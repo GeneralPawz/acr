@@ -1,0 +1,7 @@
+# Pins the toolchain so local and CI builds agree. Bump deliberately: a new
+# release can bring new clippy lints, which CI denies.
+[toolchain]
+channel = "1.99.1"
+profile = "minimal"
+components = ["clippy", "rustfmt"]
+targets = ["wasm32-unknown-unknown"]
