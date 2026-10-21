@@ -15,11 +15,15 @@
 //! ```
 //!
 //! In the shipped data only `.GP` sprite packs are stored unencrypted.
+//!
+//! [`GscIndex`] parses the table without doing I/O so callers that can only read
+//! asynchronously (the browser) can fetch ranges themselves; [`GscArchive`] is the
+//! blocking convenience wrapper.
 
 use std::io::{self, Read, Seek, SeekFrom};
 
 const MAGIC: &[u8; 6] = b"GSCfmt";
-const HEADER_LEN: u64 = 14;
+pub const HEADER_LEN: usize = 14;
 const ENTRY_LEN: usize = 81;
 const NAME_LEN: usize = 64;
 
@@ -34,29 +38,31 @@ pub struct GscEntry {
     pub checksum: u32,
 }
 
-#[derive(Debug)]
-pub struct GscArchive<R> {
-    source: R,
-    xor_key: u8,
-    entries: Vec<GscEntry>,
+/// The parsed entry table of an archive.
+#[derive(Debug, Clone)]
+pub struct GscIndex {
+    pub xor_key: u8,
+    pub entries: Vec<GscEntry>,
 }
 
-impl<R: Read + Seek> GscArchive<R> {
-    pub fn open(mut source: R) -> io::Result<Self> {
-        let mut header = [0u8; HEADER_LEN as usize];
-        source.seek(SeekFrom::Start(0))?;
-        source.read_exact(&mut header)?;
+impl GscIndex {
+    /// Given the first [`HEADER_LEN`] bytes, returns how many bytes from the start of
+    /// the archive [`GscIndex::parse`] needs.
+    pub fn index_len(header: &[u8]) -> io::Result<usize> {
+        let header = header.get(..HEADER_LEN).ok_or_else(|| invalid("archive header truncated"))?;
         if &header[..6] != MAGIC {
             return Err(invalid("not a GSCfmt archive"));
         }
-        let xor_key = header[9];
         let count = u32::from_le_bytes(header[10..14].try_into().unwrap()) as usize;
+        Ok(HEADER_LEN + count * ENTRY_LEN)
+    }
 
-        let mut table = vec![0u8; count * ENTRY_LEN];
-        source.read_exact(&mut table)?;
-        let data_start = HEADER_LEN + table.len() as u64;
-        let archive_len = source.seek(SeekFrom::End(0))?;
-
+    /// Parses the header and entry table (`bytes` must hold at least
+    /// [`GscIndex::index_len`] bytes). `archive_len` is used to reject truncated archives.
+    pub fn parse(bytes: &[u8], archive_len: u64) -> io::Result<Self> {
+        let len = Self::index_len(bytes)?;
+        let table = bytes.get(HEADER_LEN..len).ok_or_else(|| invalid("entry table truncated"))?;
+        let data_start = len as u64;
         let entries = table
             .as_chunks::<ENTRY_LEN>()
             .0
@@ -73,35 +79,56 @@ impl<R: Read + Seek> GscArchive<R> {
                     checksum: u32_at(0),
                 };
                 if entry.offset + u64::from(entry.size) > archive_len {
-                    return Err(invalid(&format!(
-                        "entry {} points past end of archive",
-                        entry.name
-                    )));
+                    return Err(invalid(&format!("entry {} points past end of archive", entry.name)));
                 }
                 Ok(entry)
             })
             .collect::<io::Result<Vec<_>>>()?;
+        Ok(Self { xor_key: bytes[9], entries })
+    }
 
-        Ok(Self {
-            source,
-            xor_key,
-            entries,
-        })
+    /// Decrypts raw entry bytes in place if the entry is encrypted.
+    pub fn decrypt(&self, entry: &GscEntry, data: &mut [u8]) {
+        if entry.encrypted {
+            data.iter_mut().for_each(|b| *b ^= self.xor_key);
+        }
+    }
+}
+
+/// An archive read through a blocking `Read + Seek` source.
+#[derive(Debug)]
+pub struct GscArchive<R> {
+    source: R,
+    index: GscIndex,
+}
+
+impl<R: Read + Seek> GscArchive<R> {
+    pub fn open(mut source: R) -> io::Result<Self> {
+        let archive_len = source.seek(SeekFrom::End(0))?;
+        source.seek(SeekFrom::Start(0))?;
+        let mut bytes = vec![0u8; HEADER_LEN];
+        source.read_exact(&mut bytes)?;
+        bytes.resize(GscIndex::index_len(&bytes)?, 0);
+        source.read_exact(&mut bytes[HEADER_LEN..])?;
+        let index = GscIndex::parse(&bytes, archive_len)?;
+        Ok(Self { source, index })
+    }
+
+    pub fn index(&self) -> &GscIndex {
+        &self.index
     }
 
     pub fn entries(&self) -> &[GscEntry] {
-        &self.entries
+        &self.index.entries
     }
 
     /// Reads and decrypts the entry at `index`.
     pub fn read(&mut self, index: usize) -> io::Result<Vec<u8>> {
-        let entry = &self.entries[index];
+        let entry = &self.index.entries[index];
         let mut data = vec![0u8; entry.size as usize];
         self.source.seek(SeekFrom::Start(entry.offset))?;
         self.source.read_exact(&mut data)?;
-        if entry.encrypted {
-            data.iter_mut().for_each(|b| *b ^= self.xor_key);
-        }
+        self.index.decrypt(entry, &mut data);
         Ok(data)
     }
 }
@@ -122,8 +149,7 @@ mod tests {
 
     /// Builds a tiny archive with one encrypted and one plain file.
     fn sample() -> Vec<u8> {
-        let files: [(&str, &[u8], bool); 2] =
-            [("0\\A.TXT", b"Hi\r\n", true), ("B.GP", b"GPAK", false)];
+        let files: [(&str, &[u8], bool); 2] = [("0\\A.TXT", b"Hi\r\n", true), ("B.GP", b"GPAK", false)];
         let mut out = b"GSCfmt\x00\x02\xCD\x78".to_vec();
         out.extend(2u32.to_le_bytes());
         let mut offset = 0u32;
@@ -151,6 +177,16 @@ mod tests {
         assert_eq!(a.entries()[0].name, "0\\A.TXT");
         assert_eq!(a.read(0).unwrap(), b"Hi\r\n");
         assert_eq!(a.read(1).unwrap(), b"GPAK");
+    }
+
+    #[test]
+    fn index_parses_without_io() {
+        let data = sample();
+        let index = GscIndex::parse(&data[..GscIndex::index_len(&data).unwrap()], data.len() as u64).unwrap();
+        let e = &index.entries[0];
+        let mut bytes = data[e.offset as usize..][..e.size as usize].to_vec();
+        index.decrypt(e, &mut bytes);
+        assert_eq!(bytes, b"Hi\r\n");
     }
 
     #[test]

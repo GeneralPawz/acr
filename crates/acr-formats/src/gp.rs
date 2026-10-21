@@ -176,23 +176,13 @@ impl GpFile {
         if dict_len > 0 && dict.end > data.len() {
             return err(8, "dictionary out of bounds");
         }
-        let offsets = (0..count)
-            .map(|i| read_u32(&data, 14 + 4 * i).map(|o| o as usize))
-            .collect::<Result<Vec<_>>>()?;
+        let offsets =
+            (0..count).map(|i| read_u32(&data, 14 + 4 * i).map(|o| o as usize)).collect::<Result<Vec<_>>>()?;
         // A frame's chunks end where the next frame (or the file) begins.
         let mut sorted = offsets.clone();
         sorted.sort_unstable();
-        let frame_end = |start: usize| {
-            sorted
-                .iter()
-                .copied()
-                .find(|&o| o > start)
-                .unwrap_or(data.len())
-        };
-        let frames = offsets
-            .iter()
-            .map(|&start| parse_frame_chunks(&data, start, frame_end(start)))
-            .collect();
+        let frame_end = |start: usize| sorted.iter().copied().find(|&o| o > start).unwrap_or(data.len());
+        let frames = offsets.iter().map(|&start| parse_frame_chunks(&data, start, frame_end(start))).collect();
         Ok(Self { data, dict, frames })
     }
 
@@ -207,10 +197,8 @@ impl GpFile {
 
     pub fn decode_frame(&self, index: usize) -> Result<Frame> {
         let headers = self.frames[index].as_ref().map_err(Clone::clone)?;
-        let layers = headers
-            .iter()
-            .map(|h| decode_chunk(&self.data, h, self.dictionary()))
-            .collect::<Result<Vec<_>>>()?;
+        let layers =
+            headers.iter().map(|h| decode_chunk(&self.data, h, self.dictionary())).collect::<Result<Vec<_>>>()?;
         Ok(Frame { layers })
     }
 }
@@ -223,10 +211,9 @@ fn parse_frame_chunks(data: &[u8], start: usize, frame_end: usize) -> Result<Vec
             return err(start, "too many chunks in frame");
         }
         let offset = usize::try_from(start as i64 + rel).or(err(start, "negative chunk link"))?;
-        let header = data.get(offset..offset + CHUNK_HEADER_LEN).ok_or(GpError {
-            offset,
-            reason: "chunk header out of bounds",
-        })?;
+        let header = data
+            .get(offset..offset + CHUNK_HEADER_LEN)
+            .ok_or(GpError { offset, reason: "chunk header out of bounds" })?;
         let next = i32::from_le_bytes(header[0..4].try_into().unwrap());
         let i16_at = |i: usize| i16::from_le_bytes([header[i], header[i + 1]]);
         let end = if next == -1 {
@@ -256,55 +243,32 @@ fn parse_frame_chunks(data: &[u8], start: usize, frame_end: usize) -> Result<Vec
 
 fn decode_chunk(data: &[u8], h: &ChunkHeader, dict: &[u8]) -> Result<Layer> {
     let encoding = Encoding::from_byte(h.encoding);
-    let mut layer = Layer {
-        encoding,
-        x: h.x,
-        y: h.y,
-        width: h.width,
-        height: h.height,
-        runs: Vec::new(),
-        pixels: Vec::new(),
-    };
+    let mut layer =
+        Layer { encoding, x: h.x, y: h.y, width: h.width, height: h.height, runs: Vec::new(), pixels: Vec::new() };
     if encoding == Encoding::Empty {
         return Ok(layer);
     }
     let body = &data[h.offset + CHUNK_HEADER_LEN..h.end];
-    let shape_end = parse_shape(body, h.height, &mut layer.runs).map_err(|r| GpError {
-        offset: h.offset + CHUNK_HEADER_LEN,
-        reason: r,
-    })?;
+    let shape_end = parse_shape(body, h.height, &mut layer.runs)
+        .map_err(|r| GpError { offset: h.offset + CHUNK_HEADER_LEN, reason: r })?;
     let count: usize = layer.runs.iter().map(|r| usize::from(r.len)).sum();
     // Skip the padding byte that precedes every color section.
     let color = body.get(shape_end + 1..).unwrap_or_default();
     let color_offset = h.offset + CHUNK_HEADER_LEN + shape_end + 1;
-    let fail = |reason| GpError {
-        offset: color_offset,
-        reason,
-    };
+    let fail = |reason| GpError { offset: color_offset, reason };
     layer.pixels = match encoding {
         Encoding::DictLz => decode_dict_lz(color, count, dict).map_err(fail)?,
         Encoding::SelfLz(_) => decode_self_lz(color, count).map_err(fail)?,
-        Encoding::Raw(_) => color
-            .get(..count)
-            .ok_or(fail("raw pixels truncated"))?
-            .to_vec(),
-        Encoding::PlayerColor => {
-            unpack_bits(color, count, 2).ok_or(fail("2-bit pixels truncated"))?
-        }
-        Encoding::Packed4(_) => {
-            unpack_bits(color, count, 4).ok_or(fail("4-bit pixels truncated"))?
-        }
+        Encoding::Raw(_) => color.get(..count).ok_or(fail("raw pixels truncated"))?.to_vec(),
+        Encoding::PlayerColor => unpack_bits(color, count, 2).ok_or(fail("2-bit pixels truncated"))?,
+        Encoding::Packed4(_) => unpack_bits(color, count, 4).ok_or(fail("4-bit pixels truncated"))?,
         Encoding::Shadow | Encoding::Unknown(_) | Encoding::Empty => vec![0; count],
     };
     Ok(layer)
 }
 
 /// Parses `rows` rows of run data, returning the number of bytes consumed.
-fn parse_shape(
-    body: &[u8],
-    rows: u16,
-    runs: &mut Vec<Run>,
-) -> std::result::Result<usize, &'static str> {
+fn parse_shape(body: &[u8], rows: u16, runs: &mut Vec<Run>) -> std::result::Result<usize, &'static str> {
     let byte = |i: usize| body.get(i).copied().ok_or("shape data truncated");
     let mut pos = 0;
     for y in 0..rows {
@@ -332,10 +296,7 @@ fn parse_shape(
                 let skip_extra = if tag & 0x40 != 0 { 16 } else { 0 };
                 for _ in 0..tag & 0x0F {
                     let b = byte(pos)?;
-                    push(
-                        u16::from(b & 0x0F) + skip_extra,
-                        u16::from(b >> 4) + len_extra,
-                    );
+                    push(u16::from(b & 0x0F) + skip_extra, u16::from(b >> 4) + len_extra);
                     pos += 1;
                 }
             }
@@ -346,11 +307,7 @@ fn parse_shape(
 
 /// Control bytes are read MSB first; a set bit means a 2-byte reference
 /// `offset:12 | (len-3):4` into the file dictionary, a clear bit a literal index.
-fn decode_dict_lz(
-    src: &[u8],
-    count: usize,
-    dict: &[u8],
-) -> std::result::Result<Vec<u8>, &'static str> {
+fn decode_dict_lz(src: &[u8], count: usize, dict: &[u8]) -> std::result::Result<Vec<u8>, &'static str> {
     let mut out = Vec::with_capacity(count);
     let mut pos = 0;
     while out.len() < count {
@@ -416,11 +373,7 @@ fn unpack_bits(src: &[u8], count: usize, bits: u32) -> Option<Vec<u8>> {
     let per_byte = (8 / bits) as usize;
     let mask = (1u8 << bits) - 1;
     let bytes = src.get(..count.div_ceil(per_byte))?;
-    Some(
-        (0..count)
-            .map(|i| bytes[i / per_byte] >> ((i % per_byte) as u32 * bits) & mask)
-            .collect(),
-    )
+    Some((0..count).map(|i| bytes[i / per_byte] >> ((i % per_byte) as u32 * bits) & mask).collect())
 }
 
 fn read_u16_at(data: &[u8], pos: usize) -> Option<u16> {
@@ -428,19 +381,13 @@ fn read_u16_at(data: &[u8], pos: usize) -> Option<u16> {
 }
 
 fn read_u16(data: &[u8], pos: usize) -> Result<u16> {
-    read_u16_at(data, pos).ok_or(GpError {
-        offset: pos,
-        reason: "unexpected end of file",
-    })
+    read_u16_at(data, pos).ok_or(GpError { offset: pos, reason: "unexpected end of file" })
 }
 
 fn read_u32(data: &[u8], pos: usize) -> Result<u32> {
     data.get(pos..pos + 4)
         .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
-        .ok_or(GpError {
-            offset: pos,
-            reason: "unexpected end of file",
-        })
+        .ok_or(GpError { offset: pos, reason: "unexpected end of file" })
 }
 
 #[cfg(test)]
@@ -454,18 +401,7 @@ mod tests {
         let body = [2, 1, 2, 3, 1, 0, 0xA1, 0x21];
         let mut runs = Vec::new();
         assert_eq!(parse_shape(&body, 3, &mut runs), Ok(body.len()));
-        assert_eq!(
-            runs,
-            vec![
-                Run { x: 1, y: 0, len: 2 },
-                Run { x: 6, y: 0, len: 1 },
-                Run {
-                    x: 1,
-                    y: 2,
-                    len: 18
-                },
-            ]
-        );
+        assert_eq!(runs, vec![Run { x: 1, y: 0, len: 2 }, Run { x: 6, y: 0, len: 1 }, Run { x: 1, y: 2, len: 18 },]);
     }
 
     #[test]
@@ -473,10 +409,7 @@ mod tests {
         let dict = [10, 11, 12, 13, 14];
         // ctrl 0b0100_0000: literal 7, then reference offset 1 len 3+1, then literal 9.
         let src = [0b0100_0000, 7, 0x01, 0x10, 9];
-        assert_eq!(
-            decode_dict_lz(&src, 6, &dict).unwrap(),
-            vec![7, 11, 12, 13, 14, 9]
-        );
+        assert_eq!(decode_dict_lz(&src, 6, &dict).unwrap(), vec![7, 11, 12, 13, 14, 9]);
         // A final reference is clamped to the remaining pixel count.
         assert_eq!(decode_dict_lz(&src, 3, &dict).unwrap(), vec![7, 11, 12]);
     }

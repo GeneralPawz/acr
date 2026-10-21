@@ -15,7 +15,8 @@ usage:
   acr extract  <game-dir> <out-dir> [filter]
   acr gp-sheet <game-dir> <gp-path> <out.png> [--pal PATH] [--player N]
                 [--only ENC,ENC..] [--frames FROM..TO]
-  acr gp-check <game-dir> [filter]";
+  acr gp-check <game-dir> [filter]
+  acr script-api <game-dir>   (markdown report of the API missions/AI import)";
 
 /// Palette used for unit and building sprites unless overridden.
 const DEFAULT_PALETTE: &str = "0\\AGEW_1.PAL";
@@ -26,13 +27,12 @@ fn main() -> ExitCode {
     let result = match args.as_slice() {
         ["list", dir, rest @ ..] => list(Path::new(dir), rest.first().copied()),
         ["cat", dir, path] => cat(Path::new(dir), path),
-        ["extract", dir, out, rest @ ..] => {
-            extract(Path::new(dir), Path::new(out), rest.first().copied())
-        }
+        ["extract", dir, out, rest @ ..] => extract(Path::new(dir), Path::new(out), rest.first().copied()),
         ["gp-sheet", dir, gp, out, rest @ ..] => {
             SheetOptions::parse(rest).and_then(|o| gp_sheet(Path::new(dir), gp, Path::new(out), &o))
         }
         ["gp-check", dir, rest @ ..] => gp_check(Path::new(dir), rest.first().copied()),
+        ["script-api", dir] => script_api(Path::new(dir)),
         _ => {
             eprintln!("{USAGE}");
             return ExitCode::from(2);
@@ -84,10 +84,7 @@ fn extract(dir: &Path, out: &Path, filter: Option<&str>) -> Result<()> {
 }
 
 fn archived_paths(vfs: &Vfs, filter: Option<&str>) -> Vec<String> {
-    vfs.list()
-        .filter(|(p, source)| *source != "<loose>" && matches(p, filter))
-        .map(|(p, _)| p.to_owned())
-        .collect()
+    vfs.list().filter(|(p, source)| *source != "<loose>" && matches(p, filter)).map(|(p, _)| p.to_owned()).collect()
 }
 
 struct SheetOptions {
@@ -99,26 +96,14 @@ struct SheetOptions {
 
 impl SheetOptions {
     fn parse(args: &[&str]) -> Result<Self> {
-        let mut o = Self {
-            palette: DEFAULT_PALETTE.to_owned(),
-            player: 0,
-            only: None,
-            frames: None,
-        };
+        let mut o = Self { palette: DEFAULT_PALETTE.to_owned(), player: 0, only: None, frames: None };
         let mut it = args.iter();
         while let Some(&flag) = it.next() {
             let value = *it.next().ok_or_else(|| format!("{flag} needs a value"))?;
             match flag {
                 "--pal" => o.palette = value.to_owned(),
                 "--player" => o.player = value.parse()?,
-                "--only" => {
-                    o.only = Some(
-                        value
-                            .split(',')
-                            .map(str::parse)
-                            .collect::<std::result::Result<_, _>>()?,
-                    )
-                }
+                "--only" => o.only = Some(value.split(',').map(str::parse).collect::<std::result::Result<_, _>>()?),
                 "--frames" => {
                     let (a, b) = value.split_once("..").ok_or("--frames expects FROM..TO")?;
                     o.frames = Some(a.parse()?..b.parse()?);
@@ -138,9 +123,7 @@ fn gp_sheet(dir: &Path, gp: &str, out: &Path, o: &SheetOptions) -> Result<()> {
 
     let range = o.frames.clone().unwrap_or(0..file.frame_count());
     let n = file.frame_count();
-    let frames: Vec<_> = (range.start.min(n)..range.end.min(n))
-        .map(|i| file.decode_frame(i))
-        .collect();
+    let frames: Vec<_> = (range.start.min(n)..range.end.min(n)).map(|i| file.decode_frame(i)).collect();
     for (i, f) in frames.iter().enumerate() {
         if let Err(e) = f {
             eprintln!("frame {i}: {e}");
@@ -156,28 +139,13 @@ fn gp_sheet(dir: &Path, gp: &str, out: &Path, o: &SheetOptions) -> Result<()> {
     let cols = (ok.len() as f64).sqrt().ceil().max(1.0) as u32;
     let rows = (ok.len() as u32).div_ceil(cols).max(1);
     let mut image = Image::new(cols * cell_w, rows * cell_h);
-    let opt = RasterOptions {
-        palette: &palette,
-        player: o.player,
-        only: o.only.as_deref(),
-    };
+    let opt = RasterOptions { palette: &palette, player: o.player, only: o.only.as_deref() };
     for (i, frame) in ok.iter().enumerate() {
         let (cx, cy) = ((i as u32 % cols) * cell_w, (i as u32 / cols) * cell_h);
-        draw_frame(
-            &mut image,
-            frame,
-            cx as i32 - x0 + 1,
-            cy as i32 - y0 + 1,
-            &opt,
-        );
+        draw_frame(&mut image, frame, cx as i32 - x0 + 1, cy as i32 - y0 + 1, &opt);
     }
     write_png(out, &image)?;
-    eprintln!(
-        "{} of {} frames, cell {cell_w}x{cell_h} -> {}",
-        ok.len(),
-        frames.len(),
-        out.display()
-    );
+    eprintln!("{} of {} frames, cell {cell_w}x{cell_h} -> {}", ok.len(), frames.len(), out.display());
     Ok(())
 }
 
@@ -195,10 +163,7 @@ fn gp_check(dir: &Path, filter: Option<&str>) -> Result<()> {
         let file = match GpFile::parse(vfs.read(path)?) {
             Ok(f) => f,
             Err(e) => {
-                failures
-                    .entry(e.reason.to_owned())
-                    .or_default()
-                    .push(path.clone());
+                failures.entry(e.reason.to_owned()).or_default().push(path.clone());
                 continue;
             }
         };
@@ -206,20 +171,70 @@ fn gp_check(dir: &Path, filter: Option<&str>) -> Result<()> {
             frames += 1;
             match file.decode_frame(i) {
                 Ok(f) => layers += f.layers.len(),
-                Err(e) => failures
-                    .entry(e.reason.to_owned())
-                    .or_default()
-                    .push(format!("{path}#{i}")),
+                Err(e) => failures.entry(e.reason.to_owned()).or_default().push(format!("{path}#{i}")),
             }
         }
     }
-    println!(
-        "{} files, {frames} frames, {layers} layers decoded",
-        paths.len()
-    );
+    println!("{} files, {frames} frames, {layers} layers decoded", paths.len());
     for (reason, items) in &failures {
         let sample: Vec<_> = items.iter().take(4).map(String::as_str).collect();
         println!("  {:>6}  {reason}  e.g. {}", items.len(), sample.join(", "));
+    }
+    Ok(())
+}
+
+/// Lists every function the mission/AI DLLs import from the game executable.
+fn script_api(dir: &Path) -> Result<()> {
+    use acr_script::pe::PeImage;
+
+    let exe = PeImage::parse(&std::fs::read(dir.join("dmcr.exe"))?)?;
+    let exported: std::collections::BTreeSet<&str> = exe.exports.iter().filter_map(|e| e.name.as_deref()).collect();
+
+    // function -> (number of DLLs importing it, example DLL)
+    let mut uses: BTreeMap<String, (usize, String)> = BTreeMap::new();
+    let mut other_dlls: BTreeMap<String, usize> = BTreeMap::new();
+    let mut dll_count = 0;
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for entry in std::fs::read_dir(&d)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let rel = path.strip_prefix(dir)?.to_string_lossy().replace('\\', "/");
+            let is_script = ["AI/", "Missions/", "History_battl/", "UserMissions/"].iter().any(|p| rel.starts_with(p));
+            if !is_script || !rel.to_ascii_lowercase().ends_with(".dll") {
+                continue;
+            }
+            let pe = PeImage::parse(&std::fs::read(&path)?).map_err(|e| format!("{rel}: {e}"))?;
+            dll_count += 1;
+            let mut seen = std::collections::BTreeSet::new();
+            for import in &pe.imports {
+                if import.dll.eq_ignore_ascii_case("dmcr.exe") {
+                    if seen.insert(import.name.to_string()) {
+                        let e = uses.entry(import.name.to_string()).or_insert((0, rel.clone()));
+                        e.0 += 1;
+                    }
+                } else {
+                    *other_dlls.entry(format!("{}!{}", import.dll.to_ascii_uppercase(), import.name)).or_default() += 1;
+                }
+            }
+        }
+    }
+
+    let mut out = io::stdout().lock();
+    writeln!(out, "# Mission and AI scripting API\n")?;
+    writeln!(out, "Generated by `acr script-api` from {dll_count} mission/AI DLLs.\n")?;
+    writeln!(out, "## Imports from `dmcr.exe` ({} functions)\n", uses.len())?;
+    writeln!(out, "| function | used by DLLs | exported by dmcr.exe | example |\n|---|---:|---|---|")?;
+    for (name, (count, example)) in &uses {
+        let exp = if exported.contains(name.as_str()) { "yes" } else { "**no**" };
+        writeln!(out, "| `{name}` | {count} | {exp} | `{example}` |")?;
+    }
+    writeln!(out, "\n## Other imports\n\n| function | used by DLLs |\n|---|---:|")?;
+    for (name, count) in &other_dlls {
+        writeln!(out, "| `{name}` | {count} |")?;
     }
     Ok(())
 }

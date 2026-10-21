@@ -11,22 +11,13 @@ pub mod raster;
 pub mod vfs;
 
 pub use gp::{Encoding, Frame, GpFile, Layer};
-pub use gsc::{GscArchive, GscEntry};
+pub use gsc::{GscArchive, GscEntry, GscIndex};
 pub use pal::Palette;
-pub use vfs::Vfs;
+pub use vfs::{Located, Vfs};
 
 /// Normalizes a game path for lookups: uppercase ASCII, `/` as separator.
 ///
 /// The original engine treats paths case-insensitively and uses `\`.
 pub fn normalize_path(path: &str) -> String {
-    path.trim_start_matches(['\\', '/'])
-        .chars()
-        .map(|c| {
-            if c == '\\' {
-                '/'
-            } else {
-                c.to_ascii_uppercase()
-            }
-        })
-        .collect()
+    path.trim_start_matches(['\\', '/']).chars().map(|c| if c == '\\' { '/' } else { c.to_ascii_uppercase() }).collect()
 }

@@ -1,0 +1,8 @@
+[package]
+name = "acr-sim"
+description = "Deterministic, fixed-tick American Conquest game simulation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

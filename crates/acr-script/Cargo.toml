@@ -1,0 +1,8 @@
+[package]
+name = "acr-script"
+description = "Mission and AI scripting API for American Conquest, including loading the original DLLs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

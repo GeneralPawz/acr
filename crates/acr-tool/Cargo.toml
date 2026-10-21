@@ -11,4 +11,5 @@ path = "src/main.rs"
 
 [dependencies]
 acr-formats.workspace = true
+acr-script.workspace = true
 png = "0.18.1"
