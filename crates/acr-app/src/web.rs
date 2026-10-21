@@ -78,15 +78,25 @@ struct Inner {
     vfs: Vfs,
     /// Archive sources, indexed by VFS layer.
     archives: Vec<Source>,
+    /// Loose files of the selected folder, indexed by their item in the listed layer.
+    loose: Vec<web_sys::File>,
 }
 
 #[derive(Clone)]
 pub struct WebAssets(Rc<Inner>);
 
 impl WebAssets {
-    /// From the files of the player's game folder.
+    /// From the files of the player's game folder. Archives are indexed; all other files
+    /// override archive contents like loose files do in the original.
     pub async fn from_files(files: js_sys::Array) -> Result<Self, String> {
-        Self::mount(files.iter().filter_map(|f| f.dyn_into().ok()).map(Source::File).collect()).await
+        let files: Vec<web_sys::File> = files.iter().filter_map(|f| f.dyn_into().ok()).collect();
+        let (archives, loose): (Vec<_>, Vec<_>) = files.into_iter().partition(|f| is_archive(&f.name()));
+        let mut assets = Self::mount(archives.into_iter().map(Source::File).collect(), Vec::new()).await?;
+        let inner = Rc::get_mut(&mut assets.0).expect("not shared yet");
+        let paths: Vec<String> = loose.iter().map(game_path).collect();
+        inner.vfs.mount_listed("<folder>".to_owned(), paths);
+        inner.loose = loose;
+        Ok(assets)
     }
 
     /// From `base` (ending in `/`), serving `ALL.GSC` and the listed patches with range support.
@@ -105,15 +115,12 @@ impl WebAssets {
                 .ok_or_else(|| format!("{url}: server does not support range requests"))?;
             sources.push(Source::Url { url, len });
         }
-        Self::mount(sources).await
+        Self::mount(sources, Vec::new()).await
     }
 
-    async fn mount(mut sources: Vec<Source>) -> Result<Self, String> {
+    async fn mount(mut sources: Vec<Source>, loose: Vec<web_sys::File>) -> Result<Self, String> {
         // Same mount order as the original game: ALL.GSC, then patches by name.
-        sources.retain(|s| {
-            let name = s.name().to_ascii_uppercase();
-            name == "ALL.GSC" || name.ends_with(".GS1")
-        });
+        sources.retain(|s| is_archive(&s.name()));
         sources.sort_by_key(|s| {
             let name = s.name().to_ascii_uppercase();
             (name != "ALL.GSC", name)
@@ -129,7 +136,7 @@ impl WebAssets {
             let index = GscIndex::parse(&table, source.len()).map_err(|e| e.to_string())?;
             vfs.mount_index(source.name(), index);
         }
-        Ok(Self(Rc::new(Inner { vfs, archives: sources })))
+        Ok(Self(Rc::new(Inner { vfs, archives: sources, loose })))
     }
 
     async fn read(&self, path: &str) -> Result<Vec<u8>, String> {
@@ -139,10 +146,31 @@ impl WebAssets {
                 index.decrypt(entry, &mut data);
                 Ok(data)
             }
-            Some(Located::Loose { .. }) => Err(format!("{path}: loose files are not loaded in the browser")),
+            Some(Located::Listed { item, .. }) => {
+                let file = &self.0.loose[item];
+                Source::File(file.clone()).read(0, file.size() as u64).await
+            }
+            Some(Located::Loose { .. }) => Err(format!("{path}: unexpected local path in the browser")),
             None => Err(format!("{path} not found")),
         }
     }
+}
+
+fn is_archive(name: &str) -> bool {
+    let name = name.to_ascii_uppercase();
+    name == "ALL.GSC" || name.ends_with(".GS1")
+}
+
+/// The file's path inside the selected folder, with `\` separators like the game uses.
+fn game_path(file: &web_sys::File) -> String {
+    let relative = js_sys::Reflect::get(file, &"webkitRelativePath".into())
+        .ok()
+        .and_then(|v| v.as_string())
+        .filter(|p| !p.is_empty())
+        .unwrap_or_else(|| file.name());
+    // Drop the selected folder's own name.
+    let inside = relative.split_once('/').map_or(relative.as_str(), |(_, rest)| rest);
+    inside.replace('/', "\\")
 }
 
 impl Assets for WebAssets {

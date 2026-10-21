@@ -18,20 +18,31 @@ pub trait ReadSeek: Read + Seek {}
 impl<T: Read + Seek> ReadSeek for T {}
 
 enum Layer {
-    Archive { label: String, index: GscIndex, source: Option<Box<dyn ReadSeek>> },
-    Dir { root: PathBuf },
+    Archive {
+        label: String,
+        index: GscIndex,
+        source: Option<Box<dyn ReadSeek>>,
+    },
+    Dir {
+        root: PathBuf,
+    },
+    /// Files known by name only; the caller reads them (e.g. browser `File` objects).
+    Listed {
+        label: String,
+    },
 }
 
 #[derive(Clone, Copy)]
 enum Location {
     Archive { layer: usize, entry: usize },
     Loose { layer: usize },
+    Listed { layer: usize, item: usize },
 }
 
 impl Location {
     fn layer(self) -> usize {
         match self {
-            Location::Archive { layer, .. } | Location::Loose { layer } => layer,
+            Location::Archive { layer, .. } | Location::Loose { layer } | Location::Listed { layer, .. } => layer,
         }
     }
 }
@@ -48,6 +59,11 @@ pub enum Located<'a> {
     },
     Loose {
         path: PathBuf,
+    },
+    /// The `item`-th path passed to [`Vfs::mount_listed`] for `layer`.
+    Listed {
+        layer: usize,
+        item: usize,
     },
 }
 
@@ -132,6 +148,17 @@ impl Vfs {
         Ok(())
     }
 
+    /// Mounts files known only by their game paths (e.g. `Sound\Baraban.wav`); read them
+    /// via [`Vfs::locate`]. Returns the layer number.
+    pub fn mount_listed(&mut self, label: String, paths: impl IntoIterator<Item = String>) -> usize {
+        let layer = self.layers.len();
+        for (item, path) in paths.into_iter().enumerate() {
+            self.index.insert(normalize_path(&path), (path, Location::Listed { layer, item }));
+        }
+        self.layers.push(Layer::Listed { label });
+        layer
+    }
+
     pub fn contains(&self, path: &str) -> bool {
         self.index.contains_key(&normalize_path(path))
     }
@@ -146,6 +173,7 @@ impl Vfs {
             (Location::Loose { .. }, Layer::Dir { root }) => {
                 Located::Loose { path: root.join(original.replace('\\', std::path::MAIN_SEPARATOR_STR)) }
             }
+            (Location::Listed { layer, item }, Layer::Listed { .. }) => Located::Listed { layer: *layer, item: *item },
             _ => unreachable!("location always refers to a layer of matching kind"),
         })
     }
@@ -170,6 +198,10 @@ impl Vfs {
                 Some(Located::Loose { path }) => std::fs::read(path),
                 _ => unreachable!(),
             },
+            (Location::Listed { .. }, Layer::Listed { .. }) => Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                format!("{path} is a listed file; read it through locate()"),
+            )),
             _ => unreachable!("location always refers to a layer of matching kind"),
         }
     }
@@ -180,8 +212,27 @@ impl Vfs {
             let label = match &self.layers[location.layer()] {
                 Layer::Archive { label, .. } => label.as_str(),
                 Layer::Dir { .. } => "<loose>",
+                Layer::Listed { label } => label.as_str(),
             };
             (original.as_str(), label)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn listed_files_override_and_locate() {
+        let mut vfs = Vfs::new();
+        let layer = vfs.mount_listed("folder".into(), ["Sound\\Baraban.wav".to_owned(), "Ac.ico".to_owned()]);
+        assert!(vfs.contains("sound/BARABAN.WAV"));
+        match vfs.locate("ac.ico") {
+            Some(Located::Listed { layer: l, item }) => assert_eq!((l, item), (layer, 1)),
+            other => panic!("unexpected {other:?}"),
+        }
+        assert_eq!(vfs.list().map(|(_, label)| label).collect::<Vec<_>>(), ["folder", "folder"]);
+        assert!(vfs.read("Ac.ico").is_err());
     }
 }
