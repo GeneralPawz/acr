@@ -3,6 +3,7 @@
 mod audio;
 mod fonts;
 mod images;
+mod video;
 
 use std::collections::BTreeMap;
 use std::io::{self, Write};
@@ -34,7 +35,10 @@ usage:
   acr bmp-png <game-dir> <bmp> <out.png>   (--pal of gp-sheet also accepts a .BMP)
   acr font-png <game-dir> <font> <text> <out.png> [--set N] [--color N]
                 [--bg BMP --at X,Y] [--crop X,Y,W,H] [--zoom N]
-                font: global name (fonG60w), sprite pack (rom10) or .RLC file";
+                font: global name (fonG60w), sprite pack (rom10) or .RLC file
+  acr bik-check <game-dir>    (decode every frame and the audio of all .bik videos)
+  acr bik-frames <game-dir> <bik> <out-dir> [--every N]   (write every Nth frame as PNG)
+  acr bik-play <game-dir> <bik>   (play the soundtrack of a video)";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -62,6 +66,15 @@ fn main() -> ExitCode {
         ["font-png", dir, font, text, out, rest @ ..] => {
             fonts::font_png(Path::new(dir), font, text, Path::new(out), rest)
         }
+        ["bik-check", dir] => video::check(Path::new(dir)),
+        ["bik-frames", dir, bik, out, rest @ ..] => match rest {
+            [] => video::frames(Path::new(dir), bik, Path::new(out), 50),
+            ["--every", n] => {
+                n.parse().map_err(Into::into).and_then(|n| video::frames(Path::new(dir), bik, Path::new(out), n))
+            }
+            _ => Err("expected --every N".into()),
+        },
+        ["bik-play", dir, bik] => video::play(Path::new(dir), bik),
         _ => {
             eprintln!("{USAGE}");
             return ExitCode::from(2);

@@ -48,6 +48,7 @@ crates/
   acr-formats   original data formats; pure, no I/O required (native + wasm32)
   acr-sim       deterministic fixed-tick simulation (clock, RNG; game rules to come)
   acr-script    mission/AI scripting: PE reader now, x86 interpreter + API later
+  acr-video     Bink 1 video + audio decoder for the intro movies (native + wasm32)
   acr-render    wgpu renderer: palette-indexed sprite atlas, layer blend modes
   acr-viewer    sprite viewer app (winit); native binary and wasm entry point
   acr-tool      `acr` CLI for inspecting game data and validating decoders
@@ -73,8 +74,8 @@ beyond `cargo`.
 
 ### Dropped from the original
 
-DirectPlay, Wintab, the GameSpy/`iChat`/`DipServer` lobby, `binkw32` video (to be
-converted or skipped), the external `vopl.exe` music process, DirectDraw palette tricks,
+DirectPlay, Wintab, the GameSpy/`iChat`/`DipServer` lobby, `binkw32.dll` (the `.bik`
+videos play through our own decoder, `acr-video`), the external `vopl.exe` music process, DirectDraw palette tricks,
 copy protection.
 
 ## Play
@@ -98,6 +99,7 @@ cargo run --release -p acr-tool -- cat      "C:\path\to\American Conquest" ANMBI
 cargo run --release -p acr-tool -- gp-sheet "C:\path\to\American Conquest" ATCCEN.GP sheet.png
 cargo run --release -p acr-tool -- gp-check "C:\path\to\American Conquest"
 cargo run --release -p acr-tool -- script-api "C:\path\to\American Conquest" > docs/script-api.md
+cargo run --release -p acr-tool -- bik-check "C:\path\to\American Conquest"
 
 # Sprite viewer (Left/Right file, Up/Down frame, Space play, G grid, +/- zoom, 1-8 player)
 cargo run --release -p acr-viewer -- "C:\path\to\American Conquest" ENGB17C.GP

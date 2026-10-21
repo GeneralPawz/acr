@@ -92,7 +92,15 @@ dependencies = [
  "acr-audio",
  "acr-formats",
  "acr-script",
+ "acr-video",
  "png",
+]
+
+[[package]]
+name = "acr-video"
+version = "0.1.0"
+dependencies = [
+ "acr-audio",
 ]
 
 [[package]]
