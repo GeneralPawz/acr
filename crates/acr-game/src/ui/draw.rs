@@ -187,7 +187,7 @@ impl Textures {
 /// `None` while inputs are still loading, `Some(None)` if the sprite cannot be drawn.
 type Rasterized = Option<Option<(Image, [i32; 2])>>;
 
-fn rasterize(lib: &Library, fonts: &Fonts, sprite: &Sprite) -> Rasterized {
+pub(super) fn rasterize(lib: &Library, fonts: &Fonts, sprite: &Sprite) -> Rasterized {
     match sprite {
         Sprite::Bitmap(path) => {
             if !lib.settled(path) {

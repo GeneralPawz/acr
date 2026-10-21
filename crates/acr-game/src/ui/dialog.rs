@@ -124,6 +124,9 @@ pub struct ComboBox {
     pub drop_dx: i32,
     pub active: FontId,
     pub passive: FontId,
+    /// Text offset of the list rows (`FontDy`, +0x6f) and of the closed box (`OneDy`, +0x83).
+    pub font_dy: i32,
+    pub one_dy: i32,
     pub open: bool,
     light: usize,
     width: i32,
@@ -151,6 +154,14 @@ pub struct TextViewer {
     width: i32,
     pub scroll: Option<WidgetId>,
     pub focus: bool,
+}
+
+impl TextViewer {
+    /// Overrides the line height (`SymSize`, +0x7b) for a viewer `height` pixels tall.
+    pub fn set_line_height(&mut self, line_h: i32, height: i32) {
+        self.line_h = line_h.max(1);
+        self.page = (height / self.line_h) as usize;
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -190,6 +201,13 @@ pub enum Kind {
     ComboBox(ComboBox),
     TextViewer(TextViewer),
     InputBox(InputBox),
+    /// `addUniversalButton` (0x46ff83) as a decoration: a left cap, middle pieces picked
+    /// by `random.lst` and a right cap, `[left, mid, mid, mid, right]` frames.
+    Strip {
+        gp: String,
+        frames: [usize; 5],
+        width: i32,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -253,8 +271,9 @@ pub struct Dialog {
     now: f64,
     /// Click sound of [`OK`] (`DialogsSystem::OkSound`), `STANDART` unless set.
     pub ok_sound: Option<&'static str>,
-    /// Row variants of drop-down lists: `random.lst[i * 17] & 1`.
-    row_variants: Vec<u8>,
+    /// `RANDOM.LST`: 8192 pseudo-random `i16` (row variants of drop-down lists, middle
+    /// pieces of strips).
+    random: Vec<i16>,
     hover_variant: u32,
 }
 
@@ -281,11 +300,28 @@ impl Dialog {
         self.widgets.len() - 1
     }
 
-    /// Loads the drop-down row variants from `RANDOM.LST` (8192 little-endian `i16`).
-    pub fn load_variants(&mut self, lib: &Library) {
+    /// Loads `RANDOM.LST` (8192 little-endian `i16`).
+    pub fn load_random(&mut self, lib: &Library) {
         if let Some(bytes) = lib.bytes(RANDOM_LST) {
-            self.row_variants = (0..64).map(|i| bytes.get(i * 34).map_or(0, |b| b & 1)).collect();
+            self.random = bytes.as_chunks::<2>().0.iter().map(|&b| i16::from_le_bytes(b)).collect();
         }
+    }
+
+    fn random(&self, i: usize) -> i32 {
+        i32::from(self.random.get(i % self.random.len().max(1)).copied().unwrap_or(0))
+    }
+
+    /// A decorative strip of `width` pixels (see [`Kind::Strip`]).
+    pub fn add_strip(&mut self, lib: &Library, x: i32, y: i32, width: i32, gp: &str, frames: [usize; 5]) -> WidgetId {
+        let h = lib.frame_size(gp, frames[0])[1];
+        let id = self.push(
+            x,
+            y,
+            Rect::inclusive(x, y, x + width - 1, y + h),
+            Kind::Strip { gp: gp.to_owned(), frames, width },
+        );
+        self.widgets[id].enabled = false;
+        id
     }
 
     pub fn add_area(&mut self, rect: Rect) -> WidgetId {
@@ -489,6 +525,8 @@ impl Dialog {
             drop_dx,
             active,
             passive,
+            font_dy: 2,
+            one_dy: 3,
             open: false,
             light: 0,
             width,
@@ -629,7 +667,7 @@ impl Dialog {
         let w = &self.widgets[id];
         let Kind::ComboBox(c) = &w.kind else { return None };
         let (x, y) = drop_origin(w, c);
-        Some((id, Rect::inclusive(x, y, x + c.width - 1, y + c.row_h * c.lines.len() as i32 + 2 + c.head_h)))
+        Some((id, Rect::inclusive(x, y, x + c.width - 1, y + c.row_h * c.lines.len() as i32 + c.font_dy + c.head_h)))
     }
 
     /// Keeps lists, text viewers and their scroll bars in step (`ListBox` Refresh 0x473f81,
@@ -727,7 +765,7 @@ impl Dialog {
             && let Kind::ComboBox(c) = &mut self.widgets[id].kind
         {
             let y = p[1] as i32 - rect.y0;
-            let y0 = 3 + 2 + c.head_h;
+            let y0 = c.one_dy + c.font_dy + c.head_h;
             if y >= y0 {
                 c.light = (((y - y0) / c.row_h) as usize).min(c.lines.len().saturating_sub(1));
             }
@@ -744,7 +782,7 @@ impl Dialog {
         if let Some((id, zone)) = self.modal_zone() {
             if zone.contains(p) {
                 if let Kind::ComboBox(c) = &mut self.widgets[id].kind
-                    && p[1] as i32 - zone.y0 >= 3
+                    && p[1] as i32 - zone.y0 >= c.one_dy
                 {
                     c.cur = c.light;
                     c.open = false;
@@ -1045,7 +1083,7 @@ impl Dialog {
                     out.push(Draw::frame(&c.gp, frame, w.x, w.y));
                 }
                 let font = if c.open && w.enabled { c.active } else { c.passive };
-                out.push(Draw::text(font, line, w.x + 24, w.y + 3));
+                out.push(Draw::text(font, line, w.x + 24, w.y + c.one_dy));
             }
             Kind::TextViewer(t) => {
                 for i in 0..t.page {
@@ -1065,6 +1103,29 @@ impl Dialog {
                         }
                     }
                 }
+            }
+            Kind::Strip { gp, frames, width } => {
+                // UniversalButton draw 0x46f9f1: middle pieces between the caps, then the caps.
+                let size = |f: usize| lib.frame_size(gp, f)[0];
+                let (mut left, right) = (w.x + size(frames[0]), w.x + width - size(frames[4]));
+                let clip = Rect::inclusive(left, 0, right, 767);
+                let mut seed = (left * 7 + w.y * 17) as usize;
+                let mut n = 0;
+                while left < right && n < 1000 {
+                    let f = frames[1 + (self.random(seed & 0x1fff).rem_euclid(3)) as usize];
+                    out.push(Draw::frame(gp, f, left, w.y).clipped(clip));
+                    left += size(f).max(1);
+                    seed += 1;
+                    n += 1;
+                }
+                let mid = (w.x + w.x + width - 1) / 2;
+                out.push(Draw::frame(gp, frames[0], w.x, w.y).clipped(Rect::inclusive(0, 0, mid, 767)));
+                out.push(Draw::frame(gp, frames[4], w.x + width - 1 - size(frames[4]), w.y).clipped(Rect::inclusive(
+                    mid + 1,
+                    0,
+                    1023,
+                    767,
+                )));
             }
             Kind::InputBox(b) => {
                 let width = w.rect.width() - 1;
@@ -1111,7 +1172,7 @@ impl Dialog {
     /// hovered row highlight and the texts.
     fn draw_drop_down(&self, w: &Widget, out: &mut Vec<Draw>) {
         let Kind::ComboBox(c) = &w.kind else { return };
-        let variant = |i: usize| usize::from(self.row_variants.get(i).copied().unwrap_or(0));
+        let variant = |i: usize| (self.random(i * 17) & 1) as usize;
         let (dx, dy) = drop_origin(w, c);
         out.push(Draw::frame(&c.gp, c.up + 2, dx, dy));
         let mut yy = dy + c.head_h;
@@ -1128,7 +1189,7 @@ impl Dialog {
             } else {
                 c.passive
             };
-            out.push(Draw::text(font, line, w.x + 25, ry + 2));
+            out.push(Draw::text(font, line, w.x + 25, ry + c.font_dy));
         }
     }
 }
