@@ -5,15 +5,18 @@
 //! which in the browser can be backed by user-provided `File` blobs.
 
 pub mod bmp;
+pub mod font;
 pub mod gp;
 pub mod grd;
 pub mod gsc;
 pub mod m3d;
 pub mod pal;
 pub mod raster;
+pub mod rlc;
 pub mod vfs;
 
 pub use bmp::Bitmap;
+pub use font::{Font, FontColors, named_font};
 pub use gp::{Encoding, Frame, GpFile, Layer};
 pub use gsc::{GscArchive, GscEntry, GscIndex};
 pub use m3d::{M3dError, M3dMap, MapSize};
