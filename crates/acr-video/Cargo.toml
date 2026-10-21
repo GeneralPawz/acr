@@ -1,0 +1,10 @@
+[package]
+name = "acr-video"
+description = "Bink 1 video and audio decoder for the original intro movies (pure Rust, native + wasm32)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# Only for the `MusicSource` trait; no audio device code.
+acr-audio = { path = "../acr-audio", default-features = false }
