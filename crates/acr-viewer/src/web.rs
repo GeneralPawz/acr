@@ -115,7 +115,9 @@ impl WebAssets {
                 index.decrypt(entry, &mut data);
                 Ok(data)
             }
-            Some(Located::Loose { .. }) => Err(format!("{path}: loose files are not loaded in the browser")),
+            Some(Located::Loose { .. } | Located::Listed { .. }) => {
+                Err(format!("{path}: loose files are not loaded in the viewer"))
+            }
             None => Err(format!("{path} not found")),
         }
     }
