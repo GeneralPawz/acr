@@ -52,6 +52,7 @@ dependencies = [
  "acr-app",
  "acr-audio",
  "acr-formats",
+ "acr-mapgen",
  "acr-render",
  "acr-sim",
  "acr-video",
@@ -67,6 +68,13 @@ dependencies = [
  "wgpu",
  "winit",
  "winresource",
+]
+
+[[package]]
+name = "acr-mapgen"
+version = "0.1.0"
+dependencies = [
+ "acr-formats",
 ]
 
 [[package]]
@@ -99,6 +107,7 @@ version = "0.1.0"
 dependencies = [
  "acr-audio",
  "acr-formats",
+ "acr-mapgen",
  "acr-script",
  "acr-sim",
  "acr-video",

@@ -57,7 +57,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: >-
           cargo clippy --locked --target wasm32-unknown-unknown
-          -p acr-formats -p acr-sim -p acr-script -p acr-render -p acr-audio -p acr-video -p acr-app -p acr-viewer -p acr-game
+          -p acr-formats -p acr-mapgen -p acr-sim -p acr-script -p acr-render -p acr-audio -p acr-video -p acr-app -p acr-viewer -p acr-game
           -- -D warnings
       - run: cargo xtask web --release --app game && cargo xtask web --release --app viewer
       - uses: actions/upload-artifact@v4
