@@ -6,3 +6,5 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+# Pure-Rust math so x87 transcendental results are identical on every host.
+libm = "0.2"
