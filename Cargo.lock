@@ -89,6 +89,9 @@ dependencies = [
 [[package]]
 name = "acr-sim"
 version = "0.1.0"
+dependencies = [
+ "acr-formats",
+]
 
 [[package]]
 name = "acr-tool"
