@@ -10,6 +10,7 @@ use super::super::dialog::{Align, WidgetId};
 use super::super::draw::{Draw, Rect};
 use super::super::{Ctx, Input, Key, Nav, Screen};
 use super::placeholder::Placeholder;
+use super::player_name::PlayerName;
 use super::{Menu, font};
 
 const BACKGROUND: &str = "INTERF2\\BACKGROUND_MAIN_MENU.BMP";
@@ -176,9 +177,14 @@ impl Screen for MainMenu {
             (Page::Main, item::OPTIONS) => return Nav::Push(Box::new(super::options::Options::default())),
             (Page::Main, item::LOAD) => return Nav::Push(Box::new(Placeholder::load_game())),
             (Page::Main, item::EXIT) => return Nav::Quit,
-            (Page::Single, item::SUB_1) => return Nav::Push(Box::new(super::campaign::Campaigns::default())),
-            (Page::Single, item::SUB_2) => return Nav::Push(Box::new(super::single_mission::SingleMission::default())),
-            (Page::Single, item::SUB_3) => return Nav::Push(Box::new(super::random_map::RandomMap::default())),
+            (Page::Single, item::SUB_1 | item::SUB_2 | item::SUB_3) => {
+                let next: Box<dyn Screen> = match param {
+                    item::SUB_1 => Box::new(super::campaign::Campaigns::default()),
+                    item::SUB_2 => Box::new(super::single_mission::SingleMission::default()),
+                    _ => Box::new(super::random_map::RandomMap::default()),
+                };
+                return Nav::Push(Box::new(PlayerName::new(next)));
+            }
             (Page::Multi, item::SUB_1 | item::SUB_2 | item::SUB_3) => {
                 return Nav::Push(Box::new(Placeholder::multiplayer()));
             }

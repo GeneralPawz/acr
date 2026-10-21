@@ -5,6 +5,7 @@ pub mod loading;
 pub mod main_menu;
 pub mod options;
 pub mod placeholder;
+pub mod player_name;
 pub mod random_map;
 pub mod single_mission;
 

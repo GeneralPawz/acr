@@ -75,6 +75,7 @@ pub struct Ctx<'a> {
     pub fonts: &'a Fonts,
     pub texts: &'a Texts,
     pub settings: &'a Settings,
+    pub profile: &'a std::cell::RefCell<screens::player_name::Profile>,
 }
 
 /// What a screen wants after handling input or a tick.
@@ -87,6 +88,8 @@ pub enum Nav {
     /// Close this screen and report `value` to the one below (`on_return`).
     Return(i32),
     Quit,
+    /// Close this screen and open another in its place.
+    Replace(Box<dyn Screen>),
     Start(Box<GameSetup>),
     /// Store new options and close this screen.
     Apply(Box<Settings>),
@@ -131,6 +134,7 @@ pub struct Ui {
     sounds: Vec<String>,
     tick_time: f64,
     settings: Settings,
+    profile: std::cell::RefCell<screens::player_name::Profile>,
 }
 
 impl Ui {
@@ -150,6 +154,7 @@ impl Ui {
             sounds: Vec::new(),
             tick_time: 0.0,
             settings: Settings::default(),
+            profile: Default::default(),
         };
         ui.stack.push(Entry { screen: Box::new(screens::main_menu::MainMenu::default()), built: false });
         ui
@@ -186,7 +191,7 @@ impl Ui {
     }
 
     fn ctx(&self) -> Ctx<'_> {
-        Ctx { lib: &self.lib, fonts: &self.fonts, texts: &self.texts, settings: &self.settings }
+        Ctx { lib: &self.lib, fonts: &self.fonts, texts: &self.texts, settings: &self.settings, profile: &self.profile }
     }
 
     /// Loads texts and fonts, then builds the top screen once its files are there.
@@ -195,10 +200,16 @@ impl Ui {
             if !self.text_sources.iter().all(|p| self.lib.settled(p)) {
                 return;
             }
+            if !self.lib.settled(screens::player_name::PLAYERS) {
+                return;
+            }
             for path in &self.text_sources {
                 if let Some(bytes) = self.lib.bytes(path) {
                     self.texts.add(&bytes);
                 }
+            }
+            if let Some(players) = self.lib.bytes(screens::player_name::PLAYERS) {
+                *self.profile.borrow_mut() = screens::player_name::Profile::load(&players);
             }
             self.texts_loaded = true;
         }
@@ -212,7 +223,13 @@ impl Ui {
         if top.built {
             return;
         }
-        let ctx = Ctx { lib: &self.lib, fonts: &self.fonts, texts: &self.texts, settings: &self.settings };
+        let ctx = Ctx {
+            lib: &self.lib,
+            fonts: &self.fonts,
+            texts: &self.texts,
+            settings: &self.settings,
+            profile: &self.profile,
+        };
         let assets = top.screen.assets(&ctx);
         let waiting: Vec<&String> = assets.iter().filter(|p| !self.lib.settled(p)).collect();
         if !waiting.is_empty() {
@@ -243,7 +260,13 @@ impl Ui {
         let mut action = Action::None;
         while self.tick_time >= 1.0 / TICK_RATE {
             self.tick_time -= 1.0 / TICK_RATE;
-            let ctx = Ctx { lib: &self.lib, fonts: &self.fonts, texts: &self.texts, settings: &self.settings };
+            let ctx = Ctx {
+                lib: &self.lib,
+                fonts: &self.fonts,
+                texts: &self.texts,
+                settings: &self.settings,
+                profile: &self.profile,
+            };
             let nav = self.stack.last_mut().map_or(Nav::Stay, |e| e.screen.tick(&ctx));
             self.collect_sounds();
             action = self.navigate(nav);
@@ -262,7 +285,13 @@ impl Ui {
         if !self.ready() {
             return Action::None;
         }
-        let ctx = Ctx { lib: &self.lib, fonts: &self.fonts, texts: &self.texts, settings: &self.settings };
+        let ctx = Ctx {
+            lib: &self.lib,
+            fonts: &self.fonts,
+            texts: &self.texts,
+            settings: &self.settings,
+            profile: &self.profile,
+        };
         let nav = self.stack.last_mut().unwrap().screen.input(&ctx, input);
         self.collect_sounds();
         self.navigate(nav)
@@ -285,13 +314,24 @@ impl Ui {
                 self.stack.push(Entry { screen, built: false });
                 Action::None
             }
+            Nav::Replace(screen) => {
+                self.stack.pop();
+                self.stack.push(Entry { screen, built: false });
+                Action::None
+            }
             Nav::Pop => {
                 self.stack.pop();
                 self.after_pop()
             }
             Nav::Return(value) => {
                 self.stack.pop();
-                let ctx = Ctx { lib: &self.lib, fonts: &self.fonts, texts: &self.texts, settings: &self.settings };
+                let ctx = Ctx {
+                    lib: &self.lib,
+                    fonts: &self.fonts,
+                    texts: &self.texts,
+                    settings: &self.settings,
+                    profile: &self.profile,
+                };
                 let nav = self.stack.last_mut().map_or(Nav::Quit, |e| e.screen.on_return(&ctx, value));
                 let action = self.navigate(nav);
                 if action == Action::None { self.after_pop() } else { action }
@@ -317,7 +357,13 @@ impl Ui {
         }
         self.textures.trim();
         if let Some(p) = self.mouse {
-            let ctx = Ctx { lib: &self.lib, fonts: &self.fonts, texts: &self.texts, settings: &self.settings };
+            let ctx = Ctx {
+                lib: &self.lib,
+                fonts: &self.fonts,
+                texts: &self.texts,
+                settings: &self.settings,
+                profile: &self.profile,
+            };
             self.stack.last_mut().unwrap().screen.input(&ctx, Input::MouseMove(p));
         }
         Action::None
