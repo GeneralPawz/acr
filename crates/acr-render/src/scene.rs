@@ -317,6 +317,14 @@ impl MapObjects {
         more
     }
 
+    /// Whether `path` is a file this collection requested.
+    pub fn wants(&self, path: &str) -> bool {
+        Self::LISTS.iter().any(|(_, p)| *p == path)
+            || path == Self::NAME_LIST
+            || self.packs.contains_key(path)
+            || (self.defs_pending.is_some_and(|n| n > 0) && acr_formats::normalize_path(path).ends_with(".MD"))
+    }
+
     /// A requested file could not be read: stop waiting for it.
     pub fn file_failed(&mut self, path: &str) {
         self.packs.remove(path);

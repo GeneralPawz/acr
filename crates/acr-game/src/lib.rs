@@ -101,7 +101,11 @@ impl Game {
 
     /// Hands the menus' file requests to the platform loader.
     fn load_requested(&mut self) {
-        for path in self.ui.requests() {
+        let mut paths = self.ui.requests();
+        if let Mode::InGame(game) = &self.mode {
+            paths.extend(game.take_requests());
+        }
+        for path in paths {
             self.load(&path);
         }
     }
@@ -196,10 +200,9 @@ impl Game {
             ui::Action::StartGame(setup) => {
                 log::info!("starting {setup:?}");
                 let game = ingame::InGame::new(setup);
-                for path in game.requests() {
-                    self.load(&path);
-                }
+                game.start();
                 self.mode = Mode::InGame(Box::new(game));
+                self.load_requested();
             }
         }
     }
@@ -242,10 +245,9 @@ impl Game {
         };
         let setup = ui::GameSetup { kind: ui::GameKind::Mission(mission), players: Vec::new(), local_player: 0 };
         let game = ingame::InGame::new(Box::new(setup));
-        for path in game.requests() {
-            self.load(&path);
-        }
+        game.start();
         self.mode = Mode::InGame(Box::new(game));
+        self.load_requested();
     }
 
     /// Ends the current game and returns to the main menu.
@@ -318,7 +320,7 @@ impl ApplicationHandler<Event> for Game {
                 if let Mode::InGame(game) = &mut self.mode
                     && game.on_loaded(&path, &result)
                 {
-                    return;
+                    return self.load_requested();
                 }
                 if let Ok(bytes) = &result {
                     let (movie, audio) = self.intro.on_loaded(&path, bytes);

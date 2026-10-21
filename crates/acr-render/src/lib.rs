@@ -5,6 +5,7 @@
 //! Vulkan/DX12/Metal natively and on WebGPU/WebGL2 in the browser.
 
 pub mod image;
+pub mod objects_view;
 pub mod scene;
 pub mod terrain;
 
