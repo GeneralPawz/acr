@@ -180,8 +180,9 @@ from the renders.
 ### `RESU` — resources
 
 8 players × 8 u32, plain (the loader XORs them with 0x20D7D only for the in-memory copy).
-Typical values: 50 000, or 0x4876E7FF (presumably "unlimited") in missions. Which index is which
-resource is not mapped yet (American Conquest has food, wood, stone, gold, iron, coal).
+Typical values: 50 000, or 0x4876E7FF (presumably "unlimited") in missions. Index order is
+`NRES.DAT [RESTYPES]`: 0 wood, 1 gold, 2 stone, 3 food, 4 iron, 5 coal (the random map generator
+adds the food bonus of `Data\Start%d.dat` at index 3, see [mapgen.md](../mapgen.md)).
 
 ### `TOP1`, `TOPW` — pathfinding areas
 
