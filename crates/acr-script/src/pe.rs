@@ -1,7 +1,7 @@
 //! Minimal reader for 32-bit Portable Executable (PE32) images.
 //!
 //! Covers what the scripting layer needs from the original mission/AI DLLs and
-//! `dmcr.exe`: sections, imports and exports.
+//! `dmcr.exe`: sections, imports, exports and base relocations.
 
 use std::fmt;
 
@@ -25,6 +25,8 @@ pub struct Section {
     pub virtual_size: u32,
     pub raw_offset: u32,
     pub raw_size: u32,
+    /// `IMAGE_SCN_*` flags.
+    pub characteristics: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,9 +63,16 @@ pub struct Export {
 pub struct PeImage {
     pub image_base: u32,
     pub entry_point_rva: u32,
+    /// Size of the mapped image (`SizeOfImage`).
+    pub size_of_image: u32,
+    /// Size of the headers that are mapped at the image base (`SizeOfHeaders`).
+    pub size_of_headers: u32,
     pub sections: Vec<Section>,
     pub imports: Vec<Import>,
     pub exports: Vec<Export>,
+    /// RVAs of the 32-bit words to adjust when the image is not loaded at `image_base`
+    /// (`IMAGE_REL_BASED_HIGHLOW`; other relocation types are rejected).
+    pub relocations: Vec<u32>,
 }
 
 const IMAGE_FILE_MACHINE_I386: u16 = 0x014C;
@@ -91,6 +100,8 @@ impl PeImage {
         }
         let entry_point_rva = r.u32(opt + 16)?;
         let image_base = r.u32(opt + 28)?;
+        let size_of_image = r.u32(opt + 56)?;
+        let size_of_headers = r.u32(opt + 60)?;
         let dir_count = r.u32(opt + 92)? as usize;
         let dir = |i: usize| -> Result<(u32, u32)> {
             if i >= dir_count {
@@ -111,11 +122,21 @@ impl PeImage {
                     virtual_address: r.u32(s + 12)?,
                     raw_size: r.u32(s + 16)?,
                     raw_offset: r.u32(s + 20)?,
+                    characteristics: r.u32(s + 36)?,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
 
-        let mut image = Self { image_base, entry_point_rva, sections, imports: Vec::new(), exports: Vec::new() };
+        let mut image = Self {
+            image_base,
+            entry_point_rva,
+            size_of_image,
+            size_of_headers,
+            sections,
+            imports: Vec::new(),
+            exports: Vec::new(),
+            relocations: Vec::new(),
+        };
         let (export_rva, _) = dir(0)?;
         if export_rva != 0 {
             image.exports = image.parse_exports(data, export_rva)?;
@@ -123,6 +144,10 @@ impl PeImage {
         let (import_rva, _) = dir(1)?;
         if import_rva != 0 {
             image.imports = image.parse_imports(data, import_rva)?;
+        }
+        let (reloc_rva, reloc_size) = dir(5)?;
+        if reloc_rva != 0 {
+            image.relocations = image.parse_relocations(data, reloc_rva, reloc_size)?;
         }
         Ok(image)
     }
@@ -195,6 +220,39 @@ impl PeImage {
     }
 }
 
+impl PeImage {
+    fn parse_relocations(&self, data: &[u8], rva: u32, size: u32) -> Result<Vec<u32>> {
+        let r = Reader(data);
+        let start = self.at(rva)?;
+        let mut out = Vec::new();
+        let mut block = start;
+        while block + 8 <= start + size as usize {
+            let page = r.u32(block)?;
+            let len = r.u32(block + 4)? as usize;
+            if len < 8 {
+                break;
+            }
+            for i in (8..len).step_by(2) {
+                let entry = r.u16(block + i)?;
+                match entry >> 12 {
+                    0 => {} // padding
+                    3 => out.push(page + u32::from(entry & 0xFFF)),
+                    _ => return Err(PeError("unsupported relocation type")),
+                }
+            }
+            block += len;
+        }
+        Ok(out)
+    }
+
+    /// Section containing `rva`.
+    pub fn section_at(&self, rva: u32) -> Option<&Section> {
+        self.sections
+            .iter()
+            .find(|s| rva >= s.virtual_address && rva - s.virtual_address < s.virtual_size.max(s.raw_size))
+    }
+}
+
 struct Reader<'a>(&'a [u8]);
 
 impl Reader<'_> {
@@ -240,6 +298,10 @@ mod tests {
         put(&mut d, opt + 92, 16);
         put(&mut d, opt + 96, 0x1100); // export dir
         put(&mut d, opt + 104, 0x1000); // import dir
+        put(&mut d, opt + 96 + 40, 0x1190); // relocation dir
+        put(&mut d, opt + 100 + 40, 12);
+        put(&mut d, opt + 56, 0x2000);
+        put(&mut d, opt + 60, 0x200);
         let s = opt + 224;
         d[s..s + 5].copy_from_slice(b".data");
         put(&mut d, s + 8, 0x200);
@@ -265,6 +327,10 @@ mod tests {
         put(&mut d, f(0x1140), 0x1180);
         put(&mut d, f(0x1144), 0x1150);
         d[f(0x1150)..f(0x1150) + 4].copy_from_slice(b"Init");
+        // One relocation block for page 0x1000: a HIGHLOW fixup at 0x1184 and padding.
+        put(&mut d, f(0x1190), 0x1000);
+        put(&mut d, f(0x1194), 12);
+        d[f(0x1198)..f(0x1198) + 2].copy_from_slice(&0x3184u16.to_le_bytes());
         d
     }
 
@@ -279,6 +345,9 @@ mod tests {
         assert_eq!(pe.exports.len(), 1);
         assert_eq!(pe.exports[0].name.as_deref(), Some("Init"));
         assert_eq!(pe.exports[0].rva, 0x1180);
+        assert_eq!(pe.relocations, [0x1184]);
+        assert_eq!((pe.size_of_image, pe.size_of_headers), (0x2000, 0x200));
+        assert_eq!(pe.section_at(0x1184).map(|s| s.name.as_str()), Some(".data"));
     }
 
     #[test]
