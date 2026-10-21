@@ -9,6 +9,7 @@ mod intro;
 mod music;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod native;
+mod random_map;
 pub mod ui;
 mod unit_sounds;
 #[cfg(target_arch = "wasm32")]

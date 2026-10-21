@@ -59,15 +59,19 @@ pub struct InGame {
     held: HashSet<NamedKey>,
     cursor: Option<[f32; 2]>,
     failed: Option<String>,
+    /// The random map generator while it collects its files.
+    mapgen: Option<crate::random_map::RandomMapGen>,
 }
 
 impl InGame {
     pub fn new(setup: Box<GameSetup>) -> Self {
-        let map_path = match &setup.kind {
-            GameKind::Mission(m) => Some(m.map.clone()),
-            GameKind::RandomMap(_) => None,
+        let (map_path, mapgen) = match &setup.kind {
+            GameKind::Mission(m) => (Some(m.map.clone()), None),
+            GameKind::RandomMap(r) => {
+                (None, Some(crate::random_map::RandomMapGen::new(crate::random_map::settings(r, &setup))))
+            }
         };
-        let failed = map_path.is_none().then(|| "random maps are not generated yet (#74)".to_owned());
+        let failed = None;
         Self {
             setup,
             map_path,
@@ -92,6 +96,7 @@ impl InGame {
             held: HashSet::new(),
             cursor: None,
             failed,
+            mapgen,
         }
     }
 
@@ -102,6 +107,7 @@ impl InGame {
         queue.extend(self.map_path.clone());
         queue.extend(self.sim_assets.start(paths));
         drop(queue);
+        self.generate_map();
         self.objects.start(&|p| self.requests.borrow_mut().push(p.to_owned()));
     }
 
@@ -128,6 +134,10 @@ impl InGame {
     /// Takes a loaded file if it is one of ours. A file may serve several parts (e.g. the
     /// unit definitions are read by both the objects and the simulation).
     pub fn on_loaded(&mut self, path: &str, result: &Result<Vec<u8>, String>) -> bool {
+        if self.mapgen.as_mut().is_some_and(|g| g.on_loaded(path, result)) {
+            self.generate_map();
+            return true;
+        }
         let load = |p: &str| self.requests.borrow_mut().push(p.to_owned());
         let for_objects = match result {
             Ok(bytes) => self.objects.on_loaded(path, bytes, &load),
@@ -182,6 +192,34 @@ impl InGame {
             }
         }
         true
+    }
+
+    /// Runs the random map generator once all files it asked for are there (#74).
+    fn generate_map(&mut self) {
+        let Some(mapgen) = self.mapgen.as_mut().filter(|g| !g.waiting()) else { return };
+        let mut requests = Vec::new();
+        let result = mapgen.try_generate(&mut requests);
+        self.requests.borrow_mut().extend(requests);
+        match result {
+            Ok(Some(map)) => {
+                self.mapgen = None;
+                self.map = Some(map);
+                self.objects.reset();
+                self.build_terrain();
+            }
+            Ok(None) => {}
+            Err(e) => self.failed = Some(format!("random map: {e}")),
+        }
+    }
+
+    /// Builds the terrain once the map and the ground assets are there.
+    fn build_terrain(&mut self) {
+        if let (Some(assets), Some(map), None) = (&self.assets, &self.map, &self.terrain) {
+            match TerrainData::new(map, assets) {
+                Ok(t) => self.terrain = Some(t),
+                Err(e) => self.failed = Some(format!("terrain: {e}")),
+            }
+        }
     }
 
     /// Builds the world once the map and the simulation data are complete.
