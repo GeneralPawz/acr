@@ -143,7 +143,47 @@ The minimap (0x44C230) uses the same light and textures (`0x6D4658[tile]`, one c
 texture) and colours water cells (`depth > 128`) with palette entries 0xB3..0xB7 by the
 `SEA2` brightness layer.
 
+## Objects on the terrain
+
+Implementation: `crates/acr-render/src/scene.rs` (`Scene`, `MapObjects`), lists in
+`crates/acr-formats/src/sprite_list.rs`.
+
+**Sprite lists.** `TRE1` objects index the lists `TREELIST.LST`, `STONLIST.LST`,
+`HOLELIST.LST`, ... (loader 0x5011AF). The first line names the sprite pack and the count
+(`TREES 472` → `TREES.GP`), entry `i` is `ID DX DY RADIUS` for frame `i`.
+
+**Placement** (`ShowSprites`, 0x4D0930). The object record (35 bytes at 0x1100D6C) holds x, y,
+the height `z` taken when the object is placed, the group and the index. The frame is drawn at
+screen `(x − DX, y/2 − z − DY)`, relative to the camera. Units and buildings use their `.MD`
+sprite set offset (`USERLC … dx dy`) instead of `DX DY` and stand at `GetHeight(x, y)`; the
+random vertex lift of the terrain is not applied to objects.
+
+**Draw order** (z-buffer 0x49C249 / 0x49C3E1, flushed in 0x49D828). After the terrain:
+
+1. "Flat" items, added by 0x49C249: all list sprites except trees (stones, holes, …), drawn
+   in the order they were added.
+2. Sorted items, added by 0x49C3E1 with a sort point `(X, Y)`: bucketed by `Y + 256`
+   (2000 rows, 64 items per row) and drawn row by row from the top. Trees use `Y = y/2 −
+   camera`, i.e. the ground position **without** the height, so a tree on a hill sorts like
+   one in the valley at the same map row.
+
+Buildings declare per animation part how it sorts (`LINESORT #STANDLO GROUND LINE x1 y1 x2 y2
+…`): `GROUND` parts go to the flat list, `LINE` parts sort against a line in frame
+coordinates. The flush compares items with lines specially (flags 0x2000 in the bucket loop);
+here a line part sorts at `y/2 + (y1 + y2)/2`, which keeps trees and units behind a building
+behind it.
+
+**Idle frames.** Map units (`UNI3` id `EngM18(EN)`) resolve to the `.MD` with `NAME EngM18`
+(the parenthesis is the nation). Buildings show all parts of `#STANDLO`, units the first frame
+of `#STAND`. Frame `f` of direction `d` is `d · N/dirs + f`; the map's direction byte (0..255)
+is mapped to the 9 stored directions as a half circle mirrored to the other half (a guess:
+mirrored units are not flipped yet).
+
 ## Open questions
+
+- Objects: `COMPLEX.LST` (fields, `KUK`/`PUK`) and `ANIMATIONS.LST` (`SA`, river animations of
+  `POTOK.GP`) have their own formats and are not drawn yet; `MEAT.LST` (`PS`) neither. Line
+  sorting of buildings is approximated, unit directions are a guess.
 
 - Waves and surf: `WAVE*.DAT`, `WAVE.GRD`, `PRIBOY.GP` and `Water\voda.bmp` (not shipped) are
   loaded around 0x5EF413; their animation is not reproduced yet.

@@ -75,6 +75,7 @@ version = "0.1.0"
 dependencies = [
  "acr-formats",
  "bytemuck",
+ "log",
  "wgpu",
 ]
 
