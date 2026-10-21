@@ -27,7 +27,6 @@ usage:
                 peace, ground0, ground1
   acr script-api <game-dir>   (markdown report of the API missions/AI import)
   acr audio-check <game-dir>  (decode every sound effect and music track)
-  acr play <game-dir> <path>  (play a .wav or .ogg on the default device)
   acr grd-fit  <game-dir>   (blend strengths of the sprite lookup tables)
   acr gp-palette <game-dir> [filter]   (rank palettes per sprite pack)
   acr play <game-dir> <path>  (play a .wav or .ogg on the default device)
@@ -142,9 +141,8 @@ impl SheetOptions {
 /// Renders the frames of a sprite pack into one grid image.
 fn gp_sheet(dir: &Path, gp: &str, out: &Path, o: &SheetOptions) -> Result<()> {
     let mut vfs = Vfs::open_game_dir(dir)?;
-    let palette = images::load_palette(&mut vfs, &o.palette)?;
     let pal_path = o.palette.as_deref().unwrap_or(acr_formats::sprite_palette(gp));
-    let palette = Palette::parse(&vfs.read(pal_path)?).ok_or("palette too short")?;
+    let palette = images::load_palette(&mut vfs, pal_path)?;
     let file = GpFile::parse(vfs.read(gp)?)?;
 
     let range = o.frames.clone().unwrap_or(0..file.frame_count());
