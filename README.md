@@ -119,4 +119,5 @@ Requires the `wasm32-unknown-unknown` target for the browser build
 - [`GPAK` sprites](docs/formats/gp.md)
 - [Fonts (`RLCFont`, `.GPI`, `.RLC`)](docs/formats/fonts.md)
 - [`.m3d` maps](docs/formats/m3d.md)
+- [Units, buildings, nations, sounds, map pieces](docs/formats/definitions.md)
 - [Mission/AI scripting API](docs/script-api.md) (generated)
