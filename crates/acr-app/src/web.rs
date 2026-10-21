@@ -80,6 +80,8 @@ struct Inner {
     archives: Vec<Source>,
     /// Loose files of the selected folder, indexed by their item in the listed layer.
     loose: Vec<web_sys::File>,
+    /// Or, when loading from a URL, the loose files' URLs.
+    loose_urls: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -99,10 +101,14 @@ impl WebAssets {
         Ok(assets)
     }
 
-    /// From `base` (ending in `/`), serving `ALL.GSC` and the listed patches with range support.
-    pub async fn from_url(base: &str, patches: &[String]) -> Result<Self, String> {
+    /// From `base` (ending in `/`), which serves `ALL.GSC` with range support. `files` are
+    /// the other files below `base` (`/`-separated): top-level `*.GS1` patches are mounted
+    /// as archives, everything else as loose overrides fetched whole.
+    pub async fn from_url(base: &str, files: &[String]) -> Result<Self, String> {
+        let (patches, loose): (Vec<&String>, Vec<&String>) =
+            files.iter().partition(|f| !f.contains('/') && is_archive(f));
         let mut sources = Vec::new();
-        for name in std::iter::once("ALL.GSC").chain(patches.iter().map(String::as_str)) {
+        for name in std::iter::once("ALL.GSC").chain(patches.iter().map(|s| s.as_str())) {
             let url = format!("{base}{name}");
             // A 1-byte range request reveals the total size in Content-Range.
             let response = fetch(&url, Some("bytes=0-0")).await?;
@@ -115,7 +121,14 @@ impl WebAssets {
                 .ok_or_else(|| format!("{url}: server does not support range requests"))?;
             sources.push(Source::Url { url, len });
         }
-        Self::mount(sources, Vec::new()).await
+        let mut assets = Self::mount(sources, Vec::new()).await?;
+        let inner = Rc::get_mut(&mut assets.0).expect("not shared yet");
+        inner.vfs.mount_listed("<url>".to_owned(), loose.iter().map(|f| f.replace('/', "\\")));
+        inner.loose_urls = loose
+            .iter()
+            .map(|f| format!("{base}{}", f.split('/').map(encode_segment).collect::<Vec<_>>().join("/")))
+            .collect();
+        Ok(assets)
     }
 
     async fn mount(mut sources: Vec<Source>, loose: Vec<web_sys::File>) -> Result<Self, String> {
@@ -136,7 +149,7 @@ impl WebAssets {
             let index = GscIndex::parse(&table, source.len()).map_err(|e| e.to_string())?;
             vfs.mount_index(source.name(), index);
         }
-        Ok(Self(Rc::new(Inner { vfs, archives: sources, loose })))
+        Ok(Self(Rc::new(Inner { vfs, archives: sources, loose, loose_urls: Vec::new() })))
     }
 
     async fn read(&self, path: &str) -> Result<Vec<u8>, String> {
@@ -147,13 +160,34 @@ impl WebAssets {
                 Ok(data)
             }
             Some(Located::Listed { item, .. }) => {
-                let file = &self.0.loose[item];
-                Source::File(file.clone()).read(0, file.size() as u64).await
+                if let Some(file) = self.0.loose.get(item) {
+                    return Source::File(file.clone()).read(0, file.size() as u64).await;
+                }
+                let url = self.0.loose_urls.get(item).ok_or_else(|| format!("{path}: no source"))?;
+                let response = fetch(url, None).await?;
+                let buffer = JsFuture::from(response.array_buffer().map_err(|e| format!("{e:?}"))?)
+                    .await
+                    .map_err(|e| format!("{e:?}"))?;
+                Ok(js_sys::Uint8Array::new(&buffer).to_vec())
             }
             Some(Located::Loose { .. }) => Err(format!("{path}: unexpected local path in the browser")),
             None => Err(format!("{path} not found")),
         }
     }
+}
+
+/// Percent-encodes a URL path segment.
+fn encode_segment(segment: &str) -> String {
+    segment
+        .bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect()
 }
 
 fn is_archive(name: &str) -> bool {

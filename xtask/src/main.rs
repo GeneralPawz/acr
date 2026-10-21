@@ -52,8 +52,20 @@ fn main() -> ExitCode {
     }
 }
 
+/// The workspace `cargo xtask` was started in. Found at runtime because a shared
+/// `CARGO_TARGET_DIR` may hold an xtask binary built from another checkout.
 fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("xtask lives in the workspace").to_path_buf()
+    let start = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    start
+        .ancestors()
+        .find(|dir| std::fs::read_to_string(dir.join("Cargo.toml")).is_ok_and(|toml| toml.contains("[workspace]")))
+        .map(Path::to_path_buf)
+        .unwrap_or(start)
+}
+
+/// Cargo's build output directory, honouring `CARGO_TARGET_DIR`.
+fn target_dir(root: &Path) -> PathBuf {
+    std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from)
 }
 
 /// Compiles the viewer to wasm, generates JS bindings and copies the static page.
@@ -72,7 +84,7 @@ fn build_web(app: &str, release: bool) -> Result<PathBuf> {
     }
 
     let profile = if release { "release" } else { "debug" };
-    let wasm = root.join("target").join(WASM_TARGET).join(profile).join(format!("{lib}.wasm"));
+    let wasm = target_dir(&root).join(WASM_TARGET).join(profile).join(format!("{lib}.wasm"));
     let out = root.join("target").join("web").join(app);
     std::fs::create_dir_all(&out)?;
     wasm_bindgen_cli_support::Bindgen::new()
@@ -104,7 +116,7 @@ fn dist(game_dir: Option<&Path>, install: bool) -> Result<()> {
     if !build.status()?.success() {
         return Err("release build failed".into());
     }
-    let target = std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from);
+    let target = target_dir(&root);
     let exe = format!("{GAME_EXE}{}", std::env::consts::EXE_SUFFIX);
     let built = target.join("release").join(&exe);
     let out = root.join("dist");
@@ -162,15 +174,27 @@ fn respond(mut stream: TcpStream, dir: &Path, game_dir: Option<&Path>) -> Result
 
     if let (Some(rest), Some(game)) = (path.strip_prefix("game/"), game_dir) {
         if rest.is_empty() {
-            let mut names: Vec<String> = std::fs::read_dir(game)?
-                .filter_map(|e| e.ok()?.file_name().into_string().ok())
-                .filter(|n| is_archive(n))
-                .collect();
-            names.sort();
-            return send(&mut stream, "200 OK", "text/plain", &[], names.join("\n").as_bytes());
+            // Archives first (mounted in order), then every other file as a loose override.
+            let mut files = Vec::new();
+            list_files(game, game, &mut files)?;
+            files.sort_by_key(|f| (!is_archive(f) || f.contains('/'), f.to_ascii_uppercase()));
+            return send(
+                &mut stream,
+                "200 OK",
+                "text/plain; charset=utf-8",
+                &[],
+                files
+                    .join(
+                        "
+",
+                    )
+                    .as_bytes(),
+            );
         }
-        if plain(rest) && is_archive(rest) && game.join(rest).is_file() {
-            return send_range(&mut stream, &game.join(rest), range);
+        let rest = percent_decode(rest);
+        let safe = !rest.split('/').any(|seg| seg.is_empty() || seg == "..") && !rest.contains('\\');
+        if safe && game.join(&rest).is_file() {
+            return send_range(&mut stream, &game.join(&rest), range);
         }
         return send(&mut stream, "404 Not Found", "text/plain", &[], b"");
     }
@@ -188,6 +212,39 @@ fn respond(mut stream: TcpStream, dir: &Path, game_dir: Option<&Path>) -> Result
     send(&mut stream, "200 OK", mime, &[], &std::fs::read(&file)?)
 }
 
+/// Every file below `dir`, as `/`-separated paths relative to `root`.
+fn list_files(root: &Path, dir: &Path, out: &mut Vec<String>) -> Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        if path.is_dir() {
+            list_files(root, &path, out)?;
+        } else if let Ok(rel) = path.strip_prefix(root) {
+            out.push(rel.to_string_lossy().replace('\\', "/"));
+        }
+    }
+    Ok(())
+}
+
+/// Decodes `%XX` escapes of a URL path (file names contain spaces and umlauts).
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = |b: u8| (b as char).to_digit(16);
+        if bytes[i] == b'%'
+            && let (Some(h), Some(l)) = (bytes.get(i + 1).and_then(|&b| hex(b)), bytes.get(i + 2).and_then(|&b| hex(b)))
+        {
+            out.push((h * 16 + l) as u8);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 /// Parses `bytes=START-END` (inclusive end, as sent by the viewer).
 fn parse_range(value: &str) -> Option<(u64, u64)> {
     let (start, end) = value.strip_prefix("bytes=")?.split_once('-')?;
@@ -197,7 +254,8 @@ fn parse_range(value: &str) -> Option<(u64, u64)> {
 fn send_range(stream: &mut TcpStream, file: &Path, range: Option<(u64, u64)>) -> Result<()> {
     let mut f = std::fs::File::open(file)?;
     let total = f.metadata()?.len();
-    let Some((start, end)) = range.filter(|&(s, e)| s <= e && e < total) else {
+    let Some((start, end)) = Some(range.unwrap_or((0, total.saturating_sub(1)))).filter(|&(s, e)| s <= e && e < total)
+    else {
         return send(
             stream,
             "416 Range Not Satisfiable",
@@ -210,7 +268,8 @@ fn send_range(stream: &mut TcpStream, file: &Path, range: Option<(u64, u64)>) ->
     f.seek(SeekFrom::Start(start))?;
     f.read_exact(&mut body)?;
     let content_range = format!("Content-Range: bytes {start}-{end}/{total}");
-    send(stream, "206 Partial Content", "application/octet-stream", &[content_range], &body)
+    let status = if range.is_some() { "206 Partial Content" } else { "200 OK" };
+    send(stream, status, "application/octet-stream", &[content_range], &body)
 }
 
 fn send(stream: &mut TcpStream, status: &str, mime: &str, extra: &[String], body: &[u8]) -> Result<()> {
