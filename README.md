@@ -17,7 +17,6 @@ Progress is tracked in GitHub issues; each tracking issue shows its sub-issues a
 - [Deterministic simulation](https://github.com/GeneralPawz/acr/issues/26) (#26)
 - [Mission and AI scripting](https://github.com/GeneralPawz/acr/issues/35) (#35)
 - [UI, sound and music](https://github.com/GeneralPawz/acr/issues/43) (#43)
-- [Multiplayer](https://github.com/GeneralPawz/acr/issues/51) (#51)
 - [Build, CI and packaging](https://github.com/GeneralPawz/acr/issues/55) (#55)
 
 ## Roadmap
@@ -33,6 +32,10 @@ Progress is tracked in GitHub issues; each tracking issue shows its sub-issues a
    mission and opponent AI with LLMs and System One models.
 4. [**M4 – New content**](https://github.com/GeneralPawz/acr/milestone/4): new nations,
    missions and campaigns.
+
+Deferred: [**Multiplayer**](https://github.com/GeneralPawz/acr/milestone/5)
+([tracking issue #51](https://github.com/GeneralPawz/acr/issues/51)), lockstep networking
+replacing DirectPlay, after single player is complete.
 
 Everything after M1 is an optional layer: the original game must stay playable exactly as
 it was. Where 3D models are missing, a fixed camera matching the original view keeps the
