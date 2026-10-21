@@ -498,19 +498,37 @@ fn window_attributes(event_loop: &ActiveEventLoop) -> winit::window::WindowAttri
     }
 }
 
-/// The CP1252 byte of a typed character, as the original's `ToAscii` gives it.
+/// The byte of a typed character in the game texts' code page (CP1252 for the Western
+/// versions), as the original's `ToAscii` gives it; also `€`, `Œ`, `“` and the other
+/// characters CP1252 places in 0x80..=0x9F.
 fn cp1252(text: &str) -> Option<u8> {
     let mut chars = text.chars();
     let c = chars.next()?;
-    if chars.next().is_some() {
+    if chars.next().is_some() || c.is_control() {
         return None;
     }
-    match c as u32 {
-        0x20..=0x7e | 0xa0..=0xff => Some(c as u8),
+    match acr_formats::CodePage::Cp1252.encode(c.encode_utf8(&mut [0; 4]))?.as_slice() {
+        &[b] => Some(b),
         _ => None,
     }
 }
 
 fn event_loop() -> Result<EventLoop<Event>, String> {
     EventLoop::<Event>::with_user_event().build().map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cp1252;
+
+    #[test]
+    fn typed_characters_map_to_cp1252() {
+        assert_eq!(cp1252("a"), Some(b'a'));
+        assert_eq!(cp1252("ä"), Some(0xe4));
+        assert_eq!(cp1252("ß"), Some(0xdf));
+        assert_eq!(cp1252("€"), Some(0x80));
+        assert_eq!(cp1252("Ж"), None);
+        assert_eq!(cp1252("\u{8}"), None);
+        assert_eq!(cp1252("ab"), None);
+    }
 }
