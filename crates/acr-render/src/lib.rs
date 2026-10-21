@@ -5,6 +5,7 @@
 //! Vulkan/DX12/Metal natively and on WebGPU/WebGL2 in the browser.
 
 pub mod image;
+pub mod scene;
 pub mod terrain;
 
 use std::ops::Range;
