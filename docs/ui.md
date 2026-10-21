@@ -81,8 +81,8 @@ which reads `Comment.txt`, `Missions\miss_*.txt`, `Text\*.txt` and `moretx.dat`
 (0x609f40); each line is `ID text`, the first definition wins, an unknown ID shows itself.
 
 Text stays bytes from file to screen: every font maps byte values to glyphs, so whatever
-single-byte code page a localisation uses (CP1252 for the Western versions, CP1251 for the
-Russian one) shows the way the original shows it without being decoded. Only typed input
+single-byte code page a localisation uses (CP1252 in this German data; other localisations
+may use another) shows the way the original shows it without being decoded. Only typed input
 is converted: the original takes the code page byte from `ToAscii`, the game encodes
 the typed character as CP1252 (`acr_formats::CodePage`) and drops characters CP1252
 lacks. Decoding to Unicode (`acr_formats::text`) is for tools and logs.
