@@ -552,7 +552,8 @@ fn m3d_png(dir: &Path, path: &str, out: &Path, layer: &str) -> Result<()> {
         }
         "preview" | "old-preview" => {
             use acr_formats::m3d::{OLD_PREVIEW_HEIGHT, OLD_PREVIEW_WIDTH, PREVIEW_HEIGHT, PREVIEW_WIDTH};
-            let palette = Palette::parse(&vfs.read(DEFAULT_PALETTE)?).ok_or("palette too short")?;
+            let palette =
+                Palette::parse(&vfs.read(acr_formats::pal::SPRITE_PALETTES[0])?).ok_or("palette too short")?;
             let grid = if layer == "preview" {
                 Grid { width: PREVIEW_WIDTH, height: PREVIEW_HEIGHT, cells: map.preview.clone().ok_or_else(missing)? }
             } else {
