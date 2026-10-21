@@ -36,6 +36,10 @@ fn run() -> Result<(), String> {
     let assets = NativeAssets::open(&dir)?;
     let event_loop = crate::event_loop()?;
     let mut game = Game::new(event_loop.create_proxy(), Box::new(assets));
+    // Developer shortcut: skip movies and menus and open a map right away.
+    if let Ok(map) = std::env::var("ACR_START_MAP") {
+        game.start_map(&map);
+    }
     event_loop.run_app(&mut game).map_err(|e| e.to_string())
 }
 
