@@ -1,31 +1,171 @@
-//! Work in progress.
+//! The single missions screen (0x5d66b0).
+//!
+//! A list of the missions of `Missions\SingleMiss.txt` (17 rows, `Interf2\ListBox`
+//! highlight frames 3-5) with its scroll bar, the map preview `Maps2\single<n>.bmp`
+//! (400x224 at (588, 120)) under the `Interf2\GameMap` frame, the mission's briefing in a
+//! text viewer, the difficulty combo box, and the swords (start, `Interf2\GameButtons`
+//! 0/1) and cancel (3/4) buttons. The chosen difficulty is kept in `smiss.opt` by the
+//! original; here it lives as long as the program.
 
+use super::super::dialog::{Align, CANCEL, OK, WidgetId};
 use super::super::draw::Draw;
+use super::super::missions::{self, Mission};
+use super::super::setup::{Difficulty, GameKind, GameSetup, MissionSetup};
 use super::super::{Ctx, Input, Nav, Screen};
-use super::placeholder::Placeholder;
+use super::{Menu, font};
 
-pub struct SingleMission(Placeholder);
+const BACKGROUND: &str = "INTERF2\\SINGLE_MISSION_BACKGROUND.BMP";
+const VSCROLL: &str = "INTERF2\\VSCROLL.GP";
+const COMBO: &str = "INTERF2\\COMBO.GP";
+const LISTBOX: &str = "INTERF2\\LISTBOX.GP";
+const GAMEMAP: &str = "INTERF2\\GAMEMAP.GP";
+const GAMEBUTTONS: &str = "INTERF2\\GAMEBUTTONS.GP";
+pub const MISSIONS: &str = "MISSIONS\\MISSIONS.TXT";
+const SINGLE: &str = "MISSIONS\\SINGLEMISS.TXT";
 
-impl Default for SingleMission {
-    fn default() -> Self {
-        Self(Placeholder::new("INTERF2\\SINGLE_MISSION_BACKGROUND.BMP", "INTF_SMISS_T0"))
+/// Text viewer of the briefing: position, size, line height and its scroll bar.
+const TEXT: (i32, i32, [i32; 2]) = (605, 445, [342, 226]);
+const TEXT_LINE_H: i32 = 21;
+
+#[derive(Default)]
+pub struct SingleMission {
+    menu: Menu,
+    missions: Vec<Mission>,
+    list: WidgetId,
+    difficulty: WidgetId,
+    preview: WidgetId,
+    /// Per mission: text viewer and its scroll bar; only the selected pair is shown.
+    texts: Vec<(WidgetId, WidgetId)>,
+    shown: Option<usize>,
+}
+
+impl SingleMission {
+    /// The single missions in menu order.
+    fn load(ctx: &Ctx) -> Vec<Mission> {
+        let (Some(all), Some(order)) = (ctx.lib.bytes(MISSIONS), ctx.lib.bytes(SINGLE)) else { return Vec::new() };
+        let all = missions::parse_missions(&all);
+        missions::parse_single(&order).iter().filter_map(|id| missions::find(&all, id).cloned()).collect()
+    }
+
+    /// Shows the preview and briefing of the selected mission.
+    fn select(&mut self) {
+        let cur = self.menu.d.list(self.list).cur;
+        if self.shown == Some(cur) {
+            return;
+        }
+        self.shown = Some(cur);
+        for (i, &(text, bar)) in self.texts.iter().enumerate() {
+            for w in [text, bar] {
+                self.menu.d.widgets[w].visible = i == cur;
+                self.menu.d.widgets[w].enabled = i == cur;
+            }
+        }
+        if let super::super::dialog::Kind::Picture { path } = &mut self.menu.d.widgets[self.preview].kind {
+            *path = format!("MAPS2\\SINGLE{}.BMP", cur + 1);
+        }
+    }
+
+    fn setup(&self) -> Option<GameSetup> {
+        let m = self.missions.get(self.menu.d.list(self.list).cur)?;
+        let difficulty = Difficulty::from_index(self.menu.d.combo(self.difficulty).cur);
+        Some(GameSetup {
+            kind: GameKind::Mission(MissionSetup {
+                id: m.id.clone(),
+                name: m.name.clone(),
+                map: m.map.clone(),
+                script: m.script.clone(),
+                texts: m.description.clone(),
+                difficulty,
+                campaign: None,
+            }),
+            players: Vec::new(),
+            local_player: 0,
+        })
     }
 }
 
 impl Screen for SingleMission {
     fn assets(&self, ctx: &Ctx) -> Vec<String> {
-        self.0.assets(ctx)
+        let mut files: Vec<String> =
+            [BACKGROUND, VSCROLL, COMBO, LISTBOX, GAMEMAP, GAMEBUTTONS, MISSIONS, SINGLE].map(String::from).to_vec();
+        files.extend(Self::load(ctx).iter().map(|m| m.briefing().to_owned()));
+        files.push("MAPS2\\SINGLE1.BMP".into());
+        files
     }
 
     fn build(&mut self, ctx: &Ctx) {
-        self.0.build(ctx)
+        self.missions = Self::load(ctx);
+        let m = &mut self.menu;
+        *m = std::mem::take(m).with_hints();
+        m.d.load_random(ctx.lib);
+        m.d.add_picture(ctx.lib, 0, 0, BACKGROUND);
+        self.preview = m.d.add_picture(ctx.lib, 588, 120, "MAPS2\\SINGLE1.BMP");
+        m.d.add_gp_picture(ctx.lib, 580, 115, GAMEMAP, 0);
+        let bar = m.d.add_scroll_bar(ctx.lib, 495, 136, 476, 1, 0, VSCROLL, 0);
+        self.list = m.d.add_list_box(ctx.lib, 94, 156, 17, LISTBOX, 3, 26, font::F18W, font::F18Y3, Some(bar));
+        let list = m.d.list_mut(self.list);
+        list.focus = true;
+        list.dy = -3;
+        list.dx -= 16;
+        list.items = self.missions.iter().map(|m| m.name.clone()).collect();
+        self.difficulty = m.d.add_combo_box(ctx.lib, 213, 638, COMBO, 0, 9, font::F18W, font::F18Y3);
+        let combo = m.d.combo_mut(self.difficulty);
+        combo.drop_dx -= 5;
+        combo.font_dy -= 2;
+        combo.one_dy -= 1;
+        combo.cur = 1;
+        combo.lines = ["@RMID_EASY", "@RMID_NORMAL", "@RMID_HARD", "@RMID_VERYHARD", "@RMID_IMPOSIBLE"]
+            .iter()
+            .map(|id| ctx.texts.get(id).to_vec())
+            .collect();
+        m.d.set_hint(self.difficulty, ctx.texts.get("DIFFICULT5"));
+        for mission in &self.missions {
+            let text = ctx.lib.bytes(mission.briefing()).map(|b| b.to_vec()).unwrap_or_default();
+            let (x, y, size) = TEXT;
+            let viewer = m.d.add_text_viewer(ctx.lib, ctx.fonts, x, y, size, &text, font::F18Y3);
+            m.d.viewer_mut(viewer).set_line_height(TEXT_LINE_H, size[1] - 1);
+            let bar = m.d.add_scroll_bar(ctx.lib, 957, 434, 238, 1, 0, VSCROLL, 0);
+            m.d.viewer_mut(viewer).scroll = Some(bar);
+            for w in [viewer, bar] {
+                m.d.widgets[w].visible = false;
+                m.d.widgets[w].enabled = false;
+            }
+            self.texts.push((viewer, bar));
+        }
+        let start = m.d.add_gp_button(ctx.lib, 899, 706, GAMEBUTTONS, 0, 1);
+        m.d.choose(start, OK);
+        m.d.set_hint(start, ctx.texts.get("MISS_RUN"));
+        let cancel = m.d.add_gp_button(ctx.lib, 959, 706, GAMEBUTTONS, 3, 4);
+        m.d.choose(cancel, CANCEL);
+        m.d.set_hint(cancel, ctx.texts.get("SOCANCEL"));
+        m.title(ctx, "INTF_SMISS_T0");
+        m.text(ctx, 303, 107, "INTF_SMISS_T1", font::F16Y5, Align::Center);
+        m.text(ctx, 787, 106, "INTF_SMISS_T2", font::F16Y5, Align::Center);
+        m.text(ctx, 787, 401, "INTF_SMISS_T3", font::F16Y5, Align::Center);
+        m.text(ctx, 98, 640, "INTF_SMISS_DIFF", font::F18Y3, Align::Left);
+        self.select();
     }
 
-    fn input(&mut self, ctx: &Ctx, input: Input) -> Nav {
-        self.0.input(ctx, input)
+    fn tick(&mut self, _ctx: &Ctx) -> Nav {
+        self.menu.d.tick(1.0 / super::super::TICK_RATE);
+        Nav::Stay
+    }
+
+    fn input(&mut self, _ctx: &Ctx, input: Input) -> Nav {
+        let chosen = self.menu.input(input);
+        self.select();
+        match chosen {
+            Some(OK) => self.setup().map_or(Nav::Stay, |s| Nav::Start(Box::new(s))),
+            Some(CANCEL) => Nav::Pop,
+            _ => Nav::Stay,
+        }
     }
 
     fn draw(&self, ctx: &Ctx, out: &mut Vec<Draw>) {
-        self.0.draw(ctx, out)
+        self.menu.draw(ctx, out);
+    }
+
+    fn take_sounds(&mut self) -> Vec<String> {
+        self.menu.take_sounds()
     }
 }
