@@ -14,6 +14,7 @@ pub mod m3d;
 pub mod pal;
 pub mod raster;
 pub mod rlc;
+pub mod sprite_list;
 pub mod terrain;
 pub mod text;
 pub mod vfs;
