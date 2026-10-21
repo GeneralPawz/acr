@@ -1,0 +1,183 @@
+//! Build automation, kept in Rust so the project needs no extra tools.
+//!
+//! - `cargo xtask web [--release]`    build the browser viewer into `target/web`
+//! - `cargo xtask serve [--release] [--port N] [--game-dir DIR]`   build, then serve it on
+//!   localhost; with `--game-dir`, the archives are served under `/game/` with range
+//!   support and `http://127.0.0.1:N/?game=/game/` opens the viewer without a file picker
+
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
+use std::net::{TcpListener, TcpStream};
+use std::path::{Path, PathBuf};
+use std::process::{Command, ExitCode};
+
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+
+const WASM_TARGET: &str = "wasm32-unknown-unknown";
+const VIEWER_CRATE: &str = "acr-viewer";
+
+fn main() -> ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let release = args.iter().any(|a| a == "--release");
+    let option = |name: &str| args.windows(2).find(|w| w[0] == name).map(|w| w[1].clone());
+    let port = option("--port").and_then(|p| p.parse().ok()).unwrap_or(8080);
+    let game_dir = option("--game-dir").map(PathBuf::from);
+    let result = match args.first().map(String::as_str) {
+        Some("web") => build_web(release).map(|_| ()),
+        Some("serve") => build_web(release).and_then(|dir| serve(&dir, game_dir.as_deref(), port)),
+        _ => {
+            eprintln!(
+                "usage: cargo xtask web [--release]\n       cargo xtask serve [--release] [--port N] [--game-dir DIR]"
+            );
+            return ExitCode::from(2);
+        }
+    };
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("xtask: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn workspace_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("xtask lives in the workspace").to_path_buf()
+}
+
+/// Compiles the viewer to wasm, generates JS bindings and copies the static page.
+fn build_web(release: bool) -> Result<PathBuf> {
+    let root = workspace_root();
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let mut build = Command::new(cargo);
+    build.current_dir(&root).args(["build", "--package", VIEWER_CRATE, "--lib", "--target", WASM_TARGET]);
+    if release {
+        build.arg("--release");
+    }
+    if !build.status()?.success() {
+        return Err("cargo build for wasm failed".into());
+    }
+
+    let profile = if release { "release" } else { "debug" };
+    let wasm = root.join("target").join(WASM_TARGET).join(profile).join("acr_viewer.wasm");
+    let out = root.join("target").join("web");
+    std::fs::create_dir_all(&out)?;
+    wasm_bindgen_cli_support::Bindgen::new()
+        .input_path(&wasm)
+        .out_name("acr_viewer")
+        .web(true)?
+        .typescript(false)
+        .debug(!release)
+        .generate(&out)?;
+    std::fs::copy(root.join("crates/acr-viewer/web/index.html"), out.join("index.html"))?;
+    eprintln!("web build ready in {}", out.display());
+    Ok(out)
+}
+
+/// Minimal static file server for local testing. Binds to localhost only.
+fn serve(dir: &Path, game_dir: Option<&Path>, port: u16) -> Result<()> {
+    let listener = TcpListener::bind(("127.0.0.1", port))?;
+    eprintln!("serving {} at http://127.0.0.1:{port}/", dir.display());
+    if let Some(game) = game_dir {
+        eprintln!("game archives from {} at http://127.0.0.1:{port}/?game=/game/", game.display());
+    }
+    for stream in listener.incoming() {
+        if let Err(e) = respond(stream?, dir, game_dir) {
+            eprintln!("request failed: {e}");
+        }
+    }
+    Ok(())
+}
+
+fn is_archive(name: &str) -> bool {
+    let upper = name.to_ascii_uppercase();
+    upper.ends_with(".GSC") || upper.ends_with(".GS1")
+}
+
+fn respond(mut stream: TcpStream, dir: &Path, game_dir: Option<&Path>) -> Result<()> {
+    let mut reader = BufReader::new(&stream);
+    let mut request_line = String::new();
+    reader.read_line(&mut request_line)?;
+    let mut range = None;
+    loop {
+        let mut header = String::new();
+        if reader.read_line(&mut header)? == 0 || header.trim().is_empty() {
+            break;
+        }
+        if let Some((name, value)) = header.split_once(':')
+            && name.eq_ignore_ascii_case("range")
+        {
+            range = parse_range(value.trim());
+        }
+    }
+    let path = request_line.split_whitespace().nth(1).unwrap_or("/");
+    let path = path.split(['?', '#']).next().unwrap_or("/").trim_start_matches('/');
+    // Only plain names are served: no traversal, no subdirectories.
+    let plain = |name: &str| !name.is_empty() && !name.contains(['/', '\\']) && !name.contains("..");
+
+    if let (Some(rest), Some(game)) = (path.strip_prefix("game/"), game_dir) {
+        if rest.is_empty() {
+            let mut names: Vec<String> = std::fs::read_dir(game)?
+                .filter_map(|e| e.ok()?.file_name().into_string().ok())
+                .filter(|n| is_archive(n))
+                .collect();
+            names.sort();
+            return send(&mut stream, "200 OK", "text/plain", &[], names.join("\n").as_bytes());
+        }
+        if plain(rest) && is_archive(rest) && game.join(rest).is_file() {
+            return send_range(&mut stream, &game.join(rest), range);
+        }
+        return send(&mut stream, "404 Not Found", "text/plain", &[], b"");
+    }
+
+    let path = if path.is_empty() { "index.html" } else { path };
+    let Some(file) = plain(path).then(|| dir.join(path)).filter(|p| p.is_file()) else {
+        return send(&mut stream, "404 Not Found", "text/plain", &[], b"");
+    };
+    let mime = match file.extension().and_then(|e| e.to_str()) {
+        Some("html") => "text/html; charset=utf-8",
+        Some("js") => "text/javascript",
+        Some("wasm") => "application/wasm",
+        _ => "application/octet-stream",
+    };
+    send(&mut stream, "200 OK", mime, &[], &std::fs::read(&file)?)
+}
+
+/// Parses `bytes=START-END` (inclusive end, as sent by the viewer).
+fn parse_range(value: &str) -> Option<(u64, u64)> {
+    let (start, end) = value.strip_prefix("bytes=")?.split_once('-')?;
+    Some((start.parse().ok()?, end.parse().ok()?))
+}
+
+fn send_range(stream: &mut TcpStream, file: &Path, range: Option<(u64, u64)>) -> Result<()> {
+    let mut f = std::fs::File::open(file)?;
+    let total = f.metadata()?.len();
+    let Some((start, end)) = range.filter(|&(s, e)| s <= e && e < total) else {
+        return send(
+            stream,
+            "416 Range Not Satisfiable",
+            "text/plain",
+            &[format!("Content-Range: bytes */{total}")],
+            b"",
+        );
+    };
+    let mut body = vec![0; (end - start + 1) as usize];
+    f.seek(SeekFrom::Start(start))?;
+    f.read_exact(&mut body)?;
+    let content_range = format!("Content-Range: bytes {start}-{end}/{total}");
+    send(stream, "206 Partial Content", "application/octet-stream", &[content_range], &body)
+}
+
+fn send(stream: &mut TcpStream, status: &str, mime: &str, extra: &[String], body: &[u8]) -> Result<()> {
+    let mut head = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n",
+        body.len()
+    );
+    for header in extra {
+        head.push_str(header);
+        head.push_str("\r\n");
+    }
+    head.push_str("\r\n");
+    stream.write_all(head.as_bytes())?;
+    stream.write_all(body)?;
+    Ok(())
+}

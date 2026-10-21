@@ -1,0 +1,11 @@
+[package]
+name = "acr-render"
+description = "GPU renderer for American Conquest sprites and maps (native and WebGPU/WebGL2)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+acr-formats.workspace = true
+bytemuck = { version = "1.25.2", features = ["derive"] }
+wgpu = { version = "30.0.1", features = ["webgl"] }

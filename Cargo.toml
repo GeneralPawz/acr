@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/*"]
+members = ["crates/*", "xtask"]
 
 [workspace.package]
 version = "0.1.0"
@@ -9,3 +9,6 @@ license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 acr-formats = { path = "crates/acr-formats" }
+acr-script = { path = "crates/acr-script" }
+acr-sim = { path = "crates/acr-sim" }
+acr-render = { path = "crates/acr-render" }
