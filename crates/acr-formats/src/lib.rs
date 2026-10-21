@@ -4,10 +4,15 @@
 //! `wasm32-unknown-unknown` alike. Every reader works on `Read + Seek` sources,
 //! which in the browser can be backed by user-provided `File` blobs.
 
+pub mod gp;
 pub mod gsc;
+pub mod pal;
+pub mod raster;
 pub mod vfs;
 
+pub use gp::{Encoding, Frame, GpFile, Layer};
 pub use gsc::{GscArchive, GscEntry};
+pub use pal::Palette;
 pub use vfs::Vfs;
 
 /// Normalizes a game path for lookups: uppercase ASCII, `/` as separator.
