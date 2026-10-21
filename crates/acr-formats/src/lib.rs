@@ -5,6 +5,7 @@
 //! which in the browser can be backed by user-provided `File` blobs.
 
 pub mod bmp;
+pub mod defs;
 pub mod font;
 pub mod gp;
 pub mod grd;
@@ -17,6 +18,7 @@ pub mod text;
 pub mod vfs;
 
 pub use bmp::Bitmap;
+pub use defs::{SoundList, UnitDef};
 pub use font::{Font, FontColors, named_font};
 pub use gp::{Encoding, Frame, GpFile, Layer};
 pub use gsc::{GscArchive, GscEntry, GscIndex};
