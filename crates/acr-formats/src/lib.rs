@@ -13,6 +13,7 @@ pub mod m3d;
 pub mod pal;
 pub mod raster;
 pub mod rlc;
+pub mod text;
 pub mod vfs;
 
 pub use bmp::Bitmap;
@@ -21,6 +22,7 @@ pub use gp::{Encoding, Frame, GpFile, Layer};
 pub use gsc::{GscArchive, GscEntry, GscIndex};
 pub use m3d::{M3dError, M3dMap, MapSize};
 pub use pal::{Palette, sprite_palette};
+pub use text::CodePage;
 pub use vfs::{Located, Vfs};
 
 /// Normalizes a game path for lookups: uppercase ASCII, `/` as separator.
