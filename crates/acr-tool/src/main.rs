@@ -43,10 +43,7 @@ usage:
   acr defs-check <game-dir> [--keywords] [--all]   (parse all .MD/.NDS/.SMP/.LNK definitions)
   acr unit     <game-dir> <NAME>             (show one .MD definition)
   acr script-check <game-dir> (decode and initialise every mission/AI DLL)
-  acr script-run <game-dir> <dll> [--ticks N]  (run a DLL, log its game API calls)
-
-/// Palette used for unit and building sprites unless overridden.
-const DEFAULT_PALETTE: &str = "0\\AGEW_1.PAL";
+  acr script-run <game-dir> <dll> [--ticks N]  (run a DLL, log its game API calls)";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -638,6 +635,8 @@ fn draw_objects(image: &mut Image, map: &M3dMap) {
             put(image, x + dx, y + dy, PLAYER_COLORS[usize::from(u.nation % 8)]);
         }
     }
+}
+
 /// Mission and AI DLLs of an installation, as paths relative to `dir`.
 fn script_dlls(dir: &Path) -> Result<Vec<String>> {
     let mut out = Vec::new();
