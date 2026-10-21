@@ -1,6 +1,7 @@
 //! `acr` - inspect and extract original American Conquest data.
 
 mod audio;
+mod fonts;
 mod images;
 
 use std::collections::BTreeMap;
@@ -30,7 +31,10 @@ usage:
   acr grd-fit  <game-dir>   (blend strengths of the sprite lookup tables)
   acr gp-palette <game-dir> [filter]   (rank palettes per sprite pack)
   acr play <game-dir> <path>  (play a .wav or .ogg on the default device)
-  acr bmp-png <game-dir> <bmp> <out.png>   (--pal of gp-sheet also accepts a .BMP)";
+  acr bmp-png <game-dir> <bmp> <out.png>   (--pal of gp-sheet also accepts a .BMP)
+  acr font-png <game-dir> <font> <text> <out.png> [--set N] [--color N]
+                [--bg BMP --at X,Y] [--crop X,Y,W,H] [--zoom N]
+                font: global name (fonG60w), sprite pack (rom10) or .RLC file";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -55,6 +59,9 @@ fn main() -> ExitCode {
             _ => Err("expected --layer NAME".into()),
         },
         ["bmp-png", dir, bmp, out] => images::bmp_png(Path::new(dir), bmp, Path::new(out)),
+        ["font-png", dir, font, text, out, rest @ ..] => {
+            fonts::font_png(Path::new(dir), font, text, Path::new(out), rest)
+        }
         _ => {
             eprintln!("{USAGE}");
             return ExitCode::from(2);
