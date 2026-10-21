@@ -1,9 +1,9 @@
 //! `acr` - inspect and extract original American Conquest data.
 
 mod audio;
+mod defs;
 mod fonts;
 mod images;
-mod defs;
 mod video;
 
 use std::collections::BTreeMap;
@@ -80,6 +80,7 @@ fn main() -> ExitCode {
         ["bik-play", dir, bik] => video::play(Path::new(dir), bik),
         ["defs-check", dir, rest @ ..] => {
             defs::defs_check(Path::new(dir), rest.contains(&"--keywords"), rest.contains(&"--all"))
+        }
         ["unit", dir, name] => defs::unit(Path::new(dir), name),
         _ => {
             eprintln!("{USAGE}");
