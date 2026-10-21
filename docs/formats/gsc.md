@@ -18,7 +18,7 @@ Then `count` entries of 81 bytes:
 
 | offset | size | field |
 |---|---|---|
-| 0 | 4 | checksum (not verified yet) |
+| 0 | 4 | name hash: upper-cased name in a zeroed 64-byte buffer, summed as 16 big-endian u32 (`0x405098`); `CGSCarch::GetFileHandle` compares it before the name. Matches all 5101 entries of the three archives. |
 | 4 | 64 | NUL-padded name, `\` separated |
 | 68 | 4 | bitwise NOT of the offset, relative to the end of the entry table |
 | 72 | 4 | size |
