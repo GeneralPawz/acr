@@ -1,11 +1,13 @@
 //! The in-game screen: the map of the started game, scrolled like the original.
 //!
-//! For now this shows the terrain of the mission's map; objects, units, the simulation and
-//! the panel join as their crates mature.
+//! For now this shows the mission's map with its objects as placed by the map; the
+//! simulation and the panel join as their crates mature.
 
+use std::cell::RefCell;
 use std::collections::HashSet;
 
 use acr_formats::M3dMap;
+use acr_render::objects_view::ObjectsView;
 use acr_render::terrain::{Camera, GroundAssets, TerrainData, TerrainRenderer};
 use winit::keyboard::NamedKey;
 
@@ -25,6 +27,9 @@ pub struct InGame {
     terrain: Option<TerrainData>,
     renderer: Option<TerrainRenderer>,
     uploaded: bool,
+    objects: ObjectsView,
+    /// Files to request from the platform; drained by [`InGame::take_requests`].
+    requests: RefCell<Vec<String>>,
     camera: Camera,
     centred: bool,
     held: HashSet<NamedKey>,
@@ -48,6 +53,8 @@ impl InGame {
             terrain: None,
             renderer: None,
             uploaded: false,
+            objects: ObjectsView::new(),
+            requests: RefCell::new(Vec::new()),
             camera: Camera { x: 0.0, y: 0.0, scale: 1.0 },
             centred: false,
             held: HashSet::new(),
@@ -56,11 +63,18 @@ impl InGame {
         }
     }
 
-    /// Files to load before the game can be shown.
-    pub fn requests(&self) -> Vec<String> {
-        let mut paths: Vec<String> = GroundAssets::FILES.iter().map(|p| (*p).to_owned()).collect();
-        paths.extend(self.map_path.clone());
-        paths
+    /// Queues the files needed to show the game.
+    pub fn start(&self) {
+        let mut queue = self.requests.borrow_mut();
+        queue.extend(GroundAssets::FILES.iter().map(|p| (*p).to_owned()));
+        queue.extend(self.map_path.clone());
+        drop(queue);
+        self.objects.start(&|p| self.requests.borrow_mut().push(p.to_owned()));
+    }
+
+    /// Files to request from the platform; deliver them with [`InGame::on_loaded`].
+    pub fn take_requests(&self) -> Vec<String> {
+        std::mem::take(&mut self.requests.borrow_mut())
     }
 
     /// Why the game cannot start, if it cannot.
@@ -75,13 +89,23 @@ impl InGame {
 
     /// Takes a loaded file if it is one of ours.
     pub fn on_loaded(&mut self, path: &str, result: &Result<Vec<u8>, String>) -> bool {
+        // Some files (e.g. the game palette) are needed by both the objects and the terrain.
+        let load = |p: &str| self.requests.borrow_mut().push(p.to_owned());
+        let for_objects = match result {
+            Ok(bytes) => self.objects.on_loaded(path, bytes, &load),
+            Err(_) if self.objects.wants(path) => {
+                self.objects.on_failed(path);
+                true
+            }
+            Err(_) => false,
+        };
         let ground = GroundAssets::FILES.iter().position(|&f| f == path);
         let is_map = self
             .map_path
             .as_deref()
             .is_some_and(|m| acr_formats::normalize_path(m) == acr_formats::normalize_path(path));
         if ground.is_none() && !is_map {
-            return false;
+            return for_objects;
         }
         let bytes = match result {
             Ok(b) => b,
@@ -101,7 +125,10 @@ impl InGame {
             }
         } else {
             match M3dMap::parse(bytes) {
-                Ok(map) => self.map = Some(map),
+                Ok(map) => {
+                    self.map = Some(map);
+                    self.objects.reset();
+                }
                 Err(e) => self.failed = Some(format!("{path}: {e}")),
             }
         }
@@ -125,6 +152,7 @@ impl InGame {
             renderer.set_map(device, queue, terrain);
             self.uploaded = true;
         }
+        self.objects.sync_gpu(device, queue, format);
     }
 
     /// Starts on the local player's units, else in the middle of the map.
@@ -162,6 +190,9 @@ impl InGame {
     /// Scrolls by held arrow keys and the cursor at the window edge; the speed depends on
     /// time, not on the frame rate.
     pub fn update(&mut self, seconds: f32, window: [f32; 2]) {
+        if let (Some(map), Some(terrain)) = (&self.map, &self.terrain) {
+            self.objects.update(map, terrain, &|p| self.requests.borrow_mut().push(p.to_owned()));
+        }
         if !self.centred && self.uploaded {
             self.centre(window);
         }
@@ -210,5 +241,6 @@ impl InGame {
         if let Some(renderer) = &mut self.renderer {
             renderer.render(device, queue, encoder, view, size, &self.camera);
         }
+        self.objects.render(device, queue, encoder, view, size, &self.camera);
     }
 }
