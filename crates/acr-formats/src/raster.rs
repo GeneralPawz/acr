@@ -64,7 +64,7 @@ pub fn draw_frame(image: &mut Image, frame: &Frame, ox: i32, oy: i32, opt: &Rast
                         (opt.palette.rgb(PLAYER_RAMP_BASE + 4 * (opt.player % PLAYER_COUNT) + v), 255)
                     }
                     // Soft shadow with 16 darkness levels.
-                    Encoding::Packed4(_) => ([0, 0, 0], v * 10),
+                    Encoding::Shade4 | Encoding::Shade8 => ([0, 0, 0], v.min(31) * 8),
                     Encoding::Shadow => ([0, 0, 0], 128),
                     Encoding::Unknown(_) => ([255, 0, 255], 255),
                     Encoding::Empty => continue,

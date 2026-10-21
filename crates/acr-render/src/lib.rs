@@ -36,7 +36,7 @@ impl LayerKind {
             Encoding::DictLz | Encoding::SelfLz(_) => (Self::Opaque, 0),
             Encoding::PlayerColor => (Self::Player, 0),
             Encoding::Raw(level) => (Self::Translucent, 64 * u32::from(level - 1)),
-            Encoding::Packed4(_) => (Self::ShadowLevels, 10),
+            Encoding::Shade4 | Encoding::Shade8 => (Self::ShadowLevels, 8),
             Encoding::Shadow => (Self::Shadow, 128),
             Encoding::Empty | Encoding::Unknown(_) => return None,
         })
