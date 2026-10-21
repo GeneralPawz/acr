@@ -6,7 +6,7 @@ and the routines it calls). `acr gp-check` decodes all 570 738 frames (2 925 011
 without a single failure.
 
 Implementation: `crates/acr-formats/src/gp.rs`, reference rasterizer:
-`crates/acr-formats/src/raster.rs`.
+`crates/acr-formats/src/raster.rs`, blend tables: `crates/acr-formats/src/grd.rs`.
 
 ## File
 
@@ -75,7 +75,7 @@ Starts at the offset from the header (the byte between shape and color data is p
 usually 1–5 or `0xCD`, MSVC's uninitialized-memory fill). The pixels of all runs follow in
 order.
 
-| encoding | storage | drawn by the original as (tables: `<n>\*.GRD`) |
+| encoding | storage | drawn by the original as |
 |---|---|---|
 | `0x00` | dictionary LZ: control bytes MSB first; 0 = literal index, 1 = u16 `offset:12, len-3:4` into the file dictionary | opaque |
 | `0x01` | 2 bits per pixel, LSB first | opaque, palette index `0xD0 + 4·player + value` |
@@ -98,9 +98,37 @@ value is skipped. Shipped encoding bytes: `00 01 02 03 04 05 26 27 2A 2B 40 42 4
 The decompressors (`0x493590` dictionary LZ, `0x493600` self LZ) match the rules above,
 including the `distance + 1` and the clamping of the last reference to the unpacked length.
 
+## Blending (`*.GRD`, `*.XLT`)
+
+The original draws into an 8-bit frame buffer; translucency is a table lookup
+`table[row * 256 + column]` that yields a palette index. `LoadPalettes`-style setup at
+`0x483CA2` (called with the palette set `n`) loads `<n>\AGEW_TR4.GRD` and `<n>\AGEW_TR.GRD`
+(65 536 bytes, 256 rows), `<n>\AGEW_1D.GRD` (8 192 bytes, 32 rows) and more tables for
+effects and map modes. For an RGBA renderer the tables are fitted to alpha values with
+`acr grd-fit` (least squares over all table entries, for all three palette sets):
+
+| table | fit | used as |
+|---|---|---|
+| `AGEW_TR4.GRD` | row colour weight 0.754 / 0.760 / 0.751 | encoding 2: alpha 63, encoding 4: alpha 192 |
+| `AGEW_TR.GRD` | 0.500 in all sets | encoding 3: alpha 128 |
+| `AGEW_1D.GRD` | row r darkens by ≈ r/31: black alpha 0, 1, 12, 23, 33, 41, 50, 58, 65, 78, 86, 93, 102, … 232, 240, 255 | `0x26` / `0x27` per level, `0x05` = row 12 (alpha 102) |
+
+The darkness rows of the three sets agree within 4/255. The per-row RMS error of the
+"towards black" model is 6–9 per channel, i.e. the tables are quantized versions of a
+linear darkening. `raster::pixel_color` and the GPU renderer use these values; the GPU
+stores darkness levels in the atlas as their alpha.
+
+A sprite pack can select different shadow tables (the per-pack mode in `GP_System` byte
+`[+0x38][gp] >> 4`: `BRIG`, `ORANGE`, `OPT2..4`, `AGEW_1R`, `AGEW_1BR` tables for shadows
+and soft shadows). Which packs use which mode is set by game code, not by the file.
+
+`0TO1.XLT` (in `0\` and `2\`, 256 bytes) is not referenced by `dmcr.exe`. It is a palette
+remap: `1\OLD.PAL[i] ≈ 2\AGEW_1.PAL[xlt[i]]` (mean RGB distance 13.8, the best of all palette
+pairs), probably a leftover of converting old artwork.
+
 ## Open questions
 
 - File flags at offset 6.
-- Exact blend strengths of the `*.GRD` tables used by encodings 2–5 and `0x26`/`0x27`.
 - Which palette each sprite uses (`0\AGEW_1.PAL` fits units and buildings; interface
   graphics need another one).
+- Which sprite packs use the alternative shadow tables (`GP_System` mode byte).

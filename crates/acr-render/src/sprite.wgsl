@@ -1,7 +1,8 @@
 // Palette-indexed sprite layers. Each instance draws one decoded GP layer.
 //
-// Atlas texels are (value, coverage). The palette lookup happens here so player colours
-// and palette effects stay cheap to change at runtime.
+// Atlas texels are (value, coverage); darkness levels are stored as their alpha. The
+// palette lookup happens here so player colours and palette effects stay cheap to change
+// at runtime.
 
 struct Globals {
     screen: vec2<f32>,
@@ -68,7 +69,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
             return vec4<f32>(palette_color(v), f32(in.param) / 255.0);
         }
         case KIND_SHADOW_LEVELS: {
-            return vec4<f32>(0.0, 0.0, 0.0, f32(v * in.param) / 255.0);
+            return vec4<f32>(0.0, 0.0, 0.0, f32(v) / 255.0);
         }
         case KIND_SHADOW: {
             return vec4<f32>(0.0, 0.0, 0.0, f32(in.param) / 255.0);

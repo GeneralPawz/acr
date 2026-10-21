@@ -6,6 +6,7 @@
 
 pub mod bmp;
 pub mod gp;
+pub mod grd;
 pub mod gsc;
 pub mod m3d;
 pub mod pal;

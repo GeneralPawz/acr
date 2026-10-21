@@ -8,6 +8,7 @@ pub mod image;
 
 use std::ops::Range;
 
+use acr_formats::raster::{SHADE_ALPHA, SHADOW_LEVEL, TRANSLUCENT_ALPHA};
 use acr_formats::{Encoding, Frame, Palette};
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
@@ -30,16 +31,24 @@ enum LayerKind {
 
 impl LayerKind {
     /// Blend mode and its parameter, or `None` for layers that draw nothing.
-    /// Alphas are approximations until the original blend tables are decoded.
+    /// Alphas come from the original blend tables, see `acr_formats::raster`.
     fn of(encoding: Encoding) -> Option<(Self, u32)> {
         Some(match encoding {
             Encoding::DictLz | Encoding::SelfLz(_) => (Self::Opaque, 0),
             Encoding::PlayerColor => (Self::Player, 0),
-            Encoding::Raw(level) => (Self::Translucent, 64 * u32::from(level - 1)),
-            Encoding::Shade4 | Encoding::Shade8 => (Self::ShadowLevels, 8),
-            Encoding::Shadow => (Self::Shadow, 128),
+            Encoding::Raw(level) => (Self::Translucent, u32::from(TRANSLUCENT_ALPHA[usize::from(level - 2)])),
+            Encoding::Shade4 | Encoding::Shade8 => (Self::ShadowLevels, 0),
+            Encoding::Shadow => (Self::Shadow, u32::from(SHADE_ALPHA[usize::from(SHADOW_LEVEL)])),
             Encoding::Empty | Encoding::Unknown(_) => return None,
         })
+    }
+
+    /// The atlas value of a pixel; darkness levels are stored as their alpha.
+    fn texel(self, value: u8) -> u8 {
+        match self {
+            Self::ShadowLevels => SHADE_ALPHA[usize::from(value.min(31))],
+            _ => value,
+        }
     }
 }
 
@@ -248,7 +257,7 @@ impl SpriteRenderer {
                     let row = (y + u32::from(run.y)) * PAGE_SIZE;
                     for i in 0..u32::from(run.len) {
                         let at = ((row + x + u32::from(run.x) + i) * 2) as usize;
-                        pixels[at] = values.next().copied().unwrap_or(0);
+                        pixels[at] = kind.texel(values.next().copied().unwrap_or(0));
                         pixels[at + 1] = 1;
                     }
                 }
