@@ -58,7 +58,7 @@ as the renders show.
 | `VIEW` | 6 | – | older preview, 292 × 190 palette indices | known, skipped by 1.46 |
 | `SURF` | 63 | 0x53FD72 | i16 height per terrain vertex | known |
 | `TILE` | 63 | 0x540021 | u8 texture per terrain vertex | structure known |
-| `SECT` | 60 | 0x5400F3 | `(128<<s) · 512 · 6` bytes | unknown |
+| `SECT` | 60 | 0x5400F3 | texture transition variants, 6 bytes per cell | known |
 | `TRE1` | 58 | 0x5402F0 | sprites (trees, stones, ...), 14 bytes each | known |
 | `TREE` | 5 | 0x540501 | the same, 12 bytes each | known |
 | `UNI3` | 63 | 0x54163F | units and buildings, 54 bytes each | mostly known |
@@ -102,13 +102,16 @@ relief line up (towns on flat ground, the coast where the preview shows it); the
 reading puts the sea on the wrong side. Heights lie between −62 and 875 except for 85 outliers
 (down to −32 383) in `Tekumse_A5`/`Tekumse_I5`.
 
-`TILE` values are 0..=159 (plus one 224); the textures are most likely 64 × 64 tiles of the
-256 × 256 bitmaps `DRAWTEXTURES\TEX0..9.BMP` (10 × 16 = 160) — a guess, not checked yet.
+`TILE` values are 0..=159 (plus one 224): indices of the 64 × 64 textures of `TILES3.BMP`
+(136 textures; higher indices read texture 0). How heights and textures are drawn is described
+in [terrain.md](terrain.md).
 
 ### `SECT`
 
 `(128<<s) · 2·(128<<s) · 6` bytes (786 432 for `3DMP`), read verbatim; absent from the random
-maps. Values are almost only 0, 1, 2. Unknown; perhaps per-triangle section data.
+maps. One 6-byte record per cell (column pair × row): the variants 0..2 of the texture
+transition masks of the cell's four triangles (0x44864B; see [terrain.md](terrain.md)). Without
+`SECT` the renderer takes the variants from `RANDOM.LST`.
 
 ### `TRE1` / `TREE` — sprites
 
@@ -260,12 +263,10 @@ u16 values are not RGB565 colors. Unknown.
 
 ## Open questions
 
-- `SECT`, `UORG`, `DXIP`, `AIIA`: meaning.
-- `TILE`: texture source bitmaps and how textures blend between vertices.
+- `UORG`, `DXIP`, `AIIA`: meaning.
 - `UNI3`: the two i16 values at 15, the meaning of the byte at 19 (direction?) and the flag bits.
 - `ZON1`: the zone byte and the group bounding-box fields; `FOR1`: the unknown fields.
 - `CAEP`: grid ids, per-player bytes and the 3 trailing bytes; `RIV1`: the two layers.
 - `RESU`: resource order.
 - `SEA2`: confirm the depth/brightness reading against the water renderer.
-- Heights: the unit (pixels?) and how they map to screen offsets.
 - `WAL2`, `GAT1`, `PSMS`: no shipped map contains data; fields stay raw.
