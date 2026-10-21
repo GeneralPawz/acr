@@ -1,21 +1,26 @@
-//! Background music: the tracks in `Music\` played one after another in shuffled order.
+//! Audio: background music and sound effects through one shared mixer.
 //!
-//! Replaces the original's separate `vopl.exe` player; the music belongs to the game
-//! process and ends with it.
+//! Music: the tracks in `Music\` played one after another in shuffled order. Replaces the
+//! original's separate `vopl.exe` player; the music belongs to the game process and ends
+//! with it.
+
+use std::collections::HashMap;
 
 use acr_audio::output::AudioOutput;
-use acr_audio::{MusicSource, VorbisMusic};
+use acr_audio::{MusicSource, Sound, VorbisMusic};
 use acr_sim::Rng;
 
-pub struct Playlist {
+pub struct Audio {
     tracks: Vec<String>,
     next: usize,
     output: Option<AudioOutput>,
     /// A track was requested and has not arrived yet.
     pending: Option<String>,
+    sounds: HashMap<String, Option<Sound>>,
+    volumes: (f32, f32),
 }
 
-impl Playlist {
+impl Audio {
     pub fn new(paths: &[String]) -> Self {
         // Top-level tracks only; `Music\Ger\` holds narration for the historical battles.
         let mut tracks: Vec<String> = paths
@@ -32,7 +37,7 @@ impl Playlist {
         for i in (1..tracks.len()).rev() {
             tracks.swap(i, rng.below(i as u32 + 1) as usize);
         }
-        Self { tracks, next: 0, output: None, pending: None }
+        Self { tracks, next: 0, output: None, pending: None, sounds: HashMap::new(), volumes: (1.0, 0.7) }
     }
 
     /// Opens the audio device. In the browser this must run inside a user gesture.
@@ -41,7 +46,10 @@ impl Playlist {
             return;
         }
         match AudioOutput::start() {
-            Ok(output) => self.output = Some(output),
+            Ok(output) => {
+                self.output = Some(output);
+                self.set_volumes(self.volumes.0, self.volumes.1);
+            }
             Err(e) => log::warn!("no audio: {e}"),
         }
     }
@@ -95,5 +103,28 @@ impl Playlist {
             (Ok(_), None) => {}
         }
         true
+    }
+
+    /// Plays a sound effect from the bytes of its `.wav` file.
+    pub fn play(&mut self, path: &str, bytes: &[u8]) {
+        let Some(output) = &self.output else { return };
+        let sound = self
+            .sounds
+            .entry(path.to_owned())
+            .or_insert_with(|| Sound::parse(bytes).map_err(|e| log::error!("{path}: {e}")).ok());
+        if let (Some(sound), Ok(mut mixer)) = (sound, output.mixer.lock()) {
+            mixer.play(sound.clone(), 1.0, 0.0);
+        }
+    }
+
+    /// Sets the effect and music volumes (0..=1).
+    pub fn set_volumes(&mut self, effects: f32, music: f32) {
+        self.volumes = (effects, music);
+        if let Some(output) = &self.output
+            && let Ok(mut mixer) = output.mixer.lock()
+        {
+            mixer.sfx_volume = effects;
+            mixer.music_volume = music;
+        }
     }
 }
