@@ -10,14 +10,18 @@
 pub mod lnk;
 pub mod md;
 pub mod nds;
+pub mod orders;
 pub mod smp;
 pub mod sounds;
+pub mod sprites;
 
 pub use lnk::PieceLinks;
 pub use md::{AnimFrames, Animation, Command, CommandKind, SpriteSet, UnitDef};
 pub use nds::{NationDef, NationEntry, NationList, NdsFile, Section, Upgrade};
+pub use orders::{OrderGroups, OrderList, OrderShape};
 pub use smp::Piece;
 pub use sounds::SoundList;
+pub use sprites::{SpriteList, SpriteResources};
 
 use std::fmt;
 
