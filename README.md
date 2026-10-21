@@ -74,6 +74,18 @@ DirectPlay, Wintab, the GameSpy/`iChat`/`DipServer` lobby, `binkw32` video (to b
 converted or skipped), the external `vopl.exe` music process, DirectDraw palette tricks,
 copy protection.
 
+## Play
+
+```sh
+cargo xtask dist --game-dir "C:\path	o\American Conquest" --install
+```
+
+builds `AmericanConquest.exe` with the game's original icon and copies it into the game
+folder; double-click it there. The executable also works from anywhere else: it looks for
+the game next to itself, in `ACR_GAME_DIR`, in the folder remembered from an earlier run,
+and otherwise asks once with a folder picker. Prebuilt executables (with a stand-in icon)
+and a browser build are attached to GitHub releases (`v*` tags).
+
 ## Usage
 
 ```sh

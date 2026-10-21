@@ -3,7 +3,8 @@
 //! - `cargo xtask web [--release] [--app game|viewer]`    build a browser app into `target/web/<app>`
 //! - `cargo xtask serve [--release] [--port N] [--game-dir DIR]`   build, then serve it on
 //!   localhost; with `--game-dir`, the archives are served under `/game/` with range
-//!   support and `http://127.0.0.1:N/?game=/game/` opens the viewer without a file picker
+//!   support and `http://127.0.0.1:N/?game=/game/` opens the app without a file picker
+//! - `cargo xtask dist [--game-dir DIR] [--install]`   release `AmericanConquest.exe` in `dist/`
 
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::net::{TcpListener, TcpStream};
@@ -15,6 +16,8 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 const WASM_TARGET: &str = "wasm32-unknown-unknown";
 /// Apps with a browser build: `--app game` (default) or `--app viewer`.
 const APPS: [&str; 2] = ["game", "viewer"];
+/// Name of the game executable (without extension).
+const GAME_EXE: &str = "AmericanConquest";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -30,9 +33,12 @@ fn main() -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("web") => build_web(&app, release).map(|_| ()),
         Some("serve") => build_web(&app, release).and_then(|dir| serve(&dir, game_dir.as_deref(), port)),
+        Some("dist") => dist(game_dir.as_deref(), args.iter().any(|a| a == "--install")),
         _ => {
             eprintln!(
-                "usage: cargo xtask web [--release]\n       cargo xtask serve [--release] [--port N] [--game-dir DIR]"
+                "usage: cargo xtask web [--release] [--app game|viewer]\n       \
+                 cargo xtask serve [--release] [--app game|viewer] [--port N] [--game-dir DIR]\n       \
+                 cargo xtask dist [--game-dir DIR] [--install]"
             );
             return ExitCode::from(2);
         }
@@ -79,6 +85,38 @@ fn build_web(app: &str, release: bool) -> Result<PathBuf> {
     std::fs::copy(root.join("crates").join(&krate).join("web/index.html"), out.join("index.html"))?;
     eprintln!("web build ready in {}", out.display());
     Ok(out)
+}
+
+/// Builds the release game executable into `dist/`. With a game folder, the original icon
+/// is embedded; `install` also copies the executable into that folder, so it can be
+/// started from there with a double-click.
+fn dist(game_dir: Option<&Path>, install: bool) -> Result<()> {
+    let root = workspace_root();
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let mut build = Command::new(cargo);
+    build.current_dir(&root).args(["build", "--release", "--package", "acr-game", "--bin", GAME_EXE]);
+    if let Some(dir) = game_dir {
+        if !dir.join("ALL.GSC").is_file() {
+            return Err(format!("{} is not an American Conquest folder (no ALL.GSC)", dir.display()).into());
+        }
+        build.env("ACR_GAME_DIR", dir);
+    }
+    if !build.status()?.success() {
+        return Err("release build failed".into());
+    }
+    let target = std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from);
+    let exe = format!("{GAME_EXE}{}", std::env::consts::EXE_SUFFIX);
+    let built = target.join("release").join(&exe);
+    let out = root.join("dist");
+    std::fs::create_dir_all(&out)?;
+    std::fs::copy(&built, out.join(&exe))?;
+    eprintln!("{}", out.join(&exe).display());
+    if install {
+        let dir = game_dir.ok_or("--install needs --game-dir")?;
+        std::fs::copy(&built, dir.join(&exe))?;
+        eprintln!("installed to {}", dir.join(&exe).display());
+    }
+    Ok(())
 }
 
 /// Minimal static file server for local testing. Binds to localhost only.
