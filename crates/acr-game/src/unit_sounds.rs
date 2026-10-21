@@ -2,10 +2,8 @@
 //!
 //! The original plays a group through `PlayEffect` (0x5863c4): it starts at a random
 //! variant and takes the first one whose buffer is not playing, so a busy group does not
-//! stack copies of the same sample; if every variant plays, nothing is started. Volume
-//! and pan are DirectSound values from the caller. TODO: the callers that place sounds
-//! in the world (pan and volume from the screen position) are not traced yet; positions
-//! use a linear pan and fade towards the screen edges.
+//! stack copies of the same sample; if every variant plays, nothing is started. Sounds in
+//! the world go through 0x5868d3, see [`placed`].
 
 use std::collections::HashMap;
 
@@ -104,5 +102,78 @@ impl UnitSounds {
                 break;
             }
         }
+    }
+}
+
+/// Original pixels around the view in which world sounds are still heard (0x586807):
+/// 1024 left and right, 512 above and below.
+const HEAR_MARGIN: [f32; 2] = [1024.0, 512.0];
+/// DirectSound pan limit for world sounds (hundredths of a dB the far channel loses).
+const MAX_PAN: f32 = 4000.0;
+/// DirectSound volume of a sound outside the view but within the margin (-8 dB).
+const OFF_SCREEN_VOLUME: f32 = -800.0;
+
+/// Volume (0..=1) and pan (-1..=1) of a sound at `(x, y)` in original screen pixels
+/// (`x` = world x, `y` = world y / 2) for the view `[left, top, width, height]`, or
+/// `None` if it is too far away to be heard.
+///
+/// The original (0x5868d3) skips sounds beyond [`HEAR_MARGIN`], plays sounds in the view
+/// at full volume and the others at -8 dB, and pans by twice the distance from the view
+/// centre, clamped to ±4000. TODO: it also skips sounds on cells the player has not
+/// explored when fog of war is on (`0x775e18`, #33).
+pub fn placed(x: f32, y: f32, view: [f32; 4]) -> Option<(f32, f32)> {
+    let [left, top, width, height] = view;
+    let (right, bottom) = (left + width, top + height);
+    if x < left - HEAR_MARGIN[0]
+        || x > right + HEAR_MARGIN[0]
+        || y < top - HEAR_MARGIN[1]
+        || y > bottom + HEAR_MARGIN[1]
+    {
+        return None;
+    }
+    let pan = (2.0 * (x - (left + right) / 2.0)).clamp(-MAX_PAN, MAX_PAN);
+    let on_screen = (left..right).contains(&x) && (top..bottom).contains(&y);
+    let volume = if on_screen { 0.0 } else { OFF_SCREEN_VOLUME };
+    Some((gain(volume), (1.0 - gain(-pan.abs())).copysign(pan)))
+}
+
+/// Amplitude of a DirectSound attenuation in hundredths of a dB.
+fn gain(hundredths_db: f32) -> f32 {
+    10f32.powf(hundredths_db / 2000.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const VIEW: [f32; 4] = [1000.0, 500.0, 1024.0, 768.0];
+
+    #[test]
+    fn centre_is_full_volume_and_unpanned() {
+        assert_eq!(placed(1512.0, 884.0, VIEW), Some((1.0, 0.0)));
+    }
+
+    #[test]
+    fn pans_by_distance_from_the_centre() {
+        // 250 px right of the centre: pan 500, the left channel loses 5 dB.
+        let (volume, pan) = placed(1762.0, 600.0, VIEW).unwrap();
+        assert_eq!(volume, 1.0);
+        assert!((pan - (1.0 - 10f32.powf(-0.25))).abs() < 1e-6);
+        let (_, left) = placed(1262.0, 600.0, VIEW).unwrap();
+        assert_eq!(left, -pan);
+    }
+
+    #[test]
+    fn off_screen_sounds_are_quieter_until_out_of_range() {
+        // 1488 px right of the centre, off screen: -8 dB, the left channel loses 29.76 dB.
+        let (volume, pan) = placed(3000.0, 600.0, VIEW).unwrap();
+        assert!((volume - 10f32.powf(-0.4)).abs() < 1e-6);
+        assert!((pan - (1.0 - 10f32.powf(-1.488))).abs() < 1e-6);
+        // A wide view reaches the pan limit: the far channel loses 40 dB.
+        let (_, pan) = placed(4600.0, 600.0, [0.0, 0.0, 5120.0, 1440.0]).unwrap();
+        assert!((pan - 0.99).abs() < 1e-6);
+        assert!(placed(1000.0 - 1024.0, 500.0 - 512.0, VIEW).is_some());
+        assert_eq!(placed(1000.0 - 1025.0, 600.0, VIEW), None);
+        assert_eq!(placed(1500.0, 500.0 + 768.0 + 513.0, VIEW), None);
     }
 }
