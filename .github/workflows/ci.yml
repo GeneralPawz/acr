@@ -1,0 +1,90 @@
+# Formatting, lints, tests, the browser bundle and Windows release binaries.
+# The toolchain comes from rust-toolchain.toml; no job needs the game data.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  test:
+    name: tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --locked
+
+  wasm:
+    name: wasm clippy + web bundle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install && rustup target add wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: >-
+          cargo clippy --locked --target wasm32-unknown-unknown
+          -p acr-formats -p acr-sim -p acr-script -p acr-render -p acr-viewer -- -D warnings
+      - run: cargo xtask web --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: acr-web
+          path: target/web
+          if-no-files-found: error
+
+  windows:
+    name: windows ${{ matrix.arch }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            target: x86_64-pc-windows-msvc
+          - arch: arm64
+            target: aarch64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install && rustup target add ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - run: cargo build --release --locked --target ${{ matrix.target }} --bin acr --bin acr-viewer
+      - uses: actions/upload-artifact@v4
+        with:
+          name: acr-windows-${{ matrix.arch }}
+          path: |
+            target/${{ matrix.target }}/release/acr.exe
+            target/${{ matrix.target }}/release/acr-viewer.exe
+          if-no-files-found: error
