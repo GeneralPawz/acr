@@ -6,7 +6,7 @@
 //! drag rectangle and orders them with a right click.
 
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use acr_formats::M3dMap;
@@ -19,6 +19,7 @@ use acr_sim::{Command, FixedClock, ORIGINAL_TICKS_PER_SECOND, World};
 use winit::keyboard::NamedKey;
 
 use crate::ui::{GameKind, GameSetup};
+use crate::unit_sounds::SoundEvent;
 
 /// Scroll speed in original pixels per second at scale 1.
 const SCROLL_SPEED: f32 = 1400.0;
@@ -49,6 +50,10 @@ pub struct InGame {
     drag_from: Option<[f32; 2]>,
     /// Files to request from the platform; drained by [`InGame::take_requests`].
     requests: RefCell<Vec<String>>,
+    /// Sounds to play this frame; drained by [`InGame::take_sound_events`].
+    sound_events: Vec<SoundEvent>,
+    /// Each unit's animation and frame when its sounds were last checked.
+    last_frames: HashMap<EntityId, (AnimKind, i32)>,
     camera: Camera,
     centred: bool,
     held: HashSet<NamedKey>,
@@ -80,6 +85,8 @@ impl InGame {
             selected: Vec::new(),
             drag_from: None,
             requests: RefCell::new(Vec::new()),
+            sound_events: Vec::new(),
+            last_frames: HashMap::new(),
             camera: Camera { x: 0.0, y: 0.0, scale: 1.0 },
             centred: false,
             held: HashSet::new(),
@@ -96,6 +103,11 @@ impl InGame {
         queue.extend(self.sim_assets.start(paths));
         drop(queue);
         self.objects.start(&|p| self.requests.borrow_mut().push(p.to_owned()));
+    }
+
+    /// Sounds started by the game since the last call.
+    pub fn take_sound_events(&mut self) -> Vec<SoundEvent> {
+        std::mem::take(&mut self.sound_events)
     }
 
     /// Files to request from the platform; deliver them with [`InGame::on_loaded`].
@@ -276,6 +288,9 @@ impl InGame {
                 .collect();
         }
         log::debug!("selected {} units", self.selected.len());
+        if let Some(&first) = self.selected.first() {
+            self.unit_sound(first, "SELECT_SOUND");
+        }
     }
 
     /// Right button: send the selected units to the point under the cursor.
@@ -283,6 +298,7 @@ impl InGame {
         let (Some(at), false) = (self.cursor, self.selected.is_empty()) else { return };
         let (x, y) = self.world_at(at);
         self.commands.push(Command::Move { player: self.local_player(), units: self.selected.clone(), x, y });
+        self.unit_sound(self.selected[0], "ORDER_SOUND");
     }
 
     /// Scrolls by held arrow keys and the cursor at the window edge and advances the world;
@@ -299,6 +315,9 @@ impl InGame {
             let ticks = self.clock.advance((f64::from(seconds) * 1e9) as u64);
             for _ in 0..ticks {
                 world.step(&std::mem::take(&mut self.commands));
+            }
+            if ticks > 0 {
+                self.animation_sounds(window);
             }
         }
         self.scroll(seconds, window);
@@ -341,6 +360,46 @@ impl InGame {
         }
     }
 
+    /// The interface sound `keyword` (`SELECT_SOUND`, `ORDER_SOUND`) of a unit's type,
+    /// played centred like the original's interface sounds.
+    fn unit_sound(&mut self, unit: EntityId, keyword: &str) {
+        let Some(world) = &self.world else { return };
+        let Some(u) = world.unit(unit) else { return };
+        let Some(def) = self.objects.objects().definition(&world.catalog.get(u.kind).id) else { return };
+        if let Some(name) = def.all(keyword).next().and_then(|c| c.word(0)) {
+            self.sound_events.push(SoundEvent { name: name.to_owned(), pan: 0.0, volume: 1.0 });
+        }
+    }
+
+    /// `SOUND frame #ANIM name` entries of visible units whose animation reached `frame`.
+    fn animation_sounds(&mut self, window: [f32; 2]) {
+        let Some(world) = &self.world else { return };
+        let mut events = Vec::new();
+        for u in world.units.iter().filter(|u| u.alive && !u.building) {
+            let now = (u.anim, u.frame);
+            if self.last_frames.insert(u.id, now) == Some(now) {
+                continue;
+            }
+            let [sx, sy] = self.screen_of(u);
+            if !(0.0..window[0]).contains(&sx) || !(0.0..window[1]).contains(&sy) {
+                continue;
+            }
+            let Some(def) = self.objects.objects().definition(&world.catalog.get(u.kind).id) else { continue };
+            let anim = anim_name(u.anim);
+            for c in def.all("SOUND") {
+                let (Some(frame), Some(on), Some(name)) = (c.int(0), c.word(1), c.word(2)) else { continue };
+                // Animation names may carry a variant digit (`#MOTION_L0`).
+                let base = on.trim_end_matches(|ch: char| ch.is_ascii_digit());
+                if frame == u.frame && base.eq_ignore_ascii_case(anim) {
+                    let pan = (sx / window[0]) * 2.0 - 1.0;
+                    let off_centre = ((sx / window[0] - 0.5).abs() + (sy / window[1] - 0.5).abs()).min(1.0);
+                    events.push(SoundEvent { name: name.to_owned(), pan, volume: 1.0 - 0.5 * off_centre });
+                }
+            }
+        }
+        self.sound_events.extend(events);
+    }
+
     /// The simulation's units as sprites in their current animation frame.
     fn unit_sprites(&self) -> Vec<SceneSprite> {
         let (Some(world), Some(terrain), true) = (&self.world, &self.terrain, self.objects.ready()) else {
@@ -350,13 +409,7 @@ impl InGame {
         let mut out = Vec::with_capacity(world.units.len());
         for u in world.units.iter().filter(|u| u.alive) {
             let kind = world.catalog.get(u.kind);
-            let anim = match u.anim {
-                AnimKind::Stand => "#STAND",
-                AnimKind::Rest => "#REST",
-                AnimKind::Rest1 => "#REST1",
-                AnimKind::MotionL => "#MOTION_L",
-                AnimKind::MotionR => "#MOTION_R",
-            };
+            let anim = anim_name(u.anim);
             let step = if u.building { 0 } else { u.frame.max(0) as usize };
             let Some(look) = objects.animation_look(&kind.id, anim, u.dir, step) else { continue };
             let (x, y) = (u.pos.x >> 4, u.pos.y >> 4);
@@ -381,5 +434,16 @@ impl InGame {
             renderer.render(device, queue, encoder, view, size, &self.camera);
         }
         self.objects.render(device, queue, encoder, view, size, &self.camera);
+    }
+}
+
+/// The `.MD` animation a simulation animation plays.
+fn anim_name(kind: AnimKind) -> &'static str {
+    match kind {
+        AnimKind::Stand => "#STAND",
+        AnimKind::Rest => "#REST",
+        AnimKind::Rest1 => "#REST1",
+        AnimKind::MotionL => "#MOTION_L",
+        AnimKind::MotionR => "#MOTION_R",
     }
 }
