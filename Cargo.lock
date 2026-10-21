@@ -81,6 +81,9 @@ dependencies = [
 [[package]]
 name = "acr-script"
 version = "0.1.0"
+dependencies = [
+ "libm",
+]
 
 [[package]]
 name = "acr-sim"
