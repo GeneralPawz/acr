@@ -7,7 +7,26 @@ use acr_audio::output::AudioOutput;
 use acr_audio::{MusicSource, Sound, VorbisMusic};
 use acr_formats::Vfs;
 
-use crate::Result;
+use crate::{Command, Result};
+
+pub const COMMANDS: &[Command] = &[
+    Command {
+        name: "audio-check",
+        usage: "<game-dir>   (decode every sound effect and music track)",
+        run: |a| match a {
+            [dir] => check(Path::new(dir)),
+            _ => Err(crate::WRONG_ARGS.into()),
+        },
+    },
+    Command {
+        name: "play",
+        usage: "<game-dir> <path>   (play a .wav or .ogg on the default device)",
+        run: |a| match a {
+            [dir, path] => play(Path::new(dir), path),
+            _ => Err(crate::WRONG_ARGS.into()),
+        },
+    },
+];
 
 fn is_music(path: &str) -> bool {
     path.to_ascii_lowercase().ends_with(".ogg")

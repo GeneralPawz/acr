@@ -6,7 +6,16 @@ use acr_formats::bmp::Pixels;
 use acr_formats::raster::Image;
 use acr_formats::{Bitmap, Palette, Vfs};
 
-use crate::Result;
+use crate::{Command, Result};
+
+pub const COMMANDS: &[Command] = &[Command {
+    name: "bmp-png",
+    usage: "<game-dir> <bmp> <out.png>   (--pal of gp-sheet also accepts a .BMP)",
+    run: |a| match a {
+        [dir, bmp, out] => bmp_png(Path::new(dir), bmp, Path::new(out)),
+        _ => Err(crate::WRONG_ARGS.into()),
+    },
+}];
 
 /// Loads a palette from a `.PAL` file or from the colour table of an 8-bit `.BMP`.
 pub fn load_palette(vfs: &mut Vfs, path: &str) -> Result<Palette> {
