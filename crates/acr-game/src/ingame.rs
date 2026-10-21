@@ -19,7 +19,7 @@ use acr_sim::{Command, FixedClock, ORIGINAL_TICKS_PER_SECOND, World};
 use winit::keyboard::NamedKey;
 
 use crate::ui::{GameKind, GameSetup};
-use crate::unit_sounds::SoundEvent;
+use crate::unit_sounds::{self, SoundEvent};
 
 /// Scroll speed in original pixels per second at scale 1.
 const SCROLL_SPEED: f32 = 1400.0;
@@ -371,19 +371,20 @@ impl InGame {
         }
     }
 
-    /// `SOUND frame #ANIM name` entries of visible units whose animation reached `frame`.
+    /// `SOUND frame #ANIM name` entries of units in earshot whose animation reached `frame`.
     fn animation_sounds(&mut self, window: [f32; 2]) {
         let Some(world) = &self.world else { return };
+        let scale = self.camera.scale;
+        let view = [self.camera.x, self.camera.y, window[0] / scale, window[1] / scale];
         let mut events = Vec::new();
         for u in world.units.iter().filter(|u| u.alive && !u.building) {
             let now = (u.anim, u.frame);
             if self.last_frames.insert(u.id, now) == Some(now) {
                 continue;
             }
-            let [sx, sy] = self.screen_of(u);
-            if !(0.0..window[0]).contains(&sx) || !(0.0..window[1]).contains(&sy) {
+            let Some((volume, pan)) = unit_sounds::placed((u.pos.x >> 4) as f32, (u.pos.y >> 5) as f32, view) else {
                 continue;
-            }
+            };
             let Some(def) = self.objects.objects().definition(&world.catalog.get(u.kind).id) else { continue };
             let anim = anim_name(u.anim);
             for c in def.all("SOUND") {
@@ -391,9 +392,7 @@ impl InGame {
                 // Animation names may carry a variant digit (`#MOTION_L0`).
                 let base = on.trim_end_matches(|ch: char| ch.is_ascii_digit());
                 if frame == u.frame && base.eq_ignore_ascii_case(anim) {
-                    let pan = (sx / window[0]) * 2.0 - 1.0;
-                    let off_centre = ((sx / window[0] - 0.5).abs() + (sy / window[1] - 0.5).abs()).min(1.0);
-                    events.push(SoundEvent { name: name.to_owned(), pan, volume: 1.0 - 0.5 * off_centre });
+                    events.push(SoundEvent { name: name.to_owned(), pan, volume });
                 }
             }
         }
