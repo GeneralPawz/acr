@@ -28,6 +28,7 @@ usage:
   acr script-api <game-dir>   (markdown report of the API missions/AI import)
   acr audio-check <game-dir>  (decode every sound effect and music track)
   acr play <game-dir> <path>  (play a .wav or .ogg on the default device)
+  acr grd-fit  <game-dir>   (blend strengths of the sprite lookup tables)
   acr bmp-png <game-dir> <bmp> <out.png>   (--pal of gp-sheet also accepts a .BMP)";
 
 /// Palette used for unit and building sprites unless overridden.
@@ -44,6 +45,7 @@ fn main() -> ExitCode {
             SheetOptions::parse(rest).and_then(|o| gp_sheet(Path::new(dir), gp, Path::new(out), &o))
         }
         ["gp-check", dir, rest @ ..] => gp_check(Path::new(dir), rest.first().copied()),
+        ["grd-fit", dir] => grd_fit(Path::new(dir)),
         ["script-api", dir] => script_api(Path::new(dir)),
         ["audio-check", dir] => audio::check(Path::new(dir)),
         ["play", dir, path] => audio::play(Path::new(dir), path),
@@ -200,6 +202,27 @@ fn gp_check(dir: &Path, filter: Option<&str>) -> Result<()> {
     for (reason, items) in &failures {
         let sample: Vec<_> = items.iter().take(4).map(String::as_str).collect();
         println!("  {:>6}  {reason}  e.g. {}", items.len(), sample.join(", "));
+    }
+    Ok(())
+}
+
+/// Fits the blend tables the original uses for sprite layers to alpha values.
+fn grd_fit(dir: &Path) -> Result<()> {
+    use acr_formats::grd::BlendTable;
+
+    let mut vfs = Vfs::open_game_dir(dir)?;
+    for set in 0..3 {
+        let palette = Palette::parse(&vfs.read(&format!("{set}\\AGEW_1.PAL"))?).ok_or("palette too short")?;
+        let mut table = |name: &str| -> Result<BlendTable> {
+            Ok(BlendTable::parse(&vfs.read(&format!("{set}\\{name}"))?).ok_or("not a GRD table")?)
+        };
+        for name in ["AGEW_TR4.GRD", "AGEW_TR.GRD"] {
+            let w = table(name)?.mix_weight(&palette).ok_or("not a 256-row table")?;
+            println!("{set}\\{name}: row colour weight {w:.3}");
+        }
+        let alphas: Vec<String> =
+            table("AGEW_1D.GRD")?.darkness(&palette).iter().map(|a| format!("{}", (a * 255.0).round())).collect();
+        println!("{set}\\AGEW_1D.GRD: black alpha per row [{}]", alphas.join(", "));
     }
     Ok(())
 }
