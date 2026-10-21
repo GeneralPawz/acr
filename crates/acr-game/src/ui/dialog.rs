@@ -130,6 +130,9 @@ pub struct ComboBox {
     pub open: bool,
     light: usize,
     width: i32,
+    /// `addGP_ComboBoxDLX`: the frame is this much wider than the box; it is drawn as a
+    /// left and a right half (`DLX`, +0xc9).
+    dlx: i32,
     row_h: i32,
     head_h: i32,
 }
@@ -154,6 +157,14 @@ pub struct TextViewer {
     width: i32,
     pub scroll: Option<WidgetId>,
     pub focus: bool,
+}
+
+impl InputBox {
+    /// Replaces the text and puts the caret at its end.
+    pub fn set_text(&mut self, text: &[u8]) {
+        self.text = text.to_vec();
+        self.caret = text.len();
+    }
 }
 
 impl TextViewer {
@@ -201,13 +212,25 @@ pub enum Kind {
     ComboBox(ComboBox),
     TextViewer(TextViewer),
     InputBox(InputBox),
-    /// `addUniversalButton` (0x46ff83) as a decoration: a left cap, middle pieces picked
-    /// by `random.lst` and a right cap, `[left, mid, mid, mid, right]` frames.
-    Strip {
-        gp: String,
-        frames: [usize; 5],
-        width: i32,
-    },
+    Universal(Universal),
+}
+
+/// `addUniversalButton` (0x46ff83): a strip of a left cap, middle pieces picked by
+/// `random.lst` and a right cap with a centred text. `frames` holds `[left, mid, mid, mid,
+/// right]` for the states normal, selected, selected again, then the same under the mouse.
+#[derive(Debug, Clone)]
+pub struct Universal {
+    pub gp: String,
+    pub frames: [[usize; 5]; 6],
+    pub width: i32,
+    pub text: Vec<u8>,
+    pub active: Option<FontId>,
+    pub passive: Option<FontId>,
+    pub selected: Option<FontId>,
+    /// 0 normal, 1 selected, 2 selected again (clicking a selected radio button).
+    pub state: usize,
+    /// Radio group: clicking selects this button and clears the others of the group.
+    pub group: Option<i32>,
 }
 
 #[derive(Debug, Clone)]
@@ -228,6 +251,8 @@ pub struct Widget {
     pub hint: Option<Vec<u8>>,
     /// Plays [`sound::HOVER`] when the mouse enters (`AssignSound(.., 0x4321)`).
     pub hover_sound: bool,
+    /// A scroll bar that moves this widget up by its position (`ParentSB`, +0x5b).
+    pub scroll_owner: Option<WidgetId>,
     pub kind: Kind,
 }
 
@@ -295,6 +320,7 @@ impl Dialog {
             param: None,
             hint: None,
             hover_sound: false,
+            scroll_owner: None,
             kind,
         });
         self.widgets.len() - 1
@@ -311,17 +337,48 @@ impl Dialog {
         i32::from(self.random.get(i % self.random.len().max(1)).copied().unwrap_or(0))
     }
 
-    /// A decorative strip of `width` pixels (see [`Kind::Strip`]).
+    /// A decorative strip of `width` pixels: a disabled [`Universal`] without text.
     pub fn add_strip(&mut self, lib: &Library, x: i32, y: i32, width: i32, gp: &str, frames: [usize; 5]) -> WidgetId {
-        let h = lib.frame_size(gp, frames[0])[1];
-        let id = self.push(
-            x,
-            y,
-            Rect::inclusive(x, y, x + width - 1, y + h),
-            Kind::Strip { gp: gp.to_owned(), frames, width },
-        );
+        let id = self.add_universal(lib, x, y, width, b"", gp, [frames; 6], [None; 3], None);
         self.widgets[id].enabled = false;
         id
+    }
+
+    /// `addUniversalButton(x, y, Lx, text, gp, frames, group, selected, tiling, active,
+    /// passive, selected)`; the rect is one pixel taller than the frame.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_universal(
+        &mut self,
+        lib: &Library,
+        x: i32,
+        y: i32,
+        width: i32,
+        text: &[u8],
+        gp: &str,
+        frames: [[usize; 5]; 6],
+        [active, passive, selected]: [Option<FontId>; 3],
+        group: Option<i32>,
+    ) -> WidgetId {
+        let h = lib.frame_size(gp, frames[0][0])[1];
+        let button = Universal {
+            gp: gp.to_owned(),
+            frames,
+            width,
+            text: text.to_vec(),
+            active,
+            passive,
+            selected,
+            state: 0,
+            group,
+        };
+        self.push(x, y, Rect::inclusive(x, y, x + width - 1, y + h), Kind::Universal(button))
+    }
+
+    pub fn universal_mut(&mut self, id: WidgetId) -> &mut Universal {
+        match &mut self.widgets[id].kind {
+            Kind::Universal(u) => u,
+            _ => panic!("widget {id} is not a universal button"),
+        }
     }
 
     pub fn add_area(&mut self, rect: Rect) -> WidgetId {
@@ -530,10 +587,36 @@ impl Dialog {
             open: false,
             light: 0,
             width,
+            dlx: 0,
             row_h: lib.frame_size(gp, up + 5)[1].max(1),
             head_h: lib.frame_size(gp, up + 2)[1],
         };
         self.push(x, y, Rect::inclusive(x, y, x + width - 1, y + h), Kind::ComboBox(combo))
+    }
+
+    /// `addGP_ComboBoxDLX(parent, x, y, Lx, gp, up, center, 0, active, passive, 0)` (0x47ada9):
+    /// a combo box `width` pixels wide built from the halves of a wider frame.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_combo_box_dlx(
+        &mut self,
+        lib: &Library,
+        x: i32,
+        y: i32,
+        width: i32,
+        gp: &str,
+        up: usize,
+        drop_dx: i32,
+        active: FontId,
+        passive: FontId,
+    ) -> WidgetId {
+        let id = self.add_combo_box(lib, x, y, gp, up, drop_dx, active, passive);
+        let w = &mut self.widgets[id];
+        w.rect.x1 = x + width;
+        if let Kind::ComboBox(c) = &mut w.kind {
+            c.dlx = c.width - width;
+            c.width = width;
+        }
+        id
     }
 
     /// `addTextViewer(parent, x, y, Lx, Ly, file, font)` (0x47715b) with the file's bytes;
@@ -661,12 +744,26 @@ impl Dialog {
         w.enabled && w.rect.contains(p) && w.clip.contains(p)
     }
 
+    /// The vertical shift of a widget by its scroll owner (0x47d273).
+    fn owner_dy(&self, w: &Widget) -> i32 {
+        match w.scroll_owner.map(|id| &self.widgets[id]) {
+            Some(Widget { visible: true, kind: Kind::ScrollBar(bar), .. }) => -bar.pos,
+            _ => 0,
+        }
+    }
+
+    /// The mouse in the coordinates of widget `i` (undoing its scroll shift).
+    fn local(&self, i: usize, p: [f32; 2]) -> [f32; 2] {
+        [p[0], p[1] - self.owner_dy(&self.widgets[i]) as f32]
+    }
+
     /// The drop-down area of the open combo box (`DS.ActiveX..ActiveY1`).
     fn modal_zone(&self) -> Option<(WidgetId, Rect)> {
         let id = self.modal?;
         let w = &self.widgets[id];
         let Kind::ComboBox(c) = &w.kind else { return None };
         let (x, y) = drop_origin(w, c);
+        let y = y + self.owner_dy(w);
         Some((id, Rect::inclusive(x, y, x + c.width - 1, y + c.row_h * c.lines.len() as i32 + c.font_dy + c.head_h)))
     }
 
@@ -724,7 +821,8 @@ impl Dialog {
         let in_zone = zone.is_some_and(|(_, r)| r.contains(p));
         let held = self.held;
         for i in 0..self.widgets.len() {
-            let hit = !in_zone && Self::hit(&self.widgets[i], p);
+            let lp = self.local(i, p);
+            let hit = !in_zone && Self::hit(&self.widgets[i], lp) && self.widgets[i].clip.contains(p);
             let w = &mut self.widgets[i];
             if hit && !w.hover && w.hover_sound {
                 self.hover_variant = self.hover_variant.wrapping_mul(1_103_515_245).wrapping_add(12_345);
@@ -799,7 +897,7 @@ impl Dialog {
         }
         let now = self.now;
         for i in 0..self.widgets.len() {
-            if !Self::hit(&self.widgets[i], p) {
+            if !(Self::hit(&self.widgets[i], self.local(i, p)) && self.widgets[i].clip.contains(p)) {
                 continue;
             }
             if let Some(param) = self.widgets[i].param {
@@ -862,6 +960,27 @@ impl Dialog {
                 }
                 Kind::TextViewer(t) => {
                     t.focus = true;
+                    true
+                }
+                Kind::Universal(u) => {
+                    let group = u.group;
+                    u.state = match (group, u.state) {
+                        (Some(_), 0) => 1,
+                        (Some(_), 1) => 2,
+                        (Some(_), _) => 1,
+                        (None, 0) => 1,
+                        (None, _) => 0,
+                    };
+                    if let Some(g) = group {
+                        for (j, other) in self.widgets.iter_mut().enumerate() {
+                            if let Kind::Universal(o) = &mut other.kind
+                                && j != i
+                                && o.group == Some(g)
+                            {
+                                o.state = 0;
+                            }
+                        }
+                    }
                     true
                 }
                 Kind::InputBox(b) => {
@@ -1007,6 +1126,12 @@ impl Dialog {
         for w in self.widgets.iter().filter(|w| w.visible) {
             let start = out.len();
             self.draw_widget(lib, fonts, w, out);
+            let dy = self.owner_dy(w);
+            if dy != 0 {
+                for d in &mut out[start..] {
+                    d.y += dy;
+                }
+            }
             for d in &mut out[start..] {
                 d.clip = d.clip.intersect(&w.clip);
             }
@@ -1080,7 +1205,7 @@ impl Dialog {
                 let Some(line) = c.lines.get(c.cur) else { return };
                 if w.enabled {
                     let frame = c.up + 1 - usize::from(w.hover || c.open);
-                    out.push(Draw::frame(&c.gp, frame, w.x, w.y));
+                    combo_frame(c, frame, w.x, w.y, out);
                 }
                 let font = if c.open && w.enabled { c.active } else { c.passive };
                 out.push(Draw::text(font, line, w.x + 24, w.y + c.one_dy));
@@ -1104,8 +1229,10 @@ impl Dialog {
                     }
                 }
             }
-            Kind::Strip { gp, frames, width } => {
-                // UniversalButton draw 0x46f9f1: middle pieces between the caps, then the caps.
+            Kind::Universal(u) => {
+                // Draw 0x46f9f1: middle pieces between the caps, then the caps, then the text.
+                let (gp, width) = (&u.gp, u.width);
+                let frames = &u.frames[usize::from(w.hover) * 3 + u.state.min(2)];
                 let size = |f: usize| lib.frame_size(gp, f)[0];
                 let (mut left, right) = (w.x + size(frames[0]), w.x + width - size(frames[4]));
                 let clip = Rect::inclusive(left, 0, right, 767);
@@ -1126,6 +1253,20 @@ impl Dialog {
                     1023,
                     767,
                 )));
+                let pick = |selected: bool| if selected { u.selected } else { u.passive };
+                let font = if u.active == u.passive {
+                    pick(u.state > 0)
+                } else if w.hover {
+                    u.active
+                } else {
+                    pick(u.state > 0)
+                };
+                if let Some(font) = font {
+                    let (x1, y1) = (w.rect.x1 - 1, w.rect.y1 - 1);
+                    let ty = (w.y + y1 - fonts.height(lib, font)) / 2 - 1;
+                    let tx = (w.x + x1 - fonts.width(lib, font, &u.text)) / 2;
+                    out.push(Draw::text(font, &u.text, tx, ty));
+                }
             }
             Kind::InputBox(b) => {
                 let width = w.rect.width() - 1;
@@ -1174,17 +1315,18 @@ impl Dialog {
         let Kind::ComboBox(c) = &w.kind else { return };
         let variant = |i: usize| (self.random(i * 17) & 1) as usize;
         let (dx, dy) = drop_origin(w, c);
-        out.push(Draw::frame(&c.gp, c.up + 2, dx, dy));
+        let dy = dy + self.owner_dy(w);
+        combo_frame(c, c.up + 2, dx, dy, out);
         let mut yy = dy + c.head_h;
         for i in 0..c.lines.len() {
-            out.push(Draw::frame(&c.gp, c.up + 5 + variant(i), dx, yy));
+            combo_frame(c, c.up + 5 + variant(i), dx, yy, out);
             yy += c.row_h;
         }
-        out.push(Draw::frame(&c.gp, c.up + 7, dx, yy));
+        combo_frame(c, c.up + 7, dx, yy, out);
         for (i, line) in c.lines.iter().enumerate() {
             let ry = dy + c.head_h + i as i32 * c.row_h;
             let font = if i == c.light {
-                out.push(Draw::frame(&c.gp, c.up + 3 + variant(i), dx, ry));
+                combo_frame(c, c.up + 3 + variant(i), dx, ry, out);
                 c.active
             } else {
                 c.passive
@@ -1196,6 +1338,18 @@ impl Dialog {
 
 /// `RANDOM.LST`: the fixed pseudo-random table of the original.
 pub const RANDOM_LST: &str = "RANDOM.LST";
+
+/// A combo box frame at (`x`, `y`); with `DLX` its left half up to the middle column and
+/// its right half shifted left by `DLX` (0x4787bd).
+fn combo_frame(c: &ComboBox, frame: usize, x: i32, y: i32, out: &mut Vec<Draw>) {
+    if c.dlx == 0 {
+        out.push(Draw::frame(&c.gp, frame, x, y));
+        return;
+    }
+    let mid = x + (c.width - 1) / 2;
+    out.push(Draw::frame(&c.gp, frame, x, y).clipped(Rect::inclusive(0, 0, mid, 767)));
+    out.push(Draw::frame(&c.gp, frame, x - c.dlx, y).clipped(Rect::inclusive(mid, 0, 1023, 767)));
+}
 
 /// Top-left of a combo box's drop-down: `Center` pixels right of the box, on its last row.
 fn drop_origin(w: &Widget, c: &ComboBox) -> (i32, i32) {
