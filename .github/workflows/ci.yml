@@ -34,6 +34,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: rustup toolchain install
+      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev  # cpal (acr-audio)
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
@@ -43,6 +44,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: rustup toolchain install
+      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev  # cpal (acr-audio)
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --locked
 
