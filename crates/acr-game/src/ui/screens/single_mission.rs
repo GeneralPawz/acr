@@ -1,4 +1,8 @@
-//! The single missions screen (0x5d66b0).
+//! The single missions screen (0x5d66b0) and the missions of a campaign (0x5c4e30).
+//!
+//! The campaign form uses the campaign's background from `Campaigns.txt`, a 10-row list of
+//! the campaign's open missions, previews next to the briefings (`.txt` -> `.bmp`) and the
+//! title `INTF_CMISS_T0`.
 //!
 //! A list of the missions of `Missions\SingleMiss.txt` (17 rows, `Interf2\ListBox`
 //! highlight frames 3-5) with its scroll bar, the map preview `Maps2\single<n>.bmp`
@@ -29,6 +33,8 @@ const TEXT_LINE_H: i32 = 21;
 
 #[derive(Default)]
 pub struct SingleMission {
+    /// Index into `Campaigns.txt` for the missions of a campaign.
+    campaign: Option<usize>,
     menu: Menu,
     missions: Vec<Mission>,
     list: WidgetId,
@@ -40,11 +46,45 @@ pub struct SingleMission {
 }
 
 impl SingleMission {
-    /// The single missions in menu order.
-    fn load(ctx: &Ctx) -> Vec<Mission> {
-        let (Some(all), Some(order)) = (ctx.lib.bytes(MISSIONS), ctx.lib.bytes(SINGLE)) else { return Vec::new() };
+    /// The missions of campaign `index` (`Missions\Campaigns.txt`).
+    pub fn campaign(index: usize) -> Self {
+        Self { campaign: Some(index), ..Self::default() }
+    }
+
+    /// The missions in menu order: the single missions, or the open missions of the campaign.
+    fn load(&self, ctx: &Ctx) -> Vec<Mission> {
+        let Some(all) = ctx.lib.bytes(MISSIONS) else { return Vec::new() };
         let all = missions::parse_missions(&all);
-        missions::parse_single(&order).iter().filter_map(|id| missions::find(&all, id).cloned()).collect()
+        let ids: Vec<String> = match self.campaign {
+            None => ctx.lib.bytes(SINGLE).map(|b| missions::parse_single(&b)).unwrap_or_default(),
+            Some(_) => self
+                .campaign_info(ctx)
+                .map(|camp| camp.missions.iter().filter(|m| m.open).map(|m| m.id.clone()).collect())
+                .unwrap_or_default(),
+        };
+        ids.iter().filter_map(|id| missions::find(&all, id).cloned()).collect()
+    }
+
+    fn campaign_info(&self, ctx: &Ctx) -> Option<missions::Campaign> {
+        let data = ctx.lib.bytes(super::campaign::CAMPAIGNS)?;
+        missions::parse_campaigns(&data).into_iter().nth(self.campaign?)
+    }
+
+    fn background(&self, ctx: &Ctx) -> String {
+        self.campaign_info(ctx).map_or(BACKGROUND.to_owned(), |c| c.background)
+    }
+
+    /// The preview of mission `index`: `Maps2\single<n>.bmp` for single missions, the
+    /// briefing's `.bmp` for campaign missions (0x5c5893).
+    fn preview(&self, index: usize) -> String {
+        match self.campaign {
+            None => format!("MAPS2\\SINGLE{}.BMP", index + 1),
+            Some(_) => self.missions.get(index).map_or(String::new(), |m| {
+                let b = m.briefing();
+                let stem = b.rfind('.').map_or(b, |dot| &b[..dot]);
+                format!("{stem}.BMP")
+            }),
+        }
     }
 
     /// Shows the preview and briefing of the selected mission.
@@ -60,8 +100,9 @@ impl SingleMission {
                 self.menu.d.widgets[w].enabled = i == cur;
             }
         }
+        let preview = self.preview(cur);
         if let super::super::dialog::Kind::Picture { path } = &mut self.menu.d.widgets[self.preview].kind {
-            *path = format!("MAPS2\\SINGLE{}.BMP", cur + 1);
+            *path = preview;
         }
     }
 
@@ -76,7 +117,7 @@ impl SingleMission {
                 script: m.script.clone(),
                 texts: m.description.clone(),
                 difficulty,
-                campaign: None,
+                campaign: self.campaign.map(|c| (c, self.menu.d.list(self.list).cur)),
             }),
             players: Vec::new(),
             local_player: 0,
@@ -87,22 +128,27 @@ impl SingleMission {
 impl Screen for SingleMission {
     fn assets(&self, ctx: &Ctx) -> Vec<String> {
         let mut files: Vec<String> =
-            [BACKGROUND, VSCROLL, COMBO, LISTBOX, GAMEMAP, GAMEBUTTONS, MISSIONS, SINGLE].map(String::from).to_vec();
-        files.extend(Self::load(ctx).iter().map(|m| m.briefing().to_owned()));
-        files.push("MAPS2\\SINGLE1.BMP".into());
+            [VSCROLL, COMBO, LISTBOX, GAMEMAP, GAMEBUTTONS, MISSIONS, SINGLE, super::campaign::CAMPAIGNS]
+                .map(String::from)
+                .to_vec();
+        files.push(self.background(ctx));
+        files.extend(self.load(ctx).iter().map(|m| m.briefing().to_owned()));
         files
     }
 
     fn build(&mut self, ctx: &Ctx) {
-        self.missions = Self::load(ctx);
+        self.missions = self.load(ctx);
+        let background = self.background(ctx);
+        let preview = self.preview(0);
         let m = &mut self.menu;
         *m = std::mem::take(m).with_hints();
         m.d.load_random(ctx.lib);
-        m.d.add_picture(ctx.lib, 0, 0, BACKGROUND);
-        self.preview = m.d.add_picture(ctx.lib, 588, 120, "MAPS2\\SINGLE1.BMP");
+        m.d.add_picture(ctx.lib, 0, 0, &background);
+        self.preview = m.d.add_picture(ctx.lib, 588, 120, &preview);
         m.d.add_gp_picture(ctx.lib, 580, 115, GAMEMAP, 0);
         let bar = m.d.add_scroll_bar(ctx.lib, 495, 136, 476, 1, 0, VSCROLL, 0);
-        self.list = m.d.add_list_box(ctx.lib, 94, 156, 17, LISTBOX, 3, 26, font::F18W, font::F18Y3, Some(bar));
+        let rows = if self.campaign.is_some() { 10 } else { 17 };
+        self.list = m.d.add_list_box(ctx.lib, 94, 156, rows, LISTBOX, 3, 26, font::F18W, font::F18Y3, Some(bar));
         let list = m.d.list_mut(self.list);
         list.focus = true;
         list.dy = -3;
@@ -137,8 +183,13 @@ impl Screen for SingleMission {
         m.d.set_hint(start, ctx.texts.get("MISS_RUN"));
         let cancel = m.d.add_gp_button(ctx.lib, 959, 706, GAMEBUTTONS, 3, 4);
         m.d.choose(cancel, CANCEL);
-        m.d.set_hint(cancel, ctx.texts.get("SOCANCEL"));
-        m.title(ctx, "INTF_SMISS_T0");
+        let (cancel_hint, title) =
+            if self.campaign.is_some() { ("WAR_CANCEL", "INTF_CMISS_T0") } else { ("SOCANCEL", "INTF_SMISS_T0") };
+        m.d.set_hint(cancel, ctx.texts.get(cancel_hint));
+        m.title(ctx, title);
+        if self.campaign.is_some() {
+            m.d.ok_sound = Some(super::super::dialog::sound::START);
+        }
         m.text(ctx, 303, 107, "INTF_SMISS_T1", font::F16Y5, Align::Center);
         m.text(ctx, 787, 106, "INTF_SMISS_T2", font::F16Y5, Align::Center);
         m.text(ctx, 787, 401, "INTF_SMISS_T3", font::F16Y5, Align::Center);
