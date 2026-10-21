@@ -4,6 +4,7 @@
 //! letterboxing, so menus look like the original at any resolution.
 
 mod canvas;
+mod ingame;
 mod intro;
 mod music;
 #[cfg(not(target_arch = "wasm32"))]
@@ -43,10 +44,8 @@ enum Mode {
     Intro,
     /// The original menus.
     Menus,
-    /// A game was started; the in-game screen takes over from here. Until then the menus
-    /// show the loading screen.
-    #[expect(dead_code, reason = "consumed by the in-game screen")]
-    Loading(Box<ui::GameSetup>),
+    /// A started game; the menus show the loading screen until it is ready.
+    InGame(Box<ingame::InGame>),
 }
 
 pub struct Game {
@@ -136,19 +135,37 @@ impl Game {
         }
         self.load_requested();
         self.play_sounds();
+        if let Mode::InGame(game) = &self.mode
+            && let Some(reason) = game.failure()
+        {
+            log::error!("cannot start the game: {reason}");
+            self.leave_game();
+        }
         let Some(g) = &mut self.graphics else { return };
+        if let Mode::InGame(game) = &mut self.mode {
+            game.sync_gpu(&g.gpu.device, &g.gpu.queue, g.gpu.config.format);
+            game.update(dt as f32, g.gpu.size());
+        }
         let canvas = Canvas::fit(g.gpu.size());
         let draws: Vec<ImageDraw> = match &self.mode {
             Mode::Intro => {
                 self.intro.upload(&g.gpu.device, &g.gpu.queue, &g.images);
                 self.intro.draws(&canvas)
             }
-            Mode::Menus | Mode::Loading(_) => self.ui.draws(&g.gpu.device, &g.gpu.queue, &g.images, &canvas),
+            Mode::InGame(game) if game.ready() => Vec::new(),
+            Mode::Menus | Mode::InGame(_) => self.ui.draws(&g.gpu.device, &g.gpu.queue, &g.images, &canvas),
         };
         let Some(frame) = g.gpu.next_frame() else { return };
         g.images.prepare(&g.gpu.device, &g.gpu.queue, g.gpu.size(), &draws);
         let view = frame.texture.create_view(&Default::default());
         let mut encoder = g.gpu.device.create_command_encoder(&Default::default());
+        let mut load = wgpu::LoadOp::Clear(wgpu::Color::BLACK);
+        if let Mode::InGame(game) = &mut self.mode
+            && game.ready()
+        {
+            game.render(&g.gpu.device, &g.gpu.queue, &mut encoder, &view, g.gpu.size());
+            load = wgpu::LoadOp::Load;
+        }
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("game"),
@@ -156,10 +173,7 @@ impl Game {
                     view: &view,
                     depth_slice: None,
                     resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
+                    ops: wgpu::Operations { load, store: wgpu::StoreOp::Store },
                 })],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
@@ -181,7 +195,11 @@ impl Game {
             }
             ui::Action::StartGame(setup) => {
                 log::info!("starting {setup:?}");
-                self.mode = Mode::Loading(setup);
+                let game = ingame::InGame::new(setup);
+                for path in game.requests() {
+                    self.load(&path);
+                }
+                self.mode = Mode::InGame(Box::new(game));
             }
         }
     }
@@ -208,6 +226,36 @@ impl Game {
             self.load_requested();
             self.play_sounds();
         }
+    }
+
+    /// Starts the map at `path` (a game path such as `Missions\...\map.m3d`) without the
+    /// movies and menus, for development.
+    pub fn start_map(&mut self, path: &str) {
+        let mission = ui::MissionSetup {
+            id: String::new(),
+            name: path.as_bytes().to_vec(),
+            map: path.to_owned(),
+            script: String::new(),
+            texts: String::new(),
+            difficulty: ui::Difficulty::default(),
+            campaign: None,
+        };
+        let setup = ui::GameSetup { kind: ui::GameKind::Mission(mission), players: Vec::new(), local_player: 0 };
+        let game = ingame::InGame::new(Box::new(setup));
+        for path in game.requests() {
+            self.load(&path);
+        }
+        self.mode = Mode::InGame(Box::new(game));
+    }
+
+    /// Ends the current game and returns to the main menu.
+    fn leave_game(&mut self) {
+        self.ui.leave_game();
+        self.mode = Mode::Menus;
+        if let Some(window) = &self.window {
+            window.set_cursor_visible(false);
+        }
+        self.load_requested();
     }
 
     fn alt_down(&self) -> bool {
@@ -267,6 +315,11 @@ impl ApplicationHandler<Event> for Game {
                 }
             }
             Event::Loaded { path, result } => {
+                if let Mode::InGame(game) = &mut self.mode
+                    && game.on_loaded(&path, &result)
+                {
+                    return;
+                }
                 if let Ok(bytes) = &result {
                     let (movie, audio) = self.intro.on_loaded(&path, bytes);
                     if movie {
@@ -295,12 +348,33 @@ impl ApplicationHandler<Event> for Game {
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = position;
+                if let Mode::InGame(game) = &mut self.mode {
+                    game.on_cursor(Some([position.x as f32, position.y as f32]));
+                    if let Some(window) = &self.window {
+                        // The original in-game cursor follows with the game panel.
+                        window.set_cursor_visible(game.ready());
+                    }
+                }
                 if let Some(p) = self.virtual_cursor() {
                     self.ui_input(ui::Input::MouseMove(p), event_loop);
                 }
             }
             WindowEvent::MouseInput { state: ElementState::Pressed, .. } if matches!(self.mode, Mode::Intro) => {
                 self.intro_input()
+            }
+            WindowEvent::KeyboardInput { event: KeyEvent { logical_key: Key::Named(named), state, .. }, .. }
+                if matches!(self.mode, Mode::InGame(_))
+                    && !matches!(named, NamedKey::F11)
+                    && !(named == NamedKey::Enter && self.alt_down()) =>
+            {
+                let pressed = state == ElementState::Pressed;
+                if named == NamedKey::Escape && pressed {
+                    // The original opens its in-game menu here; until that exists, leave.
+                    return self.leave_game();
+                }
+                if let Mode::InGame(game) = &mut self.mode {
+                    game.on_key(named, pressed);
+                }
             }
             WindowEvent::KeyboardInput {
                 event:

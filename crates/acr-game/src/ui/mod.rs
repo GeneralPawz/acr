@@ -22,7 +22,7 @@ use crate::canvas::Canvas;
 use draw::{Draw, Textures};
 use fonts::Fonts;
 use library::Library;
-pub use setup::GameSetup;
+pub use setup::{Difficulty, GameKind, GameSetup, MissionSetup};
 use texts::Texts;
 
 /// Menu ticks per second: animations such as the main menu slide advance once per tick.
@@ -143,6 +143,12 @@ impl Ui {
         };
         ui.stack.push(Entry { screen: Box::new(screens::main_menu::MainMenu::default()), built: false });
         ui
+    }
+
+    /// Back to the main menu after a game ends or fails to start.
+    pub fn leave_game(&mut self) {
+        self.stack.clear();
+        self.stack.push(Entry { screen: Box::new(screens::main_menu::MainMenu::default()), built: false });
     }
 
     /// Files to request from the platform; deliver them with [`Ui::on_loaded`].
