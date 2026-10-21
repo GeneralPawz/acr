@@ -1,6 +1,6 @@
 [package]
 name = "acr-viewer"
-description = "Sprite viewer for American Conquest data (native and browser)"
+description = "Sprite and map viewer for American Conquest data (native and browser)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,6 +9,7 @@ license.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+acr-app.workspace = true
 acr-formats.workspace = true
 acr-render.workspace = true
 acr-sim.workspace = true
@@ -19,11 +20,10 @@ winit = "0.30"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 env_logger = "0.11.11"
-pollster = "1.0.1"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1.7"
 js-sys = "0.3.106"
 wasm-bindgen = "=0.2.129"
 wasm-bindgen-futures = "0.4.79"
-web-sys = { version = "0.3.106", features = ["File", "Blob", "Window", "Document", "console", "Location", "Request", "RequestInit", "Headers", "Response"] }
+web-sys = { version = "0.3.106", features = ["Window", "Document", "Location"] }
