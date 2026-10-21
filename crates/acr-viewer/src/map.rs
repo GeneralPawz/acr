@@ -1,7 +1,7 @@
 //! Map mode: browse the maps (`.m3d`) and scroll over their terrain.
 //!
 //! Arrows or the window edge scroll, right/middle drag pans, wheel or +/- zoom,
-//! PageUp/PageDown previous/next map, Home: centre.
+//! PageUp/PageDown previous/next map, Home: centre, O: objects on/off.
 
 use std::collections::HashSet;
 
@@ -10,6 +10,7 @@ use acr_render::terrain::{Camera, GroundAssets, TerrainData, TerrainRenderer};
 use winit::keyboard::{Key, NamedKey};
 
 use crate::Loader;
+use crate::objects::Objects;
 
 /// Scroll speed in output pixels per second.
 const SCROLL_SPEED: f32 = 1400.0;
@@ -17,6 +18,19 @@ const SCROLL_SPEED: f32 = 1400.0;
 const EDGE: f32 = 3.0;
 const ZOOMS: [f32; 9] = [0.125, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0];
 const DEFAULT_ZOOM: usize = 4;
+
+/// Finds a map by file stem (`battle5`), path suffix or folder name (`Saratoga`),
+/// ignoring case.
+fn find_map(maps: &[String], want: &str) -> Option<usize> {
+    let want = normalize_path(want).trim_end_matches(".M3D").to_owned();
+    let path = |p: &String| normalize_path(p).trim_end_matches(".M3D").to_owned();
+    let stem = |p: &String| path(p).rsplit('/').next().unwrap_or_default().to_owned();
+    maps.iter()
+        .position(|p| stem(p) == want)
+        .or_else(|| maps.iter().position(|p| path(p).ends_with(&want)))
+        .or_else(|| maps.iter().position(|p| path(p).split('/').any(|part| part == want)))
+        .or_else(|| maps.iter().position(|p| path(p).contains(&want)))
+}
 
 pub struct MapView {
     maps: Vec<String>,
@@ -27,6 +41,9 @@ pub struct MapView {
     pending: Option<(String, M3dMap)>,
     /// The shown map and whether the renderer has it.
     shown: Option<(String, TerrainData, bool)>,
+    /// The shown map's data, for placing its objects.
+    map: Option<M3dMap>,
+    objects: Objects,
     renderer: Option<TerrainRenderer>,
     camera: Camera,
     zoom: usize,
@@ -42,15 +59,7 @@ impl MapView {
         let mut maps: Vec<String> =
             paths.iter().filter(|p| p.to_ascii_uppercase().ends_with(".M3D")).cloned().collect();
         maps.sort_by_key(|p| p.to_ascii_uppercase());
-        let stem = |p: &str| normalize_path(p).trim_end_matches(".M3D").to_owned();
-        let current = start
-            .map
-            .as_deref()
-            .map(stem)
-            .and_then(|want| {
-                maps.iter().position(|p| stem(p) == want).or_else(|| maps.iter().position(|p| stem(p).ends_with(&want)))
-            })
-            .unwrap_or(0);
+        let current = start.map.as_deref().and_then(|want| find_map(&maps, want)).unwrap_or(0);
         let zoom = start.zoom.and_then(|z| ZOOMS.iter().position(|&s| s >= z)).unwrap_or(DEFAULT_ZOOM);
         Self {
             maps,
@@ -60,6 +69,8 @@ impl MapView {
             assets: None,
             pending: None,
             shown: None,
+            map: None,
+            objects: Objects::new(),
             renderer: None,
             camera: Camera { x: 0.0, y: 0.0, scale: ZOOMS[zoom] },
             zoom,
@@ -70,6 +81,7 @@ impl MapView {
     }
 
     pub fn start(&self, load: &Loader<'_>) {
+        self.objects.start(load);
         if self.assets.is_none() {
             for path in GroundAssets::FILES {
                 load(path);
@@ -89,7 +101,19 @@ impl MapView {
     }
 
     /// Takes a loaded file if it is one of ours.
-    pub fn on_loaded(&mut self, path: &str, bytes: &[u8], window: [f32; 2]) {
+    pub fn on_loaded(&mut self, path: &str, bytes: &[u8], window: [f32; 2], load: &Loader<'_>) {
+        self.objects.on_loaded(path, bytes, load);
+        self.take(path, bytes, window);
+        if let (Some(map), Some((_, terrain, _))) = (&self.map, &self.shown) {
+            self.objects.update(map, terrain, load);
+        }
+    }
+
+    pub fn on_failed(&mut self, path: &str) {
+        self.objects.on_failed(path);
+    }
+
+    fn take(&mut self, path: &str, bytes: &[u8], window: [f32; 2]) {
         if let Some(i) = GroundAssets::FILES.iter().position(|&f| f == path) {
             self.ground_files[i] = Some(bytes.to_vec());
             if self.ground_files.iter().all(Option::is_some) {
@@ -119,6 +143,8 @@ impl MapView {
         match TerrainData::new(&map, assets) {
             Ok(terrain) => {
                 self.shown = Some((path, terrain, false));
+                self.map = Some(map);
+                self.objects.reset();
                 self.centre(window);
             }
             Err(e) => log::error!("{path}: {e}"),
@@ -146,17 +172,19 @@ impl MapView {
             renderer.set_map(device, queue, terrain);
             *uploaded = true;
         }
+        self.objects.sync_gpu(device, queue, format);
     }
 
     pub fn title(&self) -> String {
         match &self.shown {
             Some((path, ..)) => format!(
-                "{path} [{}/{}]  x {:.0}  y {:.0}  zoom {}",
+                "{path} [{}/{}]  x {:.0}  y {:.0}  zoom {}  objects {}",
                 self.current + 1,
                 self.maps.len(),
                 self.camera.x,
                 self.camera.y * 2.0,
-                self.camera.scale
+                self.camera.scale,
+                self.objects.count()
             ),
             None if self.maps.is_empty() => "ACR viewer - no maps found".to_owned(),
             None => "ACR viewer - loading map".to_owned(),
@@ -181,6 +209,7 @@ impl MapView {
             Key::Character(c) => match c.as_str() {
                 "+" | "=" => self.zoom_by(1, [window[0] / 2.0, window[1] / 2.0]),
                 "-" => self.zoom_by(-1, [window[0] / 2.0, window[1] / 2.0]),
+                "o" | "O" => self.objects.shown = !self.objects.shown,
                 _ => {}
             },
             _ => {}
@@ -259,5 +288,6 @@ impl MapView {
         if let Some(renderer) = &mut self.renderer {
             renderer.render(device, queue, encoder, view, size, &self.camera);
         }
+        self.objects.render(device, queue, encoder, view, size, &self.camera);
     }
 }

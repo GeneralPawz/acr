@@ -10,6 +10,7 @@
 mod map;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
+mod objects;
 mod sprites;
 #[cfg(target_arch = "wasm32")]
 mod web;
@@ -125,14 +126,21 @@ impl App {
     }
 
     fn on_loaded(&mut self, path: String, result: Result<Vec<u8>, String>) {
-        let bytes = match result {
-            Ok(b) => b,
-            Err(e) => return log::error!("{path}: {e}"),
-        };
         let size = self.window_size();
-        // Both views see every file: the palettes are shared.
-        self.sprites.on_loaded(&path, &bytes, size);
-        self.map.on_loaded(&path, &bytes, size);
+        {
+            let (load, sprites, map) = self.parts();
+            match result {
+                // Both views see every file: the palettes are shared.
+                Ok(bytes) => {
+                    sprites.on_loaded(&path, &bytes, size);
+                    map.on_loaded(&path, &bytes, size, &load);
+                }
+                Err(e) => {
+                    log::error!("{path}: {e}");
+                    map.on_failed(&path);
+                }
+            }
+        }
         self.sync_gpu();
         self.update_title();
     }
