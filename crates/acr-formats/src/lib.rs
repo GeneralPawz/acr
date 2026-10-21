@@ -17,7 +17,7 @@ pub use bmp::Bitmap;
 pub use gp::{Encoding, Frame, GpFile, Layer};
 pub use gsc::{GscArchive, GscEntry, GscIndex};
 pub use m3d::{M3dError, M3dMap, MapSize};
-pub use pal::Palette;
+pub use pal::{Palette, sprite_palette};
 pub use vfs::{Located, Vfs};
 
 /// Normalizes a game path for lookups: uppercase ASCII, `/` as separator.

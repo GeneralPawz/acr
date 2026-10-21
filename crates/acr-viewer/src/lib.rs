@@ -8,7 +8,8 @@
 
 use std::sync::Arc;
 
-use acr_formats::{Frame, GpFile, Palette, normalize_path};
+use acr_formats::pal::SPRITE_PALETTES;
+use acr_formats::{Frame, GpFile, Palette, normalize_path, sprite_palette};
 use acr_render::{SpriteAtlas, SpriteDraw, SpriteRenderer};
 use acr_sim::FixedClock;
 use web_time::Instant;
@@ -26,7 +27,6 @@ mod web;
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::run;
 
-const PALETTE_PATH: &str = "0\\AGEW_1.PAL";
 const ANIMATION_FPS: u32 = 15;
 const PREFERRED_START: &str = "ANMBIZC.GP";
 
@@ -97,7 +97,8 @@ pub struct App {
     assets: Box<dyn Assets>,
     window: Option<Arc<Window>>,
     gpu: Option<Gpu>,
-    palette: Option<Palette>,
+    /// The sprite palette sets, indexed like [`SPRITE_PALETTES`].
+    palettes: [Option<Palette>; 3],
     files: Vec<String>,
     current: usize,
     sprite: Option<LoadedSprite>,
@@ -120,7 +121,7 @@ impl App {
             assets,
             window: None,
             gpu: None,
-            palette: None,
+            palettes: [None, None, None],
             files,
             current,
             sprite: None,
@@ -153,8 +154,8 @@ impl App {
             Ok(b) => b,
             Err(e) => return log::error!("{path}: {e}"),
         };
-        if path == PALETTE_PATH {
-            self.palette = Palette::parse(&bytes);
+        if let Some(set) = SPRITE_PALETTES.iter().position(|&p| p == path) {
+            self.palettes[set] = Palette::parse(&bytes);
             self.sync_gpu();
             return;
         }
@@ -196,10 +197,12 @@ impl App {
         self.scale = fit.floor().clamp(1.0, 4.0);
     }
 
-    /// Pushes palette and sprite data to the GPU once both exist.
+    /// Pushes the sprite and the palette it was drawn for to the GPU once both exist.
     fn sync_gpu(&mut self) {
         let Some(gpu) = &self.gpu else { return };
-        if let Some(palette) = &self.palette {
+        let path = self.sprite.as_ref().map_or("", |s| s.path.as_str());
+        let set = SPRITE_PALETTES.iter().position(|&p| p == sprite_palette(path)).unwrap_or(0);
+        if let Some(palette) = &self.palettes[set] {
             gpu.renderer.set_palette(&gpu.queue, palette);
         }
         if let Some(sprite) = &mut self.sprite
@@ -369,7 +372,9 @@ impl ApplicationHandler<UserEvent> for App {
         #[cfg(target_arch = "wasm32")]
         wasm_bindgen_futures::spawn_local(init);
 
-        self.assets.request(PALETTE_PATH, &self.proxy);
+        for path in SPRITE_PALETTES {
+            self.assets.request(path, &self.proxy);
+        }
         self.open_current();
         self.update_title();
     }

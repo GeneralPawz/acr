@@ -126,9 +126,33 @@ and soft shadows). Which packs use which mode is set by game code, not by the fi
 remap: `1\OLD.PAL[i] ≈ 2\AGEW_1.PAL[xlt[i]]` (mean RGB distance 13.8, the best of all palette
 pairs), probably a leftover of converting old artwork.
 
+## Palettes
+
+Sprites use one of three palette sets, `0\AGEW_1.PAL` (the game), `1\AGEW_1.PAL` and
+`2\AGEW_1.PAL` (menus); the three differ in almost every entry (set 0 and 2 share the player
+colours `0xD0..=0xEE`). The original switches the active set per screen (`0x483CA2` is called
+with 0, 1 or 2 by the menu code, which also loads the matching `<n>\AGEW_1.PAL`).
+
+`acr gp-palette` ranks the sets per sprite pack: neighbouring opaque pixels of real artwork
+have similar colours in the palette it was drawn for. The score is the mean squared RGB
+distance of horizontally adjacent pixels divided by that of random pixel pairs with the
+same index histogram. For interface packs the right set scores 0.03–0.48 and the others
+0.6–1.0, e.g. `INTERFACE\MAIN_MENU.GP` 0.095 with set 2 vs 0.650 with set 0, and the menu
+code agrees where it loads packs right after a palette (the internet game screen at
+`0x5A1240` loads set 2 and then `Interface\igame`, `anm_*`, `bor2`, `IButtons`, `top100`,
+`isymb3`, all ranked set 2). The cursor packs `CURSOR_00/01/02.GP` are loaded in a row
+(`0x4EFEFF`) and rank set 0, 1 and 2 respectively: one cursor set per palette.
+`pal::sprite_palette` maps the 27 packs that rank set 1 and the 38 that rank set 2 with a
+clear margin (ratio < 0.6 to the runner-up); everything else uses set 0.
+
 ## Open questions
 
 - File flags at offset 6.
-- Which palette each sprite uses (`0\AGEW_1.PAL` fits units and buildings; interface
-  graphics need another one).
+- Packs without a clear palette ranking stay on set 0: `INTERFACE\CURSOR_00.GP` (0.813 vs
+  0.817 for set 2; looks better with set 2), `INTERFACE\CURSGO.GP`, `PSCROLL.GP`,
+  `SIGNS_0.GP`, `SMICONS.GP`, `STATISTIC_SCREENX.GP`, `PALETTES\LOADING0/1.GP`, and the
+  `Internet\Cash\Str_*.gp` strips.
+- Some menu screens load set 1 and also reference `Interface\*` packs that rank set 2
+  (e.g. the campaign screen at `0x5CA690`); the order in which these screens switch palettes
+  is not traced yet.
 - Which sprite packs use the alternative shadow tables (`GP_System` mode byte).
