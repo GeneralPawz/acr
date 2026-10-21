@@ -211,8 +211,8 @@ impl Game {
             }
             ui::Action::StartGame(setup) => {
                 log::info!("starting {setup:?}");
-                let game = ingame::InGame::new(setup);
-                game.start();
+                let mut game = ingame::InGame::new(setup);
+                game.start(&self.assets.paths());
                 self.mode = Mode::InGame(Box::new(game));
                 self.load_requested();
             }
@@ -256,8 +256,8 @@ impl Game {
             campaign: None,
         };
         let setup = ui::GameSetup { kind: ui::GameKind::Mission(mission), players: Vec::new(), local_player: 0 };
-        let game = ingame::InGame::new(Box::new(setup));
-        game.start();
+        let mut game = ingame::InGame::new(Box::new(setup));
+        game.start(&self.assets.paths());
         self.mode = Mode::InGame(Box::new(game));
         self.load_requested();
     }
@@ -399,6 +399,15 @@ impl ApplicationHandler<Event> for Game {
                     },
                 ..
             } if matches!(self.mode, Mode::Intro) && !self.alt_down() => self.intro_input(),
+            WindowEvent::MouseInput { state, button, .. } if matches!(&self.mode, Mode::InGame(g) if g.ready()) => {
+                if let Mode::InGame(game) = &mut self.mode {
+                    match (button, state) {
+                        (MouseButton::Left, _) => game.on_left(state == ElementState::Pressed),
+                        (MouseButton::Right, ElementState::Pressed) => game.on_right(),
+                        _ => {}
+                    }
+                }
+            }
             WindowEvent::MouseInput { state, button: MouseButton::Left, .. } => {
                 #[cfg(target_arch = "wasm32")]
                 self.audio.start();
