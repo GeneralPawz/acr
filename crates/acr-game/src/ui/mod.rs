@@ -369,24 +369,6 @@ impl Ui {
         Action::None
     }
 
-    /// Stack depth and whether the top screen is built, for debugging.
-    pub fn debug_state(&self) -> String {
-        format!("stack {} built {:?}", self.stack.len(), self.stack.iter().map(|e| e.built).collect::<Vec<_>>())
-    }
-
-    /// Rasterizes the current frame's sprites on the CPU (for tests and probes); returns
-    /// the number of draws.
-    pub fn debug_rasterize(&self) -> usize {
-        let mut draws = Vec::new();
-        if let Some(entry) = self.stack.iter().rev().find(|e| e.built) {
-            entry.screen.draw(&self.ctx(), &mut draws);
-        }
-        for d in &draws {
-            let _ = draw::rasterize(&self.lib, &self.fonts, &d.sprite);
-        }
-        draws.len()
-    }
-
     pub fn settings(&self) -> &Settings {
         &self.settings
     }
