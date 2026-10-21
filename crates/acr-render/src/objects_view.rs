@@ -5,7 +5,7 @@
 use acr_formats::{M3dMap, Palette};
 
 use crate::SpriteRenderer;
-use crate::scene::{MapObjects, Scene, SceneAtlas};
+use crate::scene::{MapObjects, Scene, SceneAtlas, SceneSprite};
 use crate::terrain::{Camera, TerrainData};
 
 /// Requests a game file; the result must come back through [`ObjectsView::on_loaded`] or
@@ -24,6 +24,11 @@ pub struct ObjectsView {
     atlas: Option<SceneAtlas>,
     renderer: Option<SpriteRenderer>,
     pub shown: bool,
+    /// Units and buildings are drawn from the caller's dynamic sprites (the simulation)
+    /// instead of the map's placements.
+    dynamic_units: bool,
+    /// Sprites to merge into the scene this frame, see [`ObjectsView::set_dynamic`].
+    dynamic: Vec<SceneSprite>,
 }
 
 impl Default for ObjectsView {
@@ -42,7 +47,31 @@ impl ObjectsView {
             atlas: None,
             renderer: None,
             shown: true,
+            dynamic_units: false,
+            dynamic: Vec::new(),
         }
+    }
+
+    /// Draw units and buildings from the dynamic sprites passed to [`ObjectsView::render`].
+    pub fn with_dynamic_units(mut self) -> Self {
+        self.dynamic_units = true;
+        self
+    }
+
+    /// Sprites (e.g. the simulation's units) drawn with the scene from now on, merged into
+    /// the original draw order. Their frames must be among the uploaded ones.
+    pub fn set_dynamic(&mut self, sprites: Vec<SceneSprite>) {
+        self.dynamic = sprites;
+    }
+
+    /// The loaded definitions and packs.
+    pub fn objects(&self) -> &MapObjects {
+        &self.assets
+    }
+
+    /// Whether the scene is built and units can be looked up.
+    pub fn ready(&self) -> bool {
+        self.scene.is_some()
     }
 
     pub fn start(&self, load: Loader<'_>) {
@@ -92,7 +121,8 @@ impl ObjectsView {
             return;
         }
         self.waiting = false;
-        let scene = self.assets.scene(map, terrain);
+        let scene =
+            if self.dynamic_units { self.assets.static_scene(map, terrain) } else { self.assets.scene(map, terrain) };
         if !scene.missing.is_empty() {
             log::warn!("objects without a sprite: {:?}", scene.missing);
         }
@@ -105,7 +135,11 @@ impl ObjectsView {
             renderer.set_palette(queue, &palette);
         }
         if let (Some(scene), None) = (&self.scene, &self.atlas) {
-            self.atlas = Some(self.assets.upload(renderer, device, queue, scene.frames()));
+            let mut frames = scene.frames();
+            if self.dynamic_units {
+                frames.extend(self.assets.unit_frames());
+            }
+            self.atlas = Some(self.assets.upload(renderer, device, queue, frames));
         }
     }
 
@@ -127,7 +161,7 @@ impl ObjectsView {
         else {
             return;
         };
-        let draws = atlas.draws(scene, &[], camera, size);
+        let draws = atlas.draws(scene, &self.dynamic, camera, size);
         renderer.prepare(device, queue, &atlas.atlas, size, &draws);
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("map objects"),

@@ -1,17 +1,11 @@
 //! `sim-check`: runs the simulation headless on a real map and checks determinism.
 
-use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
-use acr_formats::defs::{NationDef, OrderGroups, OrderList, SpriteResources, UnitDef, name_list};
-use acr_formats::m3d::SpriteGroup;
-use acr_formats::sprite_list::SpriteList;
-use acr_formats::{M3dMap, Vfs, normalize_path};
-use acr_sim::catalog::{Catalog, ObjectType};
-use acr_sim::formation::Formations;
-use acr_sim::map::SpriteShapes;
+use acr_formats::{M3dMap, Vfs};
+use acr_sim::assets::{SimAssets, SimData};
 use acr_sim::world::EntityId;
 use acr_sim::{Command, World};
 
@@ -26,65 +20,16 @@ pub const COMMANDS: &[ToolCommand] = &[ToolCommand {
     },
 }];
 
-/// Builds the object catalog: every member of every nation file, with its `.MD` definition.
-pub fn load_catalog(vfs: &mut Vfs) -> Result<Catalog> {
-    let mut defs: BTreeMap<String, UnitDef> = BTreeMap::new();
-    for name in name_list(&vfs.read("NMLIST.TXT")?) {
-        let file = format!("{}.MD", name.trim_end_matches(".MD").trim_end_matches(".md"));
-        if let Ok(data) = vfs.read(&file) {
-            let def = UnitDef::parse(&data);
-            if let Some(n) = def.name() {
-                defs.insert(n.to_ascii_uppercase(), def);
-            }
-        }
+/// Reads the simulation's static data through the shared sans-I/O loader.
+pub fn load_sim_data(vfs: &mut Vfs) -> SimData {
+    let paths: Vec<String> = vfs.list().map(|(p, _)| p.to_owned()).collect();
+    let mut assets = SimAssets::default();
+    let mut queue = assets.start(&paths);
+    while let Some(path) = queue.pop() {
+        let data = vfs.read(&path).ok();
+        queue.extend(assets.add_file(&path, data.as_deref()));
     }
-    let mut nds: Vec<String> = vfs
-        .list()
-        .map(|(p, _)| p.to_owned())
-        .filter(|p| {
-            let n = normalize_path(p);
-            n.ends_with(".NDS") && n != "WEAPON.NDS"
-        })
-        .collect();
-    nds.sort();
-    let mut catalog = Catalog::new();
-    for path in nds {
-        let nation = NationDef::parse(&vfs.read(&path)?);
-        for m in &nation.members {
-            if let Some(def) = defs.get(&m.md.to_ascii_uppercase()) {
-                catalog.add(ObjectType::from_def(&m.id, def));
-            }
-        }
-    }
-    Ok(catalog)
-}
-
-/// Blocking polygons of the map sprite lists (`*.LST` + `*.RSR`).
-pub fn load_sprite_shapes(vfs: &mut Vfs) -> Result<SpriteShapes> {
-    let mut shapes = SpriteShapes::default();
-    let lists = [
-        (SpriteGroup::Trees, "TREELIST"),
-        (SpriteGroup::Stones, "STONLIST"),
-        (SpriteGroup::Holes, "HOLELIST"),
-        (SpriteGroup::Complex, "COMPLEX"),
-        (SpriteGroup::Meat, "MEAT"),
-    ];
-    for (group, name) in lists {
-        let text = String::from_utf8_lossy(&vfs.read(&format!("{name}.LST"))?).into_owned();
-        let list = SpriteList::parse(&text).ok_or_else(|| format!("{name}.LST: bad header"))?;
-        let rsr = vfs.read(&format!("{name}.RSR")).map(|d| SpriteResources::parse(&d)).unwrap_or_default();
-        shapes.add(group, &list, &rsr);
-    }
-    Ok(shapes)
-}
-
-pub fn load_formations(vfs: &mut Vfs) -> Result<Formations> {
-    let orders = OrderList::parse(&vfs.read("ORDERS.LST")?);
-    let groups = OrderGroups::parse(&vfs.read("ORD_GROUPS.LST")?);
-    if !orders.issues.is_empty() || !groups.issues.is_empty() {
-        eprintln!("formation issues: {:?} {:?}", orders.issues, groups.issues);
-    }
-    Ok(Formations::new(&orders, &groups))
+    assets.build()
 }
 
 /// The units of one move order and their target (world pixels).
@@ -136,9 +81,10 @@ pub fn sim_check(dir: &Path, map: &str, rest: &[&str]) -> Result<()> {
         _ => return Err("expected an optional tick count".into()),
     };
     let mut vfs = Vfs::open_game_dir(dir)?;
-    let catalog = Arc::new(load_catalog(&mut vfs)?);
-    let formations = Arc::new(load_formations(&mut vfs)?);
-    let sprites = load_sprite_shapes(&mut vfs)?;
+    let data = load_sim_data(&mut vfs);
+    let catalog = Arc::new(data.catalog);
+    let formations = Arc::new(data.formations);
+    let sprites = data.shapes;
     let m3d = M3dMap::parse(&vfs.read(map)?)?;
     println!(
         "catalog: {} object types; formations: {} shapes, {} groups",

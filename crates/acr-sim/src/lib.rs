@@ -13,6 +13,7 @@
 //! The model and the original algorithms it reproduces are documented in
 //! `docs/simulation.md`.
 
+pub mod assets;
 pub mod catalog;
 pub mod clock;
 pub mod command;

@@ -73,11 +73,18 @@ pub fn idle_animation(def: &UnitDef) -> Option<&acr_formats::defs::md::Animation
     names.iter().find_map(|n| def.animation(n)).or_else(|| def.animations.first())
 }
 
-/// The sprite packs an object type needs.
+/// Animations a moving unit shows besides its idle one (see `acr_sim::world::AnimKind`).
+pub const MOTION_ANIMATIONS: [&str; 2] = ["#MOTION_L", "#MOTION_R"];
+
+/// The sprite packs an object type needs: its idle animation and, for units, walking.
 pub fn unit_packs(def: &UnitDef) -> Vec<String> {
-    let Some(anim) = idle_animation(def) else { return Vec::new() };
+    let mut anims: Vec<&acr_formats::defs::md::Animation> = idle_animation(def).into_iter().collect();
+    if !def.is_building() {
+        anims.extend(MOTION_ANIMATIONS.iter().filter_map(|n| def.animation(n)));
+    }
     let mut packs: Vec<String> =
-        anim.frame_refs().iter().filter_map(|r| def.sprite(r.sprite)).map(|s| s.gp_path()).collect();
+        anims.iter().flat_map(|a| a.frame_refs()).filter_map(|r| def.sprite(r.sprite)).map(|s| s.gp_path()).collect();
+    packs.sort();
     packs.dedup();
     packs
 }
@@ -90,7 +97,18 @@ pub fn unit_packs(def: &UnitDef) -> Vec<String> {
 /// mirroring of the 9 stored directions are not verified; directions are mapped evenly
 /// and mirrored ones use their unmirrored twin.
 pub fn unit_look(def: &UnitDef, direction: u8, frames_in: impl Fn(&str) -> Option<usize>) -> Option<UnitLook> {
-    let anim = idle_animation(def)?;
+    animation_look(def, idle_animation(def)?, direction, 0, frames_in)
+}
+
+/// The frames of animation `anim` of `def` at animation frame `step`, facing `direction`.
+/// Buildings show all parts of the animation; units show the part at `step`.
+pub fn animation_look(
+    def: &UnitDef,
+    anim: &acr_formats::defs::md::Animation,
+    direction: u8,
+    step: usize,
+    frames_in: impl Fn(&str) -> Option<usize>,
+) -> Option<UnitLook> {
     let refs = anim.frame_refs();
     let dirs = anim.directions.max(1) as usize;
     let d = if dirs >= 16 {
@@ -102,8 +120,13 @@ pub fn unit_look(def: &UnitDef, direction: u8, frames_in: impl Fn(&str) -> Optio
         half * (dirs - 1) / 8
     };
     let sorts = part_sorts(def, &anim.name);
-    let parts: Vec<_> =
-        if def.is_building() { refs.iter().enumerate().collect() } else { refs.iter().take(1).enumerate().collect() };
+    let parts: Vec<_> = if def.is_building() {
+        refs.iter().enumerate().collect()
+    } else if refs.is_empty() {
+        Vec::new()
+    } else {
+        vec![(0, &refs[step % refs.len()])]
+    };
     let parts = parts
         .into_iter()
         .filter_map(|(i, r)| {
@@ -149,6 +172,9 @@ fn part_sorts(def: &UnitDef, name: &str) -> Vec<PartSort> {
     out
 }
 
+/// The look of a unit type by map id and direction.
+pub type LookFn<'a> = dyn Fn(&str, u8) -> Option<UnitLook> + 'a;
+
 /// The placed objects of a map, in draw order.
 #[derive(Debug, Default)]
 pub struct Scene {
@@ -167,7 +193,7 @@ impl Scene {
         map: &M3dMap,
         terrain: &TerrainData,
         lists: &HashMap<SpriteGroup, SpriteList>,
-        looks: impl Fn(&str, u8) -> Option<UnitLook>,
+        looks: Option<&LookFn<'_>>,
     ) -> Self {
         let mut missing = HashMap::new();
         let mut sprites = Vec::with_capacity(map.sprites.len() + map.units.len());
@@ -191,7 +217,8 @@ impl Scene {
                 player: 0,
             });
         }
-        for u in &map.units {
+        for u in map.units.iter().filter(|_| looks.is_some()) {
+            let looks = looks.expect("filtered");
             let (x, y) = (u.x >> 4, u.y >> 4);
             let Some(look) = looks(&u.name, u.direction) else {
                 *missing.entry(u.name.clone()).or_insert(0) += 1;
@@ -377,7 +404,35 @@ impl MapObjects {
 
     /// Places the objects of `map`; call when [`MapObjects::packs_ready`].
     pub fn scene(&self, map: &M3dMap, terrain: &TerrainData) -> Scene {
-        Scene::build(map, terrain, &self.lists, |id, dir| self.unit_look(id, dir))
+        Scene::build(map, terrain, &self.lists, Some(&|id, dir| self.unit_look(id, dir)))
+    }
+
+    /// Places only the static objects of `map` (trees, stones, ...); units and buildings
+    /// come from the simulation as dynamic sprites.
+    pub fn static_scene(&self, map: &M3dMap, terrain: &TerrainData) -> Scene {
+        Scene::build(map, terrain, &self.lists, None)
+    }
+
+    /// The look of `unit_id` playing animation `anim` (e.g. `#MOTION_L`) at frame `step`,
+    /// falling back to the idle animation.
+    pub fn animation_look(&self, unit_id: &str, anim: &str, direction: u8, step: usize) -> Option<UnitLook> {
+        let def = self.definition(unit_id)?;
+        let animation = def.animation(anim).or_else(|| idle_animation(def))?;
+        animation_look(def, animation, direction, step, |p| self.pack(p).map(acr_formats::GpFile::frame_count))
+    }
+
+    /// Every frame of every pack loaded for units, for uploading next to a static scene.
+    pub fn unit_frames(&self) -> Vec<FrameKey> {
+        let lists: Vec<String> = self.lists.values().map(SpriteList::gp_path).collect();
+        let mut frames: Vec<FrameKey> = self
+            .packs
+            .iter()
+            .filter(|(path, _)| !lists.contains(path))
+            .filter_map(|(path, gp)| Some((path, gp.as_ref()?.frame_count())))
+            .flat_map(|(path, n)| (0..n).map(move |f| (path.clone(), f)))
+            .collect();
+        frames.sort();
+        frames
     }
 
     /// Decodes `frames` (a [`Scene::frames`] list, plus any frames dynamic sprites will
