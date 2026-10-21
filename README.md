@@ -46,6 +46,7 @@ illusion intact.
 ```
 crates/
   acr-formats   original data formats; pure, no I/O required (native + wasm32)
+  acr-mapgen    random map generator, reproduced from the original (pure, native + wasm32)
   acr-sim       deterministic fixed-tick simulation: world, original pathfinding, motion, formations
   acr-script    mission/AI scripting: PE reader now, x86 interpreter + API later
   acr-video     Bink 1 video + audio decoder for the intro movies (native + wasm32)
@@ -125,5 +126,6 @@ Requires the `wasm32-unknown-unknown` target for the browser build
 - [`.m3d` maps](docs/formats/m3d.md)
 - [Terrain rendering](docs/formats/terrain.md)
 - [Units, buildings, nations, sounds, map pieces](docs/formats/definitions.md)
+- [Random map generator](docs/mapgen.md)
 - [Mission/AI scripting API](docs/script-api.md) (generated)
 - [Simulation: game speed, pathfinding, motion, formations](docs/simulation.md)
