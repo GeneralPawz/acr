@@ -9,6 +9,7 @@ license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 acr-formats = { path = "crates/acr-formats" }
+acr-mapgen = { path = "crates/acr-mapgen" }
 acr-script = { path = "crates/acr-script" }
 acr-sim = { path = "crates/acr-sim" }
 acr-render = { path = "crates/acr-render" }
