@@ -29,10 +29,9 @@ usage:
   acr audio-check <game-dir>  (decode every sound effect and music track)
   acr play <game-dir> <path>  (play a .wav or .ogg on the default device)
   acr grd-fit  <game-dir>   (blend strengths of the sprite lookup tables)
+  acr gp-palette <game-dir> [filter]   (rank palettes per sprite pack)
+  acr play <game-dir> <path>  (play a .wav or .ogg on the default device)
   acr bmp-png <game-dir> <bmp> <out.png>   (--pal of gp-sheet also accepts a .BMP)";
-
-/// Palette used for unit and building sprites unless overridden.
-const DEFAULT_PALETTE: &str = "0\\AGEW_1.PAL";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -46,6 +45,7 @@ fn main() -> ExitCode {
         }
         ["gp-check", dir, rest @ ..] => gp_check(Path::new(dir), rest.first().copied()),
         ["grd-fit", dir] => grd_fit(Path::new(dir)),
+        ["gp-palette", dir, rest @ ..] => gp_palette(Path::new(dir), rest.first().copied()),
         ["script-api", dir] => script_api(Path::new(dir)),
         ["audio-check", dir] => audio::check(Path::new(dir)),
         ["play", dir, path] => audio::play(Path::new(dir), path),
@@ -111,7 +111,8 @@ fn archived_paths(vfs: &Vfs, filter: Option<&str>) -> Vec<String> {
 }
 
 struct SheetOptions {
-    palette: String,
+    /// Defaults to the palette the sprite pack was drawn for.
+    palette: Option<String>,
     player: u8,
     only: Option<Vec<u8>>,
     frames: Option<std::ops::Range<usize>>,
@@ -119,12 +120,12 @@ struct SheetOptions {
 
 impl SheetOptions {
     fn parse(args: &[&str]) -> Result<Self> {
-        let mut o = Self { palette: DEFAULT_PALETTE.to_owned(), player: 0, only: None, frames: None };
+        let mut o = Self { palette: None, player: 0, only: None, frames: None };
         let mut it = args.iter();
         while let Some(&flag) = it.next() {
             let value = *it.next().ok_or_else(|| format!("{flag} needs a value"))?;
             match flag {
-                "--pal" => o.palette = value.to_owned(),
+                "--pal" => o.palette = Some(value.to_owned()),
                 "--player" => o.player = value.parse()?,
                 "--only" => o.only = Some(value.split(',').map(str::parse).collect::<std::result::Result<_, _>>()?),
                 "--frames" => {
@@ -142,6 +143,8 @@ impl SheetOptions {
 fn gp_sheet(dir: &Path, gp: &str, out: &Path, o: &SheetOptions) -> Result<()> {
     let mut vfs = Vfs::open_game_dir(dir)?;
     let palette = images::load_palette(&mut vfs, &o.palette)?;
+    let pal_path = o.palette.as_deref().unwrap_or(acr_formats::sprite_palette(gp));
+    let palette = Palette::parse(&vfs.read(pal_path)?).ok_or("palette too short")?;
     let file = GpFile::parse(vfs.read(gp)?)?;
 
     let range = o.frames.clone().unwrap_or(0..file.frame_count());
@@ -223,6 +226,69 @@ fn grd_fit(dir: &Path) -> Result<()> {
         let alphas: Vec<String> =
             table("AGEW_1D.GRD")?.darkness(&palette).iter().map(|a| format!("{}", (a * 255.0).round())).collect();
         println!("{set}\\AGEW_1D.GRD: black alpha per row [{}]", alphas.join(", "));
+    }
+    Ok(())
+}
+
+/// Ranks the sprite palette sets per sprite pack. Neighbouring pixels of artwork are similar
+/// in the palette it was drawn for: the score is the mean squared RGB distance of horizontally
+/// adjacent opaque pixels relative to that of random pixel pairs (lower is better).
+fn gp_palette(dir: &Path, filter: Option<&str>) -> Result<()> {
+    use acr_formats::Encoding;
+    use acr_formats::pal::SPRITE_PALETTES;
+
+    let mut vfs = Vfs::open_game_dir(dir)?;
+    let palettes = SPRITE_PALETTES
+        .iter()
+        .map(|&name| Ok((name, Palette::parse(&vfs.read(name)?).ok_or("palette too short")?)))
+        .collect::<Result<Vec<_>>>()?;
+    let paths: Vec<String> = vfs
+        .list()
+        .filter(|(p, _)| p.to_ascii_uppercase().ends_with(".GP") && matches(p, filter))
+        .map(|(p, _)| p.to_owned())
+        .collect();
+    println!("sprite\tmapped\tscores");
+    for path in &paths {
+        let Ok(file) = GpFile::parse(vfs.read(path)?) else { continue };
+        let mut pairs: BTreeMap<(u8, u8), u64> = BTreeMap::new();
+        for frame in (0..file.frame_count()).filter_map(|i| file.decode_frame(i).ok()) {
+            for layer in frame.layers.iter().filter(|l| matches!(l.encoding, Encoding::DictLz | Encoding::SelfLz(_))) {
+                let mut pixels = layer.pixels.iter().copied();
+                for run in &layer.runs {
+                    let row: Vec<u8> = pixels.by_ref().take(usize::from(run.len)).collect();
+                    for w in row.windows(2) {
+                        *pairs.entry((w[0], w[1])).or_default() += 1;
+                    }
+                }
+            }
+        }
+        let total: u64 = pairs.values().sum();
+        if total == 0 {
+            continue;
+        }
+        let mut hist = [0u64; 256];
+        for (&(a, _), &n) in &pairs {
+            hist[usize::from(a)] += n;
+        }
+        let scores: Vec<String> = palettes
+            .iter()
+            .map(|(name, pal)| {
+                let dist = |a: u8, b: u8| -> f64 {
+                    let (ca, cb) = (pal.rgb(a), pal.rgb(b));
+                    (0..3).map(|k| (f64::from(ca[k]) - f64::from(cb[k])).powi(2)).sum()
+                };
+                let near: f64 = pairs.iter().map(|(&(a, b), &n)| dist(a, b) * n as f64).sum::<f64>() / total as f64;
+                let mut far = 0.0;
+                for a in 0..=255u8 {
+                    for b in 0..=255u8 {
+                        far += dist(a, b) * (hist[usize::from(a)] * hist[usize::from(b)]) as f64;
+                    }
+                }
+                let far = far / (total * total) as f64;
+                format!("{name} {:.3}", if far > 0.0 { near / far } else { 1.0 })
+            })
+            .collect();
+        println!("{path}\t{}\t{}", acr_formats::sprite_palette(path), scores.join("\t"));
     }
     Ok(())
 }
