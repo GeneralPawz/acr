@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ACR sprite viewer</title>
+  <title>ACR viewer</title>
   <style>
     html, body { margin: 0; height: 100%; background: #29381f; color: #e8e2cf; font: 15px/1.5 system-ui, sans-serif; overflow: hidden; }
     /* !important: winit writes an inline size on the canvas. */
@@ -18,11 +18,12 @@
 </head>
 <body>
   <div id="picker">
-    <h1>ACR sprite viewer</h1>
+    <h1>ACR viewer</h1>
     <p>Choose your American Conquest installation folder. Files stay on this computer; only the
        archives' tables of contents are read up front.</p>
     <label>Choose game folder<input id="dir" type="file" webkitdirectory multiple></label>
-    <p>Arrows: file / frame · Space: play · G: grid · +/−: zoom · 1–8: player colour</p>
+    <p>Sprites: arrows file / frame · Space play · G grid · +/− zoom · 1–8 player colour</p>
+    <p>Tab: maps · arrows, window edge or right drag scroll · wheel or +/− zoom · PageUp/PageDown map</p>
     <p id="error"></p>
   </div>
   <script type="module">

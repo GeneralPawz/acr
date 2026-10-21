@@ -108,6 +108,7 @@ dependencies = [
 name = "acr-viewer"
 version = "0.1.0"
 dependencies = [
+ "acr-app",
  "acr-formats",
  "acr-render",
  "acr-sim",
@@ -115,7 +116,6 @@ dependencies = [
  "env_logger",
  "js-sys",
  "log",
- "pollster 1.0.1",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
