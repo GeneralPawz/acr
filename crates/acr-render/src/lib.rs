@@ -4,11 +4,15 @@
 //! palette and player colours and applies each layer's blend mode. The same code runs on
 //! Vulkan/DX12/Metal natively and on WebGPU/WebGL2 in the browser.
 
+pub mod image;
+
 use std::ops::Range;
 
 use acr_formats::{Encoding, Frame, Palette};
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
+
+pub use image::{ImageDraw, ImageRenderer, ImageTexture};
 
 /// Atlas page edge length. WebGL2 guarantees 2048.
 const PAGE_SIZE: u32 = 2048;
