@@ -3,8 +3,8 @@
 //! Replaces the original's separate `vopl.exe` player; the music belongs to the game
 //! process and ends with it.
 
-use acr_audio::VorbisMusic;
 use acr_audio::output::AudioOutput;
+use acr_audio::{MusicSource, VorbisMusic};
 use acr_sim::Rng;
 
 pub struct Playlist {
@@ -48,6 +48,20 @@ impl Playlist {
 
     pub fn stop(&mut self) {
         self.output = None;
+    }
+
+    /// True once the audio device is open.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    pub fn started(&self) -> bool {
+        self.output.is_some()
+    }
+
+    /// Plays `source` (e.g. a movie soundtrack) instead of the playlist; `None` stops it
+    /// and the playlist continues.
+    pub fn set_music(&mut self, source: Option<Box<dyn MusicSource>>) {
+        if let Some(Ok(mut mixer)) = self.output.as_ref().map(|o| o.mixer.lock()) {
+            mixer.set_music(source);
+        }
     }
 
     /// The track to load when nothing is playing; it is then expected in `on_loaded`.
