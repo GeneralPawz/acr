@@ -5,10 +5,10 @@
 
 mod canvas;
 mod intro;
-mod menu;
 mod music;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod native;
+pub mod ui;
 #[cfg(target_arch = "wasm32")]
 mod web;
 
@@ -19,10 +19,10 @@ use acr_render::{ImageDraw, ImageRenderer, SpriteRenderer};
 use canvas::Canvas;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalPosition;
-use winit::event::{ElementState, KeyEvent, MouseButton, WindowEvent};
+use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
-use winit::window::{CursorIcon, Fullscreen, Window, WindowId};
+use winit::window::{Fullscreen, Window, WindowId};
 
 pub enum Event {
     GpuReady(Box<Gpu>),
@@ -37,12 +37,16 @@ struct Graphics {
     sprites: SpriteRenderer,
 }
 
-/// What a screen wants the app to do after handling input.
-pub(crate) enum Action {
-    None,
-    /// Play the startup movies again.
+/// What the app shows.
+enum Mode {
+    /// The startup movies, then the menus.
     Intro,
-    Quit,
+    /// The original menus.
+    Menus,
+    /// A game was started; the in-game screen takes over from here. Until then the menus
+    /// show the loading screen.
+    #[expect(dead_code, reason = "consumed by the in-game screen")]
+    Loading(Box<ui::GameSetup>),
 }
 
 pub struct Game {
@@ -50,26 +54,29 @@ pub struct Game {
     assets: Box<dyn Assets>,
     window: Option<Arc<Window>>,
     graphics: Option<Graphics>,
+    ui: ui::Ui,
+    mode: Mode,
+    audio: music::Audio,
     intro: intro::Intro,
-    menu: menu::MainMenu,
-    music: music::Playlist,
     cursor: PhysicalPosition<f64>,
+    last_frame: Option<web_time::Instant>,
     modifiers: ModifiersState,
 }
 
 impl Game {
     pub fn new(proxy: EventLoopProxy<Event>, assets: Box<dyn Assets>) -> Self {
         let paths = assets.paths();
-        let music = music::Playlist::new(&paths);
         Self {
             proxy,
+            ui: ui::Ui::new(&paths),
+            mode: Mode::Intro,
+            audio: music::Audio::new(&paths),
+            intro: intro::Intro::new(&paths),
             assets,
             window: None,
             graphics: None,
-            intro: intro::Intro::new(&paths),
-            menu: menu::MainMenu::default(),
-            music,
             cursor: Default::default(),
+            last_frame: None,
             modifiers: ModifiersState::empty(),
         }
     }
@@ -93,30 +100,50 @@ impl Game {
         Some(self.canvas()?.to_virtual([self.cursor.x as f32, self.cursor.y as f32]))
     }
 
-    fn sync_textures(&mut self) {
-        if let Some(g) = &self.graphics {
-            self.menu.upload(&g.gpu.device, &g.gpu.queue, &g.images);
+    /// Hands the menus' file requests to the platform loader.
+    fn load_requested(&mut self) {
+        for path in self.ui.requests() {
+            self.load(&path);
         }
     }
 
-    fn redraw(&mut self) {
-        if self.intro.active() {
+    fn play_sounds(&mut self) {
+        for (path, bytes) in self.ui.take_sounds() {
+            self.audio.play(&path, &bytes);
+        }
+    }
+
+    fn redraw(&mut self, event_loop: &ActiveEventLoop) {
+        if matches!(self.mode, Mode::Intro) {
             if let Some(path) = self.intro.next_request() {
                 self.load(&path);
             }
             if self.intro.update() {
-                self.music.set_music(None);
+                self.audio.set_music(None);
             }
-        } else if let Some(track) = self.music.next_track() {
+            if !self.intro.active() {
+                self.mode = Mode::Menus;
+            }
+        } else if let Some(track) = self.audio.next_track() {
             self.load(&track);
         }
+        let now = web_time::Instant::now();
+        let dt = self.last_frame.map_or(0.0, |t| (now - t).as_secs_f64());
+        self.last_frame = Some(now);
+        if matches!(self.mode, Mode::Menus) {
+            let action = self.ui.update(dt);
+            self.apply(action, event_loop);
+        }
+        self.load_requested();
+        self.play_sounds();
         let Some(g) = &mut self.graphics else { return };
         let canvas = Canvas::fit(g.gpu.size());
-        let draws: Vec<ImageDraw> = if self.intro.active() {
-            self.intro.upload(&g.gpu.device, &g.gpu.queue, &g.images);
-            self.intro.draws(&canvas)
-        } else {
-            self.menu.draws(&canvas)
+        let draws: Vec<ImageDraw> = match &self.mode {
+            Mode::Intro => {
+                self.intro.upload(&g.gpu.device, &g.gpu.queue, &g.images);
+                self.intro.draws(&canvas)
+            }
+            Mode::Menus | Mode::Loading(_) => self.ui.draws(&g.gpu.device, &g.gpu.queue, &g.images, &canvas),
         };
         let Some(frame) = g.gpu.next_frame() else { return };
         g.images.prepare(&g.gpu.device, &g.gpu.queue, g.gpu.size(), &draws);
@@ -145,16 +172,16 @@ impl Game {
         g.gpu.queue.present(frame);
     }
 
-    fn apply(&mut self, action: Action, event_loop: &ActiveEventLoop) {
+    fn apply(&mut self, action: ui::Action, event_loop: &ActiveEventLoop) {
         match action {
-            Action::None => {}
-            Action::Intro => {
-                self.intro = intro::Intro::new(&self.assets.paths());
-                self.music.set_music(None);
-            }
-            Action::Quit => {
-                self.music.stop();
+            ui::Action::None => {}
+            ui::Action::Quit => {
+                self.audio.stop();
                 event_loop.exit();
+            }
+            ui::Action::StartGame(setup) => {
+                log::info!("starting {setup:?}");
+                self.mode = Mode::Loading(setup);
             }
         }
     }
@@ -163,14 +190,24 @@ impl Game {
     /// gesture only enables audio and restarts the movie with sound.
     fn intro_input(&mut self) {
         #[cfg(target_arch = "wasm32")]
-        if !self.music.started() {
-            self.music.start();
+        if !self.audio.started() {
+            self.audio.start();
             let audio = self.intro.restart();
-            self.music.set_music(audio);
+            self.audio.set_music(audio);
             return;
         }
         self.intro.skip();
-        self.music.set_music(None);
+        self.audio.set_music(None);
+    }
+
+    /// Forwards input to the menus.
+    fn ui_input(&mut self, input: ui::Input, event_loop: &ActiveEventLoop) {
+        if matches!(self.mode, Mode::Menus) {
+            let action = self.ui.input(input);
+            self.apply(action, event_loop);
+            self.load_requested();
+            self.play_sounds();
+        }
     }
 
     fn alt_down(&self) -> bool {
@@ -197,6 +234,8 @@ impl ApplicationHandler<Event> for Game {
                 return event_loop.exit();
             }
         };
+        // The menus draw the original cursor.
+        window.set_cursor_visible(false);
         self.window = Some(window.clone());
         let proxy = self.proxy.clone();
         acr_app::spawn(async move {
@@ -207,12 +246,10 @@ impl ApplicationHandler<Event> for Game {
                 Err(e) => log::error!("GPU initialisation failed: {e}"),
             }
         });
-        for path in menu::MainMenu::assets() {
-            self.load(path);
-        }
+        self.load_requested();
         // Browsers only allow audio after a user gesture; native starts right away.
         #[cfg(not(target_arch = "wasm32"))]
-        self.music.start();
+        self.audio.start();
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: Event) {
@@ -228,26 +265,29 @@ impl ApplicationHandler<Event> for Game {
                         g.gpu.resize(size.width, size.height);
                     }
                 }
-                self.sync_textures();
             }
-            Event::Loaded { path, result } => match result {
-                Ok(bytes) => {
-                    let (movie, audio) = self.intro.on_loaded(&path, &bytes);
+            Event::Loaded { path, result } => {
+                if let Ok(bytes) = &result {
+                    let (movie, audio) = self.intro.on_loaded(&path, bytes);
                     if movie {
-                        self.music.set_music(audio);
-                    } else if !self.music.on_loaded(&path, &bytes) {
-                        self.menu.on_loaded(&path, bytes);
-                        self.sync_textures();
+                        self.audio.set_music(audio);
+                        return;
+                    }
+                    if self.audio.on_loaded(&path, bytes) {
+                        return;
                     }
                 }
-                Err(e) => log::error!("{path}: {e}"),
-            },
+                if !self.ui.on_loaded(&path, result) {
+                    log::debug!("unrequested file {path}");
+                }
+                self.load_requested();
+            }
         }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
-            WindowEvent::CloseRequested => self.apply(Action::Quit, event_loop),
+            WindowEvent::CloseRequested => self.apply(ui::Action::Quit, event_loop),
             WindowEvent::Resized(size) => {
                 if let Some(g) = &mut self.graphics {
                     g.gpu.resize(size.width, size.height);
@@ -255,12 +295,13 @@ impl ApplicationHandler<Event> for Game {
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = position;
-                let hover = self.virtual_cursor().is_some_and(|p| self.menu.hit(p).is_some());
-                if let Some(window) = &self.window {
-                    window.set_cursor(if hover { CursorIcon::Pointer } else { CursorIcon::Default });
+                if let Some(p) = self.virtual_cursor() {
+                    self.ui_input(ui::Input::MouseMove(p), event_loop);
                 }
             }
-            WindowEvent::MouseInput { state: ElementState::Pressed, .. } if self.intro.active() => self.intro_input(),
+            WindowEvent::MouseInput { state: ElementState::Pressed, .. } if matches!(self.mode, Mode::Intro) => {
+                self.intro_input()
+            }
             WindowEvent::KeyboardInput {
                 event:
                     KeyEvent {
@@ -269,28 +310,58 @@ impl ApplicationHandler<Event> for Game {
                         ..
                     },
                 ..
-            } if self.intro.active() && !self.alt_down() => self.intro_input(),
-            WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
+            } if matches!(self.mode, Mode::Intro) && !self.alt_down() => self.intro_input(),
+            WindowEvent::MouseInput { state, button: MouseButton::Left, .. } => {
                 #[cfg(target_arch = "wasm32")]
-                self.music.start();
+                self.audio.start();
                 if let Some(p) = self.virtual_cursor() {
-                    let action = self.menu.click(p);
-                    self.apply(action, event_loop);
+                    let input = match state {
+                        ElementState::Pressed => ui::Input::MouseDown(p),
+                        ElementState::Released => ui::Input::MouseUp(p),
+                    };
+                    self.ui_input(input, event_loop);
                 }
             }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let lines = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => y,
+                    MouseScrollDelta::PixelDelta(p) => p.y as f32 / 40.0,
+                };
+                self.ui_input(ui::Input::Wheel(lines), event_loop);
+            }
             WindowEvent::KeyboardInput {
-                event: KeyEvent { logical_key, state: ElementState::Pressed, .. }, ..
+                event: KeyEvent { logical_key, text, state: ElementState::Pressed, .. },
+                ..
             } => {
                 #[cfg(target_arch = "wasm32")]
-                self.music.start();
-                match logical_key {
-                    Key::Named(NamedKey::F11) => self.toggle_fullscreen(),
-                    Key::Named(NamedKey::Enter) if self.alt_down() => self.toggle_fullscreen(),
-                    _ => {}
+                self.audio.start();
+                let key = match logical_key {
+                    Key::Named(NamedKey::F11) => return self.toggle_fullscreen(),
+                    Key::Named(NamedKey::Enter) if self.alt_down() => return self.toggle_fullscreen(),
+                    Key::Named(named) => match named {
+                        NamedKey::Enter => Some(ui::Key::Enter),
+                        NamedKey::Escape => Some(ui::Key::Escape),
+                        NamedKey::ArrowUp => Some(ui::Key::Up),
+                        NamedKey::ArrowDown => Some(ui::Key::Down),
+                        NamedKey::ArrowLeft => Some(ui::Key::Left),
+                        NamedKey::ArrowRight => Some(ui::Key::Right),
+                        NamedKey::PageUp => Some(ui::Key::PageUp),
+                        NamedKey::PageDown => Some(ui::Key::PageDown),
+                        NamedKey::Home => Some(ui::Key::Home),
+                        NamedKey::End => Some(ui::Key::End),
+                        NamedKey::Backspace => Some(ui::Key::Backspace),
+                        NamedKey::Delete => Some(ui::Key::Delete),
+                        NamedKey::Space => Some(ui::Key::Char(b' ')),
+                        _ => None,
+                    },
+                    _ => text.as_deref().and_then(cp1252).map(ui::Key::Char),
+                };
+                if let Some(key) = key {
+                    self.ui_input(ui::Input::Key(key), event_loop);
                 }
             }
             WindowEvent::ModifiersChanged(m) => self.modifiers = m.state(),
-            WindowEvent::RedrawRequested => self.redraw(),
+            WindowEvent::RedrawRequested => self.redraw(event_loop),
             _ => {}
         }
     }
@@ -327,6 +398,19 @@ fn window_attributes(event_loop: &ActiveEventLoop) -> winit::window::WindowAttri
             attributes.with_window_icon(icon.clone()).with_taskbar_icon(icon)
         };
         attributes
+    }
+}
+
+/// The CP1252 byte of a typed character, as the original's `ToAscii` gives it.
+fn cp1252(text: &str) -> Option<u8> {
+    let mut chars = text.chars();
+    let c = chars.next()?;
+    if chars.next().is_some() {
+        return None;
+    }
+    match c as u32 {
+        0x20..=0x7e | 0xa0..=0xff => Some(c as u8),
+        _ => None,
     }
 }
 
