@@ -8,6 +8,7 @@ mod audio;
 mod defs;
 mod fonts;
 mod images;
+mod mapgen;
 mod maps;
 mod scripts;
 mod sim;
@@ -35,6 +36,7 @@ const MODULES: &[&[Command]] = &[
     archive::COMMANDS,
     sprites::COMMANDS,
     maps::COMMANDS,
+    mapgen::COMMANDS,
     defs::COMMANDS,
     images::COMMANDS,
     fonts::COMMANDS,

@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 acr-audio.workspace = true
 acr-formats.workspace = true
+acr-mapgen.workspace = true
 acr-script.workspace = true
 acr-video.workspace = true
 acr-sim.workspace = true

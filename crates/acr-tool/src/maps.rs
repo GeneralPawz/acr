@@ -196,6 +196,14 @@ fn grid_image<T: Copy>(grid: &Grid<T>, color: impl Fn(T) -> [u8; 3]) -> Image {
 fn m3d_png(dir: &Path, path: &str, out: &Path, layer: &str) -> Result<()> {
     let mut vfs = Vfs::open_game_dir(dir)?;
     let map = M3dMap::parse(&vfs.read(path)?)?;
+    let image = render_layer(&mut vfs, &map, path, layer)?;
+    crate::write_png(out, &image)?;
+    eprintln!("{}x{} -> {}", image.width, image.height, out.display());
+    Ok(())
+}
+
+/// Renders one layer of a decoded map (see `m3d-png`); `name` is used in error messages.
+pub fn render_layer(vfs: &mut Vfs, map: &M3dMap, path: &str, layer: &str) -> Result<Image> {
     let gray = |v: u8| [v, v, v];
     let ids = |v: u16| if v == u16::MAX { [0, 0, 0] } else { hash_color(u32::from(v)) };
     let missing = || format!("{path} has no data for layer {layer}");
@@ -228,7 +236,7 @@ fn m3d_png(dir: &Path, path: &str, out: &Path, layer: &str) -> Result<()> {
                 }
             }
             if layer == "terrain" {
-                draw_objects(&mut image, &map);
+                draw_objects(&mut image, map);
             }
             image
         }
@@ -256,9 +264,7 @@ fn m3d_png(dir: &Path, path: &str, out: &Path, layer: &str) -> Result<()> {
         "ground1" => grid_image(&map.ground.as_ref().ok_or_else(missing)?.1, ids),
         _ => return Err(format!("unknown layer {layer}").into()),
     };
-    crate::write_png(out, &image)?;
-    eprintln!("{}x{} -> {}", image.width, image.height, out.display());
-    Ok(())
+    Ok(image)
 }
 
 /// Draws sprites, zones and units onto a vertex-resolution image (32 world pixels per pixel).
