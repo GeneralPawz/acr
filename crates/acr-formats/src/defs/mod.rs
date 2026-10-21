@@ -7,12 +7,16 @@
 //! rest of its line; `.MD` commands also skip whatever follows their arguments on the
 //! same line. See `docs/formats/definitions.md` for the grammars.
 
+pub mod lnk;
 pub mod md;
 pub mod nds;
+pub mod smp;
 pub mod sounds;
 
+pub use lnk::PieceLinks;
 pub use md::{AnimFrames, Animation, Command, CommandKind, SpriteSet, UnitDef};
 pub use nds::{NationDef, NationEntry, NationList, NdsFile, Section, Upgrade};
+pub use smp::Piece;
 pub use sounds::SoundList;
 
 use std::fmt;
