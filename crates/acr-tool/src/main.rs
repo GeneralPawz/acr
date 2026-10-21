@@ -3,6 +3,7 @@
 mod audio;
 mod fonts;
 mod images;
+mod defs;
 mod video;
 
 use std::collections::BTreeMap;
@@ -38,7 +39,9 @@ usage:
                 font: global name (fonG60w), sprite pack (rom10) or .RLC file
   acr bik-check <game-dir>    (decode every frame and the audio of all .bik videos)
   acr bik-frames <game-dir> <bik> <out-dir> [--every N]   (write every Nth frame as PNG)
-  acr bik-play <game-dir> <bik>   (play the soundtrack of a video)";
+  acr bik-play <game-dir> <bik>   (play the soundtrack of a video)
+  acr defs-check <game-dir> [--keywords] [--all]   (parse all .MD/.NDS/.SMP/.LNK definitions)
+  acr unit     <game-dir> <NAME>             (show one .MD definition)";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -75,6 +78,9 @@ fn main() -> ExitCode {
             _ => Err("expected --every N".into()),
         },
         ["bik-play", dir, bik] => video::play(Path::new(dir), bik),
+        ["defs-check", dir, rest @ ..] => {
+            defs::defs_check(Path::new(dir), rest.contains(&"--keywords"), rest.contains(&"--all"))
+        ["unit", dir, name] => defs::unit(Path::new(dir), name),
         _ => {
             eprintln!("{USAGE}");
             return ExitCode::from(2);
