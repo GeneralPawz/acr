@@ -100,6 +100,7 @@ dependencies = [
  "acr-audio",
  "acr-formats",
  "acr-script",
+ "acr-sim",
  "acr-video",
  "png",
 ]

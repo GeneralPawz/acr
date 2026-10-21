@@ -14,4 +14,5 @@ acr-audio.workspace = true
 acr-formats.workspace = true
 acr-script.workspace = true
 acr-video.workspace = true
+acr-sim.workspace = true
 png = "0.18.1"
