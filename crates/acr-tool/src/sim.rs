@@ -5,8 +5,9 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
-use acr_formats::defs::{NationDef, OrderGroups, OrderList, SpriteList, SpriteResources, UnitDef, name_list};
+use acr_formats::defs::{NationDef, OrderGroups, OrderList, SpriteResources, UnitDef, name_list};
 use acr_formats::m3d::SpriteGroup;
+use acr_formats::sprite_list::SpriteList;
 use acr_formats::{M3dMap, Vfs, normalize_path};
 use acr_sim::catalog::{Catalog, ObjectType};
 use acr_sim::formation::Formations;
@@ -69,7 +70,8 @@ pub fn load_sprite_shapes(vfs: &mut Vfs) -> Result<SpriteShapes> {
         (SpriteGroup::Meat, "MEAT"),
     ];
     for (group, name) in lists {
-        let list = SpriteList::parse(&vfs.read(&format!("{name}.LST"))?);
+        let text = String::from_utf8_lossy(&vfs.read(&format!("{name}.LST"))?).into_owned();
+        let list = SpriteList::parse(&text).ok_or_else(|| format!("{name}.LST: bad header"))?;
         let rsr = vfs.read(&format!("{name}.RSR")).map(|d| SpriteResources::parse(&d)).unwrap_or_default();
         shapes.add(group, &list, &rsr);
     }

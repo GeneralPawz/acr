@@ -8,8 +8,9 @@
 
 use std::collections::BTreeMap;
 
-use acr_formats::defs::{SpriteList, SpriteResources};
+use acr_formats::defs::SpriteResources;
 use acr_formats::m3d::{Areas, Grid, M3dMap, Sprite, SpriteGroup};
+use acr_formats::sprite_list::SpriteList;
 
 /// Side of a passability cell in world pixels.
 pub const LOCK_CELL: i32 = 16;
@@ -196,10 +197,10 @@ pub struct SpriteShapes {
 impl SpriteShapes {
     pub fn add(&mut self, group: SpriteGroup, list: &SpriteList, rsr: &SpriteResources) {
         let v = list
-            .types
+            .entries
             .iter()
             .map(|t| {
-                let id = t.id.to_ascii_uppercase();
+                let id = t.name.to_ascii_uppercase();
                 rsr.locks.get(&id).map(|p| SpriteLock {
                     dx: t.dx,
                     dy: t.dy,

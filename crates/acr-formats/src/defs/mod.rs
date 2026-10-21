@@ -21,7 +21,7 @@ pub use nds::{NationDef, NationEntry, NationList, NdsFile, Section, Upgrade};
 pub use orders::{OrderGroups, OrderList, OrderShape};
 pub use smp::Piece;
 pub use sounds::SoundList;
-pub use sprites::{SpriteList, SpriteResources};
+pub use sprites::SpriteResources;
 
 use std::fmt;
 
