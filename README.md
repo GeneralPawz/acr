@@ -77,7 +77,7 @@ copy protection.
 ## Play
 
 ```sh
-cargo xtask dist --game-dir "C:\path	o\American Conquest" --install
+cargo xtask dist --game-dir "C:\path\to\American Conquest" --install
 ```
 
 builds `AmericanConquest.exe` with the game's original icon and copies it into the game
