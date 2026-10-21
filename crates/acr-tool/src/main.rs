@@ -41,7 +41,12 @@ usage:
   acr bik-frames <game-dir> <bik> <out-dir> [--every N]   (write every Nth frame as PNG)
   acr bik-play <game-dir> <bik>   (play the soundtrack of a video)
   acr defs-check <game-dir> [--keywords] [--all]   (parse all .MD/.NDS/.SMP/.LNK definitions)
-  acr unit     <game-dir> <NAME>             (show one .MD definition)";
+  acr unit     <game-dir> <NAME>             (show one .MD definition)
+  acr script-check <game-dir> (decode and initialise every mission/AI DLL)
+  acr script-run <game-dir> <dll> [--ticks N]  (run a DLL, log its game API calls)
+
+/// Palette used for unit and building sprites unless overridden.
+const DEFAULT_PALETTE: &str = "0\\AGEW_1.PAL";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -82,6 +87,11 @@ fn main() -> ExitCode {
             defs::defs_check(Path::new(dir), rest.contains(&"--keywords"), rest.contains(&"--all"))
         }
         ["unit", dir, name] => defs::unit(Path::new(dir), name),
+        ["script-check", dir] => script_check(Path::new(dir)),
+        ["script-run", dir, dll] => script_run(Path::new(dir), dll, 1),
+        ["script-run", dir, dll, "--ticks", n] => {
+            n.parse().map_err(Into::into).and_then(|n| script_run(Path::new(dir), dll, n))
+        }
         _ => {
             eprintln!("{USAGE}");
             return ExitCode::from(2);
@@ -628,6 +638,133 @@ fn draw_objects(image: &mut Image, map: &M3dMap) {
             put(image, x + dx, y + dy, PLAYER_COLORS[usize::from(u.nation % 8)]);
         }
     }
+/// Mission and AI DLLs of an installation, as paths relative to `dir`.
+fn script_dlls(dir: &Path) -> Result<Vec<String>> {
+    let mut out = Vec::new();
+    let mut stack: Vec<PathBuf> = ["AI", "Missions", "History_battl", "UserMissions"]
+        .iter()
+        .map(|d| dir.join(d))
+        .filter(|d| d.is_dir())
+        .collect();
+    while let Some(d) = stack.pop() {
+        for entry in std::fs::read_dir(&d)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("dll")) {
+                out.push(path.strip_prefix(dir)?.to_string_lossy().replace('/', "\\"));
+            }
+        }
+    }
+    out.sort();
+    Ok(out)
+}
+
+/// Exports to call after `DllMain`: (init, per-tick).
+fn script_entry_points(m: &acr_script::runtime::Machine) -> (&'static str, &'static str) {
+    if m.image.export("InitAI").is_some() { ("InitAI", "ProcessAI") } else { ("OnInit", "ProcessScenary") }
+}
+
+/// Statically decodes every mission/AI DLL and runs DllMain, the init export and one tick.
+fn script_check(dir: &Path) -> Result<()> {
+    use acr_script::analysis::reachable_code;
+    use acr_script::dmcr::RecordingHost;
+    use acr_script::runtime::Machine;
+
+    let dlls = script_dlls(dir)?;
+    let (mut insns, mut unsupported, mut attached, mut inited, mut ticked) = (0, 0, 0, 0, 0);
+    let mut mnemonics = std::collections::BTreeSet::new();
+    println!(
+        "{:<52} {:>7} {:>5} {:>7} {:>7} {:>7} {:>5}  result",
+        "dll", "insns", "unsup", "attach", "init", "tick", "api"
+    );
+    for rel in &dlls {
+        let mut m = Machine::new(&std::fs::read(dir.join(rel))?, rel)?;
+        let cov = reachable_code(&m.mem, &m.image);
+        insns += cov.instructions;
+        unsupported += cov.unsupported.len();
+        mnemonics.extend(cov.mnemonics.into_keys());
+        let mut host = RecordingHost::default();
+        let (init, tick) = script_entry_points(&m);
+        let mut steps = [0u64; 3];
+        let mut result = "ok".to_owned();
+        let mut stage = 0;
+        for (i, name) in ["DllMain", init, tick].into_iter().enumerate() {
+            let before = m.steps;
+            let r = if i == 0 { m.attach(&mut host).map(u32::from) } else { m.call_export(&mut host, name, &[]) };
+            steps[i] = m.steps - before;
+            match r {
+                Ok(0) if i == 0 => result = "DllMain returned FALSE".into(),
+                Ok(_) => {
+                    stage = i + 1;
+                    continue;
+                }
+                Err(e) => result = format!("{name}: {e}"),
+            }
+            break;
+        }
+        attached += usize::from(stage >= 1);
+        inited += usize::from(stage >= 2);
+        ticked += usize::from(stage >= 3);
+        let unsup = cov.unsupported.first().map(|e| format!(" ({e})")).unwrap_or_default();
+        println!(
+            "{rel:<52} {:>7} {:>5} {:>7} {:>7} {:>7} {:>5}  {result}{unsup}",
+            cov.instructions,
+            cov.unsupported.len(),
+            steps[0],
+            steps[1],
+            steps[2],
+            host.calls.len()
+        );
+    }
+    println!(
+        "\n{} DLLs: {insns} reachable instructions ({} mnemonics), {unsupported} unsupported; \
+         DllMain ok {attached}, init ok {inited}, first tick ok {ticked}",
+        dlls.len(),
+        mnemonics.len()
+    );
+    Ok(())
+}
+
+/// Runs one DLL: DllMain, the init export and `ticks` per-tick calls, printing every game
+/// API call.
+fn script_run(dir: &Path, dll: &str, ticks: u32) -> Result<()> {
+    use acr_script::dmcr::RecordingHost;
+    use acr_script::runtime::Machine;
+
+    let rel = dll.replace('/', "\\");
+    let mut m = Machine::new(&std::fs::read(dir.join(dll))?, &rel)?;
+    let mut host = RecordingHost::default();
+    let (init, tick) = script_entry_points(&m);
+    let mut out = io::stdout().lock();
+    let mut shown = 0;
+    let mut stage = |name: &str, m: &mut Machine, host: &mut RecordingHost, out: &mut io::StdoutLock| -> Result<()> {
+        let before = m.steps;
+        let r = if name == "DllMain" { m.attach(host).map(u32::from) } else { m.call_export(host, name, &[]) };
+        writeln!(out, "== {name}: {} instructions, {} API calls", m.steps - before, host.calls.len() - shown)?;
+        for c in &host.calls[shown..] {
+            writeln!(out, "  {c}")?;
+        }
+        shown = host.calls.len();
+        match r {
+            Ok(v) => writeln!(out, "  returned {v:#x}")?,
+            Err(e) => {
+                writeln!(out, "  error: {e}")?;
+                return Err(e.into());
+            }
+        }
+        Ok(())
+    };
+    stage("DllMain", &mut m, &mut host, &mut out)?;
+    stage(init, &mut m, &mut host, &mut out)?;
+    for _ in 0..ticks {
+        stage(tick, &mut m, &mut host, &mut out)?;
+    }
+    writeln!(out, "== KERNEL32 calls: {:?}", m.process.calls)?;
+    for line in &m.process.output {
+        writeln!(out, "== output: {line}")?;
+    }
+    Ok(())
 }
 
 fn write_png(path: &Path, image: &Image) -> Result<()> {
