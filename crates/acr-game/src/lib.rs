@@ -4,6 +4,7 @@
 //! letterboxing, so menus look like the original at any resolution.
 
 mod canvas;
+mod intro;
 mod menu;
 mod music;
 #[cfg(not(target_arch = "wasm32"))]
@@ -39,6 +40,8 @@ struct Graphics {
 /// What a screen wants the app to do after handling input.
 pub(crate) enum Action {
     None,
+    /// Play the startup movies again.
+    Intro,
     Quit,
 }
 
@@ -47,6 +50,7 @@ pub struct Game {
     assets: Box<dyn Assets>,
     window: Option<Arc<Window>>,
     graphics: Option<Graphics>,
+    intro: intro::Intro,
     menu: menu::MainMenu,
     music: music::Playlist,
     cursor: PhysicalPosition<f64>,
@@ -55,12 +59,14 @@ pub struct Game {
 
 impl Game {
     pub fn new(proxy: EventLoopProxy<Event>, assets: Box<dyn Assets>) -> Self {
-        let music = music::Playlist::new(&assets.paths());
+        let paths = assets.paths();
+        let music = music::Playlist::new(&paths);
         Self {
             proxy,
             assets,
             window: None,
             graphics: None,
+            intro: intro::Intro::new(&paths),
             menu: menu::MainMenu::default(),
             music,
             cursor: Default::default(),
@@ -94,12 +100,24 @@ impl Game {
     }
 
     fn redraw(&mut self) {
-        if let Some(track) = self.music.next_track() {
+        if self.intro.active() {
+            if let Some(path) = self.intro.next_request() {
+                self.load(&path);
+            }
+            if self.intro.update() {
+                self.music.set_music(None);
+            }
+        } else if let Some(track) = self.music.next_track() {
             self.load(&track);
         }
         let Some(g) = &mut self.graphics else { return };
         let canvas = Canvas::fit(g.gpu.size());
-        let draws: Vec<ImageDraw> = self.menu.draws(&canvas);
+        let draws: Vec<ImageDraw> = if self.intro.active() {
+            self.intro.upload(&g.gpu.device, &g.gpu.queue, &g.images);
+            self.intro.draws(&canvas)
+        } else {
+            self.menu.draws(&canvas)
+        };
         let Some(frame) = g.gpu.next_frame() else { return };
         g.images.prepare(&g.gpu.device, &g.gpu.queue, g.gpu.size(), &draws);
         let view = frame.texture.create_view(&Default::default());
@@ -130,11 +148,29 @@ impl Game {
     fn apply(&mut self, action: Action, event_loop: &ActiveEventLoop) {
         match action {
             Action::None => {}
+            Action::Intro => {
+                self.intro = intro::Intro::new(&self.assets.paths());
+                self.music.set_music(None);
+            }
             Action::Quit => {
                 self.music.stop();
                 event_loop.exit();
             }
         }
+    }
+
+    /// Click or key during the movies: skip the current one. In the browser the first
+    /// gesture only enables audio and restarts the movie with sound.
+    fn intro_input(&mut self) {
+        #[cfg(target_arch = "wasm32")]
+        if !self.music.started() {
+            self.music.start();
+            let audio = self.intro.restart();
+            self.music.set_music(audio);
+            return;
+        }
+        self.intro.skip();
+        self.music.set_music(None);
     }
 
     fn alt_down(&self) -> bool {
@@ -196,7 +232,10 @@ impl ApplicationHandler<Event> for Game {
             }
             Event::Loaded { path, result } => match result {
                 Ok(bytes) => {
-                    if !self.music.on_loaded(&path, &bytes) {
+                    let (movie, audio) = self.intro.on_loaded(&path, &bytes);
+                    if movie {
+                        self.music.set_music(audio);
+                    } else if !self.music.on_loaded(&path, &bytes) {
                         self.menu.on_loaded(&path, bytes);
                         self.sync_textures();
                     }
@@ -221,6 +260,16 @@ impl ApplicationHandler<Event> for Game {
                     window.set_cursor(if hover { CursorIcon::Pointer } else { CursorIcon::Default });
                 }
             }
+            WindowEvent::MouseInput { state: ElementState::Pressed, .. } if self.intro.active() => self.intro_input(),
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        logical_key: Key::Named(NamedKey::Escape | NamedKey::Space | NamedKey::Enter),
+                        state: ElementState::Pressed,
+                        ..
+                    },
+                ..
+            } if self.intro.active() && !self.alt_down() => self.intro_input(),
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
                 #[cfg(target_arch = "wasm32")]
                 self.music.start();

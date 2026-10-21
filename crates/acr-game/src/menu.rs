@@ -78,6 +78,7 @@ impl MainMenu {
     pub fn click(&mut self, p: [f32; 2]) -> Action {
         match self.hit(p) {
             Some(Entry::Exit) => Action::Quit,
+            Some(Entry::Intro) => Action::Intro,
             Some(entry) => {
                 log::info!("{entry:?} is not implemented yet");
                 Action::None

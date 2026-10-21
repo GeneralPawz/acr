@@ -104,6 +104,14 @@ Peaks reach 1.17 (clipped to 16 bits), RMS 0.20-0.24.
 Release build, x64: 1.bik decodes at ~4500 fps, 3.bik at ~1700 fps (68x real time);
 the whole 67 s soundtrack decodes in 0.06 s.
 
+## In the game
+
+`crates/acr-game/src/intro.rs` plays `Video.bik`..`10.bik` (those present) at startup
+and again from the main menu's "Intro" entry; a click or Esc/Space/Enter skips the current
+movie. The soundtrack replaces the menu music while a movie plays. In the browser the
+first click only enables audio and restarts the current movie with sound. Which movies
+the original's "Intro" entry plays has not been checked yet.
+
 ## Open issues
 
 - DCT audio (flag `0x1000`), revision `b` and revisions `k`/`KB2` (Bink 1 successors with
