@@ -8,9 +8,11 @@
 //! same line. See `docs/formats/definitions.md` for the grammars.
 
 pub mod md;
+pub mod nds;
 pub mod sounds;
 
 pub use md::{AnimFrames, Animation, Command, CommandKind, SpriteSet, UnitDef};
+pub use nds::{NationDef, NationEntry, NationList, NdsFile, Section, Upgrade};
 pub use sounds::SoundList;
 
 use std::fmt;
@@ -169,6 +171,19 @@ impl<'a> Tokenizer<'a> {
 pub fn name_list(data: &[u8]) -> Vec<String> {
     let mut tk = Tokenizer::new(data);
     std::iter::from_fn(|| tk.next()).map(|t| t.text(CodePage::Cp1252)).collect()
+}
+
+/// Splits a file into lines of tokens, dropping comments and empty lines.
+pub(crate) fn token_lines(data: &[u8]) -> Vec<Vec<Token<'_>>> {
+    let mut lines: Vec<Vec<Token>> = Vec::new();
+    let mut tk = Tokenizer::new(data);
+    while let Some(t) = tk.next() {
+        match lines.last_mut() {
+            Some(l) if l[0].line == t.line => l.push(t),
+            _ => lines.push(vec![t]),
+        }
+    }
+    lines
 }
 
 #[cfg(test)]
