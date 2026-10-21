@@ -10,6 +10,7 @@ name = "acr"
 path = "src/main.rs"
 
 [dependencies]
+acr-audio.workspace = true
 acr-formats.workspace = true
 acr-script.workspace = true
 png = "0.18.1"

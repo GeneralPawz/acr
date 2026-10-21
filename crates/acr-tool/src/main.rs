@@ -1,5 +1,7 @@
 //! `acr` - inspect and extract original American Conquest data.
 
+mod audio;
+
 use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -16,7 +18,9 @@ usage:
   acr gp-sheet <game-dir> <gp-path> <out.png> [--pal PATH] [--player N]
                 [--only ENC,ENC..] [--frames FROM..TO]
   acr gp-check <game-dir> [filter]
-  acr script-api <game-dir>   (markdown report of the API missions/AI import)";
+  acr script-api <game-dir>   (markdown report of the API missions/AI import)
+  acr audio-check <game-dir>  (decode every sound effect and music track)
+  acr play <game-dir> <path>  (play a .wav or .ogg on the default device)";
 
 /// Palette used for unit and building sprites unless overridden.
 const DEFAULT_PALETTE: &str = "0\\AGEW_1.PAL";
@@ -33,6 +37,8 @@ fn main() -> ExitCode {
         }
         ["gp-check", dir, rest @ ..] => gp_check(Path::new(dir), rest.first().copied()),
         ["script-api", dir] => script_api(Path::new(dir)),
+        ["audio-check", dir] => audio::check(Path::new(dir)),
+        ["play", dir, path] => audio::play(Path::new(dir), path),
         _ => {
             eprintln!("{USAGE}");
             return ExitCode::from(2);
