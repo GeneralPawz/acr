@@ -9,7 +9,26 @@ use acr_formats::defs::nds::{NationList, Upgrade};
 use acr_formats::defs::{Issue, NationDef, NdsFile, Piece, PieceLinks, SoundList, UnitDef, name_list};
 use acr_formats::{GpFile, Vfs, normalize_path};
 
-use crate::Result;
+use crate::{Command, Result};
+
+pub const COMMANDS: &[Command] = &[
+    Command {
+        name: "defs-check",
+        usage: "<game-dir> [--keywords] [--all]   (parse all .MD/.NDS/.SMP/.LNK definitions)",
+        run: |a| match a {
+            [dir, rest @ ..] => defs_check(Path::new(dir), rest.contains(&"--keywords"), rest.contains(&"--all")),
+            _ => Err(crate::WRONG_ARGS.into()),
+        },
+    },
+    Command {
+        name: "unit",
+        usage: "<game-dir> <NAME>   (show one .MD definition)",
+        run: |a| match a {
+            [dir, name] => unit(Path::new(dir), name),
+            _ => Err(crate::WRONG_ARGS.into()),
+        },
+    },
+];
 
 /// Counts occurrences and remembers the examples per key.
 #[derive(Default)]

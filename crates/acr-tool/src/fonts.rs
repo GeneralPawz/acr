@@ -7,7 +7,16 @@ use acr_formats::raster::Image;
 use acr_formats::rlc::RlcFile;
 use acr_formats::{Bitmap, GpFile, Palette, Vfs};
 
-use crate::Result;
+use crate::{Command, Result};
+
+pub const COMMANDS: &[Command] = &[Command {
+    name: "font-png",
+    usage: "<game-dir> <font> <text> <out.png> [--set N] [--color N] [--bg BMP --at X,Y] [--crop X,Y,W,H]             [--zoom N]   font: global name (fonG60w), sprite pack (rom10) or .RLC file",
+    run: |a| match a {
+        [dir, font, text, out, rest @ ..] => font_png(Path::new(dir), font, text, Path::new(out), rest),
+        _ => Err(crate::WRONG_ARGS.into()),
+    },
+}];
 
 struct Options {
     palette_set: u8,

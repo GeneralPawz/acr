@@ -8,7 +8,37 @@ use acr_formats::Vfs;
 use acr_formats::raster::Image;
 use acr_video::{BinkAudio, VideoPlayer};
 
-use crate::Result;
+use crate::{Command, Result};
+
+pub const COMMANDS: &[Command] = &[
+    Command {
+        name: "bik-check",
+        usage: "<game-dir>   (decode every frame and the audio of all .bik videos)",
+        run: |a| match a {
+            [dir] => check(Path::new(dir)),
+            _ => Err(crate::WRONG_ARGS.into()),
+        },
+    },
+    Command {
+        name: "bik-frames",
+        usage: "<game-dir> <bik> <out-dir> [--every N]   (write every Nth frame as PNG)",
+        run: |a| match a {
+            [dir, bik, out] => frames(Path::new(dir), bik, Path::new(out), 50),
+            [dir, bik, out, "--every", n] => {
+                n.parse().map_err(Into::into).and_then(|n| frames(Path::new(dir), bik, Path::new(out), n))
+            }
+            _ => Err(crate::WRONG_ARGS.into()),
+        },
+    },
+    Command {
+        name: "bik-play",
+        usage: "<game-dir> <bik>   (play the soundtrack of a video)",
+        run: |a| match a {
+            [dir, bik] => play(Path::new(dir), bik),
+            _ => Err(crate::WRONG_ARGS.into()),
+        },
+    },
+];
 
 fn bik_paths(vfs: &Vfs) -> Vec<String> {
     vfs.list().map(|(p, _)| p.to_owned()).filter(|p| p.to_ascii_lowercase().ends_with(".bik")).collect()
