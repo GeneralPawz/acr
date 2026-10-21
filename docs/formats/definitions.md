@@ -125,8 +125,11 @@ Animations come in two forms; the name after `#`/`@` is the slot:
 mirrored to 16), 16 (artillery), 65 (ships). Frame `f` of a set whose pack holds `N`
 frames exists for each direction: **verified** for all 47 217 references of loaded
 files, `f < N / dirs` always holds (`ANMBIZG.GP` has 216 = 9 × 24 frames, used as
-`@MOTION_L 9 1 0 11` and `@MOTION_R 9 1 12 23`). The frame of direction `d` is therefore
-presumably `d · N/dirs + f`; the direction order is not verified yet.
+`@MOTION_L 9 1 0 11` and `@MOTION_R 9 1 12 23`). The drawing code (0x5062a3) shows the
+frames are **direction-interleaved**: frame `f` of stored direction `k` is GP frame
+`f · dirs + k`. With 9 or 16 stored directions, `k = 0` is south and the west half is
+stored; the east half is drawn mirrored. The mapping from the unit direction is described
+in [`docs/simulation.md`](../simulation.md#directions-and-sprites).
 
 Animation slots known to the engine (from `dmcr.exe`): `#STAND #PSTAND #MOTION_L
 #MOTION_R #MOTION_LB #MOTION_RB #MINISTEP_L/R/LB/RB #ATTACK #PATTACK #UATTACK #DEATH
@@ -440,8 +443,8 @@ directions.
 
 ## Open questions
 
-- Direction order and mirroring of animation frames (`dirs` 9, 16, 65); the frame index
-  formula `d · N/dirs + f` is inferred from frame counts only.
+- Direction order of the 65-direction ship animations (only 9, 16 and `FULLROTATION` were
+  traced).
 - `USERLC` offsets vs. `SETANMPARAM`/`LOCATION`: which one positions building sprites.
 - Meanings marked `?` or blank in the keyword table, notably `INFO`, `OPPOSIT`, `PROMAX*`,
   `FEAR*`, `SKILLDAMAGE*`, `ZPOINTS`, `3DBARS`, `ADDSECTION`, `EX_SHOTS*` columns.
