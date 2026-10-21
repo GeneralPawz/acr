@@ -117,6 +117,24 @@ impl Audio {
         }
     }
 
+    /// Plays a sound effect at `volume` (0..=1, scaled by the effects volume) and `pan`
+    /// (-1 left .. 1 right); returns its voice to check whether it still plays.
+    pub fn play_at(&mut self, path: &str, bytes: &[u8], volume: f32, pan: f32) -> Option<acr_audio::VoiceId> {
+        let output = self.output.as_ref()?;
+        let sound = self
+            .sounds
+            .entry(path.to_owned())
+            .or_insert_with(|| Sound::parse(bytes).map_err(|e| log::error!("{path}: {e}")).ok())
+            .clone()?;
+        let mut mixer = output.mixer.lock().ok()?;
+        Some(mixer.play(sound, volume, pan))
+    }
+
+    /// Whether a voice started by [`Audio::play_at`] is still playing.
+    pub fn is_playing(&self, voice: acr_audio::VoiceId) -> bool {
+        self.output.as_ref().and_then(|o| o.mixer.lock().ok()).is_some_and(|m| m.is_playing(voice))
+    }
+
     /// Sets the effect and music volumes (0..=1).
     pub fn set_volumes(&mut self, effects: f32, music: f32) {
         self.volumes = (effects, music);

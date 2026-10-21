@@ -10,6 +10,7 @@ mod music;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod native;
 pub mod ui;
+mod unit_sounds;
 #[cfg(target_arch = "wasm32")]
 mod web;
 
@@ -56,6 +57,7 @@ pub struct Game {
     ui: ui::Ui,
     mode: Mode,
     audio: music::Audio,
+    unit_sounds: unit_sounds::UnitSounds,
     intro: intro::Intro,
     cursor: PhysicalPosition<f64>,
     last_frame: Option<web_time::Instant>,
@@ -70,6 +72,7 @@ impl Game {
             ui: ui::Ui::new(&paths),
             mode: Mode::Intro,
             audio: music::Audio::new(&paths),
+            unit_sounds: unit_sounds::UnitSounds::new(),
             intro: intro::Intro::new(&paths),
             assets,
             window: None,
@@ -102,6 +105,7 @@ impl Game {
     /// Hands the menus' file requests to the platform loader.
     fn load_requested(&mut self) {
         let mut paths = self.ui.requests();
+        paths.extend(self.unit_sounds.take_requests());
         if let Mode::InGame(game) = &self.mode {
             paths.extend(game.take_requests());
         }
@@ -149,6 +153,7 @@ impl Game {
         if let Mode::InGame(game) = &mut self.mode {
             game.sync_gpu(&g.gpu.device, &g.gpu.queue, g.gpu.config.format);
             game.update(dt as f32, g.gpu.size());
+            self.unit_sounds.play(&game.take_sound_events(), &mut self.audio);
         }
         let canvas = Canvas::fit(g.gpu.size());
         let draws: Vec<ImageDraw> = match &self.mode {
@@ -329,6 +334,11 @@ impl ApplicationHandler<Event> for Game {
                 }
             }
             Event::Loaded { path, result } => {
+                if let Ok(bytes) = &result
+                    && self.unit_sounds.on_loaded(&path, bytes)
+                {
+                    return self.load_requested();
+                }
                 if let Mode::InGame(game) = &mut self.mode
                     && game.on_loaded(&path, &result)
                 {
