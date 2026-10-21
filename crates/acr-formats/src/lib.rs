@@ -18,6 +18,7 @@ pub mod text;
 pub mod vfs;
 
 pub use bmp::Bitmap;
+pub use defs::{NationDef, NdsFile, Piece, PieceLinks, SoundList, UnitDef};
 pub use defs::{NationDef, NdsFile, SoundList, UnitDef};
 pub use defs::{SoundList, UnitDef};
 pub use font::{Font, FontColors, named_font};
