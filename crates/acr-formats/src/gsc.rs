@@ -5,7 +5,7 @@
 //! ```text
 //! header   14 bytes  "GSCfmt" | u16 version (0x0200) | u8 ? (0xCD) | u8 xor_key (0x78) | u32 count
 //! entries  count * 81 bytes
-//!            u32  checksum (unverified)
+//!            u32  name hash, see [`name_hash`]
 //!            [u8; 64] name, NUL padded, e.g. "0\AGEW_1.PAL"
 //!            u32  !offset   (bitwise NOT of the offset relative to the data block)
 //!            u32  size
@@ -35,7 +35,8 @@ pub struct GscEntry {
     pub offset: u64,
     pub size: u32,
     pub encrypted: bool,
-    pub checksum: u32,
+    /// Hash of the upper-case name ([`name_hash`]) the original compares before the name.
+    pub name_hash: u32,
 }
 
 /// The parsed entry table of an archive.
@@ -76,7 +77,7 @@ impl GscIndex {
                     offset: data_start + u64::from(!u32_at(68)),
                     size: u32_at(72),
                     encrypted: e[80] != 0,
-                    checksum: u32_at(0),
+                    name_hash: u32_at(0),
                 };
                 if entry.offset + u64::from(entry.size) > archive_len {
                     return Err(invalid(&format!("entry {} points past end of archive", entry.name)));
@@ -130,6 +131,24 @@ impl<R: Read + Seek> GscArchive<R> {
         self.source.read_exact(&mut data)?;
         self.index.decrypt(entry, &mut data);
         Ok(data)
+    }
+}
+
+/// The hash the original stores per entry for fast lookups (`0x405098`, called from
+/// `CGSCarch::GetFileHandle`): the upper-cased name in a zeroed 64-byte buffer, read as 16
+/// big-endian u32 words and summed with wrap-around.
+pub fn name_hash(name: &str) -> u32 {
+    let mut buf = [0u8; NAME_LEN];
+    for (b, c) in buf.iter_mut().zip(name.bytes()) {
+        *b = c.to_ascii_uppercase();
+    }
+    buf.as_chunks::<4>().0.iter().fold(0u32, |sum, word| sum.wrapping_add(u32::from_be_bytes(*word)))
+}
+
+impl GscEntry {
+    /// Whether the stored hash fits the name; false means a damaged entry table.
+    pub fn hash_matches(&self) -> bool {
+        self.name_hash == name_hash(&self.name)
     }
 }
 
@@ -187,6 +206,13 @@ mod tests {
         let mut bytes = data[e.offset as usize..][..e.size as usize].to_vec();
         index.decrypt(e, &mut bytes);
         assert_eq!(bytes, b"Hi\r\n");
+    }
+
+    #[test]
+    fn name_hash_matches_the_original() {
+        // Values stored in ALL.GSC for these names.
+        assert_eq!(name_hash(r"0\0TO1.XLT"), 0xcbe1_5eac);
+        assert_eq!(name_hash(r"0\agew_1.pal"), 0xa403_e1c4);
     }
 
     #[test]
