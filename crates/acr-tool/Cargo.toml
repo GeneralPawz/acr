@@ -1,0 +1,13 @@
+[package]
+name = "acr-tool"
+description = "Command-line tools for inspecting American Conquest game data"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "acr"
+path = "src/main.rs"
+
+[dependencies]
+acr-formats.workspace = true

@@ -1,0 +1,5 @@
+/target
+# Never commit original game data - users bring their own copy.
+/extracted
+*.GSC
+*.GS1

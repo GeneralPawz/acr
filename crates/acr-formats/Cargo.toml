@@ -1,0 +1,8 @@
+[package]
+name = "acr-formats"
+description = "Readers for American Conquest / Cossacks data formats"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
