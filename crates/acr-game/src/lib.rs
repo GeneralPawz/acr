@@ -193,6 +193,18 @@ impl Game {
                 self.audio.stop();
                 event_loop.exit();
             }
+            ui::Action::Settings(settings) => {
+                let (effects, music) = settings.volumes();
+                self.audio.set_volumes(effects, music);
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Some(window) = &self.window
+                    && window.fullscreen().is_none()
+                {
+                    let [w, h] =
+                        ui::settings::RESOLUTIONS[settings.resolution.min(ui::settings::RESOLUTIONS.len() - 1)];
+                    let _ = window.request_inner_size(winit::dpi::PhysicalSize::new(w, h));
+                }
+            }
             ui::Action::StartGame(setup) => {
                 log::info!("starting {setup:?}");
                 let game = ingame::InGame::new(setup);

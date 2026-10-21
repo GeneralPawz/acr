@@ -12,7 +12,9 @@ pub mod dialog;
 pub mod draw;
 pub mod fonts;
 pub mod library;
+pub mod missions;
 pub mod screens;
+pub mod settings;
 pub mod setup;
 pub mod texts;
 
@@ -22,6 +24,7 @@ use crate::canvas::Canvas;
 use draw::{Draw, Textures};
 use fonts::Fonts;
 use library::Library;
+pub use settings::Settings;
 pub use setup::{Difficulty, GameKind, GameSetup, MissionSetup};
 use texts::Texts;
 
@@ -34,6 +37,8 @@ pub enum Action {
     None,
     Quit,
     StartGame(Box<GameSetup>),
+    /// The options changed; apply volumes and window size.
+    Settings(Box<Settings>),
 }
 
 pub use dialog::Key;
@@ -69,6 +74,7 @@ pub struct Ctx<'a> {
     pub lib: &'a Library,
     pub fonts: &'a Fonts,
     pub texts: &'a Texts,
+    pub settings: &'a Settings,
 }
 
 /// What a screen wants after handling input or a tick.
@@ -82,6 +88,8 @@ pub enum Nav {
     Return(i32),
     Quit,
     Start(Box<GameSetup>),
+    /// Store new options and close this screen.
+    Apply(Box<Settings>),
 }
 
 pub trait Screen {
@@ -122,6 +130,7 @@ pub struct Ui {
     mouse: Option<[f32; 2]>,
     sounds: Vec<String>,
     tick_time: f64,
+    settings: Settings,
 }
 
 impl Ui {
@@ -140,6 +149,7 @@ impl Ui {
             mouse: None,
             sounds: Vec::new(),
             tick_time: 0.0,
+            settings: Settings::default(),
         };
         ui.stack.push(Entry { screen: Box::new(screens::main_menu::MainMenu::default()), built: false });
         ui
@@ -176,7 +186,7 @@ impl Ui {
     }
 
     fn ctx(&self) -> Ctx<'_> {
-        Ctx { lib: &self.lib, fonts: &self.fonts, texts: &self.texts }
+        Ctx { lib: &self.lib, fonts: &self.fonts, texts: &self.texts, settings: &self.settings }
     }
 
     /// Loads texts and fonts, then builds the top screen once its files are there.
@@ -202,11 +212,14 @@ impl Ui {
         if top.built {
             return;
         }
-        let ctx = Ctx { lib: &self.lib, fonts: &self.fonts, texts: &self.texts };
+        let ctx = Ctx { lib: &self.lib, fonts: &self.fonts, texts: &self.texts, settings: &self.settings };
         let assets = top.screen.assets(&ctx);
-        if !assets.iter().all(|p| self.lib.settled(p)) {
+        let waiting: Vec<&String> = assets.iter().filter(|p| !self.lib.settled(p)).collect();
+        if !waiting.is_empty() {
+            log::debug!("screen waits for {waiting:?}");
             return;
         }
+        log::debug!("building screen {}", self.stack.len());
         let top = self.stack.last_mut().unwrap();
         top.screen.build(&ctx);
         top.built = true;
@@ -230,7 +243,7 @@ impl Ui {
         let mut action = Action::None;
         while self.tick_time >= 1.0 / TICK_RATE {
             self.tick_time -= 1.0 / TICK_RATE;
-            let ctx = Ctx { lib: &self.lib, fonts: &self.fonts, texts: &self.texts };
+            let ctx = Ctx { lib: &self.lib, fonts: &self.fonts, texts: &self.texts, settings: &self.settings };
             let nav = self.stack.last_mut().map_or(Nav::Stay, |e| e.screen.tick(&ctx));
             self.collect_sounds();
             action = self.navigate(nav);
@@ -249,7 +262,7 @@ impl Ui {
         if !self.ready() {
             return Action::None;
         }
-        let ctx = Ctx { lib: &self.lib, fonts: &self.fonts, texts: &self.texts };
+        let ctx = Ctx { lib: &self.lib, fonts: &self.fonts, texts: &self.texts, settings: &self.settings };
         let nav = self.stack.last_mut().unwrap().screen.input(&ctx, input);
         self.collect_sounds();
         self.navigate(nav)
@@ -268,6 +281,7 @@ impl Ui {
         match nav {
             Nav::Stay => Action::None,
             Nav::Push(screen) => {
+                log::debug!("opening screen {}", self.stack.len() + 1);
                 self.stack.push(Entry { screen, built: false });
                 Action::None
             }
@@ -277,12 +291,18 @@ impl Ui {
             }
             Nav::Return(value) => {
                 self.stack.pop();
-                let ctx = Ctx { lib: &self.lib, fonts: &self.fonts, texts: &self.texts };
+                let ctx = Ctx { lib: &self.lib, fonts: &self.fonts, texts: &self.texts, settings: &self.settings };
                 let nav = self.stack.last_mut().map_or(Nav::Quit, |e| e.screen.on_return(&ctx, value));
                 let action = self.navigate(nav);
                 if action == Action::None { self.after_pop() } else { action }
             }
             Nav::Quit => Action::Quit,
+            Nav::Apply(settings) => {
+                self.settings = (*settings).clone();
+                self.stack.pop();
+                self.after_pop();
+                Action::Settings(settings)
+            }
             Nav::Start(setup) => {
                 self.stack.clear();
                 self.stack.push(Entry { screen: Box::new(screens::loading::Loading::default()), built: false });
@@ -297,10 +317,32 @@ impl Ui {
         }
         self.textures.trim();
         if let Some(p) = self.mouse {
-            let ctx = Ctx { lib: &self.lib, fonts: &self.fonts, texts: &self.texts };
+            let ctx = Ctx { lib: &self.lib, fonts: &self.fonts, texts: &self.texts, settings: &self.settings };
             self.stack.last_mut().unwrap().screen.input(&ctx, Input::MouseMove(p));
         }
         Action::None
+    }
+
+    /// Stack depth and whether the top screen is built, for debugging.
+    pub fn debug_state(&self) -> String {
+        format!("stack {} built {:?}", self.stack.len(), self.stack.iter().map(|e| e.built).collect::<Vec<_>>())
+    }
+
+    /// Rasterizes the current frame's sprites on the CPU (for tests and probes); returns
+    /// the number of draws.
+    pub fn debug_rasterize(&self) -> usize {
+        let mut draws = Vec::new();
+        if let Some(entry) = self.stack.iter().rev().find(|e| e.built) {
+            entry.screen.draw(&self.ctx(), &mut draws);
+        }
+        for d in &draws {
+            let _ = draw::rasterize(&self.lib, &self.fonts, &d.sprite);
+        }
+        draws.len()
+    }
+
+    pub fn settings(&self) -> &Settings {
+        &self.settings
     }
 
     /// Image draws for the current frame, in window pixels.
