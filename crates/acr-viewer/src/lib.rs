@@ -10,7 +10,6 @@
 mod map;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
-mod objects;
 mod sprites;
 #[cfg(target_arch = "wasm32")]
 mod web;

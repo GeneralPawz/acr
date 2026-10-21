@@ -10,7 +10,7 @@ use acr_render::terrain::{Camera, GroundAssets, TerrainData, TerrainRenderer};
 use winit::keyboard::{Key, NamedKey};
 
 use crate::Loader;
-use crate::objects::Objects;
+use acr_render::objects_view::ObjectsView as Objects;
 
 /// Scroll speed in output pixels per second.
 const SCROLL_SPEED: f32 = 1400.0;
