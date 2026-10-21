@@ -49,8 +49,8 @@ crates/
   acr-sim       deterministic fixed-tick simulation (clock, RNG; game rules to come)
   acr-script    mission/AI scripting: PE reader now, x86 interpreter + API later
   acr-video     Bink 1 video + audio decoder for the intro movies (native + wasm32)
-  acr-render    wgpu renderer: palette-indexed sprite atlas, layer blend modes
-  acr-viewer    sprite viewer app (winit); native binary and wasm entry point
+  acr-render    wgpu renderer: palette-indexed sprite atlas, layer blend modes, map terrain
+  acr-viewer    sprite and map viewer app (winit); native binary and wasm entry point
   acr-tool      `acr` CLI for inspecting game data and validating decoders
 xtask/          build automation in Rust (`cargo xtask web|serve`)
 docs/formats/   reverse-engineered format specifications with evidence
@@ -103,6 +103,8 @@ cargo run --release -p acr-tool -- bik-check "C:\path\to\American Conquest"
 
 # Sprite viewer (Left/Right file, Up/Down frame, Space play, G grid, +/- zoom, 1-8 player)
 cargo run --release -p acr-viewer -- "C:\path\to\American Conquest" ENGB17C.GP
+# Map viewer (arrows/window edge/right drag scroll, wheel or +/- zoom, PageUp/PageDown map, Tab: sprites)
+cargo run --release -p acr-viewer -- "C:\path\to\American Conquest" --map eng01 --zoom 0.5
 
 # Browser build: pick the game folder in the page ...
 cargo xtask serve --release
@@ -119,5 +121,6 @@ Requires the `wasm32-unknown-unknown` target for the browser build
 - [`GPAK` sprites](docs/formats/gp.md)
 - [Fonts (`RLCFont`, `.GPI`, `.RLC`)](docs/formats/fonts.md)
 - [`.m3d` maps](docs/formats/m3d.md)
+- [Terrain rendering](docs/formats/terrain.md)
 - [Units, buildings, nations, sounds, map pieces](docs/formats/definitions.md)
 - [Mission/AI scripting API](docs/script-api.md) (generated)
