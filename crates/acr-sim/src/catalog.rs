@@ -58,6 +58,26 @@ impl AnimInfo {
     }
 }
 
+/// One attack index of an object type (`.MD` keywords taking an attack index first).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct Attack {
+    pub index: u8,
+    /// `ATTACK_RADIUS i min max` (world pixels).
+    pub radius: (i32, i32),
+    /// `DET_RADIUS i min max`.
+    pub detect: (i32, i32),
+    /// `ATTACK_PAUSE i p`.
+    pub pause: i32,
+    /// `DAMAGE i v`.
+    pub damage: i32,
+    /// `WEAPONKIND i KIND` (`NRES.DAT [WEAPONS]`: `MECH`, `PIKA`, `VISTREL`, ...).
+    pub kind: Option<String>,
+    /// `WEAPON i ID` (projectile from `WEAPON.NDS`), ranged attacks only.
+    pub weapon: Option<String>,
+    /// `ATTACK_ANGLES i min max`.
+    pub angles: Option<(i32, i32)>,
+}
+
 /// One unit or building type.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ObjectType {
@@ -93,6 +113,12 @@ pub struct ObjectType {
     pub motion_r: Option<AnimInfo>,
     pub rest: Option<AnimInfo>,
     pub rest1: Option<AnimInfo>,
+    /// Attack indices that have a radius, a damage or a weapon, by index.
+    pub attacks: Vec<Attack>,
+    /// `PROTECTION n (KIND v)*n`: armour per weapon kind.
+    pub protection: Vec<(String, i32)>,
+    /// `SEARCH_ENEMY_RADIUS` (0 if absent).
+    pub search_radius: i32,
 }
 
 impl ObjectType {
@@ -132,6 +158,12 @@ impl ObjectType {
             motion_r: AnimInfo::of(def.animation("MOTION_R")),
             rest: AnimInfo::of(def.animation("REST")),
             rest1: AnimInfo::of(def.animation("REST1")),
+            attacks: attacks(def),
+            protection: def
+                .get("PROTECTION")
+                .map(|c| c.word_int_pairs(0).into_iter().map(|(k, v)| (k.to_ascii_uppercase(), v)).collect())
+                .unwrap_or_default(),
+            search_radius: int("SEARCH_ENEMY_RADIUS", 0),
         }
     }
 
@@ -161,6 +193,49 @@ impl ObjectType {
     pub fn motion_frames(&self) -> i32 {
         self.motion_l.map_or(1, |a| i32::from(a.frames))
     }
+}
+
+fn attack_slot(v: &mut Vec<Attack>, i: i32) -> Option<&mut Attack> {
+    let i = u8::try_from(i).ok().filter(|&i| i < 16)?;
+    let pos = match v.iter().position(|a| a.index == i) {
+        Some(p) => p,
+        None => {
+            v.push(Attack { index: i, ..Attack::default() });
+            v.len() - 1
+        }
+    };
+    Some(&mut v[pos])
+}
+
+/// Collects the per-attack-index keywords; later commands override earlier ones.
+fn attacks(def: &UnitDef) -> Vec<Attack> {
+    let mut v: Vec<Attack> = Vec::new();
+    for c in &def.commands {
+        let (Some(i), a1, a2) = (c.int(0), c.int(1), c.int(2)) else { continue };
+        match c.keyword.as_str() {
+            "ATTACK_RADIUS" => {
+                attack_slot(&mut v, i).into_iter().for_each(|a| a.radius = (a1.unwrap_or(0), a2.unwrap_or(0)))
+            }
+            "DET_RADIUS" => {
+                attack_slot(&mut v, i).into_iter().for_each(|a| a.detect = (a1.unwrap_or(0), a2.unwrap_or(0)))
+            }
+            "ATTACK_PAUSE" => attack_slot(&mut v, i).into_iter().for_each(|a| a.pause = a1.unwrap_or(0)),
+            "DAMAGE" => attack_slot(&mut v, i).into_iter().for_each(|a| a.damage = a1.unwrap_or(0)),
+            "ATTACK_ANGLES" => attack_slot(&mut v, i).into_iter().for_each(|a| a.angles = a1.zip(a2)),
+            "WEAPONKIND" => {
+                let w = c.word(1).map(str::to_ascii_uppercase);
+                attack_slot(&mut v, i).into_iter().for_each(|a| a.kind = w.clone());
+            }
+            "WEAPON" => {
+                let w = c.word(1).map(str::to_owned);
+                attack_slot(&mut v, i).into_iter().for_each(|a| a.weapon = w.clone());
+            }
+            _ => {}
+        }
+    }
+    v.retain(|a| a.radius.1 > 0 || a.damage > 0 || a.weapon.is_some());
+    v.sort_by_key(|a| a.index);
+    v
 }
 
 /// All object types of a match, indexed by [`TypeId`] in insertion order.
@@ -239,6 +314,32 @@ LOCKPOINTS 2 7 49 260 80
         // 260 is stored as a byte: 4.
         let cells: Vec<_> = t.lock_cells(crate::Pos::new(6480 + 256 * 10, 14400 + 256 * 20)).collect();
         assert_eq!(cells, [(17, 69), (14, 100)]);
+    }
+
+    #[test]
+    fn collects_attacks_and_protection() {
+        let def = UnitDef::parse(
+            b"NAME M
+DAMAGE 0 15
+DAMAGE 1 380
+ATTACK_RADIUS 0 40 80
+ATTACK_RADIUS 1 250 850
+              ATTACK_PAUSE 1 550
+ATTACK_RADIUS 3 0 0
+WEAPONKIND 1 VISTREL
+WEAPON 1 SHOT
+              PROTECTION 2 PIKA 1 VISTREL 10
+SEARCH_ENEMY_RADIUS 850
+[END]
+",
+        );
+        let t = ObjectType::from_def("M(EN)", &def);
+        assert_eq!(t.attacks.len(), 2, "index 3 has no radius, damage or weapon");
+        let shot = &t.attacks[1];
+        assert_eq!((shot.index, shot.radius, shot.pause, shot.damage), (1, (250, 850), 550, 380));
+        assert_eq!((shot.kind.as_deref(), shot.weapon.as_deref()), (Some("VISTREL"), Some("SHOT")));
+        assert_eq!(t.protection, [("PIKA".into(), 1), ("VISTREL".into(), 10)]);
+        assert_eq!(t.search_radius, 850);
     }
 
     #[test]
