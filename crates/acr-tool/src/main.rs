@@ -1,6 +1,7 @@
 //! `acr` - inspect and extract original American Conquest data.
 
 mod audio;
+mod images;
 
 use std::collections::BTreeMap;
 use std::io::{self, Write};
@@ -26,7 +27,8 @@ usage:
                 peace, ground0, ground1
   acr script-api <game-dir>   (markdown report of the API missions/AI import)
   acr audio-check <game-dir>  (decode every sound effect and music track)
-  acr play <game-dir> <path>  (play a .wav or .ogg on the default device)";
+  acr play <game-dir> <path>  (play a .wav or .ogg on the default device)
+  acr bmp-png <game-dir> <bmp> <out.png>   (--pal of gp-sheet also accepts a .BMP)";
 
 /// Palette used for unit and building sprites unless overridden.
 const DEFAULT_PALETTE: &str = "0\\AGEW_1.PAL";
@@ -51,6 +53,7 @@ fn main() -> ExitCode {
             ["--layer", layer] => m3d_png(Path::new(dir), map, Path::new(out), layer),
             _ => Err("expected --layer NAME".into()),
         },
+        ["bmp-png", dir, bmp, out] => images::bmp_png(Path::new(dir), bmp, Path::new(out)),
         _ => {
             eprintln!("{USAGE}");
             return ExitCode::from(2);
@@ -136,7 +139,7 @@ impl SheetOptions {
 /// Renders the frames of a sprite pack into one grid image.
 fn gp_sheet(dir: &Path, gp: &str, out: &Path, o: &SheetOptions) -> Result<()> {
     let mut vfs = Vfs::open_game_dir(dir)?;
-    let palette = Palette::parse(&vfs.read(&o.palette)?).ok_or("palette too short")?;
+    let palette = images::load_palette(&mut vfs, &o.palette)?;
     let file = GpFile::parse(vfs.read(gp)?)?;
 
     let range = o.frames.clone().unwrap_or(0..file.frame_count());

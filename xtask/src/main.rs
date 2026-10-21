@@ -1,6 +1,6 @@
 //! Build automation, kept in Rust so the project needs no extra tools.
 //!
-//! - `cargo xtask web [--release]`    build the browser viewer into `target/web`
+//! - `cargo xtask web [--release] [--app game|viewer]`    build a browser app into `target/web/<app>`
 //! - `cargo xtask serve [--release] [--port N] [--game-dir DIR]`   build, then serve it on
 //!   localhost; with `--game-dir`, the archives are served under `/game/` with range
 //!   support and `http://127.0.0.1:N/?game=/game/` opens the viewer without a file picker
@@ -13,7 +13,8 @@ use std::process::{Command, ExitCode};
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 const WASM_TARGET: &str = "wasm32-unknown-unknown";
-const VIEWER_CRATE: &str = "acr-viewer";
+/// Apps with a browser build: `--app game` (default) or `--app viewer`.
+const APPS: [&str; 2] = ["game", "viewer"];
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -21,9 +22,14 @@ fn main() -> ExitCode {
     let option = |name: &str| args.windows(2).find(|w| w[0] == name).map(|w| w[1].clone());
     let port = option("--port").and_then(|p| p.parse().ok()).unwrap_or(8080);
     let game_dir = option("--game-dir").map(PathBuf::from);
+    let app = option("--app").unwrap_or_else(|| APPS[0].to_owned());
+    if !APPS.contains(&app.as_str()) {
+        eprintln!("xtask: unknown app {app}, expected one of {APPS:?}");
+        return ExitCode::from(2);
+    }
     let result = match args.first().map(String::as_str) {
-        Some("web") => build_web(release).map(|_| ()),
-        Some("serve") => build_web(release).and_then(|dir| serve(&dir, game_dir.as_deref(), port)),
+        Some("web") => build_web(&app, release).map(|_| ()),
+        Some("serve") => build_web(&app, release).and_then(|dir| serve(&dir, game_dir.as_deref(), port)),
         _ => {
             eprintln!(
                 "usage: cargo xtask web [--release]\n       cargo xtask serve [--release] [--port N] [--game-dir DIR]"
@@ -45,11 +51,13 @@ fn workspace_root() -> PathBuf {
 }
 
 /// Compiles the viewer to wasm, generates JS bindings and copies the static page.
-fn build_web(release: bool) -> Result<PathBuf> {
+fn build_web(app: &str, release: bool) -> Result<PathBuf> {
+    let krate = format!("acr-{app}");
+    let lib = format!("acr_{app}");
     let root = workspace_root();
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let mut build = Command::new(cargo);
-    build.current_dir(&root).args(["build", "--package", VIEWER_CRATE, "--lib", "--target", WASM_TARGET]);
+    build.current_dir(&root).args(["build", "--package", &krate, "--lib", "--target", WASM_TARGET]);
     if release {
         build.arg("--release");
     }
@@ -58,17 +66,17 @@ fn build_web(release: bool) -> Result<PathBuf> {
     }
 
     let profile = if release { "release" } else { "debug" };
-    let wasm = root.join("target").join(WASM_TARGET).join(profile).join("acr_viewer.wasm");
-    let out = root.join("target").join("web");
+    let wasm = root.join("target").join(WASM_TARGET).join(profile).join(format!("{lib}.wasm"));
+    let out = root.join("target").join("web").join(app);
     std::fs::create_dir_all(&out)?;
     wasm_bindgen_cli_support::Bindgen::new()
         .input_path(&wasm)
-        .out_name("acr_viewer")
+        .out_name(&lib)
         .web(true)?
         .typescript(false)
         .debug(!release)
         .generate(&out)?;
-    std::fs::copy(root.join("crates/acr-viewer/web/index.html"), out.join("index.html"))?;
+    std::fs::copy(root.join("crates").join(&krate).join("web/index.html"), out.join("index.html"))?;
     eprintln!("web build ready in {}", out.display());
     Ok(out)
 }

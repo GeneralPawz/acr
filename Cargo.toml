@@ -13,3 +13,4 @@ acr-script = { path = "crates/acr-script" }
 acr-sim = { path = "crates/acr-sim" }
 acr-render = { path = "crates/acr-render" }
 acr-audio = { path = "crates/acr-audio" }
+acr-app = { path = "crates/acr-app" }

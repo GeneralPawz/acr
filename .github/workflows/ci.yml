@@ -57,8 +57,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: >-
           cargo clippy --locked --target wasm32-unknown-unknown
-          -p acr-formats -p acr-sim -p acr-script -p acr-render -p acr-viewer -- -D warnings
-      - run: cargo xtask web --release
+          -p acr-formats -p acr-sim -p acr-script -p acr-render -p acr-audio -p acr-app -p acr-viewer -p acr-game
+          -- -D warnings
+      - run: cargo xtask web --release --app game && cargo xtask web --release --app viewer
       - uses: actions/upload-artifact@v4
         with:
           name: acr-web
@@ -82,11 +83,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
-      - run: cargo build --release --locked --target ${{ matrix.target }} --bin acr --bin acr-viewer
+      - run: cargo build --release --locked --target ${{ matrix.target }} --bin acr --bin acr-viewer --bin AmericanConquest
       - uses: actions/upload-artifact@v4
         with:
           name: acr-windows-${{ matrix.arch }}
           path: |
             target/${{ matrix.target }}/release/acr.exe
             target/${{ matrix.target }}/release/acr-viewer.exe
+            target/${{ matrix.target }}/release/AmericanConquest.exe
           if-no-files-found: error

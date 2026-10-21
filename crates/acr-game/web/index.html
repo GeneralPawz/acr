@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>American Conquest</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #29381f; color: #e8e2cf; font: 15px/1.5 system-ui, sans-serif; overflow: hidden; }
+    /* !important: winit writes an inline size on the canvas. */
+    canvas { display: block; width: 100vw !important; height: 100vh !important; outline: none; }
+    #picker { position: fixed; inset: 0; display: grid; place-content: center; text-align: center; gap: 12px; padding: 16px; }
+    #picker h1 { margin: 0; font-size: 22px; }
+    #picker p { margin: 0; max-width: 34em; opacity: .8; }
+    #picker label { justify-self: center; padding: 10px 18px; border-radius: 6px; background: #c9a75a; color: #1d1a12; font-weight: 600; cursor: pointer; }
+    #picker input { display: none; }
+    #error { color: #ff9b8a; }
+  </style>
+</head>
+<body>
+  <div id="picker">
+    <h1>American Conquest</h1>
+    <p>Choose your American Conquest installation folder. Files stay on this computer; only the
+       archives' tables of contents are read up front.</p>
+    <label>Choose game folder<input id="dir" type="file" webkitdirectory multiple></label>
+    <p id="error"></p>
+  </div>
+  <script type="module">
+    import init, { start, start_url } from './acr_game.js';
+    await init({ module_or_path: new URL('./acr_game_bg.wasm', import.meta.url) });
+    const run = async (launch) => {
+      try {
+        await launch();
+        document.getElementById('picker').remove();
+      } catch (err) {
+        document.getElementById('error').textContent = String(err);
+      }
+    };
+    // `?game=/game/` loads the archives over HTTP (see `cargo xtask serve --game-dir`).
+    const base = new URLSearchParams(location.search).get('game');
+    if (base) {
+      run(async () => {
+        const names = (await (await fetch(base)).text()).split('\n').filter((n) => n && n.toUpperCase() !== 'ALL.GSC');
+        await start_url(base, names);
+      });
+    }
+    document.getElementById('dir').addEventListener('change', (e) => run(() => start(Array.from(e.target.files))));
+  </script>
+</body>
+</html>
