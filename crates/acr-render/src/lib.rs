@@ -17,6 +17,7 @@ pub mod scene;
 pub mod shadow;
 pub mod terrain;
 pub mod view3d;
+pub mod water;
 
 use std::ops::Range;
 

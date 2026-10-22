@@ -82,6 +82,9 @@ pub struct ThreeD {
     gore: Gore,
     /// Sun shadows of the models (`shadows` setting; [`set_shadows_override`] wins).
     shadows: bool,
+    /// The water surface (`water=detailed`, docs/water.md); `ACR_WATER` wins.
+    water_detailed: bool,
+    water: Option<acr_render::water::WaterRenderer>,
     /// How long 3D corpses lie (ticks, `corpse_minutes`).
     corpse_ticks: u64,
     free: bool,
@@ -153,6 +156,8 @@ impl Default for ThreeD {
             models: Models::Off,
             gore: Gore::Full,
             shadows: true,
+            water_detailed: true,
+            water: None,
             corpse_ticks: CORPSE_MINUTES * 60 * acr_sim::ORIGINAL_TICKS_PER_SECOND as u64,
             free: false,
             orbit: Orbit::ORIGINAL,
@@ -190,6 +195,7 @@ impl ThreeD {
         self.models = settings.models;
         self.gore = settings.gore;
         self.shadows = settings.shadows;
+        self.water_detailed = settings.water_detailed;
         self.corpse_ticks = u64::from(settings.corpse_minutes) * 60 * acr_sim::ORIGINAL_TICKS_PER_SECOND as u64;
         self.free = settings.camera == CameraMode::Free;
         log::info!("3d: models {:?}, camera {:?}, gore {:?}", settings.models, settings.camera, settings.gore);
@@ -278,6 +284,7 @@ impl ThreeD {
         }
         let renderer = self.renderer.get_or_insert_with(|| ModelRenderer::new(device, queue, format));
         self.depth.get_or_insert_with(|| DepthTarget::new(device, format));
+        self.water.get_or_insert_with(|| acr_render::water::WaterRenderer::new(device, format));
         for (name, model) in self.parsed.drain(..) {
             if name == GORE {
                 // The pack is split into its nodes; the torn cap replaces the procedural one
@@ -773,6 +780,13 @@ impl ThreeD {
             camera,
             Some(Placement { view: &view3d, terrain, on_top: self.compare == Compare::Overlay }),
         );
+        let water = match self.water.as_mut() {
+            Some(w) if !objects.zoomed && (self.free || water_detailed(self.water_detailed)) => {
+                let seconds = self.started.elapsed().as_secs_f32();
+                w.prepare(device, queue, terrain, &view3d, seconds, water_detailed(self.water_detailed)).then_some(&*w)
+            }
+            _ => None,
+        };
         renderer.render_shadows(encoder);
         let mut pass = depth.begin(device, encoder, view, size);
         if let Some(ground) = ground {
@@ -781,6 +795,9 @@ impl ThreeD {
         renderer.render(&mut pass);
         if let Some(ground) = ground {
             ground.render_shadows(device, &mut pass, renderer.shadow());
+        }
+        if let Some(water) = water {
+            water.render(&mut pass);
         }
         depth.reset_ground(&mut pass);
         if sprites {
@@ -804,6 +821,25 @@ impl ThreeD {
             self.since = Some(now);
         }
     }
+}
+
+impl ThreeD {
+    /// True when this frame's 3D pass draws the water surface in place of the terrain's
+    /// depth tint (`water=detailed`, models on and their renderer up, not zoomed out).
+    pub fn draws_water(&self, zoomed: bool) -> bool {
+        self.active() && self.renderer.is_some() && !zoomed && water_detailed(self.water_detailed)
+    }
+}
+
+/// `water=detailed` unless `ACR_WATER=original` (native) says otherwise, or the reverse.
+fn water_detailed(setting: bool) -> bool {
+    #[cfg(not(target_arch = "wasm32"))]
+    match std::env::var("ACR_WATER").as_deref() {
+        Ok("original") => return false,
+        Ok("detailed") => return true,
+        _ => {}
+    }
+    setting
 }
 
 /// Shadows forced on (2) or off (1) for tests, over the setting: `ACR_SHADOWS=on|off` or

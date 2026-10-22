@@ -72,7 +72,7 @@ acr-game
 1. **Terrain colour** as before (palette ground target, present pass). Under the free camera
    the ground triangles go through the 3D view matrix instead and are depth-tested among
    themselves (hills no longer come in row order); the water tint, which works on screen
-   blocks of the original view, is left out.
+   blocks of the original view, is left out (the water surface below replaces it).
 2. **Shadow map** (`shadows=on`, models drawn): the models once more from the sun into a
    depth texture (below).
 3. **3D pass** (one render pass, depth + stencil `Depth24PlusStencil8` at output size):
@@ -83,6 +83,9 @@ acr-game
       the sun unless the shadow map says it is blocked;
    3. *ground shadows* (`vs_ground_shadow`): the terrain mesh again, placed as in step 1 with
       a depth test, darkening the drawn ground where the shadow map has a caster;
+   3b. *water surface* (`water.rs`, docs/water.md): Gerstner waves, depth colour over the
+      lakebed, Fresnel sky and shore foam, depth-tested and not written; with
+      `water=detailed` it replaces the tint of step 1 (also under the free camera);
    4. *ground reset*: a full-screen triangle at the far plane where stencil is 0, so the
       sprites draw over the terrain as in the original;
    5. *sprites* in their usual order with a depth test (no writes) against the models.
@@ -643,8 +646,8 @@ the frame rate, the models drawn and the poses sampled.
 - No meshopt/Draco decoding, no KTX2 or JPEG textures: export models uncompressed with PNG
   textures (the pipeline's default).
 - No shadows from models; no nation colour mask yet (#162); no LODs.
-- Free camera: fog of war, the minimap frame and the water tint follow the original view
-  only; sprites (trees, units without models) show their stored direction.
+- Free camera: fog of war and the minimap frame follow the original view only (water: the
+  surface of docs/water.md, a flat one under `water=original`); sprites (trees, units without models) show their stored direction.
 - Dropped gear (musket, hat) does not detach at death yet, only for crawlers and the
   disarmed (#262 S5); strapped gear floats over a deflated body (assets-humans.md, insight 6).
 - No blending between clips; morph target normals are ignored.

@@ -48,6 +48,9 @@ pub struct Settings {
     /// ACR: sun shadows of the 3D models (`shadows=on|off`, on by default;
     /// docs/rendering-3d.md "Shadows").
     pub shadows: bool,
+    /// ACR: the water surface of the 3D path (`water=detailed|original`, detailed by
+    /// default; docs/water.md): waves, reflection and foam, or the original's depth tint.
+    pub water_detailed: bool,
 }
 
 /// `models=off|units|all`: sprites everywhere (the original), 3D units, 3D units and
@@ -120,6 +123,7 @@ impl Default for Settings {
             hit_locations: false,
             body_spacing: false,
             shadows: true,
+            water_detailed: true,
         }
     }
 }
@@ -185,7 +189,7 @@ impl Settings {
         format!(
             "sound_volume={}\nmusic_volume={}\nmusic_mode={}\ngame_mode={}\nscroll_speed={}\nframe_time={}\n\
              resolution={}\nrecord={}\nrecord_file={hex}\ncontrols={controls}\nedge_scroll={}\n\
-             models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\nhit_locations={}\nbody_spacing={}\nshadows={}\n",
+             models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\nhit_locations={}\nbody_spacing={}\nshadows={}\nwater={}\n",
             self.sound_volume,
             self.music_volume,
             self.music_mode,
@@ -199,6 +203,7 @@ impl Settings {
             if self.hit_locations { "on" } else { "off" },
             if self.body_spacing { "on" } else { "off" },
             if self.shadows { "on" } else { "off" },
+            if self.water_detailed { "detailed" } else { "original" },
         )
     }
 
@@ -239,6 +244,7 @@ impl Settings {
                 "hit_locations" => s.hit_locations = value == "on",
                 "body_spacing" => s.body_spacing = value == "on",
                 "shadows" => s.shadows = value != "off",
+                "water" => s.water_detailed = value != "original",
                 "corpse_minutes" => s.corpse_minutes = int.map_or(s.corpse_minutes, |v| v.clamp(1, 60) as u32),
                 "gore" => {
                     s.gore = match value {
@@ -276,6 +282,7 @@ mod tests {
             camera: CameraMode::Free,
             gore: Gore::Reduced,
             shadows: false,
+            water_detailed: false,
             corpse_minutes: 12,
             hit_locations: true,
             body_spacing: true,

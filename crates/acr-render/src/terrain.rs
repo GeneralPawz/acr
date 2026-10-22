@@ -239,6 +239,11 @@ impl TerrainData {
         self.heights.get(index).copied().map_or(0, i32::from)
     }
 
+    /// The `SEA2` depth grid (32 px cells): width, height and the bytes (water above 127).
+    pub fn water(&self) -> Option<(usize, usize, &[u8])> {
+        self.water.as_ref().map(|(w, h, cells)| (*w, *h, &cells[..]))
+    }
+
     /// Ground height at world pixel `(x, y)`: the plane through the triangle below
     /// (`GetHeight`, 0x4D0530, ported with its integer rounding).
     pub fn height_at(&self, x: i32, y: i32) -> i32 {
@@ -425,6 +430,8 @@ pub struct TerrainRenderer {
     /// A flat colour shown instead of the ground (the driver's blank field, `white` or
     /// `greenscreen`); the terrain still gives the 3D pass its depth.
     pub backdrop: Option<wgpu::Color>,
+    /// The 3D pass draws the water surface (`water.rs`): the depth tint is left out.
+    pub water_surface: bool,
     ground_pipeline: wgpu::RenderPipeline,
     /// The ground under the free camera: depth-tested, the hills no longer come in order.
     free_pipeline: wgpu::RenderPipeline,
@@ -653,6 +660,7 @@ impl TerrainRenderer {
             zoomed: false,
             orbit: None,
             backdrop: None,
+            water_surface: false,
             ground_pipeline,
             free_pipeline,
             depth_pipeline,
@@ -822,7 +830,12 @@ impl TerrainRenderer {
             cells: [cp0, row0, ncp.max(1), map.width as i32],
             map: [map.height as i32, map.water.0 as i32, map.water.1 as i32, i32::from(zoomed)],
             view: view.world_to_clip(),
-            mode: [if view.is_free() { 1.0 } else { 0.0 }, DEPTH_BIAS * 0.5 / DEPTH_RANGE, 0.0, 0.0],
+            mode: [
+                if view.is_free() { 1.0 } else { 0.0 },
+                DEPTH_BIAS * 0.5 / DEPTH_RANGE,
+                if self.water_surface { 1.0 } else { 0.0 },
+                0.0,
+            ],
         };
         queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
         if view.is_free() && self.free_depth.as_ref().is_none_or(|(s, _)| *s != target_size) {

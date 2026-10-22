@@ -17,7 +17,8 @@ struct Globals {
     map: vec4<i32>,
     // World (x east, y south, z true height) to output clip space (view3d.rs).
     view: mat4x4<f32>,
-    // x: free camera (1): the ground goes through `view`; y: depth bias of the depth pass.
+    // x: free camera (1): the ground goes through `view`; y: depth bias of the depth pass;
+    // z: the 3D pass draws a water surface (water.rs, 1): no tint here.
     mode: vec4<f32>,
 };
 
@@ -483,8 +484,9 @@ fn fs_present(in: FullOut) -> @location(0) vec4<f32> {
     let d10 = depth(gx + 1, gy);
     let d01 = depth(gx, gy + 2);
     let d11 = depth(gx + 1, gy + 2);
-    // The water tint works on screen blocks of the original view: not under the free camera.
-    if ((d00 >= 0 || d10 >= 0 || d01 >= 0) && globals.mode.x < 0.5) {
+    // The water tint works on screen blocks of the original view: not under the free camera,
+    // nor under the water surface.
+    if ((d00 >= 0 || d10 >= 0 || d01 >= 0) && globals.mode.x < 0.5 && globals.mode.z < 0.5) {
         let f = vec2<f32>(screen & vec2<i32>(31, 31)) / 32.0;
         let raw = mix(mix(f32(d00), f32(d10), f.x), mix(f32(d01), f32(d11), f.x), f.y) * 1024.0;
         var alpha = i32(clamp(raw, 0.0, 65000.0));

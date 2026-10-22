@@ -4,7 +4,8 @@
 use naga::back::glsl;
 use naga::valid::{Capabilities, ValidationFlags, Validator};
 
-const SHADERS: [(&str, &str); 7] = [
+const SHADERS: [(&str, &str); 8] = [
+    ("water.wgsl", include_str!("../src/water.wgsl")),
     // With the shadow receiver and casters appended (shadow.rs).
     ("model.wgsl", acr_render::model_renderer::MODEL_SHADER),
     ("terrain.wgsl + shadows", acr_render::terrain::TERRAIN_SHADOW_SHADER),
