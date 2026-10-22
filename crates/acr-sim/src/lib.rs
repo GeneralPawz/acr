@@ -5,7 +5,9 @@
 //! - The world only changes in [`Tick`] steps of fixed length. Game speed is how many
 //!   ticks run per real second, never a side effect of frame rate or CPU speed (the
 //!   original engine's flaw).
-//! - No floats in simulation state; use integers or fixed point.
+//! - No floats in simulation state; use integers or fixed point. The one exception is the
+//!   market (`market`), whose rates the original keeps as doubles; it uses only IEEE
+//!   additions, multiplications and divisions, which are exact and identical everywhere.
 //! - All randomness comes from [`Rng`] or [`SyncRandom`], seeded per match.
 //! - Iterate collections in a defined order (no `HashMap` iteration).
 //! - No I/O, no clocks, no platform APIs. The host feeds in elapsed time and commands.
@@ -26,6 +28,7 @@ pub mod formation;
 pub mod gather;
 pub mod hash;
 pub mod map;
+pub mod market;
 pub mod motion;
 pub mod path;
 pub mod replay;

@@ -138,6 +138,12 @@ pub fn sim_check(dir: &Path, map: &str, rest: &[&str]) -> Result<()> {
             researched += 1;
         }
     }
+    // Market: every player sells 1000 wood for gold.
+    if catalog.market.is_some() {
+        for p in 0..8u8 {
+            cmds.push(Command::Trade { player: p, sell: 0, buy: 1, amount: 1000 });
+        }
+    }
     println!(
         "  tech: {} upgrades, {} access rules; {produced} buildings queue a unit, {researched} research",
         tech.upgrades.len(),
@@ -207,7 +213,11 @@ pub fn sim_check(dir: &Path, map: &str, rest: &[&str]) -> Result<()> {
         n - cells.len()
     );
     let done = a.players.iter().map(|p| p.upgrades.iter().filter(|u| u.done).count()).sum::<usize>();
-    println!("  economy: {} objects created, {done} upgrades done", a.units.len() - base.units.len());
+    println!(
+        "  economy: {} objects created, {done} upgrades done; gold buys at {:.4}",
+        a.units.len() - base.units.len(),
+        a.catalog.market.as_ref().and_then(|d| d.slot(1)).map_or(0.0, |s| a.market.buy[s])
+    );
     let dead = a.units.iter().filter(|u| u.death != 0 || !u.alive).count();
     let corpses = a.units.iter().filter(|u| u.alive && u.death != 0).count();
     println!("  combat: {dead} units died ({corpses} corpses still lying)");

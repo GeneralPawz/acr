@@ -484,6 +484,22 @@ Implemented in `economy.rs`. The sources are `City::Census` (0x42e658), the upke
     within `r2 + 8 + r2'` (`GEOMETRY` radii, 0x50a495) in the 3×3 128 px cells around.
   - Cancelling refunds the price at the count when it was queued; progress is lost. There is
     no queue limit.
+- **Market** (`market.rs`; `ECONOMY.TXT` loaded at 0x4a8f82, `PerformOperation` 0x4a9d80,
+  `Process` 0x4aa0af). The rates are global, not per player (unlike Cossacks).
+  - Each of six slots has `RES BUY b0 b1 b2 CHANGE c ex TIMERETURN t SELL s0 s1 s2 CHANGE c'
+    ex' TIMERETURN t'`, read as floats and kept as doubles: `ExpBUY = ex / (c·100)`. The
+    rates start at `b1`/`s1`. The shipped file has `CHANGE 100 1.0 TIMERETURN 0.0001`
+    everywhere; e.g. wood buys at 50 and sells at 30, gold 300/210, food 25/15.
+  - A trade of `amount` (at most the stock) gives `trunc(amount · Sell[sold] / Buy[bought])`.
+    Then with `V = got · ExpBUY[bought]` the bought resource's buy and sell rates become
+    `(r + limit₂ · V) / (1 + V)` (towards `b2`/`s2`), and with `V = amount · ExpSELL[sold]`
+    the sold resource's rates move towards `s0`/`b0` the same way.
+  - Every tick each rate above its normal value drops by `TIMERETURN` and each below rises,
+    sell before buy (here right after the tick's commands).
+  - The doubles follow the engine's (x87 at double precision); intermediate products are
+    rounded to double here, where the engine keeps 80 bits, which can rarely change a
+    truncated result by 1. No market building is required by the simulation (the game's
+    interface asks for one).
 - **Tech tree** (`tech.rs`; nation loader 0x60e7f0, `City::RefreshAbility` 0x42ffed). Every
   nation file goes into one namespace of types and upgrades, as in the engine.
   - A building produces only the types of its `[FIXED_PRODUCE]` list (the produce command
@@ -651,7 +667,8 @@ sum of its four neighbours (centre excluded). This spreads the stamps and decays
   - Economy: `World::players[p]` (`resources`, `population`, `housing`), each building's
     `queue` / `inside` / `mine` / `stage`, `economy::unit_cost`, and `Unit::carried`. The
     commands are `Produce`, `Unproduce`, `Enter`, `Leave`, `Rally`, `Build`, `Repair`,
-    `Gather`, `Upgrade` and `CancelUpgrade`. `economy::producible(w, building)` lists what a
+    `Gather`, `Upgrade`, `CancelUpgrade` and `Trade` (`World::market` holds the rates,
+    `Market::quote` the price of a trade). `economy::producible(w, building)` lists what a
     building can produce now, `upgrade::available(w, building)` what it can research;
     `Unit::research` is the running research; `Player::enabled`, `Player::upgrades` and
     `tech::Tech` hold the tech tree; `World::adv(player, kind)` the upgraded
@@ -701,7 +718,7 @@ sum of its four neighbours (centre excluded). This spreads the stamps and decays
     (an idle one first, else the shortest queue).
   - Synthetic catalogs without nation files have no tech tree: everything is enabled and
     buildings produce anything.
-  - Not reproduced yet: the market, `RESSUBST` type changes, ports and ships; the AI
+  - Not reproduced yet: `RESSUBST` type changes, ports and ships; the AI
     difficulty factor on production time; the 10× cannon price lobby option.
   - Upgrades without effect here: `SPEED` (`Rate`, which no motion code reads), `WEAPON`,
     `PRECISE`, `GETRES`, `SINGLE_ATTPAUSE`, `FISHING`, `SHAR`, `FEAR`, `UNCONSTRUCT`. `ENABLE
@@ -769,6 +786,8 @@ sum of its four neighbours (centre excluded). This spreads the stamps and decays
   - a peasant chops 25 cycles and delivers 100 wood;
   - a centre produces only its list and only enabled types, pikemen once barracks are
     finished (`[ACCESSCONTROL]`), and barracks take no rally point;
+  - a trade of 1000 wood gives 100 gold and moves both rates exactly as the formulas say;
+    they drift back over time;
   - a produced unit ends at its rally point; one with the rally point on trees gets a
     gathering order.
 - **Fog test** (`tests/fog.rs`): a VISION 3 unit lights its cell and 200 px around but not

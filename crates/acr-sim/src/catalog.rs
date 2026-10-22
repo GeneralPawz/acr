@@ -588,6 +588,8 @@ pub struct Catalog {
     weapon_flags: BTreeMap<String, u8>,
     /// The nations' tech tree (build lists, upgrades, availability).
     pub tech: crate::tech::Tech,
+    /// The market's rate table (`ECONOMY.TXT`); without it there is no trade.
+    pub market: Option<crate::market::MarketDef>,
 }
 
 impl Catalog {

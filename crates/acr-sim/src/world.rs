@@ -326,6 +326,8 @@ pub struct World {
     pub deposits: Vec<crate::economy::Deposit>,
     /// Gathering sources (trees, ...), static.
     pub sources: Arc<crate::gather::Sources>,
+    /// The market's current rates, shared by all players.
+    pub market: crate::market::Market,
 }
 
 /// Unit indices per 128 px cell (8 × 8 lock cells).
@@ -377,6 +379,7 @@ impl World {
     pub fn new(map: Arc<MapGrid>, catalog: Arc<Catalog>, formations: Arc<Formations>) -> Self {
         let occupancy = LockMap::new(map.land.width, map.land.height);
         let players = std::array::from_fn(|_| Player::new(&catalog));
+        let market = catalog.market.as_ref().map(crate::market::Market::new).unwrap_or_default();
         Self {
             tick: Tick(0),
             catalog,
@@ -391,6 +394,7 @@ impl World {
             buckets: Buckets::default(),
             deposits: Vec::new(),
             sources: Arc::new(crate::gather::Sources::default()),
+            market,
         }
     }
 
@@ -580,6 +584,9 @@ impl World {
         for c in commands {
             self.apply(c);
         }
+        if let Some(def) = &self.catalog.market {
+            self.market.process(def);
+        }
         crate::formation::run_brigades(self);
         self.buckets.rebuild(self.map.land.width, &self.units);
         crate::economy::census(self, (self.tick.0 & 7) as u8);
@@ -714,6 +721,11 @@ impl World {
                     crate::upgrade::cancel(self, b);
                 }
             }
+            Command::Trade { player, sell, buy, amount } => {
+                if usize::from(*player) < PLAYERS {
+                    crate::market::trade(self, *player, usize::from(*sell), usize::from(*buy), *amount);
+                }
+            }
             Command::Gather { player, units, x, y } => {
                 if let Some(kind) = self.sources.determine(*x, *y) {
                     for i in self.owned(*player, units) {
@@ -727,6 +739,14 @@ impl World {
     /// Hash of the whole dynamic state (units, brigades, occupancy, random index, tick),
     /// identical across platforms; two worlds with equal hashes behave identically.
     pub fn state_hash(&self) -> u64 {
-        state_hash(&(self.tick.0, self.random, &self.units, &self.brigades, &self.occupancy, &self.players))
+        state_hash(&(
+            self.tick.0,
+            self.random,
+            &self.units,
+            &self.brigades,
+            &self.occupancy,
+            &self.players,
+            &self.market,
+        ))
     }
 }
