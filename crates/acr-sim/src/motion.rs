@@ -326,6 +326,7 @@ pub fn process_unit(world: &mut World, i: usize) {
         | Some(Order::WaterSendTo { .. })
         | Some(Order::GoToTransport { .. })
         | Some(Order::LeaveTransport { .. })
+        | Some(Order::LeaveMine { .. })
         | Some(Order::Fishing)
         | Some(Order::Turn { .. })
         | Some(Order::AttackPoint { .. })

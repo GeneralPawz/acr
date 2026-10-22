@@ -130,6 +130,9 @@ pub enum Order {
     /// `LeaveTransport` (link 0x54e188), on the transport: let one passenger of `kind` off
     /// after `delay` ticks.
     LeaveTransport { kind: TypeId, delay: u8 },
+    /// `LeaveMine` (link 0x5f522e), on a building: let the first unit of `kind` out after
+    /// `delay` ticks.
+    LeaveMine { kind: TypeId, delay: u8 },
     /// `FishingLink` (order type 221, link 0x54eb16): a fishing boat fishes around and brings
     /// its catch to the nearest own port.
     Fishing,
@@ -972,6 +975,8 @@ impl World {
                     // The attack order goes in front of production (0x51c30a).
                     if let Some(Order::Attack { target, prio, .. }) = u.orders.last().cloned() {
                         crate::combat::building_attack_link(self, i, target, prio);
+                    } else if let Some(Order::LeaveMine { kind, delay }) = u.orders.last().cloned() {
+                        crate::economy::leave_mine_link(self, i, kind, delay);
                     } else {
                         crate::economy::building_link(self, i);
                     }

@@ -1761,6 +1761,14 @@ No game option writes it. How the map view draws the fog is in
     (the engine would give it the order). Buildings and `UnlimitedMotion` walkers refuse
     the order as `CreateOrder` does, and the priority test ignores a stale `PrioryLevel`
     when the unit has no orders.
+  - `OBJ_LeaveMine` (0x56f1d6 → `LeaveMine` 0x5f518b, link 0x5f522e, `economy::leave_mine`)
+    lets the unit out with the spawn's walk-out (`economy::walk_out`, 0x49eeb7): it stands at
+    the first born point and walks the further points one cell in; the link sends it
+    through every point one cell in (0x517045, prio 0x10). Neither takes the second point
+    set for artillery (NM+0x178e, `NM+0x172a` bit 5). The rally point follows the spawn's
+    rules except on the building itself: the leaving unit goes back in only when the
+    building is full (0x5f56f7). The flag OB+0x29 bit 1 the link clears and sets again is
+    not kept. The player's leave command (`Command::Leave`) still lets everybody out at once.
   - Light spots (`SetLightSpot` 0x564017) are stamped once per tick with the fog's blur
     (`MissionLink::update_fog`); the engine stamps them every frame (0x55a2f1 in the main
     loop, 0x4bee14), which only differs while the game is paused.
