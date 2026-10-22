@@ -1763,6 +1763,23 @@ No game option writes it. How the map view draws the fog is in
   - Light spots (`SetLightSpot` 0x564017) are stamped once per tick with the fog's blur
     (`MissionLink::update_fog`); the engine stamps them every frame (0x55a2f1 in the main
     loop, 0x4bee14), which only differs while the game is paused.
+  - `MakeOneShotToBuild` (0x573da9) reads the building map (`BLDList` 0x27743a0: per
+    128 px cell the last living building whose position lies in it, rebuilt with the
+    buckets by 0x50a283) as `Buckets::buildings_in(..).last()`. Its lookup 0x56144f adds the
+    border offset a second time, so ring cell (x, y) tests the building of cell
+    (x + 1, y + 1); ACR keeps that. A member that gets a target leaves its brigade's orders
+    (`ClearBOrders` 0x415cca); the `OB+0x25` bit 0 the engine sets then has no ACR field,
+    and the "walking into a building" bit (`OB+0x29` bit 1) that spares an attacking member
+    from release is read as `unlimited`.
+  - `GetEnemyForce` (0x571aa8) sums the unit buckets of the zone's rings (no buildings), the
+    radius and the area-distance limit `(r >> 5) + 3` (0x43c7d8) as the engine does; it
+    tells friends by the object's alliance mask after `sync_alliances`.
+  - `CreateTopListEnArmy` (0x57bad9) counts in a `u16` per area; an undamaged building
+    (`Life` against the nation's `Adv` life) with `GetBuildingOposit` adds that value and
+    is lifted to `minForce`.
+  - `GetBuildingEntryPoint` (0x56ea8c) uses the first `CONCENTRATOR` point from the lock
+    base cell (0x516fde); the engine does not test whether the building is dying, ACR's
+    object lookup skips removed objects.
 - **`RemoveFools`.** Pushed friends get a `SendTo` to the nearest free cell (the original uses
   its `Rarr` push tables). Enemies in the way are left to `CheckMotionThroughEnemyAbility`.
 - **Animations.**
