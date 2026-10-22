@@ -21,6 +21,9 @@ pub use image::{ImageDraw, ImageRenderer, ImageTexture};
 
 /// Bit of an instance's kind that halves its opacity (`sprite.wgsl`).
 const TRANSPARENT: u32 = 0x100;
+/// Bit of an instance's kind that lightens with darkness levels instead of darkening
+/// (`AGEW_1W.GRD`, `sprite.wgsl`).
+const WHITE: u32 = 0x200;
 
 /// Atlas page edge length. WebGL2 guarantees 2048.
 const PAGE_SIZE: u32 = 2048;
@@ -114,6 +117,8 @@ pub struct SpriteDraw {
     /// Mirrored around `x` (the GP frame flag 0x1000): a layer at offset `dx` covers
     /// `x − dx − w .. x − dx`.
     pub mirrored: bool,
+    /// Darkness levels lighten instead (`WHITE` weapons, `AGEW_1W.GRD`).
+    pub white: bool,
 }
 
 pub struct SpriteRenderer {
@@ -381,7 +386,9 @@ impl SpriteRenderer {
                 instances.push(Instance {
                     dst: [x, y, w_dst, h as f32 * sprite.scale],
                     src: [ax, ay, w, h],
-                    kind: slot.kind as u32 | if sprite.transparent { TRANSPARENT } else { 0 },
+                    kind: slot.kind as u32
+                        | if sprite.transparent { TRANSPARENT } else { 0 }
+                        | if sprite.white { WHITE } else { 0 },
                     param,
                 });
             }

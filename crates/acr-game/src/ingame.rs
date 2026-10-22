@@ -23,6 +23,7 @@ use crate::ui::{GameKind, GameSetup};
 
 mod controls;
 mod dip;
+mod effects;
 mod interface;
 mod panels;
 mod save;
@@ -84,6 +85,8 @@ pub struct InGame {
     dip_page_shown: bool,
     /// Game frames run since the ambient sounds last looked (`take_ambient_ticks`).
     ambient_ticks: u32,
+    /// Fires of damaged buildings.
+    effects: effects::Effects,
 }
 
 impl InGame {
@@ -131,6 +134,7 @@ impl InGame {
             stats: Default::default(),
             dip_page_shown: false,
             ambient_ticks: 0,
+            effects: Default::default(),
         }
     }
 
@@ -144,6 +148,7 @@ impl InGame {
         drop(queue);
         self.generate_map();
         self.objects.start(&|p| self.requests.borrow_mut().push(p.to_owned()));
+        self.objects.start_effects(&|p| self.requests.borrow_mut().push(p.to_owned()));
     }
 
     /// Sounds started by the game since the last call.
@@ -464,6 +469,7 @@ impl InGame {
             && let Some(world) = &mut self.world
         {
             let mut ticks = if paused { 0 } else { self.clock.advance((f64::from(seconds) * 1e9) as u64) };
+            let mut weapon_sounds = Vec::new();
             for t in 0..ticks {
                 // The scripts run before each step; a page, a question or the end of the game
                 // stops the simulation like the original's modal dialogs.
@@ -475,6 +481,7 @@ impl InGame {
                 self.save.log.command(world.tick.0, &commands);
                 commands.extend(orders);
                 world.step(&commands);
+                weapon_sounds.append(&mut world.sounds);
                 // The fog follows the world (once per tick, also read by the scripts).
                 self.mission.update_fog(world);
             }
@@ -495,6 +502,7 @@ impl InGame {
             }
             if ticks > 0 {
                 self.animation_sounds(window);
+                self.effect_sounds(ticks, &weapon_sounds, window);
             }
             self.ambient_ticks += ticks;
         }
@@ -540,6 +548,34 @@ impl InGame {
                     events.push(SoundEvent { name: name.to_owned(), pan, volume });
                 }
             }
+        }
+        self.sound_events.extend(events);
+    }
+
+    /// The weapon sounds of the last ticks, and the fires of damaged buildings in view
+    /// (advanced once per tick) with their animation sounds.
+    fn effect_sounds(&mut self, ticks: u32, shots: &[acr_sim::projectile::WeaponSound], window: [f32; 2]) {
+        let Some(world) = &self.world else { return };
+        let scale = self.camera.scale;
+        let view = [self.camera.x, self.camera.y, window[0] / scale, window[1] / scale];
+        let fog = self.mission.fog();
+        let mut events = effects::weapon_sounds(world, shots, view, fog);
+        // Buildings whose fires may show: the view plus a building's size.
+        let rect = [
+            view[0] as i32 - 512,
+            (view[1] as i32 - 512) * 2,
+            (view[0] + view[2]) as i32 + 512,
+            (view[1] + view[3]) as i32 * 2 + 2048,
+        ];
+        for _ in 0..ticks.min(8) {
+            for (name, x, y) in self.effects.tick(world, &self.objects, rect) {
+                if let Some((volume, pan)) = unit_sounds::placed(x as f32, y as f32, view, fog) {
+                    events.push(SoundEvent { name, pan, volume });
+                }
+            }
+        }
+        for e in &events {
+            log::trace!("effect sound {} (pan {:.2}, volume {:.2})", e.name, e.pan, e.volume);
         }
         self.sound_events.extend(events);
     }
@@ -600,9 +636,12 @@ impl InGame {
                     player: u.owner,
                     transparent,
                     mirrored: look.mirrored,
+                    white: false,
                 });
             }
         }
+        effects::projectile_sprites(world, &self.objects, &mut out);
+        self.effects.fire_sprites(world, &self.objects, &mut out);
         out
     }
 

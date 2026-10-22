@@ -102,6 +102,14 @@ impl ObjectsView {
         load(PALETTE);
     }
 
+    /// Also loads the animations of projectiles, smoke and fires (`WEAPON.ADS`); call with
+    /// [`ObjectsView::start`].
+    pub fn start_effects(&mut self, load: Loader<'_>) {
+        for path in self.assets.want_effects() {
+            load(&path);
+        }
+    }
+
     /// Takes a loaded file; returns whether it was one this layer asked for.
     pub fn on_loaded(&mut self, path: &str, bytes: &[u8], load: Loader<'_>) -> bool {
         let ours = self.wants(path);

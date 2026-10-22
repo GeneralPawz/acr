@@ -38,6 +38,16 @@ pub struct Projectile {
     pub dest_obj: Option<EntityId>,
 }
 
+/// A weapon sound (`[SOUND]`) started where an object was created (0x5583a2): `x` in
+/// pixels and `y` the screen row `y / 2 − z`. Only for the sound output; never read back
+/// by the simulation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WeaponSound {
+    pub weapon: u16,
+    pub x: i32,
+    pub y: i32,
+}
+
 /// The projectile pool and the engine globals it uses.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct Projectiles {
@@ -102,6 +112,10 @@ pub fn create(
     let Some(wp) = catalog.weapons.list.get(usize::from(wid)) else { return false };
     let att = if att >= 12 { 0 } else { att };
     let (xs, ys, mut zs) = s;
+    if wp.sound.is_some() {
+        // The sound starts first, even if no slot is free.
+        w.sounds.push(WeaponSound { weapon: wid, x: xs, y: (ys >> 1) - zs });
+    }
     let g = h(w, xs, ys);
     if zs < g {
         zs = g + 1;

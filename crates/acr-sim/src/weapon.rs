@@ -1,6 +1,9 @@
 //! Projectile types (`WEAPON.NDS`, loader 0x60b390) with the frame counts of their
 //! animations (`WEAPON.ADS`) and the explosion media of the terrain textures
 //! (`TEXTURES.LST`). See `projectile.rs` and `docs/simulation.md`.
+//!
+//! The file also holds what only the drawing and the sounds use: the animation, its
+//! transparency, `[SOUND]`, `[HILAYER]` and the burning-building animations of `[FIRES]`.
 
 use std::collections::BTreeMap;
 
@@ -74,10 +77,39 @@ pub struct Children {
     pub max: i32,
 }
 
+/// How a weapon's sprites are drawn (Weapon+0x55, loader 0x60b390): `NONE`/`YELLOW` 0,
+/// `DARK` 1, `WHITE` 2, `RED` 3, `BRIGHT` 4, `ALPHAR` 5, `ALPHAW`/`ALPHAGB` 7. The drawing
+/// (0x557cb0) only distinguishes `DARK` (`AGEW_1D.GRD`) and `WHITE` (`AGEW_1W.GRD`).
+pub mod transparency {
+    pub const NONE: u8 = 0;
+    pub const DARK: u8 = 1;
+    pub const WHITE: u8 = 2;
+
+    pub fn parse(w: &str) -> u8 {
+        match w.to_ascii_uppercase().as_str() {
+            "DARK" => 1,
+            "WHITE" => 2,
+            "RED" => 3,
+            "BRIGHT" => 4,
+            "ALPHAR" => 5,
+            "ALPHAW" | "ALPHAGB" => 7,
+            _ => 0,
+        }
+    }
+}
+
 /// One weapon (`Weapon`, 0x5d bytes).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Weapon {
     pub name: String,
+    /// The animation of `WEAPON.ADS` (`#SHOTFOG`, +0x00).
+    pub anim: String,
+    /// +0x55: see [`transparency`].
+    pub transparency: u8,
+    /// `[SOUND]` (+0x59): the `SOUNDLIST.TXT` group played where an object is created.
+    pub sound: Option<String>,
+    /// `[HILAYER]` (+0x58 bit1): drawn 300 rows later.
+    pub hi_layer: bool,
     /// Frames of its animation (`anim+1`), which time its life.
     pub frames: i32,
     /// `[CHILDWEAPON]` (+0x04..+0x16).
@@ -109,6 +141,16 @@ pub struct Weapon {
     pub full_parent: bool,
 }
 
+/// The animations of one `[FIRES]` line (`FIRE` for the `FIRES` points of buildings, then
+/// `SMOKE` for the `SMOKE` points): per variant the start animation, the loop and a third
+/// one the engine keeps (0x28b7680) but never reaches.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct FireAnims {
+    pub start: Vec<String>,
+    pub cycle: Vec<String>,
+    pub end: Vec<String>,
+}
+
 /// All weapons of `WEAPON.NDS`, by index.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct Weapons {
@@ -116,6 +158,8 @@ pub struct Weapons {
     by_name: BTreeMap<String, u16>,
     /// Explosion media of each terrain texture (`TEXTURES.LST`, `FORSTRELA i # MEDIA`).
     pub texture_media: Vec<i32>,
+    /// `[FIRES]`: the fire (0) and smoke (1) animations of damaged buildings.
+    pub fires: [FireAnims; 2],
 }
 
 fn gravity(w: &str) -> i32 {
@@ -153,6 +197,10 @@ impl Weapons {
                 let anim = t[1].to_ascii_uppercase();
                 let w = Weapon {
                     name: t[0].clone(),
+                    anim: anim.clone(),
+                    transparency: transparency::parse(&t[4]),
+                    sound: None,
+                    hi_layer: false,
                     frames: frames.get(&anim).copied().unwrap_or(1),
                     children: Children::default(),
                     custom: Vec::new(),
@@ -218,11 +266,16 @@ impl Weapons {
                             }
                         }
                     }
+                    "SOUND" => ws.list[usize::from(id)].sound = t.get(1).cloned(),
+                    "HILAYER" => ws.list[usize::from(id)].hi_layer = true,
                     "DAMAGEHEIGHT" => ws.list[usize::from(id)].damage_height = int(1),
                     "DETONATOR" => ws.list[usize::from(id)].detonator = int(1),
                     _ => {}
                 }
             }
+        }
+        if let Some(fires) = file.section("FIRES") {
+            ws.fires = parse_fires(&fires.lines);
         }
         if let Some(tx) = textures {
             for line in String::from_utf8_lossy(tx).lines() {
@@ -256,6 +309,22 @@ impl Weapons {
     }
 }
 
+/// `[FIRES]`: `NAME n` and `n` start animations, then a line of `n` loop animations and a
+/// line of `n` more; the first block is the fire, the second the smoke.
+fn parse_fires(lines: &[acr_formats::defs::nds::Line]) -> [FireAnims; 2] {
+    let mut out: [FireAnims; 2] = Default::default();
+    let mut lines = lines.iter().map(|l| &l.tokens);
+    for kind in &mut out {
+        let Some(head) = lines.next() else { break };
+        let n = head.get(1).and_then(|n| n.parse::<usize>().ok()).unwrap_or(0);
+        let names = |t: &[String]| t.iter().take(n).map(|a| a.to_ascii_uppercase()).collect::<Vec<_>>();
+        kind.start = names(head.get(2..).unwrap_or_default());
+        kind.cycle = lines.next().map(|t| names(t)).unwrap_or_default();
+        kind.end = lines.next().map(|t| names(t)).unwrap_or_default();
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -264,7 +333,9 @@ mod tests {
         ENDSHOT #POINT 0 10 NONE NO_GRAVITY FLY 1500 -1\r\nPPOINTT #POINT 0 0 NONE NO_GRAVITY SLIGHTUP 0 1\r\n\
         NUCL2P #NUCL1 340 35 NONE HI_GRAVITY ANGLE 10 -1\r\nSKOKAT #NUCL1 500 16 NONE HI_GRAVITY REFLECT 32 -1\r\n\
         [CHILDWEAPON]\r\nSHOTFOG 1 1 255 1 ENDSHOT\r\nNUCL2P 1 1 0 2 SKOKAT SKOKAT\r\n[FULLPARENT]\r\nENDSHOT\r\nSHOTFOG\r\n\
-        [CUSTOMEXPLOSION]\r\nSKOKAT WATER 1 1 0 1 ENDSHOT\r\n[SYNCWEAPON]\r\nPPOINTT 1 NUCL2P\r\n[DAMAGEHEIGHT]\r\nSKOKAT 95\r\n[END]\r\n";
+        [CUSTOMEXPLOSION]\r\nSKOKAT WATER 1 1 0 1 ENDSHOT\r\n[SYNCWEAPON]\r\nPPOINTT 1 NUCL2P\r\n[FIRES]\r\n\
+        FIRE  1 #DFIRE1\r\n #DFIRE2\r\n #DFIRE2\r\nSMOKE 2 #SMOKE1 #SMOKE3\r\n #SMOKE2 #SMOKE4\r\n #SMOKE2 #SMOKE4\r\n\
+        [SOUND]\r\nSHOTFOG RUGIE1\r\n[HILAYER]\r\nNUCL2P\r\n[DAMAGEHEIGHT]\r\nSKOKAT 95\r\n[END]\r\n";
 
     #[test]
     fn parses_weapons_and_their_relations() {
@@ -279,5 +350,18 @@ mod tests {
         assert_eq!((sk.damage_height, sk.custom[0].0), (95, media::WATER));
         assert_eq!(ws.get(ws.find("PPOINTT").unwrap()).sync, [ws.find("NUCL2P").unwrap()]);
         assert_eq!(ws.texture_media, [0, 0, 0, media::FLASH]);
+    }
+
+    #[test]
+    fn parses_what_the_drawing_uses() {
+        let ws = Weapons::parse(NDS, None, None);
+        let shot = ws.get(ws.find("SHOTFOG").unwrap());
+        assert_eq!((shot.anim.as_str(), shot.sound.as_deref(), shot.hi_layer), ("#SHOTFOG", Some("RUGIE1"), false));
+        assert!(ws.get(ws.find("NUCL2P").unwrap()).hi_layer);
+        assert_eq!(ws.fires[0].start, ["#DFIRE1"]);
+        assert_eq!(ws.fires[0].cycle, ["#DFIRE2"]);
+        assert_eq!(ws.fires[1].start, ["#SMOKE1", "#SMOKE3"]);
+        assert_eq!(ws.fires[1].end, ["#SMOKE2", "#SMOKE4"]);
+        assert_eq!(transparency::parse("white"), transparency::WHITE);
     }
 }

@@ -460,6 +460,9 @@ pub struct World {
     pub morale: crate::morale::MoraleState,
     /// Projectiles in flight.
     pub projectiles: crate::projectile::Projectiles,
+    /// Weapon sounds of the last [`World::step`] (cleared at its start; not part of the
+    /// state).
+    pub sounds: Vec<crate::projectile::WeaponSound>,
     /// The 3D boxes of buildings.
     pub bars: crate::bars::Bars,
     /// The AI planning maps (`CantBuild`, `InfoMap`), built at the first use.
@@ -584,6 +587,7 @@ impl World {
             spacing: Arc::default(),
             morale: Default::default(),
             projectiles: Default::default(),
+            sounds: Vec::new(),
             bars,
             plan: None,
             cities: Default::default(),
@@ -819,6 +823,7 @@ impl World {
     /// Advances the world by one tick: applies the commands in order, then runs every unit
     /// once, player by player (`LongProcesses`, 0x5112aa).
     pub fn step(&mut self, commands: &[Command]) {
+        self.sounds.clear();
         crate::morale::decay(self);
         for c in commands {
             self.apply(c);
