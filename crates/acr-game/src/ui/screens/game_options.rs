@@ -6,7 +6,7 @@
 
 use super::super::dialog::{Align, CANCEL, Kind, OK, WidgetId};
 use super::super::draw::Draw;
-use super::super::settings::{CONTROL_CHOICES, RESOLUTIONS, Settings};
+use super::super::settings::{CONTROL_CHOICES, RESOLUTIONS, SPOTIFY, Settings};
 use super::super::{Ctx, Input, Nav, Screen};
 use super::{Menu, font};
 use crate::ui::fonts::FontId;
@@ -100,7 +100,7 @@ impl Screen for GameOptions {
         };
         let resolutions = RESOLUTIONS.iter().map(|[w, h]| format!("{w}x{h}").into_bytes()).collect();
         self.resolution = combo(m, 229, resolutions, s.resolution);
-        let music = vec![ctx.texts.get("NOCD").to_vec(), ctx.texts.get("RNDMUS").to_vec()];
+        let music = vec![ctx.texts.get("NOCD").to_vec(), ctx.texts.get("RNDMUS").to_vec(), SPOTIFY.to_vec()];
         self.music_mode = combo(m, 285, music, s.music_mode);
         let modes = vec![ctx.texts.get("SLOWMOD").to_vec(), ctx.texts.get("FASTMOD").to_vec()];
         self.game_mode = combo(m, 393, modes, s.game_mode);

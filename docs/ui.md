@@ -137,6 +137,14 @@ Abbruch (0xff) are `GP_TextButton`s on `Interf2\Buttons` frame 0 at (472, 577) a
 
 In ACR the resolution sets the window size (the menus always scale 1024×768).
 
+ACR adds a third music choice, "Spotify mitmischen" (both options dialogs, `music_mode=2`):
+the game plays no music of its own, and on Windows it lowers the volume of Spotify's audio
+sessions (the Windows volume mixer) under the battle noise. The effects' loudness (RMS of
+the mixed effects, `Mixer::sfx_level`) drives an envelope (attack 0.15 s, release 2 s);
+from 0.02 to 0.14 Spotify goes down to 40 % of its volume. A volume the player sets in
+Spotify meanwhile becomes the new full volume; leaving the mode or the game restores it
+(`crates/acr-game/src/spotify.rs`). In the browser the choice only turns the music off.
+
 ACR adds one combo box for the control scheme (#129, [controls.md](controls.md)) beside the
 section label `INTF_OPT_GO` at (619, 419), where the background has free paper between the
 music slider and the game mode box. Its lines are German texts of ACR's own ("Steuerung:

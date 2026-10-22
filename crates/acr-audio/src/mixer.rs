@@ -32,12 +32,15 @@ pub struct Mixer {
     music: Option<MusicStream>,
     pub sfx_volume: f32,
     pub music_volume: f32,
+    /// Loudness (RMS, 0..=1) of the sound effects in the last rendered block, after
+    /// `sfx_volume`, without the music: for ducking other applications' music.
+    pub sfx_level: f32,
 }
 
 impl Mixer {
     /// `rate` is the output sample rate.
     pub fn new(rate: u32) -> Self {
-        Self { rate, voices: Vec::new(), next_id: 0, music: None, sfx_volume: 1.0, music_volume: 0.7 }
+        Self { rate, voices: Vec::new(), next_id: 0, music: None, sfx_volume: 1.0, music_volume: 0.7, sfx_level: 0.0 }
     }
 
     pub fn rate(&self) -> u32 {
@@ -107,6 +110,8 @@ impl Mixer {
             }
             true
         });
+        let energy: f32 = out.iter().map(|s| s * s).sum();
+        self.sfx_level = if out.is_empty() { 0.0 } else { (energy / out.len() as f32).sqrt().min(1.0) };
 
         if let Some(music) = &mut self.music {
             let step = f64::from(music.rate) / rate;
