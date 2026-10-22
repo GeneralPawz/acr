@@ -52,11 +52,20 @@ fn snap(t: &ObjectType, x: i32, y: i32) -> Pos {
     Pos::new((((x << 4) + a) & !255) - a, (((y << 4) + b) & !255) - b)
 }
 
-/// Placement check (0x513b2c, simplified): the finished footprint must be free of locks and
-/// units.
-fn footprint_free(w: &World, t: &ObjectType, pos: Pos) -> bool {
+/// Placement check (0x513b2c, simplified): the finished footprint must be free of locks, and
+/// no enemy object may stand within `(BRadius + 15)·16 px` of the check-point centre
+/// (`CheckMonstersInArea` 0x5133bc tests only units not allied with the player); the
+/// player's own units are moved out when the site is created.
+fn footprint_free(w: &World, player: u8, t: &ObjectType, pos: Pos) -> bool {
     let cells = lock_cells(t, pos, &t.lock_points);
-    !cells.iter().any(|&(cx, cy)| w.map.land.check_pt(cx, cy) || w.occupancy.check_pt(cx, cy))
+    if cells.iter().any(|&(cx, cy)| w.map.land.check_pt(cx, cy)) {
+        return false;
+    }
+    let (bx, by) = base_cell(t, pos);
+    let (cmx, cmy, br) = t.check_center;
+    let (xc, yc, r) = (((bx + cmx) << 8) + 128, ((by + cmy) << 8) + 128, (br + 15) << 8);
+    let mask = w.nation_mask[usize::from(player) & 7];
+    !w.units.iter().any(|u| u.living() && u.nmask & mask == 0 && u.owner != 7 && norma(u.pos.x - xc, u.pos.y - yc) < r)
 }
 
 /// Where a building of `kind` placed at world pixel `(x, y)` would stand, if the position
@@ -67,7 +76,7 @@ pub fn site(w: &World, kind: TypeId, x: i32, y: i32) -> Option<Pos> {
         return None;
     }
     let pos = snap(t, x, y);
-    footprint_free(w, t, pos).then_some(pos)
+    (!lock_cells(t, pos, &t.lock_points).iter().any(|&(cx, cy)| w.map.land.check_pt(cx, cy))).then_some(pos)
 }
 
 /// `RESSUBST` (CreateObject 0x515b62): a mine placed within 64 px of a deposit of another
@@ -119,7 +128,7 @@ pub fn place(w: &mut World, player: u8, kind: TypeId, x: i32, y: i32) -> Option<
     w.random.rando();
     w.random.rando();
     let pos = snap(&t, x, y);
-    if !footprint_free(w, &t, pos) {
+    if !footprint_free(w, player, &t, pos) {
         return None;
     }
     w.random.rando();
@@ -138,11 +147,51 @@ pub fn place(w: &mut World, player: u8, kind: TypeId, x: i32, y: i32) -> Option<
     for (cx, cy) in lock_cells(&t, pos, points) {
         map.land.set_pt(cx, cy);
     }
+    if !t.economy.build_lock_points.is_empty() {
+        // 0x51692c: units standing on the new locks are moved out.
+        let (bx, by) = base_cell(&t, pos);
+        let (cmx, cmy, br) = t.check_center;
+        push_out(w, ((bx + cmx) << 8) | 0x80, ((by + cmy) << 8) | 0x80, (br + 2) << 8);
+    }
     // RenewInfoMap (0x43f763) for the AI planning maps.
     let (px, py) = pos.pixels();
     crate::aiplace::renew(w, px, py);
     census(w, player);
     Some(id)
+}
+
+/// 0x51374e: every unit within `r` of `(x, y)` (1/16 px) whose 3 × 3 lock cells around its
+/// cell are not free jumps to the centre of the first cell on the rings 0..59 around it with
+/// a free 3 × 3 box; its destination and path are dropped, its orders stay.
+fn push_out(w: &mut World, x: i32, y: i32, r: i32) {
+    let land = w.map.land.clone();
+    for i in 0..w.units.len() {
+        let u = &w.units[i];
+        if !u.living() || u.building || u.inside_of.is_some() || crate::trig::norma(u.pos.x - x, u.pos.y - y) >= r {
+            continue;
+        }
+        let (cx, cy) = u.cell;
+        if !land.check_bar(cx - 1, cy - 1, 3, 3) {
+            continue;
+        }
+        let spot = (0..60).find_map(|k| {
+            crate::morale::ring(k)
+                .iter()
+                .map(|&(dx, dy)| (cx + dx, cy + dy))
+                .find(|&(nx, ny)| !land.check_bar(nx - 1, ny - 1, 3, 3))
+        });
+        let Some((nx, ny)) = spot else { continue };
+        let World { units, occupancy, .. } = &mut *w;
+        let u = &mut units[i];
+        if !u.unlimited {
+            occupancy.clr_bar(u.cell.0, u.cell.1, u.lx);
+            occupancy.set_bar(nx, ny, u.lx);
+        }
+        u.pos = Pos::new((nx << 8) + 0x80, (ny << 8) + 0x80);
+        u.cell = (nx, ny);
+        u.dest = None;
+        u.path.clear();
+    }
 }
 
 /// `NextStage` (0x523666): one stage (or 20 life of repair) for a building. Life follows
