@@ -26,6 +26,8 @@ mod dip;
 mod effects;
 mod interface;
 mod panels;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod probe;
 mod save;
 mod three_d;
 use crate::unit_sounds::{self, SoundEvent};
@@ -300,6 +302,13 @@ impl InGame {
         }
         self.objects.sync_gpu(device, queue, format);
         self.three_d.sync_gpu(device, queue, format);
+    }
+
+    /// Without a GPU (the test driver): the game counts as shown once its terrain is built.
+    pub fn sync_headless(&mut self) {
+        if self.terrain.is_some() {
+            self.uploaded = true;
+        }
     }
 
     fn local_player(&self) -> u8 {

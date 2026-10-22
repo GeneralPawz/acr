@@ -12,6 +12,10 @@ pub struct Loading {
 }
 
 impl Screen for Loading {
+    fn dialog(&self) -> Option<&super::super::dialog::Dialog> {
+        Some(&self.dialog)
+    }
+
     fn assets(&self, _ctx: &Ctx) -> Vec<String> {
         vec![BACKGROUND.into()]
     }

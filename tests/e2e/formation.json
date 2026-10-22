@@ -1,0 +1,23 @@
+{
+  "name": "formation",
+  "description": "In the mission 'Die Indianeraufstände' select the officer, open the line formation and form it from the fusiliers: officer, drummer, flag bearer and soldiers walk into one formation",
+  "steps": [
+    {"cmd": "click", "label": "Einzelspieler"},
+    {"cmd": "click", "label": "Einzelmission"},
+    {"cmd": "click", "label": "OK"},
+    {"cmd": "click", "label": "Die Indianeraufstände."},
+    {"cmd": "click", "label": "Mission spielen!"},
+    {"cmd": "wait", "ticks": 60, "expect": {"dismissed": true}, "note": "the briefing is pressed away by the default dialog policy"},
+    {"cmd": "state", "expect": [{"path": "state.formations", "len_eq": 0}, {"path": "state.counts.0.units.UsaB18(US)", "eq": 1}]},
+    {"cmd": "click", "unit": {"owner": 0, "type": "UsaOf18"}, "expect": {"path": "target.type", "eq": "UsaOf18(US)"}},
+    {"cmd": "click", "label": "Reih-und-Glied-Formation einnehmen"},
+    {"cmd": "ui", "expect": {"path": "ui.widgets", "len_ge": 10}},
+    {"cmd": "click", "label": "Füsilier", "expect": {"path": "target.count", "ge": 15}},
+    {"cmd": "wait", "until": {"formations": 1}, "timeout": 100},
+    {"cmd": "wait", "ticks": 100},
+    {"cmd": "state", "expect": [
+      {"path": "state.formations", "len_eq": 1},
+      {"path": "state.formations.0.members", "ge": 18}
+    ]}
+  ]
+}

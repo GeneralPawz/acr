@@ -260,6 +260,10 @@ fn game_buttons(m: &mut Menu, ctx: &Ctx, (fx, fy): (i32, i32), text: &str) -> Wi
 }
 
 impl Screen for LoadGame {
+    fn dialog(&self) -> Option<&super::super::dialog::Dialog> {
+        Some(&self.menu.d)
+    }
+
     fn assets(&self, _ctx: &Ctx) -> Vec<String> {
         let files: &[&str] =
             if self.over_game { &[G_LOAD_GAME, GSCROLL] } else { &[BACKGROUND, BUTTONS, VSCROLL, LOADGAME] };
@@ -354,6 +358,10 @@ impl SaveGameDialog {
 }
 
 impl Screen for SaveGameDialog {
+    fn dialog(&self) -> Option<&super::super::dialog::Dialog> {
+        Some(&self.menu.d)
+    }
+
     fn assets(&self, _ctx: &Ctx) -> Vec<String> {
         [G_LOAD_GAME, GSCROLL].map(String::from).to_vec()
     }

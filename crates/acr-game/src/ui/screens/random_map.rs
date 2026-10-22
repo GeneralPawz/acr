@@ -180,6 +180,10 @@ fn random_below(n: usize, salt: usize) -> usize {
 }
 
 impl Screen for RandomMap {
+    fn dialog(&self) -> Option<&super::super::dialog::Dialog> {
+        Some(&self.menu.d)
+    }
+
     fn assets(&self, _ctx: &Ctx) -> Vec<String> {
         [BACKGROUND, COMBO, VSCROLL, PLAYERLIST, GAMEMAP, ROOM, GAMEBUTTONS, RES, NATIONS].map(String::from).to_vec()
     }

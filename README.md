@@ -55,7 +55,8 @@ crates/
   acr-viewer    sprite and map viewer app (winit); native binary and wasm entry point
   acr-tool      `acr` CLI for inspecting game data and validating decoders
   acr-serve     local web server: `cargo xtask serve` and the `AmericanConquest-Web` launcher
-xtask/          build automation in Rust (`cargo xtask web|serve|dist|assets`)
+xtask/          build automation in Rust (`cargo xtask web|serve|dist|assets|e2e|drive|jev`)
+tests/e2e/      end-to-end scenarios run through the game's driver mode, see docs/testing.md
 assets/         Blender scripts that build the 3D models (M2), see docs/assets.md
 docs/formats/   reverse-engineered format specifications with evidence
 ```
@@ -142,6 +143,19 @@ cargo xtask serve --release --game-dir "C:\path\to\American Conquest"
 
 Requires the `wasm32-unknown-unknown` target for the browser build
 (`rustup target add wasm32-unknown-unknown`).
+
+## Testing
+
+Unit tests first (`cargo test --workspace`), then the end-to-end scenarios, which drive
+the real game headless through its menus and HUD (`AmericanConquest --drive`, JSON lines
+on stdin/stdout):
+
+```sh
+cargo xtask e2e --game-dir "C:\path\to\American Conquest"
+```
+
+[docs/testing.md](docs/testing.md) describes how to test a change (also for coding
+agents), the driver protocol, the scenario format and the Jev helper for cheap decisions.
 
 ## Formats
 

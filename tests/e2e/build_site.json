@@ -1,0 +1,20 @@
+{
+  "name": "build_site",
+  "description": "Select the peasants with a drag rectangle, pick the Fort in the HUD and place it: the site appears at once and is paid",
+  "steps": [
+    {"cmd": "start", "random": {"nation": 1, "seed": 5}, "note": "Spain; the start units of Data\\Start2.dat"},
+    {"cmd": "wait", "ticks": 200, "note": "the first census enables the buildings"},
+    {"cmd": "state", "capture": {"wood": "state.resources.wood"}, "expect": {"path": "state.counts.0.sites", "len_eq": 0}},
+    {"cmd": "drag", "around": {"owner": 0, "type": "Kri"}, "expect": {"path": "around", "ge": 10}},
+    {"cmd": "state", "expect": [{"path": "state.selection", "len_ge": 10}, {"path": "state.selection.0.type", "contains": "Kri"}]},
+    {"cmd": "click", "label": "Fort", "expect": {"path": "target.kind", "eq": "icon"}},
+    {"cmd": "ui", "expect": {"path": "ui.cursor.mode", "contains": "placing"}},
+    {"cmd": "click", "near": {"owner": 0, "type": "Kri"}, "offset": [0, 700]},
+    {"cmd": "wait", "ticks": 1},
+    {"cmd": "state", "expect": [
+      {"path": "state.counts.0.sites", "len_eq": 1},
+      {"path": "state.resources.wood", "lt": "${wood}"}
+    ]},
+    {"cmd": "ui", "expect": {"path": "ui.cursor.mode", "eq": "normal"}}
+  ]
+}

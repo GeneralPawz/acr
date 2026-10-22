@@ -31,6 +31,10 @@ pub fn origin() -> (i32, i32) {
 }
 
 impl Screen for GameMenu {
+    fn dialog(&self) -> Option<&super::super::dialog::Dialog> {
+        Some(&self.menu.d)
+    }
+
     fn assets(&self, _ctx: &Ctx) -> Vec<String> {
         vec![GAMEMENU.to_owned()]
     }

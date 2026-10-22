@@ -1,0 +1,88 @@
+//! `screenshot`: the current frame drawn into an offscreen texture and written as PNG.
+//! Only with a GPU (`--drive-gpu`); the window stays hidden.
+
+use crate::Game;
+
+/// Draws the frame once offscreen and throws it away, so that its missing files are asked
+/// for.
+pub fn prime(game: &mut Game) -> Result<(), String> {
+    let g = game.graphics.as_ref().ok_or("no GPU")?;
+    let texture = target(&g.gpu.device, g.gpu.config.format, g.gpu.config.width, g.gpu.config.height);
+    game.draw_frame(&texture.create_view(&Default::default()));
+    game.load_requested();
+    Ok(())
+}
+
+fn target(device: &wgpu::Device, format: wgpu::TextureFormat, width: u32, height: u32) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("screenshot"),
+        size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    })
+}
+
+/// Draws the frame offscreen and writes it to `path`, cut to `crop` (x, y, w, h) if given.
+/// Returns the written size.
+pub fn screenshot(game: &mut Game, path: &str, crop: Option<[u32; 4]>) -> Result<[u32; 2], String> {
+    let g = game.graphics.as_ref().ok_or("no GPU: start the driver with --drive-gpu for screenshots")?;
+    let (device, queue) = (g.gpu.device.clone(), g.gpu.queue.clone());
+    let format = g.gpu.config.format;
+    let (width, height) = (g.gpu.config.width, g.gpu.config.height);
+    let texture = target(&device, format, width, height);
+    let view = texture.create_view(&Default::default());
+    game.draw_frame(&view);
+    let row = (width * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("screenshot"),
+        size: u64::from(row) * u64::from(height),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    encoder.copy_texture_to_buffer(
+        texture.as_image_copy(),
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(height) },
+        },
+        wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+    );
+    queue.submit([encoder.finish()]);
+    let (tx, rx) = std::sync::mpsc::channel();
+    buffer.map_async(wgpu::MapMode::Read, .., move |r| {
+        let _ = tx.send(r);
+    });
+    device
+        .poll(wgpu::PollType::Wait { submission_index: None, timeout: Some(std::time::Duration::from_secs(10)) })
+        .map_err(|e| e.to_string())?;
+    rx.recv().map_err(|e| e.to_string())?.map_err(|e| e.to_string())?;
+    let data = buffer.get_mapped_range(..).map_err(|e| e.to_string())?;
+    let bgra = matches!(format, wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb);
+    let [cx, cy, cw, ch] = crop.unwrap_or([0, 0, width, height]);
+    let (cx, cy) = (cx.min(width), cy.min(height));
+    let (cw, ch) = (cw.min(width - cx).max(1), ch.min(height - cy).max(1));
+    let mut rgba = Vec::with_capacity((cw * ch * 4) as usize);
+    for y in cy..cy + ch {
+        let start = (y * row + cx * 4) as usize;
+        for &[a, b, c, _] in data[start..start + (cw * 4) as usize].as_chunks::<4>().0 {
+            rgba.extend_from_slice(&if bgra { [c, b, a, 255] } else { [a, b, c, 255] });
+        }
+    }
+    drop(data);
+    buffer.unmap();
+    if let Some(dir) = std::path::Path::new(path).parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    let file = std::fs::File::create(path).map_err(|e| format!("{path}: {e}"))?;
+    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), cw, ch);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
+    writer.write_image_data(&rgba).map_err(|e| e.to_string())?;
+    Ok([cw, ch])
+}

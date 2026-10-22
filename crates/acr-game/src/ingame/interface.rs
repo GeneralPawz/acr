@@ -140,16 +140,16 @@ pub struct State {
     /// A building being placed (`BuildMode` 0x10fc644, `BuildingID` 0x10fca60).
     pub placing: Option<TypeId>,
     /// The next click on the map sets the selected buildings' rally point.
-    rally_mode: bool,
+    pub(super) rally_mode: bool,
     /// Shown page of the icons per building type (`+0x183c` of its type).
     pages: HashMap<TypeId, u8>,
     /// Start of the game screen, for the pulsing preview.
     started: web_time::Instant,
     keyboard: Option<Vec<(u8, u8, String)>>,
     pub mods: ModifiersState,
-    view: View,
-    canvas: Canvas,
-    window: [f32; 2],
+    pub(super) view: View,
+    pub(super) canvas: Canvas,
+    pub(super) window: [f32; 2],
     /// The last left button release on the map (time, canvas point), for double clicks.
     last_click: Option<(web_time::Instant, [f32; 2])>,
     /// The selection when the left button went down (Shift adds the rectangle to it).

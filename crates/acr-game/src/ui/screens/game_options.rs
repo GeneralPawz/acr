@@ -60,6 +60,10 @@ impl GameOptions {
 }
 
 impl Screen for GameOptions {
+    fn dialog(&self) -> Option<&super::super::dialog::Dialog> {
+        Some(&self.menu.d)
+    }
+
     fn assets(&self, _ctx: &Ctx) -> Vec<String> {
         [DIALOG, COMBO, SCROLL, BUTTONS].map(String::from).to_vec()
     }

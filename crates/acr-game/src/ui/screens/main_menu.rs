@@ -86,6 +86,10 @@ impl MainMenu {
 }
 
 impl Screen for MainMenu {
+    fn dialog(&self) -> Option<&super::super::dialog::Dialog> {
+        Some(&self.menu.d)
+    }
+
     fn assets(&self, _ctx: &Ctx) -> Vec<String> {
         vec![BACKGROUND.into(), MAP.into()]
     }
@@ -201,5 +205,9 @@ impl Screen for MainMenu {
 
     fn take_sounds(&mut self) -> Vec<String> {
         self.menu.take_sounds()
+    }
+
+    fn busy(&self) -> bool {
+        self.slide.is_some()
     }
 }

@@ -1,0 +1,20 @@
+{
+  "name": "menu_random_map",
+  "description": "Main menu -> Einzelspieler -> Zufallskarte -> start a random map game through the menus",
+  "steps": [
+    {"cmd": "ui", "expect": {"screen": "MainMenu"}},
+    {"cmd": "click", "label": "Einzelspieler"},
+    {"cmd": "click", "label": "Zufallskarte", "expect": {"screen": "PlayerName"}},
+    {"cmd": "click", "label": "OK", "expect": {"screen": "RandomMap"}},
+    {"cmd": "click", "label": "Mission spielen!", "note": "settles until the generated map is loaded"},
+    {"cmd": "wait", "until": {"in_game": true}, "timeout": 20000},
+    {"cmd": "state", "expect": [
+      {"path": "state.mode", "eq": "game"},
+      {"path": "state.counts.0.units", "nonempty": true},
+      {"path": "state.resources.wood", "ge": 0}
+    ]},
+    {"cmd": "wait", "ticks": 100, "expect": {"path": "tick", "ge": 100}},
+    {"cmd": "ui", "expect": [{"screen": "game"}, {"path": "ui.in_game", "eq": true}]},
+    {"cmd": "jev_check", "expectation": "A game is running; the local player (owner 0) has more than 100 units and neither buildings nor building sites", "min": 0.7, "note": "skipped without a TypeSafe key"}
+  ]
+}

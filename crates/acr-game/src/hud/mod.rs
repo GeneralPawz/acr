@@ -496,7 +496,7 @@ impl Hud {
         (PROPERTY[0], screen[1] - PANEL_LY + PROPERTY[1])
     }
 
-    fn icon_rect(screen: [i32; 2], slot: usize) -> Rect {
+    pub(crate) fn icon_rect(screen: [i32; 2], slot: usize) -> Rect {
         let (x, y) = Self::grid_origin(screen);
         let step = ICON + ADD_ICON;
         Rect::new(x + (slot % GRID_COLUMNS) as i32 * step, y + (slot / GRID_COLUMNS) as i32 * step, ICON, ICON)

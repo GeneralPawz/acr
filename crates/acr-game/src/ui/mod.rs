@@ -134,6 +134,19 @@ pub trait Screen {
     fn in_game(&self) -> bool {
         false
     }
+    /// Input would be dropped now, e.g. while the main menu slides; the test driver waits.
+    fn busy(&self) -> bool {
+        false
+    }
+    /// The screen's widgets, for the test driver's widget tree (`drive`).
+    fn dialog(&self) -> Option<&dialog::Dialog> {
+        None
+    }
+    /// The screen's type name, e.g. `MainMenu`, for the test driver.
+    fn name(&self) -> &'static str {
+        let full = std::any::type_name::<Self>();
+        full.rsplit("::").next().unwrap_or(full)
+    }
 }
 
 struct Entry {
@@ -199,6 +212,16 @@ impl Ui {
         };
         ui.stack.push(Entry { screen: Box::new(screens::main_menu::MainMenu::default()), built: false });
         ui
+    }
+
+    /// The open screens from the bottom, each with whether it is built (test driver).
+    pub fn screens(&self) -> impl Iterator<Item = (&dyn Screen, bool)> {
+        self.stack.iter().map(|e| (&*e.screen as &dyn Screen, e.built))
+    }
+
+    /// The canvas position of the mouse, as the screens last saw it.
+    pub fn mouse(&self) -> Option<[f32; 2]> {
+        self.mouse
     }
 
     /// The started game is shown: the loading screen goes away.
