@@ -559,6 +559,8 @@ fn spawn_from(w: &mut World, b: usize, kind: TypeId) -> EntityId {
     };
     let (owner, rally) = (bu.owner, bu.rally);
     let id = w.spawn(kind, owner, first, dir);
+    // The new unit's `BORN_SOUND` (0x49fab7).
+    w.born.push(id);
     let i = id.0 as usize;
     let u = &mut w.units[i];
     w.occupancy.clr_bar(u.cell.0, u.cell.1, u.lx);

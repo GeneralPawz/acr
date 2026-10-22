@@ -524,6 +524,7 @@ impl InGame {
         {
             let mut ticks = if paused { 0 } else { self.clock.advance((f64::from(seconds) * 1e9) as u64) };
             let mut weapon_sounds = Vec::new();
+            let mut born = Vec::new();
             for t in 0..ticks {
                 // The scripts run before each step; a page, a question or the end of the game
                 // stops the simulation like the original's modal dialogs.
@@ -536,6 +537,7 @@ impl InGame {
                 commands.extend(orders);
                 world.step(&commands);
                 weapon_sounds.append(&mut world.sounds);
+                born.append(&mut world.born);
                 // The fog follows the world (once per tick, also read by the scripts).
                 self.mission.update_fog(world);
             }
@@ -558,6 +560,7 @@ impl InGame {
             if ticks > 0 {
                 self.animation_sounds(window);
                 self.effect_sounds(ticks, &weapon_sounds, window);
+                self.born_sounds(&born, window);
             }
             self.ambient_ticks += ticks;
         }
@@ -612,6 +615,29 @@ impl InGame {
 
     /// The weapon sounds of the last ticks, and the fires of damaged buildings in view
     /// (advanced once per tick) with their animation sounds.
+    /// `BORN_SOUND` of produced units (0x49fab7, any player) and of the local player's
+    /// finished buildings (0x5247c2), at the object like other world sounds: the mill's
+    /// creaking wheel, the mines' picks, a soldier's answer.
+    fn born_sounds(&mut self, born: &[EntityId], window: [f32; 2]) {
+        let Some(world) = &self.world else { return };
+        let scale = self.camera.scale;
+        let view = [self.camera.x, self.camera.y, window[0] / scale, window[1] / scale];
+        let own = self.local_player();
+        for &id in born {
+            let Some(u) = world.unit(id) else { continue };
+            if u.building && u.owner != own {
+                continue;
+            }
+            let Some(def) = self.objects.objects().definition(&world.catalog.get(u.kind).id) else { continue };
+            let Some(name) = def.all("BORN_SOUND").next().and_then(|c| c.word(0)) else { continue };
+            let (x, y) = ((u.pos.x >> 4) as f32, (u.pos.y >> 5) as f32);
+            if let Some((volume, pan)) = unit_sounds::placed(x, y, view, self.mission.fog()) {
+                log::trace!("born sound {name} (pan {pan:.2}, volume {volume:.2})");
+                self.sound_events.push(SoundEvent { name: name.to_owned(), pan, volume });
+            }
+        }
+    }
+
     fn effect_sounds(&mut self, ticks: u32, shots: &[acr_sim::projectile::WeaponSound], window: [f32; 2]) {
         let Some(world) = &self.world else { return };
         let scale = self.camera.scale;

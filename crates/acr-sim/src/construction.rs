@@ -219,6 +219,8 @@ pub fn next_stage(w: &mut World, b: usize) {
             }
             let owner = w.units[b].owner;
             census(w, owner);
+            // The builder's link plays the finished building's `BORN_SOUND` (0x5247c2).
+            w.born.push(w.units[b].id);
             // A finished mill plants its first product (fields) around it (0x5239ec).
             if t.economy.mill
                 && let Some(&field) = w.catalog.tech.of(t_kind(w, b)).and_then(|tt| tt.produce.first())
