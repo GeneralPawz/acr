@@ -262,6 +262,38 @@ model-ref --sections S` draws every section in state S after the animation's par
 finished building does; `render_views.py` plays the clip named after the reference's
 animation and shows only the matching states.
 
+## Ships and guns from downloaded bases (#287)
+
+Ships and artillery start from professional base models (`assets/LICENSES.md`), kept
+**outside the repo** in a folder of extracted sources named by `ACR_SOURCES`
+(`<source>/<name>/...`; locally e.g. `D:\ACR-models\extracted`, on the render VM
+`/home/claude/sources`, which `blender_vm.py` passes on). `acr_assets.vessels` imports a base,
+keeps only its base colour (textures shrunk to 1024 px and re-packed as PNG), decimates it,
+and rigs it with rigid bones; `acr_assets.ships` builds the sailing ships.
+
+| Asset | Base | Size | Triangles | Clips |
+|---|---|---|---:|---|
+| `ships/shpfregat.py` (`ShpFregat`) | Poly Haven `dutch_ship_large_01` | 40 m | 27.8k | `STAND`, `MOTION_L/R/LB/RB`, `ATTACK`, `DEATH`, `DEATHLIE1` |
+| `ships/shpsanta.py` (`ShpSanta`) | Poly Haven `dutch_ship_large_02` | 34 m | 23.8k | same |
+| `ships/shppinta.py` (`ShpPinta`) | Poly Haven `dutch_ship_medium` | 28 m | 19.7k | same |
+| `artillery/artpus.py` (`ArtPus`) | rivetech's barrel (CC-BY) on a scripted field carriage | barrel 2.5 m | 4.7k | `STAND`, `MOTION_L/R`, `ATTACK`, `DEATH`, `DEATHLIE1` |
+
+- **Ships** face south with the waterline at the ground point; the afloat hull is cut 0.25 m
+  below it (the game draws water as a tint on the ground, nothing would hide the keel). Bones:
+  `hull` (rocking, heel, sinking) > `intact` (hull, rigging) > `sail<k>` (each sail at its
+  centre: slack at anchor, full under way) and `wreck` (a charred, uncut copy of hull and
+  masts). The `.MD` gives ships one frame per direction, so their clips run on the **game
+  clock** (`acr_clock = "world"` on the root): looping while afloat, from the death on while
+  sinking (12 s: burnt at once, lists to port, down by the bow; the terrain depth hides what
+  goes under, mast tops stay above like a wreck in shallows).
+- **The field cannon** keeps the sprite clock (frame counts of `ARTPUS.MD`: `MOTION_L0` 36,
+  `ATTACK4` 420 with the shot at frame 29, `DEATH` 73): wheels roll one turn per motion cycle;
+  the shot throws the piece 0.9 m back with a muzzle kick, it is run back into battery by
+  frame 400; destroyed, a wheel is smashed, the barrel thrown off and the carriage charred.
+  The crew of the original's sprites is not modelled yet.
+- Roots of both carry `acr_machine = true`: no blood pools, sprays, wounds, corpse piles or
+  rot (decay), and no sinking into the ground (`docs/rendering-3d.md`).
+
 ## Not done yet
 
 - Size budgets per asset class, LODs, the nation-colour mask channel (#162).

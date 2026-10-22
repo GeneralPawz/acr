@@ -207,6 +207,13 @@ pub struct ModelData {
     pub fps: f32,
     /// `extras.acr_type` of the scene root: the `.MD` `NAME` the model stands for.
     pub type_name: Option<String>,
+    /// `extras.acr_clock = "world"` of the scene root: clips run on the game clock, not on the
+    /// sprite frame (ships: a sprite of one frame per direction still rocks; looping while
+    /// alive, from the death on while sinking).
+    pub world_clock: bool,
+    /// `extras.acr_machine` of the scene root: a ship or a gun, not a body (no blood pools,
+    /// no corpse piles).
+    pub machine: bool,
     /// Radius around the origin (world pixels at scale 1) that holds the rest pose, for
     /// culling.
     pub radius: f32,
@@ -310,6 +317,9 @@ impl ModelData {
             .iter()
             .find_map(|e| e.get("acr_fps").and_then(serde_json::Value::as_f64))
             .map_or(CLIP_FPS, |f| f as f32);
+        let machine =
+            root_extras.iter().any(|e| e.get("acr_machine").and_then(serde_json::Value::as_bool) == Some(true));
+        let world_clock = root_extras.iter().any(|e| e.get("acr_clock").and_then(|v| v.as_str()) == Some("world"));
 
         let images = doc
             .images()
@@ -583,8 +593,22 @@ impl ModelData {
             variants: (0..crate::looks::VARIANTS).map(crate::looks::variant_weights).collect(),
             eye: floats::<3>(e.get("acr_face_frame")).map_or(1.61, |f| f[2]),
         });
-        let mut model =
-            Self { nodes, order, slots, primitives, materials, images, clips, fps, type_name, radius: 0.0, rig, looks };
+        let mut model = Self {
+            nodes,
+            order,
+            slots,
+            primitives,
+            materials,
+            images,
+            clips,
+            fps,
+            type_name,
+            world_clock,
+            machine,
+            radius: 0.0,
+            rig,
+            looks,
+        };
         model.radius = model.rest_radius();
         Ok(model)
     }
@@ -628,6 +652,8 @@ impl ModelData {
             clips: Vec::new(),
             fps: CLIP_FPS,
             type_name: None,
+            world_clock: false,
+            machine: false,
             radius: 0.0,
             rig: None,
             looks: None,
@@ -918,7 +944,7 @@ pub(crate) mod tests {
             r#"{{"asset":{{"version":"2.0"}},"scene":0,
             "scenes":[{{"nodes":[0]}}],
             "nodes":[
-              {{"name":"tiny","children":[1,3],"extras":{{"acr_type":"Tiny","acr_fps":10}}}},
+              {{"name":"tiny","children":[1,3],"extras":{{"acr_type":"Tiny","acr_fps":10,"acr_clock":"world"}}}},
               {{"name":"hips","children":[2]}},
               {{"name":"arm","translation":[0,1,0],"children":[4]}},
               {{"name":"tiny.body","mesh":0,"skin":0}},
@@ -955,6 +981,7 @@ pub(crate) mod tests {
         let m = ModelData::from_glb(&tiny_model()).unwrap();
         assert_eq!(m.type_name.as_deref(), Some("Tiny"));
         assert_eq!(m.fps, 10.0);
+        assert!(m.world_clock);
         assert_eq!(m.primitives.len(), 2);
         assert_eq!(m.triangle_count(), 2);
         // Skinned triangle: two joint slots; the hat a node slot of its own.

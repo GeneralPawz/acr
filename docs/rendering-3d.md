@@ -169,6 +169,13 @@ beard, colouring and height. Models without it draw exactly as before.
 Close-up check: `ACR-analysis/looks/looks_bench.py` places 8 EngM18 and 8 EngKri in rows
 facing the camera at zoom 5 and 12.
 
+**Ships and guns (#287).** A root with `extras.acr_clock = "world"` runs its clips on the
+game clock instead of the sprite frame: looping while alive (each unit at its own phase), from
+the death record's tick on once dead (ships: one sprite frame per direction, a sinking that
+outlasts `#DEATH`). A root with `extras.acr_machine = true` is no body: no blood pools,
+sprays, splatter or corpse wounds, no corpse pile, no decay and no corpse sink. Ships stand at
+the terrain height of their ground point like every model; water is a tint on that ground.
+
 ### Decay (#178) and gore (#183)
 
 Per corpse one value from the death counter (`Unit::death`):
