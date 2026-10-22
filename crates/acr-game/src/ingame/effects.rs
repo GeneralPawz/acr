@@ -29,21 +29,24 @@ const FRM_DEC: usize = 2;
 
 /// The direction of a projectile's animation of `dirs` directions (0x557e02): the angle
 /// of its screen velocity (`vx`, `vy − 2·vz`), or of the way to its destination while it
-/// stands, folded to 0..=π; `true` when it is mirrored (moving right).
+/// stands, folded to 0..=π; `true` when it is mirrored (moving right, or a standing one
+/// facing a destination to the right: 0x557e58 tests the `x` it fed to `fpatan`, the
+/// destination's `dx` for a standing object, #242).
 pub fn direction(p: &Projectile, dirs: usize) -> (usize, bool) {
     if dirs <= 1 {
         return (0, false);
     }
     let (vx, vy, vz) = p.vel;
-    let a = if vx == 0 && vy == 0 {
-        f64::from(p.dest.0 - p.pos.0).atan2(f64::from(p.dest.1 - p.pos.1))
+    let (a, right) = if vx == 0 && vy == 0 {
+        let dx = p.dest.0 - p.pos.0;
+        (f64::from(dx).atan2(f64::from(p.dest.1 - p.pos.1)), dx > 0)
     } else {
-        f64::from(-vx).atan2(f64::from(vy - 2 * vz))
+        (f64::from(-vx).atan2(f64::from(vy - 2 * vz)), vx > 0)
     };
     let a = if a >= 3.1415297 { a - 6.28305854 } else { a };
     let n = (2 * dirs - 2) as i64;
     let d = ((a.abs() * n as f64 * 0.318_316_308_413_704_5) as i64).min(n - 1);
-    (((d + 1) >> 1) as usize, vx > 0)
+    (((d + 1) >> 1) as usize, right)
 }
 
 /// The fires of one kind (`FIRES` or `SMOKE` points) of one building (OB+0xfd, 13 bytes).
@@ -418,9 +421,15 @@ mod tests {
         assert_eq!(direction(&shot((1 << 14, 0, 0), (0, 0)), 17), (8, true));
         // Rising counts as moving up the screen (45° here).
         assert_eq!(direction(&shot((-(1 << 14), 0, 1 << 13), (0, 0)), 17).0, 12);
-        // A standing object faces its destination, never mirrored.
-        assert_eq!(direction(&shot((0, 0, 0), (2000, 1000)), 17), (8, false));
+        // A standing object (a musket's smoke) faces its destination, mirrored when it lies
+        // to the right (0x557e58, #242): a shot to the north-east puffs north-east.
+        assert_eq!(direction(&shot((0, 0, 0), (2000, 1000)), 17), (8, true));
         assert_eq!(direction(&shot((0, 0, 0), (0, 1000)), 9), (4, false));
+        let (ne, nw) = (direction(&shot((0, 0, 0), (2000, 0)), 17), direction(&shot((0, 0, 0), (0, 0)), 17));
+        assert_eq!(ne, (nw.0, !nw.1));
+        assert!(ne.1);
+        // Like a ball flying the same way.
+        assert_eq!(ne, direction(&shot((1 << 14, -(1 << 14), 0), (0, 0)), 17));
         assert_eq!(direction(&shot((5, 5, 5), (0, 0)), 1), (0, false));
     }
 
