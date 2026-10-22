@@ -44,13 +44,13 @@ STANCE = {
     "thigh_l": (-22, -4, 8), "shin_l": (20, 0, 0), "foot_l": (2, 0, 0),
     "thigh_r": (10, 6, 0), "shin_r": (4, 0, 0), "foot_r": (-10, 0, 0),
 }
-AIM_MUSKET = dict(STANCE, **{
+AIM_MUSKET = {**STANCE, **{
     "spine": (-10, 0, -4), "spine1": (-4, 0, 0), "spine2": (-2, 0, -6),
     "neck": (14, -6, 18), "head": (12, -18, 26),
     "upperarm_r": (-62, -50, -20), "forearm_r": (-60, 0, 30), "hand_r": (0, 0, 0),
     "upperarm_l": (-70, 50, 30), "forearm_l": (-20, 0, -20),
     "world": {"socket.hand_r": AIMED},
-})
+}}
 
 # Reload drill (prime and load, 18th-century manual), keyed in ATTACK1 after the shot. The
 # man keeps the bladed stance (STANCE: turned 40° right of the target, so his right hip is
@@ -89,9 +89,9 @@ RELOAD_STEPS = {
     "pour": _step(LOAD_BODY, CAST, BUTT_AT_FOOT, right=1.50, left=0.95, butt=True, elbow_r=ELBOW_UP),
     # Draw the rammer (grasp under the muzzle, out at arm's length), ram twice, return it.
     "grasp_rod": _step(LOOK_DOWN, CAST, BUTT_AT_FOOT, right=1.25, left=0.95, butt=True, elbow_r=ELBOW_UP),
-    "rod_out": _step(LOAD_BODY, CAST, BUTT_AT_FOOT, right=1.92, left=0.95, butt=True, elbow_r=ELBOW_UP),
-    "ram_up": _step(LOAD_BODY, CAST, BUTT_AT_FOOT, right=1.80, left=0.95, butt=True, elbow_r=ELBOW_UP),
-    "ram_down": _step(LOOK_DOWN, CAST, BUTT_AT_FOOT, right=1.52, left=0.95, butt=True, elbow_r=ELBOW_UP),
+    "rod_out": _step(LOAD_BODY, CAST, BUTT_AT_FOOT, right=1.66, left=0.95, butt=True, elbow_r=ELBOW_UP),
+    "ram_up": _step(LOAD_BODY, CAST, BUTT_AT_FOOT, right=1.64, left=0.95, butt=True, elbow_r=ELBOW_UP),
+    "ram_down": _step(LOOK_DOWN, CAST, BUTT_AT_FOOT, right=1.38, left=0.95, butt=True, elbow_r=ELBOW_UP),
     "return_rod": _step(LOOK_DOWN, CAST, BUTT_AT_FOOT, right=1.20, left=0.95, butt=True, elbow_r=ELBOW_UP),
     # Make ready: the musket raised upright before the right side, then presented.
     "poise": _step(LOAD_BODY, POISE, (-0.17, -0.16, 1.02), right="grip", left=0.42),
@@ -100,6 +100,7 @@ RELOAD_STEPS = {
 # Frames of ATTACK1 (87 sprite frames, 0..86): the shot leaves at the active frame 17
 # (SETACTIVEPOINT #ATTACK1 17, rounded up to even by the engine), then the drill.
 SHOT_FRAME = 18
+ROD_DRAWN = (57, 74)  # frames the ramrod is out of its pipes, in the right hand
 RELOAD_FRAMES = [
     (26, "prime"), (29, "half_cock"), (33, "cartridge"), (37, "bite"), (41, "pan"), (44, "shut"),
     (49, "cast"), (52, "pour"), (55, "grasp_rod"), (58, "rod_out"), (61, "ram_up"), (64, "ram_down"),

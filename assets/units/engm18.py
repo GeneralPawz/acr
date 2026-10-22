@@ -116,6 +116,12 @@ def make(root, name, build=BUILD):
 
 def build(ctx):
     ch = make(ctx.root, ctx.name)
+    # Ramrod (in its pipes; drawn in the reload of ATTACK1): on the free left-hand socket,
+    # placed on every frame by `aim.bake_musket` / `aim.stow_rammer`.
+    rod = gear.rammer(f"{ctx.name}.rammer")
+    am.attach(rod, ch.arm, aiming.ROD_SOCKET, am.world(ch.arm, aiming.ROD_SOCKET))
+    ch.held["rammer"] = rod
+    ch.keys[rod.name] = "metal"
     ch.morphs(extra_deflate=ch.layers["gear"])
     ch.masks()
     # Present with both hands: butt in the shoulder, left hand under the barrel (IK).
@@ -127,8 +133,13 @@ def build(ctx):
     reload = aiming.drill(ch.arm, poses.RELOAD_STEPS)
     # Charge bayonets: the same grip with the butt at the right hip.
     charge = aiming.hold(ch.arm, poses.CHARGE_MUSKET, pocket=(0.02, -0.12, -0.32), left_along=0.30)
-    for clip, keys in poses.musketeer_clips(MD, aim=aim, charge=charge, reload=reload).items():
+    clips = poses.musketeer_clips(MD, aim=aim, charge=charge, reload=reload)
+    for clip, keys in clips.items():
         am.add_clip(ch.arm, clip, keys)
+        if clip == "ATTACK1":
+            aiming.bake_musket(ch.arm, clip, keys, rod_drawn=poses.ROD_DRAWN)
+        else:
+            aiming.stow_rammer(ch.arm, clip)
     am.set_clip(ch.arm, "STAND")
     report = {}
     colours = ch.colours(ctx.ref, PALETTE, report=report, mix=0.5)
@@ -137,6 +148,7 @@ def build(ctx):
     # The exported scene pose (glTF node transforms) is STAND.
     ch.arm.animation_data.action = None
     am.pose(ch.arm, poses.STAND_MUSKET)
+    ch.arm.pose.bones[aiming.ROD_SOCKET].matrix = ch.arm.pose.bones["socket.hand_r"].matrix @ aiming.ROD_STOWED
     tris = ch.triangles()
     prepare_export(ch.all_meshes(), ctx.root, acr_triangles=sum(tris.values()), acr_clips=list(MD),
                    acr_light=report.get("light_dir_camera", []), acr_layers=list(ch.layers))

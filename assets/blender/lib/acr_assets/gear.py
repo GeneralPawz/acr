@@ -103,6 +103,16 @@ def musket(name, length=1.55, bayonet=0.0):
     return obj
 
 
+def rammer(name, length=0.9):
+    """Steel ramrod along +Z from its tail (origin, where the hand holds it) to the head."""
+    bm = bmesh.new()
+    bmesh.ops.create_cone(bm, cap_ends=True, segments=4, radius1=0.005, radius2=0.005, depth=length,
+                          matrix=Matrix.Translation((0, 0, length / 2)))
+    bmesh.ops.create_cone(bm, cap_ends=True, segments=4, radius1=0.008, radius2=0.008, depth=0.03,
+                          matrix=Matrix.Translation((0, 0, length - 0.015)))
+    return from_bm(bm, name)
+
+
 def sabre(name, length=0.95):
     """Sabre in its scabbard, along -Z from the hilt (origin)."""
     bm = bmesh.new()
