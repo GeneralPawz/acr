@@ -471,6 +471,10 @@ pub struct World {
     pub cities: [crate::aiplace::City; PLAYERS],
     /// Each player's grouped formations (`City::GroupsSet`).
     pub formation_groups: [crate::grouping::FormationGroups; PLAYERS],
+    /// Why each dead unit died, by unit index, for the renderer only (deaths by cause,
+    /// wounds and blood). Not part of the state hash: savegames replay their commands and
+    /// record it again.
+    pub deaths: std::collections::HashMap<u32, crate::combat::DeathRecord>,
     /// Coast places, islands and the computer players' landing setup (derived from the map
     /// and refreshed every tick; not hashed, the landings' orders are in `brigades`).
     pub desant: crate::desant::Desant,
@@ -597,6 +601,7 @@ impl World {
             plan: None,
             cities: Default::default(),
             formation_groups: Default::default(),
+            deaths: Default::default(),
             desant: Default::default(),
             ai: [false; PLAYERS],
         }
