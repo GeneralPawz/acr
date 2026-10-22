@@ -1235,6 +1235,8 @@ mod tests {
             building: false,
             region: None,
             injury: Some(Injury { part, level, outcome: Outcome::Wound, energy: 80, cause: Cause::Musket }),
+            strike: None,
+            critical: None,
         };
         let name = |h: HitRecord| g.desc[struck_generic(&h, &g).0].name;
         assert_eq!(name(hit(Part::Head, 0)), "RigHead");

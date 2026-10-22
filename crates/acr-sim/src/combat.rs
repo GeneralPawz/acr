@@ -13,6 +13,7 @@ use acr_formats::defs::nres::weapon_flags::{FIRE, FIRE_SLOW, FORMATION, GARRISON
 use crate::body::Injury;
 use crate::catalog::Adv;
 use crate::fixed::Pos;
+pub use crate::melee::{Strike, StrikeHeight, StrikeKind, Vital};
 use crate::motion::{anim_frames, set_anim, try_to_stand};
 use crate::path::{Mover, create_path};
 use crate::trig::{cos, get_dir, norma, sin};
@@ -22,6 +23,9 @@ use crate::world::{AnimKind, EntityId, FRM_DEC, Order, Unit, World};
 const AUTO_PRIO: u8 = 1;
 /// Priority of the victim of a melee strike hitting back.
 const STRUCK_PRIO: u8 = 2;
+/// Added to the distance of a man on the ground in the target search (hit-locations rule):
+/// any standing enemy comes first. Below the search's initial best (10 000 000).
+const DOWN_OFFSET: i32 = 5_000_000;
 /// A corpse is removed when its death counter passes this.
 const CORPSE_LIFETIME: u16 = 2000;
 
@@ -320,6 +324,22 @@ pub enum Aim {
     Point(Pos, u16),
 }
 
+/// A point-blank shot of `i` at `j` on the ground (hit-locations rule): with his firearm
+/// `loaded` and in his hands, the index of the firearm, its damage and the reload delay.
+fn point_blank(w: &World, i: usize, j: usize, loaded: bool) -> Option<(u8, i32, i32)> {
+    let u = &w.units[i];
+    if !w.rules.hit_locations || !loaded || u.body.disarmed() || !crate::melee::on_ground(&w.units[j].body) {
+        return None;
+    }
+    let ta = w.adv(u.owner, u.kind);
+    let r = ta
+        .attacks
+        .iter()
+        .position(|a| a.usable() && a.weapon.is_some() && DeathCause::of_weapon(&a.kind) == DeathCause::Gunshot)?;
+    let a = &ta.attacks[r];
+    Some((r as u8, a.damage, (a.pause * u.personal_delay / 100).max(1)))
+}
+
 /// `AttackObjLink` (0x51bcaf), once per tick for a unit with an attack order.
 pub fn attack_link(w: &mut World, i: usize, target: EntityId, prio: u8) {
     attack_link_aim(w, i, Aim::Unit(target.0 as usize), prio);
@@ -420,7 +440,16 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
                             shoot(w, i, aim, ns - 1, my_z, en_z, can_set_delay, times);
                         }
                     } else if let Aim::Unit(j) = aim {
-                        make_damage(w, j, damage, Some(i), (ns - 1) as u8);
+                        // Hit-locations rule: a loaded musketeer over a man on the ground
+                        // shoots him point-blank instead of the bayonet (`docs/melee.md`).
+                        match point_blank(w, i, j, can_set_delay) {
+                            Some((r, d, reload)) => {
+                                w.units[i].delay = reload;
+                                w.units[i].max_delay = reload;
+                                make_damage(w, j, d, Some(i), r);
+                            }
+                            None => make_damage(w, j, damage, Some(i), (ns - 1) as u8),
+                        }
                         if w.units[j].living() {
                             attack_obj(w, j, i, STRUCK_PRIO);
                         }
@@ -1172,9 +1201,10 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
         if wf & RANDOM_KILL != 0 && w.random.rando() < 1310 && !vt.building && !vt.no25 {
             frighten(w, victim, s, att);
             let region = crate::wounds::pick_region(w, victim);
-            let injury = region.map(|r| injure(w, victim, s, record.cause, r));
+            let blow = region.map(|r| injure(w, victim, s, att, record.cause, r));
+            let injury = blow.map(|b| b.injury);
             record.torn = injury.and_then(|i| i.outcome.torn());
-            record_hit(w, victim, s, record.cause, true, region, injury);
+            record_hit(w, victim, s, record.cause, true, region, blow);
             record_death(w, victim, record);
             die(w, victim);
             w.units[s].kills = w.units[s].kills.saturating_add(1);
@@ -1204,12 +1234,13 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
     // Hit locations (#225, optional, not in the original): the region of the blow.
     let region = if sender.is_some() { crate::wounds::pick_region(w, victim) } else { None };
     // What the blow did to the body (#262): it may kill whatever the damage.
-    let injury = region.zip(sender).map(|(r, s)| injure(w, victim, s, record.cause, r));
-    // An animal picks its own region ([`crate::body::maul`]).
+    let blow = region.zip(sender).map(|(r, s)| injure(w, victim, s, att, record.cause, r));
+    let injury = blow.map(|b| b.injury);
+    // An animal (and a blow at a man on the ground) picks its own region.
     let region = injury.map(|i| region_of(i.part)).or(region);
     let fatal = injury.is_some_and(|i| i.outcome.kills());
     if let Some(s) = sender {
-        record_hit(w, victim, s, record.cause, w.units[victim].life <= dmg || fatal, region, injury);
+        record_hit(w, victim, s, record.cause, w.units[victim].life <= dmg || fatal, region, blow);
     }
     if w.units[victim].life > dmg && !fatal {
         w.units[victim].life -= dmg;
@@ -1237,23 +1268,54 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
     }
 }
 
-/// The injury of a hit by `sender` on `victim`'s `region` (hit-locations rule, #262), with
-/// the energy of a ploughing ball ([`World::hit_energy`]), of a musket ball by the range,
-/// else full.
-fn injure(w: &mut World, victim: usize, sender: usize, cause: DeathCause, region: crate::wounds::HitRegion) -> Injury {
+/// A blow on a body (hit-locations rule): the injury, how it was struck and the vital it
+/// found.
+#[derive(Debug, Clone, Copy)]
+struct Blow {
+    injury: Injury,
+    strike: Option<Strike>,
+    critical: Option<Vital>,
+}
+
+/// The injury of a hit by `sender`'s attack index `att` on `victim`'s `region`
+/// (hit-locations rule, #262), with the energy of a ploughing ball ([`World::hit_energy`]),
+/// of a musket ball by the range, else full; then how it was struck and its critical roll
+/// ([`crate::melee`], `docs/melee.md`). A melee blow at a man on the ground draws its region
+/// anew ([`crate::melee::DOWN_REGIONS`]).
+fn injure(
+    w: &mut World,
+    victim: usize,
+    sender: usize,
+    att: u8,
+    cause: DeathCause,
+    region: crate::wounds::HitRegion,
+) -> Blow {
+    let down = crate::melee::on_ground(&w.units[victim].body);
+    let weapon = {
+        let a = w.adv(w.units[sender].owner, w.units[sender].kind);
+        a.attacks.get(usize::from(att)).map_or_else(|| "MECH".to_string(), |a| a.kind.clone())
+    };
+    let kind = crate::melee::strike_kind(w, sender, &weapon, down);
+    let mounted = crate::melee::rides(w, sender);
     // An animal's claws, jaws or horns (#276): its own cause, energy and aim.
     if let Some((maul, energy, region)) = crate::body::maul(w, sender, victim) {
-        if matches!(w.catalog.get(w.units[victim].kind).role.usage, 8 | 22 | 24) {
+        if crate::melee::rides(w, victim) {
             w.units[victim].body.mounted = true;
         }
-        return crate::body::injure(w, victim, maul, energy, region);
+        let injury = crate::body::injure(w, victim, maul, energy, region);
+        let height = crate::melee::strike_height(region_of(injury.part), down);
+        return Blow { injury, strike: Some(Strike { kind, height, mounted }), critical: None };
     }
-    let usage = w.catalog.get(w.units[sender].kind).role.usage;
-    // FASTHORSE, HARDHORCE, HORSE-STRELOK: a rider's blow is a sabre's.
-    let mounted = matches!(usage, 8 | 22 | 24);
-    if matches!(w.catalog.get(w.units[victim].kind).role.usage, 8 | 22 | 24) {
+    // A rider's blow is a sabre's (or a lance's).
+    if crate::melee::rides(w, victim) {
         w.units[victim].body.mounted = true;
     }
+    // Aimed at a man on the ground: blades, balls, arrows, axes (not cannon or shell).
+    let aimed = matches!(
+        cause,
+        DeathCause::Melee | DeathCause::Unknown | DeathCause::Gunshot | DeathCause::Arrow | DeathCause::Thrown
+    );
+    let region = if down && aimed { crate::melee::down_region((w.random.rando() * 100) >> 15) } else { region };
     let energy = w.hit_energy.unwrap_or_else(|| match cause {
         // A musket ball loses its punch with the range: full within 200 px, then 1 % per
         // 10 px (`body::BALL_CLOSE` within about 450 px).
@@ -1265,7 +1327,16 @@ fn injure(w: &mut World, victim: usize, sender: usize, cause: DeathCause, region
         }
         _ => 100,
     });
-    crate::body::injure(w, victim, crate::body::Cause::of(cause, mounted), energy, region)
+    let mut body_cause = crate::body::Cause::of(cause, mounted);
+    if body_cause == crate::body::Cause::Sabre && kind == StrikeKind::Thrust {
+        // A lance's thrust wounds as a pike's.
+        body_cause = crate::body::Cause::Bayonet;
+    }
+    let mut injury = crate::body::injure(w, victim, body_cause, energy, region);
+    let strike = Strike { kind, height: crate::melee::strike_height(region_of(injury.part), down), mounted };
+    let bonus = crate::melee::attacker_bonus(w, sender);
+    let critical = crate::melee::critical(w, victim, &mut injury, strike, down, bonus);
+    Blow { injury, strike: Some(strike), critical }
 }
 
 /// The region of a body part.
@@ -1481,6 +1552,29 @@ pub struct HitRecord {
     /// What the hit did to the body (hit-locations rule, #262): what the renderer sprays
     /// and throws.
     pub injury: Option<Injury>,
+    /// How the blow was struck (hit-locations rule, `docs/melee.md`): a thrust, a cut, a
+    /// smash, a shot or a bite, and at which height (`Down` at a man on the ground).
+    pub strike: Option<Strike>,
+    /// The vital zone the blow found (a critical hit), if any.
+    pub critical: Option<Vital>,
+}
+
+/// The strike of a scripted hit ([`scripted_hit`]): by its cause, a rider's blow a cut.
+fn scripted_strike(
+    cause: DeathCause,
+    mounted: bool,
+    maul: Option<crate::body::Cause>,
+    injury: Injury,
+    down: bool,
+) -> Strike {
+    let kind = match (maul, cause) {
+        (Some(_), _) => StrikeKind::Bite,
+        (None, DeathCause::Melee) if mounted => StrikeKind::Cut,
+        (None, DeathCause::Melee) => StrikeKind::Thrust,
+        (None, DeathCause::Thrown) => StrikeKind::Cut,
+        _ => StrikeKind::Shot,
+    };
+    Strike { kind, height: crate::melee::strike_height(region_of(injury.part), down), mounted }
 }
 
 /// A scripted hit for tests and the close-up bench (`docs/testing.md`, #277): `victim` is
@@ -1519,7 +1613,7 @@ pub fn scripted_hit(w: &mut World, victim: usize, hit: ScriptedHit) -> Option<us
         Some(r) => crate::wounds::has_regions(w, victim).then_some(r),
         None => crate::wounds::pick_region(w, victim),
     };
-    if matches!(w.catalog.get(w.units[victim].kind).role.usage, 8 | 22 | 24) {
+    if crate::melee::rides(w, victim) {
         w.units[victim].body.mounted = true;
     }
     let energy = energy.min(100);
@@ -1528,6 +1622,7 @@ pub fn scripted_hit(w: &mut World, victim: usize, hit: ScriptedHit) -> Option<us
         None => region,
     };
     let body_cause = maul.unwrap_or(crate::body::Cause::of(cause, mounted));
+    let was_down = crate::melee::on_ground(&w.units[victim].body);
     let injury = match aim {
         Some((part, level)) => Some(crate::body::injure_aimed(w, victim, body_cause, energy, part, level)),
         None => region.map(|r| crate::body::injure(w, victim, body_cause, energy, r)),
@@ -1549,6 +1644,8 @@ pub fn scripted_hit(w: &mut World, victim: usize, hit: ScriptedHit) -> Option<us
         building: w.units[victim].building,
         region,
         injury,
+        strike: injury.map(|i| scripted_strike(cause, mounted, maul, i, was_down)),
+        critical: None,
     });
     let index = w.hits.len() - 1;
     if killed {
@@ -1574,8 +1671,10 @@ fn record_hit(
     cause: DeathCause,
     killed: bool,
     region: Option<crate::wounds::HitRegion>,
-    injury: Option<Injury>,
+    blow: Option<Blow>,
 ) {
+    let injury = blow.map(|b| b.injury);
+    let (strike, critical) = blow.map_or((None, None), |b| (b.strike, b.critical));
     let (vx, vy) = w.units[victim].pos.pixels();
     let (sx, sy) = w.units[sender].pos.pixels();
     if w.hits.len() >= HIT_CAP {
@@ -1592,6 +1691,8 @@ fn record_hit(
         building: w.units[victim].building,
         region,
         injury,
+        strike,
+        critical,
     });
 }
 
@@ -1794,7 +1895,7 @@ pub fn visible_between(w: &World, from: Pos, to: Pos, me: usize) -> bool {
 
 /// The first enemy in a 128 px cell that the searcher can hurt (`SearchEnemyInCell`
 /// 0x525ac1): guards only while they attack.
-fn enemy_in_cell(w: &World, u: &Unit, kill: u8, cx: i32, cy: i32) -> Option<usize> {
+fn enemy_in_cell(w: &World, u: &Unit, kill: u8, cx: i32, cy: i32, engaged: &[u8]) -> Option<usize> {
     let ok = |k: &&u32| {
         let o = &w.units[**k as usize];
         o.active() && u.hostile(o) && w.catalog.get(o.kind).materials & kill != 0 && (!o.guard || o.target().is_some())
@@ -1804,7 +1905,44 @@ fn enemy_in_cell(w: &World, u: &Unit, kill: u8, cx: i32, cy: i32) -> Option<usiz
     if b.presence(cx, cy) & !u.nmask == 0 {
         return None;
     }
+    if !engaged.is_empty() {
+        // Hit-locations rule (`docs/melee.md`): a man standing first; a man on the ground
+        // only within reach and while few others are at him already.
+        let standing = |k: &&u32| ok(k) && !crate::melee::on_ground(&w.units[**k as usize].body);
+        let finish = |k: &&u32| {
+            let o = &w.units[**k as usize];
+            ok(k)
+                && crate::melee::on_ground(&o.body)
+                && engaged[**k as usize] < crate::melee::DOWN_ATTACKERS
+                && norma(o.pos.x - u.pos.x, o.pos.y - u.pos.y) <= crate::melee::DOWN_REACH << 4
+        };
+        let cell = b.get(cx, cy);
+        return cell
+            .iter()
+            .find(standing)
+            .or_else(|| b.buildings_in(cx, cy).iter().find(ok))
+            .or_else(|| cell.iter().find(finish))
+            .map(|&k| k as usize);
+    }
     b.get(cx, cy).iter().find(ok).or_else(|| b.buildings_in(cx, cy).iter().find(ok)).map(|&k| k as usize)
+}
+
+/// Per unit, how many enemies attack it while it lies on the ground (hit-locations rule;
+/// empty without it).
+fn engaged_on_ground(w: &World) -> Vec<u8> {
+    if !w.rules.hit_locations {
+        return Vec::new();
+    }
+    let mut n = vec![0u8; w.units.len().max(1)];
+    for u in &w.units {
+        if let Some(t) = u.target().map(|t| t.0 as usize).filter(|&t| t < n.len())
+            && u.active()
+            && crate::melee::on_ground(&w.units[t].body)
+        {
+            n[t] = n[t].saturating_add(1);
+        }
+    }
+    n
 }
 
 /// The fire damage of the object loop's first pass (0x5112e3): a burning building loses
@@ -1833,6 +1971,7 @@ fn burn(w: &mut World, i: usize) {
 pub fn search_victims(w: &mut World) {
     let catalog = w.catalog.clone();
     let tm = (w.tick.0 + 1) as usize;
+    let mut engaged = engaged_on_ground(w);
     for i in 0..w.units.len() {
         burn(w, i);
         let u = &w.units[i];
@@ -1878,11 +2017,15 @@ pub fn search_victims(w: &mut World) {
         let side = 2 * rx + 1;
         let mut best = (10_000_000, None);
         let nearest = |w: &World, best: &mut (i32, Option<usize>), cx: i32, cy: i32| {
-            if let Some(k) = enemy_in_cell(w, &w.units[i], kill_mask, cx, cy) {
+            if let Some(k) = enemy_in_cell(w, &w.units[i], kill_mask, cx, cy, &engaged) {
                 let o = &w.units[k];
                 let d = norma(o.pos.x - c.x, o.pos.y - c.y);
-                if d < best.0 && d > min_r {
-                    *best = (d, Some(k));
+                if d > min_r {
+                    // A man on the ground comes after every standing threat (rule on).
+                    let d = if !engaged.is_empty() && crate::melee::on_ground(&o.body) { d + DOWN_OFFSET } else { d };
+                    if d < best.0 {
+                        *best = (d, Some(k));
+                    }
                 }
             }
         };
@@ -1956,7 +2099,7 @@ pub fn search_victims(w: &mut World) {
                         continue;
                     }
                     w.random.rando();
-                    let Some(k) = enemy_in_cell(w, &w.units[i], kill_mask, cx, cy) else { continue };
+                    let Some(k) = enemy_in_cell(w, &w.units[i], kill_mask, cx, cy, &engaged) else { continue };
                     w.random.rando();
                     let o = &w.units[k];
                     let d = norma(o.pos.x - c.x, o.pos.y - c.y);
@@ -1966,11 +2109,19 @@ pub fn search_victims(w: &mut World) {
                 }
             }
         }
+        let best = if best.0 >= DOWN_OFFSET && best.1.is_some() { (best.0 - DOWN_OFFSET, best.1) } else { best };
         if let (d, Some(k)) = best
             && d < sr
             && visible_between(w, w.units[k].pos, c, i)
         {
-            attack_obj(w, i, k, AUTO_PRIO);
+            let was = w.units[i].target();
+            if attack_obj(w, i, k, AUTO_PRIO)
+                && !engaged.is_empty()
+                && was != w.units[i].target()
+                && crate::melee::on_ground(&w.units[k].body)
+            {
+                engaged[k] = engaged[k].saturating_add(1);
+            }
         }
     }
 }

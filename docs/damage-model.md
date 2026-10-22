@@ -108,6 +108,18 @@ Body {
 
   Dying of it gives `DeathCause::BledOut`.
 
+### Critical hits and men on the ground (`docs/melee.md`)
+
+After the outcome a man struck by a man rolls once for a **vital zone** of the struck part
+(brain, neck, heart, lung, liver, spine, femoral or brachial artery) by strike kind
+(thrust, cut, smash, shot), doubled against a man on the ground. A brain hit and most
+heart hits kill; the others set a timed bleed-out (`Body::bleed_out`, seconds), a lung hit
+collapses him (`Body::collapsed`) and a spine hit paralyses (`Body::spine`: legs, or all
+four limbs). Both count as legs at 0 (he crawls), a high spine hit also as arms at 0 (he
+writhes). Men on the ground are targets after the standing ones, within reach and by at
+most two enemies; blows at them come down (`HitRecord::strike`). Tables and the contract
+are in `docs/melee.md`.
+
 ### Outcomes: `body::injure(w, victim, cause, energy, region_hint)`
 
 Each limb hit draws from the world RNG (`rando()`), only with the rule on:

@@ -86,11 +86,17 @@ pub fn bleed(w: &mut World) {
         if !u.living() {
             continue;
         }
-        let loss = u.body.bleeding();
+        let mut loss = u.body.bleeding();
+        // A vital hit (`crate::melee`): the life left runs out with the seconds left.
+        let (timed, life) = (u.body.bleed_out, u.life);
+        if timed > 0 {
+            w.units[i].body.bleed_out -= 1;
+            loss = if timed == 1 { i32::MAX } else { loss.saturating_add((life / i32::from(timed)).max(1)) };
+        }
         if loss == 0 {
             continue;
         }
-        if u.life > loss {
+        if w.units[i].life > loss {
             w.units[i].life -= loss;
         } else {
             w.units[i].life = 0;

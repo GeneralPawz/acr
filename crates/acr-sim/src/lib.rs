@@ -38,6 +38,7 @@ pub mod grouping;
 pub mod hash;
 pub mod map;
 pub mod market;
+pub mod melee;
 pub mod morale;
 pub mod motion;
 pub mod path;
