@@ -120,7 +120,20 @@ impl Host for Api<'_> {
             return Ok(0);
         };
         *self.st.calls.entry(f.name).or_default() += 1;
-        (f.handler)(self, &mut call)
+        if !self.st.trace {
+            return (f.handler)(self, &mut call);
+        }
+        let n = acr_script::dmcr::arg_count(f.name).unwrap_or(0);
+        let args: Vec<String> =
+            (0..u32::from(n)).map(|i| call.i32(i).map(|a| a.to_string()).unwrap_or_default()).collect();
+        let r = (f.handler)(self, &mut call);
+        let shown = match &r {
+            Ok(v) => (*v as i32).to_string(),
+            Err(e) => e.to_string(),
+        };
+        let line = format!("{}({}) -> {shown}", f.name, args.join(", "));
+        self.st.trace_log.push(line);
+        r
     }
 }
 
