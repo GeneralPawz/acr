@@ -636,6 +636,9 @@ pub struct ObjectType {
     pub bars: Vec<[i32; 5]>,
     /// `TRANSPORT n` (NM+0x1728 bit6): carries up to `n` units (the capacity is `max_inside`).
     pub transport: bool,
+    /// `EXITPAUSE n` (NM+0x2863, default 8, read by 0x4f79ea): ticks before `LeaveMine`
+    /// (0x5f518b) lets the next unit out.
+    pub exit_pause: u8,
     /// `MULTIWEAPON rx ry z n (x y)*n` (NM+0x2902..): a ship's guns, `(x − rx, (y − ry + z)·2)`
     /// from its centre, fired from height `z`.
     pub guns: Option<(i32, Vec<(i32, i32)>)>,
@@ -895,6 +898,7 @@ impl ObjectType {
             res_subst: def.has("RESSUBST"),
             can_stop_build: def.has("CANSTOPBUILD"),
             transport: def.has("TRANSPORT"),
+            exit_pause: def.get("EXITPAUSE").and_then(|c| c.int(0)).map_or(8, |n| n as u8),
             guns: def.get("MULTIWEAPON").map(|c| {
                 let a = |i| c.int(i).unwrap_or(0);
                 let (rx, ry, z, n) = (a(0), a(1), a(2), a(3).clamp(0, 256) as usize);

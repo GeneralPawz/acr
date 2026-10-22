@@ -557,11 +557,35 @@ fn spawn_from(w: &mut World, b: usize, kind: TypeId) -> EntityId {
         Some(&(x1, y1)) => get_dir(x1 - pts[0].0, y1 - pts[0].1),
         None => 64,
     };
-    let (owner, rally) = (bu.owner, bu.rally);
+    let owner = bu.owner;
     let id = w.spawn(kind, owner, first, dir);
     // The new unit's `BORN_SOUND` (0x49fab7).
     w.born.push(id);
-    let i = id.0 as usize;
+    walk_out(w, b, id.0 as usize, false);
+    id
+}
+
+/// The walk-out of unit `i` from building `b`, shared by the spawn (0x49eeb7) and
+/// `LeaveMine` (0x5f522e, `leaving`): the unit stands at the first born point, facing the
+/// second, and walks through the further points and the rally point.
+fn walk_out(w: &mut World, b: usize, i: usize, leaving: bool) {
+    let catalog = w.catalog.clone();
+    let (bu, bt) = (&w.units[b], catalog.get(w.units[b].kind));
+    let (bx, by) = base_cell(bt, bu.pos);
+    let pts = bt.economy.born_points.clone();
+    let corner = |(x, y): (i32, i32), add: i32| Pos::new((bx + x + add) << 8, (by + y + add) << 8);
+    let first = pts.first().map_or(bu.pos, |&p| corner(p, 0));
+    let rally = bu.rally;
+    if leaving {
+        let dir = match pts.get(1) {
+            Some(&(x1, y1)) => get_dir(x1 - pts[0].0, y1 - pts[0].1),
+            None => 64,
+        };
+        let u = &mut w.units[i];
+        u.pos = first;
+        u.cell = Unit::cell_of(first, u.lx);
+        u.dir = dir;
+    }
     let u = &mut w.units[i];
     w.occupancy.clr_bar(u.cell.0, u.cell.1, u.lx);
     // The engine's queue in execution order; the order stack is its reverse.
@@ -577,20 +601,28 @@ fn spawn_from(w: &mut World, b: usize, kind: TypeId) -> EntityId {
     u.orders = queue;
     u.prio = SPAWN_PRIO;
     if let Some(r) = rally.filter(|r| r.x > 0) {
-        follow_rally(w, b, i, r);
+        follow_rally(w, b, i, r, leaving);
     }
     let u = &mut w.units[i];
     if u.inside_of.is_none() {
         // SetOrderedUnlimitedMotion: land units walk through locks until `ClearUnlimited`.
         u.unlimited = true;
     }
-    id
 }
 
 /// The rally part of the spawn (0x49fcc6..0x4a0160) for unit `i` of building `b`.
-fn follow_rally(w: &mut World, b: usize, i: usize, rally: Pos) {
+/// `leaving` (`LeaveMine` 0x5f56f7): a rally point on the building itself sends the unit
+/// back in only when the building is full (`MaxInside + AddInside <= Inside`), otherwise
+/// the unit stays at the last born point.
+fn follow_rally(w: &mut World, b: usize, i: usize, rally: Pos, leaving: bool) {
     let (dx, dy) = rally.pixels();
     if let Some(ins) = building_at(w, dx, dy) {
+        if leaving {
+            if ins != b || !has_room(w, b) {
+                enter(w, i, ins, 0x90, true);
+            }
+            return;
+        }
         if ins == b && can_enter(w, &w.units[i], &w.units[b]) {
             // Straight in: the unit never walks out.
             let (bid, u) = (w.units[b].id, &mut w.units[i]);
@@ -624,6 +656,12 @@ fn follow_rally(w: &mut World, b: usize, i: usize, rally: Pos) {
     let (x, y) = find_unit_position(w, w.units[i].kind, rally);
     let (x, y) = (x >> 4, y >> 4);
     w.units[i].orders.insert(0, Order::SmartSendTo { x, y, dx: 0, dy: 0, prio: 0x80, area: None });
+}
+
+/// Room for one more unit in building `b` (`MaxInside + AddInside > Inside`).
+fn has_room(w: &World, b: usize) -> bool {
+    let u = &w.units[b];
+    w.adv(u.owner, u.kind).max_inside + u.add_inside > u.inside.len() as i32
 }
 
 /// The building the rally point lies on (0x49ed8e over rings 0..=3 of 128 px cells, where
@@ -888,6 +926,44 @@ fn storm(w: &mut World, i: usize, b: usize) {
         }
     }
     crate::combat::die(w, i);
+}
+
+/// `LeaveMine` (0x5f518b), on building `b`: nothing without units inside; a transport lets
+/// one passenger of `kind` off (`LeaveTransport` 0x54e000); any other building gets a
+/// [`Order::LeaveMine`] with the type's `EXITPAUSE` as its delay (`CreateOrder(1)`, OB+0x101
+/// becomes the current order). The building flag OB+0x29 bit 1 is never set on buildings.
+pub fn leave_mine(w: &mut World, b: usize, kind: TypeId) {
+    if w.units[b].inside.is_empty() {
+        return;
+    }
+    let t = w.catalog.get(w.units[b].kind);
+    if t.transport {
+        crate::ship::leave_transport(w, b, kind);
+        return;
+    }
+    let delay = t.exit_pause;
+    w.units[b].orders.push(Order::LeaveMine { kind, delay });
+}
+
+/// `LeaveMine` link (0x5f522e): the delay counts down (OB+0xef copies the order's byte 4);
+/// at 0 the first unit of `kind` on the building's list (`+0x1f` NIndex) is taken off it and
+/// walks out like a newly produced unit (born points, rally point; [`spawn_from`]'s
+/// walk-out), then the order ends. Without such a unit the order ends at once.
+pub fn leave_mine_link(w: &mut World, b: usize, kind: TypeId, delay: u8) {
+    if delay > 0 {
+        if let Some(Order::LeaveMine { delay, .. }) = w.units[b].orders.last_mut() {
+            *delay -= 1;
+        }
+        return;
+    }
+    let found = w.units[b].inside.iter().position(|e| w.units[e.0 as usize].kind == kind);
+    if let Some(k) = found {
+        let id = w.units[b].inside.remove(k);
+        let i = id.0 as usize;
+        w.units[i].inside_of = None;
+        walk_out(w, b, i, true);
+    }
+    w.units[b].pop_order();
 }
 
 /// Lets everybody out of a building at its born points.

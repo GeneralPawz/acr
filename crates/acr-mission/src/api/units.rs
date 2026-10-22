@@ -532,6 +532,7 @@ pub fn order_kind(world: &acr_sim::World, u: &acr_sim::world::Unit) -> i32 {
         Some(Order::SendTo { .. }) => 8, // 0x5172c6
         Some(Order::ClearUnlimited) => 11, // 0x527dec
         Some(Order::WaterSendTo { .. }) => 12, // 0x54ac93
+        Some(Order::LeaveMine { .. }) => 6, // 0x5f522e
         Some(Order::LeaveTransport { .. }) => 17, // 0x54e188
         Some(Order::GoToTransport { .. }) => 18, // 0x54dbb0
         Some(Order::Fishing) => 19,     // 0x54eb16

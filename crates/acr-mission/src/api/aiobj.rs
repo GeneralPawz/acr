@@ -10,22 +10,24 @@ pub const FUNCTIONS: &[ApiFn] = &[
     ApiFn { name: "OBJ_SendTo", original: 0x56f0a1, status: Status::Done, handler: obj_send_to },
     ApiFn { name: "OBJ_AttackObj", original: 0x56f13f, status: Status::Done, handler: obj_attack_obj },
     ApiFn { name: "OBJ_AttackPoint", original: 0x56f3a2, status: Status::Done, handler: obj_attack_point },
-    ApiFn {
-        name: "OBJ_LeaveMine",
-        original: 0x56f1d6,
-        status: Status::Partial("everybody leaves (acr-sim releases all units at once)"),
-        handler: obj_leave_mine,
-    },
+    ApiFn { name: "OBJ_LeaveMine", original: 0x56f1d6, status: Status::Done, handler: obj_leave_mine },
     ApiFn { name: "GetTargetObject", original: 0x56f4b7, status: Status::Done, handler: get_target_object },
     ApiFn { name: "GetOrderType", original: 0x56f3f5, status: Status::Done, handler: get_order_type },
 ];
 
-/// `bool OBJ_LeaveMine(word index, word type)`.
+/// `bool OBJ_LeaveMine(word index, word type)` (0x56f1d6): false for 0xFFFF, an empty slot
+/// or a building whose current order (OB+0x101) is already a `LeaveMine` (link 0x5f522e);
+/// otherwise `LeaveMine(type)` (0x5f518b, [`acr_sim::economy::leave_mine`]) and true.
 fn obj_leave_mine(api: &mut Api, c: &mut Call) -> Result<u32> {
-    let Some(b) = api.object(c.u16(0)?).map(|u| u.id.0 as usize) else { return Ok(0) };
-    if !api.world.units[b].inside.is_empty() {
-        acr_sim::economy::leave(api.world, b);
+    let idx = c.u16(0)?;
+    if idx == 0xFFFF {
+        return Ok(0);
     }
+    let Some(b) = api.object(idx).map(|u| u.id.0 as usize) else { return Ok(0) };
+    if matches!(api.world.units[b].orders.last(), Some(acr_sim::world::Order::LeaveMine { .. })) {
+        return Ok(0);
+    }
+    acr_sim::economy::leave_mine(api.world, b, acr_sim::TypeId(c.u16(1)?));
     Ok(1)
 }
 
@@ -37,7 +39,7 @@ pub fn order_type(u: &acr_sim::Unit) -> u32 {
         None => 0,
         Some(Order::SendTo { .. } | Order::SmartSendTo { .. } | Order::WaterSendTo { .. }) => 12,
         Some(Order::GoToTransport { .. }) => 0xF3,
-        Some(Order::LeaveTransport { .. } | Order::Turn { .. }) => 0,
+        Some(Order::LeaveTransport { .. } | Order::LeaveMine { .. } | Order::Turn { .. }) => 0,
         Some(Order::Fishing) => 221,
         Some(Order::Attack { .. }) => 3,
         Some(Order::AttackPoint { .. }) => 0x4C,
