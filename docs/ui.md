@@ -637,6 +637,30 @@ Deviations:
   that value, so ACR does not add one (F1 shows the objectives).
 >>>>>>> 7077846 (In-game "M" drop-down: all single player rows, mission history window)
 
+### Mission history (#116)
+
+- Every `ShowPage(id)` and `AskQuestion(id)` appends `id` to the local player's history
+  (0x5624c5: `Player+0x1a783` array of strings, count `+0x1a787`; no limit, no duplicate
+  check; saved with the game). `ShowPageParam` and `AskQuestionParam` append
+  `"<header> @ <formatted text>"` instead, once per matching page. `AskComplexQuestion`
+  (multiple choice) appends nothing.
+- `UM_HIST` (0x562bea) shows the newest entry. An entry starting with `#` is looked up in
+  the page table (0x28b77a0 count, 0x28b77b0 ids, 0x28b77b4 headers, 0x28b77a8 texts; the
+  last match wins; an unknown id closes the browser); any other entry is split at the
+  first `@` (0x672c44) into header and text.
+- The `MHISTORY` window 0x5e1d30 (header, text, first flag; the flag is never read) has
+  the page window's layout on `Interf2\Messages` frames 4 (window) and 5 (shadow), caption
+  `MHISTORY` ("Letzte Nachrichten"), and three `Interf2\Button2` frame 1 buttons at y =
+  520: `@MSPREV` (x = 50, returns 1), `@MSCANCEL` (217, 3), `@MSNEXT` (384, 2), all in
+  `fon18y5`. Enter and Escape return 3. The browser goes to the older entry on 1 and the
+  newer one on 2; at either end the same entry is shown again. It saves the screen under
+  the window and restores it afterwards.
+- ACR keeps the header and text of every page and question the script shows, in order.
+  So the entry of an unknown page is missing (the original stores it and stops browsing
+  there), and a page id that matches several pages gives one entry per page.
+- The game menu's objectives row (value 0xe8 in 0x5d9c30) is dead code: no row produces
+  that value, so ACR does not add one (F1 shows the objectives).
+
 ### Open questions
 
 - Which command icons the original shows for a selection without an officer (attack
