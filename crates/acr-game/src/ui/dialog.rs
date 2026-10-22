@@ -326,7 +326,7 @@ impl Dialog {
             x,
             y,
             rect,
-            clip: self.clip.unwrap_or(Rect::SCREEN),
+            clip: self.clip.unwrap_or(Rect::ALL),
             enabled: true,
             visible: true,
             hover: false,

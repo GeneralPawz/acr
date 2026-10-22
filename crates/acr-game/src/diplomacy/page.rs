@@ -4,7 +4,6 @@
 
 use acr_formats::font::{font_like, named_font};
 
-use super::WINDOW;
 use super::cml::{self, Tag};
 use crate::ui::Ctx;
 use crate::ui::dialog::{Align, Dialog, Kind, WidgetId};
@@ -54,6 +53,8 @@ impl Default for SboxStyle {
 
 pub struct Page {
     text: Vec<u8>,
+    /// The browser window the boxes are placed in ([`super::window`]).
+    window: Rect,
     built: bool,
     boxes: Vec<PageBox>,
     /// Commands of the links, by `UserParam`.
@@ -63,8 +64,8 @@ pub struct Page {
 }
 
 impl Page {
-    pub fn new(text: &[u8]) -> Self {
-        Self { text: text.to_vec(), built: false, boxes: Vec::new(), commands: Vec::new(), timer: None }
+    pub fn new(text: &[u8], window: Rect) -> Self {
+        Self { text: text.to_vec(), window, built: false, boxes: Vec::new(), commands: Vec::new(), timer: None }
     }
 
     /// The page's CML text.
@@ -134,7 +135,8 @@ impl Page {
     /// `#ebox`/`#sbox[%NAME](x:..,y:..,w:..,h:..)`: a box relative to the window (0x1000ab75).
     fn add_box(&mut self, ctx: &Ctx, tag: &Tag, style: &SboxStyle) {
         let Some(name) = tag.id.clone() else { return };
-        let window = [WINDOW.x0, WINDOW.y0, WINDOW.x1 - 1, WINDOW.y1 - 1];
+        let w = self.window;
+        let window = [w.x0, w.y0, w.x1 - 1, w.y1 - 1];
         let outer = rect(&tag.args.join(&b','), window, &[]);
         let mut dialog = Dialog::default();
         let mut scroll = None;

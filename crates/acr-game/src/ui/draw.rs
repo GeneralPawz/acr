@@ -28,7 +28,10 @@ pub struct Rect {
 }
 
 impl Rect {
+    /// The menu canvas (1024 × 768).
     pub const SCREEN: Rect = Rect { x0: 0, y0: 0, x1: 1024, y1: 768 };
+    /// No bounds: draws are clipped by their canvas ([`Canvas::clip`]) only.
+    pub const ALL: Rect = Rect { x0: i32::MIN / 2, y0: i32::MIN / 2, x1: i32::MAX / 2, y1: i32::MAX / 2 };
 
     pub fn new(x: i32, y: i32, w: i32, h: i32) -> Self {
         Self { x0: x, y0: y, x1: x + w, y1: y + h }
@@ -103,37 +106,30 @@ pub struct Draw {
 
 impl Draw {
     pub fn bitmap(path: &str, x: i32, y: i32) -> Self {
-        Self { sprite: Sprite::Bitmap(path.to_owned()), x, y, size: [0; 2], clip: Rect::SCREEN, alpha: 1.0 }
+        Self { sprite: Sprite::Bitmap(path.to_owned()), x, y, size: [0; 2], clip: Rect::ALL, alpha: 1.0 }
     }
 
     pub fn frame(gp: &str, frame: usize, x: i32, y: i32) -> Self {
-        Self { sprite: Sprite::Frame { gp: gp.to_owned(), frame }, x, y, size: [0; 2], clip: Rect::SCREEN, alpha: 1.0 }
+        Self { sprite: Sprite::Frame { gp: gp.to_owned(), frame }, x, y, size: [0; 2], clip: Rect::ALL, alpha: 1.0 }
     }
 
     pub fn text(font: FontId, text: &[u8], x: i32, y: i32) -> Self {
-        Self { sprite: Sprite::Text { font, text: text.to_vec() }, x, y, size: [0; 2], clip: Rect::SCREEN, alpha: 1.0 }
+        Self { sprite: Sprite::Text { font, text: text.to_vec() }, x, y, size: [0; 2], clip: Rect::ALL, alpha: 1.0 }
     }
 
     pub fn game_frame(gp: &str, frame: usize, x: i32, y: i32, player: u8) -> Self {
         let sprite = Sprite::GameFrame { gp: gp.to_owned(), frame, player };
-        Self { sprite, x, y, size: [0; 2], clip: Rect::SCREEN, alpha: 1.0 }
+        Self { sprite, x, y, size: [0; 2], clip: Rect::ALL, alpha: 1.0 }
     }
 
     /// [`Draw::game_frame`] with the colours remapped through row `row` of `table`.
     pub fn game_frame_remap(gp: &str, frame: usize, x: i32, y: i32, player: u8, table: &'static str, row: u8) -> Self {
         let sprite = Sprite::GameFrameRemap { gp: gp.to_owned(), frame, player, table, row };
-        Self { sprite, x, y, size: [0; 2], clip: Rect::SCREEN, alpha: 1.0 }
+        Self { sprite, x, y, size: [0; 2], clip: Rect::ALL, alpha: 1.0 }
     }
 
     pub fn game_text(font: FontId, text: &[u8], x: i32, y: i32) -> Self {
-        Self {
-            sprite: Sprite::GameText { font, text: text.to_vec() },
-            x,
-            y,
-            size: [0; 2],
-            clip: Rect::SCREEN,
-            alpha: 1.0,
-        }
+        Self { sprite: Sprite::GameText { font, text: text.to_vec() }, x, y, size: [0; 2], clip: Rect::ALL, alpha: 1.0 }
     }
 
     /// An image set with [`Textures::set_image`], stretched over `rect`.
@@ -143,7 +139,7 @@ impl Draw {
             x: rect.x0,
             y: rect.y0,
             size: [rect.width(), rect.height()],
-            clip: Rect::SCREEN,
+            clip: Rect::ALL,
             alpha: 1.0,
         }
     }
@@ -154,7 +150,7 @@ impl Draw {
             x: rect.x0,
             y: rect.y0,
             size: [rect.width(), rect.height()],
-            clip: Rect::SCREEN,
+            clip: Rect::ALL,
             alpha: 1.0,
         }
     }
@@ -169,9 +165,9 @@ impl Draw {
         self
     }
 
-    /// Without the canvas clip, for draws on other canvases (the map).
+    /// Without a clip of its own (only its canvas clips it).
     pub fn unclipped(mut self) -> Self {
-        self.clip = Rect { x0: i32::MIN / 2, y0: i32::MIN / 2, x1: i32::MAX / 2, y1: i32::MAX / 2 };
+        self.clip = Rect::ALL;
         self
     }
 
@@ -182,6 +178,17 @@ impl Draw {
 
     pub fn clipped(mut self, clip: Rect) -> Self {
         self.clip = self.clip.intersect(&clip);
+        self
+    }
+
+    /// The same draw moved by `dx`, `dy` with its clip.
+    pub fn translated(mut self, dx: i32, dy: i32) -> Self {
+        self.x += dx;
+        self.y += dy;
+        if self.clip != Rect::ALL {
+            self.clip =
+                Rect { x0: self.clip.x0 + dx, y0: self.clip.y0 + dy, x1: self.clip.x1 + dx, y1: self.clip.y1 + dy };
+        }
         self
     }
 }
@@ -252,7 +259,7 @@ impl Textures {
             let (w, h) = (raster.texture.width as i32, raster.texture.height as i32);
             let size = if matches!(d.sprite, Sprite::Fill(_) | Sprite::Image(_)) { d.size } else { [w, h] };
             let dst = Rect::new(d.x + raster.offset[0], d.y + raster.offset[1], size[0], size[1]);
-            let visible = dst.intersect(&d.clip);
+            let visible = dst.intersect(&d.clip).intersect(&canvas.clip);
             if visible.is_empty() {
                 continue;
             }

@@ -2,9 +2,10 @@
 //! minimap, the "M" drop-down, hints, and the overlays drawn over the map (selection
 //! brackets, life bars, the move marker, the selection rectangle).
 //!
-//! The original lays the interface out for the screen size (`RealLx` × `RealLy`); ACR uses
-//! the 1024 × 768 canvas of the menus, scaled into the window. The map itself fills the
-//! whole window: `0x676b84` is 1, so the view has no bottom panel (`PanelLy` is unused).
+//! The original lays the interface out for the screen size (`RealLx` × `RealLy`). ACR lays
+//! it out for the window divided by the menus' scale ([`crate::canvas::Canvas::screen`]),
+//! so one side is 1024 or 768 and the other at least as long. The map fills the whole
+//! window: `0x676b84` is 1, so the view has no bottom panel (`PanelLy` is unused).
 //! See `docs/ui.md` (in-game interface) for the addresses.
 
 pub mod cursor;
@@ -45,7 +46,7 @@ pub mod font {
     pub const SMALL_BLACK1: FontId = FontId("SmallBlackFont1");
 }
 
-/// The layout size (`RealLx`, `RealLy`).
+/// The smallest layout size (`RealLx`, `RealLy`); [`Hud::set_screen`] sets the real one.
 pub const SCREEN: [i32; 2] = [1024, 768];
 
 /// `Zone1X`, `Zone1Y`, `PropertyX`, `PropertyY`, `IconLx`, `IconLy`, `AddIconLx`,
@@ -196,7 +197,7 @@ pub struct Stats {
     pub shield: Vec<u8>,
     /// Protection icon and value, at most six; none for buildings.
     pub protections: Vec<(usize, i32)>,
-    /// Text lines in `fn10` from (13, 680), 12 apart: fish, housing, depot capacity,
+    /// Text lines in `fn10` from (13, `RealLy − 88`), 12 apart: fish, housing, depot capacity,
     /// inside, the mined resource.
     pub lines: Vec<Vec<u8>>,
     /// `SHOWDELAY` types: the summed reload counters and their starting values of the
@@ -338,11 +339,13 @@ fn menu_entries(view: &View) -> Vec<MenuEntry> {
 
 /// The "M" button: `ResPanel` frame 2 at `RealLx − 716 − 65`, clickable strictly inside
 /// x + 23..x + 44, 8..26 (0x4c73bb).
-fn menu_button() -> (i32, i32) {
-    (SCREEN[0] - RES_PANEL - 65, 0)
+fn menu_button(screen: [i32; 2]) -> (i32, i32) {
+    (screen[0] - RES_PANEL - 65, 0)
 }
 
 pub struct Hud {
+    /// The layout size (`RealLx`, `RealLy`), at least [`SCREEN`].
+    screen: [i32; 2],
     data: Option<Rc<HudData>>,
     minimap: Option<Minimap>,
     /// Large minimap (`0x668f1d`, starts at 1); M toggles.
@@ -371,6 +374,7 @@ pub struct Hud {
 impl Default for Hud {
     fn default() -> Self {
         Self {
+            screen: SCREEN,
             data: None,
             minimap: None,
             large_minimap: true,
@@ -417,8 +421,33 @@ impl Hud {
         self.minimap.is_some()
     }
 
+    /// Lays the interface out for a screen of `screen` canvas pixels (`RealLx`, `RealLy`).
+    pub fn set_screen(&mut self, screen: [i32; 2]) {
+        let screen = [screen[0].max(SCREEN[0]), screen[1].max(SCREEN[1])];
+        if screen != self.screen {
+            log::info!("interface laid out for a screen of {} x {}", screen[0], screen[1]);
+            self.screen = screen;
+            self.minimap_dirty = true;
+        }
+    }
+
+    pub fn screen(&self) -> [i32; 2] {
+        self.screen
+    }
+
+    /// How far the side panels move right: they are laid out for `RealLx` = 1024 (see
+    /// [`panels`]) and anchored to the right edge.
+    fn panel_dx(&self) -> i32 {
+        self.screen[0] - SCREEN[0]
+    }
+
+    /// A canvas point in the side panels' coordinates.
+    fn panel_point(&self, p: [f32; 2]) -> [f32; 2] {
+        [p[0] - self.panel_dx() as f32, p[1]]
+    }
+
     fn placement(&self, view: &View) -> Placement {
-        Placement::new(self.large_minimap, SCREEN, view.camera, view.view)
+        Placement::new(self.large_minimap, self.screen, view.camera, view.view)
     }
 
     /// The minimap image if it changed since the last call.
@@ -444,12 +473,12 @@ impl Hud {
     }
 
     /// The command grid's top-left corner: `PropertyX`, `RealLy − PanelLy + PropertyY`.
-    fn grid_origin() -> (i32, i32) {
-        (PROPERTY[0], SCREEN[1] - PANEL_LY + PROPERTY[1])
+    fn grid_origin(screen: [i32; 2]) -> (i32, i32) {
+        (PROPERTY[0], screen[1] - PANEL_LY + PROPERTY[1])
     }
 
-    fn icon_rect(slot: usize) -> Rect {
-        let (x, y) = Self::grid_origin();
+    fn icon_rect(screen: [i32; 2], slot: usize) -> Rect {
+        let (x, y) = Self::grid_origin(screen);
         let step = ICON + ADD_ICON;
         Rect::new(x + (slot % GRID_COLUMNS) as i32 * step, y + (slot / GRID_COLUMNS) as i32 * step, ICON, ICON)
     }
@@ -461,13 +490,13 @@ impl Hud {
     }
 
     /// The box behind the icons (0x5aa2f3): from `PropertyX − 2` to the last used column.
-    fn icon_box(icons: &[Icon]) -> Option<Rect> {
+    fn icon_box(screen: [i32; 2], icons: &[Icon]) -> Option<Rect> {
         let n = Self::columns(icons);
         if n == 0 {
             return None;
         }
-        let (x, _) = Self::grid_origin();
-        let y = SCREEN[1] - PANEL_LY + ZONE1[1];
+        let (x, _) = Self::grid_origin(screen);
+        let y = screen[1] - PANEL_LY + ZONE1[1];
         let x0 = x - 2;
         Some(Rect { x0, y0: y, x1: x0 + 2 + (ICON + ADD_ICON) * n, y1: y + ICON * 3 + 5 })
     }
@@ -478,7 +507,7 @@ impl Hud {
         let entries = menu_entries(view);
         let width = entries.iter().map(|e| ctx.fonts.width(ctx.lib, font::WHITE, ctx.texts.get(e.text(self)))).max();
         let width = width.unwrap_or(0) + 24;
-        let (bx, _) = menu_button();
+        let (bx, _) = menu_button(self.screen);
         let x = bx + 33 - width / 2;
         let rows =
             entries.into_iter().enumerate().map(|(i, e)| (e, Rect::new(x, 60 + 24 * i as i32, width, 24))).collect();
@@ -514,14 +543,14 @@ impl Hud {
         if self.dropdown && self.dropdown_rows(ctx, view).1.iter().any(|(_, r)| r.contains(p)) {
             return true;
         }
-        if self.panel != Panel::None && panels::covers(p) {
+        if self.panel != Panel::None && panels::covers(self.panel_point(p)) {
             return true;
         }
-        let (bx, by) = menu_button();
-        if Rect::new(bx, by, 67, 42).contains(p) || (p[1] < 42.0 && p[0] >= (SCREEN[0] - RES_PANEL) as f32) {
+        let (bx, by) = menu_button(self.screen);
+        if Rect::new(bx, by, 67, 42).contains(p) || (p[1] < 42.0 && p[0] >= (self.screen[0] - RES_PANEL) as f32) {
             return true;
         }
-        if Self::icon_box(&view.icons).is_some_and(|r| r.contains(p)) {
+        if Self::icon_box(self.screen, &view.icons).is_some_and(|r| r.contains(p)) {
             return true;
         }
         self.minimap.is_some() && self.placement(view).rect.contains(p)
@@ -575,29 +604,30 @@ impl Hud {
             }
         }
         // An open panel swallows the clicks in its column (0x4c1c36).
-        if self.panel != Panel::None && panels::covers(p) {
+        let pp = self.panel_point(p);
+        if self.panel != Panel::None && panels::covers(pp) {
             match self.panel {
-                Panel::Unit => match self.unit_panel.press(p) {
+                Panel::Unit => match self.unit_panel.press(pp) {
                     panels::UnitPanelEvent::Close => self.panel = Panel::None,
                     panels::UnitPanelEvent::Step(d) => return HudEvent::UnitPanelStep(d),
                     _ => {}
                 },
                 _ => {
-                    if !self.game_panel.press(p) {
+                    if !self.game_panel.press(pp) {
                         self.panel = Panel::None;
                     }
                 }
             }
             return HudEvent::Used;
         }
-        let (bx, _) = menu_button();
+        let (bx, _) = menu_button(self.screen);
         let [x, y] = p;
         if x > (bx + 23) as f32 && x < (bx + 44) as f32 && y > 8.0 && y < 26.0 {
             self.dropdown = true;
             return HudEvent::Used;
         }
         for icon in &view.icons {
-            if Self::icon_rect(icon.slot).contains(p) && icon.slot < GRID_COLUMNS * GRID_ROWS {
+            if Self::icon_rect(self.screen, icon.slot).contains(p) && icon.slot < GRID_COLUMNS * GRID_ROWS {
                 self.pressed = true;
                 return match (&icon.action, icon.disabled) {
                     (Some(a), false) => HudEvent::Command(a.clone()),
@@ -617,11 +647,12 @@ impl Hud {
     /// Mouse dragged with the left button held: the minimap keeps moving the camera.
     pub fn drag(&mut self, view: &View, p: [f32; 2]) -> HudEvent {
         self.mouse = Some(p);
+        let pp = self.panel_point(p);
         if self.panel == Panel::Unit {
-            self.unit_panel.mouse_move(p);
+            self.unit_panel.mouse_move(pp);
         }
         if self.panel == Panel::Game {
-            self.game_panel.mouse_move(p);
+            self.game_panel.mouse_move(pp);
         }
         if self.pressed
             && self.minimap.is_some()
@@ -635,11 +666,13 @@ impl Hud {
     /// Right button at canvas point `p`: an icon's right-click command, or an order to a
     /// point of the minimap.
     pub fn right_press(&mut self, ctx: &Ctx, view: &View, p: [f32; 2]) -> HudEvent {
-        if self.panel != Panel::None && panels::covers(p) {
+        if self.panel != Panel::None && panels::covers(self.panel_point(p)) {
             return HudEvent::Used;
         }
-        if let Some(icon) =
-            view.icons.iter().find(|i| i.slot < GRID_COLUMNS * GRID_ROWS && Self::icon_rect(i.slot).contains(p))
+        if let Some(icon) = view
+            .icons
+            .iter()
+            .find(|i| i.slot < GRID_COLUMNS * GRID_ROWS && Self::icon_rect(self.screen, i.slot).contains(p))
         {
             return match (&icon.right, icon.disabled) {
                 (Some(a), false) => HudEvent::Command(a.clone()),
@@ -668,31 +701,35 @@ impl Hud {
         if self.minimap.is_some() {
             self.draw_minimap(ctx, view, &palette, out);
         }
+        let screen = self.screen;
         if let (Some(stats), Some(_)) = (&view.stats, &data) {
-            draw_stats(ctx, stats, &palette, out);
+            draw_stats(ctx, stats, &palette, screen, out);
         }
-        if let Some(r) = Self::icon_box(&view.icons) {
+        if let Some(r) = Self::icon_box(screen, &view.icons) {
             border(ctx, out, r.x0, r.y0, r.x1, r.y1, BOX_CORNERS);
         }
         let mouse = self.mouse;
         for icon in view.icons.iter().filter(|i| i.slot < GRID_COLUMNS * GRID_ROWS) {
-            let r = Self::icon_rect(icon.slot);
+            let r = Self::icon_rect(screen, icon.slot);
             let pressed = self.pressed && mouse.is_some_and(|m| r.contains(m));
             draw_icon(icon, r.x0, r.y0, pressed, &palette, out);
         }
+        let mut panel = Vec::new();
         match (self.panel, &view.unit_info) {
-            (Panel::Unit, Some(info)) => self.unit_panel.draw(ctx, info, view.morale.as_ref(), &palette, out),
+            (Panel::Unit, Some(info)) => self.unit_panel.draw(ctx, info, view.morale.as_ref(), &palette, &mut panel),
             (Panel::Game, _) => {
-                self.game_panel.draw_frame(ctx, out);
-                out.extend(view.game_page.iter().cloned());
-                self.game_panel.draw_widgets(ctx, out);
+                self.game_panel.draw_frame(ctx, &mut panel);
+                panel.extend(view.game_page.iter().cloned());
+                self.game_panel.draw_widgets(ctx, &mut panel);
             }
             _ => {}
         }
+        let dx = self.panel_dx();
+        out.extend(panel.into_iter().map(|d| d.translated(dx, 0)));
         if let Some(market) = view.market {
-            draw_market(ctx, market, out);
+            draw_market(ctx, market, screen, out);
         }
-        draw_resources(ctx, view, out);
+        draw_resources(ctx, view, screen, out);
         if self.dropdown {
             self.draw_dropdown(ctx, view, out);
         }
@@ -735,17 +772,17 @@ impl Hud {
         let Some(m) = self.mouse else { return };
         let mut hint: Option<&[u8]> = None;
         for (i, id) in RES_HINTS.iter().enumerate() {
-            if res_hint_rect(i).contains(m) {
+            if res_hint_rect(self.screen, i).contains(m) {
                 hint = Some(ctx.texts.get(id));
             }
         }
         for icon in view.icons.iter().filter(|i| i.slot < GRID_COLUMNS * GRID_ROWS) {
-            if Self::icon_rect(icon.slot).contains(m) && !icon.hint.is_empty() {
+            if Self::icon_rect(self.screen, icon.slot).contains(m) && !icon.hint.is_empty() {
                 hint = Some(&icon.hint);
             }
         }
         if self.panel == Panel::Game
-            && let Some(id) = panels::GamePanel::hint(m)
+            && let Some(id) = panels::GamePanel::hint(self.panel_point(m))
         {
             hint = Some(ctx.texts.get(id));
         }
@@ -755,15 +792,15 @@ impl Hud {
             hint = Some(h);
         }
         let Some(text) = hint else { return };
-        tooltip(ctx, palette, text, m, out);
+        tooltip(ctx, palette, text, m, self.screen, out);
     }
 }
 
 /// `RESHINT0..5`: hints of the resource values (viewports of 0x5aab4b).
 const RES_HINTS: [&str; 6] = ["RESHINT0", "RESHINT1", "RESHINT2", "RESHINT3", "RESHINT4", "RESHINT5"];
 
-fn res_hint_rect(i: usize) -> Rect {
-    Rect::new(SCREEN[0] - 0x2b3 + RES_STEP * i as i32, 7, 105, 20)
+fn res_hint_rect(screen: [i32; 2], i: usize) -> Rect {
+    Rect::new(screen[0] - 0x2b3 + RES_STEP * i as i32, 7, 105, 20)
 }
 
 /// Corner table 0x668580: TL, TR, BL, BR, left, right, top, bottom frames of `Border`.
@@ -816,13 +853,13 @@ pub fn border(ctx: &Ctx, out: &mut Vec<Draw>, x0: i32, y0: i32, x1: i32, y1: i32
 /// The resource panel (0x4ecc50): frame 1 tiled every 256 pixels from the left, frame 0 at
 /// `RealLx − 716`, the "M" button frame 2 left of it; values right aligned in `YellowFont`,
 /// 110 pixels apart, with food and gold swapped into the icons' order.
-fn draw_resources(ctx: &Ctx, view: &View, out: &mut Vec<Draw>) {
-    let x0 = SCREEN[0] - RES_PANEL;
+fn draw_resources(ctx: &Ctx, view: &View, screen: [i32; 2], out: &mut Vec<Draw>) {
+    let x0 = screen[0] - RES_PANEL;
     for i in 0..=(x0 / 256) {
         out.push(Draw::game_frame(gp::RESPANEL, 1, i * 256, 0, 0));
     }
     out.push(Draw::game_frame(gp::RESPANEL, 0, x0, 0, 0));
-    let (bx, by) = menu_button();
+    let (bx, by) = menu_button(screen);
     out.push(Draw::game_frame(gp::RESPANEL, 2, bx, by, 0));
     for (i, &value) in view.resources.iter().enumerate() {
         // `FOOD` and `GOLD` change places (0x4ece10).
@@ -846,21 +883,23 @@ fn draw_resources(ctx: &Ctx, view: &View, out: &mut Vec<Draw>) {
 /// The numbers of a single selected type (0x607f50): kills, then for a finished object
 /// its life, up to two attacks in the top row, the shield below, up to six protections in
 /// three columns, and the text lines.
-fn draw_stats(ctx: &Ctx, stats: &Stats, palette: &Palette, out: &mut Vec<Draw>) {
+fn draw_stats(ctx: &Ctx, stats: &Stats, palette: &Palette, screen: [i32; 2], out: &mut Vec<Draw>) {
     let x = ICON + ZONE1[0] + 6;
-    let top = ZONE1[1] + SCREEN[1] - PANEL_LY - 1;
+    // Everything hangs from `RealLy − PanelLy` (0x28ccc54).
+    let panel_y = screen[1] - PANEL_LY;
+    let top = ZONE1[1] + panel_y - 1;
     if stats.kills != 0 {
         let t = panels::format_int(ctx.texts.get("KILLUNI"), stats.kills);
-        out.push(Draw::game_text(font::SMALL_WHITE, &t, 16, 610));
+        out.push(Draw::game_text(font::SMALL_WHITE, &t, 16, panel_y + ZONE1[1] - 20));
     }
     if !stats.ready {
         return;
     }
     let life = stats.life.to_string();
     let w = ctx.fonts.width(ctx.lib, font::SMALL_WHITE, life.as_bytes());
-    out.push(Draw::game_text(font::SMALL_WHITE, life.as_bytes(), 12 + (ICON - w) / 2, 670));
+    out.push(Draw::game_text(font::SMALL_WHITE, life.as_bytes(), 12 + (ICON - w) / 2, panel_y + 46));
     for (i, line) in stats.lines.iter().enumerate() {
-        out.push(Draw::game_text(FN10, line, 13, 680 + 12 * i as i32));
+        out.push(Draw::game_text(FN10, line, 13, panel_y + 56 + 12 * i as i32));
     }
     for (n, (icon, damage)) in stats.attacks.iter().take(2).enumerate() {
         let tx = x + 19 + 55 * n as i32;
@@ -870,7 +909,7 @@ fn draw_stats(ctx: &Ctx, stats: &Stats, palette: &Palette, out: &mut Vec<Draw>) 
     let y = top + 21;
     out.push(Draw::game_frame(gp::SMICONS, SHIELD_ICON, x + 1, y + 1, 0));
     out.push(Draw::game_text(font::SMALL_WHITE, &stats.shield, x + 21, y + 5));
-    let base = ZONE1[1] + SCREEN[1] - PANEL_LY + ICON + 10;
+    let base = ZONE1[1] + panel_y + ICON + 10;
     for (i, &(icon, value)) in stats.protections.iter().take(6).enumerate() {
         let col = (i >> 1) as i32;
         let row = (i & 1) as i32;
@@ -886,8 +925,8 @@ fn draw_stats(ctx: &Ctx, stats: &Stats, palette: &Palette, out: &mut Vec<Draw>) 
         let done = if max != 0 { h * delay / max } else { 0 };
         if done < h {
             let [r, g, b] = palette.rgb(nearest(palette, color::LIFE));
-            let y0 = SCREEN[1] - PANEL_LY + ZONE1[1] + 1 + done;
-            let y1 = SCREEN[1] - PANEL_LY + ZONE1[1] + h - 2;
+            let y0 = panel_y + ZONE1[1] + 1 + done;
+            let y1 = panel_y + ZONE1[1] + h - 2;
             let x = ZONE1_SIZE[0] + ZONE1[0] - 5;
             out.push(Draw::fill([r, g, b, 255], Rect { x0: x, y0, x1: x + 4, y1: y1 + 1 }));
         }
@@ -903,8 +942,8 @@ const FN10: crate::ui::fonts::FontId = crate::ui::fonts::FontId("fn10");
 /// The market's plaques and numbers (0x4a9c70, 0x4a96d9): `Border` 88 and 89 above the
 /// grid with `ECOSELL` and `ECOBUY` in `SmallYellowFont`; the amount between −10 and +10,
 /// the result between −1000 and +1000, centred in `WhiteFont`.
-fn draw_market(ctx: &Ctx, (amount, result): (Option<i32>, Option<i32>), out: &mut Vec<Draw>) {
-    let (x0, y0) = Hud::grid_origin();
+fn draw_market(ctx: &Ctx, (amount, result): (Option<i32>, Option<i32>), screen: [i32; 2], out: &mut Vec<Draw>) {
+    let (x0, y0) = Hud::grid_origin(screen);
     out.push(Draw::game_frame(gp::BORDER, 88, x0 - 2, y0 - 40, 0));
     out.push(Draw::game_frame(gp::BORDER, 89, x0 + 293, y0 - 40, 0));
     let centred = |out: &mut Vec<Draw>, f, t: &[u8], x: i32, y: i32| {
@@ -981,7 +1020,7 @@ fn draw_icon(icon: &Icon, x: i32, y: i32, pressed: bool, palette: &Palette, out:
 
 /// A hint box at the mouse (0x47d6b2 with `DS+6 == −1`): `SmallBlackFont1` on colour 185
 /// with the `Border` corners, at (mouse + 20, mouse + 32), kept on the screen.
-fn tooltip(ctx: &Ctx, palette: &Palette, text: &[u8], m: [f32; 2], out: &mut Vec<Draw>) {
+fn tooltip(ctx: &Ctx, palette: &Palette, text: &[u8], m: [f32; 2], screen: [i32; 2], out: &mut Vec<Draw>) {
     const WRAP: i32 = 100;
     let f = font::SMALL_BLACK1;
     let line_h = ctx.fonts.height(ctx.lib, f);
@@ -1003,11 +1042,11 @@ fn tooltip(ctx: &Ctx, palette: &Palette, text: &[u8], m: [f32; 2], out: &mut Vec
     let mut x = m[0] as i32 + 20;
     let mut y = m[1] as i32 + 32;
     x = x.max(10);
-    if x + max_w + 20 > SCREEN[0] {
-        x = SCREEN[0] - max_w - 20;
+    if x + max_w + 20 > screen[0] {
+        x = screen[0] - max_w - 20;
     }
-    if y + h + 16 > SCREEN[1] {
-        y = SCREEN[1] - h - 16;
+    if y + h + 16 > screen[1] {
+        y = screen[1] - h - 16;
     }
     let (x1, y1) = (x + max_w + 14, y + h + 12);
     out.push(Draw::fill(palette_rgba(palette, color::HINT_BACK), Rect { x0: x, y0: y, x1: x1 + 1, y1: y1 + 1 }));
@@ -1039,12 +1078,41 @@ mod tests {
 
     #[test]
     fn grid_layout_at_1024x768() {
-        assert_eq!(Hud::icon_rect(0), Rect::new(182, 630, 40, 40));
-        assert_eq!(Hud::icon_rect(27), Rect::new(182 + 3 * 42, 630 + 2 * 42, 40, 40));
+        assert_eq!(Hud::icon_rect(SCREEN, 0), Rect::new(182, 630, 40, 40));
+        assert_eq!(Hud::icon_rect(SCREEN, 27), Rect::new(182 + 3 * 42, 630 + 2 * 42, 40, 40));
         let icon = |slot| Icon { slot, ..Icon::default() };
-        assert_eq!(Hud::icon_box(&[]), None);
-        assert_eq!(Hud::icon_box(&[icon(0), icon(8 + 24)]), Some(Rect { x0: 180, y0: 630, x1: 560, y1: 755 }));
-        assert_eq!(menu_button(), (243, 0));
-        assert_eq!(res_hint_rect(0), Rect::new(333, 7, 105, 20));
+        assert_eq!(Hud::icon_box(SCREEN, &[]), None);
+        assert_eq!(Hud::icon_box(SCREEN, &[icon(0), icon(8 + 24)]), Some(Rect { x0: 180, y0: 630, x1: 560, y1: 755 }));
+        assert_eq!(menu_button(SCREEN), (243, 0));
+        assert_eq!(res_hint_rect(SCREEN, 0), Rect::new(333, 7, 105, 20));
+        let hud = Hud::default();
+        assert_eq!((hud.panel_dx(), hud.panel_point([800.0, 100.0])), (0, [800.0, 100.0]));
+    }
+
+    /// The bar along the top edge, the panels at the right edge, the icons and the minimap
+    /// at the bottom (`RealLx`, `RealLy` of a wide and a tall window).
+    #[test]
+    fn layout_follows_the_screen() {
+        let icon = |slot| Icon { slot, ..Icon::default() };
+        let wide = [1366, 768];
+        assert_eq!(menu_button(wide), (1366 - 781, 0));
+        assert_eq!(res_hint_rect(wide, 0), Rect::new(1366 - 691, 7, 105, 20));
+        assert_eq!(Hud::icon_rect(wide, 0), Rect::new(182, 630, 40, 40));
+        let mut hud = Hud::default();
+        hud.set_screen(wide);
+        assert_eq!((hud.screen(), hud.panel_dx()), (wide, 342));
+        assert_eq!(hud.panel_point([1366.0 - 100.0, 50.0]), [924.0, 50.0]);
+        assert_eq!(hud.placement(&View::default()).rect, Rect::new(1366 - 257, 512, 240, 240));
+
+        let tall = [1024, 1055];
+        assert_eq!(menu_button(tall), (243, 0));
+        assert_eq!(Hud::icon_rect(tall, 0), Rect::new(182, 1055 - 138, 40, 40));
+        assert_eq!(Hud::icon_box(tall, &[icon(0)]).map(|r| (r.y0, r.y1)), Some((1055 - 138, 1055 - 13)));
+        hud.set_screen(tall);
+        assert_eq!(hud.panel_dx(), 0);
+        assert_eq!(hud.placement(&View::default()).rect, Rect::new(767, 1055 - 256, 240, 240));
+        // Never smaller than 1024 × 768.
+        hud.set_screen([800, 600]);
+        assert_eq!(hud.screen(), SCREEN);
     }
 }

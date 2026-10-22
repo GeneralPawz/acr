@@ -386,10 +386,11 @@ impl InGame {
         self.mission.escape()
     }
 
-    /// Mission messages and dialogs drawn over the map (1024 × 768 canvas).
+    /// Mission messages and dialogs drawn over the map (the interface's canvas,
+    /// [`InGame::screen_canvas`]).
     pub fn overlay(&self, ctx: &crate::ui::Ctx) -> Vec<crate::ui::draw::Draw> {
         let mut out = Vec::new();
-        self.mission.draws(ctx, &mut out);
+        self.mission.draws(ctx, self.interface.hud.screen(), &mut out);
         self.save_overlay(&mut out);
         out
     }

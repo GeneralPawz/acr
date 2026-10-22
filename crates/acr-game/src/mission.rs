@@ -519,10 +519,11 @@ impl MissionLink {
         std::mem::take(&mut self.new_requests)
     }
 
-    /// Mission texts over the map (1024 × 768 canvas): hints, then the central box with the
-    /// end of the game or `ShowCentralText` (a text starting with `#` wins over the end).
-    pub fn draws(&self, ctx: &Ctx, out: &mut Vec<Draw>) {
-        self.messages.draw(out);
+    /// Mission texts over the map (on a screen of `screen` canvas pixels): hints, then the
+    /// central box with the end of the game or `ShowCentralText` (a text starting with `#`
+    /// wins over the end).
+    pub fn draws(&self, ctx: &Ctx, screen: [i32; 2], out: &mut Vec<Draw>) {
+        self.messages.draw(screen, out);
         let central = self.scripts.as_ref().and_then(|s| s.state().central_text.as_ref()).map(|(t, _)| t.as_slice());
         let end = self.ended.map(|won| ctx.texts.get(if won { "WINNER" } else { "LOOSER" }));
         let text = match (central, end) {
@@ -531,7 +532,7 @@ impl MissionLink {
             (c, None) => c,
         };
         if let Some(t) = text.filter(|t| !t.is_empty()) {
-            crate::mission_ui::central_text(ctx, out, t, self.local_player);
+            crate::mission_ui::central_text(ctx, out, t, self.local_player, screen);
         }
     }
 }

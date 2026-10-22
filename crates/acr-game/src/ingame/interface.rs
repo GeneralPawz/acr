@@ -210,7 +210,7 @@ impl Default for State {
             keyboard: None,
             mods: ModifiersState::empty(),
             view: View::default(),
-            canvas: Canvas::fit([1024.0, 768.0]),
+            canvas: Canvas::screen([1024.0, 768.0]),
             window: [1024.0, 768.0],
             last_click: None,
             select_before: Vec::new(),
@@ -248,6 +248,11 @@ impl InGame {
 
     pub fn set_modifiers(&mut self, mods: ModifiersState) {
         self.interface.mods = mods;
+    }
+
+    /// The interface's canvas: the whole window at the menus' scale.
+    pub fn screen_canvas(&self) -> Canvas {
+        self.interface.canvas
     }
 
     fn canvas_point(&self, p: [f32; 2]) -> [f32; 2] {
@@ -1430,8 +1435,10 @@ impl InGame {
         window: [f32; 2],
         seconds: f32,
     ) -> (Vec<(Canvas, Vec<Draw>)>, Vec<(&'static str, Image)>, Option<(usize, [i32; 2])>) {
-        self.interface.canvas = Canvas::fit(window);
+        self.interface.canvas = Canvas::screen(window);
         self.interface.window = window;
+        self.interface.hud.set_screen(self.interface.canvas.size());
+        self.diplomacy.set_screen(self.interface.hud.screen());
         if !self.interface.hud.has_minimap()
             && let (Some(map), Some(assets)) = (&self.map, &self.assets)
             && let Some(m) = Minimap::new(map, assets)
@@ -1451,7 +1458,7 @@ impl InGame {
         self.interface.hud.draw(ctx, &view, &mut hud_draws);
         self.dip_draw(ctx, &mut hud_draws);
         if self.interface.paused && self.mission.ended.is_none() {
-            pause_text(ctx, &mut hud_draws);
+            pause_text(ctx, self.interface.hud.screen(), &mut hud_draws);
         }
         let mut images: Vec<(&'static str, Image)> =
             self.interface.hud.minimap_image(ctx, &view).map(|i| (hud::MINIMAP_IMAGE, i)).into_iter().collect();
@@ -1472,7 +1479,7 @@ impl InGame {
         let cursor = Some((c.frame, c.hotspot()));
         let mut layers = vec![(self.world_canvas(), self.world_overlays(ctx))];
         if let Some(rect) = self.selection_rectangle(ctx) {
-            layers.push((Canvas { scale: 1.0, origin: [0.0, 0.0] }, rect));
+            layers.push((Canvas::new(1.0, [0.0, 0.0]), rect));
         }
         layers.push((self.interface.canvas, hud_draws));
         (layers, images, cursor)
@@ -1487,7 +1494,7 @@ impl InGame {
     /// Window = (world screen position − camera) · scale.
     fn world_canvas(&self) -> Canvas {
         let s = self.camera.scale;
-        Canvas { scale: s, origin: [-self.camera.x * s, -self.camera.y * s] }
+        Canvas::new(s, [-self.camera.x * s, -self.camera.y * s])
     }
 
     /// Selection brackets, life bars (Tab) and the move markers, in world screen pixels.
@@ -2161,10 +2168,10 @@ fn line(out: &mut Vec<Draw>, rgba: [u8; 4], (x0, y0): (i32, i32), (x1, y1): (i32
 
 /// `PAUSETEXT` while the game is paused (0x4c0130): `BigWhiteFont` centred at half the
 /// screen height on a paper box (0x480130) 64 pixels wider on each side.
-fn pause_text(ctx: &Ctx, out: &mut Vec<Draw>) {
+fn pause_text(ctx: &Ctx, screen: [i32; 2], out: &mut Vec<Draw>) {
     let text = ctx.texts.get("PAUSETEXT");
     let w = ctx.fonts.width(ctx.lib, BIG_WHITE, text);
-    let (x, y) = ((hud::SCREEN[0] - w) / 2, hud::SCREEN[1] / 2);
+    let (x, y) = ((screen[0] - w) / 2, screen[1] / 2);
     let rect = Rect::inclusive(x - 64, y - 8, x + w + 64, y + 27);
     crate::ui::screens::mission::paper_box(ctx, out, rect, PAPER, hud::BOX_CORNERS, 0);
     out.push(Draw::game_text(BIG_WHITE, text, x - 2, y - 8));

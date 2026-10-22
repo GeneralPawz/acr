@@ -218,9 +218,8 @@ The original writes the generated map as `RN<size> <seed> <options> <name> <n>.m
 ## In-game interface
 
 `crates/acr-game/src/hud/` draws it and `ingame/interface.rs` connects it to the game.
-The original lays it out for the screen size (`RealLx` × `RealLy`). ACR uses the
-1024 × 768 canvas of the menus, scaled and letterboxed, while the map fills the whole
-window. The view has no bottom panel: `0x676b84` is 1 and is never written, so
+The original lays it out for the screen size (`RealLx` × `RealLy`, 0x735008 / 0x735004).
+The view has no bottom panel: `0x676b84` is 1 and is never written, so
 `PanelLy` (144) only moves the icon rows. Text and lines use palette set 0
 (`0\agew_1.pal`) and its font colour tables. Sprite packs use the palette from
 `acr_formats::sprite_palette`. The frame function 0x4c1a20 draws, in this order:
@@ -230,6 +229,36 @@ resource panel and "M" drop-down (0x4c1a70).
 Layout constants (0x5aa6d2): `Const.lst` defines none of `Zone1X`, `PropertyX`, … , so
 the defaults apply: `Zone1X/Y` = 6/6, `PropertyX/Y` = 182/6, `IconLx/Ly` = 40/40,
 `AddIconLx/Ly` = 2/2, `ZonesNx/Ny` = 12/6.
+
+### Screen size
+
+The original's menus are fixed at 1024 × 768, but the game screen uses the whole screen:
+every part of the interface is placed relative to `RealLx`/`RealLy`. ACR keeps the menus
+(main menu, mission lists, …) on the letterboxed 1024 × 768 canvas (`Canvas::fit`). The
+in-game interface uses `Canvas::screen`: the same scale, `min(width / 1024, height / 768)`,
+so the interface has the size it has in the menus, but with the origin at the window's top
+left and the window's size divided by the scale as `RealLx` × `RealLy`. One side is
+1024 or 768, the other is longer (at least 1024 × 768, also for smaller windows). Mouse
+positions go through the same canvas. The anchors:
+
+| Part | Anchor | Where |
+|---|---|---|
+| Resource bar | frame 1 tiled from x = 0 to `RealLx − 716`, frame 0 there, "M" at `RealLx − 781`, top edge | 0x4ecc50 |
+| "M" drop-down | centred on the button, from y = 60 | 0x4c6840 |
+| Icon grid and box | `PropertyX` = 182, `RealLy − PanelLy + 6` | 0x5aa206, 0x5aa2f3 |
+| Unit numbers | from `RealLy − PanelLy` (0x28ccc54): kills at `+ 6 − 20`, life `+ 46`, lines `+ 56` | 0x607f50 |
+| Minimap | `(RealLx − w − 17, RealLy − h − 16)` | 0x4c0a40 |
+| Side panels (U, I), diplomacy | column `RealLx − 259 .. RealLx − 15`; y fixed for `RealLy` ≥ 768 | 0x5aa5ac, 0x4ce310 |
+| Diplomacy browser window | bottom `RealLy − 298` | 0x5c3770 |
+| Hint and message lines | (4, `RealLy − PanelLy − 40`) and up | 0x493fc5 |
+| Central text, pause text | centre of the screen | 0x4bc490, 0x4c0130 |
+| Tooltips | kept inside `RealLx` × `RealLy` | 0x47d6b2 |
+| Game menu, save/load, options, mission windows | centred: `((RealLx − W) / 2, (RealLy − H) / 2)` | 0x5d9c30, 0x5e16b0, … |
+
+ACR draws the centred windows on the letterboxed menu canvas, which puts them in the
+middle of the window at the same scale. The side panels are laid out for `RealLx` = 1024
+and moved by `RealLx − 1024` (their layout depends on `RealLy` only below 768). The
+cursor is drawn anywhere in the window, also beside the menu canvas.
 
 ### Resource panel (0x4ecc50)
 
@@ -333,6 +362,7 @@ the defaults apply: `Zone1X/Y` = 6/6, `PropertyX/Y` = 182/6, `IconLx/Ly` = 40/40
 - Single selected type (0x607f50, called after the icons by 0x5aa278): the first object's
   numbers drawn straight over the map, in `SmallWhiteFont`, with `SMICONS.GP` icons from
   `NRES.DAT [WEAPONS]`:
+  All positions hang from `RealLy − PanelLy` (0x28ccc54); at 1024 × 768:
   - `KILLUNI` ("Treffer %d") at (16, 610) if it has kills, even while unfinished; the rest
     only for a finished object;
   - its life, centred at x = 12 + (40 − w) / 2, y = 670;
@@ -772,7 +802,8 @@ the side panel of the game screen. The game goes on while it is open.
     top 23) down to y = 441, then a strip with table 0x6686c0 (3, 86, 6, 8, 12, 14, 10, 11);
   - a press strictly inside (`RealLx` − 42..`RealLx` − 16, 43..69) closes it;
   - `DIP_HDR` in `YellowFont` at (`RealLx` − 250, 50) (0x5c3770);
-  - browser window `RunExplorer(1, page, 762, 77, 1016, 470)` at 1024 × 768.
+  - browser window `RunExplorer(1, page, RealLx − 262, 77, RealLx − 8, RealLy − 298)`,
+    (762, 77, 1016, 470) at 1024 × 768; a page is laid out again when the size changes.
 - intExplorer draws no frame of its own. Each `#ebox`/`#sbox` is its own `DialogsSystem`,
   drawn in creation order without clipping to the window.
 - Page parser (0x1000a9c0): it scans for `#` anywhere, so tags may follow each other on one

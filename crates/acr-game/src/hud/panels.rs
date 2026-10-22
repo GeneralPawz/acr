@@ -2,6 +2,10 @@
 //! 0x4c8cd0 and run by 0x4cbb10) and the game info (key I, 0x4ce310). Both sit in the
 //! column `RealLx − 259 .. RealLx − 15` from `InfY1` to `InfY2` and close with the box at
 //! their top right corner. See `docs/ui.md` (side panels).
+//!
+//! The coordinates here are those of a 1024 × 768 screen ([`SCREEN`]): the layout depends
+//! on `RealLy` only below 768 (0x5aa5ac), so [`super::Hud`] moves the panels and their input
+//! by `RealLx − 1024` to the right edge of wider screens.
 
 use acr_formats::Palette;
 use acr_formats::raster::Image;
