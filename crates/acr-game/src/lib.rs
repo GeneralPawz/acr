@@ -167,7 +167,7 @@ impl Game {
                 let (l, image, cursor) = game.interface(&self.ui.ctx(), g.gpu.size(), game_dt);
                 layers = l;
                 // Mission pages, hints and the end of the game over the interface.
-                layers.push((Canvas::fit(g.gpu.size()), game.overlay()));
+                layers.push((Canvas::fit(g.gpu.size()), game.overlay(&self.ui.ctx())));
                 if let Some(image) = image {
                     self.ui.set_image(hud::MINIMAP_IMAGE, image);
                 }

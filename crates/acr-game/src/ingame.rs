@@ -311,9 +311,9 @@ impl InGame {
     }
 
     /// Mission messages and dialogs drawn over the map (1024 × 768 canvas).
-    pub fn overlay(&self) -> Vec<crate::ui::draw::Draw> {
+    pub fn overlay(&self, ctx: &crate::ui::Ctx) -> Vec<crate::ui::draw::Draw> {
         let mut out = Vec::new();
-        self.mission.draws(&mut out);
+        self.mission.draws(ctx, &mut out);
         out
     }
 
@@ -392,6 +392,12 @@ impl InGame {
                 world.step(&commands);
             }
             self.requests.borrow_mut().extend(self.mission.take_requests());
+            if let Some((x, y)) = self.mission.take_camera() {
+                let s = self.camera.scale;
+                self.camera.x = x as f32 - window[0] / s / 2.0;
+                self.camera.y = (y / 2) as f32 - window[1] / s / 2.0;
+                self.centred = true;
+            }
             for _ in 0..ticks {
                 self.tick_markers();
             }
