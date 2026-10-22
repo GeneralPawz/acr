@@ -204,6 +204,10 @@ pub fn create(
                     let dec = catalog.get(su.kind).attacks.get(usize::from(att)).map_or(0xFFFF, |a| a.damage_dec);
                     let dmg = crate::combat::half_life(damage, r, dec);
                     crate::combat::make_damage(w, b, dmg, Some(si), att);
+                } else if !hit && let Some(si) = sender {
+                    // A missed shot strikes the ground at its end (render only).
+                    let cause = crate::combat::cause_of_attack(w, si, att);
+                    crate::combat::record_impact(w, (hit_at.0, hit_at.1), (dx, dy), cause);
                 }
                 w.projectiles.slots[slot] = None;
                 return true;
@@ -290,6 +294,24 @@ pub fn round_damage(w: &mut World, x: i32, y: i32, r: i32, damage: i32, sender: 
     }
 }
 
+/// The flight direction of a round on the ground plane (world pixels, not normalised).
+fn flight_dir(p: &Projectile) -> (i32, i32) {
+    (p.vel.0 >> 8, p.vel.1 >> 8)
+}
+
+/// Notes a damaging round striking the ground for the renderer (`World::impacts`):
+/// cannonballs and shells always (they plough and burst whether or not they hit someone),
+/// other rounds only when they hit no one (`hit`).
+fn note_impact(w: &mut World, p: &Projectile, hit: bool) {
+    use crate::combat::DeathCause;
+    let Some(s) = p.sender.map(|e| e.0 as usize) else { return };
+    let cause = crate::combat::cause_of_attack(w, s, p.att);
+    let always = matches!(cause, DeathCause::Cannonball | DeathCause::Explosion);
+    if always || (!hit && cause != DeathCause::Unknown && cause != DeathCause::Melee) {
+        crate::combat::record_impact(w, (p.pos.0 >> 14, p.pos.1 >> 14), flight_dir(p), cause);
+    }
+}
+
 /// A living object of the projectile's sender (the engine keeps a raw pointer).
 fn sender_of(w: &World, p: &Projectile) -> Option<usize> {
     p.sender.map(|e| e.0 as usize).filter(|&k| w.units.get(k).is_some_and(|u| u.alive))
@@ -303,10 +325,16 @@ pub fn explode(w: &mut World, slot: usize, ground: bool) {
     let wp = catalog.weapons.get(p.weapon);
     let sender = sender_of(w, &p);
     if p.damage != 0 {
+        let last_hit = w.hits.back().copied();
+        w.hit_dir = Some(flight_dir(&p));
         round_damage(w, p.pos.0 >> 10, p.pos.1 >> 10, wp.radius, p.damage, sender, p.att);
         if let Some(b) = p.dest_obj.map(|e| e.0 as usize).filter(|&b| w.units[b].living()) {
             w.projectiles.media = catalog.get(w.units[b].kind).expl_media.0;
             crate::combat::make_damage(w, b, p.damage, sender, p.att);
+        }
+        w.hit_dir = None;
+        if ground {
+            note_impact(w, &p, w.hits.back().copied() != last_hit);
         }
     }
     if w.projectiles.media == -1 {
@@ -417,11 +445,13 @@ pub fn process(w: &mut World) {
         }
         let sender = sender_of(w, &p);
         if wp.damage_height != 0 && ground > z - wp.damage_height && p.damage != 0 {
+            w.hit_dir = Some(flight_dir(&p));
             round_damage(w, p.pos.0 >> 10, p.pos.1 >> 10, wp.radius, p.damage, sender, p.att);
             if let Some(b) = p.dest_obj.map(|e| e.0 as usize).filter(|&b| w.units[b].living()) {
                 w.projectiles.media = catalog.get(w.units[b].kind).expl_media.0;
                 crate::combat::make_damage(w, b, p.damage, sender, p.att);
             }
+            w.hit_dir = None;
         }
         if ground > z {
             if bar != 0 {

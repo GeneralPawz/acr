@@ -180,8 +180,17 @@ melee blow; not fire or hunger, which have none) with the tick, the victim and i
 the direction attacker → victim, the weapon's cause (`DeathCause::of_weapon`), whether it
 killed and whether the victim is a building. Hits older than `HIT_KEEP` (750) ticks are
 dropped at the start of each step, at most `HIT_CAP` (4096) are kept. Like `deaths` it is
-not part of the state hash and not saved (a loaded game replays its commands). Ground
-impacts without a victim are not recorded yet.
+not part of the state hash and not saved (a loaded game replays its commands). The
+direction is the round's own flight while a projectile does the damage (`World::hit_dir`,
+set around the damage in `projectile::explode` and the `DAMAGEHEIGHT` damage of a rolling
+ball), so a ricocheting cannonball sprays along its bounce, not attacker → victim.
+
+`World::impacts` (`combat::ImpactRecord`) keeps the rounds that struck the ground the same
+way (same `HIT_KEEP`, `HIT_CAP`, not hashed, not saved): tick, position, flight direction
+(the projectile's velocity) and the cause of the shooter's attack (`cause_of_attack`).
+`projectile::explode` on terrain contact records every damaging round of a sender:
+cannonballs and shells always, other rounds only when they hurt no one; a hitscan musket
+ball that hits nothing records its end point. Ground-impact sounds can read the same list.
 
 `acr-game/src/ingame/splatter.rs` sprays droplets onto the ground behind each hit unit
 (not buildings) in a cone along the direction of the shot. They are derived every frame
@@ -189,7 +198,10 @@ from `World::hits` and the tick, seeded from the hit (tick, victim), so they kee
 place without any renderer state and come back alike after loading; the record is kept as
 long as a droplet lives for that reason. They use the pool decal (`BloodPool::splatter`,
 `look.z` in `blood.wgsl`): a crisp round head with a tail tapering along the shot, the far
-droplets smaller and longer, drawn on the ground height at the droplet.
+droplets smaller and longer. Every decal (pools, droplets, earth) lies on the ground under
+it: `splatter::lay_on_ground` sets its centre's height and the slope from the ground
+points one radius either side (`BloodPool::tilt`), and `vs_pool` raises each corner by
+that slope, so they no longer sink into hillsides.
 
 | Cause | Droplets | Behind the victim | Radius | Cone (half) |
 |---|---|---|---|---|
@@ -201,7 +213,23 @@ droplets smaller and longer, drawn on the ground height at the droplet.
 A killing hit sprays half again as many. They dry from red to brown between 40 and 400
 ticks after the hit and fade from 75 % of `HIT_KEEP` until just before it. `gore=reduced`:
 half the droplets, 0.7× the size, 0.8× the reach; `gore=off` and `models=off`: none.
-Melee, thrown weapons and explosions spray nothing yet.
+
+Melee blows, thrown weapons and explosions spray low at the victim's feet instead
+(`Spray::low`): round drips without tails, the big ones close, and they reach neither the
+troops behind nor walls.
+
+| Cause | Drips | From the victim | Radius | Spread (half) |
+|---|---|---|---|---|
+| Melee | 5 | 0–0.7 m | 0.05–0.12 m | 1.4 rad, away from the blow |
+| Thrown | 4 | 0–0.8 m | 0.05–0.12 m | 1.0 rad |
+| Explosion | 12 | 0.1–1.6 m | 0.06–0.18 m | all round |
+
+Rounds that struck the ground (`World::impacts`) churn the earth with the same decal in
+earth colours (`BloodPool::dirt`, `look.z` 2 and 3 in `blood.wgsl`), shown with every
+`gore` setting: a cannonball leaves a 0.45 m crater (a dark pit in a ragged ring of
+earth thrown out along its flight), a shell a round 0.9 m one; musket balls (0.12 m),
+grapeshot (0.14 m) and arrows (0.08 m) a dusty scuff. The fresh earth greys and fades
+like the droplets.
 
 The same spray lands on models behind the victim (#220, `splatter::sprayed_targets`):
 troops within the cone (up to the cause's reach, at least 0.25 m wide) get speckles on the

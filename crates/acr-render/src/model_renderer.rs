@@ -120,6 +120,24 @@ pub struct BloodPool {
     /// A droplet: a crisp round head with a tail running out along `along`, instead of a
     /// noisy pool.
     pub splatter: bool,
+    /// Not blood but churned earth where a round struck the ground.
+    pub dirt: Dirt,
+    /// The ground's slope under the decal (world z per world x and per world y), so it
+    /// lies on the slope instead of sinking into it.
+    pub tilt: [f32; 2],
+}
+
+/// The earth thrown up where a round strikes the ground (a [`BloodPool`] decal in dirt
+/// colours).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Dirt {
+    /// Blood.
+    #[default]
+    None,
+    /// A cannonball's or shell's crater: a dark pit in a ring of thrown earth.
+    Crater,
+    /// A musket ball's, arrow's or grapeshot's scuff: a small dusty smudge.
+    Scuff,
 }
 
 #[repr(C)]
@@ -128,6 +146,7 @@ struct GpuPool {
     centre: [f32; 4],
     shape: [f32; 4],
     look: [f32; 4],
+    tilt: [f32; 4],
 }
 
 #[repr(C)]
@@ -211,6 +230,15 @@ fn bone_texture(device: &wgpu::Device, rows: u32) -> wgpu::Texture {
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     })
+}
+
+/// `look.z` of a decal in `blood.wgsl`: 0 pool, 1 droplet, 2 crater, 3 scuff.
+fn pool_kind(p: &BloodPool) -> f32 {
+    match p.dirt {
+        Dirt::Crater => 2.0,
+        Dirt::Scuff => 3.0,
+        Dirt::None => f32::from(u8::from(p.splatter)),
+    }
 }
 
 fn pool_buffer(device: &wgpu::Device, count: u64) -> wgpu::Buffer {
@@ -353,7 +381,7 @@ impl ModelRenderer {
             bind_group_layouts: &[Some(&globals_layout)],
             immediate_size: 0,
         });
-        let pool_attributes = wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4, 2 => Float32x4];
+        let pool_attributes = wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4, 2 => Float32x4, 3 => Float32x4];
         let pool_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("blood pools"),
             layout: Some(&pool_layout),
@@ -667,7 +695,8 @@ impl ModelRenderer {
             .map(|p| GpuPool {
                 centre: [p.centre[0], p.centre[1], p.centre[2], p.radius],
                 shape: [p.along[0], p.along[1], p.stretch, p.seed],
-                look: [p.age, p.fade, f32::from(u8::from(p.splatter)), 0.0],
+                look: [p.age, p.fade, pool_kind(p), 0.0],
+                tilt: [p.tilt[0], p.tilt[1], 0.0, 0.0],
             })
             .collect();
         self.pool_count = gpu.len() as u32;

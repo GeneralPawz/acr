@@ -111,6 +111,31 @@ fn a_cannon_ball_flies_an_arc_and_bounces() {
 }
 
 #[test]
+fn cannon_balls_leave_ground_impacts_along_their_flight() {
+    use acr_sim::combat::DeathCause;
+    let (mut w, _, gun, tgt) = setup();
+    let g = w.spawn(gun, 0, Pos::from_pixels(1500, 2000), 0);
+    let t = w.spawn(tgt, 1, Pos::from_pixels(2600, 2000), 128);
+    w.step(&[Command::Attack { player: 0, units: vec![g], target: t }]);
+    let hash = w.state_hash();
+    for _ in 0..300 {
+        w.step(&[]);
+    }
+    // The ball lands and bounces on east of the gun: impacts with its flight direction.
+    let balls: Vec<_> = w.impacts.iter().filter(|i| i.cause == DeathCause::Cannonball).collect();
+    assert!(!balls.is_empty(), "{:?}", w.impacts);
+    assert!(balls.iter().all(|i| i.pos.0 > 1500 && i.dir.0 > 0 && i.dir.0 > i.dir.1.abs()), "{balls:?}");
+    // Hits by the bouncing ball run along its velocity (east), not only gun → target.
+    let hits: Vec<_> = w.hits.iter().filter(|h| h.victim == t.0).collect();
+    assert!(!hits.is_empty() && hits.iter().all(|h| h.dir.0 > 0), "{hits:?}");
+    // Not part of the state.
+    let mut w2 = w.clone();
+    w2.impacts.clear();
+    assert_eq!(w.state_hash(), w2.state_hash());
+    assert_ne!(hash, w.state_hash());
+}
+
+#[test]
 fn every_shot_starts_its_weapon_sounds() {
     let (mut w, arc, gun, tgt) = setup();
     let a = w.spawn(arc, 0, Pos::from_pixels(2000, 2000), 0);
