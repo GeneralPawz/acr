@@ -10,12 +10,6 @@ use crate::path::{Mover, create_path};
 use crate::trig::{get_dir, norma};
 use crate::world::{AnimKind, FRM_DEC, Order, World};
 
-/// Delivery factors of the player (`WoodEff`, `StoneEff` 100; `FoodEff` 1010, whose last two
-/// digits are the food factor in tenths).
-const WOOD_EFF: i32 = 100;
-const STONE_EFF: i32 = 100;
-const FOOD_EFF: i32 = 1010;
-
 /// A resource source on the map: a tree, field or carcass (`[SOURCES]` sprites).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Source {
@@ -214,7 +208,7 @@ fn carry_home(w: &mut World, i: usize, kind: u8, dst: usize) -> bool {
             b.living()
                 && b.building
                 && b.owner == u.owner
-                && b.stage >= bt.economy.build_stages
+                && b.stage >= w.max_stage(b)
                 && bt.economy.resource_base & (1 << kind) != 0
         })
         .min_by_key(|b| norma(b.pos.x - u.pos.x, b.pos.y - u.pos.y));
@@ -240,13 +234,14 @@ fn carry_home(w: &mut World, i: usize, kind: u8, dst: usize) -> bool {
     };
     if norma(target.0 - u.cell.0, target.1 - u.cell.1) < reach {
         let mut r = u.carried;
+        let owner = usize::from(u.owner);
+        let p = &w.players[owner];
         match dst {
-            WOOD => r = r * WOOD_EFF / 100,
-            STONE => r = r * STONE_EFF / 100,
-            FOOD => r = r * (FOOD_EFF % 100) / 10,
+            WOOD => r = r * p.wood_eff / 100,
+            STONE => r = r * p.stone_eff / 100,
+            FOOD => r = r * (p.food_eff % 100) / 10,
             _ => {}
         }
-        let owner = usize::from(u.owner);
         w.players[owner].resources[dst] = w.players[owner].resources[dst].saturating_add(r);
         let u = &mut w.units[i];
         u.carried = 0;

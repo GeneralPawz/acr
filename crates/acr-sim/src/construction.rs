@@ -18,12 +18,8 @@ use crate::trig::{get_dir, norma};
 use crate::world::{AnimKind, EntityId, FRM_DEC, Order, World};
 
 /// Construction animation (`#BUILDLO_k`, k = stage·4 / stages, at most 3).
-fn stage_anim(t: &ObjectType, stage: i32) -> AnimKind {
-    if stage >= t.economy.build_stages {
-        AnimKind::Stand
-    } else {
-        AnimKind::BuildLo((stage * 4 / t.economy.build_stages.max(1)).clamp(0, 3) as u8)
-    }
+fn stage_anim(stage: i32, max: i32) -> AnimKind {
+    if stage >= max { AnimKind::Stand } else { AnimKind::BuildLo((stage * 4 / max.max(1)).clamp(0, 3) as u8) }
 }
 
 fn lock_cells(t: &ObjectType, pos: Pos, points: &[(i32, i32)]) -> Vec<(i32, i32)> {
@@ -80,7 +76,7 @@ pub fn place(w: &mut World, player: u8, kind: TypeId, x: i32, y: i32) -> Option<
     let u = &mut w.units[id.0 as usize];
     u.stage = 0;
     u.life = 2;
-    set_anim(u, &t, stage_anim(&t, 0));
+    set_anim(u, &t, stage_anim(0, 1));
     let points = if t.economy.build_lock_points.is_empty() { &t.lock_points } else { &t.economy.build_lock_points };
     let map = Arc::make_mut(&mut w.map);
     for (cx, cy) in lock_cells(&t, pos, points) {
@@ -90,18 +86,19 @@ pub fn place(w: &mut World, player: u8, kind: TypeId, x: i32, y: i32) -> Option<
     Some(id)
 }
 
-/// `NextStage` (0x523666): one stage (or 20 life of repair) for a building.
+/// `NextStage` (0x523666): one stage (or 20 life of repair) for a building. Life follows
+/// the stages up to `MaxLife`; the stage count is the owner's (`BUILD` upgrades change it).
 pub fn next_stage(w: &mut World, b: usize) {
     let t = w.catalog.get(w.units[b].kind).clone();
-    let max = t.economy.build_stages.max(1);
+    let max = w.max_stage(&w.units[b]).max(1);
     let u = &mut w.units[b];
-    if !u.building || u.life >= t.life && u.stage >= max {
+    if !u.building || u.life >= u.max_life && u.stage >= max {
         return;
     }
     if u.stage < max {
         u.stage += 1;
-        u.life = u.stage * t.life / max;
-        set_anim(u, &t, stage_anim(&t, u.stage));
+        u.life = u.stage * u.max_life / max;
+        set_anim(u, &t, stage_anim(u.stage, max));
         u.frame = 0;
         if u.stage == max {
             let pos = u.pos;
@@ -116,7 +113,7 @@ pub fn next_stage(w: &mut World, b: usize) {
             census(w, owner);
         }
     } else {
-        u.life = (u.life + 20).min(t.life);
+        u.life = (u.life + 20).min(u.max_life);
     }
 }
 
@@ -135,8 +132,7 @@ fn find_point(w: &World, b: usize, from: (i32, i32)) -> Option<(i32, i32)> {
 
 fn needs_work(w: &World, b: usize, owner: u8) -> bool {
     let bu = &w.units[b];
-    let t = w.catalog.get(bu.kind);
-    bu.living() && bu.building && bu.owner == owner && (bu.stage < t.economy.build_stages || bu.life < t.life)
+    bu.living() && bu.building && bu.owner == owner && (bu.stage < w.max_stage(bu) || bu.life < bu.max_life)
 }
 
 /// `BuildObj` (0x523c98): sends a unit with a `#WORK` animation to build or repair.

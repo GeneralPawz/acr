@@ -69,14 +69,28 @@ pub fn census(w: &mut World, player: u8) {
     let mut counts = vec![0u16; catalog.len()];
     let mut ready = vec![0u16; catalog.len()];
     let (mut housing, mut population, mut speed) = (0, 0, [0i32; 8]);
-    for u in w.units.iter_mut().filter(|u| u.alive && u.owner == player && (u.death == 0 || u.inside_of.is_some())) {
+    let mut deserters = Vec::new();
+    let mut turned = Vec::new();
+    for (i, u) in w
+        .units
+        .iter()
+        .enumerate()
+        .filter(|(_, u)| u.alive && u.owner == player && (u.death == 0 || u.inside_of.is_some()))
+    {
         let t = catalog.get(u.kind);
         let e = &t.economy;
         let k = usize::from(u.kind.0);
         counts[k] = counts[k].saturating_add(1);
-        if !t.building || u.stage >= e.build_stages {
+        let max = match w.players[n].adv.get(&u.kind) {
+            Some(a) => a.build_stages,
+            None => e.build_stages,
+        };
+        if !t.building || u.stage >= max {
             ready[k] = ready[k].saturating_add(1);
-            housing += e.farm;
+            if e.is_farm {
+                let farm = w.players[n].adv.get(&u.kind).map_or(e.farm, |a| a.farm);
+                housing += farm + u.farm_extra;
+            }
             if !t.building {
                 population += 1;
             }
@@ -84,10 +98,16 @@ pub fn census(w: &mut World, player: u8) {
         if let Some((r, v)) = e.consumer {
             speed[r] += v;
         }
-        u.turned_off = short && e.turn_off;
+        turned.push((i, short && e.turn_off));
         if short && e.mercenary {
-            u.owner = 7;
+            deserters.push(i);
         }
+    }
+    for (i, off) in turned {
+        w.units[i].turned_off = off;
+    }
+    for i in deserters {
+        w.units[i].owner = 7;
     }
     let p = &mut w.players[n];
     p.housing = housing;
@@ -146,10 +166,11 @@ pub fn starve(w: &mut World, i: usize) {
     }
 }
 
-/// The price of a type after `n` existing objects of it (each multiplies by `COSTPERCENT`).
-pub fn cost_after(t: &ObjectType, n: u32) -> [i32; 8] {
+/// The price after `n` existing objects of a type with base price `base` (each multiplies
+/// by `COSTPERCENT`).
+pub fn cost_after(t: &ObjectType, base: [i32; 8], n: u32) -> [i32; 8] {
     let e = &t.economy;
-    let mut cost = e.price;
+    let mut cost = base;
     if e.cost_percent == 100 {
         return cost;
     }
@@ -182,7 +203,7 @@ pub fn unit_cost(w: &World, player: u8, kind: TypeId, at: Option<(i32, i32)>) ->
             n = 0;
         }
     }
-    cost_after(t, n)
+    cost_after(t, w.adv(player, kind).cost, n)
 }
 
 /// `CanAfford` + `ApplyCost` (0x514e81).
@@ -231,7 +252,7 @@ pub fn producible(w: &World, b: usize) -> Vec<TypeId> {
 /// `Produce` (0x49e649): queues a unit in a finished building, paying the full price now.
 pub fn produce(w: &mut World, b: usize, kind: TypeId) -> bool {
     let u = &w.units[b];
-    if !u.living() || !u.building || u.stage < w.catalog.get(u.kind).economy.build_stages {
+    if !u.living() || !u.building || u.stage < w.max_stage(u) || u.research.is_some() {
         return false;
     }
     if !stages_done(u.stages, w.catalog.tech.of(kind).map_or(0, |t| t.stage_mask)) {
@@ -243,7 +264,7 @@ pub fn produce(w: &mut World, b: usize, kind: TypeId) -> bool {
     if !pay(w, player, &cost) {
         return false;
     }
-    let stages = w.catalog.get(kind).economy.build_stages;
+    let stages = w.adv(player, kind).build_stages;
     w.units[b].queue.push(Production { kind, progress: 0, stages, power });
     true
 }
@@ -256,7 +277,8 @@ pub fn unproduce(w: &mut World, b: usize, kind: TypeId) {
         return;
     };
     let order = w.units[b].queue.remove(k);
-    let refund = cost_after(w.catalog.get(kind), u32::from(order.power));
+    let owner = w.units[b].owner;
+    let refund = cost_after(w.catalog.get(kind), w.adv(owner, kind).cost, u32::from(order.power));
     let stock = &mut w.players[usize::from(w.units[b].owner)].resources;
     for (s, c) in stock.iter_mut().zip(refund) {
         *s = s.saturating_add(c);
@@ -266,6 +288,11 @@ pub fn unproduce(w: &mut World, b: usize, kind: TypeId) {
 /// A building's work for one tick: the head of its production queue, then its mine.
 pub fn building_link(w: &mut World, b: usize) {
     if w.units[b].turned_off {
+        return;
+    }
+    if w.units[b].research.is_some() {
+        // The research order is in front: production and mining wait.
+        crate::upgrade::research_link(w, b);
         return;
     }
     if !w.units[b].queue.is_empty() {
@@ -289,7 +316,7 @@ fn production_link(w: &mut World, b: usize) {
     if converts && !w.units[b].inside.iter().any(|&id| catalog.get(w.units[id.0 as usize].kind).peasant) {
         return; // NOT_ENOUGH_PEASANTS
     }
-    let stages = pt.economy.build_stages;
+    let stages = w.adv(owner, head.kind).build_stages;
     let q = &mut w.units[b].queue[0];
     if q.stages != stages && q.stages > 0 {
         q.progress = stages * q.progress / q.stages;
@@ -496,12 +523,14 @@ pub fn bind_mines(w: &mut World) {
 fn can_enter(w: &World, u: &Unit, b: &Unit) -> bool {
     let bt = w.catalog.get(b.kind);
     let ut = w.catalog.get(u.kind);
-    let cap = if ut.peasant && bt.economy.peasant_absorber > 0 {
-        bt.economy.peasant_absorber
+    let kind_ok = if ut.peasant {
+        bt.economy.peasant_absorber > 0 || bt.economy.unit_absorber > 0
     } else {
-        bt.economy.unit_absorber
+        bt.economy.unit_absorber > 0
     };
-    b.living()
+    let cap = w.adv(b.owner, b.kind).max_inside + b.add_inside;
+    kind_ok
+        && b.living()
         && b.building
         && b.owner == u.owner
         && !bt.economy.concentrator.is_empty()
