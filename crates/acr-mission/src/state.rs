@@ -208,6 +208,9 @@ pub struct ScriptState {
     pub triggers: [u16; TRIGGERS],
     pub timers: [Timer; TIMERS],
     pub light_spots: [LightSpot; LIGHT_SPOTS],
+    /// The local player's fog of war while the scripts run (the host puts it here for each
+    /// tick, see `Scripts::set_fog`); `None` reads as everything visible, like fog off.
+    pub fog: Option<acr_sim::fog::Fog>,
     /// `TextDisable[52]`: hidden `{A}`..`{z}` sections of `#BRIEFING`.
     pub text_disable: [bool; 52],
     /// `Victory`, `LooseGame` flags; once set the game stops.
@@ -296,6 +299,7 @@ impl ScriptState {
             triggers: [0; TRIGGERS],
             timers: [Timer::default(); TIMERS],
             light_spots: [LightSpot::default(); LIGHT_SPOTS],
+            fog: None,
             text_disable: [false; 52],
             victory: false,
             defeat: false,

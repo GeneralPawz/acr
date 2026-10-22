@@ -72,12 +72,7 @@ pub const FUNCTIONS: &[ApiFn] = &[
         status: Status::Partial("stored; the game stamps them into its fog of war (acr-game)"),
         handler: clear_light_spot,
     },
-    ApiFn {
-        name: "GetFogSpotVisibility",
-        original: 0x56e6a4,
-        status: Status::Partial("the fog lives in acr-game: everything is visible (as with fog off)"),
-        handler: get_fog_spot_visibility,
-    },
+    ApiFn { name: "GetFogSpotVisibility", original: 0x56e6a4, status: Status::Done, handler: get_fog_spot_visibility },
     done("SetStartPoint", 0x564192, set_start_point),
     ApiFn {
         name: "GetPeaceTimeLeft",
@@ -583,8 +578,12 @@ fn clear_light_spot(api: &mut Api, c: &mut Call) -> Result<u32> {
     Ok(0)
 }
 
-fn get_fog_spot_visibility(_: &mut Api, _: &mut Call) -> Result<u32> {
-    Ok(1)
+/// `bool GetFogSpotVisibility(int x, int y)` (0x56e6a4): with fog on, whether the local
+/// player's fog at the projected point reaches the visible value (900); without fog (none
+/// handed in) everything is visible.
+fn get_fog_spot_visibility(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let (x, y) = (c.i32(0)?, c.i32(1)?);
+    Ok(api.st.fog.as_ref().is_none_or(|fog| fog.visible(api.world, x, y)).into())
 }
 
 /// `void SetStartPoint(GAMEOBJ* zone)`: centres the camera on the zone.

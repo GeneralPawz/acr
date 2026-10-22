@@ -125,6 +125,12 @@ impl Scripts {
         self.state.strings = strings;
     }
 
+    /// Hands the local player's fog of war to the scripts for the coming ticks
+    /// (`GetFogSpotVisibility`) and returns the one they had.
+    pub fn set_fog(&mut self, fog: Option<acr_sim::fog::Fog>) -> Option<acr_sim::fog::Fog> {
+        std::mem::replace(&mut self.state.fog, fog)
+    }
+
     pub fn state(&self) -> &ScriptState {
         &self.state
     }

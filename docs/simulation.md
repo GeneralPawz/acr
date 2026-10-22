@@ -971,8 +971,11 @@ Recovered from `RevealUnit` (0x484f7b), the blur (0x483c2a) and its consumers. T
 - It only darkens the screen and the minimap, mutes sounds and answers the script function
   `GetFogSpotVisibility`.
 
-`acr_sim::fog::Fog` therefore lives beside the `World`, owned by the host, and is not
-hashed.
+`acr_sim::fog::Fog` therefore lives beside the `World` and is not hashed. In the game the
+mission link (`MissionLink::update_fog`) owns it and brings it up to the world's tick once
+per tick, before the scripts run, and hands it to them for `GetFogSpotVisibility`. Because
+a script's answer can depend on it, the fog is updated exactly once per tick (not per
+frame, not again while the game stands still), so a savegame's replay sees the same fog.
 
 **Grid.**
 - `u16` per 128 px cell. The width is `0x86 << (shift − 1)`.
