@@ -32,12 +32,7 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("CheckProduction", 0x5672cc, DONE, check_production),
     f("TryUnit", 0x56829b, Status::Partial("AI city without tech conditions; see aicity.rs"), try_unit),
     f("TryUpgrade", 0x5684d6, DONE, try_upgrade),
-    f(
-        "TryUpgradeEx",
-        0x568629,
-        Status::Partial("the distance limits to the city centre and buildings are not checked"),
-        try_upgrade,
-    ),
+    f("TryUpgradeEx", 0x568629, DONE, try_upgrade),
     f("UpgIsDone", 0x569259, DONE, upg_is_done),
     f("UpgIsRun", 0x5692a9, DONE, upg_is_done),
     f("InitialUpgrade", 0x55c02f, Status::Done, initial_upgrade),
@@ -579,10 +574,37 @@ fn try_upgrade(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Some(&k) = city.upgrade_index.get(&h.index) else { return Ok(0) };
     let need = city.props[k].percent;
     if api.world.random.rando() < crate::aicity::perconv(prob.max(0)) && percent >= need {
+        if c.name() == "TryUpgradeEx" && !near_city(api, n, k, c.i32(3)?, c.i32(4)?) {
+            return Ok(0);
+        }
         api.st.cities[usize::from(n)].best.push(k);
         return Ok(1);
     }
     Ok(0)
+}
+
+/// `TryUpgradeEx`'s distance limits (0x568629): the producer lies closer than `max_center`
+/// px to the city centre and closer than `max_building` px to one of the city's buildings
+/// (its first 64, mines excepted; the producer itself usually among them).
+fn near_city(api: &Api, n: u8, k: usize, max_center: i32, max_building: i32) -> bool {
+    let Some(b) = api.st.cities[usize::from(n)].props[k].producer else { return false };
+    let p = &api.world.units[b.0 as usize];
+    let (px, py) = p.pos.pixels();
+    let (cx, cy) = api.world.cities[usize::from(n)].center.unwrap_or((0, 0));
+    if crate::api::norma(px - cx * 128, py - cy * 128) >= max_center {
+        return false;
+    }
+    let d2 = api
+        .world
+        .units
+        .iter()
+        .filter(|u| u.owner == n && u.living() && u.building)
+        .take(64)
+        .filter(|u| api.world.catalog.get(u.kind).role.usage != acr_sim::catalog::usage::MINE)
+        .map(|u| crate::api::norma(u.pos.x - p.pos.x, u.pos.y - p.pos.y) >> 4)
+        .min()
+        .unwrap_or(100_000);
+    d2 < max_building
 }
 
 /// `int GetUnits(GAMEOBJ* type)` / `GetReadyUnits`: objects of the type the AI nation owns
