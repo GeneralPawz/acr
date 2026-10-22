@@ -106,6 +106,43 @@ impl GroundAssets {
         std::array::from_fn(|row| fitted.get(row).map_or(1.0, |&d| d as f32))
     }
 
+    /// The detailed ground's tables (`ground.wgsl`): the brightness of each light level
+    /// relative to the plain texel (linear luminance over the textures' texels), and per
+    /// texture its mean colour (linear RGB) and material class.
+    fn detail_tables(&self) -> ([f32; 32], Vec<[f32; 4]>) {
+        let lin = |c: u8| {
+            let [r, g, b] = self.palette.0[usize::from(c)];
+            [r, g, b].map(|v| crate::ground::srgb_to_linear(f32::from(v) / 255.0))
+        };
+        let lum = |c: [f32; 3]| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+        let count = crate::ground::TILE_CLASS.len() as u8;
+        let mut shade = [0.0; 32];
+        for (level, out) in shade.iter_mut().enumerate() {
+            let row = (SHADE_FIRST_ROW + level) as u8;
+            let (mut lit, mut plain) = (0.0, 0.0);
+            for t in 0..count {
+                for i in (0..TILE_SIZE * TILE_SIZE).step_by(7) {
+                    let c = self.tiles.texel(t, i % TILE_SIZE, i / TILE_SIZE);
+                    lit += lum(lin(self.shade.lookup(row, c)));
+                    plain += lum(lin(c));
+                }
+            }
+            *out = if plain > 0.0 { lit / plain } else { 1.0 };
+        }
+        let tiles = (0..=255u8)
+            .map(|t| {
+                let mut sum = [0.0f32; 3];
+                for i in 0..TILE_SIZE * TILE_SIZE {
+                    let c = lin(self.tiles.texel(t, i % TILE_SIZE, i / TILE_SIZE));
+                    (0..3).for_each(|k| sum[k] += c[k]);
+                }
+                let n = (TILE_SIZE * TILE_SIZE) as f32;
+                [sum[0] / n, sum[1] / n, sum[2] / n, f32::from(crate::ground::class_of(t))]
+            })
+            .collect();
+        (shade, tiles)
+    }
+
     /// 256 textures of 64 × 64, 8 per row (indices past the file read texture 0).
     fn tile_atlas(&self) -> Vec<u8> {
         let mut out = vec![0; 512 * 2048];
@@ -413,6 +450,26 @@ struct MapTextures {
     height_range: (i32, i32),
 }
 
+/// The detailed ground's uniform (`Detail` in `ground.wgsl`).
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct DetailUniform {
+    sun: [f32; 4],
+    shade: [f32; 32],
+    classes: [[f32; 4]; 16],
+    tiles: [[f32; 4]; 256],
+}
+
+/// The detailed ground (docs/ground.md), once its textures are loaded.
+struct DetailGround {
+    /// Over the original view (painter's order, like the original ground).
+    pipeline: wgpu::RenderPipeline,
+    /// Under the free camera, depth-tested among its own triangles.
+    free_pipeline: wgpu::RenderPipeline,
+    group: wgpu::BindGroup,
+    depth: Option<((u32, u32), wgpu::TextureView)>,
+}
+
 struct Target {
     size: (u32, u32),
     view: wgpu::TextureView,
@@ -457,12 +514,19 @@ pub struct TerrainRenderer {
     map: Option<MapTextures>,
     target: Option<Target>,
     max_size: u32,
+    /// Draw the detailed ground (3D mode with `ground=detailed`) once its textures are set.
+    pub detailed: bool,
+    detail: Option<DetailGround>,
+    /// Light levels and texture colours for [`DetailUniform`].
+    detail_tables: ([f32; 32], Vec<[f32; 4]>),
 }
 
 const GROUND_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Uint;
 /// `terrain.wgsl` with the shadow receiver and the ground-shadow pass.
 pub const TERRAIN_SHADOW_SHADER: &str =
     concat!(include_str!("terrain.wgsl"), include_str!("shadow.wgsl"), include_str!("terrain_shadow.wgsl"));
+/// `terrain.wgsl` with the detailed ground (`ground.wgsl`).
+pub const TERRAIN_DETAIL_SHADER: &str = concat!(include_str!("terrain.wgsl"), include_str!("ground.wgsl"));
 /// Depth of the free camera's ground target.
 const FREE_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
 
@@ -680,7 +744,202 @@ impl TerrainRenderer {
             map: None,
             target: None,
             max_size: device.limits().max_texture_dimension_2d,
+            detailed: false,
+            detail: None,
+            detail_tables: assets.detail_tables(),
         }
+    }
+
+    /// Whether the detailed ground's textures are set.
+    pub fn has_materials(&self) -> bool {
+        self.detail.is_some()
+    }
+
+    /// Sets the detailed ground's textures (docs/ground.md) and makes its pipelines.
+    pub fn set_materials(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        images: &crate::ground::MaterialImages,
+    ) {
+        let layers = images.layers.len() as u32;
+        let levels = images.layers.first().map_or(1, |l| l.0.len()) as u32;
+        let array = |label, format, pick: &dyn Fn(&crate::ground::MaterialSet) -> &Vec<Vec<u8>>| {
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d { width: images.size, height: images.size, depth_or_array_layers: layers },
+                mip_level_count: levels,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            for (layer, set) in images.layers.iter().enumerate() {
+                for (level, data) in pick(set).iter().enumerate() {
+                    let side = (images.size >> level).max(1);
+                    queue.write_texture(
+                        wgpu::TexelCopyTextureInfo {
+                            texture: &texture,
+                            mip_level: level as u32,
+                            origin: wgpu::Origin3d { x: 0, y: 0, z: layer as u32 },
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        data,
+                        wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4 * side), rows_per_image: None },
+                        wgpu::Extent3d { width: side, height: side, depth_or_array_layers: 1 },
+                    );
+                }
+            }
+            texture.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                ..Default::default()
+            })
+        };
+        let albedo = array("ground albedo", wgpu::TextureFormat::Rgba8UnormSrgb, &|s| &s.0);
+        let normals = array("ground normals", wgpu::TextureFormat::Rgba8Unorm, &|s| &s.1);
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("ground materials"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            anisotropy_clamp: if cfg!(target_arch = "wasm32") { 1 } else { 8 },
+            ..Default::default()
+        });
+        let (shade, tiles) = &self.detail_tables;
+        let sun = crate::shadow::LIGHT;
+        let len = (sun[0] * sun[0] + sun[1] * sun[1] + sun[2] * sun[2]).sqrt();
+        let mut uniform = DetailUniform {
+            sun: [sun[0] / len, sun[1] / len, sun[2] / len, if self.output.is_srgb() { 1.0 } else { 0.0 }],
+            shade: *shade,
+            classes: [[0.0; 4]; 16],
+            tiles: [[0.0; 4]; 256],
+        };
+        for (i, mean) in images.means.iter().enumerate() {
+            let repeat = crate::ground::REPEAT_METRES[i] * crate::view3d::PIXELS_PER_METRE;
+            uniform.classes[i] = [mean[0], mean[1], mean[2], repeat];
+        }
+        for (out, t) in uniform.tiles.iter_mut().zip(tiles) {
+            *out = *t;
+            // A class without a texture set keeps the original.
+            if out[3] as usize >= images.layers.len() {
+                out[3] = f32::from(crate::ground::KEEP);
+            }
+        }
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("ground detail"),
+            size: size_of::<DetailUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&buffer, 0, bytemuck::bytes_of(&uniform));
+        let both = wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT;
+        let float_array = |binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: both,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2Array,
+                multisampled: false,
+            },
+            count: None,
+        };
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("ground detail"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: both,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                float_array(1),
+                float_array(2),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: both,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("ground detail"),
+            layout: &layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&albedo) },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&normals) },
+                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&sampler) },
+            ],
+        });
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("ground detail"),
+            source: wgpu::ShaderSource::Wgsl(TERRAIN_DETAIL_SHADER.into()),
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("ground detail"),
+            bind_group_layouts: &[Some(&self.layout), None, Some(&layout)],
+            immediate_size: 0,
+        });
+        // Over the original by the alpha (kept textures, water); the target's alpha stays.
+        let blend = wgpu::BlendState {
+            color: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::SrcAlpha,
+                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                operation: wgpu::BlendOperation::Add,
+            },
+            alpha: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::Zero,
+                dst_factor: wgpu::BlendFactor::One,
+                operation: wgpu::BlendOperation::Add,
+            },
+        };
+        let pipeline = |label, depth: Option<wgpu::DepthStencilState>| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_detail"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: depth,
+                multisample: Default::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_detail"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: self.output,
+                        blend: Some(blend),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let free_pipeline = pipeline(
+            "ground detail (free camera)",
+            Some(wgpu::DepthStencilState {
+                format: FREE_DEPTH_FORMAT,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+        );
+        self.detail =
+            Some(DetailGround { pipeline: pipeline("ground detail", None), free_pipeline, group, depth: None });
     }
 
     /// Trampled soil (#223): darkens each vertex's light level by `amounts` (0..255 per
@@ -890,11 +1149,56 @@ impl TerrainRenderer {
             clear_pass(encoder, output, color);
             return;
         }
-        let mut pass = clear_pass(encoder, output, wgpu::Color::BLACK);
-        pass.set_pipeline(&self.present_pipeline);
+        {
+            let mut pass = clear_pass(encoder, output, wgpu::Color::BLACK);
+            pass.set_pipeline(&self.present_pipeline);
+            pass.set_bind_group(0, &map.group, &[]);
+            pass.set_bind_group(1, &target.group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        // The detailed ground over the original (docs/ground.md); the zoomed-out view
+        // stays the original.
+        let drawn = self.drawn;
+        let Some(detail) = self.detail.as_mut().filter(|_| self.detailed && !zoomed && drawn > 0) else {
+            return;
+        };
+        let out_size = output.texture().size();
+        let out_size = (out_size.width, out_size.height);
+        if view.is_free() && detail.depth.as_ref().is_none_or(|(s, _)| *s != out_size) {
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("ground detail depth"),
+                size: wgpu::Extent3d { width: out_size.0, height: out_size.1, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: FREE_DEPTH_FORMAT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            });
+            detail.depth = Some((out_size, texture.create_view(&Default::default())));
+        }
+        let depth = detail.depth.as_ref().filter(|_| view.is_free()).map(|(_, v)| v);
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("ground detail"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: output,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+            })],
+            depth_stencil_attachment: depth.map(|view| wgpu::RenderPassDepthStencilAttachment {
+                view,
+                depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Discard }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_pipeline(if depth.is_some() { &detail.free_pipeline } else { &detail.pipeline });
         pass.set_bind_group(0, &map.group, &[]);
-        pass.set_bind_group(1, &target.group, &[]);
-        pass.draw(0..3, 0..1);
+        pass.set_bind_group(2, &detail.group, &[]);
+        pass.draw(0..drawn, 0..1);
     }
 
     /// Writes the terrain's depth into the 3D pass (`model_renderer::DepthTarget`) for the

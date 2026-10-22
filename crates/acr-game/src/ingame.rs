@@ -852,6 +852,10 @@ impl InGame {
             renderer.zoomed = self.interface.hud.zoom;
             renderer.orbit = self.three_d.orbit();
             renderer.water_surface = self.three_d.draws_water(self.interface.hud.zoom);
+            renderer.detailed = self.three_d.active() && self.three_d.ground_detailed;
+            if let Some(images) = self.three_d.take_ground() {
+                renderer.set_materials(device, queue, &images);
+            }
             renderer.backdrop = match &self.setup.kind {
                 GameKind::Blank(b) => {
                     crate::blank_map::backdrop(b.ground).map(|[r, g, b]| wgpu::Color { r, g, b, a: 1.0 })

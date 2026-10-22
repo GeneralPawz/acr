@@ -9,6 +9,9 @@
 //!   `ACR/Sounds/`; `--install` copies them into the game folder
 //! - `cargo xtask assets [NAME..] [--game-dir DIR] [--compress none|meshopt|draco] [--check] [--blend]`
 //!   rebuild the 3D assets with Blender into `target/assets` (see `docs/assets.md`)
+//! - `cargo xtask ground [--src DIR] [--out DIR] [--size N]`   pack the detailed ground's CC0 textures
+//!   (`assets/ground/pack.py`, Python with Pillow) into `<out>/ground/` (default `target/assets`;
+//!   see `docs/ground.md`)
 //! - `cargo xtask e2e [FILE..] [--filter S] [--game-dir DIR] [--exe PATH] [--no-build] [--gpu] [--list] [-v]`
 //!   run the scenario tests in `tests/e2e/` through the game's driver mode (see `docs/testing.md`)
 //! - `cargo xtask drive [--game-dir DIR] [--exe PATH] [--no-build] [--gpu]`   driver requests from
@@ -53,6 +56,21 @@ fn main() -> ExitCode {
         Some("e2e") => drive::run_e2e(&args[1..], game_dir.clone()),
         Some("drive") => drive::drive(&args[1..], game_dir.clone()),
         Some("jev") => drive::run_jev(&args[1..], game_dir.clone()),
+        Some("ground") => {
+            let root = workspace_root();
+            let src = option("--src").unwrap_or_else(|| r"D:\ACR-models\polyhaven-textures".to_owned());
+            let out = option("--out").map_or_else(|| root.join("target").join("assets"), PathBuf::from);
+            let size = option("--size").unwrap_or_else(|| "1024".to_owned());
+            let status = std::process::Command::new("python")
+                .arg(root.join("assets").join("ground").join("pack.py"))
+                .args([src.as_str(), &out.to_string_lossy(), size.as_str()])
+                .status();
+            match status {
+                Ok(s) if s.success() => Ok(()),
+                Ok(s) => Err(format!("pack.py: {s}").into()),
+                Err(e) => Err(format!("python: {e}").into()),
+            }
+        }
         Some("assets") => {
             let mut names = Vec::new();
             let mut it = args.iter().skip(1);

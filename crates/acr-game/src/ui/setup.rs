@@ -80,6 +80,9 @@ pub struct BlankSetup {
     pub hill: Option<(i32, i32, i32, i32)>,
     /// Water: `(x, y, width, height)`.
     pub water: Option<(i32, i32, i32, i32)>,
+    /// Round patches of other ground textures `(x, y, radius, texture)`, painted in order
+    /// (for the detailed ground's transitions, docs/ground.md). Not saved.
+    pub patches: Vec<(i32, i32, i32, u8)>,
 }
 
 /// The one ground texture of a blank field.

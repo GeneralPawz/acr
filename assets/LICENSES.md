@@ -9,6 +9,15 @@ used locally only (its files and the models built from it are never committed).
 |---|---|---|---|---|
 | Horse Rig (`bd71883bad9845389ef4ec2801004801`) | base mesh for the dragoon horse (#170, #275); evaluated, not yet in the build | CreativeMachine (https://sketchfab.com/CreativeMachine) | CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/) | https://sketchfab.com/3d-models/horse-rig-bd71883bad9845389ef4ec2801004801 |
 | WildMesh 3D "100 MODELS" (Realistic Animals: BrownBear, Buffalo, AmericanAligator, Leopard, Elk, Doe, ...) | the animals `assets/animals/*.py` (#287) | WildMesh 3D (https://www.patreon.com/wildmesh), partly with AnimalMesh 3D | WildMesh Standard License v1.1 (bought, `LICENSE-STANDARD.txt` next to the pack) | purchase, kept outside the repo; scripts read it via `ACR_SOURCES` |
+| Sparse Grass (`sparse_grass`) | detailed ground, class grass (docs/ground.md) | Amal Kumar (Poly Haven) | CC0 | https://polyhaven.com/a/sparse_grass |
+| Leafy Grass (`leafy_grass`) | detailed ground, class meadow (docs/ground.md) | Charlotte Baglioni (Poly Haven) | CC0 | https://polyhaven.com/a/leafy_grass |
+| Dry Ground 01 (`dry_ground_01`) | detailed ground, class dirt (docs/ground.md) | Rob Tuytel (Poly Haven) | CC0 | https://polyhaven.com/a/dry_ground_01 |
+| Brown Mud 02 (`brown_mud_02`) | detailed ground, class mud (docs/ground.md) | Rob Tuytel (Poly Haven) | CC0 | https://polyhaven.com/a/brown_mud_02 |
+| Coast Sand 01 (`coast_sand_01`) | detailed ground, class sand (docs/ground.md) | Rob Tuytel (Poly Haven) | CC0 | https://polyhaven.com/a/coast_sand_01 |
+| Rocky Terrain 02 (`rocky_terrain_02`) | detailed ground, class rock (docs/ground.md) | Amal Kumar (Poly Haven) | CC0 | https://polyhaven.com/a/rocky_terrain_02 |
+| Forest Floor (`forest_floor`) | detailed ground, class forest floor (docs/ground.md) | eye-candy.xyz (Poly Haven) | CC0 | https://polyhaven.com/a/forest_floor |
+| Snow 02 (`snow_02`) | detailed ground, class snow (docs/ground.md) | Rob Tuytel (Poly Haven) | CC0 | https://polyhaven.com/a/snow_02 |
+| Dry Mud Field 001 (`dry_mud_field_001`) | detailed ground, class field (docs/ground.md) | Rob Tuytel, Rico Cilliers (Poly Haven) | CC0 | https://polyhaven.com/a/dry_mud_field_001 |
 | Dutch Ship Large 01 (`dutch_ship_large_01`) | base of the frigate `ShpFregat` (#287) | James Ray Cock, Rico Cilliers, Nicolò Zubbini (Poly Haven) | CC0 | https://polyhaven.com/a/dutch_ship_large_01 |
 | Dutch Ship Large 02 (`dutch_ship_large_02`) | base of the galleon `ShpSanta` (#287) | James Ray Cock, Rico Cilliers, Nicolò Zubbini (Poly Haven) | CC0 | https://polyhaven.com/a/dutch_ship_large_02 |
 | Dutch Ship Medium (`dutch_ship_medium`) | base of the small ship `ShpPinta` (#287) | James Ray Cock, Rico Cilliers, Nicolò Zubbini (Poly Haven) | CC0 | https://polyhaven.com/a/dutch_ship_medium |
@@ -42,6 +51,11 @@ Notes:
   The licence is stated on the Sketchfab page (API: `license.slug = by`) and in the file's
   `asset.extras` (author, licence, source). Credit line: "Horse Rig" by CreativeMachine,
   CC BY 4.0, modified (decimated, refitted to rig R, repainted).
+- Ground textures (Poly Haven, CC0, no attribution required; credited anyway): the 2k JPG
+  maps (diffuse, OpenGL normal, roughness, displacement) fetched by
+  `assets/ground/fetch_polyhaven.py` into `D:\ACR-models\polyhaven-textures\<id>\` (with
+  `SOURCE.json`), packed to 1024² PNGs by `cargo xtask ground` (`assets/ground/pack.py`) into
+  `<out>/ground/`. Not committed.
 - Ships (Poly Haven, CC0, no attribution required; credited anyway): the 2k glTF downloads,
   kept outside the repo under `$ACR_SOURCES/polyhaven/<id>/` (base colour textures only).
   Authors per `SOURCE.json`: James Ray Cock (model, textures, clean-up), Rico Cilliers

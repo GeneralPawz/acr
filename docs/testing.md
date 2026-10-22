@@ -214,6 +214,7 @@ every texture 0, no sprites, no units, an empty `SEA2`; `acr-game/src/blank_map.
 | `slope` | degrees (a ramp rising eastwards from `centre.x − 750` to `centre.x + 750`, flat beyond) or `{"deg": 5, "x0": 7000, "x1": 8000}` |
 | `hill` | `true` (radius 600, height 100 px at the centre) or `{"x", "y", "radius", "height"}`: a round cosine hill |
 | `water` | `true` (2000 × 1200 px east of the centre) or `{"x", "y", "w", "h"}`: a rectangle of `SEA2` depth, shallow at its edge and deep (200; ships float above 130, land units stop above 128) from 160 px in; the terrain stays at its height (water is drawn flat). With models the 3D path draws the water surface (docs/water.md) under both cameras; `ACR_WATER=original` keeps the original tint |
+| `patches` | `[{"x", "y", "radius", "texture"}, ...]`: round patches of other `TILES3.BMP` textures (vertex textures), painted in order, for ground transitions ([ground.md](ground.md)); not saved |
 | `hit_locations` | the optional rule, as for `random` (or the setting) |
 | `body_spacing` | the optional body-spacing rule, as for `random` (or the setting) |
 | `hud` | `false` hides the interface from the start, like `{"cmd": "hud", "on": false}` |

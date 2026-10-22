@@ -1,0 +1,263 @@
+# The ground in 3D mode: materials, ground state, particles
+
+Up close, the original ground is pixel art: the 8-bit tiles of `TILES3.BMP`, shaded through
+the darkness table. Next to realistic models (#287, realism over sprite parity) it looks
+like a comic. Trampling (#223) only darkens the light level per vertex, and blood, dirt
+and craters are flat decals: there is no flying earth, and hooves leave the same marks as
+boots. This plan replaces the ground in 3D mode in phases. Sprite mode and the zoomed-out
+view (key L) keep the original.
+
+Everything here is render-only. Nothing feeds back into `acr-sim`, so replays, savegames
+and the hashes stay as they are.
+
+## What the ground is today (terrain.rs, terrain.wgsl)
+
+- **Pass 1** draws the triangle mesh (4 triangles per cell, odd columns half a cell up) into
+  an `R8Uint` target of palette indices. It composes the textures with transition masks
+  and the original blend tables, and shades each texel by the per-vertex light level (0..31,
+  flat ground 3) through `AGEW_1DR.GRD`.
+- **Pass 2** (`fs_present`) tints water by depth through `WCOST.GRD` and resolves the palette.
+- The **3D pass** writes the terrain depth (`vs_depth`) and darkens the drawn ground under
+  model shadows (`terrain_shadow.wgsl`). Blood and dirt are decals (`blood.wgsl`,
+  `BloodPool::dirt`); the crater is a decal too.
+- **Trampling** (`ingame/trample.rs`) rewrites the light levels of the vertex texture once a
+  second (`set_trample`), up to 10 levels darker.
+- The **free camera** draws the same mesh through the view matrix, depth-tested, into the
+  same palette target.
+
+## Phase 1: material ground (built)
+
+**Setting.** `ground=detailed|original`, default `detailed`. It applies in 3D mode only:
+`models` other than `off`, or `camera=free`.
+
+**Classes.** Each of the 136 textures belongs to one class, taken from a contact sheet of
+`TILES3.BMP` (`ACR-analysis/ground/tiles3_sheet.png`; note that the BMP is stored
+bottom-up, so texture *t* is at row 33 − *t*/4). The table is `acr_render::ground::TILE_CLASS`.
+
+| class | Poly Haven set | repeat | e.g. textures |
+|---|---|---|---|
+| grass | `sparse_grass` | 2.5 m | 0 (the editor's green), 4, 5, 12, 16, 18, 20, 22, 39 |
+| meadow | `leafy_grass` | 2 m | 1–3, 6, 7, 13, 17, 19, 21, 23, 63–65, 68, 69, 93, 96 |
+| dirt | `dry_ground_01` | 3 m | 15, 34, 42, 43, 52, 67, 71 (blank `dirt`), 84, 94, 116, 121–135 |
+| mud | `brown_mud_02` | 2.5 m | 29, 30, 49–51, 53–55, 66, 70 |
+| sand | `coast_sand_01` | 2.5 m | 72, 74, 75, 78, 79, 100–109, 112, 114, 120 |
+| rock | `rocky_terrain_02` | 4 m | 8–11, 14, 26, 31, 33, 38, 46, 47, 56, 57, 80–83, 86, 87, 90, 91 |
+| forest floor | `forest_floor` | 2.5 m | 28, 58, 59, 62 |
+| snow | `snow_02` | 3 m | 35, 95, 99, 103 (blank `snow`), 107, 110 |
+| field | `dry_mud_field_001` | 3 m | 27, 32, 73, 85, 92, 111, 113 |
+| keep (original) | none | | paving and cobbles 24, 25, 36, 37, 40, 41, 44, 45, 48; logs 76, 77; water 60, 61, 88, 89, 115 |
+
+**Assets.** The maps are CC0 from Poly Haven: diffuse, OpenGL normal, roughness and
+displacement, at 2k.
+- `assets/ground/fetch_polyhaven.py` downloads them into
+  `D:\ACR-models\polyhaven-textures\<id>\`, with a `SOURCE.json` per set.
+- `cargo xtask ground [--src] [--out] [--size]` runs `assets/ground/pack.py`, which writes
+  two 1024² PNGs per class into `<out>/ground/`: `<class>_a.png` (albedo RGB + height A)
+  and `<class>_n.png` (normal RG + roughness B).
+- The class order is `assets/ground/materials.py` = `acr_render::ground::CLASSES`.
+- The files are about 46 MB and are not committed. The game looks them up as
+  `ACR\Models\ground\*.png`: in the game folder, or natively in `ACR_MODELS_DIR\ground\`.
+- Credits are in `assets/LICENSES.md`.
+
+**Loading.** `ThreeD` asks for the 18 files once 3D mode is active, decodes them and builds
+box-filtered mipmaps on the CPU (0.34 s natively). `TerrainRenderer::set_materials` uploads
+them as two `texture_2d_array`s: albedo as `Rgba8UnormSrgb`, normals as `Rgba8Unorm`.
+- Memory: 9 × 2 × 1024² × 4 B × 4/3 ≈ 100 MB natively.
+- The browser drops the top level: 512², about 25 MB.
+- If a file is missing, the original ground stays and the log says so.
+
+**Drawing** (`ground.wgsl`, appended to `terrain.wgsl`). After the present pass, the mesh
+is drawn once more, straight into the output (no palette target):
+- **Placement:** as the original ground places it, or through the view matrix under the free
+  camera. Under the free camera it is depth-tested against an output-sized `Depth24Plus`;
+  in the original view it keeps the painter's order.
+- **Per triangle**, from the three vertices' textures: the classes and each texture's mean
+  colour (linear) are flat varyings, and the barycentric weights are interpolated.
+- **Height blend:** weight = barycentric weight + 0.5 × the material's height. The highest
+  wins within a 0.2 band, faded out where the barycentric weight is under 0.2. Borders
+  follow the stones and tufts of the material instead of the original's masks.
+- **Colour:** each class contributes `vertex texture's mean colour × albedo / class mean
+  albedo`, clamped to 0.25..2.2. This is the low-frequency macro tint that keeps the map's
+  AC colours; from afar the mips go to the mean and the ratio goes to 1.
+- **Anti-tiling:** two samples per class, at the repeat and at a turned repeat about 1.9 ×
+  larger, mixed by value noise with a period of about 5 m. Sampling uses
+  `textureSampleGrad` with the gradients taken in uniform control flow.
+- **Light:** the original light level (and so the trample darkening), mapped to brightness
+  by `shade[level]`. That is the luminance ratio of `AGEW_1DR.GRD` row 64 + level over the
+  textures' texels, computed on the CPU.
+- **Normal map:** it adds the small relief only, as
+  `(0.5 + 0.5 n_mapped·sun) / (0.5 + 0.5 n_geom·sun)`. The geometric normal comes from
+  derivatives, because the large relief is already in the level.
+- **Alpha:** it keeps the original where a vertex's class is *keep* (blended by the same
+  weights) and over water. The original view's water depth is sampled per pixel like
+  `fs_present`, so the original tinted lakebed shows through. Without sRGB output (WebGL2
+  canvas) the result is gamma-encoded in the shader.
+- Model shadows, blood and dirt decals, and the 3D pass then go over it as before.
+
+**Tests.** The driver's blank field has a new `patches` option,
+`[{"x","y","radius","texture"}]`, that paints round patches of other textures, so class
+transitions can be seen without a real map. The shader validation test also covers
+`terrain.wgsl + ground` for GLSL ES.
+
+**Frames** (`ACR-analysis/ground/`, blank field 1280 × 720, HUD off, grass with patches of
+dirt 71, mud 66, rock 8, water 89 and snow 103, slope 8, hill, water):
+- `original/` and `detailed/` (`detailed-rebased/`: the same after the rebase onto the water surface): `z1_000.png`, `z2_000.png` and `z4_000.png` (zoom 1, 2, 4),
+  `free_000.png` (yaw 20°, pitch 20°, zoom 4) and `water_000.png`;
+- `cmp_z2.png`: side by side;
+- the real-map check, Monongahela `battle3.m3d`: `map-original/` and `map-detailed/`
+  (`map_z*_000.png`, `map_free_000.png`) and `cmp_map_z2.png`.
+
+**Measured** (Monongahela `battle3`, 1280 × 720, zoom 1, about 2700 models, shadows on,
+driver frames including the simulation, mean of 300 frames per row):
+
+| ticks | original | detailed |
+|---|---:|---:|
+| 7–307 | 38.3 ms | 38.9 ms |
+| 307–607 | 41.8 ms | 45.4 ms |
+| 607–907 | 43.3 ms | 48.1 ms |
+
+That is +0.6 to +4.8 ms per frame, single runs, with the noise of the battle. A GPU timer
+query is still to do. The pass costs one more draw of the visible mesh (about 4 bytes of
+vertex fetch per corner) and 4–12 texture samples per pixel (2 for the albedo plus 2 for
+the normal per distinct class, with shared classes reused).
+
+**Phase 1 limits, honestly:**
+- The materials are still flat: there is no displacement or parallax yet, so a close-up
+  reads as a well-textured plane, not soil with depth.
+- The colours follow the original tiles. The editor green (texture 0) is a saturated
+  green, so grass looks lawn-like. It is somewhat brighter and more saturated than the
+  dithered original (see `cmp_map_z2.png`); the tint and shade calibration needs a pass.
+- `dry_ground_01` is cracked clay. That suits dry dirt, but on a large field it reads as a
+  pattern; a looser soil set may serve the dirt class better.
+- There is no triplanar mapping yet. AC slopes are gentle, but the steepest hill sides
+  stretch the texture.
+- The shore is a soft alpha cut to the original water, which is still the palette tint.
+
+## Phase 2: ground state texture
+
+One RGBA texture per map stores what happens to the ground. It replaces the per-vertex
+trample darkening and the flat dirt and crater decals.
+
+- **Resolution:** 16 cm per texel (≈ 4.8 world px). A normal map of 15 360 px is 3200²
+  texels = 40 MB in RGBA8: too much for WebGL2 next to the materials. Instead:
+  - **Tiles:** 64 m (≈ 1920 px) tiles of 400², allocated on the first stamp. A battle
+    touches a few dozen; a page table texture maps a tile to an atlas slot, with an atlas of
+    16 × 16 slots of 400² = 6400², or 8 × 8 = 3200² on WebGL2 (40 MB / 10 MB).
+  - **Fallback:** where no tile exists, a coarse 1 texel per cell copy (the old per-vertex
+    wear) still darkens.
+- **Channels** (RGBA8 + a second R8 or RG8 for displacement):
+  - R: compression / trampling (flattened, darker, smoother; also flattens grass in
+    phase 5);
+  - G: mud / wetness (darker, glossier through the roughness, mixes towards the mud class);
+  - B: scorch (black-brown, kills the grass);
+  - A: blood (soaked into soil, replacing the pool decal's colour; the pool's sheen stays a
+    decal);
+  - second texture R8: displacement, signed, 0.5 = level, ±25 cm (craters, furrows,
+    ruts, hoof holes).
+- **Stamps:** a render-to-texture pass of instanced quads with stamp shapes from a small
+  stamp atlas (16 shapes, 64²), with max or add blending per channel. Stamps come from the
+  render side only (`trample.rs` → a stamp list), at most a few hundred per frame:
+  - **boots:** alternating left/right prints, 28 × 11 cm, compression 0.15 and
+    displacement −1 cm, spaced by the gait's stride (the stride of `gait_view.rs`);
+  - **hooves:** pairs 13 cm round, deeper (−3 cm), compression 0.3, spaced by the horse
+    gait (walk 1.6 m, gallop 3 m), with mud splash in wet ground;
+  - **cannon wheels:** two parallel ruts 8 cm wide, 1.5 m apart, continuous along the
+    path, −4 cm;
+  - **crawl drags and bodies:** a smear of compression and blood under ragdolls and
+    crawlers, from the existing trail code (`trail.rs`);
+  - **cannonballs:** at each bounce of #258, a crater with a raised rim (−20 cm / +6 cm,
+    radius 0.6 m) plus a furrow along the roll to the next bounce; scorch for shells.
+- **Recovery:** each second a pass fades compression and mud slowly (as the 0.9997 per tick
+  of today) and keeps craters. Blood dries (darker, then fades over the corpse lifetime).
+  Not saved, like trampling now.
+- **Shading:** `fs_detail` reads the state:
+  - compression darkens and lowers roughness, and blends towards the dirt class;
+  - mud blends towards the mud class with wet darkening;
+  - scorch multiplies;
+  - displacement drives the normal (finite differences) and parallax.
+- **Geometry:** near the camera (within about 40 m under the free camera, or at zoom ≥ 2),
+  a second, finer mesh is drawn instead of the cells: 8 × 8 sub-quads per cell, displaced
+  in the vertex shader by the displacement channel and the material height, with parallax
+  occlusion mapping (8–16 steps, fewer with distance) for the small relief. Far away the
+  plain mesh stays. In the original view, displacement only shades (normals, POM), because
+  the painter's order of the ground must stay.
+
+## Phase 3: particles
+
+The particles must work in WebGL2, which has no compute and no storage buffers. There are
+two options:
+- **A, CPU-simulated instancing:** simple ballistic motion with drag, a ground hit and a
+  stamp on landing, uploaded as an instance buffer each frame. That is 20 bytes per
+  particle (position, velocity packed, life, kind); 4000 particles = 80 kB/frame.
+- **B, GPU ping-pong:** two RGBA32F textures of position and velocity, updated by a
+  fragment shader, drawn with instanced quads that read the texture in the vertex shader
+  (WebGL2 allows this). It scales to 100k+, but has no CPU-side landing events, so the
+  stamps would come from a second pass.
+
+The plan is to measure A first: native and wasm at 2k, 5k and 10k particles. A battle's
+cannon fire needs maybe 2–4k live clods. Choose B only if A costs over 1 ms on wasm at 5k.
+Both draw instanced: clods as small low-poly lumps (one 20-triangle mesh, scaled and
+tinted per instance by the ground class under the spawn point), dust and spray as soft
+camera-facing quads with a depth fade.
+
+**Effects:**
+- earth clods and mud spray from hooves at a gallop and from impacts; they land and stamp
+  small prints;
+- dust on dry classes (dirt, sand, field) under marching columns and cavalry, density by
+  compression rate;
+- grass bits on grass and meadow;
+- a cannonball's earth fountain at each bounce (#258, `World::impacts`): 40–80 clods plus a
+  dust puff, scaled by the ball's speed; shell blasts with 150 clods, a scorch stamp and
+  smoke (smoke stays the existing sprite effect);
+- later: water splashes for balls on water.
+
+## Phase 4: dung
+
+Horses and other animals drop dung over time. A render-side hash per (unit id, minute)
+decides: about one drop every 6–10 minutes per horse, using no simulation state and no
+RNG. A drop is a small mesh (3 variants, about 60 triangles, made in Blender like the
+other assets) plus a stamp in the ground state. It ages: fresh and glossy, then dry and
+dark, flattened when trampled (when the compression channel rises over it), and gone
+after about 20 minutes. Its cost is negligible: a few hundred instances at most.
+
+## Phase 5: vegetation (later, plan only)
+
+- **Grass:** instanced blade cards near the camera (within about 25 m, only under zoom ≥ 2
+  or the free camera), placed from a jittered grid per class (grass, meadow, field), with
+  wind by a world-space noise. The compression channel flattens and darkens them, and
+  scorch removes them. Density fades with distance into the material.
+- **Trees:** Poly Haven CC0 trees (`D:\ACR-models\polyhaven`) built into glb with 3 LODs
+  plus an impostor (an octahedral or 8-view billboard atlas). The tree sprites are replaced
+  by them in 3D mode, keeping the map's positions and kinds. A cannonball hit (render-side
+  from `World::impacts` near a tree) fells the tree: a pivot at the base, a fall
+  animation, and the log stays. The simulation's tree (wood resource, passability) is
+  unchanged, so a felled render tree may still count as wood. That is acceptable as
+  render-only, and it is documented.
+
+## Phase 6: performance budgets
+
+| | native (dGPU / Snapdragon X) | WebGL2 |
+|---|---|---|
+| material pass | ≤ 1.0 ms at 1080p | ≤ 2.0 ms at 1080p, 512² materials |
+| ground state stamps + fade | ≤ 0.3 ms | ≤ 0.5 ms, 3200² atlas |
+| fine mesh + POM near camera | ≤ 1.0 ms | POM steps halved, fine mesh only at zoom ≥ 3 |
+| particles | ≤ 0.5 ms at 5k | ≤ 1.0 ms at 3k (CPU) |
+| grass cards | ≤ 1.0 ms | off by default |
+
+**Scaling:**
+- `ground=original` is the original path: no extra pass, no textures loaded.
+- `ground=detailed` scales with the zoom: below zoom 1 the material mips reach the mean,
+  and the pass could then be skipped (to do: skip at zoom < 0.75 and in the zoomed-out
+  view, which already happens).
+- POM and the fine mesh only near the camera; particles are capped per frame and their
+  count halves on wasm.
+- A later `ground=detailed-low` could keep phase 1 without phases 2–5.
+
+## Status
+
+- Phase 1 is built: setting, classes, CC0 sets, packing, loading, drawing, the blank
+  field's `patches`, frames and a first measurement.
+- Next: calibrate the tint and shade against the original (a mean-colour check per zoom
+  on the blank field), triplanar on steep slopes, and a skip below zoom 0.75. Then phase 2
+  (the ground state texture with boot and hoof stamps and cannonball craters and furrows),
+  then phase 3.

@@ -20,6 +20,7 @@ parameters: [assets-humans.md](assets-humans.md).
 | `models` | `off`, `units`, `all` | `off` | `units`: units with a model are drawn in 3D; `all`: finished buildings too (under construction, burning down and ruined they stay sprites) |
 | `camera` | `fixed`, `free` | `fixed` | `free`: the camera turns and tilts (below) |
 | `shadows` | `on`, `off` | `on` | sun shadows of the 3D models on the ground and on each other (below); tests switch them with `ACR_SHADOWS=on\|off` or the driver's `{"cmd": "shadows", "on": false}` |
+| `ground` | `detailed`, `original` | `detailed` | the ground in 3D mode (`models` not `off` or `camera=free`): material textures over the original tiles, [ground.md](ground.md); sprite mode always draws the original |
 | `gore` | `full`, `reduced`, `off` | `full` | 3D corpses: `full` decompose (#178), `reduced` discolour, collapse and sink without dissolving, `off` fade like the original (every other pixel once the death counter passes 100) |
 
 Sprites stay the default; with `models=off` and `camera=fixed` the frame is drawn exactly as
@@ -73,6 +74,8 @@ acr-game
    the ground triangles go through the 3D view matrix instead and are depth-tested among
    themselves (hills no longer come in row order); the water tint, which works on screen
    blocks of the original view, is left out (the water surface below replaces it).
+   With `ground=detailed` and its textures loaded, the mesh is drawn once more straight
+   into the output over the original (`ground.wgsl`, [ground.md](ground.md)).
 2. **Shadow map** (`shadows=on`, models drawn): the models once more from the sun into a
    depth texture (below).
 3. **3D pass** (one render pass, depth + stencil `Depth24PlusStencil8` at output size):
