@@ -131,6 +131,11 @@ pub struct EconomyDef {
     pub mill: bool,
     pub no_hungry: bool,
     pub peasant_convertor: bool,
+    /// `MAXINDEPO g n` (NM+0x173a = g + 1, NM+0x1737 = n): at most `n` objects of depot
+    /// group `g` (< 4) per finished `ARTDEPO` building.
+    pub depot_group: Option<(usize, i32)>,
+    /// `ARTDEPO`: a depot for [`EconomyDef::depot_group`] limits.
+    pub art_depot: bool,
     /// `NAEMNIK`: deserts when the player runs out of gold.
     pub mercenary: bool,
     /// `TURNOFF`: stops working when the player runs out of gold.
@@ -227,6 +232,10 @@ fn economy(def: &UnitDef) -> EconomyDef {
             "TRANSFORMTOMEAT" => e.meat = c.int(0).map(|v| v as u8).filter(|&v| v != 0xFF),
             "USAGE" => e.mill = c.word(0).is_some_and(|u| u.eq_ignore_ascii_case("MELNICA")),
             "PEASANTCONVERTOR" => e.peasant_convertor = true,
+            "MAXINDEPO" => {
+                e.depot_group = c.int(0).filter(|g| (0..4).contains(g)).map(|g| (g as usize, c.int(1).unwrap_or(0)))
+            }
+            "ARTDEPO" => e.art_depot = true,
             "NAEMNIK" => e.mercenary = true,
             "TURNOFF" => e.turn_off = true,
             "BUILDLOCKPOINTS" => {

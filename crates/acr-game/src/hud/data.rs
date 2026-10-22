@@ -26,6 +26,9 @@ pub struct HudData {
     icons: HashMap<String, usize>,
     /// `[WEAPONS]` in file order: (name, attack icon, protection icon) frames of `SMICONS.GP`.
     pub weapons: Vec<(String, usize, usize)>,
+    /// Per weapon kind: flag `I` (0x40 of 0x23bbb84), whose attacks the unit numbers skip
+    /// (0x6080fc).
+    pub weapon_hidden: Vec<bool>,
     /// `#GENSHIELD`: the `SMICONS.GP` frame of the shield value.
     pub shield_icon: usize,
     /// `[CONST]` lines that place an icon (`GO&ATTACK 3 2 Go_With_Attack`).
@@ -61,6 +64,7 @@ impl HudData {
                 "[WEAPONS]" => {
                     if let (Some(a), Some(p)) = (int(1), int(2)) {
                         data.weapons.push((first.to_owned(), a, p));
+                        data.weapon_hidden.push(words.get(3).is_some_and(|f| f.contains('I')));
                     }
                 }
                 "[CONST]" => {

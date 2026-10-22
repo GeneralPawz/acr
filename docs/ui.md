@@ -312,15 +312,29 @@ the defaults apply: `Zone1X/Y` = 6/6, `PropertyX/Y` = 182/6, `IconLx/Ly` = 40/40
   - `KILLUNI` ("Treffer %d") at (16, 610) if it has kills, even while unfinished; the rest
     only for a finished object;
   - its life, centred at x = 12 + (40 − w) / 2, y = 670;
-  - up to 2 attacks at (53 + 55·n, 630), text at x + 18, y + 4;
-  - the shield `#GENSHIELD` at (53, 651);
+  - up to 2 attacks at (53 + 55·n, 630), text at x + 18, y + 4: the attack indices 0..11 in
+    order whose current damage (ADC+0x78, upgrades included) is not 0 and whose weapon kind
+    lacks the `I` flag of `NRES.DAT [WEAPONS]` (0x40 of 0x23bbb84). The damage is
+    `base + (current − base)·r/1000` with the type's own `DAMAGE` as base; `r` is 1000, or
+    for `EX_SHOTS` buildings the garrison share (units inside with `USAGE` 0x15, 0x18 or
+    0x20, ·1000 / `MaxInside`). The bonus is the formation bonus `+0x61` plus, for
+    `SKILLDAMAGEMASK` indices, `SKILLDAMAGEBONUS · kills / 10`: shown as `%d+%d` when positive;
+    when negative as `%d-%d` with `skill − formation bonus` (sic, 0x6081c2);
+  - the shield `#GENSHIELD` at (53, 651): ADC+0xe0 with the formation's defence bonus
+    `+0x62` as `%d+%d` / `%d-%d`;
   - up to 6 protections in 3 columns at (13 + 55·c, 681 + 19·r), not for buildings;
-  - lines in `fn10` from (13, 680), 12 apart: `HABITAN`/`MAXHABI` (population and housing,
+  - lines in `fn10` from (13, 680), 12 apart: `FISHSTR` ("Fisch %d/%d", the fish on board
+    `+0x6f` and `FISHING`'s second value; ACR's simulation does not fish, so 0),
+    `HABITAN`/`MAXHABI` (population and housing,
     `FARM`), `__ARTCAP0..3` ("Max. Kanonen:%d\%d": objects of `MAXINDEPO` group i and depots ·
-    `ARTDEPO` i, a line skipped if its value is 0), `INSISTR`/`MAXINS1` (units inside and
-    the capacity).
-  - Not built: `FISHSTR`, `MAXINSI` (extra capacity), the mined resource's name, attack
-    bonuses (`%d+%d`), and the `SHOWDELAY` reload bar (x = 173..176).
+    `ARTDEPO` i, a line skipped if its value is 0), `INSISTR` and `MAXINSI` ("%d+%d" with
+    `AddInside` `+0xa5`) or `MAXINS1` (units inside and the capacity), then for a mine at
+    work (0x5f7882: order 0x5f75b3) the name of its resource.
+  - `SHOWDELAY` types (NM+0x172a bit 0): a reload bar of four lines in
+    `GetPaletteColor(0, 255, 0)` at x = `Zone1LX + Zone1X − 5` .. `− 2` = 173..176, from
+    y = 631 + 125·delay/MaxDelay down to 753 (`Zone1LY` = 100), with the sums of
+    `delay` (`+0x8c`) and `MaxDelay` (`+0x8f`) over the selected objects of the type
+    (the type record of 0x606ae0); not drawn while `delay ≥ MaxDelay`.
   The original's 0x606edd draws the same numbers for a brigade.
 - Command slots wired so far:
   - formation groups of the officer's `[OFFICERS]` entry, at their `NRES.DAT
@@ -402,6 +416,13 @@ builds the icons.
 - `FINBLD` ("%s: Einheitenproduktion abgeschlossen", the building's name) for 100 frames
   when an own building's queue becomes empty because its last unit was made.
 - Population full stops production silently (0x49ef92); the icon is not greyed.
+- Depot limit in production (0x49f21b): when the head order's type has `MAXINDEPO g n` and
+  the player has `n` · finished `ARTDEPO` buildings or more objects of group `g`, the
+  order is cancelled with a refund (`UnProduce` 0x4dbd47, which takes a waiting order of the
+  type first). ACR's simulation counts the objects on the spot instead of using the census.
+- `NOT_ENOUGH_PEASANTS` (0x49f16b, `AssignHint1` for 10 frames): a `PEASANTCONVERTOR`
+  building whose head order is not a peasant and that has no peasant inside waits, and
+  says so every tick while the local player has it selected.
 
 ### Market (`ECO::BuildIcons` 0x4a96d9)
 
@@ -839,8 +860,6 @@ to the panel (0x4c1c36). U toggles value 2, I value 1; one panel at a time.
 - Which command icons the original shows for a selection without an officer (attack
   on/off, friendly fire, arm attack…): the conditions in 0x606710 are only partly
   decoded.
-- The simulation does not cancel production over the depot limit (`MAXINDEPO`, 0x49f21b)
-  nor print `NOT_ENOUGH_PEASANTS` for buildings that train peasants.
 - Whether the original hides a selected type's icon when production icons take its slot.
 - The original builds on the button press; ACR too, but the order in which it checks the
   site and the price on the click (0x4c20ac) is not traced.

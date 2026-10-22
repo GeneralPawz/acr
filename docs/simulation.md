@@ -576,6 +576,8 @@ Implemented in `economy.rs`. The sources are `City::Census` (0x42e658), the upke
     100). It waits while `housing < population + 1`.
   - A `PEASANTCONVERTOR` building producing a non-peasant instead uses up a peasant from
     inside.
+  - Depot limit (0x49f21b): a head order of a `MAXINDEPO g n` type is cancelled with a refund
+    (`UnProduce`) while the owner has `n` · finished `ARTDEPO` objects or more of group `g`.
   - The unit appears at the first `BORNPOINT`, a cell corner relative to the lock base cell
     `((RealX + 16a) >> 8, (RealY + 32b) >> 8)` with `LOCATION a b`, facing the second. It
     walks through locks and other units ("unlimited motion", 0x527caa) to every further born
