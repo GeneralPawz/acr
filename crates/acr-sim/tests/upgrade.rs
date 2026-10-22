@@ -248,3 +248,40 @@ fn a_ruined_section_explodes_at_its_cells() {
     assert!(!w.map.land.check_pt(137, 137));
     assert!(w.map.land.check_pt(135, 135), "the ruin's own cells stay locked");
 }
+
+const HUT: &str = "NAME Hut\r\nBUILDING\r\nLIFE 1000\r\nLOCATION 0 0 64 64\r\nBUILDSTAGES 10\r\n\
+    DESTRUCT 32767 2 BOOM BOOM\r\nCHECKPOINTS 2 1 2 3 4\r\n[END]\r\n";
+
+#[test]
+fn a_destroyed_building_explodes_at_its_check_points() {
+    use acr_sim::combat::make_damage;
+    let mut c = Catalog::new();
+    let hut = c.add(ObjectType::from_def("Hut(EN)", &UnitDef::parse(HUT.as_bytes())));
+    c.set_weapons(acr_sim::weapon::Weapons::parse(RUIN_NDS, Some(b"@POINT 1 0 0 0\r\n"), None));
+    let mut w = World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(Formations::default()));
+    let mut destroy = |setup: &dyn Fn(&mut acr_sim::world::Unit)| {
+        let b = w.spawn(hut, 0, Pos::from_pixels(2048, 2048), 0).0 as usize;
+        setup(&mut w.units[b]);
+        let old = w.projectiles.iter().count();
+        let before = w.random;
+        make_damage(&mut w, b, 5000, None, 0xFF);
+        assert!(w.units[b].death != 0);
+        let mut drawn = 0;
+        let mut r = before;
+        while r != w.random {
+            r.rando();
+            drawn += 1;
+        }
+        let booms: Vec<_> =
+            w.projectiles.iter().skip(old).map(|p| (p.pos.0 >> 14, p.pos.1 >> 14, p.pos.2 >> 14)).collect();
+        (booms, drawn)
+    };
+    // A building does not turn (no random number for it, 0x4e78e1), one number for `Die`;
+    // then per check point (lock base cell 128, 128) the weapon, the chance and the
+    // object's own four.
+    assert_eq!(destroy(&|_| {}), (vec![(2064, 2080, 16), (2096, 2112, 16)], 1 + 2 * 6));
+    // Not built half way, or destroyed by its owner (`delay` 6000): no explosions.
+    assert_eq!(destroy(&|u| u.stage = 4), (vec![], 1));
+    assert_eq!(destroy(&|u| u.delay = 6000), (vec![], 1));
+    assert_eq!(destroy(&|u| u.stage = 5).0.len(), 2);
+}

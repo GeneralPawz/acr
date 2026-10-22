@@ -1096,8 +1096,8 @@ pub fn die(w: &mut World, i: usize) {
         // City+0xeb1a (0x4e7a1f): a lost command centre frightens the nation for a while.
         w.players[usize::from(u.owner) & 7].cc_lost_time = (w.tick.0 + 1) as u32;
     }
-    // Artillery skips the turn (0x4e77a0).
-    let turn = if w.catalog.get(u.kind).role.artillery { 0 } else { (w.random.rando() >> 8) - 64 };
+    // Buildings and artillery skip the turn and its random number (0x4e78e1).
+    let turn = if u.building || w.catalog.get(u.kind).role.artillery { 0 } else { (w.random.rando() >> 8) - 64 };
     w.random.rando();
     let u = &mut w.units[i];
     u.dir = u.dir.wrapping_add(turn as u8);
@@ -1120,6 +1120,41 @@ pub fn die(w: &mut World, i: usize) {
             w.units[k].inside_of = None;
             die(w, k);
             w.units[k].alive = false;
+        }
+    }
+    if w.units[i].building {
+        destroyed_building_explodes(w, i);
+    }
+}
+
+/// The end of `Die` for a building (0x4e84c7..0x4e8678): unless its `delay` (OB+0x8c) is
+/// 1500 or more (the player's own destroy order sets 6000, 0x4dcbb4) or it was not built
+/// half way (`stage < BUILDSTAGES / 2`), each of its `CHECKPOINTS` cells (relative to the
+/// lock base cell 0x516fde) draws two `rando()`: the first picks one of its `DESTRUCT`
+/// weapons (`r·n >> 15`), the second below the `DESTRUCT` probability creates it at the
+/// cell, 16 px above the ground, towards `(x, y, 1000)` with no sender (0x558d60). Types
+/// without `DESTRUCT` draw nothing.
+///
+/// Wall pieces (OB+0x29 bit 0) take another way (0x4e7efb..0x4e8247): the pieces in the 3×3
+/// wall cells around one that falls go with it, each with 10 explosions at random offsets
+/// of up to 32 px (the loaded data has no wall types; not reproduced).
+fn destroyed_building_explodes(w: &mut World, b: usize) {
+    let catalog = w.catalog.clone();
+    let t = catalog.get(w.units[b].kind);
+    let u = &w.units[b];
+    let n = t.destruct.ids.len() as i32;
+    if u.delay >= 1500 || u.stage < w.max_stage(u) >> 1 || n == 0 {
+        return;
+    }
+    let (cx, cy) = crate::economy::base_cell(t, u.pos);
+    for &(px, py) in &t.check_points {
+        let (x, y) = ((cx + px) << 4, (cy + py) << 4);
+        let k = ((w.random.rando() * n) >> 15) as usize;
+        if w.random.rando() < t.destruct.prob
+            && let Some(Some(wid)) = t.destruct.ids.get(k)
+        {
+            let z = w.map.heights.at(x, y) + 16;
+            crate::projectile::create(w, *wid, (x, y, z), (x, y, 1000), None, 0, None, (0, 0, 0), 0);
         }
     }
 }

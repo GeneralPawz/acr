@@ -640,7 +640,8 @@ Implemented in `combat.rs`, recovered from `SearchVictim` (0x52622b), `AttackObj
   stands within 32 px in the 128 px cell at the end of the next cycle, the walker stops and
   attacks it (priority 0x8F). Its cell is left unreserved, as in the original.
 - **Death:**
-  - The unit turns by `(rando()>>8) − 64`, frees its cell and plays `#DEATH`, then lies as
+  - The unit turns by `(rando()>>8) − 64` (buildings and artillery do not and draw no
+    number for it, 0x4e78e1), frees its cell and plays `#DEATH`, then lies as
     `#DEATHLIE1`. After 1200 / 1600 it switches to `#DEATHLIE2` / `#DEATHLIE3` where the
     type has them.
   - The death counter (`Unit::death`, `Sdoxlo`) grows by 1 per tick during `#DEATH` and by 2
@@ -651,6 +652,18 @@ Implemented in `combat.rs`, recovered from `SearchVictim` (0x52622b), `AttackObj
     2000 every corpse is removed (about 100 s).
   - Lying corpses are drawn half transparent ([Directions and sprites](#directions-and-sprites)).
   - Attackers keep striking a target whose counter is still ≤ 8.
+  - **A destroyed building explodes** (end of `Die`, 0x4e84c7..0x4e8678,
+    `combat::destroyed_building_explodes`): after its garrison died, unless its `delay`
+    (OB+0x8c) is 1500 or more (the player's destroy order sets 6000, 0x4dcbb4; ACR has no
+    such order) or it was not built half way (`stage < BUILDSTAGES / 2`), every
+    `CHECKPOINTS` cell (NM+0x170a.., bytes, relative to the lock base cell 0x516fde) draws
+    two `rando()`: the first picks one of the `DESTRUCT` weapons (`r·n >> 15`), the second
+    below the `DESTRUCT` probability creates it (0x558d60, no sender) at the cell, 16 px
+    above the ground, towards `(x, y, 1000)`. Types without `DESTRUCT` draw nothing; 105
+    loaded building types have both lists. Wall pieces (OB+0x29 bit 0) instead take the
+    pieces in the 3 × 3 wall cells around them along, each with 10 explosions at random
+    offsets up to 32 px (0x4e7efb..0x4e8247); the shipped data has no wall types, so this
+    is not reproduced.
 
 ### Friend and foe
 
