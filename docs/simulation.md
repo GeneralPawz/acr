@@ -871,10 +871,15 @@ Implemented in `economy.rs`. The sources are `City::Census` (0x42e658), the upke
 - **Construction** (`construction.rs`; `CreateObject` 0x5155c5, `BuildObj`/`BuildObjLink`
   0x523c98/0x524654, `NextStage` 0x523666).
   - **Placement.** The position snaps so that `RealX + 16a` and `RealY + 32b` fall on a 16 px
-    corner. The site must lie on the map, the finished footprint must be free, and the price
-    (with `LOWCOSTRADIUS`) must be affordable; it is paid at once.
+    corner. The site must lie on the map, the finished footprint must be free, no enemy
+    object (nation 7 aside) may stand within `(BRadius + 15)·16 px` of the check-point
+    centre (`CheckMonstersInArea` 0x5133bc: the player's own and allied units never block),
+    and the price (with `LOWCOSTRADIUS`) must be affordable; it is paid at once.
   - **The site** starts at stage 0 with 2 life (`#BUILDLO_0`) and locks its
-    `BUILDLOCKPOINTS`.
+    `BUILDLOCKPOINTS`. A type with `BUILDLOCKPOINTS` then moves the units out (0x51374e):
+    every unit within `(BRadius + 2)·16 px` of the check-point centre whose 3 × 3 lock cells
+    around its cell are not all free jumps to the centre of the first cell on the rings
+    0..59 with a free 3 × 3 box, dropping its destination and path (its orders stay).
   - **Builders.** A builder (a unit with `#WORK`) walks to the free `BUILDPOINT` nearest to
     it and faces the building. It adds one stage per `#WORK` cycle: `ceil((frames−2)/2)`
     ticks, 10 for the English peasant. Builders add up.
@@ -1146,9 +1151,10 @@ No game option writes it. How the map view draws the fog is in
     of the first ring without `FindPlaceForPeasant`'s stand points and the `Surrounded`
     marks; the random number of a failed search is drawn. Peasants deliver at the entrance
     rather than walking inside along the born points.
-  - Builders do not re-path around blocking units (`CheckBlocking`). Placement checks only
-    the finished footprint against locks and units (0x513b2c and the permission check
-    0x45f767 are not reproduced). Some of `CreateObject`'s random draws are not made.
+  - Builders do not re-path around blocking units (`CheckBlocking`). A player's placement
+    checks the finished footprint's locks and enemy units (the rest of 0x513b2c and the
+    permission check 0x45f767 are not reproduced; the AI uses the full site test).
+    Units moved out by a new site also move their occupancy bits (the engine leaves them). Some of `CreateObject`'s random draws are not made.
   - `Produce` takes one building; the original command picks among the selected buildings
     (an idle one first, else the shortest queue).
   - Synthetic catalogs without nation files have no tech tree: everything is enabled and
@@ -1235,6 +1241,8 @@ No game option writes it. How the map view draws the fog is in
   with its turn animations, bombards it and pays iron and coal; a deployed cannon fires
   canister into a crowd; projectiles are deterministic. A stance walk with `RATE 4 8` goes
   half as fast (`tests/world.rs`).
+- **Push-out test** (`tests/pushout.rs`, #143): a centre placed over the player's own
+  pikemen is accepted and the pikemen end up next to it, each with a free 3 × 3 box.
 - **AI placement test** (`tests/aiplace.rs`): the centre is the peasants' mean, a house is
   placed near it, a second keeps its build bar clear of the first, one project at a time.
 - **Switch tests** (`tests/switches.rs`): a stopped barracks keeps its queue and produces
