@@ -256,6 +256,16 @@ impl Writer {
                 self.ids(units);
                 self.0.push(u8::from(*hold));
             }
+            Command::FriendlyFire { player, units, shoot_own } => {
+                self.0.extend_from_slice(&[24, *player]);
+                self.ids(units);
+                self.0.push(u8::from(*shoot_own));
+            }
+            Command::MeleeOnly { player, units, on } => {
+                self.0.extend_from_slice(&[25, *player]);
+                self.ids(units);
+                self.0.push(u8::from(*on));
+            }
             Command::AttackMove { player, units, x, y } => {
                 self.0.extend_from_slice(&[20, *player]);
                 self.ids(units);
@@ -375,6 +385,8 @@ impl<'a> Reader<'a> {
             21 => Command::Patrol { player, units: self.ids()?, x: self.i()?, y: self.i()? },
             22 => Command::MoveFacing { player, units: self.ids()?, x: self.i()?, y: self.i()?, dir: self.byte()? },
             23 => Command::AttackGround { player, units: self.ids()?, x: self.i()?, y: self.i()? },
+            24 => Command::FriendlyFire { player, units: self.ids()?, shoot_own: self.byte()? != 0 },
+            25 => Command::MeleeOnly { player, units: self.ids()?, on: self.byte()? != 0 },
             _ => return Err(ReplayError("unknown command")),
         })
     }
@@ -411,6 +423,8 @@ mod tests {
                 Command::PlantFields { player: 1, buildings: vec![EntityId(4)], kind: TypeId(9) },
                 Command::StandGround { player: 2, units: vec![EntityId(5)], on: true },
                 Command::HoldFire { player: 2, units: vec![EntityId(5), EntityId(6)], hold: false },
+                Command::FriendlyFire { player: 2, units: vec![EntityId(5)], shoot_own: true },
+                Command::MeleeOnly { player: 2, units: vec![EntityId(6)], on: true },
                 Command::AttackMove { player: 3, units: vec![EntityId(7)], x: -5, y: 900 },
                 Command::Patrol { player: 3, units: vec![EntityId(7)], x: 40, y: 50 },
                 Command::MoveFacing { player: 4, units: vec![EntityId(8)], x: 64, y: -3, dir: 248 },
@@ -422,7 +436,7 @@ mod tests {
         let back = Replay::decode(&bytes).unwrap();
         assert_eq!(back, r);
         assert_eq!(back.entries.len(), 2, "empty ticks are not stored");
-        assert_eq!(back.commands_at(9).len(), 23);
+        assert_eq!(back.commands_at(9).len(), 25);
         assert!(back.commands_at(5).is_empty());
     }
 

@@ -955,6 +955,20 @@ impl World {
                 let ids: Vec<EntityId> = self.owned(*player, units).into_iter().map(|i| self.units[i].id).collect();
                 crate::states::hold_fire(self, &ids, *hold);
             }
+            Command::FriendlyFire { player, units, shoot_own } => {
+                for i in self.owned(*player, units) {
+                    if self.catalog.get(self.units[i].kind).avoid_friendly_fire {
+                        self.units[i].no_ff_avoid = *shoot_own;
+                    }
+                }
+            }
+            Command::MeleeOnly { player, units, on } => {
+                for i in self.owned(*player, units) {
+                    if self.catalog.get(self.units[i].kind).role.arm_attack {
+                        self.units[i].melee_only = *on;
+                    }
+                }
+            }
             Command::AttackMove { player, units, x, y } => {
                 let ids = self.owned(*player, units);
                 crate::motion::group_send(self, &ids, *x, *y, None, 0x80);

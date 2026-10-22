@@ -72,7 +72,7 @@ compares state hashes (see [Verification](#verification)).
   the unit occupancy grid and the random index. Static data (`Catalog`, `Formations`,
   `MapGrid`) is shared through `Arc`. The dynamic state is hashed.
 - **Commands** are plain data (`Move`, `MoveFacing` (a move ending in a direction: `GroupSend` with it), `Stop`, `Attack` (priority 0xFE), `AttackMove`, `Patrol`,
-  `StandGround`, `HoldFire`, `Form`, `Face`, `Disband`, with the issuing player). They are applied in order at the start of a tick, and commands for units
+  `StandGround`, `HoldFire`, `FriendlyFire`, `MeleeOnly`, `Form`, `Face`, `Disband`, with the issuing player). They are applied in order at the start of a tick, and commands for units
   the player does not own are ignored. The command stream per tick is therefore a complete
   replay.
 - **Iteration order:** per tick, the brigade orders of the nation whose city tick it is
