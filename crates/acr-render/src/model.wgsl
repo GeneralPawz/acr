@@ -359,8 +359,9 @@ fn marked(rgb_in: vec3<f32>, p: vec3<f32>, d: u32, n: u32) -> vec3<f32> {
             dry = b.z;
         }
     }
-    let red = mix(vec3<f32>(0.34, 0.012, 0.01), vec3<f32>(0.10, 0.03, 0.018), smoothstep(0.0, 1.0, dry));
-    rgb = mix(rgb, red, clamp(stain, 0.0, 1.0) * 0.93);
+    // Dark and wet, so it reads on a red coat as well as on white breeches.
+    let red = mix(vec3<f32>(0.19, 0.006, 0.005), vec3<f32>(0.07, 0.025, 0.015), smoothstep(0.0, 1.0, dry));
+    rgb = mix(rgb, red, clamp(stain, 0.0, 1.0) * 0.95);
     let meat = mix(vec3<f32>(0.42, 0.05, 0.04), vec3<f32>(0.62, 0.30, 0.26), noise3(p * 90.0));
     rgb = mix(rgb, meat, flesh);
     rgb = mix(rgb, vec3<f32>(0.06, 0.0, 0.0), core * 0.95);

@@ -388,7 +388,7 @@ impl ModelRenderer {
         };
         let globals_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("model globals"),
-            entries: &[uniform(0), texture(1, wgpu::ShaderStages::VERTEX, false)],
+            entries: &[uniform(0), texture(1, both, false)],
         });
         let material_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("model material"),

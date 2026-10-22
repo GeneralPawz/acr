@@ -110,11 +110,15 @@ impl Debris {
         gibs: &GibModels,
         ground: &dyn Fn(f32, f32) -> [f32; 3],
     ) {
-        let seen = self.seen.replace(now);
+        // The newest hit taken (#277): a step records its hits under the tick it began with,
+        // which the frame before has already drawn, so `now` would skip them.
+        let seen = self.seen;
         if gore == Gore::Off {
+            self.seen = Some(now);
             return;
         }
         for hit in hits.filter(|h| seen.is_none_or(|s| h.tick > s) && h.tick <= now && !h.building) {
+            self.seen = Some(self.seen.map_or(hit.tick, |s| s.max(hit.tick)));
             let Some(injury) = hit.injury else { continue };
             let mut rng = Rng::new(hit.tick, hit.victim ^ 0x5eed);
             let (dx, dy) = (hit.dir.0 as f32, hit.dir.1 as f32);

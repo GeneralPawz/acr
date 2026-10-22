@@ -95,11 +95,11 @@ fn wounds_of(hit: &HitRecord, side: [f32; 2]) -> Vec<(At, [f32; 2], f32, bool, f
         }
     };
     match injury.outcome {
-        Outcome::Wound => hole(0.022, 0.6, false),
-        Outcome::DeepWound => hole(0.04, 0.9, !ball),
+        Outcome::Wound => hole(0.028, 0.7, false),
+        Outcome::DeepWound => hole(0.045, 0.9, !ball),
         Outcome::Fracture(FractureKind::Open) => hole(0.035, 1.0, true),
-        Outcome::Fracture(_) => hole(0.024, 0.7, false),
-        Outcome::Kill => hole(0.026, 1.0, false),
+        Outcome::Fracture(_) => hole(0.03, 0.8, false),
+        Outcome::Kill => hole(0.03, 1.0, false),
         Outcome::BellyOpen => out.push((at(0.0), [0.0, 1.0], 0.06, true, 1.0)),
         // The stump bleeds down from just above the cut (the cut itself is drawn by #262).
         Outcome::Off => {
@@ -130,11 +130,15 @@ impl LivingWounds {
         if self.seen.is_some_and(|s| s > now) {
             self.clear();
         }
-        let seen = self.seen.replace(now);
+        // The newest hit taken: a step records its hits under the tick it began with, so
+        // they can carry the tick drawn before.
+        let seen = self.seen;
         if gore == Gore::Off {
+            self.seen = Some(now);
             return;
         }
         for hit in hits.filter(|h| seen.is_none_or(|s| h.tick > s) && h.tick <= now && !h.building) {
+            self.seen = Some(self.seen.map_or(hit.tick, |s| s.max(hit.tick)));
             let Some(dir) = facing(hit.victim) else { continue };
             // The direction to the attacker in the model's frame (see `gore::corpse`).
             let (s, c) = view3d::facing_yaw(dir).sin_cos();
@@ -151,6 +155,11 @@ impl LivingWounds {
                 list.drain(..list.len() - MAX_MARKS);
             }
         }
+    }
+
+    /// Units with wounds.
+    pub fn len(&self) -> usize {
+        self.units.len()
     }
 
     /// Keeps only the units `keep` says are still drawn.
@@ -283,6 +292,15 @@ mod tests {
         let mut other = LivingWounds::default();
         other.take_hits([h].iter(), 5, Gore::Full, &|_| Some(0));
         assert_eq!(other.marks(3, None, 5), lw.marks(3, None, 5));
+    }
+
+    #[test]
+    fn hits_recorded_under_the_tick_already_drawn_are_taken() {
+        let mut lw = LivingWounds::default();
+        lw.take_hits(std::iter::empty(), 7, Gore::Full, &|_| Some(0));
+        let h = hit(7, DeathCause::Melee, Part::Chest, Outcome::Wound);
+        lw.take_hits([h].iter(), 8, Gore::Full, &|_| Some(0));
+        assert_eq!(lw.marks(3, None, 8).1, 1);
     }
 
     #[test]

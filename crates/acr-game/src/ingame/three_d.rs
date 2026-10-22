@@ -543,10 +543,11 @@ impl ThreeD {
         self.pile_runs += 1;
         if self.pile_runs == 500 {
             log::info!(
-                "3d: {} corpses piled in {} µs; debris {}",
+                "3d: {} corpses piled in {} µs; debris {}; wounded {}",
                 footprints.len(),
                 self.pile_us / 500,
-                self.debris.len()
+                self.debris.len(),
+                self.wounds.len()
             );
             self.pile_us = 0;
             self.pile_runs = 0;
