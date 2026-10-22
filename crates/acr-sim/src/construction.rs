@@ -199,7 +199,7 @@ pub fn build_link(w: &mut World, i: usize, target: EntityId, point: (i32, i32), 
     let b = target.0 as usize;
     let owner = w.units[i].owner;
     if w.units.get(b).is_none() || !needs_work(w, b, owner) {
-        w.units[i].orders.pop();
+        w.units[i].pop_order();
         w.units[i].path.clear();
         return;
     }
@@ -215,7 +215,7 @@ pub fn build_link(w: &mut World, i: usize, target: EntityId, point: (i32, i32), 
                 }
             }
             None => {
-                w.units[i].orders.pop();
+                w.units[i].pop_order();
             }
         }
         return;

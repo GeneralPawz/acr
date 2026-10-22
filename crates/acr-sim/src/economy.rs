@@ -162,6 +162,8 @@ pub fn starve(w: &mut World, i: usize) {
         return;
     }
     if w.random.rando() <= 50 && !w.catalog.get(u.kind).economy.no_hungry {
+        // City+0xeb16 (0x511b69): hunger frightens the nation for a while.
+        w.players[usize::from(u.owner)].hungry_time = (w.tick.0 + 1) as u32;
         die(w, i);
     }
 }
@@ -561,7 +563,7 @@ pub fn enter(w: &mut World, i: usize, b: usize, prio: u8, append: bool) -> bool 
 pub fn enter_link(w: &mut World, i: usize, building: EntityId, prio: u8) {
     let b = building.0 as usize;
     if w.units.get(b).is_none() || !can_enter(w, &w.units[i], &w.units[b]) {
-        w.units[i].orders.pop();
+        w.units[i].pop_order();
         return;
     }
     let catalog = w.catalog.clone();

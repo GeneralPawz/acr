@@ -320,6 +320,8 @@ pub struct AreaGraph {
     pub centers: Vec<(i32, i32)>,
     /// `next[from * count + to]`, 0xFFFF = unreachable.
     pub next: Vec<u16>,
+    /// `LinksDist[from * count + to]` (0x28a72bc): path length between areas.
+    pub dist: Vec<u16>,
     pub cells: Grid<u16>,
 }
 
@@ -329,6 +331,7 @@ impl AreaGraph {
             count: a.areas.len(),
             centers: a.areas.iter().map(|r| (i32::from(r.x), i32::from(r.y))).collect(),
             next: a.next_hop.clone(),
+            dist: a.distance.clone(),
             cells: a.cells.clone(),
         }
     }

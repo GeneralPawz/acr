@@ -17,7 +17,7 @@ pub const FUNCTIONS: &[ApiFn] = &[
     ApiFn {
         name: "OBJ_AttackObj",
         original: 0x56f13f,
-        status: Status::Partial("Command::Attack (acr-sim walks to the target until combat lands)"),
+        status: Status::Partial("AttackObj with the given priority; nTimes is not modelled"),
         handler: obj_attack_obj,
     },
     ApiFn {
@@ -46,7 +46,7 @@ fn obj_leave_mine(api: &mut Api, c: &mut Call) -> Result<u32> {
 }
 
 /// `OrderType` of a unit's current order (`Order1+5`): 12 send-to, 3 attack, 0xF2 enter,
-/// 0x59 build, 0xEE gather.
+/// 0x59 build, 0xEE gather, 0x8E panic, 0x51 patrol.
 pub fn order_type(u: &acr_sim::Unit) -> u32 {
     use acr_sim::world::Order;
     match u.orders.last() {
@@ -56,6 +56,8 @@ pub fn order_type(u: &acr_sim::Unit) -> u32 {
         Some(Order::Enter { .. }) => 0xF2,
         Some(Order::Build { .. }) => 0x59,
         Some(Order::Gather { .. }) => 0xEE,
+        Some(Order::Panic { .. }) => 0x8E,
+        Some(Order::Patrol { .. }) => 0x51,
         Some(Order::ClearUnlimited) => 0,
     }
 }
@@ -92,7 +94,8 @@ fn obj_send_to(api: &mut Api, c: &mut Call) -> Result<u32> {
 fn obj_attack_obj(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Some((id, owner)) = unit_arg(api, c, 0)? else { return Ok(0) };
     let Some(target) = api.object(c.u16(1)?).filter(|u| u.living()).map(|u| u.id) else { return Ok(0) };
-    api.commands.push(Command::Attack { player: owner, units: vec![id], target });
+    let _ = owner;
+    api.attack(id, target, c.u8(2)?, false);
     Ok(1)
 }
 

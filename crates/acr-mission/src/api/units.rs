@@ -56,8 +56,8 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("CreateObject0", 0x55eded, DONE, create_object0),
     f("CreateFields", 0x577ff4, Status::Stub("no fields/farming in acr-sim yet"), zero),
     f("DieUnit", 0x5701ae, Status::Partial("World::kill; no SLOWDEATH burning yet"), die_unit),
-    f("GetUnitInfo", 0x567a0e, Status::Partial("reload percentage and USAGE are 0"), get_unit_info),
-    f("GetUnitInfo2", 0x578f2c, Status::Partial("USAGE is 0"), get_unit_info2),
+    f("GetUnitInfo", 0x567a0e, DONE, get_unit_info),
+    f("GetUnitInfo2", 0x578f2c, DONE, get_unit_info2),
     f("SetUnitInfo", 0x567e8a, Status::Partial("life and position; no damage/shield bonus yet"), set_unit_info),
     f("GetUnitGlobalInfo", 0x567cb9, Status::Partial("as GetUnitInfo"), get_unit_global_info),
     f("GetUnitExCaps", 0x56be77, Status::Partial("StandTime 0, order kind 8 (send-to) or -1"), get_unit_ex_caps),
@@ -335,14 +335,15 @@ fn write_one_unit(api: &Api, c: &mut Call, out: u32, id: EntityId, full: bool) -
     c.write_u16(out + 0xc, stages.clamp(0, 0xFFFF) as u16)?;
     c.write_u16(out + 0xe, u.kills)?;
     c.write_u16(out + 0x10, u.kind.0)?;
-    c.write_u8(out + 0x12, 0)?;
+    c.write_u8(out + 0x12, t.role.usage)?;
     c.write_u8(out + 0x13, u8::from(u.building))?;
     c.write_i32(out + 0x14, u.pos.x >> 4)?;
     c.write_i32(out + 0x18, u.pos.y >> 4)?;
     c.write_u8(out + 0x1c, u.owner)?;
     c.write_u8(out + 0x1d, u.dir)?;
     c.write_u8(out + 0x1e, u8::from(u.stage >= stages))?;
-    c.write_u8(out + 0x1f, 0)?;
+    // Reload in percent: `MaxDelay ? delay·100/MaxDelay : 0` (low byte).
+    c.write_u8(out + 0x1f, if u.max_delay != 0 { (u.delay * 100 / u.max_delay) as u8 } else { 0 })?;
     if full {
         c.write_u8(out + 0x20, u.stance)?;
         c.write_u8(out + 0x21, api.st.unit_nmask(id, u.owner))?;
@@ -383,8 +384,10 @@ fn get_unit_info2(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Some(u) = api.object(c.u16(0)?) else { return Ok(0) };
     let (x, y, owner, id) = (u.pos.x >> 4, u.pos.y >> 4, u.owner, u.id);
     let inside = u.inside.len() as i32;
-    let e = &api.world.catalog.get(u.kind).economy;
+    let t = api.world.catalog.get(u.kind);
+    let e = &t.economy;
     let max = e.unit_absorber.max(e.peasant_absorber);
+    let usage = t.role.usage;
     let out = c.u32(1)?;
     c.write_u16(out, id.0 as u16)?;
     c.write_i32(out + 2, inside)?;
@@ -392,7 +395,7 @@ fn get_unit_info2(api: &mut Api, c: &mut Call) -> Result<u32> {
     c.write_i32(out + 0xa, x)?;
     c.write_i32(out + 0xe, y)?;
     c.write_i32(out + 0x12, i32::from(owner))?;
-    c.write_u8(out + 0x16, 0)?;
+    c.write_u8(out + 0x16, usage)?;
     Ok(1)
 }
 

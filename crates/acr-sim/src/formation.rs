@@ -204,6 +204,35 @@ impl Formations {
     }
 }
 
+/// A brigade order (`BOrder`, stack at Brigade+0x43); the last one runs.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum BOrder {
+    /// `KeepPositions` (0x41c0a9): members return to their slots and face the brigade's way.
+    Keep,
+    /// Formation melee (`Bitva` 0x41ee89, link 0x41e50c).
+    Bitva(Box<Bitva>),
+}
+
+impl BOrder {
+    /// The order's priority byte (+1): 0 for both kinds here.
+    pub fn prio(&self) -> u8 {
+        0
+    }
+}
+
+/// The state of a formation melee: the enemies found near the brigade.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Bitva {
+    /// Pathfinding area of the first member (+0x10), 0xFFFF = none.
+    pub zone: u16,
+    /// Search box in 128 px cells (+0xe16..): `x0, y0, x1, y1`.
+    pub bbox: (i32, i32, i32, i32),
+    /// Listed enemies (+0x412), at most 512.
+    pub enemies: Vec<EntityId>,
+    /// Enemies ever listed (bitmap +0x12, never cleared).
+    pub seen: Vec<u64>,
+}
+
 /// A formation in the world (`Brigade`, 0x4F bytes).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Brigade {
@@ -215,8 +244,13 @@ pub struct Brigade {
     pub members: Vec<Option<EntityId>>,
     /// Target position of each member in world pixels.
     pub slots: Vec<(i32, i32)>,
-    /// Keep-positions order active.
-    pub keep: bool,
+    /// Brigade orders (keep positions, formation melee), the last one runs.
+    pub orders: Vec<BOrder>,
+    /// `AttEnm` (+0x2e bit4): set by attack-moves; a marching close-combat formation then
+    /// starts melee against enemies within 100 px.
+    pub att_enm: bool,
+    /// A shooting formation (+0x2e bit3, `FORMLIKESHOOTERS`): members attack one by one.
+    pub shooters: bool,
 }
 
 fn alive(world: &World, id: Option<EntityId>) -> Option<usize> {
@@ -307,7 +341,7 @@ fn send_members(world: &mut World, b: usize, prio: u8) {
             send_to(&mut world.units[i], Pos::from_pixels(slot.0, slot.1), prio, true);
         }
     }
-    world.brigades[b].keep = true;
+    world.brigades[b].orders = vec![BOrder::Keep];
 }
 
 /// Forms a brigade under `officer` (unit index) from `units`: drummers among them take the
@@ -348,6 +382,7 @@ pub fn form(world: &mut World, officer: usize, units: &[usize], kind: &str) {
         u.attack_bonus = bonus[2];
         u.defence_bonus = bonus[3];
     }
+    let shooters = catalog.get(world.units[soldiers[0]].kind).shooters_formation;
     world.brigades.push(Brigade {
         owner: world.units[officer].owner,
         alive: true,
@@ -355,7 +390,9 @@ pub fn form(world: &mut World, officer: usize, units: &[usize], kind: &str) {
         dir: 0,
         members,
         slots: Vec::new(),
-        keep: false,
+        orders: Vec::new(),
+        att_enm: false,
+        shooters,
     });
     let p = world.units[officer].pos;
     place(world, usize::from(id), p.x, p.y, 0, true);
@@ -416,6 +453,11 @@ pub fn face(world: &mut World, officer: usize, dir: u8) {
 
 pub fn disband(world: &mut World, officer: usize) {
     let Some(b) = world.units[officer].brigade.map(usize::from) else { return };
+    dissolve(world, b);
+}
+
+/// Releases every member of brigade `b` (`Disband` 0x41dc18).
+pub fn dissolve(world: &mut World, b: usize) {
     let members = std::mem::take(&mut world.brigades[b].members);
     for m in members.into_iter().flatten() {
         let u = &mut world.units[m.0 as usize];
@@ -424,26 +466,50 @@ pub fn disband(world: &mut World, officer: usize) {
         u.defence_bonus = 0;
     }
     world.brigades[b].alive = false;
-    world.brigades[b].keep = false;
+    world.brigades[b].orders.clear();
 }
 
-/// Keep-positions handler (0x41c0a9), once per tick before the units move: idle members
-/// more than 100/16 px off their slot are sent back; members at their slot turn to the
-/// brigade's facing. The order ends when everybody is in place and facing.
+/// The brigades' orders (`ProcessBrigades` 0x434486 from `City::Process` 0x432582): they run
+/// only on the owner's city tick, `tmtmt & 7 == owner` (never for nation 7), and every
+/// brigade of that nation costs two random numbers around its order link.
 pub fn run_brigades(world: &mut World) {
-    let catalog = world.catalog.clone();
+    let city = ((world.tick.0 + 1) & 7) as u8;
+    if city == 7 {
+        return;
+    }
     for b in 0..world.brigades.len() {
         let br = &world.brigades[b];
-        if !br.alive || !br.keep {
+        if !br.alive || br.owner != city {
             continue;
         }
+        world.random.rando();
+        match br.orders.last() {
+            Some(BOrder::Keep) => keep_positions(world, b),
+            Some(BOrder::Bitva(_)) => bitva_link(world, b),
+            None => {}
+        }
+        world.random.rando();
+    }
+}
+
+/// Keep-positions handler (0x41c0a9): idle members more than 100/16 px off their slot are
+/// sent back; members at their slot turn to the brigade's facing. The order ends when
+/// everybody is in place and facing.
+fn keep_positions(world: &mut World, b: usize) {
+    let catalog = world.catalog.clone();
+    {
+        let br = &world.brigades[b];
         let (dir, members, slots) = (br.dir, br.members.clone(), br.slots.clone());
         let mut settled = true;
         for (m, &slot) in members.iter().zip(&slots) {
             let Some(i) = alive(world, *m) else { continue };
             let u = &mut world.units[i];
             let target = Pos::from_pixels(slot.0, slot.1);
-            if norma(target.x - u.pos.x, target.y - u.pos.y) > KEEP_TOLERANCE {
+            // In place: within the tolerance, or in the slot's cell as far as a walk gets
+            // (`STOPDISTANCE`), which the engine checks first.
+            let (cx, cy) = crate::world::Unit::cell_of(target, u.lx);
+            let near = (u.cell.0 - cx).abs().max((u.cell.1 - cy).abs()) <= catalog.get(u.kind).stop_distance >> 8;
+            if norma(target.x - u.pos.x, target.y - u.pos.y) > KEEP_TOLERANCE && !near {
                 settled = false;
                 if u.orders.is_empty() && !u.in_motion {
                     send_to(u, target, crate::motion::PLAYER_PRIO, true);
@@ -462,8 +528,170 @@ pub fn run_brigades(world: &mut World) {
             }
         }
         if settled {
-            world.brigades[b].keep = false;
+            world.brigades[b].orders.pop();
         }
+    }
+}
+
+/// The valid members of a brigade (alive and still in it).
+fn members_of(world: &World, b: usize) -> Vec<usize> {
+    world.brigades[b]
+        .members
+        .iter()
+        .filter_map(|&m| alive(world, m))
+        .filter(|&i| world.units[i].brigade == Some(b as u16))
+        .collect()
+}
+
+/// Search box (128 px cells, grown by 4 and clamped at 0) and area of a brigade's members.
+fn bitva_box(world: &World, b: usize) -> Option<((i32, i32, i32, i32), u16)> {
+    let m = members_of(world, b);
+    let first = *m.first()?;
+    let (mut x0, mut y0, mut x1, mut y1) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+    for &i in &m {
+        let p = world.units[i].pos;
+        (x0, y0, x1, y1) = (x0.min(p.x >> 11), y0.min(p.y >> 11), x1.max(p.x >> 11), y1.max(p.y >> 11));
+    }
+    let (px, py) = world.units[first].pos.pixels();
+    let zone = world.map.land_areas.as_ref().map_or(0xFFFF, |g| g.area_at(px >> 6, py >> 6));
+    Some((((x0 - 4).max(0), (y0 - 4).max(0), x1 + 4, y1 + 4), zone))
+}
+
+/// `AddCell` (0x41e173): lists the enemy land units of 128 px cell `(x, y)` not listed before,
+/// unless the cell lies in no area or in one more than 30 away (path length) from the
+/// brigade's.
+fn add_cell(world: &World, bv: &mut Bitva, x: i32, y: i32, owner: u8) {
+    if bv.enemies.len() >= 512 {
+        return;
+    }
+    if let Some(g) = world.map.land_areas.as_ref().filter(|g| g.count > 0) {
+        let zs = [
+            g.area_at(2 * x, 2 * y),
+            g.area_at(2 * x + 1, 2 * y),
+            g.area_at(2 * x, 2 * y + 1),
+            g.area_at(2 * x + 1, 2 * y + 1),
+        ];
+        if zs.iter().all(|&z| z >= 0xFFFE) {
+            return;
+        }
+        let far = |z: u16| {
+            z < 0xFFFE
+                && z != bv.zone
+                && usize::from(bv.zone) < g.count
+                && g.dist.get(usize::from(bv.zone) * g.count + usize::from(z)).is_none_or(|&d| d > 30)
+        };
+        if zs.iter().any(|&z| far(z)) {
+            return;
+        }
+    }
+    let mask = 1u8 << (owner & 7);
+    for &k in world.buckets.get(x, y) {
+        let e = &world.units[k as usize];
+        let (word, bit) = (k as usize >> 6, 1u64 << (k & 63));
+        if e.nmask & mask != 0 || !e.living() || world.catalog.get(e.kind).medium != crate::catalog::Medium::Land {
+            continue;
+        }
+        if bv.seen.len() <= word {
+            bv.seen.resize(word + 1, 0);
+        }
+        if bv.seen[word] & bit != 0 {
+            continue;
+        }
+        bv.seen[word] |= bit;
+        bv.enemies.push(e.id);
+        if bv.enemies.len() >= 512 {
+            return;
+        }
+    }
+}
+
+/// `Bitva` (0x41ee89): starts formation melee. The brigade lists the enemies in its members'
+/// box of 128 px cells grown by 4.
+pub fn bitva(world: &mut World, b: usize) {
+    if matches!(world.brigades[b].orders.last(), Some(BOrder::Bitva(_))) {
+        return;
+    }
+    let Some((bbox, zone)) = bitva_box(world, b) else { return };
+    let mut bv = Bitva { zone, bbox, enemies: Vec::new(), seen: Vec::new() };
+    let owner = world.brigades[b].owner;
+    for x in bbox.0..=bbox.2 {
+        for y in bbox.1..=bbox.3 {
+            add_cell(world, &mut bv, x, y, owner);
+        }
+    }
+    world.brigades[b].orders.push(BOrder::Bitva(Box::new(bv)));
+}
+
+/// The melee link (0x41e50c), on the city tick: refreshes the box now and then, probes 64
+/// random cells of it for new enemies, and gives every member without a target the nearest
+/// listed enemy (preferably one in range) with priority 0x88. Members leave their slots to
+/// fight; when nobody fights any more the melee ends and the order below resumes.
+fn bitva_link(world: &mut World, b: usize) {
+    let Some(BOrder::Bitva(mut bv)) = world.brigades[b].orders.pop() else { return };
+    let owner = world.brigades[b].owner;
+    if world.random.rando() < 0x400 || bv.zone == 0xFFFF {
+        match bitva_box(world, b) {
+            Some((bbox, zone)) => (bv.bbox, bv.zone) = (bbox, zone),
+            None => return,
+        }
+    }
+    if world.random.rando() < 0x400 {
+        bv.enemies.retain(|e| world.units.get(e.0 as usize).is_some_and(|u| u.living()));
+    }
+    let (x0, y0, x1, y1) = bv.bbox;
+    for _ in 0..64 {
+        let x = x0 + ((world.random.rando() * (x1 - x0 + 1)) >> 15);
+        let y = y0 + ((world.random.rando() * (y1 - y0 + 1)) >> 15);
+        add_cell(world, &mut bv, x, y, owner);
+    }
+    let catalog = world.catalog.clone();
+    let mut busy = false;
+    for i in members_of(world, b) {
+        let u = &world.units[i];
+        let t = catalog.get(u.kind);
+        if t.role.artillery {
+            continue;
+        }
+        if !u.orders.is_empty() && u.target().is_some() {
+            busy = true;
+            continue;
+        }
+        let adv = world.adv(u.owner, u.kind);
+        let (min_r, max_r) = crate::combat::range_bounds(&adv);
+        if max_r == 0 {
+            continue;
+        }
+        let kill = t.attacks.iter().fold(0u8, |m, a| m | a.mask);
+        let (mut b1, mut b2, mut t1, mut t2) = (1_000_000, 1_000_000, None, None);
+        for e in &bv.enemies {
+            let Some(en) = world.units.get(e.0 as usize).filter(|en| en.living()) else { continue };
+            if catalog.get(en.kind).materials & kill == 0 {
+                continue;
+            }
+            let d = norma(u.pos.x - en.pos.x, u.pos.y - en.pos.y) >> 4;
+            if d <= min_r {
+                continue;
+            }
+            if d < b1 {
+                let away = en.in_motion && {
+                    let dd = en.dir.wrapping_sub(get_dir(en.pos.x - u.pos.x, en.pos.y - u.pos.y)) as i8;
+                    i32::from(dd).abs() <= 64
+                };
+                if !away {
+                    (b1, t1) = (d, Some(e.0 as usize));
+                }
+            }
+            if d < max_r && d < b2 {
+                (b2, t2) = (d, Some(e.0 as usize));
+            }
+        }
+        if let Some(t) = t2.or(t1) {
+            crate::combat::attack_obj(world, i, t, 0x88);
+            busy = true;
+        }
+    }
+    if busy {
+        world.brigades[b].orders.push(BOrder::Bitva(bv));
     }
 }
 

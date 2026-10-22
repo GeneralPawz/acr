@@ -215,7 +215,7 @@ pub fn gather_link(w: &mut World, i: usize, kind: u8, source_id: Option<usize>, 
     let catalog = w.catalog.clone();
     let t = catalog.get(w.units[i].kind);
     let Some(entry) = t.economy.take_res.get(usize::from(kind)).copied().flatten() else {
-        w.units[i].orders.pop();
+        w.units[i].pop_order();
         return;
     };
     let dst = entry.credited;
@@ -237,7 +237,7 @@ pub fn gather_link(w: &mut World, i: usize, kind: u8, source_id: Option<usize>, 
                 k
             }
             None => {
-                w.units[i].orders.pop();
+                w.units[i].pop_order();
                 return;
             }
         },
@@ -302,7 +302,7 @@ fn carry_home(w: &mut World, i: usize, kind: u8, dst: usize) -> bool {
         })
         .min_by_key(|b| norma(b.pos.x - u.pos.x, b.pos.y - u.pos.y));
     let Some(base) = base else {
-        w.units[i].orders.pop();
+        w.units[i].pop_order();
         return false;
     };
     let bt = catalog.get(base.kind);

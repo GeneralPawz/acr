@@ -31,25 +31,25 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("SaveSelectedUnits", 0x5671ad, DONE, save_selected_units),
     f("AddUnitToSel", 0x56c8c7, DONE, add_unit_to_sel),
     f("SelSendTo", 0x561ad6, MOVE, sel_send_to),
-    f(
-        "SelSendAndKill",
-        0x561be4,
-        Status::Partial("moves like SelSendTo; attack-move needs acr-sim combat"),
-        sel_send_to,
-    ),
-    f("Patrol", 0x561cfb, Status::Partial("units walk to their slot once; no patrol order in acr-sim"), patrol),
+    f("SelSendAndKill", 0x561be4, Status::Partial("attack-move (Command::AttackMove); no facing yet"), sel_send_to),
+    f("Patrol", 0x561cfb, DONE, patrol),
     f(
         "SelAttackGroup",
         0x560258,
-        Status::Partial("Command::Attack on the first living enemy (acr-sim walks there until combat lands)"),
+        Status::Partial("idle selected units attack the first living enemy (AttackObj 0x90)"),
         sel_attack_group,
     ),
     f("SelDie", 0x5601c0, Status::Partial("World::kill; finished buildings do not burn down yet"), sel_die),
     f("SelErase", 0x56021c, DONE, sel_erase),
     f("SelChangeNation", 0x561eaf, DONE, sel_change_nation),
     f("SelCenter", 0x563981, DONE, sel_center),
-    f("SetStandGround", 0x5621cd, Status::Stub("no stand-ground flag in acr-sim yet"), zero),
-    f("AllowAttack", 0x562234, Status::Stub("no auto-attack flag in acr-sim yet"), zero),
+    f(
+        "SetStandGround",
+        0x5621cd,
+        Status::Partial("formations do not get their stand-ground bonus or the #KARE outward facing"),
+        set_stand_ground,
+    ),
+    f("AllowAttack", 0x562234, DONE, allow_attack),
     f("SetDestPoint", 0x567609, DONE, set_dest_point),
     f("CleanGroup", 0x56cf09, DONE, clean_group),
     f("RemoveGroup", 0x568031, DONE, remove_group),
@@ -58,42 +58,33 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("InsertUnitToGroup", 0x56bf98, DONE, insert_unit_to_group),
     f("DeleteUnitFromGroup", 0x56ce96, DONE, delete_unit_from_group),
     f("RemoveUnitFromGroup", 0x56c17e, DONE, remove_unit_from_group),
-    f(
-        "RemoveNUnits",
-        0x56d757,
-        Status::Partial("Usage filters (≥ 20000) never match: no USAGE in the catalog"),
-        remove_n_units,
-    ),
-    f("CollectUnits", 0x56d814, Status::Partial("as RemoveNUnits"), collect_units),
+    f("RemoveNUnits", 0x56d757, DONE, remove_n_units),
+    f("CollectUnits", 0x56d814, DONE, collect_units),
     f("RemoveNearestUnit", 0x56e48c, DONE, remove_nearest_unit),
     f("RemoveNearestNotBusyUnit", 0x56e265, DONE, remove_nearest_not_busy_unit),
-    f("RemovePanicUnits", 0x56da24, Status::Partial("no morale/panic in acr-sim: nobody panics"), remove_panic_units),
-    f("DetectPanic", 0x56d9b7, Status::Partial("no morale/panic in acr-sim: false"), zero),
+    f("RemovePanicUnits", 0x56da24, DONE, remove_panic_units),
+    f("DetectPanic", 0x56d9b7, DONE, detect_panic),
     f("RemoveUpperGroundUnits", 0x56eeef, DONE, remove_upper_ground_units),
     f("DeleteHiddenUnits", 0x56d8b9, DONE, delete_hidden_units),
     f("GetNUnits", 0x5679d8, DONE, get_n_units),
     f("GetUnitsTypeInGroup", 0x570862, DONE, get_units_type_in_group),
     f("GetGrpCenter", 0x5789cb, DONE, get_grp_center),
     f("UnitsCenter", 0x5637f1, DONE, units_center),
+    f("FilterUnitsByCategory", 0x56df95, DONE, filter_units_by_category),
     f(
-        "FilterUnitsByCategory",
-        0x56df95,
-        Status::Partial("categories 3 (peasants) and 4 (not hidden) only; weapon kinds need acr-sim combat data"),
-        filter_units_by_category,
+        "SetUnitsState",
+        0x578c09,
+        Status::Partial("formations do not get their stand-ground bonus or the #KARE outward facing"),
+        set_units_state,
     ),
-    f("SetUnitsState", 0x578c09, Status::Stub("no combat flags in acr-sim yet"), zero),
     f("CancelAllPurposes", 0x578bc5, DONE, cancel_all_purposes),
     f("GetCurrentPurpose", 0x578b24, DONE, get_current_purpose),
     f("PushAllUnitsAway", 0x56083e, DONE, push_all_units_away),
-    f("SetNMASK", 0x56bcb3, Status::Partial("kept for the scripts; acr-sim has no alliances yet"), set_nmask),
+    f("SetNMASK", 0x56bcb3, DONE, set_nmask),
     f("GetUnitNMASK", 0x56bc78, DONE, get_unit_nmask),
     f("SGP_MoveToPoint", 0x578a14, MOVE, sgp_move_to_point),
     f("SGP_MakeOneStepTo", 0x578a6f, MOVE, sgp_make_one_step_to),
 ];
-
-fn zero(_: &mut Api, _: &mut Call) -> Result<u32> {
-    Ok(0)
-}
 
 /// `'MOVE'` purpose kind.
 const PURPOSE_MOVE: u32 = 0x4d4f_5645;
@@ -299,12 +290,19 @@ fn sel_send_to(api: &mut Api, c: &mut Call) -> Result<u32> {
         return Ok(0);
     };
     // TODO(acr-sim): facing `dir`, order type `type & 7` (3..7 send nothing to free units
-    // with a facing), prio 16 / 0x80 (attack-move).
+    // with a facing).
     if c.u8(3)? & 7 >= 3 {
         return Ok(1);
     }
     let units = api.selected(n);
-    api.send(n, units, x, y);
+    if c.name() == "SelSendAndKill" {
+        // Priority 0x80: an attack-move.
+        if !units.is_empty() {
+            api.commands.push(Command::AttackMove { player: n, units, x, y });
+        }
+    } else {
+        api.send(n, units, x, y);
+    }
     Ok(1)
 }
 
@@ -317,8 +315,56 @@ fn patrol(api: &mut Api, c: &mut Call) -> Result<u32> {
     };
     let units: Vec<EntityId> =
         api.selected(n).into_iter().filter(|&id| api.world.units[id.0 as usize].brigade.is_none()).collect();
-    api.send(n, units, x, y);
+    if !units.is_empty() {
+        api.commands.push(Command::Patrol { player: n, units, x, y });
+    }
     Ok(1)
+}
+
+/// `void SetStandGround(byte nation, byte val)` (0x5621cd): every selected object (by slot)
+/// stands or stops standing; formation members switch their formation.
+fn set_stand_ground(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let Some(n) = api.nation(c, 0, "SetStandGround(Nat,val)")? else { return Ok(0) };
+    let ids = api.selected_slots(n);
+    acr_sim::states::set_stand_ground(api.world, &ids, c.u8(1)? != 0);
+    Ok(0)
+}
+
+/// `void AllowAttack(byte nation, byte val)` (0x562234): `SetSearchVictim(nat, val ? 2 : 3)`.
+fn allow_attack(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let Some(n) = api.nation(c, 0, "AllowAttack(Nat,val)")? else { return Ok(0) };
+    let ids = api.selected_slots(n);
+    acr_sim::states::allow_attack(api.world, &ids, c.u8(1)? != 0);
+    Ok(0)
+}
+
+/// `void SetUnitsState(GAMEOBJ* grp, bool allowAttack, bool standGround, bool meleeOnly,
+/// bool noFFAvoid)` (0x578c09), for the alive serial-valid members.
+fn set_units_state(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let Some(g) = api.group(c, 0)? else { return Ok(0) };
+    let ids = api.members(g);
+    let (a, s, m, f) = (c.u8(1)? != 0, c.u8(2)? != 0, c.u8(3)? != 0, c.u8(4)? != 0);
+    acr_sim::states::set_units_state(api.world, &ids, a, s, m, f);
+    Ok(0)
+}
+
+/// `void SetAI_Guard(GAMEOBJ* grp, bool val)` (0x570251): the alive serial-valid members
+/// become guards (OB+0xf2 bit2) or stop being guards.
+pub(super) fn set_ai_guard(api: &mut Api, c: &mut Call) -> Result<u32> {
+    if c.u32(0)? == 0 || c.handle(0)?.magic != magic::GROUP {
+        return Ok(0);
+    }
+    let Some(g) = api.group(c, 0)? else { return Ok(0) };
+    let ids = api.members(g);
+    acr_sim::states::set_guard(api.world, &ids, c.u8(1)? != 0);
+    Ok(0)
+}
+
+/// `bool DetectPanic(int index)` (0x56d9b7): the object runs in panic (`UnlimitedMotion` and
+/// a panic order).
+fn detect_panic(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let i = c.i32(0)?;
+    Ok(u32::from((0..0xFFFF).contains(&i) && api.object(i as u16).is_some_and(acr_sim::Unit::panicking)))
 }
 
 /// `void SelAttackGroup(byte nation, GAMEOBJ* enemy)`: idle selected units attack the first
@@ -333,8 +379,8 @@ fn sel_attack_group(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Some(&target) = api.members(g).first() else { return Ok(0) };
     let units: Vec<EntityId> =
         api.selected(n).into_iter().filter(|&id| api.world.units[id.0 as usize].idle()).collect();
-    if !units.is_empty() {
-        api.commands.push(Command::Attack { player: n, units, target });
+    for id in units {
+        api.attack(id, target, 0x90, false);
     }
     Ok(0)
 }
@@ -530,16 +576,13 @@ fn remove_unit_from_group(api: &mut Api, c: &mut Call) -> Result<u32> {
 /// The type/usage filter of `RemoveNUnits`/`CollectUnits`.
 fn filter_matches(api: &Api, u: &acr_sim::Unit, filter: i32) -> bool {
     let kind = i32::from(u.kind.0);
+    let usage = i32::from(api.world.catalog.get(u.kind).role.usage);
     match filter {
         0xFFFF => true,
-        // Usage classes: not in the catalog (TODO).
-        f if f >= 30000 => true,
-        f if f >= 20000 => false,
+        f if f >= 30000 => usage != f - 30000,
+        f if f >= 20000 => usage == f - 20000,
         f if f >= 10000 => kind != f - 10000,
-        f => {
-            let _ = api;
-            kind == f
-        }
+        f => kind == f,
     }
 }
 
@@ -613,9 +656,21 @@ fn remove_nearest_not_busy_unit(api: &mut Api, c: &mut Call) -> Result<u32> {
     remove_nearest(api, c, true)
 }
 
+/// `int RemovePanicUnits(GAMEOBJ* src, GAMEOBJ* dst)` (0x56da24): panicking members move from
+/// `src` to `dst`; returns how many.
 fn remove_panic_units(api: &mut Api, c: &mut Call) -> Result<u32> {
-    let _ = (api.group(c, 0)?, api.group(c, 1)?);
-    Ok(0)
+    let (Some(s), Some(d)) = (api.group(c, 0)?, api.group(c, 1)?) else { return Ok(0) };
+    let mut n = 0;
+    for i in 0..api.st.groups[s].members.len() {
+        let m = api.st.groups[s].members[i];
+        if m.id == NO_UNIT || !api.object(m.id).is_some_and(acr_sim::Unit::panicking) {
+            continue;
+        }
+        api.st.groups[s].members[i].id = NO_UNIT;
+        api.st.groups[d].members.push(m);
+        n += 1;
+    }
+    Ok(n)
 }
 
 /// `void RemoveUpperGroundUnits(GAMEOBJ* src, GAMEOBJ* dst or NULL)`: members that are not
@@ -717,10 +772,18 @@ fn filter_units_by_category(api: &mut Api, c: &mut Call) -> Result<u32> {
     let mut i = 0;
     while i < api.st.groups[s].members.len() {
         let m = api.st.groups[s].members[i];
-        let hit = api.by_serial(m).is_some_and(|u| match cat {
-            3 => api.world.catalog.get(u.kind).peasant,
-            4 => true,
-            _ => false,
+        let hit = api.by_serial(m).is_some_and(|u| {
+            let t = api.world.catalog.get(u.kind);
+            let kind = |k: usize, names: &[&str]| names.contains(&t.attacks[k].kind.as_str());
+            match cat {
+                0 => kind(1, &["OSTRELA"]) || kind(2, &["OSTRELA"]),
+                1 => t.attacks[1].weapon.is_none() && t.attacks[0].damage != 0,
+                2 => kind(1, &["VISTREL", "VISTREL2"]),
+                3 => t.peasant,
+                4 => u.inside_of.is_none(),
+                5 => kind(1, &["TAMAGAVK", "KOPIE"]),
+                _ => false,
+            }
         });
         if hit {
             api.st.groups[d].members.push(m);

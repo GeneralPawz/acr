@@ -7,3 +7,4 @@ license.workspace = true
 
 [dependencies]
 acr-formats.workspace = true
+libm = "0.2"

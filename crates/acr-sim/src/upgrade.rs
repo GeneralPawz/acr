@@ -351,8 +351,15 @@ fn apply_unit(w: &mut World, player: u8, kind: TypeId, category: u8, slots: &Slo
                 u.max_life = u.life;
             }
         }
-        // SPEED (`Rate`, which no motion code here reads), WEAPON, PRECISE, GETRES,
-        // SINGLE_ATTPAUSE, FISHING, SHAR and FEAR have no effect in this simulation.
+        (ctg::SINGLE_ATTPAUSE, _) => {
+            // PersonalDelay (u8 OB+0xa7) of the researching building (0x5319b3).
+            if let Some(b) = maker {
+                w.units[b].personal_delay = i32::from(v.apply(w.units[b].personal_delay) as u8);
+            }
+        }
+        // SPEED (`Rate`, which no motion code here reads), WEAPON and PRECISE (no effect in
+        // the engine either), GETRES, FISHING, SHAR and FEAR have no effect in this
+        // simulation.
         _ => {}
     }
 }

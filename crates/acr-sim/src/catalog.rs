@@ -259,6 +259,151 @@ fn economy(def: &UnitDef) -> EconomyDef {
     e
 }
 
+/// `USAGE` names by value (0x4ff3b6..0x4ff96f); 26 and 29 are unused.
+pub const USAGES: [&str; 35] = [
+    "",
+    "MELNICA",
+    "FARM",
+    "CENTER",
+    "SKLAD",
+    "TOWER",
+    "FIELD",
+    "MINE",
+    "FASTHORSE",
+    "MORTIRA",
+    "PUSHKA",
+    "GRENADER",
+    "HARDWALL",
+    "WEAKWALL",
+    "LINKOR",
+    "WEAK",
+    "FISHER",
+    "ARTDEPO",
+    "SUPERMORTIRA",
+    "PORT",
+    "LIGHTINFANTRY",
+    "STRELOK",
+    "HARDHORCE",
+    "PEASANT",
+    "HORSE-STRELOK",
+    "FREGAT",
+    "",
+    "GALERA",
+    "IAXTA",
+    "",
+    "SHEBEKA",
+    "PAROM",
+    "ARCHER",
+    "MCANNON",
+    "DIPLOMAT",
+];
+
+/// `USAGE` values the engine tests.
+pub mod usage {
+    pub const MELNICA: u8 = 1;
+    pub const CENTER: u8 = 3;
+    pub const SKLAD: u8 = 4;
+    pub const TOWER: u8 = 5;
+    pub const MINE: u8 = 7;
+    pub const MORTIRA: u8 = 9;
+    pub const PUSHKA: u8 = 10;
+    pub const SUPERMORTIRA: u8 = 18;
+    pub const PORT: u8 = 19;
+    pub const PEASANT: u8 = 23;
+    pub const MCANNON: u8 = 33;
+}
+
+/// Script and AI data of a type: `USAGE`, the force values and the capture flags.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Role {
+    /// `USAGE NAME` (u8 NM+0x294a, [`USAGES`]).
+    pub usage: u8,
+    /// `FORCE v` (u8 NM+0x2939): strength for the AI's force sums.
+    pub force: i32,
+    /// `STORMFORCE v` (u8 NM+0x293c): strength when storming or defending a building.
+    pub storm_force: i32,
+    /// `BATTLEFORCE v` (u8 NM+0x294b, default 32).
+    pub battle_force: i32,
+    /// `OPPOSIT a b` (u8 NM+0x293a/+0x293b): defence scale of a building's garrison.
+    pub opposit: (i32, i32),
+    /// `CATEGORY NAME` (u8 NM+0x1736) through `CATEGORIES.DAT` (`STRELOK 1`).
+    pub category: u8,
+    /// `CAPTURE` (NM+0x172a bit1).
+    pub capture: bool,
+    /// `VES v` (NM+0x1767, default 10; `USAGE MELNICA` sets 100, `USAGE SKLAD` 30, `BUILDING` 500).
+    pub ves: i32,
+    /// A `BUILDING` token in `ATTMASK` or `MATHERIAL` (NM+0x172b bit2): attacks buildings.
+    pub attacks_buildings: bool,
+    /// `AUTO_NO_ATTACK` / `AUTO_STAND_GROUND` (NM+0x172b bits 0/1): initial unit states.
+    pub auto_no_attack: bool,
+    pub auto_stand_ground: bool,
+    /// `STANDGROUND` (NM+0x172b bit3): the interface offers the stand-ground button.
+    pub stand_ground_button: bool,
+    /// Artillery (NM+0x172a bit5, set by `USAGE MORTIRA/PUSHKA/SUPERMORTIRA/MCANNON`).
+    pub artillery: bool,
+    /// `ARCHER` (NM+0x172b bit7).
+    pub archer: bool,
+    /// `ARMATTACK` (NM+0x172d bit7): may be switched to melee only.
+    pub arm_attack: bool,
+}
+
+fn role(def: &UnitDef) -> Role {
+    let mut r = Role {
+        usage: 0,
+        force: 0,
+        storm_force: 0,
+        battle_force: 32,
+        opposit: (0, 0),
+        category: 0,
+        capture: false,
+        ves: 10,
+        attacks_buildings: false,
+        auto_no_attack: false,
+        auto_stand_ground: false,
+        stand_ground_button: false,
+        artillery: false,
+        archer: false,
+        arm_attack: false,
+    };
+    let byte = |c: &acr_formats::defs::Command, i| i32::from(c.int(i).unwrap_or(0) as u8);
+    for c in &def.commands {
+        match c.keyword.as_str() {
+            "USAGE" => {
+                let name = c.word(0).unwrap_or("").to_ascii_uppercase();
+                if let Some(v) = USAGES.iter().position(|u| !u.is_empty() && *u == name) {
+                    r.usage = v as u8;
+                    match r.usage {
+                        usage::MELNICA => r.ves = 100,
+                        usage::SKLAD => r.ves = 30,
+                        usage::MORTIRA | usage::PUSHKA | usage::SUPERMORTIRA | usage::MCANNON => r.artillery = true,
+                        _ => {}
+                    }
+                }
+            }
+            "FORCE" => r.force = byte(c, 0),
+            "STORMFORCE" => r.storm_force = byte(c, 0),
+            "BATTLEFORCE" => r.battle_force = byte(c, 0),
+            "OPPOSIT" => r.opposit = (byte(c, 0), byte(c, 1)),
+            "CATEGORY" => r.category = u8::from(c.word(0).is_some_and(|w| w.eq_ignore_ascii_case("STRELOK"))),
+            "CAPTURE" => r.capture = true,
+            "VES" => r.ves = c.int(0).unwrap_or(10),
+            "BUILDING" => r.ves = 500,
+            "ATTMASK" | "MATHERIAL" => {
+                let first = if c.keyword == "ATTMASK" { 2 } else { 1 };
+                r.attacks_buildings |=
+                    (first..first + 8).filter_map(|k| c.word(k)).any(|w| w.eq_ignore_ascii_case("BUILDING"));
+            }
+            "AUTO_NO_ATTACK" => r.auto_no_attack = true,
+            "AUTO_STAND_GROUND" => r.auto_stand_ground = true,
+            "STANDGROUND" => r.stand_ground_button = true,
+            "ARCHER" => r.archer = true,
+            "ARMATTACK" => r.arm_attack = true,
+            _ => {}
+        }
+    }
+    r
+}
+
 /// Number of attack indices (`#ATTACK`, `#ATTACK1`, ... `#ATTACK11`).
 pub const ATTACK_SLOTS: usize = 12;
 
@@ -397,6 +542,18 @@ pub struct ObjectType {
     pub vision: u8,
     /// Prices, production, housing, mines.
     pub economy: EconomyDef,
+    /// Morale: what kills by this unit frighten, and how easily it panics.
+    pub fear: FearDef,
+    /// `USAGE`, force values, capture flags.
+    pub role: Role,
+    /// `COMMANDCENTER` (NM+0x172d bit6): fleeing units of the nation run to it, and being near
+    /// one calms them.
+    pub command_center: bool,
+    /// `FASTUNIT` (NM+0x2925): never walks in the stance-1 motion.
+    pub fast_unit: bool,
+    /// `FORMLIKESHOOTERS` (NM+0x172f bit0): its formations are shooting formations, whose
+    /// members attack one by one instead of starting formation melee.
+    pub shooters_formation: bool,
     /// The characteristics upgrades can change, as every player starts with them.
     pub adv: std::sync::Arc<Adv>,
 }
@@ -423,6 +580,42 @@ pub struct Adv {
     pub razbros: i32,
     /// Housing per finished object (ADC+0xed).
     pub farm: i32,
+    /// `FEARFACTOR t v` (u16, ADC+0xf1): the base panic chance for fear type `t`.
+    pub fear_factor: [i32; 4],
+}
+
+/// Morale keywords of a type (parser 0x4f372c).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FearDef {
+    /// `FEARTYPE i t` (NM+0x16ae): the fear type a kill by attack index `i` raises (0xFF: none).
+    pub types: [u8; ATTACK_SLOTS],
+    /// `FEARRADIUS t r` (NM+0x16ba, px, default 255): this unit only panics from a kill of
+    /// fear type `t` closer than `r`.
+    pub radius: [u8; 4],
+    /// `PSIXOZ v` (NM+0x1765, default 32): chance `v/1024` per flight leg to calm down.
+    pub psixoz: i32,
+}
+
+impl Default for FearDef {
+    fn default() -> Self {
+        Self { types: [0xFF; ATTACK_SLOTS], radius: [0xFF; 4], psixoz: 32 }
+    }
+}
+
+fn fear(def: &UnitDef) -> (FearDef, [i32; 4]) {
+    let mut f = FearDef::default();
+    let mut factor = [0; 4];
+    for c in &def.commands {
+        let (a, b) = (c.int(0).unwrap_or(-1), c.int(1).unwrap_or(0));
+        match c.keyword.as_str() {
+            "FEARTYPE" if (0..ATTACK_SLOTS as i32).contains(&a) && (0..4).contains(&b) => f.types[a as usize] = b as u8,
+            "FEARRADIUS" if (0..4).contains(&a) => f.radius[a as usize] = b.clamp(0, 255) as u8,
+            "FEARFACTOR" if (0..4).contains(&a) => factor[a as usize] = i32::from(b as u16),
+            "PSIXOZ" => f.psixoz = i32::from(c.int(0).unwrap_or(32) as i16),
+            _ => {}
+        }
+    }
+    (f, factor)
 }
 
 impl ObjectType {
@@ -487,13 +680,18 @@ impl ObjectType {
             anims: anims(def),
             vision: int("VISION", 0).clamp(0, 255) as u8,
             economy: economy(def),
+            fear: fear(def).0,
+            role: role(def),
+            command_center: def.has("COMMANDCENTER"),
+            fast_unit: def.get("FASTUNIT").is_some_and(|c| c.int(0).unwrap_or(1) != 0),
+            shooters_formation: def.has("FORMLIKESHOOTERS"),
             adv: Default::default(),
         }
-        .with_adv()
+        .with_adv(fear(def).1)
     }
 
     /// Fills [`ObjectType::adv`] from the other fields (`CreateAdvCharacter`).
-    fn with_adv(mut self) -> Self {
+    fn with_adv(mut self, fear_factor: [i32; 4]) -> Self {
         let e = &self.economy;
         self.adv = std::sync::Arc::new(Adv {
             attacks: self.attacks.clone(),
@@ -505,6 +703,7 @@ impl ObjectType {
             cost: e.price,
             razbros: self.razbros,
             farm: e.farm,
+            fear_factor,
         });
         self
     }
@@ -622,6 +821,8 @@ pub struct Catalog {
     pub tech: crate::tech::Tech,
     /// The market's rate table (`ECONOMY.TXT`); without it there is no trade.
     pub market: Option<crate::market::MarketDef>,
+    /// The panic factors of `MORALE.DAT`.
+    pub morale: crate::morale::MoraleDef,
 }
 
 impl Catalog {

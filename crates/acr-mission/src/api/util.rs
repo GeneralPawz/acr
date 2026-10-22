@@ -35,6 +35,12 @@ pub fn is_point(h: &Handle) -> bool {
 }
 
 impl Api<'_> {
+    /// `OneObject::AttackObj(target, prio, ordType)` (0x51a930) at once, as the scripts call
+    /// it: `front` is order type 1 (in front of the current orders).
+    pub fn attack(&mut self, id: acr_sim::world::EntityId, target: acr_sim::world::EntityId, prio: u8, front: bool) {
+        acr_sim::combat::attack_obj_ex(self.world, id.0 as usize, target.0 as usize, prio, front);
+    }
+
     /// Remaps a nation argument through `AssignTBL`.
     pub fn assign(&self, nation: u8) -> u8 {
         self.st.assign.get(usize::from(nation)).copied().unwrap_or(nation)

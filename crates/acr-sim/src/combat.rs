@@ -28,12 +28,18 @@ fn height(w: &World, p: Pos) -> i32 {
     w.map.heights.at(p.x >> 4, p.y >> 4)
 }
 
-/// `ADC.MinR`: the smallest attack range of the indices that can attack (0x43b95a).
-fn min_range(t: &Adv) -> i32 {
+/// `ADC.MinR` and `ADC.MaxR` (0x43b95a): the smallest minimum and largest maximum attack
+/// range of the indices that can attack; both 0 if the maximum is below the minimum.
+pub fn range_bounds(t: &Adv) -> (i32, i32) {
     let usable = t.attacks.iter().filter(|a| a.usable());
     let min = usable.clone().map(|a| a.radius.0).min().unwrap_or(0);
     let max = usable.map(|a| a.radius.1).max().unwrap_or(0);
-    if max < min { 0 } else { min }
+    if max < min { (0, 0) } else { (min, max) }
+}
+
+/// `ADC.MinR`.
+fn min_range(t: &Adv) -> i32 {
+    range_bounds(t).0
 }
 
 fn is_high(w: &World, t: &Adv, i: usize) -> bool {
@@ -42,6 +48,19 @@ fn is_high(w: &World, t: &Adv, i: usize) -> bool {
 
 /// `AttackObj` (0x51a930): gives unit `i` an attack order on unit `j`; false if refused.
 pub fn attack_obj(w: &mut World, i: usize, j: usize, prio: u8) -> bool {
+    attack_obj_ex(w, i, j, prio, false)
+}
+
+/// `AttackObj` with the order placement: `front` puts the attack in front of the current
+/// orders (order type 1), so the unit resumes them after the kill; otherwise it replaces them.
+///
+/// The gate, in the engine's order: priority 0xFE becomes 0x90 and ends stand ground; a
+/// member of a close-combat formation starts formation melee instead (unless 0x8F); with
+/// `NoSearchVictim` an attack below 0x80 is accepted without effect, and one of 0x80 or more
+/// clears the flag; an attack below the unit's current priority is refused; below 5 the unit
+/// only switches to a strictly closer enemy. The order keeps `prio & 0x7f`; a unit on a
+/// patrol-like move (`InPatrol`) gets the attack in front.
+pub fn attack_obj_ex(w: &mut World, i: usize, j: usize, prio: u8, front: bool) -> bool {
     let (Some(u), Some(e)) = (w.units.get(i), w.units.get(j)) else { return false };
     if i == j || !u.active() || u.building || !e.active() || !u.hostile(e) {
         return false;
@@ -52,6 +71,53 @@ pub fn attack_obj(w: &mut World, i: usize, j: usize, prio: u8) -> bool {
     if !t.attacks.iter().any(|a| a.usable() && a.mask & materials != 0) {
         return false;
     }
+    // CreateOrder (0x525752) refuses units walking with UnlimitedMotion, except a panicking
+    // unit between two flight legs (0x51ae76).
+    if u.unlimited && !matches!(u.orders.last(), Some(Order::Panic { .. })) {
+        return false;
+    }
+    let raw = prio;
+    let prio = if raw == 0xFE { 0x90 } else { raw };
+    if raw == 0xFE {
+        w.units[i].stand_ground = false;
+    }
+    let (u, e) = (&w.units[i], &w.units[j]);
+    let ut = w.catalog.get(u.kind);
+    if let Some(b) = u.brigade.map(usize::from)
+        && prio != 0x8F
+        && !ut.role.artillery
+        && !e.building
+        && let Some(br) = w.brigades.get(b)
+    {
+        if !br.shooters {
+            if raw == 0xFE {
+                return true;
+            }
+            match br.orders.last() {
+                Some(crate::formation::BOrder::Bitva(_)) => {}
+                Some(_) => {
+                    if br.att_enm && norma(u.pos.x - e.pos.x, u.pos.y - e.pos.y) < 0x640 {
+                        crate::formation::bitva(w, b);
+                    }
+                    return true;
+                }
+                None => {
+                    crate::formation::bitva(w, b);
+                    return true;
+                }
+            }
+        } else if br.orders.last().is_some_and(|o| o.prio() & 0x7f != 0) {
+            return true;
+        }
+    }
+    let u = &w.units[i];
+    if u.no_search_victim {
+        if prio < 0x80 {
+            return true;
+        }
+        w.units[i].no_search_victim = false;
+    }
+    let (u, e) = (&w.units[i], &w.units[j]);
     if prio < u.prio && !u.orders.is_empty() {
         return false;
     }
@@ -68,11 +134,14 @@ pub fn attack_obj(w: &mut World, i: usize, j: usize, prio: u8) -> bool {
     let target = e.id;
     let u = &mut w.units[i];
     u.stand_time = 0;
+    let prio = prio & 0x7f;
     if let Some(Order::Attack { target: t, prio: p }) = u.orders.last_mut() {
         *t = target;
         *p = prio;
     } else {
-        u.orders.clear();
+        if !(front || u.in_patrol) {
+            u.orders.clear();
+        }
         u.orders.push(Order::Attack { target, prio });
         u.path.delay = 0;
     }
@@ -94,7 +163,7 @@ pub fn attack_link(w: &mut World, i: usize, target: EntityId, prio: u8) {
     }
     let valid = w.units.get(j).is_some_and(|e| e.alive && e.death <= 8 && w.units[i].hostile(e));
     if !valid {
-        w.units[i].orders.pop();
+        w.units[i].pop_order();
         return;
     }
     let (u, e) = (&w.units[i], &w.units[j]);
@@ -141,7 +210,9 @@ pub fn attack_link(w: &mut World, i: usize, target: EntityId, prio: u8) {
                 u.dir = en_dir;
                 if in_range {
                     if can_set_delay {
-                        u.delay = pause;
+                        // delay = MaxDelay = AttPause·PersonalDelay/100 (0x51d7e9).
+                        u.delay = pause * u.personal_delay / 100;
+                        u.max_delay = u.delay;
                     }
                     if weapon {
                         shoot(w, i, j, ns - 1, my_z, en_z);
@@ -182,6 +253,10 @@ pub fn attack_link(w: &mut World, i: usize, target: EntityId, prio: u8) {
         ok && a.mask & et.materials != 0
     };
     let mut chosen = (0..ta.attacks.len()).rev().find(|&k| fits(k));
+    if u.melee_only && !et.building {
+        // Melee only (OB+0x2a bit2, 0x51bdc6): always the first index; not against buildings.
+        chosen = Some(0);
+    }
     if u.delay != 0
         && let Some(k) = (0..ta.attacks.len()).rev().find(|&k| ta.attacks[k].no_pause && fits(k))
     {
@@ -191,7 +266,7 @@ pub fn attack_link(w: &mut World, i: usize, target: EntityId, prio: u8) {
         let (ex, ey) = e_pos.pixels();
         let areas = w.map.land_areas.clone();
         let u = &mut w.units[i];
-        u.orders.pop();
+        u.pop_order();
         crate::motion::smart_send_to(u, areas.as_ref(), ex, ey, 0, 0, prio);
         return;
     };
@@ -239,6 +314,9 @@ pub fn attack_link(w: &mut World, i: usize, target: EntityId, prio: u8) {
             let r = mrot as u8;
             u.dir = if ddir > 0 { u.dir.wrapping_add(r) } else { u.dir.wrapping_sub(r) };
         }
+    } else if u.stand_ground {
+        // Standing ground (0x5204aa): a target out of range is dropped, never chased.
+        u.pop_order();
     } else if dst >= a.radius.0 {
         // SetDestUnit (0x51b6c0): path to the enemy's cell.
         u.stance = 0;
@@ -269,7 +347,7 @@ fn hunt(w: &mut World, i: usize, j: usize) -> bool {
     }
     let (x, y) = e.pos.pixels();
     let target = e.pos;
-    w.units[i].orders.pop();
+    w.units[i].pop_order();
     for _ in 0..60 {
         crate::gather::take_resource_ord(w, i, x, y, kind, 0x90, 1);
     }
@@ -286,7 +364,7 @@ fn shoot(w: &mut World, i: usize, j: usize, att: usize, my_z: i32, en_z: i32) {
     let catalog = w.catalog.clone();
     let (u, e) = (&w.units[i], &w.units[j]);
     let t = w.adv(u.owner, u.kind);
-    let avoid_friendly_fire = catalog.get(u.kind).avoid_friendly_fire;
+    let avoid_friendly_fire = catalog.get(u.kind).avoid_friendly_fire && !u.no_ff_avoid;
     let (xs, ys) = u.pos.pixels();
     let (mut cx, mut cy) = e.pos.pixels();
     let mask = u.nmask;
@@ -437,6 +515,7 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
             return; // only a garrison would be hurt
         }
         if wf & RANDOM_KILL != 0 && w.random.rando() < 1310 && !vt.building && !vt.no25 {
+            frighten(w, victim, s, att);
             die(w, victim);
             w.units[s].kills = w.units[s].kills.saturating_add(1);
             return;
@@ -459,17 +538,33 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
         w.units[victim].life = 0;
         if let Some(s) = sender {
             w.units[s].kills = w.units[s].kills.saturating_add(1);
+            frighten(w, victim, s, att);
         }
         die(w, victim);
     }
 }
 
+/// The fear a kill raises around the victim (MakeDamage 0x4e8f92 / 0x4e9c4d, before `Die`):
+/// the killer's `FEARTYPE` of the attack index, within 256 px.
+fn frighten(w: &mut World, victim: usize, sender: usize, att: u8) {
+    let ft = w.catalog.get(w.units[sender].kind).fear.types.get(usize::from(att)).copied().unwrap_or(0xFF);
+    if ft != 0xFF {
+        let (x, y) = w.units[victim].pos.pixels();
+        crate::morale::fear(w, x, y, w.units[victim].owner, 256, ft);
+    }
+}
+
 /// `Die` (0x4e77a0): the unit turns a little, frees its cell and starts dying.
 pub fn die(w: &mut World, i: usize) {
-    let u = &mut w.units[i];
+    let u = &w.units[i];
     if u.death != 0 || !u.alive {
         return;
     }
+    if w.catalog.get(u.kind).command_center {
+        // City+0xeb1a (0x4e7a1f): a lost command centre frightens the nation for a while.
+        w.players[usize::from(u.owner) & 7].cc_lost_time = (w.tick.0 + 1) as u32;
+    }
+    let u = &mut w.units[i];
     let turn = (w.random.rando() >> 8) - 64;
     w.random.rando();
     u.dir = u.dir.wrapping_add(turn as u8);
@@ -495,7 +590,8 @@ pub fn search_victims(w: &mut World) {
             continue;
         }
         let t = catalog.get(u.kind);
-        if t.search_radius == 0 {
+        // NoSearchVictim and AI guards never search (0x52624b, 0x526263).
+        if t.search_radius == 0 || u.no_search_victim || u.guard {
             continue;
         }
         if w.random.rando() > 0x2000 {
@@ -513,7 +609,11 @@ pub fn search_victims(w: &mut World) {
             for cx in ccx - rx..=ccx + rx {
                 let found = w.buckets.get(cx, cy).iter().map(|&k| k as usize).find(|&k| {
                     let o = &w.units[k];
-                    o.active() && u.hostile(o) && catalog.get(o.kind).materials & kill_mask != 0
+                    // SearchEnemyInCell (0x525b70) skips guards that do not attack.
+                    o.active()
+                        && u.hostile(o)
+                        && catalog.get(o.kind).materials & kill_mask != 0
+                        && (!o.guard || o.target().is_some())
                 });
                 if let Some(k) = found {
                     let o = &w.units[k];

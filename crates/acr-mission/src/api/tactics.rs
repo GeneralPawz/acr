@@ -2,7 +2,6 @@
 //! the attack helpers.
 
 use acr_script::runtime::Result;
-use acr_sim::Command;
 use acr_sim::world::EntityId;
 
 use super::util::{Circle, norma};
@@ -14,7 +13,7 @@ const fn f(name: &'static str, original: u32, status: Status, handler: super::Ha
 
 const DONE: Status = Status::Done;
 const ATTACK: Status = Status::Partial(
-    "idle members attack the nearest enemy in the zone (Command::Attack); the original's target rules need combat",
+    "idle members attack the nearest enemy in the zone with the original priority; the original target rules are not reproduced yet",
 );
 
 pub const FUNCTIONS: &[ApiFn] = &[
@@ -28,16 +27,11 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("GetNextZone", 0x5792c5, DONE, get_next_zone),
     f("GetListOfNearZones", 0x579281, DONE, get_list_of_near_zones),
     f("FindNextZoneOnTheSafeWay", 0x579414, DONE, find_next_zone_on_the_safe_way),
-    f(
-        "CreateDangerMap",
-        0x57c3ea,
-        Status::Partial("every object counts as category 0 (no CATEGORY in the catalog); no garrisons/resource bases"),
-        create_danger_map,
-    ),
+    f("CreateDangerMap", 0x57c3ea, Status::Partial("no garrisons/resource bases"), create_danger_map),
     f(
         "CreateDangerMapForDef",
         0x57c7c0,
-        Status::Partial("STORMFORCE not in the catalog: every enemy unit adds 1"),
+        Status::Partial("enemy units weigh (STORMFORCE >> 5) | 1; the rest follows CreateDangerMap"),
         create_danger_map_for_def,
     ),
     f("CreateDangerMapForTom", 0x57c9ee, Status::Partial("as CreateDangerMap"), create_danger_map),
@@ -306,15 +300,23 @@ fn danger_map(api: &mut Api, c: &mut Call, def: bool) -> Result<u32> {
     let weights = c.u32(3)?;
     let steps = c.i32(4)?;
     let mask = api.st.nmask[usize::from(nat)];
-    let w0 = if def || weights == 0 { 0 } else { c.read_u32(weights)? as i32 };
+    // The weight of an object is `weight[CATEGORY]` (only `ENGBLG*` have category 1).
+    let mut cat_w = [0i32; 2];
+    if !def && weights != 0 {
+        for (k, w) in cat_w.iter_mut().enumerate() {
+            *w = c.read_u32(weights + 4 * k as u32)? as i32;
+        }
+    }
     let mut m = vec![0i32; nzones];
     for u in api.world.units.iter().filter(|u| u.living()) {
         let z = zone_at(api, u.pos.x >> 10, u.pos.y >> 10);
         let Some(v) = m.get_mut(usize::from(z)) else { continue };
         let enemy = api.st.unit_nmask(u.id, u.owner) & mask == 0;
         let t = api.world.catalog.get(u.kind);
+        let w0 = cat_w[usize::from(t.role.category.min(1))];
         *v = i32::from(if def {
-            if enemy && !u.building { (*v + 1) as i16 } else { *v as i16 }
+            // CreateDangerMapForDef: `(STORMFORCE >> 5) | 1` per enemy unit.
+            if enemy && !u.building { (*v + ((t.role.storm_force >> 5) | 1)) as i16 } else { *v as i16 }
         } else if enemy {
             if u.owner == 7 && u.building {
                 (*v + (w0 << 7)) as i16
@@ -414,9 +416,16 @@ fn enemies_in(api: &Api, z: &Circle, nat: u8) -> Vec<EntityId> {
 }
 
 /// Sends every idle living member of `g` (owned by `nat`) after the nearest of `targets`.
-fn attack_nearest(api: &mut Api, g: usize, targets: &[EntityId]) {
+fn attack_nearest(api: &mut Api, api_name: &str, g: usize, targets: &[EntityId]) {
     let members = api.members(g);
-    let mut orders: Vec<(u8, EntityId, EntityId)> = Vec::new();
+    // The helper's AttackObj priority and order type (E_tactics §5).
+    let (prio, front) = match api_name {
+        "AttackEnemyInZone" => (1, false),
+        "AttackEnemyInZone2" | "AttackByTomahawks" | "AttackGrpByGrp" | "GrpAttackObject" => (0x8F, false),
+        "AttackBuildingsInZone" => (0x90, true),
+        _ => (0x90, false),
+    };
+    let mut orders: Vec<(EntityId, EntityId)> = Vec::new();
     for id in members {
         let u = &api.world.units[id.0 as usize];
         if !u.idle() || u.building {
@@ -427,11 +436,11 @@ fn attack_nearest(api: &mut Api, g: usize, targets: &[EntityId]) {
             norma(u.pos.x - e.pos.x, u.pos.y - e.pos.y)
         });
         if let Some(&t) = best {
-            orders.push((u.owner, id, t));
+            orders.push((id, t));
         }
     }
-    for (owner, id, target) in orders {
-        api.commands.push(Command::Attack { player: owner, units: vec![id], target });
+    for (id, target) in orders {
+        api.attack(id, target, prio, front);
     }
 }
 
@@ -458,7 +467,7 @@ fn attack_in_zone_no_count(api: &mut Api, c: &mut Call) -> Result<u32> {
     if targets.is_empty() {
         return Ok(0);
     }
-    attack_nearest(api, g, &targets);
+    attack_nearest(api, c.name(), g, &targets);
     Ok(1)
 }
 
@@ -470,7 +479,7 @@ fn attack_enemy_in_zone(api: &mut Api, c: &mut Call) -> Result<u32> {
     let en = c.u8(2)?;
     let targets: Vec<EntityId> =
         api.world.units.iter().filter(|u| u.living() && u.owner == en && z.contains(u)).map(|u| u.id).collect();
-    attack_nearest(api, g, &targets);
+    attack_nearest(api, c.name(), g, &targets);
     Ok(0)
 }
 
@@ -492,14 +501,14 @@ fn attack_buildings_in_zone(api: &mut Api, c: &mut Call) -> Result<u32> {
         .filter(|u| u.living() && u.building && api.st.unit_nmask(u.id, u.owner) & mask == 0)
         .map(|u| u.id)
         .collect();
-    attack_nearest(api, g, &targets);
+    attack_nearest(api, c.name(), g, &targets);
     Ok(0)
 }
 
 fn attack_grp_by_grp(api: &mut Api, c: &mut Call) -> Result<u32> {
     let (Some(a), Some(v)) = (raw_group(api, c, 0)?, raw_group(api, c, 1)?) else { return Ok(0) };
     let targets = api.members(v);
-    attack_nearest(api, a, &targets);
+    attack_nearest(api, c.name(), a, &targets);
     Ok(1)
 }
 
@@ -510,7 +519,7 @@ fn grp_attack_object(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Some(target) = u16::try_from(t).ok().and_then(|t| api.object(t)).filter(|u| u.living()).map(|u| u.id) else {
         return Ok(0);
     };
-    attack_nearest(api, g, &[target]);
+    attack_nearest(api, c.name(), g, &[target]);
     Ok(1)
 }
 
@@ -526,6 +535,6 @@ fn sgp_attack_by_archers(api: &mut Api, c: &mut Call) -> Result<u32> {
     let x = (ids.iter().map(|id| i64::from(api.world.units[id.0 as usize].pos.x >> 4)).sum::<i64>() / n) as i32;
     let y = (ids.iter().map(|id| i64::from(api.world.units[id.0 as usize].pos.y >> 4)).sum::<i64>() / n) as i32;
     let targets = enemies_in(api, &Circle { x, y, r: 960 }, c.u8(0)?);
-    attack_nearest(api, g, &targets);
+    attack_nearest(api, c.name(), g, &targets);
     Ok(1)
 }
