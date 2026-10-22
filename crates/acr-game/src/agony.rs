@@ -4,7 +4,8 @@
 //! - **Agony:** a share of the soldiers killed by a hit (`World::hits`) screams as he falls
 //!   ([`SCREAM`]) and then moans and gasps ([`MOAN`], [`GASP`]) ever quieter for 3–12 s
 //!   where he lies. Who does is fixed by the unit index and the cause ([`agony_ticks`]):
-//!   a musket ball often kills outright, cannonballs, grapeshot, shells and blades seldom.
+//!   a musket ball often kills outright, grapeshot, shells and blades seldom. A man struck
+//!   dead by a cannonball is torn apart and makes no sound: only the wounded scream.
 //!   Only the [`MAX_AUDIBLE`] agonies nearest the view centre make sounds; the others wait
 //!   silently while they last, also when they are out of hearing.
 //! - **Panic:** units that start a flight leg in panic (`World::shouts`, 0x600bc8) shout in
@@ -71,7 +72,9 @@ pub fn agony_ticks(victim: u32, cause: DeathCause) -> Option<u64> {
         Arrow | Thrown => (40, 3, 10),
         Melee => (45, 4, 10),
         Grapeshot => (55, 5, 12),
-        Cannonball | Explosion => (60, 5, 12),
+        Explosion => (35, 4, 10),
+        // Killed outright: a cannonball tears a man apart (who survives one is wounded and
+        // screams in pain, `hit_sounds`).
         _ => return None,
     };
     let h = hash(u64::from(victim), 0xa90);
@@ -279,17 +282,26 @@ mod tests {
     #[test]
     fn heavy_wounds_die_slowly_more_often() {
         use DeathCause::*;
-        let (gun, cannon, melee) = (dying(Gunshot).len(), dying(Cannonball).len(), dying(Melee).len());
+        let (gun, grape, melee) = (dying(Gunshot).len(), dying(Grapeshot).len(), dying(Melee).len());
         assert!((200..300).contains(&gun), "{gun}");
-        assert!((550..650).contains(&cannon), "{cannon}");
-        assert!(gun < melee && melee < cannon);
+        assert!((500..600).contains(&grape), "{grape}");
+        assert!(gun < melee && melee < grape);
         assert!(dying(Burned).is_empty() && dying(Hunger).is_empty());
-        for v in dying(Cannonball) {
-            let t = agony_ticks(v, Cannonball).unwrap();
+        for v in dying(Grapeshot) {
+            let t = agony_ticks(v, Grapeshot).unwrap();
             assert!((50..=120).contains(&t));
             // Fixed per unit.
-            assert_eq!(agony_ticks(v, Cannonball), Some(t));
+            assert_eq!(agony_ticks(v, Grapeshot), Some(t));
         }
+    }
+
+    #[test]
+    fn struck_dead_by_a_cannonball_is_silent() {
+        assert!(dying(DeathCause::Cannonball).is_empty());
+        let hits: Vec<_> = (0..20).map(|v| kill(1, v, 1512, DeathCause::Cannonball)).collect();
+        let mut a = Agony::default();
+        let sounds = a.update(&hits, &[], |_| true, 1, VIEW, None);
+        assert!(sounds.iter().all(|e| e.name != SCREAM && e.name != MOAN && e.name != GASP));
     }
 
     fn names(events: &[SoundEvent]) -> Vec<&str> {
@@ -299,9 +311,9 @@ mod tests {
     #[test]
     fn a_dying_soldier_screams_then_moans_ever_quieter() {
         let victim =
-            dying(DeathCause::Cannonball).into_iter().max_by_key(|&v| agony_ticks(v, DeathCause::Cannonball)).unwrap();
-        let len = agony_ticks(victim, DeathCause::Cannonball).unwrap();
-        let hits = [kill(5, victim, 1512, DeathCause::Cannonball)];
+            dying(DeathCause::Grapeshot).into_iter().max_by_key(|&v| agony_ticks(v, DeathCause::Grapeshot)).unwrap();
+        let len = agony_ticks(victim, DeathCause::Grapeshot).unwrap();
+        let hits = [kill(5, victim, 1512, DeathCause::Grapeshot)];
         let mut a = Agony::default();
         let mut sounds = Vec::new();
         for now in 5..5 + len + 50 {
