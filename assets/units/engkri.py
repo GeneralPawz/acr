@@ -13,8 +13,8 @@ from mathutils import Matrix, Vector
 
 from acr_assets import armature as am
 from acr_assets import body as bd
-from acr_assets import gear, poses, rig
-from acr_assets.humans import Character, prepare_export
+from acr_assets import gear, outfit, poses, rig
+from acr_assets.humans import LAYER_OF, Character, prepare_export
 
 TYPE = "EngKri"
 CHECKS = ["--anim STAND", "--anim DEATHLIE1"]
@@ -112,7 +112,8 @@ def build(ctx):
     for clip, keys in clips().items():
         am.add_clip(ch.arm, clip, keys)
     am.set_clip(ch.arm, "STAND")
-    colours = ch.colours(ctx.ref, PALETTE)
+    colours = ch.colours(ctx.ref, PALETTE, mix=0.5)
+    outfit.dress(ch, colours, LAYER_OF)
     ch.arm.animation_data.action = None
     am.pose(ch.arm, STAND)
     tris = ch.triangles()

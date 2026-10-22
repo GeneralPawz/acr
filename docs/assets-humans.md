@@ -127,6 +127,29 @@ B layer code / 8, A 1. Two shape keys (glTF morph targets) belong to the decay t
 onto the skeleton as the flesh goes) and `lie_flat` (coat/tunic skirt: squashes the rigid tube
 so it lies flat on a prone corpse; 1 while lying).
 
+### Realistic clothes, skin and leather (`acr_assets.outfit`, #217)
+
+A realistic look matters more than matching the sprites (#214). After `Character.colours`
+picks a colour per part (sprite and palette blended 50/50: the sprite colours alone came
+out too dark in the game), `outfit.dress` paints one 1024² atlas for the dressed parts
+the way the horse coats are painted (`coat.py`): each painter gets a rectangle through a
+Smart-UV map `atlas` (the skin a double one), Cycles bakes rest-pose position, normal and
+ambient occlusion per texel, and numpy paints:
+
+| Painter | Parts | Look |
+|---|---|---|
+| `skin` | flesh, hair | tone variation, ruddy cheeks, stubble on the jaw, eyes (white, iris), brows, mouth, hair on the back and top of the head and a queue to the nape |
+| `wool` | coat, tunic, sash, cloak | weave, vertical folds, worn patches, grime towards the hem, brass buttons down the coat front |
+| `linen` | waistcoat, breeches, shirt, stockings | fine weave, grime towards the knees, small buttons down the waistcoat |
+| `boots` | gaiters, boots, shoes | creases, mud at the feet, a button row on the outer side of the gaiters |
+| `belts` | crossbelts | pipeclay with dirt |
+| `felt` | hats, caps | felt grain and dust |
+| `leather` | cartridge box, knapsack, saddle | creases and scuffs |
+
+The colours are multiplied by the occlusion (`0.55 + 0.45 · ao^0.8`) so the form reads
+under the game's flat light. Wood, metal (the musket), bones and stump caps keep their
+materials. `EngM18` and `EngKri` use it; the glb grows by the atlas (about 1.9 MB).
+
 ## 4. Decay
 
 One parameter `decay` ∈ [0, 1] per corpse; each material has its layer's windows
