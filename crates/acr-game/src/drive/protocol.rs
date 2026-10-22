@@ -202,6 +202,8 @@ pub enum Request {
         /// Radians: turn and elevation of the free camera.
         orbit: Option<[f32; 2]>,
     },
+    /// Sun shadows forced on or off over the setting (`None`: the setting again).
+    Shadows(Option<bool>),
     /// A unit placed for the bench (`drive::bench::spawn`).
     Spawn(Value),
     /// A scripted hit (`drive::bench::hit`).
@@ -431,6 +433,7 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
             let lift = num("lift").unwrap_or(27.0) as f32;
             Request::Camera { x: x as i32, y: y as i32, zoom: num("zoom").map(|z| z as f32), lift, orbit }
         }
+        "shadows" => Request::Shadows(v.get("on").and_then(Value::as_bool)),
         "spawn" => Request::Spawn(v.clone()),
         "hit" => Request::Hit(v.clone()),
         "record" => Request::Record {

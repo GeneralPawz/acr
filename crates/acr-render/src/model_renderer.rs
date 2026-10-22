@@ -22,15 +22,15 @@ use crate::damage::{self, Damage};
 use crate::looks;
 use crate::math::{self, Mat4};
 use crate::model::{ModelData, Vertex};
+use crate::shadow::{self, ShadowMap};
 use crate::view3d::View3d;
 
 /// Depth and stencil of the 3D pass (supported everywhere, WebGL2 included).
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
 /// Texels per row of the bone texture.
 const BONE_WIDTH: u32 = 1024;
-/// Direction to the light in world coordinates (east, south, up): the game's light vector
-/// (`SetLight(-15, 14, 30)`, from the upper left and the viewer's side).
-const LIGHT: [f32; 3] = [-15.0, 14.0, 30.0];
+/// Direction to the light in world coordinates (east, south, up): the sun of the shadows.
+const LIGHT: [f32; 3] = shadow::LIGHT;
 /// Share of unlit colour.
 const AMBIENT: f32 = 0.5;
 
@@ -344,6 +344,24 @@ pub struct ModelRenderer {
     /// Palettes given from outside (a physics ragdoll) for instances by their index in the
     /// next `prepare`'s slice, in place of their clip (`set_custom_poses`).
     custom: HashMap<usize, crate::model::Palette>,
+    /// Sun shadows (`shadow.rs`): on unless switched off (the `shadows` setting).
+    pub shadows: bool,
+    shadow: ShadowMap,
+    /// The models into the shadow map: `vs_main` through the light's globals, `fs_shadow`.
+    shadow_pipeline: wgpu::RenderPipeline,
+    shadow_globals: wgpu::Buffer,
+    shadow_globals_group: wgpu::BindGroup,
+}
+
+/// `model.wgsl` with the shadow receiver (`shadow.wgsl`) and casters (`model_shadow.wgsl`).
+pub const MODEL_SHADER: &str =
+    concat!(include_str!("model.wgsl"), include_str!("shadow.wgsl"), include_str!("model_shadow.wgsl"));
+
+fn model_shader(device: &wgpu::Device) -> wgpu::ShaderModule {
+    device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("model.wgsl"),
+        source: wgpu::ShaderSource::Wgsl(MODEL_SHADER.into()),
+    })
 }
 
 fn bone_texture(device: &wgpu::Device, rows: u32) -> wgpu::Texture {
@@ -404,13 +422,18 @@ fn instance_buffer(device: &wgpu::Device, count: u64) -> wgpu::Buffer {
 
 impl ModelRenderer {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, target: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::include_wgsl!("model.wgsl"));
-        let globals = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("model globals"),
-            size: size_of::<Globals>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let shader = model_shader(device);
+        let globals_buffer = |label| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size: size_of::<Globals>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        };
+        let globals = globals_buffer("model globals");
+        let shadow_globals = globals_buffer("model shadow globals");
+        let shadow = ShadowMap::new(device);
         let both = wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT;
         let uniform = |binding| wgpu::BindGroupLayoutEntry {
             binding,
@@ -451,6 +474,12 @@ impl ModelRenderer {
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("model"),
+            bind_group_layouts: &[Some(&globals_layout), Some(&material_layout), Some(&shadow.layout)],
+            immediate_size: 0,
+        });
+        // The shadow pass cannot bind the map it draws into: no group 2.
+        let shadow_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("model shadow"),
             bind_group_layouts: &[Some(&globals_layout), Some(&material_layout)],
             immediate_size: 0,
         });
@@ -517,6 +546,38 @@ impl ModelRenderer {
             multiview_mask: None,
             cache: None,
         });
+        let shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("model shadow"),
+            layout: Some(&shadow_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[
+                    Some(wgpu::VertexBufferLayout {
+                        array_stride: size_of::<Vertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &vertex_attributes,
+                    }),
+                    Some(wgpu::VertexBufferLayout {
+                        array_stride: size_of::<GpuInstance>() as u64,
+                        step_mode: wgpu::VertexStepMode::Instance,
+                        attributes: &instance_attributes,
+                    }),
+                ],
+            },
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            depth_stencil: Some(shadow::caster_depth()),
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_shadow"),
+                compilation_options: Default::default(),
+                targets: &[],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
         // Blood pools: decals over the terrain's depth, blended, writing neither depth nor
         // stencil (the models and sprites cover them).
         let pool_shader = device.create_shader_module(wgpu::include_wgsl!("blood.wgsl"));
@@ -567,6 +628,7 @@ impl ModelRenderer {
         });
         let bones = bone_texture(device, 1);
         let globals_group = Self::globals_group(device, &globals_layout, &globals, &bones);
+        let shadow_globals_group = Self::globals_group(device, &globals_layout, &shadow_globals, &bones);
         let sampler = |filter| {
             device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("model texture"),
@@ -617,6 +679,11 @@ impl ModelRenderer {
             pose_count: 0,
             drawn: 0,
             custom: HashMap::new(),
+            shadows: true,
+            shadow,
+            shadow_pipeline,
+            shadow_globals,
+            shadow_globals_group,
         };
         renderer.cap = renderer.add_model(device, queue, damage::procedural_cap());
         renderer.inserts = [
@@ -836,6 +903,8 @@ impl ModelRenderer {
         let models = &self.models;
         let draws = &mut self.draws;
         let custom = std::mem::take(&mut self.custom);
+        let shadows_on = self.shadows;
+        let mut casters: Vec<([f32; 3], f32)> = Vec::new();
         let mut push = |i: usize, inst: &ModelInstance, caps: &mut Vec<ModelInstance>| {
             let gpu_model = &models[inst.model];
             let model = &gpu_model.data;
@@ -860,11 +929,14 @@ impl ModelRenderer {
             )
             .sqrt()
                 / crate::view3d::PIXELS_PER_METRE;
-            let r = (model.radius * stretch * 1.5 + 8.0) * view.camera.scale;
+            // With shadows, models just off the screen still cast into it.
+            let reach = if shadows_on { 2.5 } else { 1.5 };
+            let r = (model.radius * stretch * reach + 8.0) * view.camera.scale;
             let p = view.project(origin);
             if p[0] < -r || p[0] > w + r || p[1] < -r || p[1] > h + r || !(0.0..=1.0).contains(&p[2]) {
                 return;
             }
+            casters.push((origin, model.radius * stretch));
             let key = (inst.model, inst.clip, inst.time.to_bits());
             let base = if let Some(palette) = custom.get(&i) {
                 let base = texels.len() as u32;
@@ -956,6 +1028,8 @@ impl ModelRenderer {
             let rows = rows.next_power_of_two().min(device.limits().max_texture_dimension_2d);
             self.bones = bone_texture(device, rows);
             self.globals_group = Self::globals_group(device, &self.globals_layout, &self.globals, &self.bones);
+            self.shadow_globals_group =
+                Self::globals_group(device, &self.globals_layout, &self.shadow_globals, &self.bones);
         }
         let rows = rows.min(self.bones.height());
         texels.resize((rows * BONE_WIDTH) as usize, [0.0; 4]);
@@ -986,6 +1060,33 @@ impl ModelRenderer {
             ],
         };
         queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
+        // The sun's view of the models drawn, around the window centre.
+        let focus = view.target();
+        let reach = 1.1 * (w * w + h * h).sqrt() / view.camera.scale;
+        let fit = if shadows_on { shadow::fit(casters.iter().copied(), focus, reach) } else { None };
+        self.shadow.upload(queue, fit.as_ref(), focus, reach);
+        if let Some(fit) = &fit {
+            let s = shadow::sun();
+            let light = Globals { view_proj: fit.matrix, forward: [-s[0], -s[1], -s[2], 0.0], ..globals };
+            queue.write_buffer(&self.shadow_globals, 0, bytemuck::bytes_of(&light));
+        }
+    }
+
+    /// The shadow map and the bind group receivers sample it through (terrain).
+    pub fn shadow(&self) -> &ShadowMap {
+        &self.shadow
+    }
+
+    /// Draws the prepared instances into the shadow map (before the 3D pass); nothing when
+    /// shadows are off or nothing casts.
+    pub fn render_shadows(&self, encoder: &mut wgpu::CommandEncoder) {
+        if !self.shadow.active || self.draws.is_empty() {
+            return;
+        }
+        let mut pass = self.shadow.begin(encoder);
+        pass.set_pipeline(&self.shadow_pipeline);
+        pass.set_bind_group(0, &self.shadow_globals_group, &[]);
+        self.draw_instances(&mut pass);
     }
 
     /// Uploads the blood pools of the next `render` (after [`Self::prepare`], which sets the
@@ -1017,7 +1118,13 @@ impl ModelRenderer {
         }
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.globals_group, &[]);
+        pass.set_bind_group(2, &self.shadow.group, &[]);
         pass.set_stencil_reference(1);
+        self.draw_instances(pass);
+    }
+
+    /// The prepared draws, with the pipeline and group 0 bound.
+    fn draw_instances(&self, pass: &mut wgpu::RenderPass<'_>) {
         let stride = size_of::<GpuInstance>() as u64;
         for (model, range, decaying, variant) in &self.draws {
             let m = &self.models[*model];
@@ -1051,7 +1158,7 @@ pub struct DepthTarget {
 
 impl DepthTarget {
     pub fn new(device: &wgpu::Device, target: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::include_wgsl!("model.wgsl"));
+        let shader = model_shader(device);
         let keep_if_zero = wgpu::StencilFaceState {
             compare: wgpu::CompareFunction::Equal,
             fail_op: wgpu::StencilOperation::Keep,
