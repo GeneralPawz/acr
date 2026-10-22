@@ -24,6 +24,7 @@ pub mod hash;
 pub mod map;
 pub mod motion;
 pub mod path;
+pub mod replay;
 pub mod rng;
 pub mod trig;
 pub mod world;
