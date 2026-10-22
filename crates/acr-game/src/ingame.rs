@@ -293,13 +293,6 @@ impl InGame {
         let (None, Some(map), true) = (&self.world, &self.map, self.sim_assets.ready()) else { return };
         let data = self.sim_assets.build();
         let (mut world, report) = World::from_map(map, &data.shapes, Arc::new(data.catalog), Arc::new(data.formations));
-        // `ACR_HIT_LOCATIONS=1` (development): the optional hit-location rule (#225, #254)
-        // for games started without a setup screen (`ACR_START_MAP`, missions). It goes into
-        // the setup, so savegames keep it.
-        #[cfg(not(target_arch = "wasm32"))]
-        if std::env::var("ACR_HIT_LOCATIONS").is_ok_and(|v| v == "1") {
-            self.setup.rules.hit_locations = true;
-        }
         world.rules = self.setup.rules;
         log::info!("world: {} units, {} map objects, {report:?}", world.units.len(), world.objects.len());
         let catalog = &world.catalog;

@@ -975,8 +975,8 @@ Lost limbs are part of the state hash only once a game has some. In 3D a crawler
 prone (the `DEATHLIE1` pose) and drags himself along head first, and the bleeding leave a
 drop of blood every second that dries and fades over five minutes (render only). Missing
 limbs on the model (stump caps, #207) and healing by priests come later.
-`ACR_HIT_LOCATIONS=1` turns the rule on for games started without a setup screen
-(development, native only).
+The setting `hit_locations=on` (in `settings.txt` / browser storage, no menu entry yet)
+turns the rule on for every new game; the setup and savegames keep it.
 
 ### Worked timing (musketeer, 10 ticks/s)
 

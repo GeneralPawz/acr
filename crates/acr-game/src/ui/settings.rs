@@ -35,6 +35,9 @@ pub struct Settings {
     /// ACR: how long 3D corpses lie and decay, in minutes of game time (the simulation
     /// removes them after about a minute as the original does; the renderer keeps them).
     pub corpse_minutes: u32,
+    /// ACR (#225, #254): new games use the optional hit-location rule (wounds, lost limbs,
+    /// bleeding out); `hit_locations=on|off`, off (the original rules) by default.
+    pub hit_locations: bool,
 }
 
 /// `models=off|units|all`: sprites everywhere (the original), 3D units, 3D units and
@@ -104,6 +107,7 @@ impl Default for Settings {
             camera: CameraMode::Fixed,
             gore: Gore::Full,
             corpse_minutes: 5,
+            hit_locations: false,
         }
     }
 }
@@ -163,7 +167,7 @@ impl Settings {
         format!(
             "sound_volume={}\nmusic_volume={}\nmusic_mode={}\ngame_mode={}\nscroll_speed={}\nframe_time={}\n\
              resolution={}\nrecord={}\nrecord_file={hex}\ncontrols={controls}\nedge_scroll={}\n\
-             models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\n",
+             models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\nhit_locations={}\n",
             self.sound_volume,
             self.music_volume,
             self.music_mode,
@@ -174,6 +178,7 @@ impl Settings {
             u8::from(self.record),
             u8::from(self.edge_scroll),
             self.corpse_minutes,
+            if self.hit_locations { "on" } else { "off" },
         )
     }
 
@@ -211,6 +216,7 @@ impl Settings {
                     }
                 }
                 "camera" => s.camera = if value == "free" { CameraMode::Free } else { CameraMode::Fixed },
+                "hit_locations" => s.hit_locations = value == "on",
                 "corpse_minutes" => s.corpse_minutes = int.map_or(s.corpse_minutes, |v| v.clamp(1, 60) as u32),
                 "gore" => {
                     s.gore = match value {
@@ -248,6 +254,7 @@ mod tests {
             camera: CameraMode::Free,
             gore: Gore::Reduced,
             corpse_minutes: 12,
+            hit_locations: true,
         };
         assert_eq!(Settings::decode(&s.encode()), s);
         assert_eq!(Settings::decode("corpse_minutes=500").corpse_minutes, 60);
