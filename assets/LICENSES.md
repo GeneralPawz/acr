@@ -9,8 +9,15 @@ used locally only (its files and the models built from it are never committed).
 |---|---|---|---|---|
 | Horse Rig (`bd71883bad9845389ef4ec2801004801`) | base mesh for the dragoon horse (#170, #275); evaluated, not yet in the build | CreativeMachine (https://sketchfab.com/CreativeMachine) | CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/) | https://sketchfab.com/3d-models/horse-rig-bd71883bad9845389ef4ec2801004801 |
 | WildMesh 3D "100 MODELS" (Realistic Animals: BrownBear, Buffalo, AmericanAligator, Leopard, Elk, Doe, ...) | the animals `assets/animals/*.py` (#287) | WildMesh 3D (https://www.patreon.com/wildmesh), partly with AnimalMesh 3D | WildMesh Standard License v1.1 (bought, `LICENSE-STANDARD.txt` next to the pack) | purchase, kept outside the repo; scripts read it via `ACR_SOURCES` |
+| Animated Free Bison (`be2dcd97db1c4b9c91a7728d9bc89925`) | the bison `assets/animals/anmbiz.py` (#287): mesh, rig, walk clip; idle, charge and fall authored | AneesAnimates (https://sketchfab.com/AneesAnimates) | CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/) | https://sketchfab.com/3d-models/be2dcd97db1c4b9c91a7728d9bc89925 |
 
 Notes:
+
+- Animated Free Bison: Sketchfab download (FBX + textures), kept outside the repo
+  (`ACR_SOURCES/sketchfab/animated-free-bison`); 61k triangles decimated to 12k, scaled to
+  1.85 m at the hump, base colour only. Its material and image names (`tripo_*`) suggest the
+  mesh was generated with Tripo AI. Credit line: "Animated Free Bison" by AneesAnimates,
+  CC BY 4.0, modified (decimated, rescaled, clips added).
 
 - WildMesh Standard License v1.1 (read 2026-10-22), in short: for licensees with at most
   USD 100,000 revenue or funding in 12 months (above that a Studio License is required);

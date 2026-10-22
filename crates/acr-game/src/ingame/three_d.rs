@@ -379,12 +379,14 @@ impl ThreeD {
         self.request_gore(request);
         // Corpses the simulation removed (after about a minute, as the original) stay in 3D
         // until their own lifetime ends (`corpse_minutes`), so battlefields fill and piles
-        // grow; their units keep position, facing and lying pose.
+        // grow; their units keep position, facing and lying pose. An animal becomes a
+        // carcass (meat) sprite when its death animation ends; its body stays in 3D, holding
+        // the death's last pose, for as long as other corpses.
         let lingering = |u: &Unit| {
             self.gore != Gore::Off
                 && !u.alive
                 && !u.building
-                && u.death >= 1000
+                && (u.death >= 1000 || (u.death > 0 && world.catalog.get(u.kind).economy.meat.is_some()))
                 && world.deaths.get(&u.id.0).is_some_and(|r| r.tick > 0 && now - r.tick < self.corpse_ticks)
         };
         // Wounds where this tick's hits struck (#277), kept for the drawn and their corpses.
