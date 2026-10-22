@@ -26,6 +26,7 @@ mod damage_view;
 mod debris;
 mod dip;
 mod effects;
+mod gait_view;
 mod gore;
 mod interface;
 mod living_wounds;

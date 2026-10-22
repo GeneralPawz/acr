@@ -37,6 +37,15 @@ pub const FRAME_BUDGET_US: f64 = 4000.0;
 const POOL: usize = 96;
 /// Physics step (s).
 const STEP: f32 = 1.0 / 60.0;
+/// Hip sway per m/s of the blow's momentum over the body's mass.
+const SWAY_GAIN: f32 = 6.0;
+/// Impulse (N·s) that knocks a survivor down (a close grapeshot, a glancing cannonball).
+const KNOCK_DOWN: f32 = 19.0;
+/// Knocked down: falling and lying (s), then getting up (s).
+const FALL_S: f32 = 2.2;
+const GETUP_S: f32 = 1.5;
+/// Centre of mass beyond the support between the feet (m) that makes him step.
+const STEP_AT: f32 = 0.12;
 
 /// The bones of skeleton H in the order of [`skeleton_h`].
 fn bone_names() -> Vec<&'static str> {
@@ -45,7 +54,7 @@ fn bone_names() -> Vec<&'static str> {
 
 /// How a model's palette maps onto the ragdoll: the bone carrying each slot, the bind
 /// palette, and each bone's own joint slot.
-struct Mapping {
+pub(super) struct Mapping {
     slot_bone: Vec<usize>,
     bind: Vec<Mat4>,
     bone_slot: Vec<usize>,
@@ -151,7 +160,7 @@ fn affine_inverse(m: &Mat4) -> Mat4 {
 }
 
 /// The skinning matrices (skeleton space → physics) of the body bones in an animated pose.
-fn animated_skins(map: &Mapping, palette: &Palette, transform: &Mat4) -> Vec<[[f32; 4]; 4]> {
+pub(super) fn animated_skins(map: &Mapping, palette: &Palette, transform: &Mat4) -> Vec<[[f32; 4]; 4]> {
     let to_physics = math::mul(&physics_of_world(), transform);
     map.bone_slot
         .iter()
@@ -190,6 +199,12 @@ struct Actor {
     sway: Vec3,
     sway_v: Vec3,
     sink: f32,
+    /// Knocked down (physics time): he crumples, lies, then gets up through a blend.
+    down: Option<f32>,
+    /// The hips' pose where he lay, the start of the getting up.
+    fallen: Option<[[f32; 4]; 4]>,
+    /// A recovery step: the foot (bone), from, to, start time.
+    step: Option<(usize, Vec3, Vec3, f32)>,
     /// Skinning matrices once he lies still (a corpse no longer needs the physics).
     frozen: Option<Vec<[[f32; 4]; 4]>>,
 }
@@ -201,6 +216,7 @@ pub struct Ragdolls {
     actors: HashMap<u32, Actor>,
     maps: HashMap<usize, Option<Mapping>>,
     names: Vec<&'static str>,
+    rig: acr_physics::gait::Rig,
     /// Awake ragdolls allowed (from the calibration).
     budget: usize,
     time: f32,
@@ -213,6 +229,8 @@ pub struct Ragdolls {
     hit_seen: Option<u64>,
     /// This frame's palettes by instance index.
     pub poses: HashMap<usize, Palette>,
+    /// Walking and crawling over the clips (#279).
+    gaits: super::gait_view::Gaits,
 }
 
 impl Default for Ragdolls {
@@ -227,6 +245,7 @@ impl Default for Ragdolls {
             actors: HashMap::new(),
             maps: HashMap::new(),
             names: bone_names(),
+            rig: acr_physics::gait::Rig::new(&skeleton_h()),
             budget,
             time: 0.0,
             stepped: 0.0,
@@ -235,6 +254,7 @@ impl Default for Ragdolls {
             tracks: HashMap::new(),
             hit_seen: None,
             poses: HashMap::new(),
+            gaits: Default::default(),
         }
     }
 }
@@ -443,7 +463,7 @@ impl Ragdolls {
                 a.died = time;
             }
         }
-        self.drive(drawn, &by_unit);
+        self.drive(drawn, &by_unit, terrain);
         // Fixed steps up to the game time.
         let ground = |x: f32, y: f32| ground_height(terrain, x, y);
         let mut n = 0;
@@ -457,6 +477,17 @@ impl Ragdolls {
         }
         self.settle(&by_unit);
         self.palettes(drawn, &by_unit);
+        if std::env::var_os("ACR_NO_GAIT").is_none() {
+            for d in drawn {
+                if d.data.clips.is_empty() {
+                    continue;
+                }
+                if !self.maps.contains_key(&d.model) {
+                    self.mapping(d.model, d.data);
+                }
+            }
+            self.gaits.update(seconds, drawn, &self.maps, focus, terrain, &mut self.poses);
+        }
     }
 
     fn take_hit(&mut self, hit: &HitRecord, d: &Drawn<'_>, now: u64, dies: bool, terrain: &TerrainData) {
@@ -522,6 +553,9 @@ impl Ragdolls {
                     sway: Vec3::ZERO,
                     sway_v: Vec3::ZERO,
                     sink: 0.0,
+                    down: None,
+                    fallen: None,
+                    step: None,
                     frozen: None,
                 },
             );
@@ -546,12 +580,18 @@ impl Ragdolls {
         let j = impulse_of(hit.cause, hit.injury.map_or(60, |i| i.energy));
         self.physics.apply_impulse(body, point, dir * j);
         // The survivor's hips sway with the blow (the total momentum over his mass).
-        a.sway_v += dir * (j / 75.0) * 2.0;
+        a.sway_v += dir * (j / 75.0) * SWAY_GAIN;
+        // A hard blow knocks a survivor down: he gets up when the clip takes him back.
+        if !a.dying && j >= KNOCK_DOWN && a.down.is_none() {
+            a.down = Some(self.time);
+            a.fallen = None;
+            a.recover = a.recover.max(FALL_S + GETUP_S + 0.3);
+        }
     }
 
     /// Survivors: hips on a spring around the animation, muscles towards the animation,
     /// tone coming back. The dying: tone running out with a last reflex.
-    fn drive(&mut self, drawn: &[Drawn<'_>], by_unit: &HashMap<u32, usize>) {
+    fn drive(&mut self, drawn: &[Drawn<'_>], by_unit: &HashMap<u32, usize>, terrain: &TerrainData) {
         let dt = (self.time - self.stepped).clamp(0.0, 0.1);
         let hips = 0;
         for (v, a) in &mut self.actors {
@@ -588,14 +628,44 @@ impl Ragdolls {
             let Some(&i) = by_unit.get(v) else { continue };
             let d = &drawn[i];
             let Some(map) = self.maps.get(&a.model).and_then(Option::as_ref) else { continue };
-            let skins = animated_skins(map, &d.data.pose(d.clip, d.time), &d.transform);
-            r.target_skins(&mut self.physics, &skins);
+            let mut skins = animated_skins(map, &d.data.pose(d.clip, d.time), &d.transform);
             let back = (t / a.recover).clamp(0.0, 1.0);
+            // Knocked down: the legs give, he lies a moment, then gets up through a blend of
+            // the hips from where he lay to the clip.
+            if let Some(down) = a.down {
+                let td = self.time - down;
+                r.target_skins(&mut self.physics, &skins);
+                if td < FALL_S {
+                    r.set_pinned_root(&mut self.physics, false);
+                    r.set_tone_all(&mut self.physics, Tone::FULL.scaled(0.3));
+                    // The knees give: thighs and shins fold, he drops to his knees and
+                    // over.
+                    for leg in [Region::LegL, Region::LegR] {
+                        r.set_tone_region(&mut self.physics, leg, Tone::FULL.scaled(0.25));
+                    }
+                    for (n, flex) in [("thigh_l", 1.3), ("thigh_r", 1.1), ("shin_l", 2.0), ("shin_r", 2.2)] {
+                        let b = self.rig.bone(n);
+                        let axis = r.joint_axis(&self.physics, b);
+                        r.set_target(&mut self.physics, b, Quat::from_axis_angle(axis, flex));
+                    }
+                    continue;
+                }
+                let fallen = *a.fallen.get_or_insert_with(|| r.skin_matrix(&self.physics, hips));
+                let k = ((td - FALL_S) / GETUP_S).clamp(0.0, 1.0);
+                let k = k * k * (3.0 - 2.0 * k);
+                r.set_tone_all(&mut self.physics, Tone::FULL.scaled(0.2 + 0.8 * k));
+                let s: [[f32; 4]; 4] = std::array::from_fn(|c| {
+                    std::array::from_fn(|i| fallen[c][i] + (skins[hips][c][i] - fallen[c][i]) * k)
+                });
+                r.set_pinned_root(&mut self.physics, true);
+                r.place(&mut self.physics, hips, &s, Vec3::ZERO);
+                continue;
+            }
             r.set_tone_all(&mut self.physics, Tone::FULL);
             r.set_tone_region(&mut self.physics, a.region, Tone::FULL.scaled(0.05 + 0.95 * back * back));
-            // Hips: a damped spring around the animation (about 1.5 Hz), the knees giving
-            // way for a leg hit.
-            let (w, z) = (9.0, 0.5);
+            // Hips: a damped spring around the animation (about 1 Hz), the knees giving
+            // way for a leg hit; the trunk leans with the sway (hip strategy).
+            let (w, z) = (6.0, 0.45);
             let acc = -(a.sway * (w * w)) - a.sway_v * (2.0 * z * w);
             a.sway_v += acc * dt;
             a.sway += a.sway_v * dt;
@@ -604,11 +674,35 @@ impl Ragdolls {
                 Reaction::Stagger => 0.05 * (std::f32::consts::PI * back).sin(),
                 Reaction::Flinch => 0.0,
             };
+            // Balance: the centre of mass against the support between the feet. Outside it, a
+            // recovery step puts the other foot under him (IK), and he stays on it.
+            let com = r.center_of_mass(&self.physics);
+            let feet = [self.rig.bone("foot_l"), self.rig.bone("foot_r")];
+            let fp = feet.map(|f| self.physics.body(r.body(f)).pos);
+            let (seg, rel) = (fp[1] - fp[0], com - fp[0]);
+            let u = (rel.x * seg.x + rel.y * seg.y) / (seg.x * seg.x + seg.y * seg.y).max(1e-6);
+            let cp = fp[0] + seg * u.clamp(0.0, 1.0);
+            let off = Vec3::new(com.x - cp.x, com.y - cp.y, 0.0);
+            if a.step.is_none() && off.length() > STEP_AT {
+                let land = Vec3::new(com.x, com.y, 0.0) + off.normalize_or_zero() * 0.12;
+                let far = |f: usize| Vec3::new(fp[f].x - land.x, fp[f].y - land.y, 0.0).length();
+                let f = if far(0) > far(1) { 0 } else { 1 };
+                let from = self.rig.joint(&skins, feet[f]);
+                a.step = Some((f, from, land, self.time));
+            }
+            if let Some((f, from, to, start)) = a.step {
+                let k = ((self.time - start) / 0.3).clamp(0.0, 1.0);
+                let mut p = from + (to - from) * k;
+                p.z = ground_height(terrain, p.x, p.y) + 0.08 + 0.12 * (std::f32::consts::PI * k).sin();
+                let chain = if f == 0 { ["thigh_l", "shin_l", "foot_l"] } else { ["thigh_r", "shin_r", "foot_r"] };
+                let [th, sh, ft] = chain.map(|n| self.rig.bone(n));
+                self.rig.two_bone_ik(&mut skins, th, sh, ft, p, Vec3::X);
+            }
+            r.target_skins(&mut self.physics, &skins);
             let mut s = skins[hips];
             s[3][0] += a.sway.x;
             s[3][1] += a.sway.y;
             s[3][2] -= a.sink;
-            // Leaning with the sway: the hips turn about the horizontal axis across it.
             let lean = Quat::from_axis_angle(Vec3::new(-a.sway.y, a.sway.x, 0.0), a.sway.length() * 1.5);
             let rot = acr_physics::math::mat4_from_rt(Vec3::ZERO, lean);
             let s = math::mul(&rot_about(&rot, [s[3][0], s[3][1], s[3][2]]), &s);
@@ -668,22 +762,21 @@ impl Ragdolls {
                     (0..r.len()).map(|b| r.skin_matrix(&self.physics, b)).collect()
                 }
             };
-            let lead = math::mul(&affine_inverse(&d.transform), &world_of_physics());
-            let per_bone: Vec<Mat4> =
-                skins.iter().map(|s| math::mul(&lead, &math::mul(s, &GLTF_TO_SKELETON))).collect();
-            let palette = map
-                .slot_bone
-                .iter()
-                .zip(&map.bind)
-                .map(|(&b, bind)| math::affine_rows(&math::mul(&per_bone[b], bind)))
-                .collect();
-            self.poses.insert(d.index, palette);
+            self.poses.insert(d.index, palette_of(map, &skins, &d.transform));
         }
     }
 }
 
+/// The palette of an instance (transform `transform`) posed by skinning matrices per body
+/// bone (physics): `P = T⁻¹ · world · S · glTF→skeleton · bind`.
+pub(super) fn palette_of(map: &Mapping, skins: &[[[f32; 4]; 4]], transform: &Mat4) -> Palette {
+    let lead = math::mul(&affine_inverse(transform), &world_of_physics());
+    let per_bone: Vec<Mat4> = skins.iter().map(|s| math::mul(&lead, &math::mul(s, &GLTF_TO_SKELETON))).collect();
+    map.slot_bone.iter().zip(&map.bind).map(|(&b, bind)| math::affine_rows(&math::mul(&per_bone[b], bind))).collect()
+}
+
 /// Height of the terrain (physics metres) under the physics point `(x, y)`.
-fn ground_height(terrain: &TerrainData, x: f32, y: f32) -> f32 {
+pub(super) fn ground_height(terrain: &TerrainData, x: f32, y: f32) -> f32 {
     let (wx, wy) = ((x * PIXELS_PER_METRE) as i32, (-y * PIXELS_PER_METRE) as i32);
     view3d::ground_point(wx, wy, terrain.height_at(wx, wy))[2] / PIXELS_PER_METRE
 }

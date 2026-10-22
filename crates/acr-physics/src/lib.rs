@@ -31,6 +31,7 @@
 //! assert!(skin[3][2].abs() < 0.1);
 //! ```
 
+pub mod gait;
 pub mod math;
 pub mod ragdoll;
 pub mod world;

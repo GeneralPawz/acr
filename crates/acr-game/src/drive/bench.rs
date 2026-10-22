@@ -99,6 +99,39 @@ pub fn spawn(game: &mut Game, v: &Value) -> Result<Value, String> {
             body::apply(&mut g.world_mut().ok_or("no world")?.units[i].body, &leg);
         }
     }
+    // Bench bodies (#279): `lost` limbs (`leg_l`, `arm_r`; `foot_l` keeps the leg to the
+    // ankle) and one flesh wound per entry of `wounds`; `patrol` makes any pose move.
+    let limb = |n: &str| match n {
+        "arm_l" => Some(LimbId::ArmL),
+        "arm_r" => Some(LimbId::ArmR),
+        "leg_l" | "foot_l" => Some(LimbId::LegL),
+        "leg_r" | "foot_r" => Some(LimbId::LegR),
+        _ => None,
+    };
+    let names = |k: &str| -> Vec<String> {
+        v.get(k)
+            .and_then(Value::as_array)
+            .map_or(Vec::new(), |a| a.iter().filter_map(Value::as_str).map(String::from).collect())
+    };
+    let body = &mut g.world_mut().ok_or("no world")?.units[i].body;
+    for n in names("lost") {
+        let l = limb(&n).ok_or_else(|| format!("unknown limb {n:?}: arm_l, arm_r, leg_l, leg_r, foot_l, foot_r"))?;
+        let level = if n.starts_with("foot") { body::ANKLE } else { KNEE };
+        body::apply(body, &Injury { part: Part::Limb(l), level, outcome: Outcome::Off, energy: 0 });
+    }
+    for n in names("wounds") {
+        let l = limb(&n).ok_or_else(|| format!("unknown limb {n:?}"))?;
+        body.limbs[l as usize].wounds = body.limbs[l as usize].wounds.saturating_add(1);
+    }
+    if pose != Pose::Walk && v.get("patrol").and_then(Value::as_bool) == Some(true) {
+        if g.world().is_some_and(|w| w.units[i].body.out_of_fight()) {
+            // Crawlers take no orders: sent straight on their way.
+            let u = &mut g.world_mut().ok_or("no world")?.units[i];
+            acr_sim::motion::send_to(u, Pos::from_pixels(x + walk, y), acr_sim::motion::PLAYER_PRIO, true);
+        } else {
+            g.push_command(Command::Patrol { player: owner, units: vec![id], x: x + walk, y });
+        }
+    }
     let world = g.world().ok_or("no world")?;
     Ok(json!({"id": id.0, "type": world.catalog.get(kind).id, "pose": format!("{pose:?}").to_lowercase()}))
 }
