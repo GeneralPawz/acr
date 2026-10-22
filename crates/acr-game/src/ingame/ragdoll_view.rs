@@ -114,6 +114,22 @@ pub(super) fn animal_model(model: &ModelData) -> bool {
         && model.slots.iter().any(|s| matches!(s, Slot::Joint { .. }))
 }
 
+/// The share of an animal's measured radius that is fur (by its `.MD` name): the bison
+/// 0.22 (879 kg instead of 1536), the elk 0.1 (386 kg), the bear 0.08 (367 kg); the
+/// jaguar's and the alligator's skins are tight.
+fn fur_share(type_name: &str) -> f32 {
+    let n = type_name.to_ascii_lowercase();
+    if n.starts_with("anmbiz") {
+        0.22
+    } else if n.starts_with("anmoln") {
+        0.1
+    } else if n.starts_with("anmmed") {
+        0.08
+    } else {
+        0.0
+    }
+}
+
 fn rows_to_mat(rows: &[[f32; 4]; 3]) -> Mat4 {
     std::array::from_fn(|c| [rows[0][c], rows[1][c], rows[2][c], if c == 3 { 1.0 } else { 0.0 }])
 }
@@ -308,10 +324,13 @@ impl Mapping {
                 dists[b].push((q - (a + ab * u)).length());
             }
         }
+        // Shaggy coats (the bison's mane and hump, an elk's or a bear's coat) are skin in the
+        // mesh: their share of the measured radius is not flesh.
+        let flesh = 1.0 - fur_share(model.type_name.as_deref().unwrap_or(""));
         for (b, d) in dists.iter_mut().enumerate() {
             if d.len() >= 8 {
                 d.sort_by(f32::total_cmp);
-                rig[b].radius = 0.85 * d[d.len() / 2];
+                rig[b].radius = 0.85 * flesh * d[d.len() / 2];
             }
         }
         if bone_slot.contains(&usize::MAX) {
@@ -434,11 +453,18 @@ struct Actor {
     step: Option<(usize, Vec3, Vec3, f32)>,
     /// Skinning matrices once he lies still (a corpse no longer needs the physics).
     frozen: Option<Vec<[[f32; 4]; 4]>>,
+    /// Physics time the corpse began to relax before it is frozen ([`RELAX_S`]).
+    relaxed: Option<f32>,
     /// A skeleton-H man; else an animal (no reflexes, steps or knock-downs).
     human: bool,
     /// The body's mass (kg), for the sway of a blow.
     mass: f32,
 }
+
+/// How long a corpse relaxes before it is frozen (s), and the tone pulling it towards the
+/// rest pose meanwhile.
+const RELAX_S: f32 = 0.7;
+const RELAX_TONE: f32 = 0.06;
 
 /// The body physics of the 3D view.
 pub struct Ragdolls {
@@ -770,6 +796,15 @@ impl Ragdolls {
         }
     }
 
+    /// Where the bone `name` of `unit`'s ragdoll is (world pixels), while it has one (an
+    /// animal mauling him stands over it, `maul_view.rs`).
+    pub fn bone_world(&self, unit: u32, name: &str) -> Option<[f32; 3]> {
+        let a = self.actors.get(&unit).filter(|a| a.slot != usize::MAX)?;
+        let r = &self.pool.get(a.slot)?.0;
+        let (p, _) = r.bone_transform(&self.physics, r.bone_index(name)?);
+        Some([p[0] * PIXELS_PER_METRE, -p[1] * PIXELS_PER_METRE, p[2] * PIXELS_PER_METRE])
+    }
+
     fn take_hit(&mut self, hit: &HitRecord, d: &Drawn<'_>, now: u64, dies: bool, terrain: &TerrainData) {
         let v = hit.victim;
         let generic = self.maps.get(&d.model).and_then(Option::as_ref).and_then(|m| m.generic.as_ref());
@@ -843,6 +878,7 @@ impl Ragdolls {
                     fallen: None,
                     step: None,
                     frozen: None,
+                    relaxed: None,
                     human,
                     mass,
                 },
@@ -1058,7 +1094,22 @@ impl Ragdolls {
                 done.push(*v);
                 continue;
             }
-            if a.dying && a.frozen.is_none() && (r.is_asleep(&self.physics) || time - a.died > 8.0) {
+            if a.dying
+                && a.frozen.is_none()
+                && a.relaxed.is_none()
+                && (r.is_asleep(&self.physics) || time - a.died > 8.0)
+            {
+                // Before it is frozen the corpse relaxes: a faint pull towards the rest pose
+                // lowers a limb left propped up (an arm raised by the death reflex).
+                a.relaxed = Some(time);
+                r.set_pose(&mut self.physics, &vec![Quat::IDENTITY; r.len()]);
+                r.set_tone_all(&mut self.physics, Tone::FULL.scaled(RELAX_TONE));
+                for b in 0..r.len() {
+                    self.physics.wake(r.body(b));
+                }
+            }
+            if a.dying && a.frozen.is_none() && a.relaxed.is_some_and(|t| time - t > RELAX_S) {
+                r.set_tone_all(&mut self.physics, Tone::LIMP);
                 r.freeze(&mut self.physics);
                 a.frozen = Some((0..r.len()).map(|b| r.skin_matrix(&self.physics, b)).collect());
             }

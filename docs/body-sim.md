@@ -192,7 +192,9 @@ are piled. The renderer takes a palette from it per instance
   - Capsules: the bone's length, and the radius 0.85 × the median distance of its skinned
     vertices (by their heaviest joint) from the bone, else a quarter of its length. Masses by
     volume at 850 kg/m³ (the capsules overlap at the joints): the bear 446 kg, the elk 492, the
-    alligator 184, the jaguar 105, the bison 1536 (heavy: its fur is wide).
+    alligator 184, the jaguar 105. Shaggy coats are part of the mesh, so a share of the
+    measured radius is fur (`fur_share`): the bison 0.22 (879 kg instead of 1536), the elk
+    0.1 (386 kg), the bear 0.08 (367 kg).
   - Limits: spine cone 14°, twist 8° (stiff); neck 35°/30°, head 30°/25°, tail 40°/20°
     (flexible); girdle 15°; upper leg 55°/20°; middle leg bones hinges of ±95° (the rest pose
     is already bent, so both ways), bending vertical bones fore and aft and level ones
@@ -208,7 +210,9 @@ are piled. The renderer takes a palette from it per instance
     middle, the root; a leg by its level), the impulse of the weapon. A survivor staggers on
     a damped spring around its clip with the struck region limp; a dying animal goes limp
     over 0.2–0.6 s, falls from its pose with the shot's impulse and freezes as the corpse's
-    pose. No death reflex, steps or knock-downs for animals. Riders and horses keep their
+    pose. Before a corpse is frozen it relaxes for 0.7 s (`RELAX_S`): a 6 % pull towards
+    the rest pose lowers a limb left propped up (an arm raised by the death reflex). No
+    death reflex, steps or knock-downs for animals. Riders and horses keep their
     clips (their types are not `Anm*`). Bones: bear 24, elk 29, jaguar 35, alligator 37.
 - **Mauling** (`m2-animalsim`, see `docs/damage-model.md`): an animal's blow (`Injury::cause`
   `Claw`, `Bite`, `Gore`) pushes a man with 28, 22 or 60 N·s (half at no energy) away from the
@@ -216,10 +220,26 @@ are piled. The renderer takes a palette from it per instance
   (`Body::down`), he falls. While `Body::down` lasts he stays on the ground (the fall phase is
   held, at 12 % tone instead of 30 %, so he lies limp) and the animal's further blows strike the
   lying body.
+- **Pinning** (`maul_view.rs`, render only): a living animal whose attack target is down
+  (`Body::down`) within 5 m, or the man it held down while it stays and does not walk,
+  is placed relative to where his ragdoll lies (`Ragdolls::bone_world`: `spine`, `hips`,
+  the limb of the last hit), eased in and out at 3 per second:
+  - bear: across his body from its side, its forepaws (the rig's front feet) under his
+    chest, the front raised by 11 cm and pitched so that the paws rest on him;
+  - jaguar: on top of him along his body, its neck at his neck, leaning forward (slope
+    0.45) and lowered 10 cm (its pouncing clip lifts the body);
+  - alligator: its jaws (neck + 0.55 × the trunk) at the limb of the last hit; after each
+    bite a roll of up to ~60° over 1.4 s, dragging him back 25 cm;
+  - elk and bison: the head at his belly.
+  The clips stay the simulation's (`ATTACK`, `PATTACK`). The ragdoll sees the new
+  transform (the placement runs before it).
 - **Wounds of mauling and on animals** (`tears.rs`, `living_wounds.rs`,
   `acr_render::damage::Rig::beast`): the wound's shape comes from `Injury::cause`. Claws rake
-  3–4 parallel slanted gashes 4–5 cm apart and 2–4 cm deep on the side facing the animal;
-  jaws crush a core between two rows of three tooth holes (a broken bone, a bigger core);
+  3–4 parallel slanted gashes 5–6 cm apart, 15–30 cm long and 3–5 cm deep on the side
+  facing the animal (zoom-16 close-ups: shallower ones only opened the coat onto the shirt
+  and read as one pale patch); jaws crush a core between two rows of three tooth holes (a
+  broken bone, a bigger core; on an unbroken limb at most 0.6 of its radius, so the sleeve
+  keeps its outline around the teeth);
   horns punch a deep hole along the blow with a ragged entry; a limb ripped off leaves a
   ragged tear. The newest hits' holes and marks are kept first (the cap is 8), so a man on
   the ground shows each new blow. Animals (`acr_animal` models) get a wound rig guessed from

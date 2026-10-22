@@ -163,6 +163,27 @@ so the animal keeps striking the man on the ground and goes for the head, neck a
 (the regions in brackets). `body::get_up` counts it down once a tick (`World::step`, after
 the bleeding). The renderer reads `unit.body.down` (> 0: lying).
 
+### Animals as victims (#276)
+
+An animal hit with the rule on gets a body of its own (`Body::animal`, set at its first
+injury from `Beast::size`: bison 4, bear and alligator 3, elk 2, jaguar and eagle 1, the
+young one less; hashed only when set, so men hash as before). The hit is rolled on the
+tables above, then `body::beast_outcome` turns it into an animal's:
+
+- no ball, blade, claw or jaw takes a leg off (the limb is shattered open or deeply
+  wounded, by the roll's parity); cannonballs and shells still do;
+- a head hit that would kill kills by 100 / size percent (a decorrelated roll: an animal's
+  head hit always draws one), else it is a deep wound;
+- from size 3 a ball that would tear the body in two or pulverize it kills it instead.
+
+Its four legs are the four limbs (the front ones in the arm slots). It never crawls, drops
+nothing and is never knocked down. Speed (`move_percent`): 60..100 % by its worst leg's
+function, 45 % on three legs (`BEAST_LIMP`, `Body::limping`), 10 % on two; an open belly
+halves it. It flees (`Body::flees`, so `out_of_fight` and `leave_fight`: it drops its
+orders and runs from the nearest enemy) with an open belly, more trunk and head wounds than
+its size, or 2 + 2 × size wounds in all. It bleeds `bleeding() × size` a second: the same
+share of a body four times a man's.
+
 A hit that kills still records where and how it struck. `DeathRecord` carries the body and
 `torn`, so a corpse shows its last injury, not just its earlier ones.
 

@@ -111,6 +111,8 @@ pub struct ThreeD {
     started: web_time::Instant,
     /// Physics ragdolls of the hit and the dying (#278), made at the first frame with models.
     ragdolls: Option<super::ragdoll_view::Ragdolls>,
+    /// Animals standing over the men they maul (#276).
+    maulers: super::maul_view::Maulers,
     /// Seconds of the last frame and the world point at the window centre.
     frame_seconds: f32,
     pub focus: [f32; 2],
@@ -170,6 +172,7 @@ impl Default for ThreeD {
             compare: Compare::from_env(),
             started: web_time::Instant::now(),
             ragdolls: None,
+            maulers: Default::default(),
             frame_seconds: 0.0,
             focus: [0.0; 2],
         }
@@ -617,6 +620,32 @@ impl ThreeD {
                 let ground = [at[0], at[1], at[2] + rest.lift];
                 self.instances[i].transform = view3d::model_matrix_tilted(ground, yaw, 1.0, rest.pitch, rest.roll);
             }
+        }
+        // Animals stand over the men they maul (#276), before the ragdolls take the pose.
+        {
+            let renderer = self.renderer.as_ref();
+            let ragdolls = self.ragdolls.as_ref();
+            let ground = |x: f32, y: f32| {
+                let (x, y) = (x as i32, y as i32);
+                view3d::ground_point(x, y, terrain.height_at(x, y))
+            };
+            let rig = |m: usize| renderer.and_then(|r| r.model(m)).and_then(|d| d.beast_rig.as_ref());
+            let lying = |v: u32, limb: &'static str| {
+                let bone = |name: &str| ragdolls.and_then(|r| r.bone_world(v, name));
+                // The chest two thirds of the way from the hips to the neck (the spine's body
+                // lies close to the hips).
+                if let (Some(neck), Some(hips)) = (bone("neck"), bone("hips")) {
+                    let chest = [0, 1, 2].map(|i| hips[i] + 0.67 * (neck[i] - hips[i]));
+                    return Some(super::maul_view::Lying { chest, hips, limb: bone(limb).unwrap_or(hips) });
+                }
+                // No ragdoll: he lies along his facing from where he stood.
+                let u = world.units.get(v as usize).filter(|u| u.id.0 == v)?;
+                let p = ground((u.pos.x >> 4) as f32, (u.pos.y >> 4) as f32);
+                let (s, c) = view3d::facing_yaw(u.dir).sin_cos();
+                let at = |m: f32| ground(p[0] + s * m * PIXELS_PER_METRE, p[1] + c * m * PIXELS_PER_METRE);
+                Some(super::maul_view::Lying { chest: at(0.45), hips: p, limb: at(-0.6) })
+            };
+            self.maulers.place(world, self.frame_seconds, &rigged, &mut self.instances, &rig, &lying, &ground);
         }
         self.update_ragdolls(world, terrain, &rigged);
         // Appended last: the indices above refer to one instance per unit.
