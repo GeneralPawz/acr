@@ -554,7 +554,8 @@ impl ThreeD {
                 inst.damage = damage;
                 pieces.push((self.instances.len(), damage));
             }
-            if model.rig.is_some() && !u.building {
+            // Men of skeleton H and animals (their own ragdolls).
+            if (model.rig.is_some() || super::ragdoll_view::animal_model(model)) && !u.building {
                 rigged.push((u.id.0 as usize, self.instances.len()));
             }
             self.instances.push(inst);

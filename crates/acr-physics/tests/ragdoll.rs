@@ -284,3 +284,90 @@ fn placed_by_skin_matrices_reproduces_the_pose() {
     dst.target_current_pose(&mut world);
     assert!(world.joint_state(dst.joint(5).unwrap()).drive_error < 1e-3);
 }
+
+/// A bear-sized quadruped rig as an animal glTF gives it (names as in the WildMesh bear).
+fn quadruped() -> Vec<acr_physics::RigBone> {
+    use acr_physics::RigBone;
+    let mut v: Vec<RigBone> = Vec::new();
+    let mut add = |name: &'static str, parent: Option<usize>, head: [f32; 3], tail: [f32; 3], radius: f32| {
+        v.push(RigBone { name, parent, head, tail, radius });
+        v.len() - 1
+    };
+    let pelvis = add("RigPelvis", None, [0.0, 0.45, 0.85], [0.0, 0.25, 0.9], 0.28);
+    let spine = add("RigSpine1", Some(pelvis), [0.0, 0.25, 0.9], [0.0, 0.0, 0.92], 0.3);
+    let chest = add("RigChest", Some(spine), [0.0, 0.0, 0.92], [0.0, -0.35, 0.9], 0.32);
+    let neck = add("RigNeck1", Some(chest), [0.0, -0.35, 0.9], [0.0, -0.6, 0.95], 0.16);
+    add("RigHead", Some(neck), [0.0, -0.6, 0.95], [0.0, -0.9, 0.9], 0.13);
+    add("RigTail1", Some(pelvis), [0.0, 0.45, 0.85], [0.0, 0.55, 0.75], 0.05);
+    for (side, x) in [("L", 0.18f32), ("R", -0.18)] {
+        let names: [&'static str; 7] = if side == "L" {
+            ["RigLFLegCollarbone", "RigLFLeg1", "RigLFLeg2", "RigLFLegAnkle", "RigLBLeg1", "RigLBLeg2", "RigLBLegAnkle"]
+        } else {
+            ["RigRFLegCollarbone", "RigRFLeg1", "RigRFLeg2", "RigRFLegAnkle", "RigRBLeg1", "RigRBLeg2", "RigRBLegAnkle"]
+        };
+        let c = add(names[0], Some(chest), [x * 0.5, -0.2, 0.9], [x, -0.25, 0.75], 0.1);
+        let f1 = add(names[1], Some(c), [x, -0.25, 0.75], [x, -0.22, 0.42], 0.09);
+        let f2 = add(names[2], Some(f1), [x, -0.22, 0.42], [x, -0.25, 0.1], 0.07);
+        add(names[3], Some(f2), [x, -0.25, 0.1], [x, -0.37, 0.03], 0.05);
+        let b1 = add(names[4], Some(pelvis), [x, 0.4, 0.8], [x, 0.3, 0.45], 0.11);
+        let b2 = add(names[5], Some(b1), [x, 0.3, 0.45], [x, 0.4, 0.1], 0.07);
+        add(names[6], Some(b2), [x, 0.4, 0.1], [x, 0.28, 0.03], 0.05);
+    }
+    v
+}
+
+#[test]
+fn generic_rig_kinds_regions_and_masses() {
+    use acr_physics::{BoneKind, Region, bone_kinds, skeleton_generic};
+    let rig = quadruped();
+    let kinds = bone_kinds(&rig);
+    let kind = |n: &str| kinds[rig.iter().position(|b| b.name == n).unwrap()];
+    assert_eq!(kind("RigPelvis"), BoneKind::Root);
+    assert_eq!(kind("RigSpine1"), BoneKind::Spine);
+    assert_eq!(kind("RigChest"), BoneKind::Spine);
+    assert_eq!(kind("RigNeck1"), BoneKind::Neck);
+    assert_eq!(kind("RigHead"), BoneKind::Head);
+    assert_eq!(kind("RigTail1"), BoneKind::Tail);
+    assert_eq!(kind("RigLFLegCollarbone"), BoneKind::Girdle);
+    assert_eq!(kind("RigLFLeg1"), BoneKind::Upper);
+    assert_eq!(kind("RigLFLeg2"), BoneKind::Middle);
+    assert_eq!(kind("RigLFLegAnkle"), BoneKind::Foot);
+    assert_eq!(kind("RigRBLeg1"), BoneKind::Upper);
+    assert_eq!(kind("RigRBLeg2"), BoneKind::Middle);
+    let (desc, mass) = skeleton_generic(&rig);
+    let region = |n: &str| desc.iter().find(|b| b.name == n).unwrap().region;
+    assert_eq!(region("RigLFLeg2"), Region::ArmL);
+    assert_eq!(region("RigRFLeg1"), Region::ArmR);
+    assert_eq!(region("RigLBLeg2"), Region::LegL);
+    assert_eq!(region("RigRBLegAnkle"), Region::LegR);
+    assert_eq!(region("RigHead"), Region::Head);
+    // A bear of a few hundred kilograms, most of it in the trunk.
+    assert!((150.0..600.0).contains(&mass), "{mass}");
+    let sum: f32 = desc.iter().map(|b| b.mass_fraction).sum();
+    assert!((sum - 1.0).abs() < 1e-4);
+    let trunk: f32 = desc.iter().filter(|b| b.region == Region::Torso).map(|b| b.mass_fraction).sum();
+    assert!(trunk > 0.5, "{trunk}");
+}
+
+#[test]
+fn generic_quadruped_falls_on_its_side_and_settles() {
+    let (desc, mass) = acr_physics::skeleton_generic(&quadruped());
+    let mut world = World::new(config());
+    let animal = Ragdoll::spawn(&mut world, &desc, mass, Vec3::new(0.0, 0.0, 0.05), Quat::IDENTITY);
+    // Dead: limp, pushed from the side as by a shot.
+    let chest = animal.bone_index("RigChest").unwrap();
+    let c = world.body(animal.body(chest)).pos;
+    world.apply_impulse(animal.body(chest), c + Vec3::new(0.3, 0.0, 0.2), Vec3::new(-0.6 * mass, 0.0, 0.0));
+    let mut worst = 0.0f32;
+    for _ in 0..600 {
+        world.step(&flat);
+        worst = worst.max(worst_violation(&world).1);
+    }
+    let (ang, _) = worst_violation(&world);
+    assert!(ang < 6.0 * DEG, "limits at rest {:.1}°", ang / DEG);
+    assert!(worst < 0.05, "separation {worst}");
+    // Down on the ground: the trunk lies low and nothing is under the ground.
+    assert!(world.body(animal.body(chest)).pos.z < 0.5, "{:?}", world.body(animal.body(chest)).pos);
+    assert!(animal.min_z(&world) > -0.03, "{}", animal.min_z(&world));
+    assert!(kinetic(&world) / mass < 0.01, "{}", kinetic(&world));
+}

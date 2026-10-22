@@ -21,11 +21,14 @@
 
 use std::collections::HashMap;
 
-use acr_physics::{Config, Quat, Ragdoll, Region, Tone, Vec3, World as Physics, skeleton_h};
+use acr_physics::{
+    BoneDesc, BoneKind, Config, Quat, Ragdoll, Region, RigBone, Tone, Vec3, World as Physics, skeleton_h,
+};
 use acr_render::math::{self, Mat4};
 use acr_render::model::{ModelData, Palette, Slot};
 use acr_render::terrain::TerrainData;
 use acr_render::view3d::{self, PIXELS_PER_METRE};
+use acr_sim::body::Cause;
 use acr_sim::combat::{DeathCause, HitRecord};
 use acr_sim::world::Unit;
 
@@ -47,6 +50,12 @@ const GETUP_S: f32 = 1.5;
 /// Centre of mass beyond the support between the feet (m) that makes him step.
 const STEP_AT: f32 = 0.12;
 
+/// [`Ragdolls::pool`] key of skeleton-H ragdolls.
+const HUMAN: usize = usize::MAX;
+/// Impulse (N·s) of an animal's blow that throws a man down: a bear's swipe, a bison's
+/// horns.
+const MAUL_IMPULSE: [f32; 3] = [34.0, 26.0, 70.0];
+
 /// The bones of skeleton H in the order of [`skeleton_h`].
 fn bone_names() -> Vec<&'static str> {
     skeleton_h().iter().map(|b| b.name).collect()
@@ -58,6 +67,51 @@ pub(super) struct Mapping {
     slot_bone: Vec<usize>,
     bind: Vec<Mat4>,
     bone_slot: Vec<usize>,
+    /// An animal's own ragdoll (bones, kinds, total mass, kg); `None` for skeleton H.
+    generic: Option<Generic>,
+}
+
+/// The ragdoll of an animal rig ([`acr_physics::skeleton_generic`]).
+pub(super) struct Generic {
+    desc: Vec<BoneDesc>,
+    kinds: Vec<BoneKind>,
+    mass: f32,
+}
+
+/// Joints of an animal rig that are details, not body bones (they ride on their nearest
+/// body-bone ancestor): digits, claws, tongue, eyes, ears, whiskers and helpers.
+const DETAIL_BONES: [&str; 22] = [
+    "digit",
+    "toe",
+    "finger",
+    "index",
+    "middle",
+    "pinky",
+    "ring",
+    "thumb",
+    "claw",
+    "tongue",
+    "eye",
+    "lid",
+    "ear",
+    "whisker",
+    "nose",
+    "lip",
+    "_end",
+    "target",
+    "reference",
+    "root",
+    "blade",
+    "teeth",
+];
+
+/// A model that gets an animal ragdoll: no skeleton-H rig, an `Anm*` type (riders and
+/// horses keep their clips), skinned.
+pub(super) fn animal_model(model: &ModelData) -> bool {
+    model.rig.is_none()
+        && !model.machine
+        && model.type_name.as_deref().is_some_and(|t| t.len() > 3 && t[..3].eq_ignore_ascii_case("anm"))
+        && model.slots.iter().any(|s| matches!(s, Slot::Joint { .. }))
 }
 
 fn rows_to_mat(rows: &[[f32; 4]; 3]) -> Mat4 {
@@ -94,10 +148,183 @@ impl Mapping {
             slot_bone.push(bone);
         }
         if bone_slot.contains(&usize::MAX) {
-            return None;
+            return if animal_model(model) { Mapping::generic(model) } else { None };
         }
         let bind = model.pose(None, 0.0).iter().map(rows_to_mat).collect();
-        Some(Mapping { slot_bone, bind, bone_slot })
+        Some(Mapping { slot_bone, bind, bone_slot, generic: None })
+    }
+
+    /// A skeleton-H man (the gait, the reflexes and the knock-down apply).
+    pub(super) fn human(&self) -> bool {
+        self.generic.is_none()
+    }
+
+    /// The mapping of an animal rig: its body bones (the skin's joints without the details),
+    /// their rest segments from the inverse bind matrices, and the flesh radius around each
+    /// from the skinned vertices.
+    fn generic(model: &ModelData) -> Option<Mapping> {
+        let joints: Vec<(usize, usize, Mat4)> = model
+            .slots
+            .iter()
+            .enumerate()
+            .filter_map(|(s, slot)| match *slot {
+                Slot::Joint { node, inverse_bind } => Some((s, node, inverse_bind)),
+                Slot::Node(_) => None,
+            })
+            .collect();
+        let detail = |n: usize| {
+            let name = model.nodes[n].name.to_ascii_lowercase();
+            DETAIL_BONES.iter().any(|d| name.contains(d)) && !name.contains("forearm")
+        };
+        let joint_of = |n: usize| joints.iter().find(|j| j.1 == n);
+        // The nearest kept ancestor of a node.
+        let kept_above = |mut n: usize| {
+            while let Some(p) = model.nodes[n].parent {
+                if joint_of(p).is_some() && !detail(p) {
+                    return Some(p);
+                }
+                n = p;
+            }
+            None
+        };
+        let below = |n: usize, r: usize| {
+            let mut a = Some(n);
+            while let Some(x) = a {
+                if x == r {
+                    return true;
+                }
+                a = model.nodes[x].parent;
+            }
+            false
+        };
+        let mut kept: Vec<usize> = joints.iter().map(|j| j.1).filter(|&n| !detail(n)).collect();
+        let depth = |mut n: usize| {
+            let mut d = 0;
+            while let Some(p) = model.nodes[n].parent {
+                d += 1;
+                n = p;
+            }
+            d
+        };
+        // One root: the top bone with the most bones under it.
+        let roots: Vec<usize> = kept.iter().copied().filter(|&n| kept_above(n).is_none()).collect();
+        let root = *roots.iter().max_by_key(|&&r| kept.iter().filter(|&&n| below(n, r)).count())?;
+        kept.retain(|&n| below(n, root));
+        kept.sort_by_key(|&n| (depth(n), n));
+        if kept.len() < 3 || kept.len() > 64 {
+            return None;
+        }
+        // Rest frames (skeleton space) of all joints.
+        let bind_of = |n: usize| joint_of(n).map(|j| math::mul(&GLTF_TO_SKELETON, &affine_inverse(&j.2)));
+        let head = |n: usize| bind_of(n).map_or([0.0; 3], |m| [m[3][0], m[3][1], m[3][2]]);
+        // Names live as long as the game (one leak per animal model).
+        let names: Vec<&'static str> =
+            kept.iter().map(|&n| &*Box::leak(model.nodes[n].name.clone().into_boxed_str())).collect();
+        let index = |n: usize| kept.iter().position(|&k| k == n);
+        let mut rig: Vec<RigBone> = kept
+            .iter()
+            .enumerate()
+            .map(|(i, &n)| RigBone {
+                name: names[i],
+                parent: kept_above(n).and_then(index),
+                head: head(n),
+                tail: head(n),
+                radius: 0.0,
+            })
+            .collect();
+        let kinds = acr_physics::bone_kinds(&rig);
+        let trunk = |k: BoneKind| matches!(k, BoneKind::Root | BoneKind::Spine);
+        let limb = |k: BoneKind| matches!(k, BoneKind::Girdle | BoneKind::Upper | BoneKind::Middle | BoneKind::Foot);
+        // Tails: the child that continues the chain, else along the joint's own axis as far
+        // as the details under it reach.
+        let mut lens = vec![0.0f32; rig.len()];
+        for i in 0..rig.len() {
+            let children: Vec<usize> = (0..rig.len()).filter(|&c| rig[c].parent == Some(i)).collect();
+            let next = match kinds[i] {
+                k if trunk(k) => children
+                    .iter()
+                    .find(|&&c| kinds[c] == BoneKind::Spine)
+                    .or_else(|| children.iter().find(|&&c| kinds[c] == BoneKind::Neck)),
+                BoneKind::Neck => children.iter().find(|&&c| matches!(kinds[c], BoneKind::Neck | BoneKind::Head)),
+                BoneKind::Tail => children.iter().find(|&&c| kinds[c] == BoneKind::Tail),
+                k if limb(k) => children.iter().find(|&&c| limb(kinds[c])),
+                _ => None,
+            };
+            let h = Vec3::from_array(rig[i].head);
+            let tail = match next {
+                Some(&c) if (Vec3::from_array(rig[c].head) - h).length() > 0.02 => rig[c].head,
+                _ => {
+                    let m = bind_of(kept[i]).unwrap_or(math::IDENTITY);
+                    let axis = Vec3::new(m[1][0], m[1][1], m[1][2]).normalize_or_zero();
+                    let reach = joints
+                        .iter()
+                        .filter(|j| j.1 != kept[i] && below(j.1, kept[i]))
+                        .map(|j| (Vec3::from_array(head(j.1)) - h).dot(axis))
+                        .fold(0.0f32, f32::max);
+                    let parent_len = rig[i].parent.map_or(0.1, |p| lens[p]);
+                    let len = if reach > 0.03 { reach } else { (0.6 * parent_len).max(0.05) };
+                    (h + axis * len).to_array()
+                }
+            };
+            lens[i] = (Vec3::from_array(tail) - h).length();
+            rig[i].tail = tail;
+        }
+        // Palette slots: each joint rides on its nearest kept ancestor (or itself).
+        let mut bone_slot = vec![usize::MAX; rig.len()];
+        let mut slot_bone = Vec::with_capacity(model.slots.len());
+        for (s, slot) in model.slots.iter().enumerate() {
+            let node = match *slot {
+                Slot::Joint { node, .. } => node,
+                Slot::Node(n) => n,
+            };
+            if let (Slot::Joint { .. }, Some(b)) = (slot, index(node)) {
+                bone_slot[b] = s;
+            }
+            let mut n = Some(node);
+            let mut bone = 0;
+            while let Some(i) = n {
+                if let Some(b) = index(i) {
+                    bone = b;
+                    break;
+                }
+                n = model.nodes[i].parent;
+            }
+            slot_bone.push(bone);
+        }
+        // Flesh radius: the median distance of the bone's vertices (by their heaviest joint)
+        // from its segment, a little inside the skin.
+        let mut dists: Vec<Vec<f32>> = vec![Vec::new(); rig.len()];
+        for p in &model.primitives {
+            for v in p.vertices.iter().step_by(3) {
+                let k = (0..4).max_by(|&a, &b| v.weights[a].total_cmp(&v.weights[b])).unwrap_or(0);
+                if v.weights[k] <= 0.0 {
+                    continue;
+                }
+                let Some(&b) = slot_bone.get(v.joints[k] as usize) else { continue };
+                let q = Vec3::new(v.position[0], -v.position[2], v.position[1]);
+                let (a, t) = (Vec3::from_array(rig[b].head), Vec3::from_array(rig[b].tail));
+                let ab = t - a;
+                let u = ((q - a).dot(ab) / ab.dot(ab).max(1e-8)).clamp(0.0, 1.0);
+                dists[b].push((q - (a + ab * u)).length());
+            }
+        }
+        for (b, d) in dists.iter_mut().enumerate() {
+            if d.len() >= 8 {
+                d.sort_by(f32::total_cmp);
+                rig[b].radius = 0.85 * d[d.len() / 2];
+            }
+        }
+        if bone_slot.contains(&usize::MAX) {
+            return None;
+        }
+        let (desc, mass) = acr_physics::skeleton_generic(&rig);
+        let bind = model.pose(None, 0.0).iter().map(rows_to_mat).collect();
+        log::info!(
+            "3d: animal ragdoll {}: {} bones, {mass:.0} kg",
+            model.type_name.as_deref().unwrap_or("?"),
+            desc.len()
+        );
+        Some(Mapping { slot_bone, bind, bone_slot, generic: Some(Generic { desc, kinds, mass }) })
     }
 }
 
@@ -207,12 +434,17 @@ struct Actor {
     step: Option<(usize, Vec3, Vec3, f32)>,
     /// Skinning matrices once he lies still (a corpse no longer needs the physics).
     frozen: Option<Vec<[[f32; 4]; 4]>>,
+    /// A skeleton-H man; else an animal (no reflexes, steps or knock-downs).
+    human: bool,
+    /// The body's mass (kg), for the sway of a blow.
+    mass: f32,
 }
 
 /// The body physics of the 3D view.
 pub struct Ragdolls {
     physics: Physics,
-    pool: Vec<(Ragdoll, Option<u32>)>,
+    /// Ragdolls, their user, and the rig they were built for (`HUMAN` or an animal's model).
+    pool: Vec<(Ragdoll, Option<u32>, usize)>,
     actors: HashMap<u32, Actor>,
     maps: HashMap<usize, Option<Mapping>>,
     names: Vec<&'static str>,
@@ -325,6 +557,45 @@ fn struck_bone(hit: &HitRecord, names: &[&str]) -> (usize, Region) {
     }
 }
 
+/// The bone of an animal's ragdoll struck by a hit, and its region: the part's bone by the
+/// rig's kinds (head, the chest end of the spine, its middle, the root; a leg by its level).
+fn struck_generic(hit: &HitRecord, g: &Generic) -> (usize, Region) {
+    use acr_sim::body::{LimbId, Part};
+    use acr_sim::wounds::HitRegion;
+    let n = g.desc.len();
+    let spine: Vec<usize> = (0..n).filter(|&b| matches!(g.kinds[b], BoneKind::Root | BoneKind::Spine)).collect();
+    let head = (0..n)
+        .find(|&b| g.kinds[b] == BoneKind::Head)
+        .or_else(|| (0..n).rev().find(|&b| g.kinds[b] == BoneKind::Neck))
+        .unwrap_or(0);
+    let mid = spine.get(spine.len() / 2).copied().unwrap_or(0);
+    let chest = spine.last().copied().unwrap_or(0);
+    let limb = |region: Region, level: u8| {
+        let bones: Vec<usize> =
+            (0..n).filter(|&b| g.desc[b].region == region && g.kinds[b] != BoneKind::Girdle).collect();
+        let at = bones.get(usize::from(level) * bones.len() / 256).copied();
+        (at.unwrap_or(mid), if at.is_some() { region } else { Region::Torso })
+    };
+    match (hit.injury.map(|i| (i.part, i.level)), hit.region) {
+        (Some((Part::Head, _)), _) | (None, Some(HitRegion::Head)) => (head, Region::Head),
+        (Some((Part::Chest, _)), _) => (chest, Region::Torso),
+        (Some((Part::Belly, _)), _) => (mid, Region::Torso),
+        (Some((Part::Pelvis, _)), _) => (0, Region::Torso),
+        (Some((Part::Limb(l), level)), _) => limb(
+            match l {
+                LimbId::ArmL => Region::ArmL,
+                LimbId::ArmR => Region::ArmR,
+                LimbId::LegL => Region::LegL,
+                LimbId::LegR => Region::LegR,
+            },
+            level,
+        ),
+        (None, Some(HitRegion::Legs)) => limb(Region::LegL, 60),
+        (None, Some(HitRegion::Arms)) => limb(Region::ArmR, 60),
+        _ => (mid, Region::Torso),
+    }
+}
+
 /// A unit's instance this frame, as [`Ragdolls::update`] needs it.
 pub struct Drawn<'a> {
     pub unit: &'a Unit,
@@ -338,7 +609,7 @@ pub struct Drawn<'a> {
 
 impl Ragdolls {
     pub fn clear(&mut self) {
-        for (r, user) in &mut self.pool {
+        for (r, user, _) in &mut self.pool {
             *user = None;
             r.freeze(&mut self.physics);
         }
@@ -362,21 +633,30 @@ impl Ragdolls {
         self.actors.values().filter(|a| a.frozen.is_none()).count()
     }
 
-    /// A free ragdoll of the pool, or the oldest frozen corpse's.
-    fn take_slot(&mut self, unit: u32) -> Option<usize> {
-        if let Some(i) = self.pool.iter().position(|(_, u)| u.is_none()) {
+    /// A free ragdoll of the pool built for `model`'s rig, or the oldest frozen corpse's.
+    fn take_slot(&mut self, unit: u32, model: usize) -> Option<usize> {
+        let generic = self.maps.get(&model).and_then(Option::as_ref).and_then(|m| m.generic.as_ref());
+        let key = if generic.is_some() { model } else { HUMAN };
+        if let Some(i) = self.pool.iter().position(|(_, u, k)| u.is_none() && *k == key) {
             self.pool[i].1 = Some(unit);
             return Some(i);
         }
         if self.pool.len() < POOL {
             let far = Vec3::new(-1000.0 - 5.0 * self.pool.len() as f32, -1000.0, 0.0);
-            let r = Ragdoll::spawn(&mut self.physics, &skeleton_h(), 75.0, far, Quat::IDENTITY);
-            self.pool.push((r, Some(unit)));
+            let r = match generic {
+                Some(g) => Ragdoll::spawn(&mut self.physics, &g.desc, g.mass, far, Quat::IDENTITY),
+                None => Ragdoll::spawn(&mut self.physics, &skeleton_h(), 75.0, far, Quat::IDENTITY),
+            };
+            self.pool.push((r, Some(unit), key));
             return Some(self.pool.len() - 1);
         }
-        // The oldest corpse leaves the physics; it keeps its pose.
-        let (&v, _) =
-            self.actors.iter().filter(|(_, a)| a.frozen.is_some()).min_by(|a, b| a.1.died.total_cmp(&b.1.died))?;
+        // The oldest corpse of the same rig leaves the physics; it keeps its pose.
+        let pool = &self.pool;
+        let (&v, _) = self
+            .actors
+            .iter()
+            .filter(|(_, a)| a.frozen.is_some() && a.slot != usize::MAX && pool[a.slot].2 == key)
+            .min_by(|a, b| a.1.died.total_cmp(&b.1.died))?;
         let slot = self.actors.get(&v)?.slot;
         if let Some(a) = self.actors.get_mut(&v) {
             a.slot = usize::MAX;
@@ -492,10 +772,15 @@ impl Ragdolls {
 
     fn take_hit(&mut self, hit: &HitRecord, d: &Drawn<'_>, now: u64, dies: bool, terrain: &TerrainData) {
         let v = hit.victim;
-        let (bone, region) = struck_bone(hit, &self.names);
+        let generic = self.maps.get(&d.model).and_then(Option::as_ref).and_then(|m| m.generic.as_ref());
+        let (human, mass) = (generic.is_none(), generic.map_or(75.0, |g| g.mass));
+        let (bone, region) = match generic {
+            Some(g) => struck_generic(hit, g),
+            None => struck_bone(hit, &self.names),
+        };
         let new = !self.actors.contains_key(&v) || self.actors[&v].slot == usize::MAX;
         if new {
-            let Some(slot) = self.take_slot(v) else { return };
+            let Some(slot) = self.take_slot(v, d.model) else { return };
             let Some(map) = self.maps.get(&d.model).and_then(Option::as_ref) else { return };
             let skins = animated_skins(map, &d.data.pose(d.clip, d.time), &d.transform);
             let vel = match self.tracks.get(&v) {
@@ -532,6 +817,7 @@ impl Ragdolls {
             r.set_tone_all(&mut self.physics, Tone::FULL);
             let energy = hit.injury.map_or(60, |i| i.energy);
             let reaction = match region {
+                _ if !human => Reaction::Stagger,
                 Region::LegL | Region::LegR => Reaction::Buckle,
                 Region::Torso => Reaction::Stagger,
                 _ => Reaction::Flinch,
@@ -557,6 +843,8 @@ impl Ragdolls {
                     fallen: None,
                     step: None,
                     frozen: None,
+                    human,
+                    mass,
                 },
             );
         }
@@ -577,12 +865,28 @@ impl Ragdolls {
         let body = r.body(bone);
         let b = self.physics.body(body);
         let point = b.pos - dir * (b.radius * 0.8);
-        let j = impulse_of(hit.cause, hit.injury.map_or(60, |i| i.energy));
-        self.physics.apply_impulse(body, point, dir * j);
+        let energy = hit.injury.map_or(60, |i| i.energy);
+        // An animal's blow (#276 phase 4): a bear's swipe or a bison's horns throw him down,
+        // away from the animal.
+        let maul = match hit.injury.map(|i| i.cause) {
+            Some(Cause::Claw) => Some(0),
+            Some(Cause::Bite) => Some(1),
+            Some(Cause::Gore) => Some(2),
+            _ => None,
+        };
+        let j = match maul {
+            Some(k) => MAUL_IMPULSE[k] * (0.5 + 0.5 * f32::from(energy) / 100.0),
+            None => impulse_of(hit.cause, energy),
+        };
+        // Thrown down and a little up for a goring.
+        let lift = if maul == Some(2) { Vec3::new(0.0, 0.0, 0.35) } else { Vec3::ZERO };
+        self.physics.apply_impulse(body, point, (dir + lift) * j);
         // The survivor's hips sway with the blow (the total momentum over his mass).
-        a.sway_v += dir * (j / 75.0) * SWAY_GAIN;
-        // A hard blow knocks a survivor down: he gets up when the clip takes him back.
-        if !a.dying && j >= KNOCK_DOWN && a.down.is_none() {
+        a.sway_v += dir * (j / a.mass) * SWAY_GAIN;
+        // A hard blow knocks a survivor down: he gets up when the clip takes him back (and the
+        // simulation lets him: `Body::down`).
+        let thrown = j >= KNOCK_DOWN || d.unit.body.down > 0;
+        if !a.dying && a.human && thrown && a.down.is_none() {
             a.down = Some(self.time);
             a.fallen = None;
             a.recover = a.recover.max(FALL_S + GETUP_S + 0.3);
@@ -610,7 +914,7 @@ impl Ragdolls {
                 r.set_tone_all(&mut self.physics, Tone::FULL.scaled(0.6 * k));
                 r.set_tone_region(&mut self.physics, a.region, Tone::FULL.scaled(0.05 * k));
                 // The last reflex: arms drawn in towards the wound.
-                if k > 0.0 {
+                if k > 0.0 && a.human {
                     for side in ["_l", "_r"] {
                         let bone = |n: &str| self.names.iter().position(|b| *b == format!("{n}{side}"));
                         if let Some(e) = bone("forearm") {
@@ -630,6 +934,31 @@ impl Ragdolls {
             let Some(map) = self.maps.get(&a.model).and_then(Option::as_ref) else { continue };
             let mut skins = animated_skins(map, &d.data.pose(d.clip, d.time), &d.transform);
             let back = (t / a.recover).clamp(0.0, 1.0);
+            if !a.human {
+                // An animal staggers on its legs: the struck region limp for a moment, the
+                // root on a damped spring around the clip.
+                r.set_tone_all(&mut self.physics, Tone::FULL);
+                r.set_tone_region(&mut self.physics, a.region, Tone::FULL.scaled(0.05 + 0.95 * back * back));
+                let (w, z) = (6.0, 0.45);
+                let acc = -(a.sway * (w * w)) - a.sway_v * (2.0 * z * w);
+                a.sway_v += acc * dt;
+                a.sway += a.sway_v * dt;
+                r.target_skins(&mut self.physics, &skins);
+                let mut s = skins[hips];
+                s[3][0] += a.sway.x;
+                s[3][1] += a.sway.y;
+                r.set_pinned_root(&mut self.physics, true);
+                r.place(&mut self.physics, hips, &s, Vec3::ZERO);
+                continue;
+            }
+            // Held down (mauled): he lies as long as the simulation keeps him down.
+            if let Some(down) = a.down
+                && d.unit.body.down > 0
+                && self.time - down > FALL_S - 0.2
+            {
+                a.down = Some(self.time - (FALL_S - 0.2));
+                a.recover = a.recover.max(t + FALL_S + GETUP_S + 0.3);
+            }
             // Knocked down: the legs give, he lies a moment, then gets up through a blend of
             // the hips from where he lay to the clip.
             if let Some(down) = a.down {
@@ -823,6 +1152,47 @@ mod tests {
         let p = physics_of(w);
         let q = Quat::from_axis_angle(Vec3::Z, yaw).rotate(Vec3::new(skel[0], skel[1], skel[2])) + physics_of(ground);
         assert!((p - q).length() < 1e-4, "{p:?} vs {q:?}");
+    }
+
+    #[test]
+    fn struck_bones_of_an_animal() {
+        use acr_sim::body::{Injury, LimbId, Outcome, Part};
+        let bone = |name, parent, head: [f32; 3], tail: [f32; 3]| RigBone { name, parent, head, tail, radius: 0.1 };
+        let rig = vec![
+            bone("RigPelvis", None, [0.0, 0.4, 0.8], [0.0, 0.2, 0.8]),
+            bone("RigSpine1", Some(0), [0.0, 0.2, 0.8], [0.0, 0.0, 0.8]),
+            bone("RigChest", Some(1), [0.0, 0.0, 0.8], [0.0, -0.3, 0.8]),
+            bone("RigNeck1", Some(2), [0.0, -0.3, 0.8], [0.0, -0.5, 0.9]),
+            bone("RigHead", Some(3), [0.0, -0.5, 0.9], [0.0, -0.8, 0.9]),
+            bone("RigLFLegCollarbone", Some(2), [0.1, -0.2, 0.8], [0.15, -0.25, 0.7]),
+            bone("RigLFLeg1", Some(5), [0.15, -0.25, 0.7], [0.15, -0.25, 0.4]),
+            bone("RigLFLeg2", Some(6), [0.15, -0.25, 0.4], [0.15, -0.25, 0.05]),
+            bone("RigLBLeg1", Some(0), [0.15, 0.4, 0.75], [0.15, 0.4, 0.4]),
+            bone("RigLBLeg2", Some(8), [0.15, 0.4, 0.4], [0.15, 0.4, 0.05]),
+        ];
+        let (desc, mass) = acr_physics::skeleton_generic(&rig);
+        let g = Generic { kinds: acr_physics::bone_kinds(&rig), desc, mass };
+        let hit = |part, level| HitRecord {
+            tick: 1,
+            victim: 1,
+            pos: (0, 0),
+            dir: (1, 0),
+            cause: DeathCause::Gunshot,
+            killed: false,
+            building: false,
+            region: None,
+            injury: Some(Injury { part, level, outcome: Outcome::Wound, energy: 80, cause: Cause::Musket }),
+        };
+        let name = |h: HitRecord| g.desc[struck_generic(&h, &g).0].name;
+        assert_eq!(name(hit(Part::Head, 0)), "RigHead");
+        assert_eq!(name(hit(Part::Chest, 40)), "RigChest");
+        assert_eq!(name(hit(Part::Pelvis, 240)), "RigPelvis");
+        assert_eq!(name(hit(Part::Limb(LimbId::ArmL), 30)), "RigLFLeg1");
+        assert_eq!(name(hit(Part::Limb(LimbId::ArmL), 220)), "RigLFLeg2");
+        assert_eq!(name(hit(Part::Limb(LimbId::LegL), 220)), "RigLBLeg2");
+        assert_eq!(struck_generic(&hit(Part::Limb(LimbId::LegL), 10), &g).1, Region::LegL);
+        // No right legs in this rig: the blow lands on the trunk.
+        assert_eq!(struck_generic(&hit(Part::Limb(LimbId::ArmR), 10), &g).1, Region::Torso);
     }
 
     #[test]
