@@ -469,6 +469,11 @@ pub struct World {
     pub plan: Option<Arc<crate::aiplace::PlanMaps>>,
     /// The building side of the computer players' cities.
     pub cities: [crate::aiplace::City; PLAYERS],
+    /// Each player's grouped formations (`City::GroupsSet`).
+    pub formation_groups: [crate::grouping::FormationGroups; PLAYERS],
+    /// Coast places, islands and the computer players' landing setup (derived from the map
+    /// and refreshed every tick; not hashed, the landings' orders are in `brigades`).
+    pub desant: crate::desant::Desant,
     /// Nations run by an AI (`Nat+0x1a729` bit3): they search targets every 8th tick except
     /// towers, and their training buildings still shoot. Set by the host.
     pub ai: [bool; PLAYERS],
@@ -591,6 +596,8 @@ impl World {
             bars,
             plan: None,
             cities: Default::default(),
+            formation_groups: Default::default(),
+            desant: Default::default(),
             ai: [false; PLAYERS],
         }
     }
@@ -662,6 +669,7 @@ impl World {
         world.sources = Arc::new(crate::gather::Sources::new(sources, world.map.land.width * 16));
         crate::economy::bind_mines(&mut world);
         crate::economy::census_all(&mut world);
+        crate::desant::create_cost_places(&mut world);
         (world, report)
     }
 
@@ -758,6 +766,8 @@ impl World {
             self.bars.add(x0, y0, x0 + l + wd, y0 + l - wd, h, id.0);
         }
         self.units.push(unit);
+        // `CreateNewMonsterAt` (0x5155c5) registers new units with a computer player's city.
+        crate::desant::register_new_unit(self, id.0 as usize);
         id
     }
 
@@ -828,6 +838,7 @@ impl World {
         for c in commands {
             self.apply(c);
         }
+        crate::desant::tick(self);
         crate::economy::city_tick(self);
         if let Some(def) = &self.catalog.market {
             self.market.process(def);
@@ -1105,6 +1116,8 @@ impl World {
                     crate::ship::leave_all(self, t);
                 }
             }
+            Command::GroupFormations { player, units } => crate::grouping::group(self, *player, units),
+            Command::UngroupFormations { player, units } => crate::grouping::ungroup(self, *player, units),
             Command::Patrol { player, units, x, y } => {
                 let ids = self.owned(*player, units);
                 crate::motion::patrol(self, &ids, *x, *y);
@@ -1133,7 +1146,7 @@ impl World {
     /// Hash of the whole dynamic state (units, brigades, occupancy, random index, tick),
     /// identical across platforms; two worlds with equal hashes behave identically.
     pub fn state_hash(&self) -> u64 {
-        state_hash(&(
+        let hash = state_hash(&(
             self.tick.0,
             self.random,
             &self.units,
@@ -1146,6 +1159,13 @@ impl World {
             &self.morale,
             &self.projectiles,
             (&self.bars, self.ai),
-        ))
+        ));
+        // Formation groups count only once there are some, so the hashes of games without
+        // them stay as they were.
+        if self.formation_groups.iter().all(|g| g.is_empty()) {
+            hash
+        } else {
+            state_hash(&(hash, &self.formation_groups))
+        }
     }
 }

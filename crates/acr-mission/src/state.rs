@@ -234,9 +234,9 @@ pub struct ScriptState {
     pub nmask: [u8; 8],
     /// `CITY[n].Difficulty`.
     pub difficulty: [u8; 8],
-    /// The AI landing setup per nation (`CITY+0xf4e`, `+0xf50`, `+0x189`): start and
-    /// destination groups and the transport load (default 80).
-    pub desant: [(u16, u16, i32); 8],
+    /// The AI landing's groups per nation (`CITY+0xf4e`, `+0xf50`): start and destination
+    /// group (see [`ScriptState::sync_desant`]).
+    pub desant: [(Option<usize>, Option<usize>); 8],
     /// Player names set by `SetPlayerName`.
     pub player_names: [Option<Vec<u8>>; 8],
     /// Nations whose AI was switched on by `StartAI`: `(nation, DLL path)`.
@@ -313,7 +313,7 @@ impl ScriptState {
             assign: [0, 1, 2, 3, 4, 5, 6, 7],
             nmask: std::array::from_fn(|n| 1 << n),
             difficulty,
-            desant: [(0xFFFF, 0xFFFF, 80); 8],
+            desant: [(None, None); 8],
             player_names: Default::default(),
             ai_started: Vec::new(),
             extra: BTreeMap::new(),
@@ -392,6 +392,48 @@ impl ScriptState {
         world.nation_mask = self.nmask;
         for u in &mut world.units {
             u.nmask = self.unit_nmask(u.id, u.owner);
+        }
+    }
+
+    /// Exchanges the AI landing's groups with the simulation (`acr_sim::desant`): the units
+    /// the last step took from a start group leave it, which is cleaned first as the engine
+    /// does before taking (0x56d0cc: alive or hidden units with their serial); the units
+    /// that landed join the destination group (0x56dc5f: appended unless there); then the
+    /// start groups' units go to the simulation for the next step. `mission`: a mission
+    /// script runs.
+    pub fn sync_desant(&mut self, world: &mut World, mission: bool) {
+        world.desant.mission = mission;
+        for n in 0..8 {
+            let (start, dest) = self.desant[n];
+            let taken = std::mem::take(&mut world.desant.cities[n].taken);
+            let landed = std::mem::take(&mut world.desant.cities[n].landed);
+            let valid = |st: &Self, m: Member| {
+                m.id != NO_UNIT
+                    && world.units.get(usize::from(m.id)).is_some_and(|u| u.alive && u.living())
+                    && st.serial(EntityId(u32::from(m.id))) == m.serial
+            };
+            if let Some(g) = start
+                && !taken.is_empty()
+            {
+                let kept: Vec<Member> = self.groups[g]
+                    .members
+                    .iter()
+                    .copied()
+                    .filter(|&m| valid(self, m) && !taken.contains(&EntityId(u32::from(m.id))))
+                    .collect();
+                self.groups[g].members = kept;
+            }
+            if let Some(g) = dest {
+                for id in landed {
+                    if !self.groups[g].members.iter().any(|m| u32::from(m.id) == id.0) {
+                        let serial = self.serial(id);
+                        self.groups[g].members.push(Member { id: id.0 as u16, serial });
+                    }
+                }
+            }
+            world.desant.cities[n].start = start.map(|g| {
+                self.groups[g].members.iter().filter(|&&m| valid(self, m)).map(|m| EntityId(u32::from(m.id))).collect()
+            });
         }
     }
 

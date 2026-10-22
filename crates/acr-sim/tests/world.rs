@@ -217,3 +217,42 @@ fn a_move_with_a_direction_ends_facing_it() {
     assert!(u.orders.is_empty());
     assert!((px(&w, id).0 - 1200).abs() < 40);
 }
+
+#[test]
+fn formations_group_and_ungroup() {
+    let (mut w, mus, off) = setup();
+    let mut officers = Vec::new();
+    for k in 0..3 {
+        let x = 1500 + 600 * k;
+        let officer = w.spawn(off, 0, Pos::from_pixels(x, 2000), 0);
+        let soldiers: Vec<EntityId> = (0..15)
+            .map(|i| w.spawn(mus, 0, Pos::from_pixels(x - 100 + 20 * (i % 5), 2100 + 20 * (i / 5)), 0))
+            .collect();
+        w.step(&[Command::Form { player: 0, officer, units: soldiers, kind: "LINE".into() }]);
+        officers.push(officer);
+    }
+    assert_eq!(w.brigades.len(), 3);
+    let hash = w.state_hash();
+    // Another player's units and free units do not count.
+    let free = w.spawn(mus, 0, Pos::from_pixels(900, 900), 0);
+    w.step(&[Command::GroupFormations { player: 1, units: officers.clone() }]);
+    assert!(w.formation_groups[1].is_empty() && w.formation_groups[0].is_empty());
+    w.step(&[Command::GroupFormations { player: 0, units: vec![officers[1], free, officers[0]] }]);
+    assert_eq!(w.formation_groups[0].sets, vec![vec![1, 0]]);
+    assert_ne!(w.state_hash(), hash);
+    // Grouping again moves a formation into the new group.
+    w.step(&[Command::GroupFormations { player: 0, units: vec![officers[2], officers[0]] }]);
+    assert_eq!(w.formation_groups[0].sets, vec![vec![1], vec![2, 0]]);
+    assert!(w.formation_groups[0].is_group(&[0, 2]));
+    w.step(&[Command::UngroupFormations { player: 0, units: vec![officers[2]] }]);
+    assert_eq!(w.formation_groups[0].sets, vec![vec![1], vec![0]]);
+    // Group [1] empties: [0] moves down but keeps the count 0 of [1] (as in the original),
+    // so it can no longer be found.
+    w.step(&[Command::UngroupFormations { player: 0, units: vec![officers[1]] }]);
+    assert_eq!(w.formation_groups[0].sets, vec![vec![0]]);
+    assert_eq!(w.formation_groups[0].counts, vec![0]);
+    assert!(!w.formation_groups[0].is_group(&[0]));
+    w.step(&[Command::GroupFormations { player: 0, units: officers.clone() }]);
+    assert_eq!(w.formation_groups[0].sets, vec![vec![0], vec![0, 1, 2]]);
+    assert!(w.formation_groups[0].is_group(&[2, 1, 0]));
+}

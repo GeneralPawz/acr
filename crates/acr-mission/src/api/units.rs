@@ -59,26 +59,11 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("GetMaxUnits", 0x578148, DONE, get_max_units),
     f("CheckBuildingsComplete", 0x566a30, DONE, check_buildings_complete),
     f("SendUnitsToTransport", 0x56093a, Status::Done, send_units_to_transport),
-    f(
-        "SetMaxInTransport",
-        0x57033a,
-        Status::Partial("stored; the AI landing process is not modelled"),
-        set_max_in_transport,
-    ),
+    f("SetMaxInTransport", 0x57033a, DONE, set_max_in_transport),
     f("GetZoneCoor", 0x56c266, DONE, get_zone_coor),
     f("GetBuildingEntryPoint", 0x56ea8c, Status::Stub("no building entry points in the catalog yet: 0"), zero),
-    f(
-        "AssignDesantStartGroup",
-        0x5701ea,
-        Status::Partial("stored; the AI landing process is not modelled"),
-        assign_desant,
-    ),
-    f(
-        "AssignDesantDestGroup",
-        0x570224,
-        Status::Partial("stored; the AI landing process is not modelled"),
-        assign_desant,
-    ),
+    f("AssignDesantStartGroup", 0x5701ea, DONE, assign_desant),
+    f("AssignDesantDestGroup", 0x570224, DONE, assign_desant),
     f(
         "CreateFormation",
         0x56fbf8,
@@ -368,24 +353,31 @@ fn send_units_to_transport(api: &mut Api, c: &mut Call) -> Result<u32> {
     Ok(0)
 }
 
-/// `void SetMaxInTransport(byte nat, int n)` (0x57033a).
+/// `void SetMaxInTransport(byte nat, int n)` (0x57033a): how many units a new transport of
+/// the AI loads (`City+0x189`, 80 at the start; see `acr_sim::desant`).
 fn set_max_in_transport(api: &mut Api, c: &mut Call) -> Result<u32> {
     let n = c.u8(0)?;
     if n < 8 {
-        api.st.desant[usize::from(n)].2 = c.i32(1)?;
+        api.world.desant.cities[usize::from(n)].max_in_transport = c.i32(1)?;
     }
     Ok(0)
 }
 
 /// `AssignDesantStartGroup(byte nat, GAMEOBJ* grp)` / `AssignDesantDestGroup` (0x5701ea /
-/// 0x570224): the AI landing's groups.
+/// 0x570224, `City+0xf4e` / `+0xf50`): the AI landing takes its units from the start group
+/// and puts them into the destination group when they are ashore. The nation is not
+/// remapped; the start group's `nat` must be below 8 (the destination's is not checked).
 fn assign_desant(api: &mut Api, c: &mut Call) -> Result<u32> {
-    let n = usize::from(c.u8(0)? & 7);
+    let n = usize::from(c.u8(0)?);
     let Some(g) = api.group(c, 1)? else { return Ok(0) };
+    if n >= 8 {
+        return Ok(0);
+    }
     if c.name() == "AssignDesantStartGroup" {
-        api.st.desant[n].0 = g as u16;
+        api.st.desant[n].0 = Some(g);
     } else {
-        api.st.desant[n].1 = g as u16;
+        api.st.desant[n].1 = Some(g);
+        api.world.desant.cities[n].dest = true;
     }
     Ok(0)
 }

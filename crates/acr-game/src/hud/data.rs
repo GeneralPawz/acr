@@ -45,6 +45,11 @@ pub struct HudData {
     /// `STOPBUILD`, `KARTECH`, `PREKARTECH`, `FISHING`, `ZASEV` (see [`SwitchIcon`]).
     pub switches: HashMap<String, SwitchIcon>,
     pub orders: Vec<OrderIcon>,
+    /// `UN?GROUP slot ungroup dogroup` (parser 0x4ec123): the slot of the grouping icon
+    /// (`GroupIconPos` 0x66ae28, 12 without the line) and its two frames.
+    pub group_slot: usize,
+    pub ungroup_icon: Option<usize>,
+    pub dogroup_icon: Option<usize>,
 }
 
 impl HudData {
@@ -58,7 +63,7 @@ impl HudData {
             .map(|(i, n)| (n.to_ascii_uppercase(), i))
             .rev()
             .collect();
-        let mut data = Self { icons, shield_icon: 13, ..Default::default() };
+        let mut data = Self { icons, shield_icon: 13, group_slot: 12, ..Default::default() };
         // The engine's defaults (0x66ae84/0x66ae88): only `ZASEV` has an icon without a line.
         data.switches.insert("ZASEV".into(), SwitchIcon { frames: vec![0x98], slot: 1 });
         let text = String::from_utf8_lossy(nres);
@@ -86,6 +91,13 @@ impl HudData {
                     let frames: Option<Vec<usize>> = (1..=n).map(|i| words.get(i).and_then(|w| data.icon(w))).collect();
                     if let (Some(frames), Some(x), Some(y)) = (frames, int(n + 1), int(n + 2)) {
                         data.switches.insert(first.to_owned(), SwitchIcon { frames, slot: x + 12 * y });
+                    }
+                }
+                "[CONST]" if first == "UN?GROUP" => {
+                    if let Some(slot) = int(1) {
+                        data.group_slot = slot;
+                        data.ungroup_icon = words.get(2).and_then(|w| data.icon(w));
+                        data.dogroup_icon = words.get(3).and_then(|w| data.icon(w));
                     }
                 }
                 "[CONST]" => {
@@ -160,5 +172,14 @@ GO&ATTACK 3 2 Go_With_Attack\r\nSTOP_ICON Cancel\r\n[ORDERICONS]\r\nLINE   8 0 F
         assert_eq!(d.switches["KARTECH"], SwitchIcon { frames: vec![2], slot: 19 });
         assert_eq!(d.switches["ZASEV"], SwitchIcon { frames: vec![152], slot: 1 }, "the engine's default");
         assert!(!d.switches.contains_key("FISHING"));
+        assert_eq!((d.group_slot, d.ungroup_icon, d.dogroup_icon), (12, None, None), "the engine's default");
+    }
+
+    #[test]
+    fn parses_grouping_icons() {
+        let icons = b"Make_Group_Formation_OFF\r\nMake_Group_Formation_ON\r\n";
+        let nres = b"[CONST]\r\nUN?GROUP 14 Make_Group_Formation_OFF Make_Group_Formation_ON\r\n[END]\r\n";
+        let d = HudData::parse(icons, nres);
+        assert_eq!((d.group_slot, d.ungroup_icon, d.dogroup_icon), (14, Some(0), Some(1)));
     }
 }
