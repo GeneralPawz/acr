@@ -101,8 +101,12 @@ the variant meshes, so the game looks as before.
   - Painted from a Cycles bake: weathered skin, eyes with whites, iris, lids, lashes and
     crease, brows, nostrils, lips and the mouth line, folds, a cropped scalp along the
     hairline, a faint beard shadow.
-  - The rest of the body keeps the shared outfit atlas; the dragoon rider (not dressed by
-    `outfit`) has no face map yet.
+  - Ageing for every man: uneven tone, sun spots, grime in the pores, forehead creases,
+    frown lines, crow's feet, eye-bag lines, deep nasolabial folds, days of stubble.
+  - The rest of the body keeps the shared outfit atlas. The dragoon rider, not dressed by
+    `outfit`, gets the face map in his detail UV map.
+- **Asymmetry:** `faces.asym` (nose knocked aside, one brow and cheek higher) is added to
+  the base face; the morph fields stay mirror-symmetric.
 - **Face morph targets** (flesh, and every shell or variant the fields reach: collar,
   hair, beards), weights `[lo, hi]` in root extras `acr_face_morphs`:
   - `face_jaw`, `face_chin`, `face_cheekbones`, `face_nose` (length), `face_nose_bridge`,
@@ -128,7 +132,9 @@ the variant meshes, so the game looks as before.
   - Each is a smooth patch (`faces.PATCHES`): a grid of rays from the head centre to the
     skin, bounded by smooth curves (hairline across the forehead and temples, beard edge
     along the cheeks). It is lifted by a thickness that tapers to the skin on the open edges
-    and has combed ridges. The queue is a tapered tube with a black ribbon (material 1).
+    and has combed ridges; the open edge of hair, beard and moustache is ragged (every other
+    column a lock reaching past the line, `faces.lock`). The queue is a tapered tube with a
+    black ribbon (material 1). The hair material is matte (`acr_roughness` 0.92).
   - All are rigid on the head bone and carry strand UVs (`TEXCOORD_0`: u across, v from the
     root edge) on a neutral 256² streak texture, darker at the roots.
   - "full" shows `beard_full` and `beard_moustache`.
