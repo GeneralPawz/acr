@@ -49,9 +49,7 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f(
         "SGP_AttackByArchers",
         0x5790f3,
-        Status::Partial(
-            "one attack on the nearest enemy (0x90); the per-tick FindArcherTarget process is not reproduced",
-        ),
+        Status::Partial("FindArcherTarget does not score walls (no wall types are loaded)"),
         sgp_attack_by_archers,
     ),
 ];
@@ -1169,9 +1167,12 @@ fn grp_attack_object(api: &mut Api, c: &mut Call) -> Result<u32> {
     Ok(1)
 }
 
-/// `bool SGP_AttackByArchers(byte nat, GAMEOBJ* grp, int, int)`: ACR attacks the nearest enemy
-/// of the group once with priority 0x90 (the original installs a per-tick target search,
-/// `'ARCA'`).
+/// `bool SGP_AttackByArchers(byte nat, GAMEOBJ* grp, ...)` (0x5790f3): the group's centre
+/// (members not dying nor inside, 0x578787; none: 0) and its top area (0x416554) become a
+/// process (0x576c80 with type 0: it replaces the group's processes) that keeps the group
+/// shooting at `FindArcherTarget`'s choice ([`find_archer_target`], handler 0x578ff6 in
+/// `run_group_orders`). The nation is taken as it is (no `AssignTBL`); the third and fourth
+/// arguments are not read.
 fn sgp_attack_by_archers(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Some(g) = api.group(c, 1)? else { return Ok(0) };
     let ids = living_members(api, g);
@@ -1181,24 +1182,121 @@ fn sgp_attack_by_archers(api: &mut Api, c: &mut Call) -> Result<u32> {
     let n = ids.len() as i64;
     let x = (ids.iter().map(|&i| i64::from(api.world.units[i].pos.x >> 4)).sum::<i64>() / n) as i32;
     let y = (ids.iter().map(|&i| i64::from(api.world.units[i].pos.y >> 4)).sum::<i64>() / n) as i32;
-    let mask = nat_mask(api, c.u8(0)?);
-    let z = Circle { x, y, r: 960 };
-    let targets: Vec<usize> = api
-        .world
-        .units
+    let zone = top_zone_ring(api, x, y);
+    let order = crate::state::GroupOrder::ArcherAttack { nation: c.u8(0)?, x, y, zone, missed: false };
+    api.st.groups[g].orders = vec![order];
+    Ok(1)
+}
+
+/// The top area of a point (pixels) or of the nearest 64 px cell around it that has one
+/// (0x416554: rings 0..19 of `Rarr`); 0xFFFF if none.
+pub fn top_zone_ring(api: &Api, x: i32, y: i32) -> u16 {
+    let Some(t) = &api.st.topo else { return 0xFFFF };
+    let (w, h) = (t.cells.width as i32, t.cells.height as i32);
+    let (cx, cy) = (x >> 6, y >> 6);
+    let at = |x: i32, y: i32| {
+        (x >= 0 && y >= 0 && x < w && y < h)
+            .then(|| t.cells.get(x as usize, y as usize))
+            .flatten()
+            .filter(|&a| a < 0xFFFE)
+    };
+    acr_sim::trig::rings()[..20]
         .iter()
-        .filter(|u| u.living() && api.st.unit_nmask(u.id, u.owner) & mask == 0 && z.contains(u))
-        .map(|u| u.id.0 as usize)
-        .collect();
-    for i in ids {
-        let up = api.world.units[i].pos;
-        if let Some(&t) =
-            targets.iter().min_by_key(|&&t| norma(up.x - api.world.units[t].pos.x, up.y - api.world.units[t].pos.y))
-        {
-            attack_obj(api, i, t, 0x90, acr_sim::combat::Placement::Replace);
+        .flatten()
+        .find_map(|&(dx, dy)| at(cx + i32::from(dx), cy + i32::from(dy)))
+        .unwrap_or(0xFFFF)
+}
+
+/// `FindArcherTarget(nat, x, y, maxd, zone)` (0x43e5dd): the best target for archers of
+/// nation `nat` around `(x, y)` (pixels). Objects within 960 px (a square, strictly; not
+/// dying, not inside, no artillery) are scored on a grid of 32 px cells centred on the
+/// point: an enemy building adds 50 if it is a town centre, tower or mine (`USAGE` 3, 5, 7),
+/// else by its life (below 4000: 30, 8000: 20, 20000: 8, else 3); an enemy unit adds 1 to
+/// its cell and the 8 around it, a friend takes 1 off them. Scores are bytes and wrap. A
+/// cell's last enemy (in index order) stands for it. Then, over the cells with a positive
+/// score in row order, `(score << 8) / max(8, Norma)` of the cell offset (0 beyond `maxd`)
+/// must beat the best so far, and the 64 px cell at half the offset must lie in an area
+/// (not the top row or left column) that is `zone` or within 40 of it (`LinksDist`). No
+/// random numbers. Walls (OB+0x29 bit0) are scored by another rule (0x43e3cc); the data
+/// has none.
+pub fn find_archer_target(api: &Api, nat: u8, x: i32, y: i32, maxd: i32, zone: u16) -> Option<usize> {
+    let t = api.st.topo.as_ref()?;
+    let n_areas = t.areas.len();
+    if usize::from(zone) >= n_areas {
+        return None;
+    }
+    let mybit = (1u32 << (nat & 31)) as u8;
+    let (lo_x, hi_x, lo_y, hi_y) = ((x - 960) << 4, (x + 960) << 4, (y - 960) << 4, (y + 960) << 4);
+    let (bx, by) = ((x - 1024) << 4, (y - 1024) << 4);
+    let mut score = [0i8; 4096];
+    let mut id = [None::<usize>; 4096];
+    let catalog = &api.world.catalog;
+    for (k, u) in api.world.units.iter().enumerate() {
+        if !(lo_x < u.pos.x && u.pos.x < hi_x && lo_y < u.pos.y && u.pos.y < hi_y) || !u.active() {
+            continue;
+        }
+        let c = (((u.pos.x - bx) >> 9) + (((u.pos.y - by) >> 9) << 6)) as usize;
+        let ty = catalog.get(u.kind);
+        if c >= 4096 || ty.role.artillery {
+            continue;
+        }
+        let friend = api.st.unit_nmask(u.id, u.owner) & mybit != 0;
+        if u.building {
+            if !friend {
+                use acr_sim::catalog::usage;
+                let add = if matches!(ty.role.usage, usage::CENTER | usage::TOWER | usage::MINE) {
+                    50
+                } else {
+                    match u.life as u16 {
+                        0..4000 => 30,
+                        4000..8000 => 20,
+                        8000..20000 => 8,
+                        _ => 3,
+                    }
+                };
+                score[c] = score[c].wrapping_add(add);
+                id[c] = Some(k);
+            }
+        } else {
+            for d in [0i32, 1, -1, 64, -64, 63, -63, 65, -65] {
+                if let Some(s) = score.get_mut((c as i32 + d) as usize) {
+                    *s = if friend { s.wrapping_sub(1) } else { s.wrapping_add(1) };
+                }
+            }
+            if !friend {
+                id[c] = Some(k);
+            }
         }
     }
-    Ok(1)
+    let (mut best, mut res) = (0, None);
+    let (cx0, cy0) = (x >> 6, y >> 6);
+    let (w, h) = (t.cells.width as i32, t.cells.height as i32);
+    for c in 0..4096i32 {
+        let Some(o) = id[c as usize] else { continue };
+        let s = i32::from(score[c as usize]);
+        if s <= 0 {
+            continue;
+        }
+        let (dx, dy) = ((c & 63) - 32, (c >> 6) - 32);
+        let d = match norma(dx, dy).max(8) {
+            d if d > maxd => 100_000,
+            d => d,
+        };
+        let s = (s << 8) / d;
+        if s <= best {
+            continue;
+        }
+        let (zx, zy) = (cx0 + (dx >> 1), cy0 + (dy >> 1));
+        if zx <= 0 || zx >= w || zy <= 0 || zy >= h {
+            continue;
+        }
+        let Some(a) = t.cells.get(zx as usize, zy as usize).filter(|&a| usize::from(a) < n_areas) else { continue };
+        let links = t.distance.get(usize::from(a) * n_areas + usize::from(zone)).copied().unwrap_or(0xFFFF);
+        if a == zone || links < 40 {
+            (best, res) = (s, Some(o));
+        }
+    }
+    res
 }
 
 #[cfg(test)]
@@ -1373,5 +1471,105 @@ OPPOSIT 10 30
         assert_eq!(f.call("EnumEnemyArmies", &[0, 15, DATA, 9]), 1);
         assert_eq!(buf(&f, 10), [300, 100, 2, 14, 1, 2, 3, 4, 900, 100]);
         assert_eq!(f.call("EnumEnemyArmies", &[2, 15, DATA, 9]), 0, "no EnemyInfo");
+    }
+
+    /// An archer of nation 0 in the west half of the fixture's areas, alone on a new map,
+    /// in a group of its own; the tests add the targets.
+    struct Archers {
+        f: Fixture,
+        foot: acr_sim::TypeId,
+        tower: acr_sim::TypeId,
+        archer: acr_sim::world::EntityId,
+    }
+
+    impl Archers {
+        fn new() -> Self {
+            const ARCHER: &str = "NAME Arc\r\nUSERLC 0 G SHADOW 0 0\r\n#STAND 9 1 0 0\r\nLIFE 100\r\nGEOMETRY 1 10 40\r\n\
+                DAMAGE 1 30\r\nATTACK_RADIUS 1 60 600\r\nDET_RADIUS 1 60 7000\r\nWEAPONKIND 1 STRELA\r\n\
+                MATHERIAL 1 BODY\r\nCANKILL 1 BODY\r\n[END]\r\n";
+            const FOOT: &str = "NAME Ft\r\nUSERLC 0 G SHADOW 0 0\r\n#STAND 9 1 0 0\r\nLIFE 100\r\nGEOMETRY 1 10 40\r\n\
+                MATHERIAL 1 BODY\r\n[END]\r\n";
+            const TOWER: &str = "NAME Tow\r\nBUILDING\r\nUSAGE TOWER\r\nLIFE 1000\r\nLOCATION 0 0 64 64\r\n\
+                LOCKPOINTS 4 0 0 1 0 0 1 1 1\r\nMATHERIAL 1 BODY\r\n[END]\r\n";
+            let mut f = Fixture::new();
+            let mut c = Catalog::new();
+            let arc = c.add(ObjectType::from_def("Arc(EN)", &UnitDef::parse(ARCHER.as_bytes())));
+            let foot = c.add(ObjectType::from_def("Ft(EN)", &UnitDef::parse(FOOT.as_bytes())));
+            let tower = c.add(ObjectType::from_def("Tow(EN)", &UnitDef::parse(TOWER.as_bytes())));
+            f.world = World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(Formations::default()));
+            let archer = f.world.spawn(arc, 0, Pos::from_pixels(1000, 1000), 0);
+            let m = crate::state::Member { id: archer.0 as u16, serial: f.st.serial(archer) };
+            f.st.groups.push(crate::state::Group { members: vec![m], ..Default::default() });
+            Self { f, foot, tower, archer }
+        }
+
+        fn target(&mut self) -> Option<usize> {
+            let (mut commands, mut events) = (Vec::new(), Vec::new());
+            let api = Api {
+                st: &mut self.f.st,
+                world: &mut self.f.world,
+                commands: &mut commands,
+                events: &mut events,
+                caller: Caller::Mission,
+                vm: 0,
+                dip: None,
+            };
+            super::find_archer_target(&api, 0, 1000, 1000, 40, 0)
+        }
+
+        fn run_processes(&mut self) {
+            let (mut commands, mut events) = (Vec::new(), Vec::new());
+            let mut api = Api {
+                st: &mut self.f.st,
+                world: &mut self.f.world,
+                commands: &mut commands,
+                events: &mut events,
+                caller: Caller::Mission,
+                vm: 0,
+                dip: None,
+            };
+            super::super::groups::run_group_orders(&mut api);
+        }
+    }
+
+    /// FindArcherTarget (0x43e5dd) weighs a tower (50) over a lone soldier (1 in its cell and
+    /// around): 50·256/19 against 256/8 although the soldier is four times nearer.
+    #[test]
+    fn archers_prefer_a_tower_to_a_nearer_soldier() {
+        let mut a = Archers::new();
+        let soldier = a.f.world.spawn(a.foot, 1, Pos::from_pixels(1000, 1130), 0);
+        assert_eq!(a.target(), Some(soldier.0 as usize));
+        let tower = a.f.world.spawn(a.tower, 1, Pos::from_pixels(1000, 1600), 0);
+        assert_eq!(a.target(), Some(tower.0 as usize));
+    }
+
+    /// Friends take 1 off the cells around them: an enemy among two of the archers' own
+    /// units scores −1 and is passed over for a lone one further away; artillery is never
+    /// a target.
+    #[test]
+    fn archers_skip_an_enemy_among_friends() {
+        let mut a = Archers::new();
+        let near = a.f.world.spawn(a.foot, 1, Pos::from_pixels(1000, 1130), 0);
+        a.f.world.spawn(a.foot, 0, Pos::from_pixels(1005, 1130), 0);
+        a.f.world.spawn(a.foot, 0, Pos::from_pixels(1010, 1130), 0);
+        let far = a.f.world.spawn(a.foot, 1, Pos::from_pixels(1500, 1000), 0);
+        assert_eq!(a.target(), Some(far.0 as usize));
+        assert_ne!(a.target(), Some(near.0 as usize));
+    }
+
+    /// The process (`'ACRA'`, 0x578ff6) never ends: with nothing to shoot its purpose reads
+    /// `'PCRA'`; an enemy that turns up later is attacked by every member (0x90).
+    #[test]
+    fn the_archer_process_keeps_looking() {
+        let mut a = Archers::new();
+        let order = crate::state::GroupOrder::ArcherAttack { nation: 0, x: 1000, y: 1000, zone: 0, missed: false };
+        a.f.st.groups[0].orders = vec![order];
+        a.run_processes();
+        assert_eq!(a.f.st.groups[0].orders.first().map(|o| o.kind()), Some(0x4152_4350));
+        assert!(a.f.world.units[a.archer.0 as usize].orders.is_empty());
+        let enemy = a.f.world.spawn(a.foot, 1, Pos::from_pixels(1200, 1000), 0);
+        a.run_processes();
+        assert_eq!(a.f.st.groups[0].orders.first().map(|o| o.kind()), Some(0x4152_4341));
+        assert_eq!(a.f.world.units[a.archer.0 as usize].target(), Some(enemy));
     }
 }
