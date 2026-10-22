@@ -14,7 +14,7 @@ use acr_render::math::{self, Vec3};
 use acr_render::model::ramp;
 use acr_render::model_renderer::{MAX_MARKS, Mark, Sprayed};
 use acr_render::view3d;
-use acr_sim::body::{FractureKind, Outcome, Part};
+use acr_sim::body::{Cause, FractureKind, Outcome, Part};
 use acr_sim::combat::{DeathCause, HitRecord};
 
 use crate::ui::settings::Gore;
@@ -91,6 +91,30 @@ fn wounds_of(hit: &HitRecord, side: [f32; 2]) -> Vec<(At, [f32; 2], f32, bool, f
     let entry = turn(side, (h(1) - 0.5) * 0.9);
     let exit = turn([-side[0], -side[1]], (h(2) - 0.5) * 1.2);
     let mut out = Vec::new();
+    // Mauling: claws rake a row of torn gashes, jaws leave the bite on both sides, horns one
+    // big torn hole.
+    let mauled = !matches!(injury.outcome, Outcome::Off | Outcome::Torn(_));
+    match injury.cause {
+        Cause::Claw if mauled => {
+            let n = 3 + usize::from(h(4) > 0.6);
+            for k in 0..n {
+                let off = (k as f32 - (n - 1) as f32 * 0.5) * 0.05;
+                out.push((at(off), turn(entry, off * 2.5), 0.024, true, 1.0));
+            }
+        }
+        Cause::Bite if mauled => {
+            out.push((at(0.0), entry, 0.04, true, 1.0));
+            out.push((at(0.02), turn([-entry[0], -entry[1]], (h(5) - 0.5) * 0.6), 0.034, true, 1.0));
+        }
+        Cause::Gore if mauled => out.push((at(0.0), entry, 0.05, true, 1.0)),
+        _ => {}
+    }
+    if !out.is_empty() {
+        if injury.outcome == Outcome::BellyOpen {
+            out.push((at(0.0), [0.0, 1.0], 0.06, true, 1.0));
+        }
+        return out;
+    }
     let mut hole = |r: f32, bleed: f32, ragged_entry: bool| {
         out.push((at(0.0), entry, r, ragged_entry, bleed));
         if ball {
@@ -184,7 +208,9 @@ impl LivingWounds {
 
     /// The tissue torn out of `unit` by all his hits (#280), on `rig`.
     pub fn volumes(&self, unit: u32, rig: &Rig) -> Vec<Volume> {
-        self.tears.get(&unit).map_or_else(Vec::new, |l| l.iter().flat_map(|t| tears::volumes(t, rig)).collect())
+        // Newest first: a man mauled again and again shows his latest wounds (the volumes
+        // are limited; bigger old ones still push out smaller new ones).
+        self.tears.get(&unit).map_or_else(Vec::new, |l| l.iter().rev().flat_map(|t| tears::volumes(t, rig)).collect())
     }
 
     /// … by his hit at `tick` only.
@@ -254,8 +280,13 @@ impl LivingWounds {
 fn place(at: At, side: [f32; 2], rig: Option<&Rig>) -> Vec3 {
     let out = [side[0], 0.0, side[1]];
     let on = |p: Vec3, dir: Vec3, r: f32| {
-        // Outwards, square to the bone.
-        let o = math::sub(out, math::scale(dir, math::dot(out, dir)));
+        // Outwards, square to the bone; along a lying bone (an animal's trunk hit from the
+        // front or behind) over the top.
+        let mut o = math::sub(out, math::scale(dir, math::dot(out, dir)));
+        if math::dot(o, o) < 0.09 {
+            let up = [0.0, 1.0, 0.0];
+            o = math::add(o, math::sub(up, math::scale(dir, math::dot(up, dir))));
+        }
         let l = math::dot(o, o).sqrt();
         let o = if l > 1e-3 { math::scale(o, 1.0 / l) } else { [0.0, 0.0, 1.0] };
         math::add(p, math::scale(o, r))
@@ -270,7 +301,7 @@ fn place(at: At, side: [f32; 2], rig: Option<&Rig>) -> Vec3 {
             let (p, dir, _) = rig.trunk.at(level);
             on(p, dir, rig.trunk.radius_at(level).max(0.08))
         }
-        (At::Head, Some(rig)) => on(math::add(rig.neck.0, [0.0, 0.11, 0.0]), [0.0, 1.0, 0.0], 0.09),
+        (At::Head, Some(rig)) => on(math::add(rig.neck.0, [0.0, 0.11, 0.0]), [0.0, 1.0, 0.0], rig.head_radius),
         // A rough man of 1.75 m facing +z.
         (At::Limb(l, level), None) => {
             let x = if l % 2 == 0 { 0.2 } else { -0.2 };
@@ -339,6 +370,26 @@ mod tests {
         assert!(a.soak < b.soak && a.run < b.run && b.age < c.age && c.age == 1.0);
         assert!(lw.bleeding(3, 600) && !lw.bleeding(3, 3000));
         assert!(lw.spurt(3, None, 5).is_some());
+    }
+
+    #[test]
+    fn a_mauled_man_shows_every_raking_and_bite() {
+        let mut lw = LivingWounds::default();
+        let mut claw = hit(1, DeathCause::Melee, Part::Chest, Outcome::DeepWound);
+        claw.injury = claw.injury.map(|i| Injury { cause: Cause::Claw, ..i });
+        lw.take_hits([claw].iter(), 1, Gore::Full, &|_| Some(0));
+        let (m, n) = lw.marks(3, None, 1);
+        assert!((3..=4).contains(&n), "{n}");
+        assert!(m[..usize::from(n)].iter().all(|w| w.ragged));
+        // A row along the body: the claws land at different heights.
+        assert!((m[0].point[1] - m[usize::from(n) - 1].point[1]).abs() > 0.05);
+        // Down and bitten again and again: the newest wounds always show.
+        for t in 2..8 {
+            let mut bite = hit(t, DeathCause::Melee, Part::Limb(LimbId::LegR), Outcome::Wound);
+            bite.injury = bite.injury.map(|i| Injury { cause: Cause::Bite, ..i });
+            lw.take_hits([bite].iter(), t, Gore::Full, &|_| Some(0));
+        }
+        assert_eq!(lw.marks(3, None, 8).1 as usize, MAX_MARKS);
     }
 
     #[test]

@@ -220,6 +220,9 @@ pub struct ModelData {
     pub radius: f32,
     /// Limb chains and radius profiles for cutting (skeleton H models only).
     pub rig: Option<crate::damage::Rig>,
+    /// A rig guessed from an animal's skeleton (root `extras.acr_animal`,
+    /// [`crate::damage::Rig::beast`]): where wound marks and torn volumes go; never cut.
+    pub beast_rig: Option<crate::damage::Rig>,
     /// Per-soldier faces, bodies, hair and beards (root `extras.acr_face_morphs`); `None`
     /// draws every soldier alike, as before.
     pub looks: Option<Looks>,
@@ -584,6 +587,27 @@ impl ModelData {
                 rig.read_radii(r);
             }
         }
+        let animal = root_extras.iter().any(|e| e.get("acr_animal").and_then(serde_json::Value::as_bool) == Some(true));
+        let beast_rig = (rig.is_none() && animal)
+            .then(|| {
+                let vertices = primitives.iter().zip(&skinned_prims).filter(|(_, s)| **s).flat_map(|(p, _)| {
+                    p.vertices.iter().map(|v| {
+                        let k = (0..4).max_by(|&a, &b| v.weights[a].total_cmp(&v.weights[b])).unwrap_or(0);
+                        (v.position, v.joints[k])
+                    })
+                });
+                crate::damage::Rig::beast(&nodes, &slots, vertices)
+            })
+            .flatten();
+        if beast_rig.is_some() {
+            // An animal's skin is flesh (`_PART` 0): the far wall seen through a wound volume
+            // is shaded as tissue. It is never cut (no limb parts, no `ModelData::rig`).
+            for (p, _) in primitives.iter_mut().zip(&skinned_prims).filter(|(_, s)| **s) {
+                for v in p.vertices.iter_mut().filter(|v| v.body[0] < 0.0) {
+                    v.body[0] = 0.0;
+                }
+            }
+        }
         // Individual looks (#283): the style from the odds (civilians wear their hair loose).
         let looks = root_extras.iter().find(|e| e.get("acr_face_morphs").is_some()).map(|e| Looks {
             style: if e.pointer("/acr_look_odds/hair/loose").is_some() {
@@ -608,6 +632,7 @@ impl ModelData {
             machine,
             radius: 0.0,
             rig,
+            beast_rig,
             looks,
         };
         model.radius = model.rest_radius();
@@ -657,6 +682,7 @@ impl ModelData {
             machine: false,
             radius: 0.0,
             rig: None,
+            beast_rig: None,
             looks: None,
         };
         model.radius = model.rest_radius();
@@ -743,7 +769,7 @@ impl ModelData {
         if primitives.is_empty() {
             return None;
         }
-        let mut model = Self { primitives, clips: Vec::new(), rig: None, ..self.clone() };
+        let mut model = Self { primitives, clips: Vec::new(), rig: None, beast_rig: None, ..self.clone() };
         let n = &mut model.nodes[node];
         n.parent = None;
         n.translation = [0.0; 3];
