@@ -172,3 +172,30 @@ fn allies_do_not_fight() {
     }
     assert!(unit(&w, a).life < 100 || unit(&w, b).life < 100);
 }
+
+#[test]
+fn corpses_keep_their_direction_and_disappear() {
+    let (mut w, pik, _) = setup();
+    let a = w.spawn(pik, 0, Pos::from_pixels(1000, 1000), 40);
+    w.kill(a);
+    let dir = unit(&w, a).dir;
+    let mut lying = None;
+    let mut gone = None;
+    for t in 1..=2000 {
+        w.step(&[]);
+        let Some(u) = w.unit(a) else {
+            gone = Some(t);
+            break;
+        };
+        assert_eq!(u.dir, dir, "a corpse never turns");
+        if lying.is_none() && u.anim == AnimKind::DeathLie(1) {
+            lying = Some((t, u.death));
+        }
+    }
+    // #DEATH (40 frames, 2 per tick) counts 1 per tick, then lying counts 2 per tick; a type
+    // without #DEATHLIE2 is removed once the counter passes 1200 (0x5120ab).
+    let (t0, d0) = lying.expect("the corpse lies");
+    assert!((19..=21).contains(&t0), "lies after the death animation: {t0}");
+    let gone = gone.expect("the corpse is removed");
+    assert_eq!(gone, t0 + (1201 - i32::from(d0) + 1) as usize / 2, "removed at {gone}");
+}

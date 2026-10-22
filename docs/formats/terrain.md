@@ -248,15 +248,15 @@ same point.
 
 **Idle frames.** Map units (`UNI3` id `EngM18(EN)`) resolve to the `.MD` with `NAME EngM18`
 (the parenthesis is the nation). Buildings show all parts of `#STANDLO`, units the first frame
-of `#STAND`. Frame `f` of direction `d` is `d · N/dirs + f`; the map's direction byte (0..255)
-is mapped to the 9 stored directions as a half circle mirrored to the other half (a guess:
-mirrored units are not flipped yet).
+of `#STAND`. The map's direction byte (0..255) picks a stored direction and the mirroring as
+the drawing code does ([`docs/simulation.md`](../simulation.md#directions-and-sprites)); frame
+`f` of stored direction `k` is `f · dirs + k`.
 
 ## Open questions
 
 - Objects: `COMPLEX.LST` (fields, `KUK`/`PUK`) and `ANIMATIONS.LST` (`SA`, river animations of
   `POTOK.GP`) have their own formats and are not drawn yet; `MEAT.LST` (`PS`) neither. Line
-  sorting of buildings is approximated, unit directions are a guess.
+  sorting of buildings is approximated.
 
 - Waves and surf: `WAVE*.DAT`, `WAVE.GRD`, `PRIBOY.GP` and `Water\voda.bmp` (not shipped) are
   loaded around 0x5EF413; their animation is not reproduced yet.

@@ -583,6 +583,10 @@ impl InGame {
             let Some(look) = objects.animation_look(&kind.id, &anim, u.dir, step, sections) else { continue };
             let (x, y) = (u.pos.x >> 4, u.pos.y >> 4);
             let h = terrain.height_at(x, y);
+            // The transparency mode (key O) draws buildings with `ShowGPTransparent`; a
+            // corpse whose death counter passed 100 is drawn with `ShowGPTransparentLayers`
+            // (0x506ed5, options 2 → 0x48e180): it fades soon after it fell.
+            let transparent = (transparent && u.building) || u.death > CORPSE_FADE;
             for (frame, (ox, oy), layer, row) in look.parts {
                 let sort = (y >> 1) + row;
                 out.push(SceneSprite {
@@ -594,8 +598,8 @@ impl InGame {
                     dy: oy - h,
                     sort,
                     player: u.owner,
-                    // The transparency mode (key O) draws buildings with `ShowGPTransparent`.
-                    transparent: transparent && u.building,
+                    transparent,
+                    mirrored: look.mirrored,
                 });
             }
         }
@@ -642,6 +646,9 @@ impl InGame {
         Some(FogShades::new(&self.camera, window, self.interface.hud.zoom, cell, acr_sim::fog::Fog::shade))
     }
 }
+
+/// The death counter (`Sdoxlo`) above which a corpse is drawn half transparent (0x506ed5).
+const CORPSE_FADE: u16 = 100;
 
 /// The `.MD` animation a simulation animation plays.
 fn anim_name(kind: AnimKind) -> String {

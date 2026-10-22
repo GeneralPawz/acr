@@ -121,8 +121,8 @@ Animations come in two forms; the name after `#`/`@` is the slot:
 @NAME dirs set first last       frames first..=last of one set; last < first plays backwards
 ```
 
-`dirs` is the number of stored directions: 1 (buildings), 9 (most units, presumably
-mirrored to 16), 16 (artillery), 65 (ships). Frame `f` of a set whose pack holds `N`
+`dirs` is the number of stored directions: 1 (buildings), 9 (most units, mirrored to
+16), 16 (artillery, `FULLROTATION`: all around), 65 (ships). Frame `f` of a set whose pack holds `N`
 frames exists for each direction: **verified** for all 47 217 references of loaded
 files, `f < N / dirs` always holds (`ANMBIZG.GP` has 216 = 9 × 24 frames, used as
 `@MOTION_L 9 1 0 11` and `@MOTION_R 9 1 12 23`). The drawing code (0x5062a3) shows the
