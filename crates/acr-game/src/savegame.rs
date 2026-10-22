@@ -32,7 +32,7 @@ use acr_sim::replay::Replay;
 use acr_sim::world::EntityId;
 use acr_sim::{Command, World};
 
-use crate::ui::setup::{Control, Difficulty, MapSize, MissionSetup, PlayerSetup, RandomMapSetup};
+use crate::ui::setup::{BlankSetup, Control, Difficulty, Ground, MapSize, MissionSetup, PlayerSetup, RandomMapSetup};
 use crate::ui::{GameKind, GameSetup};
 
 const MAGIC: &[u8; 4] = b"ACRS";
@@ -414,6 +414,27 @@ impl Writer {
                 self.u(r.size as u64);
                 self.u(r.climate as u64);
             }
+            GameKind::Blank(b) => {
+                self.u(2);
+                self.u(b.size as u64);
+                self.u(b.ground as u64);
+                let parts = [
+                    b.slope.map(|(a, b, c)| [a, b, c, 0]),
+                    b.hill.map(<[i32; 4]>::from),
+                    b.water.map(<[i32; 4]>::from),
+                ];
+                for part in parts {
+                    match part {
+                        Some(values) => {
+                            self.u(1);
+                            for v in values {
+                                self.i(v);
+                            }
+                        }
+                        None => self.u(0),
+                    }
+                }
+            }
         }
         self.u(s.players.len() as u64);
         for p in &s.players {
@@ -531,6 +552,34 @@ impl<'a> Reader<'a> {
                 };
                 let climate = self.small()?;
                 GameKind::RandomMap(RandomMapSetup { seed, landscape, ground, resources, minerals, size, climate })
+            }
+            2 => {
+                let size = match self.u()? {
+                    0 => MapSize::Normal,
+                    1 => MapSize::Large,
+                    _ => MapSize::Huge,
+                };
+                let ground = match self.u()? {
+                    0 => Ground::Grass,
+                    1 => Ground::Dirt,
+                    2 => Ground::Snow,
+                    3 => Ground::White,
+                    _ => Ground::Greenscreen,
+                };
+                let mut parts = [None; 3];
+                for part in &mut parts {
+                    if self.u()? != 0 {
+                        *part = Some([self.i()?, self.i()?, self.i()?, self.i()?]);
+                    }
+                }
+                let [slope, hill, water] = parts;
+                GameKind::Blank(BlankSetup {
+                    size,
+                    ground,
+                    slope: slope.map(|[a, b, c, _]| (a, b, c)),
+                    hill: hill.map(<(i32, i32, i32, i32)>::from),
+                    water: water.map(<(i32, i32, i32, i32)>::from),
+                })
             }
             _ => return Err(err("game kind")),
         };
@@ -811,6 +860,29 @@ mod tests {
         bytes[4] = 2;
         assert_eq!(bytes.pop(), Some(1));
         assert_eq!(SaveGame::decode(&bytes).unwrap().setup.rules, acr_sim::Rules::default());
+    }
+
+    #[test]
+    fn keeps_a_blank_field() {
+        let mut save = SaveGame {
+            name: b"b".to_vec(),
+            time: SaveTime::default(),
+            setup: setup(),
+            tick: 0,
+            hash: 0,
+            log: Log::default(),
+            camera: [0, 0],
+            selected: vec![],
+            groups: vec![],
+        };
+        save.setup.kind = GameKind::Blank(BlankSetup {
+            size: MapSize::Large,
+            ground: Ground::Snow,
+            slope: Some((50, 7000, 8000)),
+            hill: None,
+            water: Some((-1, 2, 3, 4)),
+        });
+        assert_eq!(SaveGame::decode(&save.encode()).unwrap(), save);
     }
 
     #[test]

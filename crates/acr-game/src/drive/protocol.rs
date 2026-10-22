@@ -127,6 +127,10 @@ pub enum Start {
         difficulty: usize,
         hit_locations: bool,
     },
+    /// The blank test field ("The blank field" in `docs/testing.md`): `players` (1 or 2)
+    /// without start units and without AI, `nation` for the local player.
+    /// `hud: false` hides the interface (see [`Request::Hud`]).
+    Blank { setup: crate::ui::setup::BlankSetup, players: usize, nation: usize, hit_locations: bool, hud: bool },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -214,6 +218,8 @@ pub enum Request {
         every: u64,
         crop: Option<[u32; 4]>,
     },
+    /// Shows or hides the interface (panel, minimap, cursor) over the game.
+    Hud(bool),
     Quit,
 }
 
@@ -223,6 +229,62 @@ fn string(v: &Value, key: &str) -> Option<String> {
 
 fn uint(v: &Value, key: &str) -> Option<u64> {
     v.get(key).and_then(Value::as_u64)
+}
+
+/// The `blank` of a `start`: size, ground, slope, hill, water (see [`Start::Blank`]).
+fn blank(b: &Value) -> Result<Start, String> {
+    use crate::ui::setup::{BlankSetup, Ground, MapSize};
+    let size = match b.get("size").and_then(Value::as_str).unwrap_or("normal") {
+        "normal" => MapSize::Normal,
+        "large" => MapSize::Large,
+        "huge" => MapSize::Huge,
+        other => return Err(format!("blank: unknown size {other:?}: normal, large or huge")),
+    };
+    let ground = match b.get("ground").and_then(Value::as_str).unwrap_or("grass") {
+        "grass" => Ground::Grass,
+        "dirt" => Ground::Dirt,
+        "snow" => Ground::Snow,
+        "white" => Ground::White,
+        "greenscreen" | "green" => Ground::Greenscreen,
+        other => {
+            return Err(format!("blank: unknown ground {other:?}: grass, dirt, snow, white or greenscreen"));
+        }
+    };
+    let c = crate::blank_map::playable(size) / 2;
+    let num = |v: &Value, key: &str, default: i32| v.get(key).and_then(Value::as_f64).map_or(default, |f| f as i32);
+    // A number is the ramp's angle in degrees; an object may also give where it runs.
+    let slope = match b.get("slope") {
+        None | Some(Value::Null) => None,
+        Some(Value::Number(n)) => Some(((n.as_f64().unwrap_or(0.0) * 10.0).round() as i32, c - 750, c + 750)),
+        Some(o @ Value::Object(_)) => {
+            let deg = o.get("deg").and_then(Value::as_f64).ok_or("blank: slope needs \"deg\"")?;
+            Some(((deg * 10.0).round() as i32, num(o, "x0", c - 750), num(o, "x1", c + 750)))
+        }
+        Some(_) => return Err("blank: slope is degrees or {\"deg\", \"x0\", \"x1\"}".into()),
+    };
+    let hill = match b.get("hill") {
+        None | Some(Value::Null | Value::Bool(false)) => None,
+        Some(Value::Bool(true)) => Some((c, c, 600, 100)),
+        Some(o @ Value::Object(_)) => {
+            Some((num(o, "x", c), num(o, "y", c), num(o, "radius", 600), num(o, "height", 100)))
+        }
+        Some(_) => return Err("blank: hill is true or {\"x\", \"y\", \"radius\", \"height\"}".into()),
+    };
+    let water = match b.get("water") {
+        None | Some(Value::Null | Value::Bool(false)) => None,
+        Some(Value::Bool(true)) => Some((c + 1000, c - 600, 2000, 1200)),
+        Some(o @ Value::Object(_)) => {
+            Some((num(o, "x", c + 1000), num(o, "y", c - 600), num(o, "w", 2000), num(o, "h", 1200)))
+        }
+        Some(_) => return Err("blank: water is true or {\"x\", \"y\", \"w\", \"h\"}".into()),
+    };
+    Ok(Start::Blank {
+        setup: BlankSetup { size, ground, slope, hill, water },
+        players: uint(b, "players").unwrap_or(2).clamp(1, 2) as usize,
+        nation: uint(b, "nation").unwrap_or(0) as usize,
+        hit_locations: b.get("hit_locations").and_then(Value::as_bool).unwrap_or(false),
+        hud: b.get("hud").and_then(Value::as_bool).unwrap_or(true),
+    })
 }
 
 fn point(v: &Value) -> Option<[f64; 2]> {
@@ -399,6 +461,8 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
         "start" | "load_map" => {
             if let Some(map) = string(&v, "map") {
                 Request::Start(Start::Map(map))
+            } else if let Some(b) = v.get("blank") {
+                Request::Start(blank(b)?)
             } else {
                 let r = v.get("random").cloned().unwrap_or(Value::Object(Default::default()));
                 Request::Start(Start::Random {
@@ -412,6 +476,7 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
                 })
             }
         }
+        "hud" => Request::Hud(v.get("on").and_then(Value::as_bool).ok_or("hud: missing \"on\" (true or false)")?),
         "save" => Request::Save { name: string(&v, "name").ok_or("save: missing \"name\"")? },
         "load" => Request::Load { name: string(&v, "name").ok_or("load: missing \"name\"")? },
         "dialogs" => Request::Dialogs(
@@ -568,6 +633,22 @@ mod tests {
         );
         let (_, r) = parse(r#"{"cmd": "load_map", "map": "Missions\\a.m3d"}"#).unwrap();
         assert_eq!(r, Request::Start(Start::Map("Missions\\a.m3d".into())));
+        let (_, r) = parse(r#"{"cmd": "start", "blank": {"ground": "snow", "slope": 4, "water": true}}"#).unwrap();
+        let Request::Start(Start::Blank { setup, players: 2, nation: 0, hit_locations: false, hud: true }) = r else {
+            panic!()
+        };
+        assert_eq!(setup.ground, crate::ui::setup::Ground::Snow);
+        assert_eq!(setup.slope, Some((40, 7680 - 750, 7680 + 750)));
+        assert_eq!(setup.water, Some((8680, 7080, 2000, 1200)));
+        assert_eq!(setup.hill, None);
+        let (_, r) = parse(r#"{"cmd": "start", "blank": {"size": "large", "hill": {"height": 50}}}"#).unwrap();
+        let Request::Start(Start::Blank { setup, .. }) = r else { panic!() };
+        assert_eq!(setup.hill, Some((15360, 15360, 600, 50)));
+        assert!(parse(r#"{"cmd": "start", "blank": {"ground": "lava"}}"#).is_err());
+        let (_, r) = parse(r#"{"cmd": "start", "blank": {"ground": "greenscreen", "hud": false}}"#).unwrap();
+        let Request::Start(Start::Blank { setup, hud: false, .. }) = r else { panic!() };
+        assert_eq!(setup.ground, crate::ui::setup::Ground::Greenscreen);
+        assert_eq!(parse(r#"{"cmd": "hud", "on": true}"#).unwrap().1, Request::Hud(true));
         let (_, r) = parse(r#"{"cmd": "dialogs", "policy": "report"}"#).unwrap();
         assert_eq!(r, Request::Dialogs(DialogPolicy::Report));
     }

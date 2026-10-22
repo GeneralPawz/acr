@@ -113,6 +113,8 @@ its label to appear.
 | `{"cmd": "select", "units": [10, 11]}` | replaces the selection (setup; prefer `drag`/`click` to test the interface) |
 | `{"cmd": "start", "random": {"nation": 1, "seed": 5}}` | a random map without the menus; also `opponents`, `resources`, `size`, `difficulty`, `hit_locations` (the optional rule, #225) |
 | `{"cmd": "start", "map": "Missions\\Singles\\Single7\\Single7.m3d"}` | a map file (alias `load_map`) |
+| `{"cmd": "start", "blank": {"ground": "grass"}}` | the blank test field, see "The blank field" below |
+| `{"cmd": "hud", "on": false}` | hides the interface (panel, minimap, cursor): frames show the world only; `true` brings it back |
 | `{"cmd": "save", "name": "x"}` / `{"cmd": "load", "name": "x"}` | savegame shortcuts |
 | `{"cmd": "screenshot", "path": "out.png", "crop": [x, y, w, h]}` | only with `--drive-gpu` |
 | `{"cmd": "dialogs", "policy": "report"}` | `auto` or `report` |
@@ -186,7 +188,64 @@ A ready script, 4 soldiers side by side seen from the side, each hit by a differ
 ```
 
 Limits: the hit is applied between ticks by the driver, not as a lockstep command, so it is
-not in replays; there is no `reload` pose yet; the HUD is drawn over the view (crop it).
+not in replays; there is no `reload` pose yet; the HUD is drawn over the view (crop it, or
+hide it with `hud`).
+
+### The blank field
+
+On a random map or a mission, trees, rocks, bushes and the fog of war get into the frames.
+`{"cmd": "start", "blank": {...}}` starts an empty field instead, built in code like the
+original editor's new map (`MapAutosave.m3d` after "new map": a `3DMP`, every height 0,
+every texture 0, no sprites, no units, an empty `SEA2`; `acr-game/src/blank_map.rs`):
+
+- flat ground of one texture, sized like an editor map (`normal` 15360 px playable, `large`
+  30720, `huge`); no trees, rocks, bushes, mines or other map objects;
+- the whole map revealed: the fog is held open and not drawn;
+- `players` (1 or 2, default 2) human players without start units and without AI, so
+  nothing gives orders but the script; `nation` of the local player (0);
+- the answer carries `centre` (the middle of the playable area, `[7680, 7680]` on a normal
+  map) and `playable` (its side), to place units around.
+
+| Key | Values |
+| --- | --- |
+| `size` | `normal` (default), `large`, `huge` |
+| `ground` | `grass` (texture 0, the editor's green, default), `dirt` (71), `snow` (103); `white` and `greenscreen` (or `green`): a flat colour, see below |
+| `slope` | degrees (a ramp rising eastwards from `centre.x − 750` to `centre.x + 750`, flat beyond) or `{"deg": 5, "x0": 7000, "x1": 8000}` |
+| `hill` | `true` (radius 600, height 100 px at the centre) or `{"x", "y", "radius", "height"}`: a round cosine hill |
+| `water` | `true` (2000 × 1200 px east of the centre) or `{"x", "y", "w", "h"}`: a rectangle of `SEA2` depth, shallow at its edge and deep (200; ships float above 130, land units stop above 128) from 160 px in; the terrain stays at its height (water is drawn flat). Water is drawn in the original view only, not under the free camera |
+| `hit_locations` | the optional rule, as for `random` (or the setting) |
+| `hud` | `false` hides the interface from the start, like `{"cmd": "hud", "on": false}` |
+
+**`white` and `greenscreen`**: the ground is cleared to pure white (255, 255, 255) or pure
+green (0, 255, 0) instead of drawn: no texture, noise, relief light, water tint or fog. The
+terrain still gives the 3D pass its depth, so models stand on it as usual (keep these
+fields flat: a slope would only show in the units' feet). With `hud` off the frames hold
+the units and the backdrop only, for checking animations frame by frame or keying them out.
+
+A second `start` in the same driver process does not load yet: run one process per field.
+`ACR-analysis/bench/bench_blank.py` (`python -I bench_blank.py [out_dir]`) places a bear
+and a musketeer facing each other and an alligator, an elk and a dragoon in a row, on grass,
+then on white and on greenscreen with the interface hidden, and records the frames.
+
+```text
+> {"cmd": "start", "blank": {"size": "normal", "ground": "grass", "players": 2, "hit_locations": true}}
+< {"ok": true, "centre": [7680, 7680], "playable": 15360, ...}
+> {"cmd": "spawn", "type": "AnmMed", "x": 7620, "y": 7680, "dir": 0}
+< {"ok": true, "unit": {"id": 0, "type": "AnmMed(NW)", "pose": "stand"}, ...}
+> {"cmd": "spawn", "type": "EngM18", "x": 7740, "y": 7680, "dir": 128}
+< {"ok": true, "unit": {"id": 1, "type": "EngM18(EN)", "pose": "stand"}, ...}
+> {"cmd": "wait", "ticks": 20}
+> {"cmd": "hud", "on": false}
+> {"cmd": "camera", "x": 7680, "y": 7680, "zoom": 5, "yaw_deg": 0, "pitch_deg": 10, "lift": 0}
+> {"cmd": "hit", "unit": 1, "cause": "claw", "region": "torso", "dir": [1, 0], "energy": 80}
+> {"cmd": "record", "dir": "frames", "count": 20, "every": 3}
+> {"cmd": "quit"}
+```
+
+Units of two owners fight on their own (an animal goes for an enemy within reach): give the
+pair one owner when they should only stand. A slope or hill for gait tests:
+`{"cmd": "start", "blank": {"ground": "dirt", "slope": 8, "hill": true}}`; ships:
+`{"cmd": "start", "blank": {"water": true}}` and `spawn` e.g. `ShpPinta` at `[9600, 7680]`.
 
 ### The widget tree (`ui`)
 

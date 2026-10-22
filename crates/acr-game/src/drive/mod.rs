@@ -707,6 +707,31 @@ impl Driver {
             Request::Start(start) => {
                 match start {
                     Start::Map(path) => game.start_map(&path),
+                    Start::Blank { setup, players, nation, hit_locations, hud } => {
+                        // Human players only: no AI gives orders, no start units come.
+                        let players = (0..players)
+                            .map(|i| PlayerSetup {
+                                name: if i == 0 { b"Driver".to_vec() } else { b"Other".to_vec() },
+                                nation: (nation + i) % 6,
+                                color: i as u8,
+                                team: 0,
+                                control: Control::Human,
+                            })
+                            .collect();
+                        let side = crate::blank_map::playable(setup.size);
+                        job.reply.insert("centre".into(), json!([side / 2, side / 2]));
+                        job.reply.insert("playable".into(), json!(side));
+                        game.ui.show_loading();
+                        game.start_game(Box::new(ui::GameSetup {
+                            kind: ui::GameKind::Blank(setup),
+                            players,
+                            local_player: 0,
+                            rules: acr_sim::Rules { hit_locations },
+                        }));
+                        if let Mode::InGame(g) = &mut game.mode {
+                            g.hud_hidden = !hud;
+                        }
+                    }
                     Start::Random { nation, opponents, seed, resources, size, difficulty, hit_locations } => {
                         let mut players = vec![PlayerSetup {
                             name: b"Driver".to_vec(),
@@ -799,6 +824,11 @@ impl Driver {
                 job.record =
                     Some(Recording { dir, prefix, count, every, crop, primed: false, next: 0, paths: Vec::new() });
                 Ok(true)
+            }
+            Request::Hud(on) => {
+                let Mode::InGame(g) = &mut game.mode else { return Err("no game".into()) };
+                g.hud_hidden = !on;
+                Ok(false)
             }
             Request::Quit => {
                 self.quit = true;

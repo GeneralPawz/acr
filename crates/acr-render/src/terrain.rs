@@ -421,6 +421,9 @@ pub struct TerrainRenderer {
     pub zoomed: bool,
     /// The free camera (`None`: the original view).
     pub orbit: Option<Orbit>,
+    /// A flat colour shown instead of the ground (the driver's blank field, `white` or
+    /// `greenscreen`); the terrain still gives the 3D pass its depth.
+    pub backdrop: Option<wgpu::Color>,
     ground_pipeline: wgpu::RenderPipeline,
     /// The ground under the free camera: depth-tested, the hills no longer come in order.
     free_pipeline: wgpu::RenderPipeline,
@@ -641,6 +644,7 @@ impl TerrainRenderer {
         Self {
             zoomed: false,
             orbit: None,
+            backdrop: None,
             ground_pipeline,
             free_pipeline,
             depth_pipeline,
@@ -858,6 +862,10 @@ impl TerrainRenderer {
                 pass.set_bind_group(0, &map.group, &[]);
                 pass.draw(0..self.drawn, 0..1);
             }
+        }
+        if let Some(color) = self.backdrop {
+            clear_pass(encoder, output, color);
+            return;
         }
         let mut pass = clear_pass(encoder, output, wgpu::Color::BLACK);
         pass.set_pipeline(&self.present_pipeline);

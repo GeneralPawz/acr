@@ -68,6 +68,33 @@ pub struct RandomMapSetup {
     pub climate: usize,
 }
 
+/// The blank test field of the driver (`docs/testing.md`, "The blank field"): a map built in
+/// code like the editor's new map, see [`crate::blank_map`]. Lengths in world pixels.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct BlankSetup {
+    pub size: MapSize,
+    pub ground: Ground,
+    /// A ramp along x: `(tenths of a degree, x0, x1)`, flat west of `x0`, rising to `x1`.
+    pub slope: Option<(i32, i32, i32)>,
+    /// A round hill: `(x, y, radius, height)`.
+    pub hill: Option<(i32, i32, i32, i32)>,
+    /// Water: `(x, y, width, height)`.
+    pub water: Option<(i32, i32, i32, i32)>,
+}
+
+/// The one ground texture of a blank field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Ground {
+    #[default]
+    Grass,
+    Dirt,
+    Snow,
+    /// Pure white, no texture, light or water: a backdrop for checking animations.
+    White,
+    /// Pure greenscreen green (0, 255, 0), like `White`.
+    Greenscreen,
+}
+
 /// Who controls a player.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Control {
@@ -91,6 +118,8 @@ pub struct PlayerSetup {
 pub enum GameKind {
     Mission(MissionSetup),
     RandomMap(RandomMapSetup),
+    /// The driver's blank test field: no objects, no start units, no AI, no fog.
+    Blank(BlankSetup),
 }
 
 /// A game to start: produced by "start" in the menus, consumed by the in-game screen.

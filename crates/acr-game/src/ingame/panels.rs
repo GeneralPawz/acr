@@ -238,7 +238,7 @@ impl InGame {
         let own = self.own();
         // In a mission only the local player has a name (the others are "???" and skipped).
         let mut players: Vec<(u8, Vec<u8>, u8)> = match &self.setup.kind {
-            crate::ui::GameKind::RandomMap(_) => self
+            crate::ui::GameKind::RandomMap(_) | crate::ui::GameKind::Blank(_) => self
                 .setup
                 .players
                 .iter()
