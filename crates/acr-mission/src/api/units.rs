@@ -29,12 +29,7 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("GetInsideList", 0x56c713, DONE, get_inside_list),
     f("GetNInside", 0x5604e2, DONE, get_n_inside),
     f("InviteUnitIntoBuilding", 0x56c638, DONE, invite_unit_into_building),
-    f(
-        "LeaveBuilding",
-        0x56c6ca,
-        Status::Partial("everybody leaves (acr-sim releases all units at once)"),
-        leave_building,
-    ),
+    f("LeaveBuilding", 0x56c6ca, DONE, leave_building),
     f("CheckLeaveAbility", 0x560b17, Status::Done, check_leave_ability),
     f("SGP_ComeIntoBuilding", 0x577c2a, DONE, sgp_come_into_building),
     f("CreateObject0", 0x55eded, DONE, create_object0),
@@ -223,12 +218,18 @@ fn invite_unit_into_building(api: &mut Api, c: &mut Call) -> Result<u32> {
     Ok(0)
 }
 
-/// `void LeaveBuilding(int building, word unitType)`.
+/// `void LeaveBuilding(int building, word unitType)` (0x56c6ca): an index in `0..0xFFFF`
+/// naming an object with someone inside (OB+0xf0) gets `LeaveMine(unitType)` (0x5f518b,
+/// [`acr_sim::economy::leave_mine`]): after `EXITPAUSE` the first unit of that type walks
+/// out (transports unload through `LeaveTransport`). No building or order test here.
 fn leave_building(api: &mut Api, c: &mut Call) -> Result<u32> {
-    if let Some(b) = building_arg(api, c, 0)?
-        && !api.world.units[b].inside.is_empty()
-    {
-        acr_sim::economy::leave(api.world, b);
+    let i = c.i32(0)?;
+    let Some(b) = u16::try_from(i).ok().filter(|&i| i != 0xFFFF).and_then(|i| api.object(i)).map(|u| u.id.0 as usize)
+    else {
+        return Ok(0);
+    };
+    if !api.world.units[b].inside.is_empty() {
+        acr_sim::economy::leave_mine(api.world, b, acr_sim::TypeId(c.u16(1)?));
     }
     Ok(0)
 }
