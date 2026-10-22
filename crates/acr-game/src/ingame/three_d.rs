@@ -21,6 +21,8 @@ use crate::ui::settings::{CameraMode, Gore, Models, Settings};
 /// Where models are looked for: `<game folder>\ACR\Models\<name>.glb` (normalised game path),
 /// `<name>` the `.MD` `NAME` in lower case (`EngM18` → `engm18.glb`).
 pub const MODEL_DIR: &str = "ACR/MODELS/";
+/// How long 3D corpses lie by default (minutes of game time, setting `corpse_minutes`).
+const CORPSE_MINUTES: u64 = 5;
 /// The death counter above which a sprite corpse turns half transparent (0x506ed5).
 const CORPSE_FADE: u16 = 100;
 /// Turn and tilt speed of the free camera's keys (radians per second).
@@ -38,6 +40,8 @@ struct HeldKeys {
 pub struct ThreeD {
     models: Models,
     gore: Gore,
+    /// How long 3D corpses lie (ticks, `corpse_minutes`).
+    corpse_ticks: u64,
     free: bool,
     pub orbit: Orbit,
     keys: HeldKeys,
@@ -94,6 +98,7 @@ impl Default for ThreeD {
         Self {
             models: Models::Off,
             gore: Gore::Full,
+            corpse_ticks: CORPSE_MINUTES * 60 * acr_sim::ORIGINAL_TICKS_PER_SECOND as u64,
             free: false,
             orbit: Orbit::ORIGINAL,
             keys: HeldKeys::default(),
@@ -120,6 +125,7 @@ impl ThreeD {
     pub fn apply(&mut self, settings: &Settings) {
         self.models = settings.models;
         self.gore = settings.gore;
+        self.corpse_ticks = u64::from(settings.corpse_minutes) * 60 * acr_sim::ORIGINAL_TICKS_PER_SECOND as u64;
         self.free = settings.camera == CameraMode::Free;
         log::info!("3d: models {:?}, camera {:?}, gore {:?}", settings.models, settings.camera, settings.gore);
     }
@@ -258,7 +264,18 @@ impl ThreeD {
         let mut corpses: Vec<(usize, [f32; 3], f32)> = Vec::new();
         let mut footprints: Vec<piles::Footprint> = Vec::new();
         let mut targets: Vec<super::splatter::Target> = Vec::new();
-        for u in world.units.iter().filter(|u| u.alive && u.inside_of.is_none()) {
+        let now = world.tick.0;
+        // Corpses the simulation removed (after about a minute, as the original) stay in 3D
+        // until their own lifetime ends (`corpse_minutes`), so battlefields fill and piles
+        // grow; their units keep position, facing and lying pose.
+        let lingering = |u: &Unit| {
+            self.gore != Gore::Off
+                && !u.alive
+                && !u.building
+                && u.death >= 1000
+                && world.deaths.get(&u.id.0).is_some_and(|r| r.tick > 0 && now - r.tick < self.corpse_ticks)
+        };
+        for u in world.units.iter().filter(|u| (u.alive || lingering(u)) && u.inside_of.is_none()) {
             if u.building && (self.models != Models::All || !finished(world, u)) {
                 continue;
             }
@@ -282,11 +299,20 @@ impl ThreeD {
                 _ => 1200,
             };
             let record = world.deaths.get(&u.id.0).copied().unwrap_or_default();
+            // 3D corpses age on their own clock: two counter steps per tick from the death
+            // (as a lying corpse counts), removed after `corpse_minutes`.
+            let (death, removed_at) = if u.death > 0 && !u.building && self.gore != Gore::Off && record.tick > 0 {
+                let age = now.saturating_sub(record.tick);
+                ((2 * age).min(u64::from(u16::MAX)) as u16, (2 * self.corpse_ticks).min(u64::from(u16::MAX)) as u16)
+            } else {
+                (u.death, removed_at)
+            };
             let (x, y) = (u.pos.x >> 4, u.pos.y >> 4);
             let ground = view3d::ground_point(x, y, terrain.height_at(x, y));
-            let (wounds, pool) = super::gore::corpse(u.into(), record, self.gore, removed_at, ground);
+            let body = super::gore::Body { death, ..u.into() };
+            let (wounds, pool) = super::gore::corpse(body, record, self.gore, removed_at, ground);
             self.pools.extend(pool);
-            let (inst, at) = instance(u, index, model, terrain, self.gore, removed_at, wounds);
+            let (inst, at) = instance(u, death, index, model, terrain, self.gore, removed_at, wounds);
             if u.death > 0 && !u.building {
                 corpses.push((self.instances.len(), at, view3d::facing_yaw(u.dir)));
                 footprints.push(footprint(u, at, &inst, model.radius));
@@ -398,8 +424,10 @@ fn finished(world: &World, u: &Unit) -> bool {
 /// The model instance of a unit: the clip of its sprite animation at its sprite frame, its
 /// facing, and as a corpse its decay (or the original's fade with `gore=off`); and its
 /// ground point (sunk with the decay).
+#[allow(clippy::too_many_arguments)]
 fn instance(
     u: &Unit,
+    death: u16,
     model: usize,
     data: &ModelData,
     terrain: &TerrainData,
@@ -414,7 +442,7 @@ fn instance(
     let lying = matches!(u.anim, AnimKind::DeathLie(_));
     let (decay, transparent) = match gore {
         Gore::Off => (0.0, u.death > CORPSE_FADE),
-        Gore::Full | Gore::Reduced => (model::corpse_decay(u.death, removed_at), false),
+        Gore::Full | Gore::Reduced => (model::corpse_decay(death, removed_at), false),
     };
     let (morphs, sink) = model::decay_pose(decay, lying);
     let mut ground = view3d::ground_point(x, y, terrain.height_at(x, y));

@@ -32,6 +32,9 @@ pub struct Settings {
     pub camera: CameraMode,
     /// ACR (#183): blood and gore of 3D corpses; sprites keep the original fade.
     pub gore: Gore,
+    /// ACR: how long 3D corpses lie and decay, in minutes of game time (the simulation
+    /// removes them after about a minute as the original does; the renderer keeps them).
+    pub corpse_minutes: u32,
 }
 
 /// `models=off|units|all`: sprites everywhere (the original), 3D units, 3D units and
@@ -100,6 +103,7 @@ impl Default for Settings {
             models: Models::Off,
             camera: CameraMode::Fixed,
             gore: Gore::Full,
+            corpse_minutes: 5,
         }
     }
 }
@@ -159,7 +163,7 @@ impl Settings {
         format!(
             "sound_volume={}\nmusic_volume={}\nmusic_mode={}\ngame_mode={}\nscroll_speed={}\nframe_time={}\n\
              resolution={}\nrecord={}\nrecord_file={hex}\ncontrols={controls}\nedge_scroll={}\n\
-             models={models}\ncamera={camera}\ngore={gore}\n",
+             models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\n",
             self.sound_volume,
             self.music_volume,
             self.music_mode,
@@ -169,6 +173,7 @@ impl Settings {
             self.resolution,
             u8::from(self.record),
             u8::from(self.edge_scroll),
+            self.corpse_minutes,
         )
     }
 
@@ -206,6 +211,7 @@ impl Settings {
                     }
                 }
                 "camera" => s.camera = if value == "free" { CameraMode::Free } else { CameraMode::Fixed },
+                "corpse_minutes" => s.corpse_minutes = int.map_or(s.corpse_minutes, |v| v.clamp(1, 60) as u32),
                 "gore" => {
                     s.gore = match value {
                         "reduced" => Gore::Reduced,
@@ -241,8 +247,10 @@ mod tests {
             models: Models::Units,
             camera: CameraMode::Free,
             gore: Gore::Reduced,
+            corpse_minutes: 12,
         };
         assert_eq!(Settings::decode(&s.encode()), s);
+        assert_eq!(Settings::decode("corpse_minutes=500").corpse_minutes, 60);
         assert_eq!(Settings::decode(""), Settings::default());
         let odd = Settings::decode("scroll_speed=99\nfoo=1\nresolution=x\ncontrols=modern\nmodels=3d\ngore=off");
         assert_eq!((odd.scroll_speed, odd.resolution, odd.controls), (10, 1, Controls::Modern));

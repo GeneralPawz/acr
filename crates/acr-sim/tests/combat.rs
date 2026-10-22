@@ -250,7 +250,8 @@ fn deaths_keep_their_cause() {
     let (wx, wy) = unit(&w, winner).pos.pixels();
     let (fx, fy) = record.from.expect("the killer's position");
     assert!((fx - wx).abs() < 64 && (fy - wy).abs() < 64, "from {fx},{fy}, killer at {wx},{wy}");
-    assert_eq!(w.deaths[&k.0], DeathRecord::default());
+    assert_eq!(w.deaths[&k.0], DeathRecord { tick: 0, ..DeathRecord::default() });
+    assert!(record.tick > 0, "the death tick is kept");
     assert!(!w.deaths.contains_key(&winner.0));
     let hash = w.state_hash();
     w.deaths.clear();
