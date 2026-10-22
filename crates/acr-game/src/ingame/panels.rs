@@ -106,8 +106,21 @@ impl InGame {
         match self.interface.hud.panel {
             Panel::Unit => {
                 let selected = self.selected_units().find(|u| u.owner == self.own()).map(|u| usize::from(u.kind.0));
+                let data = self.interface.hud.data(ctx);
                 if let Some(kind) = self.interface.hud.unit_panel.shown(selected) {
-                    view.unit_info = self.unit_info(ctx, TypeId(kind as u16));
+                    view.unit_info = self.unit_info(ctx, TypeId(kind as u16), data.as_deref());
+                    // The first selected object, if it is an own unit of the shown type
+                    // (0x4c8d35).
+                    let first = self
+                        .selected_units()
+                        .next()
+                        .filter(|u| u.owner == self.own() && !u.building && usize::from(u.kind.0) == kind);
+                    if let (Some(info), Some(u)) = (&mut view.unit_info, first)
+                        && info.info.is_none_or(|(k, _)| k == 0)
+                    {
+                        info.this_unit = true;
+                        view.morale = self.morale_info(ctx, u.id);
+                    }
                 }
             }
             Panel::Game => view.game_page = self.game_page(ctx),
@@ -138,7 +151,7 @@ impl InGame {
     }
 
     /// The `.MD` values the unit panel shows (0x4c7990).
-    fn unit_info(&self, ctx: &Ctx, kind: TypeId) -> Option<UnitInfo> {
+    fn unit_info(&self, ctx: &Ctx, kind: TypeId, data: Option<&hud::data::HudData>) -> Option<UnitInfo> {
         let world = self.world.as_ref()?;
         let t = world.catalog.get(kind);
         let def = self.objects.objects().definition(&t.id)?;
@@ -181,6 +194,7 @@ impl InGame {
             storm: int("STORMFORCE", 0),
             opposit: (int("OPPOSIT", 0), int("OPPOSIT", 1)),
             description: t.md_name.to_ascii_uppercase(),
+            ..upgrade_info(ctx, world, kind, data)
         })
     }
 
@@ -494,6 +508,236 @@ impl InGame {
         }
         yy - y
     }
+}
+
+impl InGame {
+    /// The `THIS_UNIT` page's numbers for unit `id` (0x601d70): per fear type with a
+    /// `FEARFACTOR` the start chance `FEARFACTOR · 32.769` and the current one
+    /// (`panic_p`), and the factors behind it in the page's order.
+    fn morale_info(&self, ctx: &Ctx, id: EntityId) -> Option<hud::panels::MoraleInfo> {
+        let world = self.world.as_ref()?;
+        let i = id.0 as usize;
+        let u = world.units.get(i)?;
+        let adv = world.adv(u.owner, u.kind);
+        let md = &world.catalog.morale;
+        let mut m = hud::panels::MoraleInfo::default();
+        for (ft, &ff) in adv.fear_factor.iter().enumerate() {
+            if ff != 0 {
+                let start = (f64::from(ff) * 32.769) as i32;
+                m.rows.push((ft, start, acr_sim::morale::panic_p(world, i, ft as u8)));
+            }
+        }
+        let fmt = |id: &str, v: i32| hud::panels::format_int(ctx.texts.get(id), v);
+        let plain = |id: &str| ctx.texts.get(id).to_vec();
+        let f = &mut m.factors;
+        // Near an own command centre.
+        let centres = &world.morale.centers[usize::from(u.owner) & 7];
+        if !centres.is_empty() {
+            let d = centres
+                .iter()
+                .map(|&(x, y)| acr_sim::trig::norma(x - u.pos.x, y - u.pos.y) >> 4)
+                .fold(10_000_000, i32::min);
+            if d < 4 * md.ccr0 {
+                let r = f64::from(d) / f64::from(md.ccr0.max(1));
+                let v = 1000.0 / (f64::from(md.cca - 1) * (-(r * r)).exp() + 1.0);
+                f.push((fmt("FEAR_MULC", d), "FEAR_MULCH", v as i32, false));
+            }
+        }
+        let c = i32::from(u.courage);
+        if c.abs() > 5 {
+            let v = if c > 0 { 1000 / (c + 1) } else { 1000 * (1 - c) };
+            f.push((fmt("FEAR_MULB", c), "FEAR_MULBH", v, c <= 0));
+        }
+        let now = world.tick.0 as u32;
+        let player = &world.players[usize::from(u.owner) & 7];
+        for (since, f1, f2, text, hint) in [
+            (player.hungry_time, md.hf1, md.hf2, "FEAR_MUL2", "FEAR_MUL2H"),
+            (player.cc_lost_time, md.cf1, md.cf2, "FEAR_MUL3", "FEAR_MUL3H"),
+        ] {
+            let dt = now.wrapping_sub(since) as i32;
+            if since != 0 && dt > 0 {
+                let v = 1000 + f1.wrapping_mul(1000) / dt.wrapping_mul(dt).wrapping_add(f2).max(1);
+                f.push((plain(text), hint, v, true));
+            }
+        }
+        if let Some(b) = u.brigade.and_then(|b| world.brigades.get(usize::from(b))) {
+            let n = b.members.len();
+            let valid = |k: usize| {
+                b.members
+                    .get(k)
+                    .copied()
+                    .flatten()
+                    .map(|e| e.0 as usize)
+                    .filter(|&x| world.units.get(x).is_some_and(|w| w.living() && w.brigade == u.brigade))
+            };
+            for (k, text, v) in [(0, "FEAR_MUL4", md.ofn1), (1, "FEAR_MUL5", md.drf1), (2, "FEAR_MUL6", md.flf1)] {
+                if b.members.get(k).copied().flatten().is_none() {
+                    f.push((plain(text), ["FEAR_MUL4H", "FEAR_MUL5H", "FEAR_MUL6H"][k], v * 10, true));
+                }
+            }
+            if n <= 2 {
+                return Some(m);
+            }
+            let cnt = b.members[2..].iter().filter(|m| m.is_some()).count() as i32;
+            if (n as i32 - 2 - cnt) * 100 / (n as i32 - 2) > md.fp1 {
+                f.push((fmt("FEAR_MUL7", md.fp1), "FEAR_MUL7H", md.fkf1 * 10, true));
+            }
+            let kills: i32 = (0..n).filter_map(valid).map(|k| i32::from(world.units[k].kills)).sum();
+            if kills != 0 {
+                f.push((fmt("FEAR_MUL9", kills), "FEAR_MUL9H", md.fa1 * 1000 / (kills + md.fa1), false));
+            }
+            f.push((plain("FEAR_MULA"), "FEAR_MULAH", 100_000 / (100 * (cnt - 2) / md.fb1.max(1) + 100), false));
+            if let Some(o) = valid(0) {
+                let k = i32::from(world.units[o].kills);
+                f.push((fmt("FEAR_MUL8", k), "FEAR_MUL8H", md.ofa1 * 1000 / (md.ofa1 + k * md.ofa2).max(1), false));
+            }
+        } else if u.kills != 0 {
+            let k = i32::from(u.kills);
+            f.push((fmt("FEAR_MUL1", k), "FEAR_MUL1H", md.a1 * 1000 / (md.a1 + k), false));
+        }
+        Some(m)
+    }
+}
+
+/// `Holz: 10, Gold: 5` (0x4c8b40): the resources of a price that are not 0.
+fn cost_text(ctx: &Ctx, cost: &[i32]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for (r, &c) in cost.iter().enumerate().take(6).filter(|(_, c)| **c != 0) {
+        if !out.is_empty() {
+            out.extend_from_slice(b", ");
+        }
+        out.extend_from_slice(ctx.texts.get(super::interface::RESOURCE_NAMES[r]));
+        out.extend_from_slice(format!(": {c}").as_bytes());
+    }
+    out
+}
+
+/// The unit panel's upgrade data of a type (0x4c7990): the level tables of the `DAMAGE`
+/// and `PROTECTION` upgrades for this type alone with `#LEVEL` 2, 3, … in list order (at
+/// most six each; a `DAMAGE` level names one weapon kind), and the other upgrades that
+/// concern the type, for the grid (0x4c84b0).
+fn upgrade_info(ctx: &Ctx, world: &World, kind: TypeId, data: Option<&hud::data::HudData>) -> UnitInfo {
+    use acr_sim::tech::{Effect, Select, ctg};
+    let mut info = UnitInfo::default();
+    let Some(data) = data else { return info };
+    let t = world.catalog.get(kind);
+    let tech = &world.catalog.tech;
+    // Base values per weapon kind: the highest `DAMAGE` of its attack indices, and the
+    // protection.
+    let mut attack = [0i32; 8];
+    for a in &t.attacks {
+        if let Some(k) = data.weapon(&a.kind).filter(|&k| k < 8)
+            && a.damage != 0
+            && attack[k] < a.damage
+        {
+            attack[k] = a.damage;
+        }
+    }
+    let mut shield = [0i32; 8];
+    for (name, v) in &t.protection {
+        if let Some(k) = data.weapon(name).filter(|&k| k < 8)
+            && *v != 0
+        {
+            shield[k] = *v & 0xFF;
+        }
+    }
+    let mut in_tables = vec![false; tech.upgrades.len()];
+    let mut tables = Vec::new();
+    for (category, base, att) in [(ctg::DAMAGE, attack, true), (ctg::PROTECTION, shield, false)] {
+        // Per level: the increase per kind and the price.
+        let mut levels: Vec<([i32; 8], [i32; 8], String)> = Vec::new();
+        for (i, u) in tech.upgrades.iter().enumerate() {
+            if levels.len() >= 6 || u.level != levels.len() as i32 + 2 {
+                continue;
+            }
+            let Effect::Units { category: c, units, select, value: Some(v) } = &u.effect else { continue };
+            if *c != category || units.as_slice() != [kind] {
+                continue;
+            }
+            let kinds: Vec<usize> = match (select, att) {
+                (Select::WeaponKinds(k), true) if k.len() == 1 => k.iter().filter_map(|n| data.weapon(n)).collect(),
+                (Select::Protection(k), false) => k.iter().filter_map(|n| data.weapon(n)).collect(),
+                _ => continue,
+            };
+            let mut inc = [0; 8];
+            for k in kinds.into_iter().filter(|&k| k < 8) {
+                inc[k] = v.n;
+            }
+            in_tables[i] = true;
+            levels.push((inc, u.cost, u.message.clone()));
+        }
+        let (row_hint, base_hint, to) =
+            if att { ("UI_ATT", "UI_SATT", "UI_AttTo") } else { ("UI_SHL", "UI_SSHL", "UI_ShlTo") };
+        let mut rows = Vec::new();
+        for k in 0..8 {
+            if !levels.iter().any(|l| l.0[k] != 0) {
+                continue;
+            }
+            let label = ctx.texts.get(&format!("{row_hint}{k}")).to_vec();
+            let (mut cum, mut cum_cost) = (base[k], [0i32; 8]);
+            let mut cells = Vec::new();
+            for (inc, cost, _) in &levels {
+                cum += inc[k];
+                for (c, v) in cum_cost.iter_mut().zip(cost) {
+                    *c += v;
+                }
+                // `%s/%s%d/%s` + price, `/%s` + total price (0x4cb080).
+                let mut hint = label.clone();
+                hint.push(b'/');
+                hint.extend_from_slice(ctx.texts.get(to));
+                hint.extend_from_slice(cum.to_string().as_bytes());
+                hint.push(b'/');
+                hint.extend_from_slice(ctx.texts.get("UI_Cost"));
+                hint.extend_from_slice(&cost_text(ctx, cost));
+                hint.push(b'/');
+                hint.extend_from_slice(ctx.texts.get("UI_CostTo"));
+                hint.extend_from_slice(&cost_text(ctx, &cum_cost));
+                cells.push((inc[k], hint));
+            }
+            rows.push(hud::panels::LevelRow {
+                icon: data.weapons[k].1,
+                base: base[k],
+                hints: (label, ctx.texts.get(&format!("{base_hint}{k}")).to_vec()),
+                cells,
+            });
+        }
+        tables.push(hud::panels::LevelTable { rows });
+    }
+    info.shield_levels = tables.pop().unwrap_or_default();
+    info.attack_levels = tables.pop().unwrap_or_default();
+    // The grid: upgrades of the type, not in the tables, whose message is not their id,
+    // of a category below `SHAR` other than `ENABLE`, `SINGLE_INSIDE`, `SINGLE_ATTPAUSE`;
+    // artillery leaves out `BUILD` and `COST`; peasants also get the `EFFECT_*` upgrades.
+    let artillery = t.role.artillery;
+    for (i, u) in tech.upgrades.iter().enumerate() {
+        if in_tables[i] || u.message.eq_ignore_ascii_case(&u.id) || info.upgrades.len() >= 25 {
+            continue;
+        }
+        let (category, units): (u8, &[TypeId]) = match &u.effect {
+            Effect::Units { category, units, .. } => (*category, units),
+            Effect::Cost { units, .. } => (ctg::COST, units),
+            Effect::Enable { units, .. } => (ctg::ENABLE, units),
+            Effect::Nation { category, .. } | Effect::Building { category } => (*category, &[]),
+            Effect::None => continue,
+        };
+        let mut shown = category < ctg::SHAR
+            && ![ctg::ENABLE, ctg::SINGLE_INSIDE, ctg::SINGLE_ATTPAUSE].contains(&category)
+            && units.contains(&kind);
+        if artillery && (category == ctg::BUILD || category == ctg::COST) {
+            shown = false;
+        }
+        if t.peasant && (ctg::EFFECT_FOOD..=ctg::EFFECT_STONE).contains(&category) {
+            shown = true;
+        }
+        if shown {
+            let mut hint = ctx.texts.get(&u.message).to_vec();
+            hint.push(b'/');
+            hint.extend_from_slice(ctx.texts.get("UI_Cost"));
+            hint.extend_from_slice(&cost_text(ctx, &u.cost));
+            info.upgrades.push((data.icon(&u.icon), hint));
+        }
+    }
+    info
 }
 
 /// `NatsIDS` of a type's nation: the `NATIONS.LST` entry whose code matches the id's

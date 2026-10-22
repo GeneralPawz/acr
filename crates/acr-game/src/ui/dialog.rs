@@ -199,6 +199,9 @@ pub struct InputBox {
 pub enum Kind {
     /// An area without drawing (`addViewPort`).
     Area,
+    /// A one-pixel frame around the area in a colour (`ColoredBar` with `+0x64 = 1`,
+    /// 0x476094).
+    Outline([u8; 4]),
     /// A bitmap with its top-left corner at the widget position (`addPicture`, `addBPXView`).
     Picture {
         path: String,
@@ -393,6 +396,11 @@ impl Dialog {
 
     pub fn add_area(&mut self, rect: Rect) -> WidgetId {
         self.push(rect.x0, rect.y0, rect, Kind::Area)
+    }
+
+    /// `ColoredBar(x, y, w, h, colour)` as an outline: covers `w + 1` × `h + 1` pixels.
+    pub fn add_outline(&mut self, x: i32, y: i32, w: i32, h: i32, rgba: [u8; 4]) -> WidgetId {
+        self.push(x, y, Rect::new(x, y, w + 1, h + 1), Kind::Outline(rgba))
     }
 
     pub fn add_picture(&mut self, lib: &Library, x: i32, y: i32, path: &str) -> WidgetId {
@@ -1155,6 +1163,17 @@ impl Dialog {
     fn draw_widget(&self, lib: &Library, fonts: &Fonts, w: &Widget, out: &mut Vec<Draw>) {
         match &w.kind {
             Kind::Area => {}
+            Kind::Outline(rgba) => {
+                let r = w.rect;
+                for edge in [
+                    Rect::new(r.x0, r.y0, r.width(), 1),
+                    Rect::new(r.x0, r.y1 - 1, r.width(), 1),
+                    Rect::new(r.x0, r.y0, 1, r.height()),
+                    Rect::new(r.x1 - 1, r.y0, 1, r.height()),
+                ] {
+                    out.push(Draw::fill(*rgba, edge));
+                }
+            }
             Kind::Picture { path } => out.push(Draw::bitmap(path, w.x, w.y)),
             Kind::GpPicture { gp, frame } => out.push(Draw::frame(gp, *frame, w.x, w.y)),
             Kind::GpButton { gp, active, passive } => {
