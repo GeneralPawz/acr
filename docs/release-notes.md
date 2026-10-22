@@ -21,6 +21,8 @@ double-click:
   local server, opens the browser and loads the game files from the folder it finds the
   same way (or lets you pick it in the page). Close its window to stop it.
 
+Both executables carry the original game icon.
+
 Settings, savegames and campaign progress are stored in `%LOCALAPPDATA%\ACR\` and the game
 folder's `Save\` and `Players\` folders (in the browser: the browser's local storage).
 
