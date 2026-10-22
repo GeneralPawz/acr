@@ -55,7 +55,8 @@ crates/
   acr-viewer    sprite and map viewer app (winit); native binary and wasm entry point
   acr-tool      `acr` CLI for inspecting game data and validating decoders
   acr-serve     local web server: `cargo xtask serve` and the `AmericanConquest-Web` launcher
-xtask/          build automation in Rust (`cargo xtask web|serve|dist`)
+xtask/          build automation in Rust (`cargo xtask web|serve|dist|assets`)
+assets/         Blender scripts that build the 3D models (M2), see docs/assets.md
 docs/formats/   reverse-engineered format specifications with evidence
 ```
 
@@ -153,3 +154,4 @@ Requires the `wasm32-unknown-unknown` target for the browser build
 - [Random map generator](docs/mapgen.md)
 - [Mission/AI scripting API](docs/script-api.md) (generated)
 - [Simulation: game speed, pathfinding, motion, formations](docs/simulation.md)
+- [3D assets: pipeline, original camera, sprite check](docs/assets.md)

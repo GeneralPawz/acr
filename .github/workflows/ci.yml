@@ -47,6 +47,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y libasound2-dev  # cpal (acr-audio)
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --locked
+      - run: python3 -m unittest discover -s assets/blender/tests  # asset camera math, no Blender
 
   wasm:
     name: wasm clippy + web bundle

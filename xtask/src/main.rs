@@ -6,6 +6,10 @@
 //!   support and `http://127.0.0.1:N/?game=/game/` opens the app without a file picker
 //! - `cargo xtask dist [--game-dir DIR] [--install]`   the release in `dist/`: `AmericanConquest.exe`,
 //!   the browser build in `web/` and its launcher `AmericanConquest-Web.exe`
+//! - `cargo xtask assets [NAME..] [--game-dir DIR] [--compress none|meshopt|draco] [--check] [--blend]`
+//!   rebuild the 3D assets with Blender into `target/assets` (see `docs/assets.md`)
+
+mod assets;
 
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -36,11 +40,33 @@ fn main() -> ExitCode {
         Some("web") => build_web(&app, release).map(|_| ()),
         Some("serve") => build_web(&app, release).and_then(|dir| serve(&dir, game_dir.as_deref(), port)),
         Some("dist") => dist(game_dir.as_deref(), args.iter().any(|a| a == "--install")),
+        Some("assets") => {
+            let mut names = Vec::new();
+            let mut it = args.iter().skip(1);
+            while let Some(a) = it.next() {
+                match a.as_str() {
+                    "--game-dir" | "--compress" => {
+                        it.next();
+                    }
+                    flag if flag.starts_with("--") => {}
+                    name => names.push(name.to_owned()),
+                }
+            }
+            let options = assets::Options {
+                names,
+                game_dir: game_dir.clone(),
+                compress: option("--compress").unwrap_or_else(|| "none".to_owned()),
+                check: args.iter().any(|a| a == "--check"),
+                blend: args.iter().any(|a| a == "--blend"),
+            };
+            assets::assets(&workspace_root(), &options)
+        }
         _ => {
             eprintln!(
                 "usage: cargo xtask web [--release] [--app game|viewer]\n       \
                  cargo xtask serve [--release] [--app game|viewer] [--port N] [--game-dir DIR]\n       \
-                 cargo xtask dist [--game-dir DIR] [--install]"
+                 cargo xtask dist [--game-dir DIR] [--install]
+                        cargo xtask assets [NAME..] [--game-dir DIR] [--compress none|meshopt|draco] [--check] [--blend]"
             );
             return ExitCode::from(2);
         }
