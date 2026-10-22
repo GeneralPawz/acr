@@ -124,6 +124,9 @@ def musketeer_clips(md_lines, stand=STAND_MUSKET):
         "STAND": [(0.0, stand)],
         "MOTION_L": [(0.0, cl), (0.5, pl), (1.0, cr)],
         "MOTION_R": [(0.0, cr), (0.5, pr), (1.0, cl)],
+        # Backwards: the forward halves reversed (the .MD plays R's and L's frames backwards).
+        "MOTION_LB": [(0.0, cl), (0.5, pr), (1.0, cr)],
+        "MOTION_RB": [(0.0, cr), (0.5, pl), (1.0, cl)],
         "PATTACK": [(0.0, stand), (0.5, _with(AIM_MUSKET, world={"socket.hand_r": (40, 0, 0)})), (1.0, AIM_MUSKET)],
         "UATTACK": [(0.0, AIM_MUSKET), (0.5, _with(AIM_MUSKET, world={"socket.hand_r": (40, 0, 0)})), (1.0, stand)],
         "PSTAND": [(0.0, AIM_MUSKET)],

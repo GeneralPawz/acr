@@ -16,9 +16,9 @@ COMPRESSION = ("none", "meshopt", "draco")
 
 def export_glb(path, compression="none", image_format="AUTO"):
     """Exports the scene. Skins, morph targets (shape keys), one animation per action
-    (`STAND`, `DEATH`, ...) and custom attributes whose names start with `_` (`_decay` ->
-    `_DECAY`, `_gore` -> `_GORE`, `_part` -> `_PART`, `_wind` -> `_WIND`) go out when the
-    scene has them."""
+    (`STAND`, `DEATH`, ...), the active colour attribute as COLOR_0 and custom attributes
+    whose names start with `_` (`_gore` -> `_GORE`, `_part` -> `_PART`, `_wind` -> `_WIND`)
+    go out when the scene has them. Images go out as PNG (the renderer decodes PNG only)."""
     if compression not in COMPRESSION:
         raise ValueError(f"compression must be one of {COMPRESSION}")
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
@@ -43,8 +43,9 @@ def export_glb(path, compression="none", image_format="AUTO"):
         export_animation_mode="ACTIONS",
         export_force_sampling=True,
         export_optimize_animation_size=True,
-        # No COLOR_0: glTF multiplies it into the base colour; masks go out as `_` attributes.
-        export_vertex_color="NONE",
+        # COLOR_0 = the active colour attribute: the decay mask of units (read as a mask by
+        # the renderer for `acr_decay` materials), baked shading of trees.
+        export_vertex_color="ACTIVE",
         export_all_vertex_colors=False,
         export_active_vertex_color_when_no_material=False,
         export_attributes=True,

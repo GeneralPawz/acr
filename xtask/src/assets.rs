@@ -62,8 +62,10 @@ fn constant(source: &str, name: &str) -> Option<String> {
 /// The strings of a top-level list `NAME = ["a", "b"]` (it may span lines).
 fn list(source: &str, name: &str) -> Option<Vec<String>> {
     let start = source.lines().position(|l| l.strip_prefix(name).is_some_and(|r| r.trim_start().starts_with('=')))?;
-    let text: String = source.lines().skip(start).collect::<Vec<_>>().join("
-");
+    let text: String = source.lines().skip(start).collect::<Vec<_>>().join(
+        "
+",
+    );
     let inner = text.split_once('[')?.1.split_once(']')?.0;
     Some(
         inner
@@ -138,7 +140,7 @@ pub fn assets(root: &Path, o: &Options) -> Result<()> {
         let checks = list(&source, "CHECKS").unwrap_or_else(|| vec![String::new()]);
         let reference = match (&ty, &game_dir) {
             (Some(ty), Some(game)) => {
-                let dir = out_root.join("ref").join(ty);
+                let dir = out_root.join("ref").join(ty.replace(':', "_"));
                 acr(root, &["model-ref".as_ref(), game.as_os_str(), ty.as_ref(), dir.as_os_str()])?;
                 for check in checks.iter().filter(|c| !label(c).is_empty()) {
                     let sub = dir.join(label(check));

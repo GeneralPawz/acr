@@ -23,6 +23,8 @@ MD = {
     "STAND": "#STAND 9 1 5 0",
     "MOTION_L": "@MOTION_L 9 1 0 9",
     "MOTION_R": "@MOTION_R 9 1 10 19",
+    "MOTION_LB": "@MOTION_LB 9 1 19 10",
+    "MOTION_RB": "@MOTION_RB 9 1 9 0",
     "PATTACK": "@PATTACK 9 5 0 35",
     "UATTACK": "@UATTACK 9 5 35 0",
     "PSTAND": "#PSTAND 9 1 5 35",
