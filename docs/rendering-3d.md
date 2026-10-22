@@ -61,6 +61,7 @@ acr-render
 acr-game
   ingame/three_d.rs  settings, model lookup and loading, instances from the simulation,
                      the frame's 3D pass, free-camera keys and scrolling
+  ingame/piles.rs    corpse piles: lift and tilt of overlapping corpses
   ui/settings.rs     models / camera / gore
   native.rs          ACR_MODELS_DIR
 ```
@@ -201,6 +202,28 @@ A killing hit sprays half again as many. They dry from red to brown between 40 a
 ticks after the hit and fade from 75 % of `HIT_KEEP` until just before it. `gore=reduced`:
 half the droplets, 0.7× the size, 0.8× the reach; `gore=off` and `models=off`: none.
 Melee, thrown weapons and explosions spray nothing yet.
+
+#### Corpse piles (#221)
+
+3D corpses that overlap lie on each other instead of through each other
+(`acr-game/src/ingame/piles.rs`, render only; corpses as obstacles are #222):
+
+- Each corpse (death counter > 0) is a rectangle on the ground along its facing: 1.7 m long,
+  0.5 m wide, its centre 0.1 m ahead of the ground point (the head lies ahead, the chest
+  0.55 m), with a rounded top 0.25 m thick. Larger models get a larger footprint
+  (`1 + 2.5 · (radius / 2.2 m − 1)`, at most 1.8: `engd18.glb`, radius 2.6 m, gives 1.45).
+- Bodies are stacked by time of death: the larger death counter lies lower, ties by unit id.
+  Each body samples the tops of the bodies placed before it at 8 points (±0.25, ±0.75 of
+  the half length, ±0.5 of the half width); its lift is the mean of the highest back and
+  front supports (or of left and right, whichever is more), at most 1.1 m; it tilts by the
+  difference along the body (pitch) and half the difference across it (roll), at most
+  0.5 (27°), turned rather than sheared (`view3d::model_matrix_tilted`).
+- Piles settle: a body's thickness shrinks by 65 % of its `deflate` weight and its sink
+  lowers its top, so the bodies above come down as the ones below decay.
+- Blood pools stay on the ground; living units are not lifted.
+- The bodies go into a flat grid (64 px cells, coarser when they are spread wide) every
+  frame. Monongahela (`battle3.m3d`) with 530–570 English corpses on the map: 0.25–0.5 ms
+  per frame (release, logged every 500 frames); 800 bodies packed into 40 × 20 m: 0.85 ms.
 
 ## Camera math
 

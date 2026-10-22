@@ -15,6 +15,7 @@ use acr_sim::World;
 use acr_sim::world::{AnimKind, EntityId, Unit};
 use winit::keyboard::{Key, NamedKey};
 
+use super::piles;
 use crate::ui::settings::{CameraMode, Gore, Models, Settings};
 
 /// Where models are looked for: `<game folder>\ACR\Models\<name>.glb` (normalised game path),
@@ -58,6 +59,9 @@ pub struct ThreeD {
     /// Frames and time since the last performance line in the log.
     frames: u32,
     since: Option<web_time::Instant>,
+    /// Time spent stacking corpses (µs) and stackings since the last log line.
+    pile_us: u128,
+    pile_runs: u32,
     /// `ACR_3D_COMPARE` (development): compare models with their sprites.
     compare: Compare,
     started: web_time::Instant,
@@ -104,6 +108,8 @@ impl Default for ThreeD {
             shown: HashSet::new(),
             frames: 0,
             since: None,
+            pile_us: 0,
+            pile_runs: 0,
             compare: Compare::from_env(),
             started: web_time::Instant::now(),
         }
@@ -168,8 +174,9 @@ impl ThreeD {
         match result.as_ref().map_err(String::clone).and_then(|b| ModelData::from_glb(b)) {
             Ok(model) => {
                 log::info!(
-                    "3d: {path}: {} triangles, {} clips {:?}",
+                    "3d: {path}: {} triangles, radius {:.1} m, {} clips {:?}",
                     model.triangle_count(),
+                    model.radius / PIXELS_PER_METRE,
                     model.clips.len(),
                     model.clips.iter().map(|c| c.name.as_str()).collect::<Vec<_>>()
                 );
@@ -247,6 +254,9 @@ impl ThreeD {
         }
         let defs = objects.objects();
         let mut names: HashMap<acr_sim::TypeId, String> = HashMap::new();
+        // Corpses drawn as models: instance index, sunk ground point, yaw, footprint.
+        let mut corpses: Vec<(usize, [f32; 3], f32)> = Vec::new();
+        let mut footprints: Vec<piles::Footprint> = Vec::new();
         for u in world.units.iter().filter(|u| u.alive && u.inside_of.is_none()) {
             if u.building && (self.models != Models::All || !finished(world, u)) {
                 continue;
@@ -275,8 +285,29 @@ impl ThreeD {
             let ground = view3d::ground_point(x, y, terrain.height_at(x, y));
             let (wounds, pool) = super::gore::corpse(u.into(), record, self.gore, removed_at, ground);
             self.pools.extend(pool);
-            self.instances.push(instance(u, index, model, terrain, self.gore, removed_at, wounds));
+            let (inst, at) = instance(u, index, model, terrain, self.gore, removed_at, wounds);
+            if u.death > 0 && !u.building {
+                corpses.push((self.instances.len(), at, view3d::facing_yaw(u.dir)));
+                footprints.push(footprint(u, at, &inst, model.radius));
+            }
+            self.instances.push(inst);
             self.shown.insert(u.id);
+        }
+        // Corpses that overlap lie on each other (#221).
+        let start = web_time::Instant::now();
+        let rests = piles::stack(&footprints);
+        self.pile_us += start.elapsed().as_micros();
+        self.pile_runs += 1;
+        if self.pile_runs == 500 {
+            log::info!("3d: {} corpses piled in {} µs", footprints.len(), self.pile_us / 500);
+            self.pile_us = 0;
+            self.pile_runs = 0;
+        }
+        for ((i, at, yaw), rest) in corpses.into_iter().zip(rests) {
+            if rest != piles::Rest::default() {
+                let ground = [at[0], at[1], at[2] + rest.lift];
+                self.instances[i].transform = view3d::model_matrix_tilted(ground, yaw, 1.0, rest.pitch, rest.roll);
+            }
         }
         let ground = |x: f32, y: f32| {
             let (x, y) = (x as i32, y as i32);
@@ -353,7 +384,8 @@ fn finished(world: &World, u: &Unit) -> bool {
 }
 
 /// The model instance of a unit: the clip of its sprite animation at its sprite frame, its
-/// facing, and as a corpse its decay (or the original's fade with `gore=off`).
+/// facing, and as a corpse its decay (or the original's fade with `gore=off`); and its
+/// ground point (sunk with the decay).
 fn instance(
     u: &Unit,
     model: usize,
@@ -362,7 +394,7 @@ fn instance(
     gore: Gore,
     removed_at: u16,
     wounds: Wounds,
-) -> ModelInstance {
+) -> (ModelInstance, [f32; 3]) {
     let anim = u.anim.name();
     let clip = data.clip_for_animation(&anim);
     let time = if u.building { 0.0 } else { u.frame.max(0) as f32 / data.fps };
@@ -377,7 +409,7 @@ fn instance(
     ground[2] -= sink * PIXELS_PER_METRE;
     // Buildings have one view, facing south.
     let yaw = if u.building { 0.0 } else { view3d::facing_yaw(u.dir) };
-    ModelInstance {
+    let instance = ModelInstance {
         model,
         clip,
         time,
@@ -387,6 +419,34 @@ fn instance(
         transparent,
         player: u.owner,
         wounds,
+    };
+    (instance, ground)
+}
+
+/// A human's body lying on the ground (metres): length, width, thickness, and how far its
+/// centre lies ahead of the ground point (towards the head; the chest is 0.55 m ahead,
+/// `gore.rs`).
+const BODY: [f32; 4] = [1.7, 0.5, 0.25, 0.1];
+/// The rest-pose radius of a musketeer with his musket (`engm18.glb`, world pixels). Larger
+/// models (horses) get a larger footprint, up to 1.8 times: a mounted model's radius grows
+/// less than its lying body (2.6 m for `engd18.glb`, a horse lies ~2.4 m long).
+const HUMAN_RADIUS: f32 = 2.2 * PIXELS_PER_METRE;
+
+/// The footprint of a corpse for stacking (#221): thinner as it deflates and sinks.
+fn footprint(u: &Unit, ground: [f32; 3], inst: &ModelInstance, radius: f32) -> piles::Footprint {
+    let size = (1.0 + 2.5 * (radius / HUMAN_RADIUS - 1.0)).clamp(1.0, 1.8) * PIXELS_PER_METRE;
+    let (s, c) = view3d::facing_yaw(u.dir).sin_cos();
+    let [length, width, thick, ahead] = BODY.map(|v| v * size);
+    // Deflating takes about two thirds of the body; the sink already lowered `ground`.
+    let thickness = thick * (1.0 - 0.65 * inst.morphs[0]);
+    piles::Footprint {
+        centre: [ground[0] + s * ahead, ground[1] + c * ahead, ground[2]],
+        along: [s, c],
+        half_length: length / 2.0,
+        half_width: width / 2.0,
+        thickness,
+        // Died earlier (larger death counter) lies lower.
+        order: (u32::from(u16::MAX - u.death), u.id.0),
     }
 }
 
