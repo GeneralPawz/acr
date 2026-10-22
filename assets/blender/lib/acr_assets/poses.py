@@ -115,15 +115,29 @@ def death_keys(stand, lie):
     return [(0.0, stand), (0.14, hit), (0.40, buckle), (0.65, fall), (0.85, land), (1.0, lie)]
 
 
-def musketeer_clips(md_lines, stand=STAND_MUSKET, aim=None):
+# Charge bayonets: the musket held level at the hip, both hands on it (`aim.hold` with a
+# low pocket), the body leaning in.
+CHARGE_MUSKET = {
+    "spine": (-10, 0, -16), "spine2": (-4, 0, -10), "head": (6, 0, 20), "neck": (4, 0, 6),
+    "thigh_l": (-14, -3, 0), "shin_l": (10, 0, 0), "thigh_r": (8, 3, 0),
+    "world": {"socket.hand_r": (84, 0, 0)},
+}
+
+
+def musketeer_clips(md_lines, stand=STAND_MUSKET, aim=None, charge=None):
     """{clip: [(frame, pose)]} for a European musketeer from its `.MD` lines
-    ({key: "@DEATH 9 4 0 70"}): STAND, MOTION_L, MOTION_R, PATTACK, UATTACK, PSTAND,
-    ATTACK (fire and reload), ATTACK1 (bayonet), DEATH, DEATHLIE1."""
+    ({key: "@DEATH 9 4 0 70"}): STAND, MOTION_L, MOTION_R, the bayonet (attack index 0,
+    `PIKA`: PATTACK, UATTACK, PSTAND, ATTACK), the musket shot (index 1, `VISTREL`:
+    PATTACK1, UATTACK1, PSTAND1, ATTACK1 = fire and reload, with `SETACTIVEPOINT #ATTACK1`),
+    DEATH, DEATHLIE1. `aim` and `charge` are the IK-solved two-handed poses (`aim.hold`)."""
     lie = lie_prone()
     cl, pl, cr, pr = walk_cycle(stand)
     # `aim`: the present pose with both hands on the musket (`aim.hold`); the data pose
     # without it.
     AIM_MUSKET = aim or globals()["AIM_MUSKET"]
+    ready = charge or CHARGE_MUSKET
+    lunge = _with(ready, spine=(-18, 0, -16), spine1=(-6, 0, 0), root_loc=(0, -0.14, -0.05),
+                  thigh_l=(-32, -3, 0), shin_l=(26, 0, 0), thigh_r=(16, 3, 0), shin_r=(12, 0, 0))
     fire = _with(AIM_MUSKET, spine=(4, 0, 6), head=AIM_MUSKET.get("head", (12, 0, -10)), root_loc=(0, 0.03, 0))
     clips = {
         "STAND": [(0.0, stand)],
@@ -132,12 +146,17 @@ def musketeer_clips(md_lines, stand=STAND_MUSKET, aim=None):
         # Backwards: the forward halves reversed (the .MD plays R's and L's frames backwards).
         "MOTION_LB": [(0.0, cl), (0.5, pr), (1.0, cr)],
         "MOTION_RB": [(0.0, cr), (0.5, pl), (1.0, cl)],
-        "PATTACK": [(0.0, stand), (0.5, _with(AIM_MUSKET, world={"socket.hand_r": (40, 0, 0)})), (1.0, AIM_MUSKET)],
-        "UATTACK": [(0.0, AIM_MUSKET), (0.5, _with(AIM_MUSKET, world={"socket.hand_r": (40, 0, 0)})), (1.0, stand)],
-        "PSTAND": [(0.0, AIM_MUSKET)],
-        "ATTACK": [(0.0, AIM_MUSKET), (0.06, fire), (0.15, AIM_MUSKET), (0.3, LOADING), (0.7, LOADING),
-                   (0.85, _with(AIM_MUSKET, world={"socket.hand_r": (40, 0, 0)})), (1.0, AIM_MUSKET)],
-        "ATTACK1": [(0.0, AIM_MUSKET), (0.35, THRUST), (0.55, AIM_MUSKET), (0.8, THRUST), (1.0, AIM_MUSKET)],
+        # Bayonet (index 0).
+        "PATTACK": [(0.0, stand), (0.5, _with(ready, world={"socket.hand_r": (40, 0, 0)})), (1.0, ready)],
+        "UATTACK": [(0.0, ready), (0.5, _with(ready, world={"socket.hand_r": (40, 0, 0)})), (1.0, stand)],
+        "PSTAND": [(0.0, ready)],
+        "ATTACK": [(0.0, ready), (0.35, lunge), (0.55, ready), (0.8, lunge), (1.0, ready)],
+        # Musket shot (index 1): present, fire, reload, present again.
+        "PATTACK1": [(0.0, stand), (0.5, _with(AIM_MUSKET, world={"socket.hand_r": (40, 0, 0)})), (1.0, AIM_MUSKET)],
+        "UATTACK1": [(0.0, AIM_MUSKET), (0.5, _with(AIM_MUSKET, world={"socket.hand_r": (40, 0, 0)})), (1.0, stand)],
+        "PSTAND1": [(0.0, AIM_MUSKET)],
+        "ATTACK1": [(0.0, AIM_MUSKET), (0.06, fire), (0.15, AIM_MUSKET), (0.3, LOADING), (0.7, LOADING),
+                    (0.85, _with(AIM_MUSKET, world={"socket.hand_r": (40, 0, 0)})), (1.0, AIM_MUSKET)],
         "DEATH": death_keys(stand, lie),
         "DEATHLIE1": [(0.0, lie)],
     }
