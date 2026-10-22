@@ -23,7 +23,7 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "model-ref",
-        usage: "<game-dir> <TYPE> <out-dir> [--anim NAME] [--step N] [--player N]   (reference views for the original camera)",
+        usage: "<game-dir> <TYPE|LIST:INDEX> <out-dir> [--anim NAME] [--step N] [--player N] [--sections STATE]   (reference views for the original camera; TREELIST:104 = a map object)",
         run: |a| match a {
             [dir, ty, out, rest @ ..] => {
                 RefOptions::parse(rest).and_then(|o| model_ref(Path::new(dir), ty, Path::new(out), &o).map(|_| ()))
@@ -33,7 +33,7 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "model-check",
-        usage: "<game-dir> <TYPE> <model.glb> <out-dir> [--anim NAME] [--step N] [--min-iou X] [--blender PATH] [--scripts DIR]",
+        usage: "<game-dir> <TYPE|LIST:INDEX> <model.glb> <out-dir> [--anim NAME] [--step N] [--sections STATE] [--min-iou X] [--blender PATH] [--scripts DIR]",
         run: |a| match a {
             [dir, ty, glb, out, rest @ ..] => model_check(Path::new(dir), ty, Path::new(glb), Path::new(out), rest),
             _ => Err(crate::WRONG_ARGS.into()),
@@ -76,11 +76,14 @@ struct RefOptions {
     anim: Option<String>,
     step: usize,
     player: u8,
+    /// Draw every `ADDSECTION` section of a building in this state (0..=3) after the
+    /// animation's parts, as a finished building does.
+    sections: Option<u8>,
 }
 
 impl RefOptions {
     fn parse(args: &[&str]) -> Result<Self> {
-        let mut o = Self { anim: None, step: 0, player: 0 };
+        let mut o = Self { anim: None, step: 0, player: 0, sections: None };
         let mut it = args.iter();
         while let Some(&flag) = it.next() {
             let value = *it.next().ok_or_else(|| format!("{flag} needs a value"))?;
@@ -88,6 +91,7 @@ impl RefOptions {
                 "--anim" => o.anim = Some(value.to_owned()),
                 "--step" => o.step = value.parse()?,
                 "--player" => o.player = value.parse()?,
+                "--sections" => o.sections = Some(value.parse()?),
                 _ => return Err(format!("unknown option {flag}").into()),
             }
         }
@@ -137,6 +141,8 @@ struct Reference {
     width: u32,
     height: u32,
     anchor: (i32, i32),
+    /// The section state drawn (`--sections`), if any.
+    sections: Option<u8>,
     views: Vec<View>,
 }
 
@@ -145,6 +151,9 @@ struct Reference {
 /// and writes `ref_<k>.png` and `ref.json` to `out`.
 fn model_ref(dir: &Path, ty: &str, out: &Path, o: &RefOptions) -> Result<Reference> {
     let mut vfs = Vfs::open_game_dir(dir)?;
+    if let Some((list, index)) = ty.split_once(':') {
+        return list_ref(&mut vfs, list, index.parse()?, out, o);
+    }
     let (_, def) = crate::defs::find_unit(&mut vfs, ty)?;
     let anim = match &o.anim {
         Some(name) => def.animation(name).ok_or_else(|| format!("{ty} has no animation {name}"))?,
@@ -181,8 +190,45 @@ fn model_ref(dir: &Path, ty: &str, out: &Path, o: &RefOptions) -> Result<Referen
             let frame = packs[i].1.decode_frame(index)?;
             parts.push((i, frame, (set.offset.0 + location.0, set.offset.1 + location.1)));
         }
+        // A finished building draws the frame of each section's state after its parts.
+        if let Some(state) = o.sections {
+            for section in def.sections() {
+                let Some((frame, _)) = section.shown(state) else { continue };
+                let set = def.sprite(section.sprite).ok_or_else(|| format!("no sprite set {}", section.sprite))?;
+                let path = set.gp_path();
+                let i = match packs.iter().position(|(p, ..)| *p == path) {
+                    Some(i) => i,
+                    None => {
+                        let palette = crate::images::load_palette(&mut vfs, acr_formats::sprite_palette(&path))?;
+                        packs.push((path.clone(), GpFile::parse(vfs.read(&path)?)?, palette));
+                        packs.len() - 1
+                    }
+                };
+                let frame = packs[i].1.decode_frame(usize::from(frame) * dirs + k)?;
+                parts.push((i, frame, (set.offset.0 + location.0, set.offset.1 + location.1)));
+            }
+        }
         parts_per_view.push(parts);
     }
+    let name = def.name().unwrap_or(ty).to_owned();
+    let reference = compose(name, anim.name.clone(), dirs, full_rotation, o, &packs, &parts_per_view)?;
+    write_reference(&reference, out)?;
+    Ok(reference)
+}
+
+/// A decoded frame of pack `.0`, drawn with its origin at the ground point + `.2`.
+type Part = (usize, acr_formats::gp::Frame, (i32, i32));
+
+/// Draws the parts of every view onto one canvas that holds all views plus a margin.
+fn compose(
+    name: String,
+    anim: String,
+    dirs: usize,
+    full_rotation: bool,
+    o: &RefOptions,
+    packs: &[(String, GpFile, acr_formats::Palette)],
+    parts_per_view: &[Vec<Part>],
+) -> Result<Reference> {
     let mut bounds: Option<(i32, i32, i32, i32)> = None;
     for (_, frame, (dx, dy)) in parts_per_view.iter().flatten() {
         if let Some((a, b, c, d)) = frame.bounds() {
@@ -206,16 +252,23 @@ fn model_ref(dir: &Path, ty: &str, out: &Path, o: &RefOptions) -> Result<Referen
             View { k, dir: stored_direction(k, dirs, full_rotation), image }
         })
         .collect();
-    let reference = Reference {
-        name: def.name().unwrap_or(ty).to_owned(),
-        anim: anim.name.clone(),
-        dirs,
-        full_rotation,
-        width,
-        height,
-        anchor,
-        views,
-    };
+    Ok(Reference { name, anim, dirs, full_rotation, width, height, anchor, sections: o.sections, views })
+}
+
+/// The reference of a map object: frame `index` of a sprite list (`TREELIST:104` reads
+/// `TREELIST.LST`), one view, with the ground point at the entry's `DX DY` in the frame.
+fn list_ref(vfs: &mut Vfs, list: &str, index: usize, out: &Path, o: &RefOptions) -> Result<Reference> {
+    let file = format!("{}.LST", list.to_ascii_uppercase());
+    let text = String::from_utf8_lossy(&vfs.read(&file)?).into_owned();
+    let parsed = acr_formats::sprite_list::SpriteList::parse(&text).ok_or_else(|| format!("cannot parse {file}"))?;
+    let entry = parsed.entries.get(index).ok_or_else(|| format!("{file} has no entry {index}"))?;
+    let path = parsed.gp_path();
+    let palette = crate::images::load_palette(vfs, acr_formats::sprite_palette(&path))?;
+    let gp = GpFile::parse(vfs.read(&path)?)?;
+    let frame = gp.decode_frame(index)?;
+    let packs = [(path, gp, palette)];
+    let parts = vec![vec![(0, frame, (-entry.dx, -entry.dy))]];
+    let reference = compose(format!("{list}:{index}"), "#STAND".into(), 1, false, o, &packs, &parts)?;
     write_reference(&reference, out)?;
     Ok(reference)
 }
@@ -238,11 +291,12 @@ fn write_reference(r: &Reference, out: &Path) -> Result<()> {
     }
     let json = format!(
         "{{\n  \"type\": \"{}\",\n  \"anim\": \"{}\",\n  \"dirs\": {},\n  \"full_rotation\": {},\n  \
-         \"width\": {},\n  \"height\": {},\n  \"anchor\": [{}, {}],\n  \"views\": [\n{}\n  ]\n}}\n",
+         \"sections\": {},\n  \"width\": {},\n  \"height\": {},\n  \"anchor\": [{}, {}],\n  \"views\": [\n{}\n  ]\n}}\n",
         r.name,
         r.anim,
         r.dirs,
         r.full_rotation,
+        r.sections.map_or(-1, i32::from),
         r.width,
         r.height,
         r.anchor.0,

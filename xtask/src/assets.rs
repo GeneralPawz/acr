@@ -4,7 +4,8 @@
 //! shared helpers and entry scripts) that defines `def build(ctx)`. Its glTF goes to
 //! `target/assets/<folder>/<name>.glb`. A script with `TYPE = "<MD NAME>"` gets the sprite
 //! views of that object type (`acr model-ref`) when a game folder is known, and can take its
-//! colours from them; `--check` then scores it with `acr model-check`.
+//! colours from them; `--check` then scores it with `acr model-check`, once per entry of a
+//! `CHECKS = ["--anim STAND", "--anim DEATHLIE1"]` line (arguments of `acr model-check`).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -56,6 +57,19 @@ fn constant(source: &str, name: &str) -> Option<String> {
         let rest = rest.split('#').next()?.trim();
         Some(rest.trim_matches(|c| c == '"' || c == '\'').to_owned()).filter(|s| !s.is_empty())
     })
+}
+
+/// The strings of a top-level one-line list `NAME = ["a", "b"]`.
+fn list(source: &str, name: &str) -> Option<Vec<String>> {
+    let line = source.lines().find(|l| l.strip_prefix(name).is_some_and(|r| r.trim_start().starts_with('=')))?;
+    let inner = line.split_once('[')?.1.rsplit_once(']')?.0;
+    Some(
+        inner
+            .split(',')
+            .map(|s| s.trim().trim_matches(|c| c == '"' || c == '\'').to_owned())
+            .filter(|s| !s.is_empty())
+            .collect(),
+    )
 }
 
 /// Runs the `acr` tool (built in release mode) with `args`.
@@ -125,8 +139,19 @@ pub fn assets(root: &Path, o: &Options) -> Result<()> {
                 eprintln!("asset {name}: no TYPE, no sprite check");
                 continue;
             };
-            let dir = out_root.join("check").join(&name);
-            acr(root, &["model-check".as_ref(), game.as_os_str(), ty.as_ref(), glb.as_os_str(), dir.as_os_str()])?;
+            // `CHECKS = ["--anim STAND", "--anim DEATHLIE1"]`: one check per entry, each in
+            // its own folder; without it, one check of the default animation.
+            let checks = list(&source, "CHECKS").unwrap_or_else(|| vec![String::new()]);
+            for check in &checks {
+                let label: String =
+                    check.split_whitespace().filter(|w| !w.starts_with("--")).collect::<Vec<_>>().join("-");
+                let dir = out_root.join("check").join(&name);
+                let dir = if label.is_empty() { dir } else { dir.join(label) };
+                let mut args: Vec<&std::ffi::OsStr> =
+                    vec!["model-check".as_ref(), game.as_os_str(), ty.as_ref(), glb.as_os_str(), dir.as_os_str()];
+                args.extend(check.split_whitespace().map(std::ffi::OsStr::new));
+                acr(root, &args)?;
+            }
         }
     }
     Ok(())
@@ -141,5 +166,9 @@ mod tests {
         let src = "\"\"\"doc\"\"\"\nTYPE = \"IncDo1\"  # the .MD\nOTHER=1\n";
         assert_eq!(constant(src, "TYPE").as_deref(), Some("IncDo1"));
         assert_eq!(constant(src, "MISSING"), None);
+        let src = "CHECKS = [\"--anim STAND\", '--anim BUILDLO_0 --sections 2']
+";
+        assert_eq!(list(src, "CHECKS").unwrap(), ["--anim STAND", "--anim BUILDLO_0 --sections 2"]);
+        assert_eq!(list(src, "OTHER"), None);
     }
 }

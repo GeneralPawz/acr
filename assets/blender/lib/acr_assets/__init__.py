@@ -36,4 +36,6 @@ class Reference:
         self.width = data["width"]
         self.height = data["height"]
         self.anchor = tuple(data["anchor"])
+        # ADDSECTION state drawn into the reference (`--sections`), -1 none.
+        self.sections = data.get("sections", -1)
         self.views = [View(self, v) for v in data["views"]]

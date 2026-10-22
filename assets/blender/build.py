@@ -14,6 +14,7 @@ can take its colours from the sprites (`acr_assets.project`).
 
 import argparse
 import importlib.util
+import json
 import os
 import sys
 
@@ -28,6 +29,8 @@ class Context:
         self.name = name
         self.ref = ref
         self.root = root
+        # Numbers an asset wants in `<name>.stats.json` next to its glTF (triangles, ...).
+        self.stats = {}
 
 
 def main(argv):
@@ -50,12 +53,16 @@ def main(argv):
     if getattr(module, "TYPE", None):
         props["acr_type"] = module.TYPE
     root = scene.root(name, **props)
-    module.build(Context(name, ref, root))
+    ctx = Context(name, ref, root)
+    module.build(ctx)
     if a.blend:
         import bpy
 
         bpy.ops.wm.save_as_mainfile(filepath=os.path.abspath(a.blend))
     size = export.export_glb(os.path.abspath(a.out), a.compress)
+    ctx.stats["glb_bytes"] = size
+    with open(os.path.splitext(os.path.abspath(a.out))[0] + ".stats.json", "w", encoding="utf-8") as f:
+        json.dump(ctx.stats, f, indent=1)
     print(f"ACR asset {name}: {a.out} ({size} bytes, colours {'from sprites' if ref else 'flat'})")
 
 
