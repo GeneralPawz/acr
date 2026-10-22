@@ -30,6 +30,7 @@ mod gait_view;
 mod gore;
 mod interface;
 mod living_wounds;
+mod maul_view;
 mod panels;
 mod piles;
 #[cfg(not(target_arch = "wasm32"))]

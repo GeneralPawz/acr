@@ -213,7 +213,10 @@ per-corpse `decay`; living animals (decay 0) are untouched:
 
 An animal that leaves a carcass (`TRANSFORMTOMEAT`) is removed by the simulation at the end of
 its death clip (not alive, death counter 1); in 3D its body lingers like a soldier's for
-`corpse_minutes` (the `MEAT` sprite is still drawn beside it). **Asset side, later:** the
+`corpse_minutes`. The simulation's `MEAT` sprite (`sprite::leave_carcass`, a `ResSprite`
+for hunting) is not drawn by the game at all yet (dynamic sprite objects have no draw path;
+the static scene holds the map's sprites only), so nothing shows beside the 3D carcass; when
+that path comes it must leave out a `MEAT` sprite whose animal still lies in 3D. **Asset side, later:** the
 animals should get real masks like the humans (`decay.py`: `COLOR_0` R noise, G fray, and
 `extras.acr_decay` per material with discolour and dissolve windows, a fur layer that goes
 first and a bone layer that stays), and `deflate` / `lie_flat` morph targets; with masks the

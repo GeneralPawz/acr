@@ -108,6 +108,11 @@ pub struct Body {
     /// Knocked down by an animal (mauling, #276 phase 4): ticks left on the ground. While
     /// down he cannot move, attack or hit back.
     pub down: u8,
+    /// An animal's body (set at its first injury): its size ([`Beast::size`], 1..=4), 0 for
+    /// a man. Four legs, the front ones in the arm slots: wounds slow it, a leg that gives
+    /// out makes it limp, heavy wounds make it flee; it never crawls, drops nothing and is
+    /// never knocked down.
+    pub animal: u8,
 }
 
 impl Hash for Body {
@@ -116,6 +121,9 @@ impl Hash for Body {
             (self.limbs, self.belly_open, self.head_wounds, self.chest_wounds, self.burn, self.dropped).hash(state);
             self.mounted.hash(state);
             self.down.hash(state);
+            if self.animal != 0 {
+                self.animal.hash(state);
+            }
         }
     }
 }
@@ -174,7 +182,7 @@ impl Body {
 
     /// A leg gave out: the man crawls.
     pub fn crawling(&self) -> bool {
-        !self.mounted && (self.leg(LimbId::LegL) == 0 || self.leg(LimbId::LegR) == 0)
+        !self.mounted && self.animal == 0 && (self.leg(LimbId::LegL) == 0 || self.leg(LimbId::LegR) == 0)
     }
 
     /// Moving speed in percent: walking on both legs, else crawling by the arms (0: he can
@@ -182,6 +190,9 @@ impl Body {
     pub fn move_percent(&self) -> i32 {
         if self.mounted {
             return 100;
+        }
+        if self.animal != 0 {
+            return self.beast_move_percent();
         }
         let (l, r) = (self.leg(LimbId::LegL), self.leg(LimbId::LegR));
         if l > 0 && r > 0 {
@@ -210,9 +221,42 @@ impl Body {
         self.down > 0
     }
 
+    /// An animal's speed in percent: its worst leg slows it (60 % at none left whole), one
+    /// leg that gives out makes it limp on three ([`BEAST_LIMP`]), two leave it barely
+    /// moving (10 %); an open belly halves it.
+    fn beast_move_percent(&self) -> i32 {
+        let legs = [LimbId::ArmL, LimbId::ArmR, LimbId::LegL, LimbId::LegR].map(|l| self.leg(l));
+        let out = legs.iter().filter(|&&f| f == 0).count();
+        let worst = legs.into_iter().min().unwrap_or(100);
+        let p = match out {
+            0 => 60 + 40 * worst / 100,
+            1 => BEAST_LIMP,
+            _ => 10,
+        };
+        if self.belly_open { p.min(50) } else { p }
+    }
+
+    /// An animal limps: a leg gave out.
+    pub fn limping(&self) -> bool {
+        self.animal != 0
+            && [LimbId::ArmL, LimbId::ArmR, LimbId::LegL, LimbId::LegR].into_iter().any(|l| self.leg(l) == 0)
+    }
+
+    /// An animal's heavy wounds make it flee: an open belly, more trunk and head wounds
+    /// than its size, or wounds in all from 2 + 2 × its size.
+    pub fn flees(&self) -> bool {
+        if self.animal == 0 {
+            return false;
+        }
+        let size = i32::from(self.animal);
+        let trunk = i32::from(self.chest_wounds) + i32::from(self.head_wounds);
+        let limbs: i32 = self.limbs.iter().map(|l| i32::from(l.wounds)).sum();
+        self.belly_open || trunk > size || trunk + limbs >= 2 + 2 * size
+    }
+
     /// A long weapon (musket, pike) needs both arms and a man on his feet.
     pub fn drops_long_weapon(&self) -> bool {
-        self.crawling() || self.working_arms() < 2
+        self.animal == 0 && (self.crawling() || self.working_arms() < 2)
     }
 
     /// A one-handed weapon (sabre, pistol) needs one working arm.
@@ -228,6 +272,9 @@ impl Body {
     /// A crawler or a man without a working arm: takes no orders, attacks nothing and drags
     /// himself away from the enemy.
     pub fn out_of_fight(&self) -> bool {
+        if self.animal != 0 {
+            return self.flees();
+        }
         self.crawling() || self.working_arms() == 0
     }
 
@@ -250,7 +297,8 @@ impl Body {
                 sum += BLEED_OPEN_FRACTURE;
             }
         }
-        sum
+        // A bigger body has more blood to lose: an animal loses it by its size.
+        sum * i32::from(self.animal.max(1))
     }
 }
 
@@ -334,6 +382,18 @@ impl Beast {
         })
     }
 
+    /// The size of its body against a man's (1..=4): how much blood it has to lose, how hard
+    /// it is to kill outright ([`beast_outcome`]); the young one size less.
+    pub fn size(self, small: bool) -> u8 {
+        let s: u8 = match self {
+            Self::Bison => 4,
+            Self::Bear | Self::Alligator => 3,
+            Self::Elk => 2,
+            Self::Jaguar | Self::Other => 1,
+        };
+        if small { (s - 1).max(1) } else { s }
+    }
+
     /// The young of a kind (`AnmMedSm`, `AnmMed_Sm`, `AnmCroSm`, `AnmOlnS`): weaker blows.
     pub fn small(md_name: &str) -> bool {
         let n = md_name.to_ascii_lowercase();
@@ -401,6 +461,8 @@ impl Beast {
 
 /// Percent of a bear's and a jaguar's attacks that are claws (the rest bites).
 pub const BEAR_CLAWS: i32 = 70;
+/// An animal limping on three legs (percent of its speed).
+pub const BEAST_LIMP: i32 = 45;
 pub const JAGUAR_CLAWS: i32 = 50;
 
 /// An animal's attack on `victim` (hit-locations rule): the beast of the attacker's `.MD`
@@ -703,6 +765,7 @@ fn head_rolls(cause: Cause) -> bool {
 /// (0..=100), applied to his body. Draws from the world RNG: for a limb its side, the level
 /// and the outcome; for the trunk the level and the outcome; for the head the outcome.
 pub fn injure(w: &mut World, victim: usize, cause: Cause, energy: u8, region: HitRegion) -> Injury {
+    mark_animal(w, victim);
     let level_roll = |w: &mut World| ((w.random.rando() << 8) >> 15) as u8;
     let (injury, roll) = match region {
         HitRegion::Legs | HitRegion::Arms => {
@@ -731,10 +794,12 @@ pub fn injure(w: &mut World, victim: usize, cause: Cause, energy: u8, region: Hi
             (Injury { part, level, outcome: trunk_outcome(cause, energy, part, level, roll), energy, cause }, roll)
         }
         HitRegion::Head => {
-            let roll = if head_rolls(cause) { pct(w) } else { 0 };
+            let roll = if head_rolls(cause) || w.units[victim].body.animal != 0 { pct(w) } else { 0 };
             (Injury { part: Part::Head, level: 0, outcome: head_outcome_e(cause, energy, roll), energy, cause }, roll)
         }
     };
+    let size = w.units[victim].body.animal;
+    let injury = if size != 0 { Injury { outcome: beast_outcome(&injury, size, roll), ..injury } } else { injury };
     apply(&mut w.units[victim].body, &injury);
     knock(&mut w.units[victim].body, &injury, roll);
     injury
@@ -743,6 +808,7 @@ pub fn injure(w: &mut World, victim: usize, cause: Cause, energy: u8, region: Hi
 /// An injury aimed at `part` (the close-up bench): at `level`, or a level drawn as in
 /// [`injure`]; the outcome is rolled as in battle.
 pub fn injure_aimed(w: &mut World, victim: usize, cause: Cause, energy: u8, part: Part, level: Option<u8>) -> Injury {
+    mark_animal(w, victim);
     let level_roll = |w: &mut World| ((w.random.rando() << 8) >> 15) as u8;
     let level = match level {
         Some(l) => l,
@@ -757,7 +823,7 @@ pub fn injure_aimed(w: &mut World, victim: usize, cause: Cause, energy: u8, part
             (Injury { part, level, outcome, energy, cause }, roll)
         }
         Part::Head => {
-            let roll = if head_rolls(cause) { pct(w) } else { 0 };
+            let roll = if head_rolls(cause) || w.units[victim].body.animal != 0 { pct(w) } else { 0 };
             (Injury { part, level: 0, outcome: head_outcome_e(cause, energy, roll), energy, cause }, roll)
         }
         _ => {
@@ -765,13 +831,52 @@ pub fn injure_aimed(w: &mut World, victim: usize, cause: Cause, energy: u8, part
             (Injury { part, level, outcome: trunk_outcome(cause, energy, part, level, roll), energy, cause }, roll)
         }
     };
+    let size = w.units[victim].body.animal;
+    let injury = if size != 0 { Injury { outcome: beast_outcome(&injury, size, roll), ..injury } } else { injury };
     apply(&mut w.units[victim].body, &injury);
     knock(&mut w.units[victim].body, &injury, roll);
     injury
 }
 
-/// A mauling hit knocks the victim down ([`knock_down`]), or keeps him down longer.
+/// Marks an animal's body ([`Body::animal`]) at its first injury, by its type's `.MD` name.
+fn mark_animal(w: &mut World, victim: usize) {
+    if w.units[victim].body.animal != 0 {
+        return;
+    }
+    let name = &w.catalog.get(w.units[victim].kind).md_name;
+    if let Some(beast) = Beast::of(name) {
+        w.units[victim].body.animal = beast.size(Beast::small(name));
+    }
+}
+
+/// An animal's outcome of an injury rolled on the tables of men (percentage `roll`, the
+/// outcome's): no ball, blade, claw or jaw takes a leg off (it is shattered, or deeply
+/// wounded), only cannonballs and shells; a head hit kills one of size `size` by
+/// 100 / `size` percent (a deep wound otherwise); a big body (size 3 and up) is killed
+/// rather than torn in two or pulverized.
+pub fn beast_outcome(injury: &Injury, size: u8, roll: i32) -> Outcome {
+    let size = i32::from(size.max(1));
+    match (injury.part, injury.outcome) {
+        (Part::Limb(_), Outcome::Off) if !matches!(injury.cause, Cause::Cannonball | Cause::Shell) => {
+            if roll % 2 == 0 {
+                Outcome::Fracture(FractureKind::Open)
+            } else {
+                Outcome::DeepWound
+            }
+        }
+        // Decorrelated from the outcome's roll.
+        (Part::Head, Outcome::Kill) if (roll * 53 + 17) % 100 >= 100 / size => Outcome::DeepWound,
+        (_, Outcome::Torn(Torn::InTwo { .. } | Torn::Pulverized)) if size >= 3 => Outcome::Kill,
+        (_, o) => o,
+    }
+}
+
+/// A mauling hit knocks the victim down ([`knock_down`]), or keeps him down longer; never
+/// an animal.
 fn knock(body: &mut Body, injury: &Injury, roll: i32) {
+    if body.animal != 0 {
+        return;
+    }
     let down = knock_down(injury.cause, injury.energy, roll);
     body.down = body.down.max(down);
 }
@@ -845,5 +950,82 @@ pub fn leave_fight(w: &mut World, i: usize) {
         let tx = (x + dx * RETREAT / n).clamp(64, (w_px - 64).max(64));
         let ty = (y + dy * RETREAT / n).clamp(64, (h_px - 64).max(64));
         crate::motion::send_to(u, crate::Pos::from_pixels(tx, ty), crate::motion::PLAYER_PRIO, true);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn animal(size: u8) -> Body {
+        Body { animal: size, ..Body::default() }
+    }
+
+    #[test]
+    fn an_animal_limps_and_never_crawls() {
+        let mut b = animal(3);
+        b.limbs[LimbId::ArmL as usize].fracture = Some(Fracture { level: 100, kind: FractureKind::Open, bend: 0 });
+        assert!(!b.crawling());
+        assert!(b.limping());
+        assert_eq!(b.move_percent(), BEAST_LIMP);
+        assert!(!b.drops_long_weapon());
+        // Two legs gone: it barely moves, still not crawling.
+        b.limbs[LimbId::LegR as usize].lost = KNEE;
+        assert_eq!(b.move_percent(), 10);
+        assert!(!b.crawling());
+    }
+
+    #[test]
+    fn wounds_slow_an_animal_and_heavy_ones_make_it_flee() {
+        let mut b = animal(3);
+        b.limbs[LimbId::LegL as usize].wounds = 1;
+        assert!(b.move_percent() < 100 && b.move_percent() >= 60);
+        assert!(!b.flees() && !b.out_of_fight());
+        b.chest_wounds = 4;
+        assert!(b.flees() && b.out_of_fight());
+        let mut belly = animal(4);
+        belly.belly_open = true;
+        assert!(belly.flees());
+        assert!(belly.move_percent() <= 50);
+    }
+
+    #[test]
+    fn an_animal_bleeds_by_its_size() {
+        let man = Body { belly_open: true, ..Body::default() };
+        let bison = Body { belly_open: true, ..animal(4) };
+        assert_eq!(bison.bleeding(), 4 * man.bleeding());
+    }
+
+    #[test]
+    fn balls_do_not_take_an_animals_leg_off() {
+        let i = |part, outcome, cause| Injury { part, level: 100, outcome, energy: 100, cause };
+        let off = i(Part::Limb(LimbId::LegL), Outcome::Off, Cause::Musket);
+        assert_ne!(beast_outcome(&off, 3, 4), Outcome::Off);
+        let ball = i(Part::Limb(LimbId::LegL), Outcome::Off, Cause::Cannonball);
+        assert_eq!(beast_outcome(&ball, 3, 4), Outcome::Off);
+        let torn = i(Part::Chest, Outcome::Torn(Torn::InTwo { level: 90 }), Cause::Cannonball);
+        assert_eq!(beast_outcome(&torn, 4, 0), Outcome::Kill);
+        assert_eq!(beast_outcome(&torn, 1, 0), torn.outcome);
+        // A head shot kills a jaguar always, a bison by a quarter.
+        let head = i(Part::Head, Outcome::Kill, Cause::Musket);
+        assert!((0..100).all(|r| beast_outcome(&head, 1, r) == Outcome::Kill));
+        let kills = (0..100).filter(|&r| beast_outcome(&head, 4, r) == Outcome::Kill).count();
+        assert_eq!(kills, 25);
+    }
+
+    #[test]
+    fn a_man_hashes_as_before() {
+        use std::hash::DefaultHasher;
+        let h = |b: &Body| {
+            let mut s = DefaultHasher::new();
+            b.hash(&mut s);
+            s.finish()
+        };
+        let man = Body { chest_wounds: 1, ..Body::default() };
+        let mut manual = DefaultHasher::new();
+        (man.limbs, man.belly_open, man.head_wounds, man.chest_wounds, man.burn, man.dropped).hash(&mut manual);
+        man.mounted.hash(&mut manual);
+        man.down.hash(&mut manual);
+        assert_eq!(h(&man), manual.finish());
     }
 }

@@ -84,17 +84,18 @@ fn mauled(t: &Tear, p: Vec3, bone: Vec3, radius: f32, facing: Vec3, track: Vec3)
     }
     match injury.cause {
         Cause::Claw => {
-            // Raking claws: parallel gashes across the part, slanted, a claw's width apart,
-            // cutting 2–4 cm deep.
+            // Raking claws: parallel gashes across the part, slanted, a claw's width apart
+            // (5–6 cm), 15–30 cm long, cutting through the clothes 3–5 cm into the flesh
+            // (close-up bench: shallower ones only opened the coat onto the shirt).
             let across = norm(cross(bone, facing));
             let axis = norm(math::add(across, math::scale(bone, jitter(51, 0.7))));
             let spread = norm(cross(facing, axis));
             let n = 3 + u64::from(h(52) > 0.55);
-            let half = 0.06 + 0.05 * h(53) + 0.04 * energy;
-            let r = 0.011 + 0.008 * energy;
+            let half = 0.08 + 0.05 * h(53) + 0.05 * energy;
+            let r = 0.012 + 0.009 * energy;
             for k in 0..n {
-                let off = (k as f32 - (n - 1) as f32 * 0.5) * (0.04 + 0.01 * h(54));
-                let c = math::add(surface(radius - 0.3 * r), math::scale(spread, off));
+                let off = (k as f32 - (n - 1) as f32 * 0.5) * (0.05 + 0.01 * h(54));
+                let c = math::add(surface(radius - 0.9 * r), math::scale(spread, off));
                 // Each claw a little longer or shorter, a little off line.
                 let c = math::add(c, math::scale(axis, jitter(55 + k, 0.02)));
                 let l = half * (0.8 + 0.35 * h(60 + k));
@@ -110,7 +111,13 @@ fn mauled(t: &Tear, p: Vec3, bone: Vec3, radius: f32, facing: Vec3, track: Vec3)
         Cause::Bite => {
             // The crushed core under the jaws, a shattered bone in it.
             let broken = matches!(injury.outcome, Outcome::Fracture(_));
-            let core = if broken { radius * (0.9 + 0.15 * h(56)) } else { 0.03 + 0.03 * energy };
+            // A limb keeps its outline around the teeth (a core as wide as the arm opened the
+            // whole sleeve at once).
+            let core = match (broken, limb) {
+                (true, _) => radius * (0.9 + 0.15 * h(56)),
+                (false, true) => (0.015 + 0.015 * energy).min(radius * 0.6),
+                (false, false) => 0.03 + 0.03 * energy,
+            };
             let at = if broken { surface(radius * 0.35) } else { surface(radius * 0.85) };
             v.push(tear(at, at, core, 1));
             // Two rows of tooth holes: around a limb on its near and far side, into the trunk
