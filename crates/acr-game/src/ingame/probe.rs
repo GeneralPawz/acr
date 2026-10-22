@@ -13,7 +13,8 @@ const GRID_SLOTS: usize = 36;
 
 /// An icon of the HUD's grid as the driver reports it.
 pub struct HudIcon {
-    pub slot: usize,
+    /// `hud/<slot>` for the grid, `army/<slot>` for the army icons at the top left.
+    pub id: String,
     /// Window pixels: x, y, width, height.
     pub rect: [f32; 4],
     pub hint: Vec<u8>,
@@ -22,6 +23,8 @@ pub struct HudIcon {
     /// Drawn gray: the player cannot afford it.
     pub gray: bool,
     pub count: Option<i32>,
+    /// The number at the bottom right (a formation's number).
+    pub number: Option<i32>,
     /// A left click does something.
     pub clickable: bool,
     /// A right click does something (cancelling production).
@@ -73,17 +76,39 @@ impl InGame {
             .map(|i| {
                 let r = Hud::icon_rect(screen, i.slot);
                 HudIcon {
-                    slot: i.slot,
+                    id: format!("hud/{}", i.slot),
                     rect: canvas.to_window([r.x0 as f32, r.y0 as f32, r.width() as f32, r.height() as f32]),
                     hint: i.hint.clone(),
                     disabled: i.disabled,
                     selected: i.selected,
                     gray: i.gray,
                     count: i.count,
+                    number: i.number,
                     clickable: i.action.is_some() && !i.disabled,
                     right_clickable: i.right.is_some() && !i.disabled,
                 }
             })
+            .chain(Hud::army_icons(&self.interface.view).map(|i| {
+                let r = Hud::army_rect(i.slot);
+                // The army icons have no hints; the driver names them `army` (the list
+                // button) and `army <number>`.
+                let label = match i.number {
+                    Some(n) => format!("army {n}"),
+                    None => "army".to_owned(),
+                };
+                HudIcon {
+                    id: format!("army/{}", i.slot),
+                    rect: canvas.to_window([r.x0 as f32, r.y0 as f32, r.width() as f32, r.height() as f32]),
+                    hint: label.into_bytes(),
+                    disabled: i.disabled,
+                    selected: i.selected,
+                    gray: i.gray,
+                    count: i.count,
+                    number: i.number,
+                    clickable: i.action.is_some() && !i.disabled,
+                    right_clickable: false,
+                }
+            }))
             .collect()
     }
 

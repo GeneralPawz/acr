@@ -34,6 +34,8 @@ pub struct Item {
     pub count: Option<i32>,
     /// HUD icons: a right click does something (cancels production).
     pub right: bool,
+    /// HUD icons: the number at the bottom right (a formation's number).
+    pub number: Option<i32>,
 }
 
 impl Item {
@@ -65,6 +67,9 @@ impl Item {
         }
         if self.right {
             m.insert("right_click".into(), true.into());
+        }
+        if let Some(n) = self.number {
+            m.insert("number".into(), n.into());
         }
         v
     }
@@ -129,6 +134,7 @@ pub fn dialog_items(name: &str, d: &Dialog, canvas: Canvas, all: bool) -> Vec<It
             param: w.param,
             count: None,
             right: false,
+            number: None,
         });
         if let (Kind::ListBox(l), true) = (&w.kind, visible) {
             for row in 0..l.rows {
@@ -148,6 +154,7 @@ pub fn dialog_items(name: &str, d: &Dialog, canvas: Canvas, all: bool) -> Vec<It
                     param: None,
                     count: None,
                     right: false,
+                    number: None,
                 });
             }
         }
@@ -167,6 +174,7 @@ pub fn dialog_items(name: &str, d: &Dialog, canvas: Canvas, all: bool) -> Vec<It
             param: None,
             count: None,
             right: false,
+            number: None,
         });
     }
     out
@@ -205,7 +213,7 @@ pub fn items(game: &Game, all: bool) -> Vec<Item> {
     {
         for icon in g.hud_icons() {
             out.push(Item {
-                id: format!("hud/{}", icon.slot),
+                id: icon.id.clone(),
                 kind: "icon",
                 label: decode(&icon.hint),
                 rect: icon.rect,
@@ -217,6 +225,7 @@ pub fn items(game: &Game, all: bool) -> Vec<Item> {
                 param: None,
                 count: icon.count,
                 right: icon.right_clickable,
+                number: icon.number,
             });
         }
     }

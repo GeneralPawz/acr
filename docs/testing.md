@@ -218,7 +218,9 @@ Armada* musketeers behind their pikemen step aside or hold fire, and keep reload
 friendly fire is switched on), `attack_ground` (a random map built
 up to the Festung, a cannon trained and ordered through `Boden angreifen` onto the ground
 pays its shots; the Festung's cannon ball sets a neutral building burning, which burns down
-and disappears), `save_load` (save and load through the game menu).
+and disappears), `save_load` (save and load through the game menu), `army_list` (two formations: the army icon
+at the top left opens the list of formations with their numbers; a click selects one, whose
+command panel icon shows the same number).
 
 ## Jev
 

@@ -331,6 +331,16 @@ pub struct Brigade {
     pub stand_timer: u16,
     /// Tick of the last stand-ground switch (+0x26): it switches at most once per tick.
     pub stamp: u32,
+    /// Index in the owner's brigade list (`Brigade+0x20`, the slot `GetFreeBrigade` 0x42c845
+    /// handed out): the interface shows it + 1 as the formation's number.
+    pub number: u16,
+}
+
+/// The first index of `owner`'s brigade list no living brigade holds (`GetFreeBrigade`
+/// 0x42c845 takes the first slot whose `Enabled` bit, +0x2e bit 0, is clear).
+pub fn free_number(world: &World, owner: u8) -> u16 {
+    let used: Vec<u16> = world.brigades.iter().filter(|b| b.alive && b.owner == owner).map(|b| b.number).collect();
+    (0..).find(|n| !used.contains(n)).unwrap_or(0)
 }
 
 /// Attack and defence bonus of brigade `b`'s shape (`n2`, `n4`, or standing `n1`, `n3`), plus
@@ -552,8 +562,10 @@ fn create(
     let mut members = vec![unit_id(Some(officer)), unit_id(drummer), unit_id(flag)];
     members.extend(soldiers.iter().map(|&s| Some(world.units[s].id)));
     let kind = world.units[soldiers[0]].kind;
+    let owner = world.units[officer].owner;
+    let number = free_number(world, owner);
     world.brigades.push(Brigade {
-        owner: world.units[officer].owner,
+        owner,
         alive: true,
         shape,
         dir: 0,
@@ -566,6 +578,7 @@ fn create(
         bonus: (0, 0),
         stand_timer: 0,
         stamp: 0,
+        number,
     });
     let b = usize::from(id);
     let bonus = shape_bonus(world, b, false);

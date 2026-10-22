@@ -61,6 +61,12 @@ const PANEL_LY: i32 = 144;
 const GRID_COLUMNS: usize = 12;
 const GRID_ROWS: usize = 3;
 
+/// The army icons (`IconSet` 0x28f7658, drawn by 0x5aa36a outside the editor): 5 columns by
+/// 7 rows from (6, 31), the top left under the resource bar (0x5aa5ac).
+const ARMY_ORIGIN: (i32, i32) = (6, 31);
+pub const ARMY_COLUMNS: usize = 5;
+pub const ARMY_ROWS: usize = 7;
+
 /// Width of the resource panel (`Interf2\ResPanel` frame 0, 0x4ecc50).
 const RES_PANEL: i32 = 716;
 /// Distance of the resource values (right aligned) and their spacing.
@@ -106,6 +112,12 @@ pub struct Icon {
     pub life: Option<(i32, i32)>,
     /// Number in the corner (flag 8).
     pub count: Option<i32>,
+    /// Number in the bottom right corner (flag 0x100, `+0x40`, set by 0x494a0d): a
+    /// formation's number.
+    pub number: Option<i32>,
+    /// Minimap pixel marked while the mouse is over the icon (an army icon's formation,
+    /// hover callback 0x606500 → 0x4c107f).
+    pub mark: Option<[i32; 2]>,
     /// Yellow frame (bit 1 of +0x1a).
     pub selected: bool,
     /// Drawn transparent and not clickable (bit 0 of +0x1a).
@@ -199,6 +211,12 @@ pub enum HudCommand {
     /// `IDLE_PEASANT` / `IDLE_MINE` (0x5f5d0a): select all idle peasants (false) or all
     /// mines with room for workers (true).
     SelectIdle(bool),
+    /// The army icon (`ORDERS_LIST`, click 0x6064a0): show or hide the list of formations
+    /// (`0x28f9e54`).
+    ArmyList,
+    /// A formation of the army list (click 0x6064b0): select its flag bearer and soldiers
+    /// (`ImSelBrigade` 0x4e1365 via 0x4d75a6), added to the selection with Shift.
+    ArmySelect { brigade: u16, add: bool },
 }
 
 /// Numbers of the single selected type's first object (0x607f50).
@@ -231,6 +249,8 @@ pub struct View {
     /// Resources in `NRES.DAT` order: wood, gold, stone, food, iron, coal.
     pub resources: [u32; 6],
     pub icons: Vec<Icon>,
+    /// The army icons at the top left: slot `column + 5·row` (see [`Hud::army_rect`]).
+    pub army: Vec<Icon>,
     pub stats: Option<Stats>,
     /// Unit dots of the minimap.
     pub dots: Vec<minimap::Dot>,
@@ -388,6 +408,8 @@ pub struct Hud {
     pub zoom: bool,
     pub unit_panel: panels::UnitPanel,
     pub game_panel: panels::GamePanel,
+    /// The army list is open (`0x28f9e54`, toggled by the army icon).
+    pub army_list: bool,
 }
 
 impl Default for Hud {
@@ -409,6 +431,7 @@ impl Default for Hud {
             zoom: false,
             unit_panel: panels::UnitPanel::new(),
             game_panel: panels::GamePanel::default(),
+            army_list: false,
         }
     }
 }
@@ -502,6 +525,18 @@ impl Hud {
         Rect::new(x + (slot % GRID_COLUMNS) as i32 * step, y + (slot / GRID_COLUMNS) as i32 * step, ICON, ICON)
     }
 
+    /// An army icon's place: `IconLx + AddIconLx` apart from (6, 31) (`DrawIconSet` 0x4958f7).
+    pub(crate) fn army_rect(slot: usize) -> Rect {
+        let step = ICON + ADD_ICON;
+        let (x, y) = ARMY_ORIGIN;
+        Rect::new(x + (slot % ARMY_COLUMNS) as i32 * step, y + (slot / ARMY_COLUMNS) as i32 * step, ICON, ICON)
+    }
+
+    /// The army icons that are drawn (`DrawIconSet` shows `nx · ny` of them).
+    pub(crate) fn army_icons(view: &View) -> impl Iterator<Item = &Icon> {
+        view.army.iter().filter(|i| i.slot < ARMY_COLUMNS * ARMY_ROWS)
+    }
+
     /// Columns used by the visible icons (`GetMaxX`, 0x495b86).
     fn columns(icons: &[Icon]) -> i32 {
         icons.iter().filter(|i| i.slot < GRID_COLUMNS * GRID_ROWS).map(|i| i.slot % GRID_COLUMNS + 1).max().unwrap_or(0)
@@ -570,6 +605,9 @@ impl Hud {
             return true;
         }
         if Self::icon_box(self.screen, &view.icons).is_some_and(|r| r.contains(p)) {
+            return true;
+        }
+        if Self::army_icons(view).any(|i| Self::army_rect(i.slot).contains(p)) {
             return true;
         }
         self.minimap.is_some() && self.placement(view).rect.contains(p)
@@ -645,6 +683,13 @@ impl Hud {
             self.dropdown = true;
             return HudEvent::Used;
         }
+        if let Some(icon) = Self::army_icons(view).find(|i| Self::army_rect(i.slot).contains(p)) {
+            self.pressed = true;
+            return match (&icon.action, icon.disabled) {
+                (Some(a), false) => HudEvent::Command(a.clone()),
+                _ => HudEvent::Used,
+            };
+        }
         for icon in &view.icons {
             if Self::icon_rect(self.screen, icon.slot).contains(p) && icon.slot < GRID_COLUMNS * GRID_ROWS {
                 self.pressed = true;
@@ -686,6 +731,9 @@ impl Hud {
     /// point of the minimap.
     pub fn right_press(&mut self, ctx: &Ctx, view: &View, p: [f32; 2]) -> HudEvent {
         if self.panel != Panel::None && panels::covers(self.panel_point(p)) {
+            return HudEvent::Used;
+        }
+        if Self::army_icons(view).any(|i| Self::army_rect(i.slot).contains(p)) {
             return HudEvent::Used;
         }
         if let Some(icon) = view
@@ -731,7 +779,13 @@ impl Hud {
         for icon in view.icons.iter().filter(|i| i.slot < GRID_COLUMNS * GRID_ROWS) {
             let r = Self::icon_rect(screen, icon.slot);
             let pressed = self.pressed && mouse.is_some_and(|m| r.contains(m));
-            draw_icon(icon, r.x0, r.y0, pressed, &palette, out);
+            draw_icon(ctx, icon, r.x0, r.y0, pressed, &palette, out);
+        }
+        // The army icons, the last set 0x5a9fa0 draws (0x5aa394).
+        for icon in Self::army_icons(view) {
+            let r = Self::army_rect(icon.slot);
+            let pressed = self.pressed && mouse.is_some_and(|m| r.contains(m));
+            draw_icon(ctx, icon, r.x0, r.y0, pressed, &palette, out);
         }
         let mut panel = Vec::new();
         match (self.panel, &view.unit_info) {
@@ -764,6 +818,32 @@ impl Hud {
         outline(out, Rect { x0: r.x0 - 1, y0: r.y0 - 1, x1: r.x1 + 1, y1: r.y1 + 1 }, inner);
         outline(out, Rect { x0: r.x0 - 2, y0: r.y0 - 2, x1: r.x1 + 2, y1: r.y1 + 2 }, outer);
         border(ctx, out, r.x0 - 2, r.y0 - 2, r.x1 + 1, r.y1 + 1, BOX_CORNERS);
+        // The formation of the army icon under the mouse (0x606500 sets 0x66a8e8, 0x4c107f
+        // draws): an octagon in `GetPaletteColor(255, 255, 0)` around its members' mean
+        // position.
+        let mark = self
+            .mouse
+            .and_then(|m| Self::army_icons(view).find(|i| Self::army_rect(i.slot).contains(m)).and_then(|i| i.mark));
+        if let Some([px, py]) = mark {
+            let placement = self.placement(view);
+            let x = r.x0 + 1 + px - placement.offset[0];
+            let y = r.y0 + 1 + py - placement.offset[1];
+            let c = palette_rgba(palette, nearest(palette, color::BRACKETS));
+            let mut lines = Vec::new();
+            for [x0, y0, x1, y1] in [
+                [-5, -2, -5, 2],
+                [5, -2, 5, 2],
+                [-2, -5, 1, -5],
+                [-2, 5, 2, 5],
+                [-5, -2, -2, -5],
+                [5, -2, 2, -5],
+                [-2, 5, -5, 2],
+                [2, 5, 5, 2],
+            ] {
+                line(&mut lines, c, (x + x0, y + y0), (x + x1, y + y1));
+            }
+            out.extend(lines.into_iter().map(|d| d.clipped(r)));
+        }
     }
 
     fn draw_dropdown(&self, ctx: &Ctx, view: &View, out: &mut Vec<Draw>) {
@@ -797,6 +877,11 @@ impl Hud {
         }
         for icon in view.icons.iter().filter(|i| i.slot < GRID_COLUMNS * GRID_ROWS) {
             if Self::icon_rect(self.screen, icon.slot).contains(m) && !icon.hint.is_empty() {
+                hint = Some(&icon.hint);
+            }
+        }
+        for icon in Self::army_icons(view) {
+            if Self::army_rect(icon.slot).contains(m) && !icon.hint.is_empty() {
                 hint = Some(&icon.hint);
             }
         }
@@ -987,9 +1072,47 @@ pub const GRAY_SET: &str = "0\\GRAY.SET";
 /// `#GENSHIELD` of `NRES.DAT` (0x66ad84).
 const SHIELD_ICON: usize = 13;
 
+/// A one pixel line (`DrawLine` 0x4012ff) as runs of fills.
+pub fn line(out: &mut Vec<Draw>, rgba: [u8; 4], (x0, y0): (i32, i32), (x1, y1): (i32, i32)) {
+    let (dx, dy) = (x1 - x0, y1 - y0);
+    let n = dx.abs().max(dy.abs());
+    // The pixel of step k, rounded to the nearest.
+    let at = |k: i32| {
+        if n == 0 {
+            return (x0, y0);
+        }
+        let round = |d: i32| (2 * d * k + n * d.signum()) / (2 * n);
+        (x0 + round(dx), y0 + round(dy))
+    };
+    let horizontal = dx.abs() >= dy.abs();
+    // Consecutive pixels in the same row (column) become one fill.
+    let mut start = at(0);
+    let mut last = start;
+    for k in 1..=n + 1 {
+        let p = if k <= n { Some(at(k)) } else { None };
+        let same = p.is_some_and(|p| if horizontal { p.1 == start.1 } else { p.0 == start.0 });
+        if !same {
+            let r = Rect {
+                x0: start.0.min(last.0),
+                y0: start.1.min(last.1),
+                x1: start.0.max(last.0) + 1,
+                y1: start.1.max(last.1) + 1,
+            };
+            out.push(Draw::fill(rgba, r).unclipped());
+            if let Some(p) = p {
+                start = p;
+            }
+        }
+        if let Some(p) = p {
+            last = p;
+        }
+    }
+}
+
 /// One icon (0x494c96): the picture (one pixel down-right while pressed), the outline in
-/// the owner's colour, the yellow frame when highlighted, the life bar, the count.
-fn draw_icon(icon: &Icon, x: i32, y: i32, pressed: bool, palette: &Palette, out: &mut Vec<Draw>) {
+/// the owner's colour, the yellow frame when highlighted, the life bar, the number at the
+/// bottom right, the count.
+fn draw_icon(ctx: &Ctx, icon: &Icon, x: i32, y: i32, pressed: bool, palette: &Palette, out: &mut Vec<Draw>) {
     let (x, y) = if pressed { (x + 1, y + 1) } else { (x, y) };
     let mut picture = if icon.gray {
         Draw::game_frame_remap(gp::ICONS, icon.frame, x, y, 0, GRAY_SET, 0)
@@ -1028,6 +1151,17 @@ fn draw_icon(icon: &Icon, x: i32, y: i32, pressed: bool, palette: &Palette, out:
                 ));
             }
         }
+    }
+    // Flag 0x100 (0x4951a5): right aligned 4 pixels inside the right edge, on the bottom
+    // edge by the height of 'W', `BlackFont` at ±1 under `WhiteFont`.
+    if let Some(n) = icon.number {
+        let text = n.to_string();
+        let w = ctx.fonts.width(ctx.lib, font::WHITE, text.as_bytes());
+        let h = ctx.fonts.glyph_height(ctx.lib, font::WHITE, b'W');
+        let (tx, ty) = (x + ICON - 4 - w, y + ICON - h);
+        out.push(Draw::game_text(font::BLACK, text.as_bytes(), tx + 1, ty + 1));
+        out.push(Draw::game_text(font::BLACK, text.as_bytes(), tx - 1, ty - 1));
+        out.push(Draw::game_text(font::WHITE, text.as_bytes(), tx, ty));
     }
     if let Some(n) = icon.count {
         let text = n.to_string();
@@ -1103,6 +1237,10 @@ mod tests {
         assert_eq!(Hud::icon_box(SCREEN, &[]), None);
         assert_eq!(Hud::icon_box(SCREEN, &[icon(0), icon(8 + 24)]), Some(Rect { x0: 180, y0: 630, x1: 560, y1: 755 }));
         assert_eq!(menu_button(SCREEN), (243, 0));
+        // The army icons: 5 columns from (6, 31) under the resource bar, 42 apart.
+        assert_eq!(Hud::army_rect(0), Rect::new(6, 31, 40, 40));
+        assert_eq!(Hud::army_rect(5), Rect::new(6, 73, 40, 40));
+        assert_eq!(Hud::army_rect(7), Rect::new(90, 73, 40, 40));
         assert_eq!(res_hint_rect(SCREEN, 0), Rect::new(333, 7, 105, 20));
         let hud = Hud::default();
         assert_eq!((hud.panel_dx(), hud.panel_point([800.0, 100.0])), (0, [800.0, 100.0]));

@@ -1,0 +1,28 @@
+{
+  "name": "army_list",
+  "description": "The army icon at the top left (ORDERS_LIST, 0x607d3b, #264): on the map Missions/USA/03/usa03.m3d two line formations are formed (the map's officers 1387 and 1396). The army icon appears, a click opens the list; each formation shows its soldier count and its number (brigade slot + 1, bottom right); clicking the second selects its flag bearer and soldiers, and its icon in the command panel ('Armee') shows the same number. A second click on the army icon closes the list.",
+  "steps": [
+    {"cmd": "start", "map": "Missions/USA/03/usa03.m3d"},
+    {"cmd": "wait", "ticks": 5},
+    {"cmd": "click", "label": "army", "exact": true, "timeout": 5, "expect": {"ok": false}, "note": "no formation yet, no army icon"},
+    {"cmd": "select", "units": [1387], "note": "setup: the first officer"},
+    {"cmd": "click", "label": "Reih-und-Glied-Formation einnehmen"},
+    {"cmd": "click", "label": "Füsilier"},
+    {"cmd": "select", "units": [1396], "note": "setup: the second officer"},
+    {"cmd": "click", "label": "Reih-und-Glied-Formation einnehmen"},
+    {"cmd": "click", "label": "Füsilier"},
+    {"cmd": "wait", "until": {"formations": 2}, "timeout": 100},
+    {"cmd": "select", "units": []},
+    {"cmd": "click", "label": "army", "exact": true, "expect": {"path": "target.id", "eq": "army/0"}},
+    {"cmd": "wait", "until": {"label": "army 2"}, "timeout": 10},
+    {"cmd": "click", "label": "army 2", "exact": true, "expect": [
+      {"path": "target.id", "eq": "army/6"},
+      {"path": "target.number", "eq": 2},
+      {"path": "target.count", "ge": 15}
+    ]},
+    {"cmd": "state", "expect": {"path": "state.selection", "len_ge": 16}},
+    {"cmd": "click", "label": "Armee", "exact": true, "expect": {"path": "target.number", "eq": 2}},
+    {"cmd": "click", "label": "army", "exact": true},
+    {"cmd": "click", "label": "army 1", "exact": true, "timeout": 5, "expect": {"ok": false}, "note": "the list is closed"}
+  ]
+}

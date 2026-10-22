@@ -16,7 +16,7 @@ use crate::hud::cursor::{self, Cursor};
 use crate::hud::data::HudData;
 use crate::hud::minimap::{self, Dot, Minimap};
 use crate::hud::produce::Nations;
-use crate::hud::{self, Hud, HudCommand, HudEvent, Icon, Stats, View, color, nearest};
+use crate::hud::{self, Hud, HudCommand, HudEvent, Icon, Stats, View, color, line, nearest};
 use crate::ui::Ctx;
 use crate::ui::draw::{Draw, GAME_PALETTE, Rect};
 use crate::ui::settings::Settings;
@@ -566,11 +566,82 @@ impl InGame {
                 outline: Some(outline),
                 life: (max > 0).then_some((life, max)),
                 count: (!soldiers.is_empty()).then_some(soldiers.len() as i32),
+                // `ARMYSTR` ("Armee") and the formation's number (0x606d91, 0x606e6e).
+                number: Some(i32::from(br.number) + 1),
+                hint: ctx.texts.get("ARMYSTR").to_vec(),
                 action: Some(HudCommand::SelectBrigade(b)),
                 ..Icon::default()
             });
         }
+        view.army = self.army_icons(&data, self.shift());
         view
+    }
+
+    /// The army icons at the top left (0x607d3b, the end of 0x606710). With a formation among
+    /// the first 30 slots of the player's brigade list that has a soldier, the `ORDERS_LIST`
+    /// icon (`Formation_Kare`) stands at slot 0 and opens or closes the list (0x6064a0). The
+    /// open list shows each such formation at slot 5 + its index: its soldier type with the
+    /// number of soldiers (members from the fourth on that still exist), its number (the
+    /// index + 1) at the bottom right and the yellow frame when one of them is selected. A click
+    /// selects it (0x6064b0, Shift adds); the mouse over it marks its members' mean position
+    /// on the minimap (0x606500). No outline, life bar or hint.
+    fn army_icons(&self, data: &HudData, shift: u32) -> Vec<Icon> {
+        let mut icons = Vec::new();
+        let Some(world) = &self.world else { return icons };
+        let own = self.own();
+        let slots = (hud::ARMY_ROWS - 1) * hud::ARMY_COLUMNS;
+        let listed: Vec<(usize, &acr_sim::formation::Brigade)> = world
+            .brigades
+            .iter()
+            .enumerate()
+            .filter(|(_, br)| br.alive && br.owner == own && usize::from(br.number) < slots)
+            .collect();
+        let alive = |b: usize, m: EntityId| world.unit(m).filter(|u| u.alive && u.brigade == Some(b as u16));
+        let soldiers = |b: usize, br: &acr_sim::formation::Brigade| -> Vec<EntityId> {
+            br.members.iter().skip(3).flatten().copied().filter(|&m| alive(b, m).is_some()).collect()
+        };
+        if !listed.iter().any(|&(b, br)| !soldiers(b, br).is_empty()) {
+            return icons;
+        }
+        if let Some(frame) = data.orders_list {
+            icons.push(Icon { frame, slot: 0, action: Some(HudCommand::ArmyList), ..Icon::default() });
+        }
+        if !self.interface.hud.army_list {
+            return icons;
+        }
+        let objects = self.objects.objects();
+        let add = self.interface.mods.shift_key();
+        for (b, br) in listed {
+            let members = soldiers(b, br);
+            if members.is_empty() {
+                continue;
+            }
+            let frame = br
+                .kind
+                .and_then(|k| objects.definition(&world.catalog.get(k).id))
+                .and_then(|d| d.icon())
+                .and_then(|i| data.icon(i))
+                .unwrap_or(0);
+            // The mean position of all members still in it, as the minimap's unit dots.
+            let all: Vec<&Unit> = br.members.iter().flatten().filter_map(|&m| alive(b, m)).collect();
+            let n = all.len() as i32;
+            let mark = (n > 0).then(|| {
+                let sum =
+                    all.iter().fold([0, 0], |[x, y], u| [x + (u.pos.x >> (shift + 9)), y + (u.pos.y >> (shift + 9))]);
+                [sum[0] / n, sum[1] / n]
+            });
+            icons.push(Icon {
+                frame,
+                slot: hud::ARMY_COLUMNS + usize::from(br.number),
+                count: Some(members.len() as i32),
+                number: Some(i32::from(br.number) + 1),
+                selected: members.iter().any(|m| self.selected.contains(m)),
+                mark,
+                action: Some(HudCommand::ArmySelect { brigade: b as u16, add }),
+                ..Icon::default()
+            });
+        }
+        icons
     }
 
     /// A single selected formation without free units (0x606edd): the formations its group
@@ -1355,6 +1426,25 @@ impl InGame {
                     self.commands.push(Command::Fill { player, brigade: b });
                 }
             }
+            HudCommand::ArmyList => self.interface.hud.army_list = !self.interface.hud.army_list,
+            HudCommand::ArmySelect { brigade, add } => {
+                // `ImSelBrigade` (0x4e1365): without Shift the selection is cleared first; the
+                // members from the third on join it.
+                if !add {
+                    self.selected.clear();
+                }
+                let Some(br) = world.brigades.get(usize::from(brigade)).filter(|br| br.alive && br.owner == player)
+                else {
+                    return;
+                };
+                for &m in br.members.iter().skip(2).flatten() {
+                    if world.unit(m).is_some_and(|u| u.living() && u.brigade == Some(brigade))
+                        && !self.selected.contains(&m)
+                    {
+                        self.selected.push(m);
+                    }
+                }
+            }
             HudCommand::SelectIdle(mines) => {
                 self.selected = idle(world, player, mines);
             }
@@ -1841,6 +1931,9 @@ impl InGame {
                 fill(&mut out, white, x0 + w - 5, y0 - 12, x0 + w - 5, bottom);
             }
         }
+        if !self.interface.hud.zoom {
+            self.formation_marks(world, terrain, &palette, &mut out);
+        }
         // Panic shouts (0x600320); the zoomed-out view draws none.
         let lines: [Vec<u8>; 8] = std::array::from_fn(|i| ctx.texts.get(&format!("FEAR_RNDM{i}")).to_vec());
         let measure = |f, t: &[u8]| (ctx.fonts.width(ctx.lib, f, t), ctx.fonts.height(ctx.lib, f));
@@ -1894,6 +1987,64 @@ impl InGame {
             }
         }
         out
+    }
+
+    /// The selected formations' marks (0x41c93f, called by the map drawer 0x4bd613 for the
+    /// player's brigades with a selected member; not in the zoomed-out view): every soldier
+    /// (members from the fourth on that are not dying) gets a diamond 12 pixels wide on the
+    /// ground around it, and while the formation keeps its positions (0x41c0a9, after a move
+    /// order) a cross 2 pixels wide at the slot it walks to. Both in
+    /// `GetPaletteColor(255, 255, 0)`, raw palette index 0xC9 in formation melee (0x41e50c).
+    /// The lines follow the ground height at their ends (0x41c75b). The bounding box after
+    /// the loop is never drawn (a jump skips it, 0x41cbfc).
+    fn formation_marks(
+        &self,
+        world: &acr_sim::World,
+        terrain: &acr_render::terrain::TerrainData,
+        palette: &acr_formats::Palette,
+        out: &mut Vec<Draw>,
+    ) {
+        let own = self.own();
+        let rgba = |i: u8| {
+            let [r, g, b] = palette.rgb(i);
+            [r, g, b, 255]
+        };
+        let yellow = rgba(nearest(palette, color::BRACKETS));
+        let mut brigades: Vec<u16> = self
+            .selected
+            .iter()
+            .filter_map(|&id| world.unit(id))
+            .filter(|u| u.owner == own)
+            .filter_map(|u| u.brigade)
+            .collect();
+        brigades.sort_unstable();
+        brigades.dedup();
+        let at = |x: i32, y: i32| (x, (y >> 1) - terrain.height_at(x, y));
+        for b in brigades {
+            let Some(br) = world.brigades.get(usize::from(b)).filter(|br| br.alive && br.members.len() > 3) else {
+                continue;
+            };
+            if br.slots.is_empty() {
+                continue;
+            }
+            let order = br.orders.last();
+            let keep = matches!(order, Some(acr_sim::formation::BOrder::Keep));
+            let c = if matches!(order, Some(acr_sim::formation::BOrder::Bitva(_))) { rgba(0xc9) } else { yellow };
+            for (k, m) in br.members.iter().enumerate().skip(3) {
+                let Some(u) = m.and_then(|m| world.unit(m)).filter(|u| u.living() && u.brigade == Some(b)) else {
+                    continue;
+                };
+                if keep && let Some(&(sx, sy)) = br.slots.get(k) {
+                    line(out, c, at(sx, sy - 2), at(sx, sy + 2));
+                    line(out, c, at(sx - 2, sy), at(sx + 2, sy));
+                }
+                let (x, y) = (u.pos.x >> 4, u.pos.y >> 4);
+                line(out, c, at(x - 12, y), at(x, y - 12));
+                line(out, c, at(x - 12, y), at(x, y + 12));
+                line(out, c, at(x + 12, y), at(x, y - 12));
+                line(out, c, at(x + 12, y), at(x, y + 12));
+            }
+        }
     }
 
     /// The inaccessible areas (key Q, 0x518306): every blocked 16 × 16 cell of the land
@@ -2470,43 +2621,6 @@ impl InGame {
                 self.hud_command(action);
                 return;
             }
-        }
-    }
-}
-
-/// A one pixel line (`DrawLine` 0x4012ff) as runs of fills, in world screen pixels.
-fn line(out: &mut Vec<Draw>, rgba: [u8; 4], (x0, y0): (i32, i32), (x1, y1): (i32, i32)) {
-    let (dx, dy) = (x1 - x0, y1 - y0);
-    let n = dx.abs().max(dy.abs());
-    // The pixel of step k, rounded to the nearest.
-    let at = |k: i32| {
-        if n == 0 {
-            return (x0, y0);
-        }
-        let round = |d: i32| (2 * d * k + n * d.signum()) / (2 * n);
-        (x0 + round(dx), y0 + round(dy))
-    };
-    let horizontal = dx.abs() >= dy.abs();
-    // Consecutive pixels in the same row (column) become one fill.
-    let mut start = at(0);
-    let mut last = start;
-    for k in 1..=n + 1 {
-        let p = if k <= n { Some(at(k)) } else { None };
-        let same = p.is_some_and(|p| if horizontal { p.1 == start.1 } else { p.0 == start.0 });
-        if !same {
-            let r = Rect {
-                x0: start.0.min(last.0),
-                y0: start.1.min(last.1),
-                x1: start.0.max(last.0) + 1,
-                y1: start.1.max(last.1) + 1,
-            };
-            out.push(Draw::fill(rgba, r).unclipped());
-            if let Some(p) = p {
-                start = p;
-            }
-        }
-        if let Some(p) = p {
-            last = p;
         }
     }
 }
