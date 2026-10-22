@@ -31,13 +31,8 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("SelSendTo", 0x561ad6, DONE, sel_send_to),
     f("SelSendAndKill", 0x561be4, DONE, sel_send_to),
     f("Patrol", 0x561cfb, DONE, patrol),
-    f(
-        "SelAttackGroup",
-        0x560258,
-        Status::Partial("idle selected units attack the first living enemy (AttackObj 0x90)"),
-        sel_attack_group,
-    ),
-    f("SelDie", 0x5601c0, Status::Partial("World::kill; finished buildings do not burn down yet"), sel_die),
+    f("SelAttackGroup", 0x560258, DONE, sel_attack_group),
+    f("SelDie", 0x5601c0, Status::Done, sel_die),
     f("SelErase", 0x56021c, DONE, sel_erase),
     f("SelChangeNation", 0x561eaf, DONE, sel_change_nation),
     f("SelCenter", 0x563981, DONE, sel_center),
@@ -363,8 +358,12 @@ fn detect_panic(api: &mut Api, c: &mut Call) -> Result<u32> {
     Ok(u32::from((0..0xFFFF).contains(&i) && api.object(i as u16).is_some_and(acr_sim::Unit::panicking)))
 }
 
-/// `void SelAttackGroup(byte nation, GAMEOBJ* enemy)`: idle selected units attack the first
-/// living enemy.
+/// `void SelAttackGroup(byte nation, GAMEOBJ* enemy)` (0x560258): the enemy group's serials
+/// are refreshed (0x55b636), then for every enemy member in order that is not dying
+/// (`Sdoxlo == 0`, so not inside a building) and matches its serial, every selected unit
+/// that matches its serial, is not dying and has no enemy (`EnemyID == 0xFFFF`) gets
+/// `AttackObj(enemy, 0x90, 0)`. A unit whose attack is accepted has an enemy from then on, so
+/// it keeps the first enemy it can attack.
 fn sel_attack_group(api: &mut Api, c: &mut Call) -> Result<u32> {
     let n = api.assign(c.u8(0)?);
     let Some(g) = api.group_arg(c, 1, "SelAttackGroup : Invalid <Enemy>")? else { return Ok(0) };
@@ -372,15 +371,29 @@ fn sel_attack_group(api: &mut Api, c: &mut Call) -> Result<u32> {
         api.st.error("SelAttackGroup : Invalid <Nat>");
         return Ok(0);
     }
-    let Some(&target) = api.members(g).first() else { return Ok(0) };
-    let units: Vec<EntityId> =
-        api.selected(n).into_iter().filter(|&id| api.world.units[id.0 as usize].idle()).collect();
-    for id in units {
-        api.attack(id, target, 0x90, false);
+    api.refresh_serials(g);
+    let not_dying = |api: &Api, m: Member| {
+        api.object(m.id)
+            .filter(|u| u.death == 0 && u.inside_of.is_none() && api.st.serial(u.id) == m.serial)
+            .map(|u| u.id)
+    };
+    let enemies = api.st.groups[g].members.clone();
+    for e in enemies {
+        let Some(target) = not_dying(api, e) else { continue };
+        let sel = api.st.selection[usize::from(n)].clone();
+        for m in sel {
+            let Some(id) = not_dying(api, m) else { continue };
+            if api.world.units[id.0 as usize].target().is_none() {
+                api.attack(id, target, 0x90, false);
+            }
+        }
     }
     Ok(0)
 }
 
+/// `bool SelDie(byte nation)` (0x5601c0): `KillSelected` (0x4dc83c) runs `DestructBuilding`
+/// (0x4e7720) on every selection slot that names an object, without serial checks: finished
+/// `SLOWDEATH` buildings drop to 1999 life and burn down, everything else dies.
 fn sel_die(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Some(n) = api.nation(c, 0, "SelDie(Nat)")? else { return Ok(0) };
     for id in api.selected_slots(n) {

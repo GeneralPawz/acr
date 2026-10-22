@@ -741,6 +741,15 @@ pub fn can_enter(w: &World, u: &Unit, b: &Unit) -> bool {
 /// going into this building keeps its order. `append` queues the order after the current
 /// ones (order type 2), otherwise it replaces them. The order keeps `prio & 0x7f`.
 pub fn enter(w: &mut World, i: usize, b: usize, prio: u8, append: bool) -> bool {
+    let ord = if append { crate::motion::ORD_APPEND } else { crate::motion::ORD_REPLACE };
+    enter_ex(w, i, b, prio, ord)
+}
+
+/// [`enter`] with the order placement `ord` of `CreateOrder` (0x525752, `crate::motion::ORD_*`;
+/// other values replace). Whatever the placement, the unit's priority becomes the order's
+/// (`OB+0xef = order+4`, 0x5f46d3).
+pub fn enter_ex(w: &mut World, i: usize, b: usize, prio: u8, ord: u8) -> bool {
+    use crate::motion::{ORD_APPEND, ORD_FRONT};
     if !can_enter(w, &w.units[i], &w.units[b]) || w.units[i].prio > prio {
         return false;
     }
@@ -750,12 +759,15 @@ pub fn enter(w: &mut World, i: usize, b: usize, prio: u8, append: bool) -> bool 
         return true;
     }
     let prio = prio & 0x7f;
-    if append {
-        u.orders.insert(0, Order::Enter { building: id, prio });
-        return true;
+    let order = Order::Enter { building: id, prio };
+    match ord {
+        ORD_APPEND if !u.orders.is_empty() => u.orders.insert(0, order),
+        ORD_FRONT => u.orders.push(order),
+        _ => {
+            u.orders.clear();
+            u.orders.push(order);
+        }
     }
-    u.orders.clear();
-    u.orders.push(Order::Enter { building: id, prio });
     u.prio = prio;
     u.path.delay = 0;
     true

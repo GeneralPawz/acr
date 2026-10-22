@@ -98,3 +98,28 @@ fn who_may_go_in() {
     let inside: Vec<bool> = ids.iter().map(|&i| w.units[i.0 as usize].inside_of == Some(b)).collect();
     assert_eq!(inside, [false, false, true]);
 }
+
+/// `GoToMine` (0x5f43d0) with `CreateOrder`'s placements, as `InviteUnitIntoBuilding` passes
+/// its `ordType`: front puts the entry before the walk, append after it, replace drops the
+/// walk; every placement gives the unit the order's priority `0xFF & 0x7f`.
+#[test]
+fn enter_order_placements() {
+    use acr_sim::motion::{ORD_APPEND, ORD_FRONT, ORD_REPLACE};
+    use acr_sim::world::Order;
+    let (mut w, k) = setup();
+    let b = w.spawn(k.barracks, 0, Pos::from_pixels(2048, 2048), 0);
+    let s = w.spawn(k.soldier, 0, Pos::from_pixels(2300, 2200), 0);
+    let i = s.0 as usize;
+    // `orders.last()` runs first.
+    for (ord, len, at) in [(ORD_FRONT, 2, 1), (ORD_APPEND, 2, 0), (ORD_REPLACE, 1, 0)] {
+        let u = &mut w.units[i];
+        u.orders.clear();
+        u.prio = 0;
+        acr_sim::motion::send_to(u, Pos::from_pixels(3000, 3000), 5, true);
+        assert!(acr_sim::economy::enter_ex(&mut w, i, b.0 as usize, 0xFF, ord));
+        let u = &w.units[i];
+        assert_eq!(u.orders.len(), len, "order type {ord}");
+        assert!(matches!(u.orders[at], Order::Enter { building, prio: 0x7f } if building == b), "order type {ord}");
+        assert_eq!(u.prio, 0x7f);
+    }
+}
