@@ -303,6 +303,11 @@ def build(ctx, spec):
     arm.name = f"{ctx.name}.rig"
     for m in meshes:
         m.name = f"{ctx.name}.{m.name.replace('.', '_').lower()}"
+        # The pack's vertex colours (black) would tint the texture (COLOR_0); one UV map.
+        for attr in list(m.data.color_attributes):
+            m.data.color_attributes.remove(attr)
+        while len(m.data.uv_layers) > 1:
+            m.data.uv_layers.remove(m.data.uv_layers[-1])
     ctx.stats["source_triangles"] = sum(sum(len(p.vertices) - 2 for p in m.data.polygons) for m in meshes)
     ctx.stats["triangles"] = _decimate(meshes, spec.get("tris", 12000))
 
