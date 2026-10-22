@@ -34,7 +34,8 @@ stages from the glTF alone, with the decay shader rebuilt from the extras).
   each rank-normalised) and `_PART` (body part 0..9 of `rig.PARTS`, stump caps 16 + joint
   / 32 + joint, horse 48).
 - Morph targets: `deflate` (flesh, clothes and strapped gear collapse onto the bones),
-  `emaciated` (hunger, #183). The coat skirt has bones (`skirt_*`) instead of the first
+  `emaciated` (hunger, #183), the per-soldier `face_*` and `body_*` targets (see "Faces and
+  bodies" below). The coat skirt has bones (`skirt_*`) instead of the first
   run's `lie_flat` morph: the `DEATHLIE*` clips lay it flat.
 - Nodes: `socket.*` bones (hat, back, hips, hands, hit sockets `socket.hit_*` for stuck
   missiles, horse `socket.saddle`); gear that drops at death (hat, musket, sabre) is a
@@ -83,6 +84,54 @@ stages from the glTF alone, with the decay shader rebuilt from the extras).
   (`COLOR_0`, `_GORE`, `_PART` 0); wet tissue carries `acr_roughness` (0.18..0.45) in its
   material extras and the glTF roughness. Each mesh's origin is its resting point; the
   node positions only lay the pack out on a grid.
+
+### Faces and bodies (#283, `acr_assets/faces.py` pure, `heads.py`)
+
+Every foot soldier and rider (engm18, engkri, engd18) carries the material for an
+individual look; the renderer picks one per soldier (a later slice). Until it does, it skips
+the variant meshes, so the game looks as before.
+
+- **Head:** the skin hull's head is subdivided (twice on the face, once elsewhere) and
+  modelled: nose, eye sockets, brow ridge, cheekbones, lips, chin, ears (`faces.base_face`).
+  Flesh grows from 1764 to 2850 tris (engm18).
+- **Face morph targets** (flesh, and every shell or variant the fields reach: collar,
+  hair, beards), weights `[lo, hi]` in root extras `acr_face_morphs`:
+  - `face_jaw`, `face_chin`, `face_cheekbones`, `face_nose` (length), `face_nose_bridge`,
+    `face_eyes` (spacing): −1..1;
+  - `face_brow`, `face_age` (jowls, hollow cheeks, eye bags, nose tip down), `face_fat`,
+    `face_thin`: 0..1.
+
+  10 face targets plus `body_stocky` and `body_thin`: 14 targets on the flesh with `deflate`
+  and `emaciated`. All are position-only. A shell gets only the targets that move it.
+- **Body:** `body_stocky` (flesh and clothes 14 % further from their bones) and `body_thin`
+  (12 % nearer). Head, hands and feet stay fixed. Height is a uniform instance scale to
+  `acr_height_m` = [1.58, 1.80]; the model is built at about 1.73 m.
+- **`_FACE`** (vec4, flesh only):
+  - R: the beard zone, where stubble grows;
+  - G: the wrinkle zone (forehead, crow's feet, nasolabial folds);
+  - B: pock marks and scars (cheeks, forehead);
+  - A: the face front.
+
+  The renderer shades stubble, wrinkles, pocks and a scar procedurally from these zones with
+  per-soldier uniforms, as `ACR-analysis/faces/peek_faces.py` does.
+- **Variants:** separate meshes `<name>.hair_short`, `.hair_tied`, `.hair_queue`,
+  `.hair_loose`, `.beard_full`, `.beard_moustache` and `.beard_sideburns`.
+  - They are shells of the head skin, except the queue, which is a tube on the head bone with
+    a black ribbon (material 1).
+  - They carry the decay layer `hair`, `_PART` 1, `_LIMB` −1, `deflate` and the face targets.
+  - Root extras `acr_hair_variants` / `acr_beard_variants` map a choice to its nodes:
+    `{"tied": ["hair_tied", "hair_queue"], "none": [], ...}`. `acr_look_odds` gives their
+    odds: style `regular` for engm18 and engd18, `civilian` for engkri.
+- **Tints:** material extras `acr_tint`: `"skin"` on the flesh material and `"hair"` on the
+  variants' material (neutral base `(0.80, 0.78, 0.75)`). The renderer multiplies in a
+  per-soldier colour from `acr_skin_tones` (sRGB multipliers per recruitment, `english`) or
+  `acr_hair_colours` (sRGB; for hair, divide by the neutral base first).
+- **`acr_face_frame`** `[x, y_front, eye_z]` (root extras): the head-local origin of the
+  fields, in armature space.
+- **Choice:** `faces.choose(seed, style)` is the reference. It gives the morph weights, hair,
+  beard, hair colour (greys rise with age), skin tone, stubble, pocks, scar and height, all
+  from a 32-bit hash (`_mix32`, `Rng`) that the renderer ports to Rust to get the same look
+  per unit id.
 
 ## 1. What the sprites tell
 

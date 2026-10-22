@@ -15,6 +15,7 @@ from acr_assets import crawl
 from acr_assets import armature as am
 from acr_assets import body as bd
 from acr_assets import gear, outfit, poses, rig
+from acr_assets import faces, heads
 from acr_assets.humans import LAYER_OF, Character, prepare_export
 
 TYPE = "EngKri"
@@ -108,6 +109,7 @@ def pose_for(ch, clip):
 
 def build(ctx):
     ch = make(ctx.root, ctx.name)
+    heads.variants(ch)  # hair and beard variants (#283), before the morphs
     ch.morphs()
     ch.masks()
     for clip, keys in clips().items():
@@ -118,9 +120,11 @@ def build(ctx):
     am.set_clip(ch.arm, "STAND")
     colours = ch.colours(ctx.ref, PALETTE, mix=0.5)
     outfit.dress(ch, colours, LAYER_OF)
+    heads.finish(ch)  # face and body morphs, `_FACE`, variants (#283)
     ch.arm.animation_data.action = None
     am.pose(ch.arm, STAND)
     tris = ch.triangles()
     prepare_export(ch.all_meshes(), ctx.root, acr_triangles=sum(tris.values()), acr_clips=list(MD) + list(crawl.CLIPS),
-                   acr_limb_radius=ch.limb_radius, acr_layers=list(ch.layers))
+                   acr_limb_radius=ch.limb_radius, acr_layers=list(ch.layers),
+                   **faces.extras("civilian"))
     ctx.stats = {"triangles": tris, "colours": colours}

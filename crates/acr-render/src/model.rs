@@ -9,7 +9,8 @@
 //!   serve all;
 //! - `POSITION`, `NORMAL`, `TEXCOORD_0`, `COLOR_0`, `JOINTS_0`/`WEIGHTS_0`, indices
 //!   (triangle lists only), the custom `_PART`, `_LIMB` and `_GORE` (x) for cutting
-//!   ([`crate::damage`]); meshes named `*.caps` (the old stump caps) are skipped;
+//!   ([`crate::damage`]); meshes named `*.caps` (the old stump caps) and the hair and beard
+//!   variants `*.hair_*` / `*.beard_*` (#283, not chosen per soldier yet) are skipped;
 //! - the morph targets `deflate` and `lie_flat` (by `extras.targetNames`, else the first
 //!   two), positions only;
 //! - materials: base colour factor and texture (PNG), `extras.acr_decay` (the decay layer of
@@ -373,6 +374,10 @@ impl ModelData {
                 .unwrap_or_default();
             // The old joint-only stump caps: replaced by placed caps (`damage.rs`).
             if mesh.name().is_some_and(|n| n.ends_with(".caps")) {
+                continue;
+            }
+            // Hair and beard variants (#283): one set per soldier, not chosen yet.
+            if mesh.name().is_some_and(|n| n.contains(".hair_") || n.contains(".beard_")) {
                 continue;
             }
             for prim in mesh.primitives() {
