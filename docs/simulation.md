@@ -939,6 +939,33 @@ Implemented in `economy.rs`. The sources are `City::Census` (0x42e658), the upke
     speeds become `amount·25/dt` and the amounts restart. `GetExtraction` returns the food
     and wood speeds, and for stone, iron, coal and gold the peasants inside mines of that
     resource.
+  - **AI building placement** (`aiplace.rs`, `City::ProcessCreation` 0x432582). The city
+    centre is the mean position of the nation's peasants on its first city tick
+    (`FindCenter` 0x4407b6, 128 px cells) and never moves. Two planning maps of 128 px cells
+    serve all nations: `InfoMap` (no locks, flat — the four corner heights within 20 of
+    their mean, the engine sampling one corner twice —, free of sprites, more than 2 trees,
+    more than 5 stones; `RenewInfoMap` 0x43f763 updates the 3 × 3 cells around each new
+    building) and `CantBuild` (marks of failed places). Each AI nation also keeps an
+    enemy map of 1024 px cells (1 enemy, 2 next to one), rebuilt when `tmtmt & 63 == 8k + 6`
+    and older than 256 ticks.
+    An accepted building gets an approximate cell (`FindApproximateBuildingPlace` 0x4306db):
+    the centre if it passes, else the first cell on the rings that is inside the map, away
+    from enemies and not more than 60 further along the path areas than the best so far, and
+    passes the kind's test: buildings not marked (`CheckBuilding`, 40 rings), mills 3 × 3 free
+    cells (25 rings), storehouses a cell next to a wood cell and 8 cells from others (60
+    rings; AC tests wood for stone storehouses too), towers four free cells, 9 from other
+    towers, on the side towards nation 0 (rings 6..40, threshold 14), ports deep water around
+    (60 rings), mines the nearest free deposit of their resources within 156 64-px cells.
+    Once per city tick the city tries the cell corner ± 128 px (two `rando`) with the full
+    site test (`CheckCreationAbility` 0x513b2c) there and on 9 rings of 32 px around it:
+    inside the map, no deposit or hole sprite within the radius `(BRadius + 15)·16 px` of
+    the check-point centre (fields 240 px less), no enemy object within it, no overlap of the
+    `BUILDBAR` rectangles (compared rotated by 45°), every `CHECKPOINT` with its column of 8
+    and row of 6 lock cells free, and at most 50 height difference between the check points.
+    The first spot passing is built (`CreateObject`, paid then). A failure marks the cell
+    (mills `0x10`, storehouses `1`, ports `0x20`, others `8`) and searches a new cell; after
+    6 tries the project is dropped unpaid. A placed mill marks a 13 × 13 diamond of cells for
+    mills, storehouses and buildings.
   - **Mines** (`RESSUBST`, only the gold mine has it): a mine placed within 64 px of a
     deposit of another resource is created as that resource's mine — the type `+1` iron,
     `+2` coal, `+3` stone, `+4` food, `+5` wood, the order of every nation file
@@ -1115,8 +1142,11 @@ No game option writes it. How the map view draws the fog is in
     (an idle one first, else the shortest queue).
   - Synthetic catalogs without nation files have no tech tree: everything is enabled and
     buildings produce anything.
-  - The AI city's mill list (`MelnID`) is the nation's first four ready mills (the engine
-    records the mills present at `StartAIEx` and those its city places).
+  - AI placement: the planning maps are built at the first use (the engine at game start);
+    `CheckBuildPossibility` (peace-time cordons) and `HandleConstructions` (re-sending
+    builders without a collector) are not reproduced; the deposit test of mines uses the
+    deposit list (radius of the site test instead of each sprite's work radius); the
+    builder team ignores its minimum size.
   - Not reproduced yet: the AI landing process (`AssignDesant*`, `SetMaxInTransport` are
     stored only); fishing boats do not flee from enemy ships (`GetShipDanger`); the AI
     difficulty factor on production time; the 10× cannon price lobby option.
@@ -1194,6 +1224,8 @@ No game option writes it. How the map view draws the fog is in
   with its turn animations, bombards it and pays iron and coal; a deployed cannon fires
   canister into a crowd; projectiles are deterministic. A stance walk with `RATE 4 8` goes
   half as fast (`tests/world.rs`).
+- **AI placement test** (`tests/aiplace.rs`): the centre is the peasants' mean, a house is
+  placed near it, a second keeps its build bar clear of the first, one project at a time.
 - **Ship tests** (`tests/ships.rs`): a ship accelerates by 6 per tick (overshooting once)
   to `2·step` and arrives; a ferry ordered onto the shore docks with its land point on land,
   a soldier boards it, it sails along the shore, docks again and lets him off on the far

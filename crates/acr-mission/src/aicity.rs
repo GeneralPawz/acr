@@ -6,8 +6,8 @@
 //!
 //! Build lists and availability come from acr-sim's tech tree (`[FIXED_PRODUCE]`,
 //! `[ENABLED]`, `[ACCESSCONTROL]`), upgrades are researched with acr-sim's `PerformUpgrade`.
-//! Simplified against the original: building places are searched around the centre instead of the original's farm, mill and
-//! field heuristics.
+//! Buildings are placed by acr-sim's `aiplace` (the original's approximate place per kind and
+//! exact site test); with a buildings collector the DLL sends the builders.
 
 use std::collections::BTreeMap;
 
@@ -39,6 +39,12 @@ pub struct City {
     pub upgrade_index: BTreeMap<u16, usize>,
     /// `BestProj`: proposals the DLL accepted this call.
     pub best: Vec<usize>,
+    /// `BuildingsCollector`, `UnitsCollector`, `EnemyBuildingsCollector` (City+0xf46..):
+    /// script groups that collect the nation's new buildings, the units its AI produces and
+    /// new enemy buildings.
+    pub buildings_collector: Option<usize>,
+    pub units_collector: Option<usize>,
+    pub enemy_collector: Option<usize>,
 }
 
 /// `PERCONV[p]` (0x671508): `p·32768/100`.
@@ -163,7 +169,8 @@ pub fn enum_prop(st: &mut ScriptState, world: &World, nation: u8) {
     st.cities[usize::from(nation)] = city;
 }
 
-/// Carries out the projects the DLL accepted (0x432871).
+/// Carries out the projects the DLL accepted (0x432871), then the pending building project's
+/// step.
 pub fn execute(st: &mut ScriptState, world: &mut World, nation: u8) {
     let city = std::mem::take(&mut st.cities[usize::from(nation)]);
     for &k in &city.best {
@@ -172,48 +179,17 @@ pub fn execute(st: &mut ScriptState, world: &mut World, nation: u8) {
             // `PerformUpgrade` in the producer.
             acr_sim::upgrade::start(world, b.0 as usize, up);
         } else if let Some(b) = p.producer {
-            // `ProduceByAI`: queued in the producer, paying the price.
-            acr_sim::economy::produce(world, b.0 as usize, p.kind);
-        } else if world.catalog.get(p.kind).building {
-            build_near_centre(world, nation, p.kind);
-        }
-    }
-    st.cities[usize::from(nation)] = city;
-}
-
-/// Places a building around the city centre (rings of 128 px, random start like the
-/// original's `rando() & 4096` jitter) and sends up to 3 idle peasants to build it.
-fn build_near_centre(world: &mut World, nation: u8, kind: TypeId) {
-    let mine: Vec<&acr_sim::Unit> = world.units.iter().filter(|u| u.active() && u.owner == nation).collect();
-    let anchor: Vec<_> = mine.iter().filter(|u| u.building).collect();
-    let base: Vec<_> = if anchor.is_empty() { mine.iter().collect() } else { anchor };
-    if base.is_empty() {
-        return;
-    }
-    let n = base.len() as i64;
-    let cx = (base.iter().map(|u| i64::from(u.pos.x >> 4)).sum::<i64>() / n) as i32;
-    let cy = (base.iter().map(|u| i64::from(u.pos.y >> 4)).sum::<i64>() / n) as i32;
-    let peasants: Vec<usize> = world
-        .units
-        .iter()
-        .filter(|u| u.active() && u.owner == nation && u.orders.is_empty() && world.catalog.get(u.kind).peasant)
-        .map(|u| u.id.0 as usize)
-        .take(3)
-        .collect();
-    if peasants.is_empty() {
-        return;
-    }
-    let start = world.random.rando() & 7;
-    for ring in 2..8 {
-        for k in 0..8 {
-            let dir = ((start + k) & 7) as u8 * 32;
-            let (dx, dy) = ((acr_sim::trig::cos(dir) * ring * 128) >> 8, (acr_sim::trig::sin(dir) * ring * 128) >> 8);
-            if let Some(b) = acr_sim::construction::place(world, nation, kind, cx + dx, cy + dy) {
-                for &i in &peasants {
-                    acr_sim::construction::build_obj(world, i, b.0 as usize, 0x80);
-                }
-                return;
+            // `ProduceByAI`: queued in the producer, paying the price; with a units collector
+            // the unit joins it when it is born.
+            if acr_sim::economy::produce(world, b.0 as usize, p.kind)
+                && let Some(g) = city.units_collector
+            {
+                st.production.push(crate::state::Production { building: b, kind: p.kind, group: g, ready: 0 });
             }
+        } else if world.catalog.get(p.kind).building {
+            acr_sim::aiplace::accept(world, nation, p.kind);
         }
     }
+    acr_sim::aiplace::process(world, nation, city.buildings_collector.is_some());
+    st.cities[usize::from(nation)] = city;
 }

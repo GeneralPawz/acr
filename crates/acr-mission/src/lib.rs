@@ -330,8 +330,8 @@ impl Scripts {
         let Some(i) = self.ais.iter().position(|a| a.nations.contains(&nation)) else { return };
         let k = usize::from(nation);
         if !self.center_found[k] {
-            self.center_found[k] =
-                world.units.iter().any(|u| u.living() && u.owner == nation && world.catalog.get(u.kind).peasant);
+            // FindCenter on the first call (0x433818); the AI runs from the next one.
+            self.center_found[k] = acr_sim::aiplace::start(world, nation);
             return;
         }
         let vm_id = i as u8 + 1;
