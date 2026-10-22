@@ -103,6 +103,22 @@ pub struct Material {
     pub decay: Option<DecayLayer>,
     /// A stump cap (`docs/damage-model.md`): wet, ragged outline from `uv`.
     pub stump: bool,
+    /// Drawn as torn tissue (#280): the inside of a wound, bone, or a cloth shred.
+    pub tissue: Tissue,
+}
+
+/// How a material of the gore inserts and gibs is shaded (`model.wgsl`, `look.y`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Tissue {
+    #[default]
+    None = 0,
+    /// The inner wall of a wound cavity: only its far side drawn, wet meat darkening
+    /// towards the deep centre.
+    Cavity = 1,
+    /// Bone in a wound: wet, glossy.
+    Bone = 2,
+    /// A shred of uniform: tinted with the uniform colour, crumpled.
+    Cloth = 3,
 }
 
 /// An RGBA8 picture (sRGB encoded, as stored).
@@ -295,6 +311,7 @@ impl ModelData {
                         .then(|| m.alpha_cutoff().unwrap_or(0.5)),
                     decay: extras_json(m.extras()).as_ref().and_then(decay_layer),
                     stump: false,
+                    tissue: Tissue::None,
                 }
             })
             .collect();
@@ -308,6 +325,7 @@ impl ModelData {
             alpha_cutoff: None,
             decay: None,
             stump: false,
+            tissue: Tissue::None,
         });
 
         let mut slots: Vec<Slot> = Vec::new();

@@ -68,6 +68,8 @@ struct Item {
     seed: f32,
     /// Size of a gib (1: as modelled).
     scale: f32,
+    /// The uniform colour a cloth shred takes (linear RGB).
+    coat: Option<[f32; 3]>,
 }
 
 /// A throw from the hit: `(rng, near, far, cone, height)` → start and landing point.
@@ -109,7 +111,7 @@ impl Debris {
         hits: impl Iterator<Item = &'a HitRecord>,
         now: u64,
         gore: Gore,
-        unit: &dyn Fn(u32) -> Option<(UnitModel, &'a acr_render::damage::Rig)>,
+        unit: &dyn Fn(u32) -> Option<(UnitModel, &'a acr_render::damage::Rig, [f32; 3])>,
         death: &dyn Fn(u32) -> Option<DeathRecord>,
         tears: &dyn Fn(&HitRecord, &Rig) -> Vec<Volume>,
         gibs: &GibModels,
@@ -142,14 +144,14 @@ impl Debris {
             // chunks it took fly as gibs sized by it.
             let mut ripped = Damage::default();
             if gore == Gore::Full
-                && let Some((_, rig)) = model
+                && let Some((_, rig, _)) = model
             {
                 for v in tears(hit, rig) {
                     ripped.push_volume(v);
                 }
             }
             let taken = super::tears::size(ripped.volumes());
-            if let Some((m, rig)) = model {
+            if let Some((m, rig, _)) = model {
                 if let (Part::Limb(limb), Outcome::Off) = (injury.part, injury.outcome) {
                     ripped.limb_mut(Limb::ALL[limb as usize]).cut = injury.level;
                 }
@@ -172,9 +174,9 @@ impl Debris {
                 // ball's track.
                 let n = (taken / 0.0015).round().clamp(1.0, 6.0) as u32;
                 let scale = (taken / n as f32 / 0.0008).cbrt().clamp(0.5, 1.6);
-                let player = model.map_or(0, |m| m.0.player);
+                let (player, coat) = model.map_or((0, None), |m| (m.0.player, Some(m.2)));
                 let first = self.items.len();
-                self.gibs(n, false, player, hit.tick, &mut rng, gibs, &mut throw);
+                self.gibs(n, false, player, coat, hit.tick, &mut rng, gibs, &mut throw);
                 for item in &mut self.items[first..] {
                     item.scale = scale;
                 }
@@ -182,7 +184,7 @@ impl Debris {
             match (injury.part, injury.outcome) {
                 (Part::Limb(_), Outcome::Off) => {}
                 (_, Outcome::Torn(torn)) => {
-                    if let (Torn::InTwo { .. }, Some((m, rig))) = (torn, model) {
+                    if let (Torn::InTwo { .. }, Some((m, rig, _))) = (torn, model) {
                         let record = death(hit.victim).unwrap_or_default();
                         if let Some(upper) = super::damage_view::damage(&record.body, Some(torn))
                             .as_ref()
@@ -200,8 +202,8 @@ impl Debris {
                             Torn::InTwo { .. } => 3,
                             Torn::Headless => 2,
                         };
-                        let player = model.map_or(0, |m| m.0.player);
-                        self.gibs(n, torn == Torn::Headless, player, hit.tick, &mut rng, gibs, &mut throw);
+                        let (player, coat) = model.map_or((0, None), |m| (m.0.player, Some(m.2)));
+                        self.gibs(n, torn == Torn::Headless, player, coat, hit.tick, &mut rng, gibs, &mut throw);
                     }
                 }
                 _ if gore == Gore::Full
@@ -209,8 +211,8 @@ impl Debris {
                     && hit.killed
                     && injury.energy >= POINT_BLANK =>
                 {
-                    let player = model.map_or(0, |m| m.0.player);
-                    self.gibs(GIBS.0, false, player, hit.tick, &mut rng, gibs, &mut throw);
+                    let (player, coat) = model.map_or((0, None), |m| (m.0.player, Some(m.2)));
+                    self.gibs(GIBS.0, false, player, coat, hit.tick, &mut rng, gibs, &mut throw);
                 }
                 _ => {}
             }
@@ -232,13 +234,25 @@ impl Debris {
             pool,
             seed: rng.next() * 97.0,
             scale: 1.0,
+            coat: None,
         });
     }
 
     /// `n` gibs scattered along the blow: flesh, bone and cloth (tinted by nation through
     /// the instance's player), skull and jaw for a head.
     #[allow(clippy::too_many_arguments)]
-    fn gibs(&mut self, n: u32, head: bool, player: u8, tick: u64, rng: &mut Rng, gibs: &GibModels, throw: &mut Throw) {
+    #[allow(clippy::too_many_arguments)]
+    fn gibs(
+        &mut self,
+        n: u32,
+        head: bool,
+        player: u8,
+        coat: Option<[f32; 3]>,
+        tick: u64,
+        rng: &mut Rng,
+        gibs: &GibModels,
+        throw: &mut Throw,
+    ) {
         const KINDS: [&str; 10] =
             ["flesh_0", "cloth_0", "bone_0", "flesh_1", "flesh_2", "cloth_1", "bone_1", "flesh_3", "organ_0", "bone_2"];
         let offset = (rng.next() * KINDS.len() as f32) as usize;
@@ -251,6 +265,9 @@ impl Debris {
             let Some(&model) = gibs.get(name) else { continue };
             let (from, to) = throw(rng, 0.3, 4.5, 0.35, 1.0);
             self.push(What::Gib, UnitModel { model, player }, from, to, rng, tick, 0.0);
+            if let Some(item) = self.items.last_mut() {
+                item.coat = coat;
+            }
         }
     }
 
@@ -333,7 +350,11 @@ impl Debris {
                 transparent: false,
                 player: item.player,
                 wounds: Default::default(),
-                sprayed: Default::default(),
+                sprayed: match item.coat {
+                    // A cloth shred's colour rides in the spray texel (`model.wgsl`, kind 3).
+                    Some(c) => acr_render::model_renderer::Sprayed { point: c, radius: -1.0, amount: 0.0, age: 0.0 },
+                    None => Default::default(),
+                },
                 damage,
             });
             if item.pool > 0.0 && t >= 1.0 {
@@ -434,4 +455,53 @@ pub fn lying_flat(mut m: model::ModelData) -> model::ModelData {
     n.rotation = rotation;
     n.translation = [0.0, -bottom.min(1.0), 0.0];
     m
+}
+
+/// The colour of a unit's coat (linear RGB): the commonest colour of its upper sleeves.
+pub fn coat(model: &model::ModelData) -> [f32; 3] {
+    let mut bins: HashMap<u32, (u32, [f32; 3])> = HashMap::new();
+    let lin = |c: u8| (f32::from(c) / 255.0).powf(2.2);
+    for prim in &model.primitives {
+        let material = &model.materials[prim.material];
+        let Some(image) = material.texture.and_then(|t| model.images.get(t)) else { continue };
+        if image.width == 0 || image.height == 0 {
+            continue;
+        }
+        // The sleeves above the elbow: the coat's colour, without waistcoat, belts or hands.
+        let sleeve =
+            |v: &&model::Vertex| (2..=5).contains(&(v.body[0].round() as i32)) && (0.0..0.35).contains(&v.body[1]);
+        for v in prim.vertices.iter().filter(sleeve) {
+            let x = ((v.uv[0].rem_euclid(1.0) * image.width as f32) as u32).min(image.width - 1);
+            let y = ((v.uv[1].rem_euclid(1.0) * image.height as f32) as u32).min(image.height - 1);
+            let at = ((y * image.width + x) * 4) as usize;
+            let Some(px) = image.rgba.get(at..at + 3) else { continue };
+            let rgb = [lin(px[0]), lin(px[1]), lin(px[2])];
+            let b = material.base_color;
+            let rgb = [rgb[0] * b[0], rgb[1] * b[1], rgb[2] * b[2]];
+            let key = rgb.iter().fold(0, |k, &c| k * 8 + (c.sqrt() * 7.99) as u32);
+            let e = bins.entry(key).or_insert((0, [0.0; 3]));
+            e.0 += 1;
+            (0..3).for_each(|k| e.1[k] += rgb[k]);
+        }
+    }
+    // Coloured bins count more than white shirt cuffs.
+    let weight = |e: &(u32, [f32; 3])| {
+        let c = e.1.map(|c| c / e.0 as f32);
+        let (hi, lo) = (c[0].max(c[1]).max(c[2]), c[0].min(c[1]).min(c[2]));
+        let sat = if hi > 1e-4 { (hi - lo) / hi } else { 0.0 };
+        (e.0 as f32 * (0.15 + sat)) as u32
+    };
+    bins.into_values().max_by_key(weight).map_or([0.35, 0.05, 0.04], |(n, sum)| sum.map(|c| c / n as f32))
+}
+#[cfg(test)]
+mod coat_tests {
+    /// The showcase's English line infantry wears red (skipped without the local models).
+    #[test]
+    fn an_english_coat_is_red() {
+        let path = r"C:\Users\verwalter\WIP\ACR-analysis\showcase\models\engm18.glb";
+        let Ok(bytes) = std::fs::read(path) else { return };
+        let m = acr_render::model::ModelData::from_glb(&bytes).unwrap();
+        let c = super::coat(&m);
+        assert!(c[0] > 3.0 * c[1] && c[0] > 3.0 * c[2], "{c:?}");
+    }
 }

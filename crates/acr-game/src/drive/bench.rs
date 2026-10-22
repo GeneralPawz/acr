@@ -50,6 +50,23 @@ pub fn cause(name: &str) -> Result<(DeathCause, bool), String> {
     })
 }
 
+/// A body part to aim at (`hit`'s `part`).
+pub fn part(name: &str) -> Result<Part, String> {
+    Ok(match name {
+        "arm_l" => Part::Limb(LimbId::ArmL),
+        "arm_r" => Part::Limb(LimbId::ArmR),
+        "leg_l" => Part::Limb(LimbId::LegL),
+        "leg_r" => Part::Limb(LimbId::LegR),
+        "head" => Part::Head,
+        "chest" => Part::Chest,
+        "belly" => Part::Belly,
+        "pelvis" => Part::Pelvis,
+        other => {
+            return Err(format!("unknown part {other:?}: arm_l, arm_r, leg_l, leg_r, head, chest, belly or pelvis"));
+        }
+    })
+}
+
 pub fn region(name: &str) -> Result<HitRegion, String> {
     Ok(match name {
         "legs" | "leg" => HitRegion::Legs,
@@ -111,6 +128,12 @@ pub fn hit(game: &mut Game, v: &Value) -> Result<Value, String> {
     let region = v.get("region").and_then(Value::as_str).map(region).transpose()?;
     let energy = v.get("energy").and_then(Value::as_u64).unwrap_or(100).min(100) as u8;
     let damage = v.get("damage").and_then(Value::as_i64).unwrap_or(1) as i32;
+    let aim = v.get("part").and_then(Value::as_str).map(part).transpose()?;
+    let level = v.get("level").and_then(Value::as_u64).map(|l| l.min(255) as u8);
+    if level.is_some() && aim.is_none() {
+        return Err("hit: \"level\" needs a \"part\"".into());
+    }
+    let aim = aim.map(|p| (p, level));
     let dir = match v.get("dir").and_then(Value::as_array).map(Vec::as_slice) {
         Some([x, y]) => {
             ((x.as_f64().unwrap_or(0.0) * 100.0).round() as i32, (y.as_f64().unwrap_or(0.0) * 100.0).round() as i32)
@@ -121,7 +144,7 @@ pub fn hit(game: &mut Game, v: &Value) -> Result<Value, String> {
     if world.unit(EntityId(unit as u32)).is_none() {
         return Err(format!("no unit {unit}"));
     }
-    let index = scripted_hit(world, unit, ScriptedHit { cause, mounted, region, dir, energy, dmg: damage })
+    let index = scripted_hit(world, unit, ScriptedHit { cause, mounted, region, dir, energy, dmg: damage, aim })
         .ok_or_else(|| format!("unit {unit} is not alive"))?;
     let h = world.hits[index];
     Ok(json!({
@@ -148,6 +171,8 @@ mod tests {
     fn names_of_causes_regions_and_poses() {
         assert_eq!(cause("sabre"), Ok((DeathCause::Melee, true)));
         assert_eq!(cause("axe"), Ok((DeathCause::Thrown, false)));
+        assert_eq!(part("arm_l"), Ok(Part::Limb(LimbId::ArmL)));
+        assert!(part("tail").is_err());
         assert!(cause("laser").is_err());
         assert_eq!(region("head"), Ok(HitRegion::Head));
         assert!(region("tail").is_err());

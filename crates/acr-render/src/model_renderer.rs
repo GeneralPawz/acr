@@ -290,6 +290,8 @@ pub struct ModelRenderer {
     models: Vec<GpuModel>,
     /// The model placed at every cut ([`damage::procedural_cap`] until [`Self::set_cap`]).
     cap: usize,
+    /// The inside of wounds (#280): cavity, rib, bone end ([`damage::InsertKind`] order).
+    inserts: [usize; 3],
     /// Prepared for the next `render`: model, its instances, whether they decay.
     draws: Vec<(usize, Range<u32>, bool)>,
     /// The target does not encode sRGB: the shader does.
@@ -566,6 +568,7 @@ impl ModelRenderer {
             white,
             models: Vec::new(),
             cap: 0,
+            inserts: [0; 3],
             draws: Vec::new(),
             encode_srgb: !target.is_srgb(),
             pose_count: 0,
@@ -573,6 +576,11 @@ impl ModelRenderer {
             custom: HashMap::new(),
         };
         renderer.cap = renderer.add_model(device, queue, damage::procedural_cap());
+        renderer.inserts = [
+            renderer.add_model(device, queue, damage::procedural_cavity()),
+            renderer.add_model(device, queue, damage::procedural_rib()),
+            renderer.add_model(device, queue, damage::procedural_bone()),
+        ];
         renderer
     }
 
@@ -670,7 +678,7 @@ impl ModelRenderer {
                         // The bone layer takes no blood, dirt or burns.
                         if d.is_some_and(|d| d.inner) || m.stump { 1.0 } else { 0.0 },
                     ],
-                    look: [if m.stump { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
+                    look: [if m.stump { 1.0 } else { 0.0 }, m.tissue as u8 as f32, 0.0, 0.0],
                 };
                 let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("model material"),
@@ -726,6 +734,7 @@ impl ModelRenderer {
         self.draws.clear();
         let [w, h] = view.size;
         let cap_model = self.cap;
+        let insert_models = self.inserts;
         let models = &self.models;
         let draws = &mut self.draws;
         let custom = std::mem::take(&mut self.custom);
@@ -772,6 +781,24 @@ impl ModelRenderer {
                         clip: None,
                         time: 0.0,
                         transform: math::mul(&inst.transform, &math::mul(&bone, &cap.rest_matrix())),
+                        morphs: [0.0; 2],
+                        wounds: Default::default(),
+                        sprayed: Default::default(),
+                        damage: Damage::default(),
+                        ..*inst
+                    });
+                }
+                // The inside of the wounds: cavity walls, ribs and bone ends (#280).
+                for ins in damage::inserts(&inst.damage, rig) {
+                    let at = (base + ins.slot * 3) as usize;
+                    let Some(rows) = texels.get(at..at + 3) else { continue };
+                    let bone: Mat4 =
+                        std::array::from_fn(|c| [rows[0][c], rows[1][c], rows[2][c], if c == 3 { 1.0 } else { 0.0 }]);
+                    caps.push(ModelInstance {
+                        model: insert_models[ins.kind as usize],
+                        clip: None,
+                        time: 0.0,
+                        transform: math::mul(&inst.transform, &math::mul(&bone, &ins.rest)),
                         morphs: [0.0; 2],
                         wounds: Default::default(),
                         sprayed: Default::default(),

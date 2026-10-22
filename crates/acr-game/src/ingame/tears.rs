@@ -130,11 +130,10 @@ pub fn volumes(t: &Tear, rig: &Rig) -> Vec<Volume> {
         }
         DeathCause::Gunshot => {
             let close = injury.energy >= acr_sim::body::BALL_CLOSE;
-            let exit = norm(math::sub(
-                math::scale(facing, -1.0),
-                math::scale(bone, 0.3 * math::dot(math::scale(facing, -1.0), bone)),
-            ));
-            let r_exit = (0.035 + 0.035 * energy) * (0.8 + 0.4 * h(4));
+            // Out on the far side, along the ball's track (square to the bone).
+            let exit = norm(math::sub(track, math::scale(bone, 0.7 * math::dot(track, bone))));
+            // Fist-sized at close range: the soft ball flattens and tears its way out.
+            let r_exit = if close { 0.05 + 0.025 * h(4) } else { 0.03 + 0.015 * h(4) };
             if close || matches!(injury.outcome, Outcome::Fracture(_) | Outcome::BellyOpen) {
                 // A cavity where the flattened ball comes out.
                 let c = math::add(p, math::scale(exit, radius * (0.8 + 0.2 * h(5))));
@@ -154,10 +153,10 @@ pub fn volumes(t: &Tear, rig: &Rig) -> Vec<Volume> {
             let n = 2 + (h(4) * 3.0) as u64;
             for k in 0..n {
                 let c = math::add(
-                    math::add(p, math::scale(facing, radius * (0.5 + 0.4 * h(5 + k)))),
+                    math::add(p, math::scale(facing, radius * (0.3 + 0.35 * h(5 + k)))),
                     [jitter(10 + k, 0.1), jitter(20 + k, 0.12), 0.0],
                 );
-                v.push(sphere(c, 0.03 + 0.03 * h(30 + k) + 0.02 * energy, k));
+                v.push(sphere(c, 0.045 + 0.035 * h(30 + k) + 0.02 * energy, k));
             }
             if off {
                 v.push(sphere(p, radius * 1.6, 7));

@@ -11,7 +11,7 @@
 //! tip; the segment boundaries are [`ELBOW`], [`WRIST`], [`KNEE`] and [`ANKLE`].
 
 use crate::math::{self, Mat4, Vec3};
-use crate::model::{Material, ModelData, Node, Primitive, Slot, Vertex};
+use crate::model::{Material, ModelData, Node, Primitive, Slot, Tissue, Vertex};
 
 pub const ELBOW: u8 = 110;
 pub const WRIST: u8 = 205;
@@ -612,6 +612,220 @@ pub fn caps(d: &Damage, rig: &Rig) -> Vec<Cap> {
     out
 }
 
+/// What a wound shows inside (#280): the far wall of the cavity, ribs, a bone end.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InsertKind {
+    /// [`procedural_cavity`]: an inside-out sphere, only its far wall drawn.
+    Cavity,
+    /// [`procedural_rib`]: an arc of rib about the trunk's axis.
+    Rib,
+    /// [`procedural_bone`]: a splintered bone end along +z.
+    Bone,
+}
+
+/// A piece of the inside of a wound in the rest pose: `rest` maps the unit model there,
+/// `slot` is the palette slot that carries it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Insert {
+    pub kind: InsertKind,
+    pub rest: Mat4,
+    pub slot: u32,
+}
+
+/// Columns x, y, z scaled and placed at `p`.
+fn frame(x: Vec3, y: Vec3, z: Vec3, s: [f32; 3], p: Vec3) -> Mat4 {
+    [
+        [x[0] * s[0], x[1] * s[0], x[2] * s[0], 0.0],
+        [y[0] * s[1], y[1] * s[1], y[2] * s[1], 0.0],
+        [z[0] * s[2], z[1] * s[2], z[2] * s[2], 0.0],
+        [p[0], p[1], p[2], 1.0],
+    ]
+}
+
+/// A frame whose z is `dir`.
+fn along(dir: Vec3, s: [f32; 3], p: Vec3) -> Mat4 {
+    let z = normalize(dir);
+    let up = if z[1].abs() < 0.9 { [0.0, 1.0, 0.0] } else { [1.0, 0.0, 0.0] };
+    let x = normalize(cross(up, z));
+    frame(x, cross(z, x), z, s, p)
+}
+
+/// The inside of the wounds of an instance with `d`: per volume the far wall of a cavity
+/// kept inside the body part it bites (so it is seen only through the hole, and a hole
+/// straight through shows meat, not the ground), ribs behind a chest wound and bone ends
+/// in limbs it severs or shatters.
+pub fn inserts(d: &Damage, rig: &Rig) -> Vec<Insert> {
+    let mut out = Vec::new();
+    // The chains this instance keeps (0..4 limbs, 4 trunk) at a level.
+    let kept = |k: usize, level: f32| -> bool {
+        let lb = (level * 255.0) as u8;
+        match (d.keep, k) {
+            (Keep::Body, 4) => d.trunk_cut.is_none_or(|t| lb <= t),
+            (Keep::Body, k) => lb < d.limbs[k].cut && !(d.trunk_cut.is_some() && Limb::ALL[k].is_arm()),
+            (Keep::Piece { limb, from, to }, k) => k == limb as usize && lb >= from && lb <= to,
+            (Keep::Upper, 4) => d.trunk_cut.is_some_and(|t| lb > t),
+            (Keep::Upper, k) => Limb::ALL[k].is_arm() && lb < d.limbs[k].cut,
+        }
+    };
+    for (vi, v) in d.volumes().iter().enumerate() {
+        let m = math::scale(math::add(v.a, v.b), 0.5);
+        // The part it bites deepest into: the nearest kept axis point.
+        let mut best: Option<(f32, usize, f32)> = None;
+        for k in 0..5 {
+            let chain = if k < 4 { &rig.limbs[k] } else { &rig.trunk };
+            let level = chain.project(m);
+            if !kept(k, level) {
+                continue;
+            }
+            let (q, _, _) = chain.at(level);
+            let dist = v.distance(q);
+            if dist < v.radius + chain.radius_at(level) && best.is_none_or(|b| dist < b.0) {
+                best = Some((dist, k, level));
+            }
+        }
+        let Some((_, k, level)) = best else { continue };
+        let chain = if k < 4 { &rig.limbs[k] } else { &rig.trunk };
+        let (q, dir, slot) = chain.at(level);
+        let r_body = chain.radius_at(level);
+        // Pulled towards the axis so its wall stays inside the flesh.
+        let to_m = math::sub(m, q);
+        let off = math::sub(to_m, math::scale(dir, math::dot(to_m, dir)));
+        let len = math::dot(off, off).sqrt();
+        let pull = if len > 1e-5 { math::scale(off, len.min(r_body * 0.3) / len) } else { [0.0; 3] };
+        let c = math::add(q, pull);
+        let r = v.radius.min(r_body * 0.72);
+        let unit = frame([1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [r; 3], c);
+        out.push(Insert { kind: InsertKind::Cavity, rest: unit, slot });
+        let toward = if len > 1e-5 { math::scale(off, 1.0 / len) } else { [0.0, 0.0, 1.0] };
+        if k == 4 && (0.4..0.85).contains(&level) && v.kind == VolumeKind::Tear {
+            // Ribs: arcs about the trunk's axis, facing the wound.
+            let z = normalize([toward[0], 0.0, toward[2]]);
+            let x = cross([0.0, 1.0, 0.0], z);
+            let shift = if vi % 2 == 0 { 0.0 } else { 0.02 };
+            for dy in [-0.05f32, 0.0, 0.05] {
+                let p = math::add(q, [0.0, dy + shift, 0.0]);
+                let s = r_body * 0.5;
+                out.push(Insert { kind: InsertKind::Rib, rest: frame(x, [0.0, 1.0, 0.0], z, [s; 3], p), slot });
+            }
+        } else if k < 4 && v.kind == VolumeKind::Tear {
+            // A splintered bone end where the limb comes off, or across a shattered one.
+            let cut = d.limbs[k].cut;
+            let severed = cut < WHOLE && v.distance(chain.at(f32::from(cut) / 255.0).0) < v.radius;
+            if severed {
+                let (p, dir, slot) = chain.at(f32::from(cut) / 255.0);
+                let outward = if matches!(d.keep, Keep::Piece { .. }) { math::scale(dir, -1.0) } else { dir };
+                let back = math::sub(p, math::scale(outward, 0.035));
+                out.push(Insert { kind: InsertKind::Bone, rest: along(outward, [0.05; 3], back), slot });
+            } else {
+                let bent = normalize(math::add(dir, math::scale(toward, 0.5)));
+                out.push(Insert { kind: InsertKind::Bone, rest: along(bent, [0.035; 3], q), slot });
+            }
+        }
+    }
+    out
+}
+
+/// A unit sphere turned inside out (normals in), coloured by the shader as a cavity.
+pub fn procedural_cavity() -> ModelData {
+    const RINGS: usize = 10;
+    const SEGMENTS: usize = 16;
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    for i in 0..=RINGS {
+        let t = i as f32 / RINGS as f32 * std::f32::consts::PI;
+        for s in 0..=SEGMENTS {
+            let a = s as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
+            let p = [t.sin() * a.cos(), t.cos(), t.sin() * a.sin()];
+            vertices.push(vertex(p, math::scale(p, -1.0), [0.42, 0.04, 0.035, 1.0]));
+        }
+    }
+    let at = |i: usize, s: usize| (i * (SEGMENTS + 1) + s) as u32;
+    for i in 0..RINGS {
+        for s in 0..SEGMENTS {
+            indices.extend([at(i, s), at(i, s + 1), at(i + 1, s), at(i, s + 1), at(i + 1, s + 1), at(i + 1, s)]);
+        }
+    }
+    single("wound_cavity", vertices, indices, Tissue::Cavity)
+}
+
+/// An arc of rib of unit radius about +y, centred on +z (about ±55°), a flat oval bar
+/// with broken ends.
+pub fn procedural_rib() -> ModelData {
+    const SEGMENTS: usize = 10;
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    let ring = [(0.07f32, 0.0f32), (0.0, 0.025), (-0.07, 0.0), (0.0, -0.025)];
+    for s in 0..=SEGMENTS {
+        let a = (s as f32 / SEGMENTS as f32 - 0.5) * 1.9;
+        let radial = [a.sin(), 0.0, a.cos()];
+        let jag = if s == SEGMENTS || s == 0 { 0.6 } else { 1.0 };
+        for &(dy, dr) in &ring {
+            let p = math::add(math::scale(radial, 1.0 + dr * jag), [0.0, dy * jag, 0.0]);
+            let n = normalize(math::add(math::scale(radial, dr), [0.0, dy, 0.0]));
+            vertices.push(vertex(p, n, [0.70, 0.55, 0.45, 1.0]));
+        }
+    }
+    for s in 0..SEGMENTS {
+        for k in 0..4 {
+            let (a, b) = ((s * 4 + k) as u32, (s * 4 + (k + 1) % 4) as u32);
+            indices.extend([a, b, a + 4, b, b + 4, a + 4]);
+        }
+    }
+    single("wound_rib", vertices, indices, Tissue::Bone)
+}
+
+/// A bone end along +z from 0 to 1: a shaft of radius 0.2 splintered to points at its
+/// end, red marrow in the middle.
+pub fn procedural_bone() -> ModelData {
+    const SEGMENTS: usize = 8;
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    for s in 0..SEGMENTS {
+        let a = s as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
+        let (x, y) = (a.cos() * 0.2, a.sin() * 0.2);
+        let n = [a.cos(), a.sin(), 0.0];
+        // Splinters: every other point reaches further.
+        let tip = if s % 2 == 0 { 1.0 } else { 0.72 + 0.1 * (s % 3) as f32 };
+        vertices.push(vertex([x, y, 0.0], n, [0.84, 0.78, 0.66, 1.0]));
+        vertices.push(vertex([x * 0.8, y * 0.8, tip], n, [0.90, 0.85, 0.74, 1.0]));
+    }
+    let centre = vertices.len() as u32;
+    vertices.push(vertex([0.0, 0.0, 0.75], [0.0, 0.0, 1.0], [0.35, 0.03, 0.03, 1.0]));
+    for s in 0..SEGMENTS {
+        let (a0, a1) = ((2 * s) as u32, (2 * ((s + 1) % SEGMENTS)) as u32);
+        indices.extend([a0, a1, a0 + 1, a1, a1 + 1, a0 + 1]);
+        indices.extend([a0 + 1, a1 + 1, centre]);
+    }
+    single("wound_bone", vertices, indices, Tissue::Bone)
+}
+
+fn vertex(position: Vec3, normal: Vec3, color: [f32; 4]) -> Vertex {
+    Vertex {
+        position,
+        normal,
+        uv: [0.0; 2],
+        color,
+        joints: [0; 4],
+        weights: [1.0, 0.0, 0.0, 0.0],
+        morph: [[0.0; 3]; 2],
+        body: [-1.0, -1.0, 0.5, 0.0],
+    }
+}
+
+fn single(name: &str, vertices: Vec<Vertex>, indices: Vec<u32>, tissue: Tissue) -> ModelData {
+    let material = Material {
+        name: name.into(),
+        base_color: [1.0; 4],
+        texture: None,
+        nearest: false,
+        alpha_cutoff: None,
+        decay: None,
+        stump: false,
+        tissue,
+    };
+    ModelData::single(Primitive { vertices, indices, material: 0, morphs: [false; 2] }, material)
+}
+
 /// The procedural stump cap (until `gore.glb` brings the modelled one): a unit disc in xy
 /// facing +z, domed slightly, coloured by rings: skin rim, red flesh, white bone dot.
 /// `uv` is the disc position (−1..1) for the ragged outline the shader cuts.
@@ -664,6 +878,7 @@ pub fn procedural_cap() -> ModelData {
         alpha_cutoff: None,
         decay: None,
         stump: true,
+        tissue: Tissue::None,
     };
     ModelData::single(Primitive { vertices, indices, material: 0, morphs: [false; 2] }, material)
 }
@@ -810,6 +1025,30 @@ mod tests {
         }
         assert_eq!(thread.volumes().len(), MAX_VOLUMES);
         assert!(thread.volumes().iter().all(|v| v.radius > 0.04));
+    }
+
+    #[test]
+    fn wounds_show_their_inside() {
+        let c = chain();
+        let trunk = Chain { points: vec![(0.0, [0.0, 1.0, 0.0], 0), (1.0, [0.0, 1.5, 0.0], 0)], radius: [0.15; 16] };
+        let rig = Rig { limbs: [c.clone(), c.clone(), c.clone(), c], trunk, neck: ([0.0, 1.5, 0.0], 5) };
+        // A chest wound: a cavity inside the trunk and ribs behind it.
+        let mut d = Damage::parse("vol:0.0:1.35:0.1:0.0:1.35:0.3:0.08").unwrap();
+        let ins = inserts(&d, &rig);
+        let cavity = ins.iter().find(|i| i.kind == InsertKind::Cavity).unwrap();
+        let p = [cavity.rest[3][0], cavity.rest[3][1], cavity.rest[3][2]];
+        assert!(p[2] > 0.0 && p[2] <= 0.15 * 0.3 + 1e-4, "{p:?}");
+        assert!(cavity.rest[0][0] <= 0.15 * 0.72 + 1e-5);
+        assert_eq!(ins.iter().filter(|i| i.kind == InsertKind::Rib).count(), 3);
+        // A severed arm: a bone end at the stump.
+        d = Damage::parse("vol:0.0:1.4:-0.3:0.0:1.4:0.3:0.12").unwrap();
+        d.sever(&rig);
+        assert!(inserts(&d, &rig).iter().any(|i| i.kind == InsertKind::Bone));
+        for m in [procedural_cavity(), procedural_rib(), procedural_bone()] {
+            let p = &m.primitives[0];
+            assert!(p.indices.iter().all(|&i| (i as usize) < p.vertices.len()));
+            assert_ne!(m.materials[0].tissue, Tissue::None);
+        }
     }
 
     #[test]

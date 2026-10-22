@@ -318,7 +318,8 @@ fn a_rider_never_crawls() {
 #[test]
 fn scripted_hits_injure_record_and_replay() {
     use acr_sim::combat::{ScriptedHit, scripted_hit};
-    let strike = |cause, mounted, region, dir, energy, dmg| ScriptedHit { cause, mounted, region, dir, energy, dmg };
+    let strike =
+        |cause, mounted, region, dir, energy, dmg| ScriptedHit { cause, mounted, region, dir, energy, dmg, aim: None };
     let run = || {
         let (mut w, p) = world();
         let first = scripted_hit(&mut w, p, strike(DeathCause::Gunshot, false, Some(HitRegion::Legs), (10, 0), 80, 1))

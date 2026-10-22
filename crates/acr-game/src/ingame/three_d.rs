@@ -273,7 +273,11 @@ impl ThreeD {
                 // The pack is split into its nodes; the torn cap replaces the procedural one
                 // (one cap for all cuts: `stump_cap_clean` is not used yet).
                 for node in model.mesh_nodes() {
-                    let Some(part) = model.node_part(node) else { continue };
+                    let Some(mut part) = model.node_part(node) else { continue };
+                    // Shreds of uniform take the victim's coat colour and crumple (#280).
+                    for m in part.materials.iter_mut().filter(|m| m.name.contains("cloth")) {
+                        m.tissue = acr_render::model::Tissue::Cloth;
+                    }
                     if node == "stump_cap" {
                         renderer.set_cap(device, queue, part);
                     } else {
@@ -598,7 +602,8 @@ impl ThreeD {
         let renderer = self.renderer.as_ref();
         let unit = |v: u32| {
             let &(m, index) = unit_models.get(&v)?;
-            Some((m, renderer?.model(index)?.rig.as_ref()?))
+            let model = renderer?.model(index)?;
+            Some((m, model.rig.as_ref()?, super::debris::coat(model)))
         };
         let death = |v: u32| world.deaths.get(&v).copied();
         let wounds = &self.wounds;
