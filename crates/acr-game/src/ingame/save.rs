@@ -11,7 +11,7 @@ use web_time::{Duration, Instant};
 
 use super::InGame;
 use crate::mission::MissionLink;
-use crate::savegame::{FastForward, Log, Progress, SaveGame, SaveTime, Script};
+use crate::savegame::{DipInput, FastForward, Log, Progress, SaveGame, SaveTime, Script};
 
 /// Fast-forward time per frame: the window stays responsive while a long game loads.
 const BUDGET: Duration = Duration::from_millis(100);
@@ -47,6 +47,15 @@ impl Script for MissionLink {
 
     fn ended(&self) -> bool {
         self.ended.is_some()
+    }
+
+    fn diplomacy(&mut self, world: &mut World, input: &DipInput) {
+        match input {
+            DipInput::Request(request) => {
+                self.dip_request(world, request);
+            }
+            DipInput::Building(index) => self.dip_check_building(world, *index),
+        }
     }
 }
 
@@ -130,6 +139,8 @@ impl InGame {
         self.camera.y = save.camera[1] as f32;
         self.centred = true;
         let _ = self.mission.take_camera();
+        // Pages DipServer opened on the way are history: the panel starts closed.
+        let _ = self.mission.take_diplomacy();
         self.save.log = save.log;
         true
     }

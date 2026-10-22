@@ -31,6 +31,7 @@ impl InGame {
         let Some(world) = &mut self.world else { return };
         match action {
             DipAction::Request(request) => {
+                self.save.log.diplomacy(world.tick.0, crate::savegame::DipInput::Request(request.clone()));
                 let answer = self.mission.dip_request(world, &request);
                 let mission = &self.mission;
                 self.diplomacy.execute(&answer, &|p| mission.dip_file(p));
@@ -73,6 +74,7 @@ impl InGame {
         }
         let Some(building) = self.unit_at(at, |u| u.building) else { return };
         let Some(world) = &mut self.world else { return };
+        self.save.log.diplomacy(world.tick.0, crate::savegame::DipInput::Building(building.0 as u16));
         self.mission.dip_check_building(world, building.0 as u16);
     }
 

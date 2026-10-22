@@ -2,8 +2,9 @@
 //!
 //! A savegame is not a memory dump: [`World::step`] is deterministic and the commands are
 //! its only input, so a save holds how the game was started ([`GameSetup`]), the player's
-//! commands per tick, the mission dialogs the player closed (with their tick), the tick it
-//! was saved at and the world's state hash there. Loading starts the same game and
+//! commands per tick, the mission dialogs the player closed and the requests the diplomacy
+//! panel sent to DipServer (with their tick), the tick it was saved at and the world's state
+//! hash there. Loading starts the same game and
 //! fast-forwards to the saved tick ([`FastForward`]), feeding the recorded inputs back in;
 //! the mission scripts regenerate their own orders on the way.
 //!
@@ -19,6 +20,7 @@
 //! tick | state hash (u64 LE)
 //! commands: length + an `acr_sim::replay::Replay` ("ACRR") holding the command entries
 //! dialogs: count, per close: tick delta | answer
+//! diplomacy (version 2): count, per input: tick delta | 0 request bytes, or 1 building index
 //! camera x | camera y (world pixels) | selection: count + ids | groups: count, per group: ids
 //! ```
 //!
@@ -33,15 +35,27 @@ use crate::ui::setup::{Control, Difficulty, MapSize, MissionSetup, PlayerSetup, 
 use crate::ui::{GameKind, GameSetup};
 
 const MAGIC: &[u8; 4] = b"ACRS";
-const VERSION: u64 = 1;
+const VERSION: u64 = 2;
 
-/// The inputs of a running game: player commands and closed mission dialogs.
+/// An input of the diplomacy panel, given to DipServer between two ticks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DipInput {
+    /// A request of a link or a timer (`DS_SendRequest`).
+    Request(Vec<u8>),
+    /// A click on a building (`CheckDipBuilding`), by its object index.
+    Building(u16),
+}
+
+/// The inputs of a running game: player commands, closed mission dialogs and diplomacy.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Log {
     /// Ticks that had player commands, in increasing order.
     pub commands: Vec<(u64, Vec<Command>)>,
     /// `(tick, answer)` of every closed mission window (page, question, choice), in order.
     pub dialogs: Vec<(u64, u32)>,
+    /// `(tick, input)` of every diplomacy request, in order: it changes the scripts' state
+    /// (alliances, purchases) without being a command.
+    pub diplomacy: Vec<(u64, DipInput)>,
 }
 
 impl Log {
@@ -57,6 +71,11 @@ impl Log {
     /// at `tick`.
     pub fn dialog(&mut self, tick: u64, answer: u32) {
         self.dialogs.push((tick, answer));
+    }
+
+    /// Records a diplomacy input given while the world stood at `tick`.
+    pub fn diplomacy(&mut self, tick: u64, input: DipInput) {
+        self.diplomacy.push((tick, input));
     }
 }
 
@@ -123,7 +142,7 @@ impl SaveInfo {
     /// lists only files with its magic and current version, 0x5d79c0).
     pub fn peek(data: &[u8]) -> Option<Self> {
         let mut r = Reader { data, pos: 0 };
-        let (name, time) = r.header().ok()?;
+        let (name, time, _) = r.header().ok()?;
         Some(Self { name, time })
     }
 }
@@ -150,6 +169,22 @@ impl SaveGame {
             last = tick;
             w.u(u64::from(answer));
         }
+        w.u(self.log.diplomacy.len() as u64);
+        let mut last = 0;
+        for (tick, input) in &self.log.diplomacy {
+            w.u(tick - last);
+            last = *tick;
+            match input {
+                DipInput::Request(bytes) => {
+                    w.u(0);
+                    w.bytes(bytes);
+                }
+                DipInput::Building(index) => {
+                    w.u(1);
+                    w.u(u64::from(*index));
+                }
+            }
+        }
         w.i(self.camera[0]);
         w.i(self.camera[1]);
         w.ids(&self.selected);
@@ -162,7 +197,7 @@ impl SaveGame {
 
     pub fn decode(data: &[u8]) -> Result<Self, SaveError> {
         let mut r = Reader { data, pos: 0 };
-        let (name, time) = r.header()?;
+        let (name, time, version) = r.header()?;
         let setup = r.setup()?;
         let tick = r.u()?;
         let hash = u64::from_le_bytes(r.take(8)?.try_into().expect("8 bytes"));
@@ -174,6 +209,20 @@ impl SaveGame {
             t = t.checked_add(r.u()?).ok_or(err("tick overflow"))?;
             dialogs.push((t, u32::try_from(r.u()?).map_err(|_| err("answer"))?));
         }
+        let mut diplomacy = Vec::new();
+        if version >= 2 {
+            let n = r.len()?;
+            let mut t = 0u64;
+            for _ in 0..n {
+                t = t.checked_add(r.u()?).ok_or(err("tick overflow"))?;
+                let input = match r.u()? {
+                    0 => DipInput::Request(r.bytes()?),
+                    1 => DipInput::Building(u16::try_from(r.u()?).map_err(|_| err("building"))?),
+                    _ => return Err(err("diplomacy input")),
+                };
+                diplomacy.push((t, input));
+            }
+        }
         let camera = [r.i()?, r.i()?];
         let selected = r.ids()?;
         let n = r.len()?;
@@ -181,7 +230,7 @@ impl SaveGame {
         if r.pos != data.len() {
             return Err(err("trailing bytes"));
         }
-        let log = Log { commands: replay.entries, dialogs };
+        let log = Log { commands: replay.entries, dialogs, diplomacy };
         Ok(Self { name, time, setup, tick, hash, log, camera, selected, groups })
     }
 }
@@ -195,6 +244,8 @@ pub trait Script {
     fn close_dialog(&mut self, answer: u32);
     /// Victory or defeat: the game will not go on.
     fn ended(&self) -> bool;
+    /// Gives a recorded diplomacy input to DipServer.
+    fn diplomacy(&mut self, world: &mut World, input: &DipInput);
 }
 
 /// How far a [`FastForward`] got.
@@ -215,13 +266,14 @@ pub struct FastForward {
     pub target: u64,
     next_command: usize,
     next_dialog: usize,
+    next_dip: usize,
     /// A recorded close did not match an open dialog (or the other way round).
     pub mismatch: bool,
 }
 
 impl FastForward {
     pub fn new(target: u64) -> Self {
-        Self { target, next_command: 0, next_dialog: 0, mismatch: false }
+        Self { target, next_command: 0, next_dialog: 0, next_dip: 0, mismatch: false }
     }
 
     /// Steps the world while `more()` allows (checked before every tick).
@@ -234,6 +286,12 @@ impl FastForward {
     ) -> Progress {
         loop {
             let tick = world.tick.0;
+            // Diplomacy inputs came between ticks, before the next one ran.
+            while let Some((t, input)) = log.diplomacy.get(self.next_dip).filter(|(t, _)| *t <= tick) {
+                self.mismatch |= *t != tick;
+                self.next_dip += 1;
+                script.diplomacy(world, input);
+            }
             // Closes recorded at the saved tick itself still apply: a question answered
             // just before saving (its tick is re-run with the answer next).
             let pending = log.dialogs.get(self.next_dialog).is_some_and(|&(t, _)| t <= tick);
@@ -424,11 +482,12 @@ impl<'a> Reader<'a> {
         (0..n).map(|_| u32::try_from(self.u()?).map(EntityId).map_err(|_| err("entity id"))).collect()
     }
 
-    fn header(&mut self) -> Result<(Vec<u8>, SaveTime), SaveError> {
+    fn header(&mut self) -> Result<(Vec<u8>, SaveTime, u64), SaveError> {
         if self.take(4)? != MAGIC {
             return Err(err("not a savegame"));
         }
-        if self.u()? != VERSION {
+        let version = self.u()?;
+        if !(1..=VERSION).contains(&version) {
             return Err(err("unsupported version"));
         }
         let name = self.bytes()?;
@@ -437,7 +496,7 @@ impl<'a> Reader<'a> {
         for v in &mut local {
             *v = u16::try_from(self.u()?).map_err(|_| err("date"))?;
         }
-        Ok((name, SaveTime { unix, local }))
+        Ok((name, SaveTime { unix, local }, version))
     }
 
     fn setup(&mut self) -> Result<GameSetup, SaveError> {
@@ -518,6 +577,8 @@ mod tests {
         asked: bool,
         page_shown: bool,
         dialog: Option<bool>,
+        /// A diplomacy input arrived: the scripts send a unit away.
+        allied: bool,
     }
 
     impl Script for Quiz {
@@ -539,6 +600,9 @@ mod tests {
                 let x = if self.answer == Some(true) { 2400 } else { 600 };
                 return Some(vec![Command::Move { player: 1, units: vec![self.unit], x, y: 900 }]);
             }
+            if tick == 90 && self.allied {
+                return Some(vec![Command::Move { player: 1, units: vec![self.unit], x: 300, y: 300 }]);
+            }
             Some(Vec::new())
         }
 
@@ -554,6 +618,10 @@ mod tests {
 
         fn ended(&self) -> bool {
             false
+        }
+
+        fn diplomacy(&mut self, _: &mut World, input: &DipInput) {
+            self.allied |= *input == DipInput::Building(7);
         }
     }
 
@@ -580,7 +648,8 @@ mod tests {
         let (mut w, mus) = world();
         let ids: Vec<EntityId> =
             (0..6).map(|i| w.spawn(mus, (i % 2) as u8, Pos::from_pixels(1000 + 30 * i, 1000), 0)).collect();
-        let mut quiz = Quiz { unit: ids[1], answer: None, asked: false, page_shown: false, dialog: None };
+        let mut quiz =
+            Quiz { unit: ids[1], answer: None, asked: false, page_shown: false, dialog: None, allied: false };
         let mut log = Log::default();
         let mut waited = 0;
         while w.tick.0 < ticks {
@@ -594,6 +663,13 @@ mod tests {
                 }
                 continue;
             };
+            if w.tick.0 == 80 && !quiz.allied {
+                // The diplomacy panel sends its requests between ticks.
+                log.diplomacy(80, DipInput::Request(vec![1, 2, 3]));
+                quiz.diplomacy(&mut w, &DipInput::Request(vec![1, 2, 3]));
+                log.diplomacy(80, DipInput::Building(7));
+                quiz.diplomacy(&mut w, &DipInput::Building(7));
+            }
             let mine = match w.tick.0 {
                 5 => vec![Command::Move { player: 0, units: vec![ids[0], ids[2]], x: 1800, y: 1500 }],
                 45 => vec![Command::Stop { player: 0, units: vec![ids[2]] }],
@@ -610,7 +686,7 @@ mod tests {
 
     #[test]
     fn save_and_load_reach_the_same_state() {
-        for saved_at in [20, 30, 61, 120] {
+        for saved_at in [20, 30, 61, 80, 81, 120] {
             let (w, _, log, ids) = play(saved_at);
             let save = SaveGame {
                 name: b"Test \xe4".to_vec(),
@@ -634,7 +710,8 @@ mod tests {
             for i in 0..6 {
                 again.spawn(mus, (i % 2) as u8, Pos::from_pixels(1000 + 30 * i, 1000), 0);
             }
-            let mut quiz = Quiz { unit: ids[1], answer: None, asked: false, page_shown: false, dialog: None };
+            let mut quiz =
+                Quiz { unit: ids[1], answer: None, asked: false, page_shown: false, dialog: None, allied: false };
             let mut ff = FastForward::new(back.tick);
             // A small budget: the replay is spread over several calls.
             let mut calls = 0;
@@ -662,9 +739,46 @@ mod tests {
         for i in 0..6 {
             again.spawn(mus, (i % 2) as u8, Pos::from_pixels(1000 + 30 * i, 1000), 0);
         }
-        let mut quiz = Quiz { unit: ids[1], answer: None, asked: false, page_shown: false, dialog: None };
+        let mut quiz =
+            Quiz { unit: ids[1], answer: None, asked: false, page_shown: false, dialog: None, allied: false };
         assert_eq!(FastForward::new(120).run(&log, &mut again, &mut quiz, || true), Progress::Done);
         assert_ne!(again.state_hash(), w.state_hash());
+        // Without the diplomacy inputs the scripts do not send the unit away either.
+        let (w, _, mut log, ids) = play(120);
+        log.diplomacy.clear();
+        let (mut again, mus) = world();
+        for i in 0..6 {
+            again.spawn(mus, (i % 2) as u8, Pos::from_pixels(1000 + 30 * i, 1000), 0);
+        }
+        let mut quiz =
+            Quiz { unit: ids[1], answer: None, asked: false, page_shown: false, dialog: None, allied: false };
+        assert_eq!(FastForward::new(120).run(&log, &mut again, &mut quiz, || true), Progress::Done);
+        assert_ne!(again.state_hash(), w.state_hash());
+    }
+
+    #[test]
+    fn reads_version_1_saves_without_diplomacy() {
+        let (w, _, mut log, _) = play(40);
+        log.diplomacy.clear();
+        let save = SaveGame {
+            name: b"alt".to_vec(),
+            time: SaveTime::default(),
+            setup: setup(),
+            tick: w.tick.0,
+            hash: w.state_hash(),
+            log,
+            camera: [0, 0],
+            selected: Vec::new(),
+            groups: Vec::new(),
+        };
+        let mut bytes = save.encode();
+        // Version 1 had no diplomacy section: drop the version and the empty count.
+        assert_eq!(bytes[4], 2);
+        bytes[4] = 1;
+        let cut = bytes.len() - 4;
+        assert_eq!(bytes[cut..], [0, 0, 0, 0]);
+        bytes.remove(cut);
+        assert_eq!(SaveGame::decode(&bytes).unwrap(), save);
     }
 
     #[test]
