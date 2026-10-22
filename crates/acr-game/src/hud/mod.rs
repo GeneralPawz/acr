@@ -166,6 +166,9 @@ pub enum HudCommand {
     MarketClear,
     /// Plant fields around the selected mills (`SPRITEOBJECT` items, command 0x3d).
     PlantFields(usize),
+    /// `IDLE_PEASANT` / `IDLE_MINE` (0x5f5d0a): select all idle peasants (false) or all
+    /// mines with room for workers (true).
+    SelectIdle(bool),
 }
 
 /// Numbers of the single selected type's first object (0x607f50).

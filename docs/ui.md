@@ -381,9 +381,14 @@ the defaults apply: `Zone1X/Y` = 6/6, `PropertyX/Y` = 182/6, `IconLx/Ly` = 40/40
     - `SHOTMYUNITS` / `KEEPMYUNITS` for `FRIENDLYFIRE` types (network command 0x5e, ACR's
       `FriendlyFire`) and `ARMATTACK` / `ANYATTACK` for `ARMATTACK` types (0x5f,
       `MeleeOnly`), highlighted while some unit has that setting.
-    Not built: grouping formations (`CM_DOGRP`/`CM_UNGRP`, 0x43dfdb/0x43e0b7), the
-    first object's own switches (`MAKEZASEV` fields, `FISHING`, `KARTECH`, `STOPBUILD`) and
-    the idle peasant/mine icons (0x607d62).
+    - The first selected object's idle icons (0x5f63f0): a finished own object whose type
+      has `SHOWIDLE` (both) or `SHOWIDLEPEASANTS` / `SHOWIDLEMINES` (type flag 0x172f bits
+      1 / 2; the town centres) shows `IDLE_PEASANT` / `IDLE_MINE` at their `[CONST]` slots,
+      without a hint. A click (0x5f5d0a, network commands 0x42 / 0x43) selects all of the
+      player's peasants with no order that are not inside a building (0x4e230f), or all
+      finished mines with fewer workers inside than they take (0x4e279e).
+    Not built: grouping formations (`CM_DOGRP`/`CM_UNGRP`, 0x43dfdb/0x43e0b7) and the first
+    object's own switches (`MAKEZASEV` fields, `FISHING`, `KARTECH`, `STOPBUILD`).
 - Hotkeys: `Data\Keyboard.dat` (in `Patch02.GS1`) maps `[CTRL|ALT|SHIFT] KEY : ICON`.
   The key presses the shown icon of that name.
 

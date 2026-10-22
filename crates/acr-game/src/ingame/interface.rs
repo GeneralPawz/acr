@@ -511,6 +511,7 @@ impl InGame {
             }
         }
         self.state_icons(ctx, &data, outline, &mut view.icons);
+        self.idle_icons(&data, outline, &mut view.icons);
         // The type icons take the first slots the commands leave free (`AddIcon` without a
         // position, 0x495631).
         let mut free = (0..36).filter(|s| !view.icons.iter().any(|i| i.slot == *s)).collect::<Vec<_>>().into_iter();
@@ -547,7 +548,8 @@ impl InGame {
     /// - `SHOTMYUNITS` / `KEEPMYUNITS` for `FRIENDLYFIRE` types, `ARMATTACK` / `ANYATTACK`
     ///   for `ARMATTACK` types, each highlighted while some unit has that setting.
     ///
-    /// Grouping formations (`CM_DOGRP` / `CM_UNGRP`) and the first object's own switches
+    /// The idle icons follow in [`Self::idle_icons`]. Grouping formations (`CM_DOGRP` /
+    /// `CM_UNGRP`) and the first object's own switches
     /// (fields, fishing, canister, stop building) are not built.
     fn state_icons(&self, ctx: &Ctx, data: &HudData, outline: u8, icons: &mut Vec<Icon>) {
         let Some(world) = &self.world else { return };
@@ -631,6 +633,34 @@ impl InGame {
             }
             if let Some((slot, frame)) = placed("ANYATTACK") {
                 push(frame, slot, "ANYATTACK", off, HudCommand::MeleeOnly(false));
+            }
+        }
+    }
+
+    /// The first selected object's idle icons (0x5f63f0): a finished own object whose type has
+    /// `SHOWIDLE` or `SHOWIDLEPEASANTS` (type flag 0x172f bit 1) shows `IDLE_PEASANT`, with
+    /// `SHOWIDLE` or `SHOWIDLEMINES` (bit 2) `IDLE_MINE`, at their `[CONST]` slots and without
+    /// a hint, as in the original.
+    fn idle_icons(&self, data: &HudData, outline: u8, icons: &mut Vec<Icon>) {
+        let Some(world) = &self.world else { return };
+        let Some(first) = self.selected.first().and_then(|&id| world.unit(id)) else { return };
+        if first.owner != self.own() || (first.building && first.stage < world.max_stage(first)) {
+            return;
+        }
+        let Some(def) = self.objects.objects().definition(&world.catalog.get(first.kind).id) else { return };
+        let both = def.has("SHOWIDLE");
+        for (key, shown, mines) in [
+            ("IDLE_PEASANT", both || def.has("SHOWIDLEPEASANTS"), false),
+            ("IDLE_MINE", both || def.has("SHOWIDLEMINES"), true),
+        ] {
+            if let (true, Some(c)) = (shown, data.consts.get(key)) {
+                icons.push(Icon {
+                    frame: c.frame,
+                    slot: c.slot,
+                    outline: Some(outline),
+                    action: Some(HudCommand::SelectIdle(mines)),
+                    ..Icon::default()
+                });
             }
         }
     }
@@ -995,6 +1025,9 @@ impl InGame {
                 }
                 self.commands.push(Command::Form { player, officer, units, kind: group });
                 self.unit_sound(officer, "ORDER_SOUND");
+            }
+            HudCommand::SelectIdle(mines) => {
+                self.selected = idle(world, player, mines);
             }
             HudCommand::Disband => {
                 let officers: Vec<EntityId> = self
@@ -2158,9 +2191,90 @@ fn stats(
     }
 }
 
+/// The player's idle peasants (0x4e230f: usage 23, no order, not inside a building) or
+/// mines with room for more workers (0x4e279e: usage 7, finished, fewer inside than they
+/// take), in object order.
+fn idle(world: &acr_sim::World, player: u8, mines: bool) -> Vec<EntityId> {
+    use acr_sim::catalog::usage;
+    world
+        .units
+        .iter()
+        .filter(|u| u.alive && u.owner == player && u.death == 0)
+        .filter(|u| {
+            let t = world.catalog.get(u.kind);
+            if mines {
+                t.role.usage == usage::MINE
+                    && u.stage >= world.max_stage(u)
+                    && (u.inside.len() as i32) < world.adv(u.owner, u.kind).max_inside + u.add_inside
+            } else {
+                t.role.usage == usage::PEASANT && u.orders.is_empty() && u.inside_of.is_none()
+            }
+        })
+        .map(|u| u.id)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn idle_selects_peasants_without_orders_and_mines_with_room() {
+        use acr_formats::defs::{OrderGroups, OrderList, UnitDef};
+        use acr_sim::Pos;
+        use acr_sim::catalog::{Catalog, ObjectType};
+        use acr_sim::formation::Formations;
+        use acr_sim::map::MapGrid;
+        use std::sync::Arc;
+        let mut c = Catalog::new();
+        let peasant = c.add(ObjectType::from_def(
+            "Kr(EN)",
+            &UnitDef::parse(
+                b"NAME Kr
+USAGE PEASANT
+LIFE 10
+[END]
+",
+            ),
+        ));
+        let mine = c.add(ObjectType::from_def(
+            "Mine(EN)",
+            &UnitDef::parse(
+                b"NAME Mine
+BUILDING
+USAGE MINE
+LIFE 100
+PEASANTABSORBER 2
+[END]
+",
+            ),
+        ));
+        let f = Formations::new(
+            &OrderList::parse(
+                b"#END
+#EXIT
+",
+            ),
+            &OrderGroups::parse(
+                b"0
+",
+            ),
+        );
+        let mut w = acr_sim::World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(f));
+        let idle_one = w.spawn(peasant, 0, Pos::from_pixels(500, 500), 0);
+        let busy = w.spawn(peasant, 0, Pos::from_pixels(560, 500), 0);
+        let enemy = w.spawn(peasant, 1, Pos::from_pixels(620, 500), 0);
+        let m = w.spawn(mine, 0, Pos::from_pixels(900, 900), 0);
+        w.step(&[Command::Move { player: 0, units: vec![busy], x: 2000, y: 2000 }]);
+        assert_eq!(idle(&w, 0, false), [idle_one]);
+        assert_eq!(idle(&w, 1, false), [enemy]);
+        assert_eq!(idle(&w, 0, true), [m]);
+        // A full mine is not idle.
+        let full = w.unit(m).unwrap().id;
+        let cap = w.adv(0, mine).max_inside;
+        w.units[full.0 as usize].inside = (0..cap.max(1) as u32).map(|i| EntityId(100 + i)).collect();
+        assert!(idle(&w, 0, true).is_empty());
+    }
 
     /// The pixels a line covers.
     fn pixels(from: (i32, i32), to: (i32, i32)) -> Vec<(i32, i32)> {
