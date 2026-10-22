@@ -188,10 +188,12 @@ pub struct SpriteLock {
     pub source: bool,
 }
 
-/// Blocking polygons per sprite group and type index.
+/// Blocking polygons per sprite group and type index, and the deposits' resources.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SpriteShapes {
     pub groups: BTreeMap<SpriteGroup, Vec<Option<SpriteLock>>>,
+    /// `[INTERNAL_SOURCE]` resource index per sprite group and type index.
+    pub sources: BTreeMap<SpriteGroup, Vec<Option<usize>>>,
 }
 
 impl SpriteShapes {
@@ -210,6 +212,17 @@ impl SpriteShapes {
             })
             .collect();
         self.groups.insert(group, v);
+        let sources = list
+            .entries
+            .iter()
+            .map(|t| rsr.sources.get(&t.name.to_ascii_uppercase()).and_then(|s| crate::catalog::resource_index(&s.0)))
+            .collect();
+        self.sources.insert(group, sources);
+    }
+
+    /// The resource a sprite supplies to mines, if it is a deposit.
+    pub fn source(&self, group: SpriteGroup, index: u16) -> Option<usize> {
+        *self.sources.get(&group)?.get(usize::from(index))?
     }
 
     fn get(&self, s: &Sprite) -> Option<&SpriteLock> {

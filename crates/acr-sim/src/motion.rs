@@ -168,8 +168,15 @@ enum Signal {
 
 /// Runs one unit for one tick: its order link, then the motion handler.
 pub fn process_unit(world: &mut World, i: usize) {
-    if let Some(Order::Attack { target, prio }) = world.units[i].orders.last().cloned() {
-        crate::combat::attack_link(world, i, target, prio);
+    match world.units[i].orders.last().cloned() {
+        Some(Order::Attack { target, prio }) => crate::combat::attack_link(world, i, target, prio),
+        Some(Order::Enter { building, prio }) => {
+            crate::economy::enter_link(world, i, building, prio);
+            if world.units[i].inside_of.is_some() {
+                return;
+            }
+        }
+        _ => {}
     }
     let catalog = world.catalog.clone();
     let map = world.map.clone();
@@ -178,11 +185,11 @@ pub fn process_unit(world: &mut World, i: usize) {
     let t = catalog.get(u.kind);
     let lay = layer(&map, t);
     match u.orders.last().cloned() {
-        Some(Order::SendTo { cell, prio }) => send_to_link(u, t, lay, random, cell, prio),
+        Some(Order::SendTo { cell, prio }) => send_to_link(u, t, lay, random, occupancy, cell, prio),
         Some(Order::SmartSendTo { x, y, dx, dy, prio, area }) => {
             smart_send_to_link(u, map.land_areas.as_ref(), lay, x, y, dx, dy, prio, area)
         }
-        Some(Order::Attack { .. }) => {}
+        Some(Order::Attack { .. }) | Some(Order::Enter { .. }) => {}
         None => u.prio = 0,
     }
     match motion_handler(u, t, lay, occupancy, random, buckets) {
@@ -195,13 +202,35 @@ pub fn process_unit(world: &mut World, i: usize) {
 }
 
 /// `NewMonsterSendToLink` (0x5172c6).
-fn send_to_link(u: &mut Unit, t: &ObjectType, m: &LockMap, rnd: &mut SyncRandom, cell: (i32, i32), prio: u8) {
+fn send_to_link(
+    u: &mut Unit,
+    t: &ObjectType,
+    m: &LockMap,
+    rnd: &mut SyncRandom,
+    occupancy: &mut LockMap,
+    cell: (i32, i32),
+    prio: u8,
+) {
     if u.path.delay != 0 && u.stand_time > 64 {
         u.orders.pop();
+        crate::economy::settle(u, occupancy);
         return;
     }
     u.prio = prio;
     let mut c = cell;
+    if u.unlimited {
+        // CreatePath with UnlimitedMotion: straight to the cell centre.
+        if dist_to(mover(u), c.0, c.1) <= t.stop_distance >> 8 {
+            if u.frame >= u.anim_frames - FRM_DEC {
+                try_to_stand(u, t, rnd, false);
+                u.orders.pop();
+                crate::economy::settle(u, occupancy);
+            }
+        } else {
+            u.dest = Some(Pos::new(crate::path::cell_center(c.0, u.lx), crate::path::cell_center(c.1, u.lx)));
+        }
+        return;
+    }
     if m.check_bar(c.0 - 1, c.1 - 1, u.lx + 2, u.lx + 2)
         && find_best_position(m, mover(u), &mut c, 80)
         && let Some(Order::SendTo { cell, .. }) = u.orders.last_mut()
@@ -345,9 +374,20 @@ fn motion_handler(
     let nst = t.motion_frames() >> SPEED_SH;
     let (dx0, dy0) = (nst * (t.step_dx(d) << SPEED_SH), nst * (t.step_dy(d) << SPEED_SH));
     let lx = u.lx;
-    occupancy.clr_bar(u.cell.0, u.cell.1, lx);
     let end = Pos::new(u.pos.x + dx0, u.pos.y + dy0);
     let (xf, yf) = Unit::cell_of(end, lx);
+    if u.unlimited {
+        // UnlimitedMotion: no checks, no reservations.
+        u.vel = (0, 0);
+        try_to_move(u, t, m, rnd, d);
+        u.dir = d;
+        if u.vel != (0, 0) {
+            u.cell = (xf, yf);
+        }
+        u.move_stage = 0;
+        return None;
+    }
+    occupancy.clr_bar(u.cell.0, u.cell.1, lx);
     let mut on_the_way = false;
     let mut blocked = occupancy.check_bar(xf, yf, lx, lx);
     if !blocked {
@@ -398,7 +438,7 @@ fn try_to_move(u: &mut Unit, t: &ObjectType, m: &LockMap, rnd: &mut SyncRandom, 
     let (odx, ody) = (t.step_dx(d) << SPEED_SH, t.step_dy(d) << SPEED_SH);
     let end = Pos::new(u.pos.x + nf * odx, u.pos.y + nf * ody);
     let (cx, cy) = Unit::cell_of(end, u.lx);
-    if m.check_bar(cx, cy, u.lx, u.lx) {
+    if !u.unlimited && m.check_bar(cx, cy, u.lx, u.lx) {
         return; // CheckTerra (0x50a60d) failed
     }
     let kind = match (u.left_leg, t.motion_l.is_some(), t.motion_r.is_some()) {

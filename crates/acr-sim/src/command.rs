@@ -4,6 +4,7 @@
 //! from the network) and passes them to [`crate::World::step`]. Nothing else changes the
 //! world, so recording the command stream per tick is a complete replay.
 
+use crate::catalog::TypeId;
 use crate::world::EntityId;
 
 /// Player slot 0..=7 (the map's nation byte).
@@ -24,6 +25,16 @@ pub enum Command {
     Face { player: PlayerId, officer: EntityId, dir: u8 },
     /// Release the members of the formation led by `officer`.
     Disband { player: PlayerId, officer: EntityId },
+    /// Queue a unit in a building; the price is paid at once.
+    Produce { player: PlayerId, building: EntityId, kind: TypeId },
+    /// Cancel one queued unit of `kind` (full refund).
+    Unproduce { player: PlayerId, building: EntityId, kind: TypeId },
+    /// Walk into a building (peasants into mines, units into garrisons).
+    Enter { player: PlayerId, units: Vec<EntityId>, building: EntityId },
+    /// Let everybody out of a building.
+    Leave { player: PlayerId, building: EntityId },
+    /// Set a building's rally point (world pixels).
+    Rally { player: PlayerId, building: EntityId, x: i32, y: i32 },
 }
 
 impl Command {
@@ -34,7 +45,12 @@ impl Command {
             | Command::Attack { player, .. }
             | Command::Form { player, .. }
             | Command::Face { player, .. }
-            | Command::Disband { player, .. } => *player,
+            | Command::Disband { player, .. }
+            | Command::Produce { player, .. }
+            | Command::Unproduce { player, .. }
+            | Command::Enter { player, .. }
+            | Command::Leave { player, .. }
+            | Command::Rally { player, .. } => *player,
         }
     }
 }

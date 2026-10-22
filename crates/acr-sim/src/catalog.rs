@@ -64,6 +64,104 @@ impl AnimInfo {
     }
 }
 
+/// Resources in the engine's order (`NRES.DAT [RESTYPES]`): wood, gold, stone, food, iron,
+/// coal. Indices 6 and 7 exist in the stock arrays but are unused.
+pub const RESOURCES: [&str; 6] = ["WOOD", "GOLD", "STONE", "FOOD", "IRON", "COAL"];
+
+/// Index of a resource name (`WOOD` = 0 ... `COAL` = 5).
+pub fn resource_index(name: &str) -> Option<usize> {
+    RESOURCES.iter().position(|r| r.eq_ignore_ascii_case(name))
+}
+
+/// Economy data of an object type.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct EconomyDef {
+    /// `PRICE n (RES v)*n`, by resource index.
+    pub price: [i32; 8],
+    /// `COSTPERCENT p` (default 100; the last line wins): each existing object of the type
+    /// multiplies the price by `p/100`.
+    pub cost_percent: i32,
+    /// `LOWCOSTRADIUS r` (px): without another object of the type that close, the base price.
+    pub low_cost_radius: i32,
+    /// `BUILDSTAGES n` (default 64): construction stages of a building, production time of
+    /// a unit (`n/2` ticks).
+    pub build_stages: i32,
+    /// `BORNPOINTS`, `CONCENTRATOR`, `BUILDPOINTS`: 16 px cells relative to the lock base cell
+    /// (stored as signed bytes).
+    pub born_points: Vec<(i32, i32)>,
+    pub concentrator: Vec<(i32, i32)>,
+    pub build_points: Vec<(i32, i32)>,
+    /// Housing: `FARM` gives 15, `MFARM n` gives n.
+    pub farm: i32,
+    /// `RESCONSUMER RES v`: upkeep `v/10000` of the resource per tick.
+    pub consumer: Option<(usize, i32)>,
+    /// `PRODUCER n RES*n free per_peasant`: mine output.
+    pub producer: Option<Producer>,
+    /// `PEASANTABSORBER n` / `UNITABSORBER n`: capacity for peasants / other units inside.
+    pub peasant_absorber: i32,
+    pub unit_absorber: i32,
+    pub no_hungry: bool,
+    pub peasant_convertor: bool,
+    /// `NAEMNIK`: deserts when the player runs out of gold.
+    pub mercenary: bool,
+    /// `TURNOFF`: stops working when the player runs out of gold.
+    pub turn_off: bool,
+}
+
+/// A mine's production (`PRODUCER`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Producer {
+    /// Bit per resource index it can mine.
+    pub mask: u8,
+    pub free: i32,
+    pub per_peasant: i32,
+}
+
+fn byte_points(c: &acr_formats::defs::Command) -> Vec<(i32, i32)> {
+    c.points(0).into_iter().map(|(x, y)| (i32::from(x as i8), i32::from(y as i8))).collect()
+}
+
+fn economy(def: &UnitDef) -> EconomyDef {
+    let mut e = EconomyDef { cost_percent: 100, build_stages: 64, ..EconomyDef::default() };
+    for c in &def.commands {
+        match c.keyword.as_str() {
+            "PRICE" => {
+                e.price = [0; 8];
+                for (r, v) in c.word_int_pairs(0) {
+                    if let Some(i) = resource_index(r) {
+                        e.price[i] = v;
+                    }
+                }
+            }
+            "COSTPERCENT" => e.cost_percent = c.int(0).unwrap_or(100),
+            "LOWCOSTRADIUS" => e.low_cost_radius = c.int(0).unwrap_or(0),
+            "BUILDSTAGES" => e.build_stages = c.int(0).unwrap_or(64),
+            "BORNPOINTS" => e.born_points = byte_points(c),
+            "CONCENTRATOR" => e.concentrator = byte_points(c),
+            "BUILDPOINTS" => e.build_points = byte_points(c),
+            "FARM" => e.farm = 15,
+            "MFARM" => e.farm = i32::from(c.int(0).unwrap_or(0) as u8),
+            "RESCONSUMER" => {
+                e.consumer = c.word(0).and_then(resource_index).map(|r| (r, i32::from(c.int(1).unwrap_or(0) as i16)))
+            }
+            "PRODUCER" => {
+                let n = c.int(0).unwrap_or(0).max(0) as usize;
+                let mask = (0..n).filter_map(|i| c.word(1 + i).and_then(resource_index)).fold(0u8, |m, r| m | 1 << r);
+                e.producer =
+                    Some(Producer { mask, free: c.int(1 + n).unwrap_or(0), per_peasant: c.int(2 + n).unwrap_or(0) });
+            }
+            "PEASANTABSORBER" => e.peasant_absorber = c.int(0).unwrap_or(0),
+            "UNITABSORBER" => e.unit_absorber = c.int(0).unwrap_or(0),
+            "NO_HUNGRY" => e.no_hungry = true,
+            "PEASANTCONVERTOR" => e.peasant_convertor = true,
+            "NAEMNIK" => e.mercenary = true,
+            "TURNOFF" => e.turn_off = true,
+            _ => {}
+        }
+    }
+    e
+}
+
 /// Number of attack indices (`#ATTACK`, `#ATTACK1`, ... `#ATTACK11`).
 pub const ATTACK_SLOTS: usize = 12;
 
@@ -200,6 +298,8 @@ pub struct ObjectType {
     pub anims: BTreeMap<String, AnimInfo>,
     /// `VISION` (0..=8, default 0): the fog reveal pattern.
     pub vision: u8,
+    /// Prices, production, housing, mines.
+    pub economy: EconomyDef,
 }
 
 impl ObjectType {
@@ -263,6 +363,7 @@ impl ObjectType {
                 .fold(0, |m, i| m | 1 << i),
             anims: anims(def),
             vision: int("VISION", 0).clamp(0, 255) as u8,
+            economy: economy(def),
         }
     }
 

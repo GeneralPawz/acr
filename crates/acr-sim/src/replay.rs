@@ -13,6 +13,7 @@
 //!
 //! A command is a tag byte followed by its fields (see [`Command`]).
 
+use crate::catalog::TypeId;
 use crate::command::Command;
 use crate::world::EntityId;
 
@@ -183,6 +184,31 @@ impl Writer {
                 self.0.extend_from_slice(&[5, *player]);
                 self.u(u64::from(officer.0));
             }
+            Command::Produce { player, building, kind } => {
+                self.0.extend_from_slice(&[6, *player]);
+                self.u(u64::from(building.0));
+                self.u(u64::from(kind.0));
+            }
+            Command::Unproduce { player, building, kind } => {
+                self.0.extend_from_slice(&[7, *player]);
+                self.u(u64::from(building.0));
+                self.u(u64::from(kind.0));
+            }
+            Command::Enter { player, units, building } => {
+                self.0.extend_from_slice(&[8, *player]);
+                self.ids(units);
+                self.u(u64::from(building.0));
+            }
+            Command::Leave { player, building } => {
+                self.0.extend_from_slice(&[9, *player]);
+                self.u(u64::from(building.0));
+            }
+            Command::Rally { player, building, x, y } => {
+                self.0.extend_from_slice(&[10, *player]);
+                self.u(u64::from(building.0));
+                self.i(*x);
+                self.i(*y);
+            }
         }
     }
 }
@@ -231,6 +257,10 @@ impl<'a> Reader<'a> {
         u32::try_from(self.u()?).map(EntityId).map_err(|_| ReplayError("entity id"))
     }
 
+    fn kind(&mut self) -> Result<TypeId, ReplayError> {
+        u16::try_from(self.u()?).map(TypeId).map_err(|_| ReplayError("type id"))
+    }
+
     fn ids(&mut self) -> Result<Vec<EntityId>, ReplayError> {
         let n = self.len()?;
         (0..n).map(|_| self.id()).collect()
@@ -251,6 +281,11 @@ impl<'a> Reader<'a> {
             3 => Command::Form { player, officer: self.id()?, units: self.ids()?, kind: self.str()? },
             4 => Command::Face { player, officer: self.id()?, dir: self.byte()? },
             5 => Command::Disband { player, officer: self.id()? },
+            6 => Command::Produce { player, building: self.id()?, kind: self.kind()? },
+            7 => Command::Unproduce { player, building: self.id()?, kind: self.kind()? },
+            8 => Command::Enter { player, units: self.ids()?, building: self.id()? },
+            9 => Command::Leave { player, building: self.id()? },
+            10 => Command::Rally { player, building: self.id()?, x: self.i()?, y: self.i()? },
             _ => return Err(ReplayError("unknown command")),
         })
     }
@@ -273,6 +308,11 @@ mod tests {
                 Command::Form { player: 3, officer: EntityId(9), units: vec![EntityId(10)], kind: "LINE".into() },
                 Command::Face { player: 3, officer: EntityId(9), dir: 200 },
                 Command::Disband { player: 3, officer: EntityId(9) },
+                Command::Produce { player: 1, building: EntityId(4), kind: TypeId(300) },
+                Command::Unproduce { player: 1, building: EntityId(4), kind: TypeId(2) },
+                Command::Enter { player: 1, units: vec![EntityId(5)], building: EntityId(4) },
+                Command::Leave { player: 1, building: EntityId(4) },
+                Command::Rally { player: 1, building: EntityId(4), x: -3, y: 9 },
             ],
         );
         r.checkpoints.push((100, 0xdead_beef_0123_4567));
@@ -280,7 +320,7 @@ mod tests {
         let back = Replay::decode(&bytes).unwrap();
         assert_eq!(back, r);
         assert_eq!(back.entries.len(), 2, "empty ticks are not stored");
-        assert_eq!(back.commands_at(9).len(), 5);
+        assert_eq!(back.commands_at(9).len(), 10);
         assert!(back.commands_at(5).is_empty());
     }
 
