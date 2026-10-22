@@ -868,6 +868,18 @@ order) and draws random numbers.
   engine. The children of that media (`CUSTOMEXPLOSION`, else `CHILDWEAPON`) follow:
   `min + ((max − min)·rando() >> 15)` of them, each picked with a random number (a bounce is
   picked again up to 20 times after a building hit), and the `SYNCWEAPON`s.
+- **Thrown corpses** (`[DETONATOR] w f`: `SKOKAT3` and `SHIPIT`, 8000): while such a weapon
+  deals its damage (its explosion until the children are made, 0x557909..0x557c6e; only the
+  target's damage of a low `DAMAGEHEIGHT` object, 0x558212; the damage of a hitscan on its
+  target building, from its starting point, 0x558b09) the blast point and the force are
+  set (globals 0x671314..0x67131c). A land unit (not a building) that dies then (end of
+  `Die`, 0x4e86b9 → 0x55a070) flies away from the point: at distance `r` and `c = r + 20`,
+  `vz = 20·f/c`, `vx = (20·f·dx/r)/c`, `vy` likewise (1/256 px per tick), starting 1 px
+  above the ground; at most 128 at once, none at the point itself (0x559e30). At the start of
+  every `ProcessExpl` (0x559f20) each moves, then `vz −= 1000`; the corpse is put there and
+  lands when the ground reaches its height (`World::thrown`, hashed while not empty). No
+  random numbers, the cells and lock maps are not touched. A 100 px throw of 8000 carries a
+  corpse 21 px in 4 ticks, 7 px high; the drawing does not show the height.
 - **Examples:** an arrow (`STRELA`, 50 px per tick, high gravity) hurts everything within
   15 px where it lands with the archer's damage; a cannon ball (`PPOINTT` → `NUCL2P`, 10°)
   deals 340 within 35 px, then bounces (`SKOKAT`: 500 within 16 px every tick while below
@@ -1588,9 +1600,9 @@ No game option writes it. How the map view draws the fog is in
     water lock map; `MoveObject` and docking use the order's cell centre rather than the
     clicked point; `EraseLodki` has no caller in AC.
   - Projectiles: the explosion's water test samples the `SEA2` depth with the rows shifted
-    by the height (the engine reads a screen-space water map); the corpses thrown by a
-    `DETONATOR` blast are not moved; `extra` (the shot point's visual height) is kept but
-    unused, as in the engine.
+    by the height (the engine reads a screen-space water map); the height of a thrown
+    corpse is not drawn; `extra` (the shot point's visual height) is kept but unused, as in
+    the engine.
   - Buildings: the cells of a building for round damage and searches are those of its
     position (the engine keeps building lists by cell); `SLOWDEATH`, capture and storming
     are not reproduced.
@@ -1632,6 +1644,9 @@ No game option writes it. How the map view draws the fog is in
   the line walks 40 px to its left and hits the enemy from there, the friend unhurt; one
   already standing in `#PSTAND1` behind a friend drops every attack and never fires; a
   300 px ridge between musketeer and enemy stops the shot (reload 20 frames, no hit).
+- **Thrown corpses** (`tests/detonator.rs`): a `DETONATOR` 8000 blast 100 px away throws
+  the dead victim with velocity (1333, 0, 1333), 6, 7 and 4 px high, down after four ticks
+  21 px further, without random numbers; other blasts throw nobody.
 - **Counted attacks** (`tests/ntimes.rs`): a musketeer ordered to fire twice counts down
   after the first shot and stops after the second although the target lives; a pikeman
   with one strike stops after it, and switching its target keeps the count.

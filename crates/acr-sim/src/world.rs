@@ -486,6 +486,12 @@ pub struct World {
     pub cities: [crate::aiplace::City; PLAYERS],
     /// Each player's grouped formations (`City::GroupsSet`).
     pub formation_groups: [crate::grouping::FormationGroups; PLAYERS],
+    /// Corpses thrown by a `DETONATOR` blast, in flight (0x28b4730, at most 128; see
+    /// [`crate::projectile::Thrown`]).
+    pub thrown: Vec<crate::projectile::Thrown>,
+    /// The blast that throws whoever it kills (0x671314/0x671318/0x67131c: x, y in pixels
+    /// and the weapon's `DETONATOR` force), set only while an explosion deals its damage.
+    pub detonation: Option<(i32, i32, i32)>,
     /// Why each dead unit died, by unit index, for the renderer only (deaths by cause,
     /// wounds and blood). Not part of the state hash: savegames replay their commands and
     /// record it again.
@@ -640,6 +646,8 @@ impl World {
             plan: None,
             cities: Default::default(),
             formation_groups: Default::default(),
+            thrown: Vec::new(),
+            detonation: None,
             deaths: Default::default(),
             hits: Default::default(),
             impacts: Default::default(),
@@ -1218,13 +1226,14 @@ impl World {
             &self.projectiles,
             (&self.bars, self.ai),
         ));
-        // Formation groups count only once there are some, so the hashes of games without
-        // them stay as they were.
+        // Formation groups and thrown corpses count only once there are some, so the hashes of
+        // games without them stay as they were.
         let hash = if self.formation_groups.iter().all(|g| g.is_empty()) {
             hash
         } else {
             state_hash(&(hash, &self.formation_groups))
         };
+        let hash = if self.thrown.is_empty() { hash } else { state_hash(&(hash, &self.thrown)) };
         // Likewise the optional rules, only when some are on.
         if self.rules == crate::Rules::default() { hash } else { state_hash(&(hash, self.rules)) }
     }

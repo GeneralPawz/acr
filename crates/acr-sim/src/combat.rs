@@ -1516,6 +1516,7 @@ pub fn die(w: &mut World, i: usize) {
     if w.units[i].building {
         destroyed_building_explodes(w, i);
     }
+    crate::projectile::throw_corpse(w, i);
 }
 
 /// The end of `Die` for a building (0x4e84c7..0x4e8678): unless its `delay` (OB+0x8c) is

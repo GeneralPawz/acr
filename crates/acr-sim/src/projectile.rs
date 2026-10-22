@@ -7,6 +7,7 @@
 //! and takes a slot, which decides where later objects go and so the processing order.
 //! Positions and velocities are pixels << 14.
 
+use crate::fixed::Pos;
 use crate::trig::norma;
 use crate::weapon::{Propagation, media};
 use crate::world::{EntityId, World};
@@ -100,6 +101,68 @@ pub struct WeaponSound {
     pub weapon: u16,
     pub x: i32,
     pub y: i32,
+}
+
+/// A corpse thrown by a `DETONATOR` blast (an entry of 0x28b4730): position and velocity in
+/// 1/256 px; the height is above the ground of the map, not of the corpse's spot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Thrown {
+    pub unit: EntityId,
+    pub pos: (i32, i32, i32),
+    pub vel: (i32, i32, i32),
+}
+
+/// At most this many corpses fly at once (0x559e30).
+pub const THROWN_MAX: usize = 128;
+
+/// The end of `Die` (0x4e86b9 → 0x55a070): a land unit (not a building) killed while a
+/// `DETONATOR` blast deals its damage flies away from the blast point `(bx, by)` with force
+/// `d`: at distance `r` (pixels) and `c = r + 20`, `vz = 20·d/c` and `vx = (20·d·dx/r)/c`
+/// (likewise `vy`), from 1 px above the ground (0x559e30; not at the blast point itself,
+/// not twice, at most [`THROWN_MAX`]). No random numbers.
+pub fn throw_corpse(w: &mut World, i: usize) {
+    let Some((bx, by, d)) = w.detonation else { return };
+    let u = &w.units[i];
+    if u.building || w.catalog.get(u.kind).medium != crate::catalog::Medium::Land {
+        return;
+    }
+    let (px, py) = u.pos.pixels();
+    let (dx, dy) = (px - bx, py - by);
+    let r = isqrt(i64::from(dx) * i64::from(dx) + i64::from(dy) * i64::from(dy)) as i32;
+    if r == 0 || w.thrown.len() >= THROWN_MAX || w.thrown.iter().any(|t| t.unit == u.id) {
+        return;
+    }
+    let c = r + 20;
+    let vel = (dx * d * 20 / r / c, dy * d * 20 / r / c, d * 20 / c);
+    let z = (h(w, px, py) + 1) << 8;
+    let pos = (u.pos.x << 4, u.pos.y << 4, z);
+    w.thrown.push(Thrown { unit: u.id, pos, vel });
+}
+
+/// The flight of the thrown corpses (0x559f20, at the start of `ProcessExpl`): each moves by
+/// its velocity, then falls (`vz −= 1000`); the corpse is put where it flies and is done when
+/// the ground there reaches its height. A corpse that is gone is dropped. The cells and the
+/// lock map are not touched.
+pub fn fly_corpses(w: &mut World) {
+    let mut k = 0;
+    while k < w.thrown.len() {
+        let mut t = w.thrown[k];
+        let i = t.unit.0 as usize;
+        if !w.units.get(i).is_some_and(|u| u.alive) {
+            w.thrown.remove(k);
+            continue;
+        }
+        t.pos = (t.pos.0 + t.vel.0, t.pos.1 + t.vel.1, t.pos.2 + t.vel.2);
+        t.vel.2 -= 1000;
+        let ground = h(w, t.pos.0 >> 8, t.pos.1 >> 8);
+        w.units[i].pos = Pos::new(t.pos.0 >> 4, t.pos.1 >> 4);
+        if ground >= t.pos.2 >> 8 {
+            w.thrown.remove(k);
+        } else {
+            w.thrown[k] = t;
+            k += 1;
+        }
+    }
 }
 
 /// The projectile pool and the engine globals it uses.
@@ -259,7 +322,12 @@ pub fn create(
                     let su = &w.units[si];
                     let dec = catalog.get(su.kind).attacks.get(usize::from(att)).map_or(0xFFFF, |a| a.damage_dec);
                     let dmg = crate::combat::half_life(damage, r, dec);
+                    // 0x558b09: from the object's own (starting) point.
+                    if wp.detonator != 0 {
+                        w.detonation = Some((xs, ys, wp.detonator));
+                    }
                     crate::combat::make_damage(w, b, dmg, Some(si), att);
+                    w.detonation = None;
                 } else if !hit && let Some(si) = sender {
                     // A missed shot strikes the ground at its end (render only).
                     let cause = crate::combat::cause_of_attack(w, si, att);
@@ -376,7 +444,14 @@ fn round_damage_with(
 
 /// The damage a low ball does in one place: [`round_damage`] and the target object, or with
 /// the hit-locations rule ploughing ([`Plough`]) through each body once, losing energy.
-fn ball_damage(w: &mut World, slot: usize, p: &Projectile, r: i32, sender: Option<usize>) {
+fn ball_damage(
+    w: &mut World,
+    slot: usize,
+    p: &Projectile,
+    r: i32,
+    sender: Option<usize>,
+    target_blast: Option<(i32, i32, i32)>,
+) {
     let mut plough = p.plough;
     let ploughing = w.rules.hit_locations && w.catalog.weapons.get(p.weapon).damage_height != 0;
     if ploughing && plough.spent() {
@@ -392,7 +467,14 @@ fn ball_damage(w: &mut World, slot: usize, p: &Projectile, r: i32, sender: Optio
             Some(pl) => pl.take(b, p.damage),
         };
         if let Some(dmg) = dmg {
+            // A DETONATOR armed for the target's damage only (`target_blast`).
+            if target_blast.is_some() {
+                w.detonation = target_blast;
+            }
             crate::combat::make_damage(w, b, dmg, sender, p.att);
+            if target_blast.is_some() {
+                w.detonation = None;
+            }
         }
     }
     if ploughing && let Some(Some(q)) = w.projectiles.slots.get_mut(slot) {
@@ -430,10 +512,14 @@ pub fn explode(w: &mut World, slot: usize, ground: bool) {
     let catalog = w.catalog.clone();
     let wp = catalog.weapons.get(p.weapon);
     let sender = sender_of(w, &p);
+    // A DETONATOR blast throws whoever it kills (0x557909), until the end of the explosion.
+    if wp.detonator != 0 {
+        w.detonation = Some((p.pos.0 >> 14, p.pos.1 >> 14, wp.detonator));
+    }
     if p.damage != 0 {
         let last_hit = w.hits.back().copied();
         w.hit_dir = Some(flight_dir(&p));
-        ball_damage(w, slot, &p, wp.radius, sender);
+        ball_damage(w, slot, &p, wp.radius, sender, None);
         w.hit_dir = None;
         if ground {
             note_impact(w, &p, w.hits.back().copied() != last_hit);
@@ -475,6 +561,7 @@ pub fn explode(w: &mut World, slot: usize, ground: bool) {
         }
     }
     w.plough_carry = outer_carry;
+    w.detonation = None; // 0x557c6e
 }
 
 /// The media of the ground at a point (0x5578f0): water where the four `SEA2` cells around
@@ -506,6 +593,9 @@ fn ground_media(w: &World, x: i32, y: i32) -> i32 {
 /// (`DAMAGEHEIGHT`), explodes at its hot frame and dies at the end of its last animation
 /// cycle.
 pub fn process(w: &mut World) {
+    if !w.thrown.is_empty() {
+        fly_corpses(w);
+    }
     if w.projectiles.slots.is_empty() {
         return;
     }
@@ -553,7 +643,9 @@ pub fn process(w: &mut World) {
         let sender = sender_of(w, &p);
         if wp.damage_height != 0 && ground > z - wp.damage_height && p.damage != 0 {
             w.hit_dir = Some(flight_dir(&p));
-            ball_damage(w, slot, &p, wp.radius, sender);
+            // Only the target's damage throws here (0x558212..0x558254).
+            let blast = (wp.detonator != 0).then_some((x, y, wp.detonator));
+            ball_damage(w, slot, &p, wp.radius, sender, blast);
             w.hit_dir = None;
         }
         if ground > z {
