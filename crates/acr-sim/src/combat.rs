@@ -43,7 +43,7 @@ fn is_high(w: &World, t: &Adv, i: usize) -> bool {
 /// `AttackObj` (0x51a930): gives unit `i` an attack order on unit `j`; false if refused.
 pub fn attack_obj(w: &mut World, i: usize, j: usize, prio: u8) -> bool {
     let (Some(u), Some(e)) = (w.units.get(i), w.units.get(j)) else { return false };
-    if i == j || !u.active() || u.building || !e.active() || e.owner == u.owner {
+    if i == j || !u.active() || u.building || !e.active() || !u.hostile(e) {
         return false;
     }
     let t = w.adv(u.owner, u.kind);
@@ -92,7 +92,7 @@ pub fn attack_link(w: &mut World, i: usize, target: EntityId, prio: u8) {
     if hunt(w, i, j) {
         return;
     }
-    let valid = w.units.get(j).is_some_and(|e| e.alive && e.death <= 8 && e.owner != w.units[i].owner);
+    let valid = w.units.get(j).is_some_and(|e| e.alive && e.death <= 8 && w.units[i].hostile(e));
     if !valid {
         w.units[i].orders.pop();
         return;
@@ -289,7 +289,7 @@ fn shoot(w: &mut World, i: usize, j: usize, att: usize, my_z: i32, en_z: i32) {
     let avoid_friendly_fire = catalog.get(u.kind).avoid_friendly_fire;
     let (xs, ys) = u.pos.pixels();
     let (mut cx, mut cy) = e.pos.pixels();
-    let owner = u.owner;
+    let mask = u.nmask;
     // GetDamagePoint draws two numbers without using them.
     w.random.rando();
     w.random.rando();
@@ -330,7 +330,7 @@ fn shoot(w: &mut World, i: usize, j: usize, att: usize, my_z: i32, en_z: i32) {
             let (ox, oy) = o.pos.pixels();
             let r_dist = norma(ox - xs, oy - ys);
             let h = pz - height(w, o.pos);
-            let friend = o.owner == owner;
+            let friend = o.nmask & mask != 0;
             let min_dist = if friend { 150 } else { 60 };
             if h > 0 && h < 90 && r_dist > min_dist && r_dist < min_r {
                 let cross = (i64::from(ox - xs) * i64::from(yy) - i64::from(oy - ys) * i64::from(xx)).abs();
@@ -349,7 +349,7 @@ fn shoot(w: &mut World, i: usize, j: usize, att: usize, my_z: i32, en_z: i32) {
     let (bx, by) = w.units[b].pos.pixels();
     let a = &t.attacks[att];
     let damage = half_life(a.damage, norma(bx - xs, by - ys), a.damage_dec);
-    if avoid_friendly_fire && w.units[b].owner == owner {
+    if avoid_friendly_fire && w.units[b].nmask & mask != 0 {
         return; // the friend absorbs the ball unharmed
     }
     make_damage(w, b, damage, Some(i), att as u8);
@@ -513,7 +513,7 @@ pub fn search_victims(w: &mut World) {
             for cx in ccx - rx..=ccx + rx {
                 let found = w.buckets.get(cx, cy).iter().map(|&k| k as usize).find(|&k| {
                     let o = &w.units[k];
-                    o.active() && o.owner != u.owner && catalog.get(o.kind).materials & kill_mask != 0
+                    o.active() && u.hostile(o) && catalog.get(o.kind).materials & kill_mask != 0
                 });
                 if let Some(k) = found {
                     let o = &w.units[k];
