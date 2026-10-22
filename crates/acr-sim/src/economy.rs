@@ -411,7 +411,7 @@ fn follow_rally(w: &mut World, b: usize, i: usize, rally: Pos) {
         return;
     }
     let peasant = w.catalog.get(w.units[i].kind).peasant;
-    if let Some(rk) = w.sources.determine(dx, dy).filter(|_| peasant) {
+    if let Some(rk) = crate::gather::determine(w, dx, dy).filter(|_| peasant) {
         // The engine draws random points within 128 px until one lies at a source of the
         // same type (its retry counter is never decremented); capped here at one pass
         // through the random table.
@@ -419,7 +419,7 @@ fn follow_rally(w: &mut World, b: usize, i: usize, rally: Pos) {
         for _ in 0..crate::rng::SYNC_TABLE_LEN / 2 {
             let rx = dx + (w.random.rando() & 255) - 128;
             let ry = dy + (w.random.rando() & 255) - 128;
-            if rx > 0 && ry > 0 && w.sources.determine(rx, ry) == Some(rk) {
+            if rx > 0 && ry > 0 && crate::gather::determine(w, rx, ry) == Some(rk) {
                 (x, y) = (rx, ry);
                 break;
             }

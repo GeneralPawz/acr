@@ -34,6 +34,11 @@ pub struct SpriteResources {
     /// `[SOURCES]`: `(resource, amount per work cycle, work radius)` per sprite id (trees,
     /// fields, carcasses).
     pub work_sources: BTreeMap<String, (String, i32, i32)>,
+    /// `[WORKTRANSFORM] ID NEXT n`: after `n` work cycles the sprite becomes `NEXT`
+    /// (`NONE`: it disappears).
+    pub work_transform: BTreeMap<String, (String, i32)>,
+    /// `[TIMETRANSFORM] ID NEXT n`: after `n` animation frames (`n/2` ticks) likewise.
+    pub time_transform: BTreeMap<String, (String, i32)>,
 }
 
 impl SpriteResources {
@@ -53,6 +58,13 @@ impl SpriteResources {
                     let pts: Option<Vec<_>> = (0..n).map(|i| Some((int(2 + 2 * i)?, int(3 + 2 * i)?))).collect();
                     if let Some(p) = pts.filter(|p| p.len() >= 3) {
                         r.locks.insert(id, p);
+                    }
+                }
+                "WORKTRANSFORM" | "TIMETRANSFORM" => {
+                    if let (Some(next), Some(n)) = (l.get(1), int(2)) {
+                        let map =
+                            if section == "WORKTRANSFORM" { &mut r.work_transform } else { &mut r.time_transform };
+                        map.insert(id, (next.to_ascii_uppercase(), n));
                     }
                 }
                 "INTERNAL_SOURCE" | "SOURCES" => {

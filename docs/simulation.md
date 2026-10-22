@@ -597,6 +597,42 @@ Implemented in `economy.rs`. The sources are `City::Census` (0x42e658), the upke
     building and delivers: within 5 cells of its last born point, else within 6 of a
     `CONCENTRATOR` point. Wood counts 1:1 at the default factors (food ×(1010 mod 100)/10).
     Then it goes back.
+- **Fields and carcasses** (`sprite.rs`). They are sprites of the `COMPLEX` and `MEAT` groups
+  whose type changes (`World::sprites`). Each type has an `ObjCharacter` (loader 0x5011af)
+  from the group's `.RSR`: `[SOURCES]` (source type, amount per cycle, work radius),
+  `[WORKTRANSFORM] ID NEXT n` and `[TIMETRANSFORM] ID NEXT n` (`NONE`: removed; without an
+  entry the type stays itself).
+  - **Time** (`TimeReq::Handle` 0x4d4440, every tick after the units): `TimePassed += 2`;
+    at the type's `TimeAmount` the sprite becomes the next type (with no work done) or
+    disappears. So `TIMETRANSFORM 500` takes 250 ticks.
+  - **Work** (`PerformWork` 0x4d2cb0): each cycle adds the old type's amount to the load
+    and counts `WorkOver`; at `WorkAmount · amount / 100` cycles the sprite becomes the next
+    type. `amount` is `FoodEff / 100 · 10` for food from fields (100 at the start; the
+    `EFFECT_FOOD +2000` upgrades make fields last 3×), else 100.
+  - **Fields** (`COMPLEX.RSR`): `KUK00 → … → KUK05` in 5 × 250 ticks, then 5 cycles of 3
+    food (`#ATTACK3`, 28 ticks each for the peasant), then `KUD00 → … → KUD05` regrows and
+    gives 5 × 3 more, then `KUB00` vanishes after one tick. There are three variants.
+  - **Planting.** A `SPRITEOBJECT` type (`FIELD(EN)`, `EXSPRITES KUK00 3 64 4 64`) is placed
+    by `CreateObject` (0x5155c5): `rando()`, the price check and another `rando()`, one
+    more, then for the sprite `rando()`; the point snaps to the `[DISCRET]` diamond grid
+    (0x514fea, 1 px by default); the 8 × 15 lock cells from `(cx − 4, cy − 3)` must be free
+    and the heights 64 px left, right, above and below must differ from their mean by less
+    than 40, 32, 32, 32; the type is `KUK00 + rando() % 3`; no other sprite may lie closer
+    than its list radius (30) plus the other's (only deposits have one; 0x4d1aa0); then the
+    price (`GOLD 1`) is paid.
+  - **Mills** (`USAGE MELNICA`). A finished mill (0x5239ec) and the "plant fields" button
+    (`PlantFields`, 0x4e0d88) call 0x51522f: on the diamond grid `(i + j)·step,
+    (i − j)·step` for `i, j` in `−n..=n` (`n` 64, `step` 4 px) plus `rando()·spread >> 11`
+    on each axis (`spread` 64 px), a field is planted where possible: about 200 around an
+    English mill.
+  - **Hunting.** When a unit's victim is dying and its `TRANSFORMTOMEAT` sprite is a source
+    the unit can gather (0x51bf0b in `AttackObjLink`), the attack ends: the hunter walks to
+    the body and takes 60 gathering orders (`TakeResource` order type 1, which keeps the
+    order even when nothing is found yet and draws a random number each time). At the end
+    of the death animation the body becomes the `MEAT` sprite (0x511f4b): `M00` gives 50
+    meat per cycle for 10 cycles, then `M01` 250 more cycles; an untouched `M00` rots after
+    3750 ticks. Meat is source type 8; bases take it with `RESOURCEBASE … #R8` and it counts
+    as food.
 - **Entering buildings.** A unit walks to the first `CONCENTRATOR` point and disappears inside
   (`Unit::inside_of`). Peasants count against `PEASANTABSORBER`, other units against
   `UNITABSORBER`. Units inside still eat and count. `Leave` puts them back at the born points.
@@ -667,7 +703,7 @@ sum of its four neighbours (centre excluded). This spreads the stamps and decays
   - Economy: `World::players[p]` (`resources`, `population`, `housing`), each building's
     `queue` / `inside` / `mine` / `stage`, `economy::unit_cost`, and `Unit::carried`. The
     commands are `Produce`, `Unproduce`, `Enter`, `Leave`, `Rally`, `Build`, `Repair`,
-    `Gather`, `Upgrade`, `CancelUpgrade` and `Trade` (`World::market` holds the rates,
+    `Gather`, `Upgrade`, `CancelUpgrade`, `Trade` and `PlantFields` (`World::market` holds the rates,
     `Market::quote` the price of a trade). `economy::producible(w, building)` lists what a
     building can produce now, `upgrade::available(w, building)` what it can research;
     `Unit::research` is the running research; `Player::enabled`, `Player::upgrades` and
@@ -732,8 +768,11 @@ sum of its four neighbours (centre excluded). This spreads the stamps and decays
   - `#TRANS01`/`#TRANS10`, `BREAKANIMATION` and build animations are not modelled.
   - Units without `#MOTION_L` are treated as 1-frame cycles.
 - **Economy:**
-  - Fields (`FIELD` sprite objects with their ripening timers), carcasses and hunting are not
-    simulated, and neither are stone sprites (the shipped data has none). Peasants carry in
+  - Stone sprites are not simulated (the shipped data has none). Field planting skips the
+    territory permission (0x45f767, only active with territories set up) and the picture
+    lock polygons of sprites (fields have none). `FindResourceObject` takes the nearest source
+    of the first ring without `FindPlaceForPeasant`'s stand points and the `Surrounded`
+    marks; the random number of a failed search is drawn. Peasants carry in
     stance 0, not with their carry walk (`#MOTION_L{b−1}`), and deliver at the entrance
     rather than walking inside along the born points.
   - Builders do not re-path around blocking units (`CheckBlocking`). Placement checks only
@@ -815,6 +854,10 @@ sum of its four neighbours (centre excluded). This spreads the stamps and decays
     they drift back over time;
   - a produced unit ends at its rally point; one with the rally point on trees gets a
     gathering order.
+- **Food tests** (`tests/food.rs`): a field ripens on the 250th tick, gives 5 × 3 food,
+  regrows in 250 ticks, gives 15 more and vanishes; `PlantFields` plants a 7 × 7 diamond and
+  pays one gold per field, and finds no room the second time; a hunter kills a deer, which
+  becomes a carcass, and carries the meat home.
 - **Fog test** (`tests/fog.rs`): a VISION 3 unit lights its cell and 200 px around but not
   1000 px away, and the light fades once the unit is gone.
 - **Replay tests:** every command round-trips through the binary format; damaged data is

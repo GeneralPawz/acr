@@ -328,6 +328,12 @@ pub struct World {
     pub sources: Arc<crate::gather::Sources>,
     /// The market's current rates, shared by all players.
     pub market: crate::market::Market,
+    /// Fields and carcasses (sprites that change), by index.
+    pub sprites: Vec<crate::sprite::ResSprite>,
+    /// `ObjCharacter`s of the `COMPLEX` (fields) and `MEAT` (carcasses) sprite groups.
+    pub sprite_kinds: Arc<(crate::sprite::SpriteKinds, crate::sprite::SpriteKinds)>,
+    /// The map's other sprites for the spacing of new ones: `(x, y, radius)` (static).
+    pub spacing: Arc<Vec<(i32, i32, i32)>>,
 }
 
 /// Unit indices per 128 px cell (8 × 8 lock cells).
@@ -395,6 +401,9 @@ impl World {
             deposits: Vec::new(),
             sources: Arc::new(crate::gather::Sources::default()),
             market,
+            sprites: Vec::new(),
+            sprite_kinds: Arc::default(),
+            spacing: Arc::default(),
         }
     }
 
@@ -439,9 +448,24 @@ impl World {
             .map(|s| MapObject { group: s.group, index: s.index, x: s.x, y: s.y })
             .collect();
         world.deposits = crate::economy::deposits(&world.objects, sprites);
+        let kind_of = |g: SpriteGroup| sprites.kinds.get(&g).cloned().unwrap_or_default();
+        world.sprite_kinds = Arc::new((kind_of(SpriteGroup::Complex), kind_of(SpriteGroup::Meat)));
+        let dynamic = |g: SpriteGroup| matches!(g, SpriteGroup::Complex | SpriteGroup::Meat);
+        for o in world.objects.clone().iter().filter(|o| dynamic(o.group)) {
+            world.add_sprite(o.group, o.index, o.x, o.y);
+        }
+        world.spacing = Arc::new(
+            world
+                .objects
+                .iter()
+                .filter(|o| !dynamic(o.group))
+                .map(|o| (o.x, o.y, sprites.spacing(o.group, o.index)))
+                .collect(),
+        );
         let sources = world
             .objects
             .iter()
+            .filter(|o| !dynamic(o.group))
             .filter_map(|o| {
                 let (kind, per_work, radius) = sprites.work_source(o.group, o.index)?;
                 Some(crate::gather::Source { x: o.x, y: o.y, kind, per_work, radius })
@@ -609,6 +633,7 @@ impl World {
             }
         }
         crate::combat::object_loop(self);
+        crate::sprite::time_step(self);
         self.tick.0 += 1;
     }
 
@@ -726,8 +751,22 @@ impl World {
                     crate::market::trade(self, *player, usize::from(*sell), usize::from(*buy), *amount);
                 }
             }
+            Command::PlantFields { player, buildings, kind } => {
+                if usize::from(kind.0) < self.catalog.len() {
+                    for b in self.owned(*player, buildings) {
+                        let u = &self.units[b];
+                        let t = self.catalog.get(u.kind);
+                        let listed = !self.catalog.tech.loaded
+                            || self.catalog.tech.of(u.kind).is_some_and(|tt| !tt.produce.is_empty());
+                        if t.economy.mill && listed && u.stage >= self.max_stage(u) {
+                            let pos = u.pos;
+                            crate::sprite::plant_fields(self, *player, pos.x, pos.y, *kind);
+                        }
+                    }
+                }
+            }
             Command::Gather { player, units, x, y } => {
-                if let Some(kind) = self.sources.determine(*x, *y) {
+                if let Some(kind) = crate::gather::determine(self, *x, *y) {
                     for i in self.owned(*player, units) {
                         crate::gather::take_resource(self, i, *x, *y, kind, 0x80, false);
                     }
@@ -747,6 +786,7 @@ impl World {
             &self.occupancy,
             &self.players,
             &self.market,
+            &self.sprites,
         ))
     }
 }

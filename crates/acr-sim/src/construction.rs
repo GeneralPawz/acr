@@ -111,10 +111,21 @@ pub fn next_stage(w: &mut World, b: usize) {
             }
             let owner = w.units[b].owner;
             census(w, owner);
+            // A finished mill plants its first product (fields) around it (0x5239ec).
+            if t.economy.mill
+                && let Some(&field) = w.catalog.tech.of(t_kind(w, b)).and_then(|tt| tt.produce.first())
+            {
+                let pos = w.units[b].pos;
+                crate::sprite::plant_fields(w, owner, pos.x, pos.y, field);
+            }
         }
     } else {
         u.life = (u.life + 20).min(u.max_life);
     }
+}
+
+fn t_kind(w: &World, b: usize) -> TypeId {
+    w.units[b].kind
 }
 
 /// The free `BUILDPOINT` nearest to `from` (`FindPoint` 0x5233e4 with flags 7).
