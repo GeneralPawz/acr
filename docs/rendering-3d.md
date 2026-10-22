@@ -128,6 +128,49 @@ dissolving is alpha-tested (`discard`), nothing is blended or sorted. `gore=redu
 everything but the dissolve; `gore=off` draws the corpse like the original's half
 transparent sprite, every other pixel. Sprite corpses always keep the original fade.
 
+#### Deaths by cause: wounds, blood, dirt, burns, pools
+
+The simulation keeps why each unit died in `World::deaths` (`combat::DeathRecord`: the
+cause and the attacker's position), for the renderer only: it is not part of the state
+hash, and savegames replay their commands and record it again. The cause comes from the
+weapon kind of the killing blow (`NRES.DAT [WEAPONS]`): `MECH`, `PIKA` melee; `VISTREL*`
+gunshot; `STRELA*`, `OSTRELA` arrow; `TAMAGAVK`, `KOPIE`, `KAMEN` thrown; `IADRO` cannonball;
+`KARTECH` grapeshot; `IADROMOR`, `VAFLIA` explosion; a unit that dies burning is burned,
+one that starves (`economy::starve`) died of hunger, the rest (scripts) is unknown.
+
+`acr-game/src/ingame/gore.rs` turns the record into per-corpse `Wounds` (instance
+attributes 13, 14) and a `BloodPool`:
+
+| Cause | Wounds (radius) | Body blood | Pool (radius, trail) | Burn |
+|---|---|---|---|---|
+| Melee | 3 (0.10 m) | 1.0 | 0.85 m, 0.2 | — |
+| Gunshot | entry + exit (0.06 m) | 0.85 | 0.55 m, 0.1 | — |
+| Arrow | 1 (0.06 m) | 0.7 | 0.45 m | — |
+| Thrown | 1 (0.09 m) | 0.9 | 0.6 m, 0.1 | — |
+| Cannonball | 1 (0.28 m) | 1.0 | 1.1 m, 1.2 | — |
+| Grapeshot | 6 (0.06 m) | 1.0 | 0.9 m, 0.4 | — |
+| Explosion | 3 (0.12 m) | 0.8 | 0.7 m, 0.3 | 0.6 |
+| Burned | — | — | — | 1.0 |
+| Hunger | — | — | — | — |
+| Unknown | 1 (0.07 m) | 0.6 | 0.5 m | — |
+
+- Wounds sit on the model's rest pose (the bind position, so they stay on the body in any
+  pose): the first at chest height on the side facing the blow (turned into the model's
+  frame), with two wounds the second is the exit on the far side, further ones spread over
+  the front. Blood runs down from them (in the rest pose), fresh red drying to brown with
+  the decay. Dirt rises from the ground in patches (`0.8 · ramp(death, 60, 900)`), burns
+  char the body. The bone layer gets none of it.
+- Pools are a decal pipeline (`blood.wgsl`) drawn before the models over the terrain's
+  depth, alpha blended, writing no depth: a noisy round pool under the chest (0.55 m ahead
+  of the ground point, where a body lying face down has it) with a narrowing trail away
+  from the blow; they spread over the first ~140 counter steps, dry from red to brown up to
+  900 and fade over the last 15 % before removal. Pools are flat at the ground point's
+  height: on slopes part of them can sink into the terrain.
+- `gore=reduced`: one wound, half the blood, half-size pools; `gore=off`: none of it.
+- Not done yet (#183): cause-specific death clips, dismemberment (the models' stump caps
+  and `_PART` attributes, #207), the `emaciated` morph for hunger, stuck missiles, pools
+  that outlive the corpse.
+
 ## Camera math
 
 World coordinates of the 3D path are world pixels: `x` east, `y` south, `z` up as a true
