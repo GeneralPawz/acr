@@ -23,6 +23,47 @@ from acr_assets import Reference, camera, scene  # noqa: E402
 from acr_assets import conventions as cv  # noqa: E402
 
 
+def show_state(s, ref):
+    """Puts the model into the state of the reference: every armature plays the clip named
+    after the animation (`#DEATHLIE1` -> `DEATHLIE1`, frame 0; none: rest pose), and nodes
+    tagged with extras `acr_state` (an animation name, e.g. `BUILDLO_2`, or a list of them)
+    or `acr_section` + `acr_section_state` (`ADDSECTION` parts) are shown only in their
+    state. Untagged nodes always show."""
+    anim = ref.anim.lstrip("#@")
+    sections = getattr(ref, "sections", -1)
+    for obj in s.objects:
+        if obj.type == "ARMATURE":
+            obj.animation_data_create()
+            act = bpy.data.actions.get(anim)
+            obj.animation_data.action = act
+            if act is not None and hasattr(obj.animation_data, "action_slot"):
+                slots = [sl for sl in act.slots if sl.target_id_type == "OBJECT"]
+                match = [sl for sl in slots if obj.name in sl.name_display] or slots
+                if match:
+                    obj.animation_data.action_slot = match[0]
+            if act is None:
+                for pb in obj.pose.bones:
+                    pb.matrix_basis.identity()
+    s.frame_set(0)
+
+    def visible(obj):
+        while obj is not None:
+            st = obj.get("acr_state")
+            if st is not None:
+                states = [st] if isinstance(st, str) else list(st)
+                if anim not in states:
+                    return False
+            if "acr_section" in obj:
+                if anim != "STANDLO" or int(obj.get("acr_section_state", -1)) != sections:
+                    return False
+            obj = obj.parent
+        return True
+
+    for obj in s.objects:
+        obj.hide_render = not visible(obj)
+    print(f"ACR state: {anim}, sections {sections}, hidden {sum(o.hide_render for o in s.objects)} objects")
+
+
 def main(argv):
     p = argparse.ArgumentParser(prog="render_views.py")
     p.add_argument("--ref", required=True)
@@ -39,6 +80,7 @@ def main(argv):
     for obj in list(s.objects):
         if obj.parent is None and obj is not pivot:
             obj.parent = pivot
+    show_state(s, ref)
     camera.original_camera(ref.width, ref.height, ref.anchor)
 
     s.render.engine = "BLENDER_WORKBENCH"

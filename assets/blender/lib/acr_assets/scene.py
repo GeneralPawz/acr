@@ -11,9 +11,14 @@ def reset():
     sets metres as the unit."""
     for obj in list(bpy.data.objects):
         bpy.data.objects.remove(obj, do_unlink=True)
-    for coll in (bpy.data.meshes, bpy.data.materials, bpy.data.images, bpy.data.cameras, bpy.data.lights):
+    for coll in (bpy.data.meshes, bpy.data.materials, bpy.data.images, bpy.data.cameras, bpy.data.lights,
+                 bpy.data.armatures, bpy.data.actions, bpy.data.shape_keys):
         for block in list(coll):
-            coll.remove(block)
+            try:
+                coll.remove(block)
+            except (RuntimeError, AttributeError, ReferenceError):
+                pass
+    bpy.data.orphans_purge(do_recursive=True)
     s = bpy.context.scene
     s.unit_settings.system = "METRIC"
     s.unit_settings.scale_length = 1.0

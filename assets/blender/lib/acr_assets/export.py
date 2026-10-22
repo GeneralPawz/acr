@@ -15,6 +15,10 @@ COMPRESSION = ("none", "meshopt", "draco")
 
 
 def export_glb(path, compression="none"):
+    """Exports the scene. Skins, morph targets (shape keys), one animation per action
+    (`STAND`, `DEATH`, ...), the active colour attribute as COLOR_0 and custom attributes
+    whose names start with `_` (`_gore` -> `_GORE`, `_part` -> `_PART`) go out when the
+    scene has them."""
     if compression not in COMPRESSION:
         raise ValueError(f"compression must be one of {COMPRESSION}")
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
@@ -29,6 +33,19 @@ def export_glb(path, compression="none"):
         export_texcoords=True,
         export_normals=True,
         export_image_format="AUTO",
+        export_skins=True,
+        # Node transforms = the current pose (units: STAND), not the bind pose.
+        export_rest_position_armature=False,
+        export_morph=True,
+        export_morph_normal=False,
+        export_animations=True,
+        export_animation_mode="ACTIONS",
+        export_force_sampling=True,
+        export_optimize_animation_size=True,
+        export_vertex_color="ACTIVE",
+        export_all_vertex_colors=False,
+        export_active_vertex_color_when_no_material=False,
+        export_attributes=True,
         export_meshopt_compression_enable=compression == "meshopt",
         export_draco_mesh_compression_enable=compression == "draco",
     )
