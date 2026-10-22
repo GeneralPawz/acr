@@ -936,6 +936,14 @@ Implemented in `economy.rs`. The sources are `City::Census` (0x42e658), the upke
     draws one `rando` (0x43269e) and, if it has mills, with chance `0x1000/32768`
     (`HandleFields` 0x431ead) lets each of them plant 20 fields at random points of the
     diamond (`CreateFieldsSlow` 0x5153cd).
+  - **Object switches** (network commands 0x61..0x65, executors 0x4e0718, 0x4dc8fa,
+    0x4dca2a, 0x4e07f9, 0x4e08d2): `StopProduction` sets OB+0xf2 bit0 of `CANSTOPBUILD`
+    buildings, and `ProduceObjLink` does nothing while it is set (0x49eec5); `StopFishing`
+    sets the same bit of fishing boats (`Fishing` 0x54e606 starts nothing, `FishingLink`
+    0x54eb1f drops its order); `StopSowing` sets bit3 of mills, which `CreateFields` skips
+    (0x5780d2), and switching it off plants the player's fields at once; `Canister` clears
+    a canister unit's orders and attacks the point 256 px ahead once (`NewAttackPoint`
+    0x90, 1 shot); `LoadCanister` sets its stance to the canister attack index + 1.
   - **Gathering speeds** (City+0xeb2c..+0xeb44): wood, stone and food delivered count
     `load·ResEff/100` (before the nation factors; fishing boats count their food). On the
     city tick, once `GlobalTime` (2 per tick) is more than 1000 past the last update, the
@@ -1229,6 +1237,8 @@ No game option writes it. How the map view draws the fog is in
   half as fast (`tests/world.rs`).
 - **AI placement test** (`tests/aiplace.rs`): the centre is the peasants' mean, a house is
   placed near it, a second keeps its build bar clear of the first, one project at a time.
+- **Switch tests** (`tests/switches.rs`): a stopped barracks keeps its queue and produces
+  after resuming; the canister buttons set the stance and attack 256 px ahead.
 - **Ship tests** (`tests/ships.rs`): a ship accelerates by 6 per tick (overshooting once)
   to `2·step` and arrives; a ferry ordered onto the shore docks with its land point on land,
   a soldier boards it, it sails along the shore, docks again and lets him off on the far

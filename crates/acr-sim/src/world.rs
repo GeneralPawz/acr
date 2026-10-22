@@ -253,6 +253,10 @@ pub struct Unit {
     /// AI guard (OB+0xf2 bit2, `SetAI_Guard`): never searches targets and is not found by
     /// others' searches unless it attacks; a guarded building kills units that try to take it.
     pub guard: bool,
+    /// OB+0xf2 bit0: production stopped (`STOPBUILD`) or fishing stopped (`FISHING`).
+    pub switched_off: bool,
+    /// OB+0xf2 bit3: a mill plants no fields (`ZASEV`).
+    pub no_sowing: bool,
     /// `InPatrol` (OB+0x2a bit0): it has a move of priority below 5 (attack-move, patrol), so
     /// attacks are put in front of the move and the unit resumes it afterwards.
     pub in_patrol: bool,
@@ -723,6 +727,8 @@ impl World {
             no_ff_avoid: false,
             melee_only: false,
             guard: false,
+            switched_off: false,
+            no_sowing: false,
             in_patrol: false,
             port_point: if t.port { crate::ship::port_point(&self.map.water, pos) } else { None },
             speed: 0,
@@ -1012,6 +1018,42 @@ impl World {
                 for i in self.owned(*player, units) {
                     if self.catalog.get(self.units[i].kind).role.arm_attack {
                         self.units[i].melee_only = *on;
+                    }
+                }
+            }
+            Command::StopProduction { player, buildings, stop } => {
+                for i in self.owned(*player, buildings) {
+                    if self.catalog.get(self.units[i].kind).can_stop_build {
+                        self.units[i].switched_off = *stop;
+                    }
+                }
+            }
+            Command::StopFishing { player, units, stop } => {
+                for i in self.owned(*player, units) {
+                    if self.catalog.get(self.units[i].kind).fishing.0 != 0 {
+                        self.units[i].switched_off = *stop;
+                    }
+                }
+            }
+            Command::StopSowing { player, buildings, stop } => {
+                for i in self.owned(*player, buildings) {
+                    if self.catalog.get(self.units[i].kind).role.usage == crate::catalog::usage::MELNICA {
+                        self.units[i].no_sowing = *stop;
+                    }
+                }
+                if !*stop {
+                    crate::economy::create_fields(self, *player);
+                }
+            }
+            Command::Canister { player, units } => {
+                for i in self.owned(*player, units) {
+                    crate::artillery::fire_canister(self, i);
+                }
+            }
+            Command::LoadCanister { player, units } => {
+                for i in self.owned(*player, units) {
+                    if let Some(s) = self.catalog.get(self.units[i].kind).sector_weapon {
+                        self.units[i].stance = s.att.wrapping_add(1);
                     }
                 }
             }

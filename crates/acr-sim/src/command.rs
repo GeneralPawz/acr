@@ -98,6 +98,23 @@ pub enum Command {
     /// The interface's `ARMATTACK` / `ANYATTACK` buttons (network command 0x5f, 0x4d7765):
     /// `ARMATTACK` units fight in melee only (OB+0x2a bit2).
     MeleeOnly { player: PlayerId, units: Vec<EntityId>, on: bool },
+    /// The `STOPBUILD` switch (network command 0x61, 0x4d77b0, executor 0x4e0718):
+    /// buildings whose type has `CANSTOPBUILD` stop (or resume) their production (OB+0xf2
+    /// bit0, tested at the start of `ProduceObjLink` 0x49eec5).
+    StopProduction { player: PlayerId, buildings: Vec<EntityId>, stop: bool },
+    /// The `KARTECH` button (0x62, 0x4d77fb, executor 0x4dc8fa): units with canister
+    /// (`WEAPONINSECTOR`) clear their orders and fire one volley at the point 256 px ahead.
+    Canister { player: PlayerId, units: Vec<EntityId> },
+    /// The `PREKARTECH` button (0x63, 0x4d7836, executor 0x4dca2a): units with canister take
+    /// its stance (`NewState` = canister attack index + 1), loading canister.
+    LoadCanister { player: PlayerId, units: Vec<EntityId> },
+    /// The `FISHING` switch (0x64, 0x4d7871, executor 0x4e07f9): fishing boats stop (or
+    /// resume) fishing (OB+0xf2 bit0, read by `Fishing` 0x54e606 and `FishingLink` 0x54eb1f).
+    StopFishing { player: PlayerId, units: Vec<EntityId>, stop: bool },
+    /// The `ZASEV` switch (0x65, 0x4d78bc, executor 0x4e08d2): mills stop (or resume)
+    /// planting fields (OB+0xf2 bit3, read by `CreateFields` 0x5780d2); resuming plants at
+    /// once (`CreateFields` of the player).
+    StopSowing { player: PlayerId, buildings: Vec<EntityId>, stop: bool },
 }
 
 impl Command {
@@ -129,6 +146,11 @@ impl Command {
             | Command::AttackGround { player, .. }
             | Command::FriendlyFire { player, .. }
             | Command::MeleeOnly { player, .. }
+            | Command::StopProduction { player, .. }
+            | Command::Canister { player, .. }
+            | Command::LoadCanister { player, .. }
+            | Command::StopFishing { player, .. }
+            | Command::StopSowing { player, .. }
             | Command::Board { player, .. }
             | Command::Unload { player, .. } => *player,
         }

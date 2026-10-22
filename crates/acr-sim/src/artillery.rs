@@ -94,6 +94,21 @@ pub fn auto_canister(w: &mut World, i: usize) {
     }
 }
 
+/// The `KARTECH` button's executor (0x4dc8fa): a unit with canister clears its orders and
+/// attacks the point 256 px ahead once (`NewAttackPoint(.., 0x90, 0, 1)`).
+pub fn fire_canister(w: &mut World, i: usize) {
+    let u = &w.units[i];
+    if w.catalog.get(u.kind).sector_weapon.is_none() {
+        return;
+    }
+    let (x, y) = u.pos.pixels();
+    let dir = u.dir;
+    let u = &mut w.units[i];
+    u.orders.clear();
+    u.prio = 0;
+    attack_point(w, i, x + cos(dir), y + sin(dir), 0x90, crate::combat::Placement::Replace, 1);
+}
+
 /// `NewAttackPoint` (0x51b4aa): an attack on the ground at `(x, y)` (px) for `times` shots
 /// (0: until stopped). Refused for objects that cannot act, garrison buildings, a priority
 /// below the unit's or a unit that is producing.

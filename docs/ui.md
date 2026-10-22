@@ -387,8 +387,18 @@ the defaults apply: `Zone1X/Y` = 6/6, `PropertyX/Y` = 182/6, `IconLx/Ly` = 40/40
       without a hint. A click (0x5f5d0a, network commands 0x42 / 0x43) selects all of the
       player's peasants with no order that are not inside a building (0x4e230f), or all
       finished mines with fewer workers inside than they take (0x4e279e).
-    Not built: grouping formations (`CM_DOGRP`/`CM_UNGRP`, 0x43dfdb/0x43e0b7) and the first
-    object's own switches (`MAKEZASEV` fields, `FISHING`, `KARTECH`, `STOPBUILD`).
+    - The first selected object's switches (collector 0x606889, icons 0x607add..0x607d3b) at
+      their `NRES.DAT [CONST]` slots (`STOPBUILD off on x y`, `KARTECH icon x y`; `ZASEV`
+      has no line and uses the engine's default, frame 152 at slot 1): `STOPBUILD` for a
+      `CANSTOPBUILD` type with fewer than 12 rows (network command 0x61, ACR's
+      `StopProduction`: production waits); with one selected type `KARTECH` / `PREKARTECH`
+      when a unit has canister (0x62 `Canister`: fire one volley 256 px ahead now; 0x63
+      `LoadCanister`: take the canister stance), `FISHING` for fishing boats (0x64,
+      `StopFishing`) and `ZASEV` for a finished mill (0x65, `StopSowing`: no automatic
+      fields; switching it back on plants at once). Each two-state icon shows the frame and
+      hint of the current state (`STOPBUILD_OFF`/`_ON`, `FISHING_ON_TXT`/`_OFF_TXT`,
+      `MAKEZASEV`/`DONTMAKEZASEV`) and switches to the other.
+    Not built: grouping formations (`CM_DOGRP`/`CM_UNGRP`, 0x43dfdb/0x43e0b7).
 - Hotkeys: `Data\Keyboard.dat` (in `Patch02.GS1`) maps `[CTRL|ALT|SHIFT] KEY : ICON`.
   The key presses the shown icon of that name.
 

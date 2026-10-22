@@ -512,6 +512,7 @@ impl InGame {
         }
         self.state_icons(ctx, &data, outline, &mut view.icons);
         self.idle_icons(&data, outline, &mut view.icons);
+        self.switch_icons(ctx, &data, outline, &mut view.icons);
         // The type icons take the first slots the commands leave free (`AddIcon` without a
         // position, 0x495631).
         let mut free = (0..36).filter(|s| !view.icons.iter().any(|i| i.slot == *s)).collect::<Vec<_>>().into_iter();
@@ -548,9 +549,8 @@ impl InGame {
     /// - `SHOTMYUNITS` / `KEEPMYUNITS` for `FRIENDLYFIRE` types, `ARMATTACK` / `ANYATTACK`
     ///   for `ARMATTACK` types, each highlighted while some unit has that setting.
     ///
-    /// The idle icons follow in [`Self::idle_icons`]. Grouping formations (`CM_DOGRP` /
-    /// `CM_UNGRP`) and the first object's own switches
-    /// (fields, fishing, canister, stop building) are not built.
+    /// The idle icons follow in [`Self::idle_icons`], the first object's switches in
+    /// [`Self::switch_icons`]. Grouping formations (`CM_DOGRP` / `CM_UNGRP`) is not built.
     fn state_icons(&self, ctx: &Ctx, data: &HudData, outline: u8, icons: &mut Vec<Icon>) {
         let Some(world) = &self.world else { return };
         let objects = self.objects.objects();
@@ -661,6 +661,77 @@ impl InGame {
                     action: Some(HudCommand::SelectIdle(mines)),
                     ..Icon::default()
                 });
+            }
+        }
+    }
+
+    /// The first selected object's switches (collector 0x606889, icons 0x607add..0x607d3b), at
+    /// their `[CONST]` slots:
+    /// - `STOPBUILD` for a `CANSTOPBUILD` type with fewer than 12 rows: stopped, the first
+    ///   frame with `STOPBUILD_OFF` resumes; running, the second with `STOPBUILD_ON` stops;
+    /// - with one selected type: `KARTECH` (`KARTECH_TXT`) and `PREKARTECH`
+    ///   (`PREKARTECH_TXT`) when a selected unit has canister; `FISHING` for a fishing boat
+    ///   (fishing: the second frame, `FISHING_OFF_TXT`, stops; else the first,
+    ///   `FISHING_ON_TXT`, resumes); `ZASEV` for a finished mill (sowing: `DONTMAKEZASEV`
+    ///   stops; else highlighted, `MAKEZASEV` resumes).
+    fn switch_icons(&self, ctx: &Ctx, data: &HudData, outline: u8, icons: &mut Vec<Icon>) {
+        let Some(world) = &self.world else { return };
+        let own = self.own();
+        let objects: Vec<&Unit> = self.selected_units().filter(|u| u.owner == own).collect();
+        let Some(first) = objects.first() else { return };
+        let mut kinds: Vec<TypeId> = objects.iter().map(|u| u.kind).collect();
+        kinds.sort_unstable_by_key(|k| k.0);
+        kinds.dedup();
+        let mut brigades: Vec<u16> = objects.iter().filter_map(|u| u.brigade).collect();
+        brigades.sort_unstable();
+        brigades.dedup();
+        let mut free: Vec<TypeId> = objects.iter().filter(|u| u.brigade.is_none()).map(|u| u.kind).collect();
+        free.sort_unstable_by_key(|k| k.0);
+        free.dedup();
+        let rows = brigades.len() + free.len();
+        let single = kinds.len() == 1;
+        let t = world.catalog.get(first.kind);
+        let mut push = |key: &str, frame: usize, hint: &str, selected: bool, action: HudCommand| {
+            let Some(s) = data.switches.get(key) else { return };
+            if let Some(&frame) = s.frames.get(frame) {
+                icons.push(Icon {
+                    frame,
+                    slot: s.slot,
+                    outline: Some(outline),
+                    selected,
+                    hint: ctx.texts.get(hint).to_vec(),
+                    action: Some(action),
+                    ..Icon::default()
+                });
+            }
+        };
+        if t.can_stop_build && rows < 12 {
+            if first.switched_off {
+                push("STOPBUILD", 0, "STOPBUILD_OFF", false, HudCommand::StopProduction(false));
+            } else {
+                push("STOPBUILD", 1, "STOPBUILD_ON", false, HudCommand::StopProduction(true));
+            }
+        }
+        if !single {
+            return;
+        }
+        if objects.iter().any(|u| world.catalog.get(u.kind).sector_weapon.is_some()) {
+            push("KARTECH", 0, "KARTECH_TXT", false, HudCommand::Canister);
+            push("PREKARTECH", 0, "PREKARTECH_TXT", false, HudCommand::LoadCanister);
+        }
+        if t.fishing.0 != 0 {
+            if first.switched_off {
+                push("FISHING", 0, "FISHING_ON_TXT", false, HudCommand::StopFishing(false));
+            } else {
+                push("FISHING", 1, "FISHING_OFF_TXT", false, HudCommand::StopFishing(true));
+            }
+        }
+        let ready = !first.building || first.stage >= world.max_stage(first);
+        if ready && t.role.usage == acr_sim::catalog::usage::MELNICA {
+            if first.no_sowing {
+                push("ZASEV", 0, "MAKEZASEV", true, HudCommand::StopSowing(false));
+            } else {
+                push("ZASEV", 0, "DONTMAKEZASEV", false, HudCommand::StopSowing(true));
             }
         }
     }
@@ -1133,6 +1204,26 @@ impl InGame {
             HudCommand::MeleeOnly(on) => {
                 let units = self.own_selected_units();
                 self.commands.push(Command::MeleeOnly { player, units, on });
+            }
+            HudCommand::StopProduction(stop) => {
+                let buildings = self.own_selected_units();
+                self.commands.push(Command::StopProduction { player, buildings, stop });
+            }
+            HudCommand::Canister => {
+                let units = self.own_selected_units();
+                self.commands.push(Command::Canister { player, units });
+            }
+            HudCommand::LoadCanister => {
+                let units = self.own_selected_units();
+                self.commands.push(Command::LoadCanister { player, units });
+            }
+            HudCommand::StopFishing(stop) => {
+                let units = self.own_selected_units();
+                self.commands.push(Command::StopFishing { player, units, stop });
+            }
+            HudCommand::StopSowing(stop) => {
+                let buildings = self.own_selected_units();
+                self.commands.push(Command::StopSowing { player, buildings, stop });
             }
         }
     }
