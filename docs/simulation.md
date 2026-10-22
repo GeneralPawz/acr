@@ -432,6 +432,52 @@ Implemented in `combat.rs`, recovered from `SearchVictim` (0x52622b), `AttackObj
   16 ticks, `#TRANS3X`, and the next shot.
 - The bayonet strikes every 26 ticks; a pikeman every 10 ticks.
 
+## Fog of war
+
+Recovered from `RevealUnit` (0x484f7b), the blur (0x483c2a) and its consumers. The fog is
+**not part of the simulation**:
+
+- There is one grid, for the local player only.
+- No unit, combat, AI or pathing code reads it.
+- It is not saved in savegames.
+- It only darkens the screen and the minimap, mutes sounds and answers the script function
+  `GetFogSpotVisibility`.
+
+`acr_sim::fog::Fog` therefore lives beside the `World`, owned by the host, and is not
+hashed.
+
+**Grid.**
+- `u16` per 128 px cell. The width is `0x86 << (shift − 1)`.
+- Cell address: `((x + 64) >> 7) + 3`, clamped to `[1, (msx >> 2) + 3]`, where `msx` is the
+  playable side in 32 px units.
+- 0 is black. There is no "explored" state: areas fade back to black when no unit lights
+  them.
+
+**Reveal**, every tick: every living object of the viewer stamps 8000 into the cells of its
+`VISION` pattern.
+- The stamp position is `(x, y − 2·height)`: hills shift the spot north, with no range bonus.
+- VISION 0 stamps the centre; 1 the four axis neighbours; 2 the four diagonals.
+- From 3 up it stamps the axes at `±128·(v−1)` and the diagonals at `±128·(v−2)`.
+- VISION 7 and 8 keep the original's misplaced diagonal point (`y+4`, `y+3`).
+- Units without `VISION` use 0.
+- Outside missions the original also stamps allies' units. ACR has no alliances yet.
+
+**Blur**, every rendered frame: each cell becomes `(s >> 2) − (s >> 10)`, where `s` is the
+sum of its four neighbours (centre excluded). This spreads the stamps and decays them by
+1/256. Script light spots (`SetLightSpot`, 64 slots) are stamped first.
+
+**Use:**
+- Overlay shade `v ≥ 1500 → 5` (clear), `1500 − v ≤ 300 → 5 + (1500 − v)·153/300`, else 158
+  (black) (`Fog::shade`).
+- The minimap is black where `v ≤ 1300`.
+- `GetFogSpotVisibility` returns `v ≥ 900` (`Fog::visible`).
+- Enemy units are drawn normally; only the overlay hides them.
+
+**Switches in the original:**
+- the `F` hotkey and the cheats `qwe`/`viewall`;
+- a skirmish "no fog" option (tens digit of the packed options);
+- in multiplayer, a defeated player sees the whole map.
+
 ## Using the simulation
 
 - **Setup.** `acr_sim::assets::SimAssets` collects the static data without I/O: the host
@@ -523,6 +569,8 @@ Implemented in `combat.rs`, recovered from `SearchVictim` (0x52622b), `AttackObj
   - a musketeer fires its first shot 38–45 ticks after the order, reloads 550 frames and
     kills at 300 px;
   - a 20-unit battle gives identical hashes in two runs.
+- **Fog test** (`tests/fog.rs`): a VISION 3 unit lights its cell and 200 px around but not
+  1000 px away, and the light fades once the unit is gone.
 - **Replay tests:** every command round-trips through the binary format; damaged data is
   rejected; a recorded 200-tick match with commands at three ticks replays to the recorded
   hash.
