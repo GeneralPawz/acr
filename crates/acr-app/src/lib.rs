@@ -48,12 +48,19 @@ pub struct Gpu {
 
 impl Gpu {
     pub async fn new(window: Arc<Window>) -> Result<Self, String> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
-        let surface = instance.create_surface(window.clone()).map_err(|e| e.to_string())?;
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions { compatible_surface: Some(&surface), ..Default::default() })
-            .await
-            .map_err(|e| e.to_string())?;
+        // On the desktop only the primary backends (DX12, Vulkan, Metal) are tried first:
+        // probing OpenGL on Windows creates a hidden legacy GL context, which other programs
+        // see as the desktop composition switching off (PowerToys crashed on it). OpenGL stays
+        // the fallback when no primary adapter exists; `WGPU_BACKEND` still overrides both.
+        let (_instance, surface, adapter) = match Self::adapter(window.clone(), cfg!(not(target_arch = "wasm32"))).await
+        {
+            Ok(found) => found,
+            Err(e) if cfg!(not(target_arch = "wasm32")) => {
+                log::warn!("no DX12/Vulkan/Metal adapter ({e}), trying all backends");
+                Self::adapter(window.clone(), false).await?
+            }
+            Err(e) => return Err(e),
+        };
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("acr"),
@@ -68,6 +75,25 @@ impl Gpu {
             .ok_or("surface not supported by adapter")?;
         surface.configure(&device, &config);
         Ok(Self { surface, device, queue, config })
+    }
+
+    /// An instance, the window's surface and an adapter for it; `primary` limits the search
+    /// to the primary backends unless `WGPU_BACKEND` names others.
+    async fn adapter(
+        window: Arc<Window>,
+        primary: bool,
+    ) -> Result<(wgpu::Instance, wgpu::Surface<'static>, wgpu::Adapter), String> {
+        let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
+        if primary && std::env::var_os("WGPU_BACKEND").is_none() {
+            descriptor.backends = wgpu::Backends::PRIMARY;
+        }
+        let instance = wgpu::Instance::new(descriptor);
+        let surface = instance.create_surface(window).map_err(|e| e.to_string())?;
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions { compatible_surface: Some(&surface), ..Default::default() })
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok((instance, surface, adapter))
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
