@@ -2,7 +2,8 @@
 red saddlecloth, and a rider on skeleton H (bones `rider.*`, its root on the horse's
 `socket.saddle`) in a red coat, buff breeches, high boots and a tall cap, sabre at the hip.
 One armature, so every clip moves horse and rider together; the horse has its own bone
-layer and decay masks (#178), the rider all layers of the musketeer (#183).
+layer and decay masks (#178), the rider all layers of the musketeer (#183). The horse is a
+bay with black points, bridle and saddle on one baked 1024 px atlas (`horse.dress`, #215).
 
 Clips (keyed on ENGD18.MD's frame counts): STAND, REST (86 frames, the horse lowers its
 head and swishes its tail), MOTION_L/R (the two halves of a 14-frame trot), MOTION_LB/RB
@@ -18,7 +19,7 @@ from mathutils import Matrix, Vector
 from acr_assets import armature as am
 from acr_assets import body as bd
 from acr_assets import decay, gear, horse, rig
-from acr_assets.humans import Character, prepare_export
+from acr_assets.humans import LAYER_OF, Character, prepare_export
 
 TYPE = "EngD18"
 CHECKS = ["--anim STAND", "--anim DEATHLIE1"]
@@ -45,7 +46,7 @@ PALETTE = {
     "waistcoat": (0.85, 0.80, 0.62), "breeches": (0.85, 0.80, 0.62), "boots_high": (0.08, 0.07, 0.06),
     "belts": (0.85, 0.80, 0.62), "cap": (0.70, 0.08, 0.05), "metal": (0.70, 0.70, 0.72), "wood": (0.42, 0.24, 0.12),
     "horse": (0.33, 0.21, 0.11), "mane": (0.10, 0.07, 0.05), "saddlecloth": (0.72, 0.10, 0.06),
-    "saddle": (0.25, 0.15, 0.08), "hat": (0.70, 0.08, 0.05),
+    "saddle": (0.25, 0.15, 0.08), "tack": (0.27, 0.15, 0.07), "hat": (0.70, 0.08, 0.05),
 }
 
 # The rider's skeleton stands 0.72 m higher and 0.10 m back: seated, the hips are over the
@@ -190,8 +191,10 @@ def make(root, name):
     cloth = horse.saddlecloth(hull, f"{name}.saddlecloth")
     sad = horse.saddle(f"{name}.saddle")
     gear.rigid(sad, ch.arm, "spine_02", Matrix.Translation((0, 0, seat())), part=horse.HORSE_PART)
-    hbones = horse.bones(ch.arm, f"{name}.horse_bones")
-    ch.horse = {"hull": hull, "mane": mane, "cloth": cloth, "saddle": sad, "bones": hbones}
+    hbones = horse.bones(ch.arm, f"{name}.horse_bones", secs)
+    brd = horse.bridle(ch.arm, f"{name}.bridle", secs)
+    ch.horse = {"hull": hull, "mane": mane, "cloth": cloth, "saddle": sad, "bridle": brd, "bones": hbones}
+    ch.horse_sections = secs
 
     # Held gear: cap and sabre (drop at death), placed in the seated pose.
     am.pose(ch.arm, SEAT, prefix=P)
@@ -223,18 +226,21 @@ def build(ctx):
     ch = make(ctx.root, ctx.name)
     H = ch.horse
     ch.morphs()
-    for o in (H["hull"], H["mane"], H["cloth"], H["saddle"]):
+    for o in (H["hull"], H["mane"], H["cloth"], H["saddle"], H["bridle"]):
         bd.toward_bones(o, ch.arm, "deflate", 0.6 if o is not H["saddle"] else 0.4, horse.DEFORM)
     ch.add("flesh", H["hull"], "horse", symmetric=True)
     ch.add("flesh", H["mane"], "mane", symmetric=True)
     ch.add("clothes", H["cloth"], "saddlecloth", symmetric=True)
     ch.add("gear", H["saddle"], "saddle", symmetric=True)
+    ch.add("gear", H["bridle"], "tack", symmetric=True)
     ch.add("bones", H["bones"], "bone")
     ch.masks()
     add_clips(ch.arm)
     am.set_clip(ch.arm, "STAND")
     report = {}
     colours = ch.colours(ctx.ref, PALETTE, report=report)
+    # The horse gets a realistic baked coat and tack (#215) instead of sprite colours.
+    horse.dress(ch, ch.horse_sections, PALETTE["saddlecloth"], LAYER_OF)
     ch.arm.animation_data.action = None
     pose_for(ch, "STAND")
     tris = ch.triangles()

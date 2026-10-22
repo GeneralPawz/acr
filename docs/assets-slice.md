@@ -26,7 +26,7 @@ are solid, render unlit.
 | | `#DEATHLIE1` | 0.442 | 0.587 | 60.9 | | |
 | `engkri` | `#STAND` | 0.635 | 0.710 | 37.8 | 4 740 | 0.99 MB |
 | | `#DEATHLIE1` | 0.441 | 0.572 | 57.5 | | |
-| `engd18` | `#STAND` | **0.758** | 0.782 | 40.0 | 7 197 | 1.82 MB |
+| `engd18` | `#STAND` | **0.757** | 0.782 | 41.4 | 7 343 | 2.67 MB |
 | | `#DEATHLIE1` | 0.502 | 0.514 | 37.1 | | |
 | `engkre` | `#STANDLO` + section 0 state 0 (wood) | **0.910** | 0.910 | 3.8 | 30 108 | 5.98 MB |
 | | state 1 (stone house in scaffolding) | 0.899 | 0.900 | 2.3 | | |
@@ -70,6 +70,20 @@ All under `target/assets/` (git-ignored; rebuilt by the commands above):
   belts, black gaiters); close up they are clean, toy-like figures without the sprite's
   pixel mosaic. Sprite textures were tried first: at 60 px per figure they turn into
   wrong-coloured speckles in the free view.
+- **Animals: realistic baked coats, not sprite colours** (#215; the sprite check only
+  guards size and placement). `acr_assets.coat` gives the horse's parts (hide, mane and
+  tail, saddle, bridle, saddlecloth) rectangles of one 1024² atlas through a Smart-UV map
+  `atlas`, bakes world position, normal and ambient occlusion of every texel in the rest
+  pose with Cycles (~20 s), and paints the texels in numpy: a bay coat with a darker top
+  line, lighter belly and inner thighs, hair-direction streaks (noise stretched along the
+  hair), mottling and faint dapples, black points (lower legs, ears, nose), mealy muzzle,
+  hooves with growth lines, eyes; leather with grain and wear, brass bit rings, wool with a
+  lace border in the nation colour. The occlusion is multiplied in, so the form reads under
+  the renderer's Lambert light. The atlas PNG is ~0.8 MB of the 2.67 MB `.glb`; materials
+  sample it linearly. Hide and mane decay on their own layer `hide` (#212): they darken
+  and brown (tint (0.16, 0.11, 0.07)) instead of bleaching like the human `flesh` tint, and
+  dissolve a little later (0.30–0.72); the horse's trunk and neck bones follow the fitted
+  hull, so no vertebra pokes out of the lowered neck any more (the white "fin" on corpses).
 - **Buildings: the sprite is the texture.** The fort's sprites are 900 px wide (3 cm per
   pixel), so projecting each state's sprite onto simple kit geometry (palisade stakes, log
   boxes, gable/hip/lean-to roofs) reproduces the original exactly at the original camera

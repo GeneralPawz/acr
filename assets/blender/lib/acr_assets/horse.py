@@ -15,7 +15,7 @@ from mathutils import Matrix, Vector
 
 from . import armature as am
 from . import body as bd
-from . import rig
+from . import coat, decay, rig
 
 HORSE_PART = 48  # `_part` of every horse vertex (the rider's cuts are 0..41)
 
@@ -78,6 +78,8 @@ def hull(arm_obj, name, scale=1.0, n=10, sections=None):
                 for k in range(7):
                     bm.faces.new((a[k], a[(k + 1) % 7], b[(k + 1) % 7], b[k]))
             bm.faces.new(rings[-1])
+    for tip, base in ears(sections):
+        _ear(bm, base, tip)
     me = bpy.data.meshes.new(name)
     bm.to_mesh(me)
     bm.free()
@@ -99,16 +101,158 @@ def hull(arm_obj, name, scale=1.0, n=10, sections=None):
     return am.bind(obj, arm_obj)
 
 
+POLL = 10  # section index of the poll (top of the head behind the ears)
+
+
+def _frame(sections, i, t=0.0):
+    """Centre, half width, half height and the ring's up vector of the head/body section
+    i (+ t towards i + 1)."""
+    a, b = sections[i], sections[min(i + 1, len(sections) - 1)]
+    y, z, hw, hh = (a[k] + (b[k] - a[k]) * t for k in range(4))
+    cs = [Vector((0, s[0], s[1])) for s in sections]
+    d = (cs[min(i + 1, len(cs) - 1)] - cs[max(i - 1, 0)]).normalized()
+    up = d.cross(Vector((1, 0, 0))).normalized()
+    if up.z < 0:
+        up = -up
+    return Vector((0, y, z)), hw, hh, up
+
+
+def surface(sections, i, t, angle_deg, side=1):
+    """A point on the section ellipse: angle 0 = side, 90 = top."""
+    c, hw, hh, up = _frame(sections, i, t)
+    a = math.radians(angle_deg)
+    return c + Vector((side * math.cos(a) * hw, 0, 0)) + up * math.sin(a) * hh
+
+
+def ears(sections):
+    """(tip, base) of both ears: on the poll, pricked up and a little forward."""
+    out = []
+    for side in (1, -1):
+        base = surface(sections, POLL, 0.15, 62, side)
+        out.append((base + Vector((0.035 * side, -0.05, 0.15)), base))
+    return out
+
+
+def _ear(bm, base, tip, r=0.034, n=5):
+    d = (tip - base).normalized()
+    e1 = d.cross(Vector((0, 1, 0))).normalized()
+    e2 = d.cross(e1).normalized()
+    ring = [bm.verts.new(base + (e1 * math.cos(2 * math.pi * k / n) * 0.8 + e2 * math.sin(2 * math.pi * k / n)) * r)
+            for k in range(n)]
+    mid = [bm.verts.new(base + (tip - base) * 0.55 + (v.co - base) * 0.75) for v in ring]
+    t = bm.verts.new(tip)
+    for k in range(n):
+        j = (k + 1) % n
+        bm.faces.new((ring[k], ring[j], mid[j], mid[k]))
+        bm.faces.new((mid[k], mid[j], t))
+    bm.faces.new(list(reversed(ring)))
+
+
+def landmarks(sections):
+    """Rest-space points the coat painter needs (coat.paint_hide)."""
+    eyes = [tuple(surface(sections, POLL, 0.55, 38, side)) for side in (1, -1)]
+    tip = sections[-1]
+    bits = [tuple(surface(sections, len(sections) - 2, 0.5, -25, side)) for side in (1, -1)]
+    return {"knee": 0.50, "hoof": 0.075, "eyes": eyes, "ears": [tuple(t) for t, _b in ears(sections)],
+            "muzzle": tip[0] - 0.03, "brass": [(x, y, z, 0.03) for x, y, z in bits]}
+
+
+def bridle(arm_obj, name, sections, width=0.024, push=0.012):
+    """Headstall: crown piece behind the ears, noseband, cheek pieces; bit rings at the
+    mouth corners. Skinned like the hull, so it follows the head."""
+    bm = bmesh.new()
+
+    def band(i, t, n=12):
+        c, hw, hh, up = _frame(sections, i, t)
+        fwd = up.cross(Vector((1, 0, 0))).normalized() * (width / 2)
+        rings = []
+        for off in (-fwd, fwd):
+            rings.append([bm.verts.new(c + off + Vector((math.cos(2 * math.pi * k / n) * (hw + push), 0, 0))
+                                       + up * math.sin(2 * math.pi * k / n) * (hh + push)) for k in range(n)])
+        for k in range(n):
+            j = (k + 1) % n
+            bm.faces.new((rings[0][k], rings[0][j], rings[1][j], rings[1][k]))
+
+    def strap(a, b, out):
+        d = (b - a).normalized()
+        w = d.cross(out).normalized() * (width / 2)
+        vs = [bm.verts.new(p) for p in (a - w + out * push, b - w + out * push, b + w + out * push, a + w + out * push)]
+        bm.faces.new(vs)
+
+    n = len(sections)
+    band(POLL, 0.35)
+    band(n - 3, 0.6)
+    for side in (1, -1):
+        a = surface(sections, POLL, 0.35, 0, side)
+        b = surface(sections, n - 3, 0.6, 0, side)
+        strap(a, b, Vector((side, 0, 0)))
+        bit = surface(sections, n - 2, 0.5, -25, side)
+        bmesh.ops.create_icosphere(bm, subdivisions=1, radius=0.022,
+                                   matrix=Matrix.Translation(bit + Vector((side * 0.008, 0, 0))))
+    me = bpy.data.meshes.new(name)
+    bm.to_mesh(me)
+    bm.free()
+    obj = bd.link(bpy.data.objects.new(name, me))
+    bd.skin_weights(obj, arm_obj, DEFORM, falloff=3.0)
+    part = me.attributes.new("part", "INT", "POINT")
+    for d in part.data:
+        d.value = HORSE_PART
+    return am.bind(obj, arm_obj)
+
+
+# Atlas rectangles of the horse's parts (coat.REGIONS names the painter of each).
+PARTS = {"hull": "hide", "mane": "hair", "saddle": "tack", "bridle": "bridle", "cloth": "cloth"}
+
+
+def dress(ch, sections, cloth_rgb, key_layer, coat_rgb=None):
+    """Realistic materials for the horse of `ch` (`ch.horse` objects): one baked atlas
+    (coat.atlas) for hide, mane and tail, saddle, bridle and saddlecloth; replaces their
+    colours from `Character.colours`. `key_layer` maps a material key to its decay layer."""
+    H = ch.horse
+    parts = {}
+    for part, region in PARTS.items():
+        if part in H:
+            coat.atlas_uv(H[part], coat.REGIONS[region])
+            parts.setdefault(region, []).append(H[part])
+    L = landmarks(sections)
+    zs = [v.co.z for v in H["cloth"].data.vertices]
+    ys = [v.co.y for v in H["cloth"].data.vertices]
+    L["cloth_edges"] = (min(zs), min(ys), max(ys))
+    img = coat.atlas(f"{ch.name}.horse_atlas", parts, L, cloth_rgb)
+    rep = {"hide": coat.BAY["body"], "hair": coat.BAY["mane"], "tack": (0.27, 0.15, 0.07),
+           "bridle": (0.27, 0.15, 0.07), "cloth": cloth_rgb}
+    for region, objs in parts.items():
+        for o in objs:
+            key = ch.keys[o.name]
+            m = decay.material(f"{ch.name}.{key}.coat", key_layer[key], rep[region], image=img, uv_map="atlas",
+                               interpolation="Linear")
+            m["acr_colour_from"] = "coat"
+            o.data.materials.clear()
+            o.data.materials.append(m)
+    return img
+
+
 def mane_tail(arm_obj, name, sections=None):
     """Mane along the neck and a tail: thin fins/tubes."""
     sections = sections or SECTIONS
     bm = bmesh.new()
-    neck = [Vector((0, y, z + h * 0.9)) for y, z, _w, h in sections[6:11]]
-    for a, b in zip(neck, neck[1:]):
-        vs = [bm.verts.new(p) for p in (a, b, b + Vector((0, 0.05, 0.10)), a + Vector((0, 0.05, 0.10)))]
-        bm.faces.new(vs)
+    # Mane: a crest along the top of the neck and a curtain falling to the off (right) side.
+    rows = []
+    for y, z, w, h in sections[6:11]:
+        top = Vector((0, y, z + h * 0.92))
+        rows.append((top + Vector((0.01, 0.02, 0.0)), top + Vector((0, 0.03, 0.07)),
+                     Vector((-w * 0.75, y + 0.03, z + h * 0.62)), Vector((-w * 1.02, y + 0.05, z + h * 0.05))))
+    for a, b in zip(rows, rows[1:]):
+        for k in range(3):
+            bm.faces.new([bm.verts.new(p) for p in (a[k], b[k], b[k + 1], a[k + 1])] if k else
+                         [bm.verts.new(p) for p in (a[1], b[1], b[0], a[0])])
+    # Forelock between the ears.
+    c, _hw, hh, up = _frame(sections, POLL, 0.25)
+    f0 = c + up * hh * 0.95
+    bm.faces.new([bm.verts.new(p) for p in (f0 + Vector((-0.04, 0, 0)), f0 + Vector((0.04, 0, 0)),
+                                             f0 + Vector((0.03, -0.10, -0.08)), f0 + Vector((-0.03, -0.10, -0.08)))])
     tail = [Vector(p) for p in ((0, 0.86, 1.30), (0, 0.94, 1.10), (0, 0.98, 0.85), (0, 1.0, 0.62))]
-    rs = [0.05, 0.07, 0.08, 0.06]
+    rs = [0.05, 0.08, 0.10, 0.08]
     rings = []
     for i, (c, r) in enumerate(zip(tail, rs)):
         d = (tail[min(i + 1, 3)] - tail[max(i - 1, 0)]).normalized()
@@ -130,8 +274,9 @@ def mane_tail(arm_obj, name, sections=None):
     return am.bind(obj, arm_obj)
 
 
-def bones(arm_obj, name):
-    """Horse skeleton for decay: skull, vertebrae, ribs, pelvis, leg bones."""
+def bones(arm_obj, name, sections=None):
+    """Horse skeleton for decay: skull, vertebrae, ribs, pelvis, leg bones; `sections` = the
+    fitted hull's sections (the trunk follows them)."""
     B = bd.BoneMesh(arm_obj)
     seg = B.seg
     h, t = seg["head"]
@@ -158,7 +303,28 @@ def bones(arm_obj, name):
         for sfx in ("_l", "_r"):
             for n, *_r in chain:
                 B.long_bone(f"{leg}_{n}{sfx}", 0.02, 0.03, shrink=0.05, segments=4)
+    if sections is not None:
+        # The trunk, neck and head bones follow a fitted hull: same height within the
+        # section as in the unfitted one, so no vertebra pokes out of a lowered neck (#212).
+        for v in B.bm.verts:
+            if B.names[v[B.lay]].startswith(("front_", "back_")):
+                continue
+            yo, zo, _wo, ho = _section_at(SECTIONS, v.co.y)
+            _yf, zf, _wf, hf = _section_at(sections, v.co.y)
+            v.co.z = zf + (v.co.z - zo) * hf / ho
     return B.finish(name, lambda b: HORSE_PART)
+
+
+def _section_at(sections, y):
+    """Section (y, z, half width, half height) interpolated at y (clamped at the ends)."""
+    ys = [s[0] for s in sections]
+    if y >= ys[0]:
+        return sections[0]
+    for a, b in zip(sections, sections[1:]):
+        if b[0] <= y <= a[0]:
+            t = (a[0] - y) / (a[0] - b[0])
+            return tuple(a[k] + (b[k] - a[k]) * t for k in range(4))
+    return sections[-1]
 
 
 def saddlecloth(horse_hull, name, offset=0.025):
