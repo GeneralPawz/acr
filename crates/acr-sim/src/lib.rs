@@ -19,6 +19,7 @@ pub mod clock;
 pub mod combat;
 pub mod command;
 pub mod fixed;
+pub mod fog;
 pub mod formation;
 pub mod hash;
 pub mod map;

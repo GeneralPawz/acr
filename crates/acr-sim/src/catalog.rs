@@ -198,6 +198,8 @@ pub struct ObjectType {
     pub trans_x: u16,
     /// All animations by upper-case name (`#ATTACK1`, `#DEATH`, ...).
     pub anims: BTreeMap<String, AnimInfo>,
+    /// `VISION` (0..=8, default 0): the fog reveal pattern.
+    pub vision: u8,
 }
 
 impl ObjectType {
@@ -260,6 +262,7 @@ impl ObjectType {
                 .filter(|i| (0..16).contains(i))
                 .fold(0, |m, i| m | 1 << i),
             anims: anims(def),
+            vision: int("VISION", 0).clamp(0, 255) as u8,
         }
     }
 
