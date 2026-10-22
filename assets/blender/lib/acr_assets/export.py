@@ -14,7 +14,7 @@ import bpy
 COMPRESSION = ("none", "meshopt", "draco")
 
 
-def export_glb(path, compression="none"):
+def export_glb(path, compression="none", image_format="AUTO"):
     """Exports the scene. Skins, morph targets (shape keys), one animation per action
     (`STAND`, `DEATH`, ...) and custom attributes whose names start with `_` (`_decay` ->
     `_DECAY`, `_gore` -> `_GORE`, `_part` -> `_PART`, `_wind` -> `_WIND`) go out when the
@@ -32,7 +32,8 @@ def export_glb(path, compression="none"):
         export_lights=False,
         export_texcoords=True,
         export_normals=True,
-        export_image_format="AUTO",
+        export_image_format=image_format,
+        export_image_quality=88,
         export_skins=True,
         # Node transforms = the current pose (units: STAND), not the bind pose.
         export_rest_position_armature=False,
