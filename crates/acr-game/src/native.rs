@@ -104,11 +104,14 @@ fn find_game_dir() -> Result<Option<PathBuf>, String> {
     }
 }
 
+/// Logs to `%LOCALAPPDATA%\ACR\acr.log`, or to the file `ACR_LOG` names (for runs side by
+/// side).
 fn init_logging() {
     let mut builder = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"));
-    if let Some(dir) = data_dir()
-        && std::fs::create_dir_all(&dir).is_ok()
-        && let Ok(file) = std::fs::File::create(dir.join("acr.log"))
+    let path = std::env::var_os("ACR_LOG").map(PathBuf::from).or_else(|| data_dir().map(|d| d.join("acr.log")));
+    if let Some(path) = path
+        && path.parent().is_none_or(|d| std::fs::create_dir_all(d).is_ok())
+        && let Ok(file) = std::fs::File::create(&path)
     {
         builder.target(env_logger::Target::Pipe(Box::new(file)));
     }

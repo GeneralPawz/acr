@@ -75,6 +75,8 @@ pub struct InGame {
     /// `ACR_DIP_PAGE` has been looked at.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     dip_page_shown: bool,
+    /// Game frames run since the ambient sounds last looked (`take_ambient_ticks`).
+    ambient_ticks: u32,
 }
 
 impl InGame {
@@ -119,6 +121,7 @@ impl InGame {
             save: Default::default(),
             diplomacy: crate::diplomacy::DipPanel::default(),
             dip_page_shown: false,
+            ambient_ticks: 0,
         }
     }
 
@@ -329,6 +332,24 @@ impl InGame {
         self.mission.window()
     }
 
+    /// Game frames run since the last call, for the ambient sounds.
+    pub fn take_ambient_ticks(&mut self) -> u32 {
+        std::mem::take(&mut self.ambient_ticks)
+    }
+
+    /// What the ambient sounds need: the view in original pixels and the map's water.
+    pub fn ambient_view(&self, ticks: u32, window: [f32; 2]) -> Option<crate::unit_sounds::AmbientView<'_>> {
+        let (map, terrain) = (self.map.as_ref()?, self.terrain.as_ref()?);
+        let s = self.camera.scale;
+        let side = terrain.width as i32 - 1;
+        Some(crate::unit_sounds::AmbientView {
+            ticks,
+            view: [self.camera.x, self.camera.y, window[0] / s, window[1] / s],
+            map: [side, side],
+            depth: map.water.as_ref().map(|w| &w.depth),
+        })
+    }
+
     /// The mission objectives (F1), if the mission has any.
     pub fn objectives_window(&self) -> Option<Box<dyn crate::ui::Screen>> {
         self.mission.objectives()
@@ -439,6 +460,7 @@ impl InGame {
             if ticks > 0 {
                 self.animation_sounds(window);
             }
+            self.ambient_ticks += ticks;
         }
         self.scroll_view(seconds, window);
         self.want_new_types();

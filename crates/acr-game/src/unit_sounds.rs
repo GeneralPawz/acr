@@ -4,6 +4,12 @@
 //! variant and takes the first one whose buffer is not playing, so a busy group does not
 //! stack copies of the same sample; if every variant plays, nothing is started. Sounds in
 //! the world go through 0x5868d3, see [`placed`].
+//!
+//! Ambient sounds (0x4ecef0, once per game frame from 0x4a7198): up to ten random cells of
+//! the view are tried for deep water (`SEA2` depth > 0x80); the first one found plays a
+//! random `SEA` group of `NRES.DAT [SOUNDS]` there with chance `chance / 32768`. If no
+//! water turns up and no `DANGER` sound played in the last 400 frames (timer 0x28c25a8),
+//! a random `FIELD` group plays at a random point of the view with its chance.
 
 use std::collections::HashMap;
 
@@ -15,6 +21,58 @@ use acr_sim::Rng;
 use crate::music::Audio;
 
 pub const SOUND_LIST: &str = "SOUNDLIST.TXT";
+/// Holds the ambient sound lines in its `[SOUNDS]` section.
+pub const NRES: &str = "NRES.DAT";
+
+/// Frames a `DANGER` sound keeps the land ambience quiet (0x586550).
+const DANGER_FRAMES: u32 = 400;
+
+/// An ambient line of `NRES.DAT [SOUNDS]`: `SEA 600 1 SEA` = chance out of 32768 per frame,
+/// group count, `SOUNDLIST.TXT` groups (read by 0x4ec6bc and following).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Ambient {
+    pub chance: i32,
+    pub sounds: Vec<String>,
+}
+
+/// The `SEA` (deep water) and `FIELD` (land) lines of `NRES.DAT`.
+pub fn parse_ambient(data: &[u8]) -> (Ambient, Ambient) {
+    let text = String::from_utf8_lossy(data);
+    let (mut sea, mut field) = (Ambient::default(), Ambient::default());
+    let mut in_sounds = false;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_sounds = line.eq_ignore_ascii_case("[SOUNDS]");
+            continue;
+        }
+        let mut words = line.split_whitespace();
+        let target = match words.next() {
+            Some(w) if in_sounds && w.eq_ignore_ascii_case("SEA") => &mut sea,
+            Some(w) if in_sounds && w.eq_ignore_ascii_case("FIELD") => &mut field,
+            _ => continue,
+        };
+        let (Some(chance), Some(count)) =
+            (words.next().and_then(|w| w.parse().ok()), words.next().and_then(|w| w.parse::<usize>().ok()))
+        else {
+            continue;
+        };
+        *target = Ambient { chance, sounds: words.take(count).map(str::to_owned).collect() };
+    }
+    (sea, field)
+}
+
+/// What the ambience needs to know about the running game.
+pub struct AmbientView<'a> {
+    /// Game frames (simulation ticks) since the last call.
+    pub ticks: u32,
+    /// `[left, top, width, height]` in original screen pixels, as for [`placed`].
+    pub view: [f32; 4],
+    /// Map size in 32-pixel cells.
+    pub map: [i32; 2],
+    /// Water depth per 32-pixel cell (`SEA2`).
+    pub depth: Option<&'a acr_formats::m3d::Grid<u8>>,
+}
 
 /// A sound to play: group name from `SOUNDLIST.TXT`, pan (-1 left .. 1 right), volume 0..=1.
 #[derive(Debug, Clone, PartialEq)]
@@ -32,6 +90,10 @@ pub struct UnitSounds {
     voices: HashMap<String, VoiceId>,
     rng: Rng,
     requests: Vec<String>,
+    sea: Ambient,
+    field: Ambient,
+    /// Frames left in which the land ambience stays quiet after a `DANGER` sound.
+    danger: u32,
 }
 
 impl Default for UnitSounds {
@@ -47,7 +109,10 @@ impl UnitSounds {
             samples: HashMap::new(),
             voices: HashMap::new(),
             rng: Rng::new(0x5a1d, 3),
-            requests: vec![SOUND_LIST.to_owned()],
+            requests: vec![SOUND_LIST.to_owned(), NRES.to_owned()],
+            sea: Ambient::default(),
+            field: Ambient::default(),
+            danger: 0,
         }
     }
 
@@ -58,6 +123,11 @@ impl UnitSounds {
 
     /// Takes a loaded file if it is the sound list or one of its samples.
     pub fn on_loaded(&mut self, path: &str, bytes: &[u8]) -> bool {
+        if path == NRES {
+            (self.sea, self.field) = parse_ambient(bytes);
+            // Other parts of the game read NRES.DAT too.
+            return false;
+        }
         if path == SOUND_LIST {
             let list = SoundList::parse(bytes);
             for sound in &list.sounds {
@@ -87,6 +157,9 @@ impl UnitSounds {
             if n == 0 {
                 continue;
             }
+            if sound.modifiers.iter().any(|m| m.eq_ignore_ascii_case("DANGER")) {
+                self.danger = DANGER_FRAMES;
+            }
             let start = self.rng.below(n as u32) as usize;
             for k in 0..n {
                 let file = &sound.files[(start + k) % n];
@@ -103,6 +176,67 @@ impl UnitSounds {
             }
         }
     }
+}
+
+impl UnitSounds {
+    /// The ambient sounds of `view.ticks` game frames.
+    pub fn ambient(&mut self, view: &AmbientView) -> Vec<SoundEvent> {
+        let mut out = Vec::new();
+        for _ in 0..view.ticks {
+            self.danger = self.danger.saturating_sub(1);
+            out.extend(self.ambient_frame(view));
+        }
+        out
+    }
+
+    /// `rand() & 0x7fff` of the original's sound code (0x585d27).
+    fn rand(&mut self) -> i32 {
+        self.rng.below(32768) as i32
+    }
+
+    fn ambient_frame(&mut self, view: &AmbientView) -> Option<SoundEvent> {
+        let [left, top, width, height] = view.view;
+        // The view in the original's units: 32-pixel columns, 16-pixel rows.
+        let (x0, y0) = ((left / 32.0) as i32, (top / 16.0) as i32);
+        let (w, h) = ((width / 32.0) as i32, (height / 16.0) as i32);
+        for _ in 0..10 {
+            let x = x0 + ((self.rand() * w) >> 15);
+            let y = y0 + ((self.rand() * h) >> 15);
+            if x <= 0 || x >= view.map[0] || y <= 0 || y >= view.map[1] {
+                continue;
+            }
+            let deep = view.depth.and_then(|d| d.get(x as usize, y as usize)).is_some_and(|d| d > 0x80);
+            if !deep {
+                continue;
+            }
+            let name = self.pick(true)?;
+            return event(name, (x * 32) as f32, (y * 16) as f32, view.view);
+        }
+        if self.danger > 0 {
+            return None;
+        }
+        let name = self.pick(false)?;
+        let y = top + ((self.rand() * h) >> 11) as f32;
+        let x = left + ((self.rand() * w) >> 10) as f32;
+        event(name, x, y, view.view)
+    }
+
+    /// A random group of the `SEA` or `FIELD` line, if its chance comes up.
+    fn pick(&mut self, sea: bool) -> Option<String> {
+        let line = if sea { &self.sea } else { &self.field };
+        let (chance, n) = (line.chance, line.sounds.len() as i32);
+        if self.rand() >= chance || n == 0 {
+            return None;
+        }
+        let i = ((self.rand() * n) >> 15) as usize;
+        let line = if sea { &self.sea } else { &self.field };
+        line.sounds.get(i).cloned()
+    }
+}
+
+fn event(name: String, x: f32, y: f32, view: [f32; 4]) -> Option<SoundEvent> {
+    let (volume, pan) = placed(x, y, view)?;
+    Some(SoundEvent { name, pan, volume })
 }
 
 /// Original pixels around the view in which world sounds are still heard (0x586807):
@@ -147,6 +281,34 @@ mod tests {
     use super::*;
 
     const VIEW: [f32; 4] = [1000.0, 500.0, 1024.0, 768.0];
+
+    #[test]
+    fn reads_the_ambient_lines_of_nres() {
+        let data = b"[CONST]\r\nSEA 1 1 X\r\n[SOUNDS]\r\nALARM  ALARM\r\nSEA    600 1 SEA\r\nFIELD  300 2 FIELD BIRDS\r\n[ORDERICONS]\r\n";
+        let (sea, field) = parse_ambient(data);
+        assert_eq!(sea, Ambient { chance: 600, sounds: vec!["SEA".into()] });
+        assert_eq!(field, Ambient { chance: 300, sounds: vec!["FIELD".into(), "BIRDS".into()] });
+    }
+
+    #[test]
+    fn ambience_plays_sea_over_water_and_field_on_land() {
+        let mut s = UnitSounds::new();
+        s.sea = Ambient { chance: 32768, sounds: vec!["SEA".into()] };
+        s.field = Ambient { chance: 32768, sounds: vec!["FIELD".into()] };
+        let water = acr_formats::m3d::Grid { width: 64, height: 64, cells: vec![200u8; 64 * 64] };
+        let land = acr_formats::m3d::Grid { width: 64, height: 64, cells: vec![0u8; 64 * 64] };
+        let view = |depth, ticks| AmbientView { ticks, view: VIEW, map: [64, 64], depth: Some(depth) };
+        let sea = s.ambient(&view(&water, 3));
+        assert!(sea.len() == 3 && sea.iter().all(|e| e.name == "SEA" && e.volume == 1.0));
+        let field = s.ambient(&view(&land, 3));
+        assert!(field.len() == 3 && field.iter().all(|e| e.name == "FIELD"));
+        // A DANGER sound keeps the land quiet for 400 frames; the sea is not affected.
+        s.danger = DANGER_FRAMES;
+        assert!(s.ambient(&view(&land, 399)).is_empty());
+        assert_eq!(s.ambient(&view(&land, 2)).len(), 2);
+        s.danger = DANGER_FRAMES;
+        assert_eq!(s.ambient(&view(&water, 1)).len(), 1);
+    }
 
     #[test]
     fn centre_is_full_volume_and_unpanned() {

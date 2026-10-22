@@ -169,6 +169,13 @@ impl Game {
             game.update(game_dt, g.gpu.size());
             self.ui.set_loading_progress(game.loading_progress());
             self.unit_sounds.play(&game.take_sound_events(), &mut self.audio);
+            let ticks = game.take_ambient_ticks();
+            if ticks > 0
+                && let Some(view) = game.ambient_view(ticks, g.gpu.size())
+            {
+                let ambient = self.unit_sounds.ambient(&view);
+                self.unit_sounds.play(&ambient, &mut self.audio);
+            }
             if game.ready() {
                 if !self.ui.in_game() {
                     self.ui.enter_game();
