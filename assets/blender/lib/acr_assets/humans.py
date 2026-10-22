@@ -110,6 +110,8 @@ class Character:
             self.face_frame = heads.refine(bm, cx)
 
         self.flesh = bd.hull(self.arm, f"{self.name}.flesh", g, bones=[P + b for b in bones], head=head if faces else None)
+        if faces:
+            heads.head_weights(self)
         bd.split_parts(self.flesh, lambda b: rig.part_of_bone(b[len(P):]))
         self.add("flesh", self.flesh, key, symmetric=True)
         return self.flesh
