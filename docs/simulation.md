@@ -280,8 +280,17 @@ mechanism, and **neither `UNITRADIUS` nor the GEOMETRY radii affect motion**:
 - `UNITRADIUS` is only read by projectile hit tests (0x559310).
 - The radius check `CheckPosition` is computed in `TryToMove`, but its result is ignored.
 
-`RATE`/`SPEED` upgrades scale the step only in non-zero stances (`NewState`). This is an AC
-difference from Cossacks, which also scaled stance 0.
+**Stance walks.** In a stance `s ≠ 0` a unit walks with `#MOTION_L{s−1}`/`#MOTION_R{s−1}`
+(the normal walk if the type has none) and its step is `OneStepDX·2·RATE[s−1] >> 4`
+(`RATE i v`, default 16; `SPEED` upgrades change it, 0x5310ce); the look-ahead still counts
+the frames of `#MOTION_L`. Stance 0 is never scaled (an AC difference from Cossacks). Units
+walk in a stance:
+- loaded gatherers in their carry stance (`TAKERESSTAGES RES a b c`: `b`, 0x50af66): Indian
+  peasants and hunters with `RATE … 8` carry at half speed;
+- units chasing a target with an index that has a walk (`#MOTION_Lk`, pikemen);
+- units on an attack-move that have `#MOTION_L0` and no `FASTUNIT` (`GroundState` 1,
+  0x52bf0b);
+- a cannon driving (stance 1).
 
 ### Directions and sprites
 
@@ -373,12 +382,24 @@ Implemented in `combat.rs`, recovered from `SearchVictim` (0x52622b), `AttackObj
 
 ### Rules
 
-- **`SearchVictim`.** On a tick a unit draws `rando()`, and anything above `0x2000` skips
-  the search (about 3 ticks in 4). Otherwise it scans the `(2·(SR>>11)+1)²` cells of 128 px
-  around the search centre.
-  - In each cell it takes the first living enemy whose material it can kill.
+- **`SearchVictim`** (in the first pass of `LongProcesses`, after the fire damage). Human
+  nations search every tick (peasants, `USAGE PEASANT`, only when `(index & 15) == (tmtmt &
+  15)`); AI nations every 8th tick (`(index & 7) == (tmtmt & 7)`) except towers. A unit draws
+  `rando()`, and anything above `0x2000` skips the search (about 3 ticks in 4). Otherwise it
+  scans the `(2·(SR>>11)+1)²` cells of 128 px around the search centre.
+  - Only cells where a nation outside its friend mask is present (`NPresence`) are looked at.
+  - In each cell it takes the first living enemy, unit or building, whose material it can
+    kill (guards only while they attack).
   - It keeps the nearest one to the centre with `MinR·16 < d < SR`.
-  - It attacks that enemy with priority 1.
+  - Searchers with a square wider than 10 cells (forts: 3500 px) skip the 3-in-4 draw and
+    try 6 random cells instead (two random numbers each, plus up to three discarded ones),
+    after a 3 × 3 scan when their minimum range is below 140 px.
+  - A garrisoned building with shot points takes one random enemy from each enemy cell of its
+    square (a random number per such cell) and then a random one of those, every call.
+  - The target must be visible: no building box higher than 18 px (`CheckVisibility`
+    0x556af4, 32 px steps). It is attacked with priority 1.
+  - Cannons (`WEAPONINSECTOR`) never search; they only fire canister on their own (see
+    Artillery).
 - **`AttackObj`** refuses a target the unit cannot hurt, or an order with priority below the
   current one. Player orders have priority 16, so moving units do not get distracted. With
   priority < 5 the unit only switches to a strictly closer enemy. (The engine compares the
@@ -395,7 +416,8 @@ Implemented in `combat.rs`, recovered from `SearchVictim` (0x52622b), `AttackObj
      - Musketeers play `#ATTACK3` reload loops while the reload lasts.
      - **In range:** turn (snapping within `min(16, 1.5·ROTATE)`), switch stance if needed
        (the transition animation plays at the cycle end), then start `#ATTACKi`.
-     - **Out of range:** walk to the enemy's cell (stance 0).
+     - **Out of range:** walk to the enemy's cell, in the index's walking stance if the type
+      has `#MOTION_Lk` (pikemen with the pike lowered), else in the ground stance.
 - **Damage** (`MakeDamage`):
   - Start with `DAMAGE`, plus `min(kills·SKILLDAMAGEBONUS/10, 19·damage)` if the mask
     allows, minus `SHIELD`.
@@ -404,17 +426,28 @@ Implemented in `combat.rs`, recovered from `SearchVictim` (0x52622b), `AttackObj
   - The formation bonuses (shape header numbers 3 and 4) are scaled by the angle to the
     brigade's facing: full within 40, half below 70, none beyond; `#KARE` gets full.
   - At least 1. A surviving victim counter-attacks with priority 1.
-- **Musket shots** are instant line traces:
-  - The aim point is dispersed per axis by
-    `((rando()>>5) − 512)·(Norma>>5)·RAZBROS/32000`, about ±57 px at 400 px.
-  - Samples every 16 px run out to twice the distance, each 128 px cell checked once.
+- **Shots** (`Shoot` 0x51ddc3) leave from the muzzle: the `SETACTIVEPOINT` point of the
+  current direction (9-direction sets mirrored for the east half) plus the `USERLC` offset
+  of the frame's sprite pack, `y + 2·(point y + offset y + ZPOINTS source)`, at the ground
+  height plus the source height. `SETACTIVEPOINT2` (canoes) fires two shots. The aim point
+  (`GetDamagePoint` 0x52557e) is the target at its `ZPOINTS` aim height, or the centre of a
+  random one of a building's `3DBARS` boxes (one more random number), then two unused
+  random numbers; it is dispersed per axis by
+  `((rando()>>5) − 512)·(Norma>>5)·RAZBROS/32000`, about ±57 px at 400 px. The attack's
+  `WEAPON` then becomes a projectile (see Projectiles).
+- **Musket balls** are instant line traces (`TraceObjectsInLine` 0x559310), because the
+  musket's `ENDSHOT` flies 3000 px per tick:
+  - Samples every 16 px run out to twice the distance, each 128 px cell checked once; a
+    building box above the line stops the ball.
   - A unit qualifies if `0 < z − ground < 90`, it is more than 60 px from the shooter (150
     for friends), and the line passes within `UNITRADIUS` (doubled for friends within
-    250 px). The qualifying unit closest to the shooter takes the hit.
+    250 px). The qualifying unit closest to the shooter takes the hit; a building without a
+    garrison absorbs it.
   - Damage halves every `DAMAGEDEC` px.
-  - `FRIENDLYFIRE` means *avoid* friendly fire: a friend hit absorbs the ball unharmed.
-  - Random numbers are drawn as in the original: 2 + 2 + 4 per shot, plus 1 for the `R`
-    test.
+  - `FRIENDLYFIRE` means *avoid* friendly fire: a friend hit absorbs the ball unharmed (off
+    with `SetUnitsState`'s fourth flag).
+  - Random numbers per shot: 2 (aim point) + 2 (dispersion) + 1 (the smoke) + 1 (its child
+    count) + 1 (the pick) + 1 (the ball), plus 1 for the `R` test.
 - **Enemy contact while walking** (`CheckMotionThroughEnemyAbility` 0x41df98): if an enemy
   stands within 32 px in the 128 px cell at the end of the next cycle, the walker stops and
   attacks it (priority 0x8F). Its cell is left unreserved, as in the original.
@@ -532,6 +565,98 @@ factors; the shipped file only changes `FKF1` from 200 to 500.
   drifts one step towards 0 and the command-centre table is rebuilt (up to 16 per nation).
 
 The scripts' `DetectPanic` and `RemovePanicUnits` test `UnlimitedMotion` with a panic order.
+
+### Projectiles
+
+`WEAPON.NDS` (loader 0x60b390) defines the projectiles, with the frame counts of their
+animations from `WEAPON.ADS` and the explosion media of the terrain textures from
+`TEXTURES.LST` (`weapon.rs`). Up to 8192 objects fly at once (`projectile.rs`); every one is
+simulated, smoke and debris too, because each takes a slot (which decides the processing
+order) and draws random numbers.
+
+- **Creation** (`Create3DAnmObjectEX` 0x558360): the first free slot from a ring pointer,
+  one random number, the damage (a `FULLPARENT` weapon takes the shooter's `DAMAGE` of the
+  attack index — for a garrisoned building `MinDamage..MaxDamage` by the shooters inside —
+  others the weapon's own), gravity `−8000·G` (pixels << 14 per tick²). By propagation:
+  `STAND`/`SLIGHTUP` stay at the start (`HotFrame 255`: explode at once); `RANDOM` draws three
+  random velocities; `FLY` flies a straight or ballistic line in `t = dist/(2·speed)` ticks,
+  or is a line trace when `t = 0`; `ANGLE` flies an arc at `speed` degrees (cannon balls,
+  `T = 4·sqrt((e << 11)/az)`); `REFLECT` bounces off the ground with the parent's velocity
+  mirrored at the terrain normal and `speed/64` restitution, or explodes if it hits steeper
+  than about 24°.
+- **Flight** (`ProcessExpl` 0x557fa0, once per tick after the units, slots in order): trail
+  objects (`TILEWEAPON`), then `vz += az` and the move; aimed objects (`FLY`, `ANGLE`)
+  explode within 16 px of their destination; contact with the ground or a building box
+  (not the shooter's own) explodes them; `DAMAGEHEIGHT` objects (bouncing cannon balls)
+  hurt every tick while that low; a `Times`-1 object explodes at its hot frame and dies at
+  the end of its animation.
+- **Explosion** (`ExplodeAnmObject` 0x5578f0): round damage (`MakeRoundDamage` 0x5253ae):
+  every object in the 3 × 3 cells of 128 px within the weapon's radius plus its own
+  `EXPLMEDIA` size (buildings 5 px) takes the full damage, friends included, plus the
+  target object. The media is then the target's, or water where the four `SEA2` cells
+  around are deep, or the texture's (`FORSTRELA`: flash); it is a global that only round
+  damage resets, so objects without damage use the last explosion's media, as in the
+  engine. The children of that media (`CUSTOMEXPLOSION`, else `CHILDWEAPON`) follow:
+  `min + ((max − min)·rando() >> 15)` of them, each picked with a random number (a bounce is
+  picked again up to 20 times after a building hit), and the `SYNCWEAPON`s.
+- **Examples:** an arrow (`STRELA`, 50 px per tick, high gravity) hurts everything within
+  15 px where it lands with the archer's damage; a cannon ball (`PPOINTT` → `NUCL2P`, 10°)
+  deals 340 within 35 px, then bounces (`SKOKAT`: 500 within 16 px every tick while below
+  95 px) or breaks a wall (`PUWALL`, 900 and debris of 100 each).
+
+### Buildings that shoot
+
+Towers, forts and Indian buildings shoot from their `EX_SHOTS`/`EX_SHOTS2` points
+(AttackObjLink's building branch 0x51c30a) and only with a garrison.
+
+- `AttackObj` accepts a finished building that does not research and, for a human nation,
+  does not train units; a building not attacking yet gets priority 0x81 and the attack goes
+  in front of its orders. Buildings hit back.
+- Each tick, once its reload is over, the first free point whose range (`r1..r2` px from the
+  point) and sector hold the target fires the weapon of its attack index — Indian buildings
+  (`EVROSHOT 2`) only their index-2 points when the first unit inside is European
+  (`EVROUNIT`), else the others. One shot per tick; then the building's reload is
+  `ATTACK_PAUSE[0]·PersonalDelay/(inside·100)` (counted down 4 per tick) and the point's own
+  `reload` starts (2 per tick). A unit target that no free point covers is dropped.
+- Damage of index 0: `MinDamage + (MaxDamage − MinDamage)·n/capacity − Shield`, `n` the
+  `STRELOK`/`HORSE-STRELOK`/`ARCHER` units inside (`MakeDamage` 0x4e8c43); the shot's own
+  falloff is replaced. Buildings shoot through anything and do not disperse.
+- A `B` weapon (muskets, arrows) hitting a building only hurts its garrison (0x4e8870):
+  `rando()·101 >> 15 < PROMAX[attacker's PROMAXCTG]` misses, else a random unit inside takes
+  the damage. A building's garrison dies with it.
+- Building boxes (`3DBARS x y l w h`, `bars.rs`; `Add3DBar` 0x443697 at creation, removed at
+  death): 45°-turned rectangles in 256 px cells, entered in the cells of nine sample points
+  only, as in the engine. They stop projectiles and traces and hide units from searches.
+
+### Artillery
+
+The cannon (`ArtPus`, `USAGE PUSHKA`, `MOTIONSTYLE COMPLEXROTATE`; `artillery.rs`):
+
+- **Motion** (0x50f7cb): at the end of a cycle a cannon facing its target within a 16th
+  drives one cycle in stance 1 (`#MOTION_L0/R0`); otherwise it changes to stance 2 and turns
+  16 per turn animation (`#MOTION_L1`: +16 at its end, `#MOTION_R1`: −16 at its start).
+- **Attack:** the same 16th-steps while aiming (the engine calls `TryToStand` on the target
+  there, a random number, kept); each shot of indices 4 and 5 costs 50 iron and 100 coal
+  (`RASTRATA_NA_VISTREL2`, paid when the strike starts; without them the order ends). Index
+  4 fires the cannon ball beyond 1500 px, index 5 canister below.
+- **Canister** (`WEAPONINSECTOR a r1 r2 d1 d2 sector pct`, 0x52d6b8): after the shot every
+  object in the touched cells of the sector, friend or foe, takes
+  `d1 − (d − r1)·(d1 − d2)/(r2 − r1)`, scaled to `pct` % at the edge. A deployed cannon
+  without orders fires a volley by itself (0x526349) when more than 3 enemies and more than
+  twice as many enemies as friends are in the cells of its sector out to its search radius.
+- **Attack on the ground** (`NewAttackPoint` 0x51b4aa, `Command::AttackGround`,
+  `OBJ_AttackPoint`, `ArtAttackGroud`): the attack link with a stand-in target at the point;
+  `ADDRANGE` % of the range and `ADDPAUSE` % of the reload (`NRES.DAT`: 200 and 200), a
+  number of shots or until stopped.
+- Cannons never hit back when hurt, skip the death turn and are never captured.
+
+### Fire
+
+`X` weapons (cannon balls) set the target burning at once, `F` weapons after `FIRELIMIT`
+hits (buildings 15). A burning building loses `max(1, MaxLife >> 11)` per tick (no shield)
+until it collapses or a repair brings it to full life; a burning unit loses 1 every 32
+ticks while above a tenth of its life. Every building below half its life draws a random
+number per tick for its smoke (0x511be2).
 
 ### Worked timing (musketeer, 10 ticks/s)
 
@@ -666,9 +791,12 @@ Implemented in `economy.rs`. The sources are `City::Census` (0x42e658), the upke
     - `LIFE` sets life and maximum of all objects of the type (capped at 65535),
       `MORELIFE` only the maximum, `HEALING` adds a tenth of the maximum;
     - `ENABLE UNITS` enables types (`Enabled`, `CondEnabled`) and reruns every census;
+    - `SPEED` the walking rates of the stances (`Rate[12]`, u8), `GETRES` the share of a
+      load a base credits (`ResEff`, delivery `RAmount·ResEff/100` at the base, 0x4d3170);
     - `EFFECT_FOOD`/`EFFECT_WOOD`/`EFFECT_STONE` change the player's delivery factors (u16,
       no caps unlike Cossacks); `GEOLOGY` sets a flag;
     - on the researching building: `SINGLE_INSIDE` (`AddInside`, OB+0xa5),
+      `SINGLE_ATTPAUSE` (`PersonalDelay`, u8 OB+0xa7: the building's reload percentage),
       `MOREFARMS_SINGLE` (OB+0xf3 = the type's housing changed by the value, added to the
       housing), `PERSONALLIFE` (life and maximum), `UPSTAGEn` (0x53268e: if the type has
       that `ADDSECTION`, the stage becomes done; life and maximum become the type's life
@@ -723,19 +851,33 @@ Implemented in `economy.rs`. The sources are `City::Census` (0x42e658), the upke
   - **Fields** (`COMPLEX.RSR`): `KUK00 → … → KUK05` in 5 × 250 ticks, then 5 cycles of 3
     food (`#ATTACK3`, 28 ticks each for the peasant), then `KUD00 → … → KUD05` regrows and
     gives 5 × 3 more, then `KUB00` vanishes after one tick. There are three variants.
-  - **Planting.** A `SPRITEOBJECT` type (`FIELD(EN)`, `EXSPRITES KUK00 3 64 4 64`) is placed
+  - **Planting.** A `SPRITEOBJECT` type (`FIELD(EN)` = `FIELDP`, `EXSPRITES PUK00 3 64 4 64`;
+    other nations `KUK00`, the numbers are the same) is placed
     by `CreateObject` (0x5155c5): `rando()`, the price check and another `rando()`, one
     more, then for the sprite `rando()`; the point snaps to the `[DISCRET]` diamond grid
     (0x514fea, 1 px by default); the 8 × 15 lock cells from `(cx − 4, cy − 3)` must be free
     and the heights 64 px left, right, above and below must differ from their mean by less
-    than 40, 32, 32, 32; the type is `KUK00 + rando() % 3`; no other sprite may lie closer
+    than 40, 32, 32, 32; the type is the first of the three + `rando() % 3`; no other sprite may lie closer
     than its list radius (30) plus the other's (only deposits have one; 0x4d1aa0); then the
     price (`GOLD 1`) is paid.
   - **Mills** (`USAGE MELNICA`). A finished mill (0x5239ec) and the "plant fields" button
     (`PlantFields`, 0x4e0d88) call 0x51522f: on the diamond grid `(i + j)·step,
     (i − j)·step` for `i, j` in `−n..=n` (`n` 64, `step` 4 px) plus `rando()·spread >> 11`
-    on each axis (`spread` 64 px), a field is planted where possible: about 200 around an
-    English mill.
+    on each axis (`spread` 64 px, so the jitter is 0..64 px, never negative), a field is
+    planted where possible. `n` is the half-width, not a count: 16 641 attempts on a diamond
+    of 512 px, two random numbers each plus those of `CreateObject` (0, 1, 4 or 5 by where it
+    fails). Nothing caps the number: the 30 px spacing, the 8 × 15 free lock cells, trees,
+    slope, the map edge and the gold limit it, which gives about 546 fields on empty flat
+    ground (fewer around the mill's own locks).
+  - **Mines** (`RESSUBST`, only the gold mine has it): a mine placed within 64 px of a
+    deposit of another resource is created as that resource's mine — the type `+1` iron,
+    `+2` coal, `+3` stone, `+4` food, `+5` wood, the order of every nation file
+    (CreateObject 0x515b62); the first deposit near enough decides, and the gold mine's price
+    stays paid.
+  - **`UNCONSTRUCT`** (the Sioux centre, 0x4a0f76, link 0x4a0d47): the researching building
+    drops its queue (no refund), lets its units out one per tick, then loses a stage per tick
+    — its first tick reaches the last stage again and re-runs the completion (a mill would
+    plant its fields once more) — and at stage 0 it is gone and its price is refunded.
   - **Hunting.** When a unit's victim is dying and its `TRANSFORMTOMEAT` sprite is a source
     the unit can gather (0x51bf0b in `AttackObjLink`), the attack ends: the hunter walks to
     the body and takes 60 gathering orders (`TakeResource` order type 1, which keeps the
@@ -884,8 +1026,6 @@ No game option writes it. How the map view draws the fog is in
 - **`RemoveFools`.** Pushed friends get a `SendTo` to the nearest free cell (the original uses
   its `Rarr` push tables). Enemies in the way are left to `CheckMotionThroughEnemyAbility`.
 - **Animations.**
-  - Units walk only in stance 0: an attacker leaves its stance before walking. The engine
-    walks pikemen in stance 1 with `#MOTION_L0`/`#MOTION_R0` at the same speed.
   - `#TRANS01`/`#TRANS10`, `BREAKANIMATION` and build animations are not modelled.
   - Units without `#MOTION_L` are treated as 1-frame cycles.
 - **Economy:**
@@ -893,8 +1033,7 @@ No game option writes it. How the map view draws the fog is in
     territory permission (0x45f767, only active with territories set up) and the picture
     lock polygons of sprites (fields have none). `FindResourceObject` takes the nearest source
     of the first ring without `FindPlaceForPeasant`'s stand points and the `Surrounded`
-    marks; the random number of a failed search is drawn. Peasants carry in
-    stance 0, not with their carry walk (`#MOTION_L{b−1}`), and deliver at the entrance
+    marks; the random number of a failed search is drawn. Peasants deliver at the entrance
     rather than walking inside along the born points.
   - Builders do not re-path around blocking units (`CheckBlocking`). Placement checks only
     the finished footprint against locks and units (0x513b2c and the permission check
@@ -903,10 +1042,10 @@ No game option writes it. How the map view draws the fog is in
     (an idle one first, else the shortest queue).
   - Synthetic catalogs without nation files have no tech tree: everything is enabled and
     buildings produce anything.
-  - Not reproduced yet: `RESSUBST` type changes, ports and ships; the AI
+  - Not reproduced yet: ports and ships; the AI
     difficulty factor on production time; the 10× cannon price lobby option.
-  - Upgrades without effect here: `SPEED` (`Rate`, which no motion code reads), `WEAPON`,
-    `PRECISE`, `GETRES`, `SINGLE_ATTPAUSE`, `FISHING`, `SHAR`, `FEAR`, `UNCONSTRUCT`. `ENABLE
+  - Upgrades without effect here: `FISHING`, `SHAR` (`WEAPON` and
+    `PRECISE` have none in the engine either). `ENABLE
     UPGRADES` does nothing (the engine indexes the type table with upgrade ids). The
     `STAGELOCKPOINTS` of building stages are not set.
   - Rally point on a building: the original hit-tests the building's picture in rings 0..3
@@ -914,15 +1053,19 @@ No game option writes it. How the map view draws the fog is in
     The random search for a source spot is capped at 4096 tries (the engine would retry
     forever). `GotoFinePosition` is not called.
 - **Combat:**
-  - Shots start at the unit's position. The `SETACTIVEPOINT` muzzle offsets (and the
-    sprite frame offsets) are not added.
-  - Every `WEAPON` is treated like the musket: an instant trace with the attack's damage.
-    Arrows, cannon balls and other slow projectiles (`ProcessExpl` 0x557fa0) are not
-    simulated.
   - Not reproduced: the friendly-fire check before a shot and the search for a firing
-    position (0x559a40, 0x51e359); buildings, terrain and 3D bars blocking shots
-    (`PredictShot`); `BackSteps` when an enemy is too close.
-  - Also missing: garrisons, towers, artillery, ships; fire damage; healers.
+    position (0x559a40, 0x51e359); terrain and buildings blocking a musket shot before it
+    is fired (`PredictShot`; boxes do stop the ball in flight); `BackSteps` when an enemy is
+    too close; the territory checks; the AI's random-cell search (`Zombi` units) and its
+    artillery pickers; healers; ships' broadsides.
+  - Projectiles: the explosion's water test samples the `SEA2` depth with the rows shifted
+    by the height (the engine reads a screen-space water map); the corpses thrown by a
+    `DETONATOR` blast are not moved; `extra` (the shot point's visual height) is kept but
+    unused, as in the engine.
+  - Buildings: the cells of a building for round damage and searches are those of its
+    position (the engine keeps building lists by cell); `SLOWDEATH`, capture and storming
+    are not reproduced.
+  - Attacks on objects ignore `nTimes` (attacks on the ground count their shots).
   - Morale: the fear scan takes the units of the 128 px buckets built at the start of the
     tick (the engine's cell lists change during the tick); the cell number in the panic
     seed uses the bucket grid's width. Fleeing units walk in stance 0 (the engine runs them
@@ -933,12 +1076,9 @@ No game option writes it. How the map view draws the fog is in
     counts a member in place when it reached its slot's cell (as far as a walk gets).
   - Shot damage falloff uses an integer `2^(−d/dec)` (16-step table, linear interpolation)
     instead of the x87 `exp`, so values can differ by 1.
-  - All players use the human `SearchVictim` path. AI nations scan every 8th tick and use
-    random cells in the original.
 - **Not reproduced yet:**
-  - motion styles 1–5 (ships and sheep use style 0 on the water layer here);
+  - motion styles 1, 2, 4, 5 (ships and sheep use style 0 on the water layer here);
   - `GotoFinePosition` (0x4a0670, at `StandTime == 48`);
-  - unit heights (`RZ`);
   - the optional terrain pass 0x449aa4;
   - `STAGELOCKPOINTS`, construction (`BUILDLOCKPOINTS`), walls and gates;
   - deleting sprites under new buildings (0x4d1df0).
@@ -968,6 +1108,13 @@ No game option writes it. How the map view draws the fog is in
   player's attack order; an attack-move kills the enemy on the way and goes on; a patrol
   reaches both ends; a formation of pikemen starts melee, several members fight, the enemies
   die and the melee ends. Allies do not fight (`tests/combat.rs`).
+- **Projectile tests** (`tests/projectile.rs`): an arrow leaves the muzzle, flies about 8
+  ticks for 400 px and lands with the archer's damage; a cannon ball's arc peaks at about
+  D·tan 10°/4 and it bounces on; an empty tower does not shoot, one with a musketeer inside
+  deals 26 per shot paced by the point's reload; a cannon turns towards a point in 16ths
+  with its turn animations, bombards it and pays iron and coal; a deployed cannon fires
+  canister into a crowd; projectiles are deterministic. A stance walk with `RATE 4 8` goes
+  half as fast (`tests/world.rs`).
 - **Upgrade tests** (`tests/upgrade.rs`): research is paid at the start, blocks the
   building and ends on the 10th tick for `#TIME 21`; damage and protection change for the
   researching player only; links enable the next level; cancelling refunds; `BUILD`,
@@ -1026,10 +1173,8 @@ No game option writes it. How the map view draws the fog is in
 
 ## Open questions
 
-- Motion styles 1–5 (`SLOWROTATE`, `SHEEPS`, `COMPLEXROTATE`, `ROTATE&MOVE`, `NEWSHEEPS`);
-  ship pathing on the water layer (0x535b04).
-- Where non-zero stances (`NewState`, e.g. pikemen's `#MOTION_L0`) are entered, which decides
-  when `RATE` and the `SPEED` upgrade apply.
+- Motion styles 1, 2, 4, 5 (`SLOWROTATE`, `SHEEPS`, `ROTATE&MOVE`, `NEWSHEEPS`); ship
+  pathing on the water layer (0x535b04).
 - What runs the brigade order list each tick, and `0x41d090` at the end of `PlaceBrigade`.
 - The exact `Rarr` push tables of `RemoveFools`, `ApplyOffset`, the 10-ring spiral table.
 - The first move of a unit standing on a locked cell (0x538c4e) and the repulsion vector

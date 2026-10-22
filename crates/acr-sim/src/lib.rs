@@ -15,7 +15,9 @@
 //! The model and the original algorithms it reproduces are documented in
 //! `docs/simulation.md`.
 
+pub mod artillery;
 pub mod assets;
+pub mod bars;
 pub mod catalog;
 pub mod clock;
 pub mod combat;
@@ -32,6 +34,7 @@ pub mod market;
 pub mod morale;
 pub mod motion;
 pub mod path;
+pub mod projectile;
 pub mod replay;
 pub mod rng;
 pub mod sprite;
@@ -39,6 +42,7 @@ pub mod states;
 pub mod tech;
 pub mod trig;
 pub mod upgrade;
+pub mod weapon;
 pub mod world;
 
 pub use catalog::{Catalog, ObjectType, TypeId};

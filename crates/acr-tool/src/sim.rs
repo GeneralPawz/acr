@@ -237,6 +237,12 @@ pub fn sim_check(dir: &Path, map: &str, rest: &[&str]) -> Result<()> {
     let panicking = a.units.iter().filter(|u| u.living() && u.panicking()).count();
     let courage = a.units.iter().filter(|u| u.living() && u.courage != 0).count();
     println!("  morale: {panicking} units panicking at the end, {courage} with courage != 0");
+    let burning = a.units.iter().filter(|u| u.living() && u.burning).count();
+    println!(
+        "  projectiles: {} in flight at the end; {burning} objects burning; {} garrisoned buildings",
+        a.projectiles.iter().count(),
+        a.units.iter().filter(|u| u.living() && u.building && !u.inside.is_empty()).count()
+    );
     far.sort_by_key(|f| std::cmp::Reverse(f.1));
     if !far.is_empty() {
         let sample: Vec<String> = far.iter().take(5).map(|(id, d)| format!("#{} {d} px", id.0)).collect();

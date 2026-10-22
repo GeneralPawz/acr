@@ -310,6 +310,10 @@ pub struct MapGrid {
     pub water: LockMap,
     /// `TOP1`: land pathfinding areas, if the map has them.
     pub land_areas: Option<AreaGraph>,
+    /// `TILE`: texture per vertex (explosion media).
+    pub textures: Option<acr_formats::m3d::Grid<u8>>,
+    /// `SEA2` depth on the 32 px grid (explosions in water).
+    pub water_depth: Option<acr_formats::m3d::Grid<u8>>,
 }
 
 /// `TOP1`/`TOPW` in the form the router uses.
@@ -369,6 +373,8 @@ impl MapGrid {
             land: LockMap::new(side, side),
             water: LockMap::new(side, side),
             land_areas: map.land_areas.as_ref().map(AreaGraph::from_areas),
+            textures: map.textures.clone(),
+            water_depth: map.water.as_ref().map(|w| w.depth.clone()),
         };
         grid.lock_by_terrain(map, sprites);
         if let Some(w) = &map.water {
@@ -393,6 +399,8 @@ impl MapGrid {
             land: LockMap::new(side, side),
             water: LockMap::new(side, side),
             land_areas: None,
+            textures: None,
+            water_depth: None,
         };
         grid.water.set_rect(0, 0, side, side);
         grid.lock_borders();

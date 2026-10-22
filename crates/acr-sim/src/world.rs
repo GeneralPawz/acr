@@ -43,6 +43,10 @@ pub enum AnimKind {
     Rest1,
     MotionL,
     MotionR,
+    /// `#MOTION_Li` / `#MOTION_Ri`: walking in stance `i + 1` (pikemen with the pike
+    /// lowered, loaded gatherers, a driving cannon; a cannon's turns are `#MOTION_L1/R1`).
+    MotionLs(u8),
+    MotionRs(u8),
     /// `#ATTACKi`: a strike or shot (and `#ATTACK3`, the musketeer's reload).
     Attack(u8),
     /// `#PATTACKi`: getting ready for stance `i + 1`.
@@ -73,6 +77,8 @@ impl AnimKind {
             AnimKind::Rest1 => "#REST1".into(),
             AnimKind::MotionL => "#MOTION_L".into(),
             AnimKind::MotionR => "#MOTION_R".into(),
+            AnimKind::MotionLs(i) => format!("#MOTION_L{i}"),
+            AnimKind::MotionRs(i) => format!("#MOTION_R{i}"),
             AnimKind::Attack(i) => indexed("#ATTACK", i),
             AnimKind::PAttack(i) => indexed("#PATTACK", i),
             AnimKind::UAttack(i) => indexed("#UATTACK", i),
@@ -107,6 +113,9 @@ pub enum Order {
     /// Panic (order type 0x8e, link 0x600720, priority 0xFF): flight legs away from enemies;
     /// `step` counts the legs, `dir` is the way the unit runs when nothing threatens it.
     Panic { step: u16, dir: u8 },
+    /// `NewAttackPoint` (order type 0x4c, link 0x51bc5b): shoot at the ground at `(x, y)`
+    /// (world pixels), `times` shots (0: until stopped).
+    AttackPoint { x: i32, y: i32, prio: u8, times: u16 },
     /// `Patrol` (link 0x4ea3f0, priority 0): alternately walks to `b` and back to `a` (world
     /// pixels), each leg a priority-0 move put in front, so enemies on the way are fought.
     /// `back` is the leg to walk next.
@@ -170,6 +179,9 @@ pub struct Unit {
     pub stance: u8,
     /// Stance the animations have reached (`LocalNewState`).
     pub local_stance: u8,
+    /// The stance the unit returns to (`GroundState`, OB+0xe8): 1 on an attack-move for
+    /// types that walk in stance 1, the carry stance of a loaded gatherer.
+    pub ground_state: u8,
     /// Reload counter in animation frames (`delay`, OB+0x8c).
     pub delay: i32,
     /// The reload the last attack set (`MaxDelay`, OB+0x8f): `delay` counts down from it.
@@ -202,10 +214,14 @@ pub struct Unit {
     pub upgrade_level: u8,
     /// Buildings: extra capacity from `SINGLE_INSIDE` (`AddInside`, OB+0xa5).
     pub add_inside: i32,
+    /// Buildings: the reload timers of the shot points (OB+0xac), −2 per tick.
+    pub shot_timers: Vec<i32>,
     /// Buildings: extra housing from `MOREFARMS_SINGLE` (u8, OB+0xf3).
     pub farm_extra: i32,
     /// The building this unit is inside (hidden, but counted and fed).
     pub inside_of: Option<EntityId>,
+    /// Buildings: being taken down (`UNCONSTRUCT`).
+    pub unconstruct: bool,
     /// Walks through locks and other units (leaving a building).
     pub unlimited: bool,
     /// Switched off for lack of gold (`TURNOFF`).
@@ -226,6 +242,9 @@ pub struct Unit {
     /// `InPatrol` (OB+0x2a bit0): it has a move of priority below 5 (attack-move, patrol), so
     /// attacks are put in front of the move and the unit resumes it afterwards.
     pub in_patrol: bool,
+    /// Fire: hits of slow-burning weapons so far (+0x3f) and burning (+0x26 bit1).
+    pub fire: i32,
+    pub burning: bool,
     /// Courage (i8, OB+0x53): kills nearby raise it for enemies of the victim and lower it
     /// for the victim's nation; it drifts back to 0 every 256 ticks.
     pub courage: i8,
@@ -401,6 +420,13 @@ pub struct World {
     pub spacing: Arc<Vec<(i32, i32, i32)>>,
     /// Command centres and the panic-chance cache.
     pub morale: crate::morale::MoraleState,
+    /// Projectiles in flight.
+    pub projectiles: crate::projectile::Projectiles,
+    /// The 3D boxes of buildings.
+    pub bars: crate::bars::Bars,
+    /// Nations run by an AI (`Nat+0x1a729` bit3): they search targets every 8th tick except
+    /// towers, and their training buildings still shoot. Set by the host.
+    pub ai: [bool; PLAYERS],
 }
 
 /// Unit indices per 128 px cell (8 × 8 lock cells).
@@ -408,6 +434,10 @@ pub struct World {
 pub struct Buckets {
     side: i32,
     cells: Vec<Vec<u32>>,
+    /// Buildings per 128 px cell (by position), for round damage.
+    buildings: Vec<Vec<u32>>,
+    /// Nations present in each cell (`NPresence`, a bit per owner).
+    presence: Vec<u8>,
     /// Alliance mask and position of every unit at the start of the tick.
     snapshot: Vec<(u8, Pos)>,
 }
@@ -419,12 +449,23 @@ impl Buckets {
         for c in &mut self.cells {
             c.clear();
         }
+        self.buildings.resize((self.side * self.side) as usize, Vec::new());
+        for c in &mut self.buildings {
+            c.clear();
+        }
+        self.presence.clear();
+        self.presence.resize((self.side * self.side) as usize, 0);
         self.snapshot.clear();
         self.snapshot.extend(units.iter().map(|u| (u.nmask, u.pos)));
         for (i, u) in units.iter().enumerate() {
             if u.active() && !u.building {
                 let (x, y) = ((u.cell.0 >> 3).clamp(0, self.side - 1), (u.cell.1 >> 3).clamp(0, self.side - 1));
                 self.cells[(y * self.side + x) as usize].push(i as u32);
+                self.presence[(y * self.side + x) as usize] |= 1 << (u.owner & 7);
+            } else if u.living() && u.building {
+                let (x, y) = ((u.pos.x >> 11).clamp(0, self.side - 1), (u.pos.y >> 11).clamp(0, self.side - 1));
+                self.buildings[(y * self.side + x) as usize].push(i as u32);
+                self.presence[(y * self.side + x) as usize] |= 1 << (u.owner & 7);
             }
         }
     }
@@ -444,6 +485,27 @@ impl Buckets {
         self.side
     }
 
+    /// Units, then buildings, of a cell.
+    pub fn all(&self, x: i32, y: i32) -> impl Iterator<Item = u32> + '_ {
+        self.get(x, y).iter().chain(self.buildings_in(x, y)).copied()
+    }
+
+    /// The nations present in a cell (`NPresence`): a bit per owner.
+    pub fn presence(&self, x: i32, y: i32) -> u8 {
+        if x < 0 || y < 0 || x >= self.side || y >= self.side {
+            return 0;
+        }
+        self.presence[(y * self.side + x) as usize]
+    }
+
+    /// Buildings of a cell (by position).
+    pub fn buildings_in(&self, x: i32, y: i32) -> &[u32] {
+        if x < 0 || y < 0 || x >= self.side || y >= self.side {
+            return &[];
+        }
+        &self.buildings[(y * self.side + x) as usize]
+    }
+
     pub fn get(&self, x: i32, y: i32) -> &[u32] {
         if x < 0 || y < 0 || x >= self.side || y >= self.side {
             return &[];
@@ -456,6 +518,7 @@ impl World {
     /// An empty world on a map.
     pub fn new(map: Arc<MapGrid>, catalog: Arc<Catalog>, formations: Arc<Formations>) -> Self {
         let occupancy = LockMap::new(map.land.width, map.land.height);
+        let bars = crate::bars::Bars::new(map.land.width * 16);
         let players = std::array::from_fn(|_| Player::new(&catalog));
         let market = catalog.market.as_ref().map(crate::market::Market::new).unwrap_or_default();
         Self {
@@ -478,6 +541,9 @@ impl World {
             sprite_kinds: Arc::default(),
             spacing: Arc::default(),
             morale: Default::default(),
+            projectiles: Default::default(),
+            bars,
+            ai: [false; PLAYERS],
         }
     }
 
@@ -592,6 +658,7 @@ impl World {
             death: 0,
             stance: 0,
             local_stance: 0,
+            ground_state: 0,
             delay: 0,
             max_delay: 0,
             personal_delay: 100,
@@ -607,8 +674,10 @@ impl World {
             research: None,
             upgrade_level: 0,
             add_inside: 0,
+            shot_timers: vec![0; t.shot_points.len()],
             farm_extra: 0,
             inside_of: None,
+            unconstruct: false,
             unlimited: false,
             turned_off: false,
             no_search_victim: t.role.auto_no_attack,
@@ -617,12 +686,20 @@ impl World {
             melee_only: false,
             guard: false,
             in_patrol: false,
+            fire: 0,
+            burning: false,
             courage: 0,
             carried: 0,
             carry_type: None,
         };
         if !unit.building && t.mobile() {
             self.occupancy.set_bar(cell.0, cell.1, lx);
+        }
+        // Add3DBar (CreateObject 0x516b98): the boxes, at full height from the start.
+        let (bx, by) = ((pos.x >> 4) + t.location.0, (pos.y >> 4) + 2 * t.location.1);
+        for &[x, y, l, wd, h] in &t.bars {
+            let (x0, y0) = (bx + x, by + 2 * y);
+            self.bars.add(x0, y0, x0 + l + wd, y0 + l - wd, h, id.0);
         }
         self.units.push(unit);
         id
@@ -684,6 +761,7 @@ impl World {
         }
         u.alive = false;
         u.orders.clear();
+        self.bars.remove(id.0);
     }
 
     /// Advances the world by one tick: applies the commands in order, then runs every unit
@@ -711,7 +789,19 @@ impl World {
                     continue;
                 }
                 if u.building {
-                    crate::economy::building_link(self, i);
+                    // The attack order goes in front of production (0x51c30a).
+                    if let Some(Order::Attack { target, prio }) = u.orders.last().cloned() {
+                        crate::combat::building_attack_link(self, i, target, prio);
+                    } else {
+                        crate::economy::building_link(self, i);
+                    }
+                    // 0x5115a6: buildings count their reload and shot timers down here (and
+                    // the reload once more in the object loop).
+                    let u = &mut self.units[i];
+                    u.delay = (u.delay - FRM_DEC).max(0);
+                    for t in &mut u.shot_timers {
+                        *t = if *t > FRM_DEC { *t - FRM_DEC } else { 0 };
+                    }
                 } else if self.catalog.get(u.kind).mobile() {
                     crate::motion::process_unit(self, i);
                 }
@@ -719,6 +809,7 @@ impl World {
         }
         crate::combat::object_loop(self);
         crate::sprite::time_step(self);
+        crate::projectile::process(self);
         self.tick.0 += 1;
     }
 
@@ -868,6 +959,13 @@ impl World {
                 let ids = self.owned(*player, units);
                 crate::motion::group_send(self, &ids, *x, *y, None, 0x80);
             }
+            Command::AttackGround { player, units, x, y } => {
+                for i in self.owned(*player, units) {
+                    if self.catalog.get(self.units[i].kind).ground_attack {
+                        crate::artillery::attack_point(self, i, *x, *y, 0x90, crate::combat::Placement::Replace, 0);
+                    }
+                }
+            }
             Command::Patrol { player, units, x, y } => {
                 let ids = self.owned(*player, units);
                 crate::motion::patrol(self, &ids, *x, *y);
@@ -880,6 +978,17 @@ impl World {
                 }
             }
         }
+    }
+
+    /// `Bar3DHeight` (0x443b06): the height of the highest building box above the ground at
+    /// a point (pixels), 0 where there is none.
+    pub fn bar_height(&self, x: i32, y: i32) -> i32 {
+        self.bars.at(x, y, |o| self.units.get(o as usize).is_some_and(|u| u.alive)).0
+    }
+
+    /// `Bar3DOwner` (0x443d37): the building whose box that is.
+    pub fn bar_owner(&self, x: i32, y: i32) -> Option<usize> {
+        self.bars.at(x, y, |o| self.units.get(o as usize).is_some_and(|u| u.alive)).1.map(|o| o as usize)
     }
 
     /// Hash of the whole dynamic state (units, brigades, occupancy, random index, tick),
@@ -896,6 +1005,8 @@ impl World {
             &self.market,
             &self.sprites,
             &self.morale,
+            &self.projectiles,
+            (&self.bars, self.ai),
         ))
     }
 }

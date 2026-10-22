@@ -67,7 +67,7 @@ pub fn send_to(u: &mut Unit, pos: Pos, prio: u8, replace: bool) {
 /// `SmartSendTo` (0x52bc95): a move routed over the pathfinding areas to `(x, y)` plus the
 /// unit's group offset `(dx, dy)` (world pixels).
 pub fn smart_send_to(u: &mut Unit, areas: Option<&AreaGraph>, x: i32, y: i32, dx: i32, dy: i32, prio: u8) {
-    smart_send_to_ex(u, areas, x, y, dx, dy, prio, false);
+    smart_send_to_ex(u, areas, x, y, dx, dy, prio, false, false);
 }
 
 /// `SmartSendTo` with the order placement: `front` (order type 1) puts the move in front of
@@ -82,6 +82,7 @@ pub fn smart_send_to_ex(
     mut dy: i32,
     prio: u8,
     front: bool,
+    stance_walk: bool,
 ) {
     while norma(dx, dy) > 128 {
         let n = norma(dx, dy);
@@ -107,10 +108,14 @@ pub fn smart_send_to_ex(
         u.orders.clear();
     }
     // The order keeps `prio & 0x7f`; priority 0 (attack-move, patrol) marks `InPatrol`
-    // (0x52bef4).
+    // (0x52bef4) and walks in stance 1 where the type can (0x52bf0b).
     let prio = prio & 0x7f;
     if prio == 0 {
         u.in_patrol = true;
+    }
+    u.ground_state = u8::from(prio == 0 && stance_walk);
+    if u.target().is_none() {
+        u.stance = u.ground_state;
     }
     u.orders.push(Order::SmartSendTo { x, y, dx, dy, prio, area: None });
     u.prio = prio;
@@ -190,6 +195,9 @@ enum Signal {
 pub fn process_unit(world: &mut World, i: usize) {
     match world.units[i].orders.last().cloned() {
         Some(Order::Attack { target, prio }) => crate::combat::attack_link(world, i, target, prio),
+        Some(Order::AttackPoint { x, y, prio, times }) => {
+            crate::combat::attack_link_aim(world, i, crate::combat::Aim::Point(Pos::from_pixels(x, y), times), prio)
+        }
         Some(Order::Build { target, point, prio }) => crate::construction::build_link(world, i, target, point, prio),
         Some(Order::Gather { kind, source, at, prio }) => crate::gather::gather_link(world, i, kind, source, at, prio),
         Some(Order::Panic { .. }) => crate::morale::panic_link(world, i),
@@ -203,7 +211,27 @@ pub fn process_unit(world: &mut World, i: usize) {
         _ => {}
     }
     let catalog = world.catalog.clone();
+    if catalog.get(world.units[i].kind).motion_style == crate::catalog::MotionStyle::ComplexRotate {
+        // Cannons: their own motion handler (0x50f7cb); the order links set the target.
+        if let Some(Order::SendTo { cell, prio }) = world.units[i].orders.last().cloned() {
+            let map = world.map.clone();
+            let World { units, occupancy, random, .. } = &mut *world;
+            let u = &mut units[i];
+            let t = catalog.get(u.kind);
+            send_to_link(u, t, layer(&map, t), random, occupancy, cell, prio);
+        } else if let Some(Order::SmartSendTo { x, y, dx, dy, prio, area }) = world.units[i].orders.last().cloned() {
+            let map = world.map.clone();
+            let u = &mut world.units[i];
+            let t = catalog.get(u.kind);
+            smart_send_to_link(u, map.land_areas.as_ref(), layer(&map, t), x, y, dx, dy, prio, area);
+        } else if world.units[i].orders.is_empty() {
+            world.units[i].prio = 0;
+        }
+        crate::artillery::complex_rotate(world, i);
+        return;
+    }
     let map = world.map.clone();
+    let world_adv = world.adv(world.units[i].owner, world.units[i].kind);
     let World { units, occupancy, random, buckets, .. } = world;
     let u = &mut units[i];
     let t = catalog.get(u.kind);
@@ -214,6 +242,7 @@ pub fn process_unit(world: &mut World, i: usize) {
             smart_send_to_link(u, map.land_areas.as_ref(), lay, x, y, dx, dy, prio, area)
         }
         Some(Order::Attack { .. })
+        | Some(Order::AttackPoint { .. })
         | Some(Order::Panic { .. })
         | Some(Order::Patrol { .. })
         | Some(Order::Enter { .. })
@@ -225,13 +254,19 @@ pub fn process_unit(world: &mut World, i: usize) {
         }
         None => u.prio = 0,
     }
-    match motion_handler(u, t, lay, occupancy, random, buckets) {
+    let rate = if u.stance == 0 { 16 } else { adv_rate(&catalog, u, &world_adv) };
+    match motion_handler(u, t, lay, occupancy, random, buckets, rate) {
         Some(Signal::Push(cell)) => remove_fools(world, i, cell),
         Some(Signal::Engage(j)) => {
             crate::combat::attack_obj(world, i, j, 0x8F);
         }
         None => {}
     }
+}
+
+/// The walking rate of the unit's stance (`Rate[NewState − 1]`, 16 = normal).
+fn adv_rate(_c: &crate::catalog::Catalog, u: &Unit, adv: &crate::catalog::Adv) -> i32 {
+    adv.rate.get(usize::from(u.stance) - 1).copied().unwrap_or(16)
 }
 
 /// `NewMonsterSendToLink` (0x5172c6).
@@ -360,6 +395,7 @@ fn motion_handler(
     occupancy: &mut LockMap,
     rnd: &mut SyncRandom,
     buckets: &crate::world::Buckets,
+    rate: i32,
 ) -> Option<Signal> {
     if u.orders.is_empty() {
         u.dest = None;
@@ -405,14 +441,15 @@ fn motion_handler(
     };
     u.move_stage = next_stage;
     let nst = t.motion_frames() >> SPEED_SH;
-    let (dx0, dy0) = (nst * (t.step_dx(d) << SPEED_SH), nst * (t.step_dy(d) << SPEED_SH));
+    let (dx0, dy0) =
+        (nst * (((t.step_dx(d) << SPEED_SH) * rate) >> 4), nst * (((t.step_dy(d) << SPEED_SH) * rate) >> 4));
     let lx = u.lx;
     let end = Pos::new(u.pos.x + dx0, u.pos.y + dy0);
     let (xf, yf) = Unit::cell_of(end, lx);
     if u.unlimited {
         // UnlimitedMotion: no checks, no reservations.
         u.vel = (0, 0);
-        try_to_move(u, t, m, rnd, d);
+        try_to_move(u, t, m, rnd, d, rate);
         u.dir = d;
         if u.vel != (0, 0) {
             u.cell = (xf, yf);
@@ -450,7 +487,7 @@ fn motion_handler(
         return Some(Signal::Engage(j));
     }
     u.vel = (0, 0);
-    try_to_move(u, t, m, rnd, d);
+    try_to_move(u, t, m, rnd, d, rate);
     u.dir = d;
     if u.vel != (0, 0) {
         u.cell = (xf, yf);
@@ -460,31 +497,42 @@ fn motion_handler(
     None
 }
 
-/// `TryToMove` (0x50b021) for a unit in the normal stance, walking forwards.
-fn try_to_move(u: &mut Unit, t: &ObjectType, m: &LockMap, rnd: &mut SyncRandom, d: u8) {
+/// `TryToMove` (0x50b021), walking forwards. In stance `s ≠ 0` the unit plays
+/// `#MOTION_L{s−1}`/`#MOTION_R{s−1}` and its step is scaled by `RATE[s−1]/16` (0x50b13c);
+/// the look-ahead still counts the frames of `#MOTION_L`.
+fn try_to_move(u: &mut Unit, t: &ObjectType, m: &LockMap, rnd: &mut SyncRandom, d: u8, rate: i32) {
     rnd.rando();
     if u.local_stance != u.stance {
         try_to_stand(u, t, rnd, false);
         return;
     }
     let nf = t.motion_frames() >> SPEED_SH;
-    let (odx, ody) = (t.step_dx(d) << SPEED_SH, t.step_dy(d) << SPEED_SH);
+    let (odx, ody) = (((t.step_dx(d) << SPEED_SH) * rate) >> 4, ((t.step_dy(d) << SPEED_SH) * rate) >> 4);
     let end = Pos::new(u.pos.x + nf * odx, u.pos.y + nf * ody);
     let (cx, cy) = Unit::cell_of(end, u.lx);
     if !u.unlimited && m.check_bar(cx, cy, u.lx, u.lx) {
         return; // CheckTerra (0x50a60d) failed
     }
-    let kind = match (u.left_leg, t.motion_l.is_some(), t.motion_r.is_some()) {
-        (true, true, _) | (false, true, false) => AnimKind::MotionL,
-        (_, _, true) => AnimKind::MotionR,
-        _ => AnimKind::Stand,
+    let kind = if u.stance == 0 {
+        match (u.left_leg, t.motion_l.is_some(), t.motion_r.is_some()) {
+            (true, true, _) | (false, true, false) => AnimKind::MotionL,
+            (_, _, true) => AnimKind::MotionR,
+            _ => AnimKind::Stand,
+        }
+    } else {
+        let s = u.stance - 1;
+        let (l, r) = (anim_frames(t, AnimKind::MotionLs(s)).is_some(), anim_frames(t, AnimKind::MotionRs(s)).is_some());
+        match (u.left_leg, l, r) {
+            (true, true, _) | (false, true, false) => AnimKind::MotionLs(s),
+            (_, _, true) => AnimKind::MotionRs(s),
+            // No walk of this stance: the normal walk (at the stance's rate).
+            _ => match (u.left_leg, t.motion_l.is_some(), t.motion_r.is_some()) {
+                (true, true, _) | (false, true, false) => AnimKind::MotionL,
+                (_, _, true) => AnimKind::MotionR,
+                _ => AnimKind::Stand,
+            },
+        }
     };
-    if u.stance != 0 {
-        // Walking in an attack stance (#MOTION_Lk) is not modelled; leave the stance first.
-        u.stance = 0;
-        try_to_stand(u, t, rnd, false);
-        return;
-    }
     u.dir = d;
     set_anim(u, t, kind);
     u.left_leg = !u.left_leg;
@@ -653,7 +701,8 @@ pub fn group_send(world: &mut World, ids: &[usize], x: i32, y: i32, dir: Option<
     for (i, (sx, sy)) in slots {
         // Planner.Send (0x4ac20d) ends stand ground of every free unit it sends.
         world.units[i].stand_ground = false;
-        smart_send_to(&mut world.units[i], areas.as_ref(), x, y, (sx - x16) >> 4, (sy - y16) >> 4, prio);
+        let sw = stance_walker(world, i);
+        smart_send_to_ex(&mut world.units[i], areas.as_ref(), x, y, (sx - x16) >> 4, (sy - y16) >> 4, prio, false, sw);
     }
 }
 
@@ -680,12 +729,19 @@ pub fn patrol(world: &mut World, ids: &[usize], x: i32, y: i32) {
 /// `PatrolLink` (0x4ea3f0): the next leg, a priority-0 move put in front of the patrol.
 fn patrol_link(world: &mut World, i: usize) {
     let areas = world.map.land_areas.clone();
+    let sw = stance_walker(world, i);
     let u = &mut world.units[i];
     let Some(Order::Patrol { a, b, back }) = u.orders.last_mut() else { return };
     let (tx, ty) = if *back { *a } else { *b };
     *back = !*back;
     u.prio = 0;
-    smart_send_to_ex(u, areas.as_ref(), tx, ty, 0, 0, 0, true);
+    smart_send_to_ex(u, areas.as_ref(), tx, ty, 0, 0, 0, true, sw);
+}
+
+/// Whether a unit walks in stance 1 on attack-moves: it has `#MOTION_L0` and no `FASTUNIT`.
+fn stance_walker(world: &World, i: usize) -> bool {
+    let t = world.catalog.get(world.units[i].kind);
+    !t.fast_unit && anim_frames(t, AnimKind::MotionLs(0)).is_some()
 }
 
 /// The planner `Place` (0x4ab607): returns `(unit index, slot position in 1/16 px)`.

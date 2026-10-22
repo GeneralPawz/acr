@@ -188,6 +188,8 @@ impl Scripts {
         let ai = &mut self.ais[i];
         ai.vm.call_export(&mut api, "InitAI")?;
         ai.nations.push(nation);
+        // The nation is AI-controlled (Nat+0x1a729 bit3): its search schedule changes.
+        world.ai[usize::from(nation) & 7] = true;
         self.state.pending_commands.extend(commands);
         Ok(())
     }

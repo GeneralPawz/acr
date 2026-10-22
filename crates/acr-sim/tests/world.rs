@@ -179,3 +179,29 @@ fn replay_reproduces_the_match() {
     }
     assert_eq!(again.state_hash(), replay.checkpoints[0].1);
 }
+
+const CARRIER: &str = "NAME Car\r\nUSERLC 0 G SHADOW 0 0\r\n#STAND 9 1 0 0\r\n@MOTION_L 9 0 0 9\r\n@MOTION_R 9 0 10 19\r\n\
+    @MOTION_L4 9 0 20 29\r\n@MOTION_R4 9 0 30 39\r\nLIFE 100\r\nGEOMETRY 1 10 40\r\nRATE 4 8\r\n[END]\r\n";
+
+#[test]
+fn a_stance_walk_goes_at_its_rate() {
+    let mut c = Catalog::new();
+    let car = c.add(ObjectType::from_def("Car(EN)", &UnitDef::parse(CARRIER.as_bytes())));
+    let mut w = World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(Formations::default()));
+    let a = w.spawn(car, 0, Pos::from_pixels(2000, 2000), 0);
+    let b = w.spawn(car, 0, Pos::from_pixels(2000, 2400), 0);
+    // b walks in stance 5 (#MOTION_L4, RATE 4 8): half the speed.
+    {
+        let u = &mut w.units[b.0 as usize];
+        (u.stance, u.local_stance) = (5, 5);
+    }
+    w.step(&[Command::Move { player: 0, units: vec![a], x: 3000, y: 2000 }]);
+    acr_sim::motion::send_to(&mut w.units[b.0 as usize], Pos::from_pixels(3000, 2400), 0x10, true);
+    w.units[b.0 as usize].stance = 5;
+    run(&mut w, 60);
+    let (xa, _) = px(&w, a);
+    let (xb, _) = px(&w, b);
+    assert!(w.units[b.0 as usize].anim.name().starts_with("#MOTION_"), "{:?}", w.units[b.0 as usize].anim);
+    let (da, db) = (xa - 2000, xb - 2000);
+    assert!((db * 2 - da).abs() <= 30, "stance 5 walked {db} px, stance 0 {da} px");
+}

@@ -2,7 +2,6 @@
 //! the attack helpers.
 
 use acr_script::runtime::Result;
-use acr_sim::world::EntityId;
 
 use super::util::{Circle, norma};
 use super::{Api, ApiFn, Call, Status};
@@ -12,9 +11,6 @@ const fn f(name: &'static str, original: u32, status: Status, handler: super::Ha
 }
 
 const DONE: Status = Status::Done;
-const ATTACK: Status = Status::Partial(
-    "idle members attack the nearest enemy in the zone with the original priority; the original target rules are not reproduced yet",
-);
 
 pub const FUNCTIONS: &[ApiFn] = &[
     f("GetNZones", 0x579399, DONE, get_n_zones),
@@ -41,16 +37,33 @@ pub const FUNCTIONS: &[ApiFn] = &[
         Status::Partial("one army per enemy nation (centre, count, force = count); the original clusters 256-px cells"),
         enum_enemy_armies,
     ),
-    f("Attack3", 0x57ea15, ATTACK, attack_in_zone),
-    f("Attack4", 0x580042, ATTACK, attack_in_zone),
-    f("Attack6", 0x580b71, ATTACK, attack_in_zone),
-    f("AttackByTomahawks", 0x574667, ATTACK, attack_in_zone),
-    f("AttackEnemyInZone2", 0x57dfb9, ATTACK, attack_in_zone_no_count),
-    f("AttackEnemyInZone", 0x5642b7, ATTACK, attack_enemy_in_zone),
-    f("AttackBuildingsInZone", 0x5617df, ATTACK, attack_buildings_in_zone),
-    f("AttackGrpByGrp", 0x57385f, ATTACK, attack_grp_by_grp),
-    f("GrpAttackObject", 0x570d0c, ATTACK, grp_attack_object),
-    f("SGP_AttackByArchers", 0x5790f3, ATTACK, sgp_attack_by_archers),
+    f("Attack3", 0x57ea15, DONE, attack3),
+    f("Attack4", 0x580042, DONE, attack4),
+    f(
+        "Attack6",
+        0x580b71,
+        Status::Partial("ranged members enter empty buildings only of their own nation (no capture)"),
+        attack3,
+    ),
+    f("AttackByTomahawks", 0x574667, DONE, attack_by_tomahawks),
+    f("AttackEnemyInZone2", 0x57dfb9, DONE, attack_enemy_in_zone2),
+    f(
+        "AttackEnemyInZone",
+        0x5642b7,
+        Status::Partial("walls are not modelled (their pass is skipped)"),
+        attack_enemy_in_zone,
+    ),
+    f("AttackBuildingsInZone", 0x5617df, DONE, attack_buildings_in_zone),
+    f("AttackGrpByGrp", 0x57385f, DONE, attack_grp_by_grp),
+    f("GrpAttackObject", 0x570d0c, DONE, grp_attack_object),
+    f(
+        "SGP_AttackByArchers",
+        0x5790f3,
+        Status::Partial(
+            "one attack on the nearest enemy (0x90); the per-tick FindArcherTarget process is not reproduced",
+        ),
+        sgp_attack_by_archers,
+    ),
 ];
 
 /// Area centre in area cells.
@@ -404,44 +417,145 @@ fn enum_enemy_armies(api: &mut Api, c: &mut Call) -> Result<u32> {
     Ok(if size > 0 { (k / size) as u32 } else { 0 })
 }
 
-/// Enemies of `nat` (by alliance mask) inside the circle, as ids.
-fn enemies_in(api: &Api, z: &Circle, nat: u8) -> Vec<EntityId> {
-    let mask = api.st.nmask[usize::from(nat & 7)];
-    api.world
-        .units
-        .iter()
-        .filter(|u| u.living() && api.st.unit_nmask(u.id, u.owner) & mask == 0 && z.contains(u))
-        .map(|u| u.id)
-        .collect()
+/// The alliance mask of a nation as the scripts see it (`NMASK(nat)`).
+fn nat_mask(api: &Api, nat: u8) -> u8 {
+    api.st.nmask[usize::from(nat & 7)]
 }
 
-/// Sends every idle living member of `g` (owned by `nat`) after the nearest of `targets`.
-fn attack_nearest(api: &mut Api, api_name: &str, g: usize, targets: &[EntityId]) {
-    let members = api.members(g);
-    // The helper's AttackObj priority and order type (E_tactics §5).
-    let (prio, front) = match api_name {
-        "AttackEnemyInZone" => (1, false),
-        "AttackEnemyInZone2" | "AttackByTomahawks" | "AttackGrpByGrp" | "GrpAttackObject" => (0x8F, false),
-        "AttackBuildingsInZone" => (0x90, true),
-        _ => (0x90, false),
-    };
-    let mut orders: Vec<(EntityId, EntityId)> = Vec::new();
-    for id in members {
-        let u = &api.world.units[id.0 as usize];
-        if !u.idle() || u.building {
-            continue;
-        }
-        let best = targets.iter().min_by_key(|t| {
-            let e = &api.world.units[t.0 as usize];
-            norma(u.pos.x - e.pos.x, u.pos.y - e.pos.y)
-        });
-        if let Some(&t) = best {
-            orders.push((id, t));
+/// A member's combat data: maximum and minimum range, the reach of index 1 (0 for melee
+/// units), its own kill mask and its medium (`LockType`).
+struct Fighter {
+    max_r: i32,
+    min_r: i32,
+    det2_1: i32,
+    kill: u8,
+    water: bool,
+}
+
+fn fighter(api: &Api, u: &acr_sim::Unit) -> Fighter {
+    let adv = api.world.adv(u.owner, u.kind);
+    let (min_r, max_r) = acr_sim::combat::range_bounds(&adv);
+    let t = api.world.catalog.get(u.kind);
+    Fighter {
+        max_r,
+        min_r,
+        det2_1: adv.attacks[1].detect.1,
+        kill: t.attacks.iter().fold(0, |m, a| m | a.mask),
+        water: t.medium == acr_sim::catalog::Medium::Water,
+    }
+}
+
+fn material(api: &Api, k: usize) -> u8 {
+    api.world.catalog.get(api.world.units[k].kind).materials
+}
+
+fn is_water(api: &Api, k: usize) -> bool {
+    api.world.catalog.get(api.world.units[k].kind).medium == acr_sim::catalog::Medium::Water
+}
+
+/// `TopDist` between two objects (64 px area cells).
+fn obj_top_dist(api: &Api, a: usize, b: usize) -> i32 {
+    let (pa, pb) = (api.world.units[a].pos, api.world.units[b].pos);
+    top_dist(api, pa.x >> 10, pa.y >> 10, pb.x >> 10, pb.y >> 10)
+}
+
+fn obj_dist(api: &Api, a: usize, b: usize) -> i32 {
+    let (pa, pb) = (api.world.units[a].pos, api.world.units[b].pos);
+    norma(pa.x - pb.x, pa.y - pb.y) >> 4
+}
+
+/// Which building of a cell `Building(cell, mask)` (0x56144f) reports.
+#[derive(Clone, Copy)]
+enum CellBuilding {
+    /// Attack3: a building of the cell that is not one of the nation's friends'.
+    NotFriend,
+    /// Attack4/6: a building whose mask has a bit outside the nation's.
+    Outside,
+    None,
+}
+
+/// `EnemyScan` (E_tactics 0.4): the living enemies of `nat` in the 128 px cells of the ring
+/// tables around the zone, within its radius and a path length of `(R16 >> 9) + 3`, at most
+/// 1600; with a building rule, also one building per scanned cell.
+fn enemy_scan(api: &Api, z: &Circle, nat: u8, bld: CellBuilding) -> Vec<usize> {
+    let mask = nat_mask(api, nat);
+    let (cx16, cy16, r16) = (z.x << 4, z.y << 4, z.r << 4);
+    let (ccx, ccy) = (cx16 >> 11, cy16 >> 11);
+    let side = api.world.buckets.side();
+    let mut out: Vec<usize> = Vec::new();
+    for r in 0..=((r16 >> 11) + 1) as usize {
+        for &(a, b) in acr_sim::morale::ring(r) {
+            let (x, y) = (ccx + a, ccy + b);
+            if x < 0 || y < 0 || x >= side - 1 || y >= side - 1 {
+                continue;
+            }
+            for &k in api.world.buckets.get(x, y) {
+                let k = k as usize;
+                let u = &api.world.units[k];
+                if out.len() < 1600
+                    && u.living()
+                    && api.st.unit_nmask(u.id, u.owner) & mask == 0
+                    && norma(u.pos.x - cx16, u.pos.y - cy16) < r16
+                    && top_dist(api, u.pos.x >> 10, u.pos.y >> 10, cx16 >> 10, cy16 >> 10) < (r16 >> 9) + 3
+                {
+                    out.push(k);
+                }
+            }
+            let cell: &[u32] = api.world.buckets.buildings_in(x, y);
+            let living = |k: &&u32| api.world.units[**k as usize].living();
+            let pick = match bld {
+                CellBuilding::NotFriend => {
+                    let any = cell.iter().find(living);
+                    let own = cell.iter().filter(living).find(|&&k| api.world.units[k as usize].nmask & mask != 0);
+                    any.filter(|_| any != own)
+                }
+                CellBuilding::Outside => {
+                    cell.iter().filter(living).find(|&&k| api.world.units[k as usize].nmask & !mask != 0)
+                }
+                CellBuilding::None => None,
+            };
+            if let Some(&b) = pick
+                && out.len() < 1600
+                && !out.contains(&(b as usize))
+            {
+                out.push(b as usize);
+            }
         }
     }
-    for (id, target) in orders {
-        api.attack(id, target, prio, front);
+    out
+}
+
+/// `ClearOrders` (0x4efad1).
+fn clear_orders(api: &mut Api, i: usize) {
+    let u = &mut api.world.units[i];
+    u.orders.clear();
+    u.path.clear();
+    u.prio = 0;
+}
+
+/// The attack order just given runs at priority 0xF0 (`PrioryLevel = order prio = 0xF0`).
+fn prio_f0(api: &mut Api, i: usize) {
+    let u = &mut api.world.units[i];
+    u.prio = 0xF0;
+    if let Some(acr_sim::world::Order::Attack { prio, .. }) = u.orders.last_mut() {
+        *prio = 0xF0;
     }
+}
+
+/// `ClearBOrders` (0x415cca) of a member's brigade.
+fn clear_brigade_orders(api: &mut Api, i: usize) {
+    if let Some(b) = api.world.units[i].brigade {
+        api.world.brigades[usize::from(b)].orders.clear();
+    }
+}
+
+fn attack_obj(api: &mut Api, i: usize, t: usize, prio: u8, p: acr_sim::combat::Placement) -> bool {
+    acr_sim::combat::attack_obj_ex(api.world, i, t, prio, p)
+}
+
+/// The living members of a group (serial checked), as unit indices.
+fn living_members(api: &Api, g: usize) -> Vec<usize> {
+    api.members(g).into_iter().map(|e| e.0 as usize).collect()
 }
 
 /// Group index without validation beyond the range (Attack3/4/6 do not check the handle).
@@ -453,88 +567,573 @@ fn raw_group(api: &Api, c: &Call, i: u32) -> Result<Option<usize>> {
     Ok((g < api.st.groups.len()).then_some(g))
 }
 
-/// `bool Attack3/4/6/AttackByTomahawks(GAMEOBJ* grp, GAMEOBJ* zone, byte nat, int* n)`.
-fn attack_in_zone(api: &mut Api, c: &mut Call) -> Result<u32> {
-    c.out_i32(3, 0)?;
-    attack_in_zone_no_count(api, c)
+fn zone_of_call(api: &Api, c: &Call, i: u32) -> Result<Option<Circle>> {
+    Ok(if c.u32(i)? == 0 { None } else { api.zone_circles(&c.handle(i)?).and_then(|z| z.first().copied()) })
 }
 
-fn attack_in_zone_no_count(api: &mut Api, c: &mut Call) -> Result<u32> {
-    let Some(g) = raw_group(api, c, 0)? else { return Ok(0) };
-    let zone = if c.u32(1)? == 0 { None } else { api.zone_circles(&c.handle(1)?) };
-    let Some(z) = zone.and_then(|z| z.first().copied()) else { return Ok(0) };
-    let targets = enemies_in(api, &z, c.u8(2)?);
-    if targets.is_empty() {
+/// `bool Attack3(grp, zone, nat, int* nClose)` (0x57ea15) and `Attack6` (0x580b71): every
+/// member that is not attacking takes the enemy of the zone nearest by path that it can hurt
+/// — unless one is closer than half its range (Attack3 counts it as close and drops the
+/// member's attack). Ranged members attack at once (0x90, one shot for Attack3), melee
+/// members after the scan; attacking members drop a target that left the zone.
+fn attack3(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let six = c.name() == "Attack6";
+    let Some(z) = zone_of_call(api, c, 1)? else { return Ok(0) };
+    let nat = c.u8(2)?;
+    let scan = enemy_scan(api, &z, nat, if six { CellBuilding::Outside } else { CellBuilding::NotFriend });
+    c.out_i32(3, 0)?;
+    if scan.is_empty() {
         return Ok(0);
     }
-    attack_nearest(api, c.name(), g, &targets);
+    let Some(g) = raw_group(api, c, 0)? else { return Ok(1) };
+    let times = u8::from(!six);
+    let _ = times;
+    let (cx16, cy16, r16) = (z.x << 4, z.y << 4, z.r << 4);
+    let mut pending: Vec<(usize, usize)> = Vec::new();
+    let mut n_prio = 0usize;
+    let mut n_close = 0;
+    let members = living_members(api, g);
+    let n_group = api.st.groups[g].members.len();
+    for i in members {
+        let f = fighter(api, &api.world.units[i]);
+        let half = f.max_r >> 1;
+        let attacking = api.world.units[i].target().is_some();
+        let mut close = false;
+        if !attacking {
+            let (mut best, mut best_top, mut best_d) = (None, 10_000, 10_000);
+            for &e in &scan {
+                if f.kill & material(api, e) == 0 {
+                    continue;
+                }
+                let top = obj_top_dist(api, e, i);
+                let d = obj_dist(api, i, e);
+                if top < best_top {
+                    (best, best_top, best_d) = (Some(e), top, d);
+                }
+                if d < half {
+                    close = !six;
+                    break;
+                }
+            }
+            if !close && let Some(t) = best {
+                if f.det2_1 == 0 {
+                    if pending.len() < 128 {
+                        pending.push((i, t));
+                    }
+                } else if best_d > f.max_r || api.world.units[i].orders.is_empty() {
+                    let empty_building = api.world.units[t].building && api.world.units[t].inside.is_empty();
+                    if six && empty_building {
+                        // Attack6 sends ranged members into an empty building (GoToMine): here
+                        // only into one of their own nation.
+                        let b = t;
+                        if api.world.units[b].owner == api.world.units[i].owner {
+                            acr_sim::economy::enter(api.world, i, b, 0xFF, false);
+                            prio_f0(api, i);
+                        }
+                    } else if attack_obj(api, i, t, 0x90, acr_sim::combat::Placement::Replace) {
+                        prio_f0(api, i);
+                    }
+                }
+            }
+        } else {
+            let target = api.world.units[i].target().map(|e| e.0 as usize);
+            for &e in &scan {
+                if f.kill & material(api, e) == 0 {
+                    continue;
+                }
+                if let Some(tg) = target.filter(|&t| api.world.units[t].alive) {
+                    let tp = api.world.units[tg].pos;
+                    if norma(tp.x - cx16, tp.y - cy16) > r16 {
+                        api.world.units[i].pop_order();
+                        api.world.units[i].prio = 0;
+                        break;
+                    }
+                }
+                let d = obj_dist(api, i, e);
+                if f.det2_1 != 0 {
+                    if d < half {
+                        close = !six;
+                        break;
+                    }
+                } else {
+                    let e_r = api.world.adv(api.world.units[e].owner, api.world.units[e].kind).attacks[0].radius.1;
+                    if d < e_r {
+                        close = !six;
+                        break;
+                    } else if api.world.units[i].prio == 0xF0 {
+                        n_prio += 1;
+                        break;
+                    }
+                }
+            }
+        }
+        if close {
+            n_close += 1;
+            if attacking && !api.world.units[i].unlimited {
+                api.world.units[i].pop_order();
+                api.world.units[i].prio = 0;
+            }
+        }
+    }
+    let lim = n_group >> 5;
+    for (i, t) in pending {
+        if attack_obj(api, i, t, 0x90, acr_sim::combat::Placement::Replace) {
+            if n_prio < lim {
+                prio_f0(api, i);
+            }
+            n_prio += 1;
+        }
+    }
+    c.out_i32(3, n_close)?;
     Ok(1)
 }
 
-/// `void AttackEnemyInZone(GAMEOBJ* grp, GAMEOBJ* zone, byte enemyNat)`: targets are the
-/// living objects of `enemyNat` in the zone (alliances are not checked).
+/// `bool Attack4(grp, zone, nat, int* nThreat)` (0x580042): melee members only; they go
+/// after the enemy shooters of the zone nearest by path unless an enemy melee unit has them
+/// within its reach (then they count as threatened).
+fn attack4(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let Some(z) = zone_of_call(api, c, 1)? else { return Ok(0) };
+    let nat = c.u8(2)?;
+    let scan = enemy_scan(api, &z, nat, CellBuilding::Outside);
+    c.out_i32(3, 0)?;
+    if scan.is_empty() {
+        return Ok(0);
+    }
+    let Some(g) = raw_group(api, c, 0)? else { return Ok(1) };
+    let (cx16, cy16, r16) = (z.x << 4, z.y << 4, z.r << 4);
+    let mut threatened_n = 0;
+    for i in living_members(api, g) {
+        let f = fighter(api, &api.world.units[i]);
+        if f.det2_1 != 0 {
+            continue;
+        }
+        let attacking = api.world.units[i].target().is_some();
+        let mut threatened = false;
+        if !attacking {
+            let (mut best, mut best_top, mut best_d, mut rng) = (None, 10_000, 10_000, f.max_r);
+            for &e in &scan {
+                if f.kill & material(api, e) == 0 {
+                    continue;
+                }
+                let d = obj_dist(api, i, e);
+                let ef = fighter(api, &api.world.units[e]);
+                if ef.det2_1 != 0 {
+                    let top = obj_top_dist(api, e, i);
+                    if top < best_top {
+                        (best, best_top, best_d) = (Some(e), top, d);
+                        rng = api.world.adv(api.world.units[e].owner, api.world.units[e].kind).attacks[1].radius.1;
+                    }
+                } else if d < ef.max_r {
+                    threatened = true;
+                    break;
+                }
+            }
+            if !threatened
+                && let Some(t) = best
+                && (best_d > rng || api.world.units[i].orders.is_empty())
+                && attack_obj(api, i, t, 0x90, acr_sim::combat::Placement::Replace)
+            {
+                prio_f0(api, i);
+            }
+        } else {
+            let target = api.world.units[i].target().map(|e| e.0 as usize);
+            for &e in &scan {
+                if f.kill & material(api, e) == 0 {
+                    continue;
+                }
+                if let Some(tg) = target.filter(|&t| api.world.units[t].alive) {
+                    let tp = api.world.units[tg].pos;
+                    if norma(tp.x - cx16, tp.y - cy16) > r16 {
+                        api.world.units[i].pop_order();
+                        api.world.units[i].prio = 0;
+                        break;
+                    }
+                }
+                let ef = fighter(api, &api.world.units[e]);
+                if ef.det2_1 == 0 && obj_dist(api, i, e) < ef.max_r {
+                    if !api.world.units[i].unlimited {
+                        api.world.units[i].pop_order();
+                        api.world.units[i].prio = 0;
+                    }
+                    threatened = true;
+                    break;
+                }
+            }
+        }
+        if threatened {
+            threatened_n += 1;
+        }
+    }
+    c.out_i32(3, threatened_n)?;
+    Ok(1)
+}
+
+/// `bool AttackByTomahawks(grp, zone, nat, int* nClose)` (0x574667): reloaded members take
+/// the enemy nearest by path (same medium) when it is within the zone's radius or they fight
+/// in melee (0x8F, one shot); attacking members are released with `rando() < 500`; reloading
+/// shooters with an enemy close count as close and step back.
+fn attack_by_tomahawks(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let Some(z) = zone_of_call(api, c, 1)? else { return Ok(0) };
+    let nat = c.u8(2)?;
+    let scan = enemy_scan(api, &z, nat, CellBuilding::None);
+    c.out_i32(3, 0)?;
+    let Some(g) = raw_group(api, c, 0)? else { return Ok(u32::from(!scan.is_empty())) };
+    let rz = z.r;
+    let mut n_close = 0;
+    for i in living_members(api, g) {
+        let f = fighter(api, &api.world.units[i]);
+        let half = f.max_r >> 1;
+        let melee = api.world.units[i].melee_only;
+        let attacking = api.world.units[i].target().is_some();
+        let delay = api.world.units[i].delay;
+        let mut close = false;
+        if !attacking && delay == 0 {
+            let (mut best, mut best_top, mut best_d) = (None, 10_000, 10_000);
+            for &e in &scan {
+                if f.kill & material(api, e) == 0 || is_water(api, e) != f.water {
+                    continue;
+                }
+                let top = obj_top_dist(api, e, i);
+                let d = obj_dist(api, i, e);
+                if top <= best_top {
+                    (best, best_top, best_d) = (Some(e), top, d);
+                }
+                if d < half {
+                    close = true;
+                    break;
+                }
+            }
+            if !close
+                && let Some(t) = best
+                && (best_d < rz || melee)
+            {
+                clear_brigade_orders(api, i);
+                if attack_obj(api, i, t, 0x8F, acr_sim::combat::Placement::Replace) {
+                    prio_f0(api, i);
+                }
+            }
+        } else if attacking {
+            if api.world.random.rando() < 500 && !api.world.units[i].unlimited {
+                clear_orders(api, i);
+            }
+        } else {
+            for &e in &scan {
+                if f.kill & material(api, e) == 0 {
+                    continue;
+                }
+                let d = obj_dist(api, i, e);
+                let e_max = fighter(api, &api.world.units[e]).max_r;
+                if f.det2_1 != 0 && (d < half || (d < e_max && delay != 0)) && !melee {
+                    close = true;
+                    break;
+                }
+            }
+        }
+        if close {
+            n_close += 1;
+            if api.world.units[i].target().is_some() && !melee && !api.world.units[i].unlimited {
+                clear_orders(api, i);
+            }
+        }
+    }
+    c.out_i32(3, n_close)?;
+    Ok(u32::from(!scan.is_empty()))
+}
+
+/// `bool AttackEnemyInZone2(grp, zone, nat)` (0x57dfb9): members that are not attacking take
+/// the enemy nearest by path beyond their minimum range (same medium, 0x8F); attacking
+/// members are released with `rando() < 900`.
+fn attack_enemy_in_zone2(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let Some(z) = zone_of_call(api, c, 1)? else { return Ok(0) };
+    let nat = c.u8(2)?;
+    let scan = enemy_scan(api, &z, nat, CellBuilding::None);
+    let Some(g) = raw_group(api, c, 0)? else { return Ok(u32::from(!scan.is_empty())) };
+    for i in living_members(api, g) {
+        if api.world.units[i].target().is_some() {
+            if api.world.random.rando() < 900 && !api.world.units[i].unlimited {
+                clear_orders(api, i);
+            }
+            continue;
+        }
+        let f = fighter(api, &api.world.units[i]);
+        let me = api.world.units[i].nmask;
+        let mut best: Option<(i32, usize)> = None;
+        for &e in &scan {
+            let eu = &api.world.units[e];
+            if f.kill & material(api, e) == 0 || eu.nmask & me != 0 || is_water(api, e) != f.water {
+                continue;
+            }
+            if obj_dist(api, i, e) <= f.min_r {
+                continue;
+            }
+            let top = obj_top_dist(api, e, i);
+            if top < 10_000 && best.is_none_or(|b| top < b.0) {
+                best = Some((top, e));
+            }
+        }
+        if let Some((_, t)) = best {
+            clear_brigade_orders(api, i);
+            attack_obj(api, i, t, 0x8F, acr_sim::combat::Placement::Replace);
+        }
+    }
+    Ok(u32::from(!scan.is_empty()))
+}
+
+/// `void AttackEnemyInZone(grp, zone, enemyNat)` (0x5642b7): the living objects of
+/// `enemyNat` in the zone (alliances not checked); idle members take, in this order of
+/// preference: a unit in their range band nearest by path (the engine compares the 1/16 px
+/// distance with the pixel ranges, kept), for building attackers a building in the band, a
+/// visible one of those, any target within a path length of 560; priority 1. Members with an
+/// attack order drop it with `rando() < 600`.
 fn attack_enemy_in_zone(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Some(z) = api.zone_arg(c, 1, "AttackEnemyInZone")?.and_then(|z| z.first().copied()) else { return Ok(0) };
     let Some(g) = raw_group(api, c, 0)? else { return Ok(0) };
     let en = c.u8(2)?;
-    let targets: Vec<EntityId> =
-        api.world.units.iter().filter(|u| u.living() && u.owner == en && z.contains(u)).map(|u| u.id).collect();
-    attack_nearest(api, c.name(), g, &targets);
+    let list: Vec<usize> = api
+        .world
+        .units
+        .iter()
+        .filter(|u| u.living() && u.owner == en && z.contains(u))
+        .take(800)
+        .map(|u| u.id.0 as usize)
+        .collect();
+    if list.is_empty() {
+        return Ok(0);
+    }
+    for i in living_members(api, g) {
+        if !api.world.units[i].orders.is_empty() {
+            if api.world.random.rando() < 600 && api.world.units[i].target().is_some() {
+                api.world.units[i].pop_order();
+            }
+            continue;
+        }
+        let f = fighter(api, &api.world.units[i]);
+        let ab = api.world.catalog.get(api.world.units[i].kind).role.attacks_buildings;
+        let up = api.world.units[i].pos;
+        let mut best: Option<(i32, usize)> = None;
+        for &e in &list {
+            let eu = &api.world.units[e];
+            if eu.building || f.kill & material(api, e) == 0 {
+                continue;
+            }
+            let d16 = norma(up.x - eu.pos.x, up.y - eu.pos.y);
+            if f.min_r < d16 && d16 < f.max_r {
+                let top = obj_top_dist(api, e, i);
+                if best.is_none_or(|b| top < b.0) {
+                    best = Some((top, e));
+                }
+            }
+        }
+        if best.is_none() && ab {
+            for &e in &list {
+                if !api.world.units[e].building {
+                    continue;
+                }
+                let d = obj_dist(api, i, e);
+                if f.min_r < d && d < f.max_r {
+                    let v = obj_top_dist(api, e, i) + d;
+                    if best.is_none_or(|b| v < b.0) {
+                        best = Some((v, e));
+                    }
+                }
+            }
+        }
+        let saved = best;
+        if let Some((_, t)) = best
+            && (ab || f.max_r > 150)
+            && !acr_sim::combat::visible_between(api.world, api.world.units[t].pos, up, i)
+        {
+            best = None;
+        }
+        if best.is_none() {
+            best = saved;
+        }
+        if best.is_none() {
+            for &e in &list {
+                let eu = &api.world.units[e];
+                if f.kill & material(api, e) == 0 && !(ab && eu.building) {
+                    continue;
+                }
+                let top = obj_top_dist(api, e, i);
+                if obj_dist(api, i, e) > f.min_r && top < 560 && best.is_none_or(|b| top < b.0) {
+                    best = Some((top, e));
+                }
+            }
+        }
+        if let Some((_, t)) = best {
+            attack_obj(api, i, t, 1, acr_sim::combat::Placement::Replace);
+        }
+    }
     Ok(0)
 }
 
-/// `void AttackBuildingsInZone(GAMEOBJ* grp, GAMEOBJ* zone, byte nat)`: the original ignores
-/// zone and nation and attacks random targets near each unit; ACR takes the nearest enemy
-/// building of each member.
+/// `void AttackBuildingsInZone(grp, zone, nat)` (0x5617df): nation and zone are not used;
+/// every member without a target probes 50 random cells around itself (`FindTarget`
+/// 0x5614df, two random numbers each) for an enemy ship, building or (close by) land unit
+/// in its range band and attacks it (0x90, in front, 10 shots).
 fn attack_buildings_in_zone(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Some(g) = api.group_arg(c, 0, "AttackBuildingsInZone")? else { return Ok(0) };
     if api.zone_arg(c, 1, "AttackBuildingsInZone")?.is_none() {
         return Ok(0);
     }
-    let Some(&first) = api.members(g).first() else { return Ok(0) };
-    let owner = api.world.units[first.0 as usize].owner;
-    let mask = api.st.unit_nmask(first, owner);
-    let targets: Vec<EntityId> = api
-        .world
-        .units
-        .iter()
-        .filter(|u| u.living() && u.building && api.st.unit_nmask(u.id, u.owner) & mask == 0)
-        .map(|u| u.id)
-        .collect();
-    attack_nearest(api, c.name(), g, &targets);
+    for i in living_members(api, g) {
+        if api.world.units[i].target().is_some() {
+            continue;
+        }
+        if let Some(t) = find_target(api, i) {
+            attack_obj(api, i, t, 0x90, acr_sim::combat::Placement::Front);
+        }
+    }
     Ok(0)
 }
 
+/// `FindTarget` (0x5614df): 50 random 128 px cells within the unit's maximum range.
+fn find_target(api: &mut Api, i: usize) -> Option<usize> {
+    let f = fighter(api, &api.world.units[i]);
+    let u = &api.world.units[i];
+    let (ux, uy, nm) = (u.pos.x, u.pos.y, !u.nmask);
+    let (cx, cy) = (ux >> 11, uy >> 11);
+    let k = (f.max_r >> 7) + 1;
+    let side = api.world.buckets.side();
+    let (mut c1, mut c2, mut c3, mut best3) = (None, None, None, i32::MAX);
+    let within = |api: &Api, e: usize| {
+        let p = api.world.units[e].pos;
+        let d = norma(p.x - ux, p.y - uy);
+        f.min_r * 16 < d && d < f.max_r * 16
+    };
+    for _ in 0..50 {
+        let dx = ((api.world.random.rando() * (2 * k + 1)) >> 15) - k;
+        let dy = ((api.world.random.rando() * (2 * k + 1)) >> 15) - k;
+        // The engine bounds dy by cx too (a bug, kept).
+        if dx < -cx || dx > side - cx || dy < -cx || dy > side - cx {
+            continue;
+        }
+        let (x, y) = (cx + dx, cy + dy);
+        if api.world.buckets.presence(x, y) & nm == 0 {
+            continue;
+        }
+        let units: Vec<usize> = api.world.buckets.get(x, y).iter().map(|&k| k as usize).collect();
+        let enemy = |e: &usize| api.world.units[*e].nmask & !nm == 0 && api.world.units[*e].living();
+        if units.len() >= 3
+            && let Some(&s) = units.iter().find(|e| enemy(e))
+            && is_water(api, s)
+            && api.world.catalog.get(api.world.units[s].kind).role.usage != 16
+            && within(api, s)
+        {
+            c1 = Some(s);
+            continue;
+        }
+        if let Some(&b) = api
+            .world
+            .buckets
+            .buildings_in(x, y)
+            .iter()
+            .find(|&&b| enemy(&(b as usize)))
+            .filter(|&&b| within(api, b as usize))
+        {
+            c2 = Some(b as usize);
+            continue;
+        }
+        if norma(dx, dy) < 20
+            && units.len() >= 3
+            && let Some(&l) = units.iter().find(|e| enemy(e))
+            && !is_water(api, l)
+            && within(api, l)
+        {
+            let p = api.world.units[l].pos;
+            let d = norma(p.x - ux, p.y - uy);
+            if d < best3 {
+                (best3, c3) = (d, Some(l));
+            }
+        }
+    }
+    c1.or(c2).or(c3)
+}
+
+/// `bool AttackGrpByGrp(attackers, victims)` (0x57385f): members not attacking take the
+/// victim nearest by path they can hurt (same medium, 0x8F); attacking members are released
+/// with `rando() < 900`.
 fn attack_grp_by_grp(api: &mut Api, c: &mut Call) -> Result<u32> {
     let (Some(a), Some(v)) = (raw_group(api, c, 0)?, raw_group(api, c, 1)?) else { return Ok(0) };
-    let targets = api.members(v);
-    attack_nearest(api, c.name(), a, &targets);
+    let victims = living_members(api, v);
+    for i in living_members(api, a) {
+        if api.world.units[i].target().is_some() {
+            if api.world.random.rando() < 900 && !api.world.units[i].unlimited {
+                clear_orders(api, i);
+            }
+            continue;
+        }
+        let f = fighter(api, &api.world.units[i]);
+        let me = api.world.units[i].nmask;
+        let mut best: Option<(i32, usize)> = None;
+        for &e in &victims {
+            if f.kill & material(api, e) == 0 || api.world.units[e].nmask & me != 0 || is_water(api, e) != f.water {
+                continue;
+            }
+            let top = obj_top_dist(api, e, i);
+            if top < 10_000 && best.is_none_or(|b| top < b.0) {
+                best = Some((top, e));
+            }
+        }
+        if let Some((_, t)) = best {
+            attack_obj(api, i, t, 0x8F, acr_sim::combat::Placement::Replace);
+        }
+    }
     Ok(1)
 }
 
-/// `bool GrpAttackObject(byte nat, GAMEOBJ* grp, int target)`.
+/// `bool GrpAttackObject(nat, grp, target)` (0x570d0c): members not attacking attack the
+/// object unless it is a friend of the nation (0x8F); attacking members are released with
+/// `rando() < 600`.
 fn grp_attack_object(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Some(g) = raw_group(api, c, 1)? else { return Ok(0) };
     let t = c.i32(2)?;
-    let Some(target) = u16::try_from(t).ok().and_then(|t| api.object(t)).filter(|u| u.living()).map(|u| u.id) else {
+    let Some(target) =
+        u16::try_from(t).ok().and_then(|t| api.object(t)).filter(|u| u.living()).map(|u| u.id.0 as usize)
+    else {
         return Ok(0);
     };
-    attack_nearest(api, c.name(), g, &[target]);
+    let mask = nat_mask(api, c.u8(0)?);
+    for i in living_members(api, g) {
+        if api.world.units[i].target().is_some() {
+            if api.world.random.rando() < 600 && !api.world.units[i].unlimited {
+                clear_orders(api, i);
+            }
+        } else if api.world.units[target].nmask & mask == 0 {
+            attack_obj(api, i, target, 0x8F, acr_sim::combat::Placement::Replace);
+        }
+    }
     Ok(1)
 }
 
 /// `bool SGP_AttackByArchers(byte nat, GAMEOBJ* grp, int, int)`: ACR attacks the nearest enemy
-/// of the group once (the original installs a per-tick target search, `'ARCA'`).
+/// of the group once with priority 0x90 (the original installs a per-tick target search,
+/// `'ARCA'`).
 fn sgp_attack_by_archers(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Some(g) = api.group(c, 1)? else { return Ok(0) };
-    let ids = api.members(g);
+    let ids = living_members(api, g);
     if ids.is_empty() {
         return Ok(0);
     }
     let n = ids.len() as i64;
-    let x = (ids.iter().map(|id| i64::from(api.world.units[id.0 as usize].pos.x >> 4)).sum::<i64>() / n) as i32;
-    let y = (ids.iter().map(|id| i64::from(api.world.units[id.0 as usize].pos.y >> 4)).sum::<i64>() / n) as i32;
-    let targets = enemies_in(api, &Circle { x, y, r: 960 }, c.u8(0)?);
-    attack_nearest(api, c.name(), g, &targets);
+    let x = (ids.iter().map(|&i| i64::from(api.world.units[i].pos.x >> 4)).sum::<i64>() / n) as i32;
+    let y = (ids.iter().map(|&i| i64::from(api.world.units[i].pos.y >> 4)).sum::<i64>() / n) as i32;
+    let mask = nat_mask(api, c.u8(0)?);
+    let z = Circle { x, y, r: 960 };
+    let targets: Vec<usize> = api
+        .world
+        .units
+        .iter()
+        .filter(|u| u.living() && api.st.unit_nmask(u.id, u.owner) & mask == 0 && z.contains(u))
+        .map(|u| u.id.0 as usize)
+        .collect();
+    for i in ids {
+        let up = api.world.units[i].pos;
+        if let Some(&t) =
+            targets.iter().min_by_key(|&&t| norma(up.x - api.world.units[t].pos.x, up.y - api.world.units[t].pos.y))
+        {
+            attack_obj(api, i, t, 0x90, acr_sim::combat::Placement::Replace);
+        }
+    }
     Ok(1)
 }

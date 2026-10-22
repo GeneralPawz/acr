@@ -52,7 +52,133 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("SGP_TakeResources", 0x577be1, DONE, sgp_take_resources),
     f("IsResourceEnabled", 0x577225, DONE, is_resource_enabled),
     f("SetToInternalResourcesZero", 0x56eba8, DONE, set_to_internal_resources_zero),
+    // These two replace the approximations in dip.rs (later tables win).
+    f("ArtAttackObject", 0x570b32, DONE, art_attack_object),
+    f("ArtAttackGroud", 0x5709b5, DONE, art_attack_ground),
+    f(
+        "MakeOneShotToBuild",
+        0x573da9,
+        Status::Partial("buildings found by their position's cell (the engine keeps a building map)"),
+        make_one_shot_to_build,
+    ),
 ];
+
+/// `word MakeOneShotToBuild(GAMEOBJ* zone, GAMEOBJ* grp, byte nat)` (0x573da9): the enemy
+/// buildings in the 128 px cells of the zone's rings; every member that is not attacking
+/// fires once (`AttackObj(.., 0x8F, 0, 1)`, then priority 0xF0) at the one nearest by path
+/// within its range band (musket shooters: the inner eighth); attacking members are released
+/// with `rando() < 600`. Returns the last target, 0xFFFF if none.
+fn make_one_shot_to_build(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let Some(z) =
+        (if c.u32(0)? == 0 { None } else { api.zone_circles(&c.handle(0)?) }).and_then(|z| z.first().copied())
+    else {
+        return Ok(0);
+    };
+    let Some(g) = api.group(c, 1)? else { return Ok(0xFFFF) };
+    let nat_mask = api.world.nation_mask[usize::from(c.u8(2)? & 7)];
+    let side = api.world.buckets.side();
+    let mut targets: Vec<usize> = Vec::new();
+    for r in 0..=((z.r >> 7) + 1) as usize {
+        for &(a, b) in acr_sim::morale::ring(r) {
+            let (cx, cy) = ((z.x >> 7) + a, (z.y >> 7) + b);
+            if cx < 0 || cy < 0 || cx >= side - 1 || cy >= side - 1 {
+                continue;
+            }
+            let cell: Vec<usize> =
+                api.world.buckets.all(cx, cy).map(|k| k as usize).filter(|&k| api.world.units[k].building).collect();
+            let any = cell.first().copied();
+            let own = cell.iter().copied().find(|&k| api.world.units[k].nmask & nat_mask != 0);
+            if let Some(b) = any
+                && Some(b) != own
+                && api.world.units[b].living()
+                && !targets.contains(&b)
+                && targets.len() < 1600
+            {
+                targets.push(b);
+            }
+        }
+    }
+    if targets.is_empty() {
+        return Ok(0xFFFF);
+    }
+    let catalog = api.world.catalog.clone();
+    let mut res = 0xFFFF;
+    for id in api.members(g) {
+        let i = id.0 as usize;
+        let u = &api.world.units[i];
+        if u.target().is_some() {
+            if api.world.random.rando() < 600 && !api.world.units[i].unlimited {
+                let u = &mut api.world.units[i];
+                u.orders.clear();
+                u.prio = 0;
+            }
+            continue;
+        }
+        let adv = api.world.adv(u.owner, u.kind);
+        let rmin = adv.attacks[1].radius.0;
+        let mut rmax = acr_sim::combat::range_bounds(&adv).1;
+        if matches!(adv.attacks[1].kind.as_str(), "VISTREL" | "VISTREL2") {
+            rmax = rmin + ((rmax - rmin) >> 3);
+        }
+        let (ux, uy) = (u.pos.x, u.pos.y);
+        let mut best: Option<(i32, usize)> = None;
+        for &t in &targets {
+            let tu = &api.world.units[t];
+            let d = super::util::norma(ux - tu.pos.x, uy - tu.pos.y) >> 4;
+            if d > rmin && d < rmax + catalog.get(tu.kind).add_shot_radius {
+                let td = super::tactics::top_dist(api, tu.pos.x >> 10, tu.pos.y >> 10, ux >> 10, uy >> 10);
+                if best.is_none_or(|b| td < b.0) {
+                    best = Some((td, t));
+                }
+            }
+        }
+        if let Some((_, t)) = best
+            && acr_sim::combat::attack_obj_ex(api.world, i, t, 0x8F, acr_sim::combat::Placement::Replace)
+        {
+            let u = &mut api.world.units[i];
+            u.prio = 0xF0;
+            if let Some(acr_sim::world::Order::Attack { prio, .. }) = u.orders.last_mut() {
+                *prio = 0xF0;
+            }
+            res = t as u32;
+        }
+    }
+    Ok(res)
+}
+
+/// `void ArtAttackObject(GAMEOBJ* guns, byte nat, word target)` (0x570b32): every living gun
+/// that is not attacking attacks the object (priority 0x90, after its orders, one shot).
+fn art_attack_object(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let Some(g) = api.group(c, 0)? else { return Ok(0) };
+    let Some(t) = api.object(c.u16(2)?).filter(|u| u.living()).map(|u| u.id.0 as usize) else { return Ok(0) };
+    for id in api.members(g) {
+        if api.world.units[id.0 as usize].target().is_none() {
+            acr_sim::combat::attack_obj_ex(api.world, id.0 as usize, t, 0x90, acr_sim::combat::Placement::Append);
+        }
+    }
+    Ok(0)
+}
+
+/// `void ArtAttackGroud(GAMEOBJ* guns, byte nat, int x, int y)` (0x5709b5): every living gun
+/// that is not attacking fires one shot at the ground (`NewAttackPoint(x, y, 0x90, 2, 1)`).
+fn art_attack_ground(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let Some(g) = api.group(c, 0)? else { return Ok(0) };
+    let (x, y) = (c.i32(2)?, c.i32(3)?);
+    for id in api.members(g) {
+        if api.world.units[id.0 as usize].target().is_none() {
+            acr_sim::artillery::attack_point(
+                api.world,
+                id.0 as usize,
+                x,
+                y,
+                0x90,
+                acr_sim::combat::Placement::Append,
+                1,
+            );
+        }
+    }
+    Ok(0)
+}
 
 fn n_areas(api: &Api) -> usize {
     api.st.topo.as_ref().map_or(0, |t| t.areas.len())
