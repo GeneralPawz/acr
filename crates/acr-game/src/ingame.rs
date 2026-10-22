@@ -62,6 +62,8 @@ pub struct InGame {
     interface: interface::State,
     /// `FPSTime` of the options: the game speed.
     frame_time: i32,
+    /// The mission script and AI DLLs (`acr-mission`).
+    mission: crate::mission::MissionLink,
 }
 
 impl InGame {
@@ -73,6 +75,7 @@ impl InGame {
             }
         };
         let failed = None;
+        let mission = crate::mission::MissionLink::new(&setup);
         Self {
             setup,
             map_path,
@@ -100,6 +103,7 @@ impl InGame {
             mapgen,
             interface: interface::State::default(),
             frame_time: crate::ui::Settings::default().frame_time,
+            mission,
         }
     }
 
@@ -109,6 +113,7 @@ impl InGame {
         queue.extend(GroundAssets::FILES.iter().map(|p| (*p).to_owned()));
         queue.extend(self.map_path.clone());
         queue.extend(self.sim_assets.start(paths));
+        queue.extend(self.mission.start(paths));
         drop(queue);
         self.generate_map();
         self.objects.start(&|p| self.requests.borrow_mut().push(p.to_owned()));
@@ -150,6 +155,8 @@ impl InGame {
             }
             Err(_) => false,
         };
+        let (for_mission, more) = self.mission.on_loaded(path, result);
+        self.requests.borrow_mut().extend(more);
         let for_sim = self.sim_assets.wants(path);
         if for_sim {
             let more = self.sim_assets.add_file(path, result.as_ref().ok().map(Vec::as_slice));
@@ -161,7 +168,7 @@ impl InGame {
             .as_deref()
             .is_some_and(|m| acr_formats::normalize_path(m) == acr_formats::normalize_path(path));
         if ground.is_none() && !is_map {
-            return for_objects || for_sim;
+            return for_objects || for_sim || for_mission;
         }
         let bytes = match result {
             Ok(b) => b,
@@ -294,6 +301,22 @@ impl InGame {
         self.camera.project(x, y, h)
     }
 
+    /// Closes an open mission page or answers an open question (`yes`); false if none.
+    pub fn close_dialog(&mut self, yes: bool) -> bool {
+        self.mission.close_dialog(yes)
+    }
+
+    pub fn mission_dialog_open(&self) -> bool {
+        self.mission.dialog_open()
+    }
+
+    /// Mission messages and dialogs drawn over the map (1024 × 768 canvas).
+    pub fn overlay(&self) -> Vec<crate::ui::draw::Draw> {
+        let mut out = Vec::new();
+        self.mission.draws(&mut out);
+        out
+    }
+
     /// Left button: press starts a selection, release selects by click or rectangle.
     pub fn on_left(&mut self, pressed: bool) {
         let Some(at) = self.cursor else { return };
@@ -351,11 +374,24 @@ impl InGame {
             self.centre(window);
         }
         let paused = self.interface.paused;
+        if let (Some(world), Some(map)) = (&mut self.world, &self.map) {
+            let more = self.mission.update(map, world, f64::from(seconds));
+            self.requests.borrow_mut().extend(more);
+        }
         if let Some(world) = &mut self.world {
-            let ticks = if paused { 0 } else { self.clock.advance((f64::from(seconds) * 1e9) as u64) };
-            for _ in 0..ticks {
-                world.step(&std::mem::take(&mut self.commands));
+            let mut ticks = if paused { 0 } else { self.clock.advance((f64::from(seconds) * 1e9) as u64) };
+            for t in 0..ticks {
+                // The scripts run before each step; a page, a question or the end of the game
+                // stops the simulation like the original's modal dialogs.
+                let Some(orders) = self.mission.before_step(world) else {
+                    ticks = t;
+                    break;
+                };
+                let mut commands = std::mem::take(&mut self.commands);
+                commands.extend(orders);
+                world.step(&commands);
             }
+            self.requests.borrow_mut().extend(self.mission.take_requests());
             for _ in 0..ticks {
                 self.tick_markers();
             }

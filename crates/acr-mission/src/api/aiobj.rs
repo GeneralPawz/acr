@@ -1,0 +1,106 @@
+//! Direct object access for the AI DLLs: `GetOBJ` and the `OBJ_*` orders.
+
+use acr_script::runtime::Result;
+use acr_sim::Command;
+
+use super::{Api, ApiFn, Call, Status};
+use crate::guest;
+
+pub const FUNCTIONS: &[ApiFn] = &[
+    ApiFn { name: "GetOBJ", original: 0x56f07f, status: Status::Done, handler: get_obj },
+    ApiFn {
+        name: "OBJ_SendTo",
+        original: 0x56f0a1,
+        status: Status::Partial("a single-unit Command::Move; priority and order type need acr-sim orders"),
+        handler: obj_send_to,
+    },
+    ApiFn {
+        name: "OBJ_AttackObj",
+        original: 0x56f13f,
+        status: Status::Partial("Command::Attack (acr-sim walks to the target until combat lands)"),
+        handler: obj_attack_obj,
+    },
+    ApiFn {
+        name: "OBJ_AttackPoint",
+        original: 0x56f3a2,
+        status: Status::Partial("moves to the point; no ranged ground attack in acr-sim yet"),
+        handler: obj_attack_point,
+    },
+    ApiFn {
+        name: "OBJ_LeaveMine",
+        original: 0x56f1d6,
+        status: Status::Stub("no garrisons in acr-sim yet: returns 0"),
+        handler: zero,
+    },
+    ApiFn {
+        name: "GetTargetObject",
+        original: 0x56f4b7,
+        status: Status::Partial("no attack state in acr-sim yet: never attacking (0xFFFF)"),
+        handler: get_target_object,
+    },
+    ApiFn {
+        name: "GetOrderType",
+        original: 0x56f3f5,
+        status: Status::Partial("12 (moving) when the unit has orders, else 0; other order types need acr-sim"),
+        handler: get_order_type,
+    },
+];
+
+fn zero(_: &mut Api, _: &mut Call) -> Result<u32> {
+    Ok(0)
+}
+
+/// `OneObject* GetOBJ(int index)`: the guest mirror of the object, NULL for an empty slot.
+/// Dead units stay visible (with `Sdoxlo` set) like dying units in the original.
+fn get_obj(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let i = c.i32(0)?;
+    if !(0..0xFFFF).contains(&i) {
+        return Ok(0);
+    }
+    let Some(u) = api.object(i as u16) else { return Ok(0) };
+    let id = u.id;
+    let p = guest::write_mirror(c.raw.mem, api.st, api.world, id)?;
+    api.st.mirrors.entry(api.vm).or_default().insert(i as u16);
+    Ok(p)
+}
+
+/// The living unit behind a `word index` argument.
+fn unit_arg(api: &Api, c: &Call, i: u32) -> Result<Option<(acr_sim::world::EntityId, u8)>> {
+    let idx = c.u16(i)?;
+    Ok(api.object(idx).filter(|u| u.living()).map(|u| (u.id, u.owner)))
+}
+
+/// `void OBJ_SendTo(word index, int x, int y, byte prio, byte ordType)` (pixels).
+fn obj_send_to(api: &mut Api, c: &mut Call) -> Result<u32> {
+    if let Some((id, owner)) = unit_arg(api, c, 0)? {
+        api.commands.push(Command::Move { player: owner, units: vec![id], x: c.i32(1)?, y: c.i32(2)? });
+    }
+    Ok(0)
+}
+
+/// `void OBJ_AttackObj(word index, word target, byte prio, word nTimes)`.
+fn obj_attack_obj(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let Some((id, owner)) = unit_arg(api, c, 0)? else { return Ok(0) };
+    let Some(target) = api.object(c.u16(1)?).filter(|u| u.living()).map(|u| u.id) else { return Ok(0) };
+    api.commands.push(Command::Attack { player: owner, units: vec![id], target });
+    Ok(1)
+}
+
+/// `void OBJ_AttackPoint(word index, int x, int y, byte prio, byte ordType, word nTimes)`.
+fn obj_attack_point(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let Some((id, owner)) = unit_arg(api, c, 0)? else { return Ok(0) };
+    api.commands.push(Command::Move { player: owner, units: vec![id], x: c.i32(1)?, y: c.i32(2)? });
+    Ok(1)
+}
+
+/// `void GetTargetObject(word index, word* outIndex, word* outSerial)`.
+fn get_target_object(_: &mut Api, c: &mut Call) -> Result<u32> {
+    c.out_u16(1, 0xFFFF)?;
+    Ok(0)
+}
+
+/// `int GetOrderType(OneObject*)`: the current order's type (12 = move).
+fn get_order_type(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let Some(i) = guest::object_index(c, c.u32(0)?)? else { return Ok(0) };
+    Ok(api.object(i).map_or(0, |u| if u.orders.is_empty() { 0 } else { 12 }))
+}

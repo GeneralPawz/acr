@@ -7,6 +7,7 @@ mod canvas;
 mod hud;
 mod ingame;
 mod intro;
+mod mission;
 mod music;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod native;
@@ -165,6 +166,8 @@ impl Game {
                 }
                 let (l, image, cursor) = game.interface(&self.ui.ctx(), g.gpu.size(), game_dt);
                 layers = l;
+                // Mission pages, hints and the end of the game over the interface.
+                layers.push((Canvas::fit(g.gpu.size()), game.overlay()));
                 if let Some(image) = image {
                     self.ui.set_image(hud::MINIMAP_IMAGE, image);
                 }
@@ -422,6 +425,14 @@ impl ApplicationHandler<Event> for Game {
                     && !(logical_key == Key::Named(NamedKey::Enter) && self.alt_down()) =>
             {
                 let pressed = state == ElementState::Pressed;
+                // An open mission page takes Enter (OK) and Escape (No) first.
+                if let Mode::InGame(game) = &mut self.mode
+                    && pressed
+                    && matches!(logical_key, Key::Named(NamedKey::Enter | NamedKey::Escape))
+                    && game.close_dialog(logical_key == Key::Named(NamedKey::Enter))
+                {
+                    return;
+                }
                 if let Mode::InGame(game) = &mut self.mode
                     && game.key(&self.ui.ctx(), &logical_key, pressed) == ingame::GameKey::Menu
                 {
@@ -442,6 +453,12 @@ impl ApplicationHandler<Event> for Game {
                 if matches!(&self.mode, Mode::InGame(g) if g.ready()) && !self.ui.dialog_open() =>
             {
                 let Mode::InGame(game) = &mut self.mode else { return };
+                if game.mission_dialog_open() {
+                    if button == MouseButton::Left && state == ElementState::Released {
+                        game.close_dialog(true);
+                    }
+                    return;
+                }
                 let ctx = self.ui.ctx();
                 let result = match (button, state) {
                     (MouseButton::Left, _) => game.left_button(&ctx, state == ElementState::Pressed),

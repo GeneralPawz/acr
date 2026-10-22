@@ -4,8 +4,8 @@
 //! All of these functions are `cdecl` (caller cleans the stack, confirmed by the
 //! `add esp, n` after every call site and by the `YA` calling convention code in the
 //! mangled C++ names). [`ARG_COUNTS`] lists the number of 32-bit arguments of each
-//! function as inferred from the stack cleanup at its call sites across all 73 DLLs; the
-//! real signatures still have to be reverse-engineered for the API implementation.
+//! function as inferred from the stack cleanup at its call sites across all 73 DLLs (7 from
+//! the original functions' argument reads); the signatures are in `acr-mission`.
 
 use crate::runtime::{Host, HostCall, Result};
 
@@ -36,6 +36,7 @@ pub const ARG_COUNTS: &[(&str, u8)] = &[
     ("AssignDesantDestGroup", 2),
     ("AssignDesantStartGroup", 2),
     ("Attack3", 4), // ambiguous: add16:18, add24:4, add36:2
+    ("Attack4", 4), // from the original's argument reads (no direct call site)
     ("Attack6", 4),
     ("AttackBuildingsInZone", 3),
     ("AttackByTomahawks", 4),
@@ -65,6 +66,7 @@ pub const ARG_COUNTS: &[(&str, u8)] = &[
     ("CreateTopListEnArmy", 3),
     ("DeleteHiddenUnits", 1),
     ("DeleteUnitFromGroup", 2),
+    ("DetectPanic", 1), // from the original's argument reads
     ("DieUnit", 1),
     ("DisableMission", 1),
     ("DisableUpgrade", 2),
@@ -78,9 +80,11 @@ pub const ARG_COUNTS: &[(&str, u8)] = &[
     ("GetAINation", 0),
     ("GetAmountOfWarriors", 1),
     ("GetBuildingEntryPoint", 4),
+    ("GetCurrentPurpose", 1), // from the original's argument reads
     ("GetCurrentUnits", 1),
     ("GetDiff", 1),
     ("GetDifficulty", 0),
+    ("GetEnemy3", 3), // from the original's argument reads
     ("GetEnemyForce", 2),
     ("GetExtraction", 1),
     ("GetFogSpotVisibility", 2),
@@ -90,6 +94,7 @@ pub const ARG_COUNTS: &[(&str, u8)] = &[
     ("GetInsideAmount", 1),
     ("GetInsideList", 2),
     ("GetLandType", 0),
+    ("GetListOfNearZones", 2), // from the original's argument reads
     ("GetMaxDamage", 1),
     ("GetMaxInsideAmount", 1),
     ("GetMaxUnits", 1),
@@ -100,6 +105,7 @@ pub const ARG_COUNTS: &[(&str, u8)] = &[
     ("GetNInside", 1), // ambiguous: add24:1, add4:2
     ("GetNUnits", 1),
     ("GetNZones", 0),
+    ("GetNextZone", 2), // from the original's argument reads
     ("GetOBJ", 1),
     ("GetOrderType", 1),
     ("GetPeaceTimeLeft", 0),
@@ -145,6 +151,7 @@ pub const ARG_COUNTS: &[(&str, u8)] = &[
     ("MissErrorMessage", 2),
     ("NationIsErased", 1),
     ("OBJ_AttackObj", 4),
+    ("OBJ_AttackPoint", 6), // from the original's argument reads
     ("OBJ_LeaveMine", 2),
     ("OBJ_SendTo", 5),
     ("Patrol", 3),

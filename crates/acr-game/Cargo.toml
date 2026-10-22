@@ -20,6 +20,7 @@ acr-formats.workspace = true
 acr-mapgen.workspace = true
 acr-render.workspace = true
 acr-sim.workspace = true
+acr-mission.workspace = true
 acr-video.workspace = true
 log = "0.4.34"
 web-time = "1.1.0"
