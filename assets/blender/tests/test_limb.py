@@ -70,6 +70,32 @@ class Radius(unittest.TestCase):
         self.assertAlmostEqual(p[8], 0.06 + (0.02 - 0.06) * 8 / 15, places=4)
         self.assertEqual(limb.radius_profile([]), [0.0] * limb.SAMPLES)
 
+    def test_trunk_skin_does_not_bulge_the_root(self):
+        # A limb tapering 0.09 -> 0.04 m, eight vertices per window, plus armpit/crotch
+        # skin near the trunk joint: a cluster far off the chain at levels 1/15..3/15.
+        n = limb.SAMPLES
+        samples = []
+        for k in range(n):
+            lv = k / (n - 1)
+            r = 0.09 - 0.05 * lv
+            samples += [(lv + d, r * f) for d in (-0.01, 0.01) for f in (0.9, 0.95, 1.0, 0.97)]
+        samples += [(1 / 15, 0.18), (1 / 15 + 0.01, 0.176), (1 / 15 - 0.01, 0.17),
+                    (2 / 15, 0.15), (2 / 15 + 0.01, 0.146), (2 / 15 - 0.01, 0.144), (3 / 15, 0.138)]
+        p = limb.radius_profile(samples)
+        for k in range(n):
+            want = 0.09 - 0.05 * k / (n - 1)
+            self.assertLess(p[k], want * 1.2, k)  # was up to 2x
+            self.assertGreater(p[k], want * 0.85, k)
+        for a, b in zip(p, p[1:]):  # smooth: no step over 20 %
+            self.assertLess(abs(a - b) / max(a, b), 0.2)
+
+    def test_spike_cut_keeps_a_real_step(self):
+        # The wrist: forearm 0.07 then hand 0.035 over the last third stays a step.
+        samples = [(k / 15, 0.07 if k < 11 else 0.035) for k in range(16)]
+        p = limb.radius_profile(samples)
+        self.assertAlmostEqual(p[5], 0.07)
+        self.assertAlmostEqual(p[14], 0.035)
+
 
 class Crawl(unittest.TestCase):
     def test_euler_round_trip(self):
