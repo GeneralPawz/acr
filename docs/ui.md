@@ -529,7 +529,6 @@ Deviations: hint timers count simulation ticks; the end waits 7 s of game time; 
 custom texts of `SetVictoryText`/`SetLoosText` are not supported (no mission uses them);
 after a campaign victory the next missions are not opened (no campaign progress yet).
 
-<<<<<<< HEAD
 ### Diplomacy panel
 
 `diplomacy/` (panel, CML pages) and `ingame/dip.rs` (hooks); DipServer's side is in
@@ -611,7 +610,6 @@ Deviations:
 - The scroll bar's `shrink` (arrows 5 px shorter) is not applied; there is no mouse wheel,
   as in the original.
 - `ACR_DIP_PAGE=<file.cml>` (native) shows a page file at the start, for layout checks.
-=======
 ### Mission history (#116)
 
 - Every `ShowPage(id)` and `AskQuestion(id)` appends `id` to the local player's history
@@ -635,7 +633,6 @@ Deviations:
   there), and a page id that matches several pages gives one entry per page.
 - The game menu's objectives row (value 0xe8 in 0x5d9c30) is dead code: no row produces
   that value, so ACR does not add one (F1 shows the objectives).
->>>>>>> 7077846 (In-game "M" drop-down: all single player rows, mission history window)
 
 ### Open questions
 
