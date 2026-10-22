@@ -11,6 +11,8 @@ use crate::ui::draw::Rect;
 
 /// Side of the whole-map image: `240 << s` cells, one pixel per `1 << s` cells.
 pub const SIDE: i32 = 240;
+/// Side of the fog mask: one entry per 2 × 2 block of minimap pixels.
+pub const FOG_SIDE: i32 = SIDE / 2;
 /// Largest shown side in the small and the large mode (0x4c0a40).
 const SMALL: i32 = 120;
 const LARGE: i32 = 480;
@@ -130,6 +132,7 @@ pub fn compose(
     map: &Minimap,
     placement: &Placement,
     dots: &[Dot],
+    fog: Option<&[bool]>,
     camera: Option<Rect>,
     palette: &acr_formats::Palette,
 ) -> acr_formats::raster::Image {
@@ -144,7 +147,7 @@ pub fn compose(
             }
         }
     }
-    let mut put = |x: i32, y: i32, c: u8| {
+    let put = |idx: &mut [u8], x: i32, y: i32, c: u8| {
         if (0..w).contains(&x) && (0..h).contains(&y) {
             idx[(y * w + x) as usize] = c;
         }
@@ -152,18 +155,29 @@ pub fn compose(
     for d in dots {
         let (x, y) = (d.x - ox, d.y - oy);
         for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
-            put(x + dx, y + dy, d.color);
+            put(&mut idx, x + dx, y + dy, d.color);
+        }
+    }
+    // Fog (0x485c24, after the dots, so it hides them): 2 × 2 blocks in palette colour 0.
+    if let Some(fog) = fog {
+        for y in 0..h {
+            for x in 0..w {
+                let (bx, by) = ((x + ox) >> 1, (y + oy) >> 1);
+                if (0..FOG_SIDE).contains(&bx) && (0..FOG_SIDE).contains(&by) && fog[(by * FOG_SIDE + bx) as usize] {
+                    idx[(y * w + x) as usize] = 0;
+                }
+            }
         }
     }
     if let Some(r) = camera {
         let (x0, y0, x1, y1) = (r.x0 - ox, r.y0 - oy, r.x1 - 1 - ox, r.y1 - 1 - oy);
         for x in x0..=x1 {
-            put(x, y0, WHITE);
-            put(x, y1, WHITE);
+            put(&mut idx, x, y0, WHITE);
+            put(&mut idx, x, y1, WHITE);
         }
         for y in y0..=y1 {
-            put(x0, y, WHITE);
-            put(x1, y, WHITE);
+            put(&mut idx, x0, y, WHITE);
+            put(&mut idx, x1, y, WHITE);
         }
     }
     let mut rgba = Vec::with_capacity(idx.len() * 4);

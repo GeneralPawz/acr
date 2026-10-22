@@ -460,6 +460,22 @@ The cursor shows what a right click on the map does with the selection:
 With only buildings selected, the right click sets the rally point. Map points account for
 the terrain height under the cursor.
 
+The order is given when the button is released (0x4c4dad); a press only starts the drag
+(`0x1100b32`, press point 0x1100acc / 0x1100ad0):
+
+- While the button is held, 0x4c5407 draws a facing arrow from the press point to the
+  cursor once the drag is longer than 30 map pixels: seven `DrawLine`s in
+  `GetPaletteColor(255, 255, 0)` around a shaft 40 wide, with a head 40 long and 80 wide
+  (`u = 20·(A, B) / L`, map y halved on the screen). No sprites.
+- Released after more than 30 map pixels: a move to the press point facing the drag,
+  `dir = (GetDir(dx, dy) + 4) & 0xF8` (32 directions), whatever is under the cursor. The
+  move command 2 carries the direction (0x4d5f86); formations re-form facing it, free units
+  are arranged across it (0x4ac705). ACR sends `MoveFacing`.
+- Otherwise the context order of the table above.
+- The `GO&ATTACK` icon toggles the attack-move mode (`0x28f9e55`): moves get flag 8 and
+  become attack-moves (`AttackMove`; ACR's attack-move has no direction). `STANDGR` and
+  `NOSTAND` switch stand ground (`StandGround`).
+
 ### Minimap (0x44c230 image, 0x4c0a40 draw)
 
 - One pixel per `1 << s` map cells, so the image is 240 × 240. A pixel samples vertex
@@ -477,6 +493,12 @@ the terrain height under the cursor.
   `Border` box.
 - Mouse: left press or drag centres the view (0x4c5c9a). Right press orders the
   selection there.
+- Fog of war (0x485c24, after the dots, so it hides them, before the camera rectangle):
+  each 2 × 2 block of pixels whose fog cell (`FogMap` 0x7b7b28, 128 px cells) is 1300 or
+  less becomes palette colour 0. There is no explored state. It is drawn while fog is on
+  (`0x775e18`) and the player has not been defeated. ACR keeps the local player's
+  `acr_sim::fog::Fog`, stamps and blurs it every tick, and shows it only on the minimap;
+  the map view has no fog yet.
 
 ### Cursor and overlays
 
@@ -488,6 +510,9 @@ the terrain height under the cursor.
   `RECTANGLE dx dy w h` (defaults 0 3 40 64). Soldiers of a formed brigade get none.
 - Life bars (Tab, 0x4bb390): green lines at y0 − 12 and y0 − 11 with white end caps.
 - Selection rectangle: `GetPaletteColor(0, 255, 255)`.
+- The game menu, load and options dialogs load `cur_mn.rlc` (`LoadPointer` 0x496de2), but
+  it is never drawn: the cursor drawer 0x496efe always shows `CURSOR_00.GP` frame 0, so
+  dialogs show the arrow, as in ACR.
 - `Interface\CursGo` at a move target: one frame per game frame, 17 frames (0x587fa9).
 
 ### Keys (0x4a30e8) and scrolling (0x4c5910)
@@ -501,9 +526,15 @@ the terrain height under the cursor.
   (x − 64, y − 8) to (x + w + 64, y + 27). It does not blink.
 - Control groups: Ctrl + digit stores, digit recalls, Shift + digit adds.
 - Space: jump to the next selected unit. Pause: pause. Tab: life bars. M: minimap size.
-- A second click on a unit selects all own units of that type on the screen. This is
-  not verified in the original.
-- Shift adds to a selection.
+- Selection (0x4da424 → 0x5179d6): a press and release within 5 pixels picks the own object
+  under the cursor (nothing → empty selection). A rectangle selects while it is drawn
+  (every mouse event): every own object whose box (`RECTANGLE`) meets it, but buildings
+  only if no unit is caught. Enemies cannot be selected. Shift adds and never removes;
+  Ctrl does nothing.
+- Double click (WM_LBUTTONUP 0x4a2d2a: the next release within 600 ms and
+  `|dx| + |dy|` < 16 pixels, pseudo key 0xF1, handler 0x4c2ea5): the own units on the screen
+  of the first selected unit's type, of its kind (formation members if the selection has
+  some, free units if it has some); Shift adds.
 - Scrolling is updated once per game frame:
   - arrow keys set the speed to ±4;
   - the cursor within 6 px of the edge accelerates up to `ScrollSpeed`;
@@ -766,8 +797,6 @@ to the panel (0x4c1c36). U toggles value 2, I value 1; one panel at a time.
 - Which command icons the original shows for a selection without an officer (attack
   on/off, friendly fire, arm attack…): the conditions in 0x606710 are only partly
   decoded.
-- Selection with Ctrl and the double click (`DBLCLICK`) are not traced.
-- The right-drag facing arrow (0x4c5407) and fog of war on the minimap are not built.
 - The simulation does not cancel production over the depot limit (`MAXINDEPO`, 0x49f21b)
   nor print `NOT_ENOUGH_PEASANTS` for buildings that train peasants.
 - Whether the original hides a selected type's icon when production icons take its slot.

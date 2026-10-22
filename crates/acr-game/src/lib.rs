@@ -526,8 +526,8 @@ impl ApplicationHandler<Event> for Game {
                 let ctx = self.ui.ctx();
                 let result = match (button, state) {
                     (MouseButton::Left, _) => game.left_button(&ctx, state == ElementState::Pressed),
-                    (MouseButton::Right, ElementState::Pressed) => {
-                        game.right_button(&ctx);
+                    (MouseButton::Right, _) => {
+                        game.right_button(&ctx, state == ElementState::Pressed);
                         ingame::GameMouse::None
                     }
                     _ => ingame::GameMouse::None,
