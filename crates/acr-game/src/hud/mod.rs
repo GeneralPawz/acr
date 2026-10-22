@@ -10,6 +10,7 @@
 pub mod cursor;
 pub mod data;
 pub mod minimap;
+pub mod panels;
 pub mod produce;
 
 use std::rc::Rc;
@@ -170,6 +171,10 @@ pub struct View {
     pub view: [f32; 2],
     /// The local player has mission messages: the drop-down offers `UM_HIST` (0x4c6cb0).
     pub history: bool,
+    /// The type the unit panel shows (key U).
+    pub unit_info: Option<panels::UnitInfo>,
+    /// The game panel's page (key I).
+    pub game_page: Vec<Draw>,
 }
 
 /// What the game should do after input on the interface.
@@ -194,6 +199,8 @@ pub enum HudEvent {
     History,
     /// Switch the zoomed-out view (`4XSCALE_ON`/`OFF`, 0x5fb4dd).
     Zoom,
+    /// The unit panel's Next (1) or Prev (−1) button.
+    UnitPanelStep(i32),
 }
 
 /// The side panel (`0x1100a74`): none, the game info (key I, 1) or the unit
@@ -302,6 +309,8 @@ pub struct Hud {
     pub transparent: bool,
     /// The zoomed-out view is on (`0x28eed70`, key L).
     pub zoom: bool,
+    pub unit_panel: panels::UnitPanel,
+    pub game_panel: panels::GamePanel,
 }
 
 impl Default for Hud {
@@ -320,6 +329,8 @@ impl Default for Hud {
             locks: false,
             transparent: false,
             zoom: false,
+            unit_panel: panels::UnitPanel::new(),
+            game_panel: panels::GamePanel::default(),
         }
     }
 }
@@ -444,6 +455,9 @@ impl Hud {
         if self.dropdown && self.dropdown_rows(ctx, view).1.iter().any(|(_, r)| r.contains(p)) {
             return true;
         }
+        if self.panel != Panel::None && panels::covers(p) {
+            return true;
+        }
         let (bx, by) = menu_button();
         if Rect::new(bx, by, 67, 42).contains(p) || (p[1] < 42.0 && p[0] >= (SCREEN[0] - RES_PANEL) as f32) {
             return true;
@@ -456,6 +470,12 @@ impl Hud {
 
     pub fn release(&mut self) {
         self.pressed = false;
+        self.unit_panel.release();
+    }
+
+    /// The portrait of the unit panel when it changed.
+    pub fn take_images(&mut self) -> Vec<(&'static str, acr_formats::raster::Image)> {
+        self.unit_panel.take_image().map(|i| (panels::PORTRAIT_IMAGE, i)).into_iter().collect()
     }
 
     /// Left button pressed at canvas point `p`.
@@ -494,6 +514,22 @@ impl Hud {
                 };
             }
         }
+        // An open panel swallows the clicks in its column (0x4c1c36).
+        if self.panel != Panel::None && panels::covers(p) {
+            match self.panel {
+                Panel::Unit => match self.unit_panel.press(p) {
+                    panels::UnitPanelEvent::Close => self.panel = Panel::None,
+                    panels::UnitPanelEvent::Step(d) => return HudEvent::UnitPanelStep(d),
+                    _ => {}
+                },
+                _ => {
+                    if !self.game_panel.press(p) {
+                        self.panel = Panel::None;
+                    }
+                }
+            }
+            return HudEvent::Used;
+        }
         let (bx, _) = menu_button();
         let [x, y] = p;
         if x > (bx + 23) as f32 && x < (bx + 44) as f32 && y > 8.0 && y < 26.0 {
@@ -521,6 +557,9 @@ impl Hud {
     /// Mouse dragged with the left button held: the minimap keeps moving the camera.
     pub fn drag(&mut self, view: &View, p: [f32; 2]) -> HudEvent {
         self.mouse = Some(p);
+        if self.panel == Panel::Unit {
+            self.unit_panel.mouse_move(p);
+        }
         if self.pressed
             && self.minimap.is_some()
             && let Some(px) = self.placement(view).pixel_at(p)
@@ -533,6 +572,9 @@ impl Hud {
     /// Right button at canvas point `p`: an icon's right-click command, or an order to a
     /// point of the minimap.
     pub fn right_press(&mut self, ctx: &Ctx, view: &View, p: [f32; 2]) -> HudEvent {
+        if self.panel != Panel::None && panels::covers(p) {
+            return HudEvent::Used;
+        }
         if let Some(icon) =
             view.icons.iter().find(|i| i.slot < GRID_COLUMNS * GRID_ROWS && Self::icon_rect(i.slot).contains(p))
         {
@@ -574,6 +616,14 @@ impl Hud {
             let r = Self::icon_rect(icon.slot);
             let pressed = self.pressed && mouse.is_some_and(|m| r.contains(m));
             draw_icon(icon, r.x0, r.y0, pressed, &palette, out);
+        }
+        match (self.panel, &view.unit_info) {
+            (Panel::Unit, Some(info)) => self.unit_panel.draw(ctx, info, &palette, out),
+            (Panel::Game, _) => {
+                self.game_panel.draw_frame(ctx, out);
+                out.extend(view.game_page.iter().cloned());
+            }
+            _ => {}
         }
         draw_resources(ctx, view, out);
         if self.dropdown {
@@ -626,6 +676,11 @@ impl Hud {
             if Self::icon_rect(icon.slot).contains(m) && !icon.hint.is_empty() {
                 hint = Some(&icon.hint);
             }
+        }
+        if self.panel == Panel::Game
+            && let Some(id) = panels::GamePanel::hint(m)
+        {
+            hint = Some(ctx.texts.get(id));
         }
         let Some(text) = hint else { return };
         tooltip(ctx, palette, text, m, out);

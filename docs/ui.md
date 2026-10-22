@@ -610,6 +610,80 @@ Deviations:
 - The scroll bar's `shrink` (arrows 5 px shorter) is not applied; there is no mouse wheel,
   as in the original.
 - `ACR_DIP_PAGE=<file.cml>` (native) shows a page file at the start, for layout checks.
+### Side panels (keys U and I, `0x1100a74`)
+
+`hud/panels.rs` draws them, `ingame/panels.rs` fills them. Both use the column from
+`RealLx − 259` to `RealLx − 15` between `InfY1` = 48 and `InfY2` = 466 (`InfDY` = 16, 8 at
+`RealLy` ≤ 600; `InfY3` = `InfDY` + 428). The close box is `RealLx − 42 .. RealLx − 16`,
+`InfDY + 27 .. InfDY + 53`, and mouse input with `x > RealLx − 262`, `y < InfY2 + 8` goes
+to the panel (0x4c1c36). U toggles value 2, I value 1; one panel at a time.
+
+- Boxes (0x47f48a): a table of `Border` frames (TL, TR, BL, BR, left, right, top, bottom; −1
+  none). Edges are tiled every `max(64, frame size)` between the corners, each corner is
+  clipped to its quarter of the box. Paper (0x47fb51) fills the box with 64-pixel tiles
+  `fill + (i² + j³) % 3` first. Tables: panel 0x668660 = 17, 87, −1, −1, 12, 36, 23, −1;
+  paper 0x6686a0 = 3, 22, 6, 24, 12, 36, 10, 11; footer 0x6686c0 = 3, 86, 6, 8, 12, 14, 10, 11.
+- **Unit panel** (`DialogsSystem` 0xbe1b80, built by 0x4c8cd0, run by 0x4cbb10): the type of
+  the first selected own unit. Origin (`RealLx − 260`, `InfY1 + 31`) = (764, 79).
+  - Frame (0x480343): the panel box from `InfY1` down to the divider `InfY1 + 29 + H`, the
+    paper (fill 0x1c) below it. `H` is the height of the header frame: `Border` 0x13 unit,
+    0x15 artillery, 0x14 ship, 4 building, drawn at (0, −3) (building −4) over the portrait.
+  - `INFO kind frame` of the `.MD` (0x4f993e) picks the portrait: `Units.bmp` 104 × 132,
+    `Artillery.bmp` 132 × 114, `Ships.bmp` 132 × 151, `<nation>_BLD.bmp` 240 × 151. The
+    frames are stacked in a raw 8-bit BMP (0x436-byte header, palette ignored, bottom-up), the
+    last frame first. It is drawn at (1, −3) (buildings (4, −3)).
+  - Title: the type's name in `fon16y1` at (8, −29).
+  - Page buttons (`addGP_TextButton` on `Border`, the frame only under the mouse,
+    `SmallWhiteFont` hovered, `SmallYellowFont` otherwise): units at x = 114, y = 12 + 22·i
+    (sprite 0x37); artillery at x = 140, y = 3 + 22·i (sprite 0x39 over a fixed 0x38);
+    ships at x = 143, y = 20, 42, 64, 86, 109 (0x5e): General, Descr, Upgr, Next, Prev.
+    Buildings (0x39): Descr (12, 158), PriceUpg (132, 158), Next (132, 176), Prev (12, 176).
+    The page is kept per kind (`UI_PrmPage` 0x66a958, starting General, PriceUpg for
+    buildings). Next and Prev (0x4c8920, 0x4c8a20) step to the next or previous type with
+    an `ICON` in the nations' lists, without wrapping.
+  - General page from y = `H` + 16, x = 13, 16 pixels per line: `UI_Price`, the six
+    resource icons `Border` 37..42 at x = 16 + 35·i, the strip 35 with the non-zero prices in
+    `fn10` centred at x = 30 + 34·i, then `UI_Upkeep` and the upkeep lines (`UI_UGold`
+    `RESCONSUMER GOLD`·100/80, `UI_UWood`/`UI_UStone` ·100/800, `UI_UIron`/`UI_UCoal` from
+    `RASTRATA_NA_VISTREL`), `UI_STAGE` (`BUILDSTAGES`), `UI_CAPT`/`UI_BCAP` (`CAPTURE`),
+    `UI_ACCNT` (`VES` / 100) and `STORM_I` (`STORMFORCE`). PriceUpg is the same with a
+    24-pixel gap after the icons and `OPPOSIT_I` instead of `STORM_I`.
+  - Descr page: `BTN_Descr` at (9, `H` + 13), then `Description\<md>.md` in a text viewer at
+    (9, `H` + 29), 205 wide, `SmallYellowFont` with 2 pixels more per line, and an
+    `Interf2\VScroll2` bar at (218, `H` + 7).
+  - Not built: the Upgr page (upgrade icons, attack and shield upgrade tables), the upgrade
+    grid of PriceUpg, and the THIS_UNIT morale page (0x601d70) that the original shows
+    first for a selected unit.
+- **Game panel** (0x4ce310, dialogs 0x10fb148): paper (fill 28) from `InfY1` to
+  `InfY2 − 25` in the panel box, the footer box below to `InfY2 + 3`, the tab strip
+  `Border` 85 at (`RealLx − 260`, `InfY3`). Tabs at y = `InfY3` + 2, 21 high, x = 32, 69, 105,
+  141, 177 (+ `RealLx − 259`), widths 33, 32, 32, 32, 34, hints `NationalForces`,
+  `Economica`, `DeathList`, `Doxod`, `Diplomacy` (pages 0, 2, 1, 3, 4). The title is drawn
+  in `WhiteFont` at (774, 49), the page from X = 781, Y = 73 clipped to (771, 80)–(1020, 435).
+  - Page 0 (0x4cbde0): the players in the game (`Nation+0x1a78b`), teams by their average
+    score and players by score, highest first. Each: `Border` 95 + colour at (X − 6, y), the
+    name in `WhiteFont` at (X + 60, y + 6), then `Border` 91 at (X − 3, y + 50) and two
+    rows `INFO_G2`, `INFO_G1`, both with the score (`City+0xf54`) / 100 as `%.2f` centred at
+    X + 165 in `SpecialWhiteFont`, 24 pixels apart. In a mission only the player is named
+    (the others are "???" and skipped); random maps add the civilisation in
+    `SpecialYellowFont` (not drawn by ACR). The score is changed by objects: created +`VES`,
+    died −2·`VES` and +3·`VES` for the killer, captured ∓5·`VES`.
+  - Page 1 (0x4ccbb0, 0x4cc660): the local player's losses per type name, units
+    (`GI_UNITS`) then buildings (`GI_BLD`), in a table from (774, Y + 31) to 981 with lines
+    in colour 0x84, names in `SmallYellowFont`, counts right-aligned to 976, rows 14 apart.
+  - Page 2 (0x4ccc30): a 6 × 6 grid (wood, food, stone, gold, iron, coal) centred at
+    (X + 41 + 32·i, Y + 50 + 27·j): what 1000 of row j buys of column i at the current rates
+    (`SmallWhiteFont`, y − 5) and the normal ones (`SmallYellowFont`, y + 5); an outline
+    (cx − 15, cy − 8, 31 × 26, colour 0x96) where the normal value is lower. Icons `Border`
+    37 + [0, 3, 2, 1, 4, 5][k] left of the rows and above the columns; `E_Comment` below
+    from (X − 3, Y + 210), 15 pixels per line.
+  - Page 3 (0x4ccfe0): ACR shows only the gold upkeep table (`INFO_R4`..`INFO_R8`). The
+    mine workers (`INFO_R1`) and gathering (`INFO_R2`) lines are not built.
+  - Page 4 opens the diplomacy panel (`PopupDipDialog` 0x5c3a20).
+  - ACR counts score and losses by watching the world each tick: the killer's +3·`VES`
+    and captures are not counted, and the scroll bar (`Interf2\VScroll2` at (982, 79)) is not
+    built.
+
 ### Mission history (#116)
 
 - Every `ShowPage(id)` and `AskQuestion(id)` appends `id` to the local player's history
@@ -641,8 +715,6 @@ Deviations:
   decoded.
 - Selection with Ctrl and the double click (`DBLCLICK`) are not traced.
 - The right-drag facing arrow (0x4c5407) and fog of war on the minimap are not built.
-- The side panels of keys U and I (modes 1..3 of 0x4ce310) are not built; mode 4 is the
-  diplomacy panel.
 - Production: the unit limit (`+0x173a`), the `MUSTREPAIR` hint and the `+0x1729`
   special items (0x4d7682) are not built. The market has no interface yet (the simulation
   has `Trade`).
