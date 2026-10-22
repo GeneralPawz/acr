@@ -114,6 +114,17 @@ pub struct Material {
     pub tissue: Tissue,
     /// `extras.acr_tint` (#283): tinted per soldier with his skin tone or hair colour.
     pub tint: Tint,
+    /// How the surface takes the light (`extras.acr_sheen`, `acr_gloss`; docs/clothing.md).
+    pub finish: Finish,
+}
+
+/// A material's response beyond Lambert (`model.wgsl`, `cloth`): cloth fibres catch the light
+/// at grazing angles (`sheen`: wool's soft pale rim), blacked leather and brass a highlight
+/// (`gloss`).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Finish {
+    pub sheen: f32,
+    pub gloss: f32,
 }
 
 /// Which per-soldier colour a material takes (`extras.acr_tint`).
@@ -367,6 +378,10 @@ impl ModelData {
                         Some(t) if t == "hair" => Tint::Hair,
                         _ => Tint::None,
                     },
+                    finish: extras_json(m.extras()).as_ref().map_or_else(Finish::default, |e| Finish {
+                        sheen: e.get("acr_sheen").and_then(serde_json::Value::as_f64).unwrap_or(0.0) as f32,
+                        gloss: e.get("acr_gloss").and_then(serde_json::Value::as_f64).unwrap_or(0.0) as f32,
+                    }),
                 }
             })
             .collect();
@@ -382,6 +397,7 @@ impl ModelData {
             stump: false,
             tissue: Tissue::None,
             tint: Tint::None,
+            finish: Finish::default(),
         });
 
         let mut slots: Vec<Slot> = Vec::new();

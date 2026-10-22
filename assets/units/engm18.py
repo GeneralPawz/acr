@@ -91,6 +91,7 @@ def make(root, name, build=BUILD):
         cloth = [o for o in ch.layers["clothes"] if o.name in made]
         drape.hide_skin(ch, cloth)
         surf = drape.surface(cloth, f"{name}.belt_surface")
+        drape.buttons(ch, cloth, name)
         offsets = (0.014, 0.018)
     else:
         ch.shell("waistcoat", "waistcoat", lambda c, n, h, p: h in TORSO and 0.97 < c.z < 1.47, 0.012)

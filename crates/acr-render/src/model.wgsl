@@ -53,6 +53,8 @@ struct Material {
     // x: stump cap (wet, ragged outline from the uv), y: tissue kind, z: per-soldier tint
     // (1 skin, 2 hair), w: procedural decay (a model without masks).
     look: vec4<f32>,
+    // x: sheen at grazing angles (cloth), y: gloss (blacked leather, brass).
+    cloth: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> globals: Globals;
@@ -686,7 +688,21 @@ fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
         wet = max(wet, gash);
     }
     let lit = globals.light.w + (1.0 - globals.light.w) * max(dot(n, globals.light.xyz), 0.0);
+    let albedo = rgb;
     rgb = rgb * lit;
+    // Cloth: the fibres of the nap catch the light at grazing angles, a soft pale rim where
+    // the surface turns away (wool), nothing face on; no highlight, so it never reads as
+    // leather. Blacked leather and brass take a dull highlight.
+    if (material.cloth.x > 0.0) {
+        let graze = pow(1.0 - abs(dot(n, globals.forward.xyz)), 3.0);
+        let lum = dot(albedo, vec3<f32>(0.3, 0.55, 0.15));
+        rgb = rgb + material.cloth.x * graze * (0.5 + 0.5 * lit) * (0.55 * albedo + vec3<f32>(0.25 * lum + 0.025));
+    }
+    if (material.cloth.y > 0.0) {
+        let h = normalize(globals.light.xyz - globals.forward.xyz);
+        let spec = pow(max(dot(n, h), 0.0), 24.0);
+        rgb = rgb + material.cloth.y * spec * mix(vec3<f32>(1.0), albedo * 2.5, 0.5);
+    }
     // Wet flesh: a tight highlight.
     if (wet > 0.0) {
         let h = normalize(globals.light.xyz - globals.forward.xyz);

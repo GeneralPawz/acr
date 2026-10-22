@@ -21,6 +21,7 @@ use winit::keyboard::NamedKey;
 
 use crate::ui::{GameKind, GameSetup};
 
+mod cloth_view;
 mod controls;
 mod damage_view;
 mod debris;

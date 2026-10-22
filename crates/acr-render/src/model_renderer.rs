@@ -229,6 +229,8 @@ struct MaterialUniform {
     /// x: stump cap (wet, ragged outline), y: tissue kind, z: per-soldier tint, w: the
     /// model rots by the procedural fallback ([`crate::model::ModelData::decays_procedurally`]).
     look: [f32; 4],
+    /// x: sheen at grazing angles, y: gloss ([`crate::model::Finish`]).
+    cloth: [f32; 4],
 }
 
 #[repr(C)]
@@ -757,6 +759,7 @@ impl ModelRenderer {
                         m.tint as u8 as f32,
                         if procedural { 1.0 } else { 0.0 },
                     ],
+                    cloth: [m.finish.sheen, m.finish.gloss, 0.0, 0.0],
                 };
                 let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("model material"),

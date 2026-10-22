@@ -31,7 +31,7 @@ from . import body as bd
 from . import garments as gm
 from . import rig
 
-SPACING = {"coat": 3.5, "waistcoat": 3.5, "breeches": 3.5, "gaiters": 3.0, "shirt": 2.0}  # cm
+SPACING = {"coat": 3.5, "waistcoat": 5.0, "breeches": 4.2, "gaiters": 3.5, "shirt": 2.0}  # cm (the waistcoat lies under the coat)
 SEW_FRAMES = 45  # sewing phase (no gravity), then the cloth settles
 FRAMES = 75
 SEW_FORCE = 40.0
@@ -575,6 +575,29 @@ def solidify(obj, thickness):
     bpy.data.meshes.remove(old)
 
 
+# Edge depth (m) of the hems: a rim along the cut edges of the coat skirts, the turnbacks
+# and the facings (cuffs, lapels, collar), turned inwards: the broadcloth's turned hem and
+# the thickness of the facings show at the edge instead of a paper-thin outline.
+HEM = {"coat_skirts": 0.006, "turnbacks": 0.006, "facings": 0.005}
+
+
+def hem(obj, depth):
+    """A rim `depth` deep along the boundary of `obj`, inwards (no second shell)."""
+    mod = obj.modifiers.new("acr_hem", "SOLIDIFY")
+    mod.thickness = depth
+    mod.offset = -1.0
+    mod.use_rim = True
+    mod.use_rim_only = True
+    mod.use_even_offset = True
+    dg = bpy.context.evaluated_depsgraph_get()
+    me = bpy.data.meshes.new_from_object(obj.evaluated_get(dg))
+    obj.modifiers.remove(mod)
+    old = obj.data
+    obj.data = me
+    me.name = old.name
+    bpy.data.meshes.remove(old)
+
+
 def transfer_weights(obj, flesh, arm_obj, keep=4):
     """Weights interpolated from the nearest face of the skin (rest pose)."""
     fm = flesh.data
@@ -639,13 +662,16 @@ def _follow_thigh(w, co, t, P=""):
     return out
 
 
-def finish(obj, ch, skirt):
-    """Weights, `_cloth`, homes and parts, split at the part borders, bound to the rig."""
+def finish(obj, ch, skirt, weights=None):
+    """Weights, `_cloth`, homes and parts, split at the part borders, bound to the rig.
+    `weights`: given per vertex ({bone: weight}) instead of transferred from the skin."""
     P = ch.prefix
     pin = obj.vertex_groups.get("acr_pin")
     if pin:
         obj.vertex_groups.remove(pin)
-    if skirt:
+    if weights is not None:
+        ws, cl = weights, [0.0] * len(weights)
+    elif skirt:
         ws, cl = zip(*(skirt_weights(v.co, P) for v in obj.data.vertices))
         ws = [_follow_thigh(w, v.co, t, P) for w, v, t in zip(ws, obj.data.vertices, cl)]
     else:
@@ -740,6 +766,8 @@ def dress(ch, garments=gm.ORDER, report=None):
             part.data.attributes.remove(part.data.attributes["panel"])
             label = {("coat", True): "coat_skirts", ("lining", True): "turnbacks"}.get((key, skirt), key)
             part.name = part.data.name = f"{ch.name}.{label}"
+            if label in HEM:
+                hem(part, HEM[label])
             finish(part, ch, skirt)
             ch.add("clothes", part, key, symmetric=True)
             made[part.name] = key
@@ -790,6 +818,127 @@ def hide_skin(ch, garments, depth=0.012, reach=0.06):
             n += 1
     fm.update()
     return n
+
+
+BUTTON = {"lapel": 0.0095, "cuff": 0.0085, "gaiter": 0.0065}  # radius (m)
+
+
+def _weights_at(obj, face):
+    """{bone: weight} of the vertex of `face` (polygon index of `obj`) with the most weight."""
+    names = {g.index: g.name for g in obj.vertex_groups}
+    best = {}
+    for i in obj.data.polygons[face].vertices:
+        w = {names[g.group]: g.weight for g in obj.data.vertices[i].groups if g.group in names and g.weight > 0}
+        if sum(w.values()) > sum(best.values()):
+            best = w
+    t = sum(best.values()) or 1.0
+    return {b: x / t for b, x in best.items()}
+
+
+def buttons(ch, cloth, name):
+    """Brass buttons on the lapels and cuffs, pewter ones down the outside of the gaiters:
+    small low domes (6 triangles) on the draped cloth, skinned like the cloth under them.
+    Adds the objects to `ch` (keys `brass`, `metal`); returns them."""
+    P = ch.prefix
+    by_key = {}
+    for o in cloth:
+        by_key.setdefault(ch.keys.get(o.name), []).append(o)
+    seg = am.segments(ch.arm)
+    spots = {"brass": [], "metal": []}  # (object, point, normal, radius)
+
+    trees = {}
+
+    def cast(objs, origin, direction, r, key):
+        best = None
+        for o in objs:
+            if o.name not in trees:
+                trees[o.name] = BVHTree.FromPolygons([v.co.copy() for v in o.data.vertices],
+                                                     [list(p.vertices) for p in o.data.polygons])
+            hit = trees[o.name].ray_cast(origin, direction, 1.0)
+            if hit[0] is not None and (best is None or hit[3] < best[3]):
+                best = (o, hit[0], hit[1], hit[2], hit[3])
+        if best is not None:
+            o, co, nrm, face, _d = best
+            if nrm.dot(direction) > 0:
+                nrm = -nrm
+            spots[key].append((o, co, nrm, r, face))
+
+    facings = by_key.get("facings", [])
+    for o in facings:
+        V = np.array([v.co[:] for v in o.data.vertices])
+        if not len(V):
+            continue
+        for sx in (1.0, -1.0):
+            # Lapels: front of the chest, buttons near the outer edge, evenly to the waist.
+            lap = V[(V[:, 1] < -0.04) & (V[:, 0] * sx > 0.01) & (V[:, 0] * sx < 0.2) & (V[:, 2] > 1.0) & (V[:, 2] < 1.47)]
+            if len(lap) > 8:
+                z0, z1 = np.percentile(lap[:, 2], 6) + 0.02, np.percentile(lap[:, 2], 94) - 0.015
+                for z in np.linspace(z0, z1, 7):
+                    band = lap[np.abs(lap[:, 2] - z) < 0.025]
+                    if len(band) < 2:
+                        continue
+                    x = sx * (np.abs(band[:, 0]).max() - 0.02)
+                    cast(facings, Vector((x, -0.6, z)), Vector((0, 1, 0)), BUTTON["lapel"], "brass")
+            # Cuffs: three buttons up the back of the round cuff.
+            side = "l" if sx > 0 else "r"
+            h, t = seg.get(P + f"forearm_{side}", (None, None))
+            if h is None:
+                continue
+            axis = (t - h).normalized()
+            rel = V - np.array(h[:])
+            along = rel @ np.array(axis[:])
+            perp = np.linalg.norm(rel - np.outer(along, axis[:]), axis=1)
+            cuff = (along > 0.4 * (t - h).length) & (along < (t - h).length + 0.05) & (perp < 0.09)
+            if cuff.sum() < 6:
+                continue
+            a0, a1 = along[cuff].min(), along[cuff].max()
+            back = Vector((0, 1, 0)) - axis * axis.y
+            back.normalize()
+            for k in range(3):
+                q = h + axis * (a0 + (a1 - a0) * (0.25 + 0.25 * k))
+                cast(facings, q + back * 0.3, -back, BUTTON["cuff"], "brass")
+    for side, sx in (("l", 1.0), ("r", -1.0)):
+        h, t = seg.get(P + f"shin_{side}", (None, None))
+        gs = by_key.get("gaiters", [])
+        if h is None or not gs:
+            continue
+        axis = (h - t).normalized()  # ankle -> knee
+        out = Vector((sx, 0, 0)) - axis * (axis.x * sx)
+        out.normalize()
+        V = np.concatenate([np.array([v.co[:] for v in o.data.vertices]) for o in gs])
+        V = V[V[:, 0] * sx > 0]
+        along = (V - np.array(t[:])) @ np.array(axis[:])
+        lo, hi = 0.07, min(along.max() - 0.07, (h - t).length - 0.02)
+        for a in np.arange(lo, hi, 0.045):
+            q = t + axis * float(a)
+            cast(gs, q + out * 0.3, -out, BUTTON["gaiter"], "metal")
+    made = []
+    for key, sp in spots.items():
+        if not sp:
+            continue
+        verts, faces, ws = [], [], []
+        for o, co, nrm, r, face in sp:
+            nrm = nrm.normalized()
+            u = nrm.orthogonal().normalized()
+            v = nrm.cross(u)
+            w = _weights_at(o, face)
+            c = len(verts)
+            verts.append(co + nrm * (r * 0.45))
+            ws.append(w)
+            for k in range(6):
+                ang = k * math.pi / 3
+                verts.append(co + nrm * 0.0015 + (u * math.cos(ang) + v * math.sin(ang)) * r)
+                ws.append(w)
+            faces += [(c, c + 1 + k, c + 1 + (k + 1) % 6) for k in range(6)]
+        me = bpy.data.meshes.new(f"{name}.buttons_{key}")
+        me.from_pydata([x[:] for x in verts], [], faces)
+        me.validate()
+        # (centre, rim k, rim k+1) with the rim counter-clockwise about the normal: faces out.
+        obj = bd.link(bpy.data.objects.new(f"{name}.buttons_{key}", me))
+        finish(obj, ch, False, weights=ws)
+        ch.add("clothes", obj, key, symmetric=True)
+        made.append(obj)
+    return made
 
 
 def surface(objs, name):

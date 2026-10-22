@@ -17,7 +17,7 @@ from . import decay, detail, heads, limb, mbody, project, rig
 LAYER_OF = {
     "skin": "flesh", "hair": "hair", "bone": "bone",
     "coat": "wool", "tunic": "wool", "sash": "wool", "cloak": "wool", "facings": "wool", "lining": "wool",
-    "stock": "leather",
+    "stock": "leather", "garter": "leather",
     "waistcoat": "linen", "breeches": "linen", "shirt": "linen", "stockings": "linen",
     "gaiters": "leather", "belts": "leather", "hat": "leather", "boots": "leather", "shoes": "leather",
     "cartridge": "leather", "knapsack": "leather", "saddle": "leather", "tack": "leather",
@@ -27,7 +27,7 @@ LAYER_OF = {
 
 
 # Colours of keys a unit's palette may leave out (sRGB).
-FALLBACK = {"brass": (0.72, 0.58, 0.30), "metal": (0.55, 0.55, 0.57)}
+FALLBACK = {"brass": (0.72, 0.58, 0.30), "metal": (0.55, 0.55, 0.57), "garter": (0.07, 0.06, 0.05)}
 
 
 def graph(build=None):

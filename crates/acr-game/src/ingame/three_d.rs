@@ -113,6 +113,8 @@ pub struct ThreeD {
     ragdolls: Option<super::ragdoll_view::Ragdolls>,
     /// Animals standing over the men they maul (#276).
     maulers: super::maul_view::Maulers,
+    /// The coat skirts of the men near the camera (runtime cloth, docs/clothing.md).
+    skirts: super::cloth_view::Skirts,
     /// Seconds of the last frame and the world point at the window centre.
     frame_seconds: f32,
     pub focus: [f32; 2],
@@ -173,6 +175,7 @@ impl Default for ThreeD {
             started: web_time::Instant::now(),
             ragdolls: None,
             maulers: Default::default(),
+            skirts: Default::default(),
             frame_seconds: 0.0,
             focus: [0.0; 2],
         }
@@ -708,6 +711,11 @@ impl ThreeD {
         for &i in ragdolls.poses.keys() {
             // The physics pose replaces the lying pose's flattening.
             self.instances[i].morphs[1] = 0.0;
+        }
+        // The skirts swing over the clip, the gait and the ragdoll (after the flattening:
+        // a man on his clip keeps his morphs).
+        if std::env::var_os("ACR_NO_CLOTH").is_none() {
+            self.skirts.update(self.frame_seconds, &drawn, self.focus, terrain, &mut ragdolls.poses);
         }
     }
 
