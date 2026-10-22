@@ -109,9 +109,36 @@ pub fn get_dir(dx: i32, dy: i32) -> u8 {
     (d + 1024) as u8
 }
 
+/// Rings around a point (`Rarr`, 0x28a6f10, built at 0x546ac0): ring `r` holds the offsets
+/// `(dx, dy)` with `|dx|, |dy| ≤ 90` and `trunc(sqrt(dx² + dy²)) == r` (r < 90), ordered by
+/// `dx`, then `dy`. Searches for free spots walk them outwards.
+pub fn rings() -> &'static [Vec<(i8, i8)>] {
+    static RINGS: std::sync::OnceLock<Vec<Vec<(i8, i8)>>> = std::sync::OnceLock::new();
+    RINGS.get_or_init(|| {
+        let mut rings = vec![Vec::new(); 90];
+        for dx in -90i32..=90 {
+            for dy in -90i32..=90 {
+                let r = ((dx * dx + dy * dy) as u32).isqrt() as usize;
+                if r < 90 {
+                    rings[r].push((dx as i8, dy as i8));
+                }
+            }
+        }
+        rings
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rings_are_sorted_by_distance() {
+        let r = rings();
+        assert_eq!(r[0], [(0, 0)]);
+        assert_eq!(r[1], [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]);
+        assert_eq!(r[2][0], (-2, -2));
+    }
 
     #[test]
     fn table_quirks_match_the_engine() {

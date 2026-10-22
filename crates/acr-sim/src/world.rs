@@ -101,8 +101,12 @@ pub enum Order {
     Enter { building: EntityId, prio: u8 },
     /// `BuildObj` (order type 0x59, link 0x524654): build or repair at a build point (lock cell).
     Build { target: EntityId, point: (i32, i32), prio: u8 },
-    /// `TakeResource` (order type 0xEE, link 0x4d2fb0): gather sources of a type.
-    Gather { kind: u8, source: Option<usize>, prio: u8 },
+    /// `TakeResource` (order type 0xEE, link 0x4d2fb0): gather sources of type `kind`;
+    /// `at` (world pixels) is where the next source is searched from.
+    Gather { kind: u8, source: Option<usize>, at: (i32, i32), prio: u8 },
+    /// `ClearOrderedUnlimitedMotion` (0x527fed): ends the walk through locks out of a
+    /// building; the unit takes its cell.
+    ClearUnlimited,
 }
 
 /// A unit or building (the engine's `OneObject`).
@@ -167,8 +171,11 @@ pub struct Unit {
     pub inside: Vec<EntityId>,
     /// Buildings: the deposit a mine works.
     pub mine: Option<crate::economy::Mine>,
-    /// Buildings: rally point for produced units.
+    /// Buildings: rally point for produced units (`DstX/DstY`).
     pub rally: Option<Pos>,
+    /// Buildings: five 3-bit stage states (OB+0xaa), raised by `UPSTAGEn` upgrades; state
+    /// 2 means stage `n` is done. `[STAGEDEPENDENT]` objects need their stages done.
+    pub stages: u16,
     /// The building this unit is inside (hidden, but counted and fed).
     pub inside_of: Option<EntityId>,
     /// Walks through locks and other units (leaving a building).
@@ -236,6 +243,32 @@ pub struct Player {
     pub gold_short: bool,
     /// Objects per type (`UnitAmount`), for prices.
     pub type_count: Vec<u16>,
+    /// Finished objects per type (`ReadyAmount`, City+0xfb73), for `[ACCESSCONTROL]`.
+    pub ready_count: Vec<u16>,
+    /// Availability per type (`GeneralObject::Enabled`): only enabled types can be produced
+    /// or built. Recomputed with the census (`RefreshAbility` 0x42ffed).
+    pub enabled: Vec<bool>,
+    /// `CondEnabled`: the type was enabled by `[ENABLED]` or an `ENABLE` upgrade.
+    pub cond_enabled: Vec<bool>,
+    /// Upgrade states, by [`crate::tech::UpgradeId`].
+    pub upgrades: Vec<crate::tech::UpgradeState>,
+}
+
+impl Player {
+    /// A player at the start of a match: `START_STOCK` and the tech tree's initial
+    /// availability.
+    pub fn new(catalog: &Catalog) -> Self {
+        let tech = &catalog.tech;
+        let n = catalog.len();
+        let start = |t: usize| !tech.loaded || tech.types.get(t).is_some_and(|t| t.start_enabled);
+        Self {
+            resources: START_STOCK,
+            enabled: (0..n).map(start).collect(),
+            cond_enabled: (0..n).map(start).collect(),
+            upgrades: tech.upgrades.iter().map(crate::tech::UpgradeState::new).collect(),
+            ..Self::default()
+        }
+    }
 }
 
 /// What [`World::from_map`] could not place.
@@ -318,12 +351,13 @@ impl World {
     /// An empty world on a map.
     pub fn new(map: Arc<MapGrid>, catalog: Arc<Catalog>, formations: Arc<Formations>) -> Self {
         let occupancy = LockMap::new(map.land.width, map.land.height);
+        let players = std::array::from_fn(|_| Player::new(&catalog));
         Self {
             tick: Tick(0),
             catalog,
             formations,
             map,
-            players: std::array::from_fn(|_| Player { resources: START_STOCK, ..Player::default() }),
+            players,
             units: Vec::new(),
             objects: Vec::new(),
             brigades: Vec::new(),
@@ -437,6 +471,7 @@ impl World {
             inside: Vec::new(),
             mine: None,
             rally: None,
+            stages: 0,
             inside_of: None,
             unlimited: false,
             turned_off: false,
@@ -571,6 +606,7 @@ impl World {
             Command::Produce { player, building, kind } => {
                 if let Some(&b) = self.owned(*player, &[*building]).first()
                     && usize::from(kind.0) < self.catalog.len()
+                    && crate::economy::can_produce(self, b, *kind)
                 {
                     crate::economy::produce(self, b, *kind);
                 }
@@ -584,7 +620,7 @@ impl World {
                 let b = building.0 as usize;
                 if self.units.get(b).is_some_and(|u| u.owner == *player) {
                     for i in self.owned(*player, units) {
-                        crate::economy::enter(self, i, b, crate::motion::PLAYER_PRIO);
+                        crate::economy::enter(self, i, b, crate::motion::PLAYER_PRIO, false);
                     }
                 }
             }
@@ -594,15 +630,20 @@ impl World {
                 }
             }
             Command::Rally { player, building, x, y } => {
-                if let Some(&b) = self.owned(*player, &[*building]).first() {
+                if let Some(&b) = self.owned(*player, &[*building]).first()
+                    && (!self.catalog.tech.loaded
+                        || self.catalog.tech.of(self.units[b].kind).is_some_and(|t| t.can_set_dest))
+                {
                     self.units[b].rally = Some(Pos::from_pixels(*x, *y));
                 }
             }
             Command::Build { player, units, kind, x, y } => {
+                let builders = self.owned(*player, units);
                 if usize::from(kind.0) < self.catalog.len()
+                    && crate::construction::can_build(self, *player, &builders, *kind)
                     && let Some(b) = crate::construction::place(self, *player, *kind, *x, *y)
                 {
-                    for i in self.owned(*player, units) {
+                    for i in builders {
                         crate::construction::build_obj(self, i, b.0 as usize, crate::motion::PLAYER_PRIO);
                     }
                 }
@@ -618,7 +659,7 @@ impl World {
             Command::Gather { player, units, x, y } => {
                 if let Some(kind) = self.sources.determine(*x, *y) {
                     for i in self.owned(*player, units) {
-                        crate::gather::take_resource(self, i, kind, 0x80);
+                        crate::gather::take_resource(self, i, *x, *y, kind, 0x80, false);
                     }
                 }
             }

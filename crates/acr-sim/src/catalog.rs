@@ -523,6 +523,8 @@ pub struct Catalog {
     by_id: BTreeMap<String, TypeId>,
     /// `NRES.DAT [WEAPONS]` flags per weapon kind name.
     weapon_flags: BTreeMap<String, u8>,
+    /// The nations' tech tree (build lists, upgrades, availability).
+    pub tech: crate::tech::Tech,
 }
 
 impl Catalog {

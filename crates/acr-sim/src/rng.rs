@@ -38,7 +38,7 @@ impl Rng {
 }
 
 /// Entries in the engine's random table.
-const SYNC_TABLE_LEN: usize = 8192;
+pub(crate) const SYNC_TABLE_LEN: usize = 8192;
 
 /// The engine's table: `RANDOM.LST` (8192 × i16, loaded at 0x557843) holds exactly the first
 /// 8192 outputs of the MSVC C runtime `rand()` after `srand(1)` (checked against the file), so

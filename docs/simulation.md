@@ -468,10 +468,41 @@ Implemented in `economy.rs`. The sources are `City::Census` (0x42e658), the upke
   - A `PEASANTCONVERTOR` building producing a non-peasant instead uses up a peasant from
     inside.
   - The unit appears at the first `BORNPOINT`, a cell corner relative to the lock base cell
-    `((RealX + 16a) >> 8, (RealY + 32b) >> 8)` with `LOCATION a b`. It walks to the last born
-    point through locks and other units ("unlimited motion"), then to the rally point.
+    `((RealX + 16a) >> 8, (RealY + 32b) >> 8)` with `LOCATION a b`, facing the second. It
+    walks through locks and other units ("unlimited motion", 0x527caa) to every further born
+    point, one cell inside each (`(cell + 1) << 8`), takes its cell (0x527fed) and steps to
+    the last born point proper.
+  - **Rally point** (`DstX/DstY`, 0x49fcc6): on a building that takes units in, the producer
+    itself takes the unit straight inside, another building gets a `GoToMine`; on a resource
+    source (`DetermineResource`, 64 px) a peasant draws random points within ±128 px until
+    one lies at a source of the same type and gathers there; otherwise the unit walks
+    (`SmartSendTo`) to the first free spot of `FindUnitPosition` (0x51508c).
+  - `FindUnitPosition` walks the rings of the `Rarr` table (0x28a6f10, built at 0x546ac0:
+    ring `r` holds the offsets with `trunc(sqrt(dx² + dy²)) == r`, ordered by `dx`, then
+    `dy`) at 32 px spacing, rings 0..50, each forwards if `rando() < 0x4000`, else backwards.
+    A spot is free (0x513b2c) on the map, with the footprint unlocked (0x50a60d) and no unit
+    within `r2 + 8 + r2'` (`GEOMETRY` radii, 0x50a495) in the 3×3 128 px cells around.
   - Cancelling refunds the price at the count when it was queued; progress is lost. There is
     no queue limit.
+- **Tech tree** (`tech.rs`; nation loader 0x60e7f0, `City::RefreshAbility` 0x42ffed). Every
+  nation file goes into one namespace of types and upgrades, as in the engine.
+  - A building produces only the types of its `[FIXED_PRODUCE]` list (the produce command
+    0x4dbac2 checks it through 0x49e060), and only enabled ones (the command panel offers
+    no others). Peasants build only what their own list names. `Rally` works only for
+    `[CANSETDEST]` buildings.
+  - A type is `Enabled` from `[ENABLED]` (which also sets `CondEnabled`) or an `ENABLE`
+    upgrade. With every census (`ProcessCreation` 0x432582 = `EnumUnits` +
+    `RefreshAbility`), and after every placement, each `[ACCESSCONTROL]` target is first
+    disabled, then enabled again if every required type has a finished object
+    (`ReadyAmount`: living units and finished buildings) and every required upgrade is done:
+    a type only if `CondEnabled` or a building, an upgrade only if `PermanentEnabled` and
+    not yet done. `[UNITLOCK] ID n LOCK` disables `ID` while the player has `n` objects of
+    `LOCK` (steamships: 3), otherwise it follows `CondEnabled`.
+  - `[STAGEDEPENDENT] ID mask` (GeneralObject+0xad, NewUpgrade+0x4d): the producing building
+    must have done every stage in the mask (state 2 in its five 3-bit fields OB+0xaa,
+    raised by `UPSTAGEn` upgrades).
+  - A queued type that gets disabled is dropped when its turn comes, without refund
+    (0x49eeb7).
 - **Mines.**
   - A `PRODUCER` building binds to a deposit within 128 px: an `[INTERNAL_SOURCE]` sprite of
     a resource it can mine. Binding happens when it is placed and every 256 ticks.
@@ -497,7 +528,9 @@ Implemented in `economy.rs`. The sources are `City::Census` (0x42e658), the upke
   - **Sources** are `[SOURCES]` sprites, e.g. trees `Dnn WOOD 4 30`: 4 wood per work cycle
     within 30 px. Trees never run out, because their `[WORKTRANSFORM]` is empty.
   - **`Gather` command.** It picks the source type nearest the click (within 64 px). The
-    peasant finds the nearest source of that type in rings of 128 px cells and walks there.
+    source nearest to the click of that type is found in rings of 128 px cells
+    (`FindResourceObject` 0x4d2200 searches from the clicked point, not from the peasant);
+    later searches start from the last source.
   - **Work.** It faces the source (16 per cycle) and enters the work stance `c` of
     `TAKERESSTAGES RES a b c`, which plays `#ATTACK{c−1}`. Each cycle adds the source's
     amount: 13 ticks per cycle for the peasant's 28-frame chop.
@@ -575,7 +608,8 @@ sum of its four neighbours (centre excluded). This spreads the stamps and decays
   - Economy: `World::players[p]` (`resources`, `population`, `housing`), each building's
     `queue` / `inside` / `mine` / `stage`, `economy::unit_cost`, and `Unit::carried`. The
     commands are `Produce`, `Unproduce`, `Enter`, `Leave`, `Rally`, `Build`, `Repair` and
-    `Gather`.
+    `Gather`. `economy::producible(w, building)` lists what a building can produce now;
+    `Player::enabled` and `tech::Tech` hold the tech tree.
 
   These calls change the state directly. Call them between ticks, in the same order on
   every machine.
@@ -617,12 +651,17 @@ sum of its four neighbours (centre excluded). This spreads the stamps and decays
   - Builders do not re-path around blocking units (`CheckBlocking`). Placement checks only
     the finished footprint against locks and units (0x513b2c and the permission check
     0x45f767 are not reproduced). Some of `CreateObject`'s random draws are not made.
-  - `Produce` accepts any unit type: the nation's `[FIXED_PRODUCE]` lists are not checked.
+  - `Produce` takes one building; the original command picks among the selected buildings
+    (an idle one first, else the shortest queue).
+  - Synthetic catalogs without nation files have no tech tree: everything is enabled and
+    buildings produce anything.
   - Not reproduced yet: upgrades, the market, `RESSUBST` type changes, ports and ships;
     building stage requirements; the AI difficulty factor on production time; the 10× cannon
     price lobby option.
-  - Spawned units walk only to the last born point (the original walks every point); the
-    rally point does not yet garrison or gather.
+  - Rally point on a building: the original hit-tests the building's picture in rings 0..3
+    of 128 px cells (0x49ed8e); here a building with a lock cell under the point counts.
+    The random search for a source spot is capped at 4096 tries (the engine would retry
+    forever). `GotoFinePosition` is not called.
 - **Combat:**
   - Shots start at the unit's position. The `SETACTIVEPOINT` muzzle offsets (and the
     sprite frame offsets) are not added.

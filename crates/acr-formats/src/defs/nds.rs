@@ -191,6 +191,21 @@ pub struct NationDef {
     pub upgrade_place: Vec<CountList>,
     /// Upgrades unlocked when an upgrade is researched.
     pub upgrade_links: Vec<CountList>,
+    /// Upgrades performed at once when an upgrade is researched (`[AUTOUPGRADE]`).
+    pub auto_upgrade: Vec<CountList>,
+    /// Upgrades available from the start (`[UPGRADEENABLE]`).
+    pub upgrade_enable: Vec<String>,
+    /// Upgrades shown greyed out (`[DISABLED_UPGRADES]`).
+    pub disabled_upgrades: Vec<String>,
+    /// Upgrades researched per building rather than per nation (`[PRIVATE]`).
+    pub private: Vec<String>,
+    /// Upgrades that raise a building's stage (`[UPGRADESTAGE]`).
+    pub upgrade_stage: Vec<String>,
+    /// Buildings whose rally point can be set (`[CANSETDEST]`).
+    pub can_set_dest: Vec<String>,
+    /// `[UNITLOCK]` lines `ID n LOCKID`: `ID` is disabled while the player has `n` objects
+    /// of `LOCKID`.
+    pub unit_lock: Vec<(String, i32, String)>,
     /// Upgrades required before an object or upgrade becomes available.
     pub access_control: Vec<CountList>,
     /// Groups of the nation as listed in the game (`#INFANTRY` etc. are group headers).
@@ -226,10 +241,14 @@ impl NationDef {
                 "COUNTRY" => def.country = def.count_lists(section),
                 "OFFICERS" => def.parse_officers(section),
                 "STAGEDEPENDENT" => def.parse_stage_dependent(section),
-                "AUTOUPGRADE" => {
-                    def.count_lists(section);
-                }
-                "UNITLOCK" | "SPECIAL_UPGRADE" | "SPECIAL_UNIT" | "END" | "" => {}
+                "AUTOUPGRADE" => def.auto_upgrade = def.count_lists(section),
+                "UPGRADEENABLE" => def.upgrade_enable = id_list(section),
+                "DISABLED_UPGRADES" => def.disabled_upgrades = id_list(section),
+                "PRIVATE" => def.private = id_list(section),
+                "UPGRADESTAGE" => def.upgrade_stage = id_list(section),
+                "CANSETDEST" => def.can_set_dest = id_list(section),
+                "UNITLOCK" => def.parse_unit_lock(section),
+                "SPECIAL_UPGRADE" | "SPECIAL_UNIT" | "END" | "" => {}
                 n if ID_LIST_SECTIONS.contains(&n) => {}
                 _ => def.issue(section.line, format!("unknown section [{}]", section.name)),
             }
@@ -358,6 +377,17 @@ impl NationDef {
         }
     }
 
+    fn parse_unit_lock(&mut self, section: &Section) {
+        for l in &section.lines {
+            match &l.tokens[..] {
+                [id, n, lock] if n.parse::<i32>().is_ok() => {
+                    self.unit_lock.push((id.clone(), n.parse().unwrap(), lock.clone()))
+                }
+                _ => self.issue(l.line, format!("[UNITLOCK]: expected `ID n LOCKID`, found {:?}", l.tokens)),
+            }
+        }
+    }
+
     fn parse_stage_dependent(&mut self, section: &Section) {
         for l in &section.lines {
             match &l.tokens[..] {
@@ -375,6 +405,11 @@ impl NationDef {
     pub fn upgrade(&self, id: &str) -> Option<&Upgrade> {
         self.upgrades.iter().find(|u| u.id.eq_ignore_ascii_case(id))
     }
+}
+
+/// The first token of every line (the engine reads one id per line and skips the rest).
+fn id_list(section: &Section) -> Vec<String> {
+    section.lines.iter().map(|l| l.tokens[0].clone()).collect()
 }
 
 fn parse_upgrade(w: &[&str], line: u32) -> Result<Upgrade, String> {
@@ -497,7 +532,8 @@ EngCen(EN) 2\r\nEngPik(EN) 1 0 Q\r\nEngKri(EN) 0 1\r\n[ENABLED]\r\nEngCen(EN)\r\
 UP1 ICO #POSITION 2 3 #LEVEL 1 MSG #COST 2 GOLD 25 WOOD 250 #TIME 200\r\n\tDAMAGE WEAPONKIND PIKA GRP 1 EngPik(EN) +10%\r\n\
 UP2 ICO #POSITION 0 0 #STAGELEVEL 2 MSG #COST 0 #TIME 5\r\n / BUILD x\r\n\
 [UPGRADEPLACE]\r\nEngCen(EN) 2 UP1\r\n UP2\r\n[COUNTRY]\r\nENGLAND 3\r\n#INFANTRY\r\nEngPik(EN)\r\nEngCen(EN)\r\n\
-[OFFICERS]\r\nOf(EN) NONE 1\r\nLINE 2 #L15 #L36 1 EngPik(EN)\r\n[STAGEDEPENDENT]\r\nUP1 1\r\n[END]\r\n";
+[OFFICERS]\r\nOf(EN) NONE 1\r\nLINE 2 #L15 #L36 1 EngPik(EN)\r\n[STAGEDEPENDENT]\r\nUP1 1\r\n\
+[UPGRADEENABLE]\r\nUP1\r\n/UP2\r\n[AUTOUPGRADE]\r\nUP1 1 UP2\r\n[UNITLOCK]\r\nEngPik(EN) 3 EngPik(EN)\r\n[END]\r\n";
 
     #[test]
     fn parses_sections() {
@@ -514,6 +550,9 @@ UP2 ICO #POSITION 0 0 #STAGELEVEL 2 MSG #COST 0 #TIME 5\r\n / BUILD x\r\n\
                 "COUNTRY",
                 "OFFICERS",
                 "STAGEDEPENDENT",
+                "UPGRADEENABLE",
+                "AUTOUPGRADE",
+                "UNITLOCK",
                 "END"
             ]
         );
@@ -545,6 +584,9 @@ UP2 ICO #POSITION 0 0 #STAGELEVEL 2 MSG #COST 0 #TIME 5\r\n / BUILD x\r\n\
         assert_eq!(def.officers[0].formations[0].variants, ["#L15", "#L36"]);
         assert_eq!(def.officers[0].formations[0].units, ["EngPik(EN)"]);
         assert_eq!(def.stage_dependent, [("UP1".to_string(), 1)]);
+        assert_eq!(def.upgrade_enable, ["UP1"]);
+        assert_eq!(def.auto_upgrade[0].items, ["UP2"]);
+        assert_eq!(def.unit_lock, [("EngPik(EN)".to_string(), 3, "EngPik(EN)".to_string())]);
     }
 
     #[test]
