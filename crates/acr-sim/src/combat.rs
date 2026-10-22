@@ -1551,6 +1551,53 @@ fn destroyed_building_explodes(w: &mut World, b: usize) {
     }
 }
 
+/// `SLOWDEATH` buildings burn down (0x4e7410, every tick after `ProcessCostPoints`). Every
+/// 128 ticks (`tick & 0x7f == 0x11`) each finished building of a `SLOWDEATH` type below 2000
+/// life that is not dying joins the list (index order, at most 64). Each tick a listed
+/// building above half its life leaves the list; above 10 it loses 5 life (also when it
+/// leaves), else it leaves and dies. A building that is gone stays listed; after a building
+/// leaves, the next one is skipped that tick (the engine shifts the list but counts on).
+/// No random numbers besides `Die`'s.
+pub fn slow_death(w: &mut World) {
+    let mut k = 0;
+    while k < w.slow_deaths.len() {
+        let i = w.slow_deaths[k].0 as usize;
+        if w.units.get(i).is_some_and(|u| u.alive) {
+            let u = &mut w.units[i];
+            let mut leave = u.life > u.max_life >> 1;
+            if u.life > 10 {
+                u.life -= 5;
+            } else {
+                leave = true;
+                record_death(w, i, DeathRecord { cause: DeathCause::Burned, from: None, tick: 0 });
+                die(w, i);
+            }
+            if leave {
+                w.slow_deaths.remove(k);
+            }
+        }
+        k += 1;
+    }
+    if w.tick.0 & 0x7f != 0x11 {
+        return;
+    }
+    for i in 0..w.units.len() {
+        if w.slow_deaths.len() >= 64 {
+            break;
+        }
+        let u = &w.units[i];
+        if u.living()
+            && u.building
+            && u.stage >= w.max_stage(u)
+            && u.life < 2000
+            && w.catalog.get(u.kind).slow_death
+            && !w.slow_deaths.contains(&u.id)
+        {
+            w.slow_deaths.push(u.id);
+        }
+    }
+}
+
 /// `CheckVisibility` (0x556af4): no building box higher than 18 px (not the searcher's own)
 /// stands between `from` and `to` (1/16 px), sampled every 32 px without the ends.
 pub fn visible_between(w: &World, from: Pos, to: Pos, me: usize) -> bool {

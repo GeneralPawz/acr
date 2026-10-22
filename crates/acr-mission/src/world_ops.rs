@@ -10,12 +10,12 @@ pub fn kill(world: &mut World, id: EntityId) {
 }
 
 /// `DestructBuilding` (0x4e7720), behind `DieUnit` and `SelDie`: a finished building (or one
-/// with an order) of a `SLOWDEATH` type only drops to 1999 life and burns down; anything
-/// else dies. TODO(acr-sim): `SLOWDEATH` and burning; buildings stand in for the flag.
+/// with an order) of a `SLOWDEATH` type only drops to 1999 life and then burns down
+/// (`acr_sim::combat::slow_death`); anything else dies.
 pub fn destruct(world: &mut World, id: EntityId) {
     let Some(u) = world.units.get(id.0 as usize).filter(|u| u.living()) else { return };
-    let ready = u.stage >= world.max_stage(u);
-    if u.building && (ready || !u.orders.is_empty()) {
+    let ready = !u.building || u.stage >= world.max_stage(u);
+    if world.catalog.get(u.kind).slow_death && (ready || !u.orders.is_empty()) {
         let u = &mut world.units[id.0 as usize];
         if u.life >= 2000 {
             u.life = 1999;
