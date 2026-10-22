@@ -125,7 +125,7 @@ fn make_one_shot_to_build(api: &mut Api, c: &mut Call) -> Result<u32> {
             }
         }
         if let Some((_, t)) = best
-            && acr_sim::combat::attack_obj_ex(api.world, i, t, 0x8F, acr_sim::combat::Placement::Replace)
+            && acr_sim::combat::attack_obj_times(api.world, i, t, 0x8F, acr_sim::combat::Placement::Replace, 1)
         {
             let u = &mut api.world.units[i];
             u.prio = 0xF0;
@@ -145,7 +145,7 @@ fn art_attack_object(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Some(t) = api.object(c.u16(2)?).filter(|u| u.living()).map(|u| u.id.0 as usize) else { return Ok(0) };
     for id in api.members(g) {
         if api.world.units[id.0 as usize].target().is_none() {
-            acr_sim::combat::attack_obj_ex(api.world, id.0 as usize, t, 0x90, acr_sim::combat::Placement::Append);
+            acr_sim::combat::attack_obj_times(api.world, id.0 as usize, t, 0x90, acr_sim::combat::Placement::Append, 1);
         }
     }
     Ok(0)

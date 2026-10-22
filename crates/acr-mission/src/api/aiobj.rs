@@ -14,12 +14,7 @@ pub const FUNCTIONS: &[ApiFn] = &[
         status: Status::Partial("a single-unit Command::Move; priority and order type need acr-sim orders"),
         handler: obj_send_to,
     },
-    ApiFn {
-        name: "OBJ_AttackObj",
-        original: 0x56f13f,
-        status: Status::Partial("AttackObj with the given priority; nTimes is not modelled"),
-        handler: obj_attack_obj,
-    },
+    ApiFn { name: "OBJ_AttackObj", original: 0x56f13f, status: Status::Done, handler: obj_attack_obj },
     ApiFn { name: "OBJ_AttackPoint", original: 0x56f3a2, status: Status::Done, handler: obj_attack_point },
     ApiFn {
         name: "OBJ_LeaveMine",
@@ -94,8 +89,8 @@ fn obj_attack_obj(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Some((id, owner)) = unit_arg(api, c, 0)? else { return Ok(0) };
     let Some(target) = api.object(c.u16(1)?).filter(|u| u.living()).map(|u| u.id) else { return Ok(0) };
     let _ = owner;
-    api.attack(id, target, c.u8(2)?, false);
-    // TODO(acr-sim): nTimes (shots) of an attack on an object.
+    let p = acr_sim::combat::Placement::Replace;
+    acr_sim::combat::attack_obj_times(api.world, id.0 as usize, target.0 as usize, c.u8(2)?, p, c.u16(3)?);
     Ok(1)
 }
 
