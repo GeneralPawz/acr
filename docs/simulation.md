@@ -764,8 +764,22 @@ one `n·(T − L)/T` below `T = M/2 + M/4`; one more point catches fire every 8.
 (the first after 1..4), points beyond the count go out at once; they are sorted 400 rows
 below the building plus the point's index. The state and its random numbers (C `rand()`)
 are the drawing's, not the simulation's; the original only advances buildings it draws
-(the game: those near the view). Not reproduced: the variant for buildings with stages
-(`STAGE_FIRES`, 0x5052b5).
+(the game: those near the view). `M` is the type's life for the owner (`AdvCharacter`
++0xdc), not the object's maximum.
+
+A building with sections (OB+0xaa ≠ 0, so every object of an `ADDSECTION` type; 0x505af5 →
+0x5052b5) burns differently:
+- The band is that of its last done section `c − 1`: `lo` = the type's life plus the done
+  sections before it, `hi` = `lo` plus the section's life; without a done section
+  `0..type life`. Ruins and unbuilt sections do not count.
+- The points are the section's `STAGE_FIRES` / `STAGE_SMOKE` (record +0x25/+0x2d count
+  +0x35, +0x29/+0x31 count +0x37), or `FIRES` / `SMOKE` without a done section.
+- `n·(T − L)/(3(hi − lo)/4)` points burn below `T = (3·hi + lo)/4`, at most `n`, whether the
+  building burns or not (no minimum of 4). So the fires of a section fill up as life falls
+  towards the point where it becomes a ruin (`lo`, see Building sections), then the
+  previous done section's points take over.
+- The fire state (OB+0xfd) keeps `c` in its first byte; when `c` changes both kinds start
+  over (0x505487).
 
 ### Worked timing (musketeer, 10 ticks/s)
 
@@ -938,8 +952,26 @@ Implemented in `economy.rs`. The sources are `City::Census` (0x42e658), the upke
   - The same loop overwrites the building's upgrade count OB+0xe9 with `2 + section` while
     life is above the threshold, else 2 — effectively 2 after the last section, since life
     never exceeds the whole threshold (the type's life plus every done section).
-  - TODO: a ruin's `STAGE_FIRES` explosions and fires (0x4e952f..0x4e98bd) and the
-    `STAGELOCKPOINTS` of done sections (0x53281d; one file uses them) are not simulated.
+  - **Ruin explosions** (0x4e952f..0x4e98bd, `combat::section_ruin`): a section that
+    becomes a ruin and has `EXPLPOINTS` cells (relative to the lock base cell 0x516fde)
+    draws two `rando()` per cell: the first picks one of the type's `DESTRUCT` weapons
+    (`r·n >> 15`), the second below the `DESTRUCT` probability creates it (0x558d60 →
+    `Create3DAnmObjectEX`, no sender, from the cell to `(x, y, 1000)`). The explosions
+    are lifted by `h = done y + 80 − 8·(mean cell y)` (the section's state-2 sort `y`):
+    `y` 2h further down the map, `z` = ground + h. Both numbers are drawn also without
+    `DESTRUCT`. The section loop reads the object anew for every section, since the
+    explosions may hurt it again.
+  - Then the engine frees (`BClrPt`, 0x5181bb) the `STAGELOCKPOINTS` cells of the stage
+    numbered by the cell loop's counter, which is the cell count by then (a bug): a stage
+    0..4 for up to 4 cells. With more it reads past the five lists (NM+0x16ce + 2·count);
+    for the only file with `EXPLPOINTS` (PORTKRE, 298 cells) that is the middle of
+    `OneStepDX[50]` (`cos·STEP >> 8` = 10), so 0 cells, and nothing is freed.
+  - **`STAGELOCKPOINTS`** (0x53281d): finishing a section (`UPSTAGEn`) locks the cells of
+    every done section (each twice). Only HOLDO1 has them (for its undeclared stage 1).
+  - Neither PORTKRE nor HOLDO1 is in `NMLIST.TXT`, so in the shipped game no section
+    explodes and no stage cells are locked; `STAGE_FIRES` are drawn for 9 loaded forts.
+  - `UPSTAGEn` does nothing while the building burns (OB+0x26 bit 1, 0x5326a1): the
+    research ends, the section stays unbuilt and its upgrade is offered again.
   - Taking a building down (`UNCONSTRUCT` link, 0x4a0dc7) clears all sections.
 - **Mines.**
   - A `PRODUCER` building binds to a deposit within 128 px: an `[INTERNAL_SOURCE]` sprite of
@@ -1248,8 +1280,7 @@ No game option writes it. How the map view draws the fog is in
     difficulty factor on production time; the 10× cannon price lobby option.
   - Upgrades without effect here: `SHAR` (`WEAPON` and
     `PRECISE` have none in the engine either). `ENABLE
-    UPGRADES` does nothing (the engine indexes the type table with upgrade ids). The
-    `STAGELOCKPOINTS` of building stages are not set.
+    UPGRADES` does nothing (the engine indexes the type table with upgrade ids).
   - Rally point on a building: the original hit-tests the building's picture in rings 0..3
     of 128 px cells (0x49ed8e); here a building with a lock cell under the point counts.
     The random search for a source spot is capped at 4096 tries (the engine would retry
@@ -1285,7 +1316,7 @@ No game option writes it. How the map view draws the fog is in
   - motion styles 1 and 4 (`SLOWROTATE`, `ROTATE&MOVE`);
   - `GotoFinePosition` (0x4a0670, at `StandTime == 48`);
   - the optional terrain pass 0x449aa4;
-  - `STAGELOCKPOINTS`, construction (`BUILDLOCKPOINTS`), walls and gates;
+  - walls and gates;
   - deleting sprites under new buildings (0x4d1df0).
 - **Iteration order.** Units within a player run in creation order. The engine's per-nation
   lists can be reordered by deaths and new units.

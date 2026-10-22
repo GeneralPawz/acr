@@ -398,6 +398,25 @@ impl UnitDef {
         out
     }
 
+    /// The points of a per-section list for section `stage`: `STAGE_FIRES` (record +0x25,
+    /// +0x2d, count +0x35), `STAGE_SMOKE` (+0x29, +0x31, +0x37) or `EXPLPOINTS` (+0x1d,
+    /// +0x21), each `stage n (x y)*n`. They live in the `ADDSECTION` records, so the engine
+    /// keeps a list only once an `ADDSECTION` with all 15 numbers has allocated them
+    /// (0x4fe1c5, 0x4fe5ab, 0x4f841b) and only for a stage below 5; a later list of the
+    /// stage replaces an earlier one. `None` if the section has none.
+    pub fn stage_points(&self, keyword: &str, stage: u8) -> Option<Vec<(i32, i32)>> {
+        let mut records = false;
+        let mut out = None;
+        for c in &self.commands {
+            if c.keyword == "ADDSECTION" {
+                records |= c.args.iter().filter(|v| v.as_int().is_some()).count() >= 15;
+            } else if c.keyword == keyword && records && stage < 5 && c.int(0) == Some(i32::from(stage)) {
+                out = Some(c.points(1));
+            }
+        }
+        out
+    }
+
     /// Commands whose keyword has no known grammar.
     pub fn unknown(&self) -> impl Iterator<Item = &Command> {
         self.commands.iter().filter(|c| c.kind == CommandKind::Unknown)
@@ -747,6 +766,25 @@ ADDSECTION 5 0 1 1 1 1 1 1 1 1 1 1 1 1 1\r\n[END]\r\n",
         // Section 2's state is bits 6..8 of OB+0xaa; bit 15 is set on every sectioned building.
         assert_eq!(spain.state_in(0x8000 | 2 << 6 | 1), 2);
         assert_eq!(fort.state_in(0x8000 | 2 << 6 | 1), 1);
+    }
+
+    #[test]
+    fn stage_lists_need_an_earlier_section_record() {
+        // PUEGOR.MD: fires per section after the ADDSECTION records; a list before any
+        // record has nowhere to go (0x4fe1c5), a later one of the stage replaces it.
+        let def = UnitDef::parse(
+            b"STAGE_FIRES 0 1 1 1\r\nADDSECTION 0 0 10000\r\n -1 0 0\r\n 10 558 564\r\n 11 558 564\r\n 12 558 564\r\n\
+STAGE_FIRES 0 2 532 132 581 107\r\nSTAGE_SMOKE 0 1 529 134\r\nSTAGE_FIRES 3 1 254 472\r\n\
+STAGE_FIRES 5 1 9 9\r\nSTAGE_SMOKE 0 1 7 7\r\nEXPLPOINTS 0 2 43 38 44 38 0\r\n[END]\r\n",
+        );
+        assert_eq!(def.stage_points("STAGE_FIRES", 0), Some(vec![(532, 132), (581, 107)]));
+        assert_eq!(def.stage_points("STAGE_SMOKE", 0), Some(vec![(7, 7)]));
+        assert_eq!(def.stage_points("STAGE_FIRES", 3), Some(vec![(254, 472)]));
+        assert_eq!(def.stage_points("STAGE_FIRES", 1), None);
+        assert_eq!(def.stage_points("STAGE_FIRES", 5), None);
+        assert_eq!(def.stage_points("EXPLPOINTS", 0), Some(vec![(43, 38), (44, 38)]));
+        let early = UnitDef::parse(b"STAGE_FIRES 0 1 1 1\r\n[END]\r\n");
+        assert_eq!(early.stage_points("STAGE_FIRES", 0), None);
     }
 
     #[test]

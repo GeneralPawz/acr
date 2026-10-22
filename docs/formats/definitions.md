@@ -194,7 +194,7 @@ transliterated Russian names or the values; `?` marks guesses, blank means unkno
 | `DAMAGE` | `ii` | 321 | 167 | attack index, damage |
 | `DAMAGEDEC` | `ii` | 39 | 39 | attack index, damage decrease with distance? |
 | `DAMPOINTS` | `#(ii)` | 9 | 9 | building: points |
-| `DESTRUCT` | `i #(s)` | 124 | 124 | "Max_Born_Probability Amount_of_weapons List_of_weapon" on destruction |
+| `DESTRUCT` | `i #(s)` | 124 | 124 | "Max_Born_Probability Amount_of_weapons List_of_weapon" (NM+0x28a8, +0x28a6, +0x28ac): probability /32768 and weapons of explosions on destruction and at a section's ruin |
 | `DET_RADIUS` | `iii` | 412 | 211 | attack index, min and max detection radius? |
 | `DIRECTTRANS` | `ii` | 23 | 17 | direct transition between attack indices? |
 | `DOOR` | `#(iiii)` | 99 | 99 | building entrances (two points each) |
@@ -203,7 +203,7 @@ transliterated Russian names or the values; `?` marks guesses, blank means unkno
 | `EXDAMAGE` | `iii` | 160 | 101 | attack index, two values |
 | `EXITPAUSE` | `i` | 6 | 6 | pause when leaving a building? |
 | `EXPLMEDIA` | `si` | 126 | 126 | explosion media (`BUILDING`, NRES.DAT `[MEDIA]`), value |
-| `EXPLPOINTS` | `i #(ii)` | 1 | 1 | "No_Stage(0or1?) Kolichestvo kardinati blocka" (stage, count, coordinates) |
+| `EXPLPOINTS` | `i #(ii)` | 1 | 1 | "No_Stage(0or1?) Kolichestvo kardinati blocka": cells (relative to the lock base cell) where a section's ruin explodes, see [Building sections](#building-sections-addsection) |
 | `EXSPRITES` | `siiii` | 2 | 2 | sprite object name and parameters (fields) |
 | `EX_SHOTS` | `#(9 × i)` | 4 | 4 | building: shot origins, one record per line |
 | `EX_SHOTS2` | `#(10 × i)` | 97 | 97 | building: shot origins, one record per line |
@@ -292,9 +292,9 @@ transliterated Russian names or the values; `?` marks guesses, blank means unkno
 | `SMOKE` | `#(ii)` | 116 | 116 | building: smoke positions |
 | `SOUND` | `iss` | 332 | 111 | frame, animation, `SOUNDLIST.TXT` sound: plays the sound at that frame? |
 | `SPRITEOBJECT` | | 2 | 2 | flag: object is a map sprite (fields) |
-| `STAGELOCKPOINTS` | `i #(ii)` | 1 | 1 | blocked cells per stage |
-| `STAGE_FIRES` | `i #(ii)` | 21 | 10 | fire positions per stage |
-| `STAGE_SMOKE` | `i #(ii)` | 26 | 11 | smoke positions per stage |
+| `STAGELOCKPOINTS` | `i #(ii)` | 1 | 1 | cells (bytes) a done section locks (NM+0x16ce count, +0x16d8/+0x16ec per stage) |
+| `STAGE_FIRES` | `i #(ii)` | 21 | 10 | fire positions (picture coordinates) of a done section, see `docs/simulation.md` "Fire" |
+| `STAGE_SMOKE` | `i #(ii)` | 26 | 11 | smoke positions of a done section |
 | `STANDGROUND` | | 102 | 102 | flag: can stand ground |
 | `STOPDISTANCE` | `i` | 21 | 21 | |
 | `STORMFORCE` | `i` | 106 | 106 | storming strength |
@@ -343,8 +343,11 @@ ADDSECTION stage sprite life      e.g. ENGKRE.MD: ADDSECTION 0 0 10000
 The parser (0x4f4be1, `%d` × 15, "Not enough or wrong parameters" unless all 15 are read,
 "Too large stage index" for `stage ≥ 5`) allocates NM+0x1714: a mask byte of declared
 sections, then 5 records of 0x58 bytes. A record holds the sprite set mapped to its pack
-(+1), the four `(frame, x, y)` words (+3 + 6·state), the life (+0x1b) and the
-`STAGE_FIRES`/`STAGE_SMOKE`/`STAGELOCKPOINTS` data of the stage (+0x1d..). Every object of
+(+1), the four `(frame, x, y)` words (+3 + 6·state), the life (+0x1b), the `EXPLPOINTS`
+count and words (+0x1d, +0x21), the `STAGE_FIRES` x/y words (+0x25, +0x2d, count +0x35) and
+the `STAGE_SMOKE` ones (+0x29, +0x31, count +0x37). Those three keywords are kept only after
+an `ADDSECTION` with all 15 numbers (which allocates the records) and for a stage below 5;
+`STAGELOCKPOINTS` are the type's (NM+0x16ce) and need no section. Every object of
 a type with sections starts with OB+0xaa = 0x8000 (0x516150); bits `3s..3s+2` hold the
 state of section `s`:
 
@@ -353,7 +356,7 @@ state of section `s`:
 | 0 not built | creation; a stage-1 section whose building loses life (0x4e94b3) | 10: the wooden part |
 | 1 being built | starting the `UPSTAGEs` upgrade | 11: stone walls in scaffolding |
 | 2 done | the finished upgrade (0x532737); adds `life` to the maximum life | 12: the stone building |
-| 3 destroyed | life ≤ own life + done sections before it (0x4e94f1, explosions at `STAGE_FIRES`); its upgrade is offered again to rebuild it (see `docs/simulation.md`, Building sections) | 13: its ruin |
+| 3 destroyed | life ≤ own life + done sections before it (0x4e94f1, `DESTRUCT` explosions at `EXPLPOINTS`); its upgrade is offered again to rebuild it (see `docs/simulation.md`, Building sections) | 13: its ruin |
 
 Drawing (0x5099a8 in the object draw 0x5062a3; zoomed out 0x5fdb93 with offsets `>> 2`):
 when OB+0x25 bit 0 (finished, `Ready`?) or OB+0x101 is set and OB+0x58 (dying?) is 0,

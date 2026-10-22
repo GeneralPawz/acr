@@ -1,17 +1,20 @@
 //! What the original draws and plays around the simulation without changing it:
 //! projectiles, smoke and explosions (`WEAPON.NDS` objects, drawn by 0x557cb0), the fire
-//! and smoke of damaged buildings (0x50618e) and the weapon sounds (0x5583a2).
+//! and smoke of damaged buildings (0x50618e, buildings with sections 0x5052b5) and the
+//! weapon sounds (0x5583a2).
 //!
 //! Everything here only reads the world; the fires use their own random numbers like the
 //! original's C `rand()` (0x616961), not the synchronised ones.
 
 use std::collections::BTreeMap;
 
+use acr_formats::UnitDef;
 use acr_render::objects_view::ObjectsView;
 use acr_render::scene::{Layer, SceneSprite};
 use acr_sim::projectile::Projectile;
+use acr_sim::upgrade::{section, section_state};
 use acr_sim::weapon::{FireAnims, transparency};
-use acr_sim::world::EntityId;
+use acr_sim::world::{EntityId, Unit};
 use acr_sim::{Rng, World};
 
 use crate::unit_sounds::{self, SoundEvent};
@@ -98,8 +101,9 @@ impl Fire {
 }
 
 /// How many of `points` fire points burn (0x505b8a): a burning building shows one per
-/// lost share of its life, at least 4; a damaged one starts below three quarters of its
-/// life (`M/2 + M/4`). `None`: no fire is drawn and the state is kept.
+/// lost share of its type's life `max_life` (the owner's `LIFE`, not the object's maximum),
+/// at least 4; a damaged one starts below three quarters of it (`M/2 + M/4`). `None`: no
+/// fire is drawn and the state is kept.
 pub fn burning_points(points: usize, life: i32, max_life: i32, burning: bool) -> Option<usize> {
     let n = points as i64;
     if n == 0 {
@@ -119,10 +123,73 @@ pub fn burning_points(points: usize, life: i32, max_life: i32, burning: bool) ->
     Some((n * (t - life) / t) as usize)
 }
 
+/// The life band of a building with sections (0x5052b5): the last done section `c - 1`
+/// (`c` = 0: none) spans `lo..hi`, from the type's life plus the done sections before it
+/// to that plus its own life; without a done section `0..type life`.
+pub fn section_band(stages: u16, type_life: i32, sections: &[(u8, i32)]) -> (u8, i32, i32) {
+    let (mut c, mut lo, mut hi, mut sum) = (0, 0, type_life, type_life);
+    for s in 0..5u8 {
+        let prev = sum;
+        if section_state(stages, s) == section::DONE {
+            sum += sections.iter().find(|x| x.0 == s).map_or(0, |x| i32::from(x.1 as u16));
+            (c, lo, hi) = (s + 1, prev, sum);
+        }
+    }
+    (c, lo, hi)
+}
+
+/// How many of `points` fire points of a building with sections burn (0x50540a): fires
+/// start below three quarters of the band `lo..hi` and all burn at its bottom, whether the
+/// building burns or not. `None`: no fire is drawn and the state is kept.
+pub fn section_points(points: usize, life: i32, lo: i32, hi: i32) -> Option<usize> {
+    let n = points as i64;
+    let (life, lo, hi) = (i64::from(life), i64::from(lo), i64::from(hi));
+    let t = (hi * 3 + lo) >> 2;
+    if n == 0 || life >= t {
+        return None;
+    }
+    let range = ((hi - lo) * 3) >> 2;
+    // The engine divides by zero here (a done section without life).
+    let k = if range == 0 { n } else { n * (t - life) / range };
+    Some(k.min(n) as usize)
+}
+
+/// Where a building's fires (`k` 0) or smoke (1) burn and how many of the points.
+struct Layout {
+    xy: Vec<(i32, i32)>,
+    target: usize,
+    /// A building with sections: its last done section + 1, whose change resets both kinds
+    /// (OB+0xfd byte 0, 0x505487).
+    tag: Option<u8>,
+}
+
+/// The [`Layout`] of fires or smoke, `None` when none is drawn. A building with sections
+/// (OB+0xaa not 0, 0x505af5) burns at the `STAGE_FIRES` / `STAGE_SMOKE` points of its last
+/// done section ([`section_points`]), or at its `FIRES` / `SMOKE` without one; others at
+/// their `FIRES` / `SMOKE` ([`burning_points`]).
+fn layout(world: &World, def: &UnitDef, u: &Unit, k: usize) -> Option<Layout> {
+    let type_life = world.adv(u.owner, u.kind).life;
+    let plain = || def.get(["FIRES", "SMOKE"][k]).map(|c| c.points(0)).unwrap_or_default();
+    if u.stages == 0 {
+        let xy = plain();
+        let target = burning_points(xy.len(), u.life, type_life, u.burning)?;
+        return Some(Layout { xy, target, tag: None });
+    }
+    let sections = &world.catalog.get(u.kind).economy.sections;
+    let (c, lo, hi) = section_band(u.stages, type_life, sections);
+    let xy = match c {
+        0 => plain(),
+        _ => def.stage_points(["STAGE_FIRES", "STAGE_SMOKE"][k], c - 1).unwrap_or_default(),
+    };
+    let target = section_points(xy.len(), u.life, lo, hi)?;
+    Some(Layout { xy, target, tag: Some(c) })
+}
+
 /// The effects of a running game.
 pub struct Effects {
-    /// Fires (0) and smoke (1) per building, in id order (a stable draw order).
-    fires: BTreeMap<EntityId, [Option<Fire>; 2]>,
+    /// Fires (0) and smoke (1) per building, in id order (a stable draw order), with the
+    /// [`Layout::tag`] of a building with sections.
+    fires: BTreeMap<EntityId, (u8, [Option<Fire>; 2])>,
     rng: Rng,
 }
 
@@ -130,12 +197,6 @@ impl Default for Effects {
     fn default() -> Self {
         Self { fires: BTreeMap::new(), rng: Rng::new(0xF12E, 7) }
     }
-}
-
-/// A burning building's fire points and the animations of one kind.
-struct Points<'a> {
-    xy: Vec<(i32, i32)>,
-    anims: &'a FireAnims,
 }
 
 impl Effects {
@@ -162,13 +223,17 @@ impl Effects {
                 continue;
             }
             let Some(def) = assets.definition(&world.catalog.get(u.kind).id) else { continue };
-            for (k, key) in ["FIRES", "SMOKE"].into_iter().enumerate() {
-                let n = def.get(key).map_or(0, |c| c.points(0).len());
-                let Some(target) = burning_points(n, u.life, u.max_life, u.burning) else { continue };
+            for (k, (start, cycle)) in lens.iter().enumerate().take(2) {
+                let Some(look) = layout(world, def, u, k) else { continue };
                 let entry = self.fires.entry(u.id).or_default();
-                let fire = entry[k].get_or_insert_with(|| Fire::new(n, target, &mut self.rng));
-                fire.target = target;
-                fire.advance(&lens[k].0, &lens[k].1, &mut self.rng);
+                if let Some(tag) = look.tag
+                    && tag != entry.0
+                {
+                    *entry = (tag, [None, None]);
+                }
+                let fire = entry.1[k].get_or_insert_with(|| Fire::new(look.xy.len(), look.target, &mut self.rng));
+                fire.target = look.target;
+                fire.advance(start, cycle, &mut self.rng);
             }
         }
         // Their animation sounds (`SOUND 1 #DFIRE2 FIRE1`), at the point they burn.
@@ -186,34 +251,30 @@ impl Effects {
         let mut out = Vec::new();
         let assets = objects.objects();
         let Some(effects) = assets.effects() else { return out };
-        for (&id, kinds) in &self.fires {
+        for (&id, (tag, kinds)) in &self.fires {
             let Some(u) = world.unit(id) else { continue };
             let Some(def) = assets.definition(&world.catalog.get(u.kind).id) else { continue };
             let t = world.catalog.get(u.kind);
             let h = objects_height(world, u.pos.x >> 4, u.pos.y >> 4);
             for (k, fire) in kinds.iter().enumerate() {
                 let Some(fire) = fire else { continue };
-                let key = ["FIRES", "SMOKE"][k];
-                let pts = Points {
-                    xy: def.get(key).map(|c| c.points(0)).unwrap_or_default(),
-                    anims: &world.catalog.weapons.fires[k],
-                };
-                if burning_points(pts.xy.len(), u.life, u.max_life, u.burning).is_none() {
+                let anims: &FireAnims = &world.catalog.weapons.fires[k];
+                let Some(look) = layout(world, def, u, k).filter(|l| l.tag.is_none_or(|c| c == *tag)) else {
                     continue;
-                }
-                for j in 0..fire.active.min(pts.xy.len()) {
-                    let nvar = pts.anims.start.len().max(1);
+                };
+                for j in 0..fire.active.min(look.xy.len()) {
+                    let nvar = anims.start.len().max(1);
                     let v = j % nvar;
                     let anim = match fire.states[j] {
-                        1 => pts.anims.start.get(v),
-                        2 => pts.anims.cycle.get(v),
+                        1 => anims.start.get(v),
+                        2 => anims.cycle.get(v),
                         3 => world.catalog.weapons.fires[0].end.get(v),
                         _ => None,
                     };
                     let Some(anim) = anim else { continue };
                     let step = usize::from(fire.frames[j]);
                     let Some((frame, (fx, fy))) = assets.effect_look(anim, step, 0) else { continue };
-                    let (px, py) = pts.xy[j];
+                    let (px, py) = look.xy[j];
                     let (dx, dy) = (t.location.0 + px, t.location.1 + py);
                     let (x, y) = (u.pos.x >> 4, u.pos.y >> 4);
                     let sound = anim_sound(effects, anim, step).map(|s| (s, x + dx, (y >> 1) - h + dy));
@@ -385,5 +446,26 @@ mod tests {
         f.target = 1;
         f.advance(&start, &cycle, &mut rng);
         assert_eq!(f.active, 1);
+    }
+
+    #[test]
+    fn buildings_with_sections_burn_in_the_band_of_their_last_done_section() {
+        // PUEGOR: sections of 10000; 0 and 2 done, 1 a ruin (state 3).
+        let sections = [(0, 10000), (1, 10000), (2, 10000), (3, 10000)];
+        let stages = 0x8000 | 2 | 3 << 3 | 2 << 6;
+        assert_eq!(section_band(stages, 5000, &sections), (3, 15000, 25000));
+        assert_eq!(section_band(0x8000 | 2, 5000, &sections), (1, 5000, 15000));
+        assert_eq!(section_band(0x8000 | 3, 5000, &sections), (0, 0, 5000));
+        // Fires start below three quarters of the band; the burning flag does not count.
+        assert_eq!(section_points(10, 12500, 5000, 15000), None);
+        assert_eq!(section_points(10, 12499, 5000, 15000), Some(0));
+        assert_eq!(section_points(10, 8750, 5000, 15000), Some(5));
+        assert_eq!(section_points(10, 5000, 5000, 15000), Some(10));
+        assert_eq!(section_points(10, 1000, 5000, 15000), Some(10), "never more than the points");
+        assert_eq!(section_points(0, 1000, 5000, 15000), None);
+        // Without a done section: three quarters of the type's life.
+        assert_eq!(section_points(12, 3750, 0, 5000), None);
+        assert_eq!(section_points(12, 1875, 0, 5000), Some(6));
+        assert_eq!(section_points(4, 100, 900, 900), Some(4), "a section without life");
     }
 }

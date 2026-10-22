@@ -502,8 +502,10 @@ builds the icons.
   +0x174a..+0x174d). The census (0x42ec4f) counts the player's finished depots and its
   objects per group; an item is greyed while its group's count ≥ depots · n (0x609abd).
 - `MUSTREPAIR` (0x60988b): a stage upgrade (`UPSTAGE0..4`) of the first selected object is
-  greyed and has no click while that building has less than 2000 life (or burns). The text
-  id has no text, so the id itself is the hint.
+  greyed and has no click while that object burns (OB+0x26 bit 1) or, being a building
+  (OB+0x27 bit 4, set at creation 0x516212 for `BUILDING` types that are not
+  `WALLOBJECT`), has less than 2000 life (`WORD +0x78 < 0x7d0`). The text id has no text, so
+  the id itself is the hint.
 - `FINBLD` ("%s: Einheitenproduktion abgeschlossen", the building's name) for 100 frames
   when an own building's queue becomes empty because its last unit was made.
 - Population full stops production silently (0x49ef92); the icon is not greyed.
