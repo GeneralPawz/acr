@@ -162,6 +162,14 @@ pub struct State {
     /// The patrol icon was pressed: the next left click on the map is the patrol point
     /// (`0x1100b3d`).
     pub patrol_mode: bool,
+    /// The officer whose formation icons were built last (0x6781dc): another one closes the
+    /// open formation.
+    form_officer: Option<EntityId>,
+    /// The officer's open formation (0x28ead08): low byte formation + 1 (0 = none), high
+    /// byte how many sizes down (`DECFORM`).
+    form_menu: u16,
+    /// An officer just ordered to form: its formation is selected once formed (0x41f198).
+    select_formed: Option<EntityId>,
     /// Space cycles through the selection (0x4c6020).
     next_centred: usize,
     /// The market's amount and chosen slots (ECO+0x2a0, +0x2a4, +0x2a8), kept for the game.
@@ -217,6 +225,9 @@ impl Default for State {
             right_drag: None,
             attack_mode: false,
             patrol_mode: false,
+            form_officer: None,
+            form_menu: 0,
+            select_formed: None,
             next_centred: 0,
             market_amount: 0,
             market_sell: None,
@@ -439,10 +450,18 @@ impl InGame {
             view.dots.push(Dot { x: u.pos.x >> shift, y: u.pos.y >> shift, color });
         }
         let Some(data) = self.interface.hud.data(ctx) else { return view };
-        // One icon per selected type, in selection order; its bar sums life and MaxLife
-        // (OB+0x78/0x7a, 0x606e12), which building sections raise.
+        // One icon per selected type of the free units, in selection order; its bar sums life
+        // and MaxLife (OB+0x78/0x7a, 0x606e12), which building sections raise. Then one per
+        // selected formation (0x606d10).
         let mut types: Vec<(acr_sim::TypeId, i32, i32, i32)> = Vec::new();
+        let mut brigades: Vec<u16> = Vec::new();
         for u in self.selected_units() {
+            if let Some(b) = u.brigade {
+                if !brigades.contains(&b) {
+                    brigades.push(b);
+                }
+                continue;
+            }
             let max = u.max_life.max(1);
             match types.iter_mut().find(|t| t.0 == u.kind) {
                 Some(t) => {
@@ -455,9 +474,18 @@ impl InGame {
         }
         let outline = color::PLAYER.wrapping_add(4 * (player % 8));
         let objects = self.objects.objects();
-        if let [(kind, ..)] = types[..]
-            && let Some(u) = self.selected_units().find(|u| u.kind == kind)
-        {
+        // A single formation shows its soldiers' numbers with the formation bonus and the
+        // reload of all its members (0x606edd).
+        let single = match (&types[..], &brigades[..]) {
+            ([(kind, ..)], []) => self.selected_units().find(|u| u.kind == *kind && u.brigade.is_none()),
+            ([], [b]) => world
+                .brigades
+                .get(usize::from(*b))
+                .and_then(|br| br.members.iter().skip(3).flatten().find_map(|&m| world.unit(m).filter(|u| u.living()))),
+            _ => None,
+        };
+        if let Some(u) = single {
+            let kind = u.kind;
             let t = world.catalog.get(kind);
             let def = objects.definition(&t.id);
             let mut s = stats(world, &data, u, def);
@@ -468,14 +496,20 @@ impl InGame {
                 s.protections.clear();
             }
             s.lines = self.info_lines(ctx, u);
-            // The type's record sums the reload counters of its selected objects (0x606ae0).
+            // The type's record sums the reload counters of its selected objects (0x606ae0); a
+            // formation's those of all its members (0x6073a1).
             if def.is_some_and(|d| d.has("SHOWDELAY")) {
-                let units = self.selected_units().filter(|v| v.kind == kind);
-                s.reload = Some(units.fold((0, 0), |(d, m), v| (d + v.delay, m + v.max_delay)));
+                let sum = |units: &mut dyn Iterator<Item = &Unit>| {
+                    units.fold((0, 0), |(d, m), v| (d + v.delay, m + v.max_delay))
+                };
+                s.reload = Some(match u.brigade.and_then(|b| world.brigades.get(usize::from(b))) {
+                    Some(br) => sum(&mut br.members.iter().flatten().filter_map(|&m| world.unit(m))),
+                    None => sum(&mut self.selected_units().filter(|v| v.kind == kind)),
+                });
             }
             view.stats = Some(s);
         }
-        if let ([(kind, ..)], Some(nations)) = (&types[..], &nations) {
+        if let ([(kind, ..)], [], Some(nations)) = (&types[..], &brigades[..], &nations) {
             self.production_icons(ctx, &data, nations, *kind, outline, &mut view.icons);
         }
         if view.icons.iter().any(|i| i.action == Some(HudCommand::MarketTrade)) {
@@ -484,51 +518,26 @@ impl InGame {
             let result = i.market_sell.zip(i.market_buy).map(|(s, b)| world.market.quote(s, b, i.market_amount));
             view.market = Some((amount, result));
         }
-        // Formations: the officer's groups in column 8 (`ORDERICONS`).
-        let officer =
-            self.selected_units().find(|u| world.catalog.get(u.kind).officer).map(|u| (u.id, u.kind, u.brigade));
-        let current = officer.and_then(|(_, _, b)| b).and_then(|b| world.brigades.get(usize::from(b))).map(|b| {
-            let name = world.formations.shapes.get(b.shape).map(|s| s.name.clone()).unwrap_or_default();
-            world
-                .formations
-                .groups
-                .iter()
-                .find(|g| g.variants.contains(&b.shape))
-                .map(|g| g.name.clone())
-                .unwrap_or(name)
-        });
-        if let Some((_, kind, _)) = officer {
-            let officer_id = world.catalog.get(kind).id.to_ascii_uppercase();
-            let groups = nations.as_ref().and_then(|n| n.officers.get(&officer_id).cloned()).unwrap_or_default();
-            for g in &groups {
-                if let Some(icon) = data.order(g) {
-                    view.icons.push(Icon {
-                        frame: icon.frame,
-                        slot: icon.slot,
-                        outline: Some(outline),
-                        life: None,
-                        count: None,
-                        selected: current.as_deref().is_some_and(|c| c.eq_ignore_ascii_case(g)),
-                        hint: ctx.texts.get(&icon.hint).to_vec(),
-                        action: Some(HudCommand::Form(g.clone())),
-                        ..Icon::default()
-                    });
-                }
-            }
+        if let ([], [b]) = (&types[..], &brigades[..]) {
+            self.brigade_icons(ctx, &data, *b, outline, &mut view.icons);
         }
+        self.officer_icons(ctx, &data, outline, &mut view.icons);
         self.state_icons(ctx, &data, outline, &mut view.icons);
         self.idle_icons(&data, outline, &mut view.icons);
         self.switch_icons(ctx, &data, outline, &mut view.icons);
-        // The type icons take the first slots the commands leave free (`AddIcon` without a
-        // position, 0x495631).
+        let Some(world) = &self.world else { return view };
+        let objects = self.objects.objects();
+        // The type icons, then the formation icons, take the first slots the commands leave
+        // free (`AddIcon` without a position, 0x495631). A formation's icon shows its soldier
+        // type, how many soldiers it has and their life (0x606d10).
         let mut free = (0..36).filter(|s| !view.icons.iter().any(|i| i.slot == *s)).collect::<Vec<_>>().into_iter();
+        let icon_of = |kind: acr_sim::TypeId| {
+            objects.definition(&world.catalog.get(kind).id).and_then(|d| d.icon()).and_then(|i| data.icon(i))
+        };
         for &(kind, count, life, max) in types.iter().take(12) {
             let Some(slot) = free.next() else { break };
-            let id = &world.catalog.get(kind).id;
-            let def = objects.definition(id);
-            let frame = def.and_then(|d| d.icon()).and_then(|i| data.icon(i)).unwrap_or(0);
             view.icons.push(Icon {
-                frame,
+                frame: icon_of(kind).unwrap_or(0),
                 slot,
                 outline: Some(outline),
                 life: Some((life, max)),
@@ -537,7 +546,146 @@ impl InGame {
                 ..Icon::default()
             });
         }
+        for &b in &brigades {
+            let Some(br) = world.brigades.get(usize::from(b)) else { continue };
+            let Some(slot) = free.next() else { break };
+            let soldiers: Vec<&Unit> = br.members.iter().skip(3).flatten().filter_map(|&m| world.unit(m)).collect();
+            let (life, max) = soldiers.iter().fold((0, 0), |(l, m), u| (l + u.life, m + u.max_life.max(1)));
+            view.icons.push(Icon {
+                frame: br.kind.and_then(icon_of).unwrap_or(0),
+                slot,
+                outline: Some(outline),
+                life: (max > 0).then_some((life, max)),
+                count: (!soldiers.is_empty()).then_some(soldiers.len() as i32),
+                action: Some(HudCommand::SelectBrigade(b)),
+                ..Icon::default()
+            });
+        }
         view
+    }
+
+    /// A single selected formation without free units (0x606edd): the formations its group
+    /// can turn into (`ORD_GROUPS.LST`, at their `[ORDERICONS]` slots, network command 0x41)
+    /// and `FILLFORM` at slot 12 (0x678a80, command 0x52).
+    fn brigade_icons(&self, ctx: &Ctx, data: &HudData, b: u16, outline: u8, icons: &mut Vec<Icon>) {
+        let Some(world) = &self.world else { return };
+        let Some(br) = world.brigades.get(usize::from(b)).filter(|br| br.alive && br.owner == self.own()) else {
+            return;
+        };
+        let f = &world.formations;
+        let buttons = f.shapes.get(br.shape).and_then(|s| s.group).map_or(&[][..], |g| &f.groups[g].buttons[..]);
+        for &g in buttons {
+            let Some(icon) = f.groups.get(g).and_then(|g| data.order(&g.name)) else { continue };
+            icons.push(Icon {
+                frame: icon.frame,
+                slot: icon.slot,
+                outline: Some(outline),
+                hint: ctx.texts.get(&icon.hint).to_vec(),
+                action: Some(HudCommand::Reform(g)),
+                ..Icon::default()
+            });
+        }
+        if let Some(frame) = data.icon("Add_Formation") {
+            icons.push(Icon {
+                frame,
+                slot: 12,
+                outline: Some(outline),
+                hint: ctx.texts.get("FILLFRM").to_vec(),
+                action: Some(HudCommand::Fill),
+                ..Icon::default()
+            });
+        }
+    }
+
+    /// The officer's formations (0x5f6869..0x5f6da3), for a single selected object or a
+    /// selection of one type whose first object is an officer:
+    /// - each formation of its `[OFFICERS]` entry at its `[ORDERICONS]` slot, enabled while a
+    ///   free unit of its drummer type stands within 1024 px of it (or it needs none);
+    ///   a click opens the formation (0x5f5c68), a disabled one closes it;
+    /// - an open formation shows its soldier types right of its icon, each with the largest
+    ///   size with as many free units of the type within 1024 px of the officer, less the
+    ///   sizes stepped down; a click forms it (network command 0x3a). With a formation open,
+    ///   `DECFORM` and `INCFORM` stand two and one slots left of the first formation's icon
+    ///   and step the sizes down and up (0x5f5d49); when no type has a size left, the step
+    ///   goes back by one.
+    fn officer_icons(&mut self, ctx: &Ctx, data: &HudData, outline: u8, icons: &mut Vec<Icon>) {
+        let Some(world) = &self.world else { return };
+        let objects = self.objects.objects();
+        let first = self.selected.first().and_then(|&id| world.unit(id)).filter(|u| u.owner == self.own());
+        let same = first.is_some_and(|f| self.selected_units().all(|u| u.kind == f.kind));
+        let Some((o, od)) = first.filter(|_| same).and_then(|o| Some((o, world.formations.officers.get(&o.kind)?)))
+        else {
+            self.interface.form_officer = None;
+            return;
+        };
+        if self.interface.form_officer != Some(o.id) {
+            self.interface.form_officer = Some(o.id);
+            self.interface.form_menu = 0;
+        }
+        let near = |kind| acr_sim::formation::count_near(world, o.pos.x, o.pos.y, kind, o.owner);
+        let ready = od.drummer.is_none_or(|d| near(d) > 0);
+        let mut menu = self.interface.form_menu;
+        let order = |f: &acr_sim::formation::OfficerFormation| {
+            world.formations.groups.get(f.group).and_then(|g| data.order(&g.name))
+        };
+        for (i, f) in od.formations.iter().enumerate() {
+            let Some(icon) = order(f) else { continue };
+            if menu != 0 && i == 0 {
+                for (dx, key, name, dec) in
+                    [(2, "DECFORM", "Dec_Formation", true), (1, "INCFORM", "Inc_Formation", false)]
+                {
+                    if let (Some(frame), Some(slot)) = (data.icon(name), icon.slot.checked_sub(dx)) {
+                        icons.push(Icon {
+                            frame,
+                            slot,
+                            outline: Some(outline),
+                            hint: ctx.texts.get(key).to_vec(),
+                            action: Some(HudCommand::FormSize(dec)),
+                            ..Icon::default()
+                        });
+                    }
+                }
+            }
+            if !ready {
+                menu = 0;
+            }
+            icons.push(Icon {
+                frame: icon.frame,
+                slot: icon.slot,
+                outline: Some(outline),
+                disabled: !ready,
+                hint: ctx.texts.get(&icon.hint).to_vec(),
+                action: ready.then_some(HudCommand::FormGroup(i)),
+                ..Icon::default()
+            });
+        }
+        if let Some(f) = (menu & 0xff).checked_sub(1).and_then(|i| od.formations.get(usize::from(i))) {
+            let mut page = usize::from(menu >> 8);
+            let slot = order(f).map_or(0, |i| i.slot);
+            let sizes: Vec<usize> = f.shapes.iter().map(|&s| world.formations.shapes[s].slots()).collect();
+            let mut any = false;
+            for (j, &kind) in f.kinds.iter().enumerate() {
+                let n = near(kind);
+                let k = sizes.iter().position(|&s| s > n).unwrap_or(sizes.len()).saturating_sub(page);
+                let t = world.catalog.get(kind);
+                let frame = objects.definition(&t.id).and_then(|d| d.icon()).and_then(|i| data.icon(i)).unwrap_or(0);
+                let mut icon = Icon { frame, slot: slot + j + 1, outline: Some(outline), ..Icon::default() };
+                if k > 0 {
+                    icon.count = Some(sizes[k - 1] as i32);
+                    icon.action = Some(HudCommand::FormNear { shape: f.shapes[k - 1] as u16, kind: kind.0 });
+                    icon.hint = unit_name(ctx, &t.md_name);
+                    any = true;
+                } else {
+                    icon.disabled = true;
+                }
+                icons.push(icon);
+            }
+            if page != 0 && !any {
+                page -= 1;
+            }
+            menu = (menu & 0xff) | (page as u16) << 8;
+        }
+        self.interface.form_menu = menu;
     }
 
     /// The commands for the selection's states (0x6074f1..0x607a59), with or without an
@@ -1094,30 +1242,51 @@ impl InGame {
                     .collect();
                 self.selected = keep;
             }
-            HudCommand::Form(group) => {
-                let Some(officer) = self.selected_units().find(|u| world.catalog.get(u.kind).officer) else { return };
-                let (officer, brigade) = (officer.id, officer.brigade);
-                let mut units: Vec<EntityId> = self.selected.clone();
-                if let Some(b) = brigade.and_then(|b| world.brigades.get(usize::from(b))) {
-                    // Re-forming: the formation's soldiers form the new one.
-                    units.extend(b.members.iter().flatten().copied());
-                    units.sort_by_key(|e| e.0);
-                    units.dedup();
-                    self.commands.push(Command::Disband { player, officer });
+            HudCommand::SelectBrigade(b) => {
+                // 0x4d737f: the formation's members only.
+                self.selected.retain(|&id| world.unit(id).is_some_and(|u| u.brigade == Some(b)));
+            }
+            HudCommand::FormGroup(i) => self.interface.form_menu = (i + 1) as u16,
+            HudCommand::FormSize(dec) => {
+                let m = &mut self.interface.form_menu;
+                if *m != 0 {
+                    if dec {
+                        *m += 0x100;
+                    } else if *m > 0x100 {
+                        *m -= 0x100;
+                    }
                 }
-                self.commands.push(Command::Form { player, officer, units, kind: group });
-                self.unit_sound(officer, "ORDER_SOUND");
+            }
+            HudCommand::FormNear { shape, kind } => {
+                let Some(officer) = self.interface.form_officer else { return };
+                self.commands.push(Command::FormNear { player, officer, shape, kind: acr_sim::TypeId(kind) });
+                // The interface selects the new formation once it exists (0x41f198).
+                self.interface.select_formed = Some(officer);
+            }
+            HudCommand::Reform(group) => {
+                let brigade = self.selected_units().find_map(|u| u.brigade);
+                if let Some(b) = brigade {
+                    self.commands.push(Command::Reform { player, brigade: b, group: group as u8 });
+                }
+            }
+            HudCommand::Fill => {
+                let brigade = self.selected_units().find_map(|u| u.brigade);
+                if let Some(b) = brigade {
+                    self.commands.push(Command::Fill { player, brigade: b });
+                }
             }
             HudCommand::SelectIdle(mines) => {
                 self.selected = idle(world, player, mines);
             }
             HudCommand::Disband => {
-                let officers: Vec<EntityId> = self
-                    .selected_units()
-                    .filter(|u| u.brigade.is_some() && world.catalog.get(u.kind).officer)
-                    .map(|u| u.id)
-                    .collect();
-                for officer in officers {
+                // One member per selected formation (the selection need not hold the officer).
+                let mut members: Vec<(u16, EntityId)> = Vec::new();
+                for u in self.selected_units() {
+                    if let Some(b) = u.brigade.filter(|b| !members.iter().any(|m| m.0 == *b)) {
+                        members.push((b, u.id));
+                    }
+                }
+                for (_, officer) in members {
                     self.commands.push(Command::Disband { player, officer });
                 }
             }
@@ -1269,6 +1438,20 @@ impl InGame {
                 Hint::NotEnoughPeasants => (ctx.texts.get("NOT_ENOUGH_PEASANTS").to_vec(), 10),
             };
             self.mission.hint(text, frames);
+        }
+    }
+
+    /// After `CreateBrigade` the new formation's flag bearer and soldiers join the selection
+    /// (0x41f198, `SelectBrigade` 0x4e0f80 from member index 2 on). Called after a tick.
+    pub(super) fn select_formed(&mut self) {
+        let Some(officer) = self.interface.select_formed.take() else { return };
+        let Some(world) = &self.world else { return };
+        let Some(b) = world.unit(officer).and_then(|u| u.brigade) else { return };
+        let members = world.brigades.get(usize::from(b)).map(|br| br.members.clone()).unwrap_or_default();
+        for m in members.into_iter().skip(2).flatten() {
+            if !self.selected.contains(&m) && world.unit(m).is_some_and(|u| u.living()) {
+                self.selected.push(m);
+            }
         }
     }
 
@@ -1517,6 +1700,7 @@ impl InGame {
         let bracket = rgba(nearest(&palette, color::BRACKETS));
         let green = rgba(nearest(&palette, color::LIFE));
         let white = rgba(color::WHITE);
+        let reload = rgba(color::RELOAD);
         let fill = |out: &mut Vec<Draw>, c: [u8; 4], x0: i32, y0: i32, x1: i32, y1: i32| {
             out.push(Draw::fill(c, Rect { x0, y0, x1: x1 + 1, y1: y1 + 1 }).unclipped());
         };
@@ -1549,8 +1733,20 @@ impl InGame {
                 let max = kind.life.max(1);
                 let l = (w - 12) * u.life.clamp(0, max) / max;
                 fill(&mut out, green, x0 + 5, y0 - 12, x0 + l + 7, y0 - 11);
-                fill(&mut out, white, x0 + 4, y0 - 12, x0 + 4, y0 - 11);
-                fill(&mut out, white, x0 + w - 5, y0 - 12, x0 + w - 5, y0 - 11);
+                // `SHOWDELAY` types (NM+0x172a bit 0, 0x4bb51a): the reload bar, two lines of
+                // palette index 0xd0 right under it, as long as the part of the reload done:
+                // `(w − 12)·(D − delay)/D` with `D = max(MaxDelay or 1, delay)`. The end
+                // caps then reach down to it.
+                let bottom = if objects.definition(&kind.id).is_some_and(|d| d.has("SHOWDELAY")) {
+                    let d = if u.max_delay != 0 { u.max_delay } else { 1 }.max(u.delay);
+                    let r = (w - 12) * (d - u.delay) / d;
+                    fill(&mut out, reload, x0 + 5, y0 - 10, x0 + r + 7, y0 - 9);
+                    y0 - 9
+                } else {
+                    y0 - 11
+                };
+                fill(&mut out, white, x0 + 4, y0 - 12, x0 + 4, bottom);
+                fill(&mut out, white, x0 + w - 5, y0 - 12, x0 + w - 5, bottom);
             }
         }
         if self.interface.hud.locks && !self.interface.hud.zoom {

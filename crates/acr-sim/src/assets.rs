@@ -171,7 +171,9 @@ impl SimAssets {
         let empty = Vec::new();
         let orders = OrderList::parse(self.files.get(ORDERS).unwrap_or(&empty));
         let groups = OrderGroups::parse(self.files.get(ORDER_GROUPS).unwrap_or(&empty));
-        SimData { catalog, shapes, formations: Formations::new(&orders, &groups) }
+        let mut formations = Formations::new(&orders, &groups);
+        formations.set_officers(&catalog, &nations);
+        SimData { catalog, shapes, formations }
     }
 }
 

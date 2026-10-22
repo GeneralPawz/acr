@@ -289,6 +289,21 @@ impl Writer {
                 self.ids(buildings);
                 self.0.push(u8::from(*stop));
             }
+            Command::FormNear { player, officer, shape, kind } => {
+                self.0.extend_from_slice(&[40, *player]);
+                self.u(u64::from(officer.0));
+                self.u(u64::from(*shape));
+                self.u(u64::from(kind.0));
+            }
+            Command::Reform { player, brigade, group } => {
+                self.0.extend_from_slice(&[41, *player]);
+                self.u(u64::from(*brigade));
+                self.0.push(*group);
+            }
+            Command::Fill { player, brigade } => {
+                self.0.extend_from_slice(&[42, *player]);
+                self.u(u64::from(*brigade));
+            }
             Command::AttackMove { player, units, x, y } => {
                 self.0.extend_from_slice(&[20, *player]);
                 self.ids(units);
@@ -375,6 +390,10 @@ impl<'a> Reader<'a> {
         u16::try_from(self.u()?).map(TypeId).map_err(|_| ReplayError("type id"))
     }
 
+    fn u16(&mut self) -> Result<u16, ReplayError> {
+        u16::try_from(self.u()?).map_err(|_| ReplayError("index"))
+    }
+
     fn ids(&mut self) -> Result<Vec<EntityId>, ReplayError> {
         let n = self.len()?;
         (0..n).map(|_| self.id()).collect()
@@ -424,6 +443,9 @@ impl<'a> Reader<'a> {
             30 => Command::LoadCanister { player, units: self.ids()? },
             31 => Command::StopFishing { player, units: self.ids()?, stop: self.byte()? != 0 },
             32 => Command::StopSowing { player, buildings: self.ids()?, stop: self.byte()? != 0 },
+            40 => Command::FormNear { player, officer: self.id()?, shape: self.u16()?, kind: self.kind()? },
+            41 => Command::Reform { player, brigade: self.u16()?, group: self.byte()? },
+            42 => Command::Fill { player, brigade: self.u16()? },
             26 => Command::Board { player, units: self.ids()?, transport: self.id()? },
             27 => Command::Unload { player, transport: self.id()? },
             _ => return Err(ReplayError("unknown command")),
@@ -469,6 +491,9 @@ mod tests {
                 Command::LoadCanister { player: 2, units: vec![EntityId(6)] },
                 Command::StopFishing { player: 2, units: vec![EntityId(7)], stop: true },
                 Command::StopSowing { player: 2, buildings: vec![EntityId(4)], stop: false },
+                Command::FormNear { player: 2, officer: EntityId(9), shape: 70, kind: TypeId(12) },
+                Command::Reform { player: 2, brigade: 3, group: 2 },
+                Command::Fill { player: 2, brigade: 3 },
                 Command::AttackMove { player: 3, units: vec![EntityId(7)], x: -5, y: 900 },
                 Command::Patrol { player: 3, units: vec![EntityId(7)], x: 40, y: 50 },
                 Command::MoveFacing { player: 4, units: vec![EntityId(8)], x: 64, y: -3, dir: 248 },
@@ -482,7 +507,7 @@ mod tests {
         let back = Replay::decode(&bytes).unwrap();
         assert_eq!(back, r);
         assert_eq!(back.entries.len(), 2, "empty ticks are not stored");
-        assert_eq!(back.commands_at(9).len(), 32);
+        assert_eq!(back.commands_at(9).len(), 35);
         assert!(back.commands_at(5).is_empty());
     }
 

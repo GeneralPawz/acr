@@ -418,8 +418,30 @@ impl InGame {
     /// The own objects a click or a rectangle picks (0x5179d6): a click takes the object
     /// under the cursor (a unit in front of a building wins), a rectangle every object
     /// whose box meets it, but buildings only if no unit is caught. Nothing hit selects
-    /// nothing.
+    /// nothing. A formation member picked brings its formation's flag bearer and soldiers
+    /// (0x41f3fb after the selection command 0x4da424, `SelectBrigade` 0x4e1365 takes the
+    /// members from index 2 on).
     pub(super) fn pick(&self, from: [f32; 2], at: [f32; 2]) -> Vec<EntityId> {
+        let Some(world) = &self.world else { return Vec::new() };
+        let mut picked = self.pick_objects(from, at);
+        let mut brigades: Vec<u16> = Vec::new();
+        for u in picked.iter().filter_map(|&id| world.unit(id)) {
+            if let Some(b) = u.brigade.filter(|b| !brigades.contains(b)) {
+                brigades.push(b);
+            }
+        }
+        for b in brigades {
+            let Some(br) = world.brigades.get(usize::from(b)) else { continue };
+            for &m in br.members.iter().skip(2).flatten() {
+                if !picked.contains(&m) && world.unit(m).is_some_and(|u| u.living() && u.brigade == Some(b)) {
+                    picked.push(m);
+                }
+            }
+        }
+        picked
+    }
+
+    fn pick_objects(&self, from: [f32; 2], at: [f32; 2]) -> Vec<EntityId> {
         let Some(world) = &self.world else { return Vec::new() };
         let own = self.local_player();
         if (from[0] - at[0]).abs() < CLICK_SLOP && (from[1] - at[1]).abs() < CLICK_SLOP {
@@ -499,6 +521,7 @@ impl InGame {
             if ticks > 0 {
                 self.update_stats();
                 self.watch_queues(ticks);
+                self.select_formed();
             }
             if ticks > 0 {
                 self.animation_sounds(window);

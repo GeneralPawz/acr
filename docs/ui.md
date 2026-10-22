@@ -345,7 +345,8 @@ cursor is drawn anywhere in the window, also beside the menu canvas.
   line index of the icon's name in `ICONLIST.TXT` (lookup 0x4f0516).
 - Grid: 12 columns, 42 px apart, from (`PropertyX`, `RealLy − 144 + 6`) = (182, 630).
   Three rows are shown. Two sets share the grid:
-  - the selected types (0x28f8190), in the first free slots;
+  - the selected types of the free units, then one icon per selected formation
+    (0x28f8190), in the first free slots;
   - the commands (0x28f9e30), at fixed slots `x + 12·y`.
 - Box: the box from (180, 630) to (182 + 42·columns, 755) is drawn with
   `Border` and corner table 0x668580 = TL 0, TR 2, BL 6, BR 8, left 12, right 14, top 9,
@@ -356,7 +357,9 @@ cursor is drawn anywhere in the window, also beside the menu canvas.
   - a life bar: two lines of colour 255 with the rest in colour 0, length
     `38·life/max`;
   - the count in `WhiteFont`, shadowed by `BlackFont` at ±1, at the top left.
-  Clicking it keeps only that type selected.
+  Clicking it keeps only that type selected. A formation's icon (0x606d10) shows its
+  soldier type (+0x1a) with the number of its soldiers and their summed life; clicking it
+  keeps only that formation selected (0x4d737f).
 - A highlighted icon gets a frame in `GetPaletteColor(255, 200, 64)`. A pressed icon is
   drawn 1 px down-right. A disabled one is drawn transparent.
 - Single selected type (0x607f50, called after the icons by 0x5aa278): the first object's
@@ -389,11 +392,33 @@ cursor is drawn anywhere in the window, also beside the menu canvas.
     y = 631 + 125·delay/MaxDelay down to 753 (`Zone1LY` = 100), with the sums of
     `delay` (`+0x8c`) and `MaxDelay` (`+0x8f`) over the selected objects of the type
     (the type record of 0x606ae0); not drawn while `delay ≥ MaxDelay`.
-  The original's 0x606edd draws the same numbers for a brigade.
+  A single formation without free units (0x606edd) shows a soldier's numbers with the
+  formation bonus, and the reload bar sums over all its members (0x6073a1).
 - Command slots wired so far:
-  - formation groups of the officer's `[OFFICERS]` entry, at their `NRES.DAT
-    [ORDERICONS]` slots (column 8). The current formation is highlighted. These send
-    `Form`, re-forming an existing formation.
+  - The officer's formations (0x5f6869..0x5f6da3), for a single selected object or a
+    selection of one type whose first object is an officer (`NM+0xa`, the nation's
+    `[OFFICERS]`):
+    - each of its formations at its `NRES.DAT [ORDERICONS]` slot (`LINE 8 0 …`: column 8,
+      row 0) with the line's hint, enabled while a free unit of its drummer type stands
+      within 1024 px of the officer (0x52c9d8) or it needs none; a click opens the
+      formation (0x28ead08 = formation + 1, 0x5f5c68). A disabled icon closes it, and so
+      does selecting another first object (0x6781dc).
+    - An open formation shows its soldier types in the slots right of its icon, each with
+      the type's icon, its name as hint and as number the largest size (slot count) with
+      at least that many free units of the type within 1024 px of the officer, stepped
+      down by the high byte of 0x28ead08; a type without a size left is disabled. A click
+      sends network command 0x3a (`FormNear`: officer, shape, type; 0x5f5c77).
+    - With a formation open, `DECFORM` (`Dec_Formation`, smaller) and `INCFORM`
+      (`Inc_Formation`, larger) stand two and one slots left of the officer's first
+      formation's icon (0x5f5d49, ±0x100); when no type has a size left the step goes back
+      by one.
+    - After forming, the formation's flag bearer and soldiers join the selection
+      (0x41f198 → `SelectBrigade` 0x4e0f80 from member index 2 on).
+  - A single formation without free units (0x606edd): the groups its shape's
+    `ORD_GROUPS.LST` group can turn into (LINE, SQUARE, KARE; cavalry PRUS, TRI, SHER) at
+    their `[ORDERICONS]` slots with their hints, sending network command 0x41
+    (`Reform`, 0x606680; none is highlighted), and `FILLFORM` (`Add_Formation`, hint
+    `FILLFRM`) at slot 12 (0x678a80), sending command 0x52 (`Fill`, 0x6066b0).
   - The state commands (0x6074f1..0x607a59), with or without an officer. 0x606889
     collects over the selected objects: the formations (`+0x29` bit 7, ids in 0x28f7690,
     count 0x28f9e24) and the types of the free units (0x28f81f8), `STANDGROUND` types
@@ -664,9 +689,18 @@ described in [simulation.md](simulation.md#fog-of-war).
   Storming, healing and the other cursors wait for the simulation.
 - Selection brackets (0x4bae50): 3 px corners in `GetPaletteColor(255, 255, 0)` around
   `RECTANGLE dx dy w h` (defaults 0 3 40 64). Soldiers of a formed brigade get none.
-- Life bars (Tab, 0x4bb390): green lines at y0 − 12 and y0 − 11 with white end caps. Only
-  living objects get one: the function returns at once when the death counter `Sdoxlo`
-  (OB+0x58) is set (0x4bb3b1), so corpses show none.
+- Life bars (Tab, 0x4bb390, called by the object drawer 0x49d795 while Tab is on): green
+  lines at y0 − 12 and y0 − 11 from x0 + 5, `(w − 12)·life/MaxLife` + 2 long, with white
+  end caps at x0 + 4 and x0 + w − 5. Only living objects get one: the function returns at
+  once when the death counter `Sdoxlo` (OB+0x58) is set (0x4bb3b1), so corpses show none.
+  Selected units get none of their own (the brackets 0x4bae50 draw no bar); with Tab off
+  only an object flashing in colour 0xd0 in the marker list 0x28c55f8 (set by the right
+  click handlers at 0x4c41e8 / 0x4c5218) gets one, which ACR does not draw yet.
+  - `SHOWDELAY` types (NM+0x172a bit 0, 0x4bb51a) get the reload bar right under it: two
+    lines of the raw palette index 0xd0 (the first player colour, red) at y0 − 10 and
+    y0 − 9, `(w − 12)·(D − delay)/D` + 2 long with `D = MaxDelay` (+0x8f, 1 if 0) or
+    `delay` (+0x8c) if larger: empty right after a shot, full when loaded. The end caps
+    then reach down to y0 − 9.
 - Selection rectangle: `GetPaletteColor(0, 255, 255)`.
 - The game menu, load and options dialogs load `cur_mn.rlc` (`LoadPointer` 0x496de2), but
   it is never drawn: the cursor drawer 0x496efe always shows `CURSOR_00.GP` frame 0, so
@@ -688,7 +722,9 @@ described in [simulation.md](simulation.md#fog-of-war).
   under the cursor (nothing → empty selection). A rectangle selects while it is drawn
   (every mouse event): every own object whose box (`RECTANGLE`) meets it, but buildings
   only if no unit is caught. Enemies cannot be selected. Shift adds and never removes;
-  Ctrl does nothing.
+  Ctrl does nothing. A picked formation member brings its formation's flag bearer and
+  soldiers along (0x41f3fb → `SelectBrigade` 0x4e1365 from member index 2 on; the officer
+  and drummer only if picked themselves).
 - Double click (WM_LBUTTONUP 0x4a2d2a: the next release within 600 ms and
   `|dx| + |dy|` < 16 pixels, pseudo key 0xF1, handler 0x4c2ea5): the own units on the screen
   of the first selected unit's type, of its kind (formation members if the selection has

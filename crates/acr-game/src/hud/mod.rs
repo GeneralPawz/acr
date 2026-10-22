@@ -78,6 +78,8 @@ pub mod color {
     /// `GetPaletteColor(0, 255, 255)`: the selection rectangle (0x4c4356).
     pub const RECTANGLE: [u8; 3] = [0, 255, 255];
     pub const WHITE: u8 = 0xff;
+    /// The reload bar under a unit's life bar (0x4bb5a4, a raw palette index).
+    pub const RELOAD: u8 = 0xd0;
     pub const BLACK: u8 = 0;
     /// Background of tooltips (`CBar(..., 185)`, 0x4804bd).
     pub const HINT_BACK: u8 = 185;
@@ -123,8 +125,19 @@ pub struct Icon {
 pub enum HudCommand {
     /// Keep only the selected units of this type (`ICONS` of the selected types, 0x606360).
     SelectType(usize),
-    /// Lead the selection into formation group `name` (`ORDERICONS`).
-    Form(String),
+    /// Keep only the selected formation with this index (its icon, 0x606ebd).
+    SelectBrigade(u16),
+    /// Open the officer's formation `n` (its `ORDERICONS` icon, 0x5f5c68).
+    FormGroup(usize),
+    /// `DECFORM` (true) / `INCFORM`: the next smaller / larger sizes (0x5f5d49).
+    FormSize(bool),
+    /// A soldier type of the open formation: form shape `shape` of type `kind` (network
+    /// command 0x3a, 0x5f5c77).
+    FormNear { shape: u16, kind: u16 },
+    /// A formed brigade's formation icons: re-form it as group `n` (0x606680).
+    Reform(usize),
+    /// `FILLFORM`: fill the formation's empty slots (0x6066b0).
+    Fill,
     /// `STANDGR` / `NOSTAND`: stand ground on or off.
     StandGround(bool),
     /// `GO&ATTACK`: moves become attack-moves (`0x28f9e55`, move flag 8) until switched off.
