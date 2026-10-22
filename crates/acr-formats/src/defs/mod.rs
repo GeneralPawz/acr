@@ -17,7 +17,7 @@ pub mod sounds;
 pub mod sprites;
 
 pub use lnk::PieceLinks;
-pub use md::{AnimFrames, Animation, Command, CommandKind, SpriteSet, UnitDef};
+pub use md::{AnimFrames, Animation, BuildingSection, Command, CommandKind, SectionState, SpriteSet, UnitDef};
 pub use nds::{NationDef, NationEntry, NationList, NdsFile, Section, Upgrade};
 pub use orders::{OrderGroups, OrderList, OrderShape};
 pub use smp::Piece;

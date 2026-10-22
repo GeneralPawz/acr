@@ -136,6 +136,46 @@ impl Animation {
     }
 }
 
+/// A building section (`ADDSECTION stage sprite life` + 4 × `frame x y`), parsed by
+/// 0x4f4be1 into NM+0x1714 (a mask byte, then 5 records of 0x58 bytes). Its state is the
+/// 3-bit field `stage` of OB+0xaa: 0 not built, 1 being built (`UPSTAGEn` upgrade
+/// running), 2 done, 3 destroyed (life fell to the building's own life, 0x4e94f1). A
+/// finished building draws the frame of each section's state on top of its `#STANDLO`
+/// parts (0x5099a8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BuildingSection {
+    /// Section index 0..=4, the `UPSTAGEn` upgrade category that builds it.
+    pub stage: u8,
+    /// Sprite set (`USERLC` index) of the frames.
+    pub sprite: i32,
+    /// Life the section adds once done (record +0x1b).
+    pub life: i32,
+    /// Per state 0..=3 (record +3 + 6·state): the frame (`-1`: nothing) and the sort point
+    /// relative to the picture origin (`LOCATION`). The frame is drawn at the picture
+    /// origin like the `#STANDLO` parts; the point only orders it.
+    pub states: [SectionState; 4],
+}
+
+/// One state of a [`BuildingSection`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SectionState {
+    pub frame: Option<u16>,
+    pub sort: (i32, i32),
+}
+
+impl BuildingSection {
+    /// The state of this section in the 3-bit fields of OB+0xaa.
+    pub fn state_in(&self, stages: u16) -> u8 {
+        ((stages >> (3 * u16::from(self.stage))) & 7) as u8
+    }
+
+    /// The frame and sort point drawn in `state`; none for states above 3 or a `-1` frame.
+    pub fn shown(&self, state: u8) -> Option<(u16, (i32, i32))> {
+        let s = self.states.get(usize::from(state))?;
+        Some((s.frame?, s.sort))
+    }
+}
+
 /// `SOUND frame #ANIMATION SOUNDNAME`: plays a `SOUNDLIST.TXT` entry during an animation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AnimSound {
@@ -329,6 +369,33 @@ impl UnitDef {
     pub fn animation(&self, name: &str) -> Option<&Animation> {
         let name = name.strip_prefix(['#', '@']).unwrap_or(name);
         self.animations.iter().rev().find(|a| a.name[1..].eq_ignore_ascii_case(name))
+    }
+
+    /// The building's sections (`ADDSECTION`), by stage index; a later record of a stage
+    /// replaces an earlier one, records with fewer than 15 numbers or a stage outside 0..=4
+    /// are rejected (0x4f4c80, 0x4f4cf3).
+    pub fn sections(&self) -> Vec<BuildingSection> {
+        let mut out: Vec<BuildingSection> = Vec::new();
+        for c in self.all("ADDSECTION") {
+            let n: Vec<i32> = c.args.iter().filter_map(Value::as_int).collect();
+            let Ok(n) = <[i32; 15]>::try_from(n) else { continue };
+            let Some(stage) = u8::try_from(n[0]).ok().filter(|s| *s < 5) else { continue };
+            // The record keeps 16-bit words; `-1` is 0xffff, which the draw skips.
+            let state = |k: usize| {
+                let f = n[3 + 3 * k] as u16;
+                SectionState { frame: (f != 0xffff).then_some(f), sort: (n[4 + 3 * k], n[5 + 3 * k]) }
+            };
+            let section = BuildingSection {
+                stage,
+                sprite: n[1],
+                life: i32::from(n[2] as u16),
+                states: [state(0), state(1), state(2), state(3)],
+            };
+            out.retain(|s| s.stage != stage);
+            out.push(section);
+        }
+        out.sort_by_key(|s| s.stage);
+        out
     }
 
     /// Commands whose keyword has no known grammar.
@@ -652,6 +719,34 @@ SOUND 3 #ATTACK HIT\r\nNEWTHING a 1\r\n[END]\r\n";
         assert_eq!(def.price(), [("FOOD", 50)]);
         assert_eq!(def.get("BUILDING").unwrap().ignored, [Value::Word("x".into())]);
         assert_eq!(def.life(), Some(3));
+    }
+
+    #[test]
+    fn parses_sections() {
+        // ENGKRE.MD: one section whose state-0 frame is the fort's front part; SPNKRE.MD
+        // draws nothing before the section is built; USAKRE.MD comments one out with `/`.
+        let def = UnitDef::parse(
+            b"ADDSECTION 0 0 10000\r\n 10 296 513\r\n 11 296 513\r\n 12 296 513\r\n 13 296 513\r\n\
+ADDSECTION 2   0   0 \r\n -1 0 0\r\n -1 604 590\r\n 9 604 590\r\n -1 604 590\r\n\
+/ADDSECTION 1 0 10000\r\n/ -1 0 0\r\n/ 9 52 407\r\n/ 10 52 407\r\n/ 11 52 407\r\n\
+ADDSECTION 5 0 1 1 1 1 1 1 1 1 1 1 1 1 1\r\n[END]\r\n",
+        );
+        let sections = def.sections();
+        assert_eq!(sections.len(), 2);
+        let fort = sections[0];
+        assert_eq!((fort.stage, fort.sprite, fort.life), (0, 0, 10000));
+        assert_eq!(fort.shown(0), Some((10, (296, 513))));
+        assert_eq!(fort.shown(2), Some((12, (296, 513))));
+        assert_eq!(fort.shown(3), Some((13, (296, 513))));
+        assert_eq!(fort.shown(4), None);
+        let spain = sections[1];
+        assert_eq!(spain.stage, 2);
+        assert_eq!(spain.shown(0), None);
+        assert_eq!(spain.shown(1), None);
+        assert_eq!(spain.shown(2), Some((9, (604, 590))));
+        // Section 2's state is bits 6..8 of OB+0xaa; bit 15 is set on every sectioned building.
+        assert_eq!(spain.state_in(0x8000 | 2 << 6 | 1), 2);
+        assert_eq!(fort.state_in(0x8000 | 2 << 6 | 1), 1);
     }
 
     #[test]

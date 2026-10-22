@@ -1568,7 +1568,10 @@ impl InGame {
             let def = objects.definition(&world.catalog.get(kind).id);
             let look = def.and_then(|d| {
                 let anim = acr_render::scene::idle_animation(d)?;
-                acr_render::scene::animation_look(d, anim, 0, 0, |p| ctx.lib.sprites(p).map(|g| g.frame_count()))
+                // The preview shows the sections' state-0 frames too (0x4bdeaf).
+                acr_render::scene::animation_look(d, anim, 0, 0, Some(0), |p| {
+                    ctx.lib.sprites(p).map(|g| g.frame_count())
+                })
             });
             if let Some(look) = look {
                 let h = terrain.height_at(sx, sy);

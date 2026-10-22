@@ -69,6 +69,9 @@ pub struct UnitLook {
     pub parts: Vec<(FrameKey, (i32, i32), Layer, i32)>,
 }
 
+/// The `TOP` sort line of `LINESORT`.
+const TOP: i32 = 10_000;
+
 /// How `LINESORT` orders one part of a building animation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PartSort {
@@ -87,8 +90,8 @@ pub fn idle_animation(def: &UnitDef) -> Option<&acr_formats::defs::md::Animation
 }
 
 /// The sprite packs an object type needs: a building's idle, construction (`#BUILDLO_k`) and
-/// ruin animations, every animation of a unit (the simulation plays walking, fighting and
-/// dying, see `acr_sim::world::AnimKind`).
+/// ruin animations and its sections (`ADDSECTION`), every animation of a unit (the
+/// simulation plays walking, fighting and dying, see `acr_sim::world::AnimKind`).
 pub fn unit_packs(def: &UnitDef) -> Vec<String> {
     let anims: Vec<&acr_formats::defs::md::Animation> = if def.is_building() {
         let stages = def.animations.iter().filter(|a| {
@@ -99,8 +102,15 @@ pub fn unit_packs(def: &UnitDef) -> Vec<String> {
     } else {
         def.animations.iter().collect()
     };
-    let mut packs: Vec<String> =
-        anims.iter().flat_map(|a| a.frame_refs()).filter_map(|r| def.sprite(r.sprite)).map(|s| s.gp_path()).collect();
+    let sections = def.sections().into_iter().map(|s| s.sprite);
+    let mut packs: Vec<String> = anims
+        .iter()
+        .flat_map(|a| a.frame_refs())
+        .map(|r| r.sprite)
+        .chain(sections)
+        .filter_map(|i| def.sprite(i))
+        .map(|s| s.gp_path())
+        .collect();
     packs.sort();
     packs.dedup();
     packs
@@ -113,17 +123,21 @@ pub fn unit_packs(def: &UnitDef) -> Vec<String> {
 /// of `N` frames (see `docs/formats/definitions.md`). TODO: the direction order and the
 /// mirroring of the 9 stored directions are not verified; directions are mapped evenly
 /// and mirrored ones use their unmirrored twin.
+///
+/// A building on a map is finished with no section built: its sections show state 0.
 pub fn unit_look(def: &UnitDef, direction: u8, frames_in: impl Fn(&str) -> Option<usize>) -> Option<UnitLook> {
-    animation_look(def, idle_animation(def)?, direction, 0, frames_in)
+    animation_look(def, idle_animation(def)?, direction, 0, def.is_building().then_some(0), frames_in)
 }
 
 /// The frames of animation `anim` of `def` at animation frame `step`, facing `direction`.
-/// Buildings show all parts of the animation; units show the part at `step`.
+/// Buildings show all parts of the animation; units show the part at `step`. A finished
+/// building passes its section states (`sections`, OB+0xaa) to add its [`section_parts`].
 pub fn animation_look(
     def: &UnitDef,
     anim: &acr_formats::defs::md::Animation,
     direction: u8,
     step: usize,
+    sections: Option<u16>,
     frames_in: impl Fn(&str) -> Option<usize>,
 ) -> Option<UnitLook> {
     let refs = anim.frame_refs();
@@ -167,11 +181,39 @@ pub fn animation_look(
             };
             Some(((pack, frame), (set.offset.0 + location.0, set.offset.1 + location.1), layer, row))
         })
+        .chain(sections.into_iter().flat_map(|stages| section_parts(def, stages, &frames_in)))
         .collect::<Vec<_>>();
     (!parts.is_empty()).then_some(UnitLook { parts })
 }
 
-/// Per part of animation `name`, its `LINESORT` entry: `GROUND` or `LINE x1 y1 x2 y2`.
+/// The frames a finished building's sections (`ADDSECTION`) add in the section states
+/// `stages` (OB+0xaa, 3 bits per section), as 0x5099a8 in the object draw 0x5062a3 (and
+/// 0x5fdb93 zoomed out) adds them after the `#STANDLO` parts: per declared section the
+/// frame of its state 0..=3 unless it is `-1`, drawn at the picture origin and sorted at
+/// the origin plus the state's point (0x49C3E1 with sort point `origin + (x, y)`).
+pub fn section_parts(
+    def: &UnitDef,
+    stages: u16,
+    frames_in: impl Fn(&str) -> Option<usize>,
+) -> Vec<(FrameKey, (i32, i32), Layer, i32)> {
+    let location = def.get("LOCATION").map_or((0, 0), |c| (c.int(0).unwrap_or(0), c.int(1).unwrap_or(0)));
+    def.sections()
+        .iter()
+        .filter_map(|s| {
+            let (frame, (_, sy)) = s.shown(s.state_in(stages))?;
+            let set = def.sprite(s.sprite)?;
+            let pack = set.gp_path();
+            let frame = usize::from(frame);
+            (frame < frames_in(&pack)?).then(|| {
+                ((pack, frame), (set.offset.0 + location.0, set.offset.1 + location.1), Layer::Sorted, location.1 + sy)
+            })
+        })
+        .collect()
+}
+
+/// Per part of animation `name`, its `LINESORT` entry (0x4f9c70): `LINE x1 y1 x2 y2`,
+/// `POINT x y` (stored as the line `x y x y`), `GROUND` (the line at −10000) or `TOP` (the
+/// line at 10000, after everything around it).
 fn part_sorts(def: &UnitDef, name: &str) -> Vec<PartSort> {
     let Some(cmd) = def.all("LINESORT").find(|c| c.word(0).is_some_and(|w| w.eq_ignore_ascii_case(name))) else {
         return Vec::new();
@@ -189,6 +231,15 @@ fn part_sorts(def: &UnitDef, name: &str) -> Vec<PartSort> {
                 let n = |k: usize| values.get(i + k).and_then(|v| v.as_int()).unwrap_or(0);
                 out.push(PartSort::Line(n(1), n(2), n(3), n(4)));
                 i += 5;
+            }
+            Some(w) if w.eq_ignore_ascii_case("POINT") => {
+                let n = |k: usize| values.get(i + k).and_then(|v| v.as_int()).unwrap_or(0);
+                out.push(PartSort::Line(n(1), n(2), n(1), n(2)));
+                i += 3;
+            }
+            Some(w) if w.eq_ignore_ascii_case("TOP") => {
+                out.push(PartSort::Line(TOP, TOP, TOP, TOP));
+                i += 1;
             }
             _ => i += 1,
         }
@@ -467,11 +518,21 @@ impl MapObjects {
     }
 
     /// The look of `unit_id` playing animation `anim` (e.g. `#MOTION_L`) at frame `step`,
-    /// falling back to the idle animation.
-    pub fn animation_look(&self, unit_id: &str, anim: &str, direction: u8, step: usize) -> Option<UnitLook> {
+    /// falling back to the idle animation; a finished building adds its sections in the
+    /// states `sections` ([`section_parts`]).
+    pub fn animation_look(
+        &self,
+        unit_id: &str,
+        anim: &str,
+        direction: u8,
+        step: usize,
+        sections: Option<u16>,
+    ) -> Option<UnitLook> {
         let def = self.definition(unit_id)?;
         let animation = def.animation(anim).or_else(|| idle_animation(def))?;
-        animation_look(def, animation, direction, step, |p| self.pack(p).map(acr_formats::GpFile::frame_count))
+        animation_look(def, animation, direction, step, sections, |p| {
+            self.pack(p).map(acr_formats::GpFile::frame_count)
+        })
     }
 
     /// `keys` plus the frames of their zoomed-out twins that are loaded.
@@ -674,6 +735,76 @@ LOCATION -400 -300 900 700
         assert_eq!(look.parts[1].3, 508 - 300);
         let packs = unit_packs(&def);
         assert_eq!(packs.len(), 2, "construction stages need their pack too: {packs:?}");
+    }
+
+    /// ENGKRE.MD: the wooden fort's front part is section 0's state-0 frame.
+    const FORT: &str = "NAME EngKre\nBUILDING\nUSERLC 0 EngKre SHADOW 0 0\nLOCATION -496 -474 999 727\n\
+                        #STANDLO 1 6 0 4 0 5 0 6 0 7 0 8 0 9\n#BUILDLO_0 1 1 0 0\n\
+                        ADDSECTION 0 0 10000\n 10 296 513\n 11 296 513\n 12 296 513\n 13 296 513\n\
+                        ADDSECTION 1 0 0\n -1 0 0\n 14 100 200\n 15 100 200\n -1 0 0\n[END]\n";
+
+    #[test]
+    fn finished_buildings_draw_their_sections() {
+        let def = UnitDef::parse(FORT.as_bytes());
+        let frames = |stages: Option<u16>| -> Vec<(usize, (i32, i32), i32)> {
+            let anim = def.animation("#STANDLO").unwrap();
+            let look = animation_look(&def, anim, 0, 0, stages, |_| Some(20)).unwrap();
+            look.parts.iter().map(|(f, o, _, row)| (f.1, *o, *row)).collect()
+        };
+        let main: Vec<usize> = (4..=9).collect();
+        let at = (-496, -474);
+        // A map's fort: every section in state 0, section 1 shows nothing yet.
+        let look = unit_look(&def, 0, |_| Some(20)).unwrap();
+        let shown: Vec<usize> = look.parts.iter().map(|p| p.0.1).collect();
+        assert_eq!(shown, [main.clone(), vec![10]].concat());
+        assert_eq!(frames(Some(0))[6], (10, at, 513 - 474));
+        // Section 0 being built, done, destroyed; section 1 done (bit 15 marks sectioned objects).
+        let last = |stages| frames(Some(stages)).iter().skip(6).map(|p| p.0).collect::<Vec<_>>();
+        assert_eq!(last(0x8000 | 1), [11]);
+        assert_eq!(last(0x8000 | 2), [12]);
+        assert_eq!(last(0x8000 | 3), [13]);
+        assert_eq!(last(0x8000 | 2 | 2 << 3), [12, 15]);
+        assert_eq!(frames(Some(2 << 3))[7], (15, at, 200 - 474));
+        // Unknown states draw nothing; under construction or dying no sections at all.
+        assert_eq!(last(4 | 4 << 3), Vec::<usize>::new());
+        assert_eq!(frames(None).len(), 6);
+        // A pack without the frame draws nothing.
+        let anim = def.animation("#STANDLO").unwrap();
+        assert_eq!(animation_look(&def, anim, 0, 0, Some(0), |_| Some(10)).unwrap().parts.len(), 6);
+    }
+
+    #[test]
+    fn points_and_top_take_their_part() {
+        // ENGKRE.MD: a `POINT` between the lines must not shift the later parts.
+        let def = UnitDef::parse(FORT.replace("[END]", "LINESORT #STANDLO GROUND LINE 82 432 919 461 POINT 701 601              LINE 630 572 783 562 TOP LINE 356 682 544 700
+[END]").as_bytes());
+        let look = unit_look(&def, 0, |_| Some(20)).unwrap();
+        let rows: Vec<(usize, Layer, i32)> = look.parts.iter().take(6).map(|p| (p.0.1, p.2, p.3 + 474)).collect();
+        assert_eq!(
+            rows,
+            [
+                (4, Layer::Ground, 474),
+                (5, Layer::Sorted, 446),
+                (6, Layer::Sorted, 601),
+                (7, Layer::Sorted, 567),
+                (8, Layer::Sorted, TOP),
+                (9, Layer::Sorted, 691)
+            ]
+        );
+    }
+
+    #[test]
+    fn sections_alone_make_a_building() {
+        // INCDO3.MD: `#STANDLO 1 0`, the whole house is two sections.
+        let def = UnitDef::parse(
+            b"NAME IncDo3\nBUILDING\nUSERLC 0 IncDo3 SHADOW 0 0\n#STANDLO 1 0\n\
+              ADDSECTION 0 0 10000 4 239 234 5 239 234 6 239 234 7 239 234\n\
+              ADDSECTION 1 0 10000 8 199 307 9 199 307 10 199 307 11 199 307\n[END]\n",
+        );
+        let look = unit_look(&def, 0, |_| Some(12)).unwrap();
+        let shown: Vec<(usize, i32)> = look.parts.iter().map(|p| (p.0.1, p.3)).collect();
+        assert_eq!(shown, [(4, 234), (8, 307)]);
+        assert_eq!(unit_packs(&def), ["INCDO3.GP"]);
     }
 
     #[test]

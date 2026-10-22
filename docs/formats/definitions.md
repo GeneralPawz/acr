@@ -154,7 +154,7 @@ transliterated Russian names or the values; `?` marks guesses, blank means unkno
 | `#NAME` | `i #(ii)` | 1980 | 249 | animation, frame list (see above) |
 | `@NAME` | `iiii` | 1340 | 125 | animation, frame range (see above) |
 | `3DBARS` | `#(iiiii)` | 119 | 119 | building: 3D health/progress bar segments? |
-| `ADDSECTION` | 15 × `i` | 29 | 15 | building stage section: stage, ?, value, then 4 × (frame x y)? |
+| `ADDSECTION` | 15 × `i` | 29 | 15 | building section: stage, sprite set, life, then 4 × (frame x y), see [Building sections](#building-sections-addsection) |
 | `ADDSHOTRADIUS` | `i` | 107 | 106 | extra shooting radius (garrison?) |
 | `ADD_ATTACK_RADIUS` | `ii` | 26 | 26 | attack index, extra radius |
 | `AISHIP` | `sii` | 6 | 6 | AI ship class (`B`) and two parameters |
@@ -228,7 +228,7 @@ transliterated Russian names or the values; `?` marks guesses, blank means unkno
 | `INFO` | `ii` | 249 | 249 | |
 | `LIFE` | `i` | 249 | 249 | hit points |
 | `LINEARSORT` | `i` | 8 | 7 | ships: sort parameter |
-| `LINESORT` | `s` then `GROUND`, `TOP`, `LINE iiii`, `POINT ii` | 819 | 119 | depth-sorting geometry of a building animation |
+| `LINESORT` | `s` then `GROUND`, `TOP`, `LINE iiii`, `POINT ii` | 819 | 119 | depth-sorting geometry of a building animation, one entry per part (0x4f9c70): `LINE x1 y1 x2 y2`, `POINT x y` (the line `x y x y`), `GROUND` (line at −10000: drawn flat first), `TOP` (line at 10000) |
 | `LOCATION` | `iiii` | 126 | 126 | picture rectangle (x y w h) |
 | `LOCKPOINTS` | `#(ii)` | 119 | 119 | building: blocked cells |
 | `LOWCOSTRADIUS` | `i` | 113 | 112 | |
@@ -325,6 +325,47 @@ CANNONLIKEMOTION CHECKWATER COST COST_FOOD DEATH_SOUND DOUBLE EXPLRADIUS FASTUNI
 FOGGING FOUNDATION KIND KINO NEDORAZVITOE NOFULLDESTRUCT REFLECT SHOTDELAY SHOTS
 SHOWIDLEMINES SPRITES STANDANYWHERE STRIKE_SOUND TIME UNITKIND USERLCEXT VESACCEL VESLA
 WALLOBJECT WATERROUND`.
+
+### Building sections (`ADDSECTION`)
+
+Forts and a few houses are built in parts: `UPSTAGE0..4` upgrades (`[STAGEDEPENDENT]`)
+add sections to a finished building. 15 buildings declare them (ATCKRE ATCVER ENGKRE
+ENGKRE2 FRNKRE FRNKRE2 HOLDO1 HOLKRE INCDO3 INCKRE MAYKRE PORTKRE PUEGOR SPNKRE USAKRE).
+
+```text
+ADDSECTION stage sprite life      e.g. ENGKRE.MD: ADDSECTION 0 0 10000
+   f0 x0 y0                       state 0, not built:      10 296 513
+   f1 x1 y1                       state 1, being built:    11 296 513
+   f2 x2 y2                       state 2, done:           12 296 513
+   f3 x3 y3                       state 3, destroyed:      13 296 513
+```
+
+The parser (0x4f4be1, `%d` × 15, "Not enough or wrong parameters" unless all 15 are read,
+"Too large stage index" for `stage ≥ 5`) allocates NM+0x1714: a mask byte of declared
+sections, then 5 records of 0x58 bytes. A record holds the sprite set mapped to its pack
+(+1), the four `(frame, x, y)` words (+3 + 6·state), the life (+0x1b) and the
+`STAGE_FIRES`/`STAGE_SMOKE`/`STAGELOCKPOINTS` data of the stage (+0x1d..). Every object of
+a type with sections starts with OB+0xaa = 0x8000 (0x516150); bits `3s..3s+2` hold the
+state of section `s`:
+
+| state | set by | drawn frame (ENGKRE) |
+|---|---|---|
+| 0 not built | creation; a stage-1 section whose building loses life (0x4e94b3) | 10: the wooden part |
+| 1 being built | starting the `UPSTAGEs` upgrade | 11: stone walls in scaffolding |
+| 2 done | the finished upgrade (0x532737); adds `life` to the maximum life | 12: the stone building |
+| 3 destroyed | life ≤ own life + done sections before it (0x4e94f1, explosions at `STAGE_FIRES`) | 13: its ruin |
+
+Drawing (0x5099a8 in the object draw 0x5062a3; zoomed out 0x5fdb93 with offsets `>> 2`):
+when OB+0x25 bit 0 (finished, `Ready`?) or OB+0x101 is set and OB+0x58 (dying?) is 0,
+after its `#STANDLO` parts, for each declared section the frame of its state is drawn
+unless it is `-1` (0xffff), from the section's sprite set, at the picture origin (object
+position + `LOCATION`/`SETANMPARAM` offset, like the `#STANDLO` parts; the frames hold
+their place in the picture), and sorted (0x49C3E1) at the sort point origin + `(x, y)`.
+States above 3 draw nothing. So the state-0 frame is part of the plain building: the
+ENGKRE `#STANDLO` frames 4..9 leave the front-left corner open for section 0's frame 10.
+Types whose state-0 line is `-1 0 0` (SPNKRE, FRNKRE, ...) show nothing there until the
+section is built. INCDO3 has an empty `#STANDLO` (`1 0`): the house is its two sections.
+The placement preview (0x4bdeaf) draws the state-0 frames too.
 
 ## Nations (`*.NDS`)
 
