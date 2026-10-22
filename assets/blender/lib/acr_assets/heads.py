@@ -15,7 +15,7 @@ from mathutils.bvhtree import BVHTree
 
 from . import armature as am
 from . import body as bd
-from . import coat, decay, faces
+from . import coat, decay, faces, mhead
 
 HAIR_BASE = (0.80, 0.78, 0.75)  # neutral: the renderer multiplies the chosen hair colour in
 FACE_SIZE = 512  # the head's own texture
@@ -28,9 +28,14 @@ class Frame:
 
     def __init__(self, cx, y_front, eye_z):
         self.cx, self.y_front, self.eye_z = cx, y_front, eye_z
+        self.keys = None  # MakeHuman head: z map to the painted layout (`mhead.canon_keys`)
+        self.field = None  # MakeHuman head: `mhead.MorphField`
 
     def local(self, co):
-        return co[0] - self.cx, co[1] - self.y_front, co[2] - self.eye_z
+        z = co[2] - self.eye_z
+        if self.keys is not None:
+            z = mhead.canon_z(self.keys, z)
+        return co[0] - self.cx, co[1] - self.y_front, z
 
     def as_list(self):
         return [self.cx, self.y_front, self.eye_z]
@@ -45,28 +50,10 @@ def frame_of(cos, cx):
 
 
 def refine(bm, cx):
-    """Hull hook (`body.hull(head=...)`): subdivides the head (twice on the face, once on
-    the rest; smooth) and models the base face. Returns the head frame."""
-    fr = frame_of([tuple(v.co) for v in bm.verts], cx)
-
-    def level(f):
-        x, y, z = fr.local(f.calc_center_median())
-        if z < -0.14:
-            return 0
-        return 2 if (y < 0.05 and -0.115 < z < 0.05 and abs(x) < 0.07) else 1
-
-    for lv in (1, 2):
-        edges = {e for f in bm.faces if level(f) >= lv for e in f.edges}
-        bmesh.ops.subdivide_edges(bm, edges=list(edges), cuts=1, use_grid_fill=True, smooth=1.0)
-    for v in bm.verts:
-        x, y, z = fr.local(v.co)
-        if z < -0.2:
-            continue
-        d = faces.base_face(x, y, z)
-        e = faces.asym(x, y, z)
-        v.co.x += d[0] + e[0]
-        v.co.y += d[1] + e[1]
-        v.co.z += d[2] + e[2]
+    """Hull hook (`body.hull(head=...)`): replaces the hull's head with the MakeHuman head
+    (`mhead.build`; pass 4). Returns the head frame (with its morph field)."""
+    fr, field, _lm = mhead.build(bm, cx, Frame)
+    fr.field = field
     return fr
 
 
@@ -75,8 +62,13 @@ def face_morphs(objs, fr, names=faces.FACE_MORPHS):
     positions in head-local coordinates; keys with no motion are left out)."""
     for o in objs:
         basis = [tuple(v.co) for v in o.data.vertices]
+        if fr.field is not None:
+            at = [fr.field.at(list(names), c) for c in basis]
         for n in names:
-            ds = [faces.morph(n, *fr.local(c)) for c in basis]
+            if fr.field is not None:
+                ds = [a[n] if a else (0.0, 0.0, 0.0) for a in at]
+            else:
+                ds = [faces.morph(n, *fr.local(c)) for c in basis]
             if max((max(map(abs, d)) for d in ds), default=0.0) < 1e-5:
                 continue
             key = bd._key(o, n)
@@ -276,6 +268,39 @@ def finish_variants(ch, deflate=0.65):
 
 # --------------------------------------------------------------------------- face map
 
+def _in_face(fr, co):
+    """Above the jaw line, on the head: the face map's (the neck part may reach the jaw)."""
+    x, y, z = fr.local(co)
+    return z > -0.125 and faces.near(x, y, z) > 0.5
+
+
+def head_weights(ch):
+    """The MakeHuman head is rigid on the head bone down to the jaw, then blends into the
+    neck over 4 cm (the hull's proximity weights give the jaw to the neck). Call after
+    `body.hull`, before `split_parts`."""
+    fr, ob = ch.face_frame, ch.flesh
+    if fr is None or fr.field is None:
+        return
+    gh = ob.vertex_groups.get(ch.prefix + "head") or ob.vertex_groups.new(name=ch.prefix + "head")
+    gn = ob.vertex_groups.get(ch.prefix + "neck") or ob.vertex_groups.new(name=ch.prefix + "neck")
+    for v in ob.data.vertices:
+        x, y, z = fr.local(v.co)
+        if faces.near(x, y, z) < 0.5 or z < -0.17:
+            continue
+        w = float(mhead.smooth(-0.165, -0.125, z))
+        for g in ob.vertex_groups:
+            if g.index not in (gh.index, gn.index):
+                try:
+                    g.remove([v.index])
+                except RuntimeError:
+                    pass
+        gh.add([v.index], w, "REPLACE")
+        if w < 1.0:
+            gn.add([v.index], 1.0 - w, "REPLACE")
+        else:
+            gn.remove([v.index])
+
+
 def face_uv(fr, co):
     """Cylindrical face-map UV of a rest position: the face front (u = 0.5) gets the
     most texels (u = 0.5 + 0.5 sin(θ/2)), v from below the chin to the crown."""
@@ -296,7 +321,8 @@ def face_map(ch, skin_rgb):
     uvname = "atlas" if "atlas" in me.uv_layers else me.uv_layers[0].name
     parts = [d.value for d in me.attributes["part"].data]
     uv = me.uv_layers[uvname]
-    head = [p.index for p in me.polygons if all(parts[v] == 1 for v in p.vertices)]
+    face = [_in_face(fr, me.vertices[v].co) for v in range(len(me.vertices))]
+    head = [p.index for p in me.polygons if all(parts[v] == 1 or face[v] for v in p.vertices)]
     for pi in head:
         p = me.polygons[pi]
         us = [face_uv(fr, me.vertices[v].co) for v in p.vertices]

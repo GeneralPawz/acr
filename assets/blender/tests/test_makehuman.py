@@ -1,0 +1,44 @@
+"""The checked-in MakeHuman head data (#283 pass 4): consistent, small, every face morph."""
+import json
+import os
+import sys
+import unittest
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
+from acr_assets import faces  # noqa: E402
+
+DATA = os.path.join(os.path.dirname(__file__), "..", "data", "makehuman", "head.json")
+
+
+class MakeHumanHead(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        with open(DATA) as fh:
+            cls.d = json.load(fh)
+
+    def test_small(self):
+        self.assertLess(os.path.getsize(DATA), 400_000)
+
+    def test_licence_recorded(self):
+        self.assertEqual(self.d["licence"], "CC0 1.0")
+        lic = open(os.path.join(os.path.dirname(__file__), "..", "..", "LICENSES.md")).read()
+        self.assertIn(self.d["commit"], lic)
+
+    def test_mesh(self):
+        n = len(self.d["verts"]) // 3
+        self.assertEqual(len(self.d["verts"]), 3 * n)
+        self.assertEqual(len(self.d["eye"]), n)
+        self.assertTrue(all(0 <= i < n for f in self.d["faces"] for i in f))
+        zs = self.d["verts"][2::3]
+        self.assertTrue(0.22 < (max(zs) - min(zs)) * 1e-4 < 0.32)  # head and upper neck, metres
+
+    def test_every_face_morph(self):
+        n = len(self.d["verts"]) // 3
+        self.assertEqual(set(self.d["targets"]), set(faces.FACE_MORPHS))
+        for t in self.d["targets"].values():
+            self.assertEqual(len(t["d"]), 3 * len(t["i"]))
+            self.assertTrue(t["i"] and all(0 <= i < n for i in t["i"]))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -91,10 +91,18 @@ Every foot soldier and rider (engm18, engkri, engd18) carries the material for a
 individual look; the renderer picks one per soldier (a later slice). Until it does, it skips
 the variant meshes, so the game looks as before.
 
-- **Head:** the skin hull's head is subdivided (twice on the face, once elsewhere) and
-  modelled: nose, eye sockets, upper lids, brow ridge, cheekbones, nasolabial folds, lips,
-  chin and ears (`faces.base_face`). The skull and jaw of the bone layer shrank to stay
-  inside the face. Flesh grows from 1764 to about 2550 tris (engm18).
+- **Head (pass 4, `acr_assets/mhead.py`):** the head and upper neck of the MakeHuman 1.x
+  base mesh (CC0, `assets/blender/data/makehuman/head.json`; source, commit and licence in
+  `assets/LICENSES.md`) replace the egg of the skin hull.
+  - It is a young adult man at real size with the low-poly MakeHuman eyeballs, decimated
+    (collapse, mirror-symmetric) to about 1300 tris.
+  - The top of the skull sits on the hull's top. The neck is narrowed to the hull's neck
+    at the cut and overlaps it by 18 mm. The hull keeps everything below the cut.
+  - Hull weights: the head bone, blending into the neck.
+  - The skull and jaw of the bone layer stay shrunk inside the face.
+  - Head-local z is mapped through the head's landmarks (nose tip, mouth line, chin) onto
+    the painted layout, so the face map, `_FACE` zones and hair curves of passes 1–3 land
+    on the real features (`Frame.local`).
 - **Face map:** the head part of the skin has its own material (second primitive of the
   flesh, `acr_tint` "skin") with a 512² texture on `TEXCOORD_0`.
   - The UV is a cylindrical projection with the face front in the middle (`heads.face_uv`).
@@ -108,7 +116,12 @@ the variant meshes, so the game looks as before.
 - **Asymmetry:** `faces.asym` (nose knocked aside, one brow and cheek higher) is added to
   the base face; the morph fields stay mirror-symmetric.
 - **Face morph targets** (flesh, and every shell or variant the fields reach: collar,
-  hair, beards), weights `[lo, hi]` in root extras `acr_face_morphs`:
+  hair, beards), weights `[lo, hi]` in root extras `acr_face_morphs`. Since pass 4 they are
+  sums of MakeHuman targets (age and weight from the macro targets, the rest from the
+  chin, cheek, nose, eyebrow, forehead, eye and head targets), scaled by `mhead.GAIN`.
+  A field over the full-resolution head carries them to the decimated skin and to the
+  shells: the nearest MakeHuman vertices' deltas, fading out 4 to 20 mm off the skin and
+  above the neck seam.
   - `face_jaw`, `face_chin`, `face_cheekbones`, `face_nose` (length), `face_nose_bridge`,
     `face_eyes` (spacing): −1..1;
   - `face_brow`, `face_age` (jowls, hollow cheeks, eye bags, nose tip down), `face_fat`,
