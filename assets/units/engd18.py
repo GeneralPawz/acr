@@ -13,17 +13,21 @@ horse falls, the rider is thrown), DEATHLIE1.
 """
 
 import math
+import os
 
 from mathutils import Matrix, Vector
 
 from acr_assets import crawl
 from acr_assets import armature as am
 from acr_assets import body as bd
-from acr_assets import decay, gear, horse, rig
+from acr_assets import decay, gear, horse, mount, rig
 from acr_assets import faces, heads
 from acr_assets.humans import LAYER_OF, Character, prepare_export
 
 TYPE = "EngD18"
+# The horse (#287): "wildmesh" (the bought pack's horse, `acr_assets.mount`, needs
+# `ACR_SOURCES`) or "procedural" (rig R, `acr_assets.horse`); `ACR_HORSE` overrides.
+HORSE = os.environ.get("ACR_HORSE", "wildmesh")
 CHECKS = ["--anim STAND", "--anim DEATHLIE1"]
 
 MD = {
@@ -239,6 +243,8 @@ def pose_for(ch, clip):
 
 
 def build(ctx):
+    if HORSE == "wildmesh":
+        return build_wild(ctx)
     ch = make(ctx.root, ctx.name)
     H = ch.horse
     heads.variants(ch)  # hair and beard variants (#283), before the morphs
@@ -266,3 +272,194 @@ def build(ctx):
     prepare_export(ch.all_meshes(), ctx.root, acr_triangles=sum(tris.values()), acr_clips=list(MD) + list(crawl.CLIPS), acr_limb_radius=ch.limb_radius,
                    acr_layers=list(ch.layers), acr_extra_clips=["WALK"], **faces.extras("regular"))
     ctx.stats = {"triangles": tris, "colours": colours}
+
+
+# ----------------------------------------------------------------------------- WildMesh horse
+
+def _n(key):
+    return rig.md_clip_frames(MD[key])[0]
+
+
+def wild_clips():
+    """{key: (source action, mode, frames[, a, b])} of the pack's horse for every clip."""
+    return {
+        "STAND": ("Idle", "pose", 1, 0.0),
+        "REST": ("Idle", "loop", _n("REST")),
+        "MOTION_L": ("G1_Trot", "loop", _n("MOTION_L"), 0.0, 0.5),
+        "MOTION_R": ("G1_Trot", "loop", _n("MOTION_R"), 0.5, 1.0),
+        "WALK": ("G0_Walk", "loop", _n("WALK")),
+        "GALLOP": ("G3_Gallop", "loop", 12),
+        "ATTACK": ("Idle_Fidget_08", "once", _n("ATTACK"), 0.0, 0.7),
+        "ATTACK1": ("Idle_Fidget_07", "once", _n("ATTACK1")),
+        # The horse falls onto its right side (its back to -X), legs relaxed.
+        "DEATH": ("Idle", "fall", _n("DEATH"), 0.0, -90),
+    }
+
+
+# Seated on the pack's saddle: knees forward, feet back under the hip in the stirrups,
+# both hands low over the withers on the reins.
+LEGS_SEAT = {"thigh_l": (-70, -12, 0), "shin_l": (96, 0, 0), "foot_l": (-22, 0, 0),
+             "thigh_r": (-70, 12, 0), "shin_r": (96, 0, 0), "foot_r": (-22, 0, 0)}
+REINS_L = {"upperarm_l": (-12, 40, 0), "forearm_l": (-58, 0, -28)}
+WSEAT = dict(SEAT, **LEGS_SEAT, **REINS_L, upperarm_r=(-12, -40, 0), forearm_r=(-58, 0, 28), spine=(-2, 0, 0))
+WAIM = dict(AIM, **LEGS_SEAT)
+WCUT_UP = dict(CUT_UP, **LEGS_SEAT, **REINS_L)
+WCUT_DOWN = dict(CUT_DOWN, **LEGS_SEAT, **REINS_L)
+# Where the thrown rider lies (armature space): clear of the fallen horse's back
+# (`make_wild` sets it from the fallen pose).
+WLIE = (-2.15, -0.35, 0.13)
+
+
+def lie_spot(hz):
+    """Ground point 0.75 m beyond the fallen horse's back, from its hooves to its spine."""
+    last = hz.worlds["DEATH"][-1]
+    hooves = [b.name for b in hz.arm.data.bones if b.head_local.z < 0.12 and b.parent is not None and "root" not in b.name]
+    s = last["spine_02"].translation
+    f = sum((last[n].translation for n in hooves), Vector()) / max(len(hooves), 1)
+    d = Vector((s.x - f.x, s.y - f.y, 0.0)).normalized()
+    return (s.x + d.x * 0.75, s.y + d.y * 0.75, 0.13)
+
+
+def wild_lie():
+    return dict(rig_lie(), world_loc={"root": WLIE})
+
+
+def wild_thrown(t):
+    if t >= 1.0:
+        return wild_lie()
+    return dict(WSEAT, spine=(-30 * t, 0, 0), upperarm_l=(-120 * t, 40, 0), upperarm_r=(-120 * t, -40, 0),
+                thigh_l=(-50, -30, 0), thigh_r=(-50, 30, 0))
+
+
+def wild_rider():
+    """{clip: [(fraction, rider spec)]}."""
+    lean = dict(WSEAT, spine=(-12, 0, 0))
+    return {
+        "STAND": [(0.0, WSEAT)], "REST": [(0.0, WSEAT), (1.0, WSEAT)],
+        "MOTION_L": [(0.0, WSEAT), (1.0, WSEAT)], "MOTION_R": [(0.0, WSEAT), (1.0, WSEAT)],
+        "WALK": [(0.0, WSEAT), (1.0, WSEAT)], "GALLOP": [(0.0, lean), (1.0, lean)],
+        "PATTACK": [(0.0, WAIM)], "UATTACK": [(0.0, WAIM)], "PSTAND": [(0.0, WAIM)],
+        "ATTACK": [(0.0, WAIM), (0.08, dict(WAIM, spine=(4, 0, 0))), (0.25, WAIM), (1.0, WAIM)],
+        "ATTACK1": [(0.0, WSEAT), (0.3, WCUT_UP), (0.45, WCUT_DOWN), (0.7, WSEAT), (1.0, WSEAT)],
+        "DEATH": [(0.0, WSEAT), (0.35, wild_thrown(0.5)), (0.75, wild_thrown(0.9)), (1.0, wild_thrown(1.0))],
+        "DEATHLIE1": [(0.0, wild_lie())],
+    }
+
+
+def make_wild(root, name):
+    global OZ
+    global WLIE
+    hz = mount.load(name, root, wild_clips())
+    WLIE = lie_spot(hz)
+    sad = hz.head("saddle")
+    origin = Vector((sad.x, sad.y + 0.02, sad.z - 0.90))
+    OZ = origin.z
+    build = dict(BUILD, origin=tuple(origin))
+    ch = Character(root, name, build, prefix="rider.", table=rig.skeleton_h("rider.", tuple(origin)))
+    mount.join(ch.arm, hz, "rider.root")
+    P = "rider."
+    cy = origin.y
+    ch.body()
+    ch.shell("waistcoat", "waistcoat", lambda c, n, h, p: h in TORSO and 0.97 + OZ < c.z < 1.47 + OZ, 0.012)
+    ch.shell("coat", "coat", lambda c, n, h, p: (h in TORSO and 0.97 + OZ < c.z < 1.49 + OZ and not (c.y - cy < -0.14 and abs(c.x) < 0.07))
+             or h in ARMS, 0.03)
+    ch.shell("breeches", "breeches", lambda c, n, h, p: (h in {"hips"} | LEGS and c.z < 1.0 + OZ), 0.010)
+    ch.shell("boots", "boots_high", lambda c, n, h, p: h in SHINS | FEET or (h in LEGS and c.z < 0.58 + OZ), 0.02)
+    skirt = bd.tube(ch.arm, f"{name}.coat_skirt", rig.SKIRT_TOP + OZ, 0.72 + OZ, (0.20, 0.15), (0.24, 0.20), gap_deg=80,
+                    flare_back=0.03, columns=rig.SKIRT_COLUMNS, centre=(origin.x, origin.y), prefix=P)
+    ch.add("clothes", skirt, "coat", symmetric=True)
+    belt = bd.strap(ch.arm, f"{name}.belt", ch.flesh, Vector((0.12, cy, 1.47 + OZ)), Vector((-0.17, cy, 0.95 + OZ)),
+                    0.06, 0.04, bones=[P + b for b in rig.BODY_BONES])
+    ch.add("clothes", belt, "belts", symmetric=True)
+    ch.bone_layer()
+    ch.caps()
+    cloth = mount.saddlecloth(hz, f"{name}.saddlecloth", PALETTE["saddlecloth"])
+    ch.horse = {"mount": hz, "cloth": cloth}
+
+    am.pose(ch.arm, WSEAT, prefix=P)
+    cap = gear.box(f"{name}.cap", (0.15, 0.17, 0.26), bevel=0.3)
+    for v in cap.data.vertices:
+        if v.co.z > 0:
+            v.co.x *= 0.55
+            v.co.y *= 0.7
+    am.attach(cap, ch.arm, P + "socket.hat", Matrix.Translation(am.world(ch.arm, P + "socket.hat").translation + Vector((0, 0, 0.10))))
+    ch.held["cap"] = cap
+    ch.keys[cap.name] = "cap"
+    sab = gear.sabre(f"{name}.sabre")
+    am.attach(sab, ch.arm, P + "socket.hip_l", Matrix.Translation(am.world(ch.arm, P + "socket.hip_l").translation)
+              @ Matrix.Rotation(math.radians(40), 4, "X"))
+    ch.held["sabre"] = sab
+    ch.keys[sab.name] = "metal"
+    return ch
+
+
+def _keyed(arm, specs, prefix="rider."):
+    still = ("index_", "middle_", "ring_", "pinky_", "thumb_", "socket.")
+    rot = {b.name[len(prefix):] for b in arm.data.bones if b.name.startswith(prefix)
+           and not any(b.name[len(prefix):].startswith(t) for t in still)}
+    loc = set()
+    for spec in specs:
+        r, lo = am.spec_bones(spec)
+        rot |= r
+        loc |= lo
+    return rot, loc
+
+
+def _key(ch, name, horse_frames, rider_keys):
+    keyed = _keyed(ch.arm, [s for _f, s in rider_keys])
+    mount.key_clip(ch.arm, name, horse_frames, rider_keys,
+                   lambda arm, spec, f: am.pose(arm, spec, frame=f, prefix="rider.", keyed=keyed))
+
+
+def add_wild_clips(ch):
+    W = ch.horse["mount"].worlds
+    frames = {
+        "STAND": W["STAND"], "REST": W["REST"], "MOTION_L": W["MOTION_L"], "MOTION_R": W["MOTION_R"],
+        "MOTION_LB": W["MOTION_R"][::-1], "MOTION_RB": W["MOTION_L"][::-1], "WALK": W["WALK"], "GALLOP": W["GALLOP"],
+        "PATTACK": W["STAND"], "UATTACK": W["STAND"], "PSTAND": W["STAND"],
+        "ATTACK": W["ATTACK"], "ATTACK1": W["ATTACK1"], "DEATH": W["DEATH"], "DEATHLIE1": W["DEATH"][-1:],
+    }
+    rider = wild_rider()
+    rider["MOTION_LB"], rider["MOTION_RB"] = rider["MOTION_R"], rider["MOTION_L"]
+    for name, hf in frames.items():
+        n = len(hf)
+        _key(ch, name, hf, [(int(round(t * (n - 1))), spec) for t, spec in rider[name]])
+    # Crawl clips (#262): the dismounted rider crawls where DEATHLIE1 throws him.
+    for name, ks in crawl.clips().items():
+        rider_keys = []
+        for f, spec in ks:
+            spec = dict(spec)
+            loc = spec.pop("root_loc")
+            spec["world"] = {"root": spec.pop("root")}
+            spec["world_loc"] = {"root": (WLIE[0] + loc[0], WLIE[1] + loc[1] - crawl.PRONE_LOC[1], loc[2])}
+            rider_keys.append((f, spec))
+        _key(ch, name, W["DEATH"][-1:], rider_keys)
+
+
+def build_wild(ctx):
+    ch = make_wild(ctx.root, ctx.name)
+    hz = ch.horse["mount"]
+    heads.variants(ch)
+    ch.morphs()
+    rider = ch.layers["flesh"] + ch.layers["clothes"]
+    ch.masks()
+    add_wild_clips(ch)
+    am.set_clip(ch.arm, "STAND")
+    report = {}
+    colours = ch.colours(ctx.ref, PALETTE, report=report)
+    heads.finish(ch, rider)
+    am.set_clip(ch.arm, "STAND")
+    ch.arm.animation_data.action = None
+    horse_meshes = hz.meshes + [ch.horse["cloth"]]
+    for o in horse_meshes:
+        part = o.data.attributes.get("_part") or o.data.attributes.new("_part", "FLOAT", "POINT")
+        for d in part.data:
+            d.value = float(horse.HORSE_PART)
+    tris = ch.triangles()
+    tris["horse"] = hz.stats["triangles"]
+    ch.horse["cloth"].data.calc_loop_triangles()
+    tris["saddlecloth"] = len(ch.horse["cloth"].data.loop_triangles)
+    prepare_export(ch.all_meshes() + horse_meshes, ctx.root, acr_triangles=sum(tris.values()),
+                   acr_clips=list(MD) + list(crawl.CLIPS), acr_limb_radius=ch.limb_radius,
+                   acr_layers=list(ch.layers), acr_extra_clips=["WALK", "GALLOP"], **faces.extras("regular"))
+    ctx.stats = {"triangles": tris, "colours": colours, "horse": hz.stats}

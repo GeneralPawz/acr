@@ -13,7 +13,8 @@ Conventions as in assets.md (30 px/m, +X east, +Y north, +Z up, models face sout
 | `armature.py` | armature from a table, `pose` in armature axes (+ `world` / `world_loc` targets), clips as actions |
 | `body.py` | skin hull, smooth weights, part split, clothing shells, skirt on its bones, straps, bone layer, stump caps, morph targets |
 | `humans.py` | `Character`: layers, finishing (morphs, masks, colours), export preparation |
-| `horse.py` | horse hull, mane/tail, bone layer, saddlecloth, saddle, gait and fall poses |
+| `horse.py` | horse hull, mane/tail, bone layer, saddlecloth, saddle, gait and fall poses (the procedural horse, `ACR_HORSE=procedural`) |
+| `mount.py` | the WildMesh pack's horse as a mount (#287): loaded, tinted bay, pruned to its weighted bones and decimated, scaled to 1.5 m at the withers, its gaits sampled on sprite frames (`animals.py`); `join` hangs the rider's root from its `saddle` bone; a saddlecloth cut from its back |
 | `gear.py`, `poses.py`, `decay.py`, `detail.py` | gear meshes; placeholder poses/clips; decay layers and masks; procedural detail tiles |
 
 Units: `assets/units/engm18.py` (musketeer), `engkri.py` (peasant), `engd18.py` (dragoon).
