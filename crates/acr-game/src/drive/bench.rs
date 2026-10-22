@@ -44,10 +44,20 @@ pub fn cause(name: &str) -> Result<(DeathCause, bool), String> {
         "axe" | "tomahawk" | "thrown" => (DeathCause::Thrown, false),
         other => {
             return Err(format!(
-                "unknown cause {other:?}: musket, arrow, cannonball, grapeshot, shell, sabre, bayonet or axe"
+                "unknown cause {other:?}: musket, arrow, cannonball, grapeshot, shell, sabre, bayonet, axe, claw, bite or gore"
             ));
         }
     })
+}
+
+/// An animal's blow for a scripted hit (`claw`, `bite`, `gore`), `None` for a weapon.
+pub fn maul(name: &str) -> Option<body::Cause> {
+    match name {
+        "claw" => Some(body::Cause::Claw),
+        "bite" => Some(body::Cause::Bite),
+        "gore" => Some(body::Cause::Gore),
+        _ => None,
+    }
 }
 
 /// A body part to aim at (`hit`'s `part`).
@@ -166,7 +176,9 @@ fn find_type(world: &acr_sim::World, name: &str) -> Result<acr_sim::TypeId, Stri
 pub fn hit(game: &mut Game, v: &Value) -> Result<Value, String> {
     let Mode::InGame(g) = &mut game.mode else { return Err("no game".into()) };
     let unit = v.get("unit").and_then(Value::as_u64).ok_or("hit: missing \"unit\" (an id)")? as usize;
-    let (cause, mounted) = cause(v.get("cause").and_then(Value::as_str).unwrap_or("musket"))?;
+    let name = v.get("cause").and_then(Value::as_str).unwrap_or("musket");
+    let maul = maul(name);
+    let (cause, mounted) = if maul.is_some() { (DeathCause::Melee, false) } else { cause(name)? };
     let region = v.get("region").and_then(Value::as_str).map(region).transpose()?;
     let energy = v.get("energy").and_then(Value::as_u64).unwrap_or(100).min(100) as u8;
     let damage = v.get("damage").and_then(Value::as_i64).unwrap_or(1) as i32;
@@ -186,7 +198,7 @@ pub fn hit(game: &mut Game, v: &Value) -> Result<Value, String> {
     if world.unit(EntityId(unit as u32)).is_none() {
         return Err(format!("no unit {unit}"));
     }
-    let index = scripted_hit(world, unit, ScriptedHit { cause, mounted, region, dir, energy, dmg: damage, aim })
+    let index = scripted_hit(world, unit, ScriptedHit { cause, mounted, region, dir, energy, dmg: damage, aim, maul })
         .ok_or_else(|| format!("unit {unit} is not alive"))?;
     let h = world.hits[index];
     Ok(json!({
@@ -199,7 +211,9 @@ pub fn hit(game: &mut Game, v: &Value) -> Result<Value, String> {
             "level": i.level,
             "outcome": format!("{:?}", i.outcome),
             "energy": i.energy,
+            "cause": format!("{:?}", i.cause),
         })),
+        "down": world.units[unit].body.down,
         "killed": h.killed,
         "life": world.units[unit].life,
     }))
@@ -216,6 +230,8 @@ mod tests {
         assert_eq!(part("arm_l"), Ok(Part::Limb(LimbId::ArmL)));
         assert!(part("tail").is_err());
         assert!(cause("laser").is_err());
+        assert_eq!(maul("claw"), Some(body::Cause::Claw));
+        assert_eq!(maul("musket"), None);
         assert_eq!(region("head"), Ok(HitRegion::Head));
         assert!(region("tail").is_err());
         assert_eq!(Pose::parse("crawling"), Ok(Pose::Crawl));

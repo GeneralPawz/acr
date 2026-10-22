@@ -53,6 +53,7 @@ Body {
     belly_open: bool,                // guts out: mortal, heavy bleeding
     head_wounds: u8, chest_wounds: u8,
     burn: u8,                        // seconds of burning left (ground fires, #256)
+    down: u8,                        // ticks left knocked down by an animal (mauling)
 }
 ```
 
@@ -128,8 +129,39 @@ Each limb hit draws from the world RNG (`rando()`), only with the rule on:
 | sabre (cavalry melee) | off hand/forearm 20, deep wound 60, fracture 20 | wound, belly open 10 | kill 50 |
 | bayonet / pike | wound 85, fracture 15 | deep wound, belly open 20 | kill |
 | thrown axe, tomahawk, spear | hand/foot off 12, deep wound 70, fracture 18 | deep wound, belly open 10 | kill 60, else deep wound |
+| claw (bear, jaguar) | e ≥ 80: arm off at the forearm or above the elbow 15 (arms only); deep gashes 65, fracture 20 (open half), wound 15 without the arm off | deep gashes; belly or pelvis torn open 35 (e < 80: 12), chest 10 | face and scalp torn (deep wound); kill 25 (e < 80: 10) |
+| bite (alligator, jaguar, bear) | e ≥ 90: off at the bite 30; crushed: open fracture 40, closed 25, deep wound the rest | chest crushed (kill) 20 at e ≥ 90; belly open 25; else deep wound | neck or skull: kill 70, else deep wound |
+| gore (elk, bison) | deep puncture 60, closed fracture 25, open 15 | belly or pelvis punctured open 45 (e < 80: 25); chest: kill 15 at e ≥ 80, else deep wound | kill 40, else deep wound |
 
 The values are constants in `body.rs` and tests pin their spread.
+
+### Mauling (#276)
+
+Animals have no weapon of their own in the original (`WEAPONKIND MECH`, so their hits carry
+`DeathCause::Melee` in `HitRecord::cause`). With the rule on, `combat::injure` asks
+`body::maul` first: an attacker whose `.MD` name starts with `Anm` is a `Beast`, and its
+blow becomes a claw, a bite or a gore with the beast's own energy and aim. `Injury::cause`
+tells the renderer which (gashes, a bite, a puncture).
+
+| Beast (`.MD` name) | Cause per attack | Energy (the young `…Sm`, `AnmOlnS`: 2/3) | Regions torso / legs / arms / head (victim down) |
+|---|---|---|---|
+| bear (`AnmMed*`) | claw 70, bite 30 | claw 100, bite 80 | 40/10/30/20 (45/5/20/30) |
+| jaguar (`AnmJug`) | claw 50, bite 50 | claw 75, bite 85 | 30/10/25/35 (25/5/20/50) |
+| alligator (`AnmCro*`) | bite | 95 | 20/55/20/5 (35/30/20/15) |
+| elk (`AnmOln*`), bison (`AnmBiz`) | gore | 80, 100 | 70/25/5/0 (75/20/5/0) |
+| any other `Anm*` (eagle) | claw | 40 | 30/10/30/30 |
+
+Each animal blow draws two more `rando()` (cause and region) after the usual region draw;
+the hit record's region is the injury's. Without the rule nothing changes: no draw, plain
+melee damage.
+
+**Knocked down** (`Body::down`, ticks left, hashed with the body): a claw from energy 70
+keeps him down 40 ticks, a gore 50, a bite 30 ticks in 60 % of bites from energy 90 (else
+30 %). A new mauling hit renews it (the longer of the two). Down, he cannot move
+(`walk_rate` 0), attack (`attack_obj` refuses; a running attack order waits) or hit back,
+so the animal keeps striking the man on the ground and goes for the head, neck and belly
+(the regions in brackets). `body::get_up` counts it down once a tick (`World::step`, after
+the bleeding). The renderer reads `unit.body.down` (> 0: lying).
 
 A hit that kills still records where and how it struck. `DeathRecord` carries the body and
 `torn`, so a corpse shows its last injury, not just its earlier ones.

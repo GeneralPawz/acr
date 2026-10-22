@@ -318,8 +318,16 @@ fn a_rider_never_crawls() {
 #[test]
 fn scripted_hits_injure_record_and_replay() {
     use acr_sim::combat::{ScriptedHit, scripted_hit};
-    let strike =
-        |cause, mounted, region, dir, energy, dmg| ScriptedHit { cause, mounted, region, dir, energy, dmg, aim: None };
+    let strike = |cause, mounted, region, dir, energy, dmg| ScriptedHit {
+        cause,
+        mounted,
+        region,
+        dir,
+        energy,
+        dmg,
+        aim: None,
+        maul: None,
+    };
     let run = || {
         let (mut w, p) = world();
         let first = scripted_hit(&mut w, p, strike(DeathCause::Gunshot, false, Some(HitRegion::Legs), (10, 0), 80, 1))
@@ -340,4 +348,152 @@ fn scripted_hits_injure_record_and_replay() {
         (w.hits.iter().map(|h| (h.injury, h.killed)).collect::<Vec<_>>(), w.units[p].body)
     };
     assert_eq!(run(), run());
+}
+
+/// Mauling (#276): claws gash and tear arms off, jaws crush and (an alligator's) sever,
+/// horns puncture; heads are torn or killed.
+#[test]
+fn mauling_outcomes_spread() {
+    // Claws: deep gashes, an arm off at high energy, bones broken; never a leg off.
+    let claw = spread(Cause::Claw, 100, HitRegion::Arms, 600);
+    let (deep, off, broke) =
+        (share(&claw, |o| *o == Outcome::DeepWound), share(&claw, |o| *o == Outcome::Off), share(&claw, is_break));
+    assert!((55..=75).contains(&deep) && (9..=22).contains(&off) && (13..=28).contains(&broke), "{deep} {off} {broke}");
+    assert!(spread(Cause::Claw, 100, HitRegion::Legs, 300).iter().all(|o| *o != Outcome::Off));
+    assert!(spread(Cause::Claw, 60, HitRegion::Arms, 300).iter().all(|o| *o != Outcome::Off));
+    let claw = spread(Cause::Claw, 100, HitRegion::Torso, 600);
+    let belly = share(&claw, |o| *o == Outcome::BellyOpen);
+    assert!((17..=35).contains(&belly), "{belly}");
+    assert!(claw.iter().all(|o| matches!(o, Outcome::BellyOpen | Outcome::DeepWound)));
+    // The face and scalp torn, a quarter killed (throat, skull).
+    let claw = spread(Cause::Claw, 100, HitRegion::Head, 600);
+    let kill = share(&claw, |o| *o == Outcome::Kill);
+    assert!((15..=35).contains(&kill) && claw.iter().all(|o| matches!(o, Outcome::Kill | Outcome::DeepWound)));
+
+    // Jaws: an alligator's take limbs off at the bite, crush the rest.
+    let bite = spread(Cause::Bite, 95, HitRegion::Legs, 600);
+    let (off, broke) = (share(&bite, |o| *o == Outcome::Off), share(&bite, is_break));
+    assert!((21..=39).contains(&off) && (55..=75).contains(&broke), "{off} {broke}");
+    let bite = spread(Cause::Bite, 80, HitRegion::Arms, 600);
+    let broke = share(&bite, is_break);
+    assert!(bite.iter().all(|o| *o != Outcome::Off) && (55..=75).contains(&broke), "{broke}");
+    let kill = share(&spread(Cause::Bite, 85, HitRegion::Head, 600), |o| *o == Outcome::Kill);
+    assert!((60..=80).contains(&kill), "{kill}");
+
+    // Horns: belly punctures, a few chests through.
+    let gore = spread(Cause::Gore, 100, HitRegion::Torso, 600);
+    let (belly, kill) = (share(&gore, |o| *o == Outcome::BellyOpen), share(&gore, |o| *o == Outcome::Kill));
+    assert!((20..=37).contains(&belly) && (1..=12).contains(&kill), "{belly} {kill}");
+    assert!(gore.iter().all(|o| matches!(o, Outcome::BellyOpen | Outcome::Kill | Outcome::DeepWound)));
+    let gore = spread(Cause::Gore, 100, HitRegion::Legs, 600);
+    assert!((50..=70).contains(&share(&gore, |o| *o == Outcome::DeepWound)));
+}
+
+#[test]
+fn beasts_by_their_names() {
+    use acr_sim::body::Beast;
+    assert_eq!(Beast::of("AnmMed"), Some(Beast::Bear));
+    assert_eq!(Beast::of("AnmMedSm"), Some(Beast::Bear));
+    assert_eq!(Beast::of("ANMCRO"), Some(Beast::Alligator));
+    assert_eq!(Beast::of("AnmJug"), Some(Beast::Jaguar));
+    assert_eq!(Beast::of("AnmOlns"), Some(Beast::Elk));
+    assert_eq!(Beast::of("AnmBiz"), Some(Beast::Bison));
+    assert_eq!(Beast::of("AnmEgl"), Some(Beast::Other));
+    assert_eq!(Beast::of("EngM18"), None);
+    assert!(
+        Beast::small("AnmMedSm") && Beast::small("AnmOlns") && Beast::small("AnmMed_Sm") && !Beast::small("AnmMed")
+    );
+    assert_eq!(Beast::Bear.cause(10), Cause::Claw);
+    assert_eq!(Beast::Bear.cause(90), Cause::Bite);
+    assert_eq!(Beast::Alligator.cause(10), Cause::Bite);
+    assert_eq!(Beast::Bison.cause(10), Cause::Gore);
+    assert!(Beast::Bear.energy(Cause::Claw, true) < Beast::Bear.energy(Cause::Claw, false));
+    for b in [Beast::Bear, Beast::Jaguar, Beast::Alligator, Beast::Elk, Beast::Bison, Beast::Other] {
+        for down in [false, true] {
+            assert_eq!(b.regions(down).iter().sum::<i32>(), 100, "{b:?}");
+        }
+    }
+    assert_eq!(Beast::Alligator.region(false, 30), HitRegion::Legs);
+}
+
+/// Claws at high energy and horns always knock the man down; he cannot move or strike and
+/// gets up when the ticks have run out.
+#[test]
+fn knocked_down_by_a_mauling_and_up_again() {
+    use acr_sim::body::{DOWN_CLAW, DOWN_GORE, knock_down};
+    assert_eq!(knock_down(Cause::Claw, 100, 50), DOWN_CLAW);
+    assert_eq!(knock_down(Cause::Claw, 40, 50), 0);
+    assert_eq!(knock_down(Cause::Gore, 30, 99), DOWN_GORE);
+    assert_eq!(knock_down(Cause::Musket, 100, 0), 0);
+    let bites = (0..100).filter(|&r| knock_down(Cause::Bite, 95, r) > 0).count();
+    assert!((50..=70).contains(&bites), "{bites}");
+    let (mut w, p) = world();
+    injure(&mut w, p, Cause::Claw, 100, HitRegion::Torso);
+    assert_eq!(w.units[p].body.down, DOWN_CLAW);
+    assert!(w.units[p].body.downed() && w.units[p].body.walk_rate(16) == 0);
+    for _ in 0..DOWN_CLAW - 1 {
+        w.step(&[]);
+    }
+    assert!(w.units[p].body.downed());
+    w.step(&[]);
+    assert!(!w.units[p].body.downed());
+}
+
+const BEAR: &str = "NAME AnmMed\r\nUSERLC 0 G SHADOW 0 0\r\n#STAND 9 1 0 0\r\n@MOTION_L 9 0 0 9\r\n\
+    @MOTION_R 9 0 10 19\r\n@PATTACK 9 0 0 35\r\n@UATTACK 9 0 35 0\r\n@ATTACK 9 0 0 20\r\n\
+    @DEATH 9 0 0 39\r\n#DEATHLIE1 9 1 0 39\r\nLIFE 400\r\nGEOMETRY 1 10 40\r\nDAMAGE 0 12\r\n\
+    ATTACK_RADIUS 0 0 100\r\nATTACK_PAUSE 0 1\r\nSEARCH_ENEMY_RADIUS 700\r\nSEARCH_ENEMY_RADIUS_SHIFT 70\r\n\
+    DET_RADIUS 0 0 7000\r\nMATHERIAL 1 BODY\r\nCANKILL 1 BODY\r\nWEAPONKIND 0 MECH\r\nCANTCAPTURE\r\n\
+    UNITRADIUS 8\r\n[END]\r\n";
+
+/// A bear on a tough man (`rules`) for `ticks`: the world, the man and the bear, and per
+/// tick the man's body after it, the bear's life after it and whether the man began it down.
+fn mauling(rules: Rules, ticks: usize) -> (World, usize, usize, Vec<(Body, i32, bool)>) {
+    let mut c = Catalog::new();
+    let bear = c.add(ObjectType::from_def("AnmMed(XX)", &UnitDef::parse(BEAR.as_bytes())));
+    let tough = PIKEMAN.replace("LIFE 100", "LIFE 1000").replace("NAME Pik", "NAME Tough");
+    let man = c.add(ObjectType::from_def("Tough(EN)", &UnitDef::parse(tough.as_bytes())));
+    c.set_weapon_kinds(&weapon_kinds(NRES));
+    let mut w = World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(Formations::default()));
+    w.rules = rules;
+    let m = w.spawn(man, 0, Pos::from_pixels(2000, 2000), 0).0 as usize;
+    let b = w.spawn(bear, 1, Pos::from_pixels(2040, 2000), 128).0 as usize;
+    let mut log = Vec::new();
+    for _ in 0..ticks {
+        let down = w.units[m].body.downed();
+        w.step(&[]);
+        log.push((w.units[m].body, w.units[b].life, down));
+    }
+    (w, m, b, log)
+}
+
+/// A bear mauls a man: its blows are claws and bites, they knock him down, he stays down
+/// while it keeps striking and does not hit back while down. Deterministic; without the
+/// rule the bear's blows are plain melee hits.
+#[test]
+fn a_bear_mauls_a_downed_man() {
+    let (w, m, _, log) = mauling(ON, 400);
+    let mauls: Vec<_> = w.hits.iter().filter(|h| h.victim == m as u32).filter_map(|h| h.injury).collect();
+    assert!(!mauls.is_empty(), "the bear strikes");
+    assert!(mauls.iter().all(|i| matches!(i.cause, Cause::Claw | Cause::Bite)), "{mauls:?}");
+    assert!(log.iter().any(|(b, ..)| b.downed()), "knocked down");
+    // Struck again while down.
+    let on_the_ground = w
+        .hits
+        .iter()
+        .filter(|h| h.victim == m as u32)
+        .filter(|h| h.tick > 0 && log.get(h.tick as usize - 1).is_some_and(|(b, ..)| b.downed()))
+        .count();
+    assert!(on_the_ground > 0, "hits on the downed man");
+    // The bear loses no life in a tick the man began on the ground.
+    for k in 1..log.len() {
+        if log[k].2 {
+            assert!(log[k].1 >= log[k - 1].1, "the downed man struck back at tick {k}");
+        }
+    }
+    let (again, ..) = mauling(ON, 400);
+    assert_eq!(w.state_hash(), again.state_hash());
+    let (off, m, ..) = mauling(Rules::default(), 400);
+    assert!(off.units[m].body == Body::default());
+    assert!(off.hits.iter().all(|h| h.injury.is_none()));
 }
