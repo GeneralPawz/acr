@@ -77,6 +77,10 @@ pub enum Command {
     /// Patrol between the units' positions and their places around a point (`Patrol`
     /// 0x4ea2c0): back and forth, fighting enemies on the way like an attack-move.
     Patrol { player: PlayerId, units: Vec<EntityId>, x: i32, y: i32 },
+    /// A move that ends facing `dir` (0..=255): the interface's right drag (the move command 2
+    /// with a direction, 0x4d5f86). Formations re-form facing it, free units are placed
+    /// across it.
+    MoveFacing { player: PlayerId, units: Vec<EntityId>, x: i32, y: i32, dir: u8 },
 }
 
 impl Command {
@@ -103,7 +107,8 @@ impl Command {
             | Command::StandGround { player, .. }
             | Command::HoldFire { player, .. }
             | Command::AttackMove { player, .. }
-            | Command::Patrol { player, .. } => *player,
+            | Command::Patrol { player, .. }
+            | Command::MoveFacing { player, .. } => *player,
         }
     }
 }

@@ -10,7 +10,7 @@ use acr_sim::world::EntityId;
 use acr_sim::{Command, TypeId, Unit};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 
-use super::InGame;
+use super::{CLICK_SLOP, InGame};
 use crate::canvas::Canvas;
 use crate::hud::cursor::{self, Cursor};
 use crate::hud::data::HudData;
@@ -29,8 +29,12 @@ const MARKER_FRAMES: u8 = 17;
 const EDGE: f32 = 6.0;
 /// Speed set by the arrow keys (0x4c5910).
 const KEY_SCROLL: i32 = 4;
-/// Two clicks on the same unit within this time select all units of its type on screen.
-const DOUBLE_CLICK: f64 = 0.35;
+/// A second left button release within this time and 16 pixels (`|dx| + |dy|`) is a double
+/// click (WM_LBUTTONUP, 0x4a2d2a: 600 ms).
+const DOUBLE_CLICK: f64 = 0.6;
+const DOUBLE_CLICK_PIXELS: f32 = 16.0;
+/// A right drag longer than this (map pixels) gives the move a direction (0x4c4dad).
+const DRAG_MIN: i32 = 30;
 /// Colour tables of the building preview (`ShowGPDarkN` / `ShowGPRedN`, loaded at 0x483feb
 /// and 0x4840d1): a free site and a blocked one.
 const PREVIEW_FREE: &str = "0\\AGEW_1W.GRD";
@@ -146,7 +150,15 @@ pub struct State {
     view: View,
     canvas: Canvas,
     window: [f32; 2],
-    last_click: Option<(web_time::Instant, EntityId)>,
+    /// The last left button release on the map (time, canvas point), for double clicks.
+    last_click: Option<(web_time::Instant, [f32; 2])>,
+    /// The selection when the left button went down (Shift adds the rectangle to it).
+    select_before: Vec<EntityId>,
+    /// The right button went down on the map with a selection: window point and world pixel
+    /// (`0x1100b32`, start 0x1100acc / 0x1100ad0).
+    right_drag: Option<([f32; 2], (i32, i32))>,
+    /// `GO&ATTACK`: moves are attack-moves (`0x28f9e55`).
+    pub attack_mode: bool,
     /// Space cycles through the selection (0x4c6020).
     next_centred: usize,
     /// The market's amount and chosen slots (ECO+0x2a0, +0x2a4, +0x2a8), kept for the game.
@@ -194,6 +206,9 @@ impl Default for State {
             canvas: Canvas::fit([1024.0, 768.0]),
             window: [1024.0, 768.0],
             last_click: None,
+            select_before: Vec::new(),
+            right_drag: None,
+            attack_mode: false,
             next_centred: 0,
             market_amount: 0,
             market_sell: None,
@@ -388,6 +403,7 @@ impl InGame {
         let res = &world.players[usize::from(player).min(world.players.len() - 1)].resources;
         view.resources = std::array::from_fn(|i| res[i].max(0) as u32);
         view.history = self.mission.has_history();
+        view.fog = self.fog_mask();
         let shift = self.shift() + 9;
         for u in world.units.iter().filter(|u| u.alive && u.inside_of.is_none()) {
             let selected = u.owner == player && self.selected.contains(&u.id);
@@ -484,10 +500,13 @@ impl InGame {
                     }
                 };
                 command("Stand_Ground_OFF", 24, "SFREORD", HudCommand::Disband);
-                command("Stand_Ground_ON", 25, "STANDGR", HudCommand::Inactive);
-                command("Stand_Ground_OFF", 26, "NOSTAND", HudCommand::Inactive);
+                command("Stand_Ground_ON", 25, "STANDGR", HudCommand::StandGround(true));
+                command("Stand_Ground_OFF", 26, "NOSTAND", HudCommand::StandGround(false));
                 if let Some(go) = data.consts.get("GO&ATTACK") {
-                    command("Go_With_Attack", go.slot, "GONATT", HudCommand::Inactive);
+                    command("Go_With_Attack", go.slot, "GONATT", HudCommand::AttackMode);
+                    if let Some(icon) = view.icons.iter_mut().find(|i| i.action == Some(HudCommand::AttackMode)) {
+                        icon.selected = self.interface.attack_mode;
+                    }
                 }
             }
         }
@@ -819,7 +838,11 @@ impl InGame {
             Context::Gather(x, y, _) => Command::Gather { player, units, x, y },
             Context::Move(x, y) => {
                 self.add_marker(x, y);
-                Command::Move { player, units, x, y }
+                if self.interface.attack_mode {
+                    Command::AttackMove { player, units, x, y }
+                } else {
+                    Command::Move { player, units, x, y }
+                }
             }
             Context::Rally(x, y) => {
                 self.set_rally(x, y);
@@ -955,8 +978,24 @@ impl InGame {
                     self.selected_units().filter(|u| u.building && u.owner == player).map(|u| u.id).collect();
                 self.commands.push(Command::PlantFields { player, buildings, kind: TypeId(kind as u16) });
             }
-            HudCommand::Inactive => {}
+            HudCommand::StandGround(on) => {
+                let units = self.selected.clone();
+                self.commands.push(Command::StandGround { player, units, on });
+            }
+            HudCommand::AttackMode => self.interface.attack_mode = !self.interface.attack_mode,
         }
+    }
+
+    /// The minimap's dark blocks (0x485c24): every 2 × 2 block whose fog value is 1300 or less.
+    /// A block covers `64 << shift` map pixels; the fog cell at its first 128 pixels decides.
+    fn fog_mask(&self) -> Option<Rc<Vec<bool>>> {
+        let fog = self.fog.as_ref()?;
+        let block = 64 << self.shift();
+        let n = minimap::FOG_SIDE;
+        let mask: Vec<bool> = (0..n * n)
+            .map(|i| fog.get((i % n) * block + 64, (i / n) * block + 64) <= acr_sim::fog::MINIMAP_DARK)
+            .collect();
+        Some(Rc::new(mask))
     }
 
     /// Puts the production messages on the message list.
@@ -1224,6 +1263,9 @@ impl InGame {
         if self.interface.hud.locks && !self.interface.hud.zoom {
             self.lock_overlay(&palette, &mut out);
         }
+        if let Some((_, (sx, sy))) = self.interface.right_drag {
+            self.facing_arrow(bracket, terrain.height_at(sx, sy), &mut out);
+        }
         for m in &self.interface.markers {
             let h = terrain.height_at(m.x, m.y);
             out.push(
@@ -1324,24 +1366,29 @@ impl InGame {
     /// The unit whose box (`RECTANGLE dx dy w h`, as for the selection brackets) contains
     /// the window point, the front-most if several do, among the living units passing `keep`.
     pub(super) fn unit_at(&self, at: [f32; 2], keep: impl Fn(&Unit) -> bool) -> Option<EntityId> {
-        let (world, terrain) = (self.world.as_ref()?, self.terrain.as_ref()?);
+        let world = self.world.as_ref()?;
         let s = self.camera.scale;
         let (px, py) = ((self.camera.x + at[0] / s) as i32, (self.camera.y + at[1] / s) as i32);
-        let objects = self.objects.objects();
         world
             .units
             .iter()
             .filter(|u| u.alive && u.inside_of.is_none() && keep(u))
             .filter(|u| {
-                let r = objects.definition(&world.catalog.get(u.kind).id).and_then(|d| d.get("RECTANGLE"));
-                let [dx, dy, w, h] = [0, 1, 2, 3].map(|i| r.and_then(|c| c.int(i)).unwrap_or([0, 3, 40, 64][i]));
-                let (x, y) = (u.pos.x >> 4, u.pos.y >> 4);
-                let x0 = x - w / 2 + dx;
-                let y0 = (y >> 1) - h + dy - terrain.height_at(x, y);
+                let (x0, y0, w, h) = self.unit_box(u);
                 (x0..x0 + w).contains(&px) && (y0..y0 + h).contains(&py)
             })
             .max_by_key(|u| u.pos.y)
             .map(|u| u.id)
+    }
+
+    /// A unit's screen box (0x4bad90) in world screen pixels: `RECTANGLE dx dy w h`
+    /// (defaults 0, 3, 40, 64) above its ground point.
+    pub(super) fn unit_box(&self, u: &Unit) -> (i32, i32, i32, i32) {
+        let (Some(world), Some(terrain)) = (&self.world, &self.terrain) else { return (0, 0, 0, 0) };
+        let r = self.objects.objects().definition(&world.catalog.get(u.kind).id).and_then(|d| d.get("RECTANGLE"));
+        let [dx, dy, w, h] = [0, 1, 2, 3].map(|i| r.and_then(|c| c.int(i)).unwrap_or([0, 3, 40, 64][i]));
+        let (x, y) = (u.pos.x >> 4, u.pos.y >> 4);
+        (x - w / 2 + dx, (y >> 1) - h + dy - terrain.height_at(x, y), w, h)
     }
 
     /// Left button. Returns what the app should do.
@@ -1402,7 +1449,10 @@ impl InGame {
             self.interface.hud.release();
             return GameMouse::None;
         }
-        let before = self.selected.clone();
+        if pressed {
+            self.interface.select_before = self.selected.clone();
+        }
+        let before = self.interface.select_before.clone();
         self.on_left(pressed);
         if !pressed {
             self.after_selection(before);
@@ -1436,34 +1486,43 @@ impl InGame {
         true
     }
 
-    /// Shift adds to the selection; a second click on a unit selects all own units of its
-    /// type on the screen.
+    /// Shift adds to the selection (0x4da424: never removes); Ctrl does nothing. A double
+    /// click (0xF1, 0x4c2ea5) selects the own units of the first selected unit's type on the
+    /// screen, of its kind (formation members or free units), added with Shift.
     fn after_selection(&mut self, before: Vec<EntityId>) {
+        self.add_with_shift(before.clone());
         let now = web_time::Instant::now();
-        if let [one] = self.selected[..] {
-            if let Some((t, id)) = self.interface.last_click
-                && id == one
-                && (now - t).as_secs_f64() < DOUBLE_CLICK
-                && let Some(world) = &self.world
-            {
-                let kind = world.unit(one).map(|u| u.kind);
-                let window = self.window_size();
-                let own = self.own();
-                self.selected = world
-                    .units
-                    .iter()
-                    .filter(|u| u.alive && u.owner == own && Some(u.kind) == kind)
-                    .filter(|u| {
-                        let [sx, sy] = self.screen_of(u);
-                        (0.0..window[0]).contains(&sx) && (0.0..window[1]).contains(&sy)
-                    })
-                    .map(|u| u.id)
-                    .collect();
-                self.interface.last_click = None;
-            } else {
-                self.interface.last_click = Some((now, one));
-            }
+        let p = self.cursor.map(|c| self.canvas_point(c)).unwrap_or_default();
+        let double = self.interface.last_click.is_some_and(|(t, q)| {
+            (now - t).as_secs_f64() < DOUBLE_CLICK && (p[0] - q[0]).abs() + (p[1] - q[1]).abs() < DOUBLE_CLICK_PIXELS
+        });
+        self.interface.last_click = if double { None } else { Some((now, p)) };
+        if !double {
+            return;
         }
+        let Some(world) = &self.world else { return };
+        let Some(first) = self.selected.first().and_then(|&id| world.unit(id)) else { return };
+        let kind = first.kind;
+        let formed = self.selected_units().any(|u| u.brigade.is_some());
+        let free = self.selected_units().any(|u| u.brigade.is_none());
+        let window = self.window_size();
+        let own = self.own();
+        self.selected = world
+            .units
+            .iter()
+            .filter(|u| u.alive && u.inside_of.is_none() && u.owner == own && u.kind == kind)
+            .filter(|u| if u.brigade.is_some() { formed } else { free })
+            .filter(|u| {
+                let [sx, sy] = self.screen_of(u);
+                (0.0..window[0]).contains(&sx) && (0.0..window[1]).contains(&sy)
+            })
+            .map(|u| u.id)
+            .collect();
+        self.add_with_shift(before);
+    }
+
+    /// With Shift the new selection is added to `before`.
+    fn add_with_shift(&mut self, before: Vec<EntityId>) {
         if self.interface.mods.shift_key() {
             let mut all = before;
             for id in std::mem::take(&mut self.selected) {
@@ -1480,6 +1539,13 @@ impl InGame {
         self.cursor = Some(at);
         let p = self.canvas_point(at);
         self.diplomacy.mouse_moved(p);
+        // The rectangle selects while it is drawn (0x4d6851 every event).
+        if let Some(from) = self.drag_from
+            && ((from[0] - at[0]).abs() >= CLICK_SLOP || (from[1] - at[1]).abs() >= CLICK_SLOP)
+        {
+            self.selected = self.pick(from, at);
+            self.add_with_shift(self.interface.select_before.clone());
+        }
         if self.drag_from.is_none() {
             let view = std::mem::take(&mut self.interface.view);
             let event = self.interface.hud.drag(&view, p);
@@ -1492,8 +1558,13 @@ impl InGame {
     }
 
     /// Right button: an order on the minimap, an attack on an enemy, else a move with the
-    /// move marker.
-    pub fn right_button(&mut self, ctx: &Ctx) {
+    /// move marker. On the map the order is given on release: a drag of more than 30 map
+    /// pixels moves to the press point facing the drag's direction (0x4c4cea..0x4c5891).
+    pub fn right_button(&mut self, ctx: &Ctx, pressed: bool) {
+        if !pressed {
+            self.right_release();
+            return;
+        }
         let Some(at) = self.cursor else { return };
         let p = self.canvas_point(at);
         let view = std::mem::take(&mut self.interface.view);
@@ -1511,9 +1582,73 @@ impl InGame {
                 if self.selected.is_empty() {
                     return;
                 }
-                self.order_at(at);
+                // Buildings only: the rally point at once.
+                if self.selected_units().filter(|u| u.owner == player).all(|u| u.building) {
+                    self.order_at(at);
+                    return;
+                }
+                self.interface.right_drag = Some((at, self.world_at(at)));
             }
             _ => {}
+        }
+    }
+
+    /// The drag's vector from the press point to the cursor, in map pixels.
+    fn drag_vector(&self) -> Option<((i32, i32), i32, i32)> {
+        let ((_, start), at) = (self.interface.right_drag?, self.cursor?);
+        let (x, y) = self.world_at(at);
+        Some((start, x - start.0, y - start.1))
+    }
+
+    fn right_release(&mut self) {
+        let Some((press, _)) = self.interface.right_drag else { return };
+        let vector = self.drag_vector();
+        self.interface.right_drag = None;
+        let Some(((x, y), dx, dy)) = vector else { return };
+        let length = f64::from(dx * dx + dy * dy).sqrt() as i32;
+        if length <= DRAG_MIN {
+            self.order_at(press);
+            return;
+        }
+        let player = self.own();
+        let units: Vec<EntityId> =
+            self.selected_units().filter(|u| u.owner == player && !u.building).map(|u| u.id).collect();
+        let Some(&first) = units.first() else { return };
+        // 32 directions: `(GetDir(dx, dy) + 4) & 0xF8`.
+        let dir = acr_sim::trig::get_dir(dx, dy).wrapping_add(4) & 0xF8;
+        self.add_marker(x, y);
+        self.commands.push(if self.interface.attack_mode {
+            Command::AttackMove { player, units, x, y }
+        } else {
+            Command::MoveFacing { player, units, x, y, dir }
+        });
+        self.unit_sound(first, "ORDER_SOUND");
+    }
+
+    /// The facing arrow while the right button is dragged (0x4c5407): seven yellow lines
+    /// around a shaft 40 wide with a head 40 long and 80 wide, from the press point to the
+    /// cursor, once the drag is longer than 30 map pixels. Map y is halved on the screen.
+    fn facing_arrow(&self, rgba: [u8; 4], h: i32, out: &mut Vec<Draw>) {
+        let Some(((sx, sy), a, b)) = self.drag_vector() else { return };
+        let l = f64::from(a * a + b * b).sqrt() as i32;
+        if l <= DRAG_MIN {
+            return;
+        }
+        let (ux, uy) = (a * 20 / l, b * 20 / l);
+        let (p, q) = (uy, -ux);
+        let pts = [
+            (-p, -q),
+            (p, q),
+            (a - 2 * ux + p, b - 2 * uy + q),
+            (a - 2 * ux + 2 * p, b - 2 * uy + 2 * q),
+            (a, b),
+            (a - 2 * ux - 2 * p, b - 2 * uy - 2 * q),
+            (a - 2 * ux - p, b - 2 * uy - q),
+        ];
+        let (ox, oy) = (sx, (sy >> 1) - h);
+        for i in 0..pts.len() {
+            let (p0, p1) = (pts[i], pts[(i + 1) % pts.len()]);
+            line(out, rgba, (ox + p0.0, oy + p0.1 / 2), (ox + p1.0, oy + p1.1 / 2));
         }
     }
 

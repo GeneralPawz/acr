@@ -28,7 +28,7 @@ use crate::unit_sounds::{self, SoundEvent};
 pub use interface::{GameKey, GameMouse};
 
 /// A drag shorter than this (window pixels) is a click.
-const CLICK_SLOP: f32 = 4.0;
+pub(super) const CLICK_SLOP: f32 = 4.0;
 
 pub struct InGame {
     pub setup: Box<GameSetup>,
@@ -75,6 +75,8 @@ pub struct InGame {
     diplomacy: crate::diplomacy::DipPanel,
     /// Score and losses for the game info panel.
     stats: panels::Stats,
+    /// The local player's fog of war (`FogMap` 0x7b7b28); only the minimap shows it.
+    fog: Option<acr_sim::fog::Fog>,
     /// `ACR_DIP_PAGE` has been looked at.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     dip_page_shown: bool,
@@ -124,6 +126,7 @@ impl InGame {
             save: Default::default(),
             diplomacy: crate::diplomacy::DipPanel::default(),
             stats: Default::default(),
+            fog: None,
             dip_page_shown: false,
             ambient_ticks: 0,
         }
@@ -395,28 +398,40 @@ impl InGame {
             return;
         }
         let Some(from) = self.drag_from.take() else { return };
-        let Some(world) = &self.world else { return };
-        let own = self.local_player();
-        let mine = world.units.iter().filter(|u| u.alive && u.inside_of.is_none() && u.owner == own && !u.building);
-        if (from[0] - at[0]).abs() < CLICK_SLOP && (from[1] - at[1]).abs() < CLICK_SLOP {
-            // A unit in front of a building wins; own buildings are selected by a click only.
-            let unit = self.unit_at(at, |u| u.owner == own && !u.building);
-            self.selected = unit.or_else(|| self.unit_at(at, |u| u.owner == own && u.building)).into_iter().collect();
-        } else {
-            let (x0, x1) = (from[0].min(at[0]), from[0].max(at[0]));
-            let (y0, y1) = (from[1].min(at[1]), from[1].max(at[1]));
-            self.selected = mine
-                .filter(|u| {
-                    let [sx, sy] = self.screen_of(u);
-                    (x0..=x1).contains(&sx) && (y0..=y1).contains(&sy)
-                })
-                .map(|u| u.id)
-                .collect();
-        }
+        self.selected = self.pick(from, at);
         log::debug!("selected {} units", self.selected.len());
         if let Some(&first) = self.selected.first() {
             self.unit_sound(first, "SELECT_SOUND");
         }
+    }
+
+    /// The own objects a click or a rectangle picks (0x5179d6): a click takes the object
+    /// under the cursor (a unit in front of a building wins), a rectangle every object
+    /// whose box meets it, but buildings only if no unit is caught. Nothing hit selects
+    /// nothing.
+    pub(super) fn pick(&self, from: [f32; 2], at: [f32; 2]) -> Vec<EntityId> {
+        let Some(world) = &self.world else { return Vec::new() };
+        let own = self.local_player();
+        if (from[0] - at[0]).abs() < CLICK_SLOP && (from[1] - at[1]).abs() < CLICK_SLOP {
+            let unit = self.unit_at(at, |u| u.owner == own && !u.building);
+            return unit.or_else(|| self.unit_at(at, |u| u.owner == own && u.building)).into_iter().collect();
+        }
+        let s = self.camera.scale;
+        let to_world = |p: [f32; 2]| [self.camera.x + p[0] / s, self.camera.y + p[1] / s];
+        let (a, b) = (to_world(from), to_world(at));
+        let (x0, x1) = (a[0].min(b[0]) as i32, a[0].max(b[0]) as i32);
+        let (y0, y1) = (a[1].min(b[1]) as i32, a[1].max(b[1]) as i32);
+        let caught: Vec<&acr_sim::Unit> = world
+            .units
+            .iter()
+            .filter(|u| u.alive && u.inside_of.is_none() && u.owner == own)
+            .filter(|u| {
+                let (bx, by, w, h) = self.unit_box(u);
+                bx <= x1 && bx + w > x0 && by <= y1 && by + h > y0
+            })
+            .collect();
+        let units = caught.iter().any(|u| !u.building);
+        caught.into_iter().filter(|u| !units || !u.building).map(|u| u.id).collect()
     }
 
     /// Scrolls by held arrow keys and the cursor at the window edge and advances the world;
@@ -455,6 +470,10 @@ impl InGame {
                 self.save.log.command(world.tick.0, &commands);
                 commands.extend(orders);
                 world.step(&commands);
+                // The fog follows the world: stamped every tick, blurred every game frame.
+                let fog = self.fog.get_or_insert_with(|| acr_sim::fog::Fog::new(world.map.shift));
+                fog.reveal(world, self.setup.local_player as u8);
+                fog.blur(world);
             }
             self.requests.borrow_mut().extend(self.mission.take_requests());
             self.update_diplomacy(f64::from(seconds));

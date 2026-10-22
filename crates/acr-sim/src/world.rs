@@ -739,6 +739,10 @@ impl World {
                 let ids = self.owned(*player, units);
                 crate::motion::group_send(self, &ids, *x, *y, None, crate::motion::PLAYER_PRIO);
             }
+            Command::MoveFacing { player, units, x, y, dir } => {
+                let ids = self.owned(*player, units);
+                crate::motion::group_send(self, &ids, *x, *y, Some(*dir), crate::motion::PLAYER_PRIO);
+            }
             Command::Attack { player, units, target } => {
                 let t = target.0 as usize;
                 // The interface's attack order has priority 0xFE (0x43ce14): 0x90 that also ends

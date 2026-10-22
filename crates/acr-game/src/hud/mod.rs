@@ -124,6 +124,10 @@ pub enum HudCommand {
     SelectType(usize),
     /// Lead the selection into formation group `name` (`ORDERICONS`).
     Form(String),
+    /// `STANDGR` / `NOSTAND`: stand ground on or off.
+    StandGround(bool),
+    /// `GO&ATTACK`: moves become attack-moves (`0x28f9e55`, move flag 8) until switched off.
+    AttackMode,
     /// Dissolve the selected formation (`SFREORD`).
     Disband,
     /// Queue a unit of this type in the selected building (0x6088c0; Shift: five).
@@ -154,8 +158,6 @@ pub enum HudCommand {
     MarketClear,
     /// Plant fields around the selected mills (`SPRITEOBJECT` items, command 0x3d).
     PlantFields(usize),
-    /// Commands the simulation does not run yet: shown, but they do nothing.
-    Inactive,
 }
 
 /// Numbers of the single selected type's first object (0x607f50).
@@ -191,6 +193,8 @@ pub struct View {
     pub view: [f32; 2],
     /// The local player has mission messages: the drop-down offers `UM_HIST` (0x4c6cb0).
     pub history: bool,
+    /// Dark 2 × 2 blocks of the minimap (fog of war), `FOG_SIDE²` entries.
+    pub fog: Option<Rc<Vec<bool>>>,
     /// The type the unit panel shows (key U).
     pub unit_info: Option<panels::UnitInfo>,
     /// The game panel's page (key I).
@@ -323,7 +327,7 @@ pub struct Hud {
     /// Life bars over all units (Tab, `0x90d411`).
     pub life_bars: bool,
     minimap_dirty: bool,
-    last_minimap: Option<(Placement, Vec<minimap::Dot>, Option<Rect>)>,
+    last_minimap: Option<MinimapState>,
     /// The side panel (`0x1100a74`), keys U and I.
     pub panel: Panel,
     /// The inaccessible areas are drawn (`0x90d905`, key Q).
@@ -357,6 +361,9 @@ impl Default for Hud {
         }
     }
 }
+
+/// What the minimap image was last composed from: placement, dots, camera, fog.
+type MinimapState = (Placement, Vec<minimap::Dot>, Option<Rect>, Option<Rc<Vec<bool>>>);
 
 /// Name of the minimap image in [`crate::ui::draw::Textures`].
 pub const MINIMAP_IMAGE: &str = "hud:minimap";
@@ -397,11 +404,12 @@ impl Hud {
             (view.view[0] as i32).max(1),
             (view.view[1] as i32).max(1),
         );
-        let state = (placement, view.dots.clone(), Some(camera));
+        let state = (placement, view.dots.clone(), Some(camera), view.fog.clone());
         if !self.minimap_dirty && self.last_minimap.as_ref() == Some(&state) {
             return None;
         }
-        let image = minimap::compose(map, &placement, &view.dots, Some(camera), &palette);
+        let fog = view.fog.as_deref().map(Vec::as_slice);
+        let image = minimap::compose(map, &placement, &view.dots, fog, Some(camera), &palette);
         self.last_minimap = Some(state);
         self.minimap_dirty = false;
         Some(image)
