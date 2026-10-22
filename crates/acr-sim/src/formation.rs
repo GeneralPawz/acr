@@ -220,7 +220,7 @@ pub struct Brigade {
 }
 
 fn alive(world: &World, id: Option<EntityId>) -> Option<usize> {
-    id.map(|e| e.0 as usize).filter(|&i| world.units.get(i).is_some_and(|u| u.alive))
+    id.map(|e| e.0 as usize).filter(|&i| world.units.get(i).is_some_and(|u| u.living()))
 }
 
 /// Centre of a brigade's living soldiers (1/16 px).
@@ -339,8 +339,14 @@ pub fn form(world: &mut World, officer: usize, units: &[usize], kind: &str) {
     let id = world.brigades.len() as u16;
     let mut members = vec![Some(world.units[officer].id), drummer.map(|d| world.units[d].id), None];
     members.extend(soldiers.iter().map(|&s| Some(world.units[s].id)));
+    // Normal attack/defence bonuses of the shape (header numbers 3 and 4); the flag
+    // bearer's extra (5, 6) needs a flag bearer, which `form` does not assign.
+    let bonus = world.formations.shapes[shape].bonus;
     for m in members.iter().flatten() {
-        world.units[m.0 as usize].brigade = Some(id);
+        let u = &mut world.units[m.0 as usize];
+        u.brigade = Some(id);
+        u.attack_bonus = bonus[2];
+        u.defence_bonus = bonus[3];
     }
     world.brigades.push(Brigade {
         owner: world.units[officer].owner,
@@ -412,7 +418,10 @@ pub fn disband(world: &mut World, officer: usize) {
     let Some(b) = world.units[officer].brigade.map(usize::from) else { return };
     let members = std::mem::take(&mut world.brigades[b].members);
     for m in members.into_iter().flatten() {
-        world.units[m.0 as usize].brigade = None;
+        let u = &mut world.units[m.0 as usize];
+        u.brigade = None;
+        u.attack_bonus = 0;
+        u.defence_bonus = 0;
     }
     world.brigades[b].alive = false;
     world.brigades[b].keep = false;
