@@ -37,6 +37,7 @@ pub mod path;
 pub mod projectile;
 pub mod replay;
 pub mod rng;
+pub mod ship;
 pub mod sprite;
 pub mod states;
 pub mod tech;

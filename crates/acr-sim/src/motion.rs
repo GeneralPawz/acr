@@ -29,6 +29,14 @@ fn layer<'a>(w: &'a crate::map::MapGrid, t: &ObjectType) -> &'a LockMap {
     }
 }
 
+/// The pathfinding areas of a type's medium (`TOP1` or `TOPW`).
+pub(crate) fn areas_of<'a>(map: &'a crate::map::MapGrid, t: &ObjectType) -> Option<&'a AreaGraph> {
+    match t.medium {
+        crate::catalog::Medium::Land => map.land_areas.as_ref(),
+        crate::catalog::Medium::Water => map.water_areas.as_ref(),
+    }
+}
+
 /// Frames of an animation slot, if the type has it.
 pub(crate) fn anim_frames(t: &ObjectType, kind: AnimKind) -> Option<i32> {
     t.anims.get(&kind.name()).map(|a| i32::from(a.frames))
@@ -172,11 +180,13 @@ fn top_line_clear(g: &AreaGraph, x0: i32, y0: i32, x1: i32, y1: i32) -> bool {
 /// Applies the group offset to a routing point (`ApplyOffset`, 0x52b0cd, simplified): the
 /// offset point if its 4 × 4 cell box is free and inside an area, else points closer to
 /// the unshifted one.
-fn apply_offset(g: &AreaGraph, m: &LockMap, x: i32, y: i32, dx: i32, dy: i32) -> (i32, i32) {
+fn apply_offset(g: &AreaGraph, m: &LockMap, x: i32, y: i32, dx: i32, dy: i32, water: bool) -> (i32, i32) {
+    // Land units test a 4 × 4 box, ships a 14 × 14 one (0x52b0cd).
+    let (h, s) = if water { (7, 14) } else { (2, 4) };
     let n = norma(dx, dy) / 32 + 1;
     for k in (0..=n).rev() {
         let (px, py) = (x + dx * k / n, y + dy * k / n);
-        if g.area_at(px >> 6, py >> 6) < 0xFFFE && !m.check_bar((px >> 4) - 2, (py >> 4) - 2, 4, 4) {
+        if g.area_at(px >> 6, py >> 6) < 0xFFFE && !m.check_bar((px >> 4) - h, (py >> 4) - h, s, s) {
             return (px, py);
         }
     }
@@ -193,8 +203,15 @@ enum Signal {
 
 /// Runs one unit for one tick: its order link, then the motion handler.
 pub fn process_unit(world: &mut World, i: usize) {
+    crate::ship::check_park(world, i);
     match world.units[i].orders.last().cloned() {
-        Some(Order::Attack { target, prio }) => crate::combat::attack_link(world, i, target, prio),
+        Some(Order::Attack { target, prio }) => {
+            if world.catalog.get(world.units[i].kind).guns.is_some() {
+                crate::ship::water_attack_link(world, i, target, prio);
+            } else {
+                crate::combat::attack_link(world, i, target, prio);
+            }
+        }
         Some(Order::AttackPoint { x, y, prio, times }) => {
             crate::combat::attack_link_aim(world, i, crate::combat::Aim::Point(Pos::from_pixels(x, y), times), prio)
         }
@@ -202,6 +219,17 @@ pub fn process_unit(world: &mut World, i: usize) {
         Some(Order::Gather { kind, source, at, prio }) => crate::gather::gather_link(world, i, kind, source, at, prio),
         Some(Order::Panic { .. }) => crate::morale::panic_link(world, i),
         Some(Order::Patrol { .. }) => patrol_link(world, i),
+        Some(Order::WaterSendTo { cell, prio, turning }) => {
+            crate::ship::water_send_to_link(world, i, cell, prio, turning)
+        }
+        Some(Order::GoToTransport { transport, land, prio }) => {
+            crate::ship::go_to_transport_link(world, i, transport, land, prio);
+            if world.units[i].inside_of.is_some() {
+                return;
+            }
+        }
+        Some(Order::LeaveTransport { kind, delay }) => crate::ship::leave_transport_link(world, i, kind, delay),
+        Some(Order::Fishing) => crate::ship::fishing_link(world, i),
         Some(Order::Enter { building, prio }) => {
             crate::economy::enter_link(world, i, building, prio);
             if world.units[i].inside_of.is_some() {
@@ -232,16 +260,23 @@ pub fn process_unit(world: &mut World, i: usize) {
     }
     let map = world.map.clone();
     let world_adv = world.adv(world.units[i].owner, world.units[i].kind);
+    let ship = crate::ship::is_ship(catalog.get(world.units[i].kind));
     let World { units, occupancy, random, buckets, .. } = world;
     let u = &mut units[i];
     let t = catalog.get(u.kind);
     let lay = layer(&map, t);
+    let areas =
+        if t.medium == crate::catalog::Medium::Water { map.water_areas.as_ref() } else { map.land_areas.as_ref() };
     match u.orders.last().cloned() {
         Some(Order::SendTo { cell, prio }) => send_to_link(u, t, lay, random, occupancy, cell, prio),
         Some(Order::SmartSendTo { x, y, dx, dy, prio, area }) => {
-            smart_send_to_link(u, map.land_areas.as_ref(), lay, x, y, dx, dy, prio, area)
+            smart_send_to_link(u, areas, lay, x, y, dx, dy, prio, area);
         }
         Some(Order::Attack { .. })
+        | Some(Order::WaterSendTo { .. })
+        | Some(Order::GoToTransport { .. })
+        | Some(Order::LeaveTransport { .. })
+        | Some(Order::Fishing)
         | Some(Order::AttackPoint { .. })
         | Some(Order::Panic { .. })
         | Some(Order::Patrol { .. })
@@ -249,10 +284,26 @@ pub fn process_unit(world: &mut World, i: usize) {
         | Some(Order::Build { .. })
         | Some(Order::Gather { .. }) => {}
         Some(Order::ClearUnlimited) => {
-            u.pop_order();
-            crate::economy::settle(u, occupancy);
+            // ClearUnlimitedLink (0x527dec): waits a moment if nothing follows; a unit on a
+            // locked cell (off a ship) first walks to the nearest free spot on land.
+            if u.stand_time < 5 && u.orders.len() == 1 {
+            } else if map.land.check_bar(u.cell.0 - 1, u.cell.1 - 1, 3, 3)
+                && let Some((x, y)) = crate::ship::find_near_empty(&map.land, u.cell.0, u.cell.1)
+            {
+                u.unlimited = false;
+                send_to(u, Pos::new(x << 8, y << 8), 0x90, false);
+                u.unlimited = true;
+            } else {
+                u.pop_order();
+                crate::economy::settle(u, occupancy);
+                u.prio = 0;
+            }
         }
         None => u.prio = 0,
+    }
+    if ship {
+        crate::ship::motion(world, i);
+        return;
     }
     let rate = if u.stance == 0 { 16 } else { adv_rate(&catalog, u, &world_adv) };
     match motion_handler(u, t, lay, occupancy, random, buckets, rate) {
@@ -355,7 +406,7 @@ fn smart_send_to_link(
     let mut nxt = g.next_hop(cur, dst);
     if nxt == dst || dst == cur {
         u.pop_order();
-        let (px, py) = apply_offset(g, m, tx, ty, dx, dy);
+        let (px, py) = apply_offset(g, m, tx, ty, dx, dy, u.lx > 1);
         send_to(u, Pos::from_pixels(px, py), prio, false);
         return;
     }
@@ -380,7 +431,7 @@ fn smart_send_to_link(
         }
     }
     let (wx, wy) = center(nxt);
-    let (wx, wy) = apply_offset(g, m, wx, wy, dx, dy);
+    let (wx, wy) = apply_offset(g, m, wx, wy, dx, dy, u.lx > 1);
     if let Some(Order::SmartSendTo { x, y, area, .. }) = u.orders.last_mut() {
         (*x, *y, *area) = (tx, ty, Some(nxt));
     }
@@ -697,12 +748,13 @@ pub fn group_send(world: &mut World, ids: &[usize], x: i32, y: i32, dir: Option<
         None => (gx - x16, gy - y16),
     };
     let slots = place(world, &free, x16, y16, vx, vy);
-    let areas = world.map.land_areas.clone();
+    let map = world.map.clone();
     for (i, (sx, sy)) in slots {
         // Planner.Send (0x4ac20d) ends stand ground of every free unit it sends.
         world.units[i].stand_ground = false;
         let sw = stance_walker(world, i);
-        smart_send_to_ex(&mut world.units[i], areas.as_ref(), x, y, (sx - x16) >> 4, (sy - y16) >> 4, prio, false, sw);
+        let areas = areas_of(&map, world.catalog.get(world.units[i].kind));
+        smart_send_to_ex(&mut world.units[i], areas, x, y, (sx - x16) >> 4, (sy - y16) >> 4, prio, false, sw);
     }
 }
 
@@ -728,14 +780,15 @@ pub fn patrol(world: &mut World, ids: &[usize], x: i32, y: i32) {
 
 /// `PatrolLink` (0x4ea3f0): the next leg, a priority-0 move put in front of the patrol.
 fn patrol_link(world: &mut World, i: usize) {
-    let areas = world.map.land_areas.clone();
+    let map = world.map.clone();
+    let areas = areas_of(&map, world.catalog.get(world.units[i].kind));
     let sw = stance_walker(world, i);
     let u = &mut world.units[i];
     let Some(Order::Patrol { a, b, back }) = u.orders.last_mut() else { return };
     let (tx, ty) = if *back { *a } else { *b };
     *back = !*back;
     u.prio = 0;
-    smart_send_to_ex(u, areas.as_ref(), tx, ty, 0, 0, 0, true, sw);
+    smart_send_to_ex(u, areas, tx, ty, 0, 0, 0, true, sw);
 }
 
 /// Whether a unit walks in stance 1 on attack-moves: it has `#MOTION_L0` and no `FASTUNIT`.

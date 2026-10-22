@@ -15,7 +15,6 @@ const fn f(name: &'static str, original: u32, status: Status, handler: super::Ha
 }
 
 const DONE: Status = Status::Done;
-const NO_TRANSPORT: Status = Status::Stub("no transports (ships) in acr-sim yet");
 
 pub const FUNCTIONS: &[ApiFn] = &[
     f("GetUnitsAmount0", 0x55c70a, DONE, get_units_amount0),
@@ -51,10 +50,10 @@ pub const FUNCTIONS: &[ApiFn] = &[
         Status::Partial("everybody leaves (acr-sim releases all units at once)"),
         leave_building,
     ),
-    f("CheckLeaveAbility", 0x560b17, NO_TRANSPORT, zero),
+    f("CheckLeaveAbility", 0x560b17, Status::Done, check_leave_ability),
     f("SGP_ComeIntoBuilding", 0x577c2a, DONE, sgp_come_into_building),
     f("CreateObject0", 0x55eded, DONE, create_object0),
-    f("CreateFields", 0x577ff4, Status::Stub("no fields/farming in acr-sim yet"), zero),
+    f("CreateFields", 0x577ff4, Status::Done, create_fields),
     f("DieUnit", 0x5701ae, Status::Partial("World::kill; no SLOWDEATH burning yet"), die_unit),
     f("GetUnitInfo", 0x567a0e, DONE, get_unit_info),
     f("GetUnitInfo2", 0x578f2c, DONE, get_unit_info2),
@@ -64,12 +63,27 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("GetCurrentUnits", 0x578173, DONE, get_current_units),
     f("GetMaxUnits", 0x578148, DONE, get_max_units),
     f("CheckBuildingsComplete", 0x566a30, DONE, check_buildings_complete),
-    f("SendUnitsToTransport", 0x56093a, NO_TRANSPORT, zero),
-    f("SetMaxInTransport", 0x57033a, Status::Stub("AI landing not modelled"), zero),
+    f("SendUnitsToTransport", 0x56093a, Status::Done, send_units_to_transport),
+    f(
+        "SetMaxInTransport",
+        0x57033a,
+        Status::Partial("stored; the AI landing process is not modelled"),
+        set_max_in_transport,
+    ),
     f("GetZoneCoor", 0x56c266, DONE, get_zone_coor),
     f("GetBuildingEntryPoint", 0x56ea8c, Status::Stub("no building entry points in the catalog yet: 0"), zero),
-    f("AssignDesantStartGroup", 0x5701ea, Status::Stub("AI landing not modelled"), zero),
-    f("AssignDesantDestGroup", 0x570224, Status::Stub("AI landing not modelled"), zero),
+    f(
+        "AssignDesantStartGroup",
+        0x5701ea,
+        Status::Partial("stored; the AI landing process is not modelled"),
+        assign_desant,
+    ),
+    f(
+        "AssignDesantDestGroup",
+        0x570224,
+        Status::Partial("stored; the AI landing process is not modelled"),
+        assign_desant,
+    ),
     f(
         "CreateFormation",
         0x56fbf8,
@@ -316,6 +330,65 @@ fn die_unit(api: &mut Api, c: &mut Call) -> Result<u32> {
     if let Some(u) = api.object(c.u16(0)?) {
         let id = u.id;
         world_ops::destruct(api.world, id);
+    }
+    Ok(0)
+}
+
+/// `void CreateFields(byte nat)` (0x577ff4): every ready mill of the nation plants fields.
+fn create_fields(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let n = c.u8(0)?;
+    if n < 8 {
+        acr_sim::economy::create_fields(api.world, n);
+    }
+    Ok(0)
+}
+
+/// `bool CheckLeaveAbility(byte nat)` (0x560b17): a selected unit of the nation's selection
+/// is a docked transport.
+fn check_leave_ability(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let n = api.assign(c.u8(0)?) & 7;
+    let docked = api.selected(n).iter().any(|id| {
+        let u = &api.world.units[id.0 as usize];
+        api.world.catalog.get(u.kind).transport && matches!(u.dock, acr_sim::ship::Dock::At(_))
+    });
+    Ok(u32::from(docked))
+}
+
+/// `void SendUnitsToTransport(byte nat)` (0x56093a): the other selected units board the
+/// selection's last transport (`GoToTransport`, priority 0x90).
+fn send_units_to_transport(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let n = api.assign(c.u8(0)?) & 7;
+    let ids = api.selected(n);
+    let is_t = |api: &Api, id: &EntityId| {
+        let u = &api.world.units[id.0 as usize];
+        u.living() && api.world.catalog.get(u.kind).transport
+    };
+    let Some(&t) = ids.iter().rev().find(|id| is_t(api, id)) else { return Ok(0) };
+    let riders: Vec<EntityId> = ids.iter().copied().filter(|id| !is_t(api, id)).collect();
+    for id in riders {
+        acr_sim::ship::go_to_transport(api.world, id.0 as usize, t.0 as usize, 0x90);
+    }
+    Ok(0)
+}
+
+/// `void SetMaxInTransport(byte nat, int n)` (0x57033a).
+fn set_max_in_transport(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let n = c.u8(0)?;
+    if n < 8 {
+        api.st.desant[usize::from(n)].2 = c.i32(1)?;
+    }
+    Ok(0)
+}
+
+/// `AssignDesantStartGroup(byte nat, GAMEOBJ* grp)` / `AssignDesantDestGroup` (0x5701ea /
+/// 0x570224): the AI landing's groups.
+fn assign_desant(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let n = usize::from(c.u8(0)? & 7);
+    let Some(g) = api.group(c, 1)? else { return Ok(0) };
+    if c.name() == "AssignDesantStartGroup" {
+        api.st.desant[n].0 = g as u16;
+    } else {
+        api.st.desant[n].1 = g as u16;
     }
     Ok(0)
 }

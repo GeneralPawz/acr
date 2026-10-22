@@ -399,8 +399,12 @@ fn apply_unit(w: &mut World, player: u8, kind: TypeId, category: u8, slots: &Slo
                 w.units[b].personal_delay = i32::from(v.apply(w.units[b].personal_delay) as u8);
             }
         }
-        // WEAPON and PRECISE have no effect in the engine either; FISHING and SHAR have none
-        // here.
+        (ctg::FISHING, _) => {
+            // FishAmount (u16) and FishSpeed (u8) take the same operation (0x531a70).
+            let a = adv_mut(w, player, kind);
+            a.fish = (i32::from(v.apply(a.fish.0) as u8), i32::from(v.apply(a.fish.1) as u16));
+        }
+        // WEAPON and PRECISE have no effect in the engine either; SHAR has none here.
         _ => {}
     }
 }

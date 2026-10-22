@@ -116,7 +116,7 @@ impl Api<'_> {
     }
 
     /// Living selected units of a nation (serial-valid).
-    fn selected(&self, n: u8) -> Vec<EntityId> {
+    pub(crate) fn selected(&self, n: u8) -> Vec<EntityId> {
         self.st.selection[usize::from(n)].iter().filter_map(|&m| self.member(m)).map(|u| u.id).collect()
     }
 
@@ -726,8 +726,11 @@ fn set_dest_point(api: &mut Api, c: &mut Call) -> Result<u32> {
 fn push_all_units_away(api: &mut Api, c: &mut Call) -> Result<u32> {
     let n = api.assign(c.u8(0)?) & 7;
     for id in api.selected(n) {
-        if !api.world.units[id.0 as usize].inside.is_empty() {
-            acr_sim::economy::leave(api.world, id.0 as usize);
+        let i = id.0 as usize;
+        if api.world.catalog.get(api.world.units[i].kind).transport {
+            acr_sim::ship::leave_all(api.world, i);
+        } else if !api.world.units[i].inside.is_empty() {
+            acr_sim::economy::leave(api.world, i);
         }
     }
     Ok(0)

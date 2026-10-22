@@ -231,6 +231,9 @@ pub struct ScriptState {
     pub nmask: [u8; 8],
     /// `CITY[n].Difficulty`.
     pub difficulty: [u8; 8],
+    /// The AI landing setup per nation (`CITY+0xf4e`, `+0xf50`, `+0x189`): start and
+    /// destination groups and the transport load (default 80).
+    pub desant: [(u16, u16, i32); 8],
     /// Player names set by `SetPlayerName`.
     pub player_names: [Option<Vec<u8>>; 8],
     /// Nations whose AI was switched on by `StartAI`: `(nation, DLL path)`.
@@ -306,6 +309,7 @@ impl ScriptState {
             assign: [0, 1, 2, 3, 4, 5, 6, 7],
             nmask: std::array::from_fn(|n| 1 << n),
             difficulty,
+            desant: [(0xFFFF, 0xFFFF, 80); 8],
             player_names: Default::default(),
             ai_started: Vec::new(),
             extra: BTreeMap::new(),

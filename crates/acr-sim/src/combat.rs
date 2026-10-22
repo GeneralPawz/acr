@@ -664,7 +664,7 @@ pub fn muzzle_points(w: &World, i: usize) -> Vec<(i32, i32, i32)> {
 
 /// `GetDamagePoint` (0x52557e) for a unit target: its position at its `ZPOINTS` aim height,
 /// after two random numbers the engine multiplies by 0.
-fn damage_point(w: &mut World, j: usize) -> (i32, i32, i32) {
+pub(crate) fn damage_point(w: &mut World, j: usize) -> (i32, i32, i32) {
     let e = &w.units[j];
     let t = w.catalog.get(e.kind);
     let (x, y) = e.pos.pixels();
@@ -697,7 +697,7 @@ fn aim_point(w: &mut World, aim: Aim) -> (i32, i32, i32) {
 }
 
 /// `CreateRazbros` (0x51b917): disperses the aim point by `RAZBROS`.
-fn razbros(w: &mut World, i: usize, c: &mut (i32, i32, i32)) {
+pub(crate) fn razbros(w: &mut World, i: usize, c: &mut (i32, i32, i32)) {
     let u = &w.units[i];
     let rz = w.adv(u.owner, u.kind).razbros;
     if rz == 0 {

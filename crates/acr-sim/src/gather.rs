@@ -325,6 +325,10 @@ fn carry_home(w: &mut World, i: usize, kind: u8, dst: usize) -> bool {
         // GETRES (0x4d3170): the base credits `ResEff` % of the load.
         let mut r = u.carried * w.adv(base.owner, base.kind).res_eff / 100;
         let owner = usize::from(u.owner);
+        // The city's gathering statistics (0x4d31de) count this before the nation factors.
+        if let Some(s) = [WOOD, STONE, FOOD].iter().position(|&x| x == dst) {
+            w.players[owner].gathered[s] += r;
+        }
         let p = &w.players[owner];
         match dst {
             WOOD => r = r * p.wood_eff / 100,

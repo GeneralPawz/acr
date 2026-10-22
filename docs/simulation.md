@@ -292,6 +292,64 @@ walk in a stance:
   0x52bf0b);
 - a cannon driving (stance 1).
 
+### Ships
+
+Ships (`MOTIONSTYLE SHEEPS`, handler 0x4d5c00; `NEWSHEEPS` for canoes, 0x4d5810) keep a speed
+(OB+0xe4, 1/16 px per tick) and a velocity (`ship.rs`). `CalculateMotion2` (0x4d4540) runs
+every tick:
+
+- with a target farther than 64: speed `+6` while below `MaxV = 2·step·RATE₀/16`, else
+  `MaxV` (it overshoots once by less than 6); the heading turns 2 per tick towards the
+  target (snapped once closer than 4) and the velocity follows the heading, so a ship never
+  stops to turn. `NEWSHEEPS` quantise the target direction to the sprite directions;
+- without a target: velocity and speed lose a quarter per tick, zero at speed ≤ 8.
+
+The ship occupies its `Lx × Lx` box of 16 px cells. A step tests the box at the next position
+against the water lock map and the other units; when it is blocked,
+`CalculateMotion2Limited` (0x4d4cf0) once tries the nearest free of the eight directions
+(`TryDir` with the engine's direction tables, turning 4 per tick). Otherwise the ship stops
+(`StopObject`, one `rando`) and after `StandTime > 15` pushes the ships in its way
+(`TryToPushShipsBy` 0x4d56d0: speed 200 along their own heading; docked transports are not
+pushed). A successful step (`MoveObject`) draws one `rando`. Group moves of ships route over
+the `TOPW` areas, and `ApplyOffset` tests a 14 × 14 box for them (4 × 4 for land units).
+
+**Transports** (`TRANSPORT n`, capacity `n`) have a docking point (`DstX/DstY`): unset at
+creation, away (−1) while sailing, or the land point 256 px ahead of the centre once docked.
+Every new move (`NewMonsterSendTo` 0x517045) first goes through `ParkWaterNewMonster`
+(0x54aa9c): open water around the target is an ordinary move; otherwise the nearest free box
+on the 40 rings around it becomes a docking order (`WaterNewMonsterSendToLink` 0x54ac93): sail
+there until within 8 cells of a box touching land, then turn 2 per tick to the mean direction
+of the blocked boxes 8 cells around (`GetBestDirection` 0x54a52f) and dock if a 4 × 4 land box
+ahead is free.
+
+- `GoToTransport` (0x54d78d, order 243; a formation member breaks up its formation): only
+  after the transport docked once, with room left. The unit walks to the landing point, then
+  straight over the water (unlimited) to the transport and hides inside within
+  `StopDistance + 32 px`. A full transport sends it back to the shore.
+- `LeaveTransport` (0x54e000; `LeaveAll` 0x54df93 one order per passenger): at a shore the
+  transport docks there; after 3 ticks one passenger appears at its centre, walks straight to
+  the 3/4 point towards the landing point and then to the landing point ± 16 px.
+  `ClearUnlimitedLink` (0x527dec) moves a unit still on a locked cell to the nearest free
+  9 × 9 land box (`FINDNEAREMPTY` 0x527d02).
+
+**Broadsides** (`WaterAttackLink` 0x520ef8, ships with `MULTIWEAPON`): the attack index is
+the last whose detection range holds the target. In range the ship turns the nearer side to
+it (2 per tick) and, within 8, fires a random gun (`MULTIWEAPON` offsets rotated by the
+heading, height `z`); `ZALP n` shots make one volley before the reload. Out of range it sails
+closer unless it stands ground.
+
+**Ports** (`PORT`): `FindPortPlace` (0x532cdb) puts the water point at the nearest free
+21 × 21 water box on the square rings 5..44 around the port. A ship is only started with a
+free 15 × 15 box there; otherwise idle ships nearby are sent 300..700 px away
+(`ClearBirthPlace` 0x49e479). New ships appear at the point heading 96 and sail to the rally
+point ± 1024 px.
+
+**Fishing** (`FISHING speed amount`, `ProcessFishing` 0x54f1b0, `FishingLink` 0x54eb16):
+every 51 ticks idle boats start fishing; the catch grows by `speed/128` per tick
+(`FISHING` upgrades change both values, `speed` wraps at 256) while the boat sails between
+random spots within 32 lock cells; a full boat brings the catch to the nearest own port's
+water point and rests 60 ticks.
+
 ### Directions and sprites
 
 The drawing code (0x5062a3) selects the sprite frame from `RealDir`:
@@ -869,6 +927,18 @@ Implemented in `economy.rs`. The sources are `City::Census` (0x42e658), the upke
     fails). Nothing caps the number: the 30 px spacing, the 8 × 15 free lock cells, trees,
     slope, the map edge and the gold limit it, which gives about 546 fields on empty flat
     ground (fewer around the mill's own locks).
+    The city tick of nation `k` (on ticks with `tmtmt & 7 == k`, nations 0..6, AI or not,
+    0x4a69b4) also calls `CreateFields(k)` (0x577ff4) with chance `0x800/32768`: every
+    ready mill of the nation plants again the same way. A computer nation's city first
+    draws one `rando` (0x43269e) and, if it has mills, with chance `0x1000/32768`
+    (`HandleFields` 0x431ead) lets each of them plant 20 fields at random points of the
+    diamond (`CreateFieldsSlow` 0x5153cd).
+  - **Gathering speeds** (City+0xeb2c..+0xeb44): wood, stone and food delivered count
+    `load·ResEff/100` (before the nation factors; fishing boats count their food). On the
+    city tick, once `GlobalTime` (2 per tick) is more than 1000 past the last update, the
+    speeds become `amount·25/dt` and the amounts restart. `GetExtraction` returns the food
+    and wood speeds, and for stone, iron, coal and gold the peasants inside mines of that
+    resource.
   - **Mines** (`RESSUBST`, only the gold mine has it): a mine placed within 64 px of a
     deposit of another resource is created as that resource's mine — the type `+1` iron,
     `+2` coal, `+3` stone, `+4` food, `+5` wood, the order of every nation file
@@ -1042,9 +1112,12 @@ No game option writes it. How the map view draws the fog is in
     (an idle one first, else the shortest queue).
   - Synthetic catalogs without nation files have no tech tree: everything is enabled and
     buildings produce anything.
-  - Not reproduced yet: ports and ships; the AI
+  - The AI city's mill list (`MelnID`) is the nation's first four ready mills (the engine
+    records the mills present at `StartAIEx` and those its city places).
+  - Not reproduced yet: the AI landing process (`AssignDesant*`, `SetMaxInTransport` are
+    stored only); fishing boats do not flee from enemy ships (`GetShipDanger`); the AI
     difficulty factor on production time; the 10× cannon price lobby option.
-  - Upgrades without effect here: `FISHING`, `SHAR` (`WEAPON` and
+  - Upgrades without effect here: `SHAR` (`WEAPON` and
     `PRECISE` have none in the engine either). `ENABLE
     UPGRADES` does nothing (the engine indexes the type table with upgrade ids). The
     `STAGELOCKPOINTS` of building stages are not set.
@@ -1057,7 +1130,10 @@ No game option writes it. How the map view draws the fog is in
     position (0x559a40, 0x51e359); terrain and buildings blocking a musket shot before it
     is fired (`PredictShot`; boxes do stop the ball in flight); `BackSteps` when an enemy is
     too close; the territory checks; the AI's random-cell search (`Zombi` units) and its
-    artillery pickers; healers; ships' broadsides.
+    artillery pickers; healers.
+  - Ships: the water pre-path (`CreateWaterPrePath` 0x535b04) uses the land pre-path on the
+    water lock map; `MoveObject` and docking use the order's cell centre rather than the
+    clicked point; `EraseLodki` has no caller in AC.
   - Projectiles: the explosion's water test samples the `SEA2` depth with the rows shifted
     by the height (the engine reads a screen-space water map); the corpses thrown by a
     `DETONATOR` blast are not moved; `extra` (the shot point's visual height) is kept but
@@ -1077,7 +1153,7 @@ No game option writes it. How the map view draws the fog is in
   - Shot damage falloff uses an integer `2^(−d/dec)` (16-step table, linear interpolation)
     instead of the x87 `exp`, so values can differ by 1.
 - **Not reproduced yet:**
-  - motion styles 1, 2, 4, 5 (ships and sheep use style 0 on the water layer here);
+  - motion styles 1 and 4 (`SLOWROTATE`, `ROTATE&MOVE`);
   - `GotoFinePosition` (0x4a0670, at `StandTime == 48`);
   - the optional terrain pass 0x449aa4;
   - `STAGELOCKPOINTS`, construction (`BUILDLOCKPOINTS`), walls and gates;
@@ -1115,6 +1191,11 @@ No game option writes it. How the map view draws the fog is in
   with its turn animations, bombards it and pays iron and coal; a deployed cannon fires
   canister into a crowd; projectiles are deterministic. A stance walk with `RATE 4 8` goes
   half as fast (`tests/world.rs`).
+- **Ship tests** (`tests/ships.rs`): a ship accelerates by 6 per tick (overshooting once)
+  to `2·step` and arrives; a ferry ordered onto the shore docks with its land point on land,
+  a soldier boards it, it sails along the shore, docks again and lets him off on the far
+  shore. **City test** (`tests/city.rs`): the gathering speed is `amount·25/dt` after
+  `GlobalTime` passes 1000.
 - **Upgrade tests** (`tests/upgrade.rs`): research is paid at the start, blocks the
   building and ends on the 10th tick for `#TIME 21`; damage and protection change for the
   researching player only; links enable the next level; cancelling refunds; `BUILD`,
@@ -1173,8 +1254,8 @@ No game option writes it. How the map view draws the fog is in
 
 ## Open questions
 
-- Motion styles 1, 2, 4, 5 (`SLOWROTATE`, `SHEEPS`, `ROTATE&MOVE`, `NEWSHEEPS`); ship
-  pathing on the water layer (0x535b04).
+- Motion styles 1 and 4 (`SLOWROTATE`, `ROTATE&MOVE`); the visibility test of the water
+  pre-path (0x535b04).
 - What runs the brigade order list each tick, and `0x41d090` at the end of `PlaceBrigade`.
 - The exact `Rarr` push tables of `RemoveFools`, `ApplyOffset`, the 10-ring spiral table.
 - The first move of a unit standing on a locked cell (0x538c4e) and the repulsion vector

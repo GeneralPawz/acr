@@ -243,6 +243,14 @@ pub fn sim_check(dir: &Path, map: &str, rest: &[&str]) -> Result<()> {
         a.projectiles.iter().count(),
         a.units.iter().filter(|u| u.living() && u.building && !u.inside.is_empty()).count()
     );
+    let ships: Vec<_> =
+        a.units.iter().filter(|u| u.living() && acr_sim::ship::is_ship(a.catalog.get(u.kind))).collect();
+    if !ships.is_empty() {
+        let moving = ships.iter().filter(|u| u.speed > 0).count();
+        let docked = ships.iter().filter(|u| matches!(u.dock, acr_sim::ship::Dock::At(_))).count();
+        let fishing = ships.iter().filter(|u| matches!(u.orders.last(), Some(acr_sim::world::Order::Fishing))).count();
+        println!("  ships: {} ({moving} under way, {docked} transports docked, {fishing} fishing)", ships.len());
+    }
     far.sort_by_key(|f| std::cmp::Reverse(f.1));
     if !far.is_empty() {
         let sample: Vec<String> = far.iter().take(5).map(|(id, d)| format!("#{} {d} px", id.0)).collect();
