@@ -1,0 +1,11 @@
+[package]
+name = "acr-mission"
+description = "Runs the original American Conquest mission and AI scripts on the ACR simulation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+acr-formats.workspace = true
+acr-script.workspace = true
+acr-sim.workspace = true

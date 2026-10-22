@@ -53,6 +53,7 @@ dependencies = [
  "acr-audio",
  "acr-formats",
  "acr-mapgen",
+ "acr-mission",
  "acr-render",
  "acr-sim",
  "acr-video",
@@ -75,6 +76,15 @@ name = "acr-mapgen"
 version = "0.1.0"
 dependencies = [
  "acr-formats",
+]
+
+[[package]]
+name = "acr-mission"
+version = "0.1.0"
+dependencies = [
+ "acr-formats",
+ "acr-script",
+ "acr-sim",
 ]
 
 [[package]]
@@ -108,6 +118,7 @@ dependencies = [
  "acr-audio",
  "acr-formats",
  "acr-mapgen",
+ "acr-mission",
  "acr-script",
  "acr-sim",
  "acr-video",

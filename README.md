@@ -48,7 +48,8 @@ crates/
   acr-formats   original data formats; pure, no I/O required (native + wasm32)
   acr-mapgen    random map generator, reproduced from the original (pure, native + wasm32)
   acr-sim       deterministic fixed-tick simulation: world, original pathfinding, motion, formations
-  acr-script    mission/AI scripting: PE reader now, x86 interpreter + API later
+  acr-script    mission/AI scripting: PE reader, x86 interpreter, KERNEL32 shims
+  acr-mission   the game API of the scripts on acr-sim; runs missions and AI DLLs
   acr-video     Bink 1 video + audio decoder for the intro movies (native + wasm32)
   acr-render    wgpu renderer: palette-indexed sprite atlas, layer blend modes, map terrain
   acr-viewer    sprite and map viewer app (winit); native binary and wasm entry point
@@ -103,6 +104,8 @@ cargo run --release -p acr-tool -- script-api "C:\path\to\American Conquest" > d
 cargo run --release -p acr-tool -- bik-check "C:\path\to\American Conquest"
 # Run a map's units headless for 3000 ticks, twice, and compare state hashes
 cargo run --release -p acr-tool -- sim-check "C:\path\to\American Conquest" Missions\England\01\eng01.m3d 3000
+# Run a mission with its original script headless and print what it does
+cargo run --release -p acr-tool -- mission-run "C:\path\to\American Conquest" "#columb1@" --ticks 3000
 
 # Sprite viewer (Left/Right file, Up/Down frame, Space play, G grid, +/- zoom, 1-8 player)
 cargo run --release -p acr-viewer -- "C:\path\to\American Conquest" ENGB17C.GP

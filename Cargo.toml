@@ -12,6 +12,7 @@ acr-formats = { path = "crates/acr-formats" }
 acr-mapgen = { path = "crates/acr-mapgen" }
 acr-script = { path = "crates/acr-script" }
 acr-sim = { path = "crates/acr-sim" }
+acr-mission = { path = "crates/acr-mission" }
 acr-render = { path = "crates/acr-render" }
 acr-audio = { path = "crates/acr-audio" }
 acr-app = { path = "crates/acr-app" }

@@ -10,6 +10,7 @@ mod fonts;
 mod images;
 mod mapgen;
 mod maps;
+mod mission;
 mod scripts;
 mod sim;
 mod sprites;
@@ -44,6 +45,7 @@ const MODULES: &[&[Command]] = &[
     video::COMMANDS,
     scripts::COMMANDS,
     sim::COMMANDS,
+    mission::COMMANDS,
 ];
 
 /// Returned by a command whose arguments do not fit; `main` then prints its usage.

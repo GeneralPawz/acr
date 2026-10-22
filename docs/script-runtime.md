@@ -123,10 +123,10 @@ Logged with `acr script-run` (stub returns 0 everywhere):
    `DisableUpgrade`, `EnableUnit`. The first argument is a pointer into the DLL's data: the
    engine is told where the script keeps its state (groups, variables, unit type handles)
    so it can fill and save it.
-2. **`OnInit()`**: in most missions it repeats the same registration sequence (the DLLs'
-   global objects register in their constructors and `OnInit` registers again), e.g. 2,634
-   `RegisterVar` calls in `Miss7E02`.
-3. **`ProcessScenary()`** per game tick: trigger and timer polling (`Trigg(n)`,
+2. **`OnInit()`**: called by the DLL's own `DllMain` (the engine never calls it), so the
+   second registration sequence `acr script-run` shows is an artefact of the tool calling it
+   again.
+3. **`ProcessScenary()`** every 8th game tick: trigger and timer polling (`Trigg(n)`,
    `TimerDoneFirst(n)`, `RunTimer`), unit queries (`GetTotalAmount0/1`, `GetUnitsAmount0`,
    `GetInsideAmount`), selection-based commands (`SelectUnitsType`, `SaveSelectedUnits`,
    `ClearSelection`, `SelSendTo`, `SelDie`), spawning (`CreateObject0`) and victory checks
@@ -139,6 +139,97 @@ AI nations: `DllMain` registers 22 unit types and 92 upgrades; `InitAI` asks
 (`RegisterDynGroupEx`, `CleanGroup`), economy (`TryUpgrade`, `SGP_TakeResources`) and
 memory through `_ExMalloc`/`_ExFree`.
 
+## Game API on the simulation (`crates/acr-mission`)
+
+`acr-mission` implements the 210 `dmcr.exe` functions and the 6 `DipServer.dll` functions the
+DLLs import on `acr_sim::World` and drives the scripts like the original. It is a separate
+crate so that `acr-script` stays a generic Win32/x86 sandbox and `acr-sim` stays free of
+scripting; only this crate knows the engine's script-facing structures.
+
+```sh
+acr mission-run <game-dir> <mission-id|map|dll> [--ticks N] [--trace] [--ai]  # headless run, event log
+acr mission-api                                                               # coverage table below
+ACR_GAME_DIR=<game-dir> cargo test -p acr-mission --test missions
+```
+
+| module | role |
+|---|---|
+| `api` | the function table (`ApiFn`: name, original address, `Status`, handler) and the `Host` that dispatches calls; one module per area: `core` (triggers, timers, heap), `game` (registration, pages, questions, victory, players, RNG, fog, camera), `groups` (selection, groups, orders, `SGP_*` processes), `units` (counting, `CreateObject0`, unit info), `economy` (resources, production, upgrades, market), `tactics` (top zones, danger maps, safe ways, attacks), `aiobj` (`GetOBJ`, `OBJ_*`) |
+| `state` | `ScriptState`: the engine side of `SCENINF` (triggers, timers, groups, zone groups, light spots, victory flags) plus the per-nation selections and alliance masks |
+| `guest` | `OneObject` mirrors in guest memory for the AI DLLs |
+| `vm` | one loaded DLL (`Machine`, per-tick export, failure state) |
+| `world_ops` | the few direct world changes scripts make (kill, erase, change owner, create) |
+| `texts`, `events` | mission text files (`#PAGE0 picture` + body) and what the UI is told |
+| `lib` | `Scripts`: loading, the tick cadence, questions, AI scheduling |
+
+The semantics come from the original functions (disassembly of `dmcr.exe` 1.46; the Cossacks
+source `ActiveScenary.cpp` served as a map, the binary decides). Every handler names the
+address it reproduces.
+
+### How the engine runs scripts
+
+* **Loading** (`ScenaryInterface::Load`, 0x55afdd): `LoadLibrary` runs `DllMain`, and the
+  DLLs call their own `OnInit` from `DllMain`; the engine only resolves `ProcessScenary`. The
+  text file named in `Missions.txt` (5th line of a record) is split into `#ID header` entries
+  whose body runs to the next `#`.
+* **Cadence**: the simulation step 0x4a61e7 runs `HandleMission` (0x55a1d2) only when
+  `tmtmt & 7 == 7`: `ProcessDipRelations` (DipServer), `ProcessScenary`, the central-text and
+  timer countdown (`8 << SpeedSh` = 16 per call, i.e. `GetGlobalTime` units, +2 per tick), then
+  the head process of every group (`SGP_*`). The other phases run the AI city of nation
+  `tmtmt & 7` (nation 7 never gets an AI). `Scripts::tick` runs before `World::step` with
+  `tmtmt = tick + 1`.
+* **Handles** (`GAMEOBJ`, 8 bytes in DLL memory): `u16 Index, u16 Serial, u32 Type` with the
+  magics `'UNIT'` (groups), `'ZONE'` (zone groups), `'UTYP'`, `'UPGR'`, `'FORM'`, and point zones
+  `0x40000000 | R` with x/y in Index/Serial (pixels). Wrong handles go to `IntErr`, which in
+  the original only shows a box when `ERR.LOG` exists, and increment `SCENINF.NErrors`, which
+  has no effect after loading; ACR logs them in `ScriptState::error_log`.
+* **Triggers** are stored inverted, so all 256 read 0xFF at the start; scripts rely on it
+  (`if (Trigg(99)) { SetTrigg(99, 0); ... }`).
+* **Units** are identified by index and serial. ACR's entity slots are never reused, so the
+  serial is derived from the index and only bit 0 changes (on capture, as in the original).
+* **Random numbers**: `RandNew`/`GetRND` draw from the simulation's synchronised table
+  (`World::random`), as in the original; the call order matters for determinism.
+* **Orders** (`SelSendTo`, `OBJ_SendTo`, attacks) become `Command`s for the current tick, so
+  the tick's command stream holds the players' and the scripts' orders. Object creation,
+  death and owner changes change the world at once because scripts query the result in the
+  same call.
+* **Pages and questions**: `ShowPage`/`AskQuestion` are modal dialogs inside the script call
+  in the original, so the game stands still. ACR reports a `MissionEvent::Page` (the UI pauses
+  while it shows it); a question rolls the script call back (machine, script state and world
+  are restored from a snapshot taken for missions that import `Ask*`) and reruns it with the
+  answer once `Scripts::answer` is called. `ShowVictory`/`LooseGame` stop the game
+  (`Scripts::ended`); the original shows WINNER/LOOSER for 7 s and unlocks the next campaign
+  missions after a victory.
+* **AI DLLs**: the DLL of a computer nation is `GetTextByID("<NATIONID>.0")` from
+  `TEXT\AI.TXT` (`SPAIN.0 AI\Spain.dll`), the nation found through the unit id suffix of its
+  first peasant in `NATIONS.LST`; missions start AIs with `StartAI`. A DLL is loaded once and
+  shared by the nations that use it (`LoadLibrary` semantics). `InitAI` runs at load; the AI
+  of nation k runs on ticks with `tmtmt % 8 == k` once the nation owned a peasant
+  (`CenterFound`).
+* **Engine memory in the DLLs**: the AI DLLs read 20 `OneObject` fields directly (no pointer
+  chains): `GetOBJ(i)` returns a 0x100-byte mirror at `0x7000_0000 + 0x100·i`, refreshed when
+  handed out and before every `ProcessAI`, and written fields (`Life` for the AI's "immortal
+  group" trick) are copied back afterwards. Field table in `guest.rs`. Pointers into engine
+  data that DLLs read (`GetListOfNearZones`, `GetUnitExCaps`' unit id, `GetTextByID`) point to
+  copies in the guest heap, made once per DLL.
+
+### What real missions do (3000 ticks headless, no player input)
+
+The 51 missions of `Missions.txt` whose maps ship load and run without script errors
+(Single9–11 reference maps that are not in the installation). Examples:
+
+* `#columb1@`: shows `#PAGE0` ("AYE KOLUMBUS! ...") at tick 39, switches four objective
+  sections, lands 40 natives with `CreateObject0` and waits for the player to build 35
+  peasants.
+* `#columb4@`, `#Tekumse_I2@`, `#Tekumse_I4@`: count down with a hint every script call
+  ("Verbleibende Zeit 12:07").
+
+Gaps that follow from the simulation (acr-sim has no combat, economy, production, buildings
+with garrisons or fog yet): attacks are plain `Command::Attack` on the nearest enemy,
+`ProduceUnit` uses a stand-in timer (100 ticks; fast production 15·(Speed+1)), and the
+functions listed as stubs return neutral values. They are marked `TODO(acr-sim)` in the code
+and become real as the simulation grows; the table below is generated from the code.
+
 ## KERNEL32 emulation
 
 The process is a single-threaded Windows XP (`GetVersion` = 5.1.2600) with code page 1252,
@@ -149,12 +240,12 @@ Critical sections are no-ops, TLS is a host-side table, standard output and
 
 ## Open problems
 
-* **Game API**: `RecordingHost` is a stub. The real implementation on `acr-sim` needs
-  signatures and semantics for the 210 functions; argument counts are known, types are not.
-* **Engine structures exposed to scripts**: AI code reads `GAMEOBJ`/`OneObject` fields
-  through pointers returned by `GetOBJ` and similar functions, and scripts hand the engine
-  pointers to their own data (`RegisterVar`, `RegisterDynGroup`). The API layer must
-  mirror those memory layouts inside guest memory.
+* **Game API**: see the coverage table; the partial and stubbed functions wait for
+  simulation features (combat, economy, production, garrisons, fog, upgrades).
+* **DipServer.dll** (diplomacy with neutral tribes, `$PSB` map groups): runs next to the
+  mission (`ProcessDipRelations` every script call) and owns the squads the AI DLLs hand it
+  (`AddStorm`, `AddTomahawks`, ...); its 6 AI-facing functions are stubs until it runs in the
+  interpreter (#42).
 * **Files**: `CreateFileA` always fails. If a DLL needs data files (`CMS_Start` wants
   `start.dat`), add a read-only file provider to `Process`.
 * **Saving**: `Machine` is `Clone`, which is enough for snapshots; a compact
@@ -167,3 +258,226 @@ Critical sections are no-ops, TLS is a host-side table, standard output and
   caching are possible if ticks get expensive.
 * `DipServer.dll` imports (`AddCannon`, `SetAIForDiplo`, ...) go to the same host as the
   game API.
+
+## API coverage
+
+Generated by `acr mission-api`: 216 functions: 92 done, 69 partial, 55 stubbed
+
+| function | original | status | notes |
+|---|---|---|---|
+| `?AddCannon@@YAXPAUGAMEOBJ@@E@Z` | DipServer | stub | not implemented |
+| `?AddFirers@@YAXPAUGAMEOBJ@@E@Z` | DipServer | stub | not implemented |
+| `?AddPsKillers@@YAXPAUGAMEOBJ@@E_N@Z` | DipServer | stub | not implemented |
+| `?AddStorm@@YAXPAUGAMEOBJ@@EH@Z` | DipServer | stub | not implemented |
+| `?AddTomahawks@@YAXPAUGAMEOBJ@@EGHH@Z` | DipServer | stub | not implemented |
+| `?AssignHint1@@YAXPADH@Z` | 0x4942db | done |  |
+| `?AssignHint@@YAXPADH@Z` | 0x494283 | done |  |
+| `?GetTextByID@@YAPADPAD@Z` | 0x60a020 | done |  |
+| `?SetAIForDiplo@@YA_NEHH@Z` | DipServer | stub | not implemented |
+| `?_ExFree@@YAXPAX@Z` | 0x46b11e | done |  |
+| `?_ExMalloc@@YAPAXH@Z` | 0x46b1c7 | done |  |
+| `?_ExRealloc@@YAPAXPAXH@Z` | 0x46b220 | done |  |
+| `AI_Torg` | 0x569083 | partial | market of ECONOMY.TXT (patch values); no drift back to nominal yet |
+| `AddOneUnitToGroup` | 0x5670a8 | done |  |
+| `AddResource` | 0x562dea | done |  |
+| `AddUnitToSel` | 0x56c8c7 | done |  |
+| `AllowAttack` | 0x562234 | stub | no auto-attack flag in acr-sim yet |
+| `AskMultilineQuestion` | 0x5662de | done |  |
+| `AskQuestion` | 0x562765 | done |  |
+| `AskQuestionParam` | 0x562868 | done |  |
+| `AssignDesantDestGroup` | 0x570224 | stub | AI landing not modelled |
+| `AssignDesantStartGroup` | 0x5701ea | stub | AI landing not modelled |
+| `Attack3` | 0x57ea15 | partial | idle members attack the nearest enemy in the zone (Command::Attack); the original's target rules need combat |
+| `Attack4` | 0x580042 | partial | idle members attack the nearest enemy in the zone (Command::Attack); the original's target rules need combat |
+| `Attack6` | 0x580b71 | partial | idle members attack the nearest enemy in the zone (Command::Attack); the original's target rules need combat |
+| `AttackBuildingsInZone` | 0x5617df | partial | idle members attack the nearest enemy in the zone (Command::Attack); the original's target rules need combat |
+| `AttackByTomahawks` | 0x574667 | partial | idle members attack the nearest enemy in the zone (Command::Attack); the original's target rules need combat |
+| `AttackEnemyInZone` | 0x5642b7 | partial | idle members attack the nearest enemy in the zone (Command::Attack); the original's target rules need combat |
+| `AttackEnemyInZone2` | 0x57dfb9 | partial | idle members attack the nearest enemy in the zone (Command::Attack); the original's target rules need combat |
+| `AttackGrpByGrp` | 0x57385f | partial | idle members attack the nearest enemy in the zone (Command::Attack); the original's target rules need combat |
+| `CancelAllPurposes` | 0x578bc5 | done |  |
+| `ChangeFriends` | 0x561df9 | partial | masks are kept for the scripts; acr-sim has no alliances/targeting yet |
+| `CheckBuildingsComplete` | 0x566a30 | partial | ACR creates buildings finished: always 1 |
+| `CheckDef` | 0x573c0d | stub | not implemented |
+| `CheckLeaveAbility` | 0x560b17 | stub | no garrisons/transports in acr-sim yet: 0 / nothing happens |
+| `CheckProduction` | 0x5672cc | done |  |
+| `CleanGroup` | 0x56cf09 | done |  |
+| `ClearLightSpot` | 0x564121 | partial | stored; no fog of war yet |
+| `ClearSelection` | 0x55f51f | done |  |
+| `CollectUnits` | 0x56d814 | partial | as RemoveNUnits |
+| `CopyUnits` | 0x56ea22 | done |  |
+| `CreateDangerMap` | 0x57c3ea | partial | every object counts as category 0 (no CATEGORY in the catalog); no garrisons/resource bases |
+| `CreateDangerMapForDef` | 0x57c7c0 | partial | STORMFORCE not in the catalog: every enemy unit adds 1 |
+| `CreateDangerMapForTom` | 0x57c9ee | partial | as CreateDangerMap |
+| `CreateFarmList` | 0x57c20d | stub | no fields: the list stays empty |
+| `CreateFields` | 0x577ff4 | stub | no fields/farming in acr-sim yet |
+| `CreateFormation` | 0x56fbf8 | partial | moves officer, drummer and soldiers into the group; Command::Form |
+| `CreateFriendBuildingsTopList` | 0x57b859 | stub | not implemented |
+| `CreateMeatList` | 0x57bff5 | stub | no hunting: the list stays empty |
+| `CreateObject0` | 0x55eded | done |  |
+| `CreateTopListEnArmy` | 0x57bad9 | stub | not implemented |
+| `DeleteHiddenUnits` | 0x56d8b9 | partial | no garrisons yet: nothing is hidden |
+| `DeleteUnitFromGroup` | 0x56ce96 | done |  |
+| `DetectPanic` | 0x56d9b7 | partial | no morale/panic in acr-sim: false |
+| `DieUnit` | 0x5701ae | partial | killed at once: no SLOWDEATH/burning yet |
+| `DisableMission` | 0x5622fb | done |  |
+| `DisableUpgrade` | 0x55c335 | partial | flag kept for the build menu (no upgrades in acr-sim) |
+| `EnableMission` | 0x562318 | done |  |
+| `EnableUnit` | 0x55c5bb | partial | flag kept for the build menu (no production UI yet) |
+| `EnumEnemyArmies` | 0x578245 | partial | one army per enemy nation (centre, count, force = count); the original clusters 256-px cells |
+| `FilterUnitsByCategory` | 0x56df95 | partial | categories 3 (peasants) and 4 (not hidden) only; weapon kinds need acr-sim combat data |
+| `FindNextZoneOnTheSafeWay` | 0x579414 | done |  |
+| `FindNextZoneOnTheSafeWayToObject` | 0x57a33c | stub | not implemented |
+| `FreeTimer` | 0x563739 | done |  |
+| `GetAINation` | 0x56827b | done |  |
+| `GetAmountOfWarriors` | 0x55eaba | done |  |
+| `GetBuildingEntryPoint` | 0x56ea8c | stub | no building entry points in the catalog yet: 0 |
+| `GetCurrentPurpose` | 0x578b24 | done |  |
+| `GetCurrentUnits` | 0x578173 | partial | living non-building units (no population rules yet) |
+| `GetDiff` | 0x56957d | done |  |
+| `GetDifficulty` | 0x569555 | done |  |
+| `GetEnemy3` | 0x5818a5 | stub | not implemented |
+| `GetEnemyForce` | 0x571aa8 | stub | not implemented |
+| `GetExtraction` | 0x5699eb | stub | the AI city (projects, statistics) is not modelled yet: 0 |
+| `GetFogSpotVisibility` | 0x56e6a4 | partial | no fog of war yet: everything is visible (as with fog off) |
+| `GetGlobalTime` | 0x5637e7 | done |  |
+| `GetGroupForce` | 0x56f574 | stub | not implemented |
+| `GetGrpCenter` | 0x5789cb | done |  |
+| `GetInsideAmount` | 0x57819e | stub | no garrisons/transports in acr-sim yet: 0 / nothing happens |
+| `GetInsideList` | 0x56c713 | stub | no garrisons/transports in acr-sim yet: 0 / nothing happens |
+| `GetLandType` | 0x5695ae | done |  |
+| `GetListOfNearZones` | 0x579281 | done |  |
+| `GetMaxDamage` | 0x575250 | stub | not implemented |
+| `GetMaxInsideAmount` | 0x5781e5 | stub | MaxInside not in the catalog yet: 0 |
+| `GetMaxUnits` | 0x578148 | stub | no farms/population in acr-sim yet: 0 |
+| `GetMinDamage` | 0x57521b | stub | not implemented |
+| `GetMonUsage` | 0x5751e5 | stub | not implemented |
+| `GetMoney` | 0x568f03 | done |  |
+| `GetMyNation` | 0x5658b6 | done |  |
+| `GetNInside` | 0x5604e2 | stub | no garrisons/transports in acr-sim yet: 0 / nothing happens |
+| `GetNUnits` | 0x5679d8 | done |  |
+| `GetNZones` | 0x579399 | done |  |
+| `GetNextZone` | 0x5792c5 | done |  |
+| `GetOBJ` | 0x56f07f | done |  |
+| `GetOrderType` | 0x56f3f5 | partial | 12 (moving) when the unit has orders, else 0; other order types need acr-sim |
+| `GetPeaceTimeLeft` | 0x569882 | partial | no peace time in ACR games yet: 0 |
+| `GetRND` | 0x570700 | done |  |
+| `GetReadyUnits` | 0x5690f0 | done |  |
+| `GetResource` | 0x562d7a | done |  |
+| `GetSearchRadius` | 0x56f46b | stub | not implemented |
+| `GetTargetObject` | 0x56f4b7 | partial | no attack state in acr-sim yet: never attacking (0xFFFF) |
+| `GetTopDist` | 0x579370 | done |  |
+| `GetTopDst` | 0x5658c7 | done |  |
+| `GetTopZRealCoor` | 0x581847 | done |  |
+| `GetTopZone` | 0x5791cb | done |  |
+| `GetTopZoneCoor` | 0x579229 | done |  |
+| `GetTorgResult` | 0x5690c0 | partial | as AI_Torg |
+| `GetTotalAmount0` | 0x55e6c6 | done |  |
+| `GetTotalAmount1` | 0x55e7f2 | partial | counted live; the original reads a per-nation cache refreshed every 8 ticks |
+| `GetUnitCost` | 0x562f80 | stub | no unit costs in the catalog yet: 0 |
+| `GetUnitExCaps` | 0x56be77 | partial | StandTime 0, order kind 8 (send-to) or -1 |
+| `GetUnitGlobalInfo` | 0x567cb9 | partial | as GetUnitInfo |
+| `GetUnitInfo` | 0x567a0e | partial | AddDamage/AddShield, stages, kills, reload, usage are 0 |
+| `GetUnitInfo2` | 0x578f2c | partial | NInside/MaxInside/Usage are 0 |
+| `GetUnitNMASK` | 0x56bc78 | done |  |
+| `GetUnitStorm` | 0x575285 | stub | not implemented |
+| `GetUnits` | 0x568f4d | done |  |
+| `GetUnitsAmount0` | 0x55c70a | done |  |
+| `GetUnitsAmount1` | 0x55dd05 | done |  |
+| `GetUnitsAmount2` | 0x55e05c | done |  |
+| `GetUnitsByNation` | 0x566ca6 | done |  |
+| `GetUnitsTypeInGroup` | 0x570862 | done |  |
+| `GetUpgradeCost` | 0x56304a | stub | no upgrade costs in the catalog yet: 0 |
+| `GetZoneCoor` | 0x56c266 | done |  |
+| `GetZonesDist` | 0x57931b | done |  |
+| `GrpAttackObject` | 0x570d0c | partial | idle members attack the nearest enemy in the zone (Command::Attack); the original's target rules need combat |
+| `InitialUpgrade` | 0x55c02f | partial | marked done for the nation; effects need acr-sim upgrades |
+| `InitialUpgradeNew` | 0x55c202 | partial | as InitialUpgrade |
+| `InsertUnitToGroup` | 0x56bf98 | done |  |
+| `InviteUnitIntoBuilding` | 0x56c638 | stub | no garrisons/transports in acr-sim yet: 0 / nothing happens |
+| `IsResourceEnabled` | 0x577225 | stub | no resource map in acr-sim yet: 0 |
+| `LeaveBuilding` | 0x56c6ca | stub | no garrisons/transports in acr-sim yet: 0 / nothing happens |
+| `LooseGame` | 0x562456 | done |  |
+| `MakeEnemyAgrTopGrp` | 0x573730 | stub | not implemented |
+| `MakeOneShotToBuild` | 0x573da9 | stub | no artillery fire in acr-sim yet |
+| `MissErrorMessage` | 0x56bc22 | done |  |
+| `NationIsErased` | 0x5695ce | partial | peasants by the PEASANT flag (the original tests USAGE PEASANT) |
+| `OBJ_AttackObj` | 0x56f13f | partial | Command::Attack (acr-sim walks to the target until combat lands) |
+| `OBJ_AttackPoint` | 0x56f3a2 | partial | moves to the point; no ranged ground attack in acr-sim yet |
+| `OBJ_LeaveMine` | 0x56f1d6 | stub | no garrisons in acr-sim yet: returns 0 |
+| `OBJ_SendTo` | 0x56f0a1 | partial | a single-unit Command::Move; priority and order type need acr-sim orders |
+| `Patrol` | 0x561cfb | partial | units walk to their slot once; no patrol order in acr-sim |
+| `ProduceUnit` | 0x566dd2 | partial | ACR's stand-in production: the unit appears next to the building after 100 ticks |
+| `ProduceUnitFast` | 0x566f36 | partial | stand-in production after 15·(Speed+1) ticks (the original's 30·FAST stages) |
+| `PushAllUnitsAway` | 0x56083e | stub | no garrisons/transports yet |
+| `RandNew` | 0x584891 | done |  |
+| `RegisterDynGroup` | 0x56780c | done |  |
+| `RegisterDynGroupEx` | 0x5678e9 | done |  |
+| `RegisterFormation` | 0x55c67c | done |  |
+| `RegisterUnitType` | 0x55be77 | done |  |
+| `RegisterUnits` | 0x55b73d | done |  |
+| `RegisterUpgrade` | 0x55bf0c | partial | no upgrade table in acr-sim yet: every name is accepted and numbered in order |
+| `RegisterVar` | 0x55bac8 | partial | recorded for savegames (#78); the engine never touches the variable otherwise |
+| `RegisterVisibleZone` | 0x55bce5 | done |  |
+| `RegisterZone` | 0x55bb53 | done |  |
+| `RemoveGroup` | 0x568031 | done |  |
+| `RemoveNUnits` | 0x56d757 | partial | Usage filters (≥ 20000) never match: no USAGE in the catalog |
+| `RemoveNearestNotBusyUnit` | 0x56e265 | done |  |
+| `RemoveNearestUnit` | 0x56e48c | done |  |
+| `RemovePanicUnits` | 0x56da24 | partial | no morale/panic in acr-sim: nobody panics |
+| `RemoveUnitFromGroup` | 0x56c17e | done |  |
+| `RemoveUpperGroundUnits` | 0x56eeef | partial | no garrisons yet: every unit is above ground |
+| `RunTimer` | 0x563598 | done |  |
+| `SGP_AttackByArchers` | 0x5790f3 | partial | idle members attack the nearest enemy in the zone (Command::Attack); the original's target rules need combat |
+| `SGP_ComeIntoBuilding` | 0x577c2a | partial | the 'IBLD' process is kept but nobody can enter buildings yet |
+| `SGP_MakeOneStepTo` | 0x578a6f | partial | plain group move (Command::Move): no facing, order type or priority yet |
+| `SGP_MoveToPoint` | 0x578a14 | partial | plain group move (Command::Move): no facing, order type or priority yet |
+| `SGP_RepairBuilding` | 0x577b9c | stub | no repairs in acr-sim yet |
+| `SGP_TakeResources` | 0x577be1 | stub | no gathering in acr-sim yet |
+| `SaveSelectedUnits` | 0x5671ad | done |  |
+| `SearchCapturedTopToDeffend` | 0x5734df | stub | not implemented |
+| `SelAttackGroup` | 0x560258 | partial | Command::Attack on the first living enemy (acr-sim walks there until combat lands) |
+| `SelCenter` | 0x563981 | done |  |
+| `SelChangeNation` | 0x561eaf | done |  |
+| `SelDie` | 0x5601c0 | partial | killed at once: no death animation or burning yet |
+| `SelErase` | 0x56021c | done |  |
+| `SelSendAndKill` | 0x561be4 | partial | moves like SelSendTo; attack-move needs acr-sim combat |
+| `SelSendTo` | 0x561ad6 | partial | plain group move (Command::Move): no facing, order type or priority yet |
+| `SelectTypeOfUnitsInZone` | 0x55d669 | done |  |
+| `SelectUnits` | 0x55f865 | done |  |
+| `SelectUnitsInZone` | 0x55cf09 | done |  |
+| `SelectUnitsType` | 0x55feda | done |  |
+| `SendUnitsToTransport` | 0x56093a | stub | no garrisons/transports in acr-sim yet: 0 / nothing happens |
+| `SetBuildingsCollector` | 0x577c6f | partial | current buildings only; new ones are not added yet |
+| `SetDestPoint` | 0x567609 | stub | no rally points / production in acr-sim yet |
+| `SetEnemyBuildingsCollector` | 0x577e71 | partial | current enemy buildings only |
+| `SetLightSpot` | 0x564017 | partial | stored; acr-sim/renderer have no fog of war yet |
+| `SetMaxInTransport` | 0x57033a | stub | AI landing not modelled |
+| `SetNMASK` | 0x56bcb3 | partial | kept for the scripts; acr-sim has no alliances yet |
+| `SetPlayerName` | 0x5697eb | done |  |
+| `SetResource` | 0x562eca | done |  |
+| `SetStandGround` | 0x5621cd | stub | no stand-ground flag in acr-sim yet |
+| `SetStartPoint` | 0x564192 | done |  |
+| `SetToInternalResourcesZero` | 0x56eba8 | stub | unit stance/carried resources not modelled |
+| `SetTrigg` | 0x563160 | done |  |
+| `SetUnitEnableState` | 0x55c4f9 | partial | flag kept for the build menu |
+| `SetUnitInfo` | 0x567e8a | partial | life and position; no damage/shield bonus yet |
+| `SetUnitsCollector` | 0x577d70 | partial | current units only |
+| `SetUnitsState` | 0x578c09 | stub | no combat flags in acr-sim yet |
+| `SetUpgradeEnableStatus` | 0x55c437 | partial | flag kept for the build menu |
+| `ShowCentralText` | 0x5624a6 | done |  |
+| `ShowPage` | 0x56255a | done |  |
+| `ShowPageParam` | 0x56261d | done |  |
+| `ShowVictory` | 0x5623df | done |  |
+| `StartAI` | 0x565a1a | partial | the AI DLL is loaded by the runtime (Scripts::ai_requests); island research not done |
+| `TakeFood` | 0x5664dd | stub | no gathering in acr-sim yet |
+| `TakeWood` | 0x566637 | stub | no gathering in acr-sim yet |
+| `TimerDone` | 0x5635f6 | done |  |
+| `TimerDoneFirst` | 0x563669 | done |  |
+| `Trigg` | 0x563117 | done |  |
+| `TryUnit` | 0x56829b | stub | the AI city (projects, statistics) is not modelled yet: 0 |
+| `TryUpgrade` | 0x5684d6 | stub | the AI city (projects, statistics) is not modelled yet: 0 |
+| `TryUpgradeEx` | 0x568629 | stub | the AI city (projects, statistics) is not modelled yet: 0 |
+| `UnitsCenter` | 0x5637f1 | done |  |
+| `UpgIsDone` | 0x569259 | partial | upgrades applied by InitialUpgrade only |
+| `UpgIsRun` | 0x5692a9 | partial | as UpgIsDone |
