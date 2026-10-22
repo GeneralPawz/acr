@@ -7,7 +7,9 @@
 
 use std::collections::HashMap;
 
-use acr_render::damage::Rig;
+use acr_render::damage::{MAX_VOLUMES, Rig, Volume};
+
+use super::tears::{self, Tear};
 use acr_render::math::{self, Vec3};
 use acr_render::model::ramp;
 use acr_render::model_renderer::{MAX_MARKS, Mark, Sprayed};
@@ -49,6 +51,8 @@ struct Wound {
 #[derive(Default)]
 pub struct LivingWounds {
     units: HashMap<u32, Vec<Wound>>,
+    /// The hits that tear tissue out (#280), per unit.
+    tears: HashMap<u32, Vec<Tear>>,
     /// Units drawn crawling or writhing, with the clip: their death holds that pose.
     lying: HashMap<u32, &'static str>,
     seen: Option<u64>,
@@ -115,6 +119,7 @@ fn wounds_of(hit: &HitRecord, side: [f32; 2]) -> Vec<(At, [f32; 2], f32, bool, f
 impl LivingWounds {
     pub fn clear(&mut self) {
         self.units.clear();
+        self.tears.clear();
         self.lying.clear();
         self.seen = None;
     }
@@ -145,6 +150,14 @@ impl LivingWounds {
             let (vx, vy) = (-hit.dir.0 as f32, -hit.dir.1 as f32);
             let len = (vx * vx + vy * vy).sqrt();
             let side = if len > 0.0 { [(vx * c - vy * s) / len, (vx * s + vy * c) / len] } else { [0.0, 1.0] };
+            if let Some(injury) = hit.injury {
+                let tear = Tear { tick: hit.tick, victim: hit.victim, cause: hit.cause, injury, side };
+                let tears = self.tears.entry(hit.victim).or_default();
+                tears.push(tear);
+                if tears.len() > MAX_VOLUMES {
+                    tears.drain(..tears.len() - MAX_VOLUMES);
+                }
+            }
             let list = self.units.entry(hit.victim).or_default();
             for (k, (at, side, radius, ragged, bleed)) in wounds_of(hit, side).into_iter().enumerate() {
                 let seed = hash(hit.tick, hit.victim, 10 + k as u64) * 97.0;
@@ -165,7 +178,20 @@ impl LivingWounds {
     /// Keeps only the units `keep` says are still drawn.
     pub fn retain(&mut self, keep: &dyn Fn(u32) -> bool) {
         self.units.retain(|&u, _| keep(u));
+        self.tears.retain(|&u, _| keep(u));
         self.lying.retain(|&u, _| keep(u));
+    }
+
+    /// The tissue torn out of `unit` by all his hits (#280), on `rig`.
+    pub fn volumes(&self, unit: u32, rig: &Rig) -> Vec<Volume> {
+        self.tears.get(&unit).map_or_else(Vec::new, |l| l.iter().flat_map(|t| tears::volumes(t, rig)).collect())
+    }
+
+    /// … by his hit at `tick` only.
+    pub fn hit_volumes(&self, unit: u32, tick: u64, rig: &Rig) -> Vec<Volume> {
+        self.tears.get(&unit).map_or_else(Vec::new, |l| {
+            l.iter().filter(|t| t.tick == tick).flat_map(|t| tears::volumes(t, rig)).collect()
+        })
     }
 
     /// Notes the clip a living unit is drawn lying in (`None`: on his feet).

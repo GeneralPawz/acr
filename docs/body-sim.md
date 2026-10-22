@@ -174,6 +174,14 @@ H: metres, `+X` left, `-Y` forward, `+Z` up.
   inside a volume detaches as a piece; physics then takes over from the thrown arc of S5.
 - **Clean cut planes** remain only for sabre and axe blows.
 
+**Status (first cut, `m2-volumes`):** wound volumes, the shader's ragged boundary, shreds,
+soaked rim and tissue-shaded back faces, the hit → volume mapping per cause, severing by
+volume (ragged stumps and pieces, caps as fallback) and gibs by volume are in; see
+`docs/rendering-3d.md`, "Torn-out tissue". Still open: instanced bone pieces (ribs, bone
+ends), physics for the detached pieces, depth-correct inner geometry (the hollow is the
+shell's back faces, so a hole straight through a thin part shows the ground behind), and
+tuning on the bench.
+
 ## 4. Interruptible actions (sim)
 
 - **Interruptions:** an action (reload, aim, melee swing, build) has phases, and a hit in a

@@ -7,7 +7,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use acr_render::damage::{Damage, Keep};
+use acr_render::damage::{Damage, Keep, Limb, Rig, Volume, WHOLE};
 use acr_render::math::{self, Mat4, Vec3};
 use acr_render::model;
 use acr_render::model_renderer::{BloodPool, ModelInstance};
@@ -35,6 +35,8 @@ pub struct UnitModel {
 /// The parts of `gore.glb` by node name (model indices).
 pub type GibModels = HashMap<String, usize>;
 
+// A piece carries its wound volumes (#280); items are few and copied by value.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Copy)]
 enum What {
     /// A severed piece or upper half: the unit's model lying on its back, its rest point
@@ -64,6 +66,8 @@ struct Item {
     /// Radius of its blood pool once landed (metres; 0 for none).
     pool: f32,
     seed: f32,
+    /// Size of a gib (1: as modelled).
+    scale: f32,
 }
 
 /// A throw from the hit: `(rng, near, far, cone, height)` → start and landing point.
@@ -107,6 +111,7 @@ impl Debris {
         gore: Gore,
         unit: &dyn Fn(u32) -> Option<(UnitModel, &'a acr_render::damage::Rig)>,
         death: &dyn Fn(u32) -> Option<DeathRecord>,
+        tears: &dyn Fn(&HitRecord, &Rig) -> Vec<Volume>,
         gibs: &GibModels,
         ground: &dyn Fn(f32, f32) -> [f32; 3],
     ) {
@@ -133,18 +138,49 @@ impl Debris {
                 (from, [start[0] + a.cos() * d, start[1] + a.sin() * d])
             };
             let model = unit(hit.victim);
-            match (injury.part, injury.outcome) {
-                (Part::Limb(limb), Outcome::Off) => {
-                    let Some((m, rig)) = model else { continue };
-                    let limb = acr_render::damage::Limb::ALL[limb as usize];
-                    let damage =
-                        Damage { keep: Keep::Piece { limb, from: injury.level, to: 255 }, ..Damage::default() };
-                    let mid = (f32::from(injury.level) / 255.0 + 1.0) / 2.0;
+            // Tissue this hit tears out (#280): the pieces end in its ragged boundary, the
+            // chunks it took fly as gibs sized by it.
+            let mut ripped = Damage::default();
+            if gore == Gore::Full
+                && let Some((_, rig)) = model
+            {
+                for v in tears(hit, rig) {
+                    ripped.push_volume(v);
+                }
+            }
+            let taken = super::tears::size(ripped.volumes());
+            if let Some((m, rig)) = model {
+                if let (Part::Limb(limb), Outcome::Off) = (injury.part, injury.outcome) {
+                    ripped.limb_mut(Limb::ALL[limb as usize]).cut = injury.level;
+                }
+                ripped.sever(rig);
+                for limb in Limb::ALL {
+                    let cut = ripped.limb(limb).cut;
+                    if cut == WHOLE {
+                        continue;
+                    }
+                    let damage = Damage { keep: Keep::Piece { limb, from: cut, to: WHOLE }, ..ripped };
+                    let mid = (f32::from(cut) / 255.0 + 1.0) / 2.0;
                     let centre = rig.limbs[limb as usize].at(mid).0;
                     let height = if limb.is_arm() { 1.2 } else { 0.5 };
                     let (from, to) = throw(&mut rng, 0.8, 1.2 + 3.0 * energy, 0.5, height);
                     self.push(What::Piece { damage, centre }, m, from, to, &mut rng, hit.tick, 0.35);
                 }
+            }
+            if gore == Gore::Full && taken > 0.0004 && !matches!(injury.outcome, Outcome::Torn(_)) {
+                // Chunks by the tissue taken: a few small bits from a bite, big lumps from a
+                // ball's track.
+                let n = (taken / 0.0015).round().clamp(1.0, 6.0) as u32;
+                let scale = (taken / n as f32 / 0.0008).cbrt().clamp(0.5, 1.6);
+                let player = model.map_or(0, |m| m.0.player);
+                let first = self.items.len();
+                self.gibs(n, false, player, hit.tick, &mut rng, gibs, &mut throw);
+                for item in &mut self.items[first..] {
+                    item.scale = scale;
+                }
+            }
+            match (injury.part, injury.outcome) {
+                (Part::Limb(_), Outcome::Off) => {}
                 (_, Outcome::Torn(torn)) => {
                     if let (Torn::InTwo { .. }, Some((m, rig))) = (torn, model) {
                         let record = death(hit.victim).unwrap_or_default();
@@ -152,6 +188,7 @@ impl Debris {
                             .as_ref()
                             .and_then(super::damage_view::upper)
                         {
+                            let upper = Damage { volumes: ripped.volumes, volumes_len: ripped.volumes_len, ..upper };
                             let (from, to) = throw(&mut rng, 1.0, 1.5 + 2.5 * energy, 0.3, 1.1);
                             let what = What::Piece { damage: upper, centre: rig.trunk.at(0.75).0 };
                             self.push(what, m, from, to, &mut rng, hit.tick, 0.6);
@@ -194,6 +231,7 @@ impl Debris {
             flight: FLIGHT,
             pool,
             seed: rng.next() * 97.0,
+            scale: 1.0,
         });
     }
 
@@ -281,7 +319,7 @@ impl Debris {
                     (m, damage)
                 }
                 What::Gib | What::Gear => {
-                    let base = view3d::model_matrix(ground_at, item.yaw, 1.0);
+                    let base = view3d::model_matrix(ground_at, item.yaw, item.scale);
                     (math::mul(&base, &about_x(tumble)), Damage::default())
                 }
             };
@@ -321,7 +359,11 @@ pub fn mist(hit: &HitRecord, now: u64, gore: Gore, ground: &dyn Fn(f32, f32) -> 
     }
     let Some(injury) = hit.injury else { return };
     let burst = matches!(injury.outcome, Outcome::Torn(Torn::Pulverized))
-        || (hit.cause == DeathCause::Cannonball && hit.killed && injury.energy >= POINT_BLANK);
+        || (hit.cause == DeathCause::Cannonball && hit.killed && injury.energy >= POINT_BLANK)
+        // A ball tearing a limb or a chunk of trunk away (#280).
+        || (hit.cause == DeathCause::Cannonball
+            && injury.energy >= acr_sim::body::BALL_SEVERS
+            && matches!(injury.outcome, Outcome::Off | Outcome::Kill | Outcome::Torn(_)));
     if !burst {
         return;
     }

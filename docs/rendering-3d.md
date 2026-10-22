@@ -223,6 +223,38 @@ The renderer half of `docs/damage-model.md` §3 (`acr_render::damage`): a `Damag
   no longer loaded.
 - Not yet: the trunk's torn-edge strip (the trunk cut uses the disc).
 
+#### Torn-out tissue: wound volumes (#280)
+
+Clean planes that split a man read as "a walking piece of meat in a cartoon". Hits now tear
+chunks out: `Damage::volumes` holds up to 8 capsules (`damage::Volume`: rest-pose ends `a`,
+`b`, radius, noise seed, kind `Tear` or `Gash`), two texels each after texel 11 of the
+damage block (`DAMAGE_TEXELS` = 28; texel 11 `.w` is their number).
+
+- **Shader** (`model.wgsl`, `holes`): a body fragment (`_PART` ≥ 0; gear is not torn)
+  inside a volume is discarded. The boundary is radius × (1 + chunk noise at 5/r and 13/r
+  + fibre noise stretched along rest y + `_GORE.x`), so it is never round; gashes are
+  cleaner. Shreds: front faces just inside the boundary survive where a stretched noise is
+  high (strands of skin and cloth hanging into the hole); just outside, a band of holes
+  frays the cloth. Front faces near the edge are soaked dark with a raw red rim. Back faces
+  near a volume (the far wall and the inside of the shell seen through the hole) are shaded
+  as `tissue`: wet red meat by fibres, yellow fat right behind the edge, dark clots, bone
+  flecks. Back faces of a sleeve just past a planar cut get the same.
+- **From hits** (`ingame/tears.rs`, hashed from tick and victim, kept per unit by
+  `LivingWounds`): cannonball a capsule along the track (radius 7.5–16.5 cm by energy);
+  through an upper arm the shoulder and a chest chunk go too; a leg takes a ragged thigh
+  bite above; a trunk torn in two a 17–28 cm capsule plus two blobs (the trunk cut stays
+  inside it, so both halves end ragged). Musket at close range (energy ≥ `BALL_CLOSE`) or
+  breaking bone: an exit cavity; a fracture also a partial volume beside the bone, so the
+  limb hangs by a thread at its bend. Grapeshot 2–4 bites, shells 3–5 fragments over the
+  body, sabre/bayonet/axe one thin deep slanted gash; a blade that takes a limb off keeps
+  the planar cut.
+- **Severing** (`Damage::sever`): a limb whose whole cross-section a volume covers is cut
+  in the middle of the covered span, so the stump and the thrown piece (`debris.rs`, which
+  now throws every limb the hit severs) end in the torn boundary; `caps` drops caps inside
+  a volume (caps stay as the fallback for plain cuts).
+- **Chunks**: the volume taken (`tears::size`) throws 1–6 gibs scaled by it; a cannonball
+  that takes a limb or a chunk also bursts red mist.
+
 #### Bodies in the game (#262 S5)
 
 `ingame/damage_view.rs` turns `acr_sim::body` into a `Damage`, `ingame/debris.rs` keeps what

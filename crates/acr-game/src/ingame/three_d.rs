@@ -434,6 +434,17 @@ impl ThreeD {
                 continue;
             };
             inst.damage = damage;
+            // Tissue torn out by his hits (#280); a limb whose whole cross-section is gone
+            // comes off inside the hole.
+            if self.gore == Gore::Full
+                && !u.building
+                && let Some(rig) = model.rig.as_ref()
+            {
+                for v in self.wounds.volumes(u.id.0, rig) {
+                    inst.damage.push_volume(v);
+                }
+                inst.damage.sever(rig);
+            }
             if model.rig.is_some() {
                 unit_models.insert(u.id.0, (UnitModel { model: index, player: u.owner }, index));
             }
@@ -575,7 +586,10 @@ impl ThreeD {
             Some((m, renderer?.model(index)?.rig.as_ref()?))
         };
         let death = |v: u32| world.deaths.get(&v).copied();
-        self.debris.take_hits(world.hits.iter(), now, self.gore, &unit, &death, &self.gibs, &ground);
+        let wounds = &self.wounds;
+        let tears =
+            |h: &acr_sim::combat::HitRecord, rig: &acr_render::damage::Rig| wounds.hit_volumes(h.victim, h.tick, rig);
+        self.debris.take_hits(world.hits.iter(), now, self.gore, &unit, &death, &tears, &self.gibs, &ground);
         self.debris.expire(now, self.corpse_ticks);
         self.debris.draw(now, self.corpse_ticks, &ground, &mut self.instances, &mut self.pools);
         for hit in &world.hits {

@@ -94,6 +94,65 @@ pub enum Keep {
     Upper,
 }
 
+/// Most wound volumes per body ([`Damage::volumes`]).
+pub const MAX_VOLUMES: usize = 8;
+
+/// How the boundary of a [`Volume`] looks.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum VolumeKind {
+    /// Torn out by a ball or a shell fragment: a very ragged, fibrous boundary.
+    #[default]
+    Tear,
+    /// Hacked by a blade: a cleaner, still uneven edge.
+    Gash,
+}
+
+/// Tissue torn out of a body (#280, `docs/body-sim.md` §3): a capsule from `a` to `b` (a
+/// sphere when they meet) of `radius`, in the rest pose (glTF metres). The shader discards
+/// what lies inside, with a noisy boundary from `seed`, and shades the hollow as flesh.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Volume {
+    pub a: Vec3,
+    pub b: Vec3,
+    pub radius: f32,
+    /// 0..1: varies the noise of the boundary.
+    pub seed: f32,
+    pub kind: VolumeKind,
+}
+
+impl Volume {
+    pub fn sphere(c: Vec3, radius: f32, seed: f32) -> Volume {
+        Volume { a: c, b: c, radius, seed, kind: VolumeKind::Tear }
+    }
+
+    /// Distance of `p` from the capsule's axis segment.
+    pub fn distance(&self, p: Vec3) -> f32 {
+        let ab = math::sub(self.b, self.a);
+        let t = (math::dot(math::sub(p, self.a), ab) / math::dot(ab, ab).max(1e-9)).clamp(0.0, 1.0);
+        let d = math::sub(p, math::add(self.a, math::scale(ab, t)));
+        math::dot(d, d).sqrt()
+    }
+
+    /// Cubic metres taken out (ignoring overlap and the body's outline).
+    pub fn size(&self) -> f32 {
+        let ab = math::sub(self.b, self.a);
+        let r = self.radius;
+        std::f32::consts::PI * r * r * (math::dot(ab, ab).sqrt() + 4.0 / 3.0 * r)
+    }
+
+    /// The two data texels (`model.wgsl`, `holes`): [a, radius], [b, kind + seed].
+    pub fn gpu(&self) -> [[f32; 4]; 2] {
+        let kind = match self.kind {
+            VolumeKind::Tear => 0.0,
+            VolumeKind::Gash => 1.0,
+        };
+        [
+            [self.a[0], self.a[1], self.a[2], self.radius],
+            [self.b[0], self.b[1], self.b[2], kind + self.seed.clamp(0.0, 0.999)],
+        ]
+    }
+}
+
 /// The damage drawn on one instance. The default draws the body whole.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Damage {
@@ -104,6 +163,9 @@ pub struct Damage {
     pub head_gone: bool,
     pub belly_open: bool,
     pub keep: Keep,
+    /// Tissue torn out (#280): the first `volumes_len`.
+    pub volumes: [Volume; MAX_VOLUMES],
+    pub volumes_len: u8,
 }
 
 impl Damage {
@@ -120,6 +182,49 @@ impl Damage {
         &mut self.limbs[l as usize]
     }
 
+    /// The wound volumes.
+    pub fn volumes(&self) -> &[Volume] {
+        &self.volumes[..usize::from(self.volumes_len).min(MAX_VOLUMES)]
+    }
+
+    /// Adds a wound volume; when full, the smallest gives way to a larger one.
+    pub fn push_volume(&mut self, v: Volume) {
+        let n = usize::from(self.volumes_len);
+        if n < MAX_VOLUMES {
+            self.volumes[n] = v;
+            self.volumes_len += 1;
+        } else if let Some((i, small)) =
+            self.volumes.iter().enumerate().min_by(|a, b| a.1.radius.total_cmp(&b.1.radius))
+            && small.radius < v.radius
+        {
+            self.volumes[i] = v;
+        }
+    }
+
+    /// Limbs whose whole cross-section a volume takes come off there: the cut moves into
+    /// the volume (hidden by its ragged boundary), so the stump and the severed piece end
+    /// in torn flesh rather than a flat cap. A torso volume through the shoulder takes the
+    /// arm at the root.
+    pub fn sever(&mut self, rig: &Rig) {
+        const STEPS: usize = 64;
+        for l in Limb::ALL {
+            let chain = &rig.limbs[l as usize];
+            let vols = self.volumes();
+            let covered = |i: usize| {
+                let lf = i as f32 / STEPS as f32;
+                let (p, _, _) = chain.at(lf);
+                let r = chain.radius_at(lf) * 0.8;
+                vols.iter().any(|v| v.distance(p) + r < v.radius)
+            };
+            if let Some(first) = (0..=STEPS).find(|&i| covered(i)) {
+                let last = (first..=STEPS).take_while(|&i| covered(i)).last().unwrap_or(first);
+                let mid = ((first + last) as f32 / 2.0 / STEPS as f32 * 255.0).round() as u8;
+                let cut = &mut self.limb_mut(l).cut;
+                *cut = (*cut).min(mid.min(WHOLE - 1));
+            }
+        }
+    }
+
     /// The instance that draws the piece cut off `limb` (from its cut to the tip).
     pub fn piece(&self, limb: Limb) -> Option<Damage> {
         let cut = self.limb(limb).cut;
@@ -127,7 +232,8 @@ impl Damage {
     }
 
     /// Parses a debug spec (`ACR_DEBUG_DAMAGE`): comma separated `cut:<limb>:<level>`,
-    /// `frac:<limb>:<level>:<degrees>`, `trunk:<level>`, `head`, `belly`, and one of
+    /// `frac:<limb>:<level>:<degrees>`, `trunk:<level>`, `head`, `belly`,
+    /// `vol:<ax>:<ay>:<az>:<bx>:<by>:<bz>:<radius>` (a wound volume), and one of
     /// `piece:<limb>` / `upper` for the kept part. `<limb>` is arm_l, arm_r, leg_l or leg_r.
     pub fn parse(spec: &str) -> Result<Damage, String> {
         let mut d = Damage::default();
@@ -151,6 +257,12 @@ impl Damage {
                     d.keep = Keep::Piece { limb: l, from: d.limb(l).cut, to: WHOLE };
                 }
                 "upper" => d.keep = Keep::Upper,
+                // vol:ax:ay:az:bx:by:bz:radius (rest pose, metres)
+                "vol" => {
+                    let a = [num(1)?, num(2)?, num(3)?];
+                    let b = [num(4)?, num(5)?, num(6)?];
+                    d.push_volume(Volume { a, b, radius: num(7)?, seed: 0.37, kind: VolumeKind::Tear });
+                }
                 _ => return Err(format!("unknown damage token {tok}")),
             }
         }
@@ -365,7 +477,7 @@ impl Rig {
 /// Number of data texels of an instance: the wounds block, plus the damage block when
 /// damaged (`model.wgsl`).
 pub const WOUND_TEXELS: u32 = 4;
-pub const DAMAGE_TEXELS: u32 = 12;
+pub const DAMAGE_TEXELS: u32 = 12 + 2 * MAX_VOLUMES as u32;
 
 /// The damage block of the instance data (`model.wgsl`, `damage_*`):
 /// - 0: cut levels of the four limbs (0..1, 2 whole);
@@ -374,7 +486,8 @@ pub const DAMAGE_TEXELS: u32 = 12;
 /// - 6..9: per limb the fracture's axis;
 /// - 10: trunk cut height (rest y; 1e6 none), head gone, belly open, keep (−1 body, limb
 ///   0..3 piece, 4 upper);
-/// - 11: piece from, piece to (0..1), belly height (rest y), 0.
+/// - 11: piece from, piece to (0..1), belly height (rest y), number of volumes;
+/// - 12..: two texels per wound volume ([`Volume::gpu`]).
 pub fn pack(d: &Damage, rig: Option<&Rig>) -> [[f32; 4]; DAMAGE_TEXELS as usize] {
     let mut t = [[0.0f32; 4]; DAMAGE_TEXELS as usize];
     for (i, l) in d.limbs.iter().enumerate() {
@@ -403,7 +516,12 @@ pub fn pack(d: &Damage, rig: Option<&Rig>) -> [[f32; 4]; DAMAGE_TEXELS as usize]
         Keep::Piece { from, to, .. } => (f32::from(from) / 255.0, level_f(to)),
         _ => (0.0, 2.0),
     };
-    t[11] = [from, to, trunk_y(70), 0.0];
+    t[11] = [from, to, trunk_y(70), d.volumes().len() as f32];
+    for (i, v) in d.volumes().iter().enumerate() {
+        let [a, b] = v.gpu();
+        t[12 + 2 * i] = a;
+        t[13 + 2 * i] = b;
+    }
     t
 }
 
@@ -489,6 +607,8 @@ pub fn caps(d: &Damage, rig: &Rig) -> Vec<Cap> {
             }
         }
     }
+    // A cut inside a wound volume ends in its torn boundary, not a cap.
+    out.retain(|c| !d.volumes().iter().any(|v| v.distance(c.point) < v.radius * 0.95));
     out
 }
 
@@ -661,6 +781,35 @@ mod tests {
         assert_eq!(upper.len(), 2);
         let m = upper[0].rest_matrix();
         assert!((m[2][1] + 0.15).abs() < 1e-4, "disc normal scaled by the radius: {m:?}");
+    }
+
+    #[test]
+    fn volumes_sever_limbs_and_hide_caps() {
+        let c = chain();
+        let trunk = Chain { points: vec![(0.0, [0.0, 1.0, 0.0], 0), (1.0, [0.0, 1.5, 0.0], 0)], radius: [0.15; 16] };
+        let rig = Rig { limbs: [c.clone(), c.clone(), c.clone(), c], trunk, neck: ([0.0, 1.5, 0.0], 5) };
+        let mut d = Damage::parse("vol:0.0:1.4:-0.3:0.0:1.4:0.3:0.12").unwrap();
+        assert_eq!(d.volumes().len(), 1);
+        d.sever(&rig);
+        // The ball through the shoulder takes the arm at its root.
+        let cut = d.limb(Limb::ArmL).cut;
+        assert!(cut < 40, "{cut}");
+        assert!(caps(&d, &rig).is_empty(), "the stump ends in the volume");
+        assert!(caps(&d.piece(Limb::ArmL).unwrap(), &rig).is_empty());
+        let t = pack(&d, None);
+        assert_eq!(t[11][3], 1.0);
+        assert_eq!(t[12][3], 0.12);
+        // A small volume beside the forearm leaves it hanging on.
+        let mut thread = Damage::default();
+        thread.push_volume(Volume::sphere([0.42, 1.45, 0.0], 0.04, 0.5));
+        thread.sever(&rig);
+        assert_eq!(thread.limb(Limb::ArmL).cut, WHOLE);
+        // Full: the smallest gives way.
+        for i in 0..MAX_VOLUMES {
+            thread.push_volume(Volume::sphere([0.0; 3], 0.05 + i as f32 * 0.01, 0.1));
+        }
+        assert_eq!(thread.volumes().len(), MAX_VOLUMES);
+        assert!(thread.volumes().iter().all(|v| v.radius > 0.04));
     }
 
     #[test]

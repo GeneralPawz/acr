@@ -91,6 +91,8 @@ struct VsOut {
     // kept distance past the cut (level units, < 0 discards), _GORE.x, sign of the ragged
     // offset, belly open (1)
     @location(9) cut: vec4<f32>,
+    // _PART (−1: gear, not torn by wound volumes)
+    @location(10) @interpolate(flat) part: f32,
 };
 
 fn texel(i: u32) -> vec4<f32> {
@@ -221,6 +223,7 @@ fn vs_main(v: VertexIn, inst: InstanceIn) -> VsOut {
     out.spray = texel(d + 2u);
     out.spray_look = vec4<f32>(look.xy, f32(d), look.w);
     out.cut = vec4<f32>(clamp(keep, -1.0, 1.0), v.body.z, side, belly);
+    out.part = v.body.x;
     return out;
 }
 
@@ -321,7 +324,7 @@ fn wounded(rgb_in: vec3<f32>, rest: vec4<f32>, w0: vec4<f32>, w1: vec4<f32>, dec
 fn marked(rgb_in: vec3<f32>, p: vec3<f32>, d: u32, n: u32) -> vec3<f32> {
     var rgb = rgb_in;
     let damaged = texel(d + 3u).z > 0.5;
-    let start = d + 4u + select(0u, 12u, damaged);
+    let start = d + 4u + select(0u, 28u, damaged);
     let grain = noise3(p * 22.0);
     var stain = 0.0;
     var dry = 1.0;
@@ -368,6 +371,59 @@ fn marked(rgb_in: vec3<f32>, p: vec3<f32>, d: u32, n: u32) -> vec3<f32> {
     return rgb;
 }
 
+// Fibres of torn muscle and cloth: noise stretched along the body's long axis (rest y).
+fn strands(p: vec3<f32>, seed: f32) -> f32 {
+    return noise3(vec3<f32>(p.x * 150.0, p.y * 26.0, p.z * 150.0) + vec3<f32>(seed));
+}
+
+// Tissue torn out (#280): the wound volumes of the damage block (texels d + 16.., see
+// damage.rs `Volume::gpu`). Returns the nearest boundary as (signed distance / radius,
+// < 0 inside; the fibre noise there; that volume's radius (m); 1 when any volume is near).
+// The boundary is never round: low noise bites chunks, fibre noise frays it, `_GORE.x`
+// shifts it per vertex region, and gashes (kind 1) are cleaner than tears.
+fn holes(p: vec3<f32>, d: u32, gore: f32) -> vec4<f32> {
+    var best = vec4<f32>(1e3, 0.0, 0.0, 0.0);
+    if (texel(d + 3u).z < 0.5) {
+        return best;
+    }
+    let n = u32(texel(d + 15u).w + 0.5);
+    for (var i = 0u; i < n; i = i + 1u) {
+        let a = texel(d + 16u + 2u * i);
+        let b = texel(d + 17u + 2u * i);
+        let r = max(a.w, 0.005);
+        let ab = b.xyz - a.xyz;
+        let t = clamp(dot(p - a.xyz, ab) / max(dot(ab, ab), 1e-8), 0.0, 1.0);
+        let dist = length(p - a.xyz - ab * t);
+        if (dist > r * 2.6) {
+            continue;
+        }
+        let gash = b.w >= 1.0;
+        let seed = fract(b.w) * 97.0;
+        let chunk = noise3(p * (5.0 / r) + vec3<f32>(seed)) * 0.6 + noise3(p * (13.0 / r) + vec3<f32>(seed * 1.7)) * 0.4;
+        let fib = strands(p, seed);
+        let amp = select(0.75, 0.3, gash);
+        let rr = r * (1.0 + amp * (chunk - 0.5) * 2.0 + select(0.22, 0.1, gash) * (fib - 0.5) + 0.25 * (gore - 0.5));
+        let e = (dist - rr) / r;
+        if (e < best.x) {
+            best = vec4<f32>(e, fib, r, 1.0);
+        }
+    }
+    return best;
+}
+
+// The inside of torn flesh: wet red meat, a yellow fat layer under the skin, dark clots and
+// splinters of bone; `depth` is how far behind the torn boundary (radius units).
+fn tissue(p: vec3<f32>, depth: f32, fib: f32) -> vec3<f32> {
+    let grain = noise3(p * 40.0);
+    var meat = mix(vec3<f32>(0.24, 0.012, 0.012), vec3<f32>(0.55, 0.07, 0.06), fib * 0.7 + grain * 0.3);
+    let fat = 1.0 - smoothstep(0.0, 0.18, depth + (grain - 0.5) * 0.12);
+    meat = mix(meat, vec3<f32>(0.72, 0.56, 0.30), fat * 0.85);
+    let clot = smoothstep(0.62, 0.72, noise3(p * 22.0 + vec3<f32>(5.3)));
+    meat = mix(meat, vec3<f32>(0.07, 0.0, 0.0), clot * 0.9);
+    let bone = smoothstep(0.80, 0.84, noise3(p * 60.0 + vec3<f32>(11.0)));
+    return mix(meat, vec3<f32>(0.80, 0.74, 0.62), bone * 0.8);
+}
+
 // Blood sprayed onto a body or a wall: speckles of several sizes around `spray.xyz` (rest
 // pose, metres) within `spray.w`, denser towards the centre.
 fn sprayed(rgb: vec3<f32>, rest: vec3<f32>, spray: vec4<f32>, look: vec2<f32>) -> vec3<f32> {
@@ -389,7 +445,7 @@ fn to_srgb(c: vec3<f32>) -> vec3<f32> {
 }
 
 @fragment
-fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     // Sampled first: derivatives need uniform control flow.
     let texel = textureSample(base_texture, base_sampler, in.uv);
     var c = material.base * texel;
@@ -407,6 +463,19 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         }
     }
     if (in.cut.x - in.cut.z * ragged(in.cut.y, in.rest.xyz) < 0.0) {
+        discard;
+    }
+    // Torn out (#280): nothing inside a wound volume but shreds of skin and cloth hanging
+    // into the hole from its edge; a ragged band of holes in the cloth around it.
+    var hole = vec4<f32>(1e3, 0.0, 0.0, 0.0);
+    if (in.part > -0.5) {
+        hole = holes(in.rest.xyz, u32(in.spray_look.z + 0.5), in.cut.y);
+    }
+    let shred = noise3(in.rest.xyz * vec3<f32>(90.0, 30.0, 90.0) + vec3<f32>(hole.y * 3.0));
+    if (hole.x < 0.0 && !(front && hole.x > -0.22 && shred > 0.68)) {
+        discard;
+    }
+    if (front && hole.x >= 0.0 && hole.x < 0.1 && shred < 0.3 - hole.x * 2.0) {
         discard;
     }
     // A stump cap's ragged outline (uv: the unit disc).
@@ -449,6 +518,25 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     }
     // An open belly: a dark wet gash.
     var wet = material.look.x;
+    if (hole.w > 0.5 && material.flags.w < 0.5) {
+        if (!front) {
+            // The far wall seen through the hole (and the shell's inside): flesh, fat at
+            // the torn edge, not an empty shell.
+            rgb = tissue(in.rest.xyz, max(hole.x, 0.0), hole.y);
+            wet = 1.0;
+        } else if (hole.x < 0.35) {
+            // Torn skin and cloth at the edge: soaked dark, raw red right at the tear.
+            let k = 1.0 - smoothstep(0.0, 0.35, hole.x + (hole.y - 0.5) * 0.15);
+            rgb = mix(rgb, rgb * 0.22 + vec3<f32>(0.10, 0.004, 0.003), k);
+            let raw = 1.0 - smoothstep(0.0, 0.07, hole.x);
+            rgb = mix(rgb, mix(vec3<f32>(0.45, 0.05, 0.04), vec3<f32>(0.66, 0.42, 0.30), shred * 0.6), raw);
+            wet = max(wet, k * 0.6);
+        }
+    } else if (!front && in.cut.x < 0.12 && in.cut.x > -0.5 && material.flags.w < 0.5) {
+        // The inside of a planar cut's sleeve where the cap does not cover it.
+        rgb = tissue(in.rest.xyz, in.cut.x * 3.0, strands(in.rest.xyz, 0.0));
+        wet = 1.0;
+    }
     if (in.cut.w > 0.05) {
         let gash = smoothstep(0.05, 0.4, in.cut.w + (noise3(in.rest.xyz * 30.0) - 0.5) * 0.3);
         rgb = mix(rgb, mix(vec3<f32>(0.30, 0.02, 0.02), vec3<f32>(0.55, 0.25, 0.22), noise3(in.rest.xyz * 60.0)), gash);
