@@ -60,12 +60,14 @@ struct InstanceIn {
     @location(10) row2: vec4<f32>,
     // decay, deflate weight, lie_flat weight, half transparent (1)
     @location(11) params: vec4<f32>,
-    // first texel of the pose, player, unused, unused
+    // first texel of the pose, player, sprayed blood amount and age (both ‰)
     @location(12) extra: vec4<u32>,
     // direction of the blow (model x, z), blood, dirt
     @location(13) wounds0: vec4<f32>,
     // burn, number of wounds, wound radius (m), seed
     @location(14) wounds1: vec4<f32>,
+    // sprayed blood: centre in the rest pose (m), radius (m)
+    @location(15) spray: vec4<f32>,
 };
 
 struct VsOut {
@@ -78,6 +80,9 @@ struct VsOut {
     @location(4) rest: vec4<f32>,
     @location(5) @interpolate(flat) wounds0: vec4<f32>,
     @location(6) @interpolate(flat) wounds1: vec4<f32>,
+    @location(7) @interpolate(flat) spray: vec4<f32>,
+    // sprayed blood amount, its age
+    @location(8) @interpolate(flat) spray_look: vec2<f32>,
 };
 
 fn bone_texel(base: u32, joint: u32, row: u32) -> vec4<f32> {
@@ -119,6 +124,8 @@ fn vs_main(v: VertexIn, inst: InstanceIn) -> VsOut {
     out.rest = vec4<f32>(v.position, local.y);
     out.wounds0 = inst.wounds0;
     out.wounds1 = inst.wounds1;
+    out.spray = inst.spray;
+    out.spray_look = vec2<f32>(f32(inst.extra.z), f32(inst.extra.w)) / 1000.0;
     return out;
 }
 
@@ -207,6 +214,20 @@ fn wounded(rgb_in: vec3<f32>, rest: vec4<f32>, w0: vec4<f32>, w1: vec4<f32>, dec
     return rgb;
 }
 
+// Blood sprayed onto a body or a wall: speckles of several sizes around `spray.xyz` (rest
+// pose, metres) within `spray.w`, denser towards the centre.
+fn sprayed(rgb: vec3<f32>, rest: vec3<f32>, spray: vec4<f32>, look: vec2<f32>) -> vec3<f32> {
+    let r = max(spray.w, 0.05);
+    let d = length(rest - spray.xyz) / r;
+    let fall = 1.0 - smoothstep(0.25, 1.0, d);
+    let big = smoothstep(0.70, 0.78, noise3(rest * 34.0 + vec3<f32>(3.1)));
+    let small = smoothstep(0.74, 0.80, noise3(rest * 85.0 + vec3<f32>(7.7)));
+    let mist = smoothstep(0.45, 0.75, noise3(rest * 12.0)) * 0.35 * (1.0 - smoothstep(0.0, 0.6, d));
+    let a = clamp(look.x * fall * max(max(big, small * 0.9), mist), 0.0, 0.95);
+    let red = mix(vec3<f32>(0.33, 0.012, 0.01), vec3<f32>(0.11, 0.035, 0.02), smoothstep(0.0, 1.0, look.y));
+    return mix(rgb, red, a);
+}
+
 fn to_srgb(c: vec3<f32>) -> vec3<f32> {
     let lo = c * 12.92;
     let hi = 1.055 * pow(max(c, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - 0.055;
@@ -249,6 +270,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     }
     if (material.flags.w < 0.5 && in.wounds0.z + in.wounds0.w + in.wounds1.x > 0.0) {
         rgb = wounded(rgb, in.rest, in.wounds0, in.wounds1, decay);
+    }
+    if (material.flags.w < 0.5 && in.spray_look.x > 0.0) {
+        rgb = sprayed(rgb, in.rest.xyz, in.spray, in.spray_look);
     }
     // Lambert from the upper left (the sprites' light), both faces lit.
     var n = normalize(in.normal);

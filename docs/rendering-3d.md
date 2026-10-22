@@ -203,6 +203,17 @@ ticks after the hit and fade from 75 % of `HIT_KEEP` until just before it. `gore
 half the droplets, 0.7× the size, 0.8× the reach; `gore=off` and `models=off`: none.
 Melee, thrown weapons and explosions spray nothing yet.
 
+The same spray lands on models behind the victim (#220, `splatter::sprayed_targets`):
+troops within the cone (up to the cause's reach, at least 0.25 m wide) get speckles on the
+side facing the victim, around a point at chest height (0.55 m around it, rest pose),
+stronger the closer they stand and for a killing hit; a building whose footprint (70 % of
+its model radius) the spray enters within reach gets a stain of 0.9 m on that wall at 1.3 m.
+Each model keeps the strongest spray that reached it (`ModelInstance::sprayed`: point,
+radius, amount, drying like the droplets), drawn in `model.wgsl` as speckles of two sizes
+and a fine mist (instance attribute 15 and `extra.zw`; with it the model pipeline uses all
+16 vertex attributes WebGL2 allows). The bone layer stays clean. Units are found through a
+128 px grid. `gore=reduced` halves it, `off` removes it.
+
 #### Corpse piles (#221)
 
 3D corpses that overlap lie on each other instead of through each other

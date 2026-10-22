@@ -257,6 +257,7 @@ impl ThreeD {
         // Corpses drawn as models: instance index, sunk ground point, yaw, footprint.
         let mut corpses: Vec<(usize, [f32; 3], f32)> = Vec::new();
         let mut footprints: Vec<piles::Footprint> = Vec::new();
+        let mut targets: Vec<super::splatter::Target> = Vec::new();
         for u in world.units.iter().filter(|u| u.alive && u.inside_of.is_none()) {
             if u.building && (self.models != Models::All || !finished(world, u)) {
                 continue;
@@ -290,8 +291,19 @@ impl ThreeD {
                 corpses.push((self.instances.len(), at, view3d::facing_yaw(u.dir)));
                 footprints.push(footprint(u, at, &inst, model.radius));
             }
+            targets.push(super::splatter::Target {
+                unit: u.id.0,
+                pos: (at[0], at[1]),
+                yaw: if u.building { 0.0 } else { view3d::facing_yaw(u.dir) },
+                building: u.building,
+                radius: model.radius,
+            });
             self.instances.push(inst);
             self.shown.insert(u.id);
+        }
+        // Blood sprayed onto troops and buildings behind hit units (#220).
+        for (i, sprayed) in super::splatter::sprayed_targets(&world.hits, world.tick.0, self.gore, &targets) {
+            self.instances[i].sprayed = sprayed;
         }
         // Corpses that overlap lie on each other (#221).
         let start = web_time::Instant::now();
@@ -419,6 +431,7 @@ fn instance(
         transparent,
         player: u.owner,
         wounds,
+        sprayed: Default::default(),
     };
     (instance, ground)
 }
