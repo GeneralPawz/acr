@@ -15,7 +15,14 @@ struct Globals {
     cells: vec4<i32>,
     // Vertex rows, water grid width, water grid height, zoomed-out view (1) or not (0).
     map: vec4<i32>,
+    // World (x east, y south, z true height) to output clip space (view3d.rs).
+    view: mat4x4<f32>,
+    // x: free camera (1): the ground goes through `view`; y: depth bias of the depth pass.
+    mode: vec4<f32>,
 };
+
+// cos 30°: game heights are true heights times this.
+const COS_E: f32 = 0.8660254;
 
 @group(0) @binding(0) var<uniform> globals: Globals;
 @group(0) @binding(1) var heights: texture_2d<i32>;
@@ -162,6 +169,12 @@ fn vs_ground(@builtin(vertex_index) vi: u32) -> GroundOut {
     let scale = globals.camera.w;
     let target_px = vec2<f32>(sx, sy) * scale;
     out.pos = vec4<f32>(target_px.x / globals.sizes.x * 2.0 - 1.0, 1.0 - target_px.y / globals.sizes.y * 2.0, 0.0, 1.0);
+    if (globals.mode.x > 0.5) {
+        // The free camera: the same mesh seen through the 3D view.
+        let z = f32(height + i32(data.b)) / COS_E;
+        let clip = globals.view * vec4<f32>(f32(world.x), f32(world.y), z, 1.0);
+        out.pos = vec4<f32>(clip.xyz, 1.0);
+    }
     out.screen = vec2<f32>(sx, sy);
     out.tex = vec2<f32>(tex_coord(world));
     out.local = local;
@@ -208,6 +221,43 @@ fn vs_ground(@builtin(vertex_index) vi: u32) -> GroundOut {
     out.layers = vec4<u32>(base, t1, m1, t2);
     out.layers2 = vec2<u32>(m2, select(0u, 1u, left));
     return out;
+}
+
+// The terrain's depth for the 3D pass (models are depth-tested against it): the same
+// triangles at output size through `view`, at the ground height without the random lift and
+// pushed back a little, so a model standing on the ground is not cut by the lifted surface.
+@vertex
+fn vs_depth(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
+    let tri = vi / 3u;
+    let corner = vi % 3u;
+    let cell = i32(tri / 4u);
+    let kind = tri % 4u;
+    let cp = globals.cells.x + cell % globals.cells.z;
+    let row = globals.cells.y + cell / globals.cells.z;
+    let w = globals.cells.w;
+    if (row >= globals.map.x - 1) {
+        return vec4<f32>(2.0, 2.0, 0.0, 1.0);
+    }
+    let v = row * w + cp * 2;
+    // P, Q, R of the four triangles, as in vs_ground.
+    var corners: array<i32, 3>;
+    switch kind {
+        case 0u: { corners = array<i32, 3>(v, v + w, v + w + 1); }
+        case 1u: { corners = array<i32, 3>(v, v + 1, v + w + 1); }
+        case 2u: { corners = array<i32, 3>(v + 2, v + 1, v + w + 1); }
+        default: { corners = array<i32, 3>(v + 2, v + w + 2, v + w + 1); }
+    }
+    let here = corners[corner];
+    let world = vertex_pos(here);
+    let height = textureLoad(heights, texel_at(here), 0).r;
+    var clip = globals.view * vec4<f32>(f32(world.x), f32(world.y), f32(height) / COS_E, 1.0);
+    clip.z = clip.z + globals.mode.y * clip.w;
+    return clip;
+}
+
+@fragment
+fn fs_depth() -> @location(0) vec4<f32> {
+    return vec4<f32>(0.0);
 }
 
 fn tile_texel(tile: u32, uv: vec2<i32>) -> u32 {
@@ -433,7 +483,8 @@ fn fs_present(in: FullOut) -> @location(0) vec4<f32> {
     let d10 = depth(gx + 1, gy);
     let d01 = depth(gx, gy + 2);
     let d11 = depth(gx + 1, gy + 2);
-    if (d00 >= 0 || d10 >= 0 || d01 >= 0) {
+    // The water tint works on screen blocks of the original view: not under the free camera.
+    if ((d00 >= 0 || d10 >= 0 || d01 >= 0) && globals.mode.x < 0.5) {
         let f = vec2<f32>(screen & vec2<i32>(31, 31)) / 32.0;
         let raw = mix(mix(f32(d00), f32(d10), f.x), mix(f32(d01), f32(d11), f.x), f.y) * 1024.0;
         var alpha = i32(clamp(raw, 0.0, 65000.0));

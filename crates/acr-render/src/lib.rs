@@ -6,9 +6,13 @@
 
 pub mod fog;
 pub mod image;
+pub mod math;
+pub mod model;
+pub mod model_renderer;
 pub mod objects_view;
 pub mod scene;
 pub mod terrain;
+pub mod view3d;
 
 use std::ops::Range;
 
@@ -76,6 +80,9 @@ struct Instance {
     src: [u32; 4],
     kind: u32,
     param: u32,
+    /// Depth (0..1) in the 3D pass.
+    depth: f32,
+    _pad: u32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -119,10 +126,14 @@ pub struct SpriteDraw {
     pub mirrored: bool,
     /// Darkness levels lighten instead (`WHITE` weapons, `AGEW_1W.GRD`).
     pub white: bool,
+    /// Depth (0..1) against 3D models, used by [`SpriteRenderer::render_depth`]; 0 otherwise.
+    pub depth: f32,
 }
 
 pub struct SpriteRenderer {
     pipeline: wgpu::RenderPipeline,
+    /// The same, depth-tested in the 3D pass (`model_renderer::DepthTarget`).
+    depth_pipeline: wgpu::RenderPipeline,
     globals: wgpu::Buffer,
     globals_group: wgpu::BindGroup,
     page_layout: wgpu::BindGroupLayout,
@@ -200,38 +211,46 @@ impl SpriteRenderer {
             bind_group_layouts: &[Some(&globals_layout), Some(&page_layout)],
             immediate_size: 0,
         });
-        let attributes = wgpu::vertex_attr_array![0 => Float32x4, 1 => Uint32x4, 2 => Uint32, 3 => Uint32];
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("sprite"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: size_of::<Instance>() as u64,
-                    step_mode: wgpu::VertexStepMode::Instance,
-                    attributes: &attributes,
-                })],
-            },
-            primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleStrip, ..Default::default() },
-            depth_stencil: None,
-            multisample: Default::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: target,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
+        let attributes =
+            wgpu::vertex_attr_array![0 => Float32x4, 1 => Uint32x4, 2 => Uint32, 3 => Uint32, 4 => Float32];
+        let pipeline = |depth_stencil| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("sprite"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: size_of::<Instance>() as u64,
+                        step_mode: wgpu::VertexStepMode::Instance,
+                        attributes: &attributes,
+                    })],
+                },
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleStrip,
+                    ..Default::default()
+                },
+                depth_stencil,
+                multisample: Default::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: target,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let depth_pipeline = pipeline(Some(model_renderer::depth_test_only()));
+        let pipeline = pipeline(None);
         let instances = Self::instance_buffer(device, 1024);
-        Self { pipeline, globals, globals_group, page_layout, palette, instances, batches: Vec::new() }
+        Self { pipeline, depth_pipeline, globals, globals_group, page_layout, palette, instances, batches: Vec::new() }
     }
 
     fn instance_buffer(device: &wgpu::Device, count: u64) -> wgpu::Buffer {
@@ -390,6 +409,8 @@ impl SpriteRenderer {
                         | if sprite.transparent { TRANSPARENT } else { 0 }
                         | if sprite.white { WHITE } else { 0 },
                     param,
+                    depth: sprite.depth.clamp(0.0, 1.0),
+                    _pad: 0,
                 });
             }
         }
@@ -401,7 +422,16 @@ impl SpriteRenderer {
     }
 
     pub fn render(&self, pass: &mut wgpu::RenderPass<'_>, atlas: &SpriteAtlas) {
-        pass.set_pipeline(&self.pipeline);
+        self.draw(pass, atlas, &self.pipeline);
+    }
+
+    /// Draws into the 3D pass, each sprite at its [`SpriteDraw::depth`] behind nearer models.
+    pub fn render_depth(&self, pass: &mut wgpu::RenderPass<'_>, atlas: &SpriteAtlas) {
+        self.draw(pass, atlas, &self.depth_pipeline);
+    }
+
+    fn draw(&self, pass: &mut wgpu::RenderPass<'_>, atlas: &SpriteAtlas, pipeline: &wgpu::RenderPipeline) {
+        pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &self.globals_group, &[]);
         pass.set_vertex_buffer(0, self.instances.slice(..));
         for (page, range) in &self.batches {

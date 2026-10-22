@@ -31,6 +31,8 @@ struct Instance {
     @location(1) src: vec4<u32>,  // atlas px: x, y, w, h
     @location(2) kind: u32,
     @location(3) param: u32,
+    // Depth in the 3D pass (0 otherwise).
+    @location(4) depth: f32,
 };
 
 struct VsOut {
@@ -46,7 +48,7 @@ fn vs_main(@builtin(vertex_index) vi: u32, inst: Instance) -> VsOut {
     let corner = vec2<f32>(f32(vi & 1u), f32(vi >> 1u));
     let px = inst.dst.xy + corner * inst.dst.zw;
     var out: VsOut;
-    out.pos = vec4<f32>(px.x / globals.screen.x * 2.0 - 1.0, 1.0 - px.y / globals.screen.y * 2.0, 0.0, 1.0);
+    out.pos = vec4<f32>(px.x / globals.screen.x * 2.0 - 1.0, 1.0 - px.y / globals.screen.y * 2.0, inst.depth, 1.0);
     out.local = corner * vec2<f32>(inst.src.zw);
     out.src = inst.src;
     out.kind = inst.kind;

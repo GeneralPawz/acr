@@ -15,6 +15,7 @@ use acr_formats::m3d::{M3dMap, SpriteGroup};
 use acr_formats::sprite_list::SpriteList;
 
 use crate::terrain::{Camera, TerrainData};
+use crate::view3d::View3d;
 
 /// One frame of a sprite pack, by game path and frame index.
 pub type FrameKey = (String, usize);
@@ -757,6 +758,31 @@ pub struct SceneAtlas {
     index: HashMap<FrameKey, usize>,
 }
 
+/// How sprites sit in the 3D pass ([`SceneAtlas::placed_draws`]): their depth against the
+/// models and, with the free camera, their place on the screen.
+#[derive(Clone, Copy)]
+pub struct Placement<'a> {
+    pub view: &'a View3d,
+    pub terrain: &'a TerrainData,
+    /// Every sprite in front of the models (comparing models with sprites).
+    pub on_top: bool,
+}
+
+impl Placement<'_> {
+    /// Depth of a sprite: ground sprites (and those the zoomed-out view bakes into its ground)
+    /// lie behind every model; the others stand at their sort row, `2 · sort` in world rows,
+    /// like the original's row buckets.
+    fn depth(&self, s: &SceneSprite, zoomed: bool, h: i32) -> f32 {
+        if self.on_top {
+            return 0.0;
+        }
+        if s.layer == Layer::Ground || (zoomed && baked_in_zoom(s)) {
+            return 1.0;
+        }
+        self.view.sprite_depth([s.x as f32, (2 * s.sort) as f32, h as f32 / crate::view3d::COS_E])
+    }
+}
+
 impl SceneAtlas {
     /// The draws for the visible part of `scene` plus `dynamic` sprites (e.g. moving units
     /// from the simulation, any order), merged into the original's draw order.
@@ -773,37 +799,86 @@ impl SceneAtlas {
         size: [f32; 2],
         zoomed: bool,
     ) -> Vec<crate::SpriteDraw> {
-        let mut out = Vec::new();
-        for (s, [x, y]) in draw_order(scene, dynamic, camera, size, zoomed) {
+        self.placed_draws(scene, dynamic, camera, size, zoomed, None)
+    }
+
+    /// [`SceneAtlas::draws`] for the 3D pass: each draw gets its depth, and with the free
+    /// camera the sprites stand upright at their projected ground points, ordered far to near.
+    pub fn placed_draws(
+        &self,
+        scene: &Scene,
+        dynamic: &[SceneSprite],
+        camera: &Camera,
+        size: [f32; 2],
+        zoomed: bool,
+        placement: Option<Placement<'_>>,
+    ) -> Vec<crate::SpriteDraw> {
+        // Per sprite: its ground point on the screen without the sprite offset, and the
+        // ground height the offset `dy` already contains (0 when the anchor is the flat
+        // projection `(x, y / 2)`).
+        let placed: Vec<(&SceneSprite, [f32; 2], i32)> = match placement {
+            Some(p) if p.view.is_free() => free_order(scene, dynamic, p, size, zoomed),
+            _ => draw_order(scene, dynamic, camera, size, zoomed)
+                .into_iter()
+                .map(|(s, _)| (s, camera.project(s.x, s.y, 0), 0))
+                .collect(),
+        };
+        let mut out = Vec::with_capacity(placed.len());
+        for (s, [ax, ay], h) in placed {
+            let depth = placement.map_or(0.0, |p| p.depth(s, zoomed, h));
             let twin =
                 zoomed.then(|| zoom_pack(&s.frame.0)).flatten().and_then(|p| self.index.get(&(p, s.frame.1)).copied());
-            if let Some(frame) = twin {
-                let [px, py] = camera.project(s.x, s.y, 0);
-                out.push(crate::SpriteDraw {
-                    frame,
-                    x: (px + (s.dx >> 2) as f32).round(),
-                    y: (py + (s.dy >> 2) as f32).round(),
-                    scale: 1.0,
-                    player: s.player,
-                    transparent: s.transparent,
-                    mirrored: s.mirrored,
-                    white: s.white,
-                });
+            let (frame, x, y, scale) = if let Some(frame) = twin {
+                (frame, ax + (s.dx >> 2) as f32, ay + ((s.dy + h) >> 2) as f32, 1.0)
             } else if let Some(&frame) = self.index.get(&s.frame) {
-                out.push(crate::SpriteDraw {
-                    frame,
-                    x: x.round(),
-                    y: y.round(),
-                    scale: camera.scale,
-                    player: s.player,
-                    transparent: s.transparent,
-                    mirrored: s.mirrored,
-                    white: s.white,
-                });
-            }
+                (frame, ax + s.dx as f32 * camera.scale, ay + (s.dy + h) as f32 * camera.scale, camera.scale)
+            } else {
+                continue;
+            };
+            out.push(crate::SpriteDraw {
+                frame,
+                x: x.round(),
+                y: y.round(),
+                scale,
+                player: s.player,
+                transparent: s.transparent,
+                mirrored: s.mirrored,
+                white: s.white,
+                depth,
+            });
         }
         out
     }
+}
+
+/// The free camera's sprites: every one whose ground point projects near the window, as
+/// `(sprite, ground point on the screen, ground height)`, ground sprites first, then far to
+/// near (the row order of the original no longer holds once the view turns).
+fn free_order<'a>(
+    scene: &'a Scene,
+    dynamic: &'a [SceneSprite],
+    placement: Placement<'_>,
+    size: [f32; 2],
+    zoomed: bool,
+) -> Vec<(&'a SceneSprite, [f32; 2], i32)> {
+    let view = placement.view;
+    let margin = 1024.0 * view.camera.scale;
+    // (sprite, ground point on the screen, ground height, (not flat, −depth))
+    type Keyed<'s> = (&'s SceneSprite, [f32; 2], i32, (bool, f32));
+    let mut out: Vec<Keyed<'_>> = scene
+        .sprites
+        .iter()
+        .chain(dynamic)
+        .filter_map(|s| {
+            let h = placement.terrain.height_at(s.x, s.y);
+            let p = view.project(crate::view3d::ground_point(s.x, s.y, h));
+            let inside = p[0] > -margin && p[0] < size[0] + margin && p[1] > -margin && p[1] < size[1] + margin;
+            let flat = s.layer == Layer::Ground || (zoomed && baked_in_zoom(s));
+            inside.then_some((s, [p[0], p[1]], h, (!flat, -p[2])))
+        })
+        .collect();
+    out.sort_by(|a, b| a.3.0.cmp(&b.3.0).then(a.3.1.total_cmp(&b.3.1)));
+    out.into_iter().map(|(s, at, h, _)| (s, at, h)).collect()
 }
 
 /// The visible part of `scene` and the `dynamic` sprites in draw order, with their frame
