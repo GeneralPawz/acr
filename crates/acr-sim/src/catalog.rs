@@ -121,6 +121,13 @@ pub struct EconomyDef {
     pub is_farm: bool,
     /// `ADDSECTION s a life …`: building stages that exist, and the life each adds once done.
     pub sections: Vec<(u8, i32)>,
+    /// Per section: the explosion cells of its ruin (`EXPLPOINTS s n (x y)*n`, record +0x1d
+    /// count, +0x21 words), relative to the lock base cell, and the sort row of its done
+    /// state (the `ADDSECTION` state-2 `y`, record +0x13).
+    pub section_ruin: [SectionRuin; 5],
+    /// `STAGELOCKPOINTS s n (x y)*n` (NM+0x16ce count, +0x16d8/+0x16ec bytes per stage):
+    /// cells a done section locks, relative to the lock base cell.
+    pub stage_lock_points: [Vec<(i32, i32)>; 5],
     /// `SPRITEOBJECT`: placing the type plants sprites (fields) instead of an object.
     pub sprite_object: bool,
     /// `EXSPRITES name variants n step spread`: the sprites it plants.
@@ -148,6 +155,22 @@ pub struct EconomyDef {
     pub portion: [i32; 8],
     /// `RESOURCEBASE n RES*n`: source types that may be delivered here (bit per type).
     pub resource_base: u16,
+}
+
+/// `DESTRUCT prob n (weapon)*n`: the names and their weapon indices (set with the weapons,
+/// [`Catalog::set_weapons`]; the engine stops on an unknown name, 0x4f747f).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct Destruct {
+    pub prob: i32,
+    pub names: Vec<String>,
+    pub ids: Vec<Option<u16>>,
+}
+
+/// What a building section's ruin uses (see [`EconomyDef::section_ruin`]).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct SectionRuin {
+    pub expl_points: Vec<(i32, i32)>,
+    pub done_y: i32,
 }
 
 /// `EXSPRITES name variants n step spread` (NM+0x28da, +0x181a, +0x183d, +0x1845,
@@ -199,6 +222,13 @@ fn economy(def: &UnitDef) -> EconomyDef {
                 if let Some(s) = c.int(0).filter(|s| (0..5).contains(s)) {
                     e.sections.retain(|x| x.0 != s as u8);
                     e.sections.push((s as u8, c.int(2).unwrap_or(0)));
+                }
+            }
+            "STAGELOCKPOINTS" => {
+                // The engine does not check the stage (0x4fe032); stages 0..5 are kept.
+                if let Some(s) = c.int(0).filter(|s| (0..5).contains(s)) {
+                    e.stage_lock_points[s as usize] =
+                        c.points(1).into_iter().map(|(x, y)| (i32::from(x as u8), i32::from(y as u8))).collect();
                 }
             }
             "RESCONSUMER" => {
@@ -265,6 +295,18 @@ fn economy(def: &UnitDef) -> EconomyDef {
             }
             _ => {}
         }
+    }
+    for section in def.sections() {
+        let r = &mut e.section_ruin[usize::from(section.stage)];
+        r.done_y = i32::from(section.states[2].sort.1 as i16);
+    }
+    for (s, r) in e.section_ruin.iter_mut().enumerate() {
+        r.expl_points = def
+            .stage_points("EXPLPOINTS", s as u8)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(x, y)| (i32::from(x as i16), i32::from(y as i16)))
+            .collect();
     }
     e
 }
@@ -519,6 +561,9 @@ pub struct ObjectType {
     /// Buildings: `LOCKPOINTS`, 16 px cells relative to the lock base cell. The engine
     /// stores them as bytes (NM+0x16c6), so only the low 8 bits of each value count.
     pub lock_points: Vec<(i32, i32)>,
+    /// `DESTRUCT prob n (weapon)*n` (NM+0x28a8, +0x28a6, +0x28ac): the explosions of a
+    /// ruined building section, each born with probability `prob`/32768.
+    pub destruct: Destruct,
     pub stand: Option<AnimInfo>,
     pub motion_l: Option<AnimInfo>,
     pub motion_r: Option<AnimInfo>,
@@ -775,6 +820,11 @@ impl ObjectType {
                 .get("LOCKPOINTS")
                 .map(|c| c.points(0).into_iter().map(|(x, y)| (i32::from(x as u8), i32::from(y as u8))).collect())
                 .unwrap_or_default(),
+            destruct: def.get("DESTRUCT").map_or_else(Destruct::default, |c| {
+                let n = c.int(1).unwrap_or(0).max(0) as usize;
+                let names: Vec<String> = (0..n).filter_map(|i| c.word(2 + i).map(str::to_owned)).collect();
+                Destruct { prob: c.int(0).unwrap_or(0), ids: vec![None; names.len()], names }
+            }),
             stand: AnimInfo::of(def.animation("STAND")),
             motion_l: AnimInfo::of(def.animation("MOTION_L")),
             motion_r: AnimInfo::of(def.animation("MOTION_R")),
@@ -1133,6 +1183,7 @@ impl Catalog {
     /// Sets the projectile types and resolves every attack's `WEAPON` to its index.
     pub fn set_weapons(&mut self, weapons: crate::weapon::Weapons) {
         for t in &mut self.types {
+            t.destruct.ids = t.destruct.names.iter().map(|n| weapons.find(n)).collect();
             for a in &mut t.attacks {
                 a.weapon_id = a.weapon.as_deref().and_then(|n| weapons.find(n));
             }

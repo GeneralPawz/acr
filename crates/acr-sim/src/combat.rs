@@ -982,32 +982,77 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
 /// for types with `ADDSECTION`). The threshold starts at the type's life (for the owner)
 /// and grows by the life of each section that was done, in section order. While life is at
 /// or below it, a section being built drops back to not built (0x4e94b3; its research goes
-/// on and marks it again on the next tick) and a done one becomes a ruin (0x4e94f1). Life
-/// and maximum life stay: a ruin keeps its share of the maximum, so builders can repair it.
-/// The building's upgrade count (OB+0xe9) is overwritten on the way: 2 + the section if
-/// life is above the threshold, else 2, so 2 after the last section unless life exceeds the
-/// whole threshold. TODO: the ruin's `STAGE_FIRES` explosions and fires (0x4e952f) are not
-/// simulated.
+/// on and marks it again on the next tick) and a done one becomes a ruin (0x4e94f1) with
+/// its explosions ([`section_ruin`]). Life and maximum life stay: a ruin keeps its share of
+/// the maximum, so builders can repair it. The building's upgrade count (OB+0xe9) is
+/// overwritten on the way: 2 + the section if life is above the threshold, else 2, so 2
+/// after the last section unless life exceeds the whole threshold. The object is read
+/// anew for every section: the explosions may hurt it again on the way.
 fn section_damage(w: &mut World, b: usize) {
     use crate::upgrade::{section, section_state, with_section};
     let catalog = w.catalog.clone();
     let sections = &catalog.get(w.units[b].kind).economy.sections;
     let mut threshold = w.adv(w.units[b].owner, w.units[b].kind).life;
-    let u = &mut w.units[b];
     for s in 0..5u8 {
-        let state = section_state(u.stages, s);
-        if u.life <= threshold {
+        let state = section_state(w.units[b].stages, s);
+        if w.units[b].life <= threshold {
+            let u = &mut w.units[b];
             match state {
                 section::BUILDING => u.stages = with_section(u.stages, s, section::NONE),
-                section::DONE => u.stages = with_section(u.stages, s, section::RUIN),
+                section::DONE => {
+                    u.stages = with_section(u.stages, s, section::RUIN);
+                    section_ruin(w, b, s);
+                }
                 _ => {}
             }
-            u.upgrade_level = 2;
+            w.units[b].upgrade_level = 2;
         } else {
-            u.upgrade_level = s + 2;
+            w.units[b].upgrade_level = s + 2;
         }
         if state == section::DONE {
             threshold += sections.iter().find(|x| x.0 == s).map_or(0, |x| x.1);
+        }
+    }
+}
+
+/// A section that became a ruin (0x4e952f..0x4e98bd), if it has `EXPLPOINTS`: at each of
+/// its cells (relative to the lock base cell 0x516fde) one random `DESTRUCT` weapon
+/// (`rando()·n >> 15`) explodes when a second `rando()` is below the `DESTRUCT`
+/// probability; both numbers are drawn for every cell, also without `DESTRUCT`. The
+/// explosions are lifted by `h = done y + 80 − 8·(mean cell y)` (picture rows: 2h further
+/// down the map, h higher). Then the engine frees the `STAGELOCKPOINTS` cells of the stage
+/// numbered by its loop counter, which is the cell count at that point: stages 0..4 for
+/// up to 4 cells. With more it reads past the five lists (NM+0x16ce + 2·count); for the
+/// only file with `EXPLPOINTS` (PORTKRE, 298 cells, not in `NMLIST.TXT`) that is the middle
+/// of `OneStepDX[50]`, which is 0, so nothing is freed there.
+fn section_ruin(w: &mut World, b: usize, s: u8) {
+    let catalog = w.catalog.clone();
+    let t = catalog.get(w.units[b].kind);
+    let ruin = &t.economy.section_ruin[usize::from(s)];
+    let n = ruin.expl_points.len() as i32;
+    if n == 0 {
+        return;
+    }
+    // The mean x is computed too but not used.
+    let ay = ruin.expl_points.iter().map(|p| p.1).sum::<i32>() / n;
+    let h = ruin.done_y + 0x50 - (ay << 3);
+    let (cx, cy) = crate::economy::base_cell(t, w.units[b].pos);
+    let count = t.destruct.ids.len() as i32;
+    for &(px, py) in &ruin.expl_points {
+        let x = (cx + px) << 4;
+        let y = ((cy + py) << 4) + 2 * h;
+        let k = ((w.random.rando() * count) >> 15) as usize;
+        if w.random.rando() < t.destruct.prob
+            && let Some(Some(wid)) = t.destruct.ids.get(k)
+        {
+            let z = w.map.heights.at(x, y) + h;
+            crate::projectile::create(w, *wid, (x, y, z), (x, y, 1000), None, 0, None, (0, 0, 0), 0);
+        }
+    }
+    if let Some(cells) = t.economy.stage_lock_points.get(n as usize) {
+        let map = std::sync::Arc::make_mut(&mut w.map);
+        for &(x, y) in cells {
+            map.land.clr_pt(cx + x, cy + y);
         }
     }
 }

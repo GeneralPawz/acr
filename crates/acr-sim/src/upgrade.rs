@@ -445,25 +445,36 @@ fn apply_unit(w: &mut World, player: u8, kind: TypeId, category: u8, slots: &Slo
     }
 }
 
-/// `UPSTAGEn` on the researching building (0x53268e): if the building has that section
-/// (`ADDSECTION`), it becomes done (2); life becomes the type's life plus the life of every
-/// done section, and so does the maximum. A rebuilt ruin is thus repaired at once.
+/// `UPSTAGEn` on the researching building (0x53268e): nothing while it burns (OB+0x26
+/// bit 1). Otherwise, if the building has that section (`ADDSECTION`), it becomes done (2);
+/// life becomes the type's life plus the life of every done section, and so does the
+/// maximum. A rebuilt ruin is thus repaired at once. Every done section locks its
+/// `STAGELOCKPOINTS` cells (0x53281d; the engine sets each cell twice).
 fn upstage(w: &mut World, b: usize, s: u8) {
     let catalog = w.catalog.clone();
     let u = &w.units[b];
     let t = catalog.get(u.kind);
-    if !t.economy.sections.iter().any(|x| x.0 == s) {
+    if u.burning || !t.economy.sections.iter().any(|x| x.0 == s) {
         return;
     }
     let life = w.adv(u.owner, u.kind).life;
+    let (bx, by) = crate::economy::base_cell(t, u.pos);
     let u = &mut w.units[b];
     u.stages = with_section(u.stages, s, section::DONE);
     let mut l = life;
+    let mut lock = Vec::new();
     for &(k, add) in &t.economy.sections {
         if section_state(u.stages, k) == section::DONE {
             l += add;
+            lock.extend(t.economy.stage_lock_points[usize::from(k)].iter().map(|&(x, y)| (bx + x, by + y)));
         }
     }
     u.life = i32::from(l as u16);
     u.max_life = u.life;
+    if !lock.is_empty() {
+        let map = std::sync::Arc::make_mut(&mut w.map);
+        for (x, y) in lock {
+            map.land.set_pt(x, y);
+        }
+    }
 }

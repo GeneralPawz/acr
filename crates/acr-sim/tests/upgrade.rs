@@ -194,3 +194,57 @@ fn sections_are_built_ruined_and_rebuilt() {
     assert_eq!((state(&w, 0), state(&w, 1)), (section::RUIN, section::RUIN));
     assert_eq!(upgrade::available(&w, b), [sec0], "SEC1 needs section 0 again");
 }
+
+const RUIN_FORT: &str = "NAME Frt\r\nBUILDING\r\nLIFE 1000\r\nLOCATION 0 0 64 64\r\nBUILDSTAGES 10\r\n\
+    DESTRUCT 32767 2 BOOM BOOM\r\nADDSECTION 0 0 500 1 0 0 2 0 0 3 10 200 4 0 0\r\n\
+    EXPLPOINTS 0 3 1 2 3 4 5 6\r\nSTAGELOCKPOINTS 0 2 7 7 7 8\r\nSTAGELOCKPOINTS 3 1 9 9\r\n[END]\r\n";
+const RUIN_NDS: &[u8] = b"[MEMBERS]\r\nBOOM #POINT 0 1 NONE HI_GRAVITY1 RANDOM 3 -1\r\n[END]\r\n";
+
+#[test]
+fn a_ruined_section_explodes_at_its_cells() {
+    use acr_sim::combat::make_damage;
+    use acr_sim::upgrade::{section, section_state};
+    let mut c = Catalog::new();
+    let frt = c.add(ObjectType::from_def("Frt(EN)", &UnitDef::parse(RUIN_FORT.as_bytes())));
+    c.set_weapons(acr_sim::weapon::Weapons::parse(RUIN_NDS, Some(b"@POINT 1 0 0 0\r\n"), None));
+    let mut tech = Tech::default();
+    tech.add_nation(&c, &NationDef::parse(FORT_NATION));
+    c.tech = tech;
+    let mut w = World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(Formations::default()));
+    let fort = w.spawn(frt, 0, Pos::from_pixels(2048, 2048), 0);
+    economy::census_all(&mut w);
+    let b = fort.0 as usize;
+    // The lock base cell is (128, 128).
+    assert!(!w.map.land.check_pt(135, 135));
+    // Burning, a finished research changes nothing (0x5326a1); the fire's life loss even
+    // puts the section back to "not built".
+    w.units[b].burning = true;
+    w.step(&[Command::Upgrade { player: 0, buildings: vec![fort], upgrade: up(&w, "SEC0") }]);
+    run(&mut w, 6);
+    assert!(w.units[b].research.is_none());
+    assert_ne!(section_state(w.units[b].stages, 0), section::DONE);
+    assert!(!w.map.land.check_pt(135, 135));
+    w.units[b].burning = false;
+    w.step(&[Command::Upgrade { player: 0, buildings: vec![fort], upgrade: up(&w, "SEC0") }]);
+    run(&mut w, 6);
+    assert_eq!(section_state(w.units[b].stages, 0), section::DONE);
+    assert_eq!(w.units[b].life, 1500);
+    assert!(w.map.land.check_pt(135, 135) && w.map.land.check_pt(135, 136), "STAGELOCKPOINTS 0 locked");
+
+    std::sync::Arc::make_mut(&mut w.map).land.set_pt(137, 137);
+    let before = w.random;
+    make_damage(&mut w, b, 600, None, 0xFF);
+    assert_eq!(section_state(w.units[b].stages, 0), section::RUIN);
+    // One BOOM per cell, lifted by 200 + 80 − 8·4 = 248: two numbers per cell, then the
+    // object's own four (ASerial, RANDOM velocity).
+    let booms: Vec<_> = w.projectiles.iter().map(|p| (p.pos.0 >> 14, p.pos.1 >> 14, p.pos.2 >> 14)).collect();
+    assert_eq!(booms, [(2064, 2080 + 496, 248), (2096, 2112 + 496, 248), (2128, 2144 + 496, 248)]);
+    let mut r = before;
+    for _ in 0..3 * 6 {
+        r.rando();
+    }
+    assert_eq!(w.random, r);
+    // Then the STAGELOCKPOINTS of stage 3 (the cell count) are freed.
+    assert!(!w.map.land.check_pt(137, 137));
+    assert!(w.map.land.check_pt(135, 135), "the ruin's own cells stay locked");
+}

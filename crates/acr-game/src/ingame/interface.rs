@@ -867,10 +867,15 @@ impl InGame {
                 life: progress,
                 ..Icon::default()
             };
-            // A stage upgrade of a damaged building (life < 2000) cannot start: `MUSTREPAIR`
-            // (0x60988b; the text id has no text, so the id is shown).
+            // A stage upgrade cannot start while the first selected object burns (OB+0x26
+            // bit 1) or is a building (OB+0x27 bit 4: `BUILDING`, not `WALLOBJECT`, set at
+            // 0x516212) with less than 2000 life: `MUSTREPAIR` (0x60988b; the text id has no
+            // text, so the id is shown).
             let first = self.selected_units().next();
-            let damaged = first.is_some_and(|u| u.building && u.life < 2000);
+            let damaged = first.is_some_and(|u| {
+                let wall = objects.definition(&world.catalog.get(u.kind).id).is_some_and(|d| d.has("WALLOBJECT"));
+                u.burning || (u.building && !wall && u.life < 2000)
+            });
             let stage =
                 matches!(def.effect, acr_sim::tech::Effect::Building { category } if (24..29).contains(&category));
             if progress.is_some() {
