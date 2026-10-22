@@ -11,6 +11,9 @@ use crate::trig::norma;
 use crate::weapon::{Propagation, media};
 use crate::world::{EntityId, World};
 
+/// The engine's degrees-to-radians factor of `ANGLE` weapons (0x645540, not quite π/180).
+pub const DEG_TO_RAD: f64 = 0.017_452_777_777_777_78;
+
 /// Projectile slots (`0x28a8518`, 8192).
 pub const SLOTS: usize = 0x2000;
 
@@ -271,7 +274,7 @@ pub fn create(
         }
         Propagation::Angle => {
             let dist = isqrt(i64::from(dx) * i64::from(dx) + i64::from(dy) * i64::from(dy));
-            let tan = libm::tan(f64::from(wp.speed) * 0.017_452_777_777_777_78);
+            let tan = libm::tan(f64::from(wp.speed) * DEG_TO_RAD);
             let hgt = (dist as f64 * tan) as i32;
             let e = d.2 - hgt - zs;
             if e >= 0 || az == 0 {

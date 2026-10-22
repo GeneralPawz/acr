@@ -173,6 +173,8 @@ pub enum Request {
         visible_only: bool,
         /// Add each unit's orders, animation, stance and reload counters.
         detail: bool,
+        /// Only list objects whose type id contains this.
+        kind: Option<String>,
     },
     /// A simulation command (see `drive::command`).
     Command(Value),
@@ -350,6 +352,7 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
             owner: uint(&v, "owner").map(|o| o as u8),
             visible_only: v.get("visible_only").and_then(Value::as_bool).unwrap_or(false),
             detail: v.get("detail").and_then(Value::as_bool).unwrap_or(false),
+            kind: v.get("type").and_then(Value::as_str).map(str::to_owned),
         },
         "command" => Request::Command(v.get("command").cloned().ok_or("command: missing \"command\"")?),
         "select" => Request::Select(

@@ -58,9 +58,16 @@ fn formations(world: &World, player: u8) -> BTreeMap<u16, u32> {
 }
 
 /// `state`: mode, tick, the player's resources and selection, objects per owner and type,
-/// the mission's end; with `units`, every object (of `owner`); with `detail`, also what each
-/// one is doing.
-pub fn state(game: &Game, units: bool, owner: Option<u8>, visible_only: bool, detail: bool) -> Value {
+/// the mission's end; with `units`, every object (of `owner`, of a type containing `kind`);
+/// with `detail`, also what each one is doing and a summary of the listed units' activity.
+pub fn state(
+    game: &Game,
+    units: bool,
+    owner: Option<u8>,
+    visible_only: bool,
+    detail: bool,
+    kind: Option<&str>,
+) -> Value {
     let mut v = json!({"mode": mode_name(game), "screen": tree::screen_name(game)});
     let m = v.as_object_mut().unwrap();
     let Mode::InGame(g) = &game.mode else { return v };
@@ -116,6 +123,7 @@ pub fn state(game: &Game, units: bool, owner: Option<u8>, visible_only: bool, de
             .units
             .iter()
             .filter(|u| u.living() && owner.is_none_or(|o| u.owner == o))
+            .filter(|u| kind.is_none_or(|k| kind_matches(world, u, k)))
             .filter(|u| !visible_only || u.owner == me || g.sees(u.pos.x >> 4, u.pos.y >> 4))
             .map(|u| {
                 let mut e = json!({
@@ -168,9 +176,35 @@ pub fn state(game: &Game, units: bool, owner: Option<u8>, visible_only: bool, de
                 e
             })
             .collect();
+        if detail {
+            let ids: Vec<u32> = list.iter().filter_map(|e| e.get("id")?.as_u64()).map(|id| id as u32).collect();
+            m.insert("activity".into(), activity(world, &ids));
+        }
         m.insert("units".into(), list.into());
     }
     v
+}
+
+/// What the listed units are doing: `attacking` (an attack is their current order), `aside`
+/// (a move in front of an attack they will resume: stepping aside to shoot, walking around),
+/// `idle` (no orders) and `reloading`.
+fn activity(world: &World, ids: &[u32]) -> Value {
+    use acr_sim::world::Order;
+    let attack = |o: &Order| matches!(o, Order::Attack { .. } | Order::AttackPoint { .. });
+    let moving = |o: &Order| matches!(o, Order::SendTo { .. } | Order::SmartSendTo { .. });
+    let (mut attacking, mut aside, mut idle, mut reloading) = (0, 0, 0, 0);
+    for u in ids.iter().filter_map(|&id| world.unit(EntityId(id))) {
+        match u.orders.split_last() {
+            None => idle += 1,
+            Some((cur, _)) if attack(cur) => attacking += 1,
+            Some((cur, below)) if moving(cur) && below.iter().any(attack) => aside += 1,
+            Some(_) => {}
+        }
+        if u.delay > 0 {
+            reloading += 1;
+        }
+    }
+    json!({"units": ids.len(), "attacking": attacking, "aside": aside, "idle": idle, "reloading": reloading})
 }
 
 /// Whether a `wait` condition holds.
@@ -225,14 +259,27 @@ fn find_type(world: &World, name: &str) -> Result<TypeId, String> {
         .ok_or_else(|| format!("no object type {name:?}"))
 }
 
-fn ids(v: &Value, key: &str, selection: &[EntityId]) -> Result<Vec<EntityId>, String> {
+/// The units of a command: a list of ids, `"selection"` (the default) or a filter
+/// `{"owner": n, "type": "Mus"}` for every living object that matches.
+fn ids(world: &World, v: &Value, key: &str, selection: &[EntityId]) -> Result<Vec<EntityId>, String> {
     match v.get(key) {
         None => Ok(selection.to_vec()),
         Some(Value::String(s)) if s == "selection" => Ok(selection.to_vec()),
         Some(Value::Array(a)) => {
             a.iter().map(|x| x.as_u64().map(|n| EntityId(n as u32)).ok_or(format!("{key}: ids"))).collect()
         }
-        Some(_) => Err(format!("{key}: a list of ids or \"selection\"")),
+        Some(Value::Object(f)) => {
+            let owner = f.get("owner").and_then(Value::as_u64);
+            let kind = f.get("type").and_then(Value::as_str);
+            Ok(world
+                .units
+                .iter()
+                .filter(|u| u.living() && owner.is_none_or(|o| u64::from(u.owner) == o))
+                .filter(|u| kind.is_none_or(|k| kind_matches(world, u, k)))
+                .map(|u| u.id)
+                .collect())
+        }
+        Some(_) => Err(format!("{key}: a list of ids, \"selection\" or {{\"owner\", \"type\"}}")),
     }
 }
 
@@ -251,7 +298,7 @@ pub fn command(game: &Game, v: &Value) -> Result<Vec<Command>, String> {
     let player = g.player();
     let sel = g.selection();
     let kind = v.get("type").and_then(Value::as_str).ok_or("command: missing \"type\"")?;
-    let units = || ids(v, "units", sel);
+    let units = || ids(world, v, "units", sel);
     let object_type = || find_type(world, v.get("kind").and_then(Value::as_str).ok_or("missing \"kind\"")?);
     let count = v.get("count").and_then(Value::as_u64).unwrap_or(1).max(1) as usize;
     let one = |c: Command| Ok(vec![c]);

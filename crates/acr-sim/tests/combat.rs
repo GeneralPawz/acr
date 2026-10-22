@@ -79,18 +79,8 @@ fn musketeers_fire_on_schedule_and_hit() {
     // Without dispersion the ball flies straight at the target.
     let mut c = Catalog::new();
     let pik = c.add(ObjectType::from_def("Pik(EN)", &UnitDef::parse(PIKEMAN.as_bytes())));
-    let mus = c.add(ObjectType::from_def(
-        "Mus(EN)",
-        &UnitDef::parse(
-            MUSKETEER
-                .replace(
-                    "RAZBROS 300
-",
-                    "",
-                )
-                .as_bytes(),
-        ),
-    ));
+    let mus =
+        c.add(ObjectType::from_def("Mus(EN)", &UnitDef::parse(MUSKETEER.replace("RAZBROS 300\r\n", "").as_bytes())));
     c.set_weapon_kinds(&weapon_kinds(NRES));
     let mut w = World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(Formations::default()));
     let shooter = w.spawn(mus, 0, Pos::from_pixels(2000, 2000), 0);
@@ -267,18 +257,8 @@ fn hits_are_recorded_for_the_renderer() {
     // Without dispersion, as in `musketeers_fire_on_schedule_and_hit`.
     let mut c = Catalog::new();
     let pik = c.add(ObjectType::from_def("Pik(EN)", &UnitDef::parse(PIKEMAN.as_bytes())));
-    let mus = c.add(ObjectType::from_def(
-        "Mus(EN)",
-        &UnitDef::parse(
-            MUSKETEER
-                .replace(
-                    "RAZBROS 300
-",
-                    "",
-                )
-                .as_bytes(),
-        ),
-    ));
+    let mus =
+        c.add(ObjectType::from_def("Mus(EN)", &UnitDef::parse(MUSKETEER.replace("RAZBROS 300\r\n", "").as_bytes())));
     c.set_weapon_kinds(&weapon_kinds(NRES));
     let mut w = World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(Formations::default()));
     let m = w.spawn(mus, 0, Pos::from_pixels(2000, 2000), 0);

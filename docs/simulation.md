@@ -648,6 +648,39 @@ Implemented in `combat.rs`, recovered from `SearchVictim` (0x52622b), `AttackObj
     with `SetUnitsState`'s fourth flag).
   - Random numbers per shot: 2 (aim point) + 2 (dispersion) + 1 (the smoke) + 1 (its child
     count) + 1 (the pick) + 1 (the ball), plus 1 for the `R` test.
+- **Looking before shooting** (`PredictShot` 0x559030, `predict.rs`): a weapon is fired only
+  along a free line, checked twice.
+  - **What blocks.** The flight of the weapon (or of its first `FLY`/`IMMEDIATE`/`ANGLE`
+    child or sync weapon, 0x558e20: the musket's smoke `SHOTFOGFORPISTOL` has the ball
+    `ENDSHOT`) is followed from the shooter to the aim point in 16 px samples (0x558f30):
+    a sample is blocked when the ground (lowered by 45 px where the building box is below
+    20 px) plus the box there rises above the line (0x558eb0); a box blocks as its
+    building, the ground as 0xFFFF. Only straight shots are followed: a `FLY` weapon that
+    arrives in the first tick (the musket ball) and `IMMEDIATE` ones; an `ANGLE` arc only
+    reports a height it cannot reach (0xFFFE); arrows, cannon balls in flight and the rest
+    are never blocked. Units do not block here. A shot whose first step covers less than
+    200 px (`|dx| + |dy| + |dz|`, the global 0x28a8018) is *close*.
+  - **Friends.** Before the strike starts, a `FRIENDLYFIRE` unit whose avoidance is on
+    (`Command::FriendlyFire` switches it off) first looks for the nearest unit on the line
+    out to twice the distance, as the ball's trace does but counting only ¾ of the
+    distance from the line (0x559770); a friend there blocks.
+  - **When the strike would start** (0x51f9e9, after turning, before the shot's cost): from
+    the unit's position at its `ZPOINTS` source height to `GetDamagePoint` (two random
+    numbers, now also for shots that go). The strike starts on a free line, if the target
+    itself is in the way, or if an enemy is in the way of a close shot. A unit standing in
+    a one-frame pose (frame 0, the musketeer's `#PSTAND1`) only shoots past an enemy
+    building with a garrison; otherwise it shows its stance's `#PSTAND` and drops the
+    attack (an idle unit then finds targets again by itself and drops them again).
+  - **At the shot** (0x51e359, per muzzle set, after the reload was set): from the muzzle,
+    with the terrain and boxes only; the same exceptions.
+  - **Blocked** (0x51fce6 / 0x51e499): a unit standing ground drops the attack. Otherwise it
+    looks for a free line from up to ten 20 px steps to its left and right of the line
+    (left first; a side ends at a lock cell; terrain and boxes only), walks one step beyond
+    the first one (`NewMonsterSendTo`, priority 0x90, in front of the attack) and attacks
+    again from there; without one it drops the attack, and a unit that was not reloading
+    gets a reload of 20 frames (before the strike) or at most 16 (at the shot). The engine
+    also shows the local player a hint ("cannot shoot", with the obstacle's name); ACR's
+    interface does not.
 - **Enemy contact while walking** (`CheckMotionThroughEnemyAbility` 0x41df98): if an enemy
   stands within 32 px in the 128 px cell at the end of the next cycle, the walker stops and
   attacks it (priority 0x8F). **Deviation:** the original leaves the walker's cell
@@ -1534,11 +1567,10 @@ No game option writes it. How the map view draws the fog is in
     The random search for a source spot is capped at 4096 tries (the engine would retry
     forever). `GotoFinePosition` is not called.
 - **Combat:**
-  - Not reproduced: the friendly-fire check before a shot and the search for a firing
-    position (0x559a40, 0x51e359); terrain and buildings blocking a musket shot before it
-    is fired (`PredictShot`; boxes do stop the ball in flight); `BackSteps` when an enemy is
-    too close; the territory checks; the AI's random-cell search (`Zombi` units) and its
-    artillery pickers; healers.
+  - Not reproduced: `BackSteps` when an enemy is too close; the territory checks; the AI's
+    random-cell search (`Zombi` units) and its artillery pickers; healers. `PredictShot`
+    looks into the 128 px cells as the ball's trace does (the engine skips the last row and
+    column of its cell grid); the hints of a blocked shot are not shown.
   - Ships: the water pre-path (`CreateWaterPrePath` 0x535b04) uses the land pre-path on the
     water lock map; `MoveObject` and docking use the order's cell centre rather than the
     clicked point; `EraseLodki` has no caller in AC.
@@ -1584,6 +1616,10 @@ No game option writes it. How the map view draws the fog is in
   - a musketeer fires its first shot 38–45 ticks after the order, reloads 550 frames and
     kills at 300 px;
   - a 20-unit battle gives identical hashes in two runs.
+- **Looking before shooting** (`tests/predict.rs`): a musketeer with a friend 200 px ahead in
+  the line walks 40 px to its left and hits the enemy from there, the friend unhurt; one
+  already standing in `#PSTAND1` behind a friend drops every attack and never fires; a
+  300 px ridge between musketeer and enemy stops the shot (reload 20 frames, no hit).
 - **Formation tests** (`tests/formation.rs`): forming takes exactly the shape's slot count
   of free soldiers within 1024 px (14 are not enough, units 1100 px away do not count), the
   drummer is required unless the officer has none, a flag bearer near adds its bonus; the

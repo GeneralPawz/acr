@@ -108,7 +108,7 @@ its label to appear.
 | `{"cmd": "text", "text": "e2e"}` | types into the focused input box |
 | `{"cmd": "wheel", "lines": -1}` | mouse wheel |
 | `{"cmd": "wait", "ticks": 100}` | also `"frames": n`, `"until": {...}` (all must hold), `"timeout": frames` (6000) |
-| `{"cmd": "state"}` | see below; `"units": true` lists every object, `"owner": n` filters, `"visible_only": true` respects the fog, `"detail": true` adds each object's orders, animation and frame, stances, reload counter (`delay`), direction and switches |
+| `{"cmd": "state"}` | see below; `"units": true` lists every object, `"owner": n` and `"type": "Mus"` filter, `"visible_only": true` respects the fog, `"detail": true` adds each object's orders, animation and frame, stances, reload counter (`delay`), direction and switches, and the listed objects' `activity` |
 | `{"cmd": "command", "command": {"type": "move", "units": [1, 2], "x": 3000, "y": 9000}}` | a simulation command for setup (below) |
 | `{"cmd": "select", "units": [10, 11]}` | replaces the selection (setup; prefer `drag`/`click` to test the interface) |
 | `{"cmd": "start", "random": {"nation": 1, "seed": 5}}` | a random map without the menus; also `opponents`, `resources`, `size`, `difficulty`, `hit_locations` (the optional rule, #225) |
@@ -125,7 +125,8 @@ widget, HUD hint or message), `"tick": n`, `"selected": n`, `"formations": n`,
 true, "finished": true, "min": 1}`. A wait that times out fails and lists the conditions
 still unmet in `unmet`.
 
-Simulation commands (`type`, with `units` as a list of ids or `"selection"`, the default):
+Simulation commands (`type`, with `units` as a list of ids, `"selection"` (the default) or a
+filter `{"owner": 0, "type": "Mus"}` for every living match):
 `move`, `attack_move`, `patrol` (`x`, `y`), `stop`, `attack` (`target`), `gather` (`x`,
 `y`), `repair` / `enter` (`building`), `leave` (`building`), `build` (`kind`, `x`, `y`),
 `produce` (`building`, `kind`, `count`), `form` (`officer`, `kind` such as `#LINE15`),
@@ -160,7 +161,9 @@ running game the tree also has `messages` (mission hints and texts over the map)
 finished `buildings`, building `sites` and `burning` objects by type, `mission` (`ended`: `won`/`lost`/null,
 `objectives`). With `"units": true`: `units` with `id`, `type`, `owner`, `x`, `y`,
 `life`, `building`, `finished`, `inside`, `burning`, `brigade` and `screen` (window position, when
-in view).
+in view). With `"detail": true`, `activity` sums up the listed objects: `units`, `attacking`
+(an attack is the current order), `aside` (a move in front of an attack it resumes, e.g. a
+musketeer stepping out of a friend's way), `idle` (no orders) and `reloading`.
 
 ### Modal messages
 
@@ -210,7 +213,9 @@ HUD build icon, placement: the site appears at once and is paid), `produce_unit`
 the Fort, queue a soldier, send peasants in, the soldier comes out), `formation` (officer
 → line formation → fusiliers: one formation of officer, drummer, flag bearer and
 soldiers), `formation_group` (two formations: `Formation gruppieren` groups them, the icon
-turns into `Gruppierung auflösen`, which ungroups them), `attack_ground` (a random map built
+turns into `Gruppierung auflösen`, which ungroups them), `musket_line_of_fire` (in *Die
+Armada* musketeers behind their pikemen step aside or hold fire, and keep reloading when
+friendly fire is switched on), `attack_ground` (a random map built
 up to the Festung, a cannon trained and ordered through `Boden angreifen` onto the ground
 pays its shots; the Festung's cannon ball sets a neutral building burning, which burns down
 and disappears), `save_load` (save and load through the game menu).

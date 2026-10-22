@@ -568,8 +568,10 @@ impl Driver {
                 job.reply.insert("ui".into(), tree::describe(game, all));
                 Ok(false)
             }
-            Request::State { units, owner, visible_only, detail } => {
-                job.reply.insert("state".into(), state::state(game, units || detail, owner, visible_only, detail));
+            Request::State { units, owner, visible_only, detail, kind } => {
+                let listed = units || detail || kind.is_some();
+                let st = state::state(game, listed, owner, visible_only, detail, kind.as_deref());
+                job.reply.insert("state".into(), st);
                 Ok(false)
             }
             Request::Click { target, button, double, mods, timeout } => {

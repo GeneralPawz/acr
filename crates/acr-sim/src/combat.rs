@@ -387,7 +387,9 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
                     if weapon {
                         // A wounded arm (#225, optional rule): the shot does not go off.
                         if !w.units[i].wounds.disarmed() {
-                            shoot(w, i, aim, ns - 1, my_z, en_z);
+                            if !shoot(w, i, aim, ns - 1, my_z, en_z, can_set_delay) {
+                                return; // blocked: stepped aside or gave up
+                            }
                             if t.sector_weapon.is_some_and(|s| usize::from(s.att) == ns - 1) {
                                 crate::artillery::sector_damage(w, i);
                             }
@@ -532,6 +534,11 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
             u.dir = en_dir;
             if usize::from(u.local_stance) == k + 1 {
                 if !delayed || ta.attacks[k].no_pause {
+                    // A shot starts only along a free line (0x51f9e9..0x520062).
+                    if a.weapon.is_some() && !clear_to_strike(w, i, aim, k, can_set_delay) {
+                        return;
+                    }
+                    let u = &mut w.units[i];
                     // RASTRATA_NA_VISTREL: shots of these indices cost resources (0x51f9c4).
                     if a.weapon.is_some()
                         && let Some((i1, i2, cost)) = t.shot_cost
@@ -763,28 +770,146 @@ pub(crate) fn razbros(w: &mut World, i: usize, c: &mut (i32, i32, i32)) {
 }
 
 /// `Shoot` (0x51ddc3): from every muzzle set of the strike animation, the aim point (target
-/// position, dispersed by `RAZBROS`) and the attack's weapon (`Create3DAnmObject`).
-fn shoot(w: &mut World, i: usize, aim: Aim, att: usize, my_z: i32, en_z: i32) {
+/// position) and, if `PredictShot` finds the way free, the attack's weapon
+/// (`Create3DAnmObject`) towards it dispersed by `RAZBROS`. A blocked set ends the attack
+/// link ([`blocked_shot`], with a reload of at most 16 frames if the unit finds no place;
+/// the reload already set stays when it steps aside); returns false then.
+fn shoot(w: &mut World, i: usize, aim: Aim, att: usize, my_z: i32, en_z: i32, can_set_delay: bool) -> bool {
     let catalog = w.catalog.clone();
     let wid = catalog.get(w.units[i].kind).attacks.get(att).and_then(|a| a.weapon_id);
     let Some(wid) = wid else {
         // Without the weapon table: the musket's trace, with its random numbers.
         let mut c = aim_point(w, aim);
         c.2 = en_z;
+        let (xs, ys) = w.units[i].pos.pixels();
+        let p = crate::predict::predict_shot(w, None, (xs, ys, my_z), c, i);
+        if p.blocked.is_some() && !shot_goes_on(w, i, aim, p) {
+            blocked_shot(w, i, (xs, ys, my_z), c, None, ShotStop::Fire { can_set_delay });
+            return false;
+        }
         razbros(w, i, &mut c);
         for _ in 0..4 {
             w.random.rando();
         }
-        let (xs, ys) = w.units[i].pos.pixels();
         let damage = w.adv(w.units[i].owner, w.units[i].kind).attacks[att].damage;
         trace_line(w, (xs, ys, my_z), &mut c, damage, Some(i), att as u8);
-        return;
+        return true;
     };
     for (x0, y0, z0) in muzzle_points(w, i) {
         let mut c = aim_point(w, aim);
+        let p = crate::predict::predict_shot(w, Some(wid), (x0, y0, z0), c, i);
+        if p.blocked.is_some() && !shot_goes_on(w, i, aim, p) {
+            blocked_shot(w, i, (x0, y0, z0), c, Some(wid), ShotStop::Fire { can_set_delay });
+            return false;
+        }
         razbros(w, i, &mut c);
         crate::projectile::create(w, wid, (x0, y0, z0), c, Some(i), att as u8, None, (0, 0, 0), 0);
     }
+    true
+}
+
+/// A blocked prediction that still lets unit `i`'s shot go (0x51e3d4, 0x51fc20): the target
+/// itself is in the way, or a close shot ([`crate::predict::Prediction::close`]) has an
+/// enemy in the way.
+fn shot_goes_on(w: &World, i: usize, aim: Aim, p: crate::predict::Prediction) -> bool {
+    use crate::predict::Blocked;
+    match (p.blocked, aim) {
+        (Some(Blocked::Object(o)), Aim::Unit(j)) if o == j => true,
+        (Some(Blocked::Object(o)), _) => p.close && w.units[o].nmask & w.units[i].nmask == 0,
+        _ => false,
+    }
+}
+
+/// Where a blocked shot was noticed: at the active frame of the strike (`Shoot`), or when
+/// the strike was about to start (`AttackObjLink` 0x51fce6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ShotStop {
+    Fire { can_set_delay: bool },
+    Start { can_set_delay: bool },
+}
+
+/// A shot found blocked (0x51e499 / 0x51fce6; the engine also shows the local player a
+/// hint, which is the interface's business): a unit standing ground drops the attack.
+/// Otherwise it looks for a place to shoot from, up to ten 20 px steps to either side of
+/// the line from `s` to the aim point `c` (left first, each side until a lock cell), with
+/// a free `PredictShot` (terrain and boxes only, not units); it walks one step beyond the
+/// first such place (`NewMonsterSendTo`, priority 0x90, in front of the attack) and resumes
+/// the attack there. Without a place the attack is dropped; if no reload was running the
+/// reload becomes at most 16 frames at the shot, 20 frames before the strike.
+fn blocked_shot(w: &mut World, i: usize, s: (i32, i32, i32), c: (i32, i32, i32), wid: Option<u16>, stop: ShotStop) {
+    if w.units[i].stand_ground {
+        w.units[i].pop_order();
+        return;
+    }
+    let (x0, y0, z0) = s;
+    let (ax, ay) = (c.1 - y0, x0 - c.0);
+    let n = norma(ax, ay);
+    if n != 0 {
+        let (vx, vy) = (ax * 20 / n, ay * 20 / n);
+        let (mut l, mut r) = ((x0, y0), (x0, y0));
+        let (mut ok_l, mut ok_r) = (true, true);
+        for _ in 0..10 {
+            if !ok_l && !ok_r {
+                break;
+            }
+            l = (l.0 + vx, l.1 + vy);
+            r = (r.0 - vx, r.1 - vy);
+            ok_l &= !w.map.land.check_pt(l.0 >> 4, l.1 >> 4);
+            ok_r &= !w.map.land.check_pt(r.0 >> 4, r.1 >> 4);
+            for (ok, p, sign) in [(ok_l, l, 1), (ok_r, r, -1)] {
+                if ok && crate::predict::predict_shot(w, wid, (p.0, p.1, z0), c, i).blocked.is_none() {
+                    let to = Pos::new((p.0 + sign * vx) << 4, (p.1 + sign * vy) << 4);
+                    crate::motion::send_to(&mut w.units[i], to, 0x90, false);
+                    return;
+                }
+            }
+        }
+    }
+    let u = &mut w.units[i];
+    match stop {
+        ShotStop::Fire { can_set_delay: true } => u.delay = u.delay.min(16).min(u.max_delay),
+        ShotStop::Start { can_set_delay: true } => (u.delay, u.max_delay) = (20, 20),
+        _ => {}
+    }
+    u.pop_order();
+}
+
+/// Before a strike with a weapon starts (0x51f9e9..0x51fce6): the unit looks along the shot
+/// from its position at its `ZPOINTS` height to the target's `GetDamagePoint` (two random
+/// numbers), with the friendly-fire look ([`crate::predict::predict_shot_ff`]). A free
+/// line, the target itself or (close) an enemy in the way let the strike start. Standing in
+/// a one-frame pose (frame 0, e.g. `#PSTAND1`) only an enemy building with a garrison in the
+/// way does; otherwise the unit shows its stance's `#PSTAND` and drops the attack. Else
+/// [`blocked_shot`]. Returns whether the strike may start.
+fn clear_to_strike(w: &mut World, i: usize, aim: Aim, k: usize, can_set_delay: bool) -> bool {
+    use crate::predict::Blocked;
+    let catalog = w.catalog.clone();
+    let c = aim_point(w, aim);
+    let u = &w.units[i];
+    let t = catalog.get(u.kind);
+    let (x0, y0) = u.pos.pixels();
+    let s = (x0, y0, height(w, u.pos) + t.zpoints.0);
+    let wid = t.attacks.get(k).and_then(|a| a.weapon_id);
+    let p = crate::predict::predict_shot_ff(w, wid, s, c, i);
+    let Some(b) = p.blocked else { return true };
+    if w.units[i].frame == 0 {
+        if let Blocked::Object(o) = b {
+            let o = &w.units[o];
+            if o.building && !o.inside.is_empty() && o.nmask & w.units[i].nmask == 0 {
+                return true;
+            }
+        }
+        let u = &mut w.units[i];
+        let ls = u.local_stance.saturating_sub(1);
+        set_anim(u, t, AnimKind::PStand(ls));
+        u.pop_order();
+        return false;
+    }
+    if shot_goes_on(w, i, aim, p) {
+        return true;
+    }
+    blocked_shot(w, i, s, c, wid, ShotStop::Start { can_set_delay });
+    false
 }
 
 /// `TraceObjectsInLine` (0x559310): an instant shot from `s` along the line to `d` (pixels),
