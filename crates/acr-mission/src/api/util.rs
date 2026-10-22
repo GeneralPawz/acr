@@ -149,6 +149,28 @@ impl Api<'_> {
         Member { id: id.0 as u16, serial: self.st.serial(id) }
     }
 
+    /// The index of an upgrade by name (exact, like `strcmp`): the tech tree's upgrade list;
+    /// without nation data every name is numbered in registration order.
+    pub fn upgrade_named(&mut self, name: &str) -> Option<u16> {
+        let tech = &self.world.catalog.tech;
+        if tech.loaded {
+            return tech.find_upgrade(name).map(|u| u.0);
+        }
+        let i = match self.st.upgrades.iter().position(|u| u == name) {
+            Some(i) => i,
+            None => {
+                self.st.upgrades.push(name.to_owned());
+                self.st.upgrades.len() - 1
+            }
+        };
+        Some(i as u16)
+    }
+
+    /// A nation's state of an upgrade, if the index is valid.
+    pub fn upgrade_state(&mut self, nation: u8, u: u16) -> Option<&mut acr_sim::tech::UpgradeState> {
+        self.world.players.get_mut(usize::from(nation))?.upgrades.get_mut(usize::from(u))
+    }
+
     /// Text by identifier (`GetTextByID`): the game's string tables, else the id itself.
     pub fn text(&self, id: &[u8]) -> Vec<u8> {
         let s = String::from_utf8_lossy(id);
