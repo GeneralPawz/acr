@@ -681,6 +681,22 @@ order) and draws random numbers.
   deals 340 within 35 px, then bounces (`SKOKAT`: 500 within 16 px every tick while below
   95 px) or breaks a wall (`PUWALL`, 900 and debris of 100 each).
 
+- **Sounds and drawing** (not part of the state): creating an object of a weapon with a
+  `[SOUND]` group starts it at `(x, y/2 − z)` (0x5583a2), before the slot search, so a
+  musket's `SHOTFOG` plays `RUGIE1`, a cannon's smoke `PUSVIS1`, a bounce `KERNEL1..4`,
+  an explosion `VZRIV1`. `World::step` collects them in `World::sounds` (cleared at the
+  start of each step); the game places them like other world sounds (0x586a48: hearing
+  margin, fog). Every object in flight is drawn (0x557cb0, `acr-game` `ingame/effects.rs`):
+  frame `frame` of its `WEAPON.ADS` animation (clamped to the last) at `(x, y/2 − z)` plus
+  the `USERLC` offset, sorted at the ground row `y/2` plus the shot point's height (+300 for
+  `[HILAYER]`). An animation of `n` directions keeps them together (sprite `f·n + d`); the
+  direction is the angle of the screen velocity `(vx, vy − 2·vz)`, or of the way to the
+  destination while the object stands, folded to 0..π (`d = (⌊a·(2n−2)/π⌋ + 1) / 2`) and
+  mirrored when `vx > 0`. `WHITE` weapons (0x24) draw the older `RLC` packs through
+  `AGEW_1W.GRD`, which lightens by the pixel's level (`PU3`, `WEXP`); GP packs ignore the
+  table (0x4903a2). Animation sounds (`SOUND 1 #DFIRE2 FIRE1` in `WEAPON.ADS`) start when
+  `frame/2` reaches the sound's frame (0x5295eb).
+
 ### Buildings that shoot
 
 Towers, forts and Indian buildings shoot from their `EX_SHOTS`/`EX_SHOTS2` points
@@ -734,6 +750,17 @@ hits (buildings 15). A burning building loses `max(1, MaxLife >> 11)` per tick (
 until it collapses or a repair brings it to full life; a burning unit loses 1 every 32
 ticks while above a tenth of its life. Every building below half its life draws a random
 number per tick for its smoke (0x511be2).
+
+Fire and smoke are drawn at the `FIRES` and `SMOKE` points of a finished building
+(0x50618e → 0x505ad5, picture coordinates from `LOCATION`) with the `[FIRES]` animations
+of `WEAPON.NDS` (`FIRE`: `#DFIRE1` then `#DFIRE2` in a loop; `SMOKE`: two variants by
+point). A burning building shows `n·(M − L)/M` of its `n` points (at least 4), a damaged
+one `n·(T − L)/T` below `T = M/2 + M/4`; one more point catches fire every 8..23 ticks
+(the first after 1..4), points beyond the count go out at once; they are sorted 400 rows
+below the building plus the point's index. The state and its random numbers (C `rand()`)
+are the drawing's, not the simulation's; the original only advances buildings it draws
+(the game: those near the view). Not reproduced: the variant for buildings with stages
+(`STAGE_FIRES`, 0x5052b5).
 
 ### Worked timing (musketeer, 10 ticks/s)
 

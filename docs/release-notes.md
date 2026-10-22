@@ -36,7 +36,8 @@ folder's `Save\` and `Players\` folders (in the browser: the browser's local sto
   pathfinding, formations, combat with muskets, arrows and artillery, morale, economy
   (gathering, construction, production, upgrades, market, fields), fog of war.
 - Computer players (the original AI DLLs) and DipServer, run in an x86 interpreter.
-- Save and load; unit, ambient and interface sounds; music.
+- Save and load; unit, weapon, ambient and interface sounds; music.
+- Muzzle smoke, cannon balls, explosions and debris, burning and smoking buildings.
 - Controls: the original ones, or an optional modern scheme (wheel zoom, drag panning,
   W/A/S/D) — see [controls.md](controls.md).
 

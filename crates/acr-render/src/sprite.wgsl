@@ -22,6 +22,9 @@ const KIND_SHADOW: u32 = 4u;
 const PLAYER_RAMP_BASE: u32 = 208u; // 0xD0
 // Kind bit of a half transparent instance (`TRANSPARENT` in lib.rs).
 const TRANSPARENT: u32 = 256u;
+// Kind bit of darkness levels that lighten (`WHITE` in lib.rs): `AGEW_1W.GRD` row r moves a
+// colour about r / 62 of the way to white, half as far as `AGEW_1D.GRD` darkens.
+const WHITE: u32 = 512u;
 
 struct Instance {
     @location(0) dst: vec4<f32>,  // screen px: x, y, w, h
@@ -79,6 +82,9 @@ fn layer_color(in: VsOut) -> vec4<f32> {
             return vec4<f32>(palette_color(v), f32(in.param) / 255.0);
         }
         case KIND_SHADOW_LEVELS: {
+            if ((in.kind & WHITE) != 0u) {
+                return vec4<f32>(1.0, 1.0, 1.0, f32(v) / 510.0);
+            }
             return vec4<f32>(0.0, 0.0, 0.0, f32(v) / 255.0);
         }
         case KIND_SHADOW: {

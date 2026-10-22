@@ -58,6 +58,8 @@ pub struct SceneSprite {
     /// Drawn mirrored around the ground point (the east half of a unit's directions); `dx`
     /// is then already the mirrored offset.
     pub mirrored: bool,
+    /// Darkness levels lighten (`WHITE` weapons).
+    pub white: bool,
 }
 
 impl SceneSprite {
@@ -328,6 +330,7 @@ impl Scene {
                 player: 0,
                 transparent: false,
                 mirrored: false,
+                white: false,
             });
         }
         for u in map.units.iter().filter(|_| looks.is_some()) {
@@ -351,6 +354,7 @@ impl Scene {
                     player: u.nation,
                     transparent: false,
                     mirrored: look.mirrored,
+                    white: false,
                 });
             }
         }
@@ -422,9 +426,44 @@ pub struct MapObjects {
     /// Packs that could not be read; not requested again (zoomed-out twins are often
     /// missing).
     missing: std::collections::HashSet<String>,
+    /// `WEAPON.ADS`, the animations of projectiles, smoke and fires; `None` until loaded.
+    effects: Option<UnitDef>,
+    /// `WEAPON.ADS` was requested and has not arrived yet.
+    effects_pending: bool,
+    /// Older run-length packs (`*.RLC`, see [`rlc_frames`]) by path; `None` while loading.
+    rlc: HashMap<String, Option<Vec<acr_formats::Frame>>>,
+}
+
+/// The frames of an `RLC` pack. Effects whose pixels are all below 32 (`PU3`, `WEXP`) are
+/// brightness maps that the engine draws through a 32-row table (`AGEW_1W.GRD` for `WHITE`
+/// weapons, 0x4903a2 -> 0x482545); they become darkness levels, the others palette pixels.
+pub fn rlc_frames(file: &acr_formats::rlc::RlcFile) -> Vec<acr_formats::Frame> {
+    use acr_formats::gp::{Layer, Run};
+    let levels = file.items.iter().flat_map(|i| &i.runs).flat_map(|r| &r.pixels).all(|&v| v < 32);
+    file.items
+        .iter()
+        .map(|item| {
+            let runs: Vec<Run> = item.runs.iter().map(|r| Run { x: r.x, y: r.y, len: r.pixels.len() as u16 }).collect();
+            let pixels: Vec<u8> = item.runs.iter().flat_map(|r| r.pixels.iter().copied()).collect();
+            let encoding = if levels { acr_formats::Encoding::Shade8 } else { acr_formats::Encoding::DictLz };
+            let layer = Layer {
+                encoding,
+                x: 0,
+                y: 0,
+                width: item.width.max(0) as u16,
+                height: item.height.max(0) as u16,
+                runs,
+                pixels,
+            };
+            acr_formats::Frame { layers: vec![layer] }
+        })
+        .collect()
 }
 
 impl MapObjects {
+    /// The animations of `WEAPON.NDS` (projectiles, smoke, explosions, fires).
+    pub const EFFECTS: &'static str = "WEAPON.ADS";
+
     /// Sprite lists of the object groups drawn so far. TODO: `COMPLEX.LST` (fields) and
     /// `ANIMATIONS.LST` (river animations) use a different format and are not drawn yet.
     pub const LISTS: [(SpriteGroup, &'static str); 3] = [
@@ -448,6 +487,30 @@ impl MapObjects {
             if let Some(list) = SpriteList::parse(&String::from_utf8_lossy(bytes)) {
                 more.extend(self.want_pack(&list.gp_path()));
                 self.lists.insert(*group, list);
+            }
+        } else if path == Self::EFFECTS && self.effects_pending {
+            self.effects_pending = false;
+            let def = UnitDef::parse(bytes);
+            // A pack is a `.GP` or an older `.RLC` (cannon balls, some explosions); both
+            // are asked for, the missing one is skipped.
+            let packs: Vec<String> = def.sprites.iter().map(|s| s.gp_path()).collect();
+            for gp in packs {
+                more.extend(self.want_pack(&gp));
+                let rlc = format!("{}.RLC", gp.trim_end_matches(".GP"));
+                if !self.rlc.contains_key(&rlc) && !self.missing.contains(&rlc) {
+                    self.rlc.insert(rlc.clone(), None);
+                    more.push(rlc);
+                }
+            }
+            self.effects = Some(def);
+        } else if let Some(slot) = self.rlc.get_mut(path) {
+            match acr_formats::rlc::RlcFile::parse(bytes) {
+                Ok(f) => *slot = Some(rlc_frames(&f)),
+                Err(e) => {
+                    log::warn!("{path}: {e}");
+                    self.rlc.remove(path);
+                    self.missing.insert(path.to_owned());
+                }
             }
         } else if path == Self::NAME_LIST {
             let names = acr_formats::defs::name_list(bytes);
@@ -476,14 +539,19 @@ impl MapObjects {
     pub fn wants(&self, path: &str) -> bool {
         Self::LISTS.iter().any(|(_, p)| *p == path)
             || path == Self::NAME_LIST
+            || (path == Self::EFFECTS && self.effects_pending)
             || self.packs.contains_key(path)
+            || self.rlc.contains_key(path)
             || (self.defs_pending.is_some_and(|n| n > 0) && acr_formats::normalize_path(path).ends_with(".MD"))
     }
 
     /// A requested file could not be read: stop waiting for it.
     pub fn file_failed(&mut self, path: &str) {
-        if self.packs.remove(path).is_some() {
+        if self.packs.remove(path).is_some() || self.rlc.remove(path).is_some() {
             self.missing.insert(path.to_owned());
+        }
+        if path == Self::EFFECTS {
+            self.effects_pending = false;
         }
         if let Some(n) = self.defs_pending.filter(|_| acr_formats::normalize_path(path).ends_with(".MD")) {
             self.defs_pending = Some(n.saturating_sub(1));
@@ -512,6 +580,51 @@ impl MapObjects {
         self.packs.get(path).and_then(Option::as_ref)
     }
 
+    /// Frames of a loaded `.GP` or `.RLC` pack.
+    fn frame_count(&self, path: &str) -> Option<usize> {
+        self.pack(path)
+            .map(acr_formats::GpFile::frame_count)
+            .or_else(|| self.rlc.get(path).and_then(Option::as_ref).map(Vec::len))
+    }
+
+    fn decode_one(&self, path: &str, frame: usize) -> Option<acr_formats::Frame> {
+        match self.pack(path) {
+            Some(g) => g.decode_frame(frame).ok(),
+            None => self.rlc.get(path)?.as_ref()?.get(frame).cloned(),
+        }
+    }
+
+    /// Requests `WEAPON.ADS` and, once it is there, its packs; returns the paths to load.
+    pub fn want_effects(&mut self) -> Vec<String> {
+        if self.effects.is_some() || self.effects_pending {
+            return Vec::new();
+        }
+        self.effects_pending = true;
+        vec![Self::EFFECTS.to_owned()]
+    }
+
+    /// `WEAPON.ADS`, once loaded.
+    pub fn effects(&self) -> Option<&UnitDef> {
+        self.effects.as_ref()
+    }
+
+    /// Frame `step` (clamped to the last, as 0x557d98 does) of the effect animation `anim`
+    /// (`#SHOTFOG`) in direction `dir` (0 when it has one), with its offset. An animation of
+    /// `n` directions keeps its directions together: sprite `f` of direction `d` is
+    /// `f * n + d` in the pack (0x557f09).
+    pub fn effect_look(&self, anim: &str, step: usize, dir: usize) -> Option<(FrameKey, (i32, i32))> {
+        let def = self.effects.as_ref()?;
+        let a = def.animation(anim)?;
+        let refs = a.frame_refs();
+        let r = refs.get(step.min(refs.len().checked_sub(1)?))?;
+        let set = def.sprite(r.sprite)?;
+        let gp = set.gp_path();
+        let pack = if self.pack(&gp).is_some() { gp } else { format!("{}.RLC", gp.trim_end_matches(".GP")) };
+        let dirs = a.directions.max(1) as usize;
+        let frame = r.frame.max(0) as usize * dirs + dir.min(dirs - 1);
+        (frame < self.frame_count(&pack)?).then_some(((pack, frame), set.offset))
+    }
+
     /// Requests the packs `map` needs; returns the paths to load. Call when the
     /// definitions are complete ([`MapObjects::definitions_ready`]).
     pub fn packs_for(&mut self, map: &M3dMap) -> Vec<String> {
@@ -531,17 +644,17 @@ impl MapObjects {
     }
 
     pub fn definitions_ready(&self) -> bool {
-        self.defs_pending == Some(0) && self.lists.len() == Self::LISTS.len()
+        self.defs_pending == Some(0) && self.lists.len() == Self::LISTS.len() && !self.effects_pending
     }
 
     /// Whether every requested pack has arrived.
     pub fn packs_ready(&self) -> bool {
-        self.packs.values().all(Option::is_some)
+        self.packs.values().all(Option::is_some) && self.rlc.values().all(Option::is_some)
     }
 
     /// The look of a unit type facing `direction`, from its definition and packs.
     pub fn unit_look(&self, unit_id: &str, direction: u8) -> Option<UnitLook> {
-        unit_look(self.definition(unit_id)?, direction, |p| self.pack(p).map(acr_formats::GpFile::frame_count))
+        unit_look(self.definition(unit_id)?, direction, |p| self.frame_count(p))
     }
 
     /// Places the objects of `map`; call when [`MapObjects::packs_ready`].
@@ -568,9 +681,7 @@ impl MapObjects {
     ) -> Option<UnitLook> {
         let def = self.definition(unit_id)?;
         let animation = def.animation(anim).or_else(|| idle_animation(def))?;
-        animation_look(def, animation, direction, step, sections, |p| {
-            self.pack(p).map(acr_formats::GpFile::frame_count)
-        })
+        animation_look(def, animation, direction, step, sections, |p| self.frame_count(p))
     }
 
     /// `keys` plus the frames of their zoomed-out twins that are loaded.
@@ -596,6 +707,7 @@ impl MapObjects {
             .iter()
             .filter(|(path, _)| !lists.contains(path))
             .filter_map(|(path, gp)| Some((path, gp.as_ref()?.frame_count())))
+            .chain(self.rlc.iter().filter_map(|(path, f)| Some((path, f.as_ref()?.len()))))
             .flat_map(|(path, n)| (0..n).map(move |f| (path.clone(), f)))
             .collect();
         frames.sort();
@@ -635,10 +747,7 @@ impl MapObjects {
     }
 
     fn decode(&self, frames: &[FrameKey]) -> Vec<acr_formats::Frame> {
-        frames
-            .iter()
-            .map(|(pack, frame)| self.pack(pack).and_then(|g| g.decode_frame(*frame).ok()).unwrap_or_default())
-            .collect()
+        frames.iter().map(|(pack, frame)| self.decode_one(pack, *frame).unwrap_or_default()).collect()
     }
 }
 
@@ -678,6 +787,7 @@ impl SceneAtlas {
                     player: s.player,
                     transparent: s.transparent,
                     mirrored: s.mirrored,
+                    white: s.white,
                 });
             } else if let Some(&frame) = self.index.get(&s.frame) {
                 out.push(crate::SpriteDraw {
@@ -688,6 +798,7 @@ impl SceneAtlas {
                     player: s.player,
                     transparent: s.transparent,
                     mirrored: s.mirrored,
+                    white: s.white,
                 });
             }
         }
@@ -755,6 +866,7 @@ mod tests {
             player: 0,
             transparent: false,
             mirrored: false,
+            white: false,
         }
     }
 

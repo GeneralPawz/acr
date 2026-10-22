@@ -37,6 +37,7 @@ const NDS: &[u8] = b"[MEMBERS]\r\n\
     [FULLPARENT]\r\nSTRELA\r\n\
     [CUSTOMEXPLOSION]\r\nSTRELA FLASH 1 1 0 1 POINT\r\n\
     [SYNCWEAPON]\r\nPPOINTT 2 DIM32_2 NUCL2P\r\n\
+    [SOUND]\r\nSTRELA STRELA1\r\nDIM32_2 PUSVIS1\r\nSKOKAT KERNEL1\r\n\
     [DAMAGEHEIGHT]\r\nSKOKAT 95\r\n[END]\r\n";
 const ADS: &[u8] = b"@STRELA 1 0 0 0\r\n@POINT 1 0 0 0\r\n@NUCL1 1 0 0 0\r\n@DIM32 1 0 0 43\r\n";
 const NRES: &[u8] = b"[WEAPONS]\r\n#GENSHIELD 13\r\nMECH 21 19 O\r\nSTRELA 1 14 HRB\r\nPIKA 11 17 O\r\nIADRO 2 15 HX\r\n[UNITKINDS]\r\n";
@@ -107,6 +108,45 @@ fn a_cannon_ball_flies_an_arc_and_bounces() {
     assert!((30..=120).contains(&max_z), "peak {max_z} px");
     assert!(bounced, "the ball bounced on");
     assert!(hit, "and hurt the target");
+}
+
+#[test]
+fn every_shot_starts_its_weapon_sounds() {
+    let (mut w, arc, gun, tgt) = setup();
+    let a = w.spawn(arc, 0, Pos::from_pixels(2000, 2000), 0);
+    let g = w.spawn(gun, 0, Pos::from_pixels(1500, 2400), 0);
+    let t = w.spawn(tgt, 1, Pos::from_pixels(2400, 2000), 128);
+    let t2 = w.spawn(tgt, 1, Pos::from_pixels(2600, 2400), 128);
+    w.step(&[
+        Command::Attack { player: 0, units: vec![a], target: t },
+        Command::Attack { player: 0, units: vec![g], target: t2 },
+    ]);
+    let mut heard: Vec<(String, i32, i32, u64)> = Vec::new();
+    let mut arrows = 0;
+    for _ in 0..300 {
+        let before: Vec<_> = w.projectiles.iter().map(|p| p.weapon).collect();
+        w.step(&[]);
+        let names = |id: u16| w.catalog.weapons.get(id).name.clone();
+        let new_arrow = w.projectiles.iter().filter(|p| names(p.weapon) == "STRELA").count()
+            > before.iter().filter(|&&id| names(id) == "STRELA").count();
+        arrows += usize::from(new_arrow);
+        for s in &w.sounds {
+            heard.push((names(s.weapon), s.x, s.y, w.tick.0));
+        }
+    }
+    let count = |n: &str| heard.iter().filter(|h| h.0 == n).count();
+    // One arrow sound per arrow, at the muzzle (the screen row is y / 2 − z).
+    assert!(arrows > 0 && count("STRELA") >= arrows, "arrows {arrows}, heard {heard:?}");
+    let arrow = heard.iter().find(|h| h.0 == "STRELA").unwrap();
+    assert!((arrow.1 - 2000).abs() < 100 && arrow.2 < 1000 && arrow.2 > 900, "{arrow:?}");
+    // The cannon's smoke sound and the bounce of its ball.
+    assert!(count("DIM32_2") >= 1 && count("SKOKAT") >= 1, "{heard:?}");
+    // Sounds belong to their tick only.
+    w.step(&[]);
+    w.sounds.clear();
+    let hash = w.state_hash();
+    w.sounds.push(acr_sim::projectile::WeaponSound { weapon: 0, x: 1, y: 2 });
+    assert_eq!(w.state_hash(), hash, "sounds are not state");
 }
 
 #[test]
