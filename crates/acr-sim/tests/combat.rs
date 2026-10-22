@@ -148,3 +148,27 @@ fn queries_kill_and_remove() {
     assert_eq!(w.units_of(1).count(), 0);
     assert_eq!(w.living().map(|u| u.id).collect::<Vec<_>>(), [a]);
 }
+
+#[test]
+fn allies_do_not_fight() {
+    let (mut w, pik, _) = setup();
+    // Nations 0 and 1 are friends (one-sided masks are enough when both share a bit).
+    w.nation_mask[0] = 0b11;
+    w.nation_mask[1] = 0b11;
+    let a = w.spawn(pik, 0, Pos::from_pixels(2000, 2000), 0);
+    let b = w.spawn(pik, 1, Pos::from_pixels(2150, 2000), 128);
+    for _ in 0..300 {
+        w.step(&[]);
+    }
+    assert!(unit(&w, a).target().is_none() && unit(&w, b).target().is_none());
+    assert_eq!((unit(&w, a).life, unit(&w, b).life), (100, 100));
+    // An explicit order on an ally is refused, too.
+    w.step(&[Command::Attack { player: 0, units: vec![a], target: b }]);
+    assert!(unit(&w, a).target().is_none());
+    // Breaking the alliance of one unit makes the two enemies again.
+    w.units[b.0 as usize].nmask = 0b100;
+    for _ in 0..300 {
+        w.step(&[]);
+    }
+    assert!(unit(&w, a).life < 100 || unit(&w, b).life < 100);
+}

@@ -115,6 +115,10 @@ pub struct Unit {
     pub id: EntityId,
     pub kind: TypeId,
     pub owner: PlayerId,
+    /// Alliance mask (`NMask`, OB+0x9a): bit `k` set = friend of nation `k`. Two objects are
+    /// enemies when their masks share no bit. New objects take their nation's mask
+    /// ([`World::nation_mask`]).
+    pub nmask: u8,
     pub building: bool,
     /// The object exists. Dead units stay (as corpses) while `death > 0`; use
     /// [`Unit::living`] for units that can act.
@@ -219,6 +223,12 @@ impl Unit {
         self.living() && self.inside_of.is_none()
     }
 
+    /// Whether `other` is an enemy (`NMask & NMask == 0`, as `AttackObj` and `SearchVictim`
+    /// test it).
+    pub fn hostile(&self, other: &Unit) -> bool {
+        self.nmask & other.nmask == 0
+    }
+
     /// The unit's current attack target, if it has an attack order.
     pub fn target(&self) -> Option<EntityId> {
         match self.orders.last() {
@@ -313,6 +323,9 @@ pub struct World {
     pub formations: Arc<Formations>,
     pub map: Arc<MapGrid>,
     pub players: [Player; PLAYERS],
+    /// Alliance mask of each nation (`NATIONS[n].NMask`), given to its new objects; `1 << n`
+    /// unless scripts change it (`ChangeFriends`).
+    pub nation_mask: [u8; PLAYERS],
     pub units: Vec<Unit>,
     pub objects: Vec<MapObject>,
     pub brigades: Vec<Brigade>,
@@ -341,8 +354,8 @@ pub struct World {
 pub struct Buckets {
     side: i32,
     cells: Vec<Vec<u32>>,
-    /// Owner and position of every unit at the start of the tick.
-    snapshot: Vec<(PlayerId, Pos)>,
+    /// Alliance mask and position of every unit at the start of the tick.
+    snapshot: Vec<(u8, Pos)>,
 }
 
 impl Buckets {
@@ -353,7 +366,7 @@ impl Buckets {
             c.clear();
         }
         self.snapshot.clear();
-        self.snapshot.extend(units.iter().map(|u| (u.owner, u.pos)));
+        self.snapshot.extend(units.iter().map(|u| (u.nmask, u.pos)));
         for (i, u) in units.iter().enumerate() {
             if u.active() && !u.building {
                 let (x, y) = ((u.cell.0 >> 3).clamp(0, self.side - 1), (u.cell.1 >> 3).clamp(0, self.side - 1));
@@ -367,8 +380,8 @@ impl Buckets {
     pub(crate) fn enemy_near(&self, u: &Unit, end: Pos) -> Option<usize> {
         let (cx, cy) = (end.x >> 11, end.y >> 11);
         self.get(cx, cy).iter().map(|&j| j as usize).find(|&j| {
-            let (owner, pos) = self.snapshot[j];
-            owner != u.owner && crate::trig::norma(u.pos.x - pos.x, u.pos.y - pos.y) < 0x200
+            let (mask, pos) = self.snapshot[j];
+            mask & u.nmask == 0 && crate::trig::norma(u.pos.x - pos.x, u.pos.y - pos.y) < 0x200
         })
     }
 
@@ -392,6 +405,7 @@ impl World {
             formations,
             map,
             players,
+            nation_mask: std::array::from_fn(|n| 1 << n),
             units: Vec::new(),
             objects: Vec::new(),
             brigades: Vec::new(),
@@ -493,6 +507,7 @@ impl World {
             id,
             kind,
             owner,
+            nmask: self.nation_mask[usize::from(owner) & 7],
             building: t.building,
             alive: true,
             life: adv.life,
@@ -785,6 +800,7 @@ impl World {
             &self.brigades,
             &self.occupancy,
             &self.players,
+            self.nation_mask,
             &self.market,
             &self.sprites,
         ))

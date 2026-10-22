@@ -378,6 +378,15 @@ impl ScriptState {
         self.extra.get(&id.0).and_then(|e| e.nmask).unwrap_or(self.nmask[usize::from(owner & 7)])
     }
 
+    /// Hands the alliance masks to the simulation, which tells friend from foe by them
+    /// (`NMask` of the nations and of every object).
+    pub fn sync_alliances(&self, world: &mut World) {
+        world.nation_mask = self.nmask;
+        for u in &mut world.units {
+            u.nmask = self.unit_nmask(u.id, u.owner);
+        }
+    }
+
     /// Opens a file of [`ScriptState::files`] and returns its handle.
     pub fn open_file(&mut self, path: String) -> u32 {
         self.next_file += 1;

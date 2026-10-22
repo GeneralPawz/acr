@@ -310,6 +310,7 @@ impl Scripts {
             self.run_group_orders(world, &mut commands);
         }
         self.run_ai(world, &mut commands, phase);
+        self.state.sync_alliances(world);
         commands
     }
 
