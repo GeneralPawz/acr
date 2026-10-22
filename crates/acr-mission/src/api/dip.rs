@@ -75,7 +75,7 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("GetZoneR", 0x56c319, DONE, get_zone_r),
     f("GetTCos", 0x56f6e9, DONE, get_tcos),
     f("GetTSin", 0x56f6d4, DONE, get_tsin),
-    f("SetAI_Guard", 0x570251, Status::Stub("AI guard flag not modelled"), zero),
+    f("SetAI_Guard", 0x570251, DONE, super::groups::set_ai_guard),
     f(
         "AddUnitsInZoneToGroup",
         0x56c914,

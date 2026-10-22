@@ -50,12 +50,7 @@ pub const FUNCTIONS: &[ApiFn] = &[
     done("?AssignHint@@YAXPADH@Z", 0x494283, assign_hint),
     done("?AssignHint1@@YAXPADH@Z", 0x4942db, assign_hint1),
     ApiFn { name: "SetPlayerName", original: 0x5697eb, status: Status::Done, handler: set_player_name },
-    ApiFn {
-        name: "ChangeFriends",
-        original: 0x561df9,
-        status: Status::Partial("masks are kept for the scripts; acr-sim has no alliances/targeting yet"),
-        handler: change_friends,
-    },
+    ApiFn { name: "ChangeFriends", original: 0x561df9, status: Status::Done, handler: change_friends },
     ApiFn {
         name: "StartAI",
         original: 0x565a1a,
@@ -64,12 +59,7 @@ pub const FUNCTIONS: &[ApiFn] = &[
     },
     done("GetMyNation", 0x5658b6, get_my_nation),
     done("GetAINation", 0x56827b, get_ai_nation),
-    ApiFn {
-        name: "NationIsErased",
-        original: 0x5695ce,
-        status: Status::Partial("peasants by the PEASANT flag (the original tests USAGE PEASANT)"),
-        handler: nation_is_erased,
-    },
+    ApiFn { name: "NationIsErased", original: 0x5695ce, status: Status::Done, handler: nation_is_erased },
     ApiFn {
         name: "SetLightSpot",
         original: 0x564017,
@@ -547,13 +537,16 @@ fn nation_is_erased(api: &mut Api, c: &mut Call) -> Result<u32> {
     if n >= 8 {
         return Ok(1);
     }
-    let (mut peasants, centres, mut units) = (0, 0, 0);
+    let n = api.assign(n);
+    let (mut peasants, mut centres, mut units) = (0, 0, 0);
+    // Objects alive or inside buildings; peasants and centres by `USAGE` (23, 3).
     for u in api.world.units.iter().filter(|u| u.living() && u.owner == n) {
         let t = api.world.catalog.get(u.kind);
-        if t.peasant {
+        if t.role.usage == acr_sim::catalog::usage::PEASANT {
             peasants += 1;
+        } else if t.role.usage == acr_sim::catalog::usage::CENTER {
+            centres += 1;
         }
-        // TODO: `USAGE CENTER` (Usage 3) once the catalog keeps `USAGE`; no AC town centre has it.
         if !u.building && t.medium == acr_sim::catalog::Medium::Land {
             units += 1;
         }

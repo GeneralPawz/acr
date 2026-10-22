@@ -104,6 +104,13 @@ pub enum Order {
     /// `TakeResource` (order type 0xEE, link 0x4d2fb0): gather sources of type `kind`;
     /// `at` (world pixels) is where the next source is searched from.
     Gather { kind: u8, source: Option<usize>, at: (i32, i32), prio: u8 },
+    /// Panic (order type 0x8e, link 0x600720, priority 0xFF): flight legs away from enemies;
+    /// `step` counts the legs, `dir` is the way the unit runs when nothing threatens it.
+    Panic { step: u16, dir: u8 },
+    /// `Patrol` (link 0x4ea3f0, priority 0): alternately walks to `b` and back to `a` (world
+    /// pixels), each leg a priority-0 move put in front, so enemies on the way are fought.
+    /// `back` is the leg to walk next.
+    Patrol { a: (i32, i32), b: (i32, i32), back: bool },
     /// `ClearOrderedUnlimitedMotion` (0x527fed): ends the walk through locks out of a
     /// building; the unit takes its cell.
     ClearUnlimited,
@@ -165,6 +172,11 @@ pub struct Unit {
     pub local_stance: u8,
     /// Reload counter in animation frames (`delay`, OB+0x8c).
     pub delay: i32,
+    /// The reload the last attack set (`MaxDelay`, OB+0x8f): `delay` counts down from it.
+    pub max_delay: i32,
+    /// `PersonalDelay` (u8 OB+0xa7, 100): reloads take this percentage of `ATTACK_PAUSE`
+    /// (`SINGLE_ATTPAUSE` upgrades change it on the researching building).
+    pub personal_delay: i32,
     /// Kills (OB+0x51), for the skill damage bonus.
     pub kills: u16,
     /// Formation attack and defence bonus (OB+0x61 / OB+0x62).
@@ -198,6 +210,25 @@ pub struct Unit {
     pub unlimited: bool,
     /// Switched off for lack of gold (`TURNOFF`).
     pub turned_off: bool,
+    /// `NoSearchVictim` (OB+0x25 bit1): no automatic targets; attack orders below priority
+    /// 0x80 are accepted without effect, and one of 0x80 or more clears the flag.
+    pub no_search_victim: bool,
+    /// `StandGround` (OB+0x25 bit4): attacks only what is in range, never chases. Group moves
+    /// clear it.
+    pub stand_ground: bool,
+    /// OB+0x2a bit1: friendly-fire avoidance (`FRIENDLYFIRE`) switched off.
+    pub no_ff_avoid: bool,
+    /// OB+0x2a bit2: melee only (for `ARMATTACK` units).
+    pub melee_only: bool,
+    /// AI guard (OB+0xf2 bit2, `SetAI_Guard`): never searches targets and is not found by
+    /// others' searches unless it attacks; a guarded building kills units that try to take it.
+    pub guard: bool,
+    /// `InPatrol` (OB+0x2a bit0): it has a move of priority below 5 (attack-move, patrol), so
+    /// attacks are put in front of the move and the unit resumes it afterwards.
+    pub in_patrol: bool,
+    /// Courage (i8, OB+0x53): kills nearby raise it for enemies of the victim and lower it
+    /// for the victim's nation; it drifts back to 0 every 256 ticks.
+    pub courage: i8,
     /// Gathered load (`RAmount`) and its source type (`RType`).
     pub carried: i32,
     pub carry_type: Option<u8>,
@@ -227,6 +258,23 @@ impl Unit {
     /// test it).
     pub fn hostile(&self, other: &Unit) -> bool {
         self.nmask & other.nmask == 0
+    }
+
+    /// `DeleteLastOrder` (0x52582d): drops the current order; `InPatrol` is recomputed from
+    /// the orders left (a move of priority below 5).
+    pub fn pop_order(&mut self) -> Option<Order> {
+        let o = self.orders.pop();
+        self.in_patrol = self.orders.iter().any(|o| match o {
+            Order::SendTo { prio, .. } | Order::SmartSendTo { prio, .. } => *prio < 5,
+            _ => false,
+        });
+        o
+    }
+
+    /// Panicking: running away out of control (`DetectPanic` 0x56d9b7: `UnlimitedMotion` and a
+    /// panic order).
+    pub fn panicking(&self) -> bool {
+        self.unlimited && self.orders.iter().any(|o| matches!(o, Order::Panic { .. }))
     }
 
     /// The unit's current attack target, if it has an attack order.
@@ -284,6 +332,10 @@ pub struct Player {
     pub stone_eff: i32,
     /// `GEOLOGY` researched (deposits shown on the minimap).
     pub geology: bool,
+    /// Tick of the last death by hunger (City+0xeb16) and of the last command centre lost
+    /// (City+0xeb1a), 0 = never: both raise the panic chance for a while.
+    pub hungry_time: u32,
+    pub cc_lost_time: u32,
 }
 
 impl Player {
@@ -347,6 +399,8 @@ pub struct World {
     pub sprite_kinds: Arc<(crate::sprite::SpriteKinds, crate::sprite::SpriteKinds)>,
     /// The map's other sprites for the spacing of new ones: `(x, y, radius)` (static).
     pub spacing: Arc<Vec<(i32, i32, i32)>>,
+    /// Command centres and the panic-chance cache.
+    pub morale: crate::morale::MoraleState,
 }
 
 /// Unit indices per 128 px cell (8 × 8 lock cells).
@@ -385,6 +439,11 @@ impl Buckets {
         })
     }
 
+    /// Cells per row (128 px cells).
+    pub fn side(&self) -> i32 {
+        self.side
+    }
+
     pub fn get(&self, x: i32, y: i32) -> &[u32] {
         if x < 0 || y < 0 || x >= self.side || y >= self.side {
             return &[];
@@ -418,6 +477,7 @@ impl World {
             sprites: Vec::new(),
             sprite_kinds: Arc::default(),
             spacing: Arc::default(),
+            morale: Default::default(),
         }
     }
 
@@ -533,6 +593,8 @@ impl World {
             stance: 0,
             local_stance: 0,
             delay: 0,
+            max_delay: 0,
+            personal_delay: 100,
             kills: 0,
             attack_bonus: 0,
             defence_bonus: 0,
@@ -549,6 +611,13 @@ impl World {
             inside_of: None,
             unlimited: false,
             turned_off: false,
+            no_search_victim: t.role.auto_no_attack,
+            stand_ground: t.role.auto_stand_ground,
+            no_ff_avoid: false,
+            melee_only: false,
+            guard: false,
+            in_patrol: false,
+            courage: 0,
             carried: 0,
             carry_type: None,
         };
@@ -620,6 +689,7 @@ impl World {
     /// Advances the world by one tick: applies the commands in order, then runs every unit
     /// once, player by player (`LongProcesses`, 0x5112aa).
     pub fn step(&mut self, commands: &[Command]) {
+        crate::morale::decay(self);
         for c in commands {
             self.apply(c);
         }
@@ -656,7 +726,7 @@ impl World {
         let mut v: Vec<usize> = ids
             .iter()
             .map(|id| id.0 as usize)
-            .filter(|&i| self.units.get(i).is_some_and(|u| u.active() && u.owner == player))
+            .filter(|&i| self.units.get(i).is_some_and(|u| u.active() && u.owner == player && !u.unlimited))
             .collect();
         v.sort_unstable();
         v.dedup();
@@ -667,12 +737,14 @@ impl World {
         match c {
             Command::Move { player, units, x, y } => {
                 let ids = self.owned(*player, units);
-                crate::motion::group_send(self, &ids, *x, *y, None);
+                crate::motion::group_send(self, &ids, *x, *y, None, crate::motion::PLAYER_PRIO);
             }
             Command::Attack { player, units, target } => {
                 let t = target.0 as usize;
+                // The interface's attack order has priority 0xFE (0x43ce14): 0x90 that also ends
+                // stand ground.
                 for i in self.owned(*player, units) {
-                    crate::combat::attack_obj(self, i, t, crate::motion::PLAYER_PRIO);
+                    crate::combat::attack_obj(self, i, t, 0xFE);
                 }
             }
             Command::Stop { player, units } => {
@@ -780,6 +852,22 @@ impl World {
                     }
                 }
             }
+            Command::StandGround { player, units, on } => {
+                let ids: Vec<EntityId> = self.owned(*player, units).into_iter().map(|i| self.units[i].id).collect();
+                crate::states::set_stand_ground(self, &ids, *on);
+            }
+            Command::HoldFire { player, units, hold } => {
+                let ids: Vec<EntityId> = self.owned(*player, units).into_iter().map(|i| self.units[i].id).collect();
+                crate::states::hold_fire(self, &ids, *hold);
+            }
+            Command::AttackMove { player, units, x, y } => {
+                let ids = self.owned(*player, units);
+                crate::motion::group_send(self, &ids, *x, *y, None, 0x80);
+            }
+            Command::Patrol { player, units, x, y } => {
+                let ids = self.owned(*player, units);
+                crate::motion::patrol(self, &ids, *x, *y);
+            }
             Command::Gather { player, units, x, y } => {
                 if let Some(kind) = crate::gather::determine(self, *x, *y) {
                     for i in self.owned(*player, units) {
@@ -803,6 +891,7 @@ impl World {
             self.nation_mask,
             &self.market,
             &self.sprites,
+            &self.morale,
         ))
     }
 }

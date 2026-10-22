@@ -234,6 +234,9 @@ pub fn sim_check(dir: &Path, map: &str, rest: &[&str]) -> Result<()> {
     let dead = a.units.iter().filter(|u| u.death != 0 || !u.alive).count();
     let corpses = a.units.iter().filter(|u| u.alive && u.death != 0).count();
     println!("  combat: {dead} units died ({corpses} corpses still lying)");
+    let panicking = a.units.iter().filter(|u| u.living() && u.panicking()).count();
+    let courage = a.units.iter().filter(|u| u.living() && u.courage != 0).count();
+    println!("  morale: {panicking} units panicking at the end, {courage} with courage != 0");
     far.sort_by_key(|f| std::cmp::Reverse(f.1));
     if !far.is_empty() {
         let sample: Vec<String> = far.iter().take(5).map(|(id, d)| format!("#{} {d} px", id.0)).collect();

@@ -13,18 +13,20 @@ const fn f(name: &'static str, original: u32, status: Status, handler: super::Ha
 }
 
 const DONE: Status = Status::Done;
-/// `FORCE`/`STORMFORCE` are not in the catalog yet: every object counts 1.
-const FORCE: Status = Status::Partial("FORCE is not in the catalog yet: every object counts 1");
-
 pub const FUNCTIONS: &[ApiFn] = &[
-    f("GetEnemyForce", 0x571aa8, FORCE, get_enemy_force),
-    f("GetGroupForce", 0x56f574, FORCE, get_group_force),
+    f(
+        "GetEnemyForce",
+        0x571aa8,
+        Status::Partial("objects in the zone circle; the area-distance limit is not applied"),
+        get_enemy_force,
+    ),
+    f("GetGroupForce", 0x56f574, DONE, get_group_force),
     f("GetEnemy3", 0x5818a5, DONE, get_enemy3),
     f("GetMaxDamage", 0x575250, Status::Partial("damage of the first attack index"), get_max_damage),
     f("GetMinDamage", 0x57521b, Status::Partial("damage of the first attack index"), get_max_damage),
-    f("GetUnitStorm", 0x575285, Status::Partial("STORMFORCE is not in the catalog yet: 0"), get_unit_storm),
+    f("GetUnitStorm", 0x575285, DONE, get_unit_storm),
     f("GetSearchRadius", 0x56f46b, DONE, get_search_radius),
-    f("GetMonUsage", 0x5751e5, Status::Partial("USAGE is not in the catalog yet: 0 for valid types"), get_mon_usage),
+    f("GetMonUsage", 0x5751e5, DONE, get_mon_usage),
     f(
         "CreateTopListEnArmy",
         0x57bad9,
@@ -64,18 +66,22 @@ fn enemy(api: &Api, u: &acr_sim::Unit, nat: u8) -> bool {
     api.st.unit_nmask(u.id, u.owner) & api.st.nmask[usize::from(nat & 7)] == 0
 }
 
-/// `int GetEnemyForce(GAMEOBJ* zone, byte nation)`: force of the enemies minus the friends in
-/// the zone (and its area neighbourhood).
+/// `int GetEnemyForce(GAMEOBJ* zone, byte nation)` (0x571aa8): `FORCE` of the enemies minus
+/// that of the friends in the zone.
 fn get_enemy_force(api: &mut Api, c: &mut Call) -> Result<u32> {
     let zone = if c.u32(0)? == 0 { None } else { api.zone_circles(&c.handle(0)?) };
     let Some(z) = zone.and_then(|z| z.first().copied()) else { return Ok(0) };
     let nat = c.u8(1)?;
+    let catalog = api.world.catalog.clone();
     let sum: i32 = api
         .world
         .units
         .iter()
         .filter(|u| u.active() && z.contains(u))
-        .map(|u| if enemy(api, u, nat) { 1 } else { -1 })
+        .map(|u| {
+            let f = catalog.get(u.kind).role.force;
+            if enemy(api, u, nat) { f } else { -f }
+        })
         .sum();
     Ok(sum as u32)
 }
@@ -88,7 +94,9 @@ fn get_group_force(api: &mut Api, c: &mut Call) -> Result<u32> {
     if h.magic != magic::GROUP || usize::from(h.index) >= api.st.groups.len() {
         return Ok(0);
     }
-    Ok(api.members(usize::from(h.index)).len() as u32)
+    let catalog = api.world.catalog.clone();
+    let members = api.members(usize::from(h.index));
+    Ok(members.iter().map(|id| catalog.get(api.world.units[id.0 as usize].kind).role.force).sum::<i32>() as u32)
 }
 
 /// `int GetEnemy3(int zone, int r, byte nation)`: enemies within `r` px of the area's corner.
@@ -114,12 +122,16 @@ fn get_max_damage(api: &mut Api, c: &mut Call) -> Result<u32> {
     Ok(api.world.catalog.get(t).attacks.first().map_or(0, |a| a.damage.clamp(0, 0xFFFF) as u32))
 }
 
+/// `int GetUnitStorm(word type)` (0x575285): the type's `STORMFORCE`, 0xFFFF if invalid.
 fn get_unit_storm(api: &mut Api, c: &mut Call) -> Result<u32> {
-    Ok(if type_index(api, c)?.is_some() { 0 } else { 0xFFFF })
+    Ok(type_index(api, c)?.map_or(0xFFFF, |t| api.world.catalog.get(t).role.storm_force as u32))
 }
 
+/// `word GetMonUsage(word type)` (0x5751e5): the type's `USAGE`; for an invalid type only `ax`
+/// is set (0xFFFF), the upper half of `eax` keeps the argument.
 fn get_mon_usage(api: &mut Api, c: &mut Call) -> Result<u32> {
-    Ok(if type_index(api, c)?.is_some() { 0 } else { 0xFFFF })
+    let raw = c.u32(0)?;
+    Ok(type_index(api, c)?.map_or((raw & 0xFFFF_0000) | 0xFFFF, |t| u32::from(api.world.catalog.get(t).role.usage)))
 }
 
 /// `int GetSearchRadius(int index)`: the enemy search radius in pixels, -1 for no object.

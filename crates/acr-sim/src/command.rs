@@ -62,6 +62,21 @@ pub enum Command {
     /// (`USAGE MELNICA`) with a build list gets a diamond of fields; each field costs its
     /// price. A finished mill does this once by itself with its first product.
     PlantFields { player: PlayerId, buildings: Vec<EntityId>, kind: TypeId },
+    /// Switch stand ground on or off (`MakeStandGround` / `CancelStandGround` 0x4e09c7 /
+    /// 0x4e0e70): a standing unit attacks only what is in range and never chases. A member
+    /// of a formation switches the whole formation. Moves end it.
+    StandGround { player: PlayerId, units: Vec<EntityId>, on: bool },
+    /// Hold fire (`NoSearchVictim`, the interface's `SetSearchVictim` 0x4e0330): the units
+    /// stop attacking and pick no targets on their own until an order of priority 0x80 or
+    /// more (a player's attack order) or `hold: false`. A formation member switches the
+    /// whole formation.
+    HoldFire { player: PlayerId, units: Vec<EntityId>, hold: bool },
+    /// Attack-move to a point (`SelSendAndKill`, a group move of priority 0x80): units fight
+    /// the enemies they meet on the way and then go on to their places.
+    AttackMove { player: PlayerId, units: Vec<EntityId>, x: i32, y: i32 },
+    /// Patrol between the units' positions and their places around a point (`Patrol`
+    /// 0x4ea2c0): back and forth, fighting enemies on the way like an attack-move.
+    Patrol { player: PlayerId, units: Vec<EntityId>, x: i32, y: i32 },
 }
 
 impl Command {
@@ -84,7 +99,11 @@ impl Command {
             | Command::Upgrade { player, .. }
             | Command::CancelUpgrade { player, .. }
             | Command::Trade { player, .. }
-            | Command::PlantFields { player, .. } => *player,
+            | Command::PlantFields { player, .. }
+            | Command::StandGround { player, .. }
+            | Command::HoldFire { player, .. }
+            | Command::AttackMove { player, .. }
+            | Command::Patrol { player, .. } => *player,
         }
     }
 }

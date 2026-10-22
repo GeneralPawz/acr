@@ -71,13 +71,13 @@ compares state hashes (see [Verification](#verification)).
   units in creation order, static map objects (trees, stones, ... from `TRE1`), brigades,
   the unit occupancy grid and the random index. Static data (`Catalog`, `Formations`,
   `MapGrid`) is shared through `Arc`. The dynamic state is hashed.
-- **Commands** are plain data (`Move`, `Stop`, `Attack` (priority 16), `Form`, `Face`, `Disband`, with the
-  issuing player). They are applied in order at the start of a tick, and commands for units
+- **Commands** are plain data (`Move`, `Stop`, `Attack` (priority 0xFE), `AttackMove`, `Patrol`,
+  `StandGround`, `HoldFire`, `Form`, `Face`, `Disband`, with the issuing player). They are applied in order at the start of a tick, and commands for units
   the player does not own are ignored. The command stream per tick is therefore a complete
   replay.
-- **Iteration order:** per tick, the brigades' keep-positions handler runs first. Then units
-  run player by player (0..7), each player's units in creation order, like `LongProcesses`
-  (0x5112aa) walking the per-nation lists.
+- **Iteration order:** per tick, the brigade orders of the nation whose city tick it is
+  (`tmtmt & 7`) run first. Then units run player by player (0..7), each player's units in
+  creation order, like `LongProcesses` (0x5112aa) walking the per-nation lists.
 - **No floats:** the trigonometry tables are literal integers (see below). Fixed-point
   arithmetic uses the engine's own shifts and truncating divisions.
 
@@ -343,10 +343,12 @@ Implemented in `combat.rs`, recovered from `SearchVictim` (0x52622b), `AttackObj
 
 **Per tick:**
 
-1. `SearchVictim` runs for every unit.
-2. Player by player, each unit runs its order link (`AttackObjLink` for attack orders), then
+1. The brigades of the nation whose city tick it is run their orders (keep positions,
+   formation melee).
+2. `SearchVictim` runs for every unit.
+3. Player by player, each unit runs its order link (`AttackObjLink` for attack orders), then
    the motion handler. The motion handler also advances strike animations by 2 frames.
-3. The object loop counts down reloads and plays death animations.
+4. The object loop counts down reloads and plays death animations.
 
 ### Data
 
@@ -423,6 +425,113 @@ Implemented in `combat.rs`, recovered from `SearchVictim` (0x52622b), `AttackObj
   - The death counter (`Unit::death`) grows by 2 per tick while lying, and the corpse is
     removed above 2000 (about 100 s).
   - Attackers keep striking a target whose counter is still ≤ 8.
+
+### Friend and foe
+
+Every object carries an alliance mask (`NMask`, OB+0x9a; `Unit::nmask`), taken from its
+nation's mask (`World::nation_mask`, `1 << n` by default) when it is created. Two objects are
+enemies when their masks share no bit. `AttackObj`, `SearchVictim`, enemy contact while
+walking and the friendly-fire rules of shots all test the masks, not the owners. The script
+functions `ChangeFriends` and `SetNMASK` set them; `acr-mission` hands its masks to the world
+after every script tick.
+
+### Priorities and unit states
+
+Every order carries a priority; a unit's `PrioryLevel` (`Unit::prio`) is the priority of the
+order it runs, 0 without one (0x511569). `AttackObj` (0x51a930) checks, in this order:
+
+1. Priority 0xFE (the interface's attack order, 0x43ce14) becomes 0x90 and ends stand ground.
+2. A member of a close-combat formation hands the attack to its formation (see below) unless
+   the priority is 0x8F, the unit is artillery or the target a building. A member of a
+   shooting formation (`FORMLIKESHOOTERS`) is ignored while the formation's order has a
+   priority.
+3. With `NoSearchVictim` an attack below 0x80 is accepted without effect (the caller sees
+   success); one of 0x80 or more clears the flag.
+4. An attack below the current priority is refused; below 5 the unit only switches to a
+   strictly closer enemy.
+5. The order keeps `prio & 0x7f`. A unit with `InPatrol` (OB+0x2a bit0, a move of priority
+   below 5 among its orders) gets the attack *in front* of its orders, so it resumes the
+   move after the kill.
+
+Moves keep `prio & 0x7f` too. A player's move has 16, so `SearchVictim` (priority 1) and
+counter-attacks (1) cannot interrupt it; only enemy contact (0x8F) can. An attack-move
+(`SelSendAndKill`, `Command::AttackMove`, priority 0x80 → 0) sets `InPatrol`, so the unit
+takes the enemies `SearchVictim` finds and continues afterwards. `Patrol` (0x4ea2c0, order
+type 0x51, link 0x4ea3f0) alternates priority-0 moves between the unit's position and its
+place at the target, each put in front of the patrol order. `DeleteLastOrder` (0x52582d)
+recomputes `InPatrol` from the orders left.
+
+The states (`Unit` fields; `states.rs`):
+
+| state | field | effect |
+|---|---|---|
+| hold fire | `NoSearchVictim` (OB+0x25 bit1) | no `SearchVictim`; attacks below 0x80 have no effect |
+| stand ground | OB+0x25 bit4 | `AttackObjLink` drops a target out of range (0x5204aa) instead of chasing it; group moves (0x4ac20d) end it |
+| melee only | OB+0x2a bit2 | only attack index 0, except against buildings (0x51bdc6); only `ARMATTACK` types |
+| no FF avoidance | OB+0x2a bit1 | `FRIENDLYFIRE` units shoot through friends |
+| AI guard | OB+0xf2 bit2 | never searches targets; others' searches skip it unless it attacks (0x525b70) |
+
+`AllowAttack(n, v)` is `SetSearchVictim(n, v ? 2 : 3)` (0x4e0330): free units get
+`NoSearchVictim = !v` and stop attacking either way; formation members always get
+`NoSearchVictim = 1` (an engine quirk). `SetUnitsState` sets the flags without stopping
+attacks. `AUTO_NO_ATTACK` / `AUTO_STAND_GROUND` give new units the flags.
+
+### Formation melee
+
+A brigade has an order stack (Brigade+0x43): keep positions (0x41c0a9) or melee (`Bitva`
+0x41ee89, link 0x41e50c). Brigade orders run only on the owner's city tick,
+`tmtmt & 7 == owner` (`City::Process` 0x432582 → 0x434486; nation 7 never), and every
+brigade of that nation draws two random numbers around its order link.
+
+- **Start.** When `AttackObj` hands an attack to a close-combat formation without a
+  brigade order, or with one while `AttEnm` is set (an attack-move) and the enemy is
+  within 0x640, the brigade lists the enemy land units in the box of 128 px cells around
+  its members, grown by 4 (`AddCell` 0x41e173: up to 512, each only once, skipping cells in
+  no area or in areas more than 30 away by path).
+- **Each city tick.** With `rando() < 0x400` the box is recomputed, with another
+  `rando() < 0x400` dead enemies are removed from the list, then 64 random cells of the box
+  (two random numbers each) are scanned again. Every member without a target attacks the
+  nearest listed enemy beyond its minimum range, preferably one within its maximum range
+  (an enemy walking away does not count as the nearest), with priority 0x88. Members leave
+  their slots and fight on their own.
+- **End.** When no member fights, the melee order goes; keep positions resumes if it is
+  below.
+
+### Morale
+
+Recovered from `Morale.cpp` (0x600400..0x602600). `MORALE.DAT` (loader 0x600e90) sets the
+factors; the shipped file only changes `FKF1` from 200 to 500.
+
+- **Fear.** When a unit is killed (also by the 4 % instant kill), before `Die`, the killer's
+  `FEARTYPE[attack index]` (0xFF: none) frightens the victim's surroundings
+  (`Fear` 0x601960): the 128 px cells of Euclidean rings 0..3 around the victim, each unit
+  within 256 px. Each one's courage (i8, OB+0x53) drops by one if it belongs to the
+  victim's nation and rises by one otherwise (not for fear type 0). A unit of the victim's
+  nation within its own `FEARRADIUS[type]` may panic (`TryPanic` 0x6017a0): with the chance
+  `p` below, `p < 327` draws nothing, else
+  `(rando() + dir + y + x + StandTime + seed + index) & 0x7fff < p` panics.
+- **Chance** (`PanicP` 0x601400, x87 doubles, truncated; cached per unit slot and type for
+  64 ticks as u16): `FEARFACTOR[type] · 32.769`, raised after a death by hunger
+  (`+HF1·p/(dt² + HF2)`), lowered near a own `COMMANDCENTER`
+  (`p/((CCA − 1)·exp(−(d/CCR0)²) + 1)` within `4·CCR0`), divided by `c + 1` for courage
+  `c > 5`, multiplied by `1 − c` below −5, raised after a lost command centre
+  (`+CF1·p/(dt² + CF2)`). In a formation it is multiplied by `OFN1`, `DRF1`, `FLF1` % for a
+  missing officer, drummer or flag bearer, by `FKF1` % when more than `FP1` % of the slots
+  are empty, by `FA1/(FA1 + kills)` for the formation's kills and by
+  `100/(100·(n − 2)/FB1 + 100)` for its size; alone it is `A1/(A1 + kills)`.
+- **Panic** (`StartPanic` 0x600e20) is an order (type 0x8e, priority 0xFF) on top of the
+  unit's orders; the unit leaves its formation (a formation left with fewer than 5 breaks
+  up). Each call of `PanicLink` (0x600720): the second leg spreads fear of type 0; with
+  `rando() < PSIXOZ << 5` the unit calms down, before leg `STEPS` where it stands, later by
+  walking to the nearest own command centre (two random numbers, y first); otherwise it
+  runs a 128 px leg to the free spot of Euclidean ring 4 (lock cells × 2) with the least
+  danger (`Danger` 0x600670: `1000/(d + 50)` per enemy within rings 0..6, `20000/(d + 50)`
+  per enemy building with a garrison; one random number per spot), or straight on when
+  nothing threatens. Legs run with `UnlimitedMotion`, during which the unit takes no orders.
+- **Every 256 ticks** (0x601a20, when the counter before the step ends in 0x3d) courage
+  drifts one step towards 0 and the command-centre table is rebuilt (up to 16 per nation).
+
+The scripts' `DetectPanic` and `RemovePanicUnits` test `UnlimitedMotion` with a panic order.
 
 ### Worked timing (musketeer, 10 ticks/s)
 
@@ -807,9 +916,15 @@ sum of its four neighbours (centre excluded). This spreads the stamps and decays
   - Not reproduced: the friendly-fire check before a shot and the search for a firing
     position (0x559a40, 0x51e359); buildings, terrain and 3D bars blocking shots
     (`PredictShot`); `BackSteps` when an enemy is too close.
-  - Also missing: formation melee (`Bitva` 0x41ee89), morale and fear (0x601960,
-    `MORALE.DAT`); garrisons, towers, artillery, ships; fire damage; healers; `SINGLE_ATTPAUSE` and
-    `PersonalDelay`.
+  - Also missing: garrisons, towers, artillery, ships; fire damage; healers.
+  - Morale: the fear scan takes the units of the 128 px buckets built at the start of the
+    tick (the engine's cell lists change during the tick); the cell number in the panic
+    seed uses the bucket grid's width. Fleeing units walk in stance 0 (the engine runs them
+    in the stance-1 motion where the type has it). The panic order's removal from the
+    selection is left to the interface.
+  - Formation melee: the AI's army melee (0x43ba30) is not reproduced. Stand ground on a
+    formation does not apply its bonus or the `#KARE` outward facing. Keep positions
+    counts a member in place when it reached its slot's cell (as far as a walk gets).
   - Shot damage falloff uses an integer `2^(−d/dec)` (16-step table, linear interpolation)
     instead of the x87 `exp`, so values can differ by 1.
   - All players use the human `SearchVictim` path. AI nations scan every 8th tick and use
@@ -839,6 +954,14 @@ sum of its four neighbours (centre excluded). This spreads the stamps and decays
   - a musketeer fires its first shot 38–45 ticks after the order, reloads 550 frames and
     kills at 300 px;
   - a 20-unit battle gives identical hashes in two runs.
+- **Morale test** (`tests/morale.rs`): a kill with fear type 3 changes the courage of every
+  unit around, some comrades of the victim panic, run more than 60 px away ignoring move
+  orders, and all calm down again.
+- **State tests** (`tests/states.rs`): a standing pikeman never leaves its place while an
+  enemy stands 300 px away, and fights after a move; hold fire stops auto-attacks until the
+  player's attack order; an attack-move kills the enemy on the way and goes on; a patrol
+  reaches both ends; a formation of pikemen starts melee, several members fight, the enemies
+  die and the melee ends. Allies do not fight (`tests/combat.rs`).
 - **Upgrade tests** (`tests/upgrade.rs`): research is paid at the start, blocks the
   building and ends on the 10th tick for `#TIME 21`; damage and protection change for the
   researching player only; links enable the next level; cancelling refunds; `BUILD`,

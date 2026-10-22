@@ -246,6 +246,28 @@ impl Writer {
                 self.ids(buildings);
                 self.u(u64::from(kind.0));
             }
+            Command::StandGround { player, units, on } => {
+                self.0.extend_from_slice(&[18, *player]);
+                self.ids(units);
+                self.0.push(u8::from(*on));
+            }
+            Command::HoldFire { player, units, hold } => {
+                self.0.extend_from_slice(&[19, *player]);
+                self.ids(units);
+                self.0.push(u8::from(*hold));
+            }
+            Command::AttackMove { player, units, x, y } => {
+                self.0.extend_from_slice(&[20, *player]);
+                self.ids(units);
+                self.i(*x);
+                self.i(*y);
+            }
+            Command::Patrol { player, units, x, y } => {
+                self.0.extend_from_slice(&[21, *player]);
+                self.ids(units);
+                self.i(*x);
+                self.i(*y);
+            }
         }
     }
 }
@@ -334,6 +356,10 @@ impl<'a> Reader<'a> {
             15 => Command::CancelUpgrade { player, building: self.id()? },
             16 => Command::Trade { player, sell: self.byte()?, buy: self.byte()?, amount: self.i()? },
             17 => Command::PlantFields { player, buildings: self.ids()?, kind: self.kind()? },
+            18 => Command::StandGround { player, units: self.ids()?, on: self.byte()? != 0 },
+            19 => Command::HoldFire { player, units: self.ids()?, hold: self.byte()? != 0 },
+            20 => Command::AttackMove { player, units: self.ids()?, x: self.i()?, y: self.i()? },
+            21 => Command::Patrol { player, units: self.ids()?, x: self.i()?, y: self.i()? },
             _ => return Err(ReplayError("unknown command")),
         })
     }
@@ -368,6 +394,10 @@ mod tests {
                 Command::CancelUpgrade { player: 1, building: EntityId(4) },
                 Command::Trade { player: 1, sell: 0, buy: 1, amount: 1000 },
                 Command::PlantFields { player: 1, buildings: vec![EntityId(4)], kind: TypeId(9) },
+                Command::StandGround { player: 2, units: vec![EntityId(5)], on: true },
+                Command::HoldFire { player: 2, units: vec![EntityId(5), EntityId(6)], hold: false },
+                Command::AttackMove { player: 3, units: vec![EntityId(7)], x: -5, y: 900 },
+                Command::Patrol { player: 3, units: vec![EntityId(7)], x: 40, y: 50 },
             ],
         );
         r.checkpoints.push((100, 0xdead_beef_0123_4567));
@@ -375,7 +405,7 @@ mod tests {
         let back = Replay::decode(&bytes).unwrap();
         assert_eq!(back, r);
         assert_eq!(back.entries.len(), 2, "empty ticks are not stored");
-        assert_eq!(back.commands_at(9).len(), 17);
+        assert_eq!(back.commands_at(9).len(), 21);
         assert!(back.commands_at(5).is_empty());
     }
 

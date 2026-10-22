@@ -53,6 +53,10 @@ pub fn send_to(u: &mut Unit, pos: Pos, prio: u8, replace: bool) {
     if replace {
         u.orders.clear();
     }
+    let prio = prio & 0x7f;
+    if prio == 0 {
+        u.in_patrol = true;
+    }
     u.orders.push(Order::SendTo { cell, prio });
     u.dest = Some(pos);
     u.prio = prio;
@@ -62,7 +66,14 @@ pub fn send_to(u: &mut Unit, pos: Pos, prio: u8, replace: bool) {
 
 /// `SmartSendTo` (0x52bc95): a move routed over the pathfinding areas to `(x, y)` plus the
 /// unit's group offset `(dx, dy)` (world pixels).
-pub fn smart_send_to(
+pub fn smart_send_to(u: &mut Unit, areas: Option<&AreaGraph>, x: i32, y: i32, dx: i32, dy: i32, prio: u8) {
+    smart_send_to_ex(u, areas, x, y, dx, dy, prio, false);
+}
+
+/// `SmartSendTo` with the order placement: `front` (order type 1) puts the move in front of
+/// the current orders instead of replacing them.
+#[allow(clippy::too_many_arguments)]
+pub fn smart_send_to_ex(
     u: &mut Unit,
     areas: Option<&AreaGraph>,
     mut x: i32,
@@ -70,6 +81,7 @@ pub fn smart_send_to(
     mut dx: i32,
     mut dy: i32,
     prio: u8,
+    front: bool,
 ) {
     while norma(dx, dy) > 128 {
         let n = norma(dx, dy);
@@ -85,13 +97,21 @@ pub fn smart_send_to(
     }
     let Some(g) = areas.filter(|g| g.count > 0) else {
         // Maps without TOP1 (editor autosaves): walk directly.
-        send_to(u, Pos::from_pixels(x + dx, y + dy), prio, true);
+        send_to(u, Pos::from_pixels(x + dx, y + dy), prio, !front);
         return;
     };
     if top_zone_of_target(g, &mut x, &mut y).is_none() {
         return;
     }
-    u.orders.clear();
+    if !front {
+        u.orders.clear();
+    }
+    // The order keeps `prio & 0x7f`; priority 0 (attack-move, patrol) marks `InPatrol`
+    // (0x52bef4).
+    let prio = prio & 0x7f;
+    if prio == 0 {
+        u.in_patrol = true;
+    }
     u.orders.push(Order::SmartSendTo { x, y, dx, dy, prio, area: None });
     u.prio = prio;
 }
@@ -172,6 +192,8 @@ pub fn process_unit(world: &mut World, i: usize) {
         Some(Order::Attack { target, prio }) => crate::combat::attack_link(world, i, target, prio),
         Some(Order::Build { target, point, prio }) => crate::construction::build_link(world, i, target, point, prio),
         Some(Order::Gather { kind, source, at, prio }) => crate::gather::gather_link(world, i, kind, source, at, prio),
+        Some(Order::Panic { .. }) => crate::morale::panic_link(world, i),
+        Some(Order::Patrol { .. }) => patrol_link(world, i),
         Some(Order::Enter { building, prio }) => {
             crate::economy::enter_link(world, i, building, prio);
             if world.units[i].inside_of.is_some() {
@@ -192,11 +214,13 @@ pub fn process_unit(world: &mut World, i: usize) {
             smart_send_to_link(u, map.land_areas.as_ref(), lay, x, y, dx, dy, prio, area)
         }
         Some(Order::Attack { .. })
+        | Some(Order::Panic { .. })
+        | Some(Order::Patrol { .. })
         | Some(Order::Enter { .. })
         | Some(Order::Build { .. })
         | Some(Order::Gather { .. }) => {}
         Some(Order::ClearUnlimited) => {
-            u.orders.pop();
+            u.pop_order();
             crate::economy::settle(u, occupancy);
         }
         None => u.prio = 0,
@@ -221,7 +245,7 @@ fn send_to_link(
     prio: u8,
 ) {
     if u.path.delay != 0 && u.stand_time > 64 {
-        u.orders.pop();
+        u.pop_order();
         crate::economy::settle(u, occupancy);
         return;
     }
@@ -233,7 +257,7 @@ fn send_to_link(
         if dist_to(mover(u), c.0, c.1) <= t.stop_distance >> 8 {
             if u.frame >= u.anim_frames - FRM_DEC {
                 try_to_stand(u, t, rnd, false);
-                u.orders.pop();
+                u.pop_order();
             }
         } else {
             u.dest = Some(Pos::new(crate::path::cell_center(c.0, u.lx), crate::path::cell_center(c.1, u.lx)));
@@ -249,7 +273,7 @@ fn send_to_link(
     if dist_to(mover(u), c.0, c.1) <= t.stop_distance >> 8 {
         if u.frame >= u.anim_frames - FRM_DEC {
             try_to_stand(u, t, rnd, false);
-            u.orders.pop();
+            u.pop_order();
         }
     } else if let Some((x, y)) = create_path(m, mover(u), &mut u.path, rnd, c.0, c.1, t.stop_distance) {
         u.dest = Some(Pos::new(x, y));
@@ -272,36 +296,36 @@ fn smart_send_to_link(
 ) {
     let (ux, uy) = u.pos.pixels();
     let Some(g) = areas else {
-        u.orders.pop();
+        u.pop_order();
         send_to(u, Pos::from_pixels(x + dx, y + dy), prio, false);
         return;
     };
     if top_line_clear(g, ux, uy, x + dx, y + dy) {
-        u.orders.pop();
+        u.pop_order();
         send_to(u, Pos::from_pixels(x + dx, y + dy), prio, false);
         return;
     }
     let cur = match area.or_else(|| nearest_area(g, ux >> 6, uy >> 6).map(|a| a.0)) {
         Some(a) => a,
         None => {
-            u.orders.pop();
+            u.pop_order();
             return;
         }
     };
     let (mut tx, mut ty) = (x, y);
     let Some(dst) = top_zone_of_target(g, &mut tx, &mut ty) else {
-        u.orders.pop();
+        u.pop_order();
         return;
     };
     let mut nxt = g.next_hop(cur, dst);
     if nxt == dst || dst == cur {
-        u.orders.pop();
+        u.pop_order();
         let (px, py) = apply_offset(g, m, tx, ty, dx, dy);
         send_to(u, Pos::from_pixels(px, py), prio, false);
         return;
     }
     if nxt == 0xFFFF {
-        u.orders.pop();
+        u.pop_order();
         return;
     }
     let center = |a: u16| {
@@ -596,7 +620,7 @@ fn isqrt(n: i32) -> i32 {
 /// brigade members move with their brigade, free units get slots of a grid `W` wide (across
 /// the movement direction) and `D` deep centred on the target, matched to units by sorting
 /// on the two axes so paths do not cross; every unit then routes on its own.
-pub fn group_send(world: &mut World, ids: &[usize], x: i32, y: i32, dir: Option<u8>) {
+pub fn group_send(world: &mut World, ids: &[usize], x: i32, y: i32, dir: Option<u8>, prio: u8) {
     let mut brigades: Vec<u16> = ids.iter().filter_map(|&i| world.units[i].brigade).collect();
     brigades.sort_unstable();
     brigades.dedup();
@@ -609,6 +633,8 @@ pub fn group_send(world: &mut World, ids: &[usize], x: i32, y: i32, dir: Option<
         let gx = (centers.iter().map(|c| i64::from(c.0)).sum::<i64>() / n) as i32;
         let gy = (centers.iter().map(|c| i64::from(c.1)).sum::<i64>() / n) as i32;
         for (&b, c) in brigades.iter().zip(&centers) {
+            // An attack-move (priority & 0x7f == 0) lets a formation fight on the way (AttEnm).
+            world.brigades[usize::from(b)].att_enm = prio & 0x7f == 0;
             crate::formation::send(world, usize::from(b), x16 + c.0 - gx, y16 + c.1 - gy, dir);
         }
     }
@@ -625,8 +651,41 @@ pub fn group_send(world: &mut World, ids: &[usize], x: i32, y: i32, dir: Option<
     let slots = place(world, &free, x16, y16, vx, vy);
     let areas = world.map.land_areas.clone();
     for (i, (sx, sy)) in slots {
-        smart_send_to(&mut world.units[i], areas.as_ref(), x, y, (sx - x16) >> 4, (sy - y16) >> 4, PLAYER_PRIO);
+        // Planner.Send (0x4ac20d) ends stand ground of every free unit it sends.
+        world.units[i].stand_ground = false;
+        smart_send_to(&mut world.units[i], areas.as_ref(), x, y, (sx - x16) >> 4, (sy - y16) >> 4, prio);
     }
+}
+
+/// `Patrol` (planner 0x4ac45d, order 0x4ea2c0): each free unit patrols between where it
+/// stands and its place in a group move to `(x, y)`; it keeps its stand-ground state.
+pub fn patrol(world: &mut World, ids: &[usize], x: i32, y: i32) {
+    let free: Vec<usize> = ids.iter().copied().filter(|&i| world.units[i].brigade.is_none()).collect();
+    if free.is_empty() {
+        return;
+    }
+    let n = free.len() as i64;
+    let (x16, y16) = (x << 4, y << 4);
+    let gx = (free.iter().map(|&i| i64::from(world.units[i].pos.x)).sum::<i64>() / n) as i32;
+    let gy = (free.iter().map(|&i| i64::from(world.units[i].pos.y)).sum::<i64>() / n) as i32;
+    for (i, (sx, sy)) in place(world, &free, x16, y16, gx - x16, gy - y16) {
+        let u = &mut world.units[i];
+        u.orders.clear();
+        u.path.clear();
+        u.orders.push(Order::Patrol { a: u.pos.pixels(), b: (sx >> 4, sy >> 4), back: true });
+        u.prio = 0;
+    }
+}
+
+/// `PatrolLink` (0x4ea3f0): the next leg, a priority-0 move put in front of the patrol.
+fn patrol_link(world: &mut World, i: usize) {
+    let areas = world.map.land_areas.clone();
+    let u = &mut world.units[i];
+    let Some(Order::Patrol { a, b, back }) = u.orders.last_mut() else { return };
+    let (tx, ty) = if *back { *a } else { *b };
+    *back = !*back;
+    u.prio = 0;
+    smart_send_to_ex(u, areas.as_ref(), tx, ty, 0, 0, 0, true);
 }
 
 /// The planner `Place` (0x4ab607): returns `(unit index, slot position in 1/16 px)`.
