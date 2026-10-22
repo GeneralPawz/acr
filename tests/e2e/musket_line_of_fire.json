@@ -1,0 +1,24 @@
+{
+  "name": "musket_line_of_fire",
+  "description": "In the mission 'Die Armada' the Spanish musketeers fight behind their own pikemen: before a shot they look along the line (PredictShot 0x559030 / 0x559a40); with friends in the way some step aside to shoot (a move in front of their attack), others hold fire. With friendly fire switched on they shoot through their own lines and keep reloading.",
+  "step_timeout_s": 180,
+  "steps": [
+    {"cmd": "click", "label": "Einzelspieler"},
+    {"cmd": "click", "label": "Einzelmission"},
+    {"cmd": "click", "label": "OK"},
+    {"cmd": "click", "label": "Die Armada."},
+    {"cmd": "click", "label": "Mission spielen!"},
+    {"cmd": "wait", "ticks": 1000, "note": "the armies meet; the musketeers fire from behind the pikemen"},
+    {"cmd": "state", "owner": 0, "type": "SpnMus", "detail": true, "expect": [
+      {"path": "state.activity.units", "ge": 300},
+      {"path": "state.activity.aside", "ge": 1},
+      {"path": "state.activity.reloading", "ge": 50}
+    ]},
+    {"cmd": "command", "command": {"type": "friendly_fire", "units": {"owner": 0, "type": "SpnMus"}, "on": true}},
+    {"cmd": "wait", "ticks": 300},
+    {"cmd": "state", "owner": 0, "type": "SpnMus", "detail": true, "expect": [
+      {"path": "state.units.0.flags", "contains": "friendly_fire"},
+      {"path": "state.activity.reloading", "ge": 100}
+    ]}
+  ]
+}

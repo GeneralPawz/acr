@@ -38,6 +38,7 @@ pub mod market;
 pub mod morale;
 pub mod motion;
 pub mod path;
+pub mod predict;
 pub mod projectile;
 pub mod replay;
 pub mod rng;
