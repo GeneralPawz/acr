@@ -13,7 +13,7 @@ from mathutils import Matrix, Vector
 from acr_assets import crawl
 from acr_assets import armature as am
 from acr_assets import aim as aiming
-from acr_assets import gear, outfit, poses, rig
+from acr_assets import faces, gear, heads, outfit, poses, rig
 from acr_assets.humans import LAYER_OF, Character, prepare_export
 
 TYPE = "EngM18"
@@ -123,6 +123,7 @@ def build(ctx):
     am.attach(rod, ch.arm, aiming.ROD_SOCKET, am.world(ch.arm, aiming.ROD_SOCKET))
     ch.held["rammer"] = rod
     ch.keys[rod.name] = "metal"
+    heads.variants(ch)  # hair and beard variants (#283), before the morphs
     ch.morphs(extra_deflate=ch.layers["gear"])
     ch.masks()
     # Present with both hands: butt in the shoulder, left hand under the barrel (IK).
@@ -150,6 +151,7 @@ def build(ctx):
     colours = ch.colours(ctx.ref, PALETTE, report=report, mix=0.5)
     # Realistic cloth, skin and leather painted over those colours (#217).
     outfit.dress(ch, colours, LAYER_OF)
+    heads.finish(ch)  # face and body morphs, `_FACE`, variants (#283)
     # The exported scene pose (glTF node transforms) is STAND.
     ch.arm.animation_data.action = None
     am.pose(ch.arm, poses.STAND_MUSKET)
@@ -157,7 +159,8 @@ def build(ctx):
     tris = ch.triangles()
     prepare_export(ch.all_meshes(), ctx.root, acr_triangles=sum(tris.values()), acr_clips=list(MD) + list(crawl.CLIPS),
                    acr_limb_radius=ch.limb_radius,
-                   acr_light=report.get("light_dir_camera", []), acr_layers=list(ch.layers))
+                   acr_light=report.get("light_dir_camera", []), acr_layers=list(ch.layers),
+                   **faces.extras("regular"))
     ctx.stats = {"triangles": tris, "light": report, "colours": colours, "aim_errors_m": ctx.aim_errors}
 
 

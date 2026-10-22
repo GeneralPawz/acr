@@ -11,7 +11,7 @@ from mathutils import Matrix, Vector
 
 from . import armature as am
 from . import body as bd
-from . import decay, detail, limb, project, rig
+from . import decay, detail, heads, limb, project, rig
 
 # Layer order (#178) and the decay layer of every material key a unit may use.
 LAYER_OF = {
@@ -88,6 +88,8 @@ class Character:
         self.keys = {}  # object name -> material key (LAYER_OF)
         self.symmetric = []  # objects that may take colours from mirrored views
         self.flesh = None
+        self.face_frame = None  # heads.Frame of the refined head (#283)
+        self.variants = {}  # hair/beard variant suffix -> object (heads.variants)
 
     # -- layers ---------------------------------------------------------------------------
 
@@ -98,9 +100,16 @@ class Character:
             self.symmetric.append(obj)
         return obj
 
-    def body(self, key="skin", bones=rig.BODY_BONES):
+    def body(self, key="skin", bones=rig.BODY_BONES, faces=True):
+        """The skin hull; with `faces` a finer head with a modelled face (#283)."""
         P = self.prefix
-        self.flesh = bd.hull(self.arm, f"{self.name}.flesh", graph(self.build), bones=[P + b for b in bones])
+        g = graph(self.build)
+        cx = next(p for n, _par, p, _r in g if n == "skull")[0]
+
+        def head(bm):
+            self.face_frame = heads.refine(bm, cx)
+
+        self.flesh = bd.hull(self.arm, f"{self.name}.flesh", g, bones=[P + b for b in bones], head=head if faces else None)
         bd.split_parts(self.flesh, lambda b: rig.part_of_bone(b[len(P):]))
         self.add("flesh", self.flesh, key, symmetric=True)
         return self.flesh
@@ -270,7 +279,7 @@ class Character:
         out = [o for objs in self.layers.values() for o in objs]
         if getattr(self, "caps_obj", None):
             out.append(self.caps_obj)
-        return out + [o for o in self.held.values() if o.type == "MESH"]
+        return out + [o for o in self.held.values() if o.type == "MESH"] + list(self.variants.values())
 
     def triangles(self):
         n = {}
