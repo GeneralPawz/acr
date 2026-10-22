@@ -205,7 +205,7 @@ enum Signal {
 pub fn process_unit(world: &mut World, i: usize) {
     crate::ship::check_park(world, i);
     match world.units[i].orders.last().cloned() {
-        Some(Order::Attack { target, prio }) => {
+        Some(Order::Attack { target, prio, .. }) => {
             if world.catalog.get(world.units[i].kind).guns.is_some() {
                 crate::ship::water_attack_link(world, i, target, prio);
             } else {

@@ -610,6 +610,11 @@ fn attack_obj(api: &mut Api, i: usize, t: usize, prio: u8, p: acr_sim::combat::P
     acr_sim::combat::attack_obj_ex(api.world, i, t, prio, p)
 }
 
+/// `AttackObj` with `nTimes` shots or strikes (0 = until the target is dead).
+fn attack_obj_n(api: &mut Api, i: usize, t: usize, prio: u8, p: acr_sim::combat::Placement, times: u16) -> bool {
+    acr_sim::combat::attack_obj_times(api.world, i, t, prio, p, times)
+}
+
 /// The living members of a group (serial checked), as unit indices.
 fn living_members(api: &Api, g: usize) -> Vec<usize> {
     api.members(g).into_iter().map(|e| e.0 as usize).collect()
@@ -643,8 +648,8 @@ fn attack3(api: &mut Api, c: &mut Call) -> Result<u32> {
         return Ok(0);
     }
     let Some(g) = raw_group(api, c, 0)? else { return Ok(1) };
-    let times = u8::from(!six);
-    let _ = times;
+    // Attack3 gives every attack one shot (0x57f346, 0x57f64e), Attack6 none (0x5814e8).
+    let times = u16::from(!six);
     let (cx16, cy16, r16) = (z.x << 4, z.y << 4, z.r << 4);
     let mut pending: Vec<(usize, usize)> = Vec::new();
     let mut n_prio = 0usize;
@@ -687,7 +692,7 @@ fn attack3(api: &mut Api, c: &mut Call) -> Result<u32> {
                             acr_sim::economy::enter(api.world, i, b, 0xFF, false);
                             prio_f0(api, i);
                         }
-                    } else if attack_obj(api, i, t, 0x90, acr_sim::combat::Placement::Replace) {
+                    } else if attack_obj_n(api, i, t, 0x90, acr_sim::combat::Placement::Replace, times) {
                         prio_f0(api, i);
                     }
                 }
@@ -734,7 +739,7 @@ fn attack3(api: &mut Api, c: &mut Call) -> Result<u32> {
     }
     let lim = n_group >> 5;
     for (i, t) in pending {
-        if attack_obj(api, i, t, 0x90, acr_sim::combat::Placement::Replace) {
+        if attack_obj_n(api, i, t, 0x90, acr_sim::combat::Placement::Replace, times) {
             if n_prio < lim {
                 prio_f0(api, i);
             }
@@ -865,7 +870,8 @@ fn attack_by_tomahawks(api: &mut Api, c: &mut Call) -> Result<u32> {
                 && (best_d < rz || melee)
             {
                 clear_brigade_orders(api, i);
-                if attack_obj(api, i, t, 0x8F, acr_sim::combat::Placement::Replace) {
+                // One throw per order (0x574f08).
+                if attack_obj_n(api, i, t, 0x8F, acr_sim::combat::Placement::Replace, 1) {
                     prio_f0(api, i);
                 }
             }
@@ -1038,7 +1044,7 @@ fn attack_buildings_in_zone(api: &mut Api, c: &mut Call) -> Result<u32> {
             continue;
         }
         if let Some(t) = find_target(api, i) {
-            attack_obj(api, i, t, 0x90, acr_sim::combat::Placement::Front);
+            attack_obj_n(api, i, t, 0x90, acr_sim::combat::Placement::Front, 10);
         }
     }
     Ok(0)

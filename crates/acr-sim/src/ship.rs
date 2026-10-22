@@ -810,6 +810,11 @@ pub fn water_attack_link(w: &mut World, i: usize, target: EntityId, prio: u8) {
         w.units[i].pop_order();
         return;
     }
+    // nTimes (0x520f23): the shots left, read once per link.
+    let times = match w.units[i].orders.last() {
+        Some(Order::Attack { times, .. }) => i32::from(*times),
+        _ => 0,
+    };
     let (u, e) = (&w.units[i], &w.units[j]);
     let adv = w.adv(u.owner, u.kind);
     let dst = norma(e.pos.x - u.pos.x, e.pos.y - u.pos.y) >> 4;
@@ -875,9 +880,19 @@ pub fn water_attack_link(w: &mut World, i: usize, target: EntityId, prio: u8) {
             let (px, py) = w.units[i].pos.pixels();
             crate::projectile::create(w, wid, (px + sx, py + sy, gz), cpt, Some(i), am as u8, None, (0, 0, 0), 0);
         }
+        // 0x521edd: the last counted shot ends the attack, others count down.
+        let u = &mut w.units[i];
+        if times == 1 {
+            u.pop_order();
+        } else if times > 1
+            && let Some(Order::Attack { times: n, .. }) = u.orders.last_mut()
+        {
+            *n = n.wrapping_sub(1);
+        }
     } else if dst > t.attacks[am].radius.1 {
         let u = &w.units[i];
-        if u.stand_ground {
+        // A counted attack does not sail after its target (0x521f34).
+        if times > 0 || u.stand_ground {
             w.units[i].pop_order();
             return;
         }

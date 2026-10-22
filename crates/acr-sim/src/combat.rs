@@ -93,6 +93,13 @@ impl Placement {
 /// only switches to a strictly closer enemy. The order keeps `prio & 0x7f`; a unit on a
 /// patrol-like move (`InPatrol`) gets the attack in front.
 pub fn attack_obj_ex(w: &mut World, i: usize, j: usize, prio: u8, placement: Placement) -> bool {
+    attack_obj_times(w, i, j, prio, placement, 0)
+}
+
+/// `AttackObj` with its last argument `nTimes` (0x51b2a0): the attack ends after that many
+/// shots or strikes (0: when the target is dead). Switching the target of a running attack
+/// keeps its count (0x51b05e).
+pub fn attack_obj_times(w: &mut World, i: usize, j: usize, prio: u8, placement: Placement, times: u16) -> bool {
     let (Some(u), Some(e)) = (w.units.get(i), w.units.get(j)) else { return false };
     if i == j || !u.active() || !e.active() || !u.hostile(e) {
         return false;
@@ -190,7 +197,7 @@ pub fn attack_obj_ex(w: &mut World, i: usize, j: usize, prio: u8, placement: Pla
     let u = &mut w.units[i];
     u.stand_time = 0;
     let prio = prio & 0x7f;
-    if let Some(Order::Attack { target: t, prio: p }) = u.orders.last_mut() {
+    if let Some(Order::Attack { target: t, prio: p, .. }) = u.orders.last_mut() {
         *t = target;
         *p = prio;
     } else {
@@ -198,7 +205,7 @@ pub fn attack_obj_ex(w: &mut World, i: usize, j: usize, prio: u8, placement: Pla
             placement = Placement::Front;
         }
         let was_empty = u.orders.is_empty();
-        placement.push(&mut u.orders, Order::Attack { target, prio });
+        placement.push(&mut u.orders, Order::Attack { target, prio, times });
         if was_empty || placement != Placement::Append {
             u.path.delay = 0;
         }
@@ -211,11 +218,17 @@ pub fn attack_obj_ex(w: &mut World, i: usize, j: usize, prio: u8, placement: Pla
 /// order: with its reload over and a garrison inside, the first free shot point whose range
 /// and sector hold the target fires its attack index's weapon (one shot per tick); the
 /// reload becomes `ATTACK_PAUSE[0]·PersonalDelay/(inside·100)` and the point's own reload
-/// starts. A unit target that no free point covers is dropped.
+/// starts. A unit target that no free point covers is dropped. An attack with `nTimes`
+/// counts the shot (0x51cc94); the last one ends it and the next order runs at once
+/// (0x51ccec).
 pub fn building_attack_link(w: &mut World, i: usize, target: EntityId, prio: u8) {
     let catalog = w.catalog.clone();
     let j = target.0 as usize;
     w.units[i].prio = prio;
+    let times = match w.units[i].orders.last() {
+        Some(Order::Attack { times, .. }) => *times,
+        _ => 0,
+    };
     let valid = w.units.get(j).is_some_and(|e| e.alive && e.death <= 8 && w.units[i].hostile(e));
     if !valid {
         w.units[i].pop_order();
@@ -283,6 +296,12 @@ pub fn building_attack_link(w: &mut World, i: usize, target: EntityId, prio: u8)
         if let Some(tm) = u.shot_timers.get_mut(k) {
             *tm = sp.reload;
         }
+        if count_strike(w, i, times) {
+            match w.units[i].orders.last().cloned() {
+                Some(Order::Attack { target, prio, .. }) => building_attack_link(w, i, target, prio),
+                _ => crate::economy::building_link(w, i),
+            }
+        }
         return;
     }
     if !keep {
@@ -317,6 +336,11 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
         u.dest = None;
     }
     let point = matches!(aim, Aim::Point(..));
+    // NTimes is read once per link (0x51c2dc).
+    let times = match w.units[i].orders.last() {
+        Some(Order::Attack { times, .. } | Order::AttackPoint { times, .. }) => *times,
+        _ => 0,
+    };
     if let Aim::Unit(j) = aim {
         if hunt(w, i, j) {
             return;
@@ -387,27 +411,14 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
                     if weapon {
                         // A wounded arm (#225, optional rule): the shot does not go off.
                         if !w.units[i].wounds.disarmed() {
-                            if !shoot(w, i, aim, ns - 1, my_z, en_z, can_set_delay) {
-                                return; // blocked: stepped aside or gave up
-                            }
-                            if t.sector_weapon.is_some_and(|s| usize::from(s.att) == ns - 1) {
-                                crate::artillery::sector_damage(w, i);
-                            }
+                            shoot(w, i, aim, ns - 1, my_z, en_z, can_set_delay, times);
                         }
                     } else if let Aim::Unit(j) = aim {
                         make_damage(w, j, damage, Some(i), (ns - 1) as u8);
                         if w.units[j].living() {
                             attack_obj(w, j, i, STRUCK_PRIO);
                         }
-                    }
-                    // NTimes: the shots of an attack on the ground.
-                    if let Some(Order::AttackPoint { times, .. }) = w.units[i].orders.last_mut()
-                        && *times != 0
-                    {
-                        *times -= 1;
-                        if *times == 0 {
-                            w.units[i].pop_order();
-                        }
+                        count_strike(w, i, times);
                     }
                 }
                 return;
@@ -771,10 +782,13 @@ pub(crate) fn razbros(w: &mut World, i: usize, c: &mut (i32, i32, i32)) {
 
 /// `Shoot` (0x51ddc3): from every muzzle set of the strike animation, the aim point (target
 /// position) and, if `PredictShot` finds the way free, the attack's weapon
-/// (`Create3DAnmObject`) towards it dispersed by `RAZBROS`. A blocked set ends the attack
-/// link ([`blocked_shot`], with a reload of at most 16 frames if the unit finds no place;
-/// the reload already set stays when it steps aside); returns false then.
-fn shoot(w: &mut World, i: usize, aim: Aim, att: usize, my_z: i32, en_z: i32, can_set_delay: bool) -> bool {
+/// (`Create3DAnmObject`) towards it dispersed by `RAZBROS`, then the sector weapon
+/// (`WEAPONINSECTOR`, 0x52d6b8) and the count of the attack's shots ([`count_strike`]). A
+/// blocked set ends the attack link ([`blocked_shot`], with a reload of at most 16 frames if
+/// the unit finds no place; the reload already set stays when it steps aside), as does the
+/// last counted shot.
+#[allow(clippy::too_many_arguments)]
+fn shoot(w: &mut World, i: usize, aim: Aim, att: usize, my_z: i32, en_z: i32, can_set_delay: bool, times: u16) {
     let catalog = w.catalog.clone();
     let wid = catalog.get(w.units[i].kind).attacks.get(att).and_then(|a| a.weapon_id);
     let Some(wid) = wid else {
@@ -785,7 +799,7 @@ fn shoot(w: &mut World, i: usize, aim: Aim, att: usize, my_z: i32, en_z: i32, ca
         let p = crate::predict::predict_shot(w, None, (xs, ys, my_z), c, i);
         if p.blocked.is_some() && !shot_goes_on(w, i, aim, p) {
             blocked_shot(w, i, (xs, ys, my_z), c, None, ShotStop::Fire { can_set_delay });
-            return false;
+            return;
         }
         razbros(w, i, &mut c);
         for _ in 0..4 {
@@ -793,19 +807,45 @@ fn shoot(w: &mut World, i: usize, aim: Aim, att: usize, my_z: i32, en_z: i32, ca
         }
         let damage = w.adv(w.units[i].owner, w.units[i].kind).attacks[att].damage;
         trace_line(w, (xs, ys, my_z), &mut c, damage, Some(i), att as u8);
-        return true;
+        count_strike(w, i, times);
+        return;
     };
     for (x0, y0, z0) in muzzle_points(w, i) {
         let mut c = aim_point(w, aim);
         let p = crate::predict::predict_shot(w, Some(wid), (x0, y0, z0), c, i);
         if p.blocked.is_some() && !shot_goes_on(w, i, aim, p) {
             blocked_shot(w, i, (x0, y0, z0), c, Some(wid), ShotStop::Fire { can_set_delay });
-            return false;
+            return;
         }
         razbros(w, i, &mut c);
         crate::projectile::create(w, wid, (x0, y0, z0), c, Some(i), att as u8, None, (0, 0, 0), 0);
+        if catalog.get(w.units[i].kind).sector_weapon.is_some_and(|s| usize::from(s.att) == att) {
+            crate::artillery::sector_damage(w, i);
+        }
+        if count_strike(w, i, times) {
+            return;
+        }
     }
-    true
+}
+
+/// `nTimes` (0x51ea72 after a muzzle set's shot, 0x51ec30 after a melee hit): the current
+/// attack order counts one shot or strike down; when the count read at the start of the
+/// link (`times`) was 1 the order goes (returns true). 0 is no limit. A unit with two muzzle
+/// sets counts twice per volley against the count it read, so a count of 2 or more can pass
+/// 0 and the attack goes on without limit (kept).
+fn count_strike(w: &mut World, i: usize, times: u16) -> bool {
+    if times == 0 {
+        return false;
+    }
+    let u = &mut w.units[i];
+    if let Some(Order::Attack { times: n, .. } | Order::AttackPoint { times: n, .. }) = u.orders.last_mut() {
+        *n = n.wrapping_sub(1);
+    }
+    if times == 1 {
+        u.pop_order();
+        return true;
+    }
+    false
 }
 
 /// A blocked prediction that still lets unit `i`'s shot go (0x51e3d4, 0x51fc20): the target

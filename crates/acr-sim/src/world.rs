@@ -101,8 +101,9 @@ pub enum Order {
     /// `SmartSendTo` (link 0x52b84a): route over the pathfinding areas to `(x, y) + offset`
     /// (world pixels), pushing `SendTo` legs to area centres.
     SmartSendTo { x: i32, y: i32, dx: i32, dy: i32, prio: u8, area: Option<u16> },
-    /// `AttackObj` (order type 3, link 0x51bcaf): fight a unit until it is dead.
-    Attack { target: EntityId, prio: u8 },
+    /// `AttackObj` (order type 3, link 0x51bcaf): fight a unit until it is dead, or for
+    /// `times` shots or strikes (`nTimes`, order+0xf; 0 = no limit).
+    Attack { target: EntityId, prio: u8, times: u16 },
     /// `GoToMine` (order type 0xF2, link 0x5f46f7): walk into a building.
     Enter { building: EntityId, prio: u8 },
     /// `BuildObj` (order type 0x59, link 0x524654): build or repair at a build point (lock cell).
@@ -917,7 +918,7 @@ impl World {
                 }
                 if u.building {
                     // The attack order goes in front of production (0x51c30a).
-                    if let Some(Order::Attack { target, prio }) = u.orders.last().cloned() {
+                    if let Some(Order::Attack { target, prio, .. }) = u.orders.last().cloned() {
                         crate::combat::building_attack_link(self, i, target, prio);
                     } else {
                         crate::economy::building_link(self, i);

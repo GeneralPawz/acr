@@ -681,6 +681,19 @@ Implemented in `combat.rs`, recovered from `SearchVictim` (0x52622b), `AttackObj
     gets a reload of 20 frames (before the strike) or at most 16 (at the shot). The engine
     also shows the local player a hint ("cannot shoot", with the obstacle's name); ACR's
     interface does not.
+- **A number of shots** (`nTimes`, `AttackObj`'s last argument at order+0xf, `Order::Attack`
+  `times`; also the shots of an attack on the ground): the link reads the count once
+  (0x51c2dc); after every muzzle set's shot (0x51ea72, after the sector weapon) or melee hit
+  (0x51ec30, after the counter-attack) the order counts one down, and when the count read
+  was 1 the attack ends, even if the target lives. 0 means until the target is dead. With
+  two muzzle sets a count of 2 or more is counted twice per volley and can pass 0, which
+  then means no limit (kept). A building's shot counts the same way (0x51cc94); its next
+  order runs at once. A ship's gun (0x521edd) ends the attack after its last shot, and a
+  counted attack never sails after a target out of range (0x521f34). The interface and the
+  replays give 0; the scripts give `OBJ_AttackObj`'s count, `Attack3` and `AttackByTomahawks`
+  1 per order, `ArtAttackObject` and `MakeOneShotToBuild` 1, `AttackBuildingsInZone` 10. The
+  AI's own callers (the ship search 0x52688d, the city 0x4215bb, the army 0x43ce96) are not
+  ported.
 - **Enemy contact while walking** (`CheckMotionThroughEnemyAbility` 0x41df98): if an enemy
   stands within 32 px in the 128 px cell at the end of the next cycle, the walker stops and
   attacks it (priority 0x8F). **Deviation:** the original leaves the walker's cell
@@ -1581,7 +1594,6 @@ No game option writes it. How the map view draws the fog is in
   - Buildings: the cells of a building for round damage and searches are those of its
     position (the engine keeps building lists by cell); `SLOWDEATH`, capture and storming
     are not reproduced.
-  - Attacks on objects ignore `nTimes` (attacks on the ground count their shots).
   - Morale: the fear scan takes the units of the 128 px buckets built at the start of the
     tick (the engine's cell lists change during the tick); the cell number in the panic
     seed uses the bucket grid's width. Fleeing units walk in stance 0 (the engine runs them
@@ -1620,6 +1632,9 @@ No game option writes it. How the map view draws the fog is in
   the line walks 40 px to its left and hits the enemy from there, the friend unhurt; one
   already standing in `#PSTAND1` behind a friend drops every attack and never fires; a
   300 px ridge between musketeer and enemy stops the shot (reload 20 frames, no hit).
+- **Counted attacks** (`tests/ntimes.rs`): a musketeer ordered to fire twice counts down
+  after the first shot and stops after the second although the target lives; a pikeman
+  with one strike stops after it, and switching its target keeps the count.
 - **Formation tests** (`tests/formation.rs`): forming takes exactly the shape's slot count
   of free soldiers within 1024 px (14 are not enough, units 1100 px away do not count), the
   drummer is required unless the officer has none, a flag bearer near adds its bonus; the
