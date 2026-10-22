@@ -24,6 +24,39 @@ pub struct Research {
     pub stages: i32,
 }
 
+/// Section states (OB+0xaa, 3 bits per `ADDSECTION` section).
+pub mod section {
+    /// Not built: the type's plain look (creation, or a section in progress losing life).
+    pub const NONE: u16 = 0;
+    /// Being built: its `UPSTAGEn` upgrade is being researched.
+    pub const BUILDING: u16 = 1;
+    /// Done: adds its life to the building.
+    pub const DONE: u16 = 2;
+    /// Destroyed: the building lost the life the section added; it can be built again.
+    pub const RUIN: u16 = 3;
+}
+
+/// The state of section `s` (0..5) in the section states `stages`.
+pub fn section_state(stages: u16, s: u8) -> u16 {
+    (stages >> (3 * u16::from(s))) & 7
+}
+
+/// `stages` with section `s` set to `state`.
+pub fn with_section(stages: u16, s: u8, state: u16) -> u16 {
+    let sh = 3 * u16::from(s);
+    (stages & !(7 << sh)) | (state << sh)
+}
+
+/// The section an upgrade builds: `UPSTAGEn` gives `n`.
+fn upstage_of(def: &crate::tech::UpgradeDef) -> Option<u8> {
+    match def.effect {
+        Effect::Building { category } if (ctg::UPSTAGE0..ctg::UPSTAGE0 + 5).contains(&category) => {
+            Some(category - ctg::UPSTAGE0)
+        }
+        _ => None,
+    }
+}
+
 /// Whether building `b` may start researching `up` now (the checks of `PerformUpgrade`):
 /// finished and idle (`Ready`), the upgrade is in its `[UPGRADEPLACE]` list and enabled for
 /// the owner, the building's stages cover the upgrade's `[STAGEDEPENDENT]` mask, the owner
@@ -46,17 +79,17 @@ pub fn can_research(w: &World, b: usize, up: UpgradeId) -> bool {
     if def.individual && i32::from(u.upgrade_level) != def.level {
         return false;
     }
-    if let Effect::Building { category } = def.effect
-        && def.stage_up
-        && (ctg::UPSTAGE0..ctg::UPSTAGE0 + 5).contains(&category)
-        && (u.stages >> (3 * (category - ctg::UPSTAGE0))) & 7 == 2
-    {
+    if def.stage_up && upstage_of(def).is_some_and(|s| section_state(u.stages, s) == section::DONE) {
         return false;
     }
     true
 }
 
-/// The upgrades building `b` offers now, in `[UPGRADEPLACE]` order (for the command panel).
+/// The upgrades building `b` offers now, in `[UPGRADEPLACE]` order (for the command panel;
+/// 0x609600 in 0x609230): enabled ones, where a `[PRIVATE]` upgrade's `#LEVEL` must equal
+/// the building's upgrade count, an `[UPGRADESTAGE]` upgrade's section must not be done
+/// (so a section being built or destroyed shows it) and the `[STAGEDEPENDENT]` sections
+/// must be done.
 pub fn available(w: &World, b: usize) -> Vec<UpgradeId> {
     let u = &w.units[b];
     let Some(t) = w.catalog.tech.of(u.kind) else { return Vec::new() };
@@ -66,7 +99,13 @@ pub fn available(w: &World, b: usize) -> Vec<UpgradeId> {
         .copied()
         .filter(|&up| {
             let def = w.catalog.tech.upgrade(up);
-            p.upgrades[usize::from(up.0)].enabled && (!def.individual || i32::from(u.upgrade_level) == def.level)
+            let own = if def.individual || def.stage_up {
+                (def.individual && i32::from(u.upgrade_level) == def.level)
+                    || (def.stage_up && upstage_of(def).is_none_or(|s| section_state(u.stages, s) != section::DONE))
+            } else {
+                true
+            };
+            p.upgrades[usize::from(up.0)].enabled && own && stages_done(u.stages, def.stage_mask)
         })
         .collect()
 }
@@ -117,14 +156,11 @@ pub fn research_link(w: &mut World, b: usize) {
     let def = catalog.tech.upgrade(r.upgrade);
     r.stage += 1 << SPEED_SH;
     let u = &mut w.units[b];
-    if let Effect::Building { category } = def.effect
-        && (ctg::UPSTAGE0..ctg::UPSTAGE0 + 5).contains(&category)
+    if let Some(s) = upstage_of(def)
+        && catalog.get(u.kind).economy.sections.iter().any(|x| x.0 == s)
     {
-        let s = category - ctg::UPSTAGE0;
-        if catalog.get(u.kind).economy.sections.iter().any(|x| x.0 == s) {
-            let sh = 3 * u16::from(s);
-            u.stages = (u.stages & !(7 << sh)) | (1 << sh);
-        }
+        // Every tick (0x54f7b4): a section set back to 0 by damage is in progress again.
+        u.stages = with_section(u.stages, s, section::BUILDING);
     }
     if r.stage < r.stages {
         u.research = Some(r);
@@ -409,9 +445,9 @@ fn apply_unit(w: &mut World, player: u8, kind: TypeId, category: u8, slots: &Slo
     }
 }
 
-/// `UPSTAGEn` on the researching building (0x53268e): if the building has that stage
+/// `UPSTAGEn` on the researching building (0x53268e): if the building has that section
 /// (`ADDSECTION`), it becomes done (2); life becomes the type's life plus the life of every
-/// done stage, and so does the maximum.
+/// done section, and so does the maximum. A rebuilt ruin is thus repaired at once.
 fn upstage(w: &mut World, b: usize, s: u8) {
     let catalog = w.catalog.clone();
     let u = &w.units[b];
@@ -421,11 +457,10 @@ fn upstage(w: &mut World, b: usize, s: u8) {
     }
     let life = w.adv(u.owner, u.kind).life;
     let u = &mut w.units[b];
-    let sh = 3 * u16::from(s);
-    u.stages = (u.stages & !(7 << sh)) | (2 << sh);
+    u.stages = with_section(u.stages, s, section::DONE);
     let mut l = life;
     for &(k, add) in &t.economy.sections {
-        if (u.stages >> (3 * u16::from(k))) & 7 == 2 {
+        if section_state(u.stages, k) == section::DONE {
             l += add;
         }
     }

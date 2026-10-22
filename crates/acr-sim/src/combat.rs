@@ -959,6 +959,9 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
     let dmg = dmg.max(1);
     if w.units[victim].life > dmg {
         w.units[victim].life -= dmg;
+        if !vt.economy.sections.is_empty() {
+            section_damage(w, victim);
+        }
         // The victim hits back (0x4e9cfb), except cannons (MotionStyle 3).
         if let Some(s) = sender
             && vt.motion_style != crate::catalog::MotionStyle::ComplexRotate
@@ -972,6 +975,40 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
             frighten(w, victim, s, att);
         }
         die(w, victim);
+    }
+}
+
+/// The sections of a building that lost life and lives on (`MakeDamage` 0x4e93fe..0x4e9925,
+/// for types with `ADDSECTION`). The threshold starts at the type's life (for the owner)
+/// and grows by the life of each section that was done, in section order. While life is at
+/// or below it, a section being built drops back to not built (0x4e94b3; its research goes
+/// on and marks it again on the next tick) and a done one becomes a ruin (0x4e94f1). Life
+/// and maximum life stay: a ruin keeps its share of the maximum, so builders can repair it.
+/// The building's upgrade count (OB+0xe9) is overwritten on the way: 2 + the section if
+/// life is above the threshold, else 2, so 2 after the last section unless life exceeds the
+/// whole threshold. TODO: the ruin's `STAGE_FIRES` explosions and fires (0x4e952f) are not
+/// simulated.
+fn section_damage(w: &mut World, b: usize) {
+    use crate::upgrade::{section, section_state, with_section};
+    let catalog = w.catalog.clone();
+    let sections = &catalog.get(w.units[b].kind).economy.sections;
+    let mut threshold = w.adv(w.units[b].owner, w.units[b].kind).life;
+    let u = &mut w.units[b];
+    for s in 0..5u8 {
+        let state = section_state(u.stages, s);
+        if u.life <= threshold {
+            match state {
+                section::BUILDING => u.stages = with_section(u.stages, s, section::NONE),
+                section::DONE => u.stages = with_section(u.stages, s, section::RUIN),
+                _ => {}
+            }
+            u.upgrade_level = 2;
+        } else {
+            u.upgrade_level = s + 2;
+        }
+        if state == section::DONE {
+            threshold += sections.iter().find(|x| x.0 == s).map_or(0, |x| x.1);
+        }
     }
 }
 

@@ -842,13 +842,20 @@ Implemented in `economy.rs`. The sources are `City::Census` (0x42e658), the upke
   - **Starting** needs a finished building that is not researching, the upgrade in its
     `[UPGRADEPLACE]` list and enabled for the player, the building's stages for the
     upgrade's `[STAGEDEPENDENT]` mask, and the price. A `[PRIVATE]` upgrade also needs the
-    building's upgrade count (`SingleUpgLevel`, OB+0xe9) to equal its `#LEVEL`; a stage
-    upgrade (`[UPGRADESTAGE]`) needs its stage not done yet. The price is paid at once. A
+    building's upgrade count (`SingleUpgLevel`, OB+0xe9, 2 at creation 0x515ff8, so the
+    first `[PRIVATE]` level is `#LEVEL 2`) to equal its `#LEVEL`; a stage upgrade
+    (`[UPGRADESTAGE]`) needs its section not done (state ≠ 2: not built, being built or a
+    ruin) (`PerformUpgrade` 0x54f25b). The price is paid at once. A
     nation-wide upgrade is then no longer offered (`Enabled`, `PermanentEnabled` off,
     `IsDoing` on). The player command (0x4dc386) tries every selected building.
+  - **Offered** in the command panel (0x609600 in 0x609230): an enabled upgrade; a
+    `[PRIVATE]` one only at its `#LEVEL`, a stage upgrade only while its section is not done
+    (either suffices for one that is both); and only when the building's sections cover the
+    `[STAGEDEPENDENT]` mask (`upgrade::available`).
   - **Research** is an order in front of the building's queue: production and mining wait.
     Progress starts at 1 and gains 2 per tick, so it takes `ceil((#TIME − 1) / 2)` ticks
-    (`#TIME 750`: 375). A stage upgrade marks its stage "in progress" (1) meanwhile.
+    (`#TIME 750`: 375). A stage upgrade marks its section "being built" (1) on every tick
+    (0x54f7b4) while the type declares that section.
     Cancelling refunds everything and offers the upgrade again.
   - **Completion.** A nation-wide upgrade is `Done`. The effect is applied with the building
     as its maker, then the `[UPGRADELINKS]` are enabled (`Enabled`, `PermanentEnabled`,
@@ -876,8 +883,32 @@ Implemented in `economy.rs`. The sources are `City::Census` (0x42e658), the upke
       `SINGLE_ATTPAUSE` (`PersonalDelay`, u8 OB+0xa7: the building's reload percentage),
       `MOREFARMS_SINGLE` (OB+0xf3 = the type's housing changed by the value, added to the
       housing), `PERSONALLIFE` (life and maximum), `UPSTAGEn` (0x53268e: if the type has
-      that `ADDSECTION`, the stage becomes done; life and maximum become the type's life
-      plus the third `ADDSECTION` number of every done stage).
+      that `ADDSECTION`, the section becomes done; life and maximum become the type's life
+      plus the third `ADDSECTION` number of every done section, so finishing one also
+      repairs the building).
+- **Building sections** (`ADDSECTION`, see `docs/formats/definitions.md`): five 3-bit
+  states in OB+0xaa (`Unit::stages`, `upgrade::section_state`): 0 not built, 1 being built,
+  2 done, 3 ruin. Objects of a type with sections start at 0x8000 (0x516150); bit 15 is no
+  section's state (the life sum 0x53268e reads a sixth field there, which is 1, never 2).
+  - **Life loss** (`MakeDamage` 0x4e93fe..0x4e9925, `combat::section_damage`): when such a
+    building takes damage and lives on, a threshold starts at the type's life for the owner
+    (`AdvCharacter` life) and, for sections 0..4 in order, while life ≤ threshold a section
+    being built goes back to 0 (0x4e94b3) and a done one becomes a ruin (0x4e94f1); after
+    each section that *was* done (a ruin just made included) the threshold grows by that
+    section's life. So a section falls when life drops to the type's life plus the done
+    sections before it. Life and maximum life are not changed: a ruin keeps its share of
+    the maximum and builders repair up to it.
+  - A section set back to 0 during its research is marked 1 again on the next research tick;
+    the research is not cancelled.
+  - A ruin offers its upgrade again; researching it (paying again) makes it done, and life
+    becomes the full maximum. `[STAGEDEPENDENT]` products and upgrades need their sections
+    done, so a ruin blocks them until rebuilt.
+  - The same loop overwrites the building's upgrade count OB+0xe9 with `2 + section` while
+    life is above the threshold, else 2 — effectively 2 after the last section, since life
+    never exceeds the whole threshold (the type's life plus every done section).
+  - TODO: a ruin's `STAGE_FIRES` explosions and fires (0x4e952f..0x4e98bd) and the
+    `STAGELOCKPOINTS` of done sections (0x53281d; one file uses them) are not simulated.
+  - Taking a building down (`UNCONSTRUCT` link, 0x4a0dc7) clears all sections.
 - **Mines.**
   - A `PRODUCER` building binds to a deposit within 128 px: an `[INTERNAL_SOURCE]` sprite of
     a resource it can mine. Binding happens when it is placed and every 256 ticks.
@@ -1271,7 +1302,10 @@ No game option writes it. How the map view draws the fog is in
 - **Upgrade tests** (`tests/upgrade.rs`): research is paid at the start, blocks the
   building and ends on the 10th tick for `#TIME 21`; damage and protection change for the
   researching player only; links enable the next level; cancelling refunds; `BUILD`,
-  `LIFE`, `[PRIVATE]` levels and `UPSTAGE0` with a `[STAGEDEPENDENT]` unit.
+  `LIFE`, `[PRIVATE]` levels (from 2) and `UPSTAGE0` with a `[STAGEDEPENDENT]` unit; a
+  two-section fort: section 1 offered only after section 0, damage resets a section in
+  progress, ruins done ones at the documented thresholds without touching life or maximum,
+  and a ruin is offered and rebuilt to full life.
 - **Economy tests** (`tests/economy.rs`):
   - 10 peasants eat 62 food in 1000 ticks;
   - famine kills peasants but not `NO_HUNGRY` units;

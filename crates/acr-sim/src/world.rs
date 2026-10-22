@@ -218,13 +218,15 @@ pub struct Unit {
     pub mine: Option<crate::economy::Mine>,
     /// Buildings: rally point for produced units (`DstX/DstY`).
     pub rally: Option<Pos>,
-    /// Buildings: five 3-bit stage states (OB+0xaa), raised by `UPSTAGEn` upgrades; state
-    /// 2 means stage `n` is done. `[STAGEDEPENDENT]` objects need their stages done.
+    /// Buildings: five 3-bit section states (OB+0xaa, see [`crate::upgrade::section_state`]),
+    /// raised by `UPSTAGEn` upgrades; state 2 means section `n` is done. `[STAGEDEPENDENT]`
+    /// objects need their sections done. Types with sections start at 0x8000 (0x516150).
     pub stages: u16,
     /// Buildings: the upgrade being researched (an order in front of the queue).
     pub research: Option<crate::upgrade::Research>,
-    /// Buildings: upgrades researched here (`SingleUpgLevel`, OB+0xe9); `[PRIVATE]`
-    /// upgrades need it to equal their `#LEVEL`.
+    /// Buildings: upgrades researched here (`SingleUpgLevel`, OB+0xe9), from 2 (0x515ff8);
+    /// `[PRIVATE]` upgrades need it to equal their `#LEVEL`. Damage to a building with
+    /// sections resets it (0x4e98ce).
     pub upgrade_level: u8,
     /// Buildings: extra capacity from `SINGLE_INSIDE` (`AddInside`, OB+0xa5).
     pub add_inside: i32,
@@ -712,9 +714,9 @@ impl World {
             inside: Vec::new(),
             mine: None,
             rally: None,
-            stages: 0,
+            stages: if t.economy.sections.is_empty() { 0 } else { 0x8000 },
             research: None,
-            upgrade_level: 0,
+            upgrade_level: 2,
             add_inside: 0,
             shot_timers: vec![0; t.shot_points.len()],
             farm_extra: 0,
