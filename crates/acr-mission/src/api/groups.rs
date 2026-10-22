@@ -836,6 +836,8 @@ impl GroupOrder {
             GroupOrder::ComeIntoBuilding { .. } => u32::from_be_bytes(*b"IBLD"),
             GroupOrder::Repair { .. } => u32::from_be_bytes(*b"REPB"),
             GroupOrder::TakeResources { .. } => u32::from_be_bytes(*b"TRES"),
+            GroupOrder::ArcherAttack { missed: false, .. } => 0x4152_4341,
+            GroupOrder::ArcherAttack { missed: true, .. } => 0x4152_4350,
         }
     }
 }
@@ -925,6 +927,25 @@ pub fn run_group_orders(api: &mut Api) {
                 if let Some(GroupOrder::TakeResources { last: l, bases: b, .. }) = api.st.groups[g].orders.first_mut() {
                     *l = last;
                     *b = bases;
+                }
+                false
+            }
+            GroupOrder::ArcherAttack { nation, x, y, zone, .. } => {
+                // Handler 0x578ff6: every member slot whose unit is still the one that joined
+                // (in any state; AttackObj refuses the dying) attacks FindArcherTarget's choice
+                // (0x90, replacing its orders).
+                let target = super::tactics::find_archer_target(api, nation, x, y, 40, zone);
+                if let Some(t) = target {
+                    let slots = api.st.groups[g].members.clone();
+                    for m in slots {
+                        if let Some(i) = api.by_serial(m).map(|u| u.id.0 as usize) {
+                            acr_sim::combat::attack_obj_ex(api.world, i, t, 0x90, acr_sim::combat::Placement::Replace);
+                        }
+                    }
+                }
+                // The purpose becomes 'ACRA' or 'PCRA' (0x5790d8 / 0x5790e7).
+                if let Some(GroupOrder::ArcherAttack { missed, .. }) = api.st.groups[g].orders.first_mut() {
+                    *missed = target.is_none();
                 }
                 false
             }

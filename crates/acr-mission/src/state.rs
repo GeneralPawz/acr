@@ -98,6 +98,11 @@ pub enum GroupOrder {
     /// `SGP_TakeResources` (`'TRES'`, handler 0x5773e1): keep gathering `res` near the
     /// nation's accepting buildings (refreshed every 64 ticks).
     TakeResources { nation: u8, res: u8, last: u64, bases: Vec<(i32, i32)> },
+    /// `SGP_AttackByArchers` (`'ACRA'`, handler 0x578ff6): every call all members attack the
+    /// best target of `FindArcherTarget` around the point the group stood at when it was
+    /// given (pixels) in top area `zone`; never ends by itself. Its purpose reads `'ARCP'`
+    /// after a call without a target (`missed`).
+    ArcherAttack { nation: u8, x: i32, y: i32, zone: u16, missed: bool },
 }
 
 /// A script unit group (`UnitsGroup`, 0x22 bytes at 0x28b7760).
