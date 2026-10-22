@@ -376,6 +376,11 @@ The drawing code (0x5062a3) selects the sprite frame from `RealDir`:
 - **Corpses fade:** once the death counter `Sdoxlo` passes 100 (0x506ed5, a few seconds after
   the fall) the frame goes to the draw list with options 2 (0x49c67e), which draws it with
   `ShowGPTransparentLayers` (0x48e180): half transparent until it is removed (see Death).
+- The selection does not depend on the animation: aiming, firing and reloading
+  (`#PATTACKk`, `#ATTACKk`, `#ATTACK3`, `#TRANSX3`) use the same 9 interleaved directions as
+  walking, and a shooter faces its target (`AttackObjLink` turns it by `ROTATE` first and the
+  strike frame sets `RealDir` again). The artists drew a musketeer firing west or north-west
+  from behind, so a line firing at a target beside it shows mostly backs.
 - ACR: `acr_render::scene::sprite_direction`; corpses use the transparent sprite mode.
 
 ## Formations
