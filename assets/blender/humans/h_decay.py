@@ -42,6 +42,9 @@ LAYERS = {
                     edge=0.03, edge_rgb=(0.45, 0.42, 0.35)),
 }
 
+# Clothes and flesh collapse onto the bones (shape key / morph target `deflate`).
+DEFLATE_WINDOW = (0.18, 0.55)
+
 # The whole corpse (bones, rags, gear on the ground) sinks by SINK metres over this window.
 SINK_WINDOW = (0.78, 1.00)
 SINK = 0.20
@@ -58,6 +61,11 @@ def decay_from_counter(counter, remove=1200):
 def sink_offset(decay):
     a, b = SINK_WINDOW
     return -SINK * min(max((decay - a) / (b - a), 0.0), 1.0)
+
+
+def deflate_weight(decay):
+    a, b = DEFLATE_WINDOW
+    return min(max((decay - a) / (b - a), 0.0), 1.0)
 
 
 def srgb_to_linear(c):
