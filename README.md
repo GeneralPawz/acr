@@ -54,7 +54,8 @@ crates/
   acr-render    wgpu renderer: palette-indexed sprite atlas, layer blend modes, map terrain
   acr-viewer    sprite and map viewer app (winit); native binary and wasm entry point
   acr-tool      `acr` CLI for inspecting game data and validating decoders
-xtask/          build automation in Rust (`cargo xtask web|serve`)
+  acr-serve     local web server: `cargo xtask serve` and the `AmericanConquest-Web` launcher
+xtask/          build automation in Rust (`cargo xtask web|serve|dist`)
 docs/formats/   reverse-engineered format specifications with evidence
 ```
 
@@ -82,15 +83,29 @@ copy protection.
 
 ## Play
 
+**From a release** ([GitHub releases](https://github.com/GeneralPawz/acr/releases)): unzip
+`AmericanConquest-windows-x64.zip` (or `-arm64` for Windows on ARM) into your American
+Conquest folder, or anywhere else.
+
+- `AmericanConquest.exe` — the game. Double-click it; it looks for the game next to
+  itself, in `ACR_GAME_DIR`, in the folder remembered from an earlier run, and otherwise
+  asks once with a folder picker.
+- `AmericanConquest-Web.exe` — the browser version. Double-click it: it serves the `web`
+  folder on localhost and opens your browser, with the game files of the folder it finds
+  the same way (or a folder picker in the page). Close its window to stop it.
+
+The original game files are not included; you need your own installation. See the
+[release notes](docs/release-notes.md) for what works and what does not yet.
+
+**From source**:
+
 ```sh
 cargo xtask dist --game-dir "C:\path\to\American Conquest" --install
 ```
 
-builds `AmericanConquest.exe` with the game's original icon and copies it into the game
-folder; double-click it there. The executable also works from anywhere else: it looks for
-the game next to itself, in `ACR_GAME_DIR`, in the folder remembered from an earlier run,
-and otherwise asks once with a folder picker. Prebuilt executables (with a stand-in icon)
-and a browser build are attached to GitHub releases (`v*` tags).
+builds both executables (with the game's original icon) and the browser build into
+`dist/` and copies them into the game folder; double-click them there. Release builds from
+CI carry a stand-in icon.
 
 ## Controls
 
