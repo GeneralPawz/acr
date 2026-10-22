@@ -246,8 +246,35 @@ are piled. The renderer takes a palette from it per instance
   their skeleton (trunk from the pelvis to the neck, the four legs as the chains that reach
   the ground, radii from the skinned vertices): it places marks, spurts, drips, pools and
   torn holes, never cuts; an animal corpse's pool grows with its girth (0.6–2.5 × a man's).
-  Later on the asset side: `_PART`/`_LIMB` and radius profiles on the animal glbs (real cuts,
-  exact flank marks).
+  The volumes carry the animal kinds of `damage::VolumeKind` (claws `Claw`, the bite's core
+  `Crush`, tooth holes and the horn's track `Puncture`): seen through them is dark wet meat
+  full of blood (`mauled_tissue` in `model.wgsl`: no pale fat at the lips, a bite bruised, a
+  puncture nearly black), the torn lips and the shreds hanging in are raw dark red, and the
+  cloth around is soaked dark for 0.9 of the radius; their marks are not ragged (a ragged
+  mark's ring of exit flesh made claw slits read pink-white) and bleed at once (soak 0.55,
+  run 14 cm at the blow, spreading within a minute). Balls (`Tear`) and blades (`Gash`) keep
+  their look.
+- **Cutting animals (contract, not built yet).** What a cannonball needs to take a leg or
+  tear an animal open:
+  - assets (`animals.py`): `_PART` per vertex with the human ids for the legs (front legs
+    as `arm_l`/`arm_r`, hind legs as `leg_l`/`leg_r`, `+x` left as in `Rig::beast`; trunk,
+    neck, head and tail as their parts), from the deform weights of the chain the vertex
+    weighs most on, the chains chosen as `Rig::beast` chooses them (from the pelvis, the
+    four that reach the ground); `_LIMB` = the projection of the rest position onto that
+    leg's chain (shoulder or hip to the hoof or paw tip), trunk −1; root extras
+    `acr_limb_radius` with 16 outer radii per leg (fur included); stump caps on the parent
+    side of each leg joint (`_PART` 16 + j, 32 + j) like the humans', scaled by the
+    profile; the inner meat and bone layers get the same `_PART`/`_LIMB` as the fur.
+  - renderer: `Rig::beast` must name the chains in the same order as the asset (or read them
+    from extras `acr_limb_chains`: bone names per leg) so that `_LIMB` and the cut levels
+    agree; the cut plane, caps and thrown limb (`debris.rs`) then work as for a man. The
+    trunk cut needs a trunk level along the spine (pelvis 0 .. neck 1), which `_LIMB` −1
+    does not give: a second float `_TRUNK` or the projection at load as for limbs without
+    `_LIMB`.
+  - simulation (`acr_sim::body`): animals today lose no legs to balls or blades and big
+    bodies are never torn in two (`Body::animal`); a leg off needs its own outcome table
+    (by `Beast::size`), a three-legged gait or a fall, and the hashes pinned for animals
+    change.
 - **Not yet:** severed pieces (`debris.rs`) keep their own throw (they could become small
   ragdoll bodies later); no kneeling or reloading pose exists to be killed in; horses and
   riders; the corpse's decay sinking is not applied to physics poses.

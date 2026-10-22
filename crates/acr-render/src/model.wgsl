@@ -448,9 +448,11 @@ fn strands(p: vec3<f32>, seed: f32) -> f32 {
 
 // Tissue torn out (#280): the wound volumes of the damage block (texels d + 16.., see
 // damage.rs `Volume::gpu`). Returns the nearest boundary as (signed distance / radius,
-// < 0 inside; the fibre noise there; that volume's radius (m); 1 when any volume is near).
+// < 0 inside; the fibre noise there; that volume's radius (m); 1 + that volume's kind when
+// any volume is near: 0 tear, 1 gash, 2 claw, 3 crush, 4 puncture, see damage.rs).
 // The boundary is never round: low noise bites chunks, fibre noise frays it, `_GORE.x`
-// shifts it per vertex region, and gashes (kind 1) are cleaner than tears.
+// shifts it per vertex region, gashes and claws (kinds 1, 2) are cleaner than tears and
+// punctures (4) cleanest.
 fn holes(p: vec3<f32>, d: u32, gore: f32) -> vec4<f32> {
     var best = vec4<f32>(1e3, 0.0, 0.0, 0.0);
     if (texel(d + 3u).z < 0.5) {
@@ -467,15 +469,19 @@ fn holes(p: vec3<f32>, d: u32, gore: f32) -> vec4<f32> {
         if (dist > r * 2.6) {
             continue;
         }
-        let gash = b.w >= 1.0;
+        let kind = floor(b.w);
+        let gash = kind > 0.5 && kind < 2.5;
         let seed = fract(b.w) * 97.0;
         let chunk = noise3(p * (5.0 / r) + vec3<f32>(seed)) * 0.6 + noise3(p * (13.0 / r) + vec3<f32>(seed * 1.7)) * 0.4;
         let fib = strands(p, seed);
-        let amp = select(0.75, 0.3, gash);
+        var amp = select(0.75, 0.3, gash);
+        if (kind > 3.5) {
+            amp = 0.12;
+        }
         let rr = r * (1.0 + amp * (chunk - 0.5) * 2.0 + select(0.22, 0.1, gash) * (fib - 0.5) + 0.25 * (gore - 0.5));
         let e = (dist - rr) / r;
         if (e < best.x) {
-            best = vec4<f32>(e, fib, r, 1.0);
+            best = vec4<f32>(e, fib, r, 1.0 + kind);
         }
     }
     return best;
@@ -492,6 +498,24 @@ fn tissue(p: vec3<f32>, depth: f32, fib: f32) -> vec3<f32> {
     meat = mix(meat, vec3<f32>(0.035, 0.0, 0.0), clot * 0.95);
     let bone = smoothstep(0.80, 0.84, noise3(p * 60.0 + vec3<f32>(11.0)));
     return mix(meat, vec3<f32>(0.80, 0.74, 0.62), bone * 0.8);
+}
+
+// The inside of an animal's wound (claw, crush, puncture: `kind` 2, 3, 4): torn and crushed
+// meat full of blood, dark and wet, darker the deeper (no pale fat showing at the lips), a
+// bite bruised, a puncture nearly black.
+fn mauled_tissue(p: vec3<f32>, depth: f32, fib: f32, kind: f32) -> vec3<f32> {
+    let grain = noise3(p * 40.0);
+    var meat = mix(vec3<f32>(0.075, 0.003, 0.004), vec3<f32>(0.34, 0.025, 0.02), fib * 0.55 + grain * 0.45);
+    meat = meat * mix(0.8, 0.3, smoothstep(0.0, 0.6, depth));
+    let clot = smoothstep(0.55, 0.68, noise3(p * 26.0 + vec3<f32>(5.3)));
+    meat = mix(meat, vec3<f32>(0.03, 0.0, 0.002), clot * 0.9);
+    if (kind > 2.5 && kind < 3.5) {
+        meat = mix(meat, vec3<f32>(0.10, 0.012, 0.03), 0.35 * smoothstep(0.3, 0.7, grain));
+    }
+    if (kind > 3.5) {
+        meat = meat * 0.35;
+    }
+    return meat;
 }
 
 // Blood sprayed onto a body or a wall: speckles of several sizes around `spray.xyz` (rest
@@ -646,7 +670,30 @@ fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
     }
     // An open belly: a dark wet gash.
     var wet = material.look.x;
-    if (hole.w > 0.5 && material.flags.w < 0.5) {
+    let mauled = hole.w > 2.5;
+    // The colour of the wet highlight: blood's is dark red (a white one on wet meat read as
+    // pale pink-white slits in the close-ups).
+    var sheen = vec3<f32>(0.6, 0.55, 0.5);
+    var broad = vec3<f32>(0.08);
+    if (mauled && material.flags.w < 0.5) {
+        let mk = hole.w - 1.0;
+        sheen = vec3<f32>(0.26, 0.05, 0.04);
+        broad = sheen * 0.14;
+        if (!front && in.part > -0.5) {
+            // Seen through an animal's wound: dark wet meat full of blood.
+            rgb = mauled_tissue(in.rest.xyz, max(hole.x, 0.0) + 0.25, hole.y, mk);
+            wet = 1.0;
+        } else if (hole.x < 0.7) {
+            // Skin and cloth around it soaked dark (a bite also bruised), the torn lips
+            // and the shreds hanging into the hole raw and bloody red against the nearly
+            // black inside, never pale.
+            let k = 1.0 - smoothstep(0.0, 0.7, hole.x + (hole.y - 0.5) * 0.25);
+            rgb = mix(rgb, rgb * 0.15 + vec3<f32>(0.12, 0.004, 0.003), k);
+            let raw = 1.0 - smoothstep(0.0, 0.14, hole.x);
+            rgb = mix(rgb, mix(vec3<f32>(0.34, 0.02, 0.015), vec3<f32>(0.52, 0.05, 0.035), shred * 0.6), raw);
+            wet = max(wet, max(k * 0.7, raw));
+        }
+    } else if (hole.w > 0.5 && material.flags.w < 0.5) {
         if (!front && in.part > -0.5) {
             // The far wall seen through the hole (and the shell's inside): flesh, fat at
             // the torn edge, not an empty shell.
@@ -713,7 +760,7 @@ fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
     if (wet > 0.0) {
         let h = normalize(globals.light.xyz - globals.forward.xyz);
         let nh = max(dot(n, h), 0.0);
-        rgb = rgb + vec3<f32>(0.6, 0.55, 0.5) * wet * pow(nh, 40.0) + vec3<f32>(0.08) * wet * pow(nh, 6.0);
+        rgb = rgb + sheen * wet * pow(nh, 40.0) + broad * wet * pow(nh, 6.0);
     }
     if (globals.params.x > 0.5) {
         rgb = to_srgb(rgb);

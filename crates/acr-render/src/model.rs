@@ -91,8 +91,9 @@ pub struct DecayLayer {
     pub dissolve: Option<[f32; 2]>,
     pub edge: f32,
     pub edge_rgb: [f32; 3],
-    /// The layer lies inside the body until the flesh is gone (`layer: "bone"`): it is not
-    /// drawn for models that do not decay.
+    /// The layer lies inside the body until the flesh is gone (`layer: "bone"`, or
+    /// `inner: true`: an animal's meat under its fur): it is not drawn for models that do
+    /// not decay.
     pub inner: bool,
 }
 
@@ -267,7 +268,8 @@ fn decay_layer(extras: &serde_json::Value) -> Option<DecayLayer> {
         dissolve: floats(d.get("dissolve")),
         edge: d.get("edge").and_then(serde_json::Value::as_f64).unwrap_or(0.0) as f32,
         edge_rgb: floats(d.get("edge_rgb")).unwrap_or([0.0; 3]),
-        inner: d.get("layer").and_then(serde_json::Value::as_str) == Some("bone"),
+        inner: d.get("layer").and_then(serde_json::Value::as_str) == Some("bone")
+            || d.get("inner").and_then(serde_json::Value::as_bool) == Some(true),
     })
 }
 

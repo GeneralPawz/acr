@@ -55,7 +55,16 @@ LAYERS = {
     # and holds out longer than human flesh.
     "hide":    dict(code=8, d=(0.04, 0.50), tint=(0.16, 0.11, 0.07), k=0.6, s=(0.30, 0.72),
                     edge=0.06, edge_rgb=(0.09, 0.05, 0.03)),
+    # Wild animals' fur (#287): opens in patches over the meat (`ANIMAL_FLESH`), darker and
+    # duller as it rots, gone before the bones.
+    "fur":     dict(code=9, d=(0.03, 0.45), tint=(0.17, 0.12, 0.08), k=0.55, s=(0.24, 0.62),
+                    edge=0.06, edge_rgb=(0.10, 0.04, 0.03)),
 }
+
+# The meat under an animal's fur (a shrunken copy of the body, inner like the bones): the
+# `flesh` layer with its own windows: dark red, browning, gone between the fur and the bones.
+ANIMAL_FLESH = dict(d=(0.10, 0.60), tint=(0.22, 0.12, 0.08), k=0.75, s=(0.36, 0.80),
+                    edge=0.05, edge_rgb=(0.12, 0.03, 0.02))
 
 # Colours of the masks of #183 (sRGB): fresh blood darkens to brown with age.
 GORE = {
@@ -102,12 +111,17 @@ def lin(rgb):
     return tuple(srgb_to_linear(c) for c in rgb) + (1.0,)
 
 
-def extras(layer):
-    """The material extras `acr_decay` of a layer."""
-    p = LAYERS[layer]
-    return {"layer": layer, "code": p["code"], "discolour": list(p["d"]), "tint": list(p["tint"]),
-            "tint_strength": p["k"], "dissolve": list(p["s"]) if p["s"] else [],
-            "edge": p["edge"], "edge_rgb": list(p["edge_rgb"])}
+def extras(layer, inner=False, **over):
+    """The material extras `acr_decay` of a layer; `over` replaces its windows (`d`, `tint`,
+    `k`, `s`, `edge`, `edge_rgb`); `inner`: the layer lies inside the body (not drawn on
+    the living, like `bone`)."""
+    p = dict(LAYERS[layer], **over)
+    out = {"layer": layer, "code": p["code"], "discolour": list(p["d"]), "tint": list(p["tint"]),
+           "tint_strength": p["k"], "dissolve": list(p["s"]) if p["s"] else [],
+           "edge": p["edge"], "edge_rgb": list(p["edge_rgb"])}
+    if inner:
+        out["inner"] = True
+    return out
 
 
 # ----------------------------------------------------------------------------- masks
@@ -139,6 +153,10 @@ def add_masks(obj, layer, seed, part_of_vertex=None):
     for i, d in enumerate(attr.data):
         d.color = (blotch[i], rnd.random(), code, 1.0)
     mesh.color_attributes.active_color = attr
+    # The exporter writes the *render* colour attribute as COLOR_0. Creating one sets it only
+    # when the mesh has no render colour name at all; a removed attribute's name stays (the
+    # WildMesh meshes' `VertexColors`), which left the bear and elk without COLOR_0.
+    mesh.color_attributes.render_color_index = list(mesh.color_attributes).index(attr)
     gore = mesh.attributes.get("_gore") or mesh.attributes.new("_gore", "FLOAT_COLOR", "POINT")
     for i, d in enumerate(gore.data):
         d.color = (wound[i], blood[i], dirt[i], burn[i])

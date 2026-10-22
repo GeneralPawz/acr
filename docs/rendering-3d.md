@@ -230,10 +230,23 @@ dissolving is alpha-tested (`discard`), nothing is blended or sorted. `gore=redu
 everything but the dissolve; `gore=off` draws the corpse like the original's half
 transparent sprite, every other pixel. Sprite corpses always keep the original fade.
 
-**Procedural decay (models without masks, the animals).** A skinned model with no
-`acr_decay` material that is not a machine (`ModelData::decays_procedurally`: the WildMesh
-animals `anm*.glb`) rots by a fallback in `model.wgsl` (material `look.w`), driven by the same
-per-corpse `decay`; living animals (decay 0) are untouched:
+**Animal corpses (masks, `acr_assets/animals.py`).** The WildMesh animals carry real decay
+masks since animals3: their own meshes are the `fur` layer (the pack's materials copied with
+`acr_decay` extras), a copy of the body inset by 1.2 % of its height with 40 % of its
+triangles is the meat under the fur (`flesh` with dark red windows of its own,
+`decay.ANIMAL_FLESH`, `inner: true`), and a tube skeleton of the deform bones longer than
+3.5 % of the height is the `bone` layer. `inner: true` in `acr_decay` (like `layer: "bone"`)
+keeps a layer from being drawn on the living. The fur opens in patches from decay 0.24 onto
+the meat, the meat goes between 0.36 and 0.80, the bones stay. Two exporter traps made the
+first try export no masks: the exporter writes the *render* colour attribute as `COLOR_0`
+(`color_attributes.render_color_index`), which stayed on the removed pack attribute
+`VertexColors` (bear, elk), and it reads materials from the depsgraph's evaluated copies,
+which predate a custom property set on an existing material (hence the copies).
+
+**Procedural decay (models without masks).** A skinned model with no `acr_decay` material
+that is not a machine (`ModelData::decays_procedurally`: animal glbs built before animals3)
+rots by a fallback in `model.wgsl` (material `look.w`), driven by the same per-corpse
+`decay`; living animals (decay 0) are untouched:
 
 - colour: mottled value noise from the rest position (`7×` and `23×` per metre) pulls the
   colour, with its blood and dirt, towards olive-grey rot in patches and brown-black
@@ -257,11 +270,9 @@ its death clip (not alive, death counter 1); in 3D its body lingers like a soldi
 `corpse_minutes`. The simulation's `MEAT` sprite (`sprite::leave_carcass`, a `ResSprite`
 for hunting) is not drawn by the game at all yet (dynamic sprite objects have no draw path;
 the static scene holds the map's sprites only), so nothing shows beside the 3D carcass; when
-that path comes it must leave out a `MEAT` sprite whose animal still lies in 3D. **Asset side, later:** the
-animals should get real masks like the humans (`decay.py`: `COLOR_0` R noise, G fray, and
-`extras.acr_decay` per material with discolour and dissolve windows, a fur layer that goes
-first and a bone layer that stays), and `deflate` / `lie_flat` morph targets; with masks the
-model leaves the fallback by itself.
+that path comes it must leave out a `MEAT` sprite whose animal still lies in 3D. **Asset side, later:**
+`deflate` / `lie_flat` morph targets for the animals (the masked corpses do not collapse yet;
+they sink with the instance transform).
 
 #### Deaths by cause: wounds, blood, dirt, burns, pools
 

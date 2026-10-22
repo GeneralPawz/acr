@@ -105,6 +105,12 @@ pub enum VolumeKind {
     Tear,
     /// Hacked by a blade: a cleaner, still uneven edge.
     Gash,
+    /// Raked by claws: a gash's clean edge, dark wet meat inside, the cloth around soaked.
+    Claw,
+    /// Crushed under jaws: ragged, bruised and dark inside.
+    Crush,
+    /// Punched by a tooth, horn or antler: a tight round hole, nearly black deep inside.
+    Puncture,
 }
 
 /// Tissue torn out of a body (#280, `docs/body-sim.md` §3): a capsule from `a` to `b` (a
@@ -145,6 +151,9 @@ impl Volume {
         let kind = match self.kind {
             VolumeKind::Tear => 0.0,
             VolumeKind::Gash => 1.0,
+            VolumeKind::Claw => 2.0,
+            VolumeKind::Crush => 3.0,
+            VolumeKind::Puncture => 4.0,
         };
         [
             [self.a[0], self.a[1], self.a[2], self.radius],
@@ -959,7 +968,9 @@ pub fn inserts(d: &Damage, rig: &Rig) -> Vec<Insert> {
         let unit = frame([1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [r; 3], c);
         out.push(Insert { kind: InsertKind::Cavity, rest: unit, slot });
         let toward = if len > 1e-5 { math::scale(off, 1.0 / len) } else { [0.0, 0.0, 1.0] };
-        if k == 4 && (0.4..0.85).contains(&level) && v.kind == VolumeKind::Tear {
+        // Torn or crushed (a bite's core), not raked or punched: ribs and bone ends show.
+        let open = matches!(v.kind, VolumeKind::Tear | VolumeKind::Crush);
+        if k == 4 && (0.4..0.85).contains(&level) && open {
             // Ribs: arcs about the trunk's axis, facing the wound.
             let z = normalize([toward[0], 0.0, toward[2]]);
             let x = cross([0.0, 1.0, 0.0], z);
@@ -969,7 +980,7 @@ pub fn inserts(d: &Damage, rig: &Rig) -> Vec<Insert> {
                 let s = r_body * 0.5;
                 out.push(Insert { kind: InsertKind::Rib, rest: frame(x, [0.0, 1.0, 0.0], z, [s; 3], p), slot });
             }
-        } else if k < 4 && v.kind == VolumeKind::Tear {
+        } else if k < 4 && open {
             // A splintered bone end where the limb comes off, or across a shattered one.
             let cut = d.limbs[k].cut;
             let severed = cut < WHOLE && v.distance(chain.at(f32::from(cut) / 255.0).0) < v.radius;

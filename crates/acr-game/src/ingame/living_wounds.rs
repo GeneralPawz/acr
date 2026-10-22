@@ -45,6 +45,9 @@ struct Wound {
     ragged: bool,
     /// How much it bleeds (scales soak and run), 0..1.
     bleed: f32,
+    /// Torn by an animal (claws, jaws, horns): bleeds at once and fast, soaking the cloth
+    /// around it within seconds.
+    torn: bool,
     seed: f32,
 }
 
@@ -91,22 +94,23 @@ fn wounds_of(hit: &HitRecord, side: [f32; 2]) -> Vec<(At, [f32; 2], f32, bool, f
     let entry = turn(side, (h(1) - 0.5) * 0.9);
     let exit = turn([-side[0], -side[1]], (h(2) - 0.5) * 1.2);
     let mut out = Vec::new();
-    // Mauling: claws rake a row of torn gashes, jaws leave the bite on both sides, horns one
-    // big torn hole.
+    // Mauling: claws rake a row of gashes, jaws leave the bite on both sides, horns one deep
+    // hole. Not ragged: the torn tissue is drawn by the wound volumes (`tears`); a ragged
+    // mark's ring of pale exit flesh made the claw slits read pink-white.
     let mauled = !matches!(injury.outcome, Outcome::Off | Outcome::Torn(_));
     match injury.cause {
         Cause::Claw if mauled => {
             let n = 3 + usize::from(h(4) > 0.6);
             for k in 0..n {
                 let off = (k as f32 - (n - 1) as f32 * 0.5) * 0.05;
-                out.push((at(off), turn(entry, off * 2.5), 0.024, true, 1.0));
+                out.push((at(off), turn(entry, off * 2.5), 0.024, false, 1.0));
             }
         }
         Cause::Bite if mauled => {
-            out.push((at(0.0), entry, 0.04, true, 1.0));
-            out.push((at(0.02), turn([-entry[0], -entry[1]], (h(5) - 0.5) * 0.6), 0.034, true, 1.0));
+            out.push((at(0.0), entry, 0.04, false, 1.0));
+            out.push((at(0.02), turn([-entry[0], -entry[1]], (h(5) - 0.5) * 0.6), 0.034, false, 1.0));
         }
-        Cause::Gore if mauled => out.push((at(0.0), entry, 0.05, true, 1.0)),
+        Cause::Gore if mauled => out.push((at(0.0), entry, 0.05, false, 1.0)),
         _ => {}
     }
     if !out.is_empty() {
@@ -182,10 +186,11 @@ impl LivingWounds {
                     tears.drain(..tears.len() - MAX_VOLUMES);
                 }
             }
+            let torn = hit.injury.is_some_and(|i| matches!(i.cause, Cause::Claw | Cause::Bite | Cause::Gore));
             let list = self.units.entry(hit.victim).or_default();
             for (k, (at, side, radius, ragged, bleed)) in wounds_of(hit, side).into_iter().enumerate() {
                 let seed = hash(hit.tick, hit.victim, 10 + k as u64) * 97.0;
-                list.push(Wound { tick: hit.tick, at, side, radius, ragged, bleed, seed });
+                list.push(Wound { tick: hit.tick, at, side, radius, ragged, bleed, torn, seed });
             }
             // The newest stay when there are too many.
             if list.len() > MAX_MARKS {
@@ -248,13 +253,19 @@ impl LivingWounds {
         let Some(list) = self.units.get(&unit) else { return (out, 0) };
         for (m, w) in out.iter_mut().zip(list) {
             let since = now.saturating_sub(w.tick) as f32 / TPS;
+            // Soaks within seconds, then spreads for minutes; runs down to the knees. A wound
+            // torn by an animal is soaked and running at once and spreads within a minute.
+            let (run, soak) = if w.torn {
+                (0.14 + 0.5 * ramp(since, 0.0, 60.0).sqrt(), 0.55 + 0.45 * ramp(since, 0.0, 75.0).sqrt())
+            } else {
+                (0.06 + 0.55 * ramp(since, 0.0, 180.0).sqrt(), 0.25 + 0.75 * ramp(since, 0.0, 240.0).sqrt())
+            };
             *m = Mark {
                 point: place(w.at, w.side, rig),
                 radius: w.radius,
                 ragged: w.ragged,
-                // Soaks within seconds, then spreads for minutes; runs down to the knees.
-                run: w.bleed * (0.06 + 0.55 * ramp(since, 0.0, 180.0).sqrt()),
-                soak: w.bleed * (0.25 + 0.75 * ramp(since, 0.0, 240.0).sqrt()),
+                run: w.bleed * run,
+                soak: w.bleed * soak,
                 age: ramp(since, 300.0, 1800.0),
                 seed: w.seed,
             };
@@ -380,7 +391,9 @@ mod tests {
         lw.take_hits([claw].iter(), 1, Gore::Full, &|_| Some(0));
         let (m, n) = lw.marks(3, None, 1);
         assert!((3..=4).contains(&n), "{n}");
-        assert!(m[..usize::from(n)].iter().all(|w| w.ragged));
+        assert!(m[..usize::from(n)].iter().all(|w| !w.ragged));
+        // Torn by claws: soaked and running at once.
+        assert!(m[..usize::from(n)].iter().all(|w| w.soak > 0.5 && w.run > 0.1));
         // A row along the body: the claws land at different heights.
         assert!((m[0].point[1] - m[usize::from(n) - 1].point[1]).abs() > 0.05);
         // Down and bitten again and again: the newest wounds always show.

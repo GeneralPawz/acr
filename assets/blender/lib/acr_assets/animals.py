@@ -30,8 +30,10 @@ humans):
 Other spec keys: `fbx` (instead of `blend`) with `anims` {action name: animation-only FBX
 of the same skeleton}, `textures` {material name part or "*": image or (image, alpha clip)
 or "#rrggbb"} for sources whose materials do not survive import, `head_bone`/`tail_bone`
-and `neck_bones` for rigs with generic bone names, `lift` {clip: metres} to raise a clip
-(the flying eagle).
+and `neck_bones` for rigs with generic bone names, `lift` {clip: metres or "clear"} to
+raise a clip (the flying eagle; "clear": just high enough that its lowest point stays
+CLEARANCE above the ground). A clip can be a list of clips played one after the other
+(blended over BLEND frames).
 
 Facing: the head is turned to -Y (south, the convention); the ground point is under the
 body's centre, the lowest point of the idle pose on the ground.
@@ -44,6 +46,10 @@ import bpy
 from mathutils import Matrix, Vector
 
 TICKS_PER_SECOND = 10
+# Frames over which a clip of a clip list blends in from the one before.
+BLEND = 6
+# A lifted clip with `lift: "clear"` keeps its lowest point this far above the ground.
+CLEARANCE = 0.25
 
 
 def sources():
@@ -425,7 +431,12 @@ def _flatten(arm, meshes, parent):
         mw = m.matrix_world.copy()
         m.parent = None
         m.parent_type = "OBJECT"
-        m.data.transform(mw)
+        # With the shape keys: a mesh that has some (the eagle's blend shapes) is evaluated
+        # from its basis key, which `transform` leaves alone by default, so the eagle came out
+        # in the FBX's centimetres (100 times too large). The keys are not used: dropped.
+        m.data.transform(mw, shape_keys=True)
+        if m.data.shape_keys:
+            m.shape_key_clear()
         m.matrix_world = Matrix.Identity(4)
     arm.parent = None
     arm.matrix_world = Matrix.Identity(4)
@@ -476,6 +487,119 @@ def _head_dir(arm, head_name=None, tail_name=None):
     v = arm.matrix_world @ head.head_local - arm.matrix_world @ tail.head_local
     v.z = 0
     return v.normalized()
+
+
+def _decay_layers(ctx, arm, meshes, height):
+    """Corpse layers (#178) of the animal: its meshes are the fur (`decay` layer `fur`, the
+    pack's materials get the `acr_decay` extras), a copy shrunk inwards by FLESH_DEPTH of the
+    height is the meat under it (`flesh` with `decay.ANIMAL_FLESH`'s windows, inner), and a
+    tube skeleton of the deform bones the bones (inner). Every mesh gets the masks
+    (`decay_mask` = COLOR_0, `_gore`, `_part` 0)."""
+    from . import body as bd
+    from . import decay
+
+    # New materials with the extras, not properties added to the pack's: the exporter reads
+    # the evaluated copies of materials, and those were made (by `_bounds`) before any
+    # property was set, so the pack's materials went out without `acr_decay`.
+    fur = {}
+    for m in meshes:
+        m.data.name = m.name
+        for slot in m.material_slots:
+            mat = slot.material
+            if mat is None:
+                continue
+            if mat not in fur:
+                twin = mat.copy()
+                twin.name = f"{ctx.name}.{mat.name}"
+                twin["acr_decay"] = decay.extras("fur")
+                fur[mat] = twin
+            slot.material = fur[mat]
+        decay.add_masks(m, "fur", seed=sum(map(ord, m.name)))
+
+    meat = bpy.data.materials.new(f"{ctx.name}.flesh")
+    meat["acr_decay"] = decay.extras("flesh", inner=True, **decay.ANIMAL_FLESH)
+    meat.diffuse_color = decay.lin(FLESH_RGB)
+    bsdf = next(n for n in meat.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
+    bsdf.inputs["Base Color"].default_value = decay.lin(FLESH_RGB)
+    bsdf.inputs["Roughness"].default_value = 0.6
+    depth = FLESH_DEPTH * height
+    for m in meshes:
+        if not any(md.type == "ARMATURE" for md in m.modifiers):
+            continue
+        f = m.copy()
+        f.data = m.data.copy()
+        f.name = f.data.name = m.name + "_flesh"
+        bpy.context.scene.collection.objects.link(f)
+        f.parent = arm
+        me = f.data
+        for v in me.vertices:
+            v.co -= v.normal * depth
+        me.materials.clear()
+        me.materials.append(meat)
+        for poly in me.polygons:
+            poly.material_index = 0
+        dec = next((md for md in f.modifiers if md.type == "DECIMATE"), None)
+        if dec is None:
+            dec = f.modifiers.new("decimate", "DECIMATE")
+            dec.decimate_type = "COLLAPSE"
+            dec.use_collapse_triangulate = True
+            dec.ratio = 1.0
+            f.modifiers.move(len(f.modifiers) - 1, 0)
+        dec.ratio *= FLESH_TRIS
+        decay.add_masks(f, "flesh", seed=sum(map(ord, f.name)))
+        f["acr_layer"] = "flesh"
+
+    # Only bones that lie inside the body, thinner where it is thin: a root or helper bone
+    # from the ground to the hips, or a tube thicker than a leg, poked through the fur of a
+    # fresh carcass.
+    from mathutils.bvhtree import BVHTree
+
+    trees = [BVHTree.FromPolygons([v.co for v in m.data.vertices], [p.vertices for p in m.data.polygons])
+             for m in meshes]
+
+    def depth(p):
+        best = None
+        for t in trees:
+            loc, nrm, _i, d = t.find_nearest(p)
+            if loc is not None and (best is None or d < best[0]):
+                best = (d, (p - loc).dot(nrm) < 0.0)
+        return best[0] if best and best[1] else -1.0
+
+    tubes = []
+    for b in arm.data.bones:
+        if not b.use_deform or b.length < BONE_MIN * height:
+            continue
+        inside = [depth(b.head_local.lerp(b.tail_local, t)) for t in (0.2, 0.5, 0.8)]
+        if min(inside) <= 0.0:
+            continue
+        r = min(0.07 * b.length, 0.018 * height, 0.45 * min(inside))
+        if r > 0.003:
+            tubes.append((b.name, r))
+    if tubes:
+        B = bd.BoneMesh(arm)
+        for name, r in tubes:
+            B.long_bone(name, r, r * 1.4, shrink=0.12, segments=5)
+        obj = B.finish(f"{ctx.name}.bones", lambda _b: 0)
+        obj.parent = arm
+        if "part" in obj.data.attributes:
+            obj.data.attributes.remove(obj.data.attributes["part"])
+        bone = bpy.data.materials.new(f"{ctx.name}.bone")
+        bone["acr_decay"] = decay.extras("bone")
+        bsdf = next(n for n in bone.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
+        bsdf.inputs["Base Color"].default_value = decay.lin(BONE_RGB)
+        bsdf.inputs["Roughness"].default_value = 0.8
+        obj.data.materials.append(bone)
+        decay.add_masks(obj, "bone", seed=sum(map(ord, obj.name)))
+        ctx.stats["bone_tubes"] = len(tubes)
+
+
+# Meat under the fur: inset by this share of the body height, with this share of the fur's
+# triangles; deform bones shorter than BONE_MIN of the height get no tube.
+FLESH_DEPTH = 0.012
+FLESH_TRIS = 0.4
+FLESH_RGB = (0.36, 0.07, 0.05)
+BONE_RGB = (0.84, 0.80, 0.70)
+BONE_MIN = 0.035
 
 
 def build(ctx, spec):
@@ -564,10 +688,23 @@ def build(ctx, spec):
     _NECK[:] = spec.get("neck_bones", [])
     baked = {}
     for key, clip in spec["clips"].items():
-        src, mode, n = clip[0], clip[1], clip[2]
-        a = clip[3] if len(clip) > 3 else (None if mode == "pose" else 0.0)
-        b = clip[4] if len(clip) > 4 else 1.0
-        baked[key] = _bake(arm, key, bpy.data.actions[src], mode, n, a, b, src_fps, meshes)
+        # A list of clips plays them one after the other, each blending in from the last
+        # pose of the one before over BLEND frames (the eagle's flapping and gliding).
+        parts = clip if isinstance(clip, list) else [clip]
+        samples = []
+        for part in parts:
+            src, mode, n = part[0], part[1], part[2]
+            a = part[3] if len(part) > 3 else (None if mode == "pose" else 0.0)
+            b = part[4] if len(part) > 4 else 1.0
+            got = _bake(arm, key, bpy.data.actions[src], mode, n, a, b, src_fps, meshes)
+            if samples:
+                prev = samples[-1]
+                for i in range(min(BLEND, len(got))):
+                    t = (i + 1) / (BLEND + 1)
+                    got[i] = {k: (prev[k][0].lerp(v[0], t), prev[k][1].slerp(v[1], t), prev[k][2].lerp(v[2], t))
+                              for k, v in got[i].items()}
+            samples += got
+        baked[key] = samples
     # The lying corpse: DEATH's last pose, unless the spec names its own.
     for key in ("DEATHLIE1", "DEATHLIE2", "DEATHLIE3"):
         if key not in baked and "DEATH" in baked:
@@ -576,11 +713,22 @@ def build(ctx, spec):
     # space against the flattened rest pose.
     arm.animation_data.action = None
     worlds = {}
+    lifts = {}
     for key, samples in baked.items():
+        lift = spec.get("lift", {}).get(key, 0.0)
+        if lift == "clear":
+            # As low as the clip allows: its lowest point (every 4th frame) CLEARANCE above
+            # the ground.
+            low = 1e9
+            for smp in samples[::4]:
+                _set(arm, smp)
+                low = min(low, _bounds(meshes)[0].z)
+            lift = max(0.0, -low) + CLEARANCE
+        lifts[key] = round(lift, 2)
         worlds[key] = []
         for smp in samples:
             _set(arm, smp)
-            up = Matrix.Translation((0.0, 0.0, spec.get("lift", {}).get(key, 0.0)))
+            up = Matrix.Translation((0.0, 0.0, lift))
             # Without the armature's own scale (it goes into the rest pose), with the bones'.
             unscale = Matrix.Scale(1.0 / arm.matrix_world.to_scale()[0], 4)
             worlds[key].append({pb.name: up @ arm.matrix_world @ pb.matrix @ unscale for pb in arm.pose.bones})
@@ -595,8 +743,16 @@ def build(ctx, spec):
         if act not in made:
             bpy.data.actions.remove(act)
     arm["acr_clips"] = [a.name for a in made]
+    _decay_layers(ctx, arm, meshes, hi.z - lo.z)
+    # The decimation applied now, not at export: the exporter re-evaluates every modifier on
+    # every sampled frame of every clip (minutes for the bison with its meat copy).
+    for o in [c for c in arm.children if c.type == "MESH"]:
+        for md in [md for md in o.modifiers if md.type == "DECIMATE"]:
+            with bpy.context.temp_override(object=o, active_object=o, selected_objects=[o]):
+                bpy.ops.object.modifier_apply(modifier=md.name)
     _show(arm, bpy.data.actions["STAND"], 0)
     lo, hi = _bounds(meshes)
     ctx.stats["size_m_flat"] = [round(hi[i] - lo[i], 2) for i in range(3)]
     ctx.root["acr_animal"] = True
+    ctx.stats["lift"] = {k: v for k, v in lifts.items() if v}
     ctx.stats["clips"] = {a.name: int(a.frame_range[1] - a.frame_range[0] + 1) for a in made}

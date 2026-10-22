@@ -75,6 +75,8 @@ fn mauled(t: &Tear, p: Vec3, bone: Vec3, radius: f32, facing: Vec3, track: Vec3)
     let jitter = |k: u64, s: f32| (h(k) - 0.5) * 2.0 * s;
     let energy = f32::from(injury.energy) / 100.0;
     let tear = |a: Vec3, b: Vec3, r: f32, k: u64| Volume { a, b, radius: r, seed: h(60 + k), kind: VolumeKind::Tear };
+    let crush = |a: Vec3, b: Vec3, r: f32, k: u64| Volume { kind: VolumeKind::Crush, ..tear(a, b, r, k) };
+    let puncture = |a: Vec3, b: Vec3, r: f32, k: u64| Volume { kind: VolumeKind::Puncture, ..tear(a, b, r, k) };
     let surface = |d: f32| math::add(p, math::scale(facing, d));
     let limb = matches!(injury.part, Part::Limb(_));
     let mut v = Vec::new();
@@ -104,7 +106,7 @@ fn mauled(t: &Tear, p: Vec3, bone: Vec3, radius: f32, facing: Vec3, track: Vec3)
                     b: math::add(c, math::scale(axis, l)),
                     radius: r * (0.85 + 0.3 * h(65 + k)),
                     seed: h(70 + k),
-                    kind: VolumeKind::Gash,
+                    kind: VolumeKind::Claw,
                 });
             }
         }
@@ -119,7 +121,7 @@ fn mauled(t: &Tear, p: Vec3, bone: Vec3, radius: f32, facing: Vec3, track: Vec3)
                 (false, false) => 0.03 + 0.03 * energy,
             };
             let at = if broken { surface(radius * 0.35) } else { surface(radius * 0.85) };
-            v.push(tear(at, at, core, 1));
+            v.push(crush(at, at, core, 1));
             // Two rows of tooth holes: around a limb on its near and far side, into the trunk
             // or head above and below the bite.
             let (u, w) = if limb { (facing, norm(bone)) } else { (bone, norm(cross(bone, facing))) };
@@ -131,22 +133,24 @@ fn mauled(t: &Tear, p: Vec3, bone: Vec3, radius: f32, facing: Vec3, track: Vec3)
                 };
                 for k in 0..3u64 {
                     let c = math::add(base, math::scale(w, (k as f32 - 1.0) * 0.032 + jitter(80 + 3 * row + k, 0.006)));
-                    v.push(tear(
+                    // Dark round punctures, a little deeper than before.
+                    v.push(puncture(
                         c,
-                        math::add(c, math::scale(u, -sign * 0.03)),
-                        0.011 + 0.006 * energy,
+                        math::add(c, math::scale(u, -sign * 0.045)),
+                        0.010 + 0.005 * energy,
                         2 + 3 * row + k,
                     ));
                 }
             }
         }
         Cause::Gore => {
-            // Horn or antler: in at the surface, deep along the blow.
-            let depth = radius * (0.9 + 0.6 * energy);
+            // Horn or antler: one clear deep puncture along the blow, its torn lip a little
+            // wider at the surface.
+            let depth = radius * (1.0 + 0.6 * energy);
             let a = surface(radius * 1.05);
             let b = math::add(a, math::scale(track, depth));
-            v.push(tear(a, b, 0.03 + 0.02 * energy, 1));
-            v.push(tear(a, a, 0.045 + 0.02 * h(57), 2));
+            v.push(puncture(a, b, 0.024 + 0.014 * energy, 1));
+            v.push(crush(a, a, 0.034 + 0.01 * h(57), 2));
         }
         _ => {}
     }
@@ -349,7 +353,7 @@ mod tests {
         for tick in 0..20 {
             let v = volumes(&maul(Cause::Claw, Part::Chest, Outcome::DeepWound, tick), &r);
             assert!((3..=4).contains(&v.len()), "{}", v.len());
-            assert!(v.iter().all(|g| g.kind == VolumeKind::Gash && g.radius < 0.025));
+            assert!(v.iter().all(|g| g.kind == VolumeKind::Claw && g.radius < 0.025));
             // Parallel, side by side a claw's width apart.
             let axis = |g: &Volume| norm(math::sub(g.b, g.a));
             let mid = |g: &Volume| math::scale(math::add(g.a, g.b), 0.5);
@@ -376,8 +380,12 @@ mod tests {
         assert!(bite.len() <= acr_render::damage::MAX_VOLUMES);
         // Tooth holes on both sides of the leg.
         assert!(bite.iter().any(|g| g.a[2] > 0.05) && bite.iter().any(|g| g.a[2] < -0.05));
+        // A crushed core and dark tooth punctures.
+        assert_eq!(bite.iter().filter(|g| g.kind == VolumeKind::Crush).count(), 1);
+        assert_eq!(bite.iter().filter(|g| g.kind == VolumeKind::Puncture).count(), 6);
         let gore = volumes(&maul(Cause::Gore, Part::Belly, Outcome::BellyOpen, 3), &r);
         assert_eq!(gore.len(), 2);
+        assert_eq!(gore[0].kind, VolumeKind::Puncture);
         let track = math::sub(gore[0].b, gore[0].a);
         assert!(math::dot(track, track).sqrt() > 0.12, "deep");
         assert!(volumes(&maul(Cause::Bite, Part::Chest, Outcome::Torn(Torn::Pulverized), 3), &r).is_empty());
