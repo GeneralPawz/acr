@@ -1,0 +1,11 @@
+[package]
+name = "acr-serve"
+description = "Local web server for the browser version (`cargo xtask serve`, `AmericanConquest-Web`)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "AmericanConquest-Web"
+path = "src/main.rs"

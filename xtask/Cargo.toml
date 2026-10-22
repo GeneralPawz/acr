@@ -7,5 +7,6 @@ license.workspace = true
 publish = false
 
 [dependencies]
+acr-serve = { path = "../crates/acr-serve" }
 # Must match the wasm-bindgen version the viewer links against exactly.
 wasm-bindgen-cli-support = "=0.2.129"

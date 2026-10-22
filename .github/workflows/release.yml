@@ -1,5 +1,7 @@
 # Builds the game for Windows (x64, ARM64) and the browser on a version tag and
-# attaches the results to a GitHub release. Release binaries carry a stand-in icon;
+# attaches the results to a GitHub release. Each Windows zip holds the game
+# (AmericanConquest.exe), the browser version (web\) and its launcher
+# (AmericanConquest-Web.exe). Release binaries carry a stand-in icon;
 # `cargo xtask dist --game-dir <dir>` builds a local copy with the original icon.
 name: Release
 
@@ -12,8 +14,26 @@ permissions:
   contents: write
 
 jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install && rustup target add wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo xtask web --release --app game
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-bundle
+          path: target/web/game
+      - run: cd target/web/game && zip -r ../../../AmericanConquest-web.zip .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web
+          path: AmericanConquest-web.zip
+
   windows:
     name: windows ${{ matrix.arch }}
+    needs: web
     runs-on: windows-latest
     strategy:
       matrix:
@@ -28,36 +48,33 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: release-${{ matrix.target }}
-      - run: cargo build --release --locked --target ${{ matrix.target }} --bin AmericanConquest
-      - run: Compress-Archive -Path target/${{ matrix.target }}/release/AmericanConquest.exe -DestinationPath AmericanConquest-windows-${{ matrix.arch }}.zip
+      - run: cargo build --release --locked --target ${{ matrix.target }} --bin AmericanConquest --bin AmericanConquest-Web
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-bundle
+          path: package/web
+      - run: |
+          Copy-Item target/${{ matrix.target }}/release/AmericanConquest.exe package/
+          Copy-Item target/${{ matrix.target }}/release/AmericanConquest-Web.exe package/
+          Compress-Archive -Path package/* -DestinationPath AmericanConquest-windows-${{ matrix.arch }}.zip
       - uses: actions/upload-artifact@v4
         with:
           name: windows-${{ matrix.arch }}
           path: AmericanConquest-windows-${{ matrix.arch }}.zip
-
-  web:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: rustup toolchain install && rustup target add wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo xtask web --release --app game
-      - run: cd target/web/game && zip -r ../../../AmericanConquest-web.zip .
-      - uses: actions/upload-artifact@v4
-        with:
-          name: web
-          path: AmericanConquest-web.zip
 
   publish:
     needs: [windows, web]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
+          pattern: "{windows-*,web}"
           merge-multiple: true
       - env:
           GH_TOKEN: ${{ github.token }}
         run: >-
-          gh release create "${{ github.ref_name }}" --repo "${{ github.repository }}" --generate-notes
+          gh release create "${{ github.ref_name }}" --repo "${{ github.repository }}"
+          --notes-file docs/release-notes.md
           AmericanConquest-windows-x64.zip AmericanConquest-windows-arm64.zip AmericanConquest-web.zip
