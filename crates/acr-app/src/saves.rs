@@ -1,6 +1,7 @@
-//! Savegame storage: `Save\<name>.sav` in the game folder on the desktop, the browser's
-//! `localStorage` on the web (the browser has no writable game folder). The game decides
-//! what goes into a file; this only stores bytes by name.
+//! Storage for files the game writes: savegames (`Save\<name>.sav`) and player profiles
+//! (`Players\<name>.txt`) in the game folder on the desktop, the browser's `localStorage`
+//! on the web (the browser has no writable game folder). The game decides what goes into a
+//! file; this only stores bytes by name.
 
 use std::collections::BTreeMap;
 
@@ -36,17 +37,23 @@ impl SaveStore for MemorySaves {
 #[cfg(not(target_arch = "wasm32"))]
 pub struct FolderSaves {
     dir: std::path::PathBuf,
+    extension: &'static str,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 impl FolderSaves {
     /// The `Save` folder of the game installed in `game_dir` (created on the first save).
     pub fn new(game_dir: &std::path::Path) -> Self {
-        Self { dir: game_dir.join("Save") }
+        Self::files(game_dir, "Save", "sav")
+    }
+
+    /// `<game dir>\<folder>\*.<extension>`, e.g. the player profiles in `Players\*.txt`.
+    pub fn files(game_dir: &std::path::Path, folder: &str, extension: &'static str) -> Self {
+        Self { dir: game_dir.join(folder), extension }
     }
 
     fn path(&self, name: &str) -> std::path::PathBuf {
-        self.dir.join(format!("{name}.sav"))
+        self.dir.join(format!("{name}.{}", self.extension))
     }
 }
 
@@ -58,7 +65,8 @@ impl SaveStore for FolderSaves {
             .filter_map(Result::ok)
             .filter_map(|e| {
                 let name = e.file_name().into_string().ok()?;
-                let stem = name.len().checked_sub(4).filter(|&n| name[n..].eq_ignore_ascii_case(".sav"))?;
+                let ext = format!(".{}", self.extension);
+                let stem = name.len().checked_sub(ext.len()).filter(|&n| name[n..].eq_ignore_ascii_case(&ext))?;
                 Some(name[..stem].to_owned())
             })
             .collect();
@@ -77,13 +85,26 @@ impl SaveStore for FolderSaves {
     }
 }
 
-/// `localStorage` entries `acr-save:<name>` holding the file as base64.
+/// `localStorage` entries `<prefix><name>` holding the file as base64: `acr-save:` for
+/// savegames ([`BrowserSaves::default`]), `acr-player:` for player profiles.
 #[cfg(target_arch = "wasm32")]
-#[derive(Default)]
-pub struct BrowserSaves;
+pub struct BrowserSaves {
+    prefix: &'static str,
+}
 
 #[cfg(target_arch = "wasm32")]
-const PREFIX: &str = "acr-save:";
+impl Default for BrowserSaves {
+    fn default() -> Self {
+        Self::with_prefix("acr-save:")
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl BrowserSaves {
+    pub fn with_prefix(prefix: &'static str) -> Self {
+        Self { prefix }
+    }
+}
 
 #[cfg(target_arch = "wasm32")]
 fn storage() -> Option<web_sys::Storage> {
@@ -95,19 +116,21 @@ impl SaveStore for BrowserSaves {
     fn list(&self) -> Vec<String> {
         let Some(s) = storage() else { return Vec::new() };
         let n = s.length().unwrap_or(0);
-        let mut names: Vec<String> =
-            (0..n).filter_map(|i| s.key(i).ok()?).filter_map(|k| k.strip_prefix(PREFIX).map(str::to_owned)).collect();
+        let mut names: Vec<String> = (0..n)
+            .filter_map(|i| s.key(i).ok()?)
+            .filter_map(|k| k.strip_prefix(self.prefix).map(str::to_owned))
+            .collect();
         names.sort();
         names
     }
 
     fn read(&self, name: &str) -> Option<Vec<u8>> {
-        base64_decode(&storage()?.get_item(&format!("{PREFIX}{name}")).ok()??)
+        base64_decode(&storage()?.get_item(&format!("{}{name}", self.prefix)).ok()??)
     }
 
     fn write(&mut self, name: &str, bytes: &[u8]) -> Result<(), String> {
         let s = storage().ok_or("no localStorage")?;
-        s.set_item(&format!("{PREFIX}{name}"), &base64_encode(bytes)).map_err(|e| format!("{e:?}"))
+        s.set_item(&format!("{}{name}", self.prefix), &base64_encode(bytes)).map_err(|e| format!("{e:?}"))
     }
 }
 

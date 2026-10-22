@@ -37,6 +37,7 @@ fn run() -> Result<(), String> {
     let event_loop = crate::event_loop()?;
     let mut game = Game::new(event_loop.create_proxy(), Box::new(assets));
     game.set_saves(Box::new(acr_app::saves::FolderSaves::new(&dir)));
+    game.set_profiles(Box::new(acr_app::saves::FolderSaves::files(&dir, "Players", "txt")));
     // Developer shortcut: skip movies and menus and open a map right away.
     if let Ok(map) = std::env::var("ACR_START_MAP") {
         game.start_map(&map);
