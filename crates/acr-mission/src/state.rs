@@ -261,8 +261,20 @@ pub struct ScriptState {
     /// Build-menu overrides `(nation, is upgrade, index) -> +1 enabled / -1 disabled`.
     pub availability: BTreeMap<(u8, bool, u16), i8>,
     pub market: Market,
+    /// Producer type -> producible types (`[FIXED_PRODUCE]` of the nations).
+    pub produces: BTreeMap<TypeId, Vec<TypeId>>,
+    /// The AI cities (projects of the computer players).
+    pub cities: [crate::aicity::City; 8],
     /// Unit indices mirrored into each machine (`GetOBJ`), refreshed around AI calls.
     pub mirrors: BTreeMap<u8, BTreeSet<u16>>,
+    /// Game files the scripts may read (`RReset`/`Gopen`; DipServer's `Dip\*`), by normalized
+    /// path; files they write live here too.
+    pub files: BTreeMap<String, Vec<u8>>,
+    /// Open file handles: path and read/write position.
+    pub open_files: BTreeMap<u32, (String, usize)>,
+    pub next_file: u32,
+    /// `SendDipCommand` data waiting for `PerformDipCommand`.
+    pub dip_commands: Vec<Vec<u8>>,
     /// Log every API call into `trace_log` (`acr mission-run --trace`).
     pub trace: bool,
     pub trace_log: Vec<String>,
@@ -312,7 +324,13 @@ impl ScriptState {
             upgrades_done: BTreeSet::new(),
             availability: BTreeMap::new(),
             market: Market::default(),
+            produces: BTreeMap::new(),
+            cities: Default::default(),
             mirrors: BTreeMap::new(),
+            files: BTreeMap::new(),
+            open_files: BTreeMap::new(),
+            next_file: 0x4000,
+            dip_commands: Vec::new(),
             trace: false,
             trace_log: Vec::new(),
             text_cache: BTreeMap::new(),
@@ -359,6 +377,13 @@ impl ScriptState {
     /// The alliance mask of a unit (`OneObject+0x9a`).
     pub fn unit_nmask(&self, id: EntityId, owner: u8) -> u8 {
         self.extra.get(&id.0).and_then(|e| e.nmask).unwrap_or(self.nmask[usize::from(owner & 7)])
+    }
+
+    /// Opens a file of [`ScriptState::files`] and returns its handle.
+    pub fn open_file(&mut self, path: String) -> u32 {
+        self.next_file += 1;
+        self.open_files.insert(self.next_file, (path, 0));
+        self.next_file
     }
 
     /// Reports a script error like `IntErr` (0x55b581; silent in the original unless an

@@ -9,6 +9,25 @@ pub enum ScriptKind {
     Mission,
     /// `InitAI()` once per computer nation, `ProcessAI()` per tick (`AI\*.dll`).
     Ai,
+    /// `DipServer.dll`: `InitDipForThisMap()` at the start, `ProcessDipRelations()` with every
+    /// script call.
+    Diplomacy,
+}
+
+/// `ProcessDipRelations` export of `DipServer.dll`.
+pub const PROCESS_DIP: &str = "?ProcessDipRelations@@YAXXZ";
+
+/// An 8-byte scratch block in a machine's heap, allocated once (for handles passed in).
+pub fn scratch(vm: &mut ScriptVm) -> acr_script::runtime::Result<u32> {
+    if vm.scratch == 0 {
+        let m = &mut vm.machine;
+        vm.scratch = m
+            .process
+            .heap
+            .alloc(&mut m.mem, 64, true)
+            .ok_or_else(|| acr_script::runtime::Error::Host("guest heap exhausted".into()))?;
+    }
+    Ok(vm.scratch)
 }
 
 /// A script DLL running in the interpreter.
@@ -24,6 +43,8 @@ pub struct ScriptVm {
     pub failed: Option<String>,
     /// Instructions executed by the last call.
     pub last_steps: u64,
+    /// Scratch block for arguments passed in from other machines (see [`scratch`]).
+    pub scratch: u32,
 }
 
 /// Instruction budget of one script call. The heaviest original `ProcessScenary` needs about
@@ -42,6 +63,8 @@ impl ScriptVm {
             (ScriptKind::Mission, a)
         } else if let Some(a) = machine.image.export("ProcessAI") {
             (ScriptKind::Ai, a)
+        } else if let Some(a) = machine.image.export(PROCESS_DIP) {
+            (ScriptKind::Diplomacy, a)
         } else {
             return Err(format!("{path}: neither ProcessScenary nor ProcessAI is exported"));
         };
@@ -50,15 +73,20 @@ impl ScriptVm {
             Ok(false) => return Err(format!("{path}: DllMain returned FALSE")),
             Err(e) => return Err(format!("{path}: DllMain: {e}")),
         }
-        Ok(Self { machine, kind, path: path.to_owned(), tick_fn: tick, failed: None, last_steps: 0 })
+        Ok(Self { machine, kind, path: path.to_owned(), tick_fn: tick, failed: None, last_steps: 0, scratch: 0 })
     }
 
     /// Calls an export by name; a failure marks the script as failed.
     pub fn call_export(&mut self, host: &mut dyn Host, name: &str) -> Result<u32, String> {
+        self.call_export_with(host, name, &[])
+    }
+
+    /// Calls an export with arguments.
+    pub fn call_export_with(&mut self, host: &mut dyn Host, name: &str, args: &[u32]) -> Result<u32, String> {
         let Some(addr) = self.machine.image.export(name) else {
             return Err(format!("{}: no export {name}", self.path));
         };
-        self.call(host, addr, name)
+        self.call_args(host, addr, name, args)
     }
 
     /// Runs the per-tick export (`ProcessScenary` or `ProcessAI`) unless the script failed.
@@ -66,13 +94,21 @@ impl ScriptVm {
         if let Some(e) = &self.failed {
             return Err(e.clone());
         }
-        let name = if self.kind == ScriptKind::Mission { "ProcessScenary" } else { "ProcessAI" };
+        let name = match self.kind {
+            ScriptKind::Mission => "ProcessScenary",
+            ScriptKind::Ai => "ProcessAI",
+            ScriptKind::Diplomacy => PROCESS_DIP,
+        };
         self.call(host, self.tick_fn, name).map(|_| ())
     }
 
     fn call(&mut self, host: &mut dyn Host, addr: u32, name: &str) -> Result<u32, String> {
+        self.call_args(host, addr, name, &[])
+    }
+
+    fn call_args(&mut self, host: &mut dyn Host, addr: u32, name: &str, args: &[u32]) -> Result<u32, String> {
         let before = self.machine.steps;
-        let r = self.machine.call(host, addr, &[]);
+        let r = self.machine.call(host, addr, args);
         self.last_steps = self.machine.steps - before;
         r.map_err(|e| {
             let at = self.machine.last_error_eip.map(|a| format!(" (eip {a:#010x})")).unwrap_or_default();

@@ -342,7 +342,7 @@ fn sel_attack_group(api: &mut Api, c: &mut Call) -> Result<u32> {
 fn sel_die(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Some(n) = api.nation(c, 0, "SelDie(Nat)")? else { return Ok(0) };
     for id in api.selected_slots(n) {
-        world_ops::kill(api.world, id);
+        world_ops::destruct(api.world, id);
     }
     Ok(1)
 }

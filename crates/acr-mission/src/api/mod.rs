@@ -13,6 +13,7 @@
 mod aiobj;
 pub mod call;
 mod core;
+mod dip;
 mod economy;
 pub mod game;
 pub mod groups;
@@ -76,6 +77,7 @@ fn modules() -> impl Iterator<Item = &'static [ApiFn]> {
         economy::FUNCTIONS,
         tactics::FUNCTIONS,
         aiobj::FUNCTIONS,
+        dip::FUNCTIONS,
     ]
     .into_iter()
 }
@@ -110,6 +112,8 @@ pub struct Api<'a> {
     pub caller: Caller,
     /// Which machine is calling (0 = mission, 1.. = AI DLLs), for guest-memory caches.
     pub vm: u8,
+    /// `DipServer.dll`'s machine, for the AI's calls into it (none while it runs itself).
+    pub dip: Option<&'a mut crate::vm::ScriptVm>,
 }
 
 impl Host for Api<'_> {
@@ -131,7 +135,7 @@ impl Host for Api<'_> {
             Ok(v) => (*v as i32).to_string(),
             Err(e) => e.to_string(),
         };
-        let line = format!("{}({}) -> {shown}", f.name, args.join(", "));
+        let line = format!("vm{} {}({}) -> {shown}", self.vm, f.name, args.join(", "));
         self.st.trace_log.push(line);
         r
     }
@@ -147,6 +151,10 @@ mod tests {
         let missing: Vec<&str> =
             acr_script::dmcr::ARG_COUNTS.iter().map(|(n, _)| *n).filter(|n| function(n).is_none()).collect();
         assert!(missing.is_empty(), "{} functions missing: {missing:?}", missing.len());
-        assert_eq!(functions().count(), 216, "210 dmcr.exe functions and 6 DipServer.dll functions");
+        assert_eq!(
+            functions().count(),
+            264,
+            "210 dmcr.exe functions, 6 DipServer.dll functions, 48 dmcr.exe functions for DipServer"
+        );
     }
 }
