@@ -232,9 +232,55 @@ pub fn model_matrix(ground: Vec3, yaw: f32, scale: f32) -> Mat4 {
     [[c * k, -s * k, 0.0, 0.0], [0.0, 0.0, k, 0.0], [s * k, c * k, 0.0, 0.0], [ground[0], ground[1], ground[2], 1.0]]
 }
 
+/// [`model_matrix`] for a model tilted to rest on a slope (a corpse on a pile): `pitch` is
+/// the height change per world pixel along the model's facing (glTF +z), `roll` towards its
+/// right side (glTF −x). Lengths are kept: the axes are turned, not sheared.
+pub fn model_matrix_tilted(ground: Vec3, yaw: f32, scale: f32, pitch: f32, roll: f32) -> Mat4 {
+    if pitch == 0.0 && roll == 0.0 {
+        return model_matrix(ground, yaw, scale);
+    }
+    let (s, c) = yaw.sin_cos();
+    let k = PIXELS_PER_METRE * scale;
+    let norm = |v: Vec3| math::scale(v, 1.0 / math::dot(v, v).sqrt());
+    // Along the facing (glTF z) and to the model's right (glTF −x), raised by the slopes.
+    let along = norm([s, c, pitch]);
+    let right = [-c, s, roll];
+    let right = norm(math::sub(right, math::scale(along, math::dot(right, along))));
+    // The world mapping mirrors (y points south): glTF y = x × z = along × right.
+    let up = [
+        along[1] * right[2] - along[2] * right[1],
+        along[2] * right[0] - along[0] * right[2],
+        along[0] * right[1] - along[1] * right[0],
+    ];
+    let x = math::scale(right, -k);
+    let (y, z) = (math::scale(up, k), math::scale(along, k));
+    [[x[0], x[1], x[2], 0.0], [y[0], y[1], y[2], 0.0], [z[0], z[1], z[2], 0.0], [ground[0], ground[1], ground[2], 1.0]]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tilted_model_keeps_its_size_and_follows_the_slope() {
+        let flat = model_matrix([1.0, 2.0, 3.0], 0.7, 1.0);
+        assert_eq!(model_matrix_tilted([1.0, 2.0, 3.0], 0.7, 1.0, 0.0, 0.0), flat);
+        // A tiny tilt is almost the flat matrix (same axes, same handedness).
+        let near = model_matrix_tilted([1.0, 2.0, 3.0], 0.7, 1.0, 1e-6, 1e-6);
+        for (a, b) in near.iter().flatten().zip(flat.iter().flatten()) {
+            assert!((a - b).abs() < 1e-3, "{near:?} {flat:?}");
+        }
+        let m = model_matrix_tilted([0.0; 3], 0.7, 1.0, 0.3, -0.2);
+        let at = |p: Vec3| math::transform_point(&m, p);
+        let head = at([0.0, 0.0, 1.0]);
+        assert!((math::dot(head, head).sqrt() - PIXELS_PER_METRE).abs() < 1e-3);
+        // Rising along the facing by the pitch, falling to the right (−x) by the roll.
+        let h = (head[0] * head[0] + head[1] * head[1]).sqrt();
+        assert!((head[2] / h - 0.3).abs() < 1e-4, "{head:?}");
+        assert!(at([-1.0, 0.0, 0.0])[2] < 0.0);
+        let up = at([0.0, 1.0, 0.0]);
+        assert!(up[2] > 0.9 * PIXELS_PER_METRE && math::dot(up, head).abs() < 1e-2, "{up:?}");
+    }
 
     fn close(a: f32, b: f32, eps: f32) -> bool {
         (a - b).abs() <= eps

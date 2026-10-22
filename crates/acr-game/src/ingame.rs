@@ -27,6 +27,7 @@ mod effects;
 mod gore;
 mod interface;
 mod panels;
+mod piles;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod probe;
 mod save;
