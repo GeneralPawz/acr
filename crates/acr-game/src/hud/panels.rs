@@ -8,7 +8,7 @@ use acr_formats::raster::Image;
 
 use super::{SCREEN, font, gp};
 use crate::ui::Ctx;
-use crate::ui::dialog::{Align, Dialog};
+use crate::ui::dialog::{Align, Dialog, Kind};
 use crate::ui::draw::{Draw, Rect};
 use crate::ui::fonts::FontId;
 
@@ -478,7 +478,13 @@ fn format_float(fmt: &[u8], v: f64) -> Vec<u8> {
 pub struct GamePanel {
     /// `0x1100b54`: 0 forces, 1 deaths, 2 market, 3 income, 4 diplomacy.
     pub tab: u8,
+    /// The page's scroll bar (`0x10fb562`), created with the panel.
+    d: Option<Dialog>,
 }
+
+/// The page's scroll bar: `Interf2\VScroll2` at (`RealLx − 42`, `InfDY + 63`), `InfY2 − 108`
+/// long (0x4ce7e4).
+const PAGE_SCROLL: (i32, i32, i32) = (SCREEN[0] - 42, INF_DY + 63, INF_Y2 - 108);
 
 /// Tab viewports at `InfY3 + 2`, 21 pixels high: x offset from `RealLx − 259`, width, page,
 /// hint (0x4ce780).
@@ -508,8 +514,71 @@ impl GamePanel {
         }
         if let Some(i) = (0..TABS.len()).find(|&i| Self::tab_rect(i).contains(p)) {
             self.tab = TABS[i].2;
+            // A tab click scrolls back to the top (0x4c6500).
+            if let Some(d) = &mut self.d
+                && let Kind::ScrollBar(bar) = &mut d.widgets[0].kind
+            {
+                bar.pos = 0;
+            }
+            return true;
+        }
+        if let Some(d) = &mut self.d {
+            d.press(p);
         }
         true
+    }
+
+    pub fn mouse_move(&mut self, p: [f32; 2]) {
+        if let Some(d) = &mut self.d {
+            d.mouse_move(p);
+        }
+    }
+
+    pub fn release(&mut self) {
+        if let Some(d) = &mut self.d {
+            d.release();
+        }
+    }
+
+    /// How far the page is scrolled down (`0x1100b5c`): the scroll bar's position while it
+    /// is shown.
+    pub fn scroll(&mut self, ctx: &Ctx) -> i32 {
+        let d = self.d.get_or_insert_with(|| {
+            let mut d = Dialog::default();
+            let (x, y, len) = PAGE_SCROLL;
+            d.add_scroll_bar(ctx.lib, x, y, len, 1, 0, VSCROLL2, 0);
+            d.widgets[0].visible = false;
+            d
+        });
+        match &d.widgets[0] {
+            w if w.visible => match &w.kind {
+                Kind::ScrollBar(bar) => bar.pos,
+                _ => 0,
+            },
+            _ => 0,
+        }
+    }
+
+    /// After drawing the page: its content height decides whether the scroll bar shows and
+    /// how far it reaches, `height − (InfY3 − 15 − Y0)` (0x4ce6ad).
+    pub fn set_page_height(&mut self, height: i32) {
+        let Some(d) = &mut self.d else { return };
+        let range = height - (INF_Y3 - 15 - (INF_Y1 + 25));
+        let w = &mut d.widgets[0];
+        w.visible = range > 0;
+        if let Kind::ScrollBar(bar) = &mut w.kind {
+            bar.max = range.max(1);
+            bar.pos = bar.pos.clamp(0, bar.max);
+        }
+    }
+
+    /// The scroll bar, drawn after the page.
+    pub fn draw_widgets(&self, ctx: &Ctx, out: &mut Vec<Draw>) {
+        if let Some(d) = &self.d {
+            let mut widgets = Vec::new();
+            d.draw(ctx.lib, ctx.fonts, &mut widgets);
+            out.extend(widgets.into_iter().map(Draw::in_game));
+        }
     }
 
     /// The frame (0x4803fb): paper down to `InfY2 − 25`, the footer box below, the tab strip.
