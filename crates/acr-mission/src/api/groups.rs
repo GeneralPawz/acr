@@ -495,9 +495,22 @@ fn remove_group(api: &mut Api, c: &mut Call) -> Result<u32> {
 /// `void CopyUnits(GAMEOBJ* src, GAMEOBJ* dst, int start, int n, bool add, bool remove)`.
 fn copy_units(api: &mut Api, c: &mut Call) -> Result<u32> {
     let (Some(s), Some(d)) = (api.group(c, 0)?, api.group(c, 1)?) else { return Ok(0) };
-    let len = api.st.groups[s].members.len() as i32;
-    let mut start = c.i32(2)?;
-    let mut n = c.i32(3)?;
+    let (start, n, add, remove) = (c.i32(2)?, c.i32(3)?, c.bool(4)?, c.bool(5)?);
+    copy_members(&mut api.st.groups, s, d, start, n, add, remove);
+    Ok(0)
+}
+
+/// The body of `CopyUnits` (0x56ea22) on group indices.
+pub(super) fn copy_members(
+    groups: &mut [crate::state::Group],
+    s: usize,
+    d: usize,
+    mut start: i32,
+    mut n: i32,
+    add: bool,
+    remove: bool,
+) {
+    let len = groups[s].members.len() as i32;
     if start >= len {
         start = len - 1;
     }
@@ -507,18 +520,17 @@ fn copy_units(api: &mut Api, c: &mut Call) -> Result<u32> {
     }
     let n = n.max(0) as usize;
     let start = start as usize;
-    let slice: Vec<Member> = api.st.groups[s].members.iter().skip(start).take(n).copied().collect();
-    if c.bool(4)? {
-        api.st.groups[d].members.extend(slice);
+    let slice: Vec<Member> = groups[s].members.iter().skip(start).take(n).copied().collect();
+    if add {
+        groups[d].members.extend(slice);
     } else {
-        api.st.groups[d].members = slice;
+        groups[d].members = slice;
     }
-    if c.bool(5)? && n > 0 {
-        let m = &mut api.st.groups[s].members;
+    if remove && n > 0 {
+        let m = &mut groups[s].members;
         let end = (start + n).min(m.len());
         m.drain(start..end);
     }
-    Ok(0)
 }
 
 /// `void AddOneUnitToGroup(GAMEOBJ* grp, OneObject* ob)`: `ob` is an engine object pointer
