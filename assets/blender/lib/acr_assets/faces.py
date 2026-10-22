@@ -82,25 +82,29 @@ STYLES = {
 # head centre (`ray_dir`) in (azimuth θ, elevation φ) degrees; θ = 0 looks forward (-Y).
 # Each patch: (θ range |θ| <= max or a band, the lower and upper elevation curves as
 # [(|θ|, φ)] keys, thickness in metres, open edges that taper into the skin, grid).
-HAIRLINE = [(0, 47), (25, 45), (50, 36), (75, 18), (92, 12), (108, -2), (128, -26), (180, -40)]
+HAIRLINE = [(0, 47), (25, 45), (50, 37), (72, 26), (92, 22), (108, 6), (128, -24), (180, -40)]
 PATCHES = {
     # hair: from the hairline (s = 0, tapered) to the crown (s = 1, closed with a fan)
     "hair_short": {"theta": (-180, 180), "lo": [(t, p + 2) for t, p in HAIRLINE], "hi": [(0, 89), (180, 89)],
-                   "thick": 0.005, "open": ("lo",), "grid": (20, 5), "ridges": 0.08},
+                   "thick": 0.0035, "open": ("lo",), "grid": (32, 6), "ridges": 0.15, "ragged": 3.0},
     "hair_tied": {"theta": (-180, 180), "lo": HAIRLINE, "hi": [(0, 89), (180, 89)],
-                  "thick": 0.0075, "open": ("lo",), "grid": (20, 5), "ridges": 0.22},
-    "hair_loose": {"theta": (-180, 180), "lo": [(0, 47), (25, 45), (50, 36), (75, 18), (92, 6), (110, -30), (135, -52), (180, -60)],
-                   "hi": [(0, 89), (180, 89)], "thick": 0.011, "open": ("lo",), "grid": (20, 6), "ridges": 0.3},
+                  "thick": 0.0050, "open": ("lo",), "grid": (32, 6), "ridges": 0.35, "ragged": 5.0},
+    "hair_loose": {"theta": (-180, 180), "lo": [(0, 47), (25, 45), (50, 37), (72, 26), (92, 12), (110, -30), (135, -52), (180, -60)],
+                   "hi": [(0, 89), (180, 89)], "thick": 0.0075, "open": ("lo",), "grid": (32, 7), "ridges": 0.4,
+                   "ragged": 9.0},
     # beards: open on every side
     "beard_full": {"theta": (-98, 98), "lo": [(0, -80), (40, -70), (70, -48), (98, -26)],
                    "hi": [(0, -31), (18, -28), (30, -17), (45, -9), (65, -3), (85, 6), (98, 9)],
-                   "thick": 0.011, "open": ("lo", "hi", "ends"), "grid": (14, 5), "ridges": 0.25},
-    "beard_moustache": {"theta": (-40, 40), "lo": [(0, -19), (22, -21), (40, -30)], "hi": [(0, -11), (22, -12), (40, -17)],
-                        "thick": 0.0055, "open": ("lo", "hi", "ends"), "grid": (8, 2), "ridges": 0.2},
+                   "thick": 0.011, "open": ("lo", "hi", "ends"), "grid": (18, 5), "ridges": 0.35, "ragged": 7.0},
+    # moustache: a band over the upper lip whose lower edge hangs in drooping locks
+    "beard_moustache": {"theta": (-44, 44), "lo": [(0, -17), (22, -19), (44, -29)], "hi": [(0, -10), (22, -11), (44, -17)],
+                        "thick": 0.006, "open": ("lo", "hi", "ends"), "grid": (12, 2), "ridges": 0.3, "ragged": 5.0},
     "beard_sideburns": {"theta": (72, 100), "mirror": True, "lo": [(72, -22), (100, -18)], "hi": [(72, 11), (100, 12)],
                         "thick": 0.005, "open": ("lo", "hi", "ends"), "grid": (3, 4), "ridges": 0.2},
 }
 CENTRE = (0.0, 0.09, -0.01)  # ray origin, head-local
+# Variant meshes that are not patches.
+OTHER_VARIANTS = ("hair_queue",)
 
 
 def curve(keys, theta):
@@ -144,9 +148,30 @@ def patch_grid(name):
             if "ends" in pt["open"]:
                 d.append(min(ti, 1.0 - ti) * (2.0 if not pt.get("mirror") else 1.0))
             taper = _smooth(0.0, 0.34, min(d)) if d else 1.0
-            row.append((th, lo + (hi - lo) * sj, taper))
+            ph = lo + (hi - lo) * sj
+            if j == 0 and pt.get("ragged"):
+                # A ragged edge: every other column a lock reaching past the line.
+                ph -= pt["ragged"] * lock(i) * (i % 2) * (1.0 if pt["open"][0] == "lo" else 0.0)
+            row.append((th, ph, taper))
         rows.append(row)
     return rows
+
+
+def lock(i):
+    """Deterministic length 0.35..1 of the lock at edge column i."""
+    f = math.sin(i * 12.9898 + 4.1) * 43758.5453
+    return 0.35 + 0.65 * (f - math.floor(f))
+
+
+def asym(x, y, z):
+    """A small, fixed asymmetry of the base face (a nose knocked aside, one brow and one
+    cheek higher): faces are never mirror images."""
+    f = front(y)
+    nose = math.exp(-(x / 0.012) ** 2) * _g((z, -0.025, 0.018)) * f
+    brow = _g((x, 0.030, 0.022), (z, 0.020, 0.010)) * f
+    cheek = _g((x, -0.048, 0.018), (z, -0.030, 0.016)) * f
+    k = near(x, y, z)
+    return (0.0025 * nose * k, 0.0, (0.0015 * brow + 0.0012 * cheek) * k)
 
 
 def thickness(name, theta, s, taper):
@@ -155,7 +180,8 @@ def thickness(name, theta, s, taper):
     pt = PATCHES[name]
     ridge = 1.0 + pt["ridges"] * math.sin(math.radians(theta) * 23.0)
     clump = 1.0 + 0.18 * math.sin(theta * 0.31 + s * 5.0) * math.sin(theta * 0.13 + 1.7)
-    return pt["thick"] * (0.2 + 0.8 * taper) * ridge * clump
+    # 1.2 mm keeps the chords of the grid over the curved scalp clear of the skin.
+    return 0.0012 * min(1.0, taper * 4.0) + pt["thick"] * (0.15 + 0.85 * taper) * ridge * clump
 
 
 def _smooth(e0, e1, x):
@@ -231,6 +257,13 @@ def base_face(x, y, z):
     t = min(max(((ax - 0.016) * 0.012 + (z + 0.040) * -0.025) / (0.012 ** 2 + 0.025 ** 2), 0.0), 1.0)
     fold = math.hypot(ax - (0.016 + 0.012 * t), z - (-0.040 - 0.025 * t))
     dy -= 0.0022 * math.exp(-(fold / 0.0045) ** 2) * f
+    # A hard jaw line over the neck, the jaw angles, the Adam's apple.
+    under = _g((y, 0.055, 0.035), (z, -0.112, 0.010)) * _smooth(0.075, 0.03, ax)
+    dz += 0.004 * under
+    dy += 0.003 * under
+    angle = _g((ax, 0.058, 0.012), (y, 0.075, 0.020), (z, -0.085, 0.014))
+    dx += s * 0.004 * angle
+    dy -= 0.004 * _g((x, 0.0, 0.010), (y, 0.05, 0.03), (z, -0.150, 0.012))
     # Ears on the sides, behind the cheeks, with a hollow bowl.
     side = _smooth(0.045, 0.065, ax)
     dx += s * 0.011 * _g((y, 0.100, 0.016), (z, -0.012, 0.022)) * side
