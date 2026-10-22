@@ -13,8 +13,15 @@ used locally only (its files and the models built from it are never committed).
 | Dutch Ship Large 02 (`dutch_ship_large_02`) | base of the galleon `ShpSanta` (#287) | James Ray Cock, Rico Cilliers, Nicolò Zubbini (Poly Haven) | CC0 | https://polyhaven.com/a/dutch_ship_large_02 |
 | Dutch Ship Medium (`dutch_ship_medium`) | base of the small ship `ShpPinta` (#287) | James Ray Cock, Rico Cilliers, Nicolò Zubbini (Poly Haven) | CC0 | https://polyhaven.com/a/dutch_ship_medium |
 | 18th Century Cannon (`df60e8db9d56459b8d900d53f5235b10`) | barrel of the field cannon `ArtPus` (#287) | rivetech (https://sketchfab.com/rivetech) | CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/) | https://sketchfab.com/3d-models/df60e8db9d56459b8d900d53f5235b10 |
+| Animated Free Bison (`be2dcd97db1c4b9c91a7728d9bc89925`) | the bison `assets/animals/anmbiz.py` (#287): mesh, rig, walk clip; idle, charge and fall authored | AneesAnimates (https://sketchfab.com/AneesAnimates) | CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/) | https://sketchfab.com/3d-models/be2dcd97db1c4b9c91a7728d9bc89925 |
 
 Notes:
+
+- Animated Free Bison: Sketchfab download (FBX + textures), kept outside the repo
+  (`ACR_SOURCES/sketchfab/animated-free-bison`); 61k triangles decimated to 12k, scaled to
+  1.85 m at the hump, base colour only. Its material and image names (`tripo_*`) suggest the
+  mesh was generated with Tripo AI. Credit line: "Animated Free Bison" by AneesAnimates,
+  CC BY 4.0, modified (decimated, rescaled, clips added).
 
 - WildMesh Standard License v1.1 (read 2026-10-22), in short: for licensees with at most
   USD 100,000 revenue or funding in 12 months (above that a Studio License is required);
