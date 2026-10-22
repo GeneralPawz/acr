@@ -164,17 +164,44 @@ ROD_STOWED = Matrix.Translation((0, 0.02, 0.50))
 ROD_SOCKET = "socket.hand_l"
 
 
-def _rod_stowed(musket):
-    return musket @ ROD_STOWED
+ROD_LENGTH = 0.9
 
 
-def _rod_in_hand(arm, musket):
-    """The rod down the bore under the right hand (head in the barrel)."""
+def _rod(mode, arm, musket):
+    """The ramrod's matrix (tail at the origin, +Z to the head) in `mode`: "stowed" in its
+    pipes; "slide" drawn up along the barrel, the right hand near its head; "swing" turned
+    out to the man's right, held in the middle; "bore" head down the barrel, the hand at
+    its tail."""
+    if mode == "stowed":
+        return musket @ ROD_STOWED
     hand = arm["hand_r"]
     palm = (hand.head + hand.tail) / 2
-    axis = musket.to_3x3() @ Vector((0, 0, 1))
-    m = (musket.to_3x3() @ Matrix.Rotation(math.pi, 3, "X")).to_4x4()
-    m.translation = musket.translation + axis * (palm - musket.translation).dot(axis)
+    m3 = musket.to_3x3()
+    axis = m3 @ Vector((0, 0, 1))
+    on_bore = musket.translation + axis * (palm - musket.translation).dot(axis)
+    if mode == "slide":
+        r, held, at = m3, ROD_LENGTH - 0.03, on_bore + m3 @ Vector((0, 0.02, 0))
+    elif mode == "swing":
+        r, held, at = m3 @ Matrix.Rotation(math.radians(-80), 3, "Y"), ROD_LENGTH * 0.5, palm
+    else:
+        r, held, at = m3 @ Matrix.Rotation(math.pi, 3, "X"), 0.02, on_bore
+    m = r.to_4x4()
+    m.translation = at - r @ Vector((0, 0, held))
+    return m
+
+
+def _rod_at(phases, f, arm, musket):
+    """The rod on frame `f` between the (frame, mode) `phases` (stowed outside them)."""
+    if not phases or f <= phases[0][0] or f >= phases[-1][0]:
+        return _rod("stowed", arm, musket)
+    i = max(j for j, (k, _) in enumerate(phases) if k <= f)
+    (f0, a), (f1, b) = phases[i], phases[i + 1]
+    m0, m1 = _rod(a, arm, musket), _rod(b, arm, musket)
+    if a == b:
+        return m0
+    t = (f - f0) / (f1 - f0)
+    m = m0.to_quaternion().slerp(m1.to_quaternion(), t).to_matrix().to_4x4()
+    m.translation = m0.translation.lerp(m1.translation, t)
     return m
 
 
@@ -185,11 +212,11 @@ def _key(pb, m, frame):
     pb.keyframe_insert("location", frame=frame, group=pb.name)
 
 
-def bake_musket(arm_obj, clip, keys, rod_drawn=None):
+def bake_musket(arm_obj, clip, keys, rod_phases=None):
     """Keys the musket (`socket.hand_r`) on every frame of `clip` along the path between its
     keys' placements (armature space: location lerped, rotation slerped), so it does not
-    swing with a hand whose grip changes between keys, and the ramrod: in its pipes, or
-    down the bore in the right hand for frames in `rod_drawn` (first, last)."""
+    swing with a hand whose grip changes between keys, and the ramrod: in its pipes, or in
+    the right hand through the (frame, mode) `rod_phases` (`_rod`)."""
     arm = arm_obj.pose.bones
     placed = []
     for f, spec in keys:
@@ -206,8 +233,7 @@ def bake_musket(arm_obj, clip, keys, rod_drawn=None):
         m.translation = m0.translation.lerp(m1.translation, t)
         bpy.context.scene.frame_set(f)
         _key(sock, m, f)
-        drawn = rod_drawn and rod_drawn[0] <= f <= rod_drawn[1]
-        _key(rod, _rod_in_hand(arm, m) if drawn else _rod_stowed(m), f)
+        _key(rod, _rod_at(rod_phases, f, arm, m), f)
     _linear(arm_obj)
     arm_obj.animation_data.action = None
 
@@ -220,7 +246,7 @@ def stow_rammer(arm_obj, clip):
     arm = arm_obj.pose.bones
     for f in range(first, last + 1):
         bpy.context.scene.frame_set(f)
-        _key(arm[ROD_SOCKET], _rod_stowed(arm["socket.hand_r"].matrix.copy()), f)
+        _key(arm[ROD_SOCKET], _rod("stowed", arm, arm["socket.hand_r"].matrix.copy()), f)
     _linear(arm_obj)
     arm_obj.animation_data.action = None
 

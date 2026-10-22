@@ -137,7 +137,7 @@ def build(ctx):
     for clip, keys in clips.items():
         am.add_clip(ch.arm, clip, keys)
         if clip == "ATTACK1":
-            aiming.bake_musket(ch.arm, clip, keys, rod_drawn=poses.ROD_DRAWN)
+            aiming.bake_musket(ch.arm, clip, keys, rod_phases=poses.ROD_PHASES)
         else:
             aiming.stow_rammer(ch.arm, clip)
     am.set_clip(ch.arm, "STAND")

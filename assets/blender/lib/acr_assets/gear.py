@@ -106,9 +106,9 @@ def musket(name, length=1.55, bayonet=0.0):
 def rammer(name, length=0.9):
     """Steel ramrod along +Z from its tail (origin, where the hand holds it) to the head."""
     bm = bmesh.new()
-    bmesh.ops.create_cone(bm, cap_ends=True, segments=4, radius1=0.005, radius2=0.005, depth=length,
+    bmesh.ops.create_cone(bm, cap_ends=True, segments=4, radius1=0.0075, radius2=0.0075, depth=length,
                           matrix=Matrix.Translation((0, 0, length / 2)))
-    bmesh.ops.create_cone(bm, cap_ends=True, segments=4, radius1=0.008, radius2=0.008, depth=0.03,
+    bmesh.ops.create_cone(bm, cap_ends=True, segments=4, radius1=0.012, radius2=0.012, depth=0.03,
                           matrix=Matrix.Translation((0, 0, length - 0.015)))
     return from_bm(bm, name)
 

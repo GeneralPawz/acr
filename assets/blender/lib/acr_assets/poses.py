@@ -64,7 +64,7 @@ PRIME = (50, 0, -17)  # muzzle forward-up 40°, lock at the right hip
 CAST = (-4, 3, 0)  # upright in front, the muzzle leaning a little towards the man
 POISE = (-6, -4, 0)  # upright before the right side (make ready)
 GRIP_AT_HIP = (-0.17, -0.04, 1.02)
-BUTT_AT_FOOT = (-0.10, -0.33, 0.03)
+BUTT_AT_FOOT = (-0.12, -0.46, 0.03)  # ~13 cm out in front of the left foot, a little left
 ELBOW_UP = (-0.30, 0.05, 0.10)  # the right elbow out and up (working at the muzzle)
 
 
@@ -89,9 +89,9 @@ RELOAD_STEPS = {
     "pour": _step(LOAD_BODY, CAST, BUTT_AT_FOOT, right=1.50, left=0.95, butt=True, elbow_r=ELBOW_UP),
     # Draw the rammer (grasp under the muzzle, out at arm's length), ram twice, return it.
     "grasp_rod": _step(LOOK_DOWN, CAST, BUTT_AT_FOOT, right=1.25, left=0.95, butt=True, elbow_r=ELBOW_UP),
-    "rod_out": _step(LOAD_BODY, CAST, BUTT_AT_FOOT, right=1.66, left=0.95, butt=True, elbow_r=ELBOW_UP),
-    "ram_up": _step(LOAD_BODY, CAST, BUTT_AT_FOOT, right=1.64, left=0.95, butt=True, elbow_r=ELBOW_UP),
-    "ram_down": _step(LOOK_DOWN, CAST, BUTT_AT_FOOT, right=1.38, left=0.95, butt=True, elbow_r=ELBOW_UP),
+    "rod_out": _step(LOAD_BODY, CAST, BUTT_AT_FOOT, right=1.58, left=0.95, butt=True, elbow_r=ELBOW_UP),
+    "ram_up": _step(LOAD_BODY, CAST, BUTT_AT_FOOT, right=1.57, left=0.95, butt=True, elbow_r=ELBOW_UP),
+    "ram_down": _step(LOOK_DOWN, CAST, BUTT_AT_FOOT, right=1.32, left=0.95, butt=True, elbow_r=ELBOW_UP),
     "return_rod": _step(LOOK_DOWN, CAST, BUTT_AT_FOOT, right=1.20, left=0.95, butt=True, elbow_r=ELBOW_UP),
     # Make ready: the musket raised upright before the right side, then presented.
     "poise": _step(LOAD_BODY, POISE, (-0.17, -0.16, 1.02), right="grip", left=0.42),
@@ -100,7 +100,8 @@ RELOAD_STEPS = {
 # Frames of ATTACK1 (87 sprite frames, 0..86): the shot leaves at the active frame 17
 # (SETACTIVEPOINT #ATTACK1 17, rounded up to even by the engine), then the drill.
 SHOT_FRAME = 18
-ROD_DRAWN = (57, 74)  # frames the ramrod is out of its pipes, in the right hand
+# The ramrod: drawn up out of its pipes, turned over, head down the bore for ramming, back.
+ROD_PHASES = [(55, "stowed"), (58, "slide"), (59, "swing"), (61, "bore"), (74, "bore"), (76, "stowed")]
 RELOAD_FRAMES = [
     (26, "prime"), (29, "half_cock"), (33, "cartridge"), (37, "bite"), (41, "pan"), (44, "shut"),
     (49, "cast"), (52, "pour"), (55, "grasp_rod"), (58, "rod_out"), (61, "ram_up"), (64, "ram_down"),
