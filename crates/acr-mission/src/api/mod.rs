@@ -10,6 +10,7 @@
 //! The semantics come from the original functions in `dmcr.exe` 1.46; each handler names the
 //! address it reproduces. `docs/script-runtime.md` has the coverage table.
 
+mod aihelp;
 mod aiobj;
 pub mod call;
 mod core;
@@ -78,6 +79,7 @@ fn modules() -> impl Iterator<Item = &'static [ApiFn]> {
         tactics::FUNCTIONS,
         aiobj::FUNCTIONS,
         dip::FUNCTIONS,
+        aihelp::FUNCTIONS,
     ]
     .into_iter()
 }

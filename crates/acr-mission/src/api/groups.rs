@@ -768,6 +768,8 @@ impl GroupOrder {
         match self {
             GroupOrder::Move { .. } => PURPOSE_MOVE,
             GroupOrder::ComeIntoBuilding { .. } => u32::from_be_bytes(*b"IBLD"),
+            GroupOrder::Repair { .. } => u32::from_be_bytes(*b"REPB"),
+            GroupOrder::TakeResources { .. } => u32::from_be_bytes(*b"TRES"),
         }
     }
 }
@@ -850,6 +852,15 @@ pub fn run_group_orders(api: &mut Api) {
                         false
                     }
                 }
+            }
+            GroupOrder::Repair { building, serial } => super::aihelp::repair_step(api, g, building, serial),
+            GroupOrder::TakeResources { nation, res, mut last, mut bases } => {
+                super::aihelp::take_resources_step(api, g, nation, res, &mut last, &mut bases);
+                if let Some(GroupOrder::TakeResources { last: l, bases: b, .. }) = api.st.groups[g].orders.first_mut() {
+                    *l = last;
+                    *b = bases;
+                }
+                false
             }
             GroupOrder::ComeIntoBuilding { building, serial } => {
                 // Handler 0x577945: every call, members not already on their way are sent in
