@@ -13,7 +13,7 @@ use crate::{Command, Result};
 pub const COMMANDS: &[Command] = &[
     Command {
         name: "mission-run",
-        usage: "<game-dir> <mission-id|map.m3d|script.dll> [--ticks N] [--trace] [--ai]   \
+        usage: "<game-dir> <mission-id|map.m3d|script.dll> [--ticks N] [--trace] [--ai] [--units]   \
                 (run a mission with its script headless, print the event log)",
         run: |a| match a {
             [dir, mission, rest @ ..] => mission_run(Path::new(dir), mission, rest),
@@ -62,12 +62,14 @@ fn mission_run(dir: &Path, what: &str, rest: &[&str]) -> Result<()> {
     let mut ticks: u64 = 3000;
     let mut trace = false;
     let mut ai = false;
+    let mut units = false;
     let mut it = rest.iter();
     while let Some(a) = it.next() {
         match *a {
             "--ticks" => ticks = it.next().ok_or("--ticks needs a number")?.parse()?,
             "--trace" => trace = true,
             "--ai" => ai = true,
+            "--units" => units = true,
             _ => return Err(crate::WRONG_ARGS.into()),
         }
     }
@@ -102,6 +104,9 @@ fn mission_run(dir: &Path, what: &str, rest: &[&str]) -> Result<()> {
     load_ais(&mut vfs, &mut scripts, &mut world, wanted);
     print_events(0, &mut scripts);
     print_counts("start", &world);
+    if units {
+        print_types(&world);
+    }
     let mut ended = false;
     for _ in 0..ticks {
         let requests = scripts.ai_requests();
@@ -190,12 +195,26 @@ fn print_events(tick: u64, scripts: &mut Scripts) -> Vec<MissionEvent> {
     events
 }
 
+/// Object types per player.
+fn print_types(world: &World) {
+    for p in 0..8u8 {
+        let mut kinds: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+        for u in world.units.iter().filter(|u| u.living() && u.owner == p) {
+            *kinds.entry(&world.catalog.get(u.kind).id).or_default() += 1;
+        }
+        if !kinds.is_empty() {
+            let list: Vec<String> = kinds.iter().map(|(k, n)| format!("{k} {n}")).collect();
+            println!("  P{p}: {}", list.join(", "));
+        }
+    }
+}
+
 /// Units per player: alive units and buildings.
 fn print_counts(label: &str, world: &World) {
     let mut parts = Vec::new();
     for p in 0..8u8 {
-        let units = world.units.iter().filter(|u| u.alive && u.owner == p && !u.building).count();
-        let buildings = world.units.iter().filter(|u| u.alive && u.owner == p && u.building).count();
+        let units = world.units.iter().filter(|u| u.living() && u.owner == p && !u.building).count();
+        let buildings = world.units.iter().filter(|u| u.living() && u.owner == p && u.building).count();
         if units + buildings > 0 {
             parts.push(format!("P{p} {units}u/{buildings}b"));
         }

@@ -261,6 +261,9 @@ pub struct ScriptState {
     pub market: Market,
     /// Unit indices mirrored into each machine (`GetOBJ`), refreshed around AI calls.
     pub mirrors: BTreeMap<u8, BTreeSet<u16>>,
+    /// Log every API call into `trace_log` (`acr mission-run --trace`).
+    pub trace: bool,
+    pub trace_log: Vec<String>,
     /// Guest copies handed out (`GetTextByID` strings, link lists), per machine and key.
     pub text_cache: BTreeMap<(u8, Vec<u8>), u32>,
 }
@@ -307,6 +310,8 @@ impl ScriptState {
             availability: BTreeMap::new(),
             market: Market::default(),
             mirrors: BTreeMap::new(),
+            trace: false,
+            trace_log: Vec::new(),
             text_cache: BTreeMap::new(),
         }
     }

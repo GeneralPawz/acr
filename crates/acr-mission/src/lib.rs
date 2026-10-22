@@ -394,9 +394,13 @@ impl Scripts {
         std::mem::take(&mut self.events)
     }
 
-    /// Trace lines since the last call (`trace` must be on).
+    /// Trace lines since the last call (`trace` must be on): every API call with its
+    /// arguments and result, and a summary per `ProcessScenary`.
     pub fn take_trace(&mut self) -> Vec<String> {
-        std::mem::take(&mut self.trace_lines)
+        self.state.trace = self.trace;
+        let mut out = std::mem::take(&mut self.state.trace_log);
+        out.append(&mut self.trace_lines);
+        out
     }
 
     /// Script failures (a failed script is not called again).
