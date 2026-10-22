@@ -149,3 +149,33 @@ fn deterministic_and_command_sensitive() {
     assert_eq!(run_world(1800), run_world(1800));
     assert_ne!(run_world(1800), run_world(1900));
 }
+
+#[test]
+fn replay_reproduces_the_match() {
+    use acr_sim::replay::Replay;
+    let script = |tick: u64, ids: &[EntityId]| -> Vec<Command> {
+        match tick {
+            0 => vec![Command::Move { player: 0, units: ids[..5].to_vec(), x: 2000, y: 1500 }],
+            40 => vec![Command::Move { player: 0, units: ids[5..].to_vec(), x: 1200, y: 2200 }],
+            90 => vec![Command::Stop { player: 0, units: ids[..2].to_vec() }],
+            _ => Vec::new(),
+        }
+    };
+    let (base, mus, _) = setup();
+    let mut base = base;
+    let ids: Vec<EntityId> = (0..10).map(|i| base.spawn(mus, 0, Pos::from_pixels(1000 + 30 * i, 1000), 0)).collect();
+    let mut w = base.clone();
+    let mut rec = Replay::new("test", 0);
+    for tick in 0..200 {
+        let cmds = script(tick, &ids);
+        rec.record(tick, &cmds);
+        w.step(&cmds);
+    }
+    rec.checkpoints.push((200, w.state_hash()));
+    let replay = Replay::decode(&rec.encode()).unwrap();
+    let mut again = base.clone();
+    for tick in 0..200 {
+        again.step(replay.commands_at(tick));
+    }
+    assert_eq!(again.state_hash(), replay.checkpoints[0].1);
+}
