@@ -1229,7 +1229,8 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
 }
 
 /// The injury of a hit by `sender` on `victim`'s `region` (hit-locations rule, #262), with
-/// the energy of a ploughing ball ([`World::hit_energy`], else full).
+/// the energy of a ploughing ball ([`World::hit_energy`]), of a musket ball by the range,
+/// else full.
 fn injure(w: &mut World, victim: usize, sender: usize, cause: DeathCause, region: crate::wounds::HitRegion) -> Injury {
     let usage = w.catalog.get(w.units[sender].kind).role.usage;
     // FASTHORSE, HARDHORCE, HORSE-STRELOK: a rider's blow is a sabre's.
@@ -1237,7 +1238,17 @@ fn injure(w: &mut World, victim: usize, sender: usize, cause: DeathCause, region
     if matches!(w.catalog.get(w.units[victim].kind).role.usage, 8 | 22 | 24) {
         w.units[victim].body.mounted = true;
     }
-    let energy = w.hit_energy.unwrap_or(100);
+    let energy = w.hit_energy.unwrap_or_else(|| match cause {
+        // A musket ball loses its punch with the range: full within 200 px, then 1 % per
+        // 10 px (`body::BALL_CLOSE` within about 450 px).
+        DeathCause::Gunshot => {
+            let (sx, sy) = w.units[sender].pos.pixels();
+            let (vx, vy) = w.units[victim].pos.pixels();
+            let d = crate::trig::norma(vx - sx, vy - sy);
+            (100 - (d - 200).max(0) / 10).clamp(30, 100) as u8
+        }
+        _ => 100,
+    });
     crate::body::injure(w, victim, crate::body::Cause::of(cause, mounted), energy, region)
 }
 

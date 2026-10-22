@@ -92,6 +92,42 @@ pub struct Wounds {
     pub radius: f32,
     /// Varies the places of the further wounds per corpse.
     pub seed: f32,
+    /// Wounds placed where the hits struck (#277), on the living and the dead: the first
+    /// `marks_len` of `marks`.
+    pub marks: [Mark; MAX_MARKS],
+    pub marks_len: u8,
+}
+
+/// Most wounds placed per body ([`Wounds::marks`]).
+pub const MAX_MARKS: usize = 8;
+
+/// One wound where a hit struck (#277), in the rest pose (glTF metres): a hole, blood soaking
+/// the cloth around it and running down from it.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Mark {
+    /// Centre on the body's surface (rest pose).
+    pub point: [f32; 3],
+    /// Radius of the hole (metres).
+    pub radius: f32,
+    /// A ragged exit wound: torn flesh around a larger hole.
+    pub ragged: bool,
+    /// How far the blood has run down from it (metres).
+    pub run: f32,
+    /// How far the cloth around it is soaked, 0..1.
+    pub soak: f32,
+    /// 0 fresh .. 1 dried.
+    pub age: f32,
+    pub seed: f32,
+}
+
+impl Mark {
+    fn gpu(&self) -> [[f32; 4]; 2] {
+        let r = if self.ragged { -self.radius } else { self.radius };
+        [
+            [self.point[0], self.point[1], self.point[2], r],
+            [self.run, self.soak.clamp(0.0, 1.0), self.age.clamp(0.0, 1.0), self.seed],
+        ]
+    }
 }
 
 impl Wounds {
@@ -205,14 +241,19 @@ fn instance_texels(inst: &ModelInstance, rig: Option<&damage::Rig>, out: &mut Ve
     let [w0, w1] = inst.wounds.gpu();
     let s = &inst.sprayed;
     let damaged = !inst.damage.is_none();
+    let marks = &inst.wounds.marks[..usize::from(inst.wounds.marks_len).min(MAX_MARKS)];
     out.extend([
         w0,
         w1,
         [s.point[0], s.point[1], s.point[2], s.radius],
-        [s.amount.clamp(0.0, 1.0), s.age.clamp(0.0, 1.0), f32::from(u8::from(damaged)), 0.0],
+        [s.amount.clamp(0.0, 1.0), s.age.clamp(0.0, 1.0), f32::from(u8::from(damaged)), marks.len() as f32],
     ]);
     if damaged {
         out.extend(damage::pack(&inst.damage, rig));
+    }
+    // The marks follow the damage block (`model.wgsl`, `marked`).
+    for m in marks {
+        out.extend(m.gpu());
     }
 }
 

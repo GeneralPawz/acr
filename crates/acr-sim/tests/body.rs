@@ -79,12 +79,32 @@ fn is_break(o: &Outcome) -> bool {
 
 #[test]
 fn outcomes_spread_by_cause() {
+    // Musket balls shatter bones; at close range they tear hands, forearms and feet off.
     let musket = spread(Cause::Musket, 100, HitRegion::Legs, 600);
     let wound = share(&musket, |o| *o == Outcome::Wound);
     let (broke, off) = (share(&musket, is_break), share(&musket, |o| *o == Outcome::Off));
-    assert!((60..=80).contains(&wound) && (18..=38).contains(&broke) && off <= 6, "{wound} {broke} {off}");
+    assert!(
+        (39..=59).contains(&wound) && (35..=55).contains(&broke) && (2..=11).contains(&off),
+        "{wound} {broke} {off}"
+    );
     let open = share(&musket, |o| *o == Outcome::Fracture(FractureKind::Open));
     assert!(open * 3 > broke && open < broke, "open {open} of {broke}");
+    let far = spread(Cause::Musket, 40, HitRegion::Arms, 600);
+    assert!(share(&far, |o| *o == Outcome::Off) <= 5);
+    let belly = spread(Cause::Musket, 100, HitRegion::Torso, 600);
+    assert!((3..=14).contains(&share(&belly, |o| *o == Outcome::BellyOpen)));
+    assert!(spread(Cause::Musket, 40, HitRegion::Torso, 100).iter().all(|o| *o == Outcome::Wound));
+
+    // Thrown axes: deep gashes, hands off, bellies open, most heads split.
+    let axe = spread(Cause::Thrown, 100, HitRegion::Arms, 600);
+    let (deep, off) = (share(&axe, |o| *o == Outcome::DeepWound), share(&axe, |o| *o == Outcome::Off));
+    assert!((60..=80).contains(&deep) && (6..=18).contains(&off), "{deep} {off}");
+    let axe = spread(Cause::Thrown, 100, HitRegion::Torso, 600);
+    assert!((5..=16).contains(&share(&axe, |o| *o == Outcome::BellyOpen)));
+    let axe = spread(Cause::Thrown, 100, HitRegion::Head, 600);
+    assert!((48..=72).contains(&share(&axe, |o| *o == Outcome::Kill)));
+    assert_eq!(Cause::of(DeathCause::Thrown, false), Cause::Thrown);
+    assert_eq!(Cause::of(DeathCause::Melee, false), Cause::Bayonet);
 
     let grape = spread(Cause::Grapeshot, 100, HitRegion::Arms, 600);
     let wound = share(&grape, |o| *o == Outcome::Wound);
@@ -119,9 +139,9 @@ fn outcomes_spread_by_cause() {
     assert!(spread(Cause::Musket, 100, HitRegion::Head, 20).iter().all(|o| *o == Outcome::Kill));
     let sabre = spread(Cause::Sabre, 100, HitRegion::Head, 400);
     assert!((35..=65).contains(&share(&sabre, |o| *o == Outcome::Kill)));
-    // Bellies: bayonets open some.
+    // Bellies: a bayonet stab opens one in five.
     let bayonet = spread(Cause::Bayonet, 100, HitRegion::Torso, 600);
-    assert!((8..=25).contains(&share(&bayonet, |o| *o == Outcome::BellyOpen)));
+    assert!((13..=28).contains(&share(&bayonet, |o| *o == Outcome::BellyOpen)));
 }
 
 #[test]

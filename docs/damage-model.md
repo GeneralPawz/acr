@@ -114,16 +114,20 @@ Each limb hit draws from the world RNG (`rando()`), only with the rule on:
   legs);
 - the level within the struck segment;
 - the outcome, from this table (percentages per hit; energy 0..100 from the projectile
-  or plough, see #258):
+  or plough, see #258; a musket ball's from the range: full within 200 px, −1 per 10 px
+  beyond, so close range is within about 450 px). 18th-century balls are soft, heavy and
+  slow: they shatter bone and, close up, tear chunks (#277):
 
 | Cause | Limb hit | Trunk hit | Head |
 |---|---|---|---|
-| musket ball | wound 70, fracture (open 2/3) 28, hand/foot off 2 | wound | kill |
+| musket ball (close, e ≥ 75) | fracture (open 2/3) 45, off at hand/forearm/foot 6, wound 49 | wound, belly open 8 | kill |
+| musket ball (far) | fracture (open 2/3) 45, hand/foot off 2, wound 53 | wound | kill |
 | grapeshot | wound 40, fracture 35, off below elbow/knee 25 | wound, belly open 10 | kill |
 | cannonball | off at the hit level 85 (e ≥ 30), crushed fracture otherwise | e ≥ 60: torn in two, e ≥ 90: pulverized; else chest crushed (kill) or belly open | headless |
 | shell (explosion) | 1–3 fragments: wound / fracture / off by distance | belly open 20 | kill |
 | sabre (cavalry melee) | off hand/forearm 20, deep wound 60, fracture 20 | wound, belly open 10 | kill 50 |
-| bayonet / pike | wound 85, fracture 15 | wound, belly open 15 | kill |
+| bayonet / pike | wound 85, fracture 15 | deep wound, belly open 20 | kill |
+| thrown axe, tomahawk, spear | hand/foot off 12, deep wound 70, fracture 18 | deep wound, belly open 10 | kill 60, else deep wound |
 
 The values are constants in `body.rs` and tests pin their spread.
 

@@ -28,6 +28,7 @@ mod dip;
 mod effects;
 mod gore;
 mod interface;
+mod living_wounds;
 mod panels;
 mod piles;
 #[cfg(not(target_arch = "wasm32"))]

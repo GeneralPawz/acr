@@ -72,6 +72,8 @@ pub struct ThreeD {
     gear: HashMap<usize, Gear>,
     /// Blood trails of the bleeding (render only, #254, #262).
     trail: super::trail::Trails,
+    /// Wounds where the hits struck, on the living and their corpses (#277).
+    wounds: super::living_wounds::LivingWounds,
     /// The last tick drops were added for (frames redraw a tick several times).
     trail_tick: u64,
     /// The tick of the last update: going back means another game, the debris is dropped.
@@ -152,6 +154,7 @@ impl Default for ThreeD {
             instances: Vec::new(),
             pools: Vec::new(),
             trail: super::trail::Trails::default(),
+            wounds: Default::default(),
             trail_tick: u64::MAX,
             debris_tick: 0,
             shown: HashSet::new(),
@@ -355,6 +358,7 @@ impl ThreeD {
         if self.debris_tick > now {
             // A loaded game or a restart: the debris belongs to another battle.
             self.debris.clear();
+            self.wounds.clear();
         }
         self.debris_tick = now;
         self.request_gore(request);
@@ -368,6 +372,10 @@ impl ThreeD {
                 && u.death >= 1000
                 && world.deaths.get(&u.id.0).is_some_and(|r| r.tick > 0 && now - r.tick < self.corpse_ticks)
         };
+        // Wounds where this tick's hits struck (#277), kept for the drawn and their corpses.
+        let facing = |v: u32| world.units.get(v as usize).filter(|u| u.id.0 == v && !u.building).map(|u| u.dir);
+        self.wounds.take_hits(world.hits.iter(), now, self.gore, &facing);
+        self.wounds.retain(&|v| world.units.get(v as usize).is_some_and(|u| u.id.0 == v && (u.alive || lingering(u))));
         for u in world.units.iter().filter(|u| (u.alive || lingering(u)) && u.inside_of.is_none()) {
             if u.building && (self.models != Models::All || !finished(world, u)) {
                 continue;
@@ -403,8 +411,15 @@ impl ThreeD {
             let (x, y) = (u.pos.x >> 4, u.pos.y >> 4);
             let ground = view3d::ground_point(x, y, terrain.height_at(x, y));
             let body = super::gore::Body { death, ..u.into() };
-            let (wounds, pool) = super::gore::corpse(body, record, self.gore, removed_at, ground);
+            let (mut wounds, pool) = super::gore::corpse(body, record, self.gore, removed_at, ground);
             self.pools.extend(pool);
+            // The wounds of his hits, alive and dead; they replace the corpse's guessed ones.
+            if !u.building {
+                (wounds.marks, wounds.marks_len) = self.wounds.marks(u.id.0, model.rig.as_ref(), now);
+                if wounds.marks_len > 0 {
+                    wounds.count = 0;
+                }
+            }
             let (mut inst, at) = instance(u, death, index, model, terrain, self.gore, removed_at, wounds);
             let living = u.alive && u.death == 0;
             // What is left of the body (#262): cuts, fractures, a torn trunk, an open belly.
@@ -423,6 +438,28 @@ impl ThreeD {
                 unit_models.insert(u.id.0, (UnitModel { model: index, player: u.owner }, index));
             }
             // Lost legs (#254, #262): he lies face down and drags himself along, head first.
+            if living && !u.building {
+                let lying = u.body.crawling().then(|| super::damage_view::crawl_clip(&u.body));
+                self.wounds.set_lying(u.id.0, lying);
+            }
+            // Killed while crawling or writhing (#277): he never stands up to die, his last
+            // crawling pose is held and sinks as a corpse.
+            if !living
+                && !u.building
+                && let Some(name) = self.wounds.lying(u.id.0)
+            {
+                match model.clip(name) {
+                    Some(clip) => {
+                        inst.clip = Some(clip);
+                        inst.time = record.tick as f32 / acr_sim::ORIGINAL_TICKS_PER_SECOND as f32;
+                    }
+                    None => {
+                        inst.clip = model.clip_for_animation("DEATHLIE1");
+                        inst.time = 0.0;
+                        inst.morphs[1] = 1.0;
+                    }
+                }
+            }
             if living && u.body.crawling() {
                 match model.clip(super::damage_view::crawl_clip(&u.body)) {
                     Some(clip) => {
@@ -452,7 +489,7 @@ impl ThreeD {
             // The bleeding leave drops of blood as they go, crawlers a smear.
             if u.alive
                 && u.death == 0
-                && u.body.bleeding() > 0
+                && (u.body.bleeding() > 0 || self.wounds.bleeding(u.id.0, now))
                 && self.gore != Gore::Off
                 && now.is_multiple_of(super::trail::EVERY)
                 && now != self.trail_tick
@@ -481,6 +518,17 @@ impl ThreeD {
         // Blood sprayed onto troops and buildings behind hit units (#220).
         for (i, sprayed) in super::splatter::sprayed_targets(&world.hits, world.tick.0, self.gore, &targets) {
             self.instances[i].sprayed = sprayed;
+        }
+        // Blood burst around his own newest wound where nothing else sprayed on him (#277).
+        for (i, t) in targets.iter().enumerate() {
+            if t.building || self.instances[i].sprayed.amount > 0.0 {
+                continue;
+            }
+            let rig =
+                self.renderer.as_ref().and_then(|r| r.model(self.instances[i].model)).and_then(|m| m.rig.as_ref());
+            if let Some(s) = self.wounds.spurt(t.unit, rig, now) {
+                self.instances[i].sprayed = s;
+            }
         }
         // Blood trails of the bleeding (#254, #262): drops and smears that dry and fade.
         if now.is_multiple_of(super::trail::EVERY) {

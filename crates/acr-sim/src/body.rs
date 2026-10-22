@@ -253,8 +253,10 @@ pub enum Cause {
     Shell,
     /// Cavalry melee.
     Sabre,
-    /// Bayonet, pike, thrown weapons.
+    /// Bayonet and pike.
     Bayonet,
+    /// Thrown axes, tomahawks, spears and stones.
+    Thrown,
 }
 
 impl Cause {
@@ -265,7 +267,8 @@ impl Cause {
             DeathCause::Cannonball => Self::Cannonball,
             DeathCause::Explosion => Self::Shell,
             DeathCause::Melee if mounted => Self::Sabre,
-            DeathCause::Melee | DeathCause::Thrown => Self::Bayonet,
+            DeathCause::Melee => Self::Bayonet,
+            DeathCause::Thrown => Self::Thrown,
             _ => Self::Musket,
         }
     }
@@ -329,18 +332,49 @@ pub const BALL_TEARS: u8 = 60;
 /// … and from which nothing whole is left.
 pub const BALL_PULVERIZES: u8 = 90;
 
+/// Musket-ball energy (percent, by range) from which a ball tears chunks: a limb off at the
+/// hand, forearm or foot, a belly open.
+pub const BALL_CLOSE: u8 = 75;
+
+/// Percent of musket-ball limb hits that shatter the bone (18th-century balls are soft,
+/// heavy and slow: they flatten and splinter what they strike).
+pub const MUSKET_FRACTURE: i32 = 45;
+/// … that take the limb off at the hand, forearm or foot at close range ([`BALL_CLOSE`]),
+/// and beyond it (at the tip only).
+pub const MUSKET_OFF: [i32; 2] = [6, 2];
+/// … of trunk hits that open the belly at close range.
+pub const MUSKET_BELLY: i32 = 8;
+/// Thrown axes and tomahawks: hand (or foot) off, belly open, head kill.
+pub const THROWN_OFF: i32 = 12;
+pub const THROWN_BELLY: i32 = 10;
+pub const THROWN_HEAD_KILL: i32 = 60;
+/// A bayonet thrust into the belly opens it.
+pub const BAYONET_BELLY: i32 = 20;
+
 /// The outcome of a limb hit at `level` by percentage `roll`, and the level it applies at.
 pub fn limb_outcome(cause: Cause, energy: u8, leg: bool, level: u8, roll: i32) -> (Outcome, u8) {
     let (joint, tip) = if leg { (KNEE, ANKLE) } else { (ELBOW, WRIST) };
+    // Torn off by a ball at close range: the hand or forearm, or the foot.
+    let chunk = if leg { ANKLE } else { ELBOW };
     // Two thirds of the breaks by balls are open.
     let ball_break = |from: i32, n: i32| {
         if roll - from < n * 2 / 3 { FractureKind::Open } else { FractureKind::Closed }
     };
     match cause {
-        Cause::Musket => match roll {
-            0..70 => (Outcome::Wound, level),
-            70..98 => (Outcome::Fracture(ball_break(70, 28)), level),
-            _ => (Outcome::Off, level.max(tip)),
+        Cause::Musket => {
+            let close = energy >= BALL_CLOSE;
+            let off = MUSKET_OFF[usize::from(!close)];
+            match roll {
+                r if r < off => (Outcome::Off, level.max(if close { chunk } else { tip })),
+                r if r < off + MUSKET_FRACTURE => (Outcome::Fracture(ball_break(off, MUSKET_FRACTURE)), level),
+                _ => (Outcome::Wound, level),
+            }
+        }
+        // Deep gashes; a hand (or foot) chopped off.
+        Cause::Thrown => match roll {
+            r if r < THROWN_OFF => (Outcome::Off, level.max(tip)),
+            r if r < THROWN_OFF + 70 => (Outcome::DeepWound, level),
+            _ => (Outcome::Fracture(FractureKind::Closed), level),
         },
         Cause::Grapeshot => match roll {
             0..40 => (Outcome::Wound, level),
@@ -374,10 +408,14 @@ pub fn limb_outcome(cause: Cause, energy: u8, leg: bool, level: u8, roll: i32) -
 pub fn trunk_outcome(cause: Cause, energy: u8, part: Part, level: u8, roll: i32) -> Outcome {
     let belly = |chance: i32| if roll < chance { Outcome::BellyOpen } else { Outcome::Wound };
     match cause {
+        Cause::Musket if energy >= BALL_CLOSE => belly(MUSKET_BELLY),
         Cause::Musket => Outcome::Wound,
         Cause::Grapeshot | Cause::Sabre => belly(10),
         Cause::Shell => belly(20),
-        Cause::Bayonet => belly(15),
+        // A deep stab or gash.
+        Cause::Bayonet if roll < BAYONET_BELLY => Outcome::BellyOpen,
+        Cause::Thrown if roll < THROWN_BELLY => Outcome::BellyOpen,
+        Cause::Bayonet | Cause::Thrown => Outcome::DeepWound,
         Cause::Cannonball if energy >= BALL_PULVERIZES => Outcome::Torn(Torn::Pulverized),
         Cause::Cannonball if energy >= BALL_TEARS => Outcome::Torn(Torn::InTwo { level }),
         Cause::Cannonball if part == Part::Chest => Outcome::Kill,
@@ -390,6 +428,7 @@ pub fn head_outcome(cause: Cause, roll: i32) -> Outcome {
     match cause {
         Cause::Cannonball => Outcome::Torn(Torn::Headless),
         Cause::Sabre if roll >= 50 => Outcome::Wound,
+        Cause::Thrown if roll >= THROWN_HEAD_KILL => Outcome::DeepWound,
         _ => Outcome::Kill,
     }
 }
@@ -426,7 +465,7 @@ pub fn injure(w: &mut World, victim: usize, cause: Cause, energy: u8, region: Hi
             Injury { part, level, outcome: trunk_outcome(cause, energy, part, level, roll), energy }
         }
         HitRegion::Head => {
-            let roll = if cause == Cause::Sabre { pct(w) } else { 0 };
+            let roll = if matches!(cause, Cause::Sabre | Cause::Thrown) { pct(w) } else { 0 };
             Injury { part: Part::Head, level: 0, outcome: head_outcome(cause, roll), energy }
         }
     };
@@ -467,7 +506,7 @@ pub fn apply(body: &mut Body, injury: &Injury) {
                 Outcome::BellyOpen | Outcome::Kill | Outcome::Torn(_) => {}
             }
         }
-        (Part::Head, Outcome::Wound) => body.head_wounds = body.head_wounds.saturating_add(1),
+        (Part::Head, Outcome::Wound | Outcome::DeepWound) => body.head_wounds = body.head_wounds.saturating_add(1),
         (_, Outcome::BellyOpen) => body.belly_open = true,
         (Part::Head, _) => {}
         (_, Outcome::Wound | Outcome::DeepWound) => body.chest_wounds = body.chest_wounds.saturating_add(1),

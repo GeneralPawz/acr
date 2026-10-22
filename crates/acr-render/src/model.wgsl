@@ -85,8 +85,9 @@ struct VsOut {
     @location(5) @interpolate(flat) wounds0: vec4<f32>,
     @location(6) @interpolate(flat) wounds1: vec4<f32>,
     @location(7) @interpolate(flat) spray: vec4<f32>,
-    // sprayed blood amount, its age
-    @location(8) @interpolate(flat) spray_look: vec2<f32>,
+    // sprayed blood amount, its age, first texel of the instance data, wounds placed at the
+    // hits (#277)
+    @location(8) @interpolate(flat) spray_look: vec4<f32>,
     // kept distance past the cut (level units, < 0 discards), _GORE.x, sign of the ragged
     // offset, belly open (1)
     @location(9) cut: vec4<f32>,
@@ -218,7 +219,7 @@ fn vs_main(v: VertexIn, inst: InstanceIn) -> VsOut {
     out.wounds0 = texel(d);
     out.wounds1 = texel(d + 1u);
     out.spray = texel(d + 2u);
-    out.spray_look = look.xy;
+    out.spray_look = vec4<f32>(look.xy, f32(d), look.w);
     out.cut = vec4<f32>(clamp(keep, -1.0, 1.0), v.body.z, side, belly);
     return out;
 }
@@ -313,6 +314,59 @@ fn wounded(rgb_in: vec3<f32>, rest: vec4<f32>, w0: vec4<f32>, w1: vec4<f32>, dec
     return rgb;
 }
 
+// Wounds placed where hits struck (#277): `n` marks of two texels each after the instance's
+// data (and its damage block): [centre (rest pose), radius (< 0: a ragged exit)], [blood run
+// down (m), soak 0..1, age 0..1, seed]. A dark hole, torn flesh around an exit, the cloth
+// soaked around it and blood running down from it.
+fn marked(rgb_in: vec3<f32>, p: vec3<f32>, d: u32, n: u32) -> vec3<f32> {
+    var rgb = rgb_in;
+    let damaged = texel(d + 3u).z > 0.5;
+    let start = d + 4u + select(0u, 12u, damaged);
+    let grain = noise3(p * 22.0);
+    var stain = 0.0;
+    var dry = 1.0;
+    var flesh = 0.0;
+    var core = 0.0;
+    for (var i = 0u; i < n; i = i + 1u) {
+        let a = texel(start + 2u * i);
+        let b = texel(start + 2u * i + 1u);
+        let c = a.xyz;
+        let r = max(abs(a.w), 0.005);
+        let exit = a.w < 0.0;
+        let dist = length(p - c);
+        if (dist > r * 6.0 + b.x + 0.25) {
+            continue;
+        }
+        let rough = noise3(p * 70.0 + vec3<f32>(b.w)) - 0.5;
+        let hole = r * (1.0 + select(0.3, 0.8, exit) * rough);
+        core = max(core, 1.0 - smoothstep(hole * 0.55, hole, dist));
+        if (exit) {
+            flesh = max(flesh, 1.0 - smoothstep(hole * 1.1, hole * 1.8, dist + rough * r));
+        }
+        // Soaked cloth around the wound, spreading as it bleeds.
+        let soak = r * (1.6 + 4.5 * b.y);
+        var s = 1.0 - smoothstep(soak * 0.45, soak, dist + (grain - 0.5) * soak * 0.6);
+        // Blood running down from it (down in the rest pose), widening and thinning.
+        let below = c.y - p.y;
+        if (below > -r && below < b.x) {
+            let f = clamp(below / max(b.x, 0.01), 0.0, 1.0);
+            let side = length((p - c).xz) + (noise3(p * 9.0 + vec3<f32>(b.w)) - 0.5) * 0.05;
+            let width = r * (1.1 + 1.6 * f) + 0.02 * b.y;
+            s = max(s, (1.0 - smoothstep(width * 0.55, width, side)) * (1.0 - f * f) * 0.95);
+        }
+        if (s > stain) {
+            stain = s;
+            dry = b.z;
+        }
+    }
+    let red = mix(vec3<f32>(0.34, 0.012, 0.01), vec3<f32>(0.10, 0.03, 0.018), smoothstep(0.0, 1.0, dry));
+    rgb = mix(rgb, red, clamp(stain, 0.0, 1.0) * 0.93);
+    let meat = mix(vec3<f32>(0.42, 0.05, 0.04), vec3<f32>(0.62, 0.30, 0.26), noise3(p * 90.0));
+    rgb = mix(rgb, meat, flesh);
+    rgb = mix(rgb, vec3<f32>(0.06, 0.0, 0.0), core * 0.95);
+    return rgb;
+}
+
 // Blood sprayed onto a body or a wall: speckles of several sizes around `spray.xyz` (rest
 // pose, metres) within `spray.w`, denser towards the centre.
 fn sprayed(rgb: vec3<f32>, rest: vec3<f32>, spray: vec4<f32>, look: vec2<f32>) -> vec3<f32> {
@@ -381,8 +435,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if (material.flags.w < 0.5 && in.wounds0.z + in.wounds0.w + in.wounds1.x > 0.0) {
         rgb = wounded(rgb, in.rest, in.wounds0, in.wounds1, decay);
     }
+    if (material.flags.w < 0.5 && in.spray_look.w > 0.5) {
+        rgb = marked(rgb, in.rest.xyz, u32(in.spray_look.z + 0.5), u32(in.spray_look.w + 0.5));
+    }
     if (material.flags.w < 0.5 && in.spray_look.x > 0.0) {
-        rgb = sprayed(rgb, in.rest.xyz, in.spray, in.spray_look);
+        rgb = sprayed(rgb, in.rest.xyz, in.spray, in.spray_look.xy);
     }
     // Lambert from the upper left (the sprites' light), both faces lit.
     var n = normalize(in.normal);

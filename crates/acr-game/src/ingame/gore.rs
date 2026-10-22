@@ -104,6 +104,7 @@ pub fn corpse(
         count: look.wounds,
         radius: look.radius,
         seed,
+        ..Default::default()
     };
     if look.pool <= 0.0 {
         return (wounds, None);
