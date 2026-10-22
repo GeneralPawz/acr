@@ -662,7 +662,9 @@ described in [simulation.md](simulation.md#fog-of-war).
   Storming, healing and the other cursors wait for the simulation.
 - Selection brackets (0x4bae50): 3 px corners in `GetPaletteColor(255, 255, 0)` around
   `RECTANGLE dx dy w h` (defaults 0 3 40 64). Soldiers of a formed brigade get none.
-- Life bars (Tab, 0x4bb390): green lines at y0 − 12 and y0 − 11 with white end caps.
+- Life bars (Tab, 0x4bb390): green lines at y0 − 12 and y0 − 11 with white end caps. Only
+  living objects get one: the function returns at once when the death counter `Sdoxlo`
+  (OB+0x58) is set (0x4bb3b1), so corpses show none.
 - Selection rectangle: `GetPaletteColor(0, 255, 255)`.
 - The game menu, load and options dialogs load `cur_mn.rlc` (`LoadPointer` 0x496de2), but
   it is never drawn: the cursor drawer 0x496efe always shows `CURSOR_00.GP` frame 0, so

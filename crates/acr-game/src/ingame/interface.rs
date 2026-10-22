@@ -1516,7 +1516,8 @@ impl InGame {
         };
         let objects = self.objects.objects();
         let own = self.own();
-        for u in world.units.iter().filter(|u| u.alive && u.inside_of.is_none()) {
+        // Corpses get neither brackets nor a life bar (0x4bb3b1 skips objects with `Sdoxlo`).
+        for u in world.units.iter().filter(|u| u.living() && u.inside_of.is_none()) {
             let selected = u.owner == own && self.selected.contains(&u.id);
             if !selected && !self.interface.hud.life_bars {
                 continue;

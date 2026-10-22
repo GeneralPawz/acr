@@ -111,6 +111,9 @@ pub struct SpriteDraw {
     pub player: u8,
     /// Half transparent (`ShowGPTransparent`).
     pub transparent: bool,
+    /// Mirrored around `x` (the GP frame flag 0x1000): a layer at offset `dx` covers
+    /// `x − dx − w .. x − dx`.
+    pub mirrored: bool,
 }
 
 pub struct SpriteRenderer {
@@ -362,7 +365,12 @@ impl SpriteRenderer {
             let Some(range) = atlas.frames.get(sprite.frame) else { continue };
             for slot in &atlas.slots[range.clone()] {
                 let [ax, ay, w, h] = slot.atlas;
-                let x = sprite.x + slot.offset[0] as f32 * sprite.scale;
+                let (x, w_dst) = if sprite.mirrored {
+                    // A negative width flips the quad: its left texel column lands on the right.
+                    (sprite.x - slot.offset[0] as f32 * sprite.scale, -(w as f32) * sprite.scale)
+                } else {
+                    (sprite.x + slot.offset[0] as f32 * sprite.scale, w as f32 * sprite.scale)
+                };
                 let y = sprite.y + slot.offset[1] as f32 * sprite.scale;
                 let param = if slot.kind == LayerKind::Player { u32::from(sprite.player % 8) } else { slot.param };
                 let index = instances.len() as u32;
@@ -371,7 +379,7 @@ impl SpriteRenderer {
                     _ => self.batches.push((slot.page, index..index + 1)),
                 }
                 instances.push(Instance {
-                    dst: [x, y, w as f32 * sprite.scale, h as f32 * sprite.scale],
+                    dst: [x, y, w_dst, h as f32 * sprite.scale],
                     src: [ax, ay, w, h],
                     kind: slot.kind as u32 | if sprite.transparent { TRANSPARENT } else { 0 },
                     param,

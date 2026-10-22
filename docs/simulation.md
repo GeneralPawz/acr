@@ -358,14 +358,25 @@ water point and rests 60 ticks.
 The drawing code (0x5062a3) selects the sprite frame from `RealDir`:
 
 - The GP frame index is `SpriteID·R + k`, with `R` the stored directions. Frames are
-  **direction-interleaved**: frame f of direction k is at `f·R + k`. (`docs/formats/definitions.md`
-  presumed `d·N/R + f`.)
-- **9 directions:** `dir16 = ((RealDir + 71) & 255)·16 >> 8`.
-  - If `dir16 < 8`: `k = 8 − dir16`, drawn mirrored.
-  - Otherwise: `k = dir16 − 8`.
+  **direction-interleaved**: frame f of direction k is at `f·R + k` (0x506f13; e.g.
+  `EngD18G.gp` starts with the 9 directions of its first frame).
+- **Odd `R` (9 for most units, 0x506cd5):** `n = 2R − 2` (16),
+  `i = ((RealDir + 64 + 255/(2n)) & 255)·n >> 8`, i.e. `((RealDir + 71) & 255)·16 >> 8` for 9.
+  - If `i < R − 1`: `k = R − 1 − i`, drawn mirrored (frame | 0x1000, placed at `x − dx`).
+  - Otherwise: `k = i − (R − 1)`.
   - Stored k = 0 is south, 4 west, 8 north; the east half is the mirror image.
-- **16 directions:** `dir32 = ((RealDir + 64) & 255)·32 >> 8`, mirrored below 16.
-- **`FULLROTATION`:** no mirroring, `k = ((RealDir + 128/R − 64) mod 256)/(256/R)`.
+- **Even `R`:** `n = 2R`, `i = ((RealDir + 64) & 255)·n >> 8`; `k = R − 1 − i` mirrored below
+  `R`, else `k = i − R`.
+- **`FULLROTATION` (type flag 0x172d bit 3, the cannon):** no mirroring,
+  `k = ((RealDir + 128/R − 64) mod 256)/(256/R)` (0x50663f).
+- The direction is `RealDir` of the moment: walking, standing, attacking and dying units
+  show the frame of their own animation in that direction, so a unit only turns when the
+  simulation turns it (by `ROTATE` steps, or `Die`'s one random turn). A corpse keeps its
+  direction.
+- **Corpses fade:** once the death counter `Sdoxlo` passes 100 (0x506ed5, a few seconds after
+  the fall) the frame goes to the draw list with options 2 (0x49c67e), which draws it with
+  `ShowGPTransparentLayers` (0x48e180): half transparent until it is removed (see Death).
+- ACR: `acr_render::scene::sprite_direction`; corpses use the transparent sprite mode.
 
 ## Formations
 
@@ -516,8 +527,13 @@ Implemented in `combat.rs`, recovered from `SearchVictim` (0x52622b), `AttackObj
   - The unit turns by `(rando()>>8) − 64`, frees its cell and plays `#DEATH`, then lies as
     `#DEATHLIE1`. After 1200 / 1600 it switches to `#DEATHLIE2` / `#DEATHLIE3` where the
     type has them.
-  - The death counter (`Unit::death`) grows by 2 per tick while lying, and the corpse is
-    removed above 2000 (about 100 s).
+  - The death counter (`Unit::death`, `Sdoxlo`) grows by 1 per tick during `#DEATH` and by 2
+    per tick while lying (0x512090, 0x5121f5).
+  - Above 1200 a type without `#DEATHLIE2` loses its corpse (0x5120ab), about 61 s after the
+    death at 10 ticks/s (most units have only `#DEATHLIE1`). Above 1600 the engine sets the
+    `#DEATHLIE3` slot (an empty slot draws nothing; ACR removes such a corpse), and above
+    2000 every corpse is removed (about 100 s).
+  - Lying corpses are drawn half transparent ([Directions and sprites](#directions-and-sprites)).
   - Attackers keep striking a target whose counter is still ≤ 8.
 
 ### Friend and foe

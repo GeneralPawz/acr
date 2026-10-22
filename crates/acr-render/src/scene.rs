@@ -52,8 +52,12 @@ pub struct SceneSprite {
     /// Sort row: the ground point's `y / 2`, plus a building part's sort line.
     pub sort: i32,
     pub player: u8,
-    /// Drawn half transparent (`ShowGPTransparent`: buildings in the transparency mode).
+    /// Drawn half transparent (`ShowGPTransparent`: buildings in the transparency mode,
+    /// corpses).
     pub transparent: bool,
+    /// Drawn mirrored around the ground point (the east half of a unit's directions); `dx`
+    /// is then already the mirrored offset.
+    pub mirrored: bool,
 }
 
 impl SceneSprite {
@@ -67,6 +71,41 @@ impl SceneSprite {
 pub struct UnitLook {
     /// Frame, offset, layer and sort row offset of each part.
     pub parts: Vec<(FrameKey, (i32, i32), Layer, i32)>,
+    /// The frames are drawn mirrored around the ground point (the offsets are already
+    /// mirrored).
+    pub mirrored: bool,
+}
+
+/// The stored direction of an animation with `dirs` stored directions that a unit facing
+/// `dir` (`RealDir`, 0 = east, 64 = south) shows, and whether it is drawn mirrored, as the
+/// drawing code picks them (0x5062a3):
+///
+/// - `FULLROTATION` types (cannons): `k = (dir + 128/dirs − 64) / (256/dirs)`, never
+///   mirrored (0x50663f).
+/// - An odd count (9 for most units): with `n = 2·dirs − 2` (16), the index
+///   `i = ((dir + 64 + 255/(2n)) & 255)·n >> 8`; below `dirs − 1` the frame is
+///   `k = dirs − 1 − i` drawn mirrored, otherwise `k = i − (dirs − 1)` (0x506cd5).
+/// - An even count: `n = 2·dirs`, `i = ((dir + 64) & 255)·n >> 8`; below `dirs`, `k =
+///   dirs − 1 − i` mirrored, otherwise `k = i − dirs`.
+///
+/// Stored direction 0 faces south, the stored half turns over west to north; the east half
+/// is its mirror image.
+pub fn sprite_direction(dir: u8, dirs: usize, full_rotation: bool) -> (usize, bool) {
+    let r = dirs.max(1) as i32;
+    let dir = i32::from(dir);
+    if full_rotation {
+        let per = (256 / r).max(1);
+        let v = (dir + (per >> 1) - 64).rem_euclid(256);
+        return (((v / per) as usize).min(dirs.max(1) - 1), false);
+    }
+    let (n, c, below) = if r & 1 != 0 {
+        let n = (2 * r - 2).max(1);
+        (n, 255 / (2 * n), r - 1)
+    } else {
+        (2 * r, 0, r)
+    };
+    let i = (((dir + 64 + c) & 255) * n) >> 8;
+    if i < below { ((r - 1 - i) as usize, true) } else { ((i - below) as usize, false) }
 }
 
 /// The `TOP` sort line of `LINESORT`.
@@ -119,10 +158,8 @@ pub fn unit_packs(def: &UnitDef) -> Vec<String> {
 /// The frames of `def`'s idle animation facing `direction` (0..=255, as stored in maps).
 ///
 /// A building's animation lists its parts, all drawn; `LINESORT` marks `GROUND` parts.
-/// A unit shows the first frame. Frame `f` of direction `d` is `d · N / dirs + f` in a pack
-/// of `N` frames (see `docs/formats/definitions.md`). TODO: the direction order and the
-/// mirroring of the 9 stored directions are not verified; directions are mapped evenly
-/// and mirrored ones use their unmirrored twin.
+/// A unit shows the first frame. Frame `f` of stored direction `d` is `f · dirs + d`, with
+/// `d` from [`sprite_direction`] (see `docs/simulation.md`, "Directions and sprites").
 ///
 /// A building on a map is finished with no section built: its sections show state 0.
 pub fn unit_look(def: &UnitDef, direction: u8, frames_in: impl Fn(&str) -> Option<usize>) -> Option<UnitLook> {
@@ -142,14 +179,7 @@ pub fn animation_look(
 ) -> Option<UnitLook> {
     let refs = anim.frame_refs();
     let dirs = anim.directions.max(1) as usize;
-    let d = if dirs >= 16 {
-        usize::from(direction) * dirs / 256
-    } else {
-        // 9 stored directions cover half a circle; the other half is mirrored.
-        let d16 = (usize::from(direction) + 8) / 16 % 16;
-        let half = if d16 <= 8 { d16 } else { 16 - d16 };
-        half * (dirs - 1) / 8
-    };
+    let (d, mirrored) = sprite_direction(direction, dirs, def.get("FULLROTATION").is_some());
     let sorts = part_sorts(def, &anim.name);
     // A building's picture is placed at its position + `LOCATION x y`, the corner of the
     // picture rectangle (the placement preview 0x4bdd8e draws it so; the lock cells and
@@ -170,8 +200,12 @@ pub fn animation_look(
         .filter_map(|(i, r)| {
             let set = def.sprite(r.sprite)?;
             let pack = set.gp_path();
-            let per_dir = frames_in(&pack)? / dirs;
-            let frame = d.min(dirs - 1) * per_dir + r.frame.max(0) as usize;
+            // The frames are direction-interleaved: frame `f` of stored direction `d` is
+            // `f·dirs + d` (0x506f13).
+            let frame = r.frame.max(0) as usize * dirs + d;
+            if frame >= frames_in(&pack)? {
+                return None;
+            }
             // TODO: the original compares objects against the line (0x49C96A); the line's
             // middle row is used as the sort row here.
             let (layer, row) = match sorts.get(i) {
@@ -179,11 +213,13 @@ pub fn animation_look(
                 Some(&PartSort::Line(_, y1, _, y2)) => (Layer::Sorted, location.1 + (y1 + y2) / 2),
                 None => (Layer::Sorted, 0),
             };
-            Some(((pack, frame), (set.offset.0 + location.0, set.offset.1 + location.1), layer, row))
+            // A mirrored frame is placed at `x − dx` (0x506f5f).
+            let dx = set.offset.0 + location.0;
+            Some(((pack, frame), (if mirrored { -dx } else { dx }, set.offset.1 + location.1), layer, row))
         })
         .chain(sections.into_iter().flat_map(|stages| section_parts(def, stages, &frames_in)))
         .collect::<Vec<_>>();
-    (!parts.is_empty()).then_some(UnitLook { parts })
+    (!parts.is_empty()).then_some(UnitLook { parts, mirrored })
 }
 
 /// The frames a finished building's sections (`ADDSECTION`) add in the section states
@@ -291,6 +327,7 @@ impl Scene {
                 sort: s.y >> 1,
                 player: 0,
                 transparent: false,
+                mirrored: false,
             });
         }
         for u in map.units.iter().filter(|_| looks.is_some()) {
@@ -313,6 +350,7 @@ impl Scene {
                     sort,
                     player: u.nation,
                     transparent: false,
+                    mirrored: look.mirrored,
                 });
             }
         }
@@ -639,6 +677,7 @@ impl SceneAtlas {
                     scale: 1.0,
                     player: s.player,
                     transparent: s.transparent,
+                    mirrored: s.mirrored,
                 });
             } else if let Some(&frame) = self.index.get(&s.frame) {
                 out.push(crate::SpriteDraw {
@@ -648,6 +687,7 @@ impl SceneAtlas {
                     scale: camera.scale,
                     player: s.player,
                     transparent: s.transparent,
+                    mirrored: s.mirrored,
                 });
             }
         }
@@ -714,6 +754,7 @@ mod tests {
             sort,
             player: 0,
             transparent: false,
+            mirrored: false,
         }
     }
 
@@ -830,13 +871,51 @@ LOCATION -400 -300 900 700
     }
 
     #[test]
-    fn units_pick_a_direction_block() {
+    fn units_pick_an_interleaved_direction() {
         let def = UnitDef::parse(UNIT.as_bytes());
-        // 9 directions of 4 frames: frame 2 of direction d is 4·d + 2.
-        let frame = |dir| unit_look(&def, dir, |_| Some(36)).unwrap().parts[0].0.1;
-        assert_eq!(frame(0), 2);
-        assert_eq!(frame(128), 4 * 8 + 2);
-        assert_eq!(unit_look(&def, 0, |_| Some(36)).unwrap().parts[0].1, (-160, -132));
+        // 9 directions of 4 frames, interleaved: frame 2 of stored direction k is 2·9 + k.
+        let look = |dir| unit_look(&def, dir, |_| Some(36)).unwrap();
+        let frame = |dir| (look(dir).parts[0].0.1, look(dir).mirrored);
+        assert_eq!(frame(64), (18, false), "south is stored direction 0");
+        assert_eq!(frame(128), (22, false), "west is stored direction 4");
+        assert_eq!(frame(0), (22, true), "east mirrors west");
+        assert_eq!(frame(192), (26, true), "north is stored direction 8");
+        assert_eq!(look(128).parts[0].1, (-160, -132));
+        assert_eq!(look(0).parts[0].1, (160, -132), "a mirrored frame is placed at x − dx");
+        // A frame beyond the pack is not drawn.
+        assert!(unit_look(&def, 0, |_| Some(20)).is_none());
+    }
+
+    #[test]
+    fn directions_follow_the_drawing_code() {
+        // 9 stored directions: 16 sectors offset by 7, the east half mirrored.
+        let nine: Vec<_> = (0..16).map(|s| sprite_direction((s * 16) as u8, 9, false)).collect();
+        assert_eq!(nine[0], (4, true));
+        assert_eq!(nine[4], (0, false));
+        assert_eq!(nine[8], (4, false));
+        assert_eq!(nine[12], (8, true));
+        // RealDir 57 still shows the east-southeast frame; 58 is the next sector (64 − 7 + 1).
+        assert_eq!(sprite_direction(56, 9, false), (1, true));
+        assert_eq!(sprite_direction(57, 9, false), (0, false));
+        // Every stored direction is reached and none lies outside.
+        for d in 0..=255u8 {
+            assert!(sprite_direction(d, 9, false).0 < 9);
+            assert!(sprite_direction(d, 16, false).0 < 16);
+            assert!(sprite_direction(d, 16, true).0 < 16);
+            assert!(sprite_direction(d, 65, false).0 < 65);
+        }
+        // 16 stored directions: 32 sectors over a half circle, south is 0; west and east fall
+        // between two stored directions (8, and 7 mirrored).
+        assert_eq!(sprite_direction(64, 16, false), (0, false));
+        assert_eq!(sprite_direction(128, 16, false), (8, false));
+        assert_eq!(sprite_direction(0, 16, false), (7, true));
+        // FULLROTATION: 16 directions around, south first, west at 4, never mirrored.
+        assert_eq!(sprite_direction(64, 16, true), (0, false));
+        assert_eq!(sprite_direction(128, 16, true), (4, false));
+        assert_eq!(sprite_direction(0, 16, true), (12, false));
+        assert_eq!(sprite_direction(55, 16, true), (15, false));
+        // One direction (buildings) is always frame 0, unmirrored.
+        assert_eq!(sprite_direction(200, 1, false), (0, false));
     }
 
     #[test]
