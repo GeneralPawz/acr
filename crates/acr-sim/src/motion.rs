@@ -171,7 +171,7 @@ pub fn process_unit(world: &mut World, i: usize) {
     match world.units[i].orders.last().cloned() {
         Some(Order::Attack { target, prio }) => crate::combat::attack_link(world, i, target, prio),
         Some(Order::Build { target, point, prio }) => crate::construction::build_link(world, i, target, point, prio),
-        Some(Order::Gather { kind, source, prio }) => crate::gather::gather_link(world, i, kind, source, prio),
+        Some(Order::Gather { kind, source, at, prio }) => crate::gather::gather_link(world, i, kind, source, at, prio),
         Some(Order::Enter { building, prio }) => {
             crate::economy::enter_link(world, i, building, prio);
             if world.units[i].inside_of.is_some() {
@@ -195,6 +195,10 @@ pub fn process_unit(world: &mut World, i: usize) {
         | Some(Order::Enter { .. })
         | Some(Order::Build { .. })
         | Some(Order::Gather { .. }) => {}
+        Some(Order::ClearUnlimited) => {
+            u.orders.pop();
+            crate::economy::settle(u, occupancy);
+        }
         None => u.prio = 0,
     }
     match motion_handler(u, t, lay, occupancy, random, buckets) {
@@ -224,12 +228,12 @@ fn send_to_link(
     u.prio = prio;
     let mut c = cell;
     if u.unlimited {
-        // CreatePath with UnlimitedMotion: straight to the cell centre.
+        // CreatePath with UnlimitedMotion: straight to the cell centre. The walk through
+        // locks ends with the `ClearUnlimited` order queued after the last such leg.
         if dist_to(mover(u), c.0, c.1) <= t.stop_distance >> 8 {
             if u.frame >= u.anim_frames - FRM_DEC {
                 try_to_stand(u, t, rnd, false);
                 u.orders.pop();
-                crate::economy::settle(u, occupancy);
             }
         } else {
             u.dest = Some(Pos::new(crate::path::cell_center(c.0, u.lx), crate::path::cell_center(c.1, u.lx)));

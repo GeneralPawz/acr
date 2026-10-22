@@ -110,14 +110,25 @@ impl SimAssets {
     /// Builds the simulation data from everything received.
     pub fn build(&self) -> SimData {
         let mut catalog = Catalog::new();
-        for path in &self.nations {
-            let Some(bytes) = self.files.get(&normalize_path(path)) else { continue };
-            for m in &NationDef::parse(bytes).members {
+        let nations: Vec<NationDef> = self
+            .nations
+            .iter()
+            .filter_map(|path| self.files.get(&normalize_path(path)))
+            .map(|bytes| NationDef::parse(bytes))
+            .collect();
+        for nation in &nations {
+            for m in &nation.members {
                 if let Some(def) = self.defs.get(&m.md.to_ascii_uppercase()) {
                     catalog.add(ObjectType::from_def(&m.id, def));
                 }
             }
         }
+        // The tech sections may name members of any nation (one namespace, as in the engine).
+        let mut tech = std::mem::take(&mut catalog.tech);
+        for nation in &nations {
+            tech.add_nation(&catalog, nation);
+        }
+        catalog.tech = tech;
         if let Some(nres) = self.files.get(NRES) {
             catalog.set_weapon_kinds(&acr_formats::defs::nres::weapon_kinds(nres));
         }

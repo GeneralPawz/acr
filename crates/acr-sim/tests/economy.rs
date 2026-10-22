@@ -200,3 +200,89 @@ fn peasants_carry_wood_to_the_store() {
     // 25 work cycles of 13 ticks (#ATTACK1, 28 frames) plus walking there and back.
     assert!((325..700).contains(&t), "first delivery at tick {t}");
 }
+
+const BARRACKS: &str = "NAME Bar\r\nBUILDING\r\nLIFE 1000\r\nLOCATION 0 0 64 64\r\nBUILDSTAGES 10\r\n[END]\r\n";
+
+/// A nation where the centre trains peasants (enabled) and pikemen, which need barracks.
+fn nation() -> (World, TypeId, TypeId, TypeId, TypeId) {
+    use acr_formats::defs::NationDef;
+    let mut c = Catalog::new();
+    let kri = c.add(ObjectType::from_def("Kri(EN)", &UnitDef::parse(BUILDER.as_bytes())));
+    let pik = c.add(ObjectType::from_def("Hardy(EN)", &UnitDef::parse(HARDY.as_bytes())));
+    let cen = c.add(ObjectType::from_def("Cen(EN)", &UnitDef::parse(CENTER.as_bytes())));
+    let bar = c.add(ObjectType::from_def("Bar(EN)", &UnitDef::parse(BARRACKS.as_bytes())));
+    let def = NationDef::parse(
+        b"[FIXED_PRODUCE]\r\nCen(EN) 2\r\nKri(EN) 0 0\r\nHardy(EN) 1 0\r\nKri(EN) 1\r\nBar(EN) 0 0\r\n\
+          [ENABLED]\r\nKri(EN)\r\nHardy(EN)\r\nCen(EN)\r\n[ACCESSCONTROL]\r\nHardy(EN) 1 Bar(EN)\r\n\
+          [CANSETDEST]\r\nCen(EN)\r\n[END]\r\n",
+    );
+    let mut tech = acr_sim::tech::Tech::default();
+    tech.add_nation(&c, &def);
+    c.tech = tech;
+    let w = World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(Formations::default()));
+    (w, kri, pik, cen, bar)
+}
+
+#[test]
+fn production_follows_the_build_lists_and_access_control() {
+    let (mut w, kri, pik, cen, bar) = nation();
+    let center = w.spawn(cen, 0, Pos::from_pixels(2048, 2048), 0);
+    economy::census_all(&mut w);
+    assert_eq!(economy::producible(&w, center.0 as usize), [kri], "pikemen need barracks");
+    w.step(&[Command::Produce { player: 0, building: center, kind: pik }]);
+    w.step(&[Command::Produce { player: 0, building: center, kind: cen }]);
+    assert!(w.units[center.0 as usize].queue.is_empty(), "refused");
+    // A finished barracks enables the pikemen at the next census.
+    let site = w.spawn(bar, 0, Pos::from_pixels(3000, 2048), 0);
+    w.units[site.0 as usize].stage = 0;
+    economy::census_all(&mut w);
+    assert!(!w.players[0].enabled[usize::from(pik.0)], "an unfinished building does not count");
+    w.units[site.0 as usize].stage = 10;
+    economy::census_all(&mut w);
+    assert_eq!(economy::producible(&w, center.0 as usize), [kri, pik]);
+    w.step(&[Command::Produce { player: 0, building: center, kind: pik }]);
+    assert_eq!(w.units[center.0 as usize].queue.len(), 1);
+    // Barracks have no rally point (`[CANSETDEST]`).
+    w.step(&[Command::Rally { player: 0, building: site, x: 100, y: 100 }]);
+    assert_eq!(w.units[site.0 as usize].rally, None);
+}
+
+#[test]
+fn produced_units_walk_to_the_rally_point() {
+    let (mut w, kri, _, cen, _) = nation();
+    let center = w.spawn(cen, 0, Pos::from_pixels(2048, 2048), 0);
+    economy::census_all(&mut w);
+    w.step(&[
+        Command::Rally { player: 0, building: center, x: 2600, y: 2400 },
+        Command::Produce { player: 0, building: center, kind: kri },
+    ]);
+    // BUILDSTAGES 64 (the builder's default): 32 ticks, then the walk.
+    for _ in 0..600 {
+        w.step(&[]);
+    }
+    let p = w.units.iter().find(|u| u.kind == kri).expect("produced");
+    let (x, y) = p.pos.pixels();
+    assert!((x - 2600).abs() <= 32 && (y - 2400).abs() <= 32, "at ({x}, {y})");
+    assert!(!p.unlimited && p.orders.is_empty(), "{:?}", p.orders);
+}
+
+#[test]
+fn a_rally_point_on_trees_sends_peasants_to_chop() {
+    use acr_sim::gather::{Source, Sources};
+    use acr_sim::world::Order;
+    let (mut w, kri, _, cen, _) = nation();
+    let trees: Vec<Source> =
+        (0..4).map(|k| Source { x: 2600 + 40 * k, y: 2400, kind: 0, per_work: 4, radius: 30 }).collect();
+    w.sources = Arc::new(Sources::new(trees, 16384));
+    let center = w.spawn(cen, 0, Pos::from_pixels(2048, 2048), 0);
+    economy::census_all(&mut w);
+    w.step(&[
+        Command::Rally { player: 0, building: center, x: 2620, y: 2400 },
+        Command::Produce { player: 0, building: center, kind: kri },
+    ]);
+    for _ in 0..33 {
+        w.step(&[]);
+    }
+    let p = w.units.iter().find(|u| u.kind == kri).expect("produced");
+    assert!(matches!(p.orders.first(), Some(Order::Gather { kind: 0, .. })), "{:?}", p.orders);
+}

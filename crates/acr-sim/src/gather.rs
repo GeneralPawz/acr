@@ -103,28 +103,39 @@ impl Sources {
     }
 }
 
-/// `TakeResource` (0x4d2e10): sends a peasant to gather sources of type `kind`.
-pub fn take_resource(w: &mut World, i: usize, kind: u8, prio: u8) -> bool {
+/// `TakeResource` (0x4d2e10): sends a peasant to gather sources of type `kind`, starting
+/// with the one nearest to world pixel `(x, y)` (`FindResourceObject` searches from the
+/// clicked point, not from the peasant). `append` queues the order after the current ones
+/// (order type 2, used for units leaving a building towards a rally point); otherwise it
+/// replaces them. False if the unit cannot gather it or no source is found.
+pub fn take_resource(w: &mut World, i: usize, x: i32, y: i32, kind: u8, prio: u8, append: bool) -> bool {
     let u = &w.units[i];
     let t = w.catalog.get(u.kind);
     let Some(entry) = t.economy.take_res.get(usize::from(kind)).copied().flatten() else { return false };
-    if !u.active() || prio < u.prio && !u.orders.is_empty() || entry.work == 0 {
+    if !u.active() || u.unlimited || prio < u.prio && !u.orders.is_empty() || entry.work == 0 {
         return false;
     }
+    let Some(src) = w.sources.find(x, y, kind) else { return false };
+    let s = w.sources.list[src];
     let u = &mut w.units[i];
     if u.carry_type != Some(kind) {
         u.carried = 0;
         u.carry_type = None;
     }
-    u.orders.clear();
-    u.orders.push(Order::Gather { kind, source: None, prio });
-    u.prio = prio;
-    u.path.delay = 0;
+    let order = Order::Gather { kind, source: Some(src), at: (s.x, s.y), prio };
+    if append {
+        u.orders.insert(0, order);
+    } else {
+        u.orders.clear();
+        u.orders.push(order);
+        u.prio = prio;
+        u.path.delay = 0;
+    }
     true
 }
 
 /// `TakeResLink` (0x4d2fb0), once per tick, acting only at the end of an animation cycle.
-pub fn gather_link(w: &mut World, i: usize, kind: u8, source: Option<usize>, prio: u8) {
+pub fn gather_link(w: &mut World, i: usize, kind: u8, source: Option<usize>, at: (i32, i32), prio: u8) {
     if w.units[i].frame < w.units[i].anim_frames - FRM_DEC {
         return;
     }
@@ -144,10 +155,12 @@ pub fn gather_link(w: &mut World, i: usize, kind: u8, source: Option<usize>, pri
     let (ux, uy) = w.units[i].pos.pixels();
     let src = match source.filter(|&s| s < w.sources.list.len()) {
         Some(s) => s,
-        None => match w.sources.find(ux, uy, kind) {
+        None => match w.sources.find(at.0, at.1, kind) {
             Some(s) => {
-                if let Some(Order::Gather { source, .. }) = w.units[i].orders.last_mut() {
+                let (sx, sy) = (w.sources.list[s].x, w.sources.list[s].y);
+                if let Some(Order::Gather { source, at, .. }) = w.units[i].orders.last_mut() {
                     *source = Some(s);
+                    *at = (sx, sy);
                 }
                 s
             }

@@ -59,20 +59,23 @@ pub fn base_cell(t: &ObjectType, pos: Pos) -> (i32, i32) {
     ((pos.x + (t.location.0 << 4)) >> 8, (pos.y + ((2 * t.location.1) << 4)) >> 8)
 }
 
-/// `City::Census` (0x42e658) for one player: housing, population, upkeep rates, type counts;
-/// players short of gold lose `NAEMNIK` units (they desert to player 7) and `TURNOFF` units
-/// stop.
+/// `City::ProcessCreation` (0x432582) for one player: `EnumUnits` (0x42e658: housing,
+/// population, upkeep rates, type counts; players short of gold lose `NAEMNIK` units, which
+/// desert to player 7, and `TURNOFF` units stop), then `RefreshAbility` (0x42ffed).
 pub fn census(w: &mut World, player: u8) {
     let catalog = w.catalog.clone();
     let n = usize::from(player);
     let short = w.players[n].gold_short;
     let mut counts = vec![0u16; catalog.len()];
+    let mut ready = vec![0u16; catalog.len()];
     let (mut housing, mut population, mut speed) = (0, 0, [0i32; 8]);
     for u in w.units.iter_mut().filter(|u| u.alive && u.owner == player && (u.death == 0 || u.inside_of.is_some())) {
         let t = catalog.get(u.kind);
         let e = &t.economy;
-        counts[usize::from(u.kind.0)] = counts[usize::from(u.kind.0)].saturating_add(1);
+        let k = usize::from(u.kind.0);
+        counts[k] = counts[k].saturating_add(1);
         if !t.building || u.stage >= e.build_stages {
+            ready[k] = ready[k].saturating_add(1);
             housing += e.farm;
             if !t.building {
                 population += 1;
@@ -91,6 +94,8 @@ pub fn census(w: &mut World, player: u8) {
     p.population = population;
     p.consumption = speed;
     p.type_count = counts;
+    p.ready_count = ready;
+    crate::tech::refresh_ability(w, player);
 }
 
 /// The per-tick upkeep (0x4a6b8d) of every player: food per head, then `RESCONSUMER`.
@@ -192,10 +197,44 @@ fn pay(w: &mut World, player: u8, cost: &[i32; 8]) -> bool {
     true
 }
 
+/// Whether building `b` may produce `kind` now: the type is in its `[FIXED_PRODUCE]` list
+/// (checked by the produce command 0x4dbac2 through 0x49e060), enabled for the owner (the
+/// command panel only offers enabled types), and the building has done every stage of the
+/// type's `[STAGEDEPENDENT]` mask (`Produce` 0x49e649). Without nation data everything may
+/// be produced.
+pub fn can_produce(w: &World, b: usize, kind: TypeId) -> bool {
+    let tech = &w.catalog.tech;
+    if !tech.loaded {
+        return true;
+    }
+    let u = &w.units[b];
+    let p = &w.players[usize::from(u.owner)];
+    tech.of(u.kind).is_some_and(|t| t.produce.contains(&kind))
+        && p.enabled.get(usize::from(kind.0)).copied().unwrap_or(false)
+        && stages_done(u.stages, tech.of(kind).map_or(0, |t| t.stage_mask))
+}
+
+/// Whether every stage `s` in `mask` is in state 2 (done) in the 3-bit fields of `stages`.
+pub fn stages_done(stages: u16, mask: u8) -> bool {
+    (0..5).all(|s| mask & (1 << s) == 0 || (stages >> (3 * s)) & 7 == 2)
+}
+
+/// The types building `b` can produce now, in menu order (for the command panel).
+pub fn producible(w: &World, b: usize) -> Vec<TypeId> {
+    let u = &w.units[b];
+    match w.catalog.tech.of(u.kind) {
+        Some(t) if w.catalog.tech.loaded => t.produce.iter().copied().filter(|&k| can_produce(w, b, k)).collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// `Produce` (0x49e649): queues a unit in a finished building, paying the full price now.
 pub fn produce(w: &mut World, b: usize, kind: TypeId) -> bool {
     let u = &w.units[b];
     if !u.living() || !u.building || u.stage < w.catalog.get(u.kind).economy.build_stages {
+        return false;
+    }
+    if !stages_done(u.stages, w.catalog.tech.of(kind).map_or(0, |t| t.stage_mask)) {
         return false;
     }
     let player = u.owner;
@@ -256,6 +295,13 @@ fn production_link(w: &mut World, b: usize) {
         q.progress = stages * q.progress / q.stages;
         q.stages = stages;
     }
+    let enabled = w.players[usize::from(owner)].enabled.get(usize::from(head.kind.0)).copied().unwrap_or(true);
+    if !enabled {
+        // The type was disabled meanwhile: the order is dropped without refund.
+        w.units[b].queue.remove(0);
+        return;
+    }
+    let q = &mut w.units[b].queue[0];
     q.progress += 1 << SPEED_SH;
     if q.progress < q.stages {
         return;
@@ -272,33 +318,144 @@ fn production_link(w: &mut World, b: usize) {
     census(w, owner);
 }
 
-/// Creates a unit at the building's first born point and sends it along the others (and on
-/// to the rally point), walking through locks until it is out (`SetOrderedUnlimitedMotion`).
+/// The spawn of `ProduceObjLink` (0x49eeb7, from 0x49f4b3): the unit appears at the
+/// building's first born point facing the second, walks through locks and units to every
+/// further born point (each one cell in, `+1`), takes its cell, steps to the last born point
+/// and then follows the rally point (`DstX/DstY`):
+///
+/// - onto a building that can take it: the producer itself takes it in at once, another
+///   building gets a `GoToMine`;
+/// - onto a resource source: a peasant gathers it (`TakeResource`, appended);
+/// - elsewhere: a free spot near the point (`FindUnitPosition` 0x51508c) and `SmartSendTo`.
 fn spawn_from(w: &mut World, b: usize, kind: TypeId) -> EntityId {
     let catalog = w.catalog.clone();
     let (bu, bt) = (&w.units[b], catalog.get(w.units[b].kind));
     let (bx, by) = base_cell(bt, bu.pos);
-    let pts = &bt.economy.born_points;
-    let first = pts.first().map_or(bu.pos, |&(x, y)| Pos::new((bx + x) << 8, (by + y) << 8));
+    let pts = bt.economy.born_points.clone();
+    let corner = |(x, y): (i32, i32), add: i32| Pos::new((bx + x + add) << 8, (by + y + add) << 8);
+    let first = pts.first().map_or(bu.pos, |&p| corner(p, 0));
     let dir = match pts.get(1) {
         Some(&(x1, y1)) => get_dir(x1 - pts[0].0, y1 - pts[0].1),
         None => 64,
     };
     let (owner, rally) = (bu.owner, bu.rally);
-    let last = pts.last().map(|&(x, y)| Pos::new((bx + x) << 8, (by + y) << 8));
     let id = w.spawn(kind, owner, first, dir);
-    let u = &mut w.units[id.0 as usize];
+    let i = id.0 as usize;
+    let u = &mut w.units[i];
     w.occupancy.clr_bar(u.cell.0, u.cell.1, u.lx);
-    u.unlimited = true;
-    if let Some(r) = rally {
-        let (x, y) = r.pixels();
-        u.orders.push(Order::SmartSendTo { x, y, dx: 0, dy: 0, prio: SPAWN_PRIO, area: None });
-    }
-    let out = last.unwrap_or(first);
-    u.orders.push(Order::SendTo { cell: Unit::cell_of(out, u.lx), prio: SPAWN_PRIO });
-    u.dest = Some(out);
+    // The engine's queue in execution order; the order stack is its reverse.
+    let mut queue: Vec<Order> = pts
+        .iter()
+        .skip(1)
+        .map(|&p| Order::SendTo { cell: Unit::cell_of(corner(p, 1), u.lx), prio: SPAWN_PRIO })
+        .collect();
+    queue.push(Order::ClearUnlimited);
+    let out = pts.last().map_or(first, |&p| corner(p, 0));
+    queue.push(Order::SendTo { cell: Unit::cell_of(out, u.lx), prio: SPAWN_PRIO });
+    queue.reverse();
+    u.orders = queue;
     u.prio = SPAWN_PRIO;
+    if let Some(r) = rally.filter(|r| r.x > 0) {
+        follow_rally(w, b, i, r);
+    }
+    let u = &mut w.units[i];
+    if u.inside_of.is_none() {
+        // SetOrderedUnlimitedMotion: land units walk through locks until `ClearUnlimited`.
+        u.unlimited = true;
+    }
     id
+}
+
+/// The rally part of the spawn (0x49fcc6..0x4a0160) for unit `i` of building `b`.
+fn follow_rally(w: &mut World, b: usize, i: usize, rally: Pos) {
+    let (dx, dy) = rally.pixels();
+    if let Some(ins) = building_at(w, dx, dy) {
+        if ins == b && can_enter(w, &w.units[i], &w.units[b]) {
+            // Straight in: the unit never walks out.
+            let (bid, u) = (w.units[b].id, &mut w.units[i]);
+            u.orders.clear();
+            u.inside_of = Some(bid);
+            u.dest = None;
+            let id = u.id;
+            w.units[b].inside.push(id);
+            return;
+        }
+        enter(w, i, ins, 0x90, true);
+        return;
+    }
+    let peasant = w.catalog.get(w.units[i].kind).peasant;
+    if let Some(rk) = w.sources.determine(dx, dy).filter(|_| peasant) {
+        // The engine draws random points within 128 px until one lies at a source of the
+        // same type (its retry counter is never decremented); capped here at one pass
+        // through the random table.
+        let (mut x, mut y) = (dx, dy);
+        for _ in 0..crate::rng::SYNC_TABLE_LEN / 2 {
+            let rx = dx + (w.random.rando() & 255) - 128;
+            let ry = dy + (w.random.rando() & 255) - 128;
+            if rx > 0 && ry > 0 && w.sources.determine(rx, ry) == Some(rk) {
+                (x, y) = (rx, ry);
+                break;
+            }
+        }
+        crate::gather::take_resource(w, i, x, y, rk, 0x10, true);
+        return;
+    }
+    let (x, y) = find_unit_position(w, w.units[i].kind, rally);
+    let (x, y) = (x >> 4, y >> 4);
+    w.units[i].orders.insert(0, Order::SmartSendTo { x, y, dx: 0, dy: 0, prio: 0x80, area: None });
+}
+
+/// The building the rally point lies on (0x49ed8e over rings 0..=3 of 128 px cells, where
+/// the last match wins; simplified: a building that can take units in and has a lock cell
+/// under the point).
+fn building_at(w: &World, x: i32, y: i32) -> Option<usize> {
+    let cell = (x >> 4, y >> 4);
+    w.units.iter().enumerate().rev().find_map(|(k, u)| {
+        let t = w.catalog.get(u.kind);
+        let absorbs = t.economy.unit_absorber > 0 || t.economy.peasant_absorber > 0;
+        (u.living() && u.building && absorbs && t.lock_cells(u.pos).any(|c| c == cell)).then_some(k)
+    })
+}
+
+/// `FindUnitPosition` (0x51508c): the first free spot for a unit of `kind` on the rings
+/// around `at` (1/16 px), 32 px apart; each ring is walked forwards or backwards by a
+/// random draw. A spot is free (0x513b2c) when it lies on the map, the unit's footprint is
+/// unlocked (0x50a60d) and no unit stands within the two radii plus 8 (0x50a495).
+pub fn find_unit_position(w: &mut World, kind: TypeId, at: Pos) -> (i32, i32) {
+    let catalog = w.catalog.clone();
+    let t = catalog.get(kind);
+    let r2 = t.radius2 << 4;
+    let lx = ((r2 + 3) >> 7).max(1);
+    let msx = 240 << w.map.shift;
+    let free = |w: &World, x: i32, y: i32| {
+        if x >> 9 <= 0 || y >> 9 <= 0 || x >> 9 >= msx || y >> 9 >= msx {
+            return false;
+        }
+        let (cx, cy) = ((x - lx * 128) >> 8, (y - lx * 128) >> 8);
+        if w.map.land.check_bar(cx, cy, lx, lx) {
+            return false;
+        }
+        let (gx, gy) = (x >> 11, y >> 11);
+        !w.units.iter().any(|u| {
+            u.living()
+                && u.inside_of.is_none()
+                && ((u.pos.x >> 11) - gx).abs() <= 1
+                && ((u.pos.y >> 11) - gy).abs() <= 1
+                && norma(u.pos.x - x, u.pos.y - y) < r2 + 8 + (catalog.get(u.kind).radius2 << 4)
+        })
+    };
+    for ring in &crate::trig::rings()[..50] {
+        let forward = w.random.rando() < 0x4000;
+        let test = |&(dx, dy): &(i8, i8)| {
+            let (x, y) = (at.x + (i32::from(dx) << 9), at.y + (i32::from(dy) << 9));
+            free(w, x, y).then_some((x, y))
+        };
+        let found = if forward { ring.iter().find_map(test) } else { ring.iter().rev().find_map(test) };
+        if let Some(p) = found {
+            return p;
+        }
+    }
+    (at.x, at.y)
 }
 
 /// `TakeResourceFromSpriteLink` (0x5f75b3), every tick, no randomness: the mine adds
@@ -351,13 +508,18 @@ fn can_enter(w: &World, u: &Unit, b: &Unit) -> bool {
         && (b.inside.len() as i32) < cap
 }
 
-/// Orders a unit into a building (mine, garrison).
-pub fn enter(w: &mut World, i: usize, b: usize, prio: u8) -> bool {
+/// Orders a unit into a building (mine, garrison): `GoToMine`. `append` queues the order
+/// after the current ones (order type 2), otherwise it replaces them.
+pub fn enter(w: &mut World, i: usize, b: usize, prio: u8, append: bool) -> bool {
     if !can_enter(w, &w.units[i], &w.units[b]) || prio < w.units[i].prio && !w.units[i].orders.is_empty() {
         return false;
     }
     let id = w.units[b].id;
     let u = &mut w.units[i];
+    if append {
+        u.orders.insert(0, Order::Enter { building: id, prio });
+        return true;
+    }
     u.orders.clear();
     u.orders.push(Order::Enter { building: id, prio });
     u.prio = prio;
@@ -418,6 +580,7 @@ pub fn leave(w: &mut World, b: usize) {
         u.cell = Unit::cell_of(first, u.lx);
         u.unlimited = true;
         u.orders.clear();
+        u.orders.push(Order::ClearUnlimited);
         u.orders.push(Order::SendTo { cell: Unit::cell_of(out, u.lx), prio: SPAWN_PRIO });
         u.dest = Some(out);
     }

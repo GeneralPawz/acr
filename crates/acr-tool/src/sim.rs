@@ -117,11 +117,28 @@ pub fn sim_check(dir: &Path, map: &str, rest: &[&str]) -> Result<()> {
         unknown.dedup();
         println!("  not placed: {} skipped (nation >= 8), unknown types {:?}", report.skipped, unknown);
     }
-    let (cmds, groups) = orders(&base);
+    let (mut cmds, groups) = orders(&base);
     println!(
         "  {} move orders for {} units, {ticks} ticks",
         cmds.len(),
         groups.iter().map(|g| g.0.len()).sum::<usize>()
+    );
+    // Economy: every finished building that can produce something queues its first item
+    // with a rally point 200 px south.
+    let tech = &catalog.tech;
+    let mut produced = 0;
+    for (b, u) in base.units.iter().enumerate().filter(|(_, u)| u.living() && u.building) {
+        if let Some(&kind) = acr_sim::economy::producible(&base, b).first() {
+            let (x, y) = u.pos.pixels();
+            cmds.push(Command::Rally { player: u.owner, building: u.id, x, y: y + 200 });
+            cmds.push(Command::Produce { player: u.owner, building: u.id, kind });
+            produced += 1;
+        }
+    }
+    println!(
+        "  tech: {} upgrades, {} access rules; {produced} buildings queue a unit",
+        tech.upgrades.len(),
+        tech.access.len()
     );
 
     // Run A records a replay; run B plays back the decoded replay and must reproduce the
@@ -186,6 +203,7 @@ pub fn sim_check(dir: &Path, map: &str, rest: &[&str]) -> Result<()> {
         100.0 * f64::from(arrived) / f64::from(total.max(1)),
         n - cells.len()
     );
+    println!("  economy: {} objects created", a.units.len() - base.units.len());
     let dead = a.units.iter().filter(|u| u.death != 0 || !u.alive).count();
     let corpses = a.units.iter().filter(|u| u.alive && u.death != 0).count();
     println!("  combat: {dead} units died ({corpses} corpses still lying)");

@@ -31,6 +31,18 @@ fn lock_cells(t: &ObjectType, pos: Pos, points: &[(i32, i32)]) -> Vec<(i32, i32)
     points.iter().map(|&(x, y)| (bx + x, by + y)).collect()
 }
 
+/// Whether `player` may place `kind` with these builders: the type is enabled and in the
+/// `[FIXED_PRODUCE]` list (the build menu) of one of them. Without nation data anything
+/// may be built.
+pub fn can_build(w: &World, player: u8, builders: &[usize], kind: TypeId) -> bool {
+    let tech = &w.catalog.tech;
+    if !tech.loaded {
+        return true;
+    }
+    w.players[usize::from(player)].enabled.get(usize::from(kind.0)).copied().unwrap_or(false)
+        && builders.iter().any(|&i| tech.of(w.units[i].kind).is_some_and(|t| t.produce.contains(&kind)))
+}
+
 /// `CreateObject` for a building placed by a player at world pixel `(x, y)`: checks the
 /// position and the price, pays, and creates the construction site. `None` if refused.
 pub fn place(w: &mut World, player: u8, kind: TypeId, x: i32, y: i32) -> Option<EntityId> {
