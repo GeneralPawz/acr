@@ -11,8 +11,8 @@ import math
 from mathutils import Matrix, Vector
 
 from acr_assets import armature as am
-from acr_assets import gear, poses, rig
-from acr_assets.humans import Character, prepare_export
+from acr_assets import gear, outfit, poses, rig
+from acr_assets.humans import LAYER_OF, Character, prepare_export
 
 TYPE = "EngM18"
 # Sprite checks run by `cargo xtask assets --check` (arguments of `acr model-check`).
@@ -118,7 +118,9 @@ def build(ctx):
         am.add_clip(ch.arm, clip, keys)
     am.set_clip(ch.arm, "STAND")
     report = {}
-    colours = ch.colours(ctx.ref, PALETTE, report=report)
+    colours = ch.colours(ctx.ref, PALETTE, report=report, mix=0.5)
+    # Realistic cloth, skin and leather painted over those colours (#217).
+    outfit.dress(ch, colours, LAYER_OF)
     # The exported scene pose (glTF node transforms) is STAND.
     ch.arm.animation_data.action = None
     am.pose(ch.arm, poses.STAND_MUSKET)
