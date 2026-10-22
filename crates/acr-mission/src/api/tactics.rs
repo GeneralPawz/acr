@@ -1524,6 +1524,62 @@ OPPOSIT 10 30
         }
     }
 
+    /// SelAttackGroup (0x560258): enemies in member order, skipping a dying one; a unit that
+    /// took an enemy keeps it (its `EnemyID` is set), and one already attacking is left alone.
+    #[test]
+    fn sel_attack_group_takes_the_first_enemy_it_can() {
+        use super::super::call::magic;
+        let mut a = Archers::new();
+        let foes: Vec<_> =
+            (0..3).map(|n| a.f.world.spawn(a.foot, 1, Pos::from_pixels(1100 + 40 * n, 1000), 0)).collect();
+        a.f.world.units[foes[0].0 as usize].death = 1;
+        let members =
+            foes.iter().map(|&id| crate::state::Member { id: id.0 as u16, serial: a.f.st.serial(id) }).collect();
+        a.f.st.groups.push(crate::state::Group { members, ..Default::default() });
+        a.f.st.selection[0] = a.f.st.groups[0].members.clone();
+        a.f.mem.write_u16(DATA, 1).expect("handle");
+        a.f.mem.write_u16(DATA + 2, 0).expect("handle");
+        a.f.mem.write_u32(DATA + 4, magic::GROUP).expect("handle");
+        a.f.call("SelAttackGroup", &[0, DATA]);
+        assert_eq!(a.f.world.units[a.archer.0 as usize].target(), Some(foes[1]));
+        // Already attacking: the next call changes nothing.
+        a.f.st.groups[1].members.swap(1, 2);
+        a.f.call("SelAttackGroup", &[0, DATA]);
+        assert_eq!(a.f.world.units[a.archer.0 as usize].target(), Some(foes[1]));
+    }
+
+    /// GetTotalAmount1 (0x55e7f2) reads the census cache, not the live objects.
+    #[test]
+    fn get_total_amount1_reads_the_census() {
+        use super::super::call::magic;
+        let mut f = Fixture::new();
+        f.mem.write_u16(DATA, 0).expect("handle");
+        f.mem.write_u32(DATA + 4, magic::UNIT_TYPE).expect("handle");
+        assert_eq!(f.call("GetTotalAmount1", &[DATA, 1]), 0, "no census yet");
+        acr_sim::economy::census_all(&mut f.world);
+        assert_eq!(f.call("GetTotalAmount1", &[DATA, 1]), 5);
+        assert_eq!(f.call("GetTotalAmount1", &[DATA, 0]), 1);
+        f.world.units[0].death = 1;
+        assert_eq!(f.call("GetTotalAmount1", &[DATA, 1]), 5, "until the next census");
+    }
+
+    /// GetUnitGlobalInfo (0x567cb9): no serial, a dying object fails, `0x20`/`0x21`/`0x23`
+    /// are not written.
+    #[test]
+    fn get_unit_global_info_fills_the_short_record() {
+        let mut f = Fixture::new();
+        f.mem.write_u32(DATA + 0x20, 0xAAAA_AAAA).expect("out");
+        assert_eq!(f.call("GetUnitGlobalInfo", &[6, DATA]), 1);
+        assert_eq!(f.mem.read_u16(DATA).expect("out"), 6);
+        assert_eq!(f.mem.read_u8(DATA + 0x1c).expect("out"), 0, "owner");
+        assert_eq!(f.mem.read_u8(DATA + 0x20).expect("out"), 0xAA);
+        assert_eq!(f.mem.read_u8(DATA + 0x23).expect("out"), 0xAA);
+        f.world.units[6].death = 1;
+        assert_eq!(f.call("GetUnitGlobalInfo", &[6, DATA]), 0);
+        assert_eq!(f.mem.read_u16(DATA).expect("out"), NO_UNIT);
+        assert_eq!(f.call("GetUnitGlobalInfo", &[0xFFFF, DATA]), 0);
+    }
+
     /// FindArcherTarget (0x43e5dd) weighs a tower (50) over a lone soldier (1 in its cell and
     /// around): 50·256/19 against 256/8 although the soldier is four times nearer.
     #[test]

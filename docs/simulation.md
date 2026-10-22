@@ -1716,6 +1716,18 @@ No game option writes it. How the map view draws the fog is in
   the target cell first.
 - **`ApplyOffset`** (0x52b0cd) and the 10-ring spiral table (0x28a6f10) are approximated by
   square rings and a simple free-box test.
+- **Script API on the simulation.**
+  - `InviteUnitIntoBuilding` (0x56c638) is `GoToMine(building, 0xFF, ordType)` with
+    `CreateOrder`'s placements (`economy::enter_ex`); `GoToMine`'s own gaps are listed under
+    Economy (the walk inside, the transport test).
+  - `GetTotalAmount1` (0x55e7f2) reads the census's per-type count (`City+0xeb73`,
+    `Player::type_count`); a type handle beyond the catalog reports a script error, where
+    the engine returns 0 silently for an index ≥ `NMONS`.
+  - `SelAttackGroup` (0x560258) tests `EnemyID == 0xFFFF` as "no current attack order"
+    (`Unit::target`); a unit whose attack was placed behind other orders would be offered
+    the next enemy too.
+  - `GetUnitInfo` / `GetUnitGlobalInfo` (0x567a0e, 0x567cb9) accept a dying object only when
+    it is `Hidden`; ACR's units inside buildings are not dying, so `living()` is the same test.
 - **`RemoveFools`.** Pushed friends get a `SendTo` to the nearest free cell (the original uses
   its `Rarr` push tables). Enemies in the way are left to `CheckMotionThroughEnemyAbility`.
 - **Animations.**

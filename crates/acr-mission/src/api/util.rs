@@ -135,6 +135,20 @@ impl Api<'_> {
         (u.living() && self.st.serial(u.id) == m.serial).then_some(u)
     }
 
+    /// The engine's serial refresh of a group (0x55b636): a member whose object has
+    /// `Sdoxlo == 0` (not dying, not inside a building) and whose serial matches without bit 0
+    /// (a captured unit) takes the object's serial.
+    pub fn refresh_serials(&mut self, g: usize) {
+        for k in 0..self.st.groups[g].members.len() {
+            let m = self.st.groups[g].members[k];
+            let Some(u) = self.object(m.id).filter(|u| u.death == 0 && u.inside_of.is_none()) else { continue };
+            let s = self.st.serial(u.id);
+            if s & 0xFFFE == m.serial & 0xFFFE {
+                self.st.groups[g].members[k].serial = s;
+            }
+        }
+    }
+
     /// Like [`Api::member_h`], comparing serials without bit 0 (`ser>>1`: captured units match).
     pub fn member_loose(&self, m: Member) -> Option<&Unit> {
         let u = self.object(m.id)?;

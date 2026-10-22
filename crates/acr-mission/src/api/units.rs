@@ -21,24 +21,14 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("GetUnitsAmount1", 0x55dd05, DONE, get_units_amount1),
     f("GetUnitsAmount2", 0x55e05c, DONE, get_units_amount2),
     f("GetTotalAmount0", 0x55e6c6, DONE, get_total_amount0),
-    f(
-        "GetTotalAmount1",
-        0x55e7f2,
-        Status::Partial("counted live; the original reads a per-nation cache refreshed every 8 ticks"),
-        get_total_amount1,
-    ),
+    f("GetTotalAmount1", 0x55e7f2, DONE, get_total_amount1),
     f("GetUnitsByNation", 0x566ca6, DONE, get_units_by_nation),
     f("GetAmountOfWarriors", 0x55eaba, DONE, get_amount_of_warriors),
     f("GetInsideAmount", 0x57819e, DONE, get_inside_amount),
     f("GetMaxInsideAmount", 0x5781e5, Status::Done, get_max_inside_amount),
     f("GetInsideList", 0x56c713, DONE, get_inside_list),
     f("GetNInside", 0x5604e2, DONE, get_n_inside),
-    f(
-        "InviteUnitIntoBuilding",
-        0x56c638,
-        Status::Partial("economy::enter (capacity and owner rules of acr-sim)"),
-        invite_unit_into_building,
-    ),
+    f("InviteUnitIntoBuilding", 0x56c638, DONE, invite_unit_into_building),
     f(
         "LeaveBuilding",
         0x56c6ca,
@@ -53,7 +43,7 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("GetUnitInfo", 0x567a0e, DONE, get_unit_info),
     f("GetUnitInfo2", 0x578f2c, DONE, get_unit_info2),
     f("SetUnitInfo", 0x567e8a, Status::Partial("life and position; no damage/shield bonus yet"), set_unit_info),
-    f("GetUnitGlobalInfo", 0x567cb9, Status::Partial("as GetUnitInfo"), get_unit_global_info),
+    f("GetUnitGlobalInfo", 0x567cb9, DONE, get_unit_global_info),
     f("GetUnitExCaps", 0x56be77, Status::Partial("StandTime 0, order kind 8 (send-to) or -1"), get_unit_ex_caps),
     f("GetCurrentUnits", 0x578173, DONE, get_current_units),
     f("GetMaxUnits", 0x578148, DONE, get_max_units),
@@ -124,8 +114,10 @@ fn get_total_amount0(api: &mut Api, c: &mut Call) -> Result<u32> {
     Ok(api.members_h(g).len() as u32)
 }
 
-/// `int GetTotalAmount1(GAMEOBJ* type, byte nation)`: objects of the type the nation owns
-/// (buildings included).
+/// `int GetTotalAmount1(GAMEOBJ* type, byte nation)` (0x55e7f2): the nation's cached object
+/// count of the type (`City+0xeb73[type]`), refreshed by the census (`EnumUnits` 0x42e658,
+/// every 8 ticks per player and after a unit is produced): living objects of the owner,
+/// including buildings under construction and units inside buildings.
 fn get_total_amount1(api: &mut Api, c: &mut Call) -> Result<u32> {
     let n = api.assign(c.u8(1)?);
     let Some(t) = api.type_arg(c, 0, "GetTotalAmount(UnitType,Nation)")? else { return Ok(0) };
@@ -133,7 +125,8 @@ fn get_total_amount1(api: &mut Api, c: &mut Call) -> Result<u32> {
         api.st.error("GetTotalAmount(UnitType,Nation) : Invalid parameter <Nation>");
         return Ok(0);
     }
-    Ok(api.world.units.iter().filter(|u| u.living() && u.owner == n && u.kind == t).count() as u32)
+    let counts = &api.world.players[usize::from(n)].type_count;
+    Ok(counts.get(usize::from(t.0)).map_or(0, |&k| u32::from(k)))
 }
 
 /// `int GetUnitsByNation(GAMEOBJ* units, byte nation)`: living members owned by the nation
@@ -229,13 +222,13 @@ fn get_n_inside(api: &mut Api, c: &mut Call) -> Result<u32> {
     Ok(sel.iter().filter_map(|&m| api.member(m)).map(|u| u.inside.len() as u32).sum())
 }
 
-/// `void InviteUnitIntoBuilding(int building, int unit, byte ordType)`: `GoToMine` with
-/// priority 0x7f.
+/// `void InviteUnitIntoBuilding(int building, int unit, byte ordType)` (0x56c638): both
+/// indices in `0..=0xFFFF` name living objects (no building test here), then
+/// `unit->GoToMine(building, 0xFF, ordType)`; `GoToMine` does the rest of the checks.
 fn invite_unit_into_building(api: &mut Api, c: &mut Call) -> Result<u32> {
     let (Some(b), Some(u)) = (building_arg(api, c, 0)?, building_arg(api, c, 1)?) else { return Ok(0) };
-    if api.world.units[b].building && !api.world.units[u].building {
-        acr_sim::economy::enter(api.world, u, b, 0x7f, false);
-    }
+    let ord = c.u8(2)?;
+    acr_sim::economy::enter_ex(api.world, u, b, 0xFF, ord);
     Ok(0)
 }
 
@@ -403,7 +396,7 @@ fn write_one_unit(api: &Api, c: &mut Call, out: u32, id: EntityId, full: bool) -
     c.write_i32(out + 0x18, u.pos.y >> 4)?;
     c.write_u8(out + 0x1c, u.owner)?;
     c.write_u8(out + 0x1d, u.dir)?;
-    c.write_u8(out + 0x1e, u8::from(u.stage >= stages))?;
+    c.write_u8(out + 0x1e, u8::from(u.stage == stages))?;
     // Reload in percent: `MaxDelay ? delay·100/MaxDelay : 0` (low byte).
     c.write_u8(out + 0x1f, if u.max_delay != 0 { (u.delay * 100 / u.max_delay) as u8 } else { 0 })?;
     if full {
@@ -429,12 +422,17 @@ fn get_unit_info(api: &mut Api, c: &mut Call) -> Result<u32> {
     Ok(1)
 }
 
-/// `bool GetUnitGlobalInfo(int index, OneUnit* out)`: no serial check.
+/// `bool GetUnitGlobalInfo(int index, OneUnit* out)` (0x567cb9): `out->Index = 0xFFFF`, then an
+/// object at `index < 0xFFFF` that is not dying (`Sdoxlo == 0`, or `Hidden` inside a
+/// building: ACR's `living()`) fills the fields `0..=0x1f` and `0x22` exactly as
+/// `GetUnitInfo` (0x567a0e) does; no serial check, and `0x20`/`0x21`/`0x23` are left alone.
 fn get_unit_global_info(api: &mut Api, c: &mut Call) -> Result<u32> {
     let out = c.u32(1)?;
     c.write_u16(out, NO_UNIT)?;
     let i = c.i32(0)?;
-    let Some(id) = u16::try_from(i).ok().and_then(|i| api.object(i)).filter(|u| u.living()).map(|u| u.id) else {
+    let Some(id) =
+        u16::try_from(i).ok().filter(|&i| i != 0xFFFF).and_then(|i| api.object(i)).filter(|u| u.living()).map(|u| u.id)
+    else {
         return Ok(0);
     };
     write_one_unit(api, c, out, id, false)?;
