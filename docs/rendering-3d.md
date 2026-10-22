@@ -255,6 +255,19 @@ damage block (`DAMAGE_TEXELS` = 28; texel 11 `.w` is their number).
 - **Chunks**: the volume taken (`tears::size`) throws 1–6 gibs scaled by it; a cannonball
   that takes a limb or a chunk also bursts red mist.
 
+**Inside the wound** (`damage::inserts`, drawn like the caps, carried by the bone of the
+part they sit in): per volume an inside-out sphere (`procedural_cavity`, material
+`Tissue::Cavity`) pulled into the part it bites (centre at most 0.3 × the part's radius
+from its axis, radius at most 0.72 ×), of which only the far wall facing the viewer is
+drawn: wet lumpy meat darkening into the deep centre. It closes a hole straight through,
+so the ground does not show. A chest volume (trunk level 0.4..0.85) adds three blood-
+smeared rib arcs (`procedural_rib`), a limb volume a splintered bone end with marrow
+(`procedural_bone`) at the stump of a limb it severs or across one it shatters. Gear
+(the knapsack) is torn by volumes too, but shows no tissue. Shreds of uniform from
+`gore.glb` (materials named `cloth`, `Tissue::Cloth`) are crumpled in the vertex shader
+and take the victim's coat colour (`debris::coat`: the commonest colour of the upper
+sleeves), carried in the gib's spray texel (radius < 0).
+
 #### Bodies in the game (#262 S5)
 
 `ingame/damage_view.rs` turns `acr_sim::body` into a `Damage`, `ingame/debris.rs` keeps what

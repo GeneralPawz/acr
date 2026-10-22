@@ -140,6 +140,13 @@ fn vs_main(v: VertexIn, inst: InstanceIn) -> VsOut {
     }
     var p = v.position + v.morph0 * inst.params.y + v.morph1 * inst.params.z;
     var n = v.normal;
+    // A shred of uniform is crumpled, not a flat sheet.
+    if (i32(round(material.look.y)) == 3) {
+        let k = noise3(v.position * 30.0) - 0.5;
+        let fold = sin(v.position.x * 70.0 + v.position.z * 40.0) * 0.4;
+        p = p + n * (k * 0.05 + fold * 0.012) + vec3<f32>(0.0, abs(k) * 0.03, 0.0);
+        n = normalize(n + vec3<f32>(k * 1.5, 0.0, fold));
+    }
     let d = inst.extra.y;
     let look = texel(d + 3u);
     let part = i32(round(v.body.x));
@@ -415,11 +422,11 @@ fn holes(p: vec3<f32>, d: u32, gore: f32) -> vec4<f32> {
 // splinters of bone; `depth` is how far behind the torn boundary (radius units).
 fn tissue(p: vec3<f32>, depth: f32, fib: f32) -> vec3<f32> {
     let grain = noise3(p * 40.0);
-    var meat = mix(vec3<f32>(0.24, 0.012, 0.012), vec3<f32>(0.55, 0.07, 0.06), fib * 0.7 + grain * 0.3);
+    var meat = mix(vec3<f32>(0.16, 0.006, 0.008), vec3<f32>(0.62, 0.06, 0.05), fib * 0.75 + grain * 0.25);
     let fat = 1.0 - smoothstep(0.0, 0.18, depth + (grain - 0.5) * 0.12);
     meat = mix(meat, vec3<f32>(0.72, 0.56, 0.30), fat * 0.85);
     let clot = smoothstep(0.62, 0.72, noise3(p * 22.0 + vec3<f32>(5.3)));
-    meat = mix(meat, vec3<f32>(0.07, 0.0, 0.0), clot * 0.9);
+    meat = mix(meat, vec3<f32>(0.035, 0.0, 0.0), clot * 0.95);
     let bone = smoothstep(0.80, 0.84, noise3(p * 60.0 + vec3<f32>(11.0)));
     return mix(meat, vec3<f32>(0.80, 0.74, 0.62), bone * 0.8);
 }
@@ -467,10 +474,8 @@ fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
     }
     // Torn out (#280): nothing inside a wound volume but shreds of skin and cloth hanging
     // into the hole from its edge; a ragged band of holes in the cloth around it.
-    var hole = vec4<f32>(1e3, 0.0, 0.0, 0.0);
-    if (in.part > -0.5) {
-        hole = holes(in.rest.xyz, u32(in.spray_look.z + 0.5), in.cut.y);
-    }
+    // Gear (a knapsack in the way) is torn too, but only flesh shows tissue.
+    let hole = holes(in.rest.xyz, u32(in.spray_look.z + 0.5), in.cut.y);
     let shred = noise3(in.rest.xyz * vec3<f32>(90.0, 30.0, 90.0) + vec3<f32>(hole.y * 3.0));
     if (hole.x < 0.0 && !(front && hole.x > -0.22 && shred > 0.68)) {
         discard;
@@ -485,6 +490,12 @@ fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
         if (length(in.uv) > edge) {
             discard;
         }
+    }
+    // The wall of a wound cavity (an inside-out sphere): only the far side, facing the
+    // viewer, so it is seen through the hole and closes a hole straight through.
+    let kind = i32(round(material.look.y));
+    if (kind == 1 && dot(normalize(in.normal), globals.forward.xyz) > 0.0) {
+        discard;
     }
     var rgb = c.rgb;
     let decay = in.params.x;
@@ -519,7 +530,7 @@ fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
     // An open belly: a dark wet gash.
     var wet = material.look.x;
     if (hole.w > 0.5 && material.flags.w < 0.5) {
-        if (!front) {
+        if (!front && in.part > -0.5) {
             // The far wall seen through the hole (and the shell's inside): flesh, fat at
             // the torn edge, not an empty shell.
             rgb = tissue(in.rest.xyz, max(hole.x, 0.0), hole.y);
@@ -537,6 +548,26 @@ fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
         rgb = tissue(in.rest.xyz, in.cut.x * 3.0, strands(in.rest.xyz, 0.0));
         wet = 1.0;
     }
+    if (kind == 1) {
+        // Wet meat darkening into the deep centre of the cavity.
+        let q = in.rest.xyz * 0.07 + vec3<f32>(in.params.x * 3.0);
+        rgb = tissue(q, 1.0, strands(q, 1.3));
+        let deep = smoothstep(0.55, 1.0, -dot(normalize(in.normal), globals.forward.xyz));
+        rgb = rgb * mix(0.85, 0.18, deep);
+        // Lumpy, not a smooth bowl: the gloss breaks up.
+        wet = 0.45 * smoothstep(0.3, 0.7, noise3(in.rest.xyz * 6.0 + vec3<f32>(2.0)));
+    } else if (kind == 2) {
+        // Bone: blood-smeared ivory, glossy.
+        rgb = mix(rgb, vec3<f32>(0.30, 0.02, 0.015), smoothstep(0.35, 0.65, noise3(in.rest.xyz * 9.0 + vec3<f32>(in.params.x))) * 0.85);
+        wet = 0.8;
+    } else if (kind == 3 && in.spray.w < 0.0) {
+        // A shred of uniform: the uniform's colour (in the spray texel), soaked in places.
+        let lum = dot(c.rgb, vec3<f32>(0.3, 0.55, 0.15));
+        rgb = in.spray.xyz * (0.55 + 0.9 * lum);
+        let soak = smoothstep(0.45, 0.7, noise3(in.rest.xyz * 25.0));
+        rgb = mix(rgb, vec3<f32>(0.12, 0.005, 0.004), soak * 0.7);
+        wet = soak * 0.4;
+    }
     if (in.cut.w > 0.05) {
         let gash = smoothstep(0.05, 0.4, in.cut.w + (noise3(in.rest.xyz * 30.0) - 0.5) * 0.3);
         rgb = mix(rgb, mix(vec3<f32>(0.30, 0.02, 0.02), vec3<f32>(0.55, 0.25, 0.22), noise3(in.rest.xyz * 60.0)), gash);
@@ -547,7 +578,8 @@ fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
     // Wet flesh: a tight highlight.
     if (wet > 0.0) {
         let h = normalize(globals.light.xyz - globals.forward.xyz);
-        rgb = rgb + vec3<f32>(0.35) * wet * pow(max(dot(n, h), 0.0), 28.0);
+        let nh = max(dot(n, h), 0.0);
+        rgb = rgb + vec3<f32>(0.6, 0.55, 0.5) * wet * pow(nh, 40.0) + vec3<f32>(0.08) * wet * pow(nh, 6.0);
     }
     if (globals.params.x > 0.5) {
         rgb = to_srgb(rgb);

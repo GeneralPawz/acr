@@ -158,7 +158,10 @@ frame. Start a random map with the hit-locations rule and the settings `models=a
   `grapeshot`, `shell`, `sabre`, `bayonet`, `axe`) on `region` (`legs`, `arms`, `torso`,
   `head`; drawn as in battle if left out) from direction `dir` (towards the victim, world
   axes) with `energy` 0..100 (default 100) and `damage` life points (default 1: only the
-  injury's outcome kills; give e.g. 1000 to kill). It runs `acr_sim::combat::scripted_hit`:
+  injury's outcome kills; give e.g. 1000 to kill). `part` (`arm_l`, `arm_r`, `leg_l`, `leg_r`, `head`, `chest`,
+  `belly`, `pelvis`) aims the hit there instead of a region, and `level` (0..255, from the
+  limb's root or from the shoulders down the trunk; needs `part`) at that level; the outcome
+  is still rolled as in battle (`acr_sim::body::injure_aimed`). It runs `acr_sim::combat::scripted_hit`:
   `body::injure` and the `HitRecord`/`DeathRecord` of battle, drawing from the world RNG
   only, so the same script gives the same wounds. Answers the region, injury (`part`,
   `level`, `outcome`), `killed` and `life`. Needs the hit-locations rule for regions.

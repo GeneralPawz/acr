@@ -1474,12 +1474,14 @@ pub struct ScriptedHit {
     pub energy: u8,
     /// Life points taken.
     pub dmg: i32,
+    /// Aimed at this part, at this level (drawn when `None`); overrides `region`.
+    pub aim: Option<(crate::body::Part, Option<u8>)>,
 }
 
 /// Strikes `victim` with a [`ScriptedHit`]; the index of its record in [`World::hits`], or
 /// `None` if the victim is not alive.
 pub fn scripted_hit(w: &mut World, victim: usize, hit: ScriptedHit) -> Option<usize> {
-    let ScriptedHit { cause, mounted, region, dir, energy, dmg } = hit;
+    let ScriptedHit { cause, mounted, region, dir, energy, dmg, aim } = hit;
     if !w.units.get(victim).is_some_and(Unit::living) {
         return None;
     }
@@ -1491,7 +1493,20 @@ pub fn scripted_hit(w: &mut World, victim: usize, hit: ScriptedHit) -> Option<us
         w.units[victim].body.mounted = true;
     }
     let energy = energy.min(100);
-    let injury = region.map(|r| crate::body::injure(w, victim, crate::body::Cause::of(cause, mounted), energy, r));
+    let region = match aim {
+        Some((part, _)) => Some(match part {
+            crate::body::Part::Limb(l) if l.is_leg() => crate::wounds::HitRegion::Legs,
+            crate::body::Part::Limb(_) => crate::wounds::HitRegion::Arms,
+            crate::body::Part::Head => crate::wounds::HitRegion::Head,
+            _ => crate::wounds::HitRegion::Torso,
+        }),
+        None => region,
+    };
+    let body_cause = crate::body::Cause::of(cause, mounted);
+    let injury = match aim {
+        Some((part, level)) => Some(crate::body::injure_aimed(w, victim, body_cause, energy, part, level)),
+        None => region.map(|r| crate::body::injure(w, victim, body_cause, energy, r)),
+    };
     let fatal = injury.is_some_and(|i| i.outcome.kills());
     let dmg = dmg.max(0);
     let killed = w.units[victim].life <= dmg || fatal;

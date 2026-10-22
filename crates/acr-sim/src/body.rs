@@ -473,6 +473,35 @@ pub fn injure(w: &mut World, victim: usize, cause: Cause, energy: u8, region: Hi
     injury
 }
 
+/// An injury aimed at `part` (the close-up bench): at `level`, or a level drawn as in
+/// [`injure`]; the outcome is rolled as in battle.
+pub fn injure_aimed(w: &mut World, victim: usize, cause: Cause, energy: u8, part: Part, level: Option<u8>) -> Injury {
+    let level_roll = |w: &mut World| ((w.random.rando() << 8) >> 15) as u8;
+    let level = match level {
+        Some(l) => l,
+        None => level_roll(w),
+    };
+    let injury = match part {
+        Part::Limb(limb) => {
+            let lost = w.units[victim].body.limb(limb).lost;
+            let level = level.min(lost.saturating_sub(1));
+            let roll = pct(w);
+            let (outcome, level) = limb_outcome(cause, energy, limb.is_leg(), level, roll);
+            Injury { part, level, outcome, energy }
+        }
+        Part::Head => {
+            let roll = if matches!(cause, Cause::Sabre | Cause::Thrown) { pct(w) } else { 0 };
+            Injury { part, level: 0, outcome: head_outcome(cause, roll), energy }
+        }
+        _ => {
+            let roll = pct(w);
+            Injury { part, level, outcome: trunk_outcome(cause, energy, part, level, roll), energy }
+        }
+    };
+    apply(&mut w.units[victim].body, &injury);
+    injury
+}
+
 /// Leaves the injury on the body.
 pub fn apply(body: &mut Body, injury: &Injury) {
     match (injury.part, injury.outcome) {
