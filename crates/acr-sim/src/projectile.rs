@@ -36,6 +36,57 @@ pub struct Projectile {
     pub sender: Option<EntityId>,
     pub att: u8,
     pub dest_obj: Option<EntityId>,
+    /// The men a low cannonball has ploughed through (only with
+    /// [`crate::Rules::hit_locations`]; hashes to nothing while empty).
+    pub plough: Plough,
+}
+
+/// Bodies a ball can plough through with [`crate::Rules::hit_locations`] on (#256).
+pub const PLOUGH_BODIES: u8 = 5;
+/// Share of the ball's damage, in percent, that each body takes out of it: the bodies get
+/// 100, 80, 60, 40 and 20 % of the damage, then the ball is spent.
+pub const PLOUGH_LOSS: i32 = 20;
+
+/// The men a ball low enough to hurt (`DAMAGEHEIGHT`) has already hit, with
+/// [`crate::Rules::hit_locations`] on: each is hit once, each costs the ball
+/// [`PLOUGH_LOSS`] % of its damage, and after [`PLOUGH_BODIES`] the ball is spent. Not in
+/// the original game, where a low ball hurts everything near it every tick at full damage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Plough {
+    /// Unit indices hit so far (the first `n`).
+    pub victims: [u32; PLOUGH_BODIES as usize],
+    pub n: u8,
+}
+
+impl std::hash::Hash for Plough {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        if self.n != 0 {
+            (self.victims, self.n).hash(state);
+        }
+    }
+}
+
+impl Plough {
+    /// The ball has no energy left to hurt anyone.
+    pub fn spent(&self) -> bool {
+        self.n >= PLOUGH_BODIES
+    }
+
+    fn hit(&self, k: usize) -> bool {
+        self.victims[..usize::from(self.n)].contains(&(k as u32))
+    }
+
+    /// Records the next body and returns the damage it takes (`None`: already hit, or the
+    /// ball is spent).
+    fn take(&mut self, k: usize, damage: i32) -> Option<i32> {
+        if self.spent() || self.hit(k) {
+            return None;
+        }
+        let dmg = damage * (100 - PLOUGH_LOSS * i32::from(self.n)) / 100;
+        self.victims[usize::from(self.n)] = k as u32;
+        self.n += 1;
+        Some(dmg)
+    }
 }
 
 /// A weapon sound (`[SOUND]`) started where an object was created (0x5583a2): `x` in
@@ -163,6 +214,8 @@ pub fn create(
         sender: sender.map(|k| w.units[k].id),
         att,
         dest_obj,
+        // A bounce goes on with what is left of the ball (only set with the rule on).
+        plough: if wp.damage_height != 0 { w.plough_carry.unwrap_or_default() } else { Plough::default() },
     };
     let (dx, dy, dz) = (d.0 - xs, d.1 - ys, d.2 - zs);
     let mut explode_now = false;
@@ -270,6 +323,22 @@ pub fn create(
 /// around the point within `r` (plus its `EXPLMEDIA`/`EXPLRADIUS` size) takes the full
 /// damage; resets the explosion media, or sets it to the media of an object hit dead centre.
 pub fn round_damage(w: &mut World, x: i32, y: i32, r: i32, damage: i32, sender: Option<usize>, att: u8) {
+    round_damage_with(w, x, y, r, damage, sender, att, None);
+}
+
+/// [`round_damage`], or with a [`Plough`] (the hit-locations rule) each object is hit once
+/// and takes what is left of the ball's damage.
+#[allow(clippy::too_many_arguments)]
+fn round_damage_with(
+    w: &mut World,
+    x: i32,
+    y: i32,
+    r: i32,
+    damage: i32,
+    sender: Option<usize>,
+    att: u8,
+    mut plough: Option<&mut Plough>,
+) {
     let (cx, cy) = (x >> 11, y >> 11);
     w.projectiles.media = -1;
     let catalog = w.catalog.clone();
@@ -288,9 +357,43 @@ pub fn round_damage(w: &mut World, x: i32, y: i32, r: i32, damage: i32, sender: 
                 if d < size {
                     w.projectiles.media = t.expl_media.0;
                 }
-                crate::combat::make_damage(w, k, damage, sender, att);
+                let dmg = match plough.as_deref_mut() {
+                    None => damage,
+                    Some(_) if !u.living() || sender == Some(k) => continue,
+                    Some(pl) => match pl.take(k, damage) {
+                        Some(dmg) => dmg,
+                        None => continue,
+                    },
+                };
+                crate::combat::make_damage(w, k, dmg, sender, att);
             }
         }
+    }
+}
+
+/// The damage a low ball does in one place: [`round_damage`] and the target object, or with
+/// the hit-locations rule ploughing ([`Plough`]) through each body once, losing energy.
+fn ball_damage(w: &mut World, slot: usize, p: &Projectile, r: i32, sender: Option<usize>) {
+    let mut plough = p.plough;
+    let ploughing = w.rules.hit_locations && w.catalog.weapons.get(p.weapon).damage_height != 0;
+    if ploughing && plough.spent() {
+        w.projectiles.media = -1;
+        return;
+    }
+    let mut pl = ploughing.then_some(&mut plough);
+    round_damage_with(w, p.pos.0 >> 10, p.pos.1 >> 10, r, p.damage, sender, p.att, pl.as_deref_mut());
+    if let Some(b) = p.dest_obj.map(|e| e.0 as usize).filter(|&b| w.units[b].living()) {
+        w.projectiles.media = w.catalog.get(w.units[b].kind).expl_media.0;
+        let dmg = match pl {
+            None => Some(p.damage),
+            Some(pl) => pl.take(b, p.damage),
+        };
+        if let Some(dmg) = dmg {
+            crate::combat::make_damage(w, b, dmg, sender, p.att);
+        }
+    }
+    if ploughing && let Some(Some(q)) = w.projectiles.slots.get_mut(slot) {
+        q.plough = plough;
     }
 }
 
@@ -327,11 +430,7 @@ pub fn explode(w: &mut World, slot: usize, ground: bool) {
     if p.damage != 0 {
         let last_hit = w.hits.back().copied();
         w.hit_dir = Some(flight_dir(&p));
-        round_damage(w, p.pos.0 >> 10, p.pos.1 >> 10, wp.radius, p.damage, sender, p.att);
-        if let Some(b) = p.dest_obj.map(|e| e.0 as usize).filter(|&b| w.units[b].living()) {
-            w.projectiles.media = catalog.get(w.units[b].kind).expl_media.0;
-            crate::combat::make_damage(w, b, p.damage, sender, p.att);
-        }
+        ball_damage(w, slot, &p, wp.radius, sender);
         w.hit_dir = None;
         if ground {
             note_impact(w, &p, w.hits.back().copied() != last_hit);
@@ -340,6 +439,10 @@ pub fn explode(w: &mut World, slot: usize, ground: bool) {
     if w.projectiles.media == -1 {
         w.projectiles.media = ground_media(w, p.pos.0 >> 14, p.pos.1 >> 14);
     }
+    // With the hit-locations rule a bounce carries on what is left of the ball.
+    let outer_carry = w.plough_carry;
+    w.plough_carry = (w.rules.hit_locations && wp.damage_height != 0)
+        .then(|| w.projectiles.slots[slot].map_or(p.plough, |q| q.plough));
     let m = w.projectiles.media;
     let block = wp.custom.iter().rev().find(|(cm, _)| *cm == m).map(|(_, c)| c);
     let default = block.is_none();
@@ -368,6 +471,7 @@ pub fn explode(w: &mut World, slot: usize, ground: bool) {
             create(w, sy, s, d, sender, p.att, dest_obj, p.vel, p.extra);
         }
     }
+    w.plough_carry = outer_carry;
 }
 
 /// The media of the ground at a point (0x5578f0): water where the four `SEA2` cells around
@@ -446,11 +550,7 @@ pub fn process(w: &mut World) {
         let sender = sender_of(w, &p);
         if wp.damage_height != 0 && ground > z - wp.damage_height && p.damage != 0 {
             w.hit_dir = Some(flight_dir(&p));
-            round_damage(w, p.pos.0 >> 10, p.pos.1 >> 10, wp.radius, p.damage, sender, p.att);
-            if let Some(b) = p.dest_obj.map(|e| e.0 as usize).filter(|&b| w.units[b].living()) {
-                w.projectiles.media = catalog.get(w.units[b].kind).expl_media.0;
-                crate::combat::make_damage(w, b, p.damage, sender, p.att);
-            }
+            ball_damage(w, slot, &p, wp.radius, sender);
             w.hit_dir = None;
         }
         if ground > z {

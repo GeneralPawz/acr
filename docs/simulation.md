@@ -978,6 +978,24 @@ limbs on the model (stump caps, #207) and healing by priests come later.
 The setting `hit_locations=on` (in `settings.txt` / browser storage, no menu entry yet)
 turns the rule on for every new game; the setup and savegames keep it.
 
+#### Ploughing cannonballs (#256)
+
+The original already lets a low ball hurt along its path: an object with `DAMAGEHEIGHT`
+(the bouncing ball `SKOKAT`, 500 within 16 px below 95 px) does round damage every tick
+while that low, to everyone near it at full damage, the same man again on each tick he is
+in reach, with no limit on the number of victims; only the ground contact (or the end of
+its animation) stops it. That stays so with the rule off.
+
+With `hit_locations` on, such a ball ploughs instead (`projectile::Plough`, hashed with the
+projectile, nothing while empty): each unit is hit at most once per ball (dying units and
+the shooter do not count), the n-th body takes `damage · (100 − 20·n) / 100`, so 100, 80,
+60, 40 and 20 % (`PLOUGH_LOSS`), and after five bodies (`PLOUGH_BODIES`) the ball is spent
+and flies on harmlessly. A bounce (`explode` → `REFLECT` child) carries on what is left of
+its ball (`World::plough_carry`, not hashed). A 500 ball thus kills three men of 300 life
+and wounds two, as a 6-pounder ball down a file. The first strike of an aimed ball
+(`NUCL2P`, 340 within 35 px, no `DAMAGEHEIGHT`) is unchanged. No random number is drawn
+beyond the rule's body regions. `tests/plough.rs` shows both and pins the original hash.
+
 ### Worked timing (musketeer, 10 ticks/s)
 
 - First shot: `#PATTACK1` (63 frames, 32 ticks), then 7 ticks to the active frame 14. The
