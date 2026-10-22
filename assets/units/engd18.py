@@ -41,6 +41,9 @@ MD = {
     "PATTACK": "#PATTACK 9 1 3 0",
     "UATTACK": "#UATTACK 9 1 3 0",
     "PSTAND": "#PSTAND 9 1 3 0",
+    "PATTACK1": "#PATTACK1 9 1 4 0",
+    "UATTACK1": "#UATTACK1 9 1 4 0",
+    "PSTAND1": "#PSTAND1 9 1 4 0",
     "ATTACK": "@ATTACK 9 3 0 61",
     "ATTACK1": "@ATTACK1 9 4 0 155",
     "DEATH": "@DEATH 9 2 0 37",
@@ -277,8 +280,10 @@ def build(ctx):
 # ----------------------------------------------------------------------------- WildMesh horse
 
 # The dragoon on the WildMesh horse (`acr_assets.cavalry`): coat and cap, a military saddle
-# with holsters on a red saddlecloth, sabre at the hip.
-SPEC = {"md": MD, "palette": PALETTE, "dress": "coat", "tack": "military", "hat": "cap", "held": None}
+# with holsters on a red saddlecloth, sabre at the hip, the carbine upright on the right
+# thigh (raised for the shot, ATTACK1); a dark bay (sprites).
+SPEC = {"md": MD, "palette": PALETTE, "dress": "coat", "tack": "military", "hat": "cap", "held": None, "gun": "carbine",
+        "coat": {"body": (0.45, 0.28, 0.16), "hair": (0.12, 0.09, 0.07)}}
 
 
 def build_wild(ctx):

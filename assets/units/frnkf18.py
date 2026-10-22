@@ -20,7 +20,8 @@ MD = {
 
 PALETTE = dict(cavalry.PALETTE, **{"coat": (0.80, 0.78, 0.72), "cap": (0.10, 0.09, 0.08), "saddlecloth": (0.15, 0.20, 0.50), "sash": (0.15, 0.20, 0.55), "waistcoat": (0.70, 0.10, 0.08)})
 
-SPEC = {"md": MD, "palette": PALETTE, "dress": "coat", "tack": "military", "hat": "tricorne", "held": "flag"}
+SPEC = {"md": MD, "palette": PALETTE, "dress": "coat", "tack": "military", "hat": "tricorne", "held": "flag",
+        "coat": {"body": (0.18, 0.15, 0.14), "hair": (0.08, 0.07, 0.06)}}  # a black horse (sprites)
 
 
 def build(ctx):

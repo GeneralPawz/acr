@@ -50,14 +50,14 @@ class Horse:
         return self.arm.data.bones[bone].tail_local.copy()
 
 
-def load(name, parent, clips, withers=WITHERS, tris=TRIS):
+def load(name, parent, clips, withers=WITHERS, tris=TRIS, coat=None):
     """The horse under `parent` with `clips` = {key: (source action, mode, frames[, a, b])}
-    (modes of `acr_assets.animals`). Returns a `Horse`."""
+    (modes of `acr_assets.animals`), its coat tinted by `coat` (`COAT`). Returns a `Horse`."""
     path = os.path.join(an.sources(), *BLEND.split("/"))
     objs, actions = an._append(path)
     an._fix_images(os.path.dirname(path))
     for im in bpy.data.images:
-        for part, rgb in COAT.items():
+        for part, rgb in (coat or COAT).items():
             if im.users and part in im.name.lower():
                 _tint(im, rgb)
     arm = next(o for o in objs if o.type == "ARMATURE")
@@ -116,9 +116,9 @@ def load(name, parent, clips, withers=WITHERS, tris=TRIS):
     stats["withers_m"] = round(_withers_height(arm, meshes), 2)
 
     # Ground covered by one source cycle of each gait (metres, its root motion), against
-    # which the game's speed is matched (`cavalry.CYCLES`).
+    # which the game's speed is matched (`cavalry.MOTIONS`).
     stats["stride_m"] = {}
-    for src in sorted({c[0] for c in clips.values() if c[1] == "loop"}):
+    for src in sorted({c[0] for c in clips.values() if c[1] in ("loop", "cycles")}):
         act = bpy.data.actions[src]
         ends = []
         for t in act.frame_range:

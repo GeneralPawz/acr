@@ -8,9 +8,23 @@ A unit script gives a spec and calls `build(ctx, spec)`:
     dress     "coat" (18th-century coat, waistcoat, breeches, high boots, cap), "native"
               (bare chest, breechcloth, leggings)
     tack      "military" (scripted saddle with pistol holsters on a saddlecloth),
-              "blanket" (a blanket, no saddle), "bare"
-    held      gear: "sabre", "flag" (a standard in the right hand), "lance"
-    hat       "cap" (tall mitre cap), "tricorne", None
+              "blanket" (a blanket, no saddle, a rope bridle), "bare" (a rope bridle)
+    held      gear in the right hand: "flag" (a standard, the fist round the pole), "lance"
+              (couched, thrust in ATTACK), None (reins)
+    hat       "cap" (tall mitre cap), "tricorne", "morion" (crested helmet with a plume),
+              "feathers" (long hair, a feather or two upright), "crown" (long hair, a
+              headband of feathers), None
+    shirt     natives: a shirt over the bare chest (`tunic`)
+    armour    a steel cuirass over the coat (`metal`)
+    shield    a round hide shield on the left forearm (`knapsack`)
+    gun       "carbine" or "pistol" in the right fist: upright on the thigh while he rides,
+              level for the shot (ATTACK1, PATTACK1...)
+    sabre     False: no sabre at the hip
+    coat      the horse's coat tint {"body": rgb, "hair": rgb} (`mount.COAT`)
+    motions   {MD suffix: (source gait, strides per sprite cycle)} (`MOTIONS`)
+
+Attacks follow the .MD: index 0 (`ATTACK`, `PATTACK`, `UATTACK`, `PSTAND`) is the cold
+weapon (sabre cut, lance thrust), index 1 (`ATTACK1`, `PATTACK1`...) the shot.
 
 The horse is `acr_assets.mount`; the rider stands on skeleton H, his root on the horse's
 `saddle` bone. Seated pose: legs to the stirrups, both arms solved (two-bone IK) to closed
@@ -43,6 +57,7 @@ PALETTE = {
     "waistcoat": (0.85, 0.80, 0.62), "breeches": (0.85, 0.80, 0.62), "boots_high": (0.08, 0.07, 0.06),
     "boots": (0.30, 0.20, 0.12), "belts": (0.85, 0.80, 0.62), "cap": (0.70, 0.08, 0.05), "metal": (0.70, 0.70, 0.72),
     "wood": (0.42, 0.24, 0.12), "saddle": (0.25, 0.15, 0.08), "tack": (0.08, 0.07, 0.06), "saddlecloth": (0.72, 0.10, 0.06), "sash": (0.75, 0.10, 0.10), "hat": (0.10, 0.09, 0.08),
+    "tunic": (0.80, 0.75, 0.62), "hair": (0.05, 0.04, 0.04), "knapsack": (0.80, 0.70, 0.55),
 }
 
 # The horse's clips: {key: (source action, mode, frames[, a, b])}; frames come from the MD.
@@ -67,6 +82,12 @@ AIM_L = {"upperarm_l": (-75, 45, 25), "forearm_l": (-15, 0, -15)}
 CUT_UP_R = {"upperarm_r": (-150, -20, 0), "forearm_r": (-20, 0, 0), "spine": (4, 0, -10)}
 CUT_DOWN_R = {"upperarm_r": (-60, -10, 0), "forearm_r": (-30, 0, 0), "spine": (-14, 0, 15)}
 FLAG_R = {"upperarm_r": (-20, -10, 0), "forearm_r": (-75, 0, 10)}
+# Fists (`close_hands`): the mitten's fingers, from `KNUCKLE` metres past the wrist, wrap
+# round a cylinder of radius `GRIP` before the palm, where pole, lance and grips go.
+KNUCKLE, GRIP = 0.08, 0.03
+# The flag hand: fist axis (rest Y) upright, knuckles forward, palm towards the rider.
+FLAG_HAND = (-90, 0, 0)
+LANCE = (2.9, 0.65)  # length, and how far it reaches behind the grip (metres)
 
 
 def rig_lie():
@@ -220,9 +241,10 @@ def military_saddle(hz, name, leather=(0.20, 0.12, 0.06), caps=(0.05, 0.04, 0.03
 # ----------------------------------------------------------------------------- held gear
 
 def flag(ch, name):
-    """A cavalry standard in the right hand: a pole (`wood`) and a square cloth (`sash`,
-    the standard's colour), two held objects. Returns (pole, cloth)."""
-    sock = am.world(ch.arm, P + "socket.hand_r")
+    """A cavalry standard in the right fist (the pole through it, upright): a pole
+    (`wood`) and a square cloth (`sash`, the standard's colour), two held objects. Call
+    with the flag pose set. Returns (pole, cloth)."""
+    c, _rot = fist_centre(ch)
     out = []
     for part, key in (("pole", "wood"), ("cloth", "sash")):
         bm = bmesh.new()
@@ -236,11 +258,208 @@ def flag(ch, name):
         bm.free()
         obj = bpy.data.objects.new(f"{name}_{part}", me)
         bpy.context.scene.collection.objects.link(obj)
-        am.attach(obj, ch.arm, P + "socket.hand_r", Matrix.Translation(sock.translation + Vector((0, 0, -0.05))))
+        am.attach(obj, ch.arm, P + "socket.hand_r", Matrix.Translation(c))
         ch.held["flag_" + part] = obj
         ch.keys[obj.name] = key
         out.append(obj)
     return out
+
+
+def _palm(d, side):
+    """The palm's normal (rest): towards the thigh, square to the hand's axis `d`."""
+    n = Vector((1.0 if side == "r" else -1.0, 0.0, 0.0))
+    return (n - d * n.dot(d)).normalized()
+
+
+def close_hands(ch):
+    """Curls both hands into fists. The MakeHuman mittens carry no finger weights, so the
+    fingers are bent in the mesh: every hand vertex past the knuckles (`KNUCKLE` along the
+    hand) is rolled round the grip's axis (`GRIP` before the palm, along the knuckles), as
+    far round as it lies past them. A rider's hands always hold something (reins, a
+    standard, a lance, a gun)."""
+    me = ch.flesh.data
+    ch.fist_vertices = 0
+    for sd in ("l", "r"):
+        g = ch.flesh.vertex_groups.get(P + "hand_" + sd)
+        if g is None:
+            continue
+        b = ch.arm.data.bones[P + "hand_" + sd]
+        d = (b.tail_local - b.head_local).normalized()
+        n = _palm(d, sd)
+        axis = d.cross(n)
+        k = b.head_local + d * KNUCKLE
+        c = k + n * GRIP
+        for v in me.vertices:
+            if next((e.weight for e in v.groups if e.group == g.index), 0.0) < 0.5:
+                continue
+            s = (v.co - k).dot(d)
+            if s > 0.0:
+                v.co = c + Matrix.Rotation(s / GRIP, 3, axis) @ (v.co - d * s - c)
+                ch.fist_vertices += 1
+    me.update()
+
+
+def fist_centre(ch, side="r"):
+    """The middle of the fist's grip (current pose). Returns (point, the hand's rotation
+    from rest)."""
+    pb = ch.arm.pose.bones[P + "hand_" + side]
+    m = ch.arm.matrix_world @ pb.matrix
+    rot = m.to_3x3() @ pb.bone.matrix_local.to_3x3().inverted()
+    d0 = (pb.bone.tail_local - pb.bone.head_local).normalized()
+    d = rot @ d0
+    return m.translation + d * KNUCKLE + (rot @ _palm(d0, side)) * GRIP, rot
+
+
+def _held(ch, name, key, bm, socket, matrix):
+    me = bpy.data.meshes.new(name)
+    bm.to_mesh(me)
+    bm.free()
+    obj = bpy.data.objects.new(name, me)
+    bpy.context.scene.collection.objects.link(obj)
+    am.attach(obj, ch.arm, P + socket, matrix)
+    ch.held[name.split(".", 1)[-1]] = obj
+    ch.keys[obj.name] = key
+    return obj
+
+
+def lance(ch, name):
+    """A lance in the closed right hand along the fist's axis (rest -Y: forward): the
+    shaft (`wood`) and an iron head (`metal`)."""
+    c, rot = fist_centre(ch)
+    m = Matrix.Translation(c) @ rot.to_4x4()
+    ln, back = LANCE
+    bm = bmesh.new()
+    _tube(bm, Vector((0, back, 0)), Vector((0, back - ln, 0)), 0.018, 0.014, 8)
+    _held(ch, f"{name}_shaft", "wood", bm, "hand_r", m)
+    bm = bmesh.new()
+    _tube(bm, Vector((0, back - ln, 0)), Vector((0, back - ln - 0.30, 0)), 0.03, 0.002, 6)
+    return _held(ch, f"{name}_head", "metal", bm, "hand_r", m)
+
+
+def shield(ch, name, radius=0.27):
+    """A round hide shield on the outside of the left forearm (`knapsack`), facing out."""
+    pb = ch.arm.pose.bones[P + "forearm_l"]
+    a = ch.arm.matrix_world @ pb.head
+    b = ch.arm.matrix_world @ pb.tail
+    centre = (a + b) / 2 + Vector((0.07, 0, 0))
+    bm = bmesh.new()
+    bmesh.ops.create_cone(bm, cap_ends=True, segments=20, radius1=radius, radius2=radius * 0.9, depth=0.03,
+                          matrix=Matrix.Translation(centre) @ Matrix.Rotation(math.radians(90), 4, "Y"))
+    return _held(ch, name, "knapsack", bm, "forearm_l", Matrix.Identity(4))
+
+
+def gun(ch, name, kind):
+    """A carbine or a pistol in the right hand, set for the shot: call with the aim pose
+    (the socket level), the barrel forward."""
+    c, _rot = fist_centre(ch)
+    ln = 1.05 if kind == "carbine" else 0.42
+    bm = bmesh.new()
+    _box(bm, Vector((0, -ln / 2 + 0.12, 0.0)), (0.03, ln, 0.035))  # barrel and stock
+    _box(bm, Vector((0, 0.02, -0.05)), (0.03, 0.08, 0.10), Matrix.Rotation(math.radians(-20), 4, "X"))  # grip
+    for v in bm.verts:
+        v.co += c
+    return _held(ch, name, "metal" if kind == "pistol" else "wood", bm, "socket.hand_r", Matrix.Identity(4))
+
+
+def morion(ch, name, plume=True):
+    """A Spanish morion: a combed steel dome with a brim turned up front and back, and a
+    plume at the back (`sash`)."""
+    sock = am.world(ch.arm, P + "socket.hat").translation + Vector((0, 0, -0.02))
+    bm = bmesh.new()
+    bmesh.ops.create_uvsphere(bm, u_segments=14, v_segments=8, radius=0.12)
+    for v in bm.verts:
+        v.co.z = max(v.co.z, -0.01) * 1.35
+    rim = bmesh.ops.create_cone(bm, cap_ends=False, segments=16, radius1=0.155, radius2=0.115, depth=0.02,
+                                matrix=Matrix.Translation((0, 0, -0.01)))
+    for v in rim["verts"]:
+        if v.co.xy.length > 0.13:
+            v.co.x *= 0.85
+            v.co.y *= 1.25
+            v.co.z += 0.13 * (abs(v.co.y) / 0.19) ** 3
+    _box(bm, Vector((0, 0, 0.16)), (0.012, 0.20, 0.07))  # comb
+    for v in bm.verts:
+        v.co += sock
+    obj = _held(ch, f"{name}_morion", "metal", bm, "socket.hat", Matrix.Identity(4))
+    if plume:
+        bm = bmesh.new()
+        _box(bm, sock + Vector((0, 0.10, 0.16)), (0.05, 0.06, 0.20), Matrix.Rotation(math.radians(-25), 4, "X"))
+        _held(ch, f"{name}_plume", "sash", bm, "socket.hat", Matrix.Identity(4))
+    return obj
+
+
+def native_head(ch, name, kind, cy):
+    """Long black hair down the back (`hair`) and feathers (`cap`): "feathers" (two
+    upright at the back) or "crown" (a headband of feathers all round)."""
+    head = am.world(ch.arm, P + "head").translation
+    bm = bmesh.new()
+    _box(bm, Vector((0, cy + 0.075, head.z - 0.02)), (0.17, 0.06, 0.36))
+    for v in bm.verts:
+        if v.co.z < head.z - 0.1:
+            v.co.x *= 0.7
+    _held(ch, f"{name}_hair", "hair", bm, "head", Matrix.Identity(4))
+    sock = am.world(ch.arm, P + "socket.hat").translation
+    bm = bmesh.new()
+    if kind == "crown":
+        n = 11
+        for i in range(n):
+            a = 2 * math.pi * i / n
+            r = Vector((math.sin(a) * 0.105, -math.cos(a) * 0.115, 0))
+            tilt = Matrix.Rotation(a, 4, "Z") @ Matrix.Rotation(math.radians(25), 4, "X")
+            _box(bm, sock + r + Vector((0, 0, 0.04)), (0.045, 0.008, 0.20), tilt)
+    else:
+        for dx in (-0.03, 0.03):
+            _box(bm, sock + Vector((dx, 0.09, 0.08)), (0.035, 0.006, 0.24), Matrix.Rotation(math.radians(20), 4, "X"))
+    return _held(ch, f"{name}_feathers", "cap", bm, "socket.hat", Matrix.Identity(4))
+
+
+# Where the dead horse's body (spine) ends, unit space (metres; the unit faces -Y): the
+# sprites' corpse (DEATHLIE1) lies about 2.3 m behind the unit's position and 0.6 m to
+# its right, rider included (`acr model-check --anim DEATHLIE1`: the sprite's centroid
+# circles the anchor at about 55 px as the views turn; ours sat on it).
+FALL_TO = (-0.6, 2.3)
+
+
+def centre_fall(hz, bone="spine_02", to=FALL_TO):
+    """Slides the fall so that the dead horse's body ends at `to`, where the sprites'
+    corpse lies; eased over the fall, as the stumble of a falling horse."""
+    W = hz.worlds.get("DEATH")
+    if not W:
+        return
+    end = W[-1][bone].translation
+    off = Vector((end.x - to[0], end.y - to[1], 0.0))
+    n = len(W)
+    for i, fr in enumerate(W):
+        t = i / max(n - 1, 1)
+        T = Matrix.Translation(-off * (t * t * (3 - 2 * t)))
+        for b in fr:
+            fr[b] = T @ fr[b]
+
+
+def rope_bridle(hz):
+    """Bareback tack: the pack's western saddle (`saddle1`) and its girth, stirrup
+    leathers and stirrups (`saddle2` behind the reins' grip, below the back) go; its
+    bridle and reins stay."""
+    sad = hz.head("saddle")
+    grip = hz.head("reins_01_l").y if "reins_01_l" in hz.arm.data.bones else sad.y - 0.35
+    for m in hz.meshes:
+        mats = m.data.materials
+        bad = {i for i, mat in enumerate(mats) if mat and any(k in mat.name.lower() for k in ("saddle1", "saddle2"))}
+        if not bad:
+            continue
+        bm = bmesh.new()
+        bm.from_mesh(m.data)
+        gone = []
+        for f in bm.faces:
+            if f.material_index not in bad:
+                continue
+            c = f.calc_center_median()
+            if "saddle1" in mats[f.material_index].name.lower() or (c.y > grip + 0.04 and c.z < sad.z - 0.04):
+                gone.append(f)
+        bmesh.ops.delete(bm, geom=gone, context="FACES")
+        bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context="VERTS")
+        bm.to_mesh(m.data)
+        bm.free()
+    hz.stats["triangles"] = sum(sum(len(p.vertices) - 2 for p in o.data.polygons) for o in hz.meshes)
 
 
 # ----------------------------------------------------------------------------- build
@@ -249,16 +468,18 @@ def frames(md, key):
     return rig.md_clip_frames(md[key])[0]
 
 
-# Gait cycles of the source per MOTION_L + MOTION_R (one sprite cycle): 2 plays a full
-# stride in each half, so that the stride matches the game's speed (no sliding hooves).
-# Source strides per MOTION_L + MOTION_R. The dragoons move 13.6 px (0.45 m) a tick: 6.4 m
-# per 14-frame cycle = three trot strides of 2.14 m (the pack's trot, at 1.5 m withers),
-# so the hooves do not slide (the trot plays 1.4 times faster). The natives' 25 px a tick
-# over 10 frames (8.3 m) is two gallop strides of 3.9 m.
-CYCLES = {"MOTION": 3, "MOTION1": 2}
+# The source gait and its strides per MOTION_L + MOTION_R (one sprite cycle), by .MD
+# suffix, so that the stride matches the game's speed (no sliding hooves). Source strides
+# at 1.5 m withers: walk 1.60 m, trot 2.14 m, canter 2.95 m, gallop 3.88 m (30 fps: 35, 20,
+# 17, 15 frames). The dragoons move 13.6 px (0.45 m) a tick, 6.4 m per 14-frame cycle: two
+# canter strides (5.9 m) play at 0.8 of the source's pace, where three trot strides played
+# 1.4 times too fast; and 4.4 m/s is a canter's speed. The natives' 25 px a tick over 10
+# frames (8.3 m) is two gallop strides of 3.9 m, at the source's pace.
+MOTIONS = {"": ("G2_Canter", 2), "1": ("G3_Gallop", 2)}
+NATIVE_MOTIONS = {"": ("G3_Gallop", 2)}
 
 
-def horse_clips(md, cycles=CYCLES):
+def horse_clips(md, motions=MOTIONS):
     out = {}
     for key, clip in GAITS.items():
         if key in ("ATTACK", "ATTACK1") and key not in md:
@@ -266,7 +487,7 @@ def horse_clips(md, cycles=CYCLES):
         n = clip[2] or (frames(md, key) if key in md else 1)
         out[key] = (clip[0], clip[1], n) + tuple(clip[3:])
     # MOTION_L covers its share of the cycles (by frames), MOTION_R the rest.
-    for sfx, gait, k in (("", "G1_Trot", cycles.get("MOTION", 1)), ("1", "G3_Gallop", cycles.get("MOTION1", 1))):
+    for sfx, (gait, k) in motions.items():
         if "MOTION_L" + sfx not in md:
             continue
         nl, nr = frames(md, "MOTION_L" + sfx), frames(md, "MOTION_R" + sfx)
@@ -293,9 +514,13 @@ def lie_spot(hz):
 def make(ctx, spec):
     name, root = ctx.name, ctx.root
     md = spec["md"]
-    hz = mount.load(name, root, horse_clips(md, spec.get("cycles", CYCLES)))
-    if spec.get("tack") in ("military", "blanket", "bare"):
-        mount.drop_faces(hz, ["saddle1"] if spec["tack"] == "military" else ["saddle1", "saddle2"])
+    hz = mount.load(name, root, horse_clips(md, spec.get("motions", MOTIONS)), coat=spec.get("coat"))
+    centre_fall(hz)
+    tack = spec.get("tack", "military")
+    if tack == "military":
+        mount.drop_faces(hz, ["saddle1"])
+    else:
+        rope_bridle(hz)
     lie, heading = lie_spot(hz)
     sad = hz.head("saddle")
     origin = Vector((sad.x, sad.y + 0.02, sad.z - 0.90 + spec.get("seat_dz", 0.0)))
@@ -303,6 +528,7 @@ def make(ctx, spec):
     ch = Character(root, name, dict(BUILD, origin=tuple(origin)), prefix=P, table=rig.skeleton_h(P, tuple(origin)))
     mount.join(ch.arm, hz, P + "root")
     ch.body()
+    close_hands(ch)
     if spec.get("dress", "coat") == "coat":
         ch.shell("waistcoat", "waistcoat", lambda c, n, h, p: h in TORSO and 0.97 + oz < c.z < 1.47 + oz, 0.012)
         ch.shell("coat", "coat", lambda c, n, h, p: (h in TORSO and 0.97 + oz < c.z < 1.49 + oz and not (c.y - cy < -0.14 and abs(c.x) < 0.07))
@@ -318,13 +544,17 @@ def make(ctx, spec):
     else:
         ch.shell("breechcloth", "breeches", lambda c, n, h, p: h in {"hips"} | LEGS and 0.80 + oz < c.z < 1.0 + oz, 0.012)
         ch.shell("leggings", "boots", lambda c, n, h, p: h in SHINS | FEET or (h in LEGS and c.z < 0.80 + oz), 0.012)
+        if spec.get("shirt"):
+            ch.shell("shirt", "tunic", lambda c, n, h, p: (h in TORSO and 0.97 + oz < c.z < 1.47 + oz) or h in ARMS, 0.014)
+    if spec.get("armour"):
+        ch.shell("cuirass", "metal", lambda c, n, h, p: h in TORSO and 1.0 + oz < c.z < 1.46 + oz, 0.05)
     ch.bone_layer()
     ch.caps()
     extra = []
-    if spec.get("tack", "military") != "bare":
+    if tack != "bare":
         extra.append(mount.saddlecloth(hz, f"{name}.saddlecloth", spec["palette"]["saddlecloth"],
-                                       half_len=0.36 if spec.get("tack", "military") == "military" else 0.42))
-    if spec.get("tack", "military") == "military":
+                                       half_len=0.36 if tack == "military" else 0.42))
+    if tack == "military":
         sad_obj = military_saddle(hz, f"{name}.saddle")
         # Leather like the rider's gear: decay material and colour from the sprites.
         sad_obj["acr_material_keys"] = ["saddle", "tack"]
@@ -338,18 +568,45 @@ def make(ctx, spec):
     both = reins_world(ch.arm, targets)
     left = {k: v for k, v in both.items() if k.endswith("_l")}
     seat = _with_world(LEGS_SEAT, both)
+    def right(target, hand=None, socket=None):
+        """The left hand on the reins, the right one solved to `target` (and turned)."""
+        w = dict(left, **{k: v for k, v in reins_world(ch.arm, {"r": target}, sides=("r",)).items()})
+        if hand is not None:
+            w["hand_r"] = hand
+        if socket is not None:
+            w["socket.hand_r"] = socket
+        return w
+
+    def side(dx, dy, dz):
+        """A point by the right hip (seated), moved by (dx, dy, dz)."""
+        return Vector((-0.24 + dx, cy + dy, sad.z + dz))
+
     poses = {"seat": seat, "lean": _with_world(dict(LEGS_SEAT, spine=(-12, 0, 0)), both),
              "aim": _with_world(dict(LEGS_SEAT, **AIM_R, **AIM_L), {"socket.hand_r": (88, 0, 0)}),
              "cut_up": _with_world(dict(LEGS_SEAT, **CUT_UP_R), dict(left, **{"socket.hand_r": (-40, 0, 0)})),
              "cut_down": _with_world(dict(LEGS_SEAT, **CUT_DOWN_R), dict(left, **{"socket.hand_r": (110, 0, 0)})),
-             "flag": _with_world(dict(LEGS_SEAT, **FLAG_R), dict(left, **{"socket.hand_r": (0, 0, 0)}))}
+             "flag": _with_world(dict(LEGS_SEAT, **FLAG_R), dict(left, hand_r=FLAG_HAND, **{"socket.hand_r": (0, 0, 0)})),
+             # Lance couched at the right hip, the point forward and up; the thrust.
+             "lance": _with_world(dict(LEGS_SEAT), right(side(0, -0.12, 0.15), (-20, 0, 0))),
+             "thrust": _with_world(dict(LEGS_SEAT, spine=(-10, 0, 8)), right(side(0.04, -0.62, 0.50), (-5, 0, 0))),
+             # A gun upright, its butt on the right thigh (the socket turned from the aim's).
+             "gun": _with_world(dict(LEGS_SEAT), right(side(0.04, -0.22, 0.12), None, (-2, 0, 0)))}
+    for k in ("lance", "gun", "flag"):
+        poses[k + "_lean"] = dict(poses[k], spine=(-12, 0, 0))
     lie_spec = dict(rig_lie(), world={"root": (90, 0, heading)}, world_loc={"root": lie})
     ch.poses, ch.lie = poses, lie_spec
-    base = poses["flag"] if spec.get("held") == "flag" else poses["seat"]
-    am.pose(ch.arm, base, prefix=P)
+    ch.ride = ride_pose(spec)
+    if spec.get("gun"):
+        am.pose(ch.arm, poses["aim"], prefix=P)
+        gun(ch, f"{name}.gun", spec["gun"])
+    am.pose(ch.arm, poses[ch.ride], prefix=P)
 
     hat = spec.get("hat", "cap")
-    if hat:
+    if hat in ("feathers", "crown"):
+        native_head(ch, name, hat, cy)
+    elif hat == "morion":
+        morion(ch, name)
+    elif hat:
         if hat == "cap":
             cap = gear.box(f"{name}.cap", (0.15, 0.17, 0.26), bevel=0.3)
             for v in cap.data.vertices:
@@ -365,6 +622,10 @@ def make(ctx, spec):
         ch.keys[cap.name] = "cap"
     if spec.get("held") == "flag":
         flag(ch, f"{name}.flag")
+    elif spec.get("held") == "lance":
+        lance(ch, f"{name}.lance")
+    if spec.get("shield"):
+        shield(ch, f"{name}.shield")
     if spec.get("sabre", True):
         sab = gear.sabre(f"{name}.sabre")
         am.attach(sab, ch.arm, P + "socket.hip_l", Matrix.Translation(am.world(ch.arm, P + "socket.hip_l").translation)
@@ -400,29 +661,47 @@ def thrown(ch, t):
                 upperarm_l=(-120 * t, 40, 0), upperarm_r=(-120 * t, -40, 0))
 
 
-def add_clips(ch, md, held):
+def ride_pose(spec):
+    """The pose the rider sits in (stand, rest, moves): his right hand's charge."""
+    held = spec.get("held")
+    if held in ("flag", "lance"):
+        return held
+    return "gun" if spec.get("gun") else "seat"
+
+
+def add_clips(ch, md, motions=MOTIONS):
     W = ch.horse["mount"].worlds
     p = ch.poses
-    ride = p["flag"] if held == "flag" else p["seat"]
+    ride = p[ch.ride]
+    lean = p["lean"] if ch.ride == "seat" else p[ch.ride + "_lean"]
     hold = [(0.0, ride), (1.0, ride)]
+    aim = [(0.0, p["aim"])]
     plan = {
         "STAND": (W["STAND"], [(0.0, ride)]), "REST": (W["REST"], hold),
-        "MOTION_L": (W["MOTION_L"], hold), "MOTION_R": (W["MOTION_R"], hold),
-        "MOTION_LB": (W["MOTION_R"][::-1], hold), "MOTION_RB": (W["MOTION_L"][::-1], hold),
-        "WALK": (W["WALK"], hold), "GALLOP": (W["GALLOP"], [(0.0, p["lean"]), (1.0, p["lean"])]),
-        "PATTACK": (W["STAND"], [(0.0, p["aim"])]), "UATTACK": (W["STAND"], [(0.0, p["aim"])]),
-        "PSTAND": (W["STAND"], [(0.0, p["aim"])]),
+        "WALK": (W["WALK"], hold), "GALLOP": (W["GALLOP"], [(0.0, lean), (1.0, lean)]),
+        # Index 0 (cold weapon) stands as he rides; index 1 (the shot) aims.
+        "PATTACK": (W["STAND"], [(0.0, ride)]), "UATTACK": (W["STAND"], [(0.0, ride)]),
+        "PSTAND": (W["STAND"], [(0.0, ride)]),
         "DEATH": (W["DEATH"], [(0.0, ride), (0.35, thrown(ch, 0.5)), (0.75, thrown(ch, 0.9)), (1.0, ch.lie)]),
         "DEATHLIE1": (W["DEATH"][-1:], [(0.0, ch.lie)]),
     }
+    for k in ("PATTACK1", "UATTACK1", "PSTAND1"):
+        if k in md:
+            plan[k] = (W["STAND"], aim)
+    for sfx, (gait, _k) in motions.items():
+        if "MOTION_L" + sfx not in W:
+            continue
+        pose = [(0.0, lean), (1.0, lean)] if gait == "G3_Gallop" else hold
+        plan["MOTION_L" + sfx], plan["MOTION_R" + sfx] = (W["MOTION_L" + sfx], pose), (W["MOTION_R" + sfx], pose)
+        plan["MOTION_LB" + sfx], plan["MOTION_RB" + sfx] = (W["MOTION_R" + sfx][::-1], pose), (W["MOTION_L" + sfx][::-1], pose)
     if "ATTACK" in W:
-        plan["ATTACK"] = (W["ATTACK"], [(0.0, p["aim"]), (0.08, dict(p["aim"], spine=(4, 0, 0))), (0.25, p["aim"]), (1.0, p["aim"])])
+        if ch.ride == "lance":
+            cold = [(0.0, ride), (0.3, p["thrust"]), (0.5, p["thrust"]), (0.8, ride), (1.0, ride)]
+        else:
+            cold = [(0.0, ride), (0.3, p["cut_up"]), (0.45, p["cut_down"]), (0.7, ride), (1.0, ride)]
+        plan["ATTACK"] = (W["ATTACK"], cold)
     if "ATTACK1" in W:
-        plan["ATTACK1"] = (W["ATTACK1"], [(0.0, ride), (0.3, p["cut_up"]), (0.45, p["cut_down"]), (0.7, ride), (1.0, ride)])
-    if "MOTION_L1" in W:
-        lean = [(0.0, p["lean"]), (1.0, p["lean"])]
-        plan["MOTION_L1"], plan["MOTION_R1"] = (W["MOTION_L1"], lean), (W["MOTION_R1"], lean)
-        plan["MOTION_LB1"], plan["MOTION_RB1"] = (W["MOTION_R1"][::-1], lean), (W["MOTION_L1"][::-1], lean)
+        plan["ATTACK1"] = (W["ATTACK1"], [(0.0, p["aim"]), (0.08, dict(p["aim"], spine=(4, 0, 0))), (0.25, p["aim"]), (1.0, p["aim"])])
     for name, (hf, rk) in plan.items():
         n = len(hf)
         _key(ch, name, hf, [(int(round(t * (n - 1))), s) for t, s in rk])
@@ -446,7 +725,7 @@ def build(ctx, spec):
     ch.morphs()
     rider = ch.layers["flesh"] + ch.layers["clothes"]
     ch.masks()
-    made = add_clips(ch, spec["md"], spec.get("held"))
+    made = add_clips(ch, spec["md"], spec.get("motions", MOTIONS))
     am.set_clip(ch.arm, "STAND")
     report = {}
     colours = ch.colours(ctx.ref, spec["palette"], report=report)
@@ -475,4 +754,5 @@ def build(ctx, spec):
     ch.arm.animation_data.action = None
     am.set_clip(ch.arm, "STAND")
     ch.arm.animation_data.action = None
-    ctx.stats = {"triangles": tris, "colours": colours, "horse": hz.stats, "corpse": corpse}
+    ctx.stats = {"triangles": tris, "colours": colours, "horse": hz.stats, "corpse": corpse,
+                 "fist_vertices": getattr(ch, "fist_vertices", 0)}
