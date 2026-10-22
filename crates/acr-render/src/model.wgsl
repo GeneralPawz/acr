@@ -13,6 +13,12 @@
 // Wounds (docs/rendering-3d.md): per corpse the direction of the blow, blood, dirt, burns
 // and the number and size of the wounds. They are placed in the rest pose (the bind
 // position, metres, +y up, facing +z), so they stay on the body in any pose.
+//
+// Instance data (wounds, spray, damage) lies in the bone texture after the palettes, from
+// texel `extra.y` (the vertex slots are full on WebGL2): 4 texels, plus the damage block of
+// `damage.rs` (`pack`) when damaged. Damage (docs/damage-model.md): vertices past a cut are
+// discarded per fragment along `_LIMB` with a ragged edge from `_GORE.x`, vertices past a
+// fracture turn about it in the rest pose before skinning, a piece keeps only its span.
 
 struct Globals {
     view_proj: mat4x4<f32>,
@@ -35,6 +41,8 @@ struct Material {
     // x: decaying layer (COLOR_0 is the mask), y: COLOR_0 is a vertex colour, z: alpha cutoff
     // (0: none), w: bone layer (no wounds).
     flags: vec4<f32>,
+    // x: stump cap (wet, ragged outline from the uv).
+    look: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> globals: Globals;
@@ -52,22 +60,18 @@ struct VertexIn {
     @location(5) weights: vec4<f32>,
     @location(6) morph0: vec3<f32>,
     @location(7) morph1: vec3<f32>,
+    // _PART (−1 none), _LIMB level 0..1 (−1 none), _GORE.x, 0
+    @location(8) body: vec4<f32>,
 };
 
 struct InstanceIn {
-    @location(8) row0: vec4<f32>,
-    @location(9) row1: vec4<f32>,
-    @location(10) row2: vec4<f32>,
+    @location(9) row0: vec4<f32>,
+    @location(10) row1: vec4<f32>,
+    @location(11) row2: vec4<f32>,
     // decay, deflate weight, lie_flat weight, half transparent (1)
-    @location(11) params: vec4<f32>,
-    // first texel of the pose, player, sprayed blood amount and age (both ‰)
-    @location(12) extra: vec4<u32>,
-    // direction of the blow (model x, z), blood, dirt
-    @location(13) wounds0: vec4<f32>,
-    // burn, number of wounds, wound radius (m), seed
-    @location(14) wounds1: vec4<f32>,
-    // sprayed blood: centre in the rest pose (m), radius (m)
-    @location(15) spray: vec4<f32>,
+    @location(12) params: vec4<f32>,
+    // first texel of the pose, first texel of the instance data, player, 0
+    @location(13) extra: vec4<u32>,
 };
 
 struct VsOut {
@@ -83,12 +87,33 @@ struct VsOut {
     @location(7) @interpolate(flat) spray: vec4<f32>,
     // sprayed blood amount, its age
     @location(8) @interpolate(flat) spray_look: vec2<f32>,
+    // kept distance past the cut (level units, < 0 discards), _GORE.x, sign of the ragged
+    // offset, belly open (1)
+    @location(9) cut: vec4<f32>,
 };
 
-fn bone_texel(base: u32, joint: u32, row: u32) -> vec4<f32> {
-    let i = base + joint * 3u + row;
+fn texel(i: u32) -> vec4<f32> {
     let w = u32(globals.params.z);
     return textureLoad(bones, vec2<i32>(i32(i % w), i32(i / w)), 0);
+}
+
+fn bone_texel(base: u32, joint: u32, row: u32) -> vec4<f32> {
+    return texel(base + joint * 3u + row);
+}
+
+// Rodrigues: `v` turned by `angle` about the unit `axis`.
+fn rotate(v: vec3<f32>, axis: vec3<f32>, angle: f32) -> vec3<f32> {
+    let c = cos(angle);
+    let s = sin(angle);
+    return v * c + cross(axis, v) * s + axis * dot(axis, v) * (1.0 - c);
+}
+
+// Limb of a body part (rig.PARTS): 0 arm_l, 1 arm_r, 2 leg_l, 3 leg_r, −1 torso/head/none.
+fn limb_of(part: i32) -> i32 {
+    if (part >= 2 && part <= 9) {
+        return (part - 2) / 2;
+    }
+    return -1;
 }
 
 fn apply(r0: vec4<f32>, r1: vec4<f32>, r2: vec4<f32>, p: vec4<f32>) -> vec3<f32> {
@@ -110,9 +135,77 @@ fn vs_main(v: VertexIn, inst: InstanceIn) -> VsOut {
             r2 = r2 + w * bone_texel(base, j, 2u);
         }
     }
-    let p = v.position + v.morph0 * inst.params.y + v.morph1 * inst.params.z;
+    var p = v.position + v.morph0 * inst.params.y + v.morph1 * inst.params.z;
+    var n = v.normal;
+    let d = inst.extra.y;
+    let look = texel(d + 3u);
+    let part = i32(round(v.body.x));
+    let limb = limb_of(part);
+    let t = v.body.y;
+    var keep = 1.0;
+    var side = 1.0;
+    var belly = 0.0;
+    if (look.z > 0.5) {
+        let cuts = texel(d + 4u);
+        let fracs = texel(d + 5u);
+        let tr = texel(d + 14u);
+        let pc = texel(d + 15u);
+        let mode = i32(round(tr.w));
+        belly = tr.z;
+        if (limb >= 0 && t >= 0.0) {
+            let fl = fracs[limb];
+            if (fl < 1.5) {
+                let pivot = texel(d + 6u + u32(limb));
+                let axis = texel(d + 10u + u32(limb)).xyz;
+                let a = pivot.w * smoothstep(fl - 0.012, fl + 0.012, t);
+                p = pivot.xyz + rotate(p - pivot.xyz, axis, a);
+                n = rotate(n, axis, a);
+            }
+        }
+        // Trunk height in level-like units (a trunk is ~0.5 m).
+        let above = (v.position.y - tr.x) * 2.0;
+        let arm = limb == 0 || limb == 1;
+        if (mode < 0) {
+            if (limb >= 0 && t >= 0.0) {
+                keep = cuts[limb] - t;
+            }
+            if (tr.x < 1e5) {
+                if (part == 0) {
+                    keep = -above;
+                } else if (part == 1 || arm) {
+                    keep = -1.0;
+                }
+            }
+            if (part == 1 && tr.y > 0.5) {
+                keep = -1.0;
+            }
+        } else if (mode < 4) {
+            keep = -1.0;
+            if (limb == mode && t >= 0.0) {
+                let lo = t - pc.x;
+                let hi = pc.y - t;
+                keep = min(lo, hi);
+                side = select(1.0, -1.0, lo < hi);
+            }
+        } else {
+            keep = -1.0;
+            if (part == 0) {
+                keep = above;
+                side = -1.0;
+            } else if (part == 1 && tr.y < 0.5) {
+                keep = 1.0;
+            } else if (arm && t >= 0.0) {
+                keep = cuts[limb] - t;
+            } else if (arm) {
+                keep = 1.0;
+            }
+        }
+        // Belly wound on the front of the torso: x within 0.12 m, y around the belly.
+        let b = (v.position - vec3<f32>(0.0, pc.z, 0.12)) / vec3<f32>(0.13, 0.1, 0.12);
+        belly = select(0.0, belly * clamp(1.0 - length(b), 0.0, 1.0), part == 0);
+    }
     let local = apply(r0, r1, r2, vec4<f32>(p, 1.0));
-    let local_n = apply(r0, r1, r2, vec4<f32>(v.normal, 0.0));
+    let local_n = apply(r0, r1, r2, vec4<f32>(n, 0.0));
     let world = apply(inst.row0, inst.row1, inst.row2, vec4<f32>(local, 1.0));
     let world_n = apply(inst.row0, inst.row1, inst.row2, vec4<f32>(local_n, 0.0));
     var out: VsOut;
@@ -122,15 +215,21 @@ fn vs_main(v: VertexIn, inst: InstanceIn) -> VsOut {
     out.color = v.color;
     out.params = inst.params;
     out.rest = vec4<f32>(v.position, local.y);
-    out.wounds0 = inst.wounds0;
-    out.wounds1 = inst.wounds1;
-    out.spray = inst.spray;
-    out.spray_look = vec2<f32>(f32(inst.extra.z), f32(inst.extra.w)) / 1000.0;
+    out.wounds0 = texel(d);
+    out.wounds1 = texel(d + 1u);
+    out.spray = texel(d + 2u);
+    out.spray_look = look.xy;
+    out.cut = vec4<f32>(clamp(keep, -1.0, 1.0), v.body.z, side, belly);
     return out;
 }
 
 fn ramp(x: f32, a: f32, b: f32) -> f32 {
     return clamp((x - a) / max(b - a, 1e-5), 0.0, 1.0);
+}
+
+// Ragged outline of a cut in level units: the asset's wound noise plus fine noise.
+fn ragged(gore: f32, rest: vec3<f32>) -> f32 {
+    return (gore - 0.5) * 0.06 + (noise3(rest * 45.0) - 0.5) * 0.035;
 }
 
 fn hash1(n: f32) -> f32 {
@@ -252,6 +351,17 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
             discard;
         }
     }
+    if (in.cut.x - in.cut.z * ragged(in.cut.y, in.rest.xyz) < 0.0) {
+        discard;
+    }
+    // A stump cap's ragged outline (uv: the unit disc).
+    if (material.look.x > 0.5) {
+        let a = atan2(in.uv.y, in.uv.x);
+        let edge = 0.9 + 0.1 * noise3(vec3<f32>(cos(a) * 3.0, sin(a) * 3.0, in.params.x * 0.0 + 1.7));
+        if (length(in.uv) > edge) {
+            discard;
+        }
+    }
     var rgb = c.rgb;
     let decay = in.params.x;
     if (material.flags.x > 0.5 && decay > 0.0) {
@@ -279,8 +389,20 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if (dot(n, globals.forward.xyz) > 0.0) {
         n = -n;
     }
+    // An open belly: a dark wet gash.
+    var wet = material.look.x;
+    if (in.cut.w > 0.05) {
+        let gash = smoothstep(0.05, 0.4, in.cut.w + (noise3(in.rest.xyz * 30.0) - 0.5) * 0.3);
+        rgb = mix(rgb, mix(vec3<f32>(0.30, 0.02, 0.02), vec3<f32>(0.55, 0.25, 0.22), noise3(in.rest.xyz * 60.0)), gash);
+        wet = max(wet, gash);
+    }
     let lit = globals.light.w + (1.0 - globals.light.w) * max(dot(n, globals.light.xyz), 0.0);
     rgb = rgb * lit;
+    // Wet flesh: a tight highlight.
+    if (wet > 0.0) {
+        let h = normalize(globals.light.xyz - globals.forward.xyz);
+        rgb = rgb + vec3<f32>(0.35) * wet * pow(max(dot(n, h), 0.0), 28.0);
+    }
     if (globals.params.x > 0.5) {
         rgb = to_srgb(rgb);
     }

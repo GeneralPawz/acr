@@ -92,12 +92,18 @@ ground) lie at the far plane, under every model.
 - Every mesh is skinned to a **palette** of matrices: skinned meshes to their joints
   (global × inverse bind), static meshes (gear parented to socket bones, buildings) to their
   node. One vertex format, one pipeline: position, normal, uv, `COLOR_0`, 4 joints/weights,
-  two morph target offsets (13 vertex attributes with the instance data, WebGL2 allows 16).
+  two morph target offsets and the damage coordinates `_PART`, `_LIMB`, `_GORE.x` (14
+  vertex attributes with the instance data, WebGL2 allows 16).
 - Poses are sampled on the CPU (translation/rotation/scale channels, step and linear;
   cubic splines use their key values) **once per distinct (model, clip, frame)**: units in
   the same animation frame share a palette. The palettes go into an `Rgba32Float` texture,
   1024 texels wide, 3 texels (affine rows) per matrix; instances carry their palette's first
   texel. No storage buffers, no uniform arrays.
+- **Instance data** follows the palettes in the same texture; an instance carries its first
+  texel (`extra.y`): wounds (2 texels), spray (centre, radius), spray look (amount, age,
+  damaged); a damaged instance adds the 12 texels of `damage::pack` (below). The instance
+  buffer holds only the transform, the decay/morph/transparency parameters and the two
+  texel indices (locations 9–13).
 - Instancing: all instances of one model type are drawn with one `draw_indexed` per
   primitive (13 for `engm18.glb`). The instance buffer is bound from each model's first
   instance (WebGL2 has no base instance); indices are pre-offset (no base vertex).
@@ -168,9 +174,42 @@ attributes 13, 14) and a `BloodPool`:
   900 and fade over the last 15 % before removal. Pools are flat at the ground point's
   height: on slopes part of them can sink into the terrain.
 - `gore=reduced`: one wound, half the blood, half-size pools; `gore=off`: none of it.
-- Not done yet (#183): cause-specific death clips, dismemberment (the models' stump caps
-  and `_PART` attributes, #207), the `emaciated` morph for hunger, stuck missiles, pools
-  that outlive the corpse.
+- Not done yet (#183): cause-specific death clips, the `emaciated` morph for hunger, stuck
+  missiles, pools that outlive the corpse. Dismemberment: see the next section.
+
+#### Cut, broken and torn bodies (#262)
+
+The renderer half of `docs/damage-model.md` §3 (`acr_render::damage`): a `Damage` on a
+`ModelInstance` (default: whole).
+
+- `limbs: [LimbDamage; 4]` (arm_l, arm_r, leg_l, leg_r), each `cut: u8` (the limb ends at
+  this level, 255 whole) and `fracture: Option<Fracture { level, axis, angle }>` (rest pose
+  axis, radians); `trunk_cut: Option<u8>` (0 hips .. 255 neck); `head_gone`, `belly_open`;
+  `keep: Keep::Body | Piece { limb, from, to } | Upper`.
+- Levels are the bytes of `acr_sim::body` (`ELBOW` 110, `WRIST` 205, `KNEE` 120, `ANKLE`
+  215). The model's `Rig` (`ModelData::rig`, skeleton H only) holds the limb chains in the
+  bind pose (from the inverse bind matrices of `upperarm`/`forearm`/`hand`,
+  `thigh`/`shin`/`foot`/`toe`, `hips`/`neck`), so a level maps to a point, direction and
+  bone. Vertex levels are `_LIMB`; models without it get them at load by projecting the
+  skinned limb vertices (by `_PART`) onto the chains, as the bake does. Radius profiles are
+  `extras.acr_limb_radius` when present, else measured from the vertices (outer radius per
+  sixteenth of the level).
+- Shader (`model.wgsl`): vertices past a fracture turn about the fracture point in the rest
+  pose before skinning (blended over ±0.012 of the level); the vertex shader computes the
+  kept distance past the cut (limb level, or rest height for the trunk), the fragment shader
+  discards below zero after a ragged offset from `_GORE.x` and fine noise (the same offset
+  on both sides of a cut, so body and piece meet). `Piece` keeps only `from..to` of one
+  limb; `Upper` keeps the trunk above the tear, the arms and the head; `Body` with a trunk
+  cut keeps the pelvis and legs. `belly_open` paints a wet gash on the front of the torso.
+- Caps: every cut of the kept part gets an instance of the cap model, placed in the rest
+  pose at the cut (`damage::caps`), facing away from the kept flesh, scaled by the radius,
+  and carried by the bone at the cut in the instance's pose. The cap is
+  `damage::procedural_cap` (rings: bone white, red flesh, skin rim; wet highlight; ragged
+  outline in the shader) until `ModelRenderer::set_cap` swaps in the modelled cap of
+  `gore.glb` (a unit disc in xy facing +z). The old joint-only caps (`*.caps` meshes) are
+  no longer loaded.
+- Not yet: the game turning `acr_sim::body` into damages and pieces (S5: pieces posed limp
+  and thrown, guts, gibs), the trunk's torn-edge strip (the trunk cut uses the disc).
 
 #### Hits and blood splatter
 
@@ -349,7 +388,10 @@ the cost is the vertex work, so LODs and fewer triangles per figure are the next
 `ACR_3D_COMPARE` (native only) compares models with their sprites: `overlay` draws the
 sprites of units with a model half transparent in front of the model, `toggle` swaps sprites
 and models every 2 seconds (pause the game with the Pause key to compare one moment).
-`ACR_MODELS_DIR` points the game at a folder of models (above). The log reports every 5 s
+`ACR_MODELS_DIR` points the game at a folder of models (above). `ACR_DEBUG_DAMAGE` (native
+only) forces damage on every 3D human: a spec of `Damage::parse` (`cut:arm_l:160`,
+`frac:leg_l:170:55` (degrees), `trunk:110`, `head`, `belly`, `piece:arm_l`, `upper`, comma
+separated) or `demo` (a preset per unit id); severed pieces stand beside their body. The log reports every 5 s
 the frame rate, the models drawn and the poses sampled.
 
 ## Limits and open points

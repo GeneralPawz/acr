@@ -5,6 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use acr_render::damage::{Damage, Keep, Limb};
 use acr_render::model::{self, ModelData};
 use acr_render::model_renderer::{BloodPool, DepthTarget, ModelInstance, ModelRenderer, Wounds};
 use acr_render::objects_view::ObjectsView;
@@ -282,6 +283,7 @@ impl ThreeD {
         let mut corpses: Vec<(usize, [f32; 3], f32)> = Vec::new();
         let mut footprints: Vec<piles::Footprint> = Vec::new();
         let mut targets: Vec<super::splatter::Target> = Vec::new();
+        let mut pieces: Vec<(usize, Damage)> = Vec::new();
         let now = world.tick.0;
         // Corpses the simulation removed (after about a minute, as the original) stay in 3D
         // until their own lifetime ends (`corpse_minutes`), so battlefields fill and piles
@@ -358,6 +360,13 @@ impl ThreeD {
                 building: u.building,
                 radius: model.radius,
             });
+            let damaged = model.rig.as_ref().and_then(|_| debug_damage(u.id.0));
+            if let Some(damage) = damaged {
+                inst.damage = damage;
+            }
+            if let Some(damage) = damaged {
+                pieces.push((self.instances.len(), damage));
+            }
             self.instances.push(inst);
             self.shown.insert(u.id);
         }
@@ -398,6 +407,11 @@ impl ThreeD {
                 let ground = [at[0], at[1], at[2] + rest.lift];
                 self.instances[i].transform = view3d::model_matrix_tilted(ground, yaw, 1.0, rest.pitch, rest.roll);
             }
+        }
+        // Appended last: the indices above refer to one instance per unit.
+        for (i, damage) in pieces {
+            let body = self.instances[i];
+            self.instances.extend(debug_pieces(&body, damage));
         }
         let ground = |x: f32, y: f32| {
             let (x, y) = (x as i32, y as i32);
@@ -474,6 +488,53 @@ impl ThreeD {
     }
 }
 
+/// `ACR_DEBUG_DAMAGE` (native, `docs/rendering-3d.md`): forces damage on the 3D humans to
+/// show the renderer without the game logic. A spec of [`Damage::parse`] for all, or `demo`
+/// for a preset per unit (by id): cut arm, cut thigh, fractures, torn in two, headless with
+/// the belly open, hand and foot off.
+fn debug_damage(unit: u32) -> Option<Damage> {
+    static SPEC: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    let spec = SPEC.get_or_init(|| std::env::var("ACR_DEBUG_DAMAGE").ok()).as_deref()?;
+    const DEMO: [&str; 6] = [
+        "cut:arm_l:160",
+        "cut:leg_r:70",
+        "frac:leg_l:170:55,frac:arm_r:150:-70",
+        "trunk:110",
+        "head,belly",
+        "cut:arm_r:215,cut:leg_l:228",
+    ];
+    let spec = if spec == "demo" { DEMO[unit as usize % DEMO.len()] } else { spec };
+    Damage::parse(spec).ok()
+}
+
+/// The severed pieces of a body under `ACR_DEBUG_DAMAGE`, laid beside it (game placement is
+/// #262 S5).
+fn debug_pieces(body: &ModelInstance, damage: Damage) -> Vec<ModelInstance> {
+    let beside = |x: f32, z: f32| {
+        let mut m = acr_render::math::IDENTITY;
+        m[3] = [x, 0.0, z, 1.0];
+        acr_render::math::mul(&body.transform, &m)
+    };
+    let mut out = Vec::new();
+    if !matches!(damage.keep, Keep::Body) {
+        return out;
+    }
+    for limb in Limb::ALL {
+        if let Some(piece) = damage.piece(limb) {
+            let x = if matches!(limb, Limb::ArmL | Limb::LegL) { 0.7 } else { -0.7 };
+            out.push(ModelInstance { damage: piece, transform: beside(x, 0.5), ..*body });
+        }
+    }
+    if damage.trunk_cut.is_some() {
+        out.push(ModelInstance {
+            damage: Damage { keep: Keep::Upper, ..damage },
+            transform: beside(0.9, 0.0),
+            ..*body
+        });
+    }
+    out
+}
+
 /// A building that stands finished (not under construction, not falling down).
 fn finished(world: &World, u: &Unit) -> bool {
     u.stage >= world.max_stage(u) && !matches!(u.anim, AnimKind::BuildLo(_) | AnimKind::Death | AnimKind::DeathLie(_))
@@ -518,6 +579,7 @@ fn instance(
         player: u.owner,
         wounds,
         sprayed: Default::default(),
+        damage: Default::default(),
     };
     (instance, ground)
 }
