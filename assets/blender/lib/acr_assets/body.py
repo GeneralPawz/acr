@@ -202,11 +202,12 @@ def derive(src, name, keep_face, offset):
 
 
 def tube(arm_obj, name, top, bottom, r_top, r_bot, gap_deg=0.0, rings=6, seg=20, flare_back=0.0,
-         columns=None, centre=(0.0, 0.0)):
+         columns=None, centre=(0.0, 0.0), prefix=""):
     """A lofted tube from z=top to z=bottom with an optional front opening of gap_deg (coat
     skirt, tunic tail). With `columns` (rig.SKIRT_COLUMNS) it is weighted to the skirt bones
     (hips at the top, `skirt_<c>_01/_02` below, blended between the two nearest columns);
-    otherwise to hips and the thigh of its side."""
+    otherwise to hips and the thigh of its side. `prefix` names a rider's bones
+    (`rider.hips`); `centre` and the heights are in armature space."""
     verts, faces = [], []
     half = math.radians(gap_deg) / 2.0
     cols = seg + (1 if gap_deg > 0 else 0)
@@ -238,6 +239,7 @@ def tube(arm_obj, name, top, bottom, r_top, r_bot, gap_deg=0.0, rings=6, seg=20,
     def add(bone, vi, w):
         if w <= 0.001:
             return
+        bone = prefix + bone
         g = groups.get(bone) or obj.vertex_groups.new(name=bone)
         groups[bone] = g
         g.add([vi], w, "ADD")
@@ -245,7 +247,7 @@ def tube(arm_obj, name, top, bottom, r_top, r_bot, gap_deg=0.0, rings=6, seg=20,
     for v in me.vertices:
         t = (top - v.co.z) / (top - bottom)
         if columns:
-            ang = math.atan2(v.co.y, v.co.x)
+            ang = math.atan2(v.co.y - centre[1], v.co.x - centre[0])
             cs = sorted(columns, key=lambda c: abs(_adiff(ang, math.atan2(c[2], c[1]))))[:2]
             d0, d1 = (abs(_adiff(ang, math.atan2(c[2], c[1]))) for c in cs)
             w0 = d1 / (d0 + d1) if d0 + d1 > 1e-6 else 1.0
@@ -257,14 +259,14 @@ def tube(arm_obj, name, top, bottom, r_top, r_bot, gap_deg=0.0, rings=6, seg=20,
                 add(f"skirt_{c[0]}_01", v.index, s1 * wc)
                 add(f"skirt_{c[0]}_02", v.index, s2 * wc)
         else:
-            side = max(min(v.co.x / 0.12, 1.0), -1.0)
+            side = max(min((v.co.x - centre[0]) / 0.12, 1.0), -1.0)
             leg = t * abs(side) * 0.8
             add("hips", v.index, 1.0 - leg)
             add("thigh_l" if side > 0 else "thigh_r", v.index, leg)
     attr = me.attributes.new("part", "INT", "POINT")
     for d in attr.data:
         d.value = 0
-    orient_outward(obj, arm_obj, [b for b in rig.BODY_BONES if b in arm_obj.data.bones])
+    orient_outward(obj, arm_obj, [prefix + b for b in rig.BODY_BONES if prefix + b in arm_obj.data.bones])
     return am.bind(obj, arm_obj)
 
 

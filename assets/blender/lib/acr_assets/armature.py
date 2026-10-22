@@ -45,9 +45,18 @@ def euler(r):
             @ Matrix.Rotation(math.radians(r[0]), 3, "X"))
 
 
-def pose(arm_obj, spec, frame=None, prefix=""):
+def spec_bones(spec):
+    """Bones a pose spec moves (rotation) and the ones it places (location)."""
+    rot = {k for k in spec if k not in ("root_loc", "world", "world_loc")}
+    rot |= set(spec.get("world", {})) | set(spec.get("world_loc", {}))
+    loc = set(spec.get("world_loc", {})) | ({"root"} if "root_loc" in spec else set())
+    return rot, loc
+
+
+def pose(arm_obj, spec, frame=None, prefix="", keyed=None):
     """Applies `spec` = {bone: (rx, ry, rz)} plus optional "root_loc": (x, y, z) (armature
-    space) and "world": {bone: (rx, ry, rz)} (see below), and keys it at `frame`. Bone names in `spec` get `prefix`; bones of the armature
+    space) and "world": {bone: (rx, ry, rz)} (see below), and keys it at `frame`: all
+    bones, or with `keyed` = (rotated, located) only those (unprefixed names). Bone names in `spec` get `prefix`; bones of the armature
     without the prefix are left alone, unlisted bones with it return to rest."""
     for pb in arm_obj.pose.bones:
         if not pb.name.startswith(prefix):
@@ -61,9 +70,11 @@ def pose(arm_obj, spec, frame=None, prefix=""):
         pb.location = (0, 0, 0)
         if key == "root" and "root_loc" in spec:
             pb.location = rest.inverted() @ Vector(spec["root_loc"])
-        if frame is not None and key not in spec.get("world", {}):
-            pb.keyframe_insert("rotation_quaternion", frame=frame, group=pb.name)
-            pb.keyframe_insert("location", frame=frame, group=pb.name)
+        if frame is not None and key not in spec.get("world", {}) and key not in spec.get("world_loc", {}):
+            if keyed is None or key in keyed[0]:
+                pb.keyframe_insert("rotation_quaternion", frame=frame, group=pb.name)
+            if keyed is None or key in keyed[1]:
+                pb.keyframe_insert("location", frame=frame, group=pb.name)
     bpy.context.view_layer.update()
     # "world": {bone: (rx, ry, rz)}: the bone's armature-space orientation = that rotation
     # applied to its rest orientation, whatever its parents do (a socket that keeps a
@@ -80,6 +91,17 @@ def pose(arm_obj, spec, frame=None, prefix=""):
             pb.keyframe_insert("rotation_quaternion", frame=frame, group=pb.name)
             pb.keyframe_insert("location", frame=frame, group=pb.name)
         bpy.context.view_layer.update()
+    # "world_loc": {bone: (x, y, z)}: the bone's head in armature space (a rider thrown off
+    # the horse lies on the ground wherever the horse is).
+    for key, loc in spec.get("world_loc", {}).items():
+        pb = arm_obj.pose.bones[prefix + key]
+        m = pb.matrix.copy()
+        m.translation = Vector(loc)
+        pb.matrix = m
+        bpy.context.view_layer.update()
+        if frame is not None:
+            pb.keyframe_insert("rotation_quaternion", frame=frame, group=pb.name)
+            pb.keyframe_insert("location", frame=frame, group=pb.name)
 
 
 def add_clip(arm_obj, name, keys, prefix_keys=None):
@@ -90,12 +112,26 @@ def add_clip(arm_obj, name, keys, prefix_keys=None):
     act.use_fake_user = True
     arm_obj.animation_data.action = act
     groups = prefix_keys or {"": keys}
+    # Key every bone but fingers and sockets that no key of the clip moves: their channels
+    # would be constant and bloat the file.
+    keyed = {}
+    still = ("index_", "middle_", "ring_", "pinky_", "thumb_", "socket.")
+    names = [b.name for b in arm_obj.data.bones]
+    for prefix, ks in groups.items():
+        own = [n[len(prefix):] for n in names if n.startswith(prefix) and not any(
+            n.startswith(q) for q in groups if len(q) > len(prefix) and q.startswith(prefix))]
+        rot, loc = {n for n in own if not any(n.startswith(t) for t in still)}, set()
+        for _f, spec in ks:
+            r, lo = spec_bones(spec)
+            rot |= r
+            loc |= lo
+        keyed[prefix] = (rot, loc)
     for prefix, ks in groups.items():
         for f, spec in ks:
-            pose(arm_obj, spec, frame=f, prefix=prefix)
+            pose(arm_obj, spec, frame=f, prefix=prefix, keyed=keyed[prefix])
     for fc in _fcurves(act):
         for kp in fc.keyframe_points:
-            kp.interpolation = "BEZIER"
+            kp.interpolation = "LINEAR"
     clips = list(arm_obj.get("acr_clips", []))
     clips.append(name)
     arm_obj["acr_clips"] = clips
