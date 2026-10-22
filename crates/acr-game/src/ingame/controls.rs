@@ -284,6 +284,7 @@ impl InGame {
         self.held.clear();
         self.interface.modern.keys = [false; 4];
         self.interface.modern.pan = None;
+        self.three_d.release_keys();
     }
 }
 

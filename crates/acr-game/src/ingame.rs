@@ -27,6 +27,7 @@ mod effects;
 mod interface;
 mod panels;
 mod save;
+mod three_d;
 use crate::unit_sounds::{self, SoundEvent};
 pub use interface::{GameKey, GameMouse};
 
@@ -87,6 +88,8 @@ pub struct InGame {
     ambient_ticks: u32,
     /// Fires of damaged buildings.
     effects: effects::Effects,
+    /// 3D models and the free camera (#163, #164).
+    three_d: three_d::ThreeD,
 }
 
 impl InGame {
@@ -135,6 +138,7 @@ impl InGame {
             dip_page_shown: false,
             ambient_ticks: 0,
             effects: Default::default(),
+            three_d: Default::default(),
         }
     }
 
@@ -146,6 +150,7 @@ impl InGame {
         queue.extend(self.sim_assets.start(paths));
         queue.extend(self.mission.start(paths));
         drop(queue);
+        self.three_d.start(paths);
         self.generate_map();
         self.objects.start(&|p| self.requests.borrow_mut().push(p.to_owned()));
         self.objects.start_effects(&|p| self.requests.borrow_mut().push(p.to_owned()));
@@ -176,6 +181,9 @@ impl InGame {
     pub fn on_loaded(&mut self, path: &str, result: &Result<Vec<u8>, String>) -> bool {
         if self.mapgen.as_mut().is_some_and(|g| g.on_loaded(path, result)) {
             self.generate_map();
+            return true;
+        }
+        if self.three_d.on_loaded(path, result) {
             return true;
         }
         let load = |p: &str| self.requests.borrow_mut().push(p.to_owned());
@@ -286,6 +294,7 @@ impl InGame {
             self.uploaded = true;
         }
         self.objects.sync_gpu(device, queue, format);
+        self.three_d.sync_gpu(device, queue, format);
     }
 
     fn local_player(&self) -> u8 {
@@ -322,6 +331,9 @@ impl InGame {
 
     /// World pixel of the ground under a window position.
     fn world_at(&self, [x, y]: [f32; 2]) -> (i32, i32) {
+        if let Some(view) = self.three_d.free_view(self.camera, self.window_size()) {
+            return view.ground_at([x, y], |x, y| self.terrain.as_ref().map_or(0, |t| t.height_at(x, y)));
+        }
         let wx = (self.camera.x + x / self.camera.scale) as i32;
         let sy = self.camera.y + y / self.camera.scale;
         // The ground there is lifted by its height: a few steps find the point under the
@@ -339,6 +351,10 @@ impl InGame {
     fn screen_of(&self, unit: &acr_sim::Unit) -> [f32; 2] {
         let (x, y) = (unit.pos.x >> 4, unit.pos.y >> 4);
         let h = self.terrain.as_ref().map_or(0, |t| t.height_at(x, y));
+        if let Some(view) = self.three_d.free_view(self.camera, self.window_size()) {
+            let p = view.project(acr_render::view3d::ground_point(x, y, h));
+            return [p[0], p[1]];
+        }
         self.camera.project(x, y, h)
     }
 
@@ -530,8 +546,11 @@ impl InGame {
             self.ambient_ticks += ticks;
         }
         self.glide_zoom(seconds, window);
+        let before = self.camera;
         self.scroll_view(seconds, window);
+        self.turn_scrolling(before, window);
         self.want_new_types();
+        self.update_models(seconds);
         self.objects.set_dynamic(self.unit_sprites());
     }
 
@@ -630,7 +649,7 @@ impl InGame {
         let transparent = self.interface.hud.transparent;
         let mut out = Vec::with_capacity(world.units.len());
         // Units inside buildings are not drawn (`Hidden`).
-        for u in world.units.iter().filter(|u| u.alive && u.inside_of.is_none()) {
+        for u in world.units.iter().filter(|u| u.alive && u.inside_of.is_none() && !self.three_d.shows(u.id)) {
             let kind = world.catalog.get(u.kind);
             let anim = anim_name(u.anim);
             let step = if u.building { 0 } else { u.frame.max(0) as usize };
@@ -645,7 +664,7 @@ impl InGame {
             // The transparency mode (key O) draws buildings with `ShowGPTransparent`; a
             // corpse whose death counter passed 100 is drawn with `ShowGPTransparentLayers`
             // (0x506ed5, options 2 → 0x48e180): it fades soon after it fell.
-            let transparent = (transparent && u.building) || u.death > CORPSE_FADE;
+            let transparent = (transparent && u.building) || u.death > CORPSE_FADE || self.three_d.ghost(u.id);
             for (frame, (ox, oy), layer, row) in look.parts {
                 let sort = (y >> 1) + row;
                 out.push(SceneSprite {
@@ -678,10 +697,17 @@ impl InGame {
     ) {
         if let Some(renderer) = &mut self.renderer {
             renderer.zoomed = self.interface.hud.zoom;
+            renderer.orbit = self.three_d.orbit();
             renderer.render(device, queue, encoder, view, size, &self.camera);
         }
         self.objects.zoomed = self.interface.hud.zoom;
-        self.objects.render(device, queue, encoder, view, size, &self.camera);
+        if self.three_d.active() {
+            let ground = self.renderer.as_ref();
+            let terrain = self.terrain.as_ref();
+            self.three_d.render(device, queue, encoder, view, size, &self.camera, ground, terrain, &mut self.objects);
+        } else {
+            self.objects.render(device, queue, encoder, view, size, &self.camera);
+        }
         let shades = self.fog_shades(size);
         if let Some(fog) = &mut self.fog_renderer {
             fog.prepare(device, queue, &self.camera, shades.as_ref());

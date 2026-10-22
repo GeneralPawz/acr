@@ -25,6 +25,41 @@ pub struct Settings {
     /// ACR: the view scrolls with the cursor at the window edge. Always on with the original
     /// controls; the modern scheme can switch it off.
     pub edge_scroll: bool,
+    /// ACR (#163): which objects are drawn as 3D models where a model exists
+    /// (docs/rendering-3d.md). Only in `settings.txt` / `localStorage` for now.
+    pub models: Models,
+    /// ACR (#164): the original fixed camera or the free one.
+    pub camera: CameraMode,
+    /// ACR (#183): blood and gore of 3D corpses; sprites keep the original fade.
+    pub gore: Gore,
+}
+
+/// `models=off|units|all`: sprites everywhere (the original), 3D units, 3D units and
+/// buildings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Models {
+    #[default]
+    Off,
+    Units,
+    All,
+}
+
+/// `camera=fixed|free`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CameraMode {
+    #[default]
+    Fixed,
+    Free,
+}
+
+/// `gore=full|reduced|off`: corpses decompose fully, decompose without dissolving (they
+/// discolour, collapse and sink), or fade like the original.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Gore {
+    #[default]
+    Full,
+    Reduced,
+    Off,
 }
 
 /// The in-game controls: the original's, or the modern scheme with wheel zoom and drag
@@ -62,6 +97,9 @@ impl Default for Settings {
             record_file: Vec::new(),
             controls: Controls::Original,
             edge_scroll: true,
+            models: Models::Off,
+            camera: CameraMode::Fixed,
+            gore: Gore::Full,
         }
     }
 }
@@ -104,9 +142,24 @@ impl Settings {
             Controls::Original => "original",
             Controls::Modern => "modern",
         };
+        let models = match self.models {
+            Models::Off => "off",
+            Models::Units => "units",
+            Models::All => "all",
+        };
+        let camera = match self.camera {
+            CameraMode::Fixed => "fixed",
+            CameraMode::Free => "free",
+        };
+        let gore = match self.gore {
+            Gore::Full => "full",
+            Gore::Reduced => "reduced",
+            Gore::Off => "off",
+        };
         format!(
             "sound_volume={}\nmusic_volume={}\nmusic_mode={}\ngame_mode={}\nscroll_speed={}\nframe_time={}\n\
-             resolution={}\nrecord={}\nrecord_file={hex}\ncontrols={controls}\nedge_scroll={}\n",
+             resolution={}\nrecord={}\nrecord_file={hex}\ncontrols={controls}\nedge_scroll={}\n\
+             models={models}\ncamera={camera}\ngore={gore}\n",
             self.sound_volume,
             self.music_volume,
             self.music_mode,
@@ -145,6 +198,21 @@ impl Settings {
                 }
                 "controls" => s.controls = if value == "modern" { Controls::Modern } else { Controls::Original },
                 "edge_scroll" => s.edge_scroll = value != "0",
+                "models" => {
+                    s.models = match value {
+                        "units" => Models::Units,
+                        "all" => Models::All,
+                        _ => Models::Off,
+                    }
+                }
+                "camera" => s.camera = if value == "free" { CameraMode::Free } else { CameraMode::Fixed },
+                "gore" => {
+                    s.gore = match value {
+                        "reduced" => Gore::Reduced,
+                        "off" => Gore::Off,
+                        _ => Gore::Full,
+                    }
+                }
                 _ => {}
             }
         }
@@ -170,11 +238,17 @@ mod tests {
             record_file: b"Spiel \xe4".to_vec(),
             controls: Controls::Modern,
             edge_scroll: false,
+            models: Models::Units,
+            camera: CameraMode::Free,
+            gore: Gore::Reduced,
         };
         assert_eq!(Settings::decode(&s.encode()), s);
         assert_eq!(Settings::decode(""), Settings::default());
-        let odd = Settings::decode("scroll_speed=99\nfoo=1\nresolution=x\ncontrols=modern");
+        let odd = Settings::decode("scroll_speed=99\nfoo=1\nresolution=x\ncontrols=modern\nmodels=3d\ngore=off");
         assert_eq!((odd.scroll_speed, odd.resolution, odd.controls), (10, 1, Controls::Modern));
+        assert_eq!((odd.models, odd.camera, odd.gore), (Models::Off, CameraMode::Fixed, Gore::Off));
+        let all = Settings::decode("models=all\ncamera=free");
+        assert_eq!((all.models, all.camera, all.gore), (Models::All, CameraMode::Free, Gore::Full));
     }
 
     #[test]
