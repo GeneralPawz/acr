@@ -349,6 +349,9 @@ pub struct Rig {
     pub trunk: Chain,
     /// Neck joint and the head's slot (the cap where the head is gone).
     pub neck: (Vec3, u32),
+    /// The head's radius: hits on the head land this far from its centre (0.11 m above
+    /// [`Rig::neck`]).
+    pub head_radius: f32,
 }
 
 /// Inverse of the affine part of `m` applied to the origin: where a joint with inverse
@@ -416,7 +419,7 @@ impl Rig {
             points: vec![(0.0, hips, sh), (0.5, math::scale(math::add(hips, neck), 0.5), spine), (1.0, neck, spine)],
             radius: [0.16; RADIUS_SAMPLES],
         };
-        Some(Rig { limbs: [arm("l")?, arm("r")?, leg("l")?, leg("r")?], trunk, neck: (neck, head) })
+        Some(Rig { limbs: [arm("l")?, arm("r")?, leg("l")?, leg("r")?], trunk, neck: (neck, head), head_radius: 0.09 })
     }
 
     /// Fills the radius profiles from the vertices (rest pose): the outer radius of each
@@ -433,6 +436,12 @@ impl Rig {
             let i = ((level * (RADIUS_SAMPLES - 1) as f32).round() as usize).min(RADIUS_SAMPLES - 1);
             max[k][i] = max[k][i].max(chain.distance(p));
         }
+        self.set_profiles(&max, 0.4);
+    }
+
+    /// The radius profiles from the outer radii per band (`max`, limbs then trunk; 0 where
+    /// no vertex fell), smoothed and clamped to `cap`.
+    fn set_profiles(&mut self, max: &[[f32; RADIUS_SAMPLES]; 5], cap: f32) {
         for (k, m) in max.iter().enumerate() {
             let chain = if k < 4 { &mut self.limbs[k] } else { &mut self.trunk };
             if m.iter().all(|&r| r <= 0.0) {
@@ -453,7 +462,7 @@ impl Rig {
             chain.radius = std::array::from_fn(|i| {
                 let a = r[i.saturating_sub(1)];
                 let b = r[(i + 1).min(RADIUS_SAMPLES - 1)];
-                (0.25 * a + 0.5 * r[i] + 0.25 * b).clamp(0.015, 0.4)
+                (0.25 * a + 0.5 * r[i] + 0.25 * b).clamp(0.015, cap)
             });
         }
     }
@@ -471,6 +480,259 @@ impl Rig {
                 self.limbs[l as usize].radius = r;
             }
         }
+    }
+}
+
+/// Words of a bone's name, lower case (`RigLBLegDigit11` → rig, lb, leg, digit, 11).
+pub fn name_words(name: &str) -> Vec<String> {
+    let c: Vec<char> = name.chars().collect();
+    let mut words = Vec::new();
+    let mut w = String::new();
+    for (i, &ch) in c.iter().enumerate() {
+        if !ch.is_ascii_alphanumeric() {
+            if !w.is_empty() {
+                words.push(std::mem::take(&mut w));
+            }
+            continue;
+        }
+        let split = i > 0 && c[i - 1].is_ascii_alphanumeric() && {
+            let (p, next) = (c[i - 1], c.get(i + 1).copied());
+            (ch.is_ascii_uppercase() && (p.is_ascii_lowercase() || p.is_ascii_digit()))
+                || (ch.is_ascii_uppercase() && p.is_ascii_uppercase() && next.is_some_and(|n| n.is_ascii_lowercase()))
+                || ch.is_ascii_digit() != p.is_ascii_digit()
+        };
+        if split && !w.is_empty() {
+            words.push(std::mem::take(&mut w));
+        }
+        w.push(ch.to_ascii_lowercase());
+    }
+    if !w.is_empty() {
+        words.push(w);
+    }
+    words
+}
+
+/// Words of bones that are detail, not body: digits, claws, the face, bone ends, helpers.
+const DETAIL_WORDS: [&str; 26] = [
+    "digit",
+    "toe",
+    "finger",
+    "index",
+    "middle",
+    "pinky",
+    "ring",
+    "thumb",
+    "claw",
+    "tongue",
+    "eye",
+    "eyelid",
+    "lid",
+    "ear",
+    "whisker",
+    "whiskers",
+    "nose",
+    "lip",
+    "end",
+    "jaw",
+    "target",
+    "ref",
+    "reference",
+    "blade",
+    "root",
+    "membrane",
+];
+
+impl Rig {
+    /// A rig guessed from an animal's skeleton with any bone names (`acr_animal` models):
+    /// the pelvis (or hips) bone nearest the middle, the head, the spine between them as
+    /// the trunk (up to the first neck bone), and four legs: the chains hanging from the
+    /// trunk that reach the ground, front ones as the arms, by side (`+x` left). Digits,
+    /// the face, tails and helper bones are left out. The radii are measured from the
+    /// skinned `vertices` (rest position, the slot weighing most). For wound marks and torn
+    /// volumes only: such a model has no `_PART`/`_LIMB` and is never cut.
+    pub fn beast(nodes: &[Node], slots: &[Slot], vertices: impl Iterator<Item = (Vec3, u32)>) -> Option<Rig> {
+        let n_nodes = nodes.len();
+        let mut joint: Vec<Option<(Vec3, u32)>> = vec![None; n_nodes];
+        for (i, s) in slots.iter().enumerate() {
+            if let Slot::Joint { node, inverse_bind } = s
+                && *node < n_nodes
+            {
+                joint[*node] = Some((joint_position(inverse_bind), i as u32));
+            }
+        }
+        let words: Vec<Vec<String>> = nodes.iter().map(|n| name_words(&n.name)).collect();
+        let has = |n: usize, w: &str| words[n].iter().any(|x| x == w);
+        let body: Vec<bool> = (0..n_nodes)
+            .map(|n| joint[n].is_some() && !words[n].iter().any(|x| DETAIL_WORDS.contains(&x.as_str())))
+            .collect();
+        let pos = |n: usize| joint[n].map_or([0.0; 3], |j| j.0);
+        let slot = |n: usize| joint[n].map_or(0, |j| j.1);
+        let ancestors = |n: usize| {
+            let mut v = Vec::new();
+            let mut p = nodes[n].parent;
+            while let Some(i) = p {
+                v.push(i);
+                p = nodes[i].parent;
+            }
+            v
+        };
+        let middle = |a: &usize, b: &usize| pos(*a)[0].abs().total_cmp(&pos(*b)[0].abs());
+        let hips = (0..n_nodes).filter(|&n| body[n] && (has(n, "pelvis") || has(n, "hips"))).min_by(middle)?;
+        let head =
+            (0..n_nodes).filter(|&n| body[n] && has(n, "head") && ancestors(n).contains(&hips)).min_by(middle)?;
+        // Hips .. the head's parent, body bones only.
+        let mut path: Vec<usize> =
+            ancestors(head).into_iter().take_while(|&a| a != hips).filter(|&a| body[a]).collect();
+        path.reverse();
+        path.insert(0, hips);
+        let neck_at = path.iter().position(|&n| has(n, "neck")).unwrap_or(path.len()).max(1);
+        let trunk_nodes = &path[..neck_at];
+        let neck_point = path.get(neck_at).map_or(pos(head), |&n| pos(n));
+        let chain_of = |points: Vec<(Vec3, u32)>| -> Chain {
+            let mut len = vec![0.0f32];
+            for w in points.windows(2) {
+                let d = math::sub(w[1].0, w[0].0);
+                len.push(len.last().copied().unwrap_or(0.0) + math::dot(d, d).sqrt());
+            }
+            let total = len.last().copied().unwrap_or(0.0).max(1e-6);
+            let points = points.iter().zip(&len).map(|(&(p, s), &l)| (l / total, p, s)).collect();
+            Chain { points, radius: [0.1; RADIUS_SAMPLES] }
+        };
+        let mut trunk_points: Vec<(Vec3, u32)> = trunk_nodes.iter().map(|&n| (pos(n), slot(n))).collect();
+        trunk_points.push((neck_point, slot(trunk_nodes[trunk_nodes.len() - 1])));
+        let trunk = chain_of(trunk_points);
+        // Everything below a node (joints only), and its lowest point.
+        let below = |n: usize| -> Vec<usize> {
+            (0..n_nodes).filter(|&m| joint[m].is_some() && (m == n || ancestors(m).contains(&n))).collect()
+        };
+        let lowest = |n: usize| below(n).into_iter().min_by(|&a, &b| pos(a)[1].total_cmp(&pos(b)[1]));
+        let ground = 0.5 * pos(hips)[1].min(neck_point[1]);
+        let mid_z = 0.5 * (pos(hips)[2] + neck_point[2]);
+        let mut legs: [Option<(usize, f32)>; 4] = [None; 4];
+        for n in (0..n_nodes).filter(|&n| {
+            body[n]
+                && !path.contains(&n)
+                && nodes[n].parent.is_some_and(|p| trunk_nodes.contains(&p))
+                && !["tail", "neck", "head"].iter().any(|w| has(n, w))
+        }) {
+            let Some(low) = lowest(n) else { continue };
+            let y = pos(low)[1];
+            if y > ground {
+                continue;
+            }
+            // Front or hind by where it hangs, the side by the foot (some rigs name their
+            // sides mirrored).
+            let k = match (pos(n)[2] > mid_z, pos(low)[0] > 0.0) {
+                (true, true) => 0,
+                (true, false) => 1,
+                (false, true) => 2,
+                (false, false) => 3,
+            };
+            if legs[k].is_none_or(|(_, best)| y < best) {
+                legs[k] = Some((n, y));
+            }
+        }
+        let mut chains = Vec::with_capacity(4);
+        let mut limb_nodes: Vec<Vec<usize>> = Vec::with_capacity(4);
+        for leg in legs {
+            let (start, _) = leg?;
+            let mut list = vec![start];
+            loop {
+                let last = list[list.len() - 1];
+                let next = (0..n_nodes)
+                    .filter(|&c| body[c] && nodes[c].parent == Some(last))
+                    .filter_map(|c| Some((c, pos(lowest(c)?)[1])))
+                    .min_by(|a, b| a.1.total_cmp(&b.1));
+                match next {
+                    Some((c, _)) => list.push(c),
+                    None => break,
+                }
+            }
+            let mut points: Vec<(Vec3, u32)> = list.iter().map(|&n| (pos(n), slot(n))).collect();
+            let last = list[list.len() - 1];
+            let end = pos(last);
+            let tip = lowest(last).map(pos).filter(|&t| {
+                let d = math::sub(t, end);
+                math::dot(d, d) > 1e-4
+            });
+            let tip = tip.unwrap_or_else(|| {
+                let from = if list.len() > 1 { pos(list[list.len() - 2]) } else { pos(hips) };
+                math::add(end, math::scale(math::sub(end, from), 0.3))
+            });
+            points.push((tip, slot(last)));
+            chains.push(chain_of(points));
+            limb_nodes.push(list);
+        }
+        // The head: halfway from its joint to the farthest bone in it (the snout).
+        let hp = pos(head);
+        let far = below(head).into_iter().map(pos).max_by(|a, b| {
+            let (da, db) = (math::sub(*a, hp), math::sub(*b, hp));
+            math::dot(da, da).total_cmp(&math::dot(db, db))
+        });
+        let centre = match far {
+            Some(f) if f != hp => math::scale(math::add(hp, f), 0.5),
+            _ => math::add(hp, math::scale(normalize(math::sub(hp, neck_point)), 0.12)),
+        };
+        let limbs: [Chain; 4] = chains.try_into().ok()?;
+        let mut rig = Rig { limbs, trunk, neck: (math::sub(centre, [0.0, 0.11, 0.0]), slot(head)), head_radius: 0.12 };
+        // Which chain carries a slot: the nearest limb or trunk bone above its joint (the
+        // head, neck and tail are left out).
+        let head_slots: Vec<u32> = below(head).into_iter().map(slot).collect();
+        let mut carrier: Vec<Option<usize>> = vec![None; slots.len()];
+        for (s, sl) in slots.iter().enumerate() {
+            let Slot::Joint { node, .. } = *sl else { continue };
+            let mut n = Some(node);
+            while let Some(i) = n {
+                if i == head || ["neck", "tail"].iter().any(|w| has(i, w)) {
+                    break;
+                }
+                if let Some(k) = limb_nodes.iter().position(|l| l.contains(&i)) {
+                    carrier[s] = Some(k);
+                    break;
+                }
+                if trunk_nodes.contains(&i) {
+                    carrier[s] = Some(4);
+                    break;
+                }
+                n = nodes[i].parent;
+            }
+        }
+        // Per band the radius most of its vertices lie within (fur, and the flank where a
+        // leg joins, stay out of it); the head's from its centre.
+        let mut bands: Vec<Vec<f32>> = vec![Vec::new(); 5 * RADIUS_SAMPLES];
+        let mut head_d = Vec::new();
+        for (p, s) in vertices {
+            match carrier.get(s as usize).copied().flatten() {
+                Some(k) => {
+                    let chain = if k < 4 { &rig.limbs[k] } else { &rig.trunk };
+                    let level = chain.project(p);
+                    let i = ((level * (RADIUS_SAMPLES - 1) as f32).round() as usize).min(RADIUS_SAMPLES - 1);
+                    bands[k * RADIUS_SAMPLES + i].push(chain.distance(p));
+                }
+                None if head_slots.contains(&s) => {
+                    let d = math::sub(p, centre);
+                    head_d.push(math::dot(d, d).sqrt());
+                }
+                None => {}
+            }
+        }
+        let mut max = [[0.0f32; RADIUS_SAMPLES]; 5];
+        for (k, m) in max.iter_mut().enumerate() {
+            for (i, r) in m.iter_mut().enumerate() {
+                let b = &mut bands[k * RADIUS_SAMPLES + i];
+                if !b.is_empty() {
+                    b.sort_by(f32::total_cmp);
+                    *r = b[(b.len() - 1) * 7 / 10];
+                }
+            }
+        }
+        rig.set_profiles(&max, 0.8);
+        if !head_d.is_empty() {
+            // Low in the spread: a long snout, ears and antlers stay out of it.
+            head_d.sort_by(f32::total_cmp);
+            rig.head_radius = head_d[(head_d.len() - 1) * 35 / 100].clamp(0.04, 0.4);
+        }
+        Some(rig)
     }
 }
 
@@ -987,7 +1249,8 @@ mod tests {
     fn caps_face_away_from_the_kept_flesh() {
         let c = chain();
         let trunk = Chain { points: vec![(0.0, [0.0, 1.0, 0.0], 0), (1.0, [0.0, 1.5, 0.0], 0)], radius: [0.15; 16] };
-        let rig = Rig { limbs: [c.clone(), c.clone(), c.clone(), c], trunk, neck: ([0.0, 1.5, 0.0], 5) };
+        let rig =
+            Rig { limbs: [c.clone(), c.clone(), c.clone(), c], trunk, neck: ([0.0, 1.5, 0.0], 5), head_radius: 0.09 };
         let mut d = Damage::default();
         d.limb_mut(Limb::ArmL).cut = 150;
         let body = caps(&d, &rig);
@@ -1012,7 +1275,8 @@ mod tests {
     fn volumes_sever_limbs_and_hide_caps() {
         let c = chain();
         let trunk = Chain { points: vec![(0.0, [0.0, 1.0, 0.0], 0), (1.0, [0.0, 1.5, 0.0], 0)], radius: [0.15; 16] };
-        let rig = Rig { limbs: [c.clone(), c.clone(), c.clone(), c], trunk, neck: ([0.0, 1.5, 0.0], 5) };
+        let rig =
+            Rig { limbs: [c.clone(), c.clone(), c.clone(), c], trunk, neck: ([0.0, 1.5, 0.0], 5), head_radius: 0.09 };
         let mut d = Damage::parse("vol:0.0:1.4:-0.3:0.0:1.4:0.3:0.12").unwrap();
         assert_eq!(d.volumes().len(), 1);
         d.sever(&rig);
@@ -1041,7 +1305,8 @@ mod tests {
     fn wounds_show_their_inside() {
         let c = chain();
         let trunk = Chain { points: vec![(0.0, [0.0, 1.0, 0.0], 0), (1.0, [0.0, 1.5, 0.0], 0)], radius: [0.15; 16] };
-        let rig = Rig { limbs: [c.clone(), c.clone(), c.clone(), c], trunk, neck: ([0.0, 1.5, 0.0], 5) };
+        let rig =
+            Rig { limbs: [c.clone(), c.clone(), c.clone(), c], trunk, neck: ([0.0, 1.5, 0.0], 5), head_radius: 0.09 };
         // A chest wound: a cavity inside the trunk and ribs behind it.
         let mut d = Damage::parse("vol:0.0:1.35:0.1:0.0:1.35:0.3:0.08").unwrap();
         let ins = inserts(&d, &rig);
@@ -1068,5 +1333,118 @@ mod tests {
         assert!(p.indices.iter().all(|&i| (i as usize) < p.vertices.len()));
         assert_eq!(p.indices.len() % 3, 0);
         assert!(m.materials[0].stump);
+    }
+}
+
+#[cfg(test)]
+mod beast_tests {
+    use super::*;
+
+    fn joint_at(p: Vec3) -> Mat4 {
+        let mut m = math::IDENTITY;
+        m[3] = [-p[0], -p[1], -p[2], 1.0];
+        m
+    }
+
+    /// The bear's bones (`anmmed.glb`) at rough rest positions (glTF: y up, z forward).
+    fn bear() -> (Vec<Node>, Vec<Slot>) {
+        let bones: [(&str, Option<&str>, Vec3); 22] = [
+            ("RigPelvis", None, [0.0, 0.85, -0.5]),
+            ("RigLBLeg1", Some("RigPelvis"), [0.15, 0.8, -0.55]),
+            ("RigLBLeg2", Some("RigLBLeg1"), [0.15, 0.45, -0.5]),
+            ("RigLBLegAnkle", Some("RigLBLeg2"), [0.15, 0.1, -0.6]),
+            ("RigLBLegDigit11", Some("RigLBLegAnkle"), [0.15, 0.02, -0.5]),
+            ("RigRBLeg1", Some("RigPelvis"), [-0.15, 0.8, -0.55]),
+            ("RigRBLeg2", Some("RigRBLeg1"), [-0.15, 0.45, -0.5]),
+            ("RigRBLegAnkle", Some("RigRBLeg2"), [-0.15, 0.1, -0.6]),
+            ("RigSpine1", Some("RigPelvis"), [0.0, 0.9, -0.2]),
+            ("RigChest", Some("RigSpine1"), [0.0, 0.95, 0.2]),
+            ("RigLFLegCollarbone", Some("RigChest"), [0.18, 0.9, 0.35]),
+            ("RigLFLeg1", Some("RigLFLegCollarbone"), [0.2, 0.7, 0.4]),
+            ("RigLFLeg2", Some("RigLFLeg1"), [0.2, 0.4, 0.38]),
+            ("RigLFLegAnkle", Some("RigLFLeg2"), [0.2, 0.08, 0.4]),
+            ("RigRFLegCollarbone", Some("RigChest"), [-0.18, 0.9, 0.35]),
+            ("RigRFLeg1", Some("RigRFLegCollarbone"), [-0.2, 0.7, 0.4]),
+            ("RigRFLeg2", Some("RigRFLeg1"), [-0.2, 0.4, 0.38]),
+            ("RigRFLegAnkle", Some("RigRFLeg2"), [-0.2, 0.08, 0.4]),
+            ("RigNeck1", Some("RigChest"), [0.0, 1.0, 0.45]),
+            ("RigHead", Some("RigNeck1"), [0.0, 1.0, 0.7]),
+            ("RigJaw", Some("RigHead"), [0.0, 0.9, 0.95]),
+            ("RigTail1", Some("RigPelvis"), [0.0, 0.85, -0.8]),
+        ];
+        let index = |n: &str| bones.iter().position(|b| b.0 == n);
+        let nodes = bones
+            .iter()
+            .map(|b| Node {
+                name: b.0.into(),
+                parent: b.1.and_then(index),
+                translation: [0.0; 3],
+                rotation: [0.0, 0.0, 0.0, 1.0],
+                scale: [1.0; 3],
+            })
+            .collect();
+        let slots =
+            bones.iter().enumerate().map(|(i, b)| Slot::Joint { node: i, inverse_bind: joint_at(b.2) }).collect();
+        (nodes, slots)
+    }
+
+    #[test]
+    fn words_of_bone_names() {
+        assert_eq!(name_words("RigLBLegDigit11"), ["rig", "lb", "leg", "digit", "11"]);
+        assert_eq!(name_words("RigRigLEar1"), ["rig", "rig", "l", "ear", "1"]);
+        assert_eq!(name_words("LeftForeArm"), ["left", "fore", "arm"]);
+        assert_eq!(name_words("Tail08_end_end"), ["tail", "08", "end", "end"]);
+    }
+
+    #[test]
+    fn a_bears_rig_from_its_bone_names() {
+        let (nodes, slots) = bear();
+        // A flank vertex on the chest, one on the left foreleg.
+        let verts = [([0.25, 0.9, 0.0], 9u32), ([0.27, 0.55, 0.39], 12u32)];
+        let rig = Rig::beast(&nodes, &slots, verts.into_iter()).expect("a rig");
+        // Front left, front right, hind left, hind right.
+        let start = |k: usize| rig.limbs[k].points[0].1;
+        assert!(start(0)[0] > 0.0 && start(0)[2] > 0.0, "{:?}", start(0));
+        assert!(start(1)[0] < 0.0 && start(1)[2] > 0.0);
+        assert!(start(2)[0] > 0.0 && start(2)[2] < 0.0);
+        assert!(start(3)[0] < 0.0 && start(3)[2] < 0.0);
+        // The hind leg ends at the digit; the trunk runs pelvis to neck, slots on the way.
+        let tip = rig.limbs[2].points.last().unwrap().1;
+        assert!(tip[1] < 0.05, "{tip:?}");
+        let t = &rig.trunk.points;
+        assert_eq!(t[0].1, [0.0, 0.85, -0.5]);
+        assert_eq!(t.last().unwrap().1, [0.0, 1.0, 0.45]);
+        assert!((t.last().unwrap().0 - 1.0).abs() < 1e-6);
+        // The head lies ahead of the neck; the measured flank sets the trunk's radius.
+        assert!(rig.neck.0[2] > 0.7 && rig.neck.0[1] < 1.0, "{:?}", rig.neck);
+        let chest = rig.trunk.radius_at(rig.trunk.project([0.0, 0.95, 0.0]));
+        assert!(chest > 0.15 && chest < 0.4, "{chest}");
+    }
+
+    #[test]
+    fn no_rig_without_a_head_or_four_legs() {
+        let (mut nodes, slots) = bear();
+        nodes[19].name = "RigSkull".into();
+        assert!(Rig::beast(&nodes, &slots, std::iter::empty()).is_none());
+        let (mut nodes, slots) = bear();
+        // The right foreleg hangs from a helper bone (left out), not from the trunk.
+        nodes[14].name = "RigRShoulderBlade".into();
+        assert!(Rig::beast(&nodes, &slots, std::iter::empty()).is_none());
+    }
+
+    /// `ACR_BEAST_GLB=path/to/anmmed.glb cargo test -p acr-render beast_glb -- --nocapture`
+    #[test]
+    fn beast_glb() {
+        let Some(path) = std::env::var_os("ACR_BEAST_GLB") else { return };
+        for p in std::env::split_paths(&path) {
+            let m = ModelData::from_glb(&std::fs::read(&p).unwrap()).unwrap();
+            let rig = m.beast_rig.as_ref().unwrap_or_else(|| panic!("{p:?}: no beast rig"));
+            println!("{p:?}: neck {:?} head r {:.3}", rig.neck, rig.head_radius);
+            for (k, c) in rig.limbs.iter().enumerate() {
+                let pts: Vec<_> = c.points.iter().map(|p| (p.0, p.1.map(|x| (x * 100.0).round() / 100.0))).collect();
+                println!("  limb {k}: {pts:?} r {:.3}..{:.3}", c.radius[0], c.radius[15]);
+            }
+            println!("  trunk r {:?}", rig.trunk.radius.map(|r| (r * 100.0).round() / 100.0));
+        }
     }
 }
