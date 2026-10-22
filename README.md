@@ -105,8 +105,8 @@ cargo xtask dist --game-dir "C:\path\to\American Conquest" --install
 ```
 
 builds both executables (with the game's original icon) and the browser build into
-`dist/` and copies them into the game folder; double-click them there. Release builds from
-CI carry a stand-in icon.
+`dist/` and copies them into the game folder; double-click them there. Both executables
+carry the original game icon, CI releases included.
 
 ## Controls
 
