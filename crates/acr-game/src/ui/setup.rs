@@ -101,4 +101,7 @@ pub struct GameSetup {
     pub players: Vec<PlayerSetup>,
     /// Index into `players` of the player at this computer.
     pub local_player: usize,
+    /// Optional rules that are not in the original game (all off by default), such as hit
+    /// locations (#225). Saved with the game.
+    pub rules: acr_sim::Rules,
 }

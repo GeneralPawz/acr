@@ -117,7 +117,16 @@ pub enum Start {
     /// A map file (`Missions\...\x.m3d`) without its script.
     Map(String),
     /// A random map: the local player's nation and the computer opponents.
-    Random { nation: usize, opponents: usize, seed: u32, resources: usize, size: usize, difficulty: usize },
+    /// `hit_locations` turns on the optional hit-location rule (#225).
+    Random {
+        nation: usize,
+        opponents: usize,
+        seed: u32,
+        resources: usize,
+        size: usize,
+        difficulty: usize,
+        hit_locations: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -371,6 +380,7 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
                     resources: uint(&r, "resources").unwrap_or(0) as usize,
                     size: uint(&r, "size").unwrap_or(0) as usize,
                     difficulty: uint(&r, "difficulty").unwrap_or(1) as usize,
+                    hit_locations: r.get("hit_locations").and_then(Value::as_bool).unwrap_or(false),
                 })
             }
         }
@@ -479,7 +489,15 @@ mod tests {
         let (_, r) = parse(r#"{"cmd": "start", "random": {"nation": 2, "seed": 9}}"#).unwrap();
         assert_eq!(
             r,
-            Request::Start(Start::Random { nation: 2, opponents: 1, seed: 9, resources: 0, size: 0, difficulty: 1 })
+            Request::Start(Start::Random {
+                nation: 2,
+                opponents: 1,
+                seed: 9,
+                resources: 0,
+                size: 0,
+                difficulty: 1,
+                hit_locations: false
+            })
         );
         let (_, r) = parse(r#"{"cmd": "load_map", "map": "Missions\\a.m3d"}"#).unwrap();
         assert_eq!(r, Request::Start(Start::Map("Missions\\a.m3d".into())));

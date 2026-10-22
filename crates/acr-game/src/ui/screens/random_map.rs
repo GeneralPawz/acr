@@ -170,6 +170,7 @@ impl RandomMap {
             }),
             players,
             local_player: 0,
+            rules: Default::default(),
         }
     }
 }

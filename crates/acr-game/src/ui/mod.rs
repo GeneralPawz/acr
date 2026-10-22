@@ -664,6 +664,7 @@ mod tests {
             }),
             players: Vec::new(),
             local_player: 0,
+            rules: Default::default(),
         }
     }
 

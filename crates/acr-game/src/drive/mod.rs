@@ -664,7 +664,7 @@ impl Driver {
             Request::Start(start) => {
                 match start {
                     Start::Map(path) => game.start_map(&path),
-                    Start::Random { nation, opponents, seed, resources, size, difficulty } => {
+                    Start::Random { nation, opponents, seed, resources, size, difficulty, hit_locations } => {
                         let mut players = vec![PlayerSetup {
                             name: b"Driver".to_vec(),
                             nation,
@@ -697,6 +697,7 @@ impl Driver {
                             kind: ui::GameKind::RandomMap(map),
                             players,
                             local_player: 0,
+                            rules: acr_sim::Rules { hit_locations },
                         }));
                     }
                 }

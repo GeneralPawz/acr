@@ -292,7 +292,8 @@ impl InGame {
     fn build_world(&mut self) {
         let (None, Some(map), true) = (&self.world, &self.map, self.sim_assets.ready()) else { return };
         let data = self.sim_assets.build();
-        let (world, report) = World::from_map(map, &data.shapes, Arc::new(data.catalog), Arc::new(data.formations));
+        let (mut world, report) = World::from_map(map, &data.shapes, Arc::new(data.catalog), Arc::new(data.formations));
+        world.rules = self.setup.rules;
         log::info!("world: {} units, {} map objects, {report:?}", world.units.len(), world.objects.len());
         let catalog = &world.catalog;
         self.objects.set_names((0..catalog.len()).map(|i| {

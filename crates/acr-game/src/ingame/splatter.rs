@@ -327,7 +327,16 @@ mod tests {
     use super::*;
 
     fn hit(cause: DeathCause) -> HitRecord {
-        HitRecord { tick: 100, victim: 3, pos: (1000, 1000), dir: (300, 0), cause, killed: false, building: false }
+        HitRecord {
+            tick: 100,
+            victim: 3,
+            pos: (1000, 1000),
+            dir: (300, 0),
+            cause,
+            killed: false,
+            building: false,
+            region: None,
+        }
     }
 
     fn drops(h: &HitRecord, now: u64, gore: Gore) -> Vec<BloodPool> {

@@ -49,6 +49,7 @@ pub mod trig;
 pub mod upgrade;
 pub mod weapon;
 pub mod world;
+pub mod wounds;
 
 pub use catalog::{Catalog, ObjectType, TypeId};
 pub use clock::{FixedClock, Tick};
@@ -57,6 +58,7 @@ pub use fixed::Pos;
 pub use map::MapGrid;
 pub use rng::{Rng, SyncRandom};
 pub use world::{EntityId, Unit, World};
+pub use wounds::Rules;
 
 /// Simulation ticks per second at the original default game speed: the single-player frame
 /// limiter (0x4a7589) waits `2 · FPSTime` ms per frame, `FPSTime` defaults to 50 and one

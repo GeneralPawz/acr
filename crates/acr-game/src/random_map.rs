@@ -142,6 +142,7 @@ mod tests {
             kind: GameKind::RandomMap(map.clone()),
             players: vec![player(3, 0), player(1, 2)],
             local_player: 0,
+            rules: Default::default(),
         };
         let s = settings(&map, &setup);
         assert_eq!((s.size, s.shape, s.landscape, s.climate), (2, 0, 4, 3));
