@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use acr_audio::Mixer;
 
 /// How Spotify's volume follows the loudness of the game's sound effects.
+#[cfg_attr(not(windows), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Ducking {
     /// The loudness at which the music starts to go down.
@@ -28,11 +29,13 @@ impl Default for Ducking {
 }
 
 /// The envelope of the effects' loudness and the volume factor for the music.
+#[cfg_attr(not(windows), allow(dead_code))]
 #[derive(Debug, Clone, Default)]
 pub struct Envelope {
     level: f32,
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 impl Envelope {
     /// Follows `loudness` (RMS 0..=1) over `dt` seconds; returns the factor (1 = untouched,
     /// `1 - depth` = fully ducked) for the music's volume.
