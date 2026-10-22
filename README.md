@@ -169,3 +169,4 @@ agents), the driver protocol, the scenario format and the Jev helper for cheap d
 - [Mission/AI scripting API](docs/script-api.md) (generated)
 - [Simulation: game speed, pathfinding, motion, formations](docs/simulation.md)
 - [3D assets: pipeline, original camera, sprite check](docs/assets.md)
+- [Humans: skeleton H, layered body, decomposing corpses (prototype)](docs/assets-humans.md)

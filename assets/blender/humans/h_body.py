@@ -13,6 +13,7 @@ import math
 import bmesh
 import bpy
 from mathutils import Matrix, Vector
+from mathutils.bvhtree import BVHTree
 from mathutils.geometry import intersect_point_line
 
 import h_rig
@@ -166,7 +167,18 @@ def derive(src, name, keep_face, offset):
     bm.from_mesh(obj.data)
     bm.normal_update()
     bm.verts.ensure_lookup_table()
-    normals = {v.index: v.normal.copy() for v in bm.verts}
+    # Offset direction: the vertex normal, flipped where it points towards the vertex's own
+    # bone (the Skin-modifier hull is not consistently wound, so some normals point in).
+    seg = h_rig.segments(src.parent)
+    normals = {}
+    for v in bm.verts:
+        a, b = seg[homes[v.index]]
+        q, t = intersect_point_line(v.co, a, b)
+        q = a + (b - a) * min(max(t, 0.0), 1.0)
+        n = v.normal.copy()
+        if n.dot(v.co - q) < 0:
+            n.negate()
+        normals[v] = n
     kill = []
     for f in bm.faces:
         votes = {}
@@ -177,7 +189,7 @@ def derive(src, name, keep_face, offset):
             kill.append(f)
     bmesh.ops.delete(bm, geom=kill, context="FACES")
     for v in bm.verts:
-        v.co += normals[v.index] * offset
+        v.co += normals[v] * offset  # keyed by BMVert: delete() renumbers indices
     bm.to_mesh(obj.data)
     bm.free()
     for a in list(obj.data.color_attributes):
@@ -225,6 +237,40 @@ def skirt(arm_obj, name, top, bottom, r_top, r_bot, gap_deg=0.0, rings=6, seg=20
         leg = t * abs(side) * 0.8
         gh.add([v.index], 1.0 - leg, "REPLACE")
         (gl if side > 0 else gr).add([v.index], max(leg, 0.0), "REPLACE")
+    return bind(obj, arm_obj)
+
+
+def strap(arm_obj, name, surface, a, b, width, offset, samples=12):
+    """A belt over `surface` (rest mesh) along the line a-b (in the XZ plane), front and
+    back: rays along Y find the surface, the ribbon sits `offset` above it."""
+    me = surface.data
+    tree = BVHTree.FromPolygons([v.co for v in me.vertices], [p.vertices for p in me.polygons])
+    along = (b - a).normalized()
+    side = along.cross(Vector((0, 1, 0))).normalized() * (width / 2)
+    verts, faces = [], []
+    for sign in (-1, 1):  # front (-Y), back (+Y)
+        row = []
+        for i in range(samples + 1):
+            c = a + (b - a) * (i / samples)
+            pair = []
+            for e in (-side, side):
+                p = c + e
+                hit, n, _i, _d = tree.ray_cast(Vector((p.x, sign * 1.0, p.z)), Vector((0, -sign, 0)))
+                if hit is None:
+                    break
+                pair.append(hit + n * offset)
+            if len(pair) == 2:
+                row.append(pair)
+        base = len(verts)
+        for pair in row:
+            verts += [tuple(pair[0]), tuple(pair[1])]
+        for i in range(len(row) - 1):
+            j = base + 2 * i
+            faces.append((j, j + 1, j + 3, j + 2) if sign < 0 else (j, j + 2, j + 3, j + 1))
+    m = bpy.data.meshes.new(name)
+    m.from_pydata(verts, [], faces)
+    obj = _link(bpy.data.objects.new(name, m))
+    skin_weights(obj, arm_obj)
     return bind(obj, arm_obj)
 
 
@@ -426,3 +472,42 @@ def attach(obj, arm_obj, bone, world_matrix):
     obj.matrix_basis = world_matrix
     obj["acr_socket"] = bone
     return obj
+
+
+# --------------------------------------------------------------------------- shape keys
+
+def add_deflate(obj, arm_obj, keep=0.65):
+    """Shape key (glTF morph target) `deflate`: every vertex moves towards the nearest point
+    of its bone, keeping `keep` of its distance. Clothes collapse onto the bones while the
+    flesh under them dissolves; driven by the decay (h_decay.DEFLATE_WINDOW)."""
+    seg = h_rig.segments(arm_obj)
+    if obj.data.shape_keys is None:
+        obj.shape_key_add(name="Basis", from_mix=False)
+    key = obj.shape_key_add(name="deflate", from_mix=False)
+    key.value = 0.0  # Blender 5.2 creates new keys at 1.0
+    for v in obj.data.vertices:
+        best, q = None, None
+        for b in h_rig.BODY_BONES:
+            a, c = seg[b]
+            p, t = intersect_point_line(v.co, a, c)
+            p = a + (c - a) * min(max(t, 0.0), 1.0)
+            dist = (v.co - p).length
+            if best is None or dist < best:
+                best, q = dist, p
+        key.data[v.index].co = q + (v.co - q) * keep
+    return key
+
+
+def add_lie_flat(obj, back=0.7, front=0.6, widen=1.12):
+    """Shape key `lie_flat` for free-hanging parts (coat skirt): squashes the rest-pose
+    front/back depth so a stiff tube lies flat on a prone corpse; weight 1 once lying."""
+    if obj.data.shape_keys is None:
+        obj.shape_key_add(name="Basis", from_mix=False)
+    key = obj.shape_key_add(name="lie_flat", from_mix=False)
+    key.value = 0.0
+    for v in obj.data.vertices:
+        c = v.co.copy()
+        c.y *= back if c.y > 0 else front
+        c.x *= widen
+        key.data[v.index].co = c
+    return key

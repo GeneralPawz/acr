@@ -79,12 +79,12 @@ def lie_pose():
     """#DEATHLIE1: prone, head towards the facing direction, arms flung out (as the sprite),
     feet near the ground point."""
     return {
-        "root": (88, 0, 6), "root_loc": _root_for(88, (0.03, -0.52, 0.115)),
+        "root": (91, 0, 6), "root_loc": _root_for(91, (0.03, -0.52, 0.12)),
         "spine": (0, 6, 4), "spine1": (0, 3, 0), "neck": (-4, 0, 0), "head": (-10, 18, 62),
-        "clavicle_l": (0, -10, 0), "upperarm_l": (0, -105, 0), "forearm_l": (0, -20, 0),
-        "clavicle_r": (0, 6, 0), "upperarm_r": (0, 55, 0), "forearm_r": (0, 35, 0),
-        "thigh_l": (-4, -9, 0), "shin_l": (22, 0, 0), "foot_l": (55, 0, 0),
-        "thigh_r": (2, 7, 0), "shin_r": (48, 0, 0), "foot_r": (55, 0, 0),
+        "clavicle_l": (0, -10, 0), "upperarm_l": (-8, -70, 0), "forearm_l": (0, -45, 0),
+        "clavicle_r": (0, 6, 0), "upperarm_r": (-8, 45, 0), "forearm_r": (0, 50, 0),
+        "thigh_l": (-6, -9, 0), "shin_l": (8, 0, 0), "foot_l": (55, 0, 0),
+        "thigh_r": (-4, 10, 0), "shin_r": (28, 0, 0), "foot_r": (50, 0, 0),
     }
 
 
@@ -132,13 +132,23 @@ def mats(prefix):
     return m
 
 
-def _band(c, a, b, half=0.03):
-    """c lies within `half` of the plane through the line a-b that contains the Y axis."""
-    n = (b - a).normalized().cross(Vector((0, 1, 0))).normalized()
-    return abs((c - a).dot(n)) < half
+def join(a, b):
+    """Joins mesh object b into a (same armature)."""
+    for o in bpy.data.objects:
+        o.select_set(False)
+    a.select_set(True)
+    b.select_set(True)
+    bpy.context.view_layer.objects.active = a
+    bpy.ops.object.join()
+    return a
 
 
-def _finish(arm, layers, prefix, stand):
+def _finish(arm, layers, prefix, stand, skirts=()):
+    for layer in ("flesh", "clothes"):
+        for o in layers[layer]:
+            h_body.add_deflate(o, arm)
+    for o in skirts:
+        h_body.add_lie_flat(o)
     for objs in layers.values():
         for o in objs:
             h_decay.add_mask(o, o.data.materials[0]["acr_decay"]["layer"],
@@ -167,10 +177,12 @@ def musketeer(prefix="engm18.", state="stand"):
                  or (h in {"shin_l", "shin_r"} and c.z > 0.40), 0.010)
     gaiters = d(body, prefix + "gaiters", lambda c, n, h: (h in {"shin_l", "shin_r"} and c.z <= 0.44)
                 or h in {"foot_l", "foot_r", "toe_l", "toe_r"}, 0.014)
-    a1, b1 = Vector((0.13, 0, 1.44)), Vector((-0.17, 0, 0.97))
-    a2, b2 = Vector((-0.13, 0, 1.44)), Vector((0.17, 0, 0.97))
-    belts = d(body, prefix + "crossbelts", lambda c, n, h: h in TORSO and 0.95 < c.z < 1.46
-              and (_band(c, a1, b1, 0.028) or _band(c, a2, b2, 0.028)), 0.036)
+    # Crossbelts: two straps over the coat, shoulder to opposite hip, front and back.
+    belts = h_body.strap(arm, prefix + "crossbelts", body, Vector((0.12, 0, 1.47)),
+                         Vector((-0.17, 0, 0.95)), 0.055, 0.036)
+    belt2 = h_body.strap(arm, prefix + "crossbelts2", body, Vector((-0.12, 0, 1.47)),
+                         Vector((0.17, 0, 0.95)), 0.055, 0.040)
+    belts = join(belts, belt2)
     for o, k in ((body, "skin"), (bones, "bone"), (waistcoat, "waistcoat"), (coat, "coat"),
                  (skirt, "coat"), (breeches, "breeches"), (gaiters, "gaiters"), (belts, "belts")):
         h_body.set_material(o, M[k])
@@ -200,7 +212,7 @@ def musketeer(prefix="engm18.", state="stand"):
     layers = {"bones": [bones], "flesh": [body],
               "clothes": [waistcoat, coat, skirt, breeches, gaiters, belts],
               "gear": [hat, gun, box, pack]}
-    _finish(arm, layers, prefix, STAND_M18)
+    _finish(arm, layers, prefix, STAND_M18, skirts=(skirt,))
     gear = {"hat": hat, "musket": gun, "cartridge_box": box, "knapsack": pack}
     if state == "lie":
         set_state(arm, "DEATHLIE1")
@@ -239,7 +251,7 @@ def peasant(prefix="engkri."):
                   @ Matrix.Rotation(math.radians(-8), 4, "X"))
     layers = {"bones": [bones], "flesh": [body, hair],
               "clothes": [tunic, skirt, sash, breeches, shoes], "gear": [hat]}
-    _finish(arm, layers, prefix, STAND_KRI)
+    _finish(arm, layers, prefix, STAND_KRI, skirts=(skirt,))
     set_state(arm, "STAND")
     return arm, layers, {"hat": hat}
 
@@ -262,6 +274,11 @@ def add_actions(arm, stand):
 
 
 def set_state(arm, clip, frame=0):
+    lying = 1.0 if clip == "DEATHLIE1" else 0.0
+    for o in arm.children:
+        keys = o.data.shape_keys if o.type == "MESH" else None
+        if keys and "lie_flat" in keys.key_blocks:
+            keys.key_blocks["lie_flat"].value = lying
     i = list(arm["acr_clips"]).index(clip)
     arm.animation_data.action = bpy.data.actions[arm["_acts"][i]]
     bpy.context.scene.frame_set(frame)
@@ -281,6 +298,9 @@ def set_decay(arm, layers, gear, decay):
     arm.location.z = z
     for o in [o for v in layers.values() for o in v] + list(gear.values()):
         o["decay"] = decay
+        keys = o.data.shape_keys
+        if keys and "deflate" in keys.key_blocks:
+            keys.key_blocks["deflate"].value = h_decay.deflate_weight(decay)
         if o.get("acr_dropped"):
             if "z0" not in o:
                 o["z0"] = o.location.z
@@ -474,10 +494,10 @@ def main():
     if "decay" in only:
         reset()
         arm, layers, gear = musketeer(state="lie")
-        g = ground()
+        g = ground(12.0)
         w, h, anchor = canvas(refs, "EngM18", "DEATHLIE1")
         place(arm, gear, 0, 0, cv.stored_direction(2, 9))
-        stages = [0.0, 0.12, 0.28, 0.40, 0.52, 0.66, 0.82, 0.95]
+        stages = [0.0, 0.15, 0.30, 0.42, 0.55, 0.68, 0.80, 0.90]
         report["decay_stages"] = stages
         for i, dec in enumerate(stages):
             set_decay(arm, layers, gear, dec)
