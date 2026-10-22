@@ -195,11 +195,19 @@ impl Body {
     /// The walking `rate` (16ths) scaled by [`Self::move_percent`]: at least 1 unless he
     /// cannot move at all.
     pub fn walk_rate(&self, rate: i32) -> i32 {
+        if self.downed() {
+            return 0;
+        }
         match self.move_percent() {
             100 => rate,
             0 => 0,
             p => (rate * p / 100).max(1),
         }
+    }
+
+    /// Knocked down ([`Body::down`]): he cannot move, attack or hit back until he is up.
+    pub fn downed(&self) -> bool {
+        self.down > 0
     }
 
     /// A long weapon (musket, pike) needs both arms and a man on his feet.
@@ -282,6 +290,130 @@ impl Cause {
             _ => Self::Musket,
         }
     }
+
+    /// An animal's claws, jaws or horns.
+    pub fn mauls(self) -> bool {
+        matches!(self, Self::Claw | Self::Bite | Self::Gore)
+    }
+}
+
+/// An animal attacker, by its type's `.MD` name (`AnmMed`, `AnmCroSm`, ...): how it mauls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Beast {
+    /// `AnmMed*`: claws mostly, bites.
+    Bear,
+    /// `AnmJug`: claws and skull bites.
+    Jaguar,
+    /// `AnmCro*`: bites, tears limbs off.
+    Alligator,
+    /// `AnmOln*`: antlers.
+    Elk,
+    /// `AnmBiz`: horns.
+    Bison,
+    /// Any other `Anm*` (the eagle): claws.
+    Other,
+}
+
+impl Beast {
+    /// The beast of a type's `.MD` name, `None` for anything that is not an animal.
+    pub fn of(md_name: &str) -> Option<Self> {
+        let n = md_name.to_ascii_lowercase();
+        let rest = n.strip_prefix("anm")?;
+        Some(if rest.starts_with("med") {
+            Self::Bear
+        } else if rest.starts_with("jug") {
+            Self::Jaguar
+        } else if rest.starts_with("cro") {
+            Self::Alligator
+        } else if rest.starts_with("oln") {
+            Self::Elk
+        } else if rest.starts_with("biz") {
+            Self::Bison
+        } else {
+            Self::Other
+        })
+    }
+
+    /// The young of a kind (`AnmMedSm`, `AnmMed_Sm`, `AnmCroSm`, `AnmOlnS`): weaker blows.
+    pub fn small(md_name: &str) -> bool {
+        let n = md_name.to_ascii_lowercase();
+        n.ends_with("sm") || n == "anmolns"
+    }
+
+    /// The cause of one attack by percentage `roll`: a bear claws 70 % (bites 30), a
+    /// jaguar claws or bites half and half, an alligator bites, elk and bison gore.
+    pub fn cause(self, roll: i32) -> Cause {
+        match self {
+            Self::Bear if roll < BEAR_CLAWS => Cause::Claw,
+            Self::Jaguar if roll < JAGUAR_CLAWS => Cause::Claw,
+            Self::Bear | Self::Jaguar | Self::Alligator => Cause::Bite,
+            Self::Elk | Self::Bison => Cause::Gore,
+            Self::Other => Cause::Claw,
+        }
+    }
+
+    /// The energy (0..=100) of its `cause`; `small`: the young ([`Beast::small`]).
+    pub fn energy(self, cause: Cause, small: bool) -> u8 {
+        let e: u8 = match (self, cause) {
+            (Self::Bear, Cause::Claw) => 100,
+            (Self::Bear, _) => 80,
+            (Self::Jaguar, Cause::Claw) => 75,
+            (Self::Jaguar, _) => 85,
+            (Self::Alligator, _) => 95,
+            (Self::Elk, _) => 80,
+            (Self::Bison, _) => 100,
+            (Self::Other, _) => 40,
+        };
+        if small { e * 2 / 3 } else { e }
+    }
+
+    /// Weights of the regions it strikes (torso, legs, arms, head; sum 100); `down`: the
+    /// victim lies on the ground (the beast goes for the head, the neck and the belly; the
+    /// arms come up to shield the face).
+    pub fn regions(self, down: bool) -> [i32; 4] {
+        match (self, down) {
+            (Self::Bear, false) => [40, 10, 30, 20],
+            (Self::Bear, true) => [45, 5, 20, 30],
+            (Self::Jaguar, false) => [30, 10, 25, 35],
+            (Self::Jaguar, true) => [25, 5, 20, 50],
+            (Self::Alligator, false) => [20, 55, 20, 5],
+            (Self::Alligator, true) => [35, 30, 20, 15],
+            (Self::Elk | Self::Bison, false) => [70, 25, 5, 0],
+            (Self::Elk | Self::Bison, true) => [75, 20, 5, 0],
+            (Self::Other, _) => [30, 10, 30, 30],
+        }
+    }
+
+    /// The region of an attack by percentage `roll` ([`Beast::regions`]).
+    pub fn region(self, down: bool, roll: i32) -> HitRegion {
+        let mut r = roll;
+        for (region, weight) in
+            [HitRegion::Torso, HitRegion::Legs, HitRegion::Arms, HitRegion::Head].into_iter().zip(self.regions(down))
+        {
+            if r < weight {
+                return region;
+            }
+            r -= weight;
+        }
+        HitRegion::Torso
+    }
+}
+
+/// Percent of a bear's and a jaguar's attacks that are claws (the rest bites).
+pub const BEAR_CLAWS: i32 = 70;
+pub const JAGUAR_CLAWS: i32 = 50;
+
+/// An animal's attack on `victim` (hit-locations rule): the beast of the attacker's `.MD`
+/// name, or `None` (no random number drawn) for anything else. Two `rando()`: the cause
+/// ([`Beast::cause`]) and the region ([`Beast::region`], by whether the victim is down);
+/// the energy is the beast's.
+pub fn maul(w: &mut World, sender: usize, victim: usize) -> Option<(Cause, u8, HitRegion)> {
+    let name = &w.catalog.get(w.units[sender].kind).md_name;
+    let beast = Beast::of(name)?;
+    let small = Beast::small(name);
+    let cause = beast.cause(pct(w));
+    let region = beast.region(w.units[victim].body.downed(), pct(w));
+    Some((cause, beast.energy(cause, small), region))
 }
 
 /// Where a hit landed.
@@ -317,6 +449,11 @@ impl Outcome {
 
     pub fn torn(self) -> Option<Torn> {
         if let Self::Torn(t) = self { Some(t) } else { None }
+    }
+
+    /// A flesh wound made deep (mauling gashes and punctures).
+    fn deep(self) -> Self {
+        if self == Self::Wound { Self::DeepWound } else { self }
     }
 }
 
@@ -363,6 +500,64 @@ pub const THROWN_HEAD_KILL: i32 = 60;
 /// A bayonet thrust into the belly opens it.
 pub const BAYONET_BELLY: i32 = 20;
 
+/// Claw energy from which a swipe tears an arm off (at the forearm or above the elbow) and
+/// the share of arm hits that do. The share of belly and pelvis hits that tear the belly
+/// open (from [`CLAW_TEARS`] and below it), of chest hits; head hits that kill (the throat
+/// or the skull; from [`CLAW_TEARS`] and below), the rest tear the face and scalp.
+pub const CLAW_TEARS: u8 = 80;
+pub const CLAW_ARM_OFF: i32 = 15;
+pub const CLAW_BELLY: [i32; 2] = [35, 12];
+pub const CLAW_CHEST_BELLY: i32 = 10;
+pub const CLAW_HEAD_KILL: [i32; 2] = [25, 10];
+/// Bite energy from which the jaws take a limb off at the bite (an alligator's death roll),
+/// and the share of limb hits that do; head and neck bites that kill.
+pub const BITE_SEVERS: u8 = 90;
+pub const BITE_OFF: i32 = 30;
+pub const BITE_HEAD_KILL: i32 = 70;
+/// Chest bites from [`BITE_SEVERS`] that crush the chest (kill); belly bites that open it.
+pub const BITE_CHEST_KILL: i32 = 20;
+pub const BITE_BELLY: i32 = 25;
+/// Gore energy from which antlers and horns go deep: belly and pelvis hits that open the
+/// belly (from it and below), chest hits that kill (heart or lungs), head hits that kill.
+pub const GORE_DEEP: u8 = 80;
+pub const GORE_BELLY: [i32; 2] = [45, 25];
+pub const GORE_CHEST_KILL: i32 = 15;
+pub const GORE_HEAD_KILL: i32 = 40;
+
+/// Ticks a mauling hit keeps the victim down ([`Body::down`]): a claw from [`CLAW_KNOCKS`]
+/// energy, a bite by [`BITE_KNOCKS`] percent (from [`BITE_SEVERS`] and below), a gore
+/// always. A new hit while down renews it.
+pub const DOWN_CLAW: u8 = 40;
+pub const DOWN_BITE: u8 = 30;
+pub const DOWN_GORE: u8 = 50;
+pub const CLAW_KNOCKS: u8 = 70;
+pub const BITE_KNOCKS: [i32; 2] = [60, 30];
+
+/// The ticks a mauling hit by `cause` with `energy` and percentage `roll` (the outcome's)
+/// knocks the victim down for; 0 for none.
+pub fn knock_down(cause: Cause, energy: u8, roll: i32) -> u8 {
+    match cause {
+        Cause::Claw if energy >= CLAW_KNOCKS => DOWN_CLAW,
+        // Decorrelated from the outcome, from the same roll.
+        Cause::Bite if (roll * 37 + 11) % 100 < BITE_KNOCKS[usize::from(energy < BITE_SEVERS)] => DOWN_BITE,
+        Cause::Gore => DOWN_GORE,
+        _ => 0,
+    }
+}
+
+/// Counts down the knocked-down ([`Body::down`]) once a tick; only with the hit-locations
+/// rule (else nobody is ever down).
+pub fn get_up(w: &mut World) {
+    if !w.rules.hit_locations {
+        return;
+    }
+    for u in &mut w.units {
+        if u.body.down > 0 {
+            u.body.down -= 1;
+        }
+    }
+}
+
 /// The outcome of a limb hit at `level` by percentage `roll`, and the level it applies at.
 pub fn limb_outcome(cause: Cause, energy: u8, leg: bool, level: u8, roll: i32) -> (Outcome, u8) {
     let (joint, tip) = if leg { (KNEE, ANKLE) } else { (ELBOW, WRIST) };
@@ -405,8 +600,35 @@ pub fn limb_outcome(cause: Cause, energy: u8, leg: bool, level: u8, roll: i32) -
             20..80 => (Outcome::DeepWound, level),
             _ => (Outcome::Fracture(FractureKind::Closed), level),
         },
-        // Mauling (stub: filled by the mauling tables).
-        Cause::Claw | Cause::Bite | Cause::Gore => (Outcome::DeepWound, level),
+        // Deep parallel gashes; a swipe at high energy tears the arm off at the forearm or
+        // above the elbow; the paw's blow breaks the bone, often through the gashes.
+        Cause::Claw => {
+            let off = if !leg && energy >= CLAW_TEARS { CLAW_ARM_OFF } else { 0 };
+            match roll - off {
+                r if r < 0 => (Outcome::Off, level.max(ELBOW / 3)),
+                r if r < 65 => (Outcome::DeepWound, level),
+                r if r < 75 => (Outcome::Fracture(FractureKind::Open), level),
+                r if r < 85 => (Outcome::Fracture(FractureKind::Closed), level),
+                _ => (Outcome::Wound, level),
+            }
+        }
+        // Crushing: the bone breaks under the jaws (mostly open, the teeth go through); an
+        // alligator's death roll takes the limb off at the bite.
+        Cause::Bite => {
+            let off = if energy >= BITE_SEVERS { BITE_OFF } else { 0 };
+            match roll - off {
+                r if r < 0 => (Outcome::Off, level),
+                r if r < 40 => (Outcome::Fracture(FractureKind::Open), level),
+                r if r < 65 => (Outcome::Fracture(FractureKind::Closed), level),
+                _ => (Outcome::DeepWound, level),
+            }
+        }
+        // A puncture; thrown and trampled, the bone breaks.
+        Cause::Gore => match roll {
+            0..60 => (Outcome::DeepWound, level),
+            60..85 => (Outcome::Fracture(FractureKind::Closed), level),
+            _ => (Outcome::Fracture(FractureKind::Open), level),
+        },
         Cause::Bayonet => match roll {
             0..85 => (Outcome::Wound, level),
             // A thrust into a joint puts it out.
@@ -434,18 +656,47 @@ pub fn trunk_outcome(cause: Cause, energy: u8, part: Part, level: u8, roll: i32)
         Cause::Cannonball if energy >= BALL_TEARS => Outcome::Torn(Torn::InTwo { level }),
         Cause::Cannonball if part == Part::Chest => Outcome::Kill,
         Cause::Cannonball => Outcome::BellyOpen,
-        Cause::Claw | Cause::Bite | Cause::Gore => Outcome::DeepWound,
+        // Gashes across the trunk; the belly torn open.
+        Cause::Claw => {
+            let chance = match part {
+                Part::Chest => CLAW_CHEST_BELLY,
+                _ => CLAW_BELLY[usize::from(energy < CLAW_TEARS)],
+            };
+            belly(chance).deep()
+        }
+        Cause::Bite if part == Part::Chest && energy >= BITE_SEVERS && roll < BITE_CHEST_KILL => Outcome::Kill,
+        Cause::Bite if part == Part::Belly => belly(BITE_BELLY).deep(),
+        Cause::Bite => Outcome::DeepWound,
+        // Antlers or horns through the chest or into the belly.
+        Cause::Gore if part == Part::Chest && energy >= GORE_DEEP && roll < GORE_CHEST_KILL => Outcome::Kill,
+        Cause::Gore if part == Part::Chest => Outcome::DeepWound,
+        Cause::Gore => belly(GORE_BELLY[usize::from(energy < GORE_DEEP)]).deep(),
     }
 }
 
 /// The outcome of a head hit by percentage `roll`.
 pub fn head_outcome(cause: Cause, roll: i32) -> Outcome {
+    head_outcome_e(cause, 100, roll)
+}
+
+/// [`head_outcome`] with the blow's energy (mauling): claws tear the face and scalp and kill
+/// by [`CLAW_HEAD_KILL`]; a bite to the head or the neck kills by [`BITE_HEAD_KILL`]; a horn
+/// by [`GORE_HEAD_KILL`].
+pub fn head_outcome_e(cause: Cause, energy: u8, roll: i32) -> Outcome {
     match cause {
         Cause::Cannonball => Outcome::Torn(Torn::Headless),
         Cause::Sabre if roll >= 50 => Outcome::Wound,
         Cause::Thrown if roll >= THROWN_HEAD_KILL => Outcome::DeepWound,
+        Cause::Claw if roll >= CLAW_HEAD_KILL[usize::from(energy < CLAW_TEARS)] => Outcome::DeepWound,
+        Cause::Bite if roll >= BITE_HEAD_KILL => Outcome::DeepWound,
+        Cause::Gore if roll >= GORE_HEAD_KILL => Outcome::DeepWound,
         _ => Outcome::Kill,
     }
+}
+
+/// Whether a head hit by `cause` draws a roll (the others always kill).
+fn head_rolls(cause: Cause) -> bool {
+    matches!(cause, Cause::Sabre | Cause::Thrown) || cause.mauls()
 }
 
 /// `injure`: the injury of a hit on `victim`'s `region` by `cause` with `energy`
@@ -453,7 +704,7 @@ pub fn head_outcome(cause: Cause, roll: i32) -> Outcome {
 /// and the outcome; for the trunk the level and the outcome; for the head the outcome.
 pub fn injure(w: &mut World, victim: usize, cause: Cause, energy: u8, region: HitRegion) -> Injury {
     let level_roll = |w: &mut World| ((w.random.rando() << 8) >> 15) as u8;
-    let injury = match region {
+    let (injury, roll) = match region {
         HitRegion::Legs | HitRegion::Arms => {
             let right = w.random.rando() >= 1 << 14;
             let limb = match (region, right) {
@@ -467,7 +718,7 @@ pub fn injure(w: &mut World, victim: usize, cause: Cause, energy: u8, region: Hi
             let level = (u32::from(level_roll(w)) * u32::from(lost) / 255) as u8;
             let roll = pct(w);
             let (outcome, level) = limb_outcome(cause, energy, limb.is_leg(), level, roll);
-            Injury { part: Part::Limb(limb), level, outcome, energy, cause }
+            (Injury { part: Part::Limb(limb), level, outcome, energy, cause }, roll)
         }
         HitRegion::Torso => {
             let level = level_roll(w);
@@ -477,14 +728,15 @@ pub fn injure(w: &mut World, victim: usize, cause: Cause, energy: u8, region: Hi
                 _ => Part::Pelvis,
             };
             let roll = pct(w);
-            Injury { part, level, outcome: trunk_outcome(cause, energy, part, level, roll), energy, cause }
+            (Injury { part, level, outcome: trunk_outcome(cause, energy, part, level, roll), energy, cause }, roll)
         }
         HitRegion::Head => {
-            let roll = if matches!(cause, Cause::Sabre | Cause::Thrown) { pct(w) } else { 0 };
-            Injury { part: Part::Head, level: 0, outcome: head_outcome(cause, roll), energy, cause }
+            let roll = if head_rolls(cause) { pct(w) } else { 0 };
+            (Injury { part: Part::Head, level: 0, outcome: head_outcome_e(cause, energy, roll), energy, cause }, roll)
         }
     };
     apply(&mut w.units[victim].body, &injury);
+    knock(&mut w.units[victim].body, &injury, roll);
     injury
 }
 
@@ -496,25 +748,32 @@ pub fn injure_aimed(w: &mut World, victim: usize, cause: Cause, energy: u8, part
         Some(l) => l,
         None => level_roll(w),
     };
-    let injury = match part {
+    let (injury, roll) = match part {
         Part::Limb(limb) => {
             let lost = w.units[victim].body.limb(limb).lost;
             let level = level.min(lost.saturating_sub(1));
             let roll = pct(w);
             let (outcome, level) = limb_outcome(cause, energy, limb.is_leg(), level, roll);
-            Injury { part, level, outcome, energy, cause }
+            (Injury { part, level, outcome, energy, cause }, roll)
         }
         Part::Head => {
-            let roll = if matches!(cause, Cause::Sabre | Cause::Thrown) { pct(w) } else { 0 };
-            Injury { part, level: 0, outcome: head_outcome(cause, roll), energy, cause }
+            let roll = if head_rolls(cause) { pct(w) } else { 0 };
+            (Injury { part, level: 0, outcome: head_outcome_e(cause, energy, roll), energy, cause }, roll)
         }
         _ => {
             let roll = pct(w);
-            Injury { part, level, outcome: trunk_outcome(cause, energy, part, level, roll), energy, cause }
+            (Injury { part, level, outcome: trunk_outcome(cause, energy, part, level, roll), energy, cause }, roll)
         }
     };
     apply(&mut w.units[victim].body, &injury);
+    knock(&mut w.units[victim].body, &injury, roll);
     injury
+}
+
+/// A mauling hit knocks the victim down ([`knock_down`]), or keeps him down longer.
+fn knock(body: &mut Body, injury: &Injury, roll: i32) {
+    let down = knock_down(injury.cause, injury.energy, roll);
+    body.down = body.down.max(down);
 }
 
 /// Leaves the injury on the body.

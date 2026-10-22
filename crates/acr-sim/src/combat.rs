@@ -102,8 +102,8 @@ pub fn attack_obj_ex(w: &mut World, i: usize, j: usize, prio: u8, placement: Pla
 /// keeps its count (0x51b05e).
 pub fn attack_obj_times(w: &mut World, i: usize, j: usize, prio: u8, placement: Placement, times: u16) -> bool {
     let (Some(u), Some(e)) = (w.units.get(i), w.units.get(j)) else { return false };
-    // A man out of the fight (#262, hit-locations rule) attacks nothing.
-    if i == j || !u.active() || !e.active() || !u.hostile(e) || u.body.out_of_fight() {
+    // A man out of the fight (#262, hit-locations rule) or knocked down attacks nothing.
+    if i == j || !u.active() || !e.active() || !u.hostile(e) || u.body.out_of_fight() || u.body.downed() {
         return false;
     }
     let mut prio = prio;
@@ -331,6 +331,10 @@ pub fn attack_link(w: &mut World, i: usize, target: EntityId, prio: u8) {
 /// walks towards the target (in the index's walking stance where the type has one). An
 /// attack on the ground reaches `ADDRANGE` % as far and reloads `ADDPAUSE` % as long.
 pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
+    // Knocked down (hit-locations rule, mauling): he keeps his order but cannot strike.
+    if w.units[i].body.downed() {
+        return;
+    }
     let catalog = w.catalog.clone();
     {
         let u = &mut w.units[i];
@@ -1201,6 +1205,8 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
     let region = if sender.is_some() { crate::wounds::pick_region(w, victim) } else { None };
     // What the blow did to the body (#262): it may kill whatever the damage.
     let injury = region.zip(sender).map(|(r, s)| injure(w, victim, s, record.cause, r));
+    // An animal picks its own region ([`crate::body::maul`]).
+    let region = injury.map(|i| region_of(i.part)).or(region);
     let fatal = injury.is_some_and(|i| i.outcome.kills());
     if let Some(s) = sender {
         record_hit(w, victim, s, record.cause, w.units[victim].life <= dmg || fatal, region, injury);
@@ -1235,6 +1241,13 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
 /// the energy of a ploughing ball ([`World::hit_energy`]), of a musket ball by the range,
 /// else full.
 fn injure(w: &mut World, victim: usize, sender: usize, cause: DeathCause, region: crate::wounds::HitRegion) -> Injury {
+    // An animal's claws, jaws or horns (#276): its own cause, energy and aim.
+    if let Some((maul, energy, region)) = crate::body::maul(w, sender, victim) {
+        if matches!(w.catalog.get(w.units[victim].kind).role.usage, 8 | 22 | 24) {
+            w.units[victim].body.mounted = true;
+        }
+        return crate::body::injure(w, victim, maul, energy, region);
+    }
     let usage = w.catalog.get(w.units[sender].kind).role.usage;
     // FASTHORSE, HARDHORCE, HORSE-STRELOK: a rider's blow is a sabre's.
     let mounted = matches!(usage, 8 | 22 | 24);
@@ -1253,6 +1266,18 @@ fn injure(w: &mut World, victim: usize, sender: usize, cause: DeathCause, region
         _ => 100,
     });
     crate::body::injure(w, victim, crate::body::Cause::of(cause, mounted), energy, region)
+}
+
+/// The region of a body part.
+fn region_of(part: crate::body::Part) -> crate::wounds::HitRegion {
+    use crate::body::Part;
+    use crate::wounds::HitRegion;
+    match part {
+        Part::Limb(l) if l.is_leg() => HitRegion::Legs,
+        Part::Limb(_) => HitRegion::Arms,
+        Part::Head => HitRegion::Head,
+        _ => HitRegion::Torso,
+    }
 }
 
 /// The sections of a building that lost life and lives on (`MakeDamage` 0x4e93fe..0x4e9925,
@@ -1479,12 +1504,14 @@ pub struct ScriptedHit {
     pub dmg: i32,
     /// Aimed at this part, at this level (drawn when `None`); overrides `region`.
     pub aim: Option<(crate::body::Part, Option<u8>)>,
+    /// An animal's claws, jaws or horns in place of the weapon's body cause.
+    pub maul: Option<crate::body::Cause>,
 }
 
 /// Strikes `victim` with a [`ScriptedHit`]; the index of its record in [`World::hits`], or
 /// `None` if the victim is not alive.
 pub fn scripted_hit(w: &mut World, victim: usize, hit: ScriptedHit) -> Option<usize> {
-    let ScriptedHit { cause, mounted, region, dir, energy, dmg, aim } = hit;
+    let ScriptedHit { cause, mounted, region, dir, energy, dmg, aim, maul } = hit;
     if !w.units.get(victim).is_some_and(Unit::living) {
         return None;
     }
@@ -1497,15 +1524,10 @@ pub fn scripted_hit(w: &mut World, victim: usize, hit: ScriptedHit) -> Option<us
     }
     let energy = energy.min(100);
     let region = match aim {
-        Some((part, _)) => Some(match part {
-            crate::body::Part::Limb(l) if l.is_leg() => crate::wounds::HitRegion::Legs,
-            crate::body::Part::Limb(_) => crate::wounds::HitRegion::Arms,
-            crate::body::Part::Head => crate::wounds::HitRegion::Head,
-            _ => crate::wounds::HitRegion::Torso,
-        }),
+        Some((part, _)) => Some(region_of(part)),
         None => region,
     };
-    let body_cause = crate::body::Cause::of(cause, mounted);
+    let body_cause = maul.unwrap_or(crate::body::Cause::of(cause, mounted));
     let injury = match aim {
         Some((part, level)) => Some(crate::body::injure_aimed(w, victim, body_cause, energy, part, level)),
         None => region.map(|r| crate::body::injure(w, victim, body_cause, energy, r)),
