@@ -116,6 +116,8 @@ pub struct InGame {
     shouts: RefCell<shouts::Shouts>,
     /// 3D models and the free camera (#163, #164).
     three_d: three_d::ThreeD,
+    /// The interface is hidden (the driver's `hud` command): only the world is drawn.
+    pub hud_hidden: bool,
 }
 
 impl InGame {
@@ -125,6 +127,7 @@ impl InGame {
             GameKind::RandomMap(r) => {
                 (None, Some(crate::random_map::RandomMapGen::new(crate::random_map::settings(r, &setup))))
             }
+            GameKind::Blank(_) => (None, None),
         };
         let failed = None;
         let mission = crate::mission::MissionLink::new(&setup);
@@ -170,6 +173,7 @@ impl InGame {
             effects: Default::default(),
             shouts: Default::default(),
             three_d: Default::default(),
+            hud_hidden: false,
         }
     }
 
@@ -183,6 +187,10 @@ impl InGame {
         drop(queue);
         self.three_d.start(paths);
         self.generate_map();
+        if let GameKind::Blank(b) = &self.setup.kind {
+            self.map = Some(crate::blank_map::build(b));
+            self.objects.reset();
+        }
         self.objects.start(&|p| self.requests.borrow_mut().push(p.to_owned()));
         self.objects.start_effects(&|p| self.requests.borrow_mut().push(p.to_owned()));
     }
@@ -843,6 +851,12 @@ impl InGame {
         if let Some(renderer) = &mut self.renderer {
             renderer.zoomed = self.interface.hud.zoom;
             renderer.orbit = self.three_d.orbit();
+            renderer.backdrop = match &self.setup.kind {
+                GameKind::Blank(b) => {
+                    crate::blank_map::backdrop(b.ground).map(|[r, g, b]| wgpu::Color { r, g, b, a: 1.0 })
+                }
+                _ => None,
+            };
             renderer.render(device, queue, encoder, view, size, &self.camera);
         }
         self.objects.zoomed = self.interface.hud.zoom;
@@ -871,7 +885,7 @@ impl InGame {
     /// game: only the editor's F key, the cheats and a defeat in multiplayer clear it), by
     /// 0x485606/0x485a3c, or 0x485d2d in the zoomed-out view.
     fn fog_shades(&self, window: [f32; 2]) -> Option<FogShades> {
-        let fog = self.mission.fog()?;
+        let fog = self.mission.drawn_fog()?;
         let (width, cells) = fog.cells();
         let cell = |gx: i32, gy: i32| {
             if (0..width).contains(&gx) && (0..width).contains(&gy) { cells[(gy * width + gx) as usize] } else { 0 }

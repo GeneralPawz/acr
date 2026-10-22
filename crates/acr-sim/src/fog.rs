@@ -117,6 +117,11 @@ impl Fog {
         }
     }
 
+    /// Reveals the whole map (the driver's blank field): every cell as freshly stamped.
+    pub fn open(&mut self) {
+        self.cells.fill(STAMP);
+    }
+
     /// `GetFogSpotVisibility` for a world position (the projection is applied here).
     pub fn visible(&self, world: &World, x: i32, y: i32) -> bool {
         self.get(x, y - 2 * world.map.heights.at(x, y)) >= VISIBLE

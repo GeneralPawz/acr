@@ -53,6 +53,8 @@ pub struct MissionLink {
     /// The local player's fog of war: stamped and blurred once per tick from the world and
     /// the scripts' light spots, read by `GetFogSpotVisibility` and drawn by the game.
     fog: Option<acr_sim::fog::Fog>,
+    /// The whole map stays revealed (the driver's blank field).
+    open_fog: bool,
     /// The world tick the fog was last updated for.
     fog_tick: Option<u64>,
     /// The player whose fog it is (`GameSetup::local_player`).
@@ -91,10 +93,10 @@ impl MissionLink {
                 (Some(m.script.clone()), Some(m.texts.clone()).filter(|t| !t.is_empty()), None, m.difficulty.index())
             }
             GameKind::Mission(m) => (None, None, Some(m.map.clone()), m.difficulty.index()),
-            GameKind::RandomMap(_) => (None, None, None, 1),
+            GameKind::RandomMap(_) | GameKind::Blank(_) => (None, None, None, 1),
         };
         // Random maps put player k's units in nation `color` (random_map.rs).
-        let random = matches!(setup.kind, GameKind::RandomMap(_));
+        let random = matches!(setup.kind, GameKind::RandomMap(_) | GameKind::Blank(_));
         let nation_of = |i: usize| if random { setup.players.get(i).map_or(i as u8, |p| p.color) } else { i as u8 };
         let computers = setup
             .players
@@ -115,6 +117,7 @@ impl MissionLink {
             local_player,
             fog: None,
             fog_tick: None,
+            open_fog: matches!(setup.kind, GameKind::Blank(_)),
             viewer: setup.local_player as u8,
             difficulty: difficulty.min(3) as u8,
             scripts: None,
@@ -495,6 +498,9 @@ impl MissionLink {
         fog.reveal(world, self.viewer);
         fog.light_spots = light_spots;
         fog.blur(world);
+        if self.open_fog {
+            fog.open();
+        }
         match self.scripts.as_mut() {
             Some(scripts) => {
                 scripts.set_fog(Some(fog));
@@ -506,6 +512,11 @@ impl MissionLink {
     /// The local player's fog of war, once the game runs.
     pub fn fog(&self) -> Option<&acr_sim::fog::Fog> {
         self.scripts.as_ref().and_then(|s| s.state().fog.as_ref()).or(self.fog.as_ref())
+    }
+
+    /// The fog to draw: none on a revealed map (the driver's blank field).
+    pub fn drawn_fog(&self) -> Option<&acr_sim::fog::Fog> {
+        self.fog().filter(|_| !self.open_fog)
     }
 
     /// Files requested while running (AI DLLs started by the mission).

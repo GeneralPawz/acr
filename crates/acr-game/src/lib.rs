@@ -6,6 +6,7 @@
 //! `RealLx` × `RealLy` (see `docs/ui.md`, screen size).
 
 mod agony;
+mod blank_map;
 mod canvas;
 mod diplomacy;
 #[cfg(not(target_arch = "wasm32"))]
@@ -271,6 +272,13 @@ impl Game {
                 self.ui.draws(&g.gpu.device, &g.gpu.queue, &g.images, &canvas, &self.layers)
             }
         };
+        // The driver's `hud` off: the world's own draws only (no panel, minimap or cursor).
+        let mut draws = draws;
+        if let Mode::InGame(game) = &self.mode
+            && game.hud_hidden
+        {
+            draws.truncate(world_draws);
+        }
         g.images.prepare(&g.gpu.device, &g.gpu.queue, g.gpu.size(), &draws);
         let mut encoder = g.gpu.device.create_command_encoder(&Default::default());
         let mut load = wgpu::LoadOp::Clear(wgpu::Color::BLACK);
