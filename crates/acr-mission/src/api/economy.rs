@@ -30,7 +30,7 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("ProduceUnit", 0x566dd2, DONE, produce_unit),
     f("ProduceUnitFast", 0x566f36, DONE, produce_unit_fast),
     f("CheckProduction", 0x5672cc, DONE, check_production),
-    f("TryUnit", 0x56829b, Status::Partial("AI city without tech conditions; see aicity.rs"), try_unit),
+    f("TryUnit", 0x56829b, DONE, try_unit),
     f("TryUpgrade", 0x5684d6, DONE, try_upgrade),
     f("TryUpgradeEx", 0x568629, DONE, try_upgrade),
     f("UpgIsDone", 0x569259, DONE, upg_is_done),
@@ -511,10 +511,12 @@ fn ai_torg(api: &mut Api, c: &mut Call) -> Result<u32> {
     Ok(0)
 }
 
-/// `bool TryUnit(GAMEOBJ* type, int max, byte costPercent, byte probability)`: proposes a
-/// project of the AI city when fewer than `max` objects of the type exist, the city can
-/// produce it now and, with the given probability, it costs at most `costPercent` of the
-/// stock.
+/// `bool TryUnit(GAMEOBJ* type, int max, byte costPercent, byte probability)` (0x56829b):
+/// proposes a project of the AI city when the census counts fewer than `max` objects of the
+/// type (`City+0xeb73`), the city can produce it (`City+0x10b73`), `rando()` falls below
+/// the probability and `costPercent` covers the project's share of the stock; while a
+/// building project is pending (`City+0x14b73` bit 0) buildings are refused after the draw.
+/// With game option 2 at 1 (0x6e45c9) artillery and towers are refused.
 fn try_unit(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Caller::Ai(n) = api.caller else {
         api.st.error("ERROR: AI function must be called only from AI section.");
@@ -530,18 +532,22 @@ fn try_unit(api: &mut Api, c: &mut Call) -> Result<u32> {
     if city.best.len() >= 127 {
         return Ok(0);
     }
-    let count = api.world.units.iter().filter(|u| u.living() && u.owner == n && u.kind == t).count() as i32;
+    let ty = api.world.catalog.get(t);
+    if api.world.game_options[1] == 1 && (ty.role.artillery || ty.role.usage == acr_sim::catalog::usage::TOWER) {
+        return Ok(0);
+    }
+    let count = i32::from(api.world.players[usize::from(n)].type_count.get(usize::from(t.0)).copied().unwrap_or(0));
     let Some(&k) = city.index.get(&t).filter(|_| max > count) else { return Ok(0) };
-    // One building project at a time (`PresentProject`).
+    let need = city.props[k].percent;
+    if api.world.random.rando() >= crate::aicity::perconv(prob) || percent < need {
+        return Ok(0);
+    }
+    // One building project at a time (`PresentProject`, 0x56841c).
     if api.world.catalog.get(t).building && acr_sim::aiplace::project_pending(api.world, n) {
         return Ok(0);
     }
-    let need = city.props[k].percent;
-    if api.world.random.rando() < crate::aicity::perconv(prob) && percent >= need {
-        api.st.cities[usize::from(n)].best.push(k);
-        return Ok(1);
-    }
-    Ok(0)
+    api.st.cities[usize::from(n)].best.push(k);
+    Ok(1)
 }
 
 /// `bool TryUpgrade(GAMEOBJ* upgrade, int costPercent, int probability)` and `TryUpgradeEx`

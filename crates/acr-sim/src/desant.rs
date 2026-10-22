@@ -400,8 +400,8 @@ fn diversion(w: &mut World, b: usize) -> &mut Diversion {
 /// `MakeDiversionLink` (0x424957), from the owner's `ExecuteBrigades`.
 pub fn diversion_link(w: &mut World, b: usize) {
     let k = usize::from(w.brigades[b].owner & 7);
-    // No peace time in ACR games (`PeaceTimeLeft`, 0x66795c).
-    if w.desant.cities[k].start.is_none() {
+    // Nothing during the peace time (`PeaceTimeLeft`, 0x66795c).
+    if w.peace.active() || w.desant.cities[k].start.is_none() {
         return;
     }
     let Some(&Some(tid)) = w.brigades[b].members.first() else {

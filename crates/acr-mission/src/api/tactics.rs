@@ -1329,6 +1329,7 @@ mod tests {
         st: ScriptState,
         mem: Memory,
         peasant: acr_sim::TypeId,
+        caller: Caller,
     }
 
     impl Fixture {
@@ -1355,7 +1356,7 @@ mod tests {
             });
             let mut mem = Memory::new();
             mem.map(0x1_0000, 0x1_0000);
-            Self { world, st, mem, peasant: kri }
+            Self { world, st, mem, peasant: kri, caller: Caller::Mission }
         }
 
         /// Calls the API function with the 32-bit arguments.
@@ -1373,7 +1374,7 @@ mod tests {
                 world: &mut self.world,
                 commands: &mut commands,
                 events: &mut events,
-                caller: Caller::Mission,
+                caller: self.caller,
                 vm: 0,
                 dip: None,
             };
@@ -1729,5 +1730,58 @@ OPPOSIT 10 30
         // 3 + 3 enemies − 3 own; the enemy 400 px away is outside.
         assert_eq!(f.call("GetEnemyForce", &[DATA + 0x300, 0]) as i32, 3);
         assert_eq!(f.call("GetEnemyForce", &[DATA + 0x300, 1]) as i32, -3);
+    }
+
+    #[test]
+    fn peace_time_left_reports_the_minutes_of_the_last_sync() {
+        let mut f = Fixture::new();
+        assert_eq!(f.call("GetPeaceTimeLeft", &[]), 0);
+        f.world.peace = acr_sim::peace::Peace::new(1200);
+        assert_eq!(f.call("GetPeaceTimeLeft", &[]), 20);
+        // One second per 10 ticks after tick 20; the minutes follow every 300 ticks.
+        for _ in 0..300 {
+            f.world.step(&[]);
+        }
+        assert_eq!((f.world.peace.left, f.call("GetPeaceTimeLeft", &[])), (1173, 20));
+        f.world.step(&[]);
+        assert_eq!((f.world.peace.left, f.call("GetPeaceTimeLeft", &[])), (1172, 19));
+    }
+
+    /// TryUnit (0x56829b): census count, cost share, the draw, and game option 2.
+    #[test]
+    fn try_unit_follows_the_census_and_the_no_artillery_option() {
+        use super::super::call::magic;
+        use crate::aicity::Prop;
+        let mut f = Fixture::new();
+        let tow = ObjectType::from_def("Tow(EN)", &UnitDef::parse(b"NAME Tow\r\nUSAGE TOWER\r\nLIFE 10\r\n[END]\r\n"));
+        let mut c = (*f.world.catalog).clone();
+        let tow = c.add(tow);
+        f.world.catalog = Arc::new(c);
+        let sol = f.world.units[0].kind;
+        f.caller = Caller::Ai(1);
+        acr_sim::economy::census_all(&mut f.world);
+        let city = &mut f.st.cities[1];
+        for (i, kind) in [sol, tow].into_iter().enumerate() {
+            city.props.push(Prop { kind, upgrade: None, producer: None, percent: 10 });
+            city.index.insert(kind, i);
+        }
+        let handle = |f: &mut Fixture, t: acr_sim::TypeId| {
+            f.mem.write_u16(DATA, t.0).expect("handle");
+            f.mem.write_u32(DATA + 4, magic::UNIT_TYPE).expect("handle");
+        };
+        handle(&mut f, sol);
+        // Five soldiers in the census: a maximum of 5 is reached.
+        assert_eq!(f.call("TryUnit", &[DATA, 5, 50, 100]), 0);
+        assert_eq!(f.call("TryUnit", &[DATA, 6, 9, 100]), 0, "costs 10 % of the stock");
+        assert_eq!(f.call("TryUnit", &[DATA, 6, 10, 100]), 1);
+        assert_eq!(f.st.cities[1].best, vec![0]);
+        // The census, not the live objects, counts.
+        f.world.units[0].death = 1;
+        assert_eq!(f.call("TryUnit", &[DATA, 5, 50, 100]), 0);
+        handle(&mut f, tow);
+        assert_eq!(f.call("TryUnit", &[DATA, 1, 50, 100]), 1);
+        f.world.game_options[1] = 1;
+        assert_eq!(f.call("TryUnit", &[DATA, 1, 50, 100]), 0, "no towers with option 2 at 1");
+        assert_eq!(f.st.cities[1].best, vec![0, 1]);
     }
 }

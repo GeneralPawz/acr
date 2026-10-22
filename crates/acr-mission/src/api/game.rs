@@ -64,18 +64,9 @@ pub const FUNCTIONS: &[ApiFn] = &[
     ApiFn { name: "ClearLightSpot", original: 0x564121, status: Status::Done, handler: clear_light_spot },
     ApiFn { name: "GetFogSpotVisibility", original: 0x56e6a4, status: Status::Done, handler: get_fog_spot_visibility },
     done("SetStartPoint", 0x564192, set_start_point),
-    ApiFn {
-        name: "GetPeaceTimeLeft",
-        original: 0x569882,
-        status: Status::Partial("no peace time in ACR games yet: 0"),
-        handler: zero,
-    },
+    done("GetPeaceTimeLeft", 0x569882, get_peace_time_left),
     done("GetLandType", 0x5695ae, get_land_type),
 ];
-
-fn zero(_: &mut Api, _: &mut Call) -> Result<u32> {
-    Ok(0)
-}
 
 // --- registration ------------------------------------------------------------------------
 
@@ -505,6 +496,11 @@ fn get_ai_nation(api: &mut Api, _: &mut Call) -> Result<u32> {
             Ok(0)
         }
     }
+}
+
+/// `int GetPeaceTimeLeft()`: the minutes of peace left (0x6e45d8), refreshed every 30 s.
+fn get_peace_time_left(api: &mut Api, _: &mut Call) -> Result<u32> {
+    Ok(api.world.peace.minutes as u32)
 }
 
 fn get_land_type(api: &mut Api, _: &mut Call) -> Result<u32> {
