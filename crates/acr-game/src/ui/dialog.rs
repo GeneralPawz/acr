@@ -173,6 +173,16 @@ impl TextViewer {
         self.line_h = line_h.max(1);
         self.page = (height / self.line_h) as usize;
     }
+
+    /// The height of all lines (`NLines` +0x6b times `SymSize` +0x7b).
+    pub fn text_height(&self) -> i32 {
+        self.lines.len() as i32 * self.line_h
+    }
+
+    /// Changes the font (`Font`, +0x7d); the lines stay wrapped as before.
+    pub fn set_font(&mut self, font: FontId) {
+        self.font = font;
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -528,7 +528,7 @@ pub fn describe(e: &MissionEvent) -> String {
         MissionEvent::Question { id, text: t, .. } => format!("question {id}: {}", text(t)),
         MissionEvent::Choice { id, choices, .. } => format!("choice {id}: {} options", choices.len()),
         MissionEvent::CentralText { text: t, ticks } => format!("central text ({ticks} ticks): {}", text(t)),
-        MissionEvent::Hint { text: t, ticks } => format!("hint ({ticks} frames): {}", text(t)),
+        MissionEvent::Hint { text: t, ticks, .. } => format!("hint ({ticks} frames): {}", text(t)),
         MissionEvent::Victory => "VICTORY".into(),
         MissionEvent::Defeat => "DEFEAT".into(),
         MissionEvent::Briefing => "objectives changed".into(),

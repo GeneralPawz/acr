@@ -1,58 +1,41 @@
 //! The mission script of the running game (`acr-mission`): loads the DLL, the mission texts
 //! and the AI DLLs, runs them before every simulation tick and shows what they report.
 //!
-//! The original shows `ShowPage` pages as modal windows inside the script call, so the game
-//! stands still until the player closes them; ACR pauses the simulation while a page or a
-//! question is open. Hints and central texts are drawn over the map for their time. Until
-//! the in-game interface has its own message widgets this module draws them with the menu
-//! fonts.
+//! The original shows `ShowPage` pages and questions as modal windows inside the script
+//! call, so the game stands still until the player closes them; ACR hands them to the
+//! screen stack ([`MissionLink::window`]) and runs no script and no simulation step until
+//! they are answered. Hints, the central text and the end of the game are drawn over the
+//! map ([`crate::mission_ui`]).
 
-use std::collections::BTreeMap;
+use std::cell::Cell;
+use std::collections::{BTreeMap, VecDeque};
+use std::rc::Rc;
 
 use acr_formats::M3dMap;
 use acr_formats::string_table::Texts;
 use acr_mission::{MissionEvent, ScriptSetup, Scripts};
 use acr_sim::{Command, World};
 
-use crate::ui::draw::{Draw, Rect};
-use crate::ui::fonts::FontId;
+use crate::mission_ui::Messages;
+use crate::ui::draw::Draw;
+use crate::ui::screens::mission::{Answer, ChoiceWindow, MessageWindow, Window};
 use crate::ui::setup::Control;
-use crate::ui::{Ctx, GameKind, GameSetup};
-
-/// Breaks a line into pieces at most `max` pixels wide, at spaces.
-fn wrap(line: &[u8], max: i32, width: &dyn Fn(&[u8]) -> i32) -> Vec<Vec<u8>> {
-    let mut out = Vec::new();
-    let mut cur: Vec<u8> = Vec::new();
-    for word in line.split(|&b| b == b' ') {
-        let mut next = cur.clone();
-        if !next.is_empty() {
-            next.push(b' ');
-        }
-        next.extend_from_slice(word);
-        if !cur.is_empty() && width(&next) > max {
-            out.push(std::mem::take(&mut cur));
-            cur = word.to_vec();
-        } else {
-            cur = next;
-        }
-    }
-    out.push(cur);
-    out
-}
+use crate::ui::{Ctx, GameKind, GameSetup, Screen};
 
 const MISSIONS: &str = "Missions\\Missions.txt";
 const NATIONS: &str = "NATIONS.LST";
 /// The diplomacy system for neutral tribes, loaded in every game like the original.
 const DIPSERVER: &str = "DipServer.dll";
-/// Seconds a hint stays when the script gives no time.
-const MESSAGE_SECONDS: f64 = 6.0;
-const FONT: FontId = FontId("fon16y5");
-const PAGE_FONT: FontId = FontId("fon16y3");
+/// The victory or defeat text stays this long before the game ends (0x4bc7b0: 7000 ms).
+const END_SECONDS: f64 = 7.0;
 
-/// A dialog the player has to close before the game goes on.
-enum Dialog {
-    Page(Vec<u8>),
-    Question(Vec<u8>),
+/// A window the player has to close before the game goes on.
+struct Pending {
+    /// Taken when the window is opened.
+    screen: Option<Box<dyn Screen>>,
+    answer: Answer,
+    /// The script waits for the answer (questions, not pages).
+    question: bool,
 }
 
 pub struct MissionLink {
@@ -74,11 +57,15 @@ pub struct MissionLink {
     new_requests: Vec<String>,
     /// Tried and failed (no script, or it did not load).
     off: bool,
-    messages: Vec<(Vec<u8>, f64)>,
-    dialog: Option<Dialog>,
+    messages: Messages,
+    pending: VecDeque<Pending>,
     clock: f64,
     /// `Some(true)` after victory, `Some(false)` after defeat.
     pub ended: Option<bool>,
+    /// When the game ended (seconds of `clock`).
+    ended_at: f64,
+    /// Escape after the end: leave at once.
+    leave: bool,
     /// `SetStartPoint`: centre the view here (world pixels).
     camera: Option<(i32, i32)>,
 }
@@ -117,10 +104,12 @@ impl MissionLink {
             pending_ais: Vec::new(),
             new_requests: Vec::new(),
             off: false,
-            messages: Vec::new(),
-            dialog: None,
+            messages: Messages::default(),
+            pending: VecDeque::new(),
             clock: 0.0,
             ended: None,
+            ended_at: 0.0,
+            leave: false,
             camera: None,
         }
     }
@@ -193,7 +182,18 @@ impl MissionLink {
     /// when no mission names a script.
     pub fn update(&mut self, map: &M3dMap, world: &mut World, seconds: f64) -> Vec<String> {
         self.clock += seconds;
-        self.messages.retain(|(_, until)| *until > self.clock);
+        // Answers of closed windows, in the order the script asked.
+        while let Some(front) = self.pending.front()
+            && front.screen.is_none()
+            && let Some(answer) = front.answer.get()
+        {
+            if front.question
+                && let Some(s) = &mut self.scripts
+            {
+                s.answer(answer);
+            }
+            self.pending.pop_front();
+        }
         if self.scripts.is_some() || self.off {
             return Vec::new();
         }
@@ -257,11 +257,12 @@ impl MissionLink {
     }
 
     /// Runs the scripts for the next tick; `None` while the game must stand still (a page or
-    /// question is open, or the game has ended).
+    /// question is open). After the end of the game the world goes on without scripts.
     pub fn before_step(&mut self, world: &mut World) -> Option<Vec<Command>> {
-        if self.dialog.is_some() || self.ended.is_some() {
+        if !self.pending.is_empty() {
             return None;
         }
+        self.messages.tick();
         // Deterministic start: the world does not move before the scripts run (they would
         // otherwise start at a tick that depends on file loading).
         let Some(scripts) = &mut self.scripts else { return if self.off { Some(Vec::new()) } else { None } };
@@ -290,31 +291,70 @@ impl MissionLink {
             return None;
         }
         let commands = scripts.tick(world);
+        let waiting = scripts.waiting();
         for e in scripts.take_events() {
             log::info!("mission: {}", acr_mission::describe(&e));
             match e {
-                MissionEvent::Page { text, .. } => self.dialog = Some(Dialog::Page(text)),
-                MissionEvent::Question { text, .. } | MissionEvent::Choice { text, .. } => {
-                    self.dialog = Some(Dialog::Question(text));
+                MissionEvent::Page { header, text, .. } => {
+                    self.open(false, |a| Box::new(MessageWindow::new(Window::Page, &header, text, a)))
                 }
-                MissionEvent::Hint { text, ticks } => {
-                    let secs = if ticks == 0 { MESSAGE_SECONDS } else { f64::from(ticks) / 10.0 };
-                    self.messages.push((text, self.clock + secs.max(2.0)));
+                MissionEvent::Question { header, text, .. } => {
+                    self.open(true, |a| Box::new(MessageWindow::new(Window::Question, &header, text, a)))
                 }
-                MissionEvent::CentralText { text, ticks } => {
-                    self.messages.push((text, self.clock + f64::from(ticks) / 10.0));
+                MissionEvent::Choice { header, text, choices, width, orient, .. } => {
+                    self.open(true, |a| Box::new(ChoiceWindow::new(width, orient, &header, text, choices, a)))
                 }
-                MissionEvent::Victory => self.ended = Some(true),
-                MissionEvent::Defeat => self.ended = Some(false),
+                MissionEvent::Hint { text, ticks, list } => self.messages.add(text, ticks, list),
+                // Drawn from the script state while its time runs.
+                MissionEvent::CentralText { .. } => {}
+                MissionEvent::Victory | MissionEvent::Defeat if self.ended.is_none() => {
+                    self.ended = Some(matches!(e, MissionEvent::Victory));
+                    self.ended_at = self.clock;
+                }
+                MissionEvent::Victory | MissionEvent::Defeat => {}
                 MissionEvent::Error { title, text } => log::error!("{title}: {text}"),
                 MissionEvent::Camera { x, y } => self.camera = Some((x, y)),
                 MissionEvent::Briefing => {}
             }
         }
-        if scripts.waiting() {
+        if waiting {
             return None;
         }
         Some(commands)
+    }
+
+    /// Queues a window; `question`: the script waits for its answer.
+    fn open(&mut self, question: bool, screen: impl FnOnce(Answer) -> Box<dyn Screen>) {
+        let answer: Answer = Rc::new(Cell::new(None));
+        self.pending.push_back(Pending { screen: Some(screen(answer.clone())), answer, question });
+    }
+
+    /// The next mission window to show, once (pages and questions in the order the script
+    /// asked; the next one follows when this one is closed).
+    pub fn window(&mut self) -> Option<Box<dyn Screen>> {
+        self.pending.front_mut().and_then(|p| p.screen.take())
+    }
+
+    /// The objectives window (F1, 0x5e11c0): only in a mission with objectives text.
+    pub fn objectives(&self) -> Option<Box<dyn Screen>> {
+        let briefing = self.scripts.as_ref()?.briefing();
+        if briefing.is_empty() || !self.pending.is_empty() {
+            return None;
+        }
+        Some(Box::new(MessageWindow::new(Window::Objectives, "NONE", briefing, Rc::new(Cell::new(None)))))
+    }
+
+    /// The victory or defeat text has been shown long enough: back to the menus (missions
+    /// show no statistics, 0x5ab55d).
+    pub fn over(&self) -> bool {
+        self.ended.is_some() && (self.leave || self.clock - self.ended_at > END_SECONDS)
+    }
+
+    /// Escape: after the end of the game it leaves without waiting ("press ESC", 0x4a31f2
+    /// sets `0x11eaf4c` to 2); returns whether it did.
+    pub fn escape(&mut self) -> bool {
+        self.leave = self.ended.is_some();
+        self.leave
     }
 
     /// A view position the script asked for (`SetStartPoint`), once.
@@ -327,58 +367,19 @@ impl MissionLink {
         std::mem::take(&mut self.new_requests)
     }
 
-    /// Closes an open page; answers an open question with `yes`.
-    pub fn close_dialog(&mut self, yes: bool) -> bool {
-        match self.dialog.take() {
-            Some(Dialog::Question(_)) => {
-                if let Some(s) = &mut self.scripts {
-                    s.answer(u32::from(yes));
-                }
-                true
-            }
-            Some(Dialog::Page(_)) => true,
-            None => false,
-        }
-    }
-
-    pub fn dialog_open(&self) -> bool {
-        self.dialog.is_some()
-    }
-
-    /// Message overlay on the 1024 × 768 canvas.
+    /// Mission texts over the map (1024 × 768 canvas): hints, then the central box with the
+    /// end of the game or `ShowCentralText` (a text starting with `#` wins over the end).
     pub fn draws(&self, ctx: &Ctx, out: &mut Vec<Draw>) {
-        let mut y = 520;
-        for (text, _) in self.messages.iter().rev().take(4) {
-            out.push(Draw::text(FONT, text, 40, y));
-            y -= 22;
-        }
-        let banner = match self.ended {
-            Some(true) => Some(&b"WINNER"[..]),
-            Some(false) => Some(&b"LOOSER"[..]),
-            None => None,
+        self.messages.draw(out);
+        let central = self.scripts.as_ref().and_then(|s| s.state().central_text.as_ref()).map(|(t, _)| t.as_slice());
+        let end = self.ended.map(|won| ctx.texts.get(if won { "WINNER" } else { "LOOSER" }));
+        let text = match (central, end) {
+            (Some(c), _) if c.first() == Some(&b'#') => Some(&c[1..]),
+            (_, Some(e)) => Some(e),
+            (c, None) => c,
         };
-        if let Some(b) = banner {
-            out.push(Draw::text(FontId("fonG60y5"), b, 400, 340));
+        if let Some(t) = text.filter(|t| !t.is_empty()) {
+            crate::mission_ui::central_text(ctx, out, t, self.local_player);
         }
-        let Some(dialog) = &self.dialog else { return };
-        let (text, hint): (&[u8], &[u8]) = match dialog {
-            Dialog::Page(t) => (t, b"Enter / click: OK"),
-            Dialog::Question(t) => (t, b"Enter / click: OK    Esc: No"),
-        };
-        let rect = Rect::new(162, 134, 700, 500);
-        out.push(Draw::fill([0, 0, 0, 200], rect));
-        let width = |t: &[u8]| ctx.fonts.width(ctx.lib, PAGE_FONT, t);
-        let mut y = rect.y0 + 20;
-        for line in text.split(|&b| b == b'\n') {
-            let line = line.strip_suffix(b"\r").unwrap_or(line);
-            for part in wrap(line, rect.width() - 40, &width) {
-                if y > rect.y1 - 50 {
-                    break;
-                }
-                out.push(Draw::text(PAGE_FONT, &part, rect.x0 + 20, y).clipped(rect));
-                y += 18;
-            }
-        }
-        out.push(Draw::text(PAGE_FONT, hint, rect.x0 + 20, rect.y1 - 30));
     }
 }

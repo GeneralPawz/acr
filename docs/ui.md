@@ -330,6 +330,55 @@ the defaults apply: `Zone1X/Y` = 6/6, `PropertyX/Y` = 182/6, `IconLx/Ly` = 40/40
   - OK and Abbruch on `G_Load_Game` frame 1. Enter and Escape work.
   - OK changes the simulation's tick rate and the scroll speed.
 
+### Mission windows and messages
+
+`ui/screens/mission.rs` (windows) and `mission_ui.rs` (texts over the map). The
+original runs the windows as modal loops inside the script call (Enter/Escape are read
+from `LastKey` in the loop); ACR pushes them on the screen stack, which stops the game, and
+the mission runs no script and no step until they are closed.
+
+- Page (`ShowPage` → `ProcessMissionText` 0x5e16b0), question (`AskQuestion` → 0x5adfb0)
+  and objectives (F1 → 0x5e11c0) share one layout on `Interf2\Messages`, frame `f` (0 for
+  page and objectives, 2 for the question) at `((RealLx − W) / 2, (RealLy − H) / 2)`, its
+  shadow `f + 1` under it. Relative to that:
+  - caption centred at (`W / 2`, 34) in `fon16y5`: `INTF_MESSAGE`, `INTF_CROOM_GS0`,
+    `MISSOBJ`;
+  - page and question: the header's picture (`"<gp> <frame>"`, `sscanf("%s%d")`, `NONE` =
+    none) centred at y = 75, then `Interf2\Line2` frame 0 centred 16 pixels below it; the
+    text starts 10 pixels below the line. The objectives text starts at y = 75;
+  - `Interf2\VScroll2` at the right edge x = 520 down to y = 495, the text viewer from
+    x = 55 to 5 pixels left of it in `fon18y3`, 21 pixels per line;
+  - `@MSOK` (0xf5) on `Interf2\Button2` frame 3 (`fon18y5`) at (191, 520); the question has
+    `@MSOK` at (75, 521) and `@MSNO` (0xf6) at (307, 521).
+  - Enter is OK. Escape is No in the question and OK otherwise. The objectives window
+    opens only in a mission with a non-empty objectives text (`miss.txt`).
+- Multiple choice (`AskMultilineQuestion(nx, page, orient, "id|id|…")` → 0x5ad540): a box
+  `nx · 64` pixels wide, centred horizontally:
+  - picture at (16, 16) for `orient` 1 (text right of it), at the right edge for 2, centred
+    above the text for 0 (values above 2 count as 0);
+  - the page text in `rom11` with `SetRedColor`, disabled; the choices 32 pixels below it,
+    each a text viewer at x = 32 in plain `rom11` that turns red under the mouse, 16 pixels
+    apart; a click answers its index, the keyboard does nothing;
+  - the dialog is then moved so that the whole is centred vertically; the paper box
+    (0x480455: `Border` 51..53 tiles, corner table 0x6686e0) is drawn 32 pixels above it.
+- Hints (0x493fc5, timers counted down once per frame by 0x4944a9): `AssignHint` sets the
+  hint line at (`smapx + 4`, `RealLy − PanelLy − 40`) = (4, 584); `AssignHint1` pushes onto
+  four message lines 20, 40, 60, 80 pixels above it (the same text again only renews its
+  time). Each is drawn in `BlackFont` 2 pixels down-right, then `WhiteFont`. A time of 0
+  shows nothing.
+- Central box (0x4bc490): `\` separates lines; `BigWhiteFont` centred on the middle of the
+  view, on a paper box (0x480130: `Border` 28..30 tiles, corner table 0x668580) sized for
+  as many lines as there are `\` (one fewer than drawn). It shows `ShowCentralText` while
+  its time runs and the end of the game (0x4bc7b0).
+- End of a mission: `ShowVictory` / `LooseGame` show `WINNER` / `LOOSER` in the central box
+  (a central text starting with `#` wins over it) while the game goes on; after 7 s, or at
+  once with Escape ("Zum Verlassen ESC drücken", 0x4a31f2), the game loop ends. Missions show
+  no statistics (`0x1100ac5` is cleared, 0x5ab55d), and ACR returns to the main menu.
+
+Deviations: hint timers count simulation ticks; the end waits 7 s of game time; the
+custom texts of `SetVictoryText`/`SetLoosText` are not supported (no mission uses them);
+after a campaign victory the next missions are not opened (no campaign progress yet).
+
 ### Open questions
 
 - Which command icons the original shows for a selection without an officer (attack

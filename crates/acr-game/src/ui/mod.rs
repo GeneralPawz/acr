@@ -198,6 +198,13 @@ impl Ui {
         }
     }
 
+    /// Opens a dialog over the running game (mission pages and questions, objectives).
+    pub fn open_dialog(&mut self, screen: Box<dyn Screen>) {
+        if self.in_game {
+            self.stack.push(Entry { screen, built: false });
+        }
+    }
+
     /// Whether a dialog over the running game takes the input.
     pub fn dialog_open(&self) -> bool {
         self.in_game && !self.stack.is_empty()

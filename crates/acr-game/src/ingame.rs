@@ -301,13 +301,24 @@ impl InGame {
         self.camera.project(x, y, h)
     }
 
-    /// Closes an open mission page or answers an open question (`yes`); false if none.
-    pub fn close_dialog(&mut self, yes: bool) -> bool {
-        self.mission.close_dialog(yes)
+    /// The next mission page or question to open over the game.
+    pub fn mission_window(&mut self) -> Option<Box<dyn crate::ui::Screen>> {
+        self.mission.window()
     }
 
-    pub fn mission_dialog_open(&self) -> bool {
-        self.mission.dialog_open()
+    /// The mission objectives (F1), if the mission has any.
+    pub fn objectives_window(&self) -> Option<Box<dyn crate::ui::Screen>> {
+        self.mission.objectives()
+    }
+
+    /// The mission has ended and its last message has been shown.
+    pub fn mission_over(&self) -> bool {
+        self.mission.over()
+    }
+
+    /// Escape after the end of the mission: leave now; false while it goes on.
+    pub fn mission_escape(&mut self) -> bool {
+        self.mission.escape()
     }
 
     /// Mission messages and dialogs drawn over the map (1024 × 768 canvas).
