@@ -3,7 +3,8 @@
 Milestone M2 replaces sprites by 3D models. Every model is a Python script that Blender runs
 headless to rebuild its glTF file; nothing generated is committed. The sprite check renders a
 model through the game's original camera and scores it against the original sprites.
-Tracking: #176; pipeline #162, sprite check #165.
+Tracking: #176; pipeline #162, sprite check #165. How the game draws the models (settings,
+where it looks for them, the camera as a matrix): [rendering-3d.md](rendering-3d.md).
 
 ## Layout
 

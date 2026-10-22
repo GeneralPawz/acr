@@ -255,6 +255,7 @@ impl InGame {
         self.clock.set_rate(tick_rate(settings.frame_time));
         self.interface.scroll_speed = settings.scroll_speed.clamp(2, 10);
         self.apply_controls(settings);
+        self.three_d.apply(settings);
     }
 
     pub fn set_modifiers(&mut self, mods: ModifiersState) {
@@ -1920,6 +1921,13 @@ impl InGame {
         let r = self.objects.objects().definition(&world.catalog.get(u.kind).id).and_then(|d| d.get("RECTANGLE"));
         let [dx, dy, w, h] = [0, 1, 2, 3].map(|i| r.and_then(|c| c.int(i)).unwrap_or([0, 3, 40, 64][i]));
         let (x, y) = (u.pos.x >> 4, u.pos.y >> 4);
+        if self.three_d.orbit().is_some() {
+            // The free camera: the box stands at the projected ground point.
+            let [sx, sy] = self.screen_of(u);
+            let s = self.camera.scale;
+            let (gx, gy) = ((self.camera.x + sx / s).round() as i32, (self.camera.y + sy / s).round() as i32);
+            return (gx - w / 2 + dx, gy - h + dy, w, h);
+        }
         (x - w / 2 + dx, (y >> 1) - h + dy - terrain.height_at(x, y), w, h)
     }
 
@@ -2248,6 +2256,9 @@ impl InGame {
     pub fn key(&mut self, ctx: &Ctx, key: &Key, pressed: bool) -> GameKey {
         if let Key::Named(named) = key {
             self.on_key(*named, pressed);
+        }
+        if self.three_d.key(key, pressed) {
+            return GameKey::None;
         }
         if let Some(used) = self.modern_key(ctx, key, pressed) {
             return used;

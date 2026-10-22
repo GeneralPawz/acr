@@ -33,7 +33,7 @@ pub fn main() -> std::process::ExitCode {
 fn run() -> Result<(), String> {
     let Some(dir) = find_game_dir()? else { return Ok(()) };
     log::info!("game data: {}", dir.display());
-    let assets = NativeAssets::open(&dir)?;
+    let assets = ExtraModels::new(NativeAssets::open(&dir)?, &dir);
     let event_loop = crate::event_loop()?;
     let mut game = Game::new(event_loop.create_proxy(), Box::new(assets));
     game.set_saves(Box::new(acr_app::saves::FolderSaves::new(&dir)));
@@ -48,6 +48,60 @@ fn run() -> Result<(), String> {
         game.start_map(&map);
     }
     event_loop.run_app(&mut game).map_err(|e| e.to_string())
+}
+
+/// 3D models from outside the game folder (docs/rendering-3d.md): the folder `ACR_MODELS_DIR`
+/// names, else `ACR\Models` next to the executable; their `*.glb` files appear as
+/// `ACR\Models\<file>` and take precedence over the game folder's own.
+struct ExtraModels {
+    inner: NativeAssets,
+    dir: Option<PathBuf>,
+    files: Vec<String>,
+}
+
+impl ExtraModels {
+    fn new(inner: NativeAssets, game_dir: &Path) -> Self {
+        let exe_models = std::env::current_exe()
+            .ok()
+            .and_then(|e| Some(e.parent()?.join("ACR").join("Models")))
+            .filter(|d| !d.starts_with(game_dir));
+        let dir = std::env::var_os("ACR_MODELS_DIR").map(PathBuf::from).or(exe_models).filter(|d| d.is_dir());
+        let files: Vec<String> = dir
+            .iter()
+            .flat_map(|d| std::fs::read_dir(d).into_iter().flatten().flatten())
+            .filter_map(|e| e.file_name().into_string().ok())
+            .filter(|n| n.to_ascii_lowercase().ends_with(".glb"))
+            .collect();
+        if let Some(d) = &dir {
+            log::info!("3d models from {}: {files:?}", d.display());
+        }
+        Self { inner, dir, files }
+    }
+
+    /// The file in [`ExtraModels::dir`] that the game path `path` stands for.
+    fn local(&self, path: &str) -> Option<PathBuf> {
+        let norm = acr_formats::normalize_path(path);
+        let name = norm.strip_prefix("ACR/MODELS/")?;
+        let file = self.files.iter().find(|f| f.eq_ignore_ascii_case(name))?;
+        Some(self.dir.as_ref()?.join(file))
+    }
+}
+
+impl acr_app::Assets for ExtraModels {
+    fn paths(&self) -> Vec<String> {
+        let mut paths = self.inner.paths();
+        paths.extend(self.files.iter().map(|f| format!(r"ACR\Models\{f}")));
+        paths.sort();
+        paths.dedup();
+        paths
+    }
+
+    fn request(&self, path: &str, done: acr_app::LoadCallback) {
+        match self.local(path) {
+            Some(file) => done(std::fs::read(&file).map_err(|e| format!("{}: {e}", file.display()))),
+            None => self.inner.request(path, done),
+        }
+    }
 }
 
 fn is_game_dir(dir: &Path) -> bool {
