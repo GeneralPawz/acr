@@ -211,10 +211,23 @@ are piled. The renderer takes a palette from it per instance
     pose. No death reflex, steps or knock-downs for animals. Riders and horses keep their
     clips (their types are not `Anm*`). Bones: bear 24, elk 29, jaguar 35, alligator 37.
 - **Mauling** (`m2-animalsim`, see `docs/damage-model.md`): an animal's blow (`Injury::cause`
-  `Claw`, `Bite`, `Gore`) pushes a man with 34, 26 or 70 N·s (half at no energy) away from the
+  `Claw`, `Bite`, `Gore`) pushes a man with 28, 22 or 60 N·s (half at no energy) away from the
   animal, a goring also upwards; at 19 N·s or more, or whenever the simulation knocks him down
   (`Body::down`), he falls. While `Body::down` lasts he stays on the ground (the fall phase is
-  held) and the animal's further blows strike the lying body.
+  held, at 12 % tone instead of 30 %, so he lies limp) and the animal's further blows strike the
+  lying body.
+- **Wounds of mauling and on animals** (`tears.rs`, `living_wounds.rs`,
+  `acr_render::damage::Rig::beast`): the wound's shape comes from `Injury::cause`. Claws rake
+  3–4 parallel slanted gashes 4–5 cm apart and 2–4 cm deep on the side facing the animal;
+  jaws crush a core between two rows of three tooth holes (a broken bone, a bigger core);
+  horns punch a deep hole along the blow with a ragged entry; a limb ripped off leaves a
+  ragged tear. The newest hits' holes and marks are kept first (the cap is 8), so a man on
+  the ground shows each new blow. Animals (`acr_animal` models) get a wound rig guessed from
+  their skeleton (trunk from the pelvis to the neck, the four legs as the chains that reach
+  the ground, radii from the skinned vertices): it places marks, spurts, drips, pools and
+  torn holes, never cuts; an animal corpse's pool grows with its girth (0.6–2.5 × a man's).
+  Later on the asset side: `_PART`/`_LIMB` and radius profiles on the animal glbs (real cuts,
+  exact flank marks).
 - **Not yet:** severed pieces (`debris.rs`) keep their own throw (they could become small
   ragdoll bodies later); no kneeling or reloading pose exists to be killed in; horses and
   riders; the corpse's decay sinking is not applied to physics poses.

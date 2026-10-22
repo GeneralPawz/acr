@@ -54,7 +54,7 @@ const STEP_AT: f32 = 0.12;
 const HUMAN: usize = usize::MAX;
 /// Impulse (N·s) of an animal's blow that throws a man down: a bear's swipe, a bison's
 /// horns.
-const MAUL_IMPULSE: [f32; 3] = [34.0, 26.0, 70.0];
+const MAUL_IMPULSE: [f32; 3] = [28.0, 22.0, 60.0];
 
 /// The bones of skeleton H in the order of [`skeleton_h`].
 fn bone_names() -> Vec<&'static str> {
@@ -966,7 +966,9 @@ impl Ragdolls {
                 r.target_skins(&mut self.physics, &skins);
                 if td < FALL_S {
                     r.set_pinned_root(&mut self.physics, false);
-                    r.set_tone_all(&mut self.physics, Tone::FULL.scaled(0.3));
+                    // Held down by an animal he lies nearly limp instead of struggling up.
+                    let tone = if d.unit.body.down > 0 { 0.12 } else { 0.3 };
+                    r.set_tone_all(&mut self.physics, Tone::FULL.scaled(tone));
                     // The knees give: thighs and shins fold, he drops to his knees and
                     // over.
                     for leg in [Region::LegL, Region::LegR] {
