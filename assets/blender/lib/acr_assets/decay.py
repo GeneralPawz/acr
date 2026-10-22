@@ -261,7 +261,8 @@ def export_material(mat):
         m[k] = mat[k]
     nodes, links = m.node_tree.nodes, m.node_tree.links
     bsdf = nodes.get("Principled BSDF")
-    bsdf.inputs["Roughness"].default_value = 0.85
+    # Wet gore keeps its gloss (`acr_roughness`, set by `assets/gore/gore.py`).
+    bsdf.inputs["Roughness"].default_value = float(mat.get("acr_roughness", 0.85))
     if "acr_image" in mat:
         tex = nodes.new("ShaderNodeTexImage")
         tex.image = bpy.data.images[mat["acr_image"]]

@@ -11,7 +11,7 @@ from mathutils import Matrix, Vector
 
 from . import armature as am
 from . import body as bd
-from . import decay, detail, project, rig
+from . import decay, detail, limb, project, rig
 
 # Layer order (#178) and the decay layer of every material key a unit may use.
 LAYER_OF = {
@@ -145,6 +145,63 @@ class Character:
                 lay = LAYER_OF[self.keys[o.name]] if layer != "bones" else "bone"
                 ps = bd.parts(o)
                 decay.add_masks(o, lay, seed=sum(map(ord, o.name)), part_of_vertex=ps.__getitem__)
+        self.limb_levels(layers)
+
+    def limb_levels(self, layers):
+        """Writes `_limb` (float: limb level 0..1, trunk -1; `acr_assets.limb`) on every mesh
+        and sets `self.limb_radius` = {limb: [limb.SAMPLES outer radii]}. Skin, bones and
+        stump caps project their rest positions onto the limb chain of their part; clothes
+        and strapped gear take the level of the nearest skin vertex of the same limb; held
+        gear and the horse are -1."""
+        from mathutils import kdtree
+
+        P = self.prefix
+        bones = self.arm.data.bones
+        chains = {n: [tuple(getattr(bones[P + b], end + "_local")) for b, end in spec[1]]
+                  for n, spec in limb.LIMBS.items()}
+        joints = rig.JOINTS
+
+        def write(o, values):
+            a = o.data.attributes.get("_limb") or o.data.attributes.new("_limb", "FLOAT", "POINT")
+            for d, x in zip(a.data, values):
+                d.value = x
+
+        skin = {n: [] for n in limb.LIMBS}  # limb -> [(co, level)]
+        radius = {n: [] for n in limb.LIMBS}
+        projected = layers["flesh"] + layers["bones"] + ([self.caps_obj] if getattr(self, "caps_obj", None) else [])
+        for o in projected:
+            ps = bd.parts(o)
+            vals = []
+            for v, pt in zip(o.data.vertices, ps):
+                name, lv, dist = limb.vertex_level(tuple(v.co), limb.body_part(pt, joints), chains)
+                vals.append(lv)
+                if name and o in layers["flesh"]:
+                    skin[name].append((v.co.copy(), lv))
+                    radius[name].append((lv, dist))
+            write(o, vals)
+        trees = {}
+        for n, pts in skin.items():
+            t = kdtree.KDTree(len(pts))
+            for i, (co, _lv) in enumerate(pts):
+                t.insert(co, i)
+            t.balance()
+            trees[n] = t
+        for o in layers["clothes"] + layers["gear"]:
+            ps = bd.parts(o)
+            vals = []
+            for v, pt in zip(o.data.vertices, ps):
+                name, _lv, dist = limb.vertex_level(tuple(v.co), limb.body_part(pt, joints), chains)
+                if name is None or not skin[name]:
+                    vals.append(limb.TRUNK)
+                    continue
+                _co, i, _d = trees[name].find(v.co)
+                lv = skin[name][i][1]
+                vals.append(lv)
+                radius[name].append((lv, dist))
+            write(o, vals)
+        for o in layers.get("held", []):
+            write(o, [limb.TRUNK] * len(o.data.vertices))
+        self.limb_radius = {n: limb.radius_profile(radius[n]) for n in limb.LIMB_ORDER}
 
     def colours(self, ref, palette, delight=0.0, report=None, mix=1.0):
         """Materials: one colour per part, the robust dominant colour of the part in the

@@ -10,6 +10,7 @@ import math
 
 from mathutils import Matrix, Vector
 
+from acr_assets import crawl
 from acr_assets import armature as am
 from acr_assets import aim as aiming
 from acr_assets import gear, outfit, poses, rig
@@ -140,6 +141,10 @@ def build(ctx):
             aiming.bake_musket(ch.arm, clip, keys, rod_phases=poses.ROD_PHASES)
         else:
             aiming.stow_rammer(ch.arm, clip)
+    # Crawl clips of the wounded (#262): keyframed, looping.
+    for clip, keys in crawl.clips().items():
+        am.add_clip(ch.arm, clip, keys)
+        aiming.stow_rammer(ch.arm, clip)
     am.set_clip(ch.arm, "STAND")
     report = {}
     colours = ch.colours(ctx.ref, PALETTE, report=report, mix=0.5)
@@ -150,7 +155,8 @@ def build(ctx):
     am.pose(ch.arm, poses.STAND_MUSKET)
     ch.arm.pose.bones[aiming.ROD_SOCKET].matrix = ch.arm.pose.bones["socket.hand_r"].matrix @ aiming.ROD_STOWED
     tris = ch.triangles()
-    prepare_export(ch.all_meshes(), ctx.root, acr_triangles=sum(tris.values()), acr_clips=list(MD),
+    prepare_export(ch.all_meshes(), ctx.root, acr_triangles=sum(tris.values()), acr_clips=list(MD) + list(crawl.CLIPS),
+                   acr_limb_radius=ch.limb_radius,
                    acr_light=report.get("light_dir_camera", []), acr_layers=list(ch.layers))
     ctx.stats = {"triangles": tris, "light": report, "colours": colours, "aim_errors_m": ctx.aim_errors}
 
