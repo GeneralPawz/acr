@@ -686,6 +686,31 @@ sum of its four neighbours (centre excluded). This spreads the stamps and decays
     and compares every checkpoint.
   - `World::state_hash()` is identical on every platform for identical inputs, so it also
     detects lockstep desyncs.
+- **Savegames** (`crates/acr-game/src/savegame.rs`, #78) build on the same property. A save
+  is not a memory dump; it holds the inputs needed to reach the state again:
+  - the `GameSetup` (mission, or random map with its seed and players);
+  - the player's commands per tick, as an embedded `Replay` (script orders are not
+    stored: the scripts give them again);
+  - every closed mission window (page, question, choice) as `(tick, answer)`. A question rolls its
+    tick back (`Scripts::answer`), so the answer belongs to the tick that is re-run;
+  - the saved tick and `World::state_hash()` there, the camera, the selection and the
+    control groups, the name and the date.
+
+  Format: `ACRS`, version, name, unix time, local date and time, setup, tick, hash (u64
+  LE), then the `ACRR` replay blob, the dialog closes (tick deltas), camera, selection and
+  groups; integers are LEB128 varints like the replays. The header comes first so that the
+  load dialog lists files without decoding them. Native: `Save\<name>.sav` in the game
+  folder (the original's `.sav` files start with `KASF` and are not listed); browser:
+  `localStorage` key `acr-save:<name>`, base64.
+
+  Loading starts the setup as a new game. Once world and scripts are there (the world does
+  not step before the mission script and the AI DLLs are loaded), `FastForward` steps to
+  the saved tick, 100 ms per frame behind the loading screen, without drawing or sounds:
+  the recorded commands are applied at their ticks and each dialog that opens is closed as
+  recorded. Then the hash is compared (a differing state is logged and shown for a few
+  seconds), view, selection and groups come back, and recording continues from the saved
+  log. Replaying is as fast as the simulation: 18 000 ticks (30 minutes of the first
+  Columbus mission) take about 5 s.
 
 ## Deviations and simplifications
 
@@ -795,6 +820,11 @@ sum of its four neighbours (centre excluded). This spreads the stamps and decays
 - **Replay tests:** every command round-trips through the binary format; damaged data is
   rejected; a recorded 200-tick match with commands at three ticks replays to the recorded
   hash.
+- **Savegame tests** (`acr-game`): a game with player commands, a question and a page,
+  saved at several ticks (before, at and after the dialogs), loads to the saved hash, also
+  when replayed in small steps; flipping the recorded answer changes the result. With
+  `ACR_GAME_DIR`, the ignored `mission_save_loads_to_the_same_state` plays the first
+  Columbus mission with its script (`ACR_SAVE_TICKS`, default 1500), saves and loads.
 - **World tests** (`tests/world.rs`) on a synthetic flat map check:
   - exactly 5 px per tick for a step-40 unit;
   - 7 ticks of turning before walking west;

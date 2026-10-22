@@ -13,9 +13,10 @@ winit = "0.30"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 pollster = "1.0.1"
+jiff = { version = "0.2.38", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo", "tzdb-bundle-platform"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 js-sys = "0.3.106"
 wasm-bindgen = "=0.2.129"
 wasm-bindgen-futures = "0.4.79"
-web-sys = { version = "0.3.106", features = ["File", "Blob", "Window", "Document", "Location", "Request", "RequestInit", "Headers", "Response"] }
+web-sys = { version = "0.3.106", features = ["File", "Blob", "Window", "Document", "Location", "Request", "RequestInit", "Headers", "Response", "Storage"] }

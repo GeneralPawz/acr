@@ -13,6 +13,7 @@ mod music;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod native;
 mod random_map;
+mod savegame;
 pub mod ui;
 mod unit_sounds;
 #[cfg(target_arch = "wasm32")]
@@ -165,6 +166,7 @@ impl Game {
             // The game stands still while a dialog (game menu, options) is open.
             let game_dt = if self.ui.dialog_open() { 0.0 } else { dt as f32 };
             game.update(game_dt, g.gpu.size());
+            self.ui.set_loading_progress(game.loading_progress());
             self.unit_sounds.play(&game.take_sound_events(), &mut self.audio);
             if game.ready() {
                 if !self.ui.in_game() {
@@ -252,6 +254,8 @@ impl Game {
                 log::info!("starting {setup:?}");
                 self.start_game(setup);
             }
+            ui::Action::SaveGame(name) => self.save_game(&name),
+            ui::Action::LoadGame(save) => self.load_game(save),
         }
     }
 
@@ -297,6 +301,35 @@ impl Game {
 
     fn start_game(&mut self, setup: Box<ui::GameSetup>) {
         let mut game = ingame::InGame::new(setup);
+        game.apply_settings(self.ui.settings());
+        game.start(&self.assets.paths());
+        self.mode = Mode::InGame(Box::new(game));
+        self.load_requested();
+    }
+
+    /// Where savegames are kept: `Save\` in the game folder, or the browser's storage.
+    pub fn set_saves(&mut self, saves: Box<dyn acr_app::saves::SaveStore>) {
+        self.ui.set_saves(saves);
+    }
+
+    /// The save dialog's OK: writes the running game as `Save\<name>.sav`.
+    fn save_game(&mut self, name: &[u8]) {
+        let Mode::InGame(game) = &self.mode else { return };
+        let (unix, local) = acr_app::saves::local_time();
+        let Some(save) = game.snapshot(name, savegame::SaveTime { unix, local }) else { return };
+        let file = ui::screens::save_load::file_name(name);
+        match self.ui.saves_mut().write(&file, &save.encode()) {
+            Ok(()) => log::info!("saved {file} at tick {}", save.tick),
+            Err(e) => log::error!("cannot save {file}: {e}"),
+        }
+    }
+
+    /// A load dialog's OK: starts the saved game, which replays up to its tick.
+    fn load_game(&mut self, save: Box<savegame::SaveGame>) {
+        log::info!("loading a game saved at tick {}: {:?}", save.tick, save.setup);
+        self.ui.leave_game();
+        self.ui.show_loading();
+        let mut game = ingame::InGame::from_save(save);
         game.apply_settings(self.ui.settings());
         game.start(&self.assets.paths());
         self.mode = Mode::InGame(Box::new(game));

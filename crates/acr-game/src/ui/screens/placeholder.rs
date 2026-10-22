@@ -17,11 +17,6 @@ impl Placeholder {
         Self { background, title, dialog: Dialog::default() }
     }
 
-    /// The load game screen (0x5d8090).
-    pub fn load_game() -> Self {
-        Self { background: "INTERF2\\BACKGROUND_LOAD_GAME.BMP", title: "INTF_LOAD_T0", dialog: Dialog::default() }
-    }
-
     /// The connection type screen of multiplayer games (0x4a28b0).
     pub fn multiplayer() -> Self {
         Self { background: "INTERF2\\BACKGROUND_TYPE_CONNECTION.BMP", title: "INTF_PROT_T0", dialog: Dialog::default() }

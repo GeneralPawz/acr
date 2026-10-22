@@ -41,6 +41,10 @@ pub enum Action {
     Settings(Box<Settings>),
     /// Leave the running game for the main menu (`INTF_GMENU_PAD4`).
     LeaveGame,
+    /// Save the running game under this name (CP1252), from the save dialog.
+    SaveGame(Vec<u8>),
+    /// Start a saved game, from a load dialog.
+    LoadGame(Box<crate::savegame::SaveGame>),
 }
 
 pub use dialog::Key;
@@ -78,6 +82,8 @@ pub struct Ctx<'a> {
     pub texts: &'a Texts,
     pub settings: &'a Settings,
     pub profile: &'a std::cell::RefCell<screens::player_name::Profile>,
+    /// Where savegames are kept.
+    pub saves: &'a dyn acr_app::saves::SaveStore,
 }
 
 /// What a screen wants after handling input or a tick.
@@ -97,6 +103,10 @@ pub enum Nav {
     Apply(Box<Settings>),
     /// Close every screen and leave the running game.
     LeaveGame,
+    /// Close this screen and save the running game under this name.
+    Save(Vec<u8>),
+    /// Close every screen and start a saved game.
+    Load(Box<crate::savegame::SaveGame>),
 }
 
 pub trait Screen {
@@ -148,6 +158,9 @@ pub struct Ui {
     in_game: bool,
     /// The game's cursor frame of `CURSOR_00.GP` and its hotspot, while no dialog is open.
     game_cursor: Option<(usize, [i32; 2])>,
+    saves: Box<dyn acr_app::saves::SaveStore>,
+    /// Shown on the loading screen while a saved game is replayed (0..=1).
+    loading_progress: Option<f32>,
 }
 
 impl Ui {
@@ -170,6 +183,8 @@ impl Ui {
             profile: Default::default(),
             in_game: false,
             game_cursor: None,
+            saves: Box::new(acr_app::saves::MemorySaves::default()),
+            loading_progress: None,
         };
         ui.stack.push(Entry { screen: Box::new(screens::main_menu::MainMenu::default()), built: false });
         ui
@@ -257,7 +272,14 @@ impl Ui {
     }
 
     pub fn ctx(&self) -> Ctx<'_> {
-        Ctx { lib: &self.lib, fonts: &self.fonts, texts: &self.texts, settings: &self.settings, profile: &self.profile }
+        Ctx {
+            lib: &self.lib,
+            fonts: &self.fonts,
+            texts: &self.texts,
+            settings: &self.settings,
+            profile: &self.profile,
+            saves: &*self.saves,
+        }
     }
 
     /// Loads texts and fonts, then builds the top screen once its files are there.
@@ -295,6 +317,7 @@ impl Ui {
             texts: &self.texts,
             settings: &self.settings,
             profile: &self.profile,
+            saves: &*self.saves,
         };
         let assets = top.screen.assets(&ctx);
         let waiting: Vec<&String> = assets.iter().filter(|p| !self.lib.settled(p)).collect();
@@ -332,6 +355,7 @@ impl Ui {
                 texts: &self.texts,
                 settings: &self.settings,
                 profile: &self.profile,
+                saves: &*self.saves,
             };
             let nav = self.stack.last_mut().map_or(Nav::Stay, |e| e.screen.tick(&ctx));
             self.collect_sounds();
@@ -357,6 +381,7 @@ impl Ui {
             texts: &self.texts,
             settings: &self.settings,
             profile: &self.profile,
+            saves: &*self.saves,
         };
         let nav = self.stack.last_mut().unwrap().screen.input(&ctx, input);
         self.collect_sounds();
@@ -397,6 +422,7 @@ impl Ui {
                     texts: &self.texts,
                     settings: &self.settings,
                     profile: &self.profile,
+                    saves: &*self.saves,
                 };
                 let nav = self.stack.last_mut().map_or(Nav::Quit, |e| e.screen.on_return(&ctx, value));
                 let action = self.navigate(nav);
@@ -412,6 +438,16 @@ impl Ui {
             Nav::LeaveGame => {
                 self.leave_game();
                 Action::LeaveGame
+            }
+            Nav::Save(name) => {
+                self.stack.pop();
+                self.after_pop();
+                Action::SaveGame(name)
+            }
+            Nav::Load(save) => {
+                self.in_game = false;
+                self.show_loading();
+                Action::LoadGame(save)
             }
             Nav::Start(setup) => {
                 self.stack.clear();
@@ -433,10 +469,25 @@ impl Ui {
                 texts: &self.texts,
                 settings: &self.settings,
                 profile: &self.profile,
+                saves: &*self.saves,
             };
             self.stack.last_mut().unwrap().screen.input(&ctx, Input::MouseMove(p));
         }
         Action::None
+    }
+
+    /// Where savegames are kept (the game folder, or the browser's storage).
+    pub fn set_saves(&mut self, saves: Box<dyn acr_app::saves::SaveStore>) {
+        self.saves = saves;
+    }
+
+    pub fn saves_mut(&mut self) -> &mut dyn acr_app::saves::SaveStore {
+        &mut *self.saves
+    }
+
+    /// The replay progress of a loaded game, shown on the loading screen.
+    pub fn set_loading_progress(&mut self, progress: Option<f32>) {
+        self.loading_progress = progress;
     }
 
     pub fn settings(&self) -> &Settings {
@@ -464,6 +515,13 @@ impl Ui {
             entry.screen.draw(&ctx, &mut draws);
             if entry.screen.in_game() {
                 draws = draws.into_iter().map(Draw::in_game).collect();
+            }
+            if let (Some(p), false) = (self.loading_progress, self.in_game) {
+                // ACR's own: the original restores a savegame without a progress display.
+                let text = format!("{} {}%", String::from_utf8_lossy(self.texts.get("INTF_LOAD")), (p * 100.0) as u32);
+                let font = screens::font::F18W;
+                let w = self.fonts.width(&self.lib, font, text.as_bytes());
+                draws.push(Draw::text(font, text.as_bytes(), 512 - w / 2, 700));
             }
         }
         if let Some([x, y]) = self.mouse {

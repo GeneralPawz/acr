@@ -11,6 +11,7 @@ use super::super::draw::{Draw, Rect};
 use super::super::{Ctx, Input, Key, Nav, Screen};
 use super::placeholder::Placeholder;
 use super::player_name::PlayerName;
+use super::save_load::LoadGame;
 use super::{Menu, font};
 
 const BACKGROUND: &str = "INTERF2\\BACKGROUND_MAIN_MENU.BMP";
@@ -175,7 +176,7 @@ impl Screen for MainMenu {
             (Page::Main, item::SINGLE) => self.start_slide(Page::Single),
             (Page::Main, item::MULTI) => self.start_slide(Page::Multi),
             (Page::Main, item::OPTIONS) => return Nav::Push(Box::new(super::options::Options::default())),
-            (Page::Main, item::LOAD) => return Nav::Push(Box::new(Placeholder::load_game())),
+            (Page::Main, item::LOAD) => return Nav::Push(Box::new(LoadGame::main_menu())),
             (Page::Main, item::EXIT) => return Nav::Quit,
             (Page::Single, item::SUB_1 | item::SUB_2 | item::SUB_3) => {
                 let next: Box<dyn Screen> = match param {

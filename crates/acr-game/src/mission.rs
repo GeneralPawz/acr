@@ -68,6 +68,8 @@ pub struct MissionLink {
     leave: bool,
     /// `SetStartPoint`: centre the view here (world pixels).
     camera: Option<(i32, i32)>,
+    /// Answers of the windows closed since [`MissionLink::take_answers`] (savegames).
+    answered: Vec<u32>,
 }
 
 impl MissionLink {
@@ -111,6 +113,7 @@ impl MissionLink {
             ended_at: 0.0,
             leave: false,
             camera: None,
+            answered: Vec::new(),
         }
     }
 
@@ -193,6 +196,7 @@ impl MissionLink {
                 s.answer(answer);
             }
             self.pending.pop_front();
+            self.answered.push(answer);
         }
         if self.scripts.is_some() || self.off {
             return Vec::new();
@@ -333,6 +337,27 @@ impl MissionLink {
     /// asked; the next one follows when this one is closed).
     pub fn window(&mut self) -> Option<Box<dyn Screen>> {
         self.pending.front_mut().and_then(|p| p.screen.take())
+    }
+
+    /// A page or question waits for the player.
+    pub fn window_open(&self) -> bool {
+        !self.pending.is_empty()
+    }
+
+    /// Closes the first waiting window with `answer` without showing it (a loaded game
+    /// replays the player's answers).
+    pub fn answer_window(&mut self, answer: u32) {
+        if let Some(p) = self.pending.pop_front()
+            && p.question
+            && let Some(s) = &mut self.scripts
+        {
+            s.answer(answer);
+        }
+    }
+
+    /// Answers of the windows the player closed since the last call, in order.
+    pub fn take_answers(&mut self) -> Vec<u32> {
+        std::mem::take(&mut self.answered)
     }
 
     /// The objectives window (F1, 0x5e11c0): only in a mission with objectives text.

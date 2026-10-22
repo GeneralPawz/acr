@@ -61,7 +61,7 @@ pub struct State {
     /// The Pause key (op 0x46) stopped the simulation.
     pub paused: bool,
     /// Control groups 0..9.
-    groups: Vec<Vec<EntityId>>,
+    pub(super) groups: Vec<Vec<EntityId>>,
     markers: Vec<Marker>,
     /// Scroll speed per axis (0x4c5910) and the time not yet scrolled.
     scroll: [i32; 2],
