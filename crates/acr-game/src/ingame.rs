@@ -545,13 +545,15 @@ impl InGame {
     }
 
     /// Loads the sprites of object types that appear during the game (produced units,
-    /// placed buildings).
+    /// placed buildings). A building is asked for as soon as it is being placed, so its
+    /// site can be drawn right after the click.
     fn want_new_types(&mut self) {
         let (Some(world), true) = (&self.world, self.objects.ready()) else { return };
         let mut new = Vec::new();
-        for u in world.units.iter().filter(|u| u.alive) {
-            if self.known_types.insert(u.kind) {
-                new.push(world.catalog.get(u.kind).id.clone());
+        let placing = self.interface.placing.into_iter();
+        for kind in placing.chain(world.units.iter().filter(|u| u.alive).map(|u| u.kind)) {
+            if self.known_types.insert(kind) {
+                new.push(world.catalog.get(kind).id.clone());
             }
         }
         if !new.is_empty() {

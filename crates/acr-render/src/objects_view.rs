@@ -29,9 +29,10 @@ pub struct ObjectsView {
     dynamic_units: bool,
     /// Sprites to merge into the scene this frame, see [`ObjectsView::set_dynamic`].
     dynamic: Vec<SceneSprite>,
-    /// Packs requested by [`ObjectsView::want_units`] that have not arrived yet; the atlas
-    /// is rebuilt once they are all there.
+    /// Packs requested by [`ObjectsView::want_units`] that have not arrived yet.
     late_packs: Vec<String>,
+    /// A late pack arrived: its frames are added to the atlas.
+    grow: bool,
     /// The zoomed-out view: sprites come from their `L_Mode` twins.
     pub zoomed: bool,
 }
@@ -55,6 +56,7 @@ impl ObjectsView {
             dynamic_units: false,
             dynamic: Vec::new(),
             late_packs: Vec::new(),
+            grow: false,
             zoomed: false,
         }
     }
@@ -72,7 +74,7 @@ impl ObjectsView {
     }
 
     /// Loads the packs of object types that appear during the game (produced units, placed
-    /// buildings), given as map unit ids; the atlas is rebuilt with them once they arrived.
+    /// buildings), given as map unit ids; their frames are added to the atlas as they arrive.
     pub fn want_units<'a>(&mut self, ids: impl IntoIterator<Item = &'a str>, load: Loader<'_>) {
         if !self.assets.definitions_ready() {
             return;
@@ -113,12 +115,14 @@ impl ObjectsView {
         ours
     }
 
-    /// A late pack arrived or failed: rebuild the atlas when none is missing any more.
+    /// A late pack arrived or failed: its frames go into the atlas. Only the new frames are
+    /// uploaded; rebuilding the whole atlas froze the game for most of a second whenever a
+    /// building or unit type appeared for the first time.
     fn late_pack_done(&mut self, path: &str) {
         let before = self.late_packs.len();
         self.late_packs.retain(|p| p != path);
-        if before > 0 && self.late_packs.is_empty() {
-            self.atlas = None;
+        if self.late_packs.len() < before {
+            self.grow = true;
         }
     }
 
@@ -164,14 +168,20 @@ impl ObjectsView {
         if let Some(palette) = self.palette.take() {
             renderer.set_palette(queue, &palette);
         }
-        if let (Some(scene), None) = (&self.scene, &self.atlas) {
-            let mut frames = self.assets.with_zoom_frames(scene.frames());
-            if self.dynamic_units {
-                frames.extend(self.assets.unit_frames());
-                frames.sort();
-                frames.dedup();
-            }
-            self.atlas = Some(self.assets.upload(renderer, device, queue, frames));
+        let Some(scene) = &self.scene else { return };
+        if self.atlas.is_some() && !self.grow {
+            return;
+        }
+        let mut frames = self.assets.with_zoom_frames(scene.frames());
+        if self.dynamic_units {
+            frames.extend(self.assets.unit_frames());
+            frames.sort();
+            frames.dedup();
+        }
+        self.grow = false;
+        match &mut self.atlas {
+            Some(atlas) => self.assets.upload_more(renderer, device, queue, atlas, frames),
+            None => self.atlas = Some(self.assets.upload(renderer, device, queue, frames)),
         }
     }
 

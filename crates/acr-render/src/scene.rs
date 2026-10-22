@@ -573,12 +573,34 @@ impl MapObjects {
         queue: &wgpu::Queue,
         frames: Vec<FrameKey>,
     ) -> SceneAtlas {
-        let decoded: Vec<acr_formats::Frame> = frames
+        let atlas = renderer.upload(device, queue, &self.decode(&frames));
+        SceneAtlas { atlas, index: frames.into_iter().enumerate().map(|(i, k)| (k, i)).collect() }
+    }
+
+    /// Adds those of `frames` that `atlas` lacks (e.g. of a pack loaded late) without
+    /// uploading the rest again.
+    pub fn upload_more(
+        &self,
+        renderer: &crate::SpriteRenderer,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        atlas: &mut SceneAtlas,
+        frames: Vec<FrameKey>,
+    ) {
+        let new: Vec<FrameKey> = frames.into_iter().filter(|k| !atlas.index.contains_key(k)).collect();
+        if new.is_empty() {
+            return;
+        }
+        let base = atlas.atlas.frame_count();
+        renderer.extend(device, queue, &mut atlas.atlas, &self.decode(&new));
+        atlas.index.extend(new.into_iter().enumerate().map(|(i, k)| (k, base + i)));
+    }
+
+    fn decode(&self, frames: &[FrameKey]) -> Vec<acr_formats::Frame> {
+        frames
             .iter()
             .map(|(pack, frame)| self.pack(pack).and_then(|g| g.decode_frame(*frame).ok()).unwrap_or_default())
-            .collect();
-        let atlas = renderer.upload(device, queue, &decoded);
-        SceneAtlas { atlas, index: frames.into_iter().enumerate().map(|(i, k)| (k, i)).collect() }
+            .collect()
     }
 }
 

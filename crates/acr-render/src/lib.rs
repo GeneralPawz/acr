@@ -84,11 +84,15 @@ struct LayerSlot {
     param: u32,
 }
 
-/// The layers of a set of frames, uploaded to the GPU.
+/// The layers of a set of frames, uploaded to the GPU; more can be added with
+/// [`SpriteRenderer::extend`].
 pub struct SpriteAtlas {
+    textures: Vec<wgpu::Texture>,
     pages: Vec<wgpu::BindGroup>,
     slots: Vec<LayerSlot>,
     frames: Vec<Range<usize>>,
+    /// Where the next layer goes.
+    packer: ShelfPacker,
 }
 
 impl SpriteAtlas {
@@ -243,12 +247,25 @@ impl SpriteRenderer {
 
     /// Packs all layers of `frames` into atlas pages and uploads them.
     pub fn upload(&self, device: &wgpu::Device, queue: &wgpu::Queue, frames: &[Frame]) -> SpriteAtlas {
-        let mut packer = ShelfPacker::default();
+        let mut atlas = SpriteAtlas {
+            textures: Vec::new(),
+            pages: Vec::new(),
+            slots: Vec::new(),
+            frames: Vec::new(),
+            packer: ShelfPacker::default(),
+        };
+        self.extend(device, queue, &mut atlas, frames);
+        atlas
+    }
+
+    /// Adds `frames` to `atlas` behind its frames (their indices follow on), into the free
+    /// part of its last page and new pages; the frames already there are not touched, so
+    /// a few new ones cost no more than their own upload.
+    pub fn extend(&self, device: &wgpu::Device, queue: &wgpu::Queue, atlas: &mut SpriteAtlas, frames: &[Frame]) {
+        let old_pages = atlas.textures.len() as u32;
         let mut page_pixels: Vec<Vec<u8>> = Vec::new();
-        let mut slots = Vec::new();
-        let mut frame_ranges = Vec::with_capacity(frames.len());
         for frame in frames {
-            let start = slots.len();
+            let start = atlas.slots.len();
             for layer in &frame.layers {
                 let Some((kind, param)) = LayerKind::of(layer.encoding) else { continue };
                 let w = layer.runs.iter().map(|r| u32::from(r.x) + u32::from(r.len)).max().unwrap_or(0);
@@ -256,21 +273,42 @@ impl SpriteRenderer {
                 if w == 0 || w > PAGE_SIZE || h > PAGE_SIZE {
                     continue;
                 }
-                let (page, x, y) = packer.place(w, h);
-                if page as usize == page_pixels.len() {
-                    page_pixels.push(vec![0; (PAGE_SIZE * PAGE_SIZE * 2) as usize]);
-                }
-                let pixels = &mut page_pixels[page as usize];
+                let (page, x, y) = atlas.packer.place(w, h);
+                // A layer on an uploaded page is written on its own; new pages in one go.
+                let mut own = Vec::new();
+                let (pixels, stride, (ox, oy)) = if page < old_pages {
+                    own = vec![0; (w * h * 2) as usize];
+                    (&mut own, w, (0, 0))
+                } else {
+                    let i = (page - old_pages) as usize;
+                    if i == page_pixels.len() {
+                        page_pixels.push(vec![0; (PAGE_SIZE * PAGE_SIZE * 2) as usize]);
+                    }
+                    (&mut page_pixels[i], PAGE_SIZE, (x, y))
+                };
                 let mut values = layer.pixels.iter();
                 for run in &layer.runs {
-                    let row = (y + u32::from(run.y)) * PAGE_SIZE;
+                    let row = (oy + u32::from(run.y)) * stride;
                     for i in 0..u32::from(run.len) {
-                        let at = ((row + x + u32::from(run.x) + i) * 2) as usize;
+                        let at = ((row + ox + u32::from(run.x) + i) * 2) as usize;
                         pixels[at] = kind.texel(values.next().copied().unwrap_or(0));
                         pixels[at + 1] = 1;
                     }
                 }
-                slots.push(LayerSlot {
+                if page < old_pages {
+                    queue.write_texture(
+                        wgpu::TexelCopyTextureInfo {
+                            texture: &atlas.textures[page as usize],
+                            mip_level: 0,
+                            origin: wgpu::Origin3d { x, y, z: 0 },
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        &own,
+                        wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(w * 2), rows_per_image: None },
+                        wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                    );
+                }
+                atlas.slots.push(LayerSlot {
                     page,
                     atlas: [x, y, w, h],
                     offset: [i32::from(layer.x), i32::from(layer.y)],
@@ -278,37 +316,34 @@ impl SpriteRenderer {
                     param,
                 });
             }
-            frame_ranges.push(start..slots.len());
+            atlas.frames.push(start..atlas.slots.len());
         }
-        let pages = page_pixels
-            .iter()
-            .map(|pixels| {
-                let texture = device.create_texture_with_data(
-                    queue,
-                    &wgpu::TextureDescriptor {
-                        label: Some("sprite page"),
-                        size: wgpu::Extent3d { width: PAGE_SIZE, height: PAGE_SIZE, depth_or_array_layers: 1 },
-                        mip_level_count: 1,
-                        sample_count: 1,
-                        dimension: wgpu::TextureDimension::D2,
-                        format: wgpu::TextureFormat::Rg8Uint,
-                        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                        view_formats: &[],
-                    },
-                    wgpu::util::TextureDataOrder::LayerMajor,
-                    pixels,
-                );
-                device.create_bind_group(&wgpu::BindGroupDescriptor {
+        for pixels in &page_pixels {
+            let texture = device.create_texture_with_data(
+                queue,
+                &wgpu::TextureDescriptor {
                     label: Some("sprite page"),
-                    layout: &self.page_layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&texture.create_view(&Default::default())),
-                    }],
-                })
-            })
-            .collect();
-        SpriteAtlas { pages, slots, frames: frame_ranges }
+                    size: wgpu::Extent3d { width: PAGE_SIZE, height: PAGE_SIZE, depth_or_array_layers: 1 },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rg8Uint,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                },
+                wgpu::util::TextureDataOrder::LayerMajor,
+                pixels,
+            );
+            atlas.pages.push(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("sprite page"),
+                layout: &self.page_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&texture.create_view(&Default::default())),
+                }],
+            }));
+            atlas.textures.push(texture);
+        }
     }
 
     /// Uploads instance data for `sprites`; call before [`SpriteRenderer::render`].
