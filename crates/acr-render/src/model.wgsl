@@ -9,6 +9,10 @@
 //
 // Decay (docs/assets-humans.md): `COLOR_0` of a decaying material is the mask (R noise, G
 // fray); each material has its layer's windows; per corpse one `decay` value.
+//
+// Wounds (docs/rendering-3d.md): per corpse the direction of the blow, blood, dirt, burns
+// and the number and size of the wounds. They are placed in the rest pose (the bind
+// position, metres, +y up, facing +z), so they stay on the body in any pose.
 
 struct Globals {
     view_proj: mat4x4<f32>,
@@ -29,7 +33,7 @@ struct Material {
     // Colour of the rotten edge, edge width.
     edge: vec4<f32>,
     // x: decaying layer (COLOR_0 is the mask), y: COLOR_0 is a vertex colour, z: alpha cutoff
-    // (0: none), w: unused.
+    // (0: none), w: bone layer (no wounds).
     flags: vec4<f32>,
 };
 
@@ -58,6 +62,10 @@ struct InstanceIn {
     @location(11) params: vec4<f32>,
     // first texel of the pose, player, unused, unused
     @location(12) extra: vec4<u32>,
+    // direction of the blow (model x, z), blood, dirt
+    @location(13) wounds0: vec4<f32>,
+    // burn, number of wounds, wound radius (m), seed
+    @location(14) wounds1: vec4<f32>,
 };
 
 struct VsOut {
@@ -66,6 +74,10 @@ struct VsOut {
     @location(1) uv: vec2<f32>,
     @location(2) color: vec4<f32>,
     @location(3) @interpolate(flat) params: vec4<f32>,
+    // rest-pose position (m), height above the model's ground point in the pose (m)
+    @location(4) rest: vec4<f32>,
+    @location(5) @interpolate(flat) wounds0: vec4<f32>,
+    @location(6) @interpolate(flat) wounds1: vec4<f32>,
 };
 
 fn bone_texel(base: u32, joint: u32, row: u32) -> vec4<f32> {
@@ -104,11 +116,95 @@ fn vs_main(v: VertexIn, inst: InstanceIn) -> VsOut {
     out.uv = v.uv;
     out.color = v.color;
     out.params = inst.params;
+    out.rest = vec4<f32>(v.position, local.y);
+    out.wounds0 = inst.wounds0;
+    out.wounds1 = inst.wounds1;
     return out;
 }
 
 fn ramp(x: f32, a: f32, b: f32) -> f32 {
     return clamp((x - a) / max(b - a, 1e-5), 0.0, 1.0);
+}
+
+fn hash1(n: f32) -> f32 {
+    return fract(sin(n) * 43758.5453);
+}
+
+fn hash3(p: vec3<f32>) -> f32 {
+    return hash1(dot(p, vec3<f32>(127.1, 311.7, 74.7)));
+}
+
+// Value noise, 0..1.
+fn noise3(p: vec3<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    let a = mix(hash3(i), hash3(i + vec3<f32>(1.0, 0.0, 0.0)), u.x);
+    let b = mix(hash3(i + vec3<f32>(0.0, 1.0, 0.0)), hash3(i + vec3<f32>(1.0, 1.0, 0.0)), u.x);
+    let c = mix(hash3(i + vec3<f32>(0.0, 0.0, 1.0)), hash3(i + vec3<f32>(1.0, 0.0, 1.0)), u.x);
+    let d = mix(hash3(i + vec3<f32>(0.0, 1.0, 1.0)), hash3(i + vec3<f32>(1.0, 1.0, 1.0)), u.x);
+    return mix(mix(a, b, u.y), mix(c, d, u.y), u.z);
+}
+
+// Centre of wound `i` on the rest pose: the first faces the blow at the chest, with two
+// wounds the second is the exit on the far side, further ones spread over the front.
+fn wound_centre(i: f32, count: f32, blow: vec2<f32>, seed: f32) -> vec3<f32> {
+    var dir = vec3<f32>(0.0, 0.0, 1.0);
+    if (dot(blow, blow) > 1e-4) {
+        dir = normalize(vec3<f32>(blow.x, 0.0, blow.y));
+    }
+    var height = 1.25;
+    if (i > 0.5) {
+        if (count < 2.5 && i < 1.5) {
+            dir = -dir;
+            height = 1.18;
+        } else {
+            let a = (hash1(seed + i * 3.1) - 0.5) * 2.2;
+            let s = sin(a);
+            let c = cos(a);
+            dir = vec3<f32>(dir.x * c + dir.z * s, 0.0, dir.z * c - dir.x * s);
+            height = 0.75 + 0.7 * hash1(seed + i * 7.3);
+        }
+    }
+    return vec3<f32>(dir.x * 0.15, height, dir.z * 0.15);
+}
+
+// Blood, dirt and burns over the colour `rgb` of a body layer.
+fn wounded(rgb_in: vec3<f32>, rest: vec4<f32>, w0: vec4<f32>, w1: vec4<f32>, decay: f32) -> vec3<f32> {
+    var rgb = rgb_in;
+    let p = rest.xyz;
+    let grain = noise3(p * 22.0);
+    // Wounds and the blood running from them (down in the rest pose).
+    let count = w1.y;
+    let r = max(w1.z, 0.01);
+    var stain = 0.0;
+    var core = 0.0;
+    for (var i = 0.0; i < count; i = i + 1.0) {
+        let c = wound_centre(i, count, w0.xy, w1.w);
+        let d = length(p - c) + (grain - 0.5) * r;
+        stain = max(stain, 1.0 - smoothstep(r * 0.7, r * 1.8, d));
+        core = max(core, 1.0 - smoothstep(r * 0.15, r * 0.55, d));
+        let below = c.y - p.y;
+        if (below > 0.0 && below < 0.7) {
+            let side = length((p - c).xz) + (noise3(p * 9.0) - 0.5) * 0.06;
+            let run = (1.0 - smoothstep(r * 0.5, r * 1.3, side)) * (1.0 - below / 0.7);
+            stain = max(stain, run * 0.85);
+        }
+    }
+    let blood = clamp(stain * w0.z, 0.0, 1.0);
+    // Fresh red darkens to dried brown as the corpse decays.
+    let dried = smoothstep(0.05, 0.5, decay);
+    let red = mix(vec3<f32>(0.36, 0.015, 0.012), vec3<f32>(0.10, 0.03, 0.018), dried);
+    rgb = mix(rgb, red, blood * 0.92);
+    rgb = mix(rgb, vec3<f32>(0.05, 0.0, 0.0), core * w0.z * 0.85);
+    // Dirt: from the ground up, in patches.
+    let low = 1.0 - smoothstep(0.05, 0.6, rest.w);
+    let patches = smoothstep(0.35, 0.7, noise3(p * 6.0) + 0.25 * low);
+    rgb = mix(rgb, vec3<f32>(0.17, 0.13, 0.08), clamp(w0.w * patches * (0.45 + 0.55 * low), 0.0, 0.85));
+    // Burns: charred patches.
+    let charred = smoothstep(0.3, 0.6, noise3(p * 8.0) * 0.7 + w1.x * 0.6) * w1.x;
+    rgb = mix(rgb, vec3<f32>(0.025, 0.02, 0.018), clamp(charred, 0.0, 1.0));
+    return rgb;
 }
 
 fn to_srgb(c: vec3<f32>) -> vec3<f32> {
@@ -150,6 +246,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
                 rgb = material.edge.rgb;
             }
         }
+    }
+    if (material.flags.w < 0.5 && in.wounds0.z + in.wounds0.w + in.wounds1.x > 0.0) {
+        rgb = wounded(rgb, in.rest, in.wounds0, in.wounds1, decay);
     }
     // Lambert from the upper left (the sprites' light), both faces lit.
     var n = normalize(in.normal);
