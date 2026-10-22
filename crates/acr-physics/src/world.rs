@@ -1,9 +1,15 @@
 //! The XPBD solver: rigid capsule bodies, joints with limits and muscle drives, contacts
-//! against a ground height field and between capsules.
+//! against a ground height field and between capsules, and sleeping.
 //!
-//! One position iteration per substep (Müller et al. 2020, "Detailed Rigid Body Simulation
-//! with Extended Position Based Dynamics"): integrate, solve position constraints, derive
-//! velocities, solve velocity constraints (friction, restitution, damping).
+//! Müller et al. 2020, "Detailed Rigid Body Simulation with Extended Position Based
+//! Dynamics": per substep integrate, solve position constraints, derive velocities, solve
+//! velocity constraints (friction, restitution, damping).
+//!
+//! Cost notes (see the bench): the world inverse inertia of every body is computed once
+//! per substep and used for all corrections in it; the ground is sampled once per step
+//! (a tangent plane per capsule end); joint limits are first checked without trigonometry
+//! and only corrected when violated; capsule pairs come from a hashed grid; resting ragdolls
+//! go to sleep and cost nothing.
 
 use crate::math::{Quat, Vec3, closest_segment_params};
 
@@ -35,6 +41,39 @@ impl<F: Fn(f32, f32) -> f32> Ground for F {
     }
 }
 
+/// Symmetric 3×3 matrix (world inverse inertia).
+#[derive(Clone, Copy, Debug, Default)]
+struct Sym3 {
+    xx: f32,
+    yy: f32,
+    zz: f32,
+    xy: f32,
+    xz: f32,
+    yz: f32,
+}
+
+impl Sym3 {
+    /// `R · diag(d) · Rᵀ`.
+    fn rotated_diag(q: Quat, d: Vec3) -> Sym3 {
+        let (a, b, c) = (q.rotate(Vec3::X), q.rotate(Vec3::Y), q.rotate(Vec3::Z));
+        Sym3 {
+            xx: d.x * a.x * a.x + d.y * b.x * b.x + d.z * c.x * c.x,
+            yy: d.x * a.y * a.y + d.y * b.y * b.y + d.z * c.y * c.y,
+            zz: d.x * a.z * a.z + d.y * b.z * b.z + d.z * c.z * c.z,
+            xy: d.x * a.x * a.y + d.y * b.x * b.y + d.z * c.x * c.y,
+            xz: d.x * a.x * a.z + d.y * b.x * b.z + d.z * c.x * c.z,
+            yz: d.x * a.y * a.z + d.y * b.y * b.z + d.z * c.y * c.z,
+        }
+    }
+    fn mul(&self, v: Vec3) -> Vec3 {
+        Vec3::new(
+            self.xx * v.x + self.xy * v.y + self.xz * v.z,
+            self.xy * v.x + self.yy * v.y + self.yz * v.z,
+            self.xz * v.x + self.yz * v.y + self.zz * v.z,
+        )
+    }
+}
+
 /// A rigid capsule: the segment `pos ± rot·(0, half_len, 0)` swept by `radius`.
 #[derive(Clone, Debug)]
 pub struct Body {
@@ -49,10 +88,14 @@ pub struct Body {
     pub inertia: Vec3,
     inv_mass: f32,
     inv_inertia: Vec3,
+    /// World inverse inertia, refreshed once per substep.
+    inv_i: Sym3,
     pub radius: f32,
     pub half_len: f32,
     pinned: bool,
-    /// Collision group (a ragdoll); bodies of one group skip the pairs in `exclude`.
+    asleep: bool,
+    /// Collision and sleeping group (a ragdoll); bodies of one group skip the pairs in
+    /// `exclude`.
     group: u32,
     /// Index within the group (below 64).
     group_index: u32,
@@ -70,6 +113,7 @@ impl Body {
         // badly against heavy neighbours; the floor is invisible but keeps them stable.
         let floor = INERTIA_FLOOR;
         let inertia = Vec3::new(transverse.max(floor), axial.max(floor), transverse.max(floor));
+        let inv_inertia = Vec3::new(1.0 / inertia.x, 1.0 / inertia.y, 1.0 / inertia.z);
         Body {
             pos,
             rot,
@@ -80,10 +124,12 @@ impl Body {
             mass,
             inertia,
             inv_mass: 1.0 / mass,
-            inv_inertia: Vec3::new(1.0 / inertia.x, 1.0 / inertia.y, 1.0 / inertia.z),
+            inv_inertia,
+            inv_i: Sym3::rotated_diag(rot, inv_inertia),
             radius,
             half_len,
             pinned: false,
+            asleep: false,
             group: STATIC,
             group_index: 0,
             exclude: 0,
@@ -92,6 +138,9 @@ impl Body {
 
     pub fn is_pinned(&self) -> bool {
         self.pinned
+    }
+    pub fn is_asleep(&self) -> bool {
+        self.asleep
     }
 
     /// The capsule's segment end points.
@@ -105,19 +154,19 @@ impl Body {
         self.pos + self.rot.rotate(p)
     }
 
-    fn inv_inertia_world(&self, v: Vec3) -> Vec3 {
-        self.rot.rotate(self.inv_inertia.mul_elem(self.rot.conj().rotate(v)))
+    fn refresh_inertia(&mut self) {
+        self.inv_i = Sym3::rotated_diag(self.rot, self.inv_inertia);
     }
 
     /// Generalized inverse mass for a positional correction along unit `n` at offset `r`.
     fn w_pos(&self, r: Vec3, n: Vec3) -> f32 {
         let rn = r.cross(n);
-        self.inv_mass + rn.dot(self.inv_inertia_world(rn))
+        self.inv_mass + rn.dot(self.inv_i.mul(rn))
     }
 
     /// Generalized inverse mass for a rotation about unit `n`.
     fn w_rot(&self, n: Vec3) -> f32 {
-        n.dot(self.inv_inertia_world(n))
+        n.dot(self.inv_i.mul(n))
     }
 
     /// Kinetic energy (J).
@@ -153,8 +202,53 @@ pub enum JointLimit {
     /// Rotation about Z only, the angle (rad) from X(parent) to X(child) about Z in `[lo, hi]`.
     Hinge { lo: f32, hi: f32 },
     /// Child X within `cone` (rad) of `cone_axis` (unit, in the parent's joint frame), twist
-    /// about X in `[twist_lo, twist_hi]`.
+    /// about X in `[twist_lo, twist_hi]` (within ±π).
     Ball { cone_axis: Vec3, cone: f32, twist_lo: f32, twist_hi: f32 },
+}
+
+/// Precomputed per joint so that the in-range checks need no trigonometry.
+#[derive(Clone, Copy, Debug, Default)]
+struct LimitCache {
+    /// Joint frame axes in the bodies' frames.
+    xa: Vec3,
+    za: Vec3,
+    xb: Vec3,
+    zb: Vec3,
+    /// Cone axis in body `a`'s frame.
+    cone_a: Vec3,
+    cos_cone: f32,
+    tan_twist_lo: f32,
+    tan_twist_hi: f32,
+    /// Hinge: middle of the range and cosine of its half width.
+    cos_mid: f32,
+    sin_mid: f32,
+    cos_half: f32,
+}
+
+impl LimitCache {
+    fn new(fa: Quat, fb: Quat, limit: JointLimit) -> LimitCache {
+        let mut c = LimitCache {
+            xa: fa.rotate(Vec3::X),
+            za: fa.rotate(Vec3::Z),
+            xb: fb.rotate(Vec3::X),
+            zb: fb.rotate(Vec3::Z),
+            ..LimitCache::default()
+        };
+        match limit {
+            JointLimit::Hinge { lo, hi } => {
+                let (mid, half) = (0.5 * (lo + hi), 0.5 * (hi - lo));
+                (c.sin_mid, c.cos_mid) = mid.sin_cos();
+                c.cos_half = half.cos();
+            }
+            JointLimit::Ball { cone_axis, cone, twist_lo, twist_hi } => {
+                c.cone_a = fa.rotate(cone_axis);
+                c.cos_cone = cone.cos();
+                c.tan_twist_lo = (0.5 * twist_lo).tan();
+                c.tan_twist_hi = (0.5 * twist_hi).tan();
+            }
+        }
+        c
+    }
 }
 
 /// A joint between a parent body `a` and a child body `b`.
@@ -168,6 +262,7 @@ pub struct Joint {
     /// Joint frame in each body's frame.
     pub fa: Quat,
     pub fb: Quat,
+    /// Read only; change it with [`World::set_joint_limit`].
     pub limit: JointLimit,
     /// `rot_a⁻¹ · rot_b` at rest.
     pub rest_rel: Quat,
@@ -175,6 +270,7 @@ pub struct Joint {
     /// (`rot_b = rot_a · rest_rel · target`). Identity = rest pose.
     pub target: Quat,
     pub tone: Tone,
+    cache: LimitCache,
 }
 
 /// Measured state of a joint (for tests and debugging).
@@ -196,8 +292,8 @@ pub struct Config {
     /// Fixed step (s).
     pub dt: f32,
     pub substeps: u32,
-    /// Joint passes per substep (contacts get one): a second pass keeps limits and anchors
-    /// together under violent spins.
+    /// Joint passes per substep (contacts get one). 4 × 4 measured best for cost and
+    /// accuracy (docs/body-sim.md): fewer substeps cost less per pass than more passes.
     pub joint_iterations: u32,
     pub gravity: Vec3,
     /// Static and dynamic friction with the ground and between capsules.
@@ -207,19 +303,25 @@ pub struct Config {
     pub passive_damping: f32,
     /// Linear and angular air damping (1/s).
     pub air_damping: f32,
+    /// A group (ragdoll) whose kinetic energy per kilogram stays below this (J/kg) for
+    /// `sleep_time` seconds falls asleep. Zero disables sleeping.
+    pub sleep_energy: f32,
+    pub sleep_time: f32,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Config {
             dt: 1.0 / 60.0,
-            substeps: 8,
-            joint_iterations: 2,
+            substeps: 4,
+            joint_iterations: 4,
             gravity: Vec3::new(0.0, 0.0, -9.81),
             static_friction: 0.8,
             dynamic_friction: 0.6,
             passive_damping: 0.5,
             air_damping: 0.05,
+            sleep_energy: 0.002,
+            sleep_time: 0.5,
         }
     }
 }
@@ -236,20 +338,53 @@ struct Contact {
     lambda_n: f32,
 }
 
+/// Ground tangent plane under a capsule end, sampled once per step: `n·x = d`.
+#[derive(Clone, Copy, Debug, Default)]
+struct Plane {
+    n: Vec3,
+    d: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Group {
+    first: u32,
+    end: u32,
+    calm_time: f32,
+    asleep: bool,
+}
+
 /// A set of bodies and joints stepped together. Allocates only when bodies or joints are
 /// added; [`World::step`] does not allocate.
 pub struct World {
     pub config: Config,
     bodies: Vec<Body>,
     joints: Vec<Joint>,
+    groups: Vec<Group>,
     contacts: Vec<Contact>,
     pairs: Vec<(u32, u32)>,
-    next_group: u32,
+    planes: Vec<[Plane; 2]>,
+    // Broad-phase grid (counting sort into hashed cells).
+    cell: Vec<u32>,
+    bucket_start: Vec<u32>,
+    sorted: Vec<u32>,
+    bound: Vec<f32>,
 }
 
 impl World {
     pub fn new(config: Config) -> World {
-        World { config, bodies: Vec::new(), joints: Vec::new(), contacts: Vec::new(), pairs: Vec::new(), next_group: 0 }
+        World {
+            config,
+            bodies: Vec::new(),
+            joints: Vec::new(),
+            groups: Vec::new(),
+            contacts: Vec::new(),
+            pairs: Vec::new(),
+            planes: Vec::new(),
+            cell: Vec::new(),
+            bucket_start: Vec::new(),
+            sorted: Vec::new(),
+            bound: Vec::new(),
+        }
     }
 
     pub fn bodies(&self) -> &[Body] {
@@ -267,31 +402,59 @@ impl World {
     pub fn joint(&self, id: JointId) -> &Joint {
         &self.joints[id as usize]
     }
+    /// Direct access; does not wake the ragdoll (see [`World::set_joint_target`]).
     pub fn joint_mut(&mut self, id: JointId) -> &mut Joint {
         &mut self.joints[id as usize]
     }
 
-    /// Adds a free body (its own collision group).
+    /// Sets a joint's drive target and wakes its ragdoll.
+    pub fn set_joint_target(&mut self, id: JointId, target: Quat) {
+        self.joints[id as usize].target = target;
+        self.wake(self.joints[id as usize].a);
+    }
+    /// Sets a joint's tone and wakes its ragdoll.
+    pub fn set_joint_tone(&mut self, id: JointId, tone: Tone) {
+        self.joints[id as usize].tone = tone;
+        self.wake(self.joints[id as usize].a);
+    }
+    pub fn set_joint_limit(&mut self, id: JointId, limit: JointLimit) {
+        let j = &mut self.joints[id as usize];
+        j.limit = limit;
+        j.cache = LimitCache::new(j.fa, j.fb, limit);
+    }
+
+    /// Adds a free body (its own group).
     pub fn add_body(&mut self, body: Body) -> BodyId {
         let g = self.new_group();
         self.add_body_in_group(body, g, 0, 0)
     }
 
     pub(crate) fn new_group(&mut self) -> u32 {
-        self.next_group += 1;
-        self.next_group - 1
+        let n = self.bodies.len() as u32;
+        self.groups.push(Group { first: n, end: n, calm_time: 0.0, asleep: false });
+        (self.groups.len() - 1) as u32
     }
 
+    /// Bodies of a group are added consecutively, right after [`World::new_group`].
     pub(crate) fn add_body_in_group(&mut self, mut body: Body, group: u32, index: u32, exclude: u64) -> BodyId {
         body.group = group;
         body.group_index = index;
         body.exclude = exclude;
         self.bodies.push(body);
         let n = self.bodies.len();
+        assert_eq!(self.groups[group as usize].end as usize, n - 1, "bodies of a group are added consecutively");
+        self.groups[group as usize].end = n as u32;
+        self.wake_group(group);
         // Capacity for the step (no allocation inside it): two ground contacts per body and
-        // up to 16 capsule pairs per body.
-        self.pairs.reserve((16 * n).saturating_sub(self.pairs.capacity()));
-        self.contacts.reserve((18 * n).saturating_sub(self.contacts.capacity()));
+        // up to 16 capsule pairs per body; grid buckets for twice the bodies.
+        self.pairs.reserve((16 * n).saturating_sub(self.pairs.len()));
+        self.contacts.reserve((18 * n).saturating_sub(self.contacts.len()));
+        self.planes.push([Plane::default(); 2]);
+        self.cell.push(0);
+        self.sorted.push(0);
+        self.bound.push(0.0);
+        let buckets = (2 * n).next_power_of_two();
+        self.bucket_start.resize(buckets + 1, 0);
         (n - 1) as BodyId
     }
 
@@ -300,17 +463,19 @@ impl World {
     /// pose, which becomes the rest pose of the drive.
     pub fn add_joint(&mut self, a: BodyId, b: BodyId, anchor: Vec3, frame: Quat, limit: JointLimit) -> JointId {
         let (ba, bb) = (&self.bodies[a as usize], &self.bodies[b as usize]);
+        let (fa, fb) = (ba.rot.conj() * frame, bb.rot.conj() * frame);
         let joint = Joint {
             a,
             b,
             ra: ba.rot.conj().rotate(anchor - ba.pos),
             rb: bb.rot.conj().rotate(anchor - bb.pos),
-            fa: ba.rot.conj() * frame,
-            fb: bb.rot.conj() * frame,
+            fa,
+            fb,
             limit,
             rest_rel: ba.rot.conj() * bb.rot,
             target: Quat::IDENTITY,
             tone: Tone::LIMP,
+            cache: LimitCache::new(fa, fb, limit),
         };
         self.joints.push(joint);
         (self.joints.len() - 1) as JointId
@@ -329,17 +494,57 @@ impl World {
             b.inv_mass = 1.0 / b.mass;
             b.inv_inertia = Vec3::new(1.0 / b.inertia.x, 1.0 / b.inertia.y, 1.0 / b.inertia.z);
         }
+        b.refresh_inertia();
+        self.wake(id);
     }
 
-    /// An instantaneous impulse (N·s) at a world point.
+    /// An instantaneous impulse (N·s) at a world point; wakes the body's ragdoll.
     pub fn apply_impulse(&mut self, id: BodyId, world_point: Vec3, impulse: Vec3) {
+        self.wake(id);
         let b = &mut self.bodies[id as usize];
         if b.pinned {
             return;
         }
+        b.refresh_inertia();
         b.vel += impulse * b.inv_mass;
         let r = world_point - b.pos;
-        b.omega += b.inv_inertia_world(r.cross(impulse));
+        b.omega += b.inv_i.mul(r.cross(impulse));
+    }
+
+    /// Wakes the ragdoll (group) of a body.
+    pub fn wake(&mut self, id: BodyId) {
+        let g = self.bodies[id as usize].group;
+        self.wake_group(g);
+    }
+
+    fn wake_group(&mut self, g: u32) {
+        let grp = &mut self.groups[g as usize];
+        grp.calm_time = 0.0;
+        if grp.asleep {
+            grp.asleep = false;
+            for b in &mut self.bodies[grp.first as usize..grp.end as usize] {
+                b.asleep = false;
+            }
+        }
+    }
+
+    /// Puts the ragdoll (group) of a body to sleep now: it keeps its pose as a static
+    /// obstacle (a corpse) and costs nothing until an impulse or an awake body touching it
+    /// wakes it.
+    pub fn freeze(&mut self, id: BodyId) {
+        let g = self.bodies[id as usize].group as usize;
+        let grp = &mut self.groups[g];
+        grp.asleep = true;
+        for b in &mut self.bodies[grp.first as usize..grp.end as usize] {
+            b.asleep = true;
+            b.vel = Vec3::ZERO;
+            b.omega = Vec3::ZERO;
+        }
+    }
+
+    /// Number of awake (simulated) bodies.
+    pub fn awake_bodies(&self) -> usize {
+        self.bodies.iter().filter(|b| !b.asleep).count()
     }
 
     /// Total kinetic plus gravitational potential energy (J), potential relative to `z = 0`.
@@ -353,43 +558,122 @@ impl World {
         let n = self.config.substeps.max(1);
         let h = self.config.dt / n as f32;
         self.broad_phase();
+        self.sample_ground(ground);
         for _ in 0..n {
             self.integrate(h);
             self.contacts.clear();
             // Contacts first, joints last: a body ends each substep with its joints intact
             // (light end bodies such as toes would otherwise be torn off by the ground).
-            self.solve_contacts(h, ground);
+            self.solve_contacts();
             for _ in 0..self.config.joint_iterations.max(1) {
                 self.solve_joints(h);
             }
             self.update_velocities(h);
             self.solve_velocities(h);
         }
+        self.update_sleep();
     }
 
-    /// Capsule pairs that may touch within this step (bounding spheres with a margin).
+    /// Capsule pairs that may touch within this step: bounding spheres (with the motion of
+    /// the step as margin) in a hashed grid over `(x, y)`. A pair of an awake and a sleeping
+    /// body wakes the sleeper.
     fn broad_phase(&mut self) {
         self.pairs.clear();
-        let cap = self.pairs.capacity();
+        let n = self.bodies.len();
+        if n == 0 {
+            return;
+        }
         let dt = self.config.dt;
-        let bodies = &self.bodies;
-        'outer: for i in 0..bodies.len() {
-            let a = &bodies[i];
-            let ra = a.half_len + a.radius + a.vel.length() * dt + 0.02;
-            for (j, b) in bodies.iter().enumerate().skip(i + 1) {
-                if a.pinned && b.pinned {
-                    continue;
-                }
-                if a.group == b.group && (a.exclude >> b.group_index) & 1 == 1 {
-                    continue;
-                }
-                let rb = b.half_len + b.radius + b.vel.length() * dt + 0.02;
-                if (a.pos - b.pos).length_sq() < (ra + rb) * (ra + rb) {
-                    if self.pairs.len() == cap {
-                        break 'outer; // never allocate in the step
+        let mut max_r = 0.0f32;
+        for (i, b) in self.bodies.iter().enumerate() {
+            let r = b.half_len + b.radius + b.vel.length() * dt + 0.02;
+            self.bound[i] = r;
+            max_r = max_r.max(r);
+        }
+        // Spheres in non-neighbouring cells cannot touch.
+        let inv = 1.0 / (2.0 * max_r).max(0.25);
+        let mask = (self.bucket_start.len() - 2) as u32;
+        let hash =
+            |cx: i32, cy: i32| ((cx as u32).wrapping_mul(73_856_093) ^ (cy as u32).wrapping_mul(19_349_663)) & mask;
+        let cell_of = |p: Vec3| ((p.x * inv).floor() as i32, (p.y * inv).floor() as i32);
+        self.bucket_start.fill(0);
+        for (i, b) in self.bodies.iter().enumerate() {
+            let (cx, cy) = cell_of(b.pos);
+            let k = hash(cx, cy);
+            self.cell[i] = k;
+            self.bucket_start[k as usize + 1] += 1;
+        }
+        for k in 1..self.bucket_start.len() {
+            self.bucket_start[k] += self.bucket_start[k - 1];
+        }
+        // Counting sort, using each bucket's start as its cursor, then shifting back.
+        for i in 0..n {
+            let k = self.cell[i] as usize;
+            self.sorted[self.bucket_start[k] as usize] = i as u32;
+            self.bucket_start[k] += 1;
+        }
+        for k in (1..self.bucket_start.len() - 1).rev() {
+            self.bucket_start[k] = self.bucket_start[k - 1];
+        }
+        self.bucket_start[0] = 0;
+        let cap = self.pairs.capacity();
+        for i in 0..n {
+            let a = &self.bodies[i];
+            let (cx, cy) = cell_of(a.pos);
+            let mut seen = [u32::MAX; 9];
+            let mut ns = 0;
+            for dx in -1..=1 {
+                for dy in -1..=1 {
+                    let k = hash(cx + dx, cy + dy);
+                    if seen[..ns].contains(&k) {
+                        continue;
                     }
-                    self.pairs.push((i as u32, j as u32));
+                    seen[ns] = k;
+                    ns += 1;
+                    let (s, e) = (self.bucket_start[k as usize] as usize, self.bucket_start[k as usize + 1] as usize);
+                    for &j in &self.sorted[s..e] {
+                        let j = j as usize;
+                        if j <= i {
+                            continue;
+                        }
+                        let b = &self.bodies[j];
+                        if (a.asleep || a.pinned) && (b.asleep || b.pinned) {
+                            continue;
+                        }
+                        if a.group == b.group && (a.exclude >> b.group_index) & 1 == 1 {
+                            continue;
+                        }
+                        let r = self.bound[i] + self.bound[j];
+                        if (a.pos - b.pos).length_sq() < r * r && self.pairs.len() < cap {
+                            self.pairs.push((i as u32, j as u32));
+                        }
+                    }
                 }
+            }
+        }
+        for k in 0..self.pairs.len() {
+            let (i, j) = self.pairs[k];
+            let (a, b) = (&self.bodies[i as usize], &self.bodies[j as usize]);
+            if a.asleep != b.asleep {
+                let g = if a.asleep { a.group } else { b.group };
+                self.wake_group(g);
+            }
+        }
+    }
+
+    /// One tangent plane of the ground per capsule end, for the whole step.
+    fn sample_ground<G: Ground + ?Sized>(&mut self, ground: &G) {
+        let dt = self.config.dt;
+        for (i, b) in self.bodies.iter().enumerate() {
+            if b.asleep || b.pinned {
+                continue;
+            }
+            let (e0, e1) = b.ends();
+            for (k, e) in [e0, e1].into_iter().enumerate() {
+                let gz = ground.height(e.x, e.y);
+                // Well above the ground no contact can happen this step: skip the normal.
+                let n = if e.z - gz > b.radius + b.vel.length() * dt + 0.1 { Vec3::Z } else { ground.normal(e.x, e.y) };
+                self.planes[i][k] = Plane { n, d: n.dot(Vec3::new(e.x, e.y, gz)) };
             }
         }
     }
@@ -398,6 +682,9 @@ impl World {
         let g = self.config.gravity;
         let damp = (1.0 - self.config.air_damping * h).max(0.0);
         for b in &mut self.bodies {
+            if b.asleep {
+                continue;
+            }
             b.prev_pos = b.pos;
             b.prev_rot = b.rot;
             if b.pinned {
@@ -407,15 +694,17 @@ impl World {
             b.omega = b.omega * damp;
             b.pos += b.vel * h;
             b.rot = b.rot.add_rotvec(b.omega * h);
+            b.refresh_inertia();
         }
     }
 
     fn update_velocities(&mut self, h: f32) {
         let inv_h = 1.0 / h;
         for b in &mut self.bodies {
-            if b.pinned {
+            if b.pinned || b.asleep {
                 continue;
             }
+            b.rot = b.rot.normalize();
             b.vel = (b.pos - b.prev_pos) * inv_h;
             let dq = b.rot * b.prev_rot.conj();
             let w = Vec3::new(dq.x, dq.y, dq.z) * (2.0 * inv_h);
@@ -428,46 +717,65 @@ impl World {
         for i in 0..self.joints.len() {
             let joint = self.joints[i];
             let (a, b) = (joint.a, joint.b);
-            // Anchors coincide (hard), before and after the angular parts.
+            if self.bodies[a as usize].asleep {
+                continue;
+            }
+            let k = &joint.cache;
+            // Anchors coincide (hard); the angular parts follow so the limits have the last
+            // word within a pass (the next pass restores the anchors).
             self.solve_anchor(&joint);
             // Muscle drive: soft angular constraint towards the target (compliance 1/k).
             if joint.tone.stiffness > 0.0 {
                 let (qa, qb) = (self.bodies[a as usize].rot, self.bodies[b as usize].rot);
-                let want_b = qa * joint.rest_rel * joint.target;
-                let err = (want_b * qb.conj()).to_rotvec(); // rotation b still has to do
+                let e = qa * (joint.rest_rel * joint.target) * qb.conj(); // rotation b still has to do
+                let v = Vec3::new(e.x, e.y, e.z);
+                // Small errors: 2·sin(θ/2)·axis is the rotation vector to within 1 %.
+                let err = if v.length_sq() < 0.04 { v * if e.w < 0.0 { -2.0 } else { 2.0 } } else { e.to_rotvec() };
                 let alpha = inv_h2 / joint.tone.stiffness;
                 apply_rotation(&mut self.bodies, a, b, -err, alpha);
             }
-            // Limits (hard).
+            // Limits (hard), corrected only when violated.
             match joint.limit {
                 JointLimit::Hinge { lo, hi } => {
-                    let (qa, qb) = (self.frame_a(&joint), self.frame_b(&joint));
-                    let (za, zb) = (qa.rotate(Vec3::Z), qb.rotate(Vec3::Z));
+                    let (qa, qb) = (self.bodies[a as usize].rot, self.bodies[b as usize].rot);
+                    let (za, zb) = (qa.rotate(k.za), qb.rotate(k.zb));
+                    // The angle is measured before the (small) alignment; it is only used to
+                    // decide whether the limit needs work.
+                    let (x1, x2) = (qa.rotate(k.xa), qb.rotate(k.xb));
                     apply_rotation(&mut self.bodies, a, b, za.cross(zb), 0.0);
-                    let (qa, qb) = (self.frame_a(&joint), self.frame_b(&joint));
-                    let n = qa.rotate(Vec3::Z);
-                    if let Some(c) = limit_angle(n, qa.rotate(Vec3::X), qb.rotate(Vec3::X), lo, hi) {
-                        apply_rotation(&mut self.bodies, a, b, c, 0.0);
+                    let n = za;
+                    let (s, c) = (x1.cross(x2).dot(n), x1.dot(x2));
+                    // cos(φ − mid) ≥ cos(half) ⇔ φ within [lo, hi] (no trigonometry).
+                    if c * k.cos_mid + s * k.sin_mid < k.cos_half {
+                        let (qa, qb) = (self.bodies[a as usize].rot, self.bodies[b as usize].rot);
+                        let (n, x1, x2) = (qa.rotate(k.za), qa.rotate(k.xa), qb.rotate(k.xb));
+                        if let Some(c) = limit_angle(n, x1, x2, lo, hi) {
+                            apply_rotation(&mut self.bodies, a, b, c, 0.0);
+                        }
                     }
                 }
-                JointLimit::Ball { cone_axis, cone, twist_lo, twist_hi } => {
-                    let (qa, qb) = (self.frame_a(&joint), self.frame_b(&joint));
-                    let (ca, xb) = (qa.rotate(cone_axis), qb.rotate(Vec3::X));
-                    let phi = ca.dot(xb).clamp(-1.0, 1.0).acos();
-                    if phi > cone {
+                JointLimit::Ball { cone, twist_lo, twist_hi, .. } => {
+                    let (qa, qb) = (self.bodies[a as usize].rot, self.bodies[b as usize].rot);
+                    let (ca, xb) = (qa.rotate(k.cone_a), qb.rotate(k.xb));
+                    if ca.dot(xb) < k.cos_cone {
                         let n = ca.cross(xb).normalize_or_zero();
                         if n != Vec3::ZERO {
                             let target = Quat::from_axis_angle(n, cone).rotate(ca);
                             apply_rotation(&mut self.bodies, a, b, target.cross(xb), 0.0);
                         }
                     }
-                    let (qa, qb) = (self.frame_a(&joint), self.frame_b(&joint));
-                    if let Some(c) = twist_correction(qa, qb, twist_lo, twist_hi) {
+                    let (qa, qb) = (self.bodies[a as usize].rot * joint.fa, self.bodies[b as usize].rot * joint.fb);
+                    // Twist of the swing–twist split about X: 2·atan2(x, w) is within the
+                    // limits ⇔ x / w is within tan(limit / 2).
+                    let r = qa.conj() * qb;
+                    let (x, w) = if r.w < 0.0 { (-r.x, -r.w) } else { (r.x, r.w) };
+                    if (x < k.tan_twist_lo * w || x > k.tan_twist_hi * w)
+                        && let Some(c) = twist_correction(qa, qb, twist_lo, twist_hi)
+                    {
                         apply_rotation(&mut self.bodies, a, b, c, 0.0);
                     }
                 }
             }
-            self.solve_anchor(&joint);
         }
     }
 
@@ -485,27 +793,27 @@ impl World {
         self.bodies[j.b as usize].rot * j.fb
     }
 
-    fn solve_contacts<G: Ground + ?Sized>(&mut self, _h: f32, ground: &G) {
+    fn solve_contacts(&mut self) {
         let mu_s = self.config.static_friction;
-        // Ground: both capsule end spheres against the height field.
+        // Ground: both capsule end spheres against the step's tangent planes.
         for i in 0..self.bodies.len() {
-            if self.bodies[i].pinned {
+            if self.bodies[i].pinned || self.bodies[i].asleep {
                 continue;
             }
             for end in 0..2 {
                 let b = &self.bodies[i];
+                let p = self.planes[i][end];
+                // Cheap reject on the centre: the ends are within half_len of it.
+                if p.n.dot(b.pos) - p.d > b.radius + b.half_len {
+                    continue;
+                }
                 let (e0, e1) = b.ends();
                 let e = if end == 0 { e0 } else { e1 };
-                let gz = ground.height(e.x, e.y);
-                if e.z - gz >= b.radius {
-                    continue; // the vertical gap bounds the distance along any upward normal
-                }
-                let n = ground.normal(e.x, e.y);
-                let d = (e.z - gz) * n.z;
-                let depth = b.radius - d;
+                let depth = b.radius - (p.n.dot(e) - p.d);
                 if depth <= 0.0 {
                     continue;
                 }
+                let n = p.n;
                 let r = e - n * b.radius - b.pos;
                 let ra = b.rot.conj().rotate(r);
                 let lambda_n = apply_position(&mut self.bodies, i as u32, STATIC, r, Vec3::ZERO, n * depth, 0.0);
@@ -602,6 +910,9 @@ impl World {
                 (jt.a, jt.b, jt.tone.damping + passive)
             };
             let (ba, bb) = (&self.bodies[a as usize], &self.bodies[b as usize]);
+            if ba.asleep {
+                continue;
+            }
             let rel = bb.omega - ba.omega;
             let l = rel.length();
             if l < 1e-7 {
@@ -613,9 +924,37 @@ impl World {
                 continue;
             }
             let p = rel * (d * h).min(1.0 / w);
-            let (ia, ib) = (ba.inv_inertia_world(p), bb.inv_inertia_world(p));
+            let (ia, ib) = (ba.inv_i.mul(p), bb.inv_i.mul(p));
             self.bodies[a as usize].omega += ia;
             self.bodies[b as usize].omega -= ib;
+        }
+    }
+
+    /// Groups that stayed calm for `sleep_time` fall asleep.
+    fn update_sleep(&mut self) {
+        let (limit, time, dt) = (self.config.sleep_energy, self.config.sleep_time, self.config.dt);
+        if limit <= 0.0 {
+            return;
+        }
+        for g in 0..self.groups.len() {
+            let grp = self.groups[g];
+            if grp.asleep || grp.first == grp.end {
+                continue;
+            }
+            let (mut e, mut m) = (0.0, 0.0);
+            for b in &self.bodies[grp.first as usize..grp.end as usize] {
+                if !b.pinned {
+                    e += b.kinetic_energy();
+                    m += b.mass;
+                }
+            }
+            let calm = m == 0.0 || e < limit * m;
+            let grp = &mut self.groups[g];
+            grp.calm_time = if calm { grp.calm_time + dt } else { 0.0 };
+            if grp.calm_time >= time {
+                let first = grp.first;
+                self.freeze(first);
+            }
         }
     }
 
@@ -645,10 +984,11 @@ impl World {
 /// Positional XPBD correction: moves the point `ra` of body `a` by `corr` relative to the
 /// point `rb` of body `b` (world offsets). Returns the Lagrange multiplier (N·s²).
 fn apply_position(bodies: &mut [Body], a: u32, b: u32, ra: Vec3, rb: Vec3, corr: Vec3, alpha: f32) -> f32 {
-    let c = corr.length();
-    if c < 1e-9 {
+    let c2 = corr.length_sq();
+    if c2 < 1e-18 {
         return 0.0;
     }
+    let c = c2.sqrt();
     let n = corr * (1.0 / c);
     let wa = if a != STATIC { bodies[a as usize].w_pos(ra, n) } else { 0.0 };
     let wb = if b != STATIC { bodies[b as usize].w_pos(rb, n) } else { 0.0 };
@@ -661,24 +1001,25 @@ fn apply_position(bodies: &mut [Body], a: u32, b: u32, ra: Vec3, rb: Vec3, corr:
     if a != STATIC {
         let ba = &mut bodies[a as usize];
         ba.pos += p * ba.inv_mass;
-        let dw = ba.inv_inertia_world(ra.cross(p));
-        ba.rot = ba.rot.add_rotvec(dw);
+        let dw = ba.inv_i.mul(ra.cross(p));
+        ba.rot = ba.rot.add_rotvec_raw(dw);
     }
     if b != STATIC {
         let bb = &mut bodies[b as usize];
         bb.pos -= p * bb.inv_mass;
-        let dw = bb.inv_inertia_world(rb.cross(p));
-        bb.rot = bb.rot.add_rotvec(-dw);
+        let dw = bb.inv_i.mul(rb.cross(p));
+        bb.rot = bb.rot.add_rotvec_raw(-dw);
     }
     dl
 }
 
 /// Angular XPBD correction: turns body `a` by the rotation vector `corr` relative to `b`.
 fn apply_rotation(bodies: &mut [Body], a: u32, b: u32, corr: Vec3, alpha: f32) {
-    let theta = corr.length();
-    if theta < 1e-9 {
+    let t2 = corr.length_sq();
+    if t2 < 1e-18 {
         return;
     }
+    let theta = t2.sqrt();
     let n = corr * (1.0 / theta);
     let (ba, bb) = (&bodies[a as usize], &bodies[b as usize]);
     let w = ba.w_rot(n) + bb.w_rot(n) + alpha;
@@ -686,9 +1027,9 @@ fn apply_rotation(bodies: &mut [Body], a: u32, b: u32, corr: Vec3, alpha: f32) {
         return;
     }
     let p = n * (theta / w);
-    let (da, db) = (ba.inv_inertia_world(p), bb.inv_inertia_world(p));
-    bodies[a as usize].rot = bodies[a as usize].rot.add_rotvec(da);
-    bodies[b as usize].rot = bodies[b as usize].rot.add_rotvec(-db);
+    let (da, db) = (ba.inv_i.mul(p), bb.inv_i.mul(p));
+    bodies[a as usize].rot = bodies[a as usize].rot.add_rotvec_raw(da);
+    bodies[b as usize].rot = bodies[b as usize].rot.add_rotvec_raw(-db);
 }
 
 /// Velocity change `dv` of point `ra` of `a` relative to point `rb` of `b`, as an impulse.
@@ -707,12 +1048,12 @@ fn apply_velocity(bodies: &mut [Body], a: u32, b: u32, ra: Vec3, rb: Vec3, dv: V
     if a != STATIC {
         let ba = &mut bodies[a as usize];
         ba.vel += p * ba.inv_mass;
-        ba.omega += ba.inv_inertia_world(ra.cross(p));
+        ba.omega += ba.inv_i.mul(ra.cross(p));
     }
     if b != STATIC {
         let bb = &mut bodies[b as usize];
         bb.vel -= p * bb.inv_mass;
-        bb.omega -= bb.inv_inertia_world(rb.cross(p));
+        bb.omega -= bb.inv_i.mul(rb.cross(p));
     }
 }
 
@@ -732,7 +1073,7 @@ fn limit_angle(n: Vec3, n1: Vec3, n2: Vec3, lo: f32, hi: f32) -> Option<Vec3> {
     Some(target.cross(n2))
 }
 
-fn twist_angle(qa: Quat, qb: Quat) -> Option<f32> {
+fn twist_axes(qa: Quat, qb: Quat) -> Option<(Vec3, Vec3, Vec3)> {
     let n = (qa.rotate(Vec3::X) + qb.rotate(Vec3::X)).normalize_or_zero();
     if n == Vec3::ZERO {
         return None;
@@ -743,19 +1084,13 @@ fn twist_angle(qa: Quat, qb: Quat) -> Option<f32> {
     if b1 == Vec3::ZERO || b2 == Vec3::ZERO {
         return None;
     }
-    Some(signed_angle(n, b1, b2))
+    Some((n, b1, b2))
+}
+
+fn twist_angle(qa: Quat, qb: Quat) -> Option<f32> {
+    twist_axes(qa, qb).map(|(n, b1, b2)| signed_angle(n, b1, b2))
 }
 
 fn twist_correction(qa: Quat, qb: Quat, lo: f32, hi: f32) -> Option<Vec3> {
-    let n = (qa.rotate(Vec3::X) + qb.rotate(Vec3::X)).normalize_or_zero();
-    if n == Vec3::ZERO {
-        return None;
-    }
-    let (ya, yb) = (qa.rotate(Vec3::Y), qb.rotate(Vec3::Y));
-    let b1 = (ya - n * n.dot(ya)).normalize_or_zero();
-    let b2 = (yb - n * n.dot(yb)).normalize_or_zero();
-    if b1 == Vec3::ZERO || b2 == Vec3::ZERO {
-        return None;
-    }
-    limit_angle(n, b1, b2, lo, hi)
+    twist_axes(qa, qb).and_then(|(n, b1, b2)| limit_angle(n, b1, b2, lo, hi))
 }

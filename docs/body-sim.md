@@ -64,8 +64,8 @@ simulation shows the fall and the getting up within that time. Hit records (`Hit
 H: metres, `+X` left, `-Y` forward, `+Z` up.
 
 - `World`: capsule bodies (`Body`: position, rotation, mass, principal inertia; local `+Y`
-  along the bone) and a `Config` (fixed `dt` of 1/60 s, 8 substeps, 2 joint passes per substep,
-  friction, passive joint damping). `step(&ground)` follows Müller et al. 2020 (XPBD rigid
+  along the bone) and a `Config` (fixed `dt` of 1/60 s, 4 substeps, 4 joint passes per substep,
+  friction, passive joint damping, sleeping). `step(&ground)` follows Müller et al. 2020 (XPBD rigid
   bodies): integrate, contacts (ground first, then capsule pairs, with static friction), joints,
   velocities, then dynamic friction, restitution without bounce, and joint damping. It does not
   allocate; the buffers are sized when bodies are added.
@@ -85,17 +85,61 @@ H: metres, `+X` left, `-Y` forward, `+Z` up.
   skeleton-space rest vertex to the world.
 - Light end bodies get an inertia floor of 0.004 kg·m², so that they converge against heavy
   neighbours.
-- Tests (`tests/ragdoll.rs`):
-  - A limp drop from 1 m settles. The energy goes from 1423 J to about 80 J, the kinetic energy ends below 0.01 J, and the limits hold within 0.2° at rest. At the feet-first impact they are off by up to about 8° for a frame.
+- Sleeping: a ragdoll whose kinetic energy stays under 0.002 J/kg for 0.5 s falls
+  asleep and costs nothing: no integration, joints or ground contacts, only its place in the
+  broad phase. `World::apply_impulse`, a target or tone change, or an awake body touching
+  it wakes it. `Ragdoll::freeze` puts one to sleep at once as a corpse that still blocks
+  others; `Ragdoll::pose` gives its skinning matrices to keep.
+- Cost measures (#278 slice 2): the world inverse inertia is computed once per substep;
+  the ground is sampled once per step as a tangent plane per capsule end; the limits are
+  checked without trigonometry (cosine of the cone, `tan` of the half twist, hinge range as
+  a cosine test) and corrected only when violated; one anchor projection per joint pass;
+  orientation corrections are renormalized to first order; capsule pairs come from a
+  hashed grid over `(x, y)` (counting sort, no allocation).
+- Settings against the tests (peak limit overshoot in the limp drop, hinge overshoot
+  under 100 rad/s spins, separation):
+
+  | substeps × joint passes | drop limits | hinge stress | separation | tests |
+  |---|---|---|---|---|
+  | 8 × 2 (before) | 8.3° | 5.1° | 0.5 cm | pass |
+  | 4 × 3 | 4.1° | 1.4° | 1.6 cm | hinge separation 1.01 cm fails |
+  | 4 × 4 (default) | 3.5° | 0.5° | 1.1 cm | pass |
+
+- Tests (`tests/ragdoll.rs`, `ACR_PHYS_SUBSTEPS` and `ACR_PHYS_PASSES` override the
+  settings):
+  - A limp drop from 1 m settles. The energy goes from 1423 J to about 84 J, and the limits hold within 0.5° at rest and 3.5° at the feet-first impact.
   - With full tone and the root pinned, it holds a pose with bent elbows within 1°.
   - A 60 N·s push at the back of the right shoulder spins him clockwise and throws him backwards.
-  - The hinge stops hold within about 5° under spins of up to 100 rad/s.
-  - Stacked capsules do not interpenetrate.
+  - The hinge stops hold within 0.5° under spins of up to 100 rad/s.
+  - Stacked capsules do not interpenetrate, and a body falling across a frozen corpse wakes it and comes to lie on it.
+  - A resting ragdoll falls asleep (after about 1.1 s), does not move while asleep, and an impulse wakes it.
   - Identical runs are bit-identical.
-- Bench (`cargo run -p acr-physics --release --example bench`): about 220–300 µs per
-  ragdoll step (1/60 s, 8 substeps × 2 joint passes), natively on the dev machine. The machine runs Windows
-  on ARM and the numbers are noisy, with other builds running. The cost stays about the same per ragdoll from 1 to 64 ragdolls, and
-  the joint pass dominates it. Wasm is not measured yet.
+- Bench (`cargo run -p acr-physics --release --example bench`): limp ragdolls falling
+  and then lying on uneven ground for 4 s, with sleeping off so they stay active; "half
+  frozen" adds as many frozen corpses. The bench is best of three runs. The dev machine is a
+  Snapdragon X1P64100 at about 3 GHz, at 100 % load from other work during the
+  measurement. That is why the thread's own cycles (`QueryThreadCycleTime`) are the
+  reliable figure, and the wall time is inflated.
+
+  | Scene | before (8 × 2) | after (4 × 4) |
+  |---|---|---|
+  | 1 active | 208 kcycles (146 µs wall) | 95 kcycles (66 µs wall, ≈ 32 µs of CPU at 3 GHz) |
+  | 16 active | 239 kcycles (168 µs wall) | 103 kcycles (72 µs wall, ≈ 34 µs CPU) |
+  | 16, half frozen | — | 105 kcycles per active (75 µs wall) |
+  | 64, half frozen | — | 111 kcycles per active (78 µs wall) |
+  | 256, half frozen | — | 114 kcycles per active (80 µs wall, ≈ 38 µs CPU) |
+
+  Frozen corpses add almost nothing per active ragdoll; the slow growth with the scene
+  is the broad phase and the cache.
+- wasm32 (`examples/bench_wasm.rs`, a cdylib timed by `examples/bench_wasm.mjs` under node
+  22, see the file header for the commands), on the same loaded machine: 69 µs (1 active), 77 µs (16),
+  81 / 86 / 87 µs per active ragdoll with 16 / 64 / 256 half frozen. That is about the native wall time, so
+  wasm costs roughly the same as native here.
+- **Budget rule:** active ragdolls = floor(frame budget / measured cost per active
+  ragdoll step). The cost is measured at startup with a short calibration (for example 30
+  steps of 8 limp ragdolls in a hidden world, best of three). With 4 ms and about 35 µs,
+  that is about 110 active ragdolls (2400 bodies). Sleeping ones cost close to nothing.
+  The rest get the animation-only path.
 
 ## 2. Physical locomotion (`acr-physics::gait`)
 

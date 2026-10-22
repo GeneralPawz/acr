@@ -9,6 +9,9 @@
 //!   `Fn(f32, f32) -> f32` is one) with friction, and capsule–capsule contacts. Solver:
 //!   Müller et al. 2020, "Detailed Rigid Body Simulation with Extended Position Based
 //!   Dynamics", one iteration per substep.
+//! - Sleeping: a ragdoll at rest for 0.5 s falls asleep and costs nothing until an impulse,
+//!   a target or tone change, or an awake body touching it wakes it; [`Ragdoll::freeze`]
+//!   keeps a corpse.
 //! - Muscles: every joint drives towards a target rotation with a PD drive whose stiffness
 //!   and damping ([`Tone`]) are set per joint or per [`Region`].
 //! - [`Ragdoll`]: built from a skeleton description ([`BoneDesc`], [`skeleton_h`]): one

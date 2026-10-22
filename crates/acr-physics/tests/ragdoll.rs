@@ -6,6 +6,18 @@ use acr_physics::{Body, Config, JointLimit, Quat, Ragdoll, Tone, Vec3, World, sk
 
 const DEG: f32 = core::f32::consts::PI / 180.0;
 
+/// The default solver settings; `ACR_PHYS_SUBSTEPS` and `ACR_PHYS_PASSES` override them to
+/// measure the accuracy of cheaper settings with these same tests.
+fn config() -> Config {
+    let env = |k: &str| std::env::var(k).ok().and_then(|v| v.parse().ok());
+    let d = Config::default();
+    Config {
+        substeps: env("ACR_PHYS_SUBSTEPS").unwrap_or(d.substeps),
+        joint_iterations: env("ACR_PHYS_PASSES").unwrap_or(d.joint_iterations),
+        ..d
+    }
+}
+
 fn flat(_x: f32, _y: f32) -> f32 {
     0.0
 }
@@ -34,7 +46,7 @@ fn kinetic(world: &World) -> f32 {
 
 #[test]
 fn limp_ragdoll_falls_and_settles() {
-    let mut world = World::new(Config::default());
+    let mut world = World::new(config());
     let tilt = Quat::from_axis_angle(Vec3::new(1.0, 0.3, 0.0), 0.4);
     let man = Ragdoll::spawn(&mut world, &skeleton_h(), 75.0, Vec3::new(0.0, 0.0, 1.0), tilt);
     let e0 = world.energy();
@@ -86,7 +98,7 @@ fn limp_ragdoll_falls_and_settles() {
 
 #[test]
 fn full_tone_holds_pose_with_root_fixed() {
-    let mut world = World::new(Config::default());
+    let mut world = World::new(config());
     let man = Ragdoll::spawn(&mut world, &skeleton_h(), 75.0, Vec3::new(0.0, 0.0, 0.3), Quat::IDENTITY);
     world.set_pinned(man.body(0), true);
     man.set_tone_all(&mut world, Tone::FULL);
@@ -113,7 +125,7 @@ fn full_tone_holds_pose_with_root_fixed() {
 
 #[test]
 fn impulse_at_right_shoulder_spins_and_throws_back() {
-    let mut world = World::new(Config::default());
+    let mut world = World::new(config());
     let man = Ragdoll::spawn(&mut world, &skeleton_h(), 75.0, Vec3::new(0.0, 0.0, 0.005), Quat::IDENTITY);
     man.set_tone_all(&mut world, Tone::FULL);
     for _ in 0..6 {
@@ -140,7 +152,7 @@ fn impulse_at_right_shoulder_spins_and_throws_back() {
 
 #[test]
 fn hinge_limits_hold_under_large_impulses() {
-    let mut world = World::new(Config { gravity: Vec3::ZERO, ..Config::default() });
+    let mut world = World::new(Config { gravity: Vec3::ZERO, ..config() });
     let upper = world.add_body(Body::capsule(Vec3::new(0.0, 0.0, 1.0), Quat::IDENTITY, 0.04, 0.15, 2.0));
     let lower = world.add_body(Body::capsule(Vec3::new(0.0, 0.3, 1.0), Quat::IDENTITY, 0.04, 0.15, 1.2));
     world.set_pinned(upper, true);
@@ -167,7 +179,7 @@ fn hinge_limits_hold_under_large_impulses() {
 
 #[test]
 fn capsules_stack_instead_of_passing_through() {
-    let mut world = World::new(Config::default());
+    let mut world = World::new(config());
     // Capsule axes are local +Y: one lies along X, the other across it along Y.
     let along_x = Quat::from_axis_angle(Vec3::Z, core::f32::consts::FRAC_PI_2);
     let low = world.add_body(Body::capsule(Vec3::new(0.0, 0.0, 0.1), along_x, 0.1, 0.4, 20.0));
@@ -188,7 +200,7 @@ fn capsules_stack_instead_of_passing_through() {
 #[test]
 fn deterministic_within_a_build() {
     let run = || {
-        let mut world = World::new(Config::default());
+        let mut world = World::new(config());
         let tilt = Quat::from_axis_angle(Vec3::Y, 0.3);
         let man = Ragdoll::spawn(&mut world, &skeleton_h(), 80.0, Vec3::new(0.0, 0.0, 0.5), tilt);
         for _ in 0..120 {
@@ -197,4 +209,58 @@ fn deterministic_within_a_build() {
         (0..man.len()).map(|b| man.skin_matrix(&world, b)).collect::<Vec<_>>()
     };
     assert_eq!(run(), run());
+}
+
+#[test]
+fn resting_ragdoll_sleeps_and_wakes_on_impulse() {
+    let mut world = World::new(config());
+    let tilt = Quat::from_axis_angle(Vec3::X, 1.2);
+    let man = Ragdoll::spawn(&mut world, &skeleton_h(), 75.0, Vec3::new(0.0, 0.0, 0.4), tilt);
+    let mut slept_at = None;
+    for step in 0..600 {
+        world.step(&flat);
+        if slept_at.is_none() && man.is_asleep(&world) {
+            slept_at = Some(step);
+        }
+    }
+    let slept_at = slept_at.expect("falls asleep once at rest");
+    println!("asleep after {:.2} s", slept_at as f32 / 60.0);
+    assert_eq!(world.awake_bodies(), 0);
+    let mut before = [[[0.0; 4]; 4]; 22];
+    man.pose(&world, &mut before);
+    for _ in 0..30 {
+        world.step(&flat);
+    }
+    let mut after = [[[0.0; 4]; 4]; 22];
+    man.pose(&world, &mut after);
+    assert_eq!(before, after, "a sleeping body does not move");
+    let chest = man.body(man.bone_index("spine2").unwrap());
+    let p = world.body(chest).pos;
+    world.apply_impulse(chest, p, Vec3::new(0.0, 0.0, 30.0));
+    assert!(!man.is_asleep(&world), "an impulse wakes it");
+    world.step(&flat);
+    assert!(world.body(chest).pos.z > p.z, "and it moves");
+}
+
+#[test]
+fn frozen_corpse_blocks_and_wakes_when_hit() {
+    let mut world = World::new(config());
+    let lying = Quat::from_axis_angle(Vec3::X, 1.5);
+    let corpse = Ragdoll::spawn(&mut world, &skeleton_h(), 75.0, Vec3::new(0.0, 0.0, 0.2), lying);
+    corpse.freeze(&mut world);
+    assert!(corpse.is_asleep(&world));
+    // Across the corpse, hips over its belly.
+    let across = Quat::from_axis_angle(Vec3::Z, core::f32::consts::FRAC_PI_2) * lying;
+    let falling = Ragdoll::spawn(&mut world, &skeleton_h(), 75.0, Vec3::new(-1.0, -0.9, 0.6), across);
+    let mut woke = false;
+    for _ in 0..90 {
+        world.step(&flat);
+        woke |= !corpse.is_asleep(&world);
+    }
+    assert!(woke, "the corpse wakes when the falling body touches it");
+    let hips = world.body(falling.body(0)).pos;
+    let under = world.body(corpse.body(corpse.bone_index("spine").unwrap())).pos;
+    println!("fallen onto the corpse: hips {hips:?}, corpse's belly {under:?}");
+    // Draped over him: the hips rest on his trunk (a lying man's hips are at about 0.12 m).
+    assert!(hips.z > under.z + 0.1, "lies on the corpse, not through it: {hips:?} over {under:?}");
 }

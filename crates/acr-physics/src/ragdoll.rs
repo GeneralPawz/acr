@@ -303,7 +303,7 @@ impl Ragdoll {
     /// rest pose, in the bone's own (body) frame. Identity = rest pose.
     pub fn set_target(&self, world: &mut World, bone: usize, rotation: Quat) {
         if let Some(j) = self.bones[bone].joint {
-            world.joint_mut(j).target = rotation;
+            world.set_joint_target(j, rotation);
         }
     }
     /// Targets for all bones at once (in bone order; the root's entry is ignored).
@@ -322,7 +322,7 @@ impl Ragdoll {
     }
     pub fn set_tone(&self, world: &mut World, bone: usize, tone: Tone) {
         if let Some(j) = self.bones[bone].joint {
-            world.joint_mut(j).tone = tone;
+            world.set_joint_tone(j, tone);
         }
     }
     pub fn set_tone_region(&self, world: &mut World, region: Region, tone: Tone) {
@@ -351,6 +351,21 @@ impl Ragdoll {
         let b = world.body(rb.body);
         let q = b.rot * rb.rest_rot.conj();
         mat4_from_rt(b.pos - q.rotate(rb.rest_pos), q)
+    }
+
+    /// Freezes the ragdoll in its current pose: a static corpse that costs nothing and
+    /// still blocks others, until an impulse or an awake body touching it wakes it.
+    pub fn freeze(&self, world: &mut World) {
+        world.freeze(self.bones[0].body);
+    }
+    pub fn is_asleep(&self, world: &World) -> bool {
+        world.body(self.bones[0].body).is_asleep()
+    }
+    /// All skinning matrices (bone order) into `out`, e.g. to keep a frozen corpse's pose.
+    pub fn pose(&self, world: &World, out: &mut [[[f32; 4]; 4]]) {
+        for (b, m) in out.iter_mut().enumerate().take(self.bones.len()) {
+            *m = self.skin_matrix(world, b);
+        }
     }
 
     /// Lowest point of all capsules (m, world Z).

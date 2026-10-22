@@ -172,6 +172,14 @@ impl Quat {
         Quat { x: self.x + 0.5 * dq.x, y: self.y + 0.5 * dq.y, z: self.z + 0.5 * dq.z, w: self.w + 0.5 * dq.w }
             .normalize()
     }
+    /// `q + ½·[v, 0]·q`, renormalized to first order (no square root): for the small
+    /// corrections of the solver; `q` must be (nearly) unit.
+    pub fn add_rotvec_raw(self, v: Vec3) -> Quat {
+        let dq = Quat { x: v.x, y: v.y, z: v.z, w: 0.0 } * self;
+        let q = Quat { x: self.x + 0.5 * dq.x, y: self.y + 0.5 * dq.y, z: self.z + 0.5 * dq.z, w: self.w + 0.5 * dq.w };
+        let s = 1.5 - 0.5 * (q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+        if (0.75..=1.25).contains(&s) { Quat { x: q.x * s, y: q.y * s, z: q.z * s, w: q.w * s } } else { q.normalize() }
+    }
     pub fn to_array(self) -> [f32; 4] {
         [self.x, self.y, self.z, self.w]
     }
