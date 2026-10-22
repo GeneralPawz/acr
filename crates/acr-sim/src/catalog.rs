@@ -49,33 +49,87 @@ pub struct AnimInfo {
     pub directions: u8,
     /// Frames per direction.
     pub frames: u16,
+    /// `SETACTIVEPOINT #ANIM f ...`: the frame at which a strike hits or a shot leaves.
+    pub active: u16,
 }
 
 impl AnimInfo {
     fn of(a: Option<&Animation>) -> Option<Self> {
         let a = a?;
-        Some(Self { directions: a.directions.clamp(0, 255) as u8, frames: a.frame_refs().len().min(0xFFFF) as u16 })
+        Some(Self {
+            directions: a.directions.clamp(0, 255) as u8,
+            frames: a.frame_refs().len().min(0xFFFF) as u16,
+            active: 0,
+        })
     }
 }
 
-/// One attack index of an object type (`.MD` keywords taking an attack index first).
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+/// Number of attack indices (`#ATTACK`, `#ATTACK1`, ... `#ATTACK11`).
+pub const ATTACK_SLOTS: usize = 12;
+
+/// Material bits (`MATHERIAL`, `CANKILL`, `ATTMASK`; table 0x4f363b).
+pub fn material_bit(name: &str) -> u8 {
+    match name.to_ascii_uppercase().as_str() {
+        "BODY" => 1,
+        "STONE" => 2,
+        "WOOD" => 4,
+        "IRON" => 8,
+        "FLY" => 0x10,
+        "BUILDING" => 0x20,
+        "WOOD_BUILDING" => 0x40,
+        "STENA" => 0x80,
+        _ => 0,
+    }
+}
+
+/// One attack index of an object type; index `i` is stance `i + 1` and animation
+/// `#ATTACKi` (`#ATTACK` for 0).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Attack {
-    pub index: u8,
-    /// `ATTACK_RADIUS i min max` (world pixels).
+    /// `ATTACK_RADIUS i min max` (world pixels); also sets `detect`.
     pub radius: (i32, i32),
-    /// `DET_RADIUS i min max`.
+    /// `DET_RADIUS i min max`: the range at which this index is chosen.
     pub detect: (i32, i32),
-    /// `ATTACK_PAUSE i p`.
+    /// `ADD_ATTACK_RADIUS i v`: extra range at the moment of the hit.
+    pub add_radius: i32,
+    /// `ATTACK_PAUSE i p`: reload in animation frames.
     pub pause: i32,
-    /// `DAMAGE i v`.
+    /// `DAMAGE i v` (`MaxDamage`).
     pub damage: i32,
-    /// `WEAPONKIND i KIND` (`NRES.DAT [WEAPONS]`: `MECH`, `PIKA`, `VISTREL`, ...).
-    pub kind: Option<String>,
-    /// `WEAPON i ID` (projectile from `WEAPON.NDS`), ranged attacks only.
+    /// `DAMAGEDEC i d`: shot damage halves every `d` px (default 0xFFFF).
+    pub damage_dec: i32,
+    /// `WEAPONKIND i KIND` (`NRES.DAT [WEAPONS]`; default `MECH`).
+    pub kind: String,
+    /// `WEAPON i ID` (`WEAPON.NDS`): the attack shoots.
     pub weapon: Option<String>,
-    /// `ATTACK_ANGLES i min max`.
-    pub angles: Option<(i32, i32)>,
+    /// Materials this index may attack (`CANKILL` for all, `ATTMASK i` per index).
+    pub mask: u8,
+    /// `NOPAUSEDATTACK i`: usable while reloading, and does not reset the reload.
+    pub no_pause: bool,
+}
+
+impl Default for Attack {
+    fn default() -> Self {
+        Self {
+            radius: (0, 0),
+            detect: (0, 0),
+            add_radius: 0,
+            pause: 0,
+            damage: 0,
+            damage_dec: 0xFFFF,
+            kind: "MECH".into(),
+            weapon: None,
+            mask: 0,
+            no_pause: false,
+        }
+    }
+}
+
+impl Attack {
+    /// Whether the index can attack at all (`AttR2 != 0`).
+    pub fn usable(&self) -> bool {
+        self.radius.1 != 0
+    }
 }
 
 /// One unit or building type.
@@ -113,12 +167,37 @@ pub struct ObjectType {
     pub motion_r: Option<AnimInfo>,
     pub rest: Option<AnimInfo>,
     pub rest1: Option<AnimInfo>,
-    /// Attack indices that have a radius, a damage or a weapon, by index.
+    /// Attack slots, always [`ATTACK_SLOTS`] long, indexed by attack index.
     pub attacks: Vec<Attack>,
-    /// `PROTECTION n (KIND v)*n`: armour per weapon kind.
+    /// `PROTECTION n (KIND v)*n`: armour per weapon kind; the engine keeps the low byte.
     pub protection: Vec<(String, i32)>,
-    /// `SEARCH_ENEMY_RADIUS` (0 if absent).
+    /// `MATHERIAL`: own material bits.
+    pub materials: u8,
+    /// `SEARCH_ENEMY_RADIUS r` / `_SHIFT p` in 1/16 px: the auto-target circle has radius
+    /// `search_radius` and its centre lies `search_shift` ahead (0x4fd6b7, 0x4fd743).
     pub search_radius: i32,
+    pub search_shift: i32,
+    /// `ADDSHOTRADIUS`: extra range attackers get against this object.
+    pub add_shot_radius: i32,
+    /// `SLOWRECHARGE`: reloads only by playing `#ATTACK3` (musketeers).
+    pub slow_recharge: bool,
+    /// `SKILLDAMAGEBONUS` / `SKILLDAMAGEMASK`: damage bonus per kill.
+    pub skill_bonus: i32,
+    pub skill_mask: i32,
+    /// `SHIELD`: flat damage reduction.
+    pub shield: i32,
+    /// `RAZBROS`: shot dispersion.
+    pub razbros: i32,
+    /// `ZPOINTS src dst`: shot height above ground and aim height.
+    pub zpoints: (i32, i32),
+    /// `FRIENDLYFIRE`: the unit *avoids* hitting friends.
+    pub avoid_friendly_fire: bool,
+    /// `NO25`: immune to the 4 % instant kill.
+    pub no25: bool,
+    /// `USETRANSX i`: stances using `#TRANSX3`/`#TRANS3X` (bit per attack index).
+    pub trans_x: u16,
+    /// All animations by upper-case name (`#ATTACK1`, `#DEATH`, ...).
+    pub anims: BTreeMap<String, AnimInfo>,
 }
 
 impl ObjectType {
@@ -161,9 +240,26 @@ impl ObjectType {
             attacks: attacks(def),
             protection: def
                 .get("PROTECTION")
-                .map(|c| c.word_int_pairs(0).into_iter().map(|(k, v)| (k.to_ascii_uppercase(), v)).collect())
+                .map(|c| c.word_int_pairs(0).into_iter().map(|(k, v)| (k.to_ascii_uppercase(), v & 0xFF)).collect())
                 .unwrap_or_default(),
-            search_radius: int("SEARCH_ENEMY_RADIUS", 0),
+            materials: def.get("MATHERIAL").map_or(0, materials),
+            search_radius: search(def).0,
+            search_shift: search(def).1,
+            add_shot_radius: int("ADDSHOTRADIUS", 0),
+            slow_recharge: def.has("SLOWRECHARGE"),
+            skill_bonus: int("SKILLDAMAGEBONUS", 0),
+            skill_mask: int("SKILLDAMAGEMASK", 0),
+            shield: int("SHIELD", 0),
+            razbros: int("RAZBROS", 0),
+            zpoints: def.get("ZPOINTS").map_or((0, 0), |c| (c.int(0).unwrap_or(0), c.int(1).unwrap_or(0))),
+            avoid_friendly_fire: def.has("FRIENDLYFIRE"),
+            no25: def.has("NO25"),
+            trans_x: def
+                .all("USETRANSX")
+                .filter_map(|c| c.int(0))
+                .filter(|i| (0..16).contains(i))
+                .fold(0, |m, i| m | 1 << i),
+            anims: anims(def),
         }
     }
 
@@ -195,46 +291,77 @@ impl ObjectType {
     }
 }
 
-fn attack_slot(v: &mut Vec<Attack>, i: i32) -> Option<&mut Attack> {
-    let i = u8::try_from(i).ok().filter(|&i| i < 16)?;
-    let pos = match v.iter().position(|a| a.index == i) {
-        Some(p) => p,
-        None => {
-            v.push(Attack { index: i, ..Attack::default() });
-            v.len() - 1
-        }
-    };
-    Some(&mut v[pos])
+fn materials(c: &acr_formats::defs::Command) -> u8 {
+    let n = c.int(0).unwrap_or(0).max(0) as usize;
+    (0..n).filter_map(|i| c.word(1 + i)).fold(0, |m, w| m | material_bit(w))
 }
 
-/// Collects the per-attack-index keywords; later commands override earlier ones.
-fn attacks(def: &UnitDef) -> Vec<Attack> {
-    let mut v: Vec<Attack> = Vec::new();
+/// `SEARCH_ENEMY_RADIUS r` then `SEARCH_ENEMY_RADIUS_SHIFT p`, applied in file order.
+fn search(def: &UnitDef) -> (i32, i32) {
+    let (mut sr, mut ss) = (0, 0);
     for c in &def.commands {
-        let (Some(i), a1, a2) = (c.int(0), c.int(1), c.int(2)) else { continue };
         match c.keyword.as_str() {
-            "ATTACK_RADIUS" => {
-                attack_slot(&mut v, i).into_iter().for_each(|a| a.radius = (a1.unwrap_or(0), a2.unwrap_or(0)))
-            }
-            "DET_RADIUS" => {
-                attack_slot(&mut v, i).into_iter().for_each(|a| a.detect = (a1.unwrap_or(0), a2.unwrap_or(0)))
-            }
-            "ATTACK_PAUSE" => attack_slot(&mut v, i).into_iter().for_each(|a| a.pause = a1.unwrap_or(0)),
-            "DAMAGE" => attack_slot(&mut v, i).into_iter().for_each(|a| a.damage = a1.unwrap_or(0)),
-            "ATTACK_ANGLES" => attack_slot(&mut v, i).into_iter().for_each(|a| a.angles = a1.zip(a2)),
-            "WEAPONKIND" => {
-                let w = c.word(1).map(str::to_ascii_uppercase);
-                attack_slot(&mut v, i).into_iter().for_each(|a| a.kind = w.clone());
-            }
-            "WEAPON" => {
-                let w = c.word(1).map(str::to_owned);
-                attack_slot(&mut v, i).into_iter().for_each(|a| a.weapon = w.clone());
+            "SEARCH_ENEMY_RADIUS" => sr = c.int(0).unwrap_or(0) << 4,
+            "SEARCH_ENEMY_RADIUS_SHIFT" => {
+                let p = c.int(0).unwrap_or(0);
+                sr = sr * 100 / (p + 100).max(1);
+                ss = sr * p / 100;
             }
             _ => {}
         }
     }
-    v.retain(|a| a.radius.1 > 0 || a.damage > 0 || a.weapon.is_some());
-    v.sort_by_key(|a| a.index);
+    (sr, ss)
+}
+
+/// Animations by name, with the active frames of `SETACTIVEPOINT`.
+fn anims(def: &UnitDef) -> BTreeMap<String, AnimInfo> {
+    let mut m: BTreeMap<String, AnimInfo> = BTreeMap::new();
+    for a in &def.animations {
+        if let Some(info) = AnimInfo::of(Some(a)) {
+            m.insert(a.name.to_ascii_uppercase(), info);
+        }
+    }
+    for c in def.all("SETACTIVEPOINT").chain(def.all("SETACTIVEPOINT2")) {
+        if let (Some(name), Some(f)) = (c.word(0), c.int(1))
+            && let Some(info) = m.get_mut(&name.to_ascii_uppercase())
+        {
+            info.active = f.clamp(0, 0xFFFF) as u16;
+        }
+    }
+    m
+}
+
+/// The per-attack-index keywords in file order (`ATTACK_RADIUS` overwrites `DET_RADIUS`,
+/// `CANKILL` overwrites every `ATTMASK`, as in the loader 0x4f372c).
+fn attacks(def: &UnitDef) -> Vec<Attack> {
+    let mut v = vec![Attack::default(); ATTACK_SLOTS];
+    for c in &def.commands {
+        if c.keyword == "CANKILL" {
+            let mask = materials(c);
+            v.iter_mut().for_each(|a| a.mask = mask);
+            continue;
+        }
+        let Some(i) = c.int(0).and_then(|i| usize::try_from(i).ok()).filter(|&i| i < ATTACK_SLOTS) else { continue };
+        let (a1, a2) = (c.int(1).unwrap_or(0), c.int(2).unwrap_or(0));
+        let a = &mut v[i];
+        match c.keyword.as_str() {
+            "ATTACK_RADIUS" => (a.radius, a.detect) = ((a1, a2), (a1, a2)),
+            "DET_RADIUS" => a.detect = (a1, a2),
+            "ADD_ATTACK_RADIUS" => a.add_radius = a1,
+            "ATTACK_PAUSE" => a.pause = a1,
+            "DAMAGE" => a.damage = a1,
+            "EXDAMAGE" => a.damage = a2,
+            "DAMAGEDEC" => a.damage_dec = a1,
+            "WEAPONKIND" => a.kind = c.word(1).unwrap_or("MECH").to_ascii_uppercase(),
+            "WEAPON" => a.weapon = c.word(1).map(str::to_owned),
+            "ATTMASK" => {
+                let n = a1.max(0) as usize;
+                a.mask = (0..n).filter_map(|k| c.word(2 + k)).fold(0, |m, w| m | material_bit(w));
+            }
+            "NOPAUSEDATTACK" => a.no_pause = true,
+            _ => {}
+        }
+    }
     v
 }
 
@@ -243,6 +370,8 @@ fn attacks(def: &UnitDef) -> Vec<Attack> {
 pub struct Catalog {
     types: Vec<ObjectType>,
     by_id: BTreeMap<String, TypeId>,
+    /// `NRES.DAT [WEAPONS]` flags per weapon kind name.
+    weapon_flags: BTreeMap<String, u8>,
 }
 
 impl Catalog {
@@ -260,6 +389,17 @@ impl Catalog {
         self.types.push(t);
         self.by_id.insert(key, id);
         id
+    }
+
+    /// Sets the weapon kinds of `NRES.DAT` (their flags decide range bonuses, instant kills,
+    /// formation bonuses).
+    pub fn set_weapon_kinds(&mut self, kinds: &[acr_formats::defs::nres::WeaponKind]) {
+        self.weapon_flags = kinds.iter().map(|k| (k.name.clone(), k.flags)).collect();
+    }
+
+    /// Flags of a weapon kind (`acr_formats::defs::nres::weapon_flags`), 0 if unknown.
+    pub fn weapon_flags(&self, kind: &str) -> u8 {
+        self.weapon_flags.get(kind).copied().unwrap_or(0)
     }
 
     /// Looks a type up by nation member id (`EngMus(EN)`), ignoring case like the engine.
@@ -295,7 +435,7 @@ mod tests {
     fn compiles_motion_fields() {
         let t = ObjectType::from_def("EngMus(EN)", &UnitDef::parse(MUSKETEER.as_bytes()));
         assert_eq!((t.radius1, t.radius2, t.step, t.life), (1, 10, 40, 100));
-        assert_eq!(t.motion_l, Some(AnimInfo { directions: 9, frames: 10 }));
+        assert_eq!(t.motion_l, Some(AnimInfo { directions: 9, frames: 10, active: 0 }));
         assert!(t.mobile());
     }
 
@@ -319,27 +459,22 @@ LOCKPOINTS 2 7 49 260 80
     #[test]
     fn collects_attacks_and_protection() {
         let def = UnitDef::parse(
-            b"NAME M
-DAMAGE 0 15
-DAMAGE 1 380
-ATTACK_RADIUS 0 40 80
-ATTACK_RADIUS 1 250 850
-              ATTACK_PAUSE 1 550
-ATTACK_RADIUS 3 0 0
-WEAPONKIND 1 VISTREL
-WEAPON 1 SHOT
-              PROTECTION 2 PIKA 1 VISTREL 10
-SEARCH_ENEMY_RADIUS 850
-[END]
-",
+            b"NAME M\r\nUSERLC 0 G SHADOW 0 0\r\n@ATTACK1 9 0 0 67\r\nSETACTIVEPOINT #ATTACK1 13 1 2\r\n\
+              DAMAGE 0 15\r\nDAMAGE 1 380\r\nATTACK_RADIUS 0 40 80\r\nATTACK_RADIUS 1 250 850\r\n\
+              DET_RADIUS 1 250 7000\r\nATTACK_PAUSE 1 550\r\nWEAPONKIND 1 VISTREL\r\nWEAPON 1 SHOT\r\n\
+              CANKILL 1 BODY\r\nMATHERIAL 1 BODY\r\nNOPAUSEDATTACK 0\r\nPROTECTION 2 PIKA 1 VISTREL 300\r\n\
+              SEARCH_ENEMY_RADIUS 850\r\nSEARCH_ENEMY_RADIUS_SHIFT 70\r\n[END]\r\n",
         );
         let t = ObjectType::from_def("M(EN)", &def);
-        assert_eq!(t.attacks.len(), 2, "index 3 has no radius, damage or weapon");
+        assert_eq!(t.attacks.len(), ATTACK_SLOTS);
         let shot = &t.attacks[1];
-        assert_eq!((shot.index, shot.radius, shot.pause, shot.damage), (1, (250, 850), 550, 380));
-        assert_eq!((shot.kind.as_deref(), shot.weapon.as_deref()), (Some("VISTREL"), Some("SHOT")));
-        assert_eq!(t.protection, [("PIKA".into(), 1), ("VISTREL".into(), 10)]);
-        assert_eq!(t.search_radius, 850);
+        assert_eq!((shot.radius, shot.detect, shot.pause, shot.damage), ((250, 850), (250, 7000), 550, 380));
+        assert_eq!((shot.kind.as_str(), shot.weapon.as_deref(), shot.mask), ("VISTREL", Some("SHOT"), 1));
+        assert!(t.attacks[0].no_pause && !shot.no_pause && !t.attacks[3].usable());
+        assert_eq!(t.protection, [("PIKA".into(), 1), ("VISTREL".into(), 300 & 0xFF)]);
+        assert_eq!((t.search_radius, t.search_shift), (8000, 5600));
+        assert_eq!(t.anims["#ATTACK1"], AnimInfo { directions: 9, frames: 68, active: 13 });
+        assert_eq!(t.materials, 1);
     }
 
     #[test]

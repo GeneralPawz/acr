@@ -28,7 +28,10 @@ pub const SPEED_SH: i32 = 1;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EntityId(pub u32);
 
-/// Animation a unit plays.
+/// Animation a unit plays; [`AnimKind::name`] is the `.MD` animation slot to draw.
+///
+/// Attack-related slots carry the attack index `i` (`#ATTACK` for 0, `#ATTACKi` above);
+/// index `i` belongs to stance `i + 1`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AnimKind {
     Stand,
@@ -36,6 +39,42 @@ pub enum AnimKind {
     Rest1,
     MotionL,
     MotionR,
+    /// `#ATTACKi`: a strike or shot (and `#ATTACK3`, the musketeer's reload).
+    Attack(u8),
+    /// `#PATTACKi`: getting ready for stance `i + 1`.
+    PAttack(u8),
+    /// `#UATTACKi`: leaving stance `i + 1`.
+    UAttack(u8),
+    /// `#PSTANDi`: standing in stance `i + 1`.
+    PStand(u8),
+    /// `#TRANSX3` / `#TRANS3X`: into and out of the reload stance.
+    TransX3,
+    Trans3X,
+    /// `#DEATH`, then lying dead: `#DEATHLIE1..3`.
+    Death,
+    DeathLie(u8),
+}
+
+impl AnimKind {
+    /// The `.MD` animation name, e.g. `#ATTACK1`, `#DEATHLIE1`.
+    pub fn name(self) -> String {
+        let indexed = |base: &str, i: u8| if i == 0 { base.to_owned() } else { format!("{base}{i}") };
+        match self {
+            AnimKind::Stand => "#STAND".into(),
+            AnimKind::Rest => "#REST".into(),
+            AnimKind::Rest1 => "#REST1".into(),
+            AnimKind::MotionL => "#MOTION_L".into(),
+            AnimKind::MotionR => "#MOTION_R".into(),
+            AnimKind::Attack(i) => indexed("#ATTACK", i),
+            AnimKind::PAttack(i) => indexed("#PATTACK", i),
+            AnimKind::UAttack(i) => indexed("#UATTACK", i),
+            AnimKind::PStand(i) => indexed("#PSTAND", i),
+            AnimKind::TransX3 => "#TRANSX3".into(),
+            AnimKind::Trans3X => "#TRANS3X".into(),
+            AnimKind::Death => "#DEATH".into(),
+            AnimKind::DeathLie(n) => format!("#DEATHLIE{n}"),
+        }
+    }
 }
 
 /// An order on a unit's order stack (`LocalOrder` chain); the last one is executed.
@@ -46,6 +85,8 @@ pub enum Order {
     /// `SmartSendTo` (link 0x52b84a): route over the pathfinding areas to `(x, y) + offset`
     /// (world pixels), pushing `SendTo` legs to area centres.
     SmartSendTo { x: i32, y: i32, dx: i32, dy: i32, prio: u8, area: Option<u16> },
+    /// `AttackObj` (order type 3, link 0x51bcaf): fight a unit until it is dead.
+    Attack { target: EntityId, prio: u8 },
 }
 
 /// A unit or building (the engine's `OneObject`).
@@ -55,8 +96,12 @@ pub struct Unit {
     pub kind: TypeId,
     pub owner: PlayerId,
     pub building: bool,
+    /// The object exists. Dead units stay (as corpses) while `death > 0`; use
+    /// [`Unit::living`] for units that can act.
     pub alive: bool,
     pub life: i32,
+    /// `Sdoxlo`: 0 while living, then counts up while dying and lying dead.
+    pub death: u16,
     /// `RealX/RealY` (1/16 px).
     pub pos: Pos,
     /// `RealDir`, 0 = east, 64 = south.
@@ -87,6 +132,17 @@ pub struct Unit {
     pub path: PathState,
     /// Brigade (formation) this unit belongs to.
     pub brigade: Option<u16>,
+    /// Stance (`NewState`): 0 normal, `i + 1` for attack index `i`.
+    pub stance: u8,
+    /// Stance the animations have reached (`LocalNewState`).
+    pub local_stance: u8,
+    /// Reload counter in animation frames (`delay`, OB+0x8c).
+    pub delay: i32,
+    /// Kills (OB+0x51), for the skill damage bonus.
+    pub kills: u16,
+    /// Formation attack and defence bonus (OB+0x61 / OB+0x62).
+    pub attack_bonus: i32,
+    pub defence_bonus: i32,
 }
 
 impl Unit {
@@ -97,6 +153,19 @@ impl Unit {
 
     pub fn idle(&self) -> bool {
         self.orders.is_empty() && !self.in_motion
+    }
+
+    /// Exists and is not dead or dying.
+    pub fn living(&self) -> bool {
+        self.alive && self.death == 0
+    }
+
+    /// The unit's current attack target, if it has an attack order.
+    pub fn target(&self) -> Option<EntityId> {
+        match self.orders.last() {
+            Some(Order::Attack { target, .. }) => Some(*target),
+            _ => None,
+        }
     }
 }
 
@@ -149,6 +218,8 @@ pub struct World {
 pub struct Buckets {
     side: i32,
     cells: Vec<Vec<u32>>,
+    /// Owner and position of every unit at the start of the tick.
+    snapshot: Vec<(PlayerId, Pos)>,
 }
 
 impl Buckets {
@@ -158,12 +229,24 @@ impl Buckets {
         for c in &mut self.cells {
             c.clear();
         }
+        self.snapshot.clear();
+        self.snapshot.extend(units.iter().map(|u| (u.owner, u.pos)));
         for (i, u) in units.iter().enumerate() {
-            if u.alive && !u.building {
+            if u.living() && !u.building {
                 let (x, y) = ((u.cell.0 >> 3).clamp(0, self.side - 1), (u.cell.1 >> 3).clamp(0, self.side - 1));
                 self.cells[(y * self.side + x) as usize].push(i as u32);
             }
         }
+    }
+
+    /// `CheckMotionThroughEnemyAbility` (0x41df98): an enemy (not a building) in the 128 px
+    /// cell of `end` that stands within 32 px of `u`.
+    pub(crate) fn enemy_near(&self, u: &Unit, end: Pos) -> Option<usize> {
+        let (cx, cy) = (end.x >> 11, end.y >> 11);
+        self.get(cx, cy).iter().map(|&j| j as usize).find(|&j| {
+            let (owner, pos) = self.snapshot[j];
+            owner != u.owner && crate::trig::norma(u.pos.x - pos.x, u.pos.y - pos.y) < 0x200
+        })
     }
 
     pub fn get(&self, x: i32, y: i32) -> &[u32] {
@@ -271,6 +354,13 @@ impl World {
             orders: Vec::new(),
             path: PathState::default(),
             brigade: None,
+            death: 0,
+            stance: 0,
+            local_stance: 0,
+            delay: 0,
+            kills: 0,
+            attack_bonus: 0,
+            defence_bonus: 0,
         };
         if !unit.building && t.mobile() {
             self.occupancy.set_bar(cell.0, cell.1, lx);
@@ -279,8 +369,45 @@ impl World {
         id
     }
 
+    /// A unit that exists (living or dead), by id.
     pub fn unit(&self, id: EntityId) -> Option<&Unit> {
         self.units.get(id.0 as usize).filter(|u| u.alive)
+    }
+
+    /// Living units and buildings, in id order.
+    pub fn living(&self) -> impl Iterator<Item = &Unit> {
+        self.units.iter().filter(|u| u.living())
+    }
+
+    /// Living units and buildings of a player, in id order.
+    pub fn units_of(&self, player: PlayerId) -> impl Iterator<Item = &Unit> {
+        self.living().filter(move |u| u.owner == player)
+    }
+
+    /// Living units and buildings within `r` world pixels (octagonal `Norma` distance, like
+    /// the engine's zones) of `(x, y)`, in id order.
+    pub fn units_in_circle(&self, x: i32, y: i32, r: i32) -> impl Iterator<Item = &Unit> {
+        self.living().filter(move |u| {
+            let (ux, uy) = u.pos.pixels();
+            crate::trig::norma(ux - x, uy - y) <= r
+        })
+    }
+
+    /// Kills a unit as if it had been struck down (death animation, corpse).
+    pub fn kill(&mut self, id: EntityId) {
+        if self.unit(id).is_some_and(Unit::living) {
+            crate::combat::die(self, id.0 as usize);
+        }
+    }
+
+    /// Removes a unit at once, without a corpse (scripts' `RemoveUnits`, `EraseGroup`).
+    pub fn remove(&mut self, id: EntityId) {
+        let Some(u) = self.units.get_mut(id.0 as usize).filter(|u| u.alive) else { return };
+        if u.living() && !u.building {
+            self.occupancy.clr_bar(u.cell.0, u.cell.1, u.lx);
+        }
+        u.alive = false;
+        u.orders.clear();
     }
 
     /// Advances the world by one tick: applies the commands in order, then runs every unit
@@ -291,15 +418,17 @@ impl World {
         }
         crate::formation::run_brigades(self);
         self.buckets.rebuild(self.map.land.width, &self.units);
+        crate::combat::search_victims(self);
         for player in 0..PLAYERS as u8 {
             for i in 0..self.units.len() {
                 let u = &self.units[i];
-                if u.owner != player || !u.alive || u.building || !self.catalog.get(u.kind).mobile() {
+                if u.owner != player || !u.living() || u.building || !self.catalog.get(u.kind).mobile() {
                     continue;
                 }
                 crate::motion::process_unit(self, i);
             }
         }
+        crate::combat::object_loop(self);
         self.tick.0 += 1;
     }
 
@@ -307,7 +436,7 @@ impl World {
         let mut v: Vec<usize> = ids
             .iter()
             .map(|id| id.0 as usize)
-            .filter(|&i| self.units.get(i).is_some_and(|u| u.alive && u.owner == player))
+            .filter(|&i| self.units.get(i).is_some_and(|u| u.living() && u.owner == player))
             .collect();
         v.sort_unstable();
         v.dedup();
@@ -321,10 +450,10 @@ impl World {
                 crate::motion::group_send(self, &ids, *x, *y, None);
             }
             Command::Attack { player, units, target } => {
-                let Some(t) = self.unit(*target) else { return };
-                let (x, y) = t.pos.pixels();
-                let ids = self.owned(*player, units);
-                crate::motion::group_send(self, &ids, x, y, None);
+                let t = target.0 as usize;
+                for i in self.owned(*player, units) {
+                    crate::combat::attack_obj(self, i, t, crate::motion::PLAYER_PRIO);
+                }
             }
             Command::Stop { player, units } => {
                 for i in self.owned(*player, units) {

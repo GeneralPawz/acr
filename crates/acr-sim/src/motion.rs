@@ -29,16 +29,20 @@ fn layer<'a>(w: &'a crate::map::MapGrid, t: &ObjectType) -> &'a LockMap {
     }
 }
 
-fn set_anim(u: &mut Unit, t: &ObjectType, kind: AnimKind) {
-    let info = match kind {
-        AnimKind::Stand => t.stand,
-        AnimKind::Rest => t.rest,
-        AnimKind::Rest1 => t.rest1,
-        AnimKind::MotionL => t.motion_l,
-        AnimKind::MotionR => t.motion_r,
-    };
+/// Frames of an animation slot, if the type has it.
+pub(crate) fn anim_frames(t: &ObjectType, kind: AnimKind) -> Option<i32> {
+    t.anims.get(&kind.name()).map(|a| i32::from(a.frames))
+}
+
+/// Switches to an animation slot (1 frame if the type lacks it); the frame is not reset.
+pub(crate) fn set_anim(u: &mut Unit, t: &ObjectType, kind: AnimKind) {
     u.anim = kind;
-    u.anim_frames = info.map_or(1, |a| i32::from(a.frames));
+    u.anim_frames = anim_frames(t, kind).unwrap_or(1).max(1);
+}
+
+/// The first of `kinds` the type has, or `#STAND`.
+fn first_anim(t: &ObjectType, kinds: &[AnimKind]) -> AnimKind {
+    kinds.iter().copied().find(|&k| anim_frames(t, k).is_some()).unwrap_or(AnimKind::Stand)
 }
 
 /// `NewMonsterSendTo` (0x517470 / 0x517045): sets the steering point at once and gives the
@@ -154,16 +158,22 @@ fn apply_offset(g: &AreaGraph, m: &LockMap, x: i32, y: i32, dx: i32, dy: i32) ->
     (x, y)
 }
 
-/// Signal from the motion handler that the unit should clear its way.
-struct Push {
-    cell: (i32, i32),
+/// What the motion handler asks the caller to do with access to other units.
+enum Signal {
+    /// Clear the way into this cell (`RemoveFools`).
+    Push((i32, i32)),
+    /// An enemy stands in the way: attack it (`CheckMotionThroughEnemyAbility`).
+    Engage(usize),
 }
 
 /// Runs one unit for one tick: its order link, then the motion handler.
 pub fn process_unit(world: &mut World, i: usize) {
+    if let Some(Order::Attack { target, prio }) = world.units[i].orders.last().cloned() {
+        crate::combat::attack_link(world, i, target, prio);
+    }
     let catalog = world.catalog.clone();
     let map = world.map.clone();
-    let World { units, occupancy, random, .. } = world;
+    let World { units, occupancy, random, buckets, .. } = world;
     let u = &mut units[i];
     let t = catalog.get(u.kind);
     let lay = layer(&map, t);
@@ -172,10 +182,15 @@ pub fn process_unit(world: &mut World, i: usize) {
         Some(Order::SmartSendTo { x, y, dx, dy, prio, area }) => {
             smart_send_to_link(u, map.land_areas.as_ref(), lay, x, y, dx, dy, prio, area)
         }
+        Some(Order::Attack { .. }) => {}
         None => u.prio = 0,
     }
-    if let Some(push) = motion_handler(u, t, lay, occupancy, random) {
-        remove_fools(world, i, push.cell);
+    match motion_handler(u, t, lay, occupancy, random, buckets) {
+        Some(Signal::Push(cell)) => remove_fools(world, i, cell),
+        Some(Signal::Engage(j)) => {
+            crate::combat::attack_obj(world, i, j, 0x8F);
+        }
+        None => {}
     }
 }
 
@@ -282,7 +297,8 @@ fn motion_handler(
     m: &LockMap,
     occupancy: &mut LockMap,
     rnd: &mut SyncRandom,
-) -> Option<Push> {
+    buckets: &crate::world::Buckets,
+) -> Option<Signal> {
     if u.orders.is_empty() {
         u.dest = None;
     }
@@ -353,7 +369,12 @@ fn motion_handler(
         }
         try_to_stand(u, t, rnd, false);
         occupancy.set_bar(u.cell.0, u.cell.1, lx);
-        return need_push.then_some(Push { cell: (xf, yf) });
+        return need_push.then_some(Signal::Push((xf, yf)));
+    }
+    if let Some(j) = buckets.enemy_near(u, end) {
+        // The cell stays unreserved, as in the original.
+        try_to_stand(u, t, rnd, false);
+        return Some(Signal::Engage(j));
     }
     u.vel = (0, 0);
     try_to_move(u, t, m, rnd, d);
@@ -369,6 +390,10 @@ fn motion_handler(
 /// `TryToMove` (0x50b021) for a unit in the normal stance, walking forwards.
 fn try_to_move(u: &mut Unit, t: &ObjectType, m: &LockMap, rnd: &mut SyncRandom, d: u8) {
     rnd.rando();
+    if u.local_stance != u.stance {
+        try_to_stand(u, t, rnd, false);
+        return;
+    }
     let nf = t.motion_frames() >> SPEED_SH;
     let (odx, ody) = (t.step_dx(d) << SPEED_SH, t.step_dy(d) << SPEED_SH);
     let end = Pos::new(u.pos.x + nf * odx, u.pos.y + nf * ody);
@@ -381,6 +406,12 @@ fn try_to_move(u: &mut Unit, t: &ObjectType, m: &LockMap, rnd: &mut SyncRandom, 
         (_, _, true) => AnimKind::MotionR,
         _ => AnimKind::Stand,
     };
+    if u.stance != 0 {
+        // Walking in an attack stance (#MOTION_Lk) is not modelled; leave the stance first.
+        u.stance = 0;
+        try_to_stand(u, t, rnd, false);
+        return;
+    }
     u.dir = d;
     set_anim(u, t, kind);
     u.left_leg = !u.left_leg;
@@ -392,13 +423,38 @@ fn try_to_move(u: &mut Unit, t: &ObjectType, m: &LockMap, rnd: &mut SyncRandom, 
     u.stand_time = 0;
 }
 
-/// `TryToStand` (0x50a8c5) in the normal stance; `rest` may start an idle animation.
-fn try_to_stand(u: &mut Unit, t: &ObjectType, rnd: &mut SyncRandom, rest: bool) {
+/// `TryToStand` (0x50a8c5): stops, changes stance through the transition animations
+/// (`#PATTACKi` up, `#UATTACKi` down, `#TRANSX3`/`#TRANS3X` around the reload stance 4),
+/// shows `#PSTANDi` in a stance, and may start an idle animation (`rest`) in stance 0.
+pub(crate) fn try_to_stand(u: &mut Unit, t: &ObjectType, rnd: &mut SyncRandom, rest: bool) {
     rnd.rando();
     u.stand_time = u.stand_time.wrapping_add(1);
     u.in_motion = false;
     if u.frame < u.anim_frames - FRM_DEC {
         return; // only a finished animation is replaced
+    }
+    if u.stance != u.local_stance {
+        let (ns, ls) = (u.stance, u.local_stance);
+        let bit = |s: u8| s > 0 && t.trans_x & (1 << (s - 1)) != 0;
+        let (kind, reached) = if ls == 0 {
+            (first_anim(t, &[AnimKind::PAttack(ns - 1), AnimKind::PStand(ns - 1)]), ns)
+        } else if ns == 4 && bit(ls) && anim_frames(t, AnimKind::TransX3).is_some() {
+            (AnimKind::TransX3, 4)
+        } else if ls == 4 && ns != 0 && bit(ns) && anim_frames(t, AnimKind::Trans3X).is_some() {
+            (AnimKind::Trans3X, ns)
+        } else {
+            (first_anim(t, &[AnimKind::UAttack(ls - 1)]), 0)
+        };
+        u.local_stance = reached;
+        set_anim(u, t, kind);
+        u.frame = 0;
+        return;
+    }
+    if u.stance != 0 {
+        let kind = first_anim(t, &[AnimKind::PStand(u.stance - 1)]);
+        set_anim(u, t, kind);
+        u.frame = 0;
+        return;
     }
     let mut kind = AnimKind::Stand;
     if rest && rnd.rando() < 512 {
@@ -444,6 +500,9 @@ fn remove_fools(world: &mut World, mover_idx: usize, cell: (i32, i32)) {
         }
     }
     let Some(j) = found else { return };
+    if world.units[j].death != 0 {
+        return;
+    }
     let finished = world.units[j].frame >= world.units[j].anim_frames - FRM_DEC;
     if world.units[j].stand_time > 20 && world.units[j].lx == lx && finished {
         let (a, b) = (mover_idx.min(j), mover_idx.max(j));
@@ -527,7 +586,7 @@ fn place(world: &World, ids: &[usize], x: i32, y: i32, vx: i32, vy: i32) -> Vec<
     if vx == 0 && vy == 0 {
         vx = 1;
     }
-    let mut units: Vec<usize> = ids.iter().copied().filter(|&i| world.units[i].alive).collect();
+    let mut units: Vec<usize> = ids.iter().copied().filter(|&i| world.units[i].living()).collect();
     let n = units.len() as i32;
     if n == 0 {
         return Vec::new();

@@ -16,6 +16,7 @@
 pub mod assets;
 pub mod catalog;
 pub mod clock;
+pub mod combat;
 pub mod command;
 pub mod fixed;
 pub mod formation;

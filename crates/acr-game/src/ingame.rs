@@ -429,7 +429,7 @@ impl InGame {
                 let (Some(frame), Some(on), Some(name)) = (c.int(0), c.word(1), c.word(2)) else { continue };
                 // Animation names may carry a variant digit (`#MOTION_L0`).
                 let base = on.trim_end_matches(|ch: char| ch.is_ascii_digit());
-                if frame == u.frame && base.eq_ignore_ascii_case(anim) {
+                if frame == u.frame && base.eq_ignore_ascii_case(&anim) {
                     events.push(SoundEvent { name: name.to_owned(), pan, volume });
                 }
             }
@@ -448,7 +448,7 @@ impl InGame {
             let kind = world.catalog.get(u.kind);
             let anim = anim_name(u.anim);
             let step = if u.building { 0 } else { u.frame.max(0) as usize };
-            let Some(look) = objects.animation_look(&kind.id, anim, u.dir, step) else { continue };
+            let Some(look) = objects.animation_look(&kind.id, &anim, u.dir, step) else { continue };
             let (x, y) = (u.pos.x >> 4, u.pos.y >> 4);
             let h = terrain.height_at(x, y);
             for (frame, (ox, oy), layer, row) in look.parts {
@@ -475,12 +475,6 @@ impl InGame {
 }
 
 /// The `.MD` animation a simulation animation plays.
-fn anim_name(kind: AnimKind) -> &'static str {
-    match kind {
-        AnimKind::Stand => "#STAND",
-        AnimKind::Rest => "#REST",
-        AnimKind::Rest1 => "#REST1",
-        AnimKind::MotionL => "#MOTION_L",
-        AnimKind::MotionR => "#MOTION_R",
-    }
+fn anim_name(kind: AnimKind) -> String {
+    kind.name()
 }
