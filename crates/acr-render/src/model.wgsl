@@ -8,7 +8,10 @@
 // the first texel of their pose.
 //
 // Decay (docs/assets-humans.md): `COLOR_0` of a decaying material is the mask (R noise, G
-// fray); each material has its layer's windows; per corpse one `decay` value.
+// fray); each material has its layer's windows; per corpse one `decay` value. Models
+// without masks (the animals, `material.look.w`) rot by a procedural fallback: noise from
+// the rest position for the discolour and the dissolve, and the collapse and sink applied
+// after the palette (in model space), so physics poses sink too (docs/rendering-3d.md).
 //
 // Wounds (docs/rendering-3d.md): per corpse the direction of the blow, blood, dirt, burns
 // and the number and size of the wounds. They are placed in the rest pose (the bind
@@ -48,7 +51,7 @@ struct Material {
     // (0: none), w: bone layer (no wounds).
     flags: vec4<f32>,
     // x: stump cap (wet, ragged outline from the uv), y: tissue kind, z: per-soldier tint
-    // (1 skin, 2 hair).
+    // (1 skin, 2 hair), w: procedural decay (a model without masks).
     look: vec4<f32>,
 };
 
@@ -225,8 +228,15 @@ fn vs_main(v: VertexIn, inst: InstanceIn) -> VsOut {
         let b = (v.position - vec3<f32>(0.0, pc.z, 0.12)) / vec3<f32>(0.13, 0.1, 0.12);
         belly = select(0.0, belly * clamp(1.0 - length(b), 0.0, 1.0), part == 0);
     }
-    let local = apply(r0, r1, r2, vec4<f32>(p, 1.0));
+    var local = apply(r0, r1, r2, vec4<f32>(p, 1.0));
     let local_n = apply(r0, r1, r2, vec4<f32>(n, 0.0));
+    // Procedural decay: the carcass collapses towards the ground and sinks into it (model
+    // space, metres, +y up from the ground point; after the palette, so physics poses too).
+    let decay = inst.params.x;
+    if (material.look.w > 0.5 && decay > 0.0) {
+        let collapse = ramp(decay, 0.15, 0.6) * (0.3 + 0.12 * noise3(v.position * 3.0));
+        local.y = local.y * (1.0 - collapse) - DECAY_SINK * ramp(decay, 0.7, 1.0);
+    }
     let world = apply(inst.row0, inst.row1, inst.row2, vec4<f32>(local, 1.0));
     let world_n = apply(inst.row0, inst.row1, inst.row2, vec4<f32>(local_n, 0.0));
     var out: VsOut;
@@ -249,6 +259,34 @@ fn vs_main(v: VertexIn, inst: InstanceIn) -> VsOut {
         out.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0);
     }
     return out;
+}
+
+// How far a carcass without masks sinks into the ground at the end (metres).
+const DECAY_SINK: f32 = 0.3;
+
+// Procedural decay of a model without masks: mottled darkening towards grey-green and
+// brown-black as it rots, a ragged dissolve at the end with a dark rim. `discard` is
+// signalled by a negative red.
+fn rot(rgb_in: vec3<f32>, rest: vec3<f32>, decay: f32, dissolve: bool) -> vec3<f32> {
+    let mottle = 0.6 * noise3(rest * 7.0) + 0.4 * noise3(rest * 23.0 + vec3<f32>(5.3));
+    let lum = dot(rgb_in, vec3<f32>(0.3, 0.55, 0.15));
+    // Grey-green rot in the patches, brown-black elsewhere, keeping some of the pattern.
+    let rotten = mix(vec3<f32>(0.10, 0.07, 0.045), vec3<f32>(0.21, 0.21, 0.13), smoothstep(0.45, 0.7, mottle))
+        * (0.55 + 0.9 * lum);
+    var rgb = mix(rgb_in, rotten, ramp(decay, 0.02, 0.55) * (0.5 + 0.5 * mottle));
+    rgb = rgb * mix(1.0, 0.5, ramp(decay, 0.1, 0.85));
+    if (dissolve) {
+        let p = ramp(decay, 0.62, 1.0);
+        let mask = 0.65 * noise3(rest * 5.0 + vec3<f32>(1.9)) + 0.35 * noise3(rest * 19.0);
+        let th = p * 1.12;
+        if (p > 0.0 && mask <= th) {
+            return vec3<f32>(-1.0);
+        }
+        if (p > 0.0 && mask - th < 0.06) {
+            rgb = vec3<f32>(0.09, 0.05, 0.035);
+        }
+    }
+    return rgb;
 }
 
 fn ramp(x: f32, a: f32, b: f32) -> f32 {
@@ -575,6 +613,12 @@ fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
             if (p > 0.0 && mask - th < material.edge.w) {
                 rgb = material.edge.rgb;
             }
+        }
+    }
+    if (material.look.w > 0.5 && decay > 0.0) {
+        rgb = rot(rgb, in.rest.xyz, decay, globals.params.y > 0.5);
+        if (rgb.r < 0.0) {
+            discard;
         }
     }
     if (material.flags.w < 0.5 && in.wounds0.z + in.wounds0.w + in.wounds1.x > 0.0) {
