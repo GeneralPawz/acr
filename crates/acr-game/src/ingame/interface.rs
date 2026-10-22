@@ -170,6 +170,9 @@ pub struct State {
     form_menu: u16,
     /// An officer just ordered to form: its formation is selected once formed (0x41f198).
     select_formed: Option<EntityId>,
+    /// The attack-ground icon was pressed: the next click on the map is the point to
+    /// bombard (`0x28ead0b`).
+    pub attack_ground_mode: bool,
     /// Space cycles through the selection (0x4c6020).
     next_centred: usize,
     /// The market's amount and chosen slots (ECO+0x2a0, +0x2a4, +0x2a8), kept for the game.
@@ -228,6 +231,7 @@ impl Default for State {
             form_officer: None,
             form_menu: 0,
             select_formed: None,
+            attack_ground_mode: false,
             next_centred: 0,
             market_amount: 0,
             market_sell: None,
@@ -524,6 +528,7 @@ impl InGame {
         }
         self.officer_icons(ctx, &data, outline, &mut view.icons);
         self.state_icons(ctx, &data, outline, &mut view.icons);
+        self.attack_ground_icon(ctx, &data, outline, &mut view.icons);
         self.idle_icons(&data, outline, &mut view.icons);
         self.switch_icons(ctx, &data, outline, &mut view.icons);
         let Some(world) = &self.world else { return view };
@@ -821,6 +826,38 @@ impl InGame {
                 push(frame, slot, "ANYATTACK", off, HudCommand::MeleeOnly(false));
             }
         }
+    }
+
+    /// The attack-ground icon (0x5f6385): `NRES.DAT`'s `ATTACKGROUND icon slot` (parsed by
+    /// 0x4ec18c; `Attack_Ground` at slot 13) with the hint `ATGHINT`, outside missions (no
+    /// mission script, SCENINF+0x10 0x28b7758 is 0) when every selected object that is not
+    /// dying has a type with `ARTPODGOTOVKA` (NM+0x172c bit 1; the cannons) and there is
+    /// one. A click (0x5f5dad) starts the mode `0x28ead0b`: cursor frame 9 (0x66a910,
+    /// 0x4c24c3) until the next click on the map, which sends network command 0x57
+    /// (0x4d8344, `AttackGround`) at that point ([`Self::attack_ground_at`]); Escape ends it
+    /// (0x4a3218).
+    ///
+    /// The brigade panel (0x607347) offers it too, for formations of such types, which the
+    /// game data has none of.
+    fn attack_ground_icon(&self, ctx: &Ctx, data: &HudData, outline: u8, icons: &mut Vec<Icon>) {
+        let Some(world) = &self.world else { return };
+        let Some((frame, slot)) = data.attack_ground else { return };
+        if self.mission.has_script() {
+            return;
+        }
+        let mut objects = self.selected_units().filter(|u| u.death == 0).peekable();
+        if objects.peek().is_none() || !objects.all(|u| world.catalog.get(u.kind).ground_attack) {
+            return;
+        }
+        icons.push(Icon {
+            frame,
+            slot,
+            outline: Some(outline),
+            selected: self.interface.attack_ground_mode,
+            hint: ctx.texts.get("ATGHINT").to_vec(),
+            action: Some(HudCommand::AttackGroundMode),
+            ..Icon::default()
+        });
     }
 
     /// The first selected object's idle icons (0x5f63f0): a finished own object whose type has
@@ -1414,6 +1451,7 @@ impl InGame {
             HudCommand::AttackMode => self.interface.attack_mode = !self.interface.attack_mode,
             // 0x606650: the next left click on the map sets the patrol point (0x4c28aa).
             HudCommand::PatrolMode => self.interface.patrol_mode = true,
+            HudCommand::AttackGroundMode => self.interface.attack_ground_mode = true,
             HudCommand::HoldFire(hold) => {
                 let units = self.own_selected_units();
                 self.commands.push(Command::HoldFire { player, units, hold });
@@ -1700,6 +1738,8 @@ impl InGame {
         let frame = match self.cursor.filter(|_| !over_hud && !modal).and_then(|c| self.context_order(c)) {
             // The patrol point cursor (`0x66a90c`, 0x4c5311).
             _ if self.interface.patrol_mode && !over_hud => cursor::frame::PATROL,
+            // The attack-ground cursor (`0x66a910`, 0x4c24c3).
+            _ if self.interface.attack_ground_mode && !over_hud => cursor::frame::ATTACK_GROUND,
             Some(context) => context.cursor(),
             None => cursor::frame::ARROW,
         };
@@ -1819,10 +1859,12 @@ impl InGame {
             let def = objects.definition(&world.catalog.get(kind).id);
             let look = def.and_then(|d| {
                 let anim = acr_render::scene::idle_animation(d)?;
-                // The preview shows the sections' state-0 frames too (0x4bdeaf).
-                acr_render::scene::animation_look(d, anim, 0, 0, Some(0), |p| {
-                    ctx.lib.sprites(p).map(|g| g.frame_count())
-                })
+                let frames = |p: &str| ctx.lib.sprites(p).map(|g| g.frame_count());
+                // The preview shows the sections' state-0 frames (0x4bdeaf) and the first
+                // `#WORK` frame (0x4be467) too.
+                let mut look = acr_render::scene::animation_look(d, anim, 0, 0, Some(0), frames)?;
+                look.parts.extend(acr_render::scene::work_part(d, 0, frames));
+                Some(look)
             });
             if let Some(look) = look {
                 let h = terrain.height_at(sx, sy);
@@ -2024,6 +2066,17 @@ impl InGame {
         GameMouse::None
     }
 
+    /// A click on the map in the attack-ground mode, with either button (0x4c28dc tests the
+    /// left `0x7c9591` and the right `0x7c9dac`): the mode ends and the selection gets
+    /// network command 0x57 at that point (0x4c48c5); the simulation keeps the player's
+    /// `ARTPODGOTOVKA` units (0x4d870c).
+    fn attack_ground_at(&mut self, at: [f32; 2]) {
+        self.interface.attack_ground_mode = false;
+        let (x, y) = self.world_at(at);
+        let units = self.selected.clone();
+        self.commands.push(Command::AttackGround { player: self.own(), units, x, y });
+    }
+
     /// A left click on the map in the build mode (`Build` with the selected units; Shift
     /// keeps the mode) or while picking a rally point. True if it was used.
     fn map_click(&mut self, at: [f32; 2]) -> bool {
@@ -2037,6 +2090,10 @@ impl InGame {
                 self.unit_sound(first, "ORDER_SOUND");
             }
             self.commands.push(Command::Patrol { player, units, x, y });
+            return true;
+        }
+        if self.interface.attack_ground_mode {
+            self.attack_ground_at(at);
             return true;
         }
         if self.interface.rally_mode {
@@ -2164,6 +2221,7 @@ impl InGame {
                 self.commands.push(Command::Move { player, units: self.selected.clone(), x, y });
                 self.unit_sound(self.selected[0], "ORDER_SOUND");
             }
+            HudEvent::None if self.interface.attack_ground_mode => self.attack_ground_at(at),
             HudEvent::None if self.cancel_mode() => {}
             HudEvent::None => {
                 if self.selected.is_empty() {
@@ -2241,10 +2299,14 @@ impl InGame {
 
     /// Leaves the build mode or the rally point mode; false if neither was on.
     pub(super) fn cancel_mode(&mut self) -> bool {
-        let on = self.interface.placing.is_some() || self.interface.rally_mode || self.interface.patrol_mode;
+        let on = self.interface.placing.is_some()
+            || self.interface.rally_mode
+            || self.interface.patrol_mode
+            || self.interface.attack_ground_mode;
         self.interface.placing = None;
         self.interface.rally_mode = false;
         self.interface.patrol_mode = false;
+        self.interface.attack_ground_mode = false;
         on
     }
 

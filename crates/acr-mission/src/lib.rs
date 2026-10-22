@@ -210,6 +210,11 @@ impl Scripts {
         self.state.land_type[usize::from(nation & 7)] = land;
     }
 
+    /// Whether a mission script is loaded (the engine's SCENINF+0x10, 0x28b7758).
+    pub fn has_mission(&self) -> bool {
+        self.mission.is_some()
+    }
+
     /// Whether `DipServer.dll` runs.
     pub fn has_diplomacy(&self) -> bool {
         self.dip.is_some()

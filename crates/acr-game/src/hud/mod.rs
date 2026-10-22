@@ -144,6 +144,9 @@ pub enum HudCommand {
     AttackMode,
     /// The patrol icon (`HPATROL`, 0x606650): the next map click sets the patrol point.
     PatrolMode,
+    /// `ATTACKGROUND` (`ATGHINT`, 0x5f5dad): the next map click is the point the selected
+    /// cannons bombard.
+    AttackGroundMode,
     /// `ENABLE_ATTACK` / `DISABLE_ATTACK` (`SetSearchVictim`, 0x4d76cf): hold fire or not.
     HoldFire(bool),
     /// `SHOTMYUNITS` / `KEEPMYUNITS` (network command 0x5e): shoot through own units or not.

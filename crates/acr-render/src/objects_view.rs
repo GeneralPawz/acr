@@ -29,10 +29,6 @@ pub struct ObjectsView {
     dynamic_units: bool,
     /// Sprites to merge into the scene this frame, see [`ObjectsView::set_dynamic`].
     dynamic: Vec<SceneSprite>,
-    /// Packs requested by [`ObjectsView::want_units`] that have not arrived yet.
-    late_packs: Vec<String>,
-    /// A late pack arrived: its frames are added to the atlas.
-    grow: bool,
     /// The zoomed-out view: sprites come from their `L_Mode` twins.
     pub zoomed: bool,
 }
@@ -55,8 +51,6 @@ impl ObjectsView {
             shown: true,
             dynamic_units: false,
             dynamic: Vec::new(),
-            late_packs: Vec::new(),
-            grow: false,
             zoomed: false,
         }
     }
@@ -74,15 +68,19 @@ impl ObjectsView {
     }
 
     /// Loads the packs of object types that appear during the game (produced units, placed
-    /// buildings), given as map unit ids; their frames are added to the atlas as they arrive.
+    /// buildings), given as map unit ids; their frames are uploaded when first drawn.
     pub fn want_units<'a>(&mut self, ids: impl IntoIterator<Item = &'a str>, load: Loader<'_>) {
         if !self.assets.definitions_ready() {
             return;
         }
         for pack in self.assets.packs_for_units(ids) {
             load(&pack);
-            self.late_packs.push(pack);
         }
+    }
+
+    /// The `.MD` names of object ids ([`MapObjects::set_names`]).
+    pub fn set_names<'a>(&mut self, names: impl IntoIterator<Item = (&'a str, &'a str)>) {
+        self.assets.set_names(names);
     }
 
     /// The loaded definitions and packs.
@@ -119,19 +117,7 @@ impl ObjectsView {
         for more in self.assets.add_file(path, bytes) {
             load(&more);
         }
-        self.late_pack_done(path);
         ours
-    }
-
-    /// A late pack arrived or failed: its frames go into the atlas. Only the new frames are
-    /// uploaded; rebuilding the whole atlas froze the game for most of a second whenever a
-    /// building or unit type appeared for the first time.
-    fn late_pack_done(&mut self, path: &str) {
-        let before = self.late_packs.len();
-        self.late_packs.retain(|p| p != path);
-        if self.late_packs.len() < before {
-            self.grow = true;
-        }
     }
 
     /// Whether `path` is a file this layer asked for.
@@ -141,7 +127,6 @@ impl ObjectsView {
 
     pub fn on_failed(&mut self, path: &str) {
         self.assets.file_failed(path);
-        self.late_pack_done(path);
     }
 
     /// Forgets the scene of the previous map.
@@ -176,20 +161,9 @@ impl ObjectsView {
         if let Some(palette) = self.palette.take() {
             renderer.set_palette(queue, &palette);
         }
-        let Some(scene) = &self.scene else { return };
-        if self.atlas.is_some() && !self.grow {
-            return;
-        }
-        let mut frames = self.assets.with_zoom_frames(scene.frames());
-        if self.dynamic_units {
-            frames.extend(self.assets.unit_frames());
-            frames.sort();
-            frames.dedup();
-        }
-        self.grow = false;
-        match &mut self.atlas {
-            Some(atlas) => self.assets.upload_more(renderer, device, queue, atlas, frames),
-            None => self.atlas = Some(self.assets.upload(renderer, device, queue, frames)),
+        if self.scene.is_some() && self.atlas.is_none() {
+            // Frames are uploaded as they are first drawn ([`ObjectsView::render`]).
+            self.atlas = Some(self.assets.atlas(renderer, device, queue));
         }
     }
 
@@ -236,11 +210,22 @@ impl ObjectsView {
         placement: Option<Placement<'_>>,
     ) -> bool {
         let (Some(scene), Some(atlas), Some(renderer), true) =
-            (&self.scene, &self.atlas, &mut self.renderer, self.shown)
+            (&self.scene, &mut self.atlas, &mut self.renderer, self.shown)
         else {
             return false;
         };
-        let draws = atlas.placed_draws(scene, &self.dynamic, camera, size, self.zoomed, placement);
+        let draws = atlas.draws_uploading(
+            &self.assets,
+            renderer,
+            device,
+            queue,
+            scene,
+            &self.dynamic,
+            camera,
+            size,
+            self.zoomed,
+            placement,
+        );
         renderer.prepare(device, queue, &atlas.atlas, size, &draws);
         true
     }

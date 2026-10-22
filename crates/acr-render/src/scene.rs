@@ -8,7 +8,7 @@
 //! object's ground position `y / 2` *without* its height (0x4D0930); the frame is drawn at
 //! `(x − DX, y / 2 − height − DY)`. See `docs/formats/terrain.md`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use acr_formats::defs::UnitDef;
 use acr_formats::m3d::{M3dMap, SpriteGroup};
@@ -131,14 +131,15 @@ pub fn idle_animation(def: &UnitDef) -> Option<&acr_formats::defs::md::Animation
     names.iter().find_map(|n| def.animation(n)).or_else(|| def.animations.first())
 }
 
-/// The sprite packs an object type needs: a building's idle, construction (`#BUILDLO_k`) and
-/// ruin animations and its sections (`ADDSECTION`), every animation of a unit (the
+/// The sprite packs an object type needs: a building's idle, `#WORK`, construction
+/// (`#BUILDLO_k`) and ruin animations and its sections (`ADDSECTION`), every animation of a
+/// unit (the
 /// simulation plays walking, fighting and dying, see `acr_sim::world::AnimKind`).
 pub fn unit_packs(def: &UnitDef) -> Vec<String> {
     let anims: Vec<&acr_formats::defs::md::Animation> = if def.is_building() {
         let stages = def.animations.iter().filter(|a| {
             let n = a.name.to_ascii_uppercase();
-            n.starts_with("#BUILDLO") || n.starts_with("#DEATHLIE")
+            n.starts_with("#BUILDLO") || n.starts_with("#DEATHLIE") || n == "#WORK"
         });
         idle_animation(def).into_iter().chain(stages).collect()
     } else {
@@ -164,9 +165,12 @@ pub fn unit_packs(def: &UnitDef) -> Vec<String> {
 /// A unit shows the first frame. Frame `f` of stored direction `d` is `f · dirs + d`, with
 /// `d` from [`sprite_direction`] (see `docs/simulation.md`, "Directions and sprites").
 ///
-/// A building on a map is finished with no section built: its sections show state 0.
+/// A building on a map is finished with no section built: its sections show state 0, its
+/// `#WORK` animation its first frame ([`work_part`]).
 pub fn unit_look(def: &UnitDef, direction: u8, frames_in: impl Fn(&str) -> Option<usize>) -> Option<UnitLook> {
-    animation_look(def, idle_animation(def)?, direction, 0, def.is_building().then_some(0), frames_in)
+    let mut look = animation_look(def, idle_animation(def)?, direction, 0, def.is_building().then_some(0), &frames_in)?;
+    look.parts.extend(work_part(def, 0, &frames_in));
+    Some(look)
 }
 
 /// The frames of animation `anim` of `def` at animation frame `step`, facing `direction`.
@@ -223,6 +227,45 @@ pub fn animation_look(
         .chain(sections.into_iter().flat_map(|stages| section_parts(def, stages, &frames_in)))
         .collect::<Vec<_>>();
     (!parts.is_empty()).then_some(UnitLook { parts, mirrored })
+}
+
+/// The frame of a finished building's `#WORK` animation at `step` (wrapping), drawn on top of
+/// its `#STANDLO` parts: the mills' turning wheels, the coal mine's hoist. A finished
+/// building's current animation (OB+0x10d) is `#WORK` (set with `#STANDLO` and `#STANDHI`
+/// when it is done, 0x523924, and at creation, 0x554b8e); the object draw (0x50927a) shows
+/// its frame OB+0xec (back to 0 at the frame count) at the picture origin plus the
+/// frame's offset, sorted at the ground point plus `ANMSH` (NM+0x2890, 16 by default)
+/// and the frame's y offset, and steps the counter by one while the game runs
+/// (`0x668f22`, 0x509480). The `#STANDLO` pictures leave holes for it.
+pub fn work_part(
+    def: &UnitDef,
+    step: usize,
+    frames_in: impl Fn(&str) -> Option<usize>,
+) -> Option<(FrameKey, (i32, i32), Layer, i32)> {
+    if !def.is_building() {
+        return None;
+    }
+    let refs = def.animation("#WORK")?.frame_refs();
+    let r = refs.get(step % refs.len().max(1))?;
+    let set = def.sprite(r.sprite)?;
+    let pack = set.gp_path();
+    let frame = r.frame.max(0) as usize;
+    if frame >= frames_in(&pack)? {
+        return None;
+    }
+    let location = def.get("LOCATION").map_or((0, 0), |c| (c.int(0).unwrap_or(0), c.int(1).unwrap_or(0)));
+    // `ANMSH` is not in the keyword table: its value stays among the ignored tokens.
+    let shift = def
+        .get("ANMSH")
+        .and_then(|c| c.int(0).or_else(|| c.ignored.first().and_then(acr_formats::defs::Value::as_int)))
+        .unwrap_or(16);
+    let offset = (set.offset.0 + location.0, set.offset.1 + location.1);
+    Some(((pack, frame), offset, Layer::Sorted, shift + set.offset.1))
+}
+
+/// The number of frames of a building's `#WORK` animation (its counter wraps there).
+pub fn work_frames(def: &UnitDef) -> Option<usize> {
+    def.is_building().then(|| def.animation("#WORK")).flatten().map(|a| a.frame_refs().len()).filter(|&n| n > 0)
 }
 
 /// The frames a finished building's sections (`ADDSECTION`) add in the section states
@@ -422,6 +465,10 @@ pub struct MapObjects {
     defs_pending: Option<usize>,
     /// Unit definitions by upper-case `NAME`.
     defs: HashMap<String, UnitDef>,
+    /// Upper-case object id → upper-case `.MD` `NAME`, from the nations' `[MEMBERS]` where
+    /// they differ from the id's own name (`SpnCoa(FR)` is `SpnRudCo`), see
+    /// [`MapObjects::set_names`].
+    names: HashMap<String, String>,
     /// Requested sprite packs; `None` while loading.
     packs: HashMap<String, Option<acr_formats::GpFile>>,
     /// Packs that could not be read; not requested again (zoomed-out twins are often
@@ -571,9 +618,20 @@ impl MapObjects {
         out
     }
 
-    /// The definition of a map unit id such as `EngM18(EN)`.
+    /// The definition of a map unit id such as `EngM18(EN)`: by its nation's `[MEMBERS]`
+    /// entry when one was given ([`MapObjects::set_names`]), else by the id's name.
     pub fn definition(&self, unit_id: &str) -> Option<&UnitDef> {
-        self.defs.get(&definition_name(unit_id))
+        let named = self.names.get(&unit_id.to_ascii_uppercase()).and_then(|n| self.defs.get(n));
+        named.or_else(|| self.defs.get(&definition_name(unit_id)))
+    }
+
+    /// The `.MD` names of object ids (the nations' `[MEMBERS]`, e.g. from the simulation's
+    /// catalog). Without them, ids whose name differs from their definition's (the Spanish
+    /// coal, iron and stone mines `SpnCoa`, `SpnIro`, `SpnStn`) have no picture.
+    pub fn set_names<'a>(&mut self, names: impl IntoIterator<Item = (&'a str, &'a str)>) {
+        for (id, md) in names {
+            self.names.insert(id.to_ascii_uppercase(), md.to_ascii_uppercase());
+        }
     }
 
     /// A loaded sprite pack.
@@ -629,18 +687,17 @@ impl MapObjects {
     /// Requests the packs `map` needs; returns the paths to load. Call when the
     /// definitions are complete ([`MapObjects::definitions_ready`]).
     pub fn packs_for(&mut self, map: &M3dMap) -> Vec<String> {
-        let mut names: Vec<String> = map.units.iter().map(|u| definition_name(&u.name)).collect();
+        let mut names: Vec<&str> = map.units.iter().map(|u| u.name.as_str()).collect();
         names.sort_unstable();
         names.dedup();
-        let packs: Vec<String> = names.iter().filter_map(|n| self.defs.get(n)).flat_map(unit_packs).collect();
+        let packs: Vec<String> = names.iter().filter_map(|n| self.definition(n)).flat_map(unit_packs).collect();
         packs.iter().flat_map(|p| self.want_pack(p)).collect()
     }
 
     /// Requests the packs of object types (map unit ids such as `EngSkl(EN)`) that appear
     /// during the game; returns the paths to load.
     pub fn packs_for_units<'a>(&mut self, ids: impl IntoIterator<Item = &'a str>) -> Vec<String> {
-        let packs: Vec<String> =
-            ids.into_iter().filter_map(|id| self.defs.get(&definition_name(id))).flat_map(unit_packs).collect();
+        let packs: Vec<String> = ids.into_iter().filter_map(|id| self.definition(id)).flat_map(unit_packs).collect();
         packs.iter().flat_map(|p| self.want_pack(p)).collect()
     }
 
@@ -685,50 +742,22 @@ impl MapObjects {
         animation_look(def, animation, direction, step, sections, |p| self.frame_count(p))
     }
 
-    /// `keys` plus the frames of their zoomed-out twins that are loaded.
-    pub fn with_zoom_frames(&self, mut keys: Vec<FrameKey>) -> Vec<FrameKey> {
-        let twins: Vec<FrameKey> = keys
-            .iter()
-            .filter_map(|(p, f)| {
-                let z = zoom_pack(p)?;
-                (*f < self.pack(&z)?.frame_count()).then_some((z, *f))
-            })
-            .collect();
-        keys.extend(twins);
-        keys.sort();
-        keys.dedup();
-        keys
+    /// The `#WORK` frame of a finished building of type `unit_id` at `step` ([`work_part`]).
+    pub fn work_part(&self, unit_id: &str, step: usize) -> Option<(FrameKey, (i32, i32), Layer, i32)> {
+        work_part(self.definition(unit_id)?, step, |p| self.frame_count(p))
     }
 
-    /// Every frame of every pack loaded for units, for uploading next to a static scene.
-    pub fn unit_frames(&self) -> Vec<FrameKey> {
-        let lists: Vec<String> = self.lists.values().map(SpriteList::gp_path).collect();
-        let mut frames: Vec<FrameKey> = self
-            .packs
-            .iter()
-            .filter(|(path, _)| !lists.contains(path))
-            .filter_map(|(path, gp)| Some((path, gp.as_ref()?.frame_count())))
-            .chain(self.rlc.iter().filter_map(|(path, f)| Some((path, f.as_ref()?.len()))))
-            .flat_map(|(path, n)| (0..n).map(move |f| (path.clone(), f)))
-            .collect();
-        frames.sort();
-        frames
+    /// The number of `#WORK` frames of a building type ([`work_frames`]).
+    pub fn work_frames(&self, unit_id: &str) -> Option<usize> {
+        work_frames(self.definition(unit_id)?)
     }
 
-    /// Decodes `frames` (a [`Scene::frames`] list, plus any frames dynamic sprites will
-    /// use) and uploads them for drawing.
-    pub fn upload(
-        &self,
-        renderer: &crate::SpriteRenderer,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        frames: Vec<FrameKey>,
-    ) -> SceneAtlas {
-        let atlas = renderer.upload(device, queue, &self.decode(&frames));
-        SceneAtlas { atlas, index: frames.into_iter().enumerate().map(|(i, k)| (k, i)).collect() }
+    /// An empty atlas; frames are added as they are drawn ([`SceneAtlas::draws_uploading`]).
+    pub fn atlas(&self, renderer: &crate::SpriteRenderer, device: &wgpu::Device, queue: &wgpu::Queue) -> SceneAtlas {
+        SceneAtlas { atlas: renderer.upload(device, queue, &[]), index: HashMap::new(), budget: ATLAS_PAGES }
     }
 
-    /// Adds those of `frames` that `atlas` lacks (e.g. of a pack loaded late) without
+    /// Adds those of `frames` that `atlas` lacks and whose pack is loaded, without
     /// uploading the rest again.
     pub fn upload_more(
         &self,
@@ -738,24 +767,47 @@ impl MapObjects {
         atlas: &mut SceneAtlas,
         frames: Vec<FrameKey>,
     ) {
-        let new: Vec<FrameKey> = frames.into_iter().filter(|k| !atlas.index.contains_key(k)).collect();
-        if new.is_empty() {
+        let mut seen = HashSet::new();
+        let mut keys = Vec::new();
+        let mut decoded = Vec::new();
+        for key in frames {
+            if atlas.index.contains_key(&key) || !seen.insert(key.clone()) {
+                continue;
+            }
+            if let Some(frame) = self.decode_one(&key.0, key.1) {
+                keys.push(key);
+                decoded.push(frame);
+            }
+        }
+        if keys.is_empty() {
             return;
         }
         let base = atlas.atlas.frame_count();
-        renderer.extend(device, queue, &mut atlas.atlas, &self.decode(&new));
-        atlas.index.extend(new.into_iter().enumerate().map(|(i, k)| (k, base + i)));
+        renderer.extend(device, queue, &mut atlas.atlas, &decoded);
+        atlas.index.extend(keys.into_iter().enumerate().map(|(i, k)| (k, base + i)));
     }
 
-    fn decode(&self, frames: &[FrameKey]) -> Vec<acr_formats::Frame> {
-        frames.iter().map(|(pack, frame)| self.decode_one(pack, *frame).unwrap_or_default()).collect()
+    /// The `L_Mode` twin of a frame, if its pack is loaded and has the frame.
+    fn zoom_twin(&self, (pack, frame): &FrameKey) -> Option<FrameKey> {
+        let z = zoom_pack(pack)?;
+        (*frame < self.pack(&z)?.frame_count()).then_some((z, *frame))
     }
 }
 
-/// The uploaded frames of a scene.
+/// Atlas pages (8 MB each) a [`SceneAtlas`] may fill before it starts over.
+const ATLAS_PAGES: usize = 24;
+
+/// The uploaded frames of a scene. Frames go in when they are first drawn: uploading every
+/// frame of every unit pack up front took 334 pages of 8 MB on Miss7F03, more than the GPU
+/// of a small machine could allocate (pages went missing: rectangles cut out of sprites).
+/// Once the atlas fills its budget it starts over with the frames drawn at that moment.
 pub struct SceneAtlas {
     pub atlas: crate::SpriteAtlas,
     index: HashMap<FrameKey, usize>,
+    /// Pages after which the atlas starts over: [`ATLAS_PAGES`], or twice what the frames
+    /// of one view took after the last start, so a large view does not start over again
+    /// and again.
+    budget: usize,
 }
 
 /// How sprites sit in the 3D pass ([`SceneAtlas::placed_draws`]): their depth against the
@@ -784,6 +836,46 @@ impl Placement<'_> {
 }
 
 impl SceneAtlas {
+    /// [`SceneAtlas::placed_draws`] after uploading the frames they need that are not in the
+    /// atlas yet (in the zoomed-out view the `L_Mode` twins where `assets` has them).
+    #[allow(clippy::too_many_arguments)]
+    pub fn draws_uploading(
+        &mut self,
+        assets: &MapObjects,
+        renderer: &crate::SpriteRenderer,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        scene: &Scene,
+        dynamic: &[SceneSprite],
+        camera: &Camera,
+        size: [f32; 2],
+        zoomed: bool,
+        placement: Option<Placement<'_>>,
+    ) -> Vec<crate::SpriteDraw> {
+        let order = placed_order(scene, dynamic, camera, size, zoomed, placement);
+        let missing = |index: &HashMap<FrameKey, usize>| -> Vec<FrameKey> {
+            order
+                .iter()
+                .filter_map(|(s, ..)| match zoomed.then(|| assets.zoom_twin(&s.frame)).flatten() {
+                    Some(twin) => (!index.contains_key(&twin)).then_some(twin),
+                    None => (!index.contains_key(&s.frame)).then(|| s.frame.clone()),
+                })
+                .collect()
+        };
+        let mut new = missing(&self.index);
+        if !new.is_empty() && self.atlas.page_count() >= self.budget {
+            let budget = self.budget;
+            *self = assets.atlas(renderer, device, queue);
+            new = missing(&self.index);
+            assets.upload_more(renderer, device, queue, self, new);
+            self.budget = budget.max(2 * self.atlas.page_count());
+            log::info!("sprite atlas started over: {} frames on {} pages", self.index.len(), self.atlas.page_count());
+        } else if !new.is_empty() {
+            assets.upload_more(renderer, device, queue, self, new);
+        }
+        self.draws_from(order, camera, zoomed, placement)
+    }
+
     /// The draws for the visible part of `scene` plus `dynamic` sprites (e.g. moving units
     /// from the simulation, any order), merged into the original's draw order.
     ///
@@ -813,16 +905,16 @@ impl SceneAtlas {
         zoomed: bool,
         placement: Option<Placement<'_>>,
     ) -> Vec<crate::SpriteDraw> {
-        // Per sprite: its ground point on the screen without the sprite offset, and the
-        // ground height the offset `dy` already contains (0 when the anchor is the flat
-        // projection `(x, y / 2)`).
-        let placed: Vec<(&SceneSprite, [f32; 2], i32)> = match placement {
-            Some(p) if p.view.is_free() => free_order(scene, dynamic, p, size, zoomed),
-            _ => draw_order(scene, dynamic, camera, size, zoomed)
-                .into_iter()
-                .map(|(s, _)| (s, camera.project(s.x, s.y, 0), 0))
-                .collect(),
-        };
+        self.draws_from(placed_order(scene, dynamic, camera, size, zoomed, placement), camera, zoomed, placement)
+    }
+
+    fn draws_from(
+        &self,
+        placed: Vec<(&SceneSprite, [f32; 2], i32)>,
+        camera: &Camera,
+        zoomed: bool,
+        placement: Option<Placement<'_>>,
+    ) -> Vec<crate::SpriteDraw> {
         let mut out = Vec::with_capacity(placed.len());
         for (s, [ax, ay], h) in placed {
             let depth = placement.map_or(0.0, |p| p.depth(s, zoomed, h));
@@ -848,6 +940,26 @@ impl SceneAtlas {
             });
         }
         out
+    }
+}
+
+/// Per sprite in draw order: its ground point on the screen without the sprite offset, and
+/// the ground height the offset `dy` already contains (0 when the anchor is the flat
+/// projection `(x, y / 2)`).
+fn placed_order<'a>(
+    scene: &'a Scene,
+    dynamic: &'a [SceneSprite],
+    camera: &Camera,
+    size: [f32; 2],
+    zoomed: bool,
+    placement: Option<Placement<'_>>,
+) -> Vec<(&'a SceneSprite, [f32; 2], i32)> {
+    match placement {
+        Some(p) if p.view.is_free() => free_order(scene, dynamic, p, size, zoomed),
+        _ => draw_order(scene, dynamic, camera, size, zoomed)
+            .into_iter()
+            .map(|(s, _)| (s, camera.project(s.x, s.y, 0), 0))
+            .collect(),
     }
 }
 
@@ -957,6 +1069,70 @@ mod tests {
     fn unit_ids_name_definitions() {
         assert_eq!(definition_name("EngM18(EN)"), "ENGM18");
         assert_eq!(definition_name("AnmBiz"), "ANMBIZ");
+    }
+
+    #[test]
+    fn member_ids_find_differently_named_definitions() {
+        let mut objects = MapObjects::default();
+        let md = "NAME SpnRudCo
+BUILDING
+USERLC 0 SpnRudCo SHADOW 0 0
+#STANDLO 1 2 0 2 0 3
+[END]
+";
+        objects.defs.insert("SPNRUDCO".into(), UnitDef::parse(md.as_bytes()));
+        assert!(objects.definition("SpnCoa(FR)").is_none());
+        objects.set_names([("SpnCoa(FR)", "SpnRudCo")]);
+        assert!(objects.definition("SpnCoa(FR)").is_some());
+        assert!(objects.definition("SpnRudCo(SP)").is_some(), "the id's own name still works");
+        assert_eq!(objects.packs_for_units(["SpnCoa(FR)"]), ["SPNRUDCO.GP", r"L_MODE\SPNRUDCO.GP"]);
+    }
+
+    /// ENGMEL.MD: the mill's picture leaves a hole for its turning wheel.
+    const MILL: &str = "NAME EngMel
+BUILDING
+USERLC 0 EngMel SHADOW 0 0
+USERLC 1 OEng SHADOW 0 0
+                        SETANMPARAM -254 -285 1 0
+LOCATION -254 -285 588 498
+#STANDLO 1 2 0 4 0 5
+                        #WORK 1 4 0 9 0 10 0 8 0 28
+[END]
+";
+
+    #[test]
+    fn finished_buildings_play_their_work_animation_on_top() {
+        let def = UnitDef::parse(MILL.as_bytes());
+        assert_eq!(work_frames(&def), Some(4));
+        let at = |step| work_part(&def, step, |_| Some(30)).map(|(f, o, layer, row)| (f.1, o, layer, row));
+        // At the picture origin, sorted 16 rows (`ANMSH`) below the ground point.
+        assert_eq!(at(0), Some((9, (-254, -285), Layer::Sorted, 16)));
+        assert_eq!(at(3).unwrap().0, 28);
+        assert_eq!(at(5).unwrap().0, 10, "the counter wraps at the frame count");
+        assert_eq!(work_part(&def, 3, |_| Some(28)), None, "frames beyond the pack draw nothing");
+        // A map's mill and the placement preview show the first frame (0x4be467).
+        let look = unit_look(&def, 0, |_| Some(30)).unwrap();
+        assert_eq!(look.parts.iter().map(|p| p.0.1).collect::<Vec<_>>(), [4, 5, 9]);
+        assert!(unit_packs(&def).contains(&"ENGMEL.GP".to_owned()));
+        let shifted = UnitDef::parse(
+            MILL.replace(
+                "[END]",
+                "ANMSH 40
+[END]",
+            )
+            .as_bytes(),
+        );
+        assert_eq!(work_part(&shifted, 0, |_| Some(30)).unwrap().3, 40);
+        // Units have no such layer.
+        let unit = UnitDef::parse(
+            UNIT.replace(
+                "#STAND",
+                "#WORK 1 1 0 2
+#STAND",
+            )
+            .as_bytes(),
+        );
+        assert_eq!(work_part(&unit, 0, |_| Some(30)), None);
     }
 
     #[test]

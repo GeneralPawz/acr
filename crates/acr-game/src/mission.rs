@@ -420,6 +420,12 @@ impl MissionLink {
         std::mem::take(&mut self.answered)
     }
 
+    /// Whether a mission script runs (SCENINF+0x10, 0x28b7758, is set): the original then
+    /// offers no attack-ground icon (0x5f63a5).
+    pub fn has_script(&self) -> bool {
+        self.scripts.as_ref().is_some_and(acr_mission::Scripts::has_mission)
+    }
+
     /// The objectives window (F1, 0x5e11c0): only in a mission with objectives text.
     pub fn objectives(&self) -> Option<Box<dyn Screen>> {
         let briefing = self.scripts.as_ref()?.briefing();

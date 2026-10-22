@@ -447,6 +447,15 @@ cursor is drawn anywhere in the window, also beside the menu canvas.
     - with towers and no other buildings, with the stand-ground icons, or with a
       `WEAPONINSECTOR` type: `ENABLE_ATTACK` / `DISABLE_ATTACK` (`EATTACK` / `DATTACK`,
       0x4d76cf, `HoldFire`), highlighted while some unit attacks / holds;
+    - Attack the ground (0x5f6385): `NRES.DAT`'s `ATTACKGROUND Attack_Ground 13` (icon and
+      slot, parsed by 0x4ec18c) with the hint `ATGHINT`, outside missions (SCENINF+0x10,
+      0x28b7758, holds the mission script) when every selected object that is not dying is
+      of an `ARTPODGOTOVKA` type (NM+0x172c bit 1; the cannons). A click (0x5f5dad) starts
+      the mode `0x28ead0b`: cursor frame 9 (0x66a910) over the map; the next left or right
+      click on the map (0x4c28dc tests both buttons) sends network command 0x57 (0x4d8344,
+      `AttackGround`) at that point with the selection, Escape (0x4a3218) ends the mode. The
+      brigade panel (0x607347) offers it for formations of such types, which the data has
+      none of.
     - `SHOTMYUNITS` / `KEEPMYUNITS` for `FRIENDLYFIRE` types (network command 0x5e, ACR's
       `FriendlyFire`) and `ARMATTACK` / `ANYATTACK` for `ARMATTACK` types (0x5f,
       `MeleeOnly`), highlighted while some unit has that setting.
@@ -591,7 +600,24 @@ A finished building with `TORG` shows the market in the command grid instead of 
 - Units inside buildings (`Unit::inside_of`) are not drawn, selected or shown on the
   minimap.
 - Construction stages draw `#BUILDLO_k`. A building type that appears during the game loads
-  its packs then, and the sprite atlas is rebuilt (`ObjectsView::want_units`).
+  its packs then (`ObjectsView::want_units`).
+- A finished building draws, besides its `#STANDLO` parts and sections, its current
+  animation (OB+0x10d), which is `#WORK` from the moment it is done (0x523924; at creation
+  0x554b8e): frame OB+0xec at the picture origin, sorted at the ground point plus `ANMSH`
+  (NM+0x2890, default 16), the counter stepped by one per drawn frame while the game runs
+  (0x50927a..0x5094a6) and back to 0 at the frame count. Only EngMel, SpnMel (the mills'
+  wheels) and SpnRudCo (the coal mine's hoist) have one; their `#STANDLO` pictures leave
+  rectangular holes for it, which showed the ground before (issue #185). ACR steps the
+  counter once per tick for buildings near the view (`effects::Effects::work_step`). The
+  placement preview shows the first frame (0x4be467).
+- Map ids are looked up through the nations' `[MEMBERS]` (`MapObjects::set_names`, from the
+  catalog): `SpnCoa`, `SpnIro` and `SpnStn` are defined by `SPNRUDCO.MD`, `SPNRUDIR.MD`
+  and `SPNRUDST.MD`; by the id's own name they had no picture, icon or definition.
+- Sprite frames go into the GPU atlas (2048² pages of 2 bytes per texel) when they are first
+  drawn (`SceneAtlas::draws_uploading`), into the free part of the last page. Uploading
+  every frame of every loaded pack at the start took 334 pages (2.7 GB) on Miss7F03, more
+  than a small GPU (or WebGL) holds. After 24 pages (or twice what one view needed) the
+  atlas starts over with the frames of the current view.
 
 ### Right click and context cursor (0x4c4668..0x4c4ce2)
 

@@ -1,7 +1,7 @@
 //! What the original draws and plays around the simulation without changing it:
 //! projectiles, smoke and explosions (`WEAPON.NDS` objects, drawn by 0x557cb0), the fire
-//! and smoke of damaged buildings (0x50618e, buildings with sections 0x5052b5) and the
-//! weapon sounds (0x5583a2).
+//! and smoke of damaged buildings (0x50618e, buildings with sections 0x5052b5), the `#WORK`
+//! animations of finished buildings (0x50927a) and the weapon sounds (0x5583a2).
 //!
 //! Everything here only reads the world; the fires use their own random numbers like the
 //! original's C `rand()` (0x616961), not the synchronised ones.
@@ -191,11 +191,15 @@ pub struct Effects {
     /// [`Layout::tag`] of a building with sections.
     fires: BTreeMap<EntityId, (u8, [Option<Fire>; 2])>,
     rng: Rng,
+    /// The frame counters (OB+0xec) of the `#WORK` animations of finished buildings
+    /// ([`acr_render::scene::work_part`]): from 0 when the building is done, one step per
+    /// tick while it is in view (the original steps it when it draws it, 0x509480).
+    work: BTreeMap<EntityId, usize>,
 }
 
 impl Default for Effects {
     fn default() -> Self {
-        Self { fires: BTreeMap::new(), rng: Rng::new(0xF12E, 7) }
+        Self { fires: BTreeMap::new(), rng: Rng::new(0xF12E, 7), work: BTreeMap::new() }
     }
 }
 
@@ -205,6 +209,21 @@ impl Effects {
     pub fn tick(&mut self, world: &World, objects: &ObjectsView, view: [i32; 4]) -> Vec<(String, i32, i32)> {
         let mut sounds = Vec::new();
         let assets = objects.objects();
+        let in_view = |x: i32, y: i32| x >= view[0] && x <= view[2] && y >= view[1] && y <= view[3];
+        // A building that is not done (any more) starts its `#WORK` over when it is
+        // (0x52393b).
+        self.work.retain(|id, _| world.unit(*id).is_some_and(|u| u.living() && u.stage >= world.max_stage(u)));
+        for u in world.units.iter().filter(|u| u.building && u.living() && u.stage >= world.max_stage(u)) {
+            if !in_view(u.pos.x >> 4, u.pos.y >> 4) {
+                continue;
+            }
+            if let Some(n) = assets.work_frames(&world.catalog.get(u.kind).id) {
+                // Drawn at the counter, then stepped; at the frame count it starts over
+                // (0x5092c1).
+                let step = self.work.entry(u.id).or_insert(usize::MAX);
+                *step = step.wrapping_add(1) % n;
+            }
+        }
         let Some(effects) = assets.effects() else { return sounds };
         let frames = |a: &str| effects.animation(a).map_or(0, |a| a.frame_refs().len());
         let fires = &world.catalog.weapons.fires;
@@ -214,8 +233,7 @@ impl Effects {
             .collect();
         self.fires.retain(|id, _| world.unit(*id).is_some_and(|u| u.living()));
         for u in world.units.iter().filter(|u| u.building && u.living() && u.inside_of.is_none()) {
-            let (x, y) = (u.pos.x >> 4, u.pos.y >> 4);
-            if x < view[0] || x > view[2] || y < view[1] || y > view[3] {
+            if !in_view(u.pos.x >> 4, u.pos.y >> 4) {
                 continue;
             }
             // Only a finished building (OB+0x93 == NM+0xda, 0x5061ae).
@@ -239,6 +257,11 @@ impl Effects {
         // Their animation sounds (`SOUND 1 #DFIRE2 FIRE1`), at the point they burn.
         sounds.extend(self.burning(world, objects).into_iter().filter_map(|look| look.sound));
         sounds
+    }
+
+    /// The frame of a finished building's `#WORK` animation, as last stepped.
+    pub fn work_step(&self, building: EntityId) -> usize {
+        self.work.get(&building).copied().unwrap_or(0)
     }
 
     /// The sprites of the fires of the buildings, as last advanced.

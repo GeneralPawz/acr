@@ -34,6 +34,7 @@ How the original's keys work inside is described in [ui.md](ui.md#keys-0x4a30e8-
 | Move and face a direction | right drag (more than 30 map pixels) | right drag |
 | Rally point (only buildings selected) | right click | right click |
 | Leave the build or rally point mode | right click | right click |
+| Bombard the ground with cannons (not in missions) | the attack-ground icon, then a left or right click on the map | the same |
 | Zoom in and out | – (key L: 4× zoomed-out view) | **mouse wheel**, about the point under the cursor, 0.5× to 2× |
 | Pan by grabbing the map | – | **Ctrl + left drag** or **middle drag** |
 | Scroll at the window edge | cursor within 6 px of the edge | the same, or off ("Rand aus") |
@@ -58,7 +59,7 @@ panels) the left button works as always, also with Ctrl. The wheel does nothing 
 | Add control group to the selection | Shift + 0..9 | Shift + 0..9 |
 | Jump to the next selected unit | Space | Space |
 | Centre the view on the selection | – | **Home** |
-| Leave the build or rally point mode | Escape | Escape |
+| Leave the build, rally point or attack-ground mode | Escape | Escape |
 | Game menu | F12, Escape (ACR) | F12, Escape when nothing is to be cancelled |
 | Cancel a drag (rectangle, facing arrow, pan) | – | **Escape** (the rectangle restores the previous selection) |
 | Life bars | Tab | Tab |

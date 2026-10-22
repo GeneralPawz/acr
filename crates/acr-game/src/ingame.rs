@@ -278,6 +278,11 @@ impl InGame {
         let data = self.sim_assets.build();
         let (world, report) = World::from_map(map, &data.shapes, Arc::new(data.catalog), Arc::new(data.formations));
         log::info!("world: {} units, {} map objects, {report:?}", world.units.len(), world.objects.len());
+        let catalog = &world.catalog;
+        self.objects.set_names((0..catalog.len()).map(|i| {
+            let t = catalog.get(acr_sim::TypeId(i as u16));
+            (t.id.as_str(), t.md_name.as_str())
+        }));
         self.world = Some(world);
     }
 
@@ -658,7 +663,11 @@ impl InGame {
                 && u.stage >= world.max_stage(u)
                 && !matches!(u.anim, AnimKind::BuildLo(_) | AnimKind::Death | AnimKind::DeathLie(_));
             let sections = finished.then_some(u.stages);
-            let Some(look) = objects.animation_look(&kind.id, &anim, u.dir, step, sections) else { continue };
+            let Some(mut look) = objects.animation_look(&kind.id, &anim, u.dir, step, sections) else { continue };
+            // On top: the `#WORK` frame of a finished building (0x50927a).
+            if finished {
+                look.parts.extend(objects.work_part(&kind.id, self.effects.work_step(u.id)));
+            }
             let (x, y) = (u.pos.x >> 4, u.pos.y >> 4);
             let h = terrain.height_at(x, y);
             // The transparency mode (key O) draws buildings with `ShowGPTransparent`; a
