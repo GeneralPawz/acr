@@ -19,16 +19,13 @@ use acr_sim::{Command, FixedClock, ORIGINAL_TICKS_PER_SECOND, World};
 use winit::keyboard::NamedKey;
 
 use crate::ui::{GameKind, GameSetup};
-use crate::unit_sounds::{self, SoundEvent};
 
-/// Scroll speed in original pixels per second at scale 1.
-const SCROLL_SPEED: f32 = 1400.0;
-/// Width of the window border that scrolls while the cursor rests on it.
-const EDGE: f32 = 3.0;
+mod interface;
+use crate::unit_sounds::{self, SoundEvent};
+pub use interface::{GameKey, GameMouse};
+
 /// A drag shorter than this (window pixels) is a click.
 const CLICK_SLOP: f32 = 4.0;
-/// How far from a unit's ground point (world pixels) a click still hits it.
-const PICK_RADIUS: i32 = 24;
 
 pub struct InGame {
     pub setup: Box<GameSetup>,
@@ -61,6 +58,10 @@ pub struct InGame {
     failed: Option<String>,
     /// The random map generator while it collects its files.
     mapgen: Option<crate::random_map::RandomMapGen>,
+    /// The interface: HUD, cursor, control groups, scrolling.
+    interface: interface::State,
+    /// `FPSTime` of the options: the game speed.
+    frame_time: i32,
 }
 
 impl InGame {
@@ -97,6 +98,8 @@ impl InGame {
             cursor: None,
             failed,
             mapgen,
+            interface: interface::State::default(),
+            frame_time: crate::ui::Settings::default().frame_time,
         }
     }
 
@@ -277,10 +280,6 @@ impl InGame {
         }
     }
 
-    pub fn on_cursor(&mut self, at: Option<[f32; 2]>) {
-        self.cursor = at;
-    }
-
     /// World pixel under a window position, ignoring terrain height.
     fn world_at(&self, [x, y]: [f32; 2]) -> (i32, i32) {
         let wx = self.camera.x + x / self.camera.scale;
@@ -293,20 +292,6 @@ impl InGame {
         let (x, y) = (unit.pos.x >> 4, unit.pos.y >> 4);
         let h = self.terrain.as_ref().map_or(0, |t| t.height_at(x, y));
         self.camera.project(x, y, h)
-    }
-
-    /// The living unit nearest to the world point under `at` that passes `keep`.
-    fn unit_at(&self, at: [f32; 2], keep: impl Fn(&acr_sim::Unit) -> bool) -> Option<EntityId> {
-        let world = self.world.as_ref()?;
-        let (wx, wy) = self.world_at(at);
-        world
-            .units
-            .iter()
-            .filter(|u| u.alive && keep(u))
-            .map(|u| (u, (u.pos.x >> 4) - wx, (u.pos.y >> 4) - wy))
-            .filter(|(_, dx, dy)| dx.abs() <= PICK_RADIUS && dy.abs() <= PICK_RADIUS)
-            .min_by_key(|(_, dx, dy)| dx * dx + dy * dy)
-            .map(|(u, ..)| u.id)
     }
 
     /// Left button: press starts a selection, release selects by click or rectangle.
@@ -365,53 +350,21 @@ impl InGame {
         if !self.centred && self.uploaded {
             self.centre(window);
         }
+        let paused = self.interface.paused;
         if let Some(world) = &mut self.world {
-            let ticks = self.clock.advance((f64::from(seconds) * 1e9) as u64);
+            let ticks = if paused { 0 } else { self.clock.advance((f64::from(seconds) * 1e9) as u64) };
             for _ in 0..ticks {
                 world.step(&std::mem::take(&mut self.commands));
+            }
+            for _ in 0..ticks {
+                self.tick_markers();
             }
             if ticks > 0 {
                 self.animation_sounds(window);
             }
         }
-        self.scroll(seconds, window);
+        self.scroll_view(seconds, window);
         self.objects.set_dynamic(self.unit_sprites());
-    }
-
-    fn scroll(&mut self, seconds: f32, window: [f32; 2]) {
-        let mut dir = [0.0f32; 2];
-        for (key, axis, sign) in [
-            (NamedKey::ArrowLeft, 0, -1.0),
-            (NamedKey::ArrowRight, 0, 1.0),
-            (NamedKey::ArrowUp, 1, -1.0),
-            (NamedKey::ArrowDown, 1, 1.0),
-        ] {
-            if self.held.contains(&key) {
-                dir[axis] += sign;
-            }
-        }
-        // No edge scrolling while dragging a selection rectangle.
-        if let (Some([x, y]), None) = (self.cursor, self.drag_from) {
-            if x < EDGE {
-                dir[0] = -1.0;
-            } else if x > window[0] - EDGE {
-                dir[0] = 1.0;
-            }
-            if y < EDGE {
-                dir[1] = -1.0;
-            } else if y > window[1] - EDGE {
-                dir[1] = 1.0;
-            }
-        }
-        let step = SCROLL_SPEED * seconds.min(0.1) / self.camera.scale;
-        self.camera.x += dir[0] * step;
-        self.camera.y += dir[1] * step;
-        if let Some(terrain) = &self.terrain {
-            // Keep the view over the map.
-            let side = (terrain.width - 1) as f32 * 32.0;
-            self.camera.x = self.camera.x.clamp(-window[0] / 2.0, side - window[0] / 2.0);
-            self.camera.y = self.camera.y.clamp(-window[1] / 2.0, side / 2.0 - window[1] / 2.0);
-        }
     }
 
     /// The interface sound `keyword` (`SELECT_SOUND`, `ORDER_SOUND`) of a unit's type,

@@ -39,6 +39,8 @@ pub enum Action {
     StartGame(Box<GameSetup>),
     /// The options changed; apply volumes and window size.
     Settings(Box<Settings>),
+    /// Leave the running game for the main menu (`INTF_GMENU_PAD4`).
+    LeaveGame,
 }
 
 pub use dialog::Key;
@@ -93,6 +95,8 @@ pub enum Nav {
     Start(Box<GameSetup>),
     /// Store new options and close this screen.
     Apply(Box<Settings>),
+    /// Close every screen and leave the running game.
+    LeaveGame,
 }
 
 pub trait Screen {
@@ -113,6 +117,10 @@ pub trait Screen {
     /// Sounds to play (game paths), collected since the last call.
     fn take_sounds(&mut self) -> Vec<String> {
         Vec::new()
+    }
+    /// A dialog over the running game: drawn with the game's palette.
+    fn in_game(&self) -> bool {
+        false
     }
 }
 
@@ -135,6 +143,11 @@ pub struct Ui {
     tick_time: f64,
     settings: Settings,
     profile: std::cell::RefCell<screens::player_name::Profile>,
+    /// A game is running: the screens are dialogs over it and closing the last one
+    /// returns to the game.
+    in_game: bool,
+    /// The game's cursor frame of `CURSOR_00.GP` and its hotspot, while no dialog is open.
+    game_cursor: Option<(usize, [i32; 2])>,
 }
 
 impl Ui {
@@ -155,13 +168,59 @@ impl Ui {
             tick_time: 0.0,
             settings: Settings::default(),
             profile: Default::default(),
+            in_game: false,
+            game_cursor: None,
         };
         ui.stack.push(Entry { screen: Box::new(screens::main_menu::MainMenu::default()), built: false });
         ui
     }
 
+    /// The started game is shown: the loading screen goes away.
+    pub fn enter_game(&mut self) {
+        self.stack.clear();
+        self.in_game = true;
+    }
+
+    pub fn in_game(&self) -> bool {
+        self.in_game
+    }
+
+    /// The loading screen, e.g. while a mission restarts.
+    pub fn show_loading(&mut self) {
+        self.stack.clear();
+        self.stack.push(Entry { screen: Box::new(screens::loading::Loading::default()), built: false });
+    }
+
+    /// Opens the game menu (F12, `UM_MENU`) over the running game.
+    pub fn open_game_menu(&mut self) {
+        if self.in_game && self.stack.is_empty() {
+            self.stack.push(Entry { screen: Box::new(screens::game_menu::GameMenu::default()), built: false });
+        }
+    }
+
+    /// Whether a dialog over the running game takes the input.
+    pub fn dialog_open(&self) -> bool {
+        self.in_game && !self.stack.is_empty()
+    }
+
+    /// The game's cursor (`CURSOR_00.GP` frame and hotspot); `None` shows the menu cursor.
+    pub fn set_game_cursor(&mut self, cursor: Option<(usize, [i32; 2])>) {
+        self.game_cursor = cursor;
+    }
+
+    /// The mouse in canvas coordinates while the game has the input.
+    pub fn set_mouse(&mut self, p: [f32; 2]) {
+        self.mouse = Some(p);
+    }
+
+    /// Replaces a dynamic image drawn with [`draw::Sprite::Image`].
+    pub fn set_image(&mut self, name: &'static str, image: acr_formats::raster::Image) {
+        self.textures.set_image(name, image);
+    }
+
     /// Back to the main menu after a game ends or fails to start.
     pub fn leave_game(&mut self) {
+        self.in_game = false;
         self.stack.clear();
         self.stack.push(Entry { screen: Box::new(screens::main_menu::MainMenu::default()), built: false });
     }
@@ -190,7 +249,7 @@ impl Ui {
         ready
     }
 
-    fn ctx(&self) -> Ctx<'_> {
+    pub fn ctx(&self) -> Ctx<'_> {
         Ctx { lib: &self.lib, fonts: &self.fonts, texts: &self.texts, settings: &self.settings, profile: &self.profile }
     }
 
@@ -343,6 +402,10 @@ impl Ui {
                 self.after_pop();
                 Action::Settings(settings)
             }
+            Nav::LeaveGame => {
+                self.leave_game();
+                Action::LeaveGame
+            }
             Nav::Start(setup) => {
                 self.stack.clear();
                 self.stack.push(Entry { screen: Box::new(screens::loading::Loading::default()), built: false });
@@ -353,7 +416,7 @@ impl Ui {
 
     fn after_pop(&mut self) -> Action {
         if self.stack.is_empty() {
-            return Action::Quit;
+            return if self.in_game { Action::None } else { Action::Quit };
         }
         self.textures.trim();
         if let Some(p) = self.mouse {
@@ -373,24 +436,41 @@ impl Ui {
         &self.settings
     }
 
-    /// Image draws for the current frame, in window pixels.
+    /// Image draws for the current frame, in window pixels: `layers` (each with its own
+    /// canvas, e.g. the in-game interface), then the screens and the cursor.
     pub fn draws(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         images: &ImageRenderer,
         canvas: &Canvas,
+        layers: &[(Canvas, Vec<Draw>)],
     ) -> Vec<ImageDraw> {
+        let mut out = Vec::new();
+        for (c, draws) in layers {
+            self.textures.resolve(device, queue, images, &self.lib, &self.fonts, c, draws, &mut out);
+        }
         let mut draws = Vec::new();
         // Keep showing the previous screen while the next one loads.
         if let Some(entry) = self.stack.iter().rev().find(|e| e.built) {
             let ctx = self.ctx();
             entry.screen.draw(&ctx, &mut draws);
+            if entry.screen.in_game() {
+                draws = draws.into_iter().map(Draw::in_game).collect();
+            }
         }
         if let Some([x, y]) = self.mouse {
-            draws.push(Draw::frame(CURSOR, 0, x.floor() as i32, y.floor() as i32));
+            let (x, y) = (x.floor() as i32, y.floor() as i32);
+            match self.game_cursor {
+                _ if self.in_game && !self.stack.is_empty() => {
+                    draws.push(Draw::game_frame(crate::hud::cursor::GP, 0, x, y, 0))
+                }
+                Some((frame, [hx, hy])) if self.in_game => {
+                    draws.push(Draw::game_frame(crate::hud::cursor::GP, frame, x - hx, y - hy, 0))
+                }
+                _ => draws.push(Draw::frame(CURSOR, 0, x, y)),
+            }
         }
-        let mut out = Vec::new();
         self.textures.resolve(device, queue, images, &self.lib, &self.fonts, canvas, &draws, &mut out);
         out
     }

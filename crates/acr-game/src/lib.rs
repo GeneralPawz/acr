@@ -4,6 +4,7 @@
 //! letterboxing, so menus look like the original at any resolution.
 
 mod canvas;
+mod hud;
 mod ingame;
 mod intro;
 mod music;
@@ -138,7 +139,7 @@ impl Game {
         let now = web_time::Instant::now();
         let dt = self.last_frame.map_or(0.0, |t| (now - t).as_secs_f64());
         self.last_frame = Some(now);
-        if matches!(self.mode, Mode::Menus) {
+        if matches!(self.mode, Mode::Menus) || self.ui.dialog_open() {
             let action = self.ui.update(dt);
             self.apply(action, event_loop);
         }
@@ -151,10 +152,24 @@ impl Game {
             self.leave_game();
         }
         let Some(g) = &mut self.graphics else { return };
+        let mut layers = Vec::new();
         if let Mode::InGame(game) = &mut self.mode {
             game.sync_gpu(&g.gpu.device, &g.gpu.queue, g.gpu.config.format);
-            game.update(dt as f32, g.gpu.size());
+            // The game stands still while a dialog (game menu, options) is open.
+            let game_dt = if self.ui.dialog_open() { 0.0 } else { dt as f32 };
+            game.update(game_dt, g.gpu.size());
             self.unit_sounds.play(&game.take_sound_events(), &mut self.audio);
+            if game.ready() {
+                if !self.ui.in_game() {
+                    self.ui.enter_game();
+                }
+                let (l, image, cursor) = game.interface(&self.ui.ctx(), g.gpu.size(), game_dt);
+                layers = l;
+                if let Some(image) = image {
+                    self.ui.set_image(hud::MINIMAP_IMAGE, image);
+                }
+                self.ui.set_game_cursor(cursor);
+            }
         }
         let canvas = Canvas::fit(g.gpu.size());
         let draws: Vec<ImageDraw> = match &self.mode {
@@ -162,8 +177,7 @@ impl Game {
                 self.intro.upload(&g.gpu.device, &g.gpu.queue, &g.images);
                 self.intro.draws(&canvas)
             }
-            Mode::InGame(game) if game.ready() => Vec::new(),
-            Mode::Menus | Mode::InGame(_) => self.ui.draws(&g.gpu.device, &g.gpu.queue, &g.images, &canvas),
+            Mode::Menus | Mode::InGame(_) => self.ui.draws(&g.gpu.device, &g.gpu.queue, &g.images, &canvas, &layers),
         };
         let Some(frame) = g.gpu.next_frame() else { return };
         g.images.prepare(&g.gpu.device, &g.gpu.queue, g.gpu.size(), &draws);
@@ -203,7 +217,11 @@ impl Game {
                 self.audio.stop();
                 event_loop.exit();
             }
+            ui::Action::LeaveGame => self.leave_game(),
             ui::Action::Settings(settings) => {
+                if let Mode::InGame(game) = &mut self.mode {
+                    game.apply_settings(&settings);
+                }
                 let (effects, music) = settings.volumes();
                 self.audio.set_volumes(effects, music);
                 #[cfg(not(target_arch = "wasm32"))]
@@ -217,10 +235,7 @@ impl Game {
             }
             ui::Action::StartGame(setup) => {
                 log::info!("starting {setup:?}");
-                let mut game = ingame::InGame::new(setup);
-                game.start(&self.assets.paths());
-                self.mode = Mode::InGame(Box::new(game));
-                self.load_requested();
+                self.start_game(setup);
             }
         }
     }
@@ -239,9 +254,9 @@ impl Game {
         self.audio.set_music(None);
     }
 
-    /// Forwards input to the menus.
+    /// Forwards input to the menus and the dialogs over the game.
     fn ui_input(&mut self, input: ui::Input, event_loop: &ActiveEventLoop) {
-        if matches!(self.mode, Mode::Menus) {
+        if matches!(self.mode, Mode::Menus) || self.ui.dialog_open() {
             let action = self.ui.input(input);
             self.apply(action, event_loop);
             self.load_requested();
@@ -262,10 +277,24 @@ impl Game {
             campaign: None,
         };
         let setup = ui::GameSetup { kind: ui::GameKind::Mission(mission), players: Vec::new(), local_player: 0 };
-        let mut game = ingame::InGame::new(Box::new(setup));
+        self.start_game(Box::new(setup));
+    }
+
+    fn start_game(&mut self, setup: Box<ui::GameSetup>) {
+        let mut game = ingame::InGame::new(setup);
+        game.apply_settings(self.ui.settings());
         game.start(&self.assets.paths());
         self.mode = Mode::InGame(Box::new(game));
         self.load_requested();
+    }
+
+    /// `UM_REPLAY`: the mission starts again from its map.
+    fn restart_game(&mut self) {
+        let Mode::InGame(game) = &self.mode else { return };
+        let setup = game.setup.clone();
+        self.ui.leave_game();
+        self.ui.show_loading();
+        self.start_game(setup);
     }
 
     /// Ends the current game and returns to the main menu.
@@ -343,6 +372,8 @@ impl ApplicationHandler<Event> for Game {
                 if let Mode::InGame(game) = &mut self.mode
                     && game.on_loaded(&path, &result)
                 {
+                    // The in-game interface may have asked for the same file (the palette).
+                    self.ui.on_loaded(&path, result);
                     return self.load_requested();
                 }
                 if let Ok(bytes) = &result {
@@ -374,31 +405,28 @@ impl ApplicationHandler<Event> for Game {
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = position;
                 if let Mode::InGame(game) = &mut self.mode {
-                    game.on_cursor(Some([position.x as f32, position.y as f32]));
-                    if let Some(window) = &self.window {
-                        // The original in-game cursor follows with the game panel.
-                        window.set_cursor_visible(game.ready());
-                    }
+                    game.mouse_moved([position.x as f32, position.y as f32]);
                 }
                 if let Some(p) = self.virtual_cursor() {
+                    self.ui.set_mouse(p);
                     self.ui_input(ui::Input::MouseMove(p), event_loop);
                 }
             }
             WindowEvent::MouseInput { state: ElementState::Pressed, .. } if matches!(self.mode, Mode::Intro) => {
                 self.intro_input()
             }
-            WindowEvent::KeyboardInput { event: KeyEvent { logical_key: Key::Named(named), state, .. }, .. }
-                if matches!(self.mode, Mode::InGame(_))
-                    && !matches!(named, NamedKey::F11)
-                    && !(named == NamedKey::Enter && self.alt_down()) =>
+            WindowEvent::KeyboardInput { event: KeyEvent { logical_key, state, .. }, .. }
+                if matches!(&self.mode, Mode::InGame(g) if g.ready())
+                    && (!self.ui.dialog_open() || state == ElementState::Released)
+                    && !matches!(logical_key, Key::Named(NamedKey::F11))
+                    && !(logical_key == Key::Named(NamedKey::Enter) && self.alt_down()) =>
             {
                 let pressed = state == ElementState::Pressed;
-                if named == NamedKey::Escape && pressed {
-                    // The original opens its in-game menu here; until that exists, leave.
-                    return self.leave_game();
-                }
-                if let Mode::InGame(game) = &mut self.mode {
-                    game.on_key(named, pressed);
+                if let Mode::InGame(game) = &mut self.mode
+                    && game.key(&self.ui.ctx(), &logical_key, pressed) == ingame::GameKey::Menu
+                {
+                    self.ui.open_game_menu();
+                    self.load_requested();
                 }
             }
             WindowEvent::KeyboardInput {
@@ -410,13 +438,26 @@ impl ApplicationHandler<Event> for Game {
                     },
                 ..
             } if matches!(self.mode, Mode::Intro) && !self.alt_down() => self.intro_input(),
-            WindowEvent::MouseInput { state, button, .. } if matches!(&self.mode, Mode::InGame(g) if g.ready()) => {
-                if let Mode::InGame(game) = &mut self.mode {
-                    match (button, state) {
-                        (MouseButton::Left, _) => game.on_left(state == ElementState::Pressed),
-                        (MouseButton::Right, ElementState::Pressed) => game.on_right(),
-                        _ => {}
+            WindowEvent::MouseInput { state, button, .. }
+                if matches!(&self.mode, Mode::InGame(g) if g.ready()) && !self.ui.dialog_open() =>
+            {
+                let Mode::InGame(game) = &mut self.mode else { return };
+                let ctx = self.ui.ctx();
+                let result = match (button, state) {
+                    (MouseButton::Left, _) => game.left_button(&ctx, state == ElementState::Pressed),
+                    (MouseButton::Right, ElementState::Pressed) => {
+                        game.right_button(&ctx);
+                        ingame::GameMouse::None
                     }
+                    _ => ingame::GameMouse::None,
+                };
+                match result {
+                    ingame::GameMouse::Menu => {
+                        self.ui.open_game_menu();
+                        self.load_requested();
+                    }
+                    ingame::GameMouse::Restart => self.restart_game(),
+                    ingame::GameMouse::None => {}
                 }
             }
             WindowEvent::MouseInput { state, button: MouseButton::Left, .. } => {
@@ -468,7 +509,12 @@ impl ApplicationHandler<Event> for Game {
                     self.ui_input(ui::Input::Key(key), event_loop);
                 }
             }
-            WindowEvent::ModifiersChanged(m) => self.modifiers = m.state(),
+            WindowEvent::ModifiersChanged(m) => {
+                self.modifiers = m.state();
+                if let Mode::InGame(game) = &mut self.mode {
+                    game.set_modifiers(m.state());
+                }
+            }
             WindowEvent::RedrawRequested => self.redraw(event_loop),
             _ => {}
         }
