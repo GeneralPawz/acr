@@ -169,14 +169,23 @@ class MorphField:
         return {n: tuple((self.D[n][ids] * w[:, None]).sum(0)) for n in names}
 
 
-def build(bm, cx, frame_cls):
-    """Hull hook: removes the hull's head above the cut and puts in the decimated MakeHuman
-    head. Returns (frame, field, landmarks)."""
-    d = load()
+def skull(bm, cx):
+    """Top and the depth centre of the hull's skull: where the MakeHuman head goes."""
     hv = np.array([tuple(v.co) for v in bm.verts])
     top = hv[:, 2].max()
     headv = hv[(hv[:, 2] > top - 0.16) & (np.abs(hv[:, 0] - cx) < 0.15)]
-    y_mid = 0.5 * (headv[:, 1].min() + headv[:, 1].max())
+    return float(top), float(0.5 * (headv[:, 1].min() + headv[:, 1].max()))
+
+
+def build(bm, cx, frame_cls, body=None):
+    """Hull hook: removes the hull's head above the cut and puts in the decimated MakeHuman
+    head. `body(bm)` may replace the hull below (`mbody.build`, #287) once the skull's
+    place is measured. Returns (frame, field, landmarks)."""
+    d = load()
+    top, y_mid = skull(bm, cx)
+    if body:
+        body(bm)
+    hv = np.array([tuple(v.co) for v in bm.verts])
     V, E = d["V"], d["E"]
     skin = V[~E]
     bottom = top - (skin[:, 2].max() - skin[:, 2].min())

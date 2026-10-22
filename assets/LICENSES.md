@@ -19,7 +19,8 @@ Notes:
 
 ## MakeHuman 1.x (CC0 1.0)
 
-- **Files:** `assets/blender/data/makehuman/head.json` (#283).
+- **Files:** `assets/blender/data/makehuman/head.json` (#283) and
+  `assets/blender/data/makehuman/body.json` (#287).
 - **Source:** <https://github.com/makehumancommunity/makehuman>, commit
   `a8bc2d54ff0ac92e78ff71431b1023eda42bf482`:
   - the base mesh `makehuman/data/3dobjs/base.obj` (groups `body`, `helper-l-eye`,
@@ -43,3 +44,7 @@ Notes:
     head's vertices.
   - Made by `assets/blender/tools/makehuman_head.py`. The build decimates the head (`acr_assets/mhead.py`).
   - No MakeHuman code is used. The build does not need the MakeHuman download.
+  - `body.json`: the same young adult man's `body` group below the chin (no head, no
+    helpers) and the centres of the base mesh's `joint-*` helper cubes, in the same units.
+    Made by `assets/blender/tools/makehuman_body.py`; the build reposes it onto skeleton H
+    and decimates it (`acr_assets/mbody.py`).
