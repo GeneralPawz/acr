@@ -731,12 +731,16 @@ sum of its four neighbours (centre excluded). This spreads the stamps and decays
     stored: the scripts give them again);
   - every closed mission window (page, question, choice) as `(tick, answer)`. A question rolls its
     tick back (`Scripts::answer`), so the answer belongs to the tick that is re-run;
+  - every input of the diplomacy panel (a DipServer request or a click on a tribe
+    building) with the tick it came before: it changes the scripts' state (alliances,
+    purchases) without being a command;
   - the saved tick and `World::state_hash()` there, the camera, the selection and the
     control groups, the name and the date.
 
   Format: `ACRS`, version, name, unix time, local date and time, setup, tick, hash (u64
-  LE), then the `ACRR` replay blob, the dialog closes (tick deltas), camera, selection and
-  groups; integers are LEB128 varints like the replays. The header comes first so that the
+  LE), then the `ACRR` replay blob, the dialog closes (tick deltas), from version 2 the
+  diplomacy inputs (tick delta, 0 + request bytes or 1 + building index), camera,
+  selection and groups; integers are LEB128 varints like the replays. The header comes first so that the
   load dialog lists files without decoding them. Native: `Save\<name>.sav` in the game
   folder (the original's `.sav` files start with `KASF` and are not listed); browser:
   `localStorage` key `acr-save:<name>`, base64.
