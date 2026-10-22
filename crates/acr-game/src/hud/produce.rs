@@ -1,6 +1,7 @@
 //! Where the production icons go: the slots and keys of the nations' `[FIXED_PRODUCE]`
-//! lists, plus the officers' formation groups. What is available comes from the
-//! simulation's tech tree (`acr_sim::economy::producible`).
+//! lists. What is available comes from the simulation's tech tree
+//! (`acr_sim::economy::producible`); the officers' formations come from the simulation's
+//! `Formations::officers`.
 
 use std::collections::HashMap;
 
@@ -21,8 +22,6 @@ pub struct Item {
 pub struct Nations {
     /// Producer id (upper case) → items, in file order.
     produce: HashMap<String, Vec<Item>>,
-    /// Officer id (upper case) → the formation groups it leads.
-    pub officers: HashMap<String, Vec<String>>,
 }
 
 impl Nations {
@@ -31,12 +30,6 @@ impl Nations {
         let mut n = Self::default();
         for bytes in files {
             let nation = NationDef::parse(bytes);
-            for g in &nation.officers {
-                let names: Vec<String> = g.formations.iter().map(|f| f.name.to_ascii_uppercase()).collect();
-                if let Some(officer) = g.commanders.first() {
-                    n.officers.entry(officer.to_ascii_uppercase()).or_insert(names);
-                }
-            }
             for p in &nation.fixed_produce {
                 let items = p
                     .items

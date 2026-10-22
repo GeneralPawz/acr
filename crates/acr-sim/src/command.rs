@@ -115,6 +115,18 @@ pub enum Command {
     /// planting fields (OB+0xf2 bit3, read by `CreateFields` 0x5780d2); resuming plants at
     /// once (`CreateFields` of the player).
     StopSowing { player: PlayerId, buildings: Vec<EntityId>, stop: bool },
+    /// The officer's formation icons (network command 0x3a, 0x4d748f, executor 0x4e174a →
+    /// `CreateBrigade` 0x4198b3): the free officer forms `shape` from exactly its slot count
+    /// of free soldiers of `kind` within 1024 px, with a free drummer of its type within
+    /// 1024 px (unless it needs none) and a flag bearer if one is near.
+    FormNear { player: PlayerId, officer: EntityId, shape: u16, kind: TypeId },
+    /// A formed brigade's formation icons (network command 0x41, 0x4d79e8, `ReformBrigade`
+    /// 0x4e1cd3): its soldiers take the first variant of `ORD_GROUPS.LST` group `group` with
+    /// room for them.
+    Reform { player: PlayerId, brigade: u16, group: u8 },
+    /// The `FILLFORM` icon (network command 0x52, 0x4d8153, `FillBrigade` 0x4193a1): free
+    /// soldiers of the brigade's type within 1024 px take its empty slots.
+    Fill { player: PlayerId, brigade: u16 },
 }
 
 impl Command {
@@ -152,7 +164,10 @@ impl Command {
             | Command::StopFishing { player, .. }
             | Command::StopSowing { player, .. }
             | Command::Board { player, .. }
-            | Command::Unload { player, .. } => *player,
+            | Command::Unload { player, .. }
+            | Command::FormNear { player, .. }
+            | Command::Reform { player, .. }
+            | Command::Fill { player, .. } => *player,
         }
     }
 }

@@ -72,7 +72,9 @@ compares state hashes (see [Verification](#verification)).
   the unit occupancy grid and the random index. Static data (`Catalog`, `Formations`,
   `MapGrid`) is shared through `Arc`. The dynamic state is hashed.
 - **Commands** are plain data (`Move`, `MoveFacing` (a move ending in a direction: `GroupSend` with it), `Stop`, `Attack` (priority 0xFE), `AttackMove`, `Patrol`,
-  `StandGround`, `HoldFire`, `FriendlyFire`, `MeleeOnly`, `Form`, `Face`, `Disband`, with the issuing player). They are applied in order at the start of a tick, and commands for units
+  `StandGround`, `HoldFire`, `FriendlyFire`, `MeleeOnly`, `Form` (scripts: the units given),
+  `FormNear` (the officer's icons: the units near it), `Reform`, `Fill`, `Face`, `Disband`,
+  with the issuing player). They are applied in order at the start of a tick, and commands for units
   the player does not own are ignored. The command stream per tick is therefore a complete
   replay.
 - **Iteration order:** per tick, the brigade orders of the nation whose city tick it is
@@ -393,11 +395,31 @@ Shapes come from `ORDERS.LST` (parser 0x4ed6e0) and `ORD_GROUPS.LST` (0x4ed400).
 - **Symmetry.** `SYM2` builds a 180° slot permutation: the k-th slot from the top of a column
   maps to the k-th from the bottom of the mirrored column. `SYM4` also builds ±90°
   permutations and requires as many columns as lines.
-- **Bonuses.** The header numbers are attack/defence bonuses: standing, normal, and extra
-  with a flag bearer.
-- **Size variants.** A group (`LINE 3 0 1 2 5 #LINE15 … #LINE196`) lists the buttons offered
-  and the size variants. Re-forming takes the first variant with enough slots (0x4e1cd3):
-  infantry 15/36/72/120/196, cavalry 40/90/160.
+- **Bonuses.** The header `#NAME SYMn n1 n2 n3 n4 [n5 n6]` (`%s%s%d%d%d%d%d%d`,
+  0x4ee7cd; missing numbers are 0) stores `n1`..`n6` at shape+0x36, +0x38, +0x37, +0x39,
+  +0x3a, +0x3b: attack and defence bonus **standing** (`n1`, `n3`), **normal** (`n2`, `n4`)
+  and the flag bearer's extra (`n5`, `n6`, added while the brigade has one). `#LINE15
+  19 2 9 3 1 2`: normally +2 attack, +3 defence; standing +19, +9; a flag bearer adds
+  +1, +2. The members carry the current pair in OB+0x61 / +0x62 (the brigade in +0x1c /
+  +0x1d); `MakeDamage` adds the sender's +0x61 for `O` weapons and subtracts the victim's
+  +0x62 (see Combat).
+- **`#KARE`.** shape+0x3d is set for every shape whose name does **not** contain `#KARE`
+  (`strstr`, 0x4ee76b); only those scale the bonuses by the angle (0x4e9064).
+- **Size variants.** A group (`LINE 3 0 1 2 5 #LINE15 … #LINE196`) lists the groups a
+  formed brigade can turn into (here LINE, SQUARE, KARE; group `i` is also line `i` of
+  `NRES.DAT [ORDERICONS]`) and the size variants: infantry 15/36/72/120/196, cavalry
+  `#PRUS3`/`#PRUS2`/`#PRUS` etc. Every shape remembers the (last) group listing it
+  (shape+0x3c, 0x4ed6c4).
+- **Officers.** The `[OFFICERS]` section of the nation files gives, per officer type
+  (`NM+0xa`): its drummer type (`NONE`: none needed), its flag bearer type (optional),
+  then per formation the group, the size variants and the soldier types it takes:
+
+  ```text
+  EngOf17(EN) EngB17(EN) EngF17(EN)   3
+  SQUARE 5 #SQUARE15 #SQUARE36 #SQUARE72 #SQUARE120 #SQUARE196 3 EngPik(EN) SpnS15(EN) EngMus(EN)
+  EngKOf18(EN) NONE EngKF18(EN)    3
+  PRUS   3 #PRUS3 #PRUS2 #PRUS       1 EngD18(EN)
+  ```
 - **Placement** (`Arrange` 0x4ad9af), with `c, s = TCos/TSin[dir]`, `L = Norma(c, s)`,
   `cx = c·2048/L`, `sy = s·2048/L`:
   - `X = x0 − ((xi·sy + (avgY − 2r)·cx) >> 3)`
@@ -417,9 +439,42 @@ Shapes come from `ORDERS.LST` (parser 0x4ed6e0) and `ORD_GROUPS.LST` (0x4ed400).
     speed matching and the shape is not kept on the way.
 - **Keeping positions** (0x41c0a9): members more than 100/16 px off their slot are sent back,
   and members in place turn to the formation's facing.
-- **Forming.** In the game an officer needs exactly N free soldiers of one type within
-  1024 px (0x4198b3). The drummer and flag bearer types come from the officer's data. The
-  formation is placed centred on the officer, facing 0.
+- **Free units near a point** (0x4191a3 / 0x41901d, counted by 0x52c9d8): the 128 px
+  cells ring by ring (`r/2048 + 1` rings of the ring table 0x28a6f10) around the point,
+  in cell order; a unit counts if it is alive, not inside anything (OB+0x39), in no
+  formation, of the nation and type asked and within `r` (`Norma`). Forming and filling
+  use `r` = 0x4000 (1024 px) and take the first units found.
+- **Forming** (`CreateBrigade` 0x4198b3; network command 0x3a, executor 0x4e174a): the
+  officer must be alive and in no formation. It takes
+  - exactly the shape's slot count of free soldiers of the type within 1024 px, else
+    nothing happens;
+  - a free unit of its drummer type within 1024 px, **required** unless the type is `NONE`;
+  - a free flag bearer within 1024 px if there is one (optional; it adds `n5`, `n6`).
+
+  Officer, drummer and flag bearer stand ground (OB+0x25 bit4); the soldiers do not.
+  Everybody gets the normal bonuses. The brigade remembers the soldier type (+0x1a) and
+  `FORMLIKESHOOTERS` (+0x2e bit3); it is placed centred on the officer facing 0
+  (`PlaceBrigade` 0x41a7be with `Arrange`) and its members walk to their slots with
+  priority 0x90 (`AddKeepPositions` 0x41c63e). (The engine's special case of a soldier
+  type equal to the drummer type, which leaves the officer out, is not reproduced.)
+- **Re-forming** (`ReformBrigade` 0x4e1cd3, command 0x41): the living soldiers take the
+  first variant of the chosen group with room for all of them, in their order, placed at
+  their mean position with the brigade's facing; they walk to their slots (0x90) and the
+  formation stops standing ground (0x4e0ad7), which sets the new shape's normal bonuses.
+- **Filling** (`FillBrigade` 0x4193a1, command 0x52): free soldiers of the brigade's type
+  within 1024 px of its soldiers' mean position take the empty or dead slots with the
+  brigade's bonuses (+0x1c/+0x1d); the formation stops standing ground (0x4e0c3f), is
+  placed there anew with its facing, and its members walk to their slots (0x90).
+- **Stand ground** (`MakeStandGroundTemp` 0x4dfe94, once per tick): unless a soldier
+  stands already, every member stands with the normal bonuses and the stand-still
+  countdown +0x22 starts at 50; a `#KARE` formation's members then clear their orders and
+  face away from its centre. `ProcessBrigades` (0x434486) runs the countdown on the
+  nation's city tick: without a brigade order and while fewer than 3 members have orders
+  it drops by `FrmDec` (2); at 0 every member gets the **standing** bonuses (0x4dfd35).
+  `CancelStandGround` (0x4e0c3f, or 0x4e0ad7 once per tick) ends standing for every member
+  with the normal bonuses and stops the countdown; group moves do it for every formation
+  they send (0x4ad0b5). So a formation earns `n1`/`n3` only by standing ground and
+  staying put for 25 city ticks (200 ticks).
 
 ## Combat
 
@@ -500,8 +555,9 @@ Implemented in `combat.rs`, recovered from `SearchVictim` (0x52622b), `AttackObj
     allows, minus `SHIELD`.
   - `R` weapons: `rando() < 1310` (4 %) kills outright, except buildings and `NO25` units.
   - Then subtract `PROTECTION[kind]`, kept as a byte.
-  - The formation bonuses (shape header numbers 3 and 4) are scaled by the angle to the
-    brigade's facing: full within 40, half below 70, none beyond; `#KARE` gets full.
+  - The formation bonuses (the sender's OB+0x61 for `O` weapons, the victim's OB+0x62;
+    see Formations) are scaled by the angle to the brigade's facing: full within 40, half
+    below 70, none beyond; `#KARE` shapes get full.
   - At least 1. A surviving victim counter-attacks with priority 1.
 - **Shots** (`Shoot` 0x51ddc3) leave from the muzzle: the `SETACTIVEPOINT` point of the
   current direction (9-direction sets mirrored for the east half) plus the `USERLC` offset
@@ -581,7 +637,7 @@ The states (`Unit` fields; `states.rs`):
 | state | field | effect |
 |---|---|---|
 | hold fire | `NoSearchVictim` (OB+0x25 bit1) | no `SearchVictim`; attacks below 0x80 have no effect |
-| stand ground | OB+0x25 bit4 | `AttackObjLink` drops a target out of range (0x5204aa) instead of chasing it; group moves (0x4ac20d) end it; on a `#KARE` formation (`MakeStandGroundTemp` 0x4dfe94) every member clears its orders and turns away from the members' mean position |
+| stand ground | OB+0x25 bit4 | `AttackObjLink` drops a target out of range (0x5204aa) instead of chasing it; group moves (0x4ac20d) end it; a formation member switches its formation with its bonuses (`MakeStandGroundTemp` 0x4dfe94, see Formations); on a `#KARE` formation every member then clears its orders and turns away from the members' mean position |
 | melee only | OB+0x2a bit2 | only attack index 0, except against buildings (0x51bdc6); only `ARMATTACK` types |
 | no FF avoidance | OB+0x2a bit1 | `FRIENDLYFIRE` units shoot through friends |
 | AI guard | OB+0xf2 bit2 | never searches targets; others' searches skip it unless it attacks (0x525b70) |
@@ -1307,9 +1363,9 @@ No game option writes it. How the map view draws the fog is in
     seed uses the bucket grid's width. Fleeing units walk in stance 0 (the engine runs them
     in the stance-1 motion where the type has it). The panic order's removal from the
     selection is left to the interface.
-  - Formation melee: the AI's army melee (0x43ba30) is not reproduced. Formations get no flag
-    bearer, so its extra attack/defence bonus is never added. Keep positions
+  - Formation melee: the AI's army melee (0x43ba30) is not reproduced. Keep positions
     counts a member in place when it reached its slot's cell (as far as a walk gets).
+  - Brigades are appended, never reused (the engine takes a free slot of the nation's 512).
   - Shot damage falloff uses an integer `2^(−d/dec)` (16-step table, linear interpolation)
     instead of the x87 `exp`, so values can differ by 1.
 - **Not reproduced yet:**
@@ -1336,6 +1392,12 @@ No game option writes it. How the map view draws the fog is in
   - a musketeer fires its first shot 38–45 ticks after the order, reloads 550 frames and
     kills at 300 px;
   - a 20-unit battle gives identical hashes in two runs.
+- **Formation tests** (`tests/formation.rs`): forming takes exactly the shape's slot count
+  of free soldiers within 1024 px (14 are not enough, units 1100 px away do not count), the
+  drummer is required unless the officer has none, a flag bearer near adds its bonus; the
+  normal bonuses `n2`/`n4`, standing ground and 25 city ticks of standing still give
+  `n1`/`n3`, a move ends it; re-forming as a `#KARE` and back keeps the soldiers; filling
+  replaces fallen soldiers by free ones near; another player cannot fill the formation.
 - **Morale test** (`tests/morale.rs`): a kill with fear type 3 changes the courage of every
   unit around, some comrades of the victim panic, run more than 60 px away ignoring move
   orders, and all calm down again.

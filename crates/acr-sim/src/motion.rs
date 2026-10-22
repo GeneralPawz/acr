@@ -740,6 +740,8 @@ pub fn group_send(world: &mut World, ids: &[usize], x: i32, y: i32, dir: Option<
             // An attack-move (priority & 0x7f == 0) lets a formation fight on the way (AttEnm).
             world.brigades[usize::from(b)].att_enm = prio & 0x7f == 0;
             crate::formation::send(world, usize::from(b), x16 + c.0 - gx, y16 + c.1 - gy, dir);
+            // Every brigade sent stops standing ground, with its normal bonuses (0x4ad0b5).
+            crate::formation::cancel_stand_ground(world, usize::from(b), false);
         }
     }
     if free.is_empty() {

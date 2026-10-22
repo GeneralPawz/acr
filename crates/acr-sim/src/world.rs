@@ -1042,6 +1042,23 @@ impl World {
                     }
                 }
             }
+            Command::FormNear { player, officer, shape, kind } => {
+                if let Some(&o) = self.owned(*player, &[*officer]).first() {
+                    crate::formation::form_near(self, o, usize::from(*shape), *kind);
+                }
+            }
+            Command::Reform { player, brigade, group } => {
+                let b = usize::from(*brigade);
+                if self.brigades.get(b).is_some_and(|br| br.alive && br.owner == *player) {
+                    crate::formation::reform(self, b, usize::from(*group));
+                }
+            }
+            Command::Fill { player, brigade } => {
+                let b = usize::from(*brigade);
+                if self.brigades.get(b).is_some_and(|br| br.alive && br.owner == *player) {
+                    crate::formation::fill(self, b);
+                }
+            }
             Command::StopSowing { player, buildings, stop } => {
                 for i in self.owned(*player, buildings) {
                     if self.catalog.get(self.units[i].kind).role.usage == crate::catalog::usage::MELNICA {

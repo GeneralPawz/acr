@@ -6,8 +6,11 @@
 //! (0x41c63e); see `docs/simulation.md`. A shape cell is 32 px in both directions; text
 //! lines further down stand further in front, text columns go to the formation's right.
 
-use acr_formats::defs::{OrderGroups, OrderList, OrderShape};
+use std::collections::BTreeMap;
 
+use acr_formats::defs::{NationDef, OrderGroups, OrderList, OrderShape};
+
+use crate::catalog::{Catalog, TypeId};
 use crate::fixed::Pos;
 use crate::motion::send_to;
 use crate::trig::{cos, get_dir, norma, sin};
@@ -28,8 +31,12 @@ pub struct Shape {
     pub avg_y: i32,
     /// Commander slots, centred `(2·col − avgX, 2·row − avgY)`.
     pub commanders: Vec<(i32, i32)>,
-    /// Header numbers: attack/defence bonus standing, normal, with flag bearer.
+    /// The six header numbers `n1..n6` (`%s%s%d%d%d%d%d%d`, 0x4ee7cd; missing ones are 0),
+    /// stored at shape+0x36, +0x38, +0x37, +0x39, +0x3a, +0x3b: attack and defence bonus
+    /// standing (`n1`, `n3`), normal (`n2`, `n4`) and the flag bearer's extra (`n5`, `n6`).
     pub bonus: [i32; 6],
+    /// The `ORD_GROUPS.LST` group listing the shape (shape+0x3c, 0x4ed6c4; the last one).
+    pub group: Option<usize>,
     /// Soldier slot permutations for turning by +90°, −90° (SYM4) and 180° (SYM2, SYM4).
     pub perm_left: Option<Vec<usize>>,
     pub perm_right: Option<Vec<usize>>,
@@ -63,6 +70,7 @@ impl Shape {
             avg_y,
             commanders,
             bonus,
+            group: None,
             perm_left: None,
             perm_right: None,
             perm_back: None,
@@ -162,12 +170,36 @@ impl Shape {
     }
 }
 
-/// One line of `ORD_GROUPS.LST`: a formation and its size variants.
+/// One line of `ORD_GROUPS.LST` (table 0x23abb6c, 20 bytes each): a formation, the groups a
+/// formed brigade of it can turn into, and its size variants. The groups are listed in the
+/// order of `NRES.DAT [ORDERICONS]`, whose line `i` is group `i`'s icon.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Group {
     pub name: String,
-    /// Shape indices, smallest first.
+    /// The re-forming buttons of a brigade of this group (+8): group indices.
+    pub buttons: Vec<usize>,
+    /// Shape indices, smallest first (+0x10).
     pub variants: Vec<usize>,
+}
+
+/// One formation of an officer (`[OFFICERS]` of the nation files, 17 bytes at od+6).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct OfficerFormation {
+    /// The `ORD_GROUPS.LST` group (+0), which is also its `[ORDERICONS]` line.
+    pub group: usize,
+    /// The size variants (+7), as listed; their slot counts are the sizes (+3).
+    pub shapes: Vec<usize>,
+    /// The soldier types it takes (+0xd).
+    pub kinds: Vec<TypeId>,
+}
+
+/// What an officer type can lead (`NM+0xa`): the drummer it needs (`NONE`: none), its flag
+/// bearer and its formations.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct Officer {
+    pub drummer: Option<TypeId>,
+    pub flag: Option<TypeId>,
+    pub formations: Vec<OfficerFormation>,
 }
 
 /// All formation shapes and groups of a match.
@@ -175,18 +207,53 @@ pub struct Group {
 pub struct Formations {
     pub shapes: Vec<Shape>,
     pub groups: Vec<Group>,
+    /// Officer types and what they lead.
+    pub officers: BTreeMap<TypeId, Officer>,
 }
 
 impl Formations {
     pub fn new(orders: &OrderList, groups: &OrderGroups) -> Self {
-        let shapes: Vec<Shape> = orders.shapes.iter().filter_map(Shape::compile).collect();
-        let find = |n: &str| shapes.iter().position(|s| s.name.eq_ignore_ascii_case(n));
-        let groups = groups
+        let mut shapes: Vec<Shape> = orders.shapes.iter().filter_map(Shape::compile).collect();
+        let find = |shapes: &[Shape], n: &str| shapes.iter().position(|s| s.name.eq_ignore_ascii_case(n));
+        let groups: Vec<Group> = groups
             .groups
             .iter()
-            .map(|g| Group { name: g.name.clone(), variants: g.shapes.iter().filter_map(|s| find(s)).collect() })
+            .map(|g| Group {
+                name: g.name.clone(),
+                buttons: g.values.iter().filter_map(|&v| usize::try_from(v).ok()).collect(),
+                variants: g.shapes.iter().filter_map(|s| find(&shapes, s)).collect(),
+            })
             .collect();
-        Self { shapes, groups }
+        for (i, g) in groups.iter().enumerate() {
+            for &v in &g.variants {
+                shapes[v].group = Some(i);
+            }
+        }
+        Self { shapes, groups, officers: BTreeMap::new() }
+    }
+
+    /// Reads the `[OFFICERS]` sections: `OFFICER DRUMMER [FLAG] n`, then per formation
+    /// `GROUP m #SHAPE*m k TYPE*k`. The first nation naming an officer type wins.
+    pub fn set_officers(&mut self, catalog: &Catalog, nations: &[NationDef]) {
+        for g in nations.iter().flat_map(|n| &n.officers) {
+            let kind = |i: usize| g.commanders.get(i).and_then(|c| catalog.find(c));
+            let Some(officer) = kind(0) else { continue };
+            if self.officers.contains_key(&officer) {
+                continue;
+            }
+            let formations = g
+                .formations
+                .iter()
+                .filter_map(|f| {
+                    Some(OfficerFormation {
+                        group: self.groups.iter().position(|x| x.name.eq_ignore_ascii_case(&f.name))?,
+                        shapes: f.variants.iter().filter_map(|v| self.shape_index(v)).collect(),
+                        kinds: f.units.iter().filter_map(|u| catalog.find(u)).collect(),
+                    })
+                })
+                .collect();
+            self.officers.insert(officer, Officer { drummer: kind(1), flag: kind(2), formations });
+        }
     }
 
     pub fn shape_index(&self, name: &str) -> Option<usize> {
@@ -251,6 +318,93 @@ pub struct Brigade {
     pub att_enm: bool,
     /// A shooting formation (+0x2e bit3, `FORMLIKESHOOTERS`): members attack one by one.
     pub shooters: bool,
+    /// The soldier type (+0x1a), which filling takes.
+    pub kind: Option<TypeId>,
+    /// The members' current attack and defence bonus (+0x1c, +0x1d).
+    pub bonus: (i32, i32),
+    /// Stand-still countdown (+0x22): set to 50 when the formation stands ground; it runs
+    /// down by `FrmDec` per city tick while fewer than 3 members have orders, and at 0 the
+    /// standing bonuses apply (0x434486).
+    pub stand_timer: u16,
+    /// Tick of the last stand-ground switch (+0x26): it switches at most once per tick.
+    pub stamp: u32,
+}
+
+/// Attack and defence bonus of brigade `b`'s shape (`n2`, `n4`, or standing `n1`, `n3`), plus
+/// the flag bearer's extra (`n5`, `n6`) while it has one (0x419d57, 0x4dfd35, 0x4e0000).
+fn shape_bonus(world: &World, b: usize, standing: bool) -> (i32, i32) {
+    let br = &world.brigades[b];
+    let Some(s) = world.formations.shapes.get(br.shape) else { return (0, 0) };
+    let (mut a, mut d) = if standing { (s.bonus[0], s.bonus[2]) } else { (s.bonus[1], s.bonus[3]) };
+    if br.members.get(2).is_some_and(Option::is_some) {
+        (a, d) = (a + s.bonus[4], d + s.bonus[5]);
+    }
+    (a, d)
+}
+
+/// The living members of brigade `b` (alive and still in it), with their member index.
+fn members_at(world: &World, b: usize) -> Vec<(usize, usize)> {
+    world.brigades[b]
+        .members
+        .iter()
+        .enumerate()
+        .filter_map(|(k, &m)| Some((k, alive(world, m)?)))
+        .filter(|&(_, i)| world.units[i].brigade == Some(b as u16))
+        .collect()
+}
+
+/// Sets the bonuses of brigade `b` and of all its members, and their stand-ground flag.
+fn set_bonus(world: &mut World, b: usize, bonus: (i32, i32), stand: bool) {
+    world.brigades[b].bonus = bonus;
+    for (_, i) in members_at(world, b) {
+        let u = &mut world.units[i];
+        (u.attack_bonus, u.defence_bonus, u.stand_ground) = (bonus.0, bonus.1, stand);
+    }
+}
+
+/// `MakeStandGroundTemp` (0x4dfe94), once per tick: unless a soldier stands already, every
+/// member stands with the normal bonuses and the stand-still countdown starts at 50; a
+/// `#KARE` formation's members then clear their orders and face away from its centre.
+pub fn make_stand_ground(world: &mut World, b: usize) {
+    let now = world.tick.0 as u32;
+    if world.brigades[b].stamp == now {
+        return;
+    }
+    let members = members_at(world, b);
+    if !members.iter().any(|&(k, i)| k > 2 && world.units[i].stand_ground) {
+        let bonus = shape_bonus(world, b, false);
+        set_bonus(world, b, bonus, true);
+        world.brigades[b].stand_timer = 50;
+    }
+    let units: Vec<usize> = members.iter().map(|&(_, i)| i).collect();
+    crate::states::kare_face_outward(world, b, &units);
+    world.brigades[b].stamp = now;
+}
+
+/// `CancelStandGround` (0x4e0c3f; 0x4e0ad7 once per tick with `once`): every member stops
+/// standing with the normal bonuses, and the countdown ends.
+pub fn cancel_stand_ground(world: &mut World, b: usize, once: bool) {
+    let now = world.tick.0 as u32;
+    if once {
+        if world.brigades[b].stamp == now {
+            return;
+        }
+        world.brigades[b].stamp = now;
+    }
+    let bonus = shape_bonus(world, b, false);
+    set_bonus(world, b, bonus, false);
+    world.brigades[b].stand_timer = 0;
+}
+
+/// 0x4dfd35, once per tick: the standing bonuses (`n1`, `n3`) for every member, which stands.
+fn standing_bonus(world: &mut World, b: usize) {
+    let now = world.tick.0 as u32;
+    if world.brigades[b].stamp == now {
+        return;
+    }
+    let bonus = shape_bonus(world, b, true);
+    set_bonus(world, b, bonus, true);
+    world.brigades[b].stamp = now;
 }
 
 fn alive(world: &World, id: Option<EntityId>) -> Option<usize> {
@@ -370,19 +524,31 @@ pub fn form(world: &mut World, officer: usize, units: &[usize], kind: &str) {
     if soldiers.is_empty() {
         return;
     }
+    let flag_kind = world.formations.officers.get(&world.units[officer].kind).and_then(|o| o.flag);
+    let flag = units.iter().copied().find(|&i| {
+        let u = &world.units[i];
+        i != officer && u.brigade.is_none() && Some(u.kind) == flag_kind && u.living()
+    });
+    create(world, officer, drummer, flag, &soldiers, shape);
+}
+
+/// Sets up a brigade of `shape`: the officer, drummer and flag bearer stand ground, the
+/// soldiers do not; everybody gets the normal bonuses (0x419d57); the formation is placed
+/// centred on the officer facing 0 and its members walk to their slots with priority 0x90
+/// (`PlaceBrigade` 0x41a7be, `AddKeepPositions` 0x41c63e).
+fn create(
+    world: &mut World,
+    officer: usize,
+    drummer: Option<usize>,
+    flag: Option<usize>,
+    soldiers: &[usize],
+    shape: usize,
+) {
     let id = world.brigades.len() as u16;
-    let mut members = vec![Some(world.units[officer].id), drummer.map(|d| world.units[d].id), None];
+    let unit_id = |i: Option<usize>| i.map(|i| world.units[i].id);
+    let mut members = vec![unit_id(Some(officer)), unit_id(drummer), unit_id(flag)];
     members.extend(soldiers.iter().map(|&s| Some(world.units[s].id)));
-    // Normal attack/defence bonuses of the shape (header numbers 3 and 4); the flag
-    // bearer's extra (5, 6) needs a flag bearer, which `form` does not assign.
-    let bonus = world.formations.shapes[shape].bonus;
-    for m in members.iter().flatten() {
-        let u = &mut world.units[m.0 as usize];
-        u.brigade = Some(id);
-        u.attack_bonus = bonus[2];
-        u.defence_bonus = bonus[3];
-    }
-    let shooters = catalog.get(world.units[soldiers[0]].kind).shooters_formation;
+    let kind = world.units[soldiers[0]].kind;
     world.brigades.push(Brigade {
         owner: world.units[officer].owner,
         alive: true,
@@ -392,11 +558,149 @@ pub fn form(world: &mut World, officer: usize, units: &[usize], kind: &str) {
         slots: Vec::new(),
         orders: Vec::new(),
         att_enm: false,
-        shooters,
+        shooters: world.catalog.get(kind).shooters_formation,
+        kind: Some(kind),
+        bonus: (0, 0),
+        stand_timer: 0,
+        stamp: 0,
     });
+    let b = usize::from(id);
+    let bonus = shape_bonus(world, b, false);
+    world.brigades[b].bonus = bonus;
+    for (k, m) in world.brigades[b].members.clone().into_iter().enumerate() {
+        let Some(m) = m else { continue };
+        let u = &mut world.units[m.0 as usize];
+        u.brigade = Some(id);
+        (u.attack_bonus, u.defence_bonus) = bonus;
+        u.stand_ground = k < 3;
+    }
     let p = world.units[officer].pos;
-    place(world, usize::from(id), p.x, p.y, 0, true);
-    send_members(world, usize::from(id), FORM_PRIO);
+    place(world, b, p.x, p.y, 0, true);
+    send_members(world, b, FORM_PRIO);
+}
+
+/// Free units of `kind` owned by `owner` within `r` (1/16 px) of `(x, y)`, at most `max`, in
+/// the order of the 128 px cells ring by ring around the point (0x4191a3 with 0x41901d;
+/// `count_near`, 0x52c9d8, counts them): living, not inside anything and in no formation.
+pub fn near(world: &World, x: i32, y: i32, r: i32, kind: TypeId, owner: u8, max: usize) -> Vec<usize> {
+    let mut out = Vec::new();
+    if max == 0 {
+        return out;
+    }
+    let (cx, cy) = (x >> 11, y >> 11);
+    for ring in 0..=(r >> 11) as usize + 1 {
+        for &(dx, dy) in crate::morale::ring(ring) {
+            for &k in world.buckets.get(cx + dx, cy + dy) {
+                let u = &world.units[k as usize];
+                if u.active()
+                    && u.brigade.is_none()
+                    && u.owner == owner
+                    && u.kind == kind
+                    && norma(u.pos.x - x, u.pos.y - y) < r
+                {
+                    out.push(k as usize);
+                    if out.len() >= max {
+                        return out;
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// How many free units of `kind` stand within 1024 px of `(x, y)` (0x52c9d8).
+pub fn count_near(world: &World, x: i32, y: i32, kind: TypeId, owner: u8) -> usize {
+    near(world, x, y, NEAR, kind, owner, usize::MAX).len()
+}
+
+/// The search radius of forming and filling, 1024 px (0x4000).
+pub const NEAR: i32 = 0x4000;
+
+/// `CreateBrigade` (0x4198b3) for network command 0x3a (0x4e174a): officer `officer` (free and
+/// alive) forms `shape` from exactly its slot count of free soldiers of `kind` within
+/// 1024 px. Its drummer type, unless `NONE`, must have a free unit within 1024 px too; a
+/// flag bearer is taken if one is near. The interface then selects the brigade (0x41f198).
+/// Returns the brigade.
+pub fn form_near(world: &mut World, officer: usize, shape: usize, kind: TypeId) -> Option<usize> {
+    let o = &world.units[officer];
+    if o.brigade.is_some() || !o.living() {
+        return None;
+    }
+    let data = world.formations.officers.get(&o.kind)?.clone();
+    let (x, y, owner) = (o.pos.x, o.pos.y, o.owner);
+    let n = world.formations.shapes.get(shape)?.slots();
+    let soldiers = near(world, x, y, NEAR, kind, owner, n);
+    if soldiers.len() != n {
+        return None;
+    }
+    let drummer = match data.drummer {
+        Some(d) => Some(*near(world, x, y, NEAR, d, owner, 1).first()?),
+        None => None,
+    };
+    let flag = data.flag.and_then(|f| near(world, x, y, NEAR, f, owner, 1).first().copied());
+    create(world, officer, drummer, flag, &soldiers, shape);
+    Some(world.brigades.len() - 1)
+}
+
+/// `ReformBrigade` (0x4e1cd3, network command 0x41): the living soldiers of brigade `b` take
+/// the first variant of `group` with room for all of them, in their order, placed at their
+/// mean position with the brigade's facing; then they walk to their slots (priority 0x90)
+/// and the formation stops standing ground with the new shape's bonuses (0x4e0ad7).
+pub fn reform(world: &mut World, b: usize, group: usize) {
+    let Some(br) = world.brigades.get(b).filter(|br| br.alive) else { return };
+    let soldiers: Vec<EntityId> =
+        members_at(world, b).into_iter().filter(|&(k, _)| k > 2).map(|(_, i)| world.units[i].id).collect();
+    let Some(g) = world.formations.groups.get(group) else { return };
+    let Some(shape) = g.variants.iter().copied().find(|&v| soldiers.len() <= world.formations.shapes[v].slots()) else {
+        return;
+    };
+    if soldiers.is_empty() {
+        return;
+    }
+    let n = soldiers.len() as i64;
+    let x = (soldiers.iter().map(|e| i64::from(world.units[e.0 as usize].pos.x)).sum::<i64>() / n) as i32;
+    let y = (soldiers.iter().map(|e| i64::from(world.units[e.0 as usize].pos.y)).sum::<i64>() / n) as i32;
+    let dir = br.dir;
+    let br = &mut world.brigades[b];
+    br.members.truncate(3);
+    br.members.extend(soldiers.into_iter().map(Some));
+    br.shape = shape;
+    place(world, b, x, y, dir, true);
+    send_members(world, b, FORM_PRIO);
+    cancel_stand_ground(world, b, true);
+}
+
+/// `FillBrigade` (0x4193a1, network command 0x52, the `FILLFORM` icon): free soldiers of the
+/// brigade's type within 1024 px of its soldiers' mean position take the empty or dead slots,
+/// with the brigade's bonuses; the formation stops standing ground (0x4e0c3f), is placed
+/// there anew with its facing and its members walk to their slots (priority 0x90).
+pub fn fill(world: &mut World, b: usize) {
+    let Some(br) = world.brigades.get(b).filter(|br| br.alive) else { return };
+    let (Some(kind), owner, dir) = (br.kind, br.owner, br.dir) else { return };
+    let slots = world.formations.shapes[br.shape].slots() + 3;
+    let living = members_at(world, b);
+    let soldiers: Vec<usize> = living.iter().filter(|&&(k, _)| k > 2).map(|&(_, i)| i).collect();
+    let empty: Vec<usize> = (3..slots).filter(|k| !living.iter().any(|&(m, _)| m == *k)).collect();
+    if soldiers.is_empty() || empty.is_empty() {
+        return;
+    }
+    let n = soldiers.len() as i64;
+    let x = (soldiers.iter().map(|&i| i64::from(world.units[i].pos.x)).sum::<i64>() / n) as i32;
+    let y = (soldiers.iter().map(|&i| i64::from(world.units[i].pos.y)).sum::<i64>() / n) as i32;
+    let new = near(world, x, y, NEAR, kind, owner, empty.len());
+    let bonus = world.brigades[b].bonus;
+    world.brigades[b].members.resize(slots, None);
+    for (&k, &i) in empty.iter().zip(&new) {
+        world.brigades[b].members[k] = Some(world.units[i].id);
+        let u = &mut world.units[i];
+        u.brigade = Some(b as u16);
+        (u.attack_bonus, u.defence_bonus) = bonus;
+        u.stand_ground = false;
+    }
+    cancel_stand_ground(world, b, false);
+    place(world, b, x, y, dir, true);
+    send_members(world, b, FORM_PRIO);
 }
 
 /// The brigade move handler (0x41b83a): re-places the formation at the target (turning by
@@ -482,6 +786,19 @@ pub fn run_brigades(world: &mut World) {
         if !br.alive || br.owner != city {
             continue;
         }
+        // The stand-still countdown: without a brigade order and while fewer than 3 members
+        // have orders it runs down by `FrmDec`; at 0 the standing bonuses apply (0x4344d9).
+        if br.stand_timer != 0 && br.orders.is_empty() {
+            let busy = members_at(world, b).iter().filter(|&&(_, i)| !world.units[i].orders.is_empty()).count();
+            let br = &mut world.brigades[b];
+            if busy < 3 {
+                br.stand_timer = br.stand_timer.saturating_sub(crate::world::FRM_DEC as u16);
+            }
+            if br.stand_timer == 0 {
+                standing_bonus(world, b);
+            }
+        }
+        let br = &world.brigades[b];
         world.random.rando();
         match br.orders.last() {
             Some(BOrder::Keep) => keep_positions(world, b),
@@ -731,5 +1048,35 @@ mod tests {
         assert_eq!(p, [(0, -1024), (0, -512), (0, 0), (0, 512), (0, 1024)]);
         let (cx, cy) = s.commander_position(0, 0, 0, 0);
         assert_eq!((cx, cy), (-1024, 0), "commanders stand behind the line");
+    }
+
+    #[test]
+    fn groups_and_officers() {
+        use acr_formats::defs::UnitDef;
+
+        use crate::catalog::ObjectType;
+        let groups = OrderGroups::parse(b"2
+LINE 2 0 1 1 #LINE5
+SQ 1 0 1 #SQ4
+");
+        let mut f = Formations::new(&shapes(), &groups);
+        assert_eq!(f.groups[0].buttons, [0, 1]);
+        assert_eq!(f.shapes[1].group, Some(1));
+        let unit = UnitDef::parse(b"NAME U
+[END]
+");
+        let mut c = Catalog::new();
+        let off = c.add(ObjectType::from_def("Off(EN)", &unit));
+        let flag = c.add(ObjectType::from_def("Flag(EN)", &unit));
+        let pik = c.add(ObjectType::from_def("Pik(EN)", &unit));
+        let nds = b"[OFFICERS]
+Off(EN) NONE Flag(EN) 1
+SQ 1 #SQ4 1 Pik(EN)
+[END]
+";
+        f.set_officers(&c, &[NationDef::parse(nds)]);
+        let o = &f.officers[&off];
+        assert_eq!((o.drummer, o.flag), (None, Some(flag)));
+        assert_eq!(o.formations, [OfficerFormation { group: 1, shapes: vec![1], kinds: vec![pik] }]);
     }
 }
