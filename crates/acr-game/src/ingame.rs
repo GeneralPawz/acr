@@ -572,7 +572,12 @@ impl InGame {
             let kind = world.catalog.get(u.kind);
             let anim = anim_name(u.anim);
             let step = if u.building { 0 } else { u.frame.max(0) as usize };
-            let Some(look) = objects.animation_look(&kind.id, &anim, u.dir, step) else { continue };
+            // A finished building (`Ready`, not dying) adds its `ADDSECTION` frames (0x5099a8).
+            let finished = u.building
+                && u.stage >= world.max_stage(u)
+                && !matches!(u.anim, AnimKind::BuildLo(_) | AnimKind::Death | AnimKind::DeathLie(_));
+            let sections = finished.then_some(u.stages);
+            let Some(look) = objects.animation_look(&kind.id, &anim, u.dir, step, sections) else { continue };
             let (x, y) = (u.pos.x >> 4, u.pos.y >> 4);
             let h = terrain.height_at(x, y);
             for (frame, (ox, oy), layer, row) in look.parts {
