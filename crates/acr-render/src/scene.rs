@@ -533,6 +533,8 @@ impl SceneAtlas {
     ///
     /// In the zoomed-out view (`zoomed`, 0x5fbac1) a sprite with a `L_Mode` twin is drawn
     /// from it at its own size, its offset divided by 4 (`>> 2`); others are scaled down.
+    /// Stones, holes and then trees come first: the original bakes them into its cached
+    /// ground picture (0x5fea06, [`baked_in_zoom`]), below every unit and building.
     pub fn draws(
         &self,
         scene: &Scene,
@@ -541,18 +543,8 @@ impl SceneAtlas {
         size: [f32; 2],
         zoomed: bool,
     ) -> Vec<crate::SpriteDraw> {
-        let mut extra: Vec<(&SceneSprite, [f32; 2])> = dynamic
-            .iter()
-            .map(|s| {
-                let [px, py] = camera.project(s.x, s.y, 0);
-                (s, [px + s.dx as f32 * camera.scale, py + s.dy as f32 * camera.scale])
-            })
-            .collect();
-        extra.sort_by_key(|(s, _)| s.key());
-        let key = SceneSprite::key;
-        let mut extra = extra.into_iter().peekable();
         let mut out = Vec::new();
-        let mut push = |s: &SceneSprite, [x, y]: [f32; 2]| {
+        for (s, [x, y]) in draw_order(scene, dynamic, camera, size, zoomed) {
             let twin =
                 zoomed.then(|| zoom_pack(&s.frame.0)).flatten().and_then(|p| self.index.get(&(p, s.frame.1)).copied());
             if let Some(frame) = twin {
@@ -575,18 +567,49 @@ impl SceneAtlas {
                     transparent: s.transparent,
                 });
             }
-        };
-        for (s, at) in scene.visible(camera, size, 256.0) {
-            while let Some((e, eat)) = extra.next_if(|(e, _)| key(e) <= key(s)) {
-                push(e, eat);
-            }
-            push(s, at);
-        }
-        for (e, eat) in extra {
-            push(e, eat);
         }
         out
     }
+}
+
+/// The visible part of `scene` and the `dynamic` sprites in draw order, with their frame
+/// origin in output pixels (see [`SceneAtlas::draws`]).
+fn draw_order<'a>(
+    scene: &'a Scene,
+    dynamic: &'a [SceneSprite],
+    camera: &Camera,
+    size: [f32; 2],
+    zoomed: bool,
+) -> Vec<(&'a SceneSprite, [f32; 2])> {
+    let mut extra: Vec<(&SceneSprite, [f32; 2])> = dynamic
+        .iter()
+        .map(|s| {
+            let [px, py] = camera.project(s.x, s.y, 0);
+            (s, [px + s.dx as f32 * camera.scale, py + s.dy as f32 * camera.scale])
+        })
+        .collect();
+    extra.sort_by_key(|(s, _)| s.key());
+    let key = SceneSprite::key;
+    let mut extra = extra.into_iter().peekable();
+    let mut out = Vec::new();
+    if zoomed {
+        out.extend(scene.visible(camera, size, 256.0).filter(|(s, _)| baked_in_zoom(s)));
+    }
+    for (s, at) in scene.visible(camera, size, 256.0).filter(|(s, _)| !(zoomed && baked_in_zoom(s))) {
+        while let Some(e) = extra.next_if(|(e, _)| key(e) <= key(s)) {
+            out.push(e);
+        }
+        out.push((s, at));
+    }
+    out.extend(extra);
+    out
+}
+
+/// Whether the zoomed-out view draws `sprite` into its ground picture (0x5fdddd): the
+/// objects of `STONLIST` and `HOLELIST` (flat, in list order) and `TREELIST` (sorted by
+/// row), from the twins `L_Mode\Stones`, `L_Mode\Holes` and `L_Mode\Der`.
+fn baked_in_zoom(sprite: &SceneSprite) -> bool {
+    matches!(acr_formats::normalize_path(&sprite.frame.0).as_str(), "STONES.GP" | "HOLES.GP" | "TREES.GP")
 }
 
 #[cfg(test)]
@@ -682,5 +705,32 @@ LOCATION -400 -300 900 700
             merged.iter().map(|s| s.sort).collect()
         };
         assert_eq!(order, vec![5, 10, 20, 30]);
+    }
+
+    #[test]
+    fn zoomed_view_draws_stones_and_trees_first() {
+        let named = |pack: &str, layer, sort| SceneSprite { frame: (pack.into(), 0), ..sprite(layer, sort) };
+        let scene = Scene {
+            sprites: vec![
+                named("STONES.GP", Layer::Ground, 5),
+                named("ENGCEN.GP", Layer::Ground, 6),
+                named("TREES.GP", Layer::Sorted, 10),
+                named("ENGCEN.GP", Layer::Sorted, 12),
+                named("TREES.GP", Layer::Sorted, 30),
+            ],
+            sorted_from: 2,
+            missing: HashMap::new(),
+        };
+        let unit = [named("ENGM18.GP", Layer::Sorted, 20)];
+        let camera = Camera { x: -100.0, y: -100.0, scale: 1.0 };
+        let order = |zoomed| -> Vec<(String, i32)> {
+            draw_order(&scene, &unit, &camera, [800.0, 600.0], zoomed)
+                .iter()
+                .map(|(s, _)| (s.frame.0.clone(), s.sort))
+                .collect()
+        };
+        let names = |o: Vec<(String, i32)>| o.into_iter().map(|(n, s)| format!("{n}{s}")).collect::<Vec<_>>().join(" ");
+        assert_eq!(names(order(false)), "STONES.GP5 ENGCEN.GP6 TREES.GP10 ENGCEN.GP12 ENGM18.GP20 TREES.GP30");
+        assert_eq!(names(order(true)), "STONES.GP5 TREES.GP10 TREES.GP30 ENGCEN.GP6 ENGCEN.GP12 ENGM18.GP20");
     }
 }

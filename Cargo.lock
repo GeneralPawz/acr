@@ -95,6 +95,7 @@ dependencies = [
  "acr-formats",
  "bytemuck",
  "log",
+ "naga",
  "wgpu",
 ]
 

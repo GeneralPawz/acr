@@ -144,6 +144,72 @@ The minimap (0x44C230) uses the same light and textures (`0x6D4658[tile]`, one c
 texture) and colours water cells (`depth > 128`) with palette entries 0xB3..0xB7 by the
 `SEA2` brightness layer.
 
+## Zoomed-out view
+
+The zoomed-out view (key L, see `docs/ui.md`) draws the ground with its own renderer,
+`MiniMap4X.cpp`. Implementation: `vs_zoom`/`fs_zoom` in `terrain.wgsl`, `ZOOM_TRIANGLES` and
+`zoom_layers` in `crates/acr-render/src/terrain.rs`.
+
+**Cache.** The picture is kept in blocks of 32 × 32 screen pixels (2 column pairs × 8 rows),
+one 1024-byte bitmap each (block pointers `0x28eed58`, block → slot `0x28eed5c`, slot →
+block `0x28eed48`/`0x28eed4c`, slots handed out by 0x5fb3d1). Every frame 0x5fb93e first
+drops the blocks in the dirty rectangle (0x5ff131), then 0x5ffbd6 renders the missing
+blocks of the view, joined into runs, by 0x5fdddd, and 0x5fb75a copies each visible block to
+the screen. The dirty rectangle (`0x678300..0x67830c`, in column pairs and rows) grows by
+0x5ff043 (a height changed, 0x44a29c) and 0x5fef71 (water depth, 0x53a31b; the editor's
+ground paint, 0x5ef13c). Nothing else invalidates it: objects baked into the picture (below)
+stay as they were until their block is evicted. ACR draws the view every frame instead.
+
+**Ground (0x5fdddd).** The block range is rendered into a buffer with twice the rows and 256
+spare rows on top (`0x28ead10`), at a quarter of the world size: vertex `(col, row)` sits at
+`(8·col, 8·row − (col odd ? 4 : 0) − max(H, 0) >> 1)`, i.e. world / 4 in both axes before the
+rows are halved. Negative heights count as 0, the random lift is not used. Row by row
+(including 40 rows below the range, for heights), every cell draws four triangles in this
+order:
+
+| call | shape | P1, P2 (vertical edge) | P3 (apex) | light of P2 |
+|---|---|---|---|---|
+| 0x5fa3cc | ▷ | v, v+W | v+W+1 | own |
+| 0x5fa3cc | ▷ | v+1, v+W+1 | v+2 | own |
+| 0x5fa936 | ◁ | v+1, v+W+1 | v | own |
+| 0x5fa936 | ◁ | v+2, v+W+2 | v+W+1 | `v+W+1` (the call passes the wrong local) |
+
+A triangle covers 8 columns by 8 rows (0x5f7ff0 ▷, 0x5f8af7 ◁, walking the columns up and
+down); each pixel is moved up by the height interpolated from the corners (8.8 fixed point).
+Later triangles overwrite earlier ones. Per triangle with textures `a, b, c` at P1, P2, P3:
+
+1. Base: the smallest index of the three (`a` if `a ≤ b, c`; else `b` if `b ≤ c, a`; else
+   `c`), written opaque.
+2. Overlays: the other distinct textures, in the order `b, c` / `a, c` / `b, a` for the
+   three cases. Each has a weight per corner, `255 − r` at the corners with that texture
+   and `r` at the others, where `r = RANDOM.LST[vertex & 0x1fff] & 0x7f` (0x5fa44a). The
+   interpolated weight `w` selects, per pixel: `w > 190` the texel, `> 153` `TR4[texel][old]`,
+   `> 102` `TR[old][texel]`, `> 65` `TR4[old][texel]`, `> 51` the value left from the
+   previous pixel (ACR uses `TR4[old][texel]`), else the old pixel.
+3. Light (0x5f960b, ◁: 0x5f9cea): the vertex light levels (0x446ac0, as in the normal
+   view) are interpolated and every pixel becomes `AGEW_1DR[63 + level + bit][pixel]`,
+   `bit` = `RANDOM.LST[counter] & 0x100` with a running counter. Row 63 is the identity.
+
+Textures are not scaled: each pass reads an 8 × 8 patch of its 64 × 64 texture, one texel
+per buffer pixel, at a random offset `(rand() & 15, rand() & 15)` per pass and triangle
+(0x5f80e2). ACR takes the offsets from a hash of the triangle, so the picture is stable.
+
+Then the buffer is reduced to the block height (0x5fe62f): output row `r` is buffer row
+`2r` (after the 256 spare rows); a pixel still 0 takes the first non-zero pixel up to 19
+rows further down (holes on steep slopes).
+
+**Water** (0x5f2a89, per 8 × 8 output block = one `SEA2` cell): as in the normal view (corner
+depths at grid rows `2j` and `2j + 2`, skipped if the first three are negative, bilinear,
+`WCOST[pixel][(a >> 8) & 0xF0 + 1]`) but without the random noise. Before it, 0x5f2c34 draws
+the `UORG` ground paint layer, the twin of 0x5ee4a1; ACR draws that layer in neither view.
+
+**Objects** (0x5fea06): the `STONLIST` and `HOLELIST` objects of the block are drawn into
+the picture with `L_Mode\Stones` and `L_Mode\Holes` at `(x >> 2 − DX >> 2, y >> 3 − z >> 2 −
+DY >> 2)`, then the `TREELIST` objects with `L_Mode\Der`, sorted by `y >> 3` (0x5fafc9,
+flushed by 0x5fb0be). Units, buildings and everything else come later (0x5fbac1), so they
+always cover trees. ACR draws these three groups first in the zoomed view
+(`scene::draw_order`).
+
 ## Objects on the terrain
 
 Implementation: `crates/acr-render/src/scene.rs` (`Scene`, `MapObjects`), lists in
@@ -201,3 +267,6 @@ mirrored units are not flipped yet).
 - The exact noise of the water edge (the engine indexes `RANDOM.LST` by the interpolated
   depth plus the screen address); a hash is used instead.
 - The light dither restarts at each span in the original; it is screen-aligned here.
+- Zoomed-out view: the ◁ triangles' texel walk (texture patch mirrored or not) is not traced;
+  the patch is mapped left to right. Overlapping triangle edges are rasterised by the GPU's
+  rules instead of the original's fixed column pattern.
