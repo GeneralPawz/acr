@@ -92,8 +92,17 @@ individual look; the renderer picks one per soldier (a later slice). Until it do
 the variant meshes, so the game looks as before.
 
 - **Head:** the skin hull's head is subdivided (twice on the face, once elsewhere) and
-  modelled: nose, eye sockets, brow ridge, cheekbones, lips, chin, ears (`faces.base_face`).
-  Flesh grows from 1764 to 2850 tris (engm18).
+  modelled: nose, eye sockets, upper lids, brow ridge, cheekbones, nasolabial folds, lips,
+  chin and ears (`faces.base_face`). The skull and jaw of the bone layer shrank to stay
+  inside the face. Flesh grows from 1764 to about 2550 tris (engm18).
+- **Face map:** the head part of the skin has its own material (second primitive of the
+  flesh, `acr_tint` "skin") with a 512² texture on `TEXCOORD_0`.
+  - The UV is a cylindrical projection with the face front in the middle (`heads.face_uv`).
+  - Painted from a Cycles bake: weathered skin, eyes with whites, iris, lids, lashes and
+    crease, brows, nostrils, lips and the mouth line, folds, a cropped scalp along the
+    hairline, a faint beard shadow.
+  - The rest of the body keeps the shared outfit atlas; the dragoon rider (not dressed by
+    `outfit`) has no face map yet.
 - **Face morph targets** (flesh, and every shell or variant the fields reach: collar,
   hair, beards), weights `[lo, hi]` in root extras `acr_face_morphs`:
   - `face_jaw`, `face_chin`, `face_cheekbones`, `face_nose` (length), `face_nose_bridge`,
@@ -116,8 +125,16 @@ the variant meshes, so the game looks as before.
   per-soldier uniforms, as `ACR-analysis/faces/peek_faces.py` does.
 - **Variants:** separate meshes `<name>.hair_short`, `.hair_tied`, `.hair_queue`,
   `.hair_loose`, `.beard_full`, `.beard_moustache` and `.beard_sideburns`.
-  - They are shells of the head skin, except the queue, which is a tube on the head bone with
-    a black ribbon (material 1).
+  - Each is a smooth patch (`faces.PATCHES`): a grid of rays from the head centre to the
+    skin, bounded by smooth curves (hairline across the forehead and temples, beard edge
+    along the cheeks). It is lifted by a thickness that tapers to the skin on the open edges
+    and has combed ridges. The queue is a tapered tube with a black ribbon (material 1).
+  - All are rigid on the head bone and carry strand UVs (`TEXCOORD_0`: u across, v from the
+    root edge) on a neutral 256² streak texture, darker at the roots.
+  - "full" shows `beard_full` and `beard_moustache`.
+  - Drawn per soldier: at most about 460 tris (tied hair + queue + full beard). engkri lost
+    its fixed `hair` shell; until the renderer picks variants, peasants show the painted
+    cropped scalp.
   - They carry the decay layer `hair`, `_PART` 1, `_LIMB` −1, `deflate` and the face targets.
   - Root extras `acr_hair_variants` / `acr_beard_variants` map a choice to its nodes:
     `{"tied": ["hair_tied", "hair_queue"], "none": [], ...}`. `acr_look_odds` gives their
