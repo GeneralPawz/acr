@@ -6,7 +6,7 @@
 
 use super::super::dialog::{Align, CANCEL, Kind, OK, WidgetId};
 use super::super::draw::Draw;
-use super::super::settings::{RESOLUTIONS, Settings};
+use super::super::settings::{CONTROL_CHOICES, RESOLUTIONS, Settings};
 use super::super::{Ctx, Input, Nav, Screen};
 use super::{Menu, font};
 use crate::ui::fonts::FontId;
@@ -33,6 +33,7 @@ pub struct GameOptions {
     resolution: WidgetId,
     game_mode: WidgetId,
     music_mode: WidgetId,
+    controls: WidgetId,
 }
 
 /// The dialog origin at 1024 × 768: `((RealLx − 484) >> 1) − 57`, `((RealLy − 425) >> 1) − 166`.
@@ -43,7 +44,7 @@ fn origin() -> (i32, i32) {
 impl GameOptions {
     fn collect(&self) -> Settings {
         let d = &self.menu.d;
-        Settings {
+        let mut settings = Settings {
             sound_volume: d.slider(self.sound).pos,
             music_volume: d.slider(self.music).pos,
             scroll_speed: d.slider(self.scroll).pos + 2,
@@ -52,7 +53,9 @@ impl GameOptions {
             game_mode: d.combo(self.game_mode).cur,
             music_mode: d.combo(self.music_mode).cur,
             ..self.settings.clone()
-        }
+        };
+        settings.set_control_choice(d.combo(self.controls).cur);
+        settings
     }
 }
 
@@ -97,6 +100,9 @@ impl Screen for GameOptions {
         self.music_mode = combo(m, 285, music, s.music_mode);
         let modes = vec![ctx.texts.get("SLOWMOD").to_vec(), ctx.texts.get("FASTMOD").to_vec()];
         self.game_mode = combo(m, 393, modes, s.game_mode);
+        // ACR: the control scheme (#129) beside the game options' heading.
+        let controls = CONTROL_CHOICES.iter().map(|c| c.0.to_vec()).collect();
+        self.controls = combo(m, 366, controls, s.control_choice());
         let slider = |m: &mut Menu, y: i32, max: i32, pos: i32| {
             m.d.add_slider(ctx.lib, ox + 241, oy + y, max, pos, SCROLL, 0, [292, 12])
         };

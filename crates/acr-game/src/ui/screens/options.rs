@@ -7,7 +7,7 @@
 
 use super::super::dialog::{Align, CANCEL, Kind, OK, WidgetId};
 use super::super::draw::Draw;
-use super::super::settings::{RESOLUTIONS, Settings};
+use super::super::settings::{CONTROL_CHOICES, RESOLUTIONS, Settings};
 use super::super::{Ctx, Input, Nav, Screen};
 use super::{Menu, font};
 
@@ -35,6 +35,7 @@ pub struct Options {
     music_mode: WidgetId,
     record: WidgetId,
     record_file: WidgetId,
+    controls: WidgetId,
 }
 
 impl Options {
@@ -52,7 +53,7 @@ impl Options {
 
     fn collect(&self) -> Settings {
         let d = &self.menu.d;
-        Settings {
+        let mut settings = Settings {
             sound_volume: d.slider(self.sound).pos,
             music_volume: d.slider(self.music).pos,
             scroll_speed: d.slider(self.scroll).pos + 2,
@@ -62,7 +63,10 @@ impl Options {
             music_mode: d.combo(self.music_mode).cur,
             record: self.settings.record,
             record_file: d.input_box(self.record_file).text.clone(),
-        }
+            ..self.settings.clone()
+        };
+        settings.set_control_choice(d.combo(self.controls).cur);
+        settings
     }
 }
 
@@ -124,6 +128,9 @@ impl Screen for Options {
         self.game_mode = combo(m, 448, modes, s.game_mode);
         let music = vec![ctx.texts.get("NOCD").to_vec(), ctx.texts.get("RNDMUS").to_vec()];
         self.music_mode = combo(m, 340, music, s.music_mode);
+        // ACR: the control scheme (#129) beside the game options' heading.
+        let controls = CONTROL_CHOICES.iter().map(|c| c.0.to_vec()).collect();
+        self.controls = combo(m, 419, controls, s.control_choice());
         self.record = m.d.add_gp_button(ctx.lib, 619, 525, CHECKER, 1, 0);
         m.d.choose(self.record, RECORD);
         m.d.add_strip(ctx.lib, 649, 525, 267, TEXTBOX, [5, 6, 7, 8, 9]);

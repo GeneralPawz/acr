@@ -92,6 +92,12 @@ the game next to itself, in `ACR_GAME_DIR`, in the folder remembered from an ear
 and otherwise asks once with a folder picker. Prebuilt executables (with a stand-in icon)
 and a browser build are attached to GitHub releases (`v*` tags).
 
+## Controls
+
+The game keeps the original keys and mouse by default; an optional modern scheme (wheel
+zoom, drag panning, W/A/S/D) can be chosen in the options. Both are listed in
+[docs/controls.md](docs/controls.md).
+
 ## Usage
 
 ```sh
