@@ -187,7 +187,12 @@ def belly_weights(obj, arm_obj, prefix=""):
 FOOTWEAR = ("gaiters", "boots", "shoes", "boots_high", "stockings")
 
 
-def shoes(arm_obj, flesh, name, prefix="", offset=0.007, sole=0.012, heel=0.012):
+TOE_TAPER = 0.30  # the toe box narrows by this much at the tip
+TOE_SPRING = 0.008  # metres the sole rises at the tip
+BUCKLE = (0.040, 0.026, 0.006)  # brass buckle on the instep (x, y, z), metres
+
+
+def shoes(arm_obj, flesh, name, prefix="", offset=0.007, sole=0.012, heel=0.012, key="shoes"):
     """Both shoes as one closed mesh over a last: per side the convex hull of the skin of
     the foot below the ankle (heel, arch, toe box in one smooth shape), `offset` above the
     skin, a `sole` under it and a low `heel` at the back. Smooth weights on shin, foot and
@@ -205,7 +210,7 @@ def shoes(arm_obj, flesh, name, prefix="", offset=0.007, sole=0.012, heel=0.012)
     hulls = []
     for sfx in ("_l", "_r"):
         foot, toe, shin = prefix + "foot" + sfx, prefix + "toe" + sfx, prefix + "shin" + sfx
-        ankle = seg[foot][0].z + 0.055
+        ankle = seg[foot][0].z + 0.07
         pts = [v.co.copy() for v in flesh.data.vertices
                if hs[v.index] in (foot, toe) or (hs[v.index] == shin and v.co.z < ankle)]
         pts = [p for p in pts if p.z < ankle]
@@ -228,17 +233,44 @@ def shoes(arm_obj, flesh, name, prefix="", offset=0.007, sole=0.012, heel=0.012)
                 h = max(0.0, min(1.0, (v.co.y - (back - 0.09)) / 0.04))
                 v.co.z = lo - sole - heel * h
         hulls.append((planes, offset + 0.002))
+        # Shaped toe: narrowed towards a rounded point and sprung up a little in front of
+        # the ball of the foot (the skin inside is already gone).
+        cx = seg[foot][0].x
+        ball = seg[toe][0].y
+        tip = min(v.co.y for v in tmp.verts)
+        for v in tmp.verts:
+            t = max(0.0, min(1.0, (ball - v.co.y) / max(ball - tip, 1e-3)))
+            v.co.x = cx + (v.co.x - cx) * (1.0 - TOE_TAPER * t * t)
+            if v.co.z < lo + 0.02:
+                v.co.z += TOE_SPRING * t * t
+        # The buckle on the instep: a brass frame (material 1).
+        # On the instep, 4.5 cm behind the ball: the hull's highest point in that band.
+        top = [v.co.copy() for v in tmp.verts if abs(v.co.x - cx) < 0.05 and abs(v.co.y - (ball + 0.045)) < 0.02]
+        if top:
+            c = max(top, key=lambda q: q.z)
+            c.y = ball + 0.045
+            n0 = len(tmp.faces)
+            frame = bmesh.ops.create_cube(tmp, size=1.0)["verts"]
+            for v in frame:
+                v.co = Vector((cx + v.co.x * BUCKLE[0], c.y + v.co.y * BUCKLE[1], c.z + 0.003 + v.co.z * BUCKLE[2]))
+            for f in list(tmp.faces)[n0:]:
+                f.material_index = 1
         me = bpy.data.meshes.new("shoe.tmp")
+        for _ in range(2):  # slots keep the buckle's material index
+            me.materials.append(None)
         tmp.to_mesh(me)
         tmp.free()
         bm.from_mesh(me)
         bpy.data.meshes.remove(me)
     me = bpy.data.meshes.new(name)
+    for _ in range(2):
+        me.materials.append(None)
     bm.to_mesh(me)
     bm.free()
     for p in me.polygons:
         p.use_smooth = False
     obj = bd.link(bpy.data.objects.new(name, me))
+    obj["acr_material_keys"] = [key, "brass"]
     fb = [prefix + b for b in ("shin_l", "foot_l", "toe_l", "shin_r", "foot_r", "toe_r")]
     hs2 = bd.skin_weights(obj, arm_obj, fb)
     attr = me.attributes.new("part", "INT", "POINT")

@@ -25,6 +25,10 @@ LAYER_OF = {
 }
 
 
+# Colours of keys a unit's palette may leave out (sRGB).
+FALLBACK = {"brass": (0.72, 0.58, 0.30), "metal": (0.55, 0.55, 0.57)}
+
+
 def graph(build=None):
     """Skin-modifier graph around skeleton H: [(node, parent, position, (rx, ry))]. `build`
     scales it: width (torso), shoulders, hips, limbs (limb radii), belly, head."""
@@ -134,7 +138,7 @@ class Character:
         obj = self.add("clothes", obj, key, symmetric)
         if shoe and not getattr(self, "shoes", None):
             # The MakeHuman feet stay bare skin; footwear gets a shoe over a last (#287).
-            self.shoes = self.add("clothes", mbody.shoes(self.arm, self.flesh, f"{self.name}.footwear", P), key, symmetric)
+            self.shoes = self.add("clothes", mbody.shoes(self.arm, self.flesh, f"{self.name}.footwear", P, key=key), key, symmetric)
         return obj
 
     def bone_layer(self):
@@ -275,7 +279,7 @@ class Character:
             samples = pooled.get(keys[0], [])
             o.data.materials.clear()
             for i, k in enumerate(keys):
-                rgb = palette[k]
+                rgb = palette[k] if k in palette else FALLBACK[k]
                 if len(samples) and i == 0:
                     seen = project.guided(samples, rgb)
                     rgb = tuple(mix * a + (1 - mix) * b for a, b in zip(seen, rgb))

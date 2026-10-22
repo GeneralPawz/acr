@@ -97,8 +97,9 @@ PATCHES = {
                    "hi": [(0, -31), (18, -28), (30, -17), (45, -9), (65, -3), (85, 6), (98, 9)],
                    "thick": 0.011, "open": ("lo", "hi", "ends"), "grid": (18, 5), "ridges": 0.35, "ragged": 7.0},
     # moustache: a band over the upper lip whose lower edge hangs in drooping locks
-    "beard_moustache": {"theta": (-44, 44), "lo": [(0, -17), (22, -19), (44, -29)], "hi": [(0, -10), (22, -11), (44, -17)],
-                        "thick": 0.006, "open": ("lo", "hi", "ends"), "grid": (12, 2), "ridges": 0.3, "ragged": 5.0},
+    # (on the MakeHuman head the upper lip lies 21..30 degrees below the centre's level)
+    "beard_moustache": {"theta": (-40, 40), "lo": [(0, -29), (22, -31), (40, -39)], "hi": [(0, -21), (22, -22), (40, -28)],
+                        "thick": 0.014, "open": ("lo", "hi", "ends"), "grid": (12, 2), "ridges": 0.3, "ragged": 5.0},
     "beard_sideburns": {"theta": (72, 100), "mirror": True, "lo": [(72, -22), (100, -18)], "hi": [(72, 11), (100, 12)],
                         "thick": 0.005, "open": ("lo", "hi", "ends"), "grid": (3, 4), "ridges": 0.2},
 }
