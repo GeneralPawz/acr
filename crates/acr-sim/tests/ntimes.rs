@@ -32,7 +32,8 @@ const MUSKETEER: &str = "NAME Mus\r\nUSERLC 0 G SHADOW 0 0\r\n#STAND 9 1 0 0\r\n
     WEAPON 1 SHOT\r\nDAMAGEDEC 1 300\r\nNOPAUSEDATTACK 0\r\nSLOWRECHARGE\r\nUSETRANSX 0\r\n\
     MATHERIAL 1 BODY\r\nCANKILL 1 BODY\r\nZPOINTS 33 33\r\nUNITRADIUS 8\r\n[END]\r\n";
 
-const NRES: &[u8] = b"[WEAPONS]\r\n#GENSHIELD 13\r\nMECH 21 19 O\r\nPIKA 11 17 O\r\nVISTREL 12 18 HB\r\n[UNITKINDS]\r\n";
+const NRES: &[u8] =
+    b"[WEAPONS]\r\n#GENSHIELD 13\r\nMECH 21 19 O\r\nPIKA 11 17 O\r\nVISTREL 12 18 HB\r\n[UNITKINDS]\r\n";
 
 fn setup() -> (World, TypeId, TypeId, TypeId) {
     let mut c = Catalog::new();
