@@ -109,7 +109,7 @@ fn a_shell_burst_leaves_a_fire_that_burns_out() {
 fn without_the_rule_shells_leave_no_fire() {
     let (w, first) = shell(Rules::default(), 300);
     assert!(first.is_none() && w.ground_fires.list.is_empty());
-    assert!(w.units.iter().all(|u| !u.burning && u.wounds.burn == 0));
+    assert!(w.units.iter().all(|u| !u.burning && u.body.burn == 0));
     // The fires add nothing to the hash while there are none.
     let mut w2 = w.clone();
     w2.ground_fires.list.clear();
@@ -154,6 +154,6 @@ fn a_man_who_walks_out_goes_out() {
         w.step(&[]);
     }
     let u = &w.units[i];
-    assert!(u.living() && !u.burning && u.wounds.burn == 0);
+    assert!(u.living() && !u.burning && u.body.burn == 0);
     assert!(u.life < 60 && u.life > 0, "life {}", u.life);
 }

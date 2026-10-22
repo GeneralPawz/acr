@@ -320,7 +320,7 @@ pub fn process_unit(world: &mut World, i: usize) {
     }
     let rate = if u.stance == 0 { 16 } else { adv_rate(&catalog, u, &world_adv) };
     // Leg wounds (#225, optional rule) slow the walk.
-    let rate = u.wounds.walk_rate(rate);
+    let rate = u.body.walk_rate(rate);
     match motion_handler(u, t, lay, occupancy, random, buckets, rate) {
         Some(Signal::Push(cell)) => remove_fools(world, i, cell),
         Some(Signal::Engage(j)) => {

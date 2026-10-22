@@ -336,6 +336,7 @@ mod tests {
             killed: false,
             building: false,
             region: None,
+            injury: None,
         }
     }
 

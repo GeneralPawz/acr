@@ -288,9 +288,9 @@ pub struct Unit {
     /// Gathered load (`RAmount`) and its source type (`RType`).
     pub carried: i32,
     pub carry_type: Option<u8>,
-    /// Lasting wounds (only with [`crate::Rules::hit_locations`]; an unwounded unit adds
-    /// nothing to the state hash).
-    pub wounds: crate::wounds::Wounds,
+    /// The body: injuries, lost limbs, burning (only with [`crate::Rules::hit_locations`];
+    /// an unhurt body adds nothing to the state hash).
+    pub body: crate::body::Body,
 }
 
 impl Unit {
@@ -522,6 +522,11 @@ pub struct World {
     /// set by the projectiles around their damage so that hits record where the ball really
     /// came from (a ricochet) rather than the attacker. Render only, not hashed.
     pub hit_dir: Option<(i32, i32)>,
+    /// The energy (0..=100) of the ploughing ball now doing damage, and its height above
+    /// the ground (pixels) where it strikes, for the injuries of the hit-locations rule
+    /// (`crate::body::injure`). Set by the projectiles around their damage; not hashed.
+    pub hit_energy: Option<u8>,
+    pub hit_height: Option<i32>,
     /// What is left of a ploughing ball ([`crate::projectile::Plough`]) while it explodes,
     /// handed to its bounce. Only during `explode` and only with the hit-locations rule;
     /// not hashed.
@@ -673,6 +678,8 @@ impl World {
             hits: Default::default(),
             impacts: Default::default(),
             hit_dir: None,
+            hit_energy: None,
+            hit_height: None,
             plough_carry: None,
             desant: Default::default(),
             armies: Default::default(),
@@ -837,7 +844,7 @@ impl World {
             courage: 0,
             carried: 0,
             carry_type: None,
-            wounds: Default::default(),
+            body: Default::default(),
         };
         if !unit.building && t.mobile() {
             self.occupancy.set_bar(cell.0, cell.1, lx);
@@ -978,7 +985,12 @@ impl World {
         let mut v: Vec<usize> = ids
             .iter()
             .map(|id| id.0 as usize)
-            .filter(|&i| self.units.get(i).is_some_and(|u| u.active() && u.owner == player && !u.unlimited))
+            .filter(|&i| {
+                // A man out of the fight (#262, hit-locations rule) takes no orders.
+                self.units
+                    .get(i)
+                    .is_some_and(|u| u.active() && u.owner == player && !u.unlimited && !u.body.out_of_fight())
+            })
             .collect();
         v.sort_unstable();
         v.dedup();

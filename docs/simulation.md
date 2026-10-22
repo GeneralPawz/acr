@@ -1133,41 +1133,60 @@ A building with sections (OB+0xaa ≠ 0, so every object of an `ADDSECTION` type
 
 Not in the original game, so it is a rule of the game setup (`GameSetup::rules`,
 `acr_sim::Rules { hit_locations }`, copied to `World::rules` when the world is built) and
-off by default. Off, nothing changes: no random number is drawn, units carry no wounds and
-the state hash is the original's (`World::rules` and `Unit::wounds` add nothing to the hash
+off by default. Off, nothing changes: no random number is drawn, units carry no injuries and
+the state hash is the original's (`World::rules` and `Unit::body` add nothing to the hash
 while they are the default; `tests/wounds.rs` pins the hash of a fight). On:
 
 - Every hit by a unit (melee or a projectile with a sender, also an instant `RANDOM_KILL`)
   on a unit with a body (not a building, a cannon (`COMPLEXROTATE`) or a ship) draws one
   `rando()` in `MakeDamage` after the damage is known and before the hit is recorded:
   `rando()·100 >> 15` picks the region torso (< 45), legs (< 70), arms (< 90) or head.
-- A hit the unit survives leaves a wound (`Unit::wounds`, hashed): legs slow its walk to
-  60 %, 36 % and at least 30 % of the rate after one, two and more leg wounds (the motion
-  handler's `RATE/16` step scale); one arm wound stops its ranged attacks: the attack choice
-  takes the first index without a weapon (melee) instead, walking up to the target, and a
-  shot already in its animation does not go off. Torso and head hits only cost life.
-- The region is in `HitRecord::region` for the renderer (wounds and blood, #183); it is
-  `None` without the rule.
+- A low rolling ball (`World::hit_height` below `LOW_BALL` 20 px at its ground contact)
+  takes the legs 80 % of the time, else the torso, from the same `rando()`.
+- Every hit then injures the body (`body::injure`, below); a hit that kills records it too.
+- The region is in `HitRecord::region` and the injury in `HitRecord::injury` for the
+  renderer (wounds and blood, #183); both are `None` without the rule.
 - Savegames keep the rule (version 3, at the end of the file); older saves load with the
   original rules. Starting a game with it: set `rules.hit_locations` in the `GameSetup`, or
   through the driver `{"cmd": "start", "random": {"seed": 5, "hit_locations": true}}`. There
   is no menu entry yet.
 
-#### Lost limbs, crawling, bleeding out (#254)
+#### The body: injuries, crawling, bleeding out (#254, #262)
 
-With the same rule, a limb hit can take the limb off instead of wounding it: one `rando()`
-for every limb hit against the weapon's chance (`wounds::sever_chance`: cannonball and
-grapeshot 100 %, explosion 50 %, melee 25 %, thrown 15 %, gunshot 10 %). A soldier who lost
-a leg crawls (`CRAWL_SPEED`: 15 % with one leg lost, 8 % with both); one who lost an arm
-can no longer fire. Every lost limb bleeds: once a second (`BLEED_EVERY` 10 ticks) the unit
-loses 4 life per lost leg and 2 per lost arm (`wounds::bleed`, after the morale decay), so
-its life bar runs down, until it bleeds out and dies with cause `DeathCause::BledOut`.
-Lost limbs are part of the state hash only once a game has some. In 3D a crawler lies
-prone (the `DEATHLIE1` pose) and drags himself along head first, and the bleeding leave a
-drop of blood every second that dries and fades over five minutes (render only). Missing
-limbs on the model (stump caps, #207) and healing by priests come later.
-The setting `hit_locations=on` (in `settings.txt` / browser storage, no menu entry yet)
-turns the rule on for every new game; the setup and savegames keep it.
+The full model is in `docs/damage-model.md` (section 1); `acr_sim::body` implements it.
+`Unit::body` (`Body`, hashed, nothing while unhurt) has four limbs measured by a level from
+the root (0) to the tip (255; joints `ELBOW` 110, `WRIST` 205, `KNEE` 120, `ANKLE` 215),
+each with the level it ends at, a fracture (closed, open, dislocated) and flesh wounds,
+plus an open belly, head and chest wounds, the burning of shell fires and whether the long
+weapon was dropped.
+
+- `body::injure` draws, for a limb hit, the side, the level on what is left of the limb
+  and the outcome (three `rando()`); for a trunk hit the level (chest, belly, pelvis) and
+  the outcome; for a head hit nothing, or the outcome for a sabre. The outcome table by
+  cause (musket ball, grapeshot, cannonball, shell, sabre for a mounted attacker's melee,
+  bayonet/pike/thrown) is the doc's; the energy is the ploughing ball's share
+  (`World::hit_energy`: 100, 80, … 20), else 100. A head hit kills (a sabre's half the
+  time), a cannonball tears the head off, a trunk at energy ≥ 60 in two and at ≥ 90 to
+  pieces; these kill whatever the damage.
+- What is left decides the rest: the leg and arm functions give the walking pace
+  (`move_percent`, the motion handler's rate), crawling (a leg at 0: 15 % on two arms,
+  8 % on one, 0 writhing), the dropped musket (a long weapon needs two working arms and a
+  man on his feet: then no ranged attack, melee instead) and out of the fight.
+- Out of the fight (a crawler or no working arm): the player's commands skip him
+  (`World::owned`), `attack_obj` refuses him (so he neither attacks nor hits back), and
+  when the hit puts him out he drops his orders and drags himself 600 px away from the
+  nearest enemy (`body::leave_fight`, a plain `SendTo`; he stays in his brigade).
+- Bleeding, once a second (`BLEED_EVERY` 10 ticks, `wounds::bleed`): a stump above the
+  knee or elbow 6 life, below 4, a lost hand or foot 2, an open fracture 2, an open belly
+  5; at no life he dies with `DeathCause::BledOut`.
+- `DeathRecord::body` is the body at death (with the killing injury) and
+  `DeathRecord::torn` how it was torn apart (in two at a level, pulverized, headless).
+
+In 3D a crawler lies prone (the `DEATHLIE1` pose) and drags himself along head first, and
+the bleeding leave a drop of blood every second that dries and fades over five minutes
+(render only). Cut limbs, fractures and debris on the models come with the render slices of
+#262. The setting `hit_locations=on` (in `settings.txt` / browser storage, no menu entry
+yet) turns the rule on for every new game; the setup and savegames keep it.
 
 #### Ploughing cannonballs (#256)
 
@@ -1203,10 +1222,10 @@ tenth of its life (so it never burns to death), and a unit that dies burning is 
   the same point; a child bouncing on starts its own). Radius 40 px (about 1.3 m),
   burning `BURN_TICKS` 300 ticks (30 s). No random number is drawn.
 - Once a second (after the bleeding) every soldier (not a building, cannon or ship) inside a
-  fire catches fire: `Unit::burning` goes on and `Wounds::burn` is set to 5 s. While it
+  fire catches fire: `Unit::burning` goes on and `Body::burn` is set to 5 s. While it
   runs he loses 8 life a second through `MakeDamage` without a sender, so he can burn to
   death (`DeathCause::Burned`); out of the fire he goes out after the 5 s. No panic yet.
-- The fires are part of the state hash only while some burn (`Wounds::burn` only while not
+- The fires are part of the state hash only while some burn (`Body::burn` only while not
   0). They are not saved: savegames replay their commands and the fires come back.
 - 2D draws three flames of the burning-building loop (`[FIRES]` `#DFIRE2`) per fire, fewer
   as it burns down (`effects::ground_fire_sprites`, sprite path; not checked in the 3D view).

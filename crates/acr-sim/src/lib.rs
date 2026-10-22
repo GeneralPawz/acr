@@ -20,6 +20,7 @@ pub mod armies;
 pub mod artillery;
 pub mod assets;
 pub mod bars;
+pub mod body;
 pub mod capture;
 pub mod catalog;
 pub mod clock;

@@ -91,16 +91,16 @@ pub fn tick(w: &mut World) {
         if w.ground_fires.list.iter().any(|f| crate::trig::norma(f.x - x, f.y - y) < f.radius) {
             let u = &mut w.units[i];
             u.burning = true;
-            u.wounds.burn = BURN_SECONDS;
+            u.body.burn = BURN_SECONDS;
         }
-        if w.units[i].wounds.burn == 0 {
+        if w.units[i].body.burn == 0 {
             continue;
         }
         crate::combat::make_damage(w, i, BURN_LOSS, None, 0xFF);
         let u = &mut w.units[i];
         if u.living() {
-            u.wounds.burn -= 1;
-            if u.wounds.burn == 0 {
+            u.body.burn -= 1;
+            if u.body.burn == 0 {
                 u.burning = false;
             }
         }

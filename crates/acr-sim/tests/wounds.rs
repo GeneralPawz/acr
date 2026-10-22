@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use acr_formats::defs::UnitDef;
 use acr_formats::defs::nres::weapon_kinds;
+use acr_sim::body::{Fracture, FractureKind, LimbId};
 use acr_sim::catalog::{Catalog, ObjectType};
 use acr_sim::formation::Formations;
 use acr_sim::map::MapGrid;
@@ -63,7 +64,7 @@ fn off_by_default_the_fight_is_the_original_one() {
     // with the original's look along the line before a shot, PredictShot).
     // Update it when the original rules change, never for the optional rule.
     assert_eq!(w.state_hash(), 0xc054_d029_9070_147f);
-    assert!(w.units.iter().all(|u| u.wounds == Default::default()));
+    assert!(w.units.iter().all(|u| u.body == Default::default()));
     assert!(w.hits.iter().all(|h| h.region.is_none()));
 }
 
@@ -78,16 +79,17 @@ fn with_hit_locations_hits_land_on_regions_deterministically() {
     let regions: Vec<_> = a.hits.iter().filter(|h| !h.building).map(|h| h.region).collect();
     assert!(!regions.is_empty() && regions.iter().all(Option::is_some), "{regions:?}");
     assert!(regions.contains(&Some(HitRegion::Torso)));
-    // Survivors carry the wounds of their leg and arm hits.
-    assert!(a.units.iter().any(|u| u.wounds.legs + u.wounds.arms > 0));
+    // Survivors carry the injuries of their hits (#262).
+    assert!(a.units.iter().any(|u| u.living() && u.body != Default::default()));
+    assert!(a.hits.iter().filter(|h| !h.building).all(|h| h.injury.is_some()));
 }
 
-/// Pixels walked east in 120 ticks.
+/// Pixels walked east in 120 ticks with `legs` flesh wounds on the left leg.
 fn walked(legs: u8) -> i32 {
     let (mut w, pik, _) = setup();
     w.rules = ON;
     let p = w.spawn(pik, 0, Pos::from_pixels(1000, 2000), 0);
-    w.units[p.0 as usize].wounds.legs = legs;
+    w.units[p.0 as usize].body.limbs[LimbId::LegL as usize].wounds = legs;
     w.step(&[Command::Move { player: 0, units: vec![p], x: 4000, y: 2000 }]);
     for _ in 0..120 {
         w.step(&[]);
@@ -100,15 +102,19 @@ fn a_leg_wound_slows_the_walk() {
     let (sound, one, two, many) = (walked(0), walked(1), walked(2), walked(5));
     assert!(sound > 200, "walked {sound}");
     assert!(one < sound * 7 / 10 && one > sound / 2, "{one} of {sound}");
-    assert!(two < one && many < two && many >= sound / 4, "{two} {many} of {sound}");
+    // 65 % and 30 % of the pace on one wounded leg (`docs/damage-model.md`), no slower.
+    assert!(two < one && many <= two && many >= sound / 4, "{two} {many} of {sound}");
 }
 
-fn musket_duel(arms: u8) -> (World, EntityId, EntityId) {
+fn musket_duel(broken_arm: bool) -> (World, EntityId, EntityId) {
     let (mut w, pik, mus) = setup();
     w.rules = ON;
     let shooter = w.spawn(mus, 0, Pos::from_pixels(2000, 2000), 0);
     let target = w.spawn(pik, 1, Pos::from_pixels(2300, 2000), 128);
-    w.units[shooter.0 as usize].wounds.arms = arms;
+    if broken_arm {
+        let f = Fracture { level: 60, kind: FractureKind::Closed, bend: 10 };
+        w.units[shooter.0 as usize].body.limbs[LimbId::ArmL as usize].fracture = Some(f);
+    }
     w.step(&[Command::Attack { player: 0, units: vec![shooter], target }]);
     for _ in 0..60 {
         w.step(&[Command::Stop { player: 1, units: vec![target] }]);
@@ -119,10 +125,10 @@ fn musket_duel(arms: u8) -> (World, EntityId, EntityId) {
 #[test]
 fn an_arm_wound_stops_the_musket() {
     // Unwounded, the musketeer fires within 45 ticks (see the combat tests).
-    let (w, shooter, _) = musket_duel(0);
+    let (w, shooter, _) = musket_duel(false);
     assert!(w.units[shooter.0 as usize].delay > 0 || !w.hits.is_empty(), "the sound musketeer fired");
-    // With a wounded arm it never fires: it walks up to strike with the bayonet.
-    let (w, shooter, target) = musket_duel(1);
+    // With a broken arm it never fires: it walks up to strike with the bayonet.
+    let (w, shooter, target) = musket_duel(true);
     let s = &w.units[shooter.0 as usize];
     assert!(w.projectiles.iter().next().is_none());
     assert!(w.hits.iter().all(|h| h.cause != acr_sim::combat::DeathCause::Gunshot));
@@ -130,59 +136,46 @@ fn an_arm_wound_stops_the_musket() {
     assert!(w.units[target.0 as usize].living());
 }
 
-/// Lost limbs (#254): a soldier without a leg crawls far slower than a wounded one, every
-/// lost limb bleeds a little life away each second, and he bleeds out with his own cause.
+/// Lost limbs (#254, #262): a soldier without a leg crawls far slower than a wounded one,
+/// slower still with one arm, every stump bleeds life away each second, and he bleeds out
+/// with his own cause.
 #[test]
 fn lost_legs_crawl_and_bleed_out() {
     use acr_sim::combat::DeathCause;
-    let crawl = |lost: u8| {
+    let crawl = |arms: usize| {
         let (mut w, pik, _) = setup();
         w.rules = ON;
         let p = w.spawn(pik, 0, Pos::from_pixels(1000, 2000), 0);
-        w.units[p.0 as usize].wounds.legs_lost = lost;
-        w.units[p.0 as usize].life = 10_000;
-        w.step(&[Command::Move { player: 0, units: vec![p], x: 4000, y: 2000 }]);
+        let u = &mut w.units[p.0 as usize];
+        u.body.limbs[LimbId::LegL as usize].lost = 60;
+        if arms < 2 {
+            u.body.limbs[LimbId::ArmR as usize].lost = 150;
+        }
+        u.life = 10_000;
+        // Out of the fight he takes no orders: send him as the simulation would.
+        acr_sim::motion::send_to(u, Pos::from_pixels(4000, 2000), acr_sim::motion::PLAYER_PRIO, true);
         for _ in 0..120 {
             w.step(&[]);
         }
         w.units[p.0 as usize].pos.pixels().0 - 1000
     };
-    let (sound, one, both) = (walked(0), crawl(1), crawl(2));
-    assert!(one > 0 && one < sound / 5, "crawled {one} of {sound}");
-    assert!(both < one, "{both} {one}");
+    let (sound, two, one) = (walked(0), crawl(2), crawl(1));
+    assert!(two > 0 && two < sound / 5, "crawled {two} of {sound}");
+    assert!(one > 0 && one < two, "{one} {two}");
 
     let (mut w, pik, _) = setup();
     w.rules = ON;
     let p = w.spawn(pik, 0, Pos::from_pixels(1000, 2000), 0);
-    w.units[p.0 as usize].wounds.legs_lost = 1;
+    w.units[p.0 as usize].body.limbs[LimbId::LegR as usize].lost = 60;
     let life = w.units[p.0 as usize].life;
     for _ in 0..20 {
         w.step(&[]);
     }
     let after = w.units[p.0 as usize].life;
-    assert!(after < life && after >= life - 3 * 4, "life {life} → {after}");
+    assert!(after < life && after >= life - 3 * 6, "life {life} → {after}");
     for _ in 0..2000 {
         w.step(&[]);
     }
     assert!(w.units[p.0 as usize].death > 0, "bled out");
     assert_eq!(w.deaths[&p.0].cause, DeathCause::BledOut);
-}
-
-/// Heavy blows take limbs off: cannonballs always, a musket ball rarely.
-#[test]
-fn heavy_blows_sever_limbs() {
-    use acr_sim::combat::DeathCause;
-    let (mut w, pik, _) = setup();
-    w.rules = ON;
-    let p = w.spawn(pik, 0, Pos::from_pixels(1000, 2000), 0);
-    acr_sim::wounds::wound(&mut w, p.0 as usize, HitRegion::Legs, DeathCause::Cannonball);
-    assert_eq!(w.units[p.0 as usize].wounds.legs_lost, 1);
-    let mut severed = 0;
-    for _ in 0..200 {
-        let before = w.units[p.0 as usize].wounds.arms_lost;
-        acr_sim::wounds::wound(&mut w, p.0 as usize, HitRegion::Arms, DeathCause::Gunshot);
-        severed += usize::from(w.units[p.0 as usize].wounds.arms_lost > before);
-        w.units[p.0 as usize].wounds.arms_lost = 0;
-    }
-    assert!((5..=40).contains(&severed), "gunshot severed {severed} of 200");
 }
