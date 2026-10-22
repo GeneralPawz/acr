@@ -6,6 +6,7 @@ use std::time::Instant;
 
 use acr_formats::{M3dMap, Vfs};
 use acr_sim::assets::{SimAssets, SimData};
+use acr_sim::replay::Replay;
 use acr_sim::world::EntityId;
 use acr_sim::{Command, World};
 
@@ -123,26 +124,36 @@ pub fn sim_check(dir: &Path, map: &str, rest: &[&str]) -> Result<()> {
         groups.iter().map(|g| g.0.len()).sum::<usize>()
     );
 
+    // Run A records a replay; run B plays back the decoded replay and must reproduce the
+    // recorded state hashes.
     let checkpoints = [ticks / 4, ticks / 2, ticks];
-    let simulate = |label: &str| -> (World, Vec<u64>) {
+    let simulate = |label: &str, input: &Replay, record: bool| -> (World, Vec<u64>, Replay) {
         let mut w = base.clone();
+        let mut out = Replay::new(map, w.random.index);
         let mut hashes = Vec::new();
         let t = Instant::now();
         for tick in 0..ticks {
-            w.step(if tick == 0 { &cmds } else { &[] });
+            let commands = if record && tick == 0 { cmds.as_slice() } else { input.commands_at(tick) };
+            out.record(tick, commands);
+            w.step(commands);
             if checkpoints.contains(&(tick + 1)) {
                 hashes.push(w.state_hash());
+                out.checkpoints.push((tick + 1, w.state_hash()));
             }
         }
         let el = t.elapsed();
         println!("  run {label}: {:.2?} ({:.0} ticks/s)", el, ticks as f64 / el.as_secs_f64());
-        (w, hashes)
+        (w, hashes, out)
     };
-    let (a, ha) = simulate("A");
-    let (_, hb) = simulate("B");
+    let (a, ha, recorded) = simulate("A (recording)", &Replay::default(), true);
+    let bytes = recorded.encode();
+    let replay = Replay::decode(&bytes)?;
+    let (_, hb, _) = simulate("B (replay)", &replay, false);
+    println!("  replay: {} bytes, {} command ticks", bytes.len(), replay.entries.len());
     for ((tick, x), y) in checkpoints.iter().zip(&ha).zip(&hb) {
         println!("  tick {tick:>6}: {x:016x} {y:016x} {}", if x == y { "equal" } else { "DIFFERENT" });
     }
+    let replay_ok = replay.checkpoints.iter().map(|c| c.1).eq(hb.iter().copied());
 
     let (mut arrived, mut moving, mut total) = (0, 0, 0);
     let mut far: Vec<(EntityId, i32)> = Vec::new();
@@ -183,7 +194,7 @@ pub fn sim_check(dir: &Path, map: &str, rest: &[&str]) -> Result<()> {
         let sample: Vec<String> = far.iter().take(5).map(|(id, d)| format!("#{} {d} px", id.0)).collect();
         println!("  farthest: {}", sample.join(", "));
     }
-    if ha != hb {
+    if ha != hb || !replay_ok {
         return Err("simulation is not deterministic".into());
     }
     Ok(())
