@@ -18,8 +18,8 @@ use crate::world::{AnimKind, FRM_DEC, Order, SPEED_SH, Unit, World};
 /// Priority of player move orders (`SelSendTo` passes 0x10 to 0x4db0d3).
 pub const PLAYER_PRIO: u8 = 0x10;
 
-fn mover(u: &Unit) -> Mover {
-    Mover { x: u.cell.0, y: u.cell.1, lx: u.lx }
+fn mover(u: &Unit, t: &ObjectType) -> Mover {
+    Mover::of(u, t)
 }
 
 fn layer<'a>(w: &'a crate::map::MapGrid, t: &ObjectType) -> &'a LockMap {
@@ -354,7 +354,7 @@ fn send_to_link(
     if u.unlimited {
         // CreatePath with UnlimitedMotion: straight to the cell centre. The walk through
         // locks ends with the `ClearUnlimited` order queued after the last such leg.
-        if dist_to(mover(u), c.0, c.1) <= t.stop_distance >> 8 {
+        if dist_to(mover(u, t), c.0, c.1) <= t.stop_distance >> 8 {
             if u.frame >= u.anim_frames - FRM_DEC {
                 try_to_stand(u, t, rnd, false);
                 u.pop_order();
@@ -365,17 +365,17 @@ fn send_to_link(
         return;
     }
     if m.check_bar(c.0 - 1, c.1 - 1, u.lx + 2, u.lx + 2)
-        && find_best_position(m, mover(u), &mut c, 80)
+        && find_best_position(m, mover(u, t), &mut c, 80)
         && let Some(Order::SendTo { cell, .. }) = u.orders.last_mut()
     {
         *cell = c;
     }
-    if dist_to(mover(u), c.0, c.1) <= t.stop_distance >> 8 {
+    if dist_to(mover(u, t), c.0, c.1) <= t.stop_distance >> 8 {
         if u.frame >= u.anim_frames - FRM_DEC {
             try_to_stand(u, t, rnd, false);
             u.pop_order();
         }
-    } else if let Some((x, y)) = create_path(m, mover(u), &mut u.path, rnd, c.0, c.1, t.stop_distance) {
+    } else if let Some((x, y)) = create_path(m, mover(u, t), &mut u.path, rnd, c.0, c.1, t.stop_distance) {
         u.dest = Some(Pos::new(x, y));
     }
 }
@@ -532,13 +532,13 @@ fn motion_handler(
     if blocked {
         if on_the_way && need_push {
             if let Some(&(px, py)) = u.path.points.last() {
-                let r = create_pre_path(m, mover(u), &mut u.path, rnd, px, py);
+                let r = create_pre_path(m, mover(u, t), &mut u.path, rnd, px, py);
                 if r.searched {
                     u.path.delay = (32 + (rnd.rando() & 7)) as u8;
                 }
             } else {
                 let c = Unit::cell_of(dest, lx);
-                create_full_path(m, mover(u), &mut u.path, rnd, c.0, c.1);
+                create_full_path(m, mover(u, t), &mut u.path, rnd, c.0, c.1);
             }
             u.move_stage = 0;
         }

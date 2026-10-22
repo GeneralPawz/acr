@@ -330,7 +330,7 @@ pub fn build_link(w: &mut World, i: usize, target: EntityId, point: (i32, i32), 
         return;
     }
     let u = &mut w.units[i];
-    let mover = Mover { x: u.cell.0, y: u.cell.1, lx: u.lx };
+    let mover = Mover::of(u, t);
     if let Some((x, y)) = create_path(&w.map.land, mover, &mut u.path, &mut w.random, point.0, point.1, t.stop_distance)
     {
         u.dest = Some(Pos::new(x, y));

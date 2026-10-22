@@ -279,7 +279,7 @@ pub fn gather_link(w: &mut World, i: usize, kind: u8, source_id: Option<usize>, 
     }
     let u = &mut w.units[i];
     let cell = (s.x >> 4, s.y >> 4);
-    let mover = Mover { x: u.cell.0, y: u.cell.1, lx: u.lx };
+    let mover = Mover::of(u, t);
     if let Some((x, y)) = create_path(&w.map.land, mover, &mut u.path, &mut w.random, cell.0, cell.1, t.stop_distance) {
         u.dest = Some(Pos::new(x, y));
     }
@@ -348,7 +348,7 @@ fn carry_home(w: &mut World, i: usize, kind: u8, dst: usize) -> bool {
     let carry = t.economy.take_res.get(usize::from(kind)).copied().flatten().map_or(0, |e| e.carry);
     let u = &mut w.units[i];
     (u.stance, u.ground_state) = (carry, carry);
-    let mover = Mover { x: u.cell.0, y: u.cell.1, lx: u.lx };
+    let mover = Mover::of(u, t);
     if let Some((x, y)) =
         create_path(&w.map.land, mover, &mut u.path, &mut w.random, target.0, target.1, t.stop_distance)
     {

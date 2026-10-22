@@ -357,6 +357,7 @@ pub mod usage {
     pub const SKLAD: u8 = 4;
     pub const TOWER: u8 = 5;
     pub const MINE: u8 = 7;
+    pub const FISHER: u8 = 16;
     pub const MORTIRA: u8 = 9;
     pub const PUSHKA: u8 = 10;
     pub const SUPERMORTIRA: u8 = 18;

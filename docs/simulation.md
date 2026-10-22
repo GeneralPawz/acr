@@ -205,6 +205,26 @@ This is not A* (0x534031):
 5. On failure the cooldown is set to `200 + rando()&15`. `CreateFullPath` immediately
    overwrites it with `rando()&7` (original bug, kept).
 
+**Water pre-path** (`CreateWaterPrePath` 0x535b04). `CreatePrePath` hands the search to it
+for units on the water lock map (OB+0x54 = 1, ships) and for `MOTIONSTYLE COMPLEXROTATE`
+units (NM+0x28e1 = 3, the cannons) on theirs (0x534056). It is the same search with these
+differences:
+
+- **Visibility.** After each step, a follower's cell counts as visible when the neighbour
+  mask of its previous cell is open in the direction of the target (0x536845). No box is
+  tested.
+- **End of the detour.** It is the first cell of the winner's last visible run. If the
+  winner is not visible when it crosses the line, it is the crossing cell. The +1 cell and
+  the clamp to the start follow as on land.
+- **Waypoints.** Every fourth cell becomes a waypoint (0x536f54), not every second.
+- **Failure.** The cooldown is `64 + rando()&15` (0x537330).
+- **No `g_searched`.** The flag is never set: `CreatePrePath` clears it before it hands
+  over. So the `SendTo` push sets no 32..39 cooldown, and `CreateFullPath` draws no
+  closing `rando()`.
+- **Own footprint (OB+0x29 bit 3).** It is taken out of the lock map for the search. When
+  the start box is locked, the early exit clears it a second time instead of putting it
+  back. ACR keeps units out of the lock maps, so this has no effect here.
+
 - `CreateFullPath` (0x533f1a) first moves the target out of obstacles with
   `FindBestPosition`: square rings of radius ≤ 40, choosing the free cell nearest to the
   **unit** (`Norma`). It then refines the first leg up to 4 times.
@@ -402,6 +422,21 @@ every 51 ticks idle boats start fishing; the catch grows by `speed/128` per tick
 (`FISHING` upgrades change both values, `speed` wraps at 256) while the boat sails between
 random spots within 32 lock cells; a full boat brings the catch to the nearest own port's
 water point and rests 60 ticks.
+
+**Fleeing.** Every tick, `FishingLink` first checks `GetShipDanger` (0x4d5320) at the boat.
+The danger counts every ship in the 128 px cells of rings 0..=4: any lock-type-water unit
+except `USAGE FISHER`, of any nation, own ships included.
+
+- Each ship adds `10000 / max(d, 80)` (0x4d51a0). `d` is the least distance from the point
+  to the ship's position stepped 0..=10 times by four times its velocity.
+- Any danger makes the boat look for a safer spot (`FindSafePlace` 0x54e679). It tries
+  the eight points 256 px away in this order: east, west, south, north, NW, NE, SW, SE.
+- A point qualifies when its 6 × 6 cell box is open water (`MFIELDS[1]`) and free of
+  units (`UnitsField`).
+- The boat takes the qualifying point with the least danger over rings 0..=6; the first
+  wins a tie.
+- It goes there by `NewMonsterSendTo` with priority 0x90 and order type 0, which replaces
+  the fishing order. The idle boat starts fishing again with the next `ProcessFishing`.
 
 ### Directions and sprites
 
@@ -1679,8 +1714,8 @@ No game option writes it. How the map view draws the fog is in
     builders without a collector) are not reproduced; the deposit test of mines uses the
     deposit list (radius of the site test instead of each sprite's work radius); the
     builder team ignores its minimum size.
-  - Not reproduced yet: fishing boats do not flee from enemy ships (`GetShipDanger`); the AI
-    difficulty factor on production time; the 10× cannon price lobby option.
+  - Not reproduced yet: the AI difficulty factor on production time; the 10× cannon price
+    lobby option.
   - AI landing: the script groups live in the script host, which hands the start group's
     units to the simulation before a step and takes the units taken and landed back
     afterwards; the AI DLL runs before the brigades of its city tick (the engine runs
@@ -1708,9 +1743,11 @@ No game option writes it. How the map view draws the fog is in
     random-cell search (`Zombi` units) and its artillery pickers; healers. `PredictShot`
     looks into the 128 px cells as the ball's trace does (the engine skips the last row and
     column of its cell grid); the hints of a blocked shot are not shown.
-  - Ships: the water pre-path (`CreateWaterPrePath` 0x535b04) uses the land pre-path on the
-    water lock map; `MoveObject` and docking use the order's cell centre rather than the
-    clicked point; `EraseLodki` has no caller in AC.
+  - Ships: `MoveObject` and docking use the order's cell centre rather than the clicked
+    point; `EraseLodki` has no caller in AC. `GetShipDanger` reads the ships of the 128 px
+    cells from the tick's bucket grid (built at the tick start), with their current
+    positions and velocities; the engine's cell lists follow the units as they move. The
+    flight's priority bit 0x80 is dropped by `send_to`.
   - Projectiles: the explosion's water test samples the `SEA2` depth with the rows shifted
     by the height (the engine reads a screen-space water map); the height of a thrown
     corpse is not drawn; `extra` (the shot point's visual height) is kept but unused, as in
@@ -1880,8 +1917,7 @@ No game option writes it. How the map view draws the fog is in
 
 ## Open questions
 
-- Motion styles 1 and 4 (`SLOWROTATE`, `ROTATE&MOVE`); the visibility test of the water
-  pre-path (0x535b04).
+- Motion styles 1 and 4 (`SLOWROTATE`, `ROTATE&MOVE`).
 - What runs the brigade order list each tick, and `0x41d090` at the end of `PlaceBrigade`.
 - The exact `Rarr` push tables of `RemoveFools`, `ApplyOffset`, the 10-ring spiral table.
 - The first move of a unit standing on a locked cell (0x538c4e) and the repulsion vector

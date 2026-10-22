@@ -611,7 +611,7 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
         let m = if t.medium == crate::catalog::Medium::Water { &w.map.water } else { &w.map.land };
         let ecell = Unit::cell_of(e_pos, w.units[i].lx);
         let u = &mut w.units[i];
-        let mover = Mover { x: u.cell.0, y: u.cell.1, lx: u.lx };
+        let mover = Mover::of(u, t);
         if let Some((x, y)) = create_path(m, mover, &mut u.path, &mut w.random, ecell.0, ecell.1, t.stop_distance) {
             u.dest = Some(Pos::new(x, y));
         }
