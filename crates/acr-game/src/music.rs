@@ -141,8 +141,14 @@ impl Audio {
         if let Some(output) = &self.output
             && let Ok(mut mixer) = output.mixer.lock()
         {
-            mixer.sfx_volume = effects;
-            mixer.music_volume = music;
+            mixer.sfx_volume = effects * volume_scale();
+            mixer.music_volume = music * volume_scale();
         }
     }
+}
+
+/// `ACR_VOLUME` (0..=1) scales music and effects on top of the settings, e.g. to mute test
+/// runs; 1 when unset.
+fn volume_scale() -> f32 {
+    std::env::var("ACR_VOLUME").ok().and_then(|v| v.parse::<f32>().ok()).map_or(1.0, |v| v.clamp(0.0, 1.0))
 }

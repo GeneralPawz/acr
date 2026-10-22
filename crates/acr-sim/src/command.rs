@@ -16,7 +16,7 @@ pub enum Command {
     Move { player: PlayerId, units: Vec<EntityId>, x: i32, y: i32 },
     /// Drop the current order and stand.
     Stop { player: PlayerId, units: Vec<EntityId> },
-    /// Attack an object (not simulated yet: units walk to it).
+    /// Attack an object (`AttackObj`, see `combat`).
     Attack { player: PlayerId, units: Vec<EntityId>, target: EntityId },
     /// Lead soldiers into formation `kind` (an `ORDERS.LST` name) under `officer`.
     Form { player: PlayerId, officer: EntityId, units: Vec<EntityId>, kind: String },

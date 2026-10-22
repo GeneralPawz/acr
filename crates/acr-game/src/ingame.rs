@@ -295,6 +295,20 @@ impl InGame {
         self.camera.project(x, y, h)
     }
 
+    /// The living unit nearest to the world point under `at` that passes `keep`.
+    fn unit_at(&self, at: [f32; 2], keep: impl Fn(&acr_sim::Unit) -> bool) -> Option<EntityId> {
+        let world = self.world.as_ref()?;
+        let (wx, wy) = self.world_at(at);
+        world
+            .units
+            .iter()
+            .filter(|u| u.alive && keep(u))
+            .map(|u| (u, (u.pos.x >> 4) - wx, (u.pos.y >> 4) - wy))
+            .filter(|(_, dx, dy)| dx.abs() <= PICK_RADIUS && dy.abs() <= PICK_RADIUS)
+            .min_by_key(|(_, dx, dy)| dx * dx + dy * dy)
+            .map(|(u, ..)| u.id)
+    }
+
     /// Left button: press starts a selection, release selects by click or rectangle.
     pub fn on_left(&mut self, pressed: bool) {
         let Some(at) = self.cursor else { return };
@@ -307,13 +321,7 @@ impl InGame {
         let own = self.local_player();
         let mine = world.units.iter().filter(|u| u.alive && u.owner == own && !u.building);
         if (from[0] - at[0]).abs() < CLICK_SLOP && (from[1] - at[1]).abs() < CLICK_SLOP {
-            let (wx, wy) = self.world_at(at);
-            let hit = mine
-                .map(|u| (u, (u.pos.x >> 4) - wx, (u.pos.y >> 4) - wy))
-                .filter(|(_, dx, dy)| dx.abs() <= PICK_RADIUS && dy.abs() <= PICK_RADIUS)
-                .min_by_key(|(_, dx, dy)| dx * dx + dy * dy)
-                .map(|(u, ..)| u.id);
-            self.selected = hit.into_iter().collect();
+            self.selected = self.unit_at(at, |u| u.owner == own && !u.building).into_iter().collect();
         } else {
             let (x0, x1) = (from[0].min(at[0]), from[0].max(at[0]));
             let (y0, y1) = (from[1].min(at[1]), from[1].max(at[1]));
@@ -331,11 +339,19 @@ impl InGame {
         }
     }
 
-    /// Right button: send the selected units to the point under the cursor.
+    /// Right button: attack the enemy under the cursor, else send the selected units to the
+    /// point under it.
     pub fn on_right(&mut self) {
         let (Some(at), false) = (self.cursor, self.selected.is_empty()) else { return };
-        let (x, y) = self.world_at(at);
-        self.commands.push(Command::Move { player: self.local_player(), units: self.selected.clone(), x, y });
+        let (player, units) = (self.local_player(), self.selected.clone());
+        let command = match self.unit_at(at, |u| u.owner != player) {
+            Some(target) => Command::Attack { player, units, target },
+            None => {
+                let (x, y) = self.world_at(at);
+                Command::Move { player, units, x, y }
+            }
+        };
+        self.commands.push(command);
         self.unit_sound(self.selected[0], "ORDER_SOUND");
     }
 
