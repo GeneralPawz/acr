@@ -1,4 +1,5 @@
-"""American bison (`AnmBiz`, `ANMBIZ.MD`) from the WildMesh Buffalo (#287), 1.85 m at the hump.
+"""Bison (`AnmBiz`, `ANMBIZ.MD`) from the WildMesh Buffalo (#287), 1.85 m at the hump. NOTE: the
+pack's Buffalo is an African (Cape) buffalo, not an American bison: needs another source.
 
 The pack has no attack or death: ATTACK is an authored head-down charge (lunge), DEATH an
 authored fall onto the side."""
