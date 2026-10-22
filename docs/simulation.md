@@ -452,8 +452,16 @@ Implemented in `combat.rs`, recovered from `SearchVictim` (0x52622b), `AttackObj
 
   These calls change the state directly. Call them between ticks, in the same order on
   every machine.
-- **Replays / desync checks:** record the command list of every tick. `World::state_hash()`
-  is identical on every platform for identical inputs.
+- **Replays** (`acr_sim::replay::Replay`):
+  - `record(tick, &commands)` stores the commands of each tick; empty ticks cost nothing.
+  - `checkpoints` hold `(tick, World::state_hash())` pairs.
+  - `encode()`/`decode()` use a compact binary format: `ACRR`, version, map path, random
+    index, then varint-coded tick deltas and commands.
+  - Playing back means calling `step(replay.commands_at(tick))` for each tick on the same
+    map and data. `acr sim-check` records run A, decodes the replay, plays it back as run B
+    and compares every checkpoint.
+  - `World::state_hash()` is identical on every platform for identical inputs, so it also
+    detects lockstep desyncs.
 
 ## Deviations and simplifications
 
@@ -515,6 +523,9 @@ Implemented in `combat.rs`, recovered from `SearchVictim` (0x52622b), `AttackObj
   - a musketeer fires its first shot 38–45 ticks after the order, reloads 550 frames and
     kills at 300 px;
   - a 20-unit battle gives identical hashes in two runs.
+- **Replay tests:** every command round-trips through the binary format; damaged data is
+  rejected; a recorded 200-tick match with commands at three ticks replays to the recorded
+  hash.
 - **World tests** (`tests/world.rs`) on a synthetic flat map check:
   - exactly 5 px per tick for a step-40 unit;
   - 7 ticks of turning before walking west;
