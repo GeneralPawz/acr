@@ -102,7 +102,7 @@ fn build_web(app: &str, release: bool) -> Result<PathBuf> {
 }
 
 /// Builds the release into `dist/`: the game executable, the browser build (`web/`) and its
-/// launcher. With a game folder, the original icon is embedded; `install` also copies them
+/// launcher. With a game folder, the original icon is embedded in both; `install` also copies them
 /// into that folder, so both can be started from there with a double-click.
 fn dist(game_dir: Option<&Path>, install: bool) -> Result<()> {
     let root = workspace_root();
@@ -119,10 +119,12 @@ fn dist(game_dir: Option<&Path>, install: bool) -> Result<()> {
         return Err("release build failed".into());
     }
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-    let launcher = Command::new(cargo)
-        .current_dir(&root)
-        .args(["build", "--release", "--package", "acr-serve", "--bin", WEB_EXE])
-        .status()?;
+    let mut launcher = Command::new(cargo);
+    launcher.current_dir(&root).args(["build", "--release", "--package", "acr-serve", "--bin", WEB_EXE]);
+    if let Some(dir) = game_dir {
+        launcher.env("ACR_GAME_DIR", dir);
+    }
+    let launcher = launcher.status()?;
     if !launcher.success() {
         return Err("launcher build failed".into());
     }
