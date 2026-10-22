@@ -52,6 +52,21 @@ pub struct ModelInstance {
     pub player: u8,
     /// Wounds, blood, dirt and burns of a corpse (all zero for the living).
     pub wounds: Wounds,
+    /// Blood sprayed onto it from someone hit in front of it (troops and buildings).
+    pub sprayed: Sprayed,
+}
+
+/// Blood sprayed onto a model from a hit nearby: speckles around a point of its rest pose
+/// (glTF metres), fresh red drying to brown.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Sprayed {
+    pub point: [f32; 3],
+    /// Radius of the speckled area (metres).
+    pub radius: f32,
+    /// 0..1.
+    pub amount: f32,
+    /// 0 fresh .. 1 dried.
+    pub age: f32,
 }
 
 /// Blood, dirt and burns on a body (deaths by cause, `docs/rendering-3d.md`). Wounds sit in
@@ -141,6 +156,7 @@ struct GpuInstance {
     params: [f32; 4],
     extra: [u32; 4],
     wounds: [[f32; 4]; 2],
+    spray: [f32; 4],
 }
 
 struct GpuPrimitive {
@@ -273,7 +289,7 @@ impl ModelRenderer {
         ];
         let instance_attributes = wgpu::vertex_attr_array![
             8 => Float32x4, 9 => Float32x4, 10 => Float32x4, 11 => Float32x4, 12 => Uint32x4,
-            13 => Float32x4, 14 => Float32x4
+            13 => Float32x4, 14 => Float32x4, 15 => Float32x4
         ];
         let stencil_mark = wgpu::StencilFaceState {
             compare: wgpu::CompareFunction::Always,
@@ -592,8 +608,14 @@ impl ModelRenderer {
             gpu.push(GpuInstance {
                 rows: math::affine_rows(&inst.transform),
                 params: [inst.decay, inst.morphs[0], inst.morphs[1], if inst.transparent { 1.0 } else { 0.0 }],
-                extra: [base, u32::from(inst.player), 0, 0],
+                extra: [
+                    base,
+                    u32::from(inst.player),
+                    (inst.sprayed.amount.clamp(0.0, 1.0) * 1000.0) as u32,
+                    (inst.sprayed.age.clamp(0.0, 1.0) * 1000.0) as u32,
+                ],
                 wounds: inst.wounds.gpu(),
+                spray: [inst.sprayed.point[0], inst.sprayed.point[1], inst.sprayed.point[2], inst.sprayed.radius],
             });
         }
         self.pose_count = poses.len();

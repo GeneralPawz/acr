@@ -4,9 +4,12 @@
 //! `combat::HIT_KEEP` ticks, longer than a droplet lives) and the current tick, seeded from
 //! the hit, so they neither flicker nor need state of their own and come back alike after
 //! loading a game.
+//!
+//! The same spray lands on troops standing behind the victim (speckles on the side facing
+//! it) and on the walls of buildings in its path (#220).
 
 use acr_render::model::ramp;
-use acr_render::model_renderer::BloodPool;
+use acr_render::model_renderer::{BloodPool, Sprayed};
 use acr_render::view3d::PIXELS_PER_METRE;
 use acr_sim::combat::{DeathCause, HIT_KEEP, HitRecord};
 
@@ -96,6 +99,130 @@ pub fn splatter(
     }
 }
 
+/// A model that spray can land on.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Target {
+    /// The unit's index (the victim itself is skipped).
+    pub unit: u32,
+    /// Ground position (world pixels) and the model's turn (`view3d::facing_yaw`).
+    pub pos: (f32, f32),
+    pub yaw: f32,
+    /// Buildings take the spray on their walls, within `radius` (world pixels) of `pos`.
+    pub building: bool,
+    pub radius: f32,
+}
+
+/// How much spray of one hit a unit `along` metres behind the victim and `across` metres
+/// off the shot line takes (0..1).
+fn share(s: &Spray, along: f32, across: f32) -> f32 {
+    if along <= 0.05 || along > s.far {
+        return 0.0;
+    }
+    let half = (along * s.cone.tan()).max(0.25);
+    if across > half {
+        return 0.0;
+    }
+    (1.0 - along / s.far) * (1.0 - 0.5 * across / half)
+}
+
+/// The blood sprayed onto `targets` by recent `hits` at tick `now`: for each target index
+/// the strongest spray that reached it. Units are found through a grid of `CELL` world
+/// pixels, so a battle with thousands of hits and models stays cheap.
+pub fn sprayed_targets<'a>(
+    hits: impl IntoIterator<Item = &'a HitRecord>,
+    now: u64,
+    gore: Gore,
+    targets: &[Target],
+) -> Vec<(usize, Sprayed)> {
+    const CELL: f32 = 128.0;
+    let mut out: std::collections::HashMap<usize, Sprayed> = std::collections::HashMap::new();
+    if gore == Gore::Off || targets.is_empty() {
+        return Vec::new();
+    }
+    let key = |x: f32, y: f32| ((x / CELL).floor() as i32, (y / CELL).floor() as i32);
+    let mut grid: std::collections::HashMap<(i32, i32), Vec<usize>> = std::collections::HashMap::new();
+    let mut buildings = Vec::new();
+    for (i, t) in targets.iter().enumerate() {
+        if t.building {
+            buildings.push(i);
+        } else {
+            grid.entry(key(t.pos.0, t.pos.1)).or_default().push(i);
+        }
+    }
+    let strength = if gore == Gore::Reduced { 0.5 } else { 1.0 };
+    for hit in hits.into_iter().filter(|h| !h.building && now >= h.tick) {
+        let Some(s) = spray(hit.cause) else { continue };
+        let t = (now - hit.tick) as f32;
+        let fade = 1.0 - ramp(t, FADE.0, FADE.1);
+        let (dx, dy) = (hit.dir.0 as f32, hit.dir.1 as f32);
+        let len = (dx * dx + dy * dy).sqrt();
+        if fade <= 0.0 || len == 0.0 {
+            continue;
+        }
+        let (ux, uy) = (dx / len, dy / len);
+        let power = strength * fade * if hit.killed { 1.0 } else { 0.7 };
+        let age = ramp(t, 40.0, DRIED);
+        let (vx, vy) = (hit.pos.0 as f32, hit.pos.1 as f32);
+        let reach = s.far * PIXELS_PER_METRE;
+        let mut take = |i: usize, amount: f32, point: [f32; 3], radius: f32| {
+            let e = out.entry(i).or_default();
+            if amount > e.amount {
+                *e = Sprayed { point, radius, amount, age };
+            }
+        };
+        // Troops in the cone behind the victim: speckles on the side facing it.
+        let (a, b) = (
+            key(vx.min(vx + ux * reach) - CELL, vy.min(vy + uy * reach) - CELL),
+            key(vx.max(vx + ux * reach) + CELL, vy.max(vy + uy * reach) + CELL),
+        );
+        for cx in a.0..=b.0 {
+            for cy in a.1..=b.1 {
+                for &i in grid.get(&(cx, cy)).into_iter().flatten() {
+                    let tg = &targets[i];
+                    if tg.unit == hit.victim {
+                        continue;
+                    }
+                    let (rx, ry) = (tg.pos.0 - vx, tg.pos.1 - vy);
+                    let along = (rx * ux + ry * uy) / PIXELS_PER_METRE;
+                    let across = (rx * uy - ry * ux).abs() / PIXELS_PER_METRE;
+                    let amount = power * share(&s, along, across);
+                    if amount > 0.02 {
+                        // Towards the victim in the model's frame (model x → world (c, −s),
+                        // model z → world (s, c)), at chest height.
+                        let (sn, cs) = tg.yaw.sin_cos();
+                        let (wx, wy) = (-ux, -uy);
+                        let (lx, lz) = (wx * cs - wy * sn, wx * sn + wy * cs);
+                        take(i, amount, [lx * 0.22, 1.2, lz * 0.22], 0.55);
+                    }
+                }
+            }
+        }
+        // Buildings whose footprint the spray enters within its reach: a stain on the wall.
+        for &i in &buildings {
+            let tg = &targets[i];
+            let (rx, ry) = (tg.pos.0 - vx, tg.pos.1 - vy);
+            let along = rx * ux + ry * uy;
+            let off = (rx * uy - ry * ux).abs();
+            let r = tg.radius * 0.7;
+            if off >= r || along <= 0.0 {
+                continue;
+            }
+            let enter = along - (r * r - off * off).sqrt();
+            if !(0.0..=reach).contains(&enter) {
+                continue;
+            }
+            let amount = power * (1.0 - enter / reach);
+            let (px, py) = (vx + ux * enter, vy + uy * enter);
+            // Buildings are not turned: model x is world x, model z is world y.
+            let point = [(px - tg.pos.0) / PIXELS_PER_METRE, 1.3, (py - tg.pos.1) / PIXELS_PER_METRE];
+            take(i, amount, point, 0.9);
+        }
+    }
+    let mut v: Vec<(usize, Sprayed)> = out.into_iter().collect();
+    v.sort_by_key(|(i, _)| *i);
+    v
+}
+
 /// A small deterministic generator (SplitMix64) seeded from a hit.
 struct Rng(u64);
 
@@ -127,6 +254,55 @@ mod tests {
         let mut out = Vec::new();
         splatter(h, now, gore, &|x, y| [x, y, 0.0], &mut out);
         out
+    }
+
+    fn soldier(unit: u32, x: f32, y: f32, yaw: f32) -> Target {
+        Target { unit, pos: (x, y), yaw, building: false, radius: 0.0 }
+    }
+
+    #[test]
+    fn spray_lands_on_troops_behind_the_victim() {
+        // The shot travels east from the victim at (1000, 1000).
+        let mut h = hit(DeathCause::Gunshot);
+        h.killed = true;
+        let behind = soldier(1, 1000.0 + 0.8 * PIXELS_PER_METRE, 1000.0, 0.0);
+        let in_front = soldier(2, 1000.0 - 0.8 * PIXELS_PER_METRE, 1000.0, 0.0);
+        let aside = soldier(4, 1000.0 + 0.8 * PIXELS_PER_METRE, 1000.0 + 1.5 * PIXELS_PER_METRE, 0.0);
+        let victim = soldier(3, 1000.0, 1000.0, 0.0);
+        let s = sprayed_targets([&h], 110, Gore::Full, &[behind, in_front, aside, victim]);
+        assert_eq!(s.len(), 1, "{s:?}");
+        let (i, sp) = s[0];
+        assert_eq!(i, 0);
+        assert!(sp.amount > 0.3 && sp.age == 0.0);
+        // Facing east (yaw 0 → model +z is world +y, +x is world +x): the victim lies west,
+        // so the speckles sit on the model's −x side.
+        assert!(sp.point[0] < -0.2 && sp.point[2].abs() < 1e-5, "{:?}", sp.point);
+        // Reduced gore halves it, off removes it, it dries and fades.
+        let r = sprayed_targets([&h], 110, Gore::Reduced, &[behind]);
+        assert!((r[0].1.amount - sp.amount / 2.0).abs() < 1e-5);
+        assert!(sprayed_targets([&h], 110, Gore::Off, &[behind]).is_empty());
+        assert!(sprayed_targets([&h], 600, Gore::Full, &[behind])[0].1.age == 1.0);
+        assert!(sprayed_targets([&h], 100 + HIT_KEEP, Gore::Full, &[behind]).is_empty());
+    }
+
+    #[test]
+    fn spray_stains_a_building_wall_in_its_path() {
+        let h = hit(DeathCause::Cannonball);
+        // A building 3 m east, 1 m across: the spray enters it from the west.
+        let b = Target {
+            unit: 9,
+            pos: (1000.0 + 3.0 * PIXELS_PER_METRE, 1000.0),
+            yaw: 0.0,
+            building: true,
+            radius: 1.5 * PIXELS_PER_METRE,
+        };
+        let s = sprayed_targets([&h], 110, Gore::Full, &[b]);
+        assert_eq!(s.len(), 1);
+        let sp = s[0].1;
+        assert!(sp.point[0] < -0.9 && sp.point[0] > -1.1 && sp.point[2].abs() < 1e-4, "{:?}", sp.point);
+        // Out of reach (cannonball spray 3.5 m) it stays clean.
+        let far = Target { pos: (1000.0 + 6.0 * PIXELS_PER_METRE, 1000.0), ..b };
+        assert!(sprayed_targets([&h], 110, Gore::Full, &[far]).is_empty());
     }
 
     #[test]
