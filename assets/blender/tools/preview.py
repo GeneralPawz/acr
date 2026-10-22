@@ -155,8 +155,11 @@ def main(argv):
     for o in s.objects:
         if o.name.endswith(".caps"):
             o.hide_render = True
-    if a.decay:
-        decay_materials()
+    # Always: the importer multiplies COLOR_0 (the decay mask) into the base colour.
+    decay_materials()
+    for o in s.objects:
+        if o.type == "MESH":
+            o["decay"] = 0.0
     s.render.engine = "BLENDER_EEVEE"
     s.render.film_transparent = not a.ground
     s.render.image_settings.file_format = "PNG"
