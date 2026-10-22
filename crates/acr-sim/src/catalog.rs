@@ -385,6 +385,12 @@ pub struct Role {
     pub capture: bool,
     /// `CANTCAPTURE` (NM+0x172a bit2): never captures (animals).
     pub cant_capture: bool,
+    /// `CANSTORM` (NM+0x172c bit5): may go into buildings (`GoToMine`) besides peasants, and
+    /// so storm enemy ones.
+    pub can_storm: bool,
+    /// `HIGHUNIT` (NM+0x172e bit2) cannot go into `HIGHUNITCANTENTER` buildings (bit3).
+    pub high_unit: bool,
+    pub high_unit_cant_enter: bool,
     /// `VES v` (NM+0x1767, default 10; `USAGE MELNICA` sets 100, `USAGE SKLAD` 30, `BUILDING` 500).
     pub ves: i32,
     /// A `BUILDING` token in `ATTMASK` or `MATHERIAL` (NM+0x172b bit2): attacks buildings.
@@ -412,6 +418,9 @@ fn role(def: &UnitDef) -> Role {
         category: 0,
         capture: false,
         cant_capture: false,
+        can_storm: false,
+        high_unit: false,
+        high_unit_cant_enter: false,
         ves: 10,
         attacks_buildings: false,
         auto_no_attack: false,
@@ -443,6 +452,9 @@ fn role(def: &UnitDef) -> Role {
             "CATEGORY" => r.category = u8::from(c.word(0).is_some_and(|w| w.eq_ignore_ascii_case("STRELOK"))),
             "CAPTURE" => r.capture = true,
             "CANTCAPTURE" => r.cant_capture = true,
+            "CANSTORM" => r.can_storm = true,
+            "HIGHUNIT" => r.high_unit = true,
+            "HIGHUNITCANTENTER" => r.high_unit_cant_enter = true,
             "VES" => r.ves = c.int(0).unwrap_or(10),
             "BUILDING" => r.ves = 500,
             "ATTMASK" | "MATHERIAL" => {

@@ -10,7 +10,7 @@ use crate::combat::die;
 use crate::fixed::Pos;
 use crate::path::{Mover, create_path, dist_to};
 use crate::trig::{get_dir, norma};
-use crate::world::{EntityId, Order, PLAYERS, SPEED_SH, Unit, World};
+use crate::world::{AnimKind, EntityId, FRM_DEC, Order, PLAYERS, SPEED_SH, Unit, World};
 
 /// Resource indices (`NRES.DAT [RESTYPES]` order).
 pub const WOOD: usize = 0;
@@ -713,32 +713,43 @@ pub fn bind_mines(w: &mut World) {
     }
 }
 
-/// Whether `u` may go into building `b` now (`GoToMine` 0x5f43d0 checks).
+/// Whether unit `u` may go into building `b` (`GoToMine`'s tests, 0x5f43d0): `b` is not
+/// dying and finished or busy; a `HIGHUNIT` does not fit a `HIGHUNITCANTENTER` building;
+/// the unit is a peasant or `CANSTORM`, and mobile; the building takes units
+/// (`UNITABSORBER`), or peasants (`PEASANTABSORBER`) and the unit is one; it has
+/// `CONCENTRATOR` points; a friend's building must have room (an enemy's need not: the unit
+/// storms it, see [`enter_link`]).
 pub fn can_enter(w: &World, u: &Unit, b: &Unit) -> bool {
     let bt = w.catalog.get(b.kind);
     let ut = w.catalog.get(u.kind);
-    let kind_ok = if ut.peasant {
-        bt.economy.peasant_absorber > 0 || bt.economy.unit_absorber > 0
-    } else {
-        bt.economy.unit_absorber > 0
-    };
+    let ready = !b.building || b.stage >= w.max_stage(b);
+    let kind_ok = bt.economy.unit_absorber > 0 || (bt.economy.peasant_absorber > 0 && ut.peasant);
     let cap = w.adv(b.owner, b.kind).max_inside + b.add_inside;
-    kind_ok
-        && b.living()
-        && b.building
-        && b.owner == u.owner
+    let full = u.nmask & b.nmask != 0 && b.inside.len() as i32 >= cap;
+    b.living()
+        && (ready || !b.orders.is_empty())
+        && !(ut.role.high_unit && bt.role.high_unit_cant_enter)
+        && (ut.peasant || ut.role.usage == crate::catalog::usage::PEASANT || ut.role.can_storm)
+        && ut.mobile()
+        && kind_ok
+        && !full
         && !bt.economy.concentrator.is_empty()
-        && (b.inside.len() as i32) < cap
 }
 
-/// Orders a unit into a building (mine, garrison): `GoToMine`. `append` queues the order
-/// after the current ones (order type 2), otherwise it replaces them.
+/// Orders a unit into a building (mine, garrison, an enemy's building to storm): `GoToMine`
+/// (0x5f43d0). Refused by [`can_enter`] or below the unit's current priority; a unit already
+/// going into this building keeps its order. `append` queues the order after the current
+/// ones (order type 2), otherwise it replaces them. The order keeps `prio & 0x7f`.
 pub fn enter(w: &mut World, i: usize, b: usize, prio: u8, append: bool) -> bool {
-    if !can_enter(w, &w.units[i], &w.units[b]) || prio < w.units[i].prio && !w.units[i].orders.is_empty() {
+    if !can_enter(w, &w.units[i], &w.units[b]) || w.units[i].prio > prio {
         return false;
     }
     let id = w.units[b].id;
     let u = &mut w.units[i];
+    if matches!(u.orders.last(), Some(Order::Enter { building, .. }) if *building == id) {
+        return true;
+    }
+    let prio = prio & 0x7f;
     if append {
         u.orders.insert(0, Order::Enter { building: id, prio });
         return true;
@@ -750,40 +761,121 @@ pub fn enter(w: &mut World, i: usize, b: usize, prio: u8, append: bool) -> bool 
     true
 }
 
-/// `GoToMineLink` (0x5f46f7, simplified): walk to the building's first `CONCENTRATOR` point,
-/// then disappear inside.
+/// `GoToMineLink` (0x5f46f7): walk to the building's first `CONCENTRATOR` point (lock-cell
+/// distance below 2), then:
+/// - a friend's building takes the unit inside (no room: the order ends);
+/// - an empty enemy building is captured ([`crate::capture::change_side`], its orders
+///   cleared) and the unit goes inside;
+/// - a guarded one (`SetAI_Guard`) kills the unit;
+/// - a garrisoned one is stormed: the unit plays `#ATTACK` to its end, then one random
+///   defender `D` (`rando()·n >> 15` of the `n` inside) faces
+///   `STORMFORCE(D) · (a + (b − a)·n / MaxInside) · rando() >> 15` (`OPPOSIT a b` of the
+///   building) and dies when that is below the stormer's `STORMFORCE`; the stormer always
+///   dies (a type without `STORMFORCE` at once). When the garrison is gone, the next
+///   stormer takes the building.
+///
+/// A gone or dying building ends the order.
 pub fn enter_link(w: &mut World, i: usize, building: EntityId, prio: u8) {
     let b = building.0 as usize;
-    if w.units.get(b).is_none() || !can_enter(w, &w.units[i], &w.units[b]) {
+    w.units[i].prio = prio;
+    if !w.units.get(b).is_some_and(|u| u.alive) || !w.units[b].living() {
+        w.units[i].pop_order();
+        return;
+    }
+    let allied = w.units[i].nmask & w.units[b].nmask != 0;
+    let cap = w.adv(w.units[b].owner, w.units[b].kind).max_inside + w.units[b].add_inside;
+    if allied && w.units[b].inside.len() as i32 >= cap {
         w.units[i].pop_order();
         return;
     }
     let catalog = w.catalog.clone();
     let bt = catalog.get(w.units[b].kind);
     let (bx, by) = base_cell(bt, w.units[b].pos);
-    let (cx, cy) = bt.economy.concentrator[0];
+    let Some(&(cx, cy)) = bt.economy.concentrator.first() else {
+        w.units[i].pop_order();
+        return;
+    };
     let target = (bx + cx, by + cy);
-    w.units[i].prio = prio;
     let u = &w.units[i];
     let mover = Mover { x: u.cell.0, y: u.cell.1, lx: u.lx };
-    if dist_to(mover, target.0, target.1) < 2 {
+    if dist_to(mover, target.0, target.1) >= 2 {
+        let t = catalog.get(w.units[i].kind);
         let u = &mut w.units[i];
-        w.occupancy.clr_bar(u.cell.0, u.cell.1, u.lx);
-        u.orders.clear();
-        u.in_motion = false;
-        u.dest = None;
-        u.inside_of = Some(building);
-        let id = u.id;
-        w.units[b].inside.push(id);
+        if let Some((x, y)) =
+            create_path(&w.map.land, mover, &mut u.path, &mut w.random, target.0, target.1, t.stop_distance)
+        {
+            u.dest = Some(Pos::new(x, y));
+        }
         return;
     }
+    let u = &mut w.units[i];
+    u.prio = 0x7f;
+    u.dest = None;
+    if !allied {
+        if w.units[b].guard {
+            if w.units[i].owner != w.units[b].owner {
+                crate::combat::die(w, i);
+            }
+            return;
+        }
+        if !w.units[b].inside.is_empty() {
+            storm(w, i, b);
+            return;
+        }
+        // An empty enemy building is taken (0x5f4b6c..0x5f4e59).
+        let new = w.units[i].owner;
+        crate::capture::change_side(w, b, new);
+        let bu = &mut w.units[b];
+        bu.orders.clear();
+        bu.path.clear();
+        bu.prio = 0;
+    }
+    let u = &mut w.units[i];
+    w.occupancy.clr_bar(u.cell.0, u.cell.1, u.lx);
+    u.orders.clear();
+    u.in_motion = false;
+    u.dest = None;
+    u.inside_of = Some(building);
+    let id = u.id;
+    w.units[b].inside.push(id);
+}
+
+/// The storm of a garrisoned enemy building (0x5f4e5e..0x5f502e), once the stormer stands at
+/// its door: see [`enter_link`].
+fn storm(w: &mut World, i: usize, b: usize) {
+    let catalog = w.catalog.clone();
     let t = catalog.get(w.units[i].kind);
     let u = &mut w.units[i];
-    if let Some((x, y)) =
-        create_path(&w.map.land, mover, &mut u.path, &mut w.random, target.0, target.1, t.stop_distance)
-    {
-        u.dest = Some(Pos::new(x, y));
+    if u.anim != AnimKind::Attack(0) {
+        // The frame is not reset (0x5f5033).
+        crate::motion::set_anim(u, t, AnimKind::Attack(0));
+        return;
     }
+    if u.frame < u.anim_frames - FRM_DEC {
+        return;
+    }
+    let sf = t.role.storm_force;
+    let n = w.units[b].inside.len() as i32;
+    if sf != 0 && n != 0 {
+        let k = ((w.random.rando() * n) >> 15) as usize;
+        if let Some(d) = w.units[b].inside.get(k).map(|e| e.0 as usize) {
+            let bt = catalog.get(w.units[b].kind);
+            let (o1, o2) = bt.role.opposit;
+            let full = w.adv(w.units[b].owner, w.units[b].kind).max_inside;
+            let sfd = catalog.get(w.units[d].kind).role.storm_force;
+            let scale = if full == 0 { o1 } else { o1 + (o2 - o1) * n / full };
+            let v = (sfd * scale * w.random.rando()) >> 15;
+            if v < sf {
+                // The defender dies and is gone at once.
+                let id = w.units[d].id;
+                w.units[b].inside.retain(|&e| e != id);
+                crate::combat::die(w, d);
+                w.units[d].inside_of = None;
+                w.units[d].alive = false;
+            }
+        }
+    }
+    crate::combat::die(w, i);
 }
 
 /// Lets everybody out of a building at its born points.

@@ -92,6 +92,8 @@ pub(super) enum Context {
     Attack(EntityId),
     Repair(EntityId),
     Enter(EntityId),
+    /// Into another nation's building (with Ctrl): storm or take it.
+    Storm(EntityId),
     /// World pixel and source type.
     Gather(i32, i32, u8),
     Move(i32, i32),
@@ -105,6 +107,7 @@ impl Context {
             Context::Attack(_) => cursor::frame::SWORD,
             Context::Repair(_) => cursor::frame::BUILD,
             Context::Enter(_) => cursor::frame::ENTER,
+            Context::Storm(_) => cursor::frame::STORM,
             Context::Gather(_, _, kind) => {
                 cursor::frame::GATHER.get(usize::from(kind)).map_or(cursor::frame::ARROW, |&f| usize::from(f))
             }
@@ -1230,6 +1233,14 @@ impl InGame {
             return rally.then_some(Context::Rally(x, y));
         }
         if let Some(target) = self.unit_at(at, |u| u.owner != own) {
+            // With Ctrl, units go into another nation's building that takes units: they storm
+            // it, or take it when it is empty (the door cursor, 0x4c4808).
+            if self.interface.mods.control_key()
+                && let Some(b) = world.unit(target).filter(|b| b.building)
+                && units.iter().any(|u| !u.building && acr_sim::economy::can_enter(world, u, b))
+            {
+                return Some(Context::Storm(target));
+            }
             return Some(Context::Attack(target));
         }
         if let Some(b) = self.unit_at(at, |u| u.owner == own && u.building) {
@@ -1267,7 +1278,7 @@ impl InGame {
         let command = match context {
             Context::Attack(target) => Command::Attack { player, units, target },
             Context::Repair(building) => Command::Repair { player, units, building },
-            Context::Enter(building) => Command::Enter { player, units, building },
+            Context::Enter(building) | Context::Storm(building) => Command::Enter { player, units, building },
             Context::Gather(x, y, _) => Command::Gather { player, units, x, y },
             Context::Move(x, y) => {
                 self.add_marker(x, y);

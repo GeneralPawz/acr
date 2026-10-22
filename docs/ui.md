@@ -625,9 +625,10 @@ The cursor shows what a right click on the map does with the selection:
 
 | Under the cursor | Order | Cursor (`CURSOR_00.GP`) |
 |---|---|---|
-| enemy | `Attack` | 1, sword (0x66a924) |
+| enemy (without Ctrl over a building the units may storm) | `Attack` | 1, sword (0x66a924) |
 | own unfinished or damaged building, selection has builders (`#WORK`), Ctrl not held | `Repair` | 3, hammer (0x66a920) |
 | own building one of the selected units may enter | `Enter` | 11 (0x66a918) |
+| with Ctrl: another nation's building one of the selected units may enter (storm it, or take it empty) | `Enter` | 15 (0x66a91c) |
 | a source within 64 px (`DetermineResource`) that a selected unit can gather | `Gather` | by source type (0x66a934): wood 6, minerals 5, field 7, meat 1 |
 | anything else | `Move` with the `CursGo` marker | 0, arrow |
 

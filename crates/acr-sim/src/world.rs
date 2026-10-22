@@ -1035,10 +1035,28 @@ impl World {
                 }
             }
             Command::Enter { player, units, building } => {
+                // Command 0x2d (0x4de4cc): into a building that takes units, a friend's as far
+                // as it has room, an enemy's (to storm or take it) with 1000 more places; units
+                // already on their way into a building are skipped.
                 let b = building.0 as usize;
-                if self.units.get(b).is_some_and(|u| u.owner == *player) {
-                    for i in self.owned(*player, units) {
-                        crate::economy::enter(self, i, b, crate::motion::PLAYER_PRIO, false);
+                let Some(bu) = self.units.get(b).filter(|u| u.alive) else { return };
+                let eco = &self.catalog.get(bu.kind).economy;
+                if eco.unit_absorber == 0 && eco.peasant_absorber == 0 {
+                    return;
+                }
+                let mut free = self.adv(bu.owner, bu.kind).max_inside + bu.add_inside - bu.inside.len() as i32;
+                if self.nation_mask[usize::from(*player) & 7] & bu.nmask == 0 {
+                    free += 1000;
+                }
+                for i in self.owned(*player, units) {
+                    if free <= 0 {
+                        break;
+                    }
+                    if self.units[i].orders.iter().any(|o| matches!(o, Order::Enter { .. })) {
+                        continue;
+                    }
+                    if crate::economy::enter(self, i, b, 0x90, false) {
+                        free -= 1;
                     }
                 }
             }

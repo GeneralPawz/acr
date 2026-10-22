@@ -1447,9 +1447,31 @@ Implemented in `economy.rs`. The sources are `City::Census` (0x42e658), the upke
     meat per cycle for 10 cycles, then `M01` 250 more cycles; an untouched `M00` rots after
     3750 ticks. Meat is source type 8; bases take it with `RESOURCEBASE … #R8` and it counts
     as food.
-- **Entering buildings.** A unit walks to the first `CONCENTRATOR` point and disappears inside
-  (`Unit::inside_of`). Peasants count against `PEASANTABSORBER`, other units against
-  `UNITABSORBER`. Units inside still eat and count. `Leave` puts them back at the born points.
+- **Entering buildings** (`GoToMine` 0x5f43d0, `economy::enter`): only peasants and
+  `CANSTORM` types go in, mobile ones, not a `HIGHUNIT` into a `HIGHUNITCANTENTER` building;
+  the building is not dying and finished or busy, takes units (`UNITABSORBER`) or peasants
+  (`PEASANTABSORBER`) and has `CONCENTRATOR` points; a friend's must have room, an enemy's
+  need not. The order keeps `prio & 0x7f`; below the unit's priority it is refused, and a
+  unit already going there keeps its order. The player's command (0x4de4cc) sends the
+  selected units that are not on their way into a building, as many as there are places
+  (1000 more for another nation's building). A unit walks to the first `CONCENTRATOR` point
+  (`GoToMineLink` 0x5f46f7, lock-cell distance below 2) and disappears inside
+  (`Unit::inside_of`). Units inside still eat and count. `Leave` puts them back at the born
+  points.
+- **Storming** (0x5f4ad1..0x5f502e): at the door of another nation's building, a guarded
+  one (`SetAI_Guard`) kills the unit; an empty one is taken (its orders cleared, see
+  Capture for the change of sides) and the unit goes in; a garrisoned one is stormed: the
+  unit plays `#ATTACK` to its end (the frame is not reset), then one defender `D`
+  (`rando()·n >> 15` of the `n` inside) falls when `STORMFORCE(D) · (a + (b − a)·n /
+  MaxInside) · rando() >> 15` (`OPPOSIT a b` of the building) is below the stormer's
+  `STORMFORCE`, and the stormer dies in any case (a type without `STORMFORCE` without the
+  draws). The fallen defender leaves the garrison at once. With Ctrl the interface's right
+  click on such a building sends units in (the door cursor, 0x4c4808). Not reproduced: the
+  walk along the further `CONCENTRATOR` points into the building (OB+0x29 bit 1, also for
+  friends' buildings) and the way back to the first point when the building is lost on the
+  way, the storm flag (OB+0xf2 bit 1, no reader found), throwing out a unit of a friend's
+  overfull building (0x5f518b), the transport test (0x54d6a2), `AutoKill` and the territory
+  checks.
 
 ## Fog of war
 
@@ -1654,8 +1676,8 @@ No game option writes it. How the map view draws the fog is in
     corpse is not drawn; `extra` (the shot point's visual height) is kept but unused, as in
     the engine.
   - Buildings: the cells of a building for round damage and searches are those of its
-    position (the engine keeps building lists by cell); storming enemy buildings is not
-    reproduced (see Capture for what of capturing is not).
+    position (the engine keeps building lists by cell); see Capture and Storming for what of
+    them is not reproduced.
   - Morale: the fear scan takes the units of the 128 px buckets built at the start of the
     tick (the engine's cell lists change during the tick); the cell number in the panic
     seed uses the bucket grid's width. Fleeing units walk in stance 0 (the engine runs them
@@ -1701,6 +1723,9 @@ No game option writes it. How the map view draws the fog is in
   the tick of its index, without orders and with the new mask; a friend 350 px away, an
   enemy 260 px away, an animal, nation 7 or capture rule 1 prevent it, a friend 600 px away
   does not; an idle building site is captured with its stage, a finished house is not.
+- **Storming** (`tests/storm.rs`): a soldier sent into an empty enemy barracks takes it and
+  is inside; one sent into a garrisoned one kills the defender (`STORMFORCE` 10 against 5)
+  and dies, the next one takes it; a unit without `CANSTORM` and a `HIGHUNIT` do not go in.
 - **Burning down** (`tests/slowdeath.rs`): a `SLOWDEATH` house at 1500 is listed at the
   next 0x11 tick and dies 299 ticks later, a house without the flag keeps its life; a
   repaired one leaves the list (losing 5 once more) and the next one is skipped that tick.

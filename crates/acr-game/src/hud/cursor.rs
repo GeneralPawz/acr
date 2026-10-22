@@ -15,6 +15,8 @@ pub mod frame {
     pub const BUILD: usize = 3;
     /// Go into an own building (0x66a918).
     pub const ENTER: usize = 11;
+    /// Go into another nation's building with Ctrl: storm or take it (0x66a91c).
+    pub const STORM: usize = 15;
     /// Pick the patrol point (0x66a90c).
     pub const PATROL: usize = 13;
     /// Pick the point to bombard (0x66a910).
