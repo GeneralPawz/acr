@@ -43,13 +43,8 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("SetUnitEnableState", 0x55c4f9, DONE, set_unit_enable_state),
     f("GetUpgradeCost", 0x56304a, DONE, get_upgrade_cost),
     f("GetUnitCost", 0x562f80, DONE, get_unit_cost),
-    f(
-        "AI_Torg",
-        0x569083,
-        Status::Partial("market of ECONOMY.TXT (patch values); no drift back to nominal yet"),
-        ai_torg,
-    ),
-    f("GetTorgResult", 0x5690c0, Status::Partial("as AI_Torg"), get_torg_result),
+    f("AI_Torg", 0x569083, DONE, ai_torg),
+    f("GetTorgResult", 0x5690c0, DONE, get_torg_result),
     f("SetBuildingsCollector", 0x577c6f, DONE, set_buildings_collector),
     f("SetUnitsCollector", 0x577d70, DONE, set_units_collector),
     f(
@@ -469,45 +464,30 @@ fn get_extraction(api: &mut Api, c: &mut Call) -> Result<u32> {
     Ok(acr_sim::economy::extraction(api.world, n, usize::from(c.u8(0)?)) as u32)
 }
 
-/// Resource id -> economy index (`INVECO`, 0x67169c).
-const INVECO: [usize; 6] = [2, 5, 4, 0, 1, 3];
-/// Economy index -> resource id (`ECO.EcResID`).
-const EC_RES: [usize; 6] = [3, 4, 0, 5, 2, 1];
-
-/// `int GetTorgResult(byte sell, byte buy, int amount)`: `trunc(amount * Sell[s] / Buy[b])`.
-fn get_torg_result(api: &mut Api, c: &mut Call) -> Result<u32> {
-    let (s, b) = (usize::from(c.u8(0)?), usize::from(c.u8(1)?));
-    if s >= 6 || b >= 6 {
-        return Ok(0);
-    }
-    let m = &api.st.market;
-    Ok((f64::from(c.i32(2)?) * m.sell[INVECO[s]] / m.buy[INVECO[b]]) as i32 as u32)
+/// The market slot of a script resource id (`INVECO`, 0x67169c, the inverse of the loaded
+/// `ECO.EcResID`), `None` without `ECONOMY.TXT` or for an id past the six resources.
+fn market_slot(api: &Api, res: u8) -> Option<usize> {
+    api.world.catalog.market.as_ref()?.slot(usize::from(res))
 }
 
-/// `void AI_Torg(byte sell, byte buy, int amount)`: `ECO.PerformOperation` (0x4a9d80) for
-/// the AI nation; the prices are shared by all nations.
+/// `int GetTorgResult(byte sell, byte buy, int amount)` (0x5690c0 → 0x4aa039): what
+/// `amount` of `sell` buys of `buy` at the market's current rates, `trunc(amount ·
+/// Sell[s] / Buy[b])`. The rates are the player's market (`world.market`).
+fn get_torg_result(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let (Some(s), Some(b)) = (market_slot(api, c.u8(0)?), market_slot(api, c.u8(1)?)) else { return Ok(0) };
+    Ok(api.world.market.quote(s, b, c.i32(2)?) as u32)
+}
+
+/// `void AI_Torg(byte sell, byte buy, int amount)` (0x569083 → 0x4aa090): the city's
+/// nation (`City+0x11dcc`) trades through `ECO.PerformOperation` (0x4a9d80), the same
+/// trade as the player's market (`acr_sim::market::trade`); the rates drift back with
+/// `Process` (0x4aa0af) every tick.
 fn ai_torg(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Caller::Ai(n) = api.caller else { return Ok(0) };
-    let (s, b) = (usize::from(c.u8(0)?), usize::from(c.u8(1)?));
-    if s >= 6 || b >= 6 {
+    if market_slot(api, c.u8(0)?).is_none() || market_slot(api, c.u8(1)?).is_none() {
         return Ok(0);
     }
-    let (es, eb) = (INVECO[s], INVECO[b]);
-    let (sr, br) = (EC_RES[es], EC_RES[eb]);
-    let n = usize::from(n);
-    let mut a = c.i32(2)?;
-    a = a.min(res(api, n, sr));
-    let m = &mut api.st.market;
-    let got = (f64::from(a) * m.sell[es] / m.buy[eb]) as i32;
-    let p = &mut api.world.players[n].resources;
-    p[sr] = p[sr].wrapping_sub(a);
-    p[br] = p[br].wrapping_add(got);
-    let t = f64::from(got) * m.buy_change[eb];
-    m.buy[eb] = (m.buy[eb] + t * m.buy_range[eb][2]) / (1.0 + t);
-    m.sell[eb] = (m.sell[eb] + t * m.sell_range[eb][2]) / (1.0 + t);
-    let t = f64::from(a) * m.sell_change[es];
-    m.sell[es] = (m.sell[es] + t * m.sell_range[es][0]) / (1.0 + t);
-    m.buy[es] = (m.buy[es] + t * m.buy_range[es][0]) / (1.0 + t);
+    acr_sim::market::trade(api.world, n, usize::from(c.u8(0)?), usize::from(c.u8(1)?), c.i32(2)?);
     Ok(0)
 }
 
@@ -680,5 +660,83 @@ pub fn run_production(st: &mut crate::state::ScriptState, world: &mut acr_sim::W
                 st.extra.entry(id.0).or_default().nmask = Some(g.start_nmask);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use acr_script::heap::Heap;
+    use acr_script::memory::Memory;
+    use acr_script::runtime::HostCall;
+    use acr_script::x86::Cpu;
+    use acr_sim::World;
+    use acr_sim::catalog::Catalog;
+    use acr_sim::formation::Formations;
+    use acr_sim::map::MapGrid;
+    use acr_sim::market::MarketDef;
+
+    use super::super::{Api, Call, Caller, function};
+    use crate::state::{ScriptSetup, ScriptState};
+    use crate::texts::MissionTexts;
+
+    const STACK: u32 = 0x1_8000;
+
+    fn world() -> World {
+        let mut text = String::from("a b c d e f g h i j k\n");
+        for (r, b, s) in [
+            ("FOOD", "20 25 40", "5 15 20"),
+            ("IRON", "140 190 240", "80 110 140"),
+            ("WOOD", "40 50 60", "20 30 40"),
+            ("COAL", "140 190 240", "80 110 140"),
+            ("STONE", "75 90 105", "30 45 60"),
+            ("GOLD", "270 300 330", "180 210 240"),
+        ] {
+            text +=
+                &format!("{r}\nBUY {b} CHANGE 100 1.0 TIMERETURN 0.0001\nSELL {s} CHANGE 100 1.0 TIMERETURN 0.0001\n");
+        }
+        let mut c = Catalog::new();
+        c.market = MarketDef::parse(text.as_bytes());
+        let f = Formations::new(&Default::default(), &Default::default());
+        World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(f))
+    }
+
+    fn call(name: &str, world: &mut World, caller: Caller, args: [u32; 3]) -> u32 {
+        let mut st = ScriptState::new(ScriptSetup::default(), MissionTexts::default());
+        let mut mem = Memory::new();
+        mem.map(0x1_0000, 0x1_0000);
+        for (i, &a) in args.iter().enumerate() {
+            mem.write_u32(STACK + 4 + 4 * i as u32, a).expect("stack");
+        }
+        let mut cpu = Cpu::new();
+        cpu.regs[usize::from(acr_script::x86::decode::reg::ESP)] = STACK;
+        let mut heap = Heap::new(0x2_0000, 0x3_0000);
+        let mut raw = HostCall { dll: "test", name, cpu: &mut cpu, mem: &mut mem, heap: &mut heap };
+        let (mut commands, mut events) = (Vec::new(), Vec::new());
+        let mut api =
+            Api { st: &mut st, world, commands: &mut commands, events: &mut events, caller, vm: 0, dip: None };
+        (function(name).expect("known").handler)(&mut api, &mut Call { raw: &mut raw }).expect("call")
+    }
+
+    #[test]
+    fn ai_trades_on_the_players_market() {
+        let mut w = world();
+        // 100 wood (sells at 30) buy 10 gold (buys at 300).
+        assert_eq!(call("GetTorgResult", &mut w, Caller::Ai(1), [0, 1, 100]), 10);
+        assert_eq!(call("GetTorgResult", &mut w, Caller::Ai(1), [0, 6, 100]), 0);
+        w.players[1].resources[0] = 60;
+        let mut expect = w.clone();
+        acr_sim::market::trade(&mut expect, 1, 0, 1, 100);
+        call("AI_Torg", &mut w, Caller::Ai(1), [0, 1, 100]);
+        // At most the stock: 60 wood for 6 gold, and the shared rates moved.
+        assert_eq!(w.players[1].resources[0], 0);
+        assert_eq!(w.players[1].resources[1], expect.players[1].resources[1]);
+        assert_eq!(w.market, expect.market);
+        assert!(w.market.buy[5] > 300.0 && w.market.sell[2] < 30.0);
+        // Only the AI section trades.
+        w.players[0].resources[0] = 100;
+        call("AI_Torg", &mut w, Caller::Mission, [0, 1, 100]);
+        assert_eq!(w.players[0].resources[0], 100);
     }
 }

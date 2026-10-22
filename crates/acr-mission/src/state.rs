@@ -126,50 +126,6 @@ pub struct Production {
     pub ready: u64,
 }
 
-/// The market (`ECO` at 0x9d5f28; one set of prices for all nations), indexed by economy
-/// index: 0 food, 1 iron, 2 wood, 3 coal, 4 stone, 5 gold. Values from `ECONOMY.TXT`.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Market {
-    pub buy: [f64; 6],
-    pub sell: [f64; 6],
-    /// `(min, nominal, max)`.
-    pub buy_range: [[f64; 3]; 6],
-    pub sell_range: [[f64; 3]; 6],
-    pub buy_change: [f64; 6],
-    pub sell_change: [f64; 6],
-}
-
-impl Default for Market {
-    fn default() -> Self {
-        let buy_range = [
-            [20.0, 25.0, 40.0],
-            [140.0, 190.0, 240.0],
-            [40.0, 50.0, 60.0],
-            [140.0, 190.0, 240.0],
-            [75.0, 90.0, 105.0],
-            [270.0, 300.0, 330.0],
-        ];
-        let sell_range = [
-            [5.0, 15.0, 20.0],
-            [80.0, 110.0, 140.0],
-            [20.0, 30.0, 40.0],
-            [80.0, 110.0, 140.0],
-            [30.0, 45.0, 60.0],
-            [180.0, 210.0, 240.0],
-        ];
-        // `CHANGE 100 1.0`: weight / (amount * 100.0f).
-        let change = 1.0 / f64::from(100.0f32 * 100.0f32);
-        Self {
-            buy: buy_range.map(|r| r[1]),
-            sell: sell_range.map(|r| r[1]),
-            buy_range,
-            sell_range,
-            buy_change: [change; 6],
-            sell_change: [change; 6],
-        }
-    }
-}
-
 /// A light spot (`SetLightSpot`): reveals the fog around a point for the local player.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct LightSpot {
@@ -274,7 +230,6 @@ pub struct ScriptState {
     pub seen_units: usize,
     /// Build-menu overrides `(nation, is upgrade, index) -> +1 enabled / -1 disabled`.
     pub availability: BTreeMap<(u8, bool, u16), i8>,
-    pub market: Market,
     /// The AI cities (projects of the computer players).
     pub cities: [crate::aicity::City; 8],
     /// Unit indices mirrored into each machine (`GetOBJ`), refreshed around AI calls.
@@ -336,7 +291,6 @@ impl ScriptState {
             production: Vec::new(),
             seen_units: 0,
             availability: BTreeMap::new(),
-            market: Market::default(),
             cities: Default::default(),
             mirrors: BTreeMap::new(),
             files: BTreeMap::new(),
