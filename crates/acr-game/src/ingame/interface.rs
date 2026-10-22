@@ -74,6 +74,9 @@ pub enum GameKey {
     None,
     /// F12 or Escape: the game menu.
     Menu,
+    /// A leader chord of the modern controls (Ctrl + Space, then a letter): the app handles
+    /// it as a press of this key.
+    Leader(NamedKey),
 }
 
 /// What the app should do after mouse input.
@@ -2579,7 +2582,7 @@ impl InGame {
     }
 
     /// Space: the camera jumps to the next selected unit (0x4c6020).
-    fn centre_next(&mut self) {
+    pub(super) fn centre_next(&mut self) {
         let units: Vec<(i32, i32)> = self.selected_units().map(|u| (u.pos.x >> 4, u.pos.y >> 4)).collect();
         if units.is_empty() {
             return;

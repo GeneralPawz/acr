@@ -743,11 +743,18 @@ impl Game {
             {
                 return;
             }
-            if let Mode::InGame(game) = &mut self.mode
-                && game.key(&self.ui.ctx(), &logical_key, pressed) == ingame::GameKey::Menu
-            {
-                self.ui.open_game_menu();
-                self.load_requested();
+            let Mode::InGame(game) = &mut self.mode else { return };
+            match game.key(&self.ui.ctx(), &logical_key, pressed) {
+                ingame::GameKey::Menu => {
+                    self.ui.open_game_menu();
+                    self.load_requested();
+                }
+                // A leader chord of the modern controls: a press of the key it stands for.
+                ingame::GameKey::Leader(named) => {
+                    self.keyboard_input(Key::Named(named), None, ElementState::Pressed, event_loop);
+                    self.keyboard_input(Key::Named(named), None, ElementState::Released, event_loop);
+                }
+                ingame::GameKey::None => {}
             }
             return;
         }

@@ -123,3 +123,35 @@ fn enter_order_placements() {
         assert_eq!(u.prio, 0x7f);
     }
 }
+
+/// Members of a formation go in too (the player's command 0x2d sends every selected unit).
+#[test]
+fn formation_members_go_in() {
+    use acr_formats::defs::{OrderGroups, OrderList};
+    const OFFICER: &str = "NAME Off\r\nUSERLC 0 G SHADOW 0 0\r\n#STAND 9 1 0 0\r\n@MOTION_L 9 0 0 9\r\n\
+        @MOTION_R 9 0 10 19\r\nLIFE 100\r\nGEOMETRY 1 10 40\r\nOFFICER\r\nMATHERIAL 1 BODY\r\n[END]\r\n";
+    const ORDERS: &[u8] =
+        b"#LINE15 SYM2 19 2 9 3 1 2\r\n   C   C   C\r\n      \r\n***************\r\n#END\r\n#EXIT\r\n";
+    const GROUPS: &[u8] = b"1\r\nLINE 0 1 #LINE15\r\n";
+    let mut c = Catalog::new();
+    let soldier = c.add(ObjectType::from_def("Sol(EN)", &UnitDef::parse(SOLDIER.as_bytes())));
+    let off = c.add(ObjectType::from_def("Off(EN)", &UnitDef::parse(OFFICER.as_bytes())));
+    let barracks = c.add(ObjectType::from_def("Bar(EN)", &UnitDef::parse(BARRACKS.as_bytes())));
+    let f = Formations::new(&OrderList::parse(ORDERS), &OrderGroups::parse(GROUPS));
+    let mut w = World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(f));
+    let officer = w.spawn(off, 0, Pos::from_pixels(2600, 2600), 0);
+    let soldiers: Vec<EntityId> =
+        (0..15).map(|i| w.spawn(soldier, 0, Pos::from_pixels(2500 + 20 * (i % 5), 2700 + 20 * (i / 5)), 0)).collect();
+    w.step(&[Command::Form { player: 0, officer, units: soldiers.clone(), kind: "LINE".into() }]);
+    run_until(&mut w, 300, |_| false);
+    assert_eq!(w.brigades.len(), 1);
+    let b = w.spawn(barracks, 1, Pos::from_pixels(2048, 2048), 0);
+    let mut sel = soldiers.clone();
+    sel.push(officer);
+    w.step(&[Command::Enter { player: 0, units: sel, building: b }]);
+    assert!(
+        run_until(&mut w, 600, |w| w.units[b.0 as usize].owner == 0),
+        "taken; orders {:?}",
+        soldiers.iter().map(|s| w.units[s.0 as usize].orders.clone()).collect::<Vec<_>>()
+    );
+}

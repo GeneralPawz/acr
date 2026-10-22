@@ -63,7 +63,7 @@ panels) the left button works as always, also with Ctrl. The wheel does nothing 
 | Game menu | F12, Escape (ACR) | F12, Escape when nothing is to be cancelled |
 | Cancel a drag (rectangle, facing arrow, pan) | – | **Escape** (the rectangle restores the previous selection) |
 | Life bars | Tab | Tab |
-| Pause | Pause | Pause |
+| Pause | Pause | Pause, **Ctrl + Space, P** (see below) |
 | Mission objectives | F1 | F1 |
 | Diplomacy panel | F8 | F8 |
 | Unit panel | U | U |
@@ -78,6 +78,23 @@ panels) the left button works as always, also with Ctrl. The wheel does nothing 
 
 Escape in the modern scheme first leaves a build or rally point mode, then cancels a drag
 in progress, and only then opens the game menu.
+
+### Leader chords (modern)
+
+In the modern scheme, **Ctrl + Space** followed by a letter (within 2 s) does what one of the
+original's special keys does, so no Pause or function key is needed. Ctrl + Space shows the
+letters on the message list; any other key ends the chord unused, and Ctrl or Shift pressed
+on the way keep it. The original keys work as before.
+
+| Chord | Does | Original key |
+|---|---|---|
+| Ctrl + Space, P | pause or go on | Pause |
+| Ctrl + Space, M | game menu | F12 |
+| Ctrl + Space, O | mission objectives | F1 |
+| Ctrl + Space, D | diplomacy panel | F8 |
+| Ctrl + Space, L | life bars | Tab |
+| Ctrl + Space, F | fullscreen | F11 |
+| Ctrl + Space, N | jump to the next selected unit | Space |
 
 ### Keys the modern scheme takes
 

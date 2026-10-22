@@ -104,7 +104,7 @@ its label to appear.
 | `{"cmd": "move", "pos": [500, 300]}` | mouse move only (hover, hints) |
 | `{"cmd": "drag", "from": [100, 100], "to": [300, 250]}` | press, move in steps, release |
 | `{"cmd": "drag", "around": {"owner": 0, "type": "Kri", "max": 5}}` | a selection rectangle over matching objects |
-| `{"cmd": "key", "key": "F12", "mods": ["ctrl"]}` | `Enter`, `Escape`, `F1`..`F12`, arrows, `PageUp`, `Home`, `Space`, single characters |
+| `{"cmd": "key", "key": "F12", "mods": ["ctrl"]}` | `Enter`, `Escape`, `F1`..`F12`, arrows, `PageUp`, `Home`, `Space`, `Pause`, single characters |
 | `{"cmd": "text", "text": "e2e"}` | types into the focused input box |
 | `{"cmd": "wheel", "lines": -1}` | mouse wheel |
 | `{"cmd": "wait", "ticks": 100}` | also `"frames": n`, `"until": {...}` (all must hold), `"timeout": frames` (6000) |

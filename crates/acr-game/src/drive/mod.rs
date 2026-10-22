@@ -242,6 +242,7 @@ fn parse_key(name: &str) -> Result<(Key, Option<String>), String> {
         "escape" | "esc" => NamedKey::Escape,
         "space" => return Ok((Key::Named(NamedKey::Space), Some(" ".into()))),
         "tab" => NamedKey::Tab,
+        "pause" => NamedKey::Pause,
         "backspace" => NamedKey::Backspace,
         "delete" | "del" => NamedKey::Delete,
         "insert" => NamedKey::Insert,

@@ -229,10 +229,13 @@ fn find_game_dir() -> Result<Option<PathBuf>, String> {
 }
 
 /// Logs to `%LOCALAPPDATA%\ACR\acr.log`, or to the file `ACR_LOG` names (for runs side by
-/// side).
+/// side). The driver logs to stderr unless `ACR_LOG` is set, so test runs keep the player's
+/// log (and a panic in it).
 fn init_logging(drive: bool) {
     let mut builder = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"));
-    let path = std::env::var_os("ACR_LOG").map(PathBuf::from).or_else(|| data_dir().map(|d| d.join("acr.log")));
+    let path = std::env::var_os("ACR_LOG")
+        .map(PathBuf::from)
+        .or_else(|| if drive { None } else { data_dir().map(|d| d.join("acr.log")) });
     if let Some(path) = path
         && path.parent().is_none_or(|d| std::fs::create_dir_all(d).is_ok())
         && let Ok(file) = std::fs::File::create(&path)
@@ -247,4 +250,15 @@ fn init_logging(drive: bool) {
     } else {
         builder.init();
     }
+    // A panic goes into the log with its backtrace: the window has no console.
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        log::error!(
+            "{info}
+{}",
+            std::backtrace::Backtrace::force_capture()
+        );
+        log::logger().flush();
+        default(info);
+    }));
 }

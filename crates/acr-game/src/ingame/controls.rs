@@ -23,6 +23,26 @@ const ZOOM_RATE: f32 = 16.0;
 const DOUBLE_TAP: f64 = 0.5;
 /// W, A, S, D in the order of [`Modern::keys`]: left, right, up, down.
 const PAN_KEYS: [u8; 4] = *b"ADWS";
+/// After Ctrl + Space, a letter within this time stands for one of the original's special
+/// keys.
+const LEADER_TIME: f64 = 2.0;
+/// The leader chords: letter, the key it stands for, its name in the hint.
+pub(super) const LEADER: [(u8, NamedKey, &str); 7] = [
+    (b'P', NamedKey::Pause, "Pause"),
+    (b'M', NamedKey::F12, "Menü"),
+    (b'O', NamedKey::F1, "Ziele"),
+    (b'D', NamedKey::F8, "Diplomatie"),
+    (b'L', NamedKey::Tab, "Lebensbalken"),
+    (b'F', NamedKey::F11, "Vollbild"),
+    (b'N', NamedKey::Space, "nächste Einheit"),
+];
+/// How long the hint of the leader chords stays (frames of the message list).
+const LEADER_HINT: u32 = 100;
+
+/// The key a leader chord's letter stands for.
+pub(super) fn leader_key(ch: u8) -> Option<NamedKey> {
+    LEADER.iter().find(|&&(c, ..)| c == ch.to_ascii_uppercase()).map(|&(_, k, _)| k)
+}
 
 /// The camera zoomed to `scale` about the window point `at`: the map point under `at` stays
 /// under it.
@@ -76,6 +96,8 @@ pub(super) struct Modern {
     pub keys: [bool; 4],
     /// The last group recalled and when.
     last_group: Option<(usize, web_time::Instant)>,
+    /// When Ctrl + Space was pressed: the next letter is a leader chord.
+    leader: Option<web_time::Instant>,
 }
 
 impl Default for Modern {
@@ -88,6 +110,7 @@ impl Default for Modern {
             pan: None,
             keys: [false; 4],
             last_group: None,
+            leader: None,
         }
     }
 }
@@ -197,6 +220,9 @@ impl InGame {
             return None;
         }
         let mods = self.interface.mods;
+        if pressed && let Some(used) = self.leader_chord(key, mods) {
+            return Some(used);
+        }
         match key {
             Key::Character(c) => {
                 let ch = c.chars().next().filter(char::is_ascii_alphabetic)?.to_ascii_uppercase() as u8;
@@ -241,6 +267,41 @@ impl InGame {
                 None
             }
             _ => None,
+        }
+    }
+
+    /// Ctrl + Space starts a leader chord and shows the letters; the next letter (within
+    /// [`LEADER_TIME`]) stands for one of the original's special keys. Modifier keys pressed
+    /// on the way keep the chord, any other key ends it unused.
+    fn leader_chord(&mut self, key: &Key, mods: ModifiersState) -> Option<GameKey> {
+        if *key == Key::Named(NamedKey::Space) && mods.control_key() && !mods.alt_key() {
+            self.interface.modern.leader = Some(web_time::Instant::now());
+            let list: Vec<String> = LEADER.iter().map(|&(c, _, name)| format!("{} {name}", c as char)).collect();
+            let text = format!("Strg+Leertaste: {}", list.join(", "));
+            let bytes = acr_formats::CodePage::Cp1252.encode(&text).unwrap_or_else(|| text.into_bytes());
+            self.mission.hint(bytes, LEADER_HINT);
+            return Some(GameKey::None);
+        }
+        let since = self.interface.modern.leader?;
+        if matches!(key, Key::Named(NamedKey::Control | NamedKey::Shift | NamedKey::Alt)) {
+            return None;
+        }
+        self.interface.modern.leader = None;
+        if since.elapsed().as_secs_f64() > LEADER_TIME {
+            return None;
+        }
+        let ch = match key {
+            Key::Character(c) => c.chars().next().filter(char::is_ascii_alphabetic).map(|c| c as u8),
+            _ => None,
+        };
+        match ch.and_then(leader_key) {
+            // Space here would start the chord again while Ctrl is still held.
+            Some(NamedKey::Space) => {
+                self.centre_next();
+                Some(GameKey::None)
+            }
+            Some(named) => Some(GameKey::Leader(named)),
+            None => Some(GameKey::None),
         }
     }
 
@@ -318,6 +379,20 @@ mod tests {
         // Zooming in and out again returns to the same camera.
         let there = zoom_about(zoom_about(camera, [300.0, 200.0], 2.0), [300.0, 200.0], 1.0);
         assert!(near(there.x, camera.x) && near(there.y, camera.y));
+    }
+
+    #[test]
+    fn leader_letters_stand_for_the_special_keys() {
+        assert_eq!(leader_key(b'p'), Some(NamedKey::Pause));
+        assert_eq!(leader_key(b'P'), Some(NamedKey::Pause));
+        assert_eq!(leader_key(b'M'), Some(NamedKey::F12));
+        assert_eq!(leader_key(b'O'), Some(NamedKey::F1));
+        assert_eq!(leader_key(b'X'), None);
+        // Every letter once.
+        let mut letters: Vec<u8> = LEADER.iter().map(|&(c, ..)| c).collect();
+        letters.sort_unstable();
+        letters.dedup();
+        assert_eq!(letters.len(), LEADER.len());
     }
 
     #[test]
