@@ -1683,7 +1683,19 @@ No game option writes it. How the map view draws the fog is in
     seed uses the bucket grid's width. Fleeing units walk in stance 0 (the engine runs them
     in the stance-1 motion where the type has it). The panic order's removal from the
     selection is left to the interface.
-  - Formation melee: the AI's army melee (0x43ba30) is not reproduced. Keep positions
+  - Formation melee: the AI's army melee `Army::Bitva` (0x43ba30) is not reproduced. It
+    works only on the AI city's armies (`City+0xae7d`, 0x79-byte records), which ACR does
+    not have: the engine calls it from `MakeDamage` (0x4e8b62) when a hurt unit has the
+    `Zombi` bit (OB+0x25 bit 6) and its brigade belongs to an army (brigade +0x2a), and from
+    the city's army code (0x4383d8, 0x4391a9, 0x43a171). At most once per 64 ticks it gives
+    the army an order listing the enemies in the members' bounding box widened by 6 cells
+    of 128 px (0x43ab87); its link 0x43af30 sets the archers on `FindArcherTarget` targets
+    (0x43ef4b) and gives every member the nearest enemy in front of it with `AttackObj`
+    priority 0xC0 (0x51a8ec), collecting the enemies anew on `rando() < 0x2000`. It needs
+    the city's army system first: armies and their orders (0x437f52/0x437fff, the links
+    0x43cdc3/0x43d0cd/0x43a9f6), the army branches of `RegisterNewUnit` (0x42dda3) that
+    give brigades to armies, the `Zombi` bit and the army step of `City::Process`
+    (0x432582). The close-combat formations have their own melee (`formation::bitva`). Keep positions
     counts a member in place when it reached its slot's cell (as far as a walk gets).
   - Brigades are appended, never reused (the engine takes a free slot of the nation's 512).
   - Shot damage falloff uses an integer `2^(−d/dec)` (16-step table, linear interpolation)
