@@ -798,6 +798,17 @@ impl ModelData {
         )
     }
 
+    /// The corpse rots by the shader's procedural fallback (`model.wgsl`, "Procedural
+    /// decay"): a skinned body without any `acr_decay` mask (the animals), not a machine.
+    /// Their corpses darken, discolour, collapse, sink and dissolve by noise from the rest
+    /// position; the sink is applied in the shader after the palette, so it also holds for
+    /// poses from the body physics.
+    pub fn decays_procedurally(&self) -> bool {
+        !self.machine
+            && self.materials.iter().all(|m| m.decay.is_none())
+            && self.slots.iter().any(|s| matches!(s, Slot::Joint { .. }))
+    }
+
     /// The model without the meshes on nodes whose name `drop` accepts (held gear left out
     /// for crawlers: the musket and hat lie on the ground instead).
     pub fn without_nodes(&self, drop: impl Fn(&str) -> bool) -> ModelData {
@@ -1058,6 +1069,23 @@ pub(crate) mod tests {
             println!("  clip {} {:.3} s, {} channels, pose in {:?}", c.name, c.duration, c.channels.len(), t.elapsed());
             assert_eq!(p.len(), m.slots.len());
         }
+    }
+
+    #[test]
+    fn models_without_masks_decay_procedurally() {
+        let mut m = ModelData::from_glb(&tiny_model()).unwrap();
+        // A soldier with his decay masks rots by them.
+        assert!(!m.decays_procedurally());
+        // A skinned animal without masks takes the shader's fallback.
+        m.materials[0].decay = None;
+        assert!(m.decays_procedurally());
+        // Ships and guns never rot.
+        m.machine = true;
+        assert!(!m.decays_procedurally());
+        // Nor does a static model (a building).
+        m.machine = false;
+        m.slots.retain(|s| matches!(s, Slot::Node(_)));
+        assert!(!m.decays_procedurally());
     }
 
     #[test]

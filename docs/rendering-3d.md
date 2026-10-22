@@ -189,6 +189,36 @@ dissolving is alpha-tested (`discard`), nothing is blended or sorted. `gore=redu
 everything but the dissolve; `gore=off` draws the corpse like the original's half
 transparent sprite, every other pixel. Sprite corpses always keep the original fade.
 
+**Procedural decay (models without masks, the animals).** A skinned model with no
+`acr_decay` material that is not a machine (`ModelData::decays_procedurally`: the WildMesh
+animals `anm*.glb`) rots by a fallback in `model.wgsl` (material `look.w`), driven by the same
+per-corpse `decay`; living animals (decay 0) are untouched:
+
+- colour: mottled value noise from the rest position (`7×` and `23×` per metre) pulls the
+  colour, with its blood and dirt, towards olive-grey rot in patches and brown-black
+  elsewhere (`ramp(decay, 0.02, 0.55)`), and darkens it by 40 % (`ramp(decay, 0.1, 0.85)`);
+- collapse: after the palette, in model space (metres above the ground point), the height is
+  flattened by up to 30–42 % (`ramp(decay, 0.15, 0.6)`, a little noise per vertex);
+- sink: then lowered by `0.3 m · ramp(decay, 0.7, 1)`. Both happen after the palette, so a
+  corpse posed by the body physics (`ragdoll_view`, whose palette cancels the instance
+  transform) collapses and sinks as well; for these models the instance transform is not
+  sunk (the footprint for the piles still is);
+- dissolve (`gore=full` only): noise from the rest position (`5×` and `19×`, stretched
+  so that its values spread over 0..1) against `1.08 · ramp(decay, 0.62, 1)`, with a dark
+  rim; ragged dark shreds remain at about 0.85 and nothing at the end. Without inner
+  geometry the dissolving body is a hollow shell (a bone layer comes with real masks).
+- Bench (`ACR-analysis/animalsim/tools/bench_decay.py`, `corpse_minutes=1`): a bear, an
+  alligator and an elk shot dead and photographed at 40..590 ticks, with a watcher of
+  their side so the fog does not grey them.
+
+An animal that leaves a carcass (`TRANSFORMTOMEAT`) is removed by the simulation at the end of
+its death clip (not alive, death counter 1); in 3D its body lingers like a soldier's for
+`corpse_minutes` (the `MEAT` sprite is still drawn beside it). **Asset side, later:** the
+animals should get real masks like the humans (`decay.py`: `COLOR_0` R noise, G fray, and
+`extras.acr_decay` per material with discolour and dissolve windows, a fur layer that goes
+first and a bone layer that stays), and `deflate` / `lie_flat` morph targets; with masks the
+model leaves the fallback by itself.
+
 #### Deaths by cause: wounds, blood, dirt, burns, pools
 
 The simulation keeps why each unit died in `World::deaths` (`combat::DeathRecord`: the

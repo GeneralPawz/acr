@@ -382,11 +382,13 @@ impl ThreeD {
         // Corpses the simulation removed (after about a minute, as the original) stay in 3D
         // until their own lifetime ends (`corpse_minutes`), so battlefields fill and piles
         // grow; their units keep position, facing and lying pose.
+        // An animal that left a carcass (`TRANSFORMTOMEAT`) is removed at the end of its
+        // death clip; its body lies and rots on as well.
         let lingering = |u: &Unit| {
             self.gore != Gore::Off
                 && !u.alive
                 && !u.building
-                && u.death >= 1000
+                && (u.death >= 1000 || (u.death > 0 && world.catalog.get(u.kind).economy.meat.is_some()))
                 && world.deaths.get(&u.id.0).is_some_and(|r| r.tick > 0 && now - r.tick < self.corpse_ticks)
         };
         // Wounds where this tick's hits struck (#277), kept for the drawn and their corpses.
@@ -840,14 +842,18 @@ fn instance(
     };
     let (morphs, sink) = model::decay_pose(decay, lying);
     let mut ground = view3d::ground_point(x, y, terrain.height_at(x, y));
+    // A model without decay masks sinks in the shader (after the palette, so a physics
+    // pose sinks too); the footprint still sinks here.
+    let placed = ground;
     ground[2] -= sink * PIXELS_PER_METRE;
+    let placed = if data.decays_procedurally() { placed } else { ground };
     // Buildings have one view, facing south.
     let yaw = if u.building { 0.0 } else { view3d::facing_yaw(u.dir) };
     let instance = ModelInstance {
         model,
         clip,
         time,
-        transform: view3d::model_matrix(ground, yaw, 1.0),
+        transform: view3d::model_matrix(placed, yaw, 1.0),
         decay,
         morphs,
         transparent,
