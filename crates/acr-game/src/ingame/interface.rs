@@ -293,7 +293,7 @@ impl InGame {
         let mut view = View { player, camera, view: view_size, ..View::default() };
         let Some(world) = &self.world else { return view };
         let res = &world.players[usize::from(player).min(world.players.len() - 1)].resources;
-        view.resources = [res[0], res[1], res[2], res[3], res[4], res[5]];
+        view.resources = std::array::from_fn(|i| res[i].max(0) as u32);
         let shift = self.shift() + 9;
         for u in world.units.iter().filter(|u| u.alive) {
             let selected = u.owner == player && self.selected.contains(&u.id);
