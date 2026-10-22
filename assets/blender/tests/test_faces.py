@@ -64,7 +64,7 @@ class Regions(unittest.TestCase):
             for parts in table.values():
                 for p in parts:
                     self.assertTrue(p.startswith(("hair_", "beard_")))
-        for v in faces.PATCHES:
+        for v in list(faces.PATCHES) + list(faces.OTHER_VARIANTS):
             self.assertTrue(any(v in p for t in (faces.HAIR_VARIANTS, faces.BEARD_VARIANTS) for p in t.values()))
 
     def test_patches(self):
@@ -81,6 +81,14 @@ class Regions(unittest.TestCase):
         self.assertGreater(faces.curve(faces.HAIRLINE, 0), 30)
         self.assertLess(faces.curve(faces.HAIRLINE, 180), -30)
         self.assertAlmostEqual(sum(c * c for c in faces.ray_dir(33, -12)), 1.0)
+        # Ragged edge: locks reach below the line.
+        row = faces.patch_grid("hair_tied")[0]
+        self.assertLess(min(p - faces.curve(faces.HAIRLINE, t) for t, p, _tp in row), -1.0)
+        self.assertTrue(all(0.35 <= faces.lock(i) <= 1.0 for i in range(50)))
+
+    def test_asym_small_and_local(self):
+        self.assertGreater(max(map(abs, faces.asym(0.0, 0.0, -0.025))), 0.001)
+        self.assertEqual(faces.asym(0.0, 0.05, -0.6), (0.0, 0.0, 0.0))
 
 
 class Choice(unittest.TestCase):

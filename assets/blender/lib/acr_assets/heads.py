@@ -63,9 +63,10 @@ def refine(bm, cx):
         if z < -0.2:
             continue
         d = faces.base_face(x, y, z)
-        v.co.x += d[0]
-        v.co.y += d[1]
-        v.co.z += d[2]
+        e = faces.asym(x, y, z)
+        v.co.x += d[0] + e[0]
+        v.co.y += d[1] + e[1]
+        v.co.z += d[2] + e[2]
     return fr
 
 
@@ -241,7 +242,7 @@ def strand_image(name, seed=29):
     fine = coat.fbm(p, (220.0, 5.0, 1.0), seed, octaves=2)
     broad = coat.fbm(p, (40.0, 2.0, 1.0), seed + 3)
     light = coat.smooth(0.70, 0.80, coat.fbm(p, (90.0, 3.0, 1.0), seed + 5))
-    val = 0.55 + 0.55 * (fine - 0.5) + 0.35 * (broad - 0.5) + 0.25 * light
+    val = 0.62 + 0.45 * (fine - 0.5) + 0.30 * (broad - 0.5) + 0.12 * light
     root = 0.62 + 0.38 * coat.smooth(0.0, 0.35, p[:, 1])
     return _image(name, coat.lin(HAIR_BASE) * (val * root)[:, None], n)
 
@@ -259,7 +260,7 @@ def finish_variants(ch, deflate=0.65):
     hair = decay.material(f"{ch.name}.hair_variant", "hair", HAIR_BASE, image=img, uv_map="strands",
                           interpolation="Linear")
     hair["acr_tint"] = "hair"
-    hair["acr_roughness"] = 0.6
+    hair["acr_roughness"] = 0.92  # matte: unwashed hair
     ribbon = decay.material(f"{ch.name}.hair_ribbon", "hair", (0.04, 0.04, 0.05))
     for o in objs:
         decay.add_masks(o, "hair", seed=sum(map(ord, o.name)), part_of_vertex=lambda i: 1)
@@ -290,10 +291,11 @@ def face_map(ch, skin_rgb):
     fr = ch.face_frame
     flesh = ch.flesh
     me = flesh.data
-    if "atlas" not in me.uv_layers:  # not dressed by `outfit` (the dragoon rider, for now)
-        return None
+    # The texture layer of the skin: `atlas` when dressed by `outfit`, else the detail map
+    # (the dragoon rider).
+    uvname = "atlas" if "atlas" in me.uv_layers else me.uv_layers[0].name
     parts = [d.value for d in me.attributes["part"].data]
-    uv = me.uv_layers["atlas"]
+    uv = me.uv_layers[uvname]
     head = [p.index for p in me.polygons if all(parts[v] == 1 for v in p.vertices)]
     for pi in head:
         p = me.polygons[pi]
@@ -314,7 +316,7 @@ def face_map(ch, skin_rgb):
     bmesh.ops.delete(bm, geom=[f for f in bm.faces if f.index not in keep], context="FACES")
     bm.to_mesh(tmp.data)
     bm.free()
-    tmp.data.uv_layers.active = tmp.data.uv_layers["atlas"]
+    tmp.data.uv_layers.active = tmp.data.uv_layers[uvname]
     size = coat.SIZE
     coat.SIZE = FACE_SIZE
     try:
@@ -332,7 +334,7 @@ def face_map(ch, skin_rgb):
     occ = np.clip(ao.reshape(-1), 0.0, 1.0)
     col[cov] *= (0.5 + 0.5 * occ[cov] ** 0.9)[:, None]
     img = _image(f"{ch.name}.face", col, FACE_SIZE)
-    m = decay.material(f"{ch.name}.face", "flesh", skin_rgb, image=img, uv_map="atlas", interpolation="Linear")
+    m = decay.material(f"{ch.name}.face", "flesh", skin_rgb, image=img, uv_map=uvname, interpolation="Linear")
     m["acr_colour_from"] = "outfit"
     m["acr_tint"] = "skin"
     me.materials.append(m)
@@ -366,6 +368,16 @@ def paint_face(p, n, rgb, seed=41):
     col *= (1.0 - sun)[:, None]
     mole = coat.smooth(0.90, 0.92, coat.fbm(p, 90.0, seed + 3, octaves=1)) * 0.5
     col = coat.mix(col, base * np.array([0.45, 0.32, 0.25], np.float32), mole)
+    # Campaign skin: uneven tone, sun spots, grime in the pores and the creases.
+    tone = coat.fbm(p, 7.0, seed + 6)
+    col *= (0.92 + 0.16 * tone)[:, None] * np.array([1.0, 0.97, 0.94], np.float32)
+    exposed = np.clip(front + np.clip(n[:, 2], 0, 1), 0, 1)
+    spots = coat.smooth(0.70, 0.78, coat.fbm(p, 55.0, seed + 7)) * exposed
+    col = coat.mix(col, base * np.array([0.68, 0.52, 0.40], np.float32), spots * 0.45)
+    pores = coat.smooth(0.60, 0.72, coat.fbm(p, 900.0, seed + 8, octaves=1))
+    col *= (1.0 - 0.22 * pores)[:, None]
+    dirt = coat.smooth(0.45, 0.75, coat.fbm(p, 9.0, seed + 9)) * 0.30
+    col = coat.mix(col, coat.lin((0.30, 0.24, 0.17)), dirt)
     cheek = (_g((ax, 0.046, 0.016), (z, -0.030, 0.016)) + _g((x, 0.0, 0.010), (z, -0.030, 0.012))) * front
     col = coat.mix(col, base * np.array([1.10, 0.74, 0.68], np.float32), np.clip(cheek, 0, 1) * 0.45)
     under = _g((ax, 0.033, 0.013), (z, -0.011, 0.005)) * front
@@ -394,6 +406,20 @@ def paint_face(p, n, rgb, seed=41):
     hairs = coat.fbm(hp, (500.0, 140.0, 10.0), seed + 4, octaves=1)
     brow = coat.smooth(0.0040, 0.0022, np.abs(z - bz)) * coat.smooth(0.064, 0.050, ax) * coat.smooth(0.004, 0.010, ax) * front
     col = coat.mix(col, coat.lin((0.09, 0.065, 0.045)), brow * (0.55 + 0.4 * coat.smooth(0.4, 0.6, hairs)))
+    # Wrinkles: forehead creases, frown lines, crow's feet, the line under the eye bags.
+    wav = 0.0025 * np.sin(x * 95.0 + 1.3) + 0.0012 * np.sin(x * 260.0)
+    fh = np.zeros_like(x)
+    for zk in (0.036, 0.046, 0.057):
+        fh = np.maximum(fh, coat.smooth(0.0010, 0.0002, np.abs(z - zk - wav)) * coat.smooth(0.052, 0.035, ax))
+    col = coat.mix(col, base * 0.55, fh * front * 0.55)
+    frown = coat.smooth(0.0009, 0.0002, np.abs(ax - 0.0055 - 0.08 * (z - 0.012))) * coat.smooth(0.0, 0.012, z) * coat.smooth(0.034, 0.024, z)
+    col = coat.mix(col, base * 0.55, frown * front * 0.5)
+    ca = np.arctan2(z - 0.001, ax - 0.047)
+    cr = np.hypot(ax - 0.047, z - 0.001)
+    feet = coat.smooth(0.55, 0.9, np.cos(ca * 9.0)) * coat.smooth(0.003, 0.006, cr) * coat.smooth(0.018, 0.010, cr) * (ax > 0.047)
+    col = coat.mix(col, base * 0.58, feet * 0.5)
+    bag = coat.smooth(0.0011, 0.0003, np.abs(z - (-0.0115 - 0.0035 * np.clip(1 - ((ax - 0.034) / 0.016) ** 2, 0, 1)))) * coat.smooth(0.054, 0.044, ax) * coat.smooth(0.018, 0.026, ax)
+    col = coat.mix(col, base * 0.6, bag * front * 0.5)
     # Nostrils.
     nost = _g((ax, 0.0075, 0.0034), (z, -0.0415, 0.0019)) * front
     col = coat.mix(col, coat.lin((0.10, 0.045, 0.035)), np.clip(nost * 1.2, 0, 0.9))
@@ -412,7 +438,7 @@ def paint_face(p, n, rgb, seed=41):
     # Nasolabial folds: a soft crease from the nose wing to the mouth corner.
     t = np.clip(((ax - 0.018) * 0.012 + (z + 0.042) * -0.022) / (0.012 ** 2 + 0.022 ** 2), 0, 1)
     fold = np.hypot(ax - (0.018 + 0.012 * t), z - (-0.042 - 0.022 * t))
-    col = coat.mix(col, base * 0.72, coat.smooth(0.003, 0.0, fold) * front * 0.45)
+    col = coat.mix(col, base * 0.62, coat.smooth(0.0035, 0.0, fold) * front * 0.6)
     # Scalp: cropped hair above the hairline (under every hair variant), a soft edge.
     cy, cz = faces.CENTRE[1], faces.CENTRE[2]
     th = np.degrees(np.arctan2(x, -(y - cy)))
@@ -423,7 +449,9 @@ def paint_face(p, n, rgb, seed=41):
     col = coat.mix(col, coat.lin((0.11, 0.08, 0.06)) * (0.8 + 0.4 * stip)[:, None], scalp * (0.6 + 0.3 * stip))
     # A faint beard shadow (the renderer adds the soldier's stubble from `_FACE`).
     beard = np.fromiter((faces.zones(float(a), float(b), float(c))[0] for a, b, c in p), np.float32, len(p))
-    col = coat.mix(col, base * np.array([0.70, 0.68, 0.70], np.float32), beard * 0.18 * (0.7 + 0.6 * fine))
+    # Unshaven: days of dark stubble in the beard zone (the renderer adds more per soldier).
+    speck = coat.smooth(0.48, 0.62, coat.fbm(p, 1400.0, seed + 10, octaves=1))
+    col = coat.mix(col, coat.lin((0.07, 0.06, 0.055)), beard * (0.22 + 0.38 * speck))
     return col
 
 
