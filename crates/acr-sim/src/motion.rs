@@ -230,6 +230,10 @@ pub fn process_unit(world: &mut World, i: usize) {
         }
         Some(Order::LeaveTransport { kind, delay }) => crate::ship::leave_transport_link(world, i, kind, delay),
         Some(Order::Fishing) => crate::ship::fishing_link(world, i),
+        Some(Order::Turn { dir }) => {
+            let step = catalog_rotate(world, i);
+            turn_link(&mut world.units[i], step, dir);
+        }
         Some(Order::Enter { building, prio }) => {
             crate::economy::enter_link(world, i, building, prio);
             if world.units[i].inside_of.is_some() {
@@ -277,6 +281,7 @@ pub fn process_unit(world: &mut World, i: usize) {
         | Some(Order::GoToTransport { .. })
         | Some(Order::LeaveTransport { .. })
         | Some(Order::Fishing)
+        | Some(Order::Turn { .. })
         | Some(Order::AttackPoint { .. })
         | Some(Order::Panic { .. })
         | Some(Order::Patrol { .. })
@@ -755,6 +760,42 @@ pub fn group_send(world: &mut World, ids: &[usize], x: i32, y: i32, dir: Option<
         let sw = stance_walker(world, i);
         let areas = areas_of(&map, world.catalog.get(world.units[i].kind));
         smart_send_to_ex(&mut world.units[i], areas, x, y, (sx - x16) >> 4, (sy - y16) >> 4, prio, false, sw);
+        // With a direction, the unit turns to it after the move (0x4ac2d3, appended).
+        if let Some(d) = dir
+            && !world.catalog.get(world.units[i].kind).transport
+        {
+            turn_to(world, i, d);
+        }
+    }
+}
+
+/// 0x41bfdb with order type 2: a turn to `dir` appended to the orders (not for transports,
+/// `NEWSHEEPS` ships or buildings).
+pub fn turn_to(world: &mut World, i: usize, dir: u8) {
+    let t = world.catalog.get(world.units[i].kind);
+    if t.transport || t.motion_style == crate::catalog::MotionStyle::NewShips || t.building {
+        return;
+    }
+    world.units[i].orders.insert(0, Order::Turn { dir });
+}
+
+fn catalog_rotate(world: &World, i: usize) -> i32 {
+    world.catalog.get(world.units[i].kind).rotate
+}
+
+/// The turn link (0x41bd0d, units without `COMPLEXROTATE`): within `ROTATE` of the target
+/// direction the unit faces it and the order ends, otherwise it turns by `ROTATE`.
+fn turn_link(u: &mut Unit, step: i32, dir: u8) {
+    // The finished move left no destination (`DestX = -1`).
+    u.dest = None;
+    let dd = u.dir.wrapping_sub(dir) as i8;
+    if i32::from(dd).abs() <= step {
+        u.dir = dir;
+        u.pop_order();
+    } else if dd > 0 {
+        u.dir = u.dir.wrapping_sub(step as u8);
+    } else {
+        u.dir = u.dir.wrapping_add(step as u8);
     }
 }
 

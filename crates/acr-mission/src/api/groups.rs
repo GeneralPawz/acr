@@ -46,7 +46,7 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f(
         "SetStandGround",
         0x5621cd,
-        Status::Partial("formations do not get their stand-ground bonus or the #KARE outward facing"),
+        Status::Partial("formations have no flag bearer, so its extra bonus is never added"),
         set_stand_ground,
     ),
     f("AllowAttack", 0x562234, DONE, allow_attack),
@@ -74,7 +74,7 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f(
         "SetUnitsState",
         0x578c09,
-        Status::Partial("formations do not get their stand-ground bonus or the #KARE outward facing"),
+        Status::Partial("formations have no flag bearer, so its extra bonus is never added"),
         set_units_state,
     ),
     f("CancelAllPurposes", 0x578bc5, DONE, cancel_all_purposes),

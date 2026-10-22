@@ -43,9 +43,31 @@ fn stop_attack(w: &mut World, i: usize) {
 /// `CancelStandGround` 0x4e0ad7). A standing unit attacks only what is in range.
 pub fn set_stand_ground(w: &mut World, ids: &[EntityId], on: bool) {
     for i in living(w, ids) {
-        for k in with_brigade(w, i) {
+        let members = with_brigade(w, i);
+        for &k in &members {
             w.units[k].stand_ground = on;
         }
+        // A `#KARE` formation's members face outward from its centre.
+        if on && let Some(b) = w.units[i].brigade {
+            kare_face_outward(w, usize::from(b), &members);
+        }
+    }
+}
+
+/// `MakeStandGroundTemp` (0x4dfe94), `#KARE` formations: every member clears its orders and
+/// turns away from the members' mean position.
+fn kare_face_outward(w: &mut World, b: usize, members: &[usize]) {
+    let shape = w.brigades[b].shape;
+    if !w.formations.shapes.get(shape).is_some_and(|s| s.kare) || members.is_empty() {
+        return;
+    }
+    let n = members.len() as i32;
+    let cx = members.iter().map(|&k| w.units[k].pos.x >> 4).sum::<i32>() / n;
+    let cy = members.iter().map(|&k| w.units[k].pos.y >> 4).sum::<i32>() / n;
+    for &k in members {
+        let (x, y) = w.units[k].pos.pixels();
+        w.units[k].orders.clear();
+        crate::motion::turn_to(w, k, crate::trig::get_dir(x - cx, y - cy));
     }
 }
 
@@ -101,8 +123,12 @@ pub fn set_units_state(
         }
         u.no_search_victim = !allow_attack;
         if stand_ground {
-            for k in with_brigade(w, i) {
+            let members = with_brigade(w, i);
+            for &k in &members {
                 w.units[k].stand_ground = true;
+            }
+            if let Some(b) = w.units[i].brigade {
+                kare_face_outward(w, usize::from(b), &members);
             }
         } else if w.units[i].brigade.is_none() {
             w.units[i].stand_ground = false;

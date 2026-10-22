@@ -48,7 +48,7 @@ pub fn order_type(u: &acr_sim::Unit) -> u32 {
         None => 0,
         Some(Order::SendTo { .. } | Order::SmartSendTo { .. } | Order::WaterSendTo { .. }) => 12,
         Some(Order::GoToTransport { .. }) => 0xF3,
-        Some(Order::LeaveTransport { .. }) => 0,
+        Some(Order::LeaveTransport { .. } | Order::Turn { .. }) => 0,
         Some(Order::Fishing) => 221,
         Some(Order::Attack { .. }) => 3,
         Some(Order::AttackPoint { .. }) => 0x4C,

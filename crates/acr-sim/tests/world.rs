@@ -205,3 +205,15 @@ fn a_stance_walk_goes_at_its_rate() {
     let (da, db) = (xa - 2000, xb - 2000);
     assert!((db * 2 - da).abs() <= 30, "stance 5 walked {db} px, stance 0 {da} px");
 }
+
+#[test]
+fn a_move_with_a_direction_ends_facing_it() {
+    let (mut w, mus, _) = setup();
+    let id = w.spawn(mus, 0, Pos::from_pixels(1000, 1000), 0);
+    w.step(&[Command::MoveFacing { player: 0, units: vec![id], x: 1200, y: 1000, dir: 64 }]);
+    run(&mut w, 200);
+    let u = w.unit(id).unwrap();
+    assert_eq!(u.dir, 64, "turned after arriving: {:?}", u.orders);
+    assert!(u.orders.is_empty());
+    assert!((px(&w, id).0 - 1200).abs() < 40);
+}

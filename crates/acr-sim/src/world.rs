@@ -132,6 +132,8 @@ pub enum Order {
     /// `FishingLink` (order type 221, link 0x54eb16): a fishing boat fishes around and brings
     /// its catch to the nearest own port.
     Fishing,
+    /// Turn to a direction (link 0x41bd0d, created by 0x41bfdb): `ROTATE` per tick.
+    Turn { dir: u8 },
     /// `ClearOrderedUnlimitedMotion` (0x527fed): ends the walk through locks out of a
     /// building; the unit takes its cell.
     ClearUnlimited,
