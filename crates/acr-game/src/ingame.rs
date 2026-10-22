@@ -33,6 +33,7 @@ mod panels;
 mod piles;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod probe;
+mod ragdoll_view;
 mod save;
 mod shouts;
 mod splatter;
@@ -626,7 +627,7 @@ impl InGame {
         self.scroll_view(seconds, window);
         self.turn_scrolling(before, window);
         self.want_new_types();
-        self.update_models(seconds);
+        self.update_models(seconds, window);
         self.objects.set_dynamic(self.unit_sprites());
     }
 

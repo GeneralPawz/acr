@@ -353,6 +353,64 @@ impl Ragdoll {
         mat4_from_rt(b.pos - q.rotate(rb.rest_pos), q)
     }
 
+    /// Places the bone's body by a skinning matrix (column-major, `current · rest⁻¹` as
+    /// [`Ragdoll::skin_matrix`] gives it, e.g. from an animation) moving at `vel` (m/s).
+    pub fn place(&self, world: &mut World, bone: usize, skin: &[[f32; 4]; 4], vel: Vec3) {
+        let col = |c: usize| Vec3::new(skin[c][0], skin[c][1], skin[c][2]);
+        let x = col(0).normalize_or_zero();
+        let z = x.cross(col(1)).normalize_or_zero();
+        let q = Quat::from_basis(x, z.cross(x), z);
+        let rb = &self.bones[bone];
+        let p = col(3) + q.rotate(rb.rest_pos);
+        world.set_body_state(rb.body, p, q * rb.rest_rot, vel, Vec3::ZERO);
+    }
+
+    /// Pins the root body (kinematic, moved by [`Ragdoll::place`]) or frees it; no change,
+    /// no wake.
+    pub fn set_pinned_root(&self, world: &mut World, pinned: bool) {
+        let id = self.bones[0].body;
+        if world.body(id).is_pinned() != pinned {
+            world.set_pinned(id, pinned);
+        }
+    }
+
+    /// Makes the current pose the muscles' target (every joint's relative rotation now).
+    pub fn target_current_pose(&self, world: &mut World) {
+        for rb in &self.bones {
+            let Some(j) = rb.joint else { continue };
+            let jt = world.joint(j);
+            let (qa, qb) = (world.body(jt.a).rot, world.body(jt.b).rot);
+            let target = (jt.rest_rel.conj() * qa.conj() * qb).normalize();
+            world.set_joint_target(j, target);
+        }
+    }
+
+    /// Makes a pose given as skinning matrices per bone (as for [`Ragdoll::place`]) the
+    /// muscles' target, without moving the bodies.
+    pub fn target_skins(&self, world: &mut World, skins: &[[[f32; 4]; 4]]) {
+        let rot = |b: usize| {
+            let m = &skins[b];
+            let col = |c: usize| Vec3::new(m[c][0], m[c][1], m[c][2]);
+            let x = col(0).normalize_or_zero();
+            let z = x.cross(col(1)).normalize_or_zero();
+            Quat::from_basis(x, z.cross(x), z) * self.bones[b].rest_rot
+        };
+        for b in 0..self.bones.len().min(skins.len()) {
+            let Some(j) = self.bones[b].joint else { continue };
+            let jt = world.joint(j);
+            let Some(pa) = self.bones.iter().position(|r| r.body == jt.a) else { continue };
+            let target = (jt.rest_rel.conj() * rot(pa).conj() * rot(b)).normalize();
+            world.set_joint_target(j, target);
+        }
+    }
+
+    /// The muscles' targets of all joints (bone order; the root's entry is identity).
+    pub fn targets(&self, world: &World, out: &mut [Quat]) {
+        for (o, rb) in out.iter_mut().zip(&self.bones) {
+            *o = rb.joint.map_or(Quat::IDENTITY, |j| world.joint(j).target);
+        }
+    }
+
     /// Freezes the ragdoll in its current pose: a static corpse that costs nothing and
     /// still blocks others, until an impulse or an awake body touching it wakes it.
     pub fn freeze(&self, world: &mut World) {

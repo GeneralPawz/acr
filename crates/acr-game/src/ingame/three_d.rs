@@ -109,6 +109,11 @@ pub struct ThreeD {
     /// `ACR_3D_COMPARE` (development): compare models with their sprites.
     compare: Compare,
     started: web_time::Instant,
+    /// Physics ragdolls of the hit and the dying (#278), made at the first frame with models.
+    ragdolls: Option<super::ragdoll_view::Ragdolls>,
+    /// Seconds of the last frame and the world point at the window centre.
+    frame_seconds: f32,
+    pub focus: [f32; 2],
 }
 
 /// `ACR_3D_COMPARE=overlay`: the sprites of units with a model are drawn half transparent
@@ -164,6 +169,9 @@ impl Default for ThreeD {
             pile_runs: 0,
             compare: Compare::from_env(),
             started: web_time::Instant::now(),
+            ragdolls: None,
+            frame_seconds: 0.0,
+            focus: [0.0; 2],
         }
     }
 }
@@ -316,6 +324,7 @@ impl ThreeD {
 
     /// Turns and tilts the free camera by the held keys.
     pub fn tick(&mut self, seconds: f32) {
+        self.frame_seconds = seconds;
         if !self.free {
             return;
         }
@@ -354,6 +363,8 @@ impl ThreeD {
         let mut extra: Vec<ModelInstance> = Vec::new();
         // Models of the units drawn, for the pieces their hits throw.
         let mut unit_models: HashMap<u32, (UnitModel, usize)> = HashMap::new();
+        // Rigged men drawn: unit index → instance index (ragdolls, #278).
+        let mut rigged: Vec<(usize, usize)> = Vec::new();
         let now = world.tick.0;
         if self.debris_tick > now {
             // A loaded game or a restart: the debris belongs to another battle.
@@ -523,6 +534,9 @@ impl ThreeD {
                 inst.damage = damage;
                 pieces.push((self.instances.len(), damage));
             }
+            if model.rig.is_some() && !u.building {
+                rigged.push((u.id.0 as usize, self.instances.len()));
+            }
             self.instances.push(inst);
             self.shown.insert(u.id);
         }
@@ -569,6 +583,7 @@ impl ThreeD {
                 self.instances[i].transform = view3d::model_matrix_tilted(ground, yaw, 1.0, rest.pitch, rest.roll);
             }
         }
+        self.update_ragdolls(world, terrain, &rigged);
         // Appended last: the indices above refer to one instance per unit.
         for (i, damage) in pieces {
             let body = self.instances[i];
@@ -602,6 +617,33 @@ impl ThreeD {
         }
         // Every decal lies on the slope under it rather than flat at one height (#226).
         super::splatter::lay_on_ground(&mut self.pools, &ground);
+    }
+
+    /// Body physics of the hit and the dying (#278): ragdolls pose their instances.
+    fn update_ragdolls(&mut self, world: &World, terrain: &TerrainData, rigged: &[(usize, usize)]) {
+        let Some(renderer) = self.renderer.as_ref() else { return };
+        let ragdolls = self.ragdolls.get_or_insert_with(Default::default);
+        let mut drawn = Vec::with_capacity(rigged.len());
+        for &(u, i) in rigged {
+            let (Some(unit), inst) = (world.units.get(u), &self.instances[i]) else { continue };
+            let Some(data) = renderer.model(inst.model) else { continue };
+            drawn.push(super::ragdoll_view::Drawn {
+                unit,
+                index: i,
+                model: inst.model,
+                data,
+                clip: inst.clip,
+                time: inst.time,
+                transform: inst.transform,
+            });
+        }
+        let hits: Vec<_> = world.hits.iter().collect();
+        let killed = |v: u32| world.units.get(v as usize).is_none_or(|u| u.id.0 != v || !u.alive || u.death > 0);
+        ragdolls.update(world.tick.0, self.frame_seconds, &hits, &drawn, self.focus, terrain, &killed);
+        for &i in ragdolls.poses.keys() {
+            // The physics pose replaces the lying pose's flattening.
+            self.instances[i].morphs[1] = 0.0;
+        }
     }
 
     /// Asks for `gore.glb` (gibs, guts, the stump cap) once gore is shown.
@@ -639,6 +681,11 @@ impl ThreeD {
         };
         let view3d = View3d { camera: *camera, size, orbit: self.free.then_some(self.orbit) };
         let shown = if models_phase { &self.instances[..] } else { &[] };
+        if let Some(r) = self.ragdolls.as_mut()
+            && models_phase
+        {
+            renderer.set_custom_poses(std::mem::take(&mut r.poses));
+        }
         renderer.prepare(device, queue, &view3d, shown, self.gore == Gore::Full);
         renderer.prepare_pools(device, queue, if models_phase { &self.pools[..] } else { &[] });
         let sprites = objects.prepare(
@@ -816,9 +863,13 @@ impl super::InGame {
     }
 
     /// Turns the free camera and collects the models of this frame.
-    pub(super) fn update_models(&mut self, seconds: f32) {
+    pub(super) fn update_models(&mut self, seconds: f32, window: [f32; 2]) {
         self.three_d.tick(seconds);
         let (Some(world), Some(terrain), true) = (&self.world, &self.terrain, self.objects.ready()) else { return };
+        // The world point at the window centre: ragdolls go to the hits nearest to it.
+        let [w, h] = window;
+        let c = self.camera;
+        self.three_d.focus = [c.x + w / (2.0 * c.scale), 2.0 * (c.y + h / (2.0 * c.scale))];
         let requests = &self.requests;
         self.three_d.update(world, terrain, &self.objects, &|p| requests.borrow_mut().push(p.to_owned()));
     }

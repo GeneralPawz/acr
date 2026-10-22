@@ -498,6 +498,19 @@ impl World {
         self.wake(id);
     }
 
+    /// Places a body (teleport): pose and velocities, as if it had been there since the
+    /// last substep. Wakes its ragdoll. A pinned body moved so each step is kinematic.
+    pub fn set_body_state(&mut self, id: BodyId, pos: Vec3, rot: Quat, vel: Vec3, omega: Vec3) {
+        self.wake(id);
+        let b = &mut self.bodies[id as usize];
+        b.pos = pos;
+        b.rot = rot.normalize();
+        b.prev_pos = pos;
+        b.prev_rot = b.rot;
+        (b.vel, b.omega) = if b.pinned { (Vec3::ZERO, Vec3::ZERO) } else { (vel, omega) };
+        b.refresh_inertia();
+    }
+
     /// An instantaneous impulse (N·s) at a world point; wakes the body's ragdoll.
     pub fn apply_impulse(&mut self, id: BodyId, world_point: Vec3, impulse: Vec3) {
         self.wake(id);

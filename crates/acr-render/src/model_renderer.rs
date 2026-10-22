@@ -298,6 +298,9 @@ pub struct ModelRenderer {
     pub pose_count: usize,
     /// Instances drawn by the last `prepare`.
     pub drawn: usize,
+    /// Palettes given from outside (a physics ragdoll) for instances by their index in the
+    /// next `prepare`'s slice, in place of their clip (`set_custom_poses`).
+    custom: HashMap<usize, crate::model::Palette>,
 }
 
 fn bone_texture(device: &wgpu::Device, rows: u32) -> wgpu::Texture {
@@ -567,6 +570,7 @@ impl ModelRenderer {
             encode_srgb: !target.is_srgb(),
             pose_count: 0,
             drawn: 0,
+            custom: HashMap::new(),
         };
         renderer.cap = renderer.add_model(device, queue, damage::procedural_cap());
         renderer
@@ -694,6 +698,13 @@ impl ModelRenderer {
         self.models.get(index).map(|m| &m.data)
     }
 
+    /// Palettes for the next [`ModelRenderer::prepare`]: instance index → palette (the
+    /// model's slots in order, as [`ModelData::pose`] gives them), drawn instead of the
+    /// instance's clip. Used once.
+    pub fn set_custom_poses(&mut self, poses: HashMap<usize, crate::model::Palette>) {
+        self.custom = poses;
+    }
+
     /// Samples the poses, uploads palettes and instances for `instances` seen through
     /// `view`; `dissolve` lets decaying layers dissolve (the gore setting).
     pub fn prepare(
@@ -717,7 +728,8 @@ impl ModelRenderer {
         let cap_model = self.cap;
         let models = &self.models;
         let draws = &mut self.draws;
-        let mut push = |inst: &ModelInstance, caps: &mut Vec<ModelInstance>| {
+        let custom = std::mem::take(&mut self.custom);
+        let mut push = |i: usize, inst: &ModelInstance, caps: &mut Vec<ModelInstance>| {
             let model = &models[inst.model].data;
             // Culling by the rest pose's radius (lying corpses reach about as far).
             let origin = [inst.transform[3][0], inst.transform[3][1], inst.transform[3][2]];
@@ -733,13 +745,21 @@ impl ModelRenderer {
                 return;
             }
             let key = (inst.model, inst.clip, inst.time.to_bits());
-            let base = *poses.entry(key).or_insert_with(|| {
+            let base = if let Some(palette) = custom.get(&i) {
                 let base = texels.len() as u32;
-                for rows in model.pose(inst.clip, inst.time) {
-                    texels.extend_from_slice(&rows);
+                for rows in palette {
+                    texels.extend_from_slice(rows);
                 }
                 base
-            });
+            } else {
+                *poses.entry(key).or_insert_with(|| {
+                    let base = texels.len() as u32;
+                    for rows in model.pose(inst.clip, inst.time) {
+                        texels.extend_from_slice(&rows);
+                    }
+                    base
+                })
+            };
             // Caps at the cuts, carried by the bone at the cut in this pose.
             if let Some(rig) = model.rig.as_ref().filter(|_| !inst.damage.is_none()) {
                 for cap in damage::caps(&inst.damage, rig) {
@@ -775,11 +795,11 @@ impl ModelRenderer {
             });
         };
         for &i in &order {
-            push(&instances[i], &mut caps);
+            push(i, &instances[i], &mut caps);
         }
         let mut none = Vec::new();
         for inst in &caps {
-            push(inst, &mut none);
+            push(usize::MAX, inst, &mut none);
         }
         // The instance data follows the palettes; `extra.y` becomes absolute.
         let data_base = texels.len() as u32;

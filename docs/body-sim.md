@@ -141,6 +141,52 @@ H: metres, `+X` left, `-Y` forward, `+Z` up.
   that is about 110 active ragdolls (2400 bodies). Sleeping ones cost close to nothing.
   The rest get the animation-only path.
 
+### In the game (#278)
+
+`crates/acr-game/src/ingame/ragdoll_view.rs`, called from `three_d.rs` after the corpses
+are piled. The renderer takes a palette from it per instance
+(`ModelRenderer::set_custom_poses`, instance index → palette) instead of sampling the clip.
+
+- **Mapping:** every body bone of skeleton H must be a joint of the model (exact names; a
+  rider's prefixed bones fail, so mounted models stay on their clips). Each palette slot is
+  carried by its nearest body-bone ancestor (fingers by the hand, sockets by their bone,
+  the root by the hips). Axes: physics = world pixels / 30 with `y` negated (right-handed,
+  `y` north, `z` up); skeleton space turned by the facing about `z` and moved to the ground
+  point is physics (tested), glTF → skeleton is `(x, y, z) → (x, −z, y)`. The palette is
+  `T⁻¹ · world · S · glTF→skeleton · bind` with `S` the ragdoll's skinning matrix and `T`
+  the instance transform; the animated pose goes the other way into the bodies
+  (`Ragdoll::place`, `target_skins`).
+- **Hits:** a hit on a drawn man (not mounted, not a building) takes his animated pose and
+  his velocity (ground points of the last two ticks) into a pooled ragdoll and applies the
+  impulse at the struck bone (the `Injury` part, else the region), on its surface towards
+  the attacker. Impulses: musket ball 4.5–9 N·s by energy, arrow 4, grapeshot 5–20,
+  cannonball 60–300, shell 40–160, melee 18, thrown 12. The struck region's tone drops to 5 %.
+- **Survivors:** the hips follow the animation on a damped spring kicked by the blow
+  (stagger), sinking for leg hits (knees buckle) and a little for body hits, leaning with
+  the sway; the muscles track the clip and the struck region's tone returns over 0.5–1.3 s
+  (by energy); then the clip takes over again.
+- **Deaths:** the hips are freed, the tone runs out over 0.2–0.6 s (per man) with a last
+  reflex (elbows bent, arms forward, towards the body), he falls, settles and sleeps; his
+  pose is then kept as the corpse's (no `DEATHLIE1`, no `lie_flat` morph). Crawlers and the
+  lying start from their current pose and stay down. Frozen corpses stay in the physics
+  (others fall onto them) until the pool of 96 is full; the oldest then keeps its pose
+  without physics.
+- **Ground:** the terrain height (`view3d::ground_point`) as the physics height field.
+- **Clock:** the game's ticks (10 per second) smoothed by the frame time, fixed 1/60 s
+  steps, at most 4 per frame; paused with the game; a jump back (a loaded game) clears.
+- **Budget:** `ragdoll_view::calibrate` at the first frame with models: 8 limp ragdolls,
+  30 steps, best of three; awake ragdolls = floor(4000 µs / cost). Logged as
+  `3d: ragdoll budget N awake (C µs per ragdoll step, ...)` (66 at 60 µs on the loaded dev
+  machine). New hits beyond it keep their clips; hits nearest the window centre go first.
+- **Bench:** `ACR-analysis/ragdoll/bench_ragdoll.py` (with `ACR_EXE`): six men in a row
+  seen from the side — a musket wound from the front, musket kills from the side and the
+  front, a cannonball kill, a crawler killed, a musket wound in the leg; 24 frames, one per
+  tick, then the corpses after 4 s, from the side and from above.
+- **Not yet:** severed pieces (`debris.rs`) keep their own throw (they could become small
+  ragdoll bodies later); no kneeling or reloading pose exists to be killed in; horses and
+  riders; the corpse's decay sinking is not applied to physics poses; a balance controller
+  (survivors are held by the spring on the hips, not by their feet).
+
 ## 2. Physical locomotion (`acr-physics::gait`)
 
 - **Gait generator:** step length and frequency come from the sim speed, and foot targets

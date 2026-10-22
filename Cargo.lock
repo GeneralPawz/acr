@@ -55,6 +55,7 @@ dependencies = [
  "acr-formats",
  "acr-mapgen",
  "acr-mission",
+ "acr-physics",
  "acr-render",
  "acr-sim",
  "acr-video",

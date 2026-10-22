@@ -264,3 +264,23 @@ fn frozen_corpse_blocks_and_wakes_when_hit() {
     // Draped over him: the hips rest on his trunk (a lying man's hips are at about 0.12 m).
     assert!(hips.z > under.z + 0.1, "lies on the corpse, not through it: {hips:?} over {under:?}");
 }
+
+#[test]
+fn placed_by_skin_matrices_reproduces_the_pose() {
+    let mut world = World::new(config());
+    let turn = Quat::from_axis_angle(Vec3::Z, 0.7);
+    let src = Ragdoll::spawn(&mut world, &skeleton_h(), 75.0, Vec3::new(1.0, 2.0, 0.0), turn);
+    let dst = Ragdoll::spawn(&mut world, &skeleton_h(), 75.0, Vec3::new(9.0, 0.0, 0.0), Quat::IDENTITY);
+    for b in 0..src.len() {
+        let m = src.skin_matrix(&world, b);
+        dst.place(&mut world, b, &m, Vec3::ZERO);
+    }
+    for b in 0..src.len() {
+        let (a, c) = (src.skin_matrix(&world, b), dst.skin_matrix(&world, b));
+        for (x, y) in a.iter().flatten().zip(c.iter().flatten()) {
+            assert!((x - y).abs() < 1e-4, "bone {b}: {a:?} vs {c:?}");
+        }
+    }
+    dst.target_current_pose(&mut world);
+    assert!(world.joint_state(dst.joint(5).unwrap()).drive_error < 1e-3);
+}

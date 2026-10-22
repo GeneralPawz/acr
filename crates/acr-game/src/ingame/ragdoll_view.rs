@@ -1,0 +1,740 @@
+//! Physics ragdolls for soldiers hit near the camera (#276, phase 1 #278,
+//! `docs/body-sim.md`). Render side only: the simulation decides who is hit and who dies;
+//! this shows how the body moves.
+//!
+//! - A hit ([`acr_sim::combat::HitRecord`]) on a drawn skeleton-H man (not mounted) takes
+//!   his current animated pose and velocity into a ragdoll and applies the blow's impulse
+//!   at the struck bone. The struck region goes limp.
+//! - A survivor's hips follow the animation on a spring (stagger, flinch, knees buckling);
+//!   the muscles pull him back to the animation and he is handed back to the clip after
+//!   0.5–1.5 s.
+//! - A man killed falls: the tone runs out over 0.2–0.6 s with a last reflex (the hands
+//!   towards the wound), he settles, sleeps, and his last pose becomes the corpse's pose in
+//!   place of `DEATHLIE1`.
+//! - Budget: at most `budget` awake ragdolls, from a calibration at startup (the cost of a
+//!   ragdoll step against [`FRAME_BUDGET_US`]); nearest to the camera first. Above it the
+//!   clips play as before.
+//!
+//! Axes: physics is right-handed, metres, `x` east, `y` north, `z` up (`world / 30` with `y`
+//! negated); the skeleton space of skeleton H turned by the facing is the physics space
+//! (see [`physics_of`]); glTF models are `+y` up facing `+z`.
+
+use std::collections::HashMap;
+
+use acr_physics::{Config, Quat, Ragdoll, Region, Tone, Vec3, World as Physics, skeleton_h};
+use acr_render::math::{self, Mat4};
+use acr_render::model::{ModelData, Palette, Slot};
+use acr_render::terrain::TerrainData;
+use acr_render::view3d::{self, PIXELS_PER_METRE};
+use acr_sim::combat::{DeathCause, HitRecord};
+use acr_sim::world::Unit;
+
+/// Frame time given to body physics (µs): the budget of awake ragdolls is this over the
+/// measured cost of one ragdoll step.
+pub const FRAME_BUDGET_US: f64 = 4000.0;
+/// Ragdolls kept in the physics world: the awake ones plus frozen corpses that still block
+/// falling bodies. Beyond it the oldest corpse keeps its pose but leaves the physics.
+const POOL: usize = 96;
+/// Physics step (s).
+const STEP: f32 = 1.0 / 60.0;
+
+/// The bones of skeleton H in the order of [`skeleton_h`].
+fn bone_names() -> Vec<&'static str> {
+    skeleton_h().iter().map(|b| b.name).collect()
+}
+
+/// How a model's palette maps onto the ragdoll: the bone carrying each slot, the bind
+/// palette, and each bone's own joint slot.
+struct Mapping {
+    slot_bone: Vec<usize>,
+    bind: Vec<Mat4>,
+    bone_slot: Vec<usize>,
+}
+
+fn rows_to_mat(rows: &[[f32; 4]; 3]) -> Mat4 {
+    std::array::from_fn(|c| [rows[0][c], rows[1][c], rows[2][c], if c == 3 { 1.0 } else { 0.0 }])
+}
+
+impl Mapping {
+    /// `None` unless every body bone of skeleton H is a joint of the model (riders' bones
+    /// are prefixed: mounted models are left out).
+    fn new(model: &ModelData) -> Option<Mapping> {
+        let names = bone_names();
+        let node_bone = |n: usize| names.iter().position(|b| *b == model.nodes[n].name);
+        let mut bone_slot = vec![usize::MAX; names.len()];
+        let mut slot_bone = Vec::with_capacity(model.slots.len());
+        for (s, slot) in model.slots.iter().enumerate() {
+            let node = match *slot {
+                Slot::Joint { node, .. } => node,
+                Slot::Node(n) => n,
+            };
+            if let (Slot::Joint { .. }, Some(b)) = (slot, node_bone(node)) {
+                bone_slot[b] = s;
+            }
+            // The nearest ancestor that is a body bone carries it (fingers the hand, sockets
+            // their bone); the root and anything above the hips go with the hips.
+            let mut n = Some(node);
+            let mut bone = 0;
+            while let Some(i) = n {
+                if let Some(b) = node_bone(i) {
+                    bone = b;
+                    break;
+                }
+                n = model.nodes[i].parent;
+            }
+            slot_bone.push(bone);
+        }
+        if bone_slot.contains(&usize::MAX) {
+            return None;
+        }
+        let bind = model.pose(None, 0.0).iter().map(rows_to_mat).collect();
+        Some(Mapping { slot_bone, bind, bone_slot })
+    }
+}
+
+/// glTF model space → skeleton (Blender) space: `(x, y, z) → (x, −z, y)`.
+const GLTF_TO_SKELETON: Mat4 =
+    [[1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, -1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
+/// Skeleton space → glTF.
+const SKELETON_TO_GLTF: Mat4 =
+    [[1.0, 0.0, 0.0, 0.0], [0.0, 0.0, -1.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
+
+/// Physics → world pixels.
+fn world_of_physics() -> Mat4 {
+    let k = PIXELS_PER_METRE;
+    [[k, 0.0, 0.0, 0.0], [0.0, -k, 0.0, 0.0], [0.0, 0.0, k, 0.0], [0.0, 0.0, 0.0, 1.0]]
+}
+
+/// World pixels → physics.
+fn physics_of_world() -> Mat4 {
+    let k = 1.0 / PIXELS_PER_METRE;
+    [[k, 0.0, 0.0, 0.0], [0.0, -k, 0.0, 0.0], [0.0, 0.0, k, 0.0], [0.0, 0.0, 0.0, 1.0]]
+}
+
+/// A world point (pixels) in physics.
+pub fn physics_of(p: [f32; 3]) -> Vec3 {
+    Vec3::new(p[0] / PIXELS_PER_METRE, -p[1] / PIXELS_PER_METRE, p[2] / PIXELS_PER_METRE)
+}
+
+/// Inverse of an affine matrix (column-major).
+fn affine_inverse(m: &Mat4) -> Mat4 {
+    let a = |r: usize, c: usize| m[c][r];
+    let det = a(0, 0) * (a(1, 1) * a(2, 2) - a(1, 2) * a(2, 1)) - a(0, 1) * (a(1, 0) * a(2, 2) - a(1, 2) * a(2, 0))
+        + a(0, 2) * (a(1, 0) * a(2, 1) - a(1, 1) * a(2, 0));
+    let d = 1.0 / det;
+    let inv = [
+        [
+            (a(1, 1) * a(2, 2) - a(1, 2) * a(2, 1)) * d,
+            (a(0, 2) * a(2, 1) - a(0, 1) * a(2, 2)) * d,
+            (a(0, 1) * a(1, 2) - a(0, 2) * a(1, 1)) * d,
+        ],
+        [
+            (a(1, 2) * a(2, 0) - a(1, 0) * a(2, 2)) * d,
+            (a(0, 0) * a(2, 2) - a(0, 2) * a(2, 0)) * d,
+            (a(0, 2) * a(1, 0) - a(0, 0) * a(1, 2)) * d,
+        ],
+        [
+            (a(1, 0) * a(2, 1) - a(1, 1) * a(2, 0)) * d,
+            (a(0, 1) * a(2, 0) - a(0, 0) * a(2, 1)) * d,
+            (a(0, 0) * a(1, 1) - a(0, 1) * a(1, 0)) * d,
+        ],
+    ];
+    // inv is row-major here: inv[r][c].
+    let t = [m[3][0], m[3][1], m[3][2]];
+    let it: [f32; 3] = std::array::from_fn(|r| -(inv[r][0] * t[0] + inv[r][1] * t[1] + inv[r][2] * t[2]));
+    [
+        [inv[0][0], inv[1][0], inv[2][0], 0.0],
+        [inv[0][1], inv[1][1], inv[2][1], 0.0],
+        [inv[0][2], inv[1][2], inv[2][2], 0.0],
+        [it[0], it[1], it[2], 1.0],
+    ]
+}
+
+/// The skinning matrices (skeleton space → physics) of the body bones in an animated pose.
+fn animated_skins(map: &Mapping, palette: &Palette, transform: &Mat4) -> Vec<[[f32; 4]; 4]> {
+    let to_physics = math::mul(&physics_of_world(), transform);
+    map.bone_slot
+        .iter()
+        .map(|&s| math::mul(&to_physics, &math::mul(&rows_to_mat(&palette[s]), &SKELETON_TO_GLTF)))
+        .collect()
+}
+
+/// What a survivor does after the blow.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Reaction {
+    /// Arms and head: a short jerk.
+    Flinch,
+    /// Body hits: thrown off balance, a step's worth of sway.
+    Stagger,
+    /// Legs: the knees give, he sinks and comes up again.
+    Buckle,
+}
+
+struct Actor {
+    slot: usize,
+    model: usize,
+    /// Physics time of the (first) hit.
+    since: f32,
+    dying: bool,
+    /// Physics time of the death.
+    died: f32,
+    /// Tone fall-off of a death (s).
+    fade: f32,
+    reaction: Reaction,
+    /// How long until a survivor is handed back to the clip (s).
+    recover: f32,
+    region: Region,
+    /// The struck bone, for the death reflex.
+    struck: usize,
+    /// The hips' offset from the animation (survivors): position and velocity (m, m/s).
+    sway: Vec3,
+    sway_v: Vec3,
+    sink: f32,
+    /// Skinning matrices once he lies still (a corpse no longer needs the physics).
+    frozen: Option<Vec<[[f32; 4]; 4]>>,
+}
+
+/// The body physics of the 3D view.
+pub struct Ragdolls {
+    physics: Physics,
+    pool: Vec<(Ragdoll, Option<u32>)>,
+    actors: HashMap<u32, Actor>,
+    maps: HashMap<usize, Option<Mapping>>,
+    names: Vec<&'static str>,
+    /// Awake ragdolls allowed (from the calibration).
+    budget: usize,
+    time: f32,
+    stepped: f32,
+    last_tick: u64,
+    since_tick: f32,
+    /// Ground points by unit at the last two ticks, for velocities.
+    tracks: HashMap<u32, (u64, [f32; 3], [f32; 3])>,
+    /// The newest hit tick taken (a step records its hits under the tick it began with).
+    hit_seen: Option<u64>,
+    /// This frame's palettes by instance index.
+    pub poses: HashMap<usize, Palette>,
+}
+
+impl Default for Ragdolls {
+    fn default() -> Self {
+        let (cost_us, budget) = calibrate();
+        log::info!(
+            "3d: ragdoll budget {budget} awake ({cost_us:.1} µs per ragdoll step, {FRAME_BUDGET_US} µs per frame)"
+        );
+        Ragdolls {
+            physics: Physics::new(Config::default()),
+            pool: Vec::new(),
+            actors: HashMap::new(),
+            maps: HashMap::new(),
+            names: bone_names(),
+            budget,
+            time: 0.0,
+            stepped: 0.0,
+            last_tick: 0,
+            since_tick: 0.0,
+            tracks: HashMap::new(),
+            hit_seen: None,
+            poses: HashMap::new(),
+        }
+    }
+}
+
+/// Cost of a ragdoll step on this machine: 8 limp ragdolls falling on flat ground, 30
+/// steps, best of three; and the budget of awake ragdolls it gives.
+pub fn calibrate() -> (f64, usize) {
+    let skeleton = skeleton_h();
+    let mut best = f64::MAX;
+    for _ in 0..3 {
+        let mut world = Physics::new(Config { sleep_energy: 0.0, ..Config::default() });
+        for i in 0..8 {
+            let tilt = Quat::from_axis_angle(Vec3::new(1.0, 0.3 * i as f32, 0.0), 0.5);
+            Ragdoll::spawn(&mut world, &skeleton, 75.0, Vec3::new(3.0 * i as f32, 0.0, 0.3), tilt);
+        }
+        let start = web_time::Instant::now();
+        for _ in 0..30 {
+            world.step(&|_: f32, _: f32| 0.0);
+        }
+        best = best.min(start.elapsed().as_secs_f64() * 1e6 / (30.0 * 8.0));
+    }
+    (best, (FRAME_BUDGET_US / best.max(1.0)).floor().min(POOL as f64) as usize)
+}
+
+/// Impulse (N·s) of a blow by cause and energy (percent): a musket ball's momentum (30 g at
+/// about 300 m/s) when it stops in the body, a share of a cannonball's, the swing of a
+/// weapon.
+fn impulse_of(cause: DeathCause, energy: u8) -> f32 {
+    let e = f32::from(energy.max(20)) / 100.0;
+    match cause {
+        DeathCause::Gunshot => 9.0 * (0.5 + 0.5 * e),
+        DeathCause::Arrow => 4.0,
+        DeathCause::Grapeshot => 15.0 * e + 5.0,
+        DeathCause::Cannonball => 60.0 + 240.0 * e,
+        DeathCause::Explosion => 40.0 + 120.0 * e,
+        DeathCause::Melee => 18.0,
+        DeathCause::Thrown => 12.0,
+        _ => 6.0,
+    }
+}
+
+/// The bone struck by a hit and its region.
+fn struck_bone(hit: &HitRecord, names: &[&str]) -> (usize, Region) {
+    use acr_sim::body::{LimbId, Part};
+    use acr_sim::wounds::HitRegion;
+    let at = |n: &str| names.iter().position(|b| *b == n).unwrap_or(0);
+    let side = |l: LimbId| if matches!(l, LimbId::ArmL | LimbId::LegL) { "_l" } else { "_r" };
+    match (hit.injury.map(|i| (i.part, i.level)), hit.region) {
+        (Some((Part::Head, _)), _) => (at("head"), Region::Head),
+        (Some((Part::Chest, _)), _) => (at("spine2"), Region::Torso),
+        (Some((Part::Belly, _)), _) => (at("spine"), Region::Torso),
+        (Some((Part::Pelvis, _)), _) => (at("hips"), Region::Torso),
+        (Some((Part::Limb(l), level)), _) => {
+            let (upper, lower) = if l.is_leg() { ("thigh", "shin") } else { ("upperarm", "forearm") };
+            let bone = if level > 50 { lower } else { upper };
+            let region = match l {
+                LimbId::ArmL => Region::ArmL,
+                LimbId::ArmR => Region::ArmR,
+                LimbId::LegL => Region::LegL,
+                LimbId::LegR => Region::LegR,
+            };
+            (at(&format!("{bone}{}", side(l))), region)
+        }
+        (None, Some(HitRegion::Head)) => (at("head"), Region::Head),
+        (None, Some(HitRegion::Legs)) => (at("thigh_l"), Region::LegL),
+        (None, Some(HitRegion::Arms)) => (at("upperarm_r"), Region::ArmR),
+        _ => (at("spine1"), Region::Torso),
+    }
+}
+
+/// A unit's instance this frame, as [`Ragdolls::update`] needs it.
+pub struct Drawn<'a> {
+    pub unit: &'a Unit,
+    pub index: usize,
+    pub model: usize,
+    pub data: &'a ModelData,
+    pub clip: Option<usize>,
+    pub time: f32,
+    pub transform: Mat4,
+}
+
+impl Ragdolls {
+    pub fn clear(&mut self) {
+        for (r, user) in &mut self.pool {
+            *user = None;
+            r.freeze(&mut self.physics);
+        }
+        self.actors.clear();
+        self.tracks.clear();
+    }
+
+    fn mapping(&mut self, model: usize, data: &ModelData) -> Option<&Mapping> {
+        self.maps
+            .entry(model)
+            .or_insert_with(|| {
+                let m = Mapping::new(data);
+                log::info!("3d: model {model} ragdoll mapping {}", if m.is_some() { "ok" } else { "missing bones" });
+                m
+            })
+            .as_ref()
+    }
+
+    /// Awake ragdolls.
+    fn awake(&self) -> usize {
+        self.actors.values().filter(|a| a.frozen.is_none()).count()
+    }
+
+    /// A free ragdoll of the pool, or the oldest frozen corpse's.
+    fn take_slot(&mut self, unit: u32) -> Option<usize> {
+        if let Some(i) = self.pool.iter().position(|(_, u)| u.is_none()) {
+            self.pool[i].1 = Some(unit);
+            return Some(i);
+        }
+        if self.pool.len() < POOL {
+            let far = Vec3::new(-1000.0 - 5.0 * self.pool.len() as f32, -1000.0, 0.0);
+            let r = Ragdoll::spawn(&mut self.physics, &skeleton_h(), 75.0, far, Quat::IDENTITY);
+            self.pool.push((r, Some(unit)));
+            return Some(self.pool.len() - 1);
+        }
+        // The oldest corpse leaves the physics; it keeps its pose.
+        let (&v, _) =
+            self.actors.iter().filter(|(_, a)| a.frozen.is_some()).min_by(|a, b| a.1.died.total_cmp(&b.1.died))?;
+        let slot = self.actors.get(&v)?.slot;
+        if let Some(a) = self.actors.get_mut(&v) {
+            a.slot = usize::MAX;
+        }
+        self.pool[slot].1 = Some(unit);
+        Some(slot)
+    }
+
+    /// Advances the body physics to the game time, takes this tick's hits on the drawn
+    /// units, and fills [`Ragdolls::poses`] for their instances.
+    #[allow(clippy::too_many_arguments)]
+    pub fn update(
+        &mut self,
+        now: u64,
+        seconds: f32,
+        hits: &[&HitRecord],
+        drawn: &[Drawn<'_>],
+        focus: [f32; 2],
+        terrain: &TerrainData,
+        killed: &dyn Fn(u32) -> bool,
+    ) {
+        self.poses.clear();
+        if now < self.last_tick {
+            self.clear();
+            self.hit_seen = None;
+        }
+        if now != self.last_tick {
+            self.since_tick = 0.0;
+            for d in drawn {
+                let u = d.unit;
+                let p = [d.transform[3][0], d.transform[3][1], d.transform[3][2]];
+                let e = self.tracks.entry(u.id.0).or_insert((now, p, p));
+                if e.0 != now {
+                    *e = (now, e.2, p);
+                }
+            }
+            self.last_tick = now;
+        } else {
+            self.since_tick = (self.since_tick + seconds).min(1.0 / acr_sim::ORIGINAL_TICKS_PER_SECOND as f32);
+        }
+        // The game's clock (paused with the game), smoothed within a tick.
+        let target = now as f32 / acr_sim::ORIGINAL_TICKS_PER_SECOND as f32 + self.since_tick;
+        if target < self.time || target - self.time > 1.0 {
+            self.time = target;
+            self.stepped = target;
+        }
+        self.time = target;
+
+        let by_unit: HashMap<u32, usize> = drawn.iter().enumerate().map(|(i, d)| (d.unit.id.0, i)).collect();
+        // New hits, nearest to the camera first.
+        let mut fresh: Vec<(&HitRecord, f32)> = hits
+            .iter()
+            .filter(|h| self.hit_seen.is_none_or(|s| h.tick > s) && h.tick <= now && !h.building)
+            .filter_map(|h| {
+                let d = &drawn[*by_unit.get(&h.victim)?];
+                let (dx, dy) = (d.transform[3][0] - focus[0], d.transform[3][1] - focus[1]);
+                Some((*h, dx * dx + dy * dy))
+            })
+            .collect();
+        fresh.sort_by(|a, b| a.1.total_cmp(&b.1));
+        if let Some(t) = hits.iter().map(|h| h.tick).filter(|&t| t <= now).max() {
+            self.hit_seen = Some(self.hit_seen.map_or(t, |s| s.max(t)));
+        }
+        for (hit, _) in fresh {
+            let d = &drawn[by_unit[&hit.victim]];
+            if d.unit.body.mounted || d.unit.building {
+                continue;
+            }
+            let known = self.actors.contains_key(&hit.victim);
+            if !known && self.awake() >= self.budget {
+                continue;
+            }
+            if self.mapping(d.model, d.data).is_none() {
+                continue;
+            }
+            log::info!("3d: ragdoll for unit {} (hit {:?})", hit.victim, hit.cause);
+            self.take_hit(hit, d, now, killed(hit.victim), terrain);
+        }
+        // Deaths of the hit after their hit (bled out, a second blow elsewhere).
+        let time = self.time;
+        for (v, a) in &mut self.actors {
+            if !a.dying && killed(*v) {
+                a.dying = true;
+                a.died = time;
+            }
+        }
+        self.drive(drawn, &by_unit);
+        // Fixed steps up to the game time.
+        let ground = |x: f32, y: f32| ground_height(terrain, x, y);
+        let mut n = 0;
+        while self.stepped + STEP <= self.time && n < 4 {
+            self.physics.step(&ground);
+            self.stepped += STEP;
+            n += 1;
+        }
+        if n == 4 {
+            self.stepped = self.time;
+        }
+        self.settle(&by_unit);
+        self.palettes(drawn, &by_unit);
+    }
+
+    fn take_hit(&mut self, hit: &HitRecord, d: &Drawn<'_>, now: u64, dies: bool, terrain: &TerrainData) {
+        let v = hit.victim;
+        let (bone, region) = struck_bone(hit, &self.names);
+        let new = !self.actors.contains_key(&v) || self.actors[&v].slot == usize::MAX;
+        if new {
+            let Some(slot) = self.take_slot(v) else { return };
+            let Some(map) = self.maps.get(&d.model).and_then(Option::as_ref) else { return };
+            let skins = animated_skins(map, &d.data.pose(d.clip, d.time), &d.transform);
+            let vel = match self.tracks.get(&v) {
+                Some(&(t, a, b)) if t + 1 >= now => {
+                    let w = physics_of(b) - physics_of(a);
+                    w * acr_sim::ORIGINAL_TICKS_PER_SECOND as f32
+                }
+                _ => Vec3::ZERO,
+            };
+            let r = &self.pool[slot].0;
+            r.set_pinned_root(&mut self.physics, false);
+            for (b, s) in skins.iter().enumerate() {
+                r.place(&mut self.physics, b, s, Vec3::new(vel.x, vel.y, 0.0));
+            }
+            // Out of the ground first: a lying or crawling pose sinks into it a little, and
+            // the contacts would throw him up.
+            let mut lift = 0.0f32;
+            for b in 0..r.len() {
+                let body = self.physics.body(r.body(b));
+                let (e0, e1) = body.ends();
+                for e in [e0, e1] {
+                    lift = lift.max(ground_height(terrain, e.x, e.y) + body.radius - e.z);
+                }
+            }
+            if lift > 0.0 {
+                for b in 0..r.len() {
+                    let id = r.body(b);
+                    let body = self.physics.body(id);
+                    let (p, q, v) = (body.pos + Vec3::new(0.0, 0.0, lift), body.rot, body.vel);
+                    self.physics.set_body_state(id, p, q, v, Vec3::ZERO);
+                }
+            }
+            r.target_current_pose(&mut self.physics);
+            r.set_tone_all(&mut self.physics, Tone::FULL);
+            let energy = hit.injury.map_or(60, |i| i.energy);
+            let reaction = match region {
+                Region::LegL | Region::LegR => Reaction::Buckle,
+                Region::Torso => Reaction::Stagger,
+                _ => Reaction::Flinch,
+            };
+            let h = (v.wrapping_mul(2_654_435_761) >> 16) as f32 / 65536.0;
+            self.actors.insert(
+                v,
+                Actor {
+                    slot,
+                    model: d.model,
+                    since: self.time,
+                    dying: dies,
+                    died: self.time,
+                    fade: 0.2 + 0.4 * h,
+                    reaction,
+                    recover: 0.5 + f32::from(energy) / 100.0,
+                    region,
+                    struck: bone,
+                    sway: Vec3::ZERO,
+                    sway_v: Vec3::ZERO,
+                    sink: 0.0,
+                    frozen: None,
+                },
+            );
+        }
+        let Some(a) = self.actors.get_mut(&v) else { return };
+        if dies && !a.dying {
+            a.dying = true;
+            a.died = self.time;
+        }
+        a.frozen = None;
+        a.region = region;
+        a.struck = bone;
+        a.since = self.time;
+        let r = &self.pool[a.slot].0;
+        r.set_tone_region(&mut self.physics, region, Tone::FULL.scaled(0.05));
+        // The blow: at the struck bone's surface facing the attacker, along the shot.
+        let dir = Vec3::new(hit.dir.0 as f32, -(hit.dir.1 as f32), 0.0).normalize_or_zero();
+        let dir = if dir == Vec3::ZERO { Vec3::new(0.0, -1.0, 0.0) } else { dir };
+        let body = r.body(bone);
+        let b = self.physics.body(body);
+        let point = b.pos - dir * (b.radius * 0.8);
+        let j = impulse_of(hit.cause, hit.injury.map_or(60, |i| i.energy));
+        self.physics.apply_impulse(body, point, dir * j);
+        // The survivor's hips sway with the blow (the total momentum over his mass).
+        a.sway_v += dir * (j / 75.0) * 2.0;
+    }
+
+    /// Survivors: hips on a spring around the animation, muscles towards the animation,
+    /// tone coming back. The dying: tone running out with a last reflex.
+    fn drive(&mut self, drawn: &[Drawn<'_>], by_unit: &HashMap<u32, usize>) {
+        let dt = (self.time - self.stepped).clamp(0.0, 0.1);
+        let hips = 0;
+        for (v, a) in &mut self.actors {
+            if a.slot == usize::MAX || a.frozen.is_some() {
+                continue;
+            }
+            let r = &self.pool[a.slot].0;
+            let t = self.time - a.since;
+            if a.dying {
+                // Limp for good: leave him alone (so he can fall asleep).
+                if self.time - a.died > a.fade + 0.1 {
+                    continue;
+                }
+                let k = (1.0 - (self.time - a.died) / a.fade).clamp(0.0, 1.0);
+                r.set_pinned_root(&mut self.physics, false);
+                r.set_tone_all(&mut self.physics, Tone::FULL.scaled(0.6 * k));
+                r.set_tone_region(&mut self.physics, a.region, Tone::FULL.scaled(0.05 * k));
+                // The last reflex: arms drawn in towards the wound.
+                if k > 0.0 {
+                    for side in ["_l", "_r"] {
+                        let bone = |n: &str| self.names.iter().position(|b| *b == format!("{n}{side}"));
+                        if let Some(e) = bone("forearm") {
+                            let axis = r.joint_axis(&self.physics, e);
+                            r.set_target(&mut self.physics, e, Quat::from_axis_angle(axis, 1.9));
+                        }
+                        if let Some(sh) = bone("upperarm") {
+                            let axis = r.joint_axis(&self.physics, sh);
+                            r.set_target(&mut self.physics, sh, Quat::from_axis_angle(axis, 0.7));
+                        }
+                    }
+                }
+                continue;
+            }
+            let Some(&i) = by_unit.get(v) else { continue };
+            let d = &drawn[i];
+            let Some(map) = self.maps.get(&a.model).and_then(Option::as_ref) else { continue };
+            let skins = animated_skins(map, &d.data.pose(d.clip, d.time), &d.transform);
+            r.target_skins(&mut self.physics, &skins);
+            let back = (t / a.recover).clamp(0.0, 1.0);
+            r.set_tone_all(&mut self.physics, Tone::FULL);
+            r.set_tone_region(&mut self.physics, a.region, Tone::FULL.scaled(0.05 + 0.95 * back * back));
+            // Hips: a damped spring around the animation (about 1.5 Hz), the knees giving
+            // way for a leg hit.
+            let (w, z) = (9.0, 0.5);
+            let acc = -(a.sway * (w * w)) - a.sway_v * (2.0 * z * w);
+            a.sway_v += acc * dt;
+            a.sway += a.sway_v * dt;
+            a.sink = match a.reaction {
+                Reaction::Buckle => 0.25 * (std::f32::consts::PI * back).sin(),
+                Reaction::Stagger => 0.05 * (std::f32::consts::PI * back).sin(),
+                Reaction::Flinch => 0.0,
+            };
+            let mut s = skins[hips];
+            s[3][0] += a.sway.x;
+            s[3][1] += a.sway.y;
+            s[3][2] -= a.sink;
+            // Leaning with the sway: the hips turn about the horizontal axis across it.
+            let lean = Quat::from_axis_angle(Vec3::new(-a.sway.y, a.sway.x, 0.0), a.sway.length() * 1.5);
+            let rot = acr_physics::math::mat4_from_rt(Vec3::ZERO, lean);
+            let s = math::mul(&rot_about(&rot, [s[3][0], s[3][1], s[3][2]]), &s);
+            r.set_pinned_root(&mut self.physics, true);
+            r.place(&mut self.physics, hips, &s, Vec3::ZERO);
+        }
+    }
+
+    /// Survivors whose time is up go back to their clip; corpses lying still are frozen.
+    fn settle(&mut self, by_unit: &HashMap<u32, usize>) {
+        let time = self.time;
+        let mut done = Vec::new();
+        for (v, a) in &mut self.actors {
+            if a.slot == usize::MAX {
+                if !by_unit.contains_key(v) {
+                    done.push(*v);
+                }
+                continue;
+            }
+            let r = &self.pool[a.slot].0;
+            if !a.dying && time - a.since > a.recover + 0.2 {
+                done.push(*v);
+                continue;
+            }
+            if a.dying && a.frozen.is_none() && (r.is_asleep(&self.physics) || time - a.died > 8.0) {
+                r.freeze(&mut self.physics);
+                a.frozen = Some((0..r.len()).map(|b| r.skin_matrix(&self.physics, b)).collect());
+            }
+            // The corpse is gone from the game.
+            if !by_unit.contains_key(v) && time - a.since > 1.0 {
+                done.push(*v);
+            }
+        }
+        for v in done {
+            if let Some(a) = self.actors.remove(&v)
+                && a.slot != usize::MAX
+            {
+                self.pool[a.slot].1 = None;
+                let r = &self.pool[a.slot].0;
+                r.set_pinned_root(&mut self.physics, false);
+                r.freeze(&mut self.physics);
+            }
+        }
+    }
+
+    /// Palettes of the ragdolls' instances: `P = T⁻¹ · world · S · glTF→skeleton · bind`.
+    fn palettes(&mut self, drawn: &[Drawn<'_>], by_unit: &HashMap<u32, usize>) {
+        for (v, a) in &self.actors {
+            let Some(&i) = by_unit.get(v) else { continue };
+            let d = &drawn[i];
+            let Some(map) = self.maps.get(&a.model).and_then(Option::as_ref) else { continue };
+            let skins: Vec<[[f32; 4]; 4]> = match (&a.frozen, a.slot) {
+                (Some(f), _) => f.clone(),
+                (None, usize::MAX) => continue,
+                (None, s) => {
+                    let r = &self.pool[s].0;
+                    (0..r.len()).map(|b| r.skin_matrix(&self.physics, b)).collect()
+                }
+            };
+            let lead = math::mul(&affine_inverse(&d.transform), &world_of_physics());
+            let per_bone: Vec<Mat4> =
+                skins.iter().map(|s| math::mul(&lead, &math::mul(s, &GLTF_TO_SKELETON))).collect();
+            let palette = map
+                .slot_bone
+                .iter()
+                .zip(&map.bind)
+                .map(|(&b, bind)| math::affine_rows(&math::mul(&per_bone[b], bind)))
+                .collect();
+            self.poses.insert(d.index, palette);
+        }
+    }
+}
+
+/// Height of the terrain (physics metres) under the physics point `(x, y)`.
+fn ground_height(terrain: &TerrainData, x: f32, y: f32) -> f32 {
+    let (wx, wy) = ((x * PIXELS_PER_METRE) as i32, (-y * PIXELS_PER_METRE) as i32);
+    view3d::ground_point(wx, wy, terrain.height_at(wx, wy))[2] / PIXELS_PER_METRE
+}
+
+/// The rotation `rot` about the point `p`.
+fn rot_about(rot: &[[f32; 4]; 4], p: [f32; 3]) -> Mat4 {
+    let mut to = math::IDENTITY;
+    to[3] = [p[0], p[1], p[2], 1.0];
+    let mut back = math::IDENTITY;
+    back[3] = [-p[0], -p[1], -p[2], 1.0];
+    math::mul(&to, &math::mul(rot, &back))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inverse_of_a_model_matrix() {
+        let m = view3d::model_matrix([100.0, 200.0, 30.0], 0.7, 1.0);
+        let p = math::mul(&affine_inverse(&m), &m);
+        for (c, col) in p.iter().enumerate() {
+            for (r, v) in col.iter().enumerate() {
+                let want = if c == r { 1.0 } else { 0.0 };
+                assert!((v - want).abs() < 1e-4, "{p:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn skeleton_space_turned_by_the_facing_is_physics() {
+        // A skeleton point (Blender) through glTF and the model matrix lands where the
+        // ragdoll spawned with the same yaw puts it.
+        let yaw = 0.9;
+        let ground = [300.0, 600.0, 15.0];
+        let m = view3d::model_matrix(ground, yaw, 1.0);
+        let skel = [0.2, -0.1, 1.4, 1.0];
+        let g = math::mul(&SKELETON_TO_GLTF, &{
+            let mut t = math::IDENTITY;
+            t[3] = skel;
+            t
+        })[3];
+        let w = math::transform_point(&m, [g[0], g[1], g[2]]);
+        let p = physics_of(w);
+        let q = Quat::from_axis_angle(Vec3::Z, yaw).rotate(Vec3::new(skel[0], skel[1], skel[2])) + physics_of(ground);
+        assert!((p - q).length() < 1e-4, "{p:?} vs {q:?}");
+    }
+
+    #[test]
+    fn calibration_gives_a_budget() {
+        let (cost, budget) = calibrate();
+        assert!(cost > 0.0 && budget > 0, "{cost} {budget}");
+    }
+}
