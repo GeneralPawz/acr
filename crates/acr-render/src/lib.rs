@@ -18,6 +18,9 @@ use wgpu::util::DeviceExt;
 
 pub use image::{ImageDraw, ImageRenderer, ImageTexture};
 
+/// Bit of an instance's kind that halves its opacity (`sprite.wgsl`).
+const TRANSPARENT: u32 = 0x100;
+
 /// Atlas page edge length. WebGL2 guarantees 2048.
 const PAGE_SIZE: u32 = 2048;
 
@@ -101,6 +104,8 @@ pub struct SpriteDraw {
     pub y: f32,
     pub scale: f32,
     pub player: u8,
+    /// Half transparent (`ShowGPTransparent`).
+    pub transparent: bool,
 }
 
 pub struct SpriteRenderer {
@@ -332,7 +337,7 @@ impl SpriteRenderer {
                 instances.push(Instance {
                     dst: [x, y, w as f32 * sprite.scale, h as f32 * sprite.scale],
                     src: [ax, ay, w, h],
-                    kind: slot.kind as u32,
+                    kind: slot.kind as u32 | if sprite.transparent { TRANSPARENT } else { 0 },
                     param,
                 });
             }

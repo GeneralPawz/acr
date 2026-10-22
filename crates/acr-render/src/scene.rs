@@ -41,6 +41,8 @@ pub struct SceneSprite {
     /// Sort row: the ground point's `y / 2`, plus a building part's sort line.
     pub sort: i32,
     pub player: u8,
+    /// Drawn half transparent (`ShowGPTransparent`: buildings in the transparency mode).
+    pub transparent: bool,
 }
 
 impl SceneSprite {
@@ -226,6 +228,7 @@ impl Scene {
                 dy: -entry.dy - h,
                 sort: s.y >> 1,
                 player: 0,
+                transparent: false,
             });
         }
         for u in map.units.iter().filter(|_| looks.is_some()) {
@@ -238,7 +241,17 @@ impl Scene {
             let h = terrain.height_at(x, y);
             for (frame, (ox, oy), layer, row) in look.parts {
                 let sort = (y >> 1) + row;
-                sprites.push(SceneSprite { frame, layer, x, y, dx: ox, dy: oy - h, sort, player: u.nation });
+                sprites.push(SceneSprite {
+                    frame,
+                    layer,
+                    x,
+                    y,
+                    dx: ox,
+                    dy: oy - h,
+                    sort,
+                    player: u.nation,
+                    transparent: false,
+                });
             }
         }
         sprites.sort_by_key(SceneSprite::key);
@@ -507,6 +520,7 @@ impl SceneAtlas {
                     y: y.round(),
                     scale: camera.scale,
                     player: s.player,
+                    transparent: s.transparent,
                 });
             }
         };
@@ -532,7 +546,17 @@ mod tests {
     const UNIT: &str = "NAME AnmBiz\nUSERLC 0 AnmBizC SHADOW -160 -132\n#STAND 9 1 0 2\n[END]\n";
 
     fn sprite(layer: Layer, sort: i32) -> SceneSprite {
-        SceneSprite { frame: ("A.GP".into(), 0), layer, x: 0, y: sort * 2, dx: 0, dy: 0, sort, player: 0 }
+        SceneSprite {
+            frame: ("A.GP".into(), 0),
+            layer,
+            x: 0,
+            y: sort * 2,
+            dx: 0,
+            dy: 0,
+            sort,
+            player: 0,
+            transparent: false,
+        }
     }
 
     #[test]

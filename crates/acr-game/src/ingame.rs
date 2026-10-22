@@ -355,6 +355,11 @@ impl InGame {
         self.mission.objectives()
     }
 
+    /// The mission history (`UM_HIST`, 0x562bea), if any page or question was shown.
+    pub fn history_window(&self) -> Option<Box<dyn crate::ui::Screen>> {
+        self.mission.history()
+    }
+
     /// The mission has ended and its last message has been shown.
     pub fn mission_over(&self) -> bool {
         self.mission.over()
@@ -420,7 +425,8 @@ impl InGame {
         if !self.centred && self.uploaded {
             self.centre(window);
         }
-        let paused = self.interface.paused;
+        // A finished game cannot be paused (0x1100a78).
+        let paused = self.interface.paused && self.mission.ended.is_none();
         if let (Some(world), Some(map)) = (&mut self.world, &self.map) {
             let more = self.mission.update(map, world, f64::from(seconds));
             self.requests.borrow_mut().extend(more);
@@ -528,6 +534,7 @@ impl InGame {
             return Vec::new();
         };
         let objects = self.objects.objects();
+        let transparent = self.interface.hud.transparent;
         let mut out = Vec::with_capacity(world.units.len());
         // Units inside buildings are not drawn (`Hidden`).
         for u in world.units.iter().filter(|u| u.alive && u.inside_of.is_none()) {
@@ -539,7 +546,18 @@ impl InGame {
             let h = terrain.height_at(x, y);
             for (frame, (ox, oy), layer, row) in look.parts {
                 let sort = (y >> 1) + row;
-                out.push(SceneSprite { frame, layer, x, y, dx: ox, dy: oy - h, sort, player: u.owner });
+                out.push(SceneSprite {
+                    frame,
+                    layer,
+                    x,
+                    y,
+                    dx: ox,
+                    dy: oy - h,
+                    sort,
+                    player: u.owner,
+                    // The transparency mode (key O) draws buildings with `ShowGPTransparent`.
+                    transparent: transparent && u.building,
+                });
             }
         }
         out

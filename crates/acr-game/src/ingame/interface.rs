@@ -39,6 +39,10 @@ const PREVIEW_BLOCKED: &str = "0\\AGEW_1R.GRD";
 const RESOURCE_NAMES: [&str; 6] = ["Wood", "Gold", "Stone", "Food", "Iron", "Coal"];
 /// Shift repeats production orders five times (0x60897d).
 const SHIFT_REPEAT: usize = 5;
+/// The zoomed-out view draws 8 screen pixels per 32-pixel cell (the world shift 0x90d6b4
+/// goes from 5 to 3).
+const ZOOM_SCALE: f32 = 0.25;
+
 /// Slot of the icon that lets the units out of a building.
 const LEAVE_SLOT: usize = 11 + 12;
 
@@ -56,6 +60,8 @@ pub enum GameMouse {
     None,
     Menu,
     Restart,
+    /// Open the mission history (`UM_HIST`).
+    History,
 }
 
 /// What a right click on the map orders (and the cursor shown for it).
@@ -337,6 +343,7 @@ impl InGame {
         let Some(world) = &self.world else { return view };
         let res = &world.players[usize::from(player).min(world.players.len() - 1)].resources;
         view.resources = std::array::from_fn(|i| res[i].max(0) as u32);
+        view.history = self.mission.has_history();
         let shift = self.shift() + 9;
         for u in world.units.iter().filter(|u| u.alive && u.inside_of.is_none()) {
             let selected = u.owner == player && self.selected.contains(&u.id);
@@ -865,10 +872,8 @@ impl InGame {
         let mut hud_draws = Vec::new();
         self.interface.hud.draw(ctx, &view, &mut hud_draws);
         self.dip_draw(ctx, &mut hud_draws);
-        if self.interface.paused {
-            let text = ctx.texts.get("PAUSETEXT");
-            let w = ctx.fonts.width(ctx.lib, hud::font::YELLOW, text);
-            hud_draws.push(Draw::game_text(hud::font::YELLOW, text, (hud::SCREEN[0] - w) / 2, hud::SCREEN[1] / 2));
+        if self.interface.paused && self.mission.ended.is_none() {
+            pause_text(ctx, &mut hud_draws);
         }
         let image = self.interface.hud.minimap_image(ctx, &view);
         self.interface.view = view;
@@ -952,6 +957,9 @@ impl InGame {
                 fill(&mut out, white, x0 + w - 5, y0 - 12, x0 + w - 5, y0 - 11);
             }
         }
+        if self.interface.hud.locks && !self.interface.hud.zoom {
+            self.lock_overlay(&palette, &mut out);
+        }
         for m in &self.interface.markers {
             let h = terrain.height_at(m.x, m.y);
             out.push(
@@ -987,6 +995,50 @@ impl InGame {
             }
         }
         out
+    }
+
+    /// The inaccessible areas (key Q, 0x518306): every blocked 16 × 16 cell of the land
+    /// lock map in view gets its two diagonals in colour 0xfe and, towards free neighbours,
+    /// its edges in colour 0xff, following the ground height at the corners. Cells outside
+    /// the map count as blocked.
+    fn lock_overlay(&self, palette: &acr_formats::Palette, out: &mut Vec<Draw>) {
+        let (Some(world), Some(terrain)) = (&self.world, &self.terrain) else { return };
+        let locks = &world.map.land;
+        let rgba = |i: u8| {
+            let [r, g, b] = palette.rgb(i);
+            [r, g, b, 255]
+        };
+        let (cross, edge) = (rgba(0xfe), rgba(0xff));
+        let s = self.camera.scale;
+        let window = self.window_size();
+        let (x0, y0) = ((self.camera.x / 16.0).floor() as i32 - 1, (self.camera.y / 8.0).floor() as i32 - 1);
+        let (x1, y1) = (x0 + (window[0] / s / 16.0) as i32 + 3, y0 + (window[1] / s / 8.0) as i32 + 3);
+        // Hills lift cells into the view from below.
+        let y1 = y1 + 64;
+        let h = |cx: i32, cy: i32| terrain.height_at(cx * 16, cy * 16);
+        for cy in y0.max(-1)..=y1.min(locks.height) {
+            for cx in x0.max(-1)..=x1.min(locks.width) {
+                if !locks.check_pt(cx, cy) {
+                    continue;
+                }
+                let (sx, sy) = (cx * 16, cy * 8);
+                let (h00, h10, h01, h11) = (h(cx, cy), h(cx + 1, cy), h(cx, cy + 1), h(cx + 1, cy + 1));
+                line(out, cross, (sx, sy - h00), (sx + 16, sy + 8 - h11));
+                line(out, cross, (sx, sy + 8 - h01), (sx + 16, sy - h10));
+                if !locks.check_pt(cx + 1, cy) {
+                    line(out, edge, (sx + 16, sy - h10), (sx + 16, sy + 8 - h11));
+                }
+                if !locks.check_pt(cx - 1, cy) {
+                    line(out, edge, (sx, sy - h00), (sx, sy + 8 - h01));
+                }
+                if !locks.check_pt(cx, cy - 1) {
+                    line(out, edge, (sx, sy - h00), (sx + 16, sy - h10));
+                }
+                if !locks.check_pt(cx, cy + 1) {
+                    line(out, edge, (sx, sy + 8 - h01), (sx + 16, sy + 8 - h11));
+                }
+            }
+        }
     }
 
     /// The drag rectangle (0x4c4356), 1 pixel in `GetPaletteColor(0, 255, 255)`.
@@ -1052,6 +1104,15 @@ impl InGame {
                 }
                 HudEvent::GameMenu => return GameMouse::Menu,
                 HudEvent::Restart => return GameMouse::Restart,
+                HudEvent::History => return GameMouse::History,
+                HudEvent::Surrender => {
+                    self.mission.surrender();
+                    return GameMouse::None;
+                }
+                HudEvent::Zoom => {
+                    self.toggle_zoom(at);
+                    return GameMouse::None;
+                }
                 _ => return GameMouse::None,
             }
         }
@@ -1207,7 +1268,9 @@ impl InGame {
             Key::Named(NamedKey::Escape) if self.cancel_mode() => {}
             Key::Named(NamedKey::F12 | NamedKey::Escape) => return GameKey::Menu,
             Key::Named(NamedKey::F8) => self.dip_toggle(),
-            Key::Named(NamedKey::Pause) => self.interface.paused = !self.interface.paused,
+            Key::Named(NamedKey::Pause) if self.mission.ended.is_none() => {
+                self.interface.paused = !self.interface.paused
+            }
             Key::Named(NamedKey::Tab) => self.interface.hud.life_bars = !self.interface.hud.life_bars,
             Key::Named(NamedKey::Space) => self.centre_next(),
             Key::Character(c) => {
@@ -1217,6 +1280,18 @@ impl InGame {
                     self.control_group(n as usize, mods);
                 } else if ch == b'M' && mods.is_empty() {
                     self.interface.hud.toggle_minimap();
+                } else if ch == b'U' && mods.is_empty() {
+                    self.interface.hud.toggle_unit_panel();
+                } else if ch == b'I' && mods.is_empty() {
+                    self.interface.hud.toggle_game_panel();
+                } else if ch == b'Q' && mods.is_empty() {
+                    self.interface.hud.toggle_locks();
+                } else if ch == b'O' && mods.is_empty() {
+                    self.interface.hud.toggle_transparency();
+                } else if ch == b'L' && mods.is_empty() {
+                    if let Some(at) = self.cursor {
+                        self.toggle_zoom(at);
+                    }
                 } else if ch == b'D' && mods.control_key() {
                     // Ctrl+D: slow/fast game mode (op 0x45); the simulation has one mode.
                 } else {
@@ -1248,6 +1323,20 @@ impl InGame {
         } else {
             self.selected = alive;
         }
+    }
+
+    /// Key L or `4XSCALE_ON`/`OFF` (0x5fb4dd): the view at a quarter of the size, or back,
+    /// centred on the point under the cursor.
+    fn toggle_zoom(&mut self, at: [f32; 2]) {
+        let (x, y) = self.world_at(at);
+        let zoom = !self.interface.hud.zoom;
+        self.interface.hud.zoom = zoom;
+        self.camera.scale = if zoom { ZOOM_SCALE } else { 1.0 };
+        let window = self.window_size();
+        let s = self.camera.scale;
+        self.camera.x = x as f32 - window[0] / s / 2.0;
+        self.camera.y = (y / 2) as f32 - window[1] / s / 2.0;
+        self.clamp_camera(window);
     }
 
     /// Space: the camera jumps to the next selected unit (0x4c6020).
@@ -1296,6 +1385,58 @@ impl InGame {
         }
     }
 }
+
+/// A one pixel line (`DrawLine` 0x4012ff) as runs of fills, in world screen pixels.
+fn line(out: &mut Vec<Draw>, rgba: [u8; 4], (x0, y0): (i32, i32), (x1, y1): (i32, i32)) {
+    let (dx, dy) = (x1 - x0, y1 - y0);
+    let n = dx.abs().max(dy.abs());
+    // The pixel of step k, rounded to the nearest.
+    let at = |k: i32| {
+        if n == 0 {
+            return (x0, y0);
+        }
+        let round = |d: i32| (2 * d * k + n * d.signum()) / (2 * n);
+        (x0 + round(dx), y0 + round(dy))
+    };
+    let horizontal = dx.abs() >= dy.abs();
+    // Consecutive pixels in the same row (column) become one fill.
+    let mut start = at(0);
+    let mut last = start;
+    for k in 1..=n + 1 {
+        let p = if k <= n { Some(at(k)) } else { None };
+        let same = p.is_some_and(|p| if horizontal { p.1 == start.1 } else { p.0 == start.0 });
+        if !same {
+            let r = Rect {
+                x0: start.0.min(last.0),
+                y0: start.1.min(last.1),
+                x1: start.0.max(last.0) + 1,
+                y1: start.1.max(last.1) + 1,
+            };
+            out.push(Draw::fill(rgba, r).unclipped());
+            if let Some(p) = p {
+                start = p;
+            }
+        }
+        if let Some(p) = p {
+            last = p;
+        }
+    }
+}
+
+/// `PAUSETEXT` while the game is paused (0x4c0130): `BigWhiteFont` centred at half the
+/// screen height on a paper box (0x480130) 64 pixels wider on each side.
+fn pause_text(ctx: &Ctx, out: &mut Vec<Draw>) {
+    let text = ctx.texts.get("PAUSETEXT");
+    let w = ctx.fonts.width(ctx.lib, BIG_WHITE, text);
+    let (x, y) = ((hud::SCREEN[0] - w) / 2, hud::SCREEN[1] / 2);
+    let rect = Rect::inclusive(x - 64, y - 8, x + w + 64, y + 27);
+    crate::ui::screens::mission::paper_box(ctx, out, rect, PAPER, hud::BOX_CORNERS, 0);
+    out.push(Draw::game_text(BIG_WHITE, text, x - 2, y - 8));
+}
+
+/// `BigWhiteFont` and the paper of 0x480130 (`Border` 28..30).
+const BIG_WHITE: crate::ui::fonts::FontId = crate::ui::fonts::FontId("BigWhiteFont");
+const PAPER: usize = 28;
 
 /// The name of a unit type: the text `NAME.MD` (`GeneralObject::Message`), else its name.
 fn unit_name(ctx: &Ctx, md_name: &str) -> Vec<u8> {
@@ -1360,4 +1501,36 @@ fn stats(def: &acr_formats::defs::UnitDef, data: &hud::data::HudData) -> Stats {
     protections.sort_by_key(|p| p.0);
     protections.dedup_by_key(|p| p.0);
     Stats { attacks, shield, protections: protections.into_iter().map(|(_, icon, v)| (icon, v)).take(6).collect() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The pixels a line covers.
+    fn pixels(from: (i32, i32), to: (i32, i32)) -> Vec<(i32, i32)> {
+        let mut out = Vec::new();
+        line(&mut out, [0; 4], from, to);
+        let mut px: Vec<(i32, i32)> = out
+            .iter()
+            .flat_map(|d| {
+                let r = Rect::new(d.x, d.y, d.size[0], d.size[1]);
+                (r.y0..r.y1).flat_map(move |y| (r.x0..r.x1).map(move |x| (x, y)))
+            })
+            .collect();
+        px.sort_unstable();
+        px
+    }
+
+    #[test]
+    fn lines_cover_every_step_once() {
+        // A lock cell's diagonal: 17 pixels from (0, 0) to (16, 8), two per row.
+        let px = pixels((0, 0), (16, 8));
+        assert_eq!(px.len(), 17);
+        assert_eq!((px[0], px[16]), ((0, 0), (16, 8)));
+        assert!(px.windows(2).all(|w| w[0] != w[1]));
+        // Rising and vertical lines.
+        assert_eq!(pixels((0, 8), (16, 0)).len(), 17);
+        assert_eq!(pixels((3, 0), (3, 5)), (0..=5).map(|y| (3, y)).collect::<Vec<_>>());
+    }
 }

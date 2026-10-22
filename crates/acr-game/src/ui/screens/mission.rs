@@ -80,44 +80,16 @@ impl Screen for MessageWindow {
     }
 
     fn build(&mut self, ctx: &Ctx) {
-        let lib = ctx.lib;
         let frame = if self.window == Window::Question { 2 } else { 0 };
-        let [w, h] = lib.frame_size(MESSAGES, frame);
-        // `DialogsSystem(x0, y0)`: the window is centred on the screen.
-        let (x0, y0) = ((1024 - w) / 2, (768 - h) / 2);
-        let d = &mut self.menu.d;
-        // The shadow is drawn once straight to the screen before the loop (`ShowGP`).
-        d.add_gp_picture(lib, x0, y0, MESSAGES, frame + 1);
-        d.add_gp_picture(lib, x0, y0, MESSAGES, frame);
         let caption = match self.window {
             Window::Page => "INTF_MESSAGE",
             Window::Question => "INTF_CROOM_GS0",
             Window::Objectives => "MISSOBJ",
         };
-        d.add_text(lib, ctx.fonts, x0 + (w >> 1), y0 + 34, ctx.texts.get(caption), font::F16Y5, Align::Center);
-        let mut top = 75;
-        if self.window != Window::Objectives {
-            // The portrait centred at y = 75, 16 pixels above the separator line.
-            let mut ph = 0;
-            if let Some((gp, f)) = &self.portrait {
-                let [pw, height] = lib.frame_size(gp, *f);
-                ph = height + 16;
-                d.add_gp_picture(lib, x0 + ((w - pw) >> 1), y0 + 75, gp, *f);
-            }
-            let [lw, lh] = lib.frame_size(LINE2, 0);
-            d.add_gp_button(lib, x0 + ((w - lw) >> 1), y0 + 75 + ph, LINE2, 0, 0);
-            top = 75 + ph + lh + 10;
-        }
-        // The text from x = 55 to the scroll bar at the right edge x = 520, down to y = 495,
-        // in `fon18y3` with 21 pixels per line.
-        let sw = lib.frame_size(VSCROLL2, 0)[0];
-        let height = 495 - top;
-        let sb = d.add_scroll_bar(lib, x0 + 520 - sw, y0 + top, height, 1, 0, VSCROLL2, 0);
-        let tv =
-            d.add_text_viewer(lib, ctx.fonts, x0 + 55, y0 + top, [520 - sw - 5 - 55, height], &self.text, font::F18Y3);
-        let viewer = d.viewer_mut(tv);
-        viewer.scroll = Some(sb);
-        viewer.set_line_height(21, height);
+        let picture = if self.window == Window::Objectives { None } else { Some(self.portrait.as_ref()) };
+        let (x0, y0) = page_layout(&mut self.menu, ctx, frame, caption, picture, &self.text);
+        let lib = ctx.lib;
+        let d = &mut self.menu.d;
         let ok = ctx.texts.get("@MSOK");
         if self.window == Window::Question {
             let b = d.add_gp_text_button(lib, x0 + 75, y0 + 521, ok, BUTTON2, 3, font::F18Y5, font::F18Y5);
@@ -141,6 +113,141 @@ impl Screen for MessageWindow {
         };
         self.answer.set(Some(answer));
         Nav::Pop
+    }
+
+    fn draw(&self, ctx: &Ctx, out: &mut Vec<Draw>) {
+        self.menu.draw(ctx, out);
+    }
+
+    fn take_sounds(&mut self) -> Vec<String> {
+        self.menu.take_sounds()
+    }
+
+    fn in_game(&self) -> bool {
+        true
+    }
+}
+
+/// The common layout of the windows on `Interf2\Messages` (0x5e16b0, 0x5adfb0, 0x5e11c0,
+/// 0x5e1d30): frame `frame` centred with its shadow `frame + 1`, the caption, then for pages
+/// (`picture` is `Some`) the portrait centred at y = 75 over `Interf2\Line2`, and the text
+/// viewer with its scroll bar down to y = 495. Returns the window origin.
+fn page_layout(
+    menu: &mut Menu,
+    ctx: &Ctx,
+    frame: usize,
+    caption: &str,
+    picture: Option<Option<&(String, usize)>>,
+    text: &[u8],
+) -> (i32, i32) {
+    let lib = ctx.lib;
+    let [w, h] = lib.frame_size(MESSAGES, frame);
+    // `DialogsSystem(x0, y0)`: the window is centred on the screen.
+    let (x0, y0) = ((1024 - w) / 2, (768 - h) / 2);
+    let d = &mut menu.d;
+    // The shadow is drawn once straight to the screen before the loop (`ShowGP`).
+    d.add_gp_picture(lib, x0, y0, MESSAGES, frame + 1);
+    d.add_gp_picture(lib, x0, y0, MESSAGES, frame);
+    d.add_text(lib, ctx.fonts, x0 + (w >> 1), y0 + 34, ctx.texts.get(caption), font::F16Y5, Align::Center);
+    let mut top = 75;
+    if let Some(portrait) = picture {
+        // The portrait centred at y = 75, 16 pixels above the separator line.
+        let mut ph = 0;
+        if let Some((gp, f)) = portrait {
+            let [pw, height] = lib.frame_size(gp, *f);
+            ph = height + 16;
+            d.add_gp_picture(lib, x0 + ((w - pw) >> 1), y0 + 75, gp, *f);
+        }
+        let [lw, lh] = lib.frame_size(LINE2, 0);
+        d.add_gp_button(lib, x0 + ((w - lw) >> 1), y0 + 75 + ph, LINE2, 0, 0);
+        top = 75 + ph + lh + 10;
+    }
+    // The text from x = 55 to the scroll bar at the right edge x = 520, down to y = 495,
+    // in `fon18y3` with 21 pixels per line.
+    let sw = lib.frame_size(VSCROLL2, 0)[0];
+    let height = 495 - top;
+    let sb = d.add_scroll_bar(lib, x0 + 520 - sw, y0 + top, height, 1, 0, VSCROLL2, 0);
+    let tv = d.add_text_viewer(lib, ctx.fonts, x0 + 55, y0 + top, [520 - sw - 5 - 55, height], text, font::F18Y3);
+    let viewer = d.viewer_mut(tv);
+    viewer.scroll = Some(sb);
+    viewer.set_line_height(21, height);
+    (x0, y0)
+}
+
+/// One entry of the mission history (`Player+0x1a783`, appended by 0x5624c5): the header
+/// (`"<gp> <frame>"` or `NONE`) and the text of a page or question.
+pub type HistoryEntry = (String, Vec<u8>);
+
+/// Return values of the history window's buttons (0x5e1d30).
+const HISTORY_PREV: i32 = 1;
+const HISTORY_NEXT: i32 = 2;
+const HISTORY_CLOSE: i32 = 3;
+
+/// The mission history (`UM_HIST` of the "M" drop-down, 0x562bea, `MHISTORY` window
+/// 0x5e1d30): one entry at a time on `Interf2\Messages` frames 4/5, from the newest.
+/// Zurück shows the older entry, Weiter the newer one; at either end the click shows the
+/// same entry again. Schließen, Enter and Escape close it.
+pub struct HistoryWindow {
+    entries: Rc<[HistoryEntry]>,
+    index: usize,
+    portrait: Option<(String, usize)>,
+    menu: Menu,
+}
+
+impl HistoryWindow {
+    /// The window on the newest entry; `None` without entries (the row is not offered then).
+    pub fn newest(entries: Rc<[HistoryEntry]>) -> Option<Self> {
+        let index = entries.len().checked_sub(1)?;
+        Some(Self::at(entries, index))
+    }
+
+    fn at(entries: Rc<[HistoryEntry]>, index: usize) -> Self {
+        let portrait = portrait(&entries[index].0);
+        Self { entries, index, portrait, menu: Menu::default() }
+    }
+
+    /// The entry after a button (0x562bea): 1 = older, 2 = newer, both kept at the ends.
+    fn step(&self, button: i32) -> usize {
+        match button {
+            HISTORY_PREV => self.index.saturating_sub(1),
+            HISTORY_NEXT => (self.index + 1).min(self.entries.len() - 1),
+            _ => self.index,
+        }
+    }
+}
+
+impl Screen for HistoryWindow {
+    fn assets(&self, _ctx: &Ctx) -> Vec<String> {
+        let mut files: Vec<String> = [MESSAGES, BUTTON2, VSCROLL2, LINE2].map(str::to_owned).into();
+        files.extend(self.portrait.as_ref().map(|(gp, _)| gp.clone()));
+        files
+    }
+
+    fn build(&mut self, ctx: &Ctx) {
+        let text = self.entries[self.index].1.clone();
+        let (x0, y0) = page_layout(&mut self.menu, ctx, 4, "MHISTORY", Some(self.portrait.as_ref()), &text);
+        let lib = ctx.lib;
+        let d = &mut self.menu.d;
+        // `addGP_TextButton(x, 520, text, Button2, 1, fon18y5, fon18y5)`, never disabled.
+        let buttons =
+            [(50, "@MSPREV", HISTORY_PREV), (217, "@MSCANCEL", HISTORY_CLOSE), (384, "@MSNEXT", HISTORY_NEXT)];
+        for (x, id, value) in buttons {
+            let text = ctx.texts.get(id);
+            let b = d.add_gp_text_button(lib, x0 + x, y0 + 520, text, BUTTON2, 1, font::F18Y5, font::F18Y5);
+            d.choose(b, value);
+        }
+    }
+
+    fn input(&mut self, _ctx: &Ctx, input: Input) -> Nav {
+        match self.menu.input(input) {
+            // Enter and Escape close it (`LastKey` 13 or 27).
+            Some(HISTORY_CLOSE | OK | CANCEL) => Nav::Pop,
+            // The original rebuilds the window for every entry, also for the same one.
+            Some(button @ (HISTORY_PREV | HISTORY_NEXT)) => {
+                Nav::Replace(Box::new(Self::at(self.entries.clone(), self.step(button))))
+            }
+            _ => Nav::Stay,
+        }
     }
 
     fn draw(&self, ctx: &Ctx, out: &mut Vec<Draw>) {
@@ -308,6 +415,20 @@ pub fn paper_box(ctx: &Ctx, out: &mut Vec<Draw>, rect: Rect, fill: usize, corner
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn history_starts_at_the_newest_and_stops_at_the_ends() {
+        assert!(HistoryWindow::newest(Rc::from(Vec::new())).is_none());
+        let entries: Rc<[HistoryEntry]> =
+            Rc::from(vec![("NONE".into(), b"a".to_vec()), ("NONE".into(), b"b".to_vec())]);
+        let w = HistoryWindow::newest(entries.clone()).unwrap();
+        assert_eq!(w.index, 1);
+        assert_eq!(w.step(HISTORY_NEXT), 1);
+        assert_eq!(w.step(HISTORY_PREV), 0);
+        let w = HistoryWindow::at(entries, 0);
+        assert_eq!(w.step(HISTORY_PREV), 0);
+        assert_eq!(w.step(HISTORY_NEXT), 1);
+    }
 
     #[test]
     fn page_headers() {

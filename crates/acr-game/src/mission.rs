@@ -18,7 +18,7 @@ use acr_sim::{Command, World};
 
 use crate::mission_ui::Messages;
 use crate::ui::draw::Draw;
-use crate::ui::screens::mission::{Answer, ChoiceWindow, MessageWindow, Window};
+use crate::ui::screens::mission::{Answer, ChoiceWindow, HistoryEntry, HistoryWindow, MessageWindow, Window};
 use crate::ui::setup::Control;
 use crate::ui::{Ctx, GameKind, GameSetup, Screen};
 
@@ -72,6 +72,9 @@ pub struct MissionLink {
     answered: Vec<u32>,
     /// `ActivateDipDialog` commands for the diplomacy panel.
     diplomacy: Vec<Vec<u8>>,
+    /// The local player's mission history (`Player+0x1a783`): every page and question
+    /// shown, oldest first.
+    history: Vec<HistoryEntry>,
 }
 
 impl MissionLink {
@@ -117,6 +120,7 @@ impl MissionLink {
             camera: None,
             answered: Vec::new(),
             diplomacy: Vec::new(),
+            history: Vec::new(),
         }
     }
 
@@ -313,9 +317,11 @@ impl MissionLink {
             log::info!("mission: {}", acr_mission::describe(&e));
             match e {
                 MissionEvent::Page { header, text, .. } => {
+                    self.history.push((header.clone(), text.clone()));
                     self.open(false, |a| Box::new(MessageWindow::new(Window::Page, &header, text, a)))
                 }
                 MissionEvent::Question { header, text, .. } => {
+                    self.history.push((header.clone(), text.clone()));
                     self.open(true, |a| Box::new(MessageWindow::new(Window::Question, &header, text, a)))
                 }
                 MissionEvent::Choice { header, text, choices, width, orient, .. } => {
@@ -412,10 +418,30 @@ impl MissionLink {
         Some(Box::new(MessageWindow::new(Window::Objectives, "NONE", briefing, Rc::new(Cell::new(None)))))
     }
 
+    /// Whether the history has entries (the "M" drop-down offers `UM_HIST`, 0x4c6cb0).
+    pub fn has_history(&self) -> bool {
+        !self.history.is_empty()
+    }
+
+    /// The mission history window on the newest entry (0x562bea), if there is one.
+    pub fn history(&self) -> Option<Box<dyn Screen>> {
+        let window = HistoryWindow::newest(self.history.clone().into())?;
+        Some(Box::new(window))
+    }
+
     /// The victory or defeat text has been shown long enough: back to the menus (missions
     /// show no statistics, 0x5ab55d).
     pub fn over(&self) -> bool {
         self.ended.is_some() && (self.leave || self.clock - self.ended_at > END_SECONDS)
+    }
+
+    /// `UM_SURRENDER` (0x4c6550 value 6): the local player gives up at once, without a
+    /// question, like `LooseGame` (the defeat text, then back to the menus).
+    pub fn surrender(&mut self) {
+        if self.ended.is_none() {
+            self.ended = Some(false);
+            self.ended_at = self.clock;
+        }
     }
 
     /// Escape: after the end of the game it leaves without waiting ("press ESC", 0x4a31f2

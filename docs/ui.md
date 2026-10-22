@@ -243,9 +243,48 @@ the defaults apply: `Zone1X/Y` = 6/6, `PropertyX/Y` = 182/6, `IconLx/Ly` = 40/40
   WhiteFont, YellowFont)`. The plank frame repeats along the row (0x46ef12). The rows are
   centred on `x0 + 33`, start at y = 60, and are as wide as the widest text + 24. A
   `Border` box surrounds them.
-- Single player rows: `UM_MENU` (game menu), `UM_INF1`, `UM_INF3`, `UM_MINI` (minimap
-  size), `UI_LOCK1`, `UM_TRANS2`, `4XSCALE_ON`, `UM_SURRENDER`, `UM_REPLAY` (restart).
-  ACR runs the game menu, the minimap toggle and restart; the other rows do nothing yet.
+- Rows: the text ids and the values the click callback 0x4c6550 receives are stored side by
+  side (text at `-0x80(%ebp,i,4)`, value at `-0x100(%ebp,i,4)`). The callback dispatches
+  through the byte table 0x4c67f2 and the jump table 0x4c6792; every row closes the menu.
+  In build order:
+
+  | Row | Value | Condition | Effect |
+  |---|---|---|---|
+  | `TUTORIAL` | 0x20 | tutorial (`SetTutorial`, 0x1100ac6) | sets 0x1100ac8 for `GetQuestPressed` |
+  | `UM_CURR` | 0x21 | tutorial | shows the current tutorial message again (0x562b74) |
+  | `UM_MENU` | 0 | always | game menu, like F12 |
+  | `UM_INF1` / `UM_INF2` | 1 | `UM_INF2` while the unit panel is open | unit panel, like U (`0x1100a74` = 2) |
+  | `UM_INF3` / `UM_INF4` | 2 | `UM_INF4` while the game panel is open | game panel, like I (`0x1100a74` = 1) |
+  | `UM_MINI` | 3 | always | minimap size, like M |
+  | `UI_LOCK1` / `UI_LOCK2` | 4 | `UI_LOCK2` while shown | inaccessible areas, like Q (`0x90d905`) |
+  | `UM_TRANS2` / `UM_TRANS1` | 5 | `UM_TRANS1` while on | transparent buildings, like O (`0x90d680`) |
+  | `4XSCALE_ON` / `4XSCALE_OFF` | 0x30 / 0x2f | `4XSCALE_OFF` while zoomed | zoomed-out view, like L (0x5fb4dd) |
+  | `UM_SURRENDER` | 6 | not a replay or the editor | gives up |
+  | `UM_NORT` | 0x49 | multiplayer | marks the game unrated |
+  | `UM_REPLAY` | 0x25 | one player | restart (0x4c7130) |
+  | `SENDR_L1` | 0x48 | multiplayer | resource transfer dialog |
+  | `UM_HIST` | 0x26 | the local player has history entries (0x4c6cb0) | mission history (0x562bea) |
+
+  The editor (`ED_TLSHOW`, `ED_TOPSHOW`, `NEWMPHDR`) and replay rows (`REP_*`) never appear
+  in a game. ACR offers the single player rows without the tutorial ones: no mission
+  script calls `SetTutorial` and the API does not implement it.
+- Surrender (value 6) asks nothing: it ends the game as lost (`0x1100a78`, defeat state
+  `0x11eaf4c` = 1, network command 0x5c → 0x4d930c), like `LooseGame`. ACR shows the defeat
+  text and returns to the menus after 7 s (missions show no statistics; random maps have
+  none in ACR yet). A finished game cannot be paused.
+- Inaccessible areas (0x518306, drawn after the world and before the interface, not in the
+  zoomed view): each blocked 16 × 16 cell of the land lock map gets its two diagonals in
+  colour 0xfe and, towards free neighbours, its edges in colour 0xff, lifted by the ground
+  height at its corners. Cells outside the map count as blocked. ACR draws the map's lock
+  layer (`MapGrid::land`).
+- Transparency: objects with the building bit (`OneObject+0x27` bit 4, set at creation for
+  buildings) are drawn with `ShowGPTransparent` (0x504fad). ACR draws building sprites at
+  half opacity.
+- Zoom (0x5fb4dd): the world shift 0x90d6b4 goes from 5 to 3, so a 32-pixel cell is 8
+  screen pixels, and the view is centred on the cell under the cursor. ACR scales the
+  camera by 1/4. The original then moves the cursor to the screen centre
+  (`SetCursorPos`) and draws terrain and objects with separate routines (0x5fb93e,
+  0x5fbac1); ACR keeps the cursor and draws the same sprites scaled down.
 
 ### Unit and command icons (0x606710 builds, 0x5a9fa0 draws)
 
@@ -402,6 +441,11 @@ the terrain height under the cursor.
 
 - F12: game menu. Escape leaves the build or rally point mode (0x4a31a3); otherwise ACR
   also opens the menu with it.
+- U, I, M, Q, O, L: the drop-down's toggles (unit panel, game panel, minimap size,
+  inaccessible areas, transparency, zoom). Each also closes the drop-down.
+- Pause (0x4c0130): `PAUSETEXT` in `BigWhiteFont` at ((`RealLx` − w) / 2 − 2,
+  `RealLy` / 2 − 8) on a paper box (0x480130: `Border` 28..30, corner table 0x668580) from
+  (x − 64, y − 8) to (x + w + 64, y + 27). It does not blink.
 - Control groups: Ctrl + digit stores, digit recalls, Shift + digit adds.
 - Space: jump to the next selected unit. Pause: pause. Tab: life bars. M: minimap size.
 - A second click on a unit selects all own units of that type on the screen. This is
@@ -485,6 +529,7 @@ Deviations: hint timers count simulation ticks; the end waits 7 s of game time; 
 custom texts of `SetVictoryText`/`SetLoosText` are not supported (no mission uses them);
 after a campaign victory the next missions are not opened (no campaign progress yet).
 
+<<<<<<< HEAD
 ### Diplomacy panel
 
 `diplomacy/` (panel, CML pages) and `ingame/dip.rs` (hooks); DipServer's side is in
@@ -566,14 +611,37 @@ Deviations:
 - The scroll bar's `shrink` (arrows 5 px shorter) is not applied; there is no mouse wheel,
   as in the original.
 - `ACR_DIP_PAGE=<file.cml>` (native) shows a page file at the start, for layout checks.
+=======
+### Mission history (#116)
+
+- Every `ShowPage(id)` and `AskQuestion(id)` appends `id` to the local player's history
+  (0x5624c5: `Player+0x1a783` array of strings, count `+0x1a787`; no limit, no duplicate
+  check; saved with the game). `ShowPageParam` and `AskQuestionParam` append
+  `"<header> @ <formatted text>"` instead, once per matching page. `AskComplexQuestion`
+  (multiple choice) appends nothing.
+- `UM_HIST` (0x562bea) shows the newest entry. An entry starting with `#` is looked up in
+  the page table (0x28b77a0 count, 0x28b77b0 ids, 0x28b77b4 headers, 0x28b77a8 texts; the
+  last match wins; an unknown id closes the browser); any other entry is split at the
+  first `@` (0x672c44) into header and text.
+- The `MHISTORY` window 0x5e1d30 (header, text, first flag; the flag is never read) has
+  the page window's layout on `Interf2\Messages` frames 4 (window) and 5 (shadow), caption
+  `MHISTORY` ("Letzte Nachrichten"), and three `Interf2\Button2` frame 1 buttons at y =
+  520: `@MSPREV` (x = 50, returns 1), `@MSCANCEL` (217, 3), `@MSNEXT` (384, 2), all in
+  `fon18y5`. Enter and Escape return 3. The browser goes to the older entry on 1 and the
+  newer one on 2; at either end the same entry is shown again. It saves the screen under
+  the window and restores it afterwards.
+- ACR keeps the header and text of every page and question the script shows, in order.
+  So the entry of an unknown page is missing (the original stores it and stops browsing
+  there), and a page id that matches several pages gives one entry per page.
+- The game menu's objectives row (value 0xe8 in 0x5d9c30) is dead code: no row produces
+  that value, so ACR does not add one (F1 shows the objectives).
+>>>>>>> 7077846 (In-game "M" drop-down: all single player rows, mission history window)
 
 ### Open questions
 
 - Which command icons the original shows for a selection without an officer (attack
   on/off, friendly fire, arm attack…): the conditions in 0x606710 are only partly
   decoded.
-- The in-game menu cursor (`cur_mn.rlc`), and the "PAUSE" text position: ACR centres
-  `PAUSETEXT` in `YellowFont`.
 - Selection with Ctrl and the double click (`DBLCLICK`) are not traced.
 - The right-drag facing arrow (0x4c5407) and fog of war on the minimap are not built.
 - The side panels of keys U and I (modes 1..3 of 0x4ce310) are not built; mode 4 is the
