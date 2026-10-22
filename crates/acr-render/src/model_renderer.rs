@@ -826,7 +826,7 @@ impl ModelRenderer {
                         m.tint as u8 as f32,
                         if procedural { 1.0 } else { 0.0 },
                     ],
-                    cloth: [m.finish.sheen, m.finish.gloss, 0.0, 0.0],
+                    cloth: [m.finish.sheen, m.finish.gloss, m.finish.layer, 0.0],
                 };
                 let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("model material"),

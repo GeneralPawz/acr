@@ -126,6 +126,10 @@ pub struct Material {
 pub struct Finish {
     pub sheen: f32,
     pub gloss: f32,
+    /// Depth bias towards the camera (m) by the clothing layer (`extras.acr_layer`, else the
+    /// material key's [`crate::layers::layer_rank`]): a millimetre of an inner layer crossing
+    /// the one above it under skinning does not show through (docs/clothing.md, "Layers").
+    pub layer: f32,
 }
 
 /// Which per-soldier colour a material takes (`extras.acr_tint`).
@@ -383,6 +387,14 @@ impl ModelData {
                     finish: extras_json(m.extras()).as_ref().map_or_else(Finish::default, |e| Finish {
                         sheen: e.get("acr_sheen").and_then(serde_json::Value::as_f64).unwrap_or(0.0) as f32,
                         gloss: e.get("acr_gloss").and_then(serde_json::Value::as_f64).unwrap_or(0.0) as f32,
+                        layer: crate::layers::LAYER_BIAS
+                            * e.get("acr_layer").and_then(serde_json::Value::as_f64).map_or_else(
+                                || {
+                                    crate::layers::layer_rank(crate::layers::material_key(m.name().unwrap_or("")))
+                                        .map_or(0.0, f32::from)
+                                },
+                                |x| x as f32,
+                            ),
                     }),
                 }
             })

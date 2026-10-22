@@ -7,6 +7,7 @@
 pub mod damage;
 pub mod fog;
 pub mod image;
+pub mod layers;
 pub mod looks;
 pub mod math;
 pub mod model;

@@ -53,7 +53,8 @@ struct Material {
     // x: stump cap (wet, ragged outline from the uv), y: tissue kind, z: per-soldier tint
     // (1 skin, 2 hair), w: procedural decay (a model without masks).
     look: vec4<f32>,
-    // x: sheen at grazing angles (cloth), y: gloss (blacked leather, brass).
+    // x: sheen at grazing angles (cloth), y: gloss (blacked leather, brass), z: depth bias
+    // towards the camera (model metres) by the clothing layer (docs/clothing.md, "Layers").
     cloth: vec4<f32>,
 };
 
@@ -241,7 +242,12 @@ fn vs_main(v: VertexIn, inst: InstanceIn) -> VsOut {
         let collapse = ramp(decay, 0.15, 0.6) * (0.3 + 0.12 * noise3(v.position * 3.0));
         local.y = local.y * (1.0 - collapse) - DECAY_SINK * ramp(decay, 0.7, 1.0);
     }
-    let world = apply(inst.row0, inst.row1, inst.row2, vec4<f32>(local, 1.0));
+    // Outer clothing layers a millimetre or so nearer the camera than the ones beneath, so a
+    // residual crossing under skinning never flickers through (the instance's scale: its
+    // first column).
+    let unit = length(vec3<f32>(inst.row0.x, inst.row1.x, inst.row2.x));
+    let world = apply(inst.row0, inst.row1, inst.row2, vec4<f32>(local, 1.0))
+        - globals.forward.xyz * (material.cloth.z * unit);
     let world_n = apply(inst.row0, inst.row1, inst.row2, vec4<f32>(local_n, 0.0));
     var out: VsOut;
     out.pos = globals.view_proj * vec4<f32>(world, 1.0);

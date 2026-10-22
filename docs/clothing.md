@@ -78,6 +78,55 @@ the shells of #178 (`False`, the fallback).
 The crossbelts are laid over a joined surface of the draped garments (28 samples, 14/18 mm
 off it) instead of the skin.
 
+## Layers
+
+The garments collide only in the rest pose (the drape). What keeps them in order under
+skinning, in every clip and ragdoll pose, is cheap and static; there is no per-frame
+collision between layers (too dear for hundreds of men):
+
+- **Weights from the layer beneath** (`drape.transfer_weights(..., under=...)`): each
+  garment takes its weights from the nearest face of the skin *or of the garments already
+  dressed* (not the free skirts), so the coat moves with the waistcoat and shirt under it.
+  The crossbelts take the weights of the coat and facings under each vertex
+  (`drape.inherit_weights`), no longer the bones' smooth weights.
+- **Covered under-layers pushed in** (`drape.hide_under`, after `hide_skin`): waistcoat
+  vertices under the coat or facings 6 mm towards their bone, the shirt 4 mm, the breeches
+  under the waistcoat or gaiters 4 mm, as the skin under the clothes is pushed 12 mm.
+- **Depth bias in the shader**: every layer draws `LAYER_BIAS` (1 mm) × its rank nearer the
+  camera (`model.wgsl`, `material.cloth.z`), so a millimetre of crossing never flickers.
+  The rank is the material extra `acr_layer` if present, else from the material key
+  (`acr_render::layers::layer_rank`: skin 0, breeches 1, gaiters 2, shirt and stock 3,
+  waistcoat 4, coat 5, facings and lining 6, belts and brass 7, cartridge box and knapsack
+  8). The shadow pass shares `vs_main`: it moves by the same few mm along its own view
+  direction, far below the shadow bias. WebGL2: a uniform, no new bindings.
+- Ragdolls drive the same bones and weights, so the same holds for physics poses (the
+  check covers the death and lying clips; a free ragdoll is not sampled).
+
+**Check**: `cargo run --release -p acr-render --example model_layers -- <model.glb>...
+[--steps 24] [--max-crossing N]` skins the model through every clip (24 frames each) and
+lists, per layer pair, the inner vertices covered in the rest pose, how many come out
+through the outer layer by more than 1 mm in some frame, and the deepest crossing with its
+clip and frame (`acr_render::layers`). The test `belts_stay_on_the_coat` runs it on
+`ACR_MODELS_DIR/engm18.glb` when that is set.
+
+engm18, 24 frames × 19 clips (crossing vertices / worst):
+
+| pair | before | after |
+|---|---|---|
+| coat → belts | 43 / 38 mm | 8 / 10 mm |
+| waistcoat, facings, breeches → belts | 15 / 33 mm | 0 |
+| waistcoat → coat | 49 / 39 mm | 54 / 24 mm |
+| waistcoat → facings | 4 / 39 mm | 3 / 1.8 mm |
+| stock → coat | 36 / 37 mm | 10 / 36 mm |
+| skin → coat | 65 / 37 mm | 48 / 40 mm |
+| breeches → coat (mostly the skirts over a striding or lying leg) | 218 / 40 mm | 223 / 40 mm |
+| all pairs | 502 | 434 |
+
+Left: the coat skirts over the legs (free cloth: the thigh share and the runtime cloth
+handle them, see below), the stock under the waistcoat and coat collar in the death clips
+(the neck is excluded from the push-in), the skin and waistcoat under the coat at the
+armpits in raised-arm and crawl frames (DEATH, CRAWL2, ATTACK1).
+
 ## Pattern format
 
 ```python
@@ -207,4 +256,5 @@ up from the side, frames `walk*`, `fall*`; `ACR_NO_CLOTH=1` for the skinned skir
   sleeves are still placed round a straight arm axis and the side pleats are not modelled.
 - The shoulders and the upper back are crumpled and a little puffed.
 - The gaiters take their colour from the sprites (brown-black), not the palette's black.
-- No per-frame push-out of the layers; the runtime cloth only for ragdolls (above).
+- No per-frame push-out of the layers (see "Layers": weights, push-in and a depth bias
+  instead); the runtime cloth only for ragdolls (above).

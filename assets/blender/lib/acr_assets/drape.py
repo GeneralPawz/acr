@@ -598,17 +598,30 @@ def hem(obj, depth):
     bpy.data.meshes.remove(old)
 
 
-def transfer_weights(obj, flesh, arm_obj, keep=4):
-    """Weights interpolated from the nearest face of the skin (rest pose)."""
-    fm = flesh.data
-    tree = BVHTree.FromPolygons([v.co for v in fm.vertices], [p.vertices for p in fm.polygons])
-    names = {g.index: g.name for g in flesh.vertex_groups}
-    vw = [{names[e.group]: e.weight for e in v.groups if e.group in names} for v in fm.vertices]
+def transfer_weights(obj, flesh, arm_obj, keep=4, under=()):
+    """Weights interpolated from the nearest face of the skin (rest pose), or of the layer
+    right beneath: `under` are the inner garments already skinned (docs/clothing.md,
+    "Layers"). A vertex takes the weights of the surface it rests on, so the two move
+    together under any pose and cannot cross."""
+    srcs = []
+    for o in [flesh, *under]:
+        fm = o.data
+        if not fm.polygons:
+            continue
+        tree = BVHTree.FromPolygons([v.co for v in fm.vertices], [p.vertices for p in fm.polygons])
+        names = {g.index: g.name for g in o.vertex_groups}
+        vw = [{names[e.group]: e.weight for e in v.groups if e.group in names} for v in fm.vertices]
+        srcs.append((fm, tree, vw))
     out = []
     for v in obj.data.vertices:
-        loc, _n, fi, _d = tree.find_nearest(v.co)
+        best = None
+        for fm, tree, vw in srcs:
+            loc, _n, fi, d = tree.find_nearest(v.co)
+            if fi is not None and (best is None or d < best[3]):
+                best = (fm, vw, loc, d, fi)
         w = {}
-        if fi is not None:
+        if best is not None:
+            fm, vw, loc, _d, fi = best
             poly = fm.polygons[fi]
             ds = [max((fm.vertices[i].co - loc).length, 1e-5) for i in poly.vertices]
             inv = [1.0 / d for d in ds]
@@ -662,9 +675,10 @@ def _follow_thigh(w, co, t, P=""):
     return out
 
 
-def finish(obj, ch, skirt, weights=None):
+def finish(obj, ch, skirt, weights=None, under=()):
     """Weights, `_cloth`, homes and parts, split at the part borders, bound to the rig.
-    `weights`: given per vertex ({bone: weight}) instead of transferred from the skin."""
+    `weights`: given per vertex ({bone: weight}) instead of transferred from the skin;
+    `under`: inner layers to take the weights from where they are nearer than the skin."""
     P = ch.prefix
     pin = obj.vertex_groups.get("acr_pin")
     if pin:
@@ -675,7 +689,7 @@ def finish(obj, ch, skirt, weights=None):
         ws, cl = zip(*(skirt_weights(v.co, P) for v in obj.data.vertices))
         ws = [_follow_thigh(w, v.co, t, P) for w, v, t in zip(ws, obj.data.vertices, cl)]
     else:
-        ws = transfer_weights(obj, ch.flesh, ch.arm)
+        ws = transfer_weights(obj, ch.flesh, ch.arm, under=under)
         cl = [0.0] * len(ws)
     groups = {}
     bones = [P + b for b in rig.BODY_BONES] + [P + f"skirt_{c[0]}_0{k}" for c in rig.SKIRT_COLUMNS for k in (1, 2)]
@@ -710,6 +724,7 @@ def dress(ch, garments=gm.ORDER, report=None):
     for o in colliders:
         _collision(o)
     made = {}
+    under = []  # skinned inner layers (not the free skirts): the next garment rests on them
     stats = report if report is not None else {}
     stats["measure"] = {k: round(v, 1) for k, v in body.m.items()}
     for g in garments:
@@ -750,6 +765,7 @@ def dress(ch, garments=gm.ORDER, report=None):
             solidify(obj, gm.CLOTH[g]["thickness"])
         # One object per (key, skirt).
         kinds = {}
+        new_under = []  # the parts of one garment rest on the layers before it, not on each other
         for n, pnl in panels.items():
             kinds.setdefault((pnl.key, pnl.skirt), []).append(names.index(n))
         for (key, skirt), idx in kinds.items():
@@ -768,10 +784,14 @@ def dress(ch, garments=gm.ORDER, report=None):
             part.name = part.data.name = f"{ch.name}.{label}"
             if label in HEM:
                 hem(part, HEM[label])
-            finish(part, ch, skirt)
+            finish(part, ch, skirt, under=under)
             ch.add("clothes", part, key, symmetric=True)
             made[part.name] = key
+            if not skirt:
+                new_under.append(part)
         bpy.data.objects.remove(obj)
+        under += new_under
+
         def mm(xs, q):
             return round(1000 * xs[min(len(xs) - 1, int(q * len(xs)))], 1) if xs else 0.0
 
@@ -818,6 +838,52 @@ def hide_skin(ch, garments, depth=0.012, reach=0.06):
             n += 1
     fm.update()
     return n
+
+
+def hide_under(ch, inner, outer, depth=0.006, reach=0.05):
+    """Pushes the vertices of garment `inner` that lie under the garments `outer` `depth`
+    towards their bone, as `hide_skin` does for the skin: a covered layer keeps a margin
+    below the one above it under skinning. Returns the number moved."""
+    polys, verts = [], []
+    for o in outer:
+        base = len(verts)
+        verts += [v.co.copy() for v in o.data.vertices]
+        polys += [[base + i for i in p.vertices] for p in o.data.polygons]
+    if not polys:
+        return 0
+    tree = BVHTree.FromPolygons(verts, polys)
+    seg = am.segments(ch.arm)
+    n = 0
+    me = inner.data
+    me.update()
+    for v, h in zip(me.vertices, bd.homes(inner)):
+        if h not in seg or h.endswith("neck"):
+            continue
+        hit = tree.ray_cast(v.co + v.normal * 0.001, v.normal, reach)
+        if hit[0] is None:
+            continue
+        # Single-sided cloth: the normal may point inwards; only push towards the bone.
+        q = bd.seg_point(v.co, *seg[h])
+        d = v.co - q
+        if d.length > depth * 3:
+            v.co = q + d * ((d.length - depth) / d.length)
+            n += 1
+    me.update()
+    return n
+
+
+def inherit_weights(obj, ch, under):
+    """Replaces the weights of gear laid over the garments (the crossbelts) by those of the
+    garment surface under each vertex (`transfer_weights` with `under`)."""
+    ws = transfer_weights(obj, ch.flesh, ch.arm, under=under)
+    for g in list(obj.vertex_groups):
+        if g.name in ch.arm.data.bones:
+            obj.vertex_groups.remove(g)
+    for i, w in enumerate(ws):
+        for b, x in w.items():
+            g = obj.vertex_groups.get(b) or obj.vertex_groups.new(name=b)
+            g.add([i], x, "REPLACE")
+    return obj
 
 
 BUTTON = {"lapel": 0.0095, "cuff": 0.0085, "gaiter": 0.0065}  # radius (m)

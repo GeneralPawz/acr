@@ -90,6 +90,13 @@ def make(root, name, build=BUILD):
         made = drape.dress(ch, report=ch.drape_report)
         cloth = [o for o in ch.layers["clothes"] if o.name in made]
         drape.hide_skin(ch, cloth)
+        # Covered under-layers keep a margin below the layers on them (docs/clothing.md, "Layers").
+        fixed = [o for o in cloth if not o.name.endswith(("coat_skirts", "turnbacks"))]
+        for inner, outer, depth in (("waistcoat", ("coat", "facings"), 0.006), ("shirt", ("coat", "facings"), 0.004),
+                                    ("breeches", ("waistcoat", "gaiters"), 0.004)):
+            for o in fixed:
+                if made[o.name] == inner:
+                    drape.hide_under(ch, o, [x for x in fixed if made[x.name] in outer], depth)
         surf = drape.surface(cloth, f"{name}.belt_surface")
         drape.buttons(ch, cloth, name)
         offsets = (0.014, 0.018)
@@ -108,6 +115,10 @@ def make(root, name, build=BUILD):
                   samples=n)
     b2 = bd.strap(ch.arm, f"{name}.crossbelt2", surf, Vector((-0.12, 0, 1.47)), Vector((0.17, 0, 0.95)), 0.06, offsets[1],
                   samples=n)
+    if build.get("garments"):
+        # The belts take the weights of the garment under them: they move with the coat.
+        for b in (b1, b2):
+            drape.inherit_weights(b, ch, fixed)
     ch.add("clothes", b1, "belts", symmetric=True)
     ch.add("clothes", b2, "belts", symmetric=True)
     ch.bone_layer()
