@@ -47,7 +47,7 @@ fn setup() -> (World, TypeId, TypeId, TypeId) {
     (World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(Formations::default())), pik, mus, gun)
 }
 
-const ON: Rules = Rules { hit_locations: true };
+const ON: Rules = Rules { hit_locations: true, body_spacing: false };
 
 fn world() -> (World, usize) {
     let (mut w, pik, _, _) = setup();

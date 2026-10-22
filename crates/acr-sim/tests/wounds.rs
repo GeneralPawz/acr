@@ -55,7 +55,7 @@ fn fight(rules: Rules, ticks: u32) -> World {
     w
 }
 
-const ON: Rules = Rules { hit_locations: true };
+const ON: Rules = Rules { hit_locations: true, body_spacing: false };
 
 #[test]
 fn off_by_default_the_fight_is_the_original_one() {

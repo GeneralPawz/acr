@@ -126,11 +126,20 @@ pub enum Start {
         size: usize,
         difficulty: usize,
         hit_locations: bool,
+        /// The optional body-spacing rule (`docs/body-spacing.md`).
+        body_spacing: bool,
     },
     /// The blank test field ("The blank field" in `docs/testing.md`): `players` (1 or 2)
     /// without start units and without AI, `nation` for the local player.
     /// `hud: false` hides the interface (see [`Request::Hud`]).
-    Blank { setup: crate::ui::setup::BlankSetup, players: usize, nation: usize, hit_locations: bool, hud: bool },
+    Blank {
+        setup: crate::ui::setup::BlankSetup,
+        players: usize,
+        nation: usize,
+        hit_locations: bool,
+        body_spacing: bool,
+        hud: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -285,6 +294,7 @@ fn blank(b: &Value) -> Result<Start, String> {
         players: uint(b, "players").unwrap_or(2).clamp(1, 2) as usize,
         nation: uint(b, "nation").unwrap_or(0) as usize,
         hit_locations: b.get("hit_locations").and_then(Value::as_bool).unwrap_or(false),
+        body_spacing: b.get("body_spacing").and_then(Value::as_bool).unwrap_or(false),
         hud: b.get("hud").and_then(Value::as_bool).unwrap_or(true),
     })
 }
@@ -475,6 +485,7 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
                     size: uint(&r, "size").unwrap_or(0) as usize,
                     difficulty: uint(&r, "difficulty").unwrap_or(1) as usize,
                     hit_locations: r.get("hit_locations").and_then(Value::as_bool).unwrap_or(false),
+                    body_spacing: r.get("body_spacing").and_then(Value::as_bool).unwrap_or(false),
                 })
             }
         }
@@ -631,13 +642,22 @@ mod tests {
                 resources: 0,
                 size: 0,
                 difficulty: 1,
-                hit_locations: false
+                hit_locations: false,
+                body_spacing: false
             })
         );
         let (_, r) = parse(r#"{"cmd": "load_map", "map": "Missions\\a.m3d"}"#).unwrap();
         assert_eq!(r, Request::Start(Start::Map("Missions\\a.m3d".into())));
         let (_, r) = parse(r#"{"cmd": "start", "blank": {"ground": "snow", "slope": 4, "water": true}}"#).unwrap();
-        let Request::Start(Start::Blank { setup, players: 2, nation: 0, hit_locations: false, hud: true }) = r else {
+        let Request::Start(Start::Blank {
+            setup,
+            players: 2,
+            nation: 0,
+            hit_locations: false,
+            body_spacing: false,
+            hud: true,
+        }) = r
+        else {
             panic!()
         };
         assert_eq!(setup.ground, crate::ui::setup::Ground::Snow);
