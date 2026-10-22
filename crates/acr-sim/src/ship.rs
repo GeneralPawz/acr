@@ -692,7 +692,7 @@ pub fn process_fishing(w: &mut World) {
     }
     for i in 0..w.units.len() {
         let u = &w.units[i];
-        if !u.active() || u.building || !u.orders.is_empty() || w.adv(u.owner, u.kind).fish.1 == 0 {
+        if !u.active() || u.building || !u.orders.is_empty() || u.switched_off || w.adv(u.owner, u.kind).fish.1 == 0 {
             continue;
         }
         let u = &mut w.units[i];
@@ -706,6 +706,10 @@ pub fn process_fishing(w: &mut World) {
 /// otherwise the catch grows by `FishSpeed/128` per tick and the boat sails between random
 /// spots within 32 lock cells.
 pub fn fishing_link(w: &mut World, i: usize) {
+    if w.units[i].switched_off {
+        w.units[i].pop_order();
+        return;
+    }
     let (owner, kind) = (w.units[i].owner, w.units[i].kind);
     let (speed, amount) = w.adv(owner, kind).fish;
     let map = w.map.clone();

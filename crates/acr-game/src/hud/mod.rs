@@ -136,6 +136,16 @@ pub enum HudCommand {
     FriendlyFire(bool),
     /// `ARMATTACK` / `ANYATTACK` (network command 0x5f): melee only or not.
     MeleeOnly(bool),
+    /// `STOPBUILD` (network command 0x61, click 0x6065d0): stop or resume production.
+    StopProduction(bool),
+    /// `KARTECH` (0x62, click 0x6065f0): fire canister at once.
+    Canister,
+    /// `PREKARTECH` (0x63, click 0x606600): load canister.
+    LoadCanister,
+    /// `FISHING` (0x64, click 0x606610): stop or resume fishing.
+    StopFishing(bool),
+    /// `ZASEV` (0x65, click 0x606630): stop or resume planting fields.
+    StopSowing(bool),
     /// Dissolve the selected formation (`SFREORD`).
     Disband,
     /// Queue a unit of this type in the selected building (0x6088c0; Shift: five).

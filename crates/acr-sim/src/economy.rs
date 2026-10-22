@@ -340,6 +340,7 @@ fn mill_product(w: &World, b: usize) -> Option<TypeId> {
 pub fn create_fields(w: &mut World, k: u8) {
     for b in 0..w.units.len() {
         if is_ready_mill(w, b, k)
+            && !w.units[b].no_sowing
             && let Some(field) = mill_product(w, b)
         {
             let pos = w.units[b].pos;
@@ -447,6 +448,9 @@ fn unconstruct_link(w: &mut World, b: usize) {
 
 /// `ProduceObjLink` (0x49eeb7).
 fn production_link(w: &mut World, b: usize) {
+    if w.units[b].switched_off {
+        return; // STOPBUILD (0x49eec5)
+    }
     let catalog = w.catalog.clone();
     let (owner, bt) = (w.units[b].owner, catalog.get(w.units[b].kind));
     let head = w.units[b].queue[0].clone();

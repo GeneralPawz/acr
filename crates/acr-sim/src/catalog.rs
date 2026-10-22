@@ -586,6 +586,8 @@ pub struct ObjectType {
     /// `BUILDBAR x0 y0 x1 y1` (NM+0x2859..): the rectangle other buildings may not overlap
     /// (16 px units from the centre).
     pub build_bar: (i32, i32, i32, i32),
+    /// `CANSTOPBUILD` (NM+0x172e bit7): the `STOPBUILD` switch stops its production.
+    pub can_stop_build: bool,
     /// `RESSUBST` (NM+0x172b bit6): a mine that becomes the mine of the deposit it is built
     /// on.
     pub res_subst: bool,
@@ -818,6 +820,7 @@ impl ObjectType {
                 .unwrap_or_default(),
             ground_attack: def.has("ARTPODGOTOVKA"),
             res_subst: def.has("RESSUBST"),
+            can_stop_build: def.has("CANSTOPBUILD"),
             transport: def.has("TRANSPORT"),
             guns: def.get("MULTIWEAPON").map(|c| {
                 let a = |i| c.int(i).unwrap_or(0);

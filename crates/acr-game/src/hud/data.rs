@@ -20,6 +20,15 @@ pub struct OrderIcon {
     pub icon: SlotIcon,
 }
 
+/// `NRES.DAT [CONST]` switches of the first selected object (`STOPBUILD Production_OFF
+/// Production_ON 11 0`, `KARTECH FireKartech_Cannon 7 1`; parsers 0x4ec38a..): one or two
+/// icon frames (off, on) and the slot `x + 12·y`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SwitchIcon {
+    pub frames: Vec<usize>,
+    pub slot: usize,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct HudData {
     /// `ICONLIST.TXT`: icon name → frame of `ICONS.GP` (line index, the lookup 0x4f0516).
@@ -33,6 +42,8 @@ pub struct HudData {
     pub shield_icon: usize,
     /// `[CONST]` lines that place an icon (`GO&ATTACK 3 2 Go_With_Attack`).
     pub consts: HashMap<String, SlotIcon>,
+    /// `STOPBUILD`, `KARTECH`, `PREKARTECH`, `FISHING`, `ZASEV` (see [`SwitchIcon`]).
+    pub switches: HashMap<String, SwitchIcon>,
     pub orders: Vec<OrderIcon>,
 }
 
@@ -48,6 +59,8 @@ impl HudData {
             .rev()
             .collect();
         let mut data = Self { icons, shield_icon: 13, ..Default::default() };
+        // The engine's defaults (0x66ae84/0x66ae88): only `ZASEV` has an icon without a line.
+        data.switches.insert("ZASEV".into(), SwitchIcon { frames: vec![0x98], slot: 1 });
         let text = String::from_utf8_lossy(nres);
         let mut section = "";
         for line in text.lines() {
@@ -65,6 +78,14 @@ impl HudData {
                     if let (Some(a), Some(p)) = (int(1), int(2)) {
                         data.weapons.push((first.to_owned(), a, p));
                         data.weapon_hidden.push(words.get(3).is_some_and(|f| f.contains('I')));
+                    }
+                }
+                "[CONST]" if matches!(first, "STOPBUILD" | "KARTECH" | "PREKARTECH" | "FISHING" | "ZASEV") => {
+                    let two = matches!(first, "STOPBUILD" | "FISHING");
+                    let n = if two { 2 } else { 1 };
+                    let frames: Option<Vec<usize>> = (1..=n).map(|i| words.get(i).and_then(|w| data.icon(w))).collect();
+                    if let (Some(frames), Some(x), Some(y)) = (frames, int(n + 1), int(n + 2)) {
+                        data.switches.insert(first.to_owned(), SwitchIcon { frames, slot: x + 12 * y });
                     }
                 }
                 "[CONST]" => {
@@ -127,5 +148,17 @@ GO&ATTACK 3 2 Go_With_Attack\r\nSTOP_ICON Cancel\r\n[ORDERICONS]\r\nLINE   8 0 F
         assert!(!d.consts.contains_key("STOP_ICON"));
         assert_eq!(d.order("line").unwrap().slot, 8);
         assert_eq!(d.order("LINE").unwrap().hint, "Assume_Rank_Formation");
+    }
+
+    #[test]
+    fn parses_switches() {
+        let icons = b"Production_OFF\r\nProduction_ON\r\nFireKartech_Cannon\r\n";
+        let nres =
+            b"[CONST]\r\nSTOPBUILD  Production_OFF Production_ON 11 0\r\nKARTECH FireKartech_Cannon 7 1\r\n[END]\r\n";
+        let d = HudData::parse(icons, nres);
+        assert_eq!(d.switches["STOPBUILD"], SwitchIcon { frames: vec![0, 1], slot: 11 });
+        assert_eq!(d.switches["KARTECH"], SwitchIcon { frames: vec![2], slot: 19 });
+        assert_eq!(d.switches["ZASEV"], SwitchIcon { frames: vec![152], slot: 1 }, "the engine's default");
+        assert!(!d.switches.contains_key("FISHING"));
     }
 }

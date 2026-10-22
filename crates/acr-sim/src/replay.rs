@@ -266,6 +266,29 @@ impl Writer {
                 self.ids(units);
                 self.0.push(u8::from(*on));
             }
+            Command::StopProduction { player, buildings, stop } => {
+                self.0.extend_from_slice(&[28, *player]);
+                self.ids(buildings);
+                self.0.push(u8::from(*stop));
+            }
+            Command::Canister { player, units } => {
+                self.0.extend_from_slice(&[29, *player]);
+                self.ids(units);
+            }
+            Command::LoadCanister { player, units } => {
+                self.0.extend_from_slice(&[30, *player]);
+                self.ids(units);
+            }
+            Command::StopFishing { player, units, stop } => {
+                self.0.extend_from_slice(&[31, *player]);
+                self.ids(units);
+                self.0.push(u8::from(*stop));
+            }
+            Command::StopSowing { player, buildings, stop } => {
+                self.0.extend_from_slice(&[32, *player]);
+                self.ids(buildings);
+                self.0.push(u8::from(*stop));
+            }
             Command::AttackMove { player, units, x, y } => {
                 self.0.extend_from_slice(&[20, *player]);
                 self.ids(units);
@@ -396,6 +419,11 @@ impl<'a> Reader<'a> {
             23 => Command::AttackGround { player, units: self.ids()?, x: self.i()?, y: self.i()? },
             24 => Command::FriendlyFire { player, units: self.ids()?, shoot_own: self.byte()? != 0 },
             25 => Command::MeleeOnly { player, units: self.ids()?, on: self.byte()? != 0 },
+            28 => Command::StopProduction { player, buildings: self.ids()?, stop: self.byte()? != 0 },
+            29 => Command::Canister { player, units: self.ids()? },
+            30 => Command::LoadCanister { player, units: self.ids()? },
+            31 => Command::StopFishing { player, units: self.ids()?, stop: self.byte()? != 0 },
+            32 => Command::StopSowing { player, buildings: self.ids()?, stop: self.byte()? != 0 },
             26 => Command::Board { player, units: self.ids()?, transport: self.id()? },
             27 => Command::Unload { player, transport: self.id()? },
             _ => return Err(ReplayError("unknown command")),
@@ -436,6 +464,11 @@ mod tests {
                 Command::HoldFire { player: 2, units: vec![EntityId(5), EntityId(6)], hold: false },
                 Command::FriendlyFire { player: 2, units: vec![EntityId(5)], shoot_own: true },
                 Command::MeleeOnly { player: 2, units: vec![EntityId(6)], on: true },
+                Command::StopProduction { player: 2, buildings: vec![EntityId(4)], stop: true },
+                Command::Canister { player: 2, units: vec![EntityId(6)] },
+                Command::LoadCanister { player: 2, units: vec![EntityId(6)] },
+                Command::StopFishing { player: 2, units: vec![EntityId(7)], stop: true },
+                Command::StopSowing { player: 2, buildings: vec![EntityId(4)], stop: false },
                 Command::AttackMove { player: 3, units: vec![EntityId(7)], x: -5, y: 900 },
                 Command::Patrol { player: 3, units: vec![EntityId(7)], x: 40, y: 50 },
                 Command::MoveFacing { player: 4, units: vec![EntityId(8)], x: 64, y: -3, dir: 248 },
@@ -449,7 +482,7 @@ mod tests {
         let back = Replay::decode(&bytes).unwrap();
         assert_eq!(back, r);
         assert_eq!(back.entries.len(), 2, "empty ticks are not stored");
-        assert_eq!(back.commands_at(9).len(), 27);
+        assert_eq!(back.commands_at(9).len(), 32);
         assert!(back.commands_at(5).is_empty());
     }
 
