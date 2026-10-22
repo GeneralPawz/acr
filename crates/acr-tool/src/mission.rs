@@ -134,14 +134,6 @@ fn mission_run(dir: &Path, what: &str, rest: &[&str]) -> Result<()> {
         }
     }
     let mut wanted: Vec<(u8, String)> = Vec::new();
-    // What the AI cities can produce: every nation's `[FIXED_PRODUCE]`.
-    let nds: Vec<String> =
-        vfs.list().map(|(p, _)| p.to_owned()).filter(|p| acr_formats::normalize_path(p).ends_with(".NDS")).collect();
-    for p in nds {
-        if let Ok(b) = vfs.read(&p) {
-            scripts.add_nation_file(&world, &b);
-        }
-    }
     if ai {
         let nations = vfs.read("NATIONS.LST").unwrap_or_default();
         for n in 1..7u8 {

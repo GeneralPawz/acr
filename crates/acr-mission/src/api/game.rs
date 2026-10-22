@@ -18,12 +18,7 @@ const fn done(name: &'static str, original: u32, handler: super::Handler) -> Api
 
 pub const FUNCTIONS: &[ApiFn] = &[
     done("RegisterUnitType", 0x55be77, register_unit_type),
-    ApiFn {
-        name: "RegisterUpgrade",
-        original: 0x55bf0c,
-        status: Status::Partial("no upgrade table in acr-sim yet: every name is accepted and numbered in order"),
-        handler: register_upgrade,
-    },
+    done("RegisterUpgrade", 0x55bf0c, register_upgrade),
     done("RegisterDynGroup", 0x56780c, register_dyn_group),
     done("RegisterDynGroupEx", 0x5678e9, register_dyn_group),
     ApiFn {
@@ -128,14 +123,11 @@ fn register_unit_type(api: &mut Api, c: &mut Call) -> Result<u32> {
 
 fn register_upgrade(api: &mut Api, c: &mut Call) -> Result<u32> {
     let name = c.str(1)?;
-    let i = match api.st.upgrades.iter().position(|u| *u == name) {
-        Some(i) => i,
-        None => {
-            api.st.upgrades.push(name);
-            api.st.upgrades.len() - 1
-        }
+    let Some(i) = api.upgrade_named(&name) else {
+        api.st.error(format!("RegisterUpgrade : Unknown upgrade : {name}"));
+        return Ok(0);
     };
-    c.set_handle(c.u32(0)?, i as u16, 0, magic::UPGRADE)?;
+    c.set_handle(c.u32(0)?, i, 0, magic::UPGRADE)?;
     Ok(1)
 }
 

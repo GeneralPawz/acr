@@ -4,9 +4,10 @@
 //! queued in their producer, buildings are placed near the city centre and built by
 //! peasants.
 //!
-//! Simplified against the original: no tech conditions (`ENABLED`/`ACCESSCONTROL`) beyond
-//! the scripts' own enable flags, no upgrades (acr-sim has none yet), and building places are
-//! searched around the centre instead of the original's farm/mill/field heuristics.
+//! Build lists and availability come from acr-sim's tech tree (`[FIXED_PRODUCE]`,
+//! `[ENABLED]`, `[ACCESSCONTROL]`). Simplified against the original: no upgrades yet, and
+//! building places are searched around the centre instead of the original's farm, mill and
+//! field heuristics.
 
 use std::collections::BTreeMap;
 
@@ -58,6 +59,23 @@ fn disabled(st: &ScriptState, nation: u8, kind: TypeId) -> bool {
     st.availability.get(&(nation, false, kind.0)).is_some_and(|&s| s < 0)
 }
 
+/// Applies the scripts' manual enable/disable flags (`ManualEnable`/`ManualDisable` of
+/// `EnableUnit`, `SetUnitEnableState`, `DisableUpgrade`, `SetUpgradeEnableStatus`) on top of
+/// the tech tree's availability, which the census recomputes (`RefreshAbility` 0x42ffed
+/// honours them the same way). Called after the flags change and before every tick.
+pub fn apply_availability(st: &ScriptState, world: &mut World) {
+    for (&(n, upgrade, i), &state) in &st.availability {
+        let Some(p) = world.players.get_mut(usize::from(n)) else { continue };
+        if upgrade {
+            if let Some(u) = p.upgrades.get_mut(usize::from(i)) {
+                u.enabled = state > 0 && !u.done;
+            }
+        } else if let Some(e) = p.enabled.get_mut(usize::from(i)) {
+            *e = state > 0;
+        }
+    }
+}
+
 /// `City::EnumProp`: every type an idle finished building (or any peasant) of the nation can
 /// produce and the nation can afford.
 pub fn enum_prop(st: &mut ScriptState, world: &World, nation: u8) {
@@ -75,8 +93,25 @@ pub fn enum_prop(st: &mut ScriptState, world: &World, nation: u8) {
             producers.entry(u.kind).or_insert(None);
         }
     }
+    let tech = &world.catalog.tech;
+    let player = &world.players[usize::from(nation)];
     for (ptype, producer) in producers {
-        for &s in st.produces.get(&ptype).map(Vec::as_slice).unwrap_or_default() {
+        // The tech tree's build list (`[FIXED_PRODUCE]`), limited to what the nation may
+        // produce now (`Enabled`, stage-dependent types: `economy::producible`).
+        let list: Vec<TypeId> = match producer {
+            Some(b) => acr_sim::economy::producible(world, b.0 as usize),
+            None => tech
+                .of(ptype)
+                .map(|t| {
+                    t.produce
+                        .iter()
+                        .copied()
+                        .filter(|k| player.enabled.get(usize::from(k.0)).copied().unwrap_or(false))
+                        .collect()
+                })
+                .unwrap_or_default(),
+        };
+        for s in list {
             if disabled(st, nation, s) || city.index.contains_key(&s) || city.props.len() >= 100 {
                 continue;
             }
@@ -143,23 +178,6 @@ fn build_near_centre(world: &mut World, nation: u8, kind: TypeId) {
                     acr_sim::construction::build_obj(world, i, b.0 as usize, 0x80);
                 }
                 return;
-            }
-        }
-    }
-}
-
-/// Producer type → producible types from a nation's `[FIXED_PRODUCE]`, resolved through the
-/// catalog.
-pub fn add_nation(st: &mut ScriptState, world: &World, nds: &[u8]) {
-    let def = acr_formats::defs::NationDef::parse(nds);
-    for p in &def.fixed_produce {
-        let Some(pt) = world.catalog.find(&p.id) else { continue };
-        let items = st.produces.entry(pt).or_default();
-        for it in &p.items {
-            if let Some(t) = world.catalog.find(&it.id)
-                && !items.contains(&t)
-            {
-                items.push(t);
             }
         }
     }

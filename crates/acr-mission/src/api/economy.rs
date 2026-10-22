@@ -34,8 +34,8 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("TryUnit", 0x56829b, Status::Partial("AI city without tech conditions; see aicity.rs"), try_unit),
     f("TryUpgrade", 0x5684d6, AI_CITY, zero),
     f("TryUpgradeEx", 0x568629, AI_CITY, zero),
-    f("UpgIsDone", 0x569259, Status::Partial("upgrades applied by InitialUpgrade only"), upg_is_done),
-    f("UpgIsRun", 0x5692a9, Status::Partial("as UpgIsDone"), upg_is_done),
+    f("UpgIsDone", 0x569259, DONE, upg_is_done),
+    f("UpgIsRun", 0x5692a9, DONE, upg_is_done),
     f(
         "InitialUpgrade",
         0x55c02f,
@@ -43,16 +43,11 @@ pub const FUNCTIONS: &[ApiFn] = &[
         initial_upgrade,
     ),
     f("InitialUpgradeNew", 0x55c202, Status::Partial("as InitialUpgrade"), initial_upgrade_new),
-    f(
-        "DisableUpgrade",
-        0x55c335,
-        Status::Partial("flag kept for the build menu (no upgrades in acr-sim)"),
-        disable_upgrade,
-    ),
-    f("SetUpgradeEnableStatus", 0x55c437, Status::Partial("flag kept for the build menu"), set_upgrade_enable_status),
-    f("EnableUnit", 0x55c5bb, Status::Partial("flag kept for the build menu (no production UI yet)"), enable_unit),
-    f("SetUnitEnableState", 0x55c4f9, Status::Partial("flag kept for the build menu"), set_unit_enable_state),
-    f("GetUpgradeCost", 0x56304a, Status::Stub("no upgrade costs in the catalog yet: 0"), zero),
+    f("DisableUpgrade", 0x55c335, DONE, disable_upgrade),
+    f("SetUpgradeEnableStatus", 0x55c437, DONE, set_upgrade_enable_status),
+    f("EnableUnit", 0x55c5bb, DONE, enable_unit),
+    f("SetUnitEnableState", 0x55c4f9, DONE, set_unit_enable_state),
+    f("GetUpgradeCost", 0x56304a, DONE, get_upgrade_cost),
     f("GetUnitCost", 0x562f80, DONE, get_unit_cost),
     f(
         "AI_Torg",
@@ -108,6 +103,29 @@ fn take_food(api: &mut Api, c: &mut Call) -> Result<u32> {
 
 fn take_wood(api: &mut Api, c: &mut Call) -> Result<u32> {
     take(api, c, acr_sim::economy::WOOD as u8)
+}
+
+/// `int GetUpgradeCost(byte nation, GAMEOBJ* upgrade, byte res)`: `UPGRADE[u]->Cost[res]`.
+fn get_upgrade_cost(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let n = api.assign(c.u8(0)?);
+    if n >= 8 {
+        api.st.error("GetUpgradeCost(Nat,Upgrade,ResID) : Invalid <Nat>");
+        return Ok(0);
+    }
+    let Some(u) = upgrade_index(c, 1)? else {
+        api.st.error("GetUpgradeCost(Nat,Upgrade,ResID) : Invalid <Upgrade>");
+        return Ok(0);
+    };
+    let r = usize::from(c.u8(2)?);
+    if r >= 6 {
+        api.st.error("GetUpgradeCost(Nat,Upgrade,ResID) : Invalid <ResID>");
+        return Ok(0);
+    }
+    let tech = &api.world.catalog.tech;
+    if !tech.loaded || usize::from(u) >= tech.upgrades.len() {
+        return Ok(0);
+    }
+    Ok(u32::from(tech.upgrade(acr_sim::tech::UpgradeId(u)).cost[r] as u16))
 }
 
 /// `int GetUnitCost(byte nation, GAMEOBJ* type, byte res)`: the current price.
@@ -227,13 +245,30 @@ fn upgrade_index(c: &Call, i: u32) -> Result<Option<u16>> {
     Ok((h.magic == magic::UPGRADE).then_some(h.index))
 }
 
+/// `bool UpgIsDone(GAMEOBJ*)` / `UpgIsRun` (done or being researched), for the AI nation.
 fn upg_is_done(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Caller::Ai(n) = api.caller else { return Ok(0) };
     let Some(u) = upgrade_index(c, 0)? else {
         api.st.error("UpgIsDone : Invalid Upgrade ID");
         return Ok(0);
     };
-    Ok(u32::from(api.st.upgrades_done.contains(&(n, u))))
+    let run = c.name() == "UpgIsRun";
+    Ok(api.upgrade_state(n, u).map_or(0, |s| u32::from(s.done || (run && s.doing))))
+}
+
+/// Marks an upgrade done for a nation like `InitialUpgrade` (0x55c02f): done, and no longer
+/// offered unless it is individual or a stage. TODO(acr-sim): apply the upgrade's effect
+/// (`PerformNewUpgrade` 0x532281) once acr-sim performs upgrades.
+fn initial(api: &mut Api, n: u8, u: u16) {
+    let def =
+        api.world.catalog.tech.loaded.then(|| api.world.catalog.tech.upgrade(acr_sim::tech::UpgradeId(u)).clone());
+    if let Some(s) = api.upgrade_state(n, u)
+        && !def.as_ref().is_some_and(|d| d.individual || d.stage_up)
+    {
+        s.done = true;
+        s.permanent = false;
+        s.enabled = false;
+    }
 }
 
 /// `void InitialUpgrade(char* mapGroup, char* upgrade)`: for the nation of the group's first
@@ -246,15 +281,12 @@ fn initial_upgrade(api: &mut Api, c: &mut Call) -> Result<u32> {
     };
     let members = mg.members.clone();
     let name = c.str(1)?;
-    let u = match api.st.upgrades.iter().position(|x| *x == name) {
-        Some(i) => i,
-        None => {
-            api.st.upgrades.push(name);
-            api.st.upgrades.len() - 1
-        }
-    } as u16;
+    let Some(u) = api.upgrade_named(&name) else {
+        api.st.error(format!("RegisterUpgrade : Unknown upgrade : {name}"));
+        return Ok(0);
+    };
     if let Some(n) = members.iter().find_map(|&m| api.member(m)).map(|u| u.owner) {
-        api.st.upgrades_done.insert((n, u));
+        initial(api, n, u);
     }
     Ok(0)
 }
@@ -262,7 +294,7 @@ fn initial_upgrade(api: &mut Api, c: &mut Call) -> Result<u32> {
 /// `void InitialUpgradeNew(byte nation, GAMEOBJ* upgrade, word unit)`.
 fn initial_upgrade_new(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Some(u) = upgrade_index(c, 1)? else { return Ok(0) };
-    api.st.upgrades_done.insert((c.u8(0)?, u));
+    initial(api, c.u8(0)? & 7, u);
     Ok(0)
 }
 
@@ -287,6 +319,7 @@ fn upgrade_flag(api: &mut Api, c: &mut Call, state: Option<i32>) -> Result<u32> 
     };
     let s = state.map_or(-1, |s| s.signum()) as i8;
     set_flag(api, n, true, u, s);
+    crate::aicity::apply_availability(api.st, api.world);
     Ok(0)
 }
 
@@ -306,6 +339,14 @@ fn unit_flag(api: &mut Api, c: &mut Call, state: i32) -> Result<u32> {
     }
     let Some(t) = api.type_arg(c, 1, "EnableUnit")? else { return Ok(0) };
     set_flag(api, n, false, t.0, state.signum() as i8);
+    // `EnableUnit(true)` also sets `Enabled` at once (unmet tech conditions turn it off again).
+    if state == 0
+        && c.name() == "EnableUnit"
+        && let Some(e) = api.world.players[usize::from(n)].enabled.get_mut(usize::from(t.0))
+    {
+        *e = true;
+    }
+    crate::aicity::apply_availability(api.st, api.world);
     Ok(0)
 }
 

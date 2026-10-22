@@ -103,9 +103,6 @@ fn computer_players_build_on_a_random_map() {
         strings.add(&vfs.read(&p).unwrap());
     }
     scripts.set_strings(strings);
-    for p in paths.iter().filter(|p| acr_formats::normalize_path(p).ends_with(".NDS")) {
-        scripts.add_nation_file(&world, &vfs.read(p).unwrap());
-    }
     let nations = vfs.read("NATIONS.LST").unwrap();
     let buildings = |w: &World, n: u8| w.units.iter().filter(|u| u.living() && u.owner == n && u.building).count();
     let mut ais = Vec::new();
