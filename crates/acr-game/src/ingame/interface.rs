@@ -439,10 +439,11 @@ impl InGame {
             view.dots.push(Dot { x: u.pos.x >> shift, y: u.pos.y >> shift, color });
         }
         let Some(data) = self.interface.hud.data(ctx) else { return view };
-        // One icon per selected type, in selection order.
+        // One icon per selected type, in selection order; its bar sums life and MaxLife
+        // (OB+0x78/0x7a, 0x606e12), which building sections raise.
         let mut types: Vec<(acr_sim::TypeId, i32, i32, i32)> = Vec::new();
         for u in self.selected_units() {
-            let max = world.catalog.get(u.kind).life.max(1);
+            let max = u.max_life.max(1);
             match types.iter_mut().find(|t| t.0 == u.kind) {
                 Some(t) => {
                     t.1 += 1;

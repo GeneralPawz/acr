@@ -353,7 +353,7 @@ state of section `s`:
 | 0 not built | creation; a stage-1 section whose building loses life (0x4e94b3) | 10: the wooden part |
 | 1 being built | starting the `UPSTAGEs` upgrade | 11: stone walls in scaffolding |
 | 2 done | the finished upgrade (0x532737); adds `life` to the maximum life | 12: the stone building |
-| 3 destroyed | life ≤ own life + done sections before it (0x4e94f1, explosions at `STAGE_FIRES`) | 13: its ruin |
+| 3 destroyed | life ≤ own life + done sections before it (0x4e94f1, explosions at `STAGE_FIRES`); its upgrade is offered again to rebuild it (see `docs/simulation.md`, Building sections) | 13: its ruin |
 
 Drawing (0x5099a8 in the object draw 0x5062a3; zoomed out 0x5fdb93 with offsets `>> 2`):
 when OB+0x25 bit 0 (finished, `Ready`?) or OB+0x101 is set and OB+0x58 (dying?) is 0,

@@ -427,6 +427,8 @@ fn unconstruct_link(w: &mut World, b: usize) {
         release(w, b, vec![first]);
         return;
     }
+    // The sections go with the building (OB+0xaa = 0, 0x4a0dc7).
+    w.units[b].stages = 0;
     if w.units[b].stage <= 0 {
         let (owner, kind) = (w.units[b].owner, w.units[b].kind);
         let cost = unit_cost(w, owner, kind, None);

@@ -21,8 +21,8 @@ const NATION: &[u8] = b"[UPGRADE]\r\n\
     DMG2 ICO #POSITION 0 0 #LEVEL 2 M #COST 1 GOLD 100 #TIME 21\r\nPROTECTION GRP 2 PIKA MECH Pik(EN) +3\r\n\
     FAST ICO #POSITION 1 0 #LEVEL 1 M #COST 0 #TIME 3\r\nBUILD GRP 2 Kri(EN) Pik(EN) -50%\r\n\
     TOUGH ICO #POSITION 2 0 #LEVEL 1 M #COST 0 #TIME 3\r\nLIFE GRP 1 Pik(EN) +50%\r\n\
-    ROOM ICO #POSITION 3 0 #LEVEL 0 M #COST 0 #TIME 3\r\nSINGLE_INSIDE Cen(EN) +5\r\n\
-    ROOM2 ICO #POSITION 3 0 #LEVEL 1 M #COST 0 #TIME 3\r\nSINGLE_INSIDE Cen(EN) +3\r\n\
+    ROOM ICO #POSITION 3 0 #LEVEL 2 M #COST 0 #TIME 3\r\nSINGLE_INSIDE Cen(EN) +5\r\n\
+    ROOM2 ICO #POSITION 3 0 #LEVEL 3 M #COST 0 #TIME 3\r\nSINGLE_INSIDE Cen(EN) +3\r\n\
     FORT ICO #POSITION 4 0 #LEVEL 0 M #COST 0 #TIME 3\r\nUPSTAGE0\r\n\
     [FIXED_PRODUCE]\r\nCen(EN) 2\r\nKri(EN) 0 0\r\nPik(EN) 1 0\r\n[ENABLED]\r\nKri(EN)\r\nPik(EN)\r\nCen(EN)\r\n\
     [UPGRADEPLACE]\r\nCen(EN) 7 DMG\r\nDMG2\r\nFAST\r\nTOUGH\r\nROOM\r\nROOM2\r\nFORT\r\n\
@@ -116,8 +116,8 @@ fn build_life_private_and_stage_upgrades() {
         (150, 150),
         "LIFE heals to the new maximum"
     );
-    assert_eq!(w.units[b].add_inside, 8, "ROOM (level 0) then ROOM2 (level 1)");
-    assert_eq!(w.units[b].upgrade_level, 5);
+    assert_eq!(w.units[b].add_inside, 8, "ROOM (level 2, the start) then ROOM2 (level 3)");
+    assert_eq!(w.units[b].upgrade_level, 7);
     assert_eq!(w.units[b].stages & 7, 2, "stage 0 done");
     assert_eq!(w.units[b].max_life, 1500, "the stage adds its life");
     assert_eq!(economy::producible(&w, b), [kri, pik]);
@@ -126,4 +126,71 @@ fn build_life_private_and_stage_upgrades() {
     let n = w.units.len();
     run(&mut w, 9);
     assert_eq!(w.units.len(), n + 1);
+}
+
+const FORT: &str = "NAME Frt\r\nBUILDING\r\nLIFE 1000\r\nLOCATION 0 0 64 64\r\nBUILDSTAGES 10\r\n\
+    ADDSECTION 0 0 500 1 0 0 2 0 0 3 0 0 4 0 0\r\nADDSECTION 1 0 300 5 0 0 6 0 0 7 0 0 8 0 0\r\n[END]\r\n";
+const FORT_NATION: &[u8] = b"[UPGRADE]\r\n\
+    SEC0 ICO #POSITION 0 0 #LEVEL 0 M #COST 1 GOLD 100 #TIME 11\r\nUPSTAGE0\r\n\
+    SEC1 ICO #POSITION 1 0 #LEVEL 0 M #COST 0 #TIME 3\r\nUPSTAGE1\r\n\
+    [FIXED_PRODUCE]\r\nFrt(EN) 0\r\n[ENABLED]\r\nFrt(EN)\r\n[UPGRADEPLACE]\r\nFrt(EN) 2 SEC0\r\nSEC1\r\n\
+    [UPGRADEENABLE]\r\nSEC0\r\nSEC1\r\n[UPGRADESTAGE]\r\nSEC0\r\nSEC1\r\n[STAGEDEPENDENT]\r\nSEC1 1\r\n[END]\r\n";
+
+#[test]
+fn sections_are_built_ruined_and_rebuilt() {
+    use acr_sim::combat::make_damage;
+    use acr_sim::upgrade::{section, section_state};
+    let mut c = Catalog::new();
+    let frt = c.add(ObjectType::from_def("Frt(EN)", &UnitDef::parse(FORT.as_bytes())));
+    let mut tech = Tech::default();
+    tech.add_nation(&c, &NationDef::parse(FORT_NATION));
+    c.tech = tech;
+    let mut w = World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(Formations::default()));
+    let fort = w.spawn(frt, 0, Pos::from_pixels(2048, 2048), 0);
+    economy::census_all(&mut w);
+    let b = fort.0 as usize;
+    let (sec0, sec1) = (up(&w, "SEC0"), up(&w, "SEC1"));
+    let state = |w: &World, s| section_state(w.units[b].stages, s);
+    // Created like 0x516150 / 0x515ff8.
+    assert_eq!((w.units[b].stages, w.units[b].upgrade_level), (0x8000, 2));
+    assert_eq!(upgrade::available(&w, b), [sec0], "SEC1 needs section 0 done");
+
+    // Building section 0: state 1 while researched.
+    w.step(&[Command::Upgrade { player: 0, buildings: vec![fort], upgrade: sec0 }]);
+    assert_eq!(state(&w, 0), section::BUILDING);
+    assert_eq!(upgrade::available(&w, b), [sec0], "offered (in progress) until done");
+    // Losing life down to the own life drops it back to 0; the research goes on.
+    make_damage(&mut w, b, 600, None, 0xFF);
+    assert_eq!((w.units[b].life, state(&w, 0)), (400, section::NONE));
+    w.step(&[]);
+    assert_eq!(state(&w, 0), section::BUILDING);
+    run(&mut w, 4);
+    assert!(w.units[b].research.is_none());
+    assert_eq!(state(&w, 0), section::DONE);
+    assert_eq!((w.units[b].life, w.units[b].max_life), (1500, 1500), "done: type life + section life");
+    assert_eq!(upgrade::available(&w, b), [sec1]);
+
+    w.step(&[Command::Upgrade { player: 0, buildings: vec![fort], upgrade: sec1 }]);
+    run(&mut w, 2);
+    assert_eq!((state(&w, 0), state(&w, 1)), (section::DONE, section::DONE));
+    assert_eq!((w.units[b].life, w.units[b].max_life), (1800, 1800));
+    assert!(upgrade::available(&w, b).is_empty());
+
+    // Above own life + section 0 (1500): no change; the upgrade count is reset to 2.
+    w.units[b].upgrade_level = 9;
+    make_damage(&mut w, b, 200, None, 0xFF);
+    assert_eq!((state(&w, 0), state(&w, 1), w.units[b].upgrade_level), (section::DONE, section::DONE, 2));
+    // At or below it section 1 is ruined; life and maximum stay.
+    make_damage(&mut w, b, 100, None, 0xFF);
+    assert_eq!((state(&w, 0), state(&w, 1)), (section::DONE, section::RUIN));
+    assert_eq!((w.units[b].life, w.units[b].max_life), (1500, 1800));
+    // A ruin is offered again; rebuilding it restores the life.
+    assert_eq!(upgrade::available(&w, b), [sec1]);
+    w.step(&[Command::Upgrade { player: 0, buildings: vec![fort], upgrade: sec1 }]);
+    run(&mut w, 2);
+    assert_eq!((state(&w, 1), w.units[b].life, w.units[b].max_life), (section::DONE, 1800, 1800));
+    // Down to the own life both fall; section 1 counts section 0's life although it just fell.
+    make_damage(&mut w, b, 800, None, 0xFF);
+    assert_eq!((state(&w, 0), state(&w, 1)), (section::RUIN, section::RUIN));
+    assert_eq!(upgrade::available(&w, b), [sec0], "SEC1 needs section 0 again");
 }
