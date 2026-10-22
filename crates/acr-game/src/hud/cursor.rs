@@ -15,6 +15,8 @@ pub mod frame {
     pub const BUILD: usize = 3;
     /// Go into an own building (0x66a918).
     pub const ENTER: usize = 11;
+    /// Pick the patrol point (0x66a90c).
+    pub const PATROL: usize = 13;
     /// Gathering, by source type (0x66a934): axe for wood, pick for minerals, sickle for
     /// fields, sword for meat; 0 is the arrow.
     pub const GATHER: [u8; 16] = [6, 5, 5, 7, 5, 5, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0];

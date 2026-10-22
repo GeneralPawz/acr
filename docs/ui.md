@@ -350,8 +350,30 @@ the defaults apply: `Zone1X/Y` = 6/6, `PropertyX/Y` = 182/6, `IconLx/Ly` = 40/40
   - formation groups of the officer's `[OFFICERS]` entry, at their `NRES.DAT
     [ORDERICONS]` slots (column 8). The current formation is highlighted. These send
     `Form`, re-forming an existing formation.
-  - For a formed brigade: slot 24 `SFREORD` ("Formation auflösen", `Disband`). Slots 25
-    and 26 (`STANDGR`/`NOSTAND`) and `GO&ATTACK` (slot 27) are shown but inactive.
+  - The state commands (0x6074f1..0x607a59), with or without an officer. 0x606889
+    collects over the selected objects: the formations (`+0x29` bit 7, ids in 0x28f7690,
+    count 0x28f9e24) and the types of the free units (0x28f81f8), `STANDGROUND` types
+    (NM+0x172b bit 3), stand ground on/off (`+0x25` bit 4), towers (`USAGE` 5) and other
+    buildings, `WEAPONINSECTOR` types (NM+0x2940), attack held/allowed (`+0x25` bit 1),
+    `FRIENDLYFIRE` (NM+0x172d bit 5) and `ARMATTACK` (bit 7) types with their switches
+    (`+0x2a` bits 1 and 2). Then:
+    - slot 24 `SFREORD` ("Formation auflösen", `FREE_ORDER` icon, `Disband`) with
+      formations and no free units;
+    - with a `STANDGROUND` type and 1..24 formations plus free types: slots 25 `STANDGR` and
+      26 `NOSTAND` (highlighted while some unit stands / does not; `StandGround`) and
+      `GO&ATTACK` at its `[CONST]` slot (highlighted in the attack-move mode); with free
+      units and at most 12 rows also the patrol icon at slot 14 (`HPATROL`, 0x606650): the
+      next left click on the map (cursor frame 13, 0x66a90c) sends `Patrol`, Escape ends
+      the mode;
+    - with towers and no other buildings, with the stand-ground icons, or with a
+      `WEAPONINSECTOR` type: `ENABLE_ATTACK` / `DISABLE_ATTACK` (`EATTACK` / `DATTACK`,
+      0x4d76cf, `HoldFire`), highlighted while some unit attacks / holds;
+    - `SHOTMYUNITS` / `KEEPMYUNITS` for `FRIENDLYFIRE` types (network command 0x5e, ACR's
+      `FriendlyFire`) and `ARMATTACK` / `ANYATTACK` for `ARMATTACK` types (0x5f,
+      `MeleeOnly`), highlighted while some unit has that setting.
+    Not built: grouping formations (`CM_DOGRP`/`CM_UNGRP`, 0x43dfdb/0x43e0b7), the
+    first object's own switches (`MAKEZASEV` fields, `FISHING`, `KARTECH`, `STOPBUILD`) and
+    the idle peasant/mine icons (0x607d62).
 - Hotkeys: `Data\Keyboard.dat` (in `Patch02.GS1`) maps `[CTRL|ALT|SHIFT] KEY : ICON`.
   The key presses the shown icon of that name.
 
@@ -940,9 +962,6 @@ to the panel (0x4c1c36). U toggles value 2, I value 1; one panel at a time.
 
 ### Open questions
 
-- Which command icons the original shows for a selection without an officer (attack
-  on/off, friendly fire, arm attack…): the conditions in 0x606710 are only partly
-  decoded.
 - Whether the original hides a selected type's icon when production icons take its slot.
 - The original builds on the button press; ACR too, but the order in which it checks the
   site and the price on the click (0x4c20ac) is not traced.

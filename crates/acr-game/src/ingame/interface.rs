@@ -159,6 +159,9 @@ pub struct State {
     pub(super) right_drag: Option<([f32; 2], (i32, i32))>,
     /// `GO&ATTACK`: moves are attack-moves (`0x28f9e55`).
     pub attack_mode: bool,
+    /// The patrol icon was pressed: the next left click on the map is the patrol point
+    /// (`0x1100b3d`).
+    pub patrol_mode: bool,
     /// Space cycles through the selection (0x4c6020).
     next_centred: usize,
     /// The market's amount and chosen slots (ECO+0x2a0, +0x2a4, +0x2a8), kept for the game.
@@ -213,6 +216,7 @@ impl Default for State {
             select_before: Vec::new(),
             right_drag: None,
             attack_mode: false,
+            patrol_mode: false,
             next_centred: 0,
             market_amount: 0,
             market_sell: None,
@@ -360,6 +364,11 @@ impl InGame {
         self.selected.iter().filter_map(move |&id| world.and_then(|w| w.unit(id)).filter(|u| u.alive))
     }
 
+    /// The local player's selected objects, for the state commands.
+    fn own_selected_units(&self) -> Vec<EntityId> {
+        self.selected_units().filter(|u| u.owner == self.own()).map(|u| u.id).collect()
+    }
+
     /// Reads the nation files once they are loaded.
     fn nations(&mut self, ctx: &Ctx) -> Option<Rc<Nations>> {
         if self.interface.nations.is_none() {
@@ -469,9 +478,7 @@ impl InGame {
             let result = i.market_sell.zip(i.market_buy).map(|(s, b)| world.market.quote(s, b, i.market_amount));
             view.market = Some((amount, result));
         }
-        // Formations: the officer's groups in column 8 (`ORDERICONS`), "Formation auflösen"
-        // (slot 24) for a formed brigade; stand ground and "attack on the way" are shown
-        // but not simulated yet.
+        // Formations: the officer's groups in column 8 (`ORDERICONS`).
         let officer =
             self.selected_units().find(|u| world.catalog.get(u.kind).officer).map(|u| (u.id, u.kind, u.brigade));
         let current = officer.and_then(|(_, _, b)| b).and_then(|b| world.brigades.get(usize::from(b))).map(|b| {
@@ -484,7 +491,7 @@ impl InGame {
                 .map(|g| g.name.clone())
                 .unwrap_or(name)
         });
-        if let Some((_, kind, brigade)) = officer {
+        if let Some((_, kind, _)) = officer {
             let officer_id = world.catalog.get(kind).id.to_ascii_uppercase();
             let groups = nations.as_ref().and_then(|n| n.officers.get(&officer_id).cloned()).unwrap_or_default();
             for g in &groups {
@@ -502,32 +509,8 @@ impl InGame {
                     });
                 }
             }
-            if brigade.is_some() {
-                let mut command = |name: &str, slot: usize, hint: &str, action: HudCommand| {
-                    if let Some(frame) = data.icon(name) {
-                        view.icons.push(Icon {
-                            frame,
-                            slot,
-                            outline: Some(outline),
-                            life: None,
-                            count: None,
-                            hint: ctx.texts.get(hint).to_vec(),
-                            action: Some(action),
-                            ..Icon::default()
-                        });
-                    }
-                };
-                command("Stand_Ground_OFF", 24, "SFREORD", HudCommand::Disband);
-                command("Stand_Ground_ON", 25, "STANDGR", HudCommand::StandGround(true));
-                command("Stand_Ground_OFF", 26, "NOSTAND", HudCommand::StandGround(false));
-                if let Some(go) = data.consts.get("GO&ATTACK") {
-                    command("Go_With_Attack", go.slot, "GONATT", HudCommand::AttackMode);
-                    if let Some(icon) = view.icons.iter_mut().find(|i| i.action == Some(HudCommand::AttackMode)) {
-                        icon.selected = self.interface.attack_mode;
-                    }
-                }
-            }
         }
+        self.state_icons(ctx, &data, outline, &mut view.icons);
         // The type icons take the first slots the commands leave free (`AddIcon` without a
         // position, 0x495631).
         let mut free = (0..36).filter(|s| !view.icons.iter().any(|i| i.slot == *s)).collect::<Vec<_>>().into_iter();
@@ -547,6 +530,109 @@ impl InGame {
             });
         }
         view
+    }
+
+    /// The commands for the selection's states (0x6074f1..0x607a59), with or without an
+    /// officer. Over the selected own objects 0x606889 collects: formations and the types of
+    /// the free units, `STANDGROUND` types, stand ground on/off, towers and other
+    /// buildings, `WEAPONINSECTOR` types, attacks allowed/held, `FRIENDLYFIRE` and
+    /// `ARMATTACK` types with their switches. Then:
+    /// - slot 24 `SFREORD` (`FREE_ORDER` icon) with formations and no free units;
+    /// - with a `STANDGROUND` type and at most 24 formations and free types: slots 25 and 26
+    ///   `STANDGR` / `NOSTAND`, highlighted if some unit stands / does not, and `GO&ATTACK`
+    ///   (highlighted in the attack-move mode); with free units and at most 12 rows also the
+    ///   patrol icon at slot 14 (`HPATROL`);
+    /// - with only towers among the buildings, with the stand-ground icons, or with a
+    ///   `WEAPONINSECTOR` type: `ENABLE_ATTACK` / `DISABLE_ATTACK` (`EATTACK` / `DATTACK`);
+    /// - `SHOTMYUNITS` / `KEEPMYUNITS` for `FRIENDLYFIRE` types, `ARMATTACK` / `ANYATTACK`
+    ///   for `ARMATTACK` types, each highlighted while some unit has that setting.
+    ///
+    /// Grouping formations (`CM_DOGRP` / `CM_UNGRP`) and the first object's own switches
+    /// (fields, fishing, canister, stop building) are not built.
+    fn state_icons(&self, ctx: &Ctx, data: &HudData, outline: u8, icons: &mut Vec<Icon>) {
+        let Some(world) = &self.world else { return };
+        let objects = self.objects.objects();
+        let own = self.own();
+        let units: Vec<&Unit> = self.selected_units().filter(|u| u.owner == own).collect();
+        let mut brigades: Vec<u16> = units.iter().filter_map(|u| u.brigade).collect();
+        brigades.sort_unstable();
+        brigades.dedup();
+        let mut free: Vec<TypeId> = units.iter().filter(|u| u.brigade.is_none()).map(|u| u.kind).collect();
+        free.sort_unstable_by_key(|k| k.0);
+        free.dedup();
+        let (rows, free) = (brigades.len() + free.len(), free.len());
+        let types =
+            |f: &dyn Fn(&acr_sim::catalog::ObjectType) -> bool| units.iter().any(|u| f(world.catalog.get(u.kind)));
+        let stand_button = types(&|t| t.role.stand_ground_button);
+        let tower = types(&|t| t.role.usage == acr_sim::catalog::usage::TOWER);
+        let other_building = units.iter().any(|u| {
+            let t = world.catalog.get(u.kind);
+            u.building && t.role.usage != acr_sim::catalog::usage::TOWER
+        });
+        let sector = units
+            .iter()
+            .any(|u| objects.definition(&world.catalog.get(u.kind).id).is_some_and(|d| d.has("WEAPONINSECTOR")));
+        let mut push = |frame: Option<usize>, slot: usize, hint: &str, selected: bool, action: HudCommand| {
+            if let Some(frame) = frame {
+                icons.push(Icon {
+                    frame,
+                    slot,
+                    outline: Some(outline),
+                    selected,
+                    hint: ctx.texts.get(hint).to_vec(),
+                    action: Some(action),
+                    ..Icon::default()
+                });
+            }
+        };
+        // `[CONST] NAME x y icon`: the icon at slot `x + 12·y`.
+        let placed = |key: &str| data.consts.get(key).map(|c| (c.slot, Some(c.frame)));
+        if !brigades.is_empty() && free == 0 {
+            push(data.icon("Stand_Ground_OFF"), 24, "SFREORD", false, HudCommand::Disband);
+        }
+        let stand_icons = stand_button && rows > 0 && rows <= 24;
+        if stand_icons {
+            let on = units.iter().any(|u| u.stand_ground);
+            let off = units.iter().any(|u| !u.stand_ground);
+            push(data.icon("Stand_Ground_ON"), 25, "STANDGR", on, HudCommand::StandGround(true));
+            push(data.icon("Stand_Ground_OFF"), 26, "NOSTAND", off, HudCommand::StandGround(false));
+            if let Some((slot, frame)) = placed("GO&ATTACK") {
+                push(frame, slot, "GONATT", self.interface.attack_mode, HudCommand::AttackMode);
+            }
+        }
+        if stand_button && free > 0 && rows <= 12 {
+            push(data.icon("Patrol"), 14, "HPATROL", self.interface.patrol_mode, HudCommand::PatrolMode);
+        }
+        if (tower && !other_building) || stand_icons || sector {
+            let held = units.iter().any(|u| u.no_search_victim);
+            let free_fire = units.iter().any(|u| !u.no_search_victim);
+            if let Some((slot, frame)) = placed("ENABLE_ATTACK") {
+                push(frame, slot, "EATTACK", free_fire, HudCommand::HoldFire(false));
+            }
+            if let Some((slot, frame)) = placed("DISABLE_ATTACK") {
+                push(frame, slot, "DATTACK", held, HudCommand::HoldFire(true));
+            }
+        }
+        if types(&|t| t.avoid_friendly_fire) {
+            let ff = units.iter().filter(|u| world.catalog.get(u.kind).avoid_friendly_fire);
+            let (on, off) = ff.fold((false, false), |(a, b), u| (a || u.no_ff_avoid, b || !u.no_ff_avoid));
+            if let Some((slot, frame)) = placed("SHOTMYUNITS") {
+                push(frame, slot, "SHOTMYUNITS", on, HudCommand::FriendlyFire(true));
+            }
+            if let Some((slot, frame)) = placed("KEEPMYUNITS") {
+                push(frame, slot, "KEEPMYUNITS", off, HudCommand::FriendlyFire(false));
+            }
+        }
+        if types(&|t| t.role.arm_attack) {
+            let arm = units.iter().filter(|u| world.catalog.get(u.kind).role.arm_attack);
+            let (on, off) = arm.fold((false, false), |(a, b), u| (a || u.melee_only, b || !u.melee_only));
+            if let Some((slot, frame)) = placed("ARMATTACK") {
+                push(frame, slot, "ARMATTACK", on, HudCommand::MeleeOnly(true));
+            }
+            if let Some((slot, frame)) = placed("ANYATTACK") {
+                push(frame, slot, "ANYATTACK", off, HudCommand::MeleeOnly(false));
+            }
+        }
     }
 
     /// The production icons of a single selected type (0x609230): the available items of its
@@ -1001,6 +1087,20 @@ impl InGame {
                 self.commands.push(Command::StandGround { player, units, on });
             }
             HudCommand::AttackMode => self.interface.attack_mode = !self.interface.attack_mode,
+            // 0x606650: the next left click on the map sets the patrol point (0x4c28aa).
+            HudCommand::PatrolMode => self.interface.patrol_mode = true,
+            HudCommand::HoldFire(hold) => {
+                let units = self.own_selected_units();
+                self.commands.push(Command::HoldFire { player, units, hold });
+            }
+            HudCommand::FriendlyFire(shoot_own) => {
+                let units = self.own_selected_units();
+                self.commands.push(Command::FriendlyFire { player, units, shoot_own });
+            }
+            HudCommand::MeleeOnly(on) => {
+                let units = self.own_selected_units();
+                self.commands.push(Command::MeleeOnly { player, units, on });
+            }
         }
     }
 
@@ -1237,6 +1337,8 @@ impl InGame {
         let over_hud = self.cursor.is_some_and(|c| self.over_hud(ctx, c));
         let modal = self.interface.placing.is_some() || self.interface.rally_mode;
         let frame = match self.cursor.filter(|_| !over_hud && !modal).and_then(|c| self.context_order(c)) {
+            // The patrol point cursor (`0x66a90c`, 0x4c5311).
+            _ if self.interface.patrol_mode && !over_hud => cursor::frame::PATROL,
             Some(context) => context.cursor(),
             None => cursor::frame::ARROW,
         };
@@ -1541,6 +1643,17 @@ impl InGame {
     /// keeps the mode) or while picking a rally point. True if it was used.
     fn map_click(&mut self, at: [f32; 2]) -> bool {
         let player = self.own();
+        if self.interface.patrol_mode {
+            self.interface.patrol_mode = false;
+            let (x, y) = self.world_at(at);
+            let units: Vec<EntityId> =
+                self.selected_units().filter(|u| u.owner == player && !u.building).map(|u| u.id).collect();
+            if let Some(&first) = units.first() {
+                self.unit_sound(first, "ORDER_SOUND");
+            }
+            self.commands.push(Command::Patrol { player, units, x, y });
+            return true;
+        }
         if self.interface.rally_mode {
             self.interface.rally_mode = false;
             let (x, y) = self.world_at(at);
@@ -1734,9 +1847,10 @@ impl InGame {
 
     /// Leaves the build mode or the rally point mode; false if neither was on.
     pub(super) fn cancel_mode(&mut self) -> bool {
-        let on = self.interface.placing.is_some() || self.interface.rally_mode;
+        let on = self.interface.placing.is_some() || self.interface.rally_mode || self.interface.patrol_mode;
         self.interface.placing = None;
         self.interface.rally_mode = false;
+        self.interface.patrol_mode = false;
         on
     }
 

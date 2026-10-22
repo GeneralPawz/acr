@@ -128,6 +128,14 @@ pub enum HudCommand {
     StandGround(bool),
     /// `GO&ATTACK`: moves become attack-moves (`0x28f9e55`, move flag 8) until switched off.
     AttackMode,
+    /// The patrol icon (`HPATROL`, 0x606650): the next map click sets the patrol point.
+    PatrolMode,
+    /// `ENABLE_ATTACK` / `DISABLE_ATTACK` (`SetSearchVictim`, 0x4d76cf): hold fire or not.
+    HoldFire(bool),
+    /// `SHOTMYUNITS` / `KEEPMYUNITS` (network command 0x5e): shoot through own units or not.
+    FriendlyFire(bool),
+    /// `ARMATTACK` / `ANYATTACK` (network command 0x5f): melee only or not.
+    MeleeOnly(bool),
     /// Dissolve the selected formation (`SFREORD`).
     Disband,
     /// Queue a unit of this type in the selected building (0x6088c0; Shift: five).

@@ -85,6 +85,13 @@ pub enum Command {
     /// with a direction, 0x4d5f86). Formations re-form facing it, free units are placed
     /// across it.
     MoveFacing { player: PlayerId, units: Vec<EntityId>, x: i32, y: i32, dir: u8 },
+    /// The interface's friendly-fire buttons (`SHOTMYUNITS` / `KEEPMYUNITS`, network command
+    /// 0x5e, 0x4d771a): `shoot_own` switches the `FRIENDLYFIRE` avoidance of the units off
+    /// (OB+0x2a bit1).
+    FriendlyFire { player: PlayerId, units: Vec<EntityId>, shoot_own: bool },
+    /// The interface's `ARMATTACK` / `ANYATTACK` buttons (network command 0x5f, 0x4d7765):
+    /// `ARMATTACK` units fight in melee only (OB+0x2a bit2).
+    MeleeOnly { player: PlayerId, units: Vec<EntityId>, on: bool },
 }
 
 impl Command {
@@ -113,7 +120,9 @@ impl Command {
             | Command::AttackMove { player, .. }
             | Command::Patrol { player, .. }
             | Command::MoveFacing { player, .. }
-            | Command::AttackGround { player, .. } => *player,
+            | Command::AttackGround { player, .. }
+            | Command::FriendlyFire { player, .. }
+            | Command::MeleeOnly { player, .. } => *player,
         }
     }
 }
