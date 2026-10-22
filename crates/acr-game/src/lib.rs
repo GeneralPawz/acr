@@ -377,7 +377,12 @@ impl Game {
         self.start_game(Box::new(setup));
     }
 
-    fn start_game(&mut self, setup: Box<ui::GameSetup>) {
+    fn start_game(&mut self, mut setup: Box<ui::GameSetup>) {
+        // The setting `hit_locations=on` (#225, #254) turns the optional rule on for every new
+        // game; it goes into the setup, so savegames and restarts keep what they began with.
+        if self.ui.settings().hit_locations {
+            setup.rules.hit_locations = true;
+        }
         let mut game = ingame::InGame::new(setup);
         game.apply_settings(self.ui.settings());
         game.start(&self.assets.paths());
