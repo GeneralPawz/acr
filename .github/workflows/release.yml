@@ -1,8 +1,8 @@
 # Builds the game for Windows (x64, ARM64) and the browser on a version tag and
 # attaches the results to a GitHub release. Each Windows zip holds the game
 # (AmericanConquest.exe), the browser version (web\) and its launcher
-# (AmericanConquest-Web.exe). Release binaries carry a stand-in icon;
-# `cargo xtask dist --game-dir <dir>` builds a local copy with the original icon.
+# (AmericanConquest-Web.exe). Both carry the original game icon
+# (crates/acr-game/Ac.ico).
 name: Release
 
 on:
