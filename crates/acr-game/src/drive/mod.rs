@@ -808,6 +808,12 @@ impl Driver {
                 job.settle = true;
                 Ok(true)
             }
+            Request::Shadows(on) => {
+                crate::ingame::three_d::set_shadows_override(on);
+                job.reply.insert("shadows".into(), on.map_or(Value::Null, Value::Bool));
+                job.steps.push_back(Step::Frame);
+                Ok(true)
+            }
             Request::Spawn(v) => {
                 let unit = bench::spawn(game, &v)?;
                 job.reply.insert("unit".into(), unit);

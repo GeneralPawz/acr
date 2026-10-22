@@ -80,6 +80,8 @@ pub struct ThreeD {
     debris_tick: u64,
     models: Models,
     gore: Gore,
+    /// Sun shadows of the models (`shadows` setting; [`set_shadows_override`] wins).
+    shadows: bool,
     /// How long 3D corpses lie (ticks, `corpse_minutes`).
     corpse_ticks: u64,
     free: bool,
@@ -150,6 +152,7 @@ impl Default for ThreeD {
             gear: HashMap::new(),
             models: Models::Off,
             gore: Gore::Full,
+            shadows: true,
             corpse_ticks: CORPSE_MINUTES * 60 * acr_sim::ORIGINAL_TICKS_PER_SECOND as u64,
             free: false,
             orbit: Orbit::ORIGINAL,
@@ -186,6 +189,7 @@ impl ThreeD {
     pub fn apply(&mut self, settings: &Settings) {
         self.models = settings.models;
         self.gore = settings.gore;
+        self.shadows = settings.shadows;
         self.corpse_ticks = u64::from(settings.corpse_minutes) * 60 * acr_sim::ORIGINAL_TICKS_PER_SECOND as u64;
         self.free = settings.camera == CameraMode::Free;
         log::info!("3d: models {:?}, camera {:?}, gore {:?}", settings.models, settings.camera, settings.gore);
@@ -759,6 +763,7 @@ impl ThreeD {
         {
             renderer.set_custom_poses(std::mem::take(&mut r.poses));
         }
+        renderer.shadows = shadows_override().unwrap_or(self.shadows);
         renderer.prepare(device, queue, &view3d, shown, self.gore == Gore::Full);
         renderer.prepare_pools(device, queue, if models_phase { &self.pools[..] } else { &[] });
         let sprites = objects.prepare(
@@ -768,11 +773,15 @@ impl ThreeD {
             camera,
             Some(Placement { view: &view3d, terrain, on_top: self.compare == Compare::Overlay }),
         );
+        renderer.render_shadows(encoder);
         let mut pass = depth.begin(device, encoder, view, size);
         if let Some(ground) = ground {
             ground.render_depth(&mut pass);
         }
         renderer.render(&mut pass);
+        if let Some(ground) = ground {
+            ground.render_shadows(device, &mut pass, renderer.shadow());
+        }
         depth.reset_ground(&mut pass);
         if sprites {
             objects.draw(&mut pass, true);
@@ -794,6 +803,39 @@ impl ThreeD {
             self.frames = 0;
             self.since = Some(now);
         }
+    }
+}
+
+/// Shadows forced on (2) or off (1) for tests, over the setting: `ACR_SHADOWS=on|off` or
+/// the driver's `{"cmd": "shadows", "on": false}`; 0 follows the setting.
+static SHADOWS_OVERRIDE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(u8::MAX);
+
+/// Forces shadows on or off (`None`: the setting decides).
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+pub fn set_shadows_override(on: Option<bool>) {
+    let v = match on {
+        None => 0,
+        Some(false) => 1,
+        Some(true) => 2,
+    };
+    SHADOWS_OVERRIDE.store(v, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn shadows_override() -> Option<bool> {
+    use std::sync::atomic::Ordering;
+    if SHADOWS_OVERRIDE.load(Ordering::Relaxed) == u8::MAX {
+        // First use: the environment (native only; the browser has none).
+        let env = if cfg!(target_arch = "wasm32") { None } else { std::env::var("ACR_SHADOWS").ok() };
+        set_shadows_override(match env.as_deref() {
+            Some("off" | "0") => Some(false),
+            Some("on" | "1") => Some(true),
+            _ => None,
+        });
+    }
+    match SHADOWS_OVERRIDE.load(Ordering::Relaxed) {
+        1 => Some(false),
+        2 => Some(true),
+        _ => None,
     }
 }
 

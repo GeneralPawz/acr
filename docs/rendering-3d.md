@@ -19,6 +19,7 @@ parameters: [assets-humans.md](assets-humans.md).
 |---|---|---|---|
 | `models` | `off`, `units`, `all` | `off` | `units`: units with a model are drawn in 3D; `all`: finished buildings too (under construction, burning down and ruined they stay sprites) |
 | `camera` | `fixed`, `free` | `fixed` | `free`: the camera turns and tilts (below) |
+| `shadows` | `on`, `off` | `on` | sun shadows of the 3D models on the ground and on each other (below); tests switch them with `ACR_SHADOWS=on\|off` or the driver's `{"cmd": "shadows", "on": false}` |
 | `gore` | `full`, `reduced`, `off` | `full` | 3D corpses: `full` decompose (#178), `reduced` discolour, collapse and sink without dissolving, `off` fade like the original (every other pixel once the death counter passes 100) |
 
 Sprites stay the default; with `models=off` and `camera=fixed` the frame is drawn exactly as
@@ -72,15 +73,55 @@ acr-game
    the ground triangles go through the 3D view matrix instead and are depth-tested among
    themselves (hills no longer come in row order); the water tint, which works on screen
    blocks of the original view, is left out.
-2. **3D pass** (one render pass, depth + stencil `Depth24PlusStencil8` at output size):
+2. **Shadow map** (`shadows=on`, models drawn): the models once more from the sun into a
+   depth texture (below).
+3. **3D pass** (one render pass, depth + stencil `Depth24PlusStencil8` at output size):
    1. *terrain depth* (`vs_depth`): the same mesh through the same matrix, at the plain ground
       height (the drawn ground is lifted by up to 7 px of random relief) and pushed back by
       24 world pixels, so a model's feet are not cut;
-   2. *models*: skinned, instanced, depth test and write; their pixels set stencil 1;
-   3. *ground reset*: a full-screen triangle at the far plane where stencil is 0, so the
+   2. *models*: skinned, instanced, depth test and write; their pixels set stencil 1; lit by
+      the sun unless the shadow map says it is blocked;
+   3. *ground shadows* (`vs_ground_shadow`): the terrain mesh again, placed as in step 1 with
+      a depth test, darkening the drawn ground where the shadow map has a caster;
+   4. *ground reset*: a full-screen triangle at the far plane where stencil is 0, so the
       sprites draw over the terrain as in the original;
-   4. *sprites* in their usual order with a depth test (no writes) against the models.
-3. Fog of war and interface as before.
+   5. *sprites* in their usual order with a depth test (no writes) against the models.
+4. Fog of war and interface as before.
+
+### Sun shadows
+
+Sprites bring their shadows painted in; the models cast theirs from a sun
+(`shadow.rs`, `shadow.wgsl`; `shadows=on|off`).
+
+- **The sun** is the light the models were already shaded by, the game's
+  `SetLight(-15, 14, 30)` (world: from the west, from the south, i.e. the viewer's side, and
+  56° up). Shadows therefore fall east-north-east, to the right and up on the screen, about
+  0.7 × the caster's height long, consistent with the models' own Lambert light. Open
+  point: the sprites' painted shadows (units, trees) are short blobs leaning a little to
+  the left, i.e. a higher sun from the east; `shadow::LIGHT` is the one constant to change
+  (it lights the models too, so both move together).
+- **One shadow map**, `Depth32Float`, 2048², orthographic along the sun. It is fitted each
+  frame to the models drawn (their culling margin grows so casters just off the screen still
+  cast into it) within 1.1 window diagonals of the window centre: the side is rounded up to a
+  half octave (at least 384 world px) and the corner snapped to whole texels, so shadows of
+  still models do not swim while others move or the view scrolls. The fixed and the free
+  camera are fitted the same way; under the free camera the far ground beyond the reach gets
+  no shadows (they fade over the last fifth), no cascades.
+- **Casters**: the model pipeline's own `vs_main` with the sun's matrix in the globals, so the
+  skinning from the bone texture, physics palettes, morphs, fractures and the procedural
+  collapse are exactly as drawn; `fs_shadow` (`model_shadow.wgsl`) drops what `fs_main`
+  drops: alpha cut-outs, cut and torn-out parts, dissolved rot, a cap's outline; the half
+  transparent fade casts a dithered half shadow. Slope-scaled depth bias (1.5) in the pass.
+- **Receivers**: `sun_visibility` (3×3 taps of a comparison sampler with linear filtering,
+  i.e. 36 compared texels, spread over at least 1.8 world px or one texel) with a normal
+  offset of 1.5 texels and a small depth bias. On models it scales the direct (Lambert)
+  term, so a shadowed side keeps the ambient half: a rider shades his horse, a bear the man
+  under it. On the ground the terrain mesh is redrawn darkening by up to 42 %. Water is only
+  a tint of the ground, so a ship's shadow lies on the lakebed colour, which reads right.
+- **Sprites** (trees, buildings, the units without a model) neither cast into the map nor
+  receive from it.
+- **WebGL2**: a depth texture with a comparison sampler (`sampler2DShadow`), a uniform block,
+  no storage buffers; one more `vec3` varying in the model shader (13 of the 15).
 
 Sprites therefore keep the original painter's order among themselves and with the ground,
 and meet the models through the depth buffer: each sprite is a vertical billboard at its
@@ -565,6 +606,11 @@ Windows 11 ARM64, Snapdragon X (Adreno, DX12), release build, 1024 × 768, `engm
 | `Miss7E01` start | 72 | 180–196 |
 | `Miss7E01`, free camera turned | 72 | 143–157 |
 | `Miss7E03` battle (marching, firing, dying) | 274 (53 poses) | 55 |
+
+Shadows (`shadows=on`): Monongahela `battle3` at tick 1500, 1600 × 900, 2686 models drawn
+(65 poses): 26.3–31.0 ms per driver frame with shadows, 28.7–36.9 ms without (four
+alternating runs of 120 frames each, simulation included). The shadow pass is lost in
+that noise; it repeats the vertex work of the models once more at 2048².
 
 About 17 µs of GPU time per drawn musketeer. Poses are cheap (one per distinct clip frame);
 the cost is the vertex work, so LODs and fewer triangles per figure are the next lever.

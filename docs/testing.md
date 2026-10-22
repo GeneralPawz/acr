@@ -120,6 +120,7 @@ its label to appear.
 | `{"cmd": "dialogs", "policy": "report"}` | `auto` or `report` |
 | `{"cmd": "camera", "x": 3000, "y": 9000, "zoom": 5, "yaw_deg": 0, "pitch_deg": 10}` | the close-up bench's camera, see below |
 | `{"cmd": "spawn", "type": "EngM18", "x": 3000, "y": 9000, "dir": 0, "pose": "stand"}` | places a unit (bench) |
+| `{"cmd": "shadows", "on": false}` | sun shadows of the models forced off (`true`: on; no `on`: the `shadows` setting again); `ACR_SHADOWS=on\|off` does the same at start |
 | `{"cmd": "hit", "unit": 541, "cause": "musket", "region": "torso", "dir": [-1, 0], "energy": 80}` | a scripted hit (bench) |
 | `{"cmd": "record", "dir": "frames", "count": 20, "every": 3, "crop": [x, y, w, h]}` | `count` screenshots, one every `every` frames (= ticks in a game), as `<dir>/frame000.png`...; `prefix` changes `frame`; answers `paths` (only with `--drive-gpu`) |
 | `{"cmd": "quit"}` | ends the game |

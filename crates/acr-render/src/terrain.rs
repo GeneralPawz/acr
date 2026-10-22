@@ -23,6 +23,7 @@ use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
 use crate::model_renderer::DEPTH_FORMAT;
+use crate::shadow::ShadowMap;
 use crate::view3d::{COS_E, DEPTH_RANGE, Orbit, View3d};
 
 /// Light vector set at game start (`SetLight(-15, 14, 30)`, 0x46993B).
@@ -431,6 +432,10 @@ pub struct TerrainRenderer {
     depth_pipeline: wgpu::RenderPipeline,
     /// Depth buffer of the free camera's ground target.
     free_depth: Option<((u32, u32), wgpu::TextureView)>,
+    /// The models' shadows on the ground in the 3D pass (`terrain_shadow.wgsl`), made at
+    /// the first use (it needs the shadow map's layout).
+    shadow_pipeline: std::cell::OnceCell<wgpu::RenderPipeline>,
+    output: wgpu::TextureFormat,
     /// Vertices of the cells drawn by the last `render`.
     drawn: u32,
     zoom_pipeline: wgpu::RenderPipeline,
@@ -448,6 +453,9 @@ pub struct TerrainRenderer {
 }
 
 const GROUND_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Uint;
+/// `terrain.wgsl` with the shadow receiver and the ground-shadow pass.
+pub const TERRAIN_SHADOW_SHADER: &str =
+    concat!(include_str!("terrain.wgsl"), include_str!("shadow.wgsl"), include_str!("terrain_shadow.wgsl"));
 /// Depth of the free camera's ground target.
 const FREE_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
 
@@ -649,6 +657,8 @@ impl TerrainRenderer {
             free_pipeline,
             depth_pipeline,
             free_depth: None,
+            shadow_pipeline: std::cell::OnceCell::new(),
+            output,
             drawn: 0,
             zoom_pipeline,
             present_pipeline,
@@ -883,6 +893,68 @@ impl TerrainRenderer {
         }
         pass.set_pipeline(&self.depth_pipeline);
         pass.set_bind_group(0, &map.group, &[]);
+        pass.draw(0..self.drawn, 0..1);
+    }
+
+    /// Darkens the drawn ground where the models' shadows fall: in the 3D pass after
+    /// [`Self::render_depth`] (and the models, which cover it where they stand in front).
+    pub fn render_shadows(&self, device: &wgpu::Device, pass: &mut wgpu::RenderPass<'_>, shadow: &ShadowMap) {
+        let Some(map) = &self.map else { return };
+        if self.drawn == 0 || !shadow.active {
+            return;
+        }
+        let pipeline = self.shadow_pipeline.get_or_init(|| {
+            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("terrain shadow"),
+                source: wgpu::ShaderSource::Wgsl(TERRAIN_SHADOW_SHADER.into()),
+            });
+            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("terrain shadow"),
+                bind_group_layouts: &[Some(&self.layout), None, Some(&shadow.layout)],
+                immediate_size: 0,
+            });
+            // Black over the ground by the shadow's alpha; the target's alpha is kept.
+            let darken = wgpu::BlendState {
+                color: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::Zero,
+                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                    operation: wgpu::BlendOperation::Add,
+                },
+                alpha: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::Zero,
+                    dst_factor: wgpu::BlendFactor::One,
+                    operation: wgpu::BlendOperation::Add,
+                },
+            };
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("terrain shadow"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_ground_shadow"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: Some(crate::model_renderer::depth_test_only()),
+                multisample: Default::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_ground_shadow"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: self.output,
+                        blend: Some(darken),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        });
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, &map.group, &[]);
+        pass.set_bind_group(2, &shadow.group, &[]);
         pass.draw(0..self.drawn, 0..1);
     }
 }

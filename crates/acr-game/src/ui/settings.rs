@@ -42,6 +42,9 @@ pub struct Settings {
     /// ACR (#225, #254): new games use the optional hit-location rule (wounds, lost limbs,
     /// bleeding out); `hit_locations=on|off`, off (the original rules) by default.
     pub hit_locations: bool,
+    /// ACR: sun shadows of the 3D models (`shadows=on|off`, on by default;
+    /// docs/rendering-3d.md "Shadows").
+    pub shadows: bool,
 }
 
 /// `models=off|units|all`: sprites everywhere (the original), 3D units, 3D units and
@@ -112,6 +115,7 @@ impl Default for Settings {
             gore: Gore::Full,
             corpse_minutes: 5,
             hit_locations: false,
+            shadows: true,
         }
     }
 }
@@ -177,7 +181,7 @@ impl Settings {
         format!(
             "sound_volume={}\nmusic_volume={}\nmusic_mode={}\ngame_mode={}\nscroll_speed={}\nframe_time={}\n\
              resolution={}\nrecord={}\nrecord_file={hex}\ncontrols={controls}\nedge_scroll={}\n\
-             models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\nhit_locations={}\n",
+             models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\nhit_locations={}\nshadows={}\n",
             self.sound_volume,
             self.music_volume,
             self.music_mode,
@@ -189,6 +193,7 @@ impl Settings {
             u8::from(self.edge_scroll),
             self.corpse_minutes,
             if self.hit_locations { "on" } else { "off" },
+            if self.shadows { "on" } else { "off" },
         )
     }
 
@@ -227,6 +232,7 @@ impl Settings {
                 }
                 "camera" => s.camera = if value == "free" { CameraMode::Free } else { CameraMode::Fixed },
                 "hit_locations" => s.hit_locations = value == "on",
+                "shadows" => s.shadows = value != "off",
                 "corpse_minutes" => s.corpse_minutes = int.map_or(s.corpse_minutes, |v| v.clamp(1, 60) as u32),
                 "gore" => {
                     s.gore = match value {
@@ -263,6 +269,7 @@ mod tests {
             models: Models::Units,
             camera: CameraMode::Free,
             gore: Gore::Reduced,
+            shadows: false,
             corpse_minutes: 12,
             hit_locations: true,
         };

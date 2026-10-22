@@ -109,6 +109,8 @@ struct VsOut {
     // _PART (−1: gear, not torn by wound volumes)
     @location(10) @interpolate(flat) part: f32,
     @location(11) face: vec4<f32>,
+    // World position (sun shadows, shadow.wgsl).
+    @location(12) world: vec3<f32>,
 };
 
 fn texel(i: u32) -> vec4<f32> {
@@ -255,6 +257,7 @@ fn vs_main(v: VertexIn, inst: InstanceIn) -> VsOut {
     out.cut = vec4<f32>(clamp(keep, -1.0, 1.0), v.body.z, side, belly);
     out.part = v.body.x;
     out.face = v.face;
+    out.world = world;
     // A hair or beard variant this soldier does not wear: off screen.
     let variant = u32(round(v.body.w));
     if (variant > 0u && ((inst.extra.w >> (variant - 1u)) & 1u) == 0u) {
@@ -687,7 +690,10 @@ fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
         rgb = mix(rgb, mix(vec3<f32>(0.30, 0.02, 0.02), vec3<f32>(0.55, 0.25, 0.22), noise3(in.rest.xyz * 60.0)), gash);
         wet = max(wet, gash);
     }
-    let lit = globals.light.w + (1.0 - globals.light.w) * max(dot(n, globals.light.xyz), 0.0);
+    // The sun's direct light is blocked where a model's shadow falls (shadow.wgsl).
+    let vis = sun_visibility(in.world, n);
+    let sun = max(dot(n, globals.light.xyz), 0.0) * vis;
+    let lit = globals.light.w + (1.0 - globals.light.w) * sun;
     let albedo = rgb;
     rgb = rgb * lit;
     // Cloth: the fibres of the nap catch the light at grazing angles, a soft pale rim where
@@ -701,7 +707,7 @@ fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
     if (material.cloth.y > 0.0) {
         let h = normalize(globals.light.xyz - globals.forward.xyz);
         let spec = pow(max(dot(n, h), 0.0), 24.0);
-        rgb = rgb + material.cloth.y * spec * mix(vec3<f32>(1.0), albedo * 2.5, 0.5);
+        rgb = rgb + material.cloth.y * spec * vis * mix(vec3<f32>(1.0), albedo * 2.5, 0.5);
     }
     // Wet flesh: a tight highlight.
     if (wet > 0.0) {

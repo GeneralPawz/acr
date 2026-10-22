@@ -41,7 +41,7 @@ mod save;
 mod shouts;
 mod splatter;
 mod tears;
-mod three_d;
+pub(crate) mod three_d;
 mod trail;
 mod trample;
 use crate::unit_sounds::{self, SoundEvent};
