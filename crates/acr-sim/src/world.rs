@@ -287,6 +287,9 @@ pub struct Unit {
     /// Gathered load (`RAmount`) and its source type (`RType`).
     pub carried: i32,
     pub carry_type: Option<u8>,
+    /// Lasting wounds (only with [`crate::Rules::hit_locations`]; an unwounded unit adds
+    /// nothing to the state hash).
+    pub wounds: crate::wounds::Wounds,
 }
 
 impl Unit {
@@ -507,6 +510,9 @@ pub struct World {
     /// Nations run by an AI (`Nat+0x1a729` bit3): they search targets every 8th tick except
     /// towers, and their training buildings still shoot. Set by the host.
     pub ai: [bool; PLAYERS],
+    /// Optional rules of this game (from the game setup; the default is the original game).
+    /// Hashed only when not the default.
+    pub rules: crate::Rules,
 }
 
 /// Unit indices per 128 px cell (8 × 8 lock cells).
@@ -636,6 +642,7 @@ impl World {
             desant: Default::default(),
             armies: Default::default(),
             ai: [false; PLAYERS],
+            rules: Default::default(),
         }
     }
 
@@ -794,6 +801,7 @@ impl World {
             courage: 0,
             carried: 0,
             carry_type: None,
+            wounds: Default::default(),
         };
         if !unit.building && t.mobile() {
             self.occupancy.set_bar(cell.0, cell.1, lx);
@@ -1205,10 +1213,12 @@ impl World {
         ));
         // Formation groups count only once there are some, so the hashes of games without
         // them stay as they were.
-        if self.formation_groups.iter().all(|g| g.is_empty()) {
+        let hash = if self.formation_groups.iter().all(|g| g.is_empty()) {
             hash
         } else {
             state_hash(&(hash, &self.formation_groups))
-        }
+        };
+        // Likewise the optional rules, only when some are on.
+        if self.rules == crate::Rules::default() { hash } else { state_hash(&(hash, self.rules)) }
     }
 }

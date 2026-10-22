@@ -938,6 +938,30 @@ A building with sections (OB+0xaa ≠ 0, so every object of an `ADDSECTION` type
 - The fire state (OB+0xfd) keeps `c` in its first byte; when `c` changes both kinds start
   over (0x505487).
 
+### Hit locations (optional rule, #225)
+
+Not in the original game, so it is a rule of the game setup (`GameSetup::rules`,
+`acr_sim::Rules { hit_locations }`, copied to `World::rules` when the world is built) and
+off by default. Off, nothing changes: no random number is drawn, units carry no wounds and
+the state hash is the original's (`World::rules` and `Unit::wounds` add nothing to the hash
+while they are the default; `tests/wounds.rs` pins the hash of a fight). On:
+
+- Every hit by a unit (melee or a projectile with a sender, also an instant `RANDOM_KILL`)
+  on a unit with a body (not a building, a cannon (`COMPLEXROTATE`) or a ship) draws one
+  `rando()` in `MakeDamage` after the damage is known and before the hit is recorded:
+  `rando()·100 >> 15` picks the region torso (< 45), legs (< 70), arms (< 90) or head.
+- A hit the unit survives leaves a wound (`Unit::wounds`, hashed): legs slow its walk to
+  60 %, 36 % and at least 30 % of the rate after one, two and more leg wounds (the motion
+  handler's `RATE/16` step scale); one arm wound stops its ranged attacks: the attack choice
+  takes the first index without a weapon (melee) instead, walking up to the target, and a
+  shot already in its animation does not go off. Torso and head hits only cost life.
+- The region is in `HitRecord::region` for the renderer (wounds and blood, #183); it is
+  `None` without the rule.
+- Savegames keep the rule (version 3, at the end of the file); older saves load with the
+  original rules. Starting a game with it: set `rules.hit_locations` in the `GameSetup`, or
+  through the driver `{"cmd": "start", "random": {"seed": 5, "hit_locations": true}}`. There
+  is no menu entry yet.
+
 ### Worked timing (musketeer, 10 ticks/s)
 
 - First shot: `#PATTACK1` (63 frames, 32 ticks), then 7 ticks to the active frame 14. The

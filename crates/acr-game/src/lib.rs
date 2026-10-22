@@ -368,7 +368,12 @@ impl Game {
             difficulty: ui::Difficulty::default(),
             campaign: None,
         };
-        let setup = ui::GameSetup { kind: ui::GameKind::Mission(mission), players: Vec::new(), local_player: 0 };
+        let setup = ui::GameSetup {
+            kind: ui::GameKind::Mission(mission),
+            players: Vec::new(),
+            local_player: 0,
+            rules: Default::default(),
+        };
         self.start_game(Box::new(setup));
     }
 

@@ -185,6 +185,7 @@ mod tests {
         let data = assets.build();
         let map = M3dMap::parse(&vfs.read(&m.map).unwrap()).unwrap();
         let (mut world, _) = World::from_map(&map, &data.shapes, Arc::new(data.catalog), Arc::new(data.formations));
+        world.rules = setup.rules;
         let mut link = MissionLink::new(setup);
         let first = link.start(&paths);
         feed(vfs, &mut link, first);
@@ -215,6 +216,7 @@ mod tests {
             }),
             players: Vec::new(),
             local_player: 0,
+            rules: Default::default(),
         };
         let (mut world, mut link) = start(&mut vfs, &setup);
         let mut log = Log::default();

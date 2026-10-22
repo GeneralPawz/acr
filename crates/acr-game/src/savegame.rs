@@ -22,6 +22,7 @@
 //! dialogs: count, per close: tick delta | answer
 //! diplomacy (version 2): count, per input: tick delta | 0 request bytes, or 1 building index
 //! camera x | camera y (world pixels) | selection: count + ids | groups: count, per group: ids
+//! rules (version 3): bits of the optional rules of the setup (bit 0 hit locations, #225)
 //! ```
 //!
 //! The name, time and setup come first so that the load dialog can list savegames
@@ -35,7 +36,7 @@ use crate::ui::setup::{Control, Difficulty, MapSize, MissionSetup, PlayerSetup, 
 use crate::ui::{GameKind, GameSetup};
 
 const MAGIC: &[u8; 4] = b"ACRS";
-const VERSION: u64 = 2;
+const VERSION: u64 = 3;
 
 /// An input of the diplomacy panel, given to DipServer between two ticks.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -192,13 +193,14 @@ impl SaveGame {
         for g in &self.groups {
             w.ids(g);
         }
+        w.u(u64::from(self.setup.rules.hit_locations));
         w.0
     }
 
     pub fn decode(data: &[u8]) -> Result<Self, SaveError> {
         let mut r = Reader { data, pos: 0 };
         let (name, time, version) = r.header()?;
-        let setup = r.setup()?;
+        let mut setup = r.setup()?;
         let tick = r.u()?;
         let hash = u64::from_le_bytes(r.take(8)?.try_into().expect("8 bytes"));
         let replay = Replay::decode(&r.bytes()?).map_err(|e| SaveError(e.to_string()))?;
@@ -227,6 +229,10 @@ impl SaveGame {
         let selected = r.ids()?;
         let n = r.len()?;
         let groups = (0..n).map(|_| r.ids()).collect::<Result<Vec<_>, _>>()?;
+        if version >= 3 {
+            let bits = r.u()?;
+            setup.rules = acr_sim::Rules { hit_locations: bits & 1 != 0 };
+        }
         if r.pos != data.len() {
             return Err(err("trailing bytes"));
         }
@@ -542,7 +548,8 @@ impl<'a> Reader<'a> {
             players.push(PlayerSetup { name, nation, color, team, control });
         }
         let local_player = self.small()?;
-        Ok(GameSetup { kind, players, local_player })
+        // The rules come at the end of the file (version 3).
+        Ok(GameSetup { kind, players, local_player, rules: acr_sim::Rules::default() })
     }
 }
 
@@ -639,6 +646,7 @@ mod tests {
                 },
             ],
             local_player: 0,
+            rules: Default::default(),
         }
     }
 
@@ -772,13 +780,37 @@ mod tests {
             groups: Vec::new(),
         };
         let mut bytes = save.encode();
-        // Version 1 had no diplomacy section: drop the version and the empty count.
-        assert_eq!(bytes[4], 2);
+        // Version 1 had no diplomacy section and no rules: drop the version, the empty count
+        // and the rules.
+        assert_eq!(bytes[4], 3);
         bytes[4] = 1;
+        assert_eq!(bytes.pop(), Some(0));
         let cut = bytes.len() - 4;
         assert_eq!(bytes[cut..], [0, 0, 0, 0]);
         bytes.remove(cut);
         assert_eq!(SaveGame::decode(&bytes).unwrap(), save);
+    }
+
+    #[test]
+    fn keeps_the_optional_rules() {
+        let mut save = SaveGame {
+            name: b"r".to_vec(),
+            time: SaveTime::default(),
+            setup: setup(),
+            tick: 0,
+            hash: 0,
+            log: Log::default(),
+            camera: [0, 0],
+            selected: vec![],
+            groups: vec![],
+        };
+        save.setup.rules.hit_locations = true;
+        let mut bytes = save.encode();
+        assert_eq!(SaveGame::decode(&bytes).unwrap(), save);
+        // A version 2 save has no rules: the original ones.
+        bytes[4] = 2;
+        assert_eq!(bytes.pop(), Some(1));
+        assert_eq!(SaveGame::decode(&bytes).unwrap().setup.rules, acr_sim::Rules::default());
     }
 
     #[test]

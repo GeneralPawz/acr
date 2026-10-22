@@ -385,9 +385,12 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
                         u.max_delay = u.delay;
                     }
                     if weapon {
-                        shoot(w, i, aim, ns - 1, my_z, en_z);
-                        if t.sector_weapon.is_some_and(|s| usize::from(s.att) == ns - 1) {
-                            crate::artillery::sector_damage(w, i);
+                        // A wounded arm (#225, optional rule): the shot does not go off.
+                        if !w.units[i].wounds.disarmed() {
+                            shoot(w, i, aim, ns - 1, my_z, en_z);
+                            if t.sector_weapon.is_some_and(|s| usize::from(s.att) == ns - 1) {
+                                crate::artillery::sector_damage(w, i);
+                            }
                         }
                     } else if let Aim::Unit(j) = aim {
                         make_damage(w, j, damage, Some(i), (ns - 1) as u8);
@@ -443,6 +446,11 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
         && let Some(k) = (0..ta.attacks.len()).rev().find(|&k| ta.attacks[k].no_pause && fits(k))
     {
         chosen = Some(k);
+    }
+    if u.wounds.disarmed() && chosen.is_some_and(|k| ta.attacks[k].weapon.is_some()) {
+        // A wounded arm (#225, optional rule): no ranged attack; the first index without a
+        // weapon instead (melee), walking up to the target.
+        chosen = (0..ta.attacks.len()).find(|&k| ta.attacks[k].weapon.is_none() && ta.attacks[k].mask & e_mat != 0);
     }
     let Some(k) = chosen else {
         let (ex, ey) = e_pos.pixels();
@@ -983,7 +991,8 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
         }
         if wf & RANDOM_KILL != 0 && w.random.rando() < 1310 && !vt.building && !vt.no25 {
             frighten(w, victim, s, att);
-            record_hit(w, victim, s, record.cause, true);
+            let region = crate::wounds::pick_region(w, victim);
+            record_hit(w, victim, s, record.cause, true, region);
             record_death(w, victim, record);
             die(w, victim);
             w.units[s].kills = w.units[s].kills.saturating_add(1);
@@ -1010,11 +1019,16 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
         }
     }
     let dmg = dmg.max(1);
+    // Hit locations (#225, optional, not in the original): the region of the blow.
+    let region = if sender.is_some() { crate::wounds::pick_region(w, victim) } else { None };
     if let Some(s) = sender {
-        record_hit(w, victim, s, record.cause, w.units[victim].life <= dmg);
+        record_hit(w, victim, s, record.cause, w.units[victim].life <= dmg, region);
     }
     if w.units[victim].life > dmg {
         w.units[victim].life -= dmg;
+        if let Some(r) = region {
+            crate::wounds::wound(w, victim, r);
+        }
         if !vt.economy.sections.is_empty() {
             section_damage(w, victim);
         }
@@ -1216,10 +1230,20 @@ pub struct HitRecord {
     pub killed: bool,
     /// Whether the victim is a building.
     pub building: bool,
+    /// The body region hit, with the hit-locations rule ([`crate::Rules::hit_locations`]);
+    /// `None` without it and for buildings, cannons and ships.
+    pub region: Option<crate::wounds::HitRegion>,
 }
 
 /// Notes a hit of `sender` on `victim` (render only, not hashed).
-fn record_hit(w: &mut World, victim: usize, sender: usize, cause: DeathCause, killed: bool) {
+fn record_hit(
+    w: &mut World,
+    victim: usize,
+    sender: usize,
+    cause: DeathCause,
+    killed: bool,
+    region: Option<crate::wounds::HitRegion>,
+) {
     let (vx, vy) = w.units[victim].pos.pixels();
     let (sx, sy) = w.units[sender].pos.pixels();
     if w.hits.len() >= HIT_CAP {
@@ -1234,6 +1258,7 @@ fn record_hit(w: &mut World, victim: usize, sender: usize, cause: DeathCause, ki
         cause,
         killed,
         building: w.units[victim].building,
+        region,
     });
 }
 
