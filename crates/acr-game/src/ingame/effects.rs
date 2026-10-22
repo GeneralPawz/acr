@@ -408,6 +408,7 @@ mod tests {
             damage: 0,
             sender: None,
             att: 0,
+            plough: Default::default(),
             dest_obj: None,
         }
     }

@@ -501,6 +501,10 @@ pub struct World {
     /// set by the projectiles around their damage so that hits record where the ball really
     /// came from (a ricochet) rather than the attacker. Render only, not hashed.
     pub hit_dir: Option<(i32, i32)>,
+    /// What is left of a ploughing ball ([`crate::projectile::Plough`]) while it explodes,
+    /// handed to its bounce. Only during `explode` and only with the hit-locations rule;
+    /// not hashed.
+    pub plough_carry: Option<crate::projectile::Plough>,
     /// Coast places, islands and the computer players' landing setup (derived from the map
     /// and refreshed every tick; not hashed, the landings' orders are in `brigades`).
     pub desant: crate::desant::Desant,
@@ -639,6 +643,7 @@ impl World {
             hits: Default::default(),
             impacts: Default::default(),
             hit_dir: None,
+            plough_carry: None,
             desant: Default::default(),
             armies: Default::default(),
             ai: [false; PLAYERS],
