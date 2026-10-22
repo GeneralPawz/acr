@@ -20,12 +20,7 @@ pub const FUNCTIONS: &[ApiFn] = &[
         status: Status::Partial("AttackObj with the given priority; nTimes is not modelled"),
         handler: obj_attack_obj,
     },
-    ApiFn {
-        name: "OBJ_AttackPoint",
-        original: 0x56f3a2,
-        status: Status::Partial("moves to the point; no ranged ground attack in acr-sim yet"),
-        handler: obj_attack_point,
-    },
+    ApiFn { name: "OBJ_AttackPoint", original: 0x56f3a2, status: Status::Done, handler: obj_attack_point },
     ApiFn {
         name: "OBJ_LeaveMine",
         original: 0x56f1d6,
@@ -53,6 +48,7 @@ pub fn order_type(u: &acr_sim::Unit) -> u32 {
         None => 0,
         Some(Order::SendTo { .. } | Order::SmartSendTo { .. }) => 12,
         Some(Order::Attack { .. }) => 3,
+        Some(Order::AttackPoint { .. }) => 0x4C,
         Some(Order::Enter { .. }) => 0xF2,
         Some(Order::Build { .. }) => 0x59,
         Some(Order::Gather { .. }) => 0xEE,
@@ -96,13 +92,16 @@ fn obj_attack_obj(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Some(target) = api.object(c.u16(1)?).filter(|u| u.living()).map(|u| u.id) else { return Ok(0) };
     let _ = owner;
     api.attack(id, target, c.u8(2)?, false);
+    // TODO(acr-sim): nTimes (shots) of an attack on an object.
     Ok(1)
 }
 
 /// `void OBJ_AttackPoint(word index, int x, int y, byte prio, byte ordType, word nTimes)`.
 fn obj_attack_point(api: &mut Api, c: &mut Call) -> Result<u32> {
-    let Some((id, owner)) = unit_arg(api, c, 0)? else { return Ok(0) };
-    api.commands.push(Command::Move { player: owner, units: vec![id], x: c.i32(1)?, y: c.i32(2)? });
+    let Some((id, _)) = unit_arg(api, c, 0)? else { return Ok(0) };
+    let (x, y, prio, typ, times) = (c.i32(1)?, c.i32(2)?, c.u8(3)?, c.u8(4)?, c.u16(5)?);
+    let p = acr_sim::combat::Placement::from_type(typ);
+    acr_sim::artillery::attack_point(api.world, id.0 as usize, x, y, prio, p, times);
     Ok(1)
 }
 

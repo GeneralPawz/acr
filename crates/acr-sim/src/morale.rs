@@ -121,16 +121,20 @@ pub struct MoraleState {
     pub stamp: Vec<u32>,
     pub hi: Vec<u8>,
     pub val: Vec<u16>,
+    /// The fear type the last `FEARk` upgrade set (global 0x2778840), which the `FEAR`
+    /// upgrade wrongly uses.
+    pub fear_index: usize,
 }
 
 /// The engine's ring tables (0x28a6f10, built at 0x546ac0): ring `r` holds the offsets with
 /// `trunc(sqrt(a² + b²)) == r`, ordered by `a`, then `b`.
 pub fn ring(r: usize) -> &'static [(i32, i32)] {
+    const EMPTY: &[(i32, i32)] = &[];
     static RINGS: OnceLock<Vec<Vec<(i32, i32)>>> = OnceLock::new();
     let rings = RINGS.get_or_init(|| {
-        let mut v = vec![Vec::new(); 11];
-        for a in -10i32..=10 {
-            for b in -10i32..=10 {
+        let mut v = vec![Vec::new(); 90];
+        for a in -90i32..90 {
+            for b in -90i32..90 {
                 let d = (a * a + b * b) as u32;
                 let r = d.isqrt() as usize;
                 if r < v.len() {
@@ -140,7 +144,7 @@ pub fn ring(r: usize) -> &'static [(i32, i32)] {
         }
         v
     });
-    &rings[r]
+    rings.get(r).map_or(EMPTY, Vec::as_slice)
 }
 
 /// The tick counter `tmtmt` while the current step runs.

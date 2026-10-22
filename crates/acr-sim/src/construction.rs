@@ -70,6 +70,37 @@ pub fn site(w: &World, kind: TypeId, x: i32, y: i32) -> Option<Pos> {
     footprint_free(w, t, pos).then_some(pos)
 }
 
+/// `RESSUBST` (CreateObject 0x515b62): a mine placed within 64 px of a deposit of another
+/// resource becomes the mine of that resource — the types follow the gold mine in every
+/// nation: iron +1, coal +2, stone +3, food +4, wood +5. The first deposit near enough
+/// decides; the price paid stays the original's.
+fn res_subst(w: &World, t: &crate::catalog::ObjectType, kind: TypeId, pos: Pos) -> TypeId {
+    if !t.res_subst {
+        return kind;
+    }
+    let (px, py) = pos.pixels();
+    let mask = t.economy.producer.map_or(0, |p| p.mask);
+    for d in &w.deposits {
+        if d.resource >= 8 || crate::trig::norma(d.x - px, d.y - py) >= 64 {
+            continue;
+        }
+        if u32::from(mask) == 1 << d.resource {
+            return kind;
+        }
+        let off = match d.resource {
+            crate::economy::IRON => 1,
+            crate::economy::COAL => 2,
+            crate::economy::STONE => 3,
+            crate::economy::FOOD => 4,
+            crate::economy::WOOD => 5,
+            _ => 0,
+        };
+        let k = TypeId(kind.0 + off);
+        return if usize::from(k.0) < w.catalog.len() { k } else { kind };
+    }
+    kind
+}
+
 /// `CreateObject` for a building placed by a player at world pixel `(x, y)`: checks the
 /// position and the price, pays, and creates the construction site. `None` if refused.
 pub fn place(w: &mut World, player: u8, kind: TypeId, x: i32, y: i32) -> Option<EntityId> {
@@ -96,6 +127,7 @@ pub fn place(w: &mut World, player: u8, kind: TypeId, x: i32, y: i32) -> Option<
     for (s, c) in stock.iter_mut().zip(&cost) {
         *s -= c;
     }
+    let kind = res_subst(w, &t, kind, pos);
     let id = w.spawn(kind, player, pos, 0);
     let u = &mut w.units[id.0 as usize];
     u.stage = 0;
@@ -145,6 +177,10 @@ pub fn next_stage(w: &mut World, b: usize) {
         }
     } else {
         u.life = (u.life + 20).min(u.max_life);
+        if u.life >= u.max_life {
+            // A full repair puts a fire out (0x523b63).
+            (u.burning, u.fire) = (false, 0);
+        }
     }
 }
 

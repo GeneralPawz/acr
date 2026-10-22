@@ -297,10 +297,43 @@ pub fn building_link(w: &mut World, b: usize) {
         crate::upgrade::research_link(w, b);
         return;
     }
+    if w.units[b].unconstruct {
+        unconstruct_link(w, b);
+        return;
+    }
     if !w.units[b].queue.is_empty() {
         production_link(w, b);
     }
     mine_link(w, b);
+}
+
+/// The `UNCONSTRUCT` order (link 0x4a0d47), once per tick: first the units inside leave, one
+/// per tick; then the building loses a stage per tick (its first tick reaches the last
+/// stage again and so re-runs the completion, as in the engine); at stage 0 it is gone and
+/// the owner gets its price back.
+fn unconstruct_link(w: &mut World, b: usize) {
+    if !w.units[b].inside.is_empty() {
+        let first = w.units[b].inside.remove(0);
+        release(w, b, vec![first]);
+        return;
+    }
+    if w.units[b].stage <= 0 {
+        let (owner, kind) = (w.units[b].owner, w.units[b].kind);
+        let cost = unit_cost(w, owner, kind, None);
+        let id = w.units[b].id;
+        w.remove(id);
+        let pl = &mut w.players[usize::from(owner)];
+        for (s, c) in pl.resources.iter_mut().zip(&cost).take(6) {
+            *s = s.saturating_add(*c);
+        }
+        census(w, owner);
+        return;
+    }
+    let u = &mut w.units[b];
+    u.life = 100;
+    u.stage -= 1;
+    crate::construction::next_stage(w, b);
+    w.units[b].stage -= 1;
 }
 
 /// `ProduceObjLink` (0x49eeb7).
@@ -614,8 +647,13 @@ pub fn enter_link(w: &mut World, i: usize, building: EntityId, prio: u8) {
 
 /// Lets everybody out of a building at its born points.
 pub fn leave(w: &mut World, b: usize) {
-    let catalog = w.catalog.clone();
     let inside = std::mem::take(&mut w.units[b].inside);
+    release(w, b, inside);
+}
+
+/// Puts units of building `b` (already off its list) back outside at its born points.
+fn release(w: &mut World, b: usize, inside: Vec<crate::world::EntityId>) {
+    let catalog = w.catalog.clone();
     let bt = catalog.get(w.units[b].kind);
     let (bx, by) = base_cell(bt, w.units[b].pos);
     let pts = bt.economy.born_points.clone();

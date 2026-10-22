@@ -74,6 +74,10 @@ pub enum Command {
     /// Attack-move to a point (`SelSendAndKill`, a group move of priority 0x80): units fight
     /// the enemies they meet on the way and then go on to their places.
     AttackMove { player: PlayerId, units: Vec<EntityId>, x: i32, y: i32 },
+    /// Bombard the ground at a point (`ATTACKGROUND` 0x4d870c through `NewAttackPoint`,
+    /// priority 0x90): units that may (`ARTPODGOTOVKA`, cannons) fire at it until stopped,
+    /// with `ADDRANGE` % of their range and `ADDPAUSE` % of their reload.
+    AttackGround { player: PlayerId, units: Vec<EntityId>, x: i32, y: i32 },
     /// Patrol between the units' positions and their places around a point (`Patrol`
     /// 0x4ea2c0): back and forth, fighting enemies on the way like an attack-move.
     Patrol { player: PlayerId, units: Vec<EntityId>, x: i32, y: i32 },
@@ -108,7 +112,8 @@ impl Command {
             | Command::HoldFire { player, .. }
             | Command::AttackMove { player, .. }
             | Command::Patrol { player, .. }
-            | Command::MoveFacing { player, .. } => *player,
+            | Command::MoveFacing { player, .. }
+            | Command::AttackGround { player, .. } => *player,
         }
     }
 }

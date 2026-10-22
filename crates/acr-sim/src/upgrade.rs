@@ -220,7 +220,18 @@ pub fn perform(w: &mut World, player: u8, up: UpgradeId, maker: Option<usize>) {
             if let Some(b) = maker.filter(|_| (ctg::UPSTAGE0..ctg::UPSTAGE0 + 5).contains(category)) {
                 upstage(w, b, category - ctg::UPSTAGE0);
             }
-            // UNCONSTRUCT (0x4a0f76) is not reproduced.
+            // UNCONSTRUCT (0x4a0f76): a finished building drops its orders (the queue goes,
+            // without refund) and is taken down.
+            if *category == ctg::UNCONSTRUCT
+                && let Some(b) = maker
+                && w.units[b].building
+                && w.units[b].stage >= w.max_stage(&w.units[b])
+            {
+                let u = &mut w.units[b];
+                u.queue.clear();
+                u.orders.clear();
+                u.unconstruct = true;
+            }
         }
         Effect::None => {}
     }
@@ -351,15 +362,45 @@ fn apply_unit(w: &mut World, player: u8, kind: TypeId, category: u8, slots: &Slo
                 u.max_life = u.life;
             }
         }
+        (ctg::FEAR, _) => {
+            // 0x531c26: four times on the type of the last FEARk upgrade (an engine bug).
+            let k = w.morale.fear_index;
+            let a = adv_mut(w, player, kind);
+            if let Some(f) = a.fear_factor.get_mut(k) {
+                for _ in 0..4 {
+                    *f = i32::from(v.apply(*f) as u16);
+                }
+            }
+        }
+        (c, _) if (ctg::FEAR0..ctg::FEAR0 + 6).contains(&c) => {
+            // FEARk (0x532642, 0x531bd1): FearFactor[k] (FEAR4/5 write past the array: lost).
+            let k = usize::from(c - ctg::FEAR0);
+            w.morale.fear_index = k;
+            let a = adv_mut(w, player, kind);
+            if let Some(f) = a.fear_factor.get_mut(k) {
+                *f = i32::from(v.apply(*f) as u16);
+            }
+        }
+        (ctg::SPEED, _) => {
+            // Rate[12] (u8, 0x5310ce): the walking speed of every stance but 0.
+            let a = adv_mut(w, player, kind);
+            for r in &mut a.rate {
+                *r = i32::from(v.apply(*r) as u8);
+            }
+        }
+        (ctg::GETRES, _) => {
+            // ResEff (ADC+0xef, 0x5318ea): what a base credits of a delivered load.
+            let a = adv_mut(w, player, kind);
+            a.res_eff = i32::from(v.apply(a.res_eff) as i16);
+        }
         (ctg::SINGLE_ATTPAUSE, _) => {
             // PersonalDelay (u8 OB+0xa7) of the researching building (0x5319b3).
             if let Some(b) = maker {
                 w.units[b].personal_delay = i32::from(v.apply(w.units[b].personal_delay) as u8);
             }
         }
-        // SPEED (`Rate`, which no motion code here reads), WEAPON and PRECISE (no effect in
-        // the engine either), GETRES, FISHING, SHAR and FEAR have no effect in this
-        // simulation.
+        // WEAPON and PRECISE have no effect in the engine either; FISHING and SHAR have none
+        // here.
         _ => {}
     }
 }

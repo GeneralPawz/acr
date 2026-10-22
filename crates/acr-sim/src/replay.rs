@@ -275,6 +275,12 @@ impl Writer {
                 self.i(*y);
                 self.0.push(*dir);
             }
+            Command::AttackGround { player, units, x, y } => {
+                self.0.extend_from_slice(&[23, *player]);
+                self.ids(units);
+                self.i(*x);
+                self.i(*y);
+            }
         }
     }
 }
@@ -368,6 +374,7 @@ impl<'a> Reader<'a> {
             20 => Command::AttackMove { player, units: self.ids()?, x: self.i()?, y: self.i()? },
             21 => Command::Patrol { player, units: self.ids()?, x: self.i()?, y: self.i()? },
             22 => Command::MoveFacing { player, units: self.ids()?, x: self.i()?, y: self.i()?, dir: self.byte()? },
+            23 => Command::AttackGround { player, units: self.ids()?, x: self.i()?, y: self.i()? },
             _ => return Err(ReplayError("unknown command")),
         })
     }
@@ -407,6 +414,7 @@ mod tests {
                 Command::AttackMove { player: 3, units: vec![EntityId(7)], x: -5, y: 900 },
                 Command::Patrol { player: 3, units: vec![EntityId(7)], x: 40, y: 50 },
                 Command::MoveFacing { player: 4, units: vec![EntityId(8)], x: 64, y: -3, dir: 248 },
+                Command::AttackGround { player: 3, units: vec![EntityId(8)], x: 4000, y: 50 },
             ],
         );
         r.checkpoints.push((100, 0xdead_beef_0123_4567));
@@ -414,7 +422,7 @@ mod tests {
         let back = Replay::decode(&bytes).unwrap();
         assert_eq!(back, r);
         assert_eq!(back.entries.len(), 2, "empty ticks are not stored");
-        assert_eq!(back.commands_at(9).len(), 22);
+        assert_eq!(back.commands_at(9).len(), 23);
         assert!(back.commands_at(5).is_empty());
     }
 

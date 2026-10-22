@@ -38,7 +38,8 @@ impl Api<'_> {
     /// `OneObject::AttackObj(target, prio, ordType)` (0x51a930) at once, as the scripts call
     /// it: `front` is order type 1 (in front of the current orders).
     pub fn attack(&mut self, id: acr_sim::world::EntityId, target: acr_sim::world::EntityId, prio: u8, front: bool) {
-        acr_sim::combat::attack_obj_ex(self.world, id.0 as usize, target.0 as usize, prio, front);
+        let p = if front { acr_sim::combat::Placement::Front } else { acr_sim::combat::Placement::Replace };
+        acr_sim::combat::attack_obj_ex(self.world, id.0 as usize, target.0 as usize, prio, p);
     }
 
     /// Remaps a nation argument through `AssignTBL`.

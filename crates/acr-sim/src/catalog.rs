@@ -445,12 +445,17 @@ pub struct Attack {
     pub pause: i32,
     /// `DAMAGE i v` (`MaxDamage`).
     pub damage: i32,
+    /// `MinDamage` (`EXDAMAGE i min max`; `DAMAGE` sets both): the damage of a garrisoned
+    /// building without shooters inside.
+    pub min_damage: i32,
     /// `DAMAGEDEC i d`: shot damage halves every `d` px (default 0xFFFF).
     pub damage_dec: i32,
     /// `WEAPONKIND i KIND` (`NRES.DAT [WEAPONS]`; default `MECH`).
     pub kind: String,
     /// `WEAPON i ID` (`WEAPON.NDS`): the attack shoots.
     pub weapon: Option<String>,
+    /// The index of `weapon` in [`Catalog::weapons`].
+    pub weapon_id: Option<u16>,
     /// Materials this index may attack (`CANKILL` for all, `ATTMASK i` per index).
     pub mask: u8,
     /// `NOPAUSEDATTACK i`: usable while reloading, and does not reset the reload.
@@ -465,9 +470,11 @@ impl Default for Attack {
             add_radius: 0,
             pause: 0,
             damage: 0,
+            min_damage: 0,
             damage_dec: 0xFFFF,
             kind: "MECH".into(),
             weapon: None,
+            weapon_id: None,
             mask: 0,
             no_pause: false,
         }
@@ -547,6 +554,40 @@ pub struct ObjectType {
     pub trans_x: u16,
     /// All animations by upper-case name (`#ATTACK1`, `#DEATH`, ...).
     pub anims: BTreeMap<String, AnimInfo>,
+    /// `SETACTIVEPOINT` muzzle points by animation (upper-case name).
+    pub muzzles: BTreeMap<String, Muzzle>,
+    /// `EXPLMEDIA NAME r` (NM+0x28de/+0x28df): the media a projectile hitting the object
+    /// explodes in, and the object's size for round damage (px; buildings 5).
+    pub expl_media: (i32, i32),
+    /// `EXPLRADIUS r` (NM+0x2920): more size for round damage (px).
+    pub expl_radius: i32,
+    /// `EX_SHOTS` / `EX_SHOTS2`: a building's shot points.
+    pub shot_points: Vec<ShotPoint>,
+    /// `3DBARS n (x y l w h)*n` (NM+0x2892): the boxes of a building that block shots and
+    /// that shooters aim at.
+    pub bars: Vec<[i32; 5]>,
+    /// `RESSUBST` (NM+0x172b bit6): a mine that becomes the mine of the deposit it is built
+    /// on.
+    pub res_subst: bool,
+    /// `ARTPODGOTOVKA` (NM+0x172c bit1): the player may order attacks on the ground.
+    pub ground_attack: bool,
+    /// `RASTRATA_NA_VISTREL i n (RES v)*n` / `..VISTREL2 i1 i2 n ..` (NM+0x2927..): shots of
+    /// attack index `i1` or `i2` cost these resources (cannons: iron and coal).
+    pub shot_cost: Option<(u8, u8, [i32; 8])>,
+    /// `WEAPONINSECTOR a r1 r2 d1 d2 sector pct` (NM+0x2940): canister. Attack index `a`
+    /// hurts everything from `r1` to `r2` px within `sector` of the facing, `d1` falling to
+    /// `d2` with distance and to `pct` % at the sector's edge.
+    pub sector_weapon: Option<SectorWeapon>,
+    /// `FIRELIMIT v` (u8 NM+0x1762, buildings 15): hits of slow-burning weapons before the
+    /// object burns.
+    pub fire_limit: i32,
+    /// `EVROSHOT k` (NM+0x293f; buildings 100, `EVROUNIT` units 1): with a European unit
+    /// first inside, an Indian building fires only its attack index `k` points.
+    pub evro_shot: i32,
+    /// `PROMAX v` / `PROMAX2 k v` (NM+0x1771[8]): the miss roll (out of 101) of attackers of
+    /// column `k` against the garrison; `PROMAXCTG c` (NM+0x1779): this unit's column.
+    pub promax: [i32; 8],
+    pub promax_ctg: u8,
     /// `VISION` (0..=8, default 0): the fog reveal pattern.
     pub vision: u8,
     /// Prices, production, housing, mines.
@@ -565,6 +606,52 @@ pub struct ObjectType {
     pub shooters_formation: bool,
     /// The characteristics upgrades can change, as every player starts with them.
     pub adv: std::sync::Arc<Adv>,
+}
+
+/// The muzzle points of an attack animation (`SETACTIVEPOINT #ANIM f (x y)*R`, anim+0xa/+0xe;
+/// `SETACTIVEPOINT2` gives two sets and two shots).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Muzzle {
+    /// `(x, y)` per stored direction, two sets after each other with `SETACTIVEPOINT2`.
+    pub points: Vec<(i32, i32)>,
+    pub sets: u8,
+    /// Stored directions of the animation.
+    pub directions: i32,
+    /// `USERLC` offset (`dx dy`) of the sprite pack of each frame (`NF.dx`, `NF.dy`).
+    pub frame_offsets: Vec<(i32, i32)>,
+}
+
+/// `WEAPONINSECTOR` (the struct at NM+0x2940).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SectorWeapon {
+    pub att: u8,
+    pub r1: i32,
+    pub r2: i32,
+    pub d1: i32,
+    pub d2: i32,
+    pub sector: i32,
+    pub pct: i32,
+}
+
+/// One `EX_SHOTS`/`EX_SHOTS2` point of a building (NM+0x17ae..): where a shot leaves, the
+/// ranges and sector it covers, its reload and attack index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ShotPoint {
+    /// x in the picture (+0x17ae), screen y (+0x17b2), height (+0x17ba) and the visual
+    /// offset (+0x17b6).
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
+    pub extra: i32,
+    /// Range from this point in px (+0x17ce, +0x17d2).
+    pub r_min: i32,
+    pub r_max: i32,
+    /// Direction (+0x17c6) and half-width (+0x17ca) of the sector it fires into.
+    pub dir: u8,
+    pub sector: i32,
+    /// Reload of this point (+0x17be, counts 2 per tick) and attack index (+0x17c2).
+    pub reload: i32,
+    pub att: u8,
 }
 
 /// The per-player characteristics of a type that upgrades change (`AdvCharacter`, built
@@ -591,6 +678,11 @@ pub struct Adv {
     pub farm: i32,
     /// `FEARFACTOR t v` (u16, ADC+0xf1): the base panic chance for fear type `t`.
     pub fear_factor: [i32; 4],
+    /// `RATE i v` (u8 ADC+0x9c, default 16): the walking speed in stance `i + 1`, in 1/16
+    /// (`SPEED` upgrades change it).
+    pub rate: [i32; ATTACK_SLOTS],
+    /// `ResEff` (ADC+0xef, 100): percent of a load a base credits (`GETRES` upgrades).
+    pub res_eff: i32,
 }
 
 /// Morale keywords of a type (parser 0x4f372c).
@@ -687,6 +779,72 @@ impl ObjectType {
                 .filter(|i| (0..16).contains(i))
                 .fold(0, |m, i| m | 1 << i),
             anims: anims(def),
+            muzzles: muzzles(def),
+            expl_media: def.get("EXPLMEDIA").map_or((0, 0), |c| {
+                (c.word(0).and_then(crate::weapon::media::id).unwrap_or(0), i32::from(c.int(1).unwrap_or(0) as u8))
+            }),
+            expl_radius: def.get("EXPLRADIUS").and_then(|c| c.int(0)).unwrap_or(0),
+            shot_points: shot_points(def),
+            bars: def
+                .get("3DBARS")
+                .map(|c| {
+                    let n = c.int(0).unwrap_or(0).max(0) as usize;
+                    (0..n)
+                        .map(|i| std::array::from_fn(|k| i32::from(c.int(1 + 5 * i + k).unwrap_or(0) as i16)))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            ground_attack: def.has("ARTPODGOTOVKA"),
+            res_subst: def.has("RESSUBST"),
+            shot_cost: def.get("RASTRATA_NA_VISTREL2").or_else(|| def.get("RASTRATA_NA_VISTREL")).map(|c| {
+                let two = c.keyword == "RASTRATA_NA_VISTREL2";
+                let (i1, i2) = (
+                    c.int(0).unwrap_or(0) as u8,
+                    if two { c.int(1).unwrap_or(0) as u8 } else { c.int(0).unwrap_or(0) as u8 },
+                );
+                let mut cost = [0; 8];
+                for (r, v) in c.word_int_pairs(if two { 2 } else { 1 }) {
+                    if let Some(k) = resource_index(r).filter(|&k| k < 8) {
+                        cost[k] = v;
+                    }
+                }
+                (i1, i2, cost)
+            }),
+            sector_weapon: def.get("WEAPONINSECTOR").map(|c| {
+                let a = |i| c.int(i).unwrap_or(0);
+                SectorWeapon { att: a(0) as u8, r1: a(1), r2: a(2), d1: a(3), d2: a(4), sector: a(5), pct: a(6) }
+            }),
+            fire_limit: def
+                .get("FIRELIMIT")
+                .and_then(|c| c.int(0))
+                .map_or(if def.is_building() { 15 } else { 0 }, |v| i32::from(v as u8)),
+            evro_shot: {
+                let mut e = if def.is_building() { 100 } else { 0 };
+                for c in &def.commands {
+                    match c.keyword.as_str() {
+                        "EVROSHOT" => e = i32::from(c.int(0).unwrap_or(0) as u8),
+                        "EVROUNIT" => e = 1,
+                        _ => {}
+                    }
+                }
+                e
+            },
+            promax: {
+                let mut p = [0; 8];
+                for c in &def.commands {
+                    match c.keyword.as_str() {
+                        "PROMAX" => p = [i32::from(c.int(0).unwrap_or(0) as u8); 8],
+                        "PROMAX2" => {
+                            if let Some(k) = c.int(0).filter(|k| (0..8).contains(k)) {
+                                p[k as usize] = i32::from(c.int(1).unwrap_or(0) as u8);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                p
+            },
+            promax_ctg: def.get("PROMAXCTG").and_then(|c| c.int(0)).unwrap_or(0) as u8 & 7,
             vision: int("VISION", 0).clamp(0, 255) as u8,
             economy: economy(def),
             fear: fear(def).0,
@@ -696,11 +854,19 @@ impl ObjectType {
             shooters_formation: def.has("FORMLIKESHOOTERS"),
             adv: Default::default(),
         }
-        .with_adv(fear(def).1)
+        .with_adv(fear(def).1, {
+            let mut r = [16; ATTACK_SLOTS];
+            for c in def.all("RATE") {
+                if let Some(i) = c.int(0).filter(|i| (0..ATTACK_SLOTS as i32).contains(i)) {
+                    r[i as usize] = i32::from(c.int(1).unwrap_or(16) as u8);
+                }
+            }
+            r
+        })
     }
 
     /// Fills [`ObjectType::adv`] from the other fields (`CreateAdvCharacter`).
-    fn with_adv(mut self, fear_factor: [i32; 4]) -> Self {
+    fn with_adv(mut self, fear_factor: [i32; 4], rate: [i32; ATTACK_SLOTS]) -> Self {
         let e = &self.economy;
         self.adv = std::sync::Arc::new(Adv {
             attacks: self.attacks.clone(),
@@ -713,6 +879,8 @@ impl ObjectType {
             razbros: self.razbros,
             farm: e.farm,
             fear_factor,
+            rate,
+            res_eff: 100,
         });
         self
     }
@@ -785,6 +953,50 @@ fn anims(def: &UnitDef) -> BTreeMap<String, AnimInfo> {
     m
 }
 
+/// The muzzle points of `SETACTIVEPOINT` / `SETACTIVEPOINT2` (parser 0x4fd325 / 0x4fd65b).
+fn muzzles(def: &UnitDef) -> BTreeMap<String, Muzzle> {
+    let mut m = BTreeMap::new();
+    for (key, sets) in [("SETACTIVEPOINT", 1u8), ("SETACTIVEPOINT2", 2)] {
+        for c in def.all(key) {
+            let Some(name) = c.word(0) else { continue };
+            let Some(anim) = def.animation(name) else { continue };
+            let r = anim.directions.max(0) as usize;
+            let points: Vec<(i32, i32)> =
+                (0..r * usize::from(sets)).filter_map(|k| Some((c.int(2 + 2 * k)?, c.int(3 + 2 * k)?))).collect();
+            let frame_offsets =
+                anim.frame_refs().iter().map(|f| def.sprite(f.sprite).map_or((0, 0), |s| s.offset)).collect();
+            m.insert(name.to_ascii_uppercase(), Muzzle { points, sets, directions: anim.directions, frame_offsets });
+        }
+    }
+    m
+}
+
+/// `EX_SHOTS n (a1..a9)*n` and `EX_SHOTS2 n (a1..a10)*n` (NM+0x17ac..).
+fn shot_points(def: &UnitDef) -> Vec<ShotPoint> {
+    let mut v = Vec::new();
+    for (key, k) in [("EX_SHOTS", 9usize), ("EX_SHOTS2", 10)] {
+        let Some(c) = def.get(key) else { continue };
+        let n = c.int(0).unwrap_or(0).max(0) as usize;
+        for i in 0..n {
+            let a = |j: usize| c.int(1 + i * k + j - 1).unwrap_or(0);
+            let (z, extra) = if k == 10 { (a(3) - a(2), a(10)) } else { (a(3), a(2) + a(3)) };
+            v.push(ShotPoint {
+                x: a(1),
+                y: a(2),
+                z,
+                extra,
+                r_min: i32::from(a(4) as u16),
+                r_max: i32::from(a(5) as u16),
+                dir: a(6) as u8,
+                sector: i32::from(a(7) as u8),
+                reload: a(8),
+                att: a(9) as u8,
+            });
+        }
+    }
+    v
+}
+
 /// The per-attack-index keywords in file order (`ATTACK_RADIUS` overwrites `DET_RADIUS`,
 /// `CANKILL` overwrites every `ATTMASK`, as in the loader 0x4f372c).
 fn attacks(def: &UnitDef) -> Vec<Attack> {
@@ -803,8 +1015,8 @@ fn attacks(def: &UnitDef) -> Vec<Attack> {
             "DET_RADIUS" => a.detect = (a1, a2),
             "ADD_ATTACK_RADIUS" => a.add_radius = a1,
             "ATTACK_PAUSE" => a.pause = a1,
-            "DAMAGE" => a.damage = a1,
-            "EXDAMAGE" => a.damage = a2,
+            "DAMAGE" => (a.damage, a.min_damage) = (a1, a1),
+            "EXDAMAGE" => (a.min_damage, a.damage) = (a1, a2),
             "DAMAGEDEC" => a.damage_dec = a1,
             "WEAPONKIND" => a.kind = c.word(1).unwrap_or("MECH").to_ascii_uppercase(),
             "WEAPON" => a.weapon = c.word(1).map(str::to_owned),
@@ -832,11 +1044,17 @@ pub struct Catalog {
     pub market: Option<crate::market::MarketDef>,
     /// The panic factors of `MORALE.DAT`.
     pub morale: crate::morale::MoraleDef,
+    /// Projectile types (`WEAPON.NDS`).
+    pub weapons: crate::weapon::Weapons,
+    /// `ADDRANGE` / `ADDPAUSE` (`NRES.DAT [UNITKINDS]`, globals 0x66ae18/0x66ae1c): an attack on
+    /// the ground reaches this percentage of the range and reloads this percentage as long.
+    pub add_range: i32,
+    pub add_pause: i32,
 }
 
 impl Catalog {
     pub fn new() -> Self {
-        Self::default()
+        Self { add_range: 200, add_pause: 150, ..Self::default() }
     }
 
     /// Adds a type unless one with the same member id (case-insensitive) exists; returns its id.
@@ -855,6 +1073,20 @@ impl Catalog {
     /// formation bonuses).
     pub fn set_weapon_kinds(&mut self, kinds: &[acr_formats::defs::nres::WeaponKind]) {
         self.weapon_flags = kinds.iter().map(|k| (k.name.clone(), k.flags)).collect();
+    }
+
+    /// Sets the projectile types and resolves every attack's `WEAPON` to its index.
+    pub fn set_weapons(&mut self, weapons: crate::weapon::Weapons) {
+        for t in &mut self.types {
+            for a in &mut t.attacks {
+                a.weapon_id = a.weapon.as_deref().and_then(|n| weapons.find(n));
+            }
+            let adv = std::sync::Arc::make_mut(&mut t.adv);
+            for a in &mut adv.attacks {
+                a.weapon_id = a.weapon.as_deref().and_then(|n| weapons.find(n));
+            }
+        }
+        self.weapons = weapons;
     }
 
     /// Flags of a weapon kind (`acr_formats::defs::nres::weapon_flags`), 0 if unknown.

@@ -322,7 +322,8 @@ fn carry_home(w: &mut World, i: usize, kind: u8, dst: usize) -> bool {
         ((base.pos.x >> 8, base.pos.y >> 8), 6)
     };
     if norma(target.0 - u.cell.0, target.1 - u.cell.1) < reach {
-        let mut r = u.carried;
+        // GETRES (0x4d3170): the base credits `ResEff` % of the load.
+        let mut r = u.carried * w.adv(base.owner, base.kind).res_eff / 100;
         let owner = usize::from(u.owner);
         let p = &w.players[owner];
         match dst {
@@ -335,12 +336,14 @@ fn carry_home(w: &mut World, i: usize, kind: u8, dst: usize) -> bool {
         let u = &mut w.units[i];
         u.carried = 0;
         u.carry_type = None;
-        u.stance = 0;
+        (u.stance, u.ground_state) = (0, 0);
         return true;
     }
     let t = catalog.get(w.units[i].kind);
+    // Loaded, the gatherer walks in its carry stance (`TAKERESSTAGES` b, 0x50af66, 0x4d34fd).
+    let carry = t.economy.take_res.get(usize::from(kind)).copied().flatten().map_or(0, |e| e.carry);
     let u = &mut w.units[i];
-    u.stance = 0;
+    (u.stance, u.ground_state) = (carry, carry);
     let mover = Mover { x: u.cell.0, y: u.cell.1, lx: u.lx };
     if let Some((x, y)) =
         create_path(&w.map.land, mover, &mut u.path, &mut w.random, target.0, target.1, t.stop_distance)

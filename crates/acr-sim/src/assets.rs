@@ -22,6 +22,9 @@ const ORDER_GROUPS: &str = "ORD_GROUPS.LST";
 const NRES: &str = "NRES.DAT";
 const ECONOMY: &str = "ECONOMY.TXT";
 const MORALE: &str = "MORALE.DAT";
+const WEAPONS: &str = "WEAPON.NDS";
+const WEAPON_ANIMS: &str = "WEAPON.ADS";
+const TEXTURES: &str = "TEXTURES.LST";
 /// Sprite lists whose blocking polygons go into the lock map.
 const SHAPE_LISTS: [(SpriteGroup, &str); 5] = [
     (SpriteGroup::Trees, "TREELIST"),
@@ -61,7 +64,10 @@ impl SimAssets {
         nations.sort();
         self.nations = nations.clone();
         let mut first: Vec<String> =
-            [NAME_LIST, ORDERS, ORDER_GROUPS, NRES, ECONOMY, MORALE].iter().map(|p| (*p).to_owned()).collect();
+            [NAME_LIST, ORDERS, ORDER_GROUPS, NRES, ECONOMY, MORALE, WEAPONS, WEAPON_ANIMS, TEXTURES]
+                .iter()
+                .map(|p| (*p).to_owned())
+                .collect();
         for (_, name) in SHAPE_LISTS {
             first.push(format!("{name}.LST"));
             first.push(format!("{name}.RSR"));
@@ -133,10 +139,23 @@ impl SimAssets {
         }
         catalog.tech = tech;
         catalog.market = self.files.get(ECONOMY).and_then(|b| crate::market::MarketDef::parse(b));
+        if let Some(nds) = self.files.get(WEAPONS) {
+            let ads = self.files.get(WEAPON_ANIMS).map(Vec::as_slice);
+            let tex = self.files.get(TEXTURES).map(Vec::as_slice);
+            catalog.set_weapons(crate::weapon::Weapons::parse(nds, ads, tex));
+        }
         if let Some(m) = self.files.get(MORALE) {
             catalog.morale = crate::morale::MoraleDef::parse(m);
         }
         if let Some(nres) = self.files.get(NRES) {
+            for line in String::from_utf8_lossy(nres).lines() {
+                let mut it = line.split_whitespace();
+                match (it.next(), it.next().and_then(|v| v.parse::<i32>().ok())) {
+                    (Some("ADDRANGE"), Some(v)) => catalog.add_range = v,
+                    (Some("ADDPAUSE"), Some(v)) => catalog.add_pause = v,
+                    _ => {}
+                }
+            }
             catalog.set_weapon_kinds(&acr_formats::defs::nres::weapon_kinds(nres));
         }
         let mut shapes = SpriteShapes::default();
@@ -164,7 +183,9 @@ mod tests {
     fn asks_for_definitions_after_the_name_list() {
         let mut a = SimAssets::default();
         let first = a.start(&["ENG.NDS".to_owned(), "WEAPON.NDS".to_owned(), "X.MD".to_owned()]);
-        assert!(first.contains(&"ENG.NDS".to_owned()) && !first.contains(&"WEAPON.NDS".to_owned()));
+        // WEAPON.NDS is read once, as the weapon table, not as a nation.
+        assert!(first.contains(&"ENG.NDS".to_owned()) && first.iter().filter(|p| *p == "WEAPON.NDS").count() == 1);
+        assert!(!a.nations.contains(&"WEAPON.NDS".to_owned()));
         let more = a.add_file("NMLIST.TXT", Some(b"EngMus\r\n"));
         assert_eq!(more, ["EngMus.MD"]);
         assert!(a.wants("ENGMUS.MD"));
