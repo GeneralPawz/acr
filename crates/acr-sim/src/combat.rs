@@ -982,6 +982,7 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
         }
         if wf & RANDOM_KILL != 0 && w.random.rando() < 1310 && !vt.building && !vt.no25 {
             frighten(w, victim, s, att);
+            record_hit(w, victim, s, record.cause, true);
             record_death(w, victim, record);
             die(w, victim);
             w.units[s].kills = w.units[s].kills.saturating_add(1);
@@ -1008,6 +1009,9 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
         }
     }
     let dmg = dmg.max(1);
+    if let Some(s) = sender {
+        record_hit(w, victim, s, record.cause, w.units[victim].life <= dmg);
+    }
     if w.units[victim].life > dmg {
         w.units[victim].life -= dmg;
         if !vt.economy.sections.is_empty() {
@@ -1182,6 +1186,57 @@ pub struct DeathRecord {
     pub cause: DeathCause,
     /// The attacker's position at the blow (world pixels).
     pub from: Option<(i32, i32)>,
+}
+
+/// How long hits stay in `World::hits` (ticks): long enough for the renderer to draw the
+/// blood they splatter until it has dried and faded.
+pub const HIT_KEEP: u64 = 750;
+/// At most this many hits are kept (the oldest go first).
+pub const HIT_CAP: usize = 4096;
+
+/// A hit on a unit or building (`World::hits`), for the renderer only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HitRecord {
+    /// The tick of the hit.
+    pub tick: u64,
+    /// The unit hit (index).
+    pub victim: u32,
+    /// Where the victim stood (world pixels).
+    pub pos: (i32, i32),
+    /// The direction of the blow, from the attacker to the victim (world pixels, not
+    /// normalised; zero when they stand on the same point).
+    pub dir: (i32, i32),
+    /// The weapon's cause ([`DeathCause::of_weapon`]).
+    pub cause: DeathCause,
+    /// Whether the hit killed.
+    pub killed: bool,
+    /// Whether the victim is a building.
+    pub building: bool,
+}
+
+/// Notes a hit of `sender` on `victim` (render only, not hashed).
+fn record_hit(w: &mut World, victim: usize, sender: usize, cause: DeathCause, killed: bool) {
+    let (vx, vy) = w.units[victim].pos.pixels();
+    let (sx, sy) = w.units[sender].pos.pixels();
+    if w.hits.len() >= HIT_CAP {
+        w.hits.pop_front();
+    }
+    w.hits.push_back(HitRecord {
+        tick: w.tick.0,
+        victim: victim as u32,
+        pos: (vx, vy),
+        dir: (vx - sx, vy - sy),
+        cause,
+        killed,
+        building: w.units[victim].building,
+    });
+}
+
+/// Drops the hits older than [`HIT_KEEP`] ticks (at the start of every step).
+pub fn forget_hits(w: &mut World) {
+    while w.hits.front().is_some_and(|h| h.tick + HIT_KEEP < w.tick.0) {
+        w.hits.pop_front();
+    }
 }
 
 /// Notes why a living unit is about to die; the first record of a death stays.

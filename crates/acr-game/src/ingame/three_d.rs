@@ -51,7 +51,7 @@ pub struct ThreeD {
     renderer: Option<ModelRenderer>,
     depth: Option<DepthTarget>,
     instances: Vec<ModelInstance>,
-    /// Blood pools under this frame's corpses.
+    /// Blood pools under this frame's corpses and splatter behind hit units.
     pools: Vec<BloodPool>,
     /// Units drawn as models this frame (their sprites are left out).
     shown: HashSet<EntityId>,
@@ -277,6 +277,13 @@ impl ThreeD {
             self.pools.extend(pool);
             self.instances.push(instance(u, index, model, terrain, self.gore, removed_at, wounds));
             self.shown.insert(u.id);
+        }
+        let ground = |x: f32, y: f32| {
+            let (x, y) = (x as i32, y as i32);
+            view3d::ground_point(x, y, terrain.height_at(x, y))
+        };
+        for hit in &world.hits {
+            super::splatter::splatter(hit, world.tick.0, self.gore, &ground, &mut self.pools);
         }
     }
 

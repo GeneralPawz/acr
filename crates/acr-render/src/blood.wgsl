@@ -1,6 +1,7 @@
-// Blood pools under corpses (docs/rendering-3d.md): one quad per pool lying on the ground,
-// a noisy round pool with a trail running out away from the blow, fresh red drying to brown,
-// blended over the terrain and tested against its depth.
+// Blood pools under corpses and splatter behind hit units (docs/rendering-3d.md): one quad
+// per pool lying on the ground, a noisy round pool with a trail running out away from the
+// blow (or a droplet: a crisp head with a tail), fresh red drying to brown, blended over the
+// terrain and tested against its depth.
 
 struct Globals {
     view_proj: mat4x4<f32>,
@@ -17,7 +18,7 @@ struct PoolIn {
     @location(0) centre: vec4<f32>,
     // direction of the trail (world x, y), stretch, seed
     @location(1) shape: vec4<f32>,
-    // age (0 fresh .. 1 dried), fade (1 .. 0)
+    // age (0 fresh .. 1 dried), fade (1 .. 0), droplet (0 pool, 1 splatter)
     @location(2) look: vec4<f32>,
 };
 
@@ -80,12 +81,18 @@ fn fs_pool(in: VsOut) -> @location(0) vec4<f32> {
     // Distance in pool radii: the round pool, and the trail narrowing away from it.
     var d = length(in.local) / r;
     let reach = 2.0 * in.shape.z * r;
+    let droplet = in.look.z > 0.5;
+    // A droplet's tail is wider and tapers to a point; a pool's trail is a thin run.
+    let tail = select(0.45, 0.7, droplet);
     if (reach > 0.0 && in.local.x > 0.0 && in.local.x < reach) {
-        let width = r * 0.45 * (1.0 - in.local.x / reach) + 0.5;
+        let t = 1.0 - in.local.x / reach;
+        let width = r * tail * select(t, sqrt(t), droplet) + 0.5;
         d = min(d, abs(in.local.y) / width);
     }
     let q = in.local / r;
-    d = d + (noise2(q * 3.0 + vec2<f32>(seed)) - 0.5) * 0.45 + (noise2(q * 9.0 + vec2<f32>(seed * 1.7)) - 0.5) * 0.15;
+    // Droplets have crisp edges: less and finer noise.
+    let rough = select(1.0, 0.35, droplet);
+    d = d + ((noise2(q * 3.0 + vec2<f32>(seed)) - 0.5) * 0.45 + (noise2(q * 9.0 + vec2<f32>(seed * 1.7)) - 0.5) * 0.15) * rough;
     if (d > 1.0) {
         discard;
     }

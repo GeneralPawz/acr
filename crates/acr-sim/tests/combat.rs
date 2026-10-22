@@ -257,6 +257,57 @@ fn deaths_keep_their_cause() {
     assert_eq!(w.state_hash(), hash, "causes are not part of the state");
 }
 
+/// Hits are kept for the renderer: a musket ball from the east is a gunshot travelling
+/// west, the last one kills; the record is not part of the state hash and is forgotten
+/// after `HIT_KEEP` ticks.
+#[test]
+fn hits_are_recorded_for_the_renderer() {
+    use acr_sim::combat::{DeathCause, HIT_KEEP};
+    // Without dispersion, as in `musketeers_fire_on_schedule_and_hit`.
+    let mut c = Catalog::new();
+    let pik = c.add(ObjectType::from_def("Pik(EN)", &UnitDef::parse(PIKEMAN.as_bytes())));
+    let mus = c.add(ObjectType::from_def(
+        "Mus(EN)",
+        &UnitDef::parse(
+            MUSKETEER
+                .replace(
+                    "RAZBROS 300
+",
+                    "",
+                )
+                .as_bytes(),
+        ),
+    ));
+    c.set_weapon_kinds(&weapon_kinds(NRES));
+    let mut w = World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(Formations::default()));
+    let m = w.spawn(mus, 0, Pos::from_pixels(2000, 2000), 0);
+    let p = w.spawn(pik, 1, Pos::from_pixels(1700, 2000), 0);
+    w.step(&[Command::Attack { player: 0, units: vec![m], target: p }]);
+    for _ in 0..3000 {
+        w.step(&[Command::Stop { player: 1, units: vec![p] }]);
+        if unit(&w, p).death != 0 {
+            break;
+        }
+    }
+    assert_ne!(unit(&w, p).death, 0, "the pikeman was shot");
+    let shots: Vec<_> = w.hits.iter().filter(|h| h.victim == p.0 && h.cause == DeathCause::Gunshot).collect();
+    assert!(!shots.is_empty(), "{:?}", w.hits);
+    for h in &shots {
+        assert!(h.dir.0 < 0 && h.dir.1.abs() < h.dir.0.abs() / 4, "travels west: {h:?}");
+        assert!((h.pos.0 - 1700).abs() < 64 && (h.pos.1 - 2000).abs() < 64, "{h:?}");
+    }
+    assert!(shots.last().unwrap().killed && shots.iter().rev().skip(1).all(|h| !h.killed));
+    let hash = w.state_hash();
+    let hits = std::mem::take(&mut w.hits);
+    assert_eq!(w.state_hash(), hash, "hits are not part of the state");
+    w.hits = hits;
+    let last = w.hits.back().unwrap().tick;
+    while w.tick.0 <= last + HIT_KEEP + 1 {
+        w.step(&[]);
+    }
+    assert!(w.hits.iter().all(|h| h.tick > last), "old hits are forgotten: {:?}", w.hits.front());
+}
+
 #[test]
 fn weapon_kinds_map_to_causes() {
     use acr_sim::combat::DeathCause;
