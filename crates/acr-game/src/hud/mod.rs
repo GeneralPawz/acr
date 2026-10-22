@@ -142,18 +142,38 @@ pub enum HudCommand {
     CancelUpgrade(u16),
     /// Pick the rally point of the selected building on the map (`SET_DEST`).
     Rally,
+    /// Market (`ECO::BuildIcons` 0x4a96d9): choose the market slot to sell (0x4a9664).
+    MarketSell(usize),
+    /// Choose the market slot to buy (0x4a9611).
+    MarketBuy(usize),
+    /// Change the amount offered (0x4a968a; ×100 with Shift).
+    MarketAmount(i32),
+    /// `r_Buy`: trade (0x4a961e).
+    MarketTrade,
+    /// `r_Clear`: amount and result to 0 (0x4a9671).
+    MarketClear,
+    /// Plant fields around the selected mills (`SPRITEOBJECT` items, command 0x3d).
+    PlantFields(usize),
     /// Commands the simulation does not run yet: shown, but they do nothing.
     Inactive,
 }
 
-/// Numbers of the single selected type (0x606edd).
+/// Numbers of the single selected type's first object (0x607f50).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Stats {
+    /// `KILLUNI` "Treffer %d", drawn even for an unfinished object.
+    pub kills: i32,
+    /// The object is finished (`Ready`): the rest is drawn only then.
+    pub ready: bool,
+    /// Life, centred under the icon zone.
+    pub life: i32,
     /// Attack icon (`SMICONS.GP` frame) and damage, at most two.
     pub attacks: Vec<(usize, i32)>,
     pub shield: i32,
-    /// Protection icon and value, at most six.
+    /// Protection icon and value, at most six; none for buildings.
     pub protections: Vec<(usize, i32)>,
+    /// Text lines in `fn10` from (13, 680), 12 apart: inside, housing, depot capacity.
+    pub lines: Vec<Vec<u8>>,
 }
 
 /// What the interface shows, collected from the game every frame.
@@ -175,6 +195,9 @@ pub struct View {
     pub unit_info: Option<panels::UnitInfo>,
     /// The game panel's page (key I).
     pub game_page: Vec<Draw>,
+    /// The market's numbers when a market is selected: the amount offered (once a resource
+    /// to sell is chosen) and what it buys (once both are chosen).
+    pub market: Option<(Option<i32>, Option<i32>)>,
 }
 
 /// What the game should do after input on the interface.
@@ -606,7 +629,7 @@ impl Hud {
             self.draw_minimap(ctx, view, &palette, out);
         }
         if let (Some(stats), Some(_)) = (&view.stats, &data) {
-            draw_stats(stats, out);
+            draw_stats(ctx, stats, out);
         }
         if let Some(r) = Self::icon_box(&view.icons) {
             border(ctx, out, r.x0, r.y0, r.x1, r.y1, BOX_CORNERS);
@@ -624,6 +647,9 @@ impl Hud {
                 out.extend(view.game_page.iter().cloned());
             }
             _ => {}
+        }
+        if let Some(market) = view.market {
+            draw_market(ctx, market, out);
         }
         draw_resources(ctx, view, out);
         if self.dropdown {
@@ -771,11 +797,25 @@ fn draw_resources(ctx: &Ctx, view: &View, out: &mut Vec<Draw>) {
     }
 }
 
-/// The numbers of a single selected type (0x606edd..0x60723e): up to two attacks in the
-/// top row, the shield below, then up to six protections in three columns.
-fn draw_stats(stats: &Stats, out: &mut Vec<Draw>) {
+/// The numbers of a single selected type (0x607f50): kills, then for a finished object
+/// its life, up to two attacks in the top row, the shield below, up to six protections in
+/// three columns, and the text lines.
+fn draw_stats(ctx: &Ctx, stats: &Stats, out: &mut Vec<Draw>) {
     let x = ICON + ZONE1[0] + 6;
     let top = ZONE1[1] + SCREEN[1] - PANEL_LY - 1;
+    if stats.kills != 0 {
+        let t = panels::format_int(ctx.texts.get("KILLUNI"), stats.kills);
+        out.push(Draw::game_text(font::SMALL_WHITE, &t, 16, 610));
+    }
+    if !stats.ready {
+        return;
+    }
+    let life = stats.life.to_string();
+    let w = ctx.fonts.width(ctx.lib, font::SMALL_WHITE, life.as_bytes());
+    out.push(Draw::game_text(font::SMALL_WHITE, life.as_bytes(), 12 + (ICON - w) / 2, 670));
+    for (i, line) in stats.lines.iter().enumerate() {
+        out.push(Draw::game_text(FN10, line, 13, 680 + 12 * i as i32));
+    }
     for (n, &(icon, damage)) in stats.attacks.iter().take(2).enumerate() {
         let tx = x + 19 + 55 * n as i32;
         out.push(Draw::game_frame(gp::SMICONS, icon, tx - 18, top + 1, 0));
@@ -792,6 +832,32 @@ fn draw_stats(stats: &Stats, out: &mut Vec<Draw>) {
         let y = base + row + 18 * row;
         out.push(Draw::game_frame(gp::SMICONS, icon, x + 3, y + 1, 0));
         out.push(Draw::game_text(font::SMALL_WHITE, value.to_string().as_bytes(), x + 22, y + 5));
+    }
+}
+
+/// `fn10` (`FontM12`), the info lines of 0x607f50.
+const FN10: crate::ui::fonts::FontId = crate::ui::fonts::FontId("fn10");
+
+/// The market's plaques and numbers (0x4a9c70, 0x4a96d9): `Border` 88 and 89 above the
+/// grid with `ECOSELL` and `ECOBUY` in `SmallYellowFont`; the amount between −10 and +10,
+/// the result between −1000 and +1000, centred in `WhiteFont`.
+fn draw_market(ctx: &Ctx, (amount, result): (Option<i32>, Option<i32>), out: &mut Vec<Draw>) {
+    let (x0, y0) = Hud::grid_origin();
+    out.push(Draw::game_frame(gp::BORDER, 88, x0 - 2, y0 - 40, 0));
+    out.push(Draw::game_frame(gp::BORDER, 89, x0 + 293, y0 - 40, 0));
+    let centred = |out: &mut Vec<Draw>, f, t: &[u8], x: i32, y: i32| {
+        let w = ctx.fonts.width(ctx.lib, f, t);
+        out.push(Draw::game_text(f, t, x - w / 2, y));
+    };
+    let small_yellow = panels::FONT_SMALL_YELLOW;
+    centred(out, small_yellow, ctx.texts.get("ECOSELL"), x0 + 2 + ICON, y0 - 35);
+    centred(out, small_yellow, ctx.texts.get("ECOBUY"), x0 + 16 + 8 * ICON, y0 - 35);
+    let y = y0 + ICON + 16;
+    if let Some(a) = amount {
+        centred(out, font::WHITE, a.to_string().as_bytes(), x0 + 3 * (ICON + ADD_ICON), y);
+    }
+    if let Some(r) = result {
+        centred(out, font::WHITE, r.to_string().as_bytes(), x0 + 6 * (ICON + ADD_ICON), y);
     }
 }
 

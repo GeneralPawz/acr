@@ -435,6 +435,11 @@ impl MissionLink {
         self.ended.is_some() && (self.leave || self.clock - self.ended_at > END_SECONDS)
     }
 
+    /// `AssignHint1` from the interface: a line on the message list for `frames` frames.
+    pub fn hint(&mut self, text: Vec<u8>, frames: u32) {
+        self.messages.add(text, frames, true);
+    }
+
     /// `UM_SURRENDER` (0x4c6550 value 6): the local player gives up at once, without a
     /// question, like `LooseGame` (the defeat text, then back to the menus).
     pub fn surrender(&mut self) {

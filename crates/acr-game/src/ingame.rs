@@ -469,6 +469,7 @@ impl InGame {
             }
             if ticks > 0 {
                 self.update_stats();
+                self.watch_queues(ticks);
             }
             if ticks > 0 {
                 self.animation_sounds(window);
