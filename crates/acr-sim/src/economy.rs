@@ -797,9 +797,9 @@ pub fn enter_link(w: &mut World, i: usize, building: EntityId, prio: u8) {
     };
     let target = (bx + cx, by + cy);
     let u = &w.units[i];
-    let mover = Mover { x: u.cell.0, y: u.cell.1, lx: u.lx };
+    let t = catalog.get(u.kind);
+    let mover = Mover::of(u, t);
     if dist_to(mover, target.0, target.1) >= 2 {
-        let t = catalog.get(w.units[i].kind);
         let u = &mut w.units[i];
         if let Some((x, y)) =
             create_path(&w.map.land, mover, &mut u.path, &mut w.random, target.0, target.1, t.stop_distance)

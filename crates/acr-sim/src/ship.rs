@@ -403,7 +403,7 @@ pub fn water_send_to_link(w: &mut World, i: usize, cell: (i32, i32), prio: u8, t
             *turning = true;
         }
     } else {
-        let mover = crate::path::Mover { x: u.cell.0, y: u.cell.1, lx: u.lx };
+        let mover = crate::path::Mover::of(u, t);
         if let Some((x, y)) =
             crate::path::create_path(&map.water, mover, &mut u.path, &mut w.random, cell.0, cell.1, t.stop_distance)
         {
@@ -508,7 +508,7 @@ pub fn go_to_transport_link(w: &mut World, i: usize, t: EntityId, land: (i32, i3
         let map = w.map.clone();
         let u = &mut w.units[i];
         let c = Unit::cell_of(dock, u.lx);
-        let mover = crate::path::Mover { x: u.cell.0, y: u.cell.1, lx: u.lx };
+        let mover = crate::path::Mover::of(u, catalog.get(u.kind));
         if let Some((x, y)) = crate::path::create_path(&map.land, mover, &mut u.path, &mut w.random, c.0, c.1, stop) {
             u.dest = Some(Pos::new(x, y));
         }
@@ -710,6 +710,14 @@ pub fn fishing_link(w: &mut World, i: usize) {
         w.units[i].pop_order();
         return;
     }
+    // Fleeing (0x54eb3f): with a ship nearby, sail to the safest open spot 256 px away.
+    let (x, y) = w.units[i].pos.pixels();
+    if ship_danger(w, x, y, 5) != 0
+        && let Some((fx, fy)) = find_safe_place(w, x, y)
+    {
+        crate::motion::send_to(&mut w.units[i], Pos::new(fx << 4, fy << 4), 0x90, true);
+        return;
+    }
     let (owner, kind) = (w.units[i].owner, w.units[i].kind);
     let (speed, amount) = w.adv(owner, kind).fish;
     let map = w.map.clone();
@@ -769,12 +777,66 @@ pub fn fishing_link(w: &mut World, i: usize) {
     }
 }
 
+/// `GetShipDanger` (0x4d5320 over rings 0..=4 of 128 px cells, 0x4d53e0 over rings 0..=6;
+/// per cell 0x4d51a0) at pixel `(x, y)`: every ship (lock type water) but fishing boats,
+/// of any nation, adds `10000 / max(d, 80)`, where `d` is the least distance between the
+/// point and the ship's position stepped 0..=10 times by four times its velocity.
+pub fn ship_danger(w: &World, x: i32, y: i32, rings: usize) -> i32 {
+    let (cx, cy) = (x >> 7, y >> 7);
+    let mut danger = 0;
+    for r in 0..rings {
+        for &(a, b) in crate::morale::ring(r) {
+            for &k in w.buckets.get(cx + a, cy + b) {
+                let u = &w.units[k as usize];
+                let t = w.catalog.get(u.kind);
+                if !u.active()
+                    || t.medium != crate::catalog::Medium::Water
+                    || t.role.usage == crate::catalog::usage::FISHER
+                {
+                    continue;
+                }
+                let (ux, uy) = u.pos.pixels();
+                let (mut dx, mut dy) = (ux - x, uy - y);
+                let (vx, vy) = (u.vel.0 * 4, u.vel.1 * 4);
+                let mut d = norma(dx, dy);
+                for _ in 0..10 {
+                    dx += vx;
+                    dy += vy;
+                    d = d.min(norma(dx, dy));
+                }
+                danger += 10000 / d.max(80);
+            }
+        }
+    }
+    danger
+}
+
+/// `FindSafePlace` (0x54e679), pixel `(x, y)`: of the eight points 256 px away (east, west,
+/// south, north, then the diagonals NW, NE, SW, SE) whose 6 × 6 cell box is open water and
+/// free of units, the one with the least [`ship_danger`] over 7 rings (the first on ties).
+fn find_safe_place(w: &World, x: i32, y: i32) -> Option<(i32, i32)> {
+    let (cx, cy) = (x >> 4, y >> 4);
+    let mut best: Option<(i32, (i32, i32))> = None;
+    for (sx, sy) in [(1, 0), (-1, 0), (0, 1), (0, -1), (-1, -1), (1, -1), (-1, 1), (1, 1)] {
+        let (bx, by) = (cx + sx * 16 - 3, cy + sy * 16 - 3);
+        if w.map.water.check_bar(bx, by, 6, 6) || w.occupancy.check_bar(bx, by, 6, 6) {
+            continue;
+        }
+        let p = (x + sx * 256, y + sy * 256);
+        let d = ship_danger(w, p.0, p.1, 7);
+        if d < 100_000_000 && best.is_none_or(|(b, _)| d < b) {
+            best = Some((d, p));
+        }
+    }
+    best.map(|(_, p)| p)
+}
+
 /// A path over the water to lock cell `(x, y)` for the motion handler.
 fn go_water(w: &mut World, i: usize, map: &crate::map::MapGrid, (x, y): (i32, i32)) {
     let t = w.catalog.get(w.units[i].kind);
     let stop = t.stop_distance;
     let u = &mut w.units[i];
-    let mover = crate::path::Mover { x: u.cell.0, y: u.cell.1, lx: u.lx };
+    let mover = crate::path::Mover::of(u, t);
     if let Some((px, py)) = crate::path::create_path(&map.water, mover, &mut u.path, &mut w.random, x, y, stop) {
         u.dest = Some(Pos::new(px, py));
     }
@@ -899,7 +961,7 @@ pub fn water_attack_link(w: &mut World, i: usize, target: EntityId, prio: u8) {
         let map = w.map.clone();
         let u = &mut w.units[i];
         let c = Unit::cell_of(e_pos, u.lx);
-        let mover = crate::path::Mover { x: u.cell.0, y: u.cell.1, lx: u.lx };
+        let mover = crate::path::Mover::of(u, t);
         if let Some((x, y)) =
             crate::path::create_path(&map.water, mover, &mut u.path, &mut w.random, c.0, c.1, t.stop_distance)
         {

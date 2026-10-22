@@ -63,6 +63,23 @@ pub struct Mover {
     pub x: i32,
     pub y: i32,
     pub lx: i32,
+    /// Takes the water pre-path (`CreateWaterPrePath` 0x535b04): ships (lock type 1, OB+0x54)
+    /// and `MOTIONSTYLE COMPLEXROTATE` units (NM+0x28e1 == 3), see 0x534056.
+    pub water: bool,
+}
+
+impl Mover {
+    /// A land-path mover (`water` false).
+    pub fn land(x: i32, y: i32, lx: i32) -> Self {
+        Mover { x, y, lx, water: false }
+    }
+
+    /// The mover of unit `u` of type `t`.
+    pub fn of(u: &crate::world::Unit, t: &crate::catalog::ObjectType) -> Self {
+        let water =
+            t.medium == crate::catalog::Medium::Water || t.motion_style == crate::catalog::MotionStyle::ComplexRotate;
+        Mover { x: u.cell.0, y: u.cell.1, lx: u.lx, water }
+    }
 }
 
 /// `GetNeighbourMask` (0x533854) for the box `(x, y, l, l)`, `l > 2`: whether a step in each
@@ -160,8 +177,17 @@ pub struct PrePath {
 
 /// `CreatePrePath` (0x534031): appends a detour around the first obstacle on the straight
 /// line to `(x1, y1)` to the unit's path (new points become the next waypoints).
+///
+/// A [`Mover::water`] unit takes `CreateWaterPrePath` (0x535b04) instead, the same search
+/// with three changes: a follower's cell counts as visible when the neighbour mask of its
+/// previous cell is open towards the target, and the end of the detour is the start of the
+/// winner's last visible run (or its crossing cell); the trace keeps every fourth cell
+/// instead of every second; a failed search waits 64..79 ticks instead of 200..215. It never
+/// sets `g_searched` (cleared by `CreatePrePath` before it dispatches), so `searched` is
+/// always false.
 pub fn create_pre_path(m: &LockMap, u: Mover, st: &mut PathState, rnd: &mut SyncRandom, x1: i32, y1: i32) -> PrePath {
-    let no = |searched| PrePath { found: false, searched };
+    let water = u.water;
+    let no = |searched: bool| PrePath { found: false, searched: searched && !water };
     if st.delay != 0 {
         return no(false);
     }
@@ -210,7 +236,7 @@ pub fn create_pre_path(m: &LockMap, u: Mover, st: &mut PathState, rnd: &mut Sync
             if !m.check_bar(lx0, ly0, lx, lx) {
                 st.points = vec![(lx0, ly0)];
                 st.allocated = true;
-                return PrePath { found: true, searched: true };
+                return PrePath { found: true, searched: !water };
             }
         }
         return no(true);
@@ -281,6 +307,22 @@ pub fn create_pre_path(m: &LockMap, u: Mover, st: &mut PathState, rnd: &mut Sync
     let mut trace_l = vec![(0, 0); MAX_TRACE + 2];
     let (mut vis_r, mut vis_l) = (Vec::new(), Vec::new());
     let (mut cum_r, mut cum_l, mut prev_r, mut prev_l) = (0i32, 0i32, 0i32, 0i32);
+    // Water: whether the follower's last cell was visible, whether a visible run is on, and
+    // the start of its last run (-0x9/-0x80c1/-0x8078 right, -0x15/-0x80c2/-0x2038 left).
+    let (mut seen_r, mut run_r, mut end_r) = (false, false, 0usize);
+    let (mut seen_l, mut run_l, mut end_l) = (false, false, 0usize);
+    // The mask of the follower's previous cell, open towards the target (0x536845).
+    let open_to_target =
+        |mask: &[bool; 16], p: (i32, i32)| !mask[dir_of((x1 - p.0).clamp(-1, 1), (y1 - p.1).clamp(-1, 1))];
+    let track = |open: bool, seen: &mut bool, run: &mut bool, end: &mut usize, i: usize| {
+        *seen = open;
+        if !open {
+            *run = false;
+        } else if !*run {
+            *end = i;
+            *run = true;
+        }
+    };
     while i < MAX_TRACE && l_alive && r_alive {
         // Right follower: obstacle on its left, goes round clockwise.
         let mask = neighbour_mask(m, r.0 - 1, r.1 - 1, l2);
@@ -301,7 +343,9 @@ pub fn create_pre_path(m: &LockMap, u: Mover, st: &mut PathState, rnd: &mut Sync
             max_ar = a;
             base_r = i;
         }
-        if visible(r, dir_r) {
+        if water {
+            track(open_to_target(&mask, r), &mut seen_r, &mut run_r, &mut end_r, i);
+        } else if visible(r, dir_r) {
             vis_r.push(i);
         }
         // Left follower: the mirror image.
@@ -322,31 +366,45 @@ pub fn create_pre_path(m: &LockMap, u: Mover, st: &mut PathState, rnd: &mut Sync
             max_al = a;
             base_l = i;
         }
-        if visible(l, dir_l) {
+        if water {
+            track(open_to_target(&mask, l), &mut seen_l, &mut run_l, &mut end_l, i);
+        } else if visible(l, dir_l) {
             vis_l.push(i);
         }
         if cum_r <= 0 && prev_r >= 0 && past(r) {
+            if !seen_r {
+                end_r = i;
+            }
             r_alive = false;
             choose_r = true;
         }
         prev_r = cum_r;
         if cum_l <= 0 && prev_l >= 0 && past(l) {
+            if !seen_l {
+                end_l = i;
+            }
             l_alive = false;
             choose_r = false;
         }
         prev_l = cum_l;
     }
     if i >= MAX_TRACE - 1 {
-        st.delay = (200 + (rnd.rando() & 15)) as u8;
+        st.delay = ((if water { 64 } else { 200 }) + (rnd.rando() & 15)) as u8;
         return no(true);
     }
     let (trace, base, vis) = if choose_r { (&trace_r, base_r, &vis_r) } else { (&trace_l, base_l, &vis_l) };
-    let mut end = vis.iter().copied().find(|&v| v >= base).unwrap_or(i.saturating_sub(1));
+    let mut end = if water {
+        if choose_r { end_r } else { end_l }
+    } else {
+        vis.iter().copied().find(|&v| v >= base).unwrap_or(i.saturating_sub(1))
+    };
     if end < i {
         end += 1;
     }
     end = end.max(base);
     let cnt = end - base + 1;
+    // Every second traced cell on land, every fourth on water (0x5354c9 / 0x536f54).
+    let sh = if water { 2 } else { 1 };
     let mut added: Vec<(i32, i32)> = Vec::new();
     if cnt <= 2 {
         added.push(trace[base + cnt - 1]);
@@ -354,16 +412,16 @@ pub fn create_pre_path(m: &LockMap, u: Mover, st: &mut PathState, rnd: &mut Sync
             added.push(trace[base]);
         }
     } else {
-        let h = ((cnt - 2) >> 1) + 1;
+        let h = ((cnt - 2) >> sh) + 1;
         added.resize(h + 1, (0, 0));
         for k in 0..h {
-            added[h - k] = trace[base + 2 * k];
+            added[h - k] = trace[base + (k << sh)];
         }
         added[0] = trace[end];
     }
     st.points.extend(added);
     st.allocated = true;
-    PrePath { found: true, searched: true }
+    PrePath { found: true, searched: !water }
 }
 
 /// `CreateFullPath` (0x533f1a): builds a new path to `(x, y)`, refining the first leg up to
@@ -470,7 +528,7 @@ mod tests {
         let m = open_map();
         let mut st = PathState::default();
         let mut rnd = SyncRandom::new(0);
-        let r = create_pre_path(&m, Mover { x: 5, y: 5, lx: 1 }, &mut st, &mut rnd, 40, 20);
+        let r = create_pre_path(&m, Mover::land(5, 5, 1), &mut st, &mut rnd, 40, 20);
         assert!(!r.found && r.searched);
         assert!(st.points.is_empty());
     }
@@ -479,7 +537,7 @@ mod tests {
     fn detours_around_a_wall() {
         let mut m = open_map();
         m.set_rect(20, 5, 2, 30); // vertical wall x = 20..22, y = 5..35
-        let u = Mover { x: 10, y: 20, lx: 1 };
+        let u = Mover::land(10, 20, 1);
         let mut st = PathState::default();
         let mut rnd = SyncRandom::new(0);
         create_full_path(&m, u, &mut st, &mut rnd, 30, 20);
@@ -492,12 +550,63 @@ mod tests {
         assert!(next.1 <= 4 || next.1 >= 35, "goes around the wall end: {next:?}");
     }
 
+    /// `CreateWaterPrePath` (0x535b04): ships keep every fourth traced cell, never report a
+    /// search (so `CreateFullPath` draws no closing `rando`) and wait 64..79 ticks after a
+    /// failed one.
+    #[test]
+    fn water_pre_path_is_sparser_and_never_searched() {
+        let mut m = open_map();
+        m.set_rect(20, 5, 24, 40);
+        let land = Mover::land(10, 30, 1);
+        let water = Mover { water: true, ..land };
+        let (mut a, mut b) = (PathState::default(), PathState::default());
+        let (mut ra, mut rb) = (SyncRandom::new(3), SyncRandom::new(3));
+        let pa = create_pre_path(&m, land, &mut a, &mut ra, 54, 30);
+        let pb = create_pre_path(&m, water, &mut b, &mut rb, 54, 30);
+        assert!(pa.found && pa.searched);
+        assert!(pb.found && !pb.searched);
+        assert!(!b.points.is_empty() && b.points.len() < a.points.len(), "{:?} vs {:?}", b.points, a.points);
+        for &(x, y) in &b.points {
+            assert!(!m.check_bar(x, y, 1, 1), "waypoint ({x},{y}) blocked");
+        }
+        // Round the block's lower side, four cells apart; the first point is where the target
+        // comes into view past the corner.
+        assert_eq!(b.points[1..], [(42, 46), (38, 46), (34, 46), (30, 46), (26, 46), (22, 46), (18, 45)]);
+        assert_eq!(b.points[0], (45, 44));
+
+        // CreateFullPath: the land search draws one more `rando` (the closing delay).
+        let (mut a, mut b) = (PathState::default(), PathState::default());
+        let (mut ra, mut rb) = (SyncRandom::new(3), SyncRandom::new(3));
+        create_full_path(&m, land, &mut a, &mut ra, 54, 30);
+        create_full_path(&m, water, &mut b, &mut rb, 54, 30);
+        assert_eq!(b.delay, 0);
+        rb.rando();
+        assert_eq!(ra.rando(), rb.rando());
+    }
+
+    #[test]
+    fn water_pre_path_failure_waits_less() {
+        // The unit is shut in a ring: the followers circle inside it until the trace ends.
+        let mut m = open_map();
+        m.set_rect(10, 10, 20, 1);
+        m.set_rect(10, 29, 20, 1);
+        m.set_rect(10, 10, 1, 20);
+        m.set_rect(29, 10, 1, 20);
+        for (water, lo) in [(false, 200), (true, 64)] {
+            let mut st = PathState::default();
+            let mut rnd = SyncRandom::new(1);
+            let r = create_pre_path(&m, Mover { water, ..Mover::land(20, 20, 1) }, &mut st, &mut rnd, 50, 20);
+            assert!(!r.found);
+            assert!((lo..lo + 16).contains(&i32::from(st.delay)), "water {water}: delay {}", st.delay);
+        }
+    }
+
     #[test]
     fn best_position_moves_target_out_of_obstacle() {
         let mut m = open_map();
         m.set_rect(30, 30, 6, 6);
         let mut t = (32, 32);
-        assert!(find_best_position(&m, Mover { x: 10, y: 32, lx: 1 }, &mut t, 10));
+        assert!(find_best_position(&m, Mover::land(10, 32, 1), &mut t, 10));
         assert!(!m.check_bar(t.0 - 1, t.1 - 1, 3, 3));
         assert!(t.0 < 30, "closest to the unit: {t:?}");
     }
