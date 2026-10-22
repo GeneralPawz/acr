@@ -1,5 +1,5 @@
 """Jaguar (`AnmJug`, `ANMJUG.MD`) from the WildMesh Leopard (#287): rosettes, 0.7 m at the
-shoulder. Not yet recoloured to a jaguar's larger rosettes."""
+shoulder, recoloured towards a jaguar (warmer ground, bolder rosettes; no inner dots)."""
 
 from acr_assets import animals
 
@@ -8,6 +8,7 @@ CHECKS = ["--anim STAND"]
 
 SPEC = {'blend': 'wildmesh/Leopard/SK_Leopard.blend',
  'height': 0.75,
+ 'recolour': 'jaguar',
  'tris': 12000,
  'fps': 24,
  'clips': {'STAND': ('Idle', 'pose', 1, 0.0),

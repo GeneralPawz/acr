@@ -100,6 +100,37 @@ def _fix_images(folder):
             im.pack()
 
 
+def _jaguar(im):
+    """Leopard fur to jaguar fur: a warmer, deeper gold ground and bolder rosettes (the dark
+    marks grown by two pixels at 1024), the way a jaguar's coat differs from a leopard's.
+    The dots inside a jaguar's rosettes are not painted."""
+    import numpy as np
+
+    w, h = im.size
+    px = np.empty(w * h * 4, dtype=np.float32)
+    im.pixels.foreach_get(px)
+    px = px.reshape(h, w, 4)
+    rgb = px[..., :3]
+    lum = rgb @ np.array([0.299, 0.587, 0.114], dtype=np.float32)
+    dark = lum < np.percentile(lum, 22)
+    grown = dark.copy()
+    for _ in range(2):
+        g = grown.copy()
+        g[1:] |= grown[:-1]
+        g[:-1] |= grown[1:]
+        g[:, 1:] |= grown[:, :-1]
+        g[:, :-1] |= grown[:, 1:]
+        grown = g
+    # Ground: towards orange-gold where light and saturated enough to be fur.
+    warm = np.array([1.08, 0.92, 0.70], dtype=np.float32)
+    rgb[:] = np.clip(rgb * warm, 0.0, 1.0)
+    ring = grown & ~dark
+    rgb[ring] = rgb[ring] * 0.35
+    px[..., :3] = rgb
+    im.pixels.foreach_set(px.ravel())
+    im.pack()
+
+
 def _decimate(meshes, budget):
     tris = sum(sum(len(p.vertices) - 2 for p in m.data.polygons) for m in meshes)
     if tris <= budget:
@@ -159,6 +190,24 @@ def _times(action, mode, n, a, b, src_fps):
 
 
 _LAST = {}
+
+
+def _fcurves(act):
+    out = []
+    for layer in act.layers:
+        for strip in layer.strips:
+            for bag in strip.channelbags:
+                out += list(bag.fcurves)
+    return out
+
+
+def _remove_fcurve(act, fc):
+    for layer in act.layers:
+        for strip in layer.strips:
+            for bag in strip.channelbags:
+                if fc in list(bag.fcurves):
+                    bag.fcurves.remove(fc)
+                    return
 
 
 def _top(arm):
@@ -251,7 +300,65 @@ def _bake(arm, name, action, mode, n, a=0.0, b=1.0, src_fps=30, meshes=()):
                 for i, smp in enumerate(samples):
                     loc, q, sc = smp[pb.name]
                     smp[pb.name] = (loc - d * (i / n), q, sc)
-    return _keys(arm, name, samples)
+    return samples
+
+
+def _unscaled(m):
+    t, q, _s = m.decompose()
+    return Matrix.LocRotScale(t, q, None)
+
+
+def _locals(arm, mats):
+    """Pose-bone (location, rotation, scale) giving the armature-space bone matrices
+    `mats` (the armature object at the identity)."""
+    out = {}
+    for pb in arm.pose.bones:
+        b = pb.bone
+        if b.parent is None:
+            local = b.matrix_local.inverted() @ mats[pb.name]
+        else:
+            rest = b.parent.matrix_local.inverted() @ b.matrix_local
+            local = rest.inverted() @ mats[b.parent.name].inverted() @ mats[pb.name]
+        loc, q, _sc = local.decompose()
+        out[pb.name] = (loc, q, Vector((1.0, 1.0, 1.0)))
+    return out
+
+
+def _flatten(arm, meshes, parent):
+    """Bakes the armature's and the meshes' world transforms (the FBX origin's rotation,
+    the 0.01 scale, the turn and size of the build) into the mesh vertices and the bone
+    rest pose, so that the exported nodes are identities like the human units'. Returns
+    the uniform scale: pose locations (bone space) must be multiplied by it."""
+    bpy.context.view_layer.update()
+    w = arm.matrix_world.copy()
+    scale = w.to_scale()[0]
+    bone_of = {m.name: m.parent_bone for m in meshes if m.parent_type == "BONE"}
+    for m in meshes:
+        mw = m.matrix_world.copy()
+        m.parent = None
+        m.parent_type = "OBJECT"
+        m.data.transform(mw)
+        m.matrix_world = Matrix.Identity(4)
+    arm.parent = None
+    arm.matrix_world = Matrix.Identity(4)
+    arm.data.transform(w)
+    arm.parent = parent
+    arm.matrix_parent_inverse = Matrix.Identity(4)
+    arm.matrix_basis = Matrix.Identity(4)
+    bpy.context.view_layer.update()
+    for m in meshes:
+        m.parent = arm
+        m.matrix_parent_inverse = Matrix.Identity(4)
+        m.matrix_basis = Matrix.Identity(4)
+        if m.name in bone_of:
+            # Rigid parts on a bone (the elk's antlers): skinned to it with full weight.
+            g = m.vertex_groups.new(name=bone_of[m.name])
+            g.add(list(range(len(m.data.vertices))), 1.0, "REPLACE")
+            if not any(md.type == "ARMATURE" for md in m.modifiers):
+                md = m.modifiers.new("armature", "ARMATURE")
+                md.object = arm
+    bpy.context.view_layer.update()
+    return scale
 
 
 def _keys(arm, name, samples):
@@ -287,11 +394,24 @@ def build(ctx, spec):
     path = os.path.join(sources(), *spec["blend"].split("/"))
     objs, actions = _append(path)
     _fix_images(os.path.dirname(path))
+    if spec.get("recolour") == "jaguar":
+        for im in bpy.data.images:
+            if im.users and "body" in im.name.lower():
+                _jaguar(im)
     arm = next(o for o in objs if o.type == "ARMATURE")
     # Keep the armature and its meshes; drop helper empties (bone ends) and stray objects.
     meshes = [o for o in objs if o.type == "MESH" and (o.parent == arm or any(
         m.type == "ARMATURE" and m.object == arm for m in o.modifiers))]
+    # The pack's actions also key the armature object (FBX: rotation and scale, the same on
+    # every frame): take the object's transform from the STAND source, then drop those
+    # channels so that only the bones animate.
+    stand_src = bpy.data.actions[spec["clips"]["STAND"][0]]
+    _show(arm, stand_src, stand_src.frame_range[0])
     mw = arm.matrix_world.copy()
+    for act in actions:
+        for fc in _fcurves(act):
+            if not fc.data_path.startswith("pose.bones"):
+                _remove_fcurve(act, fc)
     keep = {arm, *meshes}
     for o in objs:
         if o not in keep:
@@ -326,7 +446,7 @@ def build(ctx, spec):
     wrap.rotation_euler = (0.0, 0.0, yaw)
     bpy.context.view_layer.update()
     skip = spec.get("measure_skip", ())
-    body = [m for m in meshes if not any(s in m.name for s in skip)] or meshes
+    body = [m for m in meshes if not any(s.lower() in m.name.lower() for s in skip)] or meshes
     lo, hi = _bounds(body)
     size = spec.get("height") and (hi.z - lo.z, spec["height"]) or (hi.y - lo.y, spec["length"])
     k = size[1] / size[0]
@@ -340,20 +460,38 @@ def build(ctx, spec):
     ctx.stats["size_m"] = [round(hi[i] - lo[i], 2) for i in range(3)]
 
     src_fps = spec.get("fps", 30)
-    made = []
+    baked = {}
     for key, clip in spec["clips"].items():
         src, mode, n = clip[0], clip[1], clip[2]
         a = clip[3] if len(clip) > 3 else (None if mode == "pose" else 0.0)
         b = clip[4] if len(clip) > 4 else 1.0
-        made.append(_bake(arm, key, bpy.data.actions[src], mode, n, a, b, src_fps, meshes))
+        baked[key] = _bake(arm, key, bpy.data.actions[src], mode, n, a, b, src_fps, meshes)
     # The lying corpse: DEATH's last pose, unless the spec names its own.
     for key in ("DEATHLIE1", "DEATHLIE2", "DEATHLIE3"):
-        if key not in spec["clips"] and "DEATH" in _LAST:
-            made.append(_keys(arm, key, [_LAST["DEATH"]]))
+        if key not in baked and "DEATH" in baked:
+            baked[key] = [baked["DEATH"][-1]]
+    # Every pose as world matrices of the bones (without the scale), then back to bone
+    # space against the flattened rest pose.
+    arm.animation_data.action = None
+    worlds = {}
+    for key, samples in baked.items():
+        worlds[key] = []
+        for smp in samples:
+            _set(arm, smp)
+            worlds[key].append({pb.name: _unscaled(arm.matrix_world @ pb.matrix) for pb in arm.pose.bones})
+    for pb in arm.pose.bones:
+        pb.location, pb.rotation_quaternion, pb.scale = Vector(), (1, 0, 0, 0), Vector((1, 1, 1))
+    _flatten(arm, meshes, ctx.root)
+    bpy.data.objects.remove(wrap, do_unlink=True)
+    made = []
+    for key, mats in worlds.items():
+        made.append(_keys(arm, key, [_locals(arm, m) for m in mats]))
     for act in list(bpy.data.actions):
         if act not in made:
             bpy.data.actions.remove(act)
     arm["acr_clips"] = [a.name for a in made]
     _show(arm, bpy.data.actions["STAND"], 0)
+    lo, hi = _bounds(meshes)
+    ctx.stats["size_m_flat"] = [round(hi[i] - lo[i], 2) for i in range(3)]
     ctx.root["acr_animal"] = True
     ctx.stats["clips"] = {a.name: int(a.frame_range[1] - a.frame_range[0] + 1) for a in made}
