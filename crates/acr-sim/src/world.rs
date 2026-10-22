@@ -945,6 +945,7 @@ impl World {
         self.shouts.clear();
         crate::morale::decay(self);
         crate::wounds::bleed(self);
+        crate::body::get_up(self);
         crate::ground_fire::tick(self);
         for c in commands {
             self.apply(c);
