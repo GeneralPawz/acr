@@ -490,6 +490,14 @@ pub struct World {
     /// splatter, later hit reactions): kept for [`crate::combat::HIT_KEEP`] ticks, at most
     /// [`crate::combat::HIT_CAP`]. Not part of the state hash, not saved.
     pub hits: std::collections::VecDeque<crate::combat::HitRecord>,
+    /// Recent ground impacts of rounds (cannonballs, grapeshot, missed shots), oldest first,
+    /// for the renderer only (craters, scuffs, impact sounds): kept and capped like `hits`.
+    /// Not part of the state hash, not saved.
+    pub impacts: std::collections::VecDeque<crate::combat::ImpactRecord>,
+    /// The flight direction of the round now doing damage (world pixels, not normalised),
+    /// set by the projectiles around their damage so that hits record where the ball really
+    /// came from (a ricochet) rather than the attacker. Render only, not hashed.
+    pub hit_dir: Option<(i32, i32)>,
     /// Coast places, islands and the computer players' landing setup (derived from the map
     /// and refreshed every tick; not hashed, the landings' orders are in `brigades`).
     pub desant: crate::desant::Desant,
@@ -623,6 +631,8 @@ impl World {
             formation_groups: Default::default(),
             deaths: Default::default(),
             hits: Default::default(),
+            impacts: Default::default(),
+            hit_dir: None,
             desant: Default::default(),
             armies: Default::default(),
             ai: [false; PLAYERS],

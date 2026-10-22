@@ -1225,21 +1225,54 @@ fn record_hit(w: &mut World, victim: usize, sender: usize, cause: DeathCause, ki
     if w.hits.len() >= HIT_CAP {
         w.hits.pop_front();
     }
+    let dir = w.hit_dir.filter(|&d| d != (0, 0)).unwrap_or((vx - sx, vy - sy));
     w.hits.push_back(HitRecord {
         tick: w.tick.0,
         victim: victim as u32,
         pos: (vx, vy),
-        dir: (vx - sx, vy - sy),
+        dir,
         cause,
         killed,
         building: w.units[victim].building,
     });
 }
 
-/// Drops the hits older than [`HIT_KEEP`] ticks (at the start of every step).
+/// A round striking the ground (`World::impacts`), for the renderer only: a cannonball or
+/// grapeshot landing or bouncing, a shot that missed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImpactRecord {
+    /// The tick of the impact.
+    pub tick: u64,
+    /// Where the round struck (world pixels).
+    pub pos: (i32, i32),
+    /// The round's flight direction (world pixels, not normalised; may be zero).
+    pub dir: (i32, i32),
+    /// The shooter's weapon ([`DeathCause::of_weapon`]).
+    pub cause: DeathCause,
+}
+
+/// The cause of a round fired by attack `att` of unit `sender` (alive or not).
+pub fn cause_of_attack(w: &World, sender: usize, att: u8) -> DeathCause {
+    let Some(u) = w.units.get(sender) else { return DeathCause::Unknown };
+    let a = w.adv(u.owner, u.kind);
+    a.attacks.get(usize::from(att)).map_or(DeathCause::Unknown, |a| DeathCause::of_weapon(&a.kind))
+}
+
+/// Notes a round striking the ground (render only, not hashed).
+pub fn record_impact(w: &mut World, pos: (i32, i32), dir: (i32, i32), cause: DeathCause) {
+    if w.impacts.len() >= HIT_CAP {
+        w.impacts.pop_front();
+    }
+    w.impacts.push_back(ImpactRecord { tick: w.tick.0, pos, dir, cause });
+}
+
+/// Drops the hits and impacts older than [`HIT_KEEP`] ticks (at the start of every step).
 pub fn forget_hits(w: &mut World) {
     while w.hits.front().is_some_and(|h| h.tick + HIT_KEEP < w.tick.0) {
         w.hits.pop_front();
+    }
+    while w.impacts.front().is_some_and(|h| h.tick + HIT_KEEP < w.tick.0) {
+        w.impacts.pop_front();
     }
 }
 

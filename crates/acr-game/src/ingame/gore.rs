@@ -121,7 +121,7 @@ pub fn corpse(
         age: ramp(d, 120.0, 900.0),
         fade: 1.0 - ramp(d, f32::from(removed_at) * 0.85, f32::from(removed_at)),
         seed,
-        splatter: false,
+        ..Default::default()
     };
     (wounds, Some(pool))
 }

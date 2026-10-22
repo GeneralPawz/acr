@@ -354,6 +354,12 @@ impl ThreeD {
         for hit in &world.hits {
             super::splatter::splatter(hit, world.tick.0, self.gore, &ground, &mut self.pools);
         }
+        // Earth churned up where rounds struck the ground (#226).
+        for impact in &world.impacts {
+            super::splatter::impact(impact, world.tick.0, &ground, &mut self.pools);
+        }
+        // Every decal lies on the slope under it rather than flat at one height (#226).
+        super::splatter::lay_on_ground(&mut self.pools, &ground);
     }
 
     /// Draws the frame's 3D pass over the terrain already in `view`: the terrain's depth,

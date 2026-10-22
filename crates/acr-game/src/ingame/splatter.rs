@@ -6,12 +6,16 @@
 //! loading a game.
 //!
 //! The same spray lands on troops standing behind the victim (speckles on the side facing
-//! it) and on the walls of buildings in its path (#220).
+//! it) and on the walls of buildings in its path (#220). Melee blows, thrown weapons and
+//! explosions spray low and wide at the victim's feet instead (#226).
+//!
+//! Rounds striking the ground (`World::impacts`) leave churned earth the same way: a crater
+//! for cannonballs and shells, a scuff for musket balls, grapeshot and arrows (#226).
 
 use acr_render::model::ramp;
-use acr_render::model_renderer::{BloodPool, Sprayed};
+use acr_render::model_renderer::{BloodPool, Dirt, Sprayed};
 use acr_render::view3d::PIXELS_PER_METRE;
-use acr_sim::combat::{DeathCause, HIT_KEEP, HitRecord};
+use acr_sim::combat::{DeathCause, HIT_KEEP, HitRecord, ImpactRecord};
 
 use crate::ui::settings::Gore;
 
@@ -28,16 +32,25 @@ pub struct Spray {
     pub big: f32,
     /// Half the opening angle of the cone (radians).
     pub cone: f32,
+    /// Low at the victim's feet (melee, thrown, explosions): short drips without tails that
+    /// reach neither troops nor walls.
+    pub low: bool,
 }
 
 /// The spray of a cause; `None` for causes that spray nothing.
 pub fn spray(cause: DeathCause) -> Option<Spray> {
-    let s = |count, near, far, small, big, cone| Some(Spray { count, near, far, small, big, cone });
+    let s = |count, near, far, small, big, cone| Some(Spray { count, near, far, small, big, cone, low: false });
+    let low = |count, near, far, small, big, cone| Some(Spray { count, near, far, small, big, cone, low: true });
     match cause {
         DeathCause::Gunshot => s(6, 0.2, 1.8, 0.06, 0.14, 0.30),
         DeathCause::Arrow => s(3, 0.1, 0.8, 0.05, 0.10, 0.25),
         DeathCause::Grapeshot => s(9, 0.2, 2.2, 0.06, 0.15, 0.55),
         DeathCause::Cannonball => s(18, 0.3, 3.5, 0.08, 0.25, 0.45),
+        // Away from the blow, wide, low.
+        DeathCause::Melee => low(5, 0.0, 0.7, 0.05, 0.12, 1.4),
+        DeathCause::Thrown => low(4, 0.0, 0.8, 0.05, 0.12, 1.0),
+        // All around.
+        DeathCause::Explosion => low(12, 0.1, 1.6, 0.06, 0.18, std::f32::consts::PI),
         _ => None,
     }
 }
@@ -86,16 +99,83 @@ pub fn splatter(
         let angle = base + (2.0 * u2 - 1.0) * s.cone;
         let (sin, cos) = angle.sin_cos();
         let at = ground(hit.pos.0 as f32 + cos * dist, hit.pos.1 as f32 + sin * dist);
+        let (radius, stretch) = if s.low {
+            // Drips: round, the bigger ones close to the feet.
+            ((s.small + (s.big - s.small) * u3) * (1.0 - 0.3 * k), 0.15 * u4)
+        } else {
+            ((s.small + (s.big - s.small) * u3) * (1.0 - 0.4 * k), 0.3 + 1.6 * k + 0.4 * u4)
+        };
         out.push(BloodPool {
             centre: at,
-            radius: (s.small + (s.big - s.small) * u3) * (1.0 - 0.4 * k) * PIXELS_PER_METRE,
+            radius: radius * PIXELS_PER_METRE,
             along: [cos, sin],
-            stretch: 0.3 + 1.6 * k + 0.4 * u4,
+            stretch,
             age,
             fade,
             seed: rng.next() * 97.0,
             splatter: true,
+            ..Default::default()
         });
+    }
+}
+
+/// The earth churned up where `impact` struck the ground, at tick `now` (none for causes
+/// that leave nothing): a crater with earth thrown out along the flight for cannonballs and
+/// shells, a small scuff for the rest. Earth, not gore: shown with every `gore` setting.
+pub fn impact(impact: &ImpactRecord, now: u64, ground: &dyn Fn(f32, f32) -> [f32; 3], out: &mut Vec<BloodPool>) {
+    if now < impact.tick {
+        return;
+    }
+    // Radius (metres), stretch along the flight, kind.
+    let (radius, stretch, dirt) = match impact.cause {
+        DeathCause::Cannonball => (0.45, 0.9, Dirt::Crater),
+        DeathCause::Explosion => (0.9, 0.2, Dirt::Crater),
+        DeathCause::Grapeshot => (0.14, 0.6, Dirt::Scuff),
+        DeathCause::Gunshot => (0.12, 0.5, Dirt::Scuff),
+        DeathCause::Arrow => (0.08, 0.3, Dirt::Scuff),
+        _ => return,
+    };
+    let t = (now - impact.tick) as f32;
+    let fade = 1.0 - ramp(t, FADE.0, FADE.1);
+    if fade <= 0.0 {
+        return;
+    }
+    let mut rng = Rng::new(impact.tick, (impact.pos.0 as u32).wrapping_mul(7919) ^ impact.pos.1 as u32);
+    let (dx, dy) = (impact.dir.0 as f32, impact.dir.1 as f32);
+    let len = (dx * dx + dy * dy).sqrt();
+    let along = if len > 0.0 { [dx / len, dy / len] } else { [0.0; 2] };
+    out.push(BloodPool {
+        centre: ground(impact.pos.0 as f32, impact.pos.1 as f32),
+        radius: radius * (0.85 + 0.3 * rng.next()) * PIXELS_PER_METRE,
+        along,
+        stretch: if len > 0.0 { stretch } else { 0.0 },
+        age: ramp(t, 20.0, DRIED),
+        fade,
+        seed: rng.next() * 97.0,
+        dirt,
+        ..Default::default()
+    });
+}
+
+/// The ground's slope under a decal of `radius` (world pixels) at world `(x, y)`, from the
+/// ground points either side: world z per world x and per world y (`BloodPool::tilt`).
+pub fn tilt(ground: &dyn Fn(f32, f32) -> [f32; 3], x: f32, y: f32, radius: f32) -> [f32; 2] {
+    let r = radius.max(8.0);
+    let (w, e) = (ground(x - r, y), ground(x + r, y));
+    let (n, s) = (ground(x, y - r), ground(x, y + r));
+    let slope = |a: [f32; 3], b: [f32; 3], i: usize| {
+        let d = b[i] - a[i];
+        if d.abs() < 1e-3 { 0.0 } else { (b[2] - a[2]) / d }
+    };
+    [slope(w, e, 0), slope(n, s, 1)]
+}
+
+/// Lays every decal on the ground under it: its centre's height and the slope there.
+pub fn lay_on_ground(pools: &mut [BloodPool], ground: &dyn Fn(f32, f32) -> [f32; 3]) {
+    for p in pools {
+        let r = p.radius * (1.0 + p.stretch);
+        p.centre[2] = ground(p.centre[0], p.centre[1])[2];
+        p.tilt = tilt(ground, p.centre[0], p.centre[1], r);
     }
 }
 
@@ -151,7 +231,7 @@ pub fn sprayed_targets<'a>(
     }
     let strength = if gore == Gore::Reduced { 0.5 } else { 1.0 };
     for hit in hits.into_iter().filter(|h| !h.building && now >= h.tick) {
-        let Some(s) = spray(hit.cause) else { continue };
+        let Some(s) = spray(hit.cause).filter(|s| !s.low) else { continue };
         let t = (now - hit.tick) as f32;
         let fade = 1.0 - ramp(t, FADE.0, FADE.1);
         let (dx, dy) = (hit.dir.0 as f32, hit.dir.1 as f32);
@@ -323,9 +403,74 @@ mod tests {
     }
 
     #[test]
+    fn melee_thrown_and_explosions_drip_low_at_the_feet() {
+        let m = PIXELS_PER_METRE;
+        for c in [DeathCause::Melee, DeathCause::Thrown, DeathCause::Explosion] {
+            let d = drops(&hit(c), 110, Gore::Full);
+            assert!(!d.is_empty(), "{c:?}");
+            for p in &d {
+                // Short and close: within the spray's reach of the victim, hardly a tail.
+                let (x, y) = (p.centre[0] - 1000.0, p.centre[1] - 1000.0);
+                assert!((x * x + y * y).sqrt() <= 1.6 * m + 1e-3 && p.stretch <= 0.15, "{c:?} {p:?}");
+            }
+        }
+        // A blow from the west drips mostly east, never far behind the attacker's side.
+        let d = drops(&hit(DeathCause::Melee), 110, Gore::Full);
+        assert!(d.iter().all(|p| p.centre[0] - 1000.0 > -0.7 * m * 0.2), "{d:?}");
+        // An explosion sprays all around: some droplets land west of the victim.
+        let e = drops(&HitRecord { killed: true, ..hit(DeathCause::Explosion) }, 110, Gore::Full);
+        assert!(e.iter().any(|p| p.centre[0] < 1000.0) && e.iter().any(|p| p.centre[0] > 1000.0));
+        // The low spray stays off the troops behind.
+        let behind = soldier(1, 1000.0 + 0.5 * m, 1000.0, 0.0);
+        assert!(sprayed_targets([&hit(DeathCause::Melee)], 110, Gore::Full, &[behind]).is_empty());
+    }
+
+    fn impact(cause: DeathCause) -> ImpactRecord {
+        ImpactRecord { tick: 100, pos: (2000, 1500), dir: (0, 500), cause }
+    }
+
+    fn earth(i: &ImpactRecord, now: u64) -> Vec<BloodPool> {
+        let mut out = Vec::new();
+        super::impact(i, now, &|x, y| [x, y, 7.0], &mut out);
+        out
+    }
+
+    #[test]
+    fn rounds_striking_the_ground_churn_the_earth() {
+        let ball = earth(&impact(DeathCause::Cannonball), 110);
+        assert_eq!(ball.len(), 1);
+        let b = ball[0];
+        assert_eq!((b.dirt, b.centre), (Dirt::Crater, [2000.0, 1500.0, 7.0]));
+        // Thrown out along the flight (south).
+        assert!(b.along == [0.0, 1.0] && b.stretch > 0.5 && !b.splatter);
+        let shot = earth(&impact(DeathCause::Gunshot), 110)[0];
+        assert!(shot.dirt == Dirt::Scuff && shot.radius < b.radius / 2.0);
+        assert!(earth(&impact(DeathCause::Melee), 110).is_empty());
+        // The same every frame, fading before the record is forgotten.
+        assert_eq!(ball, earth(&impact(DeathCause::Cannonball), 110));
+        assert!(earth(&impact(DeathCause::Cannonball), 100 + HIT_KEEP).is_empty());
+        assert!(earth(&impact(DeathCause::Cannonball), 99).is_empty());
+    }
+
+    #[test]
+    fn decals_lie_on_the_slope() {
+        // Ground rising 0.5 per pixel eastwards, flat north-south.
+        let ground = |x: f32, y: f32| [x, y, 0.5 * x];
+        assert_eq!(tilt(&ground, 100.0, 100.0, 20.0), [0.5, 0.0]);
+        let mut pools = [BloodPool { centre: [100.0, 50.0, 0.0], radius: 10.0, ..Default::default() }];
+        lay_on_ground(&mut pools, &ground);
+        assert_eq!((pools[0].centre[2], pools[0].tilt), (50.0, [0.5, 0.0]));
+        // Every corner of the decal then lies on the ground.
+        for (dx, dy) in [(-10.0, -10.0), (10.0, 10.0), (10.0, -10.0)] {
+            let z = pools[0].centre[2] + pools[0].tilt[0] * dx + pools[0].tilt[1] * dy;
+            assert_eq!(z, ground(100.0 + dx, 50.0 + dy)[2]);
+        }
+    }
+
+    #[test]
     fn causes_gore_and_time() {
-        // Melee, fire, hunger and buildings spray nothing; gore=off shows nothing.
-        for c in [DeathCause::Melee, DeathCause::Burned, DeathCause::Hunger, DeathCause::Explosion] {
+        // Fire, hunger and buildings spray nothing; gore=off shows nothing.
+        for c in [DeathCause::Burned, DeathCause::Hunger, DeathCause::Unknown] {
             assert!(drops(&hit(c), 110, Gore::Full).is_empty(), "{c:?}");
         }
         assert!(drops(&HitRecord { building: true, ..hit(DeathCause::Gunshot) }, 110, Gore::Full).is_empty());

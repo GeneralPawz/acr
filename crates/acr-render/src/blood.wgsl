@@ -1,7 +1,9 @@
 // Blood pools under corpses and splatter behind hit units (docs/rendering-3d.md): one quad
 // per pool lying on the ground, a noisy round pool with a trail running out away from the
 // blow (or a droplet: a crisp head with a tail), fresh red drying to brown, blended over the
-// terrain and tested against its depth.
+// terrain and tested against its depth. The same decal in earth colours marks where rounds
+// struck the ground: a cannonball's crater, a musket ball's scuff. Each decal lies on the
+// slope of the ground under it (`tilt`).
 
 struct Globals {
     view_proj: mat4x4<f32>,
@@ -18,8 +20,10 @@ struct PoolIn {
     @location(0) centre: vec4<f32>,
     // direction of the trail (world x, y), stretch, seed
     @location(1) shape: vec4<f32>,
-    // age (0 fresh .. 1 dried), fade (1 .. 0), droplet (0 pool, 1 splatter)
+    // age (0 fresh .. 1 dried), fade (1 .. 0), kind (0 pool, 1 droplet, 2 crater, 3 scuff)
     @location(2) look: vec4<f32>,
+    // the ground's slope: world z per world x, per world y
+    @location(3) tilt: vec4<f32>,
 };
 
 struct VsOut {
@@ -47,7 +51,9 @@ fn vs_pool(@builtin(vertex_index) vi: u32, p: PoolIn) -> VsOut {
     let b = mix(-r, r, corner.y);
     let xy = p.centre.xy + along * a + across * b;
     var out: VsOut;
-    out.pos = globals.view_proj * vec4<f32>(xy, p.centre.z + LIFT, 1.0);
+    let off = xy - p.centre.xy;
+    let z = p.centre.z + LIFT + dot(p.tilt.xy, off);
+    out.pos = globals.view_proj * vec4<f32>(xy, z, 1.0);
     out.local = vec2<f32>(a, b);
     out.shape = p.shape;
     out.look = p.look;
@@ -74,14 +80,55 @@ fn to_srgb(c: vec3<f32>) -> vec3<f32> {
     return select(hi, lo, c <= vec3<f32>(0.0031308));
 }
 
+// Churned earth where a round struck: `crater` a dark pit in a ring of thrown earth, else a
+// dusty scuff. Fades with `look.y`, the fresh earth greys with `look.x`.
+fn dirt(in: VsOut, crater: bool) -> vec4<f32> {
+    let r = max(in.radius, 1.0);
+    let seed = in.shape.w;
+    let q = in.local / r;
+    var d = length(q);
+    // Thrown earth runs out along the flight (the tail), ragged at the rim.
+    let reach = 2.0 * in.shape.z;
+    if (reach > 0.0 && q.x > 0.0 && q.x < reach) {
+        let t = 1.0 - q.x / reach;
+        d = min(d, abs(q.y) / (0.8 * t + 0.05));
+    }
+    d = d + (noise2(q * 4.0 + vec2<f32>(seed)) - 0.5) * 0.5 + (noise2(q * 11.0 + vec2<f32>(seed * 1.3)) - 0.5) * 0.25;
+    if (d > 1.0) {
+        discard;
+    }
+    let speck = noise2(q * 14.0 + vec2<f32>(seed * 0.7));
+    var rgb: vec3<f32>;
+    var alpha: f32;
+    if (crater) {
+        let pit = 1.0 - smoothstep(0.15, 0.45, d);
+        let earth = mix(vec3<f32>(0.16, 0.11, 0.07), vec3<f32>(0.22, 0.16, 0.10), speck);
+        rgb = mix(earth, vec3<f32>(0.05, 0.035, 0.025), pit);
+        alpha = smoothstep(1.0, 0.7, d) * 0.92;
+    } else {
+        rgb = mix(vec3<f32>(0.20, 0.15, 0.10), vec3<f32>(0.30, 0.25, 0.18), speck);
+        alpha = smoothstep(1.0, 0.4, d) * 0.7;
+    }
+    // Dust settles: the fresh earth greys towards the ground's colour.
+    rgb = mix(rgb, vec3<f32>(0.24, 0.21, 0.16), 0.5 * in.look.x);
+    alpha = alpha * mix(1.0, 0.6, in.look.x) * in.look.y;
+    if (globals.params.x > 0.5) {
+        rgb = to_srgb(rgb);
+    }
+    return vec4<f32>(rgb, alpha);
+}
+
 @fragment
 fn fs_pool(in: VsOut) -> @location(0) vec4<f32> {
+    if (in.look.z > 1.5) {
+        return dirt(in, in.look.z < 2.5);
+    }
     let r = max(in.radius, 1.0);
     let seed = in.shape.w;
     // Distance in pool radii: the round pool, and the trail narrowing away from it.
     var d = length(in.local) / r;
     let reach = 2.0 * in.shape.z * r;
-    let droplet = in.look.z > 0.5;
+    let droplet = in.look.z > 0.5 && in.look.z < 1.5;
     // A droplet's tail is wider and tapers to a point; a pool's trail is a thin run.
     let tail = select(0.45, 0.7, droplet);
     if (reach > 0.0 && in.local.x > 0.0 && in.local.x < reach) {
