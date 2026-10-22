@@ -226,7 +226,8 @@ struct MaterialUniform {
     windows: [f32; 4],
     edge: [f32; 4],
     flags: [f32; 4],
-    /// x: stump cap (wet, ragged outline).
+    /// x: stump cap (wet, ragged outline), y: tissue kind, z: per-soldier tint, w: the
+    /// model rots by the procedural fallback ([`crate::model::ModelData::decays_procedurally`]).
     look: [f32; 4],
 }
 
@@ -729,6 +730,7 @@ impl ModelRenderer {
                     .create_view(&Default::default())
             })
             .collect();
+        let procedural = data.decays_procedurally();
         let materials = data
             .materials
             .iter()
@@ -749,7 +751,12 @@ impl ModelRenderer {
                         // The bone layer takes no blood, dirt or burns.
                         if d.is_some_and(|d| d.inner) || m.stump { 1.0 } else { 0.0 },
                     ],
-                    look: [if m.stump { 1.0 } else { 0.0 }, m.tissue as u8 as f32, m.tint as u8 as f32, 0.0],
+                    look: [
+                        if m.stump { 1.0 } else { 0.0 },
+                        m.tissue as u8 as f32,
+                        m.tint as u8 as f32,
+                        if procedural { 1.0 } else { 0.0 },
+                    ],
                 };
                 let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("model material"),
