@@ -62,6 +62,8 @@ compares state hashes (see [Verification](#verification)).
 | unit / building | `Unit`, stable `EntityId` = slot, never reused | `OneObject` |
 | object type | `ObjectType` from `.MD` + nation member id, in `Catalog` | `NewMonster` |
 | formation | `Brigade`, shapes in `Formations` | `Brigade` (0x4F bytes), `OrdDesc` |
+| animation | `AnimKind` (`name()` = `.MD` slot, e.g. `#ATTACK1`), `frame`, `anim_frames` | `NewAnm`, `NewCurSprite` |
+| stance, reload, death | `stance`/`local_stance`, `delay`, `death` (`living()` = exists and `death == 0`) | `NewState`/`LocalNewState`, `delay`, `Sdoxlo` |
 | randomness | `SyncRandom` (table walk) | `rando()` (0x584891) |
 | state hash | `World::state_hash()`: FNV-1a, `usize` hashed as u64 | — |
 
@@ -69,7 +71,7 @@ compares state hashes (see [Verification](#verification)).
   units in creation order, static map objects (trees, stones, ... from `TRE1`), brigades,
   the unit occupancy grid and the random index. Static data (`Catalog`, `Formations`,
   `MapGrid`) is shared through `Arc`. The dynamic state is hashed.
-- **Commands** are plain data (`Move`, `Stop`, `Attack`, `Form`, `Face`, `Disband`, with the
+- **Commands** are plain data (`Move`, `Stop`, `Attack` (priority 16), `Form`, `Face`, `Disband`, with the
   issuing player). They are applied in order at the start of a tick, and commands for units
   the player does not own are ignored. The command stream per tick is therefore a complete
   replay.
@@ -333,6 +335,126 @@ Shapes come from `ORDERS.LST` (parser 0x4ed6e0) and `ORD_GROUPS.LST` (0x4ed400).
   1024 px (0x4198b3). The drummer and flag bearer types come from the officer's data. The
   formation is placed centred on the officer, facing 0.
 
+## Combat
+
+Implemented in `combat.rs`, recovered from `SearchVictim` (0x52622b), `AttackObj`
+(0x51a930), `AttackObjLink` (0x51bcaf), `MakeDamage` (0x4e8990), `TraceObjectsInLine`
+(0x559310), `Die` (0x4e77a0) and the object loop (0x5118b3).
+
+**Per tick:**
+
+1. `SearchVictim` runs for every unit.
+2. Player by player, each unit runs its order link (`AttackObjLink` for attack orders), then
+   the motion handler. The motion handler also advances strike animations by 2 frames.
+3. The object loop counts down reloads and plays death animations.
+
+### Data
+
+- **Attack index `i` is stance `i + 1`.** Its animation is `#ATTACKi` (`#ATTACK` for 0), with
+  `#PATTACKi`/`#UATTACKi` to enter and leave the stance and `#PSTANDi` to stand in it.
+  `ATTACK_RADIUS i r1 r2` also sets the detection range `DET_RADIUS`, so a `DET_RADIUS`
+  must come after it. `CANKILL` overwrites every `ATTMASK`.
+- **`ATTACK_PAUSE` counts animation frames.** It drops by 2 per tick, except for
+  `SLOWRECHARGE` units (musketeers). These reload only by playing `#ATTACK3`; each loop
+  subtracts its frame count.
+- **`NOPAUSEDATTACK i`:** index `i` (the bayonet) can be used while reloading and does not
+  reset the reload.
+- **Weapon kinds** come from `NRES.DAT [WEAPONS]`, in line order. Their flags:
+  - `H`: height adds range.
+  - `R`: 4 % instant kill.
+  - `O`: the formation attack bonus applies.
+  - `B`: against buildings it only hurts the garrison.
+- **Auto-targeting.** `SEARCH_ENEMY_RADIUS r` / `_SHIFT p` give the search circle
+  `SR = (r<<4)·100/(p+100)`, centred `SS = SR·p/100` ahead of the unit (in 1/16 px). The
+  musketeer gets 500 px, centred 350 px ahead. Units without `SEARCH_ENEMY_RADIUS` never
+  attack on their own.
+
+### Rules
+
+- **`SearchVictim`.** On a tick a unit draws `rando()`, and anything above `0x2000` skips
+  the search (about 3 ticks in 4). Otherwise it scans the `(2·(SR>>11)+1)²` cells of 128 px
+  around the search centre.
+  - In each cell it takes the first living enemy whose material it can kill.
+  - It keeps the nearest one to the centre with `MinR·16 < d < SR`.
+  - It attacks that enemy with priority 1.
+- **`AttackObj`** refuses a target the unit cannot hurt, or an order with priority below the
+  current one. Player orders have priority 16, so moving units do not get distracted. With
+  priority < 5 the unit only switches to a strictly closer enemy. (The engine compares the
+  1/16 px distance with `MinR` in pixels; the quirk is kept.)
+- **`AttackObjLink`**, every tick:
+  1. **At the active frame of `#ATTACKi`** (`SETACTIVEPOINT`, rounded up to even): face the
+     enemy and check the range again. `dst ≥ r1` and
+     `dst − ADDSHOTRADIUS (− 2·Δz for H weapons) ≤ r2 + ADD_ATTACK_RADIUS`.
+     - In range, set the reload (`delay = ATTACK_PAUSE`) and strike or shoot.
+     - A melee victim answers with an attack of priority 2.
+  2. **Otherwise act only at the end of an animation.**
+     - Choose the **last** index whose detection range and mask fit. While reloading,
+       prefer a `NOPAUSEDATTACK` index.
+     - Musketeers play `#ATTACK3` reload loops while the reload lasts.
+     - **In range:** turn (snapping within `min(16, 1.5·ROTATE)`), switch stance if needed
+       (the transition animation plays at the cycle end), then start `#ATTACKi`.
+     - **Out of range:** walk to the enemy's cell (stance 0).
+- **Damage** (`MakeDamage`):
+  - Start with `DAMAGE`, plus `min(kills·SKILLDAMAGEBONUS/10, 19·damage)` if the mask
+    allows, minus `SHIELD`.
+  - `R` weapons: `rando() < 1310` (4 %) kills outright, except buildings and `NO25` units.
+  - Then subtract `PROTECTION[kind]`, kept as a byte.
+  - The formation bonuses (shape header numbers 3 and 4) are scaled by the angle to the
+    brigade's facing: full within 40, half below 70, none beyond; `#KARE` gets full.
+  - At least 1. A surviving victim counter-attacks with priority 1.
+- **Musket shots** are instant line traces:
+  - The aim point is dispersed per axis by
+    `((rando()>>5) − 512)·(Norma>>5)·RAZBROS/32000`, about ±57 px at 400 px.
+  - Samples every 16 px run out to twice the distance, each 128 px cell checked once.
+  - A unit qualifies if `0 < z − ground < 90`, it is more than 60 px from the shooter (150
+    for friends), and the line passes within `UNITRADIUS` (doubled for friends within
+    250 px). The qualifying unit closest to the shooter takes the hit.
+  - Damage halves every `DAMAGEDEC` px.
+  - `FRIENDLYFIRE` means *avoid* friendly fire: a friend hit absorbs the ball unharmed.
+  - Random numbers are drawn as in the original: 2 + 2 + 4 per shot, plus 1 for the `R`
+    test.
+- **Enemy contact while walking** (`CheckMotionThroughEnemyAbility` 0x41df98): if an enemy
+  stands within 32 px in the 128 px cell at the end of the next cycle, the walker stops and
+  attacks it (priority 0x8F). Its cell is left unreserved, as in the original.
+- **Death:**
+  - The unit turns by `(rando()>>8) − 64`, frees its cell and plays `#DEATH`, then lies as
+    `#DEATHLIE1`. After 1200 / 1600 it switches to `#DEATHLIE2` / `#DEATHLIE3` where the
+    type has them.
+  - The death counter (`Unit::death`) grows by 2 per tick while lying, and the corpse is
+    removed above 2000 (about 100 s).
+  - Attackers keep striking a target whose counter is still ≤ 8.
+
+### Worked timing (musketeer, 10 ticks/s)
+
+- First shot: `#PATTACK1` (63 frames, 32 ticks), then 7 ticks to the active frame 14. The
+  test `musketeers_fire_on_schedule_and_hit` checks this window.
+- Steady fire: about 307 ticks (31 s) per shot: the rest of `#ATTACK1`, 16 reload loops of
+  16 ticks, `#TRANS3X`, and the next shot.
+- The bayonet strikes every 26 ticks; a pikeman every 10 ticks.
+
+## Using the simulation
+
+- **Setup.** `acr_sim::assets::SimAssets` collects the static data without I/O: the host
+  feeds it files until it is ready. `World::from_map(&m3d, &shapes, catalog, formations)`
+  then places the map's units.
+- **Running.** `World::step(&commands)` runs one tick (`ORIGINAL_TICKS_PER_SECOND` = 10 for
+  the original speed, paced by `FixedClock`). Commands are applied first, in order.
+- **Drawing.** For each unit with `alive` set (corpses included), use:
+  - `pos` (1/16 px; `pos.pixels()`) and `dir` (0 = east, 64 = south);
+  - `anim.name()`, the `.MD` animation slot such as `#MOTION_L`, `#ATTACK1`, `#DEATH`,
+    `#DEATHLIE1`, with `frame` its frame index.
+- **Queries for scripts:**
+  - `World::living()`, `units_of(player)`, `units_in_circle(x, y, r)`: all in id order.
+  - `unit(id)`; `Unit::living()`, `Unit::target()`.
+  - `World::spawn(kind, owner, pos, dir)`, `kill(id)` (with corpse), `remove(id)` (gone at
+    once).
+  - Unit types: `Catalog::find("EngMus(EN)")`.
+
+  These calls change the state directly. Call them between ticks, in the same order on
+  every machine.
+- **Replays / desync checks:** record the command list of every tick. `World::state_hash()`
+  is identical on every platform for identical inputs.
+
 ## Deviations and simplifications
 
 - **`Form` command.** It takes the units to use rather than searching the officer's
@@ -346,12 +468,28 @@ Shapes come from `ORDERS.LST` (parser 0x4ed6e0) and `ORD_GROUPS.LST` (0x4ed400).
 - **`ApplyOffset`** (0x52b0cd) and the 10-ring spiral table (0x28a6f10) are approximated by
   square rings and a simple free-box test.
 - **`RemoveFools`.** Pushed friends get a `SendTo` to the nearest free cell (the original uses
-  its `Rarr` push tables). Enemies in the way are not attacked: there is no combat yet, and
-  `CheckMotionThroughEnemyAbility` (0x41df98) is not reproduced.
+  its `Rarr` push tables). Enemies in the way are left to `CheckMotionThroughEnemyAbility`.
 - **Animations.**
-  - Only `#STAND`, `#REST`, `#REST1`, `#MOTION_L`, `#MOTION_R` are modelled.
-  - Stance changes (`NewState`), `BREAKANIMATION`, attack and build animations are not.
+  - Units walk only in stance 0: an attacker leaves its stance before walking. The engine
+    walks pikemen in stance 1 with `#MOTION_L0`/`#MOTION_R0` at the same speed.
+  - `#TRANS01`/`#TRANS10`, `BREAKANIMATION` and build animations are not modelled.
   - Units without `#MOTION_L` are treated as 1-frame cycles.
+- **Combat:**
+  - Shots start at the unit's position. The `SETACTIVEPOINT` muzzle offsets (and the
+    sprite frame offsets) are not added.
+  - Every `WEAPON` is treated like the musket: an instant trace with the attack's damage.
+    Arrows, cannon balls and other slow projectiles (`ProcessExpl` 0x557fa0) are not
+    simulated.
+  - Not reproduced: the friendly-fire check before a shot and the search for a firing
+    position (0x559a40, 0x51e359); buildings, terrain and 3D bars blocking shots
+    (`PredictShot`); `BackSteps` when an enemy is too close.
+  - Also missing: formation melee (`Bitva` 0x41ee89), morale and fear (0x601960,
+    `MORALE.DAT`); garrisons, towers, artillery, ships; fire damage; healers; upgrades and
+    `PersonalDelay`.
+  - Shot damage falloff uses an integer `2^(−d/dec)` (16-step table, linear interpolation)
+    instead of the x87 `exp`, so values can differ by 1.
+  - All players use the human `SearchVictim` path. AI nations scan every 8th tick and use
+    random cells in the original.
 - **Not reproduced yet:**
   - motion styles 1–5 (ships and sheep use style 0 on the water layer here);
   - `GotoFinePosition` (0x4a0670, at `StandTime == 48`);
@@ -369,7 +507,14 @@ Shapes come from `ORDERS.LST` (parser 0x4ed6e0) and `ORD_GROUPS.LST` (0x4ed400).
   - trig quirks, `GetDir`, `Norma`, the `RANDOM.LST` sequence, FNV-1a;
   - height interpolation, lock map edge rules, sprite polygons, building lock cells;
   - the path search (wall detour, target relocation);
-  - formation compilation, permutations and slot geometry.
+  - formation compilation, permutations and slot geometry;
+  - combat data (attack slots, search radius, active frames), the damage falloff.
+- **Combat tests** (`tests/combat.rs`):
+  - two pikemen find each other and fight until one dies (7 damage per hit), and the corpse
+    lies as `#DEATHLIE1`;
+  - a musketeer fires its first shot 38–45 ticks after the order, reloads 550 frames and
+    kills at 300 px;
+  - a 20-unit battle gives identical hashes in two runs.
 - **World tests** (`tests/world.rs`) on a synthetic flat map check:
   - exactly 5 px per tick for a step-40 unit;
   - 7 ticks of turning before walking west;
@@ -378,14 +523,17 @@ Shapes come from `ORDERS.LST` (parser 0x4ed6e0) and `ORD_GROUPS.LST` (0x4ed400).
   - a 20-unit group move ending in 20 distinct cells;
   - forming and moving a 15-man line;
   - identical hashes for identical command streams.
-- **`acr sim-check`** on all 63 maps, 3000 ticks (5 minutes of game time):
-  - Hashes are identical between runs at every checkpoint on every map.
+- **`acr sim-check`** on all 63 maps, 3000 ticks (5 minutes of game time), with combat:
+  - Hashes are identical between runs at every checkpoint on every map (189 of 189).
+  - 3672 units die in the fights where players' units meet.
   - 0 units outside the map.
-  - Shared cells: 0, except 4 on `battle4` from units placed overlapping in the map.
-  - 75–100 % of units per map, 93.9 % of all 108 625, reach their group's target
-    (≤ 320 px). The remainder are still queued in crowds of up to 6000 units (Saratoga) or
-    have targets across water.
-  - Speed: 380 (Saratoga, 6000 units) to 100 000+ ticks/s in a release build, against the
+  - 115 units in all share a cell with another. Most of these come from the enemy-contact
+    rule leaving the walker's cell unreserved, as the original does. Before combat the count
+    was 4 (units the map itself places overlapping).
+  - 92.5 % of the 104 956 surviving units reach their group's target (≤ 320 px). The rest
+    are fighting, queued in crowds of up to 6000 units (Saratoga), or have targets across
+    water.
+  - Speed: 179 (Saratoga, 6000 units) to 100 000+ ticks/s in a release build, against the
     original's 10.
 
 ## Open questions
