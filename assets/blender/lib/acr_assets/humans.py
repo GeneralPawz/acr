@@ -11,7 +11,7 @@ from mathutils import Matrix, Vector
 
 from . import armature as am
 from . import body as bd
-from . import decay, detail, heads, limb, project, rig
+from . import decay, detail, heads, limb, mbody, project, rig
 
 # Layer order (#178) and the decay layer of every material key a unit may use.
 LAYER_OF = {
@@ -106,8 +106,11 @@ class Character:
         g = graph(self.build)
         cx = next(p for n, _par, p, _r in g if n == "skull")[0]
 
+        def mh_body(bm):
+            mbody.build(bm, am.segments(self.arm), P, self.build)
+
         def head(bm):
-            self.face_frame = heads.refine(bm, cx)
+            self.face_frame = heads.refine(bm, cx, mh_body if self.build.get("mh_body", True) else None)
 
         self.flesh = bd.hull(self.arm, f"{self.name}.flesh", g, bones=[P + b for b in bones], head=head if faces else None)
         if faces:
@@ -119,6 +122,8 @@ class Character:
     def shell(self, name, key, keep_face, offset, symmetric=True):
         P = self.prefix
         obj = bd.derive(self.flesh, f"{self.name}.{name}", lambda c, n, h, p: keep_face(c, n, h[len(P):], p), offset)
+        if key in ("gaiters", "boots", "shoes", "boots_high", "stockings"):
+            mbody.smooth_feet(obj, self.flesh, [P + b for b in ("foot_l", "foot_r", "toe_l", "toe_r")], max(offset, 0.008))
         return self.add("clothes", obj, key, symmetric)
 
     def bone_layer(self):

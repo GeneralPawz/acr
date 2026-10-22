@@ -49,10 +49,10 @@ def frame_of(cos, cx):
     return Frame(cx, min(near), ez)
 
 
-def refine(bm, cx):
+def refine(bm, cx, body=None):
     """Hull hook (`body.hull(head=...)`): replaces the hull's head with the MakeHuman head
     (`mhead.build`; pass 4). Returns the head frame (with its morph field)."""
-    fr, field, _lm = mhead.build(bm, cx, Frame)
+    fr, field, _lm = mhead.build(bm, cx, Frame, body)
     fr.field = field
     return fr
 

@@ -103,6 +103,21 @@ the variant meshes, so the game looks as before.
   - Head-local z is mapped through the head's landmarks (nose tip, mouth line, chin) onto
     the painted layout, so the face map, `_FACE` zones and hair curves of passes 1–3 land
     on the real features (`Frame.local`).
+- **Body (#287, `acr_assets/mbody.py`):** below the head the skin hull is the MakeHuman 1.x
+  base body (CC0, `assets/blender/data/makehuman/body.json`, from
+  `assets/blender/tools/makehuman_body.py`), not the Skin-modifier hull: feet with heel,
+  arch and toes, hands with fingers, real shoulders, neck and limbs.
+  - Reposed onto skeleton H: the torso is mapped through its heights (hip joints onto the
+    `thigh` heads, shoulder joints onto the `upperarm` heads); each limb segment (upper arm,
+    forearm, hand, thigh, shin, foot) is rotated, stretched along its axis and moved onto
+    its bone, blended by distance to the MakeHuman joint segments. `build["limbs"]` thickens
+    the long limbs by a third of its excess, `build["width"]` widens the torso.
+  - Decimated (collapse, mirror-symmetric) to about 2000 tris: with the head about 3200
+    tris of flesh. The shoulder line is relaxed after the decimation.
+  - The Skin-modifier hull is still built first: it gives the skull's place to the head.
+    Weights, parts, shells and caps are made from the new hull as before. Footwear shells
+    (`gaiters`, `boots`, `shoes`, `stockings`) are relaxed over the toes.
+  - `build["mh_body"] = False` keeps the old hull.
 - **Face map:** the head part of the skin has its own material (second primitive of the
   flesh, `acr_tint` "skin") with a 512² texture on `TEXCOORD_0`.
   - The UV is a cylindrical projection with the face front in the middle (`heads.face_uv`).

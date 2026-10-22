@@ -539,5 +539,6 @@ def finish_mesh(obj):
     for n in ("home", "rest_normal"):
         if n in me.attributes:
             me.attributes.remove(me.attributes[n])
-    if "acr_home_bones" in obj:
-        del obj["acr_home_bones"]
+    for k in ("acr_home_bones", "acr_feet_relaxed"):
+        if k in obj:
+            del obj[k]
