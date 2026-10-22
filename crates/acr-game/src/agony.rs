@@ -298,7 +298,8 @@ mod tests {
     #[test]
     fn struck_dead_by_a_cannonball_is_silent() {
         assert!(dying(DeathCause::Cannonball).is_empty());
-        let hits: Vec<_> = (0..20).map(|v| kill(1, v, 1512, DeathCause::Cannonball)).collect();
+        // Fewer kills than the din needs.
+        let hits: Vec<_> = (0..DIN_MIN_KILLS as u32 - 1).map(|v| kill(1, v, 1512, DeathCause::Cannonball)).collect();
         let mut a = Agony::default();
         let sounds = a.update(&hits, &[], |_| true, 1, VIEW, None);
         assert!(sounds.iter().all(|e| e.name != SCREAM && e.name != MOAN && e.name != GASP));
