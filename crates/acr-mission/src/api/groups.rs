@@ -19,8 +19,6 @@ const fn f(name: &'static str, original: u32, status: Status, handler: super::Ha
 }
 
 const DONE: Status = Status::Done;
-/// Orders whose priority/facing the simulation cannot express yet.
-const MOVE: Status = Status::Partial("plain group move (Command::Move): no facing, order type or priority yet");
 
 pub const FUNCTIONS: &[ApiFn] = &[
     f("ClearSelection", 0x55f51f, DONE, clear_selection),
@@ -30,8 +28,8 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("SelectTypeOfUnitsInZone", 0x55d669, DONE, select_type_of_units_in_zone),
     f("SaveSelectedUnits", 0x5671ad, DONE, save_selected_units),
     f("AddUnitToSel", 0x56c8c7, DONE, add_unit_to_sel),
-    f("SelSendTo", 0x561ad6, MOVE, sel_send_to),
-    f("SelSendAndKill", 0x561be4, Status::Partial("attack-move (Command::AttackMove); no facing yet"), sel_send_to),
+    f("SelSendTo", 0x561ad6, DONE, sel_send_to),
+    f("SelSendAndKill", 0x561be4, DONE, sel_send_to),
     f("Patrol", 0x561cfb, DONE, patrol),
     f(
         "SelAttackGroup",
@@ -82,8 +80,8 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("PushAllUnitsAway", 0x56083e, DONE, push_all_units_away),
     f("SetNMASK", 0x56bcb3, DONE, set_nmask),
     f("GetUnitNMASK", 0x56bc78, DONE, get_unit_nmask),
-    f("SGP_MoveToPoint", 0x578a14, MOVE, sgp_move_to_point),
-    f("SGP_MakeOneStepTo", 0x578a6f, MOVE, sgp_make_one_step_to),
+    f("SGP_MoveToPoint", 0x578a14, DONE, sgp_move_to_point),
+    f("SGP_MakeOneStepTo", 0x578a6f, DONE, sgp_make_one_step_to),
 ];
 
 /// `'MOVE'` purpose kind.
@@ -124,13 +122,6 @@ impl Api<'_> {
     /// serials and act on whatever occupies the slot).
     fn selected_slots(&self, n: u8) -> Vec<EntityId> {
         self.st.selection[usize::from(n)].iter().filter_map(|&m| self.object(m.id)).map(|u| u.id).collect()
-    }
-
-    /// Group move of units to a point (pixels) for `nation`.
-    fn send(&mut self, nation: u8, units: Vec<EntityId>, x: i32, y: i32) {
-        if !units.is_empty() {
-            self.commands.push(Command::Move { player: nation, units, x, y });
-        }
     }
 }
 
@@ -289,19 +280,24 @@ fn sel_send_to(api: &mut Api, c: &mut Call) -> Result<u32> {
         api.st.error(format!("{what} : Invalid parameter <Zone>"));
         return Ok(0);
     };
-    // TODO(acr-sim): facing `dir`, order type `type & 7` (3..7 send nothing to free units
-    // with a facing).
-    if c.u8(3)? & 7 >= 3 {
-        return Ok(1);
-    }
+    // 0x4db0d3: the facing `dir`, the order type `type & 7` and the absolute-facing bit
+    // `type & 0x10` (0x11eaf5c); priority 0x10, or 0x80 (an attack-move) for SelSendAndKill.
+    let (dir, ty) = (c.u8(2)?, c.u8(3)?);
+    let prio = if c.name() == "SelSendTo" { 0x10 } else { 0x80 };
     let units = api.selected(n);
-    if c.name() == "SelSendAndKill" {
-        // Priority 0x80: an attack-move.
-        if !units.is_empty() {
-            api.commands.push(Command::AttackMove { player: n, units, x, y });
-        }
-    } else {
-        api.send(n, units, x, y);
+    if !units.is_empty() {
+        api.commands.push(Command::ScriptMove {
+            player: n,
+            units,
+            x,
+            y,
+            dir: u16::from(dir),
+            prio,
+            ord: ty & 7,
+            abs_dir: ty & 0x10 != 0,
+            off_x: 0,
+            off_y: 0,
+        });
     }
     Ok(1)
 }
@@ -843,10 +839,25 @@ impl GroupOrder {
 }
 
 /// `GroupMovePurpose` (0x5785a9): a group move plus a `'MOVE'` purpose that replaces all
-/// others.
-fn group_move_purpose(api: &mut Api, nation: u8, g: usize, x: i32, y: i32, flags: i32) {
+/// others. `dir` 0x200 faces the direction of travel, any other value its low byte;
+/// `flags & 1` gives priority 0x81 instead of 0x90.
+#[allow(clippy::too_many_arguments)]
+fn group_move_purpose(api: &mut Api, nation: u8, g: usize, x: i32, y: i32, off: (i32, i32), dir: i32, flags: i32) {
     let units = api.members(g);
-    api.send(nation, units, x, y);
+    if !units.is_empty() {
+        api.commands.push(Command::ScriptMove {
+            player: nation,
+            units,
+            x,
+            y,
+            dir: if dir == 0x200 { 0x200 } else { (dir & 0xff) as u16 },
+            prio: if flags & 1 != 0 { 0x81 } else { 0x90 },
+            ord: 0,
+            abs_dir: false,
+            off_x: off.0,
+            off_y: off.1,
+        });
+    }
     let tmtmt = api.world.tick.0 as i64 + 1;
     api.st.groups[g].orders = vec![GroupOrder::Move { t0: tmtmt, half: None, flags }];
 }
@@ -855,8 +866,7 @@ fn group_move_purpose(api: &mut Api, nation: u8, g: usize, x: i32, y: i32, flags
 /// int flags)`.
 fn sgp_move_to_point(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Some(g) = api.group(c, 1)? else { return Ok(0) };
-    // TODO(acr-sim): dir and the offset along/across the direction of movement.
-    group_move_purpose(api, c.u8(0)?, g, c.i32(2)?, c.i32(3)?, c.i32(7)?);
+    group_move_purpose(api, c.u8(0)?, g, c.i32(2)?, c.i32(3)?, (c.i32(5)?, c.i32(6)?), c.i32(4)?, c.i32(7)?);
     Ok(0)
 }
 
@@ -887,7 +897,7 @@ fn sgp_make_one_step_to(api: &mut Api, c: &mut Call) -> Result<u32> {
     } else {
         return Ok(0);
     };
-    group_move_purpose(api, c.u8(0)?, g, tx, ty, c.i32(5)?);
+    group_move_purpose(api, c.u8(0)?, g, tx, ty, (0, 0), c.i32(4)?, c.i32(5)?);
     Ok(1)
 }
 

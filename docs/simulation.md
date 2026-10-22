@@ -71,7 +71,7 @@ compares state hashes (see [Verification](#verification)).
   units in creation order, static map objects (trees, stones, ... from `TRE1`), brigades,
   the unit occupancy grid and the random index. Static data (`Catalog`, `Formations`,
   `MapGrid`) is shared through `Arc`. The dynamic state is hashed.
-- **Commands** are plain data (`Move`, `MoveFacing` (a move ending in a direction: `GroupSend` with it), `Stop`, `Attack` (priority 0xFE), `AttackMove`, `Patrol`,
+- **Commands** are plain data (`Move`, `MoveFacing` (a move ending in a direction: `GroupSend` with it), `ScriptMove` (`GroupSend` with all its options, for scripts), `Stop`, `Attack` (priority 0xFE), `AttackMove`, `Patrol`,
   `StandGround`, `HoldFire`, `FriendlyFire`, `MeleeOnly`, `Form` (scripts: the units given),
   `FormNear` (the officer's icons: the units near it), `Reform`, `Fill`, `Face`, `Disband`,
   with the issuing player). They are applied in order at the start of a tick, and commands for units
@@ -255,9 +255,38 @@ The planner `Place` (0x4ab607) builds the slots for a group move:
 - The facing is the vector from the target back to the group centre.
 
 Each unit then routes on its own with `SmartSendTo` and its offset.
-With a direction (a right-drag), each free unit gets a turn order after the move (0x41bfdb
-with order type 2, link 0x41bd0d): it turns by `ROTATE` per tick until within `ROTATE` of
-the direction (not for transports, `NEWSHEEPS` ships or buildings).
+
+`GroupSend` (0x4ac776) around it, with the facing in `0x66aeb8` (0x200: none) and the
+absolute-facing flag `0x11eaf5c`:
+
+- The brigades' mean facing is the direction of the sum of their facing vectors / 4
+  (0x4aca49, at most 32 brigades).
+- The facing: the given one, or (0x4acc12) the direction from the centre of all units to
+  the target, replaced by the brigades' mean facing when the two differ by less than 16
+  (signed bytes subtracted as ints, not wrapped). Without a given facing the planner's vector
+  stays target → group centre; with one it is `(cos, sin) << 4`. So every move, the
+  interface's plain move too, ends with the free units turning to the travel direction.
+- The target is shifted by the offset `(offX, offY)` along and across that vector
+  (0x4accbd, `SGP_MoveToPoint`).
+- Each brigade keeps its place relative to the brigades' centre, turned by `facing − mean
+  facing` (offsets over 1000 px by `Norma` are cut to 256 px, 0x4ace5f), and faces its own
+  facing turned the same way, or the facing itself with `0x11eaf5c` (`SelSendTo` type bit 4).
+- Free units (`Send` 0x4ac182) by order type (`CreateOrder` 0x525752: 0 replaces the orders,
+  1 goes in front, 2 is appended; only 0 and 1 set the unit's priority OB+0xef): type 0 and
+  2 move and then get the turn appended, type 1 gets the turn in front and then the move in
+  front of it, types 3..7 send no free unit (brigades still go). The turn (0x41bfdb, link
+  0x41bd0d) turns by `ROTATE` per tick until within `ROTATE` of the direction (not for
+  transports, `NEWSHEEPS` ships or buildings).
+
+Callers: the interface's move (`Move`, `MoveFacing`), `SelSendTo` / `SelSendAndKill` through
+0x4db0d3 (priority 0x10 / 0x80, facing always given, order type `type & 7`), and
+`GroupMovePurpose` (0x5785a9: `SGP_MoveToPoint`, `SGP_MakeOneStepTo`; priority 0x90, or 0x81
+with `flags & 1`; order type 0). Scripts send these as `ScriptMove`.
+
+Deviations: brigade orders ignore the order type and keep ACR's priority handling (the
+engine's 0x41db45 gets 0x8e / 0x80 and the type); the `0x11eaf5c` flag is reset for
+`SGP_*` moves, while the engine keeps the value of the last `SelSendTo`; `GroupMovePurpose`'s
+`AttEnm` mark for `flags & 1` (0x5786b0) is not set.
 
 ## Motion
 

@@ -218,6 +218,75 @@ fn a_move_with_a_direction_ends_facing_it() {
     assert!((px(&w, id).0 - 1200).abs() < 40);
 }
 
+fn script_move(units: Vec<EntityId>, x: i32, y: i32, dir: u16, ord: u8, off: (i32, i32)) -> Command {
+    Command::ScriptMove { player: 0, units, x, y, dir, prio: 0x10, ord, abs_dir: false, off_x: off.0, off_y: off.1 }
+}
+
+#[test]
+fn a_script_move_shifts_its_target_along_the_facing() {
+    // GroupSend 0x4accbd: facing east, 100 px ahead and 50 px across.
+    let (mut w, mus, _) = setup();
+    let id = w.spawn(mus, 0, Pos::from_pixels(1000, 1000), 0);
+    w.step(&[script_move(vec![id], 1400, 1000, 0, 0, (100, 50))]);
+    run(&mut w, 300);
+    let (x, y) = px(&w, id);
+    assert!((x - 1500).abs() < 24 && (y - 1050).abs() < 24, "at ({x}, {y})");
+    assert_eq!(w.unit(id).unwrap().dir, 0);
+}
+
+#[test]
+fn script_moves_place_their_orders_by_order_type() {
+    // CreateOrder 0x525752: type 2 appends the move (and the turn) behind the current orders,
+    // type 1 puts the turn and then the move in front of them. A plain move also ends with a
+    // turn to the direction of travel (0x4acc74).
+    let (mut w, mus, _) = setup();
+    let a = w.spawn(mus, 0, Pos::from_pixels(1000, 1000), 0);
+    let b = w.spawn(mus, 0, Pos::from_pixels(1000, 1400), 0);
+    w.step(&[Command::Move { player: 0, units: vec![a, b], x: 1000, y: 3000 }]);
+    assert_eq!(w.unit(a).unwrap().orders.len(), 2);
+    let first = w.unit(a).unwrap().orders.last().cloned().unwrap();
+    w.step(&[script_move(vec![a], 3000, 1000, 64, 2, (0, 0)), script_move(vec![b], 3000, 1400, 64, 1, (0, 0))]);
+    let ua = w.unit(a).unwrap();
+    assert_eq!(ua.orders.len(), 4, "{:?}", ua.orders);
+    assert_eq!(ua.orders.last(), Some(&first));
+    assert!(matches!(ua.orders[0], acr_sim::world::Order::Turn { dir: 64 }));
+    let ub = w.unit(b).unwrap();
+    assert_eq!(ub.orders.len(), 4, "{:?}", ub.orders);
+    assert!(matches!(ub.orders[2], acr_sim::world::Order::Turn { dir: 64 }));
+    assert_ne!(ub.orders.last(), w.unit(a).unwrap().orders.last());
+    // Types 3..7 send no free unit.
+    let c = w.spawn(mus, 0, Pos::from_pixels(1400, 1000), 0);
+    w.step(&[script_move(vec![c], 3000, 1000, 64, 3, (0, 0))]);
+    assert!(w.unit(c).unwrap().orders.is_empty());
+}
+
+#[test]
+fn a_script_move_turns_a_line_of_formations_with_it() {
+    // GroupSend 0x4ace11: the brigades keep their places relative to the group, turned by the
+    // new facing minus their mean facing.
+    let (mut w, mus, off) = setup();
+    let mut officers = Vec::new();
+    for k in 0..2 {
+        let x = 1500 + 600 * k;
+        let officer = w.spawn(off, 0, Pos::from_pixels(x, 2000), 0);
+        let soldiers: Vec<EntityId> = (0..15)
+            .map(|i| w.spawn(mus, 0, Pos::from_pixels(x - 100 + 20 * (i % 5), 2100 + 20 * (i / 5)), 0))
+            .collect();
+        w.step(&[Command::Form { player: 0, officer, units: soldiers, kind: "LINE".into() }]);
+        officers.push(officer);
+    }
+    run(&mut w, 200);
+    let d0 = w.brigades[0].dir;
+    assert_eq!(w.brigades[1].dir, d0);
+    let ids: Vec<EntityId> = w.units.iter().filter(|u| u.alive).map(|u| u.id).collect();
+    w.step(&[script_move(ids, 2000, 3500, u16::from(d0.wrapping_add(64)), 0, (0, 0))]);
+    run(&mut w, 600);
+    let c: Vec<(i32, i32)> = (0..2).map(|b| acr_sim::formation::center(&w, b).unwrap()).collect();
+    let (dx, dy) = ((c[1].0 - c[0].0) >> 4, (c[1].1 - c[0].1) >> 4);
+    assert!(dx.abs() < 100 && dy.abs() > 400, "brigade 1 is ({dx}, {dy}) from brigade 0");
+    assert_eq!(w.brigades[0].dir, d0.wrapping_add(64));
+}
+
 #[test]
 fn formations_group_and_ungroup() {
     let (mut w, mus, off) = setup();

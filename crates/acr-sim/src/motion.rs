@@ -75,11 +75,17 @@ pub fn send_to(u: &mut Unit, pos: Pos, prio: u8, replace: bool) {
 /// `SmartSendTo` (0x52bc95): a move routed over the pathfinding areas to `(x, y)` plus the
 /// unit's group offset `(dx, dy)` (world pixels).
 pub fn smart_send_to(u: &mut Unit, areas: Option<&AreaGraph>, x: i32, y: i32, dx: i32, dy: i32, prio: u8) {
-    smart_send_to_ex(u, areas, x, y, dx, dy, prio, false, false);
+    smart_send_to_ex(u, areas, x, y, dx, dy, prio, ORD_REPLACE, false);
 }
 
-/// `SmartSendTo` with the order placement: `front` (order type 1) puts the move in front of
-/// the current orders instead of replacing them.
+/// Order types of `CreateOrder` (0x525752): replace all orders, put the new one in front
+/// (it runs first), or append it (it runs after the others).
+pub const ORD_REPLACE: u8 = 0;
+pub const ORD_FRONT: u8 = 1;
+pub const ORD_APPEND: u8 = 2;
+
+/// `SmartSendTo` with the order placement `ord` (`ORD_*`; other values replace, like
+/// `CreateOrder`).
 #[allow(clippy::too_many_arguments)]
 pub fn smart_send_to_ex(
     u: &mut Unit,
@@ -89,7 +95,7 @@ pub fn smart_send_to_ex(
     mut dx: i32,
     mut dy: i32,
     prio: u8,
-    front: bool,
+    ord: u8,
     stance_walk: bool,
 ) {
     while norma(dx, dy) > 128 {
@@ -106,13 +112,18 @@ pub fn smart_send_to_ex(
     }
     let Some(g) = areas.filter(|g| g.count > 0) else {
         // Maps without TOP1 (editor autosaves): walk directly.
-        send_to(u, Pos::from_pixels(x + dx, y + dy), prio, !front);
+        if ord == ORD_APPEND && !u.orders.is_empty() {
+            let cell = Unit::cell_of(Pos::from_pixels(x + dx, y + dy), u.lx);
+            u.orders.insert(0, Order::SendTo { cell, prio: prio & 0x7f });
+        } else {
+            send_to(u, Pos::from_pixels(x + dx, y + dy), prio, ord != ORD_FRONT);
+        }
         return;
     };
     if top_zone_of_target(g, &mut x, &mut y).is_none() {
         return;
     }
-    if !front {
+    if ord != ORD_FRONT && ord != ORD_APPEND {
         u.orders.clear();
     }
     // The order keeps `prio & 0x7f`; priority 0 (attack-move, patrol) marks `InPatrol`
@@ -125,8 +136,15 @@ pub fn smart_send_to_ex(
     if u.target().is_none() {
         u.stance = u.ground_state;
     }
-    u.orders.push(Order::SmartSendTo { x, y, dx, dy, prio, area: None });
-    u.prio = prio;
+    let order = Order::SmartSendTo { x, y, dx, dy, prio, area: None };
+    if ord == ORD_APPEND {
+        // Appended behind the current orders; the unit's priority (OB+0xef) is only set
+        // for order types 0 and 1 (0x52beb6).
+        u.orders.insert(0, order);
+    } else {
+        u.orders.push(order);
+        u.prio = prio;
+    }
 }
 
 /// Spiral search over 64 px cells for the nearest cell with an area (`TopZoneOfTarget`,
@@ -759,26 +777,107 @@ fn isqrt(n: i32) -> i32 {
     r
 }
 
+/// The options of a group move (`GroupSend` 0x4ac776 and the globals its callers set).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GroupMove {
+    /// The facing at the end (`0x66aeb8` < 0x100); `None` faces the direction of travel.
+    pub dir: Option<u8>,
+    /// The order priority (bit 7 kept by the brigade orders, `& 0x7f` by the units).
+    pub prio: u8,
+    /// The order type of the free units (`ORD_*`; 3..7 send no free unit).
+    pub ord: u8,
+    /// `0x11eaf5c` (`SelSendTo` type bit 4): brigades take `dir` itself instead of turning
+    /// by the group's turn.
+    pub abs_dir: bool,
+    /// The target offset along / across the direction of travel (pixels, `SGP_MoveToPoint`).
+    pub offset: (i32, i32),
+}
+
+impl GroupMove {
+    /// A plain move with priority `prio`, facing `dir` if given.
+    pub fn new(dir: Option<u8>, prio: u8) -> Self {
+        Self { dir, prio, ord: ORD_REPLACE, abs_dir: false, offset: (0, 0) }
+    }
+}
+
 /// Group move (`GroupSend` 0x4ac776 with the planner `Place` 0x4ab607 and `Send` 0x4ac182):
 /// brigade members move with their brigade, free units get slots of a grid `W` wide (across
 /// the movement direction) and `D` deep centred on the target, matched to units by sorting
 /// on the two axes so paths do not cross; every unit then routes on its own.
 pub fn group_send(world: &mut World, ids: &[usize], x: i32, y: i32, dir: Option<u8>, prio: u8) {
+    group_send_ex(world, ids, x, y, GroupMove::new(dir, prio));
+}
+
+/// [`group_send`] with all options of `GroupSend` (0x4ac776).
+pub fn group_send_ex(world: &mut World, ids: &[usize], x: i32, y: i32, mv: GroupMove) {
+    let prio = mv.prio;
     let mut brigades: Vec<u16> = ids.iter().filter_map(|&i| world.units[i].brigade).collect();
     brigades.sort_unstable();
     brigades.dedup();
+    // At most 32 brigades take part (0x4ac997).
+    brigades.truncate(32);
     let free: Vec<usize> = ids.iter().copied().filter(|&i| world.units[i].brigade.is_none()).collect();
-    let (x16, y16) = (x << 4, y << 4);
+    let (mut x16, mut y16) = (x << 4, y << 4);
+    // The brigades' mean facing (0x4aca49..0x4acacf: the sum of their direction vectors / 4).
+    let (mut bx, mut by) = (0i32, 0i32);
+    for &b in &brigades {
+        let d = world.brigades[usize::from(b)].dir;
+        bx += crate::trig::cos(d) >> 2;
+        by += crate::trig::sin(d) >> 2;
+    }
+    let mean_dir = get_dir(bx, by);
+    // The direction of travel (0x4acbb9..0x4accad): the given facing, or from the centre of
+    // all units to the target, snapped to the brigades' facing within 16.
+    let (mut vx, mut vy) = (16, 16);
+    let mut dir = mv.dir;
+    if let Some(d) = mv.dir {
+        (vx, vy) = (crate::trig::cos(d) << 4, crate::trig::sin(d) << 4);
+    } else if !ids.is_empty() {
+        let n = ids.len() as i64;
+        let gx = (ids.iter().map(|&i| i64::from(world.units[i].pos.x)).sum::<i64>() / n) as i32;
+        let gy = (ids.iter().map(|&i| i64::from(world.units[i].pos.y)).sum::<i64>() / n) as i32;
+        (vx, vy) = (gx - x16, gy - y16);
+        let d = get_dir(-vx, -vy);
+        dir = Some(if (i32::from(d as i8) - i32::from(mean_dir as i8)).abs() < 16 { mean_dir } else { d });
+    }
+    // The offset along and across that direction (0x4accbd).
+    let (ox, oy) = mv.offset;
+    if ox != 0 || oy != 0 {
+        let n = (f64::from(vx) * f64::from(vx) + f64::from(vy) * f64::from(vy)).sqrt() as i32;
+        if n != 0 {
+            let (ux, uy) = ((vx << 8) / n, (vy << 8) / n);
+            x16 += ((ox * ux) >> 4) - ((oy * uy) >> 4);
+            y16 += ((oy * ux) >> 4) + ((ox * uy) >> 4);
+        }
+    }
+    let turn = dir.map_or(0, |d| d.wrapping_sub(mean_dir));
     if !brigades.is_empty() {
-        let centers: Vec<(i32, i32)> =
-            brigades.iter().map(|&b| crate::formation::center(world, usize::from(b)).unwrap_or((x16, y16))).collect();
-        let n = centers.len() as i64;
-        let gx = (centers.iter().map(|c| i64::from(c.0)).sum::<i64>() / n) as i32;
-        let gy = (centers.iter().map(|c| i64::from(c.1)).sum::<i64>() / n) as i32;
+        let centers: Vec<(i32, i32)> = brigades
+            .iter()
+            .map(|&b| crate::formation::center(world, usize::from(b)).map_or((x, y), |c| (c.0 >> 4, c.1 >> 4)))
+            .collect();
+        let n = centers.len() as i32;
+        let gx = centers.iter().map(|c| c.0).sum::<i32>() / n;
+        let gy = centers.iter().map(|c| c.1).sum::<i32>() / n;
+        let (tc, ts) = (crate::trig::cos(turn), crate::trig::sin(turn));
         for (&b, c) in brigades.iter().zip(&centers) {
+            // Each brigade keeps its place relative to the group, turned with it (0x4ace11);
+            // places over 1000 px away are cut to 256 px.
+            let (mut dx, mut dy) = (c.0 - gx, c.1 - gy);
+            let nd = norma(dx, dy);
+            if nd > 1000 {
+                (dx, dy) = ((dx << 8) / nd, (dy << 8) / nd);
+            }
+            let bx = (x16 >> 4) + ((dx * tc - dy * ts) >> 8);
+            let by = (y16 >> 4) + ((dx * ts + dy * tc) >> 8);
+            let bdir = if mv.abs_dir {
+                dir.unwrap_or(0)
+            } else {
+                world.brigades[usize::from(b)].dir.wrapping_sub(mean_dir).wrapping_add(dir.unwrap_or(0))
+            };
             // An attack-move (priority & 0x7f == 0) lets a formation fight on the way (AttEnm).
             world.brigades[usize::from(b)].att_enm = prio & 0x7f == 0;
-            crate::formation::send(world, usize::from(b), x16 + c.0 - gx, y16 + c.1 - gy, dir);
+            crate::formation::send(world, usize::from(b), bx << 4, by << 4, Some(bdir));
             // Every brigade sent stops standing ground, with its normal bonuses (0x4ad0b5).
             crate::formation::cancel_stand_ground(world, usize::from(b), false);
         }
@@ -786,13 +885,6 @@ pub fn group_send(world: &mut World, ids: &[usize], x: i32, y: i32, dir: Option<
     if free.is_empty() {
         return;
     }
-    let n = free.len() as i64;
-    let gx = (free.iter().map(|&i| i64::from(world.units[i].pos.x)).sum::<i64>() / n) as i32;
-    let gy = (free.iter().map(|&i| i64::from(world.units[i].pos.y)).sum::<i64>() / n) as i32;
-    let (vx, vy) = match dir {
-        Some(d) => (crate::trig::cos(d) << 4, crate::trig::sin(d) << 4),
-        None => (gx - x16, gy - y16),
-    };
     let slots = place(world, &free, x16, y16, vx, vy);
     let map = world.map.clone();
     for (i, (sx, sy)) in slots {
@@ -800,14 +892,36 @@ pub fn group_send(world: &mut World, ids: &[usize], x: i32, y: i32, dir: Option<
         world.units[i].stand_ground = false;
         let sw = stance_walker(world, i);
         let areas = areas_of(&map, world.catalog.get(world.units[i].kind));
-        smart_send_to_ex(&mut world.units[i], areas, x, y, (sx - x16) >> 4, (sy - y16) >> 4, prio, false, sw);
-        // With a direction, the unit turns to it after the move (0x4ac2d3, appended).
-        if let Some(d) = dir
-            && !world.catalog.get(world.units[i].kind).transport
-        {
-            turn_to(world, i, d);
+        let (dx, dy) = ((sx - x16) >> 4, (sy - y16) >> 4);
+        let (tx, ty) = (x16 >> 4, y16 >> 4);
+        let Some(d) = dir else {
+            smart_send_to_ex(&mut world.units[i], areas, tx, ty, dx, dy, prio, mv.ord, sw);
+            continue;
+        };
+        // With a facing, the unit turns to it after the move (0x4ac249): type 0 and 2
+        // append the turn behind the move, type 1 puts it in front before the move goes in
+        // front of it; other types send nothing.
+        match mv.ord {
+            ORD_REPLACE | ORD_APPEND => {
+                smart_send_to_ex(&mut world.units[i], areas, tx, ty, dx, dy, prio, mv.ord, sw);
+                turn_to(world, i, d);
+            }
+            ORD_FRONT => {
+                turn_to_front(world, i, d);
+                smart_send_to_ex(&mut world.units[i], areas, tx, ty, dx, dy, prio, ORD_FRONT, sw);
+            }
+            _ => {}
         }
     }
+}
+
+/// 0x41bfdb with order type 1: a turn to `dir` put in front of the orders.
+fn turn_to_front(world: &mut World, i: usize, dir: u8) {
+    let t = world.catalog.get(world.units[i].kind);
+    if t.transport || t.motion_style == crate::catalog::MotionStyle::NewShips || t.building {
+        return;
+    }
+    world.units[i].orders.push(Order::Turn { dir });
 }
 
 /// 0x41bfdb with order type 2: a turn to `dir` appended to the orders (not for transports,
@@ -870,7 +984,7 @@ fn patrol_link(world: &mut World, i: usize) {
     let (tx, ty) = if *back { *a } else { *b };
     *back = !*back;
     u.prio = 0;
-    smart_send_to_ex(u, areas, tx, ty, 0, 0, 0, true, sw);
+    smart_send_to_ex(u, areas, tx, ty, 0, 0, 0, ORD_FRONT, sw);
 }
 
 /// Whether a unit walks in stance 1 on attack-moves: it has `#MOTION_L0` and no `FASTUNIT`.

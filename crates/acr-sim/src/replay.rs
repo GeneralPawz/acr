@@ -323,6 +323,16 @@ impl Writer {
                 self.i(*y);
                 self.0.push(*dir);
             }
+            Command::ScriptMove { player, units, x, y, dir, prio, ord, abs_dir, off_x, off_y } => {
+                self.0.extend_from_slice(&[45, *player]);
+                self.ids(units);
+                self.i(*x);
+                self.i(*y);
+                self.u(u64::from(*dir));
+                self.0.extend_from_slice(&[*prio, *ord, u8::from(*abs_dir)]);
+                self.i(*off_x);
+                self.i(*off_y);
+            }
             Command::AttackGround { player, units, x, y } => {
                 self.0.extend_from_slice(&[23, *player]);
                 self.ids(units);
@@ -443,6 +453,18 @@ impl<'a> Reader<'a> {
             20 => Command::AttackMove { player, units: self.ids()?, x: self.i()?, y: self.i()? },
             21 => Command::Patrol { player, units: self.ids()?, x: self.i()?, y: self.i()? },
             22 => Command::MoveFacing { player, units: self.ids()?, x: self.i()?, y: self.i()?, dir: self.byte()? },
+            45 => Command::ScriptMove {
+                player,
+                units: self.ids()?,
+                x: self.i()?,
+                y: self.i()?,
+                dir: u16::try_from(self.u()?).map_err(|_| ReplayError("direction"))?,
+                prio: self.byte()?,
+                ord: self.byte()?,
+                abs_dir: self.byte()? != 0,
+                off_x: self.i()?,
+                off_y: self.i()?,
+            },
             23 => Command::AttackGround { player, units: self.ids()?, x: self.i()?, y: self.i()? },
             24 => Command::FriendlyFire { player, units: self.ids()?, shoot_own: self.byte()? != 0 },
             25 => Command::MeleeOnly { player, units: self.ids()?, on: self.byte()? != 0 },
@@ -507,6 +529,18 @@ mod tests {
                 Command::AttackMove { player: 3, units: vec![EntityId(7)], x: -5, y: 900 },
                 Command::Patrol { player: 3, units: vec![EntityId(7)], x: 40, y: 50 },
                 Command::MoveFacing { player: 4, units: vec![EntityId(8)], x: 64, y: -3, dir: 248 },
+                Command::ScriptMove {
+                    player: 4,
+                    units: vec![EntityId(8)],
+                    x: 64,
+                    y: -3,
+                    dir: 0x200,
+                    prio: 0x81,
+                    ord: 2,
+                    abs_dir: true,
+                    off_x: -40,
+                    off_y: 7,
+                },
                 Command::AttackGround { player: 3, units: vec![EntityId(8)], x: 4000, y: 50 },
                 Command::Board { player: 3, units: vec![EntityId(9)], transport: EntityId(10) },
                 Command::Unload { player: 3, transport: EntityId(10) },
@@ -519,7 +553,7 @@ mod tests {
         let back = Replay::decode(&bytes).unwrap();
         assert_eq!(back, r);
         assert_eq!(back.entries.len(), 2, "empty ticks are not stored");
-        assert_eq!(back.commands_at(9).len(), 37);
+        assert_eq!(back.commands_at(9).len(), 38);
         assert!(back.commands_at(5).is_empty());
     }
 

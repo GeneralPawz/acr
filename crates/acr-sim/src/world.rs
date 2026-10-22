@@ -995,6 +995,17 @@ impl World {
                 let ids = self.owned(*player, units);
                 crate::motion::group_send(self, &ids, *x, *y, Some(*dir), crate::motion::PLAYER_PRIO);
             }
+            Command::ScriptMove { player, units, x, y, dir, prio, ord, abs_dir, off_x, off_y } => {
+                let ids = self.owned(*player, units);
+                let mv = crate::motion::GroupMove {
+                    dir: u8::try_from(*dir).ok(),
+                    prio: *prio,
+                    ord: *ord,
+                    abs_dir: *abs_dir,
+                    offset: (*off_x, *off_y),
+                };
+                crate::motion::group_send_ex(self, &ids, *x, *y, mv);
+            }
             Command::Attack { player, units, target } => {
                 let t = target.0 as usize;
                 // The interface's attack order has priority 0xFE (0x43ce14): 0x90 that also ends
