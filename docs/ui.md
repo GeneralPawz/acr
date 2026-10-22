@@ -552,7 +552,7 @@ described in [simulation.md](simulation.md#fog-of-war).
 - 0x485a3c turns each corner into a darkness row with 0x484e63 (`5` from 1500 up,
   `5 + (1500 − v)·153/300` down to 1200, then 158; table 0x7a9b28 built by 0x484dfb) and
   0x4845ae fills the cell: the row is interpolated bilinearly over the 32 × 16 pixels (16.16
-  fixed point) and every pixel becomes `AGEW_1DR[row][pixel]` (`0gew_1dr.grd`, table
+  fixed point) and every pixel becomes `AGEW_1DR[row][pixel]` (`0\agew_1dr.grd`, table
   0x7abb28, all 160 rows). Rows 0..63 are the identity, 64..95 darken linearly (row
   `64 + k` ≈ `k/32` black), 96 and up are black. A cell whose four rows are all ≤ 63 is
   skipped, one with all ≥ 96 is filled with colour 0.
@@ -846,12 +846,35 @@ to the panel (0x4c1c36). U toggles value 2, I value 1; one panel at a time.
     (cx − 15, cy − 8, 31 × 26, colour 0x96) where the normal value is lower. Icons `Border`
     37 + [0, 3, 2, 1, 4, 5][k] left of the rows and above the columns; `E_Comment` below
     from (X − 3, Y + 210), 15 pixels per line.
-  - Page 3 (0x4ccfe0): ACR shows only the gold upkeep table (`INFO_R4`..`INFO_R8`). The
-    mine workers (`INFO_R1`) and gathering (`INFO_R2`) lines are not built.
+  - Page 3 (0x4ccfe0), rows `UNI_LINEDLY1 + 15` = 15 pixels apart (`Unicode.dat` sets
+    neither `UNI_LINEDLY1` nor `UNI_LINEDY1`, so 0), table lines in colour 0x84 from X − 5 to
+    X + 213 with column lines at X − 5, X + 178 and X + 213:
+    - `INFO_R1` in `SmallWhiteFont` at (X, Y + 14), then rows for coal, iron, gold and stone
+      (`LoadRDS` ids): the resource name in `SmallYellowFont` and the workers in the working
+      mines of that resource (the per-nation sums `0x28eac00..` that 0x5f75b3 adds each tick)
+      centred at X + 196;
+    - 2 pixels lower `INFO_R2` with wood and food: City fields (0x4cd5ed, +0x93ca54/5c) not
+      traced; ACR shows how many own units gather for that resource;
+    - 10 pixels lower, if a type costs gold upkeep: `INFO_R4` centred over 210 pixels in
+      `WhiteFont`, 20 lower the lines of `INFO_R7` (14 apart), 5 lower `INFO_R5` and
+      `INFO_R6` centred at X + 160 and X + 196 on the line of the first header; units
+      (`GI_UNITS`) then 3 lower buildings (`GI_BLD`), rows 14 apart with the name, the count
+      centred at X + 161 and `RESCONSUMER GOLD v` · count / 80 tenths of a worker (`%d.%d`,
+      `%d` when whole) at X + 196, rows of 0 left out, equal names merged (0x4cc530); lines
+      at X + 143 and X + 178;
+    - 5 lower the total and `INFO_R8`.
+    ACR used `v` · count · 10 / 80 before; the original's value is ten times smaller.
   - Page 4 opens the diplomacy panel (`PopupDipDialog` 0x5c3a20).
-  - ACR counts score and losses by watching the world each tick: the killer's +3·`VES`
-    and captures are not counted, and the scroll bar (`Interf2\VScroll2` at (982, 79)) is not
-    built.
+  - Scrolling (0x4ce6ad): every page returns its height; the page is drawn `0x1100b5c`
+    pixels higher, and when the height exceeds `InfY3 − 15 − Y0` the scroll bar
+    `Interf2\VScroll2` at (`RealLx − 42`, `InfDY + 63`), `InfY2 − 108` long (0x4ce7e4),
+    shows with that excess as its range and gives the offset. A tab click scrolls to the top
+    (0x4c6500). The original keeps the last offset while the bar is hidden; ACR uses 0.
+  - ACR counts score and losses by watching the world each tick. The simulation counts kills
+    but does not name the victims' killers, so each victim's 3·`VES` goes to the first other
+    player whose units' kill counts rose (player 7's losses to nobody, as in 0x4e992a). The
+    3·`VES` per unit inside a killed building and the credit of a killer-less death to the
+    last attacker (`+0xf4`) are not reproduced. An owner change counts as a capture.
 
 ### Mission history (#116)
 

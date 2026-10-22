@@ -40,7 +40,7 @@ const DRAG_MIN: i32 = 30;
 const PREVIEW_FREE: &str = "0\\AGEW_1W.GRD";
 const PREVIEW_BLOCKED: &str = "0\\AGEW_1R.GRD";
 /// `NRES.DAT [RESTYPES]` names, the text ids of the resources in cost hints (0x606229).
-const RESOURCE_NAMES: [&str; 6] = ["Wood", "Gold", "Stone", "Food", "Iron", "Coal"];
+pub(super) const RESOURCE_NAMES: [&str; 6] = ["Wood", "Gold", "Stone", "Food", "Iron", "Coal"];
 /// Shift repeats production orders five times (0x60897d).
 const SHIFT_REPEAT: usize = 5;
 /// The zoomed-out view draws 8 screen pixels per 32-pixel cell (the world shift 0x90d6b4

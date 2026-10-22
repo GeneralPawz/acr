@@ -507,6 +507,7 @@ impl Hud {
     pub fn release(&mut self) {
         self.pressed = false;
         self.unit_panel.release();
+        self.game_panel.release();
     }
 
     /// The portrait of the unit panel when it changed.
@@ -596,6 +597,9 @@ impl Hud {
         if self.panel == Panel::Unit {
             self.unit_panel.mouse_move(p);
         }
+        if self.panel == Panel::Game {
+            self.game_panel.mouse_move(p);
+        }
         if self.pressed
             && self.minimap.is_some()
             && let Some(px) = self.placement(view).pixel_at(p)
@@ -658,6 +662,7 @@ impl Hud {
             (Panel::Game, _) => {
                 self.game_panel.draw_frame(ctx, out);
                 out.extend(view.game_page.iter().cloned());
+                self.game_panel.draw_widgets(ctx, out);
             }
             _ => {}
         }
