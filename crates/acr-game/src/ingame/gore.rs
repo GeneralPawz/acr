@@ -138,7 +138,7 @@ mod tests {
 
     #[test]
     fn the_living_and_gore_off_show_nothing() {
-        let record = DeathRecord { cause: DeathCause::Melee, from: Some((1100, 1000)), tick: 0 };
+        let record = DeathRecord { cause: DeathCause::Melee, from: Some((1100, 1000)), tick: 0, ..Default::default() };
         assert_eq!(corpse(corpse_at(0, 64), record, Gore::Full, 1200, [0.0; 3]), (Wounds::default(), None));
         assert_eq!(corpse(corpse_at(300, 64), record, Gore::Off, 1200, [0.0; 3]), (Wounds::default(), None));
     }
@@ -146,7 +146,8 @@ mod tests {
     #[test]
     fn the_blow_is_turned_into_the_models_frame() {
         // Facing south (64) the model's +z is world +y; a blow from the east is model +x.
-        let record = DeathRecord { cause: DeathCause::Gunshot, from: Some((1100, 1000)), tick: 0 };
+        let record =
+            DeathRecord { cause: DeathCause::Gunshot, from: Some((1100, 1000)), tick: 0, ..Default::default() };
         let (w, pool) = corpse(corpse_at(300, 64), record, Gore::Full, 1200, [1000.0, 1000.0, 0.0]);
         assert!((w.from[0] - 1.0).abs() < 1e-5 && w.from[1].abs() < 1e-5, "{:?}", w.from);
         assert_eq!(w.count, 2);
@@ -155,14 +156,15 @@ mod tests {
         assert!(pool.centre[1] > 1000.0 && (pool.centre[0] - 1000.0).abs() < 1e-3, "{:?}", pool.centre);
         assert!((pool.along[0] + 1.0).abs() < 1e-5);
         // Facing east (0) a blow from the south is the model's right side (−x).
-        let record = DeathRecord { cause: DeathCause::Gunshot, from: Some((1000, 1100)), tick: 0 };
+        let record =
+            DeathRecord { cause: DeathCause::Gunshot, from: Some((1000, 1100)), tick: 0, ..Default::default() };
         let (w, _) = corpse(corpse_at(300, 0), record, Gore::Full, 1200, [0.0; 3]);
         assert!((w.from[0] + 1.0).abs() < 1e-5 && w.from[1].abs() < 1e-5, "{:?}", w.from);
     }
 
     #[test]
     fn blood_spreads_dries_and_fades() {
-        let record = DeathRecord { cause: DeathCause::Melee, from: None, tick: 0 };
+        let record = DeathRecord { cause: DeathCause::Melee, from: None, tick: 0, ..Default::default() };
         let at = |d| corpse(corpse_at(d, 64), record, Gore::Full, 1200, [0.0; 3]);
         let (early, p0) = at(2);
         let (late, p1) = at(600);
@@ -172,7 +174,7 @@ mod tests {
         // Hunger and fire leave no pool; fire chars.
         let hunger = corpse(
             corpse_at(300, 64),
-            DeathRecord { cause: DeathCause::Hunger, from: None, tick: 0 },
+            DeathRecord { cause: DeathCause::Hunger, from: None, tick: 0, ..Default::default() },
             Gore::Full,
             1200,
             [0.0; 3],
@@ -180,7 +182,7 @@ mod tests {
         assert!(hunger.1.is_none() && hunger.0.blood == 0.0);
         let burned = corpse(
             corpse_at(300, 64),
-            DeathRecord { cause: DeathCause::Burned, from: None, tick: 0 },
+            DeathRecord { cause: DeathCause::Burned, from: None, tick: 0, ..Default::default() },
             Gore::Full,
             1200,
             [0.0; 3],

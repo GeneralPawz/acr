@@ -332,7 +332,7 @@ impl ThreeD {
             self.pools.extend(pool);
             let (mut inst, at) = instance(u, death, index, model, terrain, self.gore, removed_at, wounds);
             // Lost legs (#254): the soldier lies prone and drags himself along, head first.
-            if u.alive && u.death == 0 && u.wounds.crawling() {
+            if u.alive && u.death == 0 && u.body.crawling() {
                 inst.clip = model.clip_for_animation("DEATHLIE1");
                 inst.time = 0.0;
                 inst.morphs[1] = 1.0;
@@ -340,7 +340,7 @@ impl ThreeD {
             // The bleeding leave drops of blood as they go.
             if u.alive
                 && u.death == 0
-                && u.wounds.bleeding() > 0
+                && u.body.bleeding() > 0
                 && self.gore != Gore::Off
                 && now.is_multiple_of(TRAIL_EVERY)
                 && now != self.trail_tick

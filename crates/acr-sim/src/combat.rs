@@ -10,6 +10,7 @@
 
 use acr_formats::defs::nres::weapon_flags::{FIRE, FIRE_SLOW, FORMATION, GARRISON, HIGH, RANDOM_KILL};
 
+use crate::body::Injury;
 use crate::catalog::Adv;
 use crate::fixed::Pos;
 use crate::motion::{anim_frames, set_anim, try_to_stand};
@@ -101,7 +102,8 @@ pub fn attack_obj_ex(w: &mut World, i: usize, j: usize, prio: u8, placement: Pla
 /// keeps its count (0x51b05e).
 pub fn attack_obj_times(w: &mut World, i: usize, j: usize, prio: u8, placement: Placement, times: u16) -> bool {
     let (Some(u), Some(e)) = (w.units.get(i), w.units.get(j)) else { return false };
-    if i == j || !u.active() || !e.active() || !u.hostile(e) {
+    // A man out of the fight (#262, hit-locations rule) attacks nothing.
+    if i == j || !u.active() || !e.active() || !u.hostile(e) || u.body.out_of_fight() {
         return false;
     }
     let mut prio = prio;
@@ -410,7 +412,7 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
                     }
                     if weapon {
                         // A wounded arm (#225, optional rule): the shot does not go off.
-                        if !w.units[i].wounds.disarmed() {
+                        if !w.units[i].body.disarmed() {
                             shoot(w, i, aim, ns - 1, my_z, en_z, can_set_delay, times);
                         }
                     } else if let Aim::Unit(j) = aim {
@@ -460,7 +462,7 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
     {
         chosen = Some(k);
     }
-    if u.wounds.disarmed() && chosen.is_some_and(|k| ta.attacks[k].weapon.is_some()) {
+    if u.body.disarmed() && chosen.is_some_and(|k| ta.attacks[k].weapon.is_some()) {
         // A wounded arm (#225, optional rule): no ranged attack; the first index without a
         // weapon instead (melee), walking up to the target.
         chosen = (0..ta.attacks.len()).find(|&k| ta.attacks[k].weapon.is_none() && ta.attacks[k].mask & e_mat != 0);
@@ -1117,11 +1119,8 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
     let vt = catalog.get(w.units[victim].kind);
     let va = w.adv(w.units[victim].owner, w.units[victim].kind);
     let mut dmg = dmg;
-    let mut record = DeathRecord {
-        cause: if w.units[victim].burning { DeathCause::Burned } else { DeathCause::Unknown },
-        from: None,
-        tick: 0,
-    };
+    let mut record =
+        DeathRecord::of(if w.units[victim].burning { DeathCause::Burned } else { DeathCause::Unknown }, None);
     if let Some(s) = sender {
         let st = catalog.get(w.units[s].kind);
         if st.skill_bonus != 0 && att < 32 && st.skill_mask & (1 << att) != 0 {
@@ -1153,7 +1152,7 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
         }
         let kind = sa.attacks.get(usize::from(att)).map_or("MECH", |a| a.kind.as_str());
         let wf = catalog.weapon_flags(kind);
-        record = DeathRecord { cause: DeathCause::of_weapon(kind), from: Some(w.units[s].pos.pixels()), tick: 0 };
+        record = DeathRecord::of(DeathCause::of_weapon(kind), Some(w.units[s].pos.pixels()));
         if wf & GARRISON != 0 && vt.building {
             if !w.units[victim].inside.is_empty() {
                 garrison_damage(w, victim, dmg, s, att);
@@ -1166,7 +1165,9 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
         if wf & RANDOM_KILL != 0 && w.random.rando() < 1310 && !vt.building && !vt.no25 {
             frighten(w, victim, s, att);
             let region = crate::wounds::pick_region(w, victim);
-            record_hit(w, victim, s, record.cause, true, region);
+            let injury = region.map(|r| injure(w, victim, s, record.cause, r));
+            record.torn = injury.and_then(|i| i.outcome.torn());
+            record_hit(w, victim, s, record.cause, true, region, injury);
             record_death(w, victim, record);
             die(w, victim);
             w.units[s].kills = w.units[s].kills.saturating_add(1);
@@ -1195,13 +1196,16 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
     let dmg = dmg.max(1);
     // Hit locations (#225, optional, not in the original): the region of the blow.
     let region = if sender.is_some() { crate::wounds::pick_region(w, victim) } else { None };
+    // What the blow did to the body (#262): it may kill whatever the damage.
+    let injury = region.zip(sender).map(|(r, s)| injure(w, victim, s, record.cause, r));
+    let fatal = injury.is_some_and(|i| i.outcome.kills());
     if let Some(s) = sender {
-        record_hit(w, victim, s, record.cause, w.units[victim].life <= dmg, region);
+        record_hit(w, victim, s, record.cause, w.units[victim].life <= dmg || fatal, region, injury);
     }
-    if w.units[victim].life > dmg {
+    if w.units[victim].life > dmg && !fatal {
         w.units[victim].life -= dmg;
-        if let Some(r) = region {
-            crate::wounds::wound(w, victim, r, record.cause);
+        if injury.is_some() && w.units[victim].body.out_of_fight() {
+            crate::body::leave_fight(w, victim);
         }
         if !vt.economy.sections.is_empty() {
             section_damage(w, victim);
@@ -1218,9 +1222,20 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
             w.units[s].kills = w.units[s].kills.saturating_add(1);
             frighten(w, victim, s, att);
         }
+        record.torn = injury.and_then(|i| i.outcome.torn());
         record_death(w, victim, record);
         die(w, victim);
     }
+}
+
+/// The injury of a hit by `sender` on `victim`'s `region` (hit-locations rule, #262), with
+/// the energy of a ploughing ball ([`World::hit_energy`], else full).
+fn injure(w: &mut World, victim: usize, sender: usize, cause: DeathCause, region: crate::wounds::HitRegion) -> Injury {
+    let usage = w.catalog.get(w.units[sender].kind).role.usage;
+    // FASTHORSE, HARDHORCE, HORSE-STRELOK: a rider's blow is a sabre's.
+    let mounted = matches!(usage, 8 | 22 | 24);
+    let energy = w.hit_energy.unwrap_or(100);
+    crate::body::injure(w, victim, crate::body::Cause::of(cause, mounted), energy, region)
 }
 
 /// The sections of a building that lost life and lives on (`MakeDamage` 0x4e93fe..0x4e9925,
@@ -1380,6 +1395,18 @@ pub struct DeathRecord {
     /// The tick the unit died: the renderer keeps 3D corpses longer than the simulation
     /// does and times their decay from it.
     pub tick: u64,
+    /// The body at death, with the killing blow's injury (hit-locations rule, #262;
+    /// default without it).
+    pub body: crate::body::Body,
+    /// How the body was torn apart by the killing blow.
+    pub torn: Option<crate::body::Torn>,
+}
+
+impl DeathRecord {
+    /// A death by `cause` from a blow struck at `from`.
+    pub fn of(cause: DeathCause, from: Option<(i32, i32)>) -> Self {
+        Self { cause, from, ..Self::default() }
+    }
 }
 
 /// How long hits stay in `World::hits` (ticks): long enough for the renderer to draw the
@@ -1409,6 +1436,9 @@ pub struct HitRecord {
     /// The body region hit, with the hit-locations rule ([`crate::Rules::hit_locations`]);
     /// `None` without it and for buildings, cannons and ships.
     pub region: Option<crate::wounds::HitRegion>,
+    /// What the hit did to the body (hit-locations rule, #262): what the renderer sprays
+    /// and throws.
+    pub injury: Option<Injury>,
 }
 
 /// Notes a hit of `sender` on `victim` (render only, not hashed).
@@ -1419,6 +1449,7 @@ fn record_hit(
     cause: DeathCause,
     killed: bool,
     region: Option<crate::wounds::HitRegion>,
+    injury: Option<Injury>,
 ) {
     let (vx, vy) = w.units[victim].pos.pixels();
     let (sx, sy) = w.units[sender].pos.pixels();
@@ -1435,6 +1466,7 @@ fn record_hit(
         killed,
         building: w.units[victim].building,
         region,
+        injury,
     });
 }
 
@@ -1479,7 +1511,9 @@ pub fn forget_hits(w: &mut World) {
 
 /// Notes why a living unit is about to die; the first record of a death stays.
 pub fn record_death(w: &mut World, i: usize, record: DeathRecord) {
-    if w.units.get(i).is_some_and(Unit::living) {
+    if let Some(u) = w.units.get(i).filter(|u| u.living()) {
+        // The body as it is at death.
+        let record = DeathRecord { body: u.body, ..record };
         w.deaths.entry(i as u32).or_insert(record);
     }
 }
@@ -1593,7 +1627,7 @@ pub fn slow_death(w: &mut World) {
                 u.life -= 5;
             } else {
                 leave = true;
-                record_death(w, i, DeathRecord { cause: DeathCause::Burned, from: None, tick: 0 });
+                record_death(w, i, DeathRecord::of(DeathCause::Burned, None));
                 die(w, i);
             }
             if leave {

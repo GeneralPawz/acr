@@ -76,6 +76,11 @@ impl Plough {
         self.n >= PLOUGH_BODIES
     }
 
+    /// The energy left for the next body, in percent of the ball's (100, 80, … 20).
+    pub fn energy(&self) -> u8 {
+        (100 - PLOUGH_LOSS * i32::from(self.n)).max(0) as u8
+    }
+
     fn hit(&self, k: usize) -> bool {
         self.victims[..usize::from(self.n)].contains(&(k as u32))
     }
@@ -431,12 +436,16 @@ fn round_damage_with(
                 let dmg = match plough.as_deref_mut() {
                     None => damage,
                     Some(_) if !u.living() || sender == Some(k) => continue,
-                    Some(pl) => match pl.take(k, damage) {
-                        Some(dmg) => dmg,
-                        None => continue,
-                    },
+                    Some(pl) => {
+                        w.hit_energy = Some(pl.energy());
+                        match pl.take(k, damage) {
+                            Some(dmg) => dmg,
+                            None => continue,
+                        }
+                    }
                 };
                 crate::combat::make_damage(w, k, dmg, sender, att);
+                w.hit_energy = None;
             }
         }
     }
@@ -464,7 +473,10 @@ fn ball_damage(
         w.projectiles.media = w.catalog.get(w.units[b].kind).expl_media.0;
         let dmg = match pl {
             None => Some(p.damage),
-            Some(pl) => pl.take(b, p.damage),
+            Some(pl) => {
+                w.hit_energy = Some(pl.energy());
+                pl.take(b, p.damage)
+            }
         };
         if let Some(dmg) = dmg {
             // A DETONATOR armed for the target's damage only (`target_blast`).
@@ -476,6 +488,7 @@ fn ball_damage(
                 w.detonation = None;
             }
         }
+        w.hit_energy = None;
     }
     if ploughing && let Some(Some(q)) = w.projectiles.slots.get_mut(slot) {
         q.plough = plough;
@@ -646,10 +659,13 @@ pub fn process(w: &mut World) {
         let sender = sender_of(w, &p);
         if wp.damage_height != 0 && ground > z - wp.damage_height && p.damage != 0 {
             w.hit_dir = Some(flight_dir(&p));
+            // How low the ball rolls decides where it strikes (hit-locations rule, #262).
+            w.hit_height = Some(z - ground);
             // Only the target's damage throws here (0x558212..0x558254).
             let blast = (wp.detonator != 0).then_some((x, y, wp.detonator));
             ball_damage(w, slot, &p, wp.radius, sender, blast);
             w.hit_dir = None;
+            w.hit_height = None;
         }
         if ground > z {
             if bar != 0 {

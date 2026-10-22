@@ -136,7 +136,7 @@ mod tests {
 
     fn hit(tick: u64, x: i32, cause: DeathCause, killed: bool, building: bool) -> HitRecord {
         // y = 2 × 884: the view centre's row.
-        HitRecord { tick, victim: 0, pos: (x, 1768), dir: (1, 0), cause, killed, building, region: None }
+        HitRecord { tick, victim: 0, pos: (x, 1768), dir: (1, 0), cause, killed, building, region: None, injury: None }
     }
 
     fn names(events: &[SoundEvent]) -> Vec<&str> {
