@@ -22,6 +22,9 @@ use acr_formats::terrain::{MaskTable, RandomTable, TILE_SIZE, TextureFlags, Tile
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
+use crate::model_renderer::DEPTH_FORMAT;
+use crate::view3d::{COS_E, DEPTH_RANGE, Orbit, View3d};
+
 /// Light vector set at game start (`SetLight(-15, 14, 30)`, 0x46993B).
 const LIGHT: [i32; 3] = [-15, 14, 30];
 /// Darkness levels used for terrain: rows 64..96 of `0\AGEW_1DR.GRD` (table at 0x7AFB28).
@@ -384,7 +387,13 @@ struct Globals {
     sizes: [f32; 4],
     cells: [i32; 4],
     map: [i32; 4],
+    view: crate::math::Mat4,
+    mode: [f32; 4],
 }
+
+/// How far the depth pass pushes the terrain back (world pixels along the depth axis): the
+/// drawn ground is lifted by up to 7 pixels (`lift`), the depth uses the plain height.
+const DEPTH_BIAS: f32 = 24.0;
 
 struct MapTextures {
     group: wgpu::BindGroup,
@@ -406,7 +415,17 @@ pub struct TerrainRenderer {
     /// 0x5fdddd) and copies the cached blocks to the screen (0x5fb93e); here it is drawn
     /// every frame.
     pub zoomed: bool,
+    /// The free camera (`None`: the original view).
+    pub orbit: Option<Orbit>,
     ground_pipeline: wgpu::RenderPipeline,
+    /// The ground under the free camera: depth-tested, the hills no longer come in order.
+    free_pipeline: wgpu::RenderPipeline,
+    /// The terrain's depth in the 3D pass.
+    depth_pipeline: wgpu::RenderPipeline,
+    /// Depth buffer of the free camera's ground target.
+    free_depth: Option<((u32, u32), wgpu::TextureView)>,
+    /// Vertices of the cells drawn by the last `render`.
+    drawn: u32,
     zoom_pipeline: wgpu::RenderPipeline,
     present_pipeline: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
@@ -422,6 +441,8 @@ pub struct TerrainRenderer {
 }
 
 const GROUND_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Uint;
+/// Depth of the free camera's ground target.
+const FREE_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
 
 /// Size of the ground target for an output of `size` pixels and the target pixels per
 /// original pixel: the ground is drawn at original resolution when zoomed in, else at
@@ -523,7 +544,13 @@ impl TerrainRenderer {
             bind_group_layouts: &[Some(&layout), Some(&target_layout)],
             immediate_size: 0,
         });
-        let pipeline = |label, layout: &wgpu::PipelineLayout, vs, fs, format| {
+        let pipeline = |label,
+                        layout: &wgpu::PipelineLayout,
+                        vs,
+                        fs,
+                        format,
+                        depth: Option<wgpu::DepthStencilState>,
+                        write_mask: wgpu::ColorWrites| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(layout),
@@ -534,25 +561,48 @@ impl TerrainRenderer {
                     buffers: &[],
                 },
                 primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: None,
+                depth_stencil: depth,
                 multisample: Default::default(),
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
                     entry_point: Some(fs),
                     compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
+                    targets: &[Some(wgpu::ColorTargetState { format, blend: None, write_mask })],
                 }),
                 multiview_mask: None,
                 cache: None,
             })
         };
-        let ground_pipeline = pipeline("terrain ground", &ground_layout, "vs_ground", "fs_ground", GROUND_FORMAT);
-        let zoom_pipeline = pipeline("terrain zoomed", &ground_layout, "vs_zoom", "fs_zoom", GROUND_FORMAT);
-        let present_pipeline = pipeline("terrain present", &present_layout, "vs_full", "fs_present", output);
+        let all = wgpu::ColorWrites::ALL;
+        let ground_pipeline =
+            pipeline("terrain ground", &ground_layout, "vs_ground", "fs_ground", GROUND_FORMAT, None, all);
+        let zoom_pipeline = pipeline("terrain zoomed", &ground_layout, "vs_zoom", "fs_zoom", GROUND_FORMAT, None, all);
+        let present_pipeline = pipeline("terrain present", &present_layout, "vs_full", "fs_present", output, None, all);
+        let depth_state = |format| wgpu::DepthStencilState {
+            format,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Less),
+            stencil: Default::default(),
+            bias: Default::default(),
+        };
+        let free_pipeline = pipeline(
+            "terrain ground (free camera)",
+            &ground_layout,
+            "vs_ground",
+            "fs_ground",
+            GROUND_FORMAT,
+            Some(depth_state(FREE_DEPTH_FORMAT)),
+            all,
+        );
+        let depth_pipeline = pipeline(
+            "terrain depth",
+            &ground_layout,
+            "vs_depth",
+            "fs_depth",
+            output,
+            Some(depth_state(DEPTH_FORMAT)),
+            wgpu::ColorWrites::empty(),
+        );
 
         let r8 = wgpu::TextureFormat::R8Uint;
         let tiles = texture(device, queue, "terrain tiles", (512, 2048), r8, &assets.tile_atlas());
@@ -564,7 +614,12 @@ impl TerrainRenderer {
         let palette = texture(device, queue, "terrain palette", (256, 1), palette_format, &rgba);
         Self {
             zoomed: false,
+            orbit: None,
             ground_pipeline,
+            free_pipeline,
+            depth_pipeline,
+            free_depth: None,
+            drawn: 0,
             zoom_pipeline,
             present_pipeline,
             layout,
@@ -665,39 +720,96 @@ impl TerrainRenderer {
         size: [f32; 2],
         camera: &Camera,
     ) {
-        let (target_size, ratio) = target_size(size, camera.scale, self.zoomed, self.max_size);
+        // The zoomed-out ground has its own geometry for the original view only.
+        let zoomed = self.zoomed && self.orbit.is_none();
+        let (target_size, ratio) = target_size(size, camera.scale, zoomed, self.max_size);
         self.ensure_target(device, target_size);
         let Some(map) = &self.map else {
             clear_pass(encoder, output, wgpu::Color::BLACK);
             return;
         };
+        let view = View3d { camera: *camera, size, orbit: self.orbit };
 
         // Visible cells: columns by x, rows by screen y widened by the map's height range.
         let view_w = size[0] / camera.scale;
         let view_h = size[1] / camera.scale;
         let cells_per_row = ((map.width - 1) / 2) as i32;
-        let cp0 = ((camera.x / 64.0).floor() as i32 - 1).clamp(0, cells_per_row);
-        let cp1 = (((camera.x + view_w) / 64.0).ceil() as i32 + 1).clamp(0, cells_per_row);
         let (lo, hi) = map.height_range;
         let rows = map.height as i32 - 1;
-        let row0 = (((camera.y + lo.min(0) as f32) / 16.0).floor() as i32 - 2).clamp(0, rows);
-        let row1 = (((camera.y + view_h + hi.max(0) as f32 + 8.0) / 16.0).ceil() as i32 + 2).clamp(0, rows);
+        let (cp0, cp1, row0, row1) = if view.is_free() {
+            let [x0, y0, x1, y1] = view.ground_bounds(lo.min(0) as f32 / COS_E, (hi.max(0) + 8) as f32 / COS_E);
+            (
+                ((x0 / 64.0).floor() as i32 - 1).clamp(0, cells_per_row),
+                ((x1 / 64.0).ceil() as i32 + 1).clamp(0, cells_per_row),
+                ((y0 / 32.0).floor() as i32 - 2).clamp(0, rows),
+                ((y1 / 32.0).ceil() as i32 + 2).clamp(0, rows),
+            )
+        } else {
+            (
+                ((camera.x / 64.0).floor() as i32 - 1).clamp(0, cells_per_row),
+                (((camera.x + view_w) / 64.0).ceil() as i32 + 1).clamp(0, cells_per_row),
+                (((camera.y + lo.min(0) as f32) / 16.0).floor() as i32 - 2).clamp(0, rows),
+                (((camera.y + view_h + hi.max(0) as f32 + 8.0) / 16.0).ceil() as i32 + 2).clamp(0, rows),
+            )
+        };
         let (ncp, nrows) = (cp1 - cp0, row1 - row0);
+        self.drawn = if ncp > 0 && nrows > 0 { (ncp * nrows * 12) as u32 } else { 0 };
 
         let globals = Globals {
             camera: [camera.x, camera.y, camera.scale, ratio],
             sizes: [target_size.0 as f32, target_size.1 as f32, size[0], size[1]],
             cells: [cp0, row0, ncp.max(1), map.width as i32],
-            map: [map.height as i32, map.water.0 as i32, map.water.1 as i32, i32::from(self.zoomed)],
+            map: [map.height as i32, map.water.0 as i32, map.water.1 as i32, i32::from(zoomed)],
+            view: view.world_to_clip(),
+            mode: [if view.is_free() { 1.0 } else { 0.0 }, DEPTH_BIAS * 0.5 / DEPTH_RANGE, 0.0, 0.0],
         };
         queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
+        if view.is_free() && self.free_depth.as_ref().is_none_or(|(s, _)| *s != target_size) {
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("terrain ground depth"),
+                size: wgpu::Extent3d { width: target_size.0, height: target_size.1, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: FREE_DEPTH_FORMAT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            });
+            self.free_depth = Some((target_size, texture.create_view(&Default::default())));
+        }
         let target = self.target.as_ref().expect("target created above");
         {
-            let mut pass = clear_pass(encoder, &target.view, wgpu::Color::TRANSPARENT);
-            if ncp > 0 && nrows > 0 {
-                pass.set_pipeline(if self.zoomed { &self.zoom_pipeline } else { &self.ground_pipeline });
+            let depth = self.free_depth.as_ref().filter(|_| view.is_free()).map(|(_, v)| v);
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("terrain"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &target.view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: depth.map(|view| wgpu::RenderPassDepthStencilAttachment {
+                    view,
+                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Discard }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            if self.drawn > 0 {
+                pass.set_pipeline(if depth.is_some() {
+                    &self.free_pipeline
+                } else if zoomed {
+                    &self.zoom_pipeline
+                } else {
+                    &self.ground_pipeline
+                });
                 pass.set_bind_group(0, &map.group, &[]);
-                pass.draw(0..(ncp * nrows * 12) as u32, 0..1);
+                pass.draw(0..self.drawn, 0..1);
             }
         }
         let mut pass = clear_pass(encoder, output, wgpu::Color::BLACK);
@@ -705,6 +817,18 @@ impl TerrainRenderer {
         pass.set_bind_group(0, &map.group, &[]);
         pass.set_bind_group(1, &target.group, &[]);
         pass.draw(0..3, 0..1);
+    }
+
+    /// Writes the terrain's depth into the 3D pass (`model_renderer::DepthTarget`) for the
+    /// view of the last [`TerrainRenderer::render`].
+    pub fn render_depth(&self, pass: &mut wgpu::RenderPass<'_>) {
+        let Some(map) = &self.map else { return };
+        if self.drawn == 0 {
+            return;
+        }
+        pass.set_pipeline(&self.depth_pipeline);
+        pass.set_bind_group(0, &map.group, &[]);
+        pass.draw(0..self.drawn, 0..1);
     }
 }
 

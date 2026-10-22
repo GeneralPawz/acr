@@ -5,7 +5,7 @@
 use acr_formats::{M3dMap, Palette};
 
 use crate::SpriteRenderer;
-use crate::scene::{MapObjects, Scene, SceneAtlas, SceneSprite};
+use crate::scene::{MapObjects, Placement, Scene, SceneAtlas, SceneSprite};
 use crate::terrain::{Camera, TerrainData};
 
 /// Requests a game file; the result must come back through [`ObjectsView::on_loaded`] or
@@ -206,13 +206,9 @@ impl ObjectsView {
         size: [f32; 2],
         camera: &Camera,
     ) {
-        let (Some(scene), Some(atlas), Some(renderer), true) =
-            (&self.scene, &self.atlas, &mut self.renderer, self.shown)
-        else {
+        if !self.prepare(device, queue, size, camera, None) {
             return;
-        };
-        let draws = atlas.draws(scene, &self.dynamic, camera, size, self.zoomed);
-        renderer.prepare(device, queue, &atlas.atlas, size, &draws);
+        }
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("map objects"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -226,6 +222,36 @@ impl ObjectsView {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        renderer.render(&mut pass, &atlas.atlas);
+        self.draw(&mut pass, false);
+    }
+
+    /// Uploads this frame's sprites; with a `placement` they get their depth for the 3D pass
+    /// (and their place under the free camera). Returns whether there is anything to draw.
+    pub fn prepare(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        size: [f32; 2],
+        camera: &Camera,
+        placement: Option<Placement<'_>>,
+    ) -> bool {
+        let (Some(scene), Some(atlas), Some(renderer), true) =
+            (&self.scene, &self.atlas, &mut self.renderer, self.shown)
+        else {
+            return false;
+        };
+        let draws = atlas.placed_draws(scene, &self.dynamic, camera, size, self.zoomed, placement);
+        renderer.prepare(device, queue, &atlas.atlas, size, &draws);
+        true
+    }
+
+    /// Draws what [`ObjectsView::prepare`] uploaded; `depth`: into the 3D pass.
+    pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>, depth: bool) {
+        let (Some(atlas), Some(renderer), true) = (&self.atlas, &self.renderer, self.shown) else { return };
+        if depth {
+            renderer.render_depth(pass, &atlas.atlas);
+        } else {
+            renderer.render(pass, &atlas.atlas);
+        }
     }
 }
