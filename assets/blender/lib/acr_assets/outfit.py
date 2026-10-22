@@ -19,13 +19,17 @@ SIZE = 1024
 # Painter of each material key (`humans.LAYER_OF` keys); keys not listed keep their material.
 PAINTER = {
     "skin": "skin", "hair": "skin",
-    "coat": "wool", "tunic": "wool", "sash": "wool", "cloak": "wool", "facings": "wool", "lining": "wool",
-    "stock": "leather",
+    "coat": "wool", "tunic": "wool", "sash": "wool", "cloak": "wool",
+    # Draped garments (docs/clothing.md): own painters, so that the facings and the lining
+    # get their own atlas cells and colours (a painter's cell has one colour).
+    "facings": "facings", "lining": "lining", "stock": "leather",
     "waistcoat": "linen", "breeches": "linen", "shirt": "linen", "stockings": "linen",
     "gaiters": "boots", "boots": "boots", "shoes": "boots", "boots_high": "boots",
     "belts": "belts", "hat": "felt", "cap": "felt",
     "cartridge": "leather", "knapsack": "leather", "saddle": "leather", "tack": "leather",
 }
+# Painters that paint like another one.
+KIND = {"facings": "wool", "lining": "wool"}
 HAIR = (0.24, 0.16, 0.10)
 BRASS = (0.78, 0.62, 0.27)
 
@@ -33,8 +37,8 @@ BRASS = (0.78, 0.62, 0.27)
 def regions(names):
     """Atlas rectangles for the painters `names`: a grid of equal cells, the skin twice as
     wide (the face needs the detail)."""
-    names = sorted(names, key=lambda n: (n.split(":")[0] != "skin", n))
-    cells = [n for n in names for _ in range(2 if n.split(":")[0] == "skin" else 1)]
+    names = sorted(names, key=lambda n: (n != "skin", n))
+    cells = [n for n in names for _ in range(2 if n == "skin" else 1)]
     cols = 3
     rows = -(-len(cells) // cols)
     out = {}
@@ -149,10 +153,7 @@ def dress(ch, colours, layer_of, size=SIZE):
         keys = list(o.get("acr_material_keys") or [ch.keys.get(o.name)])
         if len(keys) != 1 or keys[0] not in PAINTER:
             continue
-        # One atlas cell per painter and colour (a coat and its facings differ).
-        rgb = colours.get(o.name)
-        tag = "" if rgb is None else ":" + ",".join(f"{c:.3f}" for c in rgb)
-        groups.setdefault(PAINTER[keys[0]] + tag, []).append(o)
+        groups.setdefault(PAINTER[keys[0]], []).append(o)
     if not groups:
         return None
     rects = regions(groups)
@@ -176,7 +177,7 @@ def dress(ch, colours, layer_of, size=SIZE):
         u0, v0, u1, v1 = rects[name]
         m = cov & (u >= u0) & (u < u1) & (v >= v0) & (v < v1)
         rgb = colours.get(os_[0].name) or (0.5, 0.5, 0.5)
-        out[m] = paint(name.split(":")[0], flat_p[m], flat_n[m], rgb, L, seed=11 + 7 * i)
+        out[m] = paint(KIND.get(name, name), flat_p[m], flat_n[m], rgb, L, seed=11 + 7 * i)
     occ = np.clip(ao.reshape(-1), 0.0, 1.0)
     out *= (0.55 + 0.45 * occ ** 0.8)[:, None]
     px = np.ones((size * size, 4), np.float32)

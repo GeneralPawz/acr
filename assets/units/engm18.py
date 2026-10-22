@@ -56,7 +56,7 @@ PALETTE = {
 # Body build and part sizes fitted to the sprite silhouette (#STAND; tools/silhouette.py).
 # `garments`: clothes cut from sewing patterns and draped by the cloth sim (docs/clothing.md);
 # False builds the body-derived shells of #178.
-BUILD = {"width": 1.02, "shoulders": 1.12, "limbs": 1.23, "hips": 1.0, "garments": False}
+BUILD = {"width": 1.02, "shoulders": 1.12, "limbs": 1.23, "hips": 1.0, "garments": True}
 FIT = {
     "hat_z": -0.02, "hat_scale": 0.925, "musket_len": 1.69,
     "skirt_top": [0.245, 0.175], "skirt_bot": [0.21, 0.15], "coat": 0.033,
@@ -91,7 +91,7 @@ def make(root, name, build=BUILD):
         cloth = [o for o in ch.layers["clothes"] if o.name in made]
         drape.hide_skin(ch, cloth)
         surf = drape.surface(cloth, f"{name}.belt_surface")
-        offsets = (0.008, 0.012)
+        offsets = (0.014, 0.018)
     else:
         ch.shell("waistcoat", "waistcoat", lambda c, n, h, p: h in TORSO and 0.97 < c.z < 1.47, 0.012)
         ch.shell("coat", "coat", lambda c, n, h, p: (h in TORSO and 0.97 < c.z < 1.49 and not front(c)) or h in ARMS, FIT["coat"])
@@ -102,8 +102,11 @@ def make(root, name, build=BUILD):
                         gap_deg=FIT["skirt_gap"], flare_back=0.03, columns=rig.SKIRT_COLUMNS)
         ch.add("clothes", skirt, "coat", symmetric=True)
         surf, offsets = ch.flesh, (0.038, 0.042)
-    b1 = bd.strap(ch.arm, f"{name}.crossbelts", surf, Vector((0.12, 0, 1.47)), Vector((-0.17, 0, 0.95)), 0.06, offsets[0])
-    b2 = bd.strap(ch.arm, f"{name}.crossbelt2", surf, Vector((-0.12, 0, 1.47)), Vector((0.17, 0, 0.95)), 0.06, offsets[1])
+    n = 28 if build.get("garments") else 12  # follow the folds of the draped coat
+    b1 = bd.strap(ch.arm, f"{name}.crossbelts", surf, Vector((0.12, 0, 1.47)), Vector((-0.17, 0, 0.95)), 0.06, offsets[0],
+                  samples=n)
+    b2 = bd.strap(ch.arm, f"{name}.crossbelt2", surf, Vector((-0.12, 0, 1.47)), Vector((0.17, 0, 0.95)), 0.06, offsets[1],
+                  samples=n)
     ch.add("clothes", b1, "belts", symmetric=True)
     ch.add("clothes", b2, "belts", symmetric=True)
     ch.bone_layer()
