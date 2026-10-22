@@ -52,6 +52,10 @@ impl Campaigns {
 }
 
 impl Screen for Campaigns {
+    fn dialog(&self) -> Option<&super::super::dialog::Dialog> {
+        Some(&self.menu.d)
+    }
+
     fn assets(&self, ctx: &Ctx) -> Vec<String> {
         let mut files: Vec<String> = [BACKGROUND, VSCROLL, LISTBOX, GAMEBUTTONS, CAMPAIGNS].map(String::from).to_vec();
         files.extend(Self::load(ctx).into_iter().map(|c| c.description));

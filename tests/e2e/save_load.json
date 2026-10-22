@@ -1,0 +1,23 @@
+{
+  "name": "save_load",
+  "description": "Save a running game through the game menu, play on, then load it through the game menu and arrive at the saved tick",
+  "steps": [
+    {"cmd": "start", "random": {"nation": 1, "seed": 5}},
+    {"cmd": "wait", "ticks": 120},
+    {"cmd": "key", "key": "F12", "expect": {"screen": "GameMenu"}},
+    {"cmd": "click", "label": "Spiel speichern", "expect": {"screen": "SaveGameDialog"}, "capture": {"saved": "tick"}},
+    {"cmd": "text", "text": "e2e"},
+    {"cmd": "click", "label": "Speichern", "expect": {"screen": "game"}},
+    {"cmd": "wait", "ticks": 200},
+    {"cmd": "key", "key": "F12"},
+    {"cmd": "click", "label": "Laden", "expect": {"screen": "LoadGame"}},
+    {"cmd": "click", "label": "e2e.sav", "expect": {"path": "target.kind", "eq": "row"}},
+    {"cmd": "click", "label": "Laden", "exact": true, "note": "settles until the saved game is replayed"},
+    {"cmd": "wait", "until": {"in_game": true}, "timeout": 20000},
+    {"cmd": "state", "expect": [
+      {"path": "state.mode", "eq": "game"},
+      {"path": "state.tick", "ge": "${saved}"},
+      {"path": "state.tick", "lt": 300}
+    ]}
+  ]
+}

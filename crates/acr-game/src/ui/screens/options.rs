@@ -71,6 +71,10 @@ impl Options {
 }
 
 impl Screen for Options {
+    fn dialog(&self) -> Option<&super::super::dialog::Dialog> {
+        Some(&self.menu.d)
+    }
+
     fn assets(&self, _ctx: &Ctx) -> Vec<String> {
         [BACKGROUND, BUTTONS, COMBO, SCROLL, CHECKER, TEXTBOX].map(String::from).to_vec()
     }

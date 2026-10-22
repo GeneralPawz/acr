@@ -15,8 +15,21 @@ use crate::Game;
 const MARKER: &str = "ALL.GSC";
 
 pub fn main() -> std::process::ExitCode {
-    init_logging();
-    match run() {
+    let args: Vec<String> = std::env::args().collect();
+    let drive = crate::drive::Options::from_args(&args);
+    init_logging(drive.is_some());
+    if drive.is_some() {
+        // The driver answers on stdout; errors go there too, not into a message box.
+        return match run(drive) {
+            Ok(()) => std::process::ExitCode::SUCCESS,
+            Err(e) => {
+                log::error!("{e}");
+                println!("{}", serde_json::json!({"event": "error", "ok": false, "error": e}));
+                std::process::ExitCode::FAILURE
+            }
+        };
+    }
+    match run(None) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => {
             log::error!("{e}");
@@ -30,18 +43,32 @@ pub fn main() -> std::process::ExitCode {
     }
 }
 
-fn run() -> Result<(), String> {
-    let Some(dir) = find_game_dir()? else { return Ok(()) };
+fn run(drive: Option<crate::drive::Options>) -> Result<(), String> {
+    let dir = match &drive {
+        // No folder picker under the driver.
+        Some(_) => find_game_dir_quietly().ok_or("no American Conquest folder: pass it or set ACR_GAME_DIR")?,
+        None => match find_game_dir()? {
+            Some(dir) => dir,
+            None => return Ok(()),
+        },
+    };
     log::info!("game data: {}", dir.display());
     let assets = ExtraModels::new(NativeAssets::open(&dir)?, &dir);
     let event_loop = crate::event_loop()?;
     let mut game = Game::new(event_loop.create_proxy(), Box::new(assets));
-    game.set_saves(Box::new(acr_app::saves::FolderSaves::new(&dir)));
-    game.set_profiles(Box::new(acr_app::saves::FolderSaves::files(&dir, "Players", "txt")));
+    // `ACR_SAVE_DIR` keeps savegames and player profiles of test runs out of the game folder.
+    let save_root = std::env::var_os("ACR_SAVE_DIR").map(PathBuf::from).unwrap_or_else(|| dir.clone());
+    game.set_saves(Box::new(acr_app::saves::FolderSaves::new(&save_root)));
+    game.set_profiles(Box::new(acr_app::saves::FolderSaves::files(&save_root, "Players", "txt")));
     // The options: `settings.txt` next to the remembered game folder, or in `ACR_SETTINGS_DIR`
-    // (for runs side by side).
-    if let Some(settings) = std::env::var_os("ACR_SETTINGS_DIR").map(PathBuf::from).or_else(data_dir) {
+    // (for runs side by side). The driver uses the defaults unless `ACR_SETTINGS_DIR` is set.
+    let settings_dir = std::env::var_os("ACR_SETTINGS_DIR").map(PathBuf::from);
+    let settings_dir = if drive.is_some() { settings_dir } else { settings_dir.or_else(data_dir) };
+    if let Some(settings) = settings_dir {
         game.set_settings_store(Box::new(acr_app::saves::FolderSaves::files(&settings, "", "txt")));
+    }
+    if let Some(options) = drive {
+        game.set_driver(options);
     }
     // Developer shortcut: skip movies and menus and open a map right away.
     if let Ok(map) = std::env::var("ACR_START_MAP") {
@@ -116,24 +143,35 @@ fn remembered_path() -> Option<PathBuf> {
     data_dir().map(|d| d.join("game-dir.txt"))
 }
 
-/// Returns `None` when the player cancels the folder picker.
-fn find_game_dir() -> Result<Option<PathBuf>, String> {
+/// The places to look for the game, in order: the first argument that is not a flag,
+/// `ACR_GAME_DIR`, the executable's folder and its parents, the remembered folder.
+fn candidates() -> Vec<PathBuf> {
     let exe_dirs = std::env::current_exe()
         .ok()
         .map(|exe| exe.ancestors().skip(1).take(3).map(Path::to_path_buf).collect::<Vec<_>>())
         .unwrap_or_default();
     let remembered = remembered_path().and_then(|p| std::fs::read_to_string(p).ok()).map(|s| PathBuf::from(s.trim()));
-    let candidates = std::env::args_os()
-        .nth(1)
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    crate::drive::strip_args(&args)
+        .into_iter()
+        .find(|a| !a.starts_with("--"))
         .map(PathBuf::from)
         .into_iter()
         .chain(std::env::var_os("ACR_GAME_DIR").map(PathBuf::from))
         .chain(exe_dirs)
-        .chain(remembered);
-    for dir in candidates {
-        if is_game_dir(&dir) {
-            return Ok(Some(dir));
-        }
+        .chain(remembered)
+        .collect()
+}
+
+/// The game folder without asking.
+fn find_game_dir_quietly() -> Option<PathBuf> {
+    candidates().into_iter().find(|d| is_game_dir(d))
+}
+
+/// Returns `None` when the player cancels the folder picker.
+fn find_game_dir() -> Result<Option<PathBuf>, String> {
+    if let Some(dir) = find_game_dir_quietly() {
+        return Ok(Some(dir));
     }
     loop {
         let Some(dir) = rfd::FileDialog::new().set_title("Select your American Conquest folder").pick_folder() else {
@@ -165,7 +203,7 @@ fn find_game_dir() -> Result<Option<PathBuf>, String> {
 
 /// Logs to `%LOCALAPPDATA%\ACR\acr.log`, or to the file `ACR_LOG` names (for runs side by
 /// side).
-fn init_logging() {
+fn init_logging(drive: bool) {
     let mut builder = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"));
     let path = std::env::var_os("ACR_LOG").map(PathBuf::from).or_else(|| data_dir().map(|d| d.join("acr.log")));
     if let Some(path) = path
@@ -173,6 +211,13 @@ fn init_logging() {
         && let Ok(file) = std::fs::File::create(&path)
     {
         builder.target(env_logger::Target::Pipe(Box::new(file)));
+    } else if drive {
+        // Never on stdout, which carries the driver's answers.
+        builder.target(env_logger::Target::Stderr);
     }
-    builder.init();
+    if drive {
+        crate::drive::install_logger(builder);
+    } else {
+        builder.init();
+    }
 }

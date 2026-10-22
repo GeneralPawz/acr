@@ -163,6 +163,10 @@ impl SingleMission {
 }
 
 impl Screen for SingleMission {
+    fn dialog(&self) -> Option<&super::super::dialog::Dialog> {
+        Some(&self.menu.d)
+    }
+
     fn assets(&self, ctx: &Ctx) -> Vec<String> {
         let mut files: Vec<String> =
             [VSCROLL, COMBO, LISTBOX, GAMEMAP, GAMEBUTTONS, MISSIONS, SINGLE, super::campaign::CAMPAIGNS]

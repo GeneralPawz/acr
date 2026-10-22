@@ -1,0 +1,21 @@
+{
+  "name": "mission_briefing",
+  "description": "Start a single mission through the menus; its briefing ('Nachricht') blocks until OK is clicked",
+  "args": ["--dialogs", "report"],
+  "steps": [
+    {"cmd": "click", "label": "Einzelspieler"},
+    {"cmd": "click", "label": "Einzelmission"},
+    {"cmd": "click", "label": "OK", "expect": {"screen": "SingleMission"}},
+    {"cmd": "click", "label": "Die Indianeraufstände.", "expect": {"path": "target.kind", "eq": "row"}},
+    {"cmd": "click", "label": "Mission spielen!"},
+    {"cmd": "wait", "until": {"dialog": "MessageWindow"}, "timeout": 3000, "expect": [
+      {"blocking": true},
+      {"path": "blocking.text", "contains": "Nachricht"},
+      {"path": "blocking.buttons", "contains": "OK"}
+    ]},
+    {"cmd": "wait", "ticks": 1, "timeout": 50, "expect": {"ok": false}, "note": "the game stands still under the dialog: no tick passes", "timeout_s": 30},
+    {"cmd": "click", "label": "OK", "expect": [{"screen": "game"}, {"blocking": false}]},
+    {"cmd": "wait", "ticks": 50, "expect": {"path": "tick", "ge": 50}},
+    {"cmd": "state", "expect": [{"path": "state.mission.ended", "eq": null}, {"path": "state.mission.objectives", "eq": true}]}
+  ]
+}

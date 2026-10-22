@@ -62,7 +62,9 @@ dependencies = [
  "env_logger",
  "js-sys",
  "log",
+ "png",
  "rfd",
+ "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
@@ -3499,6 +3501,8 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "acr-serve",
+ "base64",
+ "serde_json",
  "wasm-bindgen-cli-support",
 ]
 

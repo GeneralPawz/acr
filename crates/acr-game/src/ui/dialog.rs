@@ -179,6 +179,11 @@ impl TextViewer {
         self.lines.len() as i32 * self.line_h
     }
 
+    /// The whole text (CP1252).
+    pub fn text(&self) -> &[u8] {
+        &self.text
+    }
+
     /// Changes the font (`Font`, +0x7d); the lines stay wrapped as before.
     pub fn set_font(&mut self, font: FontId) {
         self.font = font;
@@ -773,6 +778,20 @@ impl Dialog {
     /// The mouse in the coordinates of widget `i` (undoing its scroll shift).
     fn local(&self, i: usize, p: [f32; 2]) -> [f32; 2] {
         [p[0], p[1] - self.owner_dy(&self.widgets[i]) as f32]
+    }
+
+    /// Where widget `id` is shown: its rectangle moved by its scroll owner (test driver).
+    pub fn shown_rect(&self, id: WidgetId) -> Rect {
+        let w = &self.widgets[id];
+        w.rect.offset(0, self.owner_dy(w))
+    }
+
+    /// The rows of the open drop-down list: combo box, row and rectangle (test driver).
+    pub fn dropdown_rows(&self) -> Vec<(WidgetId, usize, Rect)> {
+        let Some((id, zone)) = self.modal_zone() else { return Vec::new() };
+        let Kind::ComboBox(c) = &self.widgets[id].kind else { return Vec::new() };
+        let y0 = zone.y0 + c.one_dy + c.font_dy + c.head_h;
+        (0..c.lines.len()).map(|k| (id, k, Rect::new(zone.x0, y0 + k as i32 * c.row_h, c.width, c.row_h))).collect()
     }
 
     /// The drop-down area of the open combo box (`DS.ActiveX..ActiveY1`).

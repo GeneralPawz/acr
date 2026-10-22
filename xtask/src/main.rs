@@ -8,8 +8,17 @@
 //!   the browser build in `web/` and its launcher `AmericanConquest-Web.exe`
 //! - `cargo xtask assets [NAME..] [--game-dir DIR] [--compress none|meshopt|draco] [--check] [--blend]`
 //!   rebuild the 3D assets with Blender into `target/assets` (see `docs/assets.md`)
+//! - `cargo xtask e2e [FILE..] [--filter S] [--game-dir DIR] [--exe PATH] [--no-build] [--gpu] [--list] [-v]`
+//!   run the scenario tests in `tests/e2e/` through the game's driver mode (see `docs/testing.md`)
+//! - `cargo xtask drive [--game-dir DIR] [--exe PATH] [--no-build] [--gpu]`   driver requests from
+//!   stdin (one JSON object per line), answers on stdout
+//! - `cargo xtask jev status | explore --goal TEXT [--steps N] | shot --png FILE --expect TEXT`
+//!   cheap decisions with TypeSafe's Jev (key from `~/.config/typesafe/api_key`)
 
 mod assets;
+mod drive;
+mod e2e;
+mod jev;
 
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -40,6 +49,9 @@ fn main() -> ExitCode {
         Some("web") => build_web(&app, release).map(|_| ()),
         Some("serve") => build_web(&app, release).and_then(|dir| serve(&dir, game_dir.as_deref(), port)),
         Some("dist") => dist(game_dir.as_deref(), args.iter().any(|a| a == "--install")),
+        Some("e2e") => drive::run_e2e(&args[1..], game_dir.clone()),
+        Some("drive") => drive::drive(&args[1..], game_dir.clone()),
+        Some("jev") => drive::run_jev(&args[1..], game_dir.clone()),
         Some("assets") => {
             let mut names = Vec::new();
             let mut it = args.iter().skip(1);
@@ -66,7 +78,10 @@ fn main() -> ExitCode {
                 "usage: cargo xtask web [--release] [--app game|viewer]\n       \
                  cargo xtask serve [--release] [--app game|viewer] [--port N] [--game-dir DIR]\n       \
                  cargo xtask dist [--game-dir DIR] [--install]
-                        cargo xtask assets [NAME..] [--game-dir DIR] [--compress none|meshopt|draco] [--check] [--blend]"
+                        cargo xtask assets [NAME..] [--game-dir DIR] [--compress none|meshopt|draco] [--check] [--blend]
+                        cargo xtask e2e [FILE..] [--filter S] [--game-dir DIR] [--exe PATH] [--no-build] [--gpu] [--list] [-v]
+                        cargo xtask drive [--game-dir DIR] [--exe PATH] [--no-build] [--gpu]
+                        cargo xtask jev status | explore --goal TEXT [--steps N] | shot --png FILE --expect TEXT"
             );
             return ExitCode::from(2);
         }

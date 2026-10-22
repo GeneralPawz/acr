@@ -73,6 +73,10 @@ impl MessageWindow {
 }
 
 impl Screen for MessageWindow {
+    fn dialog(&self) -> Option<&super::super::dialog::Dialog> {
+        Some(&self.menu.d)
+    }
+
     fn assets(&self, _ctx: &Ctx) -> Vec<String> {
         let mut files: Vec<String> = [MESSAGES, BUTTON2, VSCROLL2, LINE2].map(str::to_owned).into();
         files.extend(self.portrait.as_ref().map(|(gp, _)| gp.clone()));
@@ -217,6 +221,10 @@ impl HistoryWindow {
 }
 
 impl Screen for HistoryWindow {
+    fn dialog(&self) -> Option<&super::super::dialog::Dialog> {
+        Some(&self.menu.d)
+    }
+
     fn assets(&self, _ctx: &Ctx) -> Vec<String> {
         let mut files: Vec<String> = [MESSAGES, BUTTON2, VSCROLL2, LINE2].map(str::to_owned).into();
         files.extend(self.portrait.as_ref().map(|(gp, _)| gp.clone()));
@@ -308,6 +316,10 @@ impl ChoiceWindow {
 }
 
 impl Screen for ChoiceWindow {
+    fn dialog(&self) -> Option<&super::super::dialog::Dialog> {
+        Some(&self.menu.d)
+    }
+
     fn assets(&self, _ctx: &Ctx) -> Vec<String> {
         let mut files = vec![BORDER.to_owned()];
         files.extend(self.portrait.as_ref().map(|(gp, _)| gp.clone()));

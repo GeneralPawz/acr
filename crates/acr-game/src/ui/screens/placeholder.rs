@@ -24,6 +24,10 @@ impl Placeholder {
 }
 
 impl Screen for Placeholder {
+    fn dialog(&self) -> Option<&super::super::dialog::Dialog> {
+        Some(&self.dialog)
+    }
+
     fn assets(&self, _ctx: &Ctx) -> Vec<String> {
         vec![self.background.into()]
     }

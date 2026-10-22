@@ -1,0 +1,22 @@
+{
+  "name": "produce_unit",
+  "description": "Build a Fort with all peasants, select it, queue a halberdier in the HUD, send peasants in (the Fort trains them) and wait for the soldier",
+  "steps": [
+    {"cmd": "start", "random": {"nation": 1, "seed": 5}},
+    {"cmd": "wait", "ticks": 200},
+    {"cmd": "drag", "around": {"owner": 0, "type": "Kri"}},
+    {"cmd": "click", "label": "Fort"},
+    {"cmd": "click", "near": {"owner": 0, "type": "Kri"}, "offset": [0, 700]},
+    {"cmd": "wait", "until": {"units": {"owner": 0, "type": "Kre", "finished": true}}, "timeout": 20000},
+    {"cmd": "click", "unit": {"owner": 0, "type": "Kre"}, "expect": {"path": "target.type", "contains": "Kre"}},
+    {"cmd": "state", "capture": {"food": "state.resources.food"}, "expect": {"path": "state.selection.0.type", "contains": "Kre"}},
+    {"cmd": "click", "label": "Hellebardier", "expect": {"path": "target.label", "contains": "Hellebardier"}},
+    {"cmd": "ui", "expect": {"path": "ui.widgets", "len_ge": 3}},
+    {"cmd": "state", "expect": {"path": "state.resources.food", "lt": "${food}"}, "note": "paid when queued"},
+    {"cmd": "ui", "expect": {"path": "ui.messages.0", "contains": "BAUERN"}, "note": "the hint: send peasants in to train them"},
+    {"cmd": "drag", "around": {"owner": 0, "type": "Kri", "max": 5}},
+    {"cmd": "rclick", "unit": {"owner": 0, "type": "Kre"}, "note": "the selected peasants walk into the Fort"},
+    {"cmd": "wait", "until": {"units": {"owner": 0, "type": "SpnAlb", "min": 101}}, "timeout": 3000},
+    {"cmd": "state", "expect": [{"path": "state.counts.0.units.SpnAlb(SP)", "ge": 101}, {"path": "state.counts.0.units.SpnKri(SP)", "lt": 30}]}
+  ]
+}
