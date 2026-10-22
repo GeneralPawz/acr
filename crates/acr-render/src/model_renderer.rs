@@ -129,6 +129,22 @@ pub struct BloodPool {
     /// The ground's slope under the decal (world z per world x and per world y), so it
     /// lies on the slope instead of sinking into it.
     pub tilt: [f32; 2],
+    /// A piece of a smear (a body dragged through blood): a ribbon from `centre` running
+    /// `along` instead of a pool. `radius` is its half width where it ends.
+    pub smear: Option<Smear>,
+}
+
+/// One segment of a smeared blood trail: consecutive segments of one unit join into a
+/// ribbon with ragged edges and streaks along the drag (`blood.wgsl`).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Smear {
+    /// Length from `centre` along `along` (world pixels).
+    pub length: f32,
+    /// Half width where it starts, relative to `radius` (where it ends), so the ribbon
+    /// widens and narrows smoothly from one segment to the next.
+    pub start_width: f32,
+    /// How much blood: 1 a heavy, dark smear (he was slow) .. 0 a thin, broken one.
+    pub density: f32,
 }
 
 /// The earth thrown up where a round strikes the ground (a [`BloodPool`] decal in dirt
@@ -256,12 +272,28 @@ fn bone_texture(device: &wgpu::Device, rows: u32) -> wgpu::Texture {
     })
 }
 
-/// `look.z` of a decal in `blood.wgsl`: 0 pool, 1 droplet, 2 crater, 3 scuff.
+/// `look.z` of a decal in `blood.wgsl`: 0 pool, 1 droplet, 2 crater, 3 scuff, 4 smear.
 fn pool_kind(p: &BloodPool) -> f32 {
     match p.dirt {
         Dirt::Crater => 2.0,
         Dirt::Scuff => 3.0,
+        Dirt::None if p.smear.is_some() => 4.0,
         Dirt::None => f32::from(u8::from(p.splatter)),
+    }
+}
+
+/// The GPU form of a decal: a smear's quad reaches `length` past its start (`stretch` in
+/// pool radii), its start width and density ride in `tilt.z` and `look.w`.
+fn gpu_pool(p: &BloodPool) -> GpuPool {
+    let (stretch, start, density) = match p.smear {
+        Some(s) => (s.length / (2.0 * p.radius), s.start_width, s.density),
+        None => (p.stretch, 0.0, 0.0),
+    };
+    GpuPool {
+        centre: [p.centre[0], p.centre[1], p.centre[2], p.radius],
+        shape: [p.along[0], p.along[1], stretch, p.seed],
+        look: [p.age, p.fade, pool_kind(p), density],
+        tilt: [p.tilt[0], p.tilt[1], start, 0.0],
     }
 }
 
@@ -755,16 +787,7 @@ impl ModelRenderer {
     /// Uploads the blood pools of the next `render` (after [`Self::prepare`], which sets the
     /// view they are drawn through).
     pub fn prepare_pools(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, pools: &[BloodPool]) {
-        let gpu: Vec<GpuPool> = pools
-            .iter()
-            .filter(|p| p.fade > 0.0 && p.radius > 0.0)
-            .map(|p| GpuPool {
-                centre: [p.centre[0], p.centre[1], p.centre[2], p.radius],
-                shape: [p.along[0], p.along[1], p.stretch, p.seed],
-                look: [p.age, p.fade, pool_kind(p), 0.0],
-                tilt: [p.tilt[0], p.tilt[1], 0.0, 0.0],
-            })
-            .collect();
+        let gpu: Vec<GpuPool> = pools.iter().filter(|p| p.fade > 0.0 && p.radius > 0.0).map(gpu_pool).collect();
         self.pool_count = gpu.len() as u32;
         if gpu.is_empty() {
             return;

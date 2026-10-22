@@ -34,6 +34,7 @@ mod save;
 mod shouts;
 mod splatter;
 mod three_d;
+mod trail;
 mod trample;
 use crate::unit_sounds::{self, SoundEvent};
 pub use interface::{GameKey, GameMouse};

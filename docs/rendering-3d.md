@@ -173,6 +173,19 @@ attributes 13, 14) and a `BloodPool`:
   from the blow; they spread over the first ~140 counter steps, dry from red to brown up to
   900 and fade over the last 15 % before removal. Pools are flat at the ground point's
   height: on slopes part of them can sink into the terrain.
+- Blood trails (`ingame/trail.rs`, render only, deterministic from unit id and tick):
+  every 10 ticks a bleeding walker leaves a small drop; a crawler (lost legs, #262) leaves
+  a *smear* segment (decal kind 4) from where he was 10 ticks ago to where he is now, so
+  the segments of one unit join into a ribbon about a body wide (half width 0.26 m). The
+  segment's length sets its look: short (slow) segments are wider and denser, long (quick)
+  ones narrower and broken into dabs; each starts as wide as the last one ended. Lying
+  still (moved < 2 px) adds to the last segment a round patch that grows with each sample.
+  The shader draws a segment with flat ends (a zero-length one round), its edges ragged
+  and the ribbon wandering slightly, with streaks along the drag; all noise is in world
+  space, so it runs on unbroken from one segment to the next. Smears are lifted 4 world
+  units (pools 1.5) so bumpy ground does not cut the narrow ribbon up. Like pools they dry
+  from glossy red to brown-black over 40..900 ticks and fade over the last 20 % of their
+  3000 ticks; the pool where he dies comes from the death.
 - `gore=reduced`: one wound, half the blood, half-size pools; `gore=off`: none of it.
 - Not done yet (#183): cause-specific death clips, the `emaciated` morph for hunger, stuck
   missiles, pools that outlive the corpse. Dismemberment: see the next section.
