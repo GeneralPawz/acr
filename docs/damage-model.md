@@ -1,0 +1,218 @@
+# Damage model: injuries, split bodies and debris (#262)
+
+Part of the realism work (#214). Everything here applies only with the optional rule
+`hit_locations` (`acr_sim::Rules`, setting `hit_locations=on`). With it off the game is the
+original: no extra random numbers, unchanged state hash.
+
+The goal is damage that is never the same twice. A hit lands somewhere on a limb, not on a
+fixed piece. It can wound, cripple, break and misplace, or take the limb off at any point:
+the foot, the lower leg halfway, above the knee. Heavy blows tear bodies in two, open the
+belly or leave nothing but chunks and mist. What a man can still do follows from what is
+left of him.
+
+The work splits into three layers with narrow contracts between them:
+
+1. **Simulation** (`acr-sim`, deterministic, hashed, saved through the replay): the state
+   of each body and the outcome of each hit. It drives gameplay: speed, crawling, weapons,
+   bleeding, death.
+2. **Assets** (`assets/`, Blender): per-vertex limb coordinates, limb radius profiles, a gib
+   pack and crawl clips.
+3. **Rendering** (`acr-render`, `acr-game/src/ingame`): bodies cut at any level, stump
+   caps, bent fractures, detached pieces, guts, dropped weapons, smears and mist. This is
+   render-only: placement comes from hashes of the hit and unit, never from the sim's RNG.
+
+## 1. Simulation: `acr_sim::body`
+
+### Body layout
+
+A body has a trunk and four limbs. Each limb is one chain measured by a **level** from its
+root (shoulder or hip, 0) to its tip (fingertips or toes, 255), so any point on it is one
+byte:
+
+| Limb | 0 | ~95 | ~120 | ~200 | ~215 | 255 |
+|---|---|---|---|---|---|---|
+| arm (upper arm, forearm, hand) | shoulder | | elbow 110 | | wrist 205 | fingertips |
+| leg (thigh, shin, foot) | hip | knee 120 | | ankle 215 | | toes |
+
+The segment boundaries are the constants `ELBOW`, `WRIST`, `KNEE` and `ANKLE`. The
+renderer maps levels to bones with the same table (`render/body.rs`), and the asset bake
+writes the same coordinate (`_LIMB`, below).
+
+The trunk has the regions head, chest, belly and pelvis.
+
+### State: `Body` (replaces `Wounds`; field `Unit::body`)
+
+```text
+Limb {
+    lost: u8,                        // 255 = whole; else the limb ends at this level
+    fracture: Option<Fracture>,      // { level: u8, kind: Closed|Open|Dislocated, bend: i8 (degrees/2) }
+    wounds: u8,                      // flesh wounds (count, saturating)
+}
+Body {
+    limbs: [Limb; 4],                // arm_l, arm_r, leg_l, leg_r
+    belly_open: bool,                // guts out: mortal, heavy bleeding
+    head_wounds: u8, chest_wounds: u8,
+    burn: u8,                        // seconds of burning left (ground fires, #256)
+}
+```
+
+- `Hash` hashes nothing while the body is default, so the original hash is kept.
+- Death keeps the body: `DeathRecord::body` is a snapshot, plus `torn: Option<Torn>`:
+  - `InTwo { level }`: split through the trunk;
+  - `Pulverized`: nothing whole left;
+  - `Headless`.
+
+### What a body can do (derived, pure functions)
+
+- **Leg function** (0..100), per leg:
+  - whole: 100;
+  - each flesh wound: −35, floored at 30;
+  - a dislocated knee or ankle: 20;
+  - a closed fracture of the thigh or shin: 0;
+  - an open fracture: 0;
+  - foot lost (lost ≥ ANKLE): 15, hobbling on the stump;
+  - lost above the ankle: 0.
+- **Moving:**
+  - Both legs above 0: walk at `min(leg) × (0.6 + 0.4 × max(leg) / 100)` percent.
+  - Otherwise crawl, at a speed set by the arms:
+    - two working arms: 15 %;
+    - one working arm: 8 %;
+    - none: 0, which means he can only writhe.
+- **Arm function**, per arm:
+  - whole: 100;
+  - each flesh wound: −40;
+  - fracture or dislocation: 0;
+  - hand lost (lost ≥ WRIST): 0;
+  - anything shorter: 0.
+- **Weapons:**
+  - A long weapon (musket, pike) needs both arms above 0. If either drops to 0 the
+    weapon is **dropped**; `Body::dropped` is set once and the renderer leaves it on the
+    ground.
+  - A one-handed weapon (sabre, pistol) needs one working arm.
+  - A crawler always drops his long weapon.
+- **Out of the fight:** a crawler, or a man with no working arm:
+  - takes no orders;
+  - attacks nothing;
+  - drags himself away from the nearest enemy towards his own side;
+  - does not count for formations.
+- **Bleeding** (life per second, summed):
+
+  | Wound | Life per second |
+  |---|---|
+  | stump above the knee or elbow | 6 |
+  | stump below the knee or elbow | 4 |
+  | hand or foot lost | 2 |
+  | open fracture | 2 |
+  | belly open | 5 |
+
+  Dying of it gives `DeathCause::BledOut`.
+
+### Outcomes: `body::injure(w, victim, cause, energy, region_hint)`
+
+Each limb hit draws from the world RNG (`rando()`), only with the rule on:
+- the limb (by region weights, or the projectile's height: a low rolling ball takes the
+  legs);
+- the level within the struck segment;
+- the outcome, from this table (percentages per hit; energy 0..100 from the projectile
+  or plough, see #258):
+
+| Cause | Limb hit | Trunk hit | Head |
+|---|---|---|---|
+| musket ball | wound 70, fracture (open 2/3) 28, hand/foot off 2 | wound | kill |
+| grapeshot | wound 40, fracture 35, off below elbow/knee 25 | wound, belly open 10 | kill |
+| cannonball | off at the hit level 85 (e ≥ 30), crushed fracture otherwise | e ≥ 60: torn in two, e ≥ 90: pulverized; else chest crushed (kill) or belly open | headless |
+| shell (explosion) | 1–3 fragments: wound / fracture / off by distance | belly open 20 | kill |
+| sabre (cavalry melee) | off hand/forearm 20, deep wound 60, fracture 20 | wound, belly open 10 | kill 50 |
+| bayonet / pike | wound 85, fracture 15 | wound, belly open 15 | kill |
+
+The values are constants in `body.rs` and tests pin their spread.
+
+A hit that kills still records where and how it struck. `DeathRecord` carries the body and
+`torn`, so a corpse shows its last injury, not just its earlier ones.
+
+`HitRecord::injury: Option<Injury { limb_or_region, level, outcome, energy }>` is how the
+renderer learns what to spray and throw.
+
+## 2. Assets
+
+On top of the existing contract (`docs/assets-humans.md`):
+
+- **`_LIMB`** (float, per vertex): the limb level 0..1 (level / 255) along its chain. It is
+  baked from the projection of the rest position onto the chain of shoulder to elbow to
+  wrist to fingertip, or hip to knee to ankle to toe. Trunk vertices are −1. Gear strapped
+  to a limb (cuffs, gaiters, boots) gets the level of the skin beneath it.
+- **Limb radius profiles:** glTF extras `acr_limb_radius`: per limb, 16 samples of the
+  outer radius (metres) along the level. Caps are scaled with them.
+- **Gib pack `assets/gore/gore.py` → `gore.glb`:** separate meshes with the decay material,
+  so they rot with the corpse:
+  - intestine coils (3 variants, spline tubes);
+  - a spilled-guts heap;
+  - organ chunks;
+  - flesh lumps (4);
+  - bone shards (3);
+  - a skull fragment;
+  - a jaw;
+  - cloth scraps in the uniform colour (tinted per nation);
+  - a **stump cap** (a disc: skin rim, red flesh, white bone centre, ragged outline; unit
+    radius);
+  - a **torn edge** strip.
+- **Crawl clips** on the human units:
+  - `CRAWL2`: face down, alternating elbows pull, legs drag;
+  - `CRAWL1`: one leg pushes, both arms pull;
+  - `CRAWLARM`: one-armed drag;
+  - `WRITHE`: on the ground, unable to move.
+
+  All four loop. They are keyframed now; recorded drills (#167) replace them later.
+
+## 3. Rendering
+
+- **Cutting:** per instance, a damage block lives in a data texture next to the bone
+  palette. The vertex slots are full (16), so per-instance wound data moves there too. It
+  holds:
+  - per limb: cut level, fracture level and bend (quaternion);
+  - a trunk cut level;
+  - flags: head gone, belly open;
+  - a keep mode: Body / Piece(limb, from, to).
+
+  The shader:
+  - discards vertices past a cut, with a ragged edge from `_GORE.x`;
+  - bends vertices past a fracture about the fracture point, in rest space before
+    skinning;
+  - in Piece mode, keeps only the cut-off span.
+- **Caps:** the cap mesh is placed at each cut, facing along the limb and scaled by the
+  radius profile at the level. There is one cap on the body side and one on the piece's.
+  The trunk cut uses the torn-edge strip around the waist. The old joint-only caps
+  (`_PART` 16+/32+) are dropped.
+- **Pieces:** a severed limb is a second instance of the same model in Piece mode, posed as
+  a limp limb. It is thrown on a short ballistic arc from the hit along the blow (hashed
+  spread), then lies with a blood pool. A body torn in two is two instances. A pulverized
+  body is a mist burst plus gibs.
+- **Debris** (render-only lists like the corpses, ageing with `corpse_minutes`):
+  - severed pieces;
+  - gibs;
+  - guts spilling from an open belly, attached at the belly and lying out on the ground;
+  - dropped weapons: the musket lies where it fell;
+  - hats.
+- **Crawlers:** use the crawl clips, face down, head first along the movement, and leave a
+  **smear**: a continuous ribbon the width of the body with ragged edges and drag streaks.
+  It is denser where they are slow, has a wider patch where they pause and a pool where
+  they die, and dries from glossy red to brown-black.
+- **Mist:** for pulverized and point-blank cannonball hits, a short-lived red particle burst
+  that drifts and settles as fine spray on the ground and on nearby troops (the spray of
+  #239).
+- **Gore setting:**
+  - `full`: everything;
+  - `reduced`: no guts, gibs or mist, and pieces without caps' flesh;
+  - `off`: the original.
+
+## Slices
+
+| Slice | Content | Depends on |
+|---|---|---|
+| S1 | `acr_sim::body`: state, outcomes, effects, out of the fight, death snapshot, tests, docs | — |
+| S2 | assets: `_LIMB`, radius profiles, gib pack with cap, crawl clips | — |
+| S3 | renderer: instance data texture, cut/discard, caps, fracture bend, Piece mode, debug fixture | S2 (attribute names only) |
+| S4 | smear trail of crawlers | — |
+| S5 | game: body → instances; pieces, gibs, guts, dropped weapons, mist; crawl clips | S1, S2, S3 |
+| S6 | death falls by region and cause; wounds placed at the hit | S1, S3 |
+| S7 | horses: wounded falls, riders thrown; limbs | S5 |
