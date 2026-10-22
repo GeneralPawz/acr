@@ -430,14 +430,18 @@ impl ThreeD {
             let (x, y) = (u.pos.x >> 4, u.pos.y >> 4);
             let ground = view3d::ground_point(x, y, terrain.height_at(x, y));
             let body = super::gore::Body { death, ..u.into() };
-            let (mut wounds, pool) = super::gore::corpse(body, record, self.gore, removed_at, ground);
+            let (mut wounds, mut pool) = super::gore::corpse(body, record, self.gore, removed_at, ground);
+            // A big animal bleeds a bigger pool (by its girth against a man's).
+            if let (Some(p), Some(rig)) = (pool.as_mut(), model.beast_rig.as_ref()) {
+                p.radius *= (rig.trunk.radius_at(0.5) / 0.16).clamp(0.6, 2.5);
+            }
             // Ships and guns leave no blood.
             if !model.machine {
                 self.pools.extend(pool);
             }
             // The wounds of his hits, alive and dead; they replace the corpse's guessed ones.
             if !u.building {
-                (wounds.marks, wounds.marks_len) = self.wounds.marks(u.id.0, model.rig.as_ref(), now);
+                (wounds.marks, wounds.marks_len) = self.wounds.marks(u.id.0, wound_rig(model), now);
                 if wounds.marks_len > 0 {
                     wounds.count = 0;
                 }
@@ -477,6 +481,13 @@ impl ThreeD {
                     inst.damage.push_volume(v);
                 }
                 inst.damage.sever(rig);
+            } else if self.gore == Gore::Full
+                && let Some(rig) = model.beast_rig.as_ref()
+            {
+                // An animal: torn but never cut.
+                for v in self.wounds.volumes(u.id.0, rig) {
+                    inst.damage.push_volume(v);
+                }
             }
             if model.rig.is_some() {
                 unit_models.insert(u.id.0, (UnitModel { model: index, player: u.owner }, index));
@@ -574,8 +585,7 @@ impl ThreeD {
             if t.building || machines.contains(&t.unit) || self.instances[i].sprayed.amount > 0.0 {
                 continue;
             }
-            let rig =
-                self.renderer.as_ref().and_then(|r| r.model(self.instances[i].model)).and_then(|m| m.rig.as_ref());
+            let rig = self.renderer.as_ref().and_then(|r| r.model(self.instances[i].model)).and_then(wound_rig);
             if let Some(s) = self.wounds.spurt(t.unit, rig, now) {
                 self.instances[i].sprayed = s;
             }
@@ -920,4 +930,10 @@ impl super::InGame {
         let requests = &self.requests;
         self.three_d.update(world, terrain, &self.objects, &|p| requests.borrow_mut().push(p.to_owned()));
     }
+}
+
+/// Where wounds go on a model: its skeleton-H rig, else the rig guessed from an animal's
+/// skeleton (marks and torn volumes only).
+fn wound_rig(model: &acr_render::model::ModelData) -> Option<&acr_render::damage::Rig> {
+    model.rig.as_ref().or(model.beast_rig.as_ref())
 }
