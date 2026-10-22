@@ -37,6 +37,7 @@ def main(argv):
     p.add_argument("--out")
     p.add_argument("--opt", help="pose parameters to fit: bone.i or world.bone.i or root_loc.i, comma-separated")
     p.add_argument("--step", type=float, default=8.0)
+    p.add_argument("--shift", default="0,0", help="move the render by dx,dy pixels before comparing")
     p.add_argument("--fit", help="module constants to fit (rebuilds): NAME.key[.i]:step, comma-separated")
     a = p.parse_args(argv)
     name = os.path.splitext(os.path.basename(a.asset))[0]
@@ -70,6 +71,10 @@ def main(argv):
     s.render.image_settings.color_mode = "RGBA"
     tmp = os.path.join(bpy.app.tempdir, "sil.png")
     sprites = [project.load(v.image)[..., 3] >= 0.5 for v in ref.views]
+    dx, dy = (int(x) for x in a.shift.split(","))
+
+    def shifted(r):
+        return np.roll(r, (dy, dx), (0, 1))
 
     def score():
         out = []
@@ -77,7 +82,7 @@ def main(argv):
             pivot.rotation_euler = (0.0, 0.0, cv.yaw(v.dir))
             s.render.filepath = tmp
             bpy.ops.render.render(write_still=True)
-            r = project.load(tmp)[..., 3] >= 0.5
+            r = shifted(project.load(tmp)[..., 3] >= 0.5)
             out.append((r & q).sum() / max((r | q).sum(), 1))
         return float(np.mean(out))
 
@@ -181,7 +186,7 @@ def main(argv):
         pivot.rotation_euler = (0.0, 0.0, cv.yaw(v.dir))
         s.render.filepath = tmp
         bpy.ops.render.render(write_still=True)
-        r = project.load(tmp)[..., 3] >= 0.5
+        r = shifted(project.load(tmp)[..., 3] >= 0.5)
         q = project.load(v.image)[..., 3] >= 0.5
         inter, union = (r & q).sum(), (r | q).sum()
         ious.append(inter / max(union, 1))
