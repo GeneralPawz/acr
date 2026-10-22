@@ -1,4 +1,5 @@
-//! Embeds the application icon and version info into the Windows executable.
+//! Embeds the application icon and version info into the Windows executable. The browser
+//! launcher (`acr-serve`) includes this script too, so both programs carry the same icon.
 //!
 //! The original game's icon (`Ac.ico`) is used when available, from `ACR_ICON` or
 //! `ACR_GAME_DIR/Ac.ico`; it is never committed to the repository. Without it a generated
@@ -6,7 +7,7 @@
 
 use std::path::PathBuf;
 
-fn main() {
+pub fn main() {
     println!("cargo:rerun-if-env-changed=ACR_ICON");
     println!("cargo:rerun-if-env-changed=ACR_GAME_DIR");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
@@ -31,11 +32,19 @@ fn main() {
     // Resource id 1 is what the game loads at runtime for the window and taskbar icon.
     res.set_icon_with_id(icon.to_str().expect("icon path is UTF-8"), "1")
         .set("ProductName", "American Conquest (ACR)")
-        .set("FileDescription", "American Conquest")
+        .set("FileDescription", description())
         .set("LegalCopyright", "Engine: ACR contributors. Game data: GSC Game World.");
     if let Err(e) = res.compile() {
         // A missing resource compiler must not break the build; the exe just has no icon.
         println!("cargo:warning=could not embed the icon: {e}");
+    }
+}
+
+/// The file description Windows shows for the crate being built.
+fn description() -> &'static str {
+    match std::env::var("CARGO_PKG_NAME").as_deref() {
+        Ok("acr-serve") => "American Conquest (browser version)",
+        _ => "American Conquest",
     }
 }
 

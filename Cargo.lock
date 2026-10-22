@@ -109,6 +109,9 @@ dependencies = [
 [[package]]
 name = "acr-serve"
 version = "0.1.0"
+dependencies = [
+ "winresource",
+]
 
 [[package]]
 name = "acr-sim"
