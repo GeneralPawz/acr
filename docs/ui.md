@@ -736,6 +736,17 @@ described in [simulation.md](simulation.md#fog-of-war).
     y0 − 9, `(w − 12)·(D − delay)/D` + 2 long with `D = MaxDelay` (+0x8f, 1 if 0) or
     `delay` (+0x8c) if larger: empty right after a shot, full when loaded. The end caps
     then reach down to y0 − 9.
+- Panic shouts (0x600bc8, #209): with Tab on, every flight leg of a panicking unit adds one
+  of the eight `FEAR_RNDM0..7` lines of `TEXT\MORALE_TEXT.TXT` ("Wir werden alle sterben
+  ...", "Rette sich, wer kann!", picked with the C library's `rand() & 7`), centred at
+  `RealX>>4` and 90 px above the unit (`(RealY>>5) − height − 90`), into a floating text list
+  (0x600050, list 0x28f2188). `FontM13` in colour 2 (`SmallRedFont`, 0x92dcc8) for units of
+  the player's side (alliance mask OB+0x9a), colour 3 (`SmallYellowFont`, 0x90d8ec) for
+  others; none for `NIKAKIXMAM` types (NM+0x172e bit 5, animals). A line that would overlap
+  another (centres closer than half the summed sizes, 0x5fffc0) is dropped. Each drawn
+  frame (0x600320) a line rises 1 px and ages by 1; it fades in over 16 frames
+  (`0x7C3428 = (age − 16)·512`) and out after 48 (`(48 − age)·256`), and goes after 80. ACR
+  counts two frames per tick and draws none in the zoomed-out view (as 0x600320 does).
 - Selection rectangle: `GetPaletteColor(0, 255, 255)`.
 - The game menu, load and options dialogs load `cur_mn.rlc` (`LoadPointer` 0x496de2), but
   it is never drawn: the cursor drawer 0x496efe always shows `CURSOR_00.GP` frame 0, so

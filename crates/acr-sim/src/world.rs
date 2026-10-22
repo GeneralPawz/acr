@@ -471,6 +471,9 @@ pub struct World {
     /// plays their `BORN_SOUND`, 0x49fab7 / 0x5247c2; cleared at its start; not part of the
     /// state).
     pub born: Vec<EntityId>,
+    /// Units that started a flight leg in panic during the last [`World::step`] (the
+    /// interface shows their shouts, 0x600bc8; cleared at its start; not part of the state).
+    pub shouts: Vec<EntityId>,
     /// The 3D boxes of buildings.
     pub bars: crate::bars::Bars,
     /// The AI planning maps (`CantBuild`, `InfoMap`), built at the first use.
@@ -613,6 +616,7 @@ impl World {
             projectiles: Default::default(),
             sounds: Vec::new(),
             born: Vec::new(),
+            shouts: Vec::new(),
             bars,
             plan: None,
             cities: Default::default(),
@@ -861,6 +865,7 @@ impl World {
         self.sounds.clear();
         self.born.clear();
         crate::combat::forget_hits(self);
+        self.shouts.clear();
         crate::morale::decay(self);
         for c in commands {
             self.apply(c);

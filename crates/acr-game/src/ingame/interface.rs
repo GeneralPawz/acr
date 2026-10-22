@@ -1830,6 +1830,13 @@ impl InGame {
                 fill(&mut out, white, x0 + w - 5, y0 - 12, x0 + w - 5, bottom);
             }
         }
+        // Panic shouts (0x600320); the zoomed-out view draws none.
+        let lines: [Vec<u8>; 8] = std::array::from_fn(|i| ctx.texts.get(&format!("FEAR_RNDM{i}")).to_vec());
+        let measure = |f, t: &[u8]| (ctx.fonts.width(ctx.lib, f, t), ctx.fonts.height(ctx.lib, f));
+        let shouts = self.shouts.borrow_mut().update(&lines, measure);
+        if !self.interface.hud.zoom {
+            out.extend(shouts);
+        }
         if self.interface.hud.locks && !self.interface.hud.zoom {
             self.lock_overlay(&palette, &mut out);
         }

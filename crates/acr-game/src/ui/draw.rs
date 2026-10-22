@@ -87,6 +87,8 @@ pub enum Sprite {
     GameFrameRemap { gp: String, frame: usize, player: u8, table: &'static str, row: u8 },
     /// A string with the colours of the in-game palette.
     GameText { font: FontId, text: Vec<u8> },
+    /// A [`Sprite::GameText`] faded like the original's `0x7C3428` (0 = full, 31 = gone).
+    GameTextFaded { font: FontId, text: Vec<u8>, fade: u8 },
     /// An image set with [`Textures::set_image`].
     Image(&'static str),
 }
@@ -130,6 +132,12 @@ impl Draw {
 
     pub fn game_text(font: FontId, text: &[u8], x: i32, y: i32) -> Self {
         Self { sprite: Sprite::GameText { font, text: text.to_vec() }, x, y, size: [0; 2], clip: Rect::ALL, alpha: 1.0 }
+    }
+
+    /// [`Draw::game_text`] faded by `fade` rows of the font's colour table.
+    pub fn game_text_faded(font: FontId, text: &[u8], x: i32, y: i32, fade: u8) -> Self {
+        let sprite = Sprite::GameTextFaded { font, text: text.to_vec(), fade };
+        Self { sprite, x, y, size: [0; 2], clip: Rect::ALL, alpha: 1.0 }
     }
 
     /// An image set with [`Textures::set_image`], stretched over `rect`.
@@ -327,6 +335,9 @@ fn rasterize(lib: &Library, fonts: &Fonts, sprite: &Sprite) -> Rasterized {
             Some(rasterize_frame_as(&file, *frame, &remapped, *player))
         }
         Sprite::GameText { font, text } => fonts.rasterize_in(lib, *font, text, super::fonts::GAME_SET),
+        Sprite::GameTextFaded { font, text, fade } => {
+            fonts.rasterize_faded(lib, *font, text, super::fonts::GAME_SET, i32::from(*fade))
+        }
         // Only uploaded images are drawn.
         Sprite::Image(_) => Some(None),
     }

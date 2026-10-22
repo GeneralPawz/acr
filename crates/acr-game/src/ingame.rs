@@ -31,6 +31,7 @@ mod piles;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod probe;
 mod save;
+mod shouts;
 mod splatter;
 mod three_d;
 use crate::unit_sounds::{self, SoundEvent};
@@ -93,6 +94,8 @@ pub struct InGame {
     ambient_ticks: u32,
     /// Fires of damaged buildings.
     effects: effects::Effects,
+    /// Panic shouts over fleeing units (laid out when the interface draws).
+    shouts: RefCell<shouts::Shouts>,
     /// 3D models and the free camera (#163, #164).
     three_d: three_d::ThreeD,
 }
@@ -143,6 +146,7 @@ impl InGame {
             dip_page_shown: false,
             ambient_ticks: 0,
             effects: Default::default(),
+            shouts: Default::default(),
             three_d: Default::default(),
         }
     }
@@ -539,6 +543,16 @@ impl InGame {
                 world.step(&commands);
                 weapon_sounds.append(&mut world.sounds);
                 born.append(&mut world.born);
+                if let Some(terrain) = &self.terrain {
+                    shouts::collect(
+                        world,
+                        terrain,
+                        &self.objects,
+                        self.setup.local_player as u8,
+                        self.interface.hud.life_bars,
+                        &mut self.shouts.borrow_mut(),
+                    );
+                }
                 // The fog follows the world (once per tick, also read by the scripts).
                 self.mission.update_fog(world);
             }
@@ -553,6 +567,7 @@ impl InGame {
             for _ in 0..ticks {
                 self.tick_markers();
             }
+            self.shouts.borrow_mut().advance(ticks);
             if ticks > 0 {
                 self.update_stats();
                 self.watch_queues(ticks);

@@ -231,7 +231,9 @@ pub fn messages(game: &Game) -> Vec<String> {
     }
     let mut out: Vec<String> = Vec::new();
     for d in g.overlay(&game.ui.ctx()) {
-        if let Sprite::Text { text, .. } | Sprite::GameText { text, .. } = &d.sprite {
+        if let Sprite::Text { text, .. } | Sprite::GameText { text, .. } | Sprite::GameTextFaded { text, .. } =
+            &d.sprite
+        {
             let t = decode(text);
             // Each line comes twice: shadow and text.
             if out.last() != Some(&t) && !t.trim().is_empty() {

@@ -445,7 +445,7 @@ pub fn panic_link(w: &mut World, i: usize) {
         w.units[i].pop_order();
         return;
     };
-    let World { units, occupancy, .. } = w;
+    let World { units, occupancy, shouts, .. } = w;
     let u = &mut units[i];
     if let Some(Order::Panic { dir, .. }) = u.orders.last_mut() {
         *dir = new_dir;
@@ -454,6 +454,8 @@ pub fn panic_link(w: &mut World, i: usize) {
     crate::motion::send_to(u, Pos::new(bx << 8, by << 8), 0x80, false);
     occupancy.clr_bar(u.cell.0, u.cell.1, u.lx);
     u.unlimited = true;
+    // Every leg the unit shouts one of `FEAR_RNDM0..7` (0x600bc8, shown by the interface).
+    shouts.push(u.id);
 }
 
 /// 0x601a20, at the start of a step whose counter before the increment ends in 0x3d (once
