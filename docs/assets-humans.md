@@ -52,10 +52,11 @@ stages from the glTF alone, with the decay shader rebuilt from the extras).
   forearm+hand/shin+foot: the other two); clothes and strapped gear take the level of the
   nearest skin vertex of the same limb; trunk, head, held gear and the horse are −1.
 - Root extras `acr_limb_radius`: `{"arm_l": [16], "arm_r": [16], "leg_l": [16], "leg_r":
-  [16]}`, the outer radius (metres, 95th percentile of skin, clothes and strapped gear
-  distances to the chain) at the levels k/15, k = 0..15; empty windows interpolated. Stump
-  caps and the gib pack's unit cap are scaled with it.
-- Crawl clips (#262, `acr_assets/crawl.py`, engm18 and engkri; listed in `acr_clips`):
+  [16]}`, the outer radius (metres, 95th percentile of the skin and clothes distances to
+  the chain; rigid strapped gear left out) at the levels k/15, k = 0..15; empty windows
+  interpolated. Stump caps and the gib pack's unit caps are scaled with it.
+- Crawl clips (#262, `acr_assets/crawl.py`; engm18, engkri and the engd18 rider, who crawls
+  where DEATHLIE1 throws him beside the fallen horse; listed in `acr_clips`):
   `CRAWL2` (24 frames: face down, head first, elbows pulling alternately, legs dragging),
   `CRAWL1` (24: both arms pull while the left leg pushes, the right drags), `CRAWLARM`
   (28: the left arm hauls, the right limp), `WRITHE` (30: on the back, knees drawn up in
@@ -64,9 +65,12 @@ stages from the glTF alone, with the decay shader rebuilt from the extras).
   the renderer drops it before a crawl.
 - Gib pack `gore.glb` (`assets/gore/gore.py`): `intestine_0..2`, `guts_heap`, `organ_0..1`,
   `flesh_0..3`, `bone_0..2`, `skull_fragment`, `jaw`, `cloth_0..1` (material extras
-  `acr_tint` = "nation": multiply the uniform colour in), `stump_cap` (unit disc in XY
-  facing +Z: skin rim, fat, meat, bone, marrow; ragged outline) and `torn_edge` (unit-radius
-  ring strip around +Z, ragged free edge up to ~0.35). Decay materials and masks as above
+  `acr_tint` = "nation": multiply the uniform colour in), `stump_cap` (torn: cannonball,
+  explosion) and `stump_cap_clean` (sabre cut), unit discs in XY facing +Z (lumpy fibrous
+  muscle or a flat cut face, an irregular fat layer, the skin rim rolled back, bone proud by
+  0.3..0.55 with a splintered end or flush, marrow; materials skin, fat, meat, bone,
+  marrow), and `torn_edge` (unit-radius ring around +Z: a low skin band with tatters of
+  skin and cloth of uneven length, up to ~0.5). Decay materials and masks as above
   (`COLOR_0`, `_GORE`, `_PART` 0); wet tissue carries `acr_roughness` (0.18..0.45) in its
   material extras and the glTF roughness. Each mesh's origin is its resting point; the
   node positions only lay the pack out on a grid.
