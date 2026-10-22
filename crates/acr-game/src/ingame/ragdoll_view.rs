@@ -138,8 +138,15 @@ impl Mapping {
     /// `None` unless every body bone of skeleton H is a joint of the model (riders' bones
     /// are prefixed: mounted models are left out).
     fn new(model: &ModelData) -> Option<Mapping> {
+        Mapping::with_prefix(model, "")
+    }
+
+    /// The mapping of the skeleton-H bones named `prefix` + bone (a rider's `rider.`; his
+    /// horse's bones ride on the rider's hips, which the strike layer never moves).
+    pub(super) fn with_prefix(model: &ModelData, prefix: &str) -> Option<Mapping> {
         let names = bone_names();
-        let node_bone = |n: usize| names.iter().position(|b| *b == model.nodes[n].name);
+        let node_bone =
+            |n: usize| names.iter().position(|b| model.nodes[n].name.strip_prefix(prefix).is_some_and(|m| m == *b));
         let mut bone_slot = vec![usize::MAX; names.len()];
         let mut slot_bone = Vec::with_capacity(model.slots.len());
         for (s, slot) in model.slots.iter().enumerate() {
@@ -489,6 +496,7 @@ pub struct Ragdolls {
     pub poses: HashMap<usize, Palette>,
     /// Walking and crawling over the clips (#279).
     gaits: super::gait_view::Gaits,
+    strikes: super::strike_view::Strikes,
 }
 
 impl Default for Ragdolls {
@@ -513,6 +521,7 @@ impl Default for Ragdolls {
             hit_seen: None,
             poses: HashMap::new(),
             gaits: Default::default(),
+            strikes: Default::default(),
         }
     }
 }
@@ -793,6 +802,15 @@ impl Ragdolls {
                 }
             }
             self.gaits.update(seconds, drawn, &self.maps, focus, terrain, &mut self.poses);
+        }
+        // Attackers bend their weapon onto their victims (`docs/melee.md`, Animation).
+        if std::env::var_os("ACR_NO_STRIKE").is_none() {
+            for d in drawn {
+                if !d.data.clips.is_empty() && !self.maps.contains_key(&d.model) {
+                    self.mapping(d.model, d.data);
+                }
+            }
+            self.strikes.update(seconds, drawn, &self.maps, focus, &mut self.poses);
         }
     }
 
@@ -1155,6 +1173,45 @@ pub(super) fn palette_of(map: &Mapping, skins: &[[[f32; 4]; 4]], transform: &Mat
     let lead = math::mul(&affine_inverse(transform), &world_of_physics());
     let per_bone: Vec<Mat4> = skins.iter().map(|s| math::mul(&lead, &math::mul(s, &GLTF_TO_SKELETON))).collect();
     map.slot_bone.iter().zip(&map.bind).map(|(&b, bind)| math::affine_rows(&math::mul(&per_bone[b], bind))).collect()
+}
+
+/// `palette` with each slot moved as its bone moved from `before` to `after` (skins of
+/// [`animated_skins`]): unlike [`palette_of`], a slot keeps its own animation relative to its
+/// bone (a socket's musket or sabre).
+pub(super) fn repose(
+    map: &Mapping,
+    palette: &Palette,
+    before: &[[[f32; 4]; 4]],
+    after: &[[[f32; 4]; 4]],
+    transform: &Mat4,
+) -> Palette {
+    let into = math::mul(&physics_of_world(), transform);
+    let back = affine_inverse(&into);
+    let delta: Vec<Mat4> = before
+        .iter()
+        .zip(after)
+        .map(|(b, a)| math::mul(&back, &math::mul(&math::mul(a, &affine_inverse(b)), &into)))
+        .collect();
+    map.slot_bone
+        .iter()
+        .zip(palette)
+        .map(|(&b, rows)| math::affine_rows(&math::mul(&delta[b], &rows_to_mat(rows))))
+        .collect()
+}
+
+/// A direction of the model's rest pose (skeleton axes, `+z` up) as slot `slot` carries it
+/// in `palette`, in physics.
+pub(super) fn slot_direction(data: &ModelData, palette: &Palette, slot: usize, transform: &Mat4, rest: Vec3) -> Vec3 {
+    let bind = data.pose(None, 0.0);
+    let (Some(now), Some(then)) = (palette.get(slot), bind.get(slot)) else { return rest };
+    let m = math::mul(
+        &math::mul(&physics_of_world(), transform),
+        &math::mul(&math::mul(&rows_to_mat(now), &affine_inverse(&rows_to_mat(then))), &SKELETON_TO_GLTF),
+    );
+    // A vector (w = 0) through the column-major matrix.
+    let v = [rest.x, rest.y, rest.z];
+    let c = |i: usize| (0..3).map(|k| m[k][i] * v[k]).sum::<f32>();
+    Vec3::new(c(0), c(1), c(2))
 }
 
 /// Height of the terrain (physics metres) under the physics point `(x, y)`.

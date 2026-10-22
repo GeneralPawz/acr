@@ -40,6 +40,7 @@ mod ragdoll_view;
 mod save;
 mod shouts;
 mod splatter;
+mod strike_view;
 mod tears;
 pub(crate) mod three_d;
 mod trail;
