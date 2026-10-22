@@ -1,6 +1,6 @@
 """Two-handed musket poses solved with inverse kinematics (needs `bpy`): the butt in the
 right shoulder, the right hand at the grip, the left hand under the barrel, the cheek down
-on the stock. The arms are solved by Blender's IK on the posed body and written back as
+on the stock. The arms are solved by a two-bone IK on the posed body and written back as
 ordinary pose angles (`armature.pose` specs), so the clips stay plain data.
 
 The musket hangs on `socket.hand_r` with its origin at the grip, 0.25 m in front of the butt
@@ -10,88 +10,70 @@ The musket hangs on `socket.hand_r` with its origin at the grip, 0.25 m in front
 import math
 
 import bpy
-from mathutils import Vector
+from mathutils import Matrix, Vector
 
 from . import armature as am
 
 GRIP_TO_BUTT = 0.25
 
 
-def _empty(name, at):
-    e = bpy.data.objects.new(name, None)
-    bpy.context.scene.collection.objects.link(e)
-    e.location = at
-    return e
+def _to_spec(pb, m3, parent_m3):
+    """Spec angles of bone `pb` for the armature-space orientation `m3` under a parent
+    posed at `parent_m3` (the inverse of `armature.pose`)."""
+    rest = pb.bone.matrix_local.to_3x3()
+    rel = pb.parent.bone.matrix_local.to_3x3().inverted() @ rest
+    basis = (parent_m3 @ rel).inverted() @ m3
+    r = (rest @ basis @ rest.inverted()).to_euler("XYZ")
+    return tuple(round(math.degrees(x), 3) for x in r)
 
 
-def _spec_angles(arm_obj, bones):
-    """The current visual pose of `bones` as spec angles (degrees about the armature axes of
-    the rest pose, relative to the parent: the inverse of `armature.pose`)."""
-    out = {}
-    for name in bones:
-        pb = arm_obj.pose.bones[name]
-        rest = pb.bone.matrix_local.to_3x3()
-        par = pb.parent
-        if par is None:
-            basis = rest.inverted() @ pb.matrix.to_3x3()
-        else:
-            rel = par.bone.matrix_local.to_3x3().inverted() @ rest
-            basis = (par.matrix.to_3x3() @ rel).inverted() @ pb.matrix.to_3x3()
-        r = (rest @ basis @ rest.inverted()).to_euler("XYZ")
-        out[name] = tuple(round(math.degrees(a), 2) for a in r)
-    return out
+def _aim_bone(m3, direction):
+    """`m3` turned by the smallest rotation that points its Y axis (the bone) along
+    `direction`."""
+    q = (m3 @ Vector((0, 1, 0))).rotation_difference(direction)
+    return q.to_matrix() @ m3
 
 
-def _solve(arm_obj, spec, goals, iterations=3):
-    """Solves the arm chains of `goals` = {"r"|"l": (point, pole)} by IK on the posed
-    `spec` so the right hand's grip point (the head of `socket.hand_r`) or the left palm
-    reaches `point` (armature space), the elbow bending towards `pole`; writes the angles
-    back into `spec` (updated in place and returned)."""
+def _solve(arm_obj, spec, goals, iterations=6):
+    """Solves the arms of `goals` = {"r"|"l": (point, pole)} analytically (two-bone IK in
+    the plane of shoulder, goal and pole) on the posed `spec` so the right hand's grip point
+    (the head of `socket.hand_r`, as the hand carries it) or the left palm reaches `point`
+    (armature space), the elbow bending towards `pole`. A goal out of reach is approached
+    with the arm straight. Writes the angles into `spec` (in place) and returns it."""
     arm = arm_obj.pose.bones
-    chain = {"r": "forearm_r", "l": "forearm_l"}
-
-    def offset(side):
-        if side == "r":
-            return arm["socket.hand_r"].head - arm["forearm_r"].tail
-        return (arm["hand_l"].tail - arm["forearm_l"].tail) * 0.5
-
-    am.pose(arm_obj, spec)
-    # A socket placed in armature space ("world_loc") does not follow the hand: measure
-    # the hand's own grip point from a pose without it.
+    # A socket placed in armature space ("world_loc") does not follow the hand: measure the
+    # hand's own grip point from a pose without it.
     loose = {k: v for k, v in spec.items() if k != "world_loc"}
-    bones = [b for side in goals for b in (f"upperarm_{side}", f"forearm_{side}")]
-    empties = []
-    for _ in range(iterations):
-        am.pose(arm_obj, loose)
-        offs = {side: offset(side) for side in goals}
-        for o in empties:
-            bpy.data.objects.remove(o)
-        empties = []
-        for side, (point, pole) in goals.items():
-            t = _empty(f"ik.{side}", arm_obj.matrix_world @ (Vector(point) - offs[side]))
-            p = _empty(f"pole.{side}", arm_obj.matrix_world @ Vector(pole))
-            empties += [t, p]
-            c = arm[chain[side]].constraints.new("IK")
-            c.name = "acr_ik"
-            c.target = t
-            c.pole_target = p
-            c.pole_angle = math.radians(-90)
-            c.chain_count = 2
-            c.use_tail = True
-        bpy.context.view_layer.update()
-        solved = _spec_angles(arm_obj, bones)
-        for side in goals:
-            pb = arm[chain[side]]
-            pb.constraints.remove(pb.constraints["acr_ik"])
-        spec.update(solved)
-        loose.update(solved)
-    for o in empties:
-        bpy.data.objects.remove(o)
+    am.pose(arm_obj, loose)
+    for side, (point, pole) in goals.items():
+        ua, fa = arm[f"upperarm_{side}"], arm[f"forearm_{side}"]
+        a, b = ua.length, fa.length
+        point, pole = Vector(point), Vector(pole)
+        for _ in range(iterations):
+            if side == "r":
+                eff = arm["socket.hand_r"].head - fa.tail
+            else:
+                eff = (arm["hand_l"].tail - fa.tail) * 0.5
+            sh = ua.head.copy()
+            wrist = point - eff
+            d_vec = wrist - sh
+            d = min(max(d_vec.length, abs(a - b) + 1e-4), (a + b) * 0.999)
+            u = d_vec.normalized()
+            v = (pole - sh) - u * (pole - sh).dot(u)
+            v = v.normalized() if v.length > 1e-6 else Vector((0, 0, -1))
+            x = (a * a + d * d - b * b) / (2 * d)
+            elbow = sh + u * x + v * math.sqrt(max(a * a - x * x, 0.0))
+            wrist = sh + u * d
+            um = _aim_bone(ua.matrix.to_3x3(), (elbow - sh).normalized())
+            fm2 = _aim_bone(fa.matrix.to_3x3(), (wrist - elbow).normalized())
+            spec[ua.name] = loose[ua.name] = _to_spec(ua, um, ua.parent.matrix.to_3x3())
+            spec[fa.name] = loose[fa.name] = _to_spec(fa, fm2, um)
+            am.pose(arm_obj, loose)
     am.pose(arm_obj, spec)
     return spec
 
 
-def hold(arm_obj, base, pocket=(0.03, -0.05, -0.04), left_along=0.34, left_drop=0.035, iterations=3,
+def hold(arm_obj, base, pocket=(0.03, -0.05, -0.04), left_along=0.34, left_drop=0.035,
          elbow_r=(0.35, -0.15, -0.35), elbow_l=0.45):
     """`base` (a pose spec with the musket socket's "world" orientation) with both arms
     solved so the musket's butt sits in the right shoulder pocket (offset `pocket` from the
@@ -118,7 +100,7 @@ def hold(arm_obj, base, pocket=(0.03, -0.05, -0.04), left_along=0.34, left_drop=
         "r": (grip, sh - inward * elbow_r[0] - flat * elbow_r[1] + Vector((0, 0, elbow_r[2]))),
         "l": (left, left + Vector((0, 0, -elbow_l)) + flat * 0.10),
     }
-    return _solve(arm_obj, spec, goals, iterations)
+    return _solve(arm_obj, spec, goals)
 
 
 def place(arm_obj, base, grip, right="grip", left=0.40, elbow_r=(-0.30, 0.15, -0.30), elbow_l=(0.25, 0.0, -0.35),
@@ -174,3 +156,76 @@ def errors(arm_obj, spec, left_along=0.34, left_drop=0.035):
     left_target = sock.head + axis * left_along + Vector((0, 0, -left_drop))
     hand_l = (arm["hand_l"].head + arm["hand_l"].tail) / 2
     return (butt - arm["upperarm_r"].head).length, (hand_l - left_target).length
+
+
+# The ramrod in its pipes under the barrel: tail 0.50 m along the musket from the grip,
+# head towards the muzzle (`gear.rammer` hangs on `socket.hand_l`, placed every frame).
+ROD_STOWED = Matrix.Translation((0, 0.02, 0.50))
+ROD_SOCKET = "socket.hand_l"
+
+
+def _rod_stowed(musket):
+    return musket @ ROD_STOWED
+
+
+def _rod_in_hand(arm, musket):
+    """The rod down the bore under the right hand (head in the barrel)."""
+    hand = arm["hand_r"]
+    palm = (hand.head + hand.tail) / 2
+    axis = musket.to_3x3() @ Vector((0, 0, 1))
+    m = (musket.to_3x3() @ Matrix.Rotation(math.pi, 3, "X")).to_4x4()
+    m.translation = musket.translation + axis * (palm - musket.translation).dot(axis)
+    return m
+
+
+def _key(pb, m, frame):
+    pb.matrix = m
+    bpy.context.view_layer.update()
+    pb.keyframe_insert("rotation_quaternion", frame=frame, group=pb.name)
+    pb.keyframe_insert("location", frame=frame, group=pb.name)
+
+
+def bake_musket(arm_obj, clip, keys, rod_drawn=None):
+    """Keys the musket (`socket.hand_r`) on every frame of `clip` along the path between its
+    keys' placements (armature space: location lerped, rotation slerped), so it does not
+    swing with a hand whose grip changes between keys, and the ramrod: in its pipes, or
+    down the bore in the right hand for frames in `rod_drawn` (first, last)."""
+    arm = arm_obj.pose.bones
+    placed = []
+    for f, spec in keys:
+        am.pose(arm_obj, spec)
+        placed.append((f, arm["socket.hand_r"].matrix.copy()))
+    am.set_clip(arm_obj, clip)
+    sock, rod = arm["socket.hand_r"], arm[ROD_SOCKET]
+    frames = [f for f, _ in placed]
+    for f in range(frames[0], frames[-1] + 1):
+        i = max(j for j, k in enumerate(frames) if k <= f)
+        (f0, m0), (f1, m1) = placed[i], placed[min(i + 1, len(placed) - 1)]
+        t = (f - f0) / (f1 - f0) if f1 > f0 else 0.0
+        m = m0.to_quaternion().slerp(m1.to_quaternion(), t).to_matrix().to_4x4()
+        m.translation = m0.translation.lerp(m1.translation, t)
+        bpy.context.scene.frame_set(f)
+        _key(sock, m, f)
+        drawn = rod_drawn and rod_drawn[0] <= f <= rod_drawn[1]
+        _key(rod, _rod_in_hand(arm, m) if drawn else _rod_stowed(m), f)
+    _linear(arm_obj)
+    arm_obj.animation_data.action = None
+
+
+def stow_rammer(arm_obj, clip):
+    """Keys the ramrod in its pipes on every frame of `clip` (the musket as the clip has it)."""
+    act = bpy.data.actions[clip]
+    first, last = (int(x) for x in act.frame_range)
+    am.set_clip(arm_obj, clip, first)
+    arm = arm_obj.pose.bones
+    for f in range(first, last + 1):
+        bpy.context.scene.frame_set(f)
+        _key(arm[ROD_SOCKET], _rod_stowed(arm["socket.hand_r"].matrix.copy()), f)
+    _linear(arm_obj)
+    arm_obj.animation_data.action = None
+
+
+def _linear(arm_obj):
+    for fc in am._fcurves(arm_obj.animation_data.action):
+        for kp in fc.keyframe_points:
+            kp.interpolation = "LINEAR"
