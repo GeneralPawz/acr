@@ -395,8 +395,20 @@ impl ScriptState {
     /// (`NMask` of the nations and of every object).
     pub fn sync_alliances(&self, world: &mut World) {
         world.nation_mask = self.nmask;
+        world.difficulty = self.difficulty;
         for u in &mut world.units {
             u.nmask = self.unit_nmask(u.id, u.owner);
+        }
+    }
+
+    /// Objects the last step captured (`acr_sim::capture`): their serial's bit 0 flips, so
+    /// groups no longer hold them, and they take their new nation's mask (0x5290c3). Each
+    /// capture is taken once.
+    pub fn note_captures(&mut self, world: &mut World) {
+        for id in std::mem::take(&mut world.captured) {
+            let e = self.extra.entry(id.0).or_default();
+            e.serial_flip = !e.serial_flip;
+            e.nmask = None;
         }
     }
 

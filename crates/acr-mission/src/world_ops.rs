@@ -13,16 +13,9 @@ pub fn kill(world: &mut World, id: EntityId) {
 /// with an order) of a `SLOWDEATH` type only drops to 1999 life and then burns down
 /// (`acr_sim::combat::slow_death`); anything else dies.
 pub fn destruct(world: &mut World, id: EntityId) {
-    let Some(u) = world.units.get(id.0 as usize).filter(|u| u.living()) else { return };
-    let ready = !u.building || u.stage >= world.max_stage(u);
-    if world.catalog.get(u.kind).slow_death && (ready || !u.orders.is_empty()) {
-        let u = &mut world.units[id.0 as usize];
-        if u.life >= 2000 {
-            u.life = 1999;
-        }
-        return;
+    if world.units.get(id.0 as usize).is_some_and(|u| u.living()) {
+        acr_sim::combat::destruct_building(world, id.0 as usize);
     }
-    world.kill(id);
 }
 
 /// `SelErase`: dies and disappears at once (no corpse).

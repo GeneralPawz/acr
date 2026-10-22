@@ -728,6 +728,46 @@ Implemented in `combat.rs`, recovered from `SearchVictim` (0x52622b), `AttackObj
     offsets up to 32 px (0x4e7efb..0x4e8247); the shipped data has no wall types, so this
     is not reproduced.
 
+### Capture
+
+Objects that can be captured (`CAPTURE`, NM+0x172a bit1: the European peasants, the Dutch
+and Portuguese buildings, the Spanish mines; and every building site nobody works on)
+change sides when an enemy is near and no friend (`capture.rs`):
+
+- **When** (last loop of `LongProcesses` 0x51175d, after the units, before the object
+  loop): every object not dying nor inside whose index `& 31` equals `tmtmt & 31`, if it is
+  of a `CAPTURE` type or a building site (not `Ready`) without orders.
+- **Capturers** (`TryCapture` 0x528868): the 5 × 5 cells of 128 px around it, walked as a
+  linear index without wrapping at the row ends. In a cell where a nation outside its
+  friends is present, the first unit that is an enemy, not `CAPTURE`, not `CANTCAPTURE`
+  (animals) and not of nation 7 (0x528072) counts if it stands within 250 px (`Norma`);
+  the last one counted takes the object. No random numbers.
+- **Defence:** a non-peasant object's reload becomes 100 (towers stop shooting while enemies
+  are close). In the 7 × 7 cells the first friend (not `CAPTURE`, not dying, 0x52817b) of
+  each cell where a friend is present defends, at any distance. An AI's artillery piece
+  blows itself up when outnumbered (1 defender and at least 1 capturer; 2 and more than 3;
+  3 and more than 7; 4 and more than 10).
+- **Change of sides** (0x528d96..0x5294ad), undefended: a peasant captured by an AI dies
+  instead if its own nation plays at difficulty 3 or more (`DestructBuilding`). Otherwise a
+  `USAGE PEASANT` loses its orders, the object leaves its formation, takes the new nation
+  and its mask, and a building keeps its share of construction (`stage · new BUILDSTAGES /
+  old`). Its serial number's bit 0 flips (`World::captured`; scripts' groups lose it). The
+  garrison changes sides with it and loses its orders; with a capture rule other than 0
+  the building is destroyed instead.
+- **The capture rule** (0x6e45cb, digit 5 of the random map's options, 0 in missions;
+  `World::capture_rule`): 1 spares peasants, 2 also town centres and mines, 3 everything
+  but artillery.
+- **Walking to capture** (`AttackObjLink` 0x51f3df): a unit with no attack that fits its
+  target walks there only if the target could be captured now (0x52853e: capturable, not
+  spared, no defender in the 7 × 7 cells); otherwise the attack just ends.
+- Not reproduced: the score (`VES·5` from the old to the new owner: the interface's
+  statistics follow the owner), the hints and alarms of the local player, the nation's
+  per-type counters (0x11041bd), OB+0x21/+0x22 and the `Zombi` bit, a unit walking into a
+  building (OB+0x29 bit 1) that dies instead, `AutoKill` and wall objects (destroyed first),
+  the territory checks (0x45f65c, only with territories), and the search rules that make
+  units go after undefended `CAPTURE` units they cannot hurt (0x525ac1 mode 2, `AttackObj`
+  0x51ab51). The interface does not offer the capture rule.
+
 ### Friend and foe
 
 Every object carries an alliance mask (`NMask`, OB+0x9a; `Unit::nmask`), taken from its
@@ -1614,8 +1654,8 @@ No game option writes it. How the map view draws the fog is in
     corpse is not drawn; `extra` (the shot point's visual height) is kept but unused, as in
     the engine.
   - Buildings: the cells of a building for round damage and searches are those of its
-    position (the engine keeps building lists by cell); capture and storming are not
-    reproduced.
+    position (the engine keeps building lists by cell); storming enemy buildings is not
+    reproduced (see Capture for what of capturing is not).
   - Morale: the fear scan takes the units of the 128 px buckets built at the start of the
     tick (the engine's cell lists change during the tick); the cell number in the panic
     seed uses the bucket grid's width. Fleeing units walk in stance 0 (the engine runs them
@@ -1657,6 +1697,10 @@ No game option writes it. How the map view draws the fog is in
 - **Thrown corpses** (`tests/detonator.rs`): a `DETONATOR` 8000 blast 100 px away throws
   the dead victim with velocity (1333, 0, 1333), 6, 7 and 4 px high, down after four ticks
   21 px further, without random numbers; other blasts throw nobody.
+- **Capture** (`tests/capture.rs`): an undefended peasant 200 px from an enemy goes over at
+  the tick of its index, without orders and with the new mask; a friend 350 px away, an
+  enemy 260 px away, an animal, nation 7 or capture rule 1 prevent it, a friend 600 px away
+  does not; an idle building site is captured with its stage, a finished house is not.
 - **Burning down** (`tests/slowdeath.rs`): a `SLOWDEATH` house at 1500 is listed at the
   next 0x11 tick and dies 299 ticks later, a house without the flag keeps its life; a
   repaired one leaves the list (losing 5 once more) and the next one is skipped that tick.
