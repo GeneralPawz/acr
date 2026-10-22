@@ -927,7 +927,10 @@ fn blocked_shot(w: &mut World, i: usize, s: (i32, i32, i32), c: (i32, i32, i32),
 
 /// Before a strike with a weapon starts (0x51f9e9..0x51fce6): the unit looks along the shot
 /// from its position at its `ZPOINTS` height to the target's `GetDamagePoint` (two random
-/// numbers), with the friendly-fire look ([`crate::predict::predict_shot_ff`]). A free
+/// numbers). Deviation: without the engine's friendly-fire look (0x559a40, see
+/// [`crate::predict::predict_shot_ff`]); with it, musketeers behind their own lines dropped
+/// their attacks again and again and hardly fired, unlike in the original game. A friend in
+/// the way absorbs the ball unharmed ([`trace_line`]) while avoidance is on. A free
 /// line, the target itself or (close) an enemy in the way let the strike start. Standing in
 /// a one-frame pose (frame 0, e.g. `#PSTAND1`) only an enemy building with a garrison in the
 /// way does; otherwise the unit shows its stance's `#PSTAND` and drops the attack. Else
@@ -941,7 +944,7 @@ fn clear_to_strike(w: &mut World, i: usize, aim: Aim, k: usize, can_set_delay: b
     let (x0, y0) = u.pos.pixels();
     let s = (x0, y0, height(w, u.pos) + t.zpoints.0);
     let wid = t.attacks.get(k).and_then(|a| a.weapon_id);
-    let p = crate::predict::predict_shot_ff(w, wid, s, c, i);
+    let p = crate::predict::predict_shot(w, wid, s, c, i);
     let Some(b) = p.blocked else { return true };
     if w.units[i].frame == 0 {
         if let Blocked::Object(o) = b {

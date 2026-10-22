@@ -1,5 +1,6 @@
-//! Looking along the shot before firing (`PredictShot` 0x559030 / 0x559a40): a musketeer
-//! does not fire into a friend or a hill but steps aside or gives up.
+//! Looking along the shot before firing (`PredictShot` 0x559030): a musketeer does not fire
+//! into a hill but steps aside or gives up. A friend in the line does not stop the shot (ACR
+//! skips the engine's friendly-fire look 0x559a40); the friend absorbs the ball unharmed.
 
 use std::sync::Arc;
 
@@ -61,30 +62,29 @@ fn run_until_shot(w: &mut World, shooter: EntityId, ticks: usize) -> Option<usiz
     None
 }
 
-/// A friend 200 px ahead on the line of fire (0x559770 finds it): when the aiming is done
-/// (`#PATTACK1` ends on a frame other than 0) the musketeer looks for a free line 20 px at a
-/// time to its left, walks 40 px there (0x51fce6) and fires from there. Before, it fired at
-/// once and the friend absorbed the ball (`FRIENDLYFIRE`).
+/// A friend 200 px ahead on the line of fire: the musketeer fires from where it stands and
+/// the friend absorbs the ball unharmed (`FRIENDLYFIRE`).
 #[test]
-fn a_friend_in_the_line_makes_the_shooter_step_aside() {
+fn a_friend_in_the_line_absorbs_the_ball() {
     let (mut w, k) = setup(MapGrid::open(1));
     let shooter = w.spawn(k.mus, 0, Pos::from_pixels(2000, 2000), 0);
     let friend = w.spawn(k.bystander, 0, Pos::from_pixels(2200, 2000), 0);
     let enemy = w.spawn(k.bystander, 1, Pos::from_pixels(2500, 2000), 128);
     w.step(&[Command::Attack { player: 0, units: vec![shooter], target: enemy }]);
-    let t = run_until_shot(&mut w, shooter, 300).expect("the musketeer fired");
-    let (sx, sy) = unit(&w, shooter).pos.pixels();
-    // The line from (2000, 2000) to (2500, 2000): left of it is north (−y).
-    assert!(sy <= 1965 && (sx - 2000).abs() <= 16, "fired from ({sx}, {sy}) at tick {t}");
+    run_until_shot(&mut w, shooter, 300).expect("the musketeer fired");
+    assert_eq!(unit(&w, shooter).pos, Pos::from_pixels(2000, 2000), "fired where it stood");
+    for _ in 0..20 {
+        w.step(&[]);
+    }
     assert_eq!(unit(&w, friend).life, 100, "the friend is unhurt");
-    assert!(unit(&w, enemy).death != 0, "the enemy was hit");
+    assert_eq!(unit(&w, enemy).life, 100, "the friend took the ball");
 }
 
 /// Already standing ready in the musket stance (`#PSTAND1`, one frame: frame 0) with a
-/// friend in the line, the musketeer does not start the shot: it shows `#PSTAND1` and drops
-/// the attack (0x51fb8d), again whenever it is ordered or finds the enemy itself.
+/// friend in the line, the musketeer still fires (the engine's 0x51fb8d would drop the
+/// attack here, again and again: #194).
 #[test]
-fn a_ready_shooter_behind_a_friend_holds_fire() {
+fn a_ready_shooter_behind_a_friend_fires() {
     let (mut w, k) = setup(MapGrid::open(1));
     let shooter = w.spawn(k.mus, 0, Pos::from_pixels(2000, 2000), 0);
     w.spawn(k.bystander, 0, Pos::from_pixels(2200, 2000), 0);
@@ -95,12 +95,9 @@ fn a_ready_shooter_behind_a_friend_holds_fire() {
         (u.anim, u.anim_frames, u.frame) = (AnimKind::PStand(1), 1, 0);
     }
     w.step(&[Command::Attack { player: 0, units: vec![shooter], target: enemy }]);
-    let u = unit(&w, shooter);
-    assert!(u.orders.is_empty(), "the attack is dropped: {:?}", u.orders);
-    assert_eq!((u.anim, u.frame), (AnimKind::PStand(1), 0));
-    assert_eq!(run_until_shot(&mut w, shooter, 200), None, "never fires");
-    assert_eq!(unit(&w, shooter).pos, Pos::from_pixels(2000, 2000), "and never moves");
-    assert_eq!(unit(&w, enemy).life, 100);
+    assert!(!unit(&w, shooter).orders.is_empty(), "the attack stays");
+    run_until_shot(&mut w, shooter, 200).expect("the musketeer fired");
+    assert_eq!(unit(&w, shooter).pos, Pos::from_pixels(2000, 2000), "without moving");
 }
 
 /// A ridge 300 px high between shooter and target blocks the musket's line (0x558eb0: the

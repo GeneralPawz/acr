@@ -61,9 +61,10 @@ const ON: Rules = Rules { hit_locations: true };
 fn off_by_default_the_fight_is_the_original_one() {
     let w = fight(Rules::default(), 1500);
     // The hash of this fight without the optional rule (measured on main at 71552fd, then
-    // with the original's look along the line before a shot, PredictShot).
+    // with the original's look along the line before a shot, PredictShot, then without its
+    // friendly-fire look, #194).
     // Update it when the original rules change, never for the optional rule.
-    assert_eq!(w.state_hash(), 0xc054_d029_9070_147f);
+    assert_eq!(w.state_hash(), 0x91d6_a8c1_1ead_2450);
     assert!(w.units.iter().all(|u| u.body == Default::default()));
     assert!(w.hits.iter().all(|h| h.region.is_none()));
 }

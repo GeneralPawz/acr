@@ -728,10 +728,15 @@ Implemented in `combat.rs`, recovered from `SearchVictim` (0x52622b), `AttackObj
     reports a height it cannot reach (0xFFFE); arrows, cannon balls in flight and the rest
     are never blocked. Units do not block here. A shot whose first step covers less than
     200 px (`|dx| + |dy| + |dz|`, the global 0x28a8018) is *close*.
-  - **Friends.** Before the strike starts, a `FRIENDLYFIRE` unit whose avoidance is on
-    (`Command::FriendlyFire` switches it off) first looks for the nearest unit on the line
-    out to twice the distance, as the ball's trace does but counting only ¾ of the
-    distance from the line (0x559770); a friend there blocks.
+  - **Friends.** In the engine, before the strike starts, a `FRIENDLYFIRE` unit whose
+    avoidance is on (`Command::FriendlyFire` switches it off) first looks for the nearest
+    unit on the line out to twice the distance, as the ball's trace does but counting only
+    ¾ of the distance from the line (0x559770); a friend there blocks. **Deviation:** ACR
+    skips this look (`predict::predict_shot_ff` is kept but not called). With it, musketeers
+    standing behind their own pikemen dropped their attacks every few ticks and never fired
+    (Die Armada: about 6000 dropped attacks per 1500 ticks, half the shots), which players
+    of the original do not see. Their balls now fly and a friend in the way absorbs them
+    unharmed while avoidance is on (`combat::trace_line`); switched off, friends are hit.
   - **When the strike would start** (0x51f9e9, after turning, before the shot's cost): from
     the unit's position at its `ZPOINTS` source height to `GetDamagePoint` (two random
     numbers, now also for shots that go). The strike starts on a free line, if the target
