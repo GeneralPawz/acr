@@ -237,6 +237,20 @@ def ground_patch(parent, name, points, z=1.0):
     return _obj(parent, name, bm)
 
 
+def ground_ring(parent, name, outer, inner, z=1.0):
+    """A flat band between two closed polygons with the same number of corners (trodden
+    earth along a wall)."""
+    bm = bmesh.new()
+    o = [bm.verts.new(_m(x, y, z)) for x, y in outer]
+    i = [bm.verts.new(_m(x, y, z)) for x, y in inner]
+    n = len(o)
+    for k in range(n):
+        f = bm.faces.new((o[k], o[(k + 1) % n], i[(k + 1) % n], i[k]))
+        if f.normal.z < 0:
+            f.normal_flip()
+    return _obj(parent, name, bm)
+
+
 def group(parent, name, **props):
     """An empty grouping a state's parts; custom properties (acr_state, acr_section, ...)
     become glTF extras the renderer and the sprite check read."""

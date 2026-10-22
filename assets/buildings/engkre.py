@@ -120,9 +120,9 @@ def palisade_ring(g, name, keep=None, walls=("fl", "fr", "br", "bl"), t=None):
         kit.palisade(g, f"{name}_{w}", pts, FIT["stake"], keep=keep, seed=hash(w) % 97)
 
 
-def ne_barracks(g, roof=True, frame=False, wall=1.0):
+def ne_barracks(g, roof=True, frame=False, wall=1.0, t0=None):
     E, N = P("E"), P("N")
-    c, a, ln = along_wall(N, E, FIT["ne_t0"], FIT["ne_t1"], FIT["ne_w"])
+    c, a, ln = along_wall(N, E, FIT["ne_t0"] if t0 is None else t0, FIT["ne_t1"], FIT["ne_w"])
     kit.box(g, "ne_walls", c, a, ln, FIT["ne_w"], 0.0, FIT["ne_h"] * wall)
     if roof:
         kit.lean_to(g, "ne_roof", c, a + 180, ln, FIT["ne_w"], FIT["ne_low"], FIT["ne_high"])
@@ -199,12 +199,16 @@ def stone_house(g, state):
             kit.box(g, f"st_chimney{t}", tuple(p), a, 24, 24, h, FIT["st_ridge"] + 40)
 
 
-def dirt(g, name):
+def dirt(g, name, ring=False):
     """Trodden earth around the walls (the sprites draw it)."""
     W, S, E, N = P("W"), P("S"), P("E"), P("N")
     c = (W + S + E + N) / 4
-    pts = [tuple(p + (p - c).normalized() * FIT["dirt"] * 1.4) for p in (W, S, E, N)]
-    kit.ground_patch(g, name, pts)
+    outer = [tuple(p + (p - c).normalized() * FIT["dirt"] * 1.4) for p in (W, S, E, N)]
+    if not ring:  # the finished fort and the ruin show the whole yard
+        kit.ground_patch(g, name, outer)
+        return
+    inner = [tuple(p - (p - c).normalized() * 30) for p in (W, S, E, N)]
+    kit.ground_ring(g, name, outer, inner)
 
 
 def finished(g):
@@ -223,13 +227,13 @@ def finished(g):
 def stage(g, k):
     """Construction stage k (#BUILDLO_k)."""
     W, S, E, N = P("W"), P("S"), P("E"), P("N")
-    dirt(g, f"b{k}_dirt")
+    dirt(g, f"b{k}_dirt", ring=True)
     if k == 0:
         palisade_ring(g, "b0_pal", t={"fl": (0.0, 0.85), "fr": (0.12, 0.45), "br": (0.0, 1.0), "bl": (0.0, 0.35)},
                       walls=("fl", "fr", "br", "bl"))
         kit.logs(g, "b0_pile", tuple(lerp(W, E, 0.5) + Vector((-60, -40))), tuple(lerp(W, E, 0.5) + Vector((40, 30))), 8, 5, 0,
                  step=0.0, spread=25)
-        ne_barracks(g, roof=False, frame=True, wall=0.6)
+        ne_barracks(g, roof=False, frame=True, wall=0.6, t0=0.45)
         kit.beams(g, "b0_scaffold", [((N.x, N.y, 0), (N.x, N.y, 160)), ((N.x + 60, N.y + 40, 0), (N.x + 60, N.y + 40, 160)),
                                       ((N.x - 10, N.y - 10, 160), (N.x + 160, N.y + 100, 160))], radius=3)
     else:
