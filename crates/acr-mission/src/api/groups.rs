@@ -864,7 +864,7 @@ pub fn run_group_orders(api: &mut Api) {
                             .iter()
                             .any(|o| matches!(o, acr_sim::world::Order::Enter { building, .. } if *building == bid));
                         if !going {
-                            acr_sim::economy::enter(api.world, id.0 as usize, b, 0x90);
+                            acr_sim::economy::enter(api.world, id.0 as usize, b, 0x90, false);
                         }
                     }
                 }

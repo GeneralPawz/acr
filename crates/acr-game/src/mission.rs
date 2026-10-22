@@ -204,8 +204,12 @@ impl MissionLink {
         if self.script.is_none()
             && let Some(dll) = map.mission_dll.clone().filter(|d| !d.is_empty())
         {
+            // History battles: pages in `<dll>.txt`, strings in `<dll>.str`.
+            let (texts, strings) = acr_mission::map_script_texts(&dll);
             self.script = Some(dll.clone());
-            return self.request(vec![dll]);
+            self.texts = Some(texts.clone());
+            self.text_sources.push(acr_formats::normalize_path(&strings));
+            return self.request(vec![dll, texts, strings]);
         }
         if !self.all_loaded() {
             return Vec::new();
