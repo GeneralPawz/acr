@@ -141,6 +141,7 @@ One parameter `decay` ∈ [0, 1] per corpse; each material has its layer's windo
 | leather (gaiters, belts, hat, boxes) | 0.20–0.70 dark | 0.74–0.95 | last to go |
 | wood / metal (musket) | 0.30–0.95 dark / rust | never | sinks with the rest |
 | bone | 0.50–0.85 bleached | 0.94–1.00 | after sinking, avoids a pop |
+| hide (animal coat, mane, tail; code 8) | 0.04–0.50 darker, browner | 0.30–0.72 | rot darkens a coat, never bleaches it (#212) |
 
 Plus `deflate` weight 0.18–0.55 and sinking 0.78–1.00 by 0.20 m (the whole corpse incl.
 dropped gear; the terrain hides it). Shader (Blender: `h_decay.material`; the same in WGSL):

@@ -21,7 +21,7 @@ LAYER_OF = {
     "gaiters": "leather", "belts": "leather", "hat": "leather", "boots": "leather", "shoes": "leather",
     "cartridge": "leather", "knapsack": "leather", "saddle": "leather", "tack": "leather",
     "wood": "wood", "metal": "metal", "brass": "metal",
-    "horse": "flesh", "mane": "hair", "hooves": "bone", "saddlecloth": "wool", "boots_high": "leather", "cap": "leather",
+    "horse": "hide", "mane": "hide", "hooves": "bone", "saddlecloth": "wool", "boots_high": "leather", "cap": "leather",
 }
 
 

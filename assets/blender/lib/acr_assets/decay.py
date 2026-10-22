@@ -50,6 +50,11 @@ LAYERS = {
                     edge=0.0, edge_rgb=(0, 0, 0)),
     "bone":    dict(code=7, d=(0.50, 0.85), tint=(0.86, 0.85, 0.80), k=0.8, s=(0.94, 1.00),
                     edge=0.03, edge_rgb=(0.45, 0.42, 0.35)),
+    # Animal hide with its hair (horse coat, mane, tail; #212): rots darker and browner,
+    # never paler (the human `flesh` tint is a pale grey-green that bleaches a brown coat),
+    # and holds out longer than human flesh.
+    "hide":    dict(code=8, d=(0.04, 0.50), tint=(0.16, 0.11, 0.07), k=0.6, s=(0.30, 0.72),
+                    edge=0.06, edge_rgb=(0.09, 0.05, 0.03)),
 }
 
 # Colours of the masks of #183 (sRGB): fresh blood darkens to brown with age.
@@ -179,7 +184,8 @@ def _mix(nodes, links, fac, a, b):
     return n.outputs["Result"]
 
 
-def material(name, layer, rgb=(0.5, 0.5, 0.5), image=None, uv_map="sprite", roughness=0.85, metallic=0.0):
+def material(name, layer, rgb=(0.5, 0.5, 0.5), image=None, uv_map="sprite", roughness=0.85, metallic=0.0,
+             interpolation="Closest"):
     """A decaying preview material (Cycles/Eevee) for `layer`: base colour `rgb` (sRGB) or
     `image` through `uv_map`; reads the object property `decay`. `export_material` makes the
     plain glTF twin."""
@@ -192,6 +198,7 @@ def material(name, layer, rgb=(0.5, 0.5, 0.5), image=None, uv_map="sprite", roug
     if image is not None:
         mat["acr_image"] = image.name
         mat["acr_uv"] = uv_map
+        mat["acr_interp"] = interpolation
     mat.diffuse_color = lin(rgb)
     nodes, links = mat.node_tree.nodes, mat.node_tree.links
     nodes.clear()
@@ -202,7 +209,7 @@ def material(name, layer, rgb=(0.5, 0.5, 0.5), image=None, uv_map="sprite", roug
     if image is not None:
         tex = nodes.new("ShaderNodeTexImage")
         tex.image = image
-        tex.interpolation = "Closest"
+        tex.interpolation = interpolation
         uv = nodes.new("ShaderNodeUVMap")
         uv.uv_map = uv_map
         links.new(uv.outputs["UV"], tex.inputs["Vector"])
@@ -258,7 +265,7 @@ def export_material(mat):
     if "acr_image" in mat:
         tex = nodes.new("ShaderNodeTexImage")
         tex.image = bpy.data.images[mat["acr_image"]]
-        tex.interpolation = "Closest"
+        tex.interpolation = mat.get("acr_interp", "Closest")
         uv = nodes.new("ShaderNodeUVMap")
         uv.uv_map = mat["acr_uv"]
         links.new(uv.outputs["UV"], tex.inputs["Vector"])

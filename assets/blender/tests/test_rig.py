@@ -83,7 +83,9 @@ class Decay(unittest.TestCase):
         self.assertLess(s["wool"][0], s["leather"][0])
         self.assertLess(s["leather"][0], s["bone"][0])
         self.assertIsNone(s["wood"])
-        self.assertEqual(sorted(v["code"] for v in decay.LAYERS.values()), list(range(8)))
+        self.assertEqual(sorted(v["code"] for v in decay.LAYERS.values()), list(range(len(decay.LAYERS))))
+        # Animal hide darkens while it rots (#212), it never bleaches.
+        self.assertLess(sum(decay.LAYERS["hide"]["tint"]), 0.5)
 
 
 if __name__ == "__main__":
