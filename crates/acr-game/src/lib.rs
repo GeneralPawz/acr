@@ -1,7 +1,9 @@
 //! American Conquest, rebuilt: the game application.
 //!
-//! The screen is laid out on the original 1024x768 canvas and scaled to the window with
-//! letterboxing, so menus look like the original at any resolution.
+//! The menus are laid out on the original 1024x768 canvas and scaled to the window with
+//! letterboxing, so they look like the original at any resolution. The in-game interface
+//! uses the same scale over the whole window, laid out for its size like the original's
+//! `RealLx` × `RealLy` (see `docs/ui.md`, screen size).
 
 mod canvas;
 mod diplomacy;
@@ -192,7 +194,7 @@ impl Game {
                 let (l, images, cursor) = game.interface(&self.ui.ctx(), g.gpu.size(), game_dt);
                 layers = l;
                 // Mission pages, hints and the end of the game over the interface.
-                layers.push((Canvas::fit(g.gpu.size()), game.overlay(&self.ui.ctx())));
+                layers.push((game.screen_canvas(), game.overlay(&self.ui.ctx())));
                 for (name, image) in images {
                     self.ui.set_image(name, image);
                 }

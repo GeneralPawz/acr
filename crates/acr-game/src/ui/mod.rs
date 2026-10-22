@@ -21,7 +21,7 @@ pub mod texts;
 use acr_render::{ImageDraw, ImageRenderer};
 
 use crate::canvas::Canvas;
-use draw::{Draw, Textures};
+use draw::{Draw, Rect, Textures};
 use fonts::Fonts;
 use library::Library;
 pub use settings::Settings;
@@ -600,6 +600,9 @@ impl Ui {
                 draws.push(Draw::text(font, text.as_bytes(), 512 - w / 2, 700));
             }
         }
+        self.textures.resolve(device, queue, images, &self.lib, &self.fonts, canvas, &draws, &mut out);
+        // The cursor goes anywhere in the window, also beside the menu canvas.
+        let mut draws = Vec::new();
         if let Some([x, y]) = self.mouse {
             let (x, y) = (x.floor() as i32, y.floor() as i32);
             match self.game_cursor {
@@ -612,7 +615,8 @@ impl Ui {
                 _ => draws.push(Draw::frame(CURSOR, 0, x, y)),
             }
         }
-        self.textures.resolve(device, queue, images, &self.lib, &self.fonts, canvas, &draws, &mut out);
+        let window = Canvas { clip: Rect::ALL, ..*canvas };
+        self.textures.resolve(device, queue, images, &self.lib, &self.fonts, &window, &draws, &mut out);
         (out, first)
     }
 }

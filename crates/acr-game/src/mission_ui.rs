@@ -2,7 +2,8 @@
 //! the four message lines (`AssignHint`/`AssignHint1`, drawn by 0x493fc5) and the central
 //! box (0x4bc490) that shows `ShowCentralText` and the end of the game (0x4bc7b0).
 //!
-//! Coordinates are on the 1024 × 768 canvas of the interface.
+//! Coordinates are on the interface's canvas (`RealLx` × `RealLy`, see
+//! [`crate::canvas::Canvas::screen`]).
 
 use crate::hud::BOX_CORNERS;
 use crate::ui::Ctx;
@@ -16,12 +17,15 @@ const BLACK: FontId = FontId("BlackFont");
 const BIG_WHITE: FontId = FontId("BigWhiteFont");
 
 /// The hint line at (`smapx + 4`, `RealLy − PanelLy − 40`) (0x5aa9ec); the message lines
-/// go up from 20 pixels above it, 20 pixels apart.
+/// go up from 20 pixels above it, 20 pixels apart. `HINT_Y` is relative to `RealLy`.
 const HINT_X: i32 = 4;
-const HINT_Y: i32 = 768 - 144 - 40;
+const HINT_Y: i32 = -144 - 40;
 
-/// Centre of the map view (`smapx + smaplx · 16`, `smapy + smaply · 8`).
-const CENTRE: (i32, i32) = (512, 384);
+/// Centre of the map view (`smapx + smaplx · 16`, `smapy + smaply · 8`): the middle of the
+/// screen.
+fn centre(screen: [i32; 2]) -> (i32, i32) {
+    (screen[0] / 2, screen[1] / 2)
+}
 /// Paper of the central box (0x480130): `Border` 28..30.
 const CENTRAL_FILL: usize = 28;
 
@@ -55,17 +59,18 @@ impl Messages {
     }
 
     /// `BlackFont` 2 pixels down-right as a shadow, then `WhiteFont`.
-    pub fn draw(&self, out: &mut Vec<Draw>) {
+    pub fn draw(&self, screen: [i32; 2], out: &mut Vec<Draw>) {
+        let hint_y = screen[1] + HINT_Y;
         let mut line = |text: &[u8], y: i32| {
             out.push(Draw::game_text(BLACK, text, HINT_X + 2, y + 2));
             out.push(Draw::game_text(WHITE, text, HINT_X, y));
         };
         if self.hint.1 > 0 {
-            line(&self.hint.0, HINT_Y);
+            line(&self.hint.0, hint_y);
         }
         for (i, (text, t)) in self.list.iter().enumerate() {
             if *t > 0 {
-                line(text, HINT_Y - 20 - 20 * i as i32);
+                line(text, hint_y - 20 - 20 * i as i32);
             }
         }
     }
@@ -73,12 +78,12 @@ impl Messages {
 
 /// The central box (0x4bc490): `\` separates lines, drawn centred in `BigWhiteFont` on a
 /// paper box. The box is sized for as many lines as there are `\`, one fewer than drawn.
-pub fn central_text(ctx: &Ctx, out: &mut Vec<Draw>, text: &[u8], player: u8) {
+pub fn central_text(ctx: &Ctx, out: &mut Vec<Draw>, text: &[u8], player: u8, screen: [i32; 2]) {
     let width = |t: &[u8]| ctx.fonts.width(ctx.lib, BIG_WHITE, t);
     let n = text.iter().filter(|&&c| c == b'\\').count() as i32;
     let max = text.split(|&c| c == b'\\').map(width).max().unwrap_or(0);
     let lh = ctx.fonts.glyph_height(ctx.lib, BIG_WHITE, b'y') + 5;
-    let (cx, mut cy) = CENTRE;
+    let (cx, mut cy) = centre(screen);
     cy -= ((lh * n) >> 1) + 32;
     let half = max >> 1;
     let rect = Rect::inclusive(cx - half - 64, cy - 8, cx + half + 64, cy + lh * n + 27);
