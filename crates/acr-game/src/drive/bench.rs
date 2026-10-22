@@ -100,6 +100,12 @@ pub fn spawn(game: &mut Game, v: &Value) -> Result<Value, String> {
     let world = g.world_mut().ok_or("no world yet")?;
     let kind = find_type(world, name)?;
     let id = world.spawn(kind, owner, Pos::from_pixels(x, y), dir);
+    // `resources`: the owner's stock of every resource set to this (a cannon pays per shot).
+    if let Some(n) = v.get("resources").and_then(Value::as_i64)
+        && let Some(p) = world.players.get_mut(usize::from(owner))
+    {
+        p.resources = [n.clamp(0, i64::from(i32::MAX)) as i32; 8];
+    }
     let i = id.0 as usize;
     match pose {
         Pose::Stand => {}

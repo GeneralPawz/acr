@@ -276,7 +276,7 @@ and rigs it with rigid bones; `acr_assets.ships` builds the sailing ships.
 | `ships/shpfregat.py` (`ShpFregat`) | Poly Haven `dutch_ship_large_01` | 40 m | 27.8k | `STAND`, `MOTION_L/R/LB/RB`, `ATTACK`, `DEATH`, `DEATHLIE1` |
 | `ships/shpsanta.py` (`ShpSanta`) | Poly Haven `dutch_ship_large_02` | 34 m | 23.8k | same |
 | `ships/shppinta.py` (`ShpPinta`) | Poly Haven `dutch_ship_medium` | 28 m | 19.7k | same |
-| `artillery/artpus.py` (`ArtPus`) | rivetech's barrel (CC-BY) on a scripted field carriage | barrel 2.5 m | 4.7k | `STAND`, `MOTION_L/R`, `ATTACK`, `DEATH`, `DEATHLIE1` |
+| `artillery/artpus.py` (`ArtPus`) | rivetech's barrel (CC-BY) on a scripted field carriage, 4 crew | barrel 2.5 m | 23.5k (crew 18.8k) | `STAND`, `MOTION_L/R`, `ATTACK`, `DEATH`, `DEATHLIE1` |
 
 - **Ships** face south with the waterline at the ground point; the afloat hull is cut 0.25 m
   below it (the game draws water as a tint on the ground, nothing would hide the keel). Bones:
@@ -290,7 +290,28 @@ and rigs it with rigid bones; `acr_assets.ships` builds the sailing ships.
   `ATTACK4` 420 with the shot at frame 29, `DEATH` 73): wheels roll one turn per motion cycle;
   the shot throws the piece 0.9 m back with a muzzle kick, it is run back into battery by
   frame 400; destroyed, a wheel is smashed, the barrel thrown off and the carriage charred.
-  The crew of the original's sprites is not modelled yet.
+  The crew (`acr_assets.guncrew`, below) works the drill in the same clips.
+- **The gun crew** (#287): four artillerymen on skeleton H joined into the gun's armature
+  (bones `c0.`..`c3.`, the riders' idea: one model, one clip set). Blue coat with red
+  waistcoat, buff breeches, black gaiters, tricorn (the Royal Artillery and the French
+  artillery both wore blue; one coat for every nation for now, palette colours, no sprite
+  projection, no faces). Kit: c0 the sponge/rammer staff, c1 a leather cartridge bag on
+  the hip, c2 a handspike, c3 the linstock with its match. Stations (gun facing -Y, muzzle
+  at y -1.4): c0/c1 either side of the muzzle outside the wheels, c2 at the trail end, c3
+  right of the breech outside the wheel's recoil path.
+  - `ATTACK` (420 frames): c2 traverses the trail with the handspike (0..18), everyone
+    stands clear (20..26), c3 puts the linstock on the vent at frame 29 = the gun's shot
+    and flinches back from the recoil; c0 sponges in front of the recoiled muzzle
+    (64..130), c1 takes cartridge and ball from his bag and puts them into the muzzle
+    (135..170), c0 rams twice (178..235), c2 thumbs the vent and primes it (58..270); from
+    300 c0/c1 push on the wheels and c2 on the trail as the piece runs back into battery
+    (400), and all go back to their stations (419).
+  - `MOTION_L/R`: c0/c1 push on the wheels, c2 on the trail, c3 walks alongside, three
+    strides per wheel turn. `STAND`: at their stations, ready. `DEATH`: all four fall
+    where they stand (staggered by 2 frames), lying in `DEATHLIE1`.
+  - Limits: between stations the men glide (no steps keyed on those moves), poses are
+    hand-set (no IK on the staffs: hands and staffs only roughly meet), the four share the
+    gun's `acr_machine` root (no blood or rot on them).
 - Roots of both carry `acr_machine = true`: no blood pools, sprays, wounds, corpse piles or
   rot (decay), and no sinking into the ground (`docs/rendering-3d.md`).
 

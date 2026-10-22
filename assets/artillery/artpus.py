@@ -8,7 +8,9 @@ Clips on the sprite frames (24 fps, the `.MD` frame counts): `STAND`, `MOTION_L`
 (36 frames: one turn of the wheels), `ATTACK` (420 frames: lay, fire at 29, recoil, sponge
 and load, run back into battery), `DEATH` (73: a wheel smashed, the barrel thrown off its
 trunnions, the carriage charred) and `DEATHLIE1` (its end).
-The crew of the original's sprites is not modelled.
+The crew of the original's sprites (#287): four artillerymen on skeleton H in the same armature
+(`acr_assets.guncrew`: bones `c0.`..`c3.`), keyed into the same clips; the drill of ATTACK puts
+the linstock on the vent at the shot frame.
 """
 
 import math
@@ -17,7 +19,7 @@ import bmesh
 import bpy
 from mathutils import Matrix, Vector
 
-from acr_assets import surfaces
+from acr_assets import guncrew, surfaces
 from acr_assets import vessels as vs
 
 TYPE = "ArtPus"
@@ -152,9 +154,14 @@ def build(ctx):
     vs.attach(barrel, arm, "barrel")
     vs.attach(wheels[0], arm, "wheel_l")
     vs.attach(wheels[1], arm, "wheel_r")
-    _clips(arm)
+    crew = guncrew.build(root, arm)
+    guncrew.key_clips(arm, _clips(arm))
+    from acr_assets.humans import prepare_export
+
+    prepare_export([o for ch in crew for o in ch.all_meshes()])
     meshes = [o for o in bpy.context.scene.objects if o.type == "MESH"]
     ctx.stats.update({"triangles": vs.triangles(meshes), "barrel": vs.triangles([barrel]),
+                      "crew": vs.triangles([o for ch in crew for o in ch.all_meshes()]),
                       "barrel_length_m": round(max(v.co.y for v in barrel.data.vertices)
                                                - min(v.co.y for v in barrel.data.vertices), 2)})
 
@@ -169,13 +176,13 @@ def _roll(metres):
 
 
 def _clips(arm):
-    vs.clip(arm, "STAND", [(0, {**HIDE, "gun": {}, "barrel": {}})], step=STEP)
+    acts = {"STAND": vs.clip(arm, "STAND", [(0, {**HIDE, "gun": {}, "barrel": {}})], step=STEP)}
     # One turn of the wheels per 36-frame cycle (seamless loop), the trail bobbing a little.
     keys = [(f, {"wheel_l": {"rot": (-360 * f / 36, 0, 0)}, "wheel_r": {"rot": (-360 * f / 36, 0, 0)},
                  "gun": {"rot": (0.6 * math.sin(f / 36 * 4 * math.pi), 0, 0)}}) for f in range(0, 37, 6)]
     keys[0][1].update(HIDE)
     for name in ("MOTION_L", "MOTION_R"):
-        vs.clip(arm, name, keys, step=STEP)
+        acts[name] = vs.clip(arm, name, keys, step=STEP)
     # Fire at frame 29: the piece jumps back 0.9 m, the muzzle kicks up; sponge and load;
     # the crew runs it back into battery.
     back = 0.9
@@ -190,7 +197,7 @@ def _clips(arm):
                    "wheel_r": {"rot": (-_roll(back), 0, 0)}}),
             (400, {"gun": {}, "wheel_l": {}, "wheel_r": {}}),
             (419, {"gun": {}, "barrel": {}, "wheel_l": {}, "wheel_r": {}})]
-    vs.clip(arm, "ATTACK", keys, step=STEP)
+    acts["ATTACK"] = vs.clip(arm, "ATTACK", keys, step=STEP)
     # Destroyed: the left wheel smashed and down, the piece slumps onto that side, the barrel
     # thrown off its trunnions onto the ground, the carriage charred.
     end = {"gun": {"rot": (-4, -14, 0), "loc": (0, 0, -0.32)},
@@ -205,6 +212,7 @@ def _clips(arm):
                   "wheel_l": {"rot": (10, 40, 0), "loc": (-0.2, 0.15, -0.3)},
                   "barrel": {"rot": (4, 10, 12), "loc": (-0.15, -0.1, -0.25)}}),
             (28, end), (72, end)]
-    vs.clip(arm, "DEATH", keys, step=STEP)
-    vs.clip(arm, "DEATHLIE1", [(0, {"wreck": {"scale": (1, 1, 1)}, "intact": {"scale": (vs.HIDDEN,) * 3},
+    acts["DEATH"] = vs.clip(arm, "DEATH", keys, step=STEP)
+    acts["DEATHLIE1"] = vs.clip(arm, "DEATHLIE1", [(0, {"wreck": {"scale": (1, 1, 1)}, "intact": {"scale": (vs.HIDDEN,) * 3},
                                      **end})], step=STEP)
+    return acts
