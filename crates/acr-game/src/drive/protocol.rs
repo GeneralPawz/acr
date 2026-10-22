@@ -192,6 +192,28 @@ pub enum Request {
         name: String,
     },
     Dialogs(DialogPolicy),
+    /// The camera centred on a world pixel, zoomed, and with `yaw`/`pitch` the free camera.
+    Camera {
+        x: i32,
+        y: i32,
+        zoom: Option<f32>,
+        /// True pixels above the ground point that come to the middle (default 0.9 m).
+        lift: f32,
+        /// Radians: turn and elevation of the free camera.
+        orbit: Option<[f32; 2]>,
+    },
+    /// A unit placed for the bench (`drive::bench::spawn`).
+    Spawn(Value),
+    /// A scripted hit (`drive::bench::hit`).
+    Hit(Value),
+    /// `count` screenshots, one every `every` frames, into `dir` as `<prefix>NNN.png`.
+    Record {
+        dir: String,
+        prefix: String,
+        count: u32,
+        every: u64,
+        crop: Option<[u32; 4]>,
+    },
     Quit,
 }
 
@@ -209,6 +231,13 @@ fn point(v: &Value) -> Option<[f64; 2]> {
         [x, y] => Some([x.as_f64()?, y.as_f64()?]),
         _ => None,
     }
+}
+
+fn crop(v: &Value) -> Option<[u32; 4]> {
+    v.get("crop").and_then(Value::as_array).and_then(|a| match a.as_slice() {
+        [x, y, w, h] => Some([x.as_u64()? as u32, y.as_u64()? as u32, w.as_u64()? as u32, h.as_u64()? as u32]),
+        _ => None,
+    })
 }
 
 fn mods(v: &Value) -> Mods {
@@ -364,13 +393,9 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
                 .map(|u| u as u32)
                 .collect(),
         ),
-        "screenshot" => Request::Screenshot {
-            path: string(&v, "path").ok_or("screenshot: missing \"path\"")?,
-            crop: v.get("crop").and_then(Value::as_array).and_then(|a| match a.as_slice() {
-                [x, y, w, h] => Some([x.as_u64()? as u32, y.as_u64()? as u32, w.as_u64()? as u32, h.as_u64()? as u32]),
-                _ => None,
-            }),
-        },
+        "screenshot" => {
+            Request::Screenshot { path: string(&v, "path").ok_or("screenshot: missing \"path\"")?, crop: crop(&v) }
+        }
         "start" | "load_map" => {
             if let Some(map) = string(&v, "map") {
                 Request::Start(Start::Map(map))
@@ -392,6 +417,29 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
         "dialogs" => Request::Dialogs(
             string(&v, "policy").as_deref().and_then(DialogPolicy::parse).ok_or("dialogs: policy auto or report")?,
         ),
+        "camera" => {
+            let num = |k: &str| v.get(k).and_then(Value::as_f64);
+            let (x, y) = match v.get("world").and_then(point) {
+                Some([x, y]) => (x, y),
+                None => (num("x").ok_or("camera: missing \"x\"")?, num("y").ok_or("camera: missing \"y\"")?),
+            };
+            let deg = |k: &str| num(k).or_else(|| num(&format!("{k}_deg")).map(f64::to_radians));
+            let orbit = match (deg("yaw"), deg("pitch")) {
+                (None, None) if v.get("free").and_then(Value::as_bool) != Some(true) => None,
+                (yaw, pitch) => Some([yaw.unwrap_or(0.0) as f32, pitch.unwrap_or(0.52) as f32]),
+            };
+            let lift = num("lift").unwrap_or(27.0) as f32;
+            Request::Camera { x: x as i32, y: y as i32, zoom: num("zoom").map(|z| z as f32), lift, orbit }
+        }
+        "spawn" => Request::Spawn(v.clone()),
+        "hit" => Request::Hit(v.clone()),
+        "record" => Request::Record {
+            dir: string(&v, "dir").ok_or("record: missing \"dir\"")?,
+            prefix: string(&v, "prefix").unwrap_or_else(|| "frame".into()),
+            count: uint(&v, "count").or_else(|| uint(&v, "frames")).unwrap_or(20).max(1) as u32,
+            every: uint(&v, "every").unwrap_or(1).max(1),
+            crop: crop(&v),
+        },
         "quit" => Request::Quit,
         other => return Err(format!("unknown cmd {other:?}")),
     };
@@ -460,6 +508,22 @@ mod tests {
                 mods: Mods::default()
             }
         );
+    }
+
+    #[test]
+    fn parses_bench_commands() {
+        let (_, r) =
+            parse(r#"{"cmd": "camera", "x": 3000, "y": 4000, "zoom": 5, "yaw_deg": 90, "pitch": 0.2}"#).unwrap();
+        let Request::Camera { x: 3000, y: 4000, zoom: Some(5.0), lift: 27.0, orbit: Some([yaw, pitch]) } = r else {
+            panic!("{r:?}")
+        };
+        assert!((yaw - std::f32::consts::FRAC_PI_2).abs() < 1e-5 && (pitch - 0.2).abs() < 1e-6);
+        let (_, r) = parse(r#"{"cmd": "camera", "world": [10, 20]}"#).unwrap();
+        assert_eq!(r, Request::Camera { x: 10, y: 20, zoom: None, lift: 27.0, orbit: None });
+        let (_, r) = parse(r#"{"cmd": "record", "dir": "out", "count": 3, "every": 4}"#).unwrap();
+        assert_eq!(r, Request::Record { dir: "out".into(), prefix: "frame".into(), count: 3, every: 4, crop: None });
+        assert!(matches!(parse(r#"{"cmd": "hit", "unit": 5}"#).unwrap().1, Request::Hit(_)));
+        assert!(parse(r#"{"cmd": "camera", "x": 1}"#).is_err());
     }
 
     #[test]

@@ -36,6 +36,59 @@ impl InGame {
         self.world.as_ref()
     }
 
+    /// The world to change directly: the close-up bench's units and scripted hits.
+    pub fn world_mut(&mut self) -> Option<&mut World> {
+        self.world.as_mut()
+    }
+
+    /// The driver's camera (bench, #277): the point `lift` true pixels above the ground at
+    /// world pixel (`x`, `y`) in the middle of the window, at `zoom` (output pixels per
+    /// original pixel, beyond the wheel's range if asked); with an `orbit` the free camera,
+    /// turned and tilted so. The view is not kept inside the map.
+    pub fn set_camera(
+        &mut self,
+        x: i32,
+        y: i32,
+        lift: f32,
+        zoom: Option<f32>,
+        orbit: Option<acr_render::view3d::Orbit>,
+    ) {
+        use acr_render::view3d::COS_E;
+        if let Some(z) = zoom {
+            self.camera.scale = z;
+            self.interface.modern.zoom = z;
+        }
+        if let Some(o) = orbit {
+            self.three_d.set_free(o);
+        }
+        let window = self.interface.window;
+        let s = self.camera.scale;
+        let h = self.terrain.as_ref().map_or(0, |t| t.height_at(x, y));
+        // The point to show: on the model's ground (`view3d::ground_point`), lifted.
+        let p = [x as f32, ((y >> 1) * 2) as f32, h as f32 / COS_E + lift];
+        let target = match self.three_d.free_view(self.camera, window) {
+            // The free camera turns about a point at z = 0: the one behind `p` on the view ray.
+            Some(view) => {
+                let f = view.basis().forward;
+                let t = p[2] / f[2];
+                [p[0] - t * f[0], p[1] - t * f[1]]
+            }
+            // The fixed camera draws height as a shift up the screen.
+            None => {
+                let up = lift * COS_E;
+                [p[0], p[1] - 2.0 * (h as f32 + up)]
+            }
+        };
+        self.camera.x = target[0] - window[0] / s / 2.0;
+        self.camera.y = target[1] / 2.0 - window[1] / s / 2.0;
+        self.centred = true;
+    }
+
+    /// The current camera: scale and, with the free camera, yaw and pitch.
+    pub fn camera_scale(&self) -> f32 {
+        self.camera.scale
+    }
+
     pub fn player(&self) -> u8 {
         self.local_player()
     }

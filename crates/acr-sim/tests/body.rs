@@ -291,3 +291,32 @@ fn a_rider_never_crawls() {
     assert!(!b.crawling() && !b.out_of_fight());
     assert_eq!(b.move_percent(), 100);
 }
+
+/// A scripted hit (the close-up bench, #277) takes the body path of battle: the region
+/// asked for, an injury, a hit record with the given direction, and a death record when it
+/// kills; the same script on the same world gives the same result.
+#[test]
+fn scripted_hits_injure_record_and_replay() {
+    use acr_sim::combat::{ScriptedHit, scripted_hit};
+    let strike = |cause, mounted, region, dir, energy, dmg| ScriptedHit { cause, mounted, region, dir, energy, dmg };
+    let run = || {
+        let (mut w, p) = world();
+        let first = scripted_hit(&mut w, p, strike(DeathCause::Gunshot, false, Some(HitRegion::Legs), (10, 0), 80, 1))
+            .expect("a living victim is hit");
+        let hit = w.hits[first];
+        assert_eq!(hit.region, Some(HitRegion::Legs));
+        assert_eq!(hit.dir, (10, 0));
+        assert!(matches!(hit.injury.map(|i| i.part), Some(Part::Limb(LimbId::LegL | LimbId::LegR))));
+        let ball =
+            scripted_hit(&mut w, p, strike(DeathCause::Cannonball, false, Some(HitRegion::Torso), (0, 5), 100, 1000))
+                .expect("still alive before the ball");
+        assert!(w.hits[ball].killed);
+        assert_eq!(w.deaths.get(&(p as u32)).map(|d| d.cause), Some(DeathCause::Cannonball));
+        assert!(
+            scripted_hit(&mut w, p, strike(DeathCause::Melee, true, None, (1, 1), 50, 1)).is_none(),
+            "the dead are not hit"
+        );
+        (w.hits.iter().map(|h| (h.injury, h.killed)).collect::<Vec<_>>(), w.units[p].body)
+    };
+    assert_eq!(run(), run());
+}

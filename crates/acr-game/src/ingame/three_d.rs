@@ -174,6 +174,17 @@ impl ThreeD {
         log::info!("3d: models {:?}, camera {:?}, gore {:?}", settings.models, settings.camera, settings.gore);
     }
 
+    /// Switches to the free camera with this turn and tilt (the driver's `camera`). The
+    /// tilt may go below the keys' limit, down to a near side view.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_free(&mut self, orbit: Orbit) {
+        self.free = true;
+        self.orbit = Orbit {
+            yaw: orbit.yaw.rem_euclid(std::f32::consts::TAU),
+            pitch: orbit.pitch.clamp(0.05, Orbit::MAX_PITCH),
+        };
+    }
+
     /// Finds the model files among the game's paths.
     pub fn start(&mut self, paths: &[String]) {
         for path in paths {

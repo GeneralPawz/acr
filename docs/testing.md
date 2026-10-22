@@ -116,6 +116,10 @@ its label to appear.
 | `{"cmd": "save", "name": "x"}` / `{"cmd": "load", "name": "x"}` | savegame shortcuts |
 | `{"cmd": "screenshot", "path": "out.png", "crop": [x, y, w, h]}` | only with `--drive-gpu` |
 | `{"cmd": "dialogs", "policy": "report"}` | `auto` or `report` |
+| `{"cmd": "camera", "x": 3000, "y": 9000, "zoom": 5, "yaw_deg": 0, "pitch_deg": 10}` | the close-up bench's camera, see below |
+| `{"cmd": "spawn", "type": "EngM18", "x": 3000, "y": 9000, "dir": 0, "pose": "stand"}` | places a unit (bench) |
+| `{"cmd": "hit", "unit": 541, "cause": "musket", "region": "torso", "dir": [-1, 0], "energy": 80}` | a scripted hit (bench) |
+| `{"cmd": "record", "dir": "frames", "count": 20, "every": 3, "crop": [x, y, w, h]}` | `count` screenshots, one every `every` frames (= ticks in a game), as `<dir>/frame000.png`...; `prefix` changes `frame`; answers `paths` (only with `--drive-gpu`) |
 | `{"cmd": "quit"}` | ends the game |
 
 `wait` conditions: `"screen": "RandomMap"` (or `"game"`), `"dialog": true | false |
@@ -131,6 +135,52 @@ filter `{"owner": 0, "type": "Mus"}` for every living match):
 `y`), `repair` / `enter` (`building`), `leave` (`building`), `build` (`kind`, `x`, `y`),
 `produce` (`building`, `kind`, `count`), `form` (`officer`, `kind` such as `#LINE15`),
 `disband` (`officer`), `friendly_fire` (`on`: shoot through own units). Type names are catalog ids such as `SpnKri(SP)`.
+
+### The close-up bench (#277)
+
+For judging bodies, wounds and gore up close: a few soldiers placed on open ground, hit by
+script through the simulation's own body path, seen from the side and recorded frame by
+frame. Start a random map with the hit-locations rule and the settings `models=all`,
+`gore=full` (an `ACR_SETTINGS_DIR` of your own), then:
+
+- **`camera`**: `x`, `y` (or `"world": [x, y]`) is a ground point in world pixels; the
+  point `lift` true pixels above it (default 27, 0.9 m: a standing man's middle) comes to the
+  middle of the window. `zoom` sets the scale (output pixels per original pixel) beyond the
+  wheel's 0.5..2: at 5 a standing man is about 270 px tall (1.8 m × 30 px/m × 5). `yaw`,
+  `pitch` (radians) or `yaw_deg`, `pitch_deg`, or `"free": true`, switch to the free camera
+  (`camera=free`) turned and tilted so: yaw 0 looks north, pitch down to 0.05 rad (below the
+  keys' 15° limit) for a side view. The view is not kept inside the map.
+- **`spawn`**: a unit of `type` (a catalog id such as `EngM18(EN)`, or a part of one:
+  exact first, else the shortest match) for `owner` (0) at `x`, `y`, facing `dir` (0..255,
+  0 = east, 64 = south). `pose`: `stand` (default), `walk` (patrols `walk` px, default 200,
+  east and back) or `crawl` (left leg off below the knee). Answers `unit.id`.
+- **`hit`**: `unit` (an id) is struck by `cause` (`musket`, `arrow`, `cannonball`,
+  `grapeshot`, `shell`, `sabre`, `bayonet`, `axe`) on `region` (`legs`, `arms`, `torso`,
+  `head`; drawn as in battle if left out) from direction `dir` (towards the victim, world
+  axes) with `energy` 0..100 (default 100) and `damage` life points (default 1: only the
+  injury's outcome kills; give e.g. 1000 to kill). It runs `acr_sim::combat::scripted_hit`:
+  `body::injure` and the `HitRecord`/`DeathRecord` of battle, drawing from the world RNG
+  only, so the same script gives the same wounds. Answers the region, injury (`part`,
+  `level`, `outcome`), `killed` and `life`. Needs the hit-locations rule for regions.
+- **`record`**: see the table; the frames are PNGs (make a GIF elsewhere if needed).
+
+A ready script, 4 soldiers side by side seen from the side, each hit by a different weapon,
+20 frames: `ACR-analysis/bench/bench.py` (`python -I bench.py [out_dir]`, with
+`ACR_EXE` pointing at a release build); `drive.py` next to it runs a JSON-lines session.
+
+```text
+> {"cmd": "start", "random": {"nation": 0, "seed": 7, "hit_locations": true}}
+> {"cmd": "spawn", "type": "EngM18", "x": 2717, "y": 11753, "dir": 0}
+< {"ok": true, "unit": {"id": 541, "type": "EngM18(EN)", "pose": "stand"}, ...}
+> {"cmd": "wait", "ticks": 20}
+> {"cmd": "camera", "x": 2800, "y": 11753, "zoom": 5, "yaw_deg": 0, "pitch_deg": 10}
+> {"cmd": "hit", "unit": 541, "cause": "cannonball", "region": "legs", "dir": [-1, 0], "energy": 80, "damage": 1000}
+< {"ok": true, "hit": {"cause": "Cannonball", "region": "Legs", "injury": {"part": "Limb(LegL)", "level": 58, "outcome": "Off", "energy": 80}, "killed": true, "life": 0, ...}}
+> {"cmd": "record", "dir": "frames", "count": 20, "every": 3, "crop": [180, 170, 1100, 470]}
+```
+
+Limits: the hit is applied between ticks by the driver, not as a lockstep command, so it is
+not in replays; there is no `reload` pose yet; the HUD is drawn over the view (crop it).
 
 ### The widget tree (`ui`)
 

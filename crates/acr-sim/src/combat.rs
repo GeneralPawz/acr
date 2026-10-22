@@ -1444,6 +1444,77 @@ pub struct HitRecord {
     pub injury: Option<Injury>,
 }
 
+/// A scripted hit for tests and the close-up bench (`docs/testing.md`, #277): `victim` is
+/// struck by `cause` (`mounted`: a rider's blow, i.e. a sabre) from direction `dir` (world
+/// pixels, towards the victim) with `energy` (0..=100) and `dmg` life points, without an
+/// attacker. It goes through the same body path as [`make_damage`]: with the hit-locations
+/// rule the `region` (else a drawn one) is injured by [`crate::body::injure`], and the hit
+/// and a death are recorded as in battle. Draws from the world RNG only, so a script replays
+/// the same.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScriptedHit {
+    pub cause: DeathCause,
+    /// A rider's blow (a sabre).
+    pub mounted: bool,
+    pub region: Option<crate::wounds::HitRegion>,
+    /// Towards the victim, world pixels (not normalised).
+    pub dir: (i32, i32),
+    /// 0..=100.
+    pub energy: u8,
+    /// Life points taken.
+    pub dmg: i32,
+}
+
+/// Strikes `victim` with a [`ScriptedHit`]; the index of its record in [`World::hits`], or
+/// `None` if the victim is not alive.
+pub fn scripted_hit(w: &mut World, victim: usize, hit: ScriptedHit) -> Option<usize> {
+    let ScriptedHit { cause, mounted, region, dir, energy, dmg } = hit;
+    if !w.units.get(victim).is_some_and(Unit::living) {
+        return None;
+    }
+    let region = match region {
+        Some(r) => crate::wounds::has_regions(w, victim).then_some(r),
+        None => crate::wounds::pick_region(w, victim),
+    };
+    if matches!(w.catalog.get(w.units[victim].kind).role.usage, 8 | 22 | 24) {
+        w.units[victim].body.mounted = true;
+    }
+    let energy = energy.min(100);
+    let injury = region.map(|r| crate::body::injure(w, victim, crate::body::Cause::of(cause, mounted), energy, r));
+    let fatal = injury.is_some_and(|i| i.outcome.kills());
+    let dmg = dmg.max(0);
+    let killed = w.units[victim].life <= dmg || fatal;
+    let (vx, vy) = w.units[victim].pos.pixels();
+    if w.hits.len() >= HIT_CAP {
+        w.hits.pop_front();
+    }
+    w.hits.push_back(HitRecord {
+        tick: w.tick.0,
+        victim: victim as u32,
+        pos: (vx, vy),
+        dir,
+        cause,
+        killed,
+        building: w.units[victim].building,
+        region,
+        injury,
+    });
+    let index = w.hits.len() - 1;
+    if killed {
+        w.units[victim].life = 0;
+        let mut record = DeathRecord::of(cause, Some((vx - dir.0.signum() * 100, vy - dir.1.signum() * 100)));
+        record.torn = injury.and_then(|i| i.outcome.torn());
+        record_death(w, victim, record);
+        die(w, victim);
+    } else {
+        w.units[victim].life -= dmg;
+        if injury.is_some() && w.units[victim].body.out_of_fight() {
+            crate::body::leave_fight(w, victim);
+        }
+    }
+    Some(index)
+}
+
 /// Notes a hit of `sender` on `victim` (render only, not hashed).
 fn record_hit(
     w: &mut World,

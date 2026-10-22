@@ -14,6 +14,7 @@
 //! built and idle and a started game is shown. Modal mission messages are pressed away
 //! (`dialogs auto`, the default; each is reported) or left open and reported as `blocking`.
 
+mod bench;
 mod logger;
 mod protocol;
 mod shot;
@@ -113,6 +114,19 @@ enum Pointer {
     Move,
 }
 
+/// `record`: screenshots every `every` frames.
+struct Recording {
+    dir: String,
+    prefix: String,
+    count: u32,
+    every: u64,
+    crop: Option<[u32; 4]>,
+    primed: bool,
+    /// The job frame of the next picture.
+    next: u64,
+    paths: Vec<String>,
+}
+
 /// The command being carried out.
 struct Job {
     seq: Option<Value>,
@@ -126,6 +140,8 @@ struct Job {
     settle_frames: u64,
     /// A screenshot to take once drawing has asked for its files: path, crop, primed.
     shot: Option<(String, Option<[u32; 4]>, bool)>,
+    /// A recording in progress (`record`).
+    record: Option<Recording>,
     reply: Map<String, Value>,
     /// The first answer: the `ready` line.
     hello: bool,
@@ -143,6 +159,7 @@ impl Job {
             settle: false,
             settle_frames: 0,
             shot: None,
+            record: None,
             reply: Map::new(),
             hello: false,
         }
@@ -500,6 +517,30 @@ impl Driver {
             job.reply.insert("path".into(), path.into());
             job.reply.insert("size".into(), json!(size));
         }
+        if let Some(mut rec) = job.record.take() {
+            if !rec.primed {
+                shot::prime(game)?;
+                rec.primed = true;
+                rec.next = job.frames;
+                job.record = Some(rec);
+                job.settle = true;
+                job.settle_frames = 0;
+                return Ok(None);
+            }
+            if job.frames >= rec.next {
+                let path =
+                    format!("{}/{}{:03}.png", rec.dir.trim_end_matches(['/', '\\']), rec.prefix, rec.paths.len());
+                let size = shot::screenshot(game, &path, rec.crop)?;
+                job.reply.insert("size".into(), json!(size));
+                rec.paths.push(path);
+                rec.next = job.frames + rec.every;
+            }
+            if rec.paths.len() < rec.count as usize {
+                job.record = Some(rec);
+                return Ok(None);
+            }
+            job.reply.insert("paths".into(), rec.paths.into());
+        }
         Ok(Some(()))
     }
 
@@ -730,6 +771,34 @@ impl Driver {
                 job.reply.insert("policy".into(), format!("{policy:?}").to_lowercase().into());
                 // Pressing away what is open now needs a frame.
                 Ok(policy == DialogPolicy::Auto && tree::modal(game).is_some())
+            }
+            Request::Camera { x, y, zoom, lift, orbit } => {
+                let Mode::InGame(g) = &mut game.mode else { return Err("no game".into()) };
+                let orbit = orbit.map(|[yaw, pitch]| acr_render::view3d::Orbit { yaw, pitch });
+                g.set_camera(x, y, lift, zoom, orbit);
+                job.reply.insert("camera".into(), json!({"world": [x, y], "zoom": g.camera_scale()}));
+                // One frame to draw the view (and settle the files it asks for).
+                job.steps.push_back(Step::Frame);
+                job.settle = true;
+                Ok(true)
+            }
+            Request::Spawn(v) => {
+                let unit = bench::spawn(game, &v)?;
+                job.reply.insert("unit".into(), unit);
+                Ok(false)
+            }
+            Request::Hit(v) => {
+                let hit = bench::hit(game, &v)?;
+                job.reply.insert("hit".into(), hit);
+                Ok(false)
+            }
+            Request::Record { dir, prefix, count, every, crop } => {
+                if game.graphics.is_none() {
+                    return Err("no GPU: start the driver with --drive-gpu to record".into());
+                }
+                job.record =
+                    Some(Recording { dir, prefix, count, every, crop, primed: false, next: 0, paths: Vec::new() });
+                Ok(true)
             }
             Request::Quit => {
                 self.quit = true;

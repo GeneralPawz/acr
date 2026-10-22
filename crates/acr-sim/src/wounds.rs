@@ -41,16 +41,21 @@ pub const LOW_BALL: i32 = 20;
 /// Chance in percent that a low ball's hit lands on the legs (else the torso).
 pub const LOW_BALL_LEGS: i32 = 80;
 
+/// Whether hits on `victim` land on a body region: the hit-locations rule is on and the
+/// victim is no building, cannon or ship.
+pub fn has_regions(w: &World, victim: usize) -> bool {
+    let u = &w.units[victim];
+    let t = w.catalog.get(u.kind);
+    w.rules.hit_locations
+        && !u.building
+        && !matches!(t.motion_style, MotionStyle::ComplexRotate | MotionStyle::Ships | MotionStyle::NewShips)
+}
+
 /// Picks the region of a hit on `victim` when the rule is on and the victim has a body
 /// (not a building, a cannon or a ship): one `rando()`, drawn by `MakeDamage` after the
 /// damage is known and before the hit is recorded.
 pub fn pick_region(w: &mut World, victim: usize) -> Option<HitRegion> {
-    if !w.rules.hit_locations {
-        return None;
-    }
-    let u = &w.units[victim];
-    let t = w.catalog.get(u.kind);
-    if u.building || matches!(t.motion_style, MotionStyle::ComplexRotate | MotionStyle::Ships | MotionStyle::NewShips) {
+    if !has_regions(w, victim) {
         return None;
     }
     let mut r = (w.random.rando() * 100) >> 15;
