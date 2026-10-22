@@ -79,7 +79,11 @@ fn with_hit_locations_the_ball_ploughs_through_five_men_losing_energy() {
     // the shield of 1); then the ball is spent and the last two are untouched.
     assert_eq!(PLOUGH_BODIES, 5);
     assert!(lives[..3].iter().all(|&(_, d)| d), "{lives:?}");
-    assert_eq!(lives[3..], [(99, false), (199, false), (300, false), (300, false)], "{lives:?}");
+    // The wounded may have lost the limb the ball struck and bleed (#254), so at most that.
+    let (fourth, fifth) = (lives[3], lives[4]);
+    assert!(!fourth.1 && (1..=99).contains(&fourth.0), "{lives:?}");
+    assert!(!fifth.1 && (100..=199).contains(&fifth.0), "{lives:?}");
+    assert_eq!(lives[5..], [(300, false), (300, false)], "{lives:?}");
     // Each man is hit once, along the flight.
     let hit: Vec<u32> = w.hits.iter().map(|h| h.victim).collect();
     let want: Vec<u32> = men[..5].iter().map(|m| m.0).collect();
