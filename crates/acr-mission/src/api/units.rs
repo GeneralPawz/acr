@@ -30,12 +30,7 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("GetUnitsByNation", 0x566ca6, DONE, get_units_by_nation),
     f("GetAmountOfWarriors", 0x55eaba, DONE, get_amount_of_warriors),
     f("GetInsideAmount", 0x57819e, DONE, get_inside_amount),
-    f(
-        "GetMaxInsideAmount",
-        0x5781e5,
-        Status::Partial("the type's absorber capacity; AddInside not modelled"),
-        get_max_inside_amount,
-    ),
+    f("GetMaxInsideAmount", 0x5781e5, Status::Done, get_max_inside_amount),
     f("GetInsideList", 0x56c713, DONE, get_inside_list),
     f("GetNInside", 0x5604e2, DONE, get_n_inside),
     f(
@@ -202,8 +197,10 @@ fn get_inside_amount(api: &mut Api, c: &mut Call) -> Result<u32> {
 /// `int GetMaxInsideAmount(int index)`: `MaxInside + AddInside`.
 fn get_max_inside_amount(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Some(b) = building_arg(api, c, 0)? else { return Ok(0) };
-    let e = &api.world.catalog.get(api.world.units[b].kind).economy;
-    Ok(e.unit_absorber.max(e.peasant_absorber).max(0) as u32)
+    let u = &api.world.units[b];
+    let e = &api.world.catalog.get(u.kind).economy;
+    let max = api.world.adv(u.owner, u.kind).max_inside.max(e.peasant_absorber);
+    Ok((max + u.add_inside).max(0) as u32)
 }
 
 /// `int GetInsideList(int index, u16** list)`: the building's inside list (unit indices). The

@@ -22,11 +22,13 @@ pub const FUNCTIONS: &[ApiFn] = &[
     ),
     f("GetGroupForce", 0x56f574, DONE, get_group_force),
     f("GetEnemy3", 0x5818a5, DONE, get_enemy3),
-    f("GetMaxDamage", 0x575250, Status::Partial("damage of the first attack index"), get_max_damage),
-    f("GetMinDamage", 0x57521b, Status::Partial("damage of the first attack index"), get_max_damage),
+    f("GetMaxDamage", 0x575250, DONE, get_max_damage),
+    f("GetMinDamage", 0x57521b, DONE, get_max_damage),
     f("GetUnitStorm", 0x575285, DONE, get_unit_storm),
     f("GetSearchRadius", 0x56f46b, DONE, get_search_radius),
     f("GetMonUsage", 0x5751e5, DONE, get_mon_usage),
+    f("CheckIfBuildingIsFired", 0x57c39e, DONE, check_if_building_is_fired),
+    f("CreateNonFiredEnemyBuildingsTopList", 0x57b2fd, DONE, create_non_fired_enemy_buildings_top_list),
     f(
         "CreateTopListEnArmy",
         0x57bad9,
@@ -34,18 +36,8 @@ pub const FUNCTIONS: &[ApiFn] = &[
         create_top_list_en_army,
     ),
     f("CreateFriendBuildingsTopList", 0x57b859, DONE, create_friend_buildings_top_list),
-    f(
-        "SearchCapturedTopToDeffend",
-        0x5734df,
-        Status::Partial("CAPTURE flag not in the catalog: buildings only"),
-        search_captured_top,
-    ),
-    f(
-        "MakeEnemyAgrTopGrp",
-        0x573730,
-        Status::Partial("animals are told apart by nation 7, not TRANSFORMTOMEAT"),
-        make_enemy_agr_top_grp,
-    ),
+    f("SearchCapturedTopToDeffend", 0x5734df, DONE, search_captured_top),
+    f("MakeEnemyAgrTopGrp", 0x573730, DONE, make_enemy_agr_top_grp),
     f("CheckDef", 0x573c0d, DONE, check_def),
     f("FindNextZoneOnTheSafeWayToObject", 0x57a33c, DONE, find_next_zone_to_object),
     f("SGP_RepairBuilding", 0x577b9c, DONE, sgp_repair_building),
@@ -243,9 +235,13 @@ fn type_index(api: &Api, c: &Call) -> Result<Option<acr_sim::TypeId>> {
     Ok((usize::from(t) < api.world.catalog.len()).then_some(acr_sim::TypeId(t)))
 }
 
+/// `word GetMaxDamage(word type)` / `GetMinDamage` (0x575250 / 0x57521b): `MaxDamage[0]` /
+/// `MinDamage[0]` of the type, 0xFFFF if invalid.
 fn get_max_damage(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Some(t) = type_index(api, c)? else { return Ok(0xFFFF) };
-    Ok(api.world.catalog.get(t).attacks.first().map_or(0, |a| a.damage.clamp(0, 0xFFFF) as u32))
+    let min = c.name() == "GetMinDamage";
+    let a = api.world.catalog.get(t).attacks.first();
+    Ok(a.map_or(0, |a| u32::from((if min { a.min_damage } else { a.damage }) as u16)))
 }
 
 /// `int GetUnitStorm(word type)` (0x575285): the type's `STORMFORCE`, 0xFFFF if invalid.
@@ -281,7 +277,12 @@ fn create_top_list_en_army(api: &mut Api, c: &mut Call) -> Result<u32> {
     let n = n_areas(api);
     let mut list = vec![0xFFFFu16; n];
     let mut count = vec![0i32; n];
-    for u in api.world.units.iter().filter(|u| u.active() && u.owner != 7 && enemy(api, u, nat)) {
+    for u in api
+        .world
+        .units
+        .iter()
+        .filter(|u| u.active() && api.world.catalog.get(u.kind).economy.meat.is_none() && enemy(api, u, nat))
+    {
         let z = usize::from(zone_of_unit(api, u));
         if z >= n {
             continue;
@@ -320,16 +321,21 @@ fn create_friend_buildings_top_list(api: &mut Api, c: &mut Call) -> Result<u32> 
     Ok(0)
 }
 
-/// `int SearchCapturedTopToDeffend(byte nation, u16* flags)`: bit 1 areas with own buildings
-/// (bit 0: capturable objects), bit 2 their neighbours.
+/// `int SearchCapturedTopToDeffend(byte nation, u16* flags)` (0x5734df): bit 0 areas with own
+/// capturable objects (`CAPTURE`), bit 1 with own buildings, bit 2 their neighbours.
 fn search_captured_top(api: &mut Api, c: &mut Call) -> Result<u32> {
     let (nat, out) = (c.u8(0)?, c.u32(1)?);
     let n = n_areas(api);
     let mut flags = vec![0u16; n];
     for u in api.world.units.iter().filter(|u| u.living() && u.owner == nat) {
         let z = usize::from(zone_of_unit(api, u));
-        if z < n && u.building {
-            flags[z] |= 2;
+        if z < n {
+            if api.world.catalog.get(u.kind).role.capture {
+                flags[z] |= 1;
+            }
+            if u.building {
+                flags[z] |= 2;
+            }
         }
     }
     for z in 0..n {
@@ -360,7 +366,12 @@ fn make_enemy_agr_top_grp(api: &mut Api, c: &mut Call) -> Result<u32> {
         }
     }
     let mut adds: Vec<(usize, Member)> = Vec::new();
-    for u in api.world.units.iter().filter(|u| u.active() && u.owner != 7 && enemy(api, u, nat)) {
+    for u in api
+        .world
+        .units
+        .iter()
+        .filter(|u| u.active() && api.world.catalog.get(u.kind).economy.meat.is_none() && enemy(api, u, nat))
+    {
         let z = usize::from(zone_of_unit(api, u));
         if z >= n || c.read_u16(mask + 2 * z as u32)? == 0 {
             continue;
@@ -612,5 +623,31 @@ fn set_to_internal_resources_zero(api: &mut Api, c: &mut Call) -> Result<u32> {
             }
         }
     }
+    Ok(0)
+}
+
+/// `bool CheckIfBuildingIsFired(int index)` (0x57c39e): the object is gone or burning
+/// (`InFire`, OB+0x26 bit1).
+fn check_if_building_is_fired(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let u = u16::try_from(c.i32(0)?).ok().and_then(|i| api.object(i));
+    Ok(u32::from(u.is_none_or(|u| u.burning)))
+}
+
+/// `void CreateNonFiredEnemyBuildingsTopList(u16* list, byte nation)` (0x57b2fd): per area the
+/// last living enemy building (not nation 7) that is not burning, else 0xFFFF.
+fn create_non_fired_enemy_buildings_top_list(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let (out, nat) = (c.u32(0)?, c.u8(1)?);
+    let n = n_areas(api);
+    let mut list = vec![0xFFFFu16; n];
+    let mask = api.world.nation_mask[usize::from(nat) & 7];
+    for u in
+        api.world.units.iter().filter(|u| u.building && u.living() && !u.burning && u.owner != 7 && u.nmask & mask == 0)
+    {
+        let z = usize::from(zone_of_unit(api, u));
+        if z < n {
+            list[z] = u.id.0 as u16;
+        }
+    }
+    write_list(c, out, &list)?;
     Ok(0)
 }
