@@ -545,6 +545,23 @@ pub fn form(world: &mut World, officer: usize, units: &[usize], kind: &str) {
     create(world, officer, drummer, flag, &soldiers, shape);
 }
 
+/// `CreateFromGroup` (0x41a00e) of the script call `CreateFormation`: `units` are officer,
+/// drummer, the shape's soldiers and optionally (exactly one more) a flag bearer, as the
+/// script group holds them. False when fewer than slots + 2. When the drummer is of the
+/// soldiers' type, the officer, drummer and flag slots stay empty (0x41a0cf: the units are
+/// added and taken out again); the brigade is still placed on the first unit.
+pub fn create_from_group(world: &mut World, units: &[usize], shape: usize) -> bool {
+    let n = world.formations.shapes[shape].slots();
+    if n == 0 || units.len() < n + 2 {
+        return false;
+    }
+    let same = world.units[units[1]].kind == world.units[units[2]].kind;
+    let (officer, drummer) = if same { (None, None) } else { (Some(units[0]), Some(units[1])) };
+    let flag = (units.len() == n + 3 && !same).then(|| units[n + 2]);
+    create_at(world, units[0], officer, drummer, flag, &units[2..n + 2], shape);
+    true
+}
+
 /// Sets up a brigade of `shape`: the officer, drummer and flag bearer stand ground, the
 /// soldiers do not; everybody gets the normal bonuses (0x419d57); the formation is placed
 /// centred on the officer facing 0 and its members walk to their slots with priority 0x90
@@ -557,12 +574,25 @@ fn create(
     soldiers: &[usize],
     shape: usize,
 ) {
+    create_at(world, officer, Some(officer), drummer, flag, soldiers, shape);
+}
+
+/// [`create`] placed on unit `lead`, with an optional officer.
+fn create_at(
+    world: &mut World,
+    lead: usize,
+    officer: Option<usize>,
+    drummer: Option<usize>,
+    flag: Option<usize>,
+    soldiers: &[usize],
+    shape: usize,
+) {
     let id = world.brigades.len() as u16;
     let unit_id = |i: Option<usize>| i.map(|i| world.units[i].id);
-    let mut members = vec![unit_id(Some(officer)), unit_id(drummer), unit_id(flag)];
+    let mut members = vec![unit_id(officer), unit_id(drummer), unit_id(flag)];
     members.extend(soldiers.iter().map(|&s| Some(world.units[s].id)));
     let kind = world.units[soldiers[0]].kind;
-    let owner = world.units[officer].owner;
+    let owner = world.units[lead].owner;
     let number = free_number(world, owner);
     world.brigades.push(Brigade {
         owner,
@@ -590,7 +620,7 @@ fn create(
         (u.attack_bonus, u.defence_bonus) = bonus;
         u.stand_ground = k < 3;
     }
-    let p = world.units[officer].pos;
+    let p = world.units[lead].pos;
     place(world, b, p.x, p.y, 0, true);
     send_members(world, b, FORM_PRIO);
 }

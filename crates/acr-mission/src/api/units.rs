@@ -54,12 +54,7 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("GetBuildingEntryPoint", 0x56ea8c, DONE, get_building_entry_point),
     f("AssignDesantStartGroup", 0x5701ea, DONE, assign_desant),
     f("AssignDesantDestGroup", 0x570224, DONE, assign_desant),
-    f(
-        "CreateFormation",
-        0x56fbf8,
-        Status::Partial("moves officer, drummer and soldiers into the group; Command::Form"),
-        create_formation,
-    ),
+    f("CreateFormation", 0x56fbf8, DONE, create_formation),
 ];
 
 /// Circles of a zone argument for the counting functions (`'@'` before `'ZONE'`).
@@ -594,45 +589,62 @@ fn get_zone_coor(api: &mut Api, c: &mut Call) -> Result<u32> {
 }
 
 /// `bool CreateFormation(byte nat, GAMEOBJ* officers, GAMEOBJ* drummers, GAMEOBJ* flags,
-/// GAMEOBJ* soldiers, GAMEOBJ* dest, char* form)`.
+/// GAMEOBJ* soldiers, GAMEOBJ* dest, char* form)` (0x56fbf8): cleans the four source groups,
+/// finds the shape by name, empties `dest` and moves into it, with `CopyUnits` (0x56ea22),
+/// the first officer, the first drummer, the shape's number of soldiers and the first flag
+/// bearer; then `CreateFromGroup` (0x41a00e) forms the brigade from `dest`. A missing
+/// officer leaves `dest` empty; a missing drummer moves the officer back; too few soldiers
+/// moved move only the soldiers back (officer and drummer stay in `dest`).
 fn create_formation(api: &mut Api, c: &mut Call) -> Result<u32> {
-    let mut g = [0usize; 5];
-    for (k, arg) in [1u32, 2, 3, 4, 5].iter().enumerate() {
-        let h = c.handle(*arg)?;
-        if (h.magic != magic::GROUP && *arg != 4) || usize::from(h.index) >= api.st.groups.len() {
+    // Only officers, drummers, flags and dest are checked for the group magic.
+    for arg in [1u32, 2, 3, 5] {
+        if c.handle(arg)?.magic != magic::GROUP {
             return Ok(0);
         }
-        g[k] = usize::from(h.index);
+    }
+    let mut g = [0usize; 5];
+    for (k, arg) in [1u32, 2, 3, 4, 5].into_iter().enumerate() {
+        let Some(i) = api.group(c, arg)? else { return Ok(0) };
+        g[k] = i;
     }
     let [off, drum, flag, sold, dest] = g;
-    for &k in &[off, drum, flag, sold] {
-        let kept: Vec<_> = api.st.groups[k].members.iter().copied().filter(|&m| api.member(m).is_some()).collect();
+    // CleanGroup (0x56cf09) of the sources.
+    for k in [off, drum, flag, sold] {
+        let kept: Vec<_> = api.st.groups[k].members.iter().copied().filter(|&m| api.member_h(m).is_some()).collect();
         api.st.groups[k].members = kept;
     }
     let name = c.str(6)?;
-    let Some(shape) = api.world.formations.shapes.iter().find(|s| s.name == name) else { return Ok(0) };
-    let n = shape.slots();
+    let Some(shape) = api.world.formations.shapes.iter().position(|s| s.name == name) else { return Ok(0) };
+    let n = api.world.formations.shapes[shape].slots();
+    let len = |api: &Api, k: usize| api.st.groups[k].members.len();
+    let mv = |api: &mut Api, s: usize, d: usize, start: i32, cnt: usize| {
+        super::groups::copy_members(&mut api.st.groups, s, d, start, cnt as i32, true, true);
+    };
     api.st.groups[dest].members.clear();
-    if api.st.groups[sold].members.len() < n
-        || api.st.groups[off].members.is_empty()
-        || api.st.groups[drum].members.is_empty()
-    {
+    if len(api, sold) < n {
         return Ok(0);
     }
-    let officer = api.st.groups[off].members.remove(0);
-    let drummer = api.st.groups[drum].members.remove(0);
-    let soldiers: Vec<_> = api.st.groups[sold].members.drain(..n).collect();
-    let mut all = vec![officer, drummer];
-    all.extend(soldiers.iter().copied());
-    if !api.st.groups[flag].members.is_empty() {
-        all.push(api.st.groups[flag].members.remove(0));
+    mv(api, off, dest, 0, 1);
+    if len(api, dest) != 1 {
+        return Ok(0);
     }
-    api.st.groups[dest].members = all.clone();
-    let ids: Vec<EntityId> = all.iter().filter_map(|&m| api.member(m)).map(|u| u.id).collect();
-    let Some(&first) = ids.first() else { return Ok(0) };
-    let owner = api.world.units[first.0 as usize].owner;
-    api.commands.push(acr_sim::Command::Form { player: owner, officer: first, units: ids[1..].to_vec(), kind: name });
-    Ok(1)
+    mv(api, drum, dest, 0, 1);
+    if len(api, dest) != 2 {
+        mv(api, dest, off, 0, 1);
+        return Ok(0);
+    }
+    mv(api, sold, dest, 0, n);
+    if len(api, dest) != n + 2 {
+        mv(api, dest, sold, 2, n);
+        return Ok(0);
+    }
+    mv(api, flag, dest, 0, 1);
+    let mut units = Vec::new();
+    for &m in &api.st.groups[dest].members {
+        let Some(u) = api.member_h(m) else { return Ok(0) };
+        units.push(u.id.0 as usize);
+    }
+    Ok(u32::from(acr_sim::formation::create_from_group(api.world, &units, shape)))
 }
 
 /// `bool GetBuildingEntryPoint(int* x, int* y, word index, int addDistance)` (0x56ea8c): the
@@ -655,4 +667,119 @@ fn get_building_entry_point(api: &mut Api, c: &mut Call) -> Result<u32> {
     c.out_i32(0, x)?;
     c.out_i32(1, y)?;
     Ok(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use acr_formats::defs::{OrderGroups, OrderList, UnitDef};
+    use acr_script::heap::Heap;
+    use acr_script::memory::Memory;
+    use acr_script::runtime::HostCall;
+    use acr_script::x86::Cpu;
+    use acr_sim::catalog::{Catalog, ObjectType};
+    use acr_sim::formation::Formations;
+    use acr_sim::map::MapGrid;
+    use acr_sim::{Pos, World};
+
+    use super::super::call::magic;
+    use super::super::{Api, Call, Caller, function};
+    use crate::state::{Group, Member, ScriptSetup, ScriptState};
+    use crate::texts::MissionTexts;
+
+    const STACK: u32 = 0x1_8000;
+    const DATA: u32 = 0x1_c000;
+
+    fn def(name: &str, extra: &str) -> UnitDef {
+        UnitDef::parse(
+            format!(
+                "NAME {name}\r\nUSERLC 0 G SHADOW 0 0\r\n#STAND 9 1 0 0\r\n@MOTION_L 9 0 0 9\r\n\
+                 @MOTION_R 9 0 10 19\r\nLIFE 100\r\nGEOMETRY 1 10 40\r\n{extra}[END]\r\n"
+            )
+            .as_bytes(),
+        )
+    }
+
+    /// Groups 0..=4: officers (1), drummers (`drummers`), flags (1), soldiers (`soldiers`), dest.
+    fn call(drummers: usize, soldiers: usize) -> (u32, World, ScriptState) {
+        let mut c = Catalog::new();
+        let pik = c.add(ObjectType::from_def("Pik(EN)", &def("Pik", "")));
+        let off = c.add(ObjectType::from_def("Off(EN)", &def("Off", "OFFICER\r\n")));
+        let drum = c.add(ObjectType::from_def("Drum(EN)", &def("Drum", "BARABAN\r\n")));
+        let orders = OrderList::parse(b"#KARE15 SYM0 9 2 9 3\r\n*****\r\n* C *\r\n** C*\r\n*****\r\n#END\r\n#EXIT\r\n");
+        let f = Formations::new(&orders, &OrderGroups::parse(b"1\r\nKARE 2 0 1 1 #KARE15\r\n"));
+        let mut world = World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(f));
+        let mut st = ScriptState::new(ScriptSetup::default(), MissionTexts::default());
+        let mut group = |kind, n: usize, world: &mut World| {
+            let members = (0..n)
+                .map(|i| {
+                    let id = world.spawn(kind, 0, Pos::from_pixels(1000 + 30 * i as i32, 1000), 0);
+                    Member { id: id.0 as u16, serial: st.serial(id) }
+                })
+                .collect();
+            st.groups.push(Group { members, ..Group::default() });
+        };
+        group(off, 1, &mut world);
+        group(drum, drummers, &mut world);
+        group(off, 1, &mut world);
+        group(pik, soldiers, &mut world);
+        group(pik, 1, &mut world);
+        let mut mem = Memory::new();
+        mem.map(0x1_0000, 0x1_0000);
+        for g in 0..5u32 {
+            mem.write_u16(DATA + 8 * g, g as u16).expect("index");
+            mem.write_u32(DATA + 8 * g + 4, magic::GROUP).expect("magic");
+        }
+        for (i, b) in b"#KARE15\0".iter().enumerate() {
+            mem.write_u8(DATA + 0x100 + i as u32, *b).expect("name");
+        }
+        let args = [0, DATA, DATA + 8, DATA + 16, DATA + 24, DATA + 32, DATA + 0x100];
+        let mut cpu = Cpu::new();
+        cpu.regs[usize::from(acr_script::x86::decode::reg::ESP)] = STACK;
+        for (i, &a) in args.iter().enumerate() {
+            mem.write_u32(STACK + 4 + 4 * i as u32, a).expect("stack");
+        }
+        let mut heap = Heap::new(0x2_0000, 0x3_0000);
+        let name = "CreateFormation";
+        let mut raw = HostCall { dll: "test", name, cpu: &mut cpu, mem: &mut mem, heap: &mut heap };
+        let (mut commands, mut events) = (Vec::new(), Vec::new());
+        let mut api = Api {
+            st: &mut st,
+            world: &mut world,
+            commands: &mut commands,
+            events: &mut events,
+            caller: Caller::Ai(0),
+            vm: 0,
+            dip: None,
+        };
+        let r = (function(name).expect("known").handler)(&mut api, &mut Call { raw: &mut raw }).expect("call");
+        (r, world, st)
+    }
+
+    fn sizes(st: &ScriptState) -> Vec<usize> {
+        st.groups.iter().map(|g| g.members.len()).collect()
+    }
+
+    #[test]
+    fn create_formation_moves_officer_drummer_soldiers_and_flag() {
+        let (r, world, st) = call(1, 18);
+        assert_eq!(r, 1);
+        // KARE15 has 15 slots: officer, drummer, 15 soldiers and the flag bearer move to dest.
+        assert_eq!(world.formations.shapes[0].slots(), 15);
+        assert_eq!(sizes(&st), [0, 0, 0, 3, 18]);
+        assert_eq!(world.brigades.len(), 1);
+        assert_eq!(world.brigades[0].members.len(), 18);
+    }
+
+    #[test]
+    fn create_formation_failures_move_back_only_part() {
+        // No drummer: the officer goes back.
+        let (r, world, st) = call(0, 18);
+        assert_eq!((r, sizes(&st)), (0, vec![1, 0, 1, 18, 0]));
+        assert!(world.brigades.is_empty());
+        // Too few soldiers: nothing moves.
+        let (r, _, st) = call(1, 14);
+        assert_eq!((r, sizes(&st)), (0, vec![1, 1, 1, 14, 0]));
+    }
 }

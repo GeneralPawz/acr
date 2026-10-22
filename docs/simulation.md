@@ -1769,6 +1769,12 @@ No game option writes it. How the map view draws the fog is in
     rules except on the building itself: the leaving unit goes back in only when the
     building is full (0x5f56f7). The flag OB+0x29 bit 1 the link clears and sets again is
     not kept. The player's leave command (`Command::Leave`) still lets everybody out at once.
+  - `CreateFormation` (0x56fbf8 → `CreateFromGroup` 0x41a00e, `formation::create_from_group`)
+    forms the brigade at once, owned by the owner of the group's first unit; the engine
+    takes a brigade of nation `nat` (`GetFreeBrigade` 0x42c845) whatever the units' owner,
+    and fails when that nation has no free brigade, which ACR never does. The member flags
+    `OB+0x29` bit 7 and the brigade fields +0x1a and +0x2e bit 3 have no ACR counterpart;
+    the shape name is compared exactly, `#` included.
   - Light spots (`SetLightSpot` 0x564017) are stamped once per tick with the fog's blur
     (`MissionLink::update_fog`); the engine stamps them every frame (0x55a2f1 in the main
     loop, 0x4bee14), which only differs while the game is paused.

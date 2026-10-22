@@ -210,3 +210,39 @@ fn formations_take_the_first_free_number_of_their_owner() {
     s.w.step(&[Command::FormNear { player: 0, officer, shape, kind: s.pik }]);
     assert_eq!((s.w.brigades[3].owner, s.w.brigades[3].number), (0, 0));
 }
+
+/// `CreateFromGroup` (0x41a00e) of the script's `CreateFormation`: officer, drummer, the
+/// shape's soldiers and one more unit as flag bearer, in group order; fewer than slots + 2
+/// fail; a drummer of the soldiers' type leaves the officer, drummer and flag slots empty.
+#[test]
+fn create_from_group_takes_the_group_order() {
+    let mut s = setup(true);
+    let officer = s.w.spawn(s.off, 0, Pos::from_pixels(2000, 2000), 0);
+    let drummer = s.w.spawn(s.drum, 0, Pos::from_pixels(2050, 2000), 0);
+    let pik = soldiers(&mut s, 16, 1900, 2100);
+    let flag = s.w.spawn(s.flag, 0, Pos::from_pixels(2100, 2000), 0);
+    run(&mut s.w, 1);
+    let shape = s.w.formations.shape_index("LINE15").unwrap();
+    let idx = |ids: &[EntityId]| ids.iter().map(|i| i.0 as usize).collect::<Vec<_>>();
+    let short = idx(&[&[officer, drummer][..], &pik[..14]].concat());
+    assert!(!acr_sim::formation::create_from_group(&mut s.w, &short, shape));
+    assert!(s.w.brigades.is_empty());
+    let full = idx(&[&[officer, drummer][..], &pik[..15], &[flag][..]].concat());
+    assert!(acr_sim::formation::create_from_group(&mut s.w, &full, shape));
+    let b = &s.w.brigades[0];
+    assert_eq!(b.shape, shape);
+    assert_eq!(&b.members[..3], &[Some(officer), Some(drummer), Some(flag)]);
+    assert_eq!(b.members.len(), 18);
+    assert!(s.w.unit(flag).unwrap().stand_ground && !s.w.unit(pik[0]).unwrap().stand_ground);
+
+    // Drummer slot holding a soldier: no officer, drummer or flag; placed on the first unit.
+    let officer2 = s.w.spawn(s.off, 0, Pos::from_pixels(6000, 2000), 0);
+    let more = soldiers(&mut s, 17, 5900, 2100);
+    run(&mut s.w, 1);
+    let same = idx(&[&[officer2][..], &more[..]].concat());
+    assert!(acr_sim::formation::create_from_group(&mut s.w, &same, shape));
+    let b = &s.w.brigades[1];
+    assert_eq!(&b.members[..3], &[None, None, None]);
+    assert_eq!(b.members[3], Some(more[1]));
+    assert_eq!(s.w.unit(officer2).unwrap().brigade, None);
+}
