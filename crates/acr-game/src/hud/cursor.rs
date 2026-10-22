@@ -11,6 +11,13 @@ pub mod frame {
     pub const ARROW: usize = 0;
     /// Attack: an enemy under the cursor with an own selection.
     pub const SWORD: usize = 1;
+    /// Build or repair an own building (0x66a920).
+    pub const BUILD: usize = 3;
+    /// Go into an own building (0x66a918).
+    pub const ENTER: usize = 11;
+    /// Gathering, by source type (0x66a934): axe for wood, pick for minerals, sickle for
+    /// fields, sword for meat; 0 is the arrow.
+    pub const GATHER: [u8; 16] = [6, 5, 5, 7, 5, 5, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0];
 }
 
 /// The animation steps every 60 ms (`RefreshView`, 0x47e075).
