@@ -576,7 +576,7 @@ fn enemy_scan(api: &Api, z: &Circle, nat: u8, bld: CellBuilding) -> Vec<usize> {
 }
 
 /// `ClearOrders` (0x4efad1).
-fn clear_orders(api: &mut Api, i: usize) {
+pub(super) fn clear_orders(api: &mut Api, i: usize) {
     let u = &mut api.world.units[i];
     u.orders.clear();
     u.path.clear();
@@ -593,7 +593,7 @@ fn prio_f0(api: &mut Api, i: usize) {
 }
 
 /// `ClearBOrders` (0x415cca) of a member's brigade.
-fn clear_brigade_orders(api: &mut Api, i: usize) {
+pub(super) fn clear_brigade_orders(api: &mut Api, i: usize) {
     if let Some(b) = api.world.units[i].brigade {
         api.world.brigades[usize::from(b)].orders.clear();
     }
@@ -1682,5 +1682,52 @@ OPPOSIT 10 30
         a.run_processes();
         assert_eq!(a.f.st.groups[0].orders.first().map(|o| o.kind()), Some(0x4152_4341));
         assert_eq!(a.f.world.units[a.archer.0 as usize].target(), Some(enemy));
+    }
+
+    #[test]
+    fn top_list_en_army_counts_objects_and_lifts_whole_buildings() {
+        const BARRACKS: &str = "NAME Bar\r\nBUILDING\r\nLIFE 1000\r\nLOCATION 0 0 64 64\r\n\
+            LOCKPOINTS 4 0 0 1 0 0 1 1 1\r\nUNITABSORBER 10\r\nOPPOSIT 10 30\r\n[END]\r\n";
+        let mut f = Fixture::new();
+        let list = |f: &Fixture| [0, 1].map(|i| f.mem.read_u16(DATA + 2 * i).expect("list"));
+        // West: 5 enemy soldiers and the enemy peasant count 6, the last one (the peasant) is
+        // listed; the own soldier and the nation-7 house in the east do not count.
+        f.call("CreateTopListEnArmy", &[DATA, 0, 6]);
+        assert_eq!(list(&f), [5, NO_UNIT]);
+        f.call("CreateTopListEnArmy", &[DATA, 0, 7]);
+        assert_eq!(list(&f), [NO_UNIT, NO_UNIT]);
+        // An undamaged enemy barracks lifts its area's count to the minimum, an empty one too.
+        let mut c = (*f.world.catalog).clone();
+        let bar = c.add(ObjectType::from_def("Bar(EN)", &UnitDef::parse(BARRACKS.as_bytes())));
+        f.world.catalog = Arc::new(c);
+        let b = f.world.spawn(bar, 1, Pos::from_pixels(3000, 2000), 0);
+        f.call("CreateTopListEnArmy", &[DATA, 0, 7]);
+        assert_eq!(list(&f), [NO_UNIT, b.0 as u16]);
+        // Damaged, it counts 1.
+        f.world.units[b.0 as usize].life -= 1;
+        f.call("CreateTopListEnArmy", &[DATA, 0, 2]);
+        assert_eq!(list(&f), [5, NO_UNIT]);
+    }
+
+    #[test]
+    fn enemy_force_sums_the_cells_of_the_zone_rings() {
+        const FORT: &str = "NAME Frc\r\nUSERLC 0 G SHADOW 0 0\r\n#STAND 9 1 0 0\r\n@MOTION_L 9 0 0 9\r\n\
+            @MOTION_R 9 0 10 19\r\nLIFE 100\r\nGEOMETRY 1 10 40\r\nFORCE 3\r\n[END]\r\n";
+        let mut f = Fixture::new();
+        let mut c = (*f.world.catalog).clone();
+        let frc = c.add(ObjectType::from_def("Frc(EN)", &UnitDef::parse(FORT.as_bytes())));
+        f.world.catalog = Arc::new(c);
+        f.world.spawn(frc, 1, Pos::from_pixels(1500, 2000), 0);
+        f.world.spawn(frc, 1, Pos::from_pixels(1550, 2000), 0);
+        f.world.spawn(frc, 0, Pos::from_pixels(1500, 2050), 0);
+        f.world.spawn(frc, 1, Pos::from_pixels(1900, 2000), 0);
+        f.world.step(&[]);
+        // A point zone: x, y, then '@' << 24 | r.
+        f.mem.write_u16(DATA + 0x300, 1500).expect("x");
+        f.mem.write_u16(DATA + 0x302, 2000).expect("y");
+        f.mem.write_u32(DATA + 0x304, 0x4000_0000 | 300).expect("r");
+        // 3 + 3 enemies − 3 own; the enemy 400 px away is outside.
+        assert_eq!(f.call("GetEnemyForce", &[DATA + 0x300, 0]) as i32, 3);
+        assert_eq!(f.call("GetEnemyForce", &[DATA + 0x300, 1]) as i32, -3);
     }
 }

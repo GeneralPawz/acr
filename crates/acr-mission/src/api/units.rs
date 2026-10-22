@@ -51,7 +51,7 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("SendUnitsToTransport", 0x56093a, Status::Done, send_units_to_transport),
     f("SetMaxInTransport", 0x57033a, DONE, set_max_in_transport),
     f("GetZoneCoor", 0x56c266, DONE, get_zone_coor),
-    f("GetBuildingEntryPoint", 0x56ea8c, Status::Stub("no building entry points in the catalog yet: 0"), zero),
+    f("GetBuildingEntryPoint", 0x56ea8c, DONE, get_building_entry_point),
     f("AssignDesantStartGroup", 0x5701ea, DONE, assign_desant),
     f("AssignDesantDestGroup", 0x570224, DONE, assign_desant),
     f(
@@ -61,10 +61,6 @@ pub const FUNCTIONS: &[ApiFn] = &[
         create_formation,
     ),
 ];
-
-fn zero(_: &mut Api, _: &mut Call) -> Result<u32> {
-    Ok(0)
-}
 
 /// Circles of a zone argument for the counting functions (`'@'` before `'ZONE'`).
 fn zone(api: &mut Api, c: &Call, i: u32, what: &str) -> Result<Option<Vec<Circle>>> {
@@ -635,5 +631,27 @@ fn create_formation(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Some(&first) = ids.first() else { return Ok(0) };
     let owner = api.world.units[first.0 as usize].owner;
     api.commands.push(acr_sim::Command::Form { player: owner, officer: first, units: ids[1..].to_vec(), kind: name });
+    Ok(1)
+}
+
+/// `bool GetBuildingEntryPoint(int* x, int* y, word index, int addDistance)` (0x56ea8c): the
+/// building's first `CONCENTRATOR` point (relative to the lock base cell 0x516fde, in
+/// pixels), moved `addDistance` px further away from the building's centre when it lies more
+/// than 20 px from it. False for no object, no building or no `CONCENTRATOR`.
+fn get_building_entry_point(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let Some(u) = api.object(c.u16(2)?).filter(|u| u.building) else { return Ok(0) };
+    let t = api.world.catalog.get(u.kind);
+    let Some(&(ex, ey)) = t.economy.concentrator.first() else { return Ok(0) };
+    let (bx, by) = acr_sim::economy::base_cell(t, u.pos);
+    let (mut x, mut y) = ((bx + ex) << 4, (by + ey) << 4);
+    let (px, py) = (u.pos.x >> 4, u.pos.y >> 4);
+    let d = super::util::norma(x - px, y - py);
+    if d > 20 {
+        let add = c.i32(3)?;
+        x += (x - px).wrapping_mul(add) / d;
+        y += (y - py).wrapping_mul(add) / d;
+    }
+    c.out_i32(0, x)?;
+    c.out_i32(1, y)?;
     Ok(1)
 }

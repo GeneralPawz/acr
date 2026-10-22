@@ -14,12 +14,7 @@ const fn f(name: &'static str, original: u32, status: Status, handler: super::Ha
 
 const DONE: Status = Status::Done;
 pub const FUNCTIONS: &[ApiFn] = &[
-    f(
-        "GetEnemyForce",
-        0x571aa8,
-        Status::Partial("objects in the zone circle; the area-distance limit is not applied"),
-        get_enemy_force,
-    ),
+    f("GetEnemyForce", 0x571aa8, DONE, get_enemy_force),
     f("GetGroupForce", 0x56f574, DONE, get_group_force),
     f("GetEnemy3", 0x5818a5, DONE, get_enemy3),
     f("GetMaxDamage", 0x575250, DONE, get_max_damage),
@@ -29,12 +24,7 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("GetMonUsage", 0x5751e5, DONE, get_mon_usage),
     f("CheckIfBuildingIsFired", 0x57c39e, DONE, check_if_building_is_fired),
     f("CreateNonFiredEnemyBuildingsTopList", 0x57b2fd, DONE, create_non_fired_enemy_buildings_top_list),
-    f(
-        "CreateTopListEnArmy",
-        0x57bad9,
-        Status::Partial("buildings count their garrison as force"),
-        create_top_list_en_army,
-    ),
+    f("CreateTopListEnArmy", 0x57bad9, DONE, create_top_list_en_army),
     f("CreateFriendBuildingsTopList", 0x57b859, DONE, create_friend_buildings_top_list),
     f("SearchCapturedTopToDeffend", 0x5734df, DONE, search_captured_top),
     f("MakeEnemyAgrTopGrp", 0x573730, DONE, make_enemy_agr_top_grp),
@@ -47,19 +37,20 @@ pub const FUNCTIONS: &[ApiFn] = &[
     // These two replace the approximations in dip.rs (later tables win).
     f("ArtAttackObject", 0x570b32, DONE, art_attack_object),
     f("ArtAttackGroud", 0x5709b5, DONE, art_attack_ground),
-    f(
-        "MakeOneShotToBuild",
-        0x573da9,
-        Status::Partial("buildings found by their position's cell (the engine keeps a building map)"),
-        make_one_shot_to_build,
-    ),
+    f("MakeOneShotToBuild", 0x573da9, DONE, make_one_shot_to_build),
 ];
 
 /// `word MakeOneShotToBuild(GAMEOBJ* zone, GAMEOBJ* grp, byte nat)` (0x573da9): the enemy
-/// buildings in the 128 px cells of the zone's rings; every member that is not attacking
-/// fires once (`AttackObj(.., 0x8F, 0, 1)`, then priority 0xF0) at the one nearest by path
-/// within its range band (musket shooters: the inner eighth); attacking members are released
-/// with `rando() < 600`. Returns the last target, 0xFFFF if none.
+/// buildings of the 128 px cells on the zone's rings; every member that is not attacking
+/// fires once (`AttackObj(.., 0x8F, 0, 1)`, then priority 0xF0) at the one nearest by area
+/// distance (0x43c7d8, below 10000) within its range band (musket shooters: the inner eighth);
+/// attacking members are released with `rando() < 600`. Returns the last target, 0xFFFF if
+/// none.
+///
+/// The cells are read from the building map (`BLDList` 0x27743a0, rebuilt with the buckets by
+/// 0x50a283: per cell the last living building whose position lies in it) through 0x56144f,
+/// which adds the border offset a second time: ring cell (x, y) reads the building of cell
+/// (x + 1, y + 1).
 fn make_one_shot_to_build(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Some(z) =
         (if c.u32(0)? == 0 { None } else { api.zone_circles(&c.handle(0)?) }).and_then(|z| z.first().copied())
@@ -73,19 +64,13 @@ fn make_one_shot_to_build(api: &mut Api, c: &mut Call) -> Result<u32> {
     for r in 0..=((z.r >> 7) + 1) as usize {
         for &(a, b) in acr_sim::morale::ring(r) {
             let (cx, cy) = ((z.x >> 7) + a, (z.y >> 7) + b);
-            if cx < 0 || cy < 0 || cx >= side - 1 || cy >= side - 1 {
+            if cx < 0 || cy < 0 || cx >= side - 1 || cy >= side - 1 || targets.len() >= 1600 {
                 continue;
             }
-            let cell: Vec<usize> =
-                api.world.buckets.all(cx, cy).map(|k| k as usize).filter(|&k| api.world.units[k].building).collect();
-            let any = cell.first().copied();
-            let own = cell.iter().copied().find(|&k| api.world.units[k].nmask & nat_mask != 0);
-            if let Some(b) = any
-                && Some(b) != own
-                && api.world.units[b].living()
-                && !targets.contains(&b)
-                && targets.len() < 1600
-            {
+            let Some(&b) = api.world.buckets.buildings_in(cx + 1, cy + 1).last() else { continue };
+            let b = b as usize;
+            let u = &api.world.units[b];
+            if u.living() && u.nmask & nat_mask == 0 && !targets.contains(&b) {
                 targets.push(b);
             }
         }
@@ -99,10 +84,9 @@ fn make_one_shot_to_build(api: &mut Api, c: &mut Call) -> Result<u32> {
         let i = id.0 as usize;
         let u = &api.world.units[i];
         if u.target().is_some() {
+            // OB+0x29 bit 1 (walking into a building): ACR's nearest flag is `unlimited`.
             if api.world.random.rando() < 600 && !api.world.units[i].unlimited {
-                let u = &mut api.world.units[i];
-                u.orders.clear();
-                u.prio = 0;
+                super::tactics::clear_orders(api, i);
             }
             continue;
         }
@@ -113,26 +97,25 @@ fn make_one_shot_to_build(api: &mut Api, c: &mut Call) -> Result<u32> {
             rmax = rmin + ((rmax - rmin) >> 3);
         }
         let (ux, uy) = (u.pos.x, u.pos.y);
-        let mut best: Option<(i32, usize)> = None;
+        let (mut best, mut best_td) = (None, 10000);
         for &t in &targets {
             let tu = &api.world.units[t];
+            let td = super::tactics::top_dist(api, tu.pos.x >> 10, tu.pos.y >> 10, ux >> 10, uy >> 10);
             let d = super::util::norma(ux - tu.pos.x, uy - tu.pos.y) >> 4;
-            if d > rmin && d < rmax + catalog.get(tu.kind).add_shot_radius {
-                let td = super::tactics::top_dist(api, tu.pos.x >> 10, tu.pos.y >> 10, ux >> 10, uy >> 10);
-                if best.is_none_or(|b| td < b.0) {
-                    best = Some((td, t));
-                }
+            if d > rmin && d < rmax + catalog.get(tu.kind).add_shot_radius && td < best_td {
+                (best, best_td) = (Some(t), td);
             }
         }
-        if let Some((_, t)) = best
-            && acr_sim::combat::attack_obj_times(api.world, i, t, 0x8F, acr_sim::combat::Placement::Replace, 1)
-        {
-            let u = &mut api.world.units[i];
-            u.prio = 0xF0;
-            if let Some(acr_sim::world::Order::Attack { prio, .. }) = u.orders.last_mut() {
-                *prio = 0xF0;
+        if let Some(t) = best {
+            super::tactics::clear_brigade_orders(api, i);
+            if acr_sim::combat::attack_obj_times(api.world, i, t, 0x8F, acr_sim::combat::Placement::Replace, 1) {
+                let u = &mut api.world.units[i];
+                u.prio = 0xF0;
+                if let Some(acr_sim::world::Order::Attack { prio, .. }) = u.orders.last_mut() {
+                    *prio = 0xF0;
+                }
+                res = t as u32;
             }
-            res = t as u32;
         }
     }
     Ok(res)
@@ -184,23 +167,38 @@ fn enemy(api: &Api, u: &acr_sim::Unit, nat: u8) -> bool {
     api.st.unit_nmask(u.id, u.owner) & api.st.nmask[usize::from(nat & 7)] == 0
 }
 
-/// `int GetEnemyForce(GAMEOBJ* zone, byte nation)` (0x571aa8): `FORCE` of the enemies minus
-/// that of the friends in the zone.
+/// `int GetEnemyForce(GAMEOBJ* zone, byte nation)` (0x571aa8): `FORCE` (NM+0x2939) of the
+/// enemies minus that of the friends (`NMask & mask`) among the units of the 128 px cells on
+/// the zone's rings (buildings are not in these cells) that stand within the radius and whose
+/// area lies below `(r >> 5) + 3` area steps (0x43c7d8) from the zone's centre.
 fn get_enemy_force(api: &mut Api, c: &mut Call) -> Result<u32> {
     let zone = if c.u32(0)? == 0 { None } else { api.zone_circles(&c.handle(0)?) };
     let Some(z) = zone.and_then(|z| z.first().copied()) else { return Ok(0) };
-    let nat = c.u8(1)?;
+    let nat_mask = api.world.nation_mask[usize::from(c.u8(1)? & 7)];
+    let (zx, zy, zr) = (z.x << 4, z.y << 4, z.r << 4);
+    let side = api.world.buckets.side();
     let catalog = api.world.catalog.clone();
-    let sum: i32 = api
-        .world
-        .units
-        .iter()
-        .filter(|u| u.active() && z.contains(u))
-        .map(|u| {
-            let f = catalog.get(u.kind).role.force;
-            if enemy(api, u, nat) { f } else { -f }
-        })
-        .sum();
+    let mut sum = 0i32;
+    for r in 0..((zr >> 11) + 2) as usize {
+        for &(a, b) in acr_sim::morale::ring(r) {
+            let (cx, cy) = ((zx >> 11) + a, (zy >> 11) + b);
+            if cx < 0 || cy < 0 || cx >= side - 1 || cy >= side - 1 {
+                continue;
+            }
+            for k in api.world.buckets.get(cx, cy).to_vec() {
+                let u = &api.world.units[k as usize];
+                if !u.living() || super::util::norma(u.pos.x - zx, u.pos.y - zy) >= zr {
+                    continue;
+                }
+                let td = super::tactics::top_dist(api, u.pos.x >> 10, u.pos.y >> 10, zx >> 10, zy >> 10);
+                if td >= (zr >> 9) + 3 {
+                    continue;
+                }
+                let f = catalog.get(u.kind).role.force;
+                sum += if u.nmask & nat_mask != 0 { -f } else { f };
+            }
+        }
+    }
     Ok(sum as u32)
 }
 
@@ -270,32 +268,35 @@ fn write_list(c: &mut Call, out: u32, list: &[u16]) -> Result<()> {
     Ok(())
 }
 
-/// `void CreateTopListEnArmy(u16* list, byte nation, int minForce)`: per area an enemy object
-/// where the enemies' force reaches `minForce`.
+/// `void CreateTopListEnArmy(u16* list, byte nation, int minForce)` (0x57bad9): per area
+/// (`GetTopZone`) the last enemy object (not dying, not nation 7) if the area's count (u16)
+/// reaches `minForce`, else 0xFFFF. An object counts 1; an undamaged building
+/// (`Life == MaxLife`) with `GetBuildingOposit` (0x57b9ae) adds that value and lifts the count
+/// to at least `minForce`.
 fn create_top_list_en_army(api: &mut Api, c: &mut Call) -> Result<u32> {
     let (out, nat, min) = (c.u32(0)?, c.u8(1)?, c.i32(2)?);
     let n = n_areas(api);
     let mut list = vec![0xFFFFu16; n];
-    let mut count = vec![0i32; n];
-    for u in api
-        .world
-        .units
-        .iter()
-        .filter(|u| u.active() && api.world.catalog.get(u.kind).economy.meat.is_none() && enemy(api, u, nat))
-    {
+    let mut count = vec![0u16; n];
+    for u in api.world.units.iter().filter(|u| u.active() && u.owner != 7 && enemy(api, u, nat)) {
         let z = usize::from(zone_of_unit(api, u));
         if z >= n {
             continue;
         }
-        if u.building && !u.inside.is_empty() {
-            count[z] = (count[z] + 2 * u.inside.len() as i32).max(min);
-        } else {
-            count[z] += 1;
+        let whole = u.building && u.life == api.world.adv(u.owner, u.kind).life;
+        match whole.then(|| super::tactics::building_oposit(api, u.id.0 as u16)).flatten() {
+            Some(v) => {
+                count[z] = count[z].wrapping_add(v as u16);
+                if i32::from(count[z]) < min {
+                    count[z] = min as u16;
+                }
+            }
+            None => count[z] = count[z].wrapping_add(1),
         }
         list[z] = u.id.0 as u16;
     }
     for (l, c) in list.iter_mut().zip(&count) {
-        if *c < min {
+        if i32::from(*c) < min {
             *l = 0xFFFF;
         }
     }
