@@ -89,11 +89,14 @@ def vertex_level(p, part, chains):
     return limb, lv, d
 
 
-def radius_profile(samples, n=SAMPLES, quantile=0.95):
+def radius_profile(samples, n=SAMPLES, quantile=0.75, spike=1.12):
     """n radii at the levels k / (n - 1) from (level, radius) samples of one limb: per
-    window of +-1/(2(n-1)) the `quantile` of the radii (the outer surface, robust against a
-    stray flap); empty windows are interpolated from their neighbours (ends copy the
-    nearest). Returns [0.0] * n without samples."""
+    window of +-1/(2(n-1)) the `quantile` of the radii (the outer surface of a low-poly
+    mesh, robust against a stray flap); empty windows are interpolated from their
+    neighbours (ends copy the nearest). Then spikes are cut: a sample may exceed the median
+    of its (up to four) neighbours within +-2 by the factor `spike` at most (armpit, crotch
+    and coat skirt vertices near the trunk joint would bulge the root of the limb).
+    Returns [0.0] * n without samples."""
     half = 0.5 / (n - 1)
     out = []
     for k in range(n):
@@ -114,4 +117,12 @@ def radius_profile(samples, n=SAMPLES, quantile=0.95):
             out[i] = out[lo]
         else:
             out[i] = out[lo] + (out[hi] - out[lo]) * (i - lo) / (hi - lo)
+    if spike:
+        capped = []
+        for i in range(n):
+            nb = sorted(out[j] for j in range(max(0, i - 2), min(n, i + 3)) if j != i)
+            m = len(nb)
+            med = nb[m // 2] if m % 2 else 0.5 * (nb[m // 2 - 1] + nb[m // 2])
+            capped.append(min(out[i], spike * med))
+        out = capped
     return [round(r, 4) for r in out]

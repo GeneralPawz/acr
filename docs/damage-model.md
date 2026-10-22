@@ -149,7 +149,7 @@ On top of the existing contract (`docs/assets-humans.md`):
   - a spilled-guts heap;
   - organ chunks;
   - flesh lumps (4);
-  - bone shards (3);
+  - bone shards (4);
   - a skull fragment;
   - a jaw;
   - cloth scraps in the uniform colour (tinted per nation);

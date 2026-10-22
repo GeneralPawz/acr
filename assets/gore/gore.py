@@ -10,15 +10,17 @@ grid for previews, the renderer takes the meshes, not the node positions):
 - `guts_heap`: a spilled-guts heap (coils piled on a wet mesentery mound);
 - `organ_0` (liver lobe), `organ_1` (lung/heart chunk);
 - `flesh_0..3`: flesh lumps (skin, fat layer, torn meat);
-- `bone_0..2`: bone shards (splintered ends, marrow);
+- `bone_0..3`: bone shards (splintered cortex tubes, marrow cavity: spiral fracture, split
+  sliver, joint end, crushed chunk);
 - `skull_fragment` (scalp with hair outside, bone inside), `jaw` (mandible with teeth);
 - `cloth_0..1`: cloth scraps in a neutral uniform colour, material extras `acr_tint` =
   "nation" (the renderer multiplies the nation's uniform colour in);
-- `stump_cap` (torn) and `stump_cap_clean` (sabre cut): discs of unit radius in the XY plane facing +Z (the limb's outward axis):
-  skin rim, fat ring, red flesh, white bone in the centre with marrow, ragged outline; the
-  renderer scales it with `acr_limb_radius`;
-- `torn_edge`: a ring strip of unit radius around +Z, height ~0.12..0.35 with a ragged free
-  edge (skin outside, meat inside), to sit on a cut around the stump cap.
+- `stump_cap` (torn) and `stump_cap_clean` (sabre cut): discs of unit radius in the XY
+  plane facing +Z (the limb's outward axis), see `stump_cap`; the renderer scales them with
+  `acr_limb_radius`;
+- `torn_edge`: a ring of unit radius around +Z with tatters of meat, skin and cloth (up to
+  0.6 long) and hanging intestine loops, to sit on a cut around the stump cap; see
+  `torn_edge`.
 
 Wet tissue is glossy (`acr_roughness` 0.22..0.4 in the material extras, kept by the glTF
 twin), bone and cloth matte.
@@ -41,7 +43,7 @@ RGB = {
     "gut": (0.78, 0.50, 0.46), "gut_dark": (0.55, 0.24, 0.25), "mesentery": (0.62, 0.18, 0.16),
     "liver": (0.30, 0.05, 0.04), "lung": (0.70, 0.36, 0.38), "bone": (0.88, 0.85, 0.75),
     "marrow": (0.42, 0.08, 0.06), "teeth": (0.90, 0.86, 0.70), "hair": (0.16, 0.11, 0.07),
-    "cloth": (0.78, 0.77, 0.74),
+    "cloth": (0.78, 0.77, 0.74), "meat_cut": (0.62, 0.09, 0.08), "fascia": (0.80, 0.62, 0.56),
 }
 # (decay layer, roughness, texture kind) per material key.
 KINDS = {
@@ -49,7 +51,7 @@ KINDS = {
     "gut": ("flesh", 0.20, "gut"), "gut_dark": ("flesh", 0.22, "gut"), "mesentery": ("flesh", 0.18, "meat"),
     "liver": ("flesh", 0.22, "liver"), "lung": ("flesh", 0.30, "lung"), "bone": ("bone", 0.60, "bone"),
     "marrow": ("flesh", 0.25, "meat"), "teeth": ("bone", 0.40, "bone"), "hair": ("hair", 0.70, "hair"),
-    "cloth": ("wool", 0.90, "wool"),
+    "cloth": ("wool", 0.90, "wool"), "meat_cut": ("flesh", 0.14, "meat"), "fascia": ("flesh", 0.16, "fat"),
 }
 SIZE = 64
 
@@ -281,40 +283,12 @@ def build(ctx):
         objs.append(finish(root, f"flesh_{k}", bm, ["meat_dark", "fat", "cloth" if patch == "cloth" else "skin"],
                            "flesh", next(grid)))
 
-    # Bone shards: a hollow shaft with splintered ends, marrow showing.
-    for k in range(3):
+    # Bone shards: hollow shafts (white cortex, dark marrow cavity) with jagged, splintered
+    # ends: a spiral fracture with one long point, a split half-pipe sliver, an end with its
+    # joint knob, a short crushed chunk.
+    for k in range(4):
         bm = bmesh.new()
-        ln = 0.10 + 0.05 * k
-        r0 = 0.014 + 0.002 * k
-        path = [Vector((-ln / 2 + ln * i / 8, 0.004 * math.sin(i * 0.8 + k), r0)) for i in range(9)]
-        rs = random.Random(30 + k)
-        spikes = [rs.uniform(0.0, 1.0) ** 1.5 for _ in range(12)]
-
-        def rad(i, a, r0=r0, k=k):
-            ridge = 1.0 + 0.12 * math.cos(2 * a) + 0.06 * math.cos(3 * a + k)  # not a round pipe
-            return r0 * ridge * (1.0 + 0.04 * math.sin(i * 1.7))
-
-        mark = len(bm.faces)
-        sweep(bm, path, rad, seg=12, mi=0, cap=True)
-        # Splinter the ends into jagged points around a recessed marrow core (the cap
-        # centres); bone_2 keeps its knobbed joint end.
-        for end, sgn in ((-ln / 2, -1), (ln / 2, 1)):
-            if k == 2 and sgn > 0:
-                continue
-            for v in bm.verts:
-                if abs(v.co.x - end) < 1e-6:
-                    if abs(v.co.y - path[0].y if sgn < 0 else v.co.y - path[-1].y) < 1e-9 and abs(v.co.z - r0) < 1e-9:
-                        v.co.x -= sgn * 0.008  # the marrow core sits in the hollow
-                        continue
-                    a = math.atan2(v.co.z - r0, v.co.y)
-                    v.co.x += sgn * 0.035 * spikes[int((a + math.pi) / (2 * math.pi) * 11.99)]
-        for f in list(bm.faces)[mark:]:
-            if len(f.verts) == 3:
-                f.material_index = 1
-                if k == 2 and f.calc_center_median().x > 0:
-                    f.material_index = 0
-        if k == 2:  # epiphysis: the joint knob of the unbroken end
-            blob(bm, (ln / 2 + 0.008, 0.0, r0), (0.016, 0.022, 0.02), 0.12, mi=0, seed=k, subdiv=2)
+        bone_shard(bm, k)
         objs.append(finish(root, f"bone_{k}", bm, ["bone", "marrow"], "bone", next(grid)))
 
     # Skull fragment: a curved shell patch, scalp and hair outside, bone inside and on the
@@ -343,21 +317,12 @@ def build(ctx):
         v.co = Vector((v.co.x, v.co.z - R * 0.55, v.co.y + R * 0.75))
     objs.append(finish(root, "skull_fragment", bm, ["hair", "bone"], "bone", next(grid)))
 
-    # Jaw: a U-shaped mandible with rami and a row of teeth.
+    # Jaw: a mandible lying on its base: the horseshoe body with chin, the rami rising at
+    # the back to condyle and coronoid process, a row of teeth (incisors to molars, two
+    # knocked out), torn muscle at the angles.
     bm = bmesh.new()
-    path = []
-    for i in range(15):
-        a = math.pi * (i / 14)
-        path.append(Vector((0.045 * math.cos(a), -0.05 * math.sin(a), 0.012)))
-    path = [path[0] + Vector((0.005, 0.03, 0.02))] + path + [path[-1] + Vector((-0.005, 0.03, 0.02))]
-    sweep(bm, path, lambda i, a: 0.008 * (1.0 + 0.6 * abs(math.sin(a))), seg=8, mi=0)
-    for i in range(2, 15):
-        p = path[i] + Vector((0, 0, 0.011))
-        bmesh.ops.create_cube(bm, size=0.006, matrix=__import__("mathutils").Matrix.Translation(p))
-    for f in bm.faces:
-        if f.calc_center_median().z > 0.0195:
-            f.material_index = 1
-    objs.append(finish(root, "jaw", bm, ["bone", "teeth"], "bone", next(grid)))
+    mandible(bm)
+    objs.append(finish(root, "jaw", bm, ["bone", "teeth", "meat_dark"], "bone", next(grid)))
 
     # Cloth scraps: ragged, crumpled, two-sided.
     for k in range(2):
@@ -425,157 +390,442 @@ def lump(bm, size, seed, patch=None):
                 f.material_index = 1
 
 
+def loft(bm, rings, mi=0, cap=(True, True), closed=True):
+    """Faces between consecutive rings (lists of equal length of Vectors), `mi` an index or
+    a function (ring i, k, face centre) -> index; fan caps at the ends of closed rings."""
+    vs = [[bm.verts.new(p) for p in r] for r in rings]
+    m = len(rings[0])
+    span = m if closed else m - 1
+    for i in range(len(vs) - 1):
+        for k in range(span):
+            k1 = (k + 1) % m
+            f = bm.faces.new((vs[i][k], vs[i][k1], vs[i + 1][k1], vs[i + 1][k]))
+            f.material_index = mi(i, k, f.calc_center_median()) if callable(mi) else mi
+    for on, ring, flip in ((cap[0], vs[0], True), (cap[1], vs[-1], False)):
+        if not on or not closed:
+            continue
+        c = bm.verts.new(sum((v.co for v in ring), Vector()) / m)
+        for k in range(m):
+            q = (c, ring[(k + 1) % m], ring[k]) if flip else (c, ring[k], ring[(k + 1) % m])
+            f = bm.faces.new(q)
+            f.material_index = mi(0, k, c.co) if callable(mi) else mi
+    return vs
+
+
+def _ellipse(c, ax, ay, rx, ry, m=8):
+    return [c + ax * (rx * math.cos(2 * math.pi * q / m)) + ay * (ry * math.sin(2 * math.pi * q / m)) for q in range(m)]
+
+
+def bone_shard(bm, k):
+    """Bone shard `k` along +X lying on the ground: a cortex tube (outer wall bone, inner
+    wall marrow-red, the broken rims bone) whose ends are cut per angular column into
+    jagged splinters. 0: spiral fracture with one long point; 1: a split half-pipe sliver;
+    2: a shaft end with its joint knob; 3: a short crushed chunk. Materials: bone 0,
+    marrow 1."""
+    rs = random.Random(30 + k)
+    seg = 16
+    L, r0, wall = ((0.15, 0.015, 0.0045), (0.10, 0.017, 0.005), (0.13, 0.014, 0.004), (0.06, 0.019, 0.006))[k]
+    closed = k != 1
+    a0, a1 = (0.0, 2 * math.pi) if closed else (-0.3, math.pi + 0.5)
+    cols = seg if closed else seg + 1
+
+    def jag(spiral):
+        out = []
+        for c in range(cols):
+            t = c / (cols if closed else cols - 1)
+            e = rs.uniform(0.0, 0.010) + (0.012 if c % 2 else 0.0) * rs.uniform(0.4, 1.0)  # sharp teeth
+            e += spiral * (2 * min(t, 1 - t))  # one long point at t = 0
+            out.append(e)
+        return out
+
+    e0 = jag((0.0, 0.0, 0.0, 0.012)[k])
+    e1 = jag((0.07, 0.035, 0.0, 0.015)[k])
+    if k == 2:
+        e1 = [0.0] * cols  # the joint end
+    rows = 10
+    outer, inner = [], []
+    for j in range(rows + 1):
+        orow, irow = [], []
+        for c in range(cols):
+            a = a0 + (a1 - a0) * c / (cols if closed else cols - 1)
+            lo, hi = e0[c], L - e1[c]
+            x = lo + (hi - lo) * j / rows
+            ridge = 1.0 + 0.10 * math.cos(2 * a + k) + 0.05 * math.cos(3 * a)  # not a round pipe
+            bend = 0.006 * math.sin(math.pi * x / L) * (1 if k % 2 else -1)
+            r = r0 * ridge * (1.0 + 0.05 * math.sin(x * 60 + k))
+            cz = r0 * 1.15
+            orow.append(Vector((x, bend + r * math.cos(a), cz + r * math.sin(a))))
+            ri = r - wall * (0.8 + 0.4 * rs.random())
+            irow.append(Vector((x, bend + ri * math.cos(a), cz + ri * math.sin(a))))
+        outer.append(orow)
+        inner.append(irow)
+    loft(bm, outer, 0, cap=(False, False), closed=closed)
+    loft(bm, [list(reversed(r)) for r in inner], 1, cap=(False, False), closed=closed)
+    span = cols if closed else cols - 1
+    for j in (0, rows):  # the broken rims (splinter edges)
+        o = [bm.verts.new(p) for p in outer[j]]
+        i_ = [bm.verts.new(p) for p in inner[j]]
+        for c in range(span):
+            c1 = (c + 1) % cols
+            q = (o[c], i_[c], i_[c1], o[c1]) if j == 0 else (o[c], o[c1], i_[c1], i_[c])
+            bm.faces.new(q).material_index = 0
+    if not closed:  # the split edges along the shaft
+        for c in (0, cols - 1):
+            vo = [bm.verts.new(outer[j][c]) for j in range(rows + 1)]
+            vi = [bm.verts.new(inner[j][c]) for j in range(rows + 1)]
+            for j in range(rows):
+                q = (vo[j], vo[j + 1], vi[j + 1], vi[j]) if c == 0 else (vo[j], vi[j], vi[j + 1], vo[j + 1])
+                bm.faces.new(q).material_index = 0
+    if k == 2:  # epiphysis: the joint end, two condyles
+        for q, dy in enumerate((-0.009, 0.009)):
+            blob(bm, (L + 0.004, dy, r0 * 1.15), (0.013, 0.012, 0.016), 0.10, mi=0, seed=k + q, subdiv=2)
+    bmesh.ops.remove_doubles(bm, verts=bm.verts[:], dist=1e-6)
+    zmin = min(v.co.z for v in bm.verts)
+    for v in bm.verts:  # rest on the ground
+        v.co.z -= zmin
+
+
+def mandible(bm):
+    """A mandible (metres) lying on its base: horseshoe body with chin, rami with condyle
+    and coronoid process, teeth (two knocked out), torn masseter at the angles. Materials:
+    bone 0, teeth 1, meat 2."""
+    W, D = 0.046, 0.060
+    Z = Vector((0, 0, 1))
+
+    def arch(t):  # t -1..1 from the left angle over the chin to the right angle
+        th = t * math.pi / 2
+        return Vector((W * math.sin(th), -D * math.copysign(abs(math.cos(th)) ** 0.8, 1), 0.0))
+
+    def frame(t):
+        p = arch(t)
+        tan = (arch(min(t + 0.01, 1)) - arch(max(t - 0.01, -1))).normalized()
+        out = tan.cross(Z)
+        if out.dot(p - Vector((0, -D * 0.45, 0))) < 0:
+            out = -out
+        return p, tan, out
+
+    n = 27
+    rings, crest = [], []
+    for i in range(n):
+        t = -1.0 + 2.0 * i / (n - 1)
+        p, tan, out = frame(t)
+        chin = math.exp(-(t / 0.22) ** 2)
+        h = 0.023 + 0.008 * chin  # taller at the symphysis
+        w = 0.011 + 0.003 * chin
+        ring = []
+        for k in range(12):
+            a = 2 * math.pi * k / 12
+            up = 0.5 - 0.5 * math.cos(a)  # 0 base .. 1 alveolar crest
+            lat = math.sin(a) * w / 2 * (1.0 - 0.35 * up)
+            bump = 0.004 * chin * max(0.0, math.sin(a)) * (1 - up) ** 2  # mental protuberance
+            ring.append(p + out * (lat + bump) + Z * (h * up))
+        rings.append(ring)
+        crest.append((t, p, tan, out, h))
+    loft(bm, rings, 0)
+    for sgn in (-1, 1):
+        _t, base, _tan, out, _h = crest[0 if sgn < 0 else -1]
+        back = Vector((0, 1, 0))
+        # Ramus: a plate rising up and back from the angle.
+        rr = []
+        for j in range(6):
+            v = j / 5
+            c = base + back * (0.004 + 0.010 * v) + Z * (0.004 + 0.036 * v) + out * (0.003 * v)
+            rr.append(_ellipse(c, back, out, 0.016 - 0.002 * v, 0.0035, 10))
+        loft(bm, rr, 0)
+        top = base + back * 0.014 + Z * 0.040 + out * 0.003
+        # Condyle (behind, a transverse knob on a neck) and coronoid (in front, a blade
+        # point); the notch between.
+        loft(bm, [_ellipse(top + back * 0.009, back, out, 0.004, 0.003),
+                  _ellipse(top + back * 0.012 + Z * 0.016, back, out, 0.003, 0.003)], 0)
+        blob(bm, top + back * 0.012 + Z * 0.019 + out * 0.001, (0.0045, 0.010, 0.0045), 0.06, mi=0, seed=3 + sgn,
+             subdiv=2)
+        cv = blob(bm, (0, 0, 0), (0.003, 0.006, 0.010), 0.05, mi=0, seed=5 + sgn, subdiv=2)
+        for v in cv:
+            v.co = top - back * 0.008 + Z * (0.008 + v.co.z) + back * v.co.y * (1 - max(v.co.z, 0) / 0.012) + out * v.co.x
+        # Torn masseter at the angle.
+        blob(bm, base + back * 0.010 + Z * 0.012 + out * 0.007, (0.006, 0.013, 0.011), 0.35, mi=2, seed=8 + sgn,
+             subdiv=2)
+    # Teeth along the crest, per side from the midline: 2 incisors, canine, 2 premolars,
+    # 3 molars.
+    kinds = (("i", 0.0055), ("i", 0.006), ("c", 0.007), ("p", 0.0072), ("p", 0.0072),
+             ("m", 0.011), ("m", 0.0105), ("m", 0.0095))
+    missing = {(1, 3), (-1, 6)}
+    arc = 0.0
+    ts = [-1.0 + 2.0 * i / 400 for i in range(401)]
+    lens = [0.0]
+    for a, b in zip(ts, ts[1:]):
+        lens.append(lens[-1] + (arch(b) - arch(a)).length)
+    mid = lens[200]
+
+    def at_len(s):  # parameter t at arc length s from the midline (signed)
+        target = mid + s
+        i = min(range(401), key=lambda i: abs(lens[i] - target))
+        return ts[i]
+
+    for sgn in (-1, 1):
+        arc = 0.0006
+        for q, (kind, wid) in enumerate(kinds):
+            s_mid = arc + wid / 2
+            arc += wid + 0.0004
+            if (sgn, q) in missing:
+                continue
+            t = at_len(sgn * s_mid)
+            p, tan, out = frame(t)
+            chin = math.exp(-(t / 0.22) ** 2)
+            h = 0.023 + 0.008 * chin
+            hgt = {"i": 0.009, "c": 0.011, "p": 0.008, "m": 0.0068}[kind]
+            lat = {"i": 0.0026, "c": 0.0035, "p": 0.0036, "m": 0.0048}[kind]
+            vs = blob(bm, (0, 0, 0), (wid * 0.47, lat, hgt * 0.5), 0.05, mi=1, seed=q * 7 + sgn + 40, subdiv=2)
+            for v in vs:
+                c = v.co.copy()
+                z = c.z + hgt * 0.5
+                if kind == "i":  # chisel edge
+                    c.y *= 1.0 - 0.6 * (z / hgt)
+                elif kind == "c":  # pointed
+                    c.x *= 1.0 - 0.5 * (z / hgt)
+                elif z > hgt * 0.75:  # cusps
+                    z += 0.0010 * math.cos(c.x / wid * 14) * math.cos(c.y / lat * 7)
+                v.co = p + tan * c.x + out * c.y + Z * (h - 0.0025 + z)
+    zmin = min(v.co.z for v in bm.verts)
+    for v in bm.verts:
+        v.co.y += D * 0.45
+        v.co.z -= zmin
+
+
+def _polar(c, r, a, z):
+    return Vector((c[0] + r * math.cos(a), c[1] + r * math.sin(a), z))
+
+
 def stump_cap(root, at, name, torn=True):
-    """Unit disc facing +Z (the limb's outward axis) on a polar grid. Torn (cannonball,
-    explosion): lumpy bulging fibrous muscle, an irregular fat layer, the skin rim rolled
-    back and ragged, the bone standing proud (0.3..0.55 of the radius: 2..4 cm on a limb)
-    with a splintered end and recessed marrow. Clean (sabre): a near-flat cut face, the bone
-    flush, a smooth rolled rim. Materials: skin 0, fat 1, meat 2, bone 3, marrow 4."""
+    """Unit disc facing +Z (the limb's outward axis), built from rings that follow the
+    tissue borders (organic, not stepped). Clean (sabre): a wet, near-flat cut face of
+    muscle bundles parted by pale fascia, an uneven fat layer, an off-centre bone with a
+    marrow dot standing a little proud, the skin retracted below the cut (the fat's flank
+    shows), a not quite round outline. Torn (cannonball, explosion): lumpy bulging fibrous
+    muscle with dark clots, an irregular fat layer, the skin rolled back and ragged, the
+    bone proud (0.25..0.55) with sharp splinters around a recessed marrow cavity.
+    Materials: skin 0, fat 1, meat 2, bone 3, marrow 4, cut meat 5, fascia 6, dark meat 7."""
     bm = bmesh.new()
-    n = 56
+    n = 96
     seed = 7 if torn else 9
     rs = random.Random(seed)
-    spikes = [rs.uniform(0.0, 1.0) for _ in range(9)]
-    mar, bone = 0.105, 0.245
-    rings = [0.0, 0.05, 0.10, 0.11, 0.17, 0.24, 0.25, 0.30, 0.36, 0.42, 0.48, 0.54, 0.60, 0.65, 0.69, 0.73,
-             0.77, 0.81, 0.85, 0.88, 0.91, 0.94, 0.97, 1.0]
+    c_b = (0.09, -0.06) if not torn else (0.05, 0.04)  # the bone sits off-centre
+    c_m = (c_b[0] + 0.012, c_b[1] - 0.008)
 
     def outer(a):
         if torn:
             return 0.92 + 0.16 * ragged(a, seed, 0.6) - 0.08 + 0.05 * _n(a * 3, 1.1)
-        return 1.0 + 0.025 * _n(a * 2, 0.4)
+        return 1.0 + 0.035 * math.sin(2 * a + 0.7) + 0.03 * _n(math.cos(a) * 2, math.sin(a) * 2, 0.4)
+
+    def rb(a):  # bone radius: a rounded triangle, not a pipe
+        return 0.20 * (1.0 + 0.09 * math.cos(3 * a + 0.5) + 0.04 * _n(math.cos(a) * 3, math.sin(a) * 3, 2.0))
+
+    def rm(a):
+        return 0.45 * rb(a) * (1.0 + 0.08 * _n(math.cos(a) * 4, math.sin(a) * 4, 6.0))
+
+    def skin_w(a):
+        return 0.04 if not torn else 0.05 + 0.02 * _n(a * 3.1, 5.1, seed)
 
     def fat_in(a):
-        return 0.70 + 0.07 * _n(a * 2.5, 3.3, seed)
+        ca, sa = math.cos(a), math.sin(a)
+        thick = 0.06 + 0.08 * (0.5 + 0.5 * _n(ca * 1.7, sa * 1.7, 2.2 + seed)) + 0.06 * max(0.0, math.sin(a - 1.0))
+        thick += 0.025 * _n(ca * 6, sa * 6, 4.4 + seed)  # an organic, wavy border
+        return outer(a) - skin_w(a) - max(thick, 0.03)
 
     def fat_out(a):
-        return 0.82 + 0.04 * _n(a * 3.1, 5.1, seed)
+        return outer(a) - skin_w(a)
 
-    def proud(a):
+    spikes = [(rs.uniform(0, 2 * math.pi), rs.uniform(0.12, 0.4), rs.uniform(0.06, 0.32)) for _ in range(11)]
+
+    def splinter(a):
+        h = 0.0
+        for a0, w, ln in spikes:
+            d = abs((a - a0 + math.pi) % (2 * math.pi) - math.pi)
+            h = max(h, ln * max(0.0, 1.0 - d / w) ** 1.4)
+        return h
+
+    # Muscle bundles: perturbed Voronoi cells in the meat annulus; fascia where two meet.
+    seeds = []
+    while len(seeds) < 20:
+        a, r = rs.uniform(0, 2 * math.pi), math.sqrt(rs.uniform(0.25 ** 2, 0.78 ** 2))
+        p = (r * math.cos(a), r * math.sin(a))
+        if math.dist(p, c_b) > 0.25 and all(math.dist(p, q) > 0.13 for q, _ in seeds):
+            seeds.append((p, rs.random() < 0.35))
+
+    def cells(x, y):
+        wx, wy = x + 0.05 * _n(x * 5, y * 5, 1.3), y + 0.05 * _n(x * 5, y * 5, 7.7)
+        ds = sorted((math.dist((wx, wy), p), dark) for p, dark in seeds)
+        return ds[1][0] - ds[0][0], ds[0][1]
+
+    def meat_z(x, y, t):
+        """Height of the muscle at (x, y), t 0 at the bone .. 1 at the fat."""
         if not torn:
-            return 0.012
-        i = (a / (2 * math.pi)) * len(spikes)
-        j = int(i) % len(spikes)
-        t = i - int(i)
-        sp = spikes[j] * (1 - t) + spikes[(j + 1) % len(spikes)] * t
-        return 0.30 + 0.25 * sp ** 2
+            gap, _ = cells(x, y)
+            return 0.004 + 0.010 * min(1.0, gap / 0.08) + 0.002 * _n(x * 20, y * 20)
+        dome = 0.17 * (1 - t ** 1.6)
+        lumps = 0.08 * _n(x * 3.2, y * 3.2, seed) + 0.035 * _n(x * 8, y * 8, seed + 1)
+        phi = 0.6 * _n(x * 1.5, y * 1.5, 9.0)
+        fib = 0.012 * math.sin((x * math.cos(phi) + y * math.sin(phi)) * 48 + 3 * _n(x * 4, y * 4))
+        return max(dome + lumps + fib, 0.02) * (1 - 0.6 * t ** 3)
 
-    def height(s, a, x, y):
-        if s <= mar:
-            return proud(a) - (0.12 if torn else 0.01)
-        if s <= bone:
-            return proud(a) - (0.0 if s > 0.2 else 0.015)
-        fo = fat_out(a)
-        if s < fo:
-            if torn:
-                t = (s - bone) / (fo - bone)
-                dome = 0.17 * (1 - t ** 1.6)
-                lumps = 0.08 * _n(x * 3.2, y * 3.2, seed) + 0.035 * _n(x * 8, y * 8, seed + 1)
-                phi = 0.6 * _n(x * 1.5, y * 1.5, 9.0)
-                fib = 0.012 * math.sin((x * math.cos(phi) + y * math.sin(phi)) * 48 + 3 * _n(x * 4, y * 4))
-                z = dome + lumps + fib
-                if s > fat_in(a):
-                    z = min(z, 0.03 + 0.02 * _n(x * 6, y * 6))  # the fat layer sits lower
-                return z
-            fib = 0.004 * math.sin(x * 55 + 2 * _n(x * 3, y * 3))
-            return 0.012 * (1 - (s - bone) / (fo - bone)) + 0.008 * _n(x * 5, y * 5) + fib
-        # Skin: rolled back into a lip, then down and away (ragged when torn).
-        t = (s - fo) / (1.0 - fo)
-        lip = (0.05 if torn else 0.025) * math.sin(math.pi * min(t / 0.6, 1.0))
-        drop = (0.16 if torn else 0.05) * max(0.0, t - 0.6) / 0.4
-        return lip - drop + (0.03 * _n(x * 9, y * 9) if torn else 0.0)
+    def meat_key(_i, _k, c):
+        if not torn:
+            gap, dark = cells(c.x, c.y)
+            return 6 if gap < 0.022 else (2 if dark else 5)
+        return 7 if _n(c.x * 7, c.y * 7, 3.0) > 0.3 else 2
 
-    grid = []
-    for s in rings:
-        row = []
-        for k in range(1 if s == 0.0 else n):
-            a = 2 * math.pi * k / n
-            r = s * outer(a) * (1.0 + (0.03 * _n(a * 4, s * 5) if torn and bone < s < 0.9 else 0.0))
+    proud = 0.25 if torn else 0.016
+    fns = []  # (ring function a -> Vector, material of the band from this ring to the next)
+    fns.append((lambda a: _polar(c_m, 0.5 * rm(a), a, proud - (0.15 if torn else 0.005)), 4))
+    fns.append((lambda a: _polar(c_m, rm(a), a, proud - (0.10 if torn else 0.004)), 3))
+    if torn:  # the splintered cortex: inner wall, jagged rim, outer wall down to the meat
+        fns.append((lambda a: _polar(c_b, rm(a) * 1.08 + 0.01, a, proud + 0.8 * splinter(a + 0.05)), 3))
+        fns.append((lambda a: _polar(c_b, rb(a), a, proud + splinter(a)), 3))
+    else:
+        fns.append((lambda a: _polar(c_b, rb(a), a, proud), 3))
+    fns.append((lambda a: _polar(c_b, rb(a) * 1.03, a, meat_z(*_polar(c_b, rb(a) * 1.03, a, 0)[:2], 0.0)
+                                  - (0.0 if torn else 0.004)), meat_key))
+    M = 16 if not torn else 14
+
+    def meat_ring(j):
+        def f(a):
+            t = j / M
+            p = _polar(c_b, rb(a) * 1.03, a, 0).lerp(_polar((0, 0), fat_in(a), a, 0), t)
+            if torn and j < M:
+                p *= 1.0 + 0.02 * _n(a * 4, t * 5)
+            p.z = meat_z(p.x, p.y, t)
+            return p
+        return f
+
+    for j in range(1, M + 1):
+        fns.append((meat_ring(j), meat_key if j < M else 1))
+
+    def fat_ring(t):
+        def f(a):
+            r = fat_in(a) + (fat_out(a) - fat_in(a)) * t
             x, y = r * math.cos(a), r * math.sin(a)
-            row.append(bm.verts.new((x, y, height(s, a, x, y))))
-        grid.append(row)
+            z = (0.007 + 0.004 * _n(x * 9, y * 9)) if not torn else 0.02 + 0.02 * _n(x * 6, y * 6)
+            return Vector((x, y, z * (1 - 0.3 * t)))
+        return f
 
-    def key(s, a):
-        if s <= mar:
-            return 4
-        if s <= bone + 0.004:
-            return 3
-        if s < fat_in(a):
-            return 2
-        if s < fat_out(a):
-            return 1
-        return 0
-
+    for t in (0.35, 0.7, 1.0):
+        fns.append((fat_ring(t), 1))
+    if not torn:
+        # The skin is retracted: the fat's flank shows, then the skin's pale cut edge, then
+        # the limb's side going down.
+        fns.append((lambda a: _polar((0, 0), fat_out(a) + 0.004, a, -0.035 + 0.008 * _n(a * 5, 1.0)), 1))
+        fns.append((lambda a: _polar((0, 0), fat_out(a) + 0.012, a, -0.032 + 0.008 * _n(a * 5, 1.0)), 0))
+        fns.append((lambda a: _polar((0, 0), outer(a), a, -0.045), 0))
+        fns.append((lambda a: _polar((0, 0), outer(a) * 1.005, a, -0.15), 0))
+    else:
+        for t in (0.3, 0.6, 1.0):
+            def skin(a, t=t):
+                r = fat_out(a) + (outer(a) - fat_out(a)) * t
+                x, y = r * math.cos(a), r * math.sin(a)
+                lip = 0.05 * math.sin(math.pi * min(t / 0.6, 1.0))
+                drop = 0.16 * max(0.0, t - 0.6) / 0.4
+                return Vector((x, y, lip - drop + 0.03 * _n(x * 9, y * 9)))
+            fns.append((skin, 0))
+    rings = [[f(2 * math.pi * k / n) for k in range(n)] for f, _ in fns]
+    centre = bm.verts.new((c_m[0], c_m[1], proud - (0.16 if torn else 0.006)))
+    vs = [[bm.verts.new(p) for p in r] for r in rings]
     for k in range(n):
-        a = 2 * math.pi * (k + 0.5) / n
-        bm.faces.new((grid[0][0], grid[1][k], grid[1][(k + 1) % n])).material_index = key(0.02, a)
-    for i in range(1, len(rings) - 1):
-        sm = 0.5 * (rings[i] + rings[i + 1])
+        bm.faces.new((centre, vs[0][k], vs[0][(k + 1) % n])).material_index = 4
+    for i in range(len(vs) - 1):
+        key = fns[i][1]
         for k in range(n):
-            a = 2 * math.pi * (k + 0.5) / n
             k1 = (k + 1) % n
-            f = bm.faces.new((grid[i][k], grid[i + 1][k], grid[i + 1][k1], grid[i][k1]))
-            f.material_index = key(sm, a)
-    return finish(root, name, bm, ["skin", "fat", "meat", "bone", "marrow"], "flesh", at)
+            f = bm.faces.new((vs[i][k], vs[i + 1][k], vs[i + 1][k1], vs[i][k1]))
+            f.material_index = key(i, k, f.calc_center_median()) if callable(key) else key
+    return finish(root, name, bm, ["skin", "fat", "meat", "bone", "marrow", "meat_cut", "fascia", "meat_dark"],
+                  "flesh", at)
+
+
+def _flap(bm, amid, w, length, r0, th, droop, hang, twist, keys, rs, cols=5, rows=10):
+    """One tatter from the ring at angle `amid` (`w` radians wide at the root): it rises
+    along +Z, then curls outwards and back over the rim (`droop` = (start, end) angle from
+    +Z), sags towards -Y by `hang`, narrows and ends in a ragged tip. `keys` = (outer side,
+    inner side, torn edges) material indices."""
+    tips = [rs.uniform(0.45, 1.0) for _ in range(cols + 1)]
+    tips[rs.randrange(cols + 1)] = 1.0
+    off = rs.uniform(0, 50)
+    ov, iv = [], []
+    for j in range(rows + 1):
+        orow, irow = [], []
+        for c in range(cols + 1):
+            u = c / cols - 0.5
+            vmax = tips[c]
+            ang = amid + u * w * (1.0 - 0.45 * (j / rows) * vmax)
+            R = Vector((math.cos(ang), math.sin(ang), 0.0))
+            p = Vector((r0 * R.x, r0 * R.y, 0.03))
+            th_c = droop[0]
+            ds = length * vmax / rows
+            for s in range(j):
+                th_c = droop[0] + (droop[1] - droop[0]) * ((s + 0.5) / rows) ** 1.2 + twist * u
+                p = p + (R * math.sin(th_c) + Vector((0, 0, math.cos(th_c)))) * ds
+            v = j / rows * vmax
+            p = p + Vector((0, -hang * length * v * v, 0))
+            nrm = R * math.cos(th_c) - Vector((0, 0, math.sin(th_c)))
+            p = p + nrm * 0.03 * _n(ang * 6 + off, v * 4) * v  # wrinkles
+            orow.append(bm.verts.new(p))
+            irow.append(bm.verts.new(p - nrm * th))
+        ov.append(orow)
+        iv.append(irow)
+    for j in range(rows):
+        for c in range(cols):
+            bm.faces.new((ov[j][c], ov[j][c + 1], ov[j + 1][c + 1], ov[j + 1][c])).material_index = keys[0]
+            bm.faces.new((iv[j][c], iv[j + 1][c], iv[j + 1][c + 1], iv[j][c + 1])).material_index = keys[1]
+    for c in range(cols):  # the torn tip
+        bm.faces.new((ov[rows][c], ov[rows][c + 1], iv[rows][c + 1], iv[rows][c])).material_index = keys[2]
+    for c, flip in ((0, False), (cols, True)):  # the torn sides
+        for j in range(rows):
+            q = (ov[j][c], iv[j][c], iv[j + 1][c], ov[j + 1][c])
+            bm.faces.new(tuple(reversed(q)) if flip else q).material_index = keys[2]
 
 
 def torn_edge(root, at):
-    """Ring of unit radius around +Z: a low band of skin (meat inside) from which hang
-    tatters of skin and of cloth of uneven width and length (0.08..0.5), curling outwards
-    and twisting, with ragged tips. Materials: skin 0, meat 1, cloth 2."""
+    """Ring of unit radius around +Z (the waist of a body torn in two; -Y is down when it
+    lies): a low ragged band (skin outside, meat inside, fat on the cut) from which hang
+    tatters in three overlapping layers, meat inside, skin, coat cloth outside, of uneven
+    width and length (0.1..0.6), rising, then curling outwards and back over the rim, the
+    ones on the lower side longest and sagging most; four intestine loops spill over the
+    rim and hang. Materials: skin 0, meat 1, cloth 2, gut 3, fat 4."""
     bm = bmesh.new()
     rs = random.Random(265)
-    n, base = 48, 0.06
+    n = 64
     o0, o1, i0, i1 = [], [], [], []
     for k in range(n):
         a = 2 * math.pi * k / n
-        h = base + 0.02 * _n(a * 3, 0.5)
-        o0.append(bm.verts.new((math.cos(a), math.sin(a), 0.0)))
-        o1.append(bm.verts.new((math.cos(a), math.sin(a), h)))
-        i0.append(bm.verts.new((0.95 * math.cos(a), 0.95 * math.sin(a), 0.0)))
-        i1.append(bm.verts.new((0.95 * math.cos(a), 0.95 * math.sin(a), h)))
+        h = 0.05 + 0.035 * _n(a * 3, 0.5) + 0.02 * _n(a * 9, 2.5)
+        r = 1.0 + 0.02 * _n(a * 4, 1.5)
+        o0.append(bm.verts.new((r * math.cos(a), r * math.sin(a), -0.06)))
+        o1.append(bm.verts.new((r * math.cos(a), r * math.sin(a), h)))
+        i0.append(bm.verts.new((0.93 * r * math.cos(a), 0.93 * r * math.sin(a), -0.06)))
+        i1.append(bm.verts.new((0.93 * r * math.cos(a), 0.93 * r * math.sin(a), h - 0.01)))
     for k in range(n):
         k1 = (k + 1) % n
         bm.faces.new((o0[k], o0[k1], o1[k1], o1[k])).material_index = 0
         bm.faces.new((i0[k], i1[k], i1[k1], i0[k1])).material_index = 1
-        bm.faces.new((o1[k], o1[k1], i1[k1], i1[k])).material_index = 1
-    a = rs.uniform(0, 0.3)
-    while a < 2 * math.pi - 0.2:
-        w = rs.uniform(0.18, 0.55)
-        if rs.random() < 0.2:  # a gap
-            a += w * 0.6
-            continue
-        length = rs.choice((rs.uniform(0.08, 0.2), rs.uniform(0.15, 0.35), rs.uniform(0.3, 0.5)))
-        cloth = rs.random() < 0.35
-        curl = rs.uniform(0.2, 0.9)
-        twist = rs.uniform(-0.5, 0.5)
-        cols, rows = 3, 6
-        tips = [rs.uniform(0.6, 1.0) for _ in range(cols + 1)]
-        th = 0.012 if cloth else 0.025
-        outer_v, inner_v = [], []
-        for j in range(rows + 1):
-            v = j / rows
-            orow, irow = [], []
-            for c in range(cols + 1):
-                u = c / cols - 0.5
-                vv = v * (tips[c] if j == rows else 1.0)
-                taper = 1.0 - 0.55 * vv
-                ang = a + w / 2 + u * w * taper + twist * vv * 0.2
-                lz = vv * length
-                r = 1.0 + curl * lz * vv + 0.02 * _n(ang * 7, lz * 9)
-                z = base * 0.6 + lz * (1.0 - 0.4 * curl * vv)
-                orow.append(bm.verts.new((r * math.cos(ang), r * math.sin(ang), z)))
-                irow.append(bm.verts.new(((r - th) * math.cos(ang), (r - th) * math.sin(ang), z)))
-            outer_v.append(orow)
-            inner_v.append(irow)
-        for j in range(rows):
-            for c in range(cols):
-                q = (outer_v[j][c], outer_v[j][c + 1], outer_v[j + 1][c + 1], outer_v[j + 1][c])
-                bm.faces.new(q).material_index = 2 if cloth else 0
-                q = (inner_v[j][c], inner_v[j + 1][c], inner_v[j + 1][c + 1], inner_v[j][c + 1])
-                bm.faces.new(q).material_index = 2 if cloth else 1
-        for c in range(cols):  # the torn tip edge
-            q = (outer_v[rows][c], outer_v[rows][c + 1], inner_v[rows][c + 1], inner_v[rows][c])
-            bm.faces.new(q).material_index = 2 if cloth else 1
-        a += w * rs.uniform(0.75, 1.0)
-    return finish(root, "torn_edge", bm, ["skin", "meat", "cloth"], "flesh", at)
+        bm.faces.new((o1[k], o1[k1], i1[k1], i1[k])).material_index = 4
+    for layer, (r0, th, keys, lens, count) in enumerate((
+            (0.90, 0.06, (1, 1, 1), (0.10, 0.30), 7),
+            (0.99, 0.025, (0, 1, 1), (0.25, 0.60), 9),
+            (1.04, 0.012, (2, 2, 2), (0.30, 0.60), 6))):
+        a = rs.uniform(0, 2 * math.pi)
+        for _ in range(count):
+            w = rs.uniform(0.25, 0.75)
+            a += w * (rs.uniform(0.6, 0.9) if layer == 1 else rs.uniform(0.7, 1.4))
+            down = max(0.0, -math.sin(a))  # the lower side hangs
+            length = min(rs.uniform(*lens) * (0.8 + 0.4 * down) * rs.choice((0.75, 1.0, 1.15)), 0.62)
+            droop = (rs.uniform(0.15, 0.6), rs.uniform(1.4, 2.6) if layer else rs.uniform(0.6, 1.4))
+            _flap(bm, a, w, length, r0, th, droop, 0.35 * down + 0.08, rs.uniform(-0.4, 0.4), keys, rs)
+    for q, (a, ln) in enumerate(((4.3, 0.55), (5.1, 0.42), (3.6, 0.35), (1.2, 0.2))):
+        pts = []
+        for s, (r, z) in enumerate(((0.5, 0.0), (0.75, 0.08), (1.0, 0.11), (1.12 + 0.3 * ln, 0.0),
+                                    (1.18 + 0.4 * ln, -ln * 0.35), (1.1 + 0.3 * ln, -ln * 0.45), (1.06, -0.1),
+                                    (1.0, 0.07), (0.8, 0.06), (0.55, 0.0))):
+            aa = a + 0.35 * s / 9
+            sag = -0.35 * ln * max(0.0, -math.sin(aa)) * (1 if 3 <= s <= 6 else 0)
+            pts.append((r * math.cos(aa), r * math.sin(aa) + sag, z))
+        intestine(bm, pts, r=0.06, mi=3, per=6, seg=10, pitch=0.13, seed=q + 20)
+    return finish(root, "torn_edge", bm, ["skin", "meat", "cloth", "gut", "fat"], "flesh", at)
