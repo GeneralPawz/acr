@@ -19,14 +19,27 @@ assets/
       project.py          colours from the sprites, projected through the original camera
       camera.py           the original camera as a Blender camera
       export.py           glTF export settings
+      kit.py              building kit: palisades, log walls, roofs, scaffolds, rubble
+      detail.py           procedural detail tiles (cloth, leather, wood) and box UVs
+      rig.py armature.py body.py humans.py horse.py gear.py poses.py decay.py
+                          characters: see docs/assets-humans.md
     build.py              entry: builds one asset script
     render_views.py       entry: renders a model in the stored directions (sprite check)
+    tools/silhouette.py   fits poses/proportions to the sprite silhouettes (development)
+    tools/preview.py      lit renders, free views and decay stages of a built glTF
     tests/                `python -m unittest discover -s assets/blender/tests` (CI runs it)
   buildings/incdo1.py     an asset (one script per model, grouped by category)
+  buildings/engkre.py     the wooden fort: stages, section states, ruin, fire anchors
+  units/engm18.py engkri.py engd18.py   musketeer, peasant, dragoon
+  nature/broadleaf.py     a tree (TREES.GP frame 104) with wind and felled/stump states
 target/assets/            output (git-ignored): <category>/<name>.glb, ref/<TYPE>/, check/<name>/
 ```
 
-An asset script defines `TYPE` (the `NAME` of its `.MD`, optional) and `build(ctx)`:
+An asset script defines `TYPE` (the `NAME` of its `.MD`, or `LIST:INDEX` for a map object
+such as `TREELIST:104`; optional), `CHECKS` (optional: one `acr model-check` argument string
+per check, e.g. `["--anim STAND", "--anim STANDLO --sections 2"]`; each also gets its own
+reference, passed to the script as `ctx.refs[<label>]`, label = the values joined by `-`) and
+`build(ctx)`:
 `ctx.root` is the root node (an empty at the ground point, named after the script),
 `ctx.ref` the sprite reference (`acr_assets.Reference`, see below) or `None`. Scripts in other
 folders (e.g. `assets/blender/humans/`) can use the helpers by putting `assets/blender/lib`
@@ -122,7 +135,7 @@ centre of the sector that `acr_render::scene::sprite_direction` maps to k unmirr
 
 | stored directions R | RealDir of k | |
 |---|---|---|
-| 1 (buildings) | 64 | the fixed view |
+| 1 (buildings, map objects) | 64 | the fixed view |
 | odd (9 for units, 65 ships) | 64 + 128 k / (R − 1) | 9: 64 south, 128 west (k 4), 192 north (k 8) |
 | even | 64 + 128 (k + ½) / R | half a sector off |
 | `FULLROTATION` (16, cannon) | 64 + 256 k / R | all around, never mirrored |
@@ -211,6 +224,13 @@ For small models like `IncDo1` the texture dominates and meshopt makes the file 
 (141 vs 131 KB; its UV quantisation also moves the colour difference from 3.2 to 5.0). The
 default stays uncompressed until the in-game renderer (#163) decodes meshopt; KTX2
 textures are a follow-up together with it.
+
+**States.** Node groups carry extras the renderer and the check read: `acr_state` (the
+animation that shows them: `STANDLO`, `BUILDLO_2`, `DEATHLIE1`, a list for several) and
+`acr_section` + `acr_section_state` (an `ADDSECTION` part, drawn with `STANDLO`). `acr
+model-ref --sections S` draws every section in state S after the animation's parts, as a
+finished building does; `render_views.py` plays the clip named after the reference's
+animation and shows only the matching states.
 
 ## Not done yet
 

@@ -1,28 +1,49 @@
-# Humans: first 3D run (skeleton H, layered body, decomposition)
+# Humans: skeleton H, layered bodies, decomposition and gore
 
-First prototype for the European foot units (#169) and decomposing corpses (#178): one
-musketeer (`EngM18`) and one peasant (`EngKri`), built by script in Blender 5.2, compared with
-the sprites through the original camera, plus a decay prototype. Prototype quality: the goal
-is insight for #162/#166/#168/#178, not finished assets. Conventions as in
-[assets.md](assets.md) (30 px/m, +X east, +Y north, +Z up, models face south, `socket.<name>`).
+European foot units (#169), horses and riders (#170), decomposing corpses (#178) and deaths
+by cause (#183). The first run (PR #181) was a self-contained prototype; its pieces now live
+in the pipeline's library and the units are normal assets built by `cargo xtask assets`
+([assets.md](assets.md); the vertical slice's numbers: [assets-slice.md](assets-slice.md)).
+Conventions as in assets.md (30 px/m, +X east, +Y north, +Z up, models face south,
+`socket.<name>`).
 
-```sh
-# sprite references (once): STAND and DEATHLIE1 for both types
-acr model-ref <game> EngM18 ref/EngM18-STAND --anim STAND      # ... EngM18-DEATHLIE1, EngKri-STAND
-# build, render, export (about 30 s on a Snapdragon X, Cycles CPU)
-blender -b --factory-startup --python assets/blender/humans/build_humans.py -- \
-        --out OUT --refs ref [--only stand,decay,free,turn,glb] [--samples 24]
-python -I assets/blender/humans/tools/compose.py ref OUT      # sheets + silhouette IoU
-python -I assets/blender/humans/tools/sprite_study.py OUT/study ref/EngM18-STAND ...
-acr model-check <game> EngM18 OUT/engm18.glb OUT/check --scripts assets/blender
-```
+| module (`assets/blender/lib/acr_assets/`) | |
+|---|---|
+| `rig.py` | skeleton H and horse rig R as data (pure Python, unit-tested), body parts and cut joints, `.MD` clip frame counts |
+| `armature.py` | armature from a table, `pose` in armature axes (+ `world` / `world_loc` targets), clips as actions |
+| `body.py` | skin hull, smooth weights, part split, clothing shells, skirt on its bones, straps, bone layer, stump caps, morph targets |
+| `humans.py` | `Character`: layers, finishing (morphs, masks, colours), export preparation |
+| `horse.py` | horse hull, mane/tail, bone layer, saddlecloth, saddle, gait and fall poses |
+| `gear.py`, `poses.py`, `decay.py`, `detail.py` | gear meshes; placeholder poses/clips; decay layers and masks; procedural detail tiles |
 
-Files (`assets/blender/humans/`): `h_rig.py` (skeleton H, posing), `h_body.py` (body, bone
-mesh, clothing shells, straps, gear, shape keys), `h_decay.py` (masks, decay materials,
-timeline), `build_humans.py` (characters, poses, clips, renders, glTF), `tools/` (pure-Python
-PNG, sprite study, comparison sheets). Generated files go to `--out` (default `out/`,
-git-ignored). Self-contained apart from `acr_assets.conventions`; meant to move onto the
-pipeline's `build.py` once a model is more than a prototype.
+Units: `assets/units/engm18.py` (musketeer), `engkri.py` (peasant), `engd18.py` (dragoon).
+Tools: `assets/blender/tools/silhouette.py` (fits poses and proportions to the sprite
+silhouettes in one Blender session) and `tools/preview.py` (lit renders, free views and decay
+stages from the glTF alone, with the decay shader rebuilt from the extras).
+
+## Export contract (what the renderer reads)
+
+- File `<md name lower case>.glb`; one armature; clips = actions named after the `.MD` keys
+  (`STAND`, `MOTION_L`, ..., `DEATHLIE1`), keyed on sprite frames at 24 fps; the exported
+  scene pose is `STAND` (not the bind pose).
+- `COLOR_0` of every mesh with an `acr_decay` material = the decay mask (R blotch noise, G
+  fray noise, B layer code / 8); materials: base colour texture (a small detail tile times
+  the part's colour) on `TEXCOORD_0`, extras `acr_decay` (layer windows) and
+  `acr_base_rgb`.
+- Custom attributes (`export_attributes`): `_GORE` (vec4: wound, blood, dirt, burn noise,
+  each rank-normalised) and `_PART` (body part 0..9 of `rig.PARTS`, stump caps 16 + joint
+  / 32 + joint, horse 48).
+- Morph targets: `deflate` (flesh, clothes and strapped gear collapse onto the bones),
+  `emaciated` (hunger, #183). The coat skirt has bones (`skirt_*`) instead of the first
+  run's `lie_flat` morph: the `DEATHLIE*` clips lay it flat.
+- Nodes: `socket.*` bones (hat, back, hips, hands, hit sockets `socket.hit_*` for stuck
+  missiles, horse `socket.saddle`); gear that drops at death (hat, musket, sabre) is a
+  separate node on its socket, strapped gear (knapsack, cartridge box, saddle) is skinned.
+- The mesh `<name>.caps` holds the stump caps: hidden unless a joint is cut. Cutting joint
+  j: draw the body without the parts below j plus the parent-side cap (`_PART` 16 + j);
+  draw the cut-off part with its child-side cap (32 + j) and, in that copy's palette, every
+  bone outside the part locked to the part's root bone (so the seam vertices weighted to
+  the parent follow the part).
 
 ## 1. What the sprites tell
 
