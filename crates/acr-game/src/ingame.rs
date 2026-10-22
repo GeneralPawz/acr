@@ -79,8 +79,6 @@ pub struct InGame {
     diplomacy: crate::diplomacy::DipPanel,
     /// Score and losses for the game info panel.
     stats: panels::Stats,
-    /// The local player's fog of war (`FogMap` 0x7b7b28), over the map view and the minimap.
-    fog: Option<acr_sim::fog::Fog>,
     /// `ACR_DIP_PAGE` has been looked at.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     dip_page_shown: bool,
@@ -131,7 +129,6 @@ impl InGame {
             save: Default::default(),
             diplomacy: crate::diplomacy::DipPanel::default(),
             stats: Default::default(),
-            fog: None,
             dip_page_shown: false,
             ambient_ticks: 0,
         }
@@ -360,7 +357,7 @@ impl InGame {
             view: [self.camera.x, self.camera.y, window[0] / s, window[1] / s],
             map: [side, side],
             depth: map.water.as_ref().map(|w| &w.depth),
-            fog: self.fog.as_ref(),
+            fog: self.mission.fog(),
         })
     }
 
@@ -477,12 +474,8 @@ impl InGame {
                 self.save.log.command(world.tick.0, &commands);
                 commands.extend(orders);
                 world.step(&commands);
-                // The fog follows the world: stamped every tick, blurred every game frame,
-                // with the script's light spots (`SetLightSpot`, stamped by 0x55a2f1).
-                let fog = self.fog.get_or_insert_with(|| acr_sim::fog::Fog::new(world.map.shift));
-                fog.reveal(world, self.setup.local_player as u8);
-                fog.light_spots = self.mission.light_spots();
-                fog.blur(world);
+                // The fog follows the world (once per tick, also read by the scripts).
+                self.mission.update_fog(world);
             }
             self.requests.borrow_mut().extend(self.mission.take_requests());
             self.update_diplomacy(f64::from(seconds));
@@ -533,7 +526,7 @@ impl InGame {
                 continue;
             }
             let (x, y) = ((u.pos.x >> 4) as f32, (u.pos.y >> 5) as f32);
-            let Some((volume, pan)) = unit_sounds::placed(x, y, view, self.fog.as_ref()) else {
+            let Some((volume, pan)) = unit_sounds::placed(x, y, view, self.mission.fog()) else {
                 continue;
             };
             let Some(def) = self.objects.objects().definition(&world.catalog.get(u.kind).id) else { continue };
@@ -632,7 +625,7 @@ impl InGame {
     /// game: only the editor's F key, the cheats and a defeat in multiplayer clear it), by
     /// 0x485606/0x485a3c, or 0x485d2d in the zoomed-out view.
     fn fog_shades(&self, window: [f32; 2]) -> Option<FogShades> {
-        let fog = self.fog.as_ref()?;
+        let fog = self.mission.fog()?;
         let (width, cells) = fog.cells();
         let cell = |gx: i32, gy: i32| {
             if (0..width).contains(&gx) && (0..width).contains(&gy) { cells[(gy * width + gx) as usize] } else { 0 }

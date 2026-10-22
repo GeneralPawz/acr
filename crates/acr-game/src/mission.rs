@@ -50,6 +50,13 @@ pub struct MissionLink {
     /// Computer players of a random map (nations).
     computers: Vec<u8>,
     local_player: u8,
+    /// The local player's fog of war: stamped and blurred once per tick from the world and
+    /// the scripts' light spots, read by `GetFogSpotVisibility` and drawn by the game.
+    fog: Option<acr_sim::fog::Fog>,
+    /// The world tick the fog was last updated for.
+    fog_tick: Option<u64>,
+    /// The player whose fog it is (`GameSetup::local_player`).
+    viewer: u8,
     difficulty: u8,
     scripts: Option<Scripts>,
     /// AI DLLs to load once their files are there.
@@ -106,6 +113,9 @@ impl MissionLink {
             dip_files: Vec::new(),
             computers,
             local_player,
+            fog: None,
+            fog_tick: None,
+            viewer: setup.local_player as u8,
             difficulty: difficulty.min(3) as u8,
             scripts: None,
             pending_ais: Vec::new(),
@@ -273,6 +283,7 @@ impl MissionLink {
         if !self.pending.is_empty() {
             return None;
         }
+        self.update_fog(world);
         self.messages.tick();
         // Deterministic start: the world does not move before the scripts run (they would
         // otherwise start at a tick that depends on file loading).
@@ -459,6 +470,36 @@ impl MissionLink {
     /// A view position the script asked for (`SetStartPoint`), once.
     pub fn take_camera(&mut self) -> Option<(i32, i32)> {
         self.camera.take()
+    }
+
+    /// Brings the fog up to the world's tick: stamped every tick, blurred every game frame,
+    /// with the scripts' light spots (`SetLightSpot`, stamped by 0x55a2f1). Exactly once per
+    /// tick, so a game that stands still (an open window) and a savegame's replay see the
+    /// same fog. The scripts hold it while they run.
+    pub fn update_fog(&mut self, world: &World) {
+        if self.fog_tick == Some(world.tick.0) {
+            return;
+        }
+        self.fog_tick = Some(world.tick.0);
+        let light_spots = self.light_spots();
+        let mut fog = match self.scripts.as_mut().and_then(|s| s.set_fog(None)).or_else(|| self.fog.take()) {
+            Some(fog) => fog,
+            None => acr_sim::fog::Fog::new(world.map.shift),
+        };
+        fog.reveal(world, self.viewer);
+        fog.light_spots = light_spots;
+        fog.blur(world);
+        match self.scripts.as_mut() {
+            Some(scripts) => {
+                scripts.set_fog(Some(fog));
+            }
+            None => self.fog = Some(fog),
+        }
+    }
+
+    /// The local player's fog of war, once the game runs.
+    pub fn fog(&self) -> Option<&acr_sim::fog::Fog> {
+        self.scripts.as_ref().and_then(|s| s.state().fog.as_ref()).or(self.fog.as_ref())
     }
 
     /// Files requested while running (AI DLLs started by the mission).

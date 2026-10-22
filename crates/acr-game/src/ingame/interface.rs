@@ -1140,7 +1140,7 @@ impl InGame {
     /// The minimap's dark blocks (0x485c24): every 2 × 2 block whose fog value is 1300 or less.
     /// A block covers `64 << shift` map pixels; the fog cell at its first 128 pixels decides.
     fn fog_mask(&self) -> Option<Rc<Vec<bool>>> {
-        let fog = self.fog.as_ref()?;
+        let fog = self.mission.fog()?;
         let block = 64 << self.shift();
         let n = minimap::FOG_SIDE;
         let mask: Vec<bool> = (0..n * n)
