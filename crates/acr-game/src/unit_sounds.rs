@@ -97,7 +97,7 @@ pub struct UnitSounds {
     field: Ambient,
     /// Frames left in which the land ambience stays quiet after a `DANGER` sound.
     danger: u32,
-    /// ACR's own groups (hit and pain sounds, [`crate::hit_sounds`]): name → game paths.
+    /// ACR's own groups (hit, pain and agony sounds, [`crate::hit_sounds`], [`crate::agony`]): name → game paths.
     own: HashMap<String, Vec<String>>,
 }
 
@@ -109,8 +109,7 @@ impl Default for UnitSounds {
 
 impl UnitSounds {
     pub fn new() -> Self {
-        let own: HashMap<String, Vec<String>> = crate::hit_sounds::GROUPS
-            .iter()
+        let own: HashMap<String, Vec<String>> = crate::hit_sounds::all_groups()
             .filter_map(|(g, _)| Some((g.to_string(), crate::hit_sounds::files(g)?)))
             .collect();
         let mut requests = vec![SOUND_LIST.to_owned(), NRES.to_owned()];
