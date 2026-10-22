@@ -1055,16 +1055,20 @@ mod tests {
         use acr_formats::defs::UnitDef;
 
         use crate::catalog::ObjectType;
-        let groups = OrderGroups::parse(b"2
+        let groups = OrderGroups::parse(
+            b"2
 LINE 2 0 1 1 #LINE5
 SQ 1 0 1 #SQ4
-");
+",
+        );
         let mut f = Formations::new(&shapes(), &groups);
         assert_eq!(f.groups[0].buttons, [0, 1]);
         assert_eq!(f.shapes[1].group, Some(1));
-        let unit = UnitDef::parse(b"NAME U
+        let unit = UnitDef::parse(
+            b"NAME U
 [END]
-");
+",
+        );
         let mut c = Catalog::new();
         let off = c.add(ObjectType::from_def("Off(EN)", &unit));
         let flag = c.add(ObjectType::from_def("Flag(EN)", &unit));
