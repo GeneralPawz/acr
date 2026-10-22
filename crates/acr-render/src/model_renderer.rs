@@ -18,6 +18,7 @@ use std::ops::Range;
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
+use crate::damage::{self, Damage};
 use crate::math::{self, Mat4};
 use crate::model::{ModelData, Vertex};
 use crate::view3d::View3d;
@@ -54,6 +55,9 @@ pub struct ModelInstance {
     pub wounds: Wounds,
     /// Blood sprayed onto it from someone hit in front of it (troops and buildings).
     pub sprayed: Sprayed,
+    /// Cuts, fractures, a torn trunk, or the piece of a body this instance draws
+    /// (`docs/damage-model.md`); the default draws it whole.
+    pub damage: Damage,
 }
 
 /// Blood sprayed onto a model from a hit nearby: speckles around a point of its rest pose
@@ -166,6 +170,8 @@ struct MaterialUniform {
     windows: [f32; 4],
     edge: [f32; 4],
     flags: [f32; 4],
+    /// x: stump cap (wet, ragged outline).
+    look: [f32; 4],
 }
 
 #[repr(C)]
@@ -173,9 +179,25 @@ struct MaterialUniform {
 struct GpuInstance {
     rows: [[f32; 4]; 3],
     params: [f32; 4],
+    /// First texel of the pose, first texel of the instance data (`model.wgsl`), player, 0.
     extra: [u32; 4],
-    wounds: [[f32; 4]; 2],
-    spray: [f32; 4],
+}
+
+/// The data texels of an instance in the bone texture: wounds, spray and (when damaged)
+/// the damage block of [`damage::pack`].
+fn instance_texels(inst: &ModelInstance, rig: Option<&damage::Rig>, out: &mut Vec<[f32; 4]>) {
+    let [w0, w1] = inst.wounds.gpu();
+    let s = &inst.sprayed;
+    let damaged = !inst.damage.is_none();
+    out.extend([
+        w0,
+        w1,
+        [s.point[0], s.point[1], s.point[2], s.radius],
+        [s.amount.clamp(0.0, 1.0), s.age.clamp(0.0, 1.0), f32::from(u8::from(damaged)), 0.0],
+    ]);
+    if damaged {
+        out.extend(damage::pack(&inst.damage, rig));
+    }
 }
 
 struct GpuPrimitive {
@@ -209,6 +231,8 @@ pub struct ModelRenderer {
     nearest: wgpu::Sampler,
     white: wgpu::TextureView,
     models: Vec<GpuModel>,
+    /// The model placed at every cut ([`damage::procedural_cap`] until [`Self::set_cap`]).
+    cap: usize,
     /// Prepared for the next `render`: model, its instances, whether they decay.
     draws: Vec<(usize, Range<u32>, bool)>,
     /// The target does not encode sRGB: the shader does.
@@ -311,13 +335,13 @@ impl ModelRenderer {
             bind_group_layouts: &[Some(&globals_layout), Some(&material_layout)],
             immediate_size: 0,
         });
+        // 14 of the 16 locations WebGL2 has: wounds, spray and damage live in the bone texture.
         let vertex_attributes = wgpu::vertex_attr_array![
             0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4,
-            4 => Uint32x4, 5 => Float32x4, 6 => Float32x3, 7 => Float32x3
+            4 => Uint32x4, 5 => Float32x4, 6 => Float32x3, 7 => Float32x3, 8 => Float32x4
         ];
         let instance_attributes = wgpu::vertex_attr_array![
-            8 => Float32x4, 9 => Float32x4, 10 => Float32x4, 11 => Float32x4, 12 => Uint32x4,
-            13 => Float32x4, 14 => Float32x4, 15 => Float32x4
+            9 => Float32x4, 10 => Float32x4, 11 => Float32x4, 12 => Float32x4, 13 => Uint32x4
         ];
         let stencil_mark = wgpu::StencilFaceState {
             compare: wgpu::CompareFunction::Always,
@@ -450,7 +474,7 @@ impl ModelRenderer {
                 &[255; 4],
             )
             .create_view(&Default::default());
-        Self {
+        let mut renderer = Self {
             pipeline,
             pool_pipeline,
             pools: pool_buffer(device, 64),
@@ -465,11 +489,22 @@ impl ModelRenderer {
             nearest: sampler(wgpu::FilterMode::Nearest),
             white,
             models: Vec::new(),
+            cap: 0,
             draws: Vec::new(),
             encode_srgb: !target.is_srgb(),
             pose_count: 0,
             drawn: 0,
-        }
+        };
+        renderer.cap = renderer.add_model(device, queue, damage::procedural_cap());
+        renderer
+    }
+
+    /// Replaces the stump cap model (the modelled cap of `gore.glb`): a unit disc in xy
+    /// facing +z, placed at every cut and scaled by the limb's radius.
+    pub fn set_cap(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, data: ModelData) {
+        let index = self.add_model(device, queue, data);
+        self.models.swap(self.cap, index);
+        self.models.pop();
     }
 
     fn globals_group(
@@ -556,8 +591,9 @@ impl ModelRenderer {
                         if d.is_some() { 0.0 } else { 1.0 },
                         m.alpha_cutoff.unwrap_or(0.0),
                         // The bone layer takes no blood, dirt or burns.
-                        if d.is_some_and(|d| d.inner) { 1.0 } else { 0.0 },
+                        if d.is_some_and(|d| d.inner) || m.stump { 1.0 } else { 0.0 },
                     ],
+                    look: [if m.stump { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
                 };
                 let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("model material"),
@@ -601,11 +637,15 @@ impl ModelRenderer {
         let mut texels: Vec<[f32; 4]> = Vec::new();
         let mut poses: HashMap<(usize, Option<usize>, u32), u32> = HashMap::new();
         let mut gpu: Vec<GpuInstance> = Vec::with_capacity(order.len());
+        let mut data: Vec<[f32; 4]> = Vec::new();
+        let mut caps: Vec<ModelInstance> = Vec::new();
         self.draws.clear();
         let [w, h] = view.size;
-        for i in order {
-            let inst = &instances[i];
-            let model = &self.models[inst.model].data;
+        let cap_model = self.cap;
+        let models = &self.models;
+        let draws = &mut self.draws;
+        let mut push = |inst: &ModelInstance, caps: &mut Vec<ModelInstance>| {
+            let model = &models[inst.model].data;
             // Culling by the rest pose's radius (lying corpses reach about as far).
             let origin = [inst.transform[3][0], inst.transform[3][1], inst.transform[3][2]];
             let stretch = math::dot(
@@ -617,7 +657,7 @@ impl ModelRenderer {
             let r = (model.radius * stretch * 1.5 + 8.0) * view.camera.scale;
             let p = view.project(origin);
             if p[0] < -r || p[0] > w + r || p[1] < -r || p[1] > h + r || !(0.0..=1.0).contains(&p[2]) {
-                continue;
+                return;
             }
             let key = (inst.model, inst.clip, inst.time.to_bits());
             let base = *poses.entry(key).or_insert_with(|| {
@@ -627,25 +667,51 @@ impl ModelRenderer {
                 }
                 base
             });
+            // Caps at the cuts, carried by the bone at the cut in this pose.
+            if let Some(rig) = model.rig.as_ref().filter(|_| !inst.damage.is_none()) {
+                for cap in damage::caps(&inst.damage, rig) {
+                    let at = (base + cap.slot * 3) as usize;
+                    let Some(rows) = texels.get(at..at + 3) else { continue };
+                    let bone: Mat4 =
+                        std::array::from_fn(|c| [rows[0][c], rows[1][c], rows[2][c], if c == 3 { 1.0 } else { 0.0 }]);
+                    caps.push(ModelInstance {
+                        model: cap_model,
+                        clip: None,
+                        time: 0.0,
+                        transform: math::mul(&inst.transform, &math::mul(&bone, &cap.rest_matrix())),
+                        morphs: [0.0; 2],
+                        wounds: Default::default(),
+                        sprayed: Default::default(),
+                        damage: Damage::default(),
+                        ..*inst
+                    });
+                }
+            }
             let index = gpu.len() as u32;
             let decaying = inst.decay > 0.0;
-            match self.draws.last_mut() {
+            match draws.last_mut() {
                 Some((m, range, d)) if *m == inst.model && *d == decaying => range.end = index + 1,
-                _ => self.draws.push((inst.model, index..index + 1, decaying)),
+                _ => draws.push((inst.model, index..index + 1, decaying)),
             }
+            let first = data.len() as u32;
+            instance_texels(inst, model.rig.as_ref(), &mut data);
             gpu.push(GpuInstance {
                 rows: math::affine_rows(&inst.transform),
                 params: [inst.decay, inst.morphs[0], inst.morphs[1], if inst.transparent { 1.0 } else { 0.0 }],
-                extra: [
-                    base,
-                    u32::from(inst.player),
-                    (inst.sprayed.amount.clamp(0.0, 1.0) * 1000.0) as u32,
-                    (inst.sprayed.age.clamp(0.0, 1.0) * 1000.0) as u32,
-                ],
-                wounds: inst.wounds.gpu(),
-                spray: [inst.sprayed.point[0], inst.sprayed.point[1], inst.sprayed.point[2], inst.sprayed.radius],
+                extra: [base, first, u32::from(inst.player), 0],
             });
+        };
+        for &i in &order {
+            push(&instances[i], &mut caps);
         }
+        let mut none = Vec::new();
+        for inst in &caps {
+            push(inst, &mut none);
+        }
+        // The instance data follows the palettes; `extra.y` becomes absolute.
+        let data_base = texels.len() as u32;
+        texels.extend_from_slice(&data);
+        gpu.iter_mut().for_each(|g| g.extra[1] += data_base);
         self.pose_count = poses.len();
         self.drawn = gpu.len();
 

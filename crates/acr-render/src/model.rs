@@ -8,7 +8,8 @@
 //!   node's slot, a skinned one to its joints' slots, so one vertex format and one shader
 //!   serve all;
 //! - `POSITION`, `NORMAL`, `TEXCOORD_0`, `COLOR_0`, `JOINTS_0`/`WEIGHTS_0`, indices
-//!   (triangle lists only);
+//!   (triangle lists only), the custom `_PART`, `_LIMB` and `_GORE` (x) for cutting
+//!   ([`crate::damage`]); meshes named `*.caps` (the old stump caps) are skipped;
 //! - the morph targets `deflate` and `lie_flat` (by `extras.targetNames`, else the first
 //!   two), positions only;
 //! - materials: base colour factor and texture (PNG), `extras.acr_decay` (the decay layer of
@@ -48,6 +49,10 @@ pub struct Vertex {
     pub weights: [f32; 4],
     /// Position offsets of the morph targets [`MORPH_NAMES`].
     pub morph: [[f32; 3]; 2],
+    /// Damage coordinates (`docs/damage-model.md`): `_PART` (body part 0..9 of `rig.PARTS`,
+    /// −1 none), `_LIMB` (level 0..1 along the limb, −1 trunk or unknown; derived from the
+    /// rest pose when the asset lacks it), `_GORE.x` (ragged-edge noise, 0.5 without), 0.
+    pub body: [f32; 4],
 }
 
 /// One entry of a model's matrix palette.
@@ -96,6 +101,8 @@ pub struct Material {
     /// `alphaMode: MASK` cutoff.
     pub alpha_cutoff: Option<f32>,
     pub decay: Option<DecayLayer>,
+    /// A stump cap (`docs/damage-model.md`): wet, ragged outline from `uv`.
+    pub stump: bool,
 }
 
 /// An RGBA8 picture (sRGB encoded, as stored).
@@ -157,6 +164,8 @@ pub struct ModelData {
     /// Radius around the origin (world pixels at scale 1) that holds the rest pose, for
     /// culling.
     pub radius: f32,
+    /// Limb chains and radius profiles for cutting (skeleton H models only).
+    pub rig: Option<crate::damage::Rig>,
 }
 
 /// The affine rows (3 × vec4) of each palette slot.
@@ -285,6 +294,7 @@ impl ModelData {
                     alpha_cutoff: (m.alpha_mode() == gltf::material::AlphaMode::Mask)
                         .then(|| m.alpha_cutoff().unwrap_or(0.5)),
                     decay: extras_json(m.extras()).as_ref().and_then(decay_layer),
+                    stump: false,
                 }
             })
             .collect();
@@ -297,12 +307,15 @@ impl ModelData {
             nearest: false,
             alpha_cutoff: None,
             decay: None,
+            stump: false,
         });
 
         let mut slots: Vec<Slot> = Vec::new();
         let mut node_slot: HashMap<usize, u32> = HashMap::new();
         let mut joint_slot: HashMap<(usize, usize), u32> = HashMap::new();
         let mut primitives = Vec::new();
+        let mut skinned_prims: Vec<bool> = Vec::new();
+        let mut has_limb = false;
         let mut scene_nodes: Vec<gltf::Node<'_>> = Vec::new();
         let mut stack: Vec<gltf::Node<'_>> = scene.nodes().collect();
         while let Some(n) = stack.pop() {
@@ -340,6 +353,10 @@ impl ModelData {
                 .and_then(|e| e.get("targetNames").cloned())
                 .and_then(|v| serde_json::from_value(v).ok())
                 .unwrap_or_default();
+            // The old joint-only stump caps: replaced by placed caps (`damage.rs`).
+            if mesh.name().is_some_and(|n| n.ends_with(".caps")) {
+                continue;
+            }
             for prim in mesh.primitives() {
                 if prim.mode() != gltf::mesh::Mode::Triangles {
                     continue;
@@ -355,6 +372,7 @@ impl ModelData {
                         joints: [joints[0], 0, 0, 0],
                         weights: [1.0, 0.0, 0.0, 0.0],
                         morph: [[0.0; 3]; 2],
+                        body: [-1.0, -1.0, 0.5, 0.0],
                     })
                     .collect();
                 if let Some(it) = reader.read_normals() {
@@ -365,6 +383,17 @@ impl ModelData {
                 }
                 if let Some(it) = reader.read_colors(0) {
                     vertices.iter_mut().zip(it.into_rgba_f32()).for_each(|(v, c)| v.color = c);
+                }
+                let custom = |name: &str| prim.get(&gltf::Semantic::Extras(name.into()));
+                if let Some(it) = custom("PART").and_then(|a| gltf::accessor::Iter::<f32>::new(a, get)) {
+                    vertices.iter_mut().zip(it).for_each(|(v, x)| v.body[0] = x);
+                }
+                if let Some(it) = custom("LIMB").and_then(|a| gltf::accessor::Iter::<f32>::new(a, get)) {
+                    vertices.iter_mut().zip(it).for_each(|(v, x)| v.body[1] = x);
+                    has_limb = true;
+                }
+                if let Some(it) = custom("GORE").and_then(|a| gltf::accessor::Iter::<[f32; 4]>::new(a, get)) {
+                    vertices.iter_mut().zip(it).for_each(|(v, x)| v.body[2] = x[0]);
                 }
                 if skinned && let (Some(js), Some(ws)) = (reader.read_joints(0), reader.read_weights(0)) {
                     for ((v, j), w) in vertices.iter_mut().zip(js.into_u16()).zip(ws.into_f32()) {
@@ -393,6 +422,7 @@ impl ModelData {
                     return Err("glTF: index out of range".into());
                 }
                 let material = prim.material().index().unwrap_or(default_material);
+                skinned_prims.push(skinned);
                 primitives.push(Primitive { vertices, indices, material, morphs });
             }
         }
@@ -440,7 +470,31 @@ impl ModelData {
             })
             .collect();
 
-        let mut model = Self { nodes, order, slots, primitives, materials, images, clips, fps, type_name, radius: 0.0 };
+        let mut rig = crate::damage::Rig::from_skeleton(&nodes, &slots);
+        if let Some(rig) = &mut rig {
+            if !has_limb {
+                // `_LIMB` missing (assets before #262): project the rest positions of the
+                // skinned limb vertices onto the chains, as the bake does.
+                for (p, _) in primitives.iter_mut().zip(&skinned_prims).filter(|(_, s)| **s) {
+                    for v in &mut p.vertices {
+                        if let Some(l) = crate::damage::Limb::of_part(v.body[0].round().max(0.0) as u32) {
+                            v.body[1] = rig.limbs[l as usize].project(v.position);
+                        }
+                    }
+                }
+            }
+            rig.measure_radii(primitives.iter().zip(&skinned_prims).filter(|(_, s)| **s).flat_map(|(p, _)| {
+                p.vertices
+                    .iter()
+                    .filter(|v| v.body[0] >= 0.0)
+                    .map(|v| (v.position, v.body[0].round() as u32, v.body[1]))
+            }));
+            if let Some(r) = root_extras.iter().find_map(|e| e.get("acr_limb_radius")) {
+                rig.read_radii(r);
+            }
+        }
+        let mut model =
+            Self { nodes, order, slots, primitives, materials, images, clips, fps, type_name, radius: 0.0, rig };
         model.radius = model.rest_radius();
         Ok(model)
     }
@@ -463,6 +517,32 @@ impl ModelData {
             }
         }
         r * crate::view3d::PIXELS_PER_METRE
+    }
+
+    /// A static model of one primitive and material (the procedural stump cap).
+    pub fn single(primitive: Primitive, material: Material) -> Self {
+        let node = Node {
+            name: "root".into(),
+            parent: None,
+            translation: [0.0; 3],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            scale: [1.0; 3],
+        };
+        let mut model = Self {
+            nodes: vec![node],
+            order: vec![0],
+            slots: vec![Slot::Node(0)],
+            primitives: vec![primitive],
+            materials: vec![material],
+            images: Vec::new(),
+            clips: Vec::new(),
+            fps: CLIP_FPS,
+            type_name: None,
+            radius: 0.0,
+            rig: None,
+        };
+        model.radius = model.rest_radius();
+        model
     }
 
     /// Local transforms of all nodes: the rest pose with `clip` applied at `time` seconds.

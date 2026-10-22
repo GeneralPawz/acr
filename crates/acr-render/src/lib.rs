@@ -4,6 +4,7 @@
 //! palette and player colours and applies each layer's blend mode. The same code runs on
 //! Vulkan/DX12/Metal natively and on WebGPU/WebGL2 in the browser.
 
+pub mod damage;
 pub mod fog;
 pub mod image;
 pub mod math;
