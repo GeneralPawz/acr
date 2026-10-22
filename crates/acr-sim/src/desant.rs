@@ -290,6 +290,7 @@ pub fn check_island(w: &mut World, nation: u8) {
 /// advances: one coast place, and every 256 ticks one nation's island.
 pub fn tick(w: &mut World) {
     process_cost_points(w);
+    crate::combat::slow_death(w);
     let tmtmt = w.tick.0;
     if tmtmt & 0xff == 1 {
         check_island(w, ((tmtmt >> 8) & 7) as u8);

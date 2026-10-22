@@ -971,6 +971,16 @@ until it collapses or a repair brings it to full life; a burning unit loses 1 ev
 ticks while above a tenth of its life. Every building below half its life draws a random
 number per tick for its smoke (0x511be2).
 
+**Burning down** (`SLOWDEATH`, NM+0x172a bit7, 114 building types; 0x4e7410, every tick
+after `ProcessCostPoints`, `combat::slow_death`): every 128 ticks (`tick & 0x7f == 0x11`)
+each finished building of such a type below 2000 life that is not dying joins a list of at
+most 64 (index order). Each tick a listed building above half its life leaves the list;
+above 10 life it loses 5 (also when it leaves, without damage rules or hits), at 10 or
+below it leaves and dies. A building that is gone stays listed; after a building leaves,
+the next one is skipped that tick (the engine shifts the list but counts on). A building
+at 1999 so burns down in 40 s at 10 ticks/s unless repaired above half. The scripts'
+`DestructBuilding` (0x4e7720) only sets a finished (or busy) `SLOWDEATH` building to 1999.
+
 Fire and smoke are drawn at the `FIRES` and `SMOKE` points of a finished building
 (0x50618e → 0x505ad5, picture coordinates from `LOCATION`) with the `[FIRES]` animations
 of `WEAPON.NDS` (`FIRE`: `#DFIRE1` then `#DFIRE2` in a loop; `SMOKE`: two variants by
@@ -1604,8 +1614,8 @@ No game option writes it. How the map view draws the fog is in
     corpse is not drawn; `extra` (the shot point's visual height) is kept but unused, as in
     the engine.
   - Buildings: the cells of a building for round damage and searches are those of its
-    position (the engine keeps building lists by cell); `SLOWDEATH`, capture and storming
-    are not reproduced.
+    position (the engine keeps building lists by cell); capture and storming are not
+    reproduced.
   - Morale: the fear scan takes the units of the 128 px buckets built at the start of the
     tick (the engine's cell lists change during the tick); the cell number in the panic
     seed uses the bucket grid's width. Fleeing units walk in stance 0 (the engine runs them
@@ -1647,6 +1657,9 @@ No game option writes it. How the map view draws the fog is in
 - **Thrown corpses** (`tests/detonator.rs`): a `DETONATOR` 8000 blast 100 px away throws
   the dead victim with velocity (1333, 0, 1333), 6, 7 and 4 px high, down after four ticks
   21 px further, without random numbers; other blasts throw nobody.
+- **Burning down** (`tests/slowdeath.rs`): a `SLOWDEATH` house at 1500 is listed at the
+  next 0x11 tick and dies 299 ticks later, a house without the flag keeps its life; a
+  repaired one leaves the list (losing 5 once more) and the next one is skipped that tick.
 - **Counted attacks** (`tests/ntimes.rs`): a musketeer ordered to fire twice counts down
   after the first shot and stops after the second although the target lives; a pikeman
   with one strike stops after it, and switching its target keeps the count.

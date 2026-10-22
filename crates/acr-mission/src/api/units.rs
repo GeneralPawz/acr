@@ -49,7 +49,7 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("SGP_ComeIntoBuilding", 0x577c2a, DONE, sgp_come_into_building),
     f("CreateObject0", 0x55eded, DONE, create_object0),
     f("CreateFields", 0x577ff4, Status::Done, create_fields),
-    f("DieUnit", 0x5701ae, Status::Partial("World::kill; no SLOWDEATH burning yet"), die_unit),
+    f("DieUnit", 0x5701ae, DONE, die_unit),
     f("GetUnitInfo", 0x567a0e, DONE, get_unit_info),
     f("GetUnitInfo2", 0x578f2c, DONE, get_unit_info2),
     f("SetUnitInfo", 0x567e8a, Status::Partial("life and position; no damage/shield bonus yet"), set_unit_info),

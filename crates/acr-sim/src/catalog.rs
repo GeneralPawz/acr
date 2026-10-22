@@ -597,6 +597,9 @@ pub struct ObjectType {
     pub avoid_friendly_fire: bool,
     /// `NO25`: immune to the 4 % instant kill.
     pub no25: bool,
+    /// `SLOWDEATH` (NM+0x172a bit7): a finished building below 2000 life burns down
+    /// ([`crate::combat::slow_death`]); `DestructBuilding` only sets it on fire.
+    pub slow_death: bool,
     /// `USETRANSX i`: stances using `#TRANSX3`/`#TRANS3X` (bit per attack index).
     pub trans_x: u16,
     /// All animations by upper-case name (`#ATTACK1`, `#DEATH`, ...).
@@ -848,6 +851,7 @@ impl ObjectType {
             zpoints: def.get("ZPOINTS").map_or((0, 0), |c| (c.int(0).unwrap_or(0), c.int(1).unwrap_or(0))),
             avoid_friendly_fire: def.has("FRIENDLYFIRE"),
             no25: def.has("NO25"),
+            slow_death: def.has("SLOWDEATH"),
             trans_x: def
                 .all("USETRANSX")
                 .filter_map(|c| c.int(0))

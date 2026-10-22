@@ -486,6 +486,9 @@ pub struct World {
     pub cities: [crate::aiplace::City; PLAYERS],
     /// Each player's grouped formations (`City::GroupsSet`).
     pub formation_groups: [crate::grouping::FormationGroups; PLAYERS],
+    /// `SLOWDEATH` buildings burning down (0x11f0f70, at most 64; see
+    /// [`crate::combat::slow_death`]).
+    pub slow_deaths: Vec<EntityId>,
     /// Corpses thrown by a `DETONATOR` blast, in flight (0x28b4730, at most 128; see
     /// [`crate::projectile::Thrown`]).
     pub thrown: Vec<crate::projectile::Thrown>,
@@ -648,6 +651,7 @@ impl World {
             formation_groups: Default::default(),
             thrown: Vec::new(),
             detonation: None,
+            slow_deaths: Vec::new(),
             deaths: Default::default(),
             hits: Default::default(),
             impacts: Default::default(),
@@ -1226,14 +1230,15 @@ impl World {
             &self.projectiles,
             (&self.bars, self.ai),
         ));
-        // Formation groups and thrown corpses count only once there are some, so the hashes of
-        // games without them stay as they were.
+        // Formation groups, thrown corpses and burning-down buildings count only once there are
+        // some, so the hashes of games without them stay as they were.
         let hash = if self.formation_groups.iter().all(|g| g.is_empty()) {
             hash
         } else {
             state_hash(&(hash, &self.formation_groups))
         };
         let hash = if self.thrown.is_empty() { hash } else { state_hash(&(hash, &self.thrown)) };
+        let hash = if self.slow_deaths.is_empty() { hash } else { state_hash(&(hash, &self.slow_deaths)) };
         // Likewise the optional rules, only when some are on.
         if self.rules == crate::Rules::default() { hash } else { state_hash(&(hash, self.rules)) }
     }
