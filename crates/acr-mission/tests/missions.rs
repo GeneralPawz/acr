@@ -80,3 +80,44 @@ fn scripts_are_deterministic() {
     assert_eq!(a.0.state_hash(), b.0.state_hash());
     assert_eq!(a.1.instructions(), b.1.instructions());
 }
+
+#[test]
+fn computer_players_build_on_a_random_map() {
+    let Some(mut vfs) = game() else { return };
+    let map_path = "RN1 3281 123132 00101111 5002012.m3d";
+    let paths: Vec<String> = vfs.list().map(|(p, _)| p.to_owned()).collect();
+    let mut assets = SimAssets::default();
+    let mut queue = assets.start(&paths);
+    while let Some(p) = queue.pop() {
+        let data = vfs.read(&p).ok();
+        queue.extend(assets.add_file(&p, data.as_deref()));
+    }
+    let data = assets.build();
+    let Ok(bytes) = vfs.read(map_path) else { return };
+    let map = M3dMap::parse(&bytes).unwrap();
+    let (mut world, _) = World::from_map(&map, &data.shapes, Arc::new(data.catalog), Arc::new(data.formations));
+    let mut scripts = Scripts::new(&map, &world, &[], ScriptSetup::default());
+    let mut strings = acr_formats::string_table::Texts::default();
+    let normalized: Vec<String> = paths.iter().map(|p| acr_formats::normalize_path(p)).collect();
+    for p in acr_formats::string_table::Texts::sources(&normalized) {
+        strings.add(&vfs.read(&p).unwrap());
+    }
+    scripts.set_strings(strings);
+    for p in paths.iter().filter(|p| acr_formats::normalize_path(p).ends_with(".NDS")) {
+        scripts.add_nation_file(&world, &vfs.read(p).unwrap());
+    }
+    let nations = vfs.read("NATIONS.LST").unwrap();
+    let buildings = |w: &World, n: u8| w.units.iter().filter(|u| u.living() && u.owner == n && u.building).count();
+    let mut ais = Vec::new();
+    for n in 1..7u8 {
+        if let Some(path) = scripts.ai_dll_for(&world, n, &nations) {
+            let dll = vfs.read(&path).unwrap();
+            scripts.load_ai(&mut world, n, &dll, &path).unwrap();
+            ais.push((n, buildings(&world, n)));
+        }
+    }
+    assert!(!ais.is_empty());
+    run(&mut world, &mut scripts, 600);
+    assert!(scripts.errors().is_empty(), "{:?}", scripts.errors());
+    assert!(ais.iter().any(|&(n, before)| buildings(&world, n) > before), "no computer player built anything");
+}
