@@ -199,3 +199,31 @@ fn corpses_keep_their_direction_and_disappear() {
     let gone = gone.expect("the corpse is removed");
     assert_eq!(gone, t0 + (1201 - i32::from(d0) + 1) as usize / 2, "removed at {gone}");
 }
+
+/// A shooter turns to its target before it fires and keeps facing it through the aiming and
+/// firing animations (`AttackObjLink`: `ROTATE` steps until within 1.5·`ROTATE`, then
+/// `RealDir = GetDir(target)`; the strike frame sets it again, 0x51d7e9). The drawing picks
+/// the sprite from that direction for every animation alike (0x5062a3).
+#[test]
+fn shooters_face_their_target() {
+    let (mut w, pik, mus) = setup();
+    let m = w.spawn(mus, 0, Pos::from_pixels(2000, 2000), 64);
+    // A target to the west, out of melee reach: the musketeer aims and fires facing west.
+    let p = w.spawn(pik, 1, Pos::from_pixels(1400, 2000), 0);
+    w.units[p.0 as usize].stand_ground = true;
+    w.step(&[Command::Attack { player: 0, units: vec![m], target: p }]);
+    let (mut aims, mut fired) = (0, false);
+    for _ in 0..400 {
+        w.step(&[]);
+        let u = unit(&w, m);
+        if matches!(u.anim, AnimKind::Attack(_) | AnimKind::PAttack(_)) {
+            let (ex, ey) = unit(&w, p).pos.pixels();
+            let (ux, uy) = u.pos.pixels();
+            let want = acr_sim::trig::get_dir(ex - ux, ey - uy);
+            assert!((u.dir.wrapping_sub(want) as i8).unsigned_abs() <= 4, "faces {} for {want} in {:?}", u.dir, u.anim);
+            aims += 1;
+            fired |= u.anim == AnimKind::Attack(1);
+        }
+    }
+    assert!(aims > 0 && fired, "the musketeer aimed and fired");
+}
