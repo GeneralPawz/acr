@@ -275,3 +275,34 @@ fn weapon_kinds_map_to_causes() {
         assert_eq!(DeathCause::of_weapon(kind), cause, "{kind}");
     }
 }
+
+#[test]
+fn a_shooter_pressed_against_its_target_backs_away_and_fights() {
+    let (mut w, pik, mus) = setup();
+    let m = w.spawn(mus, 0, Pos::from_pixels(2000, 2000), 64);
+    // A passive enemy 20 px away: inside both the bayonet's (40) and the musket's (250)
+    // minimum range. The musket is still reloading, so the bayonet is the attack to use.
+    let p = w.spawn(pik, 1, Pos::from_pixels(2020, 2000), 0);
+    let e = &mut w.units[p.0 as usize];
+    (e.stand_ground, e.no_search_victim) = (true, true);
+    w.units[m.0 as usize].delay = 550;
+    w.step(&[Command::Attack { player: 0, units: vec![m], target: p }]);
+    let dist = |w: &World| {
+        let ((ax, ay), (bx, by)) = (unit(w, m).pos.pixels(), unit(w, p).pos.pixels());
+        acr_sim::trig::norma(ax - bx, ay - by)
+    };
+    let (mut waited, mut struck) = (0, false);
+    for tick in 0..400 {
+        w.step(&[]);
+        let u = unit(&w, m);
+        if tick < 30 {
+            // 0x5206a2: first it stands for 32 ticks.
+            assert_eq!(u.pos.pixels(), (2000, 2000), "stands at tick {tick}");
+            waited += 1;
+        }
+        struck |= u.anim == AnimKind::Attack(0);
+    }
+    assert_eq!(waited, 30);
+    assert!(dist(&w) >= 40 || struck, "backed away ({} px) or fought", dist(&w));
+    assert!(struck, "the musketeer used its bayonet once it had room");
+}

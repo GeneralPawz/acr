@@ -605,6 +605,15 @@ Implemented in `combat.rs`, recovered from `SearchVictim` (0x52622b), `AttackObj
        (the transition animation plays at the cycle end), then start `#ATTACKi`.
      - **Out of range:** walk to the enemy's cell, in the index's walking stance if the type
       has `#MOTION_Lk` (pikemen with the pike lowered), else in the ground stance.
+     - **Too close** (closer than the index's `r1`, 0x520689): the unit stands for 32 ticks
+       (counter OB+0x5b), then backs away in up to 11 steps (counter OB+0x5a, one step per
+       tick through 0x50e4b2). More than 16 px short it turns its back and walks off; closer,
+       it either turns away or steps back still facing the enemy (0x50b6fe with the back
+       flag), whichever needs less turning; a step into a taken cell stands instead. Both
+       counters only change here. This is what frees a reloading musketeer pressed into a
+       melee: the bayonet (`ATTACK_RADIUS 0 40 80`) and the musket (`250 850`) both need
+       room. ACR plays the normal walk for the backward step (the original's back-step
+       animation lists at type +0xac7/+0xc3b are not read).
 - **Damage** (`MakeDamage`):
   - Start with `DAMAGE`, plus `min(kills·SKILLDAMAGEBONUS/10, 19·damage)` if the mask
     allows, minus `SHIELD`.

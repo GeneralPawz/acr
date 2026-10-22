@@ -557,7 +557,10 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
     } else if u.stand_ground {
         // Standing ground (0x5204aa): a target out of range is dropped, never chased.
         u.pop_order();
-    } else if dst >= a.radius.0 {
+    } else if dst < a.radius.0 {
+        let need = a.radius.0 - dst;
+        too_close(w, i, e_pos, need);
+    } else {
         // Walk in the index's walking stance if the type has one (`#MOTION_Lk`), otherwise
         // in the ground stance; then SetDestUnit (0x51b6c0): path to the target's cell.
         if amove {
@@ -577,6 +580,48 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
         if let Some((x, y)) = create_path(m, mover, &mut u.path, &mut w.random, ecell.0, ecell.1, t.stop_distance) {
             u.dest = Some(Pos::new(x, y));
         }
+    }
+}
+
+/// A target inside the minimum range of the chosen attack (0x520689 in `AttackObjLink`): the
+/// unit stands for 32 ticks (OB+0x5b), then backs away in up to 11 steps (OB+0x5a). More than
+/// 16 px short it turns its back and walks off; closer, it either turns away or steps back
+/// facing the target, whichever needs less turning. Without this a musketeer pressed against
+/// an enemy (closer than the bayonet's 40 px and the musket's 250 px) stood still for good.
+fn too_close(w: &mut World, i: usize, e_pos: Pos, need: i32) {
+    let catalog = w.catalog.clone();
+    let t = catalog.get(w.units[i].kind);
+    let u = &mut w.units[i];
+    if u.backoff == 0 {
+        if u.backoff_wait < 32 {
+            u.backoff_wait += 1;
+            try_to_stand(u, t, &mut w.random, false);
+            u.dest = None;
+            return;
+        }
+        (u.backoff, u.backoff_wait) = (11, 0);
+    }
+    let dir = get_dir(e_pos.x - u.pos.x, e_pos.y - u.pos.y);
+    let away = dir.wrapping_add(128);
+    let mrot = t.rotate;
+    let mrot1 = (mrot + mrot / 2).min(16);
+    let to_away = away.wrapping_sub(u.dir) as i8;
+    let to_face = dir.wrapping_sub(u.dir) as i8;
+    // (direction to take, step backwards, turn still needed)
+    let (d, back, dd) = if need > 16 || i32::from(to_away).abs() < i32::from(to_face).abs() {
+        (away, false, to_away)
+    } else {
+        (dir, true, to_face)
+    };
+    if i32::from(dd).abs() < mrot1 {
+        u.dir = d;
+        crate::motion::step(w, i, d, back);
+        let u = &mut w.units[i];
+        u.backoff = u.backoff.saturating_sub(1);
+    } else {
+        // 0x50a20f: turn by `ROTATE` towards it.
+        let r = mrot as u8;
+        u.dir = if dd > 0 { u.dir.wrapping_add(r) } else { u.dir.wrapping_sub(r) };
     }
 }
 

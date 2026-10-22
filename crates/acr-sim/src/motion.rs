@@ -553,6 +553,36 @@ fn motion_handler(
     None
 }
 
+/// One step towards direction `d` outside the motion handler (0x50e4b2): `back` walks away
+/// from `d` while still facing it. A step into a taken or blocked cell stands instead.
+pub(crate) fn step(world: &mut World, i: usize, d: u8, back: bool) {
+    let catalog = world.catalog.clone();
+    let World { units, occupancy, map, random, .. } = world;
+    let u = &mut units[i];
+    let t = catalog.get(u.kind);
+    if u.unlimited {
+        return;
+    }
+    let md = if back { d.wrapping_add(128) } else { d };
+    let lx = u.lx;
+    let nst = t.motion_frames() >> SPEED_SH;
+    let end = Pos::new(u.pos.x + nst * (t.step_dx(md) << SPEED_SH), u.pos.y + nst * (t.step_dy(md) << SPEED_SH));
+    let (xf, yf) = Unit::cell_of(end, lx);
+    occupancy.clr_bar(u.cell.0, u.cell.1, lx);
+    if occupancy.check_bar(xf, yf, lx, lx) || map.land.check_bar(xf, yf, lx, lx) {
+        try_to_stand(u, t, random, false);
+        occupancy.set_bar(u.cell.0, u.cell.1, lx);
+        return;
+    }
+    u.vel = (0, 0);
+    try_to_move(u, t, &map.land, random, md, 16);
+    if u.vel != (0, 0) {
+        u.cell = (xf, yf);
+    }
+    u.dir = d;
+    occupancy.set_bar(u.cell.0, u.cell.1, lx);
+}
+
 /// `TryToMove` (0x50b021), walking forwards. In stance `s ≠ 0` the unit plays
 /// `#MOTION_L{s−1}`/`#MOTION_R{s−1}` and its step is scaled by `RATE[s−1]/16` (0x50b13c);
 /// the look-ahead still counts the frames of `#MOTION_L`.

@@ -58,8 +58,9 @@ fn formations(world: &World, player: u8) -> BTreeMap<u16, u32> {
 }
 
 /// `state`: mode, tick, the player's resources and selection, objects per owner and type,
-/// the mission's end; with `units`, every object (of `owner`).
-pub fn state(game: &Game, units: bool, owner: Option<u8>, visible_only: bool) -> Value {
+/// the mission's end; with `units`, every object (of `owner`); with `detail`, also what each
+/// one is doing.
+pub fn state(game: &Game, units: bool, owner: Option<u8>, visible_only: bool, detail: bool) -> Value {
     let mut v = json!({"mode": mode_name(game), "screen": tree::screen_name(game)});
     let m = v.as_object_mut().unwrap();
     let Mode::InGame(g) = &game.mode else { return v };
@@ -127,6 +128,30 @@ pub fn state(game: &Game, units: bool, owner: Option<u8>, visible_only: bool) ->
                 }
                 if let Some(b) = u.brigade {
                     o.insert("brigade".into(), b.into());
+                }
+                if detail {
+                    o.insert("dir".into(), u.dir.into());
+                    o.insert(
+                        "orders".into(),
+                        u.orders.iter().rev().map(|o| format!("{o:?}")).collect::<Vec<_>>().into(),
+                    );
+                    o.insert("anim".into(), format!("{:?}", u.anim).into());
+                    o.insert("frame".into(), json!([u.frame, u.anim_frames]));
+                    o.insert("stance".into(), json!([u.stance, u.local_stance, u.ground_state]));
+                    o.insert("delay".into(), json!([u.delay, u.max_delay]));
+                    o.insert("moving".into(), u.in_motion.into());
+                    let flags: Vec<&str> = [
+                        (u.stand_ground, "stand_ground"),
+                        (u.melee_only, "melee_only"),
+                        (u.no_ff_avoid, "friendly_fire"),
+                        (u.no_search_victim, "no_search"),
+                    ]
+                    .into_iter()
+                    .filter_map(|(on, name)| on.then_some(name))
+                    .collect();
+                    if !flags.is_empty() {
+                        o.insert("flags".into(), flags.into());
+                    }
                 }
                 let b = g.unit_window_box(u);
                 let c = [b[0] + b[2] / 2.0, b[1] + b[3] / 2.0];
@@ -229,6 +254,11 @@ pub fn command(game: &Game, v: &Value) -> Result<Vec<Command>, String> {
         "patrol" => one(Command::Patrol { player, units: units()?, x: int(v, "x")?, y: int(v, "y")? }),
         "stop" => one(Command::Stop { player, units: units()? }),
         "attack" => one(Command::Attack { player, units: units()?, target: id(v, "target")? }),
+        "friendly_fire" => one(Command::FriendlyFire {
+            player,
+            units: units()?,
+            shoot_own: v.get("on").and_then(Value::as_bool).unwrap_or(true),
+        }),
         "gather" => one(Command::Gather { player, units: units()?, x: int(v, "x")?, y: int(v, "y")? }),
         "repair" => one(Command::Repair { player, units: units()?, building: id(v, "building")? }),
         "enter" => one(Command::Enter { player, units: units()?, building: id(v, "building")? }),
