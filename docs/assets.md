@@ -170,6 +170,36 @@ renderer); a face is visible or hidden as a whole; the mirrored half of unit dir
 nothing; a model seen from the side of a building's single view shows flat colours there.
 Building models therefore hold up from all sides in shape but not yet in texture.
 
+## Realistic surfaces for buildings (`acr_assets.surfaces`)
+
+A realistic look matters more than matching the sprites (user decision, #214): buildings use
+shared procedural materials instead of the projection. `surfaces.py` generates tileable
+256-pixel colour textures with their shading baked in, so they read under the game's simple
+Lambert light:
+
+| Kind | Look | Metres per tile |
+|---|---|---|
+| `logwall` | horizontal logs, rounded shading, grain, weathered tops, dark chinking | 1.6 |
+| `bark` | stakes and log piles: vertical fissures, lichen | 0.35 |
+| `shingles` | wooden shingles in staggered rows along the eaves, row shadows, a little moss | 1.4 |
+| `slate` | darker, finer shingles (stone house) | 1.2 |
+| `timber` | hewn beams and boards: grain, cracks, weathering | 1.0 |
+| `stone` | fieldstone masonry with mortar joints | 1.8 |
+| `rubble` | larger loose stones | 0.8 |
+| `earth` | trodden earth, pebbles, grass | 4.0 |
+
+`surfaces.aligned_uv` maps each face along its own axes: u along the face's horizontal
+direction (a roof's eaves, a wall's length), v up its slope, ground axes for flat faces; so
+shingle rows follow the eaves and bark runs up the stakes whatever the building's angle.
+An asset picks the kind by part name (`SURFACES` rules, first match wins, e.g.
+`("roof", "shingles")`), and `surfaces.apply` gives every mesh its material. Each kind's
+material is made once per build and shared by all states and parts.
+
+For `EngKre` this replaced the per-state sprite atlases: the build takes 8 s instead of
+2 min 18 s, the file is 2.6 MB instead of 6 MB, and the back walls and far roofs look like
+the front in the free camera (#202). `PROJECT = True` in the script brings the projection
+back. The sprite check stays a sanity check for size and placement only.
+
 ## Sprite check (`acr model-check`)
 
 `acr model-check <game-dir> <TYPE> <model.glb> <out>` writes the reference, runs
