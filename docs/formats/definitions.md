@@ -186,7 +186,7 @@ transliterated Russian names or the values; `?` marks guesses, blank means unkno
 | `CANTCAPTURE` | | 24 | 23 | flag: cannot capture |
 | `CAPTURE` | | 20 | 20 | flag: can capture |
 | `CATEGORY` | `s` | 2 | 2 | category (`STRELOK`) |
-| `CHECKPOINTS` | `#(ii)` | 119 | 119 | building: cells checked for placement |
+| `CHECKPOINTS` | `#(ii)` | 119 | 119 | building: cells checked for placement; where it explodes when destroyed (`DESTRUCT`, 0x4e8513) |
 | `COMMANDCENTER` | | 14 | 14 | flag |
 | `CONCENTRATOR` | `#(ii)` | 117 | 117 | building: gathering points |
 | `COSTPERCENT` | `i` | 138 | 127 | percent the price changes per built object? |

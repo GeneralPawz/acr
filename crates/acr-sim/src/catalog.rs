@@ -562,7 +562,8 @@ pub struct ObjectType {
     /// stores them as bytes (NM+0x16c6), so only the low 8 bits of each value count.
     pub lock_points: Vec<(i32, i32)>,
     /// `DESTRUCT prob n (weapon)*n` (NM+0x28a8, +0x28a6, +0x28ac): the explosions of a
-    /// ruined building section, each born with probability `prob`/32768.
+    /// ruined building section and of a destroyed building, each born with probability
+    /// `prob`/32768.
     pub destruct: Destruct,
     pub stand: Option<AnimInfo>,
     pub motion_l: Option<AnimInfo>,
