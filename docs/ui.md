@@ -137,6 +137,16 @@ Abbruch (0xff) are `GP_TextButton`s on `Interf2\Buttons` frame 0 at (472, 577) a
 
 In ACR the resolution sets the window size (the menus always scale 1024×768).
 
+ACR adds one combo box for the control scheme (#129, [controls.md](controls.md)) beside the
+section label `INTF_OPT_GO` at (619, 419), where the background has free paper between the
+music slider and the game mode box. Its lines are German texts of ACR's own ("Steuerung:
+Original", "Steuerung: Modern", "Steuerung: Modern, Rand aus"); the game texts have none.
+The game options have the same box at +239, +366. ACR stores all options when OK is pressed,
+as `key=value` lines in `settings.txt` in `%LOCALAPPDATA%\ACR` (the folder of
+`game-dir.txt`; `ACR_SETTINGS_DIR` overrides it) or in `localStorage` entry `acr-settings`
+in the browser, and reads them at start-up (volumes and window size included). The
+original keeps its options elsewhere; ACR does not read or write those.
+
 ### Single missions (0x5d66b0) and campaign missions (0x5c4e30)
 
 Missions come from `Missions\Missions.txt` (0x569c27: id, name, script DLL, map,
@@ -605,6 +615,18 @@ described in [simulation.md](simulation.md#fog-of-war).
   The view moves half the speed in map cells (32 × 16 px) per game frame. ACR spreads
   that step over the frame so it moves smoothly.
 - Game speed: ticks/s = `1000 / (2·FPSTime)`. ACR caps the uncapped setting at 100.
+- ACR's optional modern controls (#129, `ingame/controls.rs`, key and mouse reference in
+  [controls.md](controls.md)) leave all of the above unchanged in the original scheme. In
+  the modern scheme: the wheel sets a zoom level 0.5..2 (four notches double it) and the
+  camera scale glides to it about the window point under the cursor; Ctrl + left drag and
+  middle drag pan the map (Ctrl + left click without moving is a plain click); W/A/S/D
+  scroll like the arrow keys, which then set the speed to `ScrollSpeed` instead of 4 and
+  move the view by speed / scale so it moves the same on the screen at any zoom; the edge
+  can be switched off; Home centres the selection, a group digit pressed twice within
+  0.5 s centres the group, Escape cancels a mode or drag before it opens the menu, and
+  Alt + W/A/S/D press the icons W/A/S/D press in the original. The zoomed-out view of key L
+  keeps its 1/4 scale and returns to the wheel's level. All hit tests (selection,
+  right click, building preview, minimap rectangle, sounds) go through the camera scale.
 
 ### Game menu (0x5d9c30) and game options (0x5dbe10)
 

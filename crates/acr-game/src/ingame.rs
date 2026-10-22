@@ -21,6 +21,7 @@ use winit::keyboard::NamedKey;
 
 use crate::ui::{GameKind, GameSetup};
 
+mod controls;
 mod dip;
 mod interface;
 mod panels;
@@ -503,6 +504,7 @@ impl InGame {
             }
             self.ambient_ticks += ticks;
         }
+        self.glide_zoom(seconds, window);
         self.scroll_view(seconds, window);
         self.want_new_types();
         self.objects.set_dynamic(self.unit_sprites());

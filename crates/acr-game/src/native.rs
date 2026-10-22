@@ -38,6 +38,11 @@ fn run() -> Result<(), String> {
     let mut game = Game::new(event_loop.create_proxy(), Box::new(assets));
     game.set_saves(Box::new(acr_app::saves::FolderSaves::new(&dir)));
     game.set_profiles(Box::new(acr_app::saves::FolderSaves::files(&dir, "Players", "txt")));
+    // The options: `settings.txt` next to the remembered game folder, or in `ACR_SETTINGS_DIR`
+    // (for runs side by side).
+    if let Some(settings) = std::env::var_os("ACR_SETTINGS_DIR").map(PathBuf::from).or_else(data_dir) {
+        game.set_settings_store(Box::new(acr_app::saves::FolderSaves::files(&settings, "", "txt")));
+    }
     // Developer shortcut: skip movies and menus and open a map right away.
     if let Ok(map) = std::env::var("ACR_START_MAP") {
         game.start_map(&map);

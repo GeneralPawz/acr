@@ -68,6 +68,8 @@ pub struct Game {
     cursor: PhysicalPosition<f64>,
     last_frame: Option<web_time::Instant>,
     modifiers: ModifiersState,
+    /// The options came from the settings file: the window takes their resolution.
+    stored_settings: bool,
 }
 
 impl Game {
@@ -86,6 +88,7 @@ impl Game {
             cursor: Default::default(),
             last_frame: None,
             modifiers: ModifiersState::empty(),
+            stored_settings: false,
         }
     }
 
@@ -260,14 +263,7 @@ impl Game {
                 }
                 let (effects, music) = settings.volumes();
                 self.audio.set_volumes(effects, music);
-                #[cfg(not(target_arch = "wasm32"))]
-                if let Some(window) = &self.window
-                    && window.fullscreen().is_none()
-                {
-                    let [w, h] =
-                        ui::settings::RESOLUTIONS[settings.resolution.min(ui::settings::RESOLUTIONS.len() - 1)];
-                    let _ = window.request_inner_size(winit::dpi::PhysicalSize::new(w, h));
-                }
+                self.apply_resolution();
             }
             ui::Action::StartGame(setup) => {
                 log::info!("starting {setup:?}");
@@ -333,6 +329,26 @@ impl Game {
 
     pub fn set_saves(&mut self, saves: Box<dyn acr_app::saves::SaveStore>) {
         self.ui.set_saves(saves);
+    }
+
+    /// Where the options are kept between runs (`settings.txt` in `%LOCALAPPDATA%\ACR`, the
+    /// browser's storage); takes the stored options.
+    pub fn set_settings_store(&mut self, store: Box<dyn acr_app::saves::SaveStore>) {
+        self.stored_settings = self.ui.set_settings_store(store);
+        let (effects, music) = self.ui.settings().volumes();
+        self.audio.set_volumes(effects, music);
+    }
+
+    /// The window size of the options' resolution (not in fullscreen or the browser).
+    fn apply_resolution(&self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(window) = &self.window
+            && window.fullscreen().is_none()
+        {
+            let settings = self.ui.settings();
+            let [w, h] = ui::settings::RESOLUTIONS[settings.resolution.min(ui::settings::RESOLUTIONS.len() - 1)];
+            let _ = window.request_inner_size(winit::dpi::PhysicalSize::new(w, h));
+        }
     }
 
     /// The save dialog's OK: writes the running game as `Save\<name>.sav`.
@@ -407,7 +423,13 @@ impl ApplicationHandler<Event> for Game {
         };
         // The menus draw the original cursor.
         window.set_cursor_visible(false);
+        // The wheel and the middle button belong to the game, not to the page.
+        #[cfg(target_arch = "wasm32")]
+        web::guard_canvas(&window);
         self.window = Some(window.clone());
+        if self.stored_settings {
+            self.apply_resolution();
+        }
         let proxy = self.proxy.clone();
         acr_app::spawn(async move {
             match Gpu::new(window).await {
@@ -541,6 +563,10 @@ impl ApplicationHandler<Event> for Game {
                         game.right_button(&ctx, state == ElementState::Pressed);
                         ingame::GameMouse::None
                     }
+                    (MouseButton::Middle, _) => {
+                        game.middle_button(state == ElementState::Pressed);
+                        ingame::GameMouse::None
+                    }
                     _ => ingame::GameMouse::None,
                 };
                 match result {
@@ -574,7 +600,21 @@ impl ApplicationHandler<Event> for Game {
                     MouseScrollDelta::LineDelta(_, y) => y,
                     MouseScrollDelta::PixelDelta(p) => p.y as f32 / 40.0,
                 };
+                // Over the running game the wheel zooms (modern controls only).
+                if let Mode::InGame(game) = &mut self.mode
+                    && game.ready()
+                    && !self.ui.dialog_open()
+                {
+                    game.wheel(lines);
+                    return;
+                }
                 self.ui_input(ui::Input::Wheel(lines), event_loop);
+            }
+            WindowEvent::Focused(false) => {
+                // Keys and buttons released elsewhere never arrive.
+                if let Mode::InGame(game) = &mut self.mode {
+                    game.release_all();
+                }
             }
             WindowEvent::KeyboardInput {
                 event: KeyEvent { logical_key, text, state: ElementState::Pressed, .. },

@@ -153,10 +153,10 @@ pub struct State {
     /// The last left button release on the map (time, canvas point), for double clicks.
     last_click: Option<(web_time::Instant, [f32; 2])>,
     /// The selection when the left button went down (Shift adds the rectangle to it).
-    select_before: Vec<EntityId>,
+    pub(super) select_before: Vec<EntityId>,
     /// The right button went down on the map with a selection: window point and world pixel
     /// (`0x1100b32`, start 0x1100acc / 0x1100ad0).
-    right_drag: Option<([f32; 2], (i32, i32))>,
+    pub(super) right_drag: Option<([f32; 2], (i32, i32))>,
     /// `GO&ATTACK`: moves are attack-moves (`0x28f9e55`).
     pub attack_mode: bool,
     /// Space cycles through the selection (0x4c6020).
@@ -170,6 +170,8 @@ pub struct State {
     queues: HashMap<EntityId, (usize, i32, i32)>,
     /// Messages to put on the message list once the texts are at hand.
     hints: Vec<Hint>,
+    /// The optional modern controls (#129).
+    pub(super) modern: super::controls::Modern,
 }
 
 /// A message of the production interface (`AssignHint1`).
@@ -217,6 +219,7 @@ impl Default for State {
             market_buy: None,
             queues: HashMap::new(),
             hints: Vec::new(),
+            modern: Default::default(),
         }
     }
 }
@@ -231,11 +234,12 @@ pub fn tick_rate(frame_time: i32) -> u32 {
 const CELL: [f32; 2] = [32.0, 16.0];
 
 impl InGame {
-    /// Applies the options: game speed (tick rate) and scroll speed.
+    /// Applies the options: game speed (tick rate), scroll speed and the control scheme.
     pub fn apply_settings(&mut self, settings: &Settings) {
         self.frame_time = settings.frame_time;
         self.clock.set_rate(tick_rate(settings.frame_time));
         self.interface.scroll_speed = settings.scroll_speed.clamp(2, 10);
+        self.apply_controls(settings);
     }
 
     pub fn set_modifiers(&mut self, mods: ModifiersState) {
@@ -270,7 +274,7 @@ impl InGame {
         self.clamp_camera(window);
     }
 
-    fn clamp_camera(&mut self, window: [f32; 2]) {
+    pub(super) fn clamp_camera(&mut self, window: [f32; 2]) {
         if let Some(terrain) = &self.terrain {
             let side = (terrain.width - 1) as f32 * 32.0;
             let s = self.camera.scale;
@@ -288,11 +292,19 @@ impl InGame {
     /// The scroll speeds of 0x4c5910, updated once per game frame: arrow keys set ±4, the
     /// cursor at the edge accelerates up to `ScrollSpeed`, otherwise the speed decays by 1;
     /// the view moves by half the speed in map cells per frame.
+    ///
+    /// The modern controls (#129) add W/A/S/D to the arrow keys, which then scroll at
+    /// `ScrollSpeed`, can switch the edge off, and keep the speed on the screen the same at
+    /// any zoom.
     pub(super) fn scroll_view(&mut self, seconds: f32, window: [f32; 2]) {
         let rate = 1.0 / self.clock_period();
         self.interface.scroll_time += seconds.min(0.25);
         let frame = 1.0 / rate;
         let edge = EDGE * self.interface.canvas.scale.max(1.0);
+        let modern = self.modern();
+        let key_speed = if modern { self.interface.scroll_speed } else { KEY_SCROLL };
+        let edge_on = self.interface.modern.edge_scroll && self.interface.modern.pan.is_none();
+        let keys = self.interface.modern.keys;
         while self.interface.scroll_time >= frame {
             self.interface.scroll_time -= frame;
             for axis in 0..2 {
@@ -302,11 +314,11 @@ impl InGame {
                     (NamedKey::ArrowUp, NamedKey::ArrowDown)
                 };
                 let v = &mut self.interface.scroll[axis];
-                let at = self.cursor.filter(|_| self.drag_from.is_none()).map(|c| c[axis]);
-                if self.held.contains(&minus) {
-                    *v = -KEY_SCROLL;
-                } else if self.held.contains(&plus) {
-                    *v = KEY_SCROLL;
+                let at = self.cursor.filter(|_| self.drag_from.is_none() && edge_on).map(|c| c[axis]);
+                if self.held.contains(&minus) || keys[2 * axis] {
+                    *v = -key_speed;
+                } else if self.held.contains(&plus) || keys[2 * axis + 1] {
+                    *v = key_speed;
                 } else if at.is_some_and(|c| c < edge) {
                     *v = (*v - 1).max(-self.interface.scroll_speed);
                 } else if at.is_some_and(|c| c > window[axis] - edge) {
@@ -317,7 +329,7 @@ impl InGame {
             }
         }
         // Spread each frame's step over the frame so the view moves smoothly.
-        let step = seconds.min(0.25) * rate;
+        let step = seconds.min(0.25) * rate / if modern { self.camera.scale } else { 1.0 };
         self.camera.x += (self.interface.scroll[0] / 2) as f32 * CELL[0] * step;
         self.camera.y += (self.interface.scroll[1] / 2) as f32 * CELL[1] * step;
         self.clamp_camera(window);
@@ -1434,6 +1446,30 @@ impl InGame {
 
     /// Left button. Returns what the app should do.
     pub fn left_button(&mut self, ctx: &Ctx, pressed: bool) -> GameMouse {
+        // The modern controls: Ctrl + left drag on the map pans; without moving it is a
+        // plain click.
+        if pressed
+            && self.modern()
+            && self.interface.mods.control_key()
+            && self.drag_from.is_none()
+            && self.interface.modern.pan.is_none()
+            && self.cursor.is_some_and(|c| !self.over_hud(ctx, c))
+        {
+            self.start_pan(super::controls::PanButton::CtrlLeft);
+            return GameMouse::None;
+        }
+        if !pressed && let Some(click) = self.end_ctrl_pan() {
+            if click {
+                self.left_click(ctx, true);
+                return self.left_click(ctx, false);
+            }
+            return GameMouse::None;
+        }
+        self.left_click(ctx, pressed)
+    }
+
+    /// The left button as the original handles it.
+    fn left_click(&mut self, ctx: &Ctx, pressed: bool) -> GameMouse {
         let Some(at) = self.cursor else { return GameMouse::None };
         let p = self.canvas_point(at);
         if pressed && self.drag_from.is_none() && self.dip_press(ctx, p) {
@@ -1578,6 +1614,9 @@ impl InGame {
     /// Mouse moved (window position).
     pub fn mouse_moved(&mut self, at: [f32; 2]) {
         self.cursor = Some(at);
+        if self.pan_moved(at) {
+            return;
+        }
         let p = self.canvas_point(at);
         self.diplomacy.mouse_moved(p);
         // The rectangle selects while it is drawn (0x4d6851 every event).
@@ -1694,14 +1733,14 @@ impl InGame {
     }
 
     /// Leaves the build mode or the rally point mode; false if neither was on.
-    fn cancel_mode(&mut self) -> bool {
+    pub(super) fn cancel_mode(&mut self) -> bool {
         let on = self.interface.placing.is_some() || self.interface.rally_mode;
         self.interface.placing = None;
         self.interface.rally_mode = false;
         on
     }
 
-    fn window_size(&self) -> [f32; 2] {
+    pub(super) fn window_size(&self) -> [f32; 2] {
         self.interface.window
     }
 
@@ -1709,6 +1748,9 @@ impl InGame {
     pub fn key(&mut self, ctx: &Ctx, key: &Key, pressed: bool) -> GameKey {
         if let Key::Named(named) = key {
             self.on_key(*named, pressed);
+        }
+        if let Some(used) = self.modern_key(ctx, key, pressed) {
+            return used;
         }
         if !pressed {
             return GameKey::None;
@@ -1773,6 +1815,7 @@ impl InGame {
             }
         } else {
             self.selected = alive;
+            self.group_recalled(n);
         }
     }
 
@@ -1782,7 +1825,8 @@ impl InGame {
         let (x, y) = self.world_at(at);
         let zoom = !self.interface.hud.zoom;
         self.interface.hud.zoom = zoom;
-        self.camera.scale = if zoom { ZOOM_SCALE } else { 1.0 };
+        // Back from it, the modern controls return to the wheel's zoom level.
+        self.camera.scale = if zoom { ZOOM_SCALE } else { self.interface.modern.zoom };
         let window = self.window_size();
         let s = self.camera.scale;
         self.camera.x = x as f32 - window[0] / s / 2.0;
@@ -1807,7 +1851,7 @@ impl InGame {
     }
 
     /// Letter keys of `Keyboard.dat`: press the shown icon of that name.
-    fn icon_hotkey(&mut self, ctx: &Ctx, key: u8, mods: ModifiersState) {
+    pub(super) fn icon_hotkey(&mut self, ctx: &Ctx, key: u8, mods: ModifiersState) {
         let flags = u8::from(mods.control_key()) | (u8::from(mods.alt_key()) << 1) | (u8::from(mods.shift_key()) << 2);
         let Some(data) = self.interface.hud.data(ctx) else { return };
         let names: Vec<String> = self

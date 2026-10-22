@@ -141,6 +141,9 @@ struct Entry {
     built: bool,
 }
 
+/// Name of the options file in the settings store.
+const SETTINGS_FILE: &str = "settings";
+
 /// All menu state: the screen stack plus the loaded files, texts and textures.
 pub struct Ui {
     lib: Library,
@@ -162,6 +165,9 @@ pub struct Ui {
     game_cursor: Option<(usize, [i32; 2])>,
     saves: Box<dyn acr_app::saves::SaveStore>,
     profiles: Box<dyn acr_app::saves::SaveStore>,
+    /// Where the options are kept between runs (ACR's `settings.txt`, see
+    /// [`Settings::encode`]); none in tests.
+    settings_store: Option<Box<dyn acr_app::saves::SaveStore>>,
     /// Shown on the loading screen while a saved game is replayed (0..=1).
     loading_progress: Option<f32>,
 }
@@ -188,6 +194,7 @@ impl Ui {
             game_cursor: None,
             saves: Box::new(acr_app::saves::MemorySaves::default()),
             profiles: Box::new(acr_app::saves::MemorySaves::default()),
+            settings_store: None,
             loading_progress: None,
         };
         ui.stack.push(Entry { screen: Box::new(screens::main_menu::MainMenu::default()), built: false });
@@ -474,6 +481,11 @@ impl Ui {
             Nav::Quit => Action::Quit,
             Nav::Apply(settings) => {
                 self.settings = (*settings).clone();
+                if let Some(store) = &mut self.settings_store
+                    && let Err(e) = store.write(SETTINGS_FILE, self.settings.encode().as_bytes())
+                {
+                    log::warn!("cannot store the options: {e}");
+                }
                 self.stack.pop();
                 self.after_pop();
                 Action::Settings(settings)
@@ -527,6 +539,17 @@ impl Ui {
 
     pub fn set_saves(&mut self, saves: Box<dyn acr_app::saves::SaveStore>) {
         self.saves = saves;
+    }
+
+    /// Where the options are kept between runs; reads them from there. True if a stored
+    /// file was found.
+    pub fn set_settings_store(&mut self, store: Box<dyn acr_app::saves::SaveStore>) -> bool {
+        let stored = store.read(SETTINGS_FILE);
+        if let Some(bytes) = &stored {
+            self.settings = Settings::decode(&String::from_utf8_lossy(bytes));
+        }
+        self.settings_store = Some(store);
+        stored.is_some()
     }
 
     pub fn saves_mut(&mut self) -> &mut dyn acr_app::saves::SaveStore {
