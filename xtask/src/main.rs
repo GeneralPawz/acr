@@ -5,7 +5,8 @@
 //!   localhost; with `--game-dir`, the archives are served under `/game/` with range
 //!   support and `http://127.0.0.1:N/?game=/game/` opens the app without a file picker
 //! - `cargo xtask dist [--game-dir DIR] [--install]`   the release in `dist/`: `AmericanConquest.exe`,
-//!   the browser build in `web/` and its launcher `AmericanConquest-Web.exe`
+//!   the browser build in `web/`, its launcher `AmericanConquest-Web.exe` and ACR's sounds in
+//!   `ACR/Sounds/`; `--install` copies them into the game folder
 //! - `cargo xtask assets [NAME..] [--game-dir DIR] [--compress none|meshopt|draco] [--check] [--blend]`
 //!   rebuild the 3D assets with Blender into `target/assets` (see `docs/assets.md`)
 //! - `cargo xtask e2e [FILE..] [--filter S] [--game-dir DIR] [--exe PATH] [--no-build] [--gpu] [--list] [-v]`
@@ -181,6 +182,8 @@ fn dist(game_dir: Option<&Path>, install: bool) -> Result<()> {
         std::fs::copy(&built, dir.join(&exe))?;
         std::fs::copy(&built_web_exe, dir.join(&web_exe))?;
         copy_dir(&web, &dir.join("web"))?;
+        // ACR's own hit and pain sounds, looked up as game files `ACR\Sounds\<file>`.
+        copy_dir(&root.join("assets").join("sounds"), &dir.join("ACR").join("Sounds"))?;
         Ok(())
     };
     install_to(&out)?;
@@ -188,7 +191,7 @@ fn dist(game_dir: Option<&Path>, install: bool) -> Result<()> {
     if install {
         let dir = game_dir.ok_or("--install needs --game-dir")?;
         install_to(dir)?;
-        eprintln!("installed {exe}, {web_exe} and web/ to {}", dir.display());
+        eprintln!("installed {exe}, {web_exe}, web/ and ACR/Sounds/ to {}", dir.display());
     }
     Ok(())
 }

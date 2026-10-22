@@ -53,7 +53,7 @@ fn run(drive: Option<crate::drive::Options>) -> Result<(), String> {
         },
     };
     log::info!("game data: {}", dir.display());
-    let assets = ExtraModels::new(NativeAssets::open(&dir)?, &dir);
+    let assets = ExtraFiles::new(NativeAssets::open(&dir)?, &dir);
     let event_loop = crate::event_loop()?;
     let mut game = Game::new(event_loop.create_proxy(), Box::new(assets));
     // `ACR_SAVE_DIR` keeps savegames and player profiles of test runs out of the game folder.
@@ -77,47 +77,74 @@ fn run(drive: Option<crate::drive::Options>) -> Result<(), String> {
     event_loop.run_app(&mut game).map_err(|e| e.to_string())
 }
 
-/// 3D models from outside the game folder (docs/rendering-3d.md): the folder `ACR_MODELS_DIR`
-/// names, else `ACR\Models` next to the executable; their `*.glb` files appear as
-/// `ACR\Models\<file>` and take precedence over the game folder's own.
-struct ExtraModels {
+/// ACR's own files from outside the game folder, which take precedence over the game folder's
+/// own `ACR\Models` and `ACR\Sounds`:
+/// - 3D models (docs/rendering-3d.md): the folder `ACR_MODELS_DIR` names, else `ACR\Models`
+///   next to the executable; their `*.glb` files appear as `ACR\Models\<file>`;
+/// - hit and pain sounds (docs/simulation.md): the folder `ACR_SOUNDS_DIR` names, else
+///   `ACR\Sounds` next to the executable, else (debug builds) the repository's
+///   `assets/sounds`; their `*.ogg` and `*.wav` files appear as `ACR\Sounds\<file>`.
+struct ExtraFiles {
     inner: NativeAssets,
-    dir: Option<PathBuf>,
+    dirs: Vec<ExtraDir>,
+}
+
+/// A folder whose files stand for the game folder `game` (`ACR\Models`).
+struct ExtraDir {
+    game: &'static str,
+    dir: PathBuf,
     files: Vec<String>,
 }
 
-impl ExtraModels {
-    fn new(inner: NativeAssets, game_dir: &Path) -> Self {
-        let exe_models = std::env::current_exe()
+impl ExtraDir {
+    fn find(game: &'static str, var: &str, game_dir: &Path, dev: Option<PathBuf>, exts: &[&str]) -> Option<Self> {
+        let next_to_exe = std::env::current_exe()
             .ok()
-            .and_then(|e| Some(e.parent()?.join("ACR").join("Models")))
-            .filter(|d| !d.starts_with(game_dir));
-        let dir = std::env::var_os("ACR_MODELS_DIR").map(PathBuf::from).or(exe_models).filter(|d| d.is_dir());
-        let files: Vec<String> = dir
-            .iter()
-            .flat_map(|d| std::fs::read_dir(d).into_iter().flatten().flatten())
+            .and_then(|e| Some(e.parent()?.join(game.replace('\\', "/"))))
+            .filter(|d| !d.starts_with(game_dir) && d.is_dir());
+        let dir = std::env::var_os(var).map(PathBuf::from).or(next_to_exe).or(dev).filter(|d| d.is_dir())?;
+        let files: Vec<String> = std::fs::read_dir(&dir)
+            .into_iter()
+            .flatten()
+            .flatten()
             .filter_map(|e| e.file_name().into_string().ok())
-            .filter(|n| n.to_ascii_lowercase().ends_with(".glb"))
+            .filter(|n| exts.iter().any(|x| n.to_ascii_lowercase().ends_with(x)))
             .collect();
-        if let Some(d) = &dir {
-            log::info!("3d models from {}: {files:?}", d.display());
-        }
-        Self { inner, dir, files }
+        log::info!("{game} from {}: {files:?}", dir.display());
+        Some(Self { game, dir, files })
     }
 
-    /// The file in [`ExtraModels::dir`] that the game path `path` stands for.
+    /// The file that the game path `path` stands for.
     fn local(&self, path: &str) -> Option<PathBuf> {
         let norm = acr_formats::normalize_path(path);
-        let name = norm.strip_prefix("ACR/MODELS/")?;
+        let name = norm.strip_prefix(&acr_formats::normalize_path(self.game))?.strip_prefix('/')?;
         let file = self.files.iter().find(|f| f.eq_ignore_ascii_case(name))?;
-        Some(self.dir.as_ref()?.join(file))
+        Some(self.dir.join(file))
     }
 }
 
-impl acr_app::Assets for ExtraModels {
+impl ExtraFiles {
+    fn new(inner: NativeAssets, game_dir: &Path) -> Self {
+        let dev_sounds = cfg!(debug_assertions)
+            .then(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("assets").join("sounds"));
+        let dirs = [
+            ExtraDir::find(r"ACR\Models", "ACR_MODELS_DIR", game_dir, None, &[".glb"]),
+            ExtraDir::find(r"ACR\Sounds", "ACR_SOUNDS_DIR", game_dir, dev_sounds, &[".ogg", ".wav"]),
+        ];
+        Self { inner, dirs: dirs.into_iter().flatten().collect() }
+    }
+
+    fn local(&self, path: &str) -> Option<PathBuf> {
+        self.dirs.iter().find_map(|d| d.local(path))
+    }
+}
+
+impl acr_app::Assets for ExtraFiles {
     fn paths(&self) -> Vec<String> {
         let mut paths = self.inner.paths();
-        paths.extend(self.files.iter().map(|f| format!(r"ACR\Models\{f}")));
+        for d in &self.dirs {
+            paths.extend(d.files.iter().map(|f| format!(r"{}\{f}", d.game)));
+        }
         paths.sort();
         paths.dedup();
         paths

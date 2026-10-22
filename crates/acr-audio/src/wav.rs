@@ -23,7 +23,11 @@ pub struct Sound {
 }
 
 impl Sound {
+    /// A RIFF/WAVE file, or an Ogg Vorbis file (ACR's own sounds, decoded at once).
     pub fn parse(bytes: &[u8]) -> Result<Self, WavError> {
+        if bytes.starts_with(b"OggS") {
+            return Self::parse_vorbis(bytes);
+        }
         if bytes.len() < 12 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
             return Err(WavError("not a RIFF/WAVE file"));
         }
@@ -60,6 +64,20 @@ impl Sound {
             pos += 8 + len + (len & 1);
         }
         Err(WavError("no data chunk"))
+    }
+
+    fn parse_vorbis(bytes: &[u8]) -> Result<Self, WavError> {
+        use crate::music::{MusicSource, VorbisMusic};
+        let mut music = VorbisMusic::new(bytes.to_vec()).map_err(|_| WavError("invalid Ogg Vorbis file"))?;
+        let (rate, channels) = music.format();
+        if channels == 0 || rate == 0 {
+            return Err(WavError("invalid format"));
+        }
+        let mut samples = Vec::new();
+        while let Some(block) = music.next_block() {
+            samples.extend(block);
+        }
+        Ok(Self { rate, channels, samples: samples.into() })
     }
 
     pub fn frames(&self) -> usize {
