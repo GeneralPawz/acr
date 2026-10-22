@@ -153,7 +153,10 @@ frame. Start a random map with the hit-locations rule and the settings `models=a
 - **`spawn`**: a unit of `type` (a catalog id such as `EngM18(EN)`, or a part of one:
   exact first, else the shortest match) for `owner` (0) at `x`, `y`, facing `dir` (0..255,
   0 = east, 64 = south). `pose`: `stand` (default), `walk` (patrols `walk` px, default 200,
-  east and back) or `crawl` (left leg off below the knee). Answers `unit.id`.
+  east and back) or `crawl` (left leg off below the knee). `lost` (`arm_l`, `arm_r`, `leg_l`,
+  `leg_r`; `foot_l`/`foot_r` at the ankle) and `wounds` (one flesh wound per entry) shape
+  his body; `patrol: true` makes any pose move (a crawler is sent directly, as he takes no
+  orders). Answers `unit.id`.
 - **`hit`**: `unit` (an id) is struck by `cause` (`musket`, `arrow`, `cannonball`,
   `grapeshot`, `shell`, `sabre`, `bayonet`, `axe`) on `region` (`legs`, `arms`, `torso`,
   `head`; drawn as in battle if left out) from direction `dir` (towards the victim, world

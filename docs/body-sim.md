@@ -167,7 +167,8 @@ are piled. The renderer takes a palette from it per instance
   (by energy); then the clip takes over again.
 - **Deaths:** the hips are freed, the tone runs out over 0.2–0.6 s (per man) with a last
   reflex (elbows bent, arms forward, towards the body), he falls, settles and sleeps; his
-  pose is then kept as the corpse's (no `DEATHLIE1`, no `lie_flat` morph). Crawlers and the
+  pose is then kept as the corpse's (no `DEATHLIE1`, no `lie_flat` morph). Balance,
+  stepping and knock-downs of survivors: §2, first slice. Crawlers and the
   lying start from their current pose and stay down. Frozen corpses stay in the physics
   (others fall onto them) until the pool of 96 is full; the oldest then keeps its pose
   without physics.
@@ -184,8 +185,7 @@ are piled. The renderer takes a palette from it per instance
   tick, then the corpses after 4 s, from the side and from above.
 - **Not yet:** severed pieces (`debris.rs`) keep their own throw (they could become small
   ragdoll bodies later); no kneeling or reloading pose exists to be killed in; horses and
-  riders; the corpse's decay sinking is not applied to physics poses; a balance controller
-  (survivors are held by the spring on the hips, not by their feet).
+  riders; the corpse's decay sinking is not applied to physics poses.
 
 ## 2. Physical locomotion (`acr-physics::gait`)
 
@@ -200,6 +200,53 @@ are piled. The renderer takes a palette from it per instance
   - legs drag, or one leg pushes;
   - with one arm: a one-armed pull;
   - with none: writhing.
+
+### First slice (#279)
+
+Kinematic layers over the clips, render side only (`acr_physics::gait`,
+`crates/acr-game/src/ingame/gait_view.rs`, called from `ragdoll_view` for the 48 drawn men
+nearest the window centre that no ragdoll holds; `ACR_NO_GAIT` turns it off).
+
+- **Cycle from the clip:** each `MOTION_*` and `CRAWL*` clip is sampled once (48 samples) in
+  the body's frame. The lowest effector (feet when walking, hands when crawling) within 5 cm
+  of the lowest point carries; how far it slides back under the body is the loop's travel
+  (`MOTION_L`/`_R` of `engm18`: 1.15 m per 0.38 s loop; `CRAWL2` 0.64 m per 1.0 s;
+  `CRAWLARM` 0.32 m per 1.17 s; `WRITHE` travels nothing and keeps its clip).
+- **Phase lock:** the sim position is smoothed over its ticks, and the distance covered
+  plays the clip. The visible body sits where the clip's pushes and pulls have brought it: it
+  advances only while a carrying limb moves back, leading or lagging the sim position by less
+  than one loop. A crawler moves in surges with each pull.
+- **Contacts:** a carrying foot or hand is planted on the terrain at the clip's own height
+  over the ground and held there by two-bone IK (thigh–shin–foot, upperarm–forearm–hand);
+  lifted, it blends back to the clip over 0.12 s. The hips sink where a planted leg cannot
+  reach, and planted feet tilt with the ground. Bench: planted contacts miss their point by
+  1.3–2.9 mm on average (24–55 mm at worst, where a leg is out of reach).
+- **Limp** (`Body::leg` < 100 on both legs): the loop's samples on the bad leg take
+  `1 − 0.6 · severity` of their time (a short, quick step); in its swing the bad leg is held
+  straighter and the hip hikes; the trunk leans over the good leg. The hand on the side of a
+  wounded leg holds the thigh (arm IK); the right hand holds a chest or open-belly wound. A
+  leg ending in a stump (`lost` at the ankle) plants the stump's end on the ground.
+- **Balance for survivors** (`ragdoll_view`): the hip sway is stronger (6× the momentum over
+  the mass, about 1 Hz). The centre of mass is checked against the support between the feet;
+  12 cm outside it, the foot farther from the landing point takes a 0.3 s recovery step by
+  IK under the centre of mass and stays there. An impulse of 19 N·s or more (close grapeshot,
+  cannonball, shell) knocks him down: the root is freed, the legs go to 25 % tone with the
+  knees and hips folding, and he falls to his knees and over. He lies until 2.2 s, then the
+  hips blend from where he lay back to the clip over 1.5 s while the tone returns, and the
+  clip takes him back.
+- **Bench:** `ACR-analysis/gait/bench_gait.py` (with `ACR_EXE`) records a walker, a limper
+  (two wounds in the left leg), a man with the right foot lost, a crawler without legs, a
+  one-armed crawler and a grapeshot hit on a standing man. The bench `spawn` takes `lost`
+  (`arm_l`, `arm_r`, `leg_l`, `leg_r`; `foot_l`, `foot_r` lose the leg at the ankle),
+  `wounds` (one flesh wound per entry) and `patrol` (any pose moves; crawlers, who take no
+  orders, are sent directly).
+- **Not yet:** step length does not change with speed (the cadence does, with the
+  distance); no slope on the bench (the random map's ground only); the sim has no
+  knocked-down state, so a knocked-down survivor always gets up; the recovery step does not
+  move the hips' spring origin and the hips are still held kinematically (no ankle torque
+  or real support forces); a broken lower leg does not hop; a one-legged pushing leg when
+  crawling; legs are not dragged by contacts (the clip's legs). Writhing keeps its clip.
+
 - **Action layers:** keyframed actions (the reload drill, aiming, melee) drive the upper
   body as targets while the gait drives the legs. Physics blends both.
 - Recorded drills (#167) replace the keyframed base motions when available.
