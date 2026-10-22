@@ -1,19 +1,13 @@
 //! Direct object access for the AI DLLs: `GetOBJ` and the `OBJ_*` orders.
 
 use acr_script::runtime::Result;
-use acr_sim::Command;
 
 use super::{Api, ApiFn, Call, Status};
 use crate::guest;
 
 pub const FUNCTIONS: &[ApiFn] = &[
     ApiFn { name: "GetOBJ", original: 0x56f07f, status: Status::Done, handler: get_obj },
-    ApiFn {
-        name: "OBJ_SendTo",
-        original: 0x56f0a1,
-        status: Status::Partial("a single-unit Command::Move; priority and order type need acr-sim orders"),
-        handler: obj_send_to,
-    },
+    ApiFn { name: "OBJ_SendTo", original: 0x56f0a1, status: Status::Done, handler: obj_send_to },
     ApiFn { name: "OBJ_AttackObj", original: 0x56f13f, status: Status::Done, handler: obj_attack_obj },
     ApiFn { name: "OBJ_AttackPoint", original: 0x56f3a2, status: Status::Done, handler: obj_attack_point },
     ApiFn {
@@ -76,10 +70,14 @@ fn unit_arg(api: &Api, c: &Call, i: u32) -> Result<Option<(acr_sim::world::Entit
     Ok(api.object(idx).filter(|u| u.living()).map(|u| (u.id, u.owner)))
 }
 
-/// `void OBJ_SendTo(word index, int x, int y, byte prio, byte ordType)` (pixels).
+/// `void OBJ_SendTo(word index, int x, int y, byte prio, byte ordType)` (0x56f0a1, pixels):
+/// `NewMonsterSendTo(x << 4, y << 4, prio, ordType)` (0x517045) on the object at `index`
+/// (not 0xFFFF), at once: [`acr_sim::motion::send_to_typed`].
 fn obj_send_to(api: &mut Api, c: &mut Call) -> Result<u32> {
-    if let Some((id, owner)) = unit_arg(api, c, 0)? {
-        api.commands.push(Command::Move { player: owner, units: vec![id], x: c.i32(1)?, y: c.i32(2)? });
+    if let Some((id, _)) = unit_arg(api, c, 0)? {
+        let pos = acr_sim::Pos::from_pixels(c.i32(1)?, c.i32(2)?);
+        let (prio, ord) = (c.u8(3)?, c.u8(4)?);
+        acr_sim::motion::send_to_typed(&mut api.world.units[id.0 as usize], pos, prio, ord);
     }
     Ok(0)
 }

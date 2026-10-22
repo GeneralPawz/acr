@@ -72,6 +72,29 @@ pub fn send_to(u: &mut Unit, pos: Pos, prio: u8, replace: bool) {
     u.stand_time = 0;
 }
 
+/// `NewMonsterSendTo` (0x517045) with `CreateOrder`'s order type `ord` (0x525752, `ORD_*`;
+/// bit 7 is masked off), as `OBJ_SendTo` (0x56f0a1) gives it. Refused for buildings, below
+/// the unit's current priority (`PrioryLevel` OB+0xef, compared with the full byte) and for
+/// units walking with `UnlimitedMotion` (`CreateOrder` fails). The order keeps `prio & 0x7f`;
+/// for every order type the steering point (`DestX/DestY`, 0x51725a), the priority
+/// (0x51727d) and `StandTime` (0x517294) are set; priority 0 marks `InPatrol` (0x5172b7).
+pub fn send_to_typed(u: &mut Unit, pos: Pos, prio: u8, ord: u8) -> bool {
+    if u.building || (u.prio > prio && !u.orders.is_empty()) || u.unlimited {
+        return false;
+    }
+    let cell = Unit::cell_of(pos, u.lx);
+    let prio = prio & 0x7f;
+    crate::combat::Placement::from_type(ord & 0x7f).push(&mut u.orders, Order::SendTo { cell, prio });
+    u.dest = Some(pos);
+    u.prio = prio;
+    u.path.delay = 0;
+    u.stand_time = 0;
+    if prio == 0 {
+        u.in_patrol = true;
+    }
+    true
+}
+
 /// `SmartSendTo` (0x52bc95): a move routed over the pathfinding areas to `(x, y)` plus the
 /// unit's group offset `(dx, dy)` (world pixels).
 pub fn smart_send_to(u: &mut Unit, areas: Option<&AreaGraph>, x: i32, y: i32, dx: i32, dy: i32, prio: u8) {

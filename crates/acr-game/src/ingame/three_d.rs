@@ -335,7 +335,7 @@ impl ThreeD {
                 && now.is_multiple_of(super::trail::EVERY)
                 && now != self.trail_tick
             {
-                self.trail.sample(u.id.0, at, u.wounds.crawling(), now);
+                self.trail.sample(u.id.0, at, u.body.crawling(), now);
             }
             if u.death > 0 && !u.building {
                 corpses.push((self.instances.len(), at, view3d::facing_yaw(u.dir)));

@@ -1580,6 +1580,69 @@ OPPOSIT 10 30
         assert_eq!(f.call("GetUnitGlobalInfo", &[0xFFFF, DATA]), 0);
     }
 
+    /// GetUnitExCaps (0x56be77): direction, destination (−1 without), type, owner,
+    /// `StandTime` and, only when asked, the index of the order's link in 0x66a258.
+    #[test]
+    fn get_unit_ex_caps_reports_stand_time_and_order_kind() {
+        let mut f = Fixture::new();
+        let u = &mut f.world.units[6];
+        u.dir = 64;
+        u.stand_time = 17;
+        u.dest = Some(Pos::from_pixels(320, 480));
+        u.orders.push(acr_sim::world::Order::SendTo { cell: (5, 7), prio: 0 });
+        assert_eq!(f.call("GetUnitExCaps", &[6, DATA, 1]), 1);
+        let rd = |f: &Fixture, o: u32| f.mem.read_u32(DATA + o).expect("caps") as i32;
+        assert_eq!([rd(&f, 0), rd(&f, 4), rd(&f, 8), rd(&f, 0x14), rd(&f, 0x18)], [64, 320, 480, 0, 17]);
+        assert_eq!(rd(&f, 0x1c), 8, "NewMonsterSendToLink is entry 8");
+        assert_eq!(f.call("GetUnitExCaps", &[6, DATA, 0]), 1);
+        assert_eq!(rd(&f, 0x1c), -1, "not asked");
+        f.world.units[6].orders.clear();
+        f.world.units[6].dest = None;
+        assert_eq!(f.call("GetUnitExCaps", &[6, DATA, 1]), 1);
+        assert_eq!([rd(&f, 4), rd(&f, 8), rd(&f, 0x1c)], [-1, -1, -1]);
+        f.world.units[6].death = 1;
+        assert_eq!(f.call("GetUnitExCaps", &[6, DATA, 1]), 0);
+        assert_eq!(f.call("GetUnitExCaps", &[-1i32 as u32, DATA, 1]), 0);
+    }
+
+    /// OBJ_SendTo (0x56f0a1 → 0x517045): the order type places the move, a lower priority
+    /// is refused, the order keeps `prio & 0x7f`.
+    #[test]
+    fn obj_send_to_places_by_order_type_and_priority() {
+        use acr_sim::world::Order;
+        let mut f = Fixture::new();
+        let cell = |x| acr_sim::world::Unit::cell_of(Pos::from_pixels(x, 900), f.world.units[6].lx);
+        let (c1, c2, c3) = (cell(800), cell(1600), cell(2000));
+        f.call("OBJ_SendTo", &[6, 800, 900, 0x85, 0]);
+        let u = &f.world.units[6];
+        assert_eq!(u.orders, vec![Order::SendTo { cell: c1, prio: 5 }]);
+        assert_eq!((u.dest, u.prio), (Some(Pos::from_pixels(800, 900)), 5));
+        f.call("OBJ_SendTo", &[6, 1600, 900, 4, 0]);
+        assert_eq!(f.world.units[6].orders.len(), 1, "below the current priority");
+        f.call("OBJ_SendTo", &[6, 1600, 900, 6, 2]);
+        assert_eq!(f.world.units[6].orders[0], Order::SendTo { cell: c2, prio: 6 }, "appended");
+        f.call("OBJ_SendTo", &[6, 2000, 900, 7, 0x81]);
+        let u = &f.world.units[6];
+        assert_eq!((u.orders.len(), u.orders.last()), (3, Some(&Order::SendTo { cell: c3, prio: 7 })), "in front");
+    }
+
+    /// SetLightSpot (0x564017) takes a point zone's centre; an index above 63 is an error;
+    /// ClearLightSpot (0x564121) zeroes the slot.
+    #[test]
+    fn light_spots_fill_and_clear_their_slots() {
+        let mut f = Fixture::new();
+        f.mem.write_u16(DATA, 1200).expect("handle");
+        f.mem.write_u16(DATA + 2, 900).expect("handle");
+        f.mem.write_u32(DATA + 4, 0x4000_0100).expect("handle");
+        f.call("SetLightSpot", &[DATA, 3, 5]);
+        assert_eq!(f.st.light_spots[5], crate::state::LightSpot { x: 1200, y: 900, kind: 3 });
+        let errors = f.st.errors;
+        f.call("SetLightSpot", &[DATA, 3, 64]);
+        assert_eq!(f.st.errors, errors + 1);
+        f.call("ClearLightSpot", &[5]);
+        assert_eq!(f.st.light_spots[5], Default::default());
+    }
+
     /// FindArcherTarget (0x43e5dd) weighs a tower (50) over a lone soldier (1 in its cell and
     /// around): 50·256/19 against 256/8 although the soldier is four times nearer.
     #[test]

@@ -1747,6 +1747,22 @@ No game option writes it. How the map view draws the fog is in
     the next enemy too.
   - `GetUnitInfo` / `GetUnitGlobalInfo` (0x567a0e, 0x567cb9) accept a dying object only when
     it is `Hidden`; ACR's units inside buildings are not dying, so `living()` is the same test.
+  - `GetUnitExCaps` (0x56be77) reports the executed order as the index of its link in the
+    engine's table of 34 order links (0x66a258, looked up by 0x4b0f8c). ACR keeps a
+    building's research, `UNCONSTRUCT`, production and mine work as state rather than
+    orders; they are reported in the order its building link runs them (research 4,
+    unconstruct 33, production 1, a bound mine 7), and a building with none of them reports
+    −1. The engine's order chain may rank production and mining differently.
+  - `OBJ_SendTo` (0x56f0a1 → `NewMonsterSendTo` 0x517045, `motion::send_to_typed`) skips the
+    engine's early returns for ships (`ParkWaterNewMonster` 0x54aa9c runs later, in
+    `ship::check_park`), the transport test 0x54d6a2, the `OB+0x29` bit 7 lock and the
+    re-placement of a unit on a locked cell (0x518246/0x513574); a dying object is ignored
+    (the engine would give it the order). Buildings and `UnlimitedMotion` walkers refuse
+    the order as `CreateOrder` does, and the priority test ignores a stale `PrioryLevel`
+    when the unit has no orders.
+  - Light spots (`SetLightSpot` 0x564017) are stamped once per tick with the fog's blur
+    (`MissionLink::update_fog`); the engine stamps them every frame (0x55a2f1 in the main
+    loop, 0x4bee14), which only differs while the game is paused.
 - **`RemoveFools`.** Pushed friends get a `SendTo` to the nearest free cell (the original uses
   its `Rarr` push tables). Enemies in the way are left to `CheckMotionThroughEnemyAbility`.
 - **Animations.**

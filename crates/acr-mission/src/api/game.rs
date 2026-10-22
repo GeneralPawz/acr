@@ -60,18 +60,8 @@ pub const FUNCTIONS: &[ApiFn] = &[
     done("GetMyNation", 0x5658b6, get_my_nation),
     done("GetAINation", 0x56827b, get_ai_nation),
     ApiFn { name: "NationIsErased", original: 0x5695ce, status: Status::Done, handler: nation_is_erased },
-    ApiFn {
-        name: "SetLightSpot",
-        original: 0x564017,
-        status: Status::Partial("stored; the game stamps them into its fog of war (acr-game)"),
-        handler: set_light_spot,
-    },
-    ApiFn {
-        name: "ClearLightSpot",
-        original: 0x564121,
-        status: Status::Partial("stored; the game stamps them into its fog of war (acr-game)"),
-        handler: clear_light_spot,
-    },
+    ApiFn { name: "SetLightSpot", original: 0x564017, status: Status::Done, handler: set_light_spot },
+    ApiFn { name: "ClearLightSpot", original: 0x564121, status: Status::Done, handler: clear_light_spot },
     ApiFn { name: "GetFogSpotVisibility", original: 0x56e6a4, status: Status::Done, handler: get_fog_spot_visibility },
     done("SetStartPoint", 0x564192, set_start_point),
     ApiFn {
@@ -554,6 +544,12 @@ fn nation_is_erased(api: &mut Api, c: &mut Call) -> Result<u32> {
 
 // --- light spots, camera -------------------------------------------------------------------
 
+/// `void SetLightSpot(GAMEOBJ* zone, int kind, byte index)` (0x564017): a point zone's
+/// `(Index, Serial)` or a `'ZONE'` group's first zone centre goes into slot `index` (64
+/// slots at 0x28b7cbf, 12 bytes each, saved with the game); anything else, or an index
+/// above 63, is a script error. Every frame 0x55a2f1 stamps the used slots (`x != 0`) into
+/// the fog with the `VISION` pattern `kind` (above 7 or negative: 8); acr-game does it in
+/// `MissionLink::update_fog`, and the fog overlay and minimap show it.
 fn set_light_spot(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Some((x, y)) = (if c.u32(0)? == 0 { None } else { api.zone_point(&c.handle(0)?) }) else {
         api.st.error("SetLightSpot : Invalid  <Zone>");
@@ -568,6 +564,8 @@ fn set_light_spot(api: &mut Api, c: &mut Call) -> Result<u32> {
     Ok(0)
 }
 
+/// `void ClearLightSpot(byte index)` (0x564121): zeroes slot `index`; above 63 is a script
+/// error.
 fn clear_light_spot(api: &mut Api, c: &mut Call) -> Result<u32> {
     let i = usize::from(c.u8(0)?);
     if i >= LIGHT_SPOTS {

@@ -44,7 +44,7 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("GetUnitInfo2", 0x578f2c, DONE, get_unit_info2),
     f("SetUnitInfo", 0x567e8a, Status::Partial("life and position; no damage/shield bonus yet"), set_unit_info),
     f("GetUnitGlobalInfo", 0x567cb9, DONE, get_unit_global_info),
-    f("GetUnitExCaps", 0x56be77, Status::Partial("StandTime 0, order kind 8 (send-to) or -1"), get_unit_ex_caps),
+    f("GetUnitExCaps", 0x56be77, Status::Done, get_unit_ex_caps),
     f("GetCurrentUnits", 0x578173, DONE, get_current_units),
     f("GetMaxUnits", 0x578148, DONE, get_max_units),
     f("CheckBuildingsComplete", 0x566a30, DONE, check_buildings_complete),
@@ -477,22 +477,23 @@ fn set_unit_info(api: &mut Api, c: &mut Call) -> Result<u32> {
     Ok(0)
 }
 
-/// `bool GetUnitExCaps(int index, UnitExCaps* caps, bool needOrderType)`.
+/// `bool GetUnitExCaps(int index, UnitExCaps* caps, bool needOrderType)` (0x56be77): an
+/// object at `0 <= index < MAXOBJECT` that is not dying (`Sdoxlo == 0`, or `Hidden` inside a
+/// building: ACR's `living()`) fills `caps`: `RealDir` (OB+0xea), `DestX/DestY >> 4`
+/// (OB+0xb8/+0xbc, −1 without a destination), `NIndex`, the type's `MonsterID`, `NNUM`,
+/// `StandTime` (OB+0x91) and, with `needOrderType`, the kind of its executed order
+/// (`LocalOrder->DoLink` looked up by 0x4b0f8c, see [`order_kind`]), else −1.
 fn get_unit_ex_caps(api: &mut Api, c: &mut Call) -> Result<u32> {
     let i = c.i32(0)?;
-    if i < 0 || i as usize >= api.world.units.len() {
-        return Ok(0);
-    }
-    let u = &api.world.units[i as usize];
-    if !u.living() {
-        return Ok(0);
-    }
-    let (dir, dest, kind, owner, busy) = (u.dir, u.dest, u.kind, u.owner, !u.orders.is_empty());
+    let Some(u) = u16::try_from(i).ok().and_then(|i| api.object(i)).filter(|u| u.living()) else { return Ok(0) };
+    let (dir, dest, kind, owner, stand) = (u.dir, u.dest, u.kind, u.owner, u.stand_time);
+    let order = order_kind(api.world, u);
     let name = api.world.catalog.get(kind).id.clone();
     let out = c.u32(1)?;
-    c.write_i32(out, i32::from(dir))?;
     c.write_i32(out + 4, dest.map_or(-1, |d| d.x >> 4))?;
     c.write_i32(out + 8, dest.map_or(-1, |d| d.y >> 4))?;
+    c.write_i32(out + 0x14, i32::from(owner))?;
+    c.write_i32(out, i32::from(dir))?;
     c.write_i32(out + 0xc, i32::from(kind.0))?;
     let key = (api.vm, format!("unitid:{name}").into_bytes());
     let p = match api.st.text_cache.get(&key) {
@@ -504,10 +505,46 @@ fn get_unit_ex_caps(api: &mut Api, c: &mut Call) -> Result<u32> {
         }
     };
     c.write_u32(out + 0x10, p)?;
-    c.write_i32(out + 0x14, i32::from(owner))?;
-    c.write_i32(out + 0x18, 0)?;
-    c.write_i32(out + 0x1c, if c.bool(2)? && busy { 8 } else { -1 })?;
+    c.write_i32(out + 0x18, i32::from(stand))?;
+    c.write_i32(out + 0x1c, if c.bool(2)? { order } else { -1 })?;
     Ok(1)
+}
+
+/// The kind of a unit's executed order as 0x4b0f8c reports it: the index of its link in the
+/// engine's table of 34 order links (0x66a258), −1 without an order. ACR keeps the orders a
+/// building runs as state, so they are mapped in the order its building link runs them.
+pub fn order_kind(world: &acr_sim::World, u: &acr_sim::world::Unit) -> i32 {
+    use acr_sim::world::Order;
+    if u.building {
+        return match u.orders.last() {
+            // `AttackObjLink` (0x51bcaf, building branch 0x51c30a).
+            Some(Order::Attack { .. }) => 2,
+            _ if u.research.is_some() => 4, // `PerformUpgradeLink` 0x54f6bb
+            _ if u.unconstruct => 33,       // `UNCONSTRUCT` 0x4a0d47
+            _ if !u.queue.is_empty() => 1,  // `ProduceObjLink` 0x49eeb7
+            _ if u.mine.is_some() => 7,     // `TakeResourceFromSpriteLink` 0x5f75b3
+            _ => -1,
+        };
+    }
+    match u.orders.last() {
+        None => -1,
+        Some(Order::Build { .. }) => 0, // 0x524654
+        Some(Order::Attack { .. }) if world.catalog.get(u.kind).guns.is_some() => 16, // 0x520ef8
+        Some(Order::Attack { .. }) => 2, // 0x51bcaf
+        Some(Order::Gather { .. }) => 3, // 0x4d2fb0
+        Some(Order::Enter { .. }) => 5, // 0x5f46f7
+        Some(Order::SendTo { .. }) => 8, // 0x5172c6
+        Some(Order::ClearUnlimited) => 11, // 0x527dec
+        Some(Order::WaterSendTo { .. }) => 12, // 0x54ac93
+        Some(Order::LeaveTransport { .. }) => 17, // 0x54e188
+        Some(Order::GoToTransport { .. }) => 18, // 0x54dbb0
+        Some(Order::Fishing) => 19,     // 0x54eb16
+        Some(Order::SmartSendTo { .. }) => 21, // 0x52b84a
+        Some(Order::Turn { .. }) => 26, // 0x41bd0d
+        Some(Order::Patrol { .. }) => 27, // 0x4ea3f0
+        Some(Order::AttackPoint { .. }) => 30, // 0x51bc5b
+        Some(Order::Panic { .. }) => 32, // 0x600720
+    }
 }
 
 /// `int GetCurrentUnits(byte nation)`: population (`NGidot`, from the census).
