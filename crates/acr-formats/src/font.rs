@@ -468,7 +468,8 @@ const fn font(name: &'static str, gp: &'static str, color: u8, shadow: Option<(&
     NamedFont { name, gp, color, shadow }
 }
 
-/// The global fonts of `dmcr.exe` in the order of their set-up at `0x4A54EB`.
+/// The global fonts of `dmcr.exe` in the order of their set-up at `0x4A54EB`, then a few
+/// local fonts of screens.
 pub const FONTS: &[NamedFont] = &[
     font("fonG60y5", "FontG60", 6, None),
     font("fonG60w", "FontG60", 2, Some(("FontG60s", 0, 0))),
@@ -506,6 +507,10 @@ pub const FONTS: &[NamedFont] = &[
     font("SmallYellowFont1", "FontM13", 3, None),
     font("fn8", "FontM12", 1, None),
     font("fn10", "FontM12", 1, None),
+    // Local fonts of screens, named here after their pack and colour: `AskMultilineQuestion`
+    // (0x5ad540) builds `RLCFont(rom11)` objects, one with `SetRedColor`.
+    font("rom11", "rom11", 0, None),
+    font("rom11red", "rom11", 2, None),
 ];
 
 /// Looks up a global font by its variable name (case-insensitive).

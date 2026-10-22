@@ -8,6 +8,7 @@ mod hud;
 mod ingame;
 mod intro;
 mod mission;
+mod mission_ui;
 mod music;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod native;
@@ -152,6 +153,11 @@ impl Game {
             log::error!("cannot start the game: {reason}");
             self.leave_game();
         }
+        if let Mode::InGame(game) = &self.mode
+            && game.mission_over()
+        {
+            self.leave_game();
+        }
         let Some(g) = &mut self.graphics else { return };
         let mut layers = Vec::new();
         if let Mode::InGame(game) = &mut self.mode {
@@ -163,6 +169,12 @@ impl Game {
             if game.ready() {
                 if !self.ui.in_game() {
                     self.ui.enter_game();
+                }
+                // Mission pages and questions are dialogs over the game, one at a time.
+                if !self.ui.dialog_open()
+                    && let Some(window) = game.mission_window()
+                {
+                    self.ui.open_dialog(window);
                 }
                 let (l, image, cursor) = game.interface(&self.ui.ctx(), g.gpu.size(), game_dt);
                 layers = l;
@@ -425,11 +437,21 @@ impl ApplicationHandler<Event> for Game {
                     && !(logical_key == Key::Named(NamedKey::Enter) && self.alt_down()) =>
             {
                 let pressed = state == ElementState::Pressed;
-                // An open mission page takes Enter (OK) and Escape (No) first.
+                // F1: the mission objectives (0x4a30e8 → 0x5e11c0).
                 if let Mode::InGame(game) = &mut self.mode
                     && pressed
-                    && matches!(logical_key, Key::Named(NamedKey::Enter | NamedKey::Escape))
-                    && game.close_dialog(logical_key == Key::Named(NamedKey::Enter))
+                    && logical_key == Key::Named(NamedKey::F1)
+                    && let Some(window) = game.objectives_window()
+                {
+                    self.ui.open_dialog(window);
+                    self.load_requested();
+                    return;
+                }
+                // Escape during the victory or defeat message leaves the game.
+                if let Mode::InGame(game) = &mut self.mode
+                    && pressed
+                    && logical_key == Key::Named(NamedKey::Escape)
+                    && game.mission_escape()
                 {
                     return;
                 }
@@ -453,12 +475,6 @@ impl ApplicationHandler<Event> for Game {
                 if matches!(&self.mode, Mode::InGame(g) if g.ready()) && !self.ui.dialog_open() =>
             {
                 let Mode::InGame(game) = &mut self.mode else { return };
-                if game.mission_dialog_open() {
-                    if button == MouseButton::Left && state == ElementState::Released {
-                        game.close_dialog(true);
-                    }
-                    return;
-                }
                 let ctx = self.ui.ctx();
                 let result = match (button, state) {
                     (MouseButton::Left, _) => game.left_button(&ctx, state == ElementState::Pressed),

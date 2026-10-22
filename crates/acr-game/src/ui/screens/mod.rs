@@ -5,6 +5,7 @@ pub mod game_menu;
 pub mod game_options;
 pub mod loading;
 pub mod main_menu;
+pub mod mission;
 pub mod options;
 pub mod placeholder;
 pub mod player_name;

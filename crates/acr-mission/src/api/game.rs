@@ -48,7 +48,7 @@ pub const FUNCTIONS: &[ApiFn] = &[
     done("MissErrorMessage", 0x56bc22, miss_error_message),
     done("?GetTextByID@@YAPADPAD@Z", 0x60a020, get_text_by_id),
     done("?AssignHint@@YAXPADH@Z", 0x494283, assign_hint),
-    done("?AssignHint1@@YAXPADH@Z", 0x4942db, assign_hint),
+    done("?AssignHint1@@YAXPADH@Z", 0x4942db, assign_hint1),
     ApiFn { name: "SetPlayerName", original: 0x5697eb, status: Status::Done, handler: set_player_name },
     ApiFn {
         name: "ChangeFriends",
@@ -406,7 +406,8 @@ fn ask_multiline_question(api: &mut Api, c: &mut Call) -> Result<u32> {
         Some(a) => Ok(a),
         None => {
             let choices = c.bytes(3)?.split(|&b| b == b'|').map(|t| api.text(t)).collect();
-            api.events.push(MissionEvent::Choice { id, header, text, choices });
+            let (width, orient) = (c.i32(0)?.max(0) as u32, c.u8(2)?);
+            api.events.push(MissionEvent::Choice { id, header, text, choices, width, orient });
             Err(Error::Host(QUESTION_PENDING.into()))
         }
     }
@@ -459,7 +460,14 @@ fn get_text_by_id(api: &mut Api, c: &mut Call) -> Result<u32> {
 /// `void AssignHint(char* text, int time)`: the hint line (time in frames).
 fn assign_hint(api: &mut Api, c: &mut Call) -> Result<u32> {
     let text = c.bytes(0)?;
-    api.events.push(MissionEvent::Hint { text, ticks: c.i32(1)?.max(0) as u32 });
+    api.events.push(MissionEvent::Hint { text, ticks: c.i32(1)?.max(0) as u32, list: false });
+    Ok(0)
+}
+
+/// `AssignHint1(text, time)` (0x4942db): a new line of the message list.
+fn assign_hint1(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let text = c.bytes(0)?;
+    api.events.push(MissionEvent::Hint { text, ticks: c.i32(1)?.max(0) as u32, list: true });
     Ok(0)
 }
 

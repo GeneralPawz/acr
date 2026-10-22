@@ -23,8 +23,9 @@ pub enum MissionEvent {
     Question { id: String, header: String, text: Vec<u8> },
     /// `ShowCentralText`: a short message in the middle of the screen for `ticks` ticks.
     CentralText { text: Vec<u8>, ticks: u32 },
-    /// `AssignHint`/`AssignHint1`: a hint line at the bottom of the screen for `ticks` frames.
-    Hint { text: Vec<u8>, ticks: u32 },
+    /// `AssignHint`/`AssignHint1`: a hint for `ticks` frames. `AssignHint` sets the single
+    /// hint line, `AssignHint1` (`list`) pushes a line onto the list of four messages above it.
+    Hint { text: Vec<u8>, ticks: u32, list: bool },
     /// The local player has won (`ShowVictory`).
     Victory,
     /// The local player has lost (`LooseGame`).
@@ -35,8 +36,9 @@ pub enum MissionEvent {
     /// `SetStartPoint`: centre the camera on this point (world pixels).
     Camera { x: i32, y: i32 },
     /// `ShowPage`-style multiple choice (`AskMultilineQuestion`): the choices are text lines;
-    /// the answer is the 0-based index.
-    Choice { id: String, header: String, text: Vec<u8>, choices: Vec<Vec<u8>> },
+    /// the answer is the 0-based index. The window is `width` × 64 pixels wide; `orient` puts
+    /// the picture above the text (0), left (1) or right (2) of it.
+    Choice { id: String, header: String, text: Vec<u8>, choices: Vec<Vec<u8>>, width: u32, orient: u8 },
     /// The script reported an error (`MissErrorMessage`) or crashed in the interpreter.
     Error { title: String, text: String },
 }

@@ -43,6 +43,10 @@ const MENU_FONTS: &[&str] = &[
     "BlackFont",
     "SmallBlackFont",
     "SmallBlackFont1",
+    // Mission messages (`mission_ui`).
+    "BigWhiteFont",
+    "rom11",
+    "rom11red",
 ];
 
 #[derive(Default)]
@@ -114,6 +118,11 @@ impl Fonts {
     /// `GetRLCHeight(font, 'W')`.
     pub fn height(&self, lib: &Library, font: FontId) -> i32 {
         self.font(lib, font).map_or(0, |f| f.height())
+    }
+
+    /// `GetRLCHeight(font, c)`: the height of one glyph frame.
+    pub fn glyph_height(&self, lib: &Library, font: FontId, c: u8) -> i32 {
+        self.font(lib, font).map_or(0, |f| f.glyph_height(c))
     }
 
     /// Width of one character (`GetRLCWidthUNICODE`).
