@@ -39,6 +39,37 @@ pub fn can_build(w: &World, player: u8, builders: &[usize], kind: TypeId) -> boo
         && builders.iter().any(|&i| tech.of(w.units[i].kind).is_some_and(|t| t.produce.contains(&kind)))
 }
 
+/// The map area a building may be placed in (world pixels).
+fn on_map(w: &World, x: i32, y: i32) -> bool {
+    let (x16, y16) = (x << 4, y << 4);
+    let limit = ((240 << w.map.shift) + 2) << 9;
+    x16 >= 1024 && y16 >= 1024 && x16 <= limit && y16 <= limit
+}
+
+/// Buildings snap so that `RealX + 16a` and `RealY + 32b` fall on a 16 px cell corner.
+fn snap(t: &ObjectType, x: i32, y: i32) -> Pos {
+    let (a, b) = (t.location.0 << 4, (2 * t.location.1) << 4);
+    Pos::new((((x << 4) + a) & !255) - a, (((y << 4) + b) & !255) - b)
+}
+
+/// Placement check (0x513b2c, simplified): the finished footprint must be free of locks and
+/// units.
+fn footprint_free(w: &World, t: &ObjectType, pos: Pos) -> bool {
+    let cells = lock_cells(t, pos, &t.lock_points);
+    !cells.iter().any(|&(cx, cy)| w.map.land.check_pt(cx, cy) || w.occupancy.check_pt(cx, cy))
+}
+
+/// Where a building of `kind` placed at world pixel `(x, y)` would stand, if the position
+/// passes [`place`]'s checks (the price aside). For the placement preview.
+pub fn site(w: &World, kind: TypeId, x: i32, y: i32) -> Option<Pos> {
+    let t = w.catalog.get(kind);
+    if !t.building || !on_map(w, x, y) {
+        return None;
+    }
+    let pos = snap(t, x, y);
+    footprint_free(w, t, pos).then_some(pos)
+}
+
 /// `CreateObject` for a building placed by a player at world pixel `(x, y)`: checks the
 /// position and the price, pays, and creates the construction site. `None` if refused.
 pub fn place(w: &mut World, player: u8, kind: TypeId, x: i32, y: i32) -> Option<EntityId> {
@@ -46,9 +77,7 @@ pub fn place(w: &mut World, player: u8, kind: TypeId, x: i32, y: i32) -> Option<
     if !t.building {
         return None;
     }
-    let (x16, y16) = (x << 4, y << 4);
-    let limit = ((240 << w.map.shift) + 2) << 9;
-    if x16 < 1024 || y16 < 1024 || x16 > limit || y16 > limit {
+    if !on_map(w, x, y) {
         return None;
     }
     w.random.rando();
@@ -58,13 +87,8 @@ pub fn place(w: &mut World, player: u8, kind: TypeId, x: i32, y: i32) -> Option<
     }
     w.random.rando();
     w.random.rando();
-    // Buildings snap so that RealX + 16a and RealY + 32b fall on a 16 px cell corner.
-    let (a, b) = (t.location.0 << 4, (2 * t.location.1) << 4);
-    let pos = Pos::new(((x16 + a) & !255) - a, ((y16 + b) & !255) - b);
-    // Placement check (0x513b2c, simplified): the finished footprint must be free of locks
-    // and units.
-    let cells = lock_cells(&t, pos, &t.lock_points);
-    if cells.iter().any(|&(cx, cy)| w.map.land.check_pt(cx, cy) || w.occupancy.check_pt(cx, cy)) {
+    let pos = snap(&t, x, y);
+    if !footprint_free(w, &t, pos) {
         return None;
     }
     w.random.rando();
@@ -141,7 +165,8 @@ fn find_point(w: &World, b: usize, from: (i32, i32)) -> Option<(i32, i32)> {
         .min_by_key(|&(cx, cy)| norma(cx - from.0, cy - from.1))
 }
 
-fn needs_work(w: &World, b: usize, owner: u8) -> bool {
+/// Whether building `b` of `owner` is unfinished or damaged (builders have work there).
+pub fn needs_work(w: &World, b: usize, owner: u8) -> bool {
     let bu = &w.units[b];
     bu.living() && bu.building && bu.owner == owner && (bu.stage < w.max_stage(bu) || bu.life < bu.max_life)
 }
