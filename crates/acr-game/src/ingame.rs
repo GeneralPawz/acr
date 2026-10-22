@@ -20,6 +20,7 @@ use winit::keyboard::NamedKey;
 
 use crate::ui::{GameKind, GameSetup};
 
+mod dip;
 mod interface;
 mod save;
 use crate::unit_sounds::{self, SoundEvent};
@@ -69,6 +70,11 @@ pub struct InGame {
     mission: crate::mission::MissionLink,
     /// The log of player inputs for savegames, and a loaded game being replayed.
     save: save::SaveState,
+    /// DipServer's dialogs in the side panel.
+    diplomacy: crate::diplomacy::DipPanel,
+    /// `ACR_DIP_PAGE` has been looked at.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    dip_page_shown: bool,
 }
 
 impl InGame {
@@ -111,6 +117,8 @@ impl InGame {
             known_types: HashSet::new(),
             mission,
             save: Default::default(),
+            diplomacy: crate::diplomacy::DipPanel::default(),
+            dip_page_shown: false,
         }
     }
 
@@ -418,6 +426,7 @@ impl InGame {
                 world.step(&commands);
             }
             self.requests.borrow_mut().extend(self.mission.take_requests());
+            self.update_diplomacy(f64::from(seconds));
             if let Some((x, y)) = self.mission.take_camera() {
                 let s = self.camera.scale;
                 self.camera.x = x as f32 - window[0] / s / 2.0;

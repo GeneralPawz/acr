@@ -70,6 +70,8 @@ pub struct MissionLink {
     camera: Option<(i32, i32)>,
     /// Answers of the windows closed since [`MissionLink::take_answers`] (savegames).
     answered: Vec<u32>,
+    /// `ActivateDipDialog` commands for the diplomacy panel.
+    diplomacy: Vec<Vec<u8>>,
 }
 
 impl MissionLink {
@@ -114,6 +116,7 @@ impl MissionLink {
             leave: false,
             camera: None,
             answered: Vec::new(),
+            diplomacy: Vec::new(),
         }
     }
 
@@ -296,6 +299,16 @@ impl MissionLink {
         }
         let commands = scripts.tick(world);
         let waiting = scripts.waiting();
+        self.handle_events();
+        if waiting {
+            return None;
+        }
+        Some(commands)
+    }
+
+    /// Shows what the scripts reported since the last call.
+    fn handle_events(&mut self) {
+        let Some(scripts) = &mut self.scripts else { return };
         for e in scripts.take_events() {
             log::info!("mission: {}", acr_mission::describe(&e));
             match e {
@@ -319,12 +332,42 @@ impl MissionLink {
                 MissionEvent::Error { title, text } => log::error!("{title}: {text}"),
                 MissionEvent::Camera { x, y } => self.camera = Some((x, y)),
                 MissionEvent::Briefing => {}
+                MissionEvent::Diplomacy { command } => self.diplomacy.push(command),
             }
         }
-        if waiting {
-            return None;
-        }
-        Some(commands)
+    }
+
+    /// Browser commands of the diplomacy panel DipServer sent (`ActivateDipDialog`), once.
+    pub fn take_diplomacy(&mut self) -> Vec<Vec<u8>> {
+        std::mem::take(&mut self.diplomacy)
+    }
+
+    /// `CheckDipBuilding(MyNation, index)`: a press of the left button on object `index`.
+    pub fn dip_check_building(&mut self, world: &mut World, index: u16) {
+        let Some(scripts) = &mut self.scripts else { return };
+        scripts.dip_check_building(world, self.local_player, index);
+        self.handle_events();
+    }
+
+    /// A request of a diplomacy page (`perform&1&0&2`); returns the browser commands of the
+    /// answer.
+    pub fn dip_request(&mut self, world: &mut World, request: &[u8]) -> Vec<acr_mission::diplomacy::DipCommand> {
+        let Some(scripts) = &mut self.scripts else { return Vec::new() };
+        let answer = scripts.dip_request(world, request);
+        self.handle_events();
+        answer
+    }
+
+    /// A page DipServer wrote (`Dip\tmp.cml`) or one of its files.
+    pub fn dip_file(&self, path: &str) -> Option<Vec<u8>> {
+        let path = path.replace("//", "/");
+        let s = self.scripts.as_ref()?;
+        s.script_file(&path).map(<[u8]>::to_vec).or_else(|| self.file(&path).map(<[u8]>::to_vec))
+    }
+
+    /// Whether DipServer runs.
+    pub fn has_diplomacy(&self) -> bool {
+        self.scripts.as_ref().is_some_and(Scripts::has_diplomacy)
     }
 
     /// Queues a window; `question`: the script waits for its answer.

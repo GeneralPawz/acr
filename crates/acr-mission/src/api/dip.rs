@@ -85,12 +85,7 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("GetMoneyString", 0x56f6fe, DONE, get_money_string),
     f("EraseGroup", 0x56d7e1, DONE, erase_group),
     f("SetGroupStartNMASK", 0x56f6a2, DONE, set_group_start_nmask),
-    f(
-        "?ActivateDipDialog@@YAXPAD@Z",
-        0x5c3980,
-        Status::Partial("reported as an event; no dialog pages yet"),
-        activate_dip_dialog,
-    ),
+    f("?ActivateDipDialog@@YAXPAD@Z", 0x5c3980, DONE, activate_dip_dialog),
     f("GetNatNMASK", 0x56f689, DONE, get_nat_nmask),
     f("SetGroupNMASK", 0x56bceb, DONE, set_group_nmask),
     f("ChangeUnitColor", 0x56c778, DONE, change_unit_color),
@@ -347,10 +342,11 @@ fn get_money_string(api: &mut Api, c: &mut Call) -> Result<u32> {
     Ok(buf)
 }
 
-/// `void ActivateDipDialog(char* page)`: the diplomacy dialog (intExplorer pages).
+/// `void ActivateDipDialog(char* command)`: opens the diplomacy panel with a browser command
+/// (`LW_new&|LW_file&Dip/tmp.cml`); the game shows it ([`crate::diplomacy`]).
 fn activate_dip_dialog(api: &mut Api, c: &mut Call) -> Result<u32> {
-    let page = c.str(0)?;
-    api.events.push(MissionEvent::Error { title: "Diplomacy".into(), text: format!("dialog {page} (not shown yet)") });
+    let command = c.bytes(0)?;
+    api.events.push(MissionEvent::Diplomacy { command });
     Ok(0)
 }
 

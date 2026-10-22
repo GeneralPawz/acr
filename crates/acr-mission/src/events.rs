@@ -39,6 +39,10 @@ pub enum MissionEvent {
     /// the answer is the 0-based index. The window is `width` × 64 pixels wide; `orient` puts
     /// the picture above the text (0), left (1) or right (2) of it.
     Choice { id: String, header: String, text: Vec<u8>, choices: Vec<Vec<u8>>, width: u32, orient: u8 },
+    /// `ActivateDipDialog`: DipServer opens or changes the diplomacy panel. `command` is the
+    /// browser command in text form (`LW_new&|LW_file&Dip/tmp.cml`); see
+    /// [`crate::diplomacy`].
+    Diplomacy { command: Vec<u8> },
     /// The script reported an error (`MissErrorMessage`) or crashed in the interpreter.
     Error { title: String, text: String },
 }

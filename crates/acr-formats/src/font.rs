@@ -513,6 +513,20 @@ pub const FONTS: &[NamedFont] = &[
     font("rom11red", "rom11", 2, None),
 ];
 
+/// The first global font built from the same pack, colour mode and shadow (intExplorer's
+/// `#nfont` creates its own `RLCFont`s, which match global ones).
+pub fn font_like(gp: &str, color: u8, shadow: Option<(&str, i32, i32)>) -> Option<&'static NamedFont> {
+    FONTS.iter().find(|f| {
+        f.gp.eq_ignore_ascii_case(gp)
+            && f.color == color
+            && match (f.shadow, shadow) {
+                (None, None) => true,
+                (Some((a, x, y)), Some((b, u, v))) => a.eq_ignore_ascii_case(b) && x == u && y == v,
+                _ => false,
+            }
+    })
+}
+
 /// Looks up a global font by its variable name (case-insensitive).
 pub fn named_font(name: &str) -> Option<&'static NamedFont> {
     FONTS.iter().find(|f| f.name.eq_ignore_ascii_case(name))
