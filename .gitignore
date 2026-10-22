@@ -4,3 +4,4 @@
 *.GSC
 *.GS1
 /dist
+__pycache__/

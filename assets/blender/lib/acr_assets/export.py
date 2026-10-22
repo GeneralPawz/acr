@@ -1,0 +1,35 @@
+"""glTF export with the project's settings (needs `bpy`).
+
+Blender 5.2's exporter writes glTF 2.0 binary (`.glb`) and can compress meshes with Draco
+(`KHR_draco_mesh_compression`) or meshopt (`EXT_meshopt_compression`, built in since
+Blender 5.x); images go out as PNG, JPEG or WebP, not KTX2/Basis (that needs an external
+tool such as `gltfpack -tc` or `toktx`). The default is no compression: the Rust side has no
+meshopt/Draco decoder yet (see docs/assets.md).
+"""
+
+import os
+
+import bpy
+
+COMPRESSION = ("none", "meshopt", "draco")
+
+
+def export_glb(path, compression="none"):
+    if compression not in COMPRESSION:
+        raise ValueError(f"compression must be one of {COMPRESSION}")
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    bpy.ops.export_scene.gltf(
+        filepath=path,
+        export_format="GLB",
+        export_yup=True,
+        export_apply=True,
+        export_extras=True,
+        export_cameras=False,
+        export_lights=False,
+        export_texcoords=True,
+        export_normals=True,
+        export_image_format="AUTO",
+        export_meshopt_compression_enable=compression == "meshopt",
+        export_draco_mesh_compression_enable=compression == "draco",
+    )
+    return os.path.getsize(path)

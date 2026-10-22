@@ -18,3 +18,7 @@ acr-video.workspace = true
 acr-sim.workspace = true
 acr-mission.workspace = true
 png = "0.18.1"
+
+[dev-dependencies]
+# The sprite check tests its direction mapping against the renderer's.
+acr-render.workspace = true

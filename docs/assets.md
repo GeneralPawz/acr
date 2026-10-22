@@ -1,0 +1,219 @@
+# 3D assets: pipeline, conventions, original camera, sprite check
+
+Milestone M2 replaces sprites by 3D models. Every model is a Python script that Blender runs
+headless to rebuild its glTF file; nothing generated is committed. The sprite check renders a
+model through the game's original camera and scores it against the original sprites.
+Tracking: #176; pipeline #162, sprite check #165.
+
+## Layout
+
+```
+assets/
+  blender/                shared code, not assets
+    lib/acr_assets/       helpers: import with `from acr_assets import ...`
+      conventions.py      units, axes, original camera, directions (pure Python, unit-tested)
+      scene.py            empty scene, root node, sockets, meshes
+      shapes.py           boxes, hip roofs, posts, beams, quads from sprite measurements
+      materials.py        flat and textured materials (what the glTF exporter maps)
+      project.py          colours from the sprites, projected through the original camera
+      camera.py           the original camera as a Blender camera
+      export.py           glTF export settings
+    build.py              entry: builds one asset script
+    render_views.py       entry: renders a model in the stored directions (sprite check)
+    tests/                `python -m unittest discover -s assets/blender/tests` (CI runs it)
+  buildings/incdo1.py     an asset (one script per model, grouped by category)
+target/assets/            output (git-ignored): <category>/<name>.glb, ref/<TYPE>/, check/<name>/
+```
+
+An asset script defines `TYPE` (the `NAME` of its `.MD`, optional) and `build(ctx)`:
+`ctx.root` is the root node (an empty at the ground point, named after the script),
+`ctx.ref` the sprite reference (`acr_assets.Reference`, see below) or `None`. Scripts in other
+folders (e.g. `assets/blender/humans/`) can use the helpers by putting `assets/blender/lib`
+on `sys.path`; `build.py` does this for every asset.
+
+## Running
+
+Blender 5.2 is found through `$BLENDER`, then `C:\Program Files\Blender Foundation\Blender
+5.2\blender.exe`, then `blender` on the `PATH`.
+
+```sh
+# all assets, or the named ones; colours from the sprites when the game folder is known
+cargo xtask assets [incdo1 ..] [--game-dir DIR] [--compress none|meshopt|draco] [--blend]
+# ... and the sprite check for each asset with a TYPE
+cargo xtask assets incdo1 --game-dir "C:\path\to\American Conquest" --check
+
+# the pieces, by hand
+acr model-ref   <game-dir> IncDo1 out/ref                 # ref.json + ref_<k>.png
+blender -b --factory-startup --python assets/blender/build.py -- assets/buildings/incdo1.py \
+        --out out/incdo1.glb --ref out/ref/ref.json
+acr model-check <game-dir> IncDo1 out/incdo1.glb out/check [--min-iou 0.85]
+acr gp-frame    <game-dir> INCDO1.GP 5 frame.png [--no-shadow]   # one frame, prints its origin
+```
+
+`ACR_GAME_DIR` works instead of `--game-dir`. Without a game folder the assets build with
+their flat colours. `--blend` also saves the scene next to the `.glb` for inspection.
+
+## Units and axes
+
+- **Scale: 1 world pixel = 1/30 m (30 px per metre).** A standing musketeer (`EngM18`,
+  `#STAND`) reaches 45–47 screen pixels above his ground point (the musket further), which is
+  52–54 world pixels of true height (÷ cos 30°, below); a man with a hat is about 1.8 m. Buildings in the original
+  are drawn smaller than real ones (the Inca hut `IncDo1` is 6.2 × 3.2 m); models keep the
+  sprite size so that they fit the map.
+- **Blender:** metres, +X east (game x), +Y north (game −y), +Z up. **glTF** (+Y up, the
+  exporter converts): +X east, +Y up, +Z south, i.e. glTF x, z are the game's x, y in metres.
+- **Origin** = the object's ground point: the position the game stores for the object, at
+  terrain height. For units and buildings that is the point a sprite frame is drawn relative
+  to (`USERLC … dx dy` plus a building's `LOCATION`).
+- **Facing:** models face south (Blender −Y, glTF +Z): `RealDir` 64, stored direction 0.
+- **Naming:** root node = asset name (`incdo1`), parts `incdo1.<part>`, attachment points
+  `socket.<name>` (empties; e.g. `socket.roof` for fire and smoke). Custom properties on the
+  root become glTF extras: `acr_asset`, `acr_type`, `acr_pixels_per_metre`.
+- Measurements on sprites are world pixels (`acr_assets.shapes` takes game x, y and true
+  heights in world pixels and converts them).
+
+## The original camera
+
+The game projects a world point (x, y) at height h as (`docs/formats/terrain.md`)
+
+```
+screen x = x            screen y = y / 2 − h
+```
+
+with the height in screen pixels. This is an orthographic camera looking north and down by
+the elevation e with sin e = 1/2, **e = 30°** (2:1 dimetric). A true orthographic camera at
+30° shows a vertical length z as z · cos 30°, so the game's heights in screen pixels (terrain
+`SURF`, sprite offsets) are true heights × cos 30° = 0.866. With the camera basis (Blender
+coordinates, metres; s = 1/30 m per pixel)
+
+```
+right   = (1, 0, 0)
+up      = (0, sin e, cos e)   = (0, 0.5, 0.866)
+forward = (0, cos e, −sin e)  = (0, 0.866, −0.5)       (view direction)
+```
+
+a point p (model space) of a model at canvas pixel `anchor` facing `RealDir` d lands at
+
+```
+yaw(d) = −(d − 64) · 2π / 256         (rotation about +Z; 64 = south = 0)
+q      = Rz(yaw(d)) · p
+canvas = anchor + (q · right, −q · up) / s
+```
+
+Check: ground point (x, −y)·s → (x, y/2); height z → −z · cos 30° / s. Pixel (i, j) covers
+[i, i+1) × [j, j+1) and the anchor is a pixel corner, like a GP frame origin.
+
+**Blender camera** (`acr_assets.camera.original_camera`): `ORTHO`, rotation (60°, 0, 0) XYZ
+(X = 90° looks north, minus the 30° elevation), `ortho_scale = max(W, H) · s` with
+`sensor_fit = AUTO`, resolution W × H at 100 %, and location
+
+```
+location = right · (W/2 − ax) · s + up · (ay − H/2) · s − forward · 200 m
+```
+
+because Blender maps the camera centre to the canvas centre. The model turns, not the camera
+(`yaw` above); free rotation in the game is the inverse.
+
+**Directions** (`docs/simulation.md`, "Directions and sprites"): GP frame `f · R + k` is
+frame f in stored direction k of R. The direction a stored picture shows
+(`stored_direction`, Rust `acr model-ref`, Python `conventions.stored_direction`) is the
+centre of the sector that `acr_render::scene::sprite_direction` maps to k unmirrored:
+
+| stored directions R | RealDir of k | |
+|---|---|---|
+| 1 (buildings) | 64 | the fixed view |
+| odd (9 for units, 65 ships) | 64 + 128 k / (R − 1) | 9: 64 south, 128 west (k 4), 192 north (k 8) |
+| even | 64 + 128 (k + ½) / R | half a sector off |
+| `FULLROTATION` (16, cannon) | 64 + 256 k / R | all around, never mirrored |
+
+The east half of odd/even counts is drawn mirrored around the ground point and has no
+pictures of its own. Quirk: north (k = R − 1 of an odd count) is only ever drawn mirrored
+(sector i = 0), which shows only on asymmetric pictures; the check compares the stored
+picture unmirrored with a render at 192.
+
+Both directions of the mapping are unit-tested: Rust (`acr-tool`, against
+`sprite_direction` itself) and Python (`assets/blender/tests`, also the camera placement
+against the generic orthographic mapping).
+
+## Sprite reference (`acr model-ref`)
+
+For an object type and animation (default: `#STANDLO` for buildings, `#STAND` for units; a
+unit's frame `--step`) it draws, per stored direction, all parts of the animation (a
+building's back and front frames) at their offsets onto one canvas, **without shadow layers**
+(encodings 5, 0x26, 0x27: a model casts its own) and with the pack's palette. The canvas is
+the union of all views plus 16 px; `ref.json` holds the canvas size, the anchor (ground
+point) and per view `k`, `dir` (RealDir) and the image.
+
+## Colours from the sprites (`acr_assets.project`)
+
+Every face takes its colours from the view that sees it most frontally among those in which
+it is not hidden (ray casts from its centre and near its corners towards the camera). The
+views go side by side into one atlas texture (`sprite` UV map, nearest filtering);
+transparent pixels are filled from their neighbours so edges do not turn black. Faces no view
+sees get a flat material in the mean colour of their object's visible faces. Limits: the
+sprites carry the original lighting (used as albedo, so lighting is doubled in a lit
+renderer); a face is visible or hidden as a whole; the mirrored half of unit directions adds
+nothing; a model seen from the side of a building's single view shows flat colours there.
+Building models therefore hold up from all sides in shape but not yet in texture.
+
+## Sprite check (`acr model-check`)
+
+`acr model-check <game-dir> <TYPE> <model.glb> <out>` writes the reference, runs
+`render_views.py` (Workbench, flat lighting, texture colour, no anti-aliasing, transparent
+film, view transform *Standard*; the model is rotated for each stored direction) and compares
+`render_<k>.png` with `ref_<k>.png`:
+
+| metric | definition |
+|---|---|
+| IoU | silhouettes = alpha ≥ 128 (the 25 % translucent layers do not count); intersection / union |
+| colour diff | mean absolute RGB difference (0–255, mean of the channels) where both are solid |
+| anchor shift | the integer shift (±24 px) of the render that maximises the IoU, and that IoU; (0, 0) when the model stands where the sprite does |
+| area | solid pixels of sprite and render |
+
+Outputs: `report.md`, `report.json`, `side_<k>.png` (sprite | render | silhouettes: grey
+both, magenta sprite only, cyan render only). `--min-iou X` fails the command below X, for
+use as a regression test. The tool is Rust (it decodes the GP frames and reads the `.MD` with
+`acr-formats`, as the viewer does) and only the rendering runs in Blender; nothing in it needs
+Blender at compile time, so CI stays independent of Blender.
+
+### Proof: `IncDo1` (Inca hut)
+
+`assets/buildings/incdo1.py`: plinth, wattle walls, stone corner pillars, posts, thatched hip
+roof, ridge pole and net frame. Its plan was fitted to the sprite silhouette (`#STANDLO`,
+frames 4 + 5 of `INCDO1.GP`).
+
+| colours | IoU | colour diff | anchor shift | `.glb` |
+|---|---:|---:|---|---:|
+| from the sprite | 0.903 | 3.2 | (0, 0) | 131 KB |
+| from the sprite, `--compress meshopt` | 0.903 | 5.0 | (0, 0) | 141 KB |
+| flat (no game folder) | 0.903 | 47.0 | (0, 0) | 31 KB |
+
+The colour difference of 3.2 with projected colours shows that the camera reproduces the
+sprite to the pixel (a half-pixel error gives ~20). The remaining silhouette error is detail
+the primitives do not have: the ragged thatch edge, rubble at the wall foot, the open door
+and the sparse net. A crude three-cylinder probe of the musketeer `EngM18` (not committed)
+checks all 9 directions with anchor shifts of 0–1 px horizontally and 2–4 px vertically (the
+sprite's feet reach below the ground point).
+
+## Export and compression
+
+`acr_assets.export.export_glb`: glTF 2.0 binary, +Y up, modifiers applied, custom properties
+as extras, no cameras or lights, images as PNG. Blender 5.2's exporter also offers:
+
+- **meshopt** (`EXT_meshopt_compression` or `KHR_meshopt_compression`, built in):
+  `--compress meshopt`;
+- **Draco** (`KHR_draco_mesh_compression`, built in): `--compress draco`;
+- images as JPEG or WebP (`EXT_texture_webp`), but **no KTX2/Basis**: that needs an external
+  tool (`gltfpack -tc`, `toktx`), which is not installed and not downloaded by the build.
+
+For small models like `IncDo1` the texture dominates and meshopt makes the file larger
+(141 vs 131 KB; its UV quantisation also moves the colour difference from 3.2 to 5.0). The
+default stays uncompressed until the in-game renderer (#163) decodes meshopt; KTX2
+textures are a follow-up together with it.
+
+## Not done yet
+
+- Size budgets per asset class, LODs, the nation-colour mask channel (#162).
+- Animated models: clip timing against the original frame counts (#165).
+- Mirrored directions and multi-view blending for units; light removal from projected
+  sprite colours.

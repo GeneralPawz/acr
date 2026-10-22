@@ -422,7 +422,7 @@ pub fn unit(dir: &Path, name: &str) -> Result<()> {
 }
 
 /// Finds a definition by file name or, failing that, by its `NAME`.
-fn find_unit(vfs: &mut Vfs, name: &str) -> Result<(String, UnitDef)> {
+pub(crate) fn find_unit(vfs: &mut Vfs, name: &str) -> Result<(String, UnitDef)> {
     let file = format!("{}.MD", name.to_ascii_uppercase());
     if vfs.contains(&file) {
         return Ok((file.clone(), UnitDef::parse(&vfs.read(&file)?)));

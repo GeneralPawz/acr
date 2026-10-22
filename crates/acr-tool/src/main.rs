@@ -11,6 +11,7 @@ mod images;
 mod mapgen;
 mod maps;
 mod mission;
+mod models;
 mod scripts;
 mod sim;
 mod sprites;
@@ -36,6 +37,7 @@ pub struct Command {
 const MODULES: &[&[Command]] = &[
     archive::COMMANDS,
     sprites::COMMANDS,
+    models::COMMANDS,
     maps::COMMANDS,
     mapgen::COMMANDS,
     defs::COMMANDS,
