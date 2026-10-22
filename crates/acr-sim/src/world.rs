@@ -479,6 +479,10 @@ pub struct World {
     /// wounds and blood). Not part of the state hash: savegames replay their commands and
     /// record it again.
     pub deaths: std::collections::HashMap<u32, crate::combat::DeathRecord>,
+    /// Recent hits on units and buildings, oldest first, for the renderer only (blood
+    /// splatter, later hit reactions): kept for [`crate::combat::HIT_KEEP`] ticks, at most
+    /// [`crate::combat::HIT_CAP`]. Not part of the state hash, not saved.
+    pub hits: std::collections::VecDeque<crate::combat::HitRecord>,
     /// Coast places, islands and the computer players' landing setup (derived from the map
     /// and refreshed every tick; not hashed, the landings' orders are in `brigades`).
     pub desant: crate::desant::Desant,
@@ -606,6 +610,7 @@ impl World {
             cities: Default::default(),
             formation_groups: Default::default(),
             deaths: Default::default(),
+            hits: Default::default(),
             desant: Default::default(),
             ai: [false; PLAYERS],
         }
@@ -845,6 +850,7 @@ impl World {
     /// once, player by player (`LongProcesses`, 0x5112aa).
     pub fn step(&mut self, commands: &[Command]) {
         self.sounds.clear();
+        crate::combat::forget_hits(self);
         crate::morale::decay(self);
         for c in commands {
             self.apply(c);

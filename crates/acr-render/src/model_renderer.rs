@@ -84,7 +84,8 @@ impl Wounds {
     }
 }
 
-/// A pool of blood on the ground under a corpse.
+/// A pool of blood on the ground under a corpse, or (`splatter`) a droplet sprayed onto the
+/// ground behind a hit unit.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct BloodPool {
     /// Centre on the ground (world coordinates).
@@ -101,6 +102,9 @@ pub struct BloodPool {
     pub fade: f32,
     /// Varies the outline per pool.
     pub seed: f32,
+    /// A droplet: a crisp round head with a tail running out along `along`, instead of a
+    /// noisy pool.
+    pub splatter: bool,
 }
 
 #[repr(C)]
@@ -641,7 +645,7 @@ impl ModelRenderer {
             .map(|p| GpuPool {
                 centre: [p.centre[0], p.centre[1], p.centre[2], p.radius],
                 shape: [p.along[0], p.along[1], p.stretch, p.seed],
-                look: [p.age, p.fade, 0.0, 0.0],
+                look: [p.age, p.fade, f32::from(u8::from(p.splatter)), 0.0],
             })
             .collect();
         self.pool_count = gpu.len() as u32;

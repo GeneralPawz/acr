@@ -171,6 +171,37 @@ attributes 13, 14) and a `BloodPool`:
   and `_PART` attributes, #207), the `emaciated` morph for hunger, stuck missiles, pools
   that outlive the corpse.
 
+#### Hits and blood splatter
+
+`World::hits` (`combat::HitRecord`) keeps the recent hits for the renderer, oldest first:
+`make_damage` notes every hit that has a sender (projectile, hitscan line, round damage or
+melee blow; not fire or hunger, which have none) with the tick, the victim and its position,
+the direction attacker → victim, the weapon's cause (`DeathCause::of_weapon`), whether it
+killed and whether the victim is a building. Hits older than `HIT_KEEP` (750) ticks are
+dropped at the start of each step, at most `HIT_CAP` (4096) are kept. Like `deaths` it is
+not part of the state hash and not saved (a loaded game replays its commands). Ground
+impacts without a victim are not recorded yet.
+
+`acr-game/src/ingame/splatter.rs` sprays droplets onto the ground behind each hit unit
+(not buildings) in a cone along the direction of the shot. They are derived every frame
+from `World::hits` and the tick, seeded from the hit (tick, victim), so they keep their
+place without any renderer state and come back alike after loading; the record is kept as
+long as a droplet lives for that reason. They use the pool decal (`BloodPool::splatter`,
+`look.z` in `blood.wgsl`): a crisp round head with a tail tapering along the shot, the far
+droplets smaller and longer, drawn on the ground height at the droplet.
+
+| Cause | Droplets | Behind the victim | Radius | Cone (half) |
+|---|---|---|---|---|
+| Gunshot | 6 | 0.2–1.8 m | 0.06–0.14 m | 0.30 rad |
+| Arrow | 3 | 0.1–0.8 m | 0.05–0.10 m | 0.25 rad |
+| Grapeshot | 9 | 0.2–2.2 m | 0.06–0.15 m | 0.55 rad |
+| Cannonball | 18 | 0.3–3.5 m | 0.08–0.25 m | 0.45 rad |
+
+A killing hit sprays half again as many. They dry from red to brown between 40 and 400
+ticks after the hit and fade from 75 % of `HIT_KEEP` until just before it. `gore=reduced`:
+half the droplets, 0.7× the size, 0.8× the reach; `gore=off` and `models=off`: none.
+Melee, thrown weapons and explosions spray nothing yet.
+
 ## Camera math
 
 World coordinates of the 3D path are world pixels: `x` east, `y` south, `z` up as a true

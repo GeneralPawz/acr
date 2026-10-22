@@ -30,6 +30,7 @@ mod panels;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod probe;
 mod save;
+mod splatter;
 mod three_d;
 use crate::unit_sounds::{self, SoundEvent};
 pub use interface::{GameKey, GameMouse};
