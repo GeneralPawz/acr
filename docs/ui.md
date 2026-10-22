@@ -306,11 +306,22 @@ the defaults apply: `Zone1X/Y` = 6/6, `PropertyX/Y` = 182/6, `IconLx/Ly` = 40/40
   Clicking it keeps only that type selected.
 - A highlighted icon gets a frame in `GetPaletteColor(255, 200, 64)`. A pressed icon is
   drawn 1 px down-right. A disabled one is drawn transparent.
-- Single selected type: numbers drawn straight over the map, in `SmallWhiteFont`, with
-  `SMICONS.GP` icons from `NRES.DAT [WEAPONS]`:
+- Single selected type (0x607f50, called after the icons by 0x5aa278): the first object's
+  numbers drawn straight over the map, in `SmallWhiteFont`, with `SMICONS.GP` icons from
+  `NRES.DAT [WEAPONS]`:
+  - `KILLUNI` ("Treffer %d") at (16, 610) if it has kills, even while unfinished; the rest
+    only for a finished object;
+  - its life, centred at x = 12 + (40 − w) / 2, y = 670;
   - up to 2 attacks at (53 + 55·n, 630), text at x + 18, y + 4;
   - the shield `#GENSHIELD` at (53, 651);
-  - up to 6 protections in 3 columns at (13 + 55·c, 681 + 19·r).
+  - up to 6 protections in 3 columns at (13 + 55·c, 681 + 19·r), not for buildings;
+  - lines in `fn10` from (13, 680), 12 apart: `HABITAN`/`MAXHABI` (population and housing,
+    `FARM`), `__ARTCAP0..3` ("Max. Kanonen:%d\%d": objects of `MAXINDEPO` group i and depots ·
+    `ARTDEPO` i, a line skipped if its value is 0), `INSISTR`/`MAXINS1` (units inside and
+    the capacity).
+  - Not built: `FISHSTR`, `MAXINSI` (extra capacity), the mined resource's name, attack
+    bonuses (`%d+%d`), and the `SHOWDELAY` reload bar (x = 173..176).
+  The original's 0x606edd draws the same numbers for a brigade.
 - Command slots wired so far:
   - formation groups of the officer's `[OFFICERS]` entry, at their `NRES.DAT
     [ORDERICONS]` slots (column 8). The current formation is highlighted. These send
@@ -370,11 +381,53 @@ builds the icons.
 - The selected types take the first slots the commands leave free (`AddIcon` without a
   position, 0x495631). Both sets are drawn at the same origin (0x5aaa15).
 
+### Production messages and limits (0x6088c0, 0x609230)
+
+- A left click on a unit item (0x6088c0) checks, in this order: more than 65000 objects →
+  `UNILIMIT` ("Einheitenlimit erreicht!") for 50 frames; a field (`SPRITEOBJECT`) → the
+  command 0x3d plants fields around the selected mills, without a price check
+  (`PlantFields`); a building → the build mode; otherwise `CanAfford` and the order (five
+  with Shift).
+- `CanAfford` (0x514c65) lists the resources the player lacks, joined by "," without
+  spaces, in `NETRES1` (one) or `NETRESS` (several), both "Nicht genügend Ressourcen %s",
+  on the message list for 70 frames.
+- A grey icon (flag 0x200) is still clickable: the button registration (0x4959d9) does not
+  test it.
+- Depot limit: `MAXINDEPO g n` (group g < 4, n per depot) and `ARTDEPO a b c d` (a depot,
+  +0x174a..+0x174d). The census (0x42ec4f) counts the player's finished depots and its
+  objects per group; an item is greyed while its group's count ≥ depots · n (0x609abd).
+- `MUSTREPAIR` (0x60988b): a stage upgrade (`UPSTAGE0..4`) of the first selected object is
+  greyed and has no click while that building has less than 2000 life (or burns). The text
+  id has no text, so the id itself is the hint.
+- `FINBLD` ("%s: Einheitenproduktion abgeschlossen", the building's name) for 100 frames
+  when an own building's queue becomes empty because its last unit was made.
+- Population full stops production silently (0x49ef92); the icon is not greyed.
+
+### Market (`ECO::BuildIcons` 0x4a96d9)
+
+A finished building with `TORG` shows the market in the command grid instead of a window:
+
+- Per market slot i (`ECONOMY.TXT` order FOOD, IRON, WOOD, COAL, STONE, GOLD) the sell icon
+  at slot `(i >> 1)·12 + (i & 1)` and the buy icon 7 slots right, with the resource name
+  as hint; the chosen ones are highlighted. Buttons (icon names from `ECONOMY.TXT`, hints
+  from `COMMENT.TXT`): 2 `r_Mins10` `ECONOM1`, 3 `r_Plus10` `ECONOM2`, 4 `r_Buy` `ECONOM5`,
+  5 `r_Mins1k` `ECONOM3`, 6 `r_Plus1k` `ECONOM4`, 26 `r_Mins100` `ECONOM6`, 27 `r_Plus100`
+  `ECONOM7`, 28 `r_Clear` `ECONOM8`, 29 `r_Mins10k` `ECONOM9`, 30 `r_Plus10k` `ECONOMA`.
+  No right clicks.
+- The amount buttons add their value (×100 with Shift), never below 0 and not limited to
+  the stock; `r_Clear` sets it to 0. Amount and chosen slots stay for the whole game.
+- 0x4a9c70 draws `Border` 88 at (180, 590) and 89 at (475, 590) with `ECOSELL` ("Angebot")
+  centred at (224, 595) and `ECOBUY` ("Nachfrage") at (518, 595) in `SmallYellowFont`.
+  The amount (once a resource to sell is chosen) is centred at (308, 686), the result
+  `trunc(amount · Sell / Buy)` (once both are chosen) at (434, 686), in `WhiteFont`.
+- `r_Buy` sends the network command 0x3c (nation, sell slot, buy slot, amount) to
+  `PerformOperation`; ACR sends `Trade` with the slots' resources.
+
 ### Placing a building (0x608a0d, 0x4bdd1e)
 
 - A building item of a peasant starts the build mode (`BuildMode` 0x10fc644,
-  `BuildingID` 0x10fca60), but only if the player can pay (`CanAfford` 0x514c65; the
-  original also prints what is missing, which ACR does not).
+  `BuildingID` 0x10fca60), but only if the player can pay (`CanAfford` 0x514c65). Walls
+  (`WALLOBJECT`) start it without the check.
 - Preview: the building's idle frames at the mouse position plus `LOCATION`, drawn through
   a colour table:
   - row `N = 5 + (sin(t / 100 ms) + 2)·8` (13..29) of `0\agew_1w.grd` where the building
@@ -715,9 +768,8 @@ to the panel (0x4c1c36). U toggles value 2, I value 1; one panel at a time.
   decoded.
 - Selection with Ctrl and the double click (`DBLCLICK`) are not traced.
 - The right-drag facing arrow (0x4c5407) and fog of war on the minimap are not built.
-- Production: the unit limit (`+0x173a`), the `MUSTREPAIR` hint and the `+0x1729`
-  special items (0x4d7682) are not built. The market has no interface yet (the simulation
-  has `Trade`).
+- The simulation does not cancel production over the depot limit (`MAXINDEPO`, 0x49f21b)
+  nor print `NOT_ENOUGH_PEASANTS` for buildings that train peasants.
 - Whether the original hides a selected type's icon when production icons take its slot.
 - The original builds on the button press; ACR too, but the order in which it checks the
   site and the price on the click (0x4c20ac) is not traced.

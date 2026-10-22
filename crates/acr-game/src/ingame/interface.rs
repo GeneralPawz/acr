@@ -43,6 +43,24 @@ const SHIFT_REPEAT: usize = 5;
 /// goes from 5 to 3).
 const ZOOM_SCALE: f32 = 0.25;
 
+/// More objects than this and production stops with `UNILIMIT` (0x515579).
+const OBJECT_LIMIT: usize = 65000;
+/// Icon names of the resources by resource index (`ICONLIST.TXT`).
+const MARKET_RESOURCES: [&str; 6] = ["WOOD", "GOLD", "STONE", "FOOD", "IRON", "COAL"];
+/// The market's buttons: slot, `ECONOMY.TXT` icon, hint (`COMMENT.TXT`), action.
+const MARKET_BUTTONS: &[(usize, &str, &str, HudCommand)] = &[
+    (2, "r_Mins10", "ECONOM1", HudCommand::MarketAmount(-10)),
+    (3, "r_Plus10", "ECONOM2", HudCommand::MarketAmount(10)),
+    (4, "r_Buy", "ECONOM5", HudCommand::MarketTrade),
+    (5, "r_Mins1k", "ECONOM3", HudCommand::MarketAmount(-1000)),
+    (6, "r_Plus1k", "ECONOM4", HudCommand::MarketAmount(1000)),
+    (26, "r_Mins100", "ECONOM6", HudCommand::MarketAmount(-100)),
+    (27, "r_Plus100", "ECONOM7", HudCommand::MarketAmount(100)),
+    (28, "r_Clear", "ECONOM8", HudCommand::MarketClear),
+    (29, "r_Mins10k", "ECONOM9", HudCommand::MarketAmount(-10000)),
+    (30, "r_Plus10k", "ECONOMA", HudCommand::MarketAmount(10000)),
+];
+
 /// Slot of the icon that lets the units out of a building.
 const LEAVE_SLOT: usize = 11 + 12;
 
@@ -131,6 +149,26 @@ pub struct State {
     last_click: Option<(web_time::Instant, EntityId)>,
     /// Space cycles through the selection (0x4c6020).
     next_centred: usize,
+    /// The market's amount and chosen slots (ECO+0x2a0, +0x2a4, +0x2a8), kept for the game.
+    market_amount: i32,
+    market_sell: Option<usize>,
+    market_buy: Option<usize>,
+    /// Own buildings with a queue: its length and the head's progress and stages, to tell
+    /// when production finishes (`FINBLD`).
+    queues: HashMap<EntityId, (usize, i32, i32)>,
+    /// Messages to put on the message list once the texts are at hand.
+    hints: Vec<Hint>,
+}
+
+/// A message of the production interface (`AssignHint1`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Hint {
+    /// `UNILIMIT`, 50 frames.
+    UnitLimit,
+    /// `NETRESS`/`NETRES1` with the missing resources, 70 frames.
+    Missing(Vec<usize>),
+    /// `FINBLD` with the building type's name, 100 frames.
+    Finished(TypeId),
 }
 
 impl Default for State {
@@ -157,6 +195,11 @@ impl Default for State {
             window: [1024.0, 768.0],
             last_click: None,
             next_centred: 0,
+            market_amount: 0,
+            market_sell: None,
+            market_buy: None,
+            queues: HashMap::new(),
+            hints: Vec::new(),
         }
     }
 }
@@ -370,10 +413,27 @@ impl InGame {
         if let [(kind, ..)] = types[..]
             && let Some(def) = objects.definition(&world.catalog.get(kind).id)
         {
-            view.stats = Some(stats(def, &data));
+            let mut s = stats(def, &data);
+            if let Some(u) = self.selected_units().find(|u| u.kind == kind) {
+                let t = world.catalog.get(kind);
+                s.kills = i32::from(u.kills);
+                s.ready = !u.building || u.stage >= world.max_stage(u);
+                s.life = u.life;
+                if t.building {
+                    s.protections.clear();
+                }
+                s.lines = self.info_lines(ctx, u);
+            }
+            view.stats = Some(s);
         }
         if let ([(kind, ..)], Some(nations)) = (&types[..], &nations) {
             self.production_icons(ctx, &data, nations, *kind, outline, &mut view.icons);
+        }
+        if view.icons.iter().any(|i| i.action == Some(HudCommand::MarketTrade)) {
+            let i = &self.interface;
+            let amount = i.market_sell.map(|_| i.market_amount);
+            let result = i.market_sell.zip(i.market_buy).map(|(s, b)| world.market.quote(s, b, i.market_amount));
+            view.market = Some((amount, result));
         }
         // Formations: the officer's groups in column 8 (`ORDERICONS`), "Formation auflösen"
         // (slot 24) for a formed brigade; stand ground and "attack on the way" are shown
@@ -487,6 +547,7 @@ impl InGame {
             }
         }
         let stock = &world.players[usize::from(player)].resources;
+        let depots = self.depot_counts();
         let page = self.interface.pages.get(&kind).copied().unwrap_or(0);
         let mut pages_used = [false; 3];
         for item in nations.items(&t.id) {
@@ -503,16 +564,27 @@ impl InGame {
             }
             let frame = objects.definition(&it.id).and_then(|d| d.icon()).and_then(|i| data.icon(i)).unwrap_or(0);
             let cost = acr_sim::economy::unit_cost(world, player, k, None);
+            // `MAXINDEPO g n`: greyed while the player has `n` per depot of group `g`
+            // (0x609abd); the click still works, the simulation does not cancel.
+            let limited = objects
+                .definition(&it.id)
+                .and_then(|d| d.get("MAXINDEPO"))
+                .and_then(|c| Some((c.int(0)?, c.int(1)?)))
+                .is_some_and(|(g, n)| depots[(g.clamp(0, 3) + 1) as usize] >= depots[0] * n);
             let mut icon = Icon {
                 frame,
                 slot: item.slot % 36,
                 outline: Some(outline),
-                gray: stock.iter().zip(&cost).any(|(s, c)| s < c),
+                gray: limited || stock.iter().zip(&cost).any(|(s, c)| s < c),
                 key: item.key,
                 hint: cost_hint(unit_name(ctx, &it.md_name), &it.economy.price, &cost, ctx),
                 ..Icon::default()
             };
-            if it.building && !t.building {
+            let sprite = objects.definition(&it.id).is_some_and(|d| d.has("SPRITEOBJECT"));
+            if sprite && !objects.definition(&it.id).is_some_and(|d| d.has("WALLOBJECT")) {
+                // Fields (`SPRITEOBJECT`): planted around the mill (command 0x3d).
+                icon.action = Some(HudCommand::PlantFields(usize::from(k.0)));
+            } else if it.building && !t.building {
                 icon.action = Some(HudCommand::Place(usize::from(k.0)));
             } else {
                 let queued: usize = working.iter().map(|b| b.queue.iter().filter(|q| q.kind == k).count()).sum();
@@ -565,8 +637,17 @@ impl InGame {
                 life: progress,
                 ..Icon::default()
             };
+            // A stage upgrade of a damaged building (life < 2000) cannot start: `MUSTREPAIR`
+            // (0x60988b; the text id has no text, so the id is shown).
+            let first = self.selected_units().next();
+            let damaged = first.is_some_and(|u| u.building && u.life < 2000);
+            let stage =
+                matches!(def.effect, acr_sim::tech::Effect::Building { category } if (24..29).contains(&category));
             if progress.is_some() {
                 icon.right = Some(HudCommand::CancelUpgrade(up.0));
+            } else if damaged && stage {
+                icon.hint = ctx.texts.get("MUSTREPAIR").to_vec();
+                icon.gray = true;
             } else {
                 icon.action = Some(HudCommand::Upgrade(up.0));
             }
@@ -575,6 +656,9 @@ impl InGame {
         }
         if !t.building {
             return;
+        }
+        if objects.definition(&t.id).is_some_and(|d| d.has("TORG")) {
+            self.market_icons(ctx, data, icons);
         }
         // Page buttons in column 0 (`PAGE1..3` and `PAGE1HINT..` of the building, 0x609b18).
         let def = objects.definition(&t.id);
@@ -795,14 +879,24 @@ impl InGame {
                     self.commands.push(Command::Disband { player, officer });
                 }
             }
-            HudCommand::Produce(kind) => self.queue_orders(TypeId(kind as u16), true),
+            HudCommand::Produce(kind) => {
+                // 0x6088c0: the object limit, then `CanAfford` with its message.
+                if world.units.iter().filter(|u| u.alive).count() > OBJECT_LIMIT {
+                    self.interface.hints.push(Hint::UnitLimit);
+                    return;
+                }
+                if self.can_afford(TypeId(kind as u16)) {
+                    self.queue_orders(TypeId(kind as u16), true);
+                }
+            }
             HudCommand::Unproduce(kind) => self.queue_orders(TypeId(kind as u16), false),
             HudCommand::Place(kind) => {
                 // `CanAfford` (0x514c65) before entering the build mode.
                 let kind = TypeId(kind as u16);
-                let cost = acr_sim::economy::unit_cost(world, player, kind, None);
-                let stock = &world.players[usize::from(player)].resources;
-                if stock.iter().zip(&cost).all(|(s, c)| s >= c) {
+                // Walls are placed without a price check.
+                let wall =
+                    self.objects.objects().definition(&world.catalog.get(kind).id).is_some_and(|d| d.has("WALLOBJECT"));
+                if wall || self.can_afford(kind) {
                     self.interface.placing = Some(kind);
                     self.interface.rally_mode = false;
                 }
@@ -840,7 +934,173 @@ impl InGame {
                     self.commands.push(Command::CancelUpgrade { player, building });
                 }
             }
+            HudCommand::MarketSell(slot) => self.interface.market_sell = Some(slot),
+            HudCommand::MarketBuy(slot) => self.interface.market_buy = Some(slot),
+            HudCommand::MarketAmount(delta) => {
+                let delta = if self.interface.mods.shift_key() { delta * 100 } else { delta };
+                self.interface.market_amount = (self.interface.market_amount + delta).max(0);
+            }
+            HudCommand::MarketClear => self.interface.market_amount = 0,
+            HudCommand::MarketTrade => {
+                let (Some(sell), Some(buy), Some(def)) =
+                    (self.interface.market_sell, self.interface.market_buy, world.catalog.market.as_ref())
+                else {
+                    return;
+                };
+                let (sell, buy) = (def.res[sell] as u8, def.res[buy] as u8);
+                self.commands.push(Command::Trade { player, sell, buy, amount: self.interface.market_amount });
+            }
+            HudCommand::PlantFields(kind) => {
+                let buildings: Vec<EntityId> =
+                    self.selected_units().filter(|u| u.building && u.owner == player).map(|u| u.id).collect();
+                self.commands.push(Command::PlantFields { player, buildings, kind: TypeId(kind as u16) });
+            }
             HudCommand::Inactive => {}
+        }
+    }
+
+    /// Puts the production messages on the message list.
+    fn post_hints(&mut self, ctx: &Ctx) {
+        for hint in std::mem::take(&mut self.interface.hints) {
+            let (text, frames) = match hint {
+                Hint::UnitLimit => (ctx.texts.get("UNILIMIT").to_vec(), 50),
+                Hint::Missing(missing) => {
+                    let names: Vec<&[u8]> = missing.iter().map(|&r| ctx.texts.get(RESOURCE_NAMES[r])).collect();
+                    let fmt = ctx.texts.get(if missing.len() > 1 { "NETRESS" } else { "NETRES1" });
+                    (format_str(fmt, &names.join(&b","[..])), 70)
+                }
+                Hint::Finished(kind) => {
+                    let Some(world) = &self.world else { continue };
+                    let name = unit_name(ctx, &world.catalog.get(kind).md_name);
+                    (format_str(ctx.texts.get("FINBLD"), &name), 100)
+                }
+            };
+            self.mission.hint(text, frames);
+        }
+    }
+
+    /// `FINBLD` (0x49eeb7): an own building's queue became empty because its last unit was
+    /// made (not cancelled). Called after `ticks` ticks.
+    pub(super) fn watch_queues(&mut self, ticks: u32) {
+        let Some(world) = &self.world else { return };
+        let own = self.own();
+        let mut now = HashMap::new();
+        for u in world.units.iter().filter(|u| u.alive && u.building && u.owner == own) {
+            let before = self.interface.queues.get(&u.id).copied();
+            if let Some((_, progress, stages)) = before
+                && u.queue.is_empty()
+                && progress + 2 * ticks as i32 >= stages
+            {
+                self.interface.hints.push(Hint::Finished(u.kind));
+            }
+            if let Some(q) = u.queue.first() {
+                now.insert(u.id, (u.queue.len(), q.progress, q.stages));
+            }
+        }
+        self.interface.queues = now;
+    }
+
+    /// `CanAfford` (0x514c65): true if the player can pay for `kind`; otherwise the missing
+    /// resources as `NETRESS`/`NETRES1` ("Nicht genügend Ressourcen %s", names joined by
+    /// ",") on the message list for 70 frames.
+    fn can_afford(&mut self, kind: TypeId) -> bool {
+        let Some(world) = &self.world else { return false };
+        let player = self.own();
+        let cost = acr_sim::economy::unit_cost(world, player, kind, None);
+        let stock = &world.players[usize::from(player)].resources;
+        let missing: Vec<usize> = (0..RESOURCE_NAMES.len()).filter(|&r| stock[r] < cost[r]).collect();
+        if missing.is_empty() {
+            return true;
+        }
+        self.interface.hints.push(Hint::Missing(missing));
+        false
+    }
+
+    /// The numbers of 0x607f50's info lines: units inside, housing (`FARM`), depot capacity
+    /// (`ARTDEPO`), as `fn10` lines.
+    fn info_lines(&self, ctx: &Ctx, u: &Unit) -> Vec<Vec<u8>> {
+        let Some(world) = &self.world else { return Vec::new() };
+        let t = world.catalog.get(u.kind);
+        let def = self.objects.objects().definition(&t.id);
+        let mut lines = Vec::new();
+        let player = &world.players[usize::from(u.owner.min(7))];
+        if def.is_some_and(|d| d.has("FARM")) {
+            lines.push(crate::hud::panels::format_int(ctx.texts.get("HABITAN"), player.population));
+            lines.push(crate::hud::panels::format_int(ctx.texts.get("MAXHABI"), player.housing));
+        }
+        if let Some(c) = def.and_then(|d| d.get("ARTDEPO")) {
+            let depots = self.depot_counts();
+            for i in 0..4 {
+                let id = format!("__ARTCAP{i}");
+                let text = ctx.texts.get(&id);
+                let cap = c.int(i).unwrap_or(0);
+                if cap == 0 || text.first() == Some(&b'_') {
+                    continue;
+                }
+                lines.push(crate::hud::panels::format_ints(text, &[depots[i + 1], depots[0] * cap]));
+            }
+        }
+        let max_inside = world.adv(u.owner, u.kind).max_inside;
+        if max_inside != 0 {
+            lines.push(crate::hud::panels::format_int(ctx.texts.get("INSISTR"), u.inside.len() as i32));
+            lines.push(crate::hud::panels::format_int(ctx.texts.get("MAXINS1"), max_inside));
+        }
+        lines
+    }
+
+    /// The census of 0x42ec4f for the unit limit: `[0]` the player's finished depots
+    /// (`ARTDEPO`), `[g + 1]` its objects of `MAXINDEPO` group `g`.
+    fn depot_counts(&self) -> [i32; 5] {
+        let mut n = [0; 5];
+        let Some(world) = &self.world else { return n };
+        let objects = self.objects.objects();
+        for u in world.units.iter().filter(|u| u.alive && u.owner == self.own()) {
+            let Some(def) = objects.definition(&world.catalog.get(u.kind).id) else { continue };
+            if def.has("ARTDEPO") && (!u.building || u.stage >= world.max_stage(u)) {
+                n[0] += 1;
+            }
+            if let Some(g) = def.get("MAXINDEPO").and_then(|c| c.int(0)) {
+                n[(g.clamp(0, 3) + 1) as usize] += 1;
+            }
+        }
+        n
+    }
+
+    /// The market's icons (`ECO::BuildIcons` 0x4a96d9) at fixed slots: per market slot `i` the
+    /// sell icon at `(i >> 1)·12 + (i & 1)` and the buy icon 7 slots right, both highlighted
+    /// when chosen; the amount buttons, trade and clear (`ECONOMY.TXT` icon names).
+    fn market_icons(&self, ctx: &Ctx, data: &HudData, icons: &mut Vec<Icon>) {
+        let Some(world) = &self.world else { return };
+        let Some(def) = world.catalog.market.as_ref() else { return };
+        for (i, &res) in def.res.iter().enumerate() {
+            let Some(frame) = MARKET_RESOURCES.get(res).and_then(|n| data.icon(n)) else { continue };
+            let hint = ctx.texts.get(RESOURCE_NAMES.get(res).copied().unwrap_or("")).to_vec();
+            let sell = (i >> 1) * 12 + (i & 1);
+            for (slot, action, chosen) in [
+                (sell, HudCommand::MarketSell(i), self.interface.market_sell == Some(i)),
+                (sell + 7, HudCommand::MarketBuy(i), self.interface.market_buy == Some(i)),
+            ] {
+                icons.retain(|x| x.slot != slot);
+                icons.push(Icon {
+                    frame,
+                    slot,
+                    selected: chosen,
+                    hint: hint.clone(),
+                    action: Some(action),
+                    ..Icon::default()
+                });
+            }
+        }
+        for (slot, name, hint, action) in MARKET_BUTTONS.iter().cloned() {
+            let Some(frame) = data.icon(name) else { continue };
+            icons.retain(|x| x.slot != slot);
+            icons.push(Icon {
+                frame,
+                slot,
+                hint: ctx.texts.get(hint).to_vec(),
+                action: Some(action),
+                ..Icon::default()
+            });
         }
     }
 
@@ -869,6 +1129,7 @@ impl InGame {
             self.interface.cursor_loaded = true;
         }
         let _ = self.keyboard(ctx);
+        self.post_hints(ctx);
         let view = self.build_view(ctx, window);
         let mut hud_draws = Vec::new();
         self.interface.hud.draw(ctx, &view, &mut hud_draws);
@@ -1459,6 +1720,14 @@ pub(super) fn unit_name(ctx: &Ctx, md_name: &str) -> Vec<u8> {
     if text == key.as_bytes() { md_name.as_bytes().to_vec() } else { text.to_vec() }
 }
 
+/// `sprintf(fmt, s)` for a text with one `%s`.
+fn format_str(fmt: &[u8], s: &[u8]) -> Vec<u8> {
+    match fmt.windows(2).position(|w| w == b"%s") {
+        Some(i) => [&fmt[..i], s, &fmt[i + 2..]].concat(),
+        None => fmt.to_vec(),
+    }
+}
+
 /// A production hint (0x606180, 0x6062a0 for upgrades): the name, " -", then
 /// " Resource: price" for every resource of the base price, with the current price.
 fn cost_hint(name: Vec<u8>, base: &[i32; 8], cost: &[i32; 8], ctx: &Ctx) -> Vec<u8> {
@@ -1514,7 +1783,12 @@ fn stats(def: &acr_formats::defs::UnitDef, data: &hud::data::HudData) -> Stats {
         .collect();
     protections.sort_by_key(|p| p.0);
     protections.dedup_by_key(|p| p.0);
-    Stats { attacks, shield, protections: protections.into_iter().map(|(_, icon, v)| (icon, v)).take(6).collect() }
+    Stats {
+        attacks,
+        shield,
+        protections: protections.into_iter().map(|(_, icon, v)| (icon, v)).take(6).collect(),
+        ..Stats::default()
+    }
 }
 
 #[cfg(test)]
@@ -1534,6 +1808,23 @@ mod tests {
             .collect();
         px.sort_unstable();
         px
+    }
+
+    #[test]
+    fn production_messages_and_market_slots() {
+        assert_eq!(
+            format_str(b"Nicht gen\xfcgend Ressourcen %s", b"Holz,Gold"),
+            b"Nicht gen\xfcgend Ressourcen Holz,Gold"
+        );
+        assert_eq!(format_str(b"%s: fertig", b"Fort"), b"Fort: fertig");
+        // Sell icons of market slots 0..5 and the buttons do not collide.
+        let mut slots: Vec<usize> =
+            (0..6).flat_map(|i| [(i >> 1) * 12 + (i & 1), (i >> 1) * 12 + (i & 1) + 7]).collect();
+        slots.extend(MARKET_BUTTONS.iter().map(|b| b.0));
+        let n = slots.len();
+        slots.sort_unstable();
+        slots.dedup();
+        assert_eq!(slots.len(), n);
     }
 
     #[test]
