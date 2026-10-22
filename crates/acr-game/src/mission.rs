@@ -63,7 +63,6 @@ pub struct MissionLink {
     /// Requested files and their contents once loaded (`None` = failed).
     files: BTreeMap<String, Option<Vec<u8>>>,
     text_sources: Vec<String>,
-    nation_files: Vec<String>,
     dip_files: Vec<String>,
     /// Computer players of a random map (nations).
     computers: Vec<u8>,
@@ -110,7 +109,6 @@ impl MissionLink {
             lookup_map,
             files: BTreeMap::new(),
             text_sources: Vec::new(),
-            nation_files: Vec::new(),
             dip_files: Vec::new(),
             computers,
             local_player,
@@ -133,14 +131,12 @@ impl MissionLink {
         self.text_sources = Texts::sources(&normalized);
         let mut want: Vec<String> = self.text_sources.clone();
         want.push(NATIONS.to_owned());
-        // The AI cities' production lists, DipServer and the files it reads.
-        self.nation_files = normalized.iter().filter(|p| p.ends_with(".NDS")).cloned().collect();
+        // DipServer and the files it reads.
         self.dip_files = normalized
             .iter()
             .filter(|p| p.starts_with("DIP/") || p.starts_with("MISSIONS/CASH/") || p.starts_with("MISSIONS/RES/"))
             .cloned()
             .collect();
-        want.extend(self.nation_files.iter().cloned());
         want.extend(self.dip_files.iter().cloned());
         want.push(DIPSERVER.to_owned());
         // Every AI DLL (`TEXT\AI.TXT` names twelve), so `StartAI` never waits for a file.
@@ -224,11 +220,6 @@ impl MissionLink {
             }
         }
         scripts.set_strings(strings);
-        for p in &self.nation_files {
-            if let Some(b) = self.file(p) {
-                scripts.add_nation_file(world, b);
-            }
-        }
         for p in &self.dip_files {
             if let Some(b) = self.file(p) {
                 scripts.add_file(p, b.to_vec());

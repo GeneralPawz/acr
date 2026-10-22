@@ -191,12 +191,6 @@ impl Scripts {
         Ok(())
     }
 
-    /// A nation file (`*.NDS`): its `[FIXED_PRODUCE]` lists tell the AI cities what their
-    /// buildings and peasants can produce.
-    pub fn add_nation_file(&mut self, world: &World, nds: &[u8]) {
-        crate::aicity::add_nation(&mut self.state, world, nds);
-    }
-
     /// Whether `DipServer.dll` runs.
     pub fn has_diplomacy(&self) -> bool {
         self.dip.is_some()
@@ -298,6 +292,7 @@ impl Scripts {
         }
         let mut commands = std::mem::take(&mut self.state.pending_commands);
         api::run_production(&mut self.state, world);
+        aicity::apply_availability(&self.state, world);
         // The step that is about to run has `tmtmt` = tick + 1.
         let tmtmt = world.tick.0 + 1;
         let phase = (tmtmt % SCRIPT_PERIOD) as u8;
