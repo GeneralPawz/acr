@@ -93,6 +93,11 @@ pub enum GroupOrder {
     /// `SGP_MoveToPoint` / `SGP_MakeOneStepTo` (`'MOVE'`, handler 0x57840f): ends after 768
     /// ticks, when nobody moves any more, or 128 ticks after the first arrival.
     Move { t0: i64, half: Option<i64>, flags: i32 },
+    /// `SGP_RepairBuilding` (`'REPB'`, handler 0x576fa5): repair until whole or gone.
+    Repair { building: u16, serial: u16 },
+    /// `SGP_TakeResources` (`'TRES'`, handler 0x5773e1): keep gathering `res` near the
+    /// nation's accepting buildings (refreshed every 64 ticks).
+    TakeResources { nation: u8, res: u8, last: u64, bases: Vec<(i32, i32)> },
 }
 
 /// A script unit group (`UnitsGroup`, 0x22 bytes at 0x28b7760).
