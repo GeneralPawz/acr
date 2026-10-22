@@ -11,6 +11,7 @@ import math
 from mathutils import Matrix, Vector
 
 from acr_assets import armature as am
+from acr_assets import aim as aiming
 from acr_assets import gear, outfit, poses, rig
 from acr_assets.humans import LAYER_OF, Character, prepare_export
 
@@ -114,7 +115,10 @@ def build(ctx):
     ch = make(ctx.root, ctx.name)
     ch.morphs(extra_deflate=ch.layers["gear"])
     ch.masks()
-    for clip, keys in poses.musketeer_clips(MD).items():
+    # Present with both hands: butt in the shoulder, left hand under the barrel (IK).
+    aim = aiming.hold(ch.arm, poses.AIM_MUSKET)
+    ctx.aim_errors = aiming.errors(ch.arm, aim)
+    for clip, keys in poses.musketeer_clips(MD, aim=aim).items():
         am.add_clip(ch.arm, clip, keys)
     am.set_clip(ch.arm, "STAND")
     report = {}
@@ -127,7 +131,7 @@ def build(ctx):
     tris = ch.triangles()
     prepare_export(ch.all_meshes(), ctx.root, acr_triangles=sum(tris.values()), acr_clips=list(MD),
                    acr_light=report.get("light_dir_camera", []), acr_layers=list(ch.layers))
-    ctx.stats = {"triangles": tris, "light": report, "colours": colours}
+    ctx.stats = {"triangles": tris, "light": report, "colours": colours, "aim_errors_m": ctx.aim_errors}
 
 
 def pose_for(ch, clip):
