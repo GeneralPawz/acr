@@ -538,6 +538,9 @@ pub struct World {
     /// Optional rules of this game (from the game setup; the default is the original game).
     /// Hashed only when not the default.
     pub rules: crate::Rules,
+    /// Fires left on the ground by bursting shells (only with the rule
+    /// [`crate::Rules::hit_locations`]); hashed only while there are some.
+    pub ground_fires: crate::ground_fire::GroundFires,
 }
 
 /// Unit indices per 128 px cell (8 × 8 lock cells).
@@ -675,6 +678,7 @@ impl World {
             armies: Default::default(),
             ai: [false; PLAYERS],
             rules: Default::default(),
+            ground_fires: Default::default(),
         }
     }
 
@@ -919,6 +923,7 @@ impl World {
         self.shouts.clear();
         crate::morale::decay(self);
         crate::wounds::bleed(self);
+        crate::ground_fire::tick(self);
         for c in commands {
             self.apply(c);
         }
@@ -1273,7 +1278,8 @@ impl World {
         };
         let hash = if self.thrown.is_empty() { hash } else { state_hash(&(hash, &self.thrown)) };
         let hash = if self.slow_deaths.is_empty() { hash } else { state_hash(&(hash, &self.slow_deaths)) };
-        // Likewise the optional rules, only when some are on.
-        if self.rules == crate::Rules::default() { hash } else { state_hash(&(hash, self.rules)) }
+        // Likewise the optional rules, only when some are on, and shell fires while some burn.
+        let hash = if self.rules == crate::Rules::default() { hash } else { state_hash(&(hash, self.rules)) };
+        if self.ground_fires.list.is_empty() { hash } else { state_hash(&(hash, &self.ground_fires)) }
     }
 }

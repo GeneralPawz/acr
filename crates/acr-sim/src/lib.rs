@@ -32,6 +32,7 @@ pub mod fixed;
 pub mod fog;
 pub mod formation;
 pub mod gather;
+pub mod ground_fire;
 pub mod grouping;
 pub mod hash;
 pub mod map;

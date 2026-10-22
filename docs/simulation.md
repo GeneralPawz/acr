@@ -1104,6 +1104,30 @@ and wounds two, as a 6-pounder ball down a file. The first strike of an aimed ba
 (`NUCL2P`, 340 within 35 px, no `DAMAGEHEIGHT`) is unchanged. No random number is drawn
 beyond the rule's body regions. `tests/plough.rs` shows both and pins the original hash.
 
+#### Shell fires (#256)
+
+The original sets units and buildings on fire only by weapon kinds with the `X` (at once)
+or `F` (after `FIRELIMIT` hits) flag of `NRES`: `Unit::burning` goes on, a burning building
+loses `max(1, MaxLife >> 11)` a tick, a burning unit 1 life every 32 ticks while above a
+tenth of its life (so it never burns to death), and a unit that dies burning is recorded as
+`DeathCause::Burned`. Shells leave nothing on the ground. With the rule on
+(`ground_fire.rs`):
+
+- A round of a shell weapon kind (`IADROMOR`, `VAFLIA`: `DeathCause::Explosion`, unlike
+  round shot `IADRO` and grapeshot `KARTECH`) that bursts on the ground (`ExplodeAnmObject`
+  with terrain contact and damage) leaves a fire there (`World::ground_fires`), unless the
+  ground is water or a fire already burns within its radius (a shell's children burst at
+  the same point; a child bouncing on starts its own). Radius 40 px (about 1.3 m),
+  burning `BURN_TICKS` 300 ticks (30 s). No random number is drawn.
+- Once a second (after the bleeding) every soldier (not a building, cannon or ship) inside a
+  fire catches fire: `Unit::burning` goes on and `Wounds::burn` is set to 5 s. While it
+  runs he loses 8 life a second through `MakeDamage` without a sender, so he can burn to
+  death (`DeathCause::Burned`); out of the fire he goes out after the 5 s. No panic yet.
+- The fires are part of the state hash only while some burn (`Wounds::burn` only while not
+  0). They are not saved: savegames replay their commands and the fires come back.
+- 2D draws three flames of the burning-building loop (`[FIRES]` `#DFIRE2`) per fire, fewer
+  as it burns down (`effects::ground_fire_sprites`, sprite path; not checked in the 3D view).
+
 ### Worked timing (musketeer, 10 ticks/s)
 
 - First shot: `#PATTACK1` (63 frames, 32 ticks), then 7 ticks to the active frame 14. The

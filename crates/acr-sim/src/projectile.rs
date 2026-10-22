@@ -523,6 +523,9 @@ pub fn explode(w: &mut World, slot: usize, ground: bool) {
         w.hit_dir = None;
         if ground {
             note_impact(w, &p, w.hits.back().copied() != last_hit);
+            let at = (p.pos.0 >> 14, p.pos.1 >> 14);
+            let water = w.rules.hit_locations && ground_media(w, at.0, at.1) == media::WATER;
+            crate::ground_fire::shell_burst(w, sender, p.att, at, water);
         }
     }
     if w.projectiles.media == -1 {

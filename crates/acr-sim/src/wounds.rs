@@ -70,6 +70,8 @@ pub struct Wounds {
     /// Legs and arms lost (0..=2 each): a soldier without a leg crawls.
     pub legs_lost: u8,
     pub arms_lost: u8,
+    /// Seconds left burning after standing in a shell fire (`crate::ground_fire`).
+    pub burn: u8,
 }
 
 impl Hash for Wounds {
@@ -79,6 +81,10 @@ impl Hash for Wounds {
             // Only games where a limb was lost hash these (older wounded games keep theirs).
             if self.legs_lost != 0 || self.arms_lost != 0 {
                 (self.legs_lost, self.arms_lost).hash(state);
+            }
+            // Likewise the burning from shell fires.
+            if self.burn != 0 {
+                self.burn.hash(state);
             }
         }
     }

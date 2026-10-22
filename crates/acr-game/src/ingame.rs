@@ -782,6 +782,7 @@ impl InGame {
         }
         effects::projectile_sprites(world, &self.objects, &mut out);
         self.effects.fire_sprites(world, &self.objects, &mut out);
+        effects::ground_fire_sprites(world, &self.objects, &mut out);
         out
     }
 
