@@ -157,6 +157,9 @@ pub struct UnitExtra {
     pub nmask: Option<u8>,
     /// Serial bit 0 flips when the unit changes owner by capture.
     pub serial_flip: bool,
+    /// `OneObject+0x23` bit1: already put into an enemy buildings collector
+    /// (`SetEnemyBuildingsCollector` 0x577e71).
+    pub collected: bool,
 }
 
 /// The engine-side state of the script API.

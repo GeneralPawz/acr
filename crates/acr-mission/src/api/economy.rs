@@ -47,12 +47,7 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("GetTorgResult", 0x5690c0, DONE, get_torg_result),
     f("SetBuildingsCollector", 0x577c6f, DONE, set_buildings_collector),
     f("SetUnitsCollector", 0x577d70, DONE, set_units_collector),
-    f(
-        "SetEnemyBuildingsCollector",
-        0x577e71,
-        Status::Partial("the collected mark of 0x23 bit1 is not kept: a building can enter several enemy collectors"),
-        set_enemy_buildings_collector,
-    ),
+    f("SetEnemyBuildingsCollector", 0x577e71, DONE, set_enemy_buildings_collector),
     f("SGP_RepairBuilding", 0x577b9c, Status::Stub("no repairs in acr-sim yet"), zero),
     f("SGP_TakeResources", 0x577be1, NO_GATHER, zero),
     f("CreateFarmList", 0x57c20d, DONE, create_farm_list),
@@ -394,10 +389,33 @@ fn set_units_collector(api: &mut Api, c: &mut Call) -> Result<u32> {
 }
 
 /// `SetEnemyBuildingsCollector(byte nat, GAMEOBJ* grp)` (0x577e71): enemy buildings join the
-/// group, now and whenever one is created.
+/// group, now and whenever one is created (0x588569). Every object slot that holds a building
+/// not yet collected (OB+0x23 bit1) and not allied with `nat` (OB+0x9a & NATIONS[nat].NMask)
+/// is appended with its serial and marked collected, so a later call (for any nation) skips
+/// it; the group itself is not searched for duplicates.
 fn set_enemy_buildings_collector(api: &mut Api, c: &mut Call) -> Result<u32> {
-    remember(api, c, |city, g| city.enemy_collector = Some(g))?;
-    collector(api, c, |api, u, n| u.building && api.st.unit_nmask(u.id, u.owner) & api.st.nmask[usize::from(n)] == 0)
+    let n = c.u8(0)?;
+    let h = c.handle(1)?;
+    if n >= 8 || h.magic != magic::GROUP || usize::from(h.index) >= api.st.groups.len() {
+        return Ok(0);
+    }
+    let g = usize::from(h.index);
+    api.st.cities[usize::from(n)].enemy_collector = Some(g);
+    let mask = api.st.nmask[usize::from(n)];
+    let pick: Vec<_> = api
+        .world
+        .units
+        .iter()
+        .filter(|u| u.alive && u.building)
+        .filter(|u| !api.st.extra.get(&u.id.0).is_some_and(|e| e.collected))
+        .filter(|u| api.st.unit_nmask(u.id, u.owner) & mask == 0)
+        .map(|u| api.member_of(u.id))
+        .collect();
+    for m in pick {
+        api.st.extra.entry(u32::from(m.id)).or_default().collected = true;
+        api.st.groups[g].members.push(m);
+    }
+    Ok(0)
 }
 
 /// `GetTopZone` (0x5791cb) of a unit: the path area of its 64 px cell, `None` outside.
@@ -717,6 +735,98 @@ mod tests {
         let mut api =
             Api { st: &mut st, world, commands: &mut commands, events: &mut events, caller, vm: 0, dip: None };
         (function(name).expect("known").handler)(&mut api, &mut Call { raw: &mut raw }).expect("call")
+    }
+
+    fn object(name: &str) -> acr_sim::catalog::ObjectType {
+        let def = acr_formats::defs::UnitDef::parse(
+            format!(
+                "NAME {name}\r\nUSERLC 0 G SHADOW 0 0\r\n#STAND 9 1 0 0\r\n@MOTION_L 9 0 0 9\r\n\
+                 @MOTION_R 9 0 10 19\r\nLIFE 100\r\nGEOMETRY 1 10 40\r\n[END]\r\n"
+            )
+            .as_bytes(),
+        );
+        acr_sim::catalog::ObjectType::from_def(name, &def)
+    }
+
+    /// Calls `name` on a state of the caller's, with group handles for `groups` at 0x1_c000.
+    fn call_st(name: &str, world: &mut World, st: &mut ScriptState, groups: u16, args: [u32; 3]) -> u32 {
+        let mut mem = Memory::new();
+        mem.map(0x1_0000, 0x1_0000);
+        for g in 0..u32::from(groups) {
+            mem.write_u16(0x1_c000 + 8 * g, g as u16).expect("index");
+            mem.write_u32(0x1_c004 + 8 * g, super::super::call::magic::GROUP).expect("magic");
+        }
+        for (i, &a) in args.iter().enumerate() {
+            mem.write_u32(STACK + 4 + 4 * i as u32, a).expect("stack");
+        }
+        let mut cpu = Cpu::new();
+        cpu.regs[usize::from(acr_script::x86::decode::reg::ESP)] = STACK;
+        let mut heap = Heap::new(0x2_0000, 0x3_0000);
+        let mut raw = HostCall { dll: "test", name, cpu: &mut cpu, mem: &mut mem, heap: &mut heap };
+        let (mut commands, mut events) = (Vec::new(), Vec::new());
+        let mut api =
+            Api { st, world, commands: &mut commands, events: &mut events, caller: Caller::Mission, vm: 0, dip: None };
+        (function(name).expect("known").handler)(&mut api, &mut Call { raw: &mut raw }).expect("call")
+    }
+
+    #[test]
+    fn enemy_buildings_are_collected_once() {
+        let mut w = world();
+        let mut c = (*w.catalog).clone();
+        let kind = c.add(object("Hut"));
+        w.catalog = Arc::new(c);
+        let mut b = |owner, x| {
+            let id = w.spawn(kind, owner, acr_sim::Pos::from_pixels(x, 1000), 0);
+            w.units[id.0 as usize].building = true;
+            id.0 as u16
+        };
+        let (a, e1, e2) = (b(0, 1000), b(1, 1200), b(2, 1400));
+        let mut st = ScriptState::new(ScriptSetup::default(), MissionTexts::default());
+        st.groups = vec![Default::default(); 3];
+        // Nation 1 is allied with 0: only nation 2's building is an enemy of nation 0.
+        st.nmask[0] = 0b011;
+        st.nmask[1] = 0b011;
+        let ids = |st: &ScriptState, g: usize| st.groups[g].members.iter().map(|m| m.id).collect::<Vec<_>>();
+        call_st("SetEnemyBuildingsCollector", &mut w, &mut st, 3, [0, 0x1_c000, 0]);
+        assert_eq!(ids(&st, 0), [e2]);
+        assert_eq!(st.cities[0].enemy_collector, Some(0));
+        // Nation 2's enemies: 0's and 1's buildings; its own is already marked and skipped by
+        // every later call, whichever nation makes it.
+        call_st("SetEnemyBuildingsCollector", &mut w, &mut st, 3, [2, 0x1_c008, 0]);
+        assert_eq!(ids(&st, 1), [a, e1]);
+        call_st("SetEnemyBuildingsCollector", &mut w, &mut st, 3, [1, 0x1_c010, 0]);
+        assert!(ids(&st, 2).is_empty());
+        // A second call into the same group adds nothing, since all are marked.
+        call_st("SetEnemyBuildingsCollector", &mut w, &mut st, 3, [0, 0x1_c000, 0]);
+        assert_eq!(ids(&st, 0), [e2]);
+    }
+
+    #[test]
+    fn leave_building_orders_one_unit_of_the_type_out() {
+        let mut w = world();
+        let mut c = (*w.catalog).clone();
+        let hut = c.add(object("Hut"));
+        let man = c.add(object("Man"));
+        w.catalog = Arc::new(c);
+        let b = w.spawn(hut, 0, acr_sim::Pos::from_pixels(1000, 1000), 0);
+        w.units[b.0 as usize].building = true;
+        let mut st = ScriptState::new(ScriptSetup::default(), MissionTexts::default());
+        // Empty: nothing happens.
+        call_st("LeaveBuilding", &mut w, &mut st, 0, [b.0, u32::from(man.0), 0]);
+        assert!(w.units[b.0 as usize].orders.is_empty());
+        let u = w.spawn(man, 0, acr_sim::Pos::from_pixels(1000, 1000), 0);
+        w.units[b.0 as usize].inside.push(u);
+        w.units[u.0 as usize].inside_of = Some(b);
+        call_st("LeaveBuilding", &mut w, &mut st, 0, [b.0, u32::from(man.0), 0]);
+        assert!(matches!(
+            w.units[b.0 as usize].orders.last(),
+            Some(acr_sim::world::Order::LeaveMine { kind, .. }) if *kind == man
+        ));
+        // Nobody walks out at once.
+        assert_eq!(w.units[b.0 as usize].inside, [u]);
+        // Out of range indices do nothing.
+        call_st("LeaveBuilding", &mut w, &mut st, 0, [0xFFFF, u32::from(man.0), 0]);
+        call_st("LeaveBuilding", &mut w, &mut st, 0, [u32::MAX, u32::from(man.0), 0]);
     }
 
     #[test]

@@ -1776,6 +1776,18 @@ No game option writes it. How the map view draws the fog is in
     rules except on the building itself: the leaving unit goes back in only when the
     building is full (0x5f56f7). The flag OB+0x29 bit 1 the link clears and sets again is
     not kept. The player's leave command (`Command::Leave`) still lets everybody out at once.
+    `LeaveBuilding` (0x56c6ca) gives the same `LeaveMine` to any object with someone inside
+    (OB+0xf0), without the `LeaveMine` order test of `OBJ_LeaveMine`; a dead object's slot
+    is empty here, where the engine would still find the dying object.
+  - `SetEnemyBuildingsCollector` (0x577e71) appends every building not allied with `nat`
+    that no earlier call has collected (OB+0x23 bit1, kept in the script state's per-object
+    data as `collected`) and marks it, without looking for it in the group; a dying building
+    is collected as in the engine. New buildings join through the creation hook (0x588569),
+    which ignores the mark and checks the group instead.
+  - `SetStandGround` (0x5621cd → 0x4e09c7) and `SetUnitsState` (0x578c09) switch a formation
+    member's whole formation through `MakeStandGroundTemp`, so the flag bearer's extra
+    (`n5`, `n6`) is part of the bonuses; dead selected units are skipped, where the engine
+    would set the flag on any object still in the slot.
   - `CreateFormation` (0x56fbf8 → `CreateFromGroup` 0x41a00e, `formation::create_from_group`)
     forms the brigade at once, owned by the owner of the group's first unit; the engine
     takes a brigade of nation `nat` (`GetFreeBrigade` 0x42c845) whatever the units' owner,
