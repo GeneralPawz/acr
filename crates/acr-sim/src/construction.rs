@@ -138,6 +138,9 @@ pub fn place(w: &mut World, player: u8, kind: TypeId, x: i32, y: i32) -> Option<
     for (cx, cy) in lock_cells(&t, pos, points) {
         map.land.set_pt(cx, cy);
     }
+    // RenewInfoMap (0x43f763) for the AI planning maps.
+    let (px, py) = pos.pixels();
+    crate::aiplace::renew(w, px, py);
     census(w, player);
     Some(id)
 }

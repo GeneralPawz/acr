@@ -55,17 +55,12 @@ pub const FUNCTIONS: &[ApiFn] = &[
         ai_torg,
     ),
     f("GetTorgResult", 0x5690c0, Status::Partial("as AI_Torg"), get_torg_result),
-    f(
-        "SetBuildingsCollector",
-        0x577c6f,
-        Status::Partial("current buildings only; new ones are not added yet"),
-        set_buildings_collector,
-    ),
-    f("SetUnitsCollector", 0x577d70, Status::Partial("current units only"), set_units_collector),
+    f("SetBuildingsCollector", 0x577c6f, DONE, set_buildings_collector),
+    f("SetUnitsCollector", 0x577d70, DONE, set_units_collector),
     f(
         "SetEnemyBuildingsCollector",
         0x577e71,
-        Status::Partial("current enemy buildings only"),
+        Status::Partial("the collected mark of 0x23 bit1 is not kept: a building can enter several enemy collectors"),
         set_enemy_buildings_collector,
     ),
     f("SGP_RepairBuilding", 0x577b9c, Status::Stub("no repairs in acr-sim yet"), zero),
@@ -384,15 +379,34 @@ fn collector(api: &mut Api, c: &mut Call, pick: impl Fn(&Api, &acr_sim::Unit, u8
     Ok(0)
 }
 
+/// Remembers a collector group of a nation (`CITY+0xf46/+0xf48/+0xf4a`).
+fn remember(api: &mut Api, c: &Call, set: fn(&mut crate::aicity::City, usize)) -> Result<()> {
+    let n = c.u8(0)?;
+    let h = c.handle(1)?;
+    if n < 8 && h.magic == magic::GROUP && usize::from(h.index) < api.st.groups.len() {
+        set(&mut api.st.cities[usize::from(n)], usize::from(h.index));
+    }
+    Ok(())
+}
+
+/// `SetBuildingsCollector(byte nat, GAMEOBJ* grp)` (0x577c6f): the nation's buildings join
+/// the group, now and whenever one is created.
 fn set_buildings_collector(api: &mut Api, c: &mut Call) -> Result<u32> {
+    remember(api, c, |city, g| city.buildings_collector = Some(g))?;
     collector(api, c, |_, u, n| u.building && u.owner == n)
 }
 
+/// `SetUnitsCollector(byte nat, GAMEOBJ* grp)` (0x577d70): the nation's units join the group,
+/// and so do the units its AI produces later.
 fn set_units_collector(api: &mut Api, c: &mut Call) -> Result<u32> {
+    remember(api, c, |city, g| city.units_collector = Some(g))?;
     collector(api, c, |_, u, n| !u.building && u.owner == n)
 }
 
+/// `SetEnemyBuildingsCollector(byte nat, GAMEOBJ* grp)` (0x577e71): enemy buildings join the
+/// group, now and whenever one is created.
 fn set_enemy_buildings_collector(api: &mut Api, c: &mut Call) -> Result<u32> {
+    remember(api, c, |city, g| city.enemy_collector = Some(g))?;
     collector(api, c, |api, u, n| u.building && api.st.unit_nmask(u.id, u.owner) & api.st.nmask[usize::from(n)] == 0)
 }
 
@@ -523,6 +537,10 @@ fn try_unit(api: &mut Api, c: &mut Call) -> Result<u32> {
     }
     let count = api.world.units.iter().filter(|u| u.living() && u.owner == n && u.kind == t).count() as i32;
     let Some(&k) = city.index.get(&t).filter(|_| max > count) else { return Ok(0) };
+    // One building project at a time (`PresentProject`).
+    if api.world.catalog.get(t).building && acr_sim::aiplace::project_pending(api.world, n) {
+        return Ok(0);
+    }
     let need = city.props[k].percent;
     if api.world.random.rando() < crate::aicity::perconv(prob) && percent >= need {
         api.st.cities[usize::from(n)].best.push(k);
@@ -590,6 +608,26 @@ pub fn run_production(st: &mut crate::state::ScriptState, world: &mut acr_sim::W
     st.seen_units = world.units.len();
     for i in first..world.units.len() {
         let u = &world.units[i];
+        if u.building && u.alive {
+            // A new building joins the collectors (0x588569): its nation's buildings
+            // collector and the enemy collector of every nation it is not allied with.
+            let (id, owner) = (u.id, u.owner);
+            let nm = st.unit_nmask(id, owner);
+            let serial = st.serial(id);
+            for n in 0..8 {
+                let city = &st.cities[n];
+                let g = if n == usize::from(owner) { city.buildings_collector } else { None };
+                let e = if nm & st.nmask[n] == 0 { city.enemy_collector } else { None };
+                for g in [g, e].into_iter().flatten() {
+                    if let Some(grp) = st.groups.get_mut(g)
+                        && !grp.members.iter().any(|m| u32::from(m.id) == id.0)
+                    {
+                        grp.members.push(crate::state::Member { id: id.0 as u16, serial });
+                    }
+                }
+            }
+            continue;
+        }
         if u.building || !u.alive {
             continue;
         }

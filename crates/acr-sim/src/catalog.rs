@@ -578,6 +578,14 @@ pub struct ObjectType {
     pub fishing: (i32, i32),
     /// `PORT` (NM+0x1729 bit6): a port; ships appear at its water point.
     pub port: bool,
+    /// `CHECKPOINTS n (x y)*n` (NM+0x170a..): 16 px cells of the building's site test.
+    pub check_points: Vec<(i32, i32)>,
+    /// From the check points (parser 0x4f66f1): their mean cell `CenterMX/MY` and the
+    /// largest `Norma` from it (`BRadius`).
+    pub check_center: (i32, i32, i32),
+    /// `BUILDBAR x0 y0 x1 y1` (NM+0x2859..): the rectangle other buildings may not overlap
+    /// (16 px units from the centre).
+    pub build_bar: (i32, i32, i32, i32),
     /// `RESSUBST` (NM+0x172b bit6): a mine that becomes the mine of the deposit it is built
     /// on.
     pub res_subst: bool,
@@ -821,6 +829,24 @@ impl ObjectType {
                 .get("FISHING")
                 .map_or((0, 0), |c| (i32::from(c.int(0).unwrap_or(0) as u8), i32::from(c.int(1).unwrap_or(0) as u16))),
             port: def.has("PORT"),
+            check_points: def
+                .get("CHECKPOINTS")
+                .map(|c| c.points(0).into_iter().map(|(x, y)| (i32::from(x as u8), i32::from(y as u8))).collect())
+                .unwrap_or_default(),
+            check_center: def.get("CHECKPOINTS").map_or((0, 0, 0), |c| {
+                let p: Vec<(i32, i32)> =
+                    c.points(0).into_iter().map(|(x, y)| (i32::from(x as u8), i32::from(y as u8))).collect();
+                if p.is_empty() {
+                    return (0, 0, 0);
+                }
+                let n = p.len() as i32;
+                let (mx, my) = (p.iter().map(|q| q.0).sum::<i32>() / n, p.iter().map(|q| q.1).sum::<i32>() / n);
+                (mx, my, p.iter().map(|q| crate::trig::norma(q.0 - mx, q.1 - my)).max().unwrap_or(0))
+            }),
+            build_bar: def.get("BUILDBAR").map_or((0, 0, 0, 0), |c| {
+                let a = |i| c.int(i).unwrap_or(0);
+                (a(0), a(1), a(2), a(3))
+            }),
             shot_cost: def.get("RASTRATA_NA_VISTREL2").or_else(|| def.get("RASTRATA_NA_VISTREL")).map(|c| {
                 let two = c.keyword == "RASTRATA_NA_VISTREL2";
                 let (i1, i2) = (

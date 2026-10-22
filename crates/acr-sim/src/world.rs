@@ -454,6 +454,10 @@ pub struct World {
     pub projectiles: crate::projectile::Projectiles,
     /// The 3D boxes of buildings.
     pub bars: crate::bars::Bars,
+    /// The AI planning maps (`CantBuild`, `InfoMap`), built at the first use.
+    pub plan: Option<Arc<crate::aiplace::PlanMaps>>,
+    /// The building side of the computer players' cities.
+    pub cities: [crate::aiplace::City; PLAYERS],
     /// Nations run by an AI (`Nat+0x1a729` bit3): they search targets every 8th tick except
     /// towers, and their training buildings still shoot. Set by the host.
     pub ai: [bool; PLAYERS],
@@ -573,6 +577,8 @@ impl World {
             morale: Default::default(),
             projectiles: Default::default(),
             bars,
+            plan: None,
+            cities: Default::default(),
             ai: [false; PLAYERS],
         }
     }

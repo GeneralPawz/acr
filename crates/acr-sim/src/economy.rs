@@ -309,8 +309,8 @@ pub fn city_tick(w: &mut World) {
     }
     w.random.rando();
     if w.ai[usize::from(k)] {
-        // The city's mills (`MelnID`, at most 4; here the first four ready mills).
-        let mills: Vec<usize> = (0..w.units.len()).filter(|&i| is_ready_mill(w, i, k)).take(4).collect();
+        // The city's mills (`MelnID`, at most 4).
+        let mills = crate::aiplace::ready_mills(w, k);
         if !mills.is_empty() && w.random.rando() < 0x1000 {
             for b in mills {
                 if let Some(field) = mill_product(w, b) {
