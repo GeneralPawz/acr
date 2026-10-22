@@ -605,6 +605,57 @@ impl ModelData {
     pub fn triangle_count(&self) -> usize {
         self.primitives.iter().map(|p| p.indices.len() / 3).sum()
     }
+
+    /// The node a primitive's mesh hangs on, for unskinned meshes (`None` when skinned).
+    fn primitive_node(&self, p: &Primitive) -> Option<usize> {
+        let slot = p.vertices.first()?.joints[0] as usize;
+        match self.slots.get(slot)? {
+            Slot::Node(n) => Some(*n),
+            Slot::Joint { .. } => None,
+        }
+    }
+
+    /// The meshes on the node called `name` alone, the node moved to the origin and freed of
+    /// its parent (keeping its own rotation and scale): one gib of a pack (`gore.glb`) or a
+    /// piece of held gear (the musket) to place on its own. `None` without such a mesh.
+    pub fn node_part(&self, name: &str) -> Option<ModelData> {
+        let node = self.nodes.iter().position(|n| n.name == name)?;
+        let primitives: Vec<Primitive> =
+            self.primitives.iter().filter(|p| self.primitive_node(p) == Some(node)).cloned().collect();
+        if primitives.is_empty() {
+            return None;
+        }
+        let mut model = Self { primitives, clips: Vec::new(), rig: None, ..self.clone() };
+        let n = &mut model.nodes[node];
+        n.parent = None;
+        n.translation = [0.0; 3];
+        model.radius = model.rest_radius();
+        Some(model)
+    }
+
+    /// Names of the nodes that carry unskinned meshes (gibs of a pack, held gear).
+    pub fn mesh_nodes(&self) -> Vec<&str> {
+        let mut out: Vec<&str> = self
+            .primitives
+            .iter()
+            .filter_map(|p| self.primitive_node(p))
+            .map(|n| self.nodes[n].name.as_str())
+            .collect();
+        out.dedup();
+        out
+    }
+
+    /// The model without the meshes on nodes whose name `drop` accepts (held gear left out
+    /// for crawlers: the musket and hat lie on the ground instead).
+    pub fn without_nodes(&self, drop: impl Fn(&str) -> bool) -> ModelData {
+        let primitives = self
+            .primitives
+            .iter()
+            .filter(|p| !self.primitive_node(p).is_some_and(|n| drop(&self.nodes[n].name)))
+            .cloned()
+            .collect();
+        Self { primitives, ..self.clone() }
+    }
 }
 
 /// The decay of a corpse (0 fresh .. 1 gone) from its death counter (`Unit::death`, +1 per

@@ -22,6 +22,8 @@ use winit::keyboard::NamedKey;
 use crate::ui::{GameKind, GameSetup};
 
 mod controls;
+mod damage_view;
+mod debris;
 mod dip;
 mod effects;
 mod gore;

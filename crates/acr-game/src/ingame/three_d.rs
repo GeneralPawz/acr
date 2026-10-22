@@ -16,6 +16,7 @@ use acr_sim::World;
 use acr_sim::world::{AnimKind, EntityId, Unit};
 use winit::keyboard::{Key, NamedKey};
 
+use super::debris::UnitModel;
 use super::piles;
 use crate::ui::settings::{CameraMode, Gore, Models, Settings};
 
@@ -30,6 +31,29 @@ const CORPSE_FADE: u16 = 100;
 const TURN_RATE: f32 = 1.6;
 const TILT_RATE: f32 = 0.8;
 
+/// Held gear of a unit model (`docs/assets-humans.md`: separate nodes on sockets).
+#[derive(Debug, Clone, Default)]
+struct Gear {
+    /// The model without the musket, rammer and hat.
+    unarmed: Option<usize>,
+    /// The musket and hat alone, to lie on the ground.
+    dropped: Vec<usize>,
+}
+
+/// The `gore.glb` pack (#262): gibs, guts and the stump cap.
+const GORE: &str = "GORE";
+
+/// Held gear a crawler or a disarmed man no longer carries: long weapons and the hat.
+fn held_gear(node: &str) -> bool {
+    let n = node.rsplit('.').next().unwrap_or(node);
+    ["musket", "rammer", "pike", "tricorn", "hat", "cap"].contains(&n)
+}
+
+/// Gear that lies on the ground once dropped (the rammer stays in the musket).
+fn lies_on_ground(node: &str) -> bool {
+    held_gear(node) && !node.ends_with("rammer")
+}
+
 #[derive(Default)]
 struct HeldKeys {
     left: bool,
@@ -39,10 +63,19 @@ struct HeldKeys {
 }
 
 pub struct ThreeD {
+    /// Severed pieces, gibs and dropped gear (#262 S5).
+    debris: super::debris::Debris,
+    /// The parts of `gore.glb` (gibs, guts) by node name.
+    gibs: super::debris::GibModels,
+    /// Per unit model: the model without held gear (crawlers, the disarmed) and the gear
+    /// that then lies on the ground.
+    gear: HashMap<usize, Gear>,
     /// Blood trails of the bleeding (render only, #254, #262).
     trail: super::trail::Trails,
     /// The last tick drops were added for (frames redraw a tick several times).
     trail_tick: u64,
+    /// The tick of the last update: going back means another game, the debris is dropped.
+    debris_tick: u64,
     models: Models,
     gore: Gore,
     /// How long 3D corpses lie (ticks, `corpse_minutes`).
@@ -101,6 +134,9 @@ impl Compare {
 impl Default for ThreeD {
     fn default() -> Self {
         Self {
+            debris: Default::default(),
+            gibs: Default::default(),
+            gear: HashMap::new(),
             models: Models::Off,
             gore: Gore::Full,
             corpse_ticks: CORPSE_MINUTES * 60 * acr_sim::ORIGINAL_TICKS_PER_SECOND as u64,
@@ -117,6 +153,7 @@ impl Default for ThreeD {
             pools: Vec::new(),
             trail: super::trail::Trails::default(),
             trail_tick: u64::MAX,
+            debris_tick: 0,
             shown: HashSet::new(),
             frames: 0,
             since: None,
@@ -210,7 +247,34 @@ impl ThreeD {
         let renderer = self.renderer.get_or_insert_with(|| ModelRenderer::new(device, queue, format));
         self.depth.get_or_insert_with(|| DepthTarget::new(device, format));
         for (name, model) in self.parsed.drain(..) {
+            if name == GORE {
+                // The pack is split into its nodes; the torn cap replaces the procedural one
+                // (one cap for all cuts: `stump_cap_clean` is not used yet).
+                for node in model.mesh_nodes() {
+                    let Some(part) = model.node_part(node) else { continue };
+                    if node == "stump_cap" {
+                        renderer.set_cap(device, queue, part);
+                    } else {
+                        self.gibs.insert(node.to_owned(), renderer.add_model(device, queue, part));
+                    }
+                }
+                self.loaded.insert(name, Some(usize::MAX));
+                continue;
+            }
+            let mut gear = Gear::default();
+            if model.rig.is_some() {
+                let unarmed = model.without_nodes(held_gear);
+                if unarmed.primitives.len() < model.primitives.len() {
+                    for node in model.mesh_nodes().into_iter().filter(|n| lies_on_ground(n)) {
+                        if let Some(part) = model.node_part(node) {
+                            gear.dropped.push(renderer.add_model(device, queue, super::debris::lying_flat(part)));
+                        }
+                    }
+                    gear.unarmed = Some(renderer.add_model(device, queue, unarmed));
+                }
+            }
             let index = renderer.add_model(device, queue, model);
+            self.gear.insert(index, gear);
             self.loaded.insert(name, Some(index));
         }
     }
@@ -272,7 +336,17 @@ impl ThreeD {
         let mut footprints: Vec<piles::Footprint> = Vec::new();
         let mut targets: Vec<super::splatter::Target> = Vec::new();
         let mut pieces: Vec<(usize, Damage)> = Vec::new();
+        // Guts beside open bellies, drawn after the units (the indices above are per unit).
+        let mut extra: Vec<ModelInstance> = Vec::new();
+        // Models of the units drawn, for the pieces their hits throw.
+        let mut unit_models: HashMap<u32, (UnitModel, usize)> = HashMap::new();
         let now = world.tick.0;
+        if self.debris_tick > now {
+            // A loaded game or a restart: the debris belongs to another battle.
+            self.debris.clear();
+        }
+        self.debris_tick = now;
+        self.request_gore(request);
         // Corpses the simulation removed (after about a minute, as the original) stay in 3D
         // until their own lifetime ends (`corpse_minutes`), so battlefields fill and piles
         // grow; their units keep position, facing and lying pose.
@@ -321,11 +395,48 @@ impl ThreeD {
             let (wounds, pool) = super::gore::corpse(body, record, self.gore, removed_at, ground);
             self.pools.extend(pool);
             let (mut inst, at) = instance(u, death, index, model, terrain, self.gore, removed_at, wounds);
-            // Lost legs (#254): the soldier lies prone and drags himself along, head first.
-            if u.alive && u.death == 0 && u.body.crawling() {
-                inst.clip = model.clip_for_animation("DEATHLIE1");
-                inst.time = 0.0;
-                inst.morphs[1] = 1.0;
+            let living = u.alive && u.death == 0;
+            // What is left of the body (#262): cuts, fractures, a torn trunk, an open belly.
+            let damage = match (self.gore, model.rig.is_some(), living) {
+                (Gore::Off, ..) | (_, false, _) => Some(Damage::default()),
+                (_, true, true) => super::damage_view::damage(&u.body, None),
+                (_, true, false) => super::damage_view::damage(&record.body, record.torn),
+            };
+            let Some(damage) = damage else {
+                // Pulverized: nothing whole to draw, only gibs and mist (and no sprite).
+                self.shown.insert(u.id);
+                continue;
+            };
+            inst.damage = damage;
+            if model.rig.is_some() {
+                unit_models.insert(u.id.0, (UnitModel { model: index, player: u.owner }, index));
+            }
+            // Lost legs (#254, #262): he lies face down and drags himself along, head first.
+            if living && u.body.crawling() {
+                match model.clip(super::damage_view::crawl_clip(&u.body)) {
+                    Some(clip) => {
+                        inst.clip = Some(clip);
+                        inst.time = now as f32 / acr_sim::ORIGINAL_TICKS_PER_SECOND as f32;
+                    }
+                    None => {
+                        inst.clip = model.clip_for_animation("DEATHLIE1");
+                        inst.time = 0.0;
+                        inst.morphs[1] = 1.0;
+                    }
+                }
+            }
+            // A crawler or a man who can no longer hold his musket lets it fall with his hat.
+            if living
+                && (u.body.crawling() || u.body.dropped)
+                && let Some(gear) = self.gear.get(&index)
+                && let Some(unarmed) = gear.unarmed
+            {
+                inst.model = unarmed;
+                self.debris.drop_gear(u.id.0, &gear.dropped, u.owner, at, now);
+            }
+            if damage.belly_open && self.gore == Gore::Full {
+                let yaw = view3d::facing_yaw(u.dir);
+                super::debris::guts(u.id.0, at, yaw, inst.decay, u.owner, &self.gibs, &mut extra);
             }
             // The bleeding leave drops of blood as they go, crawlers a smear.
             if u.alive
@@ -335,7 +446,7 @@ impl ThreeD {
                 && now.is_multiple_of(super::trail::EVERY)
                 && now != self.trail_tick
             {
-                self.trail.sample(u.id.0, at, u.wounds.crawling(), now);
+                self.trail.sample(u.id.0, at, u.body.crawling(), now);
             }
             if u.death > 0 && !u.building {
                 corpses.push((self.instances.len(), at, view3d::facing_yaw(u.dir)));
@@ -348,11 +459,9 @@ impl ThreeD {
                 building: u.building,
                 radius: model.radius,
             });
-            let damaged = model.rig.as_ref().and_then(|_| debug_damage(u.id.0));
-            if let Some(damage) = damaged {
+            // `ACR_DEBUG_DAMAGE` overrides the game's damage (a debug aid).
+            if let Some(damage) = model.rig.as_ref().and_then(|_| debug_damage(u.id.0)) {
                 inst.damage = damage;
-            }
-            if let Some(damage) = damaged {
                 pieces.push((self.instances.len(), damage));
             }
             self.instances.push(inst);
@@ -374,7 +483,12 @@ impl ThreeD {
         self.pile_us += start.elapsed().as_micros();
         self.pile_runs += 1;
         if self.pile_runs == 500 {
-            log::info!("3d: {} corpses piled in {} µs", footprints.len(), self.pile_us / 500);
+            log::info!(
+                "3d: {} corpses piled in {} µs; debris {}",
+                footprints.len(),
+                self.pile_us / 500,
+                self.debris.len()
+            );
             self.pile_us = 0;
             self.pile_runs = 0;
         }
@@ -389,12 +503,24 @@ impl ThreeD {
             let body = self.instances[i];
             self.instances.extend(debug_pieces(&body, damage));
         }
+        self.instances.extend(extra);
         let ground = |x: f32, y: f32| {
             let (x, y) = (x as i32, y as i32);
             view3d::ground_point(x, y, terrain.height_at(x, y))
         };
+        // Severed limbs and halves thrown by the blow, gibs (#262 S5).
+        let renderer = self.renderer.as_ref();
+        let unit = |v: u32| {
+            let &(m, index) = unit_models.get(&v)?;
+            Some((m, renderer?.model(index)?.rig.as_ref()?))
+        };
+        let death = |v: u32| world.deaths.get(&v).copied();
+        self.debris.take_hits(world.hits.iter(), now, self.gore, &unit, &death, &self.gibs, &ground);
+        self.debris.expire(now, self.corpse_ticks);
+        self.debris.draw(now, self.corpse_ticks, &ground, &mut self.instances, &mut self.pools);
         for hit in &world.hits {
             super::splatter::splatter(hit, world.tick.0, self.gore, &ground, &mut self.pools);
+            super::debris::mist(hit, world.tick.0, self.gore, &ground, &mut self.pools);
         }
         // Earth churned up where rounds struck the ground (#226).
         for impact in &world.impacts {
@@ -402,6 +528,19 @@ impl ThreeD {
         }
         // Every decal lies on the slope under it rather than flat at one height (#226).
         super::splatter::lay_on_ground(&mut self.pools, &ground);
+    }
+
+    /// Asks for `gore.glb` (gibs, guts, the stump cap) once gore is shown.
+    fn request_gore(&mut self, request: &dyn Fn(&str)) {
+        if self.gore == Gore::Off || self.loaded.contains_key(GORE) || self.parsed.iter().any(|(n, _)| n == GORE) {
+            return;
+        }
+        let Some(path) = self.files.get(GORE) else { return };
+        let key = acr_formats::normalize_path(path);
+        if let std::collections::hash_map::Entry::Vacant(e) = self.requested.entry(key) {
+            e.insert(GORE.to_owned());
+            request(path);
+        }
     }
 
     /// Draws the frame's 3D pass over the terrain already in `view`: the terrain's depth,

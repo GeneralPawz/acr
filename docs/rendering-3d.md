@@ -221,8 +221,49 @@ The renderer half of `docs/damage-model.md` §3 (`acr_render::damage`): a `Damag
   outline in the shader) until `ModelRenderer::set_cap` swaps in the modelled cap of
   `gore.glb` (a unit disc in xy facing +z). The old joint-only caps (`*.caps` meshes) are
   no longer loaded.
-- Not yet: the game turning `acr_sim::body` into damages and pieces (S5: pieces posed limp
-  and thrown, guts, gibs), the trunk's torn-edge strip (the trunk cut uses the disc).
+- Not yet: the trunk's torn-edge strip (the trunk cut uses the disc).
+
+#### Bodies in the game (#262 S5)
+
+`ingame/damage_view.rs` turns `acr_sim::body` into a `Damage`, `ingame/debris.rs` keeps what
+falls off. Render only; placement is hashed from the hit (tick, victim), never the sim RNG.
+
+- **Body → damage** (`damage_view::damage`): the living draw `Unit::body`, corpses
+  `DeathRecord::body` plus `torn`. `lost` → cut; a fracture → bend at its level, at least
+  25°: closed and open about the rest pose's x (folds forwards) by the sim's `bend`,
+  dislocated 1.5 times as far (up to 100°) about z, outwards per side; a fracture on a lost
+  part is dropped. `Torn::InTwo { level }` → `trunk_cut = 255 − level` (the sim counts from
+  the shoulders); `Headless` → `head_gone`; `belly_open` → flag; `Pulverized` → no body
+  instance at all (the unit still counts as shown, so no sprite either). `gore=off` draws
+  the original whole bodies.
+- **Caps:** `gore.glb` (`ACR/MODELS/gore.glb`, requested once gore is on) is split into its
+  mesh nodes (`ModelData::node_part`); `stump_cap` goes to `ModelRenderer::set_cap`. The
+  renderer has one cap model for all cuts, so `stump_cap_clean` (sabre) is not used yet.
+- **Pieces** (`Debris::take_hits`, new hits since the last frame): a `HitRecord::injury`
+  with `Outcome::Off` throws the cut-off part (`Keep::Piece { limb, from: level }`) of the
+  victim's model; `Torn::InTwo` throws the `Keep::Upper` half (the legs stay with the
+  corpse where he stood). The throw: from the hit along the blow, ±0.5 rad spread, 0.8 m to
+  1.2 + 3 × energy m, in 7 ticks on a 0.6 m arc, tumbling. A piece lies on its back in the
+  bind pose (flattened to the ground) with the middle of the piece on the landing point,
+  and gets a blood pool once landed. Pieces decay as corpses and go after `corpse_minutes`.
+- **Gibs and mist** (`gore=full` only): `Pulverized` leaves 4–8 gibs, `InTwo` 3, `Headless`
+  2 (skull fragment and jaw), a killing cannonball of energy ≥ 90 (point blank) 4, from
+  flesh, bone, cloth and organ nodes, thrown 0.3–4.5 m along the ball's path. Pulverized and
+  point-blank hits add a mist: three extra sprays of #239 (`splatter::splatter`, all round
+  and far along the path) that settle as speckles. Cloth gibs carry the player for the
+  nation tint, which the shader does not apply yet (#162).
+- **Guts** (`gore=full`): an open belly, on a corpse or a living (writhing) man, gets the
+  `guts_heap` at the belly (0.35 m ahead of the ground point, to one side) and an intestine
+  coil lying out beyond it.
+- **Crawlers:** `CRAWL2`, `CRAWL1` (one working leg), `CRAWLARM` (one working arm) or
+  `WRITHE` (no working arm) by `damage_view::crawl_clip`, played on game time; models without
+  the clips fall back to `DEATHLIE1` with the `lie_flat` morph. Held gear is a separate node
+  on its socket, so each human model is also uploaded without its `musket`, `rammer`, `pike`
+  and hat nodes (`ModelData::without_nodes`); crawlers and men with `Body::dropped` draw
+  that variant, and the musket and hat (`node_part`, turned to lie flat by
+  `debris::lying_flat`) lie on the ground where he was when it happened, until
+  `corpse_minutes` have passed.
+- `gore=reduced`: pieces and caps, no guts, gibs or mist; `gore=off`: none of it.
 
 #### Hits and blood splatter
 
@@ -404,7 +445,8 @@ and models every 2 seconds (pause the game with the Pause key to compare one mom
 `ACR_MODELS_DIR` points the game at a folder of models (above). `ACR_DEBUG_DAMAGE` (native
 only) forces damage on every 3D human: a spec of `Damage::parse` (`cut:arm_l:160`,
 `frac:leg_l:170:55` (degrees), `trunk:110`, `head`, `belly`, `piece:arm_l`, `upper`, comma
-separated) or `demo` (a preset per unit id); severed pieces stand beside their body. The log reports every 5 s
+separated) or `demo` (a preset per unit id), overriding the game's damage; severed pieces
+stand beside their body. The log reports every 5 s
 the frame rate, the models drawn and the poses sampled.
 
 ## Limits and open points
@@ -414,6 +456,6 @@ the frame rate, the models drawn and the poses sampled.
 - No shadows from models; no nation colour mask yet (#162); no LODs.
 - Free camera: fog of war, the minimap frame and the water tint follow the original view
   only; sprites (trees, units without models) show their stored direction.
-- Dropped gear (musket, hat) does not detach at death yet; strapped gear floats over a
-  deflated body (assets-humans.md, insight 6).
+- Dropped gear (musket, hat) does not detach at death yet, only for crawlers and the
+  disarmed (#262 S5); strapped gear floats over a deflated body (assets-humans.md, insight 6).
 - No blending between clips; morph target normals are ignored.

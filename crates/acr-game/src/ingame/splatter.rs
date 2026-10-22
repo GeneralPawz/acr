@@ -304,15 +304,15 @@ pub fn sprayed_targets<'a>(
 }
 
 /// A small deterministic generator (SplitMix64) seeded from a hit.
-struct Rng(u64);
+pub(super) struct Rng(u64);
 
 impl Rng {
-    fn new(tick: u64, victim: u32) -> Self {
+    pub(super) fn new(tick: u64, victim: u32) -> Self {
         Self(tick.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ u64::from(victim).wrapping_mul(0xD1B5_4A32_D192_ED03))
     }
 
     /// Uniform in `0..1`.
-    fn next(&mut self) -> f32 {
+    pub(super) fn next(&mut self) -> f32 {
         self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
         let mut z = self.0;
         z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
