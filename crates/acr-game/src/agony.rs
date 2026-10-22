@@ -272,7 +272,7 @@ mod tests {
 
     fn kill(tick: u64, victim: u32, x: i32, cause: DeathCause) -> HitRecord {
         // y = 2 × 884: the view centre's row.
-        HitRecord { tick, victim, pos: (x, 1768), dir: (1, 0), cause, killed: true, building: false }
+        HitRecord { tick, victim, pos: (x, 1768), dir: (1, 0), cause, killed: true, building: false, region: None }
     }
 
     fn dying(cause: DeathCause) -> Vec<u32> {
