@@ -10,7 +10,7 @@ use std::rc::Rc;
 use acr_formats::font::{COLOR_TABLE_COUNT, Font, FontColors, color_table_path, named_font};
 use acr_formats::raster::Image;
 
-use super::draw::MENU_PALETTE;
+use super::draw::{GAME_PALETTE, MENU_PALETTE};
 use super::library::Library;
 
 /// A global `RLCFont` object of the original (`fonG60w`, `fon18y3`, ...).
@@ -19,6 +19,8 @@ pub struct FontId(pub &'static str);
 
 /// Palette set of the menus (`1\agew_1.pal`).
 const MENU_SET: u8 = 1;
+/// Palette set of the game screen (`0\agew_1.pal`), used by the in-game interface.
+pub const GAME_SET: u8 = 0;
 
 /// Fonts the menus use; their files are loaded before the first screen.
 const MENU_FONTS: &[&str] = &[
@@ -35,18 +37,25 @@ const MENU_FONTS: &[&str] = &[
     "SmallYellowFont",
     "SmallYellowFont1",
     "SmallWhiteFont",
+    // The in-game interface.
+    "YellowFont",
+    "WhiteFont",
+    "BlackFont",
+    "SmallBlackFont",
+    "SmallBlackFont1",
 ];
 
 #[derive(Default)]
 pub struct Fonts {
     fonts: RefCell<HashMap<FontId, Option<Rc<Font>>>>,
     colors: RefCell<Option<Rc<FontColors>>>,
+    game_colors: RefCell<Option<Rc<FontColors>>>,
 }
 
 impl Fonts {
     /// Files the fonts need: sprite packs, metrics, palette and colour tables.
     pub fn sources(&self) -> Vec<String> {
-        let mut files = vec![MENU_PALETTE.to_owned()];
+        let mut files = vec![MENU_PALETTE.to_owned(), GAME_PALETTE.to_owned()];
         for name in MENU_FONTS {
             let Some(font) = named_font(name) else { continue };
             files.push(font.gp_path());
@@ -84,13 +93,17 @@ impl Fonts {
             .clone()
     }
 
-    fn colors(&self, lib: &Library) -> Option<Rc<FontColors>> {
-        if self.colors.borrow().is_none() {
-            let palette = lib.palette(MENU_PALETTE)?;
-            let colors = FontColors::load((*palette).clone(), MENU_SET, |p| lib.bytes(p).map(|b| b.to_vec()));
-            *self.colors.borrow_mut() = Some(Rc::new(colors));
+    fn colors(&self, lib: &Library, set: u8) -> Option<Rc<FontColors>> {
+        let (cache, path) = match set {
+            GAME_SET => (&self.game_colors, GAME_PALETTE),
+            _ => (&self.colors, MENU_PALETTE),
+        };
+        if cache.borrow().is_none() {
+            let palette = lib.palette(path)?;
+            let colors = FontColors::load((*palette).clone(), set, |p| lib.bytes(p).map(|b| b.to_vec()));
+            *cache.borrow_mut() = Some(Rc::new(colors));
         }
-        self.colors.borrow().clone()
+        cache.borrow().clone()
     }
 
     /// `GetRLCStrWidth`.
@@ -112,10 +125,16 @@ impl Fonts {
     /// position; `None` while files are loading, `Some(None)` if nothing is drawn.
     #[allow(clippy::type_complexity)]
     pub fn rasterize(&self, lib: &Library, font: FontId, text: &[u8]) -> Option<Option<(Image, [i32; 2])>> {
+        self.rasterize_in(lib, font, text, MENU_SET)
+    }
+
+    /// [`Fonts::rasterize`] with the colours of palette set `set`.
+    #[allow(clippy::type_complexity)]
+    pub fn rasterize_in(&self, lib: &Library, font: FontId, text: &[u8], set: u8) -> Option<Option<(Image, [i32; 2])>> {
         if !self.ready(lib) {
             return None;
         }
-        let (Some(font), Some(colors)) = (self.font(lib, font), self.colors(lib)) else { return Some(None) };
+        let (Some(font), Some(colors)) = (self.font(lib, font), self.colors(lib, set)) else { return Some(None) };
         let t = font.draw(text, &colors);
         if t.image.width == 0 || t.image.height == 0 {
             return Some(None);

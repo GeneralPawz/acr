@@ -82,6 +82,14 @@ impl GroundAssets {
         })
     }
 
+    /// Colour of texture `tile` on the minimap at light level `light` (0..32): the first
+    /// texel of the texture (table 0x6d4658, filled at 0x446fd4) darkened by the terrain
+    /// shading rows of `AGEW_1DR.GRD` (0x44c2ff).
+    pub fn minimap_color(&self, tile: u8, light: u8) -> u8 {
+        let row = SHADE_FIRST_ROW + usize::from(light).min(SHADE_ROWS - 1);
+        self.shade.lookup(row as u8, self.tiles.texel(tile, 0, 0))
+    }
+
     /// 256 textures of 64 × 64, 8 per row (indices past the file read texture 0).
     fn tile_atlas(&self) -> Vec<u8> {
         let mut out = vec![0; 512 * 2048];

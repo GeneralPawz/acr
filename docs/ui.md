@@ -187,6 +187,160 @@ The original writes the generated map as `RN<size> <seed> <options> <name> <n>.m
 (0x5d294e) with a preview `Preview\P<a><b><c>`; ACR passes the settings in
 `RandomMapSetup` to the game instead.
 
+## In-game interface
+
+`crates/acr-game/src/hud/` draws it and `ingame/interface.rs` connects it to the game.
+The original lays it out for the screen size (`RealLx` × `RealLy`). ACR uses the
+1024 × 768 canvas of the menus, scaled and letterboxed, while the map fills the whole
+window. The view has no bottom panel: `0x676b84` is 1 and is never written, so
+`PanelLy` (144) only moves the icon rows. Text and lines use palette set 0
+(`0\agew_1.pal`) and its font colour tables. Sprite packs use the palette from
+`acr_formats::sprite_palette`. The frame function 0x4c1a20 draws, in this order:
+minimap (0x4c0a40), unit stats (inside 0x606710), icons (0x5a9fa0), then the
+resource panel and "M" drop-down (0x4c1a70).
+
+Layout constants (0x5aa6d2): `Const.lst` defines none of `Zone1X`, `PropertyX`, … , so
+the defaults apply: `Zone1X/Y` = 6/6, `PropertyX/Y` = 182/6, `IconLx/Ly` = 40/40,
+`AddIconLx/Ly` = 2/2, `ZonesNx/Ny` = 12/6.
+
+### Resource panel (0x4ecc50)
+
+- `Interf2\ResPanel` frame 1 is tiled every 256 px from x = 0. Frame 0 sits at
+  `RealLx − 716`, and frame 2 (the "M" plaque) at `RealLx − 781`. Frames 3 and 4
+  ("L", "F") are never drawn.
+- Values come from 0x4a09d5: the player's resources minus amounts already reserved.
+  They are drawn right aligned in `YellowFont` at `x0 + 119 + 110·slot`, y = 7. Slot =
+  resource index with `FOOD` and `GOLD` swapped, so the order on screen is wood, food,
+  stone, gold, iron, coal. Values ≥ 10 000 000 show `RES_LOT_MONEY` ("Endlos").
+- Hints: viewports 105 × 20 at `(RealLx − 691 + 110·i, 7)` with `RESHINT0..5` (0x5aab4b).
+  They are tooltips of the in-game `DialogsSystem` 0x28c8508 (`SmallBlackFont1`, wrap
+  width 100), drawn as a box at (mouse + 20, mouse + 32): fill colour 185 plus `Border`
+  frames 58..67.
+
+### "M" drop-down (0x4c7360 input, 0x4c6840 build)
+
+- Opening: a press strictly inside `x0 + 23..x0 + 44`, `8..26` of the plaque toggles
+  `0x1100a79`.
+- Rows: `addGP_TextButtonLimited(0, 0, 24·i, text, Border, 74 + i % 3, 77 + i % 3, width,
+  WhiteFont, YellowFont)`. The plank frame repeats along the row (0x46ef12). The rows are
+  centred on `x0 + 33`, start at y = 60, and are as wide as the widest text + 24. A
+  `Border` box surrounds them.
+- Single player rows: `UM_MENU` (game menu), `UM_INF1`, `UM_INF3`, `UM_MINI` (minimap
+  size), `UI_LOCK1`, `UM_TRANS2`, `4XSCALE_ON`, `UM_SURRENDER`, `UM_REPLAY` (restart).
+  ACR runs the game menu, the minimap toggle and restart; the other rows do nothing yet.
+
+### Unit and command icons (0x606710 builds, 0x5a9fa0 draws)
+
+- Icons are `OneIcon`s (0x44 bytes, drawn by 0x494c96) of `ICONS.GP`. The frame is the
+  line index of the icon's name in `ICONLIST.TXT` (lookup 0x4f0516).
+- Grid: 12 columns, 42 px apart, from (`PropertyX`, `RealLy − 144 + 6`) = (182, 630).
+  Three rows are shown. Two sets share the grid:
+  - the selected types (0x28f8190), in the first free slots;
+  - the commands (0x28f9e30), at fixed slots `x + 12·y`.
+- Box: the box from (180, 630) to (182 + 42·columns, 755) is drawn with
+  `Border` and corner table 0x668580 = TL 0, TR 2, BL 6, BR 8, left 12, right 14, top 9,
+  bottom 11 (0x47f48a: edges tiled every 64 px and centred on the box lines). The
+  separate left box of 0x5aa1bb is dead code: `0x28f819c` is never written.
+- A type icon has:
+  - an outline in player colour `0xd0 + 4·nation`;
+  - a life bar: two lines of colour 255 with the rest in colour 0, length
+    `38·life/max`;
+  - the count in `WhiteFont`, shadowed by `BlackFont` at ±1, at the top left.
+  Clicking it keeps only that type selected.
+- A highlighted icon gets a frame in `GetPaletteColor(255, 200, 64)`. A pressed icon is
+  drawn 1 px down-right. A disabled one is drawn transparent.
+- Single selected type: numbers drawn straight over the map, in `SmallWhiteFont`, with
+  `SMICONS.GP` icons from `NRES.DAT [WEAPONS]`:
+  - up to 2 attacks at (53 + 55·n, 630), text at x + 18, y + 4;
+  - the shield `#GENSHIELD` at (53, 651);
+  - up to 6 protections in 3 columns at (13 + 55·c, 681 + 19·r).
+- Command slots wired so far:
+  - formation groups of the officer's `[OFFICERS]` entry, at their `NRES.DAT
+    [ORDERICONS]` slots (column 8). The current formation is highlighted. These send
+    `Form`, re-forming an existing formation.
+  - For a formed brigade: slot 24 `SFREORD` ("Formation auflösen", `Disband`). Slots 25
+    and 26 (`STANDGR`/`NOSTAND`) and `GO&ATTACK` (slot 27) are shown but inactive.
+- Hotkeys: `Data\Keyboard.dat` (in `Patch02.GS1`) maps `[CTRL|ALT|SHIFT] KEY : ICON`.
+  The key presses the shown icon of that name.
+
+### Minimap (0x44c230 image, 0x4c0a40 draw)
+
+- One pixel per `1 << s` map cells, so the image is 240 × 240. A pixel samples vertex
+  `(x << s, y << s)` and takes the colour `SHADE[light][first texel of the texture]`:
+  - `SHADE` is `AGEW_1DR.GRD` rows 64..96;
+  - the texel table is 0x6d4658.
+- Water: every second cell with `SEA2` depth > 0x80 takes 0xb3..0xb7 by brightness.
+  Non-tree map objects are 0x4e.
+- Position: `(RealLx − w − 17, RealLy − h − 16)`. Large mode (`0x668f1d`, the default)
+  shows the whole map. Small mode (key M) shows at most 120 px, scrolled with the camera:
+  `offx = (camX + viewW/2 − w) >> s`, clamped.
+- Units are 2 × 2 dots in colours {208, 212, 216, 220, 224, 228, 232, 173}; the local
+  player's selected units are 0xff.
+- Camera rectangle: 0xff. Two frame lines in `0xd0 + 4·player` (+1 outside), then the
+  `Border` box.
+- Mouse: left press or drag centres the view (0x4c5c9a). Right press orders the
+  selection there.
+
+### Cursor and overlays
+
+- Cursor: `LoadFog(0)` selects `CURSOR_00.GP`. Hotspots and animation chains come from
+  `curs_xy.dat` (`dx dy next`, a step every 60 ms). Frame 0 (arrow) is the default;
+  frame 1 (sword) shows with a selection over an enemy (0x4c46b6). The other context
+  cursors (gathering, building, storming, …) wait for the simulation to support them.
+- Selection brackets (0x4bae50): 3 px corners in `GetPaletteColor(255, 255, 0)` around
+  `RECTANGLE dx dy w h` (defaults 0 3 40 64). Soldiers of a formed brigade get none.
+- Life bars (Tab, 0x4bb390): green lines at y0 − 12 and y0 − 11 with white end caps.
+- Selection rectangle: `GetPaletteColor(0, 255, 255)`.
+- `Interface\CursGo` at a move target: one frame per game frame, 17 frames (0x587fa9).
+
+### Keys (0x4a30e8) and scrolling (0x4c5910)
+
+- F12: game menu. ACR also opens it with Escape, which in the original only cancels a
+  command mode.
+- Control groups: Ctrl + digit stores, digit recalls, Shift + digit adds.
+- Space: jump to the next selected unit. Pause: pause. Tab: life bars. M: minimap size.
+- A second click on a unit selects all own units of that type on the screen. This is
+  not verified in the original.
+- Shift adds to a selection.
+- Scrolling is updated once per game frame:
+  - arrow keys set the speed to ±4;
+  - the cursor within 6 px of the edge accelerates up to `ScrollSpeed`;
+  - otherwise the speed decays by 1.
+  The view moves half the speed in map cells (32 × 16 px) per game frame. ACR spreads
+  that step over the frame so it moves smoothly.
+- Game speed: ticks/s = `1000 / (2·FPSTime)`. ACR caps the uncapped setting at 100.
+
+### Game menu (0x5d9c30) and game options (0x5dbe10)
+
+- Game menu: `Interf2\GameMenu` frames 0 (shadow) and 1 at `((RealLx − 470) >> 1) − 14`,
+  `(RealLy − 415) >> 1`. Title `INTF_GMENU_WIN` at +254, +36. Five `GP_TextButton` rows
+  at +46, +75 + 26·i, with hover frames 3, 5, 5, 9, 11 and fonts `fon18w`/`fon18y3`:
+  - continue (0xf4);
+  - save (0xf8);
+  - load (0xf7, text not raised);
+  - options (0xe7; the menu closes after them);
+  - back to the main menu (0xff, no confirmation).
+- The game stands still while the menu is open. Save and load are disabled placeholders
+  (#78).
+- Game options: `Interf2\Options_for_Game` at `((RealLx − 484) >> 1) − 57`,
+  `((RealLy − 425) >> 1) − 166`.
+  - Combo boxes (`Combo2`, `WhiteFont`/`YellowFont`): resolution, music, game mode.
+  - Sliders (`Scroll2`, 292 × 12): sound, music, scroll speed (`ScrollSpeed − 2`) and
+    game speed (`100 − FPSTime`).
+  - OK and Abbruch on `G_Load_Game` frame 1. Enter and Escape work.
+  - OK changes the simulation's tick rate and the scroll speed.
+
+### Open questions
+
+- Which command icons the original shows for a selection without an officer (attack
+  on/off, friendly fire, arm attack…): the conditions in 0x606710 are only partly
+  decoded.
+- The in-game menu cursor (`cur_mn.rlc`), and the "PAUSE" text position: ACR centres
+  `PAUSETEXT` in `YellowFont`.
+- Selection with Ctrl and the double click (`DBLCLICK`) are not traced.
+- The right-drag facing arrow (0x4c5407) and fog of war on the minimap are not built.
+- The side panels (keys U and I, 0x4ce310) are not built.
+
 ## Game setup
 
 "Start" ends the menus with `Action::StartGame(GameSetup)` (`ui/setup.rs`): either
@@ -201,6 +355,7 @@ for random maps.
   exact interaction (and the "X" next to the flag) is not verified.
 - Campaign progress (missions opened by finishing others) is not kept.
 - Multiplayer, load game and the editor are not rebuilt.
+- In-game: see [In-game interface](#in-game-interface).
 
 - The hint position of the main menu (`SmallWhiteFont` at (18, 701)) is unused because no
   main menu entry has a hint.
