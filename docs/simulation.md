@@ -47,8 +47,9 @@ compares state hashes (see [Verification](#verification)).
 - Other clocks:
   - Script timers count ticks, −16 per tick (0x55a1d2).
   - `GetGlobalTime` returns a counter that goes up by 2 per tick.
-  - Peace time (m3d `CAEP`) is in seconds and counts down in real time (0x4bf48b). The
-    division by 60 converts it to minutes for the announcement.
+  - Peace time (m3d `CAEP`) is in seconds and counts down in real time (0x4bf48b); ACR
+    counts it in game seconds (see Deviations → Peace time). Its minutes (0x6e45d8) are
+    for the scripts (`GetPeaceTimeLeft`).
 
 ## Model
 
@@ -1780,6 +1781,21 @@ No game option writes it. How the map view draws the fog is in
   - `GetBuildingEntryPoint` (0x56ea8c) uses the first `CONCENTRATOR` point from the lock
     base cell (0x516fde); the engine does not test whether the building is dying, ACR's
     object lookup skips removed objects.
+  - `TryUnit` (0x56829b) does not write the byte `GeneralObject+0xaa = 0xFF` (no ACR field;
+    its readers are not ported). With game option 2 at 1 (0x6e45c9, `CAEP`) it refuses
+    artillery and `USAGE TOWER` types.
+  - `GetPeaceTimeLeft` (0x569882) returns the minutes 0x6e45d8, which the host refreshes
+    every 30 s as `PeaceTimeLeft / 60` (0x4a7573, network command 0x4d843f → 0x4d84b5).
+- **Peace time** (`acr_sim::peace`, `PeaceTimeLeft` 0x66795c, from the map's `CAEP`,
+  0x545705). The engine counts it down by wall-clock seconds (0x4bf51e, `GetTickCount`
+  through 0x5469ce) and refreshes the scripts' minutes every 30 s of wall-clock time;
+  ACR counts one second per 10 ticks after tick 20 and refreshes the minutes every 300
+  ticks, so a faster game speed does not shorten the peace. The end command 0x4d8293 also
+  clears bit 0 of the matching records of the list 0x1100d6c (0x4cfa30); that is not
+  reproduced, nor the `h:mm:ss` display (0x4bf767). While it lasts, the AI's diversions
+  (`MakeDiversionLink` 0x424957) do nothing; the other blocks (the city's attack code
+  0x422d3d and 0x4391a9, the territory checks 0x45f65c/0x45f767) wait for the city's
+  armies and the territories.
 - **`RemoveFools`.** Pushed friends get a `SendTo` to the nearest free cell (the original uses
   its `Rarr` push tables). Enemies in the way are left to `CheckMotionThroughEnemyAbility`.
 - **Animations.**

@@ -534,6 +534,12 @@ pub struct World {
     /// Coast places, islands and the computer players' landing setup (derived from the map
     /// and refreshed every tick; not hashed, the landings' orders are in `brigades`).
     pub desant: crate::desant::Desant,
+    /// The peace time at the start of the game ([`crate::peace`]).
+    pub peace: crate::peace::Peace,
+    /// The other game options of the map's `CAEP` (0x6e45c8..0x6e45ca: digits 1, 2 and 4 of a
+    /// random map's options); `game_options[1] == 1` forbids the AI artillery and towers
+    /// (`TryUnit`, 0x568329).
+    pub game_options: [u8; 3],
     /// The enemy armies of each nation group (`GlobalEnemyInfo`), refreshed every 256 ticks
     /// (derived from the units, not hashed).
     pub armies: crate::armies::EnemyArmies,
@@ -682,6 +688,8 @@ impl World {
             hit_height: None,
             plough_carry: None,
             desant: Default::default(),
+            peace: Default::default(),
+            game_options: [0; 3],
             armies: Default::default(),
             ai: [false; PLAYERS],
             rules: Default::default(),
@@ -757,6 +765,10 @@ impl World {
         crate::economy::bind_mines(&mut world);
         crate::economy::census_all(&mut world);
         crate::desant::create_cost_places(&mut world);
+        if let Some(p) = &m3d.peace {
+            world.peace = crate::peace::Peace::new(p.time as i32);
+            world.game_options = p.flags;
+        }
         (world, report)
     }
 
@@ -934,6 +946,7 @@ impl World {
         for c in commands {
             self.apply(c);
         }
+        crate::peace::tick(self);
         crate::desant::tick(self);
         crate::economy::city_tick(self);
         crate::armies::tick(self);
@@ -1303,6 +1316,8 @@ impl World {
         let hash = if self.slow_deaths.is_empty() { hash } else { state_hash(&(hash, &self.slow_deaths)) };
         // Likewise the optional rules, only when some are on, and shell fires while some burn.
         let hash = if self.rules == crate::Rules::default() { hash } else { state_hash(&(hash, self.rules)) };
-        if self.ground_fires.list.is_empty() { hash } else { state_hash(&(hash, &self.ground_fires)) }
+        let hash = if self.ground_fires.list.is_empty() { hash } else { state_hash(&(hash, &self.ground_fires)) };
+        // The peace time, only in games that have one.
+        if self.peace == crate::peace::Peace::default() { hash } else { state_hash(&(hash, &self.peace)) }
     }
 }
