@@ -373,6 +373,47 @@ pub fn projectile_sprites(world: &World, objects: &ObjectsView, out: &mut Vec<Sc
     }
 }
 
+/// Where the flames of a shell fire stand, relative to its centre (in units of its radius).
+const GROUND_FLAMES: [(i32, i32); 3] = [(0, 0), (-1, 1), (1, -1)];
+
+/// The sprites of the shell fires on the ground (#256, rule `hit_locations`): a few flames
+/// of the burning-building loop (`[FIRES]`, `#DFIRE2`) per fire, each a little out of step,
+/// fewer as the fire burns down. Sorted at the ground row like the buildings' fires.
+pub fn ground_fire_sprites(world: &World, objects: &ObjectsView, out: &mut Vec<SceneSprite>) {
+    if world.ground_fires.list.is_empty() {
+        return;
+    }
+    let assets = objects.objects();
+    let Some(effects) = assets.effects() else { return };
+    let Some(anim) = world.catalog.weapons.fires[0].cycle.first() else { return };
+    let Some(len) = effects.animation(anim).map(|a| a.frame_refs().len()).filter(|&n| n > 0) else { return };
+    for f in &world.ground_fires.list {
+        let age = f.age(world.tick.0);
+        // All flames for the first half, then one goes out per sixth of the rest.
+        let left = acr_sim::ground_fire::BURN_TICKS.saturating_sub(age);
+        let n = (left * 6 / acr_sim::ground_fire::BURN_TICKS).clamp(1, GROUND_FLAMES.len() as u64) as usize;
+        let h = objects_height(world, f.x, f.y);
+        for (j, &(ox, oy)) in GROUND_FLAMES.iter().take(n).enumerate() {
+            let step = (age as usize + 5 * j) % len;
+            let Some((frame, (fx, fy))) = assets.effect_look(anim, step, 0) else { continue };
+            let (x, y) = (f.x + ox * f.radius / 2, f.y + oy * f.radius / 2);
+            out.push(SceneSprite {
+                frame,
+                layer: Layer::Sorted,
+                x,
+                y,
+                dx: fx,
+                dy: fy - h,
+                sort: (y >> 1) + FIRE_LAYER,
+                player: 0,
+                transparent: false,
+                mirrored: false,
+                white: false,
+            });
+        }
+    }
+}
+
 /// The weapon sounds of the last ticks as sound events, placed like the original's world
 /// sounds (0x586a48: `x`, `y/2 − z`).
 pub fn weapon_sounds(
