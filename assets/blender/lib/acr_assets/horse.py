@@ -384,12 +384,18 @@ def gait(phase, trot=True):
 
 
 def fallen():
-    """Lying on its side, legs out (#DEATHLIE1 of the dragoon; fitted to its sprite)."""
-    return {"root": (0, -112, 230), "root_loc": (-1.32, 1.24, 0.31),
-            "neck_01": (0, 0, 38), "neck_02": (0, 0, -8), "head": (100, 0, 0),
-            "front_humerus_l": (-16, 0, 0), "front_humerus_r": (-35, 0, 0),
-            "back_femur_l": (4, 0, 0), "back_femur_r": (30, 0, 0),
-            "tail_01": (0, 0, 20)}
+    """Dead on its side (#DEATHLIE1 of the dragoon): rolled a quarter turn (not past it, so
+    the legs lie on the ground instead of sticking up), legs relaxed and bent at knee and
+    hock, the underneath pair straighter, neck and head stretched out along the ground
+    (a head bent far back left the rigid skull of the bone layer out of the folded hull:
+    the white rectangle by the head, #275)."""
+    return {"root": (0, -90, 230), "root_loc": (-1.32, 1.24, 0.34),
+            "neck_01": (0, 0, 14), "neck_02": (0, 0, -4), "head": (14, 0, 0),
+            "front_humerus_l": (-14, 0, 0), "front_radius_l": (-38, 0, 0), "front_cannon_l": (12, 0, 0),
+            "front_humerus_r": (-24, 0, 0), "front_radius_r": (-58, 0, 0), "front_cannon_r": (16, 0, 0),
+            "back_femur_l": (8, 0, 0), "back_tibia_l": (22, 0, 0), "back_hock_l": (-18, 0, 0),
+            "back_femur_r": (22, 0, 0), "back_tibia_r": (34, 0, 0), "back_hock_r": (-30, 0, 0),
+            "tail_01": (0, 0, 20), "tail_02": (0, 0, 10)}
 
 
 def falling():
