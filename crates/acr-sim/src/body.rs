@@ -105,6 +105,9 @@ pub struct Body {
     /// A rider (set at his first injury): the horse carries him, so his legs never make him
     /// crawl or slow him (falling from the saddle comes with the body simulation, #276).
     pub mounted: bool,
+    /// Knocked down by an animal (mauling, #276 phase 4): ticks left on the ground. While
+    /// down he cannot move, attack or hit back.
+    pub down: u8,
 }
 
 impl Hash for Body {
@@ -112,6 +115,7 @@ impl Hash for Body {
         if *self != Self::default() {
             (self.limbs, self.belly_open, self.head_wounds, self.chest_wounds, self.burn, self.dropped).hash(state);
             self.mounted.hash(state);
+            self.down.hash(state);
         }
     }
 }
@@ -257,6 +261,12 @@ pub enum Cause {
     Bayonet,
     /// Thrown axes, tomahawks, spears and stones.
     Thrown,
+    /// An animal's claws (bear, jaguar): deep parallel gashes.
+    Claw,
+    /// An animal's jaws (alligator, jaguar, bear): crushing.
+    Bite,
+    /// Antlers or horns (elk, bison): punctures, thrown down.
+    Gore,
 }
 
 impl Cause {
@@ -318,6 +328,8 @@ pub struct Injury {
     pub level: u8,
     pub outcome: Outcome,
     pub energy: u8,
+    /// What struck (the renderer shapes the wound by it: claw gashes, a bite, a puncture).
+    pub cause: Cause,
 }
 
 /// A percentage roll from the world RNG (0..100).
@@ -393,6 +405,8 @@ pub fn limb_outcome(cause: Cause, energy: u8, leg: bool, level: u8, roll: i32) -
             20..80 => (Outcome::DeepWound, level),
             _ => (Outcome::Fracture(FractureKind::Closed), level),
         },
+        // Mauling (stub: filled by the mauling tables).
+        Cause::Claw | Cause::Bite | Cause::Gore => (Outcome::DeepWound, level),
         Cause::Bayonet => match roll {
             0..85 => (Outcome::Wound, level),
             // A thrust into a joint puts it out.
@@ -420,6 +434,7 @@ pub fn trunk_outcome(cause: Cause, energy: u8, part: Part, level: u8, roll: i32)
         Cause::Cannonball if energy >= BALL_TEARS => Outcome::Torn(Torn::InTwo { level }),
         Cause::Cannonball if part == Part::Chest => Outcome::Kill,
         Cause::Cannonball => Outcome::BellyOpen,
+        Cause::Claw | Cause::Bite | Cause::Gore => Outcome::DeepWound,
     }
 }
 
@@ -452,7 +467,7 @@ pub fn injure(w: &mut World, victim: usize, cause: Cause, energy: u8, region: Hi
             let level = (u32::from(level_roll(w)) * u32::from(lost) / 255) as u8;
             let roll = pct(w);
             let (outcome, level) = limb_outcome(cause, energy, limb.is_leg(), level, roll);
-            Injury { part: Part::Limb(limb), level, outcome, energy }
+            Injury { part: Part::Limb(limb), level, outcome, energy, cause }
         }
         HitRegion::Torso => {
             let level = level_roll(w);
@@ -462,11 +477,11 @@ pub fn injure(w: &mut World, victim: usize, cause: Cause, energy: u8, region: Hi
                 _ => Part::Pelvis,
             };
             let roll = pct(w);
-            Injury { part, level, outcome: trunk_outcome(cause, energy, part, level, roll), energy }
+            Injury { part, level, outcome: trunk_outcome(cause, energy, part, level, roll), energy, cause }
         }
         HitRegion::Head => {
             let roll = if matches!(cause, Cause::Sabre | Cause::Thrown) { pct(w) } else { 0 };
-            Injury { part: Part::Head, level: 0, outcome: head_outcome(cause, roll), energy }
+            Injury { part: Part::Head, level: 0, outcome: head_outcome(cause, roll), energy, cause }
         }
     };
     apply(&mut w.units[victim].body, &injury);
@@ -487,15 +502,15 @@ pub fn injure_aimed(w: &mut World, victim: usize, cause: Cause, energy: u8, part
             let level = level.min(lost.saturating_sub(1));
             let roll = pct(w);
             let (outcome, level) = limb_outcome(cause, energy, limb.is_leg(), level, roll);
-            Injury { part, level, outcome, energy }
+            Injury { part, level, outcome, energy, cause }
         }
         Part::Head => {
             let roll = if matches!(cause, Cause::Sabre | Cause::Thrown) { pct(w) } else { 0 };
-            Injury { part, level: 0, outcome: head_outcome(cause, roll), energy }
+            Injury { part, level: 0, outcome: head_outcome(cause, roll), energy, cause }
         }
         _ => {
             let roll = pct(w);
-            Injury { part, level, outcome: trunk_outcome(cause, energy, part, level, roll), energy }
+            Injury { part, level, outcome: trunk_outcome(cause, energy, part, level, roll), energy, cause }
         }
     };
     apply(&mut w.units[victim].body, &injury);

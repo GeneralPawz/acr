@@ -298,7 +298,7 @@ mod tests {
             killed: false,
             building: false,
             region: None,
-            injury: Some(Injury { part, level: 160, outcome, energy: 100 }),
+            injury: Some(Injury { part, level: 160, outcome, energy: 100, cause: acr_sim::body::Cause::Musket }),
         }
     }
 

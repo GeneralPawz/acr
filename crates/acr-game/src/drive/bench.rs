@@ -95,7 +95,13 @@ pub fn spawn(game: &mut Game, v: &Value) -> Result<Value, String> {
         Pose::Stand => {}
         Pose::Walk => g.push_command(Command::Patrol { player: owner, units: vec![id], x: x + walk, y }),
         Pose::Crawl => {
-            let leg = Injury { part: Part::Limb(LimbId::LegL), level: KNEE, outcome: Outcome::Off, energy: 0 };
+            let leg = Injury {
+                part: Part::Limb(LimbId::LegL),
+                level: KNEE,
+                outcome: Outcome::Off,
+                energy: 0,
+                cause: body::Cause::Cannonball,
+            };
             body::apply(&mut g.world_mut().ok_or("no world")?.units[i].body, &leg);
         }
     }
@@ -117,7 +123,10 @@ pub fn spawn(game: &mut Game, v: &Value) -> Result<Value, String> {
     for n in names("lost") {
         let l = limb(&n).ok_or_else(|| format!("unknown limb {n:?}: arm_l, arm_r, leg_l, leg_r, foot_l, foot_r"))?;
         let level = if n.starts_with("foot") { body::ANKLE } else { KNEE };
-        body::apply(body, &Injury { part: Part::Limb(l), level, outcome: Outcome::Off, energy: 0 });
+        body::apply(
+            body,
+            &Injury { part: Part::Limb(l), level, outcome: Outcome::Off, energy: 0, cause: body::Cause::Cannonball },
+        );
     }
     for n in names("wounds") {
         let l = limb(&n).ok_or_else(|| format!("unknown limb {n:?}"))?;
