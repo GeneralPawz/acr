@@ -1194,6 +1194,9 @@ the bleeding leave a drop of blood every second that dries and fades over five m
 #262. The setting `hit_locations=on` (in `settings.txt` / browser storage, no menu entry
 yet) turns the rule on for every new game; the setup and savegames keep it.
 
+A second optional rule, `body_spacing` (men, horses and animals take up space and push
+each other apart), is described in `docs/body-spacing.md`.
+
 #### Ploughing cannonballs (#256)
 
 The original already lets a low ball hurt along its path: an object with `DAMAGEHEIGHT`

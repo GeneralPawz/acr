@@ -395,6 +395,10 @@ impl Game {
         if self.ui.settings().hit_locations {
             setup.rules.hit_locations = true;
         }
+        // Likewise `body_spacing=on` (`docs/body-spacing.md`).
+        if self.ui.settings().body_spacing {
+            setup.rules.body_spacing = true;
+        }
         let mut game = ingame::InGame::new(setup);
         game.apply_settings(self.ui.settings());
         game.start(&self.assets.paths());

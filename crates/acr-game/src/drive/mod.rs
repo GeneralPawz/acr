@@ -708,7 +708,7 @@ impl Driver {
             Request::Start(start) => {
                 match start {
                     Start::Map(path) => game.start_map(&path),
-                    Start::Blank { setup, players, nation, hit_locations, hud } => {
+                    Start::Blank { setup, players, nation, hit_locations, body_spacing, hud } => {
                         // Human players only: no AI gives orders, no start units come.
                         let players = (0..players)
                             .map(|i| PlayerSetup {
@@ -727,13 +727,22 @@ impl Driver {
                             kind: ui::GameKind::Blank(setup),
                             players,
                             local_player: 0,
-                            rules: acr_sim::Rules { hit_locations },
+                            rules: acr_sim::Rules { hit_locations, body_spacing },
                         }));
                         if let Mode::InGame(g) = &mut game.mode {
                             g.hud_hidden = !hud;
                         }
                     }
-                    Start::Random { nation, opponents, seed, resources, size, difficulty, hit_locations } => {
+                    Start::Random {
+                        nation,
+                        opponents,
+                        seed,
+                        resources,
+                        size,
+                        difficulty,
+                        hit_locations,
+                        body_spacing,
+                    } => {
                         let mut players = vec![PlayerSetup {
                             name: b"Driver".to_vec(),
                             nation,
@@ -766,7 +775,7 @@ impl Driver {
                             kind: ui::GameKind::RandomMap(map),
                             players,
                             local_player: 0,
-                            rules: acr_sim::Rules { hit_locations },
+                            rules: acr_sim::Rules { hit_locations, body_spacing },
                         }));
                     }
                 }

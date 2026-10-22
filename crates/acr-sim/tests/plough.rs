@@ -72,7 +72,7 @@ fn originally_a_low_ball_kills_the_whole_file() {
 
 #[test]
 fn with_hit_locations_the_ball_ploughs_through_five_men_losing_energy() {
-    let on = Rules { hit_locations: true };
+    let on = Rules { hit_locations: true, body_spacing: false };
     let (w, men, _) = file_shot(on);
     let lives: Vec<_> = men.iter().map(|&m| (life(&w, m), dead(&w, m))).collect();
     // 500, 400 and 300 kill the first three (life 300); 200 and 100 wound the next two (less

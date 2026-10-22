@@ -17,6 +17,9 @@ use crate::catalog::MotionStyle;
 pub struct Rules {
     /// Hits land on body regions with lasting injuries ([`crate::body::Body`]).
     pub hit_locations: bool,
+    /// Men, horses and animals have bodies that take up space and push each other apart
+    /// ([`crate::spacing`], `docs/body-spacing.md`).
+    pub body_spacing: bool,
 }
 
 /// The body region a hit landed on.

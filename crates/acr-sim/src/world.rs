@@ -993,6 +993,7 @@ impl World {
                 }
             }
         }
+        crate::spacing::separate(self);
         crate::capture::run(self);
         crate::combat::object_loop(self);
         crate::sprite::time_step(self);

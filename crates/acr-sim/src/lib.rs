@@ -47,6 +47,7 @@ pub mod projectile;
 pub mod replay;
 pub mod rng;
 pub mod ship;
+pub mod spacing;
 pub mod sprite;
 pub mod states;
 pub mod tech;
