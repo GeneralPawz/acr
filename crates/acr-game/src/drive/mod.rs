@@ -568,8 +568,8 @@ impl Driver {
                 job.reply.insert("ui".into(), tree::describe(game, all));
                 Ok(false)
             }
-            Request::State { units, owner, visible_only } => {
-                job.reply.insert("state".into(), state::state(game, units, owner, visible_only));
+            Request::State { units, owner, visible_only, detail } => {
+                job.reply.insert("state".into(), state::state(game, units || detail, owner, visible_only, detail));
                 Ok(false)
             }
             Request::Click { target, button, double, mods, timeout } => {

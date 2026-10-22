@@ -108,7 +108,7 @@ its label to appear.
 | `{"cmd": "text", "text": "e2e"}` | types into the focused input box |
 | `{"cmd": "wheel", "lines": -1}` | mouse wheel |
 | `{"cmd": "wait", "ticks": 100}` | also `"frames": n`, `"until": {...}` (all must hold), `"timeout": frames` (6000) |
-| `{"cmd": "state"}` | see below; `"units": true` lists every object, `"owner": n` filters, `"visible_only": true` respects the fog |
+| `{"cmd": "state"}` | see below; `"units": true` lists every object, `"owner": n` filters, `"visible_only": true` respects the fog, `"detail": true` adds each object's orders, animation and frame, stances, reload counter (`delay`), direction and switches |
 | `{"cmd": "command", "command": {"type": "move", "units": [1, 2], "x": 3000, "y": 9000}}` | a simulation command for setup (below) |
 | `{"cmd": "select", "units": [10, 11]}` | replaces the selection (setup; prefer `drag`/`click` to test the interface) |
 | `{"cmd": "start", "random": {"nation": 1, "seed": 5}}` | a random map without the menus; also `opponents`, `resources`, `size`, `difficulty` |
@@ -129,7 +129,7 @@ Simulation commands (`type`, with `units` as a list of ids or `"selection"`, the
 `move`, `attack_move`, `patrol` (`x`, `y`), `stop`, `attack` (`target`), `gather` (`x`,
 `y`), `repair` / `enter` (`building`), `leave` (`building`), `build` (`kind`, `x`, `y`),
 `produce` (`building`, `kind`, `count`), `form` (`officer`, `kind` such as `#LINE15`),
-`disband` (`officer`). Type names are catalog ids such as `SpnKri(SP)`.
+`disband` (`officer`), `friendly_fire` (`on`: shoot through own units). Type names are catalog ids such as `SpnKri(SP)`.
 
 ### The widget tree (`ui`)
 

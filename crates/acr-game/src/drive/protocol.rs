@@ -162,6 +162,8 @@ pub enum Request {
         units: bool,
         owner: Option<u8>,
         visible_only: bool,
+        /// Add each unit's orders, animation, stance and reload counters.
+        detail: bool,
     },
     /// A simulation command (see `drive::command`).
     Command(Value),
@@ -338,6 +340,7 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
             units: v.get("units").and_then(Value::as_bool).unwrap_or(false),
             owner: uint(&v, "owner").map(|o| o as u8),
             visible_only: v.get("visible_only").and_then(Value::as_bool).unwrap_or(false),
+            detail: v.get("detail").and_then(Value::as_bool).unwrap_or(false),
         },
         "command" => Request::Command(v.get("command").cloned().ok_or("command: missing \"command\"")?),
         "select" => Request::Select(

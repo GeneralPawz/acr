@@ -181,6 +181,10 @@ pub struct Unit {
     pub left_leg: bool,
     /// Detour state while blocked (`MoveStage`, 0..=6 or 255).
     pub move_stage: u8,
+    /// Steps left to back away from a target inside the minimum attack range (OB+0x5a).
+    pub backoff: u8,
+    /// Ticks waited before backing away (OB+0x5b, up to 32).
+    pub backoff_wait: u8,
     /// Ticks spent standing (`StandTime`, a wrapping byte like the original).
     pub stand_time: u8,
     /// Priority of the current order (`PrioryLevel`).
@@ -711,6 +715,8 @@ impl World {
             in_motion: false,
             left_leg: false,
             move_stage: 0,
+            backoff: 0,
+            backoff_wait: 0,
             stand_time: 0,
             prio: 0,
             orders: Vec::new(),
