@@ -1926,8 +1926,17 @@ No game option writes it. How the map view draws the fog is in
   - motion styles 1 and 4 (`SLOWROTATE`, `ROTATE&MOVE`);
   - `GotoFinePosition` (0x4a0670, at `StandTime == 48`);
   - the optional terrain pass 0x449aa4;
-  - walls and gates;
+  - walls and gates (no shipped type can build them, see **Walls**);
   - deleting sprites under new buildings (0x4d1df0).
+- **Walls.** AC 1.46 can hold walls (the `WAL2` map chunk, savegames, the wall build mode
+  0x553621 and its network command, executed by 0x4dc126), but none can come into being
+  with the shipped data: the build menu enables wall placement only for a type with
+  `WALLOBJECT` (GO+0x1729 bit 1, set by the `.MD` loader at 0x5000a0; checked at 0x4bdcce),
+  and an object becomes a wall piece (OB+0x29 bit 0) only from such a type (0x51623b).
+  None of the 252 `.MD` definitions has `WALLOBJECT`, no shipped map has a `WAL2` wall,
+  and no script or AI function builds one. So the wall passes of `AttackEnemyInZone`
+  (0x564a60..0x564b61) and of `FindArcherTarget` for `SGP_AttackByArchers` (0x43e3cc) can
+  never find a wall and are left out; the ports are complete for the shipped game.
 - **Iteration order.** Units within a player run in creation order. The engine's per-nation
   lists can be reordered by deaths and new units.
 - **Initial random index** is 0, as in a single-player game start.
