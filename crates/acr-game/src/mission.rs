@@ -17,7 +17,28 @@ use acr_sim::{Command, World};
 use crate::ui::draw::{Draw, Rect};
 use crate::ui::fonts::FontId;
 use crate::ui::setup::Control;
-use crate::ui::{GameKind, GameSetup};
+use crate::ui::{Ctx, GameKind, GameSetup};
+
+/// Breaks a line into pieces at most `max` pixels wide, at spaces.
+fn wrap(line: &[u8], max: i32, width: &dyn Fn(&[u8]) -> i32) -> Vec<Vec<u8>> {
+    let mut out = Vec::new();
+    let mut cur: Vec<u8> = Vec::new();
+    for word in line.split(|&b| b == b' ') {
+        let mut next = cur.clone();
+        if !next.is_empty() {
+            next.push(b' ');
+        }
+        next.extend_from_slice(word);
+        if !cur.is_empty() && width(&next) > max {
+            out.push(std::mem::take(&mut cur));
+            cur = word.to_vec();
+        } else {
+            cur = next;
+        }
+    }
+    out.push(cur);
+    out
+}
 
 const MISSIONS: &str = "Missions\\Missions.txt";
 const NATIONS: &str = "NATIONS.LST";
@@ -55,6 +76,8 @@ pub struct MissionLink {
     clock: f64,
     /// `Some(true)` after victory, `Some(false)` after defeat.
     pub ended: Option<bool>,
+    /// `SetStartPoint`: centre the view here (world pixels).
+    camera: Option<(i32, i32)>,
 }
 
 impl MissionLink {
@@ -90,6 +113,7 @@ impl MissionLink {
             dialog: None,
             clock: 0.0,
             ended: None,
+            camera: None,
         }
     }
 
@@ -244,13 +268,19 @@ impl MissionLink {
                 MissionEvent::Victory => self.ended = Some(true),
                 MissionEvent::Defeat => self.ended = Some(false),
                 MissionEvent::Error { title, text } => log::error!("{title}: {text}"),
-                MissionEvent::Briefing | MissionEvent::Camera { .. } => {}
+                MissionEvent::Camera { x, y } => self.camera = Some((x, y)),
+                MissionEvent::Briefing => {}
             }
         }
         if scripts.waiting() {
             return None;
         }
         Some(commands)
+    }
+
+    /// A view position the script asked for (`SetStartPoint`), once.
+    pub fn take_camera(&mut self) -> Option<(i32, i32)> {
+        self.camera.take()
     }
 
     /// Files requested while running (AI DLLs started by the mission).
@@ -277,7 +307,7 @@ impl MissionLink {
     }
 
     /// Message overlay on the 1024 × 768 canvas.
-    pub fn draws(&self, out: &mut Vec<Draw>) {
+    pub fn draws(&self, ctx: &Ctx, out: &mut Vec<Draw>) {
         let mut y = 520;
         for (text, _) in self.messages.iter().rev().take(4) {
             out.push(Draw::text(FONT, text, 40, y));
@@ -298,15 +328,18 @@ impl MissionLink {
         };
         let rect = Rect::new(162, 134, 700, 500);
         out.push(Draw::fill([0, 0, 0, 200], rect));
+        let width = |t: &[u8]| ctx.fonts.width(ctx.lib, PAGE_FONT, t);
         let mut y = rect.y0 + 20;
         for line in text.split(|&b| b == b'\n') {
             let line = line.strip_suffix(b"\r").unwrap_or(line);
-            if y > rect.y1 - 50 {
-                break;
+            for part in wrap(line, rect.width() - 40, &width) {
+                if y > rect.y1 - 50 {
+                    break;
+                }
+                out.push(Draw::text(PAGE_FONT, &part, rect.x0 + 20, y).clipped(rect));
+                y += 18;
             }
-            out.push(Draw::text(PAGE_FONT, line, rect.x0 + 20, y).clipped(rect));
-            y += 18;
         }
-        out.push(Draw::text(FONT, hint, rect.x0 + 20, rect.y1 - 30));
+        out.push(Draw::text(PAGE_FONT, hint, rect.x0 + 20, rect.y1 - 30));
     }
 }
