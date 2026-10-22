@@ -89,9 +89,10 @@ def homes(obj):
 
 # --------------------------------------------------------------------------- hull
 
-def hull(arm_obj, name, graph, bones=rig.BODY_BONES, subdivide=1):
+def hull(arm_obj, name, graph, bones=rig.BODY_BONES, subdivide=1, head=None):
     """Continuous low-poly skin around a rest skeleton: `graph` = [(node, parent, position,
     (radius x, radius y))]; Skin modifier + subdivision, applied; smooth weights on `bones`.
+    `head(bm)` may refine and shape the head before the weights (`heads.refine`, #283).
     The rest normals are kept in the attribute `rest_normal` (shells use them, so seams
     split later stay closed)."""
     idx = {n: i for i, (n, *_r) in enumerate(graph)}
@@ -115,6 +116,8 @@ def hull(arm_obj, name, graph, bones=rig.BODY_BONES, subdivide=1):
     bpy.data.meshes.remove(me)
     bm = bmesh.new()
     bm.from_mesh(mesh)
+    if head:
+        head(bm)
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
     bm.to_mesh(mesh)
     bm.free()
