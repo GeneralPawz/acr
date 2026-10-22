@@ -11,6 +11,7 @@ use acr_sim::Command;
 use acr_sim::world::EntityId;
 
 use super::call::magic;
+use super::tactics::{Danger, danger_map};
 use super::util::{is_point, norma};
 use super::{Api, ApiFn, Call, Caller, Status};
 use crate::events::MissionEvent;
@@ -38,26 +39,20 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("GetGroupCharge", 0x574575, DONE, get_group_charge),
     f("isUnitAbsorber", 0x5752be, DONE, is_unit_absorber),
     f("AttackEnemyPeasantsInZone", 0x564d83, TACTIC, attack_enemy_peasants_in_zone),
-    f("CreatePeasantsTopList", 0x57bd81, TACTIC, create_peasants_top_list),
-    f("CreateDangerMapForFire", 0x57d6c4, TACTIC, danger_map),
-    f(
-        "CheckIfBuildingIsFired",
-        0x57c39e,
-        Status::Partial("no burning buildings in acr-sim yet: only removed ones"),
-        check_if_building_is_fired,
-    ),
+    f("CreatePeasantsTopList", 0x57bd81, DONE, create_peasants_top_list),
+    f("CreateDangerMapForFire", 0x57d6c4, DONE, danger_map_for_fire),
     f("ArtAttackObject", 0x570b32, TACTIC, art_attack_object),
     f("ArtAttackGroud", 0x5709b5, TACTIC, art_attack_ground),
-    f("CreateNonFiredEnemyBuildingsTopList", 0x57b2fd, TACTIC, create_enemy_buildings_top_list),
-    f("CreateDangerMapWithoutPeasants", 0x57daac, TACTIC, danger_map),
+    f("CreateDangerMapWithoutPeasants", 0x57daac, DONE, danger_map_without_peasants),
     f("CheckIfNotBusy", 0x56f78f, TACTIC, check_if_not_busy),
     f("GetAlliesForce", 0x571dc4, TACTIC, get_allies_force),
-    f("CreateTopListForStorm", 0x57b459, TACTIC, create_enemy_buildings_top_list),
-    f("CreateTopListForStormHard", 0x57b5e9, TACTIC, create_enemy_buildings_top_list),
-    f("SetDangerMap", 0x56fba1, Status::Stub("the engine's danger map is not read by acr-sim"), zero),
-    f("CreateDangerMapForStorm", 0x57cd88, TACTIC, danger_map),
-    f("CreateDangerMapForStormHard", 0x57d19e, TACTIC, danger_map),
-    f("GetBuildingOposit", 0x57b9ae, TACTIC, get_building_oposit),
+    f("CreateTopListForStorm", 0x57b459, DONE, create_top_list_for_storm),
+    f("CreateTopListForStormHard", 0x57b5e9, DONE, create_top_list_for_storm_hard),
+    // Only a debug overlay (0x5186e9) reads the engine's danger map.
+    f("SetDangerMap", 0x56fba1, DONE, zero),
+    f("CreateDangerMapForStorm", 0x57cd88, DONE, danger_map_for_storm),
+    f("CreateDangerMapForStormHard", 0x57d19e, DONE, danger_map_for_storm_hard),
+    f("GetBuildingOposit", 0x57b9ae, DONE, get_building_oposit),
     f("OBJ_SmartSendTo", 0x56f0ef, Status::Partial("a single-unit Command::Move (offsets added)"), obj_smart_send_to),
     f("GetMaxAttRadius", 0x56f41e, DONE, get_max_att_radius),
     f("RemoveAttackingUnits", 0x570728, DONE, remove_attacking_units),
@@ -275,14 +270,11 @@ fn get_max_att_radius(api: &mut Api, c: &mut Call) -> Result<u32> {
     Ok(t.attacks.iter().map(|a| a.radius.1).max().unwrap_or(0) as u32)
 }
 
-/// `bool CheckIfBuildingIsFired(int index)`: true when the building is gone (or burning).
-fn check_if_building_is_fired(api: &mut Api, c: &mut Call) -> Result<u32> {
-    Ok(u32::from(u16::try_from(c.i32(0)?).ok().and_then(|i| api.object(i)).is_none_or(|u| !u.living())))
-}
-
-/// `int GetBuildingOposit(int index, byte nation)`: units inside as the defence value.
+/// `bool GetBuildingOposit(word index, int* value)` (0x57b9ae).
 fn get_building_oposit(api: &mut Api, c: &mut Call) -> Result<u32> {
-    Ok(u16::try_from(c.i32(0)?).ok().and_then(|i| api.object(i)).map_or(0, |u| u.inside.len() as u32))
+    let v = super::tactics::building_oposit(api, c.u16(0)?);
+    c.out_i32(1, v.unwrap_or(0))?;
+    Ok(u32::from(v.is_some()))
 }
 
 /// `bool CheckLandLocking(int x, int y, int w, int h)` (1/16 px): the rectangle of lock
@@ -439,11 +431,23 @@ fn g_getch(api: &mut Api, c: &mut Call) -> Result<u32> {
     }
 }
 
-// --- tactics (approximations) ----------------------------------------------------------------
+// --- tactics ---------------------------------------------------------------------------------
 
-/// Danger-map variants for DipServer's squads: the plain danger map of [`super::tactics`].
-fn danger_map(api: &mut Api, c: &mut Call) -> Result<u32> {
-    super::tactics::danger_map_pub(api, c)
+fn danger_map_for_fire(api: &mut Api, c: &mut Call) -> Result<u32> {
+    danger_map(api, c, Danger::Fire)
+}
+
+fn danger_map_without_peasants(api: &mut Api, c: &mut Call) -> Result<u32> {
+    danger_map(api, c, Danger::NoPeasants)
+}
+
+fn danger_map_for_storm(api: &mut Api, c: &mut Call) -> Result<u32> {
+    danger_map(api, c, Danger::Storm)
+}
+
+/// The engine also hands the result to `SetDangerMap`.
+fn danger_map_for_storm_hard(api: &mut Api, c: &mut Call) -> Result<u32> {
+    danger_map(api, c, Danger::StormHard)
 }
 
 /// `void AttackEnemyPeasantsInZone(GAMEOBJ* grp, GAMEOBJ* zone, byte nation)`: idle members
@@ -537,35 +541,90 @@ fn get_allies_force(api: &mut Api, c: &mut Call) -> Result<u32> {
         .count() as u32)
 }
 
-/// Top lists: `u16 list[NZones]` with an object index per area (0xFFFF = none). ACR lists the
-/// enemy buildings of `nation` (first argument) per area.
-fn create_enemy_buildings_top_list(api: &mut Api, c: &mut Call) -> Result<u32> {
-    let out = c.u32(0)?;
-    let nat = c.u8(1)? & 7;
-    top_list(api, c, out, |api, u| u.building && api.st.unit_nmask(u.id, u.owner) & api.st.nmask[usize::from(nat)] == 0)
+/// The buildings a storm squad can take: living, finished enemy buildings (not of nation 7)
+/// that take units inside (`UNITABSORBER`), with their area below `NAreas`.
+fn storm_targets(api: &Api, nat: u8) -> Vec<(usize, usize)> {
+    let mask = api.st.nmask[usize::from(nat & 7)];
+    let n = api.st.topo.as_ref().map_or(0, |t| t.areas.len());
+    api.world
+        .units
+        .iter()
+        .filter(|u| {
+            u.building
+                && u.active()
+                && api.st.unit_nmask(u.id, u.owner) & mask == 0
+                && u.owner != 7
+                && api.world.catalog.get(u.kind).economy.unit_absorber > 0
+                && u.stage == api.world.max_stage(u)
+        })
+        .map(|u| (u.id.0 as usize, super::tactics::top_zone_px(api, u.pos.x >> 4, u.pos.y >> 4) as usize))
+        .filter(|&(_, z)| z < n)
+        .collect()
 }
 
-fn create_peasants_top_list(api: &mut Api, c: &mut Call) -> Result<u32> {
-    let out = c.u32(0)?;
-    let nat = c.u8(1)? & 7;
-    top_list(api, c, out, |api, u| {
-        api.world.catalog.get(u.kind).peasant && api.st.unit_nmask(u.id, u.owner) & api.st.nmask[usize::from(nat)] == 0
-    })
-}
-
-fn top_list(api: &mut Api, c: &mut Call, out: u32, pick: impl Fn(&Api, &acr_sim::Unit) -> bool) -> Result<u32> {
+/// `void CreateTopListForStorm(u16* list, byte nat)` (0x57b459): per area the last building
+/// a storm squad can take, else 0xFFFF.
+fn create_top_list_for_storm(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let (out, nat) = (c.u32(0)?, c.u8(1)?);
     let n = api.st.topo.as_ref().map_or(0, |t| t.areas.len());
     let mut list = vec![NO_UNIT; n];
-    for u in api.world.units.iter().filter(|u| u.active() && pick(api, u)) {
-        let z = super::tactics::zone_of(api, u.pos.x >> 10, u.pos.y >> 10);
-        if let Some(slot) = list.get_mut(usize::from(z))
-            && *slot == NO_UNIT
-        {
-            *slot = u.id.0 as u16;
+    for (i, z) in storm_targets(api, nat) {
+        list[z] = i as u16;
+    }
+    for (i, v) in list.iter().enumerate() {
+        c.write_u16(out + 2 * i as u32, *v)?;
+    }
+    Ok(0)
+}
+
+/// `void CreateTopListForStormHard(u16* list, byte nat, int max)` (0x57b5e9): per area the
+/// first of the weakest buildings a storm squad can take whose `GetBuildingOposit` value is
+/// below `max`, else 0xFFFF.
+fn create_top_list_for_storm_hard(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let (out, nat, max) = (c.u32(0)?, c.u8(1)?, c.i32(2)?);
+    let n = api.st.topo.as_ref().map_or(0, |t| t.areas.len());
+    let (mut list, mut best) = (vec![NO_UNIT; n], vec![0u16; n]);
+    for (i, z) in storm_targets(api, nat) {
+        let o = super::tactics::building_oposit(api, i as u16).unwrap_or(0);
+        if o < max && (list[z] == NO_UNIT || o < i32::from(best[z])) {
+            list[z] = i as u16;
+            best[z] = o as u16;
         }
     }
     for (i, v) in list.iter().enumerate() {
         c.write_u16(out + 2 * i as u32, *v)?;
+    }
+    Ok(0)
+}
+
+/// `void CreatePeasantsTopList(u16* list, byte nat, int min, bool mines)` (0x57bd81): per
+/// area the last enemy object that counts — a peasant 1, with `mines` a mine (not for nation
+/// 7) twice the units inside — if the area's count reaches `min`, else 0xFFFF.
+fn create_peasants_top_list(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let out = c.u32(0)?;
+    let nat = c.u8(1)?;
+    let (min, mines) = (c.i32(2)?, c.u8(3)? != 0);
+    let n = api.st.topo.as_ref().map_or(0, |t| t.areas.len());
+    let mask = api.st.nmask[usize::from(nat & 7)];
+    let (mut count, mut list) = (vec![0u16; n], vec![NO_UNIT; n]);
+    for u in api.world.units.iter().filter(|u| u.active() && api.st.unit_nmask(u.id, u.owner) & mask == 0) {
+        let t = api.world.catalog.get(u.kind);
+        let mut w = i32::from(t.peasant);
+        if nat != 7 && u.building && t.role.usage == acr_sim::catalog::usage::MINE && mines {
+            w = 2 * u.inside.len() as i32;
+        }
+        if w == 0 {
+            continue;
+        }
+        let z = super::tactics::top_zone_px(api, u.pos.x >> 4, u.pos.y >> 4) as usize;
+        if z < n {
+            count[z] = count[z].wrapping_add(w as u16);
+            list[z] = u.id.0 as u16;
+        }
+    }
+    for (i, v) in list.iter().enumerate() {
+        let v = if i32::from(count[i]) < min { NO_UNIT } else { *v };
+        c.write_u16(out + 2 * i as u32, v)?;
     }
     Ok(0)
 }

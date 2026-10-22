@@ -84,8 +84,8 @@ pub fn state(game: &Game, units: bool, owner: Option<u8>, visible_only: bool, de
     let brigades: Vec<Value> =
         formations(world, me).into_iter().map(|(b, n)| json!({"brigade": b, "members": n})).collect();
     m.insert("formations".into(), brigades.into());
-    // Counts per owner: units, finished buildings and building sites by type.
-    let mut counts: BTreeMap<u8, [BTreeMap<String, u32>; 3]> = BTreeMap::new();
+    // Counts per owner: units, finished buildings, building sites and burning objects by type.
+    let mut counts: BTreeMap<u8, [BTreeMap<String, u32>; 4]> = BTreeMap::new();
     for u in world.units.iter().filter(|u| u.living()) {
         if visible_only && u.owner != me && !g.sees(u.pos.x >> 4, u.pos.y >> 4) {
             continue;
@@ -97,11 +97,15 @@ pub fn state(game: &Game, units: bool, owner: Option<u8>, visible_only: bool, de
         } else {
             2
         };
-        *counts.entry(u.owner).or_default()[group].entry(type_name(world, u)).or_default() += 1;
+        let c = counts.entry(u.owner).or_default();
+        *c[group].entry(type_name(world, u)).or_default() += 1;
+        if u.burning {
+            *c[3].entry(type_name(world, u)).or_default() += 1;
+        }
     }
     let counts: Map<String, Value> = counts
         .into_iter()
-        .map(|(o, [u, b, s])| (o.to_string(), json!({"units": u, "buildings": b, "sites": s})))
+        .map(|(o, [u, b, s, f])| (o.to_string(), json!({"units": u, "buildings": b, "sites": s, "burning": f})))
         .collect();
     m.insert("counts".into(), counts.into());
     let ended = g.mission_result().map(|w| if w { "won" } else { "lost" });
@@ -125,6 +129,9 @@ pub fn state(game: &Game, units: bool, owner: Option<u8>, visible_only: bool, de
                 }
                 if u.inside_of.is_some() {
                     o.insert("inside".into(), true.into());
+                }
+                if u.burning {
+                    o.insert("burning".into(), true.into());
                 }
                 if let Some(b) = u.brigade {
                     o.insert("brigade".into(), b.into());

@@ -328,9 +328,12 @@ of the blocked boxes 8 cells around (`GetBestDirection` 0x54a52f) and dock if a 
 ahead is free.
 
 - `GoToTransport` (0x54d78d, order 243; a formation member breaks up its formation): only
-  after the transport docked once, with room left. The unit walks to the landing point, then
-  straight over the water (unlimited) to the transport and hides inside within
-  `StopDistance + 32 px`. A full transport sends it back to the shore.
+  after the transport docked once, with room left. The unit walks to the landing point's
+  16 px cell until it is closer than `StopDistance` to the point, then straight over the
+  water (unlimited) to the transport and hides inside once closer than
+  `StopDistance + 32 px` (`GoToTransportLink` 0x54dbb0; both tests strict, as in the
+  engine: a unit exactly `StopDistance` away walks on to the cell centre, which lies
+  closer). A full transport sends it back to the shore.
 - `LeaveTransport` (0x54e000; `LeaveAll` 0x54df93 one order per passenger): at a shore the
   transport docks there; after 3 ticks one passenger appears at its centre, walks straight to
   the 3/4 point towards the landing point and then to the landing point ± 16 px.
@@ -871,6 +874,9 @@ The cannon (`ArtPus`, `USAGE PUSHKA`, `MOTIONSTYLE COMPLEXROTATE`; `artillery.rs
 - **Motion** (0x50f7cb): at the end of a cycle a cannon facing its target within a 16th
   drives one cycle in stance 1 (`#MOTION_L0/R0`); otherwise it changes to stance 2 and turns
   16 per turn animation (`#MOTION_L1`: +16 at its end, `#MOTION_R1`: −16 at its start).
+  The drive step (`TryToMove` 0x50b021) needs the cell at the end of the cycle free, except
+  in unlimited motion, so a new cannon drives out of the building that made it; the order
+  links (`SendTo`, `SmartSendTo`, `ClearUnlimited`) run before the handler as for any unit.
 - **Attack:** the same 16th-steps while aiming (the engine calls `TryToStand` on the target
   there, a random number, kept); each shot of indices 4 and 5 costs 50 iron and 100 coal
   (`RASTRATA_NA_VISTREL2`, paid when the strike starts; without them the order ends). Index
@@ -1231,7 +1237,21 @@ Implemented in `economy.rs`. The sources are `City::Census` (0x42e658), the upke
     (mills `0x10`, storehouses `1`, ports `0x20`, others `8`) and searches a new cell; after
     6 tries the project is dropped unpaid. A placed mill marks a 13 × 13 diamond of cells for
     mills, storehouses and buildings.
-  - **Mines** (`RESSUBST`, only the gold mine has it): a mine placed within 64 px of a
+  - **Enemy armies** (`armies.rs`, `GlobalEnemyInfo` 0x6ba1b0), what `EnumEnemyArmies`
+    reports. Every nation 0..6 with units gets an `EnemyInfo` at the start (`Setup`
+    0x427373), shared with the other such nations whose mask meets its creator's; nation 7
+    has none. `GlobalEnemyInfo::Process` (0x4275e1) lets the `EnemyInfo` of nation `k`
+    research when `(tmtmt & 255) == 8k + 1`, i.e. once every 256 ticks
+    (`ResearchArmyDistribution` 0x4423d0): the living objects outside the `EnemyInfo`
+    (units inside buildings have `Sdoxlo` 1 and are left out) whose `USAGE` has an army
+    category (table 0x644454: `TOWER`, `FASTHORSE`, `MORTIRA`, `PUSHKA`, `GRENADER`,
+    `LIGHTINFANTRY`, `STRELOK`, `HARDHORCE`, `PEASANT`, and — read past the table's 26
+    entries — every usage from 26 on: `GALERA` ... `DIPLOMAT`) are counted per 256 px cell
+    (`FORCE` sum and number). Cells with more than 3 units that touch (the cells `+1`, `+W`,
+    `−1` if the index is above 1, `−W` if above `W`) take the smallest id until nothing
+    changes; then twice every such cell gives its id to the small cells next to it. Each id
+    in cell order becomes an army: bounds in cells (bytes, starting at 250/0), force and
+    unit sums, and the mean cell's centre `mean·256 + 128` in pixels (`i16`). a mine placed within 64 px of a
     deposit of another resource is created as that resource's mine — the type `+1` iron,
     `+2` coal, `+3` stone, `+4` food, `+5` wood, the order of every nation file
     (CreateObject 0x515b62); the first deposit near enough decides, and the gold mine's price
@@ -1408,6 +1428,11 @@ No game option writes it. How the map view draws the fog is in
     (an idle one first, else the shortest queue).
   - Synthetic catalogs without nation files have no tech tree: everything is enabled and
     buildings produce anything.
+  - Enemy armies: the `EnemyInfo` groups are formed on the first tick from the nations
+    that have units then (the engine at map load, also counting a nation whose `City+0x88ba`
+    flag is set) and never change, as in the engine; `StartAI`'s temporary masks (all
+    nations but 0 together) are not reproduced. An object left of or above the map is
+    skipped (the engine kills it there).
   - AI placement: the planning maps are built at the first use (the engine at game start);
     `CheckBuildPossibility` (peace-time cordons) and `HandleConstructions` (re-sending
     builders without a collector) are not reproduced; the deposit test of mines uses the
@@ -1511,6 +1536,9 @@ No game option writes it. How the map view draws the fog is in
   half as fast (`tests/world.rs`).
 - **Push-out test** (`tests/pushout.rs`, #143): a centre placed over the player's own
   pikemen is accepted and the pikemen end up next to it, each with a free 3 × 3 box.
+- **Enemy armies test** (`tests/armies.rs`): two touching cells of 5 and 4 units and a single
+  unit next to them form one army, two units far away another, units without a counted
+  `USAGE` are left out; nation 1 researches 8 ticks later; allies share an `EnemyInfo`.
 - **AI placement test** (`tests/aiplace.rs`): the centre is the peasants' mean, a house is
   placed near it, a second keeps its build bar clear of the first, one project at a time.
 - **Switch tests** (`tests/switches.rs`): a stopped barracks keeps its queue and produces
@@ -1518,7 +1546,7 @@ No game option writes it. How the map view draws the fog is in
 - **Ship tests** (`tests/ships.rs`): a ship accelerates by 6 per tick (overshooting once)
   to `2·step` and arrives; a ferry ordered onto the shore docks with its land point on land,
   a soldier boards it, it sails along the shore, docks again and lets him off on the far
-  shore. **City test** (`tests/city.rs`): the gathering speed is `amount·25/dt` after
+  shore; a soldier exactly 16 px from the landing point boards too. **City test** (`tests/city.rs`): the gathering speed is `amount·25/dt` after
   `GlobalTime` passes 1000.
 - **Upgrade tests** (`tests/upgrade.rs`): research is paid at the start, blocks the
   building and ends on the 10th tick for `#TIME 21`; damage and protection change for the

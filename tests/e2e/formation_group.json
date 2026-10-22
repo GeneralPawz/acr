@@ -1,0 +1,22 @@
+{
+  "name": "formation_group",
+  "description": "On the map Missions/USA/03/usa03.m3d form two line formations, select both: the HUD offers 'Formation gruppieren' (CM_DOGRP); grouped, the icon becomes 'Gruppierung auflösen' (CM_UNGRP), and ungrouping brings the first back (#188). The officers 1387 and 1396 are the map's.",
+  "steps": [
+    {"cmd": "start", "map": "Missions/USA/03/usa03.m3d"},
+    {"cmd": "wait", "ticks": 5},
+    {"cmd": "select", "units": [1387], "note": "setup: the first officer"},
+    {"cmd": "click", "label": "Reih-und-Glied-Formation einnehmen"},
+    {"cmd": "click", "label": "Füsilier"},
+    {"cmd": "select", "units": [1396], "note": "setup: the second officer"},
+    {"cmd": "click", "label": "Reih-und-Glied-Formation einnehmen"},
+    {"cmd": "click", "label": "Füsilier"},
+    {"cmd": "wait", "until": {"formations": 2}, "timeout": 100},
+    {"cmd": "select", "units": [1387, 1396]},
+    {"cmd": "click", "label": "Formation gruppieren", "exact": true, "expect": {"path": "target.id", "eq": "hud/14"}},
+    {"cmd": "wait", "until": {"label": "Gruppierung auflösen"}, "timeout": 10},
+    {"cmd": "state", "expect": [{"path": "state.formations", "len_eq": 2}]},
+    {"cmd": "click", "label": "Gruppierung auflösen", "expect": {"path": "target.id", "eq": "hud/14"}},
+    {"cmd": "wait", "until": {"label": "Formation gruppieren"}, "timeout": 10},
+    {"cmd": "ui", "expect": {"path": "ui.widgets", "len_ge": 5}}
+  ]
+}

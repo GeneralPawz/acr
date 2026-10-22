@@ -486,6 +486,9 @@ pub struct World {
     /// Coast places, islands and the computer players' landing setup (derived from the map
     /// and refreshed every tick; not hashed, the landings' orders are in `brigades`).
     pub desant: crate::desant::Desant,
+    /// The enemy armies of each nation group (`GlobalEnemyInfo`), refreshed every 256 ticks
+    /// (derived from the units, not hashed).
+    pub armies: crate::armies::EnemyArmies,
     /// Nations run by an AI (`Nat+0x1a729` bit3): they search targets every 8th tick except
     /// towers, and their training buildings still shoot. Set by the host.
     pub ai: [bool; PLAYERS],
@@ -612,6 +615,7 @@ impl World {
             deaths: Default::default(),
             hits: Default::default(),
             desant: Default::default(),
+            armies: Default::default(),
             ai: [false; PLAYERS],
         }
     }
@@ -857,6 +861,7 @@ impl World {
         }
         crate::desant::tick(self);
         crate::economy::city_tick(self);
+        crate::armies::tick(self);
         if let Some(def) = &self.catalog.market {
             self.market.process(def);
         }
