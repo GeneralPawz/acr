@@ -563,6 +563,9 @@ Shapes come from `ORDERS.LST` (parser 0x4ed6e0) and `ORD_GROUPS.LST` (0x4ed400).
   - a free unit of its drummer type within 1024 px, **required** unless the type is `NONE`;
   - a free flag bearer within 1024 px if there is one (optional; it adds `n5`, `n6`).
 
+  The brigade takes the first slot of the owner's brigade list that is not enabled
+  (`GetFreeBrigade` 0x42c845, `Brigade+0x20`); the interface shows the slot + 1 as the
+  formation's number, so a dissolved formation's number goes to the next one (`Brigade::number`).
   Officer, drummer and flag bearer stand ground (OB+0x25 bit4); the soldiers do not.
   Everybody gets the normal bonuses. The brigade remembers the soldier type (+0x1a) and
   `FORMLIKESHOOTERS` (+0x2e bit3); it is placed centred on the officer facing 0

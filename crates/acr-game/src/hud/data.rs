@@ -53,6 +53,8 @@ pub struct HudData {
     pub group_slot: usize,
     pub ungroup_icon: Option<usize>,
     pub dogroup_icon: Option<usize>,
+    /// `ORDERS_LIST Formation_Kare` (`%s`, 0x4ebb4e): the army icon's frame (0x66ada4).
+    pub orders_list: Option<usize>,
 }
 
 impl HudData {
@@ -101,6 +103,7 @@ impl HudData {
                         data.switches.insert(first.to_owned(), SwitchIcon { frames, slot: x + 12 * y });
                     }
                 }
+                "[CONST]" if first == "ORDERS_LIST" => data.orders_list = words.get(1).and_then(|w| data.icon(w)),
                 "[CONST]" if first == "UN?GROUP" => {
                     if let Some(slot) = int(1) {
                         data.group_slot = slot;
@@ -181,6 +184,13 @@ GO&ATTACK 3 2 Go_With_Attack\r\nSTOP_ICON Cancel\r\n[ORDERICONS]\r\nLINE   8 0 F
         assert_eq!(d.switches["ZASEV"], SwitchIcon { frames: vec![152], slot: 1 }, "the engine's default");
         assert!(!d.switches.contains_key("FISHING"));
         assert_eq!((d.group_slot, d.ungroup_icon, d.dogroup_icon), (12, None, None), "the engine's default");
+    }
+
+    #[test]
+    fn parses_the_army_icon() {
+        let d = HudData::parse(b"Cancel\r\nFormation_Kare\r\n", b"[CONST]\r\nORDERS_LIST Formation_Kare\r\n[END]\r\n");
+        assert_eq!(d.orders_list, Some(1));
+        assert!(!d.consts.contains_key("ORDERS_LIST"));
     }
 
     #[test]

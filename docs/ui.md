@@ -358,10 +358,34 @@ cursor is drawn anywhere in the window, also beside the menu canvas.
     `38·life/max`;
   - the count in `WhiteFont`, shadowed by `BlackFont` at ±1, at the top left.
   Clicking it keeps only that type selected. A formation's icon (0x606d10) shows its
-  soldier type (+0x1a) with the number of its soldiers and their summed life; clicking it
-  keeps only that formation selected (0x4d737f).
+  soldier type (+0x1a) with the number of its soldiers and their summed life, the hint
+  `ARMYSTR` ("Armee", 0x606d91) and the formation's number (its slot in the owner's
+  brigade list + 1, 0x606e6e); clicking it keeps only that formation selected (0x4d737f).
+- The second number (`OneIcon+0x40`, flag 0x100, set by 0x494a0d, drawn at 0x4951a5): right
+  aligned at `x + IconLx − 4`, its top at `y + IconLy −` the height of 'W' in `WhiteFont`;
+  `BlackFont` at +1 / −1, then `WhiteFont`. Only formations have one.
 - A highlighted icon gets a frame in `GetPaletteColor(255, 200, 64)`. A pressed icon is
   drawn 1 px down-right. A disabled one is drawn transparent.
+- Army icons (`IconSet` 0x28f7658, built at the end of 0x606710 from 0x607d3b, drawn by
+  0x5aa36a outside the editor): 5 columns × 7 rows from (6, 31), under the resource bar at
+  the top left, 42 px apart. ACR draws them after the command icons and before the resource
+  panel, as the original.
+  - Slot 0: the `ORDERS_LIST` icon (`NRES.DAT [CONST] ORDERS_LIST Formation_Kare`, parser
+    0x4ebb4e, frame 0x66ada4), when one of the first 30 slots of the player's brigade list
+    (`(ny − 1)·nx`) holds an enabled formation (+0x2e bit 0). No hint, no outline. A click
+    shows or hides the list (`0x28f9e54`, 0x6064a0).
+  - With the list open, every such formation that still has a soldier (members from the
+    fourth on whose object exists with the member's serial) at slot `5 + index`: its soldier
+    type's icon, the number of those soldiers (flag 8), its number `index + 1` (flag 0x100)
+    and the yellow frame when one of them is selected (0x49464d). A click (0x6064b0) selects
+    it through `ImSelBrigade` (0x4d75a6 → 0x4e1365, network command 0x3b): without Shift the
+    selection is cleared first; the members from the third on (flag bearer and soldiers)
+    join it. The mouse over one (0x606500 → `0x66a8e8` = the brigade's index) marks the
+    mean position of its members on the minimap (0x4c107f): an octagon of eight
+    `DrawLine`s in `GetPaletteColor(255, 255, 0)`, 5 px across the sides and 2 px across the
+    corners, at `minimap + 1 + RealX >> 10`.
+  - The driver reports them as `army/<slot>`, labelled `army` and `army <number>` (the
+    original has no hints for them).
 - Single selected type (0x607f50, called after the icons by 0x5aa278): the first object's
   numbers drawn straight over the map, in `SmallWhiteFont`, with `SMICONS.GP` icons from
   `NRES.DAT [WEAPONS]`:
@@ -725,6 +749,17 @@ described in [simulation.md](simulation.md#fog-of-war).
   Storming, healing and the other cursors wait for the simulation.
 - Selection brackets (0x4bae50): 3 px corners in `GetPaletteColor(255, 255, 0)` around
   `RECTANGLE dx dy w h` (defaults 0 3 40 64). Soldiers of a formed brigade get none.
+- Formation marks (0x41c93f, called by the map drawer at 0x4bd613 after the objects and
+  not in the zoomed-out view, for every enabled brigade of the player with a selected
+  member, bitmap 0x1100ae8 built by the minimap code 0x4c0e5f): if the brigade has a shape
+  (+0x1e), more than 3 members and its slots (+0x2e bit 1, set by `PlaceBrigade`), every
+  soldier (member index ≥ 3, not dying) gets a diamond on the ground, four lines from
+  (x ± 12, y) to (x, y ± 12) around its position; while the brigade keeps its positions
+  (order 0x41c0a9, i.e. after a move order until the next one) a cross of ±2 px marks the
+  slot each soldier walks to (+0xe / +0x12). The colour is `GetPaletteColor(255, 255, 0)`
+  (0x734f80), the raw index 0xC9 during formation melee (0x41e50c). Each end of a line is
+  lifted by the ground height there (0x41c75b). The bounding box drawn after the loop is
+  dead code (0x41cbfc jumps past it).
 - Life bars (Tab, 0x4bb390, called by the object drawer 0x49d795 while Tab is on): green
   lines at y0 − 12 and y0 − 11 from x0 + 5, `(w − 12)·life/MaxLife` + 2 long, with white
   end caps at x0 + 4 and x0 + w − 5. Only living objects get one: the function returns at

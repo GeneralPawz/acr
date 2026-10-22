@@ -179,3 +179,34 @@ fn reform_and_fill() {
     s.w.step(&[Command::Fill { player: 1, brigade: 0 }]);
     assert_eq!(s.w.unit(fresh[2]).unwrap().brigade, None);
 }
+
+/// Formation numbers are the owner's brigade list slots (`GetFreeBrigade` 0x42c845): the
+/// first free one, so a dissolved formation's number goes to the next one formed.
+#[test]
+fn formations_take_the_first_free_number_of_their_owner() {
+    let mut s = setup(false);
+    let mut officers = Vec::new();
+    for (i, owner) in [0u8, 0, 1].into_iter().enumerate() {
+        let x = 2000 + 3000 * i as i32;
+        let officer = s.w.spawn(s.off, owner, Pos::from_pixels(x, 2000), 0);
+        for k in 0..15 {
+            s.w.spawn(s.pik, owner, Pos::from_pixels(x - 100 + 20 * (k % 5), 2100 + 20 * (k / 5)), 0);
+        }
+        officers.push((owner, officer));
+    }
+    run(&mut s.w, 1);
+    let shape = s.w.formations.shape_index("LINE15").unwrap() as u16;
+    for &(player, officer) in &officers {
+        s.w.step(&[Command::FormNear { player, officer, shape, kind: s.pik }]);
+    }
+    let numbers: Vec<(u8, u16)> = s.w.brigades.iter().map(|b| (b.owner, b.number)).collect();
+    assert_eq!(numbers, [(0, 0), (0, 1), (1, 0)]);
+    // The first formation is dissolved; a new one of player 0 takes its number.
+    s.w.step(&[Command::Disband { player: 0, officer: officers[0].1 }]);
+    assert!(!s.w.brigades[0].alive);
+    let officer = s.w.spawn(s.off, 0, Pos::from_pixels(11_000, 2000), 0);
+    soldiers(&mut s, 15, 10_900, 2100);
+    run(&mut s.w, 1);
+    s.w.step(&[Command::FormNear { player: 0, officer, shape, kind: s.pik }]);
+    assert_eq!((s.w.brigades[3].owner, s.w.brigades[3].number), (0, 0));
+}

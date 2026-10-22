@@ -355,6 +355,7 @@ pub fn register_new_unit(w: &mut World, i: usize) {
     };
     let owner = u.owner;
     let id = u.id;
+    let number = crate::formation::free_number(w, owner);
     w.brigades.push(crate::formation::Brigade {
         owner,
         alive: true,
@@ -369,6 +370,7 @@ pub fn register_new_unit(w: &mut World, i: usize) {
         bonus: (0, 0),
         stand_timer: 0,
         stamp: 0,
+        number,
     });
 }
 
