@@ -279,11 +279,11 @@ impl InGame {
         self.interface.markers.push(Marker { x, y, frame: 0 });
     }
 
-    fn own(&self) -> u8 {
+    pub(super) fn own(&self) -> u8 {
         self.local_player()
     }
 
-    fn selected_units(&self) -> impl Iterator<Item = &Unit> {
+    pub(super) fn selected_units(&self) -> impl Iterator<Item = &Unit> {
         let world = self.world.as_ref();
         self.selected.iter().filter_map(move |&id| world.and_then(|w| w.unit(id)).filter(|u| u.alive))
     }
@@ -340,6 +340,7 @@ impl InGame {
         let player = self.own();
         let mut view = View { player, camera, view: view_size, ..View::default() };
         let nations = self.nations(ctx);
+        self.panel_view(ctx, &mut view);
         let Some(world) = &self.world else { return view };
         let res = &world.players[usize::from(player).min(world.players.len() - 1)].resources;
         view.resources = std::array::from_fn(|i| res[i].max(0) as u32);
@@ -845,14 +846,14 @@ impl InGame {
 
     /// Draw layers of the game screen: the overlays over the map (world coordinates), the
     /// selection rectangle (window coordinates) and the interface (canvas coordinates);
-    /// plus the minimap image when it changed and the cursor frame with its hotspot.
+    /// plus the images that changed (minimap, portrait) and the cursor frame with its hotspot.
     #[allow(clippy::type_complexity)]
     pub fn interface(
         &mut self,
         ctx: &Ctx,
         window: [f32; 2],
         seconds: f32,
-    ) -> (Vec<(Canvas, Vec<Draw>)>, Option<Image>, Option<(usize, [i32; 2])>) {
+    ) -> (Vec<(Canvas, Vec<Draw>)>, Vec<(&'static str, Image)>, Option<(usize, [i32; 2])>) {
         self.interface.canvas = Canvas::fit(window);
         self.interface.window = window;
         if !self.interface.hud.has_minimap()
@@ -875,7 +876,9 @@ impl InGame {
         if self.interface.paused && self.mission.ended.is_none() {
             pause_text(ctx, &mut hud_draws);
         }
-        let image = self.interface.hud.minimap_image(ctx, &view);
+        let mut images: Vec<(&'static str, Image)> =
+            self.interface.hud.minimap_image(ctx, &view).map(|i| (hud::MINIMAP_IMAGE, i)).into_iter().collect();
+        images.extend(self.interface.hud.take_images());
         self.interface.view = view;
         // The cursor (0x4c1f70): the arrow, the sword over an enemy with an own selection.
         let over_hud = self.cursor.is_some_and(|c| self.over_hud(ctx, c));
@@ -893,7 +896,7 @@ impl InGame {
             layers.push((Canvas { scale: 1.0, origin: [0.0, 0.0] }, rect));
         }
         layers.push((self.interface.canvas, hud_draws));
-        (layers, image, cursor)
+        (layers, images, cursor)
     }
 
     /// Whether a window point is over the interface.
@@ -1111,6 +1114,17 @@ impl InGame {
                 }
                 HudEvent::Zoom => {
                     self.toggle_zoom(at);
+                    return GameMouse::None;
+                }
+                HudEvent::UnitPanelStep(step) => {
+                    self.step_unit_panel(step);
+                    return GameMouse::None;
+                }
+                HudEvent::Used if self.interface.hud.game_panel.tab == 4 => {
+                    // The diplomacy tab opens DipServer's panel (`PopupDipDialog` 0x5c3a20).
+                    self.interface.hud.game_panel.tab = 0;
+                    self.interface.hud.panel = hud::Panel::None;
+                    self.dip_toggle();
                     return GameMouse::None;
                 }
                 _ => return GameMouse::None,
@@ -1439,7 +1453,7 @@ const BIG_WHITE: crate::ui::fonts::FontId = crate::ui::fonts::FontId("BigWhiteFo
 const PAPER: usize = 28;
 
 /// The name of a unit type: the text `NAME.MD` (`GeneralObject::Message`), else its name.
-fn unit_name(ctx: &Ctx, md_name: &str) -> Vec<u8> {
+pub(super) fn unit_name(ctx: &Ctx, md_name: &str) -> Vec<u8> {
     let key = format!("{}.MD", md_name.to_ascii_uppercase());
     let text = ctx.texts.get(&key);
     if text == key.as_bytes() { md_name.as_bytes().to_vec() } else { text.to_vec() }

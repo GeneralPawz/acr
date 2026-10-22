@@ -22,6 +22,7 @@ use crate::ui::{GameKind, GameSetup};
 
 mod dip;
 mod interface;
+mod panels;
 mod save;
 use crate::unit_sounds::{self, SoundEvent};
 pub use interface::{GameKey, GameMouse};
@@ -72,6 +73,8 @@ pub struct InGame {
     save: save::SaveState,
     /// DipServer's dialogs in the side panel.
     diplomacy: crate::diplomacy::DipPanel,
+    /// Score and losses for the game info panel.
+    stats: panels::Stats,
     /// `ACR_DIP_PAGE` has been looked at.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     dip_page_shown: bool,
@@ -120,6 +123,7 @@ impl InGame {
             mission,
             save: Default::default(),
             diplomacy: crate::diplomacy::DipPanel::default(),
+            stats: Default::default(),
             dip_page_shown: false,
             ambient_ticks: 0,
         }
@@ -462,6 +466,9 @@ impl InGame {
             }
             for _ in 0..ticks {
                 self.tick_markers();
+            }
+            if ticks > 0 {
+                self.update_stats();
             }
             if ticks > 0 {
                 self.animation_sounds(window);

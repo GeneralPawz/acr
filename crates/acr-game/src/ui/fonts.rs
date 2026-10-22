@@ -43,6 +43,9 @@ const MENU_FONTS: &[&str] = &[
     "BlackFont",
     "SmallBlackFont",
     "SmallBlackFont1",
+    "SpecialWhiteFont",
+    "SpecialYellowFont",
+    "fn10",
     // Mission messages (`mission_ui`).
     "BigWhiteFont",
     "rom11",

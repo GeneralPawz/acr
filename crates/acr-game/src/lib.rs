@@ -186,12 +186,12 @@ impl Game {
                 {
                     self.ui.open_dialog(window);
                 }
-                let (l, image, cursor) = game.interface(&self.ui.ctx(), g.gpu.size(), game_dt);
+                let (l, images, cursor) = game.interface(&self.ui.ctx(), g.gpu.size(), game_dt);
                 layers = l;
                 // Mission pages, hints and the end of the game over the interface.
                 layers.push((Canvas::fit(g.gpu.size()), game.overlay(&self.ui.ctx())));
-                if let Some(image) = image {
-                    self.ui.set_image(hud::MINIMAP_IMAGE, image);
+                for (name, image) in images {
+                    self.ui.set_image(name, image);
                 }
                 self.ui.set_game_cursor(cursor);
             }
