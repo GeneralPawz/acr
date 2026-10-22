@@ -1064,14 +1064,25 @@ fn place(world: &World, ids: &[usize], x: i32, y: i32, vx: i32, vy: i32) -> Vec<
     let sp = 4 * r2;
     let nn = norma(px, py).max(1);
     let (sx, sy) = (px * sp / nn, py * sp / nn);
-    let cx0 = ((w - 1) * sx - (d - 1) * sy) >> 1;
-    let cy0 = ((d - 1) * sx + (w - 1) * sy) >> 1;
+    // Rows one behind the other along the way: as far apart as across, except under the
+    // body-spacing rule, where a horse (2.4 m = 72 px long) needs more than the original
+    // 4 x GEOMETRY radius (60 px for every rider) nose to tail: 76 px (2.53 m).
+    let along = if world.rules.body_spacing
+        && units.iter().any(|&i| crate::spacing::is_rider(catalog.get(world.units[i].kind)))
+    {
+        sp.max(crate::spacing::RIDER_ROW)
+    } else {
+        sp
+    };
+    let (tx, ty) = (px * along / nn, py * along / nn);
+    let cx0 = ((w - 1) * sx - (d - 1) * ty) >> 1;
+    let cy0 = ((d - 1) * tx + (w - 1) * sy) >> 1;
     let mut out = Vec::with_capacity(units.len());
     let mut k = 0;
     for i in 0..w {
         for j in 0..d {
             if let Some(&u) = units.get(k) {
-                out.push((u, (x + i * sx - j * sy - cx0, y + j * sx + i * sy - cy0)));
+                out.push((u, (x + i * sx - j * ty - cx0, y + j * tx + i * sy - cy0)));
                 k += 1;
             }
         }

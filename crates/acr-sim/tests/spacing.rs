@@ -190,3 +190,134 @@ fn cost_of_2000_men_in_one_crowd() {
         cost[1] - cost[0]
     );
 }
+
+/// A dragoon: `USAGE STRELOK` like the original `ENGD18.MD`, a rider by its `GEOMETRY` radius 15.
+const DRAGOON: &str = "NAME Dra\r\nUSERLC 0 G SHADOW 0 0\r\n#STAND 9 1 0 0\r\n@MOTION_L 9 0 0 9\r\n\
+    @MOTION_R 9 0 10 19\r\nLIFE 420\r\nGEOMETRY 1 15 110\r\nUSAGE STRELOK\r\n[END]\r\n";
+
+/// The horse capsule (`spacing::HORSE`) in px: radius and half the segment.
+const HORSE_R: f64 = 10.5;
+const HORSE_H: f64 = 25.5;
+const MAN_R: f64 = 9.0;
+
+fn with_dragoons(rules: Rules) -> (World, TypeId, TypeId) {
+    let (w, pik, ..) = world(rules);
+    let mut c = (*w.catalog).clone();
+    let dra = c.add(ObjectType::from_def("Dra(EN)", &UnitDef::parse(DRAGOON.as_bytes())));
+    let mut w = World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(Formations::default()));
+    w.rules = rules;
+    (w, pik, dra)
+}
+
+/// The horse's segment in px.
+fn seg(w: &World, id: EntityId) -> ((f64, f64), (f64, f64)) {
+    let u = &w.units[id.0 as usize];
+    let (x, y) = (f64::from(u.pos.x) / 16.0, f64::from(u.pos.y) / 16.0);
+    let a = f64::from(u.dir) * std::f64::consts::TAU / 256.0;
+    let (hx, hy) = (HORSE_H * a.cos(), HORSE_H * a.sin());
+    ((x - hx, y - hy), (x + hx, y + hy))
+}
+
+fn pt_seg(p: (f64, f64), (a, b): ((f64, f64), (f64, f64))) -> f64 {
+    let (ex, ey) = (b.0 - a.0, b.1 - a.1);
+    let t = (((p.0 - a.0) * ex + (p.1 - a.1) * ey) / (ex * ex + ey * ey)).clamp(0.0, 1.0);
+    (p.0 - a.0 - t * ex).hypot(p.1 - a.1 - t * ey)
+}
+
+/// Distance between two horses' segments (px; 0 when they cross, ignored here: they never
+/// stay crossed).
+fn seg_seg(a: ((f64, f64), (f64, f64)), b: ((f64, f64), (f64, f64))) -> f64 {
+    pt_seg(a.0, b).min(pt_seg(a.1, b)).min(pt_seg(b.0, a)).min(pt_seg(b.1, a))
+}
+
+/// The smallest gap between horse bodies (px, negative: overlap) and between a man and a horse.
+fn horse_gaps(w: &World, horses: &[EntityId], men: &[EntityId]) -> (f64, f64) {
+    let mut hh = f64::MAX;
+    for (k, &a) in horses.iter().enumerate() {
+        for &b in &horses[k + 1..] {
+            hh = hh.min(seg_seg(seg(w, a), seg(w, b)) - 2.0 * HORSE_R);
+        }
+    }
+    let mut hm = f64::MAX;
+    for &h in horses {
+        for &m in men {
+            let p = w.units[m.0 as usize].pos;
+            let p = (f64::from(p.x) / 16.0, f64::from(p.y) / 16.0);
+            hm = hm.min(pt_seg(p, seg(w, h)) - HORSE_R - MAN_R);
+        }
+    }
+    (hh, hm)
+}
+
+#[test]
+fn horses_are_long_and_spread_sideways() {
+    // Two riders facing east, nose to tail 40 px apart (a horse is 72 px long), and two
+    // side by side 10 px apart (a horse is 21 px wide).
+    let (mut w, _, dra) = with_dragoons(ON);
+    let a = w.spawn(dra, 0, Pos::from_pixels(1000, 1000), 0);
+    let b = w.spawn(dra, 0, Pos::from_pixels(1040, 1000), 0);
+    let c = w.spawn(dra, 0, Pos::from_pixels(1000, 1300), 0);
+    let d = w.spawn(dra, 0, Pos::from_pixels(1000, 1310), 0);
+    let start: Vec<_> = [a, b, c, d].iter().map(|id| w.units[id.0 as usize].pos.pixels()).collect();
+    run(&mut w, 200);
+    let (hh, _) = horse_gaps(&w, &[a, b], &[]);
+    let (hh2, _) = horse_gaps(&w, &[c, d], &[]);
+    let moved: Vec<_> = [a, b, c, d]
+        .iter()
+        .zip(&start)
+        .map(|(id, s)| {
+            let p = w.units[id.0 as usize].pos.pixels();
+            (p.0 - s.0, p.1 - s.1)
+        })
+        .collect();
+    println!("nose to tail: gap {hh:.1} px; side by side: gap {hh2:.1} px; moved {moved:?}");
+    assert!(hh >= -1.0 && hh2 >= -1.0, "{hh} {hh2}");
+    // Nose to tail they step aside: more across than along.
+    let (ax, ay) = (moved[0].0 - moved[1].0, moved[0].1 - moved[1].1);
+    assert!(ay.abs() > ax.abs(), "{moved:?}");
+}
+
+#[test]
+fn a_horse_pushes_men_aside() {
+    let (mut w, pik, dra) = with_dragoons(ON);
+    // Ten men in a line across the rider's way; he rides through them to the far side.
+    let men: Vec<EntityId> = (0..10).map(|k| w.spawn(pik, 1, Pos::from_pixels(1300, 1300 + 20 * k), 0)).collect();
+    let h = w.spawn(dra, 0, Pos::from_pixels(1100, 1390), 0);
+    all_to(&mut w, &[h], 1500, 1390);
+    let mut worst = f64::MAX;
+    for _ in 0..300 {
+        w.step(&[]);
+        worst = worst.min(horse_gaps(&w, &[h], &men).1);
+    }
+    let (_, hm) = horse_gaps(&w, &[h], &men);
+    println!("man to horse: worst {worst:.1} px, at the end {hm:.1} px");
+    assert!(hm >= -2.0, "a man under the horse: {hm} px");
+}
+
+/// Twenty riders sent as a group (two rows of ten) and ridden into each other.
+fn squadron(rules: Rules) -> (f64, f64, u64) {
+    let (mut w, pik, dra) = with_dragoons(rules);
+    let men: Vec<EntityId> =
+        (0..60).map(|k| w.spawn(pik, 1, Pos::from_pixels(2000 + 24 * (k % 6), 1880 + 24 * (k / 6)), 128)).collect();
+    let mut horses: Vec<EntityId> =
+        (0..10).map(|k| w.spawn(dra, 0, Pos::from_pixels(1500, 1900 + 20 * k), 0)).collect();
+    horses.extend((0..10).map(|k| w.spawn(dra, 0, Pos::from_pixels(1460, 1900 + 20 * k), 0)));
+    w.step(&[Command::Move { player: 0, units: horses.clone(), x: 1700, y: 2000 }]);
+    run(&mut w, 400);
+    let (hh, _) = horse_gaps(&w, &horses, &men);
+    // Then everyone into the infantry block.
+    all_to(&mut w, &horses, 2060, 2000);
+    run(&mut w, 300);
+    let (_, hm) = horse_gaps(&w, &horses, &men);
+    (hh, hm, w.state_hash())
+}
+
+#[test]
+fn a_squadron_keeps_its_horses_apart() {
+    let (hh_off, hm_off, _) = squadron(Rules::default());
+    let (hh, hm, _) = squadron(ON);
+    println!("off: horses {hh_off:.1} px, man to horse {hm_off:.1} px");
+    println!("on: horses {hh:.1} px, man to horse {hm:.1} px");
+    assert!(hh >= -2.0, "horses overlap in their slots: {hh} px");
+    assert!(hm >= -6.0, "a man under a horse: {hm} px");
+}

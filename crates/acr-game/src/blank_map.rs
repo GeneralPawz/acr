@@ -27,6 +27,9 @@ pub const fn backdrop(ground: Ground) -> Option<[f64; 3]> {
     }
 }
 
+/// Each player's stock on the blank field: 1 000 000 of every resource.
+pub const BLANK_STOCK: [u32; 8] = [1_000_000, 1_000_000, 1_000_000, 1_000_000, 1_000_000, 1_000_000, 0, 0];
+
 /// Bare brown earth (`TILES3.BMP` texture 71).
 const DIRT: u8 = 71;
 /// Snow (texture 103; 110 is plain white).
@@ -86,7 +89,10 @@ pub fn build(b: &BlankSetup) -> M3dMap {
             depth: Grid { width: n, height: n, cells: depth },
             brightness: Grid { width: n, height: n, cells: brightness },
         }),
-        resources: Some([[0; 8]; acr_formats::m3d::PLAYERS]),
+        // Plenty of everything: with no food (the editor's new map has none) the players
+        // starve: each unit dies with probability 51/32768 per tick (`economy::starve`); a
+        // test scene of 120 musketeers lost 26 of them in 400 ticks.
+        resources: Some([BLANK_STOCK; acr_formats::m3d::PLAYERS]),
         mission_dll: Some(String::new()),
         ..M3dMap::default()
     }
@@ -121,6 +127,8 @@ mod tests {
         assert!(map.textures.as_ref().unwrap().cells.iter().all(|&t| t == 0));
         assert!(map.sprites.is_empty() && map.units.is_empty());
         assert!(map.water.as_ref().unwrap().depth.cells.iter().all(|&d| d == 0));
+        // Food, so nobody starves in a test scene.
+        assert!(map.resources.unwrap().iter().all(|r| r[3] > 0));
         assert_eq!(playable(setup::MapSize::Normal), 15360);
     }
 
