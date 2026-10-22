@@ -16,6 +16,7 @@
 //! `docs/simulation.md`.
 
 pub mod aiplace;
+pub mod armies;
 pub mod artillery;
 pub mod assets;
 pub mod bars;

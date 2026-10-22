@@ -214,7 +214,8 @@ pub fn complex_rotate(w: &mut World, i: usize) {
             try_to_stand(u, t, random, false);
         }
         1 => {
-            // A drive step: the cell at the end of the cycle must be free.
+            // A drive step (`TryToMove` 0x50b021): the cell at the end of the cycle must be
+            // free, except in unlimited motion (a cannon leaving the building that made it).
             random.rando();
             let rate = adv.rate[0];
             let (odx, ody) = (((t.step_dx(gd) << 1) * rate) >> 4, ((t.step_dy(gd) << 1) * rate) >> 4);
@@ -223,8 +224,7 @@ pub fn complex_rotate(w: &mut World, i: usize) {
             let (cx, cy) = Unit::cell_of(end, u.lx);
             occupancy.clr_bar(u.cell.0, u.cell.1, u.lx);
             let kind = if u.left_leg { AnimKind::MotionLs(0) } else { AnimKind::MotionRs(0) };
-            if occupancy.check_bar(cx, cy, u.lx, u.lx)
-                || map.land.check_bar(cx, cy, u.lx, u.lx)
+            if !u.unlimited && (occupancy.check_bar(cx, cy, u.lx, u.lx) || map.land.check_bar(cx, cy, u.lx, u.lx))
                 || anim_frames(t, kind).is_none()
             {
                 occupancy.set_bar(u.cell.0, u.cell.1, u.lx);

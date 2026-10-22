@@ -88,3 +88,34 @@ fn a_ferry_docks_takes_a_soldier_across_and_lets_him_off() {
     let (x, y) = u.pos.pixels();
     assert!(x > 2000 && y > 2800, "on the far shore: ({x}, {y})");
 }
+
+/// `GoToTransportLink` (0x54dbb0) compares with `<` as the engine does (`Norma < STOPDISTANCE`
+/// to the landing point, `< STOPDISTANCE + 512` to the transport): a soldier standing exactly
+/// 16 px from the landing point walks to its cell first and still boards.
+#[test]
+fn a_soldier_exactly_stop_distance_from_the_landing_point_boards() {
+    let mut c = Catalog::new();
+    let par = c.add(ObjectType::from_def("Par(EN)", &UnitDef::parse(FERRY.as_bytes())));
+    let sol = c.add(ObjectType::from_def("Sol(EN)", &UnitDef::parse(SOLDIER.as_bytes())));
+    let mut w = World::new(Arc::new(lake(2000)), Arc::new(c), Arc::new(Formations::default()));
+    let f = w.spawn(par, 0, Pos::from_pixels(1200, 2000), 0);
+    w.step(&[Command::Move { player: 0, units: vec![f], x: 2150, y: 2000 }]);
+    for _ in 0..1200 {
+        w.step(&[]);
+        if matches!(w.units[f.0 as usize].dock, Dock::At(_)) {
+            break;
+        }
+    }
+    let Dock::At(p) = w.units[f.0 as usize].dock else { panic!("not docked") };
+    let s = w.spawn(sol, 0, Pos::new(p.x + 256, p.y), 128);
+    let stop = w.catalog.get(w.units[s.0 as usize].kind).stop_distance;
+    assert_eq!(stop, 256);
+    w.step(&[Command::Board { player: 0, units: vec![s], transport: f }]);
+    for _ in 0..400 {
+        w.step(&[]);
+        if w.units[s.0 as usize].inside_of.is_some() {
+            break;
+        }
+    }
+    assert_eq!(w.units[s.0 as usize].inside_of, Some(f), "aboard: {:?}", w.units[s.0 as usize].orders);
+}

@@ -42,7 +42,7 @@ against a fake game and that every scenario file parses, and `cargo test -p acr-
 checks the driver's protocol parser.
 
 Typical timings (Windows on ARM, release build, headless): starting a random map 0.6 s,
-a mission 0.3 s, 100 ticks 0.1–0.3 s, a click 5–15 ms; all six scenarios together 8 s.
+a mission 0.3 s, 100 ticks 0.1–0.3 s, a click 5–15 ms; all eight scenarios together 29 s, 18 s of them `attack_ground`.
 
 ## The driver
 
@@ -149,16 +149,17 @@ and `right_click`). Kinds: `text`, `button`, `row`, `list`, `combo`, `option`, `
 when not the default: `clickable`, `enabled: false`, `hover`, `selected`. Labels are
 UTF-8 (the game's CP1252 decoded). Rects are window pixels of the visible part. Over a
 running game the tree also has `messages` (mission hints and texts over the map) and
-`cursor` (`pos`, `mode`: `normal`, `placing <type>`, `rally`, `patrol`).
+`cursor` (`pos`, `mode`: `normal`, `placing <type>`, `rally`, `patrol`,
+`attack_ground`).
 
 ### State (`state`)
 
 `mode` (`menus`, `loading`, `game`), `screen`, `tick`, `player`, `resources` (`wood`,
 `gold`, `stone`, `food`, `iron`, `coal`), `population`, `housing`, `selection` (`id`,
 `type`), `formations` (`brigade`, `members`), `counts` per owner of living `units`,
-finished `buildings` and building `sites` by type, `mission` (`ended`: `won`/`lost`/null,
+finished `buildings`, building `sites` and `burning` objects by type, `mission` (`ended`: `won`/`lost`/null,
 `objectives`). With `"units": true`: `units` with `id`, `type`, `owner`, `x`, `y`,
-`life`, `building`, `finished`, `inside`, `brigade` and `screen` (window position, when
+`life`, `building`, `finished`, `inside`, `burning`, `brigade` and `screen` (window position, when
 in view).
 
 ### Modal messages
@@ -208,7 +209,11 @@ single mission's briefing blocks the game until OK), `build_site` (drag-select p
 HUD build icon, placement: the site appears at once and is paid), `produce_unit` (build
 the Fort, queue a soldier, send peasants in, the soldier comes out), `formation` (officer
 → line formation → fusiliers: one formation of officer, drummer, flag bearer and
-soldiers), `save_load` (save and load through the game menu).
+soldiers), `formation_group` (two formations: `Formation gruppieren` groups them, the icon
+turns into `Gruppierung auflösen`, which ungroups them), `attack_ground` (a random map built
+up to the Festung, a cannon trained and ordered through `Boden angreifen` onto the ground
+pays its shots; the Festung's cannon ball sets a neutral building burning, which burns down
+and disappears), `save_load` (save and load through the game menu).
 
 ## Jev
 

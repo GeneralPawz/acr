@@ -87,7 +87,8 @@ impl InGame {
             .collect()
     }
 
-    /// What a map click does now: `placing <type>`, `rally`, `patrol` or `normal`.
+    /// What a map click does now: `placing <type>`, `rally`, `patrol`, `attack_ground` or
+    /// `normal`.
     pub fn cursor_mode(&self) -> String {
         if let (Some(kind), Some(world)) = (self.interface.placing, &self.world) {
             return format!("placing {}", world.catalog.get(kind).id);
@@ -97,6 +98,9 @@ impl InGame {
         }
         if self.interface.patrol_mode {
             return "patrol".into();
+        }
+        if self.interface.attack_ground_mode {
+            return "attack_ground".into();
         }
         "normal".into()
     }

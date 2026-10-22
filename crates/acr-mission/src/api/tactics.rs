@@ -23,20 +23,10 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("GetNextZone", 0x5792c5, DONE, get_next_zone),
     f("GetListOfNearZones", 0x579281, DONE, get_list_of_near_zones),
     f("FindNextZoneOnTheSafeWay", 0x579414, DONE, find_next_zone_on_the_safe_way),
-    f("CreateDangerMap", 0x57c3ea, Status::Partial("no garrisons/resource bases"), create_danger_map),
-    f(
-        "CreateDangerMapForDef",
-        0x57c7c0,
-        Status::Partial("enemy units weigh (STORMFORCE >> 5) | 1; the rest follows CreateDangerMap"),
-        create_danger_map_for_def,
-    ),
-    f("CreateDangerMapForTom", 0x57c9ee, Status::Partial("as CreateDangerMap"), create_danger_map),
-    f(
-        "EnumEnemyArmies",
-        0x578245,
-        Status::Partial("one army per enemy nation (centre, count, force = count); the original clusters 256-px cells"),
-        enum_enemy_armies,
-    ),
+    f("CreateDangerMap", 0x57c3ea, DONE, create_danger_map),
+    f("CreateDangerMapForDef", 0x57c7c0, DONE, create_danger_map_for_def),
+    f("CreateDangerMapForTom", 0x57c9ee, DONE, create_danger_map_for_tom),
+    f("EnumEnemyArmies", 0x578245, DONE, enum_enemy_armies),
     f("Attack3", 0x57ea15, DONE, attack3),
     f("Attack4", 0x580042, DONE, attack4),
     f(
@@ -145,12 +135,7 @@ fn get_n_zones(api: &mut Api, _: &mut Call) -> Result<u32> {
 
 /// `int GetTopZone(int x, int y)` (pixels): the area of the 64-px cell, 0xFFFF = none.
 fn get_top_zone(api: &mut Api, c: &mut Call) -> Result<u32> {
-    let Some(t) = &api.st.topo else { return Ok(0xFFFF) };
-    let (cx, cy) = (c.i32(0)? >> 6, c.i32(1)? >> 6);
-    if cx < 0 || cy < 0 || cx >= t.cells.width as i32 || cy >= t.cells.height as i32 {
-        return Ok(0xFFFF);
-    }
-    Ok(u32::from(t.cells.get(cx as usize, cy as usize).unwrap_or(0xFFFF)))
+    Ok(top_zone_px(api, c.i32(0)?, c.i32(1)?))
 }
 
 fn zone_coor(api: &mut Api, c: &mut Call, shift: u32) -> Result<u32> {
@@ -300,118 +285,190 @@ pub fn zone_of(api: &Api, cx: i32, cy: i32) -> u16 {
     zone_at(api, cx, cy)
 }
 
-/// `CreateDangerMap` for the DipServer variants.
-pub fn danger_map_pub(api: &mut Api, c: &mut Call) -> Result<u32> {
-    danger_map(api, c, false)
+/// The per-object term of a danger map (`CreateDangerMap*`, 0x57c3ea..0x57daac; the rest of
+/// the functions is shared).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Danger {
+    /// `CreateDangerMap` (0x57c3ea).
+    Plain,
+    /// `CreateDangerMapForDef` (0x57c7c0): enemy units only, by `STORMFORCE`; no clamp.
+    Def,
+    /// `CreateDangerMapForTom` (0x57c9ee).
+    Tom,
+    /// `CreateDangerMapForFire` (0x57d6c4).
+    Fire,
+    /// `CreateDangerMapWithoutPeasants` (0x57daac).
+    NoPeasants,
+    /// `CreateDangerMapForStorm` (0x57cd88).
+    Storm,
+    /// `CreateDangerMapForStormHard` (0x57d19e).
+    StormHard,
 }
 
-/// Danger map of `CreateDangerMap` with a per-object term.
-fn danger_map(api: &mut Api, c: &mut Call, def: bool) -> Result<u32> {
-    let nat = c.u8(0)? & 7;
+/// `GetTopZone` (0x5791cb) of a pixel point: the area of its 64 px cell, 0xFFFF outside.
+pub fn top_zone_px(api: &Api, x: i32, y: i32) -> u32 {
+    let Some(t) = &api.st.topo else { return 0xFFFF };
+    let (cx, cy) = (x >> 6, y >> 6);
+    if cx < 0 || cy < 0 || cx >= t.cells.width as i32 || cy >= t.cells.height as i32 {
+        return 0xFFFF;
+    }
+    u32::from(t.cells.get(cx as usize, cy as usize).unwrap_or(0xFFFF))
+}
+
+/// `bool GetBuildingOposit(word index, int* value)` (0x57b9ae): a living building's defence,
+/// `n · 2 · (a + (b − a) · n / cap)` for `OPPOSIT a b`, `n` units inside and the capacity
+/// `cap` (the doubling is the engine comparing two field addresses, always true); `None`
+/// (value 0) for anything else or no capacity.
+pub fn building_oposit(api: &Api, index: u16) -> Option<i32> {
+    let u = api.world.units.get(usize::from(index)).filter(|u| u.active())?;
+    if !u.building {
+        return None;
+    }
+    let (a, b) = api.world.catalog.get(u.kind).role.opposit;
+    let n = u.inside.len() as i32;
+    let cap = api.world.adv(u.owner, u.kind).max_inside & 0xFFFF;
+    if cap == 0 {
+        return None;
+    }
+    Some(n * ((a + (b - a) * n / cap) * 2))
+}
+
+/// `void CreateDangerMap*(byte nat, short* map, int nzones, int* weight, int steps)`: every
+/// object adds its term — scaled by `weight[CATEGORY]` — to the value (a `short`) of its area
+/// (`GetTopZone` of its position, areas below `nzones`); then `steps` rounds spread each
+/// area's `value / (2 · steps)` to its linked areas, in place and in area order; at the end
+/// the values are clamped to [−6, 30000] (not by `ForDef`).
+pub fn danger_map(api: &mut Api, c: &mut Call, kind: Danger) -> Result<u32> {
+    let mask = api.st.nmask[usize::from(c.u8(0)? & 7)];
     let map = c.u32(1)?;
-    let nzones = c.i32(2)?.max(0) as usize;
+    let nzones = c.i32(2)?;
     let weights = c.u32(3)?;
     let steps = c.i32(4)?;
-    let mask = api.st.nmask[usize::from(nat)];
-    // The weight of an object is `weight[CATEGORY]` (only `ENGBLG*` have category 1).
-    let mut cat_w = [0i32; 2];
-    if !def && weights != 0 {
-        for (k, w) in cat_w.iter_mut().enumerate() {
-            *w = c.read_u32(weights + 4 * k as u32)? as i32;
+    let mut m = vec![0i16; nzones.max(0) as usize];
+    for i in 0..api.world.units.len() {
+        let u = &api.world.units[i];
+        // Units inside have `Sdoxlo` 1 in the engine.
+        if !u.active() || (kind == Danger::Def && u.building) {
+            continue;
         }
-    }
-    let mut m = vec![0i32; nzones];
-    for u in api.world.units.iter().filter(|u| u.living()) {
-        let z = zone_at(api, u.pos.x >> 10, u.pos.y >> 10);
-        let Some(v) = m.get_mut(usize::from(z)) else { continue };
-        let enemy = api.st.unit_nmask(u.id, u.owner) & mask == 0;
+        let z = top_zone_px(api, u.pos.x >> 4, u.pos.y >> 4) as i32;
+        if z >= nzones {
+            continue;
+        }
         let t = api.world.catalog.get(u.kind);
-        let w0 = cat_w[usize::from(t.role.category.min(1))];
-        *v = i32::from(if def {
-            // CreateDangerMapForDef: `(STORMFORCE >> 5) | 1` per enemy unit.
-            if enemy && !u.building { (*v + ((t.role.storm_force >> 5) | 1)) as i16 } else { *v as i16 }
-        } else if enemy {
-            if u.owner == 7 && u.building {
-                (*v + (w0 << 7)) as i16
-            } else if t.peasant {
-                (*v - w0 * 2) as i16
-            } else {
-                (*v + w0) as i16
-            }
+        let w = if weights == 0 || kind == Danger::Def {
+            0
         } else {
-            (*v - w0) as i16
-        });
-    }
-    if steps > 0 {
-        for _ in 0..steps {
-            for i in 0..nzones {
-                let add = m[i] / (2 * steps);
-                for (a, _) in links(api, i as u16) {
-                    if let Some(x) = m.get_mut(usize::from(a)) {
-                        *x = i32::from((*x + add) as i16);
+            c.read_u32(weights + 4 * u32::from(t.role.category))? as i32
+        };
+        let enemy = api.st.unit_nmask(u.id, u.owner) & mask == 0;
+        let n = u.inside.len() as i32;
+        let kills = i32::from(u.kills);
+        let mine = t.role.usage == acr_sim::catalog::usage::MINE;
+        let res = t.economy.resource_base != 0;
+        let nat7 = u.owner == 7 && u.building;
+        let v = i32::from(m[z as usize]);
+        let v = match kind {
+            Danger::Def if enemy => v + (((t.role.storm_force & 0xff) >> 5) | 1),
+            Danger::Def => v,
+            _ if !enemy => v.wrapping_sub(w),
+            Danger::StormHard => {
+                if nat7 {
+                    v.wrapping_add(w << 8)
+                } else if u.building {
+                    let mut v = if mine {
+                        v.wrapping_sub(w.wrapping_mul(n))
+                    } else {
+                        v.wrapping_add(w.wrapping_mul(building_oposit(api, i as u16).unwrap_or(0)))
+                    };
+                    if res {
+                        v = v.wrapping_sub(w << 4);
                     }
+                    v
+                } else if t.peasant {
+                    v
+                } else {
+                    v.wrapping_add(w)
+                }
+            }
+            _ if nat7 => v.wrapping_add(if kind == Danger::Plain { w << 7 } else { w << 8 }),
+            _ if res => v.wrapping_sub(w << 8),
+            _ if n != 0 && mine => v.wrapping_sub(w.wrapping_mul(n) << if kind == Danger::Plain { 4 } else { 2 }),
+            _ if n != 0 => {
+                let f = match kind {
+                    Danger::Fire => n + kills - ((u.max_life & 0xFFFF) >> 10),
+                    Danger::Storm => {
+                        // `n² · b / (2 · MaxInside) + kills − 350` (`OPPOSIT a b`).
+                        let cap = 2 * (t.economy.max_inside & 0xFFFF);
+                        n.wrapping_mul(n).wrapping_mul(t.role.opposit.1).checked_div(cap).unwrap_or(0) + kills - 350
+                    }
+                    _ => n + kills,
+                };
+                let f = if kind == Danger::Tom { f.wrapping_mul(8) } else { f };
+                v.wrapping_add(w.wrapping_mul(f))
+            }
+            Danger::Tom => v.wrapping_sub(w),
+            _ if t.peasant => v.wrapping_sub(if kind == Danger::Storm { w } else { w * 2 }),
+            _ => v.wrapping_add(w),
+        };
+        m[z as usize] = v as i16;
+    }
+    for _ in 0..steps.max(0) {
+        for i in 0..m.len() {
+            let add = i32::from(m[i]) / (2 * steps);
+            for (a, _) in links(api, i as u16) {
+                if let Some(x) = m.get_mut(usize::from(a)) {
+                    *x = (i32::from(*x) + add) as i16;
                 }
             }
         }
     }
     for (i, v) in m.iter().enumerate() {
-        let v = if def { *v } else { (*v).clamp(-6, 30000) };
-        c.write_u16(map + 2 * i as u32, v as i16 as u16)?;
+        let v = if kind == Danger::Def { *v } else { (*v).clamp(-6, 30000) };
+        c.write_u16(map + 2 * i as u32, v as u16)?;
     }
     Ok(0)
 }
 
-/// `void CreateDangerMap(byte nat, short* map, int nzones, int* weight, int steps)`.
 fn create_danger_map(api: &mut Api, c: &mut Call) -> Result<u32> {
-    danger_map(api, c, false)
+    danger_map(api, c, Danger::Plain)
 }
 
 fn create_danger_map_for_def(api: &mut Api, c: &mut Call) -> Result<u32> {
-    danger_map(api, c, true)
+    danger_map(api, c, Danger::Def)
 }
 
-/// `int EnumEnemyArmies(byte nat, int fields, int* buf, int len)`.
+fn create_danger_map_for_tom(api: &mut Api, c: &mut Call) -> Result<u32> {
+    danger_map(api, c, Danger::Tom)
+}
+
+/// `int EnumEnemyArmies(byte nat, int fields, int* buf, int len)` (0x578245): per army of the
+/// nation's `EnemyInfo` (`acr_sim::armies`), `fields & 1`: x, y (pixels), `& 2`: unit count,
+/// `& 4`: force, `& 8`: min x, min y, max x, max y (256 px cells); a field is written whole
+/// when it starts below `len`, as in the engine. Returns the entries written / their size.
 fn enum_enemy_armies(api: &mut Api, c: &mut Call) -> Result<u32> {
     let nat = c.u8(0)?;
-    if nat >= 7 {
-        return Ok(0);
-    }
+    let Some(armies) = api.world.armies.of(nat).map(<[_]>::to_vec) else { return Ok(0) };
     let (fields, buf, len) = (c.i32(1)?, c.u32(2)?, c.i32(3)?);
-    let mask = api.st.nmask[usize::from(nat)];
-    let mut armies: Vec<(i64, i64, i32)> = Vec::new();
-    for n in 0..8u8 {
-        let units: Vec<_> = api.world.units.iter().filter(|u| u.living() && u.owner == n && !u.building).collect();
-        if units.is_empty() || api.st.nmask[usize::from(n)] & mask != 0 {
-            continue;
+    let mut out: Vec<i32> = Vec::new();
+    for a in &armies {
+        if fields & 1 != 0 && (out.len() as i32) < len {
+            out.extend([i32::from(a.x), i32::from(a.y)]);
         }
-        let k = units.len() as i64;
-        let x = units.iter().map(|u| i64::from(u.pos.x >> 4)).sum::<i64>() / k;
-        let y = units.iter().map(|u| i64::from(u.pos.y >> 4)).sum::<i64>() / k;
-        armies.push((x, y, units.len() as i32));
-    }
-    let mut k = 0i32;
-    let put = |c: &mut Call, v: i32, k: &mut i32| -> Result<()> {
-        c.write_i32(buf + 4 * *k as u32, v)?;
-        *k += 1;
-        Ok(())
-    };
-    for (x, y, n) in &armies {
-        if k < len && fields & 1 != 0 {
-            put(c, *x as i32, &mut k)?;
-            put(c, *y as i32, &mut k)?;
+        if fields & 2 != 0 && (out.len() as i32) < len {
+            out.push(i32::from(a.count));
         }
-        if k < len && fields & 2 != 0 {
-            put(c, *n, &mut k)?;
+        if fields & 4 != 0 && (out.len() as i32) < len {
+            out.push(i32::from(a.force));
         }
-        if k < len && fields & 4 != 0 {
-            put(c, *n, &mut k)?;
-        }
-        if k < len && fields & 8 != 0 {
-            for v in [(*x >> 8) as i32, (*y >> 8) as i32, (*x >> 8) as i32, (*y >> 8) as i32] {
-                put(c, v, &mut k)?;
-            }
+        if fields & 8 != 0 && (out.len() as i32) < len {
+            out.extend(a.bounds.map(i32::from));
         }
     }
+    for (j, &v) in out.iter().enumerate() {
+        c.write_i32(buf.wrapping_add(4 * j as u32), v)?;
+    }
+    let k = out.len() as i32;
     let size =
         2 * (fields & 1) + i32::from(fields & 2 != 0) + i32::from(fields & 4 != 0) + 4 * i32::from(fields & 8 != 0);
     Ok(if size > 0 { (k / size) as u32 } else { 0 })
@@ -1136,4 +1193,179 @@ fn sgp_attack_by_archers(api: &mut Api, c: &mut Call) -> Result<u32> {
         }
     }
     Ok(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use acr_formats::defs::UnitDef;
+    use acr_formats::m3d::{Area, Areas, Grid};
+    use acr_script::heap::Heap;
+    use acr_script::memory::Memory;
+    use acr_script::runtime::HostCall;
+    use acr_script::x86::Cpu;
+    use acr_sim::armies::Army;
+    use acr_sim::catalog::{Catalog, ObjectType};
+    use acr_sim::formation::Formations;
+    use acr_sim::map::MapGrid;
+    use acr_sim::{Pos, World};
+
+    use super::super::{Api, Call, Caller, function};
+    use crate::state::{NO_UNIT, ScriptSetup, ScriptState};
+    use crate::texts::MissionTexts;
+
+    const SOLDIER: &str = "NAME Sol\r\nUSERLC 0 G SHADOW 0 0\r\n#STAND 9 1 0 0\r\n@MOTION_L 9 0 0 9\r\n\
+        @MOTION_R 9 0 10 19\r\nLIFE 100\r\nGEOMETRY 1 10 40\r\n[END]\r\n";
+    const PEASANT: &str = "NAME Kri\r\nUSERLC 0 G SHADOW 0 0\r\n#STAND 9 1 0 0\r\n@MOTION_L 9 0 0 9\r\n\
+        @MOTION_R 9 0 10 19\r\nLIFE 50\r\nGEOMETRY 1 10 40\r\nPEASANT\r\n[END]\r\n";
+    const HOUSE: &str = "NAME Hou\r\nBUILDING\r\nLIFE 1000\r\nLOCATION 0 0 64 64\r\n\
+        LOCKPOINTS 4 0 0 1 0 0 1 1 1\r\n[END]\r\n";
+
+    const STACK: u32 = 0x1_8000;
+    const DATA: u32 = 0x1_c000;
+
+    /// A 4096 px map whose west half is area 0 and east half area 1, linked; enemy (nation 1)
+    /// soldiers and a peasant in the west, one of nation 0's soldiers, a nation-7 house in
+    /// the east.
+    struct Fixture {
+        world: World,
+        st: ScriptState,
+        mem: Memory,
+        peasant: acr_sim::TypeId,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let mut c = Catalog::new();
+            let sol = c.add(ObjectType::from_def("Sol(EN)", &UnitDef::parse(SOLDIER.as_bytes())));
+            let kri = c.add(ObjectType::from_def("Kri(EN)", &UnitDef::parse(PEASANT.as_bytes())));
+            let hou = c.add(ObjectType::from_def("Hou(EN)", &UnitDef::parse(HOUSE.as_bytes())));
+            let mut world = World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(Formations::default()));
+            for i in 0..5 {
+                world.spawn(sol, 1, Pos::from_pixels(500 + 40 * i, 500), 0);
+            }
+            world.spawn(kri, 1, Pos::from_pixels(500, 700), 0);
+            world.spawn(sol, 0, Pos::from_pixels(500, 900), 0);
+            world.spawn(hou, 7, Pos::from_pixels(3000, 1000), 0);
+            let mut st = ScriptState::new(ScriptSetup::default(), MissionTexts::default());
+            let cells = (0..64 * 64).map(|i| u16::from(i % 64 >= 32)).collect();
+            let area = |x, a: u16| Area { x, y: 32, record: Vec::new(), extra: Vec::new(), links: vec![(a, 2048)] };
+            st.topo = Some(Areas {
+                areas: vec![area(16, 1), area(48, 0)],
+                next_hop: vec![0, 1, 0, 1],
+                distance: vec![0, 2048, 2048, 0],
+                cells: Grid { width: 64, height: 64, cells },
+            });
+            let mut mem = Memory::new();
+            mem.map(0x1_0000, 0x1_0000);
+            Self { world, st, mem, peasant: kri }
+        }
+
+        /// Calls the API function with the 32-bit arguments.
+        fn call(&mut self, name: &str, args: &[u32]) -> u32 {
+            let mut cpu = Cpu::new();
+            cpu.regs[usize::from(acr_script::x86::decode::reg::ESP)] = STACK;
+            for (i, &a) in args.iter().enumerate() {
+                self.mem.write_u32(STACK + 4 + 4 * i as u32, a).expect("stack");
+            }
+            let mut heap = Heap::new(0x2_0000, 0x3_0000);
+            let mut raw = HostCall { dll: "test", name, cpu: &mut cpu, mem: &mut self.mem, heap: &mut heap };
+            let (mut commands, mut events) = (Vec::new(), Vec::new());
+            let mut api = Api {
+                st: &mut self.st,
+                world: &mut self.world,
+                commands: &mut commands,
+                events: &mut events,
+                caller: Caller::Mission,
+                vm: 0,
+                dip: None,
+            };
+            (function(name).expect("known").handler)(&mut api, &mut Call { raw: &mut raw }).expect("call")
+        }
+
+        fn danger(&mut self, name: &str, steps: u32) -> [i16; 2] {
+            self.mem.write_u32(DATA + 0x100, 10).expect("weight of category 0");
+            self.call(name, &[0, DATA, 2, DATA + 0x100, steps]);
+            [0, 1].map(|i| self.mem.read_u16(DATA + 2 * i).expect("map") as i16)
+        }
+    }
+
+    #[test]
+    fn danger_maps_weigh_objects_by_kind_and_spread_over_links() {
+        let mut f = Fixture::new();
+        // West: 5 enemy soldiers +10 each, the enemy peasant −20, the own soldier −10; east:
+        // the nation-7 building +10 << 7.
+        assert_eq!(f.danger("CreateDangerMap", 0), [20, 1280]);
+        // One step, in place and in area order: east += 20 / 2, then west += 1290 / 2.
+        assert_eq!(f.danger("CreateDangerMap", 1), [665, 1290]);
+        // Storm: the peasant counts −10 and the building 10 << 8.
+        assert_eq!(f.danger("CreateDangerMapForStorm", 0), [30, 2560]);
+        // ForDef: (STORMFORCE >> 5) | 1 per enemy unit, buildings and friends left out, no
+        // clamp.
+        assert_eq!(f.danger("CreateDangerMapForDef", 0), [6, 0]);
+        // ForTom: every other enemy object −10, the peasant too.
+        assert_eq!(f.danger("CreateDangerMapForTom", 0), [-6, 2560]);
+    }
+
+    #[test]
+    fn storm_lists_take_enemy_barracks_by_their_defence() {
+        const BARRACKS: &str = "NAME Bar
+BUILDING
+LIFE 1000
+LOCATION 0 0 64 64
+            LOCKPOINTS 4 0 0 1 0 0 1 1 1
+UNITABSORBER 10
+OPPOSIT 10 30
+[END]
+";
+        let mut f = Fixture::new();
+        let bar = ObjectType::from_def("Bar(EN)", &UnitDef::parse(BARRACKS.as_bytes()));
+        let mut c = (*f.world.catalog).clone();
+        let bar = c.add(bar);
+        f.world.catalog = Arc::new(c);
+        let b = f.world.spawn(bar, 1, Pos::from_pixels(3000, 2000), 0);
+        f.call("CreateTopListForStorm", &[DATA, 0]);
+        let list = |f: &Fixture| [0, 1].map(|i| f.mem.read_u16(DATA + 2 * i).expect("list"));
+        assert_eq!(list(&f), [NO_UNIT, b.0 as u16]);
+        // Two inside of 10: 2 · 2 · (10 + 20 · 2 / 10) = 56.
+        for _ in 0..2 {
+            let s = f.world.units[0].id;
+            f.world.units[0].inside_of = Some(b);
+            f.world.units[b.0 as usize].inside.push(s);
+        }
+        assert_eq!(f.call("GetBuildingOposit", &[b.0, DATA + 0x200]), 1);
+        assert_eq!(f.mem.read_u32(DATA + 0x200).expect("value"), 56);
+        f.call("CreateTopListForStormHard", &[DATA, 0, 56]);
+        assert_eq!(list(&f), [NO_UNIT, NO_UNIT], "56 is not below 56");
+        f.call("CreateTopListForStormHard", &[DATA, 0, 57]);
+        assert_eq!(list(&f), [NO_UNIT, b.0 as u16]);
+    }
+
+    #[test]
+    fn peasants_top_list_keeps_areas_with_enough_peasants() {
+        let mut f = Fixture::new();
+        let kri = f.peasant;
+        let p = f.world.spawn(kri, 1, Pos::from_pixels(600, 700), 0);
+        f.world.spawn(kri, 1, Pos::from_pixels(3000, 700), 0);
+        f.call("CreatePeasantsTopList", &[DATA, 0, 2, 0]);
+        let list = [0, 1].map(|i| f.mem.read_u16(DATA + 2 * i).expect("list"));
+        assert_eq!(list, [p.0 as u16, NO_UNIT], "the last peasant of the west, one is too few in the east");
+    }
+
+    #[test]
+    fn enum_enemy_armies_writes_whole_fields_while_below_len() {
+        let mut f = Fixture::new();
+        let a = |x, n| Army { bounds: [1, 2, 3, 4], force: 7 * n, count: n, x, y: 100 };
+        f.world.armies.groups = Some([Some(0), Some(1), None, None, None, None, None, None]);
+        f.world.armies.armies[0] = vec![a(300, 2), a(900, 5)];
+        assert_eq!(f.call("EnumEnemyArmies", &[0, 3, DATA, 100]), 2);
+        let buf =
+            |f: &Fixture, n: u32| (0..n).map(|i| f.mem.read_u32(DATA + 4 * i).expect("buf") as i32).collect::<Vec<_>>();
+        assert_eq!(buf(&f, 6), [300, 100, 2, 900, 100, 5]);
+        // The second army's position starts below 9 and is written whole (one past the end).
+        assert_eq!(f.call("EnumEnemyArmies", &[0, 15, DATA, 9]), 1);
+        assert_eq!(buf(&f, 10), [300, 100, 2, 14, 1, 2, 3, 4, 900, 100]);
+        assert_eq!(f.call("EnumEnemyArmies", &[2, 15, DATA, 9]), 0, "no EnemyInfo");
+    }
 }

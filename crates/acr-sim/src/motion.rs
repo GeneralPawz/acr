@@ -256,6 +256,11 @@ pub fn process_unit(world: &mut World, i: usize) {
             let u = &mut world.units[i];
             let t = catalog.get(u.kind);
             smart_send_to_link(u, map.land_areas.as_ref(), layer(&map, t), x, y, dx, dy, prio, area);
+        } else if let Some(Order::ClearUnlimited) = world.units[i].orders.last() {
+            // The order links run before every motion style's handler.
+            let map = world.map.clone();
+            let World { units, occupancy, .. } = &mut *world;
+            clear_unlimited_link(&mut units[i], &map.land, occupancy);
         } else if world.units[i].orders.is_empty() {
             world.units[i].prio = 0;
         }
@@ -288,22 +293,7 @@ pub fn process_unit(world: &mut World, i: usize) {
         | Some(Order::Enter { .. })
         | Some(Order::Build { .. })
         | Some(Order::Gather { .. }) => {}
-        Some(Order::ClearUnlimited) => {
-            // ClearUnlimitedLink (0x527dec): waits a moment if nothing follows; a unit on a
-            // locked cell (off a ship) first walks to the nearest free spot on land.
-            if u.stand_time < 5 && u.orders.len() == 1 {
-            } else if map.land.check_bar(u.cell.0 - 1, u.cell.1 - 1, 3, 3)
-                && let Some((x, y)) = crate::ship::find_near_empty(&map.land, u.cell.0, u.cell.1)
-            {
-                u.unlimited = false;
-                send_to(u, Pos::new(x << 8, y << 8), 0x90, false);
-                u.unlimited = true;
-            } else {
-                u.pop_order();
-                crate::economy::settle(u, occupancy);
-                u.prio = 0;
-            }
-        }
+        Some(Order::ClearUnlimited) => clear_unlimited_link(u, &map.land, occupancy),
         None => u.prio = 0,
     }
     if ship {
@@ -317,6 +307,23 @@ pub fn process_unit(world: &mut World, i: usize) {
             crate::combat::attack_obj(world, i, j, 0x8F);
         }
         None => {}
+    }
+}
+
+/// `ClearUnlimitedLink` (0x527dec): waits a moment if nothing follows; a unit on a locked
+/// cell (off a ship) first walks to the nearest free spot on land.
+fn clear_unlimited_link(u: &mut Unit, land: &LockMap, occupancy: &mut LockMap) {
+    if u.stand_time < 5 && u.orders.len() == 1 {
+    } else if land.check_bar(u.cell.0 - 1, u.cell.1 - 1, 3, 3)
+        && let Some((x, y)) = crate::ship::find_near_empty(land, u.cell.0, u.cell.1)
+    {
+        u.unlimited = false;
+        send_to(u, Pos::new(x << 8, y << 8), 0x90, false);
+        u.unlimited = true;
+    } else {
+        u.pop_order();
+        crate::economy::settle(u, occupancy);
+        u.prio = 0;
     }
 }
 

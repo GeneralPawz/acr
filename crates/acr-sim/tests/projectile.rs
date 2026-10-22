@@ -278,3 +278,43 @@ fn a_deployed_cannon_fires_canister_at_a_crowd() {
     let hurt = crowd.iter().filter(|e| life(&w, **e) < 1000).count();
     assert!(hurt >= 4, "canister hit {hurt} of 6");
 }
+
+/// A cannon leaving the building that made it drives in unlimited motion through the locks
+/// (`TryToMove` 0x50b021 skips the terrain test then), its `ClearUnlimited` order ends that
+/// like any unit's (the order links run before the `COMPLEXROTATE` handler), and it then
+/// takes the attack-ground order.
+#[test]
+fn a_new_cannon_drives_out_of_the_building_and_obeys() {
+    use acr_sim::world::Order;
+    let mut c = Catalog::new();
+    let can = c.add(ObjectType::from_def("Can(EN)", &UnitDef::parse(CANNON.as_bytes())));
+    c.set_weapon_kinds(&weapon_kinds(NRES));
+    c.set_weapons(Weapons::parse(NDS, Some(ADS), None));
+    let mut map = MapGrid::open(1);
+    // The building's locks: 16 px cells 150..170 around the cannon at 2500 px (cell 156).
+    map.land.set_rect(150, 150, 20, 20);
+    let mut w = World::new(Arc::new(map), Arc::new(c), Arc::new(Formations::default()));
+    let g = w.spawn(can, 0, Pos::from_pixels(2500, 2500), 64);
+    {
+        let u = &mut w.units[g.0 as usize];
+        u.unlimited = true;
+        u.orders = vec![Order::ClearUnlimited, Order::SendTo { cell: (161, 180), prio: 16 }];
+        u.prio = 16;
+    }
+    for _ in 0..1500 {
+        w.step(&[]);
+        if w.units[g.0 as usize].orders.is_empty() {
+            break;
+        }
+    }
+    let u = &w.units[g.0 as usize];
+    assert!(u.orders.is_empty() && !u.unlimited, "out and limited again: {:?}", u.orders);
+    assert!(u.pos.pixels().1 >= 170 * 16, "south of the locks: {:?}", u.pos.pixels());
+    let (iron, coal) = (w.players[0].resources[4], w.players[0].resources[5]);
+    let (x, y) = u.pos.pixels();
+    w.step(&[Command::AttackGround { player: 0, units: vec![g], x, y: y + 1000 }]);
+    for _ in 0..600 {
+        w.step(&[]);
+    }
+    assert_eq!((w.players[0].resources[4], w.players[0].resources[5]), (iron - 50, coal - 100), "it fired once");
+}
