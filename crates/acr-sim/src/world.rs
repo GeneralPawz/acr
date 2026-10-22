@@ -57,6 +57,10 @@ pub enum AnimKind {
     /// `#DEATH`, then lying dead: `#DEATHLIE1..3`.
     Death,
     DeathLie(u8),
+    /// `#WORK`: building or repairing.
+    Work,
+    /// `#BUILDLO_k`: a building under construction (k = 0..=3).
+    BuildLo(u8),
 }
 
 impl AnimKind {
@@ -77,6 +81,8 @@ impl AnimKind {
             AnimKind::Trans3X => "#TRANS3X".into(),
             AnimKind::Death => "#DEATH".into(),
             AnimKind::DeathLie(n) => format!("#DEATHLIE{n}"),
+            AnimKind::Work => "#WORK".into(),
+            AnimKind::BuildLo(k) => format!("#BUILDLO_{k}"),
         }
     }
 }
@@ -93,6 +99,10 @@ pub enum Order {
     Attack { target: EntityId, prio: u8 },
     /// `GoToMine` (order type 0xF2, link 0x5f46f7): walk into a building.
     Enter { building: EntityId, prio: u8 },
+    /// `BuildObj` (order type 0x59, link 0x524654): build or repair at a build point (lock cell).
+    Build { target: EntityId, point: (i32, i32), prio: u8 },
+    /// `TakeResource` (order type 0xEE, link 0x4d2fb0): gather sources of a type.
+    Gather { kind: u8, source: Option<usize>, prio: u8 },
 }
 
 /// A unit or building (the engine's `OneObject`).
@@ -165,6 +175,9 @@ pub struct Unit {
     pub unlimited: bool,
     /// Switched off for lack of gold (`TURNOFF`).
     pub turned_off: bool,
+    /// Gathered load (`RAmount`) and its source type (`RType`).
+    pub carried: i32,
+    pub carry_type: Option<u8>,
 }
 
 impl Unit {
@@ -253,6 +266,8 @@ pub struct World {
     pub buckets: Buckets,
     /// Resource deposits for mines.
     pub deposits: Vec<crate::economy::Deposit>,
+    /// Gathering sources (trees, ...), static.
+    pub sources: Arc<crate::gather::Sources>,
 }
 
 /// Unit indices per 128 px cell (8 × 8 lock cells).
@@ -316,6 +331,7 @@ impl World {
             random: SyncRandom::new(0),
             buckets: Buckets::default(),
             deposits: Vec::new(),
+            sources: Arc::new(crate::gather::Sources::default()),
         }
     }
 
@@ -360,6 +376,15 @@ impl World {
             .map(|s| MapObject { group: s.group, index: s.index, x: s.x, y: s.y })
             .collect();
         world.deposits = crate::economy::deposits(&world.objects, sprites);
+        let sources = world
+            .objects
+            .iter()
+            .filter_map(|o| {
+                let (kind, per_work, radius) = sprites.work_source(o.group, o.index)?;
+                Some(crate::gather::Source { x: o.x, y: o.y, kind, per_work, radius })
+            })
+            .collect();
+        world.sources = Arc::new(crate::gather::Sources::new(sources, world.map.land.width * 16));
         crate::economy::bind_mines(&mut world);
         crate::economy::census_all(&mut world);
         (world, report)
@@ -415,6 +440,8 @@ impl World {
             inside_of: None,
             unlimited: false,
             turned_off: false,
+            carried: 0,
+            carry_type: None,
         };
         if !unit.building && t.mobile() {
             self.occupancy.set_bar(cell.0, cell.1, lx);
@@ -569,6 +596,30 @@ impl World {
             Command::Rally { player, building, x, y } => {
                 if let Some(&b) = self.owned(*player, &[*building]).first() {
                     self.units[b].rally = Some(Pos::from_pixels(*x, *y));
+                }
+            }
+            Command::Build { player, units, kind, x, y } => {
+                if usize::from(kind.0) < self.catalog.len()
+                    && let Some(b) = crate::construction::place(self, *player, *kind, *x, *y)
+                {
+                    for i in self.owned(*player, units) {
+                        crate::construction::build_obj(self, i, b.0 as usize, crate::motion::PLAYER_PRIO);
+                    }
+                }
+            }
+            Command::Repair { player, units, building } => {
+                let b = building.0 as usize;
+                if self.units.get(b).is_some_and(|u| u.owner == *player) {
+                    for i in self.owned(*player, units) {
+                        crate::construction::build_obj(self, i, b, crate::motion::PLAYER_PRIO);
+                    }
+                }
+            }
+            Command::Gather { player, units, x, y } => {
+                if let Some(kind) = self.sources.determine(*x, *y) {
+                    for i in self.owned(*player, units) {
+                        crate::gather::take_resource(self, i, kind, 0x80);
+                    }
                 }
             }
         }

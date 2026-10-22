@@ -478,6 +478,33 @@ Implemented in `economy.rs`. The sources are `City::Census` (0x42e658), the upke
   - Each tick it adds `(free + inside·per_peasant) << 3` to a u16 accumulator and pays out per
     1000. That is 0.08 per peasant per tick for `PRODUCER 1 GOLD 0 10`. No randomness;
     deposits never run out.
+- **Construction** (`construction.rs`; `CreateObject` 0x5155c5, `BuildObj`/`BuildObjLink`
+  0x523c98/0x524654, `NextStage` 0x523666).
+  - **Placement.** The position snaps so that `RealX + 16a` and `RealY + 32b` fall on a 16 px
+    corner. The site must lie on the map, the finished footprint must be free, and the price
+    (with `LOWCOSTRADIUS`) must be affordable; it is paid at once.
+  - **The site** starts at stage 0 with 2 life (`#BUILDLO_0`) and locks its
+    `BUILDLOCKPOINTS`.
+  - **Builders.** A builder (a unit with `#WORK`) walks to the free `BUILDPOINT` nearest to
+    it and faces the building. It adds one stage per `#WORK` cycle: `ceil((frames−2)/2)`
+    ticks, 10 for the English peasant. Builders add up.
+  - **Life** is `stage·LIFE/BUILDSTAGES`; damage taken during construction is overwritten.
+    The animation is `#BUILDLO_k` with `k = 4·stage/BUILDSTAGES`.
+  - **Completion.** At `BUILDSTAGES` the `BUILDLOCKPOINTS` are cleared, the `LOCKPOINTS` set,
+    and the building works and houses.
+  - **Repair.** On a finished, damaged building each cycle repairs 20 life, for free.
+- **Gathering** (`gather.rs`; `TakeResource` 0x4d2e10, `TakeResLink` 0x4d2fb0).
+  - **Sources** are `[SOURCES]` sprites, e.g. trees `Dnn WOOD 4 30`: 4 wood per work cycle
+    within 30 px. Trees never run out, because their `[WORKTRANSFORM]` is empty.
+  - **`Gather` command.** It picks the source type nearest the click (within 64 px). The
+    peasant finds the nearest source of that type in rings of 128 px cells and walks there.
+  - **Work.** It faces the source (16 per cycle) and enters the work stance `c` of
+    `TAKERESSTAGES RES a b c`, which plays `#ATTACK{c−1}`. Each cycle adds the source's
+    amount: 13 ticks per cycle for the peasant's 28-frame chop.
+  - **Carrying.** At `PORTION` (wood 100) it walks to the nearest finished `RESOURCEBASE`
+    building and delivers: within 5 cells of its last born point, else within 6 of a
+    `CONCENTRATOR` point. Wood counts 1:1 at the default factors (food ×(1010 mod 100)/10).
+    Then it goes back.
 - **Entering buildings.** A unit walks to the first `CONCENTRATOR` point and disappears inside
   (`Unit::inside_of`). Peasants count against `PEASANTABSORBER`, other units against
   `UNITABSORBER`. Units inside still eat and count. `Leave` puts them back at the born points.
@@ -546,8 +573,9 @@ sum of its four neighbours (centre excluded). This spreads the stamps and decays
     once).
   - Unit types: `Catalog::find("EngMus(EN)")`.
   - Economy: `World::players[p]` (`resources`, `population`, `housing`), each building's
-    `queue` / `inside` / `mine`, `economy::unit_cost`. The commands are `Produce`,
-    `Unproduce`, `Enter`, `Leave` and `Rally`.
+    `queue` / `inside` / `mine` / `stage`, `economy::unit_cost`, and `Unit::carried`. The
+    commands are `Produce`, `Unproduce`, `Enter`, `Leave`, `Rally`, `Build`, `Repair` and
+    `Gather`.
 
   These calls change the state directly. Call them between ticks, in the same order on
   every machine.
@@ -582,9 +610,14 @@ sum of its four neighbours (centre excluded). This spreads the stamps and decays
   - `#TRANS01`/`#TRANS10`, `BREAKANIMATION` and build animations are not modelled.
   - Units without `#MOTION_L` are treated as 1-frame cycles.
 - **Economy:**
-  - Construction and peasant gathering (wood, fields, meat) are not simulated yet. All map
-    buildings exist finished, and `Produce` accepts any unit type: the `[FIXED_PRODUCE]` lists
-    of the nation files are not checked.
+  - Fields (`FIELD` sprite objects with their ripening timers), carcasses and hunting are not
+    simulated, and neither are stone sprites (the shipped data has none). Peasants carry in
+    stance 0, not with their carry walk (`#MOTION_L{b−1}`), and deliver at the entrance
+    rather than walking inside along the born points.
+  - Builders do not re-path around blocking units (`CheckBlocking`). Placement checks only
+    the finished footprint against locks and units (0x513b2c and the permission check
+    0x45f767 are not reproduced). Some of `CreateObject`'s random draws are not made.
+  - `Produce` accepts any unit type: the nation's `[FIXED_PRODUCE]` lists are not checked.
   - Not reproduced yet: upgrades, the market, `RESSUBST` type changes, ports and ships;
     building stage requirements; the AI difficulty factor on production time; the 10× cannon
     price lobby option.
@@ -638,7 +671,10 @@ sum of its four neighbours (centre excluded). This spreads the stamps and decays
     walks out;
   - a third centre costs 4× (`COSTPERCENT 200`);
   - production waits for housing, and cancelling refunds;
-  - 5 peasants in a gold mine earn 400 gold in 1000 ticks and can leave again.
+  - 5 peasants in a gold mine earn 400 gold in 1000 ticks and can leave again;
+  - two peasants build a storehouse: paid at placement, life follows the stages, the locks
+    switch on completion, and it then houses 25;
+  - a peasant chops 25 cycles and delivers 100 wood.
 - **Fog test** (`tests/fog.rs`): a VISION 3 unit lights its cell and 200 px around but not
   1000 px away, and the light fades once the unit is gone.
 - **Replay tests:** every command round-trips through the binary format; damaged data is

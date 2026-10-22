@@ -170,6 +170,8 @@ enum Signal {
 pub fn process_unit(world: &mut World, i: usize) {
     match world.units[i].orders.last().cloned() {
         Some(Order::Attack { target, prio }) => crate::combat::attack_link(world, i, target, prio),
+        Some(Order::Build { target, point, prio }) => crate::construction::build_link(world, i, target, point, prio),
+        Some(Order::Gather { kind, source, prio }) => crate::gather::gather_link(world, i, kind, source, prio),
         Some(Order::Enter { building, prio }) => {
             crate::economy::enter_link(world, i, building, prio);
             if world.units[i].inside_of.is_some() {
@@ -189,7 +191,10 @@ pub fn process_unit(world: &mut World, i: usize) {
         Some(Order::SmartSendTo { x, y, dx, dy, prio, area }) => {
             smart_send_to_link(u, map.land_areas.as_ref(), lay, x, y, dx, dy, prio, area)
         }
-        Some(Order::Attack { .. }) | Some(Order::Enter { .. }) => {}
+        Some(Order::Attack { .. })
+        | Some(Order::Enter { .. })
+        | Some(Order::Build { .. })
+        | Some(Order::Gather { .. }) => {}
         None => u.prio = 0,
     }
     match motion_handler(u, t, lay, occupancy, random, buckets) {
