@@ -37,7 +37,7 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("DieUnit", 0x5701ae, DONE, die_unit),
     f("GetUnitInfo", 0x567a0e, DONE, get_unit_info),
     f("GetUnitInfo2", 0x578f2c, DONE, get_unit_info2),
-    f("SetUnitInfo", 0x567e8a, Status::Partial("life and position; no damage/shield bonus yet"), set_unit_info),
+    f("SetUnitInfo", 0x567e8a, DONE, set_unit_info),
     f("GetUnitGlobalInfo", 0x567cb9, DONE, get_unit_global_info),
     f("GetUnitExCaps", 0x56be77, Status::Done, get_unit_ex_caps),
     f("GetCurrentUnits", 0x578173, DONE, get_current_units),
@@ -451,19 +451,27 @@ fn get_unit_info2(api: &mut Api, c: &mut Call) -> Result<u32> {
     Ok(1)
 }
 
-/// `void SetUnitInfo(OneUnit*)`: life and (for non-buildings) position.
+/// `void SetUnitInfo(OneUnit* u)` (0x567e8a): for `u->Index != 0xFFFF` naming an object
+/// with the same serial (OB+0x71) that is not dying (`Sdoxlo` OB+0x58 == 0), writes
+/// `Life` (OB+0x78) from +4 and the formation attack and defence bonuses (OB+0x61/+0x62,
+/// signed bytes) from +8/+9; an object that is not a building (OB+0x27 bit 4) also gets
+/// `RealX/RealY = x << 4, y << 4` from +0x14/+0x18, written raw (no occupancy update).
 fn set_unit_info(api: &mut Api, c: &mut Call) -> Result<u32> {
     let p = c.u32(0)?;
     let idx = c.read_u16(p)?;
+    if idx == 0xFFFF {
+        return Ok(0);
+    }
     let serial = c.read_u16(p + 2)?;
     let Some(u) = api.object(idx).filter(|u| u.living() && api.st.serial(u.id) == serial) else { return Ok(0) };
     let id = u.id;
     let life = i32::from(c.read_u16(p + 4)?);
+    let (attack, defence) = (i32::from(c.read_u8(p + 8)? as i8), i32::from(c.read_u8(p + 9)? as i8));
     let (x, y) = (c.read_u32(p + 0x14)? as i32, c.read_u32(p + 0x18)? as i32);
     let u = &mut api.world.units[id.0 as usize];
     u.life = life;
+    (u.attack_bonus, u.defence_bonus) = (attack, defence);
     if !u.building {
-        // TODO(acr-sim): teleport with occupancy update; the original writes RealX/RealY raw.
         u.pos = Pos::new(x << 4, y << 4);
     }
     Ok(0)

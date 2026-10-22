@@ -32,21 +32,11 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("Attack6", 0x580b71, DONE, attack3),
     f("AttackByTomahawks", 0x574667, DONE, attack_by_tomahawks),
     f("AttackEnemyInZone2", 0x57dfb9, DONE, attack_enemy_in_zone2),
-    f(
-        "AttackEnemyInZone",
-        0x5642b7,
-        Status::Partial("walls are not modelled (their pass is skipped)"),
-        attack_enemy_in_zone,
-    ),
+    f("AttackEnemyInZone", 0x5642b7, DONE, attack_enemy_in_zone),
     f("AttackBuildingsInZone", 0x5617df, DONE, attack_buildings_in_zone),
     f("AttackGrpByGrp", 0x57385f, DONE, attack_grp_by_grp),
     f("GrpAttackObject", 0x570d0c, DONE, grp_attack_object),
-    f(
-        "SGP_AttackByArchers",
-        0x5790f3,
-        Status::Partial("FindArcherTarget does not score walls (no wall types are loaded)"),
-        sgp_attack_by_archers,
-    ),
+    f("SGP_AttackByArchers", 0x5790f3, DONE, sgp_attack_by_archers),
 ];
 
 /// Area centre in area cells.
@@ -937,7 +927,10 @@ fn attack_enemy_in_zone2(api: &mut Api, c: &mut Call) -> Result<u32> {
 /// preference: a unit in their range band nearest by path (the engine compares the 1/16 px
 /// distance with the pixel ranges, kept), for building attackers a building in the band, a
 /// visible one of those, any target within a path length of 560; priority 1. Members with an
-/// attack order drop it with `rando() < 600`.
+/// attack order drop it with `rando() < 600`. The engine's wall pass (0x564a60..0x564b61,
+/// wall pieces with OB+0x29 bit 0) is left out: no object of AC 1.46 can be a wall piece
+/// (see "Walls" in `docs/simulation.md`), so it never picks a target and draws no random
+/// numbers.
 fn attack_enemy_in_zone(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Some(z) = api.zone_arg(c, 1, "AttackEnemyInZone")?.and_then(|z| z.first().copied()) else { return Ok(0) };
     let Some(g) = raw_group(api, c, 0)? else { return Ok(0) };
@@ -1209,8 +1202,8 @@ pub fn top_zone_ring(api: &Api, x: i32, y: i32) -> u16 {
 /// score in row order, `(score << 8) / max(8, Norma)` of the cell offset (0 beyond `maxd`)
 /// must beat the best so far, and the 64 px cell at half the offset must lie in an area
 /// (not the top row or left column) that is `zone` or within 40 of it (`LinksDist`). No
-/// random numbers. Walls (OB+0x29 bit0) are scored by another rule (0x43e3cc); the data
-/// has none.
+/// random numbers. Walls (OB+0x29 bit0) are scored by another rule (0x43e3cc), left out:
+/// no object of AC 1.46 can be a wall piece (see "Walls" in `docs/simulation.md`).
 pub fn find_archer_target(api: &Api, nat: u8, x: i32, y: i32, maxd: i32, zone: u16) -> Option<usize> {
     let t = api.st.topo.as_ref()?;
     let n_areas = t.areas.len();
@@ -1579,6 +1572,39 @@ OPPOSIT 10 30
         assert_eq!(f.call("GetUnitGlobalInfo", &[6, DATA]), 0);
         assert_eq!(f.mem.read_u16(DATA).expect("out"), NO_UNIT);
         assert_eq!(f.call("GetUnitGlobalInfo", &[0xFFFF, DATA]), 0);
+    }
+
+    /// SetUnitInfo (0x567e8a): life, signed formation bonuses and (not for buildings) the
+    /// position, only with the right serial and for an object that is not dying.
+    #[test]
+    fn set_unit_info_writes_life_bonuses_and_position() {
+        let mut f = Fixture::new();
+        for id in [6u32, 7] {
+            assert_eq!(f.call("GetUnitGlobalInfo", &[id, DATA]), 1);
+            f.mem.write_u16(DATA + 4, 33).expect("life");
+            f.mem.write_u8(DATA + 8, 5).expect("attack");
+            f.mem.write_u8(DATA + 9, 0xFE).expect("defence");
+            f.mem.write_u32(DATA + 0x14, 1234).expect("x");
+            f.mem.write_u32(DATA + 0x18, 567).expect("y");
+            let before = f.world.units[id as usize].pos;
+            assert_eq!(f.call("SetUnitInfo", &[DATA]), 0);
+            let u = &f.world.units[id as usize];
+            assert_eq!((u.life, u.attack_bonus, u.defence_bonus), (33, 5, -2));
+            if id == 7 {
+                assert_eq!(u.pos, before, "a building keeps its place");
+            } else {
+                assert_eq!(u.pos, Pos::new(1234 << 4, 567 << 4));
+            }
+        }
+        let serial = f.mem.read_u16(DATA + 2).expect("serial");
+        f.mem.write_u16(DATA + 2, serial.wrapping_add(1)).expect("serial");
+        f.mem.write_u16(DATA + 4, 99).expect("life");
+        f.call("SetUnitInfo", &[DATA]);
+        assert_eq!(f.world.units[7].life, 33, "another serial");
+        f.mem.write_u16(DATA + 2, serial).expect("serial");
+        f.world.units[7].death = 1;
+        f.call("SetUnitInfo", &[DATA]);
+        assert_eq!(f.world.units[7].life, 33, "dying");
     }
 
     /// GetUnitExCaps (0x56be77): direction, destination (−1 without), type, owner,
