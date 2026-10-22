@@ -445,7 +445,8 @@ directions.
 
 - Direction order of the 65-direction ship animations (only 9, 16 and `FULLROTATION` were
   traced).
-- `USERLC` offsets vs. `SETANMPARAM`/`LOCATION`: which one positions building sprites.
+- Whether the map drawing of buildings uses `SETANMPARAM` or `LOCATION` (the placement
+  preview uses `LOCATION`, see `terrain.md`; the two agree in the shipped files checked).
 - Meanings marked `?` or blank in the keyword table, notably `INFO`, `OPPOSIT`, `PROMAX*`,
   `FEAR*`, `SKILLDAMAGE*`, `ZPOINTS`, `3DBARS`, `ADDSECTION`, `EX_SHOTS*` columns.
 - How the engine handles data errors (`SETACTIVEPOINT` for a missing animation, `SOUND` for

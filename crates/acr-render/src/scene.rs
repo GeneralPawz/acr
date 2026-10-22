@@ -73,11 +73,19 @@ pub fn idle_animation(def: &UnitDef) -> Option<&acr_formats::defs::md::Animation
     names.iter().find_map(|n| def.animation(n)).or_else(|| def.animations.first())
 }
 
-/// The sprite packs an object type needs: a building's idle animation, every animation of
-/// a unit (the simulation plays walking, fighting and dying, see `acr_sim::world::AnimKind`).
+/// The sprite packs an object type needs: a building's idle, construction (`#BUILDLO_k`) and
+/// ruin animations, every animation of a unit (the simulation plays walking, fighting and
+/// dying, see `acr_sim::world::AnimKind`).
 pub fn unit_packs(def: &UnitDef) -> Vec<String> {
-    let anims: Vec<&acr_formats::defs::md::Animation> =
-        if def.is_building() { idle_animation(def).into_iter().collect() } else { def.animations.iter().collect() };
+    let anims: Vec<&acr_formats::defs::md::Animation> = if def.is_building() {
+        let stages = def.animations.iter().filter(|a| {
+            let n = a.name.to_ascii_uppercase();
+            n.starts_with("#BUILDLO") || n.starts_with("#DEATHLIE")
+        });
+        idle_animation(def).into_iter().chain(stages).collect()
+    } else {
+        def.animations.iter().collect()
+    };
     let mut packs: Vec<String> =
         anims.iter().flat_map(|a| a.frame_refs()).filter_map(|r| def.sprite(r.sprite)).map(|s| s.gp_path()).collect();
     packs.sort();
@@ -116,6 +124,13 @@ pub fn animation_look(
         half * (dirs - 1) / 8
     };
     let sorts = part_sorts(def, &anim.name);
+    // A building's picture is placed at its position + `LOCATION x y`, the corner of the
+    // picture rectangle (the placement preview 0x4bdd8e draws it so; the lock cells and
+    // `RECTANGLE` are centred on the position too).
+    let location = def
+        .get("LOCATION")
+        .filter(|_| def.is_building())
+        .map_or((0, 0), |c| (c.int(0).unwrap_or(0), c.int(1).unwrap_or(0)));
     let parts: Vec<_> = if def.is_building() {
         refs.iter().enumerate().collect()
     } else if refs.is_empty() {
@@ -134,10 +149,10 @@ pub fn animation_look(
             // middle row is used as the sort row here.
             let (layer, row) = match sorts.get(i) {
                 Some(PartSort::Ground) => (Layer::Ground, 0),
-                Some(&PartSort::Line(_, y1, _, y2)) => (Layer::Sorted, (y1 + y2) / 2),
+                Some(&PartSort::Line(_, y1, _, y2)) => (Layer::Sorted, location.1 + (y1 + y2) / 2),
                 None => (Layer::Sorted, 0),
             };
-            Some(((pack, frame), set.offset, layer, row))
+            Some(((pack, frame), (set.offset.0 + location.0, set.offset.1 + location.1), layer, row))
         })
         .collect::<Vec<_>>();
     (!parts.is_empty()).then_some(UnitLook { parts })
@@ -384,6 +399,14 @@ impl MapObjects {
         packs.iter().filter_map(|p| self.want_pack(p)).collect()
     }
 
+    /// Requests the packs of object types (map unit ids such as `EngSkl(EN)`) that appear
+    /// during the game; returns the paths to load.
+    pub fn packs_for_units<'a>(&mut self, ids: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+        let packs: Vec<String> =
+            ids.into_iter().filter_map(|id| self.defs.get(&definition_name(id))).flat_map(unit_packs).collect();
+        packs.iter().filter_map(|p| self.want_pack(p)).collect()
+    }
+
     pub fn definitions_ready(&self) -> bool {
         self.defs_pending == Some(0) && self.lists.len() == Self::LISTS.len()
     }
@@ -524,6 +547,26 @@ mod tests {
         let look = unit_look(&def, 0, |_| Some(10)).unwrap();
         let parts: Vec<_> = look.parts.iter().map(|(f, _, layer, row)| (f.1, *layer, *row)).collect();
         assert_eq!(parts, vec![(4, Layer::Ground, 0), (5, Layer::Sorted, 508), (6, Layer::Sorted, 580)]);
+    }
+
+    #[test]
+    fn building_pictures_start_at_location() {
+        let md = MD.replace(
+            "BUILDING
+",
+            "BUILDING
+USERLC 1 EngCenB SHADOW 0 0
+LOCATION -400 -300 900 700
+#BUILDLO_0 1 1 1 0
+",
+        );
+        let def = UnitDef::parse(md.as_bytes());
+        let look = unit_look(&def, 0, |_| Some(10)).unwrap();
+        assert!(look.parts.iter().all(|p| p.1 == (-400, -300)));
+        // The sort lines are picture rows, so they move with the picture.
+        assert_eq!(look.parts[1].3, 508 - 300);
+        let packs = unit_packs(&def);
+        assert_eq!(packs.len(), 2, "construction stages need their pack too: {packs:?}");
     }
 
     #[test]
