@@ -123,6 +123,14 @@ pub struct ThreeD {
     /// Seconds of the last frame and the world point at the window centre.
     frame_seconds: f32,
     pub focus: [f32; 2],
+    /// The detailed ground (docs/ground.md): `ground=detailed`, its texture files (game
+    /// paths in `acr_render::ground::texture_files` order), their contents as they come in
+    /// and the decoded set waiting for the renderer.
+    pub ground_detailed: bool,
+    ground_files: Vec<Option<String>>,
+    ground_data: Vec<Option<Vec<u8>>>,
+    ground_requested: bool,
+    ground_ready: Option<acr_render::ground::MaterialImages>,
 }
 
 /// `ACR_3D_COMPARE=overlay`: the sprites of units with a model are drawn half transparent
@@ -186,6 +194,11 @@ impl Default for ThreeD {
             skirts: Default::default(),
             frame_seconds: 0.0,
             focus: [0.0; 2],
+            ground_detailed: true,
+            ground_files: Vec::new(),
+            ground_data: Vec::new(),
+            ground_requested: false,
+            ground_ready: None,
         }
     }
 }
@@ -198,6 +211,7 @@ impl ThreeD {
         self.water_detailed = settings.water_detailed;
         self.corpse_ticks = u64::from(settings.corpse_minutes) * 60 * acr_sim::ORIGINAL_TICKS_PER_SECOND as u64;
         self.free = settings.camera == CameraMode::Free;
+        self.ground_detailed = settings.ground_detailed;
         log::info!("3d: models {:?}, camera {:?}, gore {:?}", settings.models, settings.camera, settings.gore);
     }
 
@@ -220,6 +234,15 @@ impl ThreeD {
                 self.files.insert(file.trim_end_matches(".GLB").to_owned(), path.clone());
             }
         }
+        let wanted = acr_render::ground::texture_files();
+        self.ground_files = wanted
+            .iter()
+            .map(|w| {
+                let w = acr_formats::normalize_path(w);
+                paths.iter().find(|p| acr_formats::normalize_path(p) == w).cloned()
+            })
+            .collect();
+        self.ground_data = vec![None; wanted.len()];
         if !self.files.is_empty() {
             let mut names: Vec<&String> = self.files.keys().collect();
             names.sort();
@@ -256,8 +279,51 @@ impl ThreeD {
         self.compare != Compare::Toggle || (self.started.elapsed().as_secs() / 2).is_multiple_of(2)
     }
 
+    /// Asks for the detailed ground's textures once 3D mode shows it.
+    fn request_ground(&mut self, request: &dyn Fn(&str)) {
+        if self.ground_requested || !self.ground_detailed || !self.active() {
+            return;
+        }
+        self.ground_requested = true;
+        if self.ground_files.is_empty() || self.ground_files.iter().any(Option::is_none) {
+            log::info!("3d: no textures for the detailed ground (ACR\\Models\\ground), the original stays");
+            return;
+        }
+        for path in self.ground_files.iter().flatten() {
+            request(path);
+        }
+    }
+
+    /// The decoded ground textures, once (for `TerrainRenderer::set_materials`).
+    pub fn take_ground(&mut self) -> Option<acr_render::ground::MaterialImages> {
+        self.ground_ready.take()
+    }
+
     /// Takes a model file this layer asked for.
     pub fn on_loaded(&mut self, path: &str, result: &Result<Vec<u8>, String>) -> bool {
+        let norm = acr_formats::normalize_path(path);
+        if let Some(i) =
+            self.ground_files.iter().position(|f| f.as_deref().map(acr_formats::normalize_path) == Some(norm.clone()))
+        {
+            match result {
+                Ok(bytes) => self.ground_data[i] = Some(bytes.clone()),
+                Err(e) => log::warn!("3d: {path}: {e}"),
+            }
+            if self.ground_data.iter().all(Option::is_some) {
+                let files: Vec<Vec<u8>> = self.ground_data.iter_mut().map(|d| d.take().unwrap_or_default()).collect();
+                // The browser takes half the resolution (a quarter of the memory).
+                let skip = usize::from(cfg!(target_arch = "wasm32"));
+                let started = web_time::Instant::now();
+                match acr_render::ground::MaterialImages::decode(&files, skip) {
+                    Ok(images) => {
+                        log::info!("3d: ground textures {0} x {0} decoded in {1:?}", images.size, started.elapsed());
+                        self.ground_ready = Some(images);
+                    }
+                    Err(e) => log::warn!("3d: ground textures: {e}"),
+                }
+            }
+            return true;
+        }
         let Some(name) = self.requested.remove(&acr_formats::normalize_path(path)) else { return false };
         match result.as_ref().map_err(String::clone).and_then(|b| ModelData::from_glb(b)) {
             Ok(model) => {
@@ -370,6 +436,7 @@ impl ThreeD {
         self.instances.clear();
         self.pools.clear();
         self.shown.clear();
+        self.request_ground(request);
         if self.models == Models::Off {
             return;
         }

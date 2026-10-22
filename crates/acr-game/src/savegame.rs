@@ -579,6 +579,7 @@ impl<'a> Reader<'a> {
                     slope: slope.map(|[a, b, c, _]| (a, b, c)),
                     hill: hill.map(<(i32, i32, i32, i32)>::from),
                     water: water.map(<(i32, i32, i32, i32)>::from),
+                    patches: Vec::new(),
                 })
             }
             _ => return Err(err("game kind")),
@@ -881,6 +882,7 @@ mod tests {
             slope: Some((50, 7000, 8000)),
             hill: None,
             water: Some((-1, 2, 3, 4)),
+            patches: Vec::new(),
         });
         assert_eq!(SaveGame::decode(&save.encode()).unwrap(), save);
     }

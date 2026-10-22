@@ -110,7 +110,20 @@ impl ExtraDir {
             .filter_map(|e| e.file_name().into_string().ok())
             .filter(|n| exts.iter().any(|x| n.to_ascii_lowercase().ends_with(x)))
             .collect();
-        log::info!("{game} from {}: {files:?}", dir.display());
+        // The detailed ground's textures (docs/ground.md): `ACR\Models\ground\*.png`.
+        let mut files = files;
+        if exts.contains(&".glb") {
+            files.extend(
+                std::fs::read_dir(dir.join("ground"))
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .filter_map(|e| e.file_name().into_string().ok())
+                    .filter(|n| n.to_ascii_lowercase().ends_with(".png"))
+                    .map(|n| format!("ground/{n}")),
+            );
+        }
+        log::info!("{game} from {}: {} files", dir.display(), files.len());
         Some(Self { game, dir, files })
     }
 

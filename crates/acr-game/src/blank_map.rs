@@ -84,7 +84,7 @@ pub fn build(b: &BlankSetup) -> M3dMap {
         size: Some(size),
         header: [vw as u32, vh as u32],
         heights: Some(Grid { width: vw, height: vh, cells: heights }),
-        textures: Some(Grid { width: vw, height: vh, cells: vec![texture(b.ground); vw * vh] }),
+        textures: Some(Grid { width: vw, height: vh, cells: textures(b, vw, vw * vh) }),
         water: Some(Water {
             depth: Grid { width: n, height: n, cells: depth },
             brightness: Grid { width: n, height: n, cells: brightness },
@@ -96,6 +96,22 @@ pub fn build(b: &BlankSetup) -> M3dMap {
         mission_dll: Some(String::new()),
         ..M3dMap::default()
     }
+}
+
+/// The vertex textures: the field's ground, then the patches in order.
+fn textures(b: &BlankSetup, vw: usize, len: usize) -> Vec<u8> {
+    let mut out = vec![texture(b.ground); len];
+    for (v, t) in out.iter_mut().enumerate() {
+        let (col, row) = ((v % vw) as i32, (v / vw) as i32);
+        let (x, y) = (col << 5, (row << 5) - ((col & 1) << 4));
+        for &(px, py, r, tex) in &b.patches {
+            let (dx, dy) = (i64::from(x - px), i64::from(y - py));
+            if dx * dx + dy * dy <= i64::from(r) * i64::from(r) {
+                *t = tex;
+            }
+        }
+    }
+    out
 }
 
 /// Ground height (world pixels) at `(x, y)`: the ramp plus the hill.
@@ -140,6 +156,7 @@ mod tests {
             slope: Some((50, 1000, 2000)),
             hill: Some((5000, 5000, 400, 100)),
             water: Some((8000, 8000, 640, 640)),
+            patches: vec![(5000, 5000, 100, 71)],
         };
         let map = build(&b);
         let heights = map.heights.as_ref().unwrap();
@@ -148,7 +165,14 @@ mod tests {
         assert_eq!(heights.get(2000 / 32 + 2, 10), Some(87));
         // The hill stands on the plateau behind the ramp.
         assert_eq!(heights.get(5000 / 32, 5000 / 32), Some(87 + 100));
-        assert!(map.textures.as_ref().unwrap().cells.iter().all(|&t| t == SNOW));
+        // Snow everywhere but the dirt patch of radius 100 at (5000, 5000).
+        let textures = map.textures.as_ref().unwrap();
+        assert_eq!(textures.get(5000 / 32, 5000 / 32), Some(71));
+        assert_eq!(textures.get(5200 / 32, 5000 / 32), Some(SNOW));
+        assert_eq!(
+            textures.cells.iter().filter(|&&t| t != SNOW).count(),
+            textures.cells.iter().filter(|&&t| t == 71).count()
+        );
         let depth = &map.water.as_ref().unwrap().depth;
         assert_eq!(depth.get(260, 260), Some(DEEP as u8));
         assert_eq!(depth.get(250, 260), Some(120));
