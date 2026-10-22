@@ -369,6 +369,8 @@ impl ThreeD {
         let mut unit_models: HashMap<u32, (UnitModel, usize)> = HashMap::new();
         // Rigged men drawn: unit index → instance index (ragdolls, #278).
         let mut rigged: Vec<(usize, usize)> = Vec::new();
+        // Ships and guns drawn (`acr_machine`): their hits splash no blood.
+        let mut machines: std::collections::HashSet<u32> = std::collections::HashSet::new();
         let now = world.tick.0;
         if self.debris_tick > now {
             // A loaded game or a restart: the debris belongs to another battle.
@@ -427,7 +429,10 @@ impl ThreeD {
             let ground = view3d::ground_point(x, y, terrain.height_at(x, y));
             let body = super::gore::Body { death, ..u.into() };
             let (mut wounds, pool) = super::gore::corpse(body, record, self.gore, removed_at, ground);
-            self.pools.extend(pool);
+            // Ships and guns leave no blood.
+            if !model.machine {
+                self.pools.extend(pool);
+            }
             // The wounds of his hits, alive and dead; they replace the corpse's guessed ones.
             if !u.building {
                 (wounds.marks, wounds.marks_len) = self.wounds.marks(u.id.0, model.rig.as_ref(), now);
@@ -436,6 +441,17 @@ impl ThreeD {
                 }
             }
             let (mut inst, at) = instance(u, death, index, model, terrain, self.gore, removed_at, wounds);
+            if model.world_clock && !u.building {
+                inst.time = world_time(model, inst.clip, u, now, record.tick);
+            }
+            if model.machine && !u.building {
+                // A wreck neither rots nor sinks into the ground: its clips show the damage.
+                machines.insert(u.id.0);
+                inst.decay = 0.0;
+                inst.morphs = [0.0; 2];
+                inst.wounds = Default::default();
+                inst.transform = view3d::model_matrix(ground, view3d::facing_yaw(u.dir), 1.0);
+            }
             let living = u.alive && u.death == 0;
             // What is left of the body (#262): cuts, fractures, a torn trunk, an open belly.
             let damage = match (self.gore, model.rig.is_some(), living) {
@@ -522,7 +538,7 @@ impl ThreeD {
             {
                 self.trail.sample(u.id.0, at, u.body.crawling(), now);
             }
-            if u.death > 0 && !u.building {
+            if u.death > 0 && !u.building && !model.machine {
                 corpses.push((self.instances.len(), at, view3d::facing_yaw(u.dir)));
                 footprints.push(footprint(u, at, &inst, model.radius));
             }
@@ -546,11 +562,13 @@ impl ThreeD {
         }
         // Blood sprayed onto troops and buildings behind hit units (#220).
         for (i, sprayed) in super::splatter::sprayed_targets(&world.hits, world.tick.0, self.gore, &targets) {
-            self.instances[i].sprayed = sprayed;
+            if !machines.contains(&targets[i].unit) {
+                self.instances[i].sprayed = sprayed;
+            }
         }
         // Blood burst around his own newest wound where nothing else sprayed on him (#277).
         for (i, t) in targets.iter().enumerate() {
-            if t.building || self.instances[i].sprayed.amount > 0.0 {
+            if t.building || machines.contains(&t.unit) || self.instances[i].sprayed.amount > 0.0 {
                 continue;
             }
             let rig =
@@ -612,7 +630,7 @@ impl ThreeD {
         self.debris.take_hits(world.hits.iter(), now, self.gore, &unit, &death, &tears, &self.gibs, &ground);
         self.debris.expire(now, self.corpse_ticks);
         self.debris.draw(now, self.corpse_ticks, &ground, &mut self.instances, &mut self.pools);
-        for hit in &world.hits {
+        for hit in world.hits.iter().filter(|h| !machines.contains(&h.victim)) {
             super::splatter::splatter(hit, world.tick.0, self.gore, &ground, &mut self.pools);
             super::debris::mist(hit, world.tick.0, self.gore, &ground, &mut self.pools);
         }
@@ -774,6 +792,21 @@ fn debug_pieces(body: &ModelInstance, damage: Damage) -> Vec<ModelInstance> {
         });
     }
     out
+}
+
+/// Clip time of a model on the game clock (`acr_clock`, ships): alive, its clip loops, each
+/// unit at its own phase; dead, the clip (sinking) runs from the death on and holds its end.
+fn world_time(data: &ModelData, clip: Option<usize>, u: &Unit, now: u64, died: u64) -> f32 {
+    let tps = acr_sim::ORIGINAL_TICKS_PER_SECOND as f32;
+    if u.death > 0 || !u.alive {
+        return now.saturating_sub(died) as f32 / tps;
+    }
+    let duration = clip.and_then(|c| data.clips.get(c)).map_or(0.0, |c| c.duration);
+    if duration <= 0.0 {
+        return 0.0;
+    }
+    let phase = (u.id.0 % 97) as f32 * 0.61;
+    (now as f32 / tps + phase) % duration
 }
 
 /// A building that stands finished (not under construction, not falling down).

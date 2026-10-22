@@ -122,6 +122,13 @@ first (`DEATHLIE1` for `DEATHLIE3`), then `STAND`, then the first clip; a model 
 shows its bind pose. Facing: `yaw = −(RealDir − 64) · 2π / 256` (models face south);
 buildings always face south (one view).
 
+**Ships and guns (#287).** A root with `extras.acr_clock = "world"` runs its clips on the
+game clock instead of the sprite frame: looping while alive (each unit at its own phase), from
+the death record's tick on once dead (ships: one sprite frame per direction, a sinking that
+outlasts `#DEATH`). A root with `extras.acr_machine = true` is no body: no blood pools,
+sprays, splatter or corpse wounds, no corpse pile, no decay and no corpse sink. Ships stand at
+the terrain height of their ground point like every model; water is a tint on that ground.
+
 ### Decay (#178) and gore (#183)
 
 Per corpse one value from the death counter (`Unit::death`):
