@@ -22,24 +22,14 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("GetResource", 0x562d7a, DONE, get_resource),
     f("AddResource", 0x562dea, DONE, add_resource),
     f("SetResource", 0x562eca, DONE, set_resource),
-    f("TakeFood", 0x5664dd, NO_GATHER, check_group),
-    f("TakeWood", 0x566637, NO_GATHER, check_group),
+    f("TakeFood", 0x5664dd, DONE, take_food),
+    f("TakeWood", 0x566637, DONE, take_wood),
     f("GetMoney", 0x568f03, DONE, get_money),
     f("GetExtraction", 0x5699eb, AI_CITY, zero),
     f("IsResourceEnabled", 0x577225, Status::Stub("no resource map in acr-sim yet: 0"), zero),
     f("SetToInternalResourcesZero", 0x56eba8, Status::Stub("unit stance/carried resources not modelled"), zero),
-    f(
-        "ProduceUnit",
-        0x566dd2,
-        Status::Partial("ACR's stand-in production: the unit appears next to the building after 100 ticks"),
-        produce_unit,
-    ),
-    f(
-        "ProduceUnitFast",
-        0x566f36,
-        Status::Partial("stand-in production after 15·(Speed+1) ticks (the original's 30·FAST stages)"),
-        produce_unit_fast,
-    ),
+    f("ProduceUnit", 0x566dd2, DONE, produce_unit),
+    f("ProduceUnitFast", 0x566f36, DONE, produce_unit_fast),
     f("CheckProduction", 0x5672cc, DONE, check_production),
     f("TryUnit", 0x56829b, AI_CITY, zero),
     f("TryUpgrade", 0x5684d6, AI_CITY, zero),
@@ -63,7 +53,7 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("EnableUnit", 0x55c5bb, Status::Partial("flag kept for the build menu (no production UI yet)"), enable_unit),
     f("SetUnitEnableState", 0x55c4f9, Status::Partial("flag kept for the build menu"), set_unit_enable_state),
     f("GetUpgradeCost", 0x56304a, Status::Stub("no upgrade costs in the catalog yet: 0"), zero),
-    f("GetUnitCost", 0x562f80, Status::Stub("no unit costs in the catalog yet: 0"), zero),
+    f("GetUnitCost", 0x562f80, DONE, get_unit_cost),
     f(
         "AI_Torg",
         0x569083,
@@ -97,9 +87,42 @@ fn zero(_: &mut Api, _: &mut Call) -> Result<u32> {
     Ok(0)
 }
 
-fn check_group(api: &mut Api, c: &mut Call) -> Result<u32> {
-    let _ = api.group_arg(c, 0, c.name())?;
+/// `TakeFood`/`TakeWood`: idle peasants of the group gather `kind` around themselves
+/// (`TakeResource(own position, kind, 0x80)`, no owner test).
+fn take(api: &mut Api, c: &mut Call, kind: u8) -> Result<u32> {
+    let what = if kind == 0 { "TakeWood(Units)" } else { "TakeFood(Units)" };
+    let Some(g) = api.group_arg(c, 0, what)? else { return Ok(0) };
+    for id in api.members_h(g) {
+        let u = &api.world.units[id.0 as usize];
+        if u.orders.is_empty() && api.world.catalog.get(u.kind).peasant {
+            acr_sim::gather::take_resource(api.world, id.0 as usize, kind, 0x80);
+        }
+    }
     Ok(0)
+}
+
+fn take_food(api: &mut Api, c: &mut Call) -> Result<u32> {
+    take(api, c, acr_sim::economy::FOOD as u8)
+}
+
+fn take_wood(api: &mut Api, c: &mut Call) -> Result<u32> {
+    take(api, c, acr_sim::economy::WOOD as u8)
+}
+
+/// `int GetUnitCost(byte nation, GAMEOBJ* type, byte res)`: the current price.
+fn get_unit_cost(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let n = api.assign(c.u8(0)?);
+    if n >= 8 {
+        api.st.error("GetUnitCost(Nat,UnitType,ResID) : Invalid <Nat>");
+        return Ok(0);
+    }
+    let Some(t) = api.type_arg(c, 1, "GetUnitCost(Nat,UnitType,ResID)")? else { return Ok(0) };
+    let r = usize::from(c.u8(2)?);
+    if r >= 6 {
+        api.st.error("GetUnitCost(Nat,UnitType,ResID) : Invalid <ResID>");
+        return Ok(0);
+    }
+    Ok(acr_sim::economy::unit_cost(api.world, n, t, None)[r] as u32)
 }
 
 /// A resource slot of a nation, `None` (and an error) for bad arguments.
@@ -149,25 +172,29 @@ fn get_money(api: &mut Api, c: &mut Call) -> Result<u32> {
     Ok(if r < 6 { res(api, usize::from(n), r) as u32 } else { 0 })
 }
 
-/// Queues a unit in every idle (or any, when `fast`) living building of the group.
+/// `ProduceUnit`/`ProduceUnitFast`: `OneObject::Produce(type, destGroup)` (0x49e649) on every
+/// idle (or, fast, every) finished building of the group. With a script group as destination
+/// the unit is free and joins the group when it is born; "fast" starts the order with only
+/// `30·(Speed+1)` stages left.
 fn produce(api: &mut Api, c: &mut Call, fast: Option<i32>) -> Result<u32> {
     const WHAT: &str = "ProduceUnit(Units,UnitType,Dest)";
     let Some(b) = api.group_arg(c, 0, WHAT)? else { return Ok(0) };
     let Some(d) = api.group_arg(c, 2, WHAT)? else { return Ok(0) };
     let Some(t) = api.type_arg(c, 1, WHAT)? else { return Ok(0) };
-    let delay = match fast {
-        Some(speed) => 15 * (speed.min(6) + 1).max(1) as u64,
-        None => 100,
+    let stages = api.world.catalog.get(t).economy.build_stages;
+    let progress = match fast {
+        Some(speed) => (stages - 30 * (speed.min(6) + 1)).max(0),
+        None => 0,
     };
-    let tick = api.world.tick.0;
     for m in api.st.groups[b].members.clone() {
-        let Some(u) = api.member_loose(m).filter(|u| u.building) else { continue };
-        let id = u.id;
-        let busy = api.st.production.iter().any(|p| p.building == id);
-        if fast.is_none() && busy {
+        let Some(u) = api.member_loose(m) else { continue };
+        let (bi, ready) = (u.id.0 as usize, u.stage >= api.world.catalog.get(u.kind).economy.build_stages);
+        if !u.building || !ready || (fast.is_none() && !u.queue.is_empty()) {
             continue;
         }
-        api.st.production.push(Production { building: id, kind: t, group: d, ready: tick + delay });
+        let power = api.world.players[usize::from(u.owner)].type_count.get(usize::from(t.0)).copied().unwrap_or(0);
+        api.world.units[bi].queue.push(acr_sim::economy::Production { kind: t, progress, stages, power });
+        api.st.production.push(Production { building: api.world.units[bi].id, kind: t, group: d, ready: 0 });
     }
     Ok(0)
 }
@@ -184,10 +211,10 @@ fn produce_unit_fast(api: &mut Api, c: &mut Call) -> Result<u32> {
 /// `bool CheckProduction(GAMEOBJ* buildings)`: an idle finished building exists.
 fn check_production(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Some(b) = api.group_arg(c, 0, "CheckProduction : Invalid <Units>")? else { return Ok(0) };
-    let idle = api
-        .members(b)
-        .into_iter()
-        .any(|id| api.world.units[id.0 as usize].building && !api.st.production.iter().any(|p| p.building == id));
+    let idle = api.members(b).into_iter().any(|id| {
+        let u = &api.world.units[id.0 as usize];
+        u.building && u.queue.is_empty() && u.stage >= api.world.catalog.get(u.kind).economy.build_stages
+    });
     Ok(u32::from(idle))
 }
 
@@ -384,27 +411,37 @@ fn get_units(api: &mut Api, c: &mut Call) -> Result<u32> {
     Ok(api.world.units.iter().filter(|u| u.living() && u.owner == n && u.kind == t).count() as u32)
 }
 
-/// Delivers finished stand-in productions: the unit appears below the building and joins the
-/// destination group.
+/// Puts units born from script productions into their destination groups
+/// (`ProduceObjLink` 0x49f6a0: the new unit joins the group and takes its StartNMask).
+/// Called before every tick with the units created since the last call.
 pub fn run_production(st: &mut crate::state::ScriptState, world: &mut acr_sim::World) {
-    let now = world.tick.0;
-    let mut i = 0;
-    while i < st.production.len() {
-        let p = st.production[i].clone();
-        if p.ready > now {
-            i += 1;
+    let first = st.seen_units.min(world.units.len());
+    st.seen_units = world.units.len();
+    for i in first..world.units.len() {
+        let u = &world.units[i];
+        if u.building || !u.alive {
             continue;
         }
-        st.production.remove(i);
-        let Some(b) = world.units.get(p.building.0 as usize).filter(|u| u.living()) else { continue };
-        let (owner, pos) = (b.owner, b.pos);
-        let r = world.catalog.get(b.kind).radius2.max(64) << 4;
-        let spot = acr_sim::Pos::new(pos.x, pos.y + r);
-        if let Some(id) = crate::world_ops::create(world, p.kind, owner, spot)
-            && p.group < st.groups.len()
-        {
-            let serial = st.serial(id);
-            st.groups[p.group].members.push(crate::state::Member { id: id.0 as u16, serial });
+        // The script order of this type whose building is nearest to the newborn unit.
+        let best = st
+            .production
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.kind == u.kind)
+            .filter_map(|(k, p)| {
+                let b = world.units.get(p.building.0 as usize).filter(|b| b.owner == u.owner)?;
+                Some((crate::api::norma(b.pos.x - u.pos.x, b.pos.y - u.pos.y), k))
+            })
+            .min();
+        let Some((_, k)) = best else { continue };
+        let p = st.production.remove(k);
+        let id = u.id;
+        let serial = st.serial(id);
+        if let Some(g) = st.groups.get_mut(p.group) {
+            g.members.push(crate::state::Member { id: id.0 as u16, serial });
+            if g.start_nmask != 0 {
+                st.extra.entry(id.0).or_default().nmask = Some(g.start_nmask);
+            }
         }
     }
 }

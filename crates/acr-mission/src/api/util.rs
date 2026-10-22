@@ -114,21 +114,34 @@ impl Api<'_> {
     }
 
     /// A group member's unit if the slot still holds the unit that joined (serial check)
-    /// and it is alive (`Sdoxlo == 0`; ACR has no hidden units yet, so `aliveH` is the same).
+    /// and it is alive in the engine's sense: `Sdoxlo == 0`, which excludes units inside
+    /// buildings (they have `Sdoxlo` = 1 and `Hidden` set).
     pub fn member(&self, m: Member) -> Option<&Unit> {
+        let u = self.object(m.id)?;
+        (u.active() && self.st.serial(u.id) == m.serial).then_some(u)
+    }
+
+    /// Like [`Api::member`] but also accepting units inside buildings (`Hidden || Sdoxlo == 0`,
+    /// "aliveH" in the RE notes).
+    pub fn member_h(&self, m: Member) -> Option<&Unit> {
         let u = self.object(m.id)?;
         (u.living() && self.st.serial(u.id) == m.serial).then_some(u)
     }
 
-    /// Like [`Api::member`], comparing serials without bit 0 (`ser>>1`: captured units match).
+    /// Like [`Api::member_h`], comparing serials without bit 0 (`ser>>1`: captured units match).
     pub fn member_loose(&self, m: Member) -> Option<&Unit> {
         let u = self.object(m.id)?;
         (u.living() && self.st.serial(u.id) >> 1 == m.serial >> 1).then_some(u)
     }
 
-    /// Living members of a group, in member order.
+    /// Alive members of a group (not dead, not inside a building), in member order.
     pub fn members(&self, g: usize) -> Vec<EntityId> {
         self.st.groups[g].members.iter().filter_map(|&m| self.member(m)).map(|u| u.id).collect()
+    }
+
+    /// Members that are alive or inside a building.
+    pub fn members_h(&self, g: usize) -> Vec<EntityId> {
+        self.st.groups[g].members.iter().filter_map(|&m| self.member_h(m)).map(|u| u.id).collect()
     }
 
     /// A member record for a unit.

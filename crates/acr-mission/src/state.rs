@@ -105,14 +105,14 @@ pub struct Group {
     pub orders: Vec<GroupOrder>,
 }
 
-/// A unit being produced by ACR's stand-in production (`ProduceUnit`).
+/// A unit a script ordered (`ProduceUnit`): when it is born it joins `group`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Production {
     pub building: EntityId,
     pub kind: TypeId,
     /// Destination group.
     pub group: usize,
-    /// Tick at which the unit appears.
+    /// Unused (kept for the record layout of older snapshots).
     pub ready: u64,
 }
 
@@ -252,8 +252,10 @@ pub struct ScriptState {
     pub land_type: [u8; 8],
     /// The map's `TOP1` areas ("top zones").
     pub topo: Option<Areas>,
-    /// Units being produced.
+    /// Script productions waiting for their unit to be born.
     pub production: Vec<Production>,
+    /// Units already looked at for productions.
+    pub seen_units: usize,
     /// Upgrades done per nation `(nation, upgrade)`.
     pub upgrades_done: BTreeSet<(u8, u16)>,
     /// Build-menu overrides `(nation, is upgrade, index) -> +1 enabled / -1 disabled`.
@@ -306,6 +308,7 @@ impl ScriptState {
             land_type: [0; 8],
             topo: None,
             production: Vec::new(),
+            seen_units: 0,
             upgrades_done: BTreeSet::new(),
             availability: BTreeMap::new(),
             market: Market::default(),
@@ -321,6 +324,7 @@ impl ScriptState {
     /// creates the units at their `UNI3` positions, so the unit is found by its position.
     pub fn bind_map(&mut self, map: &M3dMap, world: &World) {
         self.topo = map.land_areas.clone();
+        self.seen_units = world.units.len();
         self.zones = map
             .zones
             .iter()

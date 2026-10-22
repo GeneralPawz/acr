@@ -15,7 +15,7 @@ const fn f(name: &'static str, original: u32, status: Status, handler: super::Ha
 }
 
 const DONE: Status = Status::Done;
-const NO_GARRISON: Status = Status::Stub("no garrisons/transports in acr-sim yet: 0 / nothing happens");
+const NO_TRANSPORT: Status = Status::Stub("no transports (ships) in acr-sim yet");
 
 pub const FUNCTIONS: &[ApiFn] = &[
     f("GetUnitsAmount0", 0x55c70a, DONE, get_units_amount0),
@@ -30,46 +30,41 @@ pub const FUNCTIONS: &[ApiFn] = &[
     ),
     f("GetUnitsByNation", 0x566ca6, DONE, get_units_by_nation),
     f("GetAmountOfWarriors", 0x55eaba, DONE, get_amount_of_warriors),
-    f("GetInsideAmount", 0x57819e, NO_GARRISON, zero),
-    f("GetMaxInsideAmount", 0x5781e5, Status::Stub("MaxInside not in the catalog yet: 0"), zero),
-    f("GetInsideList", 0x56c713, NO_GARRISON, get_inside_list),
-    f("GetNInside", 0x5604e2, NO_GARRISON, zero),
-    f("InviteUnitIntoBuilding", 0x56c638, NO_GARRISON, zero),
-    f("LeaveBuilding", 0x56c6ca, NO_GARRISON, zero),
-    f("CheckLeaveAbility", 0x560b17, NO_GARRISON, zero),
+    f("GetInsideAmount", 0x57819e, DONE, get_inside_amount),
     f(
-        "SGP_ComeIntoBuilding",
-        0x577c2a,
-        Status::Partial("the 'IBLD' process is kept but nobody can enter buildings yet"),
-        sgp_come_into_building,
+        "GetMaxInsideAmount",
+        0x5781e5,
+        Status::Partial("the type's absorber capacity; AddInside not modelled"),
+        get_max_inside_amount,
     ),
+    f("GetInsideList", 0x56c713, DONE, get_inside_list),
+    f("GetNInside", 0x5604e2, DONE, get_n_inside),
+    f(
+        "InviteUnitIntoBuilding",
+        0x56c638,
+        Status::Partial("economy::enter (capacity and owner rules of acr-sim)"),
+        invite_unit_into_building,
+    ),
+    f(
+        "LeaveBuilding",
+        0x56c6ca,
+        Status::Partial("everybody leaves (acr-sim releases all units at once)"),
+        leave_building,
+    ),
+    f("CheckLeaveAbility", 0x560b17, NO_TRANSPORT, zero),
+    f("SGP_ComeIntoBuilding", 0x577c2a, DONE, sgp_come_into_building),
     f("CreateObject0", 0x55eded, DONE, create_object0),
     f("CreateFields", 0x577ff4, Status::Stub("no fields/farming in acr-sim yet"), zero),
     f("DieUnit", 0x5701ae, Status::Partial("World::kill; no SLOWDEATH burning yet"), die_unit),
-    f(
-        "GetUnitInfo",
-        0x567a0e,
-        Status::Partial("AddDamage/AddShield, stages, kills, reload, usage are 0"),
-        get_unit_info,
-    ),
-    f("GetUnitInfo2", 0x578f2c, Status::Partial("NInside/MaxInside/Usage are 0"), get_unit_info2),
+    f("GetUnitInfo", 0x567a0e, Status::Partial("reload percentage and USAGE are 0"), get_unit_info),
+    f("GetUnitInfo2", 0x578f2c, Status::Partial("USAGE is 0"), get_unit_info2),
     f("SetUnitInfo", 0x567e8a, Status::Partial("life and position; no damage/shield bonus yet"), set_unit_info),
     f("GetUnitGlobalInfo", 0x567cb9, Status::Partial("as GetUnitInfo"), get_unit_global_info),
     f("GetUnitExCaps", 0x56be77, Status::Partial("StandTime 0, order kind 8 (send-to) or -1"), get_unit_ex_caps),
-    f(
-        "GetCurrentUnits",
-        0x578173,
-        Status::Partial("living non-building units (no population rules yet)"),
-        get_current_units,
-    ),
-    f("GetMaxUnits", 0x578148, Status::Stub("no farms/population in acr-sim yet: 0"), zero),
-    f(
-        "CheckBuildingsComplete",
-        0x566a30,
-        Status::Partial("ACR creates buildings finished: always 1"),
-        check_buildings_complete,
-    ),
-    f("SendUnitsToTransport", 0x56093a, NO_GARRISON, zero),
+    f("GetCurrentUnits", 0x578173, DONE, get_current_units),
+    f("GetMaxUnits", 0x578148, DONE, get_max_units),
+    f("CheckBuildingsComplete", 0x566a30, DONE, check_buildings_complete),
+    f("SendUnitsToTransport", 0x56093a, NO_TRANSPORT, zero),
     f("SetMaxInTransport", 0x57033a, Status::Stub("AI landing not modelled"), zero),
     f("GetZoneCoor", 0x56c266, DONE, get_zone_coor),
     f("GetBuildingEntryPoint", 0x56ea8c, Status::Stub("no building entry points in the catalog yet: 0"), zero),
@@ -101,7 +96,7 @@ fn get_units_amount0(api: &mut Api, c: &mut Call) -> Result<u32> {
         return Ok(0);
     }
     let Some(circles) = zone(api, c, 0, "GetUnitsAmount(Zone,Nation)")? else { return Ok(0) };
-    let units: Vec<_> = api.world.units.iter().filter(|u| u.living() && u.owner == n).collect();
+    let units: Vec<_> = api.world.units.iter().filter(|u| u.active() && u.owner == n).collect();
     Ok(circles.iter().map(|z| units.iter().filter(|u| z.contains(u)).count()).sum::<usize>() as u32)
 }
 
@@ -125,14 +120,14 @@ fn get_units_amount2(api: &mut Api, c: &mut Call) -> Result<u32> {
     }
     let Some(t) = api.type_arg(c, 1, "GetUnitsAmount(Zone,UnitType,Nation)")? else { return Ok(0) };
     let Some(circles) = zone(api, c, 0, "GetUnitsAmount(Zone,UnitType,Nation)")? else { return Ok(0) };
-    let units: Vec<_> = api.world.units.iter().filter(|u| u.living() && u.owner == n && u.kind == t).collect();
+    let units: Vec<_> = api.world.units.iter().filter(|u| u.active() && u.owner == n && u.kind == t).collect();
     Ok(circles.iter().map(|z| units.iter().filter(|u| z.contains(u)).count()).sum::<usize>() as u32)
 }
 
 /// `int GetTotalAmount0(GAMEOBJ* units)`: living members.
 fn get_total_amount0(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Some(g) = api.group_arg(c, 0, "GetTotalAmount(Units)")? else { return Ok(0) };
-    Ok(api.members(g).len() as u32)
+    Ok(api.members_h(g).len() as u32)
 }
 
 /// `int GetTotalAmount1(GAMEOBJ* type, byte nation)`: objects of the type the nation owns
@@ -174,10 +169,86 @@ fn get_amount_of_warriors(api: &mut Api, c: &mut Call) -> Result<u32> {
         .count() as u32)
 }
 
-/// `int GetInsideList(int index, u16** list)`: nobody is inside anything yet: `*list = NULL`.
-fn get_inside_list(_: &mut Api, c: &mut Call) -> Result<u32> {
-    if (0..0xFFFF).contains(&c.i32(0)?) {
+/// The living building at an `int index` argument (`0 <= i < 0xFFFF`).
+fn building_arg(api: &Api, c: &Call, i: u32) -> Result<Option<usize>> {
+    let b = c.i32(i)?;
+    Ok(u16::try_from(b)
+        .ok()
+        .filter(|&b| b != 0xFFFF)
+        .and_then(|b| api.object(b))
+        .filter(|u| u.living())
+        .map(|u| u.id.0 as usize))
+}
+
+/// `int GetInsideAmount(int index)`: units inside a building.
+fn get_inside_amount(api: &mut Api, c: &mut Call) -> Result<u32> {
+    Ok(building_arg(api, c, 0)?.map_or(0, |b| api.world.units[b].inside.len() as u32))
+}
+
+/// `int GetMaxInsideAmount(int index)`: `MaxInside + AddInside`.
+fn get_max_inside_amount(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let Some(b) = building_arg(api, c, 0)? else { return Ok(0) };
+    let e = &api.world.catalog.get(api.world.units[b].kind).economy;
+    Ok(e.unit_absorber.max(e.peasant_absorber).max(0) as u32)
+}
+
+/// `int GetInsideList(int index, u16** list)`: the building's inside list (unit indices). The
+/// original hands out its own array; ACR copies it into the DLL's memory (one buffer per
+/// building, rewritten on every call).
+fn get_inside_list(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let i = c.i32(0)?;
+    if !(0..0xFFFF).contains(&i) {
+        return Ok(0);
+    }
+    let Some(b) = api.object(i as u16).map(|u| u.id.0 as usize) else {
         c.out_u32(1, 0)?;
+        return Ok(0);
+    };
+    let ids: Vec<u16> = api.world.units[b].inside.iter().map(|id| id.0 as u16).collect();
+    if ids.is_empty() {
+        c.out_u32(1, 0)?;
+        return Ok(0);
+    }
+    let key = (api.vm, format!("inside{b}").into_bytes());
+    let bytes: Vec<u8> = ids.iter().flat_map(|v| v.to_le_bytes()).collect();
+    let p = match api.st.text_cache.get(&key) {
+        Some(&p) if c.raw.heap.size(p).is_some_and(|s| s as usize >= bytes.len()) => {
+            c.raw.mem.write_bytes(p, &bytes)?;
+            p
+        }
+        _ => {
+            let p = c.alloc_bytes(&[bytes.clone(), vec![0; 64]].concat())?;
+            api.st.text_cache.insert(key, p);
+            p
+        }
+    };
+    c.out_u32(1, p)?;
+    Ok(ids.len() as u32)
+}
+
+/// `int GetNInside(byte nation)`: units inside the selected buildings of a nation.
+fn get_n_inside(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let n = usize::from(api.assign(c.u8(0)?) & 7);
+    let sel = api.st.selection[n].clone();
+    Ok(sel.iter().filter_map(|&m| api.member(m)).map(|u| u.inside.len() as u32).sum())
+}
+
+/// `void InviteUnitIntoBuilding(int building, int unit, byte ordType)`: `GoToMine` with
+/// priority 0x7f.
+fn invite_unit_into_building(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let (Some(b), Some(u)) = (building_arg(api, c, 0)?, building_arg(api, c, 1)?) else { return Ok(0) };
+    if api.world.units[b].building && !api.world.units[u].building {
+        acr_sim::economy::enter(api.world, u, b, 0x7f);
+    }
+    Ok(0)
+}
+
+/// `void LeaveBuilding(int building, word unitType)`.
+fn leave_building(api: &mut Api, c: &mut Call) -> Result<u32> {
+    if let Some(b) = building_arg(api, c, 0)?
+        && !api.world.units[b].inside.is_empty()
+    {
+        acr_sim::economy::leave(api.world, b);
     }
     Ok(0)
 }
@@ -257,11 +328,12 @@ fn write_one_unit(api: &Api, c: &mut Call, out: u32, id: EntityId, full: bool) -
     c.write_u16(out + 2, api.st.serial(id))?;
     c.write_u16(out + 4, u.life.clamp(0, 0xFFFF) as u16)?;
     c.write_u16(out + 6, t.life.clamp(0, 0xFFFF) as u16)?;
-    c.write_u8(out + 8, 0)?;
-    c.write_u8(out + 9, 0)?;
-    c.write_u16(out + 0xa, 0)?;
-    c.write_u16(out + 0xc, 0)?;
-    c.write_u16(out + 0xe, 0)?;
+    c.write_u8(out + 8, u.attack_bonus as u8)?;
+    c.write_u8(out + 9, u.defence_bonus as u8)?;
+    let stages = t.economy.build_stages;
+    c.write_u16(out + 0xa, u.stage.clamp(0, 0xFFFF) as u16)?;
+    c.write_u16(out + 0xc, stages.clamp(0, 0xFFFF) as u16)?;
+    c.write_u16(out + 0xe, u.kills)?;
     c.write_u16(out + 0x10, u.kind.0)?;
     c.write_u8(out + 0x12, 0)?;
     c.write_u8(out + 0x13, u8::from(u.building))?;
@@ -269,15 +341,15 @@ fn write_one_unit(api: &Api, c: &mut Call, out: u32, id: EntityId, full: bool) -
     c.write_i32(out + 0x18, u.pos.y >> 4)?;
     c.write_u8(out + 0x1c, u.owner)?;
     c.write_u8(out + 0x1d, u.dir)?;
-    c.write_u8(out + 0x1e, 1)?;
+    c.write_u8(out + 0x1e, u8::from(u.stage >= stages))?;
     c.write_u8(out + 0x1f, 0)?;
     if full {
-        c.write_u8(out + 0x20, 0)?;
+        c.write_u8(out + 0x20, u.stance)?;
         c.write_u8(out + 0x21, api.st.unit_nmask(id, u.owner))?;
     }
     c.write_u8(out + 0x22, u8::from(!u.orders.is_empty()))?;
     if full {
-        c.write_u8(out + 0x23, 0)?;
+        c.write_u8(out + 0x23, u8::from(u.target().is_some()))?;
     }
     Ok(())
 }
@@ -289,7 +361,7 @@ fn get_unit_info(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Some(g) = api.group_arg(c, 0, "GetUnitInfo(Units,Index,Uni)")? else { return Ok(0) };
     let i = c.i32(1)?;
     let Some(&m) = usize::try_from(i).ok().and_then(|i| api.st.groups[g].members.get(i)) else { return Ok(0) };
-    let Some(id) = api.member(m).map(|u| u.id) else { return Ok(0) };
+    let Some(id) = api.member_h(m).map(|u| u.id) else { return Ok(0) };
     write_one_unit(api, c, out, id, true)?;
     Ok(1)
 }
@@ -310,10 +382,13 @@ fn get_unit_global_info(api: &mut Api, c: &mut Call) -> Result<u32> {
 fn get_unit_info2(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Some(u) = api.object(c.u16(0)?) else { return Ok(0) };
     let (x, y, owner, id) = (u.pos.x >> 4, u.pos.y >> 4, u.owner, u.id);
+    let inside = u.inside.len() as i32;
+    let e = &api.world.catalog.get(u.kind).economy;
+    let max = e.unit_absorber.max(e.peasant_absorber);
     let out = c.u32(1)?;
     c.write_u16(out, id.0 as u16)?;
-    c.write_i32(out + 2, 0)?;
-    c.write_i32(out + 6, 0)?;
+    c.write_i32(out + 2, inside)?;
+    c.write_i32(out + 6, max)?;
     c.write_i32(out + 0xa, x)?;
     c.write_i32(out + 0xe, y)?;
     c.write_i32(out + 0x12, i32::from(owner))?;
@@ -372,16 +447,27 @@ fn get_unit_ex_caps(api: &mut Api, c: &mut Call) -> Result<u32> {
     Ok(1)
 }
 
+/// `int GetCurrentUnits(byte nation)`: population (`NGidot`, from the census).
 fn get_current_units(api: &mut Api, c: &mut Call) -> Result<u32> {
     let n = c.u8(0)?;
-    if n >= 8 {
-        return Ok(0);
-    }
-    Ok(api.world.units.iter().filter(|u| u.living() && u.owner == n && !u.building).count() as u32)
+    Ok(if n < 8 { api.world.players[usize::from(n)].population.max(0) as u32 } else { 0 })
 }
 
+/// `int GetMaxUnits(byte nation)`: housing (`NFarms`).
+fn get_max_units(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let n = c.u8(0)?;
+    Ok(if n < 8 { api.world.players[usize::from(n)].housing.max(0) as u32 } else { 0 })
+}
+
+/// `bool CheckBuildingsComplete(GAMEOBJ* buildings)`: no idle member building is still
+/// under construction.
 fn check_buildings_complete(api: &mut Api, c: &mut Call) -> Result<u32> {
-    Ok(u32::from(api.group_arg(c, 0, "CheckBuildingsComplete(Buildings)")?.is_some()))
+    let Some(g) = api.group_arg(c, 0, "CheckBuildingsComplete(Buildings)")? else { return Ok(0) };
+    let unfinished = api.members_h(g).into_iter().any(|id| {
+        let u = &api.world.units[id.0 as usize];
+        u.building && u.orders.is_empty() && u.stage < api.world.catalog.get(u.kind).economy.build_stages
+    });
+    Ok(u32::from(!unfinished))
 }
 
 /// `bool GetZoneCoor(GAMEOBJ* zone, int* x, int* y)` (the `'ZONE'` test comes first here).
