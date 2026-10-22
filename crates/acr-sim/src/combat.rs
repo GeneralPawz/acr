@@ -478,7 +478,7 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
         if walk {
             let u = &mut w.units[i];
             let p = u.prio;
-            crate::motion::smart_send_to_ex(u, areas.as_ref(), ex, ey, 0, 0, p, true, false);
+            crate::motion::smart_send_to_ex(u, areas.as_ref(), ex, ey, 0, 0, p, crate::motion::ORD_FRONT, false);
         }
         return;
     };

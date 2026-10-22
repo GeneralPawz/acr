@@ -91,6 +91,23 @@ pub enum Command {
     /// with a direction, 0x4d5f86). Formations re-form facing it, free units are placed
     /// across it.
     MoveFacing { player: PlayerId, units: Vec<EntityId>, x: i32, y: i32, dir: u8 },
+    /// A scripted group move with all options of `GroupSend` (0x4ac776): `SelSendTo`,
+    /// `SelSendAndKill` (0x4db0d3) and the `SGP_*` moves (`GroupMovePurpose` 0x5785a9).
+    /// `dir` ≥ 0x100 faces the direction of travel; `ord` is the order type of the free
+    /// units; `abs_dir` gives brigades `dir` itself; `off_x`/`off_y` shift the target along
+    /// and across the direction of travel.
+    ScriptMove {
+        player: PlayerId,
+        units: Vec<EntityId>,
+        x: i32,
+        y: i32,
+        dir: u16,
+        prio: u8,
+        ord: u8,
+        abs_dir: bool,
+        off_x: i32,
+        off_y: i32,
+    },
     /// The interface's friendly-fire buttons (`SHOTMYUNITS` / `KEEPMYUNITS`, network command
     /// 0x5e, 0x4d771a): `shoot_own` switches the `FRIENDLYFIRE` avoidance of the units off
     /// (OB+0x2a bit1).
@@ -162,6 +179,7 @@ impl Command {
             | Command::AttackMove { player, .. }
             | Command::Patrol { player, .. }
             | Command::MoveFacing { player, .. }
+            | Command::ScriptMove { player, .. }
             | Command::AttackGround { player, .. }
             | Command::FriendlyFire { player, .. }
             | Command::MeleeOnly { player, .. }
