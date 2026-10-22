@@ -958,8 +958,9 @@ order) and draws random numbers.
     fell: a scream at the fall (`ACR_AGONY_SCREAM`), then moans and gasps (`ACR_AGONY_MOAN`,
     `ACR_AGONY_GASP`) every 1.2–2.8 s, fading from 85 % to 25 % of the placed volume. Who
     and how long is fixed by the unit index and the cause: gunshots 25 % for 3–8 s, arrows
-    and thrown weapons 40 % for 3–10 s, melee 45 % for 4–10 s, grapeshot 55 % and
-    cannonballs and shells 60 % for 5–12 s; other deaths are silent. Only the 4 agonies
+    and thrown weapons 40 % for 3–10 s, melee 45 % for 4–10 s, shells 35 % for 4–10 s,
+    grapeshot 55 % for 5–12 s; other deaths are silent — a man struck dead by a cannonball
+    is torn apart and makes no sound (who survives one screams in pain like any wounded). Only the 4 agonies
     nearest the view centre (among those in hearing) make sounds; the others wait silently
     without a backlog, and one that was never heard at the fall does not scream later.
   - Units starting a flight leg in panic (`World::shouts`, the panic shouts of 0x600bc8)
