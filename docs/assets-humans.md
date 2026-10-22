@@ -25,7 +25,7 @@ the game never makes them (no nation's .NDS lists them, so they are not in the c
 SpnReiG1/SpnReiG2 (leftover variants of SpnRei with other body sprites, no LIFE, DAMAGE 1)
 and PueVsd (PueVsda without `MAXINDEPO`, same sprites). The game has no mules, donkeys,
 pack animals, carts or limbers (no such object type among its .MD files; the cannon `ArtPus`
-is pushed by its crew), so the pack's Donkey has no unit to serve.
+is pushed by its crew, modelled as part of the gun in `acr_assets/guncrew.py`), so the pack's Donkey has no unit to serve.
 Tools: `assets/blender/tools/silhouette.py` (fits poses and proportions to the sprite
 silhouettes in one Blender session) and `tools/preview.py` (lit renders, free views and decay
 stages from the glTF alone, with the decay shader rebuilt from the extras).

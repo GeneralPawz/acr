@@ -220,6 +220,18 @@ outlasts `#DEATH`). A root with `extras.acr_machine = true` is no body: no blood
 sprays, splatter or corpse wounds, no corpse pile, no decay and no corpse sink. Ships stand at
 the terrain height of their ground point like every model; water is a tint on that ground.
 
+**Gun crew (#287).** The cannon's crew is part of its model (`acr_assets/guncrew.py`,
+bones `c0.`..`c3.`), so it runs on the gun's sprite clock and the linstock touches the vent
+on the shot frame of `ATTACK` (29). The sim keeps the gun a single unit with one life, so
+the crew's losses are to be read from it; **not wired yet**, the intended mapping: with
+`k = ceil(4 · life / max_life)` men standing, a man falls each time `k` drops (c3, c1, c0,
+c2 in that order: the layer stays longest), as a separate corpse instance (a crew member
+built as its own body model and dropped with the existing ragdoll and corpse systems,
+blood and rot included) while his bones in the gun model are scaled away. The drill keeps
+the sim's timing (the shot must stay on the sim's tick; a slower reload with fewer men would
+need the sim's reload to follow), the missing men's tasks go unanimated. Today
+all four stand until the gun dies and fall with it in `DEATH`.
+
 ### Decay (#178) and gore (#183)
 
 Per corpse one value from the death counter (`Unit::death`):
