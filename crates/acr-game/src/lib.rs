@@ -21,6 +21,8 @@ mod music;
 pub mod native;
 mod random_map;
 mod savegame;
+#[cfg(not(target_arch = "wasm32"))]
+mod spotify;
 pub mod ui;
 mod unit_sounds;
 #[cfg(target_arch = "wasm32")]
@@ -322,6 +324,7 @@ impl Game {
                 }
                 let (effects, music) = settings.volumes();
                 self.audio.set_volumes(effects, music);
+                self.audio.set_external(settings.external_music());
                 self.apply_resolution();
             }
             ui::Action::StartGame(setup) => {
@@ -406,6 +409,7 @@ impl Game {
         self.stored_settings = self.ui.set_settings_store(store);
         let (effects, music) = self.ui.settings().volumes();
         self.audio.set_volumes(effects, music);
+        self.audio.set_external(self.ui.settings().external_music());
     }
 
     /// The window size of the options' resolution (not in fullscreen or the browser).

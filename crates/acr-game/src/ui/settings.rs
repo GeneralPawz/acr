@@ -1,5 +1,8 @@
 //! Player options edited in the options screen (0x5c9740).
 
+/// The third music choice: no own music, Spotify mixed in ([`Settings::external_music`]).
+pub const SPOTIFY: &[u8] = b"Spotify mitmischen";
+
 /// The original's option globals, with their ranges.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
@@ -7,7 +10,8 @@ pub struct Settings {
     pub sound_volume: i32,
     /// `MidiSound`: music volume 0..=100.
     pub music_volume: i32,
-    /// Music mode: 0 no music (`NOCD`), 1 random tracks (`RNDMUS`).
+    /// Music mode: 0 no music (`NOCD`), 1 random tracks (`RNDMUS`), 2 Spotify mixed in
+    /// (ACR, [`SPOTIFY`]).
     pub music_mode: usize,
     /// Game mode: 0 slow (`SLOWMOD`), 1 fast (`FASTMOD`).
     pub game_mode: usize,
@@ -116,8 +120,14 @@ impl Settings {
     /// Effect and music gain for the mixer (0..=1).
     pub fn volumes(&self) -> (f32, f32) {
         let gain = |v: i32| (v.clamp(0, 100) as f32 / 100.0).powi(2);
-        let music = if self.music_mode == 0 { 0.0 } else { gain(self.music_volume) };
+        let music = if self.music_mode == 1 { gain(self.music_volume) } else { 0.0 };
         (gain(self.sound_volume), music)
+    }
+
+    /// "Spotify mitmischen" (music choice 2): no own music, Spotify ducked under the
+    /// battle noise.
+    pub fn external_music(&self) -> bool {
+        self.music_mode == 2
     }
 
     /// Edge scrolling in effect: always with the original controls.
@@ -193,7 +203,7 @@ impl Settings {
             match key {
                 "sound_volume" => s.sound_volume = int.map_or(s.sound_volume, |v| v.clamp(0, 100)),
                 "music_volume" => s.music_volume = int.map_or(s.music_volume, |v| v.clamp(0, 100)),
-                "music_mode" => s.music_mode = int.map_or(s.music_mode, |v| v.clamp(0, 1) as usize),
+                "music_mode" => s.music_mode = int.map_or(s.music_mode, |v| v.clamp(0, 2) as usize),
                 "game_mode" => s.game_mode = int.map_or(s.game_mode, |v| v.clamp(0, 1) as usize),
                 "scroll_speed" => s.scroll_speed = int.map_or(s.scroll_speed, |v| v.clamp(2, 10)),
                 "frame_time" => s.frame_time = int.map_or(s.frame_time, |v| v.clamp(0, 100)),
