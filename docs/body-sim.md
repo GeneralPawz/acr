@@ -183,6 +183,38 @@ are piled. The renderer takes a palette from it per instance
   seen from the side — a musket wound from the front, musket kills from the side and the
   front, a cannonball kill, a crawler killed, a musket wound in the leg; 24 frames, one per
   tick, then the corpses after 4 s, from the side and from above.
+- **Animals** (`m2-animalsim`): any rig gets a ragdoll of its own.
+  - `acr_physics::skeleton_generic` builds one from a bone list (`RigBone`: name, parent,
+    rest head and tail, flesh radius). `bone_kinds` names each bone by its name and place:
+    root, spine, neck, head, jaw, tail, and per leg girdle, upper, middle and foot. Legs
+    hanging from the chest ahead of the root are the front legs (regions `ArmL`/`ArmR`), the
+    others the hind legs; the side is by `x`.
+  - Capsules: the bone's length, and the radius 0.85 × the median distance of its skinned
+    vertices (by their heaviest joint) from the bone, else a quarter of its length. Masses by
+    volume at 850 kg/m³ (the capsules overlap at the joints): the bear 446 kg, the elk 492, the
+    alligator 184, the jaguar 105, the bison 1536 (heavy: its fur is wide).
+  - Limits: spine cone 14°, twist 8° (stiff); neck 35°/30°, head 30°/25°, tail 40°/20°
+    (flexible); girdle 15°; upper leg 55°/20°; middle leg bones hinges of ±95° (the rest pose
+    is already bent, so both ways), bending vertical bones fore and aft and level ones
+    (the alligator's splayed legs) up and down; feet 35°/15°; jaw hinge −5..35°.
+  - `ragdoll_view`: a model with no skeleton-H rig, an `Anm*` type (`extras.acr_type`) and a
+    skin is mapped generically (`Mapping::generic`): the skin's joints without details
+    (digits, claws, tongue, eyes, ears, whiskers, `_end`, helpers such as `Reference`,
+    `RigRoot`, shoulder blades) are the bones; their rest segments come from the inverse
+    bind matrices (to the joint that continues the chain, else along the joint's own axis as
+    far as its details reach); every other joint rides on its nearest kept ancestor. The
+    pool keeps animal ragdolls apart by model (a slot is reused only by the same rig).
+  - Hits: the struck bone by the injury's part (head, the chest end of the spine, its
+    middle, the root; a leg by its level), the impulse of the weapon. A survivor staggers on
+    a damped spring around its clip with the struck region limp; a dying animal goes limp
+    over 0.2–0.6 s, falls from its pose with the shot's impulse and freezes as the corpse's
+    pose. No death reflex, steps or knock-downs for animals. Riders and horses keep their
+    clips (their types are not `Anm*`). Bones: bear 24, elk 29, jaguar 35, alligator 37.
+- **Mauling** (`m2-animalsim`, see `docs/damage-model.md`): an animal's blow (`Injury::cause`
+  `Claw`, `Bite`, `Gore`) pushes a man with 34, 26 or 70 N·s (half at no energy) away from the
+  animal, a goring also upwards; at 19 N·s or more, or whenever the simulation knocks him down
+  (`Body::down`), he falls. While `Body::down` lasts he stays on the ground (the fall phase is
+  held) and the animal's further blows strike the lying body.
 - **Not yet:** severed pieces (`debris.rs`) keep their own throw (they could become small
   ragdoll bodies later); no kneeling or reloading pose exists to be killed in; horses and
   riders; the corpse's decay sinking is not applied to physics poses.
@@ -290,6 +322,10 @@ tuning on the bench.
   | `HoldingWound` | busy with the wound, can't fight |
   | `Unconscious` | down, not moving |
   | `Unhorsed` | thrown off the horse; the horse runs on or stands |
+
+`KnockedDown` exists in a first, minimal form: `Body::down` (ticks), set by animals' blows
+(`docs/damage-model.md`, mauling) with the hit-locations rule; while it lasts he cannot move,
+attack or hit back, and the renderer keeps him on the ground.
 
 - **Riders:** a rider with a broken or lost leg, or a heavy hit, may fall from the saddle.
   From then on he is a foot soldier on the ground.
