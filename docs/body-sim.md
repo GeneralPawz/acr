@@ -58,6 +58,45 @@ simulation shows the fall and the getting up within that time. Hit records (`Hit
   reactions (additive flinch, pre-baked falls) that hand over to full physics when they
   come close.
 
+### Engine (phase 1, #278)
+
+`crates/acr-physics` has no dependencies and runs the same code on native and wasm32. It uses the axes of skeleton
+H: metres, `+X` left, `-Y` forward, `+Z` up.
+
+- `World`: capsule bodies (`Body`: position, rotation, mass, principal inertia; local `+Y`
+  along the bone) and a `Config` (fixed `dt` of 1/60 s, 8 substeps, 2 joint passes per substep,
+  friction, passive joint damping). `step(&ground)` follows Müller et al. 2020 (XPBD rigid
+  bodies): integrate, contacts (ground first, then capsule pairs, with static friction), joints,
+  velocities, then dynamic friction, restitution without bounce, and joint damping. It does not
+  allocate; the buffers are sized when bodies are added.
+- Joints: the anchors are held hard. `JointLimit::Hinge { lo, hi }` is used for the knee, elbow and toes, and
+  `JointLimit::Ball { cone_axis, cone, twist_lo, twist_hi }` for the hip, shoulder, neck and spine (with a
+  small cone for the wrist and ankle). The muscle drive is a soft angular constraint towards `target` with
+  compliance `1/stiffness`, plus damping: `Tone { stiffness, damping }`.
+- `Ground` is a height field: `height(x, y)`, with the normal taken by default from differences. Any
+  `Fn(f32, f32) -> f32` can serve as one.
+- `Ragdoll::spawn(world, &skeleton_h(), mass, pos, rot)` builds one capsule per body bone of
+  skeleton H (22), with Dempster mass fractions and limits per `JointSpec`. Parent–child pairs and pairs that touch at rest
+  never collide. The rest of the API:
+  - `set_target` and `set_pose`: the rotation relative to the parent, as a delta from rest, in the bone's frame. `joint_axis` gives the hinge axis.
+  - `set_tone`, `set_tone_region` and `set_tone_all`.
+  - `World::apply_impulse(body, point, impulse)`.
+  - `bone_transform` and `skin_matrix` (`current · rest⁻¹`, column-major): maps a
+  skeleton-space rest vertex to the world.
+- Light end bodies get an inertia floor of 0.004 kg·m², so that they converge against heavy
+  neighbours.
+- Tests (`tests/ragdoll.rs`):
+  - A limp drop from 1 m settles. The energy goes from 1423 J to about 80 J, the kinetic energy ends below 0.01 J, and the limits hold within 0.2° at rest. At the feet-first impact they are off by up to about 8° for a frame.
+  - With full tone and the root pinned, it holds a pose with bent elbows within 1°.
+  - A 60 N·s push at the back of the right shoulder spins him clockwise and throws him backwards.
+  - The hinge stops hold within about 5° under spins of up to 100 rad/s.
+  - Stacked capsules do not interpenetrate.
+  - Identical runs are bit-identical.
+- Bench (`cargo run -p acr-physics --release --example bench`): about 220–300 µs per
+  ragdoll step (1/60 s, 8 substeps × 2 joint passes), natively on the dev machine. The machine runs Windows
+  on ARM and the numbers are noisy, with other builds running. The cost stays about the same per ragdoll from 1 to 64 ragdolls, and
+  the joint pass dominates it. Wasm is not measured yet.
+
 ## 2. Physical locomotion (`acr-physics::gait`)
 
 - **Gait generator:** step length and frequency come from the sim speed, and foot targets
