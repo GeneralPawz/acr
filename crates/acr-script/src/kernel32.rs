@@ -684,6 +684,8 @@ shims! {
     // Time (fixed, see `write_systemtime`).
     "GetSystemTime" 1 |c, a| write_systemtime(c.mem, a[0]);
     "GetLocalTime" 1 |c, a| write_systemtime(c.mem, a[0]);
+    // Deterministic: 16 ms more on every call.
+    "GetTickCount" 0 |c, _a| Ok(1_000_000u32.wrapping_add(16u32.wrapping_mul(c.p.calls.get("GetTickCount").copied().unwrap_or(0) as u32)));
     "GetTimeZoneInformation" 1 |c, a| {
         c.mem.fill(a[0], 172, 0)?;
         Ok(0) // TIME_ZONE_ID_UNKNOWN

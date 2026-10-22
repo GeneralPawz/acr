@@ -28,6 +28,7 @@
 //! free of scripting; the API layer needs both and is the only place that knows the original
 //! engine's script-facing structures.
 
+pub mod aicity;
 pub mod api;
 pub mod events;
 pub mod guest;
@@ -72,6 +73,10 @@ pub struct Scripts {
     /// The mission imports a question function, so its calls are snapshotted.
     asks: bool,
     ais: Vec<AiScript>,
+    /// `DipServer.dll` (neutral tribes), if loaded.
+    dip: Option<ScriptVm>,
+    /// The tick DipServer last ran for.
+    dip_tick: Option<u64>,
     events: Vec<MissionEvent>,
     errors: Vec<String>,
     /// Answers given for the pending call.
@@ -88,6 +93,8 @@ pub struct Scripts {
 }
 
 const MISSION_VM: u8 = 0;
+/// Machine id of `DipServer.dll` for guest-memory caches.
+pub const DIP_VM: u8 = 0xFF;
 
 impl Scripts {
     /// The script layer of a game on `map`. `texts` is the mission text file (may be empty).
@@ -99,6 +106,8 @@ impl Scripts {
             mission: None,
             asks: false,
             ais: Vec::new(),
+            dip: None,
+            dip_tick: None,
             events: Vec::new(),
             errors: Vec::new(),
             answers: Vec::new(),
@@ -129,6 +138,7 @@ impl Scripts {
             events: &mut self.events,
             caller: Caller::Mission,
             vm: MISSION_VM,
+            dip: None,
         };
         match ScriptVm::load(dll, path, &mut api) {
             Ok(vm) => {
@@ -158,6 +168,7 @@ impl Scripts {
                     events: &mut self.events,
                     caller: Caller::Ai(nation),
                     vm: self.ais.len() as u8 + 1,
+                    dip: self.dip.as_mut(),
                 };
                 let vm = ScriptVm::load(dll, path, &mut api)?;
                 self.ais.push(AiScript { vm, nations: Vec::new() });
@@ -171,12 +182,84 @@ impl Scripts {
             events: &mut self.events,
             caller: Caller::Ai(nation),
             vm: i as u8 + 1,
+            dip: self.dip.as_mut(),
         };
         let ai = &mut self.ais[i];
         ai.vm.call_export(&mut api, "InitAI")?;
         ai.nations.push(nation);
         self.state.pending_commands.extend(commands);
         Ok(())
+    }
+
+    /// A nation file (`*.NDS`): its `[FIXED_PRODUCE]` lists tell the AI cities what their
+    /// buildings and peasants can produce.
+    pub fn add_nation_file(&mut self, world: &World, nds: &[u8]) {
+        crate::aicity::add_nation(&mut self.state, world, nds);
+    }
+
+    /// Whether `DipServer.dll` runs.
+    pub fn has_diplomacy(&self) -> bool {
+        self.dip.is_some()
+    }
+
+    /// Game files the scripts may open (`RReset`, `Gopen`): DipServer reads `Dip\*`.
+    pub fn add_file(&mut self, path: &str, data: Vec<u8>) {
+        self.state.files.insert(acr_formats::normalize_path(path), data);
+    }
+
+    /// Loads `DipServer.dll` (the diplomacy system for neutral tribes, `$PSB` map groups) and
+    /// runs `DllMain` and `InitDipForThisMap()`, as the engine does at game start (0x5b4cf5).
+    pub fn load_diplomacy(&mut self, world: &mut World, dll: &[u8], path: &str) -> Result<(), String> {
+        let mut commands = Vec::new();
+        let mut api = Api {
+            st: &mut self.state,
+            world,
+            commands: &mut commands,
+            events: &mut self.events,
+            caller: Caller::Diplomacy,
+            vm: DIP_VM,
+            dip: None,
+        };
+        let mut vm = ScriptVm::load(dll, path, &mut api)?;
+        vm.call_export(&mut api, "?InitDipForThisMap@@YAXXZ")?;
+        self.dip = Some(vm);
+        self.state.pending_commands.extend(commands);
+        Ok(())
+    }
+
+    /// `ProcessDipRelations()` (before `ProcessScenary`, 0x55a1e1) after executing the
+    /// diplomacy commands sent since the last call (`PerformDipCommand`, net command 0x5d).
+    fn run_diplomacy(&mut self, world: &mut World, commands: &mut Vec<Command>) {
+        let Some(dip) = &mut self.dip else { return };
+        if dip.failed.is_some() {
+            return;
+        }
+        let mut api = Api {
+            st: &mut self.state,
+            world,
+            commands,
+            events: &mut self.events,
+            caller: Caller::Diplomacy,
+            vm: DIP_VM,
+            dip: None,
+        };
+        for data in std::mem::take(&mut api.st.dip_commands) {
+            let Some(p) = dip.machine.process.heap.alloc(&mut dip.machine.mem, data.len().max(1) as u32, true) else {
+                break;
+            };
+            if dip.machine.mem.write_bytes(p, &data).is_ok() {
+                let r = dip.call_export_with(&mut api, "?PerformDipCommand@@YAXPADH@Z", &[p, data.len() as u32]);
+                if let Err(e) = r {
+                    self.errors.push(e);
+                }
+            }
+            dip.machine.process.heap.free(p);
+        }
+        if dip.failed.is_none()
+            && let Err(e) = dip.tick(&mut api)
+        {
+            self.errors.push(e);
+        }
     }
 
     /// AI DLLs the mission asked for (`StartAI`) since the last call: `(nation, game path)`.
@@ -219,6 +302,11 @@ impl Scripts {
         let tmtmt = world.tick.0 + 1;
         let phase = (tmtmt % SCRIPT_PERIOD) as u8;
         if phase == SCRIPT_PERIOD as u8 - 1 {
+            // A question reruns this tick: DipServer has already run for it.
+            if self.dip_tick != Some(tmtmt) {
+                self.dip_tick = Some(tmtmt);
+                self.run_diplomacy(world, &mut commands);
+            }
             if !self.run_mission(world, &mut commands) {
                 return Vec::new();
             }
@@ -246,6 +334,7 @@ impl Scripts {
         if ai.vm.failed.is_some() {
             return;
         }
+        crate::aicity::enum_prop(&mut self.state, world, nation);
         // Refresh the objects the DLL holds pointers to, run, copy the AI's writes back.
         let mirrored: Vec<u16> =
             self.state.mirrors.get(&vm_id).map(|s| s.iter().copied().collect()).unwrap_or_default();
@@ -264,6 +353,7 @@ impl Scripts {
             events: &mut self.events,
             caller: Caller::Ai(nation),
             vm: vm_id,
+            dip: self.dip.as_mut(),
         };
         if let Err(e) = ai.vm.tick(&mut api) {
             self.errors.push(e);
@@ -273,6 +363,7 @@ impl Scripts {
         for idx in mirrored {
             let _ = guest::read_back(&ai.vm.machine.mem, world, idx);
         }
+        crate::aicity::execute(&mut self.state, world, nation);
     }
 
     /// The AI DLL the original would load for a computer nation (`LoadAIDLL` from game
@@ -316,6 +407,7 @@ impl Scripts {
             events: &mut self.events,
             caller: Caller::Mission,
             vm: MISSION_VM,
+            dip: None,
         };
         let result = vm.tick(&mut api);
         if self.trace {
@@ -363,6 +455,7 @@ impl Scripts {
             events: &mut self.events,
             caller: Caller::Mission,
             vm: MISSION_VM,
+            dip: None,
         };
         api::groups::run_group_orders(&mut api);
     }

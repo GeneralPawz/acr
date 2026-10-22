@@ -13,7 +13,7 @@ use crate::{Command, Result};
 pub const COMMANDS: &[Command] = &[
     Command {
         name: "mission-run",
-        usage: "<game-dir> <mission-id|map.m3d|script.dll> [--ticks N] [--trace] [--ai] [--units]   \
+        usage: "<game-dir> <mission-id|map.m3d|script.dll> [--ticks N] [--trace] [--ai] [--dip] [--units]   \
                 (run a mission with its script headless, print the event log)",
         run: |a| match a {
             [dir, mission, rest @ ..] => mission_run(Path::new(dir), mission, rest),
@@ -33,7 +33,8 @@ pub const COMMANDS: &[Command] = &[
 /// A mission to run: map, script and text file.
 struct MissionFiles {
     map: String,
-    script: String,
+    /// `None` for maps without a script (random maps: only AIs and DipServer run).
+    script: Option<String>,
     texts: Option<String>,
 }
 
@@ -48,11 +49,15 @@ fn resolve(vfs: &mut Vfs, what: &str) -> Result<MissionFiles> {
             || acr_formats::normalize_path(&m.script) == norm
     });
     if let Some(m) = found {
-        return Ok(MissionFiles { map: m.map.clone(), script: m.script.clone(), texts: Some(m.description.clone()) });
+        return Ok(MissionFiles {
+            map: m.map.clone(),
+            script: Some(m.script.clone()),
+            texts: Some(m.description.clone()),
+        });
     }
     if norm.ends_with(".M3D") {
         let m3d = M3dMap::parse(&vfs.read(what)?)?;
-        let script = m3d.mission_dll.filter(|s| !s.is_empty()).ok_or("the map names no mission script")?;
+        let script = m3d.mission_dll.filter(|s| !s.is_empty());
         return Ok(MissionFiles { map: what.to_owned(), script, texts: None });
     }
     Err(format!("{what}: not a mission id, map or script listed in Missions\\Missions.txt").into())
@@ -63,6 +68,7 @@ fn mission_run(dir: &Path, what: &str, rest: &[&str]) -> Result<()> {
     let mut trace = false;
     let mut ai = false;
     let mut units = false;
+    let mut dip = false;
     let mut it = rest.iter();
     while let Some(a) = it.next() {
         match *a {
@@ -70,12 +76,18 @@ fn mission_run(dir: &Path, what: &str, rest: &[&str]) -> Result<()> {
             "--trace" => trace = true,
             "--ai" => ai = true,
             "--units" => units = true,
+            "--dip" => dip = true,
             _ => return Err(crate::WRONG_ARGS.into()),
         }
     }
     let mut vfs = Vfs::open_game_dir(dir)?;
     let files = resolve(&mut vfs, what)?;
-    println!("map {}  script {}  texts {}", files.map, files.script, files.texts.as_deref().unwrap_or("-"));
+    println!(
+        "map {}  script {}  texts {}",
+        files.map,
+        files.script.as_deref().unwrap_or("-"),
+        files.texts.as_deref().unwrap_or("-")
+    );
     let data = crate::sim::load_sim_data(&mut vfs);
     let m3d = M3dMap::parse(&vfs.read(&files.map)?)?;
     let (mut world, report) = World::from_map(&m3d, &data.shapes, Arc::new(data.catalog), Arc::new(data.formations));
@@ -87,12 +99,42 @@ fn mission_run(dir: &Path, what: &str, rest: &[&str]) -> Result<()> {
     let mut scripts = Scripts::new(&m3d, &world, &texts, setup);
     scripts.set_strings(load_strings(&mut vfs));
     scripts.trace = trace;
-    let dll = vfs.read(&files.script)?;
     let t0 = Instant::now();
-    if let Err(e) = scripts.load_mission(&mut world, &dll, &files.script) {
-        println!("load failed: {e}");
+    if let Some(script) = &files.script {
+        let dll = vfs.read(script)?;
+        if let Err(e) = scripts.load_mission(&mut world, &dll, script) {
+            println!("load failed: {e}");
+        }
+    }
+    if dip {
+        // DipServer reads its tribe descriptions and dialog pages through the archives.
+        let paths: Vec<String> = vfs.list().map(|(p, _)| p.to_owned()).collect();
+        for p in paths {
+            let n = acr_formats::normalize_path(&p);
+            if (n.starts_with("DIP/") || n.starts_with("MISSIONS/CASH/") || n.starts_with("MISSIONS/RES/"))
+                && let Ok(b) = vfs.read(&p)
+            {
+                scripts.add_file(&p, b);
+            }
+        }
+        match vfs
+            .read("DipServer.dll")
+            .map_err(|e| e.to_string())
+            .and_then(|b| scripts.load_diplomacy(&mut world, &b, "DipServer.dll"))
+        {
+            Ok(()) => println!("DipServer.dll loaded"),
+            Err(e) => println!("DipServer.dll: {e}"),
+        }
     }
     let mut wanted: Vec<(u8, String)> = Vec::new();
+    // What the AI cities can produce: every nation's `[FIXED_PRODUCE]`.
+    let nds: Vec<String> =
+        vfs.list().map(|(p, _)| p.to_owned()).filter(|p| acr_formats::normalize_path(p).ends_with(".NDS")).collect();
+    for p in nds {
+        if let Ok(b) = vfs.read(&p) {
+            scripts.add_nation_file(&world, &b);
+        }
+    }
     if ai {
         let nations = vfs.read("NATIONS.LST").unwrap_or_default();
         for n in 1..7u8 {

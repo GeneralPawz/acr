@@ -288,6 +288,16 @@ fn find_next_zone_on_the_safe_way(api: &mut Api, c: &mut Call) -> Result<u32> {
     Ok(0xFFFF)
 }
 
+/// The area of a 64-px cell, for other modules.
+pub fn zone_of(api: &Api, cx: i32, cy: i32) -> u16 {
+    zone_at(api, cx, cy)
+}
+
+/// `CreateDangerMap` for the DipServer variants.
+pub fn danger_map_pub(api: &mut Api, c: &mut Call) -> Result<u32> {
+    danger_map(api, c, false)
+}
+
 /// Danger map of `CreateDangerMap` with a per-object term.
 fn danger_map(api: &mut Api, c: &mut Call, def: bool) -> Result<u32> {
     let nat = c.u8(0)? & 7;

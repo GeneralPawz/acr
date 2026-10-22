@@ -315,7 +315,7 @@ fn create_object0(api: &mut Api, c: &mut Call) -> Result<u32> {
 fn die_unit(api: &mut Api, c: &mut Call) -> Result<u32> {
     if let Some(u) = api.object(c.u16(0)?) {
         let id = u.id;
-        world_ops::kill(api.world, id);
+        world_ops::destruct(api.world, id);
     }
     Ok(0)
 }

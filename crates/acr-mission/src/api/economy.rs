@@ -31,7 +31,7 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("ProduceUnit", 0x566dd2, DONE, produce_unit),
     f("ProduceUnitFast", 0x566f36, DONE, produce_unit_fast),
     f("CheckProduction", 0x5672cc, DONE, check_production),
-    f("TryUnit", 0x56829b, AI_CITY, zero),
+    f("TryUnit", 0x56829b, Status::Partial("AI city without tech conditions; see aicity.rs"), try_unit),
     f("TryUpgrade", 0x5684d6, AI_CITY, zero),
     f("TryUpgradeEx", 0x568629, AI_CITY, zero),
     f("UpgIsDone", 0x569259, Status::Partial("upgrades applied by InitialUpgrade only"), upg_is_done),
@@ -404,11 +404,48 @@ fn ai_torg(api: &mut Api, c: &mut Call) -> Result<u32> {
     Ok(0)
 }
 
-/// `int GetUnits(GAMEOBJ* type)` / `GetReadyUnits`: objects of the type the AI nation owns.
+/// `bool TryUnit(GAMEOBJ* type, int max, byte costPercent, byte probability)`: proposes a
+/// project of the AI city when fewer than `max` objects of the type exist, the city can
+/// produce it now and, with the given probability, it costs at most `costPercent` of the
+/// stock.
+fn try_unit(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let Caller::Ai(n) = api.caller else {
+        api.st.error("ERROR: AI function must be called only from AI section.");
+        return Ok(0);
+    };
+    let Some(t) = api.type_arg(c, 0, "TryUnit : invalid <UnitType>")? else { return Ok(0) };
+    let (max, percent, prob) = (c.i32(1)?, i32::from(c.u8(2)?), i32::from(c.u8(3)?));
+    if prob > 100 {
+        api.st.error("TryUnit : invalid <Probability>");
+        return Ok(0);
+    }
+    let city = &api.st.cities[usize::from(n)];
+    if city.best.len() >= 127 {
+        return Ok(0);
+    }
+    let count = api.world.units.iter().filter(|u| u.living() && u.owner == n && u.kind == t).count() as i32;
+    let Some(&k) = city.index.get(&t).filter(|_| max > count) else { return Ok(0) };
+    let need = city.props[k].percent;
+    if api.world.random.rando() < crate::aicity::perconv(prob) && percent >= need {
+        api.st.cities[usize::from(n)].best.push(k);
+        return Ok(1);
+    }
+    Ok(0)
+}
+
+/// `int GetUnits(GAMEOBJ* type)` / `GetReadyUnits`: objects of the type the AI nation owns
+/// (`UnitAmount`), or only the finished ones (`ReadyAmount`).
 fn get_units(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Caller::Ai(n) = api.caller else { return Ok(0) };
     let Some(t) = api.type_arg(c, 0, c.name())? else { return Ok(0) };
-    Ok(api.world.units.iter().filter(|u| u.living() && u.owner == n && u.kind == t).count() as u32)
+    let ready_only = c.name() == "GetReadyUnits";
+    let stages = api.world.catalog.get(t).economy.build_stages;
+    Ok(api
+        .world
+        .units
+        .iter()
+        .filter(|u| u.living() && u.owner == n && u.kind == t && (!ready_only || !u.building || u.stage >= stages))
+        .count() as u32)
 }
 
 /// Puts units born from script productions into their destination groups

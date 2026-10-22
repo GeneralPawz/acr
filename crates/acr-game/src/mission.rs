@@ -42,6 +42,8 @@ fn wrap(line: &[u8], max: i32, width: &dyn Fn(&[u8]) -> i32) -> Vec<Vec<u8>> {
 
 const MISSIONS: &str = "Missions\\Missions.txt";
 const NATIONS: &str = "NATIONS.LST";
+/// The diplomacy system for neutral tribes, loaded in every game like the original.
+const DIPSERVER: &str = "DipServer.dll";
 /// Seconds a hint stays when the script gives no time.
 const MESSAGE_SECONDS: f64 = 6.0;
 const FONT: FontId = FontId("fon16y5");
@@ -61,6 +63,8 @@ pub struct MissionLink {
     /// Requested files and their contents once loaded (`None` = failed).
     files: BTreeMap<String, Option<Vec<u8>>>,
     text_sources: Vec<String>,
+    nation_files: Vec<String>,
+    dip_files: Vec<String>,
     /// Computer players of a random map (nations).
     computers: Vec<u8>,
     local_player: u8,
@@ -89,21 +93,27 @@ impl MissionLink {
             GameKind::Mission(m) => (None, None, Some(m.map.clone()), m.difficulty.index()),
             GameKind::RandomMap(_) => (None, None, None, 1),
         };
+        // Random maps put player k's units in nation `color` (random_map.rs).
+        let random = matches!(setup.kind, GameKind::RandomMap(_));
+        let nation_of = |i: usize| if random { setup.players.get(i).map_or(i as u8, |p| p.color) } else { i as u8 };
         let computers = setup
             .players
             .iter()
             .enumerate()
             .filter(|(_, p)| matches!(p.control, Control::Computer(_)))
-            .map(|(i, _)| i as u8)
+            .map(|(i, _)| nation_of(i))
             .collect();
+        let local_player = nation_of(setup.local_player);
         Self {
             script,
             texts,
             lookup_map,
             files: BTreeMap::new(),
             text_sources: Vec::new(),
+            nation_files: Vec::new(),
+            dip_files: Vec::new(),
             computers,
-            local_player: setup.local_player as u8,
+            local_player,
             difficulty: difficulty.min(3) as u8,
             scripts: None,
             pending_ais: Vec::new(),
@@ -123,6 +133,18 @@ impl MissionLink {
         self.text_sources = Texts::sources(&normalized);
         let mut want: Vec<String> = self.text_sources.clone();
         want.push(NATIONS.to_owned());
+        // The AI cities' production lists, DipServer and the files it reads.
+        self.nation_files = normalized.iter().filter(|p| p.ends_with(".NDS")).cloned().collect();
+        self.dip_files = normalized
+            .iter()
+            .filter(|p| p.starts_with("DIP/") || p.starts_with("MISSIONS/CASH/") || p.starts_with("MISSIONS/RES/"))
+            .cloned()
+            .collect();
+        want.extend(self.nation_files.iter().cloned());
+        want.extend(self.dip_files.iter().cloned());
+        want.push(DIPSERVER.to_owned());
+        // Every AI DLL (`TEXT\AI.TXT` names twelve), so `StartAI` never waits for a file.
+        want.extend(normalized.iter().filter(|p| p.starts_with("AI/") && p.ends_with(".DLL")).cloned());
         want.extend(self.script.clone());
         want.extend(self.texts.clone());
         if self.lookup_map.is_some() {
@@ -198,6 +220,21 @@ impl MissionLink {
             }
         }
         scripts.set_strings(strings);
+        for p in &self.nation_files {
+            if let Some(b) = self.file(p) {
+                scripts.add_nation_file(world, b);
+            }
+        }
+        for p in &self.dip_files {
+            if let Some(b) = self.file(p) {
+                scripts.add_file(p, b.to_vec());
+            }
+        }
+        if let Some(dll) = self.file(DIPSERVER).filter(|b| !b.is_empty())
+            && let Err(e) = scripts.load_diplomacy(world, dll, DIPSERVER)
+        {
+            log::error!("{e}");
+        }
         if let Some(path) = self.script.clone() {
             match self.file(&path).filter(|b| !b.is_empty()) {
                 Some(dll) => {
@@ -215,7 +252,7 @@ impl MissionLink {
                 ais.push((n, p));
             }
         }
-        if self.script.is_none() && ais.is_empty() {
+        if self.script.is_none() && ais.is_empty() && !scripts.has_diplomacy() {
             self.off = true;
             return Vec::new();
         }
@@ -230,8 +267,12 @@ impl MissionLink {
         if self.dialog.is_some() || self.ended.is_some() {
             return None;
         }
-        let Some(scripts) = &mut self.scripts else { return Some(Vec::new()) };
-        // AI DLLs requested at start or by StartAI, once their files are there.
+        // Deterministic start: the world does not move before the scripts run (they would
+        // otherwise start at a tick that depends on file loading).
+        let Some(scripts) = &mut self.scripts else { return if self.off { Some(Vec::new()) } else { None } };
+        // AI DLLs requested at start or by StartAI. All AI DLLs are preloaded, so a StartAI
+        // takes effect in the same tick as in the original; should one still be loading, the
+        // game waits for it instead of starting the AI at a timing-dependent tick.
         let mut wanted = std::mem::take(&mut self.pending_ais);
         wanted.extend(scripts.ai_requests());
         for (n, path) in wanted {
@@ -249,6 +290,9 @@ impl MissionLink {
                     self.pending_ais.push((n, path));
                 }
             }
+        }
+        if !self.pending_ais.is_empty() {
+            return None;
         }
         let commands = scripts.tick(world);
         for e in scripts.take_events() {
