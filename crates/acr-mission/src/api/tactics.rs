@@ -29,12 +29,7 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("EnumEnemyArmies", 0x578245, DONE, enum_enemy_armies),
     f("Attack3", 0x57ea15, DONE, attack3),
     f("Attack4", 0x580042, DONE, attack4),
-    f(
-        "Attack6",
-        0x580b71,
-        Status::Partial("ranged members enter empty buildings only of their own nation (no capture)"),
-        attack3,
-    ),
+    f("Attack6", 0x580b71, DONE, attack3),
     f("AttackByTomahawks", 0x574667, DONE, attack_by_tomahawks),
     f("AttackEnemyInZone2", 0x57dfb9, DONE, attack_enemy_in_zone2),
     f(
@@ -683,13 +678,10 @@ fn attack3(api: &mut Api, c: &mut Call) -> Result<u32> {
                 } else if best_d > f.max_r || api.world.units[i].orders.is_empty() {
                     let empty_building = api.world.units[t].building && api.world.units[t].inside.is_empty();
                     if six && empty_building {
-                        // Attack6 sends ranged members into an empty building (GoToMine): here
-                        // only into one of their own nation.
-                        let b = t;
-                        if api.world.units[b].owner == api.world.units[i].owner {
-                            acr_sim::economy::enter(api.world, i, b, 0xFF, false);
-                            prio_f0(api, i);
-                        }
+                        // Attack6 sends ranged members into an empty building (GoToMine), which
+                        // takes an enemy's.
+                        acr_sim::economy::enter(api.world, i, t, 0xFF, false);
+                        prio_f0(api, i);
                     } else if attack_obj_n(api, i, t, 0x90, acr_sim::combat::Placement::Replace, times) {
                         prio_f0(api, i);
                     }

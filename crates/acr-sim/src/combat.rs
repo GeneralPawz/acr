@@ -1508,7 +1508,7 @@ pub fn die(w: &mut World, i: usize) {
     u.in_motion = false;
     u.dest = None;
     u.burning = false;
-    if !u.building {
+    if !u.building && u.inside_of.is_none() {
         w.occupancy.clr_bar(u.cell.0, u.cell.1, u.lx);
     }
     w.bars.remove(i as u32);
