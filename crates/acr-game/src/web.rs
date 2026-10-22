@@ -23,7 +23,8 @@ pub async fn start_url(base: String, patches: Vec<String>) -> Result<(), JsValue
 fn run(assets: WebAssets) -> Result<(), JsValue> {
     let event_loop = crate::event_loop()?;
     let mut game = Game::new(event_loop.create_proxy(), Box::new(assets));
-    game.set_saves(Box::new(acr_app::saves::BrowserSaves));
+    game.set_saves(Box::new(acr_app::saves::BrowserSaves::default()));
+    game.set_profiles(Box::new(acr_app::saves::BrowserSaves::with_prefix("acr-player:")));
     event_loop.spawn_app(game);
     Ok(())
 }

@@ -320,6 +320,11 @@ impl InGame {
         self.mission.over()
     }
 
+    /// How the mission ended: `Some(true)` won, `Some(false)` lost, `None` not over.
+    pub fn mission_result(&self) -> Option<bool> {
+        self.mission.ended
+    }
+
     /// Escape after the end of the mission: leave now; false while it goes on.
     pub fn mission_escape(&mut self) -> bool {
         self.mission.escape()

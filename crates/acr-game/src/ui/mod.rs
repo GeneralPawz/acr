@@ -84,6 +84,8 @@ pub struct Ctx<'a> {
     pub profile: &'a std::cell::RefCell<screens::player_name::Profile>,
     /// Where savegames are kept.
     pub saves: &'a dyn acr_app::saves::SaveStore,
+    /// Written player profiles (`Players\<name>.txt`), see `single_mission::progress`.
+    pub profiles: &'a dyn acr_app::saves::SaveStore,
 }
 
 /// What a screen wants after handling input or a tick.
@@ -159,6 +161,7 @@ pub struct Ui {
     /// The game's cursor frame of `CURSOR_00.GP` and its hotspot, while no dialog is open.
     game_cursor: Option<(usize, [i32; 2])>,
     saves: Box<dyn acr_app::saves::SaveStore>,
+    profiles: Box<dyn acr_app::saves::SaveStore>,
     /// Shown on the loading screen while a saved game is replayed (0..=1).
     loading_progress: Option<f32>,
 }
@@ -184,6 +187,7 @@ impl Ui {
             in_game: false,
             game_cursor: None,
             saves: Box::new(acr_app::saves::MemorySaves::default()),
+            profiles: Box::new(acr_app::saves::MemorySaves::default()),
             loading_progress: None,
         };
         ui.stack.push(Entry { screen: Box::new(screens::main_menu::MainMenu::default()), built: false });
@@ -240,6 +244,40 @@ impl Ui {
         self.textures.set_image(name, image);
     }
 
+    /// Back to the menu a game was started from, like the original whose menu loops start
+    /// the game and continue after it (0x5c4e30, 0x5d66b0): the campaign's or the single
+    /// missions' list; random maps return to the main menu. A won campaign mission opens
+    /// the missions it names and stores the player's progress (0x4bcbb1).
+    pub fn finish_game(&mut self, setup: &GameSetup, won: Option<bool>) {
+        self.leave_game();
+        let GameKind::Mission(mission) = &setup.kind else { return };
+        match mission.campaign {
+            Some((campaign, index)) => {
+                if won == Some(true) {
+                    let mut progress = screens::single_mission::progress(&self.ctx());
+                    progress.win(campaign, index);
+                    self.store_progress(progress);
+                }
+                self.push(Box::new(screens::campaign::Campaigns::at(campaign)));
+                self.push(Box::new(screens::single_mission::SingleMission::campaign(campaign).at(index)));
+            }
+            None => self.push(Box::new(screens::single_mission::SingleMission::default())),
+        }
+    }
+
+    /// Keeps the player's campaign progress and writes it to `Players\<name>.txt`.
+    fn store_progress(&mut self, progress: acr_formats::missions::Progress) {
+        let name = acr_formats::CodePage::Cp1252.decode(&self.profile.borrow().name);
+        if let Err(e) = self.profiles.write(&name, &progress.write()) {
+            log::error!("campaign progress of {name}: {e}");
+        }
+        self.profile.borrow_mut().progress = Some(progress);
+    }
+
+    fn push(&mut self, screen: Box<dyn Screen>) {
+        self.stack.push(Entry { screen, built: false });
+    }
+
     /// Back to the main menu after a game ends or fails to start.
     pub fn leave_game(&mut self) {
         self.in_game = false;
@@ -279,6 +317,7 @@ impl Ui {
             settings: &self.settings,
             profile: &self.profile,
             saves: &*self.saves,
+            profiles: &*self.profiles,
         }
     }
 
@@ -318,6 +357,7 @@ impl Ui {
             settings: &self.settings,
             profile: &self.profile,
             saves: &*self.saves,
+            profiles: &*self.profiles,
         };
         let assets = top.screen.assets(&ctx);
         let waiting: Vec<&String> = assets.iter().filter(|p| !self.lib.settled(p)).collect();
@@ -356,6 +396,7 @@ impl Ui {
                 settings: &self.settings,
                 profile: &self.profile,
                 saves: &*self.saves,
+                profiles: &*self.profiles,
             };
             let nav = self.stack.last_mut().map_or(Nav::Stay, |e| e.screen.tick(&ctx));
             self.collect_sounds();
@@ -382,6 +423,7 @@ impl Ui {
             settings: &self.settings,
             profile: &self.profile,
             saves: &*self.saves,
+            profiles: &*self.profiles,
         };
         let nav = self.stack.last_mut().unwrap().screen.input(&ctx, input);
         self.collect_sounds();
@@ -423,6 +465,7 @@ impl Ui {
                     settings: &self.settings,
                     profile: &self.profile,
                     saves: &*self.saves,
+                    profiles: &*self.profiles,
                 };
                 let nav = self.stack.last_mut().map_or(Nav::Quit, |e| e.screen.on_return(&ctx, value));
                 let action = self.navigate(nav);
@@ -470,6 +513,7 @@ impl Ui {
                 settings: &self.settings,
                 profile: &self.profile,
                 saves: &*self.saves,
+                profiles: &*self.profiles,
             };
             self.stack.last_mut().unwrap().screen.input(&ctx, Input::MouseMove(p));
         }
@@ -477,6 +521,10 @@ impl Ui {
     }
 
     /// Where savegames are kept (the game folder, or the browser's storage).
+    pub fn set_profiles(&mut self, profiles: Box<dyn acr_app::saves::SaveStore>) {
+        self.profiles = profiles;
+    }
+
     pub fn set_saves(&mut self, saves: Box<dyn acr_app::saves::SaveStore>) {
         self.saves = saves;
     }
@@ -538,5 +586,50 @@ impl Ui {
         }
         self.textures.resolve(device, queue, images, &self.lib, &self.fonts, canvas, &draws, &mut out);
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CAMPAIGNS: &[u8] =
+        b"1\r\nKolumbus\r\nk.txt\r\nk.bmp\r\n3\r\n#c1@ ON 1 1 1\r\n#c2@ OFF 2 2 2\r\n#c3@ OFF 1 1 1\r\n";
+
+    fn campaign_setup(index: usize) -> GameSetup {
+        GameSetup {
+            kind: GameKind::Mission(MissionSetup {
+                id: format!("#c{}@", index + 1),
+                name: Vec::new(),
+                map: String::new(),
+                script: String::new(),
+                texts: String::new(),
+                difficulty: Difficulty::from_index(1),
+                campaign: Some((0, index)),
+            }),
+            players: Vec::new(),
+            local_player: 0,
+        }
+    }
+
+    #[test]
+    fn a_won_campaign_mission_opens_the_next_and_returns_to_its_list() {
+        let mut ui = Ui::new(&[screens::campaign::CAMPAIGNS.to_owned()]);
+        ui.lib.want(screens::campaign::CAMPAIGNS);
+        ui.lib.take_requests();
+        ui.lib.insert(screens::campaign::CAMPAIGNS, Ok(CAMPAIGNS.to_vec()));
+        ui.profile.borrow_mut().name = b"Einstein".to_vec();
+        ui.finish_game(&campaign_setup(0), Some(false));
+        assert_eq!(ui.stack.len(), 3, "main menu, campaigns, the campaign's missions");
+        assert_eq!(screens::single_mission::progress(&ui.ctx()).shown(0), 1);
+
+        ui.finish_game(&campaign_setup(0), Some(true));
+        let progress = screens::single_mission::progress(&ui.ctx());
+        assert!(progress.is_open(0, 1) && !progress.is_open(0, 2));
+        assert_eq!(ui.profiles.read("Einstein").as_deref(), Some(&b"1 3 16843009 33686017 16843008 "[..]));
+
+        // A new program run reads the progress back from the written profile.
+        ui.profile.borrow_mut().progress = None;
+        assert_eq!(screens::single_mission::progress(&ui.ctx()).shown(0), 2);
     }
 }

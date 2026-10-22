@@ -22,9 +22,16 @@ pub struct Campaigns {
     list: WidgetId,
     texts: Vec<(WidgetId, WidgetId)>,
     shown: Option<usize>,
+    /// The campaign selected when the list opens.
+    start: usize,
 }
 
 impl Campaigns {
+    /// Opens the list with campaign `index` selected (returning from a game).
+    pub fn at(index: usize) -> Self {
+        Self { start: index, ..Self::default() }
+    }
+
     fn load(ctx: &Ctx) -> Vec<Campaign> {
         ctx.lib.bytes(CAMPAIGNS).map(|b| missions::parse_campaigns(&b)).unwrap_or_default()
     }
@@ -67,6 +74,7 @@ impl Screen for Campaigns {
         list.dy = -3;
         list.dx -= 1 + 16;
         list.items = self.campaigns.iter().map(|c| c.name.clone()).collect();
+        list.cur = self.start.min(list.items.len().saturating_sub(1));
         for campaign in &self.campaigns {
             let bar = m.d.add_scroll_bar(ctx.lib, 755, 338, 290, 1, 0, VSCROLL, 0);
             let text = ctx.lib.bytes(&campaign.description).map(|b| b.to_vec()).unwrap_or_default();

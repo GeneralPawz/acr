@@ -154,8 +154,27 @@ description, count, count lines), the order from `Missions\SingleMiss.txt`.
 - Titles `INTF_SMISS_T0` (campaign: `INTF_CMISS_T0`), `T1` (303, 107), `T2` (787, 106),
   `T3` (787, 401), `INTF_SMISS_DIFF` (98, 640).
 - Campaign missions: the campaign's background from `Campaigns.txt`, 10 rows, OK sound
-  `START`, cancel hint `WAR_CANCEL`. ACR lists the missions marked `ON` (no campaign
-  progress yet).
+  `START`, cancel hint `WAR_CANCEL`. The list shows the campaign's missions up to the last
+  one the player has opened (0x5c5432), see below.
+
+The menu screens start the game from their own loop and continue after it, so a game
+ends back in the list it was started from: the campaign's or the single missions' list
+with the mission still selected; ACR returns random maps to the main menu.
+
+#### Campaign progress
+
+The campaign table at 0x28b7728 (count 0x28b773c, 0x18-byte records at 0x28b7740:
+mission count at +0xc, one word per mission at +0x14) holds per mission: bit 0 of the
+low byte = open, the three higher bytes = the missions a victory opens — the
+`#id ON|OFF a b c` line of `Campaigns.txt`. A victory in campaign mission
+(0x676bb8, 0x676bbc) sets bit 0 of those three missions (0x4bcbb1) and writes the
+player's file (0x56ad86 → 0x56ac4e). The file `Players\<name>.txt` is `"%d "` words:
+the campaign count, then per campaign its mission count and words. Reading (0x56ad98)
+stops at the first count that does not fit `Campaigns.txt`; without a file the player
+gets `standart player info.txt` (0x56af11). `acr_formats::missions::Progress` holds the
+table; ACR writes it through the profile store (`Players\*.txt` on the desktop,
+`localStorage` `acr-player:<name>` in the browser), which wins over the installation's
+file when reading.
 
 ### Campaigns (0x5ca690)
 

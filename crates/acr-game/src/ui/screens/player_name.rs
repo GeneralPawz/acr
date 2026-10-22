@@ -28,6 +28,8 @@ pub struct Profile {
     pub names: Vec<Vec<u8>>,
     /// The name last saved under, the save dialog's default (0xbd63a8).
     pub last_save: Vec<u8>,
+    /// The campaign progress of `name` once read or changed by a victory.
+    pub progress: Option<acr_formats::missions::Progress>,
 }
 
 impl Profile {
@@ -39,11 +41,14 @@ impl Profile {
             .filter(|l| !l.is_empty())
             .take(10)
             .collect();
-        Self { name: names.first().cloned().unwrap_or_default(), names, last_save: Vec::new() }
+        Self { name: names.first().cloned().unwrap_or_default(), names, last_save: Vec::new(), progress: None }
     }
 
     /// Makes `name` the current player and moves it to the top of the list.
     pub fn choose(&mut self, name: &[u8]) {
+        if self.name != name {
+            self.progress = None;
+        }
         self.name = name.to_vec();
         self.names.retain(|n| n != name);
         self.names.insert(0, name.to_vec());

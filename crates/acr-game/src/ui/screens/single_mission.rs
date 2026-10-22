@@ -1,8 +1,9 @@
 //! The single missions screen (0x5d66b0) and the missions of a campaign (0x5c4e30).
 //!
 //! The campaign form uses the campaign's background from `Campaigns.txt`, a 10-row list of
-//! the campaign's open missions, previews next to the briefings (`.txt` -> `.bmp`) and the
-//! title `INTF_CMISS_T0`.
+//! the campaign's missions up to the last one the player has opened (0x5c5432, see
+//! [`progress`]), previews next to the briefings (`.txt` -> `.bmp`) and the title
+//! `INTF_CMISS_T0`.
 //!
 //! A list of the missions of `Missions\SingleMiss.txt` (17 rows, `Interf2\ListBox`
 //! highlight frames 3-5) with its scroll bar, the map preview `Maps2\single<n>.bmp`
@@ -26,6 +27,31 @@ const GAMEMAP: &str = "INTERF2\\GAMEMAP.GP";
 const GAMEBUTTONS: &str = "INTERF2\\GAMEBUTTONS.GP";
 pub const MISSIONS: &str = "MISSIONS\\MISSIONS.TXT";
 const SINGLE: &str = "MISSIONS\\SINGLEMISS.TXT";
+/// The progress of players without a file of their own.
+const STANDARD_PLAYER: &str = "PLAYERS\\STANDART PLAYER INFO.TXT";
+
+/// The progress file of player `name` (CP1252).
+pub fn player_file(name: &[u8]) -> String {
+    format!("PLAYERS\\{}.TXT", acr_formats::CodePage::Cp1252.decode(name))
+}
+
+/// The current player's campaign progress: kept since a victory, else the player's file
+/// (written by us, else the installation's), else `standart player info.txt`, else the `ON`
+/// missions of `Campaigns.txt` (0x56af11).
+pub fn progress(ctx: &Ctx) -> missions::Progress {
+    if let Some(p) = &ctx.profile.borrow().progress {
+        return p.clone();
+    }
+    let campaigns =
+        ctx.lib.bytes(super::campaign::CAMPAIGNS).map(|b| missions::parse_campaigns(&b)).unwrap_or_default();
+    let name = ctx.profile.borrow().name.clone();
+    let written = ctx.profiles.read(&acr_formats::CodePage::Cp1252.decode(&name));
+    let data = written.or_else(|| ctx.lib.bytes(&player_file(&name)).map(|b| b.to_vec()));
+    match data.or_else(|| ctx.lib.bytes(STANDARD_PLAYER).map(|b| b.to_vec())) {
+        Some(data) => missions::Progress::read(&data, &campaigns),
+        None => missions::Progress::new(&campaigns),
+    }
+}
 
 /// Text viewer of the briefing: position, size, line height and its scroll bar.
 const TEXT: (i32, i32, [i32; 2]) = (605, 445, [342, 226]);
@@ -35,6 +61,8 @@ const TEXT_LINE_H: i32 = 21;
 pub struct SingleMission {
     /// Index into `Campaigns.txt` for the missions of a campaign.
     campaign: Option<usize>,
+    /// The mission selected when the list opens.
+    start: usize,
     menu: Menu,
     missions: Vec<Mission>,
     list: WidgetId,
@@ -51,16 +79,25 @@ impl SingleMission {
         Self { campaign: Some(index), ..Self::default() }
     }
 
-    /// The missions in menu order: the single missions, or the open missions of the campaign.
+    /// Opens the list with mission `index` selected (returning from a game).
+    pub fn at(mut self, index: usize) -> Self {
+        self.start = index;
+        self
+    }
+
+    /// The missions in menu order: the single missions, or the campaign's missions up to the
+    /// last open one.
     fn load(&self, ctx: &Ctx) -> Vec<Mission> {
         let Some(all) = ctx.lib.bytes(MISSIONS) else { return Vec::new() };
         let all = missions::parse_missions(&all);
         let ids: Vec<String> = match self.campaign {
             None => ctx.lib.bytes(SINGLE).map(|b| missions::parse_single(&b)).unwrap_or_default(),
-            Some(_) => self
-                .campaign_info(ctx)
-                .map(|camp| camp.missions.iter().filter(|m| m.open).map(|m| m.id.clone()).collect())
-                .unwrap_or_default(),
+            Some(c) => {
+                let shown = progress(ctx).shown(c);
+                self.campaign_info(ctx)
+                    .map(|camp| camp.missions.iter().take(shown).map(|m| m.id.clone()).collect())
+                    .unwrap_or_default()
+            }
         };
         ids.iter().filter_map(|id| missions::find(&all, id).cloned()).collect()
     }
@@ -131,6 +168,10 @@ impl Screen for SingleMission {
             [VSCROLL, COMBO, LISTBOX, GAMEMAP, GAMEBUTTONS, MISSIONS, SINGLE, super::campaign::CAMPAIGNS]
                 .map(String::from)
                 .to_vec();
+        if self.campaign.is_some() {
+            files.push(player_file(&ctx.profile.borrow().name));
+            files.push(STANDARD_PLAYER.to_owned());
+        }
         files.push(self.background(ctx));
         files.extend(self.load(ctx).iter().map(|m| m.briefing().to_owned()));
         files
@@ -154,6 +195,7 @@ impl Screen for SingleMission {
         list.dy = -3;
         list.dx -= 16;
         list.items = self.missions.iter().map(|m| m.name.clone()).collect();
+        list.cur = self.start.min(list.items.len().saturating_sub(1));
         self.difficulty = m.d.add_combo_box(ctx.lib, 213, 638, COMBO, 0, 9, font::F18W, font::F18Y3);
         let combo = m.d.combo_mut(self.difficulty);
         combo.drop_dx -= 5;

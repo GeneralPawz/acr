@@ -308,6 +308,10 @@ impl Game {
     }
 
     /// Where savegames are kept: `Save\` in the game folder, or the browser's storage.
+    pub fn set_profiles(&mut self, profiles: Box<dyn acr_app::saves::SaveStore>) {
+        self.ui.set_profiles(profiles);
+    }
+
     pub fn set_saves(&mut self, saves: Box<dyn acr_app::saves::SaveStore>) {
         self.ui.set_saves(saves);
     }
@@ -345,9 +349,12 @@ impl Game {
         self.start_game(setup);
     }
 
-    /// Ends the current game and returns to the main menu.
+    /// Ends the current game and returns to the menu it was started from.
     fn leave_game(&mut self) {
-        self.ui.leave_game();
+        match &self.mode {
+            Mode::InGame(game) => self.ui.finish_game(&game.setup, game.mission_result()),
+            _ => self.ui.leave_game(),
+        }
         self.mode = Mode::Menus;
         if let Some(window) = &self.window {
             window.set_cursor_visible(false);
