@@ -20,7 +20,8 @@ class Patterns(unittest.TestCase):
                      "sleeve_top", "sleeve_under", "cuff", "collar"):
             self.assertIn(name, coat)
         self.assertEqual({p for p, x in self.uni["breeches"][0].items()},
-                         {"br_front", "br_back", "fall", "waistband", "knee_band"})
+                         {"br_front", "br_back", "waistband", "knee_band"})
+        self.assertEqual(coat["lapel"].tack, "coat_front")
 
     def test_outlines_counter_clockwise_and_edges_valid(self):
         for g, (panels, seams) in self.uni.items():

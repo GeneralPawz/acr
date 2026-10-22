@@ -40,15 +40,15 @@ MEASURE = {
 }
 
 # Ease (cm of girth) per garment over the body.
-EASE = {"waistcoat": 6.0, "coat": 12.0, "breeches": 6.0, "gaiters": 3.0, "shirt": 2.0}
+EASE = {"waistcoat": 8.0, "coat": 20.0, "breeches": 6.0, "gaiters": 3.0, "shirt": 2.0}
 
 # Wool broadcloth, linen and canvas: thickness (m) of the solidified cloth, sim settings.
 CLOTH = {
-    "coat": {"thickness": 0.0030, "mass": 0.45, "tension": 18.0, "bending": 2.0, "shrink": 0.03},
-    "waistcoat": {"thickness": 0.0020, "mass": 0.30, "tension": 15.0, "bending": 0.8, "shrink": 0.05},
-    "breeches": {"thickness": 0.0020, "mass": 0.30, "tension": 15.0, "bending": 0.6, "shrink": 0.06},
-    "gaiters": {"thickness": 0.0020, "mass": 0.30, "tension": 20.0, "bending": 1.0, "shrink": 0.04},
-    "shirt": {"thickness": 0.0012, "mass": 0.15, "tension": 10.0, "bending": 0.2, "shrink": 0.0},
+    "coat": {"thickness": 0.0030, "mass": 0.45, "tension": 18.0, "bending": 2.0, "shrink": 0.0, "margin": 0.006},
+    "waistcoat": {"thickness": 0.0020, "mass": 0.30, "tension": 15.0, "bending": 0.8, "shrink": 0.05, "margin": 0.004},
+    "breeches": {"thickness": 0.0020, "mass": 0.30, "tension": 15.0, "bending": 0.6, "shrink": 0.06, "margin": 0.003},
+    "gaiters": {"thickness": 0.0020, "mass": 0.30, "tension": 20.0, "bending": 1.0, "shrink": 0.04, "margin": 0.003},
+    "shirt": {"thickness": 0.0012, "mass": 0.15, "tension": 10.0, "bending": 0.2, "shrink": 0.0, "margin": 0.002},
 }
 
 # Order in which the garments are draped (each collides with the body and those before).
@@ -60,7 +60,8 @@ class Panel:
     = the outline from vertex i to vertex j (forwards, wrapping); `key` the material key;
     `skirt` marks free-hanging cloth (own weights, runtime cloth later)."""
 
-    def __init__(self, name, garment, key, outline, edges, place, mirror=True, skirt=False, grain=(0.0, 1.0)):
+    def __init__(self, name, garment, key, outline, edges, place, mirror=True, skirt=False, grain=(0.0, 1.0),
+                 tack=None):
         self.name = name
         self.garment = garment
         self.key = key
@@ -70,6 +71,7 @@ class Panel:
         self.mirror = mirror
         self.skirt = skirt
         self.grain = grain
+        self.tack = tack  # base panel an overlay (lapel, turnback) is tacked onto
 
     def edge_points(self, edge):
         """The outline points of `edge` in order (inclusive)."""
@@ -184,65 +186,69 @@ def coat(m=MEASURE):
     u_ah = fw_c
     front = [(0.0, 0.0), (fw_w, 0.0), (u_ah, top - ah), (u_ah - 4.0, top - ah + 5.0),
              (u_ah - 7.0, top - ah + 11.0), (neck_r + sh - 1.0, top - 2.5),
-             (neck_r, top), (neck_r * 0.6, top - neck_r * 0.8), (0.0, top - neck_r * 1.3)]
+             (neck_r, top), (neck_r * 0.6, top - neck_r * 0.8), (0.0, top - neck_r * 1.3),
+             (0.0, top - neck_r * 1.3 - 5.0)]
+    # The fronts were hooked together at the top of the chest (`hook`), the lapels
+    # buttoned back on them, the skirts falling open below.
     P["coat_front"] = Panel("coat_front", "coat", "coat", front,
                             {"waist": (0, 1), "side": (1, 2), "armhole": (2, 5), "shoulder": (5, 6),
-                             "neck": (6, 8), "cf": (8, 0)},
-                            {"region": "torso", "theta": 0.0, "dir": 1, "u0": 0.0, "at": "waist", "gap": 1.5})
+                             "neck": (6, 8), "cf": (8, 0), "hook": (8, 9)},
+                            {"region": "torso", "theta": 0.0, "dir": 1, "u0": 0.0, "at": "waist", "gap": 2.5})
     # Lapel (facing colour): sewn along the CF edge, lying back on the chest, wider at the
     # top (the 1768 lapel ran to the waist, 7.5 cm wide at the top).
     lp = [(0.0, 0.0), (6.0, 0.0), (8.0, top - neck_r * 1.3 - 4.0), (7.0, top - neck_r * 1.3),
           (0.0, top - neck_r * 1.3)]
     P["lapel"] = Panel("lapel", "coat", "facings", lp, {"cf": (4, 0), "outer": (1, 2)},
-                       {"region": "torso", "theta": 0.0, "dir": 1, "u0": 0.0, "at": "waist", "gap": 2.3, "layer": 1})
+                       {"region": "torso", "theta": 0.0, "dir": 1, "u0": 0.0, "at": "waist", "gap": 3.2, "layer": 1},
+                       tack="coat_front")
     # Back (left): CB seam, side seam, armhole, shoulder seam.
     back = [(0.0, 0.0), (bw_w, 0.0), (bw_c, top - ah), (bw_c + 1.0, top - ah + 9.0),
             (neck_r + sh, top - 1.5), (neck_r, top), (0.0, top - 1.5)]
     P["coat_back"] = Panel("coat_back", "coat", "coat", back,
                            {"waist": (0, 1), "side": (1, 2), "armhole": (2, 4), "shoulder": (4, 5),
                             "neck": (5, 6), "cb": (6, 0)},
-                           {"region": "torso", "theta": 180.0, "dir": -1, "u0": 0.0, "at": "waist", "gap": 1.5})
+                           {"region": "torso", "theta": 180.0, "dir": -1, "u0": 0.0, "at": "waist", "gap": 2.5})
     # Skirts: waist seam to the knee, flared (the pleats at the side are let out as flare).
     drop = m["waist_to_knee"] + 2.0
     # The front edge curves away below the waist (cutaway); v rises from the hem.
-    tb_top = drop - 16.0
-    fs = [(4.0, 0.0), (17.0, 0.0), (fw_w + 7.0, 0.0), (fw_w - 1.0, drop), (2.0, drop - 1.0), (0.0, drop - 8.0),
-          (0.7, tb_top)]
+    tb_top = drop * 0.45
+    fs = [(12.0, 0.0), (25.0, 0.0), (fw_w + 7.0, 0.0), (fw_w - 1.0, drop), (2.0, drop - 1.0), (0.0, drop - 8.0),
+          (5.0, tb_top)]
     P["skirt_front"] = Panel("skirt_front", "coat", "coat", fs,
                              {"hem_tb": (0, 1), "hem": (0, 2), "side": (2, 3), "waist": (3, 4), "front": (4, 0),
                               "front_low": (6, 0)},
                              {"region": "torso", "theta": 4.0, "dir": 1, "u0": 0.0, "at": "waist", "lift": -drop,
-                              "gap": 2.5}, skirt=True)
+                              "gap": 4.0}, skirt=True)
     bs = [(0.0, 0.0), (bw_w + 9.0, 0.0), (bw_w, drop), (0.0, drop)]
     P["skirt_back"] = Panel("skirt_back", "coat", "coat", bs,
                             {"hem": (0, 1), "side": (1, 2), "waist": (2, 3), "vent": (3, 0)},
                             {"region": "torso", "theta": 180.0, "dir": -1, "u0": 0.0, "at": "waist",
-                             "lift": -drop, "gap": 2.5}, skirt=True)
+                             "lift": -drop, "gap": 4.0}, skirt=True)
     # Turnback: the skirt's front corner hooked back, its white lining outwards: a triangle
     # lying on the skirt front, sewn along the front edge and the hem.
-    tb = [(4.0, 0.0), (17.0, 0.0), (0.7, tb_top)]
+    tb = [(12.0, 0.0), (25.0, 0.0), (5.0, tb_top)]
     P["turnback"] = Panel("turnback", "coat", "lining", tb, {"hem": (0, 1), "fold": (1, 2), "front": (2, 0)},
                           {"region": "torso", "theta": 4.0, "dir": 1, "u0": 0.0, "at": "waist", "lift": -drop,
-                           "gap": 3.3, "layer": 1}, skirt=True)
+                           "gap": 4.8, "layer": 1}, skirt=True, tack="skirt_front")
     # Two-piece sleeve: the top sleeve over the outside of the arm with the cap, the under
     # sleeve in the armpit; seams at the front and back of the arm.
     arm_len = m["arm"]
-    up_g = m["upper_arm"] + 8.0
+    up_g = m["upper_arm"] + 6.0
     wr_g = m["wrist"] + 12.0
     tw_top, tw_wr = up_g * 0.62, wr_g * 0.60
     uw_top, uw_wr = up_g * 0.38, wr_g * 0.40
-    cap = 9.0
+    cap = 8.0
     top_sl = [(-tw_wr / 2, 0.0), (tw_wr / 2, 0.0), (tw_top / 2, arm_len - cap),
               (tw_top / 4, arm_len - cap * 0.25), (0.0, arm_len), (-tw_top / 4, arm_len - cap * 0.25),
               (-tw_top / 2, arm_len - cap)]
     P["sleeve_top"] = Panel("sleeve_top", "coat", "coat", top_sl,
                             {"wrist": (0, 1), "fwd": (1, 2), "cap_front": (2, 4), "cap_back": (4, 6), "back": (6, 0)},
-                            {"region": "arm", "theta": 0.0, "dir": 1, "u0": 0.0, "at": "wrist", "gap": 2.0})
+                            {"region": "arm", "theta": 0.0, "dir": 1, "u0": 0.0, "at": "wrist", "gap": 2.5})
     under = [(-uw_wr / 2, 0.0), (uw_wr / 2, 0.0), (uw_top / 2, arm_len - cap), (0.0, arm_len - cap - 3.0),
              (-uw_top / 2, arm_len - cap)]
     P["sleeve_under"] = Panel("sleeve_under", "coat", "coat", under,
                               {"wrist": (0, 1), "back": (1, 2), "pit_back": (2, 3), "pit_front": (3, 4), "fwd": (4, 0)},
-                              {"region": "arm", "theta": 180.0, "dir": 1, "u0": 0.0, "at": "wrist", "gap": 2.0})
+                              {"region": "arm", "theta": 180.0, "dir": 1, "u0": 0.0, "at": "wrist", "gap": 2.5})
     # Round cuff (facing colour), deep, closed at the back of the arm.
     cuff_g = wr_g + 4.0
     P["cuff"] = Panel("cuff", "coat", "facings", [(0.0, 0.0), (cuff_g, 0.0), (cuff_g + 1.0, 11.0), (-1.0, 11.0)],
@@ -258,6 +264,7 @@ def coat(m=MEASURE):
         Seam([("coat_front", "side")], [("coat_back", "side")], "coat"),
         Seam([("coat_front", "shoulder")], [("coat_back", "shoulder")], "coat", ease=0.25),
         Seam([("coat_back", "cb")], [("coat_back", "cb", False, "R")], "coat"),  # centre back
+        Seam([("coat_front", "hook")], [("coat_front", "hook", False, "R")], "coat"),
         Seam([("coat_front", "waist")], [("skirt_front", "waist", True)], "coat", ease=0.3),
         Seam([("coat_back", "waist")], [("skirt_back", "waist", True)], "coat", ease=0.5),
         Seam([("skirt_back", "side")], [("skirt_front", "side")], "coat", ease=0.2),
@@ -293,12 +300,12 @@ def waistcoat(m=MEASURE):
           (q_chest - 4.0, top - ah + 9.0), (neck_r + sh, top - 2.0), (neck_r, top), (0.0, top - 16.0)]
     P["wc_front"] = Panel("wc_front", "waistcoat", "waistcoat", fr,
                           {"side": (2, 3), "armhole": (3, 5), "shoulder": (5, 6), "cf": (7, 0)},
-                          {"region": "torso", "theta": 0.0, "dir": 1, "u0": 0.0, "at": "waist", "gap": 0.8})
+                          {"region": "torso", "theta": 0.0, "dir": 1, "u0": 0.0, "at": "waist", "gap": 1.2})
     bk = [(0.0, -below + 3.0), (q_waist - 2.0, -below + 2.0), (q_chest - 1.5, top - ah),
           (q_chest - 3.0, top - ah + 10.0), (neck_r + sh, top - 1.5), (neck_r, top), (0.0, top - 1.5)]
     P["wc_back"] = Panel("wc_back", "waistcoat", "waistcoat", bk,
                          {"side": (1, 2), "armhole": (2, 4), "shoulder": (4, 5), "cb": (6, 0)},
-                         {"region": "torso", "theta": 180.0, "dir": -1, "u0": 0.0, "at": "waist", "gap": 0.8})
+                         {"region": "torso", "theta": 180.0, "dir": -1, "u0": 0.0, "at": "waist", "gap": 1.2})
     seams = [
         Seam([("wc_front", "side")], [("wc_back", "side")], "waistcoat"),
         Seam([("wc_front", "shoulder")], [("wc_back", "shoulder")], "waistcoat", ease=0.25),
@@ -309,8 +316,8 @@ def waistcoat(m=MEASURE):
 
 
 def breeches(m=MEASURE):
-    """Breeches: front and back per leg (the back with the seat), a fall front over the
-    front opening, a waistband and buttoned knee bands."""
+    """Breeches: front and back per leg (the back with the seat), a waistband and buttoned
+    knee bands."""
     e = EASE["breeches"]
     q_seat = (m["seat"] + e) / 4.0
     q_waist = (m["waist"] + e) / 4.0
@@ -336,10 +343,8 @@ def breeches(m=MEASURE):
                          {"fork": (0, 1), "cb": (1, 2), "waist": (2, 3), "outseam": (3, 6), "knee": (6, 7),
                           "inseam": (7, 0)},
                          {"region": "leg", "theta": -90.0, "dir": 1, "u0": 0.0, "at": "knee", "gap": 1.0})
-    P["fall"] = Panel("fall", "breeches", "breeches", [(0.0, 0.0), (14.0, 0.0), (14.0, 14.0), (0.0, 14.0)],
-                      {"bottom": (0, 1), "top": (2, 3)},
-                      {"region": "torso", "theta": 0.0, "dir": 1, "u0": 0.0, "at": "waist", "lift": -14.0,
-                       "gap": 1.8, "layer": 1})
+    # The fall front (a 14 cm flap buttoned to the waistband) lies under the waistcoat and is
+    # not cut yet: as a free overlay it fought the breeches in the sim.
     wb = (m["waist"] + e) / 2.0
     P["waistband"] = Panel("waistband", "breeches", "breeches", [(0.0, 0.0), (14.0, 0.0), (wb, 0.0), (wb, 4.0), (0.0, 4.0)],
                            {"bottom_fall": (0, 1), "bottom": (0, 2), "top": (3, 4)},
@@ -361,7 +366,7 @@ def breeches(m=MEASURE):
         Seam([("knee_band", "bottom")], [("br_back", "knee"), ("br_front", "knee")], "breeches", ease=0.3),
         Seam([("waistband", "bottom")], [("br_front", "waist", True), ("br_back", "waist", True)], "breeches",
              ease=0.3),
-        Seam([("fall", "top", True)], [("waistband", "bottom_fall")], "breeches"),
+
     ]
     return P, seams
 
@@ -372,10 +377,12 @@ def gaiters(m=MEASURE):
     calf = m["calf"] + EASE["gaiters"]
     ank = m["ankle"] + 8.0
     h = m["knee_to_ankle"] - 3.0
-    g = [(0.0, 0.0), (ank * 0.75, -7.0), (ank, 0.0), (calf, h * 0.55), (calf - 1.0, h), (1.0, h), (0.0, h * 0.55)]
+    top = m["knee"] + 3.0  # buttoned snug below the knee
+    g = [(0.0, 0.0), (ank * 0.75, -4.0), (ank, 0.0), (calf, h * 0.55), (top, h), (0.0, h), (0.0, h * 0.55)]
     P = {"gaiter": Panel("gaiter", "gaiters", "gaiters", g,
                          {"bottom": (0, 2), "outer": (2, 4), "top": (4, 5), "start": (5, 0)},
-                         {"region": "leg", "theta": 90.0, "dir": 1, "u0": 0.0, "at": "ankle", "lift": 1.0, "gap": 1.0})}
+                         {"region": "leg", "theta": 90.0, "dir": 1, "u0": 0.0, "at": "ankle", "lift": 1.0, "gap": 1.0,
+                          "pin": "top"})}
     # The outside opening is buttoned: start and outer edges are sewn shut.
     seams = [Seam([("gaiter", "start", True)], [("gaiter", "outer")], "gaiters")]
     return P, seams
