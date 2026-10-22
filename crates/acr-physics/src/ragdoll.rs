@@ -189,6 +189,170 @@ pub fn skeleton_h() -> Vec<BoneDesc> {
     v
 }
 
+/// One bone of an arbitrary rig, for [`skeleton_generic`] (skeleton space: metres, `+X`
+/// left, `-Y` forward, `+Z` up, rest pose). Parents come before their children.
+#[derive(Clone, Copy, Debug)]
+pub struct RigBone {
+    pub name: &'static str,
+    /// Index of the parent in the list (`None` for the root).
+    pub parent: Option<usize>,
+    pub head: [f32; 3],
+    pub tail: [f32; 3],
+    /// Radius of the flesh around the bone (m), e.g. from the skinned vertices; 0: unknown
+    /// (a quarter of the bone's length).
+    pub radius: f32,
+}
+
+/// Density of flesh (kg/m³) for masses by volume, a little under water's: capsules overlap
+/// at the joints.
+pub const FLESH_DENSITY: f32 = 850.0;
+
+/// What a bone of an arbitrary rig is, by its name and place in the hierarchy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BoneKind {
+    Root,
+    /// Spine, chest, hips: stiff.
+    Spine,
+    Neck,
+    Head,
+    Jaw,
+    Tail,
+    /// Shoulder blade, collarbone or a pelvis side bone: the first bone of a limb, barely
+    /// moving.
+    Girdle,
+    /// The upper bone of a leg (shoulder or hip joint).
+    Upper,
+    /// Middle bones of a leg (elbow, knee, hock): hinge-like.
+    Middle,
+    /// The last bone of a leg (foot, paw, hoof).
+    Foot,
+}
+
+fn has(name: &str, parts: &[&str]) -> bool {
+    parts.iter().any(|p| name.contains(p))
+}
+
+const LIMB_WORDS: [&str; 18] = [
+    "leg", "arm", "thigh", "shin", "calf", "foot", "hand", "ankle", "collar", "clavic", "shoulder", "knee", "elbow",
+    "wrist", "hoof", "paw", "scapula", "pelvis",
+];
+
+/// The kind of each bone of `rig` (see [`BoneKind`]).
+pub fn bone_kinds(rig: &[RigBone]) -> Vec<BoneKind> {
+    let lower: Vec<String> = rig.iter().map(|b| b.name.to_ascii_lowercase()).collect();
+    let limb = |i: usize| rig[i].parent.is_some() && has(&lower[i], &LIMB_WORDS);
+    let mut kinds = Vec::with_capacity(rig.len());
+    for i in 0..rig.len() {
+        let n = &lower[i];
+        let kind = if rig[i].parent.is_none() {
+            BoneKind::Root
+        } else if has(n, &["tail"]) {
+            BoneKind::Tail
+        } else if has(n, &["jaw"]) {
+            BoneKind::Jaw
+        } else if has(n, &["neck"]) {
+            BoneKind::Neck
+        } else if has(n, &["head", "skull"]) {
+            BoneKind::Head
+        } else if limb(i) {
+            let parent_limb = rig[i].parent.is_some_and(limb);
+            let leaf = !(0..rig.len()).any(|c| rig[c].parent == Some(i) && limb(c));
+            let girdle = has(n, &["collar", "clavic", "shoulder", "scapula", "pelvis"]);
+            if !parent_limb && girdle {
+                BoneKind::Girdle
+            } else if leaf {
+                BoneKind::Foot
+            } else if !parent_limb || rig[i].parent.is_some_and(|p| kinds.get(p) == Some(&BoneKind::Girdle)) {
+                BoneKind::Upper
+            } else {
+                BoneKind::Middle
+            }
+        } else {
+            BoneKind::Spine
+        };
+        kinds.push(kind);
+    }
+    kinds
+}
+
+/// A ragdoll description of any rig (quadrupeds, the alligator): capsules sized from the
+/// bone's length and flesh radius, masses by volume ([`FLESH_DENSITY`]), and joint limits by
+/// [`BoneKind`]: the spine stiff and limited, legs hinge-like, the neck and tail flexible.
+/// Legs hanging ahead of the root from the chest are the "arms" ([`Region::ArmL`], [`Region::ArmR`]), the others
+/// the legs; the side is by `x`. Returns the bones and their total mass (kg).
+pub fn skeleton_generic(rig: &[RigBone]) -> (Vec<BoneDesc>, f32) {
+    use JointSpec::*;
+    const DOWN: [f32; 3] = [0.0, 0.0, -1.0];
+    let kinds = bone_kinds(rig);
+    let root_y = rig.first().map_or(0.0, |b| b.head[1]);
+    // The limb's first bone, for front or back.
+    let limb_root = |mut i: usize| {
+        while let Some(p) = rig[i].parent {
+            if matches!(kinds[p], BoneKind::Root | BoneKind::Spine) {
+                break;
+            }
+            i = p;
+        }
+        i
+    };
+    let mut volumes = Vec::with_capacity(rig.len());
+    let mut out = Vec::with_capacity(rig.len());
+    for (i, b) in rig.iter().enumerate() {
+        let (h, t) = (Vec3::from_array(b.head), Vec3::from_array(b.tail));
+        let len = (t - h).length().max(0.01);
+        let d = (t - h).normalize_or_zero();
+        let radius = if b.radius > 0.0 { b.radius.clamp(0.015, 0.45) } else { (0.25 * len).clamp(0.02, 0.2) };
+        let pi = core::f32::consts::PI;
+        volumes.push(pi * radius * radius * len + 2.0 / 3.0 * pi * radius * radius * radius);
+        // Hinges bend vertical bones forwards and back, level bones (splayed legs) up and
+        // down; both ways, the rest pose is already bent.
+        let bend = if d.z.abs() > 0.6 { FWD } else { DOWN };
+        let joint = match kinds[i] {
+            BoneKind::Root => Root,
+            BoneKind::Spine => Ball { flex: DOWN, cone: 14.0, offset: 0.0, twist: 8.0 },
+            BoneKind::Neck => Ball { flex: DOWN, cone: 35.0, offset: 0.0, twist: 30.0 },
+            BoneKind::Head => Ball { flex: DOWN, cone: 30.0, offset: 0.0, twist: 25.0 },
+            BoneKind::Jaw => Hinge { flex: DOWN, lo: -5.0, hi: 35.0 },
+            BoneKind::Tail => Ball { flex: DOWN, cone: 40.0, offset: 0.0, twist: 20.0 },
+            BoneKind::Girdle => LimitedBall { flex: FWD, cone: 15.0, twist: 10.0 },
+            BoneKind::Upper => Ball { flex: bend, cone: 55.0, offset: 0.0, twist: 20.0 },
+            BoneKind::Middle => Hinge { flex: bend, lo: -95.0, hi: 95.0 },
+            BoneKind::Foot => LimitedBall { flex: bend, cone: 35.0, twist: 15.0 },
+        };
+        let region = match kinds[i] {
+            BoneKind::Root | BoneKind::Spine | BoneKind::Tail => Region::Torso,
+            BoneKind::Neck | BoneKind::Head | BoneKind::Jaw => Region::Head,
+            _ => {
+                let r = &rig[limb_root(i)];
+                let left = (r.head[0] + r.tail[0]) * 0.5 + (b.head[0] + b.tail[0]) * 0.5 > 0.0;
+                // Front legs hang from the chest, ahead of the root; hind legs from the root.
+                let front = r.parent.is_some_and(|p| kinds[p] != BoneKind::Root) && r.head[1] < root_y;
+                match (front, left) {
+                    (true, true) => Region::ArmL,
+                    (true, false) => Region::ArmR,
+                    (false, true) => Region::LegL,
+                    (false, false) => Region::LegR,
+                }
+            }
+        };
+        out.push(BoneDesc {
+            name: b.name,
+            parent: b.parent.map(|p| rig[p].name),
+            head: b.head,
+            tail: b.tail,
+            radius,
+            mass_fraction: 0.0,
+            joint,
+            region,
+        });
+    }
+    let total: f32 = volumes.iter().sum();
+    for (o, v) in out.iter_mut().zip(&volumes) {
+        o.mass_fraction = v / total.max(1e-9);
+    }
+    (out, total * FLESH_DENSITY)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn bone(
     name: &'static str,

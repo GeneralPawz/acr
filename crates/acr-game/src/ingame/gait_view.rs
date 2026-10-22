@@ -138,7 +138,9 @@ impl Gaits {
         let ground = |p: Vec3| ground_height(terrain, p.x, p.y);
         for (_, d) in near.into_iter().take(MEN) {
             let Some(clip) = d.clip else { continue };
-            let Some(Some(map)) = maps.get(&d.model) else { continue };
+            let Some(Some(map)) = maps.get(&d.model).filter(|m| m.as_ref().is_some_and(Mapping::human)) else {
+                continue;
+            };
             if !self.clips.contains_key(&(d.model, clip)) {
                 let m = self.measure(map, d.data, clip);
                 self.clips.insert((d.model, clip), m);
