@@ -143,11 +143,24 @@ impl Fonts {
     /// [`Fonts::rasterize`] with the colours of palette set `set`.
     #[allow(clippy::type_complexity)]
     pub fn rasterize_in(&self, lib: &Library, font: FontId, text: &[u8], set: u8) -> Option<Option<(Image, [i32; 2])>> {
+        self.rasterize_faded(lib, font, text, set, 0)
+    }
+
+    /// [`Fonts::rasterize_in`] faded by `fade` rows of the colour table (`0x7C3428`).
+    #[allow(clippy::type_complexity)]
+    pub fn rasterize_faded(
+        &self,
+        lib: &Library,
+        font: FontId,
+        text: &[u8],
+        set: u8,
+        fade: i32,
+    ) -> Option<Option<(Image, [i32; 2])>> {
         if !self.ready(lib) {
             return None;
         }
         let (Some(font), Some(colors)) = (self.font(lib, font), self.colors(lib, set)) else { return Some(None) };
-        let t = font.draw(text, &colors);
+        let t = font.draw_faded(text, &colors, fade);
         if t.image.width == 0 || t.image.height == 0 {
             return Some(None);
         }
