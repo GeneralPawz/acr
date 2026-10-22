@@ -24,6 +24,7 @@ use crate::ui::{GameKind, GameSetup};
 mod controls;
 mod dip;
 mod effects;
+mod gore;
 mod interface;
 mod panels;
 #[cfg(not(target_arch = "wasm32"))]

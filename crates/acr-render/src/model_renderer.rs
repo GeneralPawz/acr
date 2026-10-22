@@ -8,6 +8,9 @@
 //! (`TerrainRenderer::render_depth`), [`ModelRenderer::render`] draws the models (marking
 //! their pixels in the stencil), [`DepthTarget::reset_ground`] moves everything else back to
 //! the far plane, and the sprites draw with a depth test against the models only.
+//!
+//! Corpses carry [`Wounds`] (blood, dirt and burns by the cause of death) and leave
+//! [`BloodPool`]s: flat noisy decals on the ground, drawn before the models.
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -47,6 +50,65 @@ pub struct ModelInstance {
     /// Every other pixel only (the original's half transparent corpses).
     pub transparent: bool,
     pub player: u8,
+    /// Wounds, blood, dirt and burns of a corpse (all zero for the living).
+    pub wounds: Wounds,
+}
+
+/// Blood, dirt and burns on a body (deaths by cause, `docs/rendering-3d.md`). Wounds sit in
+/// the model's rest pose (glTF metres, +y up, facing +z), so they stay on the body whatever
+/// pose it lies in.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Wounds {
+    /// Direction to the blow in the model's frame (glTF x, z); zero: from the front.
+    pub from: [f32; 2],
+    /// Blood on the body, 0..1.
+    pub blood: f32,
+    /// Dirt, 0..1.
+    pub dirt: f32,
+    /// Charring, 0..1.
+    pub burn: f32,
+    /// Number of wounds (0..6): the first faces the blow; with two the second is the exit.
+    pub count: u8,
+    /// Wound radius in metres.
+    pub radius: f32,
+    /// Varies the places of the further wounds per corpse.
+    pub seed: f32,
+}
+
+impl Wounds {
+    fn gpu(&self) -> [[f32; 4]; 2] {
+        [
+            [self.from[0], self.from[1], self.blood, self.dirt],
+            [self.burn, f32::from(self.count.min(6)), self.radius, self.seed],
+        ]
+    }
+}
+
+/// A pool of blood on the ground under a corpse.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct BloodPool {
+    /// Centre on the ground (world coordinates).
+    pub centre: [f32; 3],
+    /// Radius (world pixels).
+    pub radius: f32,
+    /// Direction the pool runs out to (world x, y; unit or zero) and how far (0: round, 1:
+    /// twice as long).
+    pub along: [f32; 2],
+    pub stretch: f32,
+    /// 0 fresh red .. 1 dried and soaked in.
+    pub age: f32,
+    /// 1 visible .. 0 gone.
+    pub fade: f32,
+    /// Varies the outline per pool.
+    pub seed: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct GpuPool {
+    centre: [f32; 4],
+    shape: [f32; 4],
+    look: [f32; 4],
 }
 
 #[repr(C)]
@@ -74,6 +136,7 @@ struct GpuInstance {
     rows: [[f32; 4]; 3],
     params: [f32; 4],
     extra: [u32; 4],
+    wounds: [[f32; 4]; 2],
 }
 
 struct GpuPrimitive {
@@ -94,6 +157,9 @@ struct GpuModel {
 
 pub struct ModelRenderer {
     pipeline: wgpu::RenderPipeline,
+    pool_pipeline: wgpu::RenderPipeline,
+    pools: wgpu::Buffer,
+    pool_count: u32,
     globals: wgpu::Buffer,
     globals_layout: wgpu::BindGroupLayout,
     globals_group: wgpu::BindGroup,
@@ -124,6 +190,15 @@ fn bone_texture(device: &wgpu::Device, rows: u32) -> wgpu::Texture {
         format: wgpu::TextureFormat::Rgba32Float,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
+    })
+}
+
+fn pool_buffer(device: &wgpu::Device, count: u64) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("blood pools"),
+        size: count.max(1) * size_of::<GpuPool>() as u64,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
     })
 }
 
@@ -192,8 +267,10 @@ impl ModelRenderer {
             0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4,
             4 => Uint32x4, 5 => Float32x4, 6 => Float32x3, 7 => Float32x3
         ];
-        let instance_attributes =
-            wgpu::vertex_attr_array![8 => Float32x4, 9 => Float32x4, 10 => Float32x4, 11 => Float32x4, 12 => Uint32x4];
+        let instance_attributes = wgpu::vertex_attr_array![
+            8 => Float32x4, 9 => Float32x4, 10 => Float32x4, 11 => Float32x4, 12 => Uint32x4,
+            13 => Float32x4, 14 => Float32x4
+        ];
         let stencil_mark = wgpu::StencilFaceState {
             compare: wgpu::CompareFunction::Always,
             fail_op: wgpu::StencilOperation::Keep,
@@ -248,6 +325,54 @@ impl ModelRenderer {
             multiview_mask: None,
             cache: None,
         });
+        // Blood pools: decals over the terrain's depth, blended, writing neither depth nor
+        // stencil (the models and sprites cover them).
+        let pool_shader = device.create_shader_module(wgpu::include_wgsl!("blood.wgsl"));
+        let pool_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("blood pools"),
+            bind_group_layouts: &[Some(&globals_layout)],
+            immediate_size: 0,
+        });
+        let pool_attributes = wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4, 2 => Float32x4];
+        let pool_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("blood pools"),
+            layout: Some(&pool_layout),
+            vertex: wgpu::VertexState {
+                module: &pool_shader,
+                entry_point: Some("vs_pool"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: size_of::<GpuPool>() as u64,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &pool_attributes,
+                })],
+            },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &pool_shader,
+                entry_point: Some("fs_pool"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: target,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
         let bones = bone_texture(device, 1);
         let globals_group = Self::globals_group(device, &globals_layout, &globals, &bones);
         let sampler = |filter| {
@@ -279,6 +404,9 @@ impl ModelRenderer {
             .create_view(&Default::default());
         Self {
             pipeline,
+            pool_pipeline,
+            pools: pool_buffer(device, 64),
+            pool_count: 0,
             globals,
             globals_layout,
             globals_group,
@@ -379,7 +507,8 @@ impl ModelRenderer {
                         if d.is_some() { 1.0 } else { 0.0 },
                         if d.is_some() { 0.0 } else { 1.0 },
                         m.alpha_cutoff.unwrap_or(0.0),
-                        0.0,
+                        // The bone layer takes no blood, dirt or burns.
+                        if d.is_some_and(|d| d.inner) { 1.0 } else { 0.0 },
                     ],
                 };
                 let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -460,6 +589,7 @@ impl ModelRenderer {
                 rows: math::affine_rows(&inst.transform),
                 params: [inst.decay, inst.morphs[0], inst.morphs[1], if inst.transparent { 1.0 } else { 0.0 }],
                 extra: [base, u32::from(inst.player), 0, 0],
+                wounds: inst.wounds.gpu(),
             });
         }
         self.pose_count = poses.len();
@@ -502,8 +632,38 @@ impl ModelRenderer {
         queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
     }
 
-    /// Draws the prepared instances into a pass opened by [`DepthTarget::begin`].
+    /// Uploads the blood pools of the next `render` (after [`Self::prepare`], which sets the
+    /// view they are drawn through).
+    pub fn prepare_pools(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, pools: &[BloodPool]) {
+        let gpu: Vec<GpuPool> = pools
+            .iter()
+            .filter(|p| p.fade > 0.0 && p.radius > 0.0)
+            .map(|p| GpuPool {
+                centre: [p.centre[0], p.centre[1], p.centre[2], p.radius],
+                shape: [p.along[0], p.along[1], p.stretch, p.seed],
+                look: [p.age, p.fade, 0.0, 0.0],
+            })
+            .collect();
+        self.pool_count = gpu.len() as u32;
+        if gpu.is_empty() {
+            return;
+        }
+        let needed = (gpu.len() * size_of::<GpuPool>()) as u64;
+        if needed > self.pools.size() {
+            self.pools = pool_buffer(device, (gpu.len() as u64).next_power_of_two());
+        }
+        queue.write_buffer(&self.pools, 0, bytemuck::cast_slice(&gpu));
+    }
+
+    /// Draws the blood pools, then the prepared instances, into a pass opened by
+    /// [`DepthTarget::begin`].
     pub fn render(&self, pass: &mut wgpu::RenderPass<'_>) {
+        if self.pool_count > 0 {
+            pass.set_pipeline(&self.pool_pipeline);
+            pass.set_bind_group(0, &self.globals_group, &[]);
+            pass.set_vertex_buffer(0, self.pools.slice(..));
+            pass.draw(0..4, 0..self.pool_count);
+        }
         if self.draws.is_empty() {
             return;
         }

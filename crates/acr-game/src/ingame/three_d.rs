@@ -6,7 +6,7 @@
 use std::collections::{HashMap, HashSet};
 
 use acr_render::model::{self, ModelData};
-use acr_render::model_renderer::{DepthTarget, ModelInstance, ModelRenderer};
+use acr_render::model_renderer::{BloodPool, DepthTarget, ModelInstance, ModelRenderer, Wounds};
 use acr_render::objects_view::ObjectsView;
 use acr_render::scene::{Placement, definition_name};
 use acr_render::terrain::{Camera, TerrainData, TerrainRenderer};
@@ -51,6 +51,8 @@ pub struct ThreeD {
     renderer: Option<ModelRenderer>,
     depth: Option<DepthTarget>,
     instances: Vec<ModelInstance>,
+    /// Blood pools under this frame's corpses.
+    pools: Vec<BloodPool>,
     /// Units drawn as models this frame (their sprites are left out).
     shown: HashSet<EntityId>,
     /// Frames and time since the last performance line in the log.
@@ -98,6 +100,7 @@ impl Default for ThreeD {
             renderer: None,
             depth: None,
             instances: Vec::new(),
+            pools: Vec::new(),
             shown: HashSet::new(),
             frames: 0,
             since: None,
@@ -237,6 +240,7 @@ impl ThreeD {
     /// types that appear.
     pub fn update(&mut self, world: &World, terrain: &TerrainData, objects: &ObjectsView, request: &dyn Fn(&str)) {
         self.instances.clear();
+        self.pools.clear();
         self.shown.clear();
         if self.models == Models::Off {
             return;
@@ -266,7 +270,12 @@ impl ThreeD {
                 Some(d) if d.animation("#DEATHLIE2").is_some() => 2000,
                 _ => 1200,
             };
-            self.instances.push(instance(u, index, model, terrain, self.gore, removed_at));
+            let record = world.deaths.get(&u.id.0).copied().unwrap_or_default();
+            let (x, y) = (u.pos.x >> 4, u.pos.y >> 4);
+            let ground = view3d::ground_point(x, y, terrain.height_at(x, y));
+            let (wounds, pool) = super::gore::corpse(u.into(), record, self.gore, removed_at, ground);
+            self.pools.extend(pool);
+            self.instances.push(instance(u, index, model, terrain, self.gore, removed_at, wounds));
             self.shown.insert(u.id);
         }
     }
@@ -294,6 +303,7 @@ impl ThreeD {
         let view3d = View3d { camera: *camera, size, orbit: self.free.then_some(self.orbit) };
         let shown = if models_phase { &self.instances[..] } else { &[] };
         renderer.prepare(device, queue, &view3d, shown, self.gore == Gore::Full);
+        renderer.prepare_pools(device, queue, if models_phase { &self.pools[..] } else { &[] });
         let sprites = objects.prepare(
             device,
             queue,
@@ -344,6 +354,7 @@ fn instance(
     terrain: &TerrainData,
     gore: Gore,
     removed_at: u16,
+    wounds: Wounds,
 ) -> ModelInstance {
     let anim = u.anim.name();
     let clip = data.clip_for_animation(&anim);
@@ -368,6 +379,7 @@ fn instance(
         morphs,
         transparent,
         player: u.owner,
+        wounds,
     }
 }
 
