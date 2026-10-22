@@ -821,6 +821,8 @@ fn instance(
         wounds,
         sprayed: Default::default(),
         damage: Default::default(),
+        // Each soldier his own face, build, hair and height (#283).
+        look: (!u.building).then_some(u.id.0),
     };
     (instance, ground)
 }

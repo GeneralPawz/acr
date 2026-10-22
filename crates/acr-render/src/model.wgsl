@@ -19,6 +19,12 @@
 // `damage.rs` (`pack`) when damaged. Damage (docs/damage-model.md): vertices past a cut are
 // discarded per fragment along `_LIMB` with a ragged edge from `_GORE.x`, vertices past a
 // fracture turn about it in the rest pose before skinning, a piece keeps only its span.
+//
+// Looks (#283, docs/rendering-3d.md "Individual looks"): 3 texels after the marks (skin
+// tint and stubble, hair tint and age, pocks, scar side, eye height, has look). Hair and beard
+// variant vertices (`body.w` = variant + 1) are dropped unless bit `body.w − 1` of
+// `extra.w` is set; skin and hair materials (`material.look.z` 1, 2) take the tints; the
+// `_FACE` zones (location 14) get stubble, wrinkles, pocks and a scar.
 
 struct Globals {
     view_proj: mat4x4<f32>,
@@ -41,7 +47,8 @@ struct Material {
     // x: decaying layer (COLOR_0 is the mask), y: COLOR_0 is a vertex colour, z: alpha cutoff
     // (0: none), w: bone layer (no wounds).
     flags: vec4<f32>,
-    // x: stump cap (wet, ragged outline from the uv).
+    // x: stump cap (wet, ragged outline from the uv), y: tissue kind, z: per-soldier tint
+    // (1 skin, 2 hair).
     look: vec4<f32>,
 };
 
@@ -60,8 +67,10 @@ struct VertexIn {
     @location(5) weights: vec4<f32>,
     @location(6) morph0: vec3<f32>,
     @location(7) morph1: vec3<f32>,
-    // _PART (−1 none), _LIMB level 0..1 (−1 none), _GORE.x, 0
+    // _PART (−1 none), _LIMB level 0..1 (−1 none), _GORE.x, hair/beard variant + 1 (0 none)
     @location(8) body: vec4<f32>,
+    // _FACE: beard, wrinkle, pock zones, face front (0 without)
+    @location(14) face: vec4<f32>,
 };
 
 struct InstanceIn {
@@ -70,7 +79,8 @@ struct InstanceIn {
     @location(11) row2: vec4<f32>,
     // decay, deflate weight, lie_flat weight, half transparent (1)
     @location(12) params: vec4<f32>,
-    // first texel of the pose, first texel of the instance data, player, 0
+    // first texel of the pose, first texel of the instance data, player, hair and beard
+    // variants shown (bit mask)
     @location(13) extra: vec4<u32>,
 };
 
@@ -93,6 +103,7 @@ struct VsOut {
     @location(9) cut: vec4<f32>,
     // _PART (−1: gear, not torn by wound volumes)
     @location(10) @interpolate(flat) part: f32,
+    @location(11) face: vec4<f32>,
 };
 
 fn texel(i: u32) -> vec4<f32> {
@@ -231,6 +242,12 @@ fn vs_main(v: VertexIn, inst: InstanceIn) -> VsOut {
     out.spray_look = vec4<f32>(look.xy, f32(d), look.w);
     out.cut = vec4<f32>(clamp(keep, -1.0, 1.0), v.body.z, side, belly);
     out.part = v.body.x;
+    out.face = v.face;
+    // A hair or beard variant this soldier does not wear: off screen.
+    let variant = u32(round(v.body.w));
+    if (variant > 0u && ((inst.extra.w >> (variant - 1u)) & 1u) == 0u) {
+        out.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+    }
     return out;
 }
 
@@ -445,6 +462,38 @@ fn sprayed(rgb: vec3<f32>, rest: vec3<f32>, spray: vec4<f32>, look: vec2<f32>) -
     return mix(rgb, red, a);
 }
 
+// Look texel `k` of an instance (after its marks): see the header.
+fn look_texel(d: u32, marks: u32, k: u32) -> vec4<f32> {
+    let damaged = texel(d + 3u).z > 0.5;
+    return texel(d + 4u + select(0u, 28u, damaged) + 2u * marks + k);
+}
+
+// Stubble, wrinkles, pock marks and a scar from the `_FACE` zones (rest pose `p`, metres).
+fn face_detail(rgb_in: vec3<f32>, p: vec3<f32>, zones: vec4<f32>, l0: vec4<f32>, l1: vec4<f32>, l2: vec4<f32>) -> vec3<f32> {
+    var rgb = rgb_in;
+    // Stubble: dark blue-grey dots of growing hair over the beard zone.
+    let dots = smoothstep(0.35, 0.75, noise3(p * 700.0));
+    let stubble = zones.x * l0.w * (0.55 + 0.45 * dots);
+    rgb = mix(rgb, rgb * vec3<f32>(0.42, 0.42, 0.46), clamp(stubble, 0.0, 1.0) * 0.35);
+    // Wrinkles: thin dark folds, horizontal across the forehead, deeper with age.
+    let wave = abs(fract(p.y * 190.0 + noise3(p * 55.0) * 2.0) - 0.5) * 2.0;
+    let fold = 1.0 - smoothstep(0.0, 0.3, wave);
+    rgb = rgb * (1.0 - zones.y * l1.w * fold * 0.25);
+    // Pock marks: pitted, reddish spots.
+    let pit = smoothstep(0.70, 0.80, noise3(p * 520.0 + vec3<f32>(3.7)));
+    rgb = mix(rgb, rgb * vec3<f32>(0.70, 0.55, 0.52), zones.z * l2.x * pit);
+    // A scar: a pale line slanting down across one cheek.
+    if (abs(l2.y) > 0.5) {
+        let q = p.xy - vec2<f32>(0.034 * l2.y, l2.z - 0.04);
+        let dir = normalize(vec2<f32>(0.5 * l2.y, -1.0));
+        let along = dot(q, dir);
+        let across = abs(q.x * dir.y - q.y * dir.x);
+        let line = (1.0 - smoothstep(0.0012, 0.0022, across)) * (1.0 - smoothstep(0.018, 0.024, abs(along)));
+        rgb = mix(rgb, vec3<f32>(0.78, 0.55, 0.50), line * smoothstep(0.3, 0.6, zones.w) * 0.9);
+    }
+    return rgb;
+}
+
 fn to_srgb(c: vec3<f32>) -> vec3<f32> {
     let lo = c * 12.92;
     let hi = 1.055 * pow(max(c, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - 0.055;
@@ -498,6 +547,21 @@ fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
         discard;
     }
     var rgb = c.rgb;
+    // Each soldier's skin tone and hair colour, and the detail of his face (#283).
+    if (material.look.z > 0.5) {
+        let d = u32(in.spray_look.z + 0.5);
+        let marks = u32(in.spray_look.w + 0.5);
+        let l0 = look_texel(d, marks, 0u);
+        let l1 = look_texel(d, marks, 1u);
+        if (material.look.z < 1.5) {
+            rgb = rgb * l0.rgb;
+            if (in.face.x + in.face.y + in.face.z > 0.0) {
+                rgb = face_detail(rgb, in.rest.xyz, in.face, l0, l1, look_texel(d, marks, 2u));
+            }
+        } else {
+            rgb = rgb * l1.rgb;
+        }
+    }
     let decay = in.params.x;
     if (material.flags.x > 0.5 && decay > 0.0) {
         rgb = mix(rgb, material.tint.rgb, material.tint.w * ramp(decay, material.windows.x, material.windows.y));

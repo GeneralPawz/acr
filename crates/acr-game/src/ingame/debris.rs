@@ -356,6 +356,7 @@ impl Debris {
                     None => Default::default(),
                 },
                 damage,
+                look: None,
             });
             if item.pool > 0.0 && t >= 1.0 {
                 let grow = model::ramp(age as f32 - item.flight as f32, 0.0, 60.0);
@@ -421,6 +422,7 @@ pub fn guts(id: u32, at: Vec3, yaw: f32, decay: f32, player: u8, gibs: &GibModel
             wounds: Default::default(),
             sprayed: Default::default(),
             damage: Damage::default(),
+            look: None,
         });
     }
 }
