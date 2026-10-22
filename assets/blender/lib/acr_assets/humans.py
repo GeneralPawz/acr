@@ -198,8 +198,9 @@ class Character:
                 lv = skin[name][i][1]
                 vals.append(lv)
                 # The outer radius is skin plus clothes: rigid strapped gear (cartridge box,
-                # knapsack, scabbard) would inflate it where it hangs off the limb.
-                if o in layers["clothes"]:
+                # knapsack, scabbard) and crossbelts (they run off the body at the shoulder
+                # and the hip) would inflate it.
+                if o in layers["clothes"] and self.keys.get(o.name) not in ("belts",):
                     radius[name].append((lv, dist))
             write(o, vals)
         for o in layers.get("held", []):
