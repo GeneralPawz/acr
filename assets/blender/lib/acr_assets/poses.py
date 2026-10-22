@@ -26,23 +26,85 @@ STAND_MUSKET = {
     "world": {"socket.hand_r": (-30, 8, 0)},
 }
 
-# Present (aim): butt at the right shoulder, left hand under the barrel.
-AIM_MUSKET = {
-    # Torso turned so the left shoulder comes forward (the firing stance), head turned back
-    # along the musket and bowed onto the stock.
-    "spine": (-6, 0, -20), "spine2": (-4, 0, -14), "head": (16, -8, 26), "neck": (8, 0, 10),
+def _with(base, **over):
+    d = dict(base)
+    world = dict(base.get("world", {}))
+    world.update(over.pop("world", {}))
+    d.update(over)
+    d["world"] = world
+    return d
+
+
+# Present (aim): butt in the right shoulder pocket, left hand under the barrel, cheek down
+# on the stock. Bladed stance: the whole man turned ~40° to the right of the target (left
+# shoulder and left foot forward), weight on the bent left knee, the head turned back
+# along the musket and bowed onto the stock.
+STANCE = {
+    "root": (0, 0, -40), "root_loc": (0.02, -0.04, -0.03),
+    "thigh_l": (-22, -4, 8), "shin_l": (20, 0, 0), "foot_l": (2, 0, 0),
+    "thigh_r": (10, 6, 0), "shin_r": (4, 0, 0), "foot_r": (-10, 0, 0),
+}
+AIM_MUSKET = dict(STANCE, **{
+    "spine": (-10, 0, -4), "spine1": (-4, 0, 0), "spine2": (-2, 0, -6),
+    "neck": (14, -6, 18), "head": (12, -18, 26),
     "upperarm_r": (-62, -50, -20), "forearm_r": (-60, 0, 30), "hand_r": (0, 0, 0),
     "upperarm_l": (-70, 50, 30), "forearm_l": (-20, 0, -20),
-    "thigh_l": (-8, -3, 0), "shin_l": (8, 0, 0), "thigh_r": (6, 3, 0),
     "world": {"socket.hand_r": AIMED},
+})
+
+# Reload drill (prime and load, 18th-century manual), keyed in ATTACK1 after the shot. The
+# man keeps the bladed stance (STANCE: turned 40° right of the target, so his right hip is
+# near (-0.12, 0.10) and his left foot near (-0.11, -0.36) in armature space). Each step
+# places the musket ("world" orientation of the socket, `grip` point in armature space or
+# the butt with `butt`) and says where each hand goes (`aim.place`): "grip", metres along
+# the musket from the grip, or a point. Solved by IK in the unit script (`aim.drill`).
+LOAD_BODY = dict(STANCE, spine=(-8, 0, 6), spine2=(-4, 0, 4), neck=(8, 0, 6), head=(10, 0, 10))
+LOOK_DOWN = dict(LOAD_BODY, neck=(14, 0, 2), head=(22, 0, 0))
+PRIME = (50, 0, -17)  # muzzle forward-up 40°, lock at the right hip
+CAST = (-4, 3, 0)  # upright in front, the muzzle leaning a little towards the man
+POISE = (-6, -4, 0)  # upright before the right side (make ready)
+GRIP_AT_HIP = (-0.17, -0.04, 1.02)
+BUTT_AT_FOOT = (-0.10, -0.33, 0.03)
+ELBOW_UP = (-0.30, 0.05, 0.10)  # the right elbow out and up (working at the muzzle)
+
+
+def _step(base, musket, grip, right="grip", left=0.40, **kw):
+    return dict(base=_with(base, world={"socket.hand_r": musket}), grip=grip, right=right, left=left, **kw)
+
+
+RELOAD_STEPS = {
+    # Recover to the priming position: musket down to the right hip, thumb on the cock.
+    "prime": _step(LOOK_DOWN, PRIME, GRIP_AT_HIP, right=0.10),
+    "half_cock": _step(LOOK_DOWN, PRIME, GRIP_AT_HIP, right=0.16),
+    # Handle cartridge: the right hand back to the box on the right hip.
+    "cartridge": _step(LOAD_BODY, PRIME, GRIP_AT_HIP, right=(-0.08, 0.22, 0.98), elbow_r=(-0.30, 0.30, -0.20)),
+    # Bite it open at the mouth.
+    "bite": _step(dict(LOAD_BODY, head=(4, 0, 6)), PRIME, GRIP_AT_HIP, right=(-0.08, -0.14, 1.58), elbow_r=(-0.25, 0.0, -0.35)),
+    # Prime the pan and shut it.
+    "pan": _step(LOOK_DOWN, PRIME, GRIP_AT_HIP, right=0.13, elbow_r=(-0.30, 0.10, -0.15)),
+    "shut": _step(LOOK_DOWN, PRIME, GRIP_AT_HIP, right=0.18, elbow_r=(-0.30, 0.10, -0.15)),
+    # Cast about: musket upright in front, butt by the left foot, left hand on the barrel;
+    # the right hand pours charge and ball into the muzzle.
+    "cast": _step(LOOK_DOWN, CAST, BUTT_AT_FOOT, right=1.30, left=0.95, butt=True, elbow_r=ELBOW_UP),
+    "pour": _step(LOAD_BODY, CAST, BUTT_AT_FOOT, right=1.50, left=0.95, butt=True, elbow_r=ELBOW_UP),
+    # Draw the rammer (grasp under the muzzle, out at arm's length), ram twice, return it.
+    "grasp_rod": _step(LOOK_DOWN, CAST, BUTT_AT_FOOT, right=1.25, left=0.95, butt=True, elbow_r=ELBOW_UP),
+    "rod_out": _step(LOAD_BODY, CAST, BUTT_AT_FOOT, right=1.92, left=0.95, butt=True, elbow_r=ELBOW_UP),
+    "ram_up": _step(LOAD_BODY, CAST, BUTT_AT_FOOT, right=1.80, left=0.95, butt=True, elbow_r=ELBOW_UP),
+    "ram_down": _step(LOOK_DOWN, CAST, BUTT_AT_FOOT, right=1.52, left=0.95, butt=True, elbow_r=ELBOW_UP),
+    "return_rod": _step(LOOK_DOWN, CAST, BUTT_AT_FOOT, right=1.20, left=0.95, butt=True, elbow_r=ELBOW_UP),
+    # Make ready: the musket raised upright before the right side, then presented.
+    "poise": _step(LOAD_BODY, POISE, (-0.17, -0.16, 1.02), right="grip", left=0.42),
 }
 
-LOADING = {
-    "spine": (-6, 0, 0),
-    "upperarm_r": (-20, -20, 0), "forearm_r": (-90, 0, 10),
-    "upperarm_l": (-30, 30, 10), "forearm_l": (-60, 0, -20),
-    "world": {"socket.hand_r": LOWERED},
-}
+# Frames of ATTACK1 (87 sprite frames, 0..86): the shot leaves at the active frame 17
+# (SETACTIVEPOINT #ATTACK1 17, rounded up to even by the engine), then the drill.
+SHOT_FRAME = 18
+RELOAD_FRAMES = [
+    (26, "prime"), (29, "half_cock"), (33, "cartridge"), (37, "bite"), (41, "pan"), (44, "shut"),
+    (49, "cast"), (52, "pour"), (55, "grasp_rod"), (58, "rod_out"), (61, "ram_up"), (64, "ram_down"),
+    (67, "ram_up"), (70, "ram_down"), (73, "rod_out"), (76, "return_rod"), (80, "poise"),
+]
 
 THRUST = {
     "spine": (-14, 0, 8), "spine1": (-6, 0, 0),
@@ -52,15 +114,6 @@ THRUST = {
     "root_loc": (0, -0.12, -0.04),
     "world": {"socket.hand_r": (95, 0, 0)},
 }
-
-
-def _with(base, **over):
-    d = dict(base)
-    world = dict(base.get("world", {}))
-    world.update(over.pop("world", {}))
-    d.update(over)
-    d["world"] = world
-    return d
 
 
 def walk_cycle(stand):
@@ -124,7 +177,18 @@ CHARGE_MUSKET = {
 }
 
 
-def musketeer_clips(md_lines, stand=STAND_MUSKET, aim=None, charge=None):
+def attack1_keys(aim, fire, reload=None, n=87):
+    """(fraction, pose) keys of ATTACK1: present until the shot, recoil, the reload drill
+    (`RELOAD_FRAMES`; `reload` = the IK-solved steps, else the unsolved ones), present."""
+    steps = reload or {k: _with(v["base"], world_loc={"socket.hand_r": v["grip"]}) for k, v in RELOAD_STEPS.items()}
+    last = n - 1
+    keys = [(0.0, aim), ((SHOT_FRAME - 1) / last, aim), (SHOT_FRAME / last, fire), ((SHOT_FRAME + 3) / last, aim)]
+    keys += [(f / last, steps[name]) for f, name in RELOAD_FRAMES]
+    keys.append((1.0, aim))
+    return keys
+
+
+def musketeer_clips(md_lines, stand=STAND_MUSKET, aim=None, charge=None, reload=None):
     """{clip: [(frame, pose)]} for a European musketeer from its `.MD` lines
     ({key: "@DEATH 9 4 0 70"}): STAND, MOTION_L, MOTION_R, the bayonet (attack index 0,
     `PIKA`: PATTACK, UATTACK, PSTAND, ATTACK), the musket shot (index 1, `VISTREL`:
@@ -138,7 +202,9 @@ def musketeer_clips(md_lines, stand=STAND_MUSKET, aim=None, charge=None):
     ready = charge or CHARGE_MUSKET
     lunge = _with(ready, spine=(-18, 0, -16), spine1=(-6, 0, 0), root_loc=(0, -0.14, -0.05),
                   thigh_l=(-32, -3, 0), shin_l=(26, 0, 0), thigh_r=(16, 3, 0), shin_r=(12, 0, 0))
-    fire = _with(AIM_MUSKET, spine=(4, 0, 6), head=AIM_MUSKET.get("head", (12, 0, -10)), root_loc=(0, 0.03, 0))
+    # The kick: shoulder and body pushed back, the muzzle jumping up a little.
+    rl = AIM_MUSKET.get("root_loc", (0, 0, 0))
+    fire = _with(AIM_MUSKET, spine=(-4, 0, -2), root_loc=(rl[0], rl[1] + 0.04, rl[2]))
     clips = {
         "STAND": [(0.0, stand)],
         "MOTION_L": [(0.0, cl), (0.5, pl), (1.0, cr)],
@@ -155,8 +221,7 @@ def musketeer_clips(md_lines, stand=STAND_MUSKET, aim=None, charge=None):
         "PATTACK1": [(0.0, stand), (0.5, _with(AIM_MUSKET, world={"socket.hand_r": (40, 0, 0)})), (1.0, AIM_MUSKET)],
         "UATTACK1": [(0.0, AIM_MUSKET), (0.5, _with(AIM_MUSKET, world={"socket.hand_r": (40, 0, 0)})), (1.0, stand)],
         "PSTAND1": [(0.0, AIM_MUSKET)],
-        "ATTACK1": [(0.0, AIM_MUSKET), (0.06, fire), (0.15, AIM_MUSKET), (0.3, LOADING), (0.7, LOADING),
-                    (0.85, _with(AIM_MUSKET, world={"socket.hand_r": (40, 0, 0)})), (1.0, AIM_MUSKET)],
+        "ATTACK1": attack1_keys(AIM_MUSKET, fire, reload, rig.md_clip_frames(md_lines["ATTACK1"])[0] if "ATTACK1" in md_lines else 87),
         "DEATH": death_keys(stand, lie),
         "DEATHLIE1": [(0.0, lie)],
     }

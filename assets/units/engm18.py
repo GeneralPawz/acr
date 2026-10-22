@@ -119,11 +119,15 @@ def build(ctx):
     ch.morphs(extra_deflate=ch.layers["gear"])
     ch.masks()
     # Present with both hands: butt in the shoulder, left hand under the barrel (IK).
-    aim = aiming.hold(ch.arm, poses.AIM_MUSKET)
+    # Right elbow raised out to the side near shoulder height, left elbow under the barrel.
+    aim = aiming.hold(ch.arm, poses.AIM_MUSKET, pocket=(0.06, 0.0, -0.02), elbow_r=(0.35, 0.10, -0.06))
     ctx.aim_errors = aiming.errors(ch.arm, aim)
+    print("ACR aim errors (m):", ctx.aim_errors)
+    # The reload drill after the shot (ATTACK1), each step IK-solved.
+    reload = aiming.drill(ch.arm, poses.RELOAD_STEPS)
     # Charge bayonets: the same grip with the butt at the right hip.
     charge = aiming.hold(ch.arm, poses.CHARGE_MUSKET, pocket=(0.02, -0.12, -0.32), left_along=0.30)
-    for clip, keys in poses.musketeer_clips(MD, aim=aim, charge=charge).items():
+    for clip, keys in poses.musketeer_clips(MD, aim=aim, charge=charge, reload=reload).items():
         am.add_clip(ch.arm, clip, keys)
     am.set_clip(ch.arm, "STAND")
     report = {}
