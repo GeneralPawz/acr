@@ -59,10 +59,12 @@ fn constant(source: &str, name: &str) -> Option<String> {
     })
 }
 
-/// The strings of a top-level one-line list `NAME = ["a", "b"]`.
+/// The strings of a top-level list `NAME = ["a", "b"]` (it may span lines).
 fn list(source: &str, name: &str) -> Option<Vec<String>> {
-    let line = source.lines().find(|l| l.strip_prefix(name).is_some_and(|r| r.trim_start().starts_with('=')))?;
-    let inner = line.split_once('[')?.1.rsplit_once(']')?.0;
+    let start = source.lines().position(|l| l.strip_prefix(name).is_some_and(|r| r.trim_start().starts_with('=')))?;
+    let text: String = source.lines().skip(start).collect::<Vec<_>>().join("
+");
+    let inner = text.split_once('[')?.1.split_once(']')?.0;
     Some(
         inner
             .split(',')
@@ -70,6 +72,26 @@ fn list(source: &str, name: &str) -> Option<Vec<String>> {
             .filter(|s| !s.is_empty())
             .collect(),
     )
+}
+
+/// Folder name of a check: its values without the flags and without `--min-iou X`
+/// (`--anim STANDLO --sections 2` -> `STANDLO-2`).
+fn label(check: &str) -> String {
+    ref_args(check).iter().filter(|w| !w.starts_with("--")).copied().collect::<Vec<_>>().join("-")
+}
+
+/// The arguments of a check that select the reference (all but `--min-iou X`).
+fn ref_args(check: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut it = check.split_whitespace();
+    while let Some(w) = it.next() {
+        if w == "--min-iou" {
+            it.next();
+        } else {
+            out.push(w);
+        }
+    }
+    out
 }
 
 /// Runs the `acr` tool (built in release mode) with `args`.
@@ -111,10 +133,20 @@ pub fn assets(root: &Path, o: &Options) -> Result<()> {
         let folder = script.parent().and_then(|p| p.strip_prefix(&assets).ok()).unwrap_or(Path::new(""));
         let glb = out_root.join(folder).join(format!("{name}.glb"));
         let ty = constant(&source, "TYPE");
+        // `CHECKS = ["--anim STAND", "--anim DEATHLIE1"]`: one reference and one check per
+        // entry, each in its own folder named after it; without it, the default animation.
+        let checks = list(&source, "CHECKS").unwrap_or_else(|| vec![String::new()]);
         let reference = match (&ty, &game_dir) {
             (Some(ty), Some(game)) => {
                 let dir = out_root.join("ref").join(ty);
                 acr(root, &["model-ref".as_ref(), game.as_os_str(), ty.as_ref(), dir.as_os_str()])?;
+                for check in checks.iter().filter(|c| !label(c).is_empty()) {
+                    let sub = dir.join(label(check));
+                    let mut args: Vec<&std::ffi::OsStr> =
+                        vec!["model-ref".as_ref(), game.as_os_str(), ty.as_ref(), sub.as_os_str()];
+                    args.extend(ref_args(check).into_iter().map(std::ffi::OsStr::new));
+                    acr(root, &args)?;
+                }
                 Some(dir.join("ref.json"))
             }
             _ => None,
@@ -124,6 +156,7 @@ pub fn assets(root: &Path, o: &Options) -> Result<()> {
         cmd.arg("--out").arg(&glb).args(["--compress", &o.compress]);
         if let Some(r) = &reference {
             cmd.arg("--ref").arg(r);
+            cmd.arg("--refs").arg(r.parent().ok_or("ref dir")?);
         }
         if o.blend {
             cmd.arg("--blend").arg(glb.with_extension("blend"));
@@ -139,14 +172,9 @@ pub fn assets(root: &Path, o: &Options) -> Result<()> {
                 eprintln!("asset {name}: no TYPE, no sprite check");
                 continue;
             };
-            // `CHECKS = ["--anim STAND", "--anim DEATHLIE1"]`: one check per entry, each in
-            // its own folder; without it, one check of the default animation.
-            let checks = list(&source, "CHECKS").unwrap_or_else(|| vec![String::new()]);
             for check in &checks {
-                let label: String =
-                    check.split_whitespace().filter(|w| !w.starts_with("--")).collect::<Vec<_>>().join("-");
                 let dir = out_root.join("check").join(&name);
-                let dir = if label.is_empty() { dir } else { dir.join(label) };
+                let dir = if label(check).is_empty() { dir } else { dir.join(label(check)) };
                 let mut args: Vec<&std::ffi::OsStr> =
                     vec!["model-check".as_ref(), game.as_os_str(), ty.as_ref(), glb.as_os_str(), dir.as_os_str()];
                 args.extend(check.split_whitespace().map(std::ffi::OsStr::new));
@@ -170,5 +198,12 @@ mod tests {
 ";
         assert_eq!(list(src, "CHECKS").unwrap(), ["--anim STAND", "--anim BUILDLO_0 --sections 2"]);
         assert_eq!(list(src, "OTHER"), None);
+        let src = "CHECKS = [\"--anim A\",
+          \"--anim B\"]
+X = 1
+";
+        assert_eq!(list(src, "CHECKS").unwrap(), ["--anim A", "--anim B"]);
+        assert_eq!(label("--anim STANDLO --sections 2 --min-iou 0.7"), "STANDLO-2");
+        assert_eq!(ref_args("--anim STAND --min-iou 0.7"), ["--anim", "STAND"]);
     }
 }

@@ -185,12 +185,15 @@ def fit_light(samples):
     return best[1], min(best[2], 3.0)
 
 
-def project_uvs(objects, ref, views=None, mirror=(), delight=0.0, occluders=None, name="sprite", report=None):
+def project_uvs(objects, ref, views=None, mirror=(), delight=0.0, occluders=None, name="sprite", report=None,
+                crop=False):
     """Writes the UV map `sprite` on `objects` (in the pose of the reference) and returns
     (image, {object name: (hidden polygon indices, dominant sRGB of its seen faces or None,
     the colour samples)}).
     `mirror`: objects that may use mirrored views; `occluders`: the objects that hide faces
-    and give the normals for `delight` (default: all rendered meshes of the scene)."""
+    and give the normals for `delight` (default: all rendered meshes of the scene); `crop`
+    cuts the atlas down to the pixels the UVs use (a building state that covers part of the
+    canvas)."""
     views = views or ref.views
     w, h, n = ref.width, ref.height, len(views)
     ax, ay = ref.anchor
@@ -248,10 +251,6 @@ def project_uvs(objects, ref, views=None, mirror=(), delight=0.0, occluders=None
             report.update({"light_dir_camera": [round(float(c), 3) for c in L], "diffuse_ratio": round(k, 3),
                            "delight": delight})
     atlas = np.concatenate([dilate(q) for q in padded], axis=1)
-    image = bpy.data.images.new(name, slot * n, h, alpha=False)
-    image.pixels.foreach_set(np.ascontiguousarray(atlas[::-1]).ravel())
-    image.file_format = "PNG"
-    image.pack()
 
     # Candidate views: (atlas slot, RealDir, mirrored).
     cands = [(i, v.dir, False) for i, v in enumerate(views)]
@@ -313,6 +312,33 @@ def project_uvs(objects, ref, views=None, mirror=(), delight=0.0, occluders=None
         ev.to_mesh_clear()
         pix = covered.get(obj.name) or samples
         out[obj.name] = (hidden, dominant(pix), pix)
+    # The atlas, optionally cropped to the used UVs (plus a margin for filtering).
+    aw, ah = slot * n, h
+    x0, y0, x1, y1 = 0, 0, aw, ah
+    if crop:
+        us, vs = [], []
+        for obj in objects:
+            uvl = obj.data.uv_layers["sprite"]
+            hidden = set(out[obj.name][0])
+            for poly in obj.data.polygons:
+                if poly.index in hidden:
+                    continue
+                for li in poly.loop_indices:
+                    u, v = uvl.data[li].uv
+                    us.append(u * aw)
+                    vs.append((1.0 - v) * ah)
+        if us:
+            x0, x1 = max(int(min(us)) - 4, 0), min(int(max(us)) + 5, aw)
+            y0, y1 = max(int(min(vs)) - 4, 0), min(int(max(vs)) + 5, ah)
+            for obj in objects:
+                for d in obj.data.uv_layers["sprite"].data:
+                    u, v = d.uv
+                    d.uv = ((u * aw - x0) / (x1 - x0), 1.0 - ((1.0 - v) * ah - y0) / (y1 - y0))
+    sub = atlas[y0:y1, x0:x1]
+    image = bpy.data.images.new(name, x1 - x0, y1 - y0, alpha=False)
+    image.pixels.foreach_set(np.ascontiguousarray(sub[::-1]).ravel())
+    image.file_format = "PNG"
+    image.pack()
     return image, out
 
 
@@ -341,10 +367,10 @@ def dominant(samples, keep=0.6):
     return tuple(float(c) for c in np.median(a[np.argsort(d)[:k]], axis=0))
 
 
-def project(objects, ref, views=None, name="sprite", fallback=(0.5, 0.5, 0.5), mirror=(), delight=0.0):
+def project(objects, ref, views=None, name="sprite", fallback=(0.5, 0.5, 0.5), mirror=(), delight=0.0, crop=False):
     """Projects the views of `ref` onto `objects` and gives them one textured material (plus
     a flat one for the faces no view sees). Returns the material."""
-    image, info = project_uvs(objects, ref, views, mirror=mirror, delight=delight, name=name)
+    image, info = project_uvs(objects, ref, views, mirror=mirror, delight=delight, name=name, crop=crop)
     mat = materials.textured(name, image, "sprite")
     for obj in objects:
         hidden, rgb, _samples = info[obj.name]

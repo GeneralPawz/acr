@@ -31,6 +31,8 @@ class Context:
         self.root = root
         # Numbers an asset wants in `<name>.stats.json` next to its glTF (triangles, ...).
         self.stats = {}
+        # References by label (`STANDLO-0`, `BUILDLO_2`, ...) from --refs.
+        self.refs = {}
 
 
 def main(argv):
@@ -38,6 +40,7 @@ def main(argv):
     p.add_argument("asset")
     p.add_argument("--out", required=True)
     p.add_argument("--ref")
+    p.add_argument("--refs", help="folder of references <label>/ref.json (one per CHECKS entry)")
     p.add_argument("--compress", default="none", choices=export.COMPRESSION)
     p.add_argument("--blend", help="also save the scene as .blend (for inspection)")
     a = p.parse_args(argv)
@@ -54,12 +57,17 @@ def main(argv):
         props["acr_type"] = module.TYPE
     root = scene.root(name, **props)
     ctx = Context(name, ref, root)
+    if a.refs and os.path.isdir(a.refs):
+        for label in sorted(os.listdir(a.refs)):
+            p = os.path.join(a.refs, label, "ref.json")
+            if os.path.isfile(p):
+                ctx.refs[label] = Reference(p)
     module.build(ctx)
     if a.blend:
         import bpy
 
         bpy.ops.wm.save_as_mainfile(filepath=os.path.abspath(a.blend))
-    size = export.export_glb(os.path.abspath(a.out), a.compress)
+    size = export.export_glb(os.path.abspath(a.out), a.compress, getattr(module, "IMAGE_FORMAT", "AUTO"))
     ctx.stats["glb_bytes"] = size
     with open(os.path.splitext(os.path.abspath(a.out))[0] + ".stats.json", "w", encoding="utf-8") as f:
         json.dump(ctx.stats, f, indent=1)
