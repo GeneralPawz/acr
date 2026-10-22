@@ -20,6 +20,7 @@ from acr_assets import crawl
 from acr_assets import armature as am
 from acr_assets import body as bd
 from acr_assets import decay, gear, horse, rig
+from acr_assets import faces, heads
 from acr_assets.humans import LAYER_OF, Character, prepare_export
 
 TYPE = "EngD18"
@@ -240,7 +241,9 @@ def pose_for(ch, clip):
 def build(ctx):
     ch = make(ctx.root, ctx.name)
     H = ch.horse
+    heads.variants(ch)  # hair and beard variants (#283), before the morphs
     ch.morphs()
+    rider = ch.layers["flesh"] + ch.layers["clothes"]
     for o in (H["hull"], H["mane"], H["cloth"], H["saddle"], H["bridle"]):
         bd.toward_bones(o, ch.arm, "deflate", 0.6 if o is not H["saddle"] else 0.4, horse.DEFORM)
     ch.add("flesh", H["hull"], "horse", symmetric=True)
@@ -256,9 +259,10 @@ def build(ctx):
     colours = ch.colours(ctx.ref, PALETTE, report=report)
     # The horse gets a realistic baked coat and tack (#215) instead of sprite colours.
     horse.dress(ch, ch.horse_sections, PALETTE["saddlecloth"], LAYER_OF)
+    heads.finish(ch, rider)  # the rider's face and body morphs, `_FACE`, variants (#283)
     ch.arm.animation_data.action = None
     pose_for(ch, "STAND")
     tris = ch.triangles()
     prepare_export(ch.all_meshes(), ctx.root, acr_triangles=sum(tris.values()), acr_clips=list(MD) + list(crawl.CLIPS), acr_limb_radius=ch.limb_radius,
-                   acr_layers=list(ch.layers), acr_extra_clips=["WALK"])
+                   acr_layers=list(ch.layers), acr_extra_clips=["WALK"], **faces.extras("regular"))
     ctx.stats = {"triangles": tris, "colours": colours}

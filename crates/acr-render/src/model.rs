@@ -9,7 +9,8 @@
 //!   serve all;
 //! - `POSITION`, `NORMAL`, `TEXCOORD_0`, `COLOR_0`, `JOINTS_0`/`WEIGHTS_0`, indices
 //!   (triangle lists only), the custom `_PART`, `_LIMB` and `_GORE` (x) for cutting
-//!   ([`crate::damage`]); meshes named `*.caps` (the old stump caps) are skipped;
+//!   ([`crate::damage`]); meshes named `*.caps` (the old stump caps) and the hair and beard
+//!   variants `*.hair_*` / `*.beard_*` (#283, not chosen per soldier yet) are skipped;
 //! - the morph targets `deflate` and `lie_flat` (by `extras.targetNames`, else the first
 //!   two), positions only; the face and body targets `face_*`/`body_*` (#283), kept on the
 //!   CPU for [`ModelData::bake_looks`]; `_FACE`, and the hair and beard variant meshes
