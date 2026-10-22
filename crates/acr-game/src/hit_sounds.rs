@@ -56,9 +56,14 @@ pub const MAX_IMPACTS: usize = 3;
 /// Pain screams started per tick at most.
 pub const MAX_PAINS: usize = 1;
 
+/// ACR's own sound groups: these and those of [`crate::agony`].
+pub fn all_groups() -> impl Iterator<Item = &'static (&'static str, &'static [&'static str])> {
+    GROUPS.iter().chain(crate::agony::GROUPS)
+}
+
 /// The game paths of a group's files.
 pub fn files(group: &str) -> Option<Vec<String>> {
-    let (_, files) = GROUPS.iter().find(|(g, _)| *g == group)?;
+    let (_, files) = all_groups().find(|(g, _)| *g == group)?;
     Some(files.iter().map(|f| format!(r"{DIR}\{f}")).collect())
 }
 

@@ -5,6 +5,7 @@
 //! uses the same scale over the whole window, laid out for its size like the original's
 //! `RealLx` × `RealLy` (see `docs/ui.md`, screen size).
 
+mod agony;
 mod canvas;
 mod diplomacy;
 #[cfg(not(target_arch = "wasm32"))]

@@ -71,6 +71,10 @@ pub struct InGame {
     last_frames: HashMap<EntityId, (AnimKind, i32)>,
     /// The tick of the last hit whose sound was chosen ([`crate::hit_sounds`]).
     hit_cursor: u64,
+    /// Agony of the dying, fearful shouts and the din of battle ([`crate::agony`]).
+    agony: crate::agony::Agony,
+    /// Units that started a flight leg in panic since the last frame.
+    fleeing: Vec<crate::agony::Fleeing>,
     camera: Camera,
     centred: bool,
     held: HashSet<NamedKey>,
@@ -137,6 +141,8 @@ impl InGame {
             sound_events: Vec::new(),
             last_frames: HashMap::new(),
             hit_cursor: 0,
+            agony: Default::default(),
+            fleeing: Vec::new(),
             camera: Camera { x: 0.0, y: 0.0, scale: 1.0 },
             centred: false,
             held: HashSet::new(),
@@ -556,6 +562,16 @@ impl InGame {
                 world.step(&commands);
                 weapon_sounds.append(&mut world.sounds);
                 born.append(&mut world.born);
+                for &id in &world.shouts {
+                    let Some(u) = world.unit(id) else { continue };
+                    let kind = &world.catalog.get(u.kind).id;
+                    if self.objects.objects().definition(kind).is_some_and(|d| d.has("NIKAKIXMAM")) {
+                        continue;
+                    }
+                    let group = u.brigade.map_or((0xff, u.id.0), |b| (u.owner, u32::from(b)));
+                    let pos = ((u.pos.x >> 4) as f32, (u.pos.y >> 5) as f32);
+                    self.fleeing.push(crate::agony::Fleeing { tick: world.tick.0, group, pos });
+                }
                 if let Some(terrain) = &self.terrain {
                     shouts::collect(
                         world,
@@ -596,6 +612,7 @@ impl InGame {
                 self.effect_sounds(ticks, &weapon_sounds, window);
                 self.born_sounds(&born, window);
                 self.hit_sounds(window);
+                self.agony_sounds(window);
             }
             self.ambient_ticks += ticks;
         }
@@ -686,6 +703,26 @@ impl InGame {
         self.hit_cursor = world.hits.back().map_or(self.hit_cursor, |h| h.tick.max(self.hit_cursor));
         for e in &events {
             log::debug!("hit sound {} (pan {:.2}, volume {:.2})", e.name, e.pan, e.volume);
+        }
+        self.sound_events.extend(events);
+    }
+
+    /// The agony of the dying, the fearful shouts of the fleeing and the din of battle.
+    fn agony_sounds(&mut self, window: [f32; 2]) {
+        let fleeing = std::mem::take(&mut self.fleeing);
+        let Some(world) = &self.world else { return };
+        let scale = self.camera.scale;
+        let view = [self.camera.x, self.camera.y, window[0] / scale, window[1] / scale];
+        let objects = self.objects.objects();
+        let human = |victim: u32| {
+            world.units.get(victim as usize).is_some_and(|u| {
+                !u.building && !objects.definition(&world.catalog.get(u.kind).id).is_some_and(|d| d.has("NIKAKIXMAM"))
+            })
+        };
+        let now = world.tick.0;
+        let events = self.agony.update(&world.hits, &fleeing, human, now, view, self.mission.fog());
+        for e in &events {
+            log::debug!("agony sound {} at tick {now} (pan {:.2}, volume {:.2})", e.name, e.pan, e.volume);
         }
         self.sound_events.extend(events);
     }

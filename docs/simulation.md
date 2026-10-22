@@ -953,6 +953,21 @@ order) and draws random numbers.
   --install` copies them there), natively also from `ACR_SOUNDS_DIR`, else `ACR\Sounds`
   next to the executable, else in debug builds from `assets/sounds` itself. Missing files
   only leave the hits silent.
+- **Agony, panic and din** (ACR only, #248; `acr-game` `agony.rs`), from the same files:
+  - A share of the soldiers killed by a hit (not animals, `NIKAKIXMAM`) lies dying where he
+    fell: a scream at the fall (`ACR_AGONY_SCREAM`), then moans and gasps (`ACR_AGONY_MOAN`,
+    `ACR_AGONY_GASP`) every 1.2–2.8 s, fading from 85 % to 25 % of the placed volume. Who
+    and how long is fixed by the unit index and the cause: gunshots 25 % for 3–8 s, arrows
+    and thrown weapons 40 % for 3–10 s, melee 45 % for 4–10 s, grapeshot 55 % and
+    cannonballs and shells 60 % for 5–12 s; other deaths are silent. Only the 4 agonies
+    nearest the view centre (among those in hearing) make sounds; the others wait silently
+    without a backlog, and one that was never heard at the fall does not scream later.
+  - Units starting a flight leg in panic (`World::shouts`, the panic shouts of 0x600bc8)
+    shout in fear (`ACR_FEAR`): one shout per brigade (or loose unit) every 4 s and one
+    in all every 1.2 s, the one nearest the view centre.
+  - Din: with at least 6 kills in hearing within the last 15 s, a quiet scream or fearful
+    shout from beyond the view's left or right edge (volume 0.15–0.35, pan 0.5–0.9), every
+    `24 s / kills` (1–4 s) plus up to 0.7 s.
 
 ### Buildings that shoot
 
