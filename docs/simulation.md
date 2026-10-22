@@ -1309,6 +1309,13 @@ Implemented in `economy.rs`. The sources are `City::Census` (0x42e658), the upke
     rounded to double here, where the engine keeps 80 bits, which can rarely change a
     truncated result by 1. No market building is required by the simulation (the game's
     interface asks for one).
+  - The AI scripts trade on the same market: `AI_Torg` (0x569083 → 0x4aa090) calls
+    `PerformOperation` for the city's nation (`City+0x11dcc`) and `GetTorgResult` (0x5690c0
+    → 0x4aa039) quotes `trunc(amount · Sell / Buy)`, both after mapping the script's resource
+    ids through `INVECO` (0x67169c). Deviations: an amount of 0 or less trades nothing (the
+    engine would trade a negative amount), ids past the six resources do nothing and quote 0
+    (the engine reads past `INVECO`), and `AI_Torg` from a mission script does nothing (the
+    engine uses whichever city ran last).
 - **Tech tree** (`tech.rs`; nation loader 0x60e7f0, `City::RefreshAbility` 0x42ffed). Every
   nation file goes into one namespace of types and upgrades, as in the engine.
   - A building produces only the types of its `[FIXED_PRODUCE]` list (the produce command
