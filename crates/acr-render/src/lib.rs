@@ -109,6 +109,11 @@ impl SpriteAtlas {
     pub fn frame_count(&self) -> usize {
         self.frames.len()
     }
+
+    /// GPU pages (`PAGE_SIZE`² texels of 2 bytes each).
+    pub fn page_count(&self) -> usize {
+        self.textures.len()
+    }
 }
 
 /// One frame to draw with its origin at a screen position, scaled by `scale`.
@@ -289,63 +294,22 @@ impl SpriteRenderer {
     /// part of its last page and new pages; the frames already there are not touched, so
     /// a few new ones cost no more than their own upload.
     pub fn extend(&self, device: &wgpu::Device, queue: &wgpu::Queue, atlas: &mut SpriteAtlas, frames: &[Frame]) {
-        let old_pages = atlas.textures.len() as u32;
-        let mut page_pixels: Vec<Vec<u8>> = Vec::new();
-        for frame in frames {
-            let start = atlas.slots.len();
-            for layer in &frame.layers {
-                let Some((kind, param)) = LayerKind::of(layer.encoding) else { continue };
-                let w = layer.runs.iter().map(|r| u32::from(r.x) + u32::from(r.len)).max().unwrap_or(0);
-                let h = layer.runs.iter().map(|r| u32::from(r.y) + 1).max().unwrap_or(0);
-                if w == 0 || w > PAGE_SIZE || h > PAGE_SIZE {
-                    continue;
-                }
-                let (page, x, y) = atlas.packer.place(w, h);
-                // A layer on an uploaded page is written on its own; new pages in one go.
-                let mut own = Vec::new();
-                let (pixels, stride, (ox, oy)) = if page < old_pages {
-                    own = vec![0; (w * h * 2) as usize];
-                    (&mut own, w, (0, 0))
-                } else {
-                    let i = (page - old_pages) as usize;
-                    if i == page_pixels.len() {
-                        page_pixels.push(vec![0; (PAGE_SIZE * PAGE_SIZE * 2) as usize]);
-                    }
-                    (&mut page_pixels[i], PAGE_SIZE, (x, y))
-                };
-                let mut values = layer.pixels.iter();
-                for run in &layer.runs {
-                    let row = (oy + u32::from(run.y)) * stride;
-                    for i in 0..u32::from(run.len) {
-                        let at = ((row + ox + u32::from(run.x) + i) * 2) as usize;
-                        pixels[at] = kind.texel(values.next().copied().unwrap_or(0));
-                        pixels[at + 1] = 1;
-                    }
-                }
-                if page < old_pages {
-                    queue.write_texture(
-                        wgpu::TexelCopyTextureInfo {
-                            texture: &atlas.textures[page as usize],
-                            mip_level: 0,
-                            origin: wgpu::Origin3d { x, y, z: 0 },
-                            aspect: wgpu::TextureAspect::All,
-                        },
-                        &own,
-                        wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(w * 2), rows_per_image: None },
-                        wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
-                    );
-                }
-                atlas.slots.push(LayerSlot {
-                    page,
-                    atlas: [x, y, w, h],
-                    offset: [i32::from(layer.x), i32::from(layer.y)],
-                    kind,
-                    param,
-                });
-            }
-            atlas.frames.push(start..atlas.slots.len());
+        let growth = AtlasGrowth::plan(&mut atlas.packer, atlas.textures.len() as u32, atlas.slots.len(), frames);
+        for write in &growth.writes {
+            let [x, y, w, h] = write.rect;
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &atlas.textures[write.page as usize],
+                    mip_level: 0,
+                    origin: wgpu::Origin3d { x, y, z: 0 },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &write.texels,
+                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(w * 2), rows_per_image: None },
+                wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            );
         }
-        for pixels in &page_pixels {
+        for pixels in &growth.pages {
             let texture = device.create_texture_with_data(
                 queue,
                 &wgpu::TextureDescriptor {
@@ -371,6 +335,11 @@ impl SpriteRenderer {
             }));
             atlas.textures.push(texture);
         }
+        if !growth.pages.is_empty() {
+            log::debug!("sprite atlas: {} pages, {} frames", atlas.textures.len(), atlas.frames.len() + frames.len());
+        }
+        atlas.slots.extend(growth.slots);
+        atlas.frames.extend(growth.frames);
     }
 
     /// Uploads instance data for `sprites`; call before [`SpriteRenderer::render`].
@@ -441,6 +410,75 @@ impl SpriteRenderer {
     }
 }
 
+/// A layer placed on a page that is already on the GPU: its rectangle and texels.
+struct AtlasWrite {
+    page: u32,
+    rect: [u32; 4],
+    texels: Vec<u8>,
+}
+
+/// The CPU side of [`SpriteRenderer::extend`]: where the layers of the new frames go and
+/// the texels to upload.
+struct AtlasGrowth {
+    /// The new frames' layers, after the atlas's slots.
+    slots: Vec<LayerSlot>,
+    /// Per new frame, its slots (atlas slot indices).
+    frames: Vec<Range<usize>>,
+    /// Whole new pages (`PAGE_SIZE`² texels of 2 bytes), numbered after the existing ones.
+    pages: Vec<Vec<u8>>,
+    /// Layers in the free part of an existing page, written on their own.
+    writes: Vec<AtlasWrite>,
+}
+
+impl AtlasGrowth {
+    /// Packs the layers of `frames` with `packer` behind `old_pages` pages and `first_slot`
+    /// slots.
+    fn plan(packer: &mut ShelfPacker, old_pages: u32, first_slot: usize, frames: &[Frame]) -> Self {
+        let mut out = Self { slots: Vec::new(), frames: Vec::new(), pages: Vec::new(), writes: Vec::new() };
+        for frame in frames {
+            let start = first_slot + out.slots.len();
+            for layer in &frame.layers {
+                let Some((kind, param)) = LayerKind::of(layer.encoding) else { continue };
+                let w = layer.runs.iter().map(|r| u32::from(r.x) + u32::from(r.len)).max().unwrap_or(0);
+                let h = layer.runs.iter().map(|r| u32::from(r.y) + 1).max().unwrap_or(0);
+                if w == 0 || w > PAGE_SIZE || h > PAGE_SIZE {
+                    continue;
+                }
+                let (page, x, y) = packer.place(w, h);
+                // A layer on an uploaded page is written on its own; new pages in one go.
+                let (pixels, stride, (ox, oy)) = if page < old_pages {
+                    out.writes.push(AtlasWrite { page, rect: [x, y, w, h], texels: vec![0; (w * h * 2) as usize] });
+                    (&mut out.writes.last_mut().expect("just pushed").texels, w, (0, 0))
+                } else {
+                    let i = (page - old_pages) as usize;
+                    while out.pages.len() <= i {
+                        out.pages.push(vec![0; (PAGE_SIZE * PAGE_SIZE * 2) as usize]);
+                    }
+                    (&mut out.pages[i], PAGE_SIZE, (x, y))
+                };
+                let mut values = layer.pixels.iter();
+                for run in &layer.runs {
+                    let row = (oy + u32::from(run.y)) * stride;
+                    for i in 0..u32::from(run.len) {
+                        let at = ((row + ox + u32::from(run.x) + i) * 2) as usize;
+                        pixels[at] = kind.texel(values.next().copied().unwrap_or(0));
+                        pixels[at + 1] = 1;
+                    }
+                }
+                out.slots.push(LayerSlot {
+                    page,
+                    atlas: [x, y, w, h],
+                    offset: [i32::from(layer.x), i32::from(layer.y)],
+                    kind,
+                    param,
+                });
+            }
+            out.frames.push(start..first_slot + out.slots.len());
+        }
+        out
+    }
+}
+
 /// Places rectangles on fixed-size pages, row by row.
 #[derive(Default)]
 struct ShelfPacker {
@@ -472,6 +510,89 @@ impl ShelfPacker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use acr_formats::gp::{Layer, Run};
+
+    /// A frame of one opaque layer per size, filled with values from `seed`.
+    fn frame(sizes: &[(u16, u16)], seed: u8) -> Frame {
+        let layers = sizes
+            .iter()
+            .enumerate()
+            .map(|(k, &(w, h))| Layer {
+                encoding: Encoding::DictLz,
+                x: k as i16,
+                y: 0,
+                width: w,
+                height: h,
+                // Every other row, so the rectangle is not full.
+                runs: (0..h).step_by(2).map(|y| Run { x: y % 3, y, len: w - y % 3 }).collect(),
+                pixels: (0..u32::from(w) * u32::from(h))
+                    .map(|i| (i as u8).wrapping_mul(7).wrapping_add(seed).wrapping_add(k as u8) | 1)
+                    .collect(),
+            })
+            .collect();
+        Frame { layers }
+    }
+
+    /// The pages as the GPU would hold them after `growth`.
+    fn apply(pages: &mut Vec<Vec<u8>>, growth: &AtlasGrowth) {
+        for w in &growth.writes {
+            let [x, y, rw, rh] = w.rect;
+            for row in 0..rh {
+                let at = ((y + row) * PAGE_SIZE + x) as usize * 2;
+                let from = (row * rw) as usize * 2;
+                pages[w.page as usize][at..at + rw as usize * 2]
+                    .copy_from_slice(&w.texels[from..from + rw as usize * 2]);
+            }
+        }
+        pages.extend(growth.pages.iter().cloned());
+    }
+
+    /// Each slot's rectangle holds its layer's texels, and no two rectangles overlap.
+    fn check(pages: &[Vec<u8>], slots: &[LayerSlot], frames: &[Frame]) {
+        let layers: Vec<&Layer> = frames.iter().flat_map(|f| &f.layers).collect();
+        assert_eq!(layers.len(), slots.len());
+        for (i, (slot, layer)) in slots.iter().zip(&layers).enumerate() {
+            let [x, y, w, h] = slot.atlas;
+            assert!(x + w <= PAGE_SIZE && y + h <= PAGE_SIZE);
+            let mut values = layer.pixels.iter();
+            for run in &layer.runs {
+                for k in 0..u32::from(run.len) {
+                    let at = ((y + u32::from(run.y)) * PAGE_SIZE + x + u32::from(run.x) + k) as usize * 2;
+                    let page = &pages[slot.page as usize];
+                    assert_eq!([page[at], page[at + 1]], [*values.next().unwrap(), 1], "slot {i}");
+                }
+            }
+            for other in &slots[i + 1..] {
+                let [ox, oy, ow, oh] = other.atlas;
+                let apart = other.page != slot.page || ox >= x + w || x >= ox + ow || oy >= y + h || y >= oy + oh;
+                assert!(apart, "{:?} overlaps {:?}", slot.atlas, other.atlas);
+            }
+        }
+    }
+
+    #[test]
+    fn extending_the_atlas_keeps_what_is_there() {
+        let mut packer = ShelfPacker::default();
+        let first = vec![frame(&[(700, 700), (700, 690)], 1), frame(&[(700, 600)], 2), frame(&[(700, 700); 2], 3)];
+        let a = AtlasGrowth::plan(&mut packer, 0, 0, &first);
+        assert!(a.writes.is_empty());
+        assert_eq!(a.pages.len(), 2);
+        assert_eq!(a.frames, [0..2, 2..3, 3..5]);
+        let mut pages = Vec::new();
+        apply(&mut pages, &a);
+        check(&pages, &a.slots, &first);
+        // More frames go into the free part of the last page, then a new one.
+        let more = vec![frame(&[(500, 300), (700, 700)], 4), frame(&[(300, 1500)], 5), frame(&[], 6)];
+        let b = AtlasGrowth::plan(&mut packer, pages.len() as u32, a.slots.len(), &more);
+        assert_eq!(b.writes.iter().map(|w| w.page).collect::<Vec<_>>(), [1, 1]);
+        assert_eq!(b.pages.len(), 1);
+        assert_eq!(b.frames, [5..7, 7..8, 8..8]);
+        apply(&mut pages, &b);
+        let slots: Vec<LayerSlot> = a.slots.iter().chain(&b.slots).copied().collect();
+        let frames: Vec<Frame> = first.into_iter().chain(more).collect();
+        check(&pages, &slots, &frames);
+    }
 
     #[test]
     fn packer_wraps_rows_and_pages() {

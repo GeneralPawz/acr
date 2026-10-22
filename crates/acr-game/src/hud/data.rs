@@ -44,6 +44,9 @@ pub struct HudData {
     pub consts: HashMap<String, SlotIcon>,
     /// `STOPBUILD`, `KARTECH`, `PREKARTECH`, `FISHING`, `ZASEV` (see [`SwitchIcon`]).
     pub switches: HashMap<String, SwitchIcon>,
+    /// `ATTACKGROUND Attack_Ground 13` (`%s%d`, 0x4ec18c): the attack-ground icon's frame
+    /// (0x66ae10) and slot (0x66ae14).
+    pub attack_ground: Option<(usize, usize)>,
     pub orders: Vec<OrderIcon>,
     /// `UN?GROUP slot ungroup dogroup` (parser 0x4ec123): the slot of the grouping icon
     /// (`GroupIconPos` 0x66ae28, 12 without the line) and its two frames.
@@ -83,6 +86,11 @@ impl HudData {
                     if let (Some(a), Some(p)) = (int(1), int(2)) {
                         data.weapons.push((first.to_owned(), a, p));
                         data.weapon_hidden.push(words.get(3).is_some_and(|f| f.contains('I')));
+                    }
+                }
+                "[CONST]" if first == "ATTACKGROUND" => {
+                    if let (Some(frame), Some(slot)) = (words.get(1).and_then(|w| data.icon(w)), int(2)) {
+                        data.attack_ground = Some((frame, slot));
                     }
                 }
                 "[CONST]" if matches!(first, "STOPBUILD" | "KARTECH" | "PREKARTECH" | "FISHING" | "ZASEV") => {
@@ -181,5 +189,31 @@ GO&ATTACK 3 2 Go_With_Attack\r\nSTOP_ICON Cancel\r\n[ORDERICONS]\r\nLINE   8 0 F
         let nres = b"[CONST]\r\nUN?GROUP 14 Make_Group_Formation_OFF Make_Group_Formation_ON\r\n[END]\r\n";
         let d = HudData::parse(icons, nres);
         assert_eq!((d.group_slot, d.ungroup_icon, d.dogroup_icon), (14, Some(0), Some(1)));
+    }
+
+    #[test]
+    fn parses_the_attack_ground_icon() {
+        let icons = b"Cancel
+Attack_Ground
+";
+        let d = HudData::parse(
+            icons,
+            b"[CONST]
+ATTACKGROUND Attack_Ground 13
+ADDRANGE 200
+[END]
+",
+        );
+        assert_eq!(d.attack_ground, Some((1, 13)), "icon frame and slot, not x y");
+        assert_eq!(
+            HudData::parse(
+                icons,
+                b"[CONST]
+[END]
+"
+            )
+            .attack_ground,
+            None
+        );
     }
 }
