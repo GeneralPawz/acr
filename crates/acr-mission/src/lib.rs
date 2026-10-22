@@ -196,8 +196,18 @@ impl Scripts {
         ai.nations.push(nation);
         // The nation is AI-controlled (Nat+0x1a729 bit3): its search schedule changes.
         world.ai[usize::from(nation) & 7] = true;
+        // `StartAI` looks at every nation's island (0x565bdf).
+        for n in 0..8 {
+            acr_sim::desant::check_island(world, n);
+        }
         self.state.pending_commands.extend(commands);
         Ok(())
+    }
+
+    /// Sets the land type a computer nation's AI reads with `GetLandType` (`City+0x184`, the
+    /// `land` argument of `StartAI`); call it before [`Scripts::load_ai`].
+    pub fn set_land_type(&mut self, nation: u8, land: u8) {
+        self.state.land_type[usize::from(nation & 7)] = land;
     }
 
     /// Whether `DipServer.dll` runs.
@@ -299,6 +309,8 @@ impl Scripts {
         if self.waiting || self.ended() {
             return Vec::new();
         }
+        let mission = self.mission.is_some();
+        self.state.sync_desant(world, mission);
         let mut commands = std::mem::take(&mut self.state.pending_commands);
         api::run_production(&mut self.state, world);
         aicity::apply_availability(&self.state, world);
@@ -319,6 +331,7 @@ impl Scripts {
         }
         self.run_ai(world, &mut commands, phase);
         self.state.sync_alliances(world);
+        self.state.sync_desant(world, mission);
         commands
     }
 

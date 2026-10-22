@@ -704,7 +704,10 @@ impl InGame {
     ///   for `ARMATTACK` types, each highlighted while some unit has that setting.
     ///
     /// The idle icons follow in [`Self::idle_icons`], the first object's switches in
-    /// [`Self::switch_icons`]. Grouping formations (`CM_DOGRP` / `CM_UNGRP`) is not built.
+    /// [`Self::switch_icons`]. With at most 12 formations and no free units the grouping
+    /// icon follows `SFREORD` (0x60755c, at the `UN?GROUP` slot): `CM_UNGRP` when the
+    /// selected formations are exactly a group, else `CM_DOGRP` when every selected unit is
+    /// in a formation.
     fn state_icons(&self, ctx: &Ctx, data: &HudData, outline: u8, icons: &mut Vec<Icon>) {
         let Some(world) = &self.world else { return };
         let objects = self.objects.objects();
@@ -728,6 +731,37 @@ impl InGame {
         let sector = units
             .iter()
             .any(|u| objects.definition(&world.catalog.get(u.kind).id).is_some_and(|d| d.has("WEAPONINSECTOR")));
+        if !brigades.is_empty()
+            && free == 0
+            && let Some(frame) = data.icon("Stand_Ground_OFF")
+        {
+            icons.push(Icon {
+                frame,
+                slot: 24,
+                outline: Some(outline),
+                hint: ctx.texts.get("SFREORD").to_vec(),
+                action: Some(HudCommand::Disband),
+                ..Icon::default()
+            });
+        }
+        // Grouping (0x60755c): the `UN?GROUP` icon, without an outline.
+        if brigades.len() <= 12 && free == 0 {
+            let selected: Vec<EntityId> = self.selected_units().map(|u| u.id).collect();
+            let (frame, hint, group) = match grouping(world, own, &selected) {
+                Some(false) => (data.ungroup_icon, "CM_UNGRP", false),
+                Some(true) => (data.dogroup_icon, "CM_DOGRP", true),
+                None => (None, "", false),
+            };
+            if let Some(frame) = frame {
+                icons.push(Icon {
+                    frame,
+                    slot: data.group_slot,
+                    hint: ctx.texts.get(hint).to_vec(),
+                    action: Some(HudCommand::Group(group)),
+                    ..Icon::default()
+                });
+            }
+        }
         let mut push = |frame: Option<usize>, slot: usize, hint: &str, selected: bool, action: HudCommand| {
             if let Some(frame) = frame {
                 icons.push(Icon {
@@ -743,9 +777,6 @@ impl InGame {
         };
         // `[CONST] NAME x y icon`: the icon at slot `x + 12·y`.
         let placed = |key: &str| data.consts.get(key).map(|c| (c.slot, Some(c.frame)));
-        if !brigades.is_empty() && free == 0 {
-            push(data.icon("Stand_Ground_OFF"), 24, "SFREORD", false, HudCommand::Disband);
-        }
         let stand_icons = stand_button && rows > 0 && rows <= 24;
         if stand_icons {
             let on = units.iter().any(|u| u.stand_ground);
@@ -1277,6 +1308,15 @@ impl InGame {
             }
             HudCommand::SelectIdle(mines) => {
                 self.selected = idle(world, player, mines);
+            }
+            HudCommand::Group(group) => {
+                // 0x6066f0 / 0x606700: network command 0x58 / 0x59 with the selection.
+                let units = self.own_selected_units();
+                self.commands.push(if group {
+                    Command::GroupFormations { player, units }
+                } else {
+                    Command::UngroupFormations { player, units }
+                });
             }
             HudCommand::Disband => {
                 // One member per selected formation (the selection need not hold the officer).
@@ -2048,7 +2088,8 @@ impl InGame {
         self.add_with_shift(before);
     }
 
-    /// With Shift the new selection is added to `before`.
+    /// With Shift the new selection is added to `before`; then whole formations are
+    /// selected ([`Self::correct_brigades`]).
     fn add_with_shift(&mut self, before: Vec<EntityId>) {
         if self.interface.mods.shift_key() {
             let mut all = before;
@@ -2059,6 +2100,14 @@ impl InGame {
             }
             self.selected = all;
         }
+        self.correct_brigades();
+    }
+
+    /// Selects whole formations and their groups ([`corrected_selection`]).
+    pub(super) fn correct_brigades(&mut self) {
+        let Some(world) = &self.world else { return };
+        let selected = std::mem::take(&mut self.selected);
+        self.selected = corrected_selection(world, self.own(), selected);
     }
 
     /// Mouse moved (window position).
@@ -2264,8 +2313,10 @@ impl InGame {
                     self.selected.push(id);
                 }
             }
+            self.correct_brigades();
         } else {
             self.selected = alive;
+            self.correct_brigades();
             self.group_recalled(n);
         }
     }
@@ -2518,9 +2569,117 @@ fn idle(world: &acr_sim::World, player: u8, mines: bool) -> Vec<EntityId> {
         .collect()
 }
 
+/// The distinct formations of the selected objects that are alive and not hidden, in
+/// selection order (`FormsIDS` of 0x43dbff / 0x43e0b7).
+fn selected_brigades(world: &acr_sim::World, own: u8, selected: &[EntityId]) -> Vec<u16> {
+    let mut ids: Vec<u16> = Vec::new();
+    for u in selected.iter().filter_map(|&id| world.unit(id)) {
+        if let Some(b) = u.brigade.filter(|_| u.active() && u.owner == own)
+            && !ids.contains(&b)
+            && ids.len() < 256
+        {
+            ids.push(b);
+        }
+    }
+    ids
+}
+
+/// `ImCorrectBrigadesSelection` (0x41f3fb, after a selection 0x4da424 and a recalled group
+/// 0x4d6387): a selected member of an own formation selects the formation's soldiers
+/// (`ImSelBrigade` 0x4e1365: the members from the third on that are not selected yet,
+/// appended); then `CorrectImSelectionInGroups` (0x43dbff) does the same for the formations
+/// grouped with the selected ones (`CM_DOGRP`).
+fn corrected_selection(world: &acr_sim::World, own: u8, mut selected: Vec<EntityId>) -> Vec<EntityId> {
+    let select = |selected: &mut Vec<EntityId>, b: u16| {
+        let Some(br) = world.brigades.get(usize::from(b)).filter(|br| br.alive && br.owner == own) else { return };
+        for &m in br.members.iter().skip(2).flatten() {
+            if world.unit(m).is_some_and(|u| u.living() && u.brigade == Some(b)) && !selected.contains(&m) {
+                selected.push(m);
+            }
+        }
+    };
+    for b in selected_brigades(world, own, &selected) {
+        select(&mut selected, b);
+    }
+    let groups = &world.formation_groups[usize::from(own)];
+    for b in groups.expand(&selected_brigades(world, own, &selected)) {
+        select(&mut selected, b);
+    }
+    selected
+}
+
+/// The grouping icon for the selection: `Some(false)` `CM_UNGRP` when its formations are
+/// exactly a group (`CheckUnGroupPossibility` 0x43e0b7), else `Some(true)` `CM_DOGRP` when
+/// every selected object that is alive and not hidden is in a formation
+/// (`CheckGroupPossibility` 0x43dfdb).
+fn grouping(world: &acr_sim::World, own: u8, selected: &[EntityId]) -> Option<bool> {
+    let ids = selected_brigades(world, own, selected);
+    if world.formation_groups[usize::from(own)].is_group(&ids) {
+        return Some(false);
+    }
+    let all_formed =
+        selected.iter().filter_map(|&id| world.unit(id)).filter(|u| u.active()).all(|u| u.brigade.is_some());
+    all_formed.then_some(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn grouped_formations_are_selected_together() {
+        use acr_formats::defs::{OrderGroups, OrderList, UnitDef};
+        use acr_sim::Pos;
+        use acr_sim::catalog::{Catalog, ObjectType};
+        use acr_sim::formation::Formations;
+        use acr_sim::map::MapGrid;
+        use std::sync::Arc;
+        let mut c = Catalog::new();
+        let def = |officer: &str| {
+            format!(
+                "NAME X\r\nUSERLC 0 G SHADOW 0 0\r\n#STAND 9 1 0 0\r\n@MOTION_L 9 0 0 9\r\n@MOTION_R 9 0 10 19\r\n\
+                 LIFE 100\r\nGEOMETRY 1 10 40\r\n{officer}[END]\r\n"
+            )
+        };
+        let mus = c.add(ObjectType::from_def("Mus(EN)", &UnitDef::parse(def("").as_bytes())));
+        let off = c.add(ObjectType::from_def("Off(EN)", &UnitDef::parse(def("OFFICER\r\n").as_bytes())));
+        let f = Formations::new(
+            &OrderList::parse(
+                b"#LINE15 SYM2 19 2 9 3 1 2\r\n   C   C   C\r\n      \r\n***************\r\n#END\r\n#EXIT\r\n",
+            ),
+            &OrderGroups::parse(b"1\r\nLINE 0 1 #LINE15\r\n"),
+        );
+        let mut w = acr_sim::World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(f));
+        let mut formations = Vec::new();
+        for k in 0..3 {
+            let x = 1500 + 600 * k;
+            let officer = w.spawn(off, 0, Pos::from_pixels(x, 2000), 0);
+            let soldiers: Vec<EntityId> = (0..15)
+                .map(|i| w.spawn(mus, 0, Pos::from_pixels(x - 100 + 20 * (i % 5), 2100 + 20 * (i / 5)), 0))
+                .collect();
+            w.step(&[Command::Form { player: 0, officer, units: soldiers.clone(), kind: "LINE".into() }]);
+            formations.push((officer, soldiers));
+        }
+        let free = w.spawn(mus, 0, Pos::from_pixels(900, 900), 0);
+        // One soldier selects its formation's soldiers (the officer only if he was picked).
+        let (o0, s0) = &formations[0];
+        let sel = corrected_selection(&w, 0, vec![s0[3]]);
+        assert_eq!(sel.len(), 15);
+        assert!(!sel.contains(o0) && s0.iter().all(|s| sel.contains(s)));
+        assert_eq!(corrected_selection(&w, 0, vec![*o0]).len(), 16);
+        assert_eq!(corrected_selection(&w, 1, vec![s0[3]]), [s0[3]], "not an own formation");
+        // Grouping: offered for formations only; ungrouping once they are a group.
+        assert_eq!(grouping(&w, 0, &[*o0, formations[1].0]), Some(true));
+        assert_eq!(grouping(&w, 0, &[*o0, free]), None);
+        w.step(&[Command::GroupFormations { player: 0, units: vec![*o0, formations[1].0] }]);
+        assert_eq!(grouping(&w, 0, &[formations[1].0, *o0]), Some(false));
+        assert_eq!(grouping(&w, 0, &[*o0]), Some(true), "part of a group");
+        // Selecting one soldier of a grouped formation selects both formations' soldiers.
+        let sel = corrected_selection(&w, 0, vec![s0[0]]);
+        assert_eq!(sel.len(), 30);
+        assert!(formations[1].1.iter().all(|s| sel.contains(s)));
+        assert!(!formations[2].1.iter().any(|s| sel.contains(s)));
+    }
 
     #[test]
     fn idle_selects_peasants_without_orders_and_mines_with_room() {

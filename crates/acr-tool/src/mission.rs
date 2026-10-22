@@ -13,7 +13,7 @@ use crate::{Command, Result};
 pub const COMMANDS: &[Command] = &[
     Command {
         name: "mission-run",
-        usage: "<game-dir> <mission-id|map.m3d|script.dll> [--ticks N] [--trace] [--ai] [--dip] [--dip-click TICK] [--units]   \
+        usage: "<game-dir> <mission-id|map.m3d|script.dll> [--ticks N] [--trace] [--ai] [--dip] [--dip-click TICK] [--units] [--land N]   \
                 (run a mission with its script headless, print the event log)",
         run: |a| match a {
             [dir, mission, rest @ ..] => mission_run(Path::new(dir), mission, rest),
@@ -71,6 +71,7 @@ fn mission_run(dir: &Path, what: &str, rest: &[&str]) -> Result<()> {
     let mut units = false;
     let mut dip = false;
     let mut dip_click: Option<u64> = None;
+    let mut land: Option<u8> = None;
     let mut it = rest.iter();
     while let Some(a) = it.next() {
         match *a {
@@ -79,6 +80,7 @@ fn mission_run(dir: &Path, what: &str, rest: &[&str]) -> Result<()> {
             "--ai" => ai = true,
             "--units" => units = true,
             "--dip" => dip = true,
+            "--land" => land = Some(it.next().ok_or("--land needs a number")?.parse()?),
             "--dip-click" => {
                 dip = true;
                 dip_click = Some(it.next().ok_or("--dip-click needs a tick")?.parse()?);
@@ -147,6 +149,12 @@ fn mission_run(dir: &Path, what: &str, rest: &[&str]) -> Result<()> {
             }
         }
     }
+    if let Some(land) = land {
+        // `StartAI`'s land type for the computer nations (2 and 4: the AIs use the water).
+        for &(n, _) in &wanted {
+            scripts.set_land_type(n, land);
+        }
+    }
     load_ais(&mut vfs, &mut scripts, &mut world, wanted);
     print_events(0, &mut scripts);
     print_counts("start", &world);
@@ -197,6 +205,9 @@ fn mission_run(dir: &Path, what: &str, rest: &[&str]) -> Result<()> {
         }
     }
     print_counts("end", &world);
+    if units {
+        print_types(&world);
+    }
     let elapsed = t0.elapsed();
     println!(
         "{} ticks in {:.2?}; script instructions {}; API calls {}",

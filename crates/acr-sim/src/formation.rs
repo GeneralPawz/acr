@@ -278,6 +278,9 @@ pub enum BOrder {
     Keep,
     /// Formation melee (`Bitva` 0x41ee89, link 0x41e50c).
     Bitva(Box<Bitva>),
+    /// The AI landing of a transport (`MakeDiversion` 0x425654, link 0x424957; see
+    /// `desant`).
+    Diversion(Box<crate::desant::Diversion>),
 }
 
 impl BOrder {
@@ -773,6 +776,24 @@ pub fn dissolve(world: &mut World, b: usize) {
     world.brigades[b].orders.clear();
 }
 
+/// Takes a unit out of its brigade (the brigade part of `City::UnRegisterNewUnit` 0x42e2bd):
+/// its member slot is emptied.
+pub fn remove_member(world: &mut World, i: usize) {
+    let Some(b) = world.units[i].brigade.map(usize::from) else { return };
+    let id = world.units[i].id;
+    if let Some(br) = world.brigades.get_mut(b) {
+        for m in &mut br.members {
+            if *m == Some(id) {
+                *m = None;
+            }
+        }
+    }
+    let u = &mut world.units[i];
+    u.brigade = None;
+    u.attack_bonus = 0;
+    u.defence_bonus = 0;
+}
+
 /// The brigades' orders (`ProcessBrigades` 0x434486 from `City::Process` 0x432582): they run
 /// only on the owner's city tick, `tmtmt & 7 == owner` (never for nation 7), and every
 /// brigade of that nation costs two random numbers around its order link.
@@ -803,6 +824,7 @@ pub fn run_brigades(world: &mut World) {
         match br.orders.last() {
             Some(BOrder::Keep) => keep_positions(world, b),
             Some(BOrder::Bitva(_)) => bitva_link(world, b),
+            Some(BOrder::Diversion(_)) => crate::desant::diversion_link(world, b),
             None => {}
         }
         world.random.rando();

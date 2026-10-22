@@ -127,6 +127,13 @@ pub enum Command {
     /// The `FILLFORM` icon (network command 0x52, 0x4d8153, `FillBrigade` 0x4193a1): free
     /// soldiers of the brigade's type within 1024 px take its empty slots.
     Fill { player: PlayerId, brigade: u16 },
+    /// The `CM_DOGRP` button (network command 0x58, executor `GroupSelectedFormations`
+    /// 0x43d91d): the formations of the units leave their groups and are grouped together;
+    /// selecting one of them then selects all (see `grouping`).
+    GroupFormations { player: PlayerId, units: Vec<EntityId> },
+    /// The `CM_UNGRP` button (0x59, `UnGroupSelectedUnits` 0x43d717): the formations of the
+    /// units leave their groups.
+    UngroupFormations { player: PlayerId, units: Vec<EntityId> },
 }
 
 impl Command {
@@ -167,7 +174,9 @@ impl Command {
             | Command::Unload { player, .. }
             | Command::FormNear { player, .. }
             | Command::Reform { player, .. }
-            | Command::Fill { player, .. } => *player,
+            | Command::Fill { player, .. }
+            | Command::GroupFormations { player, .. }
+            | Command::UngroupFormations { player, .. } => *player,
         }
     }
 }

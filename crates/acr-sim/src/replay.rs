@@ -338,6 +338,14 @@ impl Writer {
                 self.0.extend_from_slice(&[27, *player]);
                 self.u(u64::from(transport.0));
             }
+            Command::GroupFormations { player, units } => {
+                self.0.extend_from_slice(&[43, *player]);
+                self.ids(units);
+            }
+            Command::UngroupFormations { player, units } => {
+                self.0.extend_from_slice(&[44, *player]);
+                self.ids(units);
+            }
         }
     }
 }
@@ -448,6 +456,8 @@ impl<'a> Reader<'a> {
             42 => Command::Fill { player, brigade: self.u16()? },
             26 => Command::Board { player, units: self.ids()?, transport: self.id()? },
             27 => Command::Unload { player, transport: self.id()? },
+            43 => Command::GroupFormations { player, units: self.ids()? },
+            44 => Command::UngroupFormations { player, units: self.ids()? },
             _ => return Err(ReplayError("unknown command")),
         })
     }
@@ -500,6 +510,8 @@ mod tests {
                 Command::AttackGround { player: 3, units: vec![EntityId(8)], x: 4000, y: 50 },
                 Command::Board { player: 3, units: vec![EntityId(9)], transport: EntityId(10) },
                 Command::Unload { player: 3, transport: EntityId(10) },
+                Command::GroupFormations { player: 1, units: vec![EntityId(11), EntityId(12)] },
+                Command::UngroupFormations { player: 1, units: vec![EntityId(12)] },
             ],
         );
         r.checkpoints.push((100, 0xdead_beef_0123_4567));
@@ -507,7 +519,7 @@ mod tests {
         let back = Replay::decode(&bytes).unwrap();
         assert_eq!(back, r);
         assert_eq!(back.entries.len(), 2, "empty ticks are not stored");
-        assert_eq!(back.commands_at(9).len(), 35);
+        assert_eq!(back.commands_at(9).len(), 37);
         assert!(back.commands_at(5).is_empty());
     }
 

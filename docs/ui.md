@@ -428,6 +428,16 @@ cursor is drawn anywhere in the window, also beside the menu canvas.
     (`+0x2a` bits 1 and 2). Then:
     - slot 24 `SFREORD` ("Formation auflösen", `FREE_ORDER` icon, `Disband`) with
       formations and no free units;
+    - with at most 12 formations and no free units (0x60755c) the grouping icon at the
+      `UN?GROUP` slot (`NRES.DAT`: `UN?GROUP 14 Make_Group_Formation_OFF
+      Make_Group_Formation_ON`, parser 0x4ec123; slot 12 and no icons without the line),
+      without an outline: `CM_UNGRP` (first icon, click 0x606700, network command 0x59
+      `UngroupFormations`) when the selected formations are exactly one group
+      (`CheckUnGroupPossibility` 0x43e0b7), else `CM_DOGRP` (second icon, 0x6066f0,
+      network command 0x58 `GroupFormations`) when every selected object that is alive and
+      not hidden is in a formation (`CheckGroupPossibility` 0x43dfdb). Grouped formations
+      are selected together (see the selection below; the groups: `simulation.md`,
+      Formations);
     - with a `STANDGROUND` type and 1..24 formations plus free types: slots 25 `STANDGR` and
       26 `NOSTAND` (highlighted while some unit stands / does not; `StandGround`) and
       `GO&ATTACK` at its `[CONST]` slot (highlighted in the attack-move mode); with free
@@ -457,7 +467,6 @@ cursor is drawn anywhere in the window, also beside the menu canvas.
       fields; switching it back on plants at once). Each two-state icon shows the frame and
       hint of the current state (`STOPBUILD_OFF`/`_ON`, `FISHING_ON_TXT`/`_OFF_TXT`,
       `MAKEZASEV`/`DONTMAKEZASEV`) and switches to the other.
-    Not built: grouping formations (`CM_DOGRP`/`CM_UNGRP`, 0x43dfdb/0x43e0b7).
 - Hotkeys: `Data\Keyboard.dat` (in `Patch02.GS1`) maps `[CTRL|ALT|SHIFT] KEY : ICON`.
   The key presses the shown icon of that name.
 
@@ -724,7 +733,9 @@ described in [simulation.md](simulation.md#fog-of-war).
   only if no unit is caught. Enemies cannot be selected. Shift adds and never removes;
   Ctrl does nothing. A picked formation member brings its formation's flag bearer and
   soldiers along (0x41f3fb → `SelectBrigade` 0x4e1365 from member index 2 on; the officer
-  and drummer only if picked themselves).
+  and drummer only if picked themselves). Then
+  `CorrectImSelectionInGroups` (0x43dbff) adds the formations grouped with the selected
+  ones (`CM_DOGRP`) the same way; both also run after recalling a control group (0x4d6387).
 - Double click (WM_LBUTTONUP 0x4a2d2a: the next release within 600 ms and
   `|dx| + |dy|` < 16 pixels, pseudo key 0xF1, handler 0x4c2ea5): the own units on the screen
   of the first selected unit's type, of its kind (formation members if the selection has

@@ -337,6 +337,51 @@ ahead is free.
   `ClearUnlimitedLink` (0x527dec) moves a unit still on a locked cell to the nearest free
   9 × 9 land box (`FINDNEAREMPTY` 0x527d02).
 
+**AI landing** (`desant.rs`; Brigade.cpp "DESANT", engine side of the AI DLLs'
+`AssignDesantStartGroup` / `AssignDesantDestGroup` / `SetMaxInTransport`):
+
+- **Islands** (`ResearchIslands` 0x41f701): the land areas (`TOP1`) connected by their links,
+  numbered in area order; from an unnumbered area the links are followed at most 100 deep,
+  then again from every area numbered so far. A nation's island (`CheckIsland` 0x41fd11,
+  `City+0xeb15`) is the one with most of its objects (first maximum, 0xFF without objects):
+  for every nation at `StartAI`/AI load, then one nation every 256 ticks (`tmtmt & 0xff == 1`,
+  nation `tmtmt >> 8 & 7`); a computer player's known island stays during a mission.
+- **Coast places** (`CreateCostPlaces` 0x423bcd, at map load): each 32 px cell 15..msx−15
+  whose four `SEA2` depths are partly deep (> 128) gives the coast direction
+  `(DX, DY) = −10·(Z0+Z2−Z1−Z3, Z0+Z1−Z2−Z3) / Norma` (outer loop x); it is a place when no
+  place was taken within its 20 × 20 box, a 12 × 12 box at `2·cell + (DX, DY)` is open water,
+  one at `2·cell − (DX, DY)` free land. That gives the water point and the land point
+  (16 px cells), the land point's island and the free radius (6, grown while the box around
+  the land point stays free; `CheckVLine` stops it at 12). Every tick one place
+  (`tmtmt % NCost`, `ProcessCostPoints` 0x4243fd) is refreshed: accessible when its radius
+  box is free land and at most 6 land units of nation 0 (no `CAPTURE` types) stand in the
+  5 × 5 cells of 128 px around the land point; its transport is the first living transport
+  of the first such cell around the water point that holds units (0xFFFF when that cell has
+  none or all are empty).
+- **Registration** (`RegisterNewUnit` 0x42dda3 from `CreateNewMonsterAt`): a new transport of
+  a computer player gets a brigade with the diversion order (`MakeDiversion` 0x425654):
+  load `SetMaxInTransport` (80 by default), phase 0. Its link (0x424957) runs on the owner's
+  city tick with the brigade orders, only while the city has a start group:
+  - a transport idle for more than 200 ticks away from a shore, or with `delay` in
+    101..129, sinks (`Die`); a dead transport ends the brigade;
+  - phase 0, not docked: sail to the water point of the nearest accessible place of its own
+    island without another transport, more than 20 cells away (`FindCostPoint` 0x42469f);
+    idle within 18 cells, to the land point (which docks it);
+  - phase 0, docked: while it has fewer passengers than its load, the docked transport that
+    loads (`City+0x185`, one per city) takes the last unit of the start group per call
+    (cleaned first: alive or hidden), takes it out of its formation (`UnRegisterNewUnit`)
+    and sends it to the landing point. Passengers that are idle (or gathering) are sent
+    again: within 160 px to board (`GoToTransport`, priority 0x90), else to the landing
+    point. With passengers aboard and nobody on the way for 256 ticks the load is complete
+    (the units not aboard go back to the city). Full, or nobody on the way for 512 ticks, it
+    sets off (phase 1);
+  - phase 1, not docked: with chance 1/64 per call the place is forgotten; sail to the
+    nearest place on the island of a nation 0..6 that is not allied (`FindCostPointEx`
+    0x424789), within 40 cells to the land point;
+  - phase 1, docked: everybody off (`LeaveAll`); a passenger on land (not hidden, not
+    walking unlimited) joins the destination group. Empty, the transport is free again
+    (phase 0, `delay` 350, so it sinks about 110 ticks later).
+
 **Broadsides** (`WaterAttackLink` 0x520ef8, ships with `MULTIWEAPON`): the attack index is
 the last whose detection range holds the target. In range the ship turns the nearer side to
 it (2 per tick) and, within 8, fires a random gun (`MULTIWEAPON` offsets rotated by the
@@ -475,6 +520,16 @@ Shapes come from `ORDERS.LST` (parser 0x4ed6e0) and `ORD_GROUPS.LST` (0x4ed400).
   with the normal bonuses and stops the countdown; group moves do it for every formation
   they send (0x4ad0b5). So a formation earns `n1`/`n3` only by standing ground and
   staying put for 25 city ticks (200 ticks).
+- **Grouping** (`grouping.rs`; `CM_DOGRP` / `CM_UNGRP`, network commands 0x58 / 0x59). A
+  player's city keeps groups of formations (`GroupsSet` City+0xf63, `NGroupsInSet` +0xf67,
+  `NGroups` +0xf6b); the interface selects a group's formations together (`ui.md`).
+  `GroupFormations` (0x43d91d) takes the distinct formations of the selected units (alive,
+  not hidden, at most 256, in selection order), removes each from its group and appends
+  them as a new group; `UngroupFormations` (0x43d717) only removes them.
+  `DeleteFromGroups` (0x43d592) removes an id from the first group that holds it and goes
+  on with the next groups; a group that becomes empty is freed and the following groups
+  move down, but their counts do not (a bug kept): each later group gets the count of the
+  group before it (the emptied group's 0 for the first), and the search ends there.
 
 ## Combat
 
@@ -1331,9 +1386,23 @@ No game option writes it. How the map view draws the fog is in
     builders without a collector) are not reproduced; the deposit test of mines uses the
     deposit list (radius of the site test instead of each sprite's work radius); the
     builder team ignores its minimum size.
-  - Not reproduced yet: the AI landing process (`AssignDesant*`, `SetMaxInTransport` are
-    stored only); fishing boats do not flee from enemy ships (`GetShipDanger`); the AI
+  - Not reproduced yet: fishing boats do not flee from enemy ships (`GetShipDanger`); the AI
     difficulty factor on production time; the 10× cannon price lobby option.
+  - AI landing: the script groups live in the script host, which hands the start group's
+    units to the simulation before a step and takes the units taken and landed back
+    afterwards; the AI DLL runs before the brigades of its city tick (the engine runs
+    them first). The transport is not a member of its brigade (`BrigadeID` stays unset),
+    and taking a unit out of its formation empties only its slot. The other branches of
+    `RegisterNewUnit` (the city's armies and lists) are not reproduced; the stock DLLs set
+    a units collector, which makes them do nothing for land units. There is no peace time
+    (`PeaceTimeLeft` would stop the landing). The cell lists of `ProcessCostPoints` hold the
+    active units in id order. A place whose land point has no area gets no island (the
+    engine leaves the byte uninitialised), an unrefreshed place has transport 0. The load is
+    not limited to the order's 320 slots. Islands and coast places are not hashed (they are
+    derived from the map and the units); the landings' orders are.
+  - Grouping: brigade ids are never reused here, so a group never takes in a new
+    formation that gets a dead one's id; reads behind a group's ids (counts moved by the
+    `DeleteFromGroups` bug) stop at its ids.
   - Upgrades without effect here: `SHAR` (`WEAPON` and
     `PRECISE` have none in the engine either). `ENABLE
     UPGRADES` does nothing (the engine indexes the type table with upgrade ids).

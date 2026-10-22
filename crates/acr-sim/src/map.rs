@@ -329,6 +329,8 @@ pub struct AreaGraph {
     /// `LinksDist[from * count + to]` (0x28a72bc): path length between areas.
     pub dist: Vec<u16>,
     pub cells: Grid<u16>,
+    /// The neighbouring areas of each area (`Area::Link`, pairs of area and distance).
+    pub links: Vec<Vec<u16>>,
 }
 
 impl AreaGraph {
@@ -339,6 +341,7 @@ impl AreaGraph {
             next: a.next_hop.clone(),
             dist: a.distance.clone(),
             cells: a.cells.clone(),
+            links: a.areas.iter().map(|r| r.links.iter().map(|l| l.0).collect()).collect(),
         }
     }
 

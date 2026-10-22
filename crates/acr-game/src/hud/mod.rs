@@ -162,6 +162,9 @@ pub enum HudCommand {
     StopSowing(bool),
     /// Dissolve the selected formation (`SFREORD`).
     Disband,
+    /// `CM_DOGRP` (true) / `CM_UNGRP` (false): group the selected formations or dissolve
+    /// their group.
+    Group(bool),
     /// Queue a unit of this type in the selected building (0x6088c0; Shift: five).
     Produce(usize),
     /// Cancel a queued unit of this type (right click, 0x608810; Shift: five).
