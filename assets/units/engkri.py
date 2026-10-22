@@ -11,6 +11,7 @@ import math
 
 from mathutils import Matrix, Vector
 
+from acr_assets import crawl
 from acr_assets import armature as am
 from acr_assets import body as bd
 from acr_assets import gear, outfit, poses, rig
@@ -111,11 +112,15 @@ def build(ctx):
     ch.masks()
     for clip, keys in clips().items():
         am.add_clip(ch.arm, clip, keys)
+    # Crawl clips of the wounded (#262): keyframed, looping.
+    for clip, keys in crawl.clips().items():
+        am.add_clip(ch.arm, clip, keys)
     am.set_clip(ch.arm, "STAND")
     colours = ch.colours(ctx.ref, PALETTE, mix=0.5)
     outfit.dress(ch, colours, LAYER_OF)
     ch.arm.animation_data.action = None
     am.pose(ch.arm, STAND)
     tris = ch.triangles()
-    prepare_export(ch.all_meshes(), ctx.root, acr_triangles=sum(tris.values()), acr_clips=list(MD), acr_layers=list(ch.layers))
+    prepare_export(ch.all_meshes(), ctx.root, acr_triangles=sum(tris.values()), acr_clips=list(MD) + list(crawl.CLIPS),
+                   acr_limb_radius=ch.limb_radius, acr_layers=list(ch.layers))
     ctx.stats = {"triangles": tris, "colours": colours}

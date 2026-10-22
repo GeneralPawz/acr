@@ -44,6 +44,32 @@ stages from the glTF alone, with the decay shader rebuilt from the extras).
   draw the cut-off part with its child-side cap (32 + j) and, in that copy's palette, every
   bone outside the part locked to the part's root bone (so the seam vertices weighted to
   the parent follow the part).
+- `_LIMB` (float, #262, `acr_assets/limb.py`): the limb level 0..1 (level / 255) along the
+  chain shoulder → elbow → wrist → tip of the middle finger (arm) or hip → knee → ankle →
+  toe tip (leg), linear per segment so that the joints land exactly on elbow 110, wrist
+  205, knee 120, ankle 215 (/255). Skin, bones and stump caps project their rest position
+  onto the segments of their own `_PART` (upper arm/thigh: the first segment only;
+  forearm+hand/shin+foot: the other two); clothes and strapped gear take the level of the
+  nearest skin vertex of the same limb; trunk, head, held gear and the horse are −1.
+- Root extras `acr_limb_radius`: `{"arm_l": [16], "arm_r": [16], "leg_l": [16], "leg_r":
+  [16]}`, the outer radius (metres, 95th percentile of skin, clothes and strapped gear
+  distances to the chain) at the levels k/15, k = 0..15; empty windows interpolated. Stump
+  caps and the gib pack's unit cap are scaled with it.
+- Crawl clips (#262, `acr_assets/crawl.py`, engm18 and engkri; listed in `acr_clips`):
+  `CRAWL2` (24 frames: face down, head first, elbows pulling alternately, legs dragging),
+  `CRAWL1` (24: both arms pull while the left leg pushes, the right drags), `CRAWLARM`
+  (28: the left arm hauls, the right limp), `WRITHE` (30: on the back, knees drawn up in
+  turn, hands on the belly, rolling). Each loops: its last frame (24/28/30) equals frame 0.
+  Keyframed stand-ins until recorded drills replace them (#167). Held gear is not keyed:
+  the renderer drops it before a crawl.
+- Gib pack `gore.glb` (`assets/gore/gore.py`): `intestine_0..2`, `guts_heap`, `organ_0..1`,
+  `flesh_0..3`, `bone_0..2`, `skull_fragment`, `jaw`, `cloth_0..1` (material extras
+  `acr_tint` = "nation": multiply the uniform colour in), `stump_cap` (unit disc in XY
+  facing +Z: skin rim, fat, meat, bone, marrow; ragged outline) and `torn_edge` (unit-radius
+  ring strip around +Z, ragged free edge up to ~0.35). Decay materials and masks as above
+  (`COLOR_0`, `_GORE`, `_PART` 0); wet tissue carries `acr_roughness` (0.18..0.45) in its
+  material extras and the glTF roughness. Each mesh's origin is its resting point; the
+  node positions only lay the pack out on a grid.
 
 ## 1. What the sprites tell
 

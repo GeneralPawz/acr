@@ -244,6 +244,6 @@ def build(ctx):
     ch.arm.animation_data.action = None
     pose_for(ch, "STAND")
     tris = ch.triangles()
-    prepare_export(ch.all_meshes(), ctx.root, acr_triangles=sum(tris.values()), acr_clips=list(MD),
+    prepare_export(ch.all_meshes(), ctx.root, acr_triangles=sum(tris.values()), acr_clips=list(MD), acr_limb_radius=ch.limb_radius,
                    acr_layers=list(ch.layers), acr_extra_clips=["WALK"])
     ctx.stats = {"triangles": tris, "colours": colours}
