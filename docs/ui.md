@@ -294,7 +294,17 @@ the defaults apply: `Zone1X/Y` = 6/6, `PropertyX/Y` = 182/6, `IconLx/Ly` = 40/40
   screen pixels, and the view is centred on the cell under the cursor. ACR scales the
   camera by 1/4. The original then moves the cursor to the screen centre
   (`SetCursorPos`) and draws terrain and objects with separate routines (0x5fb93e,
-  0x5fbac1); ACR keeps the cursor and draws the same sprites scaled down.
+  0x5fbac1); ACR keeps the cursor.
+  - Objects (0x5fbac1): every sprite pack loaded from the root folder has a quarter-size
+    twin `L_Mode\<name>` with the same frames, loaded with it (0x4870ee; packs in folders
+    have none) and mapped by 0x7c0c50; the trees' twin is `L_Mode\Der`, stones and holes
+    `L_Mode\Stones`, `L_Mode\Holes` (0x5fde0f). The zoomed view draws the twin at its own
+    size at the object's position / 4 with the frame offset `>> 2`. ACR does the same
+    (`acr_render::scene::zoom_pack`) and scales the normal frame down for packs without a
+    twin (ships, for example).
+  - Terrain (0x5fb93e, `MiniMap4X.cpp`): a cached quarter-size picture of the ground,
+    rebuilt per 32 × 32 block when marked dirty (0x5ffbd6). Not reproduced: ACR renders
+    the normal terrain scaled down.
 
 ### Unit and command icons (0x606710 builds, 0x5a9fa0 draws)
 

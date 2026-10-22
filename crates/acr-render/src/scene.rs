@@ -19,6 +19,17 @@ use crate::terrain::{Camera, TerrainData};
 /// One frame of a sprite pack, by game path and frame index.
 pub type FrameKey = (String, usize);
 
+/// The zoomed-out view's version of a sprite pack (0x4870ee): every pack loaded from the
+/// root folder has a quarter-size twin `L_Mode\<name>` with the same frames; the trees'
+/// pack is `L_Mode\Der` (0x5fde23). Packs in folders have none.
+pub fn zoom_pack(path: &str) -> Option<String> {
+    let upper = acr_formats::normalize_path(path);
+    if upper == "TREES.GP" {
+        return Some("L_MODE\\DER.GP".to_owned());
+    }
+    (!upper.contains('/')).then(|| format!("L_MODE\\{upper}"))
+}
+
 /// How an object is ordered against the others.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Layer {
@@ -319,6 +330,9 @@ pub struct MapObjects {
     defs: HashMap<String, UnitDef>,
     /// Requested sprite packs; `None` while loading.
     packs: HashMap<String, Option<acr_formats::GpFile>>,
+    /// Packs that could not be read; not requested again (zoomed-out twins are often
+    /// missing).
+    missing: std::collections::HashSet<String>,
 }
 
 impl MapObjects {
@@ -356,6 +370,7 @@ impl MapObjects {
                 Err(e) => {
                     log::warn!("{path}: {e}");
                     self.packs.remove(path);
+                    self.missing.insert(path.to_owned());
                 }
             }
         } else if let Some(n) = self.defs_pending.filter(|_| upper.ends_with(".MD")) {
@@ -378,18 +393,24 @@ impl MapObjects {
 
     /// A requested file could not be read: stop waiting for it.
     pub fn file_failed(&mut self, path: &str) {
-        self.packs.remove(path);
+        if self.packs.remove(path).is_some() {
+            self.missing.insert(path.to_owned());
+        }
         if let Some(n) = self.defs_pending.filter(|_| acr_formats::normalize_path(path).ends_with(".MD")) {
             self.defs_pending = Some(n.saturating_sub(1));
         }
     }
 
-    fn want_pack(&mut self, path: &str) -> Option<String> {
-        if self.packs.contains_key(path) {
-            return None;
+    /// Requests a pack and its zoomed-out twin ([`zoom_pack`]); returns the new paths.
+    fn want_pack(&mut self, path: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        for p in std::iter::once(path.to_owned()).chain(zoom_pack(path)) {
+            if !self.packs.contains_key(&p) && !self.missing.contains(&p) {
+                self.packs.insert(p.clone(), None);
+                out.push(p);
+            }
         }
-        self.packs.insert(path.to_owned(), None);
-        Some(path.to_owned())
+        out
     }
 
     /// The definition of a map unit id such as `EngM18(EN)`.
@@ -409,7 +430,7 @@ impl MapObjects {
         names.sort_unstable();
         names.dedup();
         let packs: Vec<String> = names.iter().filter_map(|n| self.defs.get(n)).flat_map(unit_packs).collect();
-        packs.iter().filter_map(|p| self.want_pack(p)).collect()
+        packs.iter().flat_map(|p| self.want_pack(p)).collect()
     }
 
     /// Requests the packs of object types (map unit ids such as `EngSkl(EN)`) that appear
@@ -417,7 +438,7 @@ impl MapObjects {
     pub fn packs_for_units<'a>(&mut self, ids: impl IntoIterator<Item = &'a str>) -> Vec<String> {
         let packs: Vec<String> =
             ids.into_iter().filter_map(|id| self.defs.get(&definition_name(id))).flat_map(unit_packs).collect();
-        packs.iter().filter_map(|p| self.want_pack(p)).collect()
+        packs.iter().flat_map(|p| self.want_pack(p)).collect()
     }
 
     pub fn definitions_ready(&self) -> bool {
@@ -451,6 +472,21 @@ impl MapObjects {
         let def = self.definition(unit_id)?;
         let animation = def.animation(anim).or_else(|| idle_animation(def))?;
         animation_look(def, animation, direction, step, |p| self.pack(p).map(acr_formats::GpFile::frame_count))
+    }
+
+    /// `keys` plus the frames of their zoomed-out twins that are loaded.
+    pub fn with_zoom_frames(&self, mut keys: Vec<FrameKey>) -> Vec<FrameKey> {
+        let twins: Vec<FrameKey> = keys
+            .iter()
+            .filter_map(|(p, f)| {
+                let z = zoom_pack(p)?;
+                (*f < self.pack(&z)?.frame_count()).then_some((z, *f))
+            })
+            .collect();
+        keys.extend(twins);
+        keys.sort();
+        keys.dedup();
+        keys
     }
 
     /// Every frame of every pack loaded for units, for uploading next to a static scene.
@@ -494,12 +530,16 @@ pub struct SceneAtlas {
 impl SceneAtlas {
     /// The draws for the visible part of `scene` plus `dynamic` sprites (e.g. moving units
     /// from the simulation, any order), merged into the original's draw order.
+    ///
+    /// In the zoomed-out view (`zoomed`, 0x5fbac1) a sprite with a `L_Mode` twin is drawn
+    /// from it at its own size, its offset divided by 4 (`>> 2`); others are scaled down.
     pub fn draws(
         &self,
         scene: &Scene,
         dynamic: &[SceneSprite],
         camera: &Camera,
         size: [f32; 2],
+        zoomed: bool,
     ) -> Vec<crate::SpriteDraw> {
         let mut extra: Vec<(&SceneSprite, [f32; 2])> = dynamic
             .iter()
@@ -513,7 +553,19 @@ impl SceneAtlas {
         let mut extra = extra.into_iter().peekable();
         let mut out = Vec::new();
         let mut push = |s: &SceneSprite, [x, y]: [f32; 2]| {
-            if let Some(&frame) = self.index.get(&s.frame) {
+            let twin =
+                zoomed.then(|| zoom_pack(&s.frame.0)).flatten().and_then(|p| self.index.get(&(p, s.frame.1)).copied());
+            if let Some(frame) = twin {
+                let [px, py] = camera.project(s.x, s.y, 0);
+                out.push(crate::SpriteDraw {
+                    frame,
+                    x: (px + (s.dx >> 2) as f32).round(),
+                    y: (py + (s.dy >> 2) as f32).round(),
+                    scale: 1.0,
+                    player: s.player,
+                    transparent: s.transparent,
+                });
+            } else if let Some(&frame) = self.index.get(&s.frame) {
                 out.push(crate::SpriteDraw {
                     frame,
                     x: x.round(),
@@ -557,6 +609,14 @@ mod tests {
             player: 0,
             transparent: false,
         }
+    }
+
+    #[test]
+    fn zoom_packs_are_root_packs_in_l_mode() {
+        assert_eq!(zoom_pack("EngKre.gp").as_deref(), Some("L_MODE\\ENGKRE.GP"));
+        assert_eq!(zoom_pack("TREES.GP").as_deref(), Some("L_MODE\\DER.GP"));
+        assert_eq!(zoom_pack("INTERFACE\\CURSGO.GP"), None);
+        assert_eq!(zoom_pack("L_MODE\\STONES.GP"), None);
     }
 
     #[test]

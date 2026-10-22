@@ -32,6 +32,8 @@ pub struct ObjectsView {
     /// Packs requested by [`ObjectsView::want_units`] that have not arrived yet; the atlas
     /// is rebuilt once they are all there.
     late_packs: Vec<String>,
+    /// The zoomed-out view: sprites come from their `L_Mode` twins.
+    pub zoomed: bool,
 }
 
 impl Default for ObjectsView {
@@ -53,6 +55,7 @@ impl ObjectsView {
             dynamic_units: false,
             dynamic: Vec::new(),
             late_packs: Vec::new(),
+            zoomed: false,
         }
     }
 
@@ -162,9 +165,11 @@ impl ObjectsView {
             renderer.set_palette(queue, &palette);
         }
         if let (Some(scene), None) = (&self.scene, &self.atlas) {
-            let mut frames = scene.frames();
+            let mut frames = self.assets.with_zoom_frames(scene.frames());
             if self.dynamic_units {
                 frames.extend(self.assets.unit_frames());
+                frames.sort();
+                frames.dedup();
             }
             self.atlas = Some(self.assets.upload(renderer, device, queue, frames));
         }
@@ -188,7 +193,7 @@ impl ObjectsView {
         else {
             return;
         };
-        let draws = atlas.draws(scene, &self.dynamic, camera, size);
+        let draws = atlas.draws(scene, &self.dynamic, camera, size, self.zoomed);
         renderer.prepare(device, queue, &atlas.atlas, size, &draws);
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("map objects"),

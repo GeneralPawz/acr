@@ -612,6 +612,7 @@ impl InGame {
         if let Some(renderer) = &mut self.renderer {
             renderer.render(device, queue, encoder, view, size, &self.camera);
         }
+        self.objects.zoomed = self.interface.hud.zoom;
         self.objects.render(device, queue, encoder, view, size, &self.camera);
         let shades = self.fog_shades(size);
         if let Some(fog) = &mut self.fog_renderer {
