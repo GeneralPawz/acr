@@ -246,6 +246,18 @@ twice the lifetime in ticks). `gore=off` keeps the original removal and fade.
   frame. Monongahela (`battle3.m3d`) with 530–570 English corpses on the map: 0.25–0.5 ms
   per frame (release, logged every 500 frames); 800 bodies packed into 40 × 20 m: 0.85 ms.
 
+#### Trampled soil (#223)
+
+Where many units walk, the ground darkens into trodden paths and slowly recovers, in
+sprite and 3D mode (`acr-game/src/ingame/trample.rs`, render only). Each tick every moving
+land unit adds 0.02 wear to the terrain vertex under it (a unit crosses a vertex in about
+three ticks: some five walkers start a path, fifteen wear it out, one leaves no trace) and
+all wear decays by 0.9997 per tick (half gone after about four minutes). Once a second the
+wear goes to `TerrainRenderer::set_trample`, which rewrites the per-vertex light levels of
+the vertex texture: up to `TRAMPLE_DARKEN` (10) levels darker through the original's
+darkness table, with a ragged edge from per-vertex noise; bright textures (light 0, water)
+stay. Not saved: a loaded game starts with fresh ground.
+
 ## Camera math
 
 World coordinates of the 3D path are world pixels: `x` east, `y` south, `z` up as a true
