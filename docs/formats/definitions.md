@@ -169,7 +169,7 @@ transliterated Russian names or the values; `?` marks guesses, blank means unkno
 | `ATTMASK` | `i #(s)` | 12 | 12 | attack index, materials it may attack |
 | `BARABAN` | | 13 | 13 | flag: drummer ("барабан") |
 | `BORNPOINTS` | `#(ii)` | 117 | 117 | building: spawn points of produced units |
-| `BORN_SOUND` | `s` | 89 | 82 | sound when produced |
+| `BORN_SOUND` | `s` | 89 | 82 | NM+0x290c: played at the object when a produced unit appears (`ProduceObjLink` 0x49fab7) and when the local player's building is finished (`BuildObjLink` 0x5247c2); only buildings set it (`MELNWAT` mill wheel, `SHAKOL`/`KAMENOL` mine picks, `BLG`) |
 | `BREAKANIMATION` | `s` | 111 | 87 | animation that may be interrupted (`#REST`)? |
 | `BREFLECT` | | 109 | 106 | flag (buildings) |
 | `BUILDBAR` | `iiii` | 119 | 119 | building: construction bar rectangle? |

@@ -467,6 +467,10 @@ pub struct World {
     /// Weapon sounds of the last [`World::step`] (cleared at its start; not part of the
     /// state).
     pub sounds: Vec<crate::projectile::WeaponSound>,
+    /// Units produced and buildings finished during the last [`World::step`] (the interface
+    /// plays their `BORN_SOUND`, 0x49fab7 / 0x5247c2; cleared at its start; not part of the
+    /// state).
+    pub born: Vec<EntityId>,
     /// The 3D boxes of buildings.
     pub bars: crate::bars::Bars,
     /// The AI planning maps (`CantBuild`, `InfoMap`), built at the first use.
@@ -608,6 +612,7 @@ impl World {
             morale: Default::default(),
             projectiles: Default::default(),
             sounds: Vec::new(),
+            born: Vec::new(),
             bars,
             plan: None,
             cities: Default::default(),
@@ -854,6 +859,7 @@ impl World {
     /// once, player by player (`LongProcesses`, 0x5112aa).
     pub fn step(&mut self, commands: &[Command]) {
         self.sounds.clear();
+        self.born.clear();
         crate::combat::forget_hits(self);
         crate::morale::decay(self);
         for c in commands {

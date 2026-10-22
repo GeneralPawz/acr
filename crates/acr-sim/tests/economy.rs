@@ -158,9 +158,11 @@ fn peasants_build_a_storehouse() {
     for t in 0..400 {
         w.step(&[]);
         if w.units[site].stage >= 10 {
+            assert_eq!(w.born, vec![w.units[site].id], "the finished building's BORN_SOUND (0x5247c2)");
             done_at = Some(t);
             break;
         }
+        assert!(w.born.is_empty(), "nothing born before the last stage");
         let u = &w.units[site];
         if u.stage > 0 {
             assert_eq!(u.life, u.stage * 1000 / 10, "life follows the stages");
