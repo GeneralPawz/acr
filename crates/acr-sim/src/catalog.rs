@@ -380,8 +380,11 @@ pub struct Role {
     pub opposit: (i32, i32),
     /// `CATEGORY NAME` (u8 NM+0x1736) through `CATEGORIES.DAT` (`STRELOK 1`).
     pub category: u8,
-    /// `CAPTURE` (NM+0x172a bit1).
+    /// `CAPTURE` (NM+0x172a bit1): the object can be captured (European peasants, some
+    /// buildings), and it captures nothing itself.
     pub capture: bool,
+    /// `CANTCAPTURE` (NM+0x172a bit2): never captures (animals).
+    pub cant_capture: bool,
     /// `VES v` (NM+0x1767, default 10; `USAGE MELNICA` sets 100, `USAGE SKLAD` 30, `BUILDING` 500).
     pub ves: i32,
     /// A `BUILDING` token in `ATTMASK` or `MATHERIAL` (NM+0x172b bit2): attacks buildings.
@@ -408,6 +411,7 @@ fn role(def: &UnitDef) -> Role {
         opposit: (0, 0),
         category: 0,
         capture: false,
+        cant_capture: false,
         ves: 10,
         attacks_buildings: false,
         auto_no_attack: false,
@@ -438,6 +442,7 @@ fn role(def: &UnitDef) -> Role {
             "OPPOSIT" => r.opposit = (byte(c, 0), byte(c, 1)),
             "CATEGORY" => r.category = u8::from(c.word(0).is_some_and(|w| w.eq_ignore_ascii_case("STRELOK"))),
             "CAPTURE" => r.capture = true,
+            "CANTCAPTURE" => r.cant_capture = true,
             "VES" => r.ves = c.int(0).unwrap_or(10),
             "BUILDING" => r.ves = 500,
             "ATTMASK" | "MATHERIAL" => {

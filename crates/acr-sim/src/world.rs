@@ -486,6 +486,17 @@ pub struct World {
     pub cities: [crate::aiplace::City; PLAYERS],
     /// Each player's grouped formations (`City::GroupsSet`).
     pub formation_groups: [crate::grouping::FormationGroups; PLAYERS],
+    /// The capture rule of the game (0x6e45cb, digit 5 of the random map's options; 0 in
+    /// missions): 1 spares peasants, 2 also town centres and mines, 3 everything but
+    /// artillery, and with any rule but 0 a captured building's garrison dies with it. The
+    /// interface does not offer it yet.
+    pub capture_rule: u8,
+    /// Each nation's difficulty (`City+0x183`, set by the host): an AI does not capture the
+    /// peasants of a nation at 3 or more but kills them.
+    pub difficulty: [u8; PLAYERS],
+    /// Objects captured in the last step (for the scripts' serial numbers); cleared at the
+    /// start of every step, not hashed.
+    pub captured: Vec<EntityId>,
     /// `SLOWDEATH` buildings burning down (0x11f0f70, at most 64; see
     /// [`crate::combat::slow_death`]).
     pub slow_deaths: Vec<EntityId>,
@@ -652,6 +663,9 @@ impl World {
             thrown: Vec::new(),
             detonation: None,
             slow_deaths: Vec::new(),
+            capture_rule: 0,
+            difficulty: [0; PLAYERS],
+            captured: Vec::new(),
             deaths: Default::default(),
             hits: Default::default(),
             impacts: Default::default(),
@@ -900,6 +914,7 @@ impl World {
     pub fn step(&mut self, commands: &[Command]) {
         self.sounds.clear();
         self.born.clear();
+        self.captured.clear();
         crate::combat::forget_hits(self);
         self.shouts.clear();
         crate::morale::decay(self);
@@ -947,6 +962,7 @@ impl World {
                 }
             }
         }
+        crate::capture::run(self);
         crate::combat::object_loop(self);
         crate::sprite::time_step(self);
         crate::projectile::process(self);

@@ -466,11 +466,20 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
         chosen = (0..ta.attacks.len()).find(|&k| ta.attacks[k].weapon.is_none() && ta.attacks[k].mask & e_mat != 0);
     }
     let Some(k) = chosen else {
+        // No attack fits (0x51f3df): the attack ends; the unit walks to a target it could
+        // capture now (an attack on the ground: always), at its priority, in front.
         let (ex, ey) = e_pos.pixels();
         let areas = w.map.land_areas.clone();
-        let u = &mut w.units[i];
-        u.pop_order();
-        crate::motion::smart_send_to(u, areas.as_ref(), ex, ey, 0, 0, prio);
+        w.units[i].pop_order();
+        let walk = match aim {
+            Aim::Unit(j) => crate::capture::capturable_now(w, j),
+            Aim::Point(..) => true,
+        };
+        if walk {
+            let u = &mut w.units[i];
+            let p = u.prio;
+            crate::motion::smart_send_to_ex(u, areas.as_ref(), ex, ey, 0, 0, p, true, false);
+        }
         return;
     };
     let high = is_high(w, &ta, k);
@@ -1549,6 +1558,21 @@ fn destroyed_building_explodes(w: &mut World, b: usize) {
             crate::projectile::create(w, *wid, (x, y, z), (x, y, 1000), None, 0, None, (0, 0, 0), 0);
         }
     }
+}
+
+/// `DestructBuilding` (0x4e7720): a `SLOWDEATH` object that is finished (`Ready`) or busy
+/// only drops to 1999 life (and then burns down, [`slow_death`]); anything else dies.
+pub fn destruct_building(w: &mut World, i: usize) {
+    let u = &w.units[i];
+    let ready = !u.building || u.stage >= w.max_stage(u);
+    if w.catalog.get(u.kind).slow_death && (ready || !u.orders.is_empty()) {
+        let u = &mut w.units[i];
+        if u.life >= 2000 {
+            u.life = 1999;
+        }
+        return;
+    }
+    die(w, i);
 }
 
 /// `SLOWDEATH` buildings burn down (0x4e7410, every tick after `ProcessCostPoints`). Every

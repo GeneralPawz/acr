@@ -311,6 +311,7 @@ impl Scripts {
     /// returns the orders to pass to that step. Returns nothing while a question is open or
     /// after the game has ended.
     pub fn tick(&mut self, world: &mut World) -> Vec<Command> {
+        self.state.note_captures(world);
         if self.waiting || self.ended() {
             return Vec::new();
         }
