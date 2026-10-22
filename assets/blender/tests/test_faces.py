@@ -64,8 +64,23 @@ class Regions(unittest.TestCase):
             for parts in table.values():
                 for p in parts:
                     self.assertTrue(p.startswith(("hair_", "beard_")))
-        for v in faces.OFFSETS:
+        for v in faces.PATCHES:
             self.assertTrue(any(v in p for t in (faces.HAIR_VARIANTS, faces.BEARD_VARIANTS) for p in t.values()))
+
+    def test_patches(self):
+        for name in faces.PATCHES:
+            rows = faces.patch_grid(name)
+            for row in rows:
+                for th, ph, tp in row:
+                    self.assertTrue(-90 <= ph <= 90 and 0 <= tp <= 1, name)
+                    self.assertGreater(faces.thickness(name, th, 0.5, tp), 0.0)
+            # Open edges fade into the skin, the inside does not.
+            self.assertLess(rows[0][len(rows[0]) // 2][2], 0.01, name)
+            self.assertGreater(max(tp for row in rows for _t, _p, tp in row), 0.9, name)
+        # The hairline is high on the forehead and low at the nape.
+        self.assertGreater(faces.curve(faces.HAIRLINE, 0), 30)
+        self.assertLess(faces.curve(faces.HAIRLINE, 180), -30)
+        self.assertAlmostEqual(sum(c * c for c in faces.ray_dir(33, -12)), 1.0)
 
 
 class Choice(unittest.TestCase):

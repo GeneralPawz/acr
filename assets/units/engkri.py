@@ -86,8 +86,6 @@ def make(root, name):
     ch.shell("sash", "sash", lambda c, n, h, p: h in TORSO and 1.00 < c.z < 1.10, 0.032)
     ch.shell("breeches", "breeches", lambda c, n, h, p: (h in {"hips"} | LEGS and c.z < 1.0) or (h in SHINS and c.z > 0.11), 0.009)
     ch.shell("shoes", "shoes", lambda c, n, h, p: h in FEET or (h in SHINS and c.z <= 0.11), 0.012)
-    ch.shell("hair", "hair", lambda c, n, h, p: h in {"head", "neck"} and ((c.z > 1.63 and c.y > -0.075) or (c.y > -0.01 and c.z > 1.50)),
-             0.016)
     skirt = bd.tube(ch.arm, f"{name}.tunic_skirt", rig.SKIRT_TOP, 0.70, (0.17, 0.13), (0.205, 0.17), columns=rig.SKIRT_COLUMNS)
     ch.add("clothes", skirt, "tunic", symmetric=True)
     ch.bone_layer()
