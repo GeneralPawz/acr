@@ -202,6 +202,8 @@ pub struct View {
     pub fog: Option<Rc<Vec<bool>>>,
     /// The type the unit panel shows (key U).
     pub unit_info: Option<panels::UnitInfo>,
+    /// The morale of the selected unit for the unit panel's `THIS_UNIT` page.
+    pub morale: Option<panels::MoraleInfo>,
     /// The game panel's page (key I).
     pub game_page: Vec<Draw>,
     /// The market's numbers when a market is selected: the amount offered (once a resource
@@ -658,7 +660,7 @@ impl Hud {
             draw_icon(icon, r.x0, r.y0, pressed, &palette, out);
         }
         match (self.panel, &view.unit_info) {
-            (Panel::Unit, Some(info)) => self.unit_panel.draw(ctx, info, &palette, out),
+            (Panel::Unit, Some(info)) => self.unit_panel.draw(ctx, info, view.morale.as_ref(), &palette, out),
             (Panel::Game, _) => {
                 self.game_panel.draw_frame(ctx, out);
                 out.extend(view.game_page.iter().cloned());
@@ -725,6 +727,11 @@ impl Hud {
             && let Some(id) = panels::GamePanel::hint(m)
         {
             hint = Some(ctx.texts.get(id));
+        }
+        if self.panel == Panel::Unit
+            && let Some(h) = self.unit_panel.hint()
+        {
+            hint = Some(h);
         }
         let Some(text) = hint else { return };
         tooltip(ctx, palette, text, m, out);

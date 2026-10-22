@@ -127,6 +127,44 @@ pub struct UnitInfo {
     pub opposit: (i32, i32),
     /// `Description\<md>.md`.
     pub description: String,
+    /// The upgrades that concern the type (0x4c84b0, at most 25): `ICONS.GP` frame (none
+    /// for an upgrade without a picture) and hint.
+    pub upgrades: Vec<(Option<usize>, Vec<u8>)>,
+    /// The attack and shield upgrade levels (0x4c7cda, 0x4c80a9).
+    pub attack_levels: LevelTable,
+    pub shield_levels: LevelTable,
+    /// An own unit of this type is the first of the selection: the `THIS_UNIT` page exists.
+    pub this_unit: bool,
+}
+
+/// The selected unit's panic chances and what changed them (0x601d70), see
+/// `docs/ui.md`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MoraleInfo {
+    /// Fear type (0..4, `FEARFACTOR` not 0), start and current chance (0..32767).
+    pub rows: Vec<(usize, i32, i32)>,
+    /// Factor lines: text, hint id, factor · 1000, and whether it raises the fear.
+    pub factors: Vec<(Vec<u8>, &'static str, i32, bool)>,
+}
+
+/// The levels of the `DAMAGE` (or `PROTECTION`) upgrades of one type, one row per weapon
+/// kind (below 8) that any level raises.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LevelTable {
+    pub rows: Vec<LevelRow>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LevelRow {
+    /// `SMICONS.GP` frame of the weapon kind.
+    pub icon: usize,
+    /// The type's own value for the kind.
+    pub base: i32,
+    /// Hints of the icon (`UI_ATTk` / `UI_SHLk`) and of the base column (`UI_SATTk` /
+    /// `UI_SSHLk`).
+    pub hints: (Vec<u8>, Vec<u8>),
+    /// Per level: the increase (0: an empty cell) and its hint.
+    pub cells: Vec<(i32, Vec<u8>)>,
 }
 
 /// Portrait files per `INFO` kind and their frame size (0x4c7990).
@@ -142,6 +180,10 @@ const GENERAL: i32 = 0;
 const DESCR: i32 = 1;
 const UPGR: i32 = 2;
 const PRICE_UPG: i32 = 3;
+/// `THIS_UNIT`: the selected unit's morale (0x601d70).
+const THIS_UNIT: i32 = 7;
+/// The morale page is rebuilt this often while shown (0x4c8ce5).
+const MORALE_REFRESH: f64 = 8.0;
 const NEXT: i32 = 100;
 const PREV: i32 = 101;
 
@@ -175,6 +217,8 @@ pub struct UnitPanel {
     portrait: Option<(Image, i32, i32)>,
     portrait_key: Option<(String, usize)>,
     new_portrait: Option<Image>,
+    /// When the panel was last built, for the morale page's refresh.
+    built_at: Option<web_time::Instant>,
 }
 
 impl UnitPanel {
@@ -204,13 +248,25 @@ impl UnitPanel {
     }
 
     /// Rebuilds the widgets when the type or the page changed (0x4c8cd0).
-    fn build(&mut self, ctx: &Ctx, info: &UnitInfo, palette: &Palette) {
+    fn build(&mut self, ctx: &Ctx, info: &UnitInfo, morale: Option<&MoraleInfo>, palette: &Palette) {
         let kind = Self::kind_of(info);
+        let same_info = self.built.as_ref().is_some_and(|(i, _)| i == info);
+        // A selected unit opens on its morale (0x4c98a3); without one the page falls back
+        // to General.
+        if !same_info && kind == 0 {
+            if info.this_unit {
+                self.pages[0] = THIS_UNIT;
+            } else if self.pages[0] == THIS_UNIT {
+                self.pages[0] = GENERAL;
+            }
+        }
         let page = self.pages[kind];
-        if self.built.as_ref().is_some_and(|(i, p)| i == info && *p == page) {
+        let stale = page == THIS_UNIT && self.built_at.is_none_or(|t| t.elapsed().as_secs_f64() >= MORALE_REFRESH);
+        if same_info && self.built.as_ref().is_some_and(|(_, p)| *p == page) && !stale {
             return;
         }
         self.built = Some((info.clone(), page));
+        self.built_at = Some(web_time::Instant::now());
         let lib = ctx.lib;
         let mut d = Dialog::default();
         let (bx, by) = BASE;
@@ -251,6 +307,19 @@ impl UnitPanel {
                 (132, 176, "BTN_Next", NEXT),
                 (12, 176, "BTN_Prev", PREV),
             ],
+            // With a selected unit `THIS_UNIT` comes first and the others close up (0x4c8fb0).
+            _ if info.this_unit => [
+                (GENERAL, "BTN_General"),
+                (DESCR, "BTN_Descr"),
+                (UPGR, "BTN_Upgr"),
+                (NEXT, "BTN_Next"),
+                (PREV, "BTN_Prev"),
+            ]
+            .iter()
+            .enumerate()
+            .map(|(i, &(v, t))| (114, 24 + 20 * i as i32, t, v))
+            .chain(std::iter::once((114, 5, "THIS_UNIT", THIS_UNIT)))
+            .collect(),
             _ => [
                 (GENERAL, "BTN_General"),
                 (DESCR, "BTN_Descr"),
@@ -303,6 +372,21 @@ impl UnitPanel {
                 viewer.set_line_height(line_h, height);
             }
             GENERAL | PRICE_UPG => self.price_page(ctx, &mut d, info, yy0, page == GENERAL),
+            THIS_UNIT => {
+                if let Some(m) = morale {
+                    let first = d.widgets.len();
+                    let end = morale_page(ctx, &mut d, m, palette, yy0);
+                    self.page_scroll(ctx, &mut d, first, yy0, end);
+                }
+            }
+            UPGR => {
+                let first = d.widgets.len();
+                let mut yy = yy0;
+                upgrade_grid(ctx, &mut d, info, &mut yy);
+                level_table(ctx, &mut d, &info.attack_levels, "UI_AttUpg", &mut yy);
+                level_table(ctx, &mut d, &info.shield_levels, "UI_ShlUpg", &mut yy);
+                self.page_scroll(ctx, &mut d, first, yy0, yy + 4);
+            }
             _ => {}
         }
         self.d = d;
@@ -349,8 +433,30 @@ impl UnitPanel {
         if general {
             text(d, 13, yy, &format_int(ctx.texts.get("STORM_I"), info.storm), font::SMALL_WHITE);
         } else {
+            // PriceUpg: the upgrade grid, then the resistance (0x4ca6c9, 0x4ca9ee).
+            let first = d.widgets.len();
+            upgrade_grid(ctx, d, info, &mut yy);
             let t = format_ints(ctx.texts.get("OPPOSIT_I"), &[info.opposit.0, info.opposit.1]);
             text(d, 13, yy, &t, font::SMALL_WHITE);
+            self.page_scroll(ctx, d, first, yy0, yy);
+        }
+    }
+
+    /// A page taller than the paper gets a scroll bar beside it (0x4ca8a8): `Interf2\VScroll2`
+    /// at (218, `yy0 − 9`), `InfY2 − div − 10` long, moving the page's widgets from `first`
+    /// on, 10 pixels per arrow step.
+    fn page_scroll(&self, ctx: &Ctx, d: &mut Dialog, first: usize, yy0: i32, end: i32) {
+        let (bx, by) = BASE;
+        let over = end - (INF_Y2 - by);
+        if over <= 0 {
+            return;
+        }
+        let sb = d.add_scroll_bar(ctx.lib, bx + 218, by + yy0 - 9, INF_Y2 - self.div - 10, over, 0, VSCROLL2, 0);
+        if let Kind::ScrollBar(bar) = &mut d.widgets[sb].kind {
+            bar.step = 10;
+        }
+        for w in &mut d.widgets[first..sb] {
+            w.scroll_owner = Some(sb);
         }
     }
 
@@ -386,6 +492,11 @@ impl UnitPanel {
         self.d.mouse_move(p);
     }
 
+    /// The hint of the widget under the mouse (upgrade icons and level cells).
+    pub fn hint(&self) -> Option<&[u8]> {
+        self.d.hint()
+    }
+
     pub fn release(&mut self) {
         self.d.release();
     }
@@ -400,7 +511,7 @@ impl UnitPanel {
         match self.d.press(p).chosen {
             Some(NEXT) => UnitPanelEvent::Step(1),
             Some(PREV) => UnitPanelEvent::Step(-1),
-            Some(page) if (0..4).contains(&page) => {
+            Some(page) if (0..4).contains(&page) || page == THIS_UNIT => {
                 self.pages[kind] = page;
                 UnitPanelEvent::Used
             }
@@ -410,8 +521,15 @@ impl UnitPanel {
 
     /// The frame (0x480343: the header box, then the paper below the divider), the
     /// portrait and the widgets.
-    pub fn draw(&mut self, ctx: &Ctx, info: &UnitInfo, palette: &Palette, out: &mut Vec<Draw>) {
-        self.build(ctx, info, palette);
+    pub fn draw(
+        &mut self,
+        ctx: &Ctx,
+        info: &UnitInfo,
+        morale: Option<&MoraleInfo>,
+        palette: &Palette,
+        out: &mut Vec<Draw>,
+    ) {
+        self.build(ctx, info, morale, palette);
         let (x0, x1) = (SCREEN[0] - INF_DX, SCREEN[0] - 15);
         frame_box(ctx, out, (x0, INF_Y1, x1, self.div), PANEL_CORNERS);
         paper(ctx, out, (x0, self.div, x1, INF_Y2), 0x1c, PAPER_CORNERS);
@@ -423,6 +541,175 @@ impl UnitPanel {
         self.d.draw(ctx.lib, ctx.fonts, &mut widgets);
         out.extend(widgets.into_iter().map(Draw::in_game));
     }
+}
+
+/// Wraps `text` into lines at most `x1 − x0` wide (0x601a70): breaks at CR/LF and before a
+/// word that does not fit, drops the spaces that start a wrapped line; `{`, `}` and `|`
+/// only end words. Each line becomes a text with `hint`; returns the y below the last line
+/// (`GetRLCHeight(font, 'y') + 1` per line).
+#[allow(clippy::too_many_arguments)]
+fn wrapped(
+    ctx: &Ctx,
+    d: &mut Dialog,
+    (x0, x1): (i32, i32),
+    y: i32,
+    font: FontId,
+    text: &[u8],
+    hint: Option<&[u8]>,
+) -> i32 {
+    let (bx, by) = BASE;
+    let line_h = ctx.fonts.height(ctx.lib, font) + 1;
+    let width = x1 - x0;
+    let mut lines: Vec<Vec<u8>> = Vec::new();
+    for para in text.split(|&c| c == b'\n').map(|l| l.strip_suffix(b"\r").unwrap_or(l)) {
+        let para: Vec<u8> = para.iter().copied().filter(|&c| c != b'{' && c != b'}' && c != b'\r').collect();
+        let mut line: Vec<u8> = Vec::new();
+        for word in para.split_inclusive(|&c| c == b' ' || c == b'|') {
+            let mut candidate = line.clone();
+            candidate.extend_from_slice(word);
+            let trimmed: Vec<u8> = candidate.iter().copied().filter(|&c| c != b'|').collect();
+            if !line.is_empty() && ctx.fonts.width(ctx.lib, font, trimmed.trim_ascii_end()) > width {
+                lines.push(std::mem::take(&mut line));
+                line = word.iter().copied().skip_while(|&c| c == b' ').collect();
+            } else {
+                line = candidate;
+            }
+        }
+        lines.push(line);
+    }
+    let mut yy = y;
+    for l in lines {
+        let l: Vec<u8> = l.into_iter().filter(|&c| c != b'|').collect();
+        let id = d.add_text(ctx.lib, ctx.fonts, bx + x0, by + yy, l.trim_ascii_end(), font, Align::Left);
+        if let Some(h) = hint {
+            d.set_hint(id, h);
+        }
+        yy += line_h;
+    }
+    yy
+}
+
+/// `%d.%d%%` of a chance 0..32767 as per mille (0x60243b), with `x` for factors.
+fn per_mille(v: i32) -> Vec<u8> {
+    let d = (i64::from(v) * 25000 / 32767) as i32;
+    format!("{}.{}%", d / 10, d % 10).into_bytes()
+}
+
+/// The `THIS_UNIT` page (0x601d70, x relative to the panel origin): `THIS_GEN_INF`,
+/// `FEAR_INF_BORN`, per fear type the label with the start and current chance in boxes,
+/// then, if any chance changed, `FEAR_ACTS` and the factor lines. Returns the bottom.
+fn morale_page(ctx: &Ctx, d: &mut Dialog, m: &MoraleInfo, palette: &Palette, y0: i32) -> i32 {
+    let (bx, by) = BASE;
+    let [r, g, b] = palette.rgb(0x84);
+    let line = [r, g, b, 255];
+    let t = |id: &str| ctx.texts.get(id).to_vec();
+    let centred = |d: &mut Dialog, x: i32, w: i32, y: i32, text: &[u8], hint: &[u8]| {
+        let tw = ctx.fonts.width(ctx.lib, SMALL_YELLOW, text);
+        let id = d.add_text(ctx.lib, ctx.fonts, bx + x + (w - tw) / 2, by + y, text, SMALL_YELLOW, Align::Left);
+        d.set_hint(id, hint);
+    };
+    let mut y = wrapped(ctx, d, (6, 230), y0, font::SMALL_WHITE, &t("THIS_GEN_INF"), None) + 4;
+    y = wrapped(ctx, d, (6, 230), y, SMALL_YELLOW, &t("FEAR_INF_BORN"), Some(&t("FEAR_INF_BORNH"))) + 4;
+    let mut changed = false;
+    for &(i, start, current) in &m.rows {
+        let top = y;
+        let label = t(&format!("FEAR_TXWIDE{i}"));
+        let end = wrapped(ctx, d, (6, 150), top, SMALL_YELLOW, &label, Some(&t(&format!("FEAR_TXWIDE{i}H"))));
+        let h = end - top + 3;
+        for (x, w) in [(2, 145), (147, 40), (187, 40)] {
+            d.add_outline(bx + x, by + top - 2, w, h, line);
+        }
+        centred(d, 147, 40, top, &per_mille(start), &t("START_MVAL"));
+        let (ds, dc) = (i64::from(start) * 25000 / 32767, i64::from(current) * 25000 / 32767);
+        let same = ds == dc;
+        changed |= !same;
+        let hint = match (dc, same) {
+            (..=30, true) => "CURR_MVAL0",
+            (..=30, false) => "CURR_MVAL",
+            (..100, true) => "CURR_MVAL2",
+            (..100, false) => "CURR_MVAL1",
+            (..300, true) => "CURR_MVAL4",
+            (..300, false) => "CURR_MVAL3",
+            (_, true) => "CURR_MVAL6",
+            (_, false) => "CURR_MVAL5",
+        };
+        centred(d, 187, 40, top, &per_mille(current), &t(hint));
+        y = end + 3;
+    }
+    y += 2;
+    if !changed {
+        return y;
+    }
+    y = wrapped(ctx, d, (6, 235), y, SMALL_YELLOW, &t("FEAR_ACTS"), None) + 4;
+    for (text, hint, f, raises) in &m.factors {
+        let top = y;
+        let end = wrapped(ctx, d, (6, 170), top, SMALL_YELLOW, text, Some(&t(hint)));
+        let h = end - top + 3;
+        for (x, w) in [(2, 165), (167, 60)] {
+            d.add_outline(bx + x, by + top - 2, w, h, line);
+        }
+        let v = format!("x{}.{}%", f / 10, f % 10);
+        centred(d, 167, 60, top, v.as_bytes(), &t(if *raises { "FEAR_INC" } else { "FEAR_DEC" }));
+        y = end + 3;
+    }
+    y
+}
+
+/// The upgrades of the type as icons, five per row 42 pixels apart, from (7, `yy` − 1)
+/// (0x4ca6c9), each with its hint.
+fn upgrade_grid(ctx: &Ctx, d: &mut Dialog, info: &UnitInfo, yy: &mut i32) {
+    let (bx, by) = BASE;
+    let n = info.upgrades.len() as i32;
+    for (i, (frame, hint)) in info.upgrades.iter().enumerate() {
+        let i = i as i32;
+        let (x, y) = (bx + 13 - 5 + 42 * (i % 5), by + *yy + 42 * (i / 5));
+        let id = match frame {
+            Some(f) => d.add_gp_picture(ctx.lib, x - 1, y - 1, gp::ICONS, *f),
+            None => d.add_area(Rect::new(x - 1, y - 1, 40, 40)),
+        };
+        d.set_hint(id, hint);
+    }
+    *yy += 42 * ((n + 4) / 5);
+}
+
+/// One level table of the Upgr page (0x4cacf0 attack, 0x4cb25b shield): the title, the
+/// header strip `Border` 0x21, then per weapon kind a row on `Border` 0x20 (0x1f for the
+/// last) with the kind's icon, its base value centred at x = 31 and the increase of every
+/// level centred 26 pixels apart from x = 62, in `fn10`; 19 pixels per row.
+fn level_table(ctx: &Ctx, d: &mut Dialog, table: &LevelTable, title: &str, yy: &mut i32) {
+    if table.rows.is_empty() {
+        return;
+    }
+    let (bx, by) = BASE;
+    let x = bx + 13;
+    d.add_text(ctx.lib, ctx.fonts, x, by + *yy, ctx.texts.get(title), font::SMALL_WHITE, Align::Left);
+    *yy += 16;
+    d.add_gp_picture(ctx.lib, x, by + *yy, gp::BORDER, 0x21);
+    *yy += 16;
+    let last = table.rows.len() - 1;
+    for (r, row) in table.rows.iter().enumerate() {
+        let y = by + *yy;
+        d.add_gp_picture(ctx.lib, x, y, gp::BORDER, if r < last { 0x20 } else { 0x1f });
+        d.add_gp_picture(ctx.lib, x + 1, y - 1, gp::SMICONS, row.icon);
+        let base_hint = d.add_area(Rect::new(x + 14, y, 35, 19));
+        d.set_hint(base_hint, &row.hints.1);
+        let icon_hint = d.add_area(Rect::new(x, y, 19, 19));
+        d.set_hint(icon_hint, &row.hints.0);
+        for (j, (inc, hint)) in row.cells.iter().enumerate() {
+            if *inc == 0 {
+                continue;
+            }
+            let cx = x + 0x3e + 26 * j as i32;
+            let t = format!("+{inc}");
+            d.add_text(ctx.lib, ctx.fonts, cx, y + 2, t.as_bytes(), FN10, Align::Center);
+            let cell = d.add_area(Rect::new(x + 0x31 + 26 * j as i32, y, 26, 19));
+            d.set_hint(cell, hint);
+        }
+        let base = row.base.to_string();
+        d.add_text(ctx.lib, ctx.fonts, x + 0x1f, y + 2, base.as_bytes(), FN10, Align::Center);
+        *yy += 19;
+    }
+    *yy += 3;
 }
 
 /// Frame `frame` of a portrait file as an image, `None` past the last frame.

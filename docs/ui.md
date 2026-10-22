@@ -820,9 +820,47 @@ to the panel (0x4c1c36). U toggles value 2, I value 1; one panel at a time.
   - Descr page: `BTN_Descr` at (9, `H` + 13), then `Description\<md>.md` in a text viewer at
     (9, `H` + 29), 205 wide, `SmallYellowFont` with 2 pixels more per line, and an
     `Interf2\VScroll2` bar at (218, `H` + 7).
-  - Not built: the Upgr page (upgrade icons, attack and shield upgrade tables), the upgrade
-    grid of PriceUpg, and the THIS_UNIT morale page (0x601d70) that the original shows
-    first for a selected unit.
+  - The pages are all built at once and shown by page id (0x4c78e0); a page taller than the
+    paper gets an `Interf2\VScroll2` bar at (218, `H` + 7), `InfY2 − divider − 10` long, 10
+    pixels per step (0x4ca8a8).
+  - Upgrade grid (0x4c84b0; PriceUpg of buildings before `OPPOSIT_I`, Upgr of the other
+    kinds first): up to 25 upgrades of the type's nation that name the type (alone or in a
+    group), whose message is not their id, of a category below `SHAR` other than `ENABLE`,
+    `SINGLE_INSIDE` and `SINGLE_ATTPAUSE`, and not used by the level tables; artillery
+    leaves out `BUILD` and `COST`, peasants also get `EFFECT_FOOD..EFFECT_STONE`. Icons five
+    per row 42 pixels apart from (7, y − 1), hint `message/UI_Cost` + the price as
+    `Holz: 10, Gold: 5` (0x4c8b40, `RDS` names).
+  - Upgr level tables (0x4c7990 collects, 0x4cacf0 and 0x4cb25b draw): the `DAMAGE`
+    (`WEAPONKIND` with one kind) and `PROTECTION` upgrades for this type alone whose
+    `#LEVEL` is 2, 3, … in list order, at most six each. Per table `UI_AttUpg` /
+    `UI_ShlUpg` in `SmallWhiteFont`, 16 lower `Border` 0x21 (the level header strip), 16
+    lower one row per weapon kind below 8 that a level raises: `Border` 0x20 (0x1f for the
+    last row), the kind's `SMICONS.GP` icon at (14, y − 1), the type's base value (highest
+    `DAMAGE` of the kind's attack indices, or its `PROTECTION`) centred at x = 44 and each
+    level's increase as `+%d` centred at x = 75 + 26·j, in `fn10`, rows 19 apart, 3 more
+    after the table. Hints: `UI_ATTk` / `UI_SHLk` on the icon, `UI_SATTk` / `UI_SSHLk` on
+    the base, and per cell `UI_ATTk/UI_AttTo<value at this level>/UI_Cost<price>/UI_CostTo
+    <price of all levels so far>`. The original marks the upgrades it uses by adding 0x20
+    to byte `+0xf` and removes the mark while building the grid.
+  - `THIS_UNIT` (0x601d70), only for units (`INFO` kind 0) when the first selected object
+    is an own unit of the shown type: a button at (114, 5) (param 7), the other buttons at
+    y = 24 + 20·i. Every rebuild with such a unit opens this page; without one it falls
+    back to General. While it is shown the panel is rebuilt every 8 s. Texts wrap
+    (0x601a70) at word ends and CR/LF, `GetRLCHeight + 1` per line:
+    - `THIS_GEN_INF` (`SmallWhiteFont`, x 6..230), 4 lower `FEAR_INF_BORN` (hint `…H`),
+      4 lower per fear type with a `FEARFACTOR` its `FEAR_TXWIDEi` (x 6..150, hint `…H`)
+      in outlines of colour 0x84 at x 2, 147, 187 (widths 145, 40, 40), the start chance
+      `FEARFACTOR · 32.769` and the current one (`PanicP`) as `d/10.d%10%` with
+      `d = v·25000/32767`, centred in the boxes; hints `START_MVAL` and `CURR_MVAL0..6`
+      (by `d` ≤ 30, < 100, < 300, else; the odd ones when the value differs from the
+      start);
+    - if any value differs: `FEAR_ACTS` and the factors in boxes at x 2 and 167 (165, 60
+      wide), `x%d.%d%` of the factor · 1000, hint `FEAR_INC` or `FEAR_DEC`: near a command
+      centre (`FEAR_MULC`), courage beyond ±5 (`FEAR_MULB`), hunger and a lost centre
+      (`FEAR_MUL2`, `3`), in a formation the missing officer, drummer and flag bearer
+      (`4`..`6`), more than `FP1` % lost (`7`), the formation's kills (`9`),
+      comradeship (`A`) and the officer's kills (`8`), else the unit's own kills (`1`).
+    ACR adds an outline widget to the dialogs for the boxes.
 - **Game panel** (0x4ce310, dialogs 0x10fb148): paper (fill 28) from `InfY1` to
   `InfY2 − 25` in the panel box, the footer box below to `InfY2 + 3`, the tab strip
   `Border` 85 at (`RealLx − 260`, `InfY3`). Tabs at y = `InfY3` + 2, 21 high, x = 32, 69, 105,
