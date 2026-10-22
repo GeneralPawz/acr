@@ -29,8 +29,6 @@ TYPE = "EngKre"
 CHECKS = ["--anim STANDLO --sections 0", "--anim STANDLO --sections 1", "--anim STANDLO --sections 2",
           "--anim STANDLO --sections 3", "--anim BUILDLO_0", "--anim BUILDLO_1", "--anim BUILDLO_2",
           "--anim BUILDLO_3", "--anim DEATHLIE1"]
-# Building atlases are large photos of wood and stone: JPEG keeps the file small.
-IMAGE_FORMAT = "JPEG"
 
 # Picture origin = position + LOCATION; the FIRES/SMOKE points are picture coordinates.
 LOCATION = (-496, -474)

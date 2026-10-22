@@ -3,8 +3,9 @@
 One parameter `decay` (0 fresh .. 1 gone) drives every layer of a corpse; each material
 carries its layer's windows in the glTF material extras (`acr_decay`). Per vertex:
 
-- `_DECAY` (vec4, glTF custom attribute; not `COLOR_0`, which glTF multiplies into the
-  base colour) = attribute `_decay`: R low-frequency blotch noise, rank-normalised
+- `COLOR_0` = colour attribute `decay_mask` (the in-game renderer reads COLOR_0 of a
+  material with `acr_decay` extras as this mask, never as a colour; generic glTF viewers
+  multiply it into the base colour): R low-frequency blotch noise, rank-normalised
   per mesh (a threshold x removes the fraction x of the surface, so dissolving runs evenly
   in time), G per-vertex white noise (frays the edges), B layer code / 8, A 1.
 - `_GORE` (vec4, glTF custom attribute) = noise for the masks of #183, each in 0..1 and
@@ -17,7 +18,7 @@ carries its layer's windows in the glTF material extras (`acr_decay`). Per verte
 
 The shader (Blender: `material`; the same in WGSL):
 
-    mask   = 0.75 * decay.r + 0.25 * decay.g
+    mask   = 0.75 * color.r + 0.25 * color.g
     colour = mix(base, tint, k * ramp(decay, d0, d1))
     p      = ramp(decay, s0, s1);  th = p * (1 + edge)
     if (mask <= th) { discard; }
@@ -115,7 +116,7 @@ def _rank(values):
 
 
 def add_masks(obj, layer, seed, part_of_vertex=None):
-    """Writes `_decay`, `_gore` and `_part` from the rest positions."""
+    """Writes `decay_mask` (COLOR_0), `_gore` and `_part` from the rest positions."""
     from mathutils import Vector, noise
 
     mesh = obj.data
@@ -129,9 +130,10 @@ def add_masks(obj, layer, seed, part_of_vertex=None):
     blotch = field(7.0)
     wound, blood, dirt, burn = field(22.0, 0.3), field(5.0), field(9.0), field(4.0)
     code = LAYERS[layer]["code"] / 8.0
-    attr = mesh.attributes.get("_decay") or mesh.attributes.new("_decay", "FLOAT_COLOR", "POINT")
+    attr = mesh.color_attributes.get("decay_mask") or mesh.color_attributes.new("decay_mask", "FLOAT_COLOR", "POINT")
     for i, d in enumerate(attr.data):
         d.color = (blotch[i], rnd.random(), code, 1.0)
+    mesh.color_attributes.active_color = attr
     gore = mesh.attributes.get("_gore") or mesh.attributes.new("_gore", "FLOAT_COLOR", "POINT")
     for i, d in enumerate(gore.data):
         d.color = (wound[i], blood[i], dirt[i], burn[i])
@@ -212,7 +214,7 @@ def material(name, layer, rgb=(0.5, 0.5, 0.5), image=None, uv_map="sprite", roug
     t.attribute_name = "decay"
     t = t.outputs["Fac"]
     vc = nodes.new("ShaderNodeAttribute")
-    vc.attribute_name = "_decay"
+    vc.attribute_name = "decay_mask"
     sep = nodes.new("ShaderNodeSeparateColor")
     links.new(vc.outputs["Color"], sep.inputs["Color"])
     mask = _math(nodes, links, "MULTIPLY_ADD", sep.outputs[0], 0.75)

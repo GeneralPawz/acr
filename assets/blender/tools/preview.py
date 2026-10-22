@@ -11,7 +11,7 @@ and soft sky light:
   stored directions `--views`, model in clip `--clip` (default: the reference's animation);
 - `free_<i>.png`: `--free` views around the model from a free camera 35 degrees up;
 - `decay_<d>.png`: with `--decay`, the clip's pose at those decay values, the decay shader
-  rebuilt from the material extras `acr_decay` and the `_DECAY` mask, the way the game's
+  rebuilt from the material extras `acr_decay` and the `COLOR_0` mask, the way the game's
   renderer would (a check that the exported data suffices). Stump caps stay hidden.
 """
 
@@ -61,16 +61,17 @@ def decay_materials():
         out = next((n for n in nodes if n.type == "OUTPUT_MATERIAL"), None)
         if bsdf is None or out is None:
             continue
-        base_link = next((lk for lk in links if lk.to_socket == bsdf.inputs["Base Color"]), None)
-        base = base_link.from_socket if base_link else tuple(bsdf.inputs["Base Color"].default_value)
-        if base_link:
-            links.remove(base_link)
+        # The importer multiplies COLOR_0 into the base colour; it is the decay mask here.
+        tex = next((n for n in nodes if n.type == "TEX_IMAGE"), None)
+        for lk in [lk for lk in links if lk.to_socket == bsdf.inputs["Base Color"]]:
+            links.remove(lk)
+        base = tex.outputs["Color"] if tex else decay.lin(tuple(mat.get("acr_base_rgb", (0.5, 0.5, 0.5))))
         t = nodes.new("ShaderNodeAttribute")
         t.attribute_type = "OBJECT"
         t.attribute_name = "decay"
         t = t.outputs["Fac"]
         vc = nodes.new("ShaderNodeAttribute")
-        vc.attribute_name = "_DECAY"
+        vc.attribute_name = "Color"
         sep = nodes.new("ShaderNodeSeparateColor")
         links.new(vc.outputs["Color"], sep.inputs["Color"])
         mask = decay._math(nodes, links, "MULTIPLY_ADD", sep.outputs[0], 0.75)
