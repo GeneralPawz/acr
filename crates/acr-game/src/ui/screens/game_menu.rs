@@ -2,6 +2,7 @@
 //! or the "M" drop-down. `Interf2\GameMenu` frame 0 (shadow) and 1 (dialog) at
 //! `((RealLx − 470) >> 1) − 14`, `(RealLy − 415) >> 1`; five rows 26 pixels apart whose
 //! highlight frame shows under the mouse. There is no confirmation for leaving the game.
+//! The menu closes after the options, save and load dialogs (0x5da143, `0x28ccc6d`).
 
 use super::super::dialog::{Align, CANCEL, Kind};
 use super::super::draw::Draw;
@@ -20,7 +21,7 @@ const LEAVE: i32 = 0xff;
 #[derive(Default)]
 pub struct GameMenu {
     menu: Menu,
-    /// The options were opened; the menu closes when they do (0x5d9fd0).
+    /// The options, save or load dialog was opened; the menu closes when it does.
     options_open: bool,
 }
 
@@ -40,17 +41,15 @@ impl Screen for GameMenu {
         m.d.add_gp_picture(ctx.lib, x, y, GAMEMENU, 0);
         m.d.add_gp_picture(ctx.lib, x, y, GAMEMENU, 1);
         m.text(ctx, x + 254, y + 36, "INTF_GMENU_WIN", font::F16Y5, Align::Center);
-        // Save and load are not available yet (#78): drawn, but disabled like the original's
-        // load row in games that cannot load.
-        let rows: [(&str, usize, i32, bool); 5] = [
-            ("INTF_GMENU_PAD0", 3, CONTINUE, true),
-            ("INTF_GMENU_PAD1", 5, SAVE, false),
-            ("INTF_MAIN_2", 5, LOAD, false),
-            ("INTF_GMENU_PAD3", 9, OPTIONS, true),
-            ("INTF_GMENU_PAD4", 11, LEAVE, true),
+        // The original disables load (frame 4, passive fonts only) in multiplayer games.
+        let rows: [(&str, usize, i32); 5] = [
+            ("INTF_GMENU_PAD0", 3, CONTINUE),
+            ("INTF_GMENU_PAD1", 5, SAVE),
+            ("INTF_MAIN_2", 5, LOAD),
+            ("INTF_GMENU_PAD3", 9, OPTIONS),
+            ("INTF_GMENU_PAD4", 11, LEAVE),
         ];
-        for (i, (id, frame, param, enabled)) in rows.into_iter().enumerate() {
-            let (active, passive) = if enabled { (font::F18W, font::F18Y3) } else { (font::F18Y3, font::F18Y3) };
+        for (i, (id, frame, param)) in rows.into_iter().enumerate() {
             let b = m.d.add_gp_text_button(
                 ctx.lib,
                 x + 46,
@@ -58,13 +57,10 @@ impl Screen for GameMenu {
                 ctx.texts.get(id),
                 GAMEMENU,
                 frame,
-                active,
-                passive,
+                font::F18W,
+                font::F18Y3,
             );
-            if enabled {
-                m.d.choose(b, param);
-            }
-            m.d.widgets[b].enabled = enabled;
+            m.d.choose(b, param);
             if param == LOAD
                 && let Kind::GpTextButton(t) = &mut m.d.widgets[b].kind
             {
@@ -90,6 +86,14 @@ impl Screen for GameMenu {
             Some(OPTIONS) => {
                 self.options_open = true;
                 Nav::Push(Box::<super::game_options::GameOptions>::default())
+            }
+            Some(SAVE) => {
+                self.options_open = true;
+                Nav::Push(Box::<super::save_load::SaveGameDialog>::default())
+            }
+            Some(LOAD) => {
+                self.options_open = true;
+                Nav::Push(Box::new(super::save_load::LoadGame::over_game()))
             }
             Some(LEAVE) => Nav::LeaveGame,
             _ => Nav::Stay,

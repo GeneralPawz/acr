@@ -22,7 +22,8 @@ pub async fn start_url(base: String, patches: Vec<String>) -> Result<(), JsValue
 
 fn run(assets: WebAssets) -> Result<(), JsValue> {
     let event_loop = crate::event_loop()?;
-    let game = Game::new(event_loop.create_proxy(), Box::new(assets));
+    let mut game = Game::new(event_loop.create_proxy(), Box::new(assets));
+    game.set_saves(Box::new(acr_app::saves::BrowserSaves));
     event_loop.spawn_app(game);
     Ok(())
 }

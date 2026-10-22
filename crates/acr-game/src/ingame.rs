@@ -21,6 +21,7 @@ use winit::keyboard::NamedKey;
 use crate::ui::{GameKind, GameSetup};
 
 mod interface;
+mod save;
 use crate::unit_sounds::{self, SoundEvent};
 pub use interface::{GameKey, GameMouse};
 
@@ -64,6 +65,8 @@ pub struct InGame {
     frame_time: i32,
     /// The mission script and AI DLLs (`acr-mission`).
     mission: crate::mission::MissionLink,
+    /// The log of player inputs for savegames, and a loaded game being replayed.
+    save: save::SaveState,
 }
 
 impl InGame {
@@ -104,6 +107,7 @@ impl InGame {
             interface: interface::State::default(),
             frame_time: crate::ui::Settings::default().frame_time,
             mission,
+            save: Default::default(),
         }
     }
 
@@ -136,7 +140,7 @@ impl InGame {
 
     /// True once the map is on the GPU and can be shown.
     pub fn ready(&self) -> bool {
-        self.uploaded
+        self.uploaded && !self.loading_save()
     }
 
     /// Takes a loaded file if it is one of ours. A file may serve several parts (e.g. the
@@ -325,6 +329,7 @@ impl InGame {
     pub fn overlay(&self, ctx: &crate::ui::Ctx) -> Vec<crate::ui::draw::Draw> {
         let mut out = Vec::new();
         self.mission.draws(ctx, &mut out);
+        self.save_overlay(&mut out);
         out
     }
 
@@ -388,8 +393,15 @@ impl InGame {
         if let (Some(world), Some(map)) = (&mut self.world, &self.map) {
             let more = self.mission.update(map, world, f64::from(seconds));
             self.requests.borrow_mut().extend(more);
+            // Closed mission windows, for savegames.
+            for answer in self.mission.take_answers() {
+                self.save.log.dialog(world.tick.0, answer);
+            }
         }
-        if let Some(world) = &mut self.world {
+        // A loaded game replays up to its saved tick first.
+        if !self.fast_forward(seconds)
+            && let Some(world) = &mut self.world
+        {
             let mut ticks = if paused { 0 } else { self.clock.advance((f64::from(seconds) * 1e9) as u64) };
             for t in 0..ticks {
                 // The scripts run before each step; a page, a question or the end of the game
@@ -399,6 +411,7 @@ impl InGame {
                     break;
                 };
                 let mut commands = std::mem::take(&mut self.commands);
+                self.save.log.command(world.tick.0, &commands);
                 commands.extend(orders);
                 world.step(&commands);
             }

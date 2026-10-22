@@ -4,6 +4,7 @@
 //! - [`Assets`]: reading game files, synchronously from disk ([`NativeAssets`]) or
 //!   asynchronously from the player's folder or a URL in the browser (`web::WebAssets`).
 //! - [`spawn`]: run a future to completion on either platform.
+//! - [`saves`]: where savegames are stored.
 
 use std::sync::Arc;
 
@@ -11,6 +12,7 @@ use winit::window::Window;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
+pub mod saves;
 #[cfg(target_arch = "wasm32")]
 pub mod web;
 

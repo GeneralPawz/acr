@@ -111,8 +111,7 @@ lacks. Decoding to Unicode (`acr_formats::text`) is for tools and logs.
   (0x5cc630 → 0x5cd790). Multiplayer: 0x5c95d0. Load: 0x5d8090. Options: 0x5c9740.
   Editor: 0x59c2a0.
 
-In ACR the editor entry does nothing; multiplayer and load show their background and
-title only. The startup movies (`Video\1..10.bik`) play before the main menu.
+In ACR the editor entry does nothing; multiplayer shows its background and title only. The startup movies (`Video\1..10.bik`) play before the main menu.
 
 ### Player name (0x5c6170)
 
@@ -320,8 +319,9 @@ the defaults apply: `Zone1X/Y` = 6/6, `PropertyX/Y` = 182/6, `IconLx/Ly` = 40/40
   - load (0xf7, text not raised);
   - options (0xe7; the menu closes after them);
   - back to the main menu (0xff, no confirmation).
-- The game stands still while the menu is open. Save and load are disabled placeholders
-  (#78).
+- The game stands still while the menu is open. After the options, save or load dialog
+  the menu closes (`0x28ccc6d`, set by both dialogs whether or not they saved or loaded).
+  The original disables load (frame 4, passive fonts) in multiplayer games.
 - Game options: `Interf2\Options_for_Game` at `((RealLx − 484) >> 1) − 57`,
   `((RealLy − 425) >> 1) − 166`.
   - Combo boxes (`Combo2`, `WhiteFont`/`YellowFont`): resolution, music, game mode.
@@ -390,6 +390,49 @@ after a campaign victory the next missions are not opened (no campaign progress 
 - The right-drag facing arrow (0x4c5407) and fog of war on the minimap are not built.
 - The side panels (keys U and I, 0x4ce310) are not built.
 
+## Load and save dialogs
+
+Savegames are found by `Save\*.sav` (0x5d7c10): at most 100 files, sorted by last write
+time and listed newest first. 0x5d79c0 opens each file, accepts it only with the magic
+`KASF` (or a recording's `REC[`/`REC]`) and the current version, and adds two list rows:
+the file name with `.sav` and the file time as `%02d:%02d:%02d   %02d.%02d.%d` (local
+hour, minute, second, day, month, year). Neither dialog can delete a save.
+
+- **Load from the main menu** (0x5d8090): `Interf2\Background_Load_Game.bmp`.
+  - Titles: `INTF_LOAD_TITLE0` (512, 18, `fon40y5`), `INTF_LOAD_TITLE1` (680, 203,
+    `fon16y5`, centred).
+  - Page tabs: `addUniversalButton` at (506, 244) and (692, 244), 165 wide, `Interf2\Buttons`
+    frames 4 (normal) / 5 (selected, hovered), fonts `fon16y3` / `fon16y1` (selected):
+    `INTF_LOAD_P0` savegames, `INTF_LOAD_P1` recordings (`*.rec`, `Autorecord\*.rec`;
+    0x5d7df0).
+  - Per page two `addGP_ListBox`es of 8 rows of `Interf2\LoadGame`, sharing a scroll bar
+    (901, 266, 238 high): names at (446, 282, frame 0, clipped to x ≤ 709, focused) and
+    dates at (714, 282, frame −3). Both get `dy − 3`, `dx − 16`; the dates copy the
+    names' selection every frame.
+  - `INTF_LOAD_CG` (446, 528, `fon18y3`) and the selected name (602, 528, `fon18w`).
+  - OK `INTF_LOAD` (472, 577) and `INTF_CANCEL` (704, 577), `Buttons` frame 0, `fon18y5`,
+    `FontDy − 1`. OK is enabled only with a selected row. A `.rec` file plays the recording,
+    any other file is loaded (0x4b75ba) and starts the game.
+- **Load over the game** (0x5d8cd0) and **save** (0x5d9400): `DialogsSystem` at
+  `((RealLx − 470) >> 1, (RealLy − 415) >> 1)`, the frame `Interf2\G_Load_Game` 4 (shadow)
+  and 5 at (−60, −40). Offsets below are from that origin.
+  - Scroll bar `Interf2\GScroll` at (455, 30), 255 high; names (3, 41) with highlight
+    frames 6..8 and dates (271, 41), 9 rows of 26 px, `fon18w` / `fon18y3`.
+  - `INTF_LOAD_TITLE1` (235, −4, `fon16y5`, centred).
+  - OK (`INTF_LOAD` / `INTF_SAVE`) at (16, 351) and `INTF_CANCEL` at (248, 351):
+    `G_Load_Game` frame 1, `fon18y5`, `FontDy + 4`.
+  - Load: `INTF_LOAD_CG` centred at (60, 313), the selected name at (158, 313).
+  - Save: `INTF_LOAD_CG` at (2, 313) and the name field `addInputBox(150, 309, 35 bytes,
+    302 × 24, fon18y3 / fon18w)`, focused, holding the last saved name (0xbd63a8). Nothing
+    is selected at first; choosing a row copies its name without `.sav` into the field,
+    typing a different name drops the selection. OK needs a name and sends the save
+    command (0x4d6ea0, network command 0x28 with the name).
+
+ACR shows its own savegames (`docs/simulation.md`, Savegames) with the same layout;
+the recordings page stays empty. The browser keeps savegames in `localStorage`. While a
+loaded game replays to its saved tick, the loading screen shows `INTF_LOAD` and a
+percentage (the original restores its memory image without one).
+
 ## Game setup
 
 "Start" ends the menus with `Action::StartGame(GameSetup)` (`ui/setup.rs`): either
@@ -403,7 +446,8 @@ for random maps.
 - The colour and team fields of the random map screen cycle on click; the original's
   exact interaction (and the "X" next to the flag) is not verified.
 - Campaign progress (missions opened by finishing others) is not kept.
-- Multiplayer, load game and the editor are not rebuilt.
+- Multiplayer and the editor are not rebuilt. Recordings (`.rec`) and the original's
+  savegames (`KASF`) cannot be loaded; `AUTO.sav` (autosave) is not written.
 - In-game: see [In-game interface](#in-game-interface).
 
 - The hint position of the main menu (`SmallWhiteFont` at (18, 701)) is unused because no

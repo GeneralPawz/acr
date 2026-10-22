@@ -26,6 +26,8 @@ const STYLES: [[[usize; 5]; 2]; 3] =
 pub struct Profile {
     pub name: Vec<u8>,
     pub names: Vec<Vec<u8>>,
+    /// The name last saved under, the save dialog's default (0xbd63a8).
+    pub last_save: Vec<u8>,
 }
 
 impl Profile {
@@ -37,7 +39,7 @@ impl Profile {
             .filter(|l| !l.is_empty())
             .take(10)
             .collect();
-        Self { name: names.first().cloned().unwrap_or_default(), names }
+        Self { name: names.first().cloned().unwrap_or_default(), names, last_save: Vec::new() }
     }
 
     /// Makes `name` the current player and moves it to the top of the list.
