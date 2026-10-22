@@ -10,6 +10,7 @@
 pub mod cursor;
 pub mod data;
 pub mod minimap;
+pub mod produce;
 
 use std::rc::Rc;
 
@@ -89,7 +90,7 @@ pub fn nearest(palette: &Palette, rgb: [u8; 3]) -> u8 {
 }
 
 /// An icon of the unit and command grid (`OneIcon`, drawn by 0x494c96).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Icon {
     /// Frame of `ICONS.GP`.
     pub frame: usize,
@@ -105,8 +106,14 @@ pub struct Icon {
     pub selected: bool,
     /// Drawn transparent and not clickable (bit 0 of +0x1a).
     pub disabled: bool,
+    /// Drawn through `0\gray.set` (flag 0x200, 0x494dc5): the player cannot afford it.
+    pub gray: bool,
     pub hint: Vec<u8>,
     pub action: Option<HudCommand>,
+    /// What a right click does (cancelling production, 0x608810).
+    pub right: Option<HudCommand>,
+    /// The key of a production icon (`[FIXED_PRODUCE]`), upper case.
+    pub key: Option<u8>,
 }
 
 /// What a click on the interface asks the game to do.
@@ -118,6 +125,18 @@ pub enum HudCommand {
     Form(String),
     /// Dissolve the selected formation (`SFREORD`).
     Disband,
+    /// Queue a unit of this type in the selected building (0x6088c0; Shift: five).
+    Produce(usize),
+    /// Cancel a queued unit of this type (right click, 0x608810; Shift: five).
+    Unproduce(usize),
+    /// Start placing a building of this type (`BuildMode`, 0x608a0d).
+    Place(usize),
+    /// Show page `n` of the building's icons (`PAGE1..3`, 0x608c60).
+    Page(u8),
+    /// Let the units out of the selected building.
+    Leave,
+    /// Pick the rally point of the selected building on the map (`SET_DEST`).
+    Rally,
     /// Commands the simulation does not run yet: shown, but they do nothing.
     Inactive,
 }
@@ -405,8 +424,17 @@ impl Hud {
         HudEvent::None
     }
 
-    /// Right button at canvas point `p`: an order to a point of the minimap.
+    /// Right button at canvas point `p`: an icon's right-click command, or an order to a
+    /// point of the minimap.
     pub fn right_press(&mut self, ctx: &Ctx, view: &View, p: [f32; 2]) -> HudEvent {
+        if let Some(icon) =
+            view.icons.iter().find(|i| i.slot < GRID_COLUMNS * GRID_ROWS && Self::icon_rect(i.slot).contains(p))
+        {
+            return match (&icon.right, icon.disabled) {
+                (Some(a), false) => HudEvent::Command(a.clone()),
+                _ => HudEvent::Used,
+            };
+        }
         if self.minimap.is_some()
             && let Some(px) = self.placement(view).pixel_at(p)
         {
@@ -606,6 +634,9 @@ fn draw_stats(stats: &Stats, out: &mut Vec<Draw>) {
     }
 }
 
+/// The gray colour table of unaffordable icons (`0\gray.set`, loaded at 0x483e38).
+pub const GRAY_SET: &str = "0\\GRAY.SET";
+
 /// `#GENSHIELD` of `NRES.DAT` (0x66ad84).
 const SHIELD_ICON: usize = 13;
 
@@ -613,7 +644,11 @@ const SHIELD_ICON: usize = 13;
 /// the owner's colour, the yellow frame when highlighted, the life bar, the count.
 fn draw_icon(icon: &Icon, x: i32, y: i32, pressed: bool, palette: &Palette, out: &mut Vec<Draw>) {
     let (x, y) = if pressed { (x + 1, y + 1) } else { (x, y) };
-    let mut picture = Draw::game_frame(gp::ICONS, icon.frame, x, y, 0);
+    let mut picture = if icon.gray {
+        Draw::game_frame_remap(gp::ICONS, icon.frame, x, y, 0, GRAY_SET, 0)
+    } else {
+        Draw::game_frame(gp::ICONS, icon.frame, x, y, 0)
+    };
     if icon.disabled {
         picture = picture.with_alpha(0.5);
     }
@@ -717,17 +752,7 @@ mod tests {
     fn grid_layout_at_1024x768() {
         assert_eq!(Hud::icon_rect(0), Rect::new(182, 630, 40, 40));
         assert_eq!(Hud::icon_rect(27), Rect::new(182 + 3 * 42, 630 + 2 * 42, 40, 40));
-        let icon = |slot| Icon {
-            frame: 0,
-            slot,
-            outline: None,
-            life: None,
-            count: None,
-            selected: false,
-            disabled: false,
-            hint: Vec::new(),
-            action: None,
-        };
+        let icon = |slot| Icon { slot, ..Icon::default() };
         assert_eq!(Hud::icon_box(&[]), None);
         assert_eq!(Hud::icon_box(&[icon(0), icon(8 + 24)]), Some(Rect { x0: 180, y0: 630, x1: 560, y1: 755 }));
         assert_eq!(menu_button(), (243, 0));

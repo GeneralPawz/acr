@@ -281,6 +281,86 @@ the defaults apply: `Zone1X/Y` = 6/6, `PropertyX/Y` = 182/6, `IconLx/Ly` = 40/40
 - Hotkeys: `Data\Keyboard.dat` (in `Patch02.GS1`) maps `[CTRL|ALT|SHIFT] KEY : ICON`.
   The key presses the shown icon of that name.
 
+### Production and building icons (0x609230)
+
+`hud/produce.rs` reads the nation files, `ingame/interface.rs` builds the icons.
+
+- They are built only while one type is selected. The list is the type's
+  `[FIXED_PRODUCE]` entry (`ID x y [KEY]`). Each item goes to slot `x + 12·y`. When several
+  items share a slot, the later one wins, because `AddIcon` 0x495758 reuses the slot (the
+  four mines at `5 0`).
+- An item is listed only if it is enabled (`[ENABLED]`, bit 2 of the object flags) and
+  accessible (bit 1). An object named in `[ACCESSCONTROL]` is accessible while one of its
+  entries is met, that is, while every object listed in the entry exists (0x42ffed). ACR
+  counts finished objects of the player. Items that are not available are left out, not
+  greyed. So a random map start offers only the fort (`EngKre`), and the fort unlocks houses
+  and the mill.
+- Icon:
+  - the picture is the object's `ICON`, with an outline in the player colour;
+  - the hint is built by 0x606180: `Name - Holz: 500 Stein: 100`. The name is the text
+    `NAME.MD`. Each resource with a base price is followed by its current price. The resource
+    names are the text ids `Wood`, `Gold`, …;
+  - an icon the player cannot afford is drawn through `0\gray.set` (flag 0x200,
+    `ShowGPPal` at 0x494dc5).
+- For a unit producer:
+  - the icon shows the number queued in the selected buildings (flag 8) and the head order's
+    progress as its life bar;
+  - left click: `Produce` (0x6088c0, 0x4d6226), five times with Shift;
+  - right click: `Unproduce` (0x608810, 0x4d6e08), five times with Shift;
+  - the key from the list presses the icon.
+- Several selected buildings: ACR sends a new unit to the building with the shortest queue
+  and a cancel to the one with most units of that type queued. The original's choice in
+  0x4d6226 is not traced.
+- Pages: slots from 36 on are pages 2 and 3. Page buttons sit in column 0 (slots 0, 12, 24),
+  with the building's `PAGEn` icon and `PAGEnHINT`. They appear for the pages that have icons
+  outside column 0 (flags 0x28cff78..7a). The current page is stored per building type
+  (`+0x183c`, 0x608c60) and is highlighted.
+- Rally point: `NRES.DAT [CONST] SET_DEST 11 2 Rally_Point` for buildings that make units.
+  The next click on the map sets it. A right click on the map with only buildings selected
+  sets it too.
+- Leave: units inside a selected building show as one icon of their type with the count, at
+  slot 23. A click lets them all out (`Leave`). The original's icons for units inside (around
+  0x6072af) are not decoded; the slot is ACR's choice.
+- The selected types take the first slots the commands leave free (`AddIcon` without a
+  position, 0x495631). Both sets are drawn at the same origin (0x5aaa15).
+
+### Placing a building (0x608a0d, 0x4bdd1e)
+
+- A building item of a peasant starts the build mode (`BuildMode` 0x10fc644,
+  `BuildingID` 0x10fca60), but only if the player can pay (`CanAfford` 0x514c65; the
+  original also prints what is missing, which ACR does not).
+- Preview: the building's idle frames at the mouse position plus `LOCATION`, drawn through
+  a colour table:
+  - row `N = 5 + (sin(t / 100 ms) + 2)·8` (13..29) of `0\agew_1w.grd` where the building
+    fits (`ShowGPDarkN`);
+  - the same row of `0\agew_1r.grd` where it does not (`ShowGPRedN`).
+- Fit (0x5142c2): the snapped position is tried first. If the site is blocked, the nearest
+  free position within 10 rings of 16 px cells is used (spiral table 0x28a6f10, here square
+  rings). The site check is the simulation's (`construction::site`): the finished footprint
+  must be free of locks and units. 0x513b2c and the mine-deposit rules (`MINEID0..5` hints)
+  are not reproduced.
+- A left click on a free site sends `Build` with the selected units and leaves the mode;
+  with Shift the mode stays. A right click or Escape leaves the mode.
+- Units inside buildings (`Unit::inside_of`) are not drawn, selected or shown on the
+  minimap.
+- Construction stages draw `#BUILDLO_k`. A building type that appears during the game loads
+  its packs then, and the sprite atlas is rebuilt (`ObjectsView::want_units`).
+
+### Right click and context cursor (0x4c4668..0x4c4ce2)
+
+The cursor shows what a right click on the map does with the selection:
+
+| Under the cursor | Order | Cursor (`CURSOR_00.GP`) |
+|---|---|---|
+| enemy | `Attack` | 1, sword (0x66a924) |
+| own unfinished or damaged building, selection has builders (`#WORK`), Ctrl not held | `Repair` | 3, hammer (0x66a920) |
+| own building one of the selected units may enter | `Enter` | 11 (0x66a918) |
+| a source within 64 px (`DetermineResource`) that a selected unit can gather | `Gather` | by source type (0x66a934): wood 6, minerals 5, field 7, meat 1 |
+| anything else | `Move` with the `CursGo` marker | 0, arrow |
+
+With only buildings selected, the right click sets the rally point. Map points account for
+the terrain height under the cursor.
+
 ### Minimap (0x44c230 image, 0x4c0a40 draw)
 
 - One pixel per `1 << s` map cells, so the image is 240 × 240. A pixel samples vertex
@@ -302,9 +382,9 @@ the defaults apply: `Zone1X/Y` = 6/6, `PropertyX/Y` = 182/6, `IconLx/Ly` = 40/40
 ### Cursor and overlays
 
 - Cursor: `LoadFog(0)` selects `CURSOR_00.GP`. Hotspots and animation chains come from
-  `curs_xy.dat` (`dx dy next`, a step every 60 ms). Frame 0 (arrow) is the default;
-  frame 1 (sword) shows with a selection over an enemy (0x4c46b6). The other context
-  cursors (gathering, building, storming, …) wait for the simulation to support them.
+  `curs_xy.dat` (`dx dy next`, a step every 60 ms). Frame 0 (arrow) is the default; the
+  context cursors are listed under [Right click and context cursor](#right-click-and-context-cursor-0x4c46680x4c4ce2).
+  Storming, healing and the other cursors wait for the simulation.
 - Selection brackets (0x4bae50): 3 px corners in `GetPaletteColor(255, 255, 0)` around
   `RECTANGLE dx dy w h` (defaults 0 3 40 64). Soldiers of a formed brigade get none.
 - Life bars (Tab, 0x4bb390): green lines at y0 − 12 and y0 − 11 with white end caps.
@@ -313,8 +393,8 @@ the defaults apply: `Zone1X/Y` = 6/6, `PropertyX/Y` = 182/6, `IconLx/Ly` = 40/40
 
 ### Keys (0x4a30e8) and scrolling (0x4c5910)
 
-- F12: game menu. ACR also opens it with Escape, which in the original only cancels a
-  command mode.
+- F12: game menu. Escape leaves the build or rally point mode (0x4a31a3); otherwise ACR
+  also opens the menu with it.
 - Control groups: Ctrl + digit stores, digit recalls, Shift + digit adds.
 - Space: jump to the next selected unit. Pause: pause. Tab: life bars. M: minimap size.
 - A second click on a unit selects all own units of that type on the screen. This is
@@ -408,6 +488,13 @@ after a campaign victory the next missions are not opened (no campaign progress 
 - Selection with Ctrl and the double click (`DBLCLICK`) are not traced.
 - The right-drag facing arrow (0x4c5407) and fog of war on the minimap are not built.
 - The side panels (keys U and I, 0x4ce310) are not built.
+- Production: the stage check of the items (`+0xad` against the building's stage bits,
+  `[STAGEDEPENDENT]`), the unit limit (`+0x173a`), the `MUSTREPAIR` hint, the
+  `+0x1729` special items (0x4d7682) and upgrade icons are not built. Upgrades and the
+  market wait for the simulation.
+- Whether the original hides a selected type's icon when production icons take its slot.
+- The original builds on the button press; ACR too, but the order in which it checks the
+  site and the price on the click (0x4c20ac) is not traced.
 
 ## Load and save dialogs
 

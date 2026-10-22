@@ -63,6 +63,8 @@ pub struct InGame {
     interface: interface::State,
     /// `FPSTime` of the options: the game speed.
     frame_time: i32,
+    /// Object types whose sprites have been requested.
+    known_types: HashSet<acr_sim::TypeId>,
     /// The mission script and AI DLLs (`acr-mission`).
     mission: crate::mission::MissionLink,
     /// The log of player inputs for savegames, and a loaded game being replayed.
@@ -106,6 +108,7 @@ impl InGame {
             mapgen,
             interface: interface::State::default(),
             frame_time: crate::ui::Settings::default().frame_time,
+            known_types: HashSet::new(),
             mission,
             save: Default::default(),
         }
@@ -291,11 +294,19 @@ impl InGame {
         }
     }
 
-    /// World pixel under a window position, ignoring terrain height.
+    /// World pixel of the ground under a window position.
     fn world_at(&self, [x, y]: [f32; 2]) -> (i32, i32) {
-        let wx = self.camera.x + x / self.camera.scale;
-        let wy = (self.camera.y + y / self.camera.scale) * 2.0;
-        (wx as i32, wy as i32)
+        let wx = (self.camera.x + x / self.camera.scale) as i32;
+        let sy = self.camera.y + y / self.camera.scale;
+        // The ground there is lifted by its height: a few steps find the point under the
+        // cursor (screen y = world y / 2 − height).
+        let mut wy = (sy * 2.0) as i32;
+        if let Some(t) = &self.terrain {
+            for _ in 0..4 {
+                wy = ((sy + t.height_at(wx, wy) as f32) * 2.0) as i32;
+            }
+        }
+        (wx, wy)
     }
 
     /// Window position of a unit's ground point.
@@ -348,9 +359,11 @@ impl InGame {
         let Some(from) = self.drag_from.take() else { return };
         let Some(world) = &self.world else { return };
         let own = self.local_player();
-        let mine = world.units.iter().filter(|u| u.alive && u.owner == own && !u.building);
+        let mine = world.units.iter().filter(|u| u.alive && u.inside_of.is_none() && u.owner == own && !u.building);
         if (from[0] - at[0]).abs() < CLICK_SLOP && (from[1] - at[1]).abs() < CLICK_SLOP {
-            self.selected = self.unit_at(at, |u| u.owner == own && !u.building).into_iter().collect();
+            // A unit in front of a building wins; own buildings are selected by a click only.
+            let unit = self.unit_at(at, |u| u.owner == own && !u.building);
+            self.selected = unit.or_else(|| self.unit_at(at, |u| u.owner == own && u.building)).into_iter().collect();
         } else {
             let (x0, x1) = (from[0].min(at[0]), from[0].max(at[0]));
             let (y0, y1) = (from[1].min(at[1]), from[1].max(at[1]));
@@ -366,22 +379,6 @@ impl InGame {
         if let Some(&first) = self.selected.first() {
             self.unit_sound(first, "SELECT_SOUND");
         }
-    }
-
-    /// Right button: attack the enemy under the cursor, else send the selected units to the
-    /// point under it.
-    pub fn on_right(&mut self) {
-        let (Some(at), false) = (self.cursor, self.selected.is_empty()) else { return };
-        let (player, units) = (self.local_player(), self.selected.clone());
-        let command = match self.unit_at(at, |u| u.owner != player) {
-            Some(target) => Command::Attack { player, units, target },
-            None => {
-                let (x, y) = self.world_at(at);
-                Command::Move { player, units, x, y }
-            }
-        };
-        self.commands.push(command);
-        self.unit_sound(self.selected[0], "ORDER_SOUND");
     }
 
     /// Scrolls by held arrow keys and the cursor at the window edge and advances the world;
@@ -435,6 +432,7 @@ impl InGame {
             }
         }
         self.scroll_view(seconds, window);
+        self.want_new_types();
         self.objects.set_dynamic(self.unit_sprites());
     }
 
@@ -477,6 +475,22 @@ impl InGame {
         self.sound_events.extend(events);
     }
 
+    /// Loads the sprites of object types that appear during the game (produced units,
+    /// placed buildings).
+    fn want_new_types(&mut self) {
+        let (Some(world), true) = (&self.world, self.objects.ready()) else { return };
+        let mut new = Vec::new();
+        for u in world.units.iter().filter(|u| u.alive) {
+            if self.known_types.insert(u.kind) {
+                new.push(world.catalog.get(u.kind).id.clone());
+            }
+        }
+        if !new.is_empty() {
+            let requests = &self.requests;
+            self.objects.want_units(new.iter().map(String::as_str), &|p| requests.borrow_mut().push(p.to_owned()));
+        }
+    }
+
     /// The simulation's units as sprites in their current animation frame.
     fn unit_sprites(&self) -> Vec<SceneSprite> {
         let (Some(world), Some(terrain), true) = (&self.world, &self.terrain, self.objects.ready()) else {
@@ -484,7 +498,8 @@ impl InGame {
         };
         let objects = self.objects.objects();
         let mut out = Vec::with_capacity(world.units.len());
-        for u in world.units.iter().filter(|u| u.alive) {
+        // Units inside buildings are not drawn (`Hidden`).
+        for u in world.units.iter().filter(|u| u.alive && u.inside_of.is_none()) {
             let kind = world.catalog.get(u.kind);
             let anim = anim_name(u.anim);
             let step = if u.building { 0 } else { u.frame.max(0) as usize };

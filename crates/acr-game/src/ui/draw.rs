@@ -78,6 +78,10 @@ pub enum Sprite {
     /// A frame of an in-game sprite pack, drawn with the palette the pack was made for
     /// ([`acr_formats::sprite_palette`]) in the colours of `player`.
     GameFrame { gp: String, frame: usize, player: u8 },
+    /// A [`Sprite::GameFrame`] whose colours go through row `row` of a 256-byte colour table
+    /// first (`ShowGPPal`): gray icons (`0\gray.set`), the building preview (`0\agew_1w.grd`,
+    /// `0\agew_1r.grd`).
+    GameFrameRemap { gp: String, frame: usize, player: u8, table: &'static str, row: u8 },
     /// A string with the colours of the in-game palette.
     GameText { font: FontId, text: Vec<u8> },
     /// An image set with [`Textures::set_image`].
@@ -112,6 +116,12 @@ impl Draw {
 
     pub fn game_frame(gp: &str, frame: usize, x: i32, y: i32, player: u8) -> Self {
         let sprite = Sprite::GameFrame { gp: gp.to_owned(), frame, player };
+        Self { sprite, x, y, size: [0; 2], clip: Rect::SCREEN, alpha: 1.0 }
+    }
+
+    /// [`Draw::game_frame`] with the colours remapped through row `row` of `table`.
+    pub fn game_frame_remap(gp: &str, frame: usize, x: i32, y: i32, player: u8, table: &'static str, row: u8) -> Self {
+        let sprite = Sprite::GameFrameRemap { gp: gp.to_owned(), frame, player, table, row };
         Self { sprite, x, y, size: [0; 2], clip: Rect::SCREEN, alpha: 1.0 }
     }
 
@@ -195,7 +205,14 @@ impl Textures {
     /// Forgets texts and bitmaps of the previous screen; sprite frames are kept.
     pub fn trim(&mut self) {
         self.cache.retain(|k, _| {
-            matches!(k, Sprite::Frame { .. } | Sprite::Fill(_) | Sprite::GameFrame { .. } | Sprite::Image(_))
+            matches!(
+                k,
+                Sprite::Frame { .. }
+                    | Sprite::Fill(_)
+                    | Sprite::GameFrame { .. }
+                    | Sprite::GameFrameRemap { .. }
+                    | Sprite::Image(_)
+            )
         });
     }
 
@@ -285,6 +302,22 @@ fn rasterize(lib: &Library, fonts: &Fonts, sprite: &Sprite) -> Rasterized {
             }
             let (Some(file), Some(palette)) = (lib.sprites(gp), lib.palette(palette_path)) else { return Some(None) };
             Some(rasterize_frame_as(&file, *frame, &palette, *player))
+        }
+        Sprite::GameFrameRemap { gp, frame, player, table, row } => {
+            let palette_path = acr_formats::sprite_palette(gp);
+            if !lib.settled(gp) || !lib.settled(palette_path) || !lib.settled(table) {
+                return None;
+            }
+            let (Some(file), Some(palette), Some(table)) =
+                (lib.sprites(gp), lib.palette(palette_path), lib.bytes(table))
+            else {
+                return Some(None);
+            };
+            let base = usize::from(*row) * 256;
+            let remapped = acr_formats::Palette(std::array::from_fn(|i| {
+                palette.rgb(table.get(base + i).copied().unwrap_or(i as u8))
+            }));
+            Some(rasterize_frame_as(&file, *frame, &remapped, *player))
         }
         Sprite::GameText { font, text } => fonts.rasterize_in(lib, *font, text, super::fonts::GAME_SET),
         // Only uploaded images are drawn.
