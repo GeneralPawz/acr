@@ -113,6 +113,14 @@ pub struct Body {
     /// out makes it limp, heavy wounds make it flee; it never crawls, drops nothing and is
     /// never knocked down.
     pub animal: u8,
+    /// Seconds left until he bleeds out from a vital hit (`crate::melee`, the carotid, an
+    /// artery, the liver, a lung); 0: none. Counted down by `crate::wounds::bleed`.
+    pub bleed_out: u16,
+    /// The spine hit (`crate::melee::Vital::Spine`): 1 the legs are paralysed (he crawls on
+    /// his arms), 2 all four limbs (he writhes).
+    pub spine: u8,
+    /// A lung hit: he went down and does not get up again.
+    pub collapsed: bool,
 }
 
 impl Hash for Body {
@@ -123,6 +131,9 @@ impl Hash for Body {
             self.down.hash(state);
             if self.animal != 0 {
                 self.animal.hash(state);
+            }
+            if self.bleed_out != 0 || self.spine != 0 || self.collapsed {
+                (self.bleed_out, self.spine, self.collapsed).hash(state);
             }
         }
     }
@@ -148,7 +159,7 @@ impl Body {
     /// The function of a leg, 0..=100: what it still carries.
     pub fn leg(&self, l: LimbId) -> i32 {
         let limb = self.limb(l);
-        if limb.lost < ANKLE {
+        if limb.lost < ANKLE || (self.animal == 0 && (self.spine > 0 || self.collapsed)) {
             return 0;
         }
         let mut f = 100 - 35 * i32::from(limb.wounds.min(3));
@@ -169,7 +180,7 @@ impl Body {
     /// The function of an arm, 0..=100: any loss or break makes it useless.
     pub fn arm(&self, l: LimbId) -> i32 {
         let limb = self.limb(l);
-        if limb.severed() || limb.fracture.is_some() {
+        if limb.severed() || limb.fracture.is_some() || (self.animal == 0 && self.spine >= 2) {
             return 0;
         }
         (100 - 40 * i32::from(limb.wounds)).max(0)

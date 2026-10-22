@@ -337,6 +337,8 @@ mod tests {
             building: false,
             region: None,
             injury: None,
+            strike: None,
+            critical: None,
         }
     }
 
