@@ -150,6 +150,18 @@ The colours are multiplied by the occlusion (`0.55 + 0.45 · ao^0.8`) so the for
 under the game's flat light. Wood, metal (the musket), bones and stump caps keep their
 materials. `EngM18` and `EngKri` use it; the glb grows by the atlas (about 1.9 MB).
 
+### Two-handed aiming (`acr_assets.aim`)
+
+The present/fire pose is solved with inverse kinematics instead of being hand-set: after
+the body takes `poses.AIM_MUSKET` (torso turned so the left shoulder comes forward, head
+bowed along the musket, the musket socket level along the facing), `aim.hold` puts the
+butt in the right shoulder pocket, the right hand on the grip (the musket's origin, 0.25 m
+in front of the butt) and the left hand under the barrel 0.34 m further on, lets Blender's
+IK solve both arms (chain of two, elbow poles out and down), and writes the result back as
+plain pose angles. `PATTACK`, `PSTAND` and `ATTACK` use it. `EngM18` reports the residual
+errors in its stats (`aim_errors_m`: butt to shoulder joint ~8 cm, the pocket offset; left
+hand ~2 mm).
+
 ## 4. Decay
 
 One parameter `decay` ∈ [0, 1] per corpse; each material has its layer's windows

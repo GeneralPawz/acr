@@ -28,7 +28,9 @@ STAND_MUSKET = {
 
 # Present (aim): butt at the right shoulder, left hand under the barrel.
 AIM_MUSKET = {
-    "spine": (-4, 0, 6), "spine2": (0, 0, 6), "head": (8, 0, -10), "neck": (0, 0, -6),
+    # Torso turned so the left shoulder comes forward (the firing stance), head turned back
+    # along the musket and bowed onto the stock.
+    "spine": (-6, 0, -20), "spine2": (-4, 0, -14), "head": (16, -8, 26), "neck": (8, 0, 10),
     "upperarm_r": (-62, -50, -20), "forearm_r": (-60, 0, 30), "hand_r": (0, 0, 0),
     "upperarm_l": (-70, 50, 30), "forearm_l": (-20, 0, -20),
     "thigh_l": (-8, -3, 0), "shin_l": (8, 0, 0), "thigh_r": (6, 3, 0),
@@ -113,13 +115,16 @@ def death_keys(stand, lie):
     return [(0.0, stand), (0.14, hit), (0.40, buckle), (0.65, fall), (0.85, land), (1.0, lie)]
 
 
-def musketeer_clips(md_lines, stand=STAND_MUSKET):
+def musketeer_clips(md_lines, stand=STAND_MUSKET, aim=None):
     """{clip: [(frame, pose)]} for a European musketeer from its `.MD` lines
     ({key: "@DEATH 9 4 0 70"}): STAND, MOTION_L, MOTION_R, PATTACK, UATTACK, PSTAND,
     ATTACK (fire and reload), ATTACK1 (bayonet), DEATH, DEATHLIE1."""
     lie = lie_prone()
     cl, pl, cr, pr = walk_cycle(stand)
-    fire = _with(AIM_MUSKET, spine=(4, 0, 6), head=(12, 0, -10), root_loc=(0, 0.03, 0))
+    # `aim`: the present pose with both hands on the musket (`aim.hold`); the data pose
+    # without it.
+    AIM_MUSKET = aim or globals()["AIM_MUSKET"]
+    fire = _with(AIM_MUSKET, spine=(4, 0, 6), head=AIM_MUSKET.get("head", (12, 0, -10)), root_loc=(0, 0.03, 0))
     clips = {
         "STAND": [(0.0, stand)],
         "MOTION_L": [(0.0, cl), (0.5, pl), (1.0, cr)],
