@@ -73,15 +73,11 @@ pub fn idle_animation(def: &UnitDef) -> Option<&acr_formats::defs::md::Animation
     names.iter().find_map(|n| def.animation(n)).or_else(|| def.animations.first())
 }
 
-/// Animations a moving unit shows besides its idle one (see `acr_sim::world::AnimKind`).
-pub const MOTION_ANIMATIONS: [&str; 2] = ["#MOTION_L", "#MOTION_R"];
-
-/// The sprite packs an object type needs: its idle animation and, for units, walking.
+/// The sprite packs an object type needs: a building's idle animation, every animation of
+/// a unit (the simulation plays walking, fighting and dying, see `acr_sim::world::AnimKind`).
 pub fn unit_packs(def: &UnitDef) -> Vec<String> {
-    let mut anims: Vec<&acr_formats::defs::md::Animation> = idle_animation(def).into_iter().collect();
-    if !def.is_building() {
-        anims.extend(MOTION_ANIMATIONS.iter().filter_map(|n| def.animation(n)));
-    }
+    let anims: Vec<&acr_formats::defs::md::Animation> =
+        if def.is_building() { idle_animation(def).into_iter().collect() } else { def.animations.iter().collect() };
     let mut packs: Vec<String> =
         anims.iter().flat_map(|a| a.frame_refs()).filter_map(|r| def.sprite(r.sprite)).map(|s| s.gp_path()).collect();
     packs.sort();
