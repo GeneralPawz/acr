@@ -3,6 +3,8 @@
 //! `PORTION`, carry it to the nearest `RESOURCEBASE` building, deliver, and go back. See
 //! `docs/simulation.md`.
 
+use acr_formats::m3d::SpriteGroup;
+
 use crate::economy::{FOOD, STONE, WOOD, base_cell};
 use crate::fixed::Pos;
 use crate::motion::{set_anim, try_to_stand};
@@ -50,8 +52,8 @@ impl Sources {
         &self.cells[(cy * self.side + cx) as usize]
     }
 
-    /// `DetermineResource` (0x4d3ef0): type of the nearest source within 64 px of `(x, y)`.
-    pub fn determine(&self, x: i32, y: i32) -> Option<u8> {
+    /// The nearest source to `(x, y)` in the 3 × 3 cells of 128 px around: `(distance, type)`.
+    pub fn nearest(&self, x: i32, y: i32) -> Option<(i32, u8)> {
         let mut best: Option<(i32, u8)> = None;
         for cy in (y >> 7) - 1..=(y >> 7) + 1 {
             for cx in (x >> 7) - 1..=(x >> 7) + 1 {
@@ -64,72 +66,147 @@ impl Sources {
                 }
             }
         }
-        best.filter(|b| b.0 < 64).map(|b| b.1)
+        best
     }
 
-    /// `FindResourceObject` (0x4d2200, simplified): the nearest source of `kind`, searching
-    /// rings of 128 px cells outwards (up to 12).
-    pub fn find(&self, x: i32, y: i32, kind: u8) -> Option<usize> {
+    /// `DetermineResource` over these sources only.
+    pub fn determine(&self, x: i32, y: i32) -> Option<u8> {
+        self.nearest(x, y).filter(|b| b.0 < 64).map(|b| b.1)
+    }
+
+    /// The nearest source of `kind` in ring `r` of 128 px cells around `(x, y)`.
+    pub fn find_in_ring(&self, x: i32, y: i32, kind: u8, r: i32) -> Option<(i32, usize)> {
         let (cx, cy) = (x >> 7, y >> 7);
-        for r in 0..12i32 {
-            let mut best: Option<(i32, usize)> = None;
-            for dy in -r..=r {
-                for dx in -r..=r {
-                    if dx.abs() != r && dy.abs() != r {
-                        continue;
-                    }
-                    for &k in self.cell(cx + dx, cy + dy) {
-                        let s = &self.list[k as usize];
-                        if s.kind == kind {
-                            let d = norma(s.x - x, s.y - y);
-                            if best.is_none_or(|b| d < b.0) {
-                                best = Some((d, k as usize));
-                            }
+        let mut best: Option<(i32, usize)> = None;
+        for dy in -r..=r {
+            for dx in -r..=r {
+                if dx.abs() != r && dy.abs() != r {
+                    continue;
+                }
+                for &k in self.cell(cx + dx, cy + dy) {
+                    let s = &self.list[k as usize];
+                    if s.kind == kind {
+                        let d = norma(s.x - x, s.y - y);
+                        if best.is_none_or(|b| d < b.0) {
+                            best = Some((d, k as usize));
                         }
                     }
                 }
             }
-            if let Some((_, k)) = best {
-                return Some(k);
+        }
+        best
+    }
+}
+
+/// Source ids of gathering orders: the static map sources (trees) are numbered from 0,
+/// the fields and carcasses of [`World::sprites`] from `SPRITES`.
+pub const SPRITES: usize = 1 << 24;
+
+/// The current data of a source, if it still supplies something.
+pub fn source(w: &World, id: usize) -> Option<Source> {
+    if id < SPRITES {
+        return w.sources.list.get(id).copied();
+    }
+    let s = w.sprites.get(id - SPRITES).filter(|s| !s.removed)?;
+    let oc = w.sprite_char(s)?;
+    Some(Source { x: s.x, y: s.y, kind: oc.res_type?, per_work: oc.per_work, radius: oc.radius })
+}
+
+/// `FindResourceObject` (0x4d2200, simplified): the source of type `kind` nearest to `(x,
+/// y)` in the first ring of 128 px cells (up to 12) that has one, among the map's sources
+/// and the fields and carcasses. A failed search draws one random number (0x4d262f).
+pub fn find(w: &mut World, x: i32, y: i32, kind: u8) -> Option<usize> {
+    if x <= 0 || y <= 0 {
+        return None;
+    }
+    let (cx, cy) = (x >> 7, y >> 7);
+    for r in 0..12i32 {
+        let mut best = w.sources.find_in_ring(x, y, kind, r);
+        for (k, s) in w.sprites.iter().enumerate() {
+            if s.removed || ((s.x >> 7) - cx).abs().max(((s.y >> 7) - cy).abs()) != r {
+                continue;
+            }
+            if w.sprite_char(s).and_then(|c| c.res_type) == Some(kind) {
+                let d = norma(s.x - x, s.y - y);
+                if best.is_none_or(|b| d < b.0) {
+                    best = Some((d, SPRITES + k));
+                }
             }
         }
-        None
+        if let Some((_, k)) = best {
+            return Some(k);
+        }
     }
+    w.random.rando();
+    None
+}
+
+/// `DetermineResource` (0x4d3ef0): the type of the nearest source within 64 px of `(x, y)`,
+/// fields and carcasses included.
+pub fn determine(w: &World, x: i32, y: i32) -> Option<u8> {
+    let mut best = w.sources.nearest(x, y);
+    let (cx, cy) = (x >> 7, y >> 7);
+    for s in w.sprites.iter().filter(|s| !s.removed) {
+        if ((s.x >> 7) - cx).abs() > 1 || ((s.y >> 7) - cy).abs() > 1 {
+            continue;
+        }
+        if let Some(kind) = w.sprite_char(s).and_then(|c| c.res_type) {
+            let d = norma(s.x - x, s.y - y);
+            if best.is_none_or(|b| d < b.0) {
+                best = Some((d, kind));
+            }
+        }
+    }
+    best.filter(|b| b.0 < 64).map(|b| b.1)
+}
+
+/// [`take_resource_ord`] replacing the orders, or queueing after them with `append`.
+pub fn take_resource(w: &mut World, i: usize, x: i32, y: i32, kind: u8, prio: u8, append: bool) -> bool {
+    take_resource_ord(w, i, x, y, kind, prio, if append { 2 } else { 0 })
 }
 
 /// `TakeResource` (0x4d2e10): sends a peasant to gather sources of type `kind`, starting
 /// with the one nearest to world pixel `(x, y)` (`FindResourceObject` searches from the
-/// clicked point, not from the peasant). `append` queues the order after the current ones
-/// (order type 2, used for units leaving a building towards a rally point); otherwise it
-/// replaces them. False if the unit cannot gather it or no source is found.
-pub fn take_resource(w: &mut World, i: usize, x: i32, y: i32, kind: u8, prio: u8, append: bool) -> bool {
+/// clicked point, not from the peasant). `ord` is the engine's order type: 0 replaces the
+/// orders, 1 pushes in front (and keeps the order even if nothing is found yet: hunters
+/// waiting for a carcass), 2 queues after the current ones (units leaving a building towards
+/// a rally point). False if the unit cannot gather it or (except type 1) nothing is found.
+pub fn take_resource_ord(w: &mut World, i: usize, x: i32, y: i32, kind: u8, prio: u8, ord: u8) -> bool {
     let u = &w.units[i];
     let t = w.catalog.get(u.kind);
     let Some(entry) = t.economy.take_res.get(usize::from(kind)).copied().flatten() else { return false };
     if !u.active() || u.unlimited || prio < u.prio && !u.orders.is_empty() || entry.work == 0 {
         return false;
     }
-    let Some(src) = w.sources.find(x, y, kind) else { return false };
-    let s = w.sources.list[src];
+    let found = find(w, x, y, kind);
+    if found.is_none() && ord != 1 {
+        return false;
+    }
+    let at = found.and_then(|k| source(w, k)).map_or((x, y), |s| (s.x, s.y));
     let u = &mut w.units[i];
     if u.carry_type != Some(kind) {
         u.carried = 0;
         u.carry_type = None;
     }
-    let order = Order::Gather { kind, source: Some(src), at: (s.x, s.y), prio };
-    if append {
-        u.orders.insert(0, order);
-    } else {
-        u.orders.clear();
-        u.orders.push(order);
-        u.prio = prio;
-        u.path.delay = 0;
+    let order = Order::Gather { kind, source: found, at, prio: prio & 0x7F };
+    match ord {
+        2 => u.orders.insert(0, order),
+        1 => {
+            u.orders.push(order);
+            u.prio = prio & 0x7F;
+        }
+        _ => {
+            u.orders.clear();
+            u.orders.push(order);
+            u.prio = prio;
+            u.path.delay = 0;
+        }
     }
     true
 }
 
 /// `TakeResLink` (0x4d2fb0), once per tick, acting only at the end of an animation cycle.
-pub fn gather_link(w: &mut World, i: usize, kind: u8, source: Option<usize>, at: (i32, i32), prio: u8) {
+pub fn gather_link(w: &mut World, i: usize, kind: u8, source_id: Option<usize>, at: (i32, i32), prio: u8) {
     if w.units[i].frame < w.units[i].anim_frames - FRM_DEC {
         return;
     }
@@ -145,18 +222,19 @@ pub fn gather_link(w: &mut World, i: usize, kind: u8, source: Option<usize>, at:
     if dst < 8 && w.units[i].carried >= t.economy.portion[dst] && !carry_home(w, i, kind, dst) {
         return;
     }
-    // Gather.
+    // Gather: the source, or a new one if it is gone or has changed.
     let (ux, uy) = w.units[i].pos.pixels();
-    let src = match source.filter(|&s| s < w.sources.list.len()) {
-        Some(s) => s,
-        None => match w.sources.find(at.0, at.1, kind) {
-            Some(s) => {
-                let (sx, sy) = (w.sources.list[s].x, w.sources.list[s].y);
+    let current = source_id.filter(|&k| source(w, k).is_some_and(|s| s.kind == kind));
+    let src = match current {
+        Some(k) => k,
+        None => match find(w, at.0, at.1, kind) {
+            Some(k) => {
+                let s = source(w, k).expect("found");
                 if let Some(Order::Gather { source, at, .. }) = w.units[i].orders.last_mut() {
-                    *source = Some(s);
-                    *at = (sx, sy);
+                    *source = Some(k);
+                    *at = (s.x, s.y);
                 }
-                s
+                k
             }
             None => {
                 w.units[i].orders.pop();
@@ -164,10 +242,10 @@ pub fn gather_link(w: &mut World, i: usize, kind: u8, source: Option<usize>, at:
             }
         },
     };
-    let s = w.sources.list[src];
+    let s = source(w, src).expect("valid");
     let d = norma(ux - s.x, uy - s.y);
-    let u = &mut w.units[i];
     if d < s.radius {
+        let u = &mut w.units[i];
         u.dest = None;
         u.vel = (0, 0);
         let dir = get_dir(s.x - ux, s.y - uy);
@@ -185,10 +263,21 @@ pub fn gather_link(w: &mut World, i: usize, kind: u8, source: Option<usize>, at:
         }
         u.in_motion = false;
         u.carry_type = Some(kind);
-        u.carried = (u.carried + s.per_work) & 0xFF;
+        // Fields last `FoodEff / 100` times as long (EFFECT_FOOD upgrades).
+        let got = if src >= SPRITES {
+            let field = w.sprites[src - SPRITES].group == SpriteGroup::Complex;
+            let amount =
+                if dst == FOOD && field { w.players[usize::from(w.units[i].owner)].food_eff / 100 * 10 } else { 100 };
+            crate::sprite::perform_work(w, src - SPRITES, amount)
+        } else {
+            s.per_work
+        };
+        let u = &mut w.units[i];
+        u.carried = (u.carried + got) & 0xFF;
         set_anim(u, t, AnimKind::Attack(entry.work - 1));
         return;
     }
+    let u = &mut w.units[i];
     let cell = (s.x >> 4, s.y >> 4);
     let mover = Mover { x: u.cell.0, y: u.cell.1, lx: u.lx };
     if let Some((x, y)) = create_path(&w.map.land, mover, &mut u.path, &mut w.random, cell.0, cell.1, t.stop_distance) {

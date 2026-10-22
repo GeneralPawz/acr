@@ -126,9 +126,15 @@ pub fn sim_check(dir: &Path, map: &str, rest: &[&str]) -> Result<()> {
     // Economy: every finished building that can produce something queues its first item
     // with a rally point 200 px south.
     let tech = &catalog.tech;
-    let (mut produced, mut researched) = (0, 0);
+    let (mut produced, mut researched, mut mills) = (0, 0, 0);
     for (b, u) in base.units.iter().enumerate().filter(|(_, u)| u.living() && u.building) {
-        if let Some(&kind) = acr_sim::economy::producible(&base, b).first() {
+        let t = catalog.get(u.kind);
+        if t.economy.mill
+            && let Some(&field) = tech.of(u.kind).and_then(|tt| tt.produce.first())
+        {
+            cmds.push(Command::PlantFields { player: u.owner, buildings: vec![u.id], kind: field });
+            mills += 1;
+        } else if let Some(&kind) = acr_sim::economy::producible(&base, b).first() {
             let (x, y) = u.pos.pixels();
             cmds.push(Command::Rally { player: u.owner, building: u.id, x, y: y + 200 });
             cmds.push(Command::Produce { player: u.owner, building: u.id, kind });
@@ -145,7 +151,7 @@ pub fn sim_check(dir: &Path, map: &str, rest: &[&str]) -> Result<()> {
         }
     }
     println!(
-        "  tech: {} upgrades, {} access rules; {produced} buildings queue a unit, {researched} research",
+        "  tech: {} upgrades, {} access rules; {produced} buildings queue a unit, {researched} research, {mills} mills plant",
         tech.upgrades.len(),
         tech.access.len()
     );
@@ -213,6 +219,13 @@ pub fn sim_check(dir: &Path, map: &str, rest: &[&str]) -> Result<()> {
         n - cells.len()
     );
     let done = a.players.iter().map(|p| p.upgrades.iter().filter(|u| u.done).count()).sum::<usize>();
+    let live = |g| a.sprites.iter().filter(|s| !s.removed && s.group == g).count();
+    println!(
+        "  food: {} fields ({} at the start), {} carcasses",
+        live(acr_formats::m3d::SpriteGroup::Complex),
+        base.sprites.iter().filter(|s| s.group == acr_formats::m3d::SpriteGroup::Complex).count(),
+        live(acr_formats::m3d::SpriteGroup::Meat)
+    );
     println!(
         "  economy: {} objects created, {done} upgrades done; gold buys at {:.4}",
         a.units.len() - base.units.len(),

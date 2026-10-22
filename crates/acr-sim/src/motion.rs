@@ -479,9 +479,6 @@ pub(crate) fn try_to_stand(u: &mut Unit, t: &ObjectType, rnd: &mut SyncRandom, r
     rnd.rando();
     u.stand_time = u.stand_time.wrapping_add(1);
     u.in_motion = false;
-    if u.frame < u.anim_frames - FRM_DEC {
-        return; // only a finished animation is replaced
-    }
     if u.stance != u.local_stance {
         let (ns, ls) = (u.stance, u.local_stance);
         let bit = |s: u8| s > 0 && t.trans_x & (1 << (s - 1)) != 0;
@@ -504,6 +501,9 @@ pub(crate) fn try_to_stand(u: &mut Unit, t: &ObjectType, rnd: &mut SyncRandom, r
         set_anim(u, t, kind);
         u.frame = 0;
         return;
+    }
+    if u.frame < u.anim_frames - FRM_DEC {
+        return; // at stance 0 only a finished animation is replaced (0x50ae4e)
     }
     let mut kind = AnimKind::Stand;
     if rest && rnd.rando() < 512 {

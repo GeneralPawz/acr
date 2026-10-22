@@ -121,6 +121,14 @@ pub struct EconomyDef {
     pub is_farm: bool,
     /// `ADDSECTION s a life …`: building stages that exist, and the life each adds once done.
     pub sections: Vec<(u8, i32)>,
+    /// `SPRITEOBJECT`: placing the type plants sprites (fields) instead of an object.
+    pub sprite_object: bool,
+    /// `EXSPRITES name variants n step spread`: the sprites it plants.
+    pub ex_sprites: Option<ExSprites>,
+    /// `TRANSFORMTOMEAT i`: after its death animation the unit becomes `MEAT` sprite `i`.
+    pub meat: Option<u8>,
+    /// `USAGE MELNICA`: a mill; finished, it plants its first product (fields) around it.
+    pub mill: bool,
     pub no_hungry: bool,
     pub peasant_convertor: bool,
     /// `NAEMNIK`: deserts when the player runs out of gold.
@@ -135,6 +143,18 @@ pub struct EconomyDef {
     pub portion: [i32; 8],
     /// `RESOURCEBASE n RES*n`: source types that may be delivered here (bit per type).
     pub resource_base: u16,
+}
+
+/// `EXSPRITES name variants n step spread` (NM+0x28da, +0x181a, +0x183d, +0x1845,
+/// +0x1841): a field type plants a random one of `variants` sprite types from `name`; mills
+/// plant them on a `(2n + 1)²` diamond grid `step` px apart with up to `spread` px of jitter.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ExSprites {
+    pub name: String,
+    pub variants: i32,
+    pub n: i32,
+    pub step: i32,
+    pub spread: i32,
 }
 
 /// A mine's production (`PRODUCER`).
@@ -194,6 +214,18 @@ fn economy(def: &UnitDef) -> EconomyDef {
                 e.max_inside = e.unit_absorber;
             }
             "NO_HUNGRY" => e.no_hungry = true,
+            "SPRITEOBJECT" => e.sprite_object = true,
+            "EXSPRITES" => {
+                e.ex_sprites = c.word(0).map(|name| ExSprites {
+                    name: name.to_ascii_uppercase(),
+                    variants: c.int(1).unwrap_or(0),
+                    n: c.int(2).unwrap_or(0),
+                    step: c.int(3).unwrap_or(0),
+                    spread: c.int(4).unwrap_or(0),
+                })
+            }
+            "TRANSFORMTOMEAT" => e.meat = c.int(0).map(|v| v as u8).filter(|&v| v != 0xFF),
+            "USAGE" => e.mill = c.word(0).is_some_and(|u| u.eq_ignore_ascii_case("MELNICA")),
             "PEASANTCONVERTOR" => e.peasant_convertor = true,
             "NAEMNIK" => e.mercenary = true,
             "TURNOFF" => e.turn_off = true,

@@ -57,6 +57,11 @@ pub enum Command {
     /// player gets `trunc(amount · sell rate / buy rate)`; `market::Market::quote` tells how
     /// much in advance. The rates are shared by all players and move with every trade.
     Trade { player: PlayerId, sell: u8, buy: u8, amount: i32 },
+    /// Plant fields of type `kind` (a `SPRITEOBJECT` such as `FIELD(EN)`) around the listed
+    /// mills (the command 0x4e0d88 through 0x51522f): every listed building that is a mill
+    /// (`USAGE MELNICA`) with a build list gets a diamond of fields; each field costs its
+    /// price. A finished mill does this once by itself with its first product.
+    PlantFields { player: PlayerId, buildings: Vec<EntityId>, kind: TypeId },
 }
 
 impl Command {
@@ -78,7 +83,8 @@ impl Command {
             | Command::Gather { player, .. }
             | Command::Upgrade { player, .. }
             | Command::CancelUpgrade { player, .. }
-            | Command::Trade { player, .. } => *player,
+            | Command::Trade { player, .. }
+            | Command::PlantFields { player, .. } => *player,
         }
     }
 }

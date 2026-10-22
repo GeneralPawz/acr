@@ -89,6 +89,9 @@ pub fn attack_link(w: &mut World, i: usize, target: EntityId, prio: u8) {
         u.prio = prio;
         u.dest = None;
     }
+    if hunt(w, i, j) {
+        return;
+    }
     let valid = w.units.get(j).is_some_and(|e| e.alive && e.death <= 8 && e.owner != w.units[i].owner);
     if !valid {
         w.units[i].orders.pop();
@@ -247,6 +250,33 @@ pub fn attack_link(w: &mut World, i: usize, target: EntityId, prio: u8) {
             u.dest = Some(Pos::new(x, y));
         }
     }
+}
+
+/// Hunting (0x51bf0b in `AttackObjLink`): when the victim of a unit that can gather its
+/// carcass (`TRANSFORMTOMEAT` sprite type with a `TAKERESSTAGES` work stance) is dying, the
+/// attack ends; the hunter walks to the body (pushed last, so first) and then takes 60
+/// gathering orders for the carcass that will appear there (`TakeResource` with order
+/// type 1, each drawing a random number while nothing is found).
+fn hunt(w: &mut World, i: usize, j: usize) -> bool {
+    let Some(e) = w.units.get(j).filter(|e| e.alive && e.death != 0) else { return false };
+    let Some(meat) = w.catalog.get(e.kind).economy.meat else { return false };
+    let Some(kind) = w.sprite_kinds.1.chars.get(usize::from(meat)).and_then(|c| c.res_type).filter(|&k| k < 16) else {
+        return false;
+    };
+    let t = w.catalog.get(w.units[i].kind);
+    if !t.economy.take_res.get(usize::from(kind)).copied().flatten().is_some_and(|r| r.work != 0) {
+        return false;
+    }
+    let (x, y) = e.pos.pixels();
+    let target = e.pos;
+    w.units[i].orders.pop();
+    for _ in 0..60 {
+        crate::gather::take_resource_ord(w, i, x, y, kind, 0x90, 1);
+    }
+    let u = &mut w.units[i];
+    u.orders.push(Order::SendTo { cell: Unit::cell_of(target, u.lx), prio: 0x10 });
+    u.prio = 0x10;
+    true
 }
 
 /// `Shoot` + `TraceObjectsInLine` (0x51ddc3, 0x559310): a musket ball is an instant trace
@@ -524,6 +554,14 @@ pub fn object_loop(w: &mut World) {
             if u.anim == AnimKind::Death {
                 u.frame += FRM_DEC;
                 if u.frame >= u.anim_frames - FRM_DEC {
+                    if t.economy.meat.is_some() {
+                        // The body becomes a carcass sprite (0x511f4b).
+                        if crate::sprite::leave_carcass(w, i) {
+                            w.units[i].alive = false;
+                            continue;
+                        }
+                    }
+                    let u = &mut w.units[i];
                     if anim_frames(t, AnimKind::DeathLie(1)).is_some() {
                         set_anim(u, t, AnimKind::DeathLie(1));
                         u.frame = 0;
@@ -550,6 +588,7 @@ pub fn object_loop(w: &mut World) {
                     u.alive = false;
                 }
             }
+            let u = &mut w.units[i];
             u.death = u.death.saturating_add(1);
             continue;
         }

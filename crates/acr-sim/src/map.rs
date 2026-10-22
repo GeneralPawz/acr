@@ -199,6 +199,8 @@ pub struct SpriteShapes {
     pub sources: BTreeMap<SpriteGroup, Vec<Option<usize>>>,
     /// `[SOURCES]`: `(source type, amount per work, radius)` per sprite group and type index.
     pub work: BTreeMap<SpriteGroup, Vec<Option<WorkSource>>>,
+    /// `ObjCharacter`s (sources, work and time transforms) per sprite group.
+    pub kinds: BTreeMap<SpriteGroup, crate::sprite::SpriteKinds>,
 }
 
 impl SpriteShapes {
@@ -233,6 +235,17 @@ impl SpriteShapes {
             })
             .collect();
         self.work.insert(group, work);
+        self.kinds.insert(group, crate::sprite::SpriteKinds::new(list, rsr));
+    }
+
+    /// The spacing radius of a map sprite for new sprites (0x4d1aa0): the list radius of
+    /// deposits, 0 for everything else.
+    pub fn spacing(&self, group: SpriteGroup, index: u16) -> i32 {
+        self.kinds
+            .get(&group)
+            .and_then(|k| k.chars.get(usize::from(index)))
+            .filter(|c| c.deposit)
+            .map_or(0, |c| c.list_radius)
     }
 
     /// `(source type, amount per work, radius)` of a gathering source sprite.
