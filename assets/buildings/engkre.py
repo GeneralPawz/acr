@@ -14,18 +14,29 @@ finished building). Fire and smoke anchors (`socket.fire.<i>`, `socket.smoke.<i>
 `SMOKE`, `STAGE_FIRES` and `STAGE_SMOKE` points meet the model.
 
 Plan in game ground coordinates (world pixels, x east, y south; heights true pixels),
-measured on the sprites and fitted with tools/silhouette.py. Colours are projected from the
-sprite of each state (one atlas per state, cropped to what it uses).
+measured on the sprites and fitted with tools/silhouette.py. Surfaces are realistic shared
+materials (`acr_assets.surfaces`: log walls, bark stakes, shingles, timber, stone, earth)
+chosen by part name; with `PROJECT = True` the colours are projected from the sprite of
+each state instead (one atlas per state, the slice's first look).
 """
 
 import math
 
 from mathutils import Vector
 
-from acr_assets import Reference, kit, project, scene, shapes
+from acr_assets import Reference, kit, project, scene, shapes, surfaces
 from acr_assets import conventions as cv
 
 TYPE = "EngKre"
+# Project the sprites' colours (True) or use the realistic surfaces (False).
+PROJECT = False
+# Part name → surface kind, first match wins (`surfaces.KINDS`).
+SURFACES = [
+    ("st_roof", "slate"), ("chimney", "stone"), ("st_walls", "stone"), ("rubble", "rubble"),
+    ("dirt", "earth"), ("roof", "shingles"), ("pile", "bark"), ("_pal", "bark"), ("pal_", "bark"),
+    ("rafters", "timber"), ("scaffold", "timber"), ("posts", "timber"), ("floor", "timber"),
+    ("walls", "logwall"), ("_upper", "logwall"), ("_lower", "logwall"), ("b3_ww", "logwall"),
+]
 CHECKS = ["--anim STANDLO --sections 0", "--anim STANDLO --sections 1", "--anim STANDLO --sections 2",
           "--anim STANDLO --sections 3", "--anim BUILDLO_0", "--anim BUILDLO_1", "--anim BUILDLO_2",
           "--anim BUILDLO_3", "--anim DEATHLIE1"]
@@ -347,6 +358,10 @@ def build(ctx):
         g = groups[gname]
         objs = _meshes(g)
         stats[gname] = {"objects": len(objs)}
+        if not PROJECT:
+            kinds = surfaces.apply(objs, SURFACES)
+            stats[gname]["surfaces"] = sorted(set(kinds.values()))
+            continue
         if ref is None:
             continue
         # Project this state's sprite with only this state visible.
