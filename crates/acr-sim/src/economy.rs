@@ -318,6 +318,24 @@ fn production_link(w: &mut World, b: usize) {
     if converts && !w.units[b].inside.iter().any(|&id| catalog.get(w.units[id.0 as usize].kind).peasant) {
         return; // NOT_ENOUGH_PEASANTS
     }
+    // The depot limit (0x49f21b): over it, the order is cancelled with a refund.
+    if let Some((g, n)) = pt.economy.depot_group {
+        let [depots, count] = [None, Some(g)].map(|group| {
+            w.units_of(owner)
+                .filter(|u| {
+                    let e = &catalog.get(u.kind).economy;
+                    match group {
+                        None => e.art_depot && (!u.building || u.stage >= w.max_stage(u)),
+                        Some(g) => e.depot_group.is_some_and(|(ug, _)| ug == g),
+                    }
+                })
+                .count() as i32
+        });
+        if count >= depots * n {
+            unproduce(w, b, head.kind);
+            return;
+        }
+    }
     let stages = w.adv(owner, head.kind).build_stages;
     let q = &mut w.units[b].queue[0];
     if q.stages != stages && q.stages > 0 {

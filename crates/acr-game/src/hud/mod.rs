@@ -169,13 +169,18 @@ pub struct Stats {
     pub ready: bool,
     /// Life, centred under the icon zone.
     pub life: i32,
-    /// Attack icon (`SMICONS.GP` frame) and damage, at most two.
-    pub attacks: Vec<(usize, i32)>,
-    pub shield: i32,
+    /// Attack icon (`SMICONS.GP` frame) and damage text (`%d+%d` with a bonus), at most two.
+    pub attacks: Vec<(usize, Vec<u8>)>,
+    /// Shield text, with the formation bonus.
+    pub shield: Vec<u8>,
     /// Protection icon and value, at most six; none for buildings.
     pub protections: Vec<(usize, i32)>,
-    /// Text lines in `fn10` from (13, 680), 12 apart: inside, housing, depot capacity.
+    /// Text lines in `fn10` from (13, 680), 12 apart: fish, housing, depot capacity,
+    /// inside, the mined resource.
     pub lines: Vec<Vec<u8>>,
+    /// `SHOWDELAY` types: the summed reload counters and their starting values of the
+    /// selected objects, for the reload bar.
+    pub reload: Option<(i32, i32)>,
 }
 
 /// What the interface shows, collected from the game every frame.
@@ -637,7 +642,7 @@ impl Hud {
             self.draw_minimap(ctx, view, &palette, out);
         }
         if let (Some(stats), Some(_)) = (&view.stats, &data) {
-            draw_stats(ctx, stats, out);
+            draw_stats(ctx, stats, &palette, out);
         }
         if let Some(r) = Self::icon_box(&view.icons) {
             border(ctx, out, r.x0, r.y0, r.x1, r.y1, BOX_CORNERS);
@@ -808,7 +813,7 @@ fn draw_resources(ctx: &Ctx, view: &View, out: &mut Vec<Draw>) {
 /// The numbers of a single selected type (0x607f50): kills, then for a finished object
 /// its life, up to two attacks in the top row, the shield below, up to six protections in
 /// three columns, and the text lines.
-fn draw_stats(ctx: &Ctx, stats: &Stats, out: &mut Vec<Draw>) {
+fn draw_stats(ctx: &Ctx, stats: &Stats, palette: &Palette, out: &mut Vec<Draw>) {
     let x = ICON + ZONE1[0] + 6;
     let top = ZONE1[1] + SCREEN[1] - PANEL_LY - 1;
     if stats.kills != 0 {
@@ -824,14 +829,14 @@ fn draw_stats(ctx: &Ctx, stats: &Stats, out: &mut Vec<Draw>) {
     for (i, line) in stats.lines.iter().enumerate() {
         out.push(Draw::game_text(FN10, line, 13, 680 + 12 * i as i32));
     }
-    for (n, &(icon, damage)) in stats.attacks.iter().take(2).enumerate() {
+    for (n, (icon, damage)) in stats.attacks.iter().take(2).enumerate() {
         let tx = x + 19 + 55 * n as i32;
-        out.push(Draw::game_frame(gp::SMICONS, icon, tx - 18, top + 1, 0));
-        out.push(Draw::game_text(font::SMALL_WHITE, damage.to_string().as_bytes(), tx, top + 5));
+        out.push(Draw::game_frame(gp::SMICONS, *icon, tx - 18, top + 1, 0));
+        out.push(Draw::game_text(font::SMALL_WHITE, damage, tx, top + 5));
     }
     let y = top + 21;
     out.push(Draw::game_frame(gp::SMICONS, SHIELD_ICON, x + 1, y + 1, 0));
-    out.push(Draw::game_text(font::SMALL_WHITE, stats.shield.to_string().as_bytes(), x + 21, y + 5));
+    out.push(Draw::game_text(font::SMALL_WHITE, &stats.shield, x + 21, y + 5));
     let base = ZONE1[1] + SCREEN[1] - PANEL_LY + ICON + 10;
     for (i, &(icon, value)) in stats.protections.iter().take(6).enumerate() {
         let col = (i >> 1) as i32;
@@ -841,7 +846,23 @@ fn draw_stats(ctx: &Ctx, stats: &Stats, out: &mut Vec<Draw>) {
         out.push(Draw::game_frame(gp::SMICONS, icon, x + 3, y + 1, 0));
         out.push(Draw::game_text(font::SMALL_WHITE, value.to_string().as_bytes(), x + 22, y + 5));
     }
+    // The reload bar (0x6086ea, `SHOWDELAY`): four green lines at `Zone1LX + Zone1X − 5`..
+    // `− 2`, from the bottom of the zone up to the part of the reload done.
+    if let Some((delay, max)) = stats.reload {
+        let h = ZONE1_SIZE[1] + 25;
+        let done = if max != 0 { h * delay / max } else { 0 };
+        if done < h {
+            let [r, g, b] = palette.rgb(nearest(palette, color::LIFE));
+            let y0 = SCREEN[1] - PANEL_LY + ZONE1[1] + 1 + done;
+            let y1 = SCREEN[1] - PANEL_LY + ZONE1[1] + h - 2;
+            let x = ZONE1_SIZE[0] + ZONE1[0] - 5;
+            out.push(Draw::fill([r, g, b, 255], Rect { x0: x, y0, x1: x + 4, y1: y1 + 1 }));
+        }
+    }
 }
+
+/// `Zone1LX`/`Zone1LY` (defaults 172, 100; 0x5aa6e6).
+const ZONE1_SIZE: [i32; 2] = [172, 100];
 
 /// `fn10` (`FontM12`), the info lines of 0x607f50.
 const FN10: crate::ui::fonts::FontId = crate::ui::fonts::FontId("fn10");

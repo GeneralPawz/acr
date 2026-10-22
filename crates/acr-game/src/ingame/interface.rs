@@ -181,6 +181,8 @@ enum Hint {
     Missing(Vec<usize>),
     /// `FINBLD` with the building type's name, 100 frames.
     Finished(TypeId),
+    /// `NOT_ENOUGH_PEASANTS`, 10 frames.
+    NotEnoughPeasants,
 }
 
 impl Default for State {
@@ -427,18 +429,22 @@ impl InGame {
         let outline = color::PLAYER.wrapping_add(4 * (player % 8));
         let objects = self.objects.objects();
         if let [(kind, ..)] = types[..]
-            && let Some(def) = objects.definition(&world.catalog.get(kind).id)
+            && let Some(u) = self.selected_units().find(|u| u.kind == kind)
         {
-            let mut s = stats(def, &data);
-            if let Some(u) = self.selected_units().find(|u| u.kind == kind) {
-                let t = world.catalog.get(kind);
-                s.kills = i32::from(u.kills);
-                s.ready = !u.building || u.stage >= world.max_stage(u);
-                s.life = u.life;
-                if t.building {
-                    s.protections.clear();
-                }
-                s.lines = self.info_lines(ctx, u);
+            let t = world.catalog.get(kind);
+            let def = objects.definition(&t.id);
+            let mut s = stats(world, &data, u, def);
+            s.kills = i32::from(u.kills);
+            s.ready = !u.building || u.stage >= world.max_stage(u);
+            s.life = u.life;
+            if t.building {
+                s.protections.clear();
+            }
+            s.lines = self.info_lines(ctx, u);
+            // The type's record sums the reload counters of its selected objects (0x606ae0).
+            if def.is_some_and(|d| d.has("SHOWDELAY")) {
+                let units = self.selected_units().filter(|v| v.kind == kind);
+                s.reload = Some(units.fold((0, 0), |(d, m), v| (d + v.delay, m + v.max_delay)));
             }
             view.stats = Some(s);
         }
@@ -1013,6 +1019,7 @@ impl InGame {
                     let name = unit_name(ctx, &world.catalog.get(kind).md_name);
                     (format_str(ctx.texts.get("FINBLD"), &name), 100)
                 }
+                Hint::NotEnoughPeasants => (ctx.texts.get("NOT_ENOUGH_PEASANTS").to_vec(), 10),
             };
             self.mission.hint(text, frames);
         }
@@ -1024,7 +1031,22 @@ impl InGame {
         let Some(world) = &self.world else { return };
         let own = self.own();
         let mut now = HashMap::new();
+        let mut peasants_missing = false;
         for u in world.units.iter().filter(|u| u.alive && u.building && u.owner == own) {
+            // A `PEASANTCONVERTOR` that waits for a peasant to train a non-peasant tells
+            // its owner while selected (0x49f16b: the selection mask `+0x22`).
+            let catalog = &world.catalog;
+            if catalog.get(u.kind).economy.peasant_convertor
+                && u.research.is_none()
+                && u.queue.first().is_some_and(|q| !catalog.get(q.kind).peasant)
+                && !u
+                    .inside
+                    .iter()
+                    .any(|&id| world.units.get(id.0 as usize).is_some_and(|i| catalog.get(i.kind).peasant))
+                && self.selected.contains(&u.id)
+            {
+                peasants_missing = true;
+            }
             let before = self.interface.queues.get(&u.id).copied();
             if let Some((_, progress, stages)) = before
                 && u.queue.is_empty()
@@ -1037,6 +1059,9 @@ impl InGame {
             }
         }
         self.interface.queues = now;
+        if peasants_missing {
+            self.interface.hints.push(Hint::NotEnoughPeasants);
+        }
     }
 
     /// `CanAfford` (0x514c65): true if the player can pay for `kind`; otherwise the missing
@@ -1063,6 +1088,11 @@ impl InGame {
         let def = self.objects.objects().definition(&t.id);
         let mut lines = Vec::new();
         let player = &world.players[usize::from(u.owner.min(7))];
+        // `FISHING a b` (NM+0x2934): fish on board of the maximum. The simulation does not
+        // fish yet, so the boat is always empty.
+        if let Some(max) = def.and_then(|d| d.get("FISHING")).and_then(|c| c.int(1)).filter(|&m| m != 0) {
+            lines.push(crate::hud::panels::format_ints(ctx.texts.get("FISHSTR"), &[0, max]));
+        }
         if def.is_some_and(|d| d.has("FARM")) {
             lines.push(crate::hud::panels::format_int(ctx.texts.get("HABITAN"), player.population));
             lines.push(crate::hud::panels::format_int(ctx.texts.get("MAXHABI"), player.housing));
@@ -1082,7 +1112,18 @@ impl InGame {
         let max_inside = world.adv(u.owner, u.kind).max_inside;
         if max_inside != 0 {
             lines.push(crate::hud::panels::format_int(ctx.texts.get("INSISTR"), u.inside.len() as i32));
-            lines.push(crate::hud::panels::format_int(ctx.texts.get("MAXINS1"), max_inside));
+            // `MAXINSI` "%d+%d" with the extra capacity of `SINGLE_INSIDE` (`AddInside`).
+            if u.add_inside != 0 {
+                lines.push(crate::hud::panels::format_ints(ctx.texts.get("MAXINSI"), &[max_inside, u.add_inside]));
+            } else {
+                lines.push(crate::hud::panels::format_int(ctx.texts.get("MAXINS1"), max_inside));
+            }
+            // A working mine names its resource (0x5f7882: the order 0x5f75b3, `RType`).
+            if let Some(m) = &u.mine
+                && let Some(name) = RESOURCE_NAMES.get(m.resource)
+            {
+                lines.push(ctx.texts.get(name).to_vec());
+            }
         }
         lines
     }
@@ -1892,35 +1933,68 @@ fn upgrade_hint(ctx: &Ctx, message: &str, cost: &[i32; 8]) -> Vec<u8> {
     out
 }
 
-/// The numbers of a unit type (0x606edd): damage per attack (with its weapon kind's icon),
-/// the shield and the protections, from the `.MD` file.
-fn stats(def: &acr_formats::defs::UnitDef, data: &hud::data::HudData) -> Stats {
-    let kinds: HashMap<i32, usize> =
-        def.all("WEAPONKIND").filter_map(|c| Some((c.int(0)?, data.weapon(c.word(1)?)?))).collect();
+/// The numbers of the first selected object (0x607f50): per attack index with damage
+/// (at most two, not of an `I` weapon kind) the damage with its weapon kind's icon, the
+/// shield and the protections, from the owner's characteristics (upgrades included).
+fn stats(
+    world: &acr_sim::World,
+    data: &hud::data::HudData,
+    u: &Unit,
+    def: Option<&acr_formats::defs::UnitDef>,
+) -> Stats {
+    let t = world.catalog.get(u.kind);
+    let adv = world.adv(u.owner, u.kind);
+    // `EX_SHOTS` buildings shoot by their garrison: damage scales from the type's base with
+    // the share of shooters inside (USAGE 0x15, 0x18, 0x20) in the capacity (0x60804b).
+    let mut ratio = 1000;
+    if def.is_some_and(|d| d.has("EX_SHOTS")) && adv.max_inside > 0 {
+        let shooters = u
+            .inside
+            .iter()
+            .filter_map(|&id| world.units.get(id.0 as usize))
+            .filter(|i| matches!(world.catalog.get(i.kind).role.usage, 0x15 | 0x18 | 0x20))
+            .count() as i32;
+        ratio = shooters * 1000 / adv.max_inside;
+    }
     let mut attacks = Vec::new();
-    for c in def.all("DAMAGE") {
-        let (Some(i), Some(v)) = (c.int(0), c.int(1)) else { continue };
-        if v == 0 || attacks.len() >= 2 {
+    for (i, a) in adv.attacks.iter().enumerate() {
+        let kind = data.weapon(&a.kind);
+        if a.damage == 0 || kind.is_some_and(|k| data.weapon_hidden[k]) || attacks.len() >= 2 {
             continue;
         }
-        let icon = kinds.get(&i).and_then(|&k| data.weapons.get(k)).map_or(0, |w| w.1);
-        attacks.push((icon, v));
+        let base = t.attacks.get(i).map_or(0, |b| b.damage);
+        let damage = base + (a.damage - base) * ratio / 1000;
+        // Kills raise the damage of the `SKILLDAMAGEMASK` indices (0x608165).
+        let skill = if (t.skill_mask >> i) & 1 != 0 { t.skill_bonus * i32::from(u.kills) / 10 } else { 0 };
+        let total = u.attack_bonus + skill;
+        // The original prints `skill − bonus` after the minus sign (0x6081c2).
+        let text = match total {
+            0 => damage.to_string(),
+            t if t > 0 => format!("{damage}+{t}"),
+            _ => format!("{damage}-{}", skill - u.attack_bonus),
+        };
+        let icon = kind.and_then(|k| data.weapons.get(k)).map_or(0, |w| w.1);
+        attacks.push((icon, text.into_bytes()));
     }
-    let shield = def.get("SHIELD").and_then(|c| c.int(0)).unwrap_or(0);
-    let mut protections: Vec<(usize, usize, i32)> = def
-        .all("PROTECTION")
-        .flat_map(|c| c.word_int_pairs(0))
-        .filter(|&(_, v)| v != 0)
+    let shield = match u.defence_bonus {
+        0 => adv.shield.to_string(),
+        b if b > 0 => format!("{}+{b}", adv.shield),
+        b => format!("{}-{}", adv.shield, -b),
+    };
+    let mut protections: Vec<(usize, usize, i32)> = adv
+        .protection
+        .iter()
+        .filter(|&&(_, v)| v != 0)
         .filter_map(|(k, v)| {
             let i = data.weapon(k)?;
-            Some((i, data.weapons[i].2, v))
+            Some((i, data.weapons[i].2, *v & 0xFF))
         })
         .collect();
     protections.sort_by_key(|p| p.0);
     protections.dedup_by_key(|p| p.0);
     Stats {
         attacks,
-        shield,
+        shield: shield.into_bytes(),
         protections: protections.into_iter().map(|(_, icon, v)| (icon, v)).take(6).collect(),
         ..Stats::default()
     }
