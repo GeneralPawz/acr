@@ -148,7 +148,7 @@ pub fn sim_check(dir: &Path, map: &str, rest: &[&str]) -> Result<()> {
     let mut far: Vec<(EntityId, i32)> = Vec::new();
     for (ids, (tx, ty)) in &groups {
         for id in ids {
-            let Some(u) = a.unit(*id) else { continue };
+            let Some(u) = a.unit(*id).filter(|u| u.living()) else { continue };
             total += 1;
             let (x, y) = u.pos.pixels();
             let d = (x - tx).abs().max((y - ty).abs());
@@ -163,7 +163,7 @@ pub fn sim_check(dir: &Path, map: &str, rest: &[&str]) -> Result<()> {
         }
     }
     let mut cells: Vec<(i32, i32)> =
-        a.units.iter().filter(|u| u.alive && !u.building && catalog.get(u.kind).mobile()).map(|u| u.cell).collect();
+        a.units.iter().filter(|u| u.living() && !u.building && catalog.get(u.kind).mobile()).map(|u| u.cell).collect();
     let n = cells.len();
     cells.sort_unstable();
     cells.dedup();
@@ -175,6 +175,9 @@ pub fn sim_check(dir: &Path, map: &str, rest: &[&str]) -> Result<()> {
         100.0 * f64::from(arrived) / f64::from(total.max(1)),
         n - cells.len()
     );
+    let dead = a.units.iter().filter(|u| u.death != 0 || !u.alive).count();
+    let corpses = a.units.iter().filter(|u| u.alive && u.death != 0).count();
+    println!("  combat: {dead} units died ({corpses} corpses still lying)");
     far.sort_by_key(|f| std::cmp::Reverse(f.1));
     if !far.is_empty() {
         let sample: Vec<String> = far.iter().take(5).map(|(id, d)| format!("#{} {d} px", id.0)).collect();
