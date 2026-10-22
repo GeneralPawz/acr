@@ -75,6 +75,8 @@ fn fields_ripen_are_harvested_and_regrow() {
     assert_eq!(w.sprites[field].index, 1, "ripe");
     w.spawn(mel, 0, Pos::from_pixels(2048, 2048), 0);
     let p = w.spawn(kri, 0, Pos::from_pixels(2500, 2100), 0);
+    // No gold: the city tick's `CreateFields` cannot pay for new fields around the mill.
+    w.players[0].resources[economy::GOLD] = 0;
     economy::census_all(&mut w);
     w.step(&[Command::Gather { player: 0, units: vec![p], x: 2600, y: 2048 }]);
     // Five cycles of 3 food (`FoodEff` 1010: the field lasts WorkAmount · 10 · 10 / 100

@@ -218,6 +218,7 @@ fn economy(def: &UnitDef) -> EconomyDef {
                 e.unit_absorber = c.int(0).unwrap_or(0);
                 e.max_inside = e.unit_absorber;
             }
+            "TRANSPORT" => e.max_inside = i32::from(c.int(0).unwrap_or(0) as u16),
             "NO_HUNGRY" => e.no_hungry = true,
             "SPRITEOBJECT" => e.sprite_object = true,
             "EXSPRITES" => {
@@ -566,6 +567,17 @@ pub struct ObjectType {
     /// `3DBARS n (x y l w h)*n` (NM+0x2892): the boxes of a building that block shots and
     /// that shooters aim at.
     pub bars: Vec<[i32; 5]>,
+    /// `TRANSPORT n` (NM+0x1728 bit6): carries up to `n` units (the capacity is `max_inside`).
+    pub transport: bool,
+    /// `MULTIWEAPON rx ry z n (x y)*n` (NM+0x2902..): a ship's guns, `(x − rx, (y − ry + z)·2)`
+    /// from its centre, fired from height `z`.
+    pub guns: Option<(i32, Vec<(i32, i32)>)>,
+    /// `ZALP n` (NM+0x175e): shots per volley before the reload.
+    pub zalp: i32,
+    /// `FISHING speed amount` (NM+0x2933/+0x2934).
+    pub fishing: (i32, i32),
+    /// `PORT` (NM+0x1729 bit6): a port; ships appear at its water point.
+    pub port: bool,
     /// `RESSUBST` (NM+0x172b bit6): a mine that becomes the mine of the deposit it is built
     /// on.
     pub res_subst: bool,
@@ -683,6 +695,8 @@ pub struct Adv {
     pub rate: [i32; ATTACK_SLOTS],
     /// `ResEff` (ADC+0xef, 100): percent of a load a base credits (`GETRES` upgrades).
     pub res_eff: i32,
+    /// `FishSpeed`, `FishAmount` (ADC+0xe2 u8, +0xe3 u16; `FISHING` upgrades).
+    pub fish: (i32, i32),
 }
 
 /// Morale keywords of a type (parser 0x4f372c).
@@ -796,6 +810,17 @@ impl ObjectType {
                 .unwrap_or_default(),
             ground_attack: def.has("ARTPODGOTOVKA"),
             res_subst: def.has("RESSUBST"),
+            transport: def.has("TRANSPORT"),
+            guns: def.get("MULTIWEAPON").map(|c| {
+                let a = |i| c.int(i).unwrap_or(0);
+                let (rx, ry, z, n) = (a(0), a(1), a(2), a(3).clamp(0, 256) as usize);
+                (z, (0..n).map(|k| (a(4 + 2 * k) - rx, (a(5 + 2 * k) - ry + z) << 1)).collect())
+            }),
+            zalp: def.get("ZALP").and_then(|c| c.int(0)).unwrap_or(0),
+            fishing: def
+                .get("FISHING")
+                .map_or((0, 0), |c| (i32::from(c.int(0).unwrap_or(0) as u8), i32::from(c.int(1).unwrap_or(0) as u16))),
+            port: def.has("PORT"),
             shot_cost: def.get("RASTRATA_NA_VISTREL2").or_else(|| def.get("RASTRATA_NA_VISTREL")).map(|c| {
                 let two = c.keyword == "RASTRATA_NA_VISTREL2";
                 let (i1, i2) = (
@@ -881,6 +906,7 @@ impl ObjectType {
             fear_factor,
             rate,
             res_eff: 100,
+            fish: self.fishing,
         });
         self
     }

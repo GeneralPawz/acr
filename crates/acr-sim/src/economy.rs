@@ -287,6 +287,115 @@ pub fn unproduce(w: &mut World, b: usize, kind: TypeId) {
     }
 }
 
+/// The engine part of `City::ProcessCreation` (0x432582) for nation `k = tmtmt & 7`
+/// (0..6), every nation, AI or not: the gathering speeds, one `rando`, for computer players
+/// `HandleFields` (0x431ead: `MakeSlowZasev` with chance 1/8 when the city has mills), then
+/// `CreateFields` with chance 1/16 (0x4a69b4).
+pub fn city_tick(w: &mut World) {
+    let tmtmt = w.tick.0 + 1;
+    let k = (tmtmt & 7) as u8;
+    if k == 7 {
+        return;
+    }
+    let gt = tmtmt.wrapping_mul(2) as u32;
+    let p = &mut w.players[usize::from(k)];
+    let dt = gt.wrapping_sub(p.gather_since) as i32;
+    if dt > 1000 {
+        for s in 0..3 {
+            p.gather_speed[s] = p.gathered[s] * 25 / dt;
+        }
+        p.gathered = [0; 3];
+        p.gather_since = gt;
+    }
+    w.random.rando();
+    if w.ai[usize::from(k)] {
+        // The city's mills (`MelnID`, at most 4; here the first four ready mills).
+        let mills: Vec<usize> = (0..w.units.len()).filter(|&i| is_ready_mill(w, i, k)).take(4).collect();
+        if !mills.is_empty() && w.random.rando() < 0x1000 {
+            for b in mills {
+                if let Some(field) = mill_product(w, b) {
+                    let pos = w.units[b].pos;
+                    create_fields_slow(w, k, pos.x, pos.y, field);
+                }
+            }
+        }
+    }
+    if w.random.rando() < 0x800 {
+        create_fields(w, k);
+    }
+}
+
+fn is_ready_mill(w: &World, i: usize, k: u8) -> bool {
+    let u = &w.units[i];
+    u.owner == k && u.active() && u.building && u.stage >= w.max_stage(u) && w.catalog.get(u.kind).economy.mill
+}
+
+/// The first type a building produces (`PAble[NIndex][0]`: fields for a mill).
+fn mill_product(w: &World, b: usize) -> Option<TypeId> {
+    w.catalog.tech.of(w.units[b].kind).and_then(|t| t.produce.first().copied())
+}
+
+/// `CreateFields` (0x577ff4): every ready mill of the nation plants its fields around it
+/// (`CreateFieldsAt` 0x51522f, each field paid).
+pub fn create_fields(w: &mut World, k: u8) {
+    for b in 0..w.units.len() {
+        if is_ready_mill(w, b, k)
+            && let Some(field) = mill_product(w, b)
+        {
+            let pos = w.units[b].pos;
+            crate::sprite::plant_fields(w, k, pos.x, pos.y, field);
+        }
+    }
+}
+
+/// `CreateFieldsSlow` (0x5153cd): 20 fields at random points of the planting diamond (or the
+/// 7 × 7 grid points with chance `0x50/32768` each), each paid.
+fn create_fields_slow(w: &mut World, k: u8, x16: i32, y16: i32, field: TypeId) {
+    match w.catalog.get(field).economy.ex_sprites.clone() {
+        Some(ex) => {
+            let d = (ex.n * ex.step) << 4;
+            for _ in 0..20 {
+                let a = ((w.random.rando() * (2 * d + 1)) >> 15) - d;
+                let b = ((w.random.rando() * (2 * d + 1)) >> 15) - d;
+                crate::sprite::create_sprite_object(w, k, field, x16 + a + b, y16 + a - b, false);
+            }
+        }
+        None => {
+            for i in -3..=3 {
+                for j in -3..=3 {
+                    if w.random.rando() < 0x50 {
+                        crate::sprite::create_sprite_object(
+                            w,
+                            k,
+                            field,
+                            x16 + ((i + j) << 10),
+                            y16 + ((i - j) << 10),
+                            false,
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// `GetExtraction` (0x5699eb) for nation `k`: the food and wood gathering speeds, for stone,
+/// iron, coal and gold the peasants inside mines of that resource (`WasIn*`).
+pub fn extraction(w: &World, k: u8, res: usize) -> i32 {
+    let p = &w.players[usize::from(k) & 7];
+    match res {
+        FOOD => p.gather_speed[2],
+        WOOD => p.gather_speed[0],
+        STONE | IRON | COAL | GOLD => w
+            .units
+            .iter()
+            .filter(|u| u.owner == k && u.living() && u.mine.is_some_and(|m| m.resource == res))
+            .map(|u| u.inside.iter().filter(|e| w.catalog.get(w.units[e.0 as usize].kind).peasant).count() as i32)
+            .sum(),
+        _ => 0,
+    }
+}
+
 /// A building's work for one tick: the head of its production queue, then its mine.
 pub fn building_link(w: &mut World, b: usize) {
     if w.units[b].turned_off {
@@ -381,12 +490,34 @@ fn production_link(w: &mut World, b: usize) {
         w.units[b].queue.remove(0);
         return;
     }
+    let ship = bt.port && pt.medium == crate::catalog::Medium::Water;
+    if ship && w.units[b].queue[0].progress == 0 {
+        // A ship starts only with a free 15 × 15 birth box at the port's water point.
+        let Some((px, py)) = w.units[b].port_point else { return };
+        if w.map.water.check_bar(px - 7, py - 7, 15, 15) || w.occupancy.check_bar(px - 7, py - 7, 15, 15) {
+            crate::ship::clear_birth_place(w, px, py);
+            return;
+        }
+    }
     let q = &mut w.units[b].queue[0];
     q.progress += 1 << SPEED_SH;
     if q.progress < q.stages {
         return;
     }
     w.units[b].queue.remove(0);
+    if ship && let Some((px, py)) = w.units[b].port_point {
+        // At the water point, heading 96, then to the rally point ± 1024 px (y drawn first).
+        let id = w.spawn(head.kind, owner, Pos::new(px << 8, py << 8), 96);
+        if let Some(r) = w.units[b].rally.filter(|r| r.x > 0) {
+            let ry = w.random.rando();
+            let rx = w.random.rando();
+            let areas = w.map.water_areas.clone();
+            let (tx, ty) = ((r.x + ((rx - 0x4000) >> 2)) >> 4, (r.y + ((ry - 0x4000) >> 2)) >> 4);
+            crate::motion::smart_send_to(&mut w.units[id.0 as usize], areas.as_ref(), tx, ty, 0, 0, 0x80);
+        }
+        census(w, owner);
+        return;
+    }
     spawn_from(w, b, head.kind);
     if converts
         && let Some(k) = w.units[b].inside.iter().position(|&id| catalog.get(w.units[id.0 as usize].kind).peasant)

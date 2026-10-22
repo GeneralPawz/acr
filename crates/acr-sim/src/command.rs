@@ -78,6 +78,12 @@ pub enum Command {
     /// priority 0x90): units that may (`ARTPODGOTOVKA`, cannons) fire at it until stopped,
     /// with `ADDRANGE` % of their range and `ADDPAUSE` % of their reload.
     AttackGround { player: PlayerId, units: Vec<EntityId>, x: i32, y: i32 },
+    /// Board a transport (`GoToTransport` 0x54d78d, priority 0x90): land units walk to its
+    /// landing point and over the water into it. The transport must have docked once.
+    Board { player: PlayerId, units: Vec<EntityId>, transport: EntityId },
+    /// Let everybody off a transport at the shore ahead of it (`LeaveAll` 0x54df93): one
+    /// passenger every 3 ticks; nothing happens away from a shore.
+    Unload { player: PlayerId, transport: EntityId },
     /// Patrol between the units' positions and their places around a point (`Patrol`
     /// 0x4ea2c0): back and forth, fighting enemies on the way like an attack-move.
     Patrol { player: PlayerId, units: Vec<EntityId>, x: i32, y: i32 },
@@ -122,7 +128,9 @@ impl Command {
             | Command::MoveFacing { player, .. }
             | Command::AttackGround { player, .. }
             | Command::FriendlyFire { player, .. }
-            | Command::MeleeOnly { player, .. } => *player,
+            | Command::MeleeOnly { player, .. }
+            | Command::Board { player, .. }
+            | Command::Unload { player, .. } => *player,
         }
     }
 }

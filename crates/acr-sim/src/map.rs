@@ -310,6 +310,8 @@ pub struct MapGrid {
     pub water: LockMap,
     /// `TOP1`: land pathfinding areas, if the map has them.
     pub land_areas: Option<AreaGraph>,
+    /// `TOPW`: the areas of the water.
+    pub water_areas: Option<AreaGraph>,
     /// `TILE`: texture per vertex (explosion media).
     pub textures: Option<acr_formats::m3d::Grid<u8>>,
     /// `SEA2` depth on the 32 px grid (explosions in water).
@@ -373,6 +375,7 @@ impl MapGrid {
             land: LockMap::new(side, side),
             water: LockMap::new(side, side),
             land_areas: map.land_areas.as_ref().map(AreaGraph::from_areas),
+            water_areas: map.water_areas.as_ref().map(AreaGraph::from_areas),
             textures: map.textures.clone(),
             water_depth: map.water.as_ref().map(|w| w.depth.clone()),
         };
@@ -399,6 +402,7 @@ impl MapGrid {
             land: LockMap::new(side, side),
             water: LockMap::new(side, side),
             land_areas: None,
+            water_areas: None,
             textures: None,
             water_depth: None,
         };

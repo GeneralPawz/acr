@@ -15,7 +15,6 @@ const fn f(name: &'static str, original: u32, status: Status, handler: super::Ha
 }
 
 const DONE: Status = Status::Done;
-const AI_CITY: Status = Status::Stub("the AI city (projects, statistics) is not modelled yet: 0");
 const NO_GATHER: Status = Status::Stub("no gathering in acr-sim yet");
 
 pub const FUNCTIONS: &[ApiFn] = &[
@@ -25,7 +24,7 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("TakeFood", 0x5664dd, DONE, take_food),
     f("TakeWood", 0x566637, DONE, take_wood),
     f("GetMoney", 0x568f03, DONE, get_money),
-    f("GetExtraction", 0x5699eb, AI_CITY, zero),
+    f("GetExtraction", 0x5699eb, DONE, get_extraction),
     f("IsResourceEnabled", 0x577225, Status::Stub("no resource map in acr-sim yet: 0"), zero),
     f("SetToInternalResourcesZero", 0x56eba8, Status::Stub("unit stance/carried resources not modelled"), zero),
     f("ProduceUnit", 0x566dd2, DONE, produce_unit),
@@ -71,8 +70,8 @@ pub const FUNCTIONS: &[ApiFn] = &[
     ),
     f("SGP_RepairBuilding", 0x577b9c, Status::Stub("no repairs in acr-sim yet"), zero),
     f("SGP_TakeResources", 0x577be1, NO_GATHER, zero),
-    f("CreateFarmList", 0x57c20d, Status::Stub("no fields: the list stays empty"), create_farm_list),
-    f("CreateMeatList", 0x57bff5, Status::Stub("no hunting: the list stays empty"), create_farm_list),
+    f("CreateFarmList", 0x57c20d, DONE, create_farm_list),
+    f("CreateMeatList", 0x57bff5, DONE, create_meat_list),
     f("MakeOneShotToBuild", 0x573da9, Status::Stub("no artillery fire in acr-sim yet"), zero),
     f("GetUnits", 0x568f4d, DONE, get_units),
     f("GetReadyUnits", 0x5690f0, DONE, get_units),
@@ -397,14 +396,68 @@ fn set_enemy_buildings_collector(api: &mut Api, c: &mut Call) -> Result<u32> {
     collector(api, c, |api, u, n| u.building && api.st.unit_nmask(u.id, u.owner) & api.st.nmask[usize::from(n)] == 0)
 }
 
-/// `void CreateFarmList(word* out, byte nation)`: `out[NAreas]` = 0xFFFF (no fields yet).
+/// `GetTopZone` (0x5791cb) of a unit: the path area of its 64 px cell, `None` outside.
+fn unit_area(api: &Api, u: &acr_sim::Unit) -> Option<usize> {
+    let t = api.st.topo.as_ref()?;
+    let (cx, cy) = (u.pos.x >> 10, u.pos.y >> 10);
+    if cx < 0 || cy < 0 || cx >= t.cells.width as i32 || cy >= t.cells.height as i32 {
+        return None;
+    }
+    let a = usize::from(t.cells.get(cx as usize, cy as usize).unwrap_or(0xFFFF));
+    (a < t.areas.len()).then_some(a)
+}
+
+/// `void CreateFarmList(word* out, byte nation)` (0x57c20d): per path area the last building
+/// of the nation (finished or not) that takes farm fields (acceptor bit 8), else 0xFFFF.
 fn create_farm_list(api: &mut Api, c: &mut Call) -> Result<u32> {
-    let out = c.u32(0)?;
+    let (out, nat) = (c.u32(0)?, c.u8(1)?);
     let n = api.st.topo.as_ref().map_or(0, |t| t.areas.len());
-    for i in 0..n {
-        c.write_u16(out + 2 * i as u32, 0xFFFF)?;
+    let mut list = vec![0xFFFFu16; n];
+    for u in &api.world.units {
+        if u.owner == nat
+            && u.living()
+            && u.building
+            && api.world.catalog.get(u.kind).economy.resource_base & 0x100 != 0
+            && let Some(a) = unit_area(api, u)
+        {
+            list[a] = u.id.0 as u16;
+        }
+    }
+    for (i, v) in list.iter().enumerate() {
+        c.write_u16(out + 2 * i as u32, *v)?;
     }
     Ok(0)
+}
+
+/// `void CreateMeatList(word* out, byte nation, int max)` (0x57bff5): per path area the last
+/// living non-allied unit whose body becomes meat, 0xFFFF where there are none or more than
+/// `max`.
+fn create_meat_list(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let (out, nat, max) = (c.u32(0)?, c.u8(1)?, c.i32(2)?);
+    let n = api.st.topo.as_ref().map_or(0, |t| t.areas.len());
+    let (mut list, mut count) = (vec![0xFFFFu16; n], vec![0i32; n]);
+    let mask = api.world.nation_mask[usize::from(nat) & 7];
+    for u in &api.world.units {
+        if u.nmask & mask == 0
+            && u.living()
+            && api.world.catalog.get(u.kind).economy.meat.is_some()
+            && let Some(a) = unit_area(api, u)
+        {
+            count[a] += 1;
+            list[a] = u.id.0 as u16;
+        }
+    }
+    for (i, v) in list.iter().enumerate() {
+        c.write_u16(out + 2 * i as u32, if count[i] > max { 0xFFFF } else { *v })?;
+    }
+    Ok(0)
+}
+
+/// `int GetExtraction(byte res)` (0x5699eb), AI only: the city's food or wood gathering
+/// speed, or the peasants in its stone, iron, coal or gold mines.
+fn get_extraction(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let Caller::Ai(n) = api.caller else { return Ok(0) };
+    Ok(acr_sim::economy::extraction(api.world, n, usize::from(c.u8(0)?)) as u32)
 }
 
 /// Resource id -> economy index (`INVECO`, 0x67169c).

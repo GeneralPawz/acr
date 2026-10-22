@@ -120,6 +120,18 @@ pub enum Order {
     /// pixels), each leg a priority-0 move put in front, so enemies on the way are fought.
     /// `back` is the leg to walk next.
     Patrol { a: (i32, i32), b: (i32, i32), back: bool },
+    /// `WaterNewMonsterSendToLink` (order type 12, link 0x54ac93): a transport sails to the
+    /// docking box `cell`, then (`turning`) turns its land side and docks.
+    WaterSendTo { cell: (i32, i32), prio: u8, turning: bool },
+    /// `GoToTransport` (order type 243, link 0x54dbb0): board a transport through its landing
+    /// point `land` (world pixels).
+    GoToTransport { transport: EntityId, land: (i32, i32), prio: u8 },
+    /// `LeaveTransport` (link 0x54e188), on the transport: let one passenger of `kind` off
+    /// after `delay` ticks.
+    LeaveTransport { kind: TypeId, delay: u8 },
+    /// `FishingLink` (order type 221, link 0x54eb16): a fishing boat fishes around and brings
+    /// its catch to the nearest own port.
+    Fishing,
     /// `ClearOrderedUnlimitedMotion` (0x527fed): ends the walk through locks out of a
     /// building; the unit takes its cell.
     ClearUnlimited,
@@ -245,6 +257,18 @@ pub struct Unit {
     /// Fire: hits of slow-burning weapons so far (+0x3f) and burning (+0x26 bit1).
     pub fire: i32,
     pub burning: bool,
+    /// Ports: the water point where ships appear (OB+0x69/+0x6b, lock cells).
+    pub port_point: Option<(i32, i32)>,
+    /// Ships: speed (OB+0xe4, 1/16 px per tick).
+    pub speed: i32,
+    /// Transports: the docking point (`DstX/DstY`).
+    pub dock: crate::ship::Dock,
+    /// Transports: the target cell of the last move checked for docking.
+    pub park_checked: Option<(i32, i32)>,
+    /// Fishing boats: the catch (OB+0x6f), its fraction (OB+0x6d, 1/128) and the spot.
+    pub catch: (i32, i32, Option<(i32, i32)>),
+    /// Shots left in the current volley (`ZALP`, OB+0x3d).
+    pub volley: i32,
     /// Courage (i8, OB+0x53): kills nearby raise it for enemies of the victim and lower it
     /// for the victim's nation; it drifts back to 0 every 256 ticks.
     pub courage: i8,
@@ -355,6 +379,12 @@ pub struct Player {
     /// (City+0xeb1a), 0 = never: both raise the panic chance for a while.
     pub hungry_time: u32,
     pub cc_lost_time: u32,
+    /// Gathering statistics of the city (City+0xeb2c..): wood, stone and food delivered
+    /// since `gather_since` (`GlobalTime`, 2 per tick), and the speeds computed from them
+    /// (`amount·25/dt` once `dt > 1000`), read by `GetExtraction`.
+    pub gathered: [i32; 3],
+    pub gather_since: u32,
+    pub gather_speed: [i32; 3],
 }
 
 impl Player {
@@ -686,6 +716,12 @@ impl World {
             melee_only: false,
             guard: false,
             in_patrol: false,
+            port_point: if t.port { crate::ship::port_point(&self.map.water, pos) } else { None },
+            speed: 0,
+            dock: crate::ship::Dock::Unset,
+            park_checked: None,
+            volley: 0,
+            catch: (0, 0, None),
             fire: 0,
             burning: false,
             courage: 0,
@@ -771,6 +807,7 @@ impl World {
         for c in commands {
             self.apply(c);
         }
+        crate::economy::city_tick(self);
         if let Some(def) = &self.catalog.market {
             self.market.process(def);
         }
@@ -779,6 +816,7 @@ impl World {
         crate::economy::census(self, (self.tick.0 & 7) as u8);
         crate::economy::upkeep(self);
         crate::combat::search_victims(self);
+        crate::ship::process_fishing(self);
         if self.tick.0 & 255 == 0 {
             crate::economy::bind_mines(self);
         }
@@ -978,6 +1016,19 @@ impl World {
                     if self.catalog.get(self.units[i].kind).ground_attack {
                         crate::artillery::attack_point(self, i, *x, *y, 0x90, crate::combat::Placement::Replace, 0);
                     }
+                }
+            }
+            Command::Board { player, units, transport } => {
+                let t = transport.0 as usize;
+                if self.units.get(t).is_some_and(|u| u.owner == *player) {
+                    for i in self.owned(*player, units) {
+                        crate::ship::go_to_transport(self, i, t, 0x90);
+                    }
+                }
+            }
+            Command::Unload { player, transport } => {
+                if let Some(&t) = self.owned(*player, &[*transport]).first() {
+                    crate::ship::leave_all(self, t);
                 }
             }
             Command::Patrol { player, units, x, y } => {
