@@ -29,7 +29,11 @@ WITHERS = 1.5  # metres, ground to the top of the withers in the idle pose
 TRIS = 16000
 SRC_FPS = 30
 # Leg bones whose fallen pose is relaxed (bent a little) instead of the standing pose's.
-RELAX = ("upperarm", "lowerarm", "hand", "thigh", "calf", "foot", "humerus", "radius", "femur", "tibia")
+# Fallen legs (#287): (bone, degrees, towards): each joint bends its bone towards the tail
+# ("back") or the head ("front"), the way a dead horse's legs fold: knees and fetlocks
+# back, hocks forward, the upper legs a little.
+RELAX = [("upperarm_{s}", 12, "front"), ("hand_{s}", 45, "back"), ("fingers_01_{s}", 30, "back"),
+         ("upperleg_{s}", 15, "front"), ("foot_{s}", 35, "front"), ("toes_01_{s}", 30, "back")]
 
 
 class Horse:
@@ -111,12 +115,25 @@ def load(name, parent, clips, withers=WITHERS, tris=TRIS):
     stats["size_m"] = [round(hi[i] - lo[i], 2) for i in range(3)]
     stats["withers_m"] = round(_withers_height(arm, meshes), 2)
 
+    # Ground covered by one source cycle of each gait (metres, its root motion), against
+    # which the game's speed is matched (`cavalry.CYCLES`).
+    stats["stride_m"] = {}
+    for src in sorted({c[0] for c in clips.values() if c[1] == "loop"}):
+        act = bpy.data.actions[src]
+        ends = []
+        for t in act.frame_range:
+            an._show(arm, act, t)
+            ends.append(arm.matrix_world @ arm.pose.bones["pelvis"].head)
+        stats["stride_m"][src] = [round((ends[1] - ends[0]).length, 2), round((act.frame_range[1] - act.frame_range[0]) / SRC_FPS, 2)]
     baked = {}
     for key, clip in clips.items():
         src, mode, n = clip[0], clip[1], clip[2]
         a = clip[3] if len(clip) > 3 else (None if mode == "pose" else 0.0)
         b = clip[4] if len(clip) > 4 else 1.0
-        baked[key] = an._bake(arm, key, bpy.data.actions[src], mode, n, a, b, SRC_FPS, meshes)
+        if mode == "cycles":
+            baked[key] = _cycles(arm, bpy.data.actions[src], n, a, b)
+        else:
+            baked[key] = an._bake(arm, key, bpy.data.actions[src], mode, n, a, b, SRC_FPS, meshes)
         if mode == "fall":
             _relax(arm, baked[key])
     arm.animation_data.action = None
@@ -125,7 +142,9 @@ def load(name, parent, clips, withers=WITHERS, tris=TRIS):
         worlds[key] = []
         for smp in samples:
             an._set(arm, smp)
-            worlds[key].append({pb.name: an._unscaled(arm.matrix_world @ pb.matrix) for pb in arm.pose.bones})
+            # Without the armature's own scale (it goes into the rest pose), with the bones'.
+            unscale = Matrix.Scale(1.0 / arm.matrix_world.to_scale()[0], 4)
+            worlds[key].append({pb.name: arm.matrix_world @ pb.matrix @ unscale for pb in arm.pose.bones})
     for pb in arm.pose.bones:
         pb.location, pb.rotation_quaternion, pb.scale = Vector(), (1, 0, 0, 0), Vector((1, 1, 1))
     an._flatten(arm, meshes, parent)
@@ -234,21 +253,47 @@ def _withers_height(arm, meshes):
     return top - lo
 
 
+def _cycles(arm, action, n, p0, p1):
+    """Mode `cycles`: the gait from phase `p0` to `p1` (in cycles of the source, may be
+    more than one) over `n` frames, wrapped, its root motion removed; so a sprite cycle can
+    hold several strides (the stride matched to the game's speed)."""
+    s, e = action.frame_range
+    start = an._sample(arm, action, s)
+    end = an._sample(arm, action, e)
+    top = [pb.name for pb in arm.pose.bones if pb.parent is None or pb.parent.parent is None]
+    out = []
+    for i in range(n):
+        t = p0 + (p1 - p0) * i / n
+        frac = t - math.floor(t)
+        smp = an._sample(arm, action, s + (e - s) * frac)
+        for name in top:
+            d = end[name][0] - start[name][0]
+            loc, q, sc = smp[name]
+            smp[name] = (loc - d * frac, q, sc)
+        out.append(smp)
+    return out
+
+
 def _relax(arm, samples):
-    """Fallen legs bend a little at every joint over the fall (a dead horse's legs are not
-    the stiff standing pose); the last frames hold it."""
-    legs = [pb for pb in arm.pose.bones if any(t in pb.name.lower() for t in RELAX) and "corrective" not in pb.name.lower()
-            and "slider" not in pb.name.lower()]
+    """Bends the fallen horse's legs over the fall (`RELAX`); the last frames hold it."""
+    m3 = arm.matrix_world.to_3x3().inverted()
+    back = (m3 @ Vector((0.0, 1.0, 0.0))).normalized()
+    joints = [(j.format(s=sd), deg, back if to == "back" else -back) for j, deg, to in RELAX for sd in ("l", "r")]
+    joints = [j for j in joints if j[0] in arm.pose.bones]
     for i, smp in enumerate(samples):
         f = min(i / an.TICKS_PER_SECOND, 1.0)
         f = f * f * (3 - 2 * f)
         an._set(arm, smp)
-        for pb in legs:
-            # Bend about the bone's own X axis (the joint's hinge in this rig).
-            q = pb.rotation_quaternion.copy()
-            q.rotate(Matrix.Rotation(math.radians(14.0 * f), 3, "X"))
-            pb.rotation_quaternion = q
-        bpy.context.view_layer.update()
+        for name, deg, to in joints:
+            pb = arm.pose.bones[name]
+            d = (pb.tail - pb.head).normalized()
+            axis = d.cross(to)
+            if axis.length < 1e-4:
+                continue
+            h = pb.head.copy()
+            r = Matrix.Rotation(math.radians(deg * f), 4, axis.normalized())
+            pb.matrix = Matrix.Translation(h) @ r @ Matrix.Translation(-h) @ pb.matrix
+            bpy.context.view_layer.update()
         samples[i] = an._read(arm)
 
 
@@ -278,6 +323,25 @@ def join(rider_arm, horse, rider_root, socket="saddle"):
     bpy.context.view_layer.update()
 
 
+def drop_faces(horse, materials):
+    """Removes the faces of the pack's materials whose name contains one of `materials`
+    (`saddle1`: the western saddle; `saddle2`: girth, stirrups, bridle and reins)."""
+    import bmesh
+
+    for m in horse.meshes:
+        bad = {i for i, mat in enumerate(m.data.materials) if mat and any(k in mat.name.lower() for k in materials)}
+        if not bad:
+            continue
+        bm = bmesh.new()
+        bm.from_mesh(m.data)
+        bmesh.ops.delete(bm, geom=[f for f in bm.faces if f.material_index in bad], context="FACES")
+        loose = [v for v in bm.verts if not v.link_faces]
+        bmesh.ops.delete(bm, geom=loose, context="VERTS")
+        bm.to_mesh(m.data)
+        bm.free()
+        horse.stats["triangles"] = sum(sum(len(p.vertices) - 2 for p in o.data.polygons) for o in horse.meshes)
+
+
 def horse_bones(arm, prefix="rider."):
     return [pb for pb in arm.pose.bones if not pb.name.startswith(prefix)]
 
@@ -291,9 +355,9 @@ def set_horse(arm, mats, prefix="rider."):
         else:
             rest = b.parent.matrix_local.inverted() @ b.matrix_local
             local = rest.inverted() @ mats[b.parent.name].inverted() @ mats[pb.name]
-        loc, q, _sc = local.decompose()
+        loc, q, sc = local.decompose()
         pb.rotation_mode = "QUATERNION"
-        pb.location, pb.rotation_quaternion, pb.scale = loc, q, Vector((1.0, 1.0, 1.0))
+        pb.location, pb.rotation_quaternion, pb.scale = loc, q, sc
     bpy.context.view_layer.update()
 
 
@@ -315,6 +379,7 @@ def key_clip(arm, name, horse_frames, rider_keys, pose, prefix="rider."):
             for pb in hb:
                 pb.keyframe_insert("location", frame=f, group=pb.name)
                 pb.keyframe_insert("rotation_quaternion", frame=f, group=pb.name)
+                pb.keyframe_insert("scale", frame=f, group=pb.name)
         if f in rider_at:
             pose(arm, rider_at[f], f)
     from . import armature as am
