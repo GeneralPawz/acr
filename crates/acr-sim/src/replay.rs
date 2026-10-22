@@ -15,6 +15,7 @@
 
 use crate::catalog::TypeId;
 use crate::command::Command;
+use crate::tech::UpgradeId;
 use crate::world::EntityId;
 
 const MAGIC: &[u8; 4] = b"ACRR";
@@ -227,6 +228,15 @@ impl Writer {
                 self.i(*x);
                 self.i(*y);
             }
+            Command::Upgrade { player, buildings, upgrade } => {
+                self.0.extend_from_slice(&[14, *player]);
+                self.ids(buildings);
+                self.u(u64::from(upgrade.0));
+            }
+            Command::CancelUpgrade { player, building } => {
+                self.0.extend_from_slice(&[15, *player]);
+                self.u(u64::from(building.0));
+            }
         }
     }
 }
@@ -307,6 +317,12 @@ impl<'a> Reader<'a> {
             11 => Command::Build { player, units: self.ids()?, kind: self.kind()?, x: self.i()?, y: self.i()? },
             12 => Command::Repair { player, units: self.ids()?, building: self.id()? },
             13 => Command::Gather { player, units: self.ids()?, x: self.i()?, y: self.i()? },
+            14 => Command::Upgrade {
+                player,
+                buildings: self.ids()?,
+                upgrade: u16::try_from(self.u()?).map(UpgradeId).map_err(|_| ReplayError("upgrade id"))?,
+            },
+            15 => Command::CancelUpgrade { player, building: self.id()? },
             _ => return Err(ReplayError("unknown command")),
         })
     }
@@ -337,6 +353,8 @@ mod tests {
                 Command::Build { player: 1, units: vec![EntityId(5)], kind: TypeId(7), x: 100, y: 200 },
                 Command::Repair { player: 1, units: vec![], building: EntityId(4) },
                 Command::Gather { player: 1, units: vec![EntityId(5)], x: 1, y: 2 },
+                Command::Upgrade { player: 1, buildings: vec![EntityId(4), EntityId(6)], upgrade: UpgradeId(1900) },
+                Command::CancelUpgrade { player: 1, building: EntityId(4) },
             ],
         );
         r.checkpoints.push((100, 0xdead_beef_0123_4567));
@@ -344,7 +362,7 @@ mod tests {
         let back = Replay::decode(&bytes).unwrap();
         assert_eq!(back, r);
         assert_eq!(back.entries.len(), 2, "empty ticks are not stored");
-        assert_eq!(back.commands_at(9).len(), 13);
+        assert_eq!(back.commands_at(9).len(), 15);
         assert!(back.commands_at(5).is_empty());
     }
 

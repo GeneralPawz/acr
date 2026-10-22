@@ -115,6 +115,12 @@ pub struct EconomyDef {
     /// `PEASANTABSORBER n` / `UNITABSORBER n`: capacity for peasants / other units inside.
     pub peasant_absorber: i32,
     pub unit_absorber: i32,
+    /// `MaxInside` (NM+0x175a): the capacity of the last of the two keywords.
+    pub max_inside: i32,
+    /// `FARM` or `MFARM` given: finished objects house units.
+    pub is_farm: bool,
+    /// `ADDSECTION s a life …`: building stages that exist, and the life each adds once done.
+    pub sections: Vec<(u8, i32)>,
     pub no_hungry: bool,
     pub peasant_convertor: bool,
     /// `NAEMNIK`: deserts when the player runs out of gold.
@@ -162,8 +168,14 @@ fn economy(def: &UnitDef) -> EconomyDef {
             "BORNPOINTS" => e.born_points = byte_points(c),
             "CONCENTRATOR" => e.concentrator = byte_points(c),
             "BUILDPOINTS" => e.build_points = byte_points(c),
-            "FARM" => e.farm = 15,
-            "MFARM" => e.farm = i32::from(c.int(0).unwrap_or(0) as u8),
+            "FARM" => (e.farm, e.is_farm) = (15, true),
+            "MFARM" => (e.farm, e.is_farm) = (i32::from(c.int(0).unwrap_or(0) as u8), true),
+            "ADDSECTION" => {
+                if let Some(s) = c.int(0).filter(|s| (0..5).contains(s)) {
+                    e.sections.retain(|x| x.0 != s as u8);
+                    e.sections.push((s as u8, c.int(2).unwrap_or(0)));
+                }
+            }
             "RESCONSUMER" => {
                 e.consumer = c.word(0).and_then(resource_index).map(|r| (r, i32::from(c.int(1).unwrap_or(0) as i16)))
             }
@@ -173,8 +185,14 @@ fn economy(def: &UnitDef) -> EconomyDef {
                 e.producer =
                     Some(Producer { mask, free: c.int(1 + n).unwrap_or(0), per_peasant: c.int(2 + n).unwrap_or(0) });
             }
-            "PEASANTABSORBER" => e.peasant_absorber = c.int(0).unwrap_or(0),
-            "UNITABSORBER" => e.unit_absorber = c.int(0).unwrap_or(0),
+            "PEASANTABSORBER" => {
+                e.peasant_absorber = c.int(0).unwrap_or(0);
+                e.max_inside = e.peasant_absorber;
+            }
+            "UNITABSORBER" => {
+                e.unit_absorber = c.int(0).unwrap_or(0);
+                e.max_inside = e.unit_absorber;
+            }
             "NO_HUNGRY" => e.no_hungry = true,
             "PEASANTCONVERTOR" => e.peasant_convertor = true,
             "NAEMNIK" => e.mercenary = true,
@@ -347,6 +365,32 @@ pub struct ObjectType {
     pub vision: u8,
     /// Prices, production, housing, mines.
     pub economy: EconomyDef,
+    /// The characteristics upgrades can change, as every player starts with them.
+    pub adv: std::sync::Arc<Adv>,
+}
+
+/// The per-player characteristics of a type that upgrades change (`AdvCharacter`, built
+/// from the `.MD` by `CreateAdvCharacter` 0x532b00). Combat, prices, production and
+/// construction read these through [`crate::World::adv`].
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct Adv {
+    /// Attack indices: `radius`, `detect`, `pause` and `damage` change (`AttR1/2`, `DetR1/2`,
+    /// `AttPause`, `MaxDamage`).
+    pub attacks: Vec<Attack>,
+    /// Armour per weapon kind (u8).
+    pub protection: Vec<(String, i32)>,
+    pub shield: i32,
+    /// `Life` (u16): the maximum life of new objects.
+    pub life: i32,
+    /// `MaxStage`: construction stages, and production time of units.
+    pub build_stages: i32,
+    /// `MaxInside`: capacity for units inside.
+    pub max_inside: i32,
+    /// `NeedRes`: the base price.
+    pub cost: [i32; 8],
+    pub razbros: i32,
+    /// Housing per finished object (ADC+0xed).
+    pub farm: i32,
 }
 
 impl ObjectType {
@@ -411,7 +455,26 @@ impl ObjectType {
             anims: anims(def),
             vision: int("VISION", 0).clamp(0, 255) as u8,
             economy: economy(def),
+            adv: Default::default(),
         }
+        .with_adv()
+    }
+
+    /// Fills [`ObjectType::adv`] from the other fields (`CreateAdvCharacter`).
+    fn with_adv(mut self) -> Self {
+        let e = &self.economy;
+        self.adv = std::sync::Arc::new(Adv {
+            attacks: self.attacks.clone(),
+            protection: self.protection.clone(),
+            shield: self.shield,
+            life: self.life,
+            build_stages: e.build_stages,
+            max_inside: e.max_inside,
+            cost: e.price,
+            razbros: self.razbros,
+            farm: e.farm,
+        });
+        self
     }
 
     /// Whether objects of this type ever move.

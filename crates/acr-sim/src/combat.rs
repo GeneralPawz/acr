@@ -10,7 +10,7 @@
 
 use acr_formats::defs::nres::weapon_flags::{FORMATION, GARRISON, HIGH, RANDOM_KILL};
 
-use crate::catalog::ObjectType;
+use crate::catalog::Adv;
 use crate::fixed::Pos;
 use crate::motion::{anim_frames, set_anim, try_to_stand};
 use crate::path::{Mover, create_path};
@@ -29,14 +29,14 @@ fn height(w: &World, p: Pos) -> i32 {
 }
 
 /// `ADC.MinR`: the smallest attack range of the indices that can attack (0x43b95a).
-fn min_range(t: &ObjectType) -> i32 {
+fn min_range(t: &Adv) -> i32 {
     let usable = t.attacks.iter().filter(|a| a.usable());
     let min = usable.clone().map(|a| a.radius.0).min().unwrap_or(0);
     let max = usable.map(|a| a.radius.1).max().unwrap_or(0);
     if max < min { 0 } else { min }
 }
 
-fn is_high(w: &World, t: &ObjectType, i: usize) -> bool {
+fn is_high(w: &World, t: &Adv, i: usize) -> bool {
     w.catalog.weapon_flags(&t.attacks[i].kind) & HIGH != 0
 }
 
@@ -46,7 +46,7 @@ pub fn attack_obj(w: &mut World, i: usize, j: usize, prio: u8) -> bool {
     if i == j || !u.active() || u.building || !e.active() || e.owner == u.owner {
         return false;
     }
-    let t = w.catalog.get(u.kind);
+    let t = w.adv(u.owner, u.kind);
     let materials = w.catalog.get(e.kind).materials;
     // CheckAttAbility: some index can attack this material.
     if !t.attacks.iter().any(|a| a.usable() && a.mask & materials != 0) {
@@ -61,7 +61,7 @@ pub fn attack_obj(w: &mut World, i: usize, j: usize, prio: u8) -> bool {
         let d1 = norma(e.pos.x - u.pos.x, e.pos.y - u.pos.y);
         let d2 = norma(cur.pos.x - u.pos.x, cur.pos.y - u.pos.y);
         // The engine compares the 1/16 px distance with MinR in pixels (quirk kept).
-        if d1 <= min_range(t) || d2 <= d1 {
+        if d1 <= min_range(&t) || d2 <= d1 {
             return false;
         }
     }
@@ -96,12 +96,13 @@ pub fn attack_link(w: &mut World, i: usize, target: EntityId, prio: u8) {
     }
     let (u, e) = (&w.units[i], &w.units[j]);
     let t = catalog.get(u.kind);
+    let ta = w.adv(u.owner, u.kind);
     let et = catalog.get(e.kind);
     let ns = usize::from(u.stance);
     let mut delayed = u.delay != 0;
     let mut can_set_delay = true;
     if delayed {
-        if ns > 0 && t.attacks[ns - 1].no_pause {
+        if ns > 0 && ta.attacks[ns - 1].no_pause {
             delayed = false;
         }
         can_set_delay = false;
@@ -113,7 +114,7 @@ pub fn attack_link(w: &mut World, i: usize, target: EntityId, prio: u8) {
     let en_z = height(w, e.pos) + et.zpoints.1;
     let en_dir = get_dir(dx, dy);
     let e_pos = e.pos;
-    let high_ns = ns > 0 && is_high(w, t, ns - 1);
+    let high_ns = ns > 0 && is_high(w, &ta, ns - 1);
     let (u_frame, u_frames, u_anim) = (u.frame, u.anim_frames, u.anim);
 
     // (A) The strike animation reached its active frame: hit or shoot.
@@ -125,7 +126,7 @@ pub fn attack_link(w: &mut World, i: usize, target: EntityId, prio: u8) {
                 af += 1;
             }
             if u_anim == kind && u_frame == af {
-                let a = &t.attacks[ns - 1];
+                let a = &ta.attacks[ns - 1];
                 let mut dst1 = dst - et.add_shot_radius;
                 if high_ns {
                     dst1 -= 2 * (my_z - en_z);
@@ -169,17 +170,17 @@ pub fn attack_link(w: &mut World, i: usize, target: EntityId, prio: u8) {
     let u = &w.units[i];
     let dstx = dst - 2 * (my_z - en_z);
     let fits = |k: usize| {
-        let a = &t.attacks[k];
-        let ok = if is_high(w, t, k) {
+        let a = &ta.attacks[k];
+        let ok = if is_high(w, &ta, k) {
             dst >= a.detect.0 && dstx <= a.detect.1
         } else {
             a.detect.0 <= dst && dst <= a.detect.1
         };
         ok && a.mask & et.materials != 0
     };
-    let mut chosen = (0..t.attacks.len()).rev().find(|&k| fits(k));
+    let mut chosen = (0..ta.attacks.len()).rev().find(|&k| fits(k));
     if u.delay != 0
-        && let Some(k) = (0..t.attacks.len()).rev().find(|&k| t.attacks[k].no_pause && fits(k))
+        && let Some(k) = (0..ta.attacks.len()).rev().find(|&k| ta.attacks[k].no_pause && fits(k))
     {
         chosen = Some(k);
     }
@@ -191,7 +192,7 @@ pub fn attack_link(w: &mut World, i: usize, target: EntityId, prio: u8) {
         crate::motion::smart_send_to(u, areas.as_ref(), ex, ey, 0, 0, prio);
         return;
     };
-    let high = is_high(w, t, k);
+    let high = is_high(w, &ta, k);
     let dst_c = if high { dstx } else { dst };
     if high && need_slow {
         // Musket reload while the order lasts: play #ATTACK3 cycles, each taking its frames
@@ -213,7 +214,7 @@ pub fn attack_link(w: &mut World, i: usize, target: EntityId, prio: u8) {
         u.delay = 0;
     }
     // (D) In range: face the enemy and strike; otherwise walk towards it.
-    let a = &t.attacks[k];
+    let a = &ta.attacks[k];
     let u = &mut w.units[i];
     if dst >= a.radius.0 && dst_c < a.radius.1 + et.add_shot_radius {
         let ddir = en_dir.wrapping_sub(u.dir) as i8;
@@ -222,7 +223,7 @@ pub fn attack_link(w: &mut World, i: usize, target: EntityId, prio: u8) {
         if i32::from(ddir).abs() < mrot1 {
             u.dir = en_dir;
             if usize::from(u.local_stance) == k + 1 {
-                if !delayed || t.attacks[k].no_pause {
+                if !delayed || ta.attacks[k].no_pause {
                     let kind = AnimKind::Attack(k as u8);
                     set_anim(u, t, kind);
                     u.frame = 0;
@@ -254,7 +255,8 @@ pub fn attack_link(w: &mut World, i: usize, target: EntityId, prio: u8) {
 fn shoot(w: &mut World, i: usize, j: usize, att: usize, my_z: i32, en_z: i32) {
     let catalog = w.catalog.clone();
     let (u, e) = (&w.units[i], &w.units[j]);
-    let t = catalog.get(u.kind);
+    let t = w.adv(u.owner, u.kind);
+    let avoid_friendly_fire = catalog.get(u.kind).avoid_friendly_fire;
     let (xs, ys) = u.pos.pixels();
     let (mut cx, mut cy) = e.pos.pixels();
     let owner = u.owner;
@@ -317,7 +319,7 @@ fn shoot(w: &mut World, i: usize, j: usize, att: usize, my_z: i32, en_z: i32) {
     let (bx, by) = w.units[b].pos.pixels();
     let a = &t.attacks[att];
     let damage = half_life(a.damage, norma(bx - xs, by - ys), a.damage_dec);
-    if t.avoid_friendly_fire && w.units[b].owner == owner {
+    if avoid_friendly_fire && w.units[b].owner == owner {
         return; // the friend absorbs the ball unharmed
     }
     make_damage(w, b, damage, Some(i), att as u8);
@@ -384,6 +386,7 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
     }
     let catalog = w.catalog.clone();
     let vt = catalog.get(w.units[victim].kind);
+    let va = w.adv(w.units[victim].owner, w.units[victim].kind);
     let mut dmg = dmg;
     if let Some(s) = sender {
         let st = catalog.get(w.units[s].kind);
@@ -395,10 +398,10 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
     if dmg <= 0 {
         return;
     }
-    dmg -= vt.shield;
+    dmg -= va.shield;
     if let Some(s) = sender {
-        let st = catalog.get(w.units[s].kind);
-        let kind = st.attacks.get(usize::from(att)).map_or("MECH", |a| a.kind.as_str());
+        let sa = w.adv(w.units[s].owner, w.units[s].kind);
+        let kind = sa.attacks.get(usize::from(att)).map_or("MECH", |a| a.kind.as_str());
         let wf = catalog.weapon_flags(kind);
         if wf & GARRISON != 0 && vt.building {
             return; // only a garrison would be hurt
@@ -408,7 +411,7 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
             w.units[s].kills = w.units[s].kills.saturating_add(1);
             return;
         }
-        dmg -= vt.protection.iter().find(|p| p.0 == kind).map_or(0, |p| p.1);
+        dmg -= va.protection.iter().find(|p| p.0 == kind).map_or(0, |p| p.1);
         if wf & FORMATION != 0 && w.units[s].attack_bonus != 0 {
             dmg += formation_scaled(w, s, victim, w.units[s].attack_bonus);
         }
@@ -470,8 +473,9 @@ pub fn search_victims(w: &mut World) {
         }
         let (sr, ss) = (t.search_radius, t.search_shift);
         let c = Pos::new(u.pos.x + ((cos(u.dir) * ss) >> 8), u.pos.y + ((sin(u.dir) * ss) >> 8));
-        let min_r = min_range(t) << 4;
-        let kill_mask = t.attacks.iter().filter(|a| a.usable()).fold(0, |m, a| m | a.mask);
+        let ta = w.adv(u.owner, u.kind);
+        let min_r = min_range(&ta) << 4;
+        let kill_mask = ta.attacks.iter().filter(|a| a.usable()).fold(0, |m, a| m | a.mask);
         let rx = (sr >> 11) + 1;
         let (ccx, ccy) = (c.x >> 11, c.y >> 11);
         let mut best = (i32::MAX, None);

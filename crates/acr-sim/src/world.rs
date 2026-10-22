@@ -120,6 +120,9 @@ pub struct Unit {
     /// [`Unit::living`] for units that can act.
     pub alive: bool,
     pub life: i32,
+    /// `MaxLife`: the type's life when created; `LIFE`/`MORELIFE`/`PERSONALLIFE` upgrades and
+    /// building stages raise it.
+    pub max_life: i32,
     /// `Sdoxlo`: 0 while living, then counts up while dying and lying dead.
     pub death: u16,
     /// `RealX/RealY` (1/16 px).
@@ -176,6 +179,15 @@ pub struct Unit {
     /// Buildings: five 3-bit stage states (OB+0xaa), raised by `UPSTAGEn` upgrades; state
     /// 2 means stage `n` is done. `[STAGEDEPENDENT]` objects need their stages done.
     pub stages: u16,
+    /// Buildings: the upgrade being researched (an order in front of the queue).
+    pub research: Option<crate::upgrade::Research>,
+    /// Buildings: upgrades researched here (`SingleUpgLevel`, OB+0xe9); `[PRIVATE]`
+    /// upgrades need it to equal their `#LEVEL`.
+    pub upgrade_level: u8,
+    /// Buildings: extra capacity from `SINGLE_INSIDE` (`AddInside`, OB+0xa5).
+    pub add_inside: i32,
+    /// Buildings: extra housing from `MOREFARMS_SINGLE` (u8, OB+0xf3).
+    pub farm_extra: i32,
     /// The building this unit is inside (hidden, but counted and fed).
     pub inside_of: Option<EntityId>,
     /// Walks through locks and other units (leaving a building).
@@ -252,6 +264,16 @@ pub struct Player {
     pub cond_enabled: Vec<bool>,
     /// Upgrade states, by [`crate::tech::UpgradeId`].
     pub upgrades: Vec<crate::tech::UpgradeState>,
+    /// Characteristics changed by upgrades (`AdvCharacter`); types without an entry use
+    /// [`crate::catalog::ObjectType::adv`].
+    pub adv: std::collections::BTreeMap<TypeId, Arc<crate::catalog::Adv>>,
+    /// Delivery factors (Nation+0x1a72a..): `WoodEff`, `StoneEff` 100; `FoodEff` 1010, whose
+    /// hundreds are the field work multiplier and last two digits the food factor in tenths.
+    pub food_eff: i32,
+    pub wood_eff: i32,
+    pub stone_eff: i32,
+    /// `GEOLOGY` researched (deposits shown on the minimap).
+    pub geology: bool,
 }
 
 impl Player {
@@ -266,6 +288,9 @@ impl Player {
             enabled: (0..n).map(start).collect(),
             cond_enabled: (0..n).map(start).collect(),
             upgrades: tech.upgrades.iter().map(crate::tech::UpgradeState::new).collect(),
+            food_eff: 1010,
+            wood_eff: 100,
+            stone_eff: 100,
             ..Self::default()
         }
     }
@@ -426,6 +451,7 @@ impl World {
 
     /// Places a new unit or (finished) building.
     pub fn spawn(&mut self, kind: TypeId, owner: PlayerId, pos: Pos, dir: u8) -> EntityId {
+        let adv = self.adv(owner, kind);
         let t = self.catalog.get(kind);
         let id = EntityId(u32::try_from(self.units.len()).expect("too many units"));
         let lx = match t.medium {
@@ -441,7 +467,8 @@ impl World {
             owner,
             building: t.building,
             alive: true,
-            life: t.life,
+            life: adv.life,
+            max_life: adv.life,
             pos,
             dir,
             lx,
@@ -466,12 +493,16 @@ impl World {
             kills: 0,
             attack_bonus: 0,
             defence_bonus: 0,
-            stage: t.economy.build_stages,
+            stage: adv.build_stages,
             queue: Vec::new(),
             inside: Vec::new(),
             mine: None,
             rally: None,
             stages: 0,
+            research: None,
+            upgrade_level: 0,
+            add_inside: 0,
+            farm_extra: 0,
             inside_of: None,
             unlimited: false,
             turned_off: false,
@@ -483,6 +514,23 @@ impl World {
         }
         self.units.push(unit);
         id
+    }
+
+    /// The characteristics of `kind` for `player`, upgrades included.
+    pub fn adv(&self, player: PlayerId, kind: TypeId) -> Arc<crate::catalog::Adv> {
+        match self.players[usize::from(player) & 7].adv.get(&kind) {
+            Some(a) => a.clone(),
+            None => self.catalog.get(kind).adv.clone(),
+        }
+    }
+
+    /// Construction stages of a unit's type for its owner: a building is finished at this
+    /// stage.
+    pub fn max_stage(&self, u: &Unit) -> i32 {
+        match self.players[usize::from(u.owner) & 7].adv.get(&u.kind) {
+            Some(a) => a.build_stages,
+            None => self.catalog.get(u.kind).economy.build_stages,
+        }
     }
 
     /// A unit that exists (living or dead), by id.
@@ -654,6 +702,16 @@ impl World {
                     for i in self.owned(*player, units) {
                         crate::construction::build_obj(self, i, b, crate::motion::PLAYER_PRIO);
                     }
+                }
+            }
+            Command::Upgrade { player, buildings, upgrade } => {
+                for b in self.owned(*player, buildings) {
+                    crate::upgrade::start(self, b, *upgrade);
+                }
+            }
+            Command::CancelUpgrade { player, building } => {
+                if let Some(&b) = self.owned(*player, &[*building]).first() {
+                    crate::upgrade::cancel(self, b);
                 }
             }
             Command::Gather { player, units, x, y } => {

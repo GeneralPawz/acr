@@ -5,6 +5,7 @@
 //! world, so recording the command stream per tick is a complete replay.
 
 use crate::catalog::TypeId;
+use crate::tech::UpgradeId;
 use crate::world::EntityId;
 
 /// Player slot 0..=7 (the map's nation byte).
@@ -41,6 +42,16 @@ pub enum Command {
     Repair { player: PlayerId, units: Vec<EntityId>, building: EntityId },
     /// Send peasants to gather the source nearest to world pixel `(x, y)` (within 64 px).
     Gather { player: PlayerId, units: Vec<EntityId>, x: i32, y: i32 },
+    /// Research an upgrade (`PerformUpgrade` 0x54f25b through the command 0x4dc386): every
+    /// listed building that offers it, is finished and idle, and whose owner can pay tries in
+    /// turn; a nation-wide upgrade starts in the first one only (it is no longer offered
+    /// meanwhile), a `[PRIVATE]` one in each. The price is paid at the start; the building
+    /// stops producing (and mining) until it is done. `upgrade::available` lists what a
+    /// building offers.
+    Upgrade { player: PlayerId, buildings: Vec<EntityId>, upgrade: UpgradeId },
+    /// Cancel the research in a building (`StopUpgrade` 0x4e19ad): full refund, the upgrade
+    /// is offered again.
+    CancelUpgrade { player: PlayerId, building: EntityId },
 }
 
 impl Command {
@@ -59,7 +70,9 @@ impl Command {
             | Command::Rally { player, .. }
             | Command::Build { player, .. }
             | Command::Repair { player, .. }
-            | Command::Gather { player, .. } => *player,
+            | Command::Gather { player, .. }
+            | Command::Upgrade { player, .. }
+            | Command::CancelUpgrade { player, .. } => *player,
         }
     }
 }

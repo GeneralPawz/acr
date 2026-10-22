@@ -32,6 +32,7 @@ pub mod replay;
 pub mod rng;
 pub mod tech;
 pub mod trig;
+pub mod upgrade;
 pub mod world;
 
 pub use catalog::{Catalog, ObjectType, TypeId};

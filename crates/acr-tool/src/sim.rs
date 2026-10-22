@@ -126,17 +126,20 @@ pub fn sim_check(dir: &Path, map: &str, rest: &[&str]) -> Result<()> {
     // Economy: every finished building that can produce something queues its first item
     // with a rally point 200 px south.
     let tech = &catalog.tech;
-    let mut produced = 0;
+    let (mut produced, mut researched) = (0, 0);
     for (b, u) in base.units.iter().enumerate().filter(|(_, u)| u.living() && u.building) {
         if let Some(&kind) = acr_sim::economy::producible(&base, b).first() {
             let (x, y) = u.pos.pixels();
             cmds.push(Command::Rally { player: u.owner, building: u.id, x, y: y + 200 });
             cmds.push(Command::Produce { player: u.owner, building: u.id, kind });
             produced += 1;
+        } else if let Some(&upgrade) = acr_sim::upgrade::available(&base, b).first() {
+            cmds.push(Command::Upgrade { player: u.owner, buildings: vec![u.id], upgrade });
+            researched += 1;
         }
     }
     println!(
-        "  tech: {} upgrades, {} access rules; {produced} buildings queue a unit",
+        "  tech: {} upgrades, {} access rules; {produced} buildings queue a unit, {researched} research",
         tech.upgrades.len(),
         tech.access.len()
     );
@@ -203,7 +206,8 @@ pub fn sim_check(dir: &Path, map: &str, rest: &[&str]) -> Result<()> {
         100.0 * f64::from(arrived) / f64::from(total.max(1)),
         n - cells.len()
     );
-    println!("  economy: {} objects created", a.units.len() - base.units.len());
+    let done = a.players.iter().map(|p| p.upgrades.iter().filter(|u| u.done).count()).sum::<usize>();
+    println!("  economy: {} objects created, {done} upgrades done", a.units.len() - base.units.len());
     let dead = a.units.iter().filter(|u| u.death != 0 || !u.alive).count();
     let corpses = a.units.iter().filter(|u| u.alive && u.death != 0).count();
     println!("  combat: {dead} units died ({corpses} corpses still lying)");

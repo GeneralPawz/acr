@@ -503,6 +503,49 @@ Implemented in `economy.rs`. The sources are `City::Census` (0x42e658), the upke
     raised by `UPSTAGEn` upgrades).
   - A queued type that gets disabled is dropped when its turn comes, without refund
     (0x49eeb7).
+- **Upgrades** (`upgrade.rs`; parser 0x52f798, `PerformUpgrade` 0x54f25b,
+  `PerformUpgradeLink` 0x54f6bb, `StopUpgrade` 0x4e19ad, `PerformNewUpgrade` 0x532281).
+  - **Definition.** `ID ICON #POSITION x y #LEVEL n MESSAGE #COST n (RES v)*n #TIME t`, then
+    the effect: a category, its attack indices (`WEAPONKIND k`, `ATTINDEX i`, `ALL`) or
+    protection kinds, the types (`GRP n ID*n` or one id) and a value (`n`, `+n`, `-n`, `n%`,
+    `+n%`, `-n%`; applied by `UseValue` 0x530fe7 with truncating division). Costs and `#TIME`
+    are u16.
+  - **Starting** needs a finished building that is not researching, the upgrade in its
+    `[UPGRADEPLACE]` list and enabled for the player, the building's stages for the
+    upgrade's `[STAGEDEPENDENT]` mask, and the price. A `[PRIVATE]` upgrade also needs the
+    building's upgrade count (`SingleUpgLevel`, OB+0xe9) to equal its `#LEVEL`; a stage
+    upgrade (`[UPGRADESTAGE]`) needs its stage not done yet. The price is paid at once. A
+    nation-wide upgrade is then no longer offered (`Enabled`, `PermanentEnabled` off,
+    `IsDoing` on). The player command (0x4dc386) tries every selected building.
+  - **Research** is an order in front of the building's queue: production and mining wait.
+    Progress starts at 1 and gains 2 per tick, so it takes `ceil((#TIME − 1) / 2)` ticks
+    (`#TIME 750`: 375). A stage upgrade marks its stage "in progress" (1) meanwhile.
+    Cancelling refunds everything and offers the upgrade again.
+  - **Completion.** A nation-wide upgrade is `Done`. The effect is applied with the building
+    as its maker, then the `[UPGRADELINKS]` are enabled (`Enabled`, `PermanentEnabled`,
+    `Done` cleared) and the `[AUTOUPGRADE]`s performed. The building's upgrade count rises
+    by one for every upgrade.
+  - **Effects** change the player's copy of a type's characteristics (`AdvCharacter`,
+    `World::adv`), which combat, prices, production and construction read:
+    - `DAMAGE` (`MaxDamage`, i16, indices without damage unchanged), `ATTPAUSE` (u16),
+      `PROTECTION` (u8 per kind), `SHIELD` (u16), `RAZBROS`, `INSIDE` (`MaxInside`),
+      `COST` (one value per resource), `MOREFARMS` (housing);
+    - `ATTRANGE`: maximum attack and detection range of the index; the next index's minimum
+      range becomes the scaled minimum detection range (the engine's bug: it overwrites the
+      scaled `AttR1` with the scaled `DetR1`);
+    - `BUILD` (`MaxStage`, u16): unfinished buildings of the type step back one stage
+      (or to the new maximum − 1) and redo it, finished ones take the new maximum; running
+      productions rescale their progress;
+    - `LIFE` sets life and maximum of all objects of the type (capped at 65535),
+      `MORELIFE` only the maximum, `HEALING` adds a tenth of the maximum;
+    - `ENABLE UNITS` enables types (`Enabled`, `CondEnabled`) and reruns every census;
+    - `EFFECT_FOOD`/`EFFECT_WOOD`/`EFFECT_STONE` change the player's delivery factors (u16,
+      no caps unlike Cossacks); `GEOLOGY` sets a flag;
+    - on the researching building: `SINGLE_INSIDE` (`AddInside`, OB+0xa5),
+      `MOREFARMS_SINGLE` (OB+0xf3 = the type's housing changed by the value, added to the
+      housing), `PERSONALLIFE` (life and maximum), `UPSTAGEn` (0x53268e: if the type has
+      that `ADDSECTION`, the stage becomes done; life and maximum become the type's life
+      plus the third `ADDSECTION` number of every done stage).
 - **Mines.**
   - A `PRODUCER` building binds to a deposit within 128 px: an `[INTERNAL_SOURCE]` sprite of
     a resource it can mine. Binding happens when it is placed and every 256 ticks.
@@ -607,9 +650,12 @@ sum of its four neighbours (centre excluded). This spreads the stamps and decays
   - Unit types: `Catalog::find("EngMus(EN)")`.
   - Economy: `World::players[p]` (`resources`, `population`, `housing`), each building's
     `queue` / `inside` / `mine` / `stage`, `economy::unit_cost`, and `Unit::carried`. The
-    commands are `Produce`, `Unproduce`, `Enter`, `Leave`, `Rally`, `Build`, `Repair` and
-    `Gather`. `economy::producible(w, building)` lists what a building can produce now;
-    `Player::enabled` and `tech::Tech` hold the tech tree.
+    commands are `Produce`, `Unproduce`, `Enter`, `Leave`, `Rally`, `Build`, `Repair`,
+    `Gather`, `Upgrade` and `CancelUpgrade`. `economy::producible(w, building)` lists what a
+    building can produce now, `upgrade::available(w, building)` what it can research;
+    `Unit::research` is the running research; `Player::enabled`, `Player::upgrades` and
+    `tech::Tech` hold the tech tree; `World::adv(player, kind)` the upgraded
+    characteristics.
 
   These calls change the state directly. Call them between ticks, in the same order on
   every machine.
@@ -655,9 +701,12 @@ sum of its four neighbours (centre excluded). This spreads the stamps and decays
     (an idle one first, else the shortest queue).
   - Synthetic catalogs without nation files have no tech tree: everything is enabled and
     buildings produce anything.
-  - Not reproduced yet: upgrades, the market, `RESSUBST` type changes, ports and ships;
-    building stage requirements; the AI difficulty factor on production time; the 10× cannon
-    price lobby option.
+  - Not reproduced yet: the market, `RESSUBST` type changes, ports and ships; the AI
+    difficulty factor on production time; the 10× cannon price lobby option.
+  - Upgrades without effect here: `SPEED` (`Rate`, which no motion code reads), `WEAPON`,
+    `PRECISE`, `GETRES`, `SINGLE_ATTPAUSE`, `FISHING`, `SHAR`, `FEAR`, `UNCONSTRUCT`. `ENABLE
+    UPGRADES` does nothing (the engine indexes the type table with upgrade ids). The
+    `STAGELOCKPOINTS` of building stages are not set.
   - Rally point on a building: the original hit-tests the building's picture in rings 0..3
     of 128 px cells (0x49ed8e); here a building with a lock cell under the point counts.
     The random search for a source spot is capped at 4096 tries (the engine would retry
@@ -672,7 +721,7 @@ sum of its four neighbours (centre excluded). This spreads the stamps and decays
     position (0x559a40, 0x51e359); buildings, terrain and 3D bars blocking shots
     (`PredictShot`); `BackSteps` when an enemy is too close.
   - Also missing: formation melee (`Bitva` 0x41ee89), morale and fear (0x601960,
-    `MORALE.DAT`); garrisons, towers, artillery, ships; fire damage; healers; upgrades and
+    `MORALE.DAT`); garrisons, towers, artillery, ships; fire damage; healers; `SINGLE_ATTPAUSE` and
     `PersonalDelay`.
   - Shot damage falloff uses an integer `2^(−d/dec)` (16-step table, linear interpolation)
     instead of the x87 `exp`, so values can differ by 1.
@@ -703,6 +752,10 @@ sum of its four neighbours (centre excluded). This spreads the stamps and decays
   - a musketeer fires its first shot 38–45 ticks after the order, reloads 550 frames and
     kills at 300 px;
   - a 20-unit battle gives identical hashes in two runs.
+- **Upgrade tests** (`tests/upgrade.rs`): research is paid at the start, blocks the
+  building and ends on the 10th tick for `#TIME 21`; damage and protection change for the
+  researching player only; links enable the next level; cancelling refunds; `BUILD`,
+  `LIFE`, `[PRIVATE]` levels and `UPSTAGE0` with a `[STAGEDEPENDENT]` unit.
 - **Economy tests** (`tests/economy.rs`):
   - 10 peasants eat 62 food in 1000 ticks;
   - famine kills peasants but not `NO_HUNGRY` units;
@@ -713,7 +766,11 @@ sum of its four neighbours (centre excluded). This spreads the stamps and decays
   - 5 peasants in a gold mine earn 400 gold in 1000 ticks and can leave again;
   - two peasants build a storehouse: paid at placement, life follows the stages, the locks
     switch on completion, and it then houses 25;
-  - a peasant chops 25 cycles and delivers 100 wood.
+  - a peasant chops 25 cycles and delivers 100 wood;
+  - a centre produces only its list and only enabled types, pikemen once barracks are
+    finished (`[ACCESSCONTROL]`), and barracks take no rally point;
+  - a produced unit ends at its rally point; one with the rally point on trees gets a
+    gathering order.
 - **Fog test** (`tests/fog.rs`): a VISION 3 unit lights its cell and 200 px around but not
   1000 px away, and the light fades once the unit is gone.
 - **Replay tests:** every command round-trips through the binary format; damaged data is
