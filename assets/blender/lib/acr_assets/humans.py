@@ -149,7 +149,7 @@ class Character:
 
     def limb_levels(self, layers):
         """Writes `_limb` (float: limb level 0..1, trunk -1; `acr_assets.limb`) on every mesh
-        and sets `self.limb_radius` = {limb: [limb.SAMPLES outer radii]}. Skin, bones and
+        and sets `self.limb_radius` = {limb: [limb.SAMPLES outer radii of skin and clothes]}. Skin, bones and
         stump caps project their rest positions onto the limb chain of their part; clothes
         and strapped gear take the level of the nearest skin vertex of the same limb; held
         gear and the horse are -1."""
@@ -197,7 +197,10 @@ class Character:
                 _co, i, _d = trees[name].find(v.co)
                 lv = skin[name][i][1]
                 vals.append(lv)
-                radius[name].append((lv, dist))
+                # The outer radius is skin plus clothes: rigid strapped gear (cartridge box,
+                # knapsack, scabbard) would inflate it where it hangs off the limb.
+                if o in layers["clothes"]:
+                    radius[name].append((lv, dist))
             write(o, vals)
         for o in layers.get("held", []):
             write(o, [limb.TRUNK] * len(o.data.vertices))

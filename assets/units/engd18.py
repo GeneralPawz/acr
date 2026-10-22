@@ -16,6 +16,7 @@ import math
 
 from mathutils import Matrix, Vector
 
+from acr_assets import crawl
 from acr_assets import armature as am
 from acr_assets import body as bd
 from acr_assets import decay, gear, horse, rig
@@ -156,6 +157,20 @@ def add_clips(arm):
                 horse_keys.append((f, h))
                 rider_keys.append((f, r))
         am.add_clip(arm, name, None, prefix_keys={"": horse_keys, "rider.": rider_keys})
+    # Crawl clips (#262): the dismounted rider crawls where DEATHLIE1 throws him, beside
+    # the fallen horse; his root is placed in armature space ("world"/"world_loc"), since
+    # in the combined rig it hangs from the saddle.
+    lie_loc = rig_lie()["world_loc"]["root"]
+    for name, ks in crawl.clips().items():
+        rider_keys = []
+        for f, spec in ks:
+            spec = dict(spec)
+            loc = spec.pop("root_loc")
+            spec["world"] = {"root": spec.pop("root")}
+            spec["world_loc"] = {"root": (lie_loc[0] + loc[0], lie_loc[1] + loc[1] - crawl.PRONE_LOC[1], loc[2])}
+            rider_keys.append((f, spec))
+        horse_keys = [(f, horse.fallen()) for f, _s in ks]
+        am.add_clip(arm, name, None, prefix_keys={"": horse_keys, "rider.": rider_keys})
 
 
 # ----------------------------------------------------------------------------- model
@@ -244,6 +259,6 @@ def build(ctx):
     ch.arm.animation_data.action = None
     pose_for(ch, "STAND")
     tris = ch.triangles()
-    prepare_export(ch.all_meshes(), ctx.root, acr_triangles=sum(tris.values()), acr_clips=list(MD), acr_limb_radius=ch.limb_radius,
+    prepare_export(ch.all_meshes(), ctx.root, acr_triangles=sum(tris.values()), acr_clips=list(MD) + list(crawl.CLIPS), acr_limb_radius=ch.limb_radius,
                    acr_layers=list(ch.layers), acr_extra_clips=["WALK"])
     ctx.stats = {"triangles": tris, "colours": colours}
