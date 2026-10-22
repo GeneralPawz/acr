@@ -52,6 +52,11 @@ pub enum Command {
     /// Cancel the research in a building (`StopUpgrade` 0x4e19ad): full refund, the upgrade
     /// is offered again.
     CancelUpgrade { player: PlayerId, building: EntityId },
+    /// Sell `amount` of resource `sell` (at most the stock) for resource `buy` at the market
+    /// (`PerformOperation` 0x4a9d80). Resources are indices (`economy::WOOD` …). The
+    /// player gets `trunc(amount · sell rate / buy rate)`; `market::Market::quote` tells how
+    /// much in advance. The rates are shared by all players and move with every trade.
+    Trade { player: PlayerId, sell: u8, buy: u8, amount: i32 },
 }
 
 impl Command {
@@ -72,7 +77,8 @@ impl Command {
             | Command::Repair { player, .. }
             | Command::Gather { player, .. }
             | Command::Upgrade { player, .. }
-            | Command::CancelUpgrade { player, .. } => *player,
+            | Command::CancelUpgrade { player, .. }
+            | Command::Trade { player, .. } => *player,
         }
     }
 }

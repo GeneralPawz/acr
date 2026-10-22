@@ -237,6 +237,10 @@ impl Writer {
                 self.0.extend_from_slice(&[15, *player]);
                 self.u(u64::from(building.0));
             }
+            Command::Trade { player, sell, buy, amount } => {
+                self.0.extend_from_slice(&[16, *player, *sell, *buy]);
+                self.i(*amount);
+            }
         }
     }
 }
@@ -323,6 +327,7 @@ impl<'a> Reader<'a> {
                 upgrade: u16::try_from(self.u()?).map(UpgradeId).map_err(|_| ReplayError("upgrade id"))?,
             },
             15 => Command::CancelUpgrade { player, building: self.id()? },
+            16 => Command::Trade { player, sell: self.byte()?, buy: self.byte()?, amount: self.i()? },
             _ => return Err(ReplayError("unknown command")),
         })
     }
@@ -355,6 +360,7 @@ mod tests {
                 Command::Gather { player: 1, units: vec![EntityId(5)], x: 1, y: 2 },
                 Command::Upgrade { player: 1, buildings: vec![EntityId(4), EntityId(6)], upgrade: UpgradeId(1900) },
                 Command::CancelUpgrade { player: 1, building: EntityId(4) },
+                Command::Trade { player: 1, sell: 0, buy: 1, amount: 1000 },
             ],
         );
         r.checkpoints.push((100, 0xdead_beef_0123_4567));
@@ -362,7 +368,7 @@ mod tests {
         let back = Replay::decode(&bytes).unwrap();
         assert_eq!(back, r);
         assert_eq!(back.entries.len(), 2, "empty ticks are not stored");
-        assert_eq!(back.commands_at(9).len(), 15);
+        assert_eq!(back.commands_at(9).len(), 16);
         assert!(back.commands_at(5).is_empty());
     }
 

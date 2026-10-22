@@ -20,6 +20,7 @@ const NAME_LIST: &str = "NMLIST.TXT";
 const ORDERS: &str = "ORDERS.LST";
 const ORDER_GROUPS: &str = "ORD_GROUPS.LST";
 const NRES: &str = "NRES.DAT";
+const ECONOMY: &str = "ECONOMY.TXT";
 /// Sprite lists whose blocking polygons go into the lock map.
 const SHAPE_LISTS: [(SpriteGroup, &str); 5] = [
     (SpriteGroup::Trees, "TREELIST"),
@@ -58,7 +59,8 @@ impl SimAssets {
             .collect();
         nations.sort();
         self.nations = nations.clone();
-        let mut first: Vec<String> = [NAME_LIST, ORDERS, ORDER_GROUPS, NRES].iter().map(|p| (*p).to_owned()).collect();
+        let mut first: Vec<String> =
+            [NAME_LIST, ORDERS, ORDER_GROUPS, NRES, ECONOMY].iter().map(|p| (*p).to_owned()).collect();
         for (_, name) in SHAPE_LISTS {
             first.push(format!("{name}.LST"));
             first.push(format!("{name}.RSR"));
@@ -129,6 +131,7 @@ impl SimAssets {
             tech.add_nation(&catalog, nation);
         }
         catalog.tech = tech;
+        catalog.market = self.files.get(ECONOMY).and_then(|b| crate::market::MarketDef::parse(b));
         if let Some(nres) = self.files.get(NRES) {
             catalog.set_weapon_kinds(&acr_formats::defs::nres::weapon_kinds(nres));
         }

@@ -286,3 +286,45 @@ fn a_rally_point_on_trees_sends_peasants_to_chop() {
     let p = w.units.iter().find(|u| u.kind == kri).expect("produced");
     assert!(matches!(p.orders.first(), Some(Order::Gather { kind: 0, .. })), "{:?}", p.orders);
 }
+
+#[test]
+fn trading_moves_the_shared_rates() {
+    use acr_sim::market::MarketDef;
+    let mut text = String::from("a b c d e f g h i j k\r\n");
+    for (r, b, s) in [
+        ("FOOD", "20 25 40", "5 15 20"),
+        ("IRON", "140 190 240", "80 110 140"),
+        ("WOOD", "40 50 60", "20 30 40"),
+        ("COAL", "140 190 240", "80 110 140"),
+        ("STONE", "75 90 105", "30 45 60"),
+        ("GOLD", "270 300 330", "180 210 240"),
+    ] {
+        text += &format!(
+            "{r}\r\nBUY {b} CHANGE 100 1.0 TIMERETURN 0.0001\r\nSELL {s} CHANGE 100 1.0 TIMERETURN 0.0001\r\n"
+        );
+    }
+    let mut c = Catalog::new();
+    c.market = MarketDef::parse(text.as_bytes());
+    let mut w = World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(Formations::default()));
+    let (wood, gold) = (w.players[0].resources[WOOD], w.players[0].resources[GOLD]);
+    // 1000 wood at 30 buy gold at 300: 100.
+    w.step(&[Command::Trade { player: 0, sell: WOOD as u8, buy: GOLD as u8, amount: 1000 }]);
+    assert_eq!(w.players[0].resources[WOOD], wood - 1000);
+    assert_eq!(w.players[0].resources[GOLD], gold + 100);
+    let def = w.catalog.market.clone().unwrap();
+    let (sw, sg) = (def.slot(WOOD).unwrap(), def.slot(GOLD).unwrap());
+    // V = 100 · 1e-4 for gold: buy (300 + 330 V) / (1 + V); wood sells at (30 + 20 V') / (1 + V')
+    // with V' = 0.1, then one tick of drift.
+    let v = 100.0 * 1e-4;
+    let gold_buy = (v * 330.0 + 300.0) / (1.0 + v) - def.time_buy[sg];
+    assert_eq!(w.market.buy[sg], gold_buy);
+    let wood_sell = (0.1 * 20.0 + 30.0) / 1.1 + def.time_sell[sw];
+    assert_eq!(w.market.sell[sw], wood_sell);
+    // Another player now gets less gold for the same wood.
+    w.step(&[Command::Trade { player: 1, sell: WOOD as u8, buy: GOLD as u8, amount: 1000 }]);
+    assert!(w.players[1].resources[GOLD] - gold < 100);
+    // The rates drift back by TIMERETURN per tick.
+    let before = w.market.buy[sg];
+    run(&mut w, 100);
+    assert!(w.market.buy[sg] < before);
+}
