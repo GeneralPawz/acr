@@ -485,6 +485,88 @@ Deviations: hint timers count simulation ticks; the end waits 7 s of game time; 
 custom texts of `SetVictoryText`/`SetLoosText` are not supported (no mission uses them);
 after a campaign victory the next missions are not opened (no campaign progress yet).
 
+### Diplomacy panel
+
+`diplomacy/` (panel, CML pages) and `ingame/dip.rs` (hooks); DipServer's side is in
+`acr_mission::diplomacy`. The tribe dialogs are CML pages: DipServer fills the masks
+`Dip\*.cml` (`ALL.GSC`), writes the result to `Dip\tmp.cml` and calls
+`ActivateDipDialog("LW_new&|LW_file&Dip/tmp.cml")`. The original shows them with
+`intExplorer.dll`, a small browser that builds its widgets with the `DialogsSystem` API, in
+the side panel of the game screen. The game goes on while it is open.
+
+- When it opens:
+  - DipServer opens a page itself when units of the player enter a neutral tribe's zone
+    (`$FIRSTMEET`: "Möchten Sie mit uns handeln?", with a camera jump).
+  - Every press of the left button on the map (0x4c446c) calls
+    `CheckDipBuilding(MyNation, object under the cursor)`. DipServer answers only for a
+    building of a tribe the player has allied, with that tribe's offers.
+  - F8 (`LastKey` 0x77 → 0x5c3a60) toggles the panel.
+- Panel (0x4ce310 with `0x1100a74` = 1, `0x1100b54` = 4; layout of 0x5aa5ac at
+  `RealLy` ≥ 768):
+  - box 0x4803fb from (`RealLx` − 259, 48) to (`RealLx` − 16, 469): `Border` paper 28..30
+    with corner table 0x668660 (TL 17, TR 87 with the close cross, left 12, right 36,
+    top 23) down to y = 441, then a strip with table 0x6686c0 (3, 86, 6, 8, 12, 14, 10, 11);
+  - a press strictly inside (`RealLx` − 42..`RealLx` − 16, 43..69) closes it;
+  - `DIP_HDR` in `YellowFont` at (`RealLx` − 250, 50) (0x5c3770);
+  - browser window `RunExplorer(1, page, 762, 77, 1016, 470)` at 1024 × 768.
+- intExplorer draws no frame of its own. Each `#ebox`/`#sbox` is its own `DialogsSystem`,
+  drawn in creation order without clipping to the window.
+- Page parser (0x1000a9c0): it scans for `#` anywhere, so tags may follow each other on one
+  line. DipServer's masks end without a newline, so the first offer shares the line of the
+  last `#font`. `//` starts a comment.
+- Rectangles (0x1000a170):
+  - keys `x`, `x1`, `xc`, `w`, `y`, `y1`, `yc`, `h`, seeded with the parent's inner
+    rectangle (top-level boxes: the window, inclusive x1/y1);
+  - in an expression the first term is `lo + n`, later terms add ±n; `N%` is
+    N · (hi − lo) / 100; `L`/`R`/`U`/`D`/`C` are the edges and the middle; `w`/`h` use
+    lo = 0, hi = width/height;
+  - `%NAME` (y only) is the bottom y1 of an element of the same box;
+  - only complete pairs change the rectangle: (x, w) → x1 = x + w, (x, x1), (xc, w),
+    (x, xc), (x1, xc).
+- Tags (handlers in intExplorer):
+
+  | Tag | What it does |
+  |---|---|
+  | `#font(a,b,c)` (0x1000d663) | a for plain text, metrics and line height; b for links; c for hovered links. Names: `YF` `YellowFont`, `WF` `WhiteFont`, `RF`, `BF`, `S?F` small, `B?F` and `SP?F` big, `XX?F` special, `F8`/`F10`; unknown names are `YellowFont` (0x1000a610) |
+  | `#nfont(N, gp, colour, shadow, dx, dy)` (0x1001b510) | a new `RLCFont`. ACR uses the global font built the same way: `Fn16` = `fon16y1`, `Fn16y` = `fon16y3` |
+  | `#txt`, `#ctxt`, `#rtxt` (0x100136e0) | text as word-wrapped rows of `TextButton`s, left, centred or right aligned per line. Line height `GetRLCHeight(a, 'y') + 1`; widths in font a. The k-th `{` of the text starts a link with the k-th `{cmd}` of the tag. Plain runs use (a, a, a) and links (c, b, a). The element's bottom is y + lines · line height |
+  | `#pix`, `#cpix` (0x10019390) | `addGP_Button(x, y, gp, f3, f1)`; `#cpix` is centred by the width of f3. The bottom is y + height of f3. `.gp` is appended if missing |
+  | `#sbox` / `#def_sbox` / `#def_scroll` | the content is clipped to the inner rectangle. The border frames are −1 in all pages, so no border is drawn. Scroll bar `VScroll2` at (inner x1 − 25, inner y), shown while the content reaches below the box (range = overflow + 10, 8 px per arrow step) |
+  | `#pan(rect, 1)` | draws only a style defined with `#def_panel`, which no page has |
+  | `#time(ms, "com:DS\|cmd")` | one-shot timer that sends the request; the page re-arms it whenever it is reloaded |
+
+- Links and requests:
+  - a click on a link (click sound `STANDART`) sends `DS|cmd&args`;
+  - intExplorer adds the window name and the access key as two more arguments. It
+    serialises the commands (u16 count; u8 name length, name, u16 argument count; u32
+    length and bytes per argument) for `DS_SendRequest`, then polls
+    `DS_Process`/`DS_GetRequestResult` until 0x80 and executes the answer;
+  - DipServer answers `LW_file&Dip/tmp.cml`. A file that starts with a marker
+    (`<FRM1>`) replaces only that section of the current page: the 4-second refresh of the
+    allied-tribe list (`cnlist1`).
+- DipServer requests:
+
+  | Request | Effect |
+  |---|---|
+  | `cnlist` / `cnlist1` | list of allied tribes |
+  | `showtribe&i` | the tribe's page, camera to it |
+  | `dipyes&tribe&nation&price` | accept the alliance (`SendDipCommand` 1) |
+  | `dipresell` | `SendDipCommand` 2 |
+  | `perform&tribe&offer&nation` | buy an offer of `Dip\SBLD-*.DAT`: scouts, saboteurs, peasant killers, mercenaries, resources, guerrillas |
+
+  `SendDipCommand` data reaches `PerformDipCommand` before the next `ProcessDipRelations`,
+  which pays and hands over the units through the game API.
+
+Deviations:
+- ACR keeps no page history (`LW_new`, back).
+- F8 without a page asks for the list of allied tribes. The original shows its start page
+  `LF|LW_new|open&req1.txt` of `LF_Server.dll`.
+- An unknown `%NAME` would be y = 0 (an absolute screen y) in the original. ACR continues
+  below the box's last element.
+- The scroll bar's `shrink` (arrows 5 px shorter) is not applied; there is no mouse wheel,
+  as in the original.
+- `ACR_DIP_PAGE=<file.cml>` (native) shows a page file at the start, for layout checks.
+
 ### Open questions
 
 - Which command icons the original shows for a selection without an officer (attack
@@ -494,7 +576,8 @@ after a campaign victory the next missions are not opened (no campaign progress 
   `PAUSETEXT` in `YellowFont`.
 - Selection with Ctrl and the double click (`DBLCLICK`) are not traced.
 - The right-drag facing arrow (0x4c5407) and fog of war on the minimap are not built.
-- The side panels (keys U and I, 0x4ce310) are not built.
+- The side panels of keys U and I (modes 1..3 of 0x4ce310) are not built; mode 4 is the
+  diplomacy panel.
 - Production: the unit limit (`+0x173a`), the `MUSTREPAIR` hint and the `+0x1729`
   special items (0x4d7682) are not built. The market has no interface yet (the simulation
   has `Trade`).

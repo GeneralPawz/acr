@@ -13,7 +13,7 @@ use crate::{Command, Result};
 pub const COMMANDS: &[Command] = &[
     Command {
         name: "mission-run",
-        usage: "<game-dir> <mission-id|map.m3d|script.dll> [--ticks N] [--trace] [--ai] [--dip] [--units]   \
+        usage: "<game-dir> <mission-id|map.m3d|script.dll> [--ticks N] [--trace] [--ai] [--dip] [--dip-click TICK] [--units]   \
                 (run a mission with its script headless, print the event log)",
         run: |a| match a {
             [dir, mission, rest @ ..] => mission_run(Path::new(dir), mission, rest),
@@ -70,6 +70,7 @@ fn mission_run(dir: &Path, what: &str, rest: &[&str]) -> Result<()> {
     let mut ai = false;
     let mut units = false;
     let mut dip = false;
+    let mut dip_click: Option<u64> = None;
     let mut it = rest.iter();
     while let Some(a) = it.next() {
         match *a {
@@ -78,6 +79,10 @@ fn mission_run(dir: &Path, what: &str, rest: &[&str]) -> Result<()> {
             "--ai" => ai = true,
             "--units" => units = true,
             "--dip" => dip = true,
+            "--dip-click" => {
+                dip = true;
+                dip_click = Some(it.next().ok_or("--dip-click needs a tick")?.parse()?);
+            }
             _ => return Err(crate::WRONG_ARGS.into()),
         }
     }
@@ -161,9 +166,27 @@ fn mission_run(dir: &Path, what: &str, rest: &[&str]) -> Result<()> {
         }
         world.step(&commands);
         let tick = world.tick.0;
-        for e in print_events(tick, &mut scripts) {
+        let events = print_events(tick, &mut scripts);
+        if dip_click.is_some() && events.iter().any(|e| matches!(e, MissionEvent::Diplomacy { .. })) {
+            dip_follow(&mut scripts, &mut world);
+        }
+        for e in events {
             if matches!(e, MissionEvent::Victory | MissionEvent::Defeat) {
                 ended = true;
+            }
+        }
+        if dip_click == Some(tick) {
+            dip_approach(&mut scripts, &mut world);
+        }
+        if dip_click.is_some_and(|t| tick == t + 300 || tick == t + 600) {
+            println!("P0 resources {:?}", world.players[0].resources);
+            let buildings: Vec<u16> =
+                world.units.iter().filter(|u| u.living() && u.building).map(|u| u.id.0 as u16).collect();
+            for b in buildings {
+                scripts.dip_check_building(&mut world, 0, b);
+            }
+            if print_events(tick, &mut scripts).iter().any(|e| matches!(e, MissionEvent::Diplomacy { .. })) {
+                dip_follow(&mut scripts, &mut world);
             }
         }
         if tick % 1000 == 0 {
@@ -200,6 +223,61 @@ fn mission_run(dir: &Path, what: &str, rest: &[&str]) -> Result<()> {
         println!("script error: {e}");
     }
     Ok(())
+}
+
+/// `--dip-click TICK`: at TICK player 0 clicks every building of nation 7 and ten of its units
+/// are put next to the first one (DipServer offers the tribe's alliance when they enter its
+/// zone); 300 and 600 ticks later it clicks every building again. Each page DipServer opens is
+/// printed and its links followed.
+fn dip_approach(scripts: &mut Scripts, world: &mut World) {
+    let buildings: Vec<(u16, i32, i32)> = world
+        .units
+        .iter()
+        .filter(|u| u.living() && u.owner == 7 && u.building)
+        .map(|u| (u.id.0 as u16, u.pos.x >> 4, u.pos.y >> 4))
+        .collect();
+    println!("dip-click: {} buildings of nation 7", buildings.len());
+    for &(b, ..) in &buildings {
+        scripts.dip_check_building(world, 0, b);
+    }
+    let Some(&(_, x, y)) = buildings.first() else { return };
+    // Headless shortcut instead of a long walk.
+    let ids: Vec<usize> = world
+        .units
+        .iter()
+        .filter(|u| u.living() && u.owner == 0 && !u.building)
+        .map(|u| u.id.0 as usize)
+        .take(10)
+        .collect();
+    for (k, i) in ids.into_iter().enumerate() {
+        world.units[i].pos.x = (x - 300 + 20 * k as i32) << 4;
+        world.units[i].pos.y = (y + 300) << 4;
+    }
+}
+
+/// Prints the page DipServer opened and follows its links (the first one that is not the
+/// contact list each time).
+fn dip_follow(scripts: &mut Scripts, world: &mut World) {
+    let page = |scripts: &Scripts| {
+        String::from_utf8_lossy(scripts.script_file("Dip/tmp.cml").unwrap_or_default()).into_owned()
+    };
+    let mut text = page(scripts);
+    println!("{text}");
+    for _ in 0..3 {
+        let links: Vec<String> =
+            text.split("{DS|").skip(1).filter_map(|r| r.split('}').next()).map(str::to_owned).collect();
+        let Some(link) = links.iter().find(|l| !l.starts_with("cnlist")).or(links.first()).cloned() else {
+            break;
+        };
+        let answer = scripts.dip_request(world, link.as_bytes());
+        let names: Vec<String> = answer.iter().map(|c| String::from_utf8_lossy(&c.name).into_owned()).collect();
+        println!("  request {link} -> {names:?}");
+        for e in scripts.take_events() {
+            println!("  {}", acr_mission::describe(&e));
+        }
+        text = page(scripts);
+        println!("{text}");
+    }
 }
 
 /// The interface texts (`GetTextByID`) in the original's file order.

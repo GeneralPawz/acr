@@ -4,6 +4,7 @@
 //! letterboxing, so menus look like the original at any resolution.
 
 mod canvas;
+mod diplomacy;
 mod hud;
 mod ingame;
 mod intro;

@@ -864,6 +864,7 @@ impl InGame {
         let view = self.build_view(ctx, window);
         let mut hud_draws = Vec::new();
         self.interface.hud.draw(ctx, &view, &mut hud_draws);
+        self.dip_draw(ctx, &mut hud_draws);
         if self.interface.paused {
             let text = ctx.texts.get("PAUSETEXT");
             let w = ctx.fonts.width(ctx.lib, hud::font::YELLOW, text);
@@ -892,7 +893,8 @@ impl InGame {
 
     /// Whether a window point is over the interface.
     fn over_hud(&self, ctx: &Ctx, at: [f32; 2]) -> bool {
-        self.interface.hud.covers(ctx, &self.interface.view, self.canvas_point(at))
+        let p = self.canvas_point(at);
+        self.interface.hud.covers(ctx, &self.interface.view, p) || self.diplomacy.covers(p)
     }
 
     /// Window = (world screen position − camera) · scale.
@@ -1030,6 +1032,9 @@ impl InGame {
     pub fn left_button(&mut self, ctx: &Ctx, pressed: bool) -> GameMouse {
         let Some(at) = self.cursor else { return GameMouse::None };
         let p = self.canvas_point(at);
+        if pressed && self.drag_from.is_none() && self.dip_press(ctx, p) {
+            return GameMouse::None;
+        }
         if pressed && self.drag_from.is_none() {
             let view = std::mem::take(&mut self.interface.view);
             let event = self.interface.hud.press(ctx, &view, p);
@@ -1053,7 +1058,11 @@ impl InGame {
         if pressed && self.drag_from.is_none() && self.map_click(at) {
             return GameMouse::None;
         }
+        if pressed {
+            self.dip_check_building(at);
+        }
         if !pressed && self.drag_from.is_none() {
+            self.dip_release();
             self.interface.hud.release();
             return GameMouse::None;
         }
@@ -1134,6 +1143,7 @@ impl InGame {
     pub fn mouse_moved(&mut self, at: [f32; 2]) {
         self.cursor = Some(at);
         let p = self.canvas_point(at);
+        self.diplomacy.mouse_moved(p);
         if self.drag_from.is_none() {
             let view = std::mem::take(&mut self.interface.view);
             let event = self.interface.hud.drag(&view, p);
@@ -1196,6 +1206,7 @@ impl InGame {
             // Escape first leaves a command mode (0x4a31a3).
             Key::Named(NamedKey::Escape) if self.cancel_mode() => {}
             Key::Named(NamedKey::F12 | NamedKey::Escape) => return GameKey::Menu,
+            Key::Named(NamedKey::F8) => self.dip_toggle(),
             Key::Named(NamedKey::Pause) => self.interface.paused = !self.interface.paused,
             Key::Named(NamedKey::Tab) => self.interface.hud.life_bars = !self.interface.hud.life_bars,
             Key::Named(NamedKey::Space) => self.centre_next(),

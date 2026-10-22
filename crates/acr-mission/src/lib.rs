@@ -30,6 +30,7 @@
 
 pub mod aicity;
 pub mod api;
+pub mod diplomacy;
 pub mod events;
 pub mod guest;
 pub mod state;
@@ -533,6 +534,7 @@ pub fn describe(e: &MissionEvent) -> String {
         MissionEvent::Defeat => "DEFEAT".into(),
         MissionEvent::Briefing => "objectives changed".into(),
         MissionEvent::Camera { x, y } => format!("camera to ({x}, {y})"),
+        MissionEvent::Diplomacy { command } => format!("diplomacy: {}", texts::cp1252(command)),
         MissionEvent::Error { title, text } => format!("error: {title}: {text}"),
     }
 }
