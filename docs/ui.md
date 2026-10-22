@@ -283,18 +283,19 @@ the defaults apply: `Zone1X/Y` = 6/6, `PropertyX/Y` = 182/6, `IconLx/Ly` = 40/40
 
 ### Production and building icons (0x609230)
 
-`hud/produce.rs` reads the nation files, `ingame/interface.rs` builds the icons.
+`hud/produce.rs` reads the slots and keys of the nation files, `ingame/interface.rs`
+builds the icons.
 
 - They are built only while one type is selected. The list is the type's
   `[FIXED_PRODUCE]` entry (`ID x y [KEY]`). Each item goes to slot `x + 12·y`. When several
   items share a slot, the later one wins, because `AddIcon` 0x495758 reuses the slot (the
   four mines at `5 0`).
-- An item is listed only if it is enabled (`[ENABLED]`, bit 2 of the object flags) and
-  accessible (bit 1). An object named in `[ACCESSCONTROL]` is accessible while one of its
-  entries is met, that is, while every object listed in the entry exists (0x42ffed). ACR
-  counts finished objects of the player. Items that are not available are left out, not
-  greyed. So a random map start offers only the fort (`EngKre`), and the fort unlocks houses
-  and the mill.
+- An item is listed only if it is enabled (bit 2 of the object flags) and accessible
+  (bit 1), and its `[STAGEDEPENDENT]` stages are done (`+0xad`). ACR takes this from the
+  simulation's tech tree (`economy::producible`), which also applies `[ACCESSCONTROL]`
+  (0x42ffed), `[UNITLOCK]` and `ENABLE` upgrades. Items that are not available are left
+  out, not greyed. So a random map start offers only the fort (`EngKre`), and the fort
+  unlocks houses and the mill.
 - Icon:
   - the picture is the object's `ICON`, with an outline in the player colour;
   - the hint is built by 0x606180: `Name - Holz: 500 Stein: 100`. The name is the text
@@ -315,7 +316,13 @@ the defaults apply: `Zone1X/Y` = 6/6, `PropertyX/Y` = 182/6, `IconLx/Ly` = 40/40
   with the building's `PAGEn` icon and `PAGEnHINT`. They appear for the pages that have icons
   outside column 0 (flags 0x28cff78..7a). The current page is stored per building type
   (`+0x183c`, 0x608c60) and is highlighted.
-- Rally point: `NRES.DAT [CONST] SET_DEST 11 2 Rally_Point` for buildings that make units.
+- Upgrades (entries of kind 1): those the building offers now (`upgrade::available`) at
+  their `#POSITION`, with the `ICON` of `[UPGRADE]`. The hint is the message and, on a
+  second line (0x49483d), the price as `Holz:250 Gold:25` (0x6062a0). A click sends
+  `Upgrade` for the selected buildings. A running research shows its progress as the life
+  bar; a right click sends `CancelUpgrade`. The original's click and cancel handlers
+  (0x608b00) are not traced.
+- Rally point: `NRES.DAT [CONST] SET_DEST 11 2 Rally_Point` for `[CANSETDEST]` buildings.
   The next click on the map sets it. A right click on the map with only buildings selected
   sets it too.
 - Leave: units inside a selected building show as one icon of their type with the count, at
@@ -488,10 +495,9 @@ after a campaign victory the next missions are not opened (no campaign progress 
 - Selection with Ctrl and the double click (`DBLCLICK`) are not traced.
 - The right-drag facing arrow (0x4c5407) and fog of war on the minimap are not built.
 - The side panels (keys U and I, 0x4ce310) are not built.
-- Production: the stage check of the items (`+0xad` against the building's stage bits,
-  `[STAGEDEPENDENT]`), the unit limit (`+0x173a`), the `MUSTREPAIR` hint, the
-  `+0x1729` special items (0x4d7682) and upgrade icons are not built. Upgrades and the
-  market wait for the simulation.
+- Production: the unit limit (`+0x173a`), the `MUSTREPAIR` hint and the `+0x1729`
+  special items (0x4d7682) are not built. The market has no interface yet (the simulation
+  has `Trade`).
 - Whether the original hides a selected type's icon when production icons take its slot.
 - The original builds on the button press; ACR too, but the order in which it checks the
   site and the price on the click (0x4c20ac) is not traced.

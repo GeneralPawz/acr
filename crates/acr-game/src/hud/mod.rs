@@ -135,6 +135,10 @@ pub enum HudCommand {
     Page(u8),
     /// Let the units out of the selected building.
     Leave,
+    /// Research an upgrade in the selected buildings (`PerformUpgrade`).
+    Upgrade(u16),
+    /// Stop a running research (right click, `StopUpgrade`).
+    CancelUpgrade(u16),
     /// Pick the rally point of the selected building on the map (`SET_DEST`).
     Rally,
     /// Commands the simulation does not run yet: shown, but they do nothing.

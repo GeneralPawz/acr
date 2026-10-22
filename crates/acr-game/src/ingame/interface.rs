@@ -2,7 +2,7 @@
 //! keyboard input of the game screen, scrolling, and the overlays drawn over the map
 //! (selection brackets, life bars, the move marker, the selection rectangle).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use acr_formats::raster::Image;
@@ -462,31 +462,34 @@ impl InGame {
         let catalog = &world.catalog;
         let t = catalog.get(kind);
         let objects = self.objects.objects();
-        let finished = |u: &Unit| !u.building || u.stage >= catalog.get(u.kind).economy.build_stages;
+        let finished = |u: &Unit| !u.building || u.stage >= world.max_stage(u);
         let working: Vec<&Unit> =
             self.selected_units().filter(|u| u.kind == kind && u.owner == player && finished(u)).collect();
         if working.is_empty() {
             return;
         }
-        let have: HashSet<String> = world
-            .units_of(player)
-            .filter(|u| u.living() && finished(u))
-            .map(|u| catalog.get(u.kind).id.to_ascii_uppercase())
-            .collect();
+        // What the selected objects can make now (enabled, accessible, their stages done):
+        // the simulation's tech tree; slots and keys come from `[FIXED_PRODUCE]`.
+        let mut makeable: Vec<TypeId> = Vec::new();
+        for u in &working {
+            for k in acr_sim::economy::producible(world, u.id.0 as usize) {
+                if !makeable.contains(&k) {
+                    makeable.push(k);
+                }
+            }
+        }
         let stock = &world.players[usize::from(player)].resources;
         let page = self.interface.pages.get(&kind).copied().unwrap_or(0);
         let mut pages_used = [false; 3];
-        let mut makes_units = false;
         for item in nations.items(&t.id) {
             let p = item.slot / 36;
-            if p >= 3 || !nations.available(&item.id, |id| have.contains(id)) {
+            let Some(k) = catalog.find(&item.id).filter(|k| makeable.contains(k)) else { continue };
+            if p >= 3 {
                 continue;
             }
-            let Some(k) = catalog.find(&item.id) else { continue };
             // Page flags 0x28cff78..7a: set by icons outside column 0.
-            pages_used[p] |= item.slot % 12 != 0;
+            pages_used[p] |= !item.slot.is_multiple_of(12);
             let it = catalog.get(k);
-            makes_units |= !it.building;
             if p != usize::from(page) {
                 continue;
             }
@@ -498,7 +501,7 @@ impl InGame {
                 outline: Some(outline),
                 gray: stock.iter().zip(&cost).any(|(s, c)| s < c),
                 key: item.key,
-                hint: cost_hint(ctx, &it.md_name, &it.economy.price, &cost),
+                hint: cost_hint(unit_name(ctx, &it.md_name), &it.economy.price, &cost, ctx),
                 ..Icon::default()
             };
             if it.building && !t.building {
@@ -511,6 +514,53 @@ impl InGame {
                     .find_map(|b| b.queue.first().filter(|q| q.kind == k).map(|q| (q.progress, q.stages.max(1))));
                 icon.action = Some(HudCommand::Produce(usize::from(k.0)));
                 icon.right = Some(HudCommand::Unproduce(usize::from(k.0)));
+            }
+            icons.retain(|i| i.slot != icon.slot);
+            icons.push(icon);
+        }
+        // Upgrades (entries of kind 1 in 0x609230): those the buildings offer now, and the
+        // research running in them, at their `#POSITION`.
+        let tech = &catalog.tech;
+        let mut upgrades: Vec<(acr_sim::tech::UpgradeId, Option<(i32, i32)>)> = Vec::new();
+        for u in &working {
+            if let Some(r) = &u.research {
+                upgrades.retain(|e| e.0 != r.upgrade);
+                upgrades.push((r.upgrade, Some((r.stage, r.stages.max(1)))));
+            }
+            for up in acr_sim::upgrade::available(world, u.id.0 as usize) {
+                if !upgrades.iter().any(|e| e.0 == up) {
+                    upgrades.push((up, None));
+                }
+            }
+        }
+        for (up, progress) in upgrades {
+            let def = tech.upgrade(up);
+            let (x, y) = def.position;
+            if x < 0 || y < 0 {
+                continue;
+            }
+            let slot = (x + 12 * y) as usize;
+            let p = slot / 36;
+            if p >= 3 {
+                continue;
+            }
+            pages_used[p] |= !slot.is_multiple_of(12);
+            if p != usize::from(page) {
+                continue;
+            }
+            let mut icon = Icon {
+                frame: data.icon(&def.icon).unwrap_or(0),
+                slot: slot % 36,
+                outline: Some(outline),
+                gray: progress.is_none() && stock.iter().zip(&def.cost).any(|(s, c)| s < c),
+                hint: upgrade_hint(ctx, &def.message, &def.cost),
+                life: progress,
+                ..Icon::default()
+            };
+            if progress.is_some() {
+                icon.right = Some(HudCommand::CancelUpgrade(up.0));
+            } else {
+                icon.action = Some(HudCommand::Upgrade(up.0));
             }
             icons.retain(|i| i.slot != icon.slot);
             icons.push(icon);
@@ -536,7 +586,9 @@ impl InGame {
                 });
             }
         }
-        if makes_units && let Some(rally) = data.consts.get("SET_DEST") {
+        // `[CANSETDEST]` buildings have a rally point.
+        let can_rally = !tech.loaded || tech.of(kind).is_some_and(|t| t.can_set_dest);
+        if can_rally && let Some(rally) = data.consts.get("SET_DEST") {
             icons.push(Icon {
                 frame: rally.frame,
                 slot: rally.slot,
@@ -626,10 +678,12 @@ impl InGame {
         if units.is_empty() {
             return None;
         }
-        // Buildings only: the rally point.
+        // Buildings only: the rally point of those that have one (`[CANSETDEST]`).
         if units.iter().all(|u| u.building) {
+            let tech = &world.catalog.tech;
+            let rally = units.iter().any(|u| !tech.loaded || tech.of(u.kind).is_some_and(|t| t.can_set_dest));
             let (x, y) = self.world_at(at);
-            return Some(Context::Rally(x, y));
+            return rally.then_some(Context::Rally(x, y));
         }
         if let Some(target) = self.unit_at(at, |u| u.owner != own) {
             return Some(Context::Attack(target));
@@ -761,6 +815,22 @@ impl InGame {
             HudCommand::Rally => {
                 self.interface.rally_mode = true;
                 self.interface.placing = None;
+            }
+            HudCommand::Upgrade(up) => {
+                let buildings: Vec<EntityId> =
+                    self.selected_units().filter(|u| u.building && u.owner == player).map(|u| u.id).collect();
+                let upgrade = acr_sim::tech::UpgradeId(up);
+                self.commands.push(Command::Upgrade { player, buildings, upgrade });
+            }
+            HudCommand::CancelUpgrade(up) => {
+                let buildings: Vec<EntityId> = self
+                    .selected_units()
+                    .filter(|u| u.owner == player && u.research.as_ref().is_some_and(|r| r.upgrade.0 == up))
+                    .map(|u| u.id)
+                    .collect();
+                for building in buildings {
+                    self.commands.push(Command::CancelUpgrade { player, building });
+                }
             }
             HudCommand::Inactive => {}
         }
@@ -1223,10 +1293,10 @@ fn unit_name(ctx: &Ctx, md_name: &str) -> Vec<u8> {
     if text == key.as_bytes() { md_name.as_bytes().to_vec() } else { text.to_vec() }
 }
 
-/// A production hint (0x606180): the name, " -", then " Resource: price" for every
-/// resource of the base price, with the current price.
-fn cost_hint(ctx: &Ctx, md_name: &str, base: &[i32; 8], cost: &[i32; 8]) -> Vec<u8> {
-    let mut out = unit_name(ctx, md_name);
+/// A production hint (0x606180, 0x6062a0 for upgrades): the name, " -", then
+/// " Resource: price" for every resource of the base price, with the current price.
+fn cost_hint(name: Vec<u8>, base: &[i32; 8], cost: &[i32; 8], ctx: &Ctx) -> Vec<u8> {
+    let mut out = name;
     out.extend_from_slice(b" -");
     for (r, name) in RESOURCE_NAMES.iter().enumerate() {
         if base[r] != 0 {
@@ -1234,6 +1304,20 @@ fn cost_hint(ctx: &Ctx, md_name: &str, base: &[i32; 8], cost: &[i32; 8]) -> Vec<
             out.extend_from_slice(ctx.texts.get(name));
             out.extend_from_slice(format!(": {}", cost[r]).as_bytes());
         }
+    }
+    out
+}
+
+/// An upgrade's hint: its message, and on a second line (0x49483d) the price as
+/// `Resource:amount` joined by spaces (0x6062a0).
+fn upgrade_hint(ctx: &Ctx, message: &str, cost: &[i32; 8]) -> Vec<u8> {
+    let mut out = ctx.texts.get(message).to_vec();
+    let mut first = true;
+    for (r, name) in RESOURCE_NAMES.iter().enumerate().filter(|(r, _)| cost[*r] != 0) {
+        out.push(if first { b'/' } else { b' ' });
+        first = false;
+        out.extend_from_slice(ctx.texts.get(name));
+        out.extend_from_slice(format!(":{}", cost[r]).as_bytes());
     }
     out
 }
