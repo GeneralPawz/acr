@@ -701,7 +701,9 @@ sum of its four neighbours (centre excluded). This spreads the stamps and decays
     once).
   - Unit types: `Catalog::find("EngMus(EN)")`.
   - Economy: `World::players[p]` (`resources`, `population`, `housing`), each building's
-    `queue` / `inside` / `mine` / `stage`, `economy::unit_cost`, and `Unit::carried`. The
+    `queue` / `inside` / `mine` / `stage`, `economy::unit_cost`, and `Unit::carried`. For
+    the interface: `construction::site` (where a building would stand, or `None`),
+    `construction::needs_work` and `economy::can_enter`. The
     commands are `Produce`, `Unproduce`, `Enter`, `Leave`, `Rally`, `Build`, `Repair`,
     `Gather`, `Upgrade`, `CancelUpgrade`, `Trade` and `PlantFields` (`World::market` holds the rates,
     `Market::quote` the price of a trade). `economy::producible(w, building)` lists what a

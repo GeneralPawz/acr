@@ -520,7 +520,7 @@ pub fn bind_mines(w: &mut World) {
 }
 
 /// Whether `u` may go into building `b` now (`GoToMine` 0x5f43d0 checks).
-fn can_enter(w: &World, u: &Unit, b: &Unit) -> bool {
+pub fn can_enter(w: &World, u: &Unit, b: &Unit) -> bool {
     let bt = w.catalog.get(b.kind);
     let ut = w.catalog.get(u.kind);
     let kind_ok = if ut.peasant {
