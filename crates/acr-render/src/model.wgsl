@@ -271,14 +271,17 @@ fn rot(rgb_in: vec3<f32>, rest: vec3<f32>, decay: f32, dissolve: bool) -> vec3<f
     let mottle = 0.6 * noise3(rest * 7.0) + 0.4 * noise3(rest * 23.0 + vec3<f32>(5.3));
     let lum = dot(rgb_in, vec3<f32>(0.3, 0.55, 0.15));
     // Grey-green rot in the patches, brown-black elsewhere, keeping some of the pattern.
-    let rotten = mix(vec3<f32>(0.10, 0.07, 0.045), vec3<f32>(0.21, 0.21, 0.13), smoothstep(0.45, 0.7, mottle))
-        * (0.55 + 0.9 * lum);
-    var rgb = mix(rgb_in, rotten, ramp(decay, 0.02, 0.55) * (0.5 + 0.5 * mottle));
-    rgb = rgb * mix(1.0, 0.5, ramp(decay, 0.1, 0.85));
+    let rotten = mix(vec3<f32>(0.035, 0.024, 0.016), vec3<f32>(0.085, 0.08, 0.045), smoothstep(0.45, 0.7, mottle))
+        * (0.7 + 0.6 * lum);
+    var rgb = mix(rgb_in, rotten, ramp(decay, 0.02, 0.55) * (0.45 + 0.55 * mottle));
+    rgb = rgb * mix(1.0, 0.6, ramp(decay, 0.1, 0.85));
     if (dissolve) {
         let p = ramp(decay, 0.62, 1.0);
-        let mask = 0.65 * noise3(rest * 5.0 + vec3<f32>(1.9)) + 0.35 * noise3(rest * 19.0);
-        let th = p * 1.12;
+        // The summed noise clusters around 0.5: stretched so that about `p` of the body is
+        // gone at `p`.
+        let m = 0.65 * noise3(rest * 5.0 + vec3<f32>(1.9)) + 0.35 * noise3(rest * 19.0);
+        let mask = clamp((m - 0.5) * 2.6 + 0.5, 0.0, 1.0);
+        let th = p * 1.08;
         if (p > 0.0 && mask <= th) {
             return vec3<f32>(-1.0);
         }
@@ -615,12 +618,6 @@ fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
             }
         }
     }
-    if (material.look.w > 0.5 && decay > 0.0) {
-        rgb = rot(rgb, in.rest.xyz, decay, globals.params.y > 0.5);
-        if (rgb.r < 0.0) {
-            discard;
-        }
-    }
     if (material.flags.w < 0.5 && in.wounds0.z + in.wounds0.w + in.wounds1.x > 0.0) {
         rgb = wounded(rgb, in.rest, in.wounds0, in.wounds1, decay);
     }
@@ -629,6 +626,13 @@ fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
     }
     if (material.flags.w < 0.5 && in.spray_look.x > 0.0) {
         rgb = sprayed(rgb, in.rest.xyz, in.spray, in.spray_look.xy);
+    }
+    // A carcass without masks rots over its blood and dirt too.
+    if (material.look.w > 0.5 && decay > 0.0) {
+        rgb = rot(rgb, in.rest.xyz, decay, globals.params.y > 0.5);
+        if (rgb.r < 0.0) {
+            discard;
+        }
     }
     // Lambert from the upper left (the sprites' light), both faces lit.
     var n = normalize(in.normal);
