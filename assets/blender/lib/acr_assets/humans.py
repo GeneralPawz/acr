@@ -125,8 +125,11 @@ class Character:
         """`deflate` on flesh, clothes and strapped gear; `emaciated` on flesh (full) and
         clothes (a third: loose clothes hang)."""
         bones = [self.prefix + b for b in rig.BODY_BONES]
-        for o in self.layers["flesh"] + self.layers["clothes"] + list(extra_deflate):
+        for o in self.layers["flesh"] + self.layers["clothes"]:
             bd.toward_bones(o, self.arm, "deflate", deflate, bones)
+        # Strapped gear sinks onto the bones further: nothing holds it up any more.
+        for o in extra_deflate:
+            bd.toward_bones(o, self.arm, "deflate", 0.3, bones)
         thin = {self.prefix + b: 1.0 - (1.0 - emaciated) * 0.4 for b in ("head", "neck", "hand_l", "hand_r", "foot_l", "foot_r", "toe_l", "toe_r")}
         for o in self.layers["flesh"]:
             bd.toward_bones(o, self.arm, "emaciated", emaciated, bones, thin)
@@ -172,10 +175,15 @@ class Character:
                 mats[k]["acr_colour_from"] = "sprite" if ref is not None else "palette"
             return mats[k]
 
+        # Parts with the same key share one colour, taken from all their samples.
+        pooled = {}
+        for o in objs:
+            k = (o.get("acr_material_keys") or [self.keys[o.name]])[0]
+            pooled.setdefault(k, []).extend(info.get(o.name, (None, None, []))[2])
         chosen = {}
         for o in objs:
             keys = list(o.get("acr_material_keys") or [self.keys[o.name]])
-            samples = info.get(o.name, (None, None, []))[2]
+            samples = pooled.get(keys[0], [])
             o.data.materials.clear()
             for i, k in enumerate(keys):
                 rgb = palette[k]

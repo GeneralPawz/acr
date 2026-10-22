@@ -16,8 +16,8 @@ COMPRESSION = ("none", "meshopt", "draco")
 
 def export_glb(path, compression="none"):
     """Exports the scene. Skins, morph targets (shape keys), one animation per action
-    (`STAND`, `DEATH`, ...), the active colour attribute as COLOR_0 and custom attributes
-    whose names start with `_` (`_gore` -> `_GORE`, `_part` -> `_PART`) go out when the
+    (`STAND`, `DEATH`, ...) and custom attributes whose names start with `_` (`_decay` ->
+    `_DECAY`, `_gore` -> `_GORE`, `_part` -> `_PART`, `_wind` -> `_WIND`) go out when the
     scene has them."""
     if compression not in COMPRESSION:
         raise ValueError(f"compression must be one of {COMPRESSION}")
@@ -42,7 +42,8 @@ def export_glb(path, compression="none"):
         export_animation_mode="ACTIONS",
         export_force_sampling=True,
         export_optimize_animation_size=True,
-        export_vertex_color="ACTIVE",
+        # No COLOR_0: glTF multiplies it into the base colour; masks go out as `_` attributes.
+        export_vertex_color="NONE",
         export_all_vertex_colors=False,
         export_active_vertex_color_when_no_material=False,
         export_attributes=True,

@@ -78,20 +78,18 @@ def walk_cycle(stand):
 
 def lie_prone(arms_out=True):
     """#DEATHLIE1 of the European foot: prone, head towards the facing direction, arms flung
-    out above the head, feet near the ground point (tuned against EngM18's sprite)."""
-    a = 91
-    hip = (0.03, -0.52, 0.12)
-    rl = tuple(h - o for h, o in zip(hip, (0, -0.95 * math.sin(math.radians(a)), 0.95 * math.cos(math.radians(a)))))
+    out above the head, feet near the ground point (fitted to EngM18's sprite with
+    tools/silhouette.py --shift 1,3, the hips kept 13 cm above the ground)."""
     return {
-        "root": (a, 0, 6), "root_loc": rl,
-        "spine": (0, 6, 4), "spine1": (0, 3, 0), "neck": (-4, 0, 0), "head": (-10, 18, 62),
-        "clavicle_l": (0, -10, 0), "upperarm_l": (-8, -70, 0) if arms_out else (0, 10, 0), "forearm_l": (0, -45, 0),
-        "clavicle_r": (0, 6, 0), "upperarm_r": (-8, 45, 0) if arms_out else (0, -10, 0), "forearm_r": (0, 50, 0),
-        "thigh_l": (-6, -9, 0), "shin_l": (8, 0, 0), "foot_l": (55, 0, 0),
-        "thigh_r": (-4, 10, 0), "shin_r": (28, 0, 0), "foot_r": (50, 0, 0),
+        "root": (91, -8, 4), "root_loc": (-0.05, 0.39, 0.13),
+        "spine": (0, -2, 6), "spine1": (0, 3, 0), "neck": (-4, 0, 0), "head": (-10, 18, 62),
+        "clavicle_l": (0, -10, 0), "upperarm_l": (12, -45, 0) if arms_out else (0, 10, 0), "forearm_l": (0, -16, 0),
+        "clavicle_r": (0, 6, 0), "upperarm_r": (-2, 47, 0) if arms_out else (0, -10, 0), "forearm_r": (0, 50, 0),
+        "thigh_l": (-14, -5.5, 0), "shin_l": (13.5, 0, 0), "foot_l": (55, 0, 0),
+        "thigh_r": (-10.5, 8, 0), "shin_r": (15, 0, 0), "foot_r": (50, 0, 0),
         # Skirt bones: the coat tails lie flat on the legs.
         "skirt_fl_01": (-80, 0, 0), "skirt_fr_01": (-80, 0, 0), "skirt_bl_01": (-70, 0, 0), "skirt_br_01": (-70, 0, 0),
-        "world": {"socket.hand_r": (90, 0, 30)},
+        "world": {"socket.hand_r": (90, 0, 22)},
     }
 
 
