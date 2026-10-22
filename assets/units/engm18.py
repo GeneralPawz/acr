@@ -47,10 +47,16 @@ PALETTE = {
     "gaiters": (0.10, 0.10, 0.10), "belts": (0.85, 0.75, 0.30), "hat": (0.07, 0.07, 0.07),
     "cartridge": (0.08, 0.07, 0.06), "knapsack": (0.40, 0.27, 0.14), "wood": (0.42, 0.24, 0.12),
     "metal": (0.55, 0.55, 0.57),
+    # Draped garments (docs/clothing.md): regimental facings (blue: a royal regiment), the
+    # white lining of the turnbacks, shirt, black stock and shoes.
+    "facings": (0.13, 0.17, 0.36), "lining": (0.88, 0.86, 0.80), "shirt": (0.92, 0.91, 0.88),
+    "stock": (0.08, 0.08, 0.08), "shoes": (0.08, 0.07, 0.06),
 }
 
 # Body build and part sizes fitted to the sprite silhouette (#STAND; tools/silhouette.py).
-BUILD = {"width": 1.02, "shoulders": 1.12, "limbs": 1.23, "hips": 1.0}
+# `garments`: clothes cut from sewing patterns and draped by the cloth sim (docs/clothing.md);
+# False builds the body-derived shells of #178.
+BUILD = {"width": 1.02, "shoulders": 1.12, "limbs": 1.23, "hips": 1.0, "garments": False}
 FIT = {
     "hat_z": -0.02, "hat_scale": 0.925, "musket_len": 1.69,
     "skirt_top": [0.245, 0.175], "skirt_bot": [0.21, 0.15], "coat": 0.033,
@@ -72,18 +78,32 @@ def make(root, name, build=BUILD):
     def front(c):
         return c.y < -0.04 and abs(c.x) < 0.075 and c.z < 1.41
 
-    ch.shell("waistcoat", "waistcoat", lambda c, n, h, p: h in TORSO and 0.97 < c.z < 1.47, 0.012)
-    ch.shell("coat", "coat", lambda c, n, h, p: (h in TORSO and 0.97 < c.z < 1.49 and not front(c)) or h in ARMS, FIT["coat"])
-    ch.shell("cuffs", "coat", lambda c, n, h, p: h in {"forearm_l", "forearm_r"} and c.z < 1.02, 0.045)
-    ch.shell("breeches", "breeches", lambda c, n, h, p: (h in {"hips"} | LEGS and c.z < 1.0) or (h in SHINS and c.z > 0.40), 0.010)
-    ch.shell("gaiters", "gaiters", lambda c, n, h, p: (h in SHINS and c.z <= 0.44) or h in FEET, 0.016)
     from acr_assets import body as bd
 
-    skirt = bd.tube(ch.arm, f"{name}.coat_skirt", rig.SKIRT_TOP, rig.SKIRT_BOTTOM, FIT["skirt_top"], FIT["skirt_bot"],
-                    gap_deg=FIT["skirt_gap"], flare_back=0.03, columns=rig.SKIRT_COLUMNS)
-    ch.add("clothes", skirt, "coat", symmetric=True)
-    b1 = bd.strap(ch.arm, f"{name}.crossbelts", ch.flesh, Vector((0.12, 0, 1.47)), Vector((-0.17, 0, 0.95)), 0.06, 0.038)
-    b2 = bd.strap(ch.arm, f"{name}.crossbelt2", ch.flesh, Vector((-0.12, 0, 1.47)), Vector((0.17, 0, 0.95)), 0.06, 0.042)
+    if build.get("garments"):
+        # Sewing patterns draped on the body (docs/clothing.md); shoes over a last.
+        from acr_assets import drape, mbody
+
+        ch.shoes = ch.add("clothes", mbody.shoes(ch.arm, ch.flesh, f"{name}.footwear", ch.prefix, key="shoes"),
+                          "shoes", symmetric=True)
+        ch.drape_report = {}
+        made = drape.dress(ch, report=ch.drape_report)
+        cloth = [o for o in ch.layers["clothes"] if o.name in made]
+        drape.hide_skin(ch, cloth)
+        surf = drape.surface(cloth, f"{name}.belt_surface")
+        offsets = (0.008, 0.012)
+    else:
+        ch.shell("waistcoat", "waistcoat", lambda c, n, h, p: h in TORSO and 0.97 < c.z < 1.47, 0.012)
+        ch.shell("coat", "coat", lambda c, n, h, p: (h in TORSO and 0.97 < c.z < 1.49 and not front(c)) or h in ARMS, FIT["coat"])
+        ch.shell("cuffs", "coat", lambda c, n, h, p: h in {"forearm_l", "forearm_r"} and c.z < 1.02, 0.045)
+        ch.shell("breeches", "breeches", lambda c, n, h, p: (h in {"hips"} | LEGS and c.z < 1.0) or (h in SHINS and c.z > 0.40), 0.010)
+        ch.shell("gaiters", "gaiters", lambda c, n, h, p: (h in SHINS and c.z <= 0.44) or h in FEET, 0.016)
+        skirt = bd.tube(ch.arm, f"{name}.coat_skirt", rig.SKIRT_TOP, rig.SKIRT_BOTTOM, FIT["skirt_top"], FIT["skirt_bot"],
+                        gap_deg=FIT["skirt_gap"], flare_back=0.03, columns=rig.SKIRT_COLUMNS)
+        ch.add("clothes", skirt, "coat", symmetric=True)
+        surf, offsets = ch.flesh, (0.038, 0.042)
+    b1 = bd.strap(ch.arm, f"{name}.crossbelts", surf, Vector((0.12, 0, 1.47)), Vector((-0.17, 0, 0.95)), 0.06, offsets[0])
+    b2 = bd.strap(ch.arm, f"{name}.crossbelt2", surf, Vector((-0.12, 0, 1.47)), Vector((0.17, 0, 0.95)), 0.06, offsets[1])
     ch.add("clothes", b1, "belts", symmetric=True)
     ch.add("clothes", b2, "belts", symmetric=True)
     ch.bone_layer()
@@ -161,7 +181,8 @@ def build(ctx):
                    acr_limb_radius=ch.limb_radius,
                    acr_light=report.get("light_dir_camera", []), acr_layers=list(ch.layers),
                    **faces.extras("regular"))
-    ctx.stats = {"triangles": tris, "light": report, "colours": colours, "aim_errors_m": ctx.aim_errors}
+    ctx.stats = {"triangles": tris, "light": report, "colours": colours, "aim_errors_m": ctx.aim_errors,
+                 "drape": getattr(ch, "drape_report", None)}
 
 
 def pose_for(ch, clip):

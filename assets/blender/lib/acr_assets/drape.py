@@ -1,0 +1,643 @@
+"""Draped garments (needs `bpy`; docs/clothing.md): the sewing patterns of `garments.py`
+cut into triangle meshes, placed around the rest-pose body, sewn with Blender's cloth
+sewing springs and simulated with collision on the body and the garments draped before
+(shrinking to fit), then baked, welded along the seams, solidified (real cut edges along
+the pattern outline), skinned and split into the export layers.
+
+- Weights: interpolated from the nearest face of the skin (`transfer_weights`); the coat
+  skirts and turnbacks get the skirt bones instead (`skirt_weights`, the columns of
+  `rig.SKIRT_COLUMNS`) and the FLOAT attribute `_cloth` (0 at the waist seam, 1 at the
+  hem: how freely the runtime cloth may move each vertex, docs/clothing.md).
+- `part` from the dominant bone, the mesh split at the part borders like the skin, so
+  cuts, wounds and decay work as for the shells (docs/assets-humans.md).
+- One object per material key and skirt flag (`coat`, `facings`, `coat_skirts`,
+  `turnbacks`, ...): the atlas painter paints one key per object.
+"""
+
+import math
+import time
+
+import bmesh
+import bpy
+import numpy as np
+from mathutils import Vector
+from mathutils.bvhtree import BVHTree
+from mathutils.geometry import delaunay_2d_cdt
+
+from . import armature as am
+from . import body as bd
+from . import garments as gm
+from . import rig
+
+SPACING = {"coat": 4.0, "waistcoat": 4.0, "breeches": 4.0, "gaiters": 3.0, "shirt": 2.0}  # cm
+FRAMES = 36
+TORSO = ("hips", "spine", "spine1", "spine2", "clavicle_l", "clavicle_r")
+
+
+# --------------------------------------------------------------------------- measuring
+
+def _hull2(pts):
+    pts = sorted(set(pts))
+    if len(pts) < 3:
+        return pts
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    lo, hi = [], []
+    for p in pts:
+        while len(lo) >= 2 and cross(lo[-2], lo[-1], p) <= 0:
+            lo.pop()
+        lo.append(p)
+    for p in reversed(pts):
+        while len(hi) >= 2 and cross(hi[-2], hi[-1], p) <= 0:
+            hi.pop()
+        hi.append(p)
+    return lo[:-1] + hi[:-1]
+
+
+def _girth(pts):
+    h = _hull2([(round(p[0], 5), round(p[1], 5)) for p in pts])
+    return sum(math.dist(a, b) for a, b in zip(h, h[1:] + h[:1])) * 100.0
+
+
+class Body:
+    """Measurements of the rest-pose skin (cm, `garments.MEASURE` keys), landmarks (m) and
+    the placement frames of the regions."""
+
+    def __init__(self, ch):
+        P = ch.prefix
+        fl = ch.flesh
+        self.V = np.array([v.co[:] for v in fl.data.vertices])
+        hs = bd.homes(fl)
+        self.home = np.array([h[len(P):] for h in hs])
+        self.seg = {k[len(P):]: (np.array(a[:]), np.array(b[:])) for k, (a, b) in am.segments(ch.arm).items()
+                    if k.startswith(P)}
+        S = self.seg
+        torso = np.isin(self.home, TORSO)
+        legs = np.isin(self.home, ("thigh_l", "thigh_r"))
+        self.torso_pts = self.V[torso | legs]
+        z = self.V[:, 2]
+
+        def slice_girth(mask, z0, w=0.015):
+            sel = self.V[mask & (np.abs(z - z0) < w)]
+            return _girth([tuple(p[:2]) for p in sel]) if len(sel) > 3 else 0.0
+
+        self.waist_z = 1.04
+        self.knee_z = float(S["shin_l"][0][2])
+        self.ankle_z = float(S["foot_l"][0][2]) + 0.03
+        self.neck_z = float(S["neck"][0][2])
+        sh, wr = S["upperarm_l"][0], S["forearm_l"][1]
+        m = dict(gm.MEASURE)
+        m["chest"] = slice_girth(torso, 1.30)
+        m["waist"] = min(slice_girth(torso, zz) for zz in (1.06, 1.08, 1.10))
+        m["seat"] = slice_girth(torso | legs, 0.90)
+        m["neck"] = slice_girth(self.home == "neck", self.neck_z + 0.03) or m["neck"]
+        m["nape_to_waist"] = (self.neck_z + 0.02 - self.waist_z) * 100.0
+        m["arm"] = float(np.linalg.norm(wr - sh)) * 100.0 + 4.0
+        m["waist_to_knee"] = (self.waist_z - self.knee_z) * 100.0
+        m["knee_to_ankle"] = (self.knee_z - self.ankle_z) * 100.0
+
+        def ring(bone, t):
+            a, b = S[bone]
+            sel = self.V[self.home == bone]
+            d = b - a
+            tt = ((sel - a) @ d) / float(d @ d)
+            near = sel[np.abs(tt - t) < 0.12]
+            if len(near) < 4:
+                return 0.0
+            q = a + np.outer(((near - a) @ d) / float(d @ d), d)
+            return float(np.mean(np.linalg.norm(near - q, axis=1))) * 2 * math.pi * 100.0 * 1.05
+
+        m["upper_arm"] = ring("upperarm_l", 0.3) or m["upper_arm"]
+        m["wrist"] = ring("forearm_l", 0.92) or m["wrist"]
+        m["thigh"] = ring("thigh_l", 0.15) or m["thigh"]
+        m["knee"] = ring("shin_l", 0.02) or m["knee"]
+        m["calf"] = ring("shin_l", 0.3) or m["calf"]
+        m["ankle"] = ring("shin_l", 0.92) or m["ankle"]
+        # The decimated hull gives noisy slices: keep each measure within 0.85..1.2 of the
+        # default figure.
+        for k, d in gm.MEASURE.items():
+            m[k] = min(max(m[k], d * 0.85), d * 1.2)
+        self.m = m
+        self.land = {"waist": self.waist_z, "knee": self.knee_z, "ankle": self.ankle_z, "wrist": None,
+                     "collar": self.neck_z + 0.035, "stock": self.neck_z + 0.03}
+        # Torso ellipses per height (2 cm steps): centre y, half widths.
+        self.ell = {}
+        for k in range(30, 80):
+            zz = k * 0.02
+            sel = self.torso_pts[np.abs(self.torso_pts[:, 2] - max(zz, 0.88)) < 0.02]
+            if zz > self.neck_z - 0.02:
+                sel = self.V[(self.home == "neck") & (np.abs(z - zz) < 0.02)]
+            if len(sel) < 4:
+                continue
+            cy = 0.5 * (sel[:, 1].min() + sel[:, 1].max())
+            self.ell[k] = (cy, max(abs(sel[:, 0]).max(), 0.04), max(sel[:, 1].max() - cy, 0.04))
+
+    def ellipse(self, z):
+        k = min(max(int(round(z / 0.02)), min(self.ell)), max(self.ell))
+        while k not in self.ell:
+            k += 1
+        return self.ell[k]
+
+    def limb_radius(self, bones, p, axis_a, axis_b):
+        """Mean skin distance to the axis near the axis point p."""
+        sel = self.V[np.isin(self.home, bones)]
+        d = axis_b - axis_a
+        L = float(np.linalg.norm(d))
+        u = d / L
+        t = (sel - axis_a) @ u
+        tp = float((p - axis_a) @ u)
+        near = sel[np.abs(t - tp) < 0.03]
+        if len(near) < 3:
+            near = sel[np.argsort(np.abs(t - tp))[:8]]
+        q = axis_a + np.outer((near - axis_a) @ u, u)
+        return float(np.percentile(np.linalg.norm(near - q, axis=1), 80))
+
+
+# --------------------------------------------------------------------------- panels
+
+def _mesh2d(panel, spacing):
+    """Triangulates the outline: boundary samples every `spacing` cm (corners kept),
+    interior lattice points; returns (uv[], tris[], segs) with segs[k] = the sample indices
+    of outline segment k (outline[k] -> outline[k+1], both ends included)."""
+    pts = panel.outline
+    n = len(pts)
+    uv, segs = [], []
+    for k in range(n):
+        a, b = pts[k], pts[(k + 1) % n]
+        cnt = max(1, int(round(math.dist(a, b) / spacing)))
+        idx = []
+        for s in range(cnt):
+            f = s / cnt
+            uv.append((a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f))
+            idx.append(len(uv) - 1)
+        segs.append(idx)
+    for k in range(n):
+        segs[k].append(segs[(k + 1) % n][0])
+    nb = len(uv)
+    u0, v0, u1, v1 = panel.bounds()
+    h = spacing * math.sqrt(3) / 2
+    row = 0
+    v = v0 + h * 0.5
+    while v < v1:
+        u = u0 + (spacing * 0.5 if row % 2 else 0.0) + spacing * 0.5
+        while u < u1:
+            if _inside((u, v), pts) and min(_seg_dist((u, v), pts[k], pts[(k + 1) % n]) for k in range(n)) > spacing * 0.45:
+                uv.append((u, v))
+            u += spacing
+        v += h
+        row += 1
+    out = delaunay_2d_cdt([Vector(p) for p in uv], [], [list(range(nb))], 1, 1e-4, True)
+    verts, _edges, faces, orig = out[0], out[1], out[2], out[3]
+    remap = {}
+    for i, o in enumerate(orig):
+        for j in o:
+            remap[j] = i
+    segs = [[remap[i] for i in s] for s in segs]
+    return [(p.x, p.y) for p in verts], [tuple(f) for f in faces], segs
+
+
+def _inside(p, poly):
+    x, y = p
+    c = False
+    for (x0, y0), (x1, y1) in zip(poly, poly[1:] + poly[:1]):
+        if (y0 > y) != (y1 > y) and x < x0 + (y - y0) * (x1 - x0) / (y1 - y0):
+            c = not c
+    return c
+
+
+def _seg_dist(p, a, b):
+    ax, ay = b[0] - a[0], b[1] - a[1]
+    L = ax * ax + ay * ay
+    t = 0.0 if L < 1e-12 else max(0.0, min(1.0, ((p[0] - a[0]) * ax + (p[1] - a[1]) * ay) / L))
+    return math.dist(p, (a[0] + ax * t, a[1] + ay * t))
+
+
+def _edge_samples(panel, segs, edge):
+    i, j = panel.edges[edge]
+    n = len(panel.outline)
+    out = []
+    k = i
+    while k != j:
+        s = segs[k]
+        out += s if not out else s[1:]
+        k = (k + 1) % n
+    return out
+
+
+def place(body, panel, uv):
+    """3D rest positions (armature space, metres) of the panel's points and their axis
+    points (to orient the faces outwards)."""
+    pl = panel.place
+    reg = pl["region"]
+    gap = pl.get("gap", 1.0) / 100.0
+    lift = pl.get("lift", 0.0) / 100.0
+    th0 = math.radians(pl.get("theta", 0.0))
+    sgn = pl.get("dir", 1)
+    u0 = pl.get("u0", 0.0)
+    out, axis = [], []
+    if reg in ("torso", "neck"):
+        z0 = body.land[pl["at"]]
+        for u, v in uv:
+            z = z0 + lift + v / 100.0
+            cy, a, b = body.ellipse(z) if reg == "torso" else body.ellipse(max(z, body.neck_z + 0.02))
+            a, b = a + gap, b + gap
+            arc = (u - u0) / 100.0 * sgn
+            # Arc length on the ellipse from theta0 (numerically).
+            ts = th0 + np.linspace(0.0, math.copysign(2 * math.pi, arc if arc else 1.0), 721)
+            xs, ys = np.sin(ts) * a, cy - np.cos(ts) * b
+            cum = np.concatenate([[0.0], np.cumsum(np.hypot(np.diff(xs), np.diff(ys)))])
+            t = float(np.interp(abs(arc), cum, ts))
+            out.append((math.sin(t) * a, cy - math.cos(t) * b, z))
+            axis.append((0.0, cy, z))
+        return out, axis
+    if reg == "arm":
+        sh, wr = body.seg["upperarm_l"][0], body.seg["forearm_l"][1]
+        ea = (wr - sh) / np.linalg.norm(wr - sh)
+        up = np.array((0.0, 0.0, 1.0))
+        tvec = up - (up @ ea) * ea
+        tvec /= np.linalg.norm(tvec)
+        fvec = np.array((0.0, -1.0, 0.0))
+        for u, v in uv:
+            p = wr - ea * (lift + v / 100.0)
+            r = body.limb_radius(("upperarm_l", "forearm_l", "hand_l"), p, sh, wr) + gap
+            t = th0 + sgn * (u - u0) / 100.0 / r
+            q = p + r * (math.cos(t) * tvec + math.sin(t) * fvec)
+            out.append(tuple(q))
+            axis.append(tuple(p))
+        return out, axis
+    # leg: thigh above the knee, shin below.
+    th_a, th_b = body.seg["thigh_l"]
+    sh_a, sh_b = body.seg["shin_l"]
+    z0 = body.land[pl["at"]]
+    for u, v in uv:
+        z = z0 + lift + v / 100.0
+        if z >= th_b[2]:
+            a, b, bones = th_a, th_b, ("thigh_l", "hips")
+        else:
+            a, b, bones = sh_a, sh_b, ("shin_l", "foot_l")
+        f = (z - a[2]) / (b[2] - a[2])
+        p = a + (b - a) * f
+        p[2] = z
+        if z > th_a[2] - 0.12:  # round the hip: the leg tube widens to the seat
+            sel = body.torso_pts[(np.abs(body.torso_pts[:, 2] - z) < 0.02) & (body.torso_pts[:, 0] > -0.01)]
+            r = float(np.percentile(np.hypot(sel[:, 0] - p[0], sel[:, 1] - p[1]), 85)) if len(sel) > 4 else 0.12
+        else:
+            r = body.limb_radius(bones, p, a, b)
+        r += gap
+        t = th0 + sgn * (u - u0) / 100.0 / r
+        out.append((p[0] + math.sin(t) * r, p[1] - math.cos(t) * r, z))
+        axis.append((p[0], p[1], z))
+    return out, axis
+
+
+# --------------------------------------------------------------------------- building
+
+class Piece:
+    def __init__(self, panel, side, base, n, segs, faces):
+        self.panel, self.side, self.base, self.n, self.segs, self.faces = panel, side, base, n, segs, faces
+
+    def edge(self, edge):
+        return [self.base + i for i in _edge_samples(self.panel, self.segs, edge)]
+
+
+def build_garment(body, garment, panels, seams, spacing):
+    """One mesh with every panel copy of `garment` placed, its sewing edges loose. Returns
+    (verts, faces, face_info [(panel, side)], sew [(i, j)], pieces)."""
+    verts, faces, finfo, pieces = [], [], [], {}
+    for name, pnl in panels.items():
+        uv, tris, segs = _mesh2d(pnl, spacing)
+        pos, axis = place(body, pnl, uv)
+        # Faces outward: compare the mean normal with the direction away from the axis.
+        P = np.array(pos)
+        A = np.array(axis)
+        s = 0.0
+        for f in tris:
+            a, b, c = P[f[0]], P[f[1]], P[f[2]]
+            nrm = np.cross(b - a, c - a)
+            s += float(nrm @ ((a + b + c) / 3 - (A[f[0]] + A[f[1]] + A[f[2]]) / 3))
+        if s < 0:
+            tris = [(f[0], f[2], f[1]) for f in tris]
+        sides = ("L", "R") if pnl.mirror else ("L",)
+        for side in sides:
+            base = len(verts)
+            if side == "L":
+                verts += [tuple(p) for p in pos]
+                faces += [tuple(base + i for i in f) for f in tris]
+            else:
+                verts += [(-p[0], p[1], p[2]) for p in pos]
+                faces += [(base + f[0], base + f[2], base + f[1]) for f in tris]
+            finfo += [(name, side)] * len(tris)
+            pieces[(name, side)] = Piece(pnl, side, base, len(pos), segs, tris)
+    sew = []
+    for sm in seams:
+        sides = ("L", "R") if all(lk[3] == "L" for lk in sm.a + sm.b) and all(panels[lk[0]].mirror for lk in sm.a + sm.b) else ("L",)
+        for side in sides:
+            def chain(ch_):
+                out = []
+                for name, edge, rev, s in ch_:
+                    sd = side if s == "L" else "R"
+                    idx = pieces[(name, sd)].edge(edge)
+                    if rev:
+                        idx = idx[::-1]
+                    out += idx if not out or out[-1] != idx[0] else idx[1:]
+                return out
+            A, B = chain(sm.a), chain(sm.b)
+
+            def frac(idx):
+                d = [0.0]
+                for i, j in zip(idx, idx[1:]):
+                    d.append(d[-1] + 1.0)
+                return [x / max(d[-1], 1e-9) for x in d]
+
+            fa, fb = frac(A), frac(B)
+            pairs = set()
+            for i, f in zip(A, fa):
+                k = min(range(len(B)), key=lambda q: abs(fb[q] - f))
+                pairs.add((i, B[k]))
+            for j, f in zip(B, fb):
+                k = min(range(len(A)), key=lambda q: abs(fa[q] - f))
+                pairs.add((A[k], j))
+            sew += [p for p in pairs if p[0] != p[1]]
+    return verts, faces, finfo, sew, pieces
+
+
+def _collision(obj, on=True):
+    if on:
+        if not any(m.type == "COLLISION" for m in obj.modifiers):
+            obj.modifiers.new("acr_collision", "COLLISION")
+            obj.collision.thickness_outer = 0.004
+            obj.collision.thickness_inner = 0.004
+            obj.collision.cloth_friction = 5.0
+    else:
+        for m in [m for m in obj.modifiers if m.type == "COLLISION"]:
+            obj.modifiers.remove(m)
+
+
+def simulate(obj, settings, frames=FRAMES):
+    sc = bpy.context.scene
+    mod = obj.modifiers.new("acr_cloth", "CLOTH")
+    cs = mod.settings
+    cs.quality = 6
+    cs.mass = settings["mass"]
+    cs.tension_stiffness = cs.compression_stiffness = settings["tension"]
+    cs.shear_stiffness = settings["tension"] * 0.4
+    cs.bending_stiffness = settings["bending"]
+    cs.use_sewing_springs = True
+    cs.sewing_force_max = 8.0
+    cs.shrink_min = settings["shrink"]
+    cs.air_damping = 2.0
+    cs.effector_weights.gravity = 0.6
+    cc = mod.collision_settings
+    cc.distance_min = 0.003
+    cc.use_self_collision = False
+    cc.self_distance_min = 0.002
+    cc.collision_quality = 3
+    mod.point_cache.frame_start = 1
+    mod.point_cache.frame_end = frames
+    old = sc.frame_current
+    t0 = time.time()
+    for f in range(1, frames + 1):
+        sc.frame_set(f)
+    dg = bpy.context.evaluated_depsgraph_get()
+    me = bpy.data.meshes.new_from_object(obj.evaluated_get(dg))
+    dt = time.time() - t0
+    obj.modifiers.remove(mod)
+    old_me = obj.data
+    obj.data = me
+    bpy.data.meshes.remove(old_me)
+    sc.frame_set(old)
+    return dt
+
+
+def weld(obj, sew, limit=0.02):
+    """Merges the sewn vertex pairs that met (within `limit`); drops the sewing edges."""
+    parent = {}
+
+    def find(x):
+        while parent.get(x, x) != x:
+            x = parent[x]
+        return x
+
+    V = obj.data.vertices
+    for a, b in sew:
+        if (V[a].co - V[b].co).length < limit:
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[max(ra, rb)] = min(ra, rb)
+    groups = {}
+    for v in range(len(V)):
+        groups.setdefault(find(v), []).append(v)
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    bm.verts.ensure_lookup_table()
+    tmap = {}
+    for r, vs in groups.items():
+        if len(vs) > 1:
+            c = sum((bm.verts[i].co for i in vs), Vector()) / len(vs)
+            bm.verts[r].co = c
+            for i in vs:
+                if i != r:
+                    tmap[bm.verts[i]] = bm.verts[r]
+    bmesh.ops.delete(bm, geom=[e for e in bm.edges if not e.link_faces], context="EDGES_FACES")
+    bmesh.ops.weld_verts(bm, targetmap=tmap)
+    bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context="VERTS")
+    bm.to_mesh(obj.data)
+    bm.free()
+    obj.data.update()
+
+
+def solidify(obj, thickness):
+    """Cloth thickness with rims along the cut edges (the pattern outline)."""
+    mod = obj.modifiers.new("acr_solid", "SOLIDIFY")
+    mod.thickness = thickness
+    mod.offset = 1.0
+    mod.use_rim = True
+    mod.use_even_offset = True
+    dg = bpy.context.evaluated_depsgraph_get()
+    me = bpy.data.meshes.new_from_object(obj.evaluated_get(dg))
+    obj.modifiers.remove(mod)
+    old = obj.data
+    obj.data = me
+    bpy.data.meshes.remove(old)
+
+
+def transfer_weights(obj, flesh, arm_obj, keep=4):
+    """Weights interpolated from the nearest face of the skin (rest pose)."""
+    fm = flesh.data
+    tree = BVHTree.FromPolygons([v.co for v in fm.vertices], [p.vertices for p in fm.polygons])
+    names = {g.index: g.name for g in flesh.vertex_groups}
+    vw = [{names[e.group]: e.weight for e in v.groups if e.group in names} for v in fm.vertices]
+    out = []
+    for v in obj.data.vertices:
+        loc, _n, fi, _d = tree.find_nearest(v.co)
+        w = {}
+        if fi is not None:
+            poly = fm.polygons[fi]
+            ds = [max((fm.vertices[i].co - loc).length, 1e-5) for i in poly.vertices]
+            inv = [1.0 / d for d in ds]
+            s = sum(inv)
+            for i, k in zip(poly.vertices, inv):
+                for b, x in vw[i].items():
+                    w[b] = w.get(b, 0.0) + x * k / s
+        top = sorted(w.items(), key=lambda kv: -kv[1])[:keep]
+        tot = sum(x for _b, x in top) or 1.0
+        out.append({b: x / tot for b, x in top if x / tot > 0.02})
+    return out
+
+
+def skirt_weights(co, prefix=""):
+    """Weights of a coat-skirt vertex on the skirt bones (as `body.tube` with columns)."""
+    top, bottom = rig.SKIRT_TOP, rig.SKIRT_BOTTOM
+    t = min(max((top - co.z) / (top - bottom), 0.0), 1.2)
+    ang = math.atan2(co.y, co.x)
+    cs = sorted(rig.SKIRT_COLUMNS, key=lambda c: abs(bd._adiff(ang, math.atan2(c[2], c[1]))))[:2]
+    d0, d1 = (abs(bd._adiff(ang, math.atan2(c[2], c[1]))) for c in cs)
+    w0 = d1 / (d0 + d1) if d0 + d1 > 1e-6 else 1.0
+    h = max(0.0, 1.0 - t / 0.3)
+    s2 = min(max((t - 0.45) / 0.35, 0.0), 1.0)
+    s1 = max(0.0, 1.0 - h - s2)
+    w = {prefix + "hips": h}
+    for c, wc in ((cs[0], w0), (cs[1], 1.0 - w0)):
+        w[f"{prefix}skirt_{c[0]}_01"] = w.get(f"{prefix}skirt_{c[0]}_01", 0.0) + s1 * wc
+        w[f"{prefix}skirt_{c[0]}_02"] = w.get(f"{prefix}skirt_{c[0]}_02", 0.0) + s2 * wc
+    return {b: x for b, x in w.items() if x > 0.01}, min(t, 1.0)
+
+
+def finish(obj, ch, skirt):
+    """Weights, `_cloth`, homes and parts, split at the part borders, bound to the rig."""
+    P = ch.prefix
+    if skirt:
+        ws, cl = zip(*(skirt_weights(v.co, P) for v in obj.data.vertices))
+    else:
+        ws = transfer_weights(obj, ch.flesh, ch.arm)
+        cl = [0.0] * len(ws)
+    groups = {}
+    bones = [P + b for b in rig.BODY_BONES] + [P + f"skirt_{c[0]}_0{k}" for c in rig.SKIRT_COLUMNS for k in (1, 2)]
+    bones = [b for b in bones if b in ch.arm.data.bones]
+    homes = []
+    for i, w in enumerate(ws):
+        for b, x in w.items():
+            g = groups.get(b) or obj.vertex_groups.get(b) or obj.vertex_groups.new(name=b)
+            groups[b] = g
+            g.add([i], x, "REPLACE")
+        h = max(w, key=w.get) if w else P + "hips"
+        homes.append(h if h in bones else P + "hips")
+    a = obj.data.attributes.new("home", "INT", "POINT")
+    for i, h in enumerate(homes):
+        a.data[i].value = bones.index(h)
+    obj["acr_home_bones"] = bones
+    c = obj.data.attributes.new("_cloth", "FLOAT", "POINT")
+    for i, x in enumerate(cl):
+        c.data[i].value = x
+    bd.split_parts(obj, lambda b: rig.part_of_bone(b[len(P):]))
+    for p in obj.data.polygons:
+        p.use_smooth = True
+    return am.bind(obj, ch.arm)
+
+
+def dress(ch, garments=gm.ORDER, report=None):
+    """Drapes the uniform on character `ch` (rest pose) and adds the garments to its
+    `clothes` layer. Returns {object name: material key}."""
+    body = Body(ch)
+    uni = gm.uniform(body.m, garments)
+    colliders = [ch.flesh] + ([ch.shoes] if getattr(ch, "shoes", None) else [])
+    for o in colliders:
+        _collision(o)
+    made = {}
+    stats = report if report is not None else {}
+    stats["measure"] = {k: round(v, 1) for k, v in body.m.items()}
+    for g in garments:
+        panels, seams = uni[g]
+        verts, faces, finfo, sew, _pieces = build_garment(body, g, panels, seams, SPACING[g])
+        me = bpy.data.meshes.new(f"{ch.name}.{g}.drape")
+        me.from_pydata(verts, [tuple(e) for e in sew], faces)
+        obj = bd.link(bpy.data.objects.new(f"{ch.name}.{g}.drape", me))
+        fa = me.attributes.new("panel", "INT", "FACE")
+        names = list(panels)
+        # from_pydata keeps the face order.
+        for i, (n, _s) in enumerate(finfo):
+            fa.data[i].value = names.index(n)
+        dt = 0.0
+        if g != "shirt":
+            dt = simulate(obj, gm.CLOTH[g])
+        ev = obj.data
+        longest = max(((ev.vertices[e.vertices[0]].co - ev.vertices[e.vertices[1]].co).length
+                       for e in ev.edges if not e.is_loose), default=0.0)
+        welded = sum(1 for a, b in sew if (ev.vertices[a].co - ev.vertices[b].co).length < 0.02)
+        weld(obj, sew)
+        solidify(obj, gm.CLOTH[g]["thickness"])
+        # One object per (key, skirt).
+        kinds = {}
+        for n, pnl in panels.items():
+            kinds.setdefault((pnl.key, pnl.skirt), []).append(names.index(n))
+        for (key, skirt), idx in kinds.items():
+            part = obj.copy()
+            part.data = obj.data.copy()
+            bd.link(part)
+            bm = bmesh.new()
+            bm.from_mesh(part.data)
+            lay = bm.faces.layers.int.get("panel")
+            bmesh.ops.delete(bm, geom=[f for f in bm.faces if f[lay] not in idx], context="FACES")
+            bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context="VERTS")
+            bm.to_mesh(part.data)
+            bm.free()
+            part.data.attributes.remove(part.data.attributes["panel"])
+            label = {("coat", True): "coat_skirts", ("lining", True): "turnbacks"}.get((key, skirt), key)
+            part.name = part.data.name = f"{ch.name}.{label}"
+            finish(part, ch, skirt)
+            ch.add("clothes", part, key, symmetric=True)
+            made[part.name] = key
+        bpy.data.objects.remove(obj)
+        stats[g] = {"sim_s": round(dt, 2), "sew": len(sew), "welded": welded, "verts_sim": len(verts),
+                    "longest_edge_m": round(longest, 3)}
+        for o in ch.layers["clothes"]:
+            if o.name in made:
+                _collision(o)
+    for o in list(ch.layers["clothes"]) + [ch.flesh]:
+        _collision(o, False)
+    return made
+
+
+def hide_skin(ch, garments, depth=0.012, reach=0.06):
+    """Pushes the skin that lies under the garments `depth` towards the bones (it stays for
+    decay and cuts but cannot poke through)."""
+    fm = ch.flesh.data
+    polys, verts = [], []
+    for o in garments:
+        base = len(verts)
+        verts += [v.co.copy() for v in o.data.vertices]
+        polys += [[base + i for i in p.vertices] for p in o.data.polygons]
+    if not polys:
+        return 0
+    tree = BVHTree.FromPolygons(verts, polys)
+    seg = am.segments(ch.arm)
+    bones = [ch.prefix + b for b in rig.BODY_BONES if not b.startswith(("hand", "head", "index", "middle", "ring",
+                                                                        "pinky", "thumb"))]
+    n = 0
+    hs = bd.homes(ch.flesh)
+    for v, h in zip(fm.vertices, hs):
+        if h not in bones or h.endswith(("neck",)):
+            continue
+        hit = tree.ray_cast(v.co + v.normal * 0.001, v.normal, reach)
+        if hit[0] is None:
+            continue
+        q = bd.seg_point(v.co, *seg[h])
+        d = v.co - q
+        if d.length > depth * 2:
+            v.co = q + d * ((d.length - depth) / d.length)
+            n += 1
+    fm.update()
+    return n
+
+
+def surface(objs, name):
+    """A mesh joining `objs` (rest pose), for straps laid over the garments."""
+    bm = bmesh.new()
+    for o in objs:
+        bm.from_mesh(o.data)
+    me = bpy.data.meshes.new(name)
+    bm.to_mesh(me)
+    bm.free()
+    return bpy.data.objects.new(name, me)

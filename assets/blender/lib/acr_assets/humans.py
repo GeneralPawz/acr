@@ -16,7 +16,8 @@ from . import decay, detail, heads, limb, mbody, project, rig
 # Layer order (#178) and the decay layer of every material key a unit may use.
 LAYER_OF = {
     "skin": "flesh", "hair": "hair", "bone": "bone",
-    "coat": "wool", "tunic": "wool", "sash": "wool", "cloak": "wool",
+    "coat": "wool", "tunic": "wool", "sash": "wool", "cloak": "wool", "facings": "wool", "lining": "wool",
+    "stock": "leather",
     "waistcoat": "linen", "breeches": "linen", "shirt": "linen", "stockings": "linen",
     "gaiters": "leather", "belts": "leather", "hat": "leather", "boots": "leather", "shoes": "leather",
     "cartridge": "leather", "knapsack": "leather", "saddle": "leather", "tack": "leather",
