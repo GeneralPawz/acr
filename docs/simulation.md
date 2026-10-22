@@ -233,6 +233,9 @@ The planner `Place` (0x4ab607) builds the slots for a group move:
 - The facing is the vector from the target back to the group centre.
 
 Each unit then routes on its own with `SmartSendTo` and its offset.
+With a direction (a right-drag), each free unit gets a turn order after the move (0x41bfdb
+with order type 2, link 0x41bd0d): it turns by `ROTATE` per tick until within `ROTATE` of
+the direction (not for transports, `NEWSHEEPS` ships or buildings).
 
 ## Motion
 
@@ -557,7 +560,7 @@ The states (`Unit` fields; `states.rs`):
 | state | field | effect |
 |---|---|---|
 | hold fire | `NoSearchVictim` (OB+0x25 bit1) | no `SearchVictim`; attacks below 0x80 have no effect |
-| stand ground | OB+0x25 bit4 | `AttackObjLink` drops a target out of range (0x5204aa) instead of chasing it; group moves (0x4ac20d) end it |
+| stand ground | OB+0x25 bit4 | `AttackObjLink` drops a target out of range (0x5204aa) instead of chasing it; group moves (0x4ac20d) end it; on a `#KARE` formation (`MakeStandGroundTemp` 0x4dfe94) every member clears its orders and turns away from the members' mean position |
 | melee only | OB+0x2a bit2 | only attack index 0, except against buildings (0x51bdc6); only `ARMATTACK` types |
 | no FF avoidance | OB+0x2a bit1 | `FRIENDLYFIRE` units shoot through friends |
 | AI guard | OB+0xf2 bit2 | never searches targets; others' searches skip it unless it attacks (0x525b70) |
@@ -1180,8 +1183,8 @@ No game option writes it. How the map view draws the fog is in
     seed uses the bucket grid's width. Fleeing units walk in stance 0 (the engine runs them
     in the stance-1 motion where the type has it). The panic order's removal from the
     selection is left to the interface.
-  - Formation melee: the AI's army melee (0x43ba30) is not reproduced. Stand ground on a
-    formation does not apply its bonus or the `#KARE` outward facing. Keep positions
+  - Formation melee: the AI's army melee (0x43ba30) is not reproduced. Formations get no flag
+    bearer, so its extra attack/defence bonus is never added. Keep positions
     counts a member in place when it reached its slot's cell (as far as a walk gets).
   - Shot damage falloff uses an integer `2^(−d/dec)` (16-step table, linear interpolation)
     instead of the x87 `exp`, so values can differ by 1.
