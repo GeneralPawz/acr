@@ -50,8 +50,8 @@ the shells of #178 (`False`, the fallback).
    Quality 8, air damping 5, no self-collision. Per garment (`garments.CLOTH`): mass,
    tension, bending, shrink, and a **collision margin** that grows outwards (breeches and
    gaiters 3 mm, waistcoat 4 mm, coat 6 mm; the collider thickness of a draped garment is
-   its own margin). Pinned edges (`place["pin"]`: the gaiters' garters) stay where they
-   were placed. The shirt pieces (wristbands, stock) are not simulated.
+   its own margin). Pinned edges (`place["pin"]`: the middle half of the gaiters'
+   garters, so the seam at its ends can close) stay where they were placed. The shirt pieces (wristbands, stock) are not simulated.
 7. **Weld**: sewn pairs closer than 4.5 cm (`WELD`, about one triangle) are merged at their
    midpoint, the other sewing edges dropped. Single-sided cloth (`SOLIDIFY = False`): the
    renderer draws back faces shaded (`model.wgsl`, `front_facing`) and 2–3 mm of thickness
@@ -122,14 +122,17 @@ and breeches, black gaiters.
 
 | garment | sim | sewn pairs welded (< 4.5 cm) | within 5 mm | tris |
 |---|---|---|---|---|
-| breeches | 1.6 s | 138 / 140 | 89 | 1374 |
-| gaiters | 1.2 s | 28 / 28 | 7 | 798 |
-| waistcoat | 1.5 s | 59 / 60 | 44 | 910 |
-| coat (body, facings, skirts, turnbacks) | 3.7 s | 244 / 251 | 157 | 1389 + 256 + 958 + 60 |
+| breeches | 1.7 s | 138 / 138 | 79 | 1296 |
+| gaiters | 1.3 s | 28 / 28 | 5 | 798 |
+| waistcoat | 1.5 s | 58 / 60 | 46 | 910 |
+| coat (body, facings, skirts, turnbacks) | 3.5 s | 243 / 251 | 164 | 1390 + 257 + 864 + 60 |
 | shirt, stock | – | 6 / 6 | 2 | 88 + 104 |
 
-The whole model is 12.1k triangles (the shell version 8.0k). The build takes about
-3 minutes, most of it outside the drape.
+The whole model is 12.0k triangles (the shell version 8.0k). The build takes about
+3 minutes, most of it outside the drape. Checked: the STAND views, walk, present, reload,
+crawl, death and lying clips (sheets), the looks bench and scripted hits in the game
+(musket, cannonball, sabre to the arm, shell, a leg shot off: the ragdolls fall cleanly
+with the coat).
 
 Fast iteration: `ACR-analysis/clothing/harness/run.sh <worktree> <tag> [nosim]` runs
 `engm18.make` with the garments on the VM and renders front/side/back/three-quarter views
@@ -160,14 +163,14 @@ same attribute.
 
 ## Known problems
 
-- Not every sewn pair meets within 5 mm: in the coat 157 of 251 do, 244 within 4.5 cm
-  (welded), 7 stay open (worst: the side seam at the waist where the back narrows into the
+- Not every sewn pair meets within 5 mm: in the coat 164 of 251 do, 243 within 4.5 cm
+  (welded), 8 stay open (worst: the side seam at the waist where the back narrows into the
   pleats, 10 cm; the sleeves' front seam near the armpit, where the arm is close to the
   body; the back armhole; the collar). A stronger (100) or longer (60 frames) sewing phase
   did not help; the sleeve placement round a straight arm axis and the side pleats (not
   modelled) are the likely causes.
 - The shoulders are slightly puffed (the fold placement leaves the cloth a little high).
-- The gaiters are bulky with folds at the garter.
+- The gaiters are bulky with folds at the garter; the breeches are still a little full.
 - No hem fold; buttons and lace only as painted texture.
 - The layers are kept apart by margins at rest and by the corrective skirt weights in the
   clips; there is no per-frame push-out.

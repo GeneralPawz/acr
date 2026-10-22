@@ -40,13 +40,13 @@ MEASURE = {
 }
 
 # Ease (cm of girth) per garment over the body.
-EASE = {"waistcoat": 8.0, "coat": 20.0, "breeches": 6.0, "gaiters": 3.0, "shirt": 2.0}
+EASE = {"waistcoat": 8.0, "coat": 20.0, "breeches": 2.0, "gaiters": 3.0, "shirt": 2.0}
 
 # Wool broadcloth, linen and canvas: thickness (m) of the solidified cloth, sim settings.
 CLOTH = {
     "coat": {"thickness": 0.0030, "mass": 0.45, "tension": 18.0, "bending": 2.0, "shrink": 0.0, "margin": 0.006},
     "waistcoat": {"thickness": 0.0020, "mass": 0.30, "tension": 15.0, "bending": 0.8, "shrink": 0.05, "margin": 0.004},
-    "breeches": {"thickness": 0.0020, "mass": 0.30, "tension": 15.0, "bending": 0.6, "shrink": 0.06, "margin": 0.003},
+    "breeches": {"thickness": 0.0020, "mass": 0.30, "tension": 15.0, "bending": 0.6, "shrink": 0.08, "margin": 0.003},
     "gaiters": {"thickness": 0.0020, "mass": 0.30, "tension": 20.0, "bending": 1.0, "shrink": 0.04, "margin": 0.003},
     "shirt": {"thickness": 0.0012, "mass": 0.15, "tension": 10.0, "bending": 0.2, "shrink": 0.0, "margin": 0.002},
 }
@@ -212,14 +212,14 @@ def coat(m=MEASURE):
     drop = m["waist_to_knee"] + 2.0
     # The front edge curves away below the waist (cutaway); v rises from the hem.
     tb_top = drop * 0.45
-    fs = [(12.0, 0.0), (25.0, 0.0), (fw_w + 7.0, 0.0), (fw_w - 1.0, drop), (2.0, drop - 1.0), (0.0, drop - 8.0),
+    fs = [(12.0, 0.0), (25.0, 0.0), (fw_w + 3.0, 0.0), (fw_w - 1.0, drop), (2.0, drop - 1.0), (0.0, drop - 8.0),
           (5.0, tb_top)]
     P["skirt_front"] = Panel("skirt_front", "coat", "coat", fs,
                              {"hem_tb": (0, 1), "hem": (0, 2), "side": (2, 3), "waist": (3, 4), "front": (4, 0),
                               "front_low": (6, 0)},
                              {"region": "torso", "theta": 4.0, "dir": 1, "u0": 0.0, "at": "waist", "lift": -drop,
                               "gap": 4.0}, skirt=True)
-    bs = [(0.0, 0.0), (bw_w + 9.0, 0.0), (bw_w, drop), (0.0, drop)]
+    bs = [(0.0, 0.0), (bw_w + 4.0, 0.0), (bw_w, drop), (0.0, drop)]
     P["skirt_back"] = Panel("skirt_back", "coat", "coat", bs,
                             {"hem": (0, 1), "side": (1, 2), "waist": (2, 3), "vent": (3, 0)},
                             {"region": "torso", "theta": 180.0, "dir": -1, "u0": 0.0, "at": "waist",
@@ -326,7 +326,7 @@ def breeches(m=MEASURE):
     rise = 27.0  # crotch to waist
     leg = m["waist_to_knee"] - rise + 3.0  # crotch to the knee band
     P = {}
-    fwid_t, fwid_k = half_thigh * 0.48, half_knee * 0.5
+    fwid_t, fwid_k = half_thigh * 0.45, half_knee * 0.5
     fr = [(0.0, 0.0), (fwid_k * 2, 0.0), (fwid_t * 2, leg), (q_seat, leg + rise * 0.55),
           (q_waist, leg + rise), (3.0, leg + rise), (0.0, leg + rise - 4.0), (-4.0, leg + 3.0), (-6.0, leg)]
     # u: 0 at the inseam-front at the knee, round the front of the leg to the outside.
@@ -334,7 +334,7 @@ def breeches(m=MEASURE):
                           {"knee": (0, 1), "outseam": (1, 4), "waist": (4, 5), "cf": (5, 7), "fork": (7, 8),
                            "inseam": (8, 0)},
                           {"region": "leg", "theta": -90.0, "dir": 1, "u0": 0.0, "at": "knee", "gap": 1.0})
-    bwid_t, bwid_k = half_thigh * 0.52, half_knee * 0.5
+    bwid_t, bwid_k = half_thigh * 0.50, half_knee * 0.5
     bk = [(0.0, 0.0), (-bwid_k * 2, 0.0), (-bwid_t * 2, leg), (-q_seat - 1.0, leg + rise * 0.55),
           (-q_waist + 1.0, leg + rise + 3.0), (-2.0, leg + rise + 5.0), (2.0, leg + rise * 0.3), (9.0, leg - 1.0)]
     bk = [(u, v) for u, v in bk][::-1]  # counter-clockwise

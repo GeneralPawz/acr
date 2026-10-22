@@ -694,8 +694,12 @@ def dress(ch, garments=gm.ORDER, report=None):
         obj = bd.link(bpy.data.objects.new(f"{ch.name}.{g}.drape", me))
         # Pinned edges (`place["pin"]`: the gaiters' garters) stay where they were placed.
         seam_v = {x for pr in sew for x in pr}
-        pins = [i for key, pc in pieces.items() if isinstance(key, tuple) and pc.panel.place.get("pin")
-                for i in pc.edge(pc.panel.place["pin"]) if i not in seam_v]
+        # Only the middle half of the edge: its ends must be free to close their seams.
+        pins = []
+        for key, pc in pieces.items():
+            if isinstance(key, tuple) and pc.panel.place.get("pin"):
+                e = pc.edge(pc.panel.place["pin"])
+                pins += [i for i in e[len(e) // 4:len(e) - len(e) // 4] if i not in seam_v]
         if pins:
             obj.vertex_groups.new(name="acr_pin").add(pins, 1.0, "REPLACE")
         fa = me.attributes.new("panel", "INT", "FACE")
