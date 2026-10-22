@@ -29,6 +29,9 @@ pub struct ObjectsView {
     dynamic_units: bool,
     /// Sprites to merge into the scene this frame, see [`ObjectsView::set_dynamic`].
     dynamic: Vec<SceneSprite>,
+    /// Packs requested by [`ObjectsView::want_units`] that have not arrived yet; the atlas
+    /// is rebuilt once they are all there.
+    late_packs: Vec<String>,
 }
 
 impl Default for ObjectsView {
@@ -49,6 +52,7 @@ impl ObjectsView {
             shown: true,
             dynamic_units: false,
             dynamic: Vec::new(),
+            late_packs: Vec::new(),
         }
     }
 
@@ -62,6 +66,18 @@ impl ObjectsView {
     /// the original draw order. Their frames must be among the uploaded ones.
     pub fn set_dynamic(&mut self, sprites: Vec<SceneSprite>) {
         self.dynamic = sprites;
+    }
+
+    /// Loads the packs of object types that appear during the game (produced units, placed
+    /// buildings), given as map unit ids; the atlas is rebuilt with them once they arrived.
+    pub fn want_units<'a>(&mut self, ids: impl IntoIterator<Item = &'a str>, load: Loader<'_>) {
+        if !self.assets.definitions_ready() {
+            return;
+        }
+        for pack in self.assets.packs_for_units(ids) {
+            load(&pack);
+            self.late_packs.push(pack);
+        }
     }
 
     /// The loaded definitions and packs.
@@ -90,7 +106,17 @@ impl ObjectsView {
         for more in self.assets.add_file(path, bytes) {
             load(&more);
         }
+        self.late_pack_done(path);
         ours
+    }
+
+    /// A late pack arrived or failed: rebuild the atlas when none is missing any more.
+    fn late_pack_done(&mut self, path: &str) {
+        let before = self.late_packs.len();
+        self.late_packs.retain(|p| p != path);
+        if before > 0 && self.late_packs.is_empty() {
+            self.atlas = None;
+        }
     }
 
     /// Whether `path` is a file this layer asked for.
@@ -100,6 +126,7 @@ impl ObjectsView {
 
     pub fn on_failed(&mut self, path: &str) {
         self.assets.file_failed(path);
+        self.late_pack_done(path);
     }
 
     /// Forgets the scene of the previous map.

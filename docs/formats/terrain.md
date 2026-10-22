@@ -170,8 +170,14 @@ random vertex lift of the terrain is not applied to objects.
 Buildings declare per animation part how it sorts (`LINESORT #STANDLO GROUND LINE x1 y1 x2 y2
 …`): `GROUND` parts go to the flat list, `LINE` parts sort against a line in frame
 coordinates. The flush compares items with lines specially (flags 0x2000 in the bucket loop);
-here a line part sorts at `y/2 + (y1 + y2)/2`, which keeps trees and units behind a building
-behind it.
+here a line part sorts at `y/2 + LOCATION.y + (y1 + y2)/2`, which keeps trees and units behind
+a building behind it.
+
+**Building pictures** start at the building's position plus `LOCATION x y` (the corner of the
+picture rectangle `LOCATION x y w h`; `USERLC` offsets of buildings are 0). The placement
+preview 0x4bdd8e draws the frames at `RealX/16 + LOCATION.x`, `RealY/32 + LOCATION.y −
+height`, and the lock cells (from `(RealX + 16a) >> 8`) and `RECTANGLE` are centred on the
+same point.
 
 **Idle frames.** Map units (`UNI3` id `EngM18(EN)`) resolve to the `.MD` with `NAME EngM18`
 (the parenthesis is the nation). Buildings show all parts of `#STANDLO`, units the first frame
