@@ -782,15 +782,19 @@ sum of its four neighbours (centre excluded). This spreads the stamps and decays
 
 **Use:**
 - Overlay shade `v ≥ 1500 → 5` (clear), `1500 − v ≤ 300 → 5 + (1500 − v)·153/300`, else 158
-  (black) (`Fog::shade`).
+  (black) (`Fog::shade`): a row of `AGEW_1DR.GRD`, which leaves rows below 64 alone.
 - The minimap is black where `v ≤ 1300`.
 - `GetFogSpotVisibility` returns `v ≥ 900` (`Fog::visible`).
 - Enemy units are drawn normally; only the overlay hides them.
 
-**Switches in the original:**
-- the `F` hotkey and the cheats `qwe`/`viewall`;
-- a skirmish "no fog" option (tens digit of the packed options);
+**Switches in the original** (`0x775e18`, set at game start):
+- the map editor's `F` key (0x4a424c, the editor's key handler) and the chat cheats
+  `qwe` (off) and `viewall` (toggle);
+- the replay rows `REP_FOG`/`REP_NOFOG` of the "M" drop-down;
 - in multiplayer, a defeated player sees the whole map.
+
+No game option writes it. How the map view draws the fog is in
+[ui.md](ui.md#fog-of-war-0x485606-0x485a3c-0x485d2d).
 
 ## Using the simulation
 

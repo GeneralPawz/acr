@@ -90,6 +90,13 @@ impl GroundAssets {
         self.shade.lookup(row as u8, self.tiles.texel(tile, 0, 0))
     }
 
+    /// Per darkness row of `0\AGEW_1DR.GRD`, the opacity of black it amounts to with the
+    /// terrain palette (rows past the table are black), for the fog overlay.
+    pub fn fog_darkness(&self) -> [f32; crate::fog::ROWS] {
+        let fitted = self.shade.darkness(&self.palette);
+        std::array::from_fn(|row| fitted.get(row).map_or(1.0, |&d| d as f32))
+    }
+
     /// 256 textures of 64 × 64, 8 per row (indices past the file read texture 0).
     fn tile_atlas(&self) -> Vec<u8> {
         let mut out = vec![0; 512 * 2048];

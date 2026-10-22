@@ -462,6 +462,18 @@ impl MissionLink {
     }
 
     /// Files requested while running (AI DLLs started by the mission).
+    /// The script's light spots (`SetLightSpot`) for the fog: `(x, y, kind)` of the used
+    /// slots (x ≠ 0, as 0x55a2f1 checks); kinds outside 0..=7 stamp like 8.
+    pub fn light_spots(&self) -> [Option<(i32, i32, u8)>; acr_mission::state::LIGHT_SPOTS] {
+        let mut out = [None; acr_mission::state::LIGHT_SPOTS];
+        if let Some(scripts) = &self.scripts {
+            for (o, l) in out.iter_mut().zip(scripts.state().light_spots.iter()) {
+                *o = (l.x != 0).then_some((l.x, l.y, u8::try_from(l.kind).unwrap_or(8)));
+            }
+        }
+        out
+    }
+
     pub fn take_requests(&mut self) -> Vec<String> {
         std::mem::take(&mut self.new_requests)
     }

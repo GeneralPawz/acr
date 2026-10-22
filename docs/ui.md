@@ -497,8 +497,50 @@ The order is given when the button is released (0x4c4dad); a press only starts t
   each 2 × 2 block of pixels whose fog cell (`FogMap` 0x7b7b28, 128 px cells) is 1300 or
   less becomes palette colour 0. There is no explored state. It is drawn while fog is on
   (`0x775e18`) and the player has not been defeated. ACR keeps the local player's
-  `acr_sim::fog::Fog`, stamps and blurs it every tick, and shows it only on the minimap;
-  the map view has no fog yet.
+  `acr_sim::fog::Fog` and stamps and blurs it every tick; see [Fog of war](#fog-of-war-0x485606-0x485a3c-0x485d2d)
+  for the map view.
+
+### Fog of war (0x485606, 0x485a3c, 0x485d2d)
+
+`acr_render::fog` draws it, `ingame.rs` (`fog_shades`) feeds it. The grid itself is
+described in [simulation.md](simulation.md#fog-of-war).
+
+- When (0x4bee1e): after the world, i.e. terrain, objects, selection brackets, life bars,
+  `CursGo`, the inaccessible areas and the building preview, and before the interface
+  (minimap, icons, panels, texts). Only while fog is on (`0x775e18`), `0x6e45c8` ≠ 1 and
+  bit 0 of the local nation's byte `+0x111c8d1` is clear (the same test hides the minimap
+  fog and mutes sounds; its meaning is not traced). The blur (0x483c2a) runs just before
+  it while `0x668f22` is set and `0x6b8b04`, `0x1100a70` are clear.
+- Normal view: 0x485606 spreads the fog cells over a table of screen cell corners
+  (`0x75de10`, 128 per row; a screen cell is 32 × 16 screen pixels, i.e. 32 × 32 map
+  pixels). Each fog cell gives its 4 × 4 corners from its own four corner values by
+  midpoints, rounded down at each step: edge midpoints `(a + b) >> 1`, the centre
+  `(a + b + c + d) >> 2`, then the midpoints of those (`acr_render::fog::split`). Fog cell
+  `(gx, gy)` is the corner at screen `(128·(gx − 3), 64·(gy − 3))` in map coordinates: the
+  fog follows the ground plane, not the height.
+- 0x485a3c turns each corner into a darkness row with 0x484e63 (`5` from 1500 up,
+  `5 + (1500 − v)·153/300` down to 1200, then 158; table 0x7a9b28 built by 0x484dfb) and
+  0x4845ae fills the cell: the row is interpolated bilinearly over the 32 × 16 pixels (16.16
+  fixed point) and every pixel becomes `AGEW_1DR[row][pixel]` (`0gew_1dr.grd`, table
+  0x7abb28, all 160 rows). Rows 0..63 are the identity, 64..95 darken linearly (row
+  `64 + k` ≈ `k/32` black), 96 and up are black. A cell whose four rows are all ≤ 63 is
+  skipped, one with all ≥ 96 is filled with colour 0.
+- Zoomed-out view (0x485d2d): no midpoints; one screen cell (32 × 16 pixels, 128 × 128 map
+  pixels) per fog cell with the fog cells' own values at its corners.
+- There is no explored state and no hidden objects: enemy units are drawn normally and
+  disappear only under the black.
+- Switches: the editor's F key (0x4a424c, the key handler while `0x90da38` is set), the chat
+  cheats `qwe` (fog off) and `viewall` (toggle), the replay rows `REP_FOG`/`REP_NOFOG` of
+  the "M" drop-down, and a defeat in a multiplayer game. The game itself has no fog option.
+- Sounds (0x5868d3, also 0x586aa2 and 0x586b9c): while fog is on, a world sound at `(x, y)`
+  (screen pixels, y = map y / 2) is not played where the fog at `(x, 2y)` is below 900.
+- ACR draws it in a shader after the world overlays and before the interface: the rows at
+  the corners in view are computed on the CPU (`FogShades`), interpolated per pixel and
+  applied as black of the row's opacity fitted against the palette
+  (`GroundAssets::fog_darkness`), since sprites are blended in colour, not in palette
+  indices. The grid is aligned to the map, not to whole screen cells, so it scrolls
+  smoothly. The script's light spots (`SetLightSpot`) are stamped into the grid each tick.
+  ACR has no cheats or replays yet, so the fog is always on.
 
 ### Cursor and overlays
 
