@@ -34,6 +34,7 @@ mod save;
 mod shouts;
 mod splatter;
 mod three_d;
+mod trample;
 use crate::unit_sounds::{self, SoundEvent};
 pub use interface::{GameKey, GameMouse};
 
@@ -47,6 +48,8 @@ pub struct InGame {
     assets: Option<GroundAssets>,
     map: Option<M3dMap>,
     terrain: Option<TerrainData>,
+    /// Trampled soil (render only, #223).
+    trample: Option<trample::Trample>,
     renderer: Option<TerrainRenderer>,
     /// The fog of war over the map view.
     fog_renderer: Option<FogRenderer>,
@@ -119,6 +122,7 @@ impl InGame {
             assets: None,
             map: None,
             terrain: None,
+            trample: None,
             renderer: None,
             fog_renderer: None,
             uploaded: false,
@@ -309,6 +313,11 @@ impl InGame {
         if let (Some(renderer), Some(terrain), false) = (&mut self.renderer, &self.terrain, self.uploaded) {
             renderer.set_map(device, queue, terrain);
             self.uploaded = true;
+        }
+        if let (Some(renderer), Some(trample)) = (&self.renderer, &mut self.trample)
+            && let Some(amounts) = trample.take_upload()
+        {
+            renderer.set_trample(queue, &amounts);
         }
         self.objects.sync_gpu(device, queue, format);
         self.three_d.sync_gpu(device, queue, format);
@@ -558,6 +567,11 @@ impl InGame {
                 }
                 // The fog follows the world (once per tick, also read by the scripts).
                 self.mission.update_fog(world);
+                if let Some(terrain) = &self.terrain {
+                    self.trample
+                        .get_or_insert_with(|| trample::Trample::new(terrain.width, terrain.height))
+                        .tick(world);
+                }
             }
             self.requests.borrow_mut().extend(self.mission.take_requests());
             self.update_diplomacy(f64::from(seconds));

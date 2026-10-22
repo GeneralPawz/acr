@@ -397,6 +397,10 @@ const DEPTH_BIAS: f32 = 24.0;
 
 struct MapTextures {
     group: wgpu::BindGroup,
+    /// The per-vertex texture (tile, light, lift, zoom weight) and its data from the map,
+    /// rewritten with darker light levels where the soil is trampled.
+    vertices: wgpu::Texture,
+    base: Vec<[u8; 4]>,
     width: usize,
     height: usize,
     water: (usize, usize),
@@ -466,23 +470,45 @@ fn texture(
     format: wgpu::TextureFormat,
     data: &[u8],
 ) -> wgpu::TextureView {
-    device
-        .create_texture_with_data(
-            queue,
-            &wgpu::TextureDescriptor {
-                label: Some(label),
-                size: wgpu::Extent3d { width: size.0 as u32, height: size.1 as u32, depth_or_array_layers: 1 },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            },
-            wgpu::util::TextureDataOrder::LayerMajor,
-            data,
-        )
-        .create_view(&Default::default())
+    texture_object(device, queue, label, size, format, data).create_view(&Default::default())
+}
+
+fn texture_object(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    label: &str,
+    size: (usize, usize),
+    format: wgpu::TextureFormat,
+    data: &[u8],
+) -> wgpu::Texture {
+    device.create_texture_with_data(
+        queue,
+        &wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d { width: size.0 as u32, height: size.1 as u32, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        },
+        wgpu::util::TextureDataOrder::LayerMajor,
+        data,
+    )
+}
+
+/// Light levels a fully trampled vertex is darkened by (higher levels are darker).
+pub const TRAMPLE_DARKEN: u32 = 10;
+
+/// A vertex's data with its light darkened by trample `amount` (0..255).
+fn trampled(v: [u8; 4], amount: u8) -> [u8; 4] {
+    let [tile, light, lift, zoom] = v;
+    if light == 0 || amount == 0 {
+        return v;
+    }
+    let darker = (u32::from(light) + (u32::from(amount) * TRAMPLE_DARKEN + 127) / 255).min(31) as u8;
+    [tile, darker, lift, zoom]
 }
 
 impl TerrainRenderer {
@@ -635,6 +661,22 @@ impl TerrainRenderer {
         }
     }
 
+    /// Trampled soil (#223): darkens each vertex's light level by `amounts` (0..255 per
+    /// vertex, map order) up to [`TRAMPLE_DARKEN`] levels; bright textures (light 0) stay.
+    pub fn set_trample(&self, queue: &wgpu::Queue, amounts: &[u8]) {
+        let Some(map) = &self.map else { return };
+        if amounts.len() != map.base.len() {
+            return;
+        }
+        let data: Vec<u8> = map.base.iter().zip(amounts).flat_map(|(v, &a)| trampled(*v, a)).collect();
+        queue.write_texture(
+            map.vertices.as_image_copy(),
+            &data,
+            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4 * map.width as u32), rows_per_image: None },
+            wgpu::Extent3d { width: map.width as u32, height: map.height as u32, depth_or_array_layers: 1 },
+        );
+    }
+
     pub fn set_map(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, data: &TerrainData) {
         let heights: Vec<u8> = data.heights.iter().flat_map(|h| h.to_le_bytes()).collect();
         let vertices: Vec<u8> = data.vertices.iter().flatten().copied().collect();
@@ -644,7 +686,12 @@ impl TerrainRenderer {
         let size = (data.width, data.height);
         let cells = ((data.width - 1) / 2 * 2, data.height);
         let zoom = ((data.width - 1) / 2 * ZOOM_TRIANGLES.len(), data.height);
+        let vertex_texture =
+            texture_object(device, queue, "terrain vertices", size, wgpu::TextureFormat::Rgba8Uint, &vertices);
+        let vertex_view = vertex_texture.create_view(&Default::default());
         self.map = Some(MapTextures {
+            vertices: vertex_texture,
+            base: data.vertices.clone(),
             width: data.width,
             height: data.height,
             water: (ww, wh),
@@ -653,7 +700,7 @@ impl TerrainRenderer {
                 device,
                 &[
                     texture(device, queue, "terrain heights", size, wgpu::TextureFormat::R16Sint, &heights),
-                    texture(device, queue, "terrain vertices", size, wgpu::TextureFormat::Rgba8Uint, &vertices),
+                    vertex_view,
                     texture(device, queue, "terrain sections", cells, wgpu::TextureFormat::Rgba8Uint, &sections),
                     texture(device, queue, "terrain water", (ww, wh), wgpu::TextureFormat::R8Uint, &depth),
                     texture(device, queue, "terrain zoom layers", zoom, wgpu::TextureFormat::Rgba8Uint, &zoom_layers),
