@@ -168,10 +168,11 @@ def parts(obj):
     return [d.value for d in a.data] if a else [0] * len(obj.data.vertices)
 
 
-def derive(src, name, keep_face, offset):
+def derive(src, name, keep_face, offset, border=False):
     """A clothing shell: the faces of `src` for which keep_face(centre, normal, home, part)
     holds, pushed out by `offset` metres along the rest normals; same weights, homes and
-    parts."""
+    parts. With `border` the cut edges (not the part seams of `src`) are smoothed along
+    their curve and get a hem fold (`smooth_border`)."""
     obj = src.copy()
     obj.data = src.data.copy()
     obj.data.name = name
@@ -193,15 +194,69 @@ def derive(src, name, keep_face, offset):
         if not keep_face(f.calc_center_median(), f.normal, home, part):
             kill.append(f)
     # Push before deleting (keyed by BMVert; delete() renumbers the indices).
+    seam = {frozenset(e.verts) for e in bm.edges if e.is_boundary}
     for v in bm.verts:
         v.co += Vector(v[rn]) * offset
     bmesh.ops.delete(bm, geom=kill, context="FACES")
+    if border:
+        smooth_border(bm, src, seam, offset)
     bm.to_mesh(obj.data)
     bm.free()
     for a in list(obj.data.color_attributes):
         obj.data.color_attributes.remove(a)
     obj["acr_home_bones"] = list(src["acr_home_bones"])
     return am.bind(obj, src.parent)
+
+
+def smooth_border(bm, src, seam, offset, iterations=10, hem=0.7):
+    """Cut edges of a shell made from a decimated hull zig-zag along the triangles: relax
+    the open border along its own curve (vertices on the part seams of `src`, `seam`, stay
+    put), relax the ring inside it, put both back `offset` above the skin of `src`, then
+    fold a hem inwards (`hem` * offset) so the edge has a thickness."""
+    me = src.data
+    tree = BVHTree.FromPolygons([v.co for v in me.vertices], [p.vertices for p in me.polygons])
+
+    def lift(vs):
+        for v in vs:
+            loc, n, _i, _d = tree.find_nearest(v.co)
+            if loc is not None:
+                v.co = loc + Vector(n) * offset
+
+    def cut_edge(e):
+        return e.is_boundary and frozenset(e.verts) not in seam
+
+    # Vertices on a cut edge move; those also on a part seam's border stay put.
+    edge = [v for v in bm.verts if any(cut_edge(e) for e in v.link_edges)
+            and not any(e.is_boundary and not cut_edge(e) for e in v.link_edges)]
+    if not edge:
+        return
+    nb = {v: [e.other_vert(v) for e in v.link_edges if cut_edge(e)] for v in edge}
+    for _ in range(iterations):
+        new = {v: (v.co * 0.5 + (ns[0].co + ns[1].co) * 0.25) for v, ns in nb.items() if len(ns) == 2}
+        for v, c in new.items():
+            v.co = c
+    lift(edge)
+    eset = set(edge)
+    ring = list({w for v in edge for f in v.link_faces for w in f.verts if w not in eset and not w.is_boundary})
+    for _ in range(2):
+        bmesh.ops.smooth_vert(bm, verts=ring, factor=0.5, use_axis_x=True, use_axis_y=True, use_axis_z=True)
+    lift(ring)
+    # Hem: the cut edges extruded towards the skin.
+    cut = [e for e in bm.edges if cut_edge(e)]
+    if not cut or hem <= 0:
+        return
+    ext = bmesh.ops.extrude_edge_only(bm, edges=cut)
+    for v in (g for g in ext["geom"] if isinstance(g, bmesh.types.BMVert)):
+        loc, n, _i, _d = tree.find_nearest(v.co)
+        if loc is not None:
+            v.co = loc + Vector(n) * (offset * (1.0 - hem))
+    # Face the hem away from the cloth it folds under (seen from below the edge).
+    for f in (g for g in ext["geom"] if isinstance(g, bmesh.types.BMFace)):
+        nbr = [o for e in f.edges for o in e.link_faces if o is not f]
+        if nbr:
+            f.normal_update()
+            if f.normal.dot(f.calc_center_median() - nbr[0].calc_center_median()) < 0:
+                f.normal_flip()
 
 
 def tube(arm_obj, name, top, bottom, r_top, r_bot, gap_deg=0.0, rings=6, seg=20, flare_back=0.0,
