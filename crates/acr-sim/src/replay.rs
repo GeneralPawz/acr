@@ -209,6 +209,24 @@ impl Writer {
                 self.i(*x);
                 self.i(*y);
             }
+            Command::Build { player, units, kind, x, y } => {
+                self.0.extend_from_slice(&[11, *player]);
+                self.ids(units);
+                self.u(u64::from(kind.0));
+                self.i(*x);
+                self.i(*y);
+            }
+            Command::Repair { player, units, building } => {
+                self.0.extend_from_slice(&[12, *player]);
+                self.ids(units);
+                self.u(u64::from(building.0));
+            }
+            Command::Gather { player, units, x, y } => {
+                self.0.extend_from_slice(&[13, *player]);
+                self.ids(units);
+                self.i(*x);
+                self.i(*y);
+            }
         }
     }
 }
@@ -286,6 +304,9 @@ impl<'a> Reader<'a> {
             8 => Command::Enter { player, units: self.ids()?, building: self.id()? },
             9 => Command::Leave { player, building: self.id()? },
             10 => Command::Rally { player, building: self.id()?, x: self.i()?, y: self.i()? },
+            11 => Command::Build { player, units: self.ids()?, kind: self.kind()?, x: self.i()?, y: self.i()? },
+            12 => Command::Repair { player, units: self.ids()?, building: self.id()? },
+            13 => Command::Gather { player, units: self.ids()?, x: self.i()?, y: self.i()? },
             _ => return Err(ReplayError("unknown command")),
         })
     }
@@ -313,6 +334,9 @@ mod tests {
                 Command::Enter { player: 1, units: vec![EntityId(5)], building: EntityId(4) },
                 Command::Leave { player: 1, building: EntityId(4) },
                 Command::Rally { player: 1, building: EntityId(4), x: -3, y: 9 },
+                Command::Build { player: 1, units: vec![EntityId(5)], kind: TypeId(7), x: 100, y: 200 },
+                Command::Repair { player: 1, units: vec![], building: EntityId(4) },
+                Command::Gather { player: 1, units: vec![EntityId(5)], x: 1, y: 2 },
             ],
         );
         r.checkpoints.push((100, 0xdead_beef_0123_4567));
@@ -320,7 +344,7 @@ mod tests {
         let back = Replay::decode(&bytes).unwrap();
         assert_eq!(back, r);
         assert_eq!(back.entries.len(), 2, "empty ticks are not stored");
-        assert_eq!(back.commands_at(9).len(), 10);
+        assert_eq!(back.commands_at(9).len(), 13);
         assert!(back.commands_at(5).is_empty());
     }
 

@@ -29,8 +29,11 @@ fn lines(data: &[u8]) -> impl Iterator<Item = Vec<&str>> {
 pub struct SpriteResources {
     /// `[LOCK]`: blocking polygon per sprite id.
     pub locks: BTreeMap<String, Vec<(i32, i32)>>,
-    /// `[INTERNAL_SOURCE]`: `(resource, amount, radius)` per sprite id.
+    /// `[INTERNAL_SOURCE]`: `(resource, amount, radius)` per sprite id (mine deposits).
     pub sources: BTreeMap<String, (String, i32, i32)>,
+    /// `[SOURCES]`: `(resource, amount per work cycle, work radius)` per sprite id (trees,
+    /// fields, carcasses).
+    pub work_sources: BTreeMap<String, (String, i32, i32)>,
 }
 
 impl SpriteResources {
@@ -52,9 +55,10 @@ impl SpriteResources {
                         r.locks.insert(id, p);
                     }
                 }
-                "INTERNAL_SOURCE" => {
+                "INTERNAL_SOURCE" | "SOURCES" => {
                     if let (Some(res), Some(amount), Some(radius)) = (l.get(1), int(2), int(3)) {
-                        r.sources.insert(id, (res.to_ascii_uppercase(), amount, radius));
+                        let map = if section == "SOURCES" { &mut r.work_sources } else { &mut r.sources };
+                        map.insert(id, (res.to_ascii_uppercase(), amount, radius));
                     }
                 }
                 _ => {}
@@ -75,5 +79,8 @@ mod tests {
         );
         assert_eq!(r.locks["D60"], [(32, 61), (12, 46), (16, 30)]);
         assert_eq!(r.sources["LT129"], ("IRON".into(), 20, 32));
+        assert!(r.work_sources.is_empty());
+        let w = SpriteResources::parse(b"[SOURCES]\r\nD00 WOOD 4 30\r\n[END]\r\n");
+        assert_eq!(w.work_sources["D00"], ("WOOD".into(), 4, 30));
     }
 }

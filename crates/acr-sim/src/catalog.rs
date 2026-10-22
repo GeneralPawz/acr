@@ -68,9 +68,24 @@ impl AnimInfo {
 /// coal. Indices 6 and 7 exist in the stock arrays but are unused.
 pub const RESOURCES: [&str; 6] = ["WOOD", "GOLD", "STONE", "FOOD", "IRON", "COAL"];
 
-/// Index of a resource name (`WOOD` = 0 ... `COAL` = 5).
+/// Index of a resource name (`WOOD` = 0 ... `COAL` = 5, or `#Rn` for raw index `n`, e.g. `#R8`
+/// for meat sources).
 pub fn resource_index(name: &str) -> Option<usize> {
+    if let Some(n) = name.strip_prefix("#R").or_else(|| name.strip_prefix("#r")) {
+        return n.parse().ok().filter(|&n: &usize| n < 16);
+    }
     RESOURCES.iter().position(|r| r.eq_ignore_ascii_case(name))
+}
+
+/// One `TAKERESSTAGES RES a b c` entry: gathering source type `a`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TakeRes {
+    /// Stance while carrying (`b`).
+    pub carry: u8,
+    /// Stance while working (`c`): the work animation is `#ATTACK{c-1}`.
+    pub work: u8,
+    /// Resource credited on delivery (`RES`).
+    pub credited: usize,
 }
 
 /// Economy data of an object type.
@@ -106,6 +121,14 @@ pub struct EconomyDef {
     pub mercenary: bool,
     /// `TURNOFF`: stops working when the player runs out of gold.
     pub turn_off: bool,
+    /// `BUILDLOCKPOINTS`: cells locked while under construction (bytes, like `LOCKPOINTS`).
+    pub build_lock_points: Vec<(i32, i32)>,
+    /// `TAKERESSTAGES` by source type (0..16).
+    pub take_res: Vec<Option<TakeRes>>,
+    /// `PORTION n (RES v)*n`: load carried home, by resource index.
+    pub portion: [i32; 8],
+    /// `RESOURCEBASE n RES*n`: source types that may be delivered here (bit per type).
+    pub resource_base: u16,
 }
 
 /// A mine's production (`PRODUCER`).
@@ -122,7 +145,7 @@ fn byte_points(c: &acr_formats::defs::Command) -> Vec<(i32, i32)> {
 }
 
 fn economy(def: &UnitDef) -> EconomyDef {
-    let mut e = EconomyDef { cost_percent: 100, build_stages: 64, ..EconomyDef::default() };
+    let mut e = EconomyDef { cost_percent: 100, build_stages: 64, take_res: vec![None; 16], ..EconomyDef::default() };
     for c in &def.commands {
         match c.keyword.as_str() {
             "PRICE" => {
@@ -156,6 +179,30 @@ fn economy(def: &UnitDef) -> EconomyDef {
             "PEASANTCONVERTOR" => e.peasant_convertor = true,
             "NAEMNIK" => e.mercenary = true,
             "TURNOFF" => e.turn_off = true,
+            "BUILDLOCKPOINTS" => {
+                e.build_lock_points =
+                    c.points(0).into_iter().map(|(x, y)| (i32::from(x as u8), i32::from(y as u8))).collect()
+            }
+            "TAKERESSTAGES" => {
+                if let (Some(res), Some(a), Some(b), Some(w)) =
+                    (c.word(0).and_then(resource_index), c.int(1), c.int(2), c.int(3))
+                    && (0..16).contains(&a)
+                {
+                    e.take_res[a as usize] = Some(TakeRes { carry: b as u8, work: w as u8, credited: res });
+                }
+            }
+            "PORTION" => {
+                for (r, v) in c.word_int_pairs(0) {
+                    if let Some(i) = resource_index(r).filter(|&i| i < 8) {
+                        e.portion[i] = i32::from(v as u8);
+                    }
+                }
+            }
+            "RESOURCEBASE" => {
+                let n = c.int(0).unwrap_or(0).max(0) as usize;
+                e.resource_base =
+                    (0..n).filter_map(|i| c.word(1 + i).and_then(resource_index)).fold(0, |m, r| m | 1 << r);
+            }
             _ => {}
         }
     }

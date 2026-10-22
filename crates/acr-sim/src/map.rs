@@ -188,12 +188,17 @@ pub struct SpriteLock {
     pub source: bool,
 }
 
+/// `(source type, amount per work cycle, work radius)` of a `[SOURCES]` sprite type.
+pub type WorkSource = (u8, i32, i32);
+
 /// Blocking polygons per sprite group and type index, and the deposits' resources.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SpriteShapes {
     pub groups: BTreeMap<SpriteGroup, Vec<Option<SpriteLock>>>,
     /// `[INTERNAL_SOURCE]` resource index per sprite group and type index.
     pub sources: BTreeMap<SpriteGroup, Vec<Option<usize>>>,
+    /// `[SOURCES]`: `(source type, amount per work, radius)` per sprite group and type index.
+    pub work: BTreeMap<SpriteGroup, Vec<Option<WorkSource>>>,
 }
 
 impl SpriteShapes {
@@ -218,6 +223,21 @@ impl SpriteShapes {
             .map(|t| rsr.sources.get(&t.name.to_ascii_uppercase()).and_then(|s| crate::catalog::resource_index(&s.0)))
             .collect();
         self.sources.insert(group, sources);
+        let work = list
+            .entries
+            .iter()
+            .map(|t| {
+                let (res, amount, radius) = rsr.work_sources.get(&t.name.to_ascii_uppercase())?;
+                let kind = crate::catalog::resource_index(res)?;
+                Some((kind as u8, *amount, *radius))
+            })
+            .collect();
+        self.work.insert(group, work);
+    }
+
+    /// `(source type, amount per work, radius)` of a gathering source sprite.
+    pub fn work_source(&self, group: SpriteGroup, index: u16) -> Option<WorkSource> {
+        *self.work.get(&group)?.get(usize::from(index))?
     }
 
     /// The resource a sprite supplies to mines, if it is a deposit.

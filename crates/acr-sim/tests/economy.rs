@@ -123,3 +123,80 @@ fn peasants_in_a_mine_produce_gold() {
     assert!(w.units[mine.0 as usize].inside.is_empty());
     assert!(workers.iter().all(|&id| w.units[id.0 as usize].inside_of.is_none()));
 }
+
+const BUILDER: &str = "NAME Kri\r\nUSERLC 0 G SHADOW 0 0\r\n#STAND 9 1 0 0\r\n@MOTION_L 9 0 0 9\r\n@MOTION_R 9 0 10 19\r\n\
+    @WORK 9 0 0 21\r\n@ATTACK1 9 0 0 27\r\n#PATTACK1 9 1 0 0\r\n#UATTACK1 9 1 0 0\r\nLIFE 50\r\nGEOMETRY 1 10 40\r\n\
+    PEASANT\r\nTAKERESSTAGES WOOD 0 5 2\r\nPORTION 1 WOOD 100\r\n[END]\r\n";
+const STORE: &str = "NAME Skl\r\nBUILDING\r\nLIFE 1000\r\nLOCATION 0 0 64 64\r\nBUILDSTAGES 10\r\nPRICE 1 WOOD 100\r\n\
+    LOCKPOINTS 4 0 0 1 0 0 1 1 1\r\nBUILDLOCKPOINTS 1 0 0\r\nBUILDPOINTS 2 -2 0 3 0\r\nCONCENTRATOR 1 3 3\r\n\
+    RESOURCEBASE 1 WOOD\r\nMFARM 25\r\n[END]\r\n";
+
+fn builders() -> (World, TypeId, TypeId) {
+    let mut c = Catalog::new();
+    let kri = c.add(ObjectType::from_def("Kri(EN)", &UnitDef::parse(BUILDER.as_bytes())));
+    let skl = c.add(ObjectType::from_def("Skl(EN)", &UnitDef::parse(STORE.as_bytes())));
+    let w = World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(Formations::default()));
+    (w, kri, skl)
+}
+
+#[test]
+fn peasants_build_a_storehouse() {
+    let (mut w, kri, skl) = builders();
+    let a = w.spawn(kri, 0, Pos::from_pixels(2000, 2100), 0);
+    let b = w.spawn(kri, 0, Pos::from_pixels(2100, 2100), 0);
+    economy::census_all(&mut w);
+    let wood = w.players[0].resources[WOOD];
+    w.step(&[Command::Build { player: 0, units: vec![a, b], kind: skl, x: 2048, y: 2048 }]);
+    assert_eq!(w.players[0].resources[WOOD], wood - 100, "paid at placement");
+    let site = w.units.iter().position(|u| u.kind == skl).expect("site placed");
+    assert_eq!((w.units[site].stage, w.units[site].life), (0, 2));
+    let base = (2048 >> 4, 2048 >> 4);
+    assert!(w.map.land.check_pt(base.0, base.1), "BUILDLOCKPOINTS locked");
+    assert!(!w.map.land.check_pt(base.0 + 1, base.1 + 1), "LOCKPOINTS not yet");
+    // Two builders, one stage each per 10-tick #WORK cycle: 10 stages in about 50 ticks plus walking.
+    let mut done_at = None;
+    for t in 0..400 {
+        w.step(&[]);
+        if w.units[site].stage >= 10 {
+            done_at = Some(t);
+            break;
+        }
+        let u = &w.units[site];
+        if u.stage > 0 {
+            assert_eq!(u.life, u.stage * 1000 / 10, "life follows the stages");
+        }
+    }
+    let t = done_at.expect("finished");
+    assert!(t < 150, "finished at tick {t}");
+    assert_eq!(w.units[site].life, 1000);
+    assert!(w.map.land.check_pt(base.0 + 1, base.1 + 1), "LOCKPOINTS locked when finished");
+    economy::census_all(&mut w);
+    assert_eq!(w.players[0].housing, 25, "a finished building houses");
+}
+
+#[test]
+fn peasants_carry_wood_to_the_store() {
+    use acr_sim::gather::{Source, Sources};
+    let (mut w, kri, skl) = builders();
+    let store = w.spawn(skl, 0, Pos::from_pixels(2048, 2048), 0);
+    let _ = store;
+    let trees: Vec<Source> =
+        (0..4).map(|k| Source { x: 2400 + 40 * k, y: 2048, kind: 0, per_work: 4, radius: 30 }).collect();
+    w.sources = Arc::new(Sources::new(trees, 16384));
+    let p = w.spawn(kri, 0, Pos::from_pixels(2200, 2100), 0);
+    economy::census_all(&mut w);
+    let wood = w.players[0].resources[WOOD];
+    w.step(&[Command::Gather { player: 0, units: vec![p], x: 2400, y: 2048 }]);
+    let mut first = None;
+    for t in 0..2000 {
+        w.step(&[]);
+        if w.players[0].resources[WOOD] > wood {
+            first = Some(t);
+            break;
+        }
+    }
+    let t = first.expect("delivered");
+    assert_eq!(w.players[0].resources[WOOD], wood + 100, "a full load of 100 wood");
+    // 25 work cycles of 13 ticks (#ATTACK1, 28 frames) plus walking there and back.
+    assert!((325..700).contains(&t), "first delivery at tick {t}");
+}
