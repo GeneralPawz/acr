@@ -8,6 +8,11 @@
 //! from the height slopes through the darkness table `AGEW_1DR.GRD`; water tinted by
 //! depth through `WCOST.GRD`. Everything stays in palette indices until the last pass.
 //!
+//! The zoomed-out view (key L) draws the ground with its own rules (`MiniMap4X.cpp`,
+//! 0x5fdddd): 8 × 8-pixel triangles that take unscaled texture patches at random offsets,
+//! blend the textures of the three vertices by per-vertex random weights, shade by the
+//! vertex light, and drop every other row; see [`TerrainRenderer::zoomed`].
+//!
 //! [`TerrainData`] prepares a map on the CPU; [`TerrainRenderer`] draws it.
 
 use acr_formats::Palette;
@@ -158,10 +163,12 @@ pub struct TerrainData {
     pub width: usize,
     pub height: usize,
     heights: Vec<i16>,
-    /// Per vertex: texture, light level, random lift, 0.
+    /// Per vertex: texture, light level, random lift, zoomed-view blend weight.
     vertices: Vec<[u8; 4]>,
     /// Per cell (column pair, row): transition variants S0..S6, 0.
     sections: Vec<[u8; 8]>,
+    /// Per cell and zoomed-view triangle: base texture and two overlays ([`zoom_layers`]), 0.
+    zoom_layers: Vec<[u8; 4]>,
     water: Option<(usize, usize, Vec<u8>)>,
     /// Lowest and highest vertex height.
     pub height_range: (i32, i32),
@@ -187,7 +194,7 @@ impl TerrainData {
                 } else {
                     vertex_light(&heights.cells, width, v)
                 };
-                [tile, light, lift(v, tile), 0]
+                [tile, light, lift(v, tile), zoom_weight(&assets.random, v)]
             })
             .collect();
         // Without SECT the engine picks variants from the random table (0x44864B).
@@ -198,6 +205,16 @@ impl TerrainData {
         let sections = (0..cells_per_row * height)
             .map(|cell| std::array::from_fn(|k| if k < 7 { section(cell * 6 + k) } else { 0 }))
             .collect();
+        let tile = |v: usize| textures.cells.get(v).copied().unwrap_or(0);
+        let zoom_layers = (0..cells_per_row * height)
+            .flat_map(|cell| {
+                let v = cell / cells_per_row * width + cell % cells_per_row * 2;
+                ZOOM_TRIANGLES.map(|t| {
+                    let [base, a, b] = zoom_layers(t.vertices.map(|(dx, dy)| tile(v + dx + dy * width)));
+                    [base, a, b, 0]
+                })
+            })
+            .collect();
         let water = map.water.as_ref().map(|w| (w.depth.width, w.depth.height, w.depth.cells.clone()));
         let range =
             heights.cells.iter().fold((i32::MAX, i32::MIN), |(lo, hi), &h| (lo.min(h.into()), hi.max(h.into())));
@@ -207,6 +224,7 @@ impl TerrainData {
             heights: heights.cells.clone(),
             vertices,
             sections,
+            zoom_layers,
             water,
             height_range: range,
             playable: size.playable_size(),
@@ -299,6 +317,49 @@ pub fn vertex_light(heights: &[i16], width: usize, v: usize) -> u8 {
     (32 - b) as u8
 }
 
+/// Blend weight of vertex `v` in the zoomed-out view: `RANDOM.LST[v & 0x1fff] & 0x7f`
+/// (0x5fa44a). A texture weighs `255 − weight` at its own vertices and `weight` at the
+/// others.
+pub fn zoom_weight(random: &RandomTable, v: usize) -> u8 {
+    (random.get(v) & 0x7F) as u8
+}
+
+/// One triangle of a cell in the zoomed-out view (0x5fdddd).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ZoomTriangle {
+    /// Vertices P1, P2, P3 as `(column, row)` offsets from the cell's top-left vertex.
+    pub vertices: [(usize, usize); 3],
+    /// The vertex whose light is used at each corner.
+    pub lights: [(usize, usize); 3],
+    /// Points left (◁, drawn by 0x5fa936) instead of right (▷, 0x5fa3cc).
+    pub left: bool,
+}
+
+/// The four triangles of a cell in drawing order (0x5fe443..0x5fe5f2). P1 and P2 form
+/// the vertical edge, P3 is the apex. The fourth call passes the light of `v + W + 1` for
+/// P2 instead of its own; that is kept (`vs_zoom` in `terrain.wgsl` has the same table).
+pub const ZOOM_TRIANGLES: [ZoomTriangle; 4] = [
+    ZoomTriangle { vertices: [(0, 0), (0, 1), (1, 1)], lights: [(0, 0), (0, 1), (1, 1)], left: false },
+    ZoomTriangle { vertices: [(1, 0), (1, 1), (2, 0)], lights: [(1, 0), (1, 1), (2, 0)], left: false },
+    ZoomTriangle { vertices: [(1, 0), (1, 1), (0, 0)], lights: [(1, 0), (1, 1), (0, 0)], left: true },
+    ZoomTriangle { vertices: [(2, 0), (2, 1), (1, 1)], lights: [(2, 0), (1, 1), (1, 1)], left: true },
+];
+
+/// Textures a zoomed-view triangle with vertex textures `[a, b, c]` (P1, P2, P3) draws
+/// (0x5fa3cc, 0x5fa936): the smallest index as base, then up to two overlays in the
+/// original's order. An overlay equal to the base is absent.
+pub fn zoom_layers([a, b, c]: [u8; 3]) -> [u8; 3] {
+    let (base, first, second) = if a <= b && a <= c {
+        (a, b, c)
+    } else if b <= c && b <= a {
+        (b, a, c)
+    } else {
+        (c, b, a)
+    };
+    let second = if second == first { base } else { second };
+    [base, first, second]
+}
+
 /// What part of the map to show.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Camera {
@@ -340,7 +401,13 @@ struct Target {
 }
 
 pub struct TerrainRenderer {
+    /// Draws the zoomed-out view's ground (key L, `MiniMap4X.cpp`) instead of the normal
+    /// one. The original renders it per 32 × 32-pixel block into a cache (0x5ffbd6 →
+    /// 0x5fdddd) and copies the cached blocks to the screen (0x5fb93e); here it is drawn
+    /// every frame.
+    pub zoomed: bool,
     ground_pipeline: wgpu::RenderPipeline,
+    zoom_pipeline: wgpu::RenderPipeline,
     present_pipeline: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
     target_layout: wgpu::BindGroupLayout,
@@ -355,6 +422,20 @@ pub struct TerrainRenderer {
 }
 
 const GROUND_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Uint;
+
+/// Size of the ground target for an output of `size` pixels and the target pixels per
+/// original pixel: the ground is drawn at original resolution when zoomed in, else at
+/// output size, within `max` pixels. The zoomed-out view draws twice the rows and keeps
+/// every other one (0x5fe62f).
+fn target_size(size: [f32; 2], scale: f32, zoomed: bool, max: u32) -> ((u32, u32), f32) {
+    let rows = if zoomed { 2.0 } else { 1.0 };
+    let needed = |r: f32| ((size[0] / scale * r).ceil(), (size[1] / scale * r * rows).ceil());
+    let mut ratio = scale.min(1.0);
+    let (w, h) = needed(ratio);
+    ratio *= (max as f32 / w.max(h)).min(1.0);
+    let (w, h) = needed(ratio);
+    (((w as u32).clamp(1, max), (h as u32).clamp(1, max)), ratio)
+}
 
 fn texture(
     device: &wgpu::Device,
@@ -425,6 +506,7 @@ impl TerrainRenderer {
                 tex(6, uint),
                 tex(7, uint),
                 tex(8, wgpu::TextureSampleType::Float { filterable: false }),
+                tex(9, uint),
             ],
         });
         let target_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -469,6 +551,7 @@ impl TerrainRenderer {
             })
         };
         let ground_pipeline = pipeline("terrain ground", &ground_layout, "vs_ground", "fs_ground", GROUND_FORMAT);
+        let zoom_pipeline = pipeline("terrain zoomed", &ground_layout, "vs_zoom", "fs_zoom", GROUND_FORMAT);
         let present_pipeline = pipeline("terrain present", &present_layout, "vs_full", "fs_present", output);
 
         let r8 = wgpu::TextureFormat::R8Uint;
@@ -480,7 +563,9 @@ impl TerrainRenderer {
         let rgba: Vec<u8> = assets.palette.0.iter().flat_map(|&[r, g, b]| [r, g, b, 255]).collect();
         let palette = texture(device, queue, "terrain palette", (256, 1), palette_format, &rgba);
         Self {
+            zoomed: false,
             ground_pipeline,
+            zoom_pipeline,
             present_pipeline,
             layout,
             target_layout,
@@ -499,9 +584,11 @@ impl TerrainRenderer {
         let heights: Vec<u8> = data.heights.iter().flat_map(|h| h.to_le_bytes()).collect();
         let vertices: Vec<u8> = data.vertices.iter().flatten().copied().collect();
         let sections: Vec<u8> = data.sections.iter().flatten().copied().collect();
+        let zoom_layers: Vec<u8> = data.zoom_layers.iter().flatten().copied().collect();
         let (ww, wh, depth) = data.water.clone().unwrap_or((1, 1, vec![0]));
         let size = (data.width, data.height);
         let cells = ((data.width - 1) / 2 * 2, data.height);
+        let zoom = ((data.width - 1) / 2 * ZOOM_TRIANGLES.len(), data.height);
         self.map = Some(MapTextures {
             width: data.width,
             height: data.height,
@@ -514,13 +601,15 @@ impl TerrainRenderer {
                     texture(device, queue, "terrain vertices", size, wgpu::TextureFormat::Rgba8Uint, &vertices),
                     texture(device, queue, "terrain sections", cells, wgpu::TextureFormat::Rgba8Uint, &sections),
                     texture(device, queue, "terrain water", (ww, wh), wgpu::TextureFormat::R8Uint, &depth),
+                    texture(device, queue, "terrain zoom layers", zoom, wgpu::TextureFormat::Rgba8Uint, &zoom_layers),
                 ],
             ),
         });
     }
 
-    /// Binds the map textures (heights, vertices, sections, water) with the shared ones.
-    fn bind_group(&self, device: &wgpu::Device, map: &[wgpu::TextureView; 4]) -> wgpu::BindGroup {
+    /// Binds the map textures (heights, vertices, sections, water, zoom layers) with the
+    /// shared ones.
+    fn bind_group(&self, device: &wgpu::Device, map: &[wgpu::TextureView; 5]) -> wgpu::BindGroup {
         fn view(binding: u32, view: &wgpu::TextureView) -> wgpu::BindGroupEntry<'_> {
             wgpu::BindGroupEntry { binding, resource: wgpu::BindingResource::TextureView(view) }
         }
@@ -537,6 +626,7 @@ impl TerrainRenderer {
                 view(6, &self.tables),
                 view(7, &map[3]),
                 view(8, &self.palette),
+                view(9, &map[4]),
             ],
         })
     }
@@ -575,13 +665,7 @@ impl TerrainRenderer {
         size: [f32; 2],
         camera: &Camera,
     ) {
-        // The ground is drawn at original resolution when zoomed in, else at output size.
-        let needed = |r: f32| ((size[0] / camera.scale * r).ceil(), (size[1] / camera.scale * r).ceil());
-        let mut ratio = camera.scale.min(1.0);
-        let (w, h) = needed(ratio);
-        ratio *= (self.max_size as f32 / w.max(h)).min(1.0);
-        let (w, h) = needed(ratio);
-        let target_size = ((w as u32).clamp(1, self.max_size), (h as u32).clamp(1, self.max_size));
+        let (target_size, ratio) = target_size(size, camera.scale, self.zoomed, self.max_size);
         self.ensure_target(device, target_size);
         let Some(map) = &self.map else {
             clear_pass(encoder, output, wgpu::Color::BLACK);
@@ -604,14 +688,14 @@ impl TerrainRenderer {
             camera: [camera.x, camera.y, camera.scale, ratio],
             sizes: [target_size.0 as f32, target_size.1 as f32, size[0], size[1]],
             cells: [cp0, row0, ncp.max(1), map.width as i32],
-            map: [map.height as i32, map.water.0 as i32, map.water.1 as i32, 0],
+            map: [map.height as i32, map.water.0 as i32, map.water.1 as i32, i32::from(self.zoomed)],
         };
         queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
         let target = self.target.as_ref().expect("target created above");
         {
             let mut pass = clear_pass(encoder, &target.view, wgpu::Color::TRANSPARENT);
             if ncp > 0 && nrows > 0 {
-                pass.set_pipeline(&self.ground_pipeline);
+                pass.set_pipeline(if self.zoomed { &self.zoom_pipeline } else { &self.ground_pipeline });
                 pass.set_bind_group(0, &map.group, &[]);
                 pass.draw(0..(ncp * nrows * 12) as u32, 0..1);
             }
@@ -659,6 +743,7 @@ mod tests {
             heights,
             vertices: Vec::new(),
             sections: Vec::new(),
+            zoom_layers: Vec::new(),
             water: None,
             height_range: (0, 0),
             playable: 15360,
@@ -692,6 +777,54 @@ mod tests {
         for (x, y) in [(64, 320), (64 + 16, 320), (96, 336), (100, 1000)] {
             assert!((ramp.height_at(x, y) - y / 4).abs() <= 1, "({x}, {y}): {}", ramp.height_at(x, y));
         }
+    }
+
+    #[test]
+    fn zoom_layers_follow_the_original_order() {
+        // Base is the smallest texture; overlays keep the order of 0x5fa3cc.
+        assert_eq!(zoom_layers([4, 4, 4]), [4, 4, 4]);
+        assert_eq!(zoom_layers([1, 5, 3]), [1, 5, 3]);
+        assert_eq!(zoom_layers([1, 5, 5]), [1, 5, 1], "the second overlay repeats the first");
+        assert_eq!(zoom_layers([5, 1, 3]), [1, 5, 3]);
+        assert_eq!(zoom_layers([5, 3, 1]), [1, 3, 5]);
+        assert_eq!(zoom_layers([5, 5, 1]), [1, 5, 1]);
+        assert_eq!(zoom_layers([2, 2, 7]), [2, 2, 7], "an overlay equal to the base is absent");
+    }
+
+    #[test]
+    fn zoom_triangles_tile_the_cell() {
+        // In the zoomed view vertex (col, row) sits at (8 col, 8 row - 4 if col is odd).
+        let at = |(c, r): (usize, usize)| (8 * c as i32, 8 * r as i32 - if c % 2 == 1 { 4 } else { 0 });
+        let mut area = 0;
+        for t in ZOOM_TRIANGLES {
+            let [p1, p2, p3] = t.vertices.map(at);
+            assert_eq!((p1.0, p2.0 - p1.0, p2.1 - p1.1), (p2.0, 0, 8), "P1 above P2");
+            assert_eq!(p3.0 - p1.0, if t.left { -8 } else { 8 }, "apex to the side");
+            assert_eq!(p3.1 - p1.1, 4, "apex half way down");
+            area += 32;
+        }
+        assert_eq!(area, 16 * 8, "four triangles cover a 16 x 8 cell");
+        assert_eq!(ZOOM_TRIANGLES[3].lights[1], (1, 1), "the fourth triangle's light quirk");
+    }
+
+    #[test]
+    fn zoomed_target_has_twice_the_rows() {
+        let (normal, r) = target_size([800.0, 600.0], 0.25, false, 8192);
+        assert_eq!((normal, r), ((800, 600), 0.25));
+        let (zoomed, r) = target_size([800.0, 600.0], 0.25, true, 8192);
+        assert_eq!((zoomed, r), ((800, 1200), 0.25));
+        assert_eq!(target_size([800.0, 600.0], 2.0, false, 8192).0, (400, 300), "original pixels when zoomed in");
+        let (capped, r) = target_size([4000.0, 3000.0], 0.25, true, 2048);
+        assert!(capped.0 <= 2048 && capped.1 <= 2048 && r < 0.25);
+    }
+
+    #[test]
+    fn zoom_weight_is_the_random_table_low_bits() {
+        let random = RandomTable((0..0x2000u16).map(|i| i.wrapping_mul(40503)).collect());
+        for v in [0, 1, 513, 0x1FFF, 0x2000 + 5] {
+            assert_eq!(zoom_weight(&random, v), (random.get(v) & 0x7F) as u8);
+        }
+        assert_eq!(zoom_weight(&random, 0x2005), zoom_weight(&random, 5));
     }
 
     #[test]

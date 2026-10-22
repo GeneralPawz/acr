@@ -4,6 +4,7 @@
 // indices: textures composed with transition masks and the original blend tables, shaded
 // by the per-vertex light through the original darkness table. Pass 2 (`vs_full`/
 // `fs_present`) tints water by depth through WCOST.GRD and resolves the palette.
+// The zoomed-out view (key L) replaces pass 1 by `vs_zoom`/`fs_zoom` (MiniMap4X.cpp).
 
 struct Globals {
     // Camera: top-left in original screen pixels, pixels per original pixel, target scale.
@@ -12,7 +13,7 @@ struct Globals {
     sizes: vec4<f32>,
     // First column pair, first row, column pairs, vertices per row.
     cells: vec4<i32>,
-    // Vertex rows, water grid width, water grid height, unused.
+    // Vertex rows, water grid width, water grid height, zoomed-out view (1) or not (0).
     map: vec4<i32>,
 };
 
@@ -30,6 +31,8 @@ struct Globals {
 @group(0) @binding(6) var tables: texture_2d<u32>;
 @group(0) @binding(7) var water: texture_2d<u32>;
 @group(0) @binding(8) var palette: texture_2d<f32>;
+// Per cell and zoomed-view triangle (4 per cell in a row): base texture, two overlays.
+@group(0) @binding(9) var zoom_layers: texture_2d<u32>;
 @group(1) @binding(0) var ground: texture_2d<u32>;
 
 const NONE: u32 = 0xFFFFu;
@@ -252,6 +255,133 @@ fn fs_ground(in: GroundOut) -> @location(0) u32 {
     return table(512u + level, c);
 }
 
+// The zoomed-out view's ground (MiniMap4X.cpp, 0x5fdddd), into a target with twice the
+// rows: every cell is four 8 x 8-pixel triangles at a quarter of the world size (vertex
+// (col, row) at (8 col, 8 row - 4 if col is odd - max(height, 0) / 2)), drawn in order so
+// later ones cover earlier ones. Each texture is an unscaled 8 x 8 patch of its tile at a
+// random offset (0x5f7ff0): the base texture, then the overlays blended by weights
+// interpolated from the vertices, then the light (0x5f960b).
+
+struct ZoomOut {
+    @builtin(position) pos: vec4<f32>,
+    // Position in the triangle's texture patch (before the height shift), weights of
+    // overlay 1 and 2.
+    @location(0) spot: vec4<f32>,
+    @location(1) light: f32,
+    // Base texture, overlay 1, overlay 2 (= base when absent), patch offsets (4 bits each:
+    // u and v of the base, overlay 1, overlay 2).
+    @location(2) @interpolate(flat) layers: vec4<u32>,
+};
+
+fn zoom_hash(x: u32) -> u32 {
+    var h = x * 747796405u + 2891336453u;
+    h = ((h >> ((h >> 28u) + 4u)) ^ h) * 277803737u;
+    return (h >> 22u) ^ h;
+}
+
+@vertex
+fn vs_zoom(@builtin(vertex_index) vi: u32) -> ZoomOut {
+    var out: ZoomOut;
+    let tri = vi / 3u;
+    let corner = vi % 3u;
+    let cell = i32(tri / 4u);
+    let kind = tri % 4u;
+    let cp = globals.cells.x + cell % globals.cells.z;
+    let row = globals.cells.y + cell / globals.cells.z;
+    let w = globals.cells.w;
+    if (row >= globals.map.x - 1) {
+        out.pos = vec4<f32>(2.0, 2.0, 0.0, 1.0);
+        return out;
+    }
+    let v = row * w + cp * 2;
+    // P1 and P2 (the vertical edge), P3 (the apex) and the vertex whose light each corner
+    // takes: ZOOM_TRIANGLES in terrain.rs.
+    var p = array<i32, 3>(v, v + w, v + w + 1);
+    var l = p;
+    var corners = array<vec2<f32>, 3>(vec2<f32>(0.0, 0.0), vec2<f32>(0.0, 8.0), vec2<f32>(8.0, 4.0));
+    switch kind {
+        case 1u: {
+            p = array<i32, 3>(v + 1, v + w + 1, v + 2);
+            l = p;
+        }
+        case 2u: {
+            p = array<i32, 3>(v + 1, v + w + 1, v);
+            l = p;
+        }
+        case 3u: {
+            p = array<i32, 3>(v + 2, v + w + 2, v + w + 1);
+            l = array<i32, 3>(v + 2, v + w + 1, v + w + 1);
+        }
+        default: {}
+    }
+    if (kind >= 2u) {
+        corners = array<vec2<f32>, 3>(vec2<f32>(8.0, 0.0), vec2<f32>(8.0, 8.0), vec2<f32>(0.0, 4.0));
+    }
+    let here = p[corner];
+    let world = vertex_pos(here);
+    let h = max(textureLoad(heights, texel_at(here), 0).r, 0) >> 1u;
+    let sx = f32(world.x) - globals.camera.x;
+    let sy = f32((world.y >> 1u) - (h << 1u)) - globals.camera.y;
+    let target_px = vec2<f32>(sx, sy * 2.0) * globals.camera.w;
+    out.pos = vec4<f32>(target_px.x / globals.sizes.x * 2.0 - 1.0, 1.0 - target_px.y / globals.sizes.y * 2.0, 0.0, 1.0);
+
+    let layers = textureLoad(zoom_layers, vec2<i32>(cp * 4 + i32(kind), row), 0);
+    let data = textureLoad(vertices, texel_at(here), 0);
+    // An overlay weighs 255 - r at the vertices with its texture and r at the others.
+    let r = f32(data.a);
+    let w1 = select(r, 255.0 - r, data.r == layers.g);
+    let w2 = select(r, 255.0 - r, data.r == layers.b);
+    out.spot = vec4<f32>(corners[corner], w1, w2);
+    out.light = f32(textureLoad(vertices, texel_at(l[corner]), 0).g);
+    // The original takes `rand() & 15` for u and v per texture and triangle.
+    out.layers = vec4<u32>(layers.r, layers.g, layers.b, zoom_hash(u32(v) * 4u + kind) & 0xFFFFFFu);
+    return out;
+}
+
+// One overlay pass (0x5f8154): the interpolated weight picks the new texel, 3/4, 1/2 or
+// 1/4 of it through AGEW_TR4/AGEW_TR, or keeps the old pixel. Between 51 and 65 the
+// original writes the value left from the previous pixel; 1/4 is used there.
+fn zoom_blend(old: u32, texel: u32, w: f32) -> u32 {
+    if (w > 190.0) {
+        return texel;
+    }
+    if (w > 153.0) {
+        return table(256u + texel, old);
+    }
+    if (w > 102.0) {
+        return table(old, texel);
+    }
+    if (w > 51.0) {
+        return table(256u + old, texel);
+    }
+    return old;
+}
+
+fn patch_offset(seed: u32, layer: u32) -> vec2<i32> {
+    let s = seed >> (layer * 8u);
+    return vec2<i32>(i32(s & 15u), i32((s >> 4u) & 15u));
+}
+
+@fragment
+fn fs_zoom(in: ZoomOut) -> @location(0) u32 {
+    let at = clamp(vec2<i32>(floor(in.spot.xy)), vec2<i32>(0, 0), vec2<i32>(7, 7));
+    let seed = in.layers.w;
+    var c = tile_texel(in.layers.x, at + patch_offset(seed, 0u));
+    if (in.layers.y != in.layers.x) {
+        c = zoom_blend(c, tile_texel(in.layers.y, at + patch_offset(seed, 1u)), in.spot.z);
+    }
+    if (in.layers.z != in.layers.x) {
+        c = zoom_blend(c, tile_texel(in.layers.z, at + patch_offset(seed, 2u)), in.spot.w);
+    }
+    // Light: row 63 + level + a random bit of AGEW_1DR.GRD; row 63 is the identity.
+    let px = vec2<u32>(in.pos.xy);
+    let level = u32(clamp(floor(in.light), 0.0, 31.0)) + (zoom_hash(px.x * 7919u + px.y * 104729u) & 1u);
+    if (level == 0u) {
+        return c;
+    }
+    return table(512u + min(level - 1u, 31u), c);
+}
+
 struct FullOut {
     @builtin(position) pos: vec4<f32>,
 };
@@ -281,13 +411,22 @@ fn hash(p: vec2<i32>) -> u32 {
 fn fs_present(in: FullOut) -> @location(0) vec4<f32> {
     let out_px = in.pos.xy;
     let scale = globals.camera.z;
-    let target_px = vec2<i32>(floor(out_px * globals.camera.w / scale));
+    let zoomed = globals.map.w == 1;
+    var target_px = vec2<i32>(floor(out_px * globals.camera.w / scale));
+    if (zoomed) {
+        // The zoomed-out view keeps every other row of its ground (0x5fe62f).
+        target_px.y *= 2;
+    }
     if (target_px.x >= i32(globals.sizes.x) || target_px.y >= i32(globals.sizes.y)) {
         return vec4<f32>(0.0, 0.0, 0.0, 1.0);
     }
     var c = textureLoad(ground, target_px, 0).r;
     // Water (0x5EF5A6): per 32 x 32 screen block, bilinear depth of grid rows 2j and 2j + 2.
-    let screen = vec2<i32>(floor(out_px / scale + globals.camera.xy));
+    // The zoomed-out view (0x5f2a89) does the same on its 8 x 8-pixel blocks, without noise.
+    var screen = vec2<i32>(floor(out_px / scale + globals.camera.xy));
+    if (zoomed) {
+        screen = (screen >> vec2<u32>(2u, 2u)) << vec2<u32>(2u, 2u);
+    }
     let gx = screen.x >> 5u;
     let gy = (screen.y >> 5u) * 2;
     let d00 = depth(gx, gy);
@@ -298,7 +437,7 @@ fn fs_present(in: FullOut) -> @location(0) vec4<f32> {
         let f = vec2<f32>(screen & vec2<i32>(31, 31)) / 32.0;
         let raw = mix(mix(f32(d00), f32(d10), f.x), mix(f32(d01), f32(d11), f.x), f.y) * 1024.0;
         var alpha = i32(clamp(raw, 0.0, 65000.0));
-        if (alpha < 65000) {
+        if (alpha < 65000 && !zoomed) {
             alpha = min(alpha + i32((hash(screen) & 0xFFFFu) >> 2u), 65000);
         }
         let level = u32(alpha >> 8u) & 0xF0u;

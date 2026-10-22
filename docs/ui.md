@@ -303,8 +303,12 @@ the defaults apply: `Zone1X/Y` = 6/6, `PropertyX/Y` = 182/6, `IconLx/Ly` = 40/40
     (`acr_render::scene::zoom_pack`) and scales the normal frame down for packs without a
     twin (ships, for example).
   - Terrain (0x5fb93e, `MiniMap4X.cpp`): a cached quarter-size picture of the ground,
-    rebuilt per 32 × 32 block when marked dirty (0x5ffbd6). Not reproduced: ACR renders
-    the normal terrain scaled down.
+    rebuilt per 32 × 32 block when marked dirty (0x5ffbd6 → 0x5fdddd): 8 × 8-pixel
+    triangles with unscaled texture patches at random offsets, the vertex textures blended
+    by random per-vertex weights, the vertex light with a random dither bit, every other
+    row kept, water without noise, and stones, holes and trees baked in (so units always
+    cover trees). ACR draws it the same way every frame (`TerrainRenderer::zoomed`); see
+    the zoomed-out view in [formats/terrain.md](formats/terrain.md).
 
 ### Unit and command icons (0x606710 builds, 0x5a9fa0 draws)
 

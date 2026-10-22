@@ -603,6 +603,7 @@ impl InGame {
         size: [f32; 2],
     ) {
         if let Some(renderer) = &mut self.renderer {
+            renderer.zoomed = self.interface.hud.zoom;
             renderer.render(device, queue, encoder, view, size, &self.camera);
         }
         self.objects.zoomed = self.interface.hud.zoom;
