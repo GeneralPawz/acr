@@ -66,6 +66,8 @@ pub struct InGame {
     sound_events: Vec<SoundEvent>,
     /// Each unit's animation and frame when its sounds were last checked.
     last_frames: HashMap<EntityId, (AnimKind, i32)>,
+    /// The tick of the last hit whose sound was chosen ([`crate::hit_sounds`]).
+    hit_cursor: u64,
     camera: Camera,
     centred: bool,
     held: HashSet<NamedKey>,
@@ -130,6 +132,7 @@ impl InGame {
             requests: RefCell::new(Vec::new()),
             sound_events: Vec::new(),
             last_frames: HashMap::new(),
+            hit_cursor: 0,
             camera: Camera { x: 0.0, y: 0.0, scale: 1.0 },
             centred: false,
             held: HashSet::new(),
@@ -577,6 +580,7 @@ impl InGame {
                 self.animation_sounds(window);
                 self.effect_sounds(ticks, &weapon_sounds, window);
                 self.born_sounds(&born, window);
+                self.hit_sounds(window);
             }
             self.ambient_ticks += ticks;
         }
@@ -652,6 +656,23 @@ impl InGame {
                 self.sound_events.push(SoundEvent { name: name.to_owned(), pan, volume });
             }
         }
+    }
+
+    /// Impact and pain sounds of the hits since the last call.
+    fn hit_sounds(&mut self, window: [f32; 2]) {
+        let Some(world) = &self.world else { return };
+        // A loaded game may start at an earlier tick, with its own hits.
+        if self.hit_cursor > world.tick.0 {
+            self.hit_cursor = 0;
+        }
+        let scale = self.camera.scale;
+        let view = [self.camera.x, self.camera.y, window[0] / scale, window[1] / scale];
+        let events = crate::hit_sounds::hit_sounds(&world.hits, self.hit_cursor, view, self.mission.fog());
+        self.hit_cursor = world.hits.back().map_or(self.hit_cursor, |h| h.tick.max(self.hit_cursor));
+        for e in &events {
+            log::debug!("hit sound {} (pan {:.2}, volume {:.2})", e.name, e.pan, e.volume);
+        }
+        self.sound_events.extend(events);
     }
 
     fn effect_sounds(&mut self, ticks: u32, shots: &[acr_sim::projectile::WeaponSound], window: [f32; 2]) {

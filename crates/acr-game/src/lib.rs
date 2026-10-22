@@ -9,6 +9,7 @@ mod canvas;
 mod diplomacy;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod drive;
+mod hit_sounds;
 mod hud;
 mod ingame;
 mod intro;

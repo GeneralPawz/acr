@@ -1,0 +1,14 @@
+Hit and pain sounds of ACR (issue #243). The original game has none; these are CC0 (public
+domain dedication, http://creativecommons.org/publicdomain/zero/1.0/) and installed as
+ACR\Sounds\ in the game folder (docs/simulation.md, "Hit and pain sounds").
+
+hit_body1-3.ogg   Kenney, "Impact Sounds" 1.0 (www.kenney.nl), CC0:
+                  impactPunch_medium_000-002.ogg, unchanged
+hit_heavy1-3.ogg  Kenney, "Impact Sounds": impactPunch_heavy_000-002.ogg, unchanged
+hit_wood1-3.ogg   Kenney, "Impact Sounds": impactWood_heavy_000-002.ogg, unchanged
+
+pain1-9.wav       HaelDB, "Male Grunt/Yelling sounds"
+                  (https://opengameart.org/content/male-gruntyelling-sounds), used under its
+                  CC0 option (offered as CC0 or OGA-BY 3.0):
+                  3grunt1-5.wav, 1yell1.wav, 1yell8.wav, 2yell1.wav, 3yell3.wav,
+                  converted to mono 22050 Hz and trimmed of silence.

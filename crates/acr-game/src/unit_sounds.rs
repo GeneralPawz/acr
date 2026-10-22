@@ -97,6 +97,8 @@ pub struct UnitSounds {
     field: Ambient,
     /// Frames left in which the land ambience stays quiet after a `DANGER` sound.
     danger: u32,
+    /// ACR's own groups (hit and pain sounds, [`crate::hit_sounds`]): name → game paths.
+    own: HashMap<String, Vec<String>>,
 }
 
 impl Default for UnitSounds {
@@ -107,15 +109,26 @@ impl Default for UnitSounds {
 
 impl UnitSounds {
     pub fn new() -> Self {
+        let own: HashMap<String, Vec<String>> = crate::hit_sounds::GROUPS
+            .iter()
+            .filter_map(|(g, _)| Some((g.to_string(), crate::hit_sounds::files(g)?)))
+            .collect();
+        let mut requests = vec![SOUND_LIST.to_owned(), NRES.to_owned()];
+        let mut samples = HashMap::new();
+        for file in own.values().flatten() {
+            samples.insert(normalize_path(file), None);
+            requests.push(file.clone());
+        }
         Self {
             list: None,
-            samples: HashMap::new(),
+            samples,
             voices: HashMap::new(),
             rng: Rng::new(0x5a1d, 3),
-            requests: vec![SOUND_LIST.to_owned(), NRES.to_owned()],
+            requests,
             sea: Ambient::default(),
             field: Ambient::default(),
             danger: 0,
+            own,
         }
     }
 
@@ -155,17 +168,23 @@ impl UnitSounds {
     /// Plays one variant of each event's group like the original's `PlayEffect`.
     pub fn play(&mut self, events: &[SoundEvent], audio: &mut Audio) {
         for event in events {
-            let Some(sound) = self.list.as_ref().and_then(|l| l.get(&event.name)) else { continue };
-            let n = sound.files.len();
+            let (files, danger) = match self.list.as_ref().and_then(|l| l.get(&event.name)) {
+                Some(sound) => (&sound.files, sound.modifiers.iter().any(|m| m.eq_ignore_ascii_case("DANGER"))),
+                None => match self.own.get(&event.name) {
+                    Some(files) => (files, false),
+                    None => continue,
+                },
+            };
+            let n = files.len();
             if n == 0 {
                 continue;
             }
-            if sound.modifiers.iter().any(|m| m.eq_ignore_ascii_case("DANGER")) {
+            if danger {
                 self.danger = DANGER_FRAMES;
             }
             let start = self.rng.below(n as u32) as usize;
             for k in 0..n {
-                let file = &sound.files[(start + k) % n];
+                let file = &files[(start + k) % n];
                 let key = normalize_path(file);
                 if self.voices.get(&key).is_some_and(|v| audio.is_playing(*v)) {
                     continue;

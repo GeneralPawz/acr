@@ -843,6 +843,19 @@ order) and draws random numbers.
   table (0x4903a2). Animation sounds (`SOUND 1 #DFIRE2 FIRE1` in `WEAPON.ADS`) start when
   `frame/2` reaches the sound's frame (0x5295eb).
 
+- **Hit and pain sounds** (ACR only, #243; `acr-game` `hit_sounds.rs`): the hits in
+  `World::hits` after the last one heard play an impact where the victim stands (placed like
+  other world sounds): musket balls, arrows, thrown weapons and grapeshot `ACR_HIT_BODY`,
+  cannonballs and shells `ACR_HIT_HEAVY`, any projectile on a building `ACR_HIT_WOOD`; a
+  soldier who survives a hit (also in melee) cries out (`ACR_PAIN`). Kills keep their
+  `#DEATH` sounds. Per tick only the 3 impacts and 1 scream nearest the view centre play,
+  and a group's variants that still play are skipped. The samples are CC0 files in the
+  repository's `assets/sounds` (sources in its `CREDITS.txt`), read as the game files
+  `ACR\Sounds\<file>`: in the game folder (natively and in the browser; `cargo xtask dist
+  --install` copies them there), natively also from `ACR_SOUNDS_DIR`, else `ACR\Sounds`
+  next to the executable, else in debug builds from `assets/sounds` itself. Missing files
+  only leave the hits silent.
+
 ### Buildings that shoot
 
 Towers, forts and Indian buildings shoot from their `EX_SHOTS`/`EX_SHOTS2` points
