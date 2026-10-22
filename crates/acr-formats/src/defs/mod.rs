@@ -10,6 +10,7 @@
 pub mod lnk;
 pub mod md;
 pub mod nds;
+pub mod nres;
 pub mod orders;
 pub mod smp;
 pub mod sounds;
