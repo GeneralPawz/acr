@@ -238,7 +238,7 @@ fn get_n_inside(api: &mut Api, c: &mut Call) -> Result<u32> {
 fn invite_unit_into_building(api: &mut Api, c: &mut Call) -> Result<u32> {
     let (Some(b), Some(u)) = (building_arg(api, c, 0)?, building_arg(api, c, 1)?) else { return Ok(0) };
     if api.world.units[b].building && !api.world.units[u].building {
-        acr_sim::economy::enter(api.world, u, b, 0x7f);
+        acr_sim::economy::enter(api.world, u, b, 0x7f, false);
     }
     Ok(0)
 }

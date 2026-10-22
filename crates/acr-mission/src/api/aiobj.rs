@@ -56,6 +56,7 @@ pub fn order_type(u: &acr_sim::Unit) -> u32 {
         Some(Order::Enter { .. }) => 0xF2,
         Some(Order::Build { .. }) => 0x59,
         Some(Order::Gather { .. }) => 0xEE,
+        Some(Order::ClearUnlimited) => 0,
     }
 }
 

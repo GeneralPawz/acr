@@ -95,7 +95,8 @@ fn take(api: &mut Api, c: &mut Call, kind: u8) -> Result<u32> {
     for id in api.members_h(g) {
         let u = &api.world.units[id.0 as usize];
         if u.orders.is_empty() && api.world.catalog.get(u.kind).peasant {
-            acr_sim::gather::take_resource(api.world, id.0 as usize, kind, 0x80);
+            let (x, y) = u.pos.pixels();
+            acr_sim::gather::take_resource(api.world, id.0 as usize, x, y, kind, 0x80, false);
         }
     }
     Ok(0)

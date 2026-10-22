@@ -58,7 +58,8 @@ fn resolve(vfs: &mut Vfs, what: &str) -> Result<MissionFiles> {
     if norm.ends_with(".M3D") {
         let m3d = M3dMap::parse(&vfs.read(what)?)?;
         let script = m3d.mission_dll.filter(|s| !s.is_empty());
-        return Ok(MissionFiles { map: what.to_owned(), script, texts: None });
+        let texts = script.as_deref().map(|s| acr_mission::map_script_texts(s).0);
+        return Ok(MissionFiles { map: what.to_owned(), script, texts });
     }
     Err(format!("{what}: not a mission id, map or script listed in Missions\\Missions.txt").into())
 }
@@ -97,7 +98,13 @@ fn mission_run(dir: &Path, what: &str, rest: &[&str]) -> Result<()> {
     let texts = files.texts.as_deref().and_then(|t| vfs.read(t).ok()).unwrap_or_default();
     let setup = ScriptSetup::default();
     let mut scripts = Scripts::new(&m3d, &world, &texts, setup);
-    scripts.set_strings(load_strings(&mut vfs));
+    let mut strings = load_strings(&mut vfs);
+    if let Some(s) = &files.script
+        && let Ok(b) = vfs.read(&acr_mission::map_script_texts(s).1)
+    {
+        strings.add(&b);
+    }
+    scripts.set_strings(strings);
     scripts.trace = trace;
     let t0 = Instant::now();
     if let Some(script) = &files.script {

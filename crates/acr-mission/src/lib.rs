@@ -513,6 +513,14 @@ impl Scripts {
     }
 }
 
+/// Text files of a script that a map names in its `.DLL` chunk (history battles): the
+/// engine replaces the extension of the DLL path with `.txt` for the pages and reads
+/// `.str` into the string table (0x5b47be..0x5b48b5). Returns `(texts, strings)`.
+pub fn map_script_texts(dll: &str) -> (String, String) {
+    let stem = dll.rfind('.').map_or(dll, |i| &dll[..i]);
+    (format!("{stem}.txt"), format!("{stem}.str"))
+}
+
 /// A one-line description of an event for logs.
 pub fn describe(e: &MissionEvent) -> String {
     let text = |t: &[u8]| {
