@@ -72,7 +72,7 @@ pub fn write_mirror(mem: &mut Memory, st: &ScriptState, world: &acr_sim::World, 
     put16(&mut b, 0x14, id.0 as u16);
     put16(&mut b, 0x1f, u.kind.0);
     // Ready (bit 0): finished; buildings under construction are not.
-    b[0x25] = u8::from(!u.building || u.stage >= t.economy.build_stages);
+    b[0x25] = u8::from(!u.building || u.stage >= world.max_stage(u));
     b[0x27] = if u.building { 0x10 } else { 0 };
     // Units inside a building are hidden and have Sdoxlo = 1.
     let hidden = u.inside_of.is_some();

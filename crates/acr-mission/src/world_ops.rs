@@ -13,9 +13,10 @@ pub fn kill(world: &mut World, id: EntityId) {
 /// with an order) of a `SLOWDEATH` type only drops to 1999 life and burns down; anything
 /// else dies. TODO(acr-sim): `SLOWDEATH` and burning; buildings stand in for the flag.
 pub fn destruct(world: &mut World, id: EntityId) {
-    let Some(u) = world.units.get_mut(id.0 as usize).filter(|u| u.living()) else { return };
-    let ready = u.stage >= world.catalog.get(u.kind).economy.build_stages;
+    let Some(u) = world.units.get(id.0 as usize).filter(|u| u.living()) else { return };
+    let ready = u.stage >= world.max_stage(u);
     if u.building && (ready || !u.orders.is_empty()) {
+        let u = &mut world.units[id.0 as usize];
         if u.life >= 2000 {
             u.life = 1999;
         }
