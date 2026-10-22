@@ -20,6 +20,8 @@ const KIND_TRANSLUCENT: u32 = 2u;
 const KIND_SHADOW_LEVELS: u32 = 3u;
 const KIND_SHADOW: u32 = 4u;
 const PLAYER_RAMP_BASE: u32 = 208u; // 0xD0
+// Kind bit of a half transparent instance (`TRANSPARENT` in lib.rs).
+const TRANSPARENT: u32 = 256u;
 
 struct Instance {
     @location(0) dst: vec4<f32>,  // screen px: x, y, w, h
@@ -55,13 +57,21 @@ fn palette_color(index: u32) -> vec3<f32> {
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    let c = layer_color(in);
+    if ((in.kind & TRANSPARENT) != 0u) {
+        return vec4<f32>(c.rgb, c.a * 0.5);
+    }
+    return c;
+}
+
+fn layer_color(in: VsOut) -> vec4<f32> {
     let texel = in.src.xy + min(vec2<u32>(in.local), in.src.zw - vec2<u32>(1u, 1u));
     let t = textureLoad(page, vec2<i32>(texel), 0);
     if (t.g == 0u) {
         discard;
     }
     let v = t.r;
-    switch in.kind {
+    switch in.kind & 255u {
         case KIND_PLAYER: {
             return vec4<f32>(palette_color(PLAYER_RAMP_BASE + 4u * in.param + v), 1.0);
         }

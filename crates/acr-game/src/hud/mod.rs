@@ -168,6 +168,8 @@ pub struct View {
     /// Camera position and view size in minimap pixels.
     pub camera: [f32; 2],
     pub view: [f32; 2],
+    /// The local player has mission messages: the drop-down offers `UM_HIST` (0x4c6cb0).
+    pub history: bool,
 }
 
 /// What the game should do after input on the interface.
@@ -186,48 +188,90 @@ pub enum HudEvent {
     GameMenu,
     /// Restart the mission (`UM_REPLAY`).
     Restart,
+    /// Give up (`UM_SURRENDER`).
+    Surrender,
+    /// Show the mission history (`UM_HIST`).
+    History,
+    /// Switch the zoomed-out view (`4XSCALE_ON`/`OFF`, 0x5fb4dd).
+    Zoom,
 }
 
-/// Rows of the "M" drop-down (built by 0x4c6840) in a single player game.
+/// The side panel (`0x1100a74`): none, the game info (key I, 1) or the unit
+/// encyclopedia (key U, 2).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Panel {
+    #[default]
+    None,
+    Game,
+    Unit,
+}
+
+/// Rows of the "M" drop-down (built by 0x4c6840) in a single player game. The tutorial
+/// rows (`TUTORIAL`, `UM_CURR`), and the multiplayer, replay and editor rows are not offered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MenuEntry {
+    /// `UM_MENU` (value 0): the game menu.
     GameMenu,
+    /// `UM_INF1`/`UM_INF2` (1): the unit encyclopedia, like key U.
     UnitInfo,
+    /// `UM_INF3`/`UM_INF4` (2): the game info, like key I.
     GameInfo,
+    /// `UM_MINI` (3): minimap size, like key M.
     Minimap,
+    /// `UI_LOCK1`/`UI_LOCK2` (4): the inaccessible areas, like key Q.
     Locks,
+    /// `UM_TRANS2`/`UM_TRANS1` (5): transparent buildings, like key O.
     Transparency,
+    /// `4XSCALE_ON`/`4XSCALE_OFF` (0x30/0x2f): the zoomed-out view, like key L.
     Zoom,
+    /// `UM_SURRENDER` (6).
     Surrender,
+    /// `UM_REPLAY` (0x25): restart.
     Restart,
+    /// `UM_HIST` (0x26): the mission history, only with messages.
+    History,
 }
 
-const MENU_ENTRIES: [MenuEntry; 9] = [
-    MenuEntry::GameMenu,
-    MenuEntry::UnitInfo,
-    MenuEntry::GameInfo,
-    MenuEntry::Minimap,
-    MenuEntry::Locks,
-    MenuEntry::Transparency,
-    MenuEntry::Zoom,
-    MenuEntry::Surrender,
-    MenuEntry::Restart,
-];
-
 impl MenuEntry {
-    fn text(self) -> &'static str {
+    /// The text: the alternative rows name what a click does.
+    fn text(self, hud: &Hud) -> &'static str {
         match self {
             Self::GameMenu => "UM_MENU",
+            Self::UnitInfo if hud.panel == Panel::Unit => "UM_INF2",
             Self::UnitInfo => "UM_INF1",
+            Self::GameInfo if hud.panel == Panel::Game => "UM_INF4",
             Self::GameInfo => "UM_INF3",
             Self::Minimap => "UM_MINI",
+            Self::Locks if hud.locks => "UI_LOCK2",
             Self::Locks => "UI_LOCK1",
+            Self::Transparency if hud.transparent => "UM_TRANS1",
             Self::Transparency => "UM_TRANS2",
+            Self::Zoom if hud.zoom => "4XSCALE_OFF",
             Self::Zoom => "4XSCALE_ON",
             Self::Surrender => "UM_SURRENDER",
             Self::Restart => "UM_REPLAY",
+            Self::History => "UM_HIST",
         }
     }
+}
+
+/// The rows of a single player game, in the order of 0x4c6840.
+fn menu_entries(view: &View) -> Vec<MenuEntry> {
+    let mut rows = vec![
+        MenuEntry::GameMenu,
+        MenuEntry::UnitInfo,
+        MenuEntry::GameInfo,
+        MenuEntry::Minimap,
+        MenuEntry::Locks,
+        MenuEntry::Transparency,
+        MenuEntry::Zoom,
+        MenuEntry::Surrender,
+        MenuEntry::Restart,
+    ];
+    if view.history {
+        rows.push(MenuEntry::History);
+    }
+    rows
 }
 
 /// The "M" button: `ResPanel` frame 2 at `RealLx − 716 − 65`, clickable strictly inside
@@ -250,6 +294,14 @@ pub struct Hud {
     pub life_bars: bool,
     minimap_dirty: bool,
     last_minimap: Option<(Placement, Vec<minimap::Dot>, Option<Rect>)>,
+    /// The side panel (`0x1100a74`), keys U and I.
+    pub panel: Panel,
+    /// The inaccessible areas are drawn (`0x90d905`, key Q).
+    pub locks: bool,
+    /// Buildings are drawn transparent (`0x90d680`, key O).
+    pub transparent: bool,
+    /// The zoomed-out view is on (`0x28eed70`, key L).
+    pub zoom: bool,
 }
 
 impl Default for Hud {
@@ -264,6 +316,10 @@ impl Default for Hud {
             life_bars: false,
             minimap_dirty: true,
             last_minimap: None,
+            panel: Panel::None,
+            locks: false,
+            transparent: false,
+            zoom: false,
         }
     }
 }
@@ -346,19 +402,46 @@ impl Hud {
         Some(Rect { x0, y0: y, x1: x0 + 2 + (ICON + ADD_ICON) * n, y1: y + ICON * 3 + 5 })
     }
 
-    fn dropdown_rows(&self, ctx: &Ctx) -> (i32, Vec<(MenuEntry, Rect)>) {
-        let width = MENU_ENTRIES.iter().map(|e| ctx.fonts.width(ctx.lib, font::WHITE, ctx.texts.get(e.text()))).max();
+    /// The rows as wide as the widest text + 24, centred on the button, from y = 60, 24
+    /// pixels apart (0x4c6840).
+    fn dropdown_rows(&self, ctx: &Ctx, view: &View) -> (i32, Vec<(MenuEntry, Rect)>) {
+        let entries = menu_entries(view);
+        let width = entries.iter().map(|e| ctx.fonts.width(ctx.lib, font::WHITE, ctx.texts.get(e.text(self)))).max();
         let width = width.unwrap_or(0) + 24;
         let (bx, _) = menu_button();
         let x = bx + 33 - width / 2;
         let rows =
-            MENU_ENTRIES.iter().enumerate().map(|(i, &e)| (e, Rect::new(x, 60 + 24 * i as i32, width, 24))).collect();
+            entries.into_iter().enumerate().map(|(i, e)| (e, Rect::new(x, 60 + 24 * i as i32, width, 24))).collect();
         (width, rows)
+    }
+
+    /// Key U or `UM_INF1/2`: the unit encyclopedia on or off.
+    pub fn toggle_unit_panel(&mut self) {
+        self.panel = if self.panel == Panel::Unit { Panel::None } else { Panel::Unit };
+        self.dropdown = false;
+    }
+
+    /// Key I or `UM_INF3/4`: the game info on or off.
+    pub fn toggle_game_panel(&mut self) {
+        self.panel = if self.panel == Panel::Game { Panel::None } else { Panel::Game };
+        self.dropdown = false;
+    }
+
+    /// Key Q or `UI_LOCK1/2`.
+    pub fn toggle_locks(&mut self) {
+        self.locks = !self.locks;
+        self.dropdown = false;
+    }
+
+    /// Key O or `UM_TRANS1/2`.
+    pub fn toggle_transparency(&mut self) {
+        self.transparent = !self.transparent;
+        self.dropdown = false;
     }
 
     /// Whether a canvas point is over a part of the interface that takes mouse input.
     pub fn covers(&self, ctx: &Ctx, view: &View, p: [f32; 2]) -> bool {
-        if self.dropdown && self.dropdown_rows(ctx).1.iter().any(|(_, r)| r.contains(p)) {
+        if self.dropdown && self.dropdown_rows(ctx, view).1.iter().any(|(_, r)| r.contains(p)) {
             return true;
         }
         let (bx, by) = menu_button();
@@ -380,15 +463,34 @@ impl Hud {
         self.mouse = Some(p);
         if self.dropdown {
             self.dropdown = false;
-            if let Some(&(entry, _)) = self.dropdown_rows(ctx).1.iter().find(|(_, r)| r.contains(p)) {
+            // The click callback 0x4c6550.
+            if let Some(&(entry, _)) = self.dropdown_rows(ctx, view).1.iter().find(|(_, r)| r.contains(p)) {
                 return match entry {
                     MenuEntry::GameMenu => HudEvent::GameMenu,
+                    MenuEntry::UnitInfo => {
+                        self.toggle_unit_panel();
+                        HudEvent::Used
+                    }
+                    MenuEntry::GameInfo => {
+                        self.toggle_game_panel();
+                        HudEvent::Used
+                    }
                     MenuEntry::Minimap => {
                         self.toggle_minimap();
                         HudEvent::Used
                     }
+                    MenuEntry::Locks => {
+                        self.toggle_locks();
+                        HudEvent::Used
+                    }
+                    MenuEntry::Transparency => {
+                        self.toggle_transparency();
+                        HudEvent::Used
+                    }
+                    MenuEntry::Zoom => HudEvent::Zoom,
+                    MenuEntry::Surrender => HudEvent::Surrender,
                     MenuEntry::Restart => HudEvent::Restart,
-                    _ => HudEvent::Used,
+                    MenuEntry::History => HudEvent::History,
                 };
             }
         }
@@ -475,7 +577,7 @@ impl Hud {
         }
         draw_resources(ctx, view, out);
         if self.dropdown {
-            self.draw_dropdown(ctx, out);
+            self.draw_dropdown(ctx, view, out);
         }
         self.draw_hint(ctx, view, &palette, out);
     }
@@ -491,8 +593,8 @@ impl Hud {
         border(ctx, out, r.x0 - 2, r.y0 - 2, r.x1 + 1, r.y1 + 1, BOX_CORNERS);
     }
 
-    fn draw_dropdown(&self, ctx: &Ctx, out: &mut Vec<Draw>) {
-        let (_, rows) = self.dropdown_rows(ctx);
+    fn draw_dropdown(&self, ctx: &Ctx, view: &View, out: &mut Vec<Draw>) {
+        let (_, rows) = self.dropdown_rows(ctx, view);
         let (Some((_, first)), Some((_, last))) = (rows.first(), rows.last()) else { return };
         border(ctx, out, first.x0 - 2, first.y0 - 2, last.x1 + 1, last.y1 + 1, BOX_CORNERS);
         for (i, (entry, r)) in rows.iter().enumerate() {
@@ -504,7 +606,7 @@ impl Hud {
             for k in 0..(r.width() + step - 1) / step {
                 out.push(Draw::game_frame(gp::BORDER, frame, r.x0 + k * step, r.y0, 0).clipped(*r));
             }
-            let text = ctx.texts.get(entry.text());
+            let text = ctx.texts.get(entry.text(self));
             let f = if hover { font::WHITE } else { font::YELLOW };
             let w = ctx.fonts.width(ctx.lib, f, text);
             out.push(Draw::game_text(f, text, r.x0 + (r.width() - w) / 2, r.y0 + 2));

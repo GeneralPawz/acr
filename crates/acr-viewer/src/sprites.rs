@@ -202,6 +202,7 @@ impl SpriteView {
             y: top - y0 as f32 * self.scale,
             scale: self.scale,
             player: self.player,
+            transparent: false,
         };
         if !self.grid {
             return vec![draw(self.frame, ((width - cell_w) / 2.0).floor(), ((height - cell_h) / 2.0).floor())];

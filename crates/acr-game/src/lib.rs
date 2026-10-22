@@ -538,6 +538,12 @@ impl ApplicationHandler<Event> for Game {
                         self.load_requested();
                     }
                     ingame::GameMouse::Restart => self.restart_game(),
+                    ingame::GameMouse::History => {
+                        if let Some(window) = game.history_window() {
+                            self.ui.open_dialog(window);
+                            self.load_requested();
+                        }
+                    }
                     ingame::GameMouse::None => {}
                 }
             }
