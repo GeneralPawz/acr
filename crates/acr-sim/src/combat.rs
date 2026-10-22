@@ -938,6 +938,7 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
     let mut record = DeathRecord {
         cause: if w.units[victim].burning { DeathCause::Burned } else { DeathCause::Unknown },
         from: None,
+        tick: 0,
     };
     if let Some(s) = sender {
         let st = catalog.get(w.units[s].kind);
@@ -970,7 +971,7 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
         }
         let kind = sa.attacks.get(usize::from(att)).map_or("MECH", |a| a.kind.as_str());
         let wf = catalog.weapon_flags(kind);
-        record = DeathRecord { cause: DeathCause::of_weapon(kind), from: Some(w.units[s].pos.pixels()) };
+        record = DeathRecord { cause: DeathCause::of_weapon(kind), from: Some(w.units[s].pos.pixels()), tick: 0 };
         if wf & GARRISON != 0 && vt.building {
             if !w.units[victim].inside.is_empty() {
                 garrison_damage(w, victim, dmg, s, att);
@@ -1186,6 +1187,9 @@ pub struct DeathRecord {
     pub cause: DeathCause,
     /// The attacker's position at the blow (world pixels).
     pub from: Option<(i32, i32)>,
+    /// The tick the unit died: the renderer keeps 3D corpses longer than the simulation
+    /// does and times their decay from it.
+    pub tick: u64,
 }
 
 /// How long hits stay in `World::hits` (ticks): long enough for the renderer to draw the
@@ -1252,7 +1256,8 @@ pub fn die(w: &mut World, i: usize) {
     if u.death != 0 || !u.alive {
         return;
     }
-    w.deaths.entry(i as u32).or_default();
+    let tick = w.tick.0;
+    w.deaths.entry(i as u32).or_default().tick = tick;
     if w.catalog.get(u.kind).command_center {
         // City+0xeb1a (0x4e7a1f): a lost command centre frightens the nation for a while.
         w.players[usize::from(u.owner) & 7].cc_lost_time = (w.tick.0 + 1) as u32;

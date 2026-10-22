@@ -164,7 +164,7 @@ pub fn starve(w: &mut World, i: usize) {
     if w.random.rando() <= 50 && !w.catalog.get(u.kind).economy.no_hungry {
         // City+0xeb16 (0x511b69): hunger frightens the nation for a while.
         w.players[usize::from(u.owner)].hungry_time = (w.tick.0 + 1) as u32;
-        let record = crate::combat::DeathRecord { cause: crate::combat::DeathCause::Hunger, from: None };
+        let record = crate::combat::DeathRecord { cause: crate::combat::DeathCause::Hunger, from: None, tick: 0 };
         crate::combat::record_death(w, i, record);
         die(w, i);
     }

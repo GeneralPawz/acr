@@ -214,6 +214,16 @@ and a fine mist (instance attribute 15 and `extra.zw`; with it the model pipelin
 16 vertex attributes WebGL2 allows). The bone layer stays clean. Units are found through a
 128 px grid. `gore=reduced` halves it, `off` removes it.
 
+#### Corpse lifetime
+
+The simulation removes a corpse after about a minute (death counter 1200, the original's
+rule), too soon for piles to grow. In 3D the renderer keeps removed corpses: their units
+stay in `World::units` (not alive) with position, facing and lying pose, and
+`DeathRecord::tick` (render only) says when they died. A corpse is drawn until
+`corpse_minutes` (settings, default 5, 1..60) of game time have passed, and its decay,
+pools and settling run on that clock (two counter steps per tick from the death, removal at
+twice the lifetime in ticks). `gore=off` keeps the original removal and fade.
+
 #### Corpse piles (#221)
 
 3D corpses that overlap lie on each other instead of through each other
