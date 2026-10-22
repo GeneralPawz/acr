@@ -37,7 +37,23 @@ struct HeldKeys {
     down: bool,
 }
 
+/// A drop of blood left by a bleeding soldier (#254): where and when.
+#[derive(Debug, Clone, Copy)]
+struct TrailDrop {
+    at: [f32; 3],
+    tick: u64,
+    seed: f32,
+}
+
+/// Ticks a blood trail drop stays (five minutes of game time), and between two drops.
+const TRAIL_LIFE: u64 = 3000;
+const TRAIL_EVERY: u64 = 10;
+
 pub struct ThreeD {
+    /// Blood trails of the bleeding (render only, #254).
+    trail: std::collections::VecDeque<TrailDrop>,
+    /// The last tick drops were added for (frames redraw a tick several times).
+    trail_tick: u64,
     models: Models,
     gore: Gore,
     /// How long 3D corpses lie (ticks, `corpse_minutes`).
@@ -110,6 +126,8 @@ impl Default for ThreeD {
             depth: None,
             instances: Vec::new(),
             pools: Vec::new(),
+            trail: std::collections::VecDeque::new(),
+            trail_tick: u64::MAX,
             shown: HashSet::new(),
             frames: 0,
             since: None,
@@ -312,7 +330,23 @@ impl ThreeD {
             let body = super::gore::Body { death, ..u.into() };
             let (wounds, pool) = super::gore::corpse(body, record, self.gore, removed_at, ground);
             self.pools.extend(pool);
-            let (inst, at) = instance(u, death, index, model, terrain, self.gore, removed_at, wounds);
+            let (mut inst, at) = instance(u, death, index, model, terrain, self.gore, removed_at, wounds);
+            // Lost legs (#254): the soldier lies prone and drags himself along, head first.
+            if u.alive && u.death == 0 && u.wounds.crawling() {
+                inst.clip = model.clip_for_animation("DEATHLIE1");
+                inst.time = 0.0;
+                inst.morphs[1] = 1.0;
+            }
+            // The bleeding leave drops of blood as they go.
+            if u.alive
+                && u.death == 0
+                && u.wounds.bleeding() > 0
+                && self.gore != Gore::Off
+                && now.is_multiple_of(TRAIL_EVERY)
+                && now != self.trail_tick
+            {
+                self.trail.push_back(TrailDrop { at, tick: now, seed: u.id.0 as f32 });
+            }
             if u.death > 0 && !u.building {
                 corpses.push((self.instances.len(), at, view3d::facing_yaw(u.dir)));
                 footprints.push(footprint(u, at, &inst, model.radius));
@@ -330,6 +364,24 @@ impl ThreeD {
         // Blood sprayed onto troops and buildings behind hit units (#220).
         for (i, sprayed) in super::splatter::sprayed_targets(&world.hits, world.tick.0, self.gore, &targets) {
             self.instances[i].sprayed = sprayed;
+        }
+        // Blood trails of the bleeding (#254): small drops that dry and fade.
+        if now.is_multiple_of(TRAIL_EVERY) {
+            self.trail_tick = now;
+        }
+        while self.trail.front().is_some_and(|d| d.tick + TRAIL_LIFE < now) {
+            self.trail.pop_front();
+        }
+        for d in &self.trail {
+            let t = now.saturating_sub(d.tick) as f32;
+            self.pools.push(BloodPool {
+                centre: d.at,
+                radius: 0.18 * PIXELS_PER_METRE,
+                age: model::ramp(t, 40.0, 900.0),
+                fade: 1.0 - model::ramp(t, TRAIL_LIFE as f32 * 0.8, TRAIL_LIFE as f32),
+                seed: (d.seed * 0.618 + d.tick as f32 * 0.1).fract() * 97.0,
+                ..Default::default()
+            });
         }
         // Corpses that overlap lie on each other (#221).
         let start = web_time::Instant::now();

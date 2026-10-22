@@ -885,6 +885,7 @@ impl World {
         crate::combat::forget_hits(self);
         self.shouts.clear();
         crate::morale::decay(self);
+        crate::wounds::bleed(self);
         for c in commands {
             self.apply(c);
         }

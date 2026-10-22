@@ -128,3 +128,60 @@ fn an_arm_wound_stops_the_musket() {
     assert!(s.pos.pixels().0 > 2100, "walked towards the target: {:?}", s.pos.pixels());
     assert!(w.units[target.0 as usize].living());
 }
+
+/// Lost limbs (#254): a soldier without a leg crawls far slower than a wounded one, every
+/// lost limb bleeds a little life away each second, and he bleeds out with his own cause.
+#[test]
+fn lost_legs_crawl_and_bleed_out() {
+    use acr_sim::combat::DeathCause;
+    let crawl = |lost: u8| {
+        let (mut w, pik, _) = setup();
+        w.rules = ON;
+        let p = w.spawn(pik, 0, Pos::from_pixels(1000, 2000), 0);
+        w.units[p.0 as usize].wounds.legs_lost = lost;
+        w.units[p.0 as usize].life = 10_000;
+        w.step(&[Command::Move { player: 0, units: vec![p], x: 4000, y: 2000 }]);
+        for _ in 0..120 {
+            w.step(&[]);
+        }
+        w.units[p.0 as usize].pos.pixels().0 - 1000
+    };
+    let (sound, one, both) = (walked(0), crawl(1), crawl(2));
+    assert!(one > 0 && one < sound / 5, "crawled {one} of {sound}");
+    assert!(both < one, "{both} {one}");
+
+    let (mut w, pik, _) = setup();
+    w.rules = ON;
+    let p = w.spawn(pik, 0, Pos::from_pixels(1000, 2000), 0);
+    w.units[p.0 as usize].wounds.legs_lost = 1;
+    let life = w.units[p.0 as usize].life;
+    for _ in 0..20 {
+        w.step(&[]);
+    }
+    let after = w.units[p.0 as usize].life;
+    assert!(after < life && after >= life - 3 * 4, "life {life} → {after}");
+    for _ in 0..2000 {
+        w.step(&[]);
+    }
+    assert!(w.units[p.0 as usize].death > 0, "bled out");
+    assert_eq!(w.deaths[&p.0].cause, DeathCause::BledOut);
+}
+
+/// Heavy blows take limbs off: cannonballs always, a musket ball rarely.
+#[test]
+fn heavy_blows_sever_limbs() {
+    use acr_sim::combat::DeathCause;
+    let (mut w, pik, _) = setup();
+    w.rules = ON;
+    let p = w.spawn(pik, 0, Pos::from_pixels(1000, 2000), 0);
+    acr_sim::wounds::wound(&mut w, p.0 as usize, HitRegion::Legs, DeathCause::Cannonball);
+    assert_eq!(w.units[p.0 as usize].wounds.legs_lost, 1);
+    let mut severed = 0;
+    for _ in 0..200 {
+        let before = w.units[p.0 as usize].wounds.arms_lost;
+        acr_sim::wounds::wound(&mut w, p.0 as usize, HitRegion::Arms, DeathCause::Gunshot);
+        severed += usize::from(w.units[p.0 as usize].wounds.arms_lost > before);
+        w.units[p.0 as usize].wounds.arms_lost = 0;
+    }
+    assert!((5..=40).contains(&severed), "gunshot severed {severed} of 200");
+}
