@@ -280,3 +280,14 @@ fn rule_off_no_body_no_injuries() {
     assert!(w.deaths.values().all(|d| d.body == Body::default() && d.torn.is_none()));
     assert!(w.hits.iter().all(|h| h.injury.is_none()));
 }
+
+/// A rider's legs do not make him crawl: the horse carries him on (the crawl clip would
+/// drag the horse along).
+#[test]
+fn a_rider_never_crawls() {
+    let mut b = Body { mounted: true, ..Body::default() };
+    limb(&mut b, LimbId::LegL).lost = KNEE + 40;
+    limb(&mut b, LimbId::LegR).lost = KNEE + 30;
+    assert!(!b.crawling() && !b.out_of_fight());
+    assert_eq!(b.move_percent(), 100);
+}

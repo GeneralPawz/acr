@@ -102,12 +102,16 @@ pub struct Body {
     pub burn: u8,
     /// The long weapon (musket, pike) was dropped; set once, the renderer leaves it lying.
     pub dropped: bool,
+    /// A rider (set at his first injury): the horse carries him, so his legs never make him
+    /// crawl or slow him (falling from the saddle comes with the body simulation, #276).
+    pub mounted: bool,
 }
 
 impl Hash for Body {
     fn hash<H: Hasher>(&self, state: &mut H) {
         if *self != Self::default() {
             (self.limbs, self.belly_open, self.head_wounds, self.chest_wounds, self.burn, self.dropped).hash(state);
+            self.mounted.hash(state);
         }
     }
 }
@@ -166,12 +170,15 @@ impl Body {
 
     /// A leg gave out: the man crawls.
     pub fn crawling(&self) -> bool {
-        self.leg(LimbId::LegL) == 0 || self.leg(LimbId::LegR) == 0
+        !self.mounted && (self.leg(LimbId::LegL) == 0 || self.leg(LimbId::LegR) == 0)
     }
 
     /// Moving speed in percent: walking on both legs, else crawling by the arms (0: he can
     /// only writhe).
     pub fn move_percent(&self) -> i32 {
+        if self.mounted {
+            return 100;
+        }
         let (l, r) = (self.leg(LimbId::LegL), self.leg(LimbId::LegR));
         if l > 0 && r > 0 {
             // min × (0.6 + 0.4 × max / 100)

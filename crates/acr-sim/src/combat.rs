@@ -1234,6 +1234,9 @@ fn injure(w: &mut World, victim: usize, sender: usize, cause: DeathCause, region
     let usage = w.catalog.get(w.units[sender].kind).role.usage;
     // FASTHORSE, HARDHORCE, HORSE-STRELOK: a rider's blow is a sabre's.
     let mounted = matches!(usage, 8 | 22 | 24);
+    if matches!(w.catalog.get(w.units[victim].kind).role.usage, 8 | 22 | 24) {
+        w.units[victim].body.mounted = true;
+    }
     let energy = w.hit_energy.unwrap_or(100);
     crate::body::injure(w, victim, crate::body::Cause::of(cause, mounted), energy, region)
 }
