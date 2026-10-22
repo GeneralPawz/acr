@@ -114,7 +114,7 @@ fn slot(api: &mut Api, c: &Call, what: &str) -> Result<Option<(usize, usize)>> {
 }
 
 fn res(api: &Api, n: usize, r: usize) -> i32 {
-    api.world.players[n].resources[r] as i32
+    api.world.players[n].resources[r]
 }
 
 /// `int GetResource(byte nation, byte res)`.
@@ -126,7 +126,7 @@ fn get_resource(api: &mut Api, c: &mut Call) -> Result<u32> {
 fn add_resource(api: &mut Api, c: &mut Call) -> Result<u32> {
     if let Some((n, r)) = slot(api, c, "AddResource")? {
         let v = res(api, n, r).wrapping_add(c.i32(2)?).max(0);
-        api.world.players[n].resources[r] = v as u32;
+        api.world.players[n].resources[r] = v;
     }
     Ok(0)
 }
@@ -134,7 +134,7 @@ fn add_resource(api: &mut Api, c: &mut Call) -> Result<u32> {
 /// `void SetResource(byte nation, byte res, int amount)`.
 fn set_resource(api: &mut Api, c: &mut Call) -> Result<u32> {
     if let Some((n, r)) = slot(api, c, "SetResource")? {
-        api.world.players[n].resources[r] = c.i32(2)?.max(0) as u32;
+        api.world.players[n].resources[r] = c.i32(2)?.max(0);
     }
     Ok(0)
 }
@@ -366,8 +366,8 @@ fn ai_torg(api: &mut Api, c: &mut Call) -> Result<u32> {
     let m = &mut api.st.market;
     let got = (f64::from(a) * m.sell[es] / m.buy[eb]) as i32;
     let p = &mut api.world.players[n].resources;
-    p[sr] = (p[sr] as i32).wrapping_sub(a) as u32;
-    p[br] = (p[br] as i32).wrapping_add(got) as u32;
+    p[sr] = p[sr].wrapping_sub(a);
+    p[br] = p[br].wrapping_add(got);
     let t = f64::from(got) * m.buy_change[eb];
     m.buy[eb] = (m.buy[eb] + t * m.buy_range[eb][2]) / (1.0 + t);
     m.sell[eb] = (m.sell[eb] + t * m.sell_range[eb][2]) / (1.0 + t);
