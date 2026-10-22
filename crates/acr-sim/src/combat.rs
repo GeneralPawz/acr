@@ -890,6 +890,10 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
     let vt = catalog.get(w.units[victim].kind);
     let va = w.adv(w.units[victim].owner, w.units[victim].kind);
     let mut dmg = dmg;
+    let mut record = DeathRecord {
+        cause: if w.units[victim].burning { DeathCause::Burned } else { DeathCause::Unknown },
+        from: None,
+    };
     if let Some(s) = sender {
         let st = catalog.get(w.units[s].kind);
         if st.skill_bonus != 0 && att < 32 && st.skill_mask & (1 << att) != 0 {
@@ -921,6 +925,7 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
         }
         let kind = sa.attacks.get(usize::from(att)).map_or("MECH", |a| a.kind.as_str());
         let wf = catalog.weapon_flags(kind);
+        record = DeathRecord { cause: DeathCause::of_weapon(kind), from: Some(w.units[s].pos.pixels()) };
         if wf & GARRISON != 0 && vt.building {
             if !w.units[victim].inside.is_empty() {
                 garrison_damage(w, victim, dmg, s, att);
@@ -932,6 +937,7 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
         }
         if wf & RANDOM_KILL != 0 && w.random.rando() < 1310 && !vt.building && !vt.no25 {
             frighten(w, victim, s, att);
+            record_death(w, victim, record);
             die(w, victim);
             w.units[s].kills = w.units[s].kills.saturating_add(1);
             return;
@@ -974,6 +980,7 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
             w.units[s].kills = w.units[s].kills.saturating_add(1);
             frighten(w, victim, s, att);
         }
+        record_death(w, victim, record);
         die(w, victim);
     }
 }
@@ -1086,12 +1093,66 @@ fn frighten(w: &mut World, victim: usize, sender: usize, att: u8) {
     }
 }
 
+/// Why a unit died, kept for the renderer only (`World::deaths`): the original draws every
+/// death alike, the 3D models die by cause.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DeathCause {
+    /// Killed by a script, a lost transport and the like.
+    #[default]
+    Unknown,
+    Melee,
+    Gunshot,
+    Arrow,
+    /// Tomahawk, spear or stone.
+    Thrown,
+    Cannonball,
+    Grapeshot,
+    /// Mortar shells and other bursting rounds.
+    Explosion,
+    /// Died burning.
+    Burned,
+    Hunger,
+}
+
+impl DeathCause {
+    /// The cause of a hit by a weapon kind of `NRES.DAT [WEAPONS]`.
+    pub fn of_weapon(kind: &str) -> Self {
+        match kind {
+            "MECH" | "PIKA" => Self::Melee,
+            "VISTREL" | "VISTREL2" => Self::Gunshot,
+            "OSTRELA" => Self::Arrow,
+            k if k.starts_with("STRELA") => Self::Arrow,
+            "TAMAGAVK" | "KOPIE" | "KAMEN" => Self::Thrown,
+            "IADRO" => Self::Cannonball,
+            "KARTECH" => Self::Grapeshot,
+            "IADROMOR" | "VAFLIA" => Self::Explosion,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+/// How a unit died: the cause and where the blow came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DeathRecord {
+    pub cause: DeathCause,
+    /// The attacker's position at the blow (world pixels).
+    pub from: Option<(i32, i32)>,
+}
+
+/// Notes why a living unit is about to die; the first record of a death stays.
+pub fn record_death(w: &mut World, i: usize, record: DeathRecord) {
+    if w.units.get(i).is_some_and(Unit::living) {
+        w.deaths.entry(i as u32).or_insert(record);
+    }
+}
+
 /// `Die` (0x4e77a0): the unit turns a little, frees its cell and starts dying.
 pub fn die(w: &mut World, i: usize) {
     let u = &w.units[i];
     if u.death != 0 || !u.alive {
         return;
     }
+    w.deaths.entry(i as u32).or_default();
     if w.catalog.get(u.kind).command_center {
         // City+0xeb1a (0x4e7a1f): a lost command centre frightens the nation for a while.
         w.players[usize::from(u.owner) & 7].cc_lost_time = (w.tick.0 + 1) as u32;

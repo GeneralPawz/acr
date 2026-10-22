@@ -227,3 +227,51 @@ fn shooters_face_their_target() {
     }
     assert!(aims > 0 && fired, "the musketeer aimed and fired");
 }
+
+/// Deaths keep their cause for the renderer: a pike thrust is melee from the killer's
+/// position, a script kill is unknown; the record is not part of the state hash.
+#[test]
+fn deaths_keep_their_cause() {
+    use acr_sim::combat::{DeathCause, DeathRecord};
+    let (mut w, pik, _) = setup();
+    let a = w.spawn(pik, 0, Pos::from_pixels(2000, 2000), 0);
+    let b = w.spawn(pik, 1, Pos::from_pixels(2150, 2000), 128);
+    let k = w.spawn(pik, 0, Pos::from_pixels(3000, 3000), 0);
+    w.kill(k);
+    for _ in 0..1500 {
+        w.step(&[]);
+        if unit(&w, a).death != 0 || unit(&w, b).death != 0 {
+            break;
+        }
+    }
+    let (winner, loser) = if unit(&w, a).death != 0 { (b, a) } else { (a, b) };
+    let record = w.deaths[&loser.0];
+    assert_eq!(record.cause, DeathCause::Melee);
+    let (wx, wy) = unit(&w, winner).pos.pixels();
+    let (fx, fy) = record.from.expect("the killer's position");
+    assert!((fx - wx).abs() < 64 && (fy - wy).abs() < 64, "from {fx},{fy}, killer at {wx},{wy}");
+    assert_eq!(w.deaths[&k.0], DeathRecord::default());
+    assert!(!w.deaths.contains_key(&winner.0));
+    let hash = w.state_hash();
+    w.deaths.clear();
+    assert_eq!(w.state_hash(), hash, "causes are not part of the state");
+}
+
+#[test]
+fn weapon_kinds_map_to_causes() {
+    use acr_sim::combat::DeathCause;
+    for (kind, cause) in [
+        ("MECH", DeathCause::Melee),
+        ("PIKA", DeathCause::Melee),
+        ("VISTREL2", DeathCause::Gunshot),
+        ("STRELAOTRAVLENIE", DeathCause::Arrow),
+        ("OSTRELA", DeathCause::Arrow),
+        ("TAMAGAVK", DeathCause::Thrown),
+        ("IADRO", DeathCause::Cannonball),
+        ("KARTECH", DeathCause::Grapeshot),
+        ("IADROMOR", DeathCause::Explosion),
+        ("MEDIK", DeathCause::Unknown),
+    ] {
+        assert_eq!(DeathCause::of_weapon(kind), cause, "{kind}");
+    }
+}
