@@ -330,7 +330,7 @@ fn write_one_unit(api: &Api, c: &mut Call, out: u32, id: EntityId, full: bool) -
     c.write_u16(out + 6, t.life.clamp(0, 0xFFFF) as u16)?;
     c.write_u8(out + 8, u.attack_bonus as u8)?;
     c.write_u8(out + 9, u.defence_bonus as u8)?;
-    let stages = t.economy.build_stages;
+    let stages = api.world.max_stage(u);
     c.write_u16(out + 0xa, u.stage.clamp(0, 0xFFFF) as u16)?;
     c.write_u16(out + 0xc, stages.clamp(0, 0xFFFF) as u16)?;
     c.write_u16(out + 0xe, u.kills)?;
@@ -465,7 +465,7 @@ fn check_buildings_complete(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Some(g) = api.group_arg(c, 0, "CheckBuildingsComplete(Buildings)")? else { return Ok(0) };
     let unfinished = api.members_h(g).into_iter().any(|id| {
         let u = &api.world.units[id.0 as usize];
-        u.building && u.orders.is_empty() && u.stage < api.world.catalog.get(u.kind).economy.build_stages
+        u.building && u.orders.is_empty() && u.stage < api.world.max_stage(u)
     });
     Ok(u32::from(!unfinished))
 }

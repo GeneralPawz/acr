@@ -374,7 +374,7 @@ pub fn take_resources_step(api: &mut Api, g: usize, nation: u8, res: u8, last: &
         bases.clear();
         for u in api.world.units.iter().filter(|u| u.active() && u.owner == nation && u.building) {
             let t = api.world.catalog.get(u.kind);
-            if u.stage >= t.economy.build_stages && t.economy.resource_base & (1 << res) != 0 && bases.len() < 16 {
+            if u.stage >= api.world.max_stage(u) && t.economy.resource_base & (1 << res) != 0 && bases.len() < 16 {
                 bases.push((u.pos.x, u.pos.y));
             }
         }
@@ -439,7 +439,7 @@ fn is_resource_enabled(api: &mut Api, c: &mut Call) -> Result<u32> {
             u.active()
                 && u.owner == nat
                 && u.building
-                && u.stage >= t.economy.build_stages
+                && u.stage >= api.world.max_stage(u)
                 && t.economy.resource_base & mask != 0
         })
         .map(|u| (u.pos.x >> 4, u.pos.y >> 4))

@@ -32,17 +32,17 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("ProduceUnitFast", 0x566f36, DONE, produce_unit_fast),
     f("CheckProduction", 0x5672cc, DONE, check_production),
     f("TryUnit", 0x56829b, Status::Partial("AI city without tech conditions; see aicity.rs"), try_unit),
-    f("TryUpgrade", 0x5684d6, AI_CITY, zero),
-    f("TryUpgradeEx", 0x568629, AI_CITY, zero),
+    f("TryUpgrade", 0x5684d6, DONE, try_upgrade),
+    f(
+        "TryUpgradeEx",
+        0x568629,
+        Status::Partial("the distance limits to the city centre and buildings are not checked"),
+        try_upgrade,
+    ),
     f("UpgIsDone", 0x569259, DONE, upg_is_done),
     f("UpgIsRun", 0x5692a9, DONE, upg_is_done),
-    f(
-        "InitialUpgrade",
-        0x55c02f,
-        Status::Partial("marked done for the nation; effects need acr-sim upgrades"),
-        initial_upgrade,
-    ),
-    f("InitialUpgradeNew", 0x55c202, Status::Partial("as InitialUpgrade"), initial_upgrade_new),
+    f("InitialUpgrade", 0x55c02f, Status::Done, initial_upgrade),
+    f("InitialUpgradeNew", 0x55c202, DONE, initial_upgrade_new),
     f("DisableUpgrade", 0x55c335, DONE, disable_upgrade),
     f("SetUpgradeEnableStatus", 0x55c437, DONE, set_upgrade_enable_status),
     f("EnableUnit", 0x55c5bb, DONE, enable_unit),
@@ -207,7 +207,7 @@ fn produce(api: &mut Api, c: &mut Call, fast: Option<i32>) -> Result<u32> {
     };
     for m in api.st.groups[b].members.clone() {
         let Some(u) = api.member_loose(m) else { continue };
-        let (bi, ready) = (u.id.0 as usize, u.stage >= api.world.catalog.get(u.kind).economy.build_stages);
+        let (bi, ready) = (u.id.0 as usize, u.stage >= api.world.max_stage(u));
         if !u.building || !ready || (fast.is_none() && !u.queue.is_empty()) {
             continue;
         }
@@ -232,7 +232,7 @@ fn check_production(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Some(b) = api.group_arg(c, 0, "CheckProduction : Invalid <Units>")? else { return Ok(0) };
     let idle = api.members(b).into_iter().any(|id| {
         let u = &api.world.units[id.0 as usize];
-        u.building && u.queue.is_empty() && u.stage >= api.world.catalog.get(u.kind).economy.build_stages
+        u.building && u.queue.is_empty() && u.stage >= api.world.max_stage(u)
     });
     Ok(u32::from(idle))
 }
@@ -256,12 +256,15 @@ fn upg_is_done(api: &mut Api, c: &mut Call) -> Result<u32> {
     Ok(api.upgrade_state(n, u).map_or(0, |s| u32::from(s.done || (run && s.doing))))
 }
 
-/// Marks an upgrade done for a nation like `InitialUpgrade` (0x55c02f): done, and no longer
-/// offered unless it is individual or a stage. TODO(acr-sim): apply the upgrade's effect
-/// (`PerformNewUpgrade` 0x532281) once acr-sim performs upgrades.
+/// `InitialUpgrade` (0x55c02f): applies the upgrade's effect for a nation
+/// (`PerformNewUpgrade` 0x532281) and marks it done and no longer offered unless it is
+/// individual or a stage.
 fn initial(api: &mut Api, n: u8, u: u16) {
     let def =
         api.world.catalog.tech.loaded.then(|| api.world.catalog.tech.upgrade(acr_sim::tech::UpgradeId(u)).clone());
+    if def.is_some() && usize::from(n) < api.world.players.len() {
+        acr_sim::upgrade::perform(api.world, n, acr_sim::tech::UpgradeId(u), None);
+    }
     if let Some(s) = api.upgrade_state(n, u)
         && !def.as_ref().is_some_and(|d| d.individual || d.stage_up)
     {
@@ -475,18 +478,54 @@ fn try_unit(api: &mut Api, c: &mut Call) -> Result<u32> {
     Ok(0)
 }
 
+/// `bool TryUpgrade(GAMEOBJ* upgrade, int costPercent, int probability)` and `TryUpgradeEx`
+/// (two more distance limits): proposes researching an upgrade an idle building of the AI
+/// nation offers.
+fn try_upgrade(api: &mut Api, c: &mut Call) -> Result<u32> {
+    if c.u32(0)? == 0 {
+        return Ok(0);
+    }
+    let h = c.handle(0)?;
+    if h.magic == u32::from_be_bytes(*b"SAFE") {
+        return Ok(0);
+    }
+    let Caller::Ai(n) = api.caller else {
+        api.st.error("ERROR: AI function must be called only from AI section.");
+        return Ok(0);
+    };
+    if h.magic != magic::UPGRADE {
+        return Ok(0);
+    }
+    let (percent, prob) = (c.i32(1)?, c.i32(2)?);
+    if prob > 100 {
+        api.st.error("TryUpgrade : invalid <Probability>");
+        return Ok(0);
+    }
+    let city = &api.st.cities[usize::from(n)];
+    if city.best.len() >= 127 {
+        return Ok(0);
+    }
+    let Some(&k) = city.upgrade_index.get(&h.index) else { return Ok(0) };
+    let need = city.props[k].percent;
+    if api.world.random.rando() < crate::aicity::perconv(prob.max(0)) && percent >= need {
+        api.st.cities[usize::from(n)].best.push(k);
+        return Ok(1);
+    }
+    Ok(0)
+}
+
 /// `int GetUnits(GAMEOBJ* type)` / `GetReadyUnits`: objects of the type the AI nation owns
 /// (`UnitAmount`), or only the finished ones (`ReadyAmount`).
 fn get_units(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Caller::Ai(n) = api.caller else { return Ok(0) };
     let Some(t) = api.type_arg(c, 0, c.name())? else { return Ok(0) };
     let ready_only = c.name() == "GetReadyUnits";
-    let stages = api.world.catalog.get(t).economy.build_stages;
-    Ok(api
-        .world
-        .units
+    let w = &*api.world;
+    Ok(w.units
         .iter()
-        .filter(|u| u.living() && u.owner == n && u.kind == t && (!ready_only || !u.building || u.stage >= stages))
+        .filter(|u| {
+            u.living() && u.owner == n && u.kind == t && (!ready_only || !u.building || u.stage >= w.max_stage(u))
+        })
         .count() as u32)
 }
 

@@ -5,8 +5,8 @@
 //! peasants.
 //!
 //! Build lists and availability come from acr-sim's tech tree (`[FIXED_PRODUCE]`,
-//! `[ENABLED]`, `[ACCESSCONTROL]`). Simplified against the original: no upgrades yet, and
-//! building places are searched around the centre instead of the original's farm, mill and
+//! `[ENABLED]`, `[ACCESSCONTROL]`), upgrades are researched with acr-sim's `PerformUpgrade`.
+//! Simplified against the original: building places are searched around the centre instead of the original's farm, mill and
 //! field heuristics.
 
 use std::collections::BTreeMap;
@@ -20,6 +20,8 @@ use crate::state::ScriptState;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Prop {
     pub kind: TypeId,
+    /// An upgrade project (`PKind` 1) instead of a unit; `kind` is then unused.
+    pub upgrade: Option<acr_sim::tech::UpgradeId>,
     /// Building that produces it (`ProducerIndex`); `None` for buildings (peasants build).
     pub producer: Option<EntityId>,
     /// Price as a percentage of the stock (`GetMonsterCostPercent`): the largest
@@ -33,6 +35,8 @@ pub struct City {
     pub props: Vec<Prop>,
     /// `PRPIndex[type]`.
     pub index: BTreeMap<TypeId, usize>,
+    /// `UPGIndex[upgrade]`.
+    pub upgrade_index: BTreeMap<u16, usize>,
     /// `BestProj`: proposals the DLL accepted this call.
     pub best: Vec<usize>,
 }
@@ -86,7 +90,7 @@ pub fn enum_prop(st: &mut ScriptState, world: &World, nation: u8) {
     for u in world.units.iter().filter(|u| u.active() && u.owner == nation) {
         let t = world.catalog.get(u.kind);
         if u.building {
-            if u.stage >= t.economy.build_stages && u.queue.is_empty() {
+            if u.stage >= world.max_stage(u) && u.queue.is_empty() {
                 producers.entry(u.kind).or_insert(Some(u.id));
             }
         } else if t.peasant {
@@ -123,7 +127,35 @@ pub fn enum_prop(st: &mut ScriptState, world: &World, nation: u8) {
             city.index.insert(s, city.props.len());
             city.props.push(Prop {
                 kind: s,
+                upgrade: None,
                 producer: if building { None } else { producer },
+                percent: cost_percent(&stock, &cost),
+            });
+        }
+    }
+    // Upgrades the idle buildings offer (`AddUpgr`), with the same price percentage.
+    let idle: Vec<usize> = world
+        .units
+        .iter()
+        .filter(|u| {
+            u.active() && u.owner == nation && u.building && u.queue.is_empty() && u.stage >= world.max_stage(u)
+        })
+        .map(|u| u.id.0 as usize)
+        .collect();
+    for b in idle {
+        for up in acr_sim::upgrade::available(world, b) {
+            if city.upgrade_index.contains_key(&up.0)
+                || city.props.len() >= 100
+                || !acr_sim::upgrade::can_research(world, b, up)
+            {
+                continue;
+            }
+            let cost = world.catalog.tech.upgrade(up).cost;
+            city.upgrade_index.insert(up.0, city.props.len());
+            city.props.push(Prop {
+                kind: TypeId(0),
+                upgrade: Some(up),
+                producer: Some(world.units[b].id),
                 percent: cost_percent(&stock, &cost),
             });
         }
@@ -136,7 +168,10 @@ pub fn execute(st: &mut ScriptState, world: &mut World, nation: u8) {
     let city = std::mem::take(&mut st.cities[usize::from(nation)]);
     for &k in &city.best {
         let Some(p) = city.props.get(k) else { continue };
-        if let Some(b) = p.producer {
+        if let (Some(up), Some(b)) = (p.upgrade, p.producer) {
+            // `PerformUpgrade` in the producer.
+            acr_sim::upgrade::start(world, b.0 as usize, up);
+        } else if let Some(b) = p.producer {
             // `ProduceByAI`: queued in the producer, paying the price.
             acr_sim::economy::produce(world, b.0 as usize, p.kind);
         } else if world.catalog.get(p.kind).building {
