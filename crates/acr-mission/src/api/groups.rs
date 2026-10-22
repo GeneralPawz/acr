@@ -50,7 +50,7 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("SelCenter", 0x563981, DONE, sel_center),
     f("SetStandGround", 0x5621cd, Status::Stub("no stand-ground flag in acr-sim yet"), zero),
     f("AllowAttack", 0x562234, Status::Stub("no auto-attack flag in acr-sim yet"), zero),
-    f("SetDestPoint", 0x567609, Status::Stub("no rally points / production in acr-sim yet"), zero),
+    f("SetDestPoint", 0x567609, DONE, set_dest_point),
     f("CleanGroup", 0x56cf09, DONE, clean_group),
     f("RemoveGroup", 0x568031, DONE, remove_group),
     f("CopyUnits", 0x56ea22, DONE, copy_units),
@@ -69,13 +69,8 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("RemoveNearestNotBusyUnit", 0x56e265, DONE, remove_nearest_not_busy_unit),
     f("RemovePanicUnits", 0x56da24, Status::Partial("no morale/panic in acr-sim: nobody panics"), remove_panic_units),
     f("DetectPanic", 0x56d9b7, Status::Partial("no morale/panic in acr-sim: false"), zero),
-    f(
-        "RemoveUpperGroundUnits",
-        0x56eeef,
-        Status::Partial("no garrisons yet: every unit is above ground"),
-        remove_upper_ground_units,
-    ),
-    f("DeleteHiddenUnits", 0x56d8b9, Status::Partial("no garrisons yet: nothing is hidden"), zero),
+    f("RemoveUpperGroundUnits", 0x56eeef, DONE, remove_upper_ground_units),
+    f("DeleteHiddenUnits", 0x56d8b9, DONE, delete_hidden_units),
     f("GetNUnits", 0x5679d8, DONE, get_n_units),
     f("GetUnitsTypeInGroup", 0x570862, DONE, get_units_type_in_group),
     f("GetGrpCenter", 0x5789cb, DONE, get_grp_center),
@@ -89,7 +84,7 @@ pub const FUNCTIONS: &[ApiFn] = &[
     f("SetUnitsState", 0x578c09, Status::Stub("no combat flags in acr-sim yet"), zero),
     f("CancelAllPurposes", 0x578bc5, DONE, cancel_all_purposes),
     f("GetCurrentPurpose", 0x578b24, DONE, get_current_purpose),
-    f("PushAllUnitsAway", 0x56083e, Status::Stub("no garrisons/transports yet"), zero),
+    f("PushAllUnitsAway", 0x56083e, DONE, push_all_units_away),
     f("SetNMASK", 0x56bcb3, Status::Partial("kept for the scripts; acr-sim has no alliances yet"), set_nmask),
     f("GetUnitNMASK", 0x56bc78, DONE, get_unit_nmask),
     f("SGP_MoveToPoint", 0x578a14, MOVE, sgp_move_to_point),
@@ -423,7 +418,7 @@ fn units_center(api: &mut Api, c: &mut Call) -> Result<u32> {
 /// `int CleanGroup(GAMEOBJ*)`: keeps the valid living members, returns their number.
 fn clean_group(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Some(g) = api.group(c, 0)? else { return Ok(0) };
-    let kept: Vec<Member> = api.st.groups[g].members.iter().copied().filter(|&m| api.member(m).is_some()).collect();
+    let kept: Vec<Member> = api.st.groups[g].members.iter().copied().filter(|&m| api.member_h(m).is_some()).collect();
     let n = kept.len();
     api.st.groups[g].members = kept;
     Ok(n as u32)
@@ -561,7 +556,7 @@ fn move_n(api: &mut Api, d: usize, s: usize, n: i32, filter: i32) -> u32 {
             break;
         }
         let m = api.st.groups[s].members[i];
-        if let Some(u) = api.member(m)
+        if let Some(u) = api.member_h(m)
             && filter_matches(api, u, filter)
         {
             moved.push(Member { id: m.id, serial: api.st.serial(u.id) });
@@ -623,14 +618,14 @@ fn remove_panic_units(api: &mut Api, c: &mut Call) -> Result<u32> {
     Ok(0)
 }
 
-/// `void RemoveUpperGroundUnits(GAMEOBJ* src, GAMEOBJ* dst or NULL)`: nobody is inside a
-/// building in ACR yet, so every serial-valid member counts as above ground.
+/// `void RemoveUpperGroundUnits(GAMEOBJ* src, GAMEOBJ* dst or NULL)`: members that are not
+/// inside a building move to `dst` (or become invalid without `dst`).
 fn remove_upper_ground_units(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Some(s) = api.group(c, 0)? else { return Ok(0) };
     let d = api.group(c, 1)?;
     for i in 0..api.st.groups[s].members.len() {
         let m = api.st.groups[s].members[i];
-        if m.id == NO_UNIT || api.by_serial(m).is_none() {
+        if m.id == NO_UNIT || api.by_serial(m).is_none_or(|u| u.inside_of.is_some()) {
             continue;
         }
         match d {
@@ -639,6 +634,45 @@ fn remove_upper_ground_units(api: &mut Api, c: &mut Call) -> Result<u32> {
                 api.st.groups[s].members[i].id = NO_UNIT;
             }
             None => api.st.groups[s].members[i].serial = 0xFFFF,
+        }
+    }
+    Ok(0)
+}
+
+/// `void DeleteHiddenUnits(GAMEOBJ*)`: empties the slots of members inside buildings.
+fn delete_hidden_units(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let Some(g) = api.group(c, 0)? else { return Ok(0) };
+    for i in 0..api.st.groups[g].members.len() {
+        let m = api.st.groups[g].members[i];
+        if api.by_serial(m).is_some_and(|u| u.inside_of.is_some()) {
+            api.st.groups[g].members[i].id = NO_UNIT;
+        }
+    }
+    Ok(0)
+}
+
+/// `void SetDestPoint(GAMEOBJ* grp, GAMEOBJ* zone)`: the rally point of idle member buildings.
+fn set_dest_point(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let Some(g) = api.group_arg(c, 0, "SetDestPoint(Units,Zone)")? else { return Ok(0) };
+    let Some((x, y)) = (if c.u32(1)? == 0 { None } else { api.zone_point(&c.handle(1)?) }) else {
+        api.st.error("SetDestPoint(Units,Zone) : Incorrect parameter <Zone>");
+        return Ok(0);
+    };
+    for id in api.members_h(g) {
+        let u = &mut api.world.units[id.0 as usize];
+        if u.building && u.orders.is_empty() {
+            u.rally = Some(acr_sim::Pos::from_pixels(x, y));
+        }
+    }
+    Ok(0)
+}
+
+/// `void PushAllUnitsAway(byte nation)`: everybody leaves the selected buildings.
+fn push_all_units_away(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let n = api.assign(c.u8(0)?) & 7;
+    for id in api.selected(n) {
+        if !api.world.units[id.0 as usize].inside.is_empty() {
+            acr_sim::economy::leave(api.world, id.0 as usize);
         }
     }
     Ok(0)
@@ -658,7 +692,7 @@ fn get_n_units(api: &mut Api, c: &mut Call) -> Result<u32> {
 fn get_units_type_in_group(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Some(g) = api.group(c, 0)? else { return Ok(u32::MAX) };
     let t = c.u16(1)?;
-    Ok(api.members(g).iter().filter(|id| api.world.units[id.0 as usize].kind.0 == t).count() as u32)
+    Ok(api.members_h(g).iter().filter(|id| api.world.units[id.0 as usize].kind.0 == t).count() as u32)
 }
 
 /// `bool GetGrpCenter(GAMEOBJ*, int* x, int* y)`: mean of the pixel positions.
@@ -817,7 +851,25 @@ pub fn run_group_orders(api: &mut Api) {
                     }
                 }
             }
-            GroupOrder::ComeIntoBuilding { .. } => false,
+            GroupOrder::ComeIntoBuilding { building, serial } => {
+                // Handler 0x577945: every call, members not already on their way are sent in
+                // (GoToMine prio 0x90); the process never ends by itself.
+                let b = usize::from(building);
+                let valid = api.object(building).is_some_and(|u| api.st.serial(u.id) == serial);
+                if valid {
+                    let bid = api.world.units[b].id;
+                    for id in api.members(g) {
+                        let going = api.world.units[id.0 as usize]
+                            .orders
+                            .iter()
+                            .any(|o| matches!(o, acr_sim::world::Order::Enter { building, .. } if *building == bid));
+                        if !going {
+                            acr_sim::economy::enter(api.world, id.0 as usize, b, 0x90);
+                        }
+                    }
+                }
+                false
+            }
         };
         if pop {
             api.st.groups[g].orders.remove(0);

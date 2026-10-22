@@ -29,25 +29,34 @@ pub const FUNCTIONS: &[ApiFn] = &[
     ApiFn {
         name: "OBJ_LeaveMine",
         original: 0x56f1d6,
-        status: Status::Stub("no garrisons in acr-sim yet: returns 0"),
-        handler: zero,
+        status: Status::Partial("everybody leaves (acr-sim releases all units at once)"),
+        handler: obj_leave_mine,
     },
-    ApiFn {
-        name: "GetTargetObject",
-        original: 0x56f4b7,
-        status: Status::Partial("no attack state in acr-sim yet: never attacking (0xFFFF)"),
-        handler: get_target_object,
-    },
-    ApiFn {
-        name: "GetOrderType",
-        original: 0x56f3f5,
-        status: Status::Partial("12 (moving) when the unit has orders, else 0; other order types need acr-sim"),
-        handler: get_order_type,
-    },
+    ApiFn { name: "GetTargetObject", original: 0x56f4b7, status: Status::Done, handler: get_target_object },
+    ApiFn { name: "GetOrderType", original: 0x56f3f5, status: Status::Done, handler: get_order_type },
 ];
 
-fn zero(_: &mut Api, _: &mut Call) -> Result<u32> {
-    Ok(0)
+/// `bool OBJ_LeaveMine(word index, word type)`.
+fn obj_leave_mine(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let Some(b) = api.object(c.u16(0)?).map(|u| u.id.0 as usize) else { return Ok(0) };
+    if !api.world.units[b].inside.is_empty() {
+        acr_sim::economy::leave(api.world, b);
+    }
+    Ok(1)
+}
+
+/// `OrderType` of a unit's current order (`Order1+5`): 12 send-to, 3 attack, 0xF2 enter,
+/// 0x59 build, 0xEE gather.
+pub fn order_type(u: &acr_sim::Unit) -> u32 {
+    use acr_sim::world::Order;
+    match u.orders.last() {
+        None => 0,
+        Some(Order::SendTo { .. } | Order::SmartSendTo { .. }) => 12,
+        Some(Order::Attack { .. }) => 3,
+        Some(Order::Enter { .. }) => 0xF2,
+        Some(Order::Build { .. }) => 0x59,
+        Some(Order::Gather { .. }) => 0xEE,
+    }
 }
 
 /// `OneObject* GetOBJ(int index)`: the guest mirror of the object, NULL for an empty slot.
@@ -93,14 +102,28 @@ fn obj_attack_point(api: &mut Api, c: &mut Call) -> Result<u32> {
     Ok(1)
 }
 
-/// `void GetTargetObject(word index, word* outIndex, word* outSerial)`.
-fn get_target_object(_: &mut Api, c: &mut Call) -> Result<u32> {
-    c.out_u16(1, 0xFFFF)?;
+/// `void GetTargetObject(word index, word* outIndex, word* outSerial)`: the attack target
+/// (`EnemyID`/`EnemySN`), 0xFFFF when not attacking or the target is dying.
+fn get_target_object(api: &mut Api, c: &mut Call) -> Result<u32> {
+    let target = api.object(c.u16(0)?).and_then(|u| u.target());
+    match target.and_then(|t| api.object(t.0 as u16)) {
+        Some(t) if t.living() => {
+            let (id, serial) = (t.id.0 as u16, api.st.serial(t.id));
+            c.out_u16(1, id)?;
+            c.out_u16(2, serial)?;
+        }
+        Some(t) => {
+            let serial = api.st.serial(t.id);
+            c.out_u16(1, 0xFFFF)?;
+            c.out_u16(2, serial)?;
+        }
+        None => c.out_u16(1, 0xFFFF)?,
+    }
     Ok(0)
 }
 
 /// `int GetOrderType(OneObject*)`: the current order's type (12 = move).
 fn get_order_type(api: &mut Api, c: &mut Call) -> Result<u32> {
     let Some(i) = guest::object_index(c, c.u32(0)?)? else { return Ok(0) };
-    Ok(api.object(i).map_or(0, |u| if u.orders.is_empty() { 0 } else { 12 }))
+    Ok(api.object(i).map_or(0, order_type))
 }

@@ -71,9 +71,15 @@ pub fn write_mirror(mem: &mut Memory, st: &ScriptState, world: &acr_sim::World, 
     let put32 = |b: &mut [u8], o: usize, v: i32| b[o..o + 4].copy_from_slice(&v.to_le_bytes());
     put16(&mut b, 0x14, id.0 as u16);
     put16(&mut b, 0x1f, u.kind.0);
-    b[0x25] = 1; // Ready: ACR creates finished objects
+    // Ready (bit 0): finished; buildings under construction are not.
+    b[0x25] = u8::from(!u.building || u.stage >= t.economy.build_stages);
     b[0x27] = if u.building { 0x10 } else { 0 };
-    put16(&mut b, 0x58, if u.living() { 0 } else { u.death.max(1) });
+    // Units inside a building are hidden and have Sdoxlo = 1.
+    let hidden = u.inside_of.is_some();
+    b[0x28] = u8::from(hidden);
+    b[0x29] = if u.unlimited { 2 } else { 0 };
+    put16(&mut b, 0x58, if !u.living() { u.death.max(1) } else { u16::from(hidden) });
+    b[0x5c] = u.stance;
     put16(&mut b, 0x71, st.serial(id));
     put16(&mut b, 0x78, u.life.clamp(0, 0xFFFF) as u16);
     put16(&mut b, 0x7a, t.life.clamp(0, 0xFFFF) as u16);
@@ -81,7 +87,9 @@ pub fn write_mirror(mem: &mut Memory, st: &ScriptState, world: &acr_sim::World, 
     put32(&mut b, 0x88, -1);
     b[0x95] = u.owner;
     b[0x9a] = st.unit_nmask(id, u.owner);
-    b[0x9c] = 0xFF;
+    b[0x9c] = u.carry_type.unwrap_or(0xFF);
+    b[0x9d] = u.carried.clamp(0, 255) as u8;
+    put16(&mut b, 0xf0, u.inside.len() as u16);
     put32(&mut b, 0xb0, u.pos.x);
     put32(&mut b, 0xb4, u.pos.y);
     b[0xea] = u.dir;
@@ -89,17 +97,27 @@ pub fn write_mirror(mem: &mut Memory, st: &ScriptState, world: &acr_sim::World, 
     Ok(a)
 }
 
-/// Copies the fields an AI may have written back into the world (`Life`, `MaxLife` for the
-/// "immortal group" trick). TODO(acr-sim): NoSearchVictim, UnlimitedMotion, AutoKill,
-/// NewState, GroundState, carried resources once the simulation has them.
+/// Copies the fields an AI may have written back into the world: `Life` (the "immortal
+/// group" trick), the stance (`NewState`), the carried load (`RType`/`RAmount`, dropped by
+/// the AI before it sends peasants to fight) and `UnlimitedMotion`. TODO(acr-sim):
+/// NoSearchVictim and AutoKill once the simulation has them.
 pub fn read_back(mem: &Memory, world: &mut acr_sim::World, index: u16) -> Result<()> {
     let a = mirror_addr(index);
     let life = i32::from(mem.read_u16(a + 0x78)?);
-    if let Some(u) = world.units.get_mut(usize::from(index))
-        && u.living()
-        && u.life.clamp(0, 0xFFFF) != life
-    {
+    let stance = mem.read_u8(a + 0x5c)?;
+    let (rtype, ramount) = (mem.read_u8(a + 0x9c)?, mem.read_u8(a + 0x9d)?);
+    let unlimited = mem.read_u8(a + 0x29)? & 2 != 0;
+    let Some(u) = world.units.get_mut(usize::from(index)).filter(|u| u.living()) else { return Ok(()) };
+    if u.life.clamp(0, 0xFFFF) != life {
         u.life = life;
+    }
+    u.stance = stance;
+    if rtype == 0xFF && ramount == 0 {
+        u.carry_type = None;
+        u.carried = 0;
+    }
+    if !unlimited {
+        u.unlimited = false;
     }
     Ok(())
 }
