@@ -40,7 +40,7 @@ MEASURE = {
 }
 
 # Ease (cm of girth) per garment over the body.
-EASE = {"waistcoat": 8.0, "coat": 20.0, "breeches": 2.0, "gaiters": 3.0, "shirt": 2.0}
+EASE = {"waistcoat": 8.0, "coat": 20.0, "breeches": 0.5, "gaiters": 1.0, "shirt": 2.0}
 
 # Wool broadcloth, linen and canvas: thickness (m) of the solidified cloth, sim settings.
 CLOTH = {
@@ -233,11 +233,11 @@ def coat(m=MEASURE):
     # Two-piece sleeve: the top sleeve over the outside of the arm with the cap, the under
     # sleeve in the armpit; seams at the front and back of the arm.
     arm_len = m["arm"]
-    up_g = m["upper_arm"] + 6.0
+    up_g = m["upper_arm"] + 5.0
     wr_g = m["wrist"] + 12.0
     tw_top, tw_wr = up_g * 0.62, wr_g * 0.60
     uw_top, uw_wr = up_g * 0.38, wr_g * 0.40
-    cap = 8.0
+    cap = 7.0  # a low cap: the 18th-century sleeve was set in without puff
     top_sl = [(-tw_wr / 2, 0.0), (tw_wr / 2, 0.0), (tw_top / 2, arm_len - cap),
               (tw_top / 4, arm_len - cap * 0.25), (0.0, arm_len), (-tw_top / 4, arm_len - cap * 0.25),
               (-tw_top / 2, arm_len - cap)]
@@ -322,7 +322,7 @@ def breeches(m=MEASURE):
     q_seat = (m["seat"] + e) / 4.0
     q_waist = (m["waist"] + e) / 4.0
     half_thigh = (m["thigh"] + e) / 2.0
-    half_knee = (m["knee"] + 4.0) / 2.0
+    half_knee = (m["knee"] + 3.0) / 2.0
     rise = 27.0  # crotch to waist
     leg = m["waist_to_knee"] - rise + 3.0  # crotch to the knee band
     P = {}
@@ -375,14 +375,23 @@ def gaiters(m=MEASURE):
     """Knee-high gaiters of black canvas, buttoned up the outside, the front dropping over
     the instep of the shoe."""
     calf = m["calf"] + EASE["gaiters"]
-    ank = m["ankle"] + 8.0
+    ank = m["ankle"] + 6.0
     h = m["knee_to_ankle"] - 3.0
-    top = m["knee"] + 3.0  # buttoned snug below the knee
+    top = m["knee"] + 1.5  # buttoned snug below the knee
     g = [(0.0, 0.0), (ank * 0.75, -4.0), (ank, 0.0), (calf, h * 0.55), (top, h), (0.0, h), (0.0, h * 0.55)]
+    gplace = {"region": "leg", "theta": 90.0, "dir": 1, "u0": 0.0, "at": "ankle", "lift": 1.0, "gap": 1.0}
     P = {"gaiter": Panel("gaiter", "gaiters", "gaiters", g,
                          {"bottom": (0, 2), "outer": (2, 4), "top": (4, 5), "start": (5, 0)},
-                         {"region": "leg", "theta": 90.0, "dir": 1, "u0": 0.0, "at": "ankle", "lift": 1.0, "gap": 1.0,
-                          "pin": "top"})}
+                         dict(gplace, pin="top"))}
+
+    # The garter: a black leather strap buckled round the top below the knee (an inlay: one
+    # surface with the gaiter, no fold to fight it).
+    def edge_u(v):
+        return calf + (top - calf) * (v - h * 0.55) / (h * 0.45)
+
+    v0, v1 = h - 6.0, h - 3.5
+    P["garter"] = Panel("garter", "gaiters", "garter", [(0.0, v0), (edge_u(v0), v0), (edge_u(v1), v1), (0.0, v1)],
+                        {"bottom": (0, 1), "top": (2, 3)}, dict(gplace, layer=1), tack="gaiter")
     # The outside opening is buttoned: start and outer edges are sewn shut.
     seams = [Seam([("gaiter", "start", True)], [("gaiter", "outer")], "gaiters")]
     return P, seams

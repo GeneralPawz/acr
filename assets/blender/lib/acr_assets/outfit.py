@@ -22,14 +22,26 @@ PAINTER = {
     "coat": "wool", "tunic": "wool", "sash": "wool", "cloak": "wool",
     # Draped garments (docs/clothing.md): own painters, so that the facings and the lining
     # get their own atlas cells and colours (a painter's cell has one colour).
-    "facings": "facings", "lining": "lining", "stock": "leather",
-    "waistcoat": "linen", "breeches": "linen", "shirt": "linen", "stockings": "linen",
-    "gaiters": "boots", "boots": "boots", "shoes": "boots", "boots_high": "boots",
+    "facings": "facings", "lining": "lining", "stock": "stock",
+    "waistcoat": "kersey", "breeches": "kersey", "shirt": "linen", "stockings": "linen",
+    "gaiters": "gaiters", "boots": "boots", "shoes": "boots", "boots_high": "boots",
     "belts": "belts", "hat": "felt", "cap": "felt",
-    "cartridge": "leather", "knapsack": "leather", "saddle": "leather", "tack": "leather",
+    "cartridge": "leather", "knapsack": "leather", "garter": "leather", "saddle": "leather", "tack": "leather",
 }
 # Painters that paint like another one.
-KIND = {"facings": "wool", "lining": "wool"}
+KIND = {"facings": "wool", "lining": "wool", "stock": "linen"}
+# How each painter's cloth takes the light (`acr_roughness`, `acr_sheen`, `acr_gloss` in the
+# material extras): the game's `model.wgsl` adds the sheen at grazing angles and the gloss as
+# a highlight; the Blender previews use Principled roughness, sheen and specular.
+# Broadcloth is fulled and shorn: matte, a soft sheen at the silhouette only. Kersey (the
+# waistcoat and breeches) and linen are flatter; the gaiters are black linen or wool, not
+# leather; shoes are blacked leather with a dull gloss.
+FINISH = {
+    "wool": (1.0, 0.45, 0.0), "facings": (1.0, 0.45, 0.0), "lining": (1.0, 0.35, 0.0),
+    "kersey": (1.0, 0.25, 0.0), "linen": (0.95, 0.12, 0.0), "stock": (0.95, 0.25, 0.0),
+    "gaiters": (1.0, 0.30, 0.0), "felt": (1.0, 0.30, 0.0),
+    "boots": (0.6, 0.0, 0.18), "belts": (0.8, 0.0, 0.05), "leather": (0.7, 0.0, 0.10), "skin": (0.75, 0.0, 0.0),
+}
 HAIR = (0.24, 0.16, 0.10)
 BRASS = (0.78, 0.62, 0.27)
 
@@ -97,23 +109,40 @@ def paint(kind, p, n, rgb, L, seed):
         col = coat.mix(col, coat.lin(HAIR) * (0.7 + 0.5 * streak)[:, None], np.clip(hair, 0, 1))
         return col
     if kind == "wool":
-        folds = coat.fbm(p, (7.0, 7.0, 1.1), seed + 2)
-        col = base * (0.80 + 0.12 * broad + 0.20 * folds + 0.05 * fine)[:, None]
-        wear = coat.smooth(0.62, 0.78, coat.fbm(p, 18.0, seed + 3)) * 0.35
-        col = coat.mix(col, base * 1.25 + 0.03, wear)
-        grime = coat.smooth(0.85, 0.55, p[:, 2]) * 0.25
+        # Fulled broadcloth: no weave shows, a fine felted nap (mottle at 2..5 mm), the dye a
+        # little uneven over the panel; no painted highlights (the light makes the form).
+        nap = coat.fbm(p, 420.0, seed, octaves=1)
+        mottle = coat.fbm(p, (90.0, 90.0, 60.0), seed + 2, octaves=2)
+        col = base * (0.93 + 0.05 * broad + 0.06 * mottle + 0.05 * nap)[:, None]
+        # Rubbed thin (paler, the nap worn) only on the edges that see wear.
+        grime = coat.smooth(0.85, 0.55, p[:, 2]) * 0.22
         col = coat.mix(col, coat.lin((0.25, 0.20, 0.15)), grime)
-        b, _ = _buttons(p, n, (0.10,), 1.02, 1.44, 0.07, 0.012)
-        col = coat.mix(col, coat.lin(BRASS) * (0.8 + 0.4 * fine)[:, None], b)
         return col
     if kind == "linen":
-        weave = coat.fbm(p, (320.0, 320.0, 320.0), seed, octaves=1)
-        col = base * (0.88 + 0.08 * weave + 0.06 * broad)[:, None]
-        grime = (coat.smooth(0.9, 0.35, p[:, 2]) * 0.30 + coat.smooth(0.6, 0.8, coat.fbm(p, 12.0, seed + 4)) * 0.18)
-        col = coat.mix(col, coat.lin((0.48, 0.40, 0.30)), np.clip(grime, 0, 0.5))
+        # Linen: slubbed threads (short streaks along the weft), a little crumpled, grubby.
+        slub = coat.fbm(p, (40.0, 40.0, 380.0), seed, octaves=1)
+        weave = coat.fbm(p, 520.0, seed + 1, octaves=1)
+        col = base * (0.90 + 0.07 * slub + 0.05 * weave + 0.04 * broad)[:, None]
+        grime = coat.smooth(0.6, 0.8, coat.fbm(p, 12.0, seed + 4)) * 0.12
+        return coat.mix(col, coat.lin((0.48, 0.40, 0.30)), grime)
+    if kind == "kersey":
+        # Kersey (waistcoat, breeches): a coarser twilled wool, flatter than broadcloth,
+        # soiled at the knees and the seat; buttons down the waistcoat front.
+        nap = coat.fbm(p, 380.0, seed + 1, octaves=1)
+        rib = coat.fbm(p, (160.0, 40.0, 160.0), seed + 2, octaves=1)
+        col = base * (0.90 + 0.04 * rib + 0.05 * nap + 0.05 * broad)[:, None]
+        grime = (coat.smooth(0.62, 0.48, p[:, 2]) * coat.smooth(0.40, 0.48, p[:, 2]) * 0.25
+                 + coat.smooth(0.6, 0.8, coat.fbm(p, 12.0, seed + 4)) * 0.15)
+        col = coat.mix(col, coat.lin((0.48, 0.40, 0.30)), np.clip(grime, 0, 0.4))
         b, _ = _buttons(p, n, (0.0,), 1.00, 1.42, 0.055, 0.008)
-        col = coat.mix(col, coat.lin(BRASS) * 0.9, b * coat.smooth(0.95, 1.0, p[:, 2]))
-        return col
+        return coat.mix(col, coat.lin(BRASS) * 0.9, b * coat.smooth(0.95, 1.0, p[:, 2]))
+    if kind == "gaiters":
+        # Black linen or wool gaiters: matte cloth gone rusty brown-black, mud at the foot;
+        # the buttons are geometry (`drape.buttons`).
+        nap = coat.fbm(p, 300.0, seed, octaves=1)
+        col = base * (0.85 + 0.12 * broad + 0.10 * nap)[:, None] + coat.lin((0.035, 0.03, 0.025))
+        mud = coat.smooth(0.22, 0.05, p[:, 2]) * coat.smooth(0.4, 0.7, broad)
+        return coat.mix(col, coat.lin((0.30, 0.24, 0.16)), mud * 0.6)
     if kind == "boots":
         crease = coat.fbm(p, (25.0, 25.0, 4.0), seed + 2)
         col = base * (0.80 + 0.30 * crease + 0.08 * fine)[:, None]
@@ -194,6 +223,8 @@ def dress(ch, colours, layer_of, size=SIZE):
             m = decay.material(f"{ch.name}.{key}.outfit", layer_of[key], colours.get(o.name, (0.5, 0.5, 0.5)),
                                image=img, uv_map="atlas", interpolation="Linear")
             m["acr_colour_from"] = "outfit"
+            painter = PAINTER[key]
+            m["acr_roughness"], m["acr_sheen"], m["acr_gloss"] = FINISH.get(painter, (0.9, 0.0, 0.0))
             o.data.materials.clear()
             o.data.materials.append(m)
     return img

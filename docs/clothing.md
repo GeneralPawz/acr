@@ -120,15 +120,16 @@ and breeches, black gaiters.
 
 ## Numbers (engm18 on the VM)
 
-| garment | sim | sewn pairs welded (< 4.5 cm) | within 5 mm | tris |
-|---|---|---|---|---|
-| breeches | 1.7 s | 138 / 138 | 79 | 1296 |
-| gaiters | 1.3 s | 28 / 28 | 5 | 798 |
-| waistcoat | 1.5 s | 58 / 60 | 46 | 910 |
-| coat (body, facings, skirts, turnbacks) | 3.5 s | 243 / 251 | 164 | 1390 + 257 + 864 + 60 |
-| shirt, stock | – | 6 / 6 | 2 | 88 + 104 |
+| garment | spacing | tris |
+|---|---|---|
+| breeches | 4.2 cm | 896 |
+| gaiters, garter (inlay) | 3.5 cm | 586 + 48 |
+| waistcoat (under the coat) | 5.0 cm | 442 |
+| coat (body, facings, skirts, turnbacks; hem rims) | 3.5 cm | 1399 + 523 + 1080 + 140 |
+| buttons (brass, pewter) | – | 120 + 78 |
+| shirt, stock | 2.0 cm | 88 + 104 |
 
-The whole model is 12.0k triangles (the shell version 8.0k). The build takes about
+The whole model is 11.7k triangles (12.0k before the coarser waistcoat and breeches; the shell version 8.0k). The build takes about
 3 minutes, most of it outside the drape. Checked: the STAND views, walk, present, reload,
 crawl, death and lying clips (sheets), the looks bench and scripted hits in the game
 (musket, cannonball, sabre to the arm, shell, a leg shot off: the ragdolls fall cleanly
@@ -151,26 +152,59 @@ coloured by material key in about 15 s.
   switch, shoes from `mbody.shoes`, and the crossbelts over `drape.surface(...)` as in
   `engm18.make`.
 
-## Runtime cloth (planned)
+## Materials
 
-The coat skirts and turnbacks are separate objects (`<unit>.coat_skirts`,
-`<unit>.turnbacks`) weighted to the skirt bones (plus the corrective thigh share), with the
-FLOAT attribute `_cloth` (exported as `_CLOTH`): 0 at the waist seam (follows the skin), 1
-at the hem (free). The XPBD engine can pin the vertices with `_cloth` = 0 to the skinned
-pose and simulate the rest against capsules of the leg bones; until it does, the `skirt_*`
-bones of the clips and the thigh share move the skirts. Straps and coat tails can get the
-same attribute.
+Each atlas painter has a finish (`outfit.FINISH`: roughness, sheen, gloss), written to the
+material extras `acr_roughness`, `acr_sheen`, `acr_gloss`. The game (`model.wgsl`,
+`Material.cloth`) adds the sheen at grazing angles only (a soft pale rim where the cloth
+turns away, nothing face on) and the gloss as a highlight; the Blender previews use the
+Principled roughness, sheen and specular (`decay.export_material`). Broadcloth (coat,
+facings, lining) is matte with the strongest sheen and a fine felted nap, no painted
+highlights; kersey (waistcoat, breeches) flatter; linen (shirt, stock) slubbed with almost
+no sheen; the gaiters black cloth, not leather; shoes blacked leather with a dull gloss;
+brass and pewter buttons glossy.
+
+Geometry: brass buttons on the lapels (7 a side) and the cuffs (3 up the back), pewter
+ones down the outside of the gaiters (`drape.buttons`: 6-triangle domes cast onto the
+draped cloth, skinned like the cloth under them); the garter is a black leather inlay
+strap round the gaiter top; the coat skirts, turnbacks and facings have a 5–6 mm rim
+along their cut edges, turned in (`drape.hem`), so the hems and cuffs show their edge.
+
+## Runtime cloth
+
+`acr_physics::Cloth` (`crates/acr-physics/src/cloth.rs`) is a light XPBD cloth: particles
+with skinned targets and a freedom (`_CLOTH`), a damped drive back to the drape that
+weakens towards the hem, distance constraints down the skirt (rigid) and across it
+(one-sided, soft), bending as distances two apart, capsules, the ground, quadratic air
+drag towards the wind; pinned particles move to their targets over the substeps. Tests:
+a man standing keeps his drape, walking swings the hem a little and running makes it
+flap, a fallen man's skirts drape to the ground, the legs push the skirt out on the
+target's side, wind lifts the hem.
+
+In the game (`ingame/cloth_view.rs`) the proxy is the skirt rig: 4 columns (`skirt_fl`,
+`bl`, `br`, `fr`) × waist, knee and hem, open in front. Targets come from the palette (clip,
+gait or ragdoll) blended with the thigh's corrective share (where the skirt is drawn),
+smoothed over a tick (units move once a tick), in physics space so motion gives inertia;
+the shins collide as capsules, the terrain as ground; upright the drive is firm, lying
+down it lets go. The cloth's offset from its target turns the two skirt bones of each
+column about their heads. Budget: the 24 men nearest the camera focus within 900 px.
+
+Switched on for the dying and the dead on a ragdoll (the skirts hang and drape instead
+of sticking out rigidly with the hips); `ACR_CLOTH=all` also simulates men on their feet,
+`ACR_NO_CLOTH` switches it off. Not yet for walkers: in the game the near skirt of a
+walker comes out lifted (the offline probe on the walk clip keeps the hems within a few
+cm, the game does not; not found yet), and thigh capsules pushed the hems through to the
+wrong side of a leg swinging past them, so the thigh share does the thighs.
+
+Bench: `ACR-analysis/clothing/cloth/cloth_bench.py` (a walker and a man shot dead, close
+up from the side, frames `walk*`, `fall*`; `ACR_NO_CLOTH=1` for the skinned skirts).
 
 ## Known problems
 
-- Not every sewn pair meets within 5 mm: in the coat 164 of 251 do, 243 within 4.5 cm
-  (welded), 8 stay open (worst: the side seam at the waist where the back narrows into the
-  pleats, 10 cm; the sleeves' front seam near the armpit, where the arm is close to the
-  body; the back armhole; the collar). A stronger (100) or longer (60 frames) sewing phase
-  did not help; the sleeve placement round a straight arm axis and the side pleats (not
-  modelled) are the likely causes.
-- The shoulders are slightly puffed (the fold placement leaves the cloth a little high).
-- The gaiters are bulky with folds at the garter; the breeches are still a little full.
-- No hem fold; buttons and lace only as painted texture.
-- The layers are kept apart by margins at rest and by the corrective skirt weights in the
-  clips; there is no per-frame push-out.
+- Not every sewn pair meets within 5 mm: in the coat 166 of 251 do, 242 within 4.5 cm
+  (welded), 9 stay open. Worst: the sleeves' front and back seams (9 and 8 cm) and the back
+  armhole (8 cm), the side seam at the waist (7 cm), the hook at the top of the chest. The
+  sleeves are still placed round a straight arm axis and the side pleats are not modelled.
+- The shoulders and the upper back are crumpled and a little puffed.
+- The gaiters take their colour from the sprites (brown-black), not the palette's black.
+- No per-frame push-out of the layers; the runtime cloth only for ragdolls (above).

@@ -20,6 +20,9 @@
 //!   ([`RigBone`]: animals): capsules by length and flesh radius, masses by volume, limits by
 //!   [`BoneKind`].
 //!
+//! - [`Cloth`]: light XPBD cloth for the coat skirts (particles driven by the skinned pose,
+//!   distance and bending constraints, leg capsules, ground, wind and inertia).
+//!
 //! Axes are those of skeleton H (Blender): metres, `+X` left, `-Y` forward, `+Z` up.
 //!
 //! ```
@@ -33,11 +36,13 @@
 //! assert!(skin[3][2].abs() < 0.1);
 //! ```
 
+pub mod cloth;
 pub mod gait;
 pub mod math;
 pub mod ragdoll;
 pub mod world;
 
+pub use cloth::{Capsule, Cloth, ClothConfig};
 pub use math::{Quat, Vec3};
 pub use ragdoll::{BoneDesc, BoneKind, JointSpec, Ragdoll, Region, RigBone, bone_kinds, skeleton_generic, skeleton_h};
 pub use world::{Body, BodyId, Config, Ground, Joint, JointId, JointLimit, JointState, Tone, World};

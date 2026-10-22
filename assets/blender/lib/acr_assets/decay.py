@@ -263,6 +263,11 @@ def export_material(mat):
     bsdf = nodes.get("Principled BSDF")
     # Wet gore keeps its gloss (`acr_roughness`, set by `assets/gore/gore.py`).
     bsdf.inputs["Roughness"].default_value = float(mat.get("acr_roughness", 0.85))
+    # Cloth (`outfit.FINISH`): matte with a sheen at grazing angles; leather a dull gloss.
+    if "acr_sheen" in mat:
+        bsdf.inputs["Specular IOR Level"].default_value = 0.15 + 0.6 * float(mat.get("acr_gloss", 0.0))
+        bsdf.inputs["Sheen Weight"].default_value = float(mat["acr_sheen"])
+        bsdf.inputs["Sheen Roughness"].default_value = 0.4
     if "acr_image" in mat:
         tex = nodes.new("ShaderNodeTexImage")
         tex.image = bpy.data.images[mat["acr_image"]]
