@@ -134,7 +134,7 @@ class Character:
         obj = self.add("clothes", obj, key, symmetric)
         if shoe and not getattr(self, "shoes", None):
             # The MakeHuman feet stay bare skin; footwear gets a shoe over a last (#287).
-            self.shoes = self.add("clothes", mbody.shoes(self.arm, self.flesh, f"{self.name}.shoes", P), key, symmetric)
+            self.shoes = self.add("clothes", mbody.shoes(self.arm, self.flesh, f"{self.name}.footwear", P), key, symmetric)
         return obj
 
     def bone_layer(self):

@@ -122,7 +122,7 @@ the variant meshes, so the game looks as before.
     cut edges along the border curve, put them back on the skin and fold a hem inwards
     (`body.smooth_border`); part seams stay put.
   - Footwear (`gaiters`, `boots`, `shoes`, `boots_high`, `stockings`) leaves the feet to
-    one closed `<unit>.shoes` mesh (`mbody.shoes`): per foot the convex hull of the skin
+    one closed `<unit>.footwear` mesh (`mbody.shoes`): per foot the convex hull of the skin
     below the ankle (a last: heel, arch, toe box) lifted 7 mm, with a sole and a low heel,
     weighted to shin, foot and toe. The skin inside the shoes is deleted.
   - `build["mh_body"] = False` keeps the old hull.
