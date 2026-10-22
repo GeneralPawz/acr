@@ -306,3 +306,25 @@ fn a_shooter_pressed_against_its_target_backs_away_and_fights() {
     assert!(dist(&w) >= 40 || struck, "backed away ({} px) or fought", dist(&w));
     assert!(struck, "the musketeer used its bayonet once it had room");
 }
+
+#[test]
+fn a_walker_that_stops_at_an_enemy_keeps_its_cell() {
+    let (mut w, pik, _) = setup();
+    let a = w.spawn(pik, 0, Pos::from_pixels(2000, 2000), 0);
+    let e = w.spawn(pik, 1, Pos::from_pixels(2200, 2000), 0);
+    let en = &mut w.units[e.0 as usize];
+    (en.stand_ground, en.no_search_victim) = (true, true);
+    w.units[a.0 as usize].no_search_victim = true;
+    // Walk past the enemy: the walker meets it on the way and stops to fight (0x41df98).
+    w.step(&[Command::Move { player: 0, units: vec![a], x: 2600, y: 2000 }]);
+    for _ in 0..200 {
+        w.step(&[]);
+        let u = unit(&w, a);
+        if matches!(u.orders.last(), Some(acr_sim::world::Order::Attack { .. })) && !u.in_motion {
+            // Deviation (#195): its cell stays reserved, so friends can't walk into it.
+            assert!(w.occupancy.check_pt(u.cell.0, u.cell.1), "cell {:?} reserved", u.cell);
+            return;
+        }
+    }
+    panic!("the walker never stopped at the enemy");
+}

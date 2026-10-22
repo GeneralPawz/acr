@@ -538,8 +538,8 @@ fn motion_handler(
         return need_push.then_some(Signal::Push((xf, yf)));
     }
     if let Some(j) = buckets.enemy_near(u, end) {
-        // The cell stays unreserved, as in the original.
         try_to_stand(u, t, rnd, false);
+        occupancy.set_bar(u.cell.0, u.cell.1, lx);
         return Some(Signal::Engage(j));
     }
     u.vel = (0, 0);

@@ -647,7 +647,12 @@ Implemented in `combat.rs`, recovered from `SearchVictim` (0x52622b), `AttackObj
     count) + 1 (the pick) + 1 (the ball), plus 1 for the `R` test.
 - **Enemy contact while walking** (`CheckMotionThroughEnemyAbility` 0x41df98): if an enemy
   stands within 32 px in the 128 px cell at the end of the next cycle, the walker stops and
-  attacks it (priority 0x8F). Its cell is left unreserved, as in the original.
+  attacks it (priority 0x8F). **Deviation:** the original leaves the walker's cell
+  unreserved here, so friends walk into the cells of units that stopped to fight and melee
+  crowds pile up (in *Die Armada* up to 25 pikemen in one 32 px square). ACR reserves the
+  cell again: at most 8 in that square, units on top of each other (closer than 6 px) drop
+  from about 300 to 170 of 2100 (#195). The rest comes from the occupancy being one bit per
+  cell: when one of two overlapping units leaves, it frees the cell for the other too.
 - **Death:**
   - The unit turns by `(rando()>>8) − 64` (buildings and artillery do not and draw no
     number for it, 0x4e78e1), frees its cell and plays `#DEATH`, then lies as
