@@ -43,7 +43,7 @@ fn is_high(w: &World, t: &ObjectType, i: usize) -> bool {
 /// `AttackObj` (0x51a930): gives unit `i` an attack order on unit `j`; false if refused.
 pub fn attack_obj(w: &mut World, i: usize, j: usize, prio: u8) -> bool {
     let (Some(u), Some(e)) = (w.units.get(i), w.units.get(j)) else { return false };
-    if i == j || !u.living() || u.building || !e.living() || e.owner == u.owner {
+    if i == j || !u.active() || u.building || !e.active() || e.owner == u.owner {
         return false;
     }
     let t = w.catalog.get(u.kind);
@@ -458,7 +458,7 @@ pub fn search_victims(w: &mut World) {
     let catalog = w.catalog.clone();
     for i in 0..w.units.len() {
         let u = &w.units[i];
-        if !u.living() || u.building {
+        if !u.active() || u.building {
             continue;
         }
         let t = catalog.get(u.kind);
@@ -479,7 +479,7 @@ pub fn search_victims(w: &mut World) {
             for cx in ccx - rx..=ccx + rx {
                 let found = w.buckets.get(cx, cy).iter().map(|&k| k as usize).find(|&k| {
                     let o = &w.units[k];
-                    o.living() && o.owner != u.owner && catalog.get(o.kind).materials & kill_mask != 0
+                    o.active() && o.owner != u.owner && catalog.get(o.kind).materials & kill_mask != 0
                 });
                 if let Some(k) = found {
                     let o = &w.units[k];
@@ -547,6 +547,11 @@ pub fn object_loop(w: &mut World) {
                 }
             }
             u.death = u.death.saturating_add(1);
+            continue;
+        }
+        crate::economy::starve(w, i);
+        let u = &mut w.units[i];
+        if u.death != 0 {
             continue;
         }
         if u.delay > 0 {

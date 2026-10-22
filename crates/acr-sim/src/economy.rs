@@ -1,0 +1,447 @@
+//! Economy as the engine runs it: the per-player stock, the census every 8 ticks
+//! (`City::Census` 0x42e658: housing, population, upkeep rates, desertion), the per-tick
+//! upkeep (0x4a6b8d: food per head, `RESCONSUMER`), starvation (0x511ab3), prices
+//! (`GetUnitCost` 0x514781), production queues (`Produce` 0x49e649, `ProduceObjLink`
+//! 0x49eeb7, `UnProduce` 0x4dbd47), mines (`TakeResourceFromSpriteLink` 0x5f75b3) and units
+//! entering buildings (`GoToMine` 0x5f43d0). See `docs/simulation.md`.
+
+use crate::catalog::{ObjectType, TypeId};
+use crate::combat::die;
+use crate::fixed::Pos;
+use crate::path::{Mover, create_path, dist_to};
+use crate::trig::{get_dir, norma};
+use crate::world::{EntityId, Order, PLAYERS, SPEED_SH, Unit, World};
+
+/// Resource indices (`NRES.DAT [RESTYPES]` order).
+pub const WOOD: usize = 0;
+pub const GOLD: usize = 1;
+pub const STONE: usize = 2;
+pub const FOOD: usize = 3;
+pub const IRON: usize = 4;
+pub const COAL: usize = 5;
+
+/// Food eaten per unit per tick, in thousandths (`[CONST] RES/UNIT FOOD 3`).
+const FOOD_PER_UNIT: i32 = 3;
+/// Priority of the orders units get when they leave a building.
+const SPAWN_PRIO: u8 = 16;
+
+/// A unit being produced (`ProduceObjLink` order).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Production {
+    pub kind: TypeId,
+    /// Progress, +2 per tick, done at `stages` (the unit's `BUILDSTAGES`).
+    pub progress: i32,
+    pub stages: i32,
+    /// Number of objects of the type when it was ordered: the refund price.
+    pub power: u16,
+}
+
+/// A mine bound to a deposit (`TakeResourceFromSprite`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Mine {
+    /// Resource index.
+    pub resource: usize,
+    /// Accumulator (u16 in the engine), paid out per 1000.
+    pub acc: u16,
+}
+
+/// A resource deposit on the map (mine sites, `[INTERNAL_SOURCE]` sprites).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Deposit {
+    /// World pixels.
+    pub x: i32,
+    pub y: i32,
+    pub resource: usize,
+}
+
+/// The lock base cell of an object (0x516fde): spawn and gathering points are relative to it.
+pub fn base_cell(t: &ObjectType, pos: Pos) -> (i32, i32) {
+    ((pos.x + (t.location.0 << 4)) >> 8, (pos.y + ((2 * t.location.1) << 4)) >> 8)
+}
+
+/// `City::Census` (0x42e658) for one player: housing, population, upkeep rates, type counts;
+/// players short of gold lose `NAEMNIK` units (they desert to player 7) and `TURNOFF` units
+/// stop.
+pub fn census(w: &mut World, player: u8) {
+    let catalog = w.catalog.clone();
+    let n = usize::from(player);
+    let short = w.players[n].gold_short;
+    let mut counts = vec![0u16; catalog.len()];
+    let (mut housing, mut population, mut speed) = (0, 0, [0i32; 8]);
+    for u in w.units.iter_mut().filter(|u| u.alive && u.owner == player && (u.death == 0 || u.inside_of.is_some())) {
+        let t = catalog.get(u.kind);
+        let e = &t.economy;
+        counts[usize::from(u.kind.0)] = counts[usize::from(u.kind.0)].saturating_add(1);
+        if !t.building || u.stage >= e.build_stages {
+            housing += e.farm;
+            if !t.building {
+                population += 1;
+            }
+        }
+        if let Some((r, v)) = e.consumer {
+            speed[r] += v;
+        }
+        u.turned_off = short && e.turn_off;
+        if short && e.mercenary {
+            u.owner = 7;
+        }
+    }
+    let p = &mut w.players[n];
+    p.housing = housing;
+    p.population = population;
+    p.consumption = speed;
+    p.type_count = counts;
+}
+
+/// The per-tick upkeep (0x4a6b8d) of every player: food per head, then `RESCONSUMER`.
+pub fn upkeep(w: &mut World) {
+    let mult = 2000 >> SPEED_SH;
+    for p in &mut w.players {
+        p.harch = p.harch.wrapping_add((p.population * FOOD_PER_UNIT) as u16);
+        let d = i32::from(p.harch) / mult;
+        if d != 0 {
+            if p.resources[FOOD] > d {
+                p.resources[FOOD] -= d;
+                p.harch = p.harch.wrapping_sub((mult * d) as u16);
+                if p.harch == 0 {
+                    p.harch = 1;
+                }
+            } else {
+                p.resources[FOOD] = 0;
+                p.harch = 0;
+            }
+        }
+        if p.harch == 0 && p.resources[FOOD] != 0 {
+            p.harch = 1;
+        }
+        let mult = 2_000_000 >> SPEED_SH;
+        for j in 0..8 {
+            let r = p.consumption_rest[j] + p.consumption[j] * 100;
+            p.resources[j] -= r / mult;
+            if p.resources[j] < 0 {
+                p.resources[j] = 0;
+            }
+            p.consumption_rest[j] = r % mult;
+            if j == GOLD {
+                p.gold_short = p.resources[GOLD] < 2;
+            }
+        }
+    }
+}
+
+/// Starvation (0x511ab3), in the object loop: while a player has no food left (`Harch` 0),
+/// each of its units dies with probability 51/32768 per tick unless it is `NO_HUNGRY`.
+pub fn starve(w: &mut World, i: usize) {
+    let u = &w.units[i];
+    if u.building || w.players[usize::from(u.owner)].harch != 0 {
+        return;
+    }
+    if w.random.rando() <= 50 && !w.catalog.get(u.kind).economy.no_hungry {
+        die(w, i);
+    }
+}
+
+/// The price of a type after `n` existing objects of it (each multiplies by `COSTPERCENT`).
+pub fn cost_after(t: &ObjectType, n: u32) -> [i32; 8] {
+    let e = &t.economy;
+    let mut cost = e.price;
+    if e.cost_percent == 100 {
+        return cost;
+    }
+    let mut v: i32 = 1000;
+    for _ in 0..n {
+        if v < 1_000_000 {
+            v = v.wrapping_mul(e.cost_percent) / 100;
+            for c in &mut cost {
+                *c = c.wrapping_mul(e.cost_percent) / 100;
+                if *c < 0 {
+                    *c = 10_000_000;
+                }
+            }
+        }
+    }
+    cost
+}
+
+/// `GetUnitCost` (0x514781): the price for `player` now; `at` (world px) applies
+/// `LOWCOSTRADIUS` for buildings being placed.
+pub fn unit_cost(w: &World, player: u8, kind: TypeId, at: Option<(i32, i32)>) -> [i32; 8] {
+    let t = w.catalog.get(kind);
+    let mut n = u32::from(w.players[usize::from(player)].type_count.get(usize::from(kind.0)).copied().unwrap_or(0));
+    if let Some((x, y)) = at.filter(|_| t.economy.low_cost_radius != 0) {
+        let near = w.units_of(player).any(|u| {
+            let (ux, uy) = u.pos.pixels();
+            u.kind == kind && norma(ux - x, uy - y) < t.economy.low_cost_radius
+        });
+        if !near {
+            n = 0;
+        }
+    }
+    cost_after(t, n)
+}
+
+/// `CanAfford` + `ApplyCost` (0x514e81).
+fn pay(w: &mut World, player: u8, cost: &[i32; 8]) -> bool {
+    let stock = &mut w.players[usize::from(player)].resources;
+    if stock.iter().zip(cost).any(|(s, c)| s < c) {
+        return false;
+    }
+    for (s, c) in stock.iter_mut().zip(cost) {
+        *s -= c;
+    }
+    true
+}
+
+/// `Produce` (0x49e649): queues a unit in a finished building, paying the full price now.
+pub fn produce(w: &mut World, b: usize, kind: TypeId) -> bool {
+    let u = &w.units[b];
+    if !u.living() || !u.building || u.stage < w.catalog.get(u.kind).economy.build_stages {
+        return false;
+    }
+    let player = u.owner;
+    let power = w.players[usize::from(player)].type_count.get(usize::from(kind.0)).copied().unwrap_or(0);
+    let cost = unit_cost(w, player, kind, None);
+    if !pay(w, player, &cost) {
+        return false;
+    }
+    let stages = w.catalog.get(kind).economy.build_stages;
+    w.units[b].queue.push(Production { kind, progress: 0, stages, power });
+    true
+}
+
+/// `UnProduce` (0x4dbd47): cancels one queued order of `kind` (a waiting one first, else
+/// the running one) with a full refund; progress is lost.
+pub fn unproduce(w: &mut World, b: usize, kind: TypeId) {
+    let q = &w.units[b].queue;
+    let Some(k) = (1..q.len()).find(|&k| q[k].kind == kind).or_else(|| (q.first()?.kind == kind).then_some(0)) else {
+        return;
+    };
+    let order = w.units[b].queue.remove(k);
+    let refund = cost_after(w.catalog.get(kind), u32::from(order.power));
+    let stock = &mut w.players[usize::from(w.units[b].owner)].resources;
+    for (s, c) in stock.iter_mut().zip(refund) {
+        *s = s.saturating_add(c);
+    }
+}
+
+/// A building's work for one tick: the head of its production queue, then its mine.
+pub fn building_link(w: &mut World, b: usize) {
+    if w.units[b].turned_off {
+        return;
+    }
+    if !w.units[b].queue.is_empty() {
+        production_link(w, b);
+    }
+    mine_link(w, b);
+}
+
+/// `ProduceObjLink` (0x49eeb7).
+fn production_link(w: &mut World, b: usize) {
+    let catalog = w.catalog.clone();
+    let (owner, bt) = (w.units[b].owner, catalog.get(w.units[b].kind));
+    let head = w.units[b].queue[0].clone();
+    let pt = catalog.get(head.kind);
+    let p = &w.players[usize::from(owner)];
+    let peasant = pt.peasant;
+    if p.housing < p.population + 1 && (peasant || !bt.economy.peasant_convertor) {
+        return; // no room: production waits
+    }
+    let converts = bt.economy.peasant_convertor && !peasant;
+    if converts && !w.units[b].inside.iter().any(|&id| catalog.get(w.units[id.0 as usize].kind).peasant) {
+        return; // NOT_ENOUGH_PEASANTS
+    }
+    let stages = pt.economy.build_stages;
+    let q = &mut w.units[b].queue[0];
+    if q.stages != stages && q.stages > 0 {
+        q.progress = stages * q.progress / q.stages;
+        q.stages = stages;
+    }
+    q.progress += 1 << SPEED_SH;
+    if q.progress < q.stages {
+        return;
+    }
+    w.units[b].queue.remove(0);
+    spawn_from(w, b, head.kind);
+    if converts
+        && let Some(k) = w.units[b].inside.iter().position(|&id| catalog.get(w.units[id.0 as usize].kind).peasant)
+    {
+        let pid = w.units[b].inside.remove(k);
+        w.units[pid.0 as usize].inside_of = None;
+        w.remove(pid);
+    }
+    census(w, owner);
+}
+
+/// Creates a unit at the building's first born point and sends it along the others (and on
+/// to the rally point), walking through locks until it is out (`SetOrderedUnlimitedMotion`).
+fn spawn_from(w: &mut World, b: usize, kind: TypeId) -> EntityId {
+    let catalog = w.catalog.clone();
+    let (bu, bt) = (&w.units[b], catalog.get(w.units[b].kind));
+    let (bx, by) = base_cell(bt, bu.pos);
+    let pts = &bt.economy.born_points;
+    let first = pts.first().map_or(bu.pos, |&(x, y)| Pos::new((bx + x) << 8, (by + y) << 8));
+    let dir = match pts.get(1) {
+        Some(&(x1, y1)) => get_dir(x1 - pts[0].0, y1 - pts[0].1),
+        None => 64,
+    };
+    let (owner, rally) = (bu.owner, bu.rally);
+    let last = pts.last().map(|&(x, y)| Pos::new((bx + x) << 8, (by + y) << 8));
+    let id = w.spawn(kind, owner, first, dir);
+    let u = &mut w.units[id.0 as usize];
+    w.occupancy.clr_bar(u.cell.0, u.cell.1, u.lx);
+    u.unlimited = true;
+    if let Some(r) = rally {
+        let (x, y) = r.pixels();
+        u.orders.push(Order::SmartSendTo { x, y, dx: 0, dy: 0, prio: SPAWN_PRIO, area: None });
+    }
+    let out = last.unwrap_or(first);
+    u.orders.push(Order::SendTo { cell: Unit::cell_of(out, u.lx), prio: SPAWN_PRIO });
+    u.dest = Some(out);
+    u.prio = SPAWN_PRIO;
+    id
+}
+
+/// `TakeResourceFromSpriteLink` (0x5f75b3), every tick, no randomness: the mine adds
+/// `(free + inside·per_peasant) << (SpeedSh + 2)` to its accumulator and pays out per 1000.
+fn mine_link(w: &mut World, b: usize) {
+    let Some(mut mine) = w.units[b].mine else { return };
+    let Some(prod) = w.catalog.get(w.units[b].kind).economy.producer else { return };
+    let work = (prod.free + w.units[b].inside.len() as i32 * prod.per_peasant) << (SPEED_SH + 2);
+    let mut acc = i32::from(mine.acc) + work;
+    if acc > 1000 {
+        let p = &mut w.players[usize::from(w.units[b].owner)];
+        p.resources[mine.resource] = p.resources[mine.resource].saturating_add(acc / 1000);
+        acc %= 1000;
+    }
+    mine.acc = acc as u16;
+    w.units[b].mine = Some(mine);
+}
+
+/// Binds mines without a deposit to one within 128 px (`CheckMinePosition` 0x4d2100); the
+/// engine does this at creation and every 256 ticks (`HandleMines` 0x5f7f33).
+pub fn bind_mines(w: &mut World) {
+    let catalog = w.catalog.clone();
+    for i in 0..w.units.len() {
+        let u = &w.units[i];
+        if !u.living() || u.mine.is_some() {
+            continue;
+        }
+        let Some(prod) = catalog.get(u.kind).economy.producer else { continue };
+        let (x, y) = u.pos.pixels();
+        let found = w.deposits.iter().find(|d| prod.mask & (1 << d.resource) != 0 && norma(d.x - x, d.y - y) < 128);
+        if let Some(d) = found {
+            w.units[i].mine = Some(Mine { resource: d.resource, acc: 0 });
+        }
+    }
+}
+
+/// Whether `u` may go into building `b` now (`GoToMine` 0x5f43d0 checks).
+fn can_enter(w: &World, u: &Unit, b: &Unit) -> bool {
+    let bt = w.catalog.get(b.kind);
+    let ut = w.catalog.get(u.kind);
+    let cap = if ut.peasant && bt.economy.peasant_absorber > 0 {
+        bt.economy.peasant_absorber
+    } else {
+        bt.economy.unit_absorber
+    };
+    b.living()
+        && b.building
+        && b.owner == u.owner
+        && !bt.economy.concentrator.is_empty()
+        && (b.inside.len() as i32) < cap
+}
+
+/// Orders a unit into a building (mine, garrison).
+pub fn enter(w: &mut World, i: usize, b: usize, prio: u8) -> bool {
+    if !can_enter(w, &w.units[i], &w.units[b]) || prio < w.units[i].prio && !w.units[i].orders.is_empty() {
+        return false;
+    }
+    let id = w.units[b].id;
+    let u = &mut w.units[i];
+    u.orders.clear();
+    u.orders.push(Order::Enter { building: id, prio });
+    u.prio = prio;
+    u.path.delay = 0;
+    true
+}
+
+/// `GoToMineLink` (0x5f46f7, simplified): walk to the building's first `CONCENTRATOR` point,
+/// then disappear inside.
+pub fn enter_link(w: &mut World, i: usize, building: EntityId, prio: u8) {
+    let b = building.0 as usize;
+    if w.units.get(b).is_none() || !can_enter(w, &w.units[i], &w.units[b]) {
+        w.units[i].orders.pop();
+        return;
+    }
+    let catalog = w.catalog.clone();
+    let bt = catalog.get(w.units[b].kind);
+    let (bx, by) = base_cell(bt, w.units[b].pos);
+    let (cx, cy) = bt.economy.concentrator[0];
+    let target = (bx + cx, by + cy);
+    w.units[i].prio = prio;
+    let u = &w.units[i];
+    let mover = Mover { x: u.cell.0, y: u.cell.1, lx: u.lx };
+    if dist_to(mover, target.0, target.1) < 2 {
+        let u = &mut w.units[i];
+        w.occupancy.clr_bar(u.cell.0, u.cell.1, u.lx);
+        u.orders.clear();
+        u.in_motion = false;
+        u.dest = None;
+        u.inside_of = Some(building);
+        let id = u.id;
+        w.units[b].inside.push(id);
+        return;
+    }
+    let t = catalog.get(w.units[i].kind);
+    let u = &mut w.units[i];
+    if let Some((x, y)) =
+        create_path(&w.map.land, mover, &mut u.path, &mut w.random, target.0, target.1, t.stop_distance)
+    {
+        u.dest = Some(Pos::new(x, y));
+    }
+}
+
+/// Lets everybody out of a building at its born points.
+pub fn leave(w: &mut World, b: usize) {
+    let catalog = w.catalog.clone();
+    let inside = std::mem::take(&mut w.units[b].inside);
+    let bt = catalog.get(w.units[b].kind);
+    let (bx, by) = base_cell(bt, w.units[b].pos);
+    let pts = bt.economy.born_points.clone();
+    let pos = w.units[b].pos;
+    for id in inside {
+        let u = &mut w.units[id.0 as usize];
+        u.inside_of = None;
+        let first = pts.first().map_or(pos, |&(x, y)| Pos::new((bx + x) << 8, (by + y) << 8));
+        let out = pts.last().map_or(first, |&(x, y)| Pos::new((bx + x) << 8, (by + y) << 8));
+        u.pos = first;
+        u.cell = Unit::cell_of(first, u.lx);
+        u.unlimited = true;
+        u.orders.clear();
+        u.orders.push(Order::SendTo { cell: Unit::cell_of(out, u.lx), prio: SPAWN_PRIO });
+        u.dest = Some(out);
+    }
+}
+
+/// Deposits of a map: `[INTERNAL_SOURCE]` sprites of the map objects.
+pub fn deposits(objects: &[crate::world::MapObject], shapes: &crate::map::SpriteShapes) -> Vec<Deposit> {
+    objects
+        .iter()
+        .filter_map(|o| Some(Deposit { x: o.x, y: o.y, resource: shapes.source(o.group, o.index)? }))
+        .collect()
+}
+
+/// Ends the unlimited walk out of a building: the unit takes its cell in the occupancy grid.
+pub(crate) fn settle(u: &mut Unit, occupancy: &mut crate::map::LockMap) {
+    if u.unlimited {
+        u.unlimited = false;
+        occupancy.set_bar(u.cell.0, u.cell.1, u.lx);
+    }
+}
+
+/// All players' census, as after loading a map.
+pub fn census_all(w: &mut World) {
+    for p in 0..PLAYERS as u8 {
+        census(w, p);
+    }
+}

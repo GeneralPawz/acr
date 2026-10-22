@@ -432,6 +432,56 @@ Implemented in `combat.rs`, recovered from `SearchVictim` (0x52622b), `AttackObj
   16 ticks, `#TRANS3X`, and the next shot.
 - The bayonet strikes every 26 ticks; a pikeman every 10 ticks.
 
+## Economy
+
+Implemented in `economy.rs`. The sources are `City::Census` (0x42e658), the upkeep at
+0x4a6b8d, starvation (0x511ab3), `GetUnitCost` (0x514781), `Produce` / `ProduceObjLink` /
+`UnProduce` (0x49e649, 0x49eeb7, 0x4dbd47), mines (0x5f75b3) and `GoToMine` (0x5f43d0).
+
+- **Resources.** They are indexed in `NRES.DAT [RESTYPES]` order: wood 0, gold 1, stone 2,
+  food 3, iron 4, coal 5 (`economy::WOOD` …).
+  - Every player starts with the `[RESTYPES]` amount of 500 000 each (`START_STOCK`). The
+    map's `RESU` chunk (8 players × 8 values, same order) then replaces it.
+  - There is no upper limit. Missions use 0x4876E7FF as "unlimited".
+- **Census**, every 8 ticks per player (player `tick & 7`), also after a unit is produced:
+  - housing (`NFarms`): the sum of `FARM` = 15 / `MFARM n` over finished buildings;
+  - population (`NGidot`): living non-buildings, including units inside buildings;
+  - the summed `RESCONSUMER` rates;
+  - the object count per type, used for prices.
+  - When a player's gold drops below 2, `NAEMNIK` mercenaries desert to player 7 for good,
+    and `TURNOFF` units stop working.
+- **Upkeep**, every tick:
+  - Food: `Harch += 3·population`; every whole 1000 costs one food. When food runs out,
+    `Harch` becomes 0.
+  - `RESCONSUMER RES v` costs `v·100/1 000 000` per tick, with the remainder carried. Peasants
+    (`FOOD 32`) eat 0.0062 food per tick in total; other units 0.003.
+  - With `Harch == 0`, every unit draws `rando()` each tick, and `≤ 50` kills it unless it is
+    `NO_HUNGRY`.
+- **Prices.**
+  - The price is `PRICE`, multiplied `n` times by `COSTPERCENT/100`, truncated at each step.
+    `n` is the player's count of that type, and growth stops once a ×1000 tracker passes 10⁶.
+  - With `LOWCOSTRADIUS`, a building placed far from others of its type pays the base price.
+  - The price is paid when a unit is queued.
+- **Production queues.**
+  - The head order gains 2 per tick, so a unit takes `ceil(BUILDSTAGES/2)` ticks (peasant:
+    100). It waits while `housing < population + 1`.
+  - A `PEASANTCONVERTOR` building producing a non-peasant instead uses up a peasant from
+    inside.
+  - The unit appears at the first `BORNPOINT`, a cell corner relative to the lock base cell
+    `((RealX + 16a) >> 8, (RealY + 32b) >> 8)` with `LOCATION a b`. It walks to the last born
+    point through locks and other units ("unlimited motion"), then to the rally point.
+  - Cancelling refunds the price at the count when it was queued; progress is lost. There is
+    no queue limit.
+- **Mines.**
+  - A `PRODUCER` building binds to a deposit within 128 px: an `[INTERNAL_SOURCE]` sprite of
+    a resource it can mine. Binding happens when it is placed and every 256 ticks.
+  - Each tick it adds `(free + inside·per_peasant) << 3` to a u16 accumulator and pays out per
+    1000. That is 0.08 per peasant per tick for `PRODUCER 1 GOLD 0 10`. No randomness;
+    deposits never run out.
+- **Entering buildings.** A unit walks to the first `CONCENTRATOR` point and disappears inside
+  (`Unit::inside_of`). Peasants count against `PEASANTABSORBER`, other units against
+  `UNITABSORBER`. Units inside still eat and count. `Leave` puts them back at the born points.
+
 ## Fog of war
 
 Recovered from `RevealUnit` (0x484f7b), the blur (0x483c2a) and its consumers. The fog is
@@ -495,6 +545,9 @@ sum of its four neighbours (centre excluded). This spreads the stamps and decays
   - `World::spawn(kind, owner, pos, dir)`, `kill(id)` (with corpse), `remove(id)` (gone at
     once).
   - Unit types: `Catalog::find("EngMus(EN)")`.
+  - Economy: `World::players[p]` (`resources`, `population`, `housing`), each building's
+    `queue` / `inside` / `mine`, `economy::unit_cost`. The commands are `Produce`,
+    `Unproduce`, `Enter`, `Leave` and `Rally`.
 
   These calls change the state directly. Call them between ticks, in the same order on
   every machine.
@@ -528,6 +581,15 @@ sum of its four neighbours (centre excluded). This spreads the stamps and decays
     walks pikemen in stance 1 with `#MOTION_L0`/`#MOTION_R0` at the same speed.
   - `#TRANS01`/`#TRANS10`, `BREAKANIMATION` and build animations are not modelled.
   - Units without `#MOTION_L` are treated as 1-frame cycles.
+- **Economy:**
+  - Construction and peasant gathering (wood, fields, meat) are not simulated yet. All map
+    buildings exist finished, and `Produce` accepts any unit type: the `[FIXED_PRODUCE]` lists
+    of the nation files are not checked.
+  - Not reproduced yet: upgrades, the market, `RESSUBST` type changes, ports and ships;
+    building stage requirements; the AI difficulty factor on production time; the 10× cannon
+    price lobby option.
+  - Spawned units walk only to the last born point (the original walks every point); the
+    rally point does not yet garrison or gather.
 - **Combat:**
   - Shots start at the unit's position. The `SETACTIVEPOINT` muzzle offsets (and the
     sprite frame offsets) are not added.
@@ -569,6 +631,14 @@ sum of its four neighbours (centre excluded). This spreads the stamps and decays
   - a musketeer fires its first shot 38–45 ticks after the order, reloads 550 frames and
     kills at 300 px;
   - a 20-unit battle gives identical hashes in two runs.
+- **Economy tests** (`tests/economy.rs`):
+  - 10 peasants eat 62 food in 1000 ticks;
+  - famine kills peasants but not `NO_HUNGRY` units;
+  - a centre produces a peasant on the 10th tick after the order, paid when queued, and it
+    walks out;
+  - a third centre costs 4× (`COSTPERCENT 200`);
+  - production waits for housing, and cancelling refunds;
+  - 5 peasants in a gold mine earn 400 gold in 1000 ticks and can leave again.
 - **Fog test** (`tests/fog.rs`): a VISION 3 unit lights its cell and 200 px around but not
   1000 px away, and the light fades once the unit is gone.
 - **Replay tests:** every command round-trips through the binary format; damaged data is

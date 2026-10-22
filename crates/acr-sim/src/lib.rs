@@ -18,6 +18,7 @@ pub mod catalog;
 pub mod clock;
 pub mod combat;
 pub mod command;
+pub mod economy;
 pub mod fixed;
 pub mod fog;
 pub mod formation;

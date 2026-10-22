@@ -23,6 +23,10 @@ pub const FRM_DEC: i32 = 2;
 /// `SpeedSh` (0x668f14).
 pub const SPEED_SH: i32 = 1;
 
+/// Stock every player starts with before the map's `RESU` overrides it: the `NRES.DAT
+/// [RESTYPES]` amount (500000) for the six resources (0x4eb641).
+pub const START_STOCK: [i32; 8] = [500_000, 500_000, 500_000, 500_000, 500_000, 500_000, 0, 0];
+
 /// Stable id of a unit or building: its slot in [`World::units`]. Slots are never reused
 /// within a match, so ids stay unique and iteration order is creation order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -87,6 +91,8 @@ pub enum Order {
     SmartSendTo { x: i32, y: i32, dx: i32, dy: i32, prio: u8, area: Option<u16> },
     /// `AttackObj` (order type 3, link 0x51bcaf): fight a unit until it is dead.
     Attack { target: EntityId, prio: u8 },
+    /// `GoToMine` (order type 0xF2, link 0x5f46f7): walk into a building.
+    Enter { building: EntityId, prio: u8 },
 }
 
 /// A unit or building (the engine's `OneObject`).
@@ -143,6 +149,22 @@ pub struct Unit {
     /// Formation attack and defence bonus (OB+0x61 / OB+0x62).
     pub attack_bonus: i32,
     pub defence_bonus: i32,
+    /// Buildings: construction stage, finished at the type's `BUILDSTAGES`.
+    pub stage: i32,
+    /// Buildings: production queue, head first.
+    pub queue: Vec<crate::economy::Production>,
+    /// Buildings: units inside (mine workers, garrison).
+    pub inside: Vec<EntityId>,
+    /// Buildings: the deposit a mine works.
+    pub mine: Option<crate::economy::Mine>,
+    /// Buildings: rally point for produced units.
+    pub rally: Option<Pos>,
+    /// The building this unit is inside (hidden, but counted and fed).
+    pub inside_of: Option<EntityId>,
+    /// Walks through locks and other units (leaving a building).
+    pub unlimited: bool,
+    /// Switched off for lack of gold (`TURNOFF`).
+    pub turned_off: bool,
 }
 
 impl Unit {
@@ -158,6 +180,11 @@ impl Unit {
     /// Exists and is not dead or dying.
     pub fn living(&self) -> bool {
         self.alive && self.death == 0
+    }
+
+    /// Living and on the map (not inside a building).
+    pub fn active(&self) -> bool {
+        self.living() && self.inside_of.is_none()
     }
 
     /// The unit's current attack target, if it has an attack order.
@@ -179,10 +206,23 @@ pub struct MapObject {
     pub y: i32,
 }
 
+/// A player's economy (the parts of the engine's `Nation` the simulation uses).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct Player {
-    /// Start resources from `RESU` (resource order not mapped yet).
-    pub resources: [u32; 8],
+    /// Stock by resource index (`economy::WOOD` ... `COAL`), from `RESU` at the start.
+    pub resources: [i32; 8],
+    /// Food accumulator (`Harch`): +3 per unit per tick, 1 food eaten per 1000; 0 = famine.
+    pub harch: u16,
+    /// Summed `RESCONSUMER` rates and their remainders.
+    pub consumption: [i32; 8],
+    pub consumption_rest: [i32; 8],
+    /// Living non-buildings (`NGidot`) and housing (`NFarms`), from the census.
+    pub population: i32,
+    pub housing: i32,
+    /// Gold below 2 (`GoldBunt`): mercenaries desert, `TURNOFF` units stop.
+    pub gold_short: bool,
+    /// Objects per type (`UnitAmount`), for prices.
+    pub type_count: Vec<u16>,
 }
 
 /// What [`World::from_map`] could not place.
@@ -211,6 +251,8 @@ pub struct World {
     pub random: SyncRandom,
     /// Units per 128 px cell, rebuilt at the start of every tick (derived, not hashed).
     pub buckets: Buckets,
+    /// Resource deposits for mines.
+    pub deposits: Vec<crate::economy::Deposit>,
 }
 
 /// Unit indices per 128 px cell (8 × 8 lock cells).
@@ -232,7 +274,7 @@ impl Buckets {
         self.snapshot.clear();
         self.snapshot.extend(units.iter().map(|u| (u.owner, u.pos)));
         for (i, u) in units.iter().enumerate() {
-            if u.living() && !u.building {
+            if u.active() && !u.building {
                 let (x, y) = ((u.cell.0 >> 3).clamp(0, self.side - 1), (u.cell.1 >> 3).clamp(0, self.side - 1));
                 self.cells[(y * self.side + x) as usize].push(i as u32);
             }
@@ -266,13 +308,14 @@ impl World {
             catalog,
             formations,
             map,
-            players: Default::default(),
+            players: std::array::from_fn(|_| Player { resources: START_STOCK, ..Player::default() }),
             units: Vec::new(),
             objects: Vec::new(),
             brigades: Vec::new(),
             occupancy,
             random: SyncRandom::new(0),
             buckets: Buckets::default(),
+            deposits: Vec::new(),
         }
     }
 
@@ -295,7 +338,7 @@ impl World {
         let mut report = LoadReport::default();
         if let Some(res) = &m3d.resources {
             for (p, r) in world.players.iter_mut().zip(res) {
-                p.resources = *r;
+                p.resources = r.map(|v| v as i32);
             }
         }
         for u in &m3d.units {
@@ -316,6 +359,9 @@ impl World {
             .filter(|s| !matches!(s.group, SpriteGroup::Unknown(_)))
             .map(|s| MapObject { group: s.group, index: s.index, x: s.x, y: s.y })
             .collect();
+        world.deposits = crate::economy::deposits(&world.objects, sprites);
+        crate::economy::bind_mines(&mut world);
+        crate::economy::census_all(&mut world);
         (world, report)
     }
 
@@ -361,6 +407,14 @@ impl World {
             kills: 0,
             attack_bonus: 0,
             defence_bonus: 0,
+            stage: t.economy.build_stages,
+            queue: Vec::new(),
+            inside: Vec::new(),
+            mine: None,
+            rally: None,
+            inside_of: None,
+            unlimited: false,
+            turned_off: false,
         };
         if !unit.building && t.mobile() {
             self.occupancy.set_bar(cell.0, cell.1, lx);
@@ -418,14 +472,23 @@ impl World {
         }
         crate::formation::run_brigades(self);
         self.buckets.rebuild(self.map.land.width, &self.units);
+        crate::economy::census(self, (self.tick.0 & 7) as u8);
+        crate::economy::upkeep(self);
         crate::combat::search_victims(self);
+        if self.tick.0 & 255 == 0 {
+            crate::economy::bind_mines(self);
+        }
         for player in 0..PLAYERS as u8 {
             for i in 0..self.units.len() {
                 let u = &self.units[i];
-                if u.owner != player || !u.living() || u.building || !self.catalog.get(u.kind).mobile() {
+                if u.owner != player || !u.active() {
                     continue;
                 }
-                crate::motion::process_unit(self, i);
+                if u.building {
+                    crate::economy::building_link(self, i);
+                } else if self.catalog.get(u.kind).mobile() {
+                    crate::motion::process_unit(self, i);
+                }
             }
         }
         crate::combat::object_loop(self);
@@ -436,7 +499,7 @@ impl World {
         let mut v: Vec<usize> = ids
             .iter()
             .map(|id| id.0 as usize)
-            .filter(|&i| self.units.get(i).is_some_and(|u| u.living() && u.owner == player))
+            .filter(|&i| self.units.get(i).is_some_and(|u| u.active() && u.owner == player))
             .collect();
         v.sort_unstable();
         v.dedup();
@@ -476,6 +539,36 @@ impl World {
             Command::Disband { player, officer } => {
                 if let Some(&o) = self.owned(*player, &[*officer]).first() {
                     crate::formation::disband(self, o);
+                }
+            }
+            Command::Produce { player, building, kind } => {
+                if let Some(&b) = self.owned(*player, &[*building]).first()
+                    && usize::from(kind.0) < self.catalog.len()
+                {
+                    crate::economy::produce(self, b, *kind);
+                }
+            }
+            Command::Unproduce { player, building, kind } => {
+                if let Some(&b) = self.owned(*player, &[*building]).first() {
+                    crate::economy::unproduce(self, b, *kind);
+                }
+            }
+            Command::Enter { player, units, building } => {
+                let b = building.0 as usize;
+                if self.units.get(b).is_some_and(|u| u.owner == *player) {
+                    for i in self.owned(*player, units) {
+                        crate::economy::enter(self, i, b, crate::motion::PLAYER_PRIO);
+                    }
+                }
+            }
+            Command::Leave { player, building } => {
+                if let Some(&b) = self.owned(*player, &[*building]).first() {
+                    crate::economy::leave(self, b);
+                }
+            }
+            Command::Rally { player, building, x, y } => {
+                if let Some(&b) = self.owned(*player, &[*building]).first() {
+                    self.units[b].rally = Some(Pos::from_pixels(*x, *y));
                 }
             }
         }
