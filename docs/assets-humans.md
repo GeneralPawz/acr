@@ -124,11 +124,19 @@ the variant meshes, so the game looks as before.
   - Footwear (`gaiters`, `boots`, `shoes`, `boots_high`, `stockings`) leaves the feet to
     one closed `<unit>.footwear` mesh (`mbody.shoes`): per foot the convex hull of the skin
     below the ankle (a last: heel, arch, toe box) lifted 7 mm, with a sole and a low heel,
+    the toe tapered and sprung (`TOE_TAPER`, `TOE_SPRING`), a buckle on the instep
+    (material keys `[footwear, "brass"]`),
     weighted to shin, foot and toe. The skin inside the shoes is deleted.
   - `build["mh_body"] = False` keeps the old hull.
 - **Face map:** the head part of the skin has its own material (second primitive of the
   flesh, `acr_tint` "skin") with a 512² texture on `TEXCOORD_0`.
-  - The UV is a cylindrical projection with the face front in the middle (`heads.face_uv`).
+  - The UV is a smart-project unwrap of the head (`heads.unwrap`, pass 5; the earlier
+    cylinder folded the chin's underside onto the neck). The bake is dilated into the
+    island margins (`heads.dilate`), so filtering shows no seams.
+  - Pass 5 toned the paint down (dirt, pores, blotches, occlusion) so the face matches the
+    body's skin; the stubble is fine and even (a shaved shadow and sparse hair points); the
+    brows are full tapered bands. The beard zone (`_FACE` R) is relaxed over the mesh and
+    scaled by 0.7, so the renderer's per-vertex stubble shows no wedges.
   - Painted from a Cycles bake: weathered skin, eyes with whites, iris, lids, lashes and
     crease, brows, nostrils, lips and the mouth line, folds, a cropped scalp along the
     hairline, a faint beard shadow.

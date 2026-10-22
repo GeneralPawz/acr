@@ -89,12 +89,27 @@ def body_morphs(ch, objs):
         bd.toward_bones(o, ch.arm, "body_thin", faces.THIN_KEEP, bones, fixed)
 
 
+ZONE_RELAX = 3
+BEARD_ZONE_GAIN = 0.7
+
+
 def zones(obj, fr):
     """The `_FACE` attribute (glTF `_FACE`, vec4; `faces.zones`)."""
     me = obj.data
     a = me.attributes.get("_face") or me.attributes.new("_face", "FLOAT_COLOR", "POINT")
-    for d, v in zip(a.data, me.vertices):
-        d.color = faces.zones(*fr.local(v.co))
+    z = [list(faces.zones(*fr.local(v.co))) for v in me.vertices]
+    # The beard zone is shaded per vertex in the renderer: relax it over the mesh so the
+    # decimated face's large triangles do not show as dark wedges, and keep it softer.
+    nb = [[] for _ in me.vertices]
+    for e in me.edges:
+        i, j = e.vertices
+        nb[i].append(j)
+        nb[j].append(i)
+    r = [c[0] for c in z]
+    for _ in range(ZONE_RELAX):
+        r = [0.5 * r[i] + 0.5 * (sum(r[j] for j in nb[i]) / len(nb[i])) if nb[i] else r[i] for i in range(len(r))]
+    for d, c, ri in zip(a.data, z, r):
+        d.color = (ri * BEARD_ZONE_GAIN, c[1], c[2], c[3])
 
 
 # --------------------------------------------------------------------------- hair, beards
@@ -309,9 +324,43 @@ def face_uv(fr, co):
     return 0.5 + 0.5 * math.sin(th / 2.0), (z + 0.17) / 0.30
 
 
+def unwrap(obj, angle=60.0, margin=0.015):
+    """Smart-projects the active UV map of `obj` (islands, no overlaps)."""
+    vl = bpy.context.view_layer
+    for o in vl.objects:
+        o.select_set(False)
+    vl.objects.active = obj
+    obj.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.uv.smart_project(angle_limit=math.radians(angle), island_margin=margin, scale_to_bounds=True)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    obj.select_set(False)
+
+
+def dilate(img, mask, steps=12):
+    """Grows the painted texels (`mask`) into the empty ones, so filtering and mip maps
+    do not pull the background into the island edges."""
+    img = img.copy()
+    m = mask.copy()
+    for _ in range(steps):
+        acc = np.zeros_like(img)
+        cnt = np.zeros(m.shape, np.float32)
+        for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            mm = np.roll(np.roll(m, dy, 0), dx, 1)
+            acc += np.roll(np.roll(img, dy, 0), dx, 1) * mm[..., None]
+            cnt += mm
+        grow = (~m) & (cnt > 0)
+        img[grow] = acc[grow] / cnt[grow][:, None]
+        m = m | grow
+    if (~m).any():
+        img[~m] = img[m].mean(0)
+    return img
+
+
 def face_map(ch, skin_rgb):
     """The head's own material and 512² texture: the head part of the skin gets its own
-    material slot and, in the `atlas` UV map, the cylindrical `face_uv`; Cycles bakes
+    material slot and, in the `atlas` UV map, a smart-project unwrap (`unwrap`); Cycles bakes
     position, normal and occlusion of a copy of the head, numpy paints it (`paint_face`)."""
     fr = ch.face_frame
     flesh = ch.flesh
@@ -323,14 +372,8 @@ def face_map(ch, skin_rgb):
     uv = me.uv_layers[uvname]
     face = [_in_face(fr, me.vertices[v].co) for v in range(len(me.vertices))]
     head = [p.index for p in me.polygons if all(parts[v] == 1 or face[v] for v in p.vertices)]
-    for pi in head:
-        p = me.polygons[pi]
-        us = [face_uv(fr, me.vertices[v].co) for v in p.vertices]
-        if max(u for u, _ in us) - min(u for u, _ in us) > 0.5:  # across the seam at the back
-            us = [(u + 1.0 if u < 0.5 else u, v) for u, v in us]
-        for li, t in zip(p.loop_indices, us):
-            uv.data[li].uv = t
-    # Bake on a copy holding only the head.
+    # Bake on a copy holding only the head, unwrapped without overlaps (#283 pass 5: the
+    # cylinder folded the chin's underside onto the neck), the UVs copied back.
     tmp = bpy.data.objects.new(f"{ch.name}.face_bake", me.copy())
     tmp.matrix_world = flesh.matrix_world
     bd.link(tmp)
@@ -338,11 +381,21 @@ def face_map(ch, skin_rgb):
         tmp.shape_key_clear()
     bm = bmesh.new()
     bm.from_mesh(tmp.data)
+    orig = bm.faces.layers.int.new("orig")
+    for f in bm.faces:
+        f[orig] = f.index
     keep = set(head)
     bmesh.ops.delete(bm, geom=[f for f in bm.faces if f.index not in keep], context="FACES")
     bm.to_mesh(tmp.data)
     bm.free()
     tmp.data.uv_layers.active = tmp.data.uv_layers[uvname]
+    unwrap(tmp)
+    src = tmp.data.uv_layers[uvname]
+    origs = [d.value for d in tmp.data.attributes["orig"].data]
+    for tp in tmp.data.polygons:
+        p = me.polygons[origs[tp.index]]
+        for li, tl in zip(p.loop_indices, tp.loop_indices):
+            uv.data[li].uv = src.data[tl].uv
     size = coat.SIZE
     coat.SIZE = FACE_SIZE
     try:
@@ -358,7 +411,8 @@ def face_map(ch, skin_rgb):
     col = np.tile(coat.lin(skin_rgb) * 0.85, (len(loc), 1)).astype(np.float32)
     col[cov] = paint_face(loc[cov], flat_n[cov], skin_rgb)
     occ = np.clip(ao.reshape(-1), 0.0, 1.0)
-    col[cov] *= (0.5 + 0.5 * occ[cov] ** 0.9)[:, None]
+    col[cov] *= (0.72 + 0.28 * occ[cov] ** 0.9)[:, None]
+    col = dilate(col.reshape(FACE_SIZE, FACE_SIZE, 3), cov.reshape(FACE_SIZE, FACE_SIZE)).reshape(-1, 3)
     img = _image(f"{ch.name}.face", col, FACE_SIZE)
     m = decay.material(f"{ch.name}.face", "flesh", skin_rgb, image=img, uv_map=uvname, interpolation="Linear")
     m["acr_colour_from"] = "outfit"
@@ -387,7 +441,7 @@ def paint_face(p, n, rgb, seed=41):
     fine = coat.fbm(p, 300.0, seed, octaves=1)
     col = base * (0.86 + 0.12 * coat.fbm(p, 30.0, seed + 1) + 0.06 * fine)[:, None]
     # Weathering: red blotches, sun-darkened front and top, a few moles.
-    blot = coat.smooth(0.58, 0.78, coat.fbm(p, 16.0, seed + 2)) * 0.35
+    blot = coat.smooth(0.62, 0.80, coat.fbm(p, 16.0, seed + 2)) * 0.18
     col = coat.mix(col, base * np.array([1.06, 0.78, 0.70], np.float32), blot)
     front = coat.smooth(0.045, 0.01, y)
     sun = np.clip(-n[:, 1], 0, 1) * front * 0.12 + np.clip(n[:, 2], 0, 1) * 0.08
@@ -399,10 +453,10 @@ def paint_face(p, n, rgb, seed=41):
     col *= (0.92 + 0.16 * tone)[:, None] * np.array([1.0, 0.97, 0.94], np.float32)
     exposed = np.clip(front + np.clip(n[:, 2], 0, 1), 0, 1)
     spots = coat.smooth(0.70, 0.78, coat.fbm(p, 55.0, seed + 7)) * exposed
-    col = coat.mix(col, base * np.array([0.68, 0.52, 0.40], np.float32), spots * 0.45)
+    col = coat.mix(col, base * np.array([0.68, 0.52, 0.40], np.float32), spots * 0.25)
     pores = coat.smooth(0.60, 0.72, coat.fbm(p, 900.0, seed + 8, octaves=1))
-    col *= (1.0 - 0.22 * pores)[:, None]
-    dirt = coat.smooth(0.45, 0.75, coat.fbm(p, 9.0, seed + 9)) * 0.30
+    col *= (1.0 - 0.08 * pores)[:, None]
+    dirt = coat.smooth(0.55, 0.80, coat.fbm(p, 9.0, seed + 9)) * 0.10
     col = coat.mix(col, coat.lin((0.30, 0.24, 0.17)), dirt)
     cheek = (_g((ax, 0.046, 0.016), (z, -0.030, 0.016)) + _g((x, 0.0, 0.010), (z, -0.030, 0.012))) * front
     col = coat.mix(col, base * np.array([1.10, 0.74, 0.68], np.float32), np.clip(cheek, 0, 1) * 0.45)
@@ -430,8 +484,10 @@ def paint_face(p, n, rgb, seed=41):
     bz = 0.019 + 0.004 * (1.0 - ((ax - 0.036) / 0.022) ** 2)
     hp = np.stack([x + z * 0.6, z, y], -1).astype(np.float32)
     hairs = coat.fbm(hp, (500.0, 140.0, 10.0), seed + 4, octaves=1)
-    brow = coat.smooth(0.0040, 0.0022, np.abs(z - bz)) * coat.smooth(0.064, 0.050, ax) * coat.smooth(0.004, 0.010, ax) * front
-    col = coat.mix(col, coat.lin((0.09, 0.065, 0.045)), brow * (0.55 + 0.4 * coat.smooth(0.4, 0.6, hairs)))
+    # A full band, thickest over the inner eye and tapering out, with fine hair texture.
+    width = 0.0050 - 0.0022 * coat.smooth(0.030, 0.060, ax)
+    brow = coat.smooth(width, width * 0.45, np.abs(z - bz)) * coat.smooth(0.062, 0.052, ax) * coat.smooth(0.005, 0.011, ax) * front
+    col = coat.mix(col, coat.lin((0.10, 0.075, 0.055)), brow * (0.78 + 0.18 * coat.smooth(0.3, 0.7, hairs)))
     # Wrinkles: forehead creases, frown lines, crow's feet, the line under the eye bags.
     wav = 0.0025 * np.sin(x * 95.0 + 1.3) + 0.0012 * np.sin(x * 260.0)
     fh = np.zeros_like(x)
@@ -476,8 +532,12 @@ def paint_face(p, n, rgb, seed=41):
     # A faint beard shadow (the renderer adds the soldier's stubble from `_FACE`).
     beard = np.fromiter((faces.zones(float(a), float(b), float(c))[0] for a, b, c in p), np.float32, len(p))
     # Unshaven: days of dark stubble in the beard zone (the renderer adds more per soldier).
-    speck = coat.smooth(0.48, 0.62, coat.fbm(p, 1400.0, seed + 10, octaves=1))
-    col = coat.mix(col, coat.lin((0.07, 0.06, 0.055)), beard * (0.22 + 0.38 * speck))
+    # Fine even stubble: a soft grey-blue shadow of shaved skin and sparse hair points,
+    # faded at the zone's edge (no blotches).
+    speck = coat.smooth(0.55, 0.70, coat.fbm(p, 2200.0, seed + 10, octaves=1))
+    beard = coat.smooth(0.15, 0.85, beard)
+    col = coat.mix(col, col * np.array([0.80, 0.80, 0.84], np.float32), beard * 0.45)
+    col = coat.mix(col, coat.lin((0.10, 0.09, 0.085)), beard * speck * 0.35)
     return col
 
 
