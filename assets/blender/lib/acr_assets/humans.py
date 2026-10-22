@@ -113,6 +113,8 @@ class Character:
             self.face_frame = heads.refine(bm, cx, mh_body if self.build.get("mh_body", True) else None)
 
         self.flesh = bd.hull(self.arm, f"{self.name}.flesh", g, bones=[P + b for b in bones], head=head if faces else None)
+        if self.build.get("mh_body", True):
+            mbody.belly_weights(self.flesh, self.arm, P)
         if faces:
             heads.head_weights(self)
         bd.split_parts(self.flesh, lambda b: rig.part_of_bone(b[len(P):]))
@@ -121,10 +123,19 @@ class Character:
 
     def shell(self, name, key, keep_face, offset, symmetric=True):
         P = self.prefix
-        obj = bd.derive(self.flesh, f"{self.name}.{name}", lambda c, n, h, p: keep_face(c, n, h[len(P):], p), offset)
-        if key in ("gaiters", "boots", "shoes", "boots_high", "stockings"):
-            mbody.smooth_feet(obj, self.flesh, [P + b for b in ("foot_l", "foot_r", "toe_l", "toe_r")], max(offset, 0.008))
-        return self.add("clothes", obj, key, symmetric)
+        shoe = key in mbody.FOOTWEAR and self.build.get("mh_body", True)
+        feet = {"foot_l", "foot_r", "toe_l", "toe_r"}
+
+        def keep(c, n, h, p):
+            h = h[len(P):]
+            return keep_face(c, n, h, p) and not (shoe and h in feet and c.z < self.arm.data.bones[P + "foot_l"].head_local.z + 0.045)
+
+        obj = bd.derive(self.flesh, f"{self.name}.{name}", keep, offset, border=self.build.get("mh_body", True))
+        obj = self.add("clothes", obj, key, symmetric)
+        if shoe and not getattr(self, "shoes", None):
+            # The MakeHuman feet stay bare skin; footwear gets a shoe over a last (#287).
+            self.shoes = self.add("clothes", mbody.shoes(self.arm, self.flesh, f"{self.name}.shoes", P), key, symmetric)
+        return obj
 
     def bone_layer(self):
         return self.add("bones", bd.bones_h(self.arm, f"{self.name}.bones", self.prefix), "bone")

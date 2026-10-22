@@ -115,8 +115,16 @@ the variant meshes, so the game looks as before.
   - Decimated (collapse, mirror-symmetric) to about 2000 tris: with the head about 3200
     tris of flesh. The shoulder line is relaxed after the decimation.
   - The Skin-modifier hull is still built first: it gives the skull's place to the head.
-    Weights, parts, shells and caps are made from the new hull as before. Footwear shells
-    (`gaiters`, `boots`, `shoes`, `stockings`) are relaxed over the toes.
+    Weights, parts, shells and caps are made from the new hull as before. The thigh
+    weights fade out above the hip joints (`mbody.belly_weights`), so a seated rider's
+    belly stays flat.
+  - Shells cut from the hull (`Character.shell`, `body.derive(border=True)`) relax their
+    cut edges along the border curve, put them back on the skin and fold a hem inwards
+    (`body.smooth_border`); part seams stay put.
+  - Footwear (`gaiters`, `boots`, `shoes`, `boots_high`, `stockings`) leaves the feet to
+    one closed `<unit>.shoes` mesh (`mbody.shoes`): per foot the convex hull of the skin
+    below the ankle (a last: heel, arch, toe box) lifted 7 mm, with a sole and a low heel,
+    weighted to shin, foot and toe. The skin inside the shoes is deleted.
   - `build["mh_body"] = False` keeps the old hull.
 - **Face map:** the head part of the skin has its own material (second primitive of the
   flesh, `acr_tint` "skin") with a 512² texture on `TEXCOORD_0`.

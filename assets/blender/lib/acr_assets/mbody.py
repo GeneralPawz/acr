@@ -18,6 +18,7 @@ import json
 import os
 
 import bmesh
+import bpy
 import numpy as np
 
 from . import mhead
@@ -124,6 +125,12 @@ def repose(seg, prefix="", build=None):
     names = list(out)
     D = np.stack([np.min([_seg_dist(V, a, c) for a, c in segs[n]], axis=0) for n in names], axis=1)
     W = 1.0 / (D + 0.012) ** 6
+    # The belly and the buttocks above the hip joints stay with the torso (a seated rider's
+    # thighs would otherwise drag the belly forward).
+    up = mhead.smooth(hip_mh - 0.02, hip_mh + 0.06, V[:, 2])
+    for i, n in enumerate(names):
+        if n.startswith("thigh"):
+            W[:, i] *= 1.0 - up
     W /= W.sum(1, keepdims=True)
     Q = np.zeros_like(V)
     for i, n in enumerate(names):
@@ -152,44 +159,103 @@ def build(bm, seg, prefix="", build=None, tris=TARGET_TRIS):
     return bm
 
 
-def _relax(obj, bones, iterations, keep=False):
-    """Laplacian relax of the vertices homed on `bones`; with `keep` returns the bmesh."""
-    hs = [obj["acr_home_bones"][d.value] for d in obj.data.attributes["home"].data]
-    bm = bmesh.new()
-    bm.from_mesh(obj.data)
-    bm.verts.ensure_lookup_table()
-    feet = [v for v in bm.verts if hs[v.index] in bones]
-    for _ in range(iterations):
-        bmesh.ops.smooth_vert(bm, verts=feet, factor=0.6, use_axis_x=True, use_axis_y=True, use_axis_z=True)
-    if keep:
-        return bm, feet
-    bm.to_mesh(obj.data)
-    bm.free()
-    obj.data.update()
-    return None
+def belly_weights(obj, arm_obj, prefix=""):
+    """The lower belly and the buttocks above the hip joints belong to the hips, not the
+    thighs: fades the thigh weights out from 3 cm below to 6 cm above the thigh's head and
+    gives the rest to `hips` (a seated rider's belly would bulge forward)."""
+    from . import armature as am
 
-
-def smooth_feet(obj, flesh, bones, offset, iterations=8):
-    """Footwear over the MakeHuman feet: relax the shell over the toes and the arch so a
-    shoe or gaiter does not show five toes (`bones`: the foot and toe bones), then push it
-    back to at least `offset` outside the skin of `flesh`."""
-    from mathutils import Vector
-    from mathutils.bvhtree import BVHTree
-
-    if not flesh.get("acr_feet_relaxed"):  # the toes under the footwear relax first
-        _relax(flesh, bones, iterations)
-        flesh["acr_feet_relaxed"] = True
-    fm = flesh.data
-    tree = BVHTree.FromPolygons([v.co for v in fm.vertices], [p.vertices for p in fm.polygons])
-    bm, feet = _relax(obj, bones, iterations, keep=True)
-    for _ in range(2):
-        for v in feet:
-            loc, n, _i, _d = tree.find_nearest(v.co)
-            if loc is None:
+    seg = am.segments(arm_obj)
+    hips = obj.vertex_groups.get(prefix + "hips")
+    for sfx in ("_l", "_r"):
+        g = obj.vertex_groups.get(prefix + "thigh" + sfx)
+        if g is None or hips is None:
+            continue
+        z0 = seg[prefix + "thigh" + sfx][0].z
+        for v in obj.data.vertices:
+            w = next((e.weight for e in v.groups if e.group == g.index), 0.0)
+            if w <= 0.0:
                 continue
-            n = Vector(n)
-            if (v.co - loc).dot(n) < offset:
-                v.co = loc + n * offset
-    bm.to_mesh(obj.data)
+            k = float(mhead.smooth(z0 - 0.03, z0 + 0.06, v.co.z))
+            if k <= 0.0:
+                continue
+            h = next((e.weight for e in v.groups if e.group == hips.index), 0.0)
+            g.add([v.index], w * (1.0 - k), "REPLACE")
+            hips.add([v.index], h + w * k, "REPLACE")
+
+
+FOOTWEAR = ("gaiters", "boots", "shoes", "boots_high", "stockings")
+
+
+def shoes(arm_obj, flesh, name, prefix="", offset=0.007, sole=0.012, heel=0.012):
+    """Both shoes as one closed mesh over a last: per side the convex hull of the skin of
+    the foot below the ankle (heel, arch, toe box in one smooth shape), `offset` above the
+    skin, a `sole` under it and a low `heel` at the back. Smooth weights on shin, foot and
+    toe. The skin inside the shoes is deleted (no toe can show through)."""
+    from mathutils import Vector
+
+    from . import armature as am
+    from . import body as bd
+    from . import rig
+
+    seg = am.segments(arm_obj)
+    bones = list(flesh["acr_home_bones"])
+    hs = [bones[d.value] for d in flesh.data.attributes["home"].data]
+    bm = bmesh.new()
+    hulls = []
+    for sfx in ("_l", "_r"):
+        foot, toe, shin = prefix + "foot" + sfx, prefix + "toe" + sfx, prefix + "shin" + sfx
+        ankle = seg[foot][0].z + 0.055
+        pts = [v.co.copy() for v in flesh.data.vertices
+               if hs[v.index] in (foot, toe) or (hs[v.index] == shin and v.co.z < ankle)]
+        pts = [p for p in pts if p.z < ankle]
+        if len(pts) < 8:
+            continue
+        lo = min(p.z for p in pts)
+        back = max(p.y for p in pts)
+        tmp = bmesh.new()
+        vs = [tmp.verts.new(p) for p in pts]
+        out = bmesh.ops.convex_hull(tmp, input=vs)
+        bmesh.ops.delete(tmp, geom=list({g for g in out["geom_interior"] + out["geom_unused"] if isinstance(g, bmesh.types.BMVert)}),
+                         context="VERTS")
+        bmesh.ops.recalc_face_normals(tmp, faces=tmp.faces)
+        tmp.normal_update()
+        planes = [(f.verts[0].co.copy(), f.normal.copy()) for f in tmp.faces]
+        moved = {v: v.co + v.normal * offset for v in tmp.verts}
+        for v, c in moved.items():
+            v.co = c
+            if v.co.z < lo + 0.012:  # the sole, thicker under the heel
+                h = max(0.0, min(1.0, (v.co.y - (back - 0.09)) / 0.04))
+                v.co.z = lo - sole - heel * h
+        hulls.append((planes, offset + 0.002))
+        me = bpy.data.meshes.new("shoe.tmp")
+        tmp.to_mesh(me)
+        tmp.free()
+        bm.from_mesh(me)
+        bpy.data.meshes.remove(me)
+    me = bpy.data.meshes.new(name)
+    bm.to_mesh(me)
     bm.free()
-    obj.data.update()
+    for p in me.polygons:
+        p.use_smooth = False
+    obj = bd.link(bpy.data.objects.new(name, me))
+    fb = [prefix + b for b in ("shin_l", "foot_l", "toe_l", "shin_r", "foot_r", "toe_r")]
+    hs2 = bd.skin_weights(obj, arm_obj, fb)
+    attr = me.attributes.new("part", "INT", "POINT")
+    for i, h in enumerate(hs2):
+        attr.data[i].value = rig.part_of_bone(h[len(prefix):])
+    # Delete the skin inside the shoes.
+    fm = flesh.data
+    fbm = bmesh.new()
+    fbm.from_mesh(fm)
+
+    def inside(co):
+        return any(all((co - a).dot(n) < tol for a, n in planes) for planes, tol in hulls)
+
+    gone = [f for f in fbm.faces if all(inside(Vector(v.co)) for v in f.verts)]
+    bmesh.ops.delete(fbm, geom=gone, context="FACES")
+    bmesh.ops.delete(fbm, geom=[v for v in fbm.verts if not v.link_faces], context="VERTS")
+    fbm.to_mesh(fm)
+    fbm.free()
+    fm.update()
+    return am.bind(obj, arm_obj)
