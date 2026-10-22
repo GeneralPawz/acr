@@ -1027,7 +1027,7 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
     if w.units[victim].life > dmg {
         w.units[victim].life -= dmg;
         if let Some(r) = region {
-            crate::wounds::wound(w, victim, r);
+            crate::wounds::wound(w, victim, r, record.cause);
         }
         if !vt.economy.sections.is_empty() {
             section_damage(w, victim);
@@ -1175,6 +1175,8 @@ pub enum DeathCause {
     Explosion,
     /// Died burning.
     Burned,
+    /// Bled out from lost limbs (hit locations, #254).
+    BledOut,
     Hunger,
 }
 

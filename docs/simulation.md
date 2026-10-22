@@ -962,6 +962,22 @@ while they are the default; `tests/wounds.rs` pins the hash of a fight). On:
   through the driver `{"cmd": "start", "random": {"seed": 5, "hit_locations": true}}`. There
   is no menu entry yet.
 
+#### Lost limbs, crawling, bleeding out (#254)
+
+With the same rule, a limb hit can take the limb off instead of wounding it: one `rando()`
+for every limb hit against the weapon's chance (`wounds::sever_chance`: cannonball and
+grapeshot 100 %, explosion 50 %, melee 25 %, thrown 15 %, gunshot 10 %). A soldier who lost
+a leg crawls (`CRAWL_SPEED`: 15 % with one leg lost, 8 % with both); one who lost an arm
+can no longer fire. Every lost limb bleeds: once a second (`BLEED_EVERY` 10 ticks) the unit
+loses 4 life per lost leg and 2 per lost arm (`wounds::bleed`, after the morale decay), so
+its life bar runs down, until it bleeds out and dies with cause `DeathCause::BledOut`.
+Lost limbs are part of the state hash only once a game has some. In 3D a crawler lies
+prone (the `DEATHLIE1` pose) and drags himself along head first, and the bleeding leave a
+drop of blood every second that dries and fades over five minutes (render only). Missing
+limbs on the model (stump caps, #207) and healing by priests come later.
+`ACR_HIT_LOCATIONS=1` turns the rule on for games started without a setup screen
+(development, native only).
+
 ### Worked timing (musketeer, 10 ticks/s)
 
 - First shot: `#PATTACK1` (63 frames, 32 ticks), then 7 ticks to the active frame 14. The

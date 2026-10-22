@@ -41,6 +41,8 @@ pub fn look(cause: DeathCause) -> CauseLook {
         DeathCause::Explosion => l(3, 0.12, 0.8, 0.7, 0.3, 0.6),
         DeathCause::Burned => l(0, 0.0, 0.0, 0.0, 0.0, 1.0),
         DeathCause::Hunger => l(0, 0.0, 0.0, 0.0, 0.0, 0.0),
+        // Lost limbs: soaked in blood, a large pool where he lay still.
+        DeathCause::BledOut => l(2, 0.12, 1.0, 1.0, 0.1, 0.0),
         DeathCause::Unknown => l(1, 0.07, 0.6, 0.5, 0.0, 0.0),
     }
 }
