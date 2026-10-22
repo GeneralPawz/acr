@@ -543,7 +543,8 @@ impl Ui {
     }
 
     /// Image draws for the current frame, in window pixels: `layers` (each with its own
-    /// canvas, e.g. the in-game interface), then the screens and the cursor.
+    /// canvas, e.g. the in-game interface), then the screens and the cursor; with the number
+    /// of draws from the first layer (the in-game world overlays, which the fog covers).
     pub fn draws(
         &mut self,
         device: &wgpu::Device,
@@ -551,10 +552,14 @@ impl Ui {
         images: &ImageRenderer,
         canvas: &Canvas,
         layers: &[(Canvas, Vec<Draw>)],
-    ) -> Vec<ImageDraw> {
+    ) -> (Vec<ImageDraw>, usize) {
         let mut out = Vec::new();
-        for (c, draws) in layers {
+        let mut first = 0;
+        for (i, (c, draws)) in layers.iter().enumerate() {
             self.textures.resolve(device, queue, images, &self.lib, &self.fonts, c, draws, &mut out);
+            if i == 0 {
+                first = out.len();
+            }
         }
         let mut draws = Vec::new();
         // Keep showing the previous screen while the next one loads.
@@ -585,7 +590,7 @@ impl Ui {
             }
         }
         self.textures.resolve(device, queue, images, &self.lib, &self.fonts, canvas, &draws, &mut out);
-        out
+        (out, first)
     }
 }
 

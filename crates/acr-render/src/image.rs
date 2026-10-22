@@ -234,15 +234,26 @@ impl ImageRenderer {
     }
 
     pub fn render(&self, pass: &mut wgpu::RenderPass<'_>) {
-        if self.batches.is_empty() {
-            return;
-        }
-        pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &self.globals_group, &[]);
-        pass.set_vertex_buffer(0, self.instances.slice(..));
-        for (group, range) in &self.batches {
+        self.render_range(pass, 0..u32::MAX);
+    }
+
+    /// Draws the prepared draws with indices in `range` (positions in the list given to
+    /// [`ImageRenderer::prepare`]), so that other passes can go between two parts.
+    pub fn render_range(&self, pass: &mut wgpu::RenderPass<'_>, range: Range<u32>) {
+        let mut set = false;
+        for (group, r) in &self.batches {
+            let part = r.start.max(range.start)..r.end.min(range.end);
+            if part.is_empty() {
+                continue;
+            }
+            if !set {
+                pass.set_pipeline(&self.pipeline);
+                pass.set_bind_group(0, &self.globals_group, &[]);
+                pass.set_vertex_buffer(0, self.instances.slice(..));
+                set = true;
+            }
             pass.set_bind_group(1, group.as_ref(), &[]);
-            pass.draw(0..4, range.clone());
+            pass.draw(0..4, part);
         }
     }
 }

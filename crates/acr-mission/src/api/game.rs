@@ -63,19 +63,19 @@ pub const FUNCTIONS: &[ApiFn] = &[
     ApiFn {
         name: "SetLightSpot",
         original: 0x564017,
-        status: Status::Partial("stored; acr-sim/renderer have no fog of war yet"),
+        status: Status::Partial("stored; the game stamps them into its fog of war (acr-game)"),
         handler: set_light_spot,
     },
     ApiFn {
         name: "ClearLightSpot",
         original: 0x564121,
-        status: Status::Partial("stored; no fog of war yet"),
+        status: Status::Partial("stored; the game stamps them into its fog of war (acr-game)"),
         handler: clear_light_spot,
     },
     ApiFn {
         name: "GetFogSpotVisibility",
         original: 0x56e6a4,
-        status: Status::Partial("no fog of war yet: everything is visible (as with fog off)"),
+        status: Status::Partial("the fog lives in acr-game: everything is visible (as with fog off)"),
         handler: get_fog_spot_visibility,
     },
     done("SetStartPoint", 0x564192, set_start_point),

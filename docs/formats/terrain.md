@@ -126,8 +126,9 @@ practice is 1..13. Textures flagged `B` get level 0. Out-of-map heights read as 
 The span filler (0x445368) interpolates the light linearly over the triangle (16.16 fixed
 point) and adds ½ on every other pixel and ¼ on odd rows (an ordered dither), then replaces the
 pixel by `SHADE[level][pixel]` with `SHADE` = rows 64..95 of `0\AGEW_1DR.GRD` (table base
-0x7AFB28 = 0x7ABB28 + 64·256, loaded by 0x483CA2). Row 64 is the identity, higher rows darken
-up to about 45 % at row 92.
+0x7AFB28 = 0x7ABB28 + 64·256, loaded by 0x483CA2). Rows 0..64 are the identity, row `64 + k`
+is about `k/32` darker and rows from 95 on are black; the terrain's levels 1..13 darken by up
+to about 40 %. The fog of war uses the whole table (see `docs/ui.md`).
 
 ## Water
 

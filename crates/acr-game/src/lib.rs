@@ -197,10 +197,10 @@ impl Game {
             }
         }
         let canvas = Canvas::fit(g.gpu.size());
-        let draws: Vec<ImageDraw> = match &self.mode {
+        let (draws, world_draws): (Vec<ImageDraw>, usize) = match &self.mode {
             Mode::Intro => {
                 self.intro.upload(&g.gpu.device, &g.gpu.queue, &g.images);
-                self.intro.draws(&canvas)
+                (self.intro.draws(&canvas), 0)
             }
             Mode::Menus | Mode::InGame(_) => self.ui.draws(&g.gpu.device, &g.gpu.queue, &g.images, &canvas, &layers),
         };
@@ -209,11 +209,13 @@ impl Game {
         let view = frame.texture.create_view(&Default::default());
         let mut encoder = g.gpu.device.create_command_encoder(&Default::default());
         let mut load = wgpu::LoadOp::Clear(wgpu::Color::BLACK);
+        let mut fog = None;
         if let Mode::InGame(game) = &mut self.mode
             && game.ready()
         {
             game.render(&g.gpu.device, &g.gpu.queue, &mut encoder, &view, g.gpu.size());
             load = wgpu::LoadOp::Load;
+            fog = Some(game);
         }
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -229,7 +231,16 @@ impl Game {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            g.images.render(&mut pass);
+            // The fog of war covers the world and its overlays, not the interface (0x4bee1e).
+            match fog {
+                Some(game) => {
+                    let split = world_draws as u32;
+                    g.images.render_range(&mut pass, 0..split);
+                    game.render_fog(&mut pass);
+                    g.images.render_range(&mut pass, split..u32::MAX);
+                }
+                None => g.images.render(&mut pass),
+            }
         }
         g.gpu.queue.submit([encoder.finish()]);
         g.gpu.queue.present(frame);

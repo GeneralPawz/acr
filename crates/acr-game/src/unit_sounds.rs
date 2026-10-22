@@ -17,6 +17,7 @@ use acr_audio::VoiceId;
 use acr_formats::SoundList;
 use acr_formats::normalize_path;
 use acr_sim::Rng;
+use acr_sim::fog::Fog;
 
 use crate::music::Audio;
 
@@ -72,6 +73,8 @@ pub struct AmbientView<'a> {
     pub map: [i32; 2],
     /// Water depth per 32-pixel cell (`SEA2`).
     pub depth: Option<&'a acr_formats::m3d::Grid<u8>>,
+    /// The local player's fog of war, which mutes sounds (see [`placed`]).
+    pub fog: Option<&'a Fog>,
 }
 
 /// A sound to play: group name from `SOUNDLIST.TXT`, pan (-1 left .. 1 right), volume 0..=1.
@@ -210,7 +213,7 @@ impl UnitSounds {
                 continue;
             }
             let name = self.pick(true)?;
-            return event(name, (x * 32) as f32, (y * 16) as f32, view.view);
+            return event(name, (x * 32) as f32, (y * 16) as f32, view.view, view.fog);
         }
         if self.danger > 0 {
             return None;
@@ -218,7 +221,7 @@ impl UnitSounds {
         let name = self.pick(false)?;
         let y = top + ((self.rand() * h) >> 11) as f32;
         let x = left + ((self.rand() * w) >> 10) as f32;
-        event(name, x, y, view.view)
+        event(name, x, y, view.view, view.fog)
     }
 
     /// A random group of the `SEA` or `FIELD` line, if its chance comes up.
@@ -234,8 +237,8 @@ impl UnitSounds {
     }
 }
 
-fn event(name: String, x: f32, y: f32, view: [f32; 4]) -> Option<SoundEvent> {
-    let (volume, pan) = placed(x, y, view)?;
+fn event(name: String, x: f32, y: f32, view: [f32; 4], fog: Option<&Fog>) -> Option<SoundEvent> {
+    let (volume, pan) = placed(x, y, view, fog)?;
     Some(SoundEvent { name, pan, volume })
 }
 
@@ -253,9 +256,10 @@ const OFF_SCREEN_VOLUME: f32 = -800.0;
 ///
 /// The original (0x5868d3) skips sounds beyond [`HEAR_MARGIN`], plays sounds in the view
 /// at full volume and the others at -8 dB, and pans by twice the distance from the view
-/// centre, clamped to ±4000. TODO: it also skips sounds on cells the player has not
-/// explored when fog of war is on (`0x775e18`, #33).
-pub fn placed(x: f32, y: f32, view: [f32; 4]) -> Option<(f32, f32)> {
+/// centre, clamped to ±4000. While fog of war is on (`0x775e18`) it also skips sounds
+/// where the local player's fog at `(x, 2y)` is below 900 (`GetFogSpotVisibility`'s limit,
+/// without the height); `fog` is `None` when there is none.
+pub fn placed(x: f32, y: f32, view: [f32; 4], fog: Option<&Fog>) -> Option<(f32, f32)> {
     let [left, top, width, height] = view;
     let (right, bottom) = (left + width, top + height);
     if x < left - HEAR_MARGIN[0]
@@ -263,6 +267,9 @@ pub fn placed(x: f32, y: f32, view: [f32; 4]) -> Option<(f32, f32)> {
         || y < top - HEAR_MARGIN[1]
         || y > bottom + HEAR_MARGIN[1]
     {
+        return None;
+    }
+    if fog.is_some_and(|f| f.get(x as i32, 2 * y as i32) < acr_sim::fog::VISIBLE) {
         return None;
     }
     let pan = (2.0 * (x - (left + right) / 2.0)).clamp(-MAX_PAN, MAX_PAN);
@@ -297,7 +304,7 @@ mod tests {
         s.field = Ambient { chance: 32768, sounds: vec!["FIELD".into()] };
         let water = acr_formats::m3d::Grid { width: 64, height: 64, cells: vec![200u8; 64 * 64] };
         let land = acr_formats::m3d::Grid { width: 64, height: 64, cells: vec![0u8; 64 * 64] };
-        let view = |depth, ticks| AmbientView { ticks, view: VIEW, map: [64, 64], depth: Some(depth) };
+        let view = |depth, ticks| AmbientView { ticks, view: VIEW, map: [64, 64], depth: Some(depth), fog: None };
         let sea = s.ambient(&view(&water, 3));
         assert!(sea.len() == 3 && sea.iter().all(|e| e.name == "SEA" && e.volume == 1.0));
         let field = s.ambient(&view(&land, 3));
@@ -312,30 +319,37 @@ mod tests {
 
     #[test]
     fn centre_is_full_volume_and_unpanned() {
-        assert_eq!(placed(1512.0, 884.0, VIEW), Some((1.0, 0.0)));
+        assert_eq!(placed(1512.0, 884.0, VIEW, None), Some((1.0, 0.0)));
     }
 
     #[test]
     fn pans_by_distance_from_the_centre() {
         // 250 px right of the centre: pan 500, the left channel loses 5 dB.
-        let (volume, pan) = placed(1762.0, 600.0, VIEW).unwrap();
+        let (volume, pan) = placed(1762.0, 600.0, VIEW, None).unwrap();
         assert_eq!(volume, 1.0);
         assert!((pan - (1.0 - 10f32.powf(-0.25))).abs() < 1e-6);
-        let (_, left) = placed(1262.0, 600.0, VIEW).unwrap();
+        let (_, left) = placed(1262.0, 600.0, VIEW, None).unwrap();
         assert_eq!(left, -pan);
     }
 
     #[test]
     fn off_screen_sounds_are_quieter_until_out_of_range() {
         // 1488 px right of the centre, off screen: -8 dB, the left channel loses 29.76 dB.
-        let (volume, pan) = placed(3000.0, 600.0, VIEW).unwrap();
+        let (volume, pan) = placed(3000.0, 600.0, VIEW, None).unwrap();
         assert!((volume - 10f32.powf(-0.4)).abs() < 1e-6);
         assert!((pan - (1.0 - 10f32.powf(-1.488))).abs() < 1e-6);
         // A wide view reaches the pan limit: the far channel loses 40 dB.
-        let (_, pan) = placed(4600.0, 600.0, [0.0, 0.0, 5120.0, 1440.0]).unwrap();
+        let (_, pan) = placed(4600.0, 600.0, [0.0, 0.0, 5120.0, 1440.0], None).unwrap();
         assert!((pan - 0.99).abs() < 1e-6);
-        assert!(placed(1000.0 - 1024.0, 500.0 - 512.0, VIEW).is_some());
-        assert_eq!(placed(1000.0 - 1025.0, 600.0, VIEW), None);
-        assert_eq!(placed(1500.0, 500.0 + 768.0 + 513.0, VIEW), None);
+        assert!(placed(1000.0 - 1024.0, 500.0 - 512.0, VIEW, None).is_some());
+        assert_eq!(placed(1000.0 - 1025.0, 600.0, VIEW, None), None);
+        assert_eq!(placed(1500.0, 500.0 + 768.0 + 513.0, VIEW, None), None);
+    }
+
+    #[test]
+    fn fog_mutes_sounds() {
+        // A grid nobody has lit is black everywhere.
+        let fog = Fog::new(1);
+        assert_eq!(placed(1512.0, 884.0, VIEW, Some(&fog)), None);
     }
 }
