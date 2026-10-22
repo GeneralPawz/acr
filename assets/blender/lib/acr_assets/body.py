@@ -423,8 +423,9 @@ def bones_h(arm_obj, name, prefix=""):
     def at(x, y, z):
         return Matrix.Translation(o + Vector((x, y, z)))
 
-    B.add("sphere", at(0, -0.012, 1.665), (0.068, 0.085, 0.072), P + "head", 6)
-    B.add("cube", at(0, -0.05, 1.595), (0.07, 0.05, 0.03), P + "head")
+    # Kept well inside the modelled face (#283: eye sockets, chin) so no bone shows.
+    B.add("sphere", at(0, -0.006, 1.665), (0.063, 0.078, 0.067), P + "head", 6)
+    B.add("cube", at(0, -0.04, 1.597), (0.062, 0.045, 0.026), P + "head")
     z = 0.98
     while z < 1.53:
         bone = ("hips" if z < 1.05 else "spine" if z < 1.20 else "spine1" if z < 1.33 else "spine2" if z < 1.45 else "neck")

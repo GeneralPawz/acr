@@ -62,7 +62,7 @@ HAIR_VARIANTS = {
 }
 BEARD_VARIANTS = {
     "none": [], "moustache": ["beard_moustache"], "sideburns": ["beard_sideburns"],
-    "full": ["beard_full"], "moustache_sideburns": ["beard_moustache", "beard_sideburns"],
+    "full": ["beard_full", "beard_moustache"], "moustache_sideburns": ["beard_moustache", "beard_sideburns"],
 }
 # Odds per style: line infantry shaved (stubble of a few days, now and then sideburns or a
 # moustache; the queue was regulation), civilians and irregulars did as they liked.
@@ -78,9 +78,84 @@ STYLES = {
         "stubble": (0.3, 1.0),
     },
 }
-# Shell offsets (m) of the hair and beard meshes over the skin.
-OFFSETS = {"hair_short": 0.0045, "hair_tied": 0.008, "hair_loose": 0.012, "beard_full": 0.008,
-           "beard_moustache": 0.0055, "beard_sideburns": 0.005}
+# Hair and beard patches (#283 pass 2): smooth meshes over the skin, built on rays from the
+# head centre (`ray_dir`) in (azimuth θ, elevation φ) degrees; θ = 0 looks forward (-Y).
+# Each patch: (θ range |θ| <= max or a band, the lower and upper elevation curves as
+# [(|θ|, φ)] keys, thickness in metres, open edges that taper into the skin, grid).
+HAIRLINE = [(0, 47), (25, 45), (50, 36), (75, 18), (92, 12), (108, -2), (128, -26), (180, -40)]
+PATCHES = {
+    # hair: from the hairline (s = 0, tapered) to the crown (s = 1, closed with a fan)
+    "hair_short": {"theta": (-180, 180), "lo": [(t, p + 2) for t, p in HAIRLINE], "hi": [(0, 89), (180, 89)],
+                   "thick": 0.005, "open": ("lo",), "grid": (20, 5), "ridges": 0.08},
+    "hair_tied": {"theta": (-180, 180), "lo": HAIRLINE, "hi": [(0, 89), (180, 89)],
+                  "thick": 0.0075, "open": ("lo",), "grid": (20, 5), "ridges": 0.22},
+    "hair_loose": {"theta": (-180, 180), "lo": [(0, 47), (25, 45), (50, 36), (75, 18), (92, 6), (110, -30), (135, -52), (180, -60)],
+                   "hi": [(0, 89), (180, 89)], "thick": 0.011, "open": ("lo",), "grid": (20, 6), "ridges": 0.3},
+    # beards: open on every side
+    "beard_full": {"theta": (-98, 98), "lo": [(0, -80), (40, -70), (70, -48), (98, -26)],
+                   "hi": [(0, -31), (18, -28), (30, -17), (45, -9), (65, -3), (85, 6), (98, 9)],
+                   "thick": 0.011, "open": ("lo", "hi", "ends"), "grid": (14, 5), "ridges": 0.25},
+    "beard_moustache": {"theta": (-40, 40), "lo": [(0, -19), (22, -21), (40, -30)], "hi": [(0, -11), (22, -12), (40, -17)],
+                        "thick": 0.0055, "open": ("lo", "hi", "ends"), "grid": (8, 2), "ridges": 0.2},
+    "beard_sideburns": {"theta": (72, 100), "mirror": True, "lo": [(72, -22), (100, -18)], "hi": [(72, 11), (100, 12)],
+                        "thick": 0.005, "open": ("lo", "hi", "ends"), "grid": (3, 4), "ridges": 0.2},
+}
+CENTRE = (0.0, 0.09, -0.01)  # ray origin, head-local
+
+
+def curve(keys, theta):
+    """Elevation at |θ| from (|θ|, φ) keys, smoothstep between keys (θ in degrees)."""
+    a = abs(theta)
+    if a <= keys[0][0]:
+        return keys[0][1]
+    for (t0, p0), (t1, p1) in zip(keys, keys[1:]):
+        if a <= t1:
+            return p0 + (p1 - p0) * _smooth(t0, t1, a)
+    return keys[-1][1]
+
+
+def ray_dir(theta, phi):
+    """Unit direction (head-local) of azimuth θ, elevation φ (degrees)."""
+    t, p = math.radians(theta), math.radians(phi)
+    return (math.sin(t) * math.cos(p), -math.cos(t) * math.cos(p), math.sin(p))
+
+
+def patch_grid(name):
+    """The patch's parameter grid: rows of [(θ, φ, taper)] from the lower to the upper
+    curve; taper 0 on an open edge, 1 inside (the thickness fades into the skin)."""
+    pt = PATCHES[name]
+    nt, ns = pt["grid"]
+    t0, t1 = pt["theta"]
+    wrap = t1 - t0 >= 360
+    cols = nt if wrap else nt + 1
+    rows = []
+    for j in range(ns + 1):
+        sj = j / ns
+        row = []
+        for i in range(cols):
+            ti = i / nt
+            th = t0 + (t1 - t0) * ti
+            lo, hi = curve(pt["lo"], th), curve(pt["hi"], th)
+            d = []
+            if "lo" in pt["open"]:
+                d.append(sj)
+            if "hi" in pt["open"]:
+                d.append(1.0 - sj)
+            if "ends" in pt["open"]:
+                d.append(min(ti, 1.0 - ti) * (2.0 if not pt.get("mirror") else 1.0))
+            taper = _smooth(0.0, 0.34, min(d)) if d else 1.0
+            row.append((th, lo + (hi - lo) * sj, taper))
+        rows.append(row)
+    return rows
+
+
+def thickness(name, theta, s, taper):
+    """Patch thickness at a grid point: tapered edges, combed ridges along the strands and
+    a few clumps (deterministic)."""
+    pt = PATCHES[name]
+    ridge = 1.0 + pt["ridges"] * math.sin(math.radians(theta) * 23.0)
+    clump = 1.0 + 0.18 * math.sin(theta * 0.31 + s * 5.0) * math.sin(theta * 0.13 + 1.7)
+    return pt["thick"] * (0.2 + 0.8 * taper) * ridge * clump
 
 
 def _smooth(e0, e1, x):
@@ -150,8 +225,16 @@ def base_face(x, y, z):
     dy -= 0.0035 * _g((x, 0.0, 0.020), (z, -0.060, 0.007)) * f
     dy += 0.002 * _g((x, 0.0, 0.016), (z, -0.072, 0.005)) * f
     dy -= 0.006 * _g((x, 0.0, 0.018), (z, -0.088, 0.012)) * f
-    # Ears on the sides, behind the cheeks.
-    dx += s * 0.011 * _g((y, 0.100, 0.016), (z, -0.012, 0.022)) * _smooth(0.045, 0.065, ax)
+    # Upper lids over the eyeballs, the nasolabial folds from the nose wings to the
+    # mouth corners.
+    dy -= 0.0028 * _g((ax, 0.033, 0.012), (z, 0.008, 0.0045)) * f
+    t = min(max(((ax - 0.016) * 0.012 + (z + 0.040) * -0.025) / (0.012 ** 2 + 0.025 ** 2), 0.0), 1.0)
+    fold = math.hypot(ax - (0.016 + 0.012 * t), z - (-0.040 - 0.025 * t))
+    dy -= 0.0022 * math.exp(-(fold / 0.0045) ** 2) * f
+    # Ears on the sides, behind the cheeks, with a hollow bowl.
+    side = _smooth(0.045, 0.065, ax)
+    dx += s * 0.011 * _g((y, 0.100, 0.016), (z, -0.012, 0.022)) * side
+    dx -= s * 0.004 * _g((y, 0.097, 0.007), (z, -0.010, 0.010)) * side
     return dx, dy, dz
 
 
