@@ -122,6 +122,53 @@ first (`DEATHLIE1` for `DEATHLIE3`), then `STAND`, then the first clip; a model 
 shows its bind pose. Facing: `yaw = −(RealDir − 64) · 2π / 256` (models face south);
 buildings always face south (one view).
 
+### Individual looks (#283)
+
+Models whose scene root carries `extras.acr_face_morphs` (the contract of
+`docs/assets-humans.md`, "Faces and bodies") give every soldier his own face, build, hair,
+beard, colouring and height. Models without it draw exactly as before.
+
+- **Picker** (`looks.rs`): a port of `faces.choose(seed, style)`: the hash `_mix32`
+  (lowbias32) and `Rng` drawing in the same order. Tests check it against Python values
+  for seeds 0, 1, 42, 1776 and 2³²−1. The seed is the unit id (`ModelInstance::look`, set
+  for every non-building unit in `three_d.rs`), so a unit keeps his look across frames,
+  saves and replays. The model's type gives the style: `civilian` when
+  `acr_look_odds.hair` has `loose`, else `regular`.
+  - The tables (odds, colours, tones) are copied from `faces.py`: the extras are read
+    into unordered JSON maps, but the draw order depends on the order of the tables.
+- **Face and body morphs without GPU morph slots:** the targets `face_*` and `body_*` of each
+  primitive are kept on the CPU. At `add_model`, 16 variants are baked (`bake_looks`), each
+  with the weights of a fixed seed (`variant_weights`): pre-mixed vertices of just the
+  primitives these morphs touch (flesh, coat, collar, hair and beards), which come first in
+  the model's vertex buffer so that a variant buffer shares the index numbering.
+  - A soldier draws the variant nearest to his own weights. Draws are grouped by (model,
+    decaying, variant), and the touched primitives bind the variant's buffer.
+  - `deflate` and `lie_flat` still run on the GPU on top.
+  - Cost: engm18, 4800 of 7122 vertices touched, so 16 × 4800 × 124 B ≈ 9.3 MiB of
+    vertex buffers per model type (the base buffer is 0.86 MiB). engkri needs 8.9 MiB.
+    The glb loads in about 25 ms (release), of which baking takes 3.6 ms.
+- **Hair and beard:** meshes named `*.hair_*` / `*.beard_*` mark their vertices with
+  `body.w` = variant index + 1 (`looks::VARIANT_NODES`). The instance's `extra.w` is the
+  bit mask of the nodes his hair and beard choice shows, and the vertex shader moves the
+  others off screen. With no look, the mask is 0, so the variants are hidden (the old
+  guard of the asset branch).
+- **Tints:** material `extras.acr_tint` (`"skin"`: both flesh primitives, body atlas and
+  face map; `"hair"`) sets `material.look.z`. The fragment multiplies the colour by the
+  soldier's skin tone (an sRGB multiplier, so raised to 2.2) or hair colour (linear chosen
+  colour ÷ linear neutral base `(0.80, 0.78, 0.75)`).
+- **Height:** a uniform scale `height_m / 1.73` about the ground point, applied to the
+  instance transform before the caps and inserts are placed.
+- **`_FACE`:** read as `Unorm8x4` into vertex location 14, so 15 of WebGL2's 16 locations
+  are now used. Per soldier, the fragment shades stubble (beard zone × stubble), forehead
+  folds (wrinkle zone × `face_age`), pock marks (pock zone × pocks) and, for 15 %, a pale
+  scar slanting across one cheek (face front, at `acr_face_frame` eye height − 4 cm).
+- **Instance data:** 3 look texels follow the marks in the bone texture (`look_texel`).
+  They hold the skin tint and stubble, the hair tint and age, and the pocks, scar side,
+  eye height and a has-look flag. Instances without a look get neutral texels.
+
+Close-up check: `ACR-analysis/looks/looks_bench.py` places 8 EngM18 and 8 EngKri in rows
+facing the camera at zoom 5 and 12.
+
 ### Decay (#178) and gore (#183)
 
 Per corpse one value from the death counter (`Unit::death`):

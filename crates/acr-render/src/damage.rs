@@ -809,6 +809,7 @@ fn vertex(position: Vec3, normal: Vec3, color: [f32; 4]) -> Vertex {
         weights: [1.0, 0.0, 0.0, 0.0],
         morph: [[0.0; 3]; 2],
         body: [-1.0, -1.0, 0.5, 0.0],
+        face: [0; 4],
     }
 }
 
@@ -822,8 +823,12 @@ fn single(name: &str, vertices: Vec<Vertex>, indices: Vec<u32>, tissue: Tissue) 
         decay: None,
         stump: false,
         tissue,
+        tint: Default::default(),
     };
-    ModelData::single(Primitive { vertices, indices, material: 0, morphs: [false; 2] }, material)
+    ModelData::single(
+        Primitive { vertices, indices, material: 0, morphs: [false; 2], look_morphs: Vec::new() },
+        material,
+    )
 }
 
 /// The procedural stump cap (until `gore.glb` brings the modelled one): a unit disc in xy
@@ -856,6 +861,7 @@ pub fn procedural_cap() -> ModelData {
                 weights: [1.0, 0.0, 0.0, 0.0],
                 morph: [[0.0; 3]; 2],
                 body: [-1.0, -1.0, 0.5, 0.0],
+                face: [0; 4],
             });
         }
     }
@@ -879,8 +885,12 @@ pub fn procedural_cap() -> ModelData {
         decay: None,
         stump: true,
         tissue: Tissue::None,
+        tint: Default::default(),
     };
-    ModelData::single(Primitive { vertices, indices, material: 0, morphs: [false; 2] }, material)
+    ModelData::single(
+        Primitive { vertices, indices, material: 0, morphs: [false; 2], look_morphs: Vec::new() },
+        material,
+    )
 }
 
 #[cfg(test)]

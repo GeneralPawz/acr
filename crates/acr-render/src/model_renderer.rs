@@ -19,6 +19,7 @@ use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
 use crate::damage::{self, Damage};
+use crate::looks;
 use crate::math::{self, Mat4};
 use crate::model::{ModelData, Vertex};
 use crate::view3d::View3d;
@@ -58,6 +59,9 @@ pub struct ModelInstance {
     /// Cuts, fractures, a torn trunk, or the piece of a body this instance draws
     /// (`docs/damage-model.md`); the default draws it whole.
     pub damage: Damage,
+    /// Individual look (#283, `crate::looks`): the seed of [`looks::choose`] (the unit id).
+    /// Ignored by models without looks; `None` shows the model's base look.
+    pub look: Option<u32>,
 }
 
 /// Blood sprayed onto a model from a hit nearby: speckles around a point of its rest pose
@@ -237,7 +241,7 @@ struct GpuInstance {
 
 /// The data texels of an instance in the bone texture: wounds, spray and (when damaged)
 /// the damage block of [`damage::pack`].
-fn instance_texels(inst: &ModelInstance, rig: Option<&damage::Rig>, out: &mut Vec<[f32; 4]>) {
+fn instance_texels(inst: &ModelInstance, rig: Option<&damage::Rig>, look: &[[f32; 4]; 3], out: &mut Vec<[f32; 4]>) {
     let [w0, w1] = inst.wounds.gpu();
     let s = &inst.sprayed;
     let damaged = !inst.damage.is_none();
@@ -255,10 +259,30 @@ fn instance_texels(inst: &ModelInstance, rig: Option<&damage::Rig>, out: &mut Ve
     for m in marks {
         out.extend(m.gpu());
     }
+    // The look follows the marks (`model.wgsl`, `look_texel`).
+    out.extend_from_slice(look);
+}
+
+/// The look texels of an instance (`model.wgsl`, `look_texel`): skin tint (linear) and
+/// stubble; hair tint and age; pocks, scar side (-1, 0, 1), eye height (rest pose, m), 1.
+/// Neutral without a look.
+fn look_texels(look: Option<&looks::Look>, eye: f32, seed: u32) -> [[f32; 4]; 3] {
+    let Some(l) = look else { return [[1.0, 1.0, 1.0, 0.0], [1.0, 1.0, 1.0, 0.0], [0.0; 4]] };
+    let (skin, hair) = looks::tints(l);
+    let side = if !l.scar {
+        0.0
+    } else if seed & 1 == 0 {
+        1.0
+    } else {
+        -1.0
+    };
+    [[skin[0], skin[1], skin[2], l.stubble], [hair[0], hair[1], hair[2], l.morphs[7]], [l.pocks, side, eye, 1.0]]
 }
 
 struct GpuPrimitive {
     indices: Range<u32>,
+    /// Moved by the face and body morphs: drawn from the look variant's vertex buffer.
+    touched: bool,
     material: usize,
     /// Hidden inside the body until it decays (the bone layer): drawn for decaying
     /// instances only, a third of a human's triangles.
@@ -271,6 +295,19 @@ struct GpuModel {
     indices: wgpu::Buffer,
     primitives: Vec<GpuPrimitive>,
     materials: Vec<wgpu::BindGroup>,
+    /// The baked face and body variants (#283, [`ModelData::bake_looks`]): the touched
+    /// primitives' vertices, which come first in [`Self::vertices`].
+    variants: Vec<wgpu::Buffer>,
+    /// Eye height of the rest pose (m, `extras.acr_face_frame`).
+    eye: f32,
+}
+
+/// Memory and time of the look variants baked by [`ModelRenderer::add_model`].
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct LookStats {
+    pub variants: usize,
+    pub vertices_per_variant: usize,
+    pub bytes: usize,
 }
 
 pub struct ModelRenderer {
@@ -292,8 +329,11 @@ pub struct ModelRenderer {
     cap: usize,
     /// The inside of wounds (#280): cavity, rib, bone end ([`damage::InsertKind`] order).
     inserts: [usize; 3],
-    /// Prepared for the next `render`: model, its instances, whether they decay.
-    draws: Vec<(usize, Range<u32>, bool)>,
+    /// Prepared for the next `render`: model, its instances, whether they decay, the look
+    /// variant they draw.
+    draws: Vec<(usize, Range<u32>, bool, Option<usize>)>,
+    /// The look variants of the last model added.
+    pub look_stats: LookStats,
     /// The target does not encode sRGB: the shader does.
     encode_srgb: bool,
     /// Palettes uploaded by the last `prepare`.
@@ -413,10 +453,11 @@ impl ModelRenderer {
             bind_group_layouts: &[Some(&globals_layout), Some(&material_layout)],
             immediate_size: 0,
         });
-        // 14 of the 16 locations WebGL2 has: wounds, spray and damage live in the bone texture.
+        // 15 of the 16 locations WebGL2 has: wounds, spray and damage live in the bone texture.
         let vertex_attributes = wgpu::vertex_attr_array![
             0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4,
-            4 => Uint32x4, 5 => Float32x4, 6 => Float32x3, 7 => Float32x3, 8 => Float32x4
+            4 => Uint32x4, 5 => Float32x4, 6 => Float32x3, 7 => Float32x3, 8 => Float32x4,
+            14 => Unorm8x4
         ];
         let instance_attributes = wgpu::vertex_attr_array![
             9 => Float32x4, 10 => Float32x4, 11 => Float32x4, 12 => Float32x4, 13 => Uint32x4
@@ -570,6 +611,7 @@ impl ModelRenderer {
             cap: 0,
             inserts: [0; 3],
             draws: Vec::new(),
+            look_stats: LookStats::default(),
             encode_srgb: !target.is_srgb(),
             pose_count: 0,
             drawn: 0,
@@ -615,16 +657,45 @@ impl ModelRenderer {
     pub fn add_model(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, data: ModelData) -> usize {
         let mut vertices: Vec<Vertex> = Vec::new();
         let mut indices: Vec<u32> = Vec::new();
-        let mut primitives = Vec::new();
-        for p in &data.primitives {
-            // Indices are offset here: WebGL2 has no base vertex.
-            let base = vertices.len() as u32;
-            let start = indices.len() as u32;
-            vertices.extend_from_slice(&p.vertices);
-            indices.extend(p.indices.iter().map(|i| i + base));
-            let inner = data.materials.get(p.material).and_then(|m| m.decay).is_some_and(|d| d.inner);
-            primitives.push(GpuPrimitive { indices: start..indices.len() as u32, material: p.material, inner });
+        // The look variants: the primitives they touch first, so a variant's buffer holds
+        // just those and shares the index numbering.
+        let baked = data.bake_looks().unwrap_or_default();
+        let touched = |p: &crate::model::Primitive| !baked.is_empty() && !p.look_morphs.is_empty();
+        let mut slots: Vec<Option<GpuPrimitive>> = (0..data.primitives.len()).map(|_| None).collect();
+        for pass in [true, false] {
+            for (k, p) in data.primitives.iter().enumerate().filter(|(_, p)| touched(p) == pass) {
+                // Indices are offset here: WebGL2 has no base vertex.
+                let base = vertices.len() as u32;
+                let start = indices.len() as u32;
+                vertices.extend_from_slice(&p.vertices);
+                indices.extend(p.indices.iter().map(|i| i + base));
+                let inner = data.materials.get(p.material).and_then(|m| m.decay).is_some_and(|d| d.inner);
+                slots[k] = Some(GpuPrimitive {
+                    indices: start..indices.len() as u32,
+                    touched: pass,
+                    material: p.material,
+                    inner,
+                });
+            }
         }
+        let primitives: Vec<GpuPrimitive> = slots.into_iter().flatten().collect();
+        let variants: Vec<wgpu::Buffer> = baked
+            .iter()
+            .map(|v| {
+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("model look variant"),
+                    contents: bytemuck::cast_slice(v),
+                    usage: wgpu::BufferUsages::VERTEX,
+                })
+            })
+            .collect();
+        let per = baked.first().map_or(0, Vec::len);
+        self.look_stats = LookStats {
+            variants: baked.len(),
+            vertices_per_variant: per,
+            bytes: baked.len() * per * size_of::<Vertex>(),
+        };
+        let eye = data.looks.as_ref().map_or(0.0, |l| l.eye);
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("model vertices"),
             contents: bytemuck::cast_slice(&vertices),
@@ -678,7 +749,7 @@ impl ModelRenderer {
                         // The bone layer takes no blood, dirt or burns.
                         if d.is_some_and(|d| d.inner) || m.stump { 1.0 } else { 0.0 },
                     ],
-                    look: [if m.stump { 1.0 } else { 0.0 }, m.tissue as u8 as f32, 0.0, 0.0],
+                    look: [if m.stump { 1.0 } else { 0.0 }, m.tissue as u8 as f32, m.tint as u8 as f32, 0.0],
                 };
                 let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("model material"),
@@ -698,7 +769,15 @@ impl ModelRenderer {
                 })
             })
             .collect();
-        self.models.push(GpuModel { data, vertices: vertex_buffer, indices: index_buffer, primitives, materials });
+        self.models.push(GpuModel {
+            data,
+            vertices: vertex_buffer,
+            indices: index_buffer,
+            primitives,
+            materials,
+            variants,
+            eye,
+        });
         self.models.len() - 1
     }
 
@@ -724,8 +803,20 @@ impl ModelRenderer {
         dissolve: bool,
     ) {
         let mut order: Vec<usize> = (0..instances.len()).filter(|&i| instances[i].model < self.models.len()).collect();
-        // By model, the decaying ones last (they also draw the inner layers).
-        order.sort_by_key(|&i| (instances[i].model, instances[i].decay > 0.0));
+        // Each soldier's look (#283) and the baked variant nearest to it.
+        let chosen: Vec<Option<(looks::Look, Option<usize>)>> = instances
+            .iter()
+            .map(|inst| {
+                let m = self.models.get(inst.model)?;
+                let l = m.data.looks.as_ref()?;
+                let look = looks::choose(inst.look?, l.style);
+                let variant = (!m.variants.is_empty()).then(|| looks::nearest_variant(&l.variants, &look.morphs));
+                Some((look, variant))
+            })
+            .collect();
+        let variant_of = |i: usize| chosen.get(i).copied().flatten().and_then(|c| c.1);
+        // By model, the decaying ones last (they also draw the inner layers), by look variant.
+        order.sort_by_key(|&i| (instances[i].model, instances[i].decay > 0.0, variant_of(i)));
         let mut texels: Vec<[f32; 4]> = Vec::new();
         let mut poses: HashMap<(usize, Option<usize>, u32), u32> = HashMap::new();
         let mut gpu: Vec<GpuInstance> = Vec::with_capacity(order.len());
@@ -739,7 +830,21 @@ impl ModelRenderer {
         let draws = &mut self.draws;
         let custom = std::mem::take(&mut self.custom);
         let mut push = |i: usize, inst: &ModelInstance, caps: &mut Vec<ModelInstance>| {
-            let model = &models[inst.model].data;
+            let gpu_model = &models[inst.model];
+            let model = &gpu_model.data;
+            let look = chosen.get(i).copied().flatten();
+            let variant = look.and_then(|c| c.1);
+            // Height: a uniform scale about the ground point.
+            let scaled;
+            let inst = match look {
+                Some((l, _)) => {
+                    let k = l.height_m / looks::BUILT_HEIGHT_M;
+                    let scale = math::from_trs([0.0; 3], [0.0, 0.0, 0.0, 1.0], [k; 3]);
+                    scaled = ModelInstance { transform: math::mul(&inst.transform, &scale), ..*inst };
+                    &scaled
+                }
+                None => inst,
+            };
             // Culling by the rest pose's radius (lying corpses reach about as far).
             let origin = [inst.transform[3][0], inst.transform[3][1], inst.transform[3][2]];
             let stretch = math::dot(
@@ -785,6 +890,7 @@ impl ModelRenderer {
                         wounds: Default::default(),
                         sprayed: Default::default(),
                         damage: Damage::default(),
+                        look: None,
                         ..*inst
                     });
                 }
@@ -803,6 +909,7 @@ impl ModelRenderer {
                         wounds: Default::default(),
                         sprayed: Default::default(),
                         damage: Damage::default(),
+                        look: None,
                         ..*inst
                     });
                 }
@@ -810,15 +917,17 @@ impl ModelRenderer {
             let index = gpu.len() as u32;
             let decaying = inst.decay > 0.0;
             match draws.last_mut() {
-                Some((m, range, d)) if *m == inst.model && *d == decaying => range.end = index + 1,
-                _ => draws.push((inst.model, index..index + 1, decaying)),
+                Some((m, range, d, v)) if *m == inst.model && *d == decaying && *v == variant => range.end = index + 1,
+                _ => draws.push((inst.model, index..index + 1, decaying, variant)),
             }
             let first = data.len() as u32;
-            instance_texels(inst, model.rig.as_ref(), &mut data);
+            let look_data = look_texels(look.as_ref().map(|c| &c.0), gpu_model.eye, inst.look.unwrap_or(0));
+            instance_texels(inst, model.rig.as_ref(), &look_data, &mut data);
             gpu.push(GpuInstance {
                 rows: math::affine_rows(&inst.transform),
                 params: [inst.decay, inst.morphs[0], inst.morphs[1], if inst.transparent { 1.0 } else { 0.0 }],
-                extra: [base, first, u32::from(inst.player), 0],
+                // The hair and beard variants shown (none without a look).
+                extra: [base, first, u32::from(inst.player), look.map_or(0, |c| c.0.node_mask())],
             });
         };
         for &i in &order {
@@ -903,16 +1012,22 @@ impl ModelRenderer {
         pass.set_bind_group(0, &self.globals_group, &[]);
         pass.set_stencil_reference(1);
         let stride = size_of::<GpuInstance>() as u64;
-        for (model, range, decaying) in &self.draws {
+        for (model, range, decaying, variant) in &self.draws {
             let m = &self.models[*model];
-            pass.set_vertex_buffer(0, m.vertices.slice(..));
+            let look = variant.and_then(|v| m.variants.get(v));
             // The instances are bound from their first one: no base instance on WebGL2.
             pass.set_vertex_buffer(
                 1,
                 self.instances.slice(u64::from(range.start) * stride..u64::from(range.end) * stride),
             );
             pass.set_index_buffer(m.indices.slice(..), wgpu::IndexFormat::Uint32);
+            let mut bound = None;
             for p in m.primitives.iter().filter(|p| *decaying || !p.inner) {
+                let from_look = p.touched && look.is_some();
+                if bound != Some(from_look) {
+                    pass.set_vertex_buffer(0, look.filter(|_| from_look).unwrap_or(&m.vertices).slice(..));
+                    bound = Some(from_look);
+                }
                 pass.set_bind_group(1, &m.materials[p.material], &[]);
                 pass.draw_indexed(p.indices.clone(), 0, 0..range.end - range.start);
             }

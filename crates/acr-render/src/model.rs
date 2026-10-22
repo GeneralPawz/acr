@@ -11,7 +11,9 @@
 //!   (triangle lists only), the custom `_PART`, `_LIMB` and `_GORE` (x) for cutting
 //!   ([`crate::damage`]); meshes named `*.caps` (the old stump caps) are skipped;
 //! - the morph targets `deflate` and `lie_flat` (by `extras.targetNames`, else the first
-//!   two), positions only;
+//!   two), positions only; the face and body targets `face_*`/`body_*` (#283), kept on the
+//!   CPU for [`ModelData::bake_looks`]; `_FACE`, and the hair and beard variant meshes
+//!   `*.hair_*`/`*.beard_*` (marked in `body.w`, see `crate::looks`);
 //! - materials: base colour factor and texture (PNG), `extras.acr_decay` (the decay layer of
 //!   `docs/assets-humans.md`). With `acr_decay`, `COLOR_0` is the decay mask, otherwise the
 //!   vertex colour;
@@ -51,8 +53,12 @@ pub struct Vertex {
     pub morph: [[f32; 3]; 2],
     /// Damage coordinates (`docs/damage-model.md`): `_PART` (body part 0..9 of `rig.PARTS`,
     /// −1 none), `_LIMB` (level 0..1 along the limb, −1 trunk or unknown; derived from the
-    /// rest pose when the asset lacks it), `_GORE.x` (ragged-edge noise, 0.5 without), 0.
+    /// rest pose when the asset lacks it), `_GORE.x` (ragged-edge noise, 0.5 without), and
+    /// the hair or beard variant the vertex belongs to (#283: index into
+    /// [`crate::looks::VARIANT_NODES`] + 1; 0 always drawn).
     pub body: [f32; 4],
+    /// `_FACE` (#283, flesh only): beard, wrinkle, pock zones and the face front, 0 without.
+    pub face: [u8; 4],
 }
 
 /// One entry of a model's matrix palette.
@@ -105,6 +111,17 @@ pub struct Material {
     pub stump: bool,
     /// Drawn as torn tissue (#280): the inside of a wound, bone, or a cloth shred.
     pub tissue: Tissue,
+    /// `extras.acr_tint` (#283): tinted per soldier with his skin tone or hair colour.
+    pub tint: Tint,
+}
+
+/// Which per-soldier colour a material takes (`extras.acr_tint`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Tint {
+    #[default]
+    None = 0,
+    Skin = 1,
+    Hair = 2,
 }
 
 /// How a material of the gore inserts and gibs is shaded (`model.wgsl`, `look.y`).
@@ -136,6 +153,19 @@ pub struct Primitive {
     pub material: usize,
     /// Which of the morph targets [`MORPH_NAMES`] the primitive has.
     pub morphs: [bool; 2],
+    /// The face and body targets (#283) it has: index into [`crate::looks::LOOK_MORPHS`]
+    /// and the position offsets, baked into variants on the CPU.
+    pub look_morphs: Vec<(usize, Vec<[f32; 3]>)>,
+}
+
+/// Individual looks of a model with the face and body extras (#283, `crate::looks`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Looks {
+    pub style: crate::looks::Style,
+    /// Morph weights of the baked variants ([`crate::looks::variant_weights`]).
+    pub variants: Vec<[f32; 12]>,
+    /// Eye height in the rest pose (m): `extras.acr_face_frame[2]`.
+    pub eye: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -182,6 +212,9 @@ pub struct ModelData {
     pub radius: f32,
     /// Limb chains and radius profiles for cutting (skeleton H models only).
     pub rig: Option<crate::damage::Rig>,
+    /// Per-soldier faces, bodies, hair and beards (root `extras.acr_face_morphs`); `None`
+    /// draws every soldier alike, as before.
+    pub looks: Option<Looks>,
 }
 
 /// The affine rows (3 × vec4) of each palette slot.
@@ -312,6 +345,14 @@ impl ModelData {
                     decay: extras_json(m.extras()).as_ref().and_then(decay_layer),
                     stump: false,
                     tissue: Tissue::None,
+                    tint: match extras_json(m.extras())
+                        .as_ref()
+                        .and_then(|e| e.get("acr_tint")?.as_str().map(str::to_owned))
+                    {
+                        Some(t) if t == "skin" => Tint::Skin,
+                        Some(t) if t == "hair" => Tint::Hair,
+                        _ => Tint::None,
+                    },
                 }
             })
             .collect();
@@ -326,6 +367,7 @@ impl ModelData {
             decay: None,
             stump: false,
             tissue: Tissue::None,
+            tint: Tint::None,
         });
 
         let mut slots: Vec<Slot> = Vec::new();
@@ -375,6 +417,12 @@ impl ModelData {
             if mesh.name().is_some_and(|n| n.ends_with(".caps")) {
                 continue;
             }
+            // A hair or beard variant (#283): drawn only for soldiers whose look shows it.
+            let variant = mesh
+                .name()
+                .and_then(|n| n.rsplit('.').next())
+                .and_then(|s| crate::looks::VARIANT_NODES.iter().position(|v| *v == s))
+                .map_or(0.0, |i| i as f32 + 1.0);
             for prim in mesh.primitives() {
                 if prim.mode() != gltf::mesh::Mode::Triangles {
                     continue;
@@ -390,7 +438,8 @@ impl ModelData {
                         joints: [joints[0], 0, 0, 0],
                         weights: [1.0, 0.0, 0.0, 0.0],
                         morph: [[0.0; 3]; 2],
-                        body: [-1.0, -1.0, 0.5, 0.0],
+                        body: [-1.0, -1.0, 0.5, variant],
+                        face: [0; 4],
                     })
                     .collect();
                 if let Some(it) = reader.read_normals() {
@@ -413,6 +462,12 @@ impl ModelData {
                 if let Some(it) = custom("GORE").and_then(|a| gltf::accessor::Iter::<[f32; 4]>::new(a, get)) {
                     vertices.iter_mut().zip(it).for_each(|(v, x)| v.body[2] = x[0]);
                 }
+                if let Some(it) = custom("FACE").and_then(|a| gltf::accessor::Iter::<[f32; 4]>::new(a, get)) {
+                    vertices
+                        .iter_mut()
+                        .zip(it)
+                        .for_each(|(v, x)| v.face = x.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8));
+                }
                 if skinned && let (Some(js), Some(ws)) = (reader.read_joints(0), reader.read_weights(0)) {
                     for ((v, j), w) in vertices.iter_mut().zip(js.into_u16()).zip(ws.into_f32()) {
                         v.joints = j.map(|j| joints.get(usize::from(j)).copied().unwrap_or(joints[0]));
@@ -421,8 +476,15 @@ impl ModelData {
                     }
                 }
                 let mut morphs = [false; 2];
+                let mut look_morphs = Vec::new();
                 for (t, (positions, _, _)) in reader.read_morph_targets().enumerate() {
                     let name = names.get(t).map(String::as_str);
+                    if let Some(l) = name.and_then(crate::looks::look_morph) {
+                        if let Some(positions) = positions {
+                            look_morphs.push((l, positions.collect()));
+                        }
+                        continue;
+                    }
                     let k = match name {
                         Some(n) => MORPH_NAMES.iter().position(|m| *m == n),
                         None => (t < 2).then_some(t),
@@ -441,7 +503,7 @@ impl ModelData {
                 }
                 let material = prim.material().index().unwrap_or(default_material);
                 skinned_prims.push(skinned);
-                primitives.push(Primitive { vertices, indices, material, morphs });
+                primitives.push(Primitive { vertices, indices, material, morphs, look_morphs });
             }
         }
 
@@ -511,8 +573,18 @@ impl ModelData {
                 rig.read_radii(r);
             }
         }
+        // Individual looks (#283): the style from the odds (civilians wear their hair loose).
+        let looks = root_extras.iter().find(|e| e.get("acr_face_morphs").is_some()).map(|e| Looks {
+            style: if e.pointer("/acr_look_odds/hair/loose").is_some() {
+                crate::looks::Style::Civilian
+            } else {
+                crate::looks::Style::Regular
+            },
+            variants: (0..crate::looks::VARIANTS).map(crate::looks::variant_weights).collect(),
+            eye: floats::<3>(e.get("acr_face_frame")).map_or(1.61, |f| f[2]),
+        });
         let mut model =
-            Self { nodes, order, slots, primitives, materials, images, clips, fps, type_name, radius: 0.0, rig };
+            Self { nodes, order, slots, primitives, materials, images, clips, fps, type_name, radius: 0.0, rig, looks };
         model.radius = model.rest_radius();
         Ok(model)
     }
@@ -558,6 +630,7 @@ impl ModelData {
             type_name: None,
             radius: 0.0,
             rig: None,
+            looks: None,
         };
         model.radius = model.rest_radius();
         model
@@ -661,6 +734,41 @@ impl ModelData {
             .collect();
         out.dedup();
         out
+    }
+
+    /// The face and body variants of a model with looks (#283), baked on the CPU: the
+    /// vertices of the primitives the look morphs touch, in [`Self::primitives`] order, with
+    /// [`Looks::variants`]`[k]` mixed into the positions, one list per variant. `None`
+    /// without looks or look morphs.
+    pub fn bake_looks(&self) -> Option<Vec<Vec<Vertex>>> {
+        let looks = self.looks.as_ref()?;
+        let touched: Vec<&Primitive> = self.primitives.iter().filter(|p| !p.look_morphs.is_empty()).collect();
+        if touched.is_empty() {
+            return None;
+        }
+        Some(
+            looks
+                .variants
+                .iter()
+                .map(|w| {
+                    let mut out = Vec::with_capacity(touched.iter().map(|p| p.vertices.len()).sum());
+                    for p in &touched {
+                        let start = out.len();
+                        out.extend_from_slice(&p.vertices);
+                        for (t, deltas) in &p.look_morphs {
+                            let k = w[*t];
+                            if k == 0.0 {
+                                continue;
+                            }
+                            for (v, d) in out[start..].iter_mut().zip(deltas) {
+                                v.position.iter_mut().zip(d).for_each(|(p, d)| *p += k * d);
+                            }
+                        }
+                    }
+                    out
+                })
+                .collect(),
+        )
     }
 
     /// The model without the meshes on nodes whose name `drop` accepts (held gear left out
@@ -957,6 +1065,30 @@ pub(crate) mod tests {
         let (morphs, sink) = decay_pose(0.9, true);
         assert_eq!(morphs, [1.0, 1.0]);
         assert!((sink - 0.2 * (0.12 / 0.22)).abs() < 1e-6);
+    }
+
+    /// Load and bake time and memory of the look variants of a real model:
+    /// `ACR_LOOKS_GLB=path cargo test -p acr-render --release -- --ignored measures_look_variants --nocapture`.
+    #[test]
+    #[ignore]
+    fn measures_look_variants() {
+        let Ok(path) = std::env::var("ACR_LOOKS_GLB") else { return };
+        let bytes = std::fs::read(path).expect("glb");
+        let t = std::time::Instant::now();
+        let model = ModelData::from_glb(&bytes).expect("loads");
+        let load = t.elapsed();
+        let t = std::time::Instant::now();
+        let baked = model.bake_looks().expect("looks");
+        let bake = t.elapsed();
+        let all: usize = model.primitives.iter().map(|p| p.vertices.len()).sum();
+        let per = baked[0].len();
+        println!(
+            "load {load:?}, bake {bake:?}: {} variants x {per} of {all} vertices = {} KiB (base {} KiB)",
+            baked.len(),
+            baked.len() * per * size_of::<Vertex>() / 1024,
+            all * size_of::<Vertex>() / 1024
+        );
+        assert!(model.looks.is_some());
     }
 
     #[test]
