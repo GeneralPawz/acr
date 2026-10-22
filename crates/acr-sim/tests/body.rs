@@ -190,7 +190,7 @@ fn a_fracture_crawls_a_flesh_wound_slows() {
 
 #[test]
 fn arms_decide_the_musket() {
-    let hit = |part, outcome, level| Injury { part, level, outcome, energy: 100 };
+    let hit = |part, outcome, level| Injury { part, level, outcome, energy: 100, cause: Cause::Musket };
     let mut b = Body::default();
     apply(&mut b, &hit(Part::Limb(LimbId::ArmL), Outcome::Wound, 80));
     assert!(!b.dropped && !b.disarmed() && b.arm(LimbId::ArmL) == 60);

@@ -233,7 +233,13 @@ mod tests {
     }
 
     fn tear(cause: DeathCause, part: Part, level: u8, outcome: Outcome, energy: u8, tick: u64) -> Tear {
-        Tear { tick, victim: 9, cause, injury: Injury { part, level, outcome, energy }, side: [0.0, 1.0] }
+        Tear {
+            tick,
+            victim: 9,
+            cause,
+            injury: Injury { part, level, outcome, energy, cause: acr_sim::body::Cause::Musket },
+            side: [0.0, 1.0],
+        }
     }
 
     #[test]
