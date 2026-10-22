@@ -29,6 +29,9 @@ MD = {
     "PATTACK": "@PATTACK 9 5 0 35",
     "UATTACK": "@UATTACK 9 5 35 0",
     "PSTAND": "#PSTAND 9 1 5 35",
+    "PATTACK1": "@PATTACK1 9 5 0 35",
+    "UATTACK1": "@UATTACK1 9 5 35 0",
+    "PSTAND1": "#PSTAND1 9 1 5 35",
     "ATTACK": "@ATTACK 9 6 0 70",
     "ATTACK1": "@ATTACK1 9 3 0 86",
     "DEATH": "@DEATH 9 4 0 70",
@@ -118,7 +121,9 @@ def build(ctx):
     # Present with both hands: butt in the shoulder, left hand under the barrel (IK).
     aim = aiming.hold(ch.arm, poses.AIM_MUSKET)
     ctx.aim_errors = aiming.errors(ch.arm, aim)
-    for clip, keys in poses.musketeer_clips(MD, aim=aim).items():
+    # Charge bayonets: the same grip with the butt at the right hip.
+    charge = aiming.hold(ch.arm, poses.CHARGE_MUSKET, pocket=(0.02, -0.12, -0.32), left_along=0.30)
+    for clip, keys in poses.musketeer_clips(MD, aim=aim, charge=charge).items():
         am.add_clip(ch.arm, clip, keys)
     am.set_clip(ch.arm, "STAND")
     report = {}
