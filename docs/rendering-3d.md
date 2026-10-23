@@ -747,7 +747,12 @@ on the screen, 22 poses, 1742 instances):
   map's corner (light right + up, i.e. north: up the screen): the "way too long" streaks of
   large battles at zoom 1 (`lod::tests::shadow_list_keeps_to_its_own_vertices`).
   The streaks were huge triangles, so the fix also cut the shadow pass on Monongahela
-  `battle3` (tick 1500, zoom 1, 1600 × 900) from 19.8 to 5.8–5.9 ms GPU time.
+  `battle3` (tick 1500, zoom 1, 1600 × 900) from 19.8 to 5.8–5.9 ms GPU time. Damaged
+  casters follow the drawn list's rule: only [`Damage::splits_parts`] keeps them at level
+  ≤ 1, a corpse with wound volumes alone casts from the far lists. 700 v 700 melee on the
+  blank field (`ACR-analysis/perf/clash.py`, zoom 1), shadow map / all passes in ms GPU time,
+  main 928a909 → both changes: before contact 38.1 / 60.8 → 8.7 / 42.8, at contact
+  50.5 / 83.1 → 14.5 / 53.5, 30 s later 75.3 / 146.0 → 30.6 / 98.9.
 - **Silhouette** (`lod::tests::real_models`, ignored; `ACR_LOD_MODELS=<folder>`): filled pixels
   of the rest pose projected along each axis, the worst axis against level 0
   (`ACR-analysis/lod2/silhouette_models.txt`): soldiers (engm18, engkf18, engd18, puevsda,
