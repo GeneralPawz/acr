@@ -1,4 +1,7 @@
-"""Bear cub (`AnmMedSm`, `ANMMEDSM.MD`): the brown bear at 0.62 m from the WildMesh pack's BrownBear (#287).
+"""American black bear (`AnmMedSm`, `ANMMEDSM.MD`) from the WildMesh pack's BrownBear (#287),
+reshaped and recoloured (`acr_assets.black_bear`): black fur with a tan muzzle and a small
+white chest blaze, no shoulder hump, a straight (Roman) face, larger upright ears, shorter
+claws, a leaner trunk on longer-looking legs; about 0.9 m at the shoulder.
 
 Clip lengths are ANMMED.MD's: REST 60, MOTION_L/R 18 (the two halves of a walk), *1 = the
 run when hunting (9 + 9), ATTACK1 76, DEATH 80, DEATHLIE* its last frame.
@@ -11,8 +14,10 @@ CHECKS = ["--anim STAND"]
 
 SPEC = {
     "blend": "wildmesh/BrownBear/SK_Bear.blend",
-    # A brown bear: about 1 m at the shoulder; the idle pose's top (hump) a little above.
-    "height": 0.62,
+    # An adult male black bear: about 0.9 m at the shoulder on all fours (90-150 kg); with no
+    # hump the idle pose's top is the withers.
+    "height": 0.9,
+    "recolour": "black_bear",
     "tris": 8000,
     "clips": {
         "STAND": ("Idle", "pose", 1, 0.0),

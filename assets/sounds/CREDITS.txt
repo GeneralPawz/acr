@@ -23,3 +23,20 @@ gasp1-3.wav       the same pack: 3grunt4.wav, 3grunt5.wav, 3grunt3.wav, slowed t
 fear1-7.wav       the same pack: 1yell11.wav, 2yell4.wav, 2yell5.wav, 3yell14.wav,
                   yell10.wav, yell2.wav, yell5.wav, mono 22050 Hz 8-bit, cut to 1.8 s,
                   faded out.
+
+Animal voices (not in the original, whose animals are silent; crates/acr-game/src/animal_sounds.rs).
+Public domain recordings from Wikimedia Commons, converted to mono 22050 Hz 16-bit, the
+loudest 1.4-2.5 s windows cut out, faded and normalized:
+bear_growl1-4.wav, bear_roar1-2.wav
+                  "Yellowstone sound library - Grizzly Bear vocalizations - 001.mp3" and
+                  "... - Grizzly Bears Roar - 001.mp3", NPS & MSU Acoustic Atlas /
+                  Jennifer Jerrett, public domain (US National Park Service)
+blackbear_growl1-4.wav, blackbear_roar1-2.wav
+                  the same two recordings, raised in pitch by 1.18 (a smaller bear)
+gator_hiss1-3.wav "Alligatorhiss.ogg", public domain
+gator_bellow1-2.wav "Alligatorbellow1.ogg", public domain
+bison_grunt1-2.wav, bison_bellow1.wav
+                  "Bison.ogg", National Park Service, public domain (bellow lowered by 0.92)
+elk_bugle1-2.wav  "American Elk Bugling.ogg", Jim Pisarowicz (NPS), public domain
+hind_call1-2.wav  the same, raised in pitch by 1.25
+The jaguar uses the game's own Sound\new\Hepard1.wav and Hepard2.wav (not shipped here).

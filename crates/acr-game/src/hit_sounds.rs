@@ -16,6 +16,7 @@ use std::collections::BTreeMap;
 use acr_sim::combat::{DeathCause, HitRecord};
 use acr_sim::fog::Fog;
 
+use crate::animal_sounds::Cry;
 use crate::unit_sounds::{self, SoundEvent};
 
 /// Musket balls, arrows, thrown weapons and grapeshot hitting a body.
@@ -56,15 +57,17 @@ pub const MAX_IMPACTS: usize = 3;
 /// Pain screams started per tick at most.
 pub const MAX_PAINS: usize = 1;
 
-/// ACR's own sound groups: these and those of [`crate::agony`].
+/// ACR's own sound groups: these and those of [`crate::agony`] and
+/// [`crate::animal_sounds`].
 pub fn all_groups() -> impl Iterator<Item = &'static (&'static str, &'static [&'static str])> {
-    GROUPS.iter().chain(crate::agony::GROUPS)
+    GROUPS.iter().chain(crate::agony::GROUPS).chain(crate::animal_sounds::GROUPS)
 }
 
 /// The game paths of a group's files.
 pub fn files(group: &str) -> Option<Vec<String>> {
     let (_, files) = all_groups().find(|(g, _)| *g == group)?;
-    Some(files.iter().map(|f| format!(r"{DIR}\{f}")).collect())
+    // A path with a backslash is a game file of its own (the jaguar's `Sound\new\...`).
+    Some(files.iter().map(|f| if f.contains('\\') { (*f).to_owned() } else { format!(r"{DIR}\{f}") }).collect())
 }
 
 fn projectile(cause: DeathCause) -> bool {
@@ -88,12 +91,28 @@ fn pain(hit: &HitRecord) -> bool {
     !hit.killed && !hit.building && (projectile(hit.cause) || hit.cause == DeathCause::Melee)
 }
 
+/// The cry of a hit's victim, if any: men cry out in pain ([`PAIN`]) when they survive (their
+/// death sounds come from their `.MD`); animals growl when hurt and roar when they die, with
+/// their own voices ([`crate::animal_sounds`]), never the men's.
+fn cry(hit: &HitRecord, who: Cry) -> Option<&'static str> {
+    if hit.building {
+        return None;
+    }
+    match who {
+        Cry::Human => pain(hit).then_some(PAIN),
+        Cry::Animal(v) if hit.killed => Some(v.death),
+        Cry::Animal(v) => pain(hit).then_some(v.hurt),
+        Cry::Silent => None,
+    }
+}
+
 /// The sounds of the hits after tick `after`, heard in the view `[left, top, width, height]`
 /// (original screen pixels, as for [`unit_sounds::placed`]) under the fog `fog`: per tick
-/// the [`MAX_IMPACTS`] impacts and [`MAX_PAINS`] screams nearest the view centre, in tick
-/// order.
+/// the [`MAX_IMPACTS`] impacts and [`MAX_PAINS`] cries nearest the view centre, in tick
+/// order. `who` tells men from animals by unit index.
 pub fn hit_sounds<'a>(
     hits: impl IntoIterator<Item = &'a HitRecord>,
+    who: impl Fn(u32) -> Cry,
     after: u64,
     view: [f32; 4],
     fog: Option<&Fog>,
@@ -110,8 +129,8 @@ pub fn hit_sounds<'a>(
         if let Some(group) = impact(hit) {
             impacts.push((d, group, volume, pan));
         }
-        if pain(hit) {
-            pains.push((d, PAIN, volume, pan));
+        if let Some(group) = cry(hit, who(hit.victim)) {
+            pains.push((d, group, volume, pan));
         }
     }
     let mut out = Vec::new();
@@ -151,6 +170,26 @@ mod tests {
         }
     }
 
+    fn men(_: u32) -> Cry {
+        Cry::Human
+    }
+
+    #[test]
+    fn animals_cry_with_their_own_voices() {
+        use DeathCause::*;
+        let bear = crate::animal_sounds::voice("AnmMed").unwrap();
+        let hits = [
+            hit(1, 1512, Gunshot, false, false),
+            hit(2, 1512, Melee, false, false),
+            hit(3, 1512, Gunshot, true, false),
+        ];
+        let events = hit_sounds(&hits, |_| Cry::Animal(bear), 0, VIEW, None);
+        assert_eq!(names(&events), [BODY, bear.hurt, bear.hurt, BODY, bear.death]);
+        assert!(events.iter().all(|e| e.name != PAIN));
+        // An animal without a voice stays silent; only the impacts are heard.
+        assert_eq!(names(&hit_sounds(&hits, |_| Cry::Silent, 0, VIEW, None)), [BODY, BODY]);
+    }
+
     fn names(events: &[SoundEvent]) -> Vec<&str> {
         events.iter().map(|e| e.name.as_str()).collect()
     }
@@ -165,37 +204,37 @@ mod tests {
             hit(4, 1512, Melee, false, false),
             hit(5, 1512, Burned, false, false),
         ];
-        assert_eq!(names(&hit_sounds(&hits, 0, VIEW, None)), [BODY, PAIN, HEAVY, WOOD, PAIN]);
+        assert_eq!(names(&hit_sounds(&hits, men, 0, VIEW, None)), [BODY, PAIN, HEAVY, WOOD, PAIN]);
         // The view centre plays at full volume, unpanned.
-        let first = &hit_sounds(&hits, 0, VIEW, None)[0];
+        let first = &hit_sounds(&hits, men, 0, VIEW, None)[0];
         assert_eq!((first.volume, first.pan), (1.0, 0.0));
     }
 
     #[test]
     fn only_hits_after_the_cursor() {
         let hits = [hit(7, 1512, DeathCause::Arrow, true, false), hit(8, 1512, DeathCause::Arrow, true, false)];
-        assert_eq!(hit_sounds(&hits, 7, VIEW, None).len(), 1);
-        assert!(hit_sounds(&hits, 8, VIEW, None).is_empty());
+        assert_eq!(hit_sounds(&hits, men, 7, VIEW, None).len(), 1);
+        assert!(hit_sounds(&hits, men, 8, VIEW, None).is_empty());
     }
 
     #[test]
     fn a_volley_plays_the_nearest_few_per_tick() {
         // 100 musket hits in one tick, spread to the right of the centre.
         let volley: Vec<_> = (0..100).map(|i| hit(3, 1512 + 5 * (99 - i), DeathCause::Gunshot, false, false)).collect();
-        let events = hit_sounds(&volley, 0, VIEW, None);
+        let events = hit_sounds(&volley, men, 0, VIEW, None);
         assert_eq!(names(&events), [BODY, BODY, BODY, PAIN]);
         // The nearest ones: little pan.
         assert!(events.iter().all(|e| e.pan < 0.05));
         // A second tick adds its own share.
         let mut two = volley.clone();
         two.extend((0..10).map(|_| hit(4, 1512, DeathCause::Gunshot, true, false)));
-        assert_eq!(names(&hit_sounds(&two, 0, VIEW, None)), [BODY, BODY, BODY, PAIN, BODY, BODY, BODY]);
+        assert_eq!(names(&hit_sounds(&two, men, 0, VIEW, None)), [BODY, BODY, BODY, PAIN, BODY, BODY, BODY]);
     }
 
     #[test]
     fn far_hits_are_not_heard() {
         let hits = [hit(1, 1000 + 1024 + 1025, DeathCause::Gunshot, false, false)];
-        assert!(hit_sounds(&hits, 0, VIEW, None).is_empty());
+        assert!(hit_sounds(&hits, men, 0, VIEW, None).is_empty());
     }
 
     #[test]

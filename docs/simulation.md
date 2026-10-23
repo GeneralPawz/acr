@@ -1026,6 +1026,18 @@ order) and draws random numbers.
   --install` copies them there), natively also from `ACR_SOUNDS_DIR`, else `ACR\Sounds`
   next to the executable, else in debug builds from `assets/sounds` itself. Missing files
   only leave the hits silent.
+- **Animal voices** (ACR only; `acr-game` `animal_sounds.rs`): the original's animal types
+  (`ANM*.MD`) have no `SOUND` lines and `SOUNDLIST.TXT` no animal groups, so its animals
+  were silent. ACR's pain cry above is a man's voice and is never played for an animal
+  (`NIKAKIXMAM` or an `ANM*` type); neither are the agony and panic voices below. Each
+  species has its own groups instead: when it starts a strike (`#ATTACK`) it growls, when a
+  hit wounds it it cries out in the pain cry's place (same 1-per-tick limit), and when a hit
+  kills it it roars or bellows: bears `ACR_BEAR_GROWL`/`ACR_BEAR_ROAR`, the black bear
+  (`ANMMEDSM`) its own higher `ACR_BLACK_BEAR_*`, alligators `ACR_GATOR_HISS`/`_BELLOW`,
+  bison `ACR_BISON_GRUNT`/`_BELLOW`, the elk `ACR_ELK_BUGLE`, the hind `ACR_HIND_CALL`
+  and the jaguar the game's unused `Sound\new\Hepard1-2.wav` (`ACR_JAGUAR_SNARL`). The
+  samples are public-domain recordings (NPS) in `assets/sounds`. An animal type without a
+  voice (the eagle) stays silent.
 - **Agony, panic and din** (ACR only, #248; `acr-game` `agony.rs`), from the same files:
   - A share of the soldiers killed by a hit (not animals, `NIKAKIXMAM`) lies dying where he
     fell: a scream at the fall (`ACR_AGONY_SCREAM`), then moans and gasps (`ACR_AGONY_MOAN`,

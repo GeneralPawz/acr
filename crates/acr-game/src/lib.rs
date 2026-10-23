@@ -6,6 +6,7 @@
 //! `RealLx` × `RealLy` (see `docs/ui.md`, screen size).
 
 mod agony;
+mod animal_sounds;
 mod blank_map;
 mod canvas;
 mod diplomacy;

@@ -53,6 +53,7 @@ pub(crate) mod three_d;
 mod trail;
 mod trample;
 mod water_view;
+use crate::animal_sounds::Cry;
 use crate::unit_sounds::{self, SoundEvent};
 pub use interface::{GameKey, GameMouse};
 
@@ -723,14 +724,25 @@ impl InGame {
         let mut events = Vec::new();
         for u in world.units.iter().filter(|u| u.alive && !u.building) {
             let now = (u.anim, u.frame);
-            if self.last_frames.insert(u.id, now) == Some(now) {
+            let before = self.last_frames.insert(u.id, now);
+            if before == Some(now) {
                 continue;
             }
             let (x, y) = ((u.pos.x >> 4) as f32, (u.pos.y >> 5) as f32);
             let Some((volume, pan)) = unit_sounds::placed(x, y, view, self.mission.fog()) else {
                 continue;
             };
-            let Some(def) = self.objects.objects().definition(&world.catalog.get(u.kind).id) else { continue };
+            let id = &world.catalog.get(u.kind).id;
+            let Some(def) = self.objects.objects().definition(id) else { continue };
+            // An animal growls as it starts a strike (its `.MD` has no sounds).
+            if matches!(u.anim, AnimKind::Attack(_))
+                && before.is_none_or(|b| b.0 != u.anim)
+                && def.has("NIKAKIXMAM")
+                && let Some(v) = crate::animal_sounds::voice(id)
+            {
+                log::debug!("animal sound {} of {id} (pan {pan:.2}, volume {volume:.2})", v.attack);
+                events.push(SoundEvent { name: v.attack.to_owned(), pan, volume });
+            }
             let anim = anim_name(u.anim);
             for c in def.all("SOUND") {
                 let (Some(frame), Some(on), Some(name)) = (c.int(0), c.word(1), c.word(2)) else { continue };
@@ -778,7 +790,14 @@ impl InGame {
         }
         let scale = self.camera.scale;
         let view = [self.camera.x, self.camera.y, window[0] / scale, window[1] / scale];
-        let events = crate::hit_sounds::hit_sounds(&world.hits, self.hit_cursor, view, self.mission.fog());
+        let objects = self.objects.objects();
+        // Men cry out with men's voices, animals with their own (never the men's).
+        let who = |victim: u32| {
+            let Some(u) = world.units.get(victim as usize) else { return Cry::Silent };
+            let id = &world.catalog.get(u.kind).id;
+            Cry::of(id, objects.definition(id).is_some_and(|d| d.has("NIKAKIXMAM")))
+        };
+        let events = crate::hit_sounds::hit_sounds(&world.hits, who, self.hit_cursor, view, self.mission.fog());
         self.hit_cursor = world.hits.back().map_or(self.hit_cursor, |h| h.tick.max(self.hit_cursor));
         for e in &events {
             log::debug!("hit sound {} (pan {:.2}, volume {:.2})", e.name, e.pan, e.volume);
@@ -795,7 +814,8 @@ impl InGame {
         let objects = self.objects.objects();
         let human = |victim: u32| {
             world.units.get(victim as usize).is_some_and(|u| {
-                !u.building && !objects.definition(&world.catalog.get(u.kind).id).is_some_and(|d| d.has("NIKAKIXMAM"))
+                let id = &world.catalog.get(u.kind).id;
+                !u.building && Cry::of(id, objects.definition(id).is_some_and(|d| d.has("NIKAKIXMAM"))) == Cry::Human
             })
         };
         let now = world.tick.0;
