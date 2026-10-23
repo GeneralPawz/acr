@@ -336,7 +336,12 @@ def stepped(keys, min_move=0.5):
                     continue
                 body = a if t < 0.5 else b
                 c = cyc[j % 4]
-                spec = {k: v for k, v in body.items() if k not in LEG_BONES}
+                # A man stepping between stations holds no grip (his hands go to it, or
+                # leave it, with the keys either side), unless he holds it at both
+                # (running the gun back into battery on its wheels).
+                spec = {k: v for k, v in body.items() if k not in LEG_BONES and k != "ik"}
+                if a.get("ik") and a.get("ik") == b.get("ik"):
+                    spec["ik"] = a["ik"]
                 spec.update({k: c[k] for k in LEG_BONES if k in c})
                 spec["root"] = a["root"] if j == 1 else b["root"]
                 spec["root_loc"] = (x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, z0 + c.get("root_loc", (0, 0, 0))[2])
@@ -362,13 +367,92 @@ def death_keys(n=73):
     return out, lies
 
 
+# Deploying (`#PATTACK4/5`, 171 frames, `ArtPusPdg_Vstr_1/2`; `#UATTACK4/5` play it
+# backwards: limbering up). The trail's lift and bedding (artpus.py keys the carriage):
+DEPLOY_UP = (48, 96)  # the trail raised by, lowered onto its bed again by
+DEPLOY_HEAVE = (52, 92)  # the wheels heaved (the piece run up) between
+
+
+def deploy_keys(n=170):
+    """DEPLOY: from the stations c2 seats the handspike and raises the trail, c0/c1 heave
+    the wheels to run the piece up, c2 lays it (the trail shifted aside and back) and
+    lowers it onto its bed; c3 goes to the ammunition chest set down beside the trail and
+    stoops to it (the charges taken out). All end at their stations (`#PSTAND4/5` and
+    `ATTACK` start there); played backwards it is the limbering up."""
+    k = {p: [] for p in PREFIXES}
+
+    def at(p, f, pose, x, y, yaw):
+        k[p].append((f, place(pose, (x, y), yaw)))
+
+    for p in PREFIXES:
+        x, y, yaw = HOME[p]
+        at(p, 0, HELD[p], x, y, yaw)
+        at(p, 8, HELD[p], x, y, yaw)
+    # c2: the handspike into the trail, raise, lay, lower, back.
+    tx, ty, _ = TURN["c2."]
+    up0, down1 = DEPLOY_UP
+    at("c2.", 26, tool(SPIKE, DOWN), tx, ty, 0)
+    at("c2.", up0 - 6, tool(SPIKE, DOWN), tx, ty, 0)
+    at("c2.", up0 + 8, tool(LIFT, DOWN), tx, ty, 0)
+    at("c2.", 72, tool(LIFT, DOWN), tx - 0.14, ty, 0)
+    at("c2.", 86, tool(LIFT, DOWN), tx, ty, 0)
+    at("c2.", down1 + 6, tool(SPIKE, DOWN), tx, ty, 0)
+    at("c2.", 126, tool(SPIKE, DOWN), tx, ty, 0)
+    x, y, yaw = HOME["c2."]
+    at("c2.", 150, HELD["c2."], x, y, yaw)
+    at("c2.", n, HELD["c2."], x, y, yaw)
+    # c0/c1: behind their wheels, heaving while the trail is up.
+    h0, h1 = DEPLOY_HEAVE
+    for p, sd in (("c0.", 1), ("c1.", -1)):
+        push, heave = (tool(PUSH, UP), tool(HEAVE, UP)) if p == "c0." else (PUSH, HEAVE)
+        stand = tool(STAND, UP) if p == "c0." else STAND
+        at(p, 34, stand, sd * PUSH_X, 1.15, 0)
+        at(p, 44, push, sd * PUSH_X, 1.05, 0)
+        for i, f in enumerate(range(h0, h1 + 1, 10)):
+            at(p, f, heave if i % 2 else push, sd * PUSH_X, 1.05, 0)
+        at(p, 110, push, sd * PUSH_X, 1.05, 0)
+        at(p, 120, stand, sd * PUSH_X, 1.15, 0)
+        x, y, yaw = HOME[p]
+        at(p, 146, HELD[p], x, y, yaw)
+        at(p, n, HELD[p], x, y, yaw)
+    # c3: to the chest beside the trail, stoops to it, up again, back.
+    cx, cy = CHEST_REST
+    sx = cx + CHEST_SPAN
+    at("c3.", 34, tool(STAND, UP), sx, cy, 0)
+    at("c3.", 46, tool(STOOP, UP), sx, cy, 0)
+    at("c3.", 84, tool(STOOP, UP), sx, cy, 0)
+    at("c3.", 96, tool(STAND, UP), sx, cy, 0)
+    x, y, yaw = HOME["c3."]
+    at("c3.", 130, HELD["c3."], x, y, yaw)
+    at("c3.", n, HELD["c3."], x, y, yaw)
+    return {p: stepped(ks) for p, ks in k.items()}
+
+
+def ik_spans(keys):
+    """[(first, last, kind)]: the frames of a man's keys [(frame, spec)] where his hands
+    hold a grip (`spec["ik"]`): every frame between two keys of the same kind, and a lone
+    key's own frame."""
+    out = []
+    for (f0, a), (f1, b) in zip(keys, keys[1:]):
+        ka = a.get("ik")
+        if ka and ka == b.get("ik"):
+            if out and out[-1][2] == ka and out[-1][1] >= f0:
+                out[-1] = (out[-1][0], f1, ka)
+            else:
+                out.append((f0, f1, ka))
+    covered = {f for f0, f1, _k in out for f in range(f0, f1 + 1)}
+    out += [(f, f, s["ik"]) for f, s in keys if s.get("ik") and f not in covered]
+    return sorted(out)
+
+
 def clips():
     """{clip: {prefix: [(frame, spec)]}} for every gun clip."""
     st = stand_keys()
     mo = motion_keys()
     death, lie = death_keys()
     return {"STAND": st, "GUN_PUSH": mo, "CHEST_CARRY": chest_keys(), "TRAIL_LIFT": lift_keys(),
-            "TRAIL_WALK": turn_keys(), "ATTACK": attack_keys(), "DEATH": death, "DEATHLIE1": lie}
+            "TRAIL_WALK": turn_keys(), "DEPLOY": deploy_keys(), "ATTACK": attack_keys(), "DEATH": death,
+            "DEATHLIE1": lie}
 
 
 # --- build (bpy) ---------------------------------------------------------------------------
@@ -529,7 +613,9 @@ def build(root, gun_arm, name="artpus"):
 
 
 def key_clips(arm, actions):
-    """Keys the crew's specs into the gun's actions {clip: action}."""
+    """Keys the crew's specs into the gun's actions {clip: action}, then puts the hands on
+    their grips frame by frame (`ik_spans`: the body stepped by `place_body`, the arms by
+    `solve`) and measures every frame's misses (`measure`) as played."""
     import bpy
 
     from . import armature as am
@@ -537,8 +623,7 @@ def key_clips(arm, actions):
     still = ("index_", "middle_", "ring_", "pinky_", "thumb_", "socket.")
     plan = clips()
     marks = gun_marks(arm)
-    reach_err = []
-    by_kind = {}
+    misses = {}
     for clip, act in actions.items():
         arm.animation_data_create()
         arm.animation_data.action = act
@@ -554,36 +639,62 @@ def key_clips(arm, actions):
                 loc |= lo
             for f, s in ks:
                 am.pose(arm, s, frame=f, prefix=p, keyed=(rot, loc))
-                if s.get("ik"):
+        for p, ks in plan[clip].items():
+            root = arm.pose.bones[p + "root"]
+            for f0, f1, kind in ik_spans(ks):
+                frames = range(f0, f1 + 1)
+                # The body first, from the clip's own keys: stepped in, never stretched.
+                shifts = []
+                for f in frames:
                     bpy.context.scene.frame_set(f)
-                    err = hands(arm, p, s["ik"], marks, frame=f)
-                    if err is not None:
-                        reach_err.append(err)
-                        by_kind.setdefault(s["ik"], []).append(err)
+                    shifts.append((place_body(arm, p, kind, marks), root.matrix.copy()))
+                for f, (sh, m) in zip(frames, shifts):
+                    if sh is not None:
+                        m.translation += sh
+                    root.matrix = m
+                    bpy.context.view_layer.update()
+                    root.keyframe_insert("location", frame=f, group=root.name)
+                for f in frames:
+                    bpy.context.scene.frame_set(f)
+                    solve(arm, p, kind, marks, f)
         for fc in am._fcurves(act):
             if fc.data_path.startswith('pose.bones["c'):
                 for kp in fc.keyframe_points:
                     kp.interpolation = "BEZIER"
+        # Measured on every frame, as played (the keys interpolated).
+        for p, ks in plan[clip].items():
+            for f0, f1, kind in ik_spans(ks):
+                for f in range(f0, f1 + 1):
+                    bpy.context.scene.frame_set(f)
+                    for what, d in measure(arm, p, kind, marks).items():
+                        misses.setdefault(what, []).append((d, clip, p, f))
         arm.animation_data.action = None
     bpy.context.view_layer.update()
     # The exported scene pose is STAND.
     for p, ks in plan["STAND"].items():
         am.pose(arm, ks[0][1], prefix=p)
-    reach_err.sort()
-    return {"ik_keys": len(reach_err), "ik_err_mean_m": round(sum(reach_err) / max(1, len(reach_err)), 3),
-            "ik_err_max_m": round(reach_err[-1], 3) if reach_err else 0.0,
-            "by_kind": {k: [len(v), round(sum(v) / len(v), 3), round(max(v), 3)] for k, v in by_kind.items()},
-            "marks_rest": {k: [round(x, 3) for x in loc] for k, (_b, loc) in marks.items()}}
+    out = {}
+    for what, v in sorted(misses.items()):
+        v.sort()
+        worst = v[-1]
+        out[what] = {"frames": len(v), "mean_m": round(sum(d for d, *_ in v) / len(v), 4),
+                     "max_m": round(worst[0], 4), "worst": [worst[1], worst[2], worst[3]]}
+    return {"grips": out, "marks_rest": {k: [round(x, 3) for x in loc] for k, (_b, loc) in marks.items()}}
 
 
-# --- hands on the tools (bpy): two-bone IK at build time -------------------------------------
+# --- hands on the grips (bpy): body placement and two-bone IK, frame by frame -----------------
 
-SPOKE_R = 0.66  # where the hands take the wheel: the spokes at the felloe (m from the hub)
-SPOKES = {"r": 36.0, "l": 62.0}  # degrees behind the top of the wheel, per hand
+FELLOE_R = 0.66  # the felloe's middle (m from the hub): the wheel men's hands
+RIM_OUT = 0.03  # the fists' centres outside the felloe's middle (fingers round it)
+RIMS = {"r": 36.0, "l": 62.0}  # degrees behind (or in front of) the top of the wheel, per hand
+CHEST_GRIP = (0.33, 0.35)  # the top of a rope loop: (x from the chest's middle, z over its bottom)
 STAFF_GRIP = -0.35  # the left hand on a level staff, metres behind the right (towards the butt)
-SPIKE_GRIP = 0.38  # the left hand down the handspike
+SPIKE_GRIP = 0.22  # the left hand on the handspike's lever, behind the right
 SPIKE_SEAT = 2.45  # y of the handspike's seat on the trail (m, gun frame)
-WRIST = 0.07  # wrist to the middle of the grip
+SPIKE_IN = 0.10  # the handspike's head this far past its seat (under the trail's ring)
+SPIKE_ARM = 0.36  # the right fist this far from the shoulder on the handspike
+ARM_SPAN = 0.85  # a goal at most this share of the arm's full reach away (never straight)
+NEAR = 0.24  # and at least this far from the shoulder (an arm folded no further)
 
 
 def gun_marks(arm):
@@ -657,9 +768,24 @@ def _orient(pb, rot3):
     bpy.context.view_layer.update()
 
 
-def _reach(arm, P, sd, grip, frame):
-    """Puts the hand `sd` of man `P` round the point `grip` (armature space), the elbow out
-    and down, the hand keeping its orientation. Keys the arm at `frame`; returns the miss (m)."""
+def _fist(arm, P, sd):
+    """The centre of the fist `sd` (its grip socket, `grips.setup`)."""
+    return arm.pose.bones[P + "socket.hand_" + sd].head.copy()
+
+
+def _arm_reach(arm, P, sd):
+    """(shoulder, full reach from it to the fist's centre) of arm `sd`."""
+    B = arm.pose.bones
+    up, fo, ha = B[P + "upperarm_" + sd], B[P + "forearm_" + sd], B[P + "hand_" + sd]
+    full = (fo.head - up.head).length + (ha.head - fo.head).length + (_fist(arm, P, sd) - ha.head).length
+    return up.head.copy(), full
+
+
+def _reach(arm, P, sd, goal, frame):
+    """Puts the fist `sd` of man `P` round `goal` (armature space): two-bone IK of the
+    shoulder to the wrist, the wrist placed so the fist's centre (the hand keeping its
+    orientation) lands on the goal; the elbow out and down. Keys the arm at `frame`; returns
+    the miss (m)."""
     from mathutils import Vector
 
     B = arm.pose.bones
@@ -667,21 +793,30 @@ def _reach(arm, P, sd, grip, frame):
     keep = ha.matrix.to_3x3().copy()
     s = up.head.copy()
     out = (B[P + "upperarm_" + sd].head - B[P + "upperarm_" + ("r" if sd == "l" else "l")].head).normalized()
-    t = grip + (s - grip).normalized() * WRIST
     l1, l2 = (fo.head - up.head).length, (ha.head - fo.head).length
-    e = _ik(s, t, l1, l2, out * 0.6 + Vector((0, 0, -1)))
-    _aim(up, e - s)
-    _aim(fo, t - fo.head)
-    _orient(ha, keep)
+    for _ in range(2):
+        off = _fist(arm, P, sd) - ha.head  # the fist from the wrist, in the kept orientation
+        t = goal - off
+        e = _ik(s, t, l1, l2, out * 0.6 + Vector((0, 0, -1)))
+        _aim(up, e - s)
+        _aim(fo, t - fo.head)
+        _orient(ha, keep)
     for pb in (up, fo, ha):
         pb.keyframe_insert("rotation_quaternion", frame=frame, group=pb.name)
-    return (ha.head - t).length
+    return (_fist(arm, P, sd) - goal).length
 
 
 def _tool_axis(sock):
-    """The held tool's axis (armature space): the socket's rest-relative turn of +Z."""
+    """The held tool's axis (armature space): +Z of the item frame in the fist
+    (`grips.item_in_socket`, as `grips.hold_matrix` hung it), else the socket's
+    rest-relative turn of +Z."""
     from mathutils import Vector
 
+    from . import grips
+
+    arm = sock.id_data
+    if grips.is_grip(arm, sock.name):
+        return (sock.matrix.to_3x3() @ grips.item_in_socket(arm, sock.name) @ Vector((0, 0, 1))).normalized()
     return (sock.matrix.to_3x3() @ sock.bone.matrix_local.to_3x3().inverted() @ Vector((0, 0, 1))).normalized()
 
 
@@ -695,21 +830,97 @@ def _point_tool(sock, at, frame):
     sock.keyframe_insert("rotation_quaternion", frame=frame, group=sock.name)
 
 
-def hands(arm, P, kind, marks, frame):
-    """Hand IK of man `P` at `frame` for the task `kind` (the current pose is the key's):
-    "staff" the left hand on the level staff; "spike" the handspike seated in the trail and
-    the left hand down it; "linstock" the match on the vent; "wheel" both hands on the
-    spokes of his wheel (behind or in front of it); "chest" the hand towards the ammunition
-    chest on its rope handle. Returns the largest miss (m)."""
+def _off_grip(arm, P, sock, d):
+    """The left hand's place on the right hand's tool: `d` m along its axis from the right
+    fist, on the side towards the left shoulder (the butt end of a level staff, the near
+    end of the handspike's lever)."""
+    s = arm.pose.bones[P + "upperarm_l"].head
+    a = _tool_axis(sock) * abs(d)
+    return min((sock.head + a, sock.head - a), key=lambda g: (g - s).length)
+
+
+def goals(arm, P, kind, marks):
+    """{hand: goal} where the fists' centres belong for task `kind` at the current frame
+    (armature space): "wheel" both on the felloe of his wheel (behind or in front of it),
+    "chest" the hand on the chest's side on the top of its rope loop, "spike" the right fist
+    on the handspike with its head under the trail's ring (`SPIKE_IN` past the seat),
+    "staff" the left on the level staff. The left hand on the handspike follows the right
+    (`solve`)."""
     from mathutils import Vector
 
     B = arm.pose.bones
-    sock = B[P + "socket.hand_r"]
-    if kind == "staff":
-        return _reach(arm, P, "l", sock.head + _tool_axis(sock) * STAFF_GRIP, frame)
+    if kind == "wheel":
+        side = "wheel_r" if B[P + "hips"].head.x > 0 else "wheel_l"
+        hub = B[side].head
+        sgn = 1.0 if hub.x > 0 else -1.0
+        back = 1.0 if B[P + "hips"].head.y > hub.y else -1.0
+        out = {}
+        for sd, deg in RIMS.items():
+            a = math.radians(deg)
+            out[sd] = Vector((hub.x + sgn * RIM_OUT, hub.y + back * FELLOE_R * math.sin(a),
+                              hub.z + FELLOE_R * math.cos(a)))
+        return out
+    if kind == "chest" and "chest" in B:
+        chest = B["chest"]
+        sd = "l" if B[P + "hips"].head.x < chest.head.x else "r"
+        hx, hz = CHEST_GRIP
+        return {sd: chest.matrix @ Vector((hx if sd == "l" else -hx, hz, 0.0))}
     if kind == "spike" and "intact" in marks:
-        _point_tool(sock, _mark(arm, marks, "intact"), frame)
-        return _reach(arm, P, "l", sock.head + _tool_axis(sock) * SPIKE_GRIP, frame)
+        seat = _mark(arm, marks, "intact")
+        u = (B[P + "upperarm_r"].head - seat).normalized()
+        return {"r": seat + u * (HANDSPIKE[1] - SPIKE_IN)}
+    if kind == "staff":
+        sock = B[P + "socket.hand_r"]
+        return {"l": _off_grip(arm, P, sock, STAFF_GRIP)}
+    return {}
+
+
+def place_body(arm, P, kind, marks):
+    """The step (armature-space vector, horizontal) that brings every goal of `kind` within
+    `ARM_SPAN` of its shoulder and no nearer than `NEAR` (for the handspike: the right shoulder
+    `SPIKE_ARM` behind the right fist on the seated spike), or None."""
+    from mathutils import Vector
+
+    if kind == "spike" and "intact" in marks:
+        seat = _mark(arm, marks, "intact")
+        s, _full = _arm_reach(arm, P, "r")
+        want = HANDSPIKE[1] - SPIKE_IN + SPIKE_ARM
+        dz = s.z - seat.z
+        flat = Vector((s.x - seat.x, s.y - seat.y, 0.0))
+        if flat.length < 1e-6:
+            return None
+        need = math.sqrt(max(want * want - dz * dz, 0.04))
+        return flat.normalized() * (need - flat.length)
+    if kind in ("linstock", "staff"):
+        return None
+    shift = None
+    for sd, g in goals(arm, P, kind, marks).items():
+        s, full = _arm_reach(arm, P, sd)
+        v = g - s
+        flat = Vector((v.x, v.y, 0.0))
+        if flat.length < 1e-6:
+            continue
+        far = full * ARM_SPAN
+        if v.length > far:
+            # Step in until the goal is `far` away (the height difference stays).
+            need = math.sqrt(max(far * far - v.z * v.z, 0.0))
+        elif v.length < NEAR:
+            need = math.sqrt(max(NEAR * NEAR - v.z * v.z, 0.0))
+        else:
+            continue
+        step = flat.normalized() * (flat.length - need)
+        if shift is None or step.length > shift.length:
+            shift = step
+    return shift
+
+
+def solve(arm, P, kind, marks, frame):
+    """Hand IK of man `P` at `frame` for the task `kind` (the current pose is the frame's):
+    the fists onto `goals`; "spike" then points the handspike into its seat and puts the
+    left fist down it; "linstock" the match on the vent. Keys what it moves."""
+    B = arm.pose.bones
+    sock = B[P + "socket.hand_r"]
+    held = sock.matrix.to_3x3().copy()
     if kind == "linstock" and "barrel" in marks:
         vent = _mark(arm, marks, "barrel")
         tip = LINSTOCK[1] + 0.07
@@ -717,31 +928,32 @@ def hands(arm, P, kind, marks, frame):
             want = vent - (vent - sock.head).normalized() * tip
             _reach(arm, P, "r", want, frame)
             _point_tool(sock, vent, frame)
-        return (sock.head + _tool_axis(sock) * tip - vent).length
-    if kind == "wheel":
-        side = "wheel_r" if B[P + "hips"].head.x > 0 else "wheel_l"
-        hub = B[side].head
-        sgn = 1.0 if hub.x > 0 else -1.0
-        back = 1.0 if B[P + "hips"].head.y > hub.y else -1.0  # behind the wheel or in front
-        held = sock.matrix.to_3x3().copy()
-        miss = 0.0
-        for sd, deg in SPOKES.items():
-            a = math.radians(deg)
-            grip = Vector((hub.x + sgn * 0.06, hub.y + back * SPOKE_R * math.sin(a), hub.z + SPOKE_R * math.cos(a)))
-            miss = max(miss, _reach(arm, P, sd, grip, frame))
-        _orient(sock, held)  # a staff in the hand stays upright
+        return
+    for sd, g in goals(arm, P, kind, marks).items():
+        _reach(arm, P, sd, g, frame)
+    if kind == "spike" and "intact" in marks:
+        _point_tool(sock, _mark(arm, marks, "intact"), frame)
+        _reach(arm, P, "l", _off_grip(arm, P, sock, SPIKE_GRIP), frame)
+        return
+    if kind in ("wheel", "chest"):
+        _orient(sock, held)  # a staff or linstock in the other hand stays upright
         sock.keyframe_insert("rotation_quaternion", frame=frame, group=sock.name)
-        return miss
-    if kind == "chest" and "chest" in B:
-        # The hand on the chest's side takes its rope handle (the man faces along -Y: his
-        # left hand is towards +X).
-        chest = B["chest"]
-        sd = "l" if B[P + "hips"].head.x < chest.head.x else "r"
-        hx, hz = CHEST_HANDLE
-        grip = chest.matrix @ Vector((hx if sd == "l" else -hx, hz, 0.0))
-        held = sock.matrix.to_3x3().copy()
-        miss = _reach(arm, P, sd, grip, frame)
-        _orient(sock, held)
-        sock.keyframe_insert("rotation_quaternion", frame=frame, group=sock.name)
-        return miss
-    return None
+
+
+def measure(arm, P, kind, marks):
+    """{what: miss (m)} of man `P` at the current frame: each fist from its grip
+    ("wheel_l", "chest_r", "staff_l", ...), "spike_l" the left fist from its place on the
+    handspike, "spike_seat" the handspike's head from its place under the seat,
+    "linstock" the match from the vent."""
+    B = arm.pose.bones
+    sock = B[P + "socket.hand_r"]
+    if kind == "linstock" and "barrel" in marks:
+        tip = sock.head + _tool_axis(sock) * (LINSTOCK[1] + 0.07)
+        return {"linstock": (tip - _mark(arm, marks, "barrel")).length}
+    if kind == "spike" and "intact" in marks:
+        seat = _mark(arm, marks, "intact")
+        axis = _tool_axis(sock)
+        head = sock.head + axis * (HANDSPIKE[1] - SPIKE_IN)
+        return {"spike_seat": (head - seat).length,
+                "spike_l": (_fist(arm, P, "l") - _off_grip(arm, P, sock, SPIKE_GRIP)).length}
+    return {f"{kind}_{sd}": (_fist(arm, P, sd) - g).length for sd, g in goals(arm, P, kind, marks).items()}

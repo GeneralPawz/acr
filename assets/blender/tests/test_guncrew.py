@@ -1,5 +1,6 @@
 """The gun crew's drill (`acr_assets.guncrew`, pure Python, no Blender)."""
 
+import json
 import math
 import os
 import sys
@@ -13,10 +14,10 @@ from acr_assets import guncrew  # noqa: E402
 class Drill(unittest.TestCase):
     def test_clips_cover_the_gun_frames(self):
         c = guncrew.clips()
-        self.assertEqual(set(c), {"STAND", "GUN_PUSH", "CHEST_CARRY", "TRAIL_LIFT", "TRAIL_WALK", "ATTACK", "DEATH",
-                                  "DEATHLIE1"})
+        self.assertEqual(set(c), {"STAND", "GUN_PUSH", "CHEST_CARRY", "TRAIL_LIFT", "TRAIL_WALK", "DEPLOY", "ATTACK",
+                                  "DEATH", "DEATHLIE1"})
         for clip, n in (("ATTACK", 419), ("GUN_PUSH", 36), ("CHEST_CARRY", 41), ("TRAIL_LIFT", 70),
-                        ("TRAIL_WALK", 40), ("DEATH", 72)):
+                        ("TRAIL_WALK", 40), ("DEPLOY", 170), ("DEATH", 72)):
             for p, ks in c[clip].items():
                 frames = [f for f, _ in ks]
                 self.assertEqual(frames, sorted(frames), (clip, p))
@@ -76,6 +77,64 @@ class Drill(unittest.TestCase):
             xs.append(c[p][0][1]["root_loc"][0])
         self.assertLess(xs[0], 0.0)
         self.assertGreater(xs[1], 0.0)
+
+
+    def test_deploy_starts_and_ends_at_the_stations(self):
+        """DEPLOY (`#PATTACK4/5`, backwards `#UATTACK4/5`) leaves and returns to STAND, so
+        neither the deploy nor the limbering pops; the trail man works the handspike, the
+        wheel men heave, the firer stoops to the chest."""
+        c = guncrew.clips()
+        for p in guncrew.PREFIXES:
+            self.assertEqual(c["DEPLOY"][p][0][1], c["STAND"][p][0][1], p)
+            self.assertEqual(c["DEPLOY"][p][-1][1], c["STAND"][p][0][1], p)
+        kinds = {p: {k for _a, _b, k in guncrew.ik_spans(ks)} for p, ks in c["DEPLOY"].items()}
+        self.assertEqual(kinds, {"c0.": {"wheel"}, "c1.": {"wheel"}, "c2.": {"spike"}, "c3.": {"chest"}})
+
+    def test_grip_spans_cover_the_work_not_the_steps(self):
+        spans = guncrew.ik_spans(guncrew.attack_keys()["c0."])
+        self.assertIn("wheel", {k for _a, _b, k in spans})
+        for a, b, k in spans:
+            if k == "wheel":
+                # The run back into battery: hands on the wheel from 300 to 400, not while
+                # he walks back to his station.
+                self.assertEqual((a, b), (300, 400))
+        self.assertEqual(guncrew.ik_spans(guncrew.motion_keys()["c2."]), [(0, 36, "chest")])
+
+
+GRIP_MEAN = 0.01  # m: a fist's centre from its grip, mean over every frame of every work
+GRIP_MAX = 0.10  # m: the worst frame (the stoop to the chest's lift, the first heave of DEPLOY)
+WORK = ("chest_l", "chest_r", "wheel_l", "wheel_r", "spike_l", "spike_seat", "linstock")
+
+
+def _stats():
+    """The last build's `artpus.stats.json` (`cargo xtask assets artpus`), or None."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    path = os.environ.get("ACR_ARTPUS_STATS") or os.path.join(here, "..", "..", "..", "target", "assets", "artillery",
+                                                               "artpus.stats.json")
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+class Grips(unittest.TestCase):
+    """Hands on the grips, as measured in Blender per frame by the build (`guncrew.measure`):
+    the carriers' fists on the chest's rope loops, the wheel men's on the felloes, the
+    trail man's on the handspike (its head seated under the trail's ring), the left hand on
+    the rammer staff, the match on the vent."""
+
+    def test_every_hand_on_its_grip(self):
+        st = _stats()
+        if st is None or "grips" not in st.get("hands", {}):
+            self.skipTest("no artpus build with per-frame grip stats (cargo xtask assets artpus)")
+        grips = st["hands"]["grips"]
+        for what in WORK:
+            self.assertIn(what, grips)
+            self.assertLess(grips[what]["mean_m"], GRIP_MEAN, (what, grips[what]))
+            self.assertLess(grips[what]["max_m"], GRIP_MAX, (what, grips[what]))
+        # The handspike (the turn's and the laying's lever) is held exactly.
+        for what in ("spike_l", "spike_seat"):
+            self.assertLess(grips[what]["max_m"], 0.01, (what, grips[what]))
 
 
 if __name__ == "__main__":

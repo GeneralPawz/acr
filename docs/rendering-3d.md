@@ -317,6 +317,28 @@ per 0.55 m, the root sliding along with the cycle's bob).
   switch straight from `pvrt` to `Tlk`). A `#STAND` of up to two ticks between two works
   keeps the last work's pose. Checked on the blank field: `ACR-analysis/crew`
   (`anim.log` per tick, `before_*_sheet.png` / `after_*_sheet.png`).
+  Deploying for a fire mode (`#PATTACK4/5`, 171 frames, `ArtPusPdg_Vstr_1/2`) plays
+  `DEPLOY`: c2 seats the handspike and raises the trail, c0/c1 heave the wheels behind
+  them (the piece run up a spoke's pitch), c2 lays it (the trail shifted aside and back)
+  and lowers it onto its bed, c3 stoops to the chest beside the trail; it starts and ends
+  at `STAND`, and `#UATTACK4/5` (in the `.MD` the same frames reversed) play it backwards:
+  limbering up. The chest no longer pops where the sim drives off from `#STAND` (or stops
+  into it) without `#PATTACK0`/`#UATTACK0`: `Crews::work` plays `CHEST_CARRY` forwards
+  (taken up) or backwards (set down) in `CHEST_BLEND` (0.6 s) across the switch, render
+  only (`chest_blend`).
+- **Hands on the grips** (`guncrew.key_clips`, m2-crew2): every frame of a work
+  (`ik_spans`: between two keys with the same `ik`, walking steps included where both
+  ends hold it) is solved, not only the keys: first the body (`place_body`: the root
+  stepped horizontally until each goal is within 0.85 of the arm's full reach and no
+  nearer than 0.24 m; the trail man stands where his right fist on the seated handspike
+  is 0.36 m from the shoulder), then the arms (`_reach`: two-bone IK whose goal is the
+  fist's centre, `socket.hand_*` of the grips system, the hand keeping its orientation).
+  Goals (`goals`): the felloe's middle (0.66 m from the hub) 36° and 62° behind or in
+  front of the top, 3 cm outside it; the top of the chest's rope loop; the handspike's
+  head 0.10 m past its seat under the trail's ring (the left fist 0.22 m behind the right, on the lever end); the left
+  fist 0.35 m towards the butt of the level staff. `measure` reads the misses on every frame as played
+  (keys interpolated) into `artpus.stats.json` `hands.grips` (per grip: frames, mean, max,
+  worst clip/man/frame); `test_guncrew.Grips` holds every max under 3 cm.
 - **The wreck:** the gun's `DEATH` throws the barrel off its trunnions, drops the left wheel
   and swaps the carriage for its charred copy (`wreck`, black). Seen from above, the black
   trail and a dead man's tricorn next to it read like a second barrel; there is no double

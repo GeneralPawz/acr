@@ -110,6 +110,25 @@ pub struct Crews {
     yaw: HashMap<u32, f32>,
     /// The crew's last work per gun (unit id): clip, time and the tick it was seen.
     held: HashMap<u32, (usize, f32, u64)>,
+    /// The chest being taken up (true) or set down per gun (unit id), and the seconds since.
+    chest: HashMap<u32, (bool, f32)>,
+}
+
+/// Seconds the render takes to lift the ammunition chest from the ground to carried (and
+/// to set it down): the sim drives off from `#STAND` without `#PATTACK0` and stops into
+/// it without `#UATTACK0`, as the original's sprites switch straight from `pvrt` to `Tlk`;
+/// the crew plays `CHEST_CARRY` that fast across the switch instead of the chest popping.
+pub const CHEST_BLEND: f32 = 0.6;
+
+/// The chest's blend for a crew whose work changes from `last` to `next` (clip names;
+/// `None` a `#STAND`): `Some(true)` taken up, `Some(false)` set down.
+fn chest_blend(last: Option<&str>, next: Option<&str>) -> Option<bool> {
+    let carried = |c: Option<&str>| matches!(c, Some("GUN_PUSH"));
+    match (carried(last), carried(next)) {
+        (false, true) if last != Some("CHEST_CARRY") => Some(true),
+        (true, false) if next.is_none() => Some(false),
+        _ => None,
+    }
 }
 
 /// Ticks of `#STAND` across which the crew keeps its last work: the sim stands a gun for one
@@ -162,6 +181,10 @@ fn crew_work(anim: AnimKind) -> Option<(&'static str, Play)> {
         AnimKind::MotionLs(1) => ("TRAIL_WALK", Play::Forward),
         AnimKind::MotionRs(1) => ("TRAIL_WALK", Play::Backward),
         AnimKind::PStand(1) => ("TRAIL_WALK", Play::Hold),
+        // Deploying for a fire mode (`ArtPusPdg_Vstr_1/2`): the trail raised, the piece run
+        // up and laid, the trail lowered; limbering up plays it backwards.
+        AnimKind::PAttack(4 | 5) => ("DEPLOY", Play::Forward),
+        AnimKind::UAttack(4 | 5) => ("DEPLOY", Play::Backward),
         _ => return None,
     })
 }
@@ -216,6 +239,7 @@ impl Crews {
             self.nations.clear();
             self.yaw.clear();
             self.held.clear();
+            self.chest.clear();
         }
         if now >= self.nations_tick + 256 || now < self.nations_tick {
             self.nations.clear();
@@ -241,18 +265,44 @@ impl Crews {
 
     /// The crew's clip and time for gun `u` at tick `now` ([`crew_clip`]), its last work held
     /// through a `#STAND` of up to [`STAND_GAP`] ticks so the men do not pop back to their
-    /// stations for a tick between two works.
-    pub fn work(&mut self, model: &ModelData, u: &Unit, now: u64) -> Option<(usize, f32)> {
-        if let Some((c, t)) = crew_clip(model, u) {
-            self.held.insert(u.id.0, (c, t, now));
-            return Some((c, t));
+    /// stations for a tick between two works; the chest taken up or set down in
+    /// [`CHEST_BLEND`] seconds (`CHEST_CARRY`, this frame `seconds` long) where the sim
+    /// starts or stops a move straight from or into `#STAND`.
+    pub fn work(&mut self, model: &ModelData, u: &Unit, now: u64, seconds: f32) -> Option<(usize, f32)> {
+        let id = u.id.0;
+        let last = self.held.get(&id).map(|&(c, ..)| model.clips[c].name.as_str());
+        let mut work = crew_clip(model, u);
+        if let Some((c, t)) = work {
+            self.held.insert(id, (c, t, now));
+        } else if let Some(&(c, t, at)) = self.held.get(&id) {
+            if u.alive && u.anim == AnimKind::Stand && now.saturating_sub(at) <= STAND_GAP {
+                work = Some((c, t));
+            } else {
+                self.held.remove(&id);
+            }
         }
-        let &(c, t, at) = self.held.get(&u.id.0)?;
-        if u.alive && u.anim == AnimKind::Stand && now.saturating_sub(at) <= STAND_GAP {
-            return Some((c, t));
+        let next = work.map(|(c, _)| model.clips[c].name.as_str());
+        if !u.alive {
+            self.chest.remove(&id);
+            return work;
         }
-        self.held.remove(&u.id.0);
-        None
+        if last != next {
+            match chest_blend(last, next) {
+                Some(up) => self.chest.insert(id, (up, 0.0)),
+                None => self.chest.remove(&id),
+            };
+        }
+        let Some(&(up, t)) = self.chest.get(&id) else { return work };
+        let Some(c) = model.clip("CHEST_CARRY") else { return work };
+        let t = t + seconds.max(0.0);
+        if t >= CHEST_BLEND {
+            self.chest.remove(&id);
+            return work;
+        }
+        self.chest.insert(id, (up, t));
+        let duration = model.clips[c].duration;
+        let p = t / CHEST_BLEND;
+        Some((c, duration * if up { p } else { 1.0 - p }))
     }
 
     /// The uniform of gun `u`: its type's nation, else its owner's.
@@ -413,6 +463,26 @@ mod tests {
         assert_eq!(crew_work(AnimKind::PStand(1)), Some(("TRAIL_WALK", Play::Hold)));
         assert_eq!(crew_work(AnimKind::PStand(0)), Some(("GUN_PUSH", Play::Hold)));
         assert_eq!(crew_work(AnimKind::Stand), None);
+    }
+
+    #[test]
+    fn deploying_and_limbering_have_crew_work() {
+        for i in [4, 5] {
+            assert_eq!(crew_work(AnimKind::PAttack(i)), Some(("DEPLOY", Play::Forward)));
+            assert_eq!(crew_work(AnimKind::UAttack(i)), Some(("DEPLOY", Play::Backward)));
+        }
+    }
+
+    #[test]
+    fn the_chest_is_taken_up_and_set_down_across_a_switch() {
+        // Driving off from a stand (or from a turn) lifts the chest; CHEST_CARRY itself does.
+        assert_eq!(chest_blend(None, Some("GUN_PUSH")), Some(true));
+        assert_eq!(chest_blend(Some("TRAIL_LIFT"), Some("GUN_PUSH")), Some(true));
+        assert_eq!(chest_blend(Some("CHEST_CARRY"), Some("GUN_PUSH")), None);
+        // Stopping into a stand sets it down; into another work that work takes over.
+        assert_eq!(chest_blend(Some("GUN_PUSH"), None), Some(false));
+        assert_eq!(chest_blend(Some("GUN_PUSH"), Some("TRAIL_LIFT")), None);
+        assert_eq!(chest_blend(Some("GUN_PUSH"), Some("GUN_PUSH")), None);
     }
 
     #[test]

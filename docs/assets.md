@@ -276,7 +276,7 @@ and rigs it with rigid bones; `acr_assets.ships` builds the sailing ships.
 | `ships/shpfregat.py` (`ShpFregat`) | Poly Haven `dutch_ship_large_01` | 40 m | 27.8k | `STAND`, `MOTION_L/R/LB/RB`, `ATTACK`, `DEATH`, `DEATHLIE1` |
 | `ships/shpsanta.py` (`ShpSanta`) | Poly Haven `dutch_ship_large_02` | 34 m | 23.8k | same |
 | `ships/shppinta.py` (`ShpPinta`) | Poly Haven `dutch_ship_medium` | 28 m | 19.7k | same |
-| `artillery/artpus.py` (`ArtPus`) | rivetech's barrel (CC-BY) on a scripted field carriage, 4 crew, ammunition chest | barrel 2.5 m | 31.8k | `STAND`, `GUN_PUSH`, `CHEST_CARRY`, `TRAIL_LIFT`, `TRAIL_WALK`, `ATTACK`, `DEATH`, `DEATHLIE1` |
+| `artillery/artpus.py` (`ArtPus`) | rivetech's barrel (CC-BY) on a scripted field carriage, 4 crew, ammunition chest | barrel 2.5 m | 31.8k | `STAND`, `GUN_PUSH`, `CHEST_CARRY`, `TRAIL_LIFT`, `TRAIL_WALK`, `DEPLOY`, `ATTACK`, `DEATH`, `DEATHLIE1` |
 
 - **Ships** face south with the waterline at the ground point; the afloat hull is cut 0.25 m
   below it (the game draws water as a tint on the ground, nothing would hide the keel). Bones:

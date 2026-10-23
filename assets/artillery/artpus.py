@@ -9,7 +9,9 @@ Clips on the sprite frames (24 fps, the `.MD` frame counts): `STAND`, `GUN_PUSH`
 `#MOTION_L0/R0`, 36 frames: one turn of the wheels, two men pushing, two carrying the
 ammunition chest), `CHEST_CARRY` (`#PATTACK0`, 42: the chest taken up), `TRAIL_LIFT`
 (`#PATTACK1`, 71: the trail lifted for a turn), `TRAIL_WALK` (`#MOTION_L1`, 41: a 16th of
-a turn, the trail walked round, the wheels heaved), `ATTACK` (420 frames: lay, fire at 29, recoil, sponge
+a turn, the trail walked round, the wheels heaved), `DEPLOY` (`#PATTACK4/5`, 171: the trail
+raised, the piece run up and laid, the trail lowered; `#UATTACK4/5` play it backwards to
+limber up), `ATTACK` (420 frames: lay, fire at 29, recoil, sponge
 and load, run back into battery), `DEATH` (73: a wheel smashed, the barrel thrown off its
 trunnions, the carriage charred) and `DEATHLIE1` (its end).
 The crew of the original's sprites (#287): four artillerymen on skeleton H in the same armature
@@ -242,6 +244,15 @@ def _clips(arm):
             for f in range(0, 41, 10)]
     keys[0] = (0, {**HIDE, **REST, **keys[0][1]})
     acts["TRAIL_WALK"] = vs.clip(arm, "TRAIL_WALK", keys, step=STEP)
+    # DEPLOY (`#PATTACK4/5`, `#UATTACK4/5` backwards): the trail raised on the handspike, the
+    # wheels heaved a spoke's pitch (the piece run up), the trail lowered onto its bed.
+    up0, down1 = guncrew.DEPLOY_UP
+    h0, h1 = guncrew.DEPLOY_HEAVE
+    keys = [(0, {**HIDE, **REST}), (up0 - 8, {"carriage": {}}), (up0, up),
+            (h0, {"wheel_l": {}, "wheel_r": {}}),
+            (h1, {"wheel_l": {"rot": (-r, 0, 0)}, "wheel_r": {"rot": (-r, 0, 0)}}),
+            (down1 - 8, up), (down1, {"carriage": {}}), (170, {"carriage": {}})]
+    acts["DEPLOY"] = vs.clip(arm, "DEPLOY", keys, step=STEP)
     # Fire at frame 29: the piece jumps back 0.9 m, the muzzle kicks up; sponge and load;
     # the crew runs it back into battery.
     back = 0.9

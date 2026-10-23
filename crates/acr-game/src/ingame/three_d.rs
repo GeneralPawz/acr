@@ -656,7 +656,7 @@ impl ThreeD {
                     machines.insert(u.id.0);
                 } else {
                     inst.uniform = self.crews.uniform(world, u);
-                    if let Some((c, time)) = self.crews.work(model, u, now) {
+                    if let Some((c, time)) = self.crews.work(model, u, now, self.frame_seconds) {
                         (inst.clip, inst.time) = (Some(c), time);
                     }
                 }
