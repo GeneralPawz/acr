@@ -13,6 +13,6 @@ pub mod music;
 pub mod output;
 pub mod wav;
 
-pub use mixer::{Mixer, VoiceId};
+pub use mixer::{Meter, Mixer, VoiceId};
 pub use music::{MusicSource, VorbisMusic};
 pub use wav::Sound;

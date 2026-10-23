@@ -29,6 +29,7 @@ How the original's keys work inside is described in [ui.md](ui.md#keys-0x4a30e8-
 | Select a unit or building | left click | left click (also Ctrl + left click) |
 | Select with a rectangle | left drag | left drag |
 | Add to the selection | Shift + click or drag | Shift + click or drag |
+| Take out of the selection | – | **Ctrl + click** on a selected unit (its whole formation), or on a type or formation icon of the selection panel or the army list |
 | Select all units of that type on the screen | double click (Shift adds) | double click (Shift adds) |
 | Move, attack, gather, enter, repair (context order) | right click | right click |
 | Move and face a direction | right drag (more than 30 map pixels) | right drag |
@@ -41,8 +42,16 @@ How the original's keys work inside is described in [ui.md](ui.md#keys-0x4a30e8-
 | Centre the view | left click or drag on the minimap | the same |
 | Order to a point on the minimap | right click on the minimap | the same |
 
-Ctrl + left click without moving does exactly what a plain left click does: it selects,
-places a building or sets a rally point. In the original, Ctrl changes nothing about
+Ctrl + left click without moving on a unit that is selected takes it out of the selection:
+a free unit alone, a formation member with its whole formation (officer and drummer too)
+and the formations grouped with it. So with horsemen and infantry selected, Ctrl + click on
+a horseman drops that horseman, and Ctrl + click on the horsemen's icon in the selection
+panel drops all of them. On the panel, a type icon stands for the selected free units of
+that type, a formation icon (also in the army list at the top left) for that formation's
+members. Anywhere else (no selected unit hit, or while placing a building, a rally point,
+a patrol point or an attack-ground point) Ctrl + left click does exactly what a plain left
+click does: it selects, places a building or sets a rally point. Shift + Ctrl + click is a
+plain Shift + click. In the original, Ctrl changes nothing about
 selection, so the modern scheme only takes Ctrl + left *drag* (a rectangle selection in the
 original) for panning. Ctrl + right click keeps its meaning (no repair order). A drag only
 pans once the cursor has moved more than 4 pixels. Over the interface (minimap, icons,

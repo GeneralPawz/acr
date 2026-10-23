@@ -1385,7 +1385,13 @@ impl InGame {
     /// Runs a command of the interface.
     fn hud_command(&mut self, command: HudCommand) {
         let player = self.own();
+        let deselect = self.ctrl_deselects();
         let Some(world) = &self.world else { return };
+        // Modern controls: Ctrl + click on a type or formation icon takes those units out.
+        if deselect && let Some(units) = super::controls::icon_units(world, &self.selected, &command) {
+            self.selected.retain(|id| !units.contains(id));
+            return;
+        }
         match command {
             HudCommand::SelectType(kind) => {
                 let keep: Vec<EntityId> = self
@@ -2160,6 +2166,9 @@ impl InGame {
             return GameMouse::None;
         }
         if !pressed && let Some(click) = self.end_ctrl_pan() {
+            if click && self.ctrl_click_deselect() {
+                return GameMouse::None;
+            }
             if click {
                 self.left_click(ctx, true);
                 return self.left_click(ctx, false);
@@ -2797,7 +2806,7 @@ fn selected_brigades(world: &acr_sim::World, own: u8, selected: &[EntityId]) -> 
 /// (`ImSelBrigade` 0x4e1365: the members from the third on that are not selected yet,
 /// appended); then `CorrectImSelectionInGroups` (0x43dbff) does the same for the formations
 /// grouped with the selected ones (`CM_DOGRP`).
-fn corrected_selection(world: &acr_sim::World, own: u8, mut selected: Vec<EntityId>) -> Vec<EntityId> {
+pub(super) fn corrected_selection(world: &acr_sim::World, own: u8, mut selected: Vec<EntityId>) -> Vec<EntityId> {
     let select = |selected: &mut Vec<EntityId>, b: u16| {
         let Some(br) = world.brigades.get(usize::from(b)).filter(|br| br.alive && br.owner == own) else { return };
         for &m in br.members.iter().skip(2).flatten() {
