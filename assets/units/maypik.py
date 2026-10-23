@@ -26,7 +26,7 @@ WEAPONS = {0: 'PIKA'}
 ACTIVE = {}
 
 SPEC = meso.spec(MD, weapons=WEAPONS, active=ACTIVE, dress=("hipcloth", "maya_jacket", "sandals"), head="maya", hand_r="spear", shield=None, melee="spear",
-                 palette={"maya_jacket": (0.85, 0.80, 0.66), "plumes": (0.70, 0.20, 0.12)})
+                 palette={"maya_jacket": (0.85, 0.80, 0.66), "plumes": (0.70, 0.20, 0.12)}, plume=("macaw", "quetzal"))
 
 
 def build(ctx):
