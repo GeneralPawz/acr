@@ -62,6 +62,9 @@ pub struct ModelInstance {
     /// Individual look (#283, `crate::looks`): the seed of [`looks::choose`] (the unit id).
     /// Ignored by models without looks; `None` shows the model's base look.
     pub look: Option<u32>,
+    /// A gun crew's uniform (#287): the colours (linear, as the model's palette) of the coat
+    /// and of the waistcoat and facings; `None` keeps the model's own.
+    pub uniform: Option<[[f32; 3]; 2]>,
 }
 
 /// Blood sprayed onto a model from a hit nearby: speckles around a point of its rest pose
@@ -1003,7 +1006,15 @@ impl ModelRenderer {
                 _ => draws.push((inst.model, index..index + 1, decaying, variant)),
             }
             let first = data.len() as u32;
-            let look_data = look_texels(look.as_ref().map(|c| &c.0), gpu_model.eye, inst.look.unwrap_or(0));
+            let mut look_data = look_texels(look.as_ref().map(|c| &c.0), gpu_model.eye, inst.look.unwrap_or(0));
+            // A crew's uniform rides on the look texels the crew does not use otherwise.
+            if let (None, Some(u), Some(crew)) = (look, inst.uniform, model.crew.as_ref()) {
+                // The colour and the base's luminance (`model.wgsl`: the cloth keeps its shading).
+                for k in 0..2 {
+                    let b = crew.base[k];
+                    look_data[k] = [u[k][0], u[k][1], u[k][2], 0.2126 * b[0] + 0.7152 * b[1] + 0.0722 * b[2]];
+                }
+            }
             instance_texels(inst, model.rig.as_ref(), &look_data, &mut data);
             gpu.push(GpuInstance {
                 rows: math::affine_rows(&inst.transform),

@@ -225,15 +225,40 @@ the terrain height of their ground point like every model; water is a tint on th
 
 **Gun crew (#287).** The cannon's crew is part of its model (`acr_assets/guncrew.py`,
 bones `c0.`..`c3.`), so it runs on the gun's sprite clock and the linstock touches the vent
-on the shot frame of `ATTACK` (29). The sim keeps the gun a single unit with one life, so
-the crew's losses are to be read from it; **not wired yet**, the intended mapping: with
-`k = ceil(4 · life / max_life)` men standing, a man falls each time `k` drops (c3, c1, c0,
-c2 in that order: the layer stays longest), as a separate corpse instance (a crew member
-built as its own body model and dropped with the existing ragdoll and corpse systems,
-blood and rot included) while his bones in the gun model are scaled away. The drill keeps
-the sim's timing (the shot must stay on the sim's tick; a slower reload with fewer men would
-need the sim's reload to follow), the missing men's tasks go unanimated. Today
-all four stand until the gun dies and fall with it in `DEATH`.
+on the shot frame of `ATTACK` (29). Moves of more than half a metre between stations are
+walked (`guncrew.stepped`: contact and passing poses of `poses.walk_cycle`, about one step
+per 0.55 m, the root sliding along with the cycle's bob).
+
+- **Losses** (`acr-game/src/ingame/crew_view.rs`): the sim keeps the gun a single unit with
+  one life; with `k = ceil(4 · life / max_life)` men standing, a man falls each time `k`
+  drops (c3 the firer, c1 the loader, c0 the rammer, c2 the layer, who stays longest).
+  `ModelData::crew` (`model.rs`, found on machine models with nodes `c0.`..`c3.`) knows the
+  palette slots of each man (his bones and the gear on his sockets); `Crew::mask` collapses
+  the rows of the fallen to one point, so their triangles vanish, and the gun's instance
+  takes that palette through `set_custom_poses`. The fallen man is drawn on his own: an
+  instance of the gun model posed in its `DEATH` clip (then `DEATHLIE1`) with only his
+  slots shown, at the gun's transform of the moment he fell. That corpse decays like any
+  other (`corpse_decay` on its own clock, `deflate`/`lie_flat`), carries blood and dirt and
+  bleeds a pool at his station (`HOME`); it lies `corpse_minutes`. The drill goes on with the
+  men left on the sim's timing; their tasks are not handed over (each man's tool hangs on
+  his own bones, so another man's track would show the wrong tool), so a gap shows where a
+  lost man worked. A gun that dies keeps the fallen hidden in its own `DEATH`.
+- **Spray:** a gun with a crew is not counted a machine for sprayed blood, so blood from hits
+  in front of it speckles the crew (and the carriage near them). Wound marks need a skeleton
+  H rig (`wound_rig`) and are not placed on the crew.
+- **Uniforms by nation:** the coat (`<gun>.crewN.coat.*`) and waistcoat (`.waistcoat.*`)
+  materials take `Tint::Coat` / `Tint::Facings` (or `extras.acr_tint` `"coat"`/`"facings"`).
+  `ModelInstance::uniform` holds the target colours; they go into the first two look texels
+  (unused by a model without looks) with the luminance of the materials' `acr_base_rgb`, and
+  the fragment replaces the cloth's colour by the uniform's at the cloth's own luminance
+  over the base's (a multiplier cannot turn a red waistcoat blue). The
+  catalog has one cannon type per nation, `ArtPus(EN)`, `(FR)`, `(SP)`, `(US)`, all drawn by
+  `artpus.glb`; the suffix gives the uniform (else the owner's first unit named `Eng*`,
+  `Frn*`, `Spn*` or `Usa*`).
+  England: dark blue, red waistcoat; France: bleu de roi throughout; Spain: lighter blue,
+  red; USA: dark blue, buff. Others keep the model's blue and red.
+- **Not done:** faces (the crew is built with `faces=False`, no MakeHuman face or looks),
+  hand IK onto staffs, spokes and the handspike.
 
 ### Decay (#178) and gore (#183)
 

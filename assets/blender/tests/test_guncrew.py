@@ -36,6 +36,13 @@ class Drill(unittest.TestCase):
         self.assertAlmostEqual(d["root_loc"][1], 3.0)
         self.assertEqual(d["root"], (0, 0, 90))
 
+    def test_moves_between_stations_take_steps(self):
+        ks = guncrew.attack_keys()["c0."]
+        walk = [f for f, s in ks if 246 < f < 290]
+        self.assertGreaterEqual(len(walk), 3)
+        thighs = {ks[[f for f, _ in ks].index(f)][1]["thigh_l"] for f in walk}
+        self.assertGreater(len(thighs), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

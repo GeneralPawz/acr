@@ -139,6 +139,10 @@ pub enum Tint {
     None = 0,
     Skin = 1,
     Hair = 2,
+    /// A gun crew's coat (#287): the instance's uniform colour ([`ModelData::crew`]).
+    Coat = 3,
+    /// A gun crew's waistcoat and facings.
+    Facings = 4,
 }
 
 /// How a material of the gore inserts and gibs is shaded (`model.wgsl`, `look.y`).
@@ -242,6 +246,35 @@ pub struct ModelData {
     /// Per-soldier faces, bodies, hair and beards (root `extras.acr_face_morphs`); `None`
     /// draws every soldier alike, as before.
     pub looks: Option<Looks>,
+    /// The crew of a gun (#287, `acr_assets/guncrew.py`); `None` for every other model.
+    pub crew: Option<Crew>,
+}
+
+/// The men of a gun model (#287): the bones `c0.`..`c3.` and what hangs on them, so a fallen
+/// man can be hidden from the gun and drawn alone as his own corpse.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Crew {
+    /// Per palette slot: the man (0..4) it belongs to, `None` for the gun.
+    pub slots: Vec<Option<u8>>,
+    /// The base colours (`extras.acr_base_rgb`) of the coat and the waistcoat that a
+    /// uniform replaces, their luminance kept as shading ([`Tint::Coat`], [`Tint::Facings`]).
+    pub base: [[f32; 3]; 2],
+}
+
+/// Number of men in a gun crew.
+pub const CREW: usize = 4;
+
+impl Crew {
+    /// The pose `palette` with the men not in `shown` (a bit per man; the gun is bit 4)
+    /// moved to one point: their triangles collapse and are not drawn.
+    pub fn mask(&self, palette: &mut Palette, shown: u8) {
+        for (rows, s) in palette.iter_mut().zip(&self.slots) {
+            let bit = s.map_or(1 << CREW, |m| 1 << m);
+            if shown & bit == 0 {
+                *rows = [[0.0; 4]; 3];
+            }
+        }
+    }
 }
 
 /// The affine rows (3 × vec4) of each palette slot.
@@ -382,6 +415,8 @@ impl ModelData {
                     {
                         Some(t) if t == "skin" => Tint::Skin,
                         Some(t) if t == "hair" => Tint::Hair,
+                        Some(t) if t == "coat" => Tint::Coat,
+                        Some(t) if t == "facings" => Tint::Facings,
                         _ => Tint::None,
                     },
                     finish: extras_json(m.extras()).as_ref().map_or_else(Finish::default, |e| Finish {
@@ -664,8 +699,12 @@ impl ModelData {
             rig,
             beast_rig,
             looks,
+            crew: None,
         };
         model.radius = model.rest_radius();
+        if machine {
+            model.crew = model.find_crew(doc);
+        }
         Ok(model)
     }
 
@@ -714,9 +753,57 @@ impl ModelData {
             rig: None,
             beast_rig: None,
             looks: None,
+            crew: None,
         };
         model.radius = model.rest_radius();
         model
+    }
+
+    /// The crew of a gun: slots under the nodes `c0.`..`c3.` (bones, and gear on their
+    /// sockets); its coat and waistcoat materials (`<name>.crewN.coat.*`,
+    /// `.waistcoat.*`) take the uniform tints. `None` without such nodes.
+    fn find_crew(&mut self, doc: &gltf::Document) -> Option<Crew> {
+        let man = |name: &str| -> Option<u8> {
+            let b = name.as_bytes();
+            (b.len() > 2 && b[0] == b'c' && b[2] == b'.' && (b'0'..b'0' + CREW as u8).contains(&b[1]))
+                .then(|| b[1] - b'0')
+        };
+        let of_node = |mut n: usize| -> Option<u8> {
+            loop {
+                if let Some(m) = man(&self.nodes[n].name) {
+                    return Some(m);
+                }
+                n = self.nodes[n].parent?;
+            }
+        };
+        let slots: Vec<Option<u8>> = self
+            .slots
+            .iter()
+            .map(|s| match *s {
+                Slot::Node(n) | Slot::Joint { node: n, .. } => of_node(n),
+            })
+            .collect();
+        if slots.iter().all(Option::is_none) {
+            return None;
+        }
+        let mut base = [[1.0; 3]; 2];
+        for (m, json) in self.materials.iter_mut().zip(doc.materials()) {
+            if m.tint != Tint::None || !m.name.contains(".crew") {
+                continue;
+            }
+            let k = if m.name.contains(".waistcoat.") {
+                1
+            } else if m.name.contains(".coat.") {
+                0
+            } else {
+                continue;
+            };
+            m.tint = if k == 0 { Tint::Coat } else { Tint::Facings };
+            if let Some(rgb) = extras_json(json.extras()).as_ref().and_then(|e| floats::<3>(e.get("acr_base_rgb"))) {
+                base[k] = rgb;
+            }
+        }
+        Some(Crew { slots, base })
     }
 
     /// Local transforms of all nodes: the rest pose with `clip` applied at `time` seconds.

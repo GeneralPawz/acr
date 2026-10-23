@@ -201,7 +201,40 @@ def attack_keys():
     at("c3.", FIRE + 4, tool(FLINCH, UP), 1.5, 1.0, -90)
     at("c3.", 50, tool(STAND, UP), 1.4, 0.95, -90)
     at("c3.", 419, tool(STAND, UP), 1.3, 0.9, -90)
-    return k
+    return {p: stepped(ks) for p, ks in k.items()}
+
+
+STRIDE = 0.55  # metres a step carries a man between stations
+LEG_BONES = ("thigh_l", "thigh_r", "shin_l", "shin_r", "foot_l", "foot_r")
+
+
+def stepped(keys, min_move=0.5):
+    """Placed keys [(frame, spec)] with walking steps keyed into each move of more than
+    `min_move` metres: alternate contact and passing poses of `poses.walk_cycle`, the root
+    sliding along the way with the cycle's bob, the upper body of the key left (first half)
+    and of the key reached (second half), turned towards the new facing after the first step."""
+    cyc = poses.walk_cycle(STAND)
+    out = [keys[0]]
+    for (f0, a), (f1, b) in zip(keys, keys[1:]):
+        (x0, y0, z0), (x1, y1, _z1) = a["root_loc"], b["root_loc"]
+        d = math.hypot(x1 - x0, y1 - y0)
+        if d > min_move and f1 - f0 >= 8:
+            n = max(2, round(d / STRIDE))
+            for j in range(1, 2 * n):
+                t = j / (2 * n)
+                f = f0 + round((f1 - f0) * t)
+                if f <= out[-1][0] or f >= f1:
+                    continue
+                body = a if t < 0.5 else b
+                c = cyc[j % 4]
+                spec = {k: v for k, v in body.items() if k not in LEG_BONES}
+                spec.update({k: c[k] for k in LEG_BONES if k in c})
+                spec["root"] = a["root"] if j == 1 else b["root"]
+                spec["root_loc"] = (x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, z0 + c.get("root_loc", (0, 0, 0))[2])
+                spec["world"] = dict((a if j == 1 else b).get("world", {}))
+                out.append((f, spec))
+        out.append((f1, b))
+    return out
 
 
 def death_keys(n=73):

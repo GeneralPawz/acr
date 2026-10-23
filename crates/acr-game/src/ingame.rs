@@ -23,6 +23,7 @@ use crate::ui::{GameKind, GameSetup};
 
 mod cloth_view;
 mod controls;
+mod crew_view;
 mod damage_view;
 mod debris;
 mod dip;

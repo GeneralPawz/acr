@@ -119,6 +119,8 @@ pub struct ThreeD {
     started: web_time::Instant,
     /// Physics ragdolls of the hit and the dying (#278), made at the first frame with models.
     ragdolls: Option<super::ragdoll_view::Ragdolls>,
+    /// Gun crews: losses, their corpses and uniforms (#287).
+    crews: super::crew_view::Crews,
     /// Animals standing over the men they maul (#276).
     maulers: super::maul_view::Maulers,
     /// The coat skirts of the men near the camera (runtime cloth, docs/clothing.md).
@@ -194,6 +196,7 @@ impl Default for ThreeD {
             compare: Compare::from_env(),
             started: web_time::Instant::now(),
             ragdolls: None,
+            crews: Default::default(),
             maulers: Default::default(),
             skirts: Default::default(),
             frame_seconds: 0.0,
@@ -462,6 +465,7 @@ impl ThreeD {
         // Ships and guns drawn (`acr_machine`): their hits splash no blood.
         let mut machines: std::collections::HashSet<u32> = std::collections::HashSet::new();
         let now = world.tick.0;
+        self.crews.begin(now);
         if self.debris_tick > now {
             // A loaded game or a restart: the debris belongs to another battle.
             self.debris.clear();
@@ -550,7 +554,12 @@ impl ThreeD {
             }
             if model.machine && !u.building {
                 // A wreck neither rots nor sinks into the ground: its clips show the damage.
-                machines.insert(u.id.0);
+                // A gun's crew takes the blood sprayed onto it (#287).
+                if model.crew.is_none() {
+                    machines.insert(u.id.0);
+                } else {
+                    inst.uniform = self.crews.uniform(world, u);
+                }
                 inst.decay = 0.0;
                 inst.morphs = [0.0; 2];
                 inst.wounds = Default::default();
@@ -675,6 +684,9 @@ impl ThreeD {
             } else if living && !u.building && model.nodes.iter().any(|n| n.name == "rider.hips") {
                 riders.push((u.id.0 as usize, self.instances.len()));
             }
+            if model.crew.is_some() && !u.building {
+                self.crews.gun(u, model, self.instances.len(), &inst, now);
+            }
             self.instances.push(inst);
             self.shown.insert(u.id);
         }
@@ -755,6 +767,18 @@ impl ThreeD {
             self.instances.extend(debug_pieces(&body, damage));
         }
         self.instances.extend(extra);
+        // The fallen of the gun crews, each a corpse of his own (#287).
+        {
+            let renderer = self.renderer.as_ref();
+            self.crews.corpses(
+                |i| renderer.and_then(|r| r.model(i)),
+                now,
+                self.corpse_ticks,
+                self.gore,
+                &mut self.instances,
+                &mut self.pools,
+            );
+        }
         let ground = |x: f32, y: f32| {
             let (x, y) = (x as i32, y as i32);
             view3d::ground_point(x, y, terrain.height_at(x, y))
@@ -862,10 +886,13 @@ impl ThreeD {
         };
         let view3d = View3d { camera: *camera, size, orbit: self.free.then_some(self.orbit) };
         let shown = if models_phase { &self.instances[..] } else { &[] };
-        if let Some(r) = self.ragdolls.as_mut()
-            && models_phase
-        {
-            renderer.set_custom_poses(std::mem::take(&mut r.poses));
+        if models_phase {
+            // Ragdolls and the gun crews' masked poses (#287).
+            let mut poses = self.crews.poses.clone();
+            if let Some(r) = self.ragdolls.as_mut() {
+                poses.extend(std::mem::take(&mut r.poses));
+            }
+            renderer.set_custom_poses(poses);
         }
         renderer.shadows = shadows_override().unwrap_or(self.shadows);
         renderer.prepare(device, queue, &view3d, shown, self.gore == Gore::Full);
@@ -1088,6 +1115,7 @@ fn instance(
         damage: Default::default(),
         // Each soldier his own face, build, hair and height (#283).
         look: (!u.building).then_some(u.id.0),
+        uniform: None,
     };
     (instance, ground)
 }

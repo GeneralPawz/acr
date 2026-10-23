@@ -634,6 +634,11 @@ fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
             if (in.face.x + in.face.y + in.face.z > 0.0) {
                 rgb = face_detail(rgb, in.rest.xyz, in.face, l0, l1, look_texel(d, marks, 2u));
             }
+        } else if (material.look.z > 2.5) {
+            // A gun crew's coat or waistcoat (#287): the uniform's colour (rgb) at the
+            // cloth's shading, its luminance over the base colour's (w).
+            let u = select(l1, l0, material.look.z < 3.5);
+            rgb = u.rgb * dot(rgb, vec3<f32>(0.2126, 0.7152, 0.0722)) / max(u.w, 0.005);
         } else {
             rgb = rgb * l1.rgb;
         }
