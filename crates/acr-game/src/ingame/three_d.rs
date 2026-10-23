@@ -26,6 +26,39 @@ use crate::ui::settings::{CameraMode, Gore, Models, Settings};
 pub const MODEL_DIR: &str = "ACR/MODELS/";
 /// How far a shell burst throws the remains lying around it (world pixels, 4 m).
 const BLAST_RADIUS: f32 = 120.0;
+/// A cannonball grazing the ground (hit-locations rule, the earth it throws up,
+/// `acr_sim::shrapnel::GRAZE`) throws the remains within 2.75 m: at most this many pieces
+/// and corpses, at this share of a shell's force.
+const GRAZE_RADIUS: f32 = 82.0;
+const GRAZE_PIECES: usize = 10;
+const GRAZE_CORPSES: usize = 4;
+const GRAZE_FORCE: f32 = 0.65;
+
+/// A blast throwing the remains around it: a shell's burst or a ball's graze.
+#[derive(Debug, Clone, Copy)]
+struct Blast {
+    at: [f32; 2],
+    radius: f32,
+    pieces: usize,
+    corpses: usize,
+    force: f32,
+}
+
+impl Blast {
+    fn shell(at: [f32; 2]) -> Self {
+        Self {
+            at,
+            radius: BLAST_RADIUS,
+            pieces: super::debris::BLAST_CAP,
+            corpses: super::ragdoll_view::BLAST_CAP,
+            force: 1.0,
+        }
+    }
+
+    fn graze(at: [f32; 2]) -> Self {
+        Self { at, radius: GRAZE_RADIUS, pieces: GRAZE_PIECES, corpses: GRAZE_CORPSES, force: GRAZE_FORCE }
+    }
+}
 /// How long 3D corpses lie by default (minutes of game time, setting `corpse_minutes`).
 const CORPSE_MINUTES: u64 = 5;
 /// The death counter above which a sprite corpse turns half transparent (0x506ed5).
@@ -102,7 +135,8 @@ pub struct ThreeD {
     /// Shell bursts up to this tick have thrown the remains around them, and this frame's
     /// new bursts (world pixels) for the ragdolls.
     last_blast: u64,
-    blasts: Vec<[f32; 2]>,
+    last_graze: u64,
+    blasts: Vec<Blast>,
     free: bool,
     pub orbit: Orbit,
     keys: HeldKeys,
@@ -196,6 +230,7 @@ impl Default for ThreeD {
             particle_renderer: None,
             shots: Vec::new(),
             last_blast: 0,
+            last_graze: 0,
             blasts: Vec::new(),
             corpse_ticks: CORPSE_MINUTES * 60 * acr_sim::ORIGINAL_TICKS_PER_SECOND as u64,
             free: false,
@@ -861,23 +896,38 @@ impl ThreeD {
         if now < self.last_blast {
             self.last_blast = 0;
         }
+        if now < self.last_graze {
+            self.last_graze = 0;
+        }
         self.blasts.clear();
+        let near = |blasts: &[Blast], at: [f32; 2]| {
+            blasts.iter().any(|b| (b.at[0] - at[0]).abs() + (b.at[1] - at[1]).abs() < 20.0)
+        };
         for i in world
             .impacts
             .iter()
             .filter(|i| i.tick > self.last_blast && i.cause == acr_sim::combat::DeathCause::Explosion)
         {
             let at = [i.pos.0 as f32, i.pos.1 as f32];
-            if !self.blasts.iter().any(|b| (b[0] - at[0]).abs() + (b[1] - at[1]).abs() < 20.0) {
-                self.blasts.push(at);
+            if !near(&self.blasts, at) {
+                self.blasts.push(Blast::shell(at));
             }
         }
         self.last_blast = world.impacts.back().map_or(self.last_blast, |i| i.tick.max(self.last_blast));
+        // A cannonball's grazes: where it threw up earth (hit-locations rule only).
+        for f in world.fragments.iter().filter(|f| f.tick > self.last_graze && f.kind == acr_sim::shrapnel::Kind::Earth)
+        {
+            let at = [f.from.0 as f32, f.from.1 as f32];
+            if !near(&self.blasts, at) {
+                self.blasts.push(Blast::graze(at));
+            }
+        }
+        self.last_graze = world.fragments.back().map_or(self.last_graze, |f| f.tick.max(self.last_graze));
         if !self.blasts.is_empty() {
             acr_sim::prof_scope!("3d.blast_debris");
-            for &at in &self.blasts {
-                let n = self.debris.blast(at, BLAST_RADIUS, now, &ground);
-                log::debug!("3d: blast at {at:?} threw {n} pieces");
+            for b in &self.blasts {
+                let n = self.debris.blast(b.at, b.radius, b.pieces, b.force, now, &ground);
+                log::debug!("3d: blast at {:?} threw {n} pieces", b.at);
             }
         }
         self.debris.draw(now, self.corpse_ticks, &ground, &mut self.instances, &mut self.pools);
@@ -961,10 +1011,10 @@ impl ThreeD {
         let killed = |v: u32| world.units.get(v as usize).is_none_or(|u| u.id.0 != v || !u.alive || u.death > 0);
         {
             acr_sim::prof_scope!("3d.ragdolls");
-            for &at in &self.blasts {
+            for b in &self.blasts {
                 acr_sim::prof_scope!("3d.blast_corpses");
-                let n = ragdolls.blast(at, BLAST_RADIUS, world.tick.0, &drawn, &killed, terrain);
-                log::info!("3d: blast at {at:?} threw {n} corpses");
+                let n = ragdolls.blast(b.at, b.radius, b.corpses, b.force, world.tick.0, &drawn, &killed, terrain);
+                log::info!("3d: blast at {:?} threw {n} corpses", b.at);
             }
             self.blasts.clear();
             ragdolls.update(world.tick.0, self.frame_seconds, &hits, &drawn, &mounted, self.focus, terrain, &killed);

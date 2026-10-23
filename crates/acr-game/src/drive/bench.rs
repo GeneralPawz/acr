@@ -272,6 +272,15 @@ pub fn impact(game: &mut Game, v: &Value) -> Result<Value, String> {
         acr_sim::shrapnel::burst(world, Some(b), att, at, 0);
         fragments = world.fragments.len() - before;
     }
+    // A ball of `by`'s cannon grazing there: the earth it throws up (hit-locations rule).
+    if cause == DeathCause::Cannonball
+        && let Some(b) = by
+    {
+        let att = acr_sim::shrapnel::attack_of(world, b, cause).ok_or("impact: \"by\" has no cannonball attack")?;
+        let before = world.fragments.len();
+        acr_sim::shrapnel::graze(world, Some(b), att, at, dir);
+        fragments = world.fragments.len() - before;
+    }
     Ok(json!({
         "tick": world.tick.0, "at": [at.0, at.1], "dir": [dir.0, dir.1], "cause": format!("{cause:?}"),
         "fragments": fragments,

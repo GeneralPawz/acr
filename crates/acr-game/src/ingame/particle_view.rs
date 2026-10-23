@@ -553,15 +553,26 @@ const FRAGMENT_FLIGHT: f32 = 0.18;
 fn fragment(sink: &mut dyn ParticleSink, f: &acr_sim::shrapnel::Fragment, ground: f32, blood: bool, seed: u32) {
     let (dx, dy) = ((f.to.0 - f.from.0) as f32, (f.to.1 - f.from.1) as f32);
     let len = (dx * dx + dy * dy).sqrt().max(1.0);
-    let rise = if f.victim.is_some() { 6.0 } else { -24.0 };
+    use acr_sim::shrapnel::Kind;
+    // Earth and bone fly up from the ground and fall back; a casing's fragment flies flat.
+    let rise = match (f.kind, f.victim.is_some()) {
+        (_, true) => 6.0,
+        (Kind::Casing, false) => -24.0,
+        (_, false) => 10.0,
+    };
     let dir = [dx / len, dy / len, rise / len];
-    let size = 1.5 + 2.5 * f32::from(f.mass) / 100.0;
+    let size = match f.kind {
+        Kind::Casing => 1.5 + 2.5 * f32::from(f.mass) / 100.0,
+        // A clod or stone, a splinter of bone: bigger than its mass for a casing's.
+        Kind::Earth | Kind::Bone => 2.0 + 6.0 * f32::from(f.mass) / 100.0,
+    };
     let speed = len / FRAGMENT_FLIGHT;
     let specks = 3 + u32::from(f.mass) / 34;
     for i in 0..specks {
         // Each speck starts a little behind the one before: a short streak.
         let back = i as f32 * 4.0;
-        let at = [f.from.0 as f32 - dir[0] * back, f.from.1 as f32 - dir[1] * back, ground + 22.0];
+        let lift = if f.kind == Kind::Casing { 22.0 } else { 6.0 };
+        let at = [f.from.0 as f32 - dir[0] * back, f.from.1 as f32 - dir[1] * back, ground + lift];
         sink.emit(&Burst {
             at,
             dir,
@@ -571,7 +582,11 @@ fn fragment(sink: &mut dyn ParticleSink, f: &acr_sim::shrapnel::Fragment, ground
             kind: ParticleKind::Splinter,
             life: [FRAGMENT_FLIGHT + back / speed; 2],
             size: [size * (1.0 - 0.15 * i as f32); 2],
-            color: [255, 196 - 30 * i.min(3) as u8, 90],
+            color: match f.kind {
+                Kind::Casing => [255, 196 - 30 * i.min(3) as u8, 90],
+                Kind::Earth => [92, 70, 48],
+                Kind::Bone => [226, 214, 190],
+            },
             scatter: 0.0,
             seed: seed.wrapping_add(i),
         });

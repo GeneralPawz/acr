@@ -533,6 +533,10 @@ pub struct World {
     /// (`crate::body::injure`). Set by the projectiles around their damage; not hashed.
     pub hit_energy: Option<u8>,
     pub hit_height: Option<i32>,
+    /// The cause the hit now dealt counts as, whatever the sender's weapon: a fragment
+    /// ([`crate::shrapnel`]) wounds as a shell's. Only with the hit-locations rule; not
+    /// hashed.
+    pub hit_cause: Option<crate::combat::DeathCause>,
     /// What is left of a ploughing ball ([`crate::projectile::Plough`]) while it explodes,
     /// handed to its bounce. Only during `explode` and only with the hit-locations rule;
     /// not hashed.
@@ -693,6 +697,7 @@ impl World {
             hit_dir: None,
             hit_energy: None,
             hit_height: None,
+            hit_cause: None,
             plough_carry: None,
             desant: Default::default(),
             peace: Default::default(),

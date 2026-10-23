@@ -1301,7 +1301,7 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
         }
         let kind = sa.attacks.get(usize::from(att)).map_or("MECH", |a| a.kind.as_str());
         let wf = catalog.weapon_flags(kind);
-        record = DeathRecord::of(DeathCause::of_weapon(kind), Some(w.units[s].pos.pixels()));
+        record = DeathRecord::of(w.hit_cause.unwrap_or(DeathCause::of_weapon(kind)), Some(w.units[s].pos.pixels()));
         if wf & GARRISON != 0 && vt.building {
             if !w.units[victim].inside.is_empty() {
                 garrison_damage(w, victim, dmg, s, att);

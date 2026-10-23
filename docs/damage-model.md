@@ -188,6 +188,40 @@ the 4 ms body-physics budget, falling back as they freeze again.
 Test driver: `{"cmd":"impact","at":[x,y],"cause":"shell","by":unit}` bursts a shell of
 `unit`'s shell attack there (its fragments fly; answers `fragments`).
 
+### A cannonball's grazes and a torn man's bones (`acr_sim::shrapnel::GRAZE`, `BONES`)
+
+AC has almost no shells (the field gun fires roundshot and grapeshot), so what a player sees
+"explode" is a solid ball striking the ground. With the rule on that does the small version
+of a shell burst (rule off: nothing, no draw, unchanged hash):
+
+- **Graze or bounce** (every ground contact of an `IADRO` round, `projectile::explode`
+  with `ground`, once per ball point and tick): 4–9 secondary fragments (`Kind::Earth`:
+  clods, stones, wood and bone splinters) within ±110° of the ball's flight, flying
+  40–100 % of 105 px (3.5 m), mass up to 30, punch 70 % of a casing fragment of that
+  mass. Mostly flesh wounds (energy about 10–35), seeping and screaming as for shells.
+- **A man pulverized or torn** by a ball (`body::ball_through`, any `Torn` outcome of a
+  `Cannonball` hit, `shrapnel::ball_hit` after each ball hit in `round_damage`): 2–5 of his
+  bones (`Kind::Bone`) fly on from where he stood within ±80° of the ball's flight, 75 px
+  (2.5 m), mass up to 25, punch 90 %, at the men right behind and beside him (not him).
+
+Both strike through `MakeDamage` like shell fragments; `World::hit_cause` makes the hit a
+shell's (`DeathCause::Explosion`, `Cause::Shell`) although the sender's weapon is the
+cannon, so the energy-scaled shell row, the seeping and the cries apply unchanged.
+`Fragment::kind` tells the renderer what flew: brown clods and pale bone splinters
+rising from the ground instead of glowing casing specks.
+
+Each graze also throws the remains lying there (render only, `three_d.rs`, the earth
+fragments' burst points): within 82 px (2.75 m) at most 4 corpses and 10 pieces, nearest
+first, at 0.65 of a shell's force, so the dead are flung with the mud.
+Measured (release, `ACR_PROFILE`, blank field, 40 corpses and a line of 9 men, three
+grazes 100 px apart along the ball's line, each throwing 4 corpses): the blast itself
+0.16 ms per graze; over the 72 frames after them `3d.update` 1.65 ms per frame (0.23 idle)
+of which `rag.physics` 1.2 ms (12 corpses awake), `sim.step` 0.065 ms per tick (0.029
+idle); back to idle as the corpses freeze again.
+
+Test driver: `{"cmd":"command","command":{"type":"attack_ground","units":[gun],"x":..,"y":..}}`
+bombards a ground point (`ballgraze.py` in the analysis folder).
+
 **Cannonball energy (#262, "a direct hit should shred the troop").** A 6 to 12 pdr roundshot
 keeps lethal energy over its whole flight (hundreds of metres, bounces included) and through
 several men, so the energy at a man is what the bodies before him left of the ball

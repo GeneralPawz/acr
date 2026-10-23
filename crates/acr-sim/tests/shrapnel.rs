@@ -54,23 +54,24 @@ IADROMOR 0 7 -
 [UNITKINDS]
 ";
 
-fn setup(rules: Rules) -> (World, TypeId, TypeId, TypeId) {
+fn setup(rules: Rules) -> (World, TypeId, TypeId, TypeId, TypeId) {
     let mut c = Catalog::new();
     let mor = c.add(ObjectType::from_def("Mor(EN)", &UnitDef::parse(MORTAR.as_bytes())));
     let tgt = c.add(ObjectType::from_def("Tgt(EN)", &UnitDef::parse(TARGET.as_bytes())));
     let sol = c.add(ObjectType::from_def("Sol(EN)", &UnitDef::parse(SOLDIER.as_bytes())));
+    let can = c.add(ObjectType::from_def("Can(EN)", &UnitDef::parse(CANNON.as_bytes())));
     c.set_weapon_kinds(&weapon_kinds(NRES));
     c.set_weapons(Weapons::parse(NDS, Some(ADS), None));
     let mut w = World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(Formations::default()));
     w.rules = rules;
-    (w, mor, tgt, sol)
+    (w, mor, tgt, sol, can)
 }
 
 const ON: Rules = Rules { hit_locations: true, body_spacing: false };
 
 /// A mortar shells a target with a ring of soldiers around it; the world after `ticks`.
 fn shell(rules: Rules, ticks: u32) -> World {
-    let (mut w, mor, tgt, sol) = setup(rules);
+    let (mut w, mor, tgt, sol, _) = setup(rules);
     let m = w.spawn(mor, 0, Pos::from_pixels(1500, 2000), 0);
     let t = w.spawn(tgt, 1, Pos::from_pixels(2600, 2000), 128);
     for k in 0..48 {
@@ -137,6 +138,61 @@ fn small_fragments_rarely_sever() {
 #[test]
 fn without_the_rule_no_fragments_fly() {
     let w = shell(Rules::default(), 200);
+    assert!(w.fragments.is_empty());
+    assert!(w.units.iter().all(|u| u.body.seep == 0 && u.body.seep_s == 0));
+}
+
+const CANNON: &str = "NAME Can\r\nUSERLC 0 G SHADOW 0 0\r\n#STAND 16 1 0 0\r\n@MOTION_L 16 0 0 9\r\n\
+    @MOTION_R 16 0 10 19\r\n@ATTACK1 16 0 0 19\r\n\
+    @PATTACK1 16 0 0 9\r\n@DEATH 16 0 0 9\r\nLIFE 1000\r\nGEOMETRY 1 10 40\r\nDAMAGE 1 340\r\n\
+    ATTACK_RADIUS 1 100 2000\r\nDET_RADIUS 1 100 7000\r\nATTACK_PAUSE 1 400\r\nWEAPONKIND 1 IADRO\r\n\
+    WEAPON 1 NUCL2P\r\nMATHERIAL 1 BODY\r\nCANKILL 1 BODY\r\n[END]\r\n";
+
+/// A cannon fires solid shot at a target in a block of soldiers; the world after `ticks`.
+fn cannonade(rules: Rules, ticks: u32) -> World {
+    let (mut w, _, tgt, sol, can) = setup(rules);
+    let m = w.spawn(can, 0, Pos::from_pixels(1500, 2000), 0);
+    let t = w.spawn(tgt, 1, Pos::from_pixels(2600, 2000), 128);
+    for k in 0..48 {
+        let (x, y) = (2450 + (k % 8) * 40, 1880 + (k / 8) * 45);
+        w.spawn(sol, 1, Pos::from_pixels(x, y), 128);
+    }
+    w.step(&[Command::Attack { player: 0, units: vec![m], target: t }]);
+    for _ in 0..ticks {
+        w.step(&[]);
+    }
+    w
+}
+
+#[test]
+fn a_grazing_ball_throws_up_earth_that_wounds() {
+    use acr_sim::combat::DeathCause;
+    use acr_sim::shrapnel::{GRAZE, Kind};
+    let w = cannonade(ON, 300);
+    let earth: Vec<_> = w.fragments.iter().filter(|f| f.kind == Kind::Earth).collect();
+    assert!(earth.len() >= GRAZE.count.0 as usize, "{}", earth.len());
+    assert!(w.fragments.iter().all(|f| f.kind != Kind::Casing), "a ball throws no casing");
+    for f in &earth {
+        let d = f64::from(f.to.0 - f.from.0).hypot(f64::from(f.to.1 - f.from.1));
+        assert!(d <= f64::from(GRAZE.reach) + 4.0 && f.mass <= GRAZE.mass as u8 + 1, "{f:?}");
+    }
+    // A man a torn victim's bones or the earth struck took a shell's (fragment's) wound.
+    let bones = w.fragments.iter().filter(|f| f.kind == Kind::Bone).count();
+    let torn = w.deaths.values().filter(|d| d.torn.is_some() && d.cause == DeathCause::Cannonball).count();
+    eprintln!(
+        "earth {} (struck {}), bones {bones}, torn {torn}",
+        earth.len(),
+        earth.iter().filter(|f| f.victim.is_some()).count()
+    );
+    assert_eq!(bones > 0, torn > 0, "bones fly from every torn man");
+    let w2 = cannonade(ON, 300);
+    assert_eq!(w.fragments, w2.fragments);
+    assert_eq!(w.state_hash(), w2.state_hash());
+}
+
+#[test]
+fn without_the_rule_a_ball_throws_nothing() {
+    let w = cannonade(Rules::default(), 300);
     assert!(w.fragments.is_empty());
     assert!(w.units.iter().all(|u| u.body.seep == 0 && u.body.seep_s == 0));
 }

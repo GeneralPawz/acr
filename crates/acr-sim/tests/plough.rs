@@ -88,11 +88,15 @@ fn with_hit_locations_the_ball_ploughs_through_five_men_losing_energy() {
     let fifth = lives[4];
     assert!(!fifth.1 && (100..=199).contains(&fifth.0), "{lives:?}");
     assert_eq!(lives[5..], [(300, false), (300, false)], "{lives:?}");
-    // Each man is hit once, along the flight.
-    let hit: Vec<u32> = w.hits.iter().map(|h| h.victim).collect();
+    // Each man is hit by the ball once, along the flight; the bones of the men it tore
+    // apart fly on as fragments (`shrapnel::BONES`, a shell's cause).
+    let ball = |h: &&acr_sim::combat::HitRecord| h.cause == DeathCause::Cannonball;
+    let hit: Vec<u32> = w.hits.iter().filter(ball).map(|h| h.victim).collect();
     let want: Vec<u32> = men[..5].iter().map(|m| m.0).collect();
     assert_eq!(hit, want);
-    assert!(w.hits.iter().all(|h| h.cause == DeathCause::Cannonball && h.region.is_some() && h.dir.0 > 0));
+    assert!(w.hits.iter().filter(ball).all(|h| h.region.is_some() && h.dir.0 > 0));
+    assert!(w.hits.iter().all(|h| matches!(h.cause, DeathCause::Cannonball | DeathCause::Explosion)));
+    assert!(w.fragments.iter().any(|f| f.kind == acr_sim::shrapnel::Kind::Bone));
     // The same shot again plays the same.
     let (w2, _, _) = file_shot(on);
     assert_eq!(w.state_hash(), w2.state_hash());

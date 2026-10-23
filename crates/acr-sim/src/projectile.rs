@@ -444,8 +444,10 @@ fn round_damage_with(
                         }
                     }
                 };
+                let before = w.hits.len();
                 crate::combat::make_damage(w, k, dmg, sender, att);
                 w.hit_energy = None;
+                crate::shrapnel::ball_hit(w, k, before, sender, att);
             }
         }
     }
@@ -483,10 +485,12 @@ fn ball_damage(
             if target_blast.is_some() {
                 w.detonation = target_blast;
             }
+            let before = w.hits.len();
             crate::combat::make_damage(w, b, dmg, sender, p.att);
             if target_blast.is_some() {
                 w.detonation = None;
             }
+            crate::shrapnel::ball_hit(w, b, before, sender, p.att);
         }
         w.hit_energy = None;
     }
@@ -540,6 +544,7 @@ pub fn explode(w: &mut World, slot: usize, ground: bool) {
             let water = w.rules.hit_locations && ground_media(w, at.0, at.1) == media::WATER;
             crate::ground_fire::shell_burst(w, sender, p.att, at, water);
             crate::shrapnel::burst(w, sender, p.att, at, wp.radius >> 4);
+            crate::shrapnel::graze(w, sender, p.att, at, flight_dir(&p));
         }
     }
     if w.projectiles.media == -1 {

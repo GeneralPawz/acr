@@ -890,12 +890,15 @@ impl Ragdolls {
     /// A shell burst at `at` (world pixels) throws the corpses lying within `radius`: a
     /// frozen corpse wakes, one without a ragdoll gets one from its lying pose (within the
     /// awake budget), and each flies outwards and up, the harder the nearer it lay; at most
-    /// [`BLAST_CAP`] of them, nearest first. Returns how many flew.
+    /// `cap` of them (a shell [`BLAST_CAP`]), nearest first, by `force` (1 for a shell).
+    /// Returns how many flew.
     #[allow(clippy::too_many_arguments)]
     pub fn blast(
         &mut self,
         at: [f32; 2],
         radius: f32,
+        cap: usize,
+        force: f32,
         now: u64,
         drawn: &[Drawn<'_>],
         killed: &dyn Fn(u32) -> bool,
@@ -912,7 +915,7 @@ impl Ragdolls {
             })
             .collect();
         near.sort_by(|a, b| a.0.total_cmp(&b.0));
-        near.truncate(BLAST_CAP);
+        near.truncate(cap);
         let mut thrown = 0;
         for (r, i) in near {
             let d = &drawn[i];
@@ -951,7 +954,7 @@ impl Ragdolls {
             let Some(a) = self.actors.get_mut(&v).filter(|a| a.slot != usize::MAX) else { continue };
             a.relaxed = None;
             // Thrown: outwards and up, by the distance (physics axes: y north).
-            let k = 1.0 - r / radius;
+            let k = (1.0 - r / radius) * force;
             let out = Vec3::new(dx, -dy, 0.0).normalize_or_zero();
             let h = (v.wrapping_mul(2_654_435_761) >> 20) as f32 / 4096.0;
             let vel = out * (BLAST_OUT * k * (0.7 + 0.6 * h)) + Vec3::new(0.0, 0.0, BLAST_UP * k * (0.6 + 0.8 * h));

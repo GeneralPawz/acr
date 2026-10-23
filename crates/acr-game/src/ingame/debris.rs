@@ -303,10 +303,20 @@ impl Debris {
         self.items.retain(|i| now.saturating_sub(i.tick) < lifetime);
     }
 
-    /// A shell burst at `at` (world pixels): pieces, gibs and gear lying within `radius` are
-    /// thrown again, outwards and the farther the nearer they lay, at most [`BLAST_CAP`]
-    /// of them, nearest first. Returns how many flew.
-    pub fn blast(&mut self, at: [f32; 2], radius: f32, now: u64, ground: &dyn Fn(f32, f32) -> [f32; 3]) -> usize {
+    /// A shell burst or a ball's graze at `at` (world pixels): pieces, gibs and gear lying
+    /// within `radius` are thrown again, outwards and the farther the nearer they lay (by
+    /// `force`, 1 for a shell), at most `cap` of them (a shell [`BLAST_CAP`]), nearest first.
+    /// Returns how many flew.
+    #[allow(clippy::too_many_arguments)]
+    pub fn blast(
+        &mut self,
+        at: [f32; 2],
+        radius: f32,
+        cap: usize,
+        force: f32,
+        now: u64,
+        ground: &dyn Fn(f32, f32) -> [f32; 3],
+    ) -> usize {
         let mut near: Vec<(f32, usize)> = self
             .items
             .iter()
@@ -318,12 +328,12 @@ impl Debris {
             })
             .collect();
         near.sort_by(|a, b| a.0.total_cmp(&b.0));
-        near.truncate(BLAST_CAP);
+        near.truncate(cap);
         let mut rng = Rng::new(now, (at[0] as u32) ^ (at[1] as u32).rotate_left(16));
         for &(d, k) in &near {
             let item = &mut self.items[k];
             let (dx, dy) = if d > 0.5 { ((item.to[0] - at[0]) / d, (item.to[1] - at[1]) / d) } else { (1.0, 0.0) };
-            let push = (1.0 - d / radius) * (0.6 + 0.8 * rng.next()) * 3.0 * PIXELS_PER_METRE;
+            let push = (1.0 - d / radius) * (0.6 + 0.8 * rng.next()) * 3.0 * force * PIXELS_PER_METRE;
             let angle = (rng.next() - 0.5) * 0.8;
             let (s, c) = angle.sin_cos();
             let (dx, dy) = (dx * c - dy * s, dx * s + dy * c);
