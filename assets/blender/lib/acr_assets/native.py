@@ -420,6 +420,11 @@ def _horn(name, length=0.30):
     return gear.from_bm(bm, name)
 
 
+# The quiver's strap: over the right shoulder, across the chest to the left hip (XZ line,
+# `straps.carry`), along the quiver on the back.
+QUIVER_STRAP = ((-0.10, 1.47), (0.16, 1.00))
+
+
 def kit(ch, s):
     """Strapped gear (rigid on deforming bones): quiver on the back, powder horn and shot
     pouch at the right hip under the strap, knife at the belt."""
@@ -438,17 +443,20 @@ def kit(ch, s):
             import bpy
 
             bpy.data.objects.remove(e)
-        gear.rigid(q, ch.arm, ch.prefix + "spine2", Matrix.Translation(at) @ rot)
+        # On its strap (over the right shoulder, across the chest to the left hip), seated on
+        # the back and skinned to the blended back frame (`gear.seat`).
+        straps.carry(ch, f"{name}.quiver_strap", QUIVER_STRAP[0], QUIVER_STRAP[1], key="hide")
+        gear.seat(ch, q, Matrix.Translation(at) @ rot, (0.0, -1.0, 0.0))
         out["quiver"] = ch.add("gear", q, "hide")
     if "horn" in k:
         h = _horn(f"{name}.powder_horn")
         h["acr_material_keys"] = ["horn"]
-        gear.rigid(h, ch.arm, ch.prefix + "hips", Matrix.Translation((-0.17, 0.02, 0.98)) @ Matrix.Rotation(math.radians(-70), 4, "Y")
-                   @ Matrix.Rotation(math.radians(90), 4, "Z"))
+        gear.seat(ch, h, Matrix.Translation((-0.17, 0.02, 0.98)) @ Matrix.Rotation(math.radians(-70), 4, "Y")
+                  @ Matrix.Rotation(math.radians(90), 4, "Z"), (1.0, -0.1, 0.0), turn=False)
         out["horn"] = ch.add("gear", h, "horn")
     if "pouch" in k:
         p = gear.box(f"{name}.shot_pouch", (0.13, 0.04, 0.12))
-        gear.rigid(p, ch.arm, ch.prefix + "hips", Matrix.Translation((-0.15, -0.05, 0.90)) @ Matrix.Rotation(math.radians(25), 4, "Z"))
+        gear.seat(ch, p, Matrix.Translation((-0.15, -0.05, 0.90)) @ Matrix.Rotation(math.radians(25), 4, "Z"), (0.95, 0.3, 0.0))
         out["pouch"] = ch.add("gear", p, "pouch")
     if "knife" in k:
         kn = gear.box(f"{name}.knife_sheath", (0.035, 0.022, 0.20), bevel=0.4)

@@ -7,7 +7,7 @@ import math
 
 import bmesh
 import bpy
-from mathutils import Matrix, Vector
+from mathutils import Matrix, Quaternion, Vector
 
 from . import armature as am
 from .body import link
@@ -199,3 +199,158 @@ def hold(ch, item, name, socket="socket.hand_r", matrix=None, keys=None, slot=No
     ch.held[slot or name.split(".", 1)[-1]] = obj
     ch.keys[obj.name] = obj["acr_material_keys"][0]
     return obj
+
+
+# --------------------------------------------------------------------------- seated gear
+# Carried gear (knapsack, quiver, back shield, horn, pouches) seated on the body's outermost
+# surface (docs/assets-humans.md, "Seated gear"): cast from the item's vertices onto the
+# clothes, skin and the straps already on them; laid against them with a small gap, turned to
+# the surface's slope and skinned like the surface under it.
+
+SEAT_GAP = 0.005  # m between the item's contact face and the surface under it
+SEAT_TURN = math.radians(25)  # most the item turns to lie along the surface
+SEAT_LEAD = 0.12  # m the rays start outside the item (in front of the contact face)
+# Bones (name prefixes, without the character prefix) whose surface carries no gear: a ray
+# hitting the head or an arm first is ignored, and seated gear takes none of their weights
+# (nor the coat skirt's): it rides on the trunk, not on a swinging arm or skirt.
+SEAT_FREE = ("head", "neck", "upperarm", "forearm", "hand", "skirt", "socket")
+
+
+def _free(bone, prefix=""):
+    return bone[len(prefix):].startswith(SEAT_FREE)
+
+
+def _seat_sources(ch, skip=()):
+    """(object, BVH, per-vertex weights) of the flesh, clothes and gear laid so far (world
+    rest pose); shoes and `skip` left out."""
+    from mathutils.bvhtree import BVHTree
+
+    out = []
+    for o in ch.layers["flesh"] + ch.layers["clothes"] + ch.layers["gear"]:
+        if o.type != "MESH" or o in skip or ch.keys.get(o.name) == "shoes" or not o.data.polygons:
+            continue
+        m = o.matrix_world
+        me = o.data
+        tree = BVHTree.FromPolygons([m @ v.co for v in me.vertices], [p.vertices for p in me.polygons])
+        names = {g.index: g.name for g in o.vertex_groups}
+        bones = ch.arm.data.bones
+        vw = [{names[e.group]: e.weight for e in v.groups if e.group in names and names[e.group] in bones and e.weight > 0}
+              for v in me.vertices]
+        out.append((me, tree, vw))
+    return out
+
+
+def _cast(srcs, co, into, prefix=""):
+    """The nearest surface hit along `into` from `SEAT_LEAD` in front of `co`: (gap, loc,
+    normal against `into`, weights at the hit) or None. A negative gap: `co` is inside."""
+    best = None
+    for me, tree, vw in srcs:
+        loc, n, fi, t = tree.ray_cast(co - into * SEAT_LEAD, into, SEAT_LEAD + 0.25)
+        if loc is not None and (best is None or t < best[0]):
+            best = (t, loc, n, fi, me, vw)
+    if best is None:
+        return None
+    t, loc, n, fi, me, vw = best
+    poly = me.polygons[fi]
+    inv = [1.0 / max((me.vertices[i].co - loc).length, 1e-5) for i in poly.vertices]
+    s = sum(inv)
+    w = {}
+    for i, k in zip(poly.vertices, inv):
+        for b, x in vw[i].items():
+            w[b] = w.get(b, 0.0) + x * k / s
+    if w and _free(max(w, key=w.get), prefix):
+        return None  # the head or an arm in front of the trunk
+    w = {b: x for b, x in w.items() if not _free(b, prefix)}
+    return t - SEAT_LEAD, loc, (n if n.dot(into) < 0 else -n), w
+
+
+def _norm(w, keep=4):
+    top = sorted(w.items(), key=lambda kv: -kv[1])[:keep]
+    tot = sum(x for _b, x in top) or 1.0
+    return {b: x / tot for b, x in top if x / tot > 0.02}
+
+
+def _gaps(obj, srcs, into, prefix=""):
+    hits = [(i, _cast(srcs, v.co, into, prefix)) for i, v in enumerate(obj.data.vertices)]
+    return [(i, h) for i, h in hits if h is not None]
+
+
+def seat(ch, obj, world_matrix, into, gap=SEAT_GAP, soft=False, part=0, turn=True, skip=()):
+    """Seats carried gear `obj` (item frame) placed at `world_matrix` (rest pose) on the
+    body's outermost surface: rays along `into` (world, towards the body) from its vertices
+    find the clothes, skin and gear under it; the item turns (at most `SEAT_TURN`) so its
+    contact side lies along the surface's mean slope and moves along `into` until its
+    nearest vertex is `gap` off it. Skinned like the surface under it: `soft` each vertex
+    with the weights under it (a knapsack bends with the spine), else every vertex with the
+    contact area's blended weights (a rigid frame between spine2, spine1 and the shoulders).
+    Returns the bound object; `ch.seat_report[obj.name]` = (gap before, gap after) (m)."""
+    into = Vector(into).normalized()
+    obj.matrix_world = world_matrix
+    bpy.context.view_layer.update()
+    me = obj.data
+    me.transform(obj.matrix_world)
+    obj.matrix_world = Matrix.Identity(4)
+    srcs = _seat_sources(ch, skip=(obj, *skip))
+    move = Matrix.Identity(4)
+    hits = _gaps(obj, srcs, into, ch.prefix)
+    before = min((h[0] for _i, h in hits), default=None)
+    if hits and turn:
+        near = [h for _i, h in hits if h[0] < before + 0.03]
+        n = sum((h[2] for h in near), Vector()).normalized()
+        q = into.rotation_difference(-n)
+        if q.angle > SEAT_TURN:
+            q = Quaternion(q.axis, SEAT_TURN)
+        c = sum((v.co for v in me.vertices), Vector()) / len(me.vertices)
+        move = Matrix.Translation(c) @ q.to_matrix().to_4x4() @ Matrix.Translation(-c)
+        me.transform(move)
+        into = q @ into
+        hits = _gaps(obj, srcs, into, ch.prefix)
+    if hits:
+        d = min(h[0] for _i, h in hits) - gap
+        me.transform(Matrix.Translation(into * d))
+        move = Matrix.Translation(into * d) @ move
+        hits = [(i, (h[0] - d, h[1], h[2], h[3])) for i, h in hits]
+    after = min((h[0] for _i, h in hits), default=None)
+    # Weights: the contact area's blend (rigid), or the surface under each vertex (soft).
+    contact = [h for _i, h in hits if h[0] < (after or 0.0) + 0.04] or [h for _i, h in hits]
+    blend = {}
+    for h in contact:
+        for b, x in h[3].items():
+            blend[b] = blend.get(b, 0.0) + x / len(contact)
+    blend = _norm(blend) or {ch.prefix + "spine2": 1.0}
+    per = {i: _norm(h[3]) for i, h in hits if h[3]} if soft else {}
+    for g in list(obj.vertex_groups):
+        if g.name in ch.arm.data.bones:
+            obj.vertex_groups.remove(g)
+    for i in range(len(me.vertices)):
+        for b, x in (per.get(i) or blend).items():
+            g = obj.vertex_groups.get(b) or obj.vertex_groups.new(name=b)
+            g.add([i], x, "REPLACE")
+    attr = me.attributes.get("part") or me.attributes.new("part", "INT", "POINT")
+    for a in attr.data:
+        a.value = part
+    if not hasattr(ch, "seat_report"):
+        ch.seat_report, ch.seat_moves = {}, {}
+    ch.seat_report[obj.name] = (before, after)
+    ch.seat_moves[obj.name] = move
+    print(f"seat {obj.name}: gap {before if before is None else round(before, 4)} -> "
+          f"{after if after is None else round(after, 4)} m, frame {sorted(blend.items(), key=lambda kv: -kv[1])[:3]}")
+    return am.bind(obj, arm_obj=ch.arm)
+
+
+def seat_offset(ch, obj, world_matrix, into, gap=SEAT_GAP):
+    """The move along `into` that seats `obj` at `world_matrix` `gap` off the outermost
+    surface (rigid gear on a socket bone: the slung musket); records the gaps in
+    `ch.seat_report` like `seat`."""
+    into = Vector(into).normalized()
+    srcs = _seat_sources(ch, skip=(obj,))
+    gaps = [h[0] for h in (_cast(srcs, world_matrix @ v.co, into, ch.prefix) for v in obj.data.vertices)
+            if h is not None]
+    if not gaps:
+        return Vector()
+    before = min(gaps)
+    if not hasattr(ch, "seat_report"):
+        ch.seat_report, ch.seat_moves = {}, {}
+    ch.seat_report[obj.name] = (before, gap)
+    print(f"seat {obj.name}: gap {round(before, 4)} -> {gap} m (socket moved)")
+    return into * (before - gap)

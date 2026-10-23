@@ -71,13 +71,21 @@ DEFAULTS = {"build": BUILD, "fit": FIT, "hat": "tricorn", "gear": ("crossbelts",
 
 def _cartridge(ch, name, s):
     box = gear.box(f"{name}.cartridge_box", (0.16, 0.06, 0.12))
-    gear.rigid(box, ch.arm, "hips", Matrix.Translation((-0.15, 0.17, 0.97)) @ Matrix.Rotation(math.radians(30), 4, "Z"))
+    # Behind the right hip on the end of the crossbelt, seated on the coat (`gear.seat`).
+    at = Vector((-0.15, 0.17, 0.97))
+    gear.seat(ch, box, Matrix.Translation(at) @ Matrix.Rotation(math.radians(30), 4, "Z"), (0.15, -0.17, 0.0))
     return ch.add("gear", box, "cartridge")
 
 
 def _knapsack(ch, name, s):
     pack = gear.box(f"{name}.knapsack", tuple(s["fit"]["pack"]))
-    gear.rigid(pack, ch.arm, "spine2", Matrix.Translation((0, s["fit"]["pack_y"], 1.28)))
+    # Two shoulder straps (over the shoulders, down the back under the pack), then the pack
+    # seated on them and the coat, bending with the spine (`gear.seat`, soft).
+    half, top = s["fit"]["pack"][0] / 2, 1.28 + s["fit"]["pack"][2] / 2
+    for side in (1, -1):
+        straps.carry(ch, f"{name}.knapsack_strap_{'l' if side > 0 else 'r'}", (side * (half - 0.05), 1.47),
+                     (side * (half - 0.02), top - s["fit"]["pack"][2] - 0.02))
+    gear.seat(ch, pack, Matrix.Translation((0, s["fit"]["pack_y"], 1.28)), (0.0, -1.0, 0.0), soft=True)
     return ch.add("gear", pack, "knapsack")
 
 
@@ -213,15 +221,16 @@ SLING = "socket.sling"
 # the right shoulder (`SLING_TILT` degrees from upright), the barrel against the coat.
 SLING_AT = (0.0, 0.20, 1.18)
 SLING_TILT = -28
+SLING_GAP = 0.006  # m between the barrel and the coat
 # Sockets shown: in the strike clips and in every other clip (the ramrod's socket,
 # `aim.ROD_SOCKET`, hidden with the musket in the hand).
 SHOW_MELEE = {"socket.hand_r": 0, "socket.hand_l": 0, BLADE: 1, SLING: 1}
 SHOW_REST = {"socket.hand_r": 1, "socket.hand_l": 1, BLADE: 0, SLING: 0}
 
 
-def _add_sockets(arm_obj, prefix=""):
+def _add_sockets(arm_obj, prefix="", sling_at=SLING_AT):
     """Adds `socket.blade_r` (beside `socket.hand_r`, same frame) and `socket.sling` (on
-    `spine2`, on the back) to a built armature; non-deforming."""
+    `spine2`, on the back, at `sling_at`) to a built armature; non-deforming."""
     import bpy
 
     bpy.context.view_layer.objects.active = arm_obj
@@ -234,7 +243,7 @@ def _add_sockets(arm_obj, prefix=""):
         eb.parent, eb.use_deform = hs.parent, False
     if prefix + SLING not in ebs:
         eb = ebs.new(prefix + SLING)
-        eb.head, eb.tail = Vector(SLING_AT), Vector(SLING_AT) + Vector((0.0, 0.0, 0.1))
+        eb.head, eb.tail = Vector(sling_at), Vector(sling_at) + Vector((0.0, 0.0, 0.1))
         eb.parent, eb.use_deform = ebs[prefix + "spine2"], False
     bpy.ops.object.mode_set(mode="OBJECT")
 
@@ -245,9 +254,6 @@ def add_sidearm(ch, name, kind, musket_len):
     import bpy
 
     item, _melee = SIDEARMS[kind]
-    _add_sockets(ch.arm, ch.prefix)
-    am.pose(ch.arm, {})
-    w = gear.hold(ch, item, f"{name}.{kind}", ch.prefix + BLADE, slot="sidearm")
     gun = gear.musket(f"{name}.musket_slung", length=musket_len, bayonet=0.0)
     for c in list(gun.children):  # the muzzle empty: the slung musket is no weapon
         bpy.data.objects.remove(c)
@@ -255,8 +261,13 @@ def add_sidearm(ch, name, kind, musket_len):
     t = math.radians(SLING_TILT)
     axis = Vector((math.sin(t), 0.0, math.cos(t)))
     grip = Vector(SLING_AT) - axis * (musket_len / 2 - 0.25)
-    am.attach(gun, ch.arm, ch.prefix + SLING, Matrix.Translation(grip) @ Matrix.Rotation(t, 4, "Y")
-              @ Matrix.Rotation(math.radians(180), 4, "Z"))
+    at = Matrix.Translation(grip) @ Matrix.Rotation(t, 4, "Y") @ Matrix.Rotation(math.radians(180), 4, "Z")
+    # Seated: the barrel laid against the coat (`gear.seat_offset`), the socket moved with it.
+    d = gear.seat_offset(ch, gun, at, (0.0, -1.0, 0.0), gap=SLING_GAP)
+    _add_sockets(ch.arm, ch.prefix, Vector(SLING_AT) + d)
+    am.pose(ch.arm, {})
+    w = gear.hold(ch, item, f"{name}.{kind}", ch.prefix + BLADE, slot="sidearm")
+    am.attach(gun, ch.arm, ch.prefix + SLING, Matrix.Translation(d) @ at)
     ch.held["musket_slung"] = gun
     ch.keys[gun.name] = "wood"
     ch.sidearm = kind

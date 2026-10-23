@@ -1002,7 +1002,11 @@ def arm(ch, s):
         q = gear.held("quiver", f"{name}.quiver")
         mouth = Vector(held.quiver().sockets["socket.mouth"])
         r = Matrix.Rotation(math.radians(-25), 4, "Y")
-        gear.rigid(q, ch.arm, ch.prefix + "spine2", Matrix.Translation(Vector(cl.QUIVER_MOUTH) - (r.to_3x3() @ mouth)) @ r)
+        # On its strap across the chest, seated on the back (`gear.seat`, `straps.carry`).
+        from . import native, straps
+
+        straps.carry(ch, f"{name}.quiver_strap", *native.QUIVER_STRAP, key="hide")
+        gear.seat(ch, q, Matrix.Translation(Vector(cl.QUIVER_MOUTH) - (r.to_3x3() @ mouth)) @ r, (0.0, -1.0, 0.0))
         ch.add("gear", q, "hide")
     ch.paint_masks = list(getattr(ch, "paint_masks", []))
     if s["shield"]:

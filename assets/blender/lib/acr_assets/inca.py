@@ -556,7 +556,11 @@ def arm(ch, s):
         q = gear.held("quiver", f"{name}.quiver")
         mouth = Vector(held.quiver().sockets["socket.mouth"])
         r = Matrix.Rotation(math.radians(-25), 4, "Y")
-        gear.rigid(q, ch.arm, ch.prefix + "spine2", Matrix.Translation(Vector(cl.QUIVER_MOUTH) - (r.to_3x3() @ mouth)) @ r)
+        # On its strap across the chest, seated on the back (`gear.seat`, `straps.carry`).
+        from . import native, straps
+
+        straps.carry(ch, f"{name}.quiver_strap", *native.QUIVER_STRAP, key="hide")
+        gear.seat(ch, q, Matrix.Translation(Vector(cl.QUIVER_MOUTH) - (r.to_3x3() @ mouth)) @ r, (0.0, -1.0, 0.0))
         ch.add("gear", q, "hide")
     ch.paint_masks = list(getattr(ch, "paint_masks", []))
     if s["shield"]:
@@ -569,7 +573,8 @@ def arm(ch, s):
         frame = bpy.data.objects.new(f"{name}.shield_frame", None)
         bpy.context.scene.collection.objects.link(frame)
         frame.matrix_world = at
-        gear.rigid(sh, ch.arm, ch.prefix + "spine2", at)
+        gear.seat(ch, sh, at, (0.0, -1.0, 0.0), turn=False)
+        frame.matrix_world = ch.seat_moves[sh.name] @ at  # the design's frame moves with it
         ch.add("gear", sh, "inca_shield")
         ch.paint_masks.append(masks.entry("chimalli_halves", ("inca_shield",), s["shield_design"], frame=frame.name,
                                           radius=0.24))

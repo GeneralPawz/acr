@@ -394,6 +394,35 @@ belt). The family sets `ch.strap_surface`, `ch.strap_offsets`, `ch.strap_under` 
 the names of `straps.STRAPS` its spec lists with the cloth, before `bone_layer`
 (`line.make`). EngM18 and FrnM18 rebuild unchanged: glTF JSON, vertices and textures byte-identical to batch 0a's build; the only bytes that differ (262 and 348) are the triangle order of the hidden bone layer, the same triangles (Blender's nondeterminism; batch 0a saw 344). Builds in `ACR-analysis/humans-b0b/build.log`, sheets `sheet_clips.png`, `sheet_masks.png` there.
 
+### Seated gear (`gear.seat`, `straps.carry`; m2-backgear)
+
+Carried gear no longer floats at a fixed offset on one bone. `gear.seat(ch, obj, matrix,
+into)` places the item, casts a ray from every vertex along `into` (towards the body) onto
+the outermost surface built so far (flesh, clothes, belts and gear already on them; shoes
+left out), turns the item (at most 25°) so its contact side lies along the surface's mean
+normal, and moves it along `into` until its nearest vertex is `SEAT_GAP` (5 mm) off. It is
+skinned like the surface under it: `soft` (the knapsack) each vertex with the interpolated
+weights of the face its ray hit, so it bends with spine2/spine1; rigid items (quiver, back
+shield, cartridge box, horn, pouch) every vertex with the contact area's blended weights,
+a rigid frame between spine2, spine1 and the clavicles instead of one bone.
+`ch.seat_report[name]` = (gap before, gap after) and `ch.seat_moves[name]` (the applied
+move, e.g. for the Inca shield's design frame) are kept; the build log prints `seat ...`.
+
+`straps.carry(ch, name, frm, to, width, key)` lays a carrying strap like `belt` (XZ line,
+front and back) over the outermost surface (skin + clothes + belts, 4 mm off) and gives it
+the weights of the garments under it; it joins the gear layer so the item seated after it
+rests on it. Users: `line._knapsack` (two shoulder straps, then the pack on them),
+`native.kit`/`meso.arm`/`inca.arm` quivers (`native.QUIVER_STRAP`: right shoulder across
+the chest to the left hip, along the quiver on the back). The cartridge box hangs on the
+end of the crossbelt; native horn and pouch on the end of `belt_l`.
+
+The slung musket (`line.add_sidearm`) stays rigid on its `socket.sling` bone (it is shown
+and hidden by the socket's scale), but `gear.seat_offset` moves socket and musket so the
+barrel lies `SLING_GAP` (6 mm) off the coat. Open: its sling (a strap that hides with the
+musket needs it on the socket, not on the body), a socket on a blended back frame, the
+frontier family's horn and box (`frontier.py`, not yet seated), and secondary motion (a
+damped lag bone per carried item near the camera, like `ingame/cloth_view.rs`).
+
 ## 1. What the sprites tell
 
 `ENGM18.MD` packs: `USERLC 1 EngM18G` (walk, `MOTION_*`), `2 EngM18B` (not referenced by any
