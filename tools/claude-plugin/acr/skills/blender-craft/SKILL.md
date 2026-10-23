@@ -11,7 +11,12 @@ Read the reference when you do the work:
 - `references/mesh-and-materials.md` when modelling, decimating, unwrapping, texturing or exporting;
 - `references/rigging-and-animation.md` when weighting, posing, solving IK or keying clips;
 - `references/cloth.md` when draping or fixing garments;
-- `references/bpy.md` when writing or speeding up build scripts.
+- `references/bpy.md` when writing or speeding up build scripts;
+- `references/human-figure.md` when shaping, weighting or painting people: proportions, landmarks, skin, typical mistakes;
+- `references/animals-and-gaits.md` for horses and animals: conformation, footfall timing, falls;
+- `references/period-drill.md` for drills and fighting motion: the 1764 Manual Exercise, aimed fire, bayonet, pike, sword, native weapons.
+
+The figures in the last three are ranges from standard references, not measurements. Prefer the user's recorded drills and the original's sprites where they exist.
 
 ## Ten rules that prevent most bad results
 
