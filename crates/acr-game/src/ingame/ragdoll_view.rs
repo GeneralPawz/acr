@@ -632,6 +632,7 @@ fn struck_generic(hit: &HitRecord, g: &Generic) -> (usize, Region) {
 }
 
 /// A unit's instance this frame, as [`Ragdolls::update`] needs it.
+#[derive(Clone, Copy)]
 pub struct Drawn<'a> {
     pub unit: &'a Unit,
     pub index: usize,
@@ -709,6 +710,7 @@ impl Ragdolls {
         seconds: f32,
         hits: &[&HitRecord],
         drawn: &[Drawn<'_>],
+        mounted: &[Drawn<'_>],
         focus: [f32; 2],
         terrain: &TerrainData,
         killed: &dyn Fn(u32) -> bool,
@@ -810,7 +812,9 @@ impl Ragdolls {
                     self.mapping(d.model, d.data);
                 }
             }
-            self.strikes.update(seconds, drawn, &self.maps, focus, &mut self.poses);
+            // Riders (bones prefixed `rider.`) take part in the strikes only.
+            let all: Vec<Drawn<'_>> = drawn.iter().chain(mounted).copied().collect();
+            self.strikes.update(seconds, &all, hits, &self.maps, focus, &mut self.poses);
         }
     }
 
@@ -1199,19 +1203,13 @@ pub(super) fn repose(
         .collect()
 }
 
-/// A direction of the model's rest pose (skeleton axes, `+z` up) as slot `slot` carries it
-/// in `palette`, in physics.
-pub(super) fn slot_direction(data: &ModelData, palette: &Palette, slot: usize, transform: &Mat4, rest: Vec3) -> Vec3 {
-    let bind = data.pose(None, 0.0);
-    let (Some(now), Some(then)) = (palette.get(slot), bind.get(slot)) else { return rest };
-    let m = math::mul(
-        &math::mul(&physics_of_world(), transform),
-        &math::mul(&math::mul(&rows_to_mat(now), &affine_inverse(&rows_to_mat(then))), &SKELETON_TO_GLTF),
-    );
-    // A vector (w = 0) through the column-major matrix.
-    let v = [rest.x, rest.y, rest.z];
-    let c = |i: usize| (0..3).map(|k| m[k][i] * v[k]).sum::<f32>();
-    Vec3::new(c(0), c(1), c(2))
+/// Where node `node` of the model lies in `globals` (the clip's node transforms), and its
+/// local axis `axis` there, both in physics. The held weapons are built along their local
+/// +Z in Blender, which the glTF export turns into the node's local +Y.
+pub(super) fn node_frame(globals: &[Mat4], node: usize, axis: Vec3, transform: &Mat4) -> (Vec3, Vec3) {
+    let m = math::mul(&math::mul(&physics_of_world(), transform), &globals[node]);
+    let col = |i: usize| Vec3::new(m[i][0], m[i][1], m[i][2]);
+    (col(3), col(0) * axis.x + col(1) * axis.y + col(2) * axis.z)
 }
 
 /// Height of the terrain (physics metres) under the physics point `(x, y)`.

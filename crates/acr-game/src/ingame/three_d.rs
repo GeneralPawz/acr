@@ -457,6 +457,8 @@ impl ThreeD {
         let mut unit_models: HashMap<u32, (UnitModel, usize)> = HashMap::new();
         // Rigged men drawn: unit index → instance index (ragdolls, #278).
         let mut rigged: Vec<(usize, usize)> = Vec::new();
+        // Riders (bones prefixed `rider.`): only the strike layer poses them.
+        let mut riders: Vec<(usize, usize)> = Vec::new();
         // Ships and guns drawn (`acr_machine`): their hits splash no blood.
         let mut machines: std::collections::HashSet<u32> = std::collections::HashSet::new();
         let now = world.tick.0;
@@ -539,6 +541,10 @@ impl ThreeD {
                 }
             }
             let (mut inst, at) = instance(u, death, index, model, terrain, self.gore, removed_at, wounds);
+            // The strike clip for the blow (`docs/melee.md`, Strike clips), when the model has one.
+            if let Some(c) = super::strike_view::strike_clip(model, world, u) {
+                inst.clip = Some(c);
+            }
             if model.world_clock && !u.building {
                 inst.time = world_time(model, inst.clip, u, now, record.tick);
             }
@@ -666,6 +672,8 @@ impl ThreeD {
             // Men of skeleton H and animals (their own ragdolls).
             if (model.rig.is_some() || super::ragdoll_view::animal_model(model)) && !u.building {
                 rigged.push((u.id.0 as usize, self.instances.len()));
+            } else if living && !u.building && model.nodes.iter().any(|n| n.name == "rider.hips") {
+                riders.push((u.id.0 as usize, self.instances.len()));
             }
             self.instances.push(inst);
             self.shown.insert(u.id);
@@ -740,7 +748,7 @@ impl ThreeD {
             };
             self.maulers.place(world, self.frame_seconds, &rigged, &mut self.instances, &rig, &lying, &ground);
         }
-        self.update_ragdolls(world, terrain, &rigged);
+        self.update_ragdolls(world, terrain, &rigged, &riders);
         // Appended last: the indices above refer to one instance per unit.
         for (i, damage) in pieces {
             let body = self.instances[i];
@@ -778,26 +786,36 @@ impl ThreeD {
     }
 
     /// Body physics of the hit and the dying (#278): ragdolls pose their instances.
-    fn update_ragdolls(&mut self, world: &World, terrain: &TerrainData, rigged: &[(usize, usize)]) {
+    fn update_ragdolls(
+        &mut self,
+        world: &World,
+        terrain: &TerrainData,
+        rigged: &[(usize, usize)],
+        riders: &[(usize, usize)],
+    ) {
         let Some(renderer) = self.renderer.as_ref() else { return };
         let ragdolls = self.ragdolls.get_or_insert_with(Default::default);
-        let mut drawn = Vec::with_capacity(rigged.len());
-        for &(u, i) in rigged {
-            let (Some(unit), inst) = (world.units.get(u), &self.instances[i]) else { continue };
-            let Some(data) = renderer.model(inst.model) else { continue };
-            drawn.push(super::ragdoll_view::Drawn {
-                unit,
-                index: i,
-                model: inst.model,
-                data,
-                clip: inst.clip,
-                time: inst.time,
-                transform: inst.transform,
-            });
-        }
+        let drawn_of = |list: &[(usize, usize)]| {
+            let mut drawn = Vec::with_capacity(list.len());
+            for &(u, i) in list {
+                let (Some(unit), inst) = (world.units.get(u), &self.instances[i]) else { continue };
+                let Some(data) = renderer.model(inst.model) else { continue };
+                drawn.push(super::ragdoll_view::Drawn {
+                    unit,
+                    index: i,
+                    model: inst.model,
+                    data,
+                    clip: inst.clip,
+                    time: inst.time,
+                    transform: inst.transform,
+                });
+            }
+            drawn
+        };
+        let (drawn, mounted) = (drawn_of(rigged), drawn_of(riders));
         let hits: Vec<_> = world.hits.iter().collect();
         let killed = |v: u32| world.units.get(v as usize).is_none_or(|u| u.id.0 != v || !u.alive || u.death > 0);
-        ragdolls.update(world.tick.0, self.frame_seconds, &hits, &drawn, self.focus, terrain, &killed);
+        ragdolls.update(world.tick.0, self.frame_seconds, &hits, &drawn, &mounted, self.focus, terrain, &killed);
         for &i in ragdolls.poses.keys() {
             // The physics pose replaces the lying pose's flattening.
             self.instances[i].morphs[1] = 0.0;

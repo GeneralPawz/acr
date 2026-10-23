@@ -155,52 +155,68 @@ As agreed; no change. Additions the renderer can read: `Body::bleed_out`, `Body:
 ## Animation
 
 Render side only (`crates/acr-game/src/ingame/strike_view.rs`, called from `ragdoll_view`
-after the gait layer; `ACR_NO_STRIKE` turns it off).
+after the gait layer; `ACR_NO_STRIKE` turns the layer off).
 
-- **Aimed strikes:** a man who attacks a unit (`AnimKind::Attack`, `PAttack`, `PStand` with
-  an `Order::Attack` target that is drawn) bends his trunk so that his weapon points at the
-  victim. The weapon is taken to point level along the hips' facing (reading the right-hand
-  socket's axis from the clip, `ragdoll_view::slot_direction`, gave an upright musket for a
-  levelled bayonet and is not used yet); its point lies `REACH` (1.0 m) along it from the
-  hand and turns with the hand as the trunk bends. The rotation that takes that point onto the target, seen
-  from the lower spine, is shared between `spine` (55 %) and `spine2` (the rest), clamped to
-  75° in all, and fades in and out with the attack stance (8/s). The clip keeps its own
-  motion: the bayonet lunge, the sabre cut, the shot and the reload are the clip's, turned
-  onto the victim.
-- **Target point** (`strike_height`): a man on the ground (crawling, dying, dead) is struck at
-  0.2 m over his ground point, a rider at 1.65 m, a standing man at 1.15 m. On foot, a blow
-  at a man on the ground also sinks the attacker 0.2 m into his knees, his feet kept where
-  the clip put them by leg IK (`gait::Rig::two_bone_ik`).
-- **Riders:** prepared but not active. Mounted models can be mapped onto skeleton H with the
-  `rider.` prefix (`Mapping::with_prefix`; the horse's bones ride on the rider's hips, which
-  the layer never moves), but `three_d.rs` passes only models with a skeleton-H `rig` to
-  `ragdoll_view`, so riders never reach the layer yet: a rider does not lean down at a man
-  on the ground.
-- **Socket animation kept:** the bent pose goes back into the palette as each bone's change
-  (`ragdoll_view::repose`), so a socket keeps its own keyed orientation relative to the hand
-  (the musket's "world" keys), unlike the ragdoll's and the gait's `palette_of`.
-- **Contract with the sim** (`HitRecord::strike`, not on main yet): `strike_view::StrikeHeight`
-  is a local copy of the sim's `StrikeHeight`; `strike_height(victim, strike)` prefers the
-  sim's height when given (`TODO(m2-melee)`: pass the attacker's last strike, and `Low` for
-  a kneeling man, which the renderer cannot see itself).
+### Strike clips
 
-Bench: `ACR-analysis/melee-anim/melee_bench.py` (white blank field, HUD off; an `EngM18`
-ordered to attack a standing or crawling `EngM18`, and the same for an `EngD18`), sheets
-`ACR-analysis/melee-anim/on/sheet_*.png`. Against a crawler the bayonet now points down
-by about 15–20° instead of slightly up; it does not yet reach him (he crawls out of reach,
-and the bend is small): it reads as "lowered", not yet as a stab down.
+A man playing `ATTACK` (or `ATTACKn`) at a unit plays a strike clip when his model has one
+(`strike_view::strike_clip`, picked in `three_d.rs`), else the `.MD` clip. Names, best first:
+
+1. `ATTACK_<KIND>_<HEIGHT>`: kind `THRUST`, `CUT`, `SMASH`, `SHOT` (`BITE` for animals),
+   height `HIGH`, `MID`, `LOW`, `DOWN` (`acr_sim::combat::{StrikeKind, StrikeHeight}`);
+2. `ATTACK_<HEIGHT>` (by height alone);
+3. the `.MD` clip.
+
+Kind and height come from the sim: the latest `HitRecord::strike` of this attacker at this
+victim (`last_strike`: a hit on the victim struck from where the attacker stands, `pos -
+dir` within 48 px). Before the first blow the kind is unknown and the height comes from the
+victim's pose (on the ground `Down`, mounted `High`, else `Mid`); a man on the ground is
+always struck `Down`.
+
+**Timing.** A strike clip has the frame count of the `.MD` line `ATTACK` and plays on its
+frames. The sim lands the blow at the active frame of `ATTACK` (`combat.rs`, (A)); no unit
+we build has a `SETACTIVEPOINT #ATTACK`, so that is frame 1 rounded up to even: **frame 2**
+(`poses.STRIKE_HIT_FRAME`). The clips open at the end of the wind-up, hit at frame 2, hold,
+recover, and wind up again by the end (`ATTACK` loops while the fight goes on).
+
+Built so far (`poses.musketeer_strikes`, all musketeers built by `musketeer_clips`: EngM18):
+`ATTACK_THRUST_MID` (bayonet lunge), `ATTACK_THRUST_DOWN` and `ATTACK_DOWN` (a long step in,
+knees bent, the muzzle 48° down), `ATTACK_SMASH_MID` (butt stroke; not chosen by the sim yet),
+`ATTACK_SHOT_DOWN` (point-blank from the hip).
+
+### The aiming layer
+
+- **Weapon axis:** from the clip's node transforms (`ragdoll_view::node_frame`): the
+  musket's `socket.muzzle` from `socket.hand_r` (axis and reach: 1.44 m for EngM18), else the
+  first weapon node under `socket.hand_r` (its local +Y, Blender's +Z) with `REACH` 0.9 m.
+  This replaces `slot_direction`, which read an upright musket for a levelled bayonet.
+- **Step in:** on foot, when arm and weapon cannot reach the target, the man moves towards
+  it by the lack (at most `STEP` 0.5 m), the leading foot along, the other planted (leg IK);
+  at a man on the ground he also sinks 0.25 m into his knees.
+- **Trunk bend:** as before (lower spine 55 %, chest the rest, 75° in all).
+- **Arm IK:** the right hand goes where the weapon's point meets the target (two-bone IK of
+  the right arm), then the hand turns the weapon onto the target (at most 90°); a musket's
+  left hand follows the stock 0.45 m along it.
+- **Riders:** models with `rider.` bones (`rider.hips`) are now passed to the layer
+  (`three_d.rs` → `Ragdolls::update(mounted)` → `Strikes::update`), only to it (no ragdoll,
+  gait or cloth), mapped by `Mapping::with_prefix`.
+
+Bench: `ACR-analysis/melee-anim2/melee_bench.py` (white blank field, HUD off; the crawling
+victim has lost both arms, so he writhes in place). Sheets: `melee-anim2/layer/` (old clips,
+new layer), `melee-anim2/clips/` (new EngM18 strike clips).
 
 ### Not yet
 
-- No new keyframed clips: every melee strike still plays the unit's `ATTACK` clip (the
-  musketeer's two bayonet lunges, the rider's cut up and cut down, the lance thrust) and is
-  only turned onto the target. Weapon-specific clips (butt smash, overhead and diagonal
-  cuts, a club's hack, a point-blank shot down) and choosing among them by weapon and
-  target height need asset builds and a clip-name scheme the game can pick from.
-- Cavalry with a carbine (`EngD18`) still swings the carbine in `ATTACK` (the sabre stays at
-  the hip): the fix belongs in `cavalry.add_clips` (draw the sabre into the right hand,
-  hide the gun) and needs an asset build.
-- The hit moment is not matched to the sim's strike tick; the bend holds through the whole
-  clip, so the clip's lunge reaches the target whenever it lunges.
-- The weapon's reach is one length for all (1.0 m from the hand); the left hand of a
-  two-handed weapon follows the chest, not the weapon.
+- **Looks:** against a crawler the bayonet now reaches him: a stab down with a step in.
+  Against a standing man the arm IK and the hand turn often fight the clip: the musket
+  swings about between frames, and the butt-smash keys hold the musket at odd angles.
+  The poses are first drafts.
+- **Riders** reach the layer in code, but the bench (EngD18 at a crawler) showed no lean
+  yet; not debugged. The dragoon still swings the carbine (`cavalry.add_clips`: draw the
+  sabre, sling the carbine) and there are no mounted strike clips (`ATTACK_CUT_DOWN`,
+  lance `ATTACK_THRUST_DOWN`).
+- No officer sword clips (no foot officer is built; EngKF18 is a mounted standard bearer),
+  no native club or tomahawk hack, no lance/spear clips for PueVsdA (`PIKA`) or SiuKStr.
+- The sim never picks `Smash` for musketeers, so `ATTACK_SMASH_MID` is unused.
+- Only EngM18 was rebuilt (VM) and copied to the showcase models (old one in
+  `showcase/models/backup-melee-anim2/`).
