@@ -309,6 +309,7 @@ pub fn command(game: &Game, v: &Value) -> Result<Vec<Command>, String> {
         "stop" => one(Command::Stop { player, units: units()? }),
         "attack" => one(Command::Attack { player, units: units()?, target: id(v, "target")? }),
         "attack_ground" => one(Command::AttackGround { player, units: units()?, x: int(v, "x")?, y: int(v, "y")? }),
+        "canister" => one(Command::Canister { player, units: units()? }),
         "friendly_fire" => one(Command::FriendlyFire {
             player,
             units: units()?,

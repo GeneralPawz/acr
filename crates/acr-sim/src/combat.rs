@@ -481,6 +481,8 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
     };
     let high_ns = ns > 0 && is_high(w, &ta, ns - 1);
     let (u_frame, u_frames, u_anim) = (u.frame, u.anim_frames, u.anim);
+    // Hit-locations rule: a gun's fire mode decides canister or ball (`artillery::gun_shot`).
+    let gun = crate::artillery::gun_shot(w, i, point, times, e_bld, dst);
 
     // (A) The strike animation reached its active frame: hit or shoot.
     if ns > 0 && !delayed {
@@ -497,8 +499,13 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
                     dst1 -= 2 * (my_z - en_z);
                 }
                 let dr2 = (a.radius.1 + a.add_radius) * add_range / 100;
-                let min = if stands_over(w, i, aim, a.weapon.is_some()) { 0 } else { a.radius.0 };
-                let in_range = dst >= min && dst1 <= dr2;
+                let min = match gun {
+                    _ if stands_over(w, i, aim, a.weapon.is_some()) => 0,
+                    Some((_, k, m)) if k == ns - 1 => m,
+                    _ => a.radius.0,
+                };
+                // A gun whose stance holds the other load fires only after the change.
+                let in_range = dst >= min && dst1 <= dr2 && gun.is_none_or(|(_, k, _)| k == ns - 1);
                 let (damage, weapon) = (a.damage, a.weapon.is_some());
                 let pause = a.pause;
                 let u = &mut w.units[i];
@@ -512,7 +519,16 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
                     if weapon {
                         // A wounded arm (#225, optional rule): the shot does not go off.
                         if !w.units[i].body.disarmed() {
+                            let outer = w.shot_carry;
+                            w.shot_carry = crate::projectile::Shot {
+                                mode: gun.map_or(0, |(m, _, _)| m as u8),
+                                target: match aim {
+                                    Aim::Unit(j) if e_bld => Some(w.units[j].id),
+                                    _ => None,
+                                },
+                            };
                             shoot(w, i, aim, ns - 1, my_z, en_z, can_set_delay, times);
+                            w.shot_carry = outer;
                         }
                     } else if let Aim::Unit(j) = aim {
                         // Hit-locations rule: a loaded musketeer over a man on the ground
@@ -564,6 +580,11 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
     if u.melee_only && !e_bld {
         // Melee only (OB+0x2a bit2, 0x51bdc6): always the first index; not against buildings.
         chosen = Some(0);
+    }
+    if let Some((_, k, _)) = gun
+        && ta.attacks[k].mask & e_mat != 0
+    {
+        chosen = Some(k);
     }
     if u.delay != 0
         && let Some(k) = (0..ta.attacks.len()).rev().find(|&k| ta.attacks[k].no_pause && fits(k))
@@ -621,7 +642,10 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
     // Hit-locations rule: a man on foot closes in to stand over a man on the ground before
     // the finishing blow (`melee::FINISH_REACH`); riders strike from their reach.
     let mut reach = a.radius.1 + add;
-    let mut min = a.radius.0;
+    let mut min = match gun {
+        Some((_, g, m)) if g == k => m,
+        _ => a.radius.0,
+    };
     if stands_over(w, i, aim, a.weapon.is_some()) {
         let close = crate::melee::FINISH_REACH;
         // Where he steps to: his stance beside the torso, else (both sides blocked) straight
@@ -974,7 +998,14 @@ fn shoot(w: &mut World, i: usize, aim: Aim, att: usize, my_z: i32, en_z: i32, ca
             blocked_shot(w, i, (x0, y0, z0), c, Some(wid), ShotStop::Fire { can_set_delay });
             return;
         }
+        let aimed = c;
         razbros(w, i, &mut c);
+        if w.shot_carry.mode == crate::artillery::GunMode::Direct as u8 {
+            // Direct fire (hit-locations rule): laid with care, half the dispersion.
+            let s = crate::artillery::DIRECT_SCATTER;
+            c.0 = aimed.0 + (c.0 - aimed.0) * s / 100;
+            c.1 = aimed.1 + (c.1 - aimed.1) * s / 100;
+        }
         crate::projectile::create(w, wid, (x0, y0, z0), c, Some(i), att as u8, None, (0, 0, 0), 0);
         if catalog.get(w.units[i].kind).sector_weapon.is_some_and(|s| usize::from(s.att) == att) {
             crate::artillery::sector_damage(w, i);

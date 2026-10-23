@@ -541,6 +541,10 @@ pub struct World {
     /// handed to its bounce. Only during `explode` and only with the hit-locations rule;
     /// not hashed.
     pub plough_carry: Option<crate::projectile::Plough>,
+    /// The fire mode ([`crate::projectile::Shot`]) of the shot being created,
+    /// handed to its projectiles and their children. Only with the hit-locations rule and only
+    /// while a gun shoots or a ball explodes; not hashed.
+    pub shot_carry: crate::projectile::Shot,
     /// Coast places, islands and the computer players' landing setup (derived from the map
     /// and refreshed every tick; not hashed, the landings' orders are in `brigades`).
     pub desant: crate::desant::Desant,
@@ -699,6 +703,7 @@ impl World {
             hit_height: None,
             hit_cause: None,
             plough_carry: None,
+            shot_carry: crate::projectile::Shot { mode: 0, target: None },
             desant: Default::default(),
             peace: Default::default(),
             game_options: [0; 3],

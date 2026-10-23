@@ -791,13 +791,29 @@ described in [simulation.md](simulation.md#fog-of-war).
     y0 − 9, `(w − 12)·(D − delay)/D` + 2 long with `D = MaxDelay` (+0x8f, 1 if 0) or
     `delay` (+0x8c) if larger: empty right after a shot, full when loaded. The end caps
     then reach down to y0 − 9.
-- Canister mark (`ingame/canister_mark.rs`): a selected own cannon (a type with
-  `WEAPONINSECTOR`) shows a red X on the ground where its canister goes: the point of the
-  ground attack it is carrying out, else the point `KARTECH` aims at (0x4dc8fa:
-  `NewAttackPoint(x + TCos[dir], y + TSin[dir])`, 256 px ahead along its facing). Built from
-  the original as players describe it; the original's drawing routine was not located (no
-  reader of the sector weapon NM+0x2940 or of the ground-attack link 0x51bc5b in the
-  drawing code), so its exact sprite, colour and condition are not confirmed.
+- Gun marks (`ingame/gun_marks.rs`, not in the original, which draws no gun ranges; the
+  red X of the canister mark before is gone): a selected own cannon (a type with
+  `WEAPONINSECTOR`) shows on the ground what its fire mode covers, in the selection
+  brackets' yellow (`GetPaletteColor(255, 255, 0)`) as one-pixel lines following the ground
+  with a dark edge one pixel under them, like the brackets and formation marks:
+  - **canister** (an idle gun's own volley ahead, `KARTECH`, an attack on men within the
+    canister's reach): the `WEAPONINSECTOR` sector, both edges and the arc at its reach
+    `r2` dashed (48 px on, 32 off), a dotted arc at half reach (the damage falls off
+    linearly to `d2` there); no minimum zone;
+  - **ground fire** (`ATTACKGROUND`): a dotted line along the flight to the first graze (the
+    aim point), a ring of 24 px there, the lane the ball skips along as two dashed lines
+    32 px either side for `artillery::GROUND_LANE` px, with a cross tick at each likely
+    skip (each skip half as long as the one before);
+  - **direct fire** (an attack on a building, or on men beyond canister reach): a solid line
+    to the aim point with a 40 px cross bar and a dashed line on for
+    `artillery::DIRECT_LANE` px, where a miss bounces out;
+  - the **too-close area** of a ball mode (ground fire: `artillery::GROUND_MIN`; without the
+    hit-locations rule the ball's `ATTACK_RADIUS` minimum): a dashed grey ring around the
+    gun, hatched with dotted grey diagonals every 64 px.
+  The mark follows the gun's current attack (`gun_marks::current`); while aiming it follows
+  the cursor instead: the ground point under it in the attack-ground mode, else the enemy
+  under it. The mode is the sim's own choice (`artillery::gun_shot`) with the hit-locations
+  rule, else the original's by distance. Not drawn in the zoomed-out view.
 - Panic shouts (0x600bc8, #209): with Tab on, every flight leg of a panicking unit adds one
   of the eight `FEAR_RNDM0..7` lines of `TEXT\MORALE_TEXT.TXT` ("Wir werden alle sterben
   ...", "Rette sich, wer kann!", picked with the C library's `rand() & 7`), centred at

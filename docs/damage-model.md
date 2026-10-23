@@ -222,6 +222,40 @@ idle); back to idle as the corpses freeze again.
 Test driver: `{"cmd":"command","command":{"type":"attack_ground","units":[gun],"x":..,"y":..}}`
 bombards a ground point (`ballgraze.py` in the analysis folder).
 
+### Gun modes (`acr_sim::artillery::GunMode`, hit-locations rule)
+
+The original's cannon (`ARTPUS.MD`) has two attack indices and four commands: index 4
+`IADRO` (weapon `PPOINTT` → `NUCL2P`, a ball at a fixed 10° (`ANGLE 10`) that bounces on as
+`SKOKAT`; `ATTACK_RADIUS 4 1500 6000`) and index 5 `KARTECH` (`PSMPOINTTPUS` and the
+`WEAPONINSECTOR 5 64 1500 400 1 32 50` sector, `ATTACK_RADIUS 5 0 1500`); the attack link
+picks the index by distance alone, so any attack (also `ATTACKGROUND`) within 1500 px fires
+canister and beyond it a ball. The commands are a plain attack, `ATTACKGROUND`
+(`ARTPODGOTOVKA`, bombard a point until stopped), `KARTECH` (one canister volley 256 px
+ahead) and `PREKARTECH` (load canister). With the rule off all of this is unchanged (the
+pinned hashes hold). With the rule on the command decides the shot (`artillery::gun_shot`,
+the same network and replay commands):
+
+| Mode | Command | Shot | Minimum | Ballistics |
+|---|---|---|---|---|
+| Canister | `KARTECH`, the automatic volley, an attack on men within 1500 px, `ATTACKGROUND` closer than the minimum | canister, unchanged | none (`r1` 64) | unchanged |
+| Ground fire | `ATTACKGROUND` (until stopped) | ball | `GROUND_MIN` 600 px | `GROUND_ELEVATION` 2°: first graze at the point, a long low skipping lane |
+| Direct fire | an attack on a building at any range, or on men beyond 1500 px | ball | none | `DIRECT_ELEVATION` 5°, `DIRECT_SCATTER` 50 % of `RAZBROS`; strikes the building it is laid on when it flies into it (within its `ADDSHOTRADIUS`, at least `DIRECT_BUILDING_REACH` 64 px, below `DIRECT_BUILDING_TOP` 180 px); a miss bounces on |
+
+A ground- or direct-fire ball low enough to hurt (`DAMAGEHEIGHT`) also sweeps the way it
+rolled each tick in steps of 16 px (at most 16), so a fast low ball does not skip between
+the files of a line (the original strikes only where the ball is at the tick's end).
+
+**Real numbers behind them.** A 6 pdr (95 mm, 2.7 kg ball) leaves the muzzle at about
+450 m/s, a 12 pdr (117 mm, 5.4 kg) at about 485 m/s; the barrel lies about 1 m over the
+ground. Laid level (0°) the ball first grazes at 300–400 m and skips on in ever shorter
+bounds to 1000–1200 m (ricochet fire, the gunners' preferred fire at troops); at 1–3° the
+first graze moves out to 600–900 m. Canister is effective to 300–400 m (light guns) and
+600 m at most. The game compresses ranges: its ball reaches 6000 px (200 m at 30 px/m)
+for some 1200 m of a real gun, a factor of about 6, which also makes its canister reach of
+1500 px the real 300 m. So the 600 px minimum of ground fire is about 120 m real (closer the
+ball buries itself rather than skips), and the elevations are steeper than real ones in
+proportion to the shorter flights (2° and 5° against the original's flat 10°).
+
 **Cannonball energy (#262, "a direct hit should shred the troop").** A 6 to 12 pdr roundshot
 keeps lethal energy over its whole flight (hundreds of metres, bounces included) and through
 several men, so the energy at a man is what the bodies before him left of the ball

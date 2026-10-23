@@ -43,6 +43,25 @@ pub struct Projectile {
     /// The men a low cannonball has ploughed through (only with
     /// [`crate::Rules::hit_locations`]; hashes to nothing while empty).
     pub plough: Plough,
+    /// The gun's fire mode and target ([`Shot`]; only with
+    /// [`crate::Rules::hit_locations`], hashes to nothing while the mode is 0).
+    pub shot: Shot,
+}
+
+/// A projectile's fire mode, see [`Projectile::shot`]: the mode (0 none) and, for direct
+/// fire at a building, the building it strikes when it flies into it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Shot {
+    pub mode: u8,
+    pub target: Option<EntityId>,
+}
+
+impl std::hash::Hash for Shot {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        if self.mode != 0 {
+            (self.mode, self.target).hash(state);
+        }
+    }
 }
 
 /// Bodies a ball can plough through with [`crate::Rules::hit_locations`] on (#256).
@@ -287,6 +306,7 @@ pub fn create(
         dest_obj,
         // A bounce goes on with what is left of the ball (only set with the rule on).
         plough: if wp.damage_height != 0 { w.plough_carry.unwrap_or_default() } else { Plough::default() },
+        shot: if w.rules.hit_locations { w.shot_carry } else { Shot::default() },
     };
     let (dx, dy, dz) = (d.0 - xs, d.1 - ys, d.2 - zs);
     let mut explode_now = false;
@@ -347,7 +367,9 @@ pub fn create(
         }
         Propagation::Angle => {
             let dist = isqrt(i64::from(dx) * i64::from(dx) + i64::from(dy) * i64::from(dy));
-            let tan = libm::tan(f64::from(wp.speed) * DEG_TO_RAD);
+            // Hit-locations rule: ground and direct fire lay the gun lower (`GunMode`).
+            let deg = crate::artillery::GunMode::from_u8(p.shot.mode).and_then(|m| m.elevation()).unwrap_or(wp.speed);
+            let tan = libm::tan(f64::from(deg) * DEG_TO_RAD);
             let hgt = (dist as f64 * tan) as i32;
             let e = d.2 - hgt - zs;
             if e >= 0 || az == 0 {
@@ -499,6 +521,19 @@ fn ball_damage(
     }
 }
 
+/// The building a direct-fire ball `p` has flown into (hit-locations rule, `GunMode::Direct`).
+fn direct_target(w: &World, p: &Projectile) -> Option<usize> {
+    if !w.rules.hit_locations || p.shot.mode != crate::artillery::GunMode::Direct as u8 {
+        return None;
+    }
+    let b = p.shot.target?.0 as usize;
+    let u = w.units.get(b).filter(|u| u.building && u.living())?;
+    let (x, y, z) = (p.pos.0 >> 14, p.pos.1 >> 14, p.pos.2 >> 14);
+    let (bx, by) = u.pos.pixels();
+    let r = w.catalog.get(u.kind).add_shot_radius.max(crate::artillery::DIRECT_BUILDING_REACH);
+    (norma(x - bx, y - by) <= r && z < h(w, bx, by) + crate::artillery::DIRECT_BUILDING_TOP).then_some(b)
+}
+
 /// The flight direction of a round on the ground plane (world pixels, not normalised).
 fn flight_dir(p: &Projectile) -> (i32, i32) {
     (p.vel.0 >> 8, p.vel.1 >> 8)
@@ -552,6 +587,8 @@ pub fn explode(w: &mut World, slot: usize, ground: bool) {
     }
     // With the hit-locations rule a bounce carries on what is left of the ball.
     let outer_carry = w.plough_carry;
+    let outer_shot = w.shot_carry;
+    w.shot_carry = p.shot;
     w.plough_carry = (w.rules.hit_locations && wp.damage_height != 0)
         .then(|| w.projectiles.slots[slot].map_or(p.plough, |q| q.plough));
     let m = w.projectiles.media;
@@ -583,6 +620,7 @@ pub fn explode(w: &mut World, slot: usize, ground: bool) {
         }
     }
     w.plough_carry = outer_carry;
+    w.shot_carry = outer_shot;
     w.detonation = None; // 0x557c6e
 }
 
@@ -643,6 +681,16 @@ pub fn process(w: &mut World) {
         p.vel.2 += p.az;
         p.pos = (p.pos.0 + p.vel.0, p.pos.1 + p.vel.1, p.pos.2 + p.vel.2);
         w.projectiles.slots[slot] = Some(p);
+        // Hit-locations rule: a direct-fire ball strikes the building it was laid on when it
+        // flies into it (within its `ADDSHOTRADIUS`, at least 64 px, and below its top).
+        if let Some(b) = direct_target(w, &p) {
+            if let Some(Some(q)) = w.projectiles.slots.get_mut(slot) {
+                q.dest_obj = Some(w.units[b].id);
+            }
+            explode(w, slot, false);
+            w.projectiles.slots[slot] = None;
+            continue;
+        }
         // (c) Aimed objects explode within 16 px (L1) of the destination.
         if matches!(wp.propagation, Propagation::Fly | Propagation::Angle)
             && (p.pos.2 - p.dest.2).abs() + (p.pos.1 - p.dest.1).abs() + (p.pos.0 - p.dest.0).abs() < 0x40000
@@ -669,7 +717,21 @@ pub fn process(w: &mut World) {
             w.hit_height = Some(z - ground);
             // Only the target's damage throws here (0x558212..0x558254).
             let blast = (wp.detonator != 0).then_some((x, y, wp.detonator));
-            ball_damage(w, slot, &p, wp.radius, sender, blast);
+            // Hit-locations rule: a ground- or direct-fire ball (`artillery::GunMode`) sweeps
+            // the way it rolled this tick in steps of 16 px, so a fast low ball cannot skip
+            // between the files of a line; other balls strike where they are.
+            let swept = w.rules.hit_locations
+                && matches!(
+                    crate::artillery::GunMode::from_u8(p.shot.mode),
+                    Some(crate::artillery::GunMode::Ground | crate::artillery::GunMode::Direct)
+                );
+            let steps = if swept { (norma(p.vel.0 >> 14, p.vel.1 >> 14) / 16).clamp(1, 16) } else { 1 };
+            for k in 1..=steps {
+                let mut q = w.projectiles.slots[slot].unwrap_or(p);
+                let back = steps - k;
+                q.pos = (p.pos.0 - p.vel.0 / steps * back, p.pos.1 - p.vel.1 / steps * back, p.pos.2);
+                ball_damage(w, slot, &q, wp.radius, sender, blast);
+            }
             w.hit_dir = None;
             w.hit_height = None;
         }
