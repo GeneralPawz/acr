@@ -75,11 +75,14 @@ def main():
             s["path"] = f"{rout}/{s['path']}"
 
     n = sync_dir(os.path.join(SHOWCASE, "models"), "~/showcase/models")
+    for sub in sorted(os.listdir(os.path.join(SHOWCASE, "models"))):  # e.g. ground/ (texture pack)
+        if os.path.isdir(os.path.join(SHOWCASE, "models", sub)):
+            n += sync_dir(os.path.join(SHOWCASE, "models", sub), f"~/showcase/models/{sub}")
     sync_dir(os.path.join(SHOWCASE, "settings"), "~/showcase/settings")
     if n:
         print(f"vm_drive: {n} showcase model(s) updated on the VM", file=sys.stderr)
     # The models folder of this run: the showcase models with the overrides on top.
-    layer = f"mkdir -p {rout}/models && cp -s ~/showcase/models/* {rout}/models/ 2>/dev/null; "
+    layer = f"mkdir -p {rout}/models && cp -rs ~/showcase/models/. {rout}/models/ 2>/dev/null; "
     if a.models and a.models.startswith("wt:"):
         layer += f"cp -f ~/wt/{name}/{a.models[3:]}/*.glb {rout}/models/ 2>/dev/null; "
     elif a.models:
