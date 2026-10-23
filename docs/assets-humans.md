@@ -308,6 +308,8 @@ open mitten, a stick floated beside it, a spear crossed the closed hand at any a
   Riders (prefixed rigs) keep `cavalry.close_hands`. Each family sizes its fists to its
   weapons (`held.fists(right, left)`: a two-handed right item sizes the left fist by its
   `off` grip; line, frontier, native/pueblo, meso, inca); crews and civilians keep `FIST`.
+  Draped garments take no weights from the skin's hand faces (`drape.transfer_weights`):
+  the fist's fingers curl in at the thigh, where a skirt would swing with the hand.
 - **Sockets in the fist** (`grips.setup`): `socket.hand_[lr]`, `socket.club_r` (and
   `socket.blade_r`, copied from the right one) move to the fist's centre on the grip axis;
   their rest frame turns from "upright" into the fist (`grips.frame`: +Z along the knuckle
