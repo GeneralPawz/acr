@@ -78,8 +78,9 @@ pub const TURN_SABRE: f32 = 1.31;
 /// The cut down left (`ATTACK_CUT_DOWN_L`, across the neck): the man ~40 deg left of the
 /// facing (a signed turn: negative is left).
 pub const TURN_SABRE_L: f32 = -0.70;
-/// How much shorter (radians) the turn to the left must be before the left cut is chosen.
-const LEFT_SAVING: f32 = 1.05;
+/// How much shorter (radians) the turn to the left must be before the left cut is chosen
+/// (both cuts reach since m2-fam-cavalry: the shorter turn wins).
+const LEFT_SAVING: f32 = 0.0;
 /// How fast the horse's turn for a blow eases in and back (1/s).
 const TURN_EASE: f32 = 6.0;
 /// The point at a man on the ground aims at the near part of his body: this far from his
@@ -212,7 +213,6 @@ fn down_turns(data: &ModelData, world: &World, u: &Unit) -> Option<(f32, bool)> 
     let (dx, dy) = victim_offset(world, u)?;
     let facing = acr_render::view3d::facing_yaw(u.dir);
     let (r, l) = (yaw_with_side(dx, dy, TURN_SABRE), yaw_with_side(dx, dy, TURN_SABRE_L));
-    // The left cut still falls short (docs/melee.md, "Not yet"): only when it saves a large turn.
     Some(if wrap(l - facing).abs() + LEFT_SAVING < wrap(r - facing).abs() { (l, true) } else { (r, false) })
 }
 
