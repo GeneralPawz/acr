@@ -191,3 +191,26 @@ class Registry(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GripTest(unittest.TestCase):
+    """`held.GRIPS` (m2-grips): every hand-held item has a grip spec, sane diameters, the
+    off-hand grip further up the axis than the main one."""
+
+    def test_every_hand_item_has_a_grip(self):
+        hooked = {"drum", "quiver"}  # on a hook or the back, never in a hand
+        for name in held.ITEMS:
+            if name not in hooked:
+                self.assertIsNotNone(held.grip(name), name)
+
+    def test_diameters_and_points(self):
+        for name, g in held.GRIPS.items():
+            self.assertTrue(0.005 <= g.main[1] <= 0.05, name)
+            self.assertEqual(g.point(), (0.0, 0.0, g.main[0]))
+            if g.off is not None:
+                self.assertTrue(0.005 <= g.off[1] <= 0.05, name)
+                self.assertGreater(g.off[0], g.main[0] + 0.2, name)
+        for two in ("musket", "pike", "spear", "halberd", "spontoon"):
+            self.assertIsNotNone(held.GRIPS[two].off, two)
+        for one in ("smallsword", "hanger", "war_club", "tomahawk", "macuahuitl", "longbow", "drumstick"):
+            self.assertIsNone(held.GRIPS[one].off, one)

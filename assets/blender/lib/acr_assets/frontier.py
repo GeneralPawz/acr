@@ -324,9 +324,9 @@ def make(root, name, s):
     if s["gun"]:
         gun = gear.musket(f"{name}.musket", length=s["gun"], bayonet=0.0)
         gun["acr_material_keys"] = ["wood", "metal"]
-        sock = am.world(ch.arm, "socket.hand_r")
-        rest_up = sock.to_3x3() @ ch.arm.pose.bones["socket.hand_r"].bone.matrix_local.to_3x3().inverted()
-        am.attach(gun, ch.arm, "socket.hand_r", Matrix.Translation(sock.translation + Vector((0.0, -0.01, 0.0))) @ rest_up.to_4x4())
+        from . import grips
+
+        am.attach(gun, ch.arm, "socket.hand_r", grips.hold_matrix(ch.arm, "socket.hand_r", (0.0, -0.01, 0.0)))
         ch.held["musket"] = gun
         ch.keys[gun.name] = "wood"
     return ch

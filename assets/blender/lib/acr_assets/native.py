@@ -40,7 +40,7 @@ from mathutils import Matrix, Vector
 from . import aim as aiming
 from . import armature as am
 from . import clips as cl
-from . import crawl, gear, heads, held, masks, mbody, outfit, poses, registry, rig, straps
+from . import crawl, gear, grips, heads, held, masks, mbody, outfit, poses, registry, rig, straps
 from .humans import LAYER_OF, Character, prepare_export
 
 # The Iroquois warrior's colours: a nation overrides them. The skin is a warm copper as in
@@ -537,9 +537,7 @@ def make(root, name, s):
         am.pose(ch.arm, poses.STAND_MUSKET)
         gun = gear.musket(f"{name}.musket", length=s["gun_len"], bayonet=0.0)
         gun["acr_material_keys"] = ["wood", "metal"]
-        sock = am.world(ch.arm, "socket.hand_r")
-        rest_up = sock.to_3x3() @ ch.arm.pose.bones["socket.hand_r"].bone.matrix_local.to_3x3().inverted()
-        am.attach(gun, ch.arm, "socket.hand_r", Matrix.Translation(sock.translation + Vector((0.0, -0.01, 0.0))) @ rest_up.to_4x4())
+        am.attach(gun, ch.arm, "socket.hand_r", grips.hold_matrix(ch.arm, "socket.hand_r", (0.0, -0.01, 0.0)))
         ch.held["musket"] = gun
         ch.keys[gun.name] = "wood"
         am.pose(ch.arm, {})
@@ -550,9 +548,7 @@ def make(root, name, s):
         raise ValueError(f"native weapon {w!r}")
     if s.get("rattle"):
         r = _rattle(f"{name}.rattle")
-        sock = am.world(ch.arm, "socket.hand_l")
-        rest_up = sock.to_3x3() @ ch.arm.pose.bones["socket.hand_l"].bone.matrix_local.to_3x3().inverted()
-        am.attach(r, ch.arm, "socket.hand_l", Matrix.Translation(sock.translation) @ rest_up.to_4x4())
+        am.attach(r, ch.arm, "socket.hand_l", grips.hold_matrix(ch.arm, "socket.hand_l"))
         ch.held["rattle"] = r
         ch.keys[r.name] = "turtle"
     ch.paint_masks = body_paint(s["paint"], s["palette"]) if s["paint"] else []

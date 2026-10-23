@@ -101,10 +101,12 @@ class Character:
             self.symmetric.append(obj)
         return obj
 
-    def body(self, key="skin", bones=rig.BODY_BONES, faces=True, shoulders=True):
+    def body(self, key="skin", bones=rig.BODY_BONES, faces=True, shoulders=True, grip=True):
         """The skin hull; with `faces` a finer head with a modelled face (#283). `shoulders`:
         re-mesh the shoulder line (`bd.SHOULDER_REMESH`); False under drafted garments
-        (`drape.dress`), whose coats come out torn over the re-meshed body (#287 trisoup8)."""
+        (`drape.dress`), whose coats come out torn over the re-meshed body (#287 trisoup8).
+        `grip`: close the hands into fists and put the hand sockets in them (`grips.py`);
+        a dict {"r"|"l": diameter} sizes each fist to its grip (`held.GRIPS`)."""
         P = self.prefix
         g = graph(self.build)
         cx = next(p for n, _par, p, _r in g if n == "skull")[0]
@@ -124,6 +126,13 @@ class Character:
         if faces:
             heads.head_weights(self)
         bd.split_parts(self.flesh, lambda b: rig.part_of_bone(b[len(P):]))
+        if grip and not P:
+            # Fists round the grips and the hand sockets in them (`grips.py`); riders
+            # (prefixed) close their own (`cavalry.close_hands`).
+            from . import grips
+
+            self.fist_vertices = grips.close(self, grip if isinstance(grip, dict) else None)
+            grips.setup(self)
         self.add("flesh", self.flesh, key, symmetric=True)
         return self.flesh
 

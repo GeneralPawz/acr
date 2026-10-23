@@ -307,17 +307,13 @@ def _staff(name, span, r, heads=()):
 
 
 def _hold(ch, obj, key, slot):
-    from mathutils import Vector
-
     from . import armature as am
 
     arm = ch.arm
     P = ch.prefix
-    sock = am.world(arm, P + "socket.hand_r")
-    rest_up = sock.to_3x3() @ arm.pose.bones[P + "socket.hand_r"].bone.matrix_local.to_3x3().inverted()
-    from mathutils import Matrix
+    from . import grips
 
-    am.attach(obj, arm, P + "socket.hand_r", Matrix.Translation(sock.translation + Vector((0, -0.01, 0))) @ rest_up.to_4x4())
+    am.attach(obj, arm, P + "socket.hand_r", grips.hold_matrix(arm, P + "socket.hand_r", (0, -0.01, 0)))
     ch.held[slot] = obj
     ch.keys[obj.name] = key
 
