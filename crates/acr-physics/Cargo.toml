@@ -11,3 +11,7 @@ license.workspace = true
 [[example]]
 name = "bench_wasm"
 crate-type = ["cdylib"]
+
+# Islands of awake ragdolls step in parallel on native; wasm is single-threaded.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rayon = "1.12"

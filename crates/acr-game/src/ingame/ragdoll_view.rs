@@ -17,7 +17,9 @@
 //!   pile a step costs about three times the calibration, and a slow frame runs several
 //!   steps, so the awake ragdolls allowed are [`FRAME_BUDGET_US`] over the measured cost of
 //!   one ragdoll's steps per frame (never above the calibration, never below
-//!   [`MIN_AWAKE`]).
+//!   [`MIN_AWAKE`]). Since m2-perf2 frozen corpses are static collision geometry and the
+//!   awake ragdolls' islands step in parallel, so a pile no longer raises the cost and the
+//!   budget stays at the calibration's.
 //!
 //! Axes: physics is right-handed, metres, `x` east, `y` north, `z` up (`world / 30` with `y`
 //! negated); the skeleton space of skeleton H turned by the facing is the physics space
@@ -42,8 +44,9 @@ pub const FRAME_BUDGET_US: f64 = 4000.0;
 /// Awake ragdolls always allowed, however slow the steps.
 pub const MIN_AWAKE: usize = 12;
 /// Ragdolls kept in the physics world: the awake ones plus frozen corpses that still block
-/// falling bodies. Beyond it the oldest corpse keeps its pose but leaves the physics.
-const POOL: usize = 96;
+/// falling bodies (static capsules, m2-perf2: they cost a step nothing but the contacts
+/// they actually make). Beyond it the oldest corpse keeps its pose but leaves the physics.
+const POOL: usize = 192;
 /// Physics step (s).
 const STEP: f32 = 1.0 / 60.0;
 /// Hip sway per m/s of the blow's momentum over the body's mass.
@@ -466,6 +469,9 @@ struct Actor {
     step: Option<(usize, Vec3, Vec3, f32)>,
     /// Skinning matrices once he lies still (a corpse no longer needs the physics).
     frozen: Option<Vec<[[f32; 4]; 4]>>,
+    /// The frozen corpse's palette and the instance transform it was made for: reused
+    /// every frame while the corpse lies where it lay.
+    frozen_palette: Option<(Mat4, Palette)>,
     /// Physics time the corpse began to relax before it is frozen ([`RELAX_S`]).
     relaxed: Option<f32>,
     /// A skeleton-H man; else an animal (no reflexes, steps or knock-downs).
@@ -942,6 +948,7 @@ impl Ragdolls {
                     fallen: None,
                     step: None,
                     frozen: None,
+                    frozen_palette: None,
                     relaxed: None,
                     human,
                     mass,
@@ -954,6 +961,7 @@ impl Ragdolls {
             a.died = self.time;
         }
         a.frozen = None;
+        a.frozen_palette = None;
         a.region = region;
         a.struck = bone;
         a.since = self.time;
@@ -1195,19 +1203,27 @@ impl Ragdolls {
     }
 
     /// Palettes of the ragdolls' instances: `P = T⁻¹ · world · S · glTF→skeleton · bind`.
+    /// A frozen corpse's palette is made once (and again only if its instance moves).
     fn palettes(&mut self, drawn: &[Drawn<'_>], by_unit: &HashMap<u32, usize>) {
-        for (v, a) in &self.actors {
+        for (v, a) in &mut self.actors {
             let Some(&i) = by_unit.get(v) else { continue };
             let d = &drawn[i];
             let Some(map) = self.maps.get(&a.model).and_then(Option::as_ref) else { continue };
-            let skins: Vec<[[f32; 4]; 4]> = match (&a.frozen, a.slot) {
-                (Some(f), _) => f.clone(),
-                (None, usize::MAX) => continue,
-                (None, s) => {
-                    let r = &self.pool[s].0;
-                    (0..r.len()).map(|b| r.skin_matrix(&self.physics, b)).collect()
+            if let Some(f) = &a.frozen {
+                let fresh = a.frozen_palette.as_ref().is_some_and(|(t, _)| *t == d.transform);
+                if !fresh {
+                    a.frozen_palette = Some((d.transform, palette_of(map, f, &d.transform)));
                 }
-            };
+                if let Some((_, p)) = &a.frozen_palette {
+                    self.poses.insert(d.index, p.clone());
+                }
+                continue;
+            }
+            if a.slot == usize::MAX {
+                continue;
+            }
+            let r = &self.pool[a.slot].0;
+            let skins: Vec<[[f32; 4]; 4]> = (0..r.len()).map(|b| r.skin_matrix(&self.physics, b)).collect();
             self.poses.insert(d.index, palette_of(map, &skins, &d.transform));
         }
     }

@@ -10,6 +10,13 @@
 //! (a tangent plane per capsule end); joint limits are first checked without trigonometry
 //! and only corrected when violated; capsule pairs come from a hashed grid; resting ragdolls
 //! go to sleep and cost nothing.
+//!
+//! Only awake bodies are visited by a step. Frozen ragdolls (corpses) are static collision
+//! geometry: their capsules sit in a hashed grid of their own, rebuilt only when a group
+//! falls asleep or wakes, and contacts against them are one-sided (infinite mass), so a
+//! pile of corpses costs a falling man only the capsules he actually touches. Awake bodies
+//! touching or joined form islands; each island's bodies are gathered into compact buffers
+//! and its substeps run apart from the others, in parallel on native (rayon).
 
 use crate::math::{Quat, Vec3, closest_segment_params};
 
@@ -351,23 +358,139 @@ struct Group {
     end: u32,
     calm_time: f32,
     asleep: bool,
+    /// Frozen (a corpse): static collision geometry that only an explicit wake moves.
+    frozen: bool,
+}
+
+/// A hashed grid over `(x, y)` (counting sort into buckets) of some of the world's bodies.
+#[derive(Default)]
+struct Grid {
+    /// Cell size is `1 / inv`.
+    inv: f32,
+    bucket_start: Vec<u32>,
+    sorted: Vec<u32>,
+    cell: Vec<u32>,
+}
+
+impl Grid {
+    fn mask(&self) -> u32 {
+        (self.bucket_start.len() - 2) as u32
+    }
+    fn hash(&self, cx: i32, cy: i32) -> u32 {
+        ((cx as u32).wrapping_mul(73_856_093) ^ (cy as u32).wrapping_mul(19_349_663)) & self.mask()
+    }
+    fn cell_of(&self, p: Vec3) -> (i32, i32) {
+        ((p.x * self.inv).floor() as i32, (p.y * self.inv).floor() as i32)
+    }
+
+    /// Sorts `ids` (positions `pos(id)`) into cells of size `cell`.
+    fn build(&mut self, ids: &[u32], cell: f32, pos: impl Fn(u32) -> Vec3) {
+        self.inv = 1.0 / cell;
+        let buckets = (2 * ids.len()).max(2).next_power_of_two();
+        self.bucket_start.clear();
+        self.bucket_start.resize(buckets + 1, 0);
+        self.cell.clear();
+        for &i in ids {
+            let (cx, cy) = self.cell_of(pos(i));
+            let k = self.hash(cx, cy);
+            self.cell.push(k);
+            self.bucket_start[k as usize + 1] += 1;
+        }
+        for k in 1..self.bucket_start.len() {
+            self.bucket_start[k] += self.bucket_start[k - 1];
+        }
+        // Counting sort, using each bucket's start as its cursor, then shifting back.
+        self.sorted.clear();
+        self.sorted.resize(ids.len(), 0);
+        for (n, &i) in ids.iter().enumerate() {
+            let k = self.cell[n] as usize;
+            self.sorted[self.bucket_start[k] as usize] = i;
+            self.bucket_start[k] += 1;
+        }
+        for k in (1..self.bucket_start.len() - 1).rev() {
+            self.bucket_start[k] = self.bucket_start[k - 1];
+        }
+        self.bucket_start[0] = 0;
+    }
+
+    /// Calls `f` with every body in the cells within `r` of `p` (each once).
+    fn query(&self, p: Vec3, r: f32, mut f: impl FnMut(u32)) {
+        if self.sorted.is_empty() {
+            return;
+        }
+        let (x0, y0) = self.cell_of(p - Vec3::new(r, r, 0.0));
+        let (x1, y1) = self.cell_of(p + Vec3::new(r, r, 0.0));
+        let span = (x1 - x0 + 1) as i64 * (y1 - y0 + 1) as i64;
+        if span > 25 {
+            // A body flying fast: every body (rare).
+            self.sorted.iter().for_each(|&i| f(i));
+            return;
+        }
+        let mut seen = [u32::MAX; 25];
+        let mut ns = 0;
+        for cx in x0..=x1 {
+            for cy in y0..=y1 {
+                let k = self.hash(cx, cy);
+                if seen[..ns].contains(&k) {
+                    continue;
+                }
+                seen[ns] = k;
+                ns += 1;
+                let (s, e) = (self.bucket_start[k as usize] as usize, self.bucket_start[k as usize + 1] as usize);
+                self.sorted[s..e].iter().for_each(|&i| f(i));
+            }
+        }
+    }
+}
+
+/// Awake bodies touching each other or joined: solved together, apart from other islands
+/// (in parallel on native). The island's bodies are gathered into its own buffers.
+#[derive(Default)]
+struct Island {
+    /// World ids of the bodies: the first `dynamic` are awake (written back after the
+    /// step), the rest frozen corpses' capsules they touch (read only, infinite mass).
+    ids: Vec<u32>,
+    dynamic: usize,
+    solver: Solver,
+}
+
+/// The substep loop over one island's bodies (local indices).
+#[derive(Default)]
+struct Solver {
+    bodies: Vec<Body>,
+    joints: Vec<Joint>,
+    pairs: Vec<(u32, u32)>,
+    /// Per dynamic body.
+    planes: Vec<[Plane; 2]>,
+    contacts: Vec<Contact>,
 }
 
 /// A set of bodies and joints stepped together. Allocates only when bodies or joints are
-/// added; [`World::step`] does not allocate.
+/// added or a step meets more awake bodies, pairs or islands than any before.
 pub struct World {
     pub config: Config,
     bodies: Vec<Body>,
     joints: Vec<Joint>,
     groups: Vec<Group>,
-    contacts: Vec<Contact>,
     pairs: Vec<(u32, u32)>,
     planes: Vec<[Plane; 2]>,
-    // Broad-phase grid (counting sort into hashed cells).
-    cell: Vec<u32>,
-    bucket_start: Vec<u32>,
-    sorted: Vec<u32>,
     bound: Vec<f32>,
+    /// Awake bodies of this step (group order).
+    active: Vec<u32>,
+    /// Awake bodies and the sleeping ones (corpses), in their own grids. The sleeping grid
+    /// is rebuilt only when a group falls asleep or wakes.
+    awake_grid: Grid,
+    sleep_grid: Grid,
+    sleeping: Vec<u32>,
+    sleep_bound: f32,
+    sleep_dirty: bool,
+    /// Islands: union–find over groups, the island of each root, of each awake body.
+    uf: Vec<u32>,
+    island_of_group: Vec<u32>,
+    local: Vec<u32>,
+    stamp: Vec<u32>,
+    islands: Vec<Island>,
+    n_islands: usize,
 }
 
 impl World {
@@ -377,13 +500,21 @@ impl World {
             bodies: Vec::new(),
             joints: Vec::new(),
             groups: Vec::new(),
-            contacts: Vec::new(),
             pairs: Vec::new(),
             planes: Vec::new(),
-            cell: Vec::new(),
-            bucket_start: Vec::new(),
-            sorted: Vec::new(),
             bound: Vec::new(),
+            active: Vec::new(),
+            awake_grid: Grid::default(),
+            sleep_grid: Grid::default(),
+            sleeping: Vec::new(),
+            sleep_bound: 0.0,
+            sleep_dirty: true,
+            uf: Vec::new(),
+            island_of_group: Vec::new(),
+            local: Vec::new(),
+            stamp: Vec::new(),
+            islands: Vec::new(),
+            n_islands: 0,
         }
     }
 
@@ -431,7 +562,9 @@ impl World {
 
     pub(crate) fn new_group(&mut self) -> u32 {
         let n = self.bodies.len() as u32;
-        self.groups.push(Group { first: n, end: n, calm_time: 0.0, asleep: false });
+        self.groups.push(Group { first: n, end: n, calm_time: 0.0, asleep: false, frozen: false });
+        self.uf.push(0);
+        self.island_of_group.push(0);
         (self.groups.len() - 1) as u32
     }
 
@@ -445,16 +578,10 @@ impl World {
         assert_eq!(self.groups[group as usize].end as usize, n - 1, "bodies of a group are added consecutively");
         self.groups[group as usize].end = n as u32;
         self.wake_group(group);
-        // Capacity for the step (no allocation inside it): two ground contacts per body and
-        // up to 16 capsule pairs per body; grid buckets for twice the bodies.
-        self.pairs.reserve((16 * n).saturating_sub(self.pairs.len()));
-        self.contacts.reserve((18 * n).saturating_sub(self.contacts.len()));
         self.planes.push([Plane::default(); 2]);
-        self.cell.push(0);
-        self.sorted.push(0);
         self.bound.push(0.0);
-        let buckets = (2 * n).next_power_of_two();
-        self.bucket_start.resize(buckets + 1, 0);
+        self.local.push(0);
+        self.stamp.push(u32::MAX);
         (n - 1) as BodyId
     }
 
@@ -524,7 +651,7 @@ impl World {
         b.omega += b.inv_i.mul(r.cross(impulse));
     }
 
-    /// Wakes the ragdoll (group) of a body.
+    /// Wakes the ragdoll (group) of a body, a frozen one too.
     pub fn wake(&mut self, id: BodyId) {
         let g = self.bodies[id as usize].group;
         self.wake_group(g);
@@ -534,25 +661,48 @@ impl World {
         let grp = &mut self.groups[g as usize];
         grp.calm_time = 0.0;
         if grp.asleep {
+            let frozen = grp.frozen;
             grp.asleep = false;
+            grp.frozen = false;
+            self.sleep_dirty = true;
             for b in &mut self.bodies[grp.first as usize..grp.end as usize] {
                 b.asleep = false;
+                if frozen && !b.pinned {
+                    b.inv_mass = 1.0 / b.mass;
+                    b.inv_inertia = Vec3::new(1.0 / b.inertia.x, 1.0 / b.inertia.y, 1.0 / b.inertia.z);
+                    b.refresh_inertia();
+                }
             }
         }
     }
 
-    /// Puts the ragdoll (group) of a body to sleep now: it keeps its pose as a static
-    /// obstacle (a corpse) and costs nothing until an impulse or an awake body touching it
-    /// wakes it.
-    pub fn freeze(&mut self, id: BodyId) {
-        let g = self.bodies[id as usize].group as usize;
-        let grp = &mut self.groups[g];
+    /// Puts a group to sleep: it keeps its pose and costs nothing; `frozen` makes it static
+    /// collision geometry (infinite mass), otherwise an awake body touching it wakes it.
+    fn sleep_group(&mut self, g: u32, frozen: bool) {
+        let grp = &mut self.groups[g as usize];
         grp.asleep = true;
+        grp.frozen = frozen;
+        self.sleep_dirty = true;
         for b in &mut self.bodies[grp.first as usize..grp.end as usize] {
             b.asleep = true;
             b.vel = Vec3::ZERO;
             b.omega = Vec3::ZERO;
+            b.prev_pos = b.pos;
+            b.prev_rot = b.rot;
+            if frozen {
+                b.inv_mass = 0.0;
+                b.inv_inertia = Vec3::ZERO;
+                b.refresh_inertia();
+            }
         }
+    }
+
+    /// Freezes the ragdoll (group) of a body now: it keeps its pose as static collision
+    /// geometry (a corpse): falling bodies land on it as on the ground, it is never solved
+    /// and costs nothing, until an explicit wake (an impulse, a new pose, a tone).
+    pub fn freeze(&mut self, id: BodyId) {
+        let g = self.bodies[id as usize].group;
+        self.sleep_group(g, true);
     }
 
     /// Number of awake (simulated) bodies.
@@ -568,117 +718,149 @@ impl World {
 
     /// Advances by one fixed step `config.dt` over `ground`.
     pub fn step<G: Ground + ?Sized>(&mut self, ground: &G) {
-        let n = self.config.substeps.max(1);
-        let h = self.config.dt / n as f32;
         self.broad_phase();
+        if self.active.is_empty() {
+            return;
+        }
         self.sample_ground(ground);
-        for _ in 0..n {
-            self.integrate(h);
-            self.contacts.clear();
-            // Contacts first, joints last: a body ends each substep with its joints intact
-            // (light end bodies such as toes would otherwise be torn off by the ground).
-            self.solve_contacts();
-            for _ in 0..self.config.joint_iterations.max(1) {
-                self.solve_joints(h);
+        self.build_islands();
+        let config = self.config;
+        let islands = &mut self.islands[..self.n_islands];
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use rayon::prelude::*;
+            // Small work is cheaper on this thread than handed out.
+            if islands.len() > 1 && self.active.len() >= 64 {
+                islands.par_iter_mut().with_max_len(1).for_each(|i| i.solver.run(&config));
+            } else {
+                islands.iter_mut().for_each(|i| i.solver.run(&config));
             }
-            self.update_velocities(h);
-            self.solve_velocities(h);
+        }
+        #[cfg(target_arch = "wasm32")]
+        islands.iter_mut().for_each(|i| i.solver.run(&config));
+        for isl in &self.islands[..self.n_islands] {
+            for (k, &id) in isl.ids[..isl.dynamic].iter().enumerate() {
+                self.bodies[id as usize] = isl.solver.bodies[k].clone();
+            }
         }
         self.update_sleep();
     }
 
-    /// Capsule pairs that may touch within this step: bounding spheres (with the motion of
-    /// the step as margin) in a hashed grid over `(x, y)`. A pair of an awake and a sleeping
-    /// body wakes the sleeper.
-    fn broad_phase(&mut self) {
-        self.pairs.clear();
-        let n = self.bodies.len();
-        if n == 0 {
-            return;
+    fn collect_active(&mut self) {
+        self.active.clear();
+        for g in &self.groups {
+            if !g.asleep {
+                self.active.extend(g.first..g.end);
+            }
         }
-        let dt = self.config.dt;
-        let mut max_r = 0.0f32;
-        for (i, b) in self.bodies.iter().enumerate() {
-            let r = b.half_len + b.radius + b.vel.length() * dt + 0.02;
-            self.bound[i] = r;
-            max_r = max_r.max(r);
-        }
-        // Spheres in non-neighbouring cells cannot touch.
-        let inv = 1.0 / (2.0 * max_r).max(0.25);
-        let mask = (self.bucket_start.len() - 2) as u32;
-        let hash =
-            |cx: i32, cy: i32| ((cx as u32).wrapping_mul(73_856_093) ^ (cy as u32).wrapping_mul(19_349_663)) & mask;
-        let cell_of = |p: Vec3| ((p.x * inv).floor() as i32, (p.y * inv).floor() as i32);
-        self.bucket_start.fill(0);
-        for (i, b) in self.bodies.iter().enumerate() {
-            let (cx, cy) = cell_of(b.pos);
-            let k = hash(cx, cy);
-            self.cell[i] = k;
-            self.bucket_start[k as usize + 1] += 1;
-        }
-        for k in 1..self.bucket_start.len() {
-            self.bucket_start[k] += self.bucket_start[k - 1];
-        }
-        // Counting sort, using each bucket's start as its cursor, then shifting back.
-        for i in 0..n {
-            let k = self.cell[i] as usize;
-            self.sorted[self.bucket_start[k] as usize] = i as u32;
-            self.bucket_start[k] += 1;
-        }
-        for k in (1..self.bucket_start.len() - 1).rev() {
-            self.bucket_start[k] = self.bucket_start[k - 1];
-        }
-        self.bucket_start[0] = 0;
-        let cap = self.pairs.capacity();
-        for i in 0..n {
-            let a = &self.bodies[i];
-            let (cx, cy) = cell_of(a.pos);
-            let mut seen = [u32::MAX; 9];
-            let mut ns = 0;
-            for dx in -1..=1 {
-                for dy in -1..=1 {
-                    let k = hash(cx + dx, cy + dy);
-                    if seen[..ns].contains(&k) {
-                        continue;
-                    }
-                    seen[ns] = k;
-                    ns += 1;
-                    let (s, e) = (self.bucket_start[k as usize] as usize, self.bucket_start[k as usize + 1] as usize);
-                    for &j in &self.sorted[s..e] {
-                        let j = j as usize;
-                        if j <= i {
-                            continue;
-                        }
-                        let b = &self.bodies[j];
-                        if (a.asleep || a.pinned) && (b.asleep || b.pinned) {
-                            continue;
-                        }
-                        if a.group == b.group && (a.exclude >> b.group_index) & 1 == 1 {
-                            continue;
-                        }
-                        let r = self.bound[i] + self.bound[j];
-                        if (a.pos - b.pos).length_sq() < r * r && self.pairs.len() < cap {
-                            self.pairs.push((i as u32, j as u32));
-                        }
+        if self.sleep_dirty {
+            self.sleep_dirty = false;
+            self.sleeping.clear();
+            let mut r = 0.0f32;
+            for g in &self.groups {
+                if g.asleep {
+                    for i in g.first..g.end {
+                        let b = &self.bodies[i as usize];
+                        r = r.max(b.half_len + b.radius + 0.02);
+                        self.sleeping.push(i);
                     }
                 }
             }
+            self.sleep_bound = r;
+            let bodies = &self.bodies;
+            self.sleep_grid.build(&self.sleeping, (2.0 * r).max(0.25), |i| bodies[i as usize].pos);
         }
-        for k in 0..self.pairs.len() {
-            let (i, j) = self.pairs[k];
-            let (a, b) = (&self.bodies[i as usize], &self.bodies[j as usize]);
-            if a.asleep != b.asleep {
-                let g = if a.asleep { a.group } else { b.group };
-                self.wake_group(g);
+    }
+
+    /// Capsule pairs that may touch within this step: bounding spheres (with the motion of
+    /// the step as margin), awake bodies in a hashed grid of their own, sleeping ones in a
+    /// grid rebuilt only when that set changes. An awake body touching a sleeping (not
+    /// frozen) one wakes it; a frozen corpse's capsules are one-sided obstacles.
+    fn broad_phase(&mut self) {
+        self.collect_active();
+        // An awake body touching a sleeper wakes its group (it joins from this step).
+        let mut woke = false;
+        for &i in &self.active {
+            let a = &self.bodies[i as usize];
+            let r = a.half_len + a.radius + a.vel.length() * self.config.dt + 0.02;
+            self.bound[i as usize] = r;
+        }
+        for k in 0..self.active.len() {
+            let i = self.active[k] as usize;
+            let (p, r) = (self.bodies[i].pos, self.bound[i] + self.sleep_bound);
+            let mut wake = u32::MAX;
+            let (bodies, groups) = (&self.bodies, &self.groups);
+            self.sleep_grid.query(p, r, |j| {
+                let b = &bodies[j as usize];
+                if wake == u32::MAX && !groups[b.group as usize].frozen && b.asleep {
+                    let rr = self.bound[i] + b.half_len + b.radius + 0.02;
+                    if (p - b.pos).length_sq() < rr * rr {
+                        wake = b.group;
+                    }
+                }
+            });
+            if wake != u32::MAX {
+                self.wake_group(wake);
+                woke = true;
             }
+        }
+        if woke {
+            self.collect_active();
+            for &i in &self.active {
+                let a = &self.bodies[i as usize];
+                self.bound[i as usize] = a.half_len + a.radius + a.vel.length() * self.config.dt + 0.02;
+            }
+        }
+        self.pairs.clear();
+        if self.active.is_empty() {
+            return;
+        }
+        let max_r = self.active.iter().map(|&i| self.bound[i as usize]).fold(0.0f32, f32::max);
+        // Spheres in non-neighbouring cells cannot touch.
+        let bodies = &self.bodies;
+        self.awake_grid.build(&self.active, (2.0 * max_r).max(0.25), |i| bodies[i as usize].pos);
+        for k in 0..self.active.len() {
+            let i = self.active[k];
+            let a = &self.bodies[i as usize];
+            let (bound, pairs, grid) = (&self.bound, &mut self.pairs, &self.awake_grid);
+            grid.query(a.pos, bound[i as usize] + max_r, |j| {
+                if j <= i {
+                    return;
+                }
+                let b = &bodies[j as usize];
+                if a.pinned && b.pinned {
+                    return;
+                }
+                if a.group == b.group && (a.exclude >> b.group_index) & 1 == 1 {
+                    return;
+                }
+                let r = bound[i as usize] + bound[j as usize];
+                if (a.pos - b.pos).length_sq() < r * r {
+                    pairs.push((i, j));
+                }
+            });
+            // Frozen corpses (static); sleepers met only now wake for the next step.
+            let groups = &self.groups;
+            let r0 = bound[i as usize];
+            self.sleep_grid.query(a.pos, r0 + self.sleep_bound, |j| {
+                let b = &bodies[j as usize];
+                if !b.asleep || !groups[b.group as usize].frozen || a.pinned {
+                    return;
+                }
+                let r = r0 + b.half_len + b.radius + 0.02;
+                if (a.pos - b.pos).length_sq() < r * r {
+                    pairs.push((i, j));
+                }
+            });
         }
     }
 
     /// One tangent plane of the ground per capsule end, for the whole step.
     fn sample_ground<G: Ground + ?Sized>(&mut self, ground: &G) {
         let dt = self.config.dt;
-        for (i, b) in self.bodies.iter().enumerate() {
-            if b.asleep || b.pinned {
+        for &i in &self.active {
+            let b = &self.bodies[i as usize];
+            if b.pinned {
                 continue;
             }
             let (e0, e1) = b.ends();
@@ -686,14 +868,200 @@ impl World {
                 let gz = ground.height(e.x, e.y);
                 // Well above the ground no contact can happen this step: skip the normal.
                 let n = if e.z - gz > b.radius + b.vel.length() * dt + 0.1 { Vec3::Z } else { ground.normal(e.x, e.y) };
-                self.planes[i][k] = Plane { n, d: n.dot(Vec3::new(e.x, e.y, gz)) };
+                self.planes[i as usize][k] = Plane { n, d: n.dot(Vec3::new(e.x, e.y, gz)) };
             }
         }
     }
 
-    fn integrate(&mut self, h: f32) {
-        let g = self.config.gravity;
-        let damp = (1.0 - self.config.air_damping * h).max(0.0);
+    fn find(uf: &mut [u32], mut g: u32) -> u32 {
+        while uf[g as usize] != g {
+            uf[g as usize] = uf[uf[g as usize] as usize];
+            g = uf[g as usize];
+        }
+        g
+    }
+
+    /// Splits the awake bodies into islands (groups joined by contacts or joints) and
+    /// gathers each island's bodies, joints and pairs into its own buffers.
+    fn build_islands(&mut self) {
+        let awake = |b: &Body| !b.asleep;
+        for (g, grp) in self.groups.iter().enumerate() {
+            if !grp.asleep {
+                self.uf[g] = g as u32;
+            }
+        }
+        let union = |uf: &mut Vec<u32>, a: u32, b: u32| {
+            let (ra, rb) = (Self::find(uf, a), Self::find(uf, b));
+            if ra != rb {
+                uf[ra.max(rb) as usize] = ra.min(rb);
+            }
+        };
+        for &(i, j) in &self.pairs {
+            let (a, b) = (&self.bodies[i as usize], &self.bodies[j as usize]);
+            if awake(b) && a.group != b.group {
+                union(&mut self.uf, a.group, b.group);
+            }
+        }
+        for j in &self.joints {
+            let (a, b) = (&self.bodies[j.a as usize], &self.bodies[j.b as usize]);
+            if awake(a) && awake(b) && a.group != b.group {
+                union(&mut self.uf, a.group, b.group);
+            }
+        }
+        self.n_islands = 0;
+        for g in 0..self.groups.len() {
+            if self.groups[g].asleep {
+                continue;
+            }
+            let root = Self::find(&mut self.uf, g as u32);
+            if root == g as u32 {
+                self.island_of_group[g] = self.n_islands as u32;
+                if self.islands.len() == self.n_islands {
+                    self.islands.push(Island::default());
+                }
+                let isl = &mut self.islands[self.n_islands];
+                isl.ids.clear();
+                isl.solver.bodies.clear();
+                isl.solver.joints.clear();
+                isl.solver.pairs.clear();
+                isl.solver.planes.clear();
+                self.n_islands += 1;
+            } else {
+                self.island_of_group[g] = self.island_of_group[root as usize];
+            }
+        }
+        // Awake bodies (groups in order, roots before their members' later groups).
+        for &i in &self.active {
+            let b = &self.bodies[i as usize];
+            let isl = &mut self.islands[self.island_of_group[b.group as usize] as usize];
+            self.local[i as usize] = isl.ids.len() as u32;
+            isl.ids.push(i);
+            isl.solver.bodies.push(b.clone());
+            isl.solver.planes.push(self.planes[i as usize]);
+        }
+        for isl in &mut self.islands[..self.n_islands] {
+            isl.dynamic = isl.ids.len();
+        }
+        for j in &self.joints {
+            let a = &self.bodies[j.a as usize];
+            if !awake(a) {
+                continue;
+            }
+            let k = self.island_of_group[a.group as usize];
+            let isl = &mut self.islands[k as usize];
+            let lb = Self::local_of(&self.bodies, &mut self.local, &mut self.stamp, isl, k, j.b);
+            let mut joint = *j;
+            joint.a = self.local[j.a as usize];
+            joint.b = lb;
+            isl.solver.joints.push(joint);
+        }
+        for &(i, j) in &self.pairs {
+            let k = self.island_of_group[self.bodies[i as usize].group as usize];
+            let isl = &mut self.islands[k as usize];
+            let lj = Self::local_of(&self.bodies, &mut self.local, &mut self.stamp, isl, k, j);
+            isl.solver.pairs.push((self.local[i as usize], lj));
+        }
+        for &i in &self.sleeping {
+            self.stamp[i as usize] = u32::MAX;
+        }
+    }
+
+    /// Local index of body `id` in island `k`: an awake body's own, or a sleeping body
+    /// copied in as a static partner (once per island).
+    fn local_of(bodies: &[Body], local: &mut [u32], stamp: &mut [u32], isl: &mut Island, k: u32, id: u32) -> u32 {
+        let b = &bodies[id as usize];
+        if !b.asleep {
+            return local[id as usize];
+        }
+        if stamp[id as usize] != k {
+            stamp[id as usize] = k;
+            local[id as usize] = isl.ids.len() as u32;
+            isl.ids.push(id);
+            isl.solver.bodies.push(b.clone());
+        }
+        local[id as usize]
+    }
+
+    /// Groups that stayed calm for `sleep_time` fall asleep.
+    fn update_sleep(&mut self) {
+        let (limit, time, dt) = (self.config.sleep_energy, self.config.sleep_time, self.config.dt);
+        if limit <= 0.0 {
+            return;
+        }
+        for g in 0..self.groups.len() {
+            let grp = self.groups[g];
+            if grp.asleep || grp.first == grp.end {
+                continue;
+            }
+            let (mut e, mut m) = (0.0, 0.0);
+            for b in &self.bodies[grp.first as usize..grp.end as usize] {
+                if !b.pinned {
+                    e += b.kinetic_energy();
+                    m += b.mass;
+                }
+            }
+            let calm = m == 0.0 || e < limit * m;
+            let grp = &mut self.groups[g];
+            grp.calm_time = if calm { grp.calm_time + dt } else { 0.0 };
+            if grp.calm_time >= time {
+                self.sleep_group(g as u32, false);
+            }
+        }
+    }
+    fn frame_a(&self, j: &Joint) -> Quat {
+        self.bodies[j.a as usize].rot * j.fa
+    }
+    fn frame_b(&self, j: &Joint) -> Quat {
+        self.bodies[j.b as usize].rot * j.fb
+    }
+    /// Measured state of joint `id`.
+    pub fn joint_state(&self, id: JointId) -> JointState {
+        let j = &self.joints[id as usize];
+        let (ba, bb) = (&self.bodies[j.a as usize], &self.bodies[j.b as usize]);
+        let separation = ((bb.pos + bb.rot.rotate(j.rb)) - (ba.pos + ba.rot.rotate(j.ra))).length();
+        let (qa, qb) = (self.frame_a(j), self.frame_b(j));
+        let (angle, twist) = match j.limit {
+            JointLimit::Hinge { .. } => {
+                let n = qa.rotate(Vec3::Z);
+                let (x1, x2) = (qa.rotate(Vec3::X), qb.rotate(Vec3::X));
+                (signed_angle(n, x1, x2), n.dot(qb.rotate(Vec3::Z)).clamp(-1.0, 1.0).acos())
+            }
+            JointLimit::Ball { cone_axis, .. } => {
+                let phi = qa.rotate(cone_axis).dot(qb.rotate(Vec3::X)).clamp(-1.0, 1.0).acos();
+                (phi, twist_angle(qa, qb).unwrap_or(0.0))
+            }
+        };
+        let want_b = ba.rot * j.rest_rel * j.target;
+        let drive_error = (want_b * bb.rot.conj()).angle();
+        JointState { separation, angle, twist, drive_error }
+    }
+}
+
+impl Solver {
+    /// The substeps of one step: integrate, contacts, joints, velocities.
+    fn run(&mut self, config: &Config) {
+        let n = config.substeps.max(1);
+        let h = config.dt / n as f32;
+        // Ground and pair contacts each substep: two per body plus one per pair.
+        self.contacts.clear();
+        self.contacts.reserve(2 * self.bodies.len() + self.pairs.len());
+        for _ in 0..n {
+            self.integrate(config, h);
+            self.contacts.clear();
+            // Contacts first, joints last: a body ends each substep with its joints intact
+            // (light end bodies such as toes would otherwise be torn off by the ground).
+            self.solve_contacts(config);
+            for _ in 0..config.joint_iterations.max(1) {
+                self.solve_joints(h);
+            }
+            self.update_velocities(h);
+            self.solve_velocities(config, h);
+        }
+    }
+
+    fn integrate(&mut self, config: &Config, h: f32) {
+        let g = config.gravity;
+        let damp = (1.0 - config.air_damping * h).max(0.0);
         for b in &mut self.bodies {
             if b.asleep {
                 continue;
@@ -724,7 +1092,6 @@ impl World {
             b.omega = if dq.w >= 0.0 { w } else { -w };
         }
     }
-
     fn solve_joints(&mut self, h: f32) {
         let inv_h2 = 1.0 / (h * h);
         for i in 0..self.joints.len() {
@@ -799,15 +1166,8 @@ impl World {
         apply_position(&mut self.bodies, joint.a, joint.b, ra, rb, corr, 0.0);
     }
 
-    fn frame_a(&self, j: &Joint) -> Quat {
-        self.bodies[j.a as usize].rot * j.fa
-    }
-    fn frame_b(&self, j: &Joint) -> Quat {
-        self.bodies[j.b as usize].rot * j.fb
-    }
-
-    fn solve_contacts(&mut self) {
-        let mu_s = self.config.static_friction;
+    fn solve_contacts(&mut self, config: &Config) {
+        let mu_s = config.static_friction;
         // Ground: both capsule end spheres against the step's tangent planes.
         for i in 0..self.bodies.len() {
             if self.bodies[i].pinned || self.bodies[i].asleep {
@@ -890,8 +1250,8 @@ impl World {
         apply_position(&mut self.bodies, a, b, ra, rb, -dt, 0.0);
     }
 
-    fn solve_velocities(&mut self, h: f32) {
-        let mu_d = self.config.dynamic_friction;
+    fn solve_velocities(&mut self, config: &Config, h: f32) {
+        let mu_d = config.dynamic_friction;
         for k in 0..self.contacts.len() {
             let c = self.contacts[k];
             let ba = &self.bodies[c.a as usize];
@@ -916,7 +1276,7 @@ impl World {
             apply_velocity(&mut self.bodies, c.a, c.b, ra, rb, dv);
         }
         // Joint damping (muscle tone plus passive tissue).
-        let passive = self.config.passive_damping;
+        let passive = config.passive_damping;
         for j in 0..self.joints.len() {
             let (a, b, d) = {
                 let jt = &self.joints[j];
@@ -941,56 +1301,6 @@ impl World {
             self.bodies[a as usize].omega += ia;
             self.bodies[b as usize].omega -= ib;
         }
-    }
-
-    /// Groups that stayed calm for `sleep_time` fall asleep.
-    fn update_sleep(&mut self) {
-        let (limit, time, dt) = (self.config.sleep_energy, self.config.sleep_time, self.config.dt);
-        if limit <= 0.0 {
-            return;
-        }
-        for g in 0..self.groups.len() {
-            let grp = self.groups[g];
-            if grp.asleep || grp.first == grp.end {
-                continue;
-            }
-            let (mut e, mut m) = (0.0, 0.0);
-            for b in &self.bodies[grp.first as usize..grp.end as usize] {
-                if !b.pinned {
-                    e += b.kinetic_energy();
-                    m += b.mass;
-                }
-            }
-            let calm = m == 0.0 || e < limit * m;
-            let grp = &mut self.groups[g];
-            grp.calm_time = if calm { grp.calm_time + dt } else { 0.0 };
-            if grp.calm_time >= time {
-                let first = grp.first;
-                self.freeze(first);
-            }
-        }
-    }
-
-    /// Measured state of joint `id`.
-    pub fn joint_state(&self, id: JointId) -> JointState {
-        let j = &self.joints[id as usize];
-        let (ba, bb) = (&self.bodies[j.a as usize], &self.bodies[j.b as usize]);
-        let separation = ((bb.pos + bb.rot.rotate(j.rb)) - (ba.pos + ba.rot.rotate(j.ra))).length();
-        let (qa, qb) = (self.frame_a(j), self.frame_b(j));
-        let (angle, twist) = match j.limit {
-            JointLimit::Hinge { .. } => {
-                let n = qa.rotate(Vec3::Z);
-                let (x1, x2) = (qa.rotate(Vec3::X), qb.rotate(Vec3::X));
-                (signed_angle(n, x1, x2), n.dot(qb.rotate(Vec3::Z)).clamp(-1.0, 1.0).acos())
-            }
-            JointLimit::Ball { cone_axis, .. } => {
-                let phi = qa.rotate(cone_axis).dot(qb.rotate(Vec3::X)).clamp(-1.0, 1.0).acos();
-                (phi, twist_angle(qa, qb).unwrap_or(0.0))
-            }
-        };
-        let want_b = ba.rot * j.rest_rel * j.target;
-        let drive_error = (want_b * bb.rot.conj()).angle();
-        JointState { separation, angle, twist, drive_error }
     }
 }
 

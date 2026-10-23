@@ -243,7 +243,7 @@ fn resting_ragdoll_sleeps_and_wakes_on_impulse() {
 }
 
 #[test]
-fn frozen_corpse_blocks_and_wakes_when_hit() {
+fn frozen_corpse_blocks_and_stays_static() {
     let mut world = World::new(config());
     let lying = Quat::from_axis_angle(Vec3::X, 1.5);
     let corpse = Ragdoll::spawn(&mut world, &skeleton_h(), 75.0, Vec3::new(0.0, 0.0, 0.2), lying);
@@ -252,12 +252,12 @@ fn frozen_corpse_blocks_and_wakes_when_hit() {
     // Across the corpse, hips over its belly.
     let across = Quat::from_axis_angle(Vec3::Z, core::f32::consts::FRAC_PI_2) * lying;
     let falling = Ragdoll::spawn(&mut world, &skeleton_h(), 75.0, Vec3::new(-1.0, -0.9, 0.6), across);
-    let mut woke = false;
+    let before = world.body(corpse.body(0)).pos;
     for _ in 0..90 {
         world.step(&flat);
-        woke |= !corpse.is_asleep(&world);
+        assert!(corpse.is_asleep(&world), "a frozen corpse is static geometry: touching it does not wake it");
     }
-    assert!(woke, "the corpse wakes when the falling body touches it");
+    assert_eq!(world.body(corpse.body(0)).pos, before, "and it does not move");
     let hips = world.body(falling.body(0)).pos;
     let under = world.body(corpse.body(corpse.bone_index("spine").unwrap())).pos;
     println!("fallen onto the corpse: hips {hips:?}, corpse's belly {under:?}");

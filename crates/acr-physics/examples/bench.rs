@@ -4,7 +4,9 @@
 //! Measures fixed steps (1/60 s) of N skeleton-H ragdolls side by side on uneven ground:
 //! the active ones are dropped limp (falling, then lying, for 4 s, sleeping disabled so they
 //! stay active); with "half frozen" every second one is a frozen corpse. Reports
-//! microseconds per active ragdoll step. This feeds the budget of docs/body-sim.md: active
+//! microseconds per active ragdoll step. "pile": the active ones fall onto 96 frozen
+//! corpses lying packed (a melee's dead), the case the frozen corpses' static grid is for;
+//! "60 apart": 60 active ragdolls spread out (islands in parallel on native). This feeds the budget of docs/body-sim.md: active
 //! ragdolls per frame = floor(frame budget / cost per active ragdoll step).
 
 use std::time::Instant;
@@ -42,7 +44,7 @@ fn main() {
         config.joint_iterations = j;
     }
     println!("{} substeps x {} joint passes", config.substeps, config.joint_iterations);
-    for &(n, frozen) in &[(1usize, false), (16, false), (16, true), (64, true), (256, true)] {
+    for &(n, frozen) in &[(1usize, false), (16, false), (16, true), (64, true), (256, true), (60, false)] {
         // Best of three: the dev machine is shared, the minimum is the least disturbed run.
         let (us, kc, active) = (0..3)
             .map(|_| run(config, n, frozen))
@@ -52,6 +54,36 @@ fn main() {
             if frozen { " (half frozen)" } else { "" }
         );
     }
+    for &active in &[16usize, 60] {
+        let us = (0..3).map(|_| pile(config, active)).fold(f64::MAX, f64::min);
+        println!("pile: {active:3} active over 96 frozen: {us:6.1} us per active ragdoll step (wall)");
+    }
+}
+
+/// Microseconds (wall) per active ragdoll step: `active` limp ragdolls dropped onto 96
+/// frozen corpses lying side by side, 0.7 m apart.
+fn pile(config: Config, active: usize) -> f64 {
+    let skeleton = skeleton_h();
+    let ground = |x: f32, y: f32| 0.05 * (x * 1.3).sin() + 0.04 * (y * 0.9).cos();
+    let mut world = World::new(config);
+    let lying = Quat::from_axis_angle(Vec3::X, 1.5);
+    for i in 0..96 {
+        let (x, y) = ((i % 12) as f32 * 0.7, (i / 12) as f32 * 1.9);
+        let man = Ragdoll::spawn(&mut world, &skeleton, 75.0, Vec3::new(x, y, 0.2), lying);
+        man.freeze(&mut world);
+    }
+    let side = (active as f32).sqrt().ceil() as usize;
+    for i in 0..active {
+        let (x, y) = ((i % side) as f32 * 8.0 / side as f32, (i / side) as f32 * 14.0 / side as f32);
+        let tilt = Quat::from_axis_angle(Vec3::new(1.0, 0.2 * i as f32, 0.0), 0.5);
+        Ragdoll::spawn(&mut world, &skeleton, 75.0, Vec3::new(x, y, 1.0), tilt);
+    }
+    let steps = 120;
+    let t = Instant::now();
+    for _ in 0..steps {
+        world.step(&ground);
+    }
+    t.elapsed().as_secs_f64() * 1e6 / (steps * active) as f64
 }
 
 /// Microseconds and thousands of thread cycles per active ragdoll step, and the number of

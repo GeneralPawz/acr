@@ -576,7 +576,8 @@ impl Ragdoll {
     }
 
     /// Freezes the ragdoll in its current pose: a static corpse that costs nothing and
-    /// still blocks others, until an impulse or an awake body touching it wakes it.
+    /// still blocks others (one-sided, like the ground), until an explicit wake (an
+    /// impulse, a new pose or tone).
     pub fn freeze(&self, world: &mut World) {
         world.freeze(self.bones[0].body);
     }
