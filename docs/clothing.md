@@ -253,6 +253,37 @@ order and cull, `after/` order, cull and edge relax, `sheet_v1.png`, `sheet_befo
   with a turned strip, and pull an inner layer under an outer *border* rather than under
   its interior.
 
+**Fourth trisoup pass** (#287; everything in `ACR-analysis/trisoup4/`). The garment meshes
+of FrnBuk and EngOf17 were dumped after every stage (`tools/stages.py`, a local Blender:
+place, sim frame 45 and 75, weld, finish, the shell cut and its border smoothing, the band,
+the final mesh) and rendered alone, flat with wireframe, front and back
+(`sheet_stages_engof17.png`, `sheet_stages_frnbuk_cloak.png`). The draped buff coat is clean
+through every stage: **the sim and the weld make no spikes**. The spikes are made by two
+generators:
+
+- **The falling band** (`drape.falling_band`, EngOf17, EngMus, EngB17 and every unit with the
+  band): each vertex is cast straight down onto the cloth; past the edge of the shoulder or
+  the back the ray found the cloth up to 35 cm lower, a row of long thin spikes. Now
+  (`drape.BAND_CLEAN`, **on**) a ring drops at most `BAND_SLOPE` (0.8) × its radial step
+  below the ring inside it, and the rings are smoothed round the neck (`BAND_SMOOTH`, 4
+  passes) without going under the cloth. In game (`sheet_before_after.png`, `before/`,
+  `after/`) the band is a smooth collar on the chest and back of all three; the front tips
+  still stand off the shoulders a little from the side. `model_layers --steps 8`
+  (`layers_before.txt`, `layers_after.txt`): poking / crossing engof17 375 / 368 → 382 / 353,
+  engmus 405 / 196 → 248 / 158, engb17 299 / 157 → 196 / 117; the buff coat through the
+  band, worst 33.5 → 4.2 mm.
+- **Shells** (`bd.derive`, FrnBuk's cloak, blouse, sash, and every family's shells): the cut
+  takes whole faces of the decimated hull, so its border is a row of triangle teeth, and
+  172 of the cloak's 199 border edges run along the hull's part borders, which
+  `smooth_border` keeps fixed as seams; the smoothing never touched them. Tried
+  (`body.CLEAN_CUT`, **off**): teeth and notches of the face set removed, a part border
+  counted as a seam only where the face across it is kept too, border moves capped at 2 cm.
+  The cloak's back hem comes out smoother (`sheet_v3.png`), but the neck hole and the
+  blouse's top grow new spikes (the border is put back onto the nearest skin, near the neck
+  that is the chin) and the sash loses its teeth with its faces. Next: cut shells along a
+  smoothed per-vertex field (an isoline through the triangles) instead of whole faces, and
+  lift the border onto the skin of its own part only.
+
 engm18, 24 frames × 19 clips (crossing vertices / worst):
 
 | pair | before | after |

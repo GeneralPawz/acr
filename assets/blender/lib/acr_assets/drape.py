@@ -1474,6 +1474,11 @@ def _cloth_tree(objs):
     return BVHTree.FromPolygons(vs, fs) if fs else None
 
 
+BAND_CLEAN = True  # the falling band's rings limited in drop and smoothed round the neck (#287 trisoup4)
+BAND_SLOPE = 0.8  # tan of the steepest drop from one ring to the next
+BAND_SMOOTH = 4  # smoothing passes round the neck
+
+
 def falling_band(ch, name, width=(0.115, 0.085), key="fallband", n=48, rings=7, lift=0.008):
     """The falling band: a wide linen collar lying flat on the doublet's shoulders, deeper in
     front (`width` m front, back), split at the centre front. Each vertex is cast straight
@@ -1486,23 +1491,44 @@ def falling_band(ch, name, width=(0.115, 0.085), key="fallband", n=48, rings=7, 
     cx, cy = head.x, head.y + 0.008
     r0 = 0.062
     bm = bmesh.new()
-    grid = []
+    # Per row (angle) and ring: the cloth surface under it (`floor`, z + lift) or None.
+    rows_xy, floor = [], []
     for i in range(n + 1):
         t = -math.pi / 2 + 2 * math.pi * (i + 0.5 * (i == 0) - 0.5 * (i == n)) / n  # split at the front (-Y)
         front = max(0.0, -math.sin(t)) ** 2
         w = width[1] + (width[0] - width[1]) * front
-        row = []
+        xy, fl = [], []
         for k in range(rings + 1):
             r = r0 + w * k / rings
             o = Vector((cx + r * math.cos(t), cy + r * math.sin(t), head.z + 0.03))
             hit = tree.ray_cast(o, Vector((0, 0, -1)), 0.35)
-            if hit[0] is None:
-                p = Vector((o.x, o.y, head.z - 0.03))
+            xy.append((o.x, o.y, r))
+            fl.append(None if hit[0] is None else hit[0].z + lift)
+        rows_xy.append(xy)
+        floor.append(fl)
+    # Stiff linen: a ring drops at most `BAND_SLOPE` x its radial step below the ring inside
+    # it (a ray past the shoulder's or the back's edge found the cloth far below: the long
+    # spikes of #287's trisoup), then each ring is smoothed round the neck, never under the
+    # cloth.
+    z = []
+    for xy, fl in zip(rows_xy, floor):
+        zr = []
+        for k in range(rings + 1):
+            f = fl[k]
+            if k == 0:
+                zr.append(f if f is not None else head.z - 0.03)
+            elif not BAND_CLEAN:
+                zr.append(f if f is not None else head.z - 0.03)
             else:
-                nrm = hit[1] if hit[1].z > 0 else -hit[1]
-                p = hit[0] + nrm * lift
-            row.append(bm.verts.new(p))
-        grid.append(row)
+                lim = zr[-1] - BAND_SLOPE * (xy[k][2] - xy[k - 1][2])
+                zr.append(max(f, lim) if f is not None else lim)
+        z.append(zr)
+    if BAND_CLEAN:
+        for _ in range(BAND_SMOOTH):
+            z = [[max((z[max(i - 1, 0)][k] + 2 * z[i][k] + z[min(i + 1, n)][k]) / 4,
+                      floor[i][k] if floor[i][k] is not None else -1e9) for k in range(rings + 1)]
+                 for i in range(n + 1)]
+    grid = [[bm.verts.new((x, y, zz)) for (x, y, _r), zz in zip(xy, zr)] for xy, zr in zip(rows_xy, z)]
     for a, b in zip(grid, grid[1:]):
         for k in range(rings):
             bm.faces.new((a[k], b[k], b[k + 1], a[k + 1]))

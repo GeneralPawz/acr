@@ -193,8 +193,12 @@ def derive(src, name, keep_face, offset, border=False):
         part = f.verts[0][vpart] if vpart else 0
         if not keep_face(f.calc_center_median(), f.normal, home, part):
             kill.append(f)
+    if border and CLEAN_CUT:
+        kill = clean_cut(kill, bm.faces)
     # Push before deleting (keyed by BMVert; delete() renumbers the indices).
     seam = {frozenset(e.verts) for e in bm.edges if e.is_boundary}
+    if border and CLEAN_CUT:
+        seam = real_seams(bm, set(kill))
     for v in bm.verts:
         v.co += Vector(v[rn]) * offset
     bmesh.ops.delete(bm, geom=kill, context="FACES")
@@ -206,6 +210,60 @@ def derive(src, name, keep_face, offset, border=False):
         obj.data.color_attributes.remove(a)
     obj["acr_home_bones"] = list(src["acr_home_bones"])
     return am.bind(obj, src.parent)
+
+
+BORDER_MOVE = 0.02  # m: the most a smoothed border vertex moves
+CLEAN_CUT = False  # ears and notches of the cut face set removed before the border is smoothed (#287 trisoup4)
+
+
+def clean_cut(kill, faces, rounds=4):
+    """The faces to delete for a shell, cleaned on the face graph: a kept face with two or
+    more edges on the cut (a tooth: one triangle of the decimated hull poking out of the
+    border) goes, a deleted face with two or more kept neighbours (a notch) stays, then the
+    teeth once more. The part seams of the source (edges with one face) do not count."""
+    dead = set(kill)
+
+    def cut_edges(f, gone):
+        n = 0
+        for e in f.edges:
+            other = [g for g in e.link_faces if g is not f]
+            if other and ((other[0] in dead) != gone):
+                n += 1
+        return n
+
+    kept = sum(1 for f in faces if f not in dead)
+    for r in range(rounds + 1):
+        ears = [f for f in faces if f not in dead and cut_edges(f, False) >= 2]
+        if len(ears) > 0.1 * kept:
+            ears = []  # a narrow strip (a sash) is all teeth: leave it to the smoothing
+        dead.update(ears)
+        if r == rounds:
+            break
+        notches = [f for f in faces if f in dead and cut_edges(f, True) >= 2]
+        dead.difference_update(notches)
+        if not ears and not notches:
+            break
+    return list(dead)
+
+
+def real_seams(bm, kill):
+    """The part seams of `src` (boundary edges: the hull is split at the part borders) that
+    stay seams in the shell: those whose twin edge across the border keeps its face too.
+    Where the face across is cut away the seam is the shell's outer border (FrnBuk's cloak:
+    172 of its 199 border edges ran along the jagged part borders and were never smoothed)."""
+    def key(v):
+        return tuple(round(c, 5) for c in v.co)
+
+    twins = {}
+    for e in bm.edges:
+        if e.is_boundary:
+            twins.setdefault(frozenset(key(v) for v in e.verts), []).append(e)
+    seam = set()
+    for es in twins.values():
+        kept = [e for e in es if e.link_faces[0] not in kill]
+        if len(kept) > 1:
+            seam.update(frozenset(e.verts) for e in kept)
+    return seam
 
 
 def smooth_border(bm, src, seam, offset, iterations=10, hem=0.7):
@@ -231,10 +289,18 @@ def smooth_border(bm, src, seam, offset, iterations=10, hem=0.7):
     if not edge:
         return
     nb = {v: [e.other_vert(v) for e in v.link_edges if cut_edge(e)] for v in edge}
+    start = {v: v.co.copy() for v in edge}
     for _ in range(iterations):
         new = {v: (v.co * 0.5 + (ns[0].co + ns[1].co) * 0.25) for v, ns in nb.items() if len(ns) == 2}
         for v, c in new.items():
             v.co = c
+    if CLEAN_CUT:
+        # A border vertex moves at most `BORDER_MOVE` (a long chain round the neck hole
+        # otherwise shrinks onto the chin).
+        for v, c in start.items():
+            d = v.co - c
+            if d.length > BORDER_MOVE:
+                v.co = c + d * (BORDER_MOVE / d.length)
     lift(edge)
     eset = set(edge)
     ring = list({w for v in edge for f in v.link_faces for w in f.verts if w not in eset and not w.is_boundary})
