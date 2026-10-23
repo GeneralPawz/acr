@@ -426,7 +426,7 @@ per 0.55 m, the root sliding along with the cycle's bob).
   England: dark blue, red waistcoat; France: bleu de roi throughout; Spain: lighter blue,
   red; USA: dark blue, buff. Others keep the model's blue and red.
 - **Faces:** the men are built with the MakeHuman head (`heads.refine`) and its painted
-  face map (`heads.face_map`, 512², baked per man); no face morphs, looks or hair variants
+  face map (`heads.face_map`, 1024², baked per man); no face morphs, looks or hair variants
   (a gun has no looks), and the face material drops `acr_tint` "skin" (it would read a look
   texel). Crew 18 768 → 24 432 triangles (skin 1 532 → 2 786 per man), the whole model
   29 130.

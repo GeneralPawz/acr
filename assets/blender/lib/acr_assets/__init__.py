@@ -10,6 +10,10 @@ entry script) has put `assets/blender/lib` on `sys.path`:
 import json
 import os
 
+# Numbers library code measures while building (`heads.face_map`: the head's UV layout),
+# merged into `<name>.stats.json` by `build.py`.
+BUILD_STATS = {}
+
 
 class View:
     """One stored direction of a sprite reference (`acr model-ref`)."""

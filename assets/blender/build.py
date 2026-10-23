@@ -21,7 +21,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "lib"))
 
-from acr_assets import Reference, export, scene  # noqa: E402
+from acr_assets import BUILD_STATS, Reference, export, scene  # noqa: E402
 
 
 class Context:
@@ -63,6 +63,8 @@ def main(argv):
             if os.path.isfile(p):
                 ctx.refs[label] = Reference(p)
     module.build(ctx)
+    for k, v in BUILD_STATS.items():
+        ctx.stats.setdefault(k, v)
     if a.blend:
         import bpy
 

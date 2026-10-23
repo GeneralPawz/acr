@@ -115,6 +115,19 @@ the variant meshes, so the game looks as before.
   - Head-local z is mapped through the head's landmarks (nose tip, mouth line, chin) onto
     the painted layout, so the face map, `_FACE` zones and hair curves of passes 1–3 land
     on the real features (`Frame.local`).
+- **Face map layout (`heads.unwrap_head`) and baked faces:** the head part of the skin (face,
+  scalp, ears, upper neck) has its own material and image, 1024² (`faces.FACE_SIZE`), in
+  the skin's `atlas` UV map: one coherent island cut by a seam down the back of the head
+  (nape to crown), a minimum-stretch unwrap weighted towards the face front and the ears,
+  turned upright (crown up, the model's left to the right) and scaled into the square; the
+  eyeballs are small islands beside it. The layout is deterministic, so a face baked onto
+  one build fits the next. `stats.json` `face_uv.<name>`: `islands`, `used` (share of the
+  square), `flipped`, `front_px_per_cm` (engmus: 15 islands, 0.45, 0, 20.6 px/cm; the old
+  smart-project layout had about 150 islands at 512²).
+  - **Baked faces:** `faces.face_source` looks for `$ACR_FACES/<unit>.png`, else
+    `$ACR_SOURCES/faces/<unit>.png`: an sRGB image in this layout (size 1024–2048, kept as
+    a power of two). It replaces the painted colours (paint masks still go on top); without
+    one the face is painted as before. Generated faces never go in the repo.
 - **Body (#287, `acr_assets/mbody.py`):** below the head the skin hull is the MakeHuman 1.x
   base body (CC0, `assets/blender/data/makehuman/body.json`, from
   `assets/blender/tools/makehuman_body.py`), not the Skin-modifier hull: feet with heel,
@@ -141,10 +154,10 @@ the variant meshes, so the game looks as before.
     weighted to shin, foot and toe. The skin inside the shoes is deleted.
   - `build["mh_body"] = False` keeps the old hull.
 - **Face map:** the head part of the skin has its own material (second primitive of the
-  flesh, `acr_tint` "skin") with a 512² texture on `TEXCOORD_0`.
-  - The UV is a smart-project unwrap of the head (`heads.unwrap`, pass 5; the earlier
-    cylinder folded the chin's underside onto the neck). The bake is dilated into the
-    island margins (`heads.dilate`), so filtering shows no seams.
+  flesh, `acr_tint` "skin") with a 1024² texture on `TEXCOORD_0`.
+  - The UV is one coherent island (`heads.unwrap_head`, see "Face map layout" above; it replaced
+    pass 5's smart-project unwrap). The bake is dilated into the island margins
+    (`heads.dilate`), so filtering shows no seams.
   - Pass 5 toned the paint down (dirt, pores, blotches, occlusion) so the face matches the
     body's skin; the stubble is fine and even (a shaved shadow and sparse hair points); the
     brows are full tapered bands. The beard zone (`_FACE` R) is relaxed over the mesh and

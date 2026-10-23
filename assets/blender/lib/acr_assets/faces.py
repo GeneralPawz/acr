@@ -10,6 +10,7 @@ See docs/assets-humans.md "Faces and bodies".
 """
 
 import math
+import os
 
 # Morph targets: name -> (lowest weight, highest weight). Signed ones go both ways (narrow
 # to wide jaw); the renderer mixes them per soldier (`choose`).
@@ -104,6 +105,42 @@ PATCHES = {
                         "thick": 0.005, "open": ("lo", "hi", "ends"), "grid": (3, 4), "ridges": 0.2},
 }
 CENTRE = (0.0, 0.09, -0.01)  # ray origin, head-local
+# The head's own texture (`heads.face_map`): the procedural map's size, and the largest a
+# baked face from `face_source` may bring (power-of-two sizes in between are kept).
+FACE_SIZE = 1024
+FACE_SIZE_MAX = 2048
+# Baked faces live outside the repo: `$ACR_FACES/<unit>.png`, else
+# `$ACR_SOURCES/faces/<unit>.png`, an sRGB image in the head layout (`heads.unwrap_head`).
+FACE_DIR = "faces"
+
+
+def face_source(name, environ=None, exists=os.path.isfile):
+    """Path of the baked face image of unit `name` (lower-case file stem), or None when
+    there is none: the head then gets the painted procedural face."""
+    env = os.environ if environ is None else environ
+    folder = env.get("ACR_FACES")
+    if not folder and env.get("ACR_SOURCES"):
+        folder = os.path.join(env["ACR_SOURCES"], FACE_DIR)
+    if not folder:
+        return None
+    path = os.path.join(folder, f"{name.lower()}.png")
+    return path if exists(path) else None
+
+
+def ear(x, y, z):
+    """1 on the ears (the box the hairline leaves bare in `region`), else 0."""
+    return 1.0 if abs(x) > 0.055 and 0.080 < y < 0.125 and -0.04 < z < 0.02 else 0.0
+
+
+def face_size(src=None):
+    """Texture size of the head: `FACE_SIZE`, or a baked face's own size (its larger side,
+    rounded down to a power of two) between `FACE_SIZE` and `FACE_SIZE_MAX`."""
+    if not src:
+        return FACE_SIZE
+    n = 1 << (max(int(src), 1).bit_length() - 1)
+    return max(FACE_SIZE, min(FACE_SIZE_MAX, n))
+
+
 # Variant meshes that are not patches.
 OTHER_VARIANTS = ("hair_queue",)
 
@@ -360,8 +397,8 @@ def region(variant, x, y, z):
             scalp = z > 0.030 - 0.25 * (y - 0.03)
         else:
             scalp = z > -0.035 - 0.6 * (y - 0.085)
-        ear = ax > 0.055 and 0.080 < y < 0.125 and -0.04 < z < 0.02
-        scalp = scalp and not ear
+        ear_ = ear(x, y, z) > 0.0
+        scalp = scalp and not ear_
         if variant == "hair_short":
             return scalp and z > -0.075
         if variant == "hair_tied":

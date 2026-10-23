@@ -12,6 +12,24 @@ POINTS = [(x / 100, y / 100, z / 100) for x in range(-9, 10) for y in range(-1, 
 FIELDS = [faces.base_face] + [lambda x, y, z, n=n: faces.morph(n, x, y, z) for n in faces.FACE_MORPHS]
 
 
+class FaceSource(unittest.TestCase):
+    def test_lookup_order_and_fallback(self):
+        have = {os.path.join("/f", "engmus.png"), os.path.join("/s", "faces", "engmus.png")}
+        ok = have.__contains__
+        self.assertEqual(faces.face_source("EngMus", {"ACR_FACES": "/f", "ACR_SOURCES": "/s"}, ok),
+                         os.path.join("/f", "engmus.png"))
+        self.assertEqual(faces.face_source("engmus", {"ACR_SOURCES": "/s"}, ok), os.path.join("/s", "faces", "engmus.png"))
+        self.assertIsNone(faces.face_source("engm18", {"ACR_SOURCES": "/s"}, ok))
+        self.assertIsNone(faces.face_source("engmus", {}, ok))
+
+    def test_size(self):
+        self.assertEqual(faces.face_size(), faces.FACE_SIZE)
+        self.assertEqual(faces.face_size(512), faces.FACE_SIZE)
+        self.assertEqual(faces.face_size(1536), 1024)
+        self.assertEqual(faces.face_size(2048), 2048)
+        self.assertEqual(faces.face_size(4096), faces.FACE_SIZE_MAX)
+
+
 class Fields(unittest.TestCase):
     def test_mirror_symmetric(self):
         for f in FIELDS:

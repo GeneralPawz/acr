@@ -1,11 +1,13 @@
 """Individual faces (#283, needs `bpy`, `bmesh`, `numpy`): a finer head on the skin hull
-with a modelled base face and its own painted 512² face map, the `face_*` and `body_*` morph
+with a modelled base face and its own face map (1024², one coherent UV island; or a baked
+face from `faces.face_source`), the `face_*` and `body_*` morph
 targets, the `_FACE` zones and the hair and beard variants as separate smooth meshes. The
 fields, curves and odds are pure Python in `faces.py`. See docs/assets-humans.md "Faces and
 bodies".
 """
 
 import math
+import os
 
 import bmesh
 import bpy
@@ -13,13 +15,17 @@ import numpy as np
 from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 
+from . import BUILD_STATS
 from . import armature as am
 from . import body as bd
 from . import coat, decay, faces, held, mhead
 
 HAIR_BASE = (0.80, 0.78, 0.75)  # neutral: the renderer multiplies the chosen hair colour in
-FACE_SIZE = 512  # the head's own texture
+FACE_SIZE = faces.FACE_SIZE  # the head's own texture (procedural)
 STRAND_SIZE = 256
+# `unwrap_head`: texel weight of the face front over scalp and neck, solver iterations.
+FACE_WEIGHT = 1.0
+UV_ITERATIONS = 20
 
 
 class Frame:
@@ -322,8 +328,35 @@ def face_uv(fr, co):
     return 0.5 + 0.5 * math.sin(th / 2.0), (z + 0.17) / 0.30
 
 
-def unwrap(obj, angle=60.0, margin=0.015):
-    """Smart-projects the active UV map of `obj` (islands, no overlaps)."""
+def unwrap_head(obj, fr, margin=0.004):
+    """The head's own UV layout in the active UV map of `obj` (a copy holding only the head:
+    face, scalp, ears, upper neck): one coherent island, cut by a seam down the back of the
+    head from the nape to the crown (midline edges behind `faces.CENTRE`), minimum-stretch
+    unwrap weighted towards the face front and the ears (`FACE_WEIGHT`); the eyeballs are
+    small islands beside it. The layout is turned so the face
+    stands upright (crown up, the model's left, +x, to the right) and scaled into the unit
+    square, so a baked face reads like a portrait. Deterministic: a baker can rely on the
+    same layout for the same head. Returns its numbers for `stats.json`."""
+    from bpy_extras import mesh_utils
+
+    me = obj.data
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    loc = {v: fr.local(v.co) for v in bm.verts}
+    seams = 0
+    for e in bm.edges:
+        e.seam = all(abs(loc[v][0]) < 2e-4 and loc[v][1] > faces.CENTRE[1] for v in e.verts)
+        seams += e.seam
+    bm.to_mesh(me)
+    bm.free()
+    # Texel importance: the face front (brows to chin) gets FACE_WEIGHT more area, the ears
+    # half of it; scalp and neck the rest.
+    g = obj.vertex_groups.new(name="uv_importance")
+    for v in me.vertices:
+        x, y, z = fr.local(v.co)
+        front = (1.0 - mhead.smooth(0.02, 0.06, y)) * mhead.smooth(-0.15, -0.12, z) * (1.0 - mhead.smooth(0.05, 0.08, z))
+        ear = faces.ear(x, y, z)
+        g.add([v.index], float(max(front, 0.5 * ear)), "REPLACE")
     vl = bpy.context.view_layer
     for o in vl.objects:
         o.select_set(False)
@@ -331,9 +364,56 @@ def unwrap(obj, angle=60.0, margin=0.015):
     obj.select_set(True)
     bpy.ops.object.mode_set(mode="EDIT")
     bpy.ops.mesh.select_all(action="SELECT")
-    bpy.ops.uv.smart_project(angle_limit=math.radians(angle), island_margin=margin, scale_to_bounds=True)
+    bpy.ops.uv.unwrap(method="MINIMUM_STRETCH", fill_holes=True, correct_aspect=True, margin=margin,
+                      no_flip=True, iterations=UV_ITERATIONS, use_weights=True, weight_group="uv_importance",
+                      weight_factor=FACE_WEIGHT)
     bpy.ops.object.mode_set(mode="OBJECT")
     obj.select_set(False)
+    layer = me.uv_layers.active
+    n = len(me.loops)
+    uv = np.empty(n * 2, np.float32)
+    layer.data.foreach_get("uv", uv)
+    uv = uv.reshape(-1, 2).astype(np.float64)
+    vi = np.empty(n, np.int32)
+    me.loops.foreach_get("vertex_index", vi)
+    L = np.array([fr.local(v.co) for v in me.vertices], np.float64)[vi]
+    islands = sorted(mesh_utils.mesh_linked_uv_islands(me), key=len, reverse=True)
+    main = np.zeros(n, bool)
+    for pi in islands[0]:
+        p = me.polygons[pi]
+        main[p.loop_start:p.loop_start + p.loop_total] = True
+    # Upright: fit uv ~ A (x, z, 1) over the face front of the main island, turn +z to +v,
+    # mirror u when +x points left.
+    sel = main & (L[:, 1] < 0.05)
+    A = np.linalg.lstsq(np.c_[L[sel][:, 0], L[sel][:, 2], np.ones(int(sel.sum()))], uv[sel], rcond=None)[0]
+    th = math.pi / 2 - math.atan2(A[1][1], A[1][0])
+    R = np.array([[math.cos(th), -math.sin(th)], [math.sin(th), math.cos(th)]])
+    uv = uv @ R.T
+    if (R @ A[0])[0] < 0:
+        uv[:, 0] = -uv[:, 0]
+    lo, hi = uv.min(0), uv.max(0)
+    k = (1.0 - 2 * margin) / float((hi - lo).max())
+    uv = (uv - lo) * k + margin + (1.0 - 2 * margin - (hi - lo) * k) / 2
+    layer.data.foreach_set("uv", uv.astype(np.float32).ravel())
+    # Numbers: covered share of the square, folds (flipped polygons of the main island),
+    # texel density on the face front (per metre at a 1 px texture).
+    area_uv = area_3d = used = 0.0
+    sign = []
+    for p in me.polygons:
+        ls = list(range(p.loop_start, p.loop_start + p.loop_total))
+        u = uv[ls]
+        a = 0.5 * float(np.sum(u[:, 0] * np.roll(u[:, 1], -1) - np.roll(u[:, 0], -1) * u[:, 1]))
+        used += abs(a)
+        if main[p.loop_start]:
+            sign.append(a)
+            if all(L[i][1] < 0.05 for i in ls) and L[p.loop_start][2] > -0.12:
+                area_uv += abs(a)
+                area_3d += p.area
+    sign = np.array(sign)
+    flipped = int(min((sign > 0).sum(), (sign < 0).sum()))
+    return {"islands": len(islands), "main_polys": len(islands[0]), "seam_edges": int(seams),
+            "used": round(used, 3), "flipped": flipped,
+            "front_per_m": math.sqrt(area_uv / max(area_3d, 1e-12))}
 
 
 def dilate(img, mask, steps=12):
@@ -357,12 +437,18 @@ def dilate(img, mask, steps=12):
 
 
 def face_map(ch, skin_rgb, beard=True, scalp=True):
-    """The head's own material and 512² texture: the head part of the skin gets its own
-    material slot and, in the `atlas` UV map, a smart-project unwrap (`unwrap`); Cycles bakes
-    position, normal and occlusion of a copy of the head, numpy paints it (`paint_face`)."""
+    """The head's own material and texture: the head part of the skin gets its own material
+    slot and, in the `atlas` UV map, its own layout (`unwrap_head`: one coherent island) on
+    a separate image (`faces.FACE_SIZE`, 1024²). Cycles bakes position, normal and occlusion
+    of a copy of the head, numpy paints it (`paint_face`). A baked face for the unit
+    (`faces.face_source`: `$ACR_SOURCES/faces/<unit>.png` in this layout) replaces the
+    painted colours (paint masks still go on top); without one the face is painted."""
     fr = ch.face_frame
     flesh = ch.flesh
     me = flesh.data
+    src_path = faces.face_source(ch.name)
+    src = bpy.data.images.load(os.path.abspath(src_path)) if src_path else None
+    size_px = faces.face_size(max(src.size) if src else None)
     # The texture layer of the skin: `atlas` when dressed by `outfit`, else the detail map
     # (the dragoon rider).
     uvname = "atlas" if "atlas" in me.uv_layers else me.uv_layers[0].name
@@ -370,8 +456,8 @@ def face_map(ch, skin_rgb, beard=True, scalp=True):
     uv = me.uv_layers[uvname]
     face = [_in_face(fr, me.vertices[v].co) for v in range(len(me.vertices))]
     head = [p.index for p in me.polygons if all(parts[v] == 1 or face[v] for v in p.vertices)]
-    # Bake on a copy holding only the head, unwrapped without overlaps (#283 pass 5: the
-    # cylinder folded the chin's underside onto the neck), the UVs copied back.
+    # Unwrap and bake on a copy holding only the head (#283 pass 5: a cylinder folded the
+    # chin's underside onto the neck), the UVs copied back.
     tmp = bpy.data.objects.new(f"{ch.name}.face_bake", me.copy())
     tmp.matrix_world = flesh.matrix_world
     bd.link(tmp)
@@ -387,17 +473,20 @@ def face_map(ch, skin_rgb, beard=True, scalp=True):
     bm.to_mesh(tmp.data)
     bm.free()
     tmp.data.uv_layers.active = tmp.data.uv_layers[uvname]
-    unwrap(tmp)
-    src = tmp.data.uv_layers[uvname]
+    st = unwrap_head(tmp, fr)
+    st["front_px_per_cm"] = round(st.pop("front_per_m") * size_px / 100.0, 1)
+    st.update(texture_px=size_px, baked_face=bool(src))
+    BUILD_STATS.setdefault("face_uv", {})[ch.name] = st
+    src_uv = tmp.data.uv_layers[uvname]
     origs = [d.value for d in tmp.data.attributes["orig"].data]
     for tp in tmp.data.polygons:
         p = me.polygons[origs[tp.index]]
         for li, tl in zip(p.loop_indices, tp.loop_indices):
-            uv.data[li].uv = src.data[tl].uv
+            uv.data[li].uv = src_uv.data[tl].uv
     size = coat.SIZE
-    coat.SIZE = FACE_SIZE
+    coat.SIZE = size_px
     try:
-        pos, nrm, ao, covered = coat.bake([tmp], FACE_SIZE)
+        pos, nrm, ao, covered = coat.bake([tmp], size_px)
     finally:
         coat.SIZE = size
     data = tmp.data
@@ -406,13 +495,22 @@ def face_map(ch, skin_rgb, beard=True, scalp=True):
     flat_p, flat_n = pos.reshape(-1, 3), nrm.reshape(-1, 3)
     loc = np.stack([flat_p[:, 0] - fr.cx, flat_p[:, 1] - fr.y_front, flat_p[:, 2] - fr.eye_z], -1).astype(np.float32)
     cov = covered.reshape(-1)
-    col = np.tile(coat.lin(skin_rgb) * 0.85, (len(loc), 1)).astype(np.float32)
-    col[cov] = paint_face(loc[cov], flat_n[cov], skin_rgb, beard=beard, scalp=scalp)
-    col[cov] = face_masks(ch, flat_p[cov], flat_n[cov], col[cov])
-    occ = np.clip(ao.reshape(-1), 0.0, 1.0)
-    col[cov] *= (0.72 + 0.28 * occ[cov] ** 0.9)[:, None]
-    col = dilate(col.reshape(FACE_SIZE, FACE_SIZE, 3), cov.reshape(FACE_SIZE, FACE_SIZE)).reshape(-1, 3)
-    img = _image(f"{ch.name}.face", col, FACE_SIZE)
+    if src is not None:
+        # The baked face as it is (its own shading); sRGB texels to linear.
+        if tuple(src.size) != (size_px, size_px):
+            src.scale(size_px, size_px)
+        px = np.array(src.pixels[:], np.float32).reshape(-1, 4)[:, :3]
+        bpy.data.images.remove(src)
+        col = coat.lin(px).astype(np.float32)
+        col[cov] = face_masks(ch, flat_p[cov], flat_n[cov], col[cov])
+    else:
+        col = np.tile(coat.lin(skin_rgb) * 0.85, (len(loc), 1)).astype(np.float32)
+        col[cov] = paint_face(loc[cov], flat_n[cov], skin_rgb, beard=beard, scalp=scalp)
+        col[cov] = face_masks(ch, flat_p[cov], flat_n[cov], col[cov])
+        occ = np.clip(ao.reshape(-1), 0.0, 1.0)
+        col[cov] *= (0.72 + 0.28 * occ[cov] ** 0.9)[:, None]
+        col = dilate(col.reshape(size_px, size_px, 3), cov.reshape(size_px, size_px)).reshape(-1, 3)
+    img = _image(f"{ch.name}.face", col, size_px)
     m = decay.material(f"{ch.name}.face", "flesh", skin_rgb, image=img, uv_map=uvname, interpolation="Linear")
     m["acr_colour_from"] = "outfit"
     m["acr_tint"] = "skin"
