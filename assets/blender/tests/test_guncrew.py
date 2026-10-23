@@ -43,6 +43,14 @@ class Drill(unittest.TestCase):
         thighs = {ks[[f for f, _ in ks].index(f)][1]["thigh_l"] for f in walk}
         self.assertGreater(len(thighs), 1)
 
+    def test_hands_are_put_on_the_tools(self):
+        ks = dict(guncrew.attack_keys()["c3."])
+        self.assertEqual(ks[guncrew.FIRE].get("ik"), "linstock")
+        kinds = {s.get("ik") for f, s in guncrew.attack_keys()["c0."]}
+        self.assertTrue({"staff", "wheel"} <= kinds)
+        self.assertIn("spike", {s.get("ik") for f, s in guncrew.attack_keys()["c2."]})
+        self.assertEqual({s.get("ik") for f, s in guncrew.death_keys()[0]["c1."]}, {None})
+
 
 if __name__ == "__main__":
     unittest.main()

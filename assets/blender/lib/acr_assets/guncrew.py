@@ -52,6 +52,7 @@ STAFF_IN = {
     "upperarm_r": (-62, -16, -10), "forearm_r": (-38, 0, 10),
     "upperarm_l": (-70, 22, 20), "forearm_l": (-20, 0, -10),
     "thigh_l": (-26, -3, 0), "shin_l": (24, 0, 0), "thigh_r": (12, 3, 0), "shin_r": (6, 0, 0),
+    "ik": "staff",
 }
 STAFF_OUT = dict(STAFF_IN, spine=(-4, 0, 0), upperarm_r=(-40, -14, -6), forearm_r=(-60, 0, 10),
                  upperarm_l=(-48, 20, 14), forearm_l=(-50, 0, -10), thigh_l=(-10, -3, 0), shin_l=(10, 0, 0))
@@ -60,6 +61,7 @@ PUSH = {
     "spine": (-22, 0, 0), "spine1": (-8, 0, 0), "head": (14, 0, 0),
     "upperarm_r": (-68, -10, 0), "forearm_r": (-18, 0, 0), "upperarm_l": (-68, 10, 0), "forearm_l": (-18, 0, 0),
     "thigh_l": (-30, -3, 0), "shin_l": (30, 0, 0), "thigh_r": (20, 3, 0), "shin_r": (10, 0, 0),
+    "ik": "wheel",
 }
 REACH = dict(STAND, spine=(-18, 0, 0), spine1=(-8, 0, 0), head=(16, 0, 0),
              upperarm_r=(-66, -8, -6), forearm_r=(-22, 0, 8), hand_r=(0, 0, 0))
@@ -69,11 +71,12 @@ SPIKE = {
     "spine": (-34, 0, 0), "spine1": (-10, 0, 0), "head": (24, 0, 0),
     "upperarm_r": (-50, -10, 0), "forearm_r": (-30, 0, 0), "upperarm_l": (-55, 14, 0), "forearm_l": (-30, 0, 0),
     "thigh_l": (-30, -3, 0), "shin_l": (36, 0, 0), "thigh_r": (14, 3, 0), "shin_r": (14, 0, 0),
+    "ik": "spike",
 }
 # The linstock to the vent: right arm out, leaning in; recoiling from the shot.
 TOUCH = dict(STAND, spine=(-16, 0, 6), spine1=(-6, 0, 0), head=(12, 0, 4),
              upperarm_r=(-58, -6, -4), forearm_r=(-10, 0, 0), hand_r=(0, 0, 0),
-             upperarm_l=(10, 30, 0), thigh_l=(10, -3, 0), thigh_r=(-24, 3, 0), shin_r=(20, 0, 0))
+             upperarm_l=(10, 30, 0), thigh_l=(10, -3, 0), thigh_r=(-24, 3, 0), shin_r=(20, 0, 0), ik="linstock")
 FLINCH = dict(STAND, spine=(10, 0, -8), spine1=(6, 0, 0), head=(-8, 0, -20), upperarm_l=(-30, 30, 20),
               forearm_l=(-90, 0, 0), thigh_r=(14, 3, 0))
 # Thumb on the vent / pricking and priming: bent over the breech.
@@ -113,6 +116,8 @@ def _walk(pose, n=36, strides=3):
     return out
 
 
+PUSH_X = 1.02  # the wheel pushers stand just outside their wheel (x = 0.82)
+
 # Stations (x, y, yaw) in battery.
 HOME = {
     "c0.": (1.25, -0.2, -90),
@@ -129,7 +134,7 @@ def stand_keys():
 
 def motion_keys(n=36):
     """Moving: c0/c1 push on the wheels from behind, c2 on the trail, c3 walks beside."""
-    plan = {"c0.": (tool(PUSH, UP), (1.2, 1.05), 0), "c1.": (PUSH, (-1.2, 1.05), 0),
+    plan = {"c0.": (tool(PUSH, UP), (PUSH_X, 1.05), 0), "c1.": (PUSH, (-PUSH_X, 1.05), 0),
             "c2.": (tool(SPIKE, DOWN), (0.0, 3.15), 0), "c3.": (tool(STAND, UP), (1.45, 1.4), 0)}
     out = {}
     for p, (pose, st, yaw) in plan.items():
@@ -158,9 +163,9 @@ def attack_keys():
     for i, f in enumerate(range(178, 236, 14)):  # ram twice home
         at("c0.", f, tool(STAFF_OUT if i % 2 == 0 else STAFF_IN, LEVEL), -0.08, -1.9 if i % 2 == 0 else -1.45, 180)
     at("c0.", 246, tool(STAND, UP), 0.6, -1.9, 180)
-    at("c0.", 290, tool(STAND, UP), 1.2, 1.15 + B, 0)
-    at("c0.", 300, tool(PUSH, UP), 1.2, 1.05 + B, 0)
-    at("c0.", 400, tool(PUSH, UP), 1.2, 1.05, 0)
+    at("c0.", 290, tool(STAND, UP), PUSH_X, 1.15 + B, 0)
+    at("c0.", 300, tool(PUSH, UP), PUSH_X, 1.05 + B, 0)
+    at("c0.", 400, tool(PUSH, UP), PUSH_X, 1.05, 0)
     at("c0.", 419, tool(STAND, UP), 1.25, -0.2, -90)
     # c1: clear, then cartridge and ball from the bag into the muzzle.
     at("c1.", 0, STAND, -1.25, -0.2, 90)
@@ -173,9 +178,9 @@ def attack_keys():
     at("c1.", 150, REACH, -0.75, -0.75, 90)
     at("c1.", 162, REACH, -0.65, -0.75, 90)
     at("c1.", 172, STAND, -1.05, -0.75, 90)
-    at("c1.", 290, STAND, -1.2, 1.15 + B, 0)
-    at("c1.", 300, PUSH, -1.2, 1.05 + B, 0)
-    at("c1.", 400, PUSH, -1.2, 1.05, 0)
+    at("c1.", 290, STAND, -PUSH_X, 1.15 + B, 0)
+    at("c1.", 300, PUSH, -PUSH_X, 1.05 + B, 0)
+    at("c1.", 400, PUSH, -PUSH_X, 1.05, 0)
     at("c1.", 419, STAND, -1.25, -0.2, 90)
     # c2: lays the gun with the handspike, stands clear, serves the vent, primes.
     at("c2.", 0, tool(SPIKE, DOWN), 0.0, 3.15, 0)
@@ -277,6 +282,9 @@ ARMS = {"upperarm_l", "upperarm_r", "forearm_l", "forearm_r"}
 LEGS = {"thigh_l", "thigh_r"}
 SHINS = {"shin_l", "shin_r"}
 FEET = {"foot_l", "foot_r", "toe_l", "toe_r"}
+# The MakeHuman head with its modelled face and painted face map (`heads.refine`,
+# `heads.face_map`); no face morphs, looks or hair variants (the gun has no looks).
+FACES = True
 BUILD = {"width": 1.02, "shoulders": 1.10, "limbs": 1.18, "hips": 1.0, "mh_body": True}
 
 
@@ -325,7 +333,7 @@ def man(root, name, prefix, kit):
 
     ch = Character(root, name, BUILD, prefix=prefix, table=rig.skeleton_h(prefix))
     P = prefix
-    ch.body(faces=False)
+    ch.body(faces=FACES)
     strip = lambda h: h[len(P):] if h.startswith(P) else h
     ch.shell("waistcoat", "waistcoat", lambda c, n, h, p: strip(h) in TORSO and 0.97 < c.z < 1.47, 0.012)
     ch.shell("coat", "coat", lambda c, n, h, p: (strip(h) in TORSO and 0.97 < c.z < 1.49
@@ -408,6 +416,14 @@ def build(root, gun_arm, name="artpus"):
     for ch in crew:
         ch.masks()
         ch.colours(None, PALETTE)
+        if FACES and ch.face_frame is not None:
+            from . import heads
+
+            heads.face_map(ch, PALETTE["skin"])
+            # A plain skin colour: `acr_tint` "skin" would read a look texel the gun has not.
+            for m in ch.flesh.data.materials:
+                if m is not None and "acr_tint" in m:
+                    del m["acr_tint"]
     return crew
 
 
@@ -419,6 +435,9 @@ def key_clips(arm, actions):
 
     still = ("index_", "middle_", "ring_", "pinky_", "thumb_", "socket.")
     plan = clips()
+    marks = gun_marks(arm)
+    reach_err = []
+    by_kind = {}
     for clip, act in actions.items():
         arm.animation_data_create()
         arm.animation_data.action = act
@@ -434,6 +453,12 @@ def key_clips(arm, actions):
                 loc |= lo
             for f, s in ks:
                 am.pose(arm, s, frame=f, prefix=p, keyed=(rot, loc))
+                if s.get("ik"):
+                    bpy.context.scene.frame_set(f)
+                    err = hands(arm, p, s["ik"], marks, frame=f)
+                    if err is not None:
+                        reach_err.append(err)
+                        by_kind.setdefault(s["ik"], []).append(err)
         for fc in am._fcurves(act):
             if fc.data_path.startswith('pose.bones["c'):
                 for kp in fc.keyframe_points:
@@ -443,3 +468,165 @@ def key_clips(arm, actions):
     # The exported scene pose is STAND.
     for p, ks in plan["STAND"].items():
         am.pose(arm, ks[0][1], prefix=p)
+    reach_err.sort()
+    return {"ik_keys": len(reach_err), "ik_err_mean_m": round(sum(reach_err) / max(1, len(reach_err)), 3),
+            "ik_err_max_m": round(reach_err[-1], 3) if reach_err else 0.0,
+            "by_kind": {k: [len(v), round(sum(v) / len(v), 3), round(max(v), 3)] for k, v in by_kind.items()},
+            "marks_rest": {k: [round(x, 3) for x in loc] for k, (_b, loc) in marks.items()}}
+
+
+# --- hands on the tools (bpy): two-bone IK at build time -------------------------------------
+
+SPOKE_R = 0.66  # where the hands take the wheel: the spokes at the felloe (m from the hub)
+SPOKES = {"r": 36.0, "l": 62.0}  # degrees behind the top of the wheel, per hand
+STAFF_GRIP = -0.35  # the left hand on a level staff, metres behind the right (towards the butt)
+SPIKE_GRIP = 0.38  # the left hand down the handspike
+SPIKE_SEAT = 2.45  # y of the handspike's seat on the trail (m, gun frame)
+WRIST = 0.07  # wrist to the middle of the grip
+
+
+def gun_marks(arm):
+    """Points on the gun in the frame of the bone that carries them (bone, local point):
+    the vent on the breech, the seat of the handspike on the trail."""
+    from mathutils import Vector
+
+    import bpy
+
+    out = {}
+    # The gun's bones at rest (the last clip keyed may have left the carriage scaled away).
+    for b in ("gun", "carriage", "intact", "wreck", "barrel", "wheel_l", "wheel_r"):
+        pb = arm.pose.bones.get(b)
+        if pb is not None:
+            pb.location, pb.scale = (0, 0, 0), (1, 1, 1)
+            pb.rotation_mode = "QUATERNION"
+            pb.rotation_quaternion = (1, 0, 0, 0)
+    bpy.context.view_layer.update()
+    inv = arm.matrix_world.inverted()
+    for o in arm.children:
+        if o.type != "MESH" or o.parent_type != "BONE" or o.parent_bone not in ("barrel", "intact"):
+            continue
+        vs_ = [inv @ o.matrix_world @ v.co for v in o.data.vertices]
+        if o.parent_bone == "barrel":
+            ymax = max(v.y for v in vs_)
+            y = ymax - 0.24
+            top = [v for v in vs_ if abs(v.x) < 0.04 and abs(v.y - y) < 0.05] or vs_
+            pt = Vector((0.0, y, max(v.z for v in top) + 0.01))
+        else:
+            near = [v for v in vs_ if abs(v.y - SPIKE_SEAT) < 0.08] or vs_
+            pt = Vector((0.0, SPIKE_SEAT, max(v.z for v in near) - 0.02))
+        pb = arm.pose.bones[o.parent_bone]
+        out[o.parent_bone] = (o.parent_bone, pb.matrix.inverted() @ pt)
+    return out
+
+
+def _mark(arm, marks, name):
+    bone, local = marks[name]
+    return arm.pose.bones[bone].matrix @ local
+
+
+def _ik(s, t, l1, l2, pole):
+    """Elbow of a two-bone chain from `s` to `t` bent towards `pole` (a direction)."""
+    v = t - s
+    d = max(1e-4, min(v.length, (l1 + l2) * 0.995))
+    u = v.normalized()
+    a = (l1 * l1 - l2 * l2 + d * d) / (2 * d)
+    h = math.sqrt(max(l1 * l1 - a * a, 0.0))
+    p = (pole - u * pole.dot(u)).normalized()
+    return s + u * a + p * h
+
+
+def _aim(pb, direction):
+    """Turns pose bone `pb` (armature space) so its Y axis points along `direction`."""
+    import bpy
+
+    m = pb.matrix.copy()
+    q = m.to_3x3().col[1].normalized().rotation_difference(direction.normalized()).to_matrix()
+    n = (q @ m.to_3x3()).to_4x4()
+    n.translation = m.translation
+    pb.matrix = n
+    bpy.context.view_layer.update()
+
+
+def _orient(pb, rot3):
+    import bpy
+
+    n = rot3.to_4x4()
+    n.translation = pb.matrix.translation.copy()
+    pb.matrix = n
+    bpy.context.view_layer.update()
+
+
+def _reach(arm, P, sd, grip, frame):
+    """Puts the hand `sd` of man `P` round the point `grip` (armature space), the elbow out
+    and down, the hand keeping its orientation. Keys the arm at `frame`; returns the miss (m)."""
+    from mathutils import Vector
+
+    B = arm.pose.bones
+    up, fo, ha = B[P + "upperarm_" + sd], B[P + "forearm_" + sd], B[P + "hand_" + sd]
+    keep = ha.matrix.to_3x3().copy()
+    s = up.head.copy()
+    out = (B[P + "upperarm_" + sd].head - B[P + "upperarm_" + ("r" if sd == "l" else "l")].head).normalized()
+    t = grip + (s - grip).normalized() * WRIST
+    l1, l2 = (fo.head - up.head).length, (ha.head - fo.head).length
+    e = _ik(s, t, l1, l2, out * 0.6 + Vector((0, 0, -1)))
+    _aim(up, e - s)
+    _aim(fo, t - fo.head)
+    _orient(ha, keep)
+    for pb in (up, fo, ha):
+        pb.keyframe_insert("rotation_quaternion", frame=frame, group=pb.name)
+    return (ha.head - t).length
+
+
+def _tool_axis(sock):
+    """The held tool's axis (armature space): the socket's rest-relative turn of +Z."""
+    from mathutils import Vector
+
+    return (sock.matrix.to_3x3() @ sock.bone.matrix_local.to_3x3().inverted() @ Vector((0, 0, 1))).normalized()
+
+
+def _point_tool(sock, at, frame):
+    """Turns the socket so the held tool points from the hand at `at`; keys it."""
+    from mathutils import Vector
+
+    a = _tool_axis(sock)
+    q = a.rotation_difference((Vector(at) - sock.head).normalized()).to_matrix()
+    _orient(sock, q @ sock.matrix.to_3x3())
+    sock.keyframe_insert("rotation_quaternion", frame=frame, group=sock.name)
+
+
+def hands(arm, P, kind, marks, frame):
+    """Hand IK of man `P` at `frame` for the task `kind` (the current pose is the key's):
+    "staff" the left hand on the level staff; "spike" the handspike seated in the trail and
+    the left hand down it; "linstock" the match on the vent; "wheel" both hands on the
+    spokes of his wheel. Returns the largest miss (m)."""
+    from mathutils import Vector
+
+    B = arm.pose.bones
+    sock = B[P + "socket.hand_r"]
+    if kind == "staff":
+        return _reach(arm, P, "l", sock.head + _tool_axis(sock) * STAFF_GRIP, frame)
+    if kind == "spike" and "intact" in marks:
+        _point_tool(sock, _mark(arm, marks, "intact"), frame)
+        return _reach(arm, P, "l", sock.head + _tool_axis(sock) * SPIKE_GRIP, frame)
+    if kind == "linstock" and "barrel" in marks:
+        vent = _mark(arm, marks, "barrel")
+        tip = LINSTOCK[1] + 0.07
+        for _ in range(3):
+            want = vent - (vent - sock.head).normalized() * tip
+            _reach(arm, P, "r", want, frame)
+            _point_tool(sock, vent, frame)
+        return (sock.head + _tool_axis(sock) * tip - vent).length
+    if kind == "wheel":
+        side = "wheel_r" if B[P + "hips"].head.x > 0 else "wheel_l"
+        hub = B[side].head
+        sgn = 1.0 if hub.x > 0 else -1.0
+        held = sock.matrix.to_3x3().copy()
+        miss = 0.0
+        for sd, deg in SPOKES.items():
+            a = math.radians(deg)
+            grip = Vector((hub.x + sgn * 0.06, hub.y + SPOKE_R * math.sin(a), hub.z + SPOKE_R * math.cos(a)))
+            miss = max(miss, _reach(arm, P, sd, grip, frame))
+        _orient(sock, held)  # a staff in the hand stays upright
+        sock.keyframe_insert("rotation_quaternion", frame=frame, group=sock.name)
+        return miss
+    return None

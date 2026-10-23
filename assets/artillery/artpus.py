@@ -155,7 +155,7 @@ def build(ctx):
     vs.attach(wheels[0], arm, "wheel_l")
     vs.attach(wheels[1], arm, "wheel_r")
     crew = guncrew.build(root, arm)
-    guncrew.key_clips(arm, _clips(arm))
+    hands = guncrew.key_clips(arm, _clips(arm))
     from acr_assets.humans import prepare_export
 
     prepare_export([o for ch in crew for o in ch.all_meshes()])
@@ -163,7 +163,8 @@ def build(ctx):
     ctx.stats.update({"triangles": vs.triangles(meshes), "barrel": vs.triangles([barrel]),
                       "crew": vs.triangles([o for ch in crew for o in ch.all_meshes()]),
                       "barrel_length_m": round(max(v.co.y for v in barrel.data.vertices)
-                                               - min(v.co.y for v in barrel.data.vertices), 2)})
+                                               - min(v.co.y for v in barrel.data.vertices), 2),
+                      "hands": hands})
 
 
 HIDE = {"wreck": {"scale": (vs.HIDDEN,) * 3}, "intact": {}}

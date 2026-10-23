@@ -242,10 +242,23 @@ per 0.55 m, the root sliding along with the cycle's bob).
   bleeds a pool at his station (`HOME`); it lies `corpse_minutes`. The drill goes on with the
   men left on the sim's timing; their tasks are not handed over (each man's tool hangs on
   his own bones, so another man's track would show the wrong tool), so a gap shows where a
-  lost man worked. A gun that dies keeps the fallen hidden in its own `DEATH`.
+  lost man worked. When the gun is destroyed, the men still standing become such corpses
+  too (on the first frame its unit is drawn dead): they fall in
+  `DEATH` on their own clock, bleed and rot like the others, and the gun's own `DEATH`
+  shows none of the crew. The corpses keep the transform of the moment they fell, so they
+  stay where the man fell when the gun is moved on (checked: `guncrew3/sheet_losses.png`).
+- **The wreck:** the gun's `DEATH` throws the barrel off its trunnions, drops the left wheel
+  and swaps the carriage for its charred copy (`wreck`, black). Seen from above, the black
+  trail and a dead man's tricorn next to it read like a second barrel; there is no double
+  (one barrel in every view of a gun killed at full strength, before any crew corpse exists).
 - **Spray:** a gun with a crew is not counted a machine for sprayed blood, so blood from hits
   in front of it speckles the crew (and the carriage near them). Wound marks need a skeleton
-  H rig (`wound_rig`) and are not placed on the crew.
+  H rig (`wound_rig`) and are not placed on the crew yet: `Rig::from_skeleton` finds the
+  joints by their bare names (`upperarm_l`, ...), the crew's are `c0.upperarm_l` etc. It is
+  feasible: a prefix for `from_skeleton` gives one rig per man (the slots are the gun
+  model's own palette slots, so marks packed against it land on the gun's and the corpse's
+  instances alike), and the gun's hits would have to be given to men (the hit that drops
+  `k` to the man who falls, the rest by where they land).
 - **Uniforms by nation:** the coat (`<gun>.crewN.coat.*`) and waistcoat (`.waistcoat.*`)
   materials take `Tint::Coat` / `Tint::Facings` (or `extras.acr_tint` `"coat"`/`"facings"`).
   `ModelInstance::uniform` holds the target colours; they go into the first two look texels
@@ -257,8 +270,27 @@ per 0.55 m, the root sliding along with the cycle's bob).
   `Frn*`, `Spn*` or `Usa*`).
   England: dark blue, red waistcoat; France: bleu de roi throughout; Spain: lighter blue,
   red; USA: dark blue, buff. Others keep the model's blue and red.
-- **Not done:** faces (the crew is built with `faces=False`, no MakeHuman face or looks),
-  hand IK onto staffs, spokes and the handspike.
+- **Faces:** the men are built with the MakeHuman head (`heads.refine`) and its painted
+  face map (`heads.face_map`, 512², baked per man); no face morphs, looks or hair variants
+  (a gun has no looks), and the face material drops `acr_tint` "skin" (it would read a look
+  texel). Crew 18 768 → 24 432 triangles (skin 1 532 → 2 786 per man), the whole model
+  29 130.
+- **Hands (IK at build time, `guncrew.hands`):** keys whose pose carries `"ik"` get a
+  two-bone IK pass after they are keyed (scene at that frame, so the gun's bones are where
+  the clip puts them; the gun points are taken with its bones at rest): `staff` the left
+  hand 0.35 m down the level sponge/rammer staff towards the butt; `spike` the handspike
+  turned to point at its seat on the trail (y = 2.45 m) and the left hand 0.38 m down it;
+  `linstock` the right arm moved and the linstock turned so the match touches the vent
+  (top of the breech, 0.24 m before its end) on the shot; `wheel` both hands on the spokes
+  of the man's wheel at the felloe (0.66 m from the hub, 36° and 62° behind the top), an
+  upright staff staying upright; the pushers stand at x = ±1.02. The elbow bends out and
+  down, the hand keeps its keyed orientation. The build reports the misses
+  (`stats.hands.by_kind`: keys, mean, max in m): linstock 2 / 0.007 / 0.008, staff 18 /
+  0.08 / 0.11, wheel 64 / 0.26 / 0.37, spike 38 / 0.21 / 0.34. The wheel and the spike are
+  still out of reach from the keyed body poses (the arms end stretched towards them): the
+  pushers' bodies and the spike's seat (found 0.98 m high, too high: the search takes the
+  highest carriage vertex near y = 2.45) need another pass. Between keys the arms
+  interpolate, and the fingers stay open (no grip).
 
 ### Decay (#178) and gore (#183)
 

@@ -3,7 +3,8 @@
 //! men standing, a man falls each time `k` drops (firer, loader, rammer, layer in that order):
 //! his bones are collapsed in the gun's pose, and he is drawn on his own (the gun model posed
 //! in its `DEATH` clip with only him shown) where he stood, as a corpse that bleeds a pool
-//! and rots like any other. Uniforms follow the gun owner's nation. Render only.
+//! and rots like any other; the men still standing when the gun is destroyed become such
+//! corpses too. Uniforms follow the gun owner's nation. Render only.
 
 use std::collections::HashMap;
 
@@ -135,25 +136,25 @@ impl Crews {
     pub fn gun(&mut self, u: &Unit, model: &ModelData, index: usize, inst: &ModelInstance, now: u64) {
         let Some(crew) = model.crew.as_ref() else { return };
         let lost = self.lost.entry(u.id.0).or_insert(0);
-        if u.alive {
-            let k = standing(u.life, u.max_life);
-            if k == CREW {
-                // Unhurt (or a new gun on this id).
-                *lost = 0;
-            }
-            for &man in &FALL_ORDER[(*lost).min(CREW)..CREW - k.min(CREW)] {
-                self.corpses.push(Corpse {
-                    man,
-                    tick: now,
-                    model: inst.model,
-                    transform: inst.transform,
-                    player: inst.player,
-                    uniform: inst.uniform,
-                    seed: ((u.id.0.wrapping_mul(2_654_435_761) >> 8) % 1000) as f32 / 1000.0 + f32::from(man) * 0.13,
-                });
-            }
-            *lost = (*lost).max(CREW - k.min(CREW));
+        // The men left fall with a destroyed gun: corpses of their own too, so they bleed
+        // and rot and stay where they fell (the gun's `DEATH` hides them).
+        let k = if u.alive { standing(u.life, u.max_life) } else { 0 };
+        if u.alive && k == CREW {
+            // Unhurt (or a new gun on this id).
+            *lost = 0;
         }
+        for &man in &FALL_ORDER[(*lost).min(CREW)..CREW - k.min(CREW)] {
+            self.corpses.push(Corpse {
+                man,
+                tick: now,
+                model: inst.model,
+                transform: inst.transform,
+                player: inst.player,
+                uniform: inst.uniform,
+                seed: ((u.id.0.wrapping_mul(2_654_435_761) >> 8) % 1000) as f32 / 1000.0 + f32::from(man) * 0.13,
+            });
+        }
+        *lost = (*lost).max(CREW - k.min(CREW));
         if *lost > 0 {
             let mut palette = model.pose(inst.clip, inst.time);
             crew.mask(&mut palette, shown(*lost));
