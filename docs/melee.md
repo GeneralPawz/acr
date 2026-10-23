@@ -66,12 +66,26 @@ A man on the ground is helpless: one blow ends him.
 - **No failure chance.** The man lies at the attacker's feet and cannot parry or roll away;
   a miss would only bring back the endless jabbing this replaces. The point-blank shot of a
   loaded musketeer is not a finishing blow (its own damage, `Shot`/`Down`, unchanged).
-- **Closing in.** A man on foot finishing a man on the ground closes in to
-  `melee::FINISH_REACH` (27 px, ~0.9 m at 30 px/m) instead of striking from his weapon's
-  reach (~2 m): within the reach but not over him yet he steps straight in
-  (`motion::step_over`: the victim's cell does not block, the terrain does), turning first.
-  Over him no minimum attack range holds him off (`combat::stands_over`, also at the hit
-  frame). Riders keep their reach. A unit standing ground does not step in.
+- **Closing in (m2-finish2: beside the body).** A man on foot (no beast) finishing a man on the ground
+  does not strike from his weapon's reach (~2 m) nor stand on the body: within the reach he
+  steps to his **stance** (`melee::finish_stance`), beside the torso, square to the body's
+  axis, `STANCE_SIDE` (24 px, ~0.8 m) out, on his own side of the body unless that side is
+  blocked by the terrain or more crowded by other men or corpses (any unit's ground point or
+  a lying man's torso within 14 px), then the other side; he steps there with
+  `motion::step_over` (the victim's cell does not block, the terrain does), turning first,
+  until he is within `STANCE_TOL` (5 px). There he faces the **torso** (also at the hit
+  frame) and strikes; no minimum attack range holds him off (`combat::stands_over`). Both
+  sides blocked: the old way, straight in to `melee::FINISH_REACH` (27 px). Riders keep
+  their reach. A unit standing ground does not step; he strikes from `FINISH_REACH`.
+- **The body's axis in the sim.** A man on the ground lies along his facing (`Unit::dir`):
+  the feet behind his ground point, the hips ~0.4 m and the head ~1.05 m ahead (the crawl
+  clips' prone root, `poses.lie_prone`; WRITHE lies the same way on his back). So the sim
+  derives the axis itself, deterministically, from the unit's facing:
+  `melee::along_body(v, ahead)`, with `TORSO_AHEAD` 16 px, `HEART_AHEAD` 19, `NECK_AHEAD` 28,
+  `HEAD_AHEAD` 32 (`vital_ahead(kind)`). Chosen over a render-only shift of the attacker:
+  the man really walks to the side (he collides, is selected and hit where he is drawn),
+  and the render needs no slide. Everything is under the rule, so the pinned hashes (rule
+  off) are unchanged. The stance is looked up only within 4 × `FINISH_REACH` of the victim.
 - **Record.** `HitRecord::strike` is `Strike { kind, height: Down, mounted, finishing: true }`
   and `critical` the vital (`Heart`, `Neck` or `Brain`).
 - Tests (`tests/melee.rs`): `one_finishing_blow_kills_a_crawler_from_close` (one blow kills a
@@ -513,8 +527,17 @@ carry a finishing clip per weapon (`assets/blender/lib/acr_assets/finish.py`):
 
 - **Names:** `ATTACK_<KIND>_FINISH` (`THRUST`, `CUT`, `SMASH`) and `ATTACK_FINISH`.
   `strike_view::strike_clip` prefers them for a man on the ground on foot
-  (`finish_names`: the kind's, then `ATTACK_FINISH`; before the first blow the kind is
-  unknown), never for a point-blank shot (`ATTACK_SHOT_DOWN` stays) or a rider.
+  (`finish_names`: the kind's, then `ATTACK_FINISH`), never for a point-blank shot
+  (`ATTACK_SHOT_DOWN` stays) or a rider. The kind (m2-finish2, `strike_view::swing_kind`):
+  until the swing's active frame (`combat::swing_struck`) from the attacker's state
+  (`combat::coming_strike`: `Shot` for a loaded musketeer allowed to fire point-blank, the
+  same test as the hit frame's `point_blank`; else his melee index's `melee::strike_kind`),
+  after it the recorded blow. So a loaded musketeer plays `ATTACK_SHOT_DOWN` from the
+  start, not `ATTACK_FINISH` first.
+- **Aim** (m2-finish2, `strike_view::finish_target`): on a finishing clip the arm IK aims at
+  the vital along the lying body (`melee::along_body` with `vital_ahead` of the clip's kind,
+  else the recorded blow's, else the torso): the heart for a thrust, the neck for a cut,
+  the skull for a smash, 0.2 m up; the sim already turned him to the torso.
 - **Clip:** the wind-up at frame 0 (raised, upright), the blow at frame 2 (the sim's hit
   frame) on `finish.TARGET_FINISH` (0.9 m ahead, 0.2 m up, the man's chest), held one frame,
   back to the stand by 30 % of the clip and kept: no lunge, nothing held.
@@ -547,11 +570,11 @@ IroTam, MayVoi, DelPik, SpnS15, FrnBuk (old ones in `showcase/backup-finish/`).
 
 ### Not yet
 
-- **Finishing, looks:** the attacker stands at 0.9 m from the victim's ground point, but a
-  man lying stretched towards him reaches under his feet (EngOf18 sheet: he stands on the
-  legs). Aim at the near side of the body or turn the attacker beside him. A loaded
-  musketeer plays `ATTACK_FINISH` before his point-blank shot (the kind is unknown before the
-  first hit). No knife unit and no butt-only musket unit is built, so `knife` is untested
+- **Finishing, looks:** fixed in m2-finish2 (stance beside the torso, state-chosen clip;
+  2a and Finishing clips). The clips still target `finish.TARGET_FINISH` (0.9 m ahead): from
+  the side stance the torso lies ~0.8 m ahead, the neck/head off to one side; the layer's
+  arm IK (`FINISH_ARM` 0.5) takes up the rest. A man knocked down by a beast (`downed`) is
+  assumed to lie along his facing too. No knife unit and no butt-only musket unit is built, so `knife` is untested
   on a model.
 
 - **Sabre down left:** fixed in family 5 (docs/families/cavalry.md): a cross-body cut,

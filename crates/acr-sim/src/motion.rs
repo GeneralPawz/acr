@@ -653,6 +653,14 @@ pub(crate) fn step_over(world: &mut World, i: usize, d: u8) {
     occupancy.set_bar(u.cell.0, u.cell.1, lx);
 }
 
+/// The length (1/16 px) of one walking step of `t` towards `d` at the normal rate, as
+/// [`try_to_move`] takes it (its look-ahead): a man stepping towards a point is as near as
+/// he gets once he is within half of it.
+pub(crate) fn stride(t: &ObjectType, d: u8) -> i32 {
+    let nf = t.motion_frames() >> SPEED_SH;
+    crate::trig::norma(nf * (t.step_dx(d) << SPEED_SH), nf * (t.step_dy(d) << SPEED_SH))
+}
+
 /// `TryToMove` (0x50b021), walking forwards. In stance `s ≠ 0` the unit plays
 /// `#MOTION_L{s−1}`/`#MOTION_R{s−1}` and its step is scaled by `RATE[s−1]/16` (0x50b13c);
 /// the look-ahead still counts the frames of `#MOTION_L`.

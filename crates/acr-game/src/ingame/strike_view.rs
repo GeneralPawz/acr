@@ -204,14 +204,15 @@ pub fn strike_clip(data: &ModelData, world: &World, u: &Unit) -> Option<usize> {
     let v = world.units.get(t.0 as usize).filter(|v| v.id == t && !v.building)?;
     let strike = last_strike(world.hits.iter(), u, t.0);
     let height = strike_height(v, strike);
+    let kind = swing_kind(world, u, strike);
     // A man on the ground: the finishing blow, standing over him (not a point-blank shot).
     if height == StrikeHeight::Down
         && !is_rider(data)
-        && let Some(c) = finish_names(&u.anim.name(), strike.map(|s| s.kind)).iter().find_map(|n| data.clip(n))
+        && let Some(c) = finish_names(&u.anim.name(), kind).iter().find_map(|n| data.clip(n))
     {
         return Some(c);
     }
-    let clip = clip_names(&u.anim.name(), strike.map(|s| s.kind), height).iter().find_map(|n| data.clip(n))?;
+    let clip = clip_names(&u.anim.name(), kind, height).iter().find_map(|n| data.clip(n))?;
     // A rider cutting down: the side of the horse with the shorter turn.
     let name = &data.clips[clip].name;
     if (name.ends_with("_DOWN") || name.ends_with("_DOWN_R"))
@@ -224,6 +225,43 @@ pub fn strike_clip(data: &ModelData, world: &World, u: &Unit) -> Option<usize> {
         }
     }
     Some(clip)
+}
+
+/// The kind of `u`'s current swing at his target: once its blow is struck, the recorded one
+/// (`strike`); before, what his state says it will be (`combat::coming_strike`: a loaded
+/// musketeer fires point-blank, else his melee index's kind), so a musketeer about to shoot
+/// a man on the ground does not play the bayonet's finishing clip first.
+fn swing_kind(world: &World, u: &Unit, strike: Option<Strike>) -> Option<StrikeKind> {
+    let i = u.id.0 as usize;
+    let t = u.target()?;
+    if world.units.get(i).is_none_or(|w| w.id != u.id) || acr_sim::combat::swing_struck(world, i) {
+        return strike.map(|s| s.kind);
+    }
+    acr_sim::combat::coming_strike(world, i, t.0 as usize).or(strike.map(|s| s.kind))
+}
+
+/// The strike kind a clip's name carries (`ATTACK_THRUST_FINISH`: `Thrust`), if any.
+pub fn clip_kind(name: &str) -> Option<StrikeKind> {
+    [StrikeKind::Thrust, StrikeKind::Cut, StrikeKind::Smash, StrikeKind::Shot]
+        .into_iter()
+        .find(|&k| name.contains(&format!("_{}_", kind_name(k))) || name.ends_with(&format!("_{}", kind_name(k))))
+}
+
+/// The point a finishing blow aims at on the man lying at `ground` (physics), whose sim
+/// unit is `v`: the heart, the neck or the skull by the blow's `kind`
+/// (`melee::vital_ahead`), along his body (the facing, `melee::along_body`), a little over
+/// the ground (`metres(Down)`).
+pub fn finish_target(ground: Vec3, v: &Unit, kind: Option<StrikeKind>) -> Vec3 {
+    along(ground, v.dir, kind)
+}
+
+/// [`finish_target`] by the lying man's facing `dir` alone.
+fn along(ground: Vec3, dir: u8, kind: Option<StrikeKind>) -> Vec3 {
+    let ahead = kind.map_or(acr_sim::melee::TORSO_AHEAD, acr_sim::melee::vital_ahead);
+    let o = acr_sim::fixed::Pos::new(0, 0);
+    let p = acr_sim::melee::along_body(o, dir, ahead);
+    let (dx, dy) = (p.x as f32 / 16.0, p.y as f32 / 16.0);
+    ground + physics_of([dx, dy, 0.0]) + Vec3::new(0.0, 0.0, metres(StrikeHeight::Down))
 }
 
 /// Whether the model is a rider (it has the rider's bones).
@@ -571,7 +609,14 @@ impl Strikes {
             };
             let dir = if dir == Vec3::ZERO { Vec3::new(0.0, -1.0, 0.0) } else { dir };
             let near = if mounted && reach < 1.5 { NEAR_BODY } else { 0.0 };
-            let target = target_point(ground, me, height, v.unit.body.mounted, near);
+            let finish = strike_clip.is_some_and(|c| is_finish(&c.name));
+            let target = if finish && !mounted {
+                // The kind by the clip (`ATTACK_<KIND>_FINISH`), else the recorded blow's.
+                let kind = strike_clip.and_then(|c| clip_kind(&c.name)).or(strike.map(|s| s.kind));
+                finish_target(ground, v.unit, kind)
+            } else {
+                target_point(ground, me, height, v.unit.body.mounted, near)
+            };
             let hb = self.rig.bone("hand_r");
             let grip = linear_t(&before[hb], hand_at - self.rig.joint(&before, hb));
             let held = Held { dir, reach, two_handed: wpn.muzzle, grip };
@@ -588,7 +633,7 @@ impl Strikes {
                 smash: strike.is_some_and(|s| s.kind == StrikeKind::Smash),
                 rate: 1.0 - (-dt * TURN_RATE).exp(),
                 residual: strike_clip.is_some(),
-                finish: strike_clip.is_some_and(|c| is_finish(&c.name)),
+                finish,
                 // Ready (PSTAND, or a model with strike clips outside them): the trunk only
                 // turns to face the enemy (m2-melee6: the arm IK aimed an upright musket and
                 // pointed it backwards over the shoulder).
@@ -936,6 +981,19 @@ mod tests {
         assert_eq!(finish_names("ATTACK", None), ["ATTACK_FINISH"]);
         assert!(finish_names("ATTACK", Some(StrikeKind::Shot)).is_empty());
         assert!(is_finish("ATTACK_THRUST_FINISH") && !is_finish("ATTACK_THRUST_DOWN"));
+    }
+
+    /// The kind in a clip's name, and the finishing target along the lying body: the neck
+    /// further along it than the heart, at the facing (dir 0: east, physics +x).
+    #[test]
+    fn finishing_aim_follows_the_body() {
+        assert_eq!(clip_kind("ATTACK_CUT_FINISH"), Some(StrikeKind::Cut));
+        assert_eq!(clip_kind("ATTACK_SHOT_DOWN"), Some(StrikeKind::Shot));
+        assert_eq!(clip_kind("ATTACK_FINISH"), None);
+        let heart = along(Vec3::ZERO, 0, Some(StrikeKind::Thrust));
+        let neck = along(Vec3::ZERO, 0, Some(StrikeKind::Cut));
+        assert!(heart.x > 0.5 && neck.x > heart.x + 0.2 && heart.y.abs() < 0.01, "{heart:?} {neck:?}");
+        assert!((heart.z - metres(StrikeHeight::Down)).abs() < 1e-5);
     }
 
     /// The strike clips measured offline (`ACR_PROBE_MODELS`: a folder of built `.glb`s;

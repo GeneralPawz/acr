@@ -346,6 +346,43 @@ fn point_blank(w: &World, i: usize, j: usize, loaded: bool) -> Option<(u8, i32, 
     Some((r as u8, a.damage, (a.pause * u.personal_delay / 100).max(1)))
 }
 
+/// Hit-locations rule: the kind of the blow `i`'s current swing at `j` will strike, from his
+/// state, for the renderer's clip before the first hit is recorded: `Shot` for a loaded
+/// musketeer who will fire point-blank (or a ranged index), else his melee index's kind.
+/// `None` without the rule or an attack stance.
+pub fn coming_strike(w: &World, i: usize, j: usize) -> Option<StrikeKind> {
+    if !w.rules.hit_locations || w.units.get(j).is_none() {
+        return None;
+    }
+    let u = &w.units[i];
+    let loaded = u.delay == 0;
+    if point_blank(w, i, j, loaded).is_some() {
+        return Some(StrikeKind::Shot);
+    }
+    let ns = usize::from(u.stance).checked_sub(1)?;
+    let ta = w.adv(u.owner, u.kind);
+    let a = ta.attacks.get(ns)?;
+    if a.weapon.is_some() {
+        return Some(StrikeKind::Shot);
+    }
+    Some(crate::melee::strike_kind(w, i, &a.kind, crate::melee::on_ground(&w.units[j].body)))
+}
+
+/// Whether `i`'s current attack animation has passed its active frame (the blow of this
+/// swing is struck and recorded).
+pub fn swing_struck(w: &World, i: usize) -> bool {
+    let u = &w.units[i];
+    let AnimKind::Attack(_) = u.anim else { return false };
+    let t = w.catalog.get(u.kind);
+    t.anims.get(&u.anim.name()).is_some_and(|info| {
+        let mut af = i32::from(info.active).max(1);
+        if FRM_DEC == 2 && af & 1 == 1 {
+            af += 1;
+        }
+        u.frame >= af
+    })
+}
+
 /// Hit-locations rule: whether `i` finishes his victim standing over him (a melee index at a
 /// man on the ground, on foot): he closes in to [`crate::melee::FINISH_REACH`] and no
 /// minimum range holds him off (`docs/melee.md`, Finishing blows).
@@ -421,6 +458,27 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
     let my_z = height(w, u.pos) + t.zpoints.0;
     let en_z = height(w, e_pos) + e_dstz;
     let en_dir = get_dir(dx, dy);
+    // Hit-locations rule: a man (no beast, no rider) finishing a man on the ground takes his
+    // stance beside the torso and faces it (`melee::finish_stance`, `docs/melee.md`, Finishing blows).
+    let stance = match aim {
+        Aim::Unit(j)
+            if w.rules.hit_locations
+                && dst < 4 * crate::melee::FINISH_REACH
+                && crate::melee::on_ground(&w.units[j].body)
+                && !crate::melee::rides(w, i)
+                && crate::body::Beast::of(&catalog.get(w.units[i].kind).md_name).is_none() =>
+        {
+            crate::melee::finish_stance(w, i, j)
+                .map(|p| (p, crate::melee::along_body(w.units[j].pos, w.units[j].dir, crate::melee::TORSO_AHEAD)))
+        }
+        _ => None,
+    };
+    let en_dir = match stance {
+        Some((_, torso)) if (torso.x - u.pos.x, torso.y - u.pos.y) != (0, 0) => {
+            get_dir(torso.x - u.pos.x, torso.y - u.pos.y)
+        }
+        _ => en_dir,
+    };
     let high_ns = ns > 0 && is_high(w, &ta, ns - 1);
     let (u_frame, u_frames, u_anim) = (u.frame, u.anim_frames, u.anim);
 
@@ -566,22 +624,37 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
     let mut min = a.radius.0;
     if stands_over(w, i, aim, a.weapon.is_some()) {
         let close = crate::melee::FINISH_REACH;
-        if close <= dst_c && dst_c < reach.max(close + 1) && !w.units[i].stand_ground {
-            // Within the weapon's reach but not over him yet: step straight in (his cell does
-            // not block), turning first.
+        // Where he steps to: his stance beside the torso, else (both sides blocked) straight
+        // in to `FINISH_REACH`.
+        let u = &w.units[i];
+        let (to, off) = match stance {
+            Some((p, _)) => {
+                // Close enough once a further step would not bring him nearer.
+                let (sx, sy) = (p.x - u.pos.x, p.y - u.pos.y);
+                let d = get_dir(sx, sy);
+                let tol = (crate::melee::STANCE_TOL << 4).max(crate::motion::stride(t, d) / 2);
+                (d, norma(sx, sy) > tol)
+            }
+            None => (en_dir, close <= dst_c),
+        };
+        let near = dst_c < reach.max(close + crate::melee::STANCE_SIDE);
+        if off && near && !u.stand_ground {
+            // Within the weapon's reach but not in his stance yet: step there (the victim's
+            // cell does not block), turning first.
             let u = &mut w.units[i];
-            let ddir = en_dir.wrapping_sub(u.dir) as i8;
+            let ddir = to.wrapping_sub(u.dir) as i8;
             let mrot = t.rotate;
             if i32::from(ddir).abs() < (mrot + mrot / 2).min(16) {
-                crate::motion::step_over(w, i, en_dir);
+                crate::motion::step_over(w, i, to);
             } else {
                 let r = mrot as u8;
                 u.dir = if ddir > 0 { u.dir.wrapping_add(r) } else { u.dir.wrapping_sub(r) };
             }
             return;
         }
-        // Over him, no weapon's minimum range holds him off.
-        (reach, min) = (reach.min(close), 0);
+        // In his stance (or standing ground within `FINISH_REACH`), no weapon's minimum range
+        // holds him off.
+        (reach, min) = if off { (reach.min(close), 0) } else { (reach.max(dst_c + 1), 0) };
     }
     let u = &mut w.units[i];
     if dst >= min && dst_c < reach {

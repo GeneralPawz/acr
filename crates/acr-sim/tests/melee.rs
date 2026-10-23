@@ -234,7 +234,41 @@ fn one_finishing_blow_kills_a_crawler_from_close() {
     assert!(s.finishing && s.height == StrikeHeight::Down && s.kind == StrikeKind::Thrust, "{s:?}");
     assert_eq!(h.critical, Some(Vital::Heart));
     let d = f64::from(h.dir.0).hypot(f64::from(h.dir.1));
-    assert!(d <= f64::from(FINISH_REACH) + 3.0, "he stands over him: {d} px");
+    assert!(d <= f64::from(FINISH_REACH) + 5.0, "he stands over him: {d} px");
+}
+
+/// m2-finish2: he finishes from beside the torso, square to the body's axis (the facing),
+/// wherever the man lies (toward him, away, across), never on the legs, facing the torso.
+#[test]
+fn the_finishing_stance_is_beside_the_torso() {
+    use acr_sim::melee::{STANCE_SIDE, TORSO_AHEAD};
+    for vdir in [128u8, 0, 64, 192, 96] {
+        let (mut w, pik, _) = setup(ON);
+        let a = w.spawn(pik, 0, Pos::from_pixels(2000, 2000), 0).0 as usize;
+        let c = w.spawn(pik, 1, Pos::from_pixels(2070, 2000), vdir).0 as usize;
+        w.units[c].body = crawler();
+        w.units[c].life = 5000;
+        for _ in 0..600 {
+            w.step(&[]);
+            if w.hits.iter().any(|h| h.victim == c as u32) {
+                break;
+            }
+        }
+        let h = w.hits.iter().find(|h| h.victim == c as u32).expect("he strikes");
+        assert!(h.killed, "{h:?}");
+        let ang = f64::from(vdir) * std::f64::consts::TAU / 256.0;
+        let torso = (2070.0 + ang.cos() * f64::from(TORSO_AHEAD), 2000.0 + ang.sin() * f64::from(TORSO_AHEAD));
+        let me = (f64::from(h.pos.0 - h.dir.0), f64::from(h.pos.1 - h.dir.1));
+        let (rx, ry) = (me.0 - torso.0, me.1 - torso.1);
+        // Along the axis about at the torso; across it STANCE_SIDE out (within half a
+        // stride: his steps are ~22 px).
+        let along = rx * ang.cos() + ry * ang.sin();
+        let side = (-rx * ang.sin() + ry * ang.cos()).abs();
+        assert!(along.abs() <= 12.0, "dir {vdir}: {along} px along the body");
+        assert!((side - f64::from(STANCE_SIDE)).abs() <= 12.0, "dir {vdir}: {side} px beside it");
+        let face = acr_sim::trig::get_dir((torso.0 - me.0) as i32, (torso.1 - me.1) as i32);
+        assert!((w.units[a].dir.wrapping_sub(face) as i8).abs() <= 12, "dir {vdir}: faces the torso");
+    }
 }
 
 /// A cut finishes at the throat, a smash at the skull; a rider strikes from his reach.

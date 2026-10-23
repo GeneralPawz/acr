@@ -105,6 +105,78 @@ pub fn lancer(md_name: &str) -> bool {
 /// him. Riders keep their reach (they strike down from the saddle).
 pub const FINISH_REACH: i32 = 27;
 
+/// Where a man on the ground lies (world px along his facing from his ground point, at 30
+/// px/m): the body lies along the unit's facing, the feet behind the ground point, the hips
+/// ~0.4 m and the head ~1.05 m ahead (`crawl.py`'s prone root, `poses.lie_prone`). The torso
+/// centre, the heart, the neck and the head (`docs/melee.md`, Finishing blows).
+pub const TORSO_AHEAD: i32 = 16;
+pub const HEART_AHEAD: i32 = 19;
+pub const NECK_AHEAD: i32 = 28;
+pub const HEAD_AHEAD: i32 = 32;
+/// The finishing stance: this far (world px, ~0.8 m) beside the torso centre, square to the
+/// body's axis, and how near (px) he must come to it before he strikes.
+pub const STANCE_SIDE: i32 = 24;
+pub const STANCE_TOL: i32 = 5;
+/// Another man (alive or a corpse) this near (px) to a stance point crowds it.
+const STANCE_CLEAR: i32 = 14;
+
+/// The point (1/16 px) `ahead` world px along the facing `dir` of a man lying with his
+/// ground point at `pos`.
+pub fn along_body(pos: crate::fixed::Pos, dir: u8, ahead: i32) -> crate::fixed::Pos {
+    let (c, s) = (crate::trig::cos(dir), crate::trig::sin(dir));
+    crate::fixed::Pos::new(pos.x + c * ahead * 16 / 256, pos.y + s * ahead * 16 / 256)
+}
+
+/// How far along the body (px) a finishing blow of `kind` is aimed: the heart, the neck,
+/// the skull; else the torso centre.
+pub fn vital_ahead(kind: StrikeKind) -> i32 {
+    match finishing_vital(kind) {
+        Some((_, Vital::Heart)) => HEART_AHEAD,
+        Some((_, Vital::Neck)) => NECK_AHEAD,
+        Some((_, Vital::Brain)) => HEAD_AHEAD,
+        _ => TORSO_AHEAD,
+    }
+}
+
+/// The finishing stance of `i` over the man on the ground `j` (1/16 px): beside his torso,
+/// square to his body's axis, [`STANCE_SIDE`] out, on `i`'s side unless that side is
+/// blocked by the terrain or crowded by other men or corpses (then the other side). `None`
+/// when both sides are blocked: he closes in to [`FINISH_REACH`] from where he is.
+pub fn finish_stance(w: &World, i: usize, j: usize) -> Option<crate::fixed::Pos> {
+    let (u, v) = (&w.units[i], &w.units[j]);
+    let torso = along_body(v.pos, v.dir, TORSO_AHEAD);
+    // The body's left (facing turned a quarter): the side is the sign of the cross product.
+    let (c, s) = (crate::trig::cos(v.dir), crate::trig::sin(v.dir));
+    let (rx, ry) = (u.pos.x - torso.x, u.pos.y - torso.y);
+    let mine = if c * ry - s * rx >= 0 { 1 } else { -1 };
+    let side = |sign: i32| {
+        crate::fixed::Pos::new(torso.x - sign * s * STANCE_SIDE * 16 / 256, torso.y + sign * c * STANCE_SIDE * 16 / 256)
+    };
+    let crowd = |p: crate::fixed::Pos| -> Option<usize> {
+        let (cx, cy) = crate::world::Unit::cell_of(p, u.lx);
+        if !u.unlimited && w.map.land.check_bar(cx, cy, u.lx, u.lx) {
+            return None;
+        }
+        let near = |q: crate::fixed::Pos| crate::trig::norma(q.x - p.x, q.y - p.y) >> 4 < STANCE_CLEAR;
+        Some(
+            w.units
+                .iter()
+                .enumerate()
+                .filter(|&(k, o)| k != i && k != j && !o.building)
+                .filter(|(_, o)| {
+                    near(o.pos) || (on_ground(&o.body) || !o.alive) && near(along_body(o.pos, o.dir, TORSO_AHEAD))
+                })
+                .count(),
+        )
+    };
+    match (crowd(side(mine)), crowd(side(-mine))) {
+        (Some(a), Some(b)) if b < a => Some(side(-mine)),
+        (Some(_), _) => Some(side(mine)),
+        (None, Some(_)) => Some(side(-mine)),
+        (None, None) => None,
+    }
+}
+
 /// The vital a finishing blow of `kind` ends a man on the ground with, and the part it is
 /// aimed at: a thrust (bayonet, point, spear) into the heart, a cut (tomahawk, sword edge,
 /// axe) across the throat, a smash (club, butt) on the skull. `None` for shots and bites
