@@ -908,7 +908,7 @@ tracks (311, 338, 419, 446) drawn in. The settings each line writes are in
 | Page | Heading | Line | Choices | Setting |
 |---|---|---|---|---|
 | 2 | Gefecht | Blutdarstellung | Voll / Verringert / Aus (Original) | `gore` |
-| 2 | Tote und Spuren | Verwesung | Bis auf die Knochen / Nur halb | `corpse_decay` |
+| 2 | Tote und Spuren | Verwesung | Knochen / Nur halb, each mit / ohne Bodenfleck | `corpse_decay`, `decay_stain` (one box: the page's rows are the frame's) |
 | 2 | | Liegezeit | 1 … 60 Minuten | `corpse_minutes` |
 | 2 | | Schlachtfeldspuren | Verblassen / Bleiben (ganze Schlacht) | `battlefield_marks` |
 | 2 | Regeln | (note: "Gelten ab der nächsten Schlacht") | | |

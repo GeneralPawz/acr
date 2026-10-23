@@ -357,6 +357,7 @@ impl Debris {
     }
 
     /// This frame's instances and blood pools of the debris.
+    #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &self,
         now: u64,
@@ -365,6 +366,7 @@ impl Debris {
         ground: &dyn Fn(f32, f32) -> [f32; 3],
         instances: &mut Vec<ModelInstance>,
         pools: &mut Vec<BloodPool>,
+        stain: Option<&dyn Fn(f32, f32) -> f32>,
     ) {
         let removed_at = (2 * lifetime).min(u64::from(u16::MAX)) as u16;
         for item in self.items.iter().filter(|i| i.tick <= now) {
@@ -421,6 +423,18 @@ impl Debris {
                 look: None,
                 uniform: None,
             });
+            // A large remain (half a body) stains the ground as it rots (`decay_stain`,
+            // `seep.rs`), smaller than a whole body and round; it goes with the remain.
+            if let (Some(turf), What::Piece { .. }, true) = (stain, &item.what, t >= 1.0)
+                && let Some(mut p) =
+                    super::seep::stain(land, item.yaw.sin_cos(), 0.55, decay, turf(land[0], land[1]), item.seed)
+            {
+                p.stretch = 0.2;
+                if !keep {
+                    p.fade = 1.0 - model::ramp(age as f32, lifetime as f32 * 0.8, lifetime as f32);
+                }
+                pools.push(p);
+            }
             if item.pool > 0.0 && t >= 1.0 {
                 let grow = model::ramp(age as f32 - item.flight as f32, 0.0, 60.0);
                 pools.push(BloodPool {

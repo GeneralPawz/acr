@@ -23,12 +23,44 @@ parameters: [assets-humans.md](assets-humans.md).
 | `ground` | `detailed`, `original` | `detailed` | the ground in 3D mode (`models` not `off` or `camera=free`): material textures over the original tiles, [ground.md](ground.md); sprite mode always draws the original |
 | `gore` | `full`, `reduced`, `off` | `full` | 3D corpses: `full` decompose (#178), `reduced` discolour, collapse and sink without dissolving, `off` fade like the original (every other pixel once the death counter passes 100) |
 | `battlefield_marks` | `fade`, `keep` | `fade` | `keep`: craters, scuffs, blood splatter and pools and the debris of the fallen stay for the whole battle (below, "Kept battlefield marks") |
+| `decay_stain` | `on`, `off` | `on` with `gore=full`, else `off` | the fluids of decaying corpses stain the ground under them (below, "Decay stains"); written only once set |
 
 Sprites stay the default; with `models=off` and `camera=fixed` the frame is drawn exactly as
 before (no depth buffer, no extra pass). The game menu's options dialog (Spieleinstellungen)
 sets these on its pages 2 and 3 ([ui.md](ui.md#game-menu-0x5d9c30-and-game-options-0x5dbe10));
-`gore`, `corpse_minutes`, `corpse_decay`, `battlefield_marks` and the graphics take effect at
+`gore`, `corpse_minutes`, `corpse_decay`, `decay_stain`, `battlefield_marks` and the graphics take effect at
 once, `hit_locations` and `body_spacing` from the next battle.
+
+### Decay stains
+
+`decay_stain=on` (`ingame/seep.rs`, `blood.wgsl` `seep`, render only): the "cadaver
+decomposition island" of forensic taphonomy. From bloat on, purge fluid leaks from mouth
+and nose, then through the ruptured skin, into the soil under head and torso; the stain
+grows over active decay, wet and greasy, nearly black-brown with a greenish-grey rim, and
+dries to a dark brown, cracked crust; on grass (`particle_view::Soil::turf`) the plants
+around it yellow and die in a patchy ring. It is never red, and lies under every other decal
+(blood is drawn over it).
+
+- One decal per corpse (`Dirt::Seep`, kind 5 in `blood.wgsl`), keyed by unit: a soft,
+  noisy ellipse 1.6 times as long as wide (about 0.95 × 1.5 m of dark core for a man, the
+  dead grass to about 1.3 × 2.5 m; big animals up to 1.8 times by their girth).
+- Its clock is the corpse's decay (`model::corpse_decay`): from 0.08 (`seep::ONSET`) a
+  patch under the head, spreading to the whole island at 0.40 (`FULL`), drying over
+  0.46–0.80, the grass dying over 0.15–0.55. With `corpse_decay=half` (decay stops at 0.45)
+  it reaches its full, wet stage.
+- It lies under the body as it lies: under the ragdoll's hips and neck once the body
+  physics holds it (`Seeps::place`, then it stays), else along the facing, 0.6 m ahead of
+  where the man stood. It never shrinks or gets wetter again.
+- When the corpse goes (`corpse_minutes`) the stain stays: kept with
+  `battlefield_marks=keep` (merged like the other kept marks), else fading over 5 minutes
+  of game time (`seep::FADE_TICKS`). Large remains (body halves, `debris.rs`) get a smaller,
+  rounder one that goes with them.
+- `gore=off` never stains. Driver: blank start `"decay_stain": "on"|"off"`.
+
+Cost (release, `ACR_PROFILE`, blank field, 200 men shot, decay 0.3–0.5, 1600 × 900,
+Snapdragon X; `ACR-analysis/seep/perf.py`): `3d.seeps` 0.012 ms per frame, the decal pass
+(`3d.debris_decals`, with the sort that draws the stains first) 0.20 → 0.22 ms; GPU 18.09 →
+18.24 ms per frame (models pass with the decals 11.50 → 11.76 ms).
 
 ### Kept battlefield marks
 

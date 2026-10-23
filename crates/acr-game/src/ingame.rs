@@ -45,6 +45,7 @@ mod piles;
 pub mod probe;
 mod ragdoll_view;
 mod save;
+mod seep;
 mod shouts;
 mod splatter;
 mod strike_view;
@@ -220,6 +221,12 @@ impl InGame {
     }
 
     /// Sounds started by the game since the last call.
+    /// Turns the decay stains on or off for this game (the driver's `decay_stain`).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_decay_stain(&mut self, on: bool) {
+        self.three_d.set_decay_stain(on);
+    }
+
     pub fn take_sound_events(&mut self) -> Vec<SoundEvent> {
         std::mem::take(&mut self.sound_events)
     }

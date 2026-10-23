@@ -23,9 +23,10 @@ struct PoolIn {
     // direction of the trail (world x, y), stretch, seed
     @location(1) shape: vec4<f32>,
     // age (0 fresh .. 1 dried), fade (1 .. 0), kind (0 pool, 1 droplet, 2 crater, 3 scuff,
-    // 4 smear), a smear's density
+    // 4 smear, 5 decay stain), a smear's density or a decay stain's growth
     @location(2) look: vec4<f32>,
-    // the ground's slope: world z per world x, per world y; a smear's start width
+    // the ground's slope: world z per world x, per world y; a smear's start width or a
+    // decay stain's dead grass
     @location(3) tilt: vec4<f32>,
 };
 
@@ -149,7 +150,7 @@ fn smear(in: VsOut) -> vec4<f32> {
     // The body's width wavers and the ribbon wanders a little from side to side.
     let w = r * mix(in.start, 1.0, t) * (0.8 + 0.45 * noise2(wp * 1.3 + vec2<f32>(seed * 0.5)));
     let y = in.local.y + (noise2(vec2<f32>(s / 40.0, seed)) - 0.5) * 0.6 * r;
-    // A segment of no length (he lay still) is a round patch; the others end flat, so the
+    // A segment of no length (he lay still) is a round blot; the others end flat, so the
     // next one carries on without a doubled seam.
     var d: f32;
     if (len < 0.5) {
@@ -186,8 +187,70 @@ fn smear(in: VsOut) -> vec4<f32> {
     return vec4<f32>(rgb, alpha);
 }
 
+// A decaying body's fluids soaked into the ground (`decay_stain`, a cadaver decomposition
+// island): an irregular, soft-edged stain under the head and torso, the quad's ellipse
+// (`shape.z` stretches it along the body). It starts as a blot under the head (mouth and
+// nose) and spreads with `look.w`; wet it is greasy, near black-brown with a greenish-grey
+// rim, dried (`look.x`) a dark brown crust with cracks. Around it the grass lies dead and
+// yellow (`start`, 0 where no grass grows). Never red.
+fn seep(in: VsOut) -> vec4<f32> {
+    let r = max(in.radius, 1.0);
+    let seed = in.shape.w;
+    let st = in.shape.z;
+    let growth = in.look.w;
+    let dead = in.start;
+    let dry = in.look.x;
+    let wet = 1.0 - dry;
+    // 0 at the core's centre, 1 at the quad's ellipse.
+    let q = vec2<f32>((in.local.x - r * st) / (r * (1.0 + st)), in.local.y / r);
+    // World metres (30 px per metre): the fine texture does not scale with the decal.
+    let wp = in.world / 30.0;
+    // Lobes where the fluid ran along the soil, ragged finer in.
+    let n = (noise2(q * 2.2 + vec2<f32>(seed)) - 0.5) * 0.55 + (noise2(q * 6.0 + vec2<f32>(seed * 1.3)) - 0.5) * 0.25
+        + (noise2(wp * 9.0) - 0.5) * 0.12;
+    // The core: from under the head to the whole island.
+    let spread = smoothstep(0.0, 1.0, growth);
+    let centre = vec2<f32>(mix(0.3, 0.0, spread), 0.0);
+    let size = mix(0.14, 0.6, sqrt(growth));
+    let dc = length(q - centre) / size + n;
+    let core_a = smoothstep(1.05, 0.6, dc) * mix(0.95, 0.88, dry);
+    // Wet: near black-brown, a greenish-grey tinge at the rim.
+    let pool = mix(vec3<f32>(0.016, 0.012, 0.007), vec3<f32>(0.040, 0.030, 0.016), smoothstep(0.1, 0.7, dc));
+    let rim = smoothstep(0.55, 0.95, dc);
+    var wet_rgb = mix(pool, vec3<f32>(0.075, 0.085, 0.055), rim);
+    // A greasy sheen in blotches.
+    let sheen = smoothstep(0.6, 0.9, noise2(wp * 5.0 + vec2<f32>(seed * 0.4))) * (1.0 - rim);
+    wet_rgb = wet_rgb + vec3<f32>(0.05, 0.05, 0.042) * sheen;
+    // Dried: a dark brown crust, lighter at the rim, cracked.
+    var dry_rgb = mix(vec3<f32>(0.050, 0.032, 0.020), vec3<f32>(0.105, 0.078, 0.048), rim);
+    let crack = 1.0 - smoothstep(0.0, 0.035, abs(noise2(wp * 7.0 + vec2<f32>(seed * 2.1)) - 0.5));
+    dry_rgb = dry_rgb * (1.0 - 0.45 * crack);
+    let core_rgb = mix(wet_rgb, dry_rgb, smoothstep(0.0, 1.0, dry));
+    // The dead grass: a ring reaching out as the plants die, straw yellow outside, browner in.
+    // Dying in patches: blotchy at a hand's breadth, single blades finer.
+    let reach = mix(0.5, 0.8, dead);
+    let blot = noise2(wp * 3.5 + vec2<f32>(seed * 0.6));
+    let dr = length(q) / reach + n * 0.3 + (blot - 0.5) * 0.35;
+    let blade = noise2(vec2<f32>(wp.x * 30.0, wp.y * 12.0) + vec2<f32>(seed * 0.9));
+    let inner = smoothstep(0.95, 0.45, dr);
+    let straw = mix(vec3<f32>(0.42, 0.33, 0.11), vec3<f32>(0.17, 0.12, 0.055), inner * 0.8 + 0.2 * blade);
+    let ring_a = dead * smoothstep(1.0, 0.5, dr) * mix(0.35, 0.85, blade) * mix(0.6, 1.0, blot);
+    let a = core_a + ring_a * (1.0 - core_a);
+    if (a < 0.003) {
+        discard;
+    }
+    var rgb = (core_rgb * core_a + straw * ring_a * (1.0 - core_a)) / a;
+    if (globals.params.x > 0.5) {
+        rgb = to_srgb(rgb);
+    }
+    return vec4<f32>(rgb, a * in.look.y);
+}
+
 @fragment
 fn fs_pool(in: VsOut) -> @location(0) vec4<f32> {
+    if (in.look.z > 4.5) {
+        return seep(in);
+    }
     if (in.look.z > 3.5) {
         return smear(in);
     }

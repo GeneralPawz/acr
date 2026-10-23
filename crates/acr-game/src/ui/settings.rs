@@ -63,6 +63,11 @@ pub struct Settings {
     /// earth scuffs, blood pools and the debris of the fallen stay for the whole battle
     /// (render only, capped and merged; `ingame/kept_marks.rs`, docs/rendering-3d.md).
     pub marks_keep: bool,
+    /// ACR: `decay_stain=on|off`: a decaying corpse's fluids soak into the ground under it
+    /// (a cadaver decomposition island: a dark, greasy stain drying to brown, the grass
+    /// dying around it; docs/rendering-3d.md). `None` (not in the file): on with
+    /// `gore=full`, off otherwise ([`Settings::decay_stain`]).
+    pub decay_stain: Option<bool>,
 }
 
 /// `models=off|units|all`: sprites everywhere (the original), 3D units, 3D units and
@@ -133,6 +138,7 @@ impl Default for Settings {
             gore: Gore::Full,
             corpse_minutes: 5,
             corpse_decay_half: false,
+            decay_stain: None,
             hit_locations: false,
             body_spacing: false,
             shadows: true,
@@ -145,6 +151,11 @@ impl Default for Settings {
 }
 
 impl Settings {
+    /// Whether decaying corpses stain the ground (`decay_stain`, by default with `gore=full`).
+    pub fn decay_stain(&self) -> bool {
+        self.decay_stain.unwrap_or(self.gore == Gore::Full)
+    }
+
     /// Effect and music gain for the mixer (0..=1).
     pub fn volumes(&self) -> (f32, f32) {
         let gain = |v: i32| (v.clamp(0, 100) as f32 / 100.0).powi(2);
@@ -200,7 +211,7 @@ impl Settings {
             "sound_volume={}\nmusic_volume={}\nmusic_mode={}\ngame_mode={}\nscroll_speed={}\nframe_time={}\n\
              resolution={}\nrecord={}\nrecord_file={hex}\ncontrols={controls}\nedge_scroll={}\n\
              models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\ncorpse_decay={}\nhit_locations={}\nbody_spacing={}\nshadows={}\nlod={}\nwater={}\n\
-             ground={}\nbattlefield_marks={}\n",
+             ground={}\nbattlefield_marks={}\n{}",
             self.sound_volume,
             self.music_volume,
             self.music_mode,
@@ -219,6 +230,15 @@ impl Settings {
             if self.water_detailed { "detailed" } else { "original" },
             if self.ground_detailed { "detailed" } else { "original" },
             if self.marks_keep { "keep" } else { "fade" },
+            match self.decay_stain {
+                Some(true) =>
+                    "decay_stain=on
+",
+                Some(false) =>
+                    "decay_stain=off
+",
+                None => "",
+            },
         )
     }
 
@@ -264,6 +284,13 @@ impl Settings {
                 "water" => s.water_detailed = value != "original",
                 "ground" => s.ground_detailed = value != "original",
                 "battlefield_marks" => s.marks_keep = value == "keep",
+                "decay_stain" => {
+                    s.decay_stain = match value {
+                        "on" => Some(true),
+                        "off" => Some(false),
+                        _ => None,
+                    }
+                }
                 "corpse_minutes" => s.corpse_minutes = int.map_or(s.corpse_minutes, |v| v.clamp(1, 60) as u32),
                 "gore" => {
                     s.gore = match value {
@@ -306,6 +333,7 @@ mod tests {
             ground_detailed: false,
             corpse_minutes: 12,
             corpse_decay_half: true,
+            decay_stain: Some(false),
             hit_locations: true,
             body_spacing: true,
             marks_keep: true,
@@ -315,6 +343,17 @@ mod tests {
         assert_eq!(Settings::decode("music_mode=2\nspotify=1").music_mode, 0);
         assert_eq!(Settings::decode("music_mode=1").music_mode, 1);
         assert_eq!(Settings::decode("corpse_minutes=500").corpse_minutes, 60);
+        // The decay stain follows the gore unless set.
+        assert!(Settings::decode("").decay_stain());
+        assert!(!Settings::decode("gore=reduced").decay_stain());
+        assert!(
+            Settings::decode(
+                "gore=reduced
+decay_stain=on"
+            )
+            .decay_stain()
+        );
+        assert!(!Settings::decode("decay_stain=off").decay_stain());
         assert_eq!(Settings::decode(""), Settings::default());
         let odd = Settings::decode("scroll_speed=99\nfoo=1\nresolution=x\ncontrols=modern\nmodels=3d\ngore=off");
         assert_eq!((odd.scroll_speed, odd.resolution, odd.controls), (10, 1, Controls::Modern));

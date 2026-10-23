@@ -35,6 +35,7 @@ fn kind(p: &BloodPool) -> u8 {
         (Dirt::None, false, true) => 2,
         (Dirt::Crater, ..) => 3,
         (Dirt::Scuff, ..) => 4,
+        (Dirt::Seep, ..) => 5,
     }
 }
 
@@ -134,6 +135,13 @@ impl KeptMarks {
         }
         seen.clear();
         self.seen = seen;
+    }
+
+    /// Keeps a decay stain whose corpse went (`seep.rs`), laid on `ground`.
+    pub fn keep_stain(&mut self, pool: BloodPool, ground: &dyn Fn(f32, f32) -> [f32; 3]) {
+        let mut p = [pool];
+        super::splatter::lay_on_ground(&mut p, ground);
+        self.keep(p[0]);
     }
 
     /// The kept decals, appended to this frame's.

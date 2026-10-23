@@ -117,6 +117,9 @@ pub struct ThreeD {
     /// `battlefield_marks=keep`: the marks that stay for the whole battle.
     marks_keep: bool,
     kept: super::kept_marks::KeptMarks,
+    /// `decay_stain=on`: the fluids of decaying corpses stain the ground (`seep.rs`).
+    stain: bool,
+    seeps: super::seep::Seeps,
     models: Models,
     gore: Gore,
     /// Sun shadows of the models (`shadows` setting; [`set_shadows_override`] wins).
@@ -236,6 +239,8 @@ impl Default for ThreeD {
             last_graze: 0,
             blasts: Vec::new(),
             corpse_ticks: CORPSE_MINUTES * 60 * acr_sim::ORIGINAL_TICKS_PER_SECOND as u64,
+            stain: true,
+            seeps: Default::default(),
             free: false,
             orbit: Orbit::ORIGINAL,
             keys: HeldKeys::default(),
@@ -279,6 +284,14 @@ impl Default for ThreeD {
 }
 
 impl ThreeD {
+    /// `decay_stain=on|off` (`apply` sets it from the settings).
+    pub fn set_decay_stain(&mut self, on: bool) {
+        self.stain = on;
+        if !on {
+            self.seeps.clear();
+        }
+    }
+
     pub fn apply(&mut self, settings: &Settings) {
         self.models = settings.models;
         self.gore = settings.gore;
@@ -293,6 +306,7 @@ impl ThreeD {
             self.kept.clear();
         }
         self.marks_keep = settings.marks_keep;
+        self.set_decay_stain(settings.decay_stain());
         model::set_decay_cap(if settings.corpse_decay_half { model::HALF_DECAY } else { 1.0 });
         log::info!("3d: models {:?}, camera {:?}, gore {:?}", settings.models, settings.camera, settings.gore);
     }
@@ -547,6 +561,7 @@ impl ThreeD {
             self.debris.clear();
             self.wounds.clear();
             self.kept.clear();
+            self.seeps.clear();
         }
         self.debris_tick = now;
         self.request_gore(request);
@@ -620,6 +635,19 @@ impl ThreeD {
                     self.kept.corpse_pool(u.id.0, &p);
                 }
                 self.pools.push(p);
+            }
+            // The fluids of the decay soak into the ground under him (`decay_stain`).
+            if self.stain && !model.machine && u.death > 0 && !u.building && self.gore != Gore::Off && record.tick > 0 {
+                let size =
+                    model.beast_rig.as_ref().map_or(1.0, |rig| (rig.trunk.radius_at(0.5) / 0.16).clamp(0.8, 1.8));
+                let turf = f32::from(u8::from(super::particle_view::soil_at(terrain, None, ground[0], ground[1]).turf));
+                let decay = model::corpse_decay(death, removed_at);
+                let seed = (u.id.0 as f32 * 0.618_034).fract() * 97.0;
+                if let Some(p) =
+                    super::seep::stain(ground, view3d::facing_yaw(u.dir).sin_cos(), size, decay, turf, seed)
+                {
+                    self.seeps.corpse(u.id.0, p);
+                }
             }
             // The wounds of his hits, alive and dead; they replace the corpse's guessed ones.
             if !u.building {
@@ -951,7 +979,10 @@ impl ThreeD {
                 log::debug!("3d: blast at {:?} threw {n} pieces", b.at);
             }
         }
-        self.debris.draw(now, self.corpse_ticks, self.marks_keep, &ground, &mut self.instances, &mut self.pools);
+        let turf = |x: f32, y: f32| f32::from(u8::from(super::particle_view::soil_at(terrain, None, x, y).turf));
+        let stain: Option<&dyn Fn(f32, f32) -> f32> =
+            if self.stain && self.gore != Gore::Off { Some(&turf) } else { None };
+        self.debris.draw(now, self.corpse_ticks, self.marks_keep, &ground, &mut self.instances, &mut self.pools, stain);
         if self.marks_keep {
             self.keep_marks(world, &machines, &ground);
         }
@@ -964,10 +995,29 @@ impl ThreeD {
         for impact in world.impacts.iter().filter(|i| !self.ground_marks && i.tick > impacts_until) {
             super::splatter::impact(impact, world.tick.0, &ground, &mut self.pools);
         }
+        // The decay stains, of corpses lying and gone (`decay_stain`).
+        if self.stain {
+            acr_sim::prof_scope!("3d.seeps");
+            let kept = &mut self.kept;
+            if let Some(r) = self.ragdolls.as_ref() {
+                self.seeps.place(&|v| Some((r.bone_world(v, "hips")?, r.bone_world(v, "neck")?)));
+            }
+            let mut keep = |p| kept.keep_stain(p, &ground);
+            let keep: Option<&mut dyn FnMut(acr_render::model_renderer::BloodPool)> =
+                if self.marks_keep { Some(&mut keep) } else { None };
+            self.seeps.end(now, keep, &mut self.pools);
+            if now.is_multiple_of(500) && !self.seeps.is_empty() {
+                log::info!("3d: {} decay stains", self.seeps.len());
+            }
+        }
         // Every decal lies on the slope under it rather than flat at one height (#226).
         super::splatter::lay_on_ground(&mut self.pools, &ground);
         // The kept marks were laid when they were kept.
         self.kept.draw(&mut self.pools);
+        // The decay stains lie under all other decals (drawn first, blended over by blood).
+        if self.stain || self.marks_keep {
+            self.pools.sort_by_key(|p| p.dirt != acr_render::model_renderer::Dirt::Seep);
+        }
     }
 
     /// `battlefield_marks=keep`: copies the settled decals of hits and impacts, and the pools

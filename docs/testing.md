@@ -222,6 +222,8 @@ every texture 0, no sprites, no units, an empty `SEA2`; `acr-game/src/blank_map.
 | `hit_locations` | the optional rule, as for `random` (or the setting) |
 | `body_spacing` | the optional body-spacing rule, as for `random` (or the setting) |
 | `hud` | `false` hides the interface from the start, like `{"cmd": "hud", "on": false}` |
+| `corpse_decay` | `full` or `half`: overrides the setting ([rendering-3d.md](rendering-3d.md)) |
+| `decay_stain` | `on` or `off`: overrides the setting (the ground stains under decaying corpses, [rendering-3d.md](rendering-3d.md#decay-stains)) |
 
 **`white` and `greenscreen`**: the ground is cleared to pure white (255, 255, 255) or pure
 green (0, 255, 0) instead of drawn: no texture, noise, relief light, water tint or fog. The

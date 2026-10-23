@@ -76,10 +76,20 @@ const BATTLE: &[Row] = &[
     }),
     Row::Heading(b"Tote und Spuren"),
     Row::Choice(Choice {
+        // How far corpses rot, and whether their fluids stain the ground (`decay_stain`;
+        // one combo box, the page's rows are the frame's).
         label: b"Verwesung",
-        lines: &[b"Bis auf die Knochen", b"Nur halb"],
-        get: |s| on_off(s.corpse_decay_half),
-        set: |s, i| s.corpse_decay_half = i == 1,
+        lines: &[
+            b"Knochen, mit Bodenfleck",
+            b"Knochen, ohne Bodenfleck",
+            b"Nur halb, mit Bodenfleck",
+            b"Nur halb, ohne Bodenfleck",
+        ],
+        get: |s| 2 * on_off(s.corpse_decay_half) + on_off(!s.decay_stain()),
+        set: |s, i| {
+            s.corpse_decay_half = i >= 2;
+            s.decay_stain = Some(i % 2 == 0);
+        },
     }),
     Row::Choice(Choice {
         label: b"Liegezeit",

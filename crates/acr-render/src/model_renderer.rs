@@ -176,6 +176,17 @@ pub struct BloodPool {
     /// A piece of a smear (a body dragged through blood): a ribbon from `centre` running
     /// `along` instead of a pool. `radius` is its half width where it ends.
     pub smear: Option<Smear>,
+    /// A decay stain's state ([`Dirt::Seep`]).
+    pub seep: Seep,
+}
+
+/// How far a decay stain ([`Dirt::Seep`]) has come: `age` dries it.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Seep {
+    /// 0 the first leak at the head .. 1 the whole island under head and torso.
+    pub growth: f32,
+    /// The grass dead around it: 0 none (or no grass) .. 1 a full ring.
+    pub ring: f32,
 }
 
 /// One segment of a smeared blood trail: consecutive segments of one unit join into a
@@ -202,6 +213,9 @@ pub enum Dirt {
     Crater,
     /// A musket ball's, arrow's or grapeshot's scuff: a small dusty smudge.
     Scuff,
+    /// Not earth thrown up but the fluids of a decaying body soaked into it
+    /// (`decay_stain`): dark and greasy, drying brown, the grass dead around it.
+    Seep,
 }
 
 #[repr(C)]
@@ -560,21 +574,25 @@ fn bone_texture(device: &wgpu::Device, rows: u32) -> wgpu::Texture {
     })
 }
 
-/// `look.z` of a decal in `blood.wgsl`: 0 pool, 1 droplet, 2 crater, 3 scuff, 4 smear.
+/// `look.z` of a decal in `blood.wgsl`: 0 pool, 1 droplet, 2 crater, 3 scuff, 4 smear,
+/// 5 decay stain.
 fn pool_kind(p: &BloodPool) -> f32 {
     match p.dirt {
         Dirt::Crater => 2.0,
         Dirt::Scuff => 3.0,
+        Dirt::Seep => 5.0,
         Dirt::None if p.smear.is_some() => 4.0,
         Dirt::None => f32::from(u8::from(p.splatter)),
     }
 }
 
 /// The GPU form of a decal: a smear's quad reaches `length` past its start (`stretch` in
-/// pool radii), its start width and density ride in `tilt.z` and `look.w`.
+/// pool radii), its start width and density ride in `tilt.z` and `look.w`; a decay stain's
+/// dead grass and growth too.
 fn gpu_pool(p: &BloodPool) -> GpuPool {
     let (stretch, start, density) = match p.smear {
         Some(s) => (s.length / (2.0 * p.radius), s.start_width, s.density),
+        None if p.dirt == Dirt::Seep => (p.stretch, p.seep.ring, p.seep.growth),
         None => (p.stretch, 0.0, 0.0),
     };
     GpuPool {
