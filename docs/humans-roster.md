@@ -35,22 +35,22 @@ blank-field check. Clips by weapon follow docs/melee.md (strike clips
 
 | # | family | units | n | module | slices |
 |---|---|---|---|---|---|
-| 1 | European line infantry, 18th c. | EngM18 ✔, FrnM18 ✔, SpnM18, UsaM18 | 4 | `line.py` (this change) | 1 |
-| 2 | Drummers and standard bearers, 18th c. (foot) | EngB18, FrnB18, SpnB18, UsaB18, EngF18, FrnF18, SpnF18, UsaF18 | 8 | `line.py` + held drum/flag | 3 |
-| 3 | Woodlands warriors (Iroquois, Huron, Delaware) | IroLut, IroStr, IroTam, IroVog, IroSha, HurLut, HurS15, HurSha, HurVog, DelKri, DelLut, DelPik, DelS15, DelSha, DelVog | 15 | `native.py` (new) | 5 |
-| 4 | Officers, 18th and 17th c. (foot) | EngOf17, EngOf18, FrnOf17, FrnOf18, SpnOf17, SpnOf18, UsaOf18 | 7 | `line.py` / `pikeshot.py` + sash, gorget | 2 |
-| 5 | Dragoons and mounted officers | EngD17, EngD18 ✔, FrnD17, FrnD18, SpnD17, SpnD18, UsaD18, EngKOf17, EngKOf18, FrnKOf17, FrnKOf18, SpnKOf17, SpnKOf18, UsaKOf18 | 14 | `cavalry.py` specs | 3 |
-| 6 | Pike and shot, 17th c. (with its drummers and flags) | EngPik, FrnPik, EngMus, SpnMus, FrnS17, EngB17, FrnB17, SpnB17, EngF17, FrnF17, SpnF17 | 11 | `pikeshot.py` (new) | 5 |
-| 7 | Mesoamerica (Aztec, Maya) | AtcLut, AtcMet, AtcSha, AtcVog, MayKri, MayLut, MayPik, MaySha, MayVog, MayVoi | 10 | `meso.py` (new) | 4 |
-| 8 | Inca (Texcoco also fields IncLut, IncPik) | IncLut, IncPik, IncPra, IncSha, IncTrb, IncVog | 6 | `andes.py` (new) | 3 |
-| 9 | Plains (Sioux) | SiuKri, SiuLut, SiuKLut, SiuKPik, SiuKStr ✔, SiuKVog | 6 | `native.py` + `cavalry.py` | 2 |
-| 10 | Pueblo (PueVsd also rides for the Woodlands nations) | PueKri, PueLut, PueS15, PueSha, PueVog, PueVsda ✔, PueVsd | 7 | `native.py` (Southwest garments) | 3 |
-| 11 | Frontiersmen and irregulars | EngTap, EngTapDragon, FrnBuk, UsaMil | 4 | `frontier.py` (new) | 2 |
-| 12 | Conquistadors, 16th c. | SpnS15, FrnS15, SpnAlb, SpnRei ✔ | 4 | `conquista.py` (new; morion, cuirass) | 2 |
-| 13 | European civilians: peasants and the priest | EngKri ✔, FrnKri, SpnKri, SpnSha | 4 | `civil.py` (from `engkri.py`) | 2 |
+| 1 | European line infantry, 18th c. | EngM18 ✔, FrnM18 ✔, SpnM18 ✔, UsaM18 ✔ | 4 | `line.py` (this change) | done |
+| 2 | Drummers and standard bearers, 18th c. (foot) | EngB18 ✔, FrnB18 ✔, SpnB18 ✔, UsaB18 ✔, EngF18 ✔, FrnF18 ✔, SpnF18 ✔, UsaF18 ✔ | 8 | `line.py` + held drum/flag | done |
+| 3 | Woodlands warriors (Iroquois, Huron, Delaware) | IroLut ✔, IroStr ✔, IroTam ✔, IroVog ✔, IroSha ✔, HurLut ✔, HurS15 ✔, HurSha ✔, HurVog ✔, DelKri ✔, DelLut ✔, DelPik ✔, DelS15 ✔, DelSha ✔, DelVog ✔ | 15 | `native.py` (new) | done |
+| 4 | Officers, 18th and 17th c. (foot) | EngOf17 ✔, EngOf18 ✔, FrnOf17 ✔, FrnOf18 ✔, SpnOf17 ✔, SpnOf18 ✔, UsaOf18 ✔ | 7 | `line.py` / `pikeshot.py` + sash, gorget | done |
+| 5 | Dragoons and mounted officers | EngD17 ✔, EngD18 ✔, FrnD17 ✔, FrnD18 ✔, SpnD17 ✔, SpnD18 ✔, UsaD18 ✔, EngKOf17 ✔, EngKOf18 ✔, FrnKOf17 ✔, FrnKOf18 ✔, SpnKOf17 ✔, SpnKOf18 ✔, UsaKOf18 ✔ | 14 | `cavalry.py` specs | done |
+| 6 | Pike and shot, 17th c. (with its drummers and flags) | EngPik ✔, FrnPik ✔, EngMus ✔, SpnMus ✔, FrnS17 ✔, EngB17 ✔, FrnB17 ✔, SpnB17 ✔, EngF17 ✔, FrnF17 ✔, SpnF17 ✔ | 11 | `pikeshot.py` (new) | done |
+| 7 | Mesoamerica (Aztec, Maya) | AtcLut ✔, AtcMet ✔, AtcSha ✔, AtcVog ✔, MayKri ✔, MayLut ✔, MayPik ✔, MaySha ✔, MayVog ✔, MayVoi ✔ | 10 | `meso.py` (new) | done |
+| 8 | Inca (Texcoco also fields IncLut, IncPik) | IncLut ✔, IncPik ✔, IncPra ✔, IncSha ✔, IncTrb ✔, IncVog ✔ | 6 | `andes.py` (new) | done |
+| 9 | Plains (Sioux) | SiuKri ✔, SiuLut ✔, SiuKLut ✔, SiuKPik ✔, SiuKStr ✔, SiuKVog ✔ | 6 | `native.py` + `cavalry.py` | done |
+| 10 | Pueblo (PueVsd also rides for the Woodlands nations) | PueKri ✔, PueLut ✔, PueS15 ✔, PueSha ✔, PueVog ✔, PueVsda ✔, PueVsd ✔ | 7 | `native.py` (Southwest garments) | done |
+| 11 | Frontiersmen and irregulars | EngTap ✔, EngTapDragon ✔, FrnBuk ✔, UsaMil ✔ | 4 | `frontier.py` (new) | done |
+| 12 | Conquistadors, 16th c. | SpnS15 ✔, FrnS15 ✔, SpnAlb ✔, SpnRei ✔ | 4 | `conquista.py` (new; morion, cuirass) | done |
+| 13 | European civilians: peasants and the priest | EngKri ✔, FrnKri ✔, SpnKri ✔, SpnSha ✔ | 4 | `civil.py` (from `engkri.py`) | done |
 | 14 | Mounted standard bearers | EngKF18 ✔, FrnKF18 ✔, SpnKF18 ✔, UsaKF18 ✔ | 4 | `cavalry.py` | done |
 
-104 types; 11 built (✔), 93 to go, about 37 slices. The cannon (`ArtPus`) and its crew
+104 types, all built (✔); rebuilt together from main a0a80bb (m2-rebuild), see "Known defects after the full rebuild". The cannon (`ArtPus`) and its crew
 are covered by `guncrew.py`.
 
 ### 1. European line infantry, 18th c.
@@ -264,174 +264,225 @@ batch 0a cuts them from white cloth (`lapels="lapels"`) and keeps waistcoat and 
 the palette's white (`fixed`).
 
 ## 5. Roster
-Human types: **104** (25 mounted, 79 on foot), **11** with a 3D model; the cannon's crew counted apart.
+Human types: **104** (25 mounted, 79 on foot), **104** with a 3D model; the cannon's crew counted apart.
 
 ### England (17)
 
 | .MD | German | English | foot/mounted | weapons (`WEAPONKIND`) | nations | 3D |
 |---|---|---|---|---|---|---|
-| `EngB17` | Trommler 17. Jhd. | drummer, 17th c. | foot | none | ENGLAND, USA | - |
-| `EngB18` | Trommler 18. Jhd. | drummer, 18th c. | foot | 0 PIKA (thrust) | ENGLAND | - |
-| `EngD17` | Dragoner 17. Jhd. | dragoon, 17th c. | mounted | 0 MECH (melee), 1 VISTREL (firearm) | ENGLAND, USA | - |
+| `EngB17` | Trommler 17. Jhd. | drummer, 17th c. | foot | none | ENGLAND, USA || yes |
+| `EngB18` | Trommler 18. Jhd. | drummer, 18th c. | foot | 0 PIKA (thrust) | ENGLAND || yes |
+| `EngD17` | Dragoner 17. Jhd. | dragoon, 17th c. | mounted | 0 MECH (melee), 1 VISTREL (firearm) | ENGLAND, USA || yes |
 | `EngD18` | Dragoner 18. Jhd. | dragoon, 18th c. | mounted | 0 MECH (melee), 1 VISTREL (firearm) | ENGLAND | yes |
-| `EngF17` | Flaggenträger 17. Jhd. | standard bearer, 17th c. | foot | none | ENGLAND, USA | - |
-| `EngF18` | Flaggenträger 18. Jhd. | standard bearer, 18th c. | foot | none | ENGLAND | - |
+| `EngF17` | Flaggenträger 17. Jhd. | standard bearer, 17th c. | foot | none | ENGLAND, USA || yes |
+| `EngF18` | Flaggenträger 18. Jhd. | standard bearer, 18th c. | foot | none | ENGLAND || yes |
 | `EngKF18` | Ber. Flaggenträger 18. Jhd. | mounted standard bearer, 18th c. | mounted | none | ENGLAND | yes |
-| `EngKOf17` | Berittener Off. 17. Jhd. | mounted officer, 17th c. | mounted | 0 MECH (melee), 1 VISTREL (firearm) | ENGLAND, USA | - |
-| `EngKOf18` | Berittener Off. 18. Jhd. | mounted officer, 18th c. | mounted | 0 MECH (melee), 1 VISTREL (firearm) | ENGLAND | - |
+| `EngKOf17` | Berittener Off. 17. Jhd. | mounted officer, 17th c. | mounted | 0 MECH (melee), 1 VISTREL (firearm) | ENGLAND, USA || yes |
+| `EngKOf18` | Berittener Off. 18. Jhd. | mounted officer, 18th c. | mounted | 0 MECH (melee), 1 VISTREL (firearm) | ENGLAND || yes |
 | `EngKri` | Bauer | peasant | foot | 0 MECH (melee) | ENGLAND, USA | yes |
 | `EngM18` | Füsilier | fusilier | foot | 0 PIKA (thrust), 1 VISTREL (firearm) | ENGLAND | yes |
-| `EngMus` | Musketier | musketeer | foot | 0 MECH (melee), 1 VISTREL (firearm) | ENGLAND, USA | - |
-| `EngOf17` | Offizier 17. Jhd. | officer, 17th c. | foot | 0 PIKA (thrust) | ENGLAND, USA | - |
-| `EngOf18` | Offizier 18. Jhd. | officer, 18th c. | foot | 0 MECH (melee) | ENGLAND | - |
-| `EngPik` | Pikenier | pikeman | foot | 0 PIKA (thrust) | ENGLAND, USA | - |
-| `EngTap` | Trapper | trapper | foot | 0 MECH (melee), 1 VISTREL (firearm), 2 PIKA (thrust) | ENGLAND, USA | - |
-| `EngTapDragon` | Jäger | hunter (jäger) | foot | 0 MECH (melee), 1 VISTREL (firearm), 2 PIKA (thrust) | NEUTRAL | - |
+| `EngMus` | Musketier | musketeer | foot | 0 MECH (melee), 1 VISTREL (firearm) | ENGLAND, USA || yes |
+| `EngOf17` | Offizier 17. Jhd. | officer, 17th c. | foot | 0 PIKA (thrust) | ENGLAND, USA || yes |
+| `EngOf18` | Offizier 18. Jhd. | officer, 18th c. | foot | 0 MECH (melee) | ENGLAND || yes |
+| `EngPik` | Pikenier | pikeman | foot | 0 PIKA (thrust) | ENGLAND, USA || yes |
+| `EngTap` | Trapper | trapper | foot | 0 MECH (melee), 1 VISTREL (firearm), 2 PIKA (thrust) | ENGLAND, USA || yes |
+| `EngTapDragon` | Jäger | hunter (jäger) | foot | 0 MECH (melee), 1 VISTREL (firearm), 2 PIKA (thrust) | NEUTRAL || yes |
 
 ### France (17)
 
 | .MD | German | English | foot/mounted | weapons (`WEAPONKIND`) | nations | 3D |
 |---|---|---|---|---|---|---|
-| `FrnB17` | Trommler 17. Jhd. | drummer, 17th c. | foot | none | FRANCE | - |
-| `FrnB18` | Trommler 18. Jhd. | drummer, 18th c. | foot | 0 PIKA (thrust) | FRANCE | - |
-| `FrnBuk` | Freibeuter | buccaneer | foot | 0 MECH (melee), 1 VISTREL (firearm), 2 PIKA (thrust) | FRANCE | - |
-| `FrnD17` | Dragoner 17. Jhd. | dragoon, 17th c. | mounted | 0 MECH (melee), 1 VISTREL (firearm) | FRANCE | - |
-| `FrnD18` | Dragoner 18. Jhd. | dragoon, 18th c. | mounted | 0 MECH (melee), 1 VISTREL (firearm) | FRANCE | - |
-| `FrnF17` | Flaggenträger 17. Jhd. | standard bearer, 17th c. | foot | none | FRANCE | - |
-| `FrnF18` | Flaggenträger 18. Jhd. | standard bearer, 18th c. | foot | none | FRANCE | - |
+| `FrnB17` | Trommler 17. Jhd. | drummer, 17th c. | foot | none | FRANCE || yes |
+| `FrnB18` | Trommler 18. Jhd. | drummer, 18th c. | foot | 0 PIKA (thrust) | FRANCE || yes |
+| `FrnBuk` | Freibeuter | buccaneer | foot | 0 MECH (melee), 1 VISTREL (firearm), 2 PIKA (thrust) | FRANCE || yes |
+| `FrnD17` | Dragoner 17. Jhd. | dragoon, 17th c. | mounted | 0 MECH (melee), 1 VISTREL (firearm) | FRANCE || yes |
+| `FrnD18` | Dragoner 18. Jhd. | dragoon, 18th c. | mounted | 0 MECH (melee), 1 VISTREL (firearm) | FRANCE || yes |
+| `FrnF17` | Flaggenträger 17. Jhd. | standard bearer, 17th c. | foot | none | FRANCE || yes |
+| `FrnF18` | Flaggenträger 18. Jhd. | standard bearer, 18th c. | foot | none | FRANCE || yes |
 | `FrnKF18` | Ber. Flaggenträger 18. Jhd. | mounted standard bearer, 18th c. | mounted | none | FRANCE | yes |
-| `FrnKOf17` | Berittener Off. 17. Jhd. | mounted officer, 17th c. | mounted | 0 MECH (melee), 1 VISTREL (firearm) | FRANCE | - |
-| `FrnKOf18` | Berittener Off. 18. Jhd. | mounted officer, 18th c. | mounted | 0 MECH (melee), 1 VISTREL (firearm) | FRANCE | - |
-| `FrnKri` | Bauer | peasant | foot | 0 MECH (melee) | FRANCE | - |
+| `FrnKOf17` | Berittener Off. 17. Jhd. | mounted officer, 17th c. | mounted | 0 MECH (melee), 1 VISTREL (firearm) | FRANCE || yes |
+| `FrnKOf18` | Berittener Off. 18. Jhd. | mounted officer, 18th c. | mounted | 0 MECH (melee), 1 VISTREL (firearm) | FRANCE || yes |
+| `FrnKri` | Bauer | peasant | foot | 0 MECH (melee) | FRANCE || yes |
 | `FrnM18` | Füsilier | fusilier | foot | 0 PIKA (thrust), 1 VISTREL (firearm) | FRANCE | yes |
-| `FrnOf17` | Offizier 17. Jhd. | officer, 17th c. | foot | 0 MECH (melee) | FRANCE | - |
-| `FrnOf18` | Offizier 18. Jhd. | officer, 18th c. | foot | 0 MECH (melee) | FRANCE | - |
-| `FrnPik` | Pikenier | pikeman | foot | 0 PIKA (thrust) | FRANCE | - |
-| `FrnS15` | Hakenbüchsenschütze | arquebusier | foot | 0 MECH (melee), 1 VISTREL (firearm) | FRANCE | - |
-| `FrnS17` | Musketier | musketeer | foot | 0 MECH (melee), 1 VISTREL (firearm) | FRANCE | - |
+| `FrnOf17` | Offizier 17. Jhd. | officer, 17th c. | foot | 0 MECH (melee) | FRANCE || yes |
+| `FrnOf18` | Offizier 18. Jhd. | officer, 18th c. | foot | 0 MECH (melee) | FRANCE || yes |
+| `FrnPik` | Pikenier | pikeman | foot | 0 PIKA (thrust) | FRANCE || yes |
+| `FrnS15` | Hakenbüchsenschütze | arquebusier | foot | 0 MECH (melee), 1 VISTREL (firearm) | FRANCE || yes |
+| `FrnS17` | Musketier | musketeer | foot | 0 MECH (melee), 1 VISTREL (firearm) | FRANCE || yes |
 
 ### Spain (18)
 
 | .MD | German | English | foot/mounted | weapons (`WEAPONKIND`) | nations | 3D |
 |---|---|---|---|---|---|---|
-| `SpnAlb` | Hellebardier | halberdier | foot | 0 PIKA (thrust) | SPAIN | - |
-| `SpnB17` | Trommler 17. Jhd. | drummer, 17th c. | foot | none | SPAIN | - |
-| `SpnB18` | Trommler 18. Jhd. | drummer, 18th c. | foot | 0 PIKA (thrust) | SPAIN | - |
-| `SpnD17` | Dragoner 17. Jhd. | dragoon, 17th c. | mounted | 0 MECH (melee), 1 VISTREL (firearm) | SPAIN | - |
-| `SpnD18` | Dragoner 18. Jhd. | dragoon, 18th c. | mounted | 0 MECH (melee), 1 VISTREL (firearm) | SPAIN | - |
-| `SpnF17` | Flaggenträger 17. Jhd. | standard bearer, 17th c. | foot | none | SPAIN | - |
-| `SpnF18` | Flaggenträger 18. Jhd. | standard bearer, 18th c. | foot | none | SPAIN | - |
+| `SpnAlb` | Hellebardier | halberdier | foot | 0 PIKA (thrust) | SPAIN || yes |
+| `SpnB17` | Trommler 17. Jhd. | drummer, 17th c. | foot | none | SPAIN || yes |
+| `SpnB18` | Trommler 18. Jhd. | drummer, 18th c. | foot | 0 PIKA (thrust) | SPAIN || yes |
+| `SpnD17` | Dragoner 17. Jhd. | dragoon, 17th c. | mounted | 0 MECH (melee), 1 VISTREL (firearm) | SPAIN || yes |
+| `SpnD18` | Dragoner 18. Jhd. | dragoon, 18th c. | mounted | 0 MECH (melee), 1 VISTREL (firearm) | SPAIN || yes |
+| `SpnF17` | Flaggenträger 17. Jhd. | standard bearer, 17th c. | foot | none | SPAIN || yes |
+| `SpnF18` | Flaggenträger 18. Jhd. | standard bearer, 18th c. | foot | none | SPAIN || yes |
 | `SpnKF18` | Ber. Flaggenträger 18. Jhd. | mounted standard bearer, 18th c. | mounted | none | SPAIN | yes |
-| `SpnKOf17` | Berittener Off. 17. Jhd. | mounted officer, 17th c. | mounted | 0 MECH (melee), 1 VISTREL (firearm) | SPAIN | - |
-| `SpnKOf18` | Berittener Off. 18. Jhd. | mounted officer, 18th c. | mounted | 0 MECH (melee), 1 VISTREL (firearm) | SPAIN | - |
-| `SpnKri` | Bauer | peasant | foot | 0 MECH (melee) | SPAIN | - |
-| `SpnM18` | Füsilier | fusilier | foot | 0 PIKA (thrust), 1 VISTREL (firearm) | SPAIN | - |
-| `SpnMus` | Musketier | musketeer | foot | 0 MECH (melee), 1 VISTREL (firearm) | SPAIN | - |
-| `SpnOf17` | Offizier 17. Jhd. | officer, 17th c. | foot | 0 MECH (melee) | SPAIN | - |
-| `SpnOf18` | Offizier 18. Jhd. | officer, 18th c. | foot | 0 MECH (melee) | SPAIN | - |
+| `SpnKOf17` | Berittener Off. 17. Jhd. | mounted officer, 17th c. | mounted | 0 MECH (melee), 1 VISTREL (firearm) | SPAIN || yes |
+| `SpnKOf18` | Berittener Off. 18. Jhd. | mounted officer, 18th c. | mounted | 0 MECH (melee), 1 VISTREL (firearm) | SPAIN || yes |
+| `SpnKri` | Bauer | peasant | foot | 0 MECH (melee) | SPAIN || yes |
+| `SpnM18` | Füsilier | fusilier | foot | 0 PIKA (thrust), 1 VISTREL (firearm) | SPAIN || yes |
+| `SpnMus` | Musketier | musketeer | foot | 0 MECH (melee), 1 VISTREL (firearm) | SPAIN || yes |
+| `SpnOf17` | Offizier 17. Jhd. | officer, 17th c. | foot | 0 MECH (melee) | SPAIN || yes |
+| `SpnOf18` | Offizier 18. Jhd. | officer, 18th c. | foot | 0 MECH (melee) | SPAIN || yes |
 | `SpnRei` | Conquistador 16. Jhd. | conquistador, 16th c. | mounted | 0 MECH (melee), 1 VISTREL (firearm) | SPAIN | yes |
-| `SpnS15` | Hakenbüchsenschütze | arquebusier | foot | 0 MECH (melee), 1 VISTREL (firearm) | ENGLAND, SPAIN, USA | - |
-| `SpnSha` | Priester | priest | foot | 0 MEDIK (heals) | ENGLAND, FRANCE, SPAIN, USA | - |
+| `SpnS15` | Hakenbüchsenschütze | arquebusier | foot | 0 MECH (melee), 1 VISTREL (firearm) | ENGLAND, SPAIN, USA || yes |
+| `SpnSha` | Priester | priest | foot | 0 MEDIK (heals) | ENGLAND, FRANCE, SPAIN, USA || yes |
 
 ### USA (8)
 
 | .MD | German | English | foot/mounted | weapons (`WEAPONKIND`) | nations | 3D |
 |---|---|---|---|---|---|---|
-| `UsaB18` | Trommler 18. Jhd. | drummer, 18th c. | foot | 0 PIKA (thrust) | USA | - |
-| `UsaD18` | Dragoner 18. Jhd. | dragoon, 18th c. | mounted | 0 MECH (melee), 1 VISTREL (firearm) | USA | - |
-| `UsaF18` | Flaggenträger 18. Jhd. | standard bearer, 18th c. | foot | none | USA | - |
+| `UsaB18` | Trommler 18. Jhd. | drummer, 18th c. | foot | 0 PIKA (thrust) | USA || yes |
+| `UsaD18` | Dragoner 18. Jhd. | dragoon, 18th c. | mounted | 0 MECH (melee), 1 VISTREL (firearm) | USA || yes |
+| `UsaF18` | Flaggenträger 18. Jhd. | standard bearer, 18th c. | foot | none | USA || yes |
 | `UsaKF18` | Ber. Flaggenträger 18. Jhd. | mounted standard bearer, 18th c. | mounted | none | USA | yes |
-| `UsaKOf18` | Berittener Off. 18. Jhd. | mounted officer, 18th c. | mounted | 0 MECH (melee), 1 VISTREL (firearm) | USA | - |
-| `UsaM18` | Füsilier | fusilier | foot | 0 PIKA (thrust), 1 VISTREL (firearm) | USA | - |
-| `UsaMil` | Miliz | militia | foot | 0 MECH (melee), 1 VISTREL (firearm) | USA | - |
-| `UsaOf18` | Offizier 18. Jhd. | officer, 18th c. | foot | 0 MECH (melee) | USA | - |
+| `UsaKOf18` | Berittener Off. 18. Jhd. | mounted officer, 18th c. | mounted | 0 MECH (melee), 1 VISTREL (firearm) | USA || yes |
+| `UsaM18` | Füsilier | fusilier | foot | 0 PIKA (thrust), 1 VISTREL (firearm) | USA || yes |
+| `UsaMil` | Miliz | militia | foot | 0 MECH (melee), 1 VISTREL (firearm) | USA || yes |
+| `UsaOf18` | Offizier 18. Jhd. | officer, 18th c. | foot | 0 MECH (melee) | USA || yes |
 
 ### Aztecs (4)
 
 | .MD | German | English | foot/mounted | weapons (`WEAPONKIND`) | nations | 3D |
 |---|---|---|---|---|---|---|
-| `AtcLut` | Bogenschütze | archer | foot | 0 MECH (melee), 1 OSTRELA (fire arrow), 2 STRELA (bow) | ACTEC | - |
-| `AtcMet` | Speerwerfer | spear thrower | foot | 0 PIKA (thrust), 1 KOPIE (thrown spear) | ACTEC | - |
-| `AtcSha` | Schamane | shaman | foot | 0 MECH (melee), 1 MEDIK (heals) | ACTEC | - |
-| `AtcVog` | Häuptling | chief | foot | 0 MECH (melee) | ACTEC | - |
+| `AtcLut` | Bogenschütze | archer | foot | 0 MECH (melee), 1 OSTRELA (fire arrow), 2 STRELA (bow) | ACTEC || yes |
+| `AtcMet` | Speerwerfer | spear thrower | foot | 0 PIKA (thrust), 1 KOPIE (thrown spear) | ACTEC || yes |
+| `AtcSha` | Schamane | shaman | foot | 0 MECH (melee), 1 MEDIK (heals) | ACTEC || yes |
+| `AtcVog` | Häuptling | chief | foot | 0 MECH (melee) | ACTEC || yes |
 
 ### Maya (6)
 
 | .MD | German | English | foot/mounted | weapons (`WEAPONKIND`) | nations | 3D |
 |---|---|---|---|---|---|---|
-| `MayKri` | Bauer | peasant | foot | 0 MECH (melee) | ACTEC, INCAS, MAY | - |
-| `MayLut` | Bogenschütze | archer | foot | 0 MECH (melee), 1 OSTRELA (fire arrow), 2 STRELA (bow) | MAY | - |
-| `MayPik` | Lanzenkämpfer | spearman | foot | 0 PIKA (thrust) | MAY | - |
-| `MaySha` | Schamane | shaman | foot | 0 MECH (melee), 1 MEDIK (heals) | MAY | - |
-| `MayVog` | Häuptling | chief | foot | 0 PIKA (thrust) | MAY | - |
-| `MayVoi` | Macamba-Krieger | macuahuitl warrior | foot | 0 MECH (melee) | MAY | - |
+| `MayKri` | Bauer | peasant | foot | 0 MECH (melee) | ACTEC, INCAS, MAY || yes |
+| `MayLut` | Bogenschütze | archer | foot | 0 MECH (melee), 1 OSTRELA (fire arrow), 2 STRELA (bow) | MAY || yes |
+| `MayPik` | Lanzenkämpfer | spearman | foot | 0 PIKA (thrust) | MAY || yes |
+| `MaySha` | Schamane | shaman | foot | 0 MECH (melee), 1 MEDIK (heals) | MAY || yes |
+| `MayVog` | Häuptling | chief | foot | 0 PIKA (thrust) | MAY || yes |
+| `MayVoi` | Macamba-Krieger | macuahuitl warrior | foot | 0 MECH (melee) | MAY || yes |
 
 ### Inca (6)
 
 | .MD | German | English | foot/mounted | weapons (`WEAPONKIND`) | nations | 3D |
 |---|---|---|---|---|---|---|
-| `IncLut` | Bogenschütze | archer | foot | 0 MECH (melee), 1 OSTRELA (fire arrow), 2 STRELA (bow) | INCAS, TESCOCO | - |
-| `IncPik` | Lanzenkämpfer | spearman | foot | 0 PIKA (thrust) | INCAS, TESCOCO | - |
-| `IncPra` | Steinschleuder-Krieger | slinger | foot | 0 MECH (melee), 1 KAMEN (sling) | INCAS | - |
-| `IncSha` | Schamane | shaman | foot | 0 MECH (melee), 1 MEDIK (heals) | INCAS | - |
-| `IncTrb` | Krieger mit Blasrohr | blowpipe warrior | foot | 0 MECH (melee), 1 VAFLIA (blowpipe) | INCAS | - |
-| `IncVog` | Häuptling | chief | foot | 0 PIKA (thrust) | INCAS | - |
+| `IncLut` | Bogenschütze | archer | foot | 0 MECH (melee), 1 OSTRELA (fire arrow), 2 STRELA (bow) | INCAS, TESCOCO || yes |
+| `IncPik` | Lanzenkämpfer | spearman | foot | 0 PIKA (thrust) | INCAS, TESCOCO || yes |
+| `IncPra` | Steinschleuder-Krieger | slinger | foot | 0 MECH (melee), 1 KAMEN (sling) | INCAS || yes |
+| `IncSha` | Schamane | shaman | foot | 0 MECH (melee), 1 MEDIK (heals) | INCAS || yes |
+| `IncTrb` | Krieger mit Blasrohr | blowpipe warrior | foot | 0 MECH (melee), 1 VAFLIA (blowpipe) | INCAS || yes |
+| `IncVog` | Häuptling | chief | foot | 0 PIKA (thrust) | INCAS || yes |
 
 ### Pueblo (7)
 
 | .MD | German | English | foot/mounted | weapons (`WEAPONKIND`) | nations | 3D |
 |---|---|---|---|---|---|---|
-| `PueKri` | Bauer | peasant | foot | 0 MECH (melee) | PUEBLO | - |
-| `PueLut` | Bogenschütze | archer | foot | 0 MECH (melee), 1 OSTRELA (fire arrow), 2 STRELA (bow) | PUEBLO | - |
-| `PueS15` | Schütze | rifleman | foot | 0 MECH (melee), 1 VISTREL (firearm) | PUEBLO | - |
-| `PueSha` | Schamane | shaman | foot | 0 MECH (melee), 1 MEDIK (heals) | PUEBLO | - |
-| `PueVog` | Häuptling | chief | foot | 0 MECH (melee) | PUEBLO | - |
-| `PueVsd` | Reiter | horseman | mounted | 0 PIKA (thrust) | DELAVAR, HURONI, IROKEZ | - |
+| `PueKri` | Bauer | peasant | foot | 0 MECH (melee) | PUEBLO || yes |
+| `PueLut` | Bogenschütze | archer | foot | 0 MECH (melee), 1 OSTRELA (fire arrow), 2 STRELA (bow) | PUEBLO || yes |
+| `PueS15` | Schütze | rifleman | foot | 0 MECH (melee), 1 VISTREL (firearm) | PUEBLO || yes |
+| `PueSha` | Schamane | shaman | foot | 0 MECH (melee), 1 MEDIK (heals) | PUEBLO || yes |
+| `PueVog` | Häuptling | chief | foot | 0 MECH (melee) | PUEBLO || yes |
+| `PueVsd` | Reiter | horseman | mounted | 0 PIKA (thrust) | DELAVAR, HURONI, IROKEZ || yes |
 | `PueVsda` | Reiter | horseman | mounted | 0 PIKA (thrust) | PUEBLO | yes |
 
 ### Sioux (6)
 
 | .MD | German | English | foot/mounted | weapons (`WEAPONKIND`) | nations | 3D |
 |---|---|---|---|---|---|---|
-| `SiuKLut` | Berittener Bogenschütze | mounted archer | mounted | 0 MECH (melee), 1 OSTRELA (fire arrow), 2 STRELA (bow) | SIU | - |
-| `SiuKPik` | Berittener Lanzenkämpfer | mounted spearman | mounted | 0 PIKA (thrust) | SIU | - |
-| `SiuKri` | Arbeiter (Bauer) | worker (peasant) | foot | 0 MECH (melee) | SIU | - |
+| `SiuKLut` | Berittener Bogenschütze | mounted archer | mounted | 0 MECH (melee), 1 OSTRELA (fire arrow), 2 STRELA (bow) | SIU || yes |
+| `SiuKPik` | Berittener Lanzenkämpfer | mounted spearman | mounted | 0 PIKA (thrust) | SIU || yes |
+| `SiuKri` | Arbeiter (Bauer) | worker (peasant) | foot | 0 MECH (melee) | SIU || yes |
 | `SiuKStr` | Berittener Schütze | mounted rifleman | mounted | 0 MECH (melee), 1 VISTREL (firearm) | SIU | yes |
-| `SiuKVog` | Berittener Häuptling | mounted chief | mounted | 0 MECH (melee) | SIU | - |
-| `SiuLut` | Bogenschütze (Jäger) | archer (hunter) | foot | 0 MECH (melee), 1 OSTRELA (fire arrow), 2 STRELA (bow) | SIU | - |
+| `SiuKVog` | Berittener Häuptling | mounted chief | mounted | 0 MECH (melee) | SIU || yes |
+| `SiuLut` | Bogenschütze (Jäger) | archer (hunter) | foot | 0 MECH (melee), 1 OSTRELA (fire arrow), 2 STRELA (bow) | SIU || yes |
 
 ### Delaware (6)
 
 | .MD | German | English | foot/mounted | weapons (`WEAPONKIND`) | nations | 3D |
 |---|---|---|---|---|---|---|
-| `DelKri` | Bauer | peasant | foot | 0 MECH (melee), 1 OSTRELA (fire arrow), 2 STRELA (bow) | DELAVAR, HURONI, IROKEZ | - |
-| `DelLut` | Bogenschütze | archer | foot | 0 MECH (melee), 1 OSTRELA (fire arrow), 2 STRELA (bow) | DELAVAR | - |
-| `DelPik` | Lanzenkämpfer | spearman | foot | 0 PIKA (thrust) | DELAVAR | - |
-| `DelS15` | Schütze | rifleman | foot | 0 MECH (melee), 1 VISTREL (firearm) | DELAVAR | - |
-| `DelSha` | Schamane | shaman | foot | 0 MECH (melee), 1 MEDIK (heals) | DELAVAR, SIU | - |
-| `DelVog` | Häuptling | chief | foot | 0 MECH (melee), 1 VISTREL (firearm) | DELAVAR | - |
+| `DelKri` | Bauer | peasant | foot | 0 MECH (melee), 1 OSTRELA (fire arrow), 2 STRELA (bow) | DELAVAR, HURONI, IROKEZ || yes |
+| `DelLut` | Bogenschütze | archer | foot | 0 MECH (melee), 1 OSTRELA (fire arrow), 2 STRELA (bow) | DELAVAR || yes |
+| `DelPik` | Lanzenkämpfer | spearman | foot | 0 PIKA (thrust) | DELAVAR || yes |
+| `DelS15` | Schütze | rifleman | foot | 0 MECH (melee), 1 VISTREL (firearm) | DELAVAR || yes |
+| `DelSha` | Schamane | shaman | foot | 0 MECH (melee), 1 MEDIK (heals) | DELAVAR, SIU || yes |
+| `DelVog` | Häuptling | chief | foot | 0 MECH (melee), 1 VISTREL (firearm) | DELAVAR || yes |
 
 ### Huron (4)
 
 | .MD | German | English | foot/mounted | weapons (`WEAPONKIND`) | nations | 3D |
 |---|---|---|---|---|---|---|
-| `HurLut` | Bogenschütze | archer | foot | 0 MECH (melee), 1 OSTRELA (fire arrow), 2 STRELA (bow) | HURONI | - |
-| `HurS15` | Schütze | rifleman | foot | 0 MECH (melee), 1 VISTREL (firearm) | HURONI | - |
-| `HurSha` | Schamane | shaman | foot | 0 MECH (melee), 1 MEDIK (heals) | HURONI | - |
-| `HurVog` | Häuptling | chief | foot | 0 MECH (melee), 1 VISTREL (firearm) | HURONI | - |
+| `HurLut` | Bogenschütze | archer | foot | 0 MECH (melee), 1 OSTRELA (fire arrow), 2 STRELA (bow) | HURONI || yes |
+| `HurS15` | Schütze | rifleman | foot | 0 MECH (melee), 1 VISTREL (firearm) | HURONI || yes |
+| `HurSha` | Schamane | shaman | foot | 0 MECH (melee), 1 MEDIK (heals) | HURONI || yes |
+| `HurVog` | Häuptling | chief | foot | 0 MECH (melee), 1 VISTREL (firearm) | HURONI || yes |
 
 ### Iroquois (5)
 
 | .MD | German | English | foot/mounted | weapons (`WEAPONKIND`) | nations | 3D |
 |---|---|---|---|---|---|---|
-| `IroLut` | Bogenschütze | archer | foot | 0 MECH (melee), 1 OSTRELA (fire arrow), 2 STRELA (bow) | IROKEZ | - |
-| `IroSha` | Schamane | shaman | foot | 0 MECH (melee), 1 MEDIK (heals) | IROKEZ | - |
-| `IroStr` | Schütze | rifleman | foot | 0 MECH (melee), 1 VISTREL (firearm) | IROKEZ | - |
-| `IroTam` | Tomahawkwerfer | tomahawk thrower | foot | 0 MECH (melee), 1 TAMAGAVK (thrown tomahawk) | HURONI, IROKEZ | - |
-| `IroVog` | Häuptling | chief | foot | 0 MECH (melee), 1 VISTREL (firearm) | IROKEZ | - |
+| `IroLut` | Bogenschütze | archer | foot | 0 MECH (melee), 1 OSTRELA (fire arrow), 2 STRELA (bow) | IROKEZ || yes |
+| `IroSha` | Schamane | shaman | foot | 0 MECH (melee), 1 MEDIK (heals) | IROKEZ || yes |
+| `IroStr` | Schütze | rifleman | foot | 0 MECH (melee), 1 VISTREL (firearm) | IROKEZ || yes |
+| `IroTam` | Tomahawkwerfer | tomahawk thrower | foot | 0 MECH (melee), 1 TAMAGAVK (thrown tomahawk) | HURONI, IROKEZ || yes |
+| `IroVog` | Häuptling | chief | foot | 0 MECH (melee), 1 VISTREL (firearm) | IROKEZ || yes |
 
 ### Artillery (all European nations) (1)
 
 | .MD | German | English | foot/mounted | weapons (`WEAPONKIND`) | nations | 3D |
 |---|---|---|---|---|---|---|
-| `ArtPus` | Kanone | cannon (crew) | mounted | 4 IADRO (ball), 5 KARTECH (canister) | ENGLAND, FRANCE, SPAIN, USA | - |
+| `ArtPus` | Kanone | cannon (crew) | mounted | 4 IADRO (ball), 5 KARTECH (canister) | ENGLAND, FRANCE, SPAIN, USA || yes |
+
+## 6. Known defects after the full rebuild
+
+All human unit scripts and the gun crew (`artpus`) were rebuilt from main a0a80bb on the
+render VM (`cargo xtask assets <name>`, one call per name, three in parallel, 20–50 s each):
+95 built, 1 failed. Not rebuilt here: EngD17, FrnD17, SpnD17, EngKOf17, FrnKOf17, SpnKOf17,
+SpnRei, SiuKVog, SiuKLut (rebuilt in parallel by m2-cav17). The glbs before the rebuild are in
+`ACR-analysis/rebuild/backup/`; the lineup frames and the contact sheets per nation (front
+view of each unit, body and head) in `ACR-analysis/rebuild/lineup/` (`lineup.py` next to them).
+
+- **Build failure: SpnAlb.** `conquista.py` line 242 (`_tassets`):
+  `ValueError: faces.new(...): face already exists` (deterministic). The old SpnAlb glb stays
+  in use.
+
+First visual pass over the sheets (front view, standing; not fixed):
+
+Across many units:
+- **Jagged white patches at the neckline and chest** (shirt or falling band showing through
+  the coat in torn-looking shapes): EngB17, EngF17, EngMus, EngOf17, EngPik, FrnB17, FrnB18,
+  FrnBuk (also over the red cape), FrnF17, FrnOf17, FrnPik, FrnS17, SpnB17, SpnF17, SpnMus,
+  SpnOf17; similar spiky shoulder edges on EngD18, EngKF18, SpnKOf18, UsaD18, UsaKF18.
+- **Crumpled sash blob on the chest** of the mounted (a sash or second belt bunched into a lump
+  over the crossbelt): EngKOf18, FrnD18, FrnKOf18, SpnD18, SpnKOf18, UsaD18, UsaKOf18.
+- **White diagonal streak on the right cheek** (a stray face-paint or scar stroke on
+  Europeans): FrnB17, SpnB17, UsaKOf18, UsaOf18, AtcVog, and fainter on others.
+- **Shamans' headband over the eyes** (a white band covering the eyes like a blindfold) and
+  **hair as a square block**: DelSha, IroSha, HurSha, PueSha.
+- **Pueblo hair as a flat-topped box** above the headband: PueKri, PueLut, PueS15, PueSha,
+  PueVog.
+- **Pikemen's left sleeve stretched out sideways** from the arm: EngPik, FrnPik.
+
+Per unit:
+- SpnAlb (old glb): dark holes in the cuirass.
+- SpnKri: hole in the tunic at the right upper arm.
+- SpnSha: black cloak with spiky edges at the shoulders.
+- IncLut, IncTrb: dark holes at the shoulder seams and the upper sleeve of the tunic.
+- IncSha: jagged black/white patches on the mantle.
+- PueKri: stray white patches on the black vest.
+- PueVsd, PueVsda: dark patches at the tunic's shoulders.
+- EngTapDragon: dark green spikes at the collar.
+- MaySha: spiky shoulder flaps on the tunic.
+- AtcLut, MayLut: the bow and the arrow are two long loose sticks held apart at both sides.
+- SiuKPik, SiuKStr: a pale vertical bar floating beside the rider's right leg; SiuKStr's two
+  feathers are flat grey slabs.
+- UsaF18: the colour shows stripes only, no canton.
+
+GPU time, Monongahela `battle3` (`ACR-analysis/rebuild/gputime.py`, 1600 × 900, shadows on,
+LOD on, the same exe, Snapdragon X; runs interleaved, noisy): old models z1 35.6–41.0 ms,
+z2 46.9–51.6 ms (3 runs); new models z1 36.2–43.5 ms (median 39.6), z2 47.7–65.1 ms (median
+52.4; 7 runs). About 10 % more, in the models and shadow-map passes; the LOD levels are built
+at load (meshopt), so the new glbs get them as before.
