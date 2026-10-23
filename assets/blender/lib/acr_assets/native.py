@@ -263,7 +263,7 @@ def dress(ch, s):
         for side in (1.0, -1.0):
             ch.add("clothes", _legging_flap(ch, side), "flaps")
         ch.shell("garters", "garter", lambda c, n, h, p: h in {"shin_l", "shin_r"} and knee - 0.08 < c.z < knee - 0.05, 0.016)
-    if "shirt" in d:
+    if "shirt" in d:  # `trade_shirt`: drafted and draped over the rest (below)
         ch.shell("shirt", "shirt", lambda c, n, h, p: (h in TORSO and 0.80 < c.z < 1.50) or h in ARMS
                  or (h in {"thigh_l", "thigh_r"} and c.z > 0.74), 0.013)
     belt_off = 0.024 if "shirt" in d else 0.012
@@ -288,6 +288,14 @@ def dress(ch, s):
         ch.shell("cloak", "pelt", lambda c, n, h, p: (h in TORSO and 0.92 < c.z < 1.56
                                                        and (c.y > -0.02 or c.z > 1.40 or abs(c.x) > 0.16))
                  or (h in {"upperarm_l", "upperarm_r"} and c.z > 1.22), 0.034)
+    if "trade_shirt" in d:
+        # The linen trade shirt drafted and draped (#287 drape pilot) over the breechcloth,
+        # belt and flaps, which it collides with and takes its weights from.
+        from . import drape
+
+        over = [o for o in ch.layers["clothes"] if o.type == "MESH" and o is not getattr(ch, "shoes", None)]
+        made = drape.dress(ch, garments=("trade_shirt",), over=over)
+        drape.hide_skin(ch, [o for o in ch.layers["clothes"] if o.name in made])
     if s.get("silver"):
         ch.shell("armbands", "silver", lambda c, n, h, p: h in {"upperarm_l", "upperarm_r"}
                  and abs(c.z - (ch.arm.data.bones[ch.prefix + "upperarm_l"].head_local.z - 0.12)) < 0.018, 0.010)
@@ -507,7 +515,7 @@ def make(root, name, s):
     two = s["weapon"] == "bow" and bool(s["melee"])
     table = club_socket(rig.skeleton_h("", (0, 0, 0))) if two else None
     ch = Character(root, name, s["build"], table=table)
-    ch.body()
+    ch.body(shoulders="trade_shirt" not in s["dress"])  # draped cloth tears over the re-meshed shoulders
     dress(ch, s)
     if "belt_l" in s["kit"]:
         ch.strap_surface, ch.strap_offsets, ch.strap_under = ch.flesh, (0.026 if "shirt" in s["dress"] else 0.010,) * 2, None

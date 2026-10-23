@@ -58,6 +58,13 @@ CLOTH = {
     "slops": {"thickness": 0.0025, "mass": 0.30, "tension": 12.0, "bending": 1.2, "shrink": 0.0, "margin": 0.004},
     "shirt17": {"thickness": 0.0012, "mass": 0.15, "tension": 10.0, "bending": 0.2, "shrink": 0.0, "margin": 0.002},
 }
+# Drafted instead of shells (#287 drape pilot): linen and cotton shirts and tunics, wool and
+# cotton cloaks, a wool sash that shrinks onto the shirt.
+CLOTH["frn_blouse"] = CLOTH["trade_shirt"] = dict(CLOTH["shirt"], margin=0.003, bending=0.3)
+CLOTH["unku"] = {"thickness": 0.0020, "mass": 0.30, "tension": 15.0, "bending": 1.0, "shrink": 0.0, "margin": 0.004}
+CLOTH["frn_cape"] = CLOTH["yacolla"] = CLOTH["tilmatli"] = dict(CLOTH["coat"], margin=0.006, bending=1.5)
+CLOTH["frn_sash"] = {"thickness": 0.0025, "mass": 0.30, "tension": 15.0, "bending": 0.6, "shrink": 0.10,
+                     "margin": 0.004}
 CLOTH["doublet_slashed"] = CLOTH["doublet"]
 CLOTH["buffcoat_bare"] = CLOTH["buffcoat"]
 
@@ -611,10 +618,108 @@ def shirt17(m=MEASURE):
     return {"wristband": w}, seams
 
 
+# --------------------------------------------------------------------------- drafted shells
+# (#287 drape pilot, docs/clothing.md "Drape pilot"): garments the frontier, native, Inca and
+# meso families cut out of the body hull, drafted and draped instead. The families set the
+# material keys (`keyed`), the cut is shared.
+
+def keyed(draft, key, sleeve_key=None):
+    """`draft` with every panel in material `key` (sleeves in `sleeve_key`)."""
+
+    def out(m=MEASURE):
+        panels, seams = draft(m)
+        for k, p in panels.items():
+            p.key = sleeve_key if sleeve_key and k.startswith("sleeve") else key
+        return panels, seams
+
+    return out
+
+
+def tunic(m=MEASURE, garment="tunic", key="tunic", sleeves=True, chest=24.0, waist=26.0, below=20.0, flare=4.0):
+    """A loose body garment pulled over the head: the coat's body and two-piece sleeves (or
+    open armholes without `sleeves`) let out to `chest`/`waist` cm of ease, closed down the
+    front and back, a plain neck opening; below the waist skirts (free cloth on the skirt
+    bones, so a striding leg does not drag the hem) `below` cm long, sewn shut at the sides,
+    the centre front and back. The trade shirt, the buccaneer's bloused shirt, the unku."""
+    panels, seams = coat(_fitted(m, chest, waist))
+    keep = {"coat_front", "coat_back"} | ({"sleeve_top", "sleeve_under"} if sleeves else set())
+    panels = {k: p for k, p in panels.items() if k in keep}
+    for p in panels.values():
+        p.garment = garment
+        p.key = key
+        p.place = dict(p.place, gap=min(p.place.get("gap", 2.0), 2.0))
+    seams = [sm for sm in seams if {x[0] for x in sm.a + sm.b} <= set(panels) and sm.a[0][1] != "hook"]
+    seams.append(Seam([("coat_front", "cf")], [("coat_front", "cf", False, "R")], garment, close=0.05))
+    q_seat = (m["seat"] + waist) / 4.0
+    for nm, base, theta, d, mid, off in (("skirt_front", "coat_front", 0.0, 1, "cf", 2.0),
+                                         ("skirt_back", "coat_back", 180.0, -1, "cb", -2.0)):
+        top = panels[base].outline[1][0]
+        w = max(top, q_seat + off) + flare
+        panels[nm] = Panel(nm, garment, key, [(0.0, 0.0), (w, 0.0), (top, below), (0.0, below)],
+                           {"hem": (0, 1), "side": (1, 2), "waist": (2, 3), mid: (3, 0)},
+                           {"region": "torso", "theta": theta, "dir": d, "u0": 0.0, "at": "waist", "lift": -below,
+                            "gap": 2.5}, skirt=True)
+        seams.append(Seam([(base, "waist")], [(nm, "waist", True)], garment, ease=0.3))
+        seams.append(Seam([(nm, mid)], [(nm, mid, False, "R")], garment, close=0.05))
+    seams.append(Seam([("skirt_back", "side")], [("skirt_front", "side")], garment, ease=0.2))
+    for sm in seams:
+        sm.garment = garment
+    return panels, seams
+
+
+def cloak(m=MEASURE, garment="cloak", key="cloak", drop=20.0, front=12.0, spread=10.0, knot=3.0, gap=5.0):
+    """A cloak or mantle hung from the shoulders: one panel per side (mirrored, sewn down
+    the centre back) from its hem `drop` cm below the waist up the back, over the shoulders
+    (the drape's over-the-shoulder placement) and `front` cm down the chest, with a neck
+    hole where it crosses the shoulders, `spread` cm wider than the back so it falls over
+    the upper arms; the fronts knotted at the throat (`knot` cm sewn shut), open below.
+    The buccaneer's cape, the yacolla, the tilmatli."""
+    back = drop + m["nape_to_waist"] - 14.0  # hem to the shoulder fold
+    vc = back + 16.0  # the top of the shoulder, where the neck hole is centred
+    depth = m["chest"] * 0.13 + 2.0  # from the top of the shoulder down to the front
+    vf = vc + depth + front
+    hr = m["neck"] / (2 * math.pi) + 2.5  # neck hole radius (cm)
+    w = (m["chest"] + 12.0) / 4.0 + spread
+    arc = [(hr * math.sin(math.radians(a)), vc + hr * math.cos(math.radians(a))) for a in range(30, 180, 30)]
+    pts = [(0.0, 0.0), (w, 0.0), (w + 2.0, vf), (4.0, vf), (0.0, vc + hr + knot), (0.0, vc + hr)] + arc + [(0.0, vc - hr)]
+    n = len(pts)
+    P = {"cloak": Panel("cloak", garment, key, pts,
+                        {"hem": (0, 1), "edge": (1, 2), "front_hem": (2, 3), "front": (3, 4), "knot": (4, 5),
+                         "neck": (5, n - 1), "cb": (n - 1, 0)},
+                        {"region": "torso", "theta": 180.0, "dir": -1, "u0": 0.0, "at": "waist", "lift": -drop,
+                         "gap": gap})}
+    seams = [Seam([("cloak", "cb")], [("cloak", "cb", False, "R")], garment),
+             Seam([("cloak", "knot")], [("cloak", "knot", False, "R")], garment, close=0.05)]
+    return P, seams
+
+
+def band(m=MEASURE, garment="band", key="sash", width=10.0, ease=6.0, lift=-7.0):
+    """A sash or girdle wound round the waist: one strip of the waist girth plus `ease`,
+    `width` cm wide, from the centre back round both sides, the ends sewn at the front;
+    `lift` cm from the waist to its lower edge. Shrinks onto what is under it."""
+    g = m["waist"] + ease
+    P = {"band": Panel("band", garment, key, [(-g / 2, 0.0), (g / 2, 0.0), (g / 2, width), (-g / 2, width)],
+                       {"bottom": (0, 1), "end": (1, 2), "top": (2, 3), "start": (3, 0)},
+                       {"region": "torso", "theta": 180.0, "dir": -1, "u0": 0.0, "at": "waist", "lift": lift,
+                        "gap": 7.0}, mirror=False)}
+    return P, [Seam([("band", "start", True)], [("band", "end")], garment, close=0.05)]
+
+
 GARMENTS = {"coat": coat, "waistcoat": waistcoat, "breeches": breeches, "gaiters": gaiters, "shirt": shirt,
             "doublet": doublet, "doublet_slashed": lambda m=MEASURE: doublet(m, slashed=True),
             "buffcoat": buffcoat, "buffcoat_bare": lambda m=MEASURE: buffcoat(m, sleeves=None),
-            "hose": hose, "slops": slops, "shirt17": shirt17}
+            "hose": hose, "slops": slops, "shirt17": shirt17,
+            # drafted instead of shells (#287 drape pilot); the families key them (`keyed`)
+            "frn_blouse": lambda m=MEASURE: tunic(m, "frn_blouse", "fshirt", chest=30.0, waist=34.0, below=14.0),
+            "frn_sash": lambda m=MEASURE: band(m, "frn_sash", "fsash"),
+            "frn_cape": lambda m=MEASURE: cloak(m, "frn_cape", "fcloak", drop=18.0, front=10.0, spread=9.0),
+            "trade_shirt": lambda m=MEASURE: tunic(m, "trade_shirt", "shirt", chest=22.0, waist=26.0, below=28.0),
+            "unku": lambda m=MEASURE: tunic(m, "unku", "unku_plain", sleeves=False, chest=26.0, waist=30.0,
+                                            below=m["waist_to_knee"] - 4.0, flare=2.0),
+            "yacolla": lambda m=MEASURE: cloak(m, "yacolla", "yacolla", drop=m["waist_to_knee"] - 18.0, front=14.0,
+                                               spread=12.0),
+            "tilmatli": lambda m=MEASURE: cloak(m, "tilmatli", "tilmatli", drop=m["waist_to_knee"] - 22.0, front=16.0,
+                                                spread=10.0)}
 
 
 def uniform(m=MEASURE, garments=ORDER, patterns=None):

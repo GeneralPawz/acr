@@ -61,7 +61,7 @@ DEFAULTS = {"weapons": {}, "active": {}, "build": BUILD, "mix": 0.35, "fixed": (
                                                                              "gold", "meso_trim", "meso_hair"),
             "dress": ("maxtlatl", "ichcahuipilli", "sandals"), "suit": None, "head": "topknot", "paint": None,
             "hand_r": "macuahuitl", "atlatl": False, "bow": False, "shield": "fret", "melee": "club",
-            "plume": ("quetzal", "macaw"), "jewels": ("ears", "neck", "cuffs"), "work": False}
+            "plume": ("quetzal", "macaw"), "jewels": ("ears", "neck", "cuffs"), "work": False, "drape": False}
 
 # Chimalli designs (shield face, painted in the shield's own frame): colours (sRGB) and the
 # mask. The Codex Mendoza's tribute shields: the xicalcoliuhqui (stepped fret) halves, the
@@ -914,7 +914,15 @@ def dress(ch, s):
         skirt = bd.tube(ch.arm, f"{name}.hipcloth", 1.0, 0.70, (0.19, 0.15), (0.225, 0.185), gap_deg=0, rings=5, seg=18,
                         prefix=ch.prefix)
         ch.add("clothes", skirt, "hipcloth", symmetric=True)
-    if "tilmatli" in d:
+    if "tilmatli" in d and s.get("drape"):
+        # Drafted and draped (#287 drape pilot): the cloak hung from the shoulders, knotted
+        # at the throat, over the hip cloth (which it collides with).
+        from . import drape
+
+        over = [o for o in ch.layers["clothes"] if o.type == "MESH"]
+        made = drape.dress(ch, garments=("tilmatli",), over=over)
+        drape.hide_skin(ch, [o for o in ch.layers["clothes"] if o.name in made])
+    elif "tilmatli" in d:
         ch.shell("tilmatli", "tilmatli", lambda c, n, h, p: (h in {"clavicle_l", "clavicle_r"}) or
                  (h in TORSO and c.y > 0.0 and 1.30 < c.z < 1.52), 0.036)
         _rigid(ch, cape(), "tilmatli", "spine2", Matrix.Identity(4))
@@ -1030,7 +1038,7 @@ def make(root, name, s):
     from .humans import Character
 
     ch = Character(root, name, s["build"])
-    ch.body()
+    ch.body(shoulders=not s.get("drape"))  # draped cloth tears over the re-meshed shoulders
     dress(ch, s)
     adorn(ch, s)
     ch.bone_layer()

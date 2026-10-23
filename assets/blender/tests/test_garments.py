@@ -143,6 +143,30 @@ class Period17(unittest.TestCase):
         self.assertGreater(h["hose"].bounds()[3], m["knee_to_ankle"] + 20.0)
 
 
+class DrapePilot(Period17):
+    """Shell garments drafted and draped instead (#287 drape pilot): shirts and tunics,
+    cloaks, the sash."""
+
+    NAMES = ("frn_blouse", "frn_sash", "frn_cape", "trade_shirt", "unku", "yacolla", "tilmatli")
+
+    def test_period_cut(self):
+        m = gm.MEASURE
+        unku, _ = self.uni["unku"]
+        self.assertFalse(any(k.startswith("sleeve") for k in unku))  # open armholes
+        self.assertTrue(unku["skirt_front"].skirt)
+        self.assertGreater(unku["skirt_front"].bounds()[3], m["waist_to_knee"] * 0.8)
+        shirt, _ = self.uni["trade_shirt"]
+        self.assertIn("sleeve_top", shirt)
+        for g in ("frn_cape", "yacolla", "tilmatli"):
+            cl, seams = self.uni[g]
+            # Over the shoulders and down the front, with a neck hole and a knot.
+            self.assertGreater(cl["cloak"].bounds()[3], m["nape_to_waist"] + 30.0)
+            self.assertEqual({s.b[0][3] for s in seams}, {"R"})
+        sash, _ = self.uni["frn_sash"]
+        self.assertGreater(sash["band"].bounds()[2] - sash["band"].bounds()[0], m["waist"])
+        self.assertEqual(gm.keyed(gm.GARMENTS["unku"], "unku_tocapu")()[0]["coat_front"].key, "unku_tocapu")
+
+
 class LayerRanks(unittest.TestCase):
     """The build's layer order (`garments.LAYER_RANK`, `drape.settle`) is the game's
     (`acr_render::layers::layer_rank`, the shader's depth bias), and every cloth key of the

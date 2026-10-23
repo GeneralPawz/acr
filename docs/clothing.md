@@ -450,6 +450,46 @@ Which flag does what (in game, `sheet_flags_*.png`):
 Copied to the showcase: DelKri, SpnSha, IncSha, MaySha, FrnBuk, IroLut (old ones in
 `showcase/backup-trisoup8/`); EngKri and EngM18 are unchanged.
 
+**Drape pilot: shells drafted and draped instead** (#287; everything in
+`ACR-analysis/drapepilot/`: `sheet_before_after.png` (per unit before | after; back,
+three-quarter, front, a walker, the dead man), `delkri_close.png`, `before/`, `after/`,
+`glb/`, `layers_{before,after}.txt`, `tools/` (`build.sh` VM build, `shots.py`)). New drafts
+in `garments.py`, registered in `GARMENTS`/`CLOTH`/`registry.SPACING`: `tunic` (the coat's
+body and sleeves let out, or open armholes, closed front and back, skirts below the waist on
+the skirt bones), `cloak` (one panel per side from the hem up the back, over the shoulders
+and down the front, a neck hole, the fronts knotted at the throat), `band` (a sash wound
+round the waist, shrinking onto what is under it), `keyed` (a draft in a family's key);
+instances `frn_blouse`, `frn_sash`, `frn_cape`, `trade_shirt`, `unku`, `yacolla`,
+`tilmatli`. `drape.dress(over=...)`: clothes made before (shells, flaps) collide in the sim
+and lend their weights like a draped layer beneath. Opt-in per unit, **off** in every unit
+script: frontier `drape=True` (blouse, sash, cloak), native `"trade_shirt"` in `dress`,
+inca `drape=True` (unku, yacolla), meso `drape=True` (tilmatli); the body is then not
+shoulder-re-meshed. The ichcahuipilli was not tried. `model_layers --steps 8`, poking /
+crossing, showcase → pilot: delkri 355 / 211 → 198 / 172, frnbuk 299 / 296 → 467 / 277,
+incsha 225 / 73 → 128 / 182, maysha 53 / 15 → 52 / 40.
+
+In game:
+- **The cloaks fail**: placed over the shoulders they do not stay there. IncSha's yacolla
+  slides off and lies on the ground beside him, MaySha's tilmatli hangs off one shoulder,
+  FrnBuk's cape collapses into a crumpled red heap on the upper back. Probably the
+  over-the-shoulder placement: past the fold it climbs the neck (`top_z` near x = 0 is the
+  top of the neck) and then runs out in the air, so the neck hole is in the wrong place and
+  nothing hooks the cloak on the shoulders. Next: place cloaks with their own yoke (a ring
+  round the neck base at the shoulder top, pinned for the sew phase) instead of the coat's
+  fold.
+- **The unku** (IncSha) is clean: no teeth at the shoulders or armholes, the skirt
+  hangs straight and walks; the old shell's zig-zag hem is gone.
+- **The trade shirt** (DelKri) has no shell teeth, but it is crumpled and bulky (22 cm of
+  ease is too much for linen this light), the waist seam shows a gap and the skin on the
+  front, and the quiver strap still shows the shirt through it in patches (the strap is
+  laid on the new surface but the shirt's folds stand above its 26 mm offset).
+- FrnBuk's blouse and sash are clean in themselves; with the failed cape the unit is worse.
+
+So the pilot does **not** yet clearly remove the teeth: no glb was copied to the showcase,
+the units keep their shells, and no family-wide conversion list is proposed. Before that:
+cloak placement (above), less ease and more bending for the shirts, the strap seated with
+an offset over the draped folds, then repeat this pilot.
+
 engm18, 24 frames × 19 clips (crossing vertices / worst):
 
 | pair | before | after |

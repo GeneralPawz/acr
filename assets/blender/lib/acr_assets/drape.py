@@ -714,12 +714,14 @@ def finish(obj, ch, skirt, weights=None, under=()):
     return am.bind(obj, ch.arm)
 
 
-def dress(ch, garments=gm.ORDER, report=None, patterns=None):
+def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=()):
     """Drapes the garments `garments` (in order: each rests on those before) on character
     `ch` (rest pose) and adds them to its `clothes` layer. A garment is drafted by
     `patterns[name]` when given (a family's one-off), else by `garments.GARMENTS` (the
-    uniform and what families registered with `registry.garment`). Returns {object name:
-    material key}."""
+    uniform and what families registered with `registry.garment`). `over`: clothes made
+    before (shells, modelled flaps) the garments rest on: they collide in the sim and lend
+    their weights like the draped layers beneath (docs/clothing.md, "Layers"). Returns
+    {object name: material key}."""
     # A unit's own set (`build["drape"]`: garment names in drape order, e.g. the 17th
     # century's hose, slops, doublet) replaces the set its family's `make` asks for.
     plan = (getattr(ch, "build", None) or {}).get("drape")
@@ -727,11 +729,11 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None):
         garments = tuple(plan)
     body = Body(ch)
     uni = gm.uniform(body.m, garments, patterns)
-    colliders = [ch.flesh] + ([ch.shoes] if getattr(ch, "shoes", None) else [])
+    colliders = [ch.flesh] + ([ch.shoes] if getattr(ch, "shoes", None) else []) + list(over)
     for o in colliders:
         _collision(o)
     made = {}
-    under = []  # skinned inner layers (not the free skirts): the next garment rests on them
+    under = list(over)  # skinned inner layers (not the free skirts): the next garment rests on them
     stats = report if report is not None else {}
     stats["measure"] = {k: round(v, 1) for k, v in body.m.items()}
     for g in garments:
@@ -814,7 +816,7 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None):
         for o in ch.layers["clothes"]:
             if o.name in made:
                 _collision(o, thickness=gm.CLOTH.get(g, gm.CLOTH["waistcoat"]).get("margin", 0.004))
-    for o in list(ch.layers["clothes"]) + [ch.flesh]:
+    for o in list(ch.layers["clothes"]) + [ch.flesh, *over]:
         _collision(o, False)
     return made
 

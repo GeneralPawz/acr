@@ -65,7 +65,10 @@ KIT = ("belt_l", "horn", "pouch", "tomahawk_belt", "knife")
 FIXED = ("horn", "pouch", "metal", "wood", "belts", "scabbard", "brass", "plume")
 DEFAULTS = {"body": "hunting", "sleeves": "hunting", "skirts": True, "legs": "leggings", "layers": ("cape", "sash"),
             "kit": KIT, "hat": "fur_cap", "hat_at": (0.0, 0.005, -0.07, -8), "gun": 1.62, "mix": 0.4, "fixed": (),
-            "build": BUILD, "melee": "musket"}
+            "build": BUILD, "melee": "musket", "drape": False}
+# With `drape` the shell layers `blouse`, `sash` and `cloak` are drafted and draped instead
+# (`garments.tunic`, `band`, `cloak`; #287 drape pilot): the blouse replaces the draped shirt.
+DRAPED = {"blouse": "frn_blouse", "sash": "frn_sash", "cloak": "frn_cape"}
 
 # Clips the family makes from the `.MD` (the musketeer's; extra stances of the sprites,
 # MOTION_*0..4, ATTACK2/3, are not modelled: the game falls back to the plain ones).
@@ -276,6 +279,7 @@ def make(root, name, s):
 
     from . import armature as am
     from . import drape, gear, line, mbody, poses
+    from . import garments as gm
     from .humans import Character
 
     ch = Character(root, name, s["build"])
@@ -283,8 +287,12 @@ def make(root, name, s):
     ch.shoes = ch.add("clothes", mbody.shoes(ch.arm, ch.flesh, f"{name}.footwear", ch.prefix, key="shoes"),
                       "shoes", symmetric=True)
     ch.drape_report = {}
-    made = drape.dress(ch, garments=("breeches", "gaiters", "coat"), report=ch.drape_report,
-                       patterns={"coat": civil.peasant_coat(s["body"], s["sleeves"], s["skirts"]), "gaiters": legs(s["legs"])})
+    draped = [DRAPED[x] for x in s["layers"] if s["drape"] and x in DRAPED]
+    upper_g = [g for g in draped if g == "frn_blouse"] or ["coat"]
+    patterns = {"coat": civil.peasant_coat(s["body"], s["sleeves"], s["skirts"]), "gaiters": legs(s["legs"]),
+                "frn_blouse": gm.keyed(gm.GARMENTS["frn_blouse"], s["body"], s["sleeves"])}
+    made = drape.dress(ch, garments=("breeches", "gaiters", *upper_g, *[g for g in draped if g != "frn_blouse"]),
+                       report=ch.drape_report, patterns=patterns)
     cloth = [o for o in ch.layers["clothes"] if o.name in made]
     drape.hide_skin(ch, cloth)
     upper = {s["body"], s["sleeves"]}
@@ -292,7 +300,8 @@ def make(root, name, s):
         if made[o.name] == "breeches":
             drape.hide_under(ch, o, [x for x in cloth if made[x.name] in upper | {s["legs"]}], 0.004)
     for layer in s["layers"]:
-        _layer(ch, s, layer)
+        if not (s["drape"] and layer in DRAPED):
+            _layer(ch, s, layer)
     straps = [g for g in s["kit"] if g in line.STRAPS]
     if straps:
         ch.strap_surface = drape.surface(cloth, f"{name}.belt_surface")

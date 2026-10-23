@@ -51,7 +51,8 @@ FIXED = ("unku_check", "unku_plain", "unku_tocapu", "unku_royal", "inca_plumes",
          "inca_hair", "yacolla", "inca_quilt", "inca_helmet")
 DEFAULTS = {"weapons": {}, "active": {}, "build": BUILD, "mix": 0.25, "fixed": FIXED, "unku": "check",
             "quilt": False, "yacolla": False, "head": "llautu", "plumes": 0, "plume_len": 0.22, "spools": False,
-            "hand_r": "champi", "bow": False, "shield": False, "melee": "club", "shield_design": (0.70, 0.12, 0.08)}
+            "hand_r": "champi", "bow": False, "shield": False, "melee": "club", "shield_design": (0.70, 0.12, 0.08),
+            "drape": False}
 
 
 def spec(md, **kw):
@@ -448,6 +449,20 @@ def dress(ch, s):
 
     name = ch.name
     key = f"unku_{s['unku']}"
+    if s["drape"]:
+        # Drafted and draped (#287 drape pilot): the unku (two panels sewn at the sides,
+        # neck and arm openings, to the knee) and the yacolla over it.
+        from . import drape
+        from . import garments as gm
+
+        pats = {"unku": gm.keyed(gm.GARMENTS["unku"], key)}
+        made = drape.dress(ch, garments=("unku",) + (("yacolla",) if s["yacolla"] else ()), patterns=pats)
+        drape.hide_skin(ch, [o for o in ch.layers["clothes"] if o.name in made])
+        if s["quilt"]:
+            ch.shell("quilt", "inca_quilt", lambda c, n, h, p: (h in TORSO and 0.95 < c.z < 1.50)
+                     or (h in UPPER and c.z > 1.30), 0.036)
+        meso.dress(ch, {"dress": ("sandals",)})
+        return
     ch.shell("unku", key, lambda c, n, h, p: (h in TORSO and 0.90 < c.z < 1.52) or (h in UPPER and c.z > 1.36), 0.020)
     # The skirt: the panel hangs straight from the hips to the knee, standing off the legs.
     skirt = bd.tube(ch.arm, f"{name}.unku_skirt", 1.00, 0.50, (0.195, 0.150), (0.245, 0.195), gap_deg=0, rings=6, seg=20,
@@ -585,7 +600,7 @@ def make(root, name, s):
     from .humans import Character
 
     ch = Character(root, name, s["build"])
-    ch.body()
+    ch.body(shoulders=not s["drape"])  # draped cloth tears over the re-meshed shoulders
     dress(ch, s)
     hair(ch)
     if s["spools"]:
