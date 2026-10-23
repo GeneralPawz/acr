@@ -45,6 +45,7 @@ mod tears;
 pub(crate) mod three_d;
 mod trail;
 mod trample;
+mod water_view;
 use crate::unit_sounds::{self, SoundEvent};
 pub use interface::{GameKey, GameMouse};
 

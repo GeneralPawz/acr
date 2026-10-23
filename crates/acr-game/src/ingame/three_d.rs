@@ -12,6 +12,7 @@ use acr_render::objects_view::ObjectsView;
 use acr_render::scene::{Placement, definition_name};
 use acr_render::terrain::{Camera, TerrainData, TerrainRenderer};
 use acr_render::view3d::{self, Orbit, PIXELS_PER_METRE, View3d};
+use acr_render::water::Disturbances;
 use acr_sim::World;
 use acr_sim::world::{AnimKind, EntityId, Unit};
 use winit::keyboard::{Key, NamedKey};
@@ -85,6 +86,8 @@ pub struct ThreeD {
     /// The water surface (`water=detailed`, docs/water.md); `ACR_WATER` wins.
     water_detailed: bool,
     water: Option<acr_render::water::WaterRenderer>,
+    /// Ships riding the waves, their wakes, and shot falling into the water (render only).
+    water_view: super::water_view::WaterView,
     /// How long 3D corpses lie (ticks, `corpse_minutes`).
     corpse_ticks: u64,
     free: bool,
@@ -166,6 +169,7 @@ impl Default for ThreeD {
             shadows: true,
             water_detailed: true,
             water: None,
+            water_view: Default::default(),
             corpse_ticks: CORPSE_MINUTES * 60 * acr_sim::ORIGINAL_TICKS_PER_SECOND as u64,
             free: false,
             orbit: Orbit::ORIGINAL,
@@ -463,6 +467,10 @@ impl ThreeD {
         }
         self.debris_tick = now;
         self.request_gore(request);
+        // The water's clock (as `render` passes to the surface) for ship motion and rings.
+        let water_seconds = self.started.elapsed().as_secs_f32();
+        self.water_view.begin(now, water_seconds);
+        self.water_view.shots(world, terrain, water_seconds);
         // Corpses the simulation removed (after about a minute, as the original) stay in 3D
         // until their own lifetime ends (`corpse_minutes`), so battlefields fill and piles
         // grow; their units keep position, facing and lying pose. An animal becomes a
@@ -540,7 +548,11 @@ impl ThreeD {
                 inst.decay = 0.0;
                 inst.morphs = [0.0; 2];
                 inst.wounds = Default::default();
-                inst.transform = view3d::model_matrix(ground, view3d::facing_yaw(u.dir), 1.0);
+                let yaw = view3d::facing_yaw(u.dir);
+                inst.transform = self
+                    .water_view
+                    .ship(u, now, terrain, ground, yaw, model.radius, water_seconds)
+                    .unwrap_or_else(|| view3d::model_matrix(ground, yaw, 1.0));
             }
             let living = u.alive && u.death == 0;
             // What is left of the body (#262): cuts, fractures, a torn trunk, an open belly.
@@ -850,7 +862,10 @@ impl ThreeD {
         let water = match self.water.as_mut() {
             Some(w) if !objects.zoomed && (self.free || water_detailed(self.water_detailed)) => {
                 let seconds = self.started.elapsed().as_secs_f32();
-                w.prepare(device, queue, terrain, &view3d, seconds, water_detailed(self.water_detailed)).then_some(&*w)
+                let detailed = water_detailed(self.water_detailed);
+                let none = Disturbances::default();
+                let disturbances = if detailed { &self.water_view.disturbances } else { &none };
+                w.prepare(device, queue, terrain, &view3d, seconds, detailed, disturbances).then_some(&*w)
             }
             _ => None,
         };

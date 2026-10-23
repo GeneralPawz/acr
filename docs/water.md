@@ -59,18 +59,29 @@ The reasons:
 - **Depth** is the `SEA2` grid as an `R8Unorm` texture with linear filtering: depth units
   = `byte − 127`, sampled at world `(x, y) / 32` like `acr_sim::map` does. Fragments with
   ≤ 0 units are discarded, and the waterline fades in over 5 units.
-- **Waves**: 4 Gerstner waves of 260, 150, 90 and 55 px (about 30 px to the metre, with
-  the deep-water speed `√(g·k)`), amplitudes 4–0.8 px. They are scaled by depth: 15 % in
-  the shallows, full from 40 units. In the fragment shader 4 more ripples (12–31 px)
-  shade the surface only. The normal is computed analytically per pixel.
-- **Depth colour and absorption**: shallow green-blue to deep blue by √depth. The opacity
-  rises from 30 % to 94 %, so the lakebed (the drawn ground and its shadows) shows
-  through in the shallows. Ship shadows therefore lie dimmed on the lakebed.
-- **Reflection**: Schlick-Fresnel (F0 = 0.02) of a sky gradient, plus the sun's glint
-  (`shadow::sun()`, the light the models use). No screen-space reflection yet (see the
-  phases).
-- **Foam**: a broken band of two noise octaves along the shore (the first 18 depth units),
-  and a little on the crests of deep water.
+- **Waves** (phase 2a): 10 Gerstner waves from a spectrum seeded per map
+  (`water::Waves::new`, seed from the `SEA2` grid size): one wind direction, wavelengths
+  240 px (8 m) × 0.78ⁱ down to ~26 px with ±10 % jitter, the long ones within ±20° of the
+  wind and the short ones spread up to ±57°, amplitudes 0.85 % of the wavelength (± 30 %),
+  random phases, the deep-water speed `√(g·k)` and a Gerstner steepness of 0.5 shared out.
+  They sum to < 12 px (`WAVE_REACH`, tested). They are scaled by depth: 15 % in the
+  shallows, full from 40 units. The same sum runs on the CPU (`Waves::sample`) for ship
+  motion. Phase 1 had 4 regular waves that lined up into parallel stripes.
+- **Detail normal**: 2 layers × 4 octaves of value noise with analytic gradients
+  (`noise_grad`), drifting in different directions and rotated per octave (22 px down to
+  ~2.5 px), faded out where a noise cell gets smaller than a few screen pixels (`dpdx`), so
+  nothing shimmers zoomed out. No texture is shipped.
+- **Depth colour and absorption**: olive-grey shallows (0.115, 0.17, 0.15) to dark slate
+  (0.024, 0.05, 0.062, linear) by √depth. The opacity rises from 35 % to 95 %, so the
+  lakebed (the drawn ground and its shadows) shows through in the shallows. Ship shadows
+  therefore lie dimmed on the lakebed.
+- **Reflection**: Schlick-Fresnel (F0 = 0.02) of a hazy, little saturated sky gradient,
+  plus the sun's glint (`shadow::sun()`): a faint sheen (`pow 60`, 5 %) and sparse sparkles
+  (`pow 900`, 50 %) on the facets of the detail normal. Phase 1's glint (`pow 400` × 1.5)
+  and crest foam drew bright white streaks along the regular crests; both are gone. No
+  screen-space reflection yet (see the phases).
+- **Foam**: a broken band of two noise octaves along the shore (the first 16 depth units,
+  55 % at most), the waterline of ships, wakes and splashes (below). No crest foam.
 - **Depth test**: the surface is tested against the terrain depth and the models, and does
   not write depth. A hull below the waterline is hidden. Sprites draw over the water as
   they draw over the ground. A trough takes the depth of the point where its view ray
@@ -92,7 +103,54 @@ Rivers: the depth gradient is already in the texture. A flow direction along the
 (perpendicular to the gradient, signed by the downhill direction of the terrain) will
 scroll the ripples and foam in phase 3.
 
-### Interaction (phase 2): a height field around the camera
+### Reference targets (30° view, what the shading aims at)
+
+- **Lake** (calm, light wind): dark grey-green to slate, darker than the sky; the surface
+  is a mottle of small irregular ripple cells, lighter where facets tilt towards the viewer
+  and catch the sky, no white anywhere except sparse sun sparkles; the lakebed shows only
+  in the first metre or two along the shore.
+- **River**: browner and more turbid, the bed gone within a metre, the ripples stretched
+  along the flow (phase 3: flow map).
+- **Bay**: blue-grey, a longer swell (8–10 m) under the same chop, whitecaps only in strong
+  wind (not modelled), a ship's waterline marked by a thin line of foam and darker water.
+
+At a low free-camera angle the sky's Fresnel reflection takes over and the water turns a
+pale grey, as real water does towards the horizon.
+
+### Ships: draft, motion and wake (built)
+
+- **Draft**: the Poly Haven sources keep only ~2 m of hull below their zero, so the ships
+  floated on top of the water. `ships.build(..., draft)` now sinks each model so its keel
+  lies `draft` below the waterline (frigate 3.6 m, santa 3.2 m, pinta 2.6 m; extra
+  `acr_draft` on the scene root, `draft_m` in the stats), and cuts the hull 1 m below the
+  waterline (was 0.25 m). Deeper than that the terrain's depth hides the hull anyway (the
+  water does not write depth, the terrain's depth lies at z = 0), so it never shows
+  through the shallows, and `water=original` looks as before.
+- **Motion** (phase 1b, `acr-game/src/ingame/water_view.rs`): an afloat ship (`acr_machine`
+  model, ≥ 2 depth units) samples `Waves::sample` at 9 hull points (bow, stern, both
+  quarters each side, centre; half length = half the model radius). Heave is their mean
+  (× 0.7), pitch and roll the bow–stern and port–starboard differences, damped (× 0.8,
+  × 0.6) for the hull's inertia, into `view3d::model_matrix_tilted`. The hull spans many
+  short waves, so it answers only to the long ones. No temporal low-pass yet. The model's
+  own `STAND`/`MOTION` clips still rock it as well.
+- **Wake and bow wave** (phase 2, analytic, no height field yet): the game passes up to 8
+  ships near the view (centre, heading, speed from the position over ≥ 3 ticks, half
+  length) to the shader. In the ship's frame the surface gets Kelvin transverse waves
+  (λ = 2πV²/g, clamped to 60–160 px against moiré) inside the 19.47° wedge, divergent
+  waves along the wedge's edge, a churned foam band along the track, a bow wave folding
+  over at the stem, all fading over ~400 px; and, at anchor too, a thin broken waterline
+  of foam round the hull. The slope comes from central differences of that height (only
+  computed while a wake or ring is in the uniform).
+- **Cannonballs** (phase 2): `WaterView::shots` notes each projectile that comes down
+  within 8 px of the surface over water (render side, where `projectile.rs` bursts on
+  `media::WATER`); the shader draws up to 16 rings for 6 s: a packet of short waves
+  spreading at ~2 m/s and a white boil at the centre for 1–2 s.
+
+The frigate in the blank-field bench did move after the `move` command in phase 1: ships
+sail at ~18 px/s (0.6 m/s, 153 px in 84 ticks, after turning first), so 40 ticks barely
+showed it. Film at least 100 ticks. At that speed the Kelvin pattern is faint.
+
+### Interaction (phase 2b, not built): a height field around the camera
 
 - **Simulation**: a damped wave equation `h'' = c²∇²h − k·h'` on a ping-pong texture pair,
   512² texels over about 2048 × 2048 world px (4 px per texel) and centred on the camera.
@@ -180,18 +238,25 @@ Phase 1 measured (Snapdragon X, Adreno, DX12, 1600 × 900, blank field, 3 ships 
 This measurement does **not** isolate the GPU cost. In driver mode a frame is only drawn
 for a read-back, and the time goes mostly into the PNG encoding: a water frame's PNG is
 1.9 MB against 1.2 MB for the flat tint, which explains most of the gap. A GPU timestamp
-query, or an fps reading in a windowed run, is still to be done. Per pixel the surface
-costs one texture sample, 8 sines and 2 noise lookups. The grid has at most
-192² × 6 vertices, with 4 Gerstner waves each.
+query, or an fps reading in a windowed run, is still to be done. Per pixel the phase-1
+surface cost one texture sample, 8 sines and 2 noise lookups; phase 2a costs 10 Gerstner
+sines and cosines, 8 noise gradients (32 hashes) and 2 noise lookups, plus 5 evaluations
+of the wake and ring terms where any are in the uniform. The grid has at most
+192² × 6 vertices, now with 10 Gerstner waves each. The GPU cost is still unmeasured
+(no timestamp queries or windowed fps run yet); with 10 waves per vertex and the noise per
+pixel it may exceed the 0.3 ms native budget at 1600 × 900 and needs that measurement
+before release, especially on WebGL2.
 
 ## Phases
 
 1. **Surface** (built): Gerstner waves scaled by depth, depth colour and absorption, sky
-   Fresnel, the sun's glint, shore and crest foam, fixed and free camera,
-   `water=detailed|original`.
-   1b. Ship heave, pitch and roll from the CPU-side Gerstner sum.
-2. **Interaction**: the height field, with ship bow waves and a Kelvin decal, cannonball
-   rings, swimmers, and bodies falling in.
+   Fresnel, the sun's glint, shore foam, fixed and free camera, `water=detailed|original`.
+   1b. (built) Ship draft, and heave, pitch and roll from the CPU-side Gerstner sum.
+2. **Interaction**: (built, analytic) the 10-wave spectrum and detail normal, Kelvin wake
+   and bow wave, waterline foam, cannonball rings. (Not built) the height-field ping-pong
+   texture with its packed `Rgba8` fallback, swimmers and wading men, bodies falling in,
+   and wakes that persist where a ship turned (the analytic wake follows the current
+   heading).
 3. **Look**: river flow (a flow map from the depth gradient and the terrain slope), ship
    shadows on the surface (sampling the shadow map in `water.wgsl`), a screen-space
    reflection of models where affordable (native only, behind a quality setting), and
@@ -200,6 +265,10 @@ costs one texture sample, 8 sines and 2 noise lookups. The grid has at most
    floating debris and corpses in `acr-physics`.
 
 ## Testing
+
+Phase 2a: `ACR-analysis/water2/water2_bench.py OUT` (the same field and ships; `fixed_*`,
+`free_low`, `sail/` with the frigate under way, `fire/` with the santa firing at the
+pinta). Before: `ACR-analysis/water/detailed`, after: `ACR-analysis/water2/after`.
 
 `ACR-analysis/water/water_bench.py MODE [OUT]` (`ACR_EXE` = a release build) starts the
 blank field with a 3000 × 2000 lake east of the centre, places a frigate, a pinta and a

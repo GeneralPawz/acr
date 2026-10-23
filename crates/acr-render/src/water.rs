@@ -1,9 +1,11 @@
-//! The water surface of the 3D pass (docs/water.md, phase 1): a grid at the water level over
-//! the visible part of the map, moved by Gerstner waves scaled by the `SEA2` depth, with depth
-//! colour and absorption over the lakebed, a sky reflection, the sun's glint and shore foam
-//! (`water.wgsl`). It replaces the original's depth tint (`terrain.wgsl`, `fs_present`) when
-//! drawn, for the fixed and the free camera alike. Render only: nothing goes back to the
-//! simulation.
+//! The water surface of the 3D pass (docs/water.md): a grid at the water level over the
+//! visible part of the map, moved by [`WAVES`] Gerstner waves (a seeded spectrum, the same
+//! sum on the CPU for ship motion, [`Waves::sample`]) scaled by the `SEA2` depth, with a
+//! procedural detail normal, depth colour and absorption over the lakebed, a sky reflection,
+//! the sun's glint and shore foam (`water.wgsl`). Ships under way add a Kelvin wake and a bow
+//! wave, cannonballs landing in water a ring ([`Disturbances`]). It replaces the original's
+//! depth tint (`terrain.wgsl`, `fs_present`) when drawn, for the fixed and the free camera
+//! alike. Render only: nothing goes back to the simulation.
 
 use bytemuck::{Pod, Zeroable};
 
@@ -14,6 +16,140 @@ use crate::view3d::View3d;
 
 /// Largest wave height (world px) above or below the water level, for culling.
 const WAVE_REACH: f32 = 12.0;
+/// Gerstner components of the surface (`water.wgsl` loops over as many).
+pub const WAVES: usize = 10;
+/// Ships with a wake and rings of landing shot the shader takes at most per frame.
+pub const MAX_WAKES: usize = 8;
+pub const MAX_RINGS: usize = 16;
+/// How long a ring of landing shot spreads (seconds).
+pub const RING_SECONDS: f32 = 6.0;
+/// Gravity in world px per s² (30 px to the metre), as `GRAVITY` in `water.wgsl`.
+const GRAVITY: f32 = 294.0;
+
+/// One Gerstner wave: unit direction, wave number (rad/px), amplitude (px), phase offset.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Wave {
+    pub dir: [f32; 2],
+    pub k: f32,
+    pub amp: f32,
+    pub phase: f32,
+}
+
+/// The wave spectrum of a map: [`WAVES`] components around one wind direction, wavelengths
+/// from 240 px (8 m) down to 26 px, the short ones spread wider, each with a random phase, so
+/// no two crests line up into the parallel stripes of a few regular waves.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Waves(pub [Wave; WAVES]);
+
+/// The surface's height and slope at one point.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Sample {
+    pub height: f32,
+    pub slope: [f32; 2],
+}
+
+impl Waves {
+    pub fn new(seed: u32) -> Self {
+        let mut state = seed.wrapping_mul(0x9E37_79B9) ^ 0x85EB_CA6B;
+        let mut rand = move || {
+            // xorshift32: a fixed, cheap sequence (render only, never hashed).
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            (state >> 8) as f32 / (1u32 << 24) as f32
+        };
+        let wind = rand() * std::f32::consts::TAU;
+        let waves = std::array::from_fn(|i| {
+            let f = i as f32 / (WAVES - 1) as f32;
+            let length = 240.0 * 0.78f32.powi(i as i32) * (0.9 + 0.2 * rand());
+            let angle = wind + (rand() * 2.0 - 1.0) * (0.35 + 0.65 * f);
+            Wave {
+                dir: [angle.cos(), angle.sin()],
+                k: std::f32::consts::TAU / length,
+                amp: length * 0.0085 * (0.7 + 0.6 * rand()),
+                phase: rand() * std::f32::consts::TAU,
+            }
+        });
+        Self(waves)
+    }
+
+    /// Height and slope at world point `p` (px) at `time` (s), the waves scaled by `scale`
+    /// ([`wave_scale`]): the vertex shader's sum without the horizontal Gerstner shift.
+    pub fn sample(&self, p: [f32; 2], time: f32, scale: f32) -> Sample {
+        let mut out = Sample::default();
+        for w in &self.0 {
+            let a = w.amp * scale;
+            let phase = w.k * (w.dir[0] * p[0] + w.dir[1] * p[1]) - (GRAVITY * w.k).sqrt() * time + w.phase;
+            let (sn, c) = phase.sin_cos();
+            out.height += a * sn;
+            out.slope[0] += w.dir[0] * w.k * a * c;
+            out.slope[1] += w.dir[1] * w.k * a * c;
+        }
+        out
+    }
+
+    /// The uniform form: (dir, k, amp) and the phases four to a vector.
+    fn packed(&self) -> ([[f32; 4]; WAVES], [[f32; 4]; WAVES.div_ceil(4)]) {
+        let mut phases = [[0.0; 4]; WAVES.div_ceil(4)];
+        let waves = std::array::from_fn(|i| {
+            let w = self.0[i];
+            phases[i / 4][i % 4] = w.phase;
+            [w.dir[0], w.dir[1], w.k, w.amp]
+        });
+        (waves, phases)
+    }
+}
+
+/// How much the waves move at `units` of `SEA2` depth: calm in shallows, full on open water
+/// (`wave_scale` in `water.wgsl`).
+pub fn wave_scale(units: f32) -> f32 {
+    let t = (units / 40.0).clamp(0.0, 1.0);
+    0.15 + 0.85 * t * t * (3.0 - 2.0 * t)
+}
+
+/// Depth units (0 at the waterline) of the `SEA2` grid `(w, h, cells)` at world `(x, y)`,
+/// nearest cell (`depth_units` in the shader filters; ship motion needs no more).
+pub fn depth_units(water: (usize, usize, &[u8]), x: f32, y: f32) -> f32 {
+    let (w, h, cells) = water;
+    let cx = ((x / 32.0) as isize).clamp(0, w as isize - 1) as usize;
+    let cy = ((y / 32.0) as isize).clamp(0, h as isize - 1) as usize;
+    f32::from(cells[cy * w + cx]) - 127.0
+}
+
+/// The seed of a map's wave spectrum (its depth grid's size: the same map, the same waves).
+pub fn seed(water: (usize, usize, &[u8])) -> u32 {
+    (water.0 as u32).wrapping_mul(31) ^ (water.1 as u32).wrapping_mul(0x2545_F491)
+}
+
+/// A ship under way, for its wake and bow wave.
+#[derive(Clone, Copy, Debug)]
+pub struct Wake {
+    /// The hull's centre (world px).
+    pub at: [f32; 2],
+    /// Unit heading.
+    pub dir: [f32; 2],
+    /// Speed (world px per second).
+    pub speed: f32,
+    /// Half the hull's length (px).
+    pub half_length: f32,
+}
+
+/// A cannonball (or anything) that fell into the water.
+#[derive(Clone, Copy, Debug)]
+pub struct Ring {
+    pub at: [f32; 2],
+    /// When it landed, on the clock passed to [`WaterRenderer::prepare`] (seconds).
+    pub time: f32,
+    /// 1 for a cannonball.
+    pub strength: f32,
+}
+
+/// What disturbs the surface this frame (render only, gathered by the game from its state).
+#[derive(Clone, Debug, Default)]
+pub struct Disturbances {
+    pub wakes: Vec<Wake>,
+    pub rings: Vec<Ring>,
+}
 /// The free camera's grid reaches this far (world px) from the view's target at most.
 const FREE_REACH: f32 = 7000.0;
 /// Grid cells per side: about this many world px per cell, between the limits.
@@ -29,11 +165,21 @@ struct Globals {
     eye: [f32; 4],
     sun: [f32; 4],
     grid: [f32; 4],
+    waves: [[f32; 4]; WAVES],
+    phases: [[f32; 4]; WAVES.div_ceil(4)],
+    // Per ship: x, y, dir x, dir y, then speed, half length, unused, unused.
+    wakes: [[f32; 4]; 2 * MAX_WAKES],
+    // x, y, landing time, strength (0: none).
+    rings: [[f32; 4]; MAX_RINGS],
+    // Wakes in use, rings in use, unused, unused.
+    counts: [f32; 4],
 }
 
 struct WaterMap {
     /// Which depth grid was uploaded (its size and address).
     key: (usize, usize, usize),
+    /// The map's wave spectrum ([`seed`]).
+    waves: Waves,
     /// World size of the grid (px).
     extent: [f32; 2],
     group: wgpu::BindGroup,
@@ -179,13 +325,15 @@ impl WaterRenderer {
                 wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&self.sampler) },
             ],
         });
-        self.map = Some(WaterMap { key, extent: [w as f32 * 32.0, h as f32 * 32.0], group });
+        let waves = Waves::new(seed((w, h, cells)));
+        self.map = Some(WaterMap { key, waves, extent: [w as f32 * 32.0, h as f32 * 32.0], group });
         true
     }
 
     /// Prepares this frame's surface for `view`: `seconds` drives the waves, `detailed` the
-    /// waves, glint and foam (`water=detailed`; else a flat surface, for the free camera
-    /// under `water=original`). False when there is no water to draw.
+    /// waves, glint, foam, wakes and rings (`water=detailed`; else a flat surface, for the
+    /// free camera under `water=original`). False when there is no water to draw.
+    #[allow(clippy::too_many_arguments)]
     pub fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -194,6 +342,7 @@ impl WaterRenderer {
         view: &View3d,
         seconds: f32,
         detailed: bool,
+        disturbances: &Disturbances,
     ) -> bool {
         self.vertices = 0;
         if !self.set_map(device, queue, data) {
@@ -228,12 +377,39 @@ impl WaterRenderer {
         let sun = crate::shadow::sun();
         // Waves repeat; the clock wraps hourly to keep the phases precise in f32.
         let time = seconds % 3600.0;
+        let (waves, phases) = map.waves.packed();
+        let mut wakes = [[0.0; 4]; 2 * MAX_WAKES];
+        let mut n_wakes = 0;
+        let near = |p: [f32; 2], reach: f32| {
+            p[0] > rect[0] - reach && p[0] < rect[2] + reach && p[1] > rect[1] - reach && p[1] < rect[3] + reach
+        };
+        for w in disturbances.wakes.iter().filter(|w| near(w.at, 1200.0)) {
+            if n_wakes == MAX_WAKES {
+                break;
+            }
+            wakes[2 * n_wakes] = [w.at[0], w.at[1], w.dir[0], w.dir[1]];
+            wakes[2 * n_wakes + 1] = [w.speed, w.half_length, 0.0, 0.0];
+            n_wakes += 1;
+        }
+        let mut rings = [[0.0; 4]; MAX_RINGS];
+        let mut n_rings = 0;
+        // The newest first (the list grows at its end), on the waves' wrapped clock.
+        let live = |r: &&Ring| (0.0..RING_SECONDS).contains(&(seconds - r.time)) && near(r.at, 400.0);
+        for r in disturbances.rings.iter().rev().filter(live).take(MAX_RINGS) {
+            rings[n_rings] = [r.at[0], r.at[1], time - (seconds - r.time), r.strength];
+            n_rings += 1;
+        }
         let globals = Globals {
             view: view.world_to_clip(),
             rect,
             eye: [eye[0], eye[1], eye[2], time],
             sun: [sun[0], sun[1], sun[2], if detailed { 1.0 } else { 0.0 }],
             grid: [map.extent[0] / 32.0, map.extent[1] / 32.0, cells as f32, 0.0],
+            waves,
+            phases,
+            wakes,
+            rings,
+            counts: [n_wakes as f32, n_rings as f32, 0.0, 0.0],
         };
         queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
         self.vertices = cells * cells * 6;
@@ -249,5 +425,39 @@ impl WaterRenderer {
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &map.group, &[]);
         pass.draw(0..self.vertices, 0..1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spectrum_is_seeded_and_bounded() {
+        let a = Waves::new(7);
+        assert_eq!(a, Waves::new(7));
+        assert_ne!(a, Waves::new(8));
+        let reach: f32 = a.0.iter().map(|w| w.amp).sum();
+        assert!(reach < WAVE_REACH, "waves reach {reach} px beyond the culling margin");
+        // The directions spread: not all within 20 degrees of the first.
+        let spread = a.0.iter().map(|w| w.dir[0] * a.0[0].dir[0] + w.dir[1] * a.0[0].dir[1]).fold(1.0f32, f32::min);
+        assert!(spread < 0.94, "{spread}");
+    }
+
+    #[test]
+    fn slope_matches_the_height() {
+        let w = Waves::new(3);
+        let (p, t, e) = ([1234.0, 567.0], 12.5, 0.05);
+        let s = w.sample(p, t, 1.0);
+        let h = |x: f32, y: f32| w.sample([x, y], t, 1.0).height;
+        let dx = (h(p[0] + e, p[1]) - h(p[0] - e, p[1])) / (2.0 * e);
+        let dy = (h(p[0], p[1] + e) - h(p[0], p[1] - e)) / (2.0 * e);
+        assert!((dx - s.slope[0]).abs() < 2e-2 && (dy - s.slope[1]).abs() < 2e-2, "{dx} {dy} vs {:?}", s.slope);
+    }
+
+    #[test]
+    fn shallows_are_calm() {
+        assert!((wave_scale(0.0) - 0.15).abs() < 1e-6);
+        assert!((wave_scale(80.0) - 1.0).abs() < 1e-6);
     }
 }

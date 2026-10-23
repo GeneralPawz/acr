@@ -1,8 +1,9 @@
 """Sailing ships from Poly Haven's 17th-century Dutch ships (#287; needs `bpy`).
 
-`build(ctx, base, length, budget)` imports `$ACR_SOURCES/polyhaven/<base>/<base>_2k.gltf`,
-turns the bow south (models face south), scales it to `length` metres overall with the
-waterline at the ground point, and rigs it:
+`build(ctx, base, length, budget, draft)` imports `$ACR_SOURCES/polyhaven/<base>/<base>_2k.gltf`,
+turns the bow south (models face south), scales it to `length` metres overall, sinks it so
+the keel lies `draft` metres below the ground point (the waterline, where the 3D pass draws
+the water surface, docs/water.md; the extra `acr_draft` records it), and rigs it:
 
     hull            rocking (swell), heel in turns, the jolt of a broadside, sinking
       intact        hull and rigging as built (hidden once burnt)
@@ -71,7 +72,7 @@ def _sail_groups(parts, max_groups=12):
     return [[p for p, _ in g] for g in groups]
 
 
-def build(ctx, base, length, budget, sail_share=0.10, rigging_share=0.25, wreck_share=0.20):
+def build(ctx, base, length, budget, draft, sail_share=0.10, rigging_share=0.25, wreck_share=0.20):
     root = ctx.root
     root["acr_clock"] = "world"
     root["acr_machine"] = True
@@ -96,6 +97,11 @@ def build(ctx, base, length, budget, sail_share=0.10, rigging_share=0.25, wreck_
     k = length / (x1 - x0)
     m = Matrix.Rotation(-math.pi / 2, 4, "Z") @ Matrix.Scale(k, 4) @ Matrix.Translation((-(x0 + x1) / 2, 0, 0))
     vs.transform(parts.values(), m)
+    # The draft: the source's zero lies only ~2 m above its keel, so the hull floated on the
+    # water surface. The keel goes to `draft` below the waterline (a loaded ship of the time).
+    keel = min(v.co.z for v in parts["hull"].data.vertices)
+    vs.transform(parts.values(), Matrix.Translation((0, 0, -draft - keel)))
+    root["acr_draft"] = draft
     hull_budget = budget * (1 - sail_share - rigging_share - wreck_share)
     stats = {"source_triangles": source_tris}
     stats["hull"] = vs.decimate(parts["hull"], int(hull_budget))
@@ -106,8 +112,10 @@ def build(ctx, base, length, budget, sail_share=0.10, rigging_share=0.25, wreck_
     if "rigging" in parts:
         wreck.append(vs.burnt_copy(parts["rigging"], f"{root.name}.wreck_rigging", int(budget * wreck_share * 0.3)))
     stats["wreck"] = vs.triangles(wreck)
-    # Afloat, the hull ends a little below the waterline (the wreck keeps its bottom).
-    vs.cut_below(parts["hull"], -0.25)
+    # Afloat, the hull ends 1 m below the waterline (the wreck keeps its bottom): deeper, the
+    # terrain's depth hides it anyway (the water does not write depth), and so does the
+    # original's tint under `water=original`.
+    vs.cut_below(parts["hull"], -1.0)
     stats["hull"] = vs.triangles([parts["hull"]])
     sails = []
     if "sails" in parts:
@@ -134,6 +142,7 @@ def build(ctx, base, length, budget, sail_share=0.10, rigging_share=0.25, wreck_
     stats["triangles"] = vs.triangles([o for o in bpy.context.scene.objects if o.type == "MESH"])
     stats["length_m"] = round(length, 2)
     stats["height_m"] = round(zmax, 2)
+    stats["draft_m"] = round(draft, 2)
     ctx.stats.update(stats)
 
 
