@@ -60,6 +60,10 @@ const PANEL_LY: i32 = 144;
 /// Icons per row of the command grid and visible rows (0x5aa206).
 const GRID_COLUMNS: usize = 12;
 const GRID_ROWS: usize = 3;
+/// The slot of the icon of a single selected type or formation: the original draws the set
+/// of selected types (0x28f8190) at (`Zone1X + 6`, the grid's top) in a box of its own
+/// beside the stats when it holds exactly one icon (0x5aa136), instead of in the grid.
+pub const ZONE1_SLOT: usize = 99;
 
 /// The army icons (`IconSet` 0x28f7658, drawn by 0x5aa36a outside the editor): 5 columns by
 /// 7 rows from (6, 31), the top left under the resource bar (0x5aa5ac).
@@ -521,6 +525,9 @@ impl Hud {
 
     pub(crate) fn icon_rect(screen: [i32; 2], slot: usize) -> Rect {
         let (x, y) = Self::grid_origin(screen);
+        if slot == ZONE1_SLOT {
+            return Rect::new(ZONE1[0] + 6, y, ICON, ICON);
+        }
         let step = ICON + ADD_ICON;
         Rect::new(x + (slot % GRID_COLUMNS) as i32 * step, y + (slot / GRID_COLUMNS) as i32 * step, ICON, ICON)
     }
@@ -541,6 +548,29 @@ impl Hud {
     fn columns(icons: &[Icon]) -> i32 {
         icons.iter().filter(|i| i.slot < GRID_COLUMNS * GRID_ROWS).map(|i| i.slot % GRID_COLUMNS + 1).max().unwrap_or(0)
             as i32
+    }
+
+    /// Icons drawn and clickable: the grid's three rows and the single type's icon.
+    pub(crate) fn shown(slot: usize) -> bool {
+        slot < GRID_COLUMNS * GRID_ROWS || slot == ZONE1_SLOT
+    }
+
+    /// The boxes behind the icons and their corner tables. With a single selected type
+    /// (0x5aa143): a box from `Zone1X + 6` to `PropertyX − 2` around the type's icon and
+    /// stats, open to the right (0x480166, table 0x6685a0), and the commands' box joined to
+    /// it (0x480198, table 0x6685c0); without commands the first box closed (0x4800c8).
+    /// Otherwise the commands' box alone (0x5aa2f3).
+    fn icon_boxes(screen: [i32; 2], icons: &[Icon]) -> Vec<(Rect, [i32; 8])> {
+        let commands = Self::icon_box(screen, icons);
+        if !icons.iter().any(|i| i.slot == ZONE1_SLOT) {
+            return commands.map(|r| (r, BOX_CORNERS)).into_iter().collect();
+        }
+        let y = screen[1] - PANEL_LY + ZONE1[1];
+        let left = Rect { x0: ZONE1[0] + 6, y0: y, x1: PROPERTY[0] - 2, y1: y + ICON * 3 + 5 };
+        match commands {
+            Some(r) => vec![(left, LEFT_BOX_CORNERS), (r, RIGHT_BOX_CORNERS)],
+            None => vec![(left, BOX_CORNERS)],
+        }
     }
 
     /// The box behind the icons (0x5aa2f3): from `PropertyX − 2` to the last used column.
@@ -604,7 +634,7 @@ impl Hud {
         if Rect::new(bx, by, 67, 42).contains(p) || (p[1] < 42.0 && p[0] >= (self.screen[0] - RES_PANEL) as f32) {
             return true;
         }
-        if Self::icon_box(self.screen, &view.icons).is_some_and(|r| r.contains(p)) {
+        if Self::icon_boxes(self.screen, &view.icons).iter().any(|(r, _)| r.contains(p)) {
             return true;
         }
         if Self::army_icons(view).any(|i| Self::army_rect(i.slot).contains(p)) {
@@ -691,7 +721,7 @@ impl Hud {
             };
         }
         for icon in &view.icons {
-            if Self::icon_rect(self.screen, icon.slot).contains(p) && icon.slot < GRID_COLUMNS * GRID_ROWS {
+            if Self::icon_rect(self.screen, icon.slot).contains(p) && Self::shown(icon.slot) {
                 self.pressed = true;
                 return match (&icon.action, icon.disabled) {
                     (Some(a), false) => HudEvent::Command(a.clone()),
@@ -736,10 +766,8 @@ impl Hud {
         if Self::army_icons(view).any(|i| Self::army_rect(i.slot).contains(p)) {
             return HudEvent::Used;
         }
-        if let Some(icon) = view
-            .icons
-            .iter()
-            .find(|i| i.slot < GRID_COLUMNS * GRID_ROWS && Self::icon_rect(self.screen, i.slot).contains(p))
+        if let Some(icon) =
+            view.icons.iter().find(|i| Self::shown(i.slot) && Self::icon_rect(self.screen, i.slot).contains(p))
         {
             return match (&icon.right, icon.disabled) {
                 (Some(a), false) => HudEvent::Command(a.clone()),
@@ -763,23 +791,24 @@ impl Hud {
     pub fn draw(&mut self, ctx: &Ctx, view: &View, out: &mut Vec<Draw>) {
         let Some(palette) = ctx.lib.palette(GAME_PALETTE) else { return };
         let data = self.data(ctx);
-        // The minimap (0x4c0a40) comes first, then the unit stats (0x606710), the icons
-        // (0x5aa206) and the resource panel (0x4ecc50).
+        // The minimap (0x4c0a40) comes first, then the icons (0x5aa206): the boxes, the
+        // icons and the unit stats over them (0x607f50, called at 0x5aa278), so the reload
+        // bar at x = 173..176 lies on the boxes' joint; then the resource panel (0x4ecc50).
         if self.minimap.is_some() {
             self.draw_minimap(ctx, view, &palette, out);
         }
         let screen = self.screen;
-        if let (Some(stats), Some(_)) = (&view.stats, &data) {
-            draw_stats(ctx, stats, &palette, screen, out);
-        }
-        if let Some(r) = Self::icon_box(screen, &view.icons) {
-            border(ctx, out, r.x0, r.y0, r.x1, r.y1, BOX_CORNERS);
+        for (r, corners) in Self::icon_boxes(screen, &view.icons) {
+            border(ctx, out, r.x0, r.y0, r.x1, r.y1, corners);
         }
         let mouse = self.mouse;
-        for icon in view.icons.iter().filter(|i| i.slot < GRID_COLUMNS * GRID_ROWS) {
+        for icon in view.icons.iter().filter(|i| Self::shown(i.slot)) {
             let r = Self::icon_rect(screen, icon.slot);
             let pressed = self.pressed && mouse.is_some_and(|m| r.contains(m));
             draw_icon(ctx, icon, r.x0, r.y0, pressed, &palette, out);
+        }
+        if let (Some(stats), Some(_)) = (&view.stats, &data) {
+            draw_stats(ctx, stats, &palette, screen, out);
         }
         // The army icons, the last set 0x5a9fa0 draws (0x5aa394).
         for icon in Self::army_icons(view) {
@@ -875,7 +904,7 @@ impl Hud {
                 hint = Some(ctx.texts.get(id));
             }
         }
-        for icon in view.icons.iter().filter(|i| i.slot < GRID_COLUMNS * GRID_ROWS) {
+        for icon in view.icons.iter().filter(|i| Self::shown(i.slot)) {
             if Self::icon_rect(self.screen, icon.slot).contains(m) && !icon.hint.is_empty() {
                 hint = Some(&icon.hint);
             }
@@ -909,6 +938,10 @@ fn res_hint_rect(screen: [i32; 2], i: usize) -> Rect {
 
 /// Corner table 0x668580: TL, TR, BL, BR, left, right, top, bottom frames of `Border`.
 pub const BOX_CORNERS: [i32; 8] = [0, 2, 6, 8, 12, 14, 9, 11];
+/// Corner table 0x6685a0: the single type's box, open to the right (−1: not drawn).
+const LEFT_BOX_CORNERS: [i32; 8] = [0, -1, 6, -1, 12, -1, 9, 11];
+/// Corner table 0x6685c0: the commands' box joined to it, with the joint's corners and edge.
+const RIGHT_BOX_CORNERS: [i32; 8] = [1, 2, 7, 8, 13, 14, 9, 11];
 
 fn palette_rgba(palette: &Palette, index: u8) -> [u8; 4] {
     let [r, g, b] = palette.rgb(index);
@@ -1244,6 +1277,31 @@ mod tests {
         assert_eq!(res_hint_rect(SCREEN, 0), Rect::new(333, 7, 105, 20));
         let hud = Hud::default();
         assert_eq!((hud.panel_dx(), hud.panel_point([800.0, 100.0])), (0, [800.0, 100.0]));
+    }
+
+    /// A single selected type (0x5aa136): its icon at (`Zone1X + 6`, 630) in a box open to the
+    /// right, the commands in a box joined to it; the reload bar (x 173..176, drawn after the
+    /// boxes) lies in the first box, left of the joint at `PropertyX − 2`.
+    #[test]
+    fn single_type_gets_its_own_box() {
+        let icon = |slot| Icon { slot, ..Icon::default() };
+        assert_eq!(Hud::icon_rect(SCREEN, ZONE1_SLOT), Rect::new(12, 630, 40, 40));
+        assert!(Hud::shown(ZONE1_SLOT) && Hud::shown(35) && !Hud::shown(36));
+        assert_eq!(Hud::columns(&[icon(ZONE1_SLOT)]), 0);
+        let left = Rect { x0: 12, y0: 630, x1: 180, y1: 755 };
+        assert_eq!(Hud::icon_boxes(SCREEN, &[icon(ZONE1_SLOT)]), vec![(left, BOX_CORNERS)]);
+        assert_eq!(
+            Hud::icon_boxes(SCREEN, &[icon(ZONE1_SLOT), icon(1)]),
+            vec![(left, LEFT_BOX_CORNERS), (Rect { x0: 180, y0: 630, x1: 266, y1: 755 }, RIGHT_BOX_CORNERS)]
+        );
+        // Several types: the commands' box alone, the types in the grid.
+        assert_eq!(
+            Hud::icon_boxes(SCREEN, &[icon(0), icon(1)]),
+            vec![(Rect { x0: 180, y0: 630, x1: 266, y1: 755 }, BOX_CORNERS)]
+        );
+        let bar_x = ZONE1_SIZE[0] + ZONE1[0] - 5;
+        assert_eq!(bar_x, 173);
+        assert!(bar_x + 3 < left.x1);
     }
 
     /// The bar along the top edge, the panels at the right edge, the icons and the minimap

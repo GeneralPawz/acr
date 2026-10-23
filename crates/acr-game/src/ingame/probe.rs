@@ -8,9 +8,6 @@ use super::InGame;
 use super::interface::tick_rate;
 use crate::hud::Hud;
 
-/// Slots of the icon grid (12 × 3); higher slots are not drawn in the grid.
-const GRID_SLOTS: usize = 36;
-
 /// An icon of the HUD's grid as the driver reports it.
 pub struct HudIcon {
     /// `hud/<slot>` for the grid, `army/<slot>` for the army icons at the top left.
@@ -125,7 +122,7 @@ impl InGame {
             .view
             .icons
             .iter()
-            .filter(|i| i.slot < GRID_SLOTS)
+            .filter(|i| Hud::shown(i.slot))
             .map(|i| {
                 let r = Hud::icon_rect(screen, i.slot);
                 HudIcon {

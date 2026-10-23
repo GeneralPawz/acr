@@ -562,7 +562,10 @@ impl InGame {
         // The type icons, then the formation icons, take the first slots the commands leave
         // free (`AddIcon` without a position, 0x495631). A formation's icon shows its soldier
         // type, how many soldiers it has and their life (0x606d10).
-        let mut free = (0..36).filter(|s| !view.icons.iter().any(|i| i.slot == *s)).collect::<Vec<_>>().into_iter();
+        let grid = (0..36).filter(|s| !view.icons.iter().any(|i| i.slot == *s)).collect::<Vec<_>>();
+        // A single type or formation gets its own place beside its stats (0x5aa136).
+        let one_entry = types.len().min(12) + brigades.len() == 1;
+        let mut free = one_entry.then_some(hud::ZONE1_SLOT).into_iter().chain(grid);
         let icon_of = |kind: acr_sim::TypeId| {
             objects.definition(&world.catalog.get(kind).id).and_then(|d| d.icon()).and_then(|i| data.icon(i))
         };

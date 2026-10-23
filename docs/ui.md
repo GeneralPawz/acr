@@ -358,8 +358,18 @@ cursor is drawn anywhere in the window, also beside the menu canvas.
   - the commands (0x28f9e30), at fixed slots `x + 12·y`.
 - Box: the box from (180, 630) to (182 + 42·columns, 755) is drawn with
   `Border` and corner table 0x668580 = TL 0, TR 2, BL 6, BR 8, left 12, right 14, top 9,
-  bottom 11 (0x47f48a: edges tiled every 64 px and centred on the box lines). The
-  separate left box of 0x5aa1bb is dead code: `0x28f819c` is never written.
+  bottom 11 (0x47f48a: edges tiled every 64 px and centred on the box lines).
+- **A single selected type** (0x5aa136: the set of selected types and formations
+  0x28f8190 holds exactly one icon, `+0xc` = 1) changes the layout: its icon goes to
+  (`Zone1X + 6`, 630) = (12, 630) instead of the grid (the driver's widget `hud/99`), in a box
+  from x = 12 to `PropertyX − 2` = 180 open to the right (0x480166, table 0x6685a0: TL 0,
+  BL 6, left 12, top 9, bottom 11, no right side), and the commands' box is joined to it
+  (0x480198, table 0x6685c0: TL 1, TR 2, BL 7, BR 8, left 13, right 14). Without command
+  icons the first box is closed (0x4800c8, table 0x668580). Then the type icon, the
+  commands, and **after them** the unit stats (0x607f50, called at 0x5aa278; drawn only
+  in this layout), so the reload bar at x = 173..176 shows just left of the joint. ACR
+  drew the stats before the box until 2026-10; the box's left edge (x 170..179) hid the
+  bar.
 - A type icon has:
   - an outline in player colour `0xd0 + 4·nation`;
   - a life bar: two lines of colour 255 with the rest in colour 0, length
@@ -423,7 +433,11 @@ cursor is drawn anywhere in the window, also beside the menu canvas.
     `GetPaletteColor(0, 255, 0)` at x = `Zone1LX + Zone1X − 5` .. `− 2` = 173..176, from
     y = 631 + 125·delay/MaxDelay down to 753 (`Zone1LY` = 100), with the sums of
     `delay` (`+0x8c`) and `MaxDelay` (`+0x8f`) over the selected objects of the type
-    (the type record of 0x606ae0); not drawn while `delay ≥ MaxDelay`.
+    (the type record of 0x606ae0); not drawn while `delay ≥ MaxDelay` (just fired), full
+    while loaded (`delay` 0). It fills from the bottom up as the reload runs, so the player
+    sees the reload without looking at the unit. `SHOWDELAY` is set for the guns
+    (`ARTPUS.MD` …) and the shooters (`ENGM18.MD` …); checked on the blank field with a
+    cannon and three musketeers (`ACR-analysis/reloadbar`).
   A single formation without free units (0x606edd) shows a soldier's numbers with the
   formation bonus, and the reload bar sums over all its members (0x6073a1).
 - Command slots wired so far:
