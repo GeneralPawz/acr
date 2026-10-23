@@ -117,6 +117,20 @@ Produced units walk out with `UnlimitedMotion` (through locks and units) until t
 pushed, so they come out of the door even into a crowd. Once they take a cell they are
 ordinary bodies and spread out (test `units_out_of_a_building_are_not_stuck`).
 
+**The rally point** ("troops coming out of a building get stuck in each other"). Each
+produced unit is sent to a free spot near the rally point (`FindUnitPosition` 0x51508c:
+rings 32 px apart, a spot is free when no unit *stands* near it). Units trained in quick
+succession are still walking when the next one is placed, so the original sends all of
+them to the same first spot. Without bodies that is harmless (they stand inside each other
+on it); with the rule on they push each other off the shared cell, walk back to it and
+never arrive: 20 men queued at once (`trained_units_reach_the_rally_point_apart`) never all
+stood still before (rule on, 1500 ticks), with men jostling at the point for good.
+**With the rule on only**, a spot also counts as taken when a living unit is still headed
+there (its last move order, `SmartSendTo` or `SendTo`, `economy::claimed`), so the men get
+distinct spots on the 32 px rings and all 20 stand at the point after 132 ticks; no pair
+stays closer than 16 px for more than 28 ticks (the file walking out). Rule off: unchanged,
+the men end on top of each other as in the original.
+
 ## Limits
 
 - The occupancy grid stays the original's: a pressing crowd keeps close to its 16 px cell

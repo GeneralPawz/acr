@@ -321,3 +321,65 @@ fn a_squadron_keeps_its_horses_apart() {
     assert!(hh >= -2.0, "horses overlap in their slots: {hh} px");
     assert!(hm >= -6.0, "a man under a horse: {hm} px");
 }
+
+/// A man trained in 4 ticks: a queue of them leaves the building one every few ticks.
+const RECRUIT: &str = "NAME Rec
+USERLC 0 G SHADOW 0 0
+#STAND 9 1 0 0
+@MOTION_L 9 0 0 9
+    @MOTION_R 9 0 10 19
+LIFE 100
+GEOMETRY 1 10 40
+BUILDSTAGES 4
+PRICE 1 FOOD 50
+[END]
+";
+
+/// 20 men trained one after another with a rally point: ticks until all stand at it with
+/// no orders left (`None`: not within `limit`), and the longest a pair stayed closer than
+/// 16 px (two bodies 2 px inside each other).
+fn trained_to_rally(rules: Rules, limit: usize) -> (Option<usize>, usize) {
+    let (w, _, _, cen) = world(rules);
+    let mut c = (*w.catalog).clone();
+    let kri = c.add(ObjectType::from_def("Rec(EN)", &UnitDef::parse(RECRUIT.as_bytes())));
+    let mut w = World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(Formations::default()));
+    w.rules = rules;
+    let center = w.spawn(cen, 0, Pos::from_pixels(2048, 2048), 0);
+    acr_sim::economy::census_all(&mut w);
+    w.players[0].resources = [1_000_000; 8];
+    w.players[0].housing = 1000;
+    w.step(&[Command::Rally { player: 0, building: center, x: 2048 + 300, y: 2048 + 200 }]);
+    let produce: Vec<Command> = (0..20).map(|_| Command::Produce { player: 0, building: center, kind: kri }).collect();
+    w.step(&produce);
+    let mut close: std::collections::HashMap<(usize, usize), usize> = Default::default();
+    let mut longest = 0;
+    for t in 0..limit {
+        w.step(&[]);
+        let men: Vec<usize> = (0..w.units.len()).filter(|&i| w.units[i].kind == kri && w.units[i].active()).collect();
+        let mut now = std::collections::HashMap::new();
+        for (k, &a) in men.iter().enumerate() {
+            for &b in &men[k + 1..] {
+                if dist(&w, w.units[a].id, w.units[b].id) < TWO_MEN - 32 {
+                    let n = close.get(&(a, b)).copied().unwrap_or(0) + 1;
+                    longest = longest.max(n);
+                    now.insert((a, b), n);
+                }
+            }
+        }
+        close = now;
+        if men.len() == 20 && men.iter().all(|&i| w.units[i].orders.is_empty() && !w.units[i].unlimited) {
+            return (Some(t), longest);
+        }
+    }
+    (None, longest)
+}
+
+#[test]
+fn trained_units_reach_the_rally_point_apart() {
+    let (off, off_close) = trained_to_rally(Rules::default(), 1500);
+    let (on, on_close) = trained_to_rally(ON, 1500);
+    println!("rule off: all there {off:?}, longest overlap {off_close} ticks; on: {on:?}, {on_close} ticks");
+    let t = on.expect("all 20 reach their spots at the rally point");
+    assert!(t < 400, "{t} ticks");
+    assert!(on_close <= 40, "a pair stayed inside each other {on_close} ticks");
+}

@@ -324,6 +324,7 @@ pub fn command(game: &Game, v: &Value) -> Result<Vec<Command>, String> {
             let (building, kind) = (id(v, "building")?, object_type()?);
             Ok((0..count).map(|_| Command::Produce { player, building, kind }).collect())
         }
+        "rally" => one(Command::Rally { player, building: id(v, "building")?, x: int(v, "x")?, y: int(v, "y")? }),
         "form" => one(Command::Form {
             player,
             officer: id(v, "officer")?,
