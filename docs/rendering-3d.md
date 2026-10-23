@@ -897,6 +897,40 @@ costs that grow with the fight:
    map's drop (87 → 64) is mostly this tiler's run-to-run shift between passes (the
    unchanged "before contact" frames moved 61 → 54 ms too).
 
+### Ragdolls without the cap (m2-perf2)
+
+The cap of 12 awake ragdolls above was a quality trade. m2-perf2 removes its cause
+(`docs/body-sim.md`, Bench): frozen corpses are static collision geometry instead of
+bodies woken by every man falling onto them, a step visits only awake bodies, and islands
+of awake ragdolls step in parallel (rayon, native). Same clash scene, `clash_base` (main
+928a909) against `clash_new2` (m2-perf2 rebased on 9030897) in `ACR-analysis/perf2/`; a
+driver frame is one tick, so 4 physics steps (the worst case of the clock):
+
+| ms per frame | contact main → m2-perf2 | +30 s main → m2-perf2 |
+|---|---:|---:|
+| ragdoll physics (`rag.physics`) | 6.7 → 3.5 | **16.8 → 4.0** |
+| awake ragdolls (mean) | 11.7 → 18.2 | **12.0 → 27.6** |
+| µs per awake ragdoll step | 143 → 48 | 350 → 36 |
+| 3D update (`3d.update`) | 11.1 → 7.0 | 25.4 → 10.5 |
+| instances (`3d.instances`) | 2.4 → 2.0 | 4.6 → 3.5 |
+| render CPU (of it `models_prepare`) | 6.6 (3.4) → 4.9 (2.7) | 9.0 (5.6) → 9.4 (5.3) |
+| GPU all passes (main 9030897 → m2-perf2) | 53.5 → 55.3 | 98.9 → 109.3 |
+
+With 4 steps per frame the adaptive rule lets 28 ragdolls be awake in 4 ms (2.3× more
+than the cap, in a quarter of the time); at 2 steps per frame (30 fps and faster) it is
+57, at 1 step the calibration's full 82. The GPU is unchanged by this work (the models
+pass varies 67–78 ms between runs at +30 s; more of the dead now lie in ragdoll poses,
+each its own palette instead of the shared `DEATHLIE` pose). Frames side by side:
+`ACR-analysis/perf2/after30s_base_vs_new.png` (top main, bottom m2-perf2).
+
+Next levers: the GPU models pass at +30 s (≈ 70 ms against 30 before contact) grows with
+the dead and wounded, not with skinning alone: profile it per entry kind (decaying
+layers, wound volumes that `discard` and so lose early depth on the tiler, caps and
+inserts) before baking corpse meshes; a static-pose pipeline (palette written once per
+frozen corpse into a persistent region of the bone texture, no per-frame upload) and
+cached shadow contributions of static corpses (m2-shadowfix's files); incremental
+instance building for corpses (`3d.instances`, `models_prepare` 3.5 + 5.3 ms at +30 s).
+
 ### Input latency
 
 - **Hardware cursor** (native, `acr-game/src/hw_cursor.rs`): the cursor the interface

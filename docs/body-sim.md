@@ -111,7 +111,7 @@ H: metres, `+X` left, `-Y` forward, `+Z` up.
   - With full tone and the root pinned, it holds a pose with bent elbows within 1°.
   - A 60 N·s push at the back of the right shoulder spins him clockwise and throws him backwards.
   - The hinge stops hold within 0.5° under spins of up to 100 rad/s.
-  - Stacked capsules do not interpenetrate, and a body falling across a frozen corpse wakes it and comes to lie on it.
+  - Stacked capsules do not interpenetrate, and a body falling across a frozen corpse comes to lie on it; the corpse stays asleep and does not move (static geometry, m2-perf2).
   - A resting ragdoll falls asleep (after about 1.1 s), does not move while asleep, and an impulse wakes it.
   - Identical runs are bit-identical.
 - Bench (`cargo run -p acr-physics --release --example bench`): limp ragdolls falling
@@ -131,6 +131,30 @@ H: metres, `+X` left, `-Y` forward, `+Z` up.
 
   Frozen corpses add almost nothing per active ragdoll; the slow growth with the scene
   is the broad phase and the cache.
+
+  **m2-perf2: corpses static, islands in parallel.** In a melee the corpses lie packed, and
+  a falling man used to wake every corpse he touched: they joined the solve, woke their
+  neighbours, and a step in the pile cost 260–580 µs per falling ragdoll. Now a frozen
+  ragdoll (`World::freeze`) is static collision geometry: infinite mass, its capsules in a
+  hashed grid of their own (rebuilt only when a group falls asleep or wakes), contacts
+  against it one-sided, never woken by a touch (only by an explicit wake: an impulse, a
+  new pose or tone). A natural sleeper (`update_sleep`) still wakes when touched. A step
+  visits only the awake bodies (their own hashed grid for awake–awake pairs); awake groups
+  joined by contacts or joints form islands, each gathered into compact buffers (the
+  frozen capsules it touches copied in read-only) and solved apart, in parallel with
+  rayon on native (from 64 awake bodies; wasm serial), then written back. The buffers are
+  reused, so a step allocates only when it meets more than ever before. Bench (wall,
+  per active ragdoll step, same loaded machine; "pile" = active ragdolls dropped onto 96
+  frozen corpses packed 0.7 m apart, "60 apart" = 60 active spread out):
+
+  | Scene | main | m2-perf2 serial (`RAYON_NUM_THREADS=1`) | m2-perf2 |
+  |---|---:|---:|---:|
+  | 16 active over a pile of 96 | 583 µs | 97 µs | 45–59 µs |
+  | 60 active over a pile of 96 | 240 µs | 101 µs | 48–50 µs |
+  | 60 active apart | 87 µs | 81 µs | 20–36 µs |
+  | 256, half frozen | 168 µs | 87 µs | 20–22 µs |
+
+  Physics is render-side; the simulation and its pinned hashes are untouched.
 - wasm32 (`examples/bench_wasm.rs`, a cdylib timed by `examples/bench_wasm.mjs` under node
   22, see the file header for the commands), on the same loaded machine: 69 µs (1 active), 77 µs (16),
   81 / 86 / 87 µs per active ragdoll with 16 / 64 / 256 half frozen. That is about the native wall time, so
@@ -184,6 +208,11 @@ are piled. The renderer takes a palette from it per instance
   56 awake ragdolls took 43 ms of every frame 30 s into a 700-against-700 melee. Now new
   ragdolls start only while awake < 4000 µs / (measured µs per ragdoll step × steps per
   frame), both running means, at most the calibration's and at least `MIN_AWAKE` (12).
+  m2-perf2 (static corpses, parallel islands): the calibration gives 82 (48 µs), the
+  pile no longer raises the cost (about 35 µs per awake ragdoll step in the clash), and
+  the pool of ragdolls kept in the physics is 192 (frozen corpses cost a step nothing but
+  the contacts made with them). A frozen corpse's palette is made once and reused while
+  its instance stays put.
 - **Bench:** `ACR-analysis/ragdoll/bench_ragdoll.py` (with `ACR_EXE`): six men in a row
   seen from the side — a musket wound from the front, musket kills from the side and the
   front, a cannonball kill, a crawler killed, a musket wound in the leg; 24 frames, one per
