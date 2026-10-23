@@ -887,30 +887,70 @@ SETTLE_MARGIN = 0.004  # m: an inner layer ends at least this far below the laye
 SETTLE_POKE = 0.015  # m: inner vertices up to this far out through an outer layer are pulled in
 SETTLE_SEAM = 0.0015  # m: an outer surface this close to the vertex is the same cloth (an inlay's border)
 SETTLE_SKIP = ("head", "neck", "hand", "index", "middle", "ring", "pinky", "thumb", "foot", "toe")
+SETTLE_NOT_OVER = ("brass",)  # outer keys nothing is settled under
+SETTLE_ROUNDS = 3  # passes (a moved vertex may come under another outer triangle)
+SETTLE_SPREAD = 0.5  # share of the mean move of its moved neighbours an unmoved vertex follows
 
 
-def _segment(seg, homes, i, co):
-    """The bone segment a vertex is pushed towards: its home bone, else the nearest one."""
-    if homes is not None:
-        return homes[i]
-    return min(seg, key=lambda b: (co - bd.seg_point(co, *seg[b])).length)
+_OUTWARD = {}
 
 
-def settle(ch, objs=None, margin=SETTLE_MARGIN, poke=SETTLE_POKE):
+def _outward(o, seg):
+    """Per polygon of `o`: +1 if its normal (winding) points away from the nearest body bone,
+    -1 if it is turned inwards."""
+    if o.name in _OUTWARD and len(_OUTWARD[o.name]) == len(o.data.polygons):
+        return _OUTWARD[o.name]
+    mw = o.matrix_world
+    out = []
+    for p in o.data.polygons:
+        c = mw @ p.center
+        n = (mw.to_3x3() @ p.normal)
+        q = min((bd.seg_point(c, *s) for s in seg.values()), key=lambda x: (c - x).length)
+        out.append(1.0 if n.dot(c - q) >= 0.0 else -1.0)
+    _OUTWARD[o.name] = out
+    return out
+
+
+def orient_outwards(ch, objs, seg):
+    """Turns the winding of every cloth polygon whose normal points towards the nearest bone
+    outwards (the right panels are mirrored copies of the left, so their winding came out
+    inwards, and so did whole capes and flaps). The renderer draws both sides, but the shading
+    and the layer check's above/below (`acr_render::layers`) read the winding: a cloth turned
+    inwards counted the layer under it as poking through. Returns {name: polygons turned}."""
+    turned = {}
+    for o in objs:
+        side = _outward(o, seg)
+        bad = [i for i, x in enumerate(side) if x < 0]
+        if not bad:
+            continue
+        bm = bmesh.new()
+        bm.from_mesh(o.data)
+        bm.faces.ensure_lookup_table()
+        bmesh.ops.reverse_faces(bm, faces=[bm.faces[i] for i in bad], flip_multires=False)
+        bm.to_mesh(o.data)
+        bm.free()
+        o.data.update()
+        _OUTWARD[o.name] = [1.0] * len(side)
+        turned[o.name] = len(bad)
+    return turned
+
+
+def settle(ch, objs=None, margin=SETTLE_MARGIN, poke=SETTLE_POKE, rounds=SETTLE_ROUNDS):
     """Every ranked layer under the ranked layers above it (`garments.LAYER_RANK`), for all
-    families (docs/clothing.md, "Layers"): each vertex of an inner layer is cast from its
-    bone outwards through itself; where an outer layer's surface is met less than `margin`
-    beyond the vertex, or up to `poke` before it (the vertex pokes through already in the
-    drape: a shirt through a cloak, a doublet over the falling band), the vertex moves in to
-    `margin` below that surface. Openings (nothing above) and loose layers further out keep
-    their place. The free skirts are not moved (they swing); the head, neck, hands and feet
-    of the skin neither (the face seam, the fingers). Returns {inner key: vertices moved}."""
+    families (docs/clothing.md, "Layers"). Top layer first: for each vertex of an inner layer
+    the nearest triangle of every outer layer is found; where the vertex lies above it (up to
+    `poke`: a shirt through a cloak, a doublet over the falling band) or less than `margin`
+    under it, it moves along that triangle's outward normal to `margin` below it, the same
+    measure as the layer check (`acr_render::layers`, `POKE`). Unmoved neighbours follow
+    half the mean move (no spikes), `rounds` passes. Outer meshes turned inwards are turned
+    out first (`orient_outwards`). Openings (nothing above) keep their place; the free
+    skirts are not moved (they swing); the head, neck, hands and feet of the skin neither
+    (the face seam, the fingers). Returns {inner key: vertices moved}."""
+    _OUTWARD.clear()
     objs = objs if objs is not None else ch.layers["flesh"] + ch.layers["clothes"] + ch.layers["gear"]
     body = {ch.prefix + x for x in rig.BODY_BONES}
     every = {b: s for b, s in am.segments(ch.arm).items() if b in body}
-    # Clothes may move at the neck (collars, capes and bands lie there); the skin may not.
-    cloth_seg = {b: s for b, s in every.items() if not b[len(ch.prefix):].startswith(SETTLE_SKIP[2:])}
-    skin_seg = {b: s for b, s in every.items() if not b[len(ch.prefix):].startswith(SETTLE_SKIP)}
+    skin_seg = {b for b in every if not b[len(ch.prefix):].startswith(SETTLE_SKIP)}
     ranked = []
     for o in objs:
         if o.type != "MESH" or len(o.get("acr_material_keys") or ()) > 1:
@@ -918,56 +958,84 @@ def settle(ch, objs=None, margin=SETTLE_MARGIN, poke=SETTLE_POKE):
         rank = gm.LAYER_RANK.get(ch.keys.get(o.name))
         if rank is not None and len(o.data.polygons):
             ranked.append((rank, o))
-    trees = {}
-    for r, o in ranked:
-        mw = o.matrix_world
-        trees[o.name] = BVHTree.FromPolygons([mw @ v.co for v in o.data.vertices],
-                                             [tuple(p.vertices) for p in o.data.polygons])
+    # Draped cloth only: gear (boxes, pouches, belts) is closed, its faces at the body face it.
+    clothes = {o.name for o in ch.layers["clothes"]}
+    cloth = [o for r, o in ranked if r > 0 and o.name in clothes]
+    turned = orient_outwards(ch, cloth, every)
+    if turned:
+        print(f"[{ch.name}] polygons turned outwards: {turned}")
+    ranked.sort(key=lambda x: -x[0])
     moved = {}
     for r, o in ranked:
-        outer = [trees[x.name] for rx, x in ranked if rx > r]
+        # Buttons (brass) are small domes on the cloth, not a layer to sink it under.
+        outer = [x for rx, x in ranked if rx > r and ch.keys.get(x.name) not in SETTLE_NOT_OVER]
         if not outer or o.name.endswith(("_skirts", "turnbacks")) or "skirt" in o.name:
             continue
+        trees = []
+        for x in outer:
+            mw = x.matrix_world
+            trees.append((BVHTree.FromPolygons([mw @ v.co for v in x.data.vertices],
+                                               [tuple(p.vertices) for p in x.data.polygons]),
+                          _outward(x, every)))
         me = o.data
-        try:
-            homes = bd.homes(o)
-        except (KeyError, TypeError):
-            homes = None
         mw, inv = o.matrix_world, o.matrix_world.inverted()
-        seg = skin_seg if r == 0 else cloth_seg
-        n = 0
-        for i, v in enumerate(me.vertices):
-            co = mw @ v.co
-            h = _segment(seg, homes, i, co) if (homes is None or homes[i] in seg) else None
-            if h is None or h not in seg:
-                continue
-            q = bd.seg_point(co, *seg[h])
-            d = co - q
-            dist = d.length
-            if dist < 0.02:
-                continue
-            u = d / dist
-            best, seam = None, False
-            for t in outer:
-                start = max(0.0, dist - poke)
-                hit = t.ray_cast(q + u * start, u, dist + margin - start)
-                if hit[0] is not None:
-                    h_at = start + hit[3]
-                    # On the outer surface itself: an inlay's border (facings in the coat),
-                    # one cloth, not two layers; the depth bias orders the rest.
-                    seam |= abs(h_at - dist) < SETTLE_SEAM
-                    best = h_at if best is None else min(best, h_at)
-            if best is None or seam:
-                continue
-            to = best - margin
-            if to < 0.5 * dist:  # the outer layer far inside: another surface, not this one's cover
-                continue
-            v.co = inv @ (q + u * to)
-            n += 1
+        keep = set()
+        if r == 0:
+            # The skin's head, neck, hands and feet stay (the face seam, the fingers).
+            for i, v in enumerate(me.vertices):
+                co = mw @ v.co
+                near = min(every, key=lambda x: (co - bd.seg_point(co, *every[x])).length)
+                if near not in skin_seg:
+                    keep.add(i)
+        nbrs = [[] for _ in me.vertices]
+        for e in me.edges:
+            a, b = e.vertices
+            nbrs[a].append(b)
+            nbrs[b].append(a)
+        done = set()
+        for _ in range(rounds):
+            delta = {}
+            for i, v in enumerate(me.vertices):
+                if i in keep:
+                    continue
+                co = mw @ v.co
+                best = None
+                for t, side in trees:
+                    loc, n, fi, dist = t.find_nearest(co, poke)
+                    if loc is None or dist < SETTLE_SEAM:
+                        continue
+                    n = n * side[fi]
+                    h = (co - loc).dot(n)
+                    # Over the triangle (not beside an edge), above it or barely under it.
+                    if dist - abs(h) > 0.003 or not (-margin < h < poke):
+                        continue
+                    if best is None or h > best[0]:
+                        best = (h, n)
+                if best is not None:
+                    delta[i] = -best[1] * (best[0] + margin)
+            if not delta:
+                break
+            spread = {}
+            for i in delta:
+                for j in nbrs[i]:
+                    if j not in delta and j not in keep:
+                        spread.setdefault(j, []).append(delta[i])
+            for j, ds in spread.items():
+                delta[j] = sum(ds, Vector()) * (SETTLE_SPREAD / len(ds))
+            # With shape keys the export takes each key's own positions, not `v.co`: move
+            # every key by the same offset (a relative key keeps its difference to the basis).
+            keys = me.shape_keys.key_blocks if me.shape_keys else ()
+            rot = inv.to_3x3()
+            for i, d in delta.items():
+                ld = rot @ d
+                me.vertices[i].co += ld
+                for kb in keys:
+                    kb.data[i].co += ld
+            done |= {i for i, d in delta.items() if d.length > 1e-5}
         me.update()
-        if n:
+        if done:
             key = ch.keys.get(o.name)
-            moved[key] = moved.get(key, 0) + n
+            moved[key] = moved.get(key, 0) + len(done)
     return moved
 
 

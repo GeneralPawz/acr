@@ -135,17 +135,73 @@ falling band 45 / 22 and the band over the brass 115 / 19, EngMus' doublet over 
 76 / 32, SpnS15's doublet under the armour 47 / 169, DelKri's breechcloth through the shirt
 140 / 37 and skin through the shirt 82 / 86.
 
-**`drape.settle`** (all families, before `Character.morphs`; off by default,
-`humans.SETTLE` / `ACR_SETTLE=1`): every ranked layer is pushed under all ranked layers
-above it. Each vertex is cast from its bone outwards through itself; where an outer
-surface is met less than 4 mm beyond it or up to 15 mm before it, the vertex moves in to
-4 mm below that surface; an outer surface within 1.5 mm is the same cloth (an inlay's
-border) and is left alone, and so are the free skirts and the skin's head, neck, hands and
-feet. On frnbuk it moved 53 shirt vertices and engof17 18 buff ones, but the check still
-counts most of the pokes (frnbuk shirt → cloak 125 → 100, engof17 buff → band 45 → 32): the
-bone ray does not reach them (the check measures along the outer triangle's normal; cloaks
-and bands far from the bone, or with normals turned inwards, need a cast along the outer
-surface's normal instead). Not yet checked on renders, hence off.
+**`drape.settle`** (all families, before `Character.morphs`; **off**, `humans.SETTLE` /
+`ACR_SETTLE=1` in a local Blender, a constant for the VM). Since #287's second trisoup pass:
+first every draped cloth polygon whose winding faces the nearest bone is turned outwards
+(`drape.orient_outwards`; the mirrored right panels, capes, flaps and the falling band came
+out inwards, 8–300 polygons per garment; gear is left alone, its closed boxes face the body).
+Then, top layer first, every vertex of a ranked layer finds the nearest triangle of each
+ranked layer above it (`brass` excluded: buttons are domes, not a layer) and, where it lies
+over that triangle up to 15 mm above it or less than 4 mm below it, moves along that
+triangle's outward normal to 4 mm below it (the same measure as the check); unmoved
+neighbours follow half the mean move of their moved ones; 3 passes. An outer surface within
+1.5 mm is the same cloth (an inlay's border) and is left alone, and so are the free skirts and
+the skin's head, neck, hands and feet.
+
+**Second trisoup pass** (#287; sample frnbuk, engof17, engmus, spns15, delkri, engm18,
+frnm18, irolut, mayvoi; `model_layers --steps 8`; tables and renders in
+`ACR-analysis/trisoup2/`: `layers_before.txt`, `layers_v1.txt` normal settle alone,
+`layers_v2.txt` with the polygons turned outwards; close-ups on the blank field, white, HUD
+off, `ACR_LOD=0`, in `before/`, `v1/`, `after/`, sheet `sheet_before_v2.png`):
+
+| unit | poking before | v1 | v2 | crossing before | v2 |
+|---|---|---|---|---|---|
+| frnbuk | 234 | 223 | 163 | 266 | 362 |
+| engof17 | 375 | 472 | 268 | 368 | 395 |
+| engmus | 359 | 186 | 173 | 186 | 252 |
+| spns15 | 226 | 235 | 196 | 408 | 492 |
+| delkri | 332 | 244 | 152 | 224 | 395 |
+| engm18 | 157 | 145 | 95 | 400 | 463 |
+| frnm18 | 164 | 169 | 90 | 398 | 484 |
+| irolut | 121 | 93 | 54 | 59 | 110 |
+| mayvoi | 66 | 63 | 116 | 22 | 28 |
+
+- The check now also counts, per pair, the pokes **against**: the inner vertex's winding
+  normal points against the outer triangle's. Before the pass that was 1060 of the 2034
+  pokes: about half the counted pokes are a winding turned inwards (the inner vertex lies
+  *under* the cloth, the check reads it as above), not a patch on the screen. Turning the
+  polygons outwards is most of the v2 drop; crossing rose because more vertices count as
+  covered once the windings agree. mayvoi rose: its sandals are closed, the bone test turned
+  their soles.
+- **Renders**: the patches are real (FrnBuk's shirt in white sawteeth along the cloak's
+  shoulders and hem, EngOf17's band through the buff coat at the collar and back, DelKri's
+  shirt collar against the neck skin, EngMus' band). Neither v1 nor v2 changes them visibly;
+  v2 opens new white slivers on EngOf17's back and side (the fallband's polygons, 271 of
+  them, turned by the bone test, and the buff pushed under it), and FrnBuk's cloak sinks
+  under the shoulder belt on the back (belts rank 7 over the cloak's 5; a buccaneer's belt
+  is under his cloak). Hence still off.
+- What the renders show is mostly the **edges** of the outer layer: the sawteeth run along
+  the cloak's and the buff coat's borders, where an inner vertex is beside the outer
+  triangle rather than over it (the check and the settle both skip those), and the inner
+  layer is 1–3 cm out, beyond the 15 mm reach. Next: settle against the outer layer's
+  border (extend the outer edge's triangles a few cm for the nearest search, or pull the
+  inner layer in under a band along every outer boundary), ranks per unit where a garment
+  is worn over the belts (cloaks, mantles), and the orientation by a flood fill over the
+  connected cloth from a seed known to face out instead of per polygon.
+- **Deleting covered inner faces** (not done): cuts, wounds and decay show the layer under a
+  hole, so a face may only go where an outer layer *and* the skin under it stay in every
+  clip and no wound region reaches; that needs the per-clip coverage of the check exported
+  back to Blender. Pushing the inner faces in keeps them for the wounds; deleting is for
+  later, and only far from openings (collar, cuffs, front, hems, cloak edges).
+- **Atlas gutters** (`outfit.atlas_uv`, on): the islands of a painter's cell keep
+  `outfit.GUTTER` (4 px) apart and from the cell border (Smart UV's margin is now
+  `2 × 4 px / cell px`, at least the old 0.006, at most 0.05), so mips to level 2 and the
+  bake's 6 px edge dilation no longer reach the neighbour island; one-object cells go the
+  same way (no longer `coat.atlas_uv`). Built into the sample above; not separately
+  measured on renders.
+- **Gate**: `layers::tests::settled_units_poke_little` (with `ACR_MODELS_DIR`) fails when a
+  sample unit pokes more than 400 vertices in the rest pose: a ratchet at the shipped level,
+  to be lowered as the patches go.
 
 engm18, 24 frames × 19 clips (crossing vertices / worst):
 

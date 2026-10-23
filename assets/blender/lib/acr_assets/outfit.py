@@ -175,18 +175,25 @@ def apply_mask(e, p, n, col, L, seed):
     return coat.mix(col, tint, np.clip(w, 0.0, 1.0))
 
 
+GUTTER = 4  # px: the least gap round every island in its cell (mip-safe to level 2)
+
+
 def atlas_uv(objs, region, name="atlas", angle=66.0):
     """One Smart-UV map `name` for all of `objs` together, fitted into `region`: their
     islands are packed side by side, never on top of each other (`coat.atlas_uv` unwraps one
     object; the objects of one painter share its cell, and unwrapped one by one they all
     filled it, so the bake kept the last object's texels and the others sampled them: the
-    scalp lock's hair painted over a native's trunk)."""
+    scalp lock's hair painted over a native's trunk). The islands keep `GUTTER` px apart and
+    from the cell's border in the painter's cell (Smart UV's margin is a share of the cell:
+    0.006 was under 1 px of a small cell, so mips and the bake's margin bled the neighbour
+    in), and the bake's margin dilates their edges into the gutter."""
     import math
 
     import bpy
 
-    if len(objs) == 1:
-        return coat.atlas_uv(objs[0], region, name, angle)
+    u0, v0, u1, v1 = region
+    cell = max(1.0, min(u1 - u0, v1 - v0) * coat.SIZE)
+    margin = min(0.05, max(0.006, 2.0 * GUTTER / cell))
     for o in objs:
         me = o.data
         while len(me.uv_layers):
@@ -200,15 +207,15 @@ def atlas_uv(objs, region, name="atlas", angle=66.0):
     vl.objects.active = objs[0]
     bpy.ops.object.mode_set(mode="EDIT")
     bpy.ops.mesh.select_all(action="SELECT")
-    bpy.ops.uv.smart_project(angle_limit=math.radians(angle), island_margin=0.006, scale_to_bounds=True)
+    bpy.ops.uv.smart_project(angle_limit=math.radians(angle), island_margin=margin, scale_to_bounds=True)
     bpy.ops.object.mode_set(mode="OBJECT")
-    u0, v0, u1, v1 = region
-    pad = 2.0 / coat.SIZE
+    pad = GUTTER / coat.SIZE
     for o in objs:
         for d in o.data.uv_layers[name].data:
             u, v = d.uv
             d.uv = (u0 + pad + u * (u1 - u0 - 2 * pad), v0 + pad + v * (v1 - v0 - 2 * pad))
         o.select_set(False)
+    return objs[0].data.uv_layers[name] if len(objs) == 1 else None
 
 
 def raster_labels(tris, size):
