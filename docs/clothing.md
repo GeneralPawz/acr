@@ -6,7 +6,8 @@ Blender's cloth simulation (in the normal asset build, on the render VM), and sk
 skeleton H. Loose parts (the coat skirts) keep their own bones and a `_cloth` weight so that
 the game's XPBD engine can move them later.
 
-`engm18.BUILD["garments"]` switches the musketeer between the draped uniform (`True`) and
+The pipeline runs in the line infantry family `acr_assets/line.py` (unit scripts are data:
+[humans-roster.md](humans-roster.md)). `engm18.BUILD["garments"]` switches the musketeer between the draped uniform (`True`) and
 the shells of #178 (`False`, the fallback).
 
 | module (`assets/blender/lib/acr_assets/`) | |

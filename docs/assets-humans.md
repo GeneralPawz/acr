@@ -18,12 +18,15 @@ Conventions as in assets.md (30 px/m, +X east, +Y north, +Z up, models face sout
 | `mount.py` | the WildMesh pack's horse as a mount (#287): loaded, tinted bay, pruned to its weighted bones and decimated, scaled to 1.5 m at the withers, its gaits sampled on sprite frames (`animals.py`); `join` hangs the rider's root from its `saddle` bone; a saddlecloth cut from its back |
 | `gear.py`, `poses.py`, `decay.py`, `detail.py` | gear meshes; placeholder poses/clips; decay layers and masks; procedural detail tiles |
 
-Units: `assets/units/engm18.py` (musketeer), `engkri.py` (peasant), `engd18.py` (dragoon),
+Units (every human type and the plan for the rest: [humans-roster.md](humans-roster.md)):
+`assets/units/engm18.py` (musketeer) and `frnm18.py` (French fusilier), data over the line
+infantry family `acr_assets/line.py`; `engkri.py` (peasant), `engd18.py` (dragoon),
 `engkf18.py`, `frnkf18.py`, `spnkf18.py`, `usakf18.py` (standard bearers), `spnrei.py` (reiter),
 `siukstr.py` (Sioux horseman with a gun), `puevsda.py` (Pueblo lancer). Not built, because
 the game never makes them (no nation's .NDS lists them, so they are not in the catalog):
-SpnReiG1/SpnReiG2 (leftover variants of SpnRei with other body sprites, no LIFE, DAMAGE 1)
-and PueVsd (PueVsda without `MAXINDEPO`, same sprites). The game has no mules, donkeys,
+SpnReiG1/SpnReiG2 (leftover variants of SpnRei with other body sprites, no LIFE, DAMAGE 1).
+PueVsd (PueVsda without `MAXINDEPO`, same sprites) *is* in the catalog: the Delaware, Huron
+and Iroquois horseman. The game has no mules, donkeys,
 pack animals, carts or limbers (no such object type among its .MD files; the cannon `ArtPus`
 is pushed by its crew, modelled as part of the gun in `acr_assets/guncrew.py`), so the pack's Donkey has no unit to serve.
 Tools: `assets/blender/tools/silhouette.py` (fits poses and proportions to the sprite
