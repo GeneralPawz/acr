@@ -132,6 +132,8 @@ pub struct ThreeD {
     maulers: super::maul_view::Maulers,
     /// The coat skirts of the men near the camera (runtime cloth, docs/clothing.md).
     skirts: super::cloth_view::Skirts,
+    /// Carried gear lagging behind the men near the camera (docs/assets-humans.md, "Lag").
+    carried: super::gear_view::Gear,
     /// Riders' horses turned for a blow, eased (`strike_view::Turns`).
     turns: super::strike_view::Turns,
     /// Seconds of the last frame and the world point at the window centre.
@@ -214,6 +216,7 @@ impl Default for ThreeD {
             crews: Default::default(),
             maulers: Default::default(),
             skirts: Default::default(),
+            carried: Default::default(),
             turns: Default::default(),
             frame_seconds: 0.0,
             focus: [0.0; 2],
@@ -916,6 +919,10 @@ impl ThreeD {
         // a man on his clip keeps his morphs).
         if std::env::var_os("ACR_NO_CLOTH").is_none() {
             self.skirts.update(self.frame_seconds, &drawn, self.focus, terrain, &mut ragdolls.poses);
+        }
+        // Knapsacks, quivers and the slung musket lag and bob on the living (`ACR_NO_GEAR` off).
+        if std::env::var_os("ACR_NO_GEAR").is_none() {
+            self.carried.update(self.frame_seconds, &[&drawn, &mounted], self.focus, &mut ragdolls.poses);
         }
     }
 

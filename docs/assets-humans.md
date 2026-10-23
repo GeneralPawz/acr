@@ -418,10 +418,36 @@ end of the crossbelt; native horn and pouch on the end of `belt_l`.
 
 The slung musket (`line.add_sidearm`) stays rigid on its `socket.sling` bone (it is shown
 and hidden by the socket's scale), but `gear.seat_offset` moves socket and musket so the
-barrel lies `SLING_GAP` (6 mm) off the coat. Open: its sling (a strap that hides with the
-musket needs it on the socket, not on the body), a socket on a blended back frame, the
-frontier family's horn and box (`frontier.py`, not yet seated), and secondary motion (a
-damped lag bone per carried item near the camera, like `ingame/cloth_view.rs`).
+barrel lies `SLING_GAP` (6 mm) off the coat. Its sling (`line.SLING_STRAP`, m2-backgear2)
+is part of the musket's mesh (material 2, `belts`): from the lower swivel to the upper band
+beside the fore-stock, inside the stock's depth, so it hides and shows with the musket and
+never reaches the coat. The frontier family's horn and shot pouch (`frontier._horn`,
+`_pouch`) are seated like the natives'. Open: the sling's run over the shoulder (it would
+have to follow the body, not the socket), a socket on a blended back frame, the riders'
+quivers and holsters (`cavalry.py`), and the plains/pueblo gear.
+
+#### Lag (`gear.lag_bone`, `ingame/gear_view.rs`; m2-backgear2)
+
+Every seated item gets an own deforming bone `gear.<item>` (head at the top of its contact
+side, where the strap holds it) under the trunk bone that carries most of it (a clavicle
+counts for spine2). Every clip keys it at rest, so in the clips it follows that bone
+exactly; it takes `LAG_SHARE` (0.6) of each vertex's weight, the contact blend keeps the
+rest (its three largest). In the game (`gear_view::Gear`, after the skirts in
+`three_d.rs`) the 40 living men nearest the camera's focus (900 px) hang each such bone and
+`socket.sling` on a damped spring: a point 0.25 m below the head follows the skinned point
+in physics space at 2.2 Hz, damping ratio 0.35, damped relative to the target (a steady walk
+or run leaves no lag; steps, starts and stops do). Its offset is clamped to 4.5 cm sideways
+and out and 1.6 cm up or down (on the mesh about 2.7 cm / 6° and 1 cm), never towards the
+body (the outward side: from the body's axis to the bone's head); the musket takes a third.
+It goes back as a turn of the bone about its head plus the small lift. `ACR_NO_GEAR` turns
+it off. Cost: 0.12 µs per item step (release); the larger part is the clip's palette for
+men that have no custom pose yet (one `ModelData::pose` per man near the camera).
+
+`cargo run --release -p acr-render --example gear_volume -- <glb>... [--steps N] [--keys
+...]` checks solid gear as volumes, which `model_layers` (outer layers as sheets) cannot:
+every closed, connected piece of the gear materials and the slung musket, skinned through
+the rest pose and every clip; the body and clothing vertices inside it by ray parity, per
+penetrating material, with the worst clip and frame.
 
 ## 1. What the sprites tell
 

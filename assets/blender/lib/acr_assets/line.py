@@ -248,6 +248,32 @@ def _add_sockets(arm_obj, prefix="", sling_at=SLING_AT):
     bpy.ops.object.mode_set(mode="OBJECT")
 
 
+# The slung musket's sling (item frame of `gear.musket`, +Z the barrel, the stock's coat
+# side +Y): from the lower swivel in front of the guard to the upper band, beside the
+# fore-stock (+X) and inside the stock's depth, so it never reaches the coat; part of the
+# musket's mesh (material 2, `belts`): it hides and shows with the musket's socket.
+SLING_STRAP = ((0.20, 0.75), 0.025, 0.004, 0.034, 0.018)  # (z from, to), width, thickness, x, y
+
+
+def _sling_strap(gun):
+    import bmesh
+
+    (z0, z1), w, t, x, y = SLING_STRAP
+    me = gun.data
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    r = bmesh.ops.create_cube(bm, size=1.0)
+    for v in r["verts"]:
+        top = v.co.z > 0
+        v.co = Vector((x + v.co.x * w, y + v.co.y * t + (0.004 if top else 0.0), z1 if top else z0))
+    for f in bm.faces:
+        if f.verts[0] in r["verts"]:
+            f.material_index = 2
+    bm.to_mesh(me)
+    bm.free()
+    me.update()
+
+
 def add_sidearm(ch, name, kind, musket_len):
     """The sidearm `kind` (`SIDEARMS`) on `socket.blade_r` and a second musket slung on the
     back (`socket.sling`); the clips key which is shown (`sidearm_strikes`, `key_show`)."""
@@ -257,7 +283,8 @@ def add_sidearm(ch, name, kind, musket_len):
     gun = gear.musket(f"{name}.musket_slung", length=musket_len, bayonet=0.0)
     for c in list(gun.children):  # the muzzle empty: the slung musket is no weapon
         bpy.data.objects.remove(c)
-    gun["acr_material_keys"] = ["wood", "metal"]
+    _sling_strap(gun)
+    gun["acr_material_keys"] = ["wood", "metal", "belts"]
     t = math.radians(SLING_TILT)
     axis = Vector((math.sin(t), 0.0, math.cos(t)))
     grip = Vector(SLING_AT) - axis * (musket_len / 2 - 0.25)

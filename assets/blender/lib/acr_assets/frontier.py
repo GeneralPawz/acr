@@ -159,7 +159,13 @@ def _horn(ch, name, s):
         v.co.z += 0.9 * (v.co.x / 0.13) ** 2 * 0.03
     at = Matrix.Translation((-0.20, -0.02, 1.00)) @ Matrix.Rotation(math.radians(-25), 4, "Y") \
         @ Matrix.Rotation(math.radians(70), 4, "Z")
-    return _rigid(ch, bm, f"{name}.horn", "hips", at, "horn")
+    # Seated on the hunting shirt over the right hip (`gear.seat`, docs/assets-humans.md,
+    # "Seated gear"), skinned to the blended hip frame, lagging on its own bone.
+    from . import gear
+
+    obj = gear.from_bm(bm, f"{name}.horn")
+    gear.seat(ch, obj, at, (1.0, -0.1, 0.0), turn=False)
+    return ch.add("gear", obj, "horn")
 
 
 def _pouch(ch, name, s):
@@ -169,7 +175,7 @@ def _pouch(ch, name, s):
     from . import gear
 
     box = gear.box(f"{name}.pouch", (0.05, 0.15, 0.14))
-    gear.rigid(box, ch.arm, "hips", Matrix.Translation((-0.19, 0.08, 0.93)))
+    gear.seat(ch, box, Matrix.Translation((-0.19, 0.08, 0.93)), (0.95, -0.3, 0.0))
     return ch.add("gear", box, "pouch")
 
 

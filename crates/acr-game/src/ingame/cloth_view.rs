@@ -104,20 +104,20 @@ fn gltf_of(p: [f32; 3]) -> [f32; 3] {
     [p[0], p[2], -p[1]]
 }
 
-fn apply_rows(m: &[[f32; 4]; 3], p: [f32; 3]) -> [f32; 3] {
+pub(super) fn apply_rows(m: &[[f32; 4]; 3], p: [f32; 3]) -> [f32; 3] {
     std::array::from_fn(|r| m[r][0] * p[0] + m[r][1] * p[1] + m[r][2] * p[2] + m[r][3])
 }
 
-fn apply4(m: &Mat4, p: [f32; 3]) -> [f32; 3] {
+pub(super) fn apply4(m: &Mat4, p: [f32; 3]) -> [f32; 3] {
     std::array::from_fn(|r| m[0][r] * p[0] + m[1][r] * p[1] + m[2][r] * p[2] + m[3][r])
 }
 
-fn v3(p: [f32; 3]) -> Vec3 {
+pub(super) fn v3(p: [f32; 3]) -> Vec3 {
     Vec3::new(p[0], p[1], p[2])
 }
 
 /// Inverse of an affine matrix (column-major).
-fn affine_inverse(m: &Mat4) -> Mat4 {
+pub(super) fn affine_inverse(m: &Mat4) -> Mat4 {
     let a = |r: usize, c: usize| m[c][r];
     let det = a(0, 0) * (a(1, 1) * a(2, 2) - a(1, 2) * a(2, 1)) - a(0, 1) * (a(1, 0) * a(2, 2) - a(1, 2) * a(2, 0))
         + a(0, 2) * (a(1, 0) * a(2, 1) - a(1, 1) * a(2, 0));
@@ -151,7 +151,7 @@ fn affine_inverse(m: &Mat4) -> Mat4 {
 
 /// The rotation taking the direction `a` onto `b` (rows), identity if either is degenerate
 /// or they are opposite.
-fn rotation_between(a: [f32; 3], b: [f32; 3]) -> [[f32; 3]; 3] {
+pub(super) fn rotation_between(a: [f32; 3], b: [f32; 3]) -> [[f32; 3]; 3] {
     let (a, b) = (v3(a).normalize_or_zero(), v3(b).normalize_or_zero());
     let v = a.cross(b);
     let c = a.dot(b);
@@ -167,7 +167,7 @@ fn rotation_between(a: [f32; 3], b: [f32; 3]) -> [[f32; 3]; 3] {
 }
 
 /// `p ↦ R (p − from) + to` after the palette rows `m`.
-fn turned(m: &[[f32; 4]; 3], r: &[[f32; 3]; 3], from: [f32; 3], to: [f32; 3]) -> [[f32; 4]; 3] {
+pub(super) fn turned(m: &[[f32; 4]; 3], r: &[[f32; 3]; 3], from: [f32; 3], to: [f32; 3]) -> [[f32; 4]; 3] {
     std::array::from_fn(|i| {
         let mut row = [0.0; 4];
         for (c, x) in row.iter_mut().enumerate() {

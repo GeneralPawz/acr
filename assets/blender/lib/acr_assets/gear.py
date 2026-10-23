@@ -275,7 +275,7 @@ def _gaps(obj, srcs, into, prefix=""):
     return [(i, h) for i, h in hits if h is not None]
 
 
-def seat(ch, obj, world_matrix, into, gap=SEAT_GAP, soft=False, part=0, turn=True, skip=()):
+def seat(ch, obj, world_matrix, into, gap=SEAT_GAP, soft=False, part=0, turn=True, skip=(), lag=True):
     """Seats carried gear `obj` (item frame) placed at `world_matrix` (rest pose) on the
     body's outermost surface: rays along `into` (world, towards the body) from its vertices
     find the clothes, skin and gear under it; the item turns (at most `SEAT_TURN`) so its
@@ -283,6 +283,8 @@ def seat(ch, obj, world_matrix, into, gap=SEAT_GAP, soft=False, part=0, turn=Tru
     nearest vertex is `gap` off it. Skinned like the surface under it: `soft` each vertex
     with the weights under it (a knapsack bends with the spine), else every vertex with the
     contact area's blended weights (a rigid frame between spine2, spine1 and the shoulders).
+    `lag`: the item's share of its main bone goes to an own `gear.*` bone (`lag_bone`) the
+    game swings a little behind the body (`ingame/gear_view.rs`).
     Returns the bound object; `ch.seat_report[obj.name]` = (gap before, gap after) (m)."""
     into = Vector(into).normalized()
     obj.matrix_world = world_matrix
@@ -329,6 +331,8 @@ def seat(ch, obj, world_matrix, into, gap=SEAT_GAP, soft=False, part=0, turn=Tru
     attr = me.attributes.get("part") or me.attributes.new("part", "INT", "POINT")
     for a in attr.data:
         a.value = part
+    if lag:
+        lag_bone(ch, obj, blend, into)
     if not hasattr(ch, "seat_report"):
         ch.seat_report, ch.seat_moves = {}, {}
     ch.seat_report[obj.name] = (before, after)
@@ -336,6 +340,62 @@ def seat(ch, obj, world_matrix, into, gap=SEAT_GAP, soft=False, part=0, turn=Tru
     print(f"seat {obj.name}: gap {before if before is None else round(before, 4)} -> "
           f"{after if after is None else round(after, 4)} m, frame {sorted(blend.items(), key=lambda kv: -kv[1])[:3]}")
     return am.bind(obj, arm_obj=ch.arm)
+
+
+GEAR_BONE = "gear."  # prefix of the lag bones (`lag_bone`; the game finds them by it)
+
+
+LAG_SHARE = 0.6  # of every vertex's weight the lag bone takes
+LAG_TRUNK = ("hips", "spine", "spine1", "spine2")  # its parent: the trunk bone carrying most
+
+
+def lag_bone(ch, obj, blend, into, share=LAG_SHARE):
+    """Gives carried gear `obj` (bound, world rest pose, skinned by `seat`) an own deforming
+    bone `gear.<item>` under the trunk bone that carries most of it (`blend`, the contact
+    frame; a clavicle counts for spine2), keyed at rest by every clip so it follows that
+    bone, and moves `share` of each vertex's weights onto it (the rest keeps its three
+    largest): the game turns it about its head, the top of the item's contact side (where
+    the strap holds it), so the item lags and bobs (`ingame/gear_view.rs`). Returns the
+    bone's name."""
+    me = obj.data
+    into = Vector(into).normalized()
+    cos = [v.co for v in me.vertices]
+    c = sum(cos, Vector()) / len(cos)
+    top = max(v.z for v in cos)
+    contact = max(v.dot(into) for v in cos)
+    head = c + Vector((0.0, 0.0, top - c.z)) + into * (contact - c.dot(into))
+    pre = ch.prefix
+    trunk = {}
+    for b, x in blend.items():
+        k = b[len(pre):]
+        k = "spine2" if k.startswith("clavicle") else k
+        if k in LAG_TRUNK:
+            trunk[k] = trunk.get(k, 0.0) + x
+    parent = pre + (max(trunk, key=trunk.get) if trunk else "spine2")
+    name = pre + GEAR_BONE + obj.name.split(".", 1)[-1]
+    arm_obj = ch.arm
+    active = bpy.context.view_layer.objects.active
+    bpy.context.view_layer.objects.active = arm_obj
+    bpy.ops.object.mode_set(mode="EDIT")
+    ebs = arm_obj.data.edit_bones
+    eb = ebs.get(name) or ebs.new(name)
+    eb.head, eb.tail = head, head + Vector((0.0, 0.0, -0.1))
+    eb.parent, eb.use_deform = ebs[parent], True
+    bpy.ops.object.mode_set(mode="OBJECT")
+    bpy.context.view_layer.objects.active = active
+    bones = arm_obj.data.bones
+    groups = {g.index: g for g in obj.vertex_groups if g.name in bones}
+    lag = obj.vertex_groups.get(name) or obj.vertex_groups.new(name=name)
+    for v in me.vertices:
+        ws = sorted(((groups[e.group], e.weight) for e in v.groups if e.group in groups), key=lambda gw: -gw[1])
+        tot = sum(w for _g, w in ws[:3]) or 1.0
+        for k, (g, w) in enumerate(ws):
+            if k < 3:
+                g.add([v.index], (1.0 - share) * w / tot, "REPLACE")
+            else:
+                g.remove([v.index])
+        lag.add([v.index], share if ws else 1.0, "REPLACE")
+    return name
 
 
 def seat_offset(ch, obj, world_matrix, into, gap=SEAT_GAP):
