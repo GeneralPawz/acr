@@ -5,6 +5,7 @@ clothes, gear, poses and clips. See docs/assets-humans.md.
 """
 
 import math
+import os
 
 import bpy
 from mathutils import Matrix, Vector
@@ -17,6 +18,10 @@ from . import decay, detail, heads, held, limb, mbody, project, registry, rig
 # keys a unit's palette may leave out (sRGB). Families add keys with `registry.material`.
 LAYER_OF = registry.LAYER_OF
 FALLBACK = registry.FALLBACK
+# `drape.settle` before the morphs (docs/clothing.md, "Layers"). Off until checked on renders:
+# on frnbuk and engof17 it moves 50-100 vertices but leaves most rest-pose pokes the layer
+# check counts (see "Known problems"). `ACR_SETTLE=1` in the Blender environment switches it on.
+SETTLE = bool(os.environ.get("ACR_SETTLE"))
 
 
 def graph(build=None):
@@ -145,7 +150,13 @@ class Character:
 
     def morphs(self, deflate=0.65, emaciated=0.82, extra_deflate=()):
         """`deflate` on flesh, clothes and strapped gear; `emaciated` on flesh (full) and
-        clothes (a third: loose clothes hang)."""
+        clothes (a third: loose clothes hang). With `SETTLE` every layer is first settled under
+        the layers on it (`drape.settle`, docs/clothing.md "Layers"), so the morphs keep the order."""
+        from . import drape
+
+        if SETTLE:
+            self.settle_report = drape.settle(self)
+            print(f"[{self.name}] settled under the layers above: {self.settle_report}")
         bones = [self.prefix + b for b in rig.BODY_BONES]
         for o in self.layers["flesh"] + self.layers["clothes"]:
             bd.toward_bones(o, self.arm, "deflate", deflate, bones)

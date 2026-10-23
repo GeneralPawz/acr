@@ -883,6 +883,94 @@ def hide_under(ch, inner, outer, depth=0.006, reach=0.05):
     return n
 
 
+SETTLE_MARGIN = 0.004  # m: an inner layer ends at least this far below the layer on it
+SETTLE_POKE = 0.015  # m: inner vertices up to this far out through an outer layer are pulled in
+SETTLE_SEAM = 0.0015  # m: an outer surface this close to the vertex is the same cloth (an inlay's border)
+SETTLE_SKIP = ("head", "neck", "hand", "index", "middle", "ring", "pinky", "thumb", "foot", "toe")
+
+
+def _segment(seg, homes, i, co):
+    """The bone segment a vertex is pushed towards: its home bone, else the nearest one."""
+    if homes is not None:
+        return homes[i]
+    return min(seg, key=lambda b: (co - bd.seg_point(co, *seg[b])).length)
+
+
+def settle(ch, objs=None, margin=SETTLE_MARGIN, poke=SETTLE_POKE):
+    """Every ranked layer under the ranked layers above it (`garments.LAYER_RANK`), for all
+    families (docs/clothing.md, "Layers"): each vertex of an inner layer is cast from its
+    bone outwards through itself; where an outer layer's surface is met less than `margin`
+    beyond the vertex, or up to `poke` before it (the vertex pokes through already in the
+    drape: a shirt through a cloak, a doublet over the falling band), the vertex moves in to
+    `margin` below that surface. Openings (nothing above) and loose layers further out keep
+    their place. The free skirts are not moved (they swing); the head, neck, hands and feet
+    of the skin neither (the face seam, the fingers). Returns {inner key: vertices moved}."""
+    objs = objs if objs is not None else ch.layers["flesh"] + ch.layers["clothes"] + ch.layers["gear"]
+    body = {ch.prefix + x for x in rig.BODY_BONES}
+    every = {b: s for b, s in am.segments(ch.arm).items() if b in body}
+    # Clothes may move at the neck (collars, capes and bands lie there); the skin may not.
+    cloth_seg = {b: s for b, s in every.items() if not b[len(ch.prefix):].startswith(SETTLE_SKIP[2:])}
+    skin_seg = {b: s for b, s in every.items() if not b[len(ch.prefix):].startswith(SETTLE_SKIP)}
+    ranked = []
+    for o in objs:
+        if o.type != "MESH" or len(o.get("acr_material_keys") or ()) > 1:
+            continue
+        rank = gm.LAYER_RANK.get(ch.keys.get(o.name))
+        if rank is not None and len(o.data.polygons):
+            ranked.append((rank, o))
+    trees = {}
+    for r, o in ranked:
+        mw = o.matrix_world
+        trees[o.name] = BVHTree.FromPolygons([mw @ v.co for v in o.data.vertices],
+                                             [tuple(p.vertices) for p in o.data.polygons])
+    moved = {}
+    for r, o in ranked:
+        outer = [trees[x.name] for rx, x in ranked if rx > r]
+        if not outer or o.name.endswith(("_skirts", "turnbacks")) or "skirt" in o.name:
+            continue
+        me = o.data
+        try:
+            homes = bd.homes(o)
+        except (KeyError, TypeError):
+            homes = None
+        mw, inv = o.matrix_world, o.matrix_world.inverted()
+        seg = skin_seg if r == 0 else cloth_seg
+        n = 0
+        for i, v in enumerate(me.vertices):
+            co = mw @ v.co
+            h = _segment(seg, homes, i, co) if (homes is None or homes[i] in seg) else None
+            if h is None or h not in seg:
+                continue
+            q = bd.seg_point(co, *seg[h])
+            d = co - q
+            dist = d.length
+            if dist < 0.02:
+                continue
+            u = d / dist
+            best, seam = None, False
+            for t in outer:
+                start = max(0.0, dist - poke)
+                hit = t.ray_cast(q + u * start, u, dist + margin - start)
+                if hit[0] is not None:
+                    h_at = start + hit[3]
+                    # On the outer surface itself: an inlay's border (facings in the coat),
+                    # one cloth, not two layers; the depth bias orders the rest.
+                    seam |= abs(h_at - dist) < SETTLE_SEAM
+                    best = h_at if best is None else min(best, h_at)
+            if best is None or seam:
+                continue
+            to = best - margin
+            if to < 0.5 * dist:  # the outer layer far inside: another surface, not this one's cover
+                continue
+            v.co = inv @ (q + u * to)
+            n += 1
+        me.update()
+        if n:
+            key = ch.keys.get(o.name)
+            moved[key] = moved.get(key, 0) + n
+    return moved
+
+
 def inherit_weights(obj, ch, under):
     """Replaces the weights of gear laid over the garments (the crossbelts) by those of the
     garment surface under each vertex (`transfer_weights` with `under`)."""

@@ -626,3 +626,30 @@ def uniform(m=MEASURE, garments=ORDER, patterns=None):
     if missing:
         raise KeyError(f"no sewing pattern for {missing} (register it with registry.garment)")
     return {g: drafts[g](m) for g in garments}
+
+
+# -- layer order ---------------------------------------------------------------------------
+
+# {material key: layer rank}: the game's table (`acr_render::layers::layer_rank`; the test
+# `test_layer_ranks_match_the_game` keeps them equal). Skin 0, legwear 1, gaiters and boots 2,
+# shirts 3, waistcoats 4, coats and cloaks 5, facings and sashes 6, belts 7, boxes and pouches 8.
+# `drape.settle` pushes every ranked layer under the ranked layers above it.
+LAYER_RANK = {
+    "skin": 0, "paint_red": 0, "paint_black": 0, "paint_white": 0,
+    "breeches": 1, "stockings": 1, "hose": 1, "fhose": 1, "leggings": 1,
+    "gaiters": 2, "garter": 2, "boots": 2, "boots_high": 2, "jackboots": 2, "slops": 2, "shoes": 2,
+    "moccasins": 2, "sandals": 2, "wraps": 2, "pue_wraps": 2, "breechcloth": 2, "hipcloth": 2,
+    "maxtlatl": 2, "pue_kilt": 2,
+    "shirt": 3, "stock": 3, "fshirt": 3, "war_shirt": 3, "flaps": 3,
+    "waistcoat": 4, "doublet": 4, "dsleeve": 4, "slashes": 4, "vest": 4, "fvest": 4,
+    "pue_jerkin": 4, "ichcahuipilli": 4, "maya_jacket": 4, "inca_quilt": 4,
+    "coat": 5, "tunic": 5, "cloak": 5, "buff": 5, "officer_coat": 5, "matchcoat": 5, "smock": 5,
+    "habit": 5, "hunting": 5, "cappa": 5, "fcloak": 5, "armour": 5, "unku_plain": 5,
+    "unku_tocapu": 5, "unku_check": 5, "unku_royal": 5, "pue_tunic": 5,
+    "facings": 6, "lining": 6, "sash": 6, "fallband": 6, "lapels": 6, "fsash": 6, "pue_sash": 6,
+    "band": 6, "lace": 6, "fringe": 6, "meso_trim": 6, "tilmatli": 6, "yacolla": 6,
+    "pue_blanket": 6, "pelt": 6, "jaguar": 6,
+    "belts": 7, "brass": 7, "belt_hide": 7, "cord": 7, "pue_band": 7,
+    "cartridge": 8, "knapsack": 8, "pouch": 8, "sack": 8, "scabbard": 8, "horn": 8, "match": 8,
+}
+

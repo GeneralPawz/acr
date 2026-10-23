@@ -99,9 +99,15 @@ collision between layers (too dear for hundreds of men):
 - **Depth bias in the shader**: every layer draws `LAYER_BIAS` (1 mm) × its rank nearer the
   camera (`model.wgsl`, `material.cloth.z`), so a millimetre of crossing never flickers.
   The rank is the material extra `acr_layer` if present, else from the material key
-  (`acr_render::layers::layer_rank`: skin 0, breeches 1, gaiters 2, shirt and stock 3,
-  waistcoat 4, coat 5, facings and lining 6, belts and brass 7, cartridge box and knapsack
-  8). The shadow pass shares `vs_main`: it moves by the same few mm along its own view
+  (`acr_render::layers::layer_rank`: skin 0, legwear 1, gaiters, boots, breechcloths and
+  kilts 2, shirts 3, waistcoats, doublets and quilted jackets 4, coats, cloaks, tunics and
+  armour 5, facings, lining, sashes, bands and mantles 6, belts, brass and cords 7, boxes,
+  pouches, horns and scabbards 8). Every cloth key of every family has a rank or is listed
+  in `NOT_LAYERS` (hair, feathers, jewellery, weapons, hats); until #287's trisoup pass
+  about 70 keys of the 17th-century, frontier, native, meso and Inca families had none, so
+  they drew without a bias and the check skipped them. `garments.LAYER_RANK` is the same
+  table for the build; `tests/test_garments.py` (`LayerRanks`) fails when the two differ or
+  a registered cloth key has no rank. The shadow pass shares `vs_main`: it moves by the same few mm along its own view
   direction, far below the shadow bias. WebGL2: a uniform, no new bindings.
 - Ragdolls drive the same bones and weights, so the same holds for physics poses (the
   check covers the death and lying clips; a free ragdoll is not sampled).
@@ -111,7 +117,35 @@ collision between layers (too dear for hundreds of men):
 lists, per layer pair, the inner vertices covered in the rest pose, how many come out
 through the outer layer by more than 1 mm in some frame, and the deepest crossing with its
 clip and frame (`acr_render::layers`). The test `belts_stay_on_the_coat` runs it on
-`ACR_MODELS_DIR/engm18.glb` when that is set.
+`ACR_MODELS_DIR/engm18.glb` when that is set. It also counts **poking** vertices: inner
+vertices that lie 1–12 mm *above* an outer triangle already in the rest pose (`POKE`; the
+depth bias cannot hide them, and the frame check skipped them). The last lines are one
+`summary <glb> poking N crossing M` per model; `--max-poking N` and `--max-crossing N` make
+it fail, so CI or a family's rebuild can gate on it (all 104 humans take 12 s at
+`--steps 8`).
+
+**Trisoup survey** (#287, all 104 human glbs of the showcase, `--steps 8`, output in
+`ACR-analysis/trisoup/before/`): every unit has 50–420 poking and 20–550 crossing
+vertices. Worst pairs, summed over the units (poking / crossing): skin under breeches
+2209 / 2524, coat at the facings 1225 / 440 (mostly the inlay borders and hem rims, not
+visible), skin under the coat 916 / 2189, waistcoat under the coat 866 / 2154, breechcloth
+under a native's shirt 644 / 218, breeches under the coat skirts 174 / 4193. The patches
+in the sheets: FrnBuk's shirt through the cloak 125 / 148, EngOf17's buff coat over the
+falling band 45 / 22 and the band over the brass 115 / 19, EngMus' doublet over the band
+76 / 32, SpnS15's doublet under the armour 47 / 169, DelKri's breechcloth through the shirt
+140 / 37 and skin through the shirt 82 / 86.
+
+**`drape.settle`** (all families, before `Character.morphs`; off by default,
+`humans.SETTLE` / `ACR_SETTLE=1`): every ranked layer is pushed under all ranked layers
+above it. Each vertex is cast from its bone outwards through itself; where an outer
+surface is met less than 4 mm beyond it or up to 15 mm before it, the vertex moves in to
+4 mm below that surface; an outer surface within 1.5 mm is the same cloth (an inlay's
+border) and is left alone, and so are the free skirts and the skin's head, neck, hands and
+feet. On frnbuk it moved 53 shirt vertices and engof17 18 buff ones, but the check still
+counts most of the pokes (frnbuk shirt → cloak 125 → 100, engof17 buff → band 45 → 32): the
+bone ray does not reach them (the check measures along the outer triangle's normal; cloaks
+and bands far from the bone, or with normals turned inwards, need a cast along the outer
+surface's normal instead). Not yet checked on renders, hence off.
 
 engm18, 24 frames × 19 clips (crossing vertices / worst):
 
@@ -303,3 +337,9 @@ up from the side, frames `walk*`, `fall*`; `ACR_NO_CLOTH=1` for the skinned skir
 - The gaiters take their colour from the sprites (brown-black), not the palette's black.
 - No per-frame push-out of the layers (see "Layers": weights, push-in and a depth bias
   instead); the runtime cloth only for ragdolls (above).
+- Trisoup (#287): rest-pose pokes remain in every family (survey under "Layers");
+  `drape.settle` catches only part of them. Not done yet: settling along the outer
+  surface's normal, deleting fully covered inner faces over all clips, wider atlas gutters
+  (`outfit.atlas_uv` packs islands with a 0.006 margin of the *whole* atlas before it is
+  scaled into a painter's cell, i.e. under 1 px in small cells, and pads cells by 2 px),
+  and before/after renders.

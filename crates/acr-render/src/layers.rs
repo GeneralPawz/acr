@@ -19,27 +19,100 @@ pub const REACH: f32 = 0.04;
 const CANDIDATES: f32 = 0.04;
 /// Crossings shallower than this (m) are not counted (the shader's layer bias hides them).
 pub const TOLERANCE: f32 = 0.001;
+/// Inner vertices up to this far (m) above an outer triangle in the rest pose poke through it
+/// already in the drape (further out they belong to another surface).
+pub const POKE: f32 = 0.012;
 
 /// Depth bias per layer rank (m, `model.wgsl`): belts (7) draw 7 mm nearer the camera than
 /// the skin, a coat 1 mm nearer than the waistcoat.
 pub const LAYER_BIAS: f32 = 0.001;
 
 /// The layer order of a material key (`humans.LAYER_OF`): skin at the bottom, gear on top;
-/// `None` for materials that are not layers (hair, bones, the musket, a stump cap).
+/// `None` for materials that are not layers (hair, bones, the musket, a stump cap). Every
+/// cloth, leather or hide key the families register needs a rank or a place in
+/// [`NOT_LAYERS`] (test `every_registered_key_has_a_rank`): a key without one draws without
+/// a depth bias and is left out of the check.
 pub fn layer_rank(key: &str) -> Option<u8> {
     Some(match key {
-        "skin" => 0,
-        "breeches" | "stockings" | "hose" => 1,
-        "gaiters" | "garter" | "boots" | "boots_high" | "jackboots" | "slops" => 2,
-        "shirt" | "stock" => 3,
-        "waistcoat" | "doublet" | "dsleeve" => 4,
-        "coat" | "tunic" | "cloak" | "buff" => 5,
-        "facings" | "lining" | "sash" | "fallband" => 6,
-        "belts" | "brass" => 7,
-        "cartridge" | "knapsack" => 8,
+        "skin" | "paint_red" | "paint_black" | "paint_white" => 0,
+        "breeches" | "stockings" | "hose" | "fhose" | "leggings" => 1,
+        "gaiters" | "garter" | "boots" | "boots_high" | "jackboots" | "slops" | "shoes" | "moccasins" | "sandals"
+        | "wraps" | "pue_wraps" | "breechcloth" | "hipcloth" | "maxtlatl" | "pue_kilt" => 2,
+        "shirt" | "stock" | "fshirt" | "war_shirt" | "flaps" => 3,
+        "waistcoat" | "doublet" | "dsleeve" | "slashes" | "vest" | "fvest" | "pue_jerkin" | "ichcahuipilli"
+        | "maya_jacket" | "inca_quilt" => 4,
+        "coat" | "tunic" | "cloak" | "buff" | "officer_coat" | "matchcoat" | "smock" | "habit" | "hunting"
+        | "cappa" | "fcloak" | "armour" | "unku_plain" | "unku_tocapu" | "unku_check" | "unku_royal" | "pue_tunic" => 5,
+        "facings" | "lining" | "sash" | "fallband" | "lapels" | "fsash" | "pue_sash" | "band" | "lace" | "fringe"
+        | "meso_trim" | "tilmatli" | "yacolla" | "pue_blanket" | "pelt" | "jaguar" => 6,
+        "belts" | "brass" | "belt_hide" | "cord" | "pue_band" => 7,
+        "cartridge" | "knapsack" | "pouch" | "sack" | "scabbard" | "horn" | "match" => 8,
         _ => return None,
     })
 }
+
+/// Material keys that are no clothing layer: hair, feathers, bones, weapons, jewellery,
+/// head gear (the head is not checked), horses and their tack.
+pub const NOT_LAYERS: &[&str] = &[
+    "hair",
+    "hair_variant",
+    "hair_ribbon",
+    "face",
+    "bone",
+    "stump_meat",
+    "flesh",
+    "wood",
+    "metal",
+    "stone",
+    "feather",
+    "crest",
+    "roach",
+    "hat",
+    "cap",
+    "llautu",
+    "inca_plumes",
+    "inca_hair",
+    "inca_helmet",
+    "spool",
+    "quetzal",
+    "macaw",
+    "plumes",
+    "meso_hair",
+    "jade",
+    "turquoise",
+    "gold",
+    "silver",
+    "shell",
+    "beads",
+    "hairpipe",
+    "quill",
+    "plume",
+    "gustoweh",
+    "eagle",
+    "eagle_tip",
+    "turtle",
+    "chimalli",
+    "inca_shield",
+    "atlatl",
+    "gourd",
+    "vellum",
+    "colour",
+    "flag",
+    "flag_a",
+    "flag_b",
+    "flag_c",
+    "book",
+    "horse",
+    "mane",
+    "hooves",
+    "saddle",
+    "saddlecloth",
+    "tack",
+    "hide",
+    "fur",
+    "bronze",
+    "iron",
+];
 
 /// The material key of a material name (`engm18.coat.outfit.001.gltf` -> `coat`).
 pub fn material_key(name: &str) -> &str {
@@ -55,6 +128,10 @@ pub struct PairReport {
     pub covered: usize,
     /// Of them, the ones that cross in at least one sampled frame.
     pub crossing: usize,
+    /// Inner vertices that already lie above the outer layer in the rest pose (by more than
+    /// [`TOLERANCE`], less than [`POKE`]), and the deepest of them (m).
+    pub poking: usize,
+    pub poke_worst: f32,
     /// Crossing (vertex, frame) samples.
     pub samples: usize,
     /// The deepest crossing (m) and where: clip name and frame.
@@ -192,6 +269,11 @@ pub fn check(model: &ModelData, steps: usize) -> Vec<PairReport> {
                 };
                 // Covered in the rest pose: under an outer triangle, within reach.
                 let Some((t0, d)) = nearest(op, p) else { continue };
+                if d > TOLERANCE && d < POKE {
+                    report.poking += 1;
+                    report.poke_worst = report.poke_worst.max(d);
+                    continue;
+                }
                 if d >= 0.0 || d <= -REACH {
                     continue;
                 }
@@ -228,7 +310,7 @@ pub fn check(model: &ModelData, steps: usize) -> Vec<PairReport> {
                 }
                 report.crossing += usize::from(crossed);
             }
-            if report.covered > 0 {
+            if report.covered + report.poking > 0 {
                 out.push(report);
             }
         }
@@ -239,13 +321,15 @@ pub fn check(model: &ModelData, steps: usize) -> Vec<PairReport> {
 /// A plain-text table of the reports.
 pub fn table(reports: &[PairReport]) -> String {
     use std::fmt::Write as _;
-    let mut s = String::from("inner      outer      covered crossing samples worst_mm  at\n");
+    let mut s = String::from("inner        outer        poking poke_mm covered crossing samples worst_mm  at\n");
     for r in reports {
         let _ = writeln!(
             s,
-            "{:<10} {:<10} {:>7} {:>8} {:>7} {:>8.1}  {} {}",
+            "{:<12} {:<12} {:>6} {:>7.1} {:>7} {:>8} {:>7} {:>8.1}  {} {}",
             r.inner,
             r.outer,
+            r.poking,
+            r.poke_worst * 1000.0,
             r.covered,
             r.crossing,
             r.samples,
@@ -255,7 +339,8 @@ pub fn table(reports: &[PairReport]) -> String {
         );
     }
     let total: usize = reports.iter().map(|r| r.crossing).sum();
-    let _ = writeln!(s, "crossing vertices: {total}");
+    let poking: usize = reports.iter().map(|r| r.poking).sum();
+    let _ = writeln!(s, "poking in the rest pose: {poking}, crossing vertices: {total}");
     s
 }
 
@@ -270,6 +355,15 @@ mod tests {
         assert!(ranks.windows(2).all(|w| w[0] < w[1]), "{ranks:?}");
         assert_eq!(layer_rank("hair"), None);
         assert_eq!(material_key("engm18.coat.outfit.001.gltf"), "coat");
+    }
+
+    #[test]
+    fn no_key_is_both_a_layer_and_not_one() {
+        for k in NOT_LAYERS {
+            assert_eq!(layer_rank(k), None, "{k}");
+        }
+        assert_eq!(layer_rank("fcloak"), Some(5));
+        assert!(layer_rank("fshirt") < layer_rank("fcloak"));
     }
 
     /// The built musketeer (`ACR_MODELS_DIR`, skipped without it): the crossbelts stay on the

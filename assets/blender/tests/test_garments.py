@@ -141,3 +141,39 @@ class Period17(unittest.TestCase):
         # Long hose reach above the knee.
         h, _ = self.uni["hose"]
         self.assertGreater(h["hose"].bounds()[3], m["knee_to_ankle"] + 20.0)
+
+
+class LayerRanks(unittest.TestCase):
+    """The build's layer order (`garments.LAYER_RANK`, `drape.settle`) is the game's
+    (`acr_render::layers::layer_rank`, the shader's depth bias), and every cloth key of the
+    base registry has a rank or is listed as no layer."""
+
+    def _game(self):
+        import re
+
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..",
+                            "crates", "acr-render", "src", "layers.rs")
+        if not os.path.exists(path):
+            self.skipTest("no game sources")
+        with open(path, encoding="utf-8") as f:
+            src = f.read()
+        body = src[src.index("pub fn layer_rank"):src.index("_ => return None")]
+        ranks = {}
+        for arm in re.finditer(r"((?:\"\w+\"\s*\|?\s*)+)=>\s*(\d+)", body):
+            for k in re.findall(r"\"(\w+)\"", arm.group(1)):
+                ranks[k] = int(arm.group(2))
+        nl = src[src.index("pub const NOT_LAYERS"):]
+        return ranks, set(re.findall(r"\"(\w+)\"", nl[:nl.index("];")]))
+
+    def test_layer_ranks_match_the_game(self):
+        ranks, _ = self._game()
+        self.assertEqual(gm.LAYER_RANK, ranks)
+
+    def test_every_cloth_key_has_a_rank(self):
+        from acr_assets import registry
+
+        ranks, not_layers = self._game()
+        self.assertFalse(set(ranks) & not_layers)
+        cloth = {k for k, layer in registry.LAYER_OF.items() if layer in ("wool", "linen", "leather", "hide", "flesh")}
+        missing = sorted(k for k in cloth if k not in ranks and k not in not_layers)
+        self.assertEqual(missing, [], "give these keys a rank in layers.rs and garments.LAYER_RANK")
