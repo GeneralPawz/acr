@@ -308,12 +308,10 @@ struct Entry {
     variant: Option<usize>,
     /// Within the window (else only a shadow caster).
     on_screen: bool,
-    /// Cut, fractured, torn or a severed piece ([`Damage`]): never drawn from the far
-    /// meshes, whose welded triangles span body parts ([`lod::DAMAGED_UP_TO`]).
-    damaged: bool,
     /// Damaged other than by wound volumes alone ([`Damage::splits_parts`]): the drawn
-    /// list keeps such an instance at [`lod::DAMAGED_UP_TO`]; volumes alone draw from the
-    /// far meshes (m2-perf: a battlefield of shot corpses otherwise drew whole).
+    /// list and the shadow casters keep such an instance at [`lod::DAMAGED_UP_TO`], as the
+    /// far meshes' welded triangles span body parts; volumes alone draw from the far meshes
+    /// (m2-perf: a battlefield of shot corpses otherwise drew whole).
     split: bool,
     origin: [f32; 3],
     /// Culling radius (world pixels).
@@ -1204,7 +1202,6 @@ impl ModelRenderer {
                 decaying,
                 variant,
                 on_screen,
-                damaged: !inst.damage.is_none(),
                 split: inst.damage.splits_parts(),
                 origin,
                 radius: model.radius * stretch,
@@ -1406,7 +1403,8 @@ impl ModelRenderer {
                 .map(|e| {
                     let l = match level[e.model] + lod::SHADOW_STEP {
                         _ if whole(e.model) => 0,
-                        l if e.damaged => l.min(lod::DAMAGED_UP_TO),
+                        // As drawn: only a body split into parts stays off the welded lists.
+                        l if e.split => l.min(lod::DAMAGED_UP_TO),
                         l if l >= lod::LEVELS - 1 => lod::SHADOW,
                         l => l,
                     };
