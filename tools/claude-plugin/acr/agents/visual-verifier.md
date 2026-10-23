@@ -6,6 +6,7 @@ model: haiku
 skills:
   - acr-vm
   - acr-driver
+autoCompactWindow: 100000
 effort: low
 maxTurns: 20
 disallowedTools: Agent

@@ -7,6 +7,7 @@ skills:
   - acr-vm
   - acr-sim
   - acr-map
+autoCompactWindow: 400000
 effort: medium
 maxTurns: 150
 disallowedTools: Agent

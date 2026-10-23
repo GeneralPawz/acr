@@ -5,6 +5,7 @@ tools: Bash, Read, Glob
 model: haiku
 skills:
   - acr-vm
+autoCompactWindow: 100000
 effort: low
 maxTurns: 40
 disallowedTools: Agent

@@ -7,6 +7,7 @@ skills:
   - acr-vm
   - acr-blender-pipeline
   - blender-craft
+autoCompactWindow: 400000
 effort: medium
 maxTurns: 200
 disallowedTools: Agent

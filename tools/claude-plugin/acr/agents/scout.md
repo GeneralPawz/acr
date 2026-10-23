@@ -5,6 +5,7 @@ tools: Read, Grep, Glob
 model: haiku
 skills:
   - acr-map
+autoCompactWindow: 100000
 effort: low
 maxTurns: 15
 disallowedTools: Agent

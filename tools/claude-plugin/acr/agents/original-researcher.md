@@ -6,6 +6,7 @@ model: haiku
 skills:
   - acr-original
   - acr-map
+autoCompactWindow: 100000
 effort: medium
 maxTurns: 30
 disallowedTools: Agent
