@@ -733,7 +733,7 @@ FALL_TO = (-0.6, 2.3)
 
 def centre_fall(hz, bone="spine_02", to=FALL_TO):
     """Slides the fall so that the dead horse's body ends at `to`, where the sprites'
-    corpse lies; eased over the fall, as the stumble of a falling horse."""
+    corpse lies; eased over the stumble (`rig.fall_slide`), done once the body is down."""
     W = hz.worlds.get("DEATH")
     if not W:
         return
@@ -742,7 +742,7 @@ def centre_fall(hz, bone="spine_02", to=FALL_TO):
     n = len(W)
     for i, fr in enumerate(W):
         t = i / max(n - 1, 1)
-        T = Matrix.Translation(-off * (t * t * (3 - 2 * t)))
+        T = Matrix.Translation(-off * rig.fall_slide(t))
         for b in fr:
             fr[b] = T @ fr[b]
 

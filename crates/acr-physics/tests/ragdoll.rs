@@ -371,3 +371,72 @@ fn generic_quadruped_falls_on_its_side_and_settles() {
     assert!(animal.min_z(&world) > -0.03, "{}", animal.min_z(&world));
     assert!(kinetic(&world) / mass < 0.01, "{}", kinetic(&world));
 }
+
+/// A melee blow (12 N·s, `ragdoll_view`) on any bone of a dying man standing: he falls in
+/// place or backwards, his feet move at most about a step, and no body is whipped faster
+/// than a falling man's (no launch), also when a hand or the head is struck.
+#[test]
+fn melee_blow_knocks_down_but_never_launches() {
+    let skeleton = skeleton_h();
+    // First no blow at all: where a man collapsing in place puts his feet.
+    let mut collapse = 0.0;
+    for (bone, j) in [(0, 0.0)].into_iter().chain((0..skeleton.len()).map(|b| (b, 12.0))) {
+        let mut world = World::new(config());
+        let man = Ragdoll::spawn(&mut world, &skeleton, 75.0, Vec3::new(0.0, 0.0, 0.005), Quat::IDENTITY);
+        man.set_tone_all(&mut world, Tone::FULL);
+        for _ in 0..6 {
+            world.step(&flat);
+        }
+        let feet = |w: &World| {
+            let p = |n: &str| w.body(man.body(man.bone_index(n).unwrap())).pos;
+            (p("foot_l") + p("foot_r")) * 0.5
+        };
+        let f0 = feet(&world);
+        let id = man.body(bone);
+        let dir = Vec3::new(0.0, 1.0, 0.0);
+        let point = world.body(id).pos - dir * (world.body(id).radius * 0.8);
+        man.apply_blow(&mut world, bone, point, dir * j, 2.0);
+        let mut top = 0.0f32;
+        for s in 0..180 {
+            // The tone runs out over 0.4 s, as for the dying.
+            let k = (1.0 - s as f32 / 24.0).max(0.0);
+            man.set_tone_all(&mut world, Tone::FULL.scaled(0.6 * k));
+            world.step(&flat);
+            for b in 0..man.len() {
+                top = top.max(world.body(man.body(b)).vel.length());
+            }
+        }
+        let f1 = feet(&world);
+        let moved = Vec3::new(f1.x - f0.x, f1.y - f0.y, 0.0).length();
+        let name = skeleton[bone].name;
+        println!("{name} {j}: feet moved {moved:.2} m, top {top:.1} m/s");
+        if j == 0.0 {
+            collapse = moved;
+        }
+        assert!(moved < collapse + 0.6, "{name}: feet moved {moved:.2} m ({collapse:.2} m without the blow)");
+        assert!(top < 6.0, "{name}: a body reached {top:.1} m/s");
+    }
+}
+
+/// `Ragdoll::set_velocity` takes the spikes out of a ragdoll that hung on a pinned root.
+#[test]
+fn set_velocity_calms_every_body() {
+    let mut world = World::new(config());
+    let man = Ragdoll::spawn(&mut world, &skeleton_h(), 75.0, Vec3::new(0.0, 0.0, 0.005), Quat::IDENTITY);
+    man.set_tone_all(&mut world, Tone::FULL);
+    man.set_pinned_root(&mut world, true);
+    // The root jumps 5 cm a frame (a running man's clip).
+    for i in 0..30 {
+        let b = world.body(man.body(0));
+        let (p, q) = (b.pos + Vec3::new(0.05, 0.0, 0.0), b.rot);
+        world.set_body_state(man.body(0), p, q, Vec3::ZERO, Vec3::ZERO);
+        world.step(&flat);
+        let _ = i;
+    }
+    man.set_pinned_root(&mut world, false);
+    let v = Vec3::new(3.0, 0.0, 0.0);
+    man.set_velocity(&mut world, v);
+    for b in 0..man.len() {
+        assert!((world.body(man.body(b)).vel - v).length() < 1e-4);
+    }
+}

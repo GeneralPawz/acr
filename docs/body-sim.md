@@ -184,13 +184,20 @@ are piled. The renderer takes a palette from it per instance
   his velocity (ground points of the last two ticks) into a pooled ragdoll and applies the
   impulse at the struck bone (the `Injury` part, else the region), on its surface towards
   the attacker. Impulses: musket ball 4.5–9 N·s by energy, arrow 4, grapeshot 5–20,
-  cannonball 60–300, shell 40–160, melee 18, thrown 12. The struck region's tone drops to 5 %.
+  cannonball 60–300, shell 40–160, melee 12, thrown 12. The struck region's tone drops to 5 %.
+  A melee or thrown weapon's blow speeds up the struck body by at most 2 m/s
+  (`Ragdoll::apply_blow`); the rest of the impulse goes to the trunk, so a struck hand or
+  head is not whipped and the man falls where he stands or backwards, at most a step further
+  than he would collapse without the blow (m2-corpses: 18 N·s on a 0.45 kg hand gave it
+  9.5 m/s; test `melee_blow_knocks_down_but_never_launches`).
 - **Survivors:** the hips follow the animation on a damped spring kicked by the blow
   (stagger), sinking for leg hits (knees buckle) and a little for body hits, leaning with
   the sway; the muscles track the clip and the struck region's tone returns over 0.5–1.3 s
   (by energy); then the clip takes over again.
 - **Deaths:** the hips are freed, the tone runs out over 0.2–0.6 s (per man) with a last
   reflex (elbows bent, arms forward, towards the body), he falls, settles and sleeps; his
+  ragdoll is let go from the pinned root at his ground velocity (`Ragdoll::set_velocity`:
+  the root's kinematic jumps leave 8–12 m/s spikes in the limbs of a walking survivor); his
   pose is then kept as the corpse's (no `DEATHLIE1`, no `lie_flat` morph). Balance,
   stepping and knock-downs of survivors: §2, first slice. Crawlers and the
   lying start from their current pose and stay down. Frozen corpses stay in the physics
@@ -244,10 +251,17 @@ are piled. The renderer takes a palette from it per instance
     middle, the root; a leg by its level), the impulse of the weapon. A survivor staggers on
     a damped spring around its clip with the struck region limp; a dying animal goes limp
     over 0.2–0.6 s, falls from its pose with the shot's impulse and freezes as the corpse's
-    pose. Before a corpse is frozen it relaxes for 0.7 s (`RELAX_S`): a 6 % pull towards
-    the rest pose lowers a limb left propped up (an arm raised by the death reflex). No
+    pose. Before a corpse is frozen it relaxes for 0.7 s (`RELAX_S`): an arm left propped
+    up (hand 10 cm or more above the shoulder, raised by the death reflex) is pulled at 6 %
+    towards the rest pose; the rest stays limp in the pose it fell in. (Until m2-corpses
+    the whole body was pulled towards the rest pose: the legs straightened and the corpse
+    rolled over about a second after it had come to rest; test
+    `a_settled_corpse_keeps_its_heading_while_it_relaxes`.) No
     death reflex, steps or knock-downs for animals. Riders and horses keep their
-    clips (their types are not `Anm*`). Bones: bear 24, elk 29, jaguar 35, alligator 37.
+    clips (their types are not `Anm*`). The horse's `DEATH` clip slides the body to where the
+    sprites' corpse lies (`cavalry.centre_fall`) over the stumble only (`rig.fall_slide`,
+    the first 30 % of the clip); spread over the whole clip the dead horse slid on the
+    ground for a second after it had fallen (the cavalry models need a re-export). Bones: bear 24, elk 29, jaguar 35, alligator 37.
 - **Mauling** (`m2-animalsim`, see `docs/damage-model.md`): an animal's blow (`Injury::cause`
   `Claw`, `Bite`, `Gore`) pushes a man with 28, 22 or 60 N·s (half at no energy) away from the
   animal, a goring also upwards; at 19 N·s or more, or whenever the simulation knocks him down

@@ -255,3 +255,17 @@ def clip_keys(n_frames, keys):
         else:
             out.append((f, pose))
     return out
+
+
+# The share of a horse's DEATH clip over which its body is slid to where the sprites' corpse
+# lies (`cavalry.centre_fall`): the stumble, until the body is down (its root has turned
+# onto its side by 0.42 s of 1.54 s). Spread over the whole clip, the dead horse kept
+# sliding on the ground for a second after it had fallen.
+FALL_SLIDE_END = 0.3
+
+
+def fall_slide(t, end=FALL_SLIDE_END):
+    """Share (0..1) of the death slide done at `t` (0..1 through the clip): eased in and
+    out over the first `end` of the clip, complete from there on."""
+    k = min(max(t / end, 0.0), 1.0)
+    return k * k * (3 - 2 * k)
