@@ -325,10 +325,16 @@ pub enum Aim {
 }
 
 /// A point-blank shot of `i` at `j` on the ground (hit-locations rule): with his firearm
-/// `loaded` and in his hands, the index of the firearm, its damage and the reload delay.
+/// `loaded` and in his hands, the index of the firearm, its damage and the reload delay. A
+/// unit set to melee only (`Unit::melee_only`) never fires.
 fn point_blank(w: &World, i: usize, j: usize, loaded: bool) -> Option<(u8, i32, i32)> {
     let u = &w.units[i];
-    if !w.rules.hit_locations || !loaded || u.body.disarmed() || !crate::melee::on_ground(&w.units[j].body) {
+    if !w.rules.hit_locations
+        || !loaded
+        || u.melee_only
+        || u.body.disarmed()
+        || !crate::melee::on_ground(&w.units[j].body)
+    {
         return None;
     }
     let ta = w.adv(u.owner, u.kind);

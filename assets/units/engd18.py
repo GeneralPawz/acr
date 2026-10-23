@@ -282,7 +282,7 @@ def build(ctx):
 # The dragoon on the WildMesh horse (`acr_assets.cavalry`): coat and cap, a military saddle
 # with holsters on a red saddlecloth, sabre at the hip, the carbine upright on the right
 # thigh (raised for the shot, ATTACK1); a dark bay (sprites).
-SPEC = {"md": MD, "palette": PALETTE, "dress": "coat", "tack": "military", "hat": "cap", "held": None, "gun": "carbine",
+SPEC = {"md": MD, "palette": PALETTE, "dress": "coat", "tack": "military", "hat": "cap", "held": None, "gun": "carbine", "drawn": True,
         "coat": {"body": (0.45, 0.28, 0.16), "hair": (0.12, 0.09, 0.07)}}
 
 

@@ -240,18 +240,63 @@ taller for riders). Sheets: `melee-anim3/run1` (layer before the fallback fix), 
 `run3` (current: `sheet_foot_stand.png`, `sheet_lance_crawl.png`). Rebuilt on the VM:
 EngM18 and PueVsdA, copied to `showcase/models` (old ones in `backup-melee-anim3/`).
 
+### Reach, lance and drawn sabre (m2-melee4)
+
+- **Weapon point:** a held weapon may carry an empty `*socket.tip` at its point (under the
+  right hand bone: the lance's head, the drawn sabre). The layer then takes axis and reach
+  from `socket.hand_r` to it, like a musket's muzzle but one-handed: the lance reaches
+  ~2.3 m instead of `REACH` 0.9 m. A point closer than `HIDDEN` (0.2 m) is a weapon hidden in
+  this clip (socket scaled to 0): the socket's axis and `REACH` again.
+- **`lance_down`** (`cavalry.make`): the hand turned 65° down (was 40°), the rider leaning
+  out over the right side (spine Y -16°, chest -6°) instead of folding over the neck.
+- **Drawn sabre** (`drawn: True` in the spec: EngD18): a second right-hand socket
+  `socket.blade_r` (a non-deforming bone beside `socket.hand_r`) holds a drawn sabre with its
+  `socket.tip`. Every clip keys the scale of `socket.hand_r` (carbine), `socket.hip_l`
+  (sheathed sabre) and `socket.blade_r`: `SHOW_REST` (carbine and scabbard shown, blade 0)
+  in all clips, `SHOW_MELEE` (blade shown, carbine and sheathed sabre 0) in `ATTACK` and the
+  strike clips. Firing clips (`ATTACK1`, `PATTACK1`...) keep the carbine.
+- **Sabre clips** (EngD18, on ATTACK's frames, blow on frame 2, from `sabre_up`: the blade up
+  and back over the right shoulder): `ATTACK_CUT_DOWN`, `ATTACK_DOWN` and `ATTACK_CUT_DOWN_R`
+  (down right of the horse), `ATTACK_CUT_DOWN_L` (across, down left of the neck; nothing
+  picks it yet), `ATTACK_CUT_MID` and `ATTACK_CUT_HIGH` (at a standing man).
+- **Bench helpers** (`docs/testing.md`, `spawn`): `life` (a victim that lasts several
+  blows) and `hold_fire` (`Unit::melee_only`: musketeers fence with the bayonet, dragoons
+  cut). A unit set to melee only no longer fires point-blank at a man on the ground
+  (`combat::point_blank`, only under `hit_locations`).
+
+Bench: `ACR-analysis/melee4/melee_bench.py` (all attackers `hold_fire`, victims `life` 2000
+and `hold_fire`; `foot_fence`: two musketeers fencing), `hitsheet.py` (chosen frames side by
+side; the hit frames from `ACR_STRIKE_DEBUG`'s arm weight). Results:
+`melee4/run1/sheet_foot_fence_all.png` (they fence with `ATTACK_THRUST_MID`, no shots),
+`melee4/run3/sheet_lance_crawl_hit.png` (lance reach 2.54 m read from the tip),
+`melee4/run4/sheet_horse_crawl_hit.png` (EngD18 plays `ATTACK_CUT_DOWN`, the sabre in the
+hand, carbine and scabbard hidden, the blade raised in the wind-up). Rebuilt on the VM:
+EngD18 and PueVsdA (old ones in `showcase/backup-melee4/`).
+
+The exporter takes held objects relative to their bone *as posed*: a socket left at scale 0
+by the last keyed clip baked a 0 scale into the drawn sabre's own node. `cavalry.unscale`
+resets the rider's bone scales before the export.
+
 ### Not yet
 
-- **Looks:** standing musketeers in the bench mostly *shoot* each other (ATTACK1) and the
-  melee frames are few; the bayonets still pass through bodies in the `.MD` ATTACK/PSTAND
-  frames, which the layer does not guard. The lance thrust down is too shallow: at the hit
-  the lance still points forward past the man on the ground (the `lance_down` hand turn,
-  40°, is too little; the layer's lance reach is `REACH` 0.9 m while the point is ~2.3 m
-  out). The new smash pose is unchecked in a render (the sim never picks `Smash`).
-- **Dragoon sabre** not done: EngD18 still holds the carbine in melee. Drawing the sabre
-  needs a way to hide the carbine and show a drawn blade per clip (a keyed socket scale or
-  a second hand socket); no mounted sabre clips (`ATTACK_CUT_DOWN` left/right) yet. The
-  bench needs a victim that survives the carbine shot, or a melee-only order.
+- **Lance down still misses:** with the reach right, at the hit the lance still points
+  ~20° down and its point lands about a metre past the man on the ground (`run3`); the
+  clip's 65° hand turn is not what shows. Either the `lance_down` hand euler does not turn
+  the fist the way assumed (unchecked: the bench with `ACR_NO_STRIKE` did not show the
+  strike clip either), or the layer's arm IK (aimed with the clip's axis, then at most
+  `MAX_TURN` 30°) flattens it. Next: render the clip alone in Blender, then a larger turn
+  for riders.
+- **Sabre at the ground:** the bench victim lies ~2 m ahead of the horse, out of a sabre's
+  reach: at the hit the blade is level by the horse's side. A victim beside the horse is
+  needed to judge `ATTACK_CUT_DOWN`; `ATTACK_CUT_MID` is unchecked in a render.
+- **Fencing** (`foot_fence`): the men close in and the muskets pass through both bodies
+  in the strike frames; the guard is not tuned yet.
+- **Looks:** the bayonets still pass through bodies in the `.MD` ATTACK/PSTAND frames,
+  which the layer does not guard. The smash pose is unchecked in a render (the sim never
+  picks `Smash`).
+- **Sabre side:** `ATTACK_CUT_DOWN_L` is built but never chosen: the clip name has no side,
+  and the sim's strike carries none. Picking it needs the victim's side of the horse.
+- Other riders with gun and sabre (SpnRei) do not draw the sabre (`drawn` only on EngD18).
 - No officer sword clips: no foot officer is built (EngKF18 is a mounted standard bearer).
   Which `.MD` would be the first foot officer to build is not settled yet (the unit lists sit
   in the game archives; not looked up in this slice).

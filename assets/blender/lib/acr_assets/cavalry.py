@@ -20,6 +20,10 @@ A unit script gives a spec and calls `build(ctx, spec)`:
     gun       "carbine" or "pistol" in the right fist: upright on the thigh while he rides,
               level for the shot (ATTACK1, PATTACK1...)
     sabre     False: no sabre at the hip
+    drawn     True: a drawn sabre for the melee clips besides the gun (EngD18): it sits on a
+              second right-hand socket (`socket.blade_r`); the clips key the sockets' scale,
+              so the melee clips show the blade and hide the gun and the sheathed sabre
+              (`SHOW_MELEE`), all others the reverse (`SHOW_REST`)
     coat      the horse's coat tint {"body": rgb, "hair": rgb} (`mount.COAT`)
     motions   {MD suffix: (source gait, strides per sprite cycle)} (`MOTIONS`)
 
@@ -88,6 +92,10 @@ KNUCKLE, GRIP = 0.08, 0.03
 # The flag hand: fist axis (rest Y) upright, knuckles forward, palm towards the rider.
 FLAG_HAND = (-90, 0, 0)
 LANCE = (2.9, 0.65)  # length, and how far it reaches behind the grip (metres)
+BLADE = (0.86, 0.10)  # a drawn sabre: blade length, hilt behind the grip (metres)
+# Socket scales (1 shown, 0 hidden) of a rider with a drawn sabre (`drawn`).
+SHOW_REST = {"socket.hand_r": 1.0, "socket.hip_l": 1.0, "socket.blade_r": 0.0}
+SHOW_MELEE = {"socket.hand_r": 0.0, "socket.hip_l": 0.0, "socket.blade_r": 1.0}
 
 
 def rig_lie():
@@ -333,7 +341,39 @@ def lance(ch, name):
     _held(ch, f"{name}_shaft", "wood", bm, "hand_r", m)
     bm = bmesh.new()
     _tube(bm, Vector((0, back - ln, 0)), Vector((0, back - ln - 0.30, 0)), 0.03, 0.002, 6)
-    return _held(ch, f"{name}_head", "metal", bm, "hand_r", m)
+    head = _held(ch, f"{name}_head", "metal", bm, "hand_r", m)
+    tip(head, f"{name}.socket.tip", (0, back - ln - 0.30, 0))
+    return head
+
+
+def tip(obj, name, at):
+    """An empty `*socket.tip` at the point of a held weapon `obj` (its local `at`): the strike
+    layer reads the weapon's axis and reach from the hand to it (`strike_view::weapon`)."""
+    e = bpy.data.objects.new(name, None)
+    e.empty_display_size = 0.05
+    bpy.context.scene.collection.objects.link(e)
+    e.parent = obj
+    e.location = at
+    return e
+
+
+def blade(ch, name):
+    """A drawn sabre in the closed right hand along the fist's axis (rest -Y), on the second
+    right-hand socket `socket.blade_r` (shown only in the melee clips): a flat blade narrowing
+    to the point, a grip and a guard (`metal`), the point marked by `socket.tip`."""
+    c, rot = fist_centre(ch)
+    m = Matrix.Translation(c) @ rot.to_4x4()
+    ln, back = BLADE
+    bm = bmesh.new()
+    _box(bm, Vector((0, back / 2 - 0.02, 0)), (0.025, back + 0.04, 0.03))  # grip
+    _box(bm, Vector((0, -0.03, 0)), (0.02, 0.012, 0.10))  # guard
+    r = bmesh.ops.create_cube(bm, size=1.0)
+    for v in r["verts"]:
+        t = 0.5 - v.co.y  # 0 at the guard, 1 at the point
+        v.co = Vector((v.co.x * 0.006, -0.04 - t * ln, (v.co.z * 0.034 + 0.004) * (1.0 - 0.7 * t) + 0.03 * t * t))
+    obj = _held(ch, name, "metal", bm, "socket.blade_r", m)
+    tip(obj, f"{name}.socket.tip", (0, -0.04 - ln, 0.03))
+    return obj
 
 
 def shield(ch, name, radius=0.27):
@@ -525,7 +565,12 @@ def make(ctx, spec):
     sad = hz.head("saddle")
     origin = Vector((sad.x, sad.y + 0.02, sad.z - 0.90 + spec.get("seat_dz", 0.0)))
     oz, cy = origin.z, origin.y
-    ch = Character(root, name, dict(BUILD, origin=tuple(origin)), prefix=P, table=rig.skeleton_h(P, tuple(origin)))
+    table = rig.skeleton_h(P, tuple(origin))
+    if spec.get("drawn"):
+        # The second right-hand socket for the drawn sabre, beside the gun's.
+        hs = next(b for b in table if b.name == P + "socket.hand_r")
+        table.append(rig.Bone(P + "socket.blade_r", hs.parent, hs.head, hs.tail, False))
+    ch = Character(root, name, dict(BUILD, origin=tuple(origin)), prefix=P, table=table)
     mount.join(ch.arm, hz, P + "root")
     ch.body()
     close_hands(ch)
@@ -592,9 +637,20 @@ def make(ctx, spec):
              # Strike clips (docs/melee.md): the lance drawn back high, then driven down past
              # the horse's right shoulder at a man on the ground, or level at a standing one.
              "lance_back": _with_world(dict(LEGS_SEAT, spine=(4, 0, -6)), right(side(0.02, 0.10, 0.42), (-30, 0, 0))),
-             "lance_down": _with_world(dict(LEGS_SEAT, spine=(-24, 0, 10), spine1=(-8, 0, 0)),
-                                       right(side(-0.04, -0.50, -0.05), (40, 0, 0))),
+             # Down: the hand turned 65° down, the rider leaning out over the right side
+             # (not folded over the neck), the point past the shoulder at the ground.
+             "lance_down": _with_world(dict(LEGS_SEAT, spine=(-12, -16, 4), spine1=(-4, -6, 0)),
+                                       right(side(-0.14, -0.30, -0.02), (65, 0, 0))),
              "lance_mid": _with_world(dict(LEGS_SEAT, spine=(-14, 0, 8)), right(side(0.02, -0.66, 0.36), (2, 0, 0))),
+             # Drawn sabre (`drawn`): raised over the right shoulder, the blade up and back;
+             # the cuts down at a man on the ground right and left of the horse, and the cut
+             # at a standing man (the blade level with his shoulder).
+             "sabre_up": _with_world(dict(LEGS_SEAT, spine=(4, 0, -10)), right(side(0.06, 0.04, 0.78), (-110, 0, 0))),
+             "sabre_down_r": _with_world(dict(LEGS_SEAT, spine=(-12, -18, 0), spine1=(-4, -8, 0)),
+                                         right(side(-0.22, -0.30, 0.02), (70, 30, 0))),
+             "sabre_down_l": _with_world(dict(LEGS_SEAT, spine=(-12, 14, -14), spine1=(-4, 6, 0)),
+                                         right(side(0.42, -0.36, 0.14), (70, -30, 0))),
+             "sabre_mid": _with_world(dict(LEGS_SEAT, spine=(-8, -8, 6)), right(side(-0.16, -0.46, 0.36), (25, 25, 0))),
              # A gun upright, its butt on the right thigh (the socket turned from the aim's).
              "gun": _with_world(dict(LEGS_SEAT), right(side(0.04, -0.22, 0.12), None, (-2, 0, 0)))}
     for k in ("lance", "gun", "flag"):
@@ -632,6 +688,11 @@ def make(ctx, spec):
         lance(ch, f"{name}.lance")
     if spec.get("shield"):
         shield(ch, f"{name}.shield")
+    if spec.get("drawn"):
+        am.pose(ch.arm, poses["seat"], prefix=P)
+        blade(ch, f"{name}.blade")
+        am.pose(ch.arm, poses[ch.ride], prefix=P)
+        ch.show = dict(SHOW_REST)
     if spec.get("sabre", True):
         sab = gear.sabre(f"{name}.sabre")
         am.attach(sab, ch.arm, P + "socket.hip_l", Matrix.Translation(am.world(ch.arm, P + "socket.hip_l").translation)
@@ -654,8 +715,20 @@ def _keyed(arm, specs):
 
 
 def _key(ch, name, horse_frames, rider_keys):
-    keyed = _keyed(ch.arm, [s for _f, s in rider_keys])
-    mount.key_clip(ch.arm, name, horse_frames, rider_keys, lambda arm, s, f: am.pose(arm, s, frame=f, prefix=P, keyed=keyed))
+    keyed = _keyed(ch.arm, [{k: v for k, v in s.items() if k != "show"} for _f, s in rider_keys])
+    show = getattr(ch, "show", None)
+
+    def pose(arm, s, f):
+        am.pose(arm, {k: v for k, v in s.items() if k != "show"}, frame=f, prefix=P, keyed=keyed)
+        # A rider with a drawn sabre: every clip keys the sockets' scale (`SHOW_*`); a clip
+        # without the channel would show them all.
+        for bone, default in (show or {}).items():
+            k = s.get("show", {}).get(bone, default)
+            pb = arm.pose.bones[P + bone]
+            pb.scale = (k, k, k)
+            pb.keyframe_insert("scale", frame=f, group=pb.name)
+
+    mount.key_clip(ch.arm, name, horse_frames, rider_keys, pose)
 
 
 def thrown(ch, t):
@@ -714,6 +787,23 @@ def add_clips(ch, md, motions=MOTIONS):
         for name, keys in (("ATTACK_THRUST_DOWN", down), ("ATTACK_DOWN", down), ("ATTACK_THRUST_MID", mid),
                            ("ATTACK_THRUST_HIGH", mid)):
             plan[name] = (W["ATTACK"], keys)
+    if "ATTACK" in W and getattr(ch, "show", None):
+        # The drawn sabre (`drawn`): ATTACK and its strike clips show the blade, hide the gun.
+        n = len(W["ATTACK"])
+
+        def drawn(s):
+            return dict(s, show=SHOW_MELEE)
+
+        def cut(hit):
+            return [(t, drawn(s)) for t, s in poses.strike_keys(n, p["sabre_up"], hit, ride)]
+
+        ride_d = drawn(ride)
+        plan["ATTACK"] = (W["ATTACK"], [(0.0, ride_d), (0.3, drawn(p["sabre_up"])), (0.45, drawn(p["sabre_down_r"])),
+                                         (0.7, ride_d), (1.0, ride_d)])
+        for name, keys in (("ATTACK_CUT_DOWN", cut(p["sabre_down_r"])), ("ATTACK_DOWN", cut(p["sabre_down_r"])),
+                           ("ATTACK_CUT_DOWN_R", cut(p["sabre_down_r"])), ("ATTACK_CUT_DOWN_L", cut(p["sabre_down_l"])),
+                           ("ATTACK_CUT_MID", cut(p["sabre_mid"])), ("ATTACK_CUT_HIGH", cut(p["sabre_mid"]))):
+            plan[name] = (W["ATTACK"], keys)
     if "ATTACK1" in W:
         plan["ATTACK1"] = (W["ATTACK1"], [(0.0, p["aim"]), (0.08, dict(p["aim"], spine=(4, 0, 0))), (0.25, p["aim"]), (1.0, p["aim"])])
     for name, (hf, rk) in plan.items():
@@ -730,6 +820,16 @@ def add_clips(ch, md, motions=MOTIONS):
             rider_keys.append((f, s))
         _key(ch, name, W["DEATH"][-1:], rider_keys)
     return list(plan)
+
+
+def unscale(ch):
+    """Every rider bone back to scale 1 (a clip's keyed socket scale stays on the pose when
+    its action is unset): the exporter takes the held objects' nodes relative to their
+    bone as posed, and a socket at 0 would bake a 0 scale into the drawn sabre for good."""
+    for pb in ch.arm.pose.bones:
+        if pb.name.startswith(P):
+            pb.scale = (1.0, 1.0, 1.0)
+    bpy.context.view_layer.update()
 
 
 def build(ctx, spec):
@@ -756,6 +856,7 @@ def build(ctx, spec):
     for o in ch.horse["extra"]:
         o.data.calc_loop_triangles()
         tris[o.name] = len(o.data.loop_triangles)
+    unscale(ch)
     extra_clips = [c for c in made if c not in spec["md"]]
     prepare_export(ch.all_meshes() + horse_meshes, ctx.root, acr_triangles=sum(tris.values()),
                    acr_clips=[c for c in made if c in spec["md"]] + list(crawl.CLIPS), acr_limb_radius=ch.limb_radius,
@@ -768,5 +869,6 @@ def build(ctx, spec):
     ch.arm.animation_data.action = None
     am.set_clip(ch.arm, "STAND")
     ch.arm.animation_data.action = None
+    unscale(ch)
     ctx.stats = {"triangles": tris, "colours": colours, "horse": hz.stats, "corpse": corpse,
                  "fist_vertices": getattr(ch, "fist_vertices", 0)}

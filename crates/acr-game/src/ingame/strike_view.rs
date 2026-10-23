@@ -6,9 +6,10 @@
 //! a rider's chest, a crawling or lying man on the ground. On foot he also sinks into his
 //! knees to reach the ground.
 //!
-//! - The weapon's axis is read from the clip: the musket's `socket.muzzle` from the hand's
-//!   socket, else the held weapon's own axis (the first node under `socket.hand_r`); its
-//!   point is the muzzle, or [`REACH`] along the axis from the hand.
+//! - The weapon's axis is read from the clip: the musket's `socket.muzzle` or a held
+//!   weapon's `socket.tip` (a lance's point, a drawn sabre's) from the hand's socket, its
+//!   distance the reach; else the held weapon's own axis (the first node under
+//!   `socket.hand_r`) with [`REACH`].
 //! - The bend is the rotation taking that point onto the target as seen from the lower spine,
 //!   shared between the lower spine and the chest and clamped ([`MAX_BEND`]); it fades in
 //!   and out with the attack stance.
@@ -205,32 +206,48 @@ pub fn bend(from: Vec3, to: Vec3, max: f32, share: f32) -> Quat {
 }
 
 /// The weapon nodes of a model: the right hand's socket, the node giving the weapon's axis
-/// (the muzzle, or the held weapon) and whether that is a muzzle (its distance is the reach).
+/// (the muzzle, a weapon's point or the held weapon), whether that is a muzzle (two-handed)
+/// and whether it is a point (muzzle or `socket.tip`: its distance is the reach).
 #[derive(Clone, Copy, Debug)]
 struct Weapon {
     socket: usize,
     tip: Option<usize>,
     muzzle: bool,
+    point: bool,
 }
 
-/// The weapon of a model, found by node names (`*socket.hand_r`, `*socket.muzzle`).
+/// A point closer to the hand than this (m) is a hidden weapon (its socket scaled to 0 in
+/// this clip: a dragoon's sabre while he holds the carbine); the layer then takes the
+/// socket's axis and [`REACH`].
+const HIDDEN: f32 = 0.2;
+
+/// The weapon of a model, found by node names (`*socket.hand_r`, `*socket.muzzle` under it,
+/// `*socket.tip` under the hand: a lance on the hand bone, a sabre on a second socket).
 fn weapon(data: &ModelData) -> Option<Weapon> {
     let socket = data.nodes.iter().position(|n| n.name.ends_with("socket.hand_r"))?;
-    let under = |i: usize| {
+    let hand = data.nodes[socket].parent;
+    let under = |i: usize, of: Option<usize>| {
         let mut n = data.nodes[i].parent;
         while let Some(p) = n {
-            if p == socket {
+            if Some(p) == of {
                 return true;
             }
             n = data.nodes[p].parent;
         }
         false
     };
-    let muzzle = (0..data.nodes.len()).find(|&i| data.nodes[i].name.ends_with("socket.muzzle") && under(i));
+    let named = |s: &str, of| (0..data.nodes.len()).find(|&i| data.nodes[i].name.ends_with(s) && under(i, of));
+    let muzzle = named("socket.muzzle", Some(socket));
+    let tip = named("socket.tip", hand);
     let held = || {
         (0..data.nodes.len()).find(|&i| data.nodes[i].parent == Some(socket) && !data.nodes[i].name.contains("socket."))
     };
-    Some(Weapon { socket, tip: muzzle.or_else(held), muzzle: muzzle.is_some() })
+    Some(Weapon {
+        socket,
+        tip: muzzle.or(tip).or_else(held),
+        muzzle: muzzle.is_some(),
+        point: muzzle.or(tip).is_some(),
+    })
 }
 
 /// The strike layer of the 3D view.
@@ -328,9 +345,13 @@ impl Strikes {
             // The weapon as the clip holds it: from the hand's socket to the muzzle, else
             // along the held weapon.
             let (hand_at, socket_axis) = node_frame(&globals, wpn.socket, Vec3::Y, &d.transform);
+            let point = wpn.tip.filter(|_| wpn.point).map(|t| node_frame(&globals, t, Vec3::Y, &d.transform).0);
             let (dir, reach) = match wpn.tip {
-                Some(t) if wpn.muzzle => {
-                    let (m, _) = node_frame(&globals, t, Vec3::Y, &d.transform);
+                Some(_) if point.is_some_and(|m| (m - hand_at).length() < HIDDEN) => {
+                    (socket_axis.normalize_or_zero(), REACH)
+                }
+                Some(_) if wpn.point => {
+                    let m = point.unwrap_or(hand_at);
                     ((m - hand_at).normalize_or_zero(), (m - hand_at).length())
                 }
                 Some(t) => (node_frame(&globals, t, Vec3::Y, &d.transform).1.normalize_or_zero(), REACH),
@@ -540,6 +561,16 @@ mod tests {
         let rig = Rig::new(&skeleton_h());
         let h = rig.joint(&rest(&rig), rig.bone("hand_r"));
         let (tip, target) = strike(true, 0.9, Vec3::new(0.4, -0.5, h.z - 1.0));
+        assert!((tip - target).length() < 0.2, "tip {tip:?} target {target:?}");
+    }
+
+    /// A lance (its point ~2.3 m from the hand, `socket.tip`) reaches a man on the ground
+    /// ahead of the horse (the target 1.0 m below the hand, 2 m out).
+    #[test]
+    fn a_lance_reaches_down() {
+        let rig = Rig::new(&skeleton_h());
+        let h = rig.joint(&rest(&rig), rig.bone("hand_r"));
+        let (tip, target) = strike(true, 2.3, Vec3::new(0.2, -2.0, h.z - 1.0));
         assert!((tip - target).length() < 0.2, "tip {tip:?} target {target:?}");
     }
 

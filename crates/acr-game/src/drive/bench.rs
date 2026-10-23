@@ -157,8 +157,22 @@ pub fn spawn(game: &mut Game, v: &Value) -> Result<Value, String> {
             g.push_command(Command::Patrol { player: owner, units: vec![id], x: x + walk, y });
         }
     }
+    // `life`: life and max life set to this (a victim that lasts several blows);
+    // `hold_fire`: melee only (the interface's melee-only state, `Unit::melee_only`): a
+    // musketeer fights with the bayonet, a dragoon with the sabre, and neither fires
+    // point-blank at a man on the ground.
+    let u = &mut g.world_mut().ok_or("no world")?.units[i];
+    if let Some(n) = v.get("life").and_then(Value::as_i64) {
+        u.life = n.clamp(1, i64::from(i32::MAX)) as i32;
+        u.max_life = u.life;
+    }
+    if v.get("hold_fire").and_then(Value::as_bool) == Some(true) {
+        u.melee_only = true;
+    }
     let world = g.world().ok_or("no world")?;
-    Ok(json!({"id": id.0, "type": world.catalog.get(kind).id, "pose": format!("{pose:?}").to_lowercase()}))
+    Ok(
+        json!({"id": id.0, "type": world.catalog.get(kind).id, "pose": format!("{pose:?}").to_lowercase(), "life": world.units[i].life}),
+    )
 }
 
 /// The catalog type by its exact id, else the first (by id) whose id contains `name`,
