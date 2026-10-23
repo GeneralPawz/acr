@@ -168,7 +168,9 @@ def _apostles(ch, name, s):
     bmesh.ops.create_icosphere(bm, subdivisions=1, radius=0.045, matrix=Matrix.Translation((-0.19, y, 0.92))
                                @ Matrix.Diagonal((1.0, 0.6, 1.2, 1)))
     obj = gear.from_bm(bm, f"{name}.apostles")
-    gear.rigid(obj, ch.arm, "spine1", Matrix.Identity(4))
+    # Each bottle hangs against the strap and the coat under it and follows that part of the
+    # chest (`gear.seat_pieces`), not `spine1` alone.
+    gear.seat_pieces(ch, obj, (0.0, 1.0, 0.0))
     return ch.add("gear", obj, "cartridge")
 
 

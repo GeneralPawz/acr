@@ -464,9 +464,9 @@ def quiver(arrows=6, length=0.62):
     def at(x, y, z):
         return (x - off[0], y - off[1], z - off[2])
 
-    it.tube([(at(0, 0, 0), r * 0.85), (at(0, 0, 0.05), r), (at(0, 0, length), r * 1.05)], "quiver", n=8, caps=False)
-    bottom = it.ring(at(0, 0, 0), r * 0.85, 8)
-    it.cap(bottom, "quiver", flip=True)
+    # One closed hide body (bottom and a cover at the mouth the shafts stand in), so the
+    # volume check (`gear_volume`) can test it.
+    it.tube([(at(0, 0, 0), r * 0.85), (at(0, 0, 0.05), r), (at(0, 0, length), r * 1.05)], "quiver", n=8)
     for i in range(arrows):
         a = 2 * math.pi * i / arrows
         x, y = math.cos(a) * r * 0.5, math.sin(a) * r * 0.5

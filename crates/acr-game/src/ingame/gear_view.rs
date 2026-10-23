@@ -28,14 +28,16 @@ const BUDGET: usize = 40;
 const REACH_PX: f32 = 900.0;
 /// The point mass below the bone's head (m, model space).
 const PENDULUM_M: f32 = 0.25;
-/// Spring frequency (Hz) and damping ratio: a knapsack settles in about half a second.
-const FREQ_HZ: f32 = 2.2;
-const DAMPING: f32 = 0.35;
-/// Most the point swings sideways and out (m; about 10° at `PENDULUM_M`) and bobs up or down:
-/// the lag bone carries `gear.LAG_SHARE` (0.6) of the item, so it shows as about 2.7 cm (6°)
-/// and 1 cm.
-const MAX_SWING_M: f32 = 0.045;
-const MAX_BOB_M: f32 = 0.016;
+/// Spring frequency (Hz) and damping ratio: a knapsack settles in about half a second
+/// (m2-backgear3: softer and less damped than 2.2 Hz / 0.35, which a close side view of a
+/// run and stop could hardly tell from `ACR_NO_GEAR`).
+const FREQ_HZ: f32 = 1.8;
+const DAMPING: f32 = 0.28;
+/// Most the point swings sideways and out (m; about 16° at `PENDULUM_M`) and bobs up or down:
+/// the lag bone carries `gear.LAG_SHARE` (0.6) of the item, so it shows as about 4.2 cm and
+/// 1.8 cm, the upper end of a pack's bob on a run (2-4 cm).
+const MAX_SWING_M: f32 = 0.07;
+const MAX_BOB_M: f32 = 0.03;
 /// The slung musket turns about its middle: a third of that.
 const MUSKET_SHARE: f32 = 0.35;
 /// Time constant (s) of the target smoothing (units move once per tick).
@@ -277,8 +279,9 @@ mod tests {
         let rest = [0.0, 1.1, -0.2];
         let most = out.iter().map(|p| v3(sub(*p, rest)).length()).fold(0.0, f32::max);
         assert!(most > 0.005, "it lags: {most}");
-        // The bone (0.35 m below the head here; the mesh takes 0.6 of it).
-        assert!(most < 0.07, "it stays small: {most}");
+        // The bone (0.35 m below the head here: `MAX_SWING_M` at 0.25 m reaches 0.098 m there;
+        // the mesh takes 0.6 of it).
+        assert!(most < 0.1, "it stays small: {most}");
         // Never into the body (glTF +Z from the back at z = −0.2), allowing the turn's arc.
         assert!(out.iter().all(|p| p[2] < -0.2 + 1e-3), "{out:?}");
         let last = out.last().unwrap();

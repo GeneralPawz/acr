@@ -422,9 +422,31 @@ barrel lies `SLING_GAP` (6 mm) off the coat. Its sling (`line.SLING_STRAP`, m2-b
 is part of the musket's mesh (material 2, `belts`): from the lower swivel to the upper band
 beside the fore-stock, inside the stock's depth, so it hides and shows with the musket and
 never reaches the coat. The frontier family's horn and shot pouch (`frontier._horn`,
-`_pouch`) are seated like the natives'. Open: the sling's run over the shoulder (it would
-have to follow the body, not the socket), a socket on a blended back frame, the riders'
-quivers and holsters (`cavalry.py`), and the plains/pueblo gear.
+`_pouch`) are seated like the natives'.
+
+m2-backgear3: `gear.seat` also casts back from the surface (`_reverse_gap`): every trunk
+vertex of the clothes, skin and straps under the item's outline is cast against the item, and
+the item stops `SEAT_GAP` off the nearest of them, not only off the hits of its own vertices'
+rays (a box's few vertices miss the coat's folds between them: EngM18's knapsack had 12 coat
+vertices inside it at rest). `gear.seat_pieces` seats every connected piece of one object on
+its own and skins it with its own contact blend (no lag bone): the bandolier's charges
+(`pike._apostles`), each bottle against the strap and the coat under it, following that part
+of the chest instead of `spine1` alone. `held.quiver` is one closed hide body (bottom and a
+cover at the mouth the shafts stand in), so `gear_volume --keys hide` can test it. The
+mounted archer's quiver (`cavalry.bow`) still rides `spine2` as held gear: seated with
+`gear.seat` at the rest shoulder (`upperarm_r.head_local`) its rays hit the rider's left
+thigh (contact frame 93 % `rider.thigh_l`) and it showed on the hip behind the saddle, so the
+rider's rest frame differs from the seat pose more than assumed; open. The riders' carbines
+are held in the hand and their holsters are part of the saddle mesh (`military_saddle`, on
+the horse's `saddle` bone): nothing of theirs hangs on the back.
+
+The slung musket's sling runs over the shoulder (`line._sling_run`): a strap laid on the
+coat by `straps.carry` from the right shoulder across the chest to the left hip, front and
+back, skinned only to two deforming bones `sling.run_hi` (on `clavicle_r`) and `sling.run_lo`
+(on `spine`), blended by height. `SHOW_REST`/`SHOW_MELEE` key them with `socket.sling`: hidden,
+every vertex falls onto the line between the two heads (no area); shown, the strap follows
+clavicle and spine. The musket itself stays on `socket.sling` (`spine2`): a socket on a blended
+back frame would need the renderer to blend sockets, which it does not.
 
 #### Lag (`gear.lag_bone`, `ingame/gear_view.rs`; m2-backgear2)
 
@@ -435,16 +457,18 @@ exactly; it takes `LAG_SHARE` (0.6) of each vertex's weight, the contact blend k
 rest (its three largest). In the game (`gear_view::Gear`, after the skirts in
 `three_d.rs`) the 40 living men nearest the camera's focus (900 px) hang each such bone and
 `socket.sling` on a damped spring: a point 0.25 m below the head follows the skinned point
-in physics space at 2.2 Hz, damping ratio 0.35, damped relative to the target (a steady walk
-or run leaves no lag; steps, starts and stops do). Its offset is clamped to 4.5 cm sideways
-and out and 1.6 cm up or down (on the mesh about 2.7 cm / 6° and 1 cm), never towards the
+in physics space at 1.8 Hz, damping ratio 0.28 (m2-backgear3; was 2.2 Hz, 0.35), damped relative to the target (a steady walk
+or run leaves no lag; steps, starts and stops do). Its offset is clamped to 7 cm sideways
+and out and 3 cm up or down (on the mesh about 4.2 cm / 10° and 1.8 cm, the upper end of a
+pack's 2–4 cm bob on a run; m2-backgear3, was 4.5 / 1.6 cm, which a close side view of a run
+and stop could hardly tell from `ACR_NO_GEAR`), never towards the
 body (the outward side: from the body's axis to the bone's head); the musket takes a third.
 It goes back as a turn of the bone about its head plus the small lift. `ACR_NO_GEAR` turns
 it off. Cost: 0.12 µs per item step (release); the larger part is the clip's palette for
 men that have no custom pose yet (one `ModelData::pose` per man near the camera).
 
 `cargo run --release -p acr-render --example gear_volume -- <glb>... [--steps N] [--keys
-...]` checks solid gear as volumes, which `model_layers` (outer layers as sheets) cannot:
+...]` checks solid gear as volumes, which `model_layers` (outer layers as sheets) cannot (quivers: `--keys hide`):
 every closed, connected piece of the gear materials and the slung musket, skinned through
 the rest pose and every clip; the body and clothing vertices inside it by ray parity, per
 penetrating material, with the worst clip and frame.
