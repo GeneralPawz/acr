@@ -132,7 +132,9 @@ def make(root, name, s):
     """The soldier of SPEC `s` under `root`: body, uniform, belts, strapped and held gear."""
     build, fit = s["build"], s["fit"]
     ch = Character(root, name, build)
-    ch.body(shoulders=not build.get("garments"))  # no re-mesh under drafted garments
+    w = s["weapon"]
+    grip = held.fists("drumstick", "drumstick") if w == "drum" else held.fists(w)
+    ch.body(shoulders=not build.get("garments"), grip=grip)  # no re-mesh under drafted garments
 
     def front(c):
         return c.y < -0.04 and abs(c.x) < 0.075 and c.z < 1.41
@@ -603,6 +605,16 @@ def _musket_clips(ctx, ch, md):
     charge = aiming.hold(ch.arm, poses.CHARGE_MUSKET, pocket=(0.02, -0.12, -0.32), left_along=0.30)
     clips = poses.musketeer_clips(md, aim=aim, charge=charge, reload=reload)
     clips.update(finish.musket_clips(ch.arm, md, charge))  # the bayonet's finishing blow
+    # The port, the lunge and the blows turn the musket of a solved pose: the left hand
+    # follows it onto the shaft (`aim.left_on_shaft`; grip mode only).
+    solved = {}
+    for clip, keys in clips.items():
+        if clip == "ATTACK1" or clip.startswith(("STAND", "MOTION", "DEATH", "WRITHE")):
+            continue
+        for f, p in keys:
+            if id(p) not in solved:
+                solved[id(p)] = aiming.left_on_shaft(ch.arm, p)
+        clips[clip] = [(f, solved[id(p)]) for f, p in keys]
     kind = getattr(ch, "sidearm", None)
     drawn = sidearm_strikes(md, kind) if kind else {}
     if drawn:

@@ -753,3 +753,18 @@ FIST = 0.028
 def grip(name):
     """The `Grip` of item `name` (None for an item held otherwise, e.g. the drum on a hook)."""
     return GRIPS.get(name)
+
+
+def fists(right=None, left=None):
+    """{"r"|"l": diameter} for `Character.body(grip=...)`: each hand's fist sized to the
+    item it holds (`GRIPS`); a two-handed right item sizes the left fist by its `off` grip
+    unless the left hand holds an item of its own. Hands without a spec keep `FIST`."""
+    out = {}
+    gr, gl = GRIPS.get(right or ""), GRIPS.get(left or "")
+    if gr:
+        out["r"] = gr.main[1]
+        if gr.off and not gl:
+            out["l"] = gr.off[1]
+    if gl:
+        out["l"] = gl.main[1]
+    return out

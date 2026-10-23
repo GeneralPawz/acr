@@ -305,7 +305,9 @@ open mitten, a stick floated beside it, a spear crossed the closed hand at any a
   roll round the grip axis, `diameter / 2 + 12 mm` before the hand's axis. Chosen over a
   morph keyed per clip: the hands hold something in every clip, a morph target would add
   a per-clip weight channel and its vertex deltas at every LOD, and the fist costs nothing.
-  Riders (prefixed rigs) keep `cavalry.close_hands`.
+  Riders (prefixed rigs) keep `cavalry.close_hands`. Each family sizes its fists to its
+  weapons (`held.fists(right, left)`: a two-handed right item sizes the left fist by its
+  `off` grip; line, frontier, native/pueblo, meso, inca); crews and civilians keep `FIST`.
 - **Sockets in the fist** (`grips.setup`): `socket.hand_[lr]`, `socket.club_r` (and
   `socket.blade_r`, copied from the right one) move to the fist's centre on the grip axis;
   their rest frame turns from "upright" into the fist (`grips.frame`: +Z along the knuckle
@@ -320,7 +322,11 @@ open mitten, a stick floated beside it, a spear crossed the closed hand at any a
   hand whose goal lies within 8 cm of the right item's axis (musket fore-stock, spear and
   pike shaft, colour staff) puts its fist's centre on the axis and turns the least so its
   knuckle line runs along it. The left goal of every IK is its fist's centre (was: the
-  palm). One-handed weapons leave the off hand a loose fist. The runtime strike layer
+  palm). One-handed weapons leave the off hand a loose fist. A hand whose own item the
+  pose hides (`"show"` 0: the pikeman's left pike at the charge) counts as free. Poses
+  derived from a solved one by turning the musket (`_with(ready, world=...)`: port, lunge,
+  blows, aim transitions) re-solve the left arm onto the shaft (`aim.left_on_shaft`, in
+  `line._musket_clips`) when its fist lies within 25 cm of the axis. The runtime strike layer
   (`strike_view::aim`, two-handed weapons) puts the left fist's centre (knuckle line +
   `FIST` before the palm), not the wrist, on the stock.
 - **Measure**: `ACR-analysis/grips/measure_grips.py` (Blender on a built `.blend`): per
