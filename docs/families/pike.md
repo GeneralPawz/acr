@@ -82,7 +82,9 @@ THRUST_MID was 0.45 / 0.43 off, the hand 0.44 m short of its goal behind the bod
 moved to 3.35 m.
 
 Field (blank white field, HUD off; `ACR-analysis/fam-pike/sheet_field_{a,b,c}.png`): STAND
-front and back rows and close-ups of all eleven. The strike clips were not filmed in game.
+front and back rows and close-ups of all eleven. The strike clips were not filmed in game. Rebuilt on 9883ad7 (held gear keeps its material
+slots): the pike's steel head and the musket's barrel now show apart from the wood
+(`sheet_field_d.png`).
 
 ## Not yet
 
@@ -92,4 +94,3 @@ front and back rows and close-ups of all eleven. The strike clips were not filme
 - The musketeer's `0 MECH` is the bayonet lunge, not a butt stroke or the sword.
 - `SETACTIVEPOINT #ATTACK1` (EngMus 13, SpnMus 12, FrnS17 19) is not passed to the musket
   path (the line's own fire frame is used).
-- Multi-material held items may render in one colour (the pike's head as the shaft).
