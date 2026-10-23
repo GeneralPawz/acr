@@ -190,6 +190,61 @@ def attack1_keys(aim, fire, reload=None, n=87):
     return keys
 
 
+# Strike clips (docs/melee.md, Strike clips): the game plays `ATTACK_<KIND>_<HEIGHT>` (kind
+# THRUST, CUT, SMASH, SHOT; height HIGH, MID, LOW, DOWN), else `ATTACK_<HEIGHT>`, else
+# `ATTACK`, by the sim's strike of the attacker's last blow at this victim
+# (`strike_view::strike_clip`). Each has the frame count of the `.MD` line ATTACK and is played
+# on the same sprite frames. The blow lands at the active frame of ATTACK: without a
+# `SETACTIVEPOINT #ATTACK` that is frame 1, rounded up to even: frame 2. So the clip opens at
+# the end of the wind-up, hits at frame 2, recovers and winds up again for the next blow
+# (ATTACK loops while the fight goes on).
+STRIKE_HIT_FRAME = 2
+
+
+def strike_keys(n, windup, hit, recover):
+    """(fraction, pose) keys of a strike clip of `n` frames: the wind-up at frame 0, the blow
+    at `STRIKE_HIT_FRAME`, held a frame, the recovery, the wind-up again at the end."""
+    last = max(n - 1, 1)
+    h = STRIKE_HIT_FRAME / last
+    return [(0.0, windup), (h, hit), ((STRIKE_HIT_FRAME + 2) / last, hit), (0.35, recover), (0.8, windup),
+            (1.0, windup)]
+
+
+def musketeer_strikes(ready, lunge, n):
+    """{clip: keys} of a musketeer's melee blows (attack index 0), from his charge pose `ready`
+    and its `lunge`: the bayonet thrust, the thrust down at a man on the ground (a step in,
+    both hands driving the point down), the butt smash and the point-blank shot down
+    (`Shot`/`Down`: the sim fires a loaded musket at a man on the ground)."""
+    drawn_back = _with(ready, spine=(-4, 0, -12), root_loc=(0, 0.06, -0.02), world={"socket.hand_r": (80, 0, 0)})
+    # The point down at a man on the ground: a long step in with the left foot, the knees
+    # bent, the trunk over the musket, the muzzle 45° down.
+    down_ready = _with(ready, spine=(-22, 0, -14), spine1=(-8, 0, 0), root_loc=(0, 0.02, -0.08),
+                       thigh_l=(-24, -3, 0), shin_l=(30, 0, 0), thigh_r=(10, 3, 0), shin_r=(18, 0, 0),
+                       world={"socket.hand_r": (112, 0, 0)})
+    stab_down = _with(ready, spine=(-38, 0, -12), spine1=(-16, 0, 0), spine2=(-8, 0, -8), head=(-10, 0, 18),
+                      root_loc=(0, -0.30, -0.24), thigh_l=(-62, -3, 0), shin_l=(78, 0, 0), foot_l=(-14, 0, 0),
+                      thigh_r=(22, 3, 0), shin_r=(46, 0, 0), foot_r=(-12, 0, 0),
+                      world={"socket.hand_r": (138, 0, 0)})
+    pull_out = _with(down_ready, root_loc=(0, -0.12, -0.14), thigh_l=(-40, -3, 0), shin_l=(50, 0, 0))
+    # The butt smash: the musket swung round, butt first, from the right shoulder across.
+    butt_back = _with(ready, spine=(-4, 0, 34), spine2=(0, 0, 14), head=(4, 0, -24),
+                      world={"socket.hand_r": (-20, 0, 50)})
+    butt_hit = _with(ready, spine=(-16, 0, -30), spine2=(-6, 0, -16), head=(6, 0, 30),
+                     root_loc=(0, -0.10, -0.04), thigh_l=(-30, -3, 0), shin_l=(24, 0, 0),
+                     world={"socket.hand_r": (-96, 0, -20)})
+    # Point-blank down: the musket at the hip, the muzzle on the man at the feet, the kick.
+    shot_aim = _with(down_ready, world={"socket.hand_r": (128, 0, 0)})
+    shot_kick = _with(shot_aim, spine=(-14, 0, -14), root_loc=(0, 0.06, -0.06), world={"socket.hand_r": (118, 0, 0)})
+    return {
+        "ATTACK_THRUST_MID": strike_keys(n, drawn_back, lunge, ready),
+        "ATTACK_THRUST_DOWN": strike_keys(n, down_ready, stab_down, pull_out),
+        # By height alone (the first blow at a man on the ground): the thrust down.
+        "ATTACK_DOWN": strike_keys(n, down_ready, stab_down, pull_out),
+        "ATTACK_SMASH_MID": strike_keys(n, butt_back, butt_hit, ready),
+        "ATTACK_SHOT_DOWN": strike_keys(n, shot_aim, shot_kick, shot_aim),
+    }
+
+
 def musketeer_clips(md_lines, stand=STAND_MUSKET, aim=None, charge=None, reload=None):
     """{clip: [(frame, pose)]} for a European musketeer from its `.MD` lines
     ({key: "@DEATH 9 4 0 70"}): STAND, MOTION_L, MOTION_R, the bayonet (attack index 0,
@@ -232,4 +287,8 @@ def musketeer_clips(md_lines, stand=STAND_MUSKET, aim=None, charge=None, reload=
         line = md_lines.get(key)
         n = rig.md_clip_frames(line)[0] if line else 1
         out[key] = rig.clip_keys(n, keys)
+    if "ATTACK" in md_lines:
+        n = rig.md_clip_frames(md_lines["ATTACK"])[0]
+        for key, keys in musketeer_strikes(ready, lunge, n).items():
+            out[key] = rig.clip_keys(n, keys)
     return out
