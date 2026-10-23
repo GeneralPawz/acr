@@ -36,7 +36,7 @@ MD = {
 
 
 def spec():
-    return frontier.spec(MD)
+    return frontier.spec(MD, drape=True)
 
 
 def build(ctx):

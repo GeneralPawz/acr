@@ -39,7 +39,7 @@ def spec():
     return frontier.spec(MD, palette={"breeches": (0.20, 0.18, 0.16), "leggings": (0.22, 0.17, 0.12), "hat": (0.30, 0.20, 0.11)},
                           body="fshirt", sleeves="fshirt", skirts=False, layers=("blouse", "sash", "cloak"),
                           kit=("belt_l", "horn", "pouch", "knife"), hat="buccaneer_hat", hat_at=(0.0, 0.0, -0.06, -6),
-                          gun=1.72, fixed=("fshirt",))
+                          gun=1.72, fixed=("fshirt",), drape=True)
 
 
 def build(ctx):

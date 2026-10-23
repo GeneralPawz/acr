@@ -33,12 +33,27 @@ from . import registry, rig
 
 CAPE_ARM = 0.10  # m below the shoulder joint: the upper arm in a cloak's hull down to here
 CAPE_OVER = 0.012  # m: a cloak's hull lies this much further off the layers under it
-# Pose-space drape (docs/clothing.md "Drape 4"): cloaks are simulated on the body with the
-# arms down at the STAND angle (`clips.STAND_FREE`'s arms), then brought back to the A-pose
-# rest by inverse skinning with their own weights. Garments listed here (or with
-# `CLOTH[g]["arms_down"]`) are draped so.
-ARMS_DOWN = {"upperarm_l": (4, 22, 0), "forearm_l": (-12, 0, 0), "upperarm_r": (4, -22, 0), "forearm_r": (-12, 0, 0)}
+# m: a layer's neckline counts in the hull this much above the skin's (the unku's neck stood
+# above the yacolla's yoke ring and showed white over the shoulders; Drape 5)
+CAPE_NECK_OVER = 0.04
+# Pose-space drape (docs/clothing.md "Drape 4", "Drape 5"): cloaks are simulated on the body
+# with the arms of the unit's own STAND clip (`ch.stand`, set by the family before `dress`;
+# `clips.STAND_FREE` without one), then brought back to the A-pose rest by inverse skinning
+# with their own weights. Garments listed here (or with `CLOTH[g]["arms_down"]`) are draped so.
+ARM_BONES = ("clavicle", "upperarm", "forearm", "hand")
 ARMS_DOWN_GARMENTS = {"tilmatli", "frn_cape"}
+
+
+def arms_down(stand=None):
+    """The arm rotations of the stand pose `stand` (clavicles, upper arms, forearms, hands;
+    `clips.STAND_FREE` when None): the pose a cloak is draped in."""
+    from . import clips
+
+    pose = clips.STAND_FREE if stand is None else stand
+    return {k: v for k, v in pose.items() if k != "world" and k.rsplit("_", 1)[0] in ARM_BONES}
+
+
+ARMS_DOWN = arms_down()  # the default (STAND_FREE's arms)
 CAPE_ARM_DOWN = 0.32  # m below the shoulder joint: with the arms down the cloak hangs over the upper arm
 POSED_SMOOTH = 8  # Taubin passes over a posed cloak after its sim: one-triangle pleats flattened
 ARM_HOMES = ("upperarm", "forearm", "hand", "index", "middle", "ring", "pinky", "thumb")
@@ -207,7 +222,7 @@ class Body:
                 # The layers the cloak lies on (a blouse, a tunic, a hip cloth): their
                 # outer surface, `CAPE_OVER` m further out, by the same rule.
                 Q, home = self._over
-                ok = np.isin(home, TORSO + ("neck", "thigh_l", "thigh_r") + arms) & (Q[:, 2] < zc)
+                ok = np.isin(home, TORSO + ("neck", "thigh_l", "thigh_r") + arms) & (Q[:, 2] < zc + CAPE_NECK_OVER)
                 ok &= ~(np.isin(home, arms) & (Q[:, 2] < arm_z))
                 d = Q[ok, :2] - np.array((0.0, self.ellipse(self.neck_z)[0]))
                 r = np.maximum(np.linalg.norm(d, axis=1), 1e-6)[:, None]
@@ -993,7 +1008,7 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=()):
         # Pose-space drape: the collision body and the layers beneath with the arms down.
         posed = cape and (g in ARMS_DOWN_GARMENTS or gm.CLOTH.get(g, {}).get("arms_down"))
         if posed:
-            M = pose_matrices(ch, ARMS_DOWN)
+            M = pose_matrices(ch, arms_down(getattr(ch, "stand", None)))
             saved = pose_objects(list(dict.fromkeys(colliders + [o for o in ch.layers["clothes"] if o.name in made])), M)
             body.pose_arms({k[len(ch.prefix):]: v for k, v in M.items()})
         if cape:

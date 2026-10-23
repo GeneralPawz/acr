@@ -468,11 +468,11 @@ BUILD = {"width": 0.97, "belly": 1.05, "limbs": 1.1}
 
 
 def spec(md, kind="peasant", palette=None, body="shirt", sleeves="shirt", skirts=False, sash=True, mix=0.5,
-         fixed=(), build=None):
+         fixed=(), build=None, drape=False):
     """A unit's SPEC: `kind` peasant or priest; for peasants the draped garment's `body` and
     `sleeves` keys and `skirts`, a `sash`; colours over `PALETTE` (sprite mix `mix`, `fixed`
-    keys unmixed)."""
-    return {"md": md, "kind": kind, "palette": dict(PALETTE, **(palette or {})), "body": body, "sleeves": sleeves,
+    keys unmixed); `drape` drafts and drapes the blouse and the sash instead of their shells."""
+    return {"md": md, "kind": kind, "drape": drape, "palette": dict(PALETTE, **(palette or {})), "body": body, "sleeves": sleeves,
             "skirts": skirts, "sash": sash, "mix": mix, "fixed": tuple(fixed), "build": dict(BUILD, **(build or {}))}
 
 
@@ -529,9 +529,18 @@ def make(root, name, s):
                        gap_deg=70, columns=rig.SKIRT_COLUMNS)
         ch.add("clothes", cape, "cappa", symmetric=True)
     else:
+        from . import garments as gm
+
         ch.drape_report = {}
-        made = drape.dress(ch, garments=("breeches", "gaiters", "coat"), report=ch.drape_report,
-                           patterns={"coat": peasant_coat(s["body"], s["sleeves"], s["skirts"]), "gaiters": stockings})
+        # With `drape` the bloused shirt and the sash are drafted and draped (the frontier's
+        # `frn_blouse` and `frn_sash` in the unit's cloth) instead of the shells below.
+        blouse = bool(s.get("drape")) and not s["skirts"]
+        sash = bool(s.get("drape")) and s["sash"]
+        made = drape.dress(ch, garments=("breeches", "gaiters", "frn_blouse" if blouse else "coat")
+                           + (("frn_sash",) if sash else ()), report=ch.drape_report,
+                           patterns={"coat": peasant_coat(s["body"], s["sleeves"], s["skirts"]), "gaiters": stockings,
+                                     "frn_blouse": gm.keyed(gm.GARMENTS["frn_blouse"], s["body"], s["sleeves"]),
+                                     "frn_sash": gm.keyed(gm.GARMENTS["frn_sash"], "band")})
         cloth = [o for o in ch.layers["clothes"] if o.name in made]
         drape.hide_skin(ch, cloth)
         upper = {s["body"], s["sleeves"]}
@@ -539,11 +548,11 @@ def make(root, name, s):
         for o in fixed:
             if made[o.name] == "breeches":
                 drape.hide_under(ch, o, [x for x in fixed if made[x.name] in upper | {"hose"}], 0.004)
-        if not s["skirts"]:
+        if not s["skirts"] and not blouse:
             # The shirt or waistcoat bloused over the waistband (the cut-down coat ends at
             # the natural waist, above the breeches).
             ch.shell("blouse", s["body"], lambda c, n, h, p: h in TORSO and 0.90 < c.z < 1.22, 0.050)
-        if s["sash"]:
+        if s["sash"] and not sash:
             ch.shell("sash", "band", lambda c, n, h, p: h in TORSO and 0.97 < c.z < 1.07, 0.048)
     ch.bone_layer()
     ch.caps()

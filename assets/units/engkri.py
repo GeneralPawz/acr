@@ -15,7 +15,7 @@ PALETTE = {"smock": (0.36, 0.11, 0.09), "band": (0.62, 0.07, 0.06), "breeches": 
 
 
 def spec():
-    return civil.spec(MD, palette=PALETTE, body="smock", sleeves="smock", skirts=True)
+    return civil.spec(MD, palette=PALETTE, body="smock", sleeves="smock", skirts=True, drape=True)
 
 
 def make(root, name, build=None):

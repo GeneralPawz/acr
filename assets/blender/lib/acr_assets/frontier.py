@@ -287,6 +287,7 @@ def make(root, name, s):
     ch.shoes = ch.add("clothes", mbody.shoes(ch.arm, ch.flesh, f"{name}.footwear", ch.prefix, key="shoes"),
                       "shoes", symmetric=True)
     ch.drape_report = {}
+    ch.stand = poses.STAND_MUSKET  # a cloak is draped with these arms (`drape.arms_down`)
     draped = [DRAPED[x] for x in s["layers"] if s["drape"] and x in DRAPED]
     upper_g = [g for g in draped if g == "frn_blouse"] or ["coat"]
     patterns = {"coat": civil.peasant_coat(s["body"], s["sleeves"], s["skirts"]), "gaiters": legs(s["legs"]),

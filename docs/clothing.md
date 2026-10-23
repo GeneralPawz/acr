@@ -653,6 +653,50 @@ In game:
   `STAND_FREE`), or a larger cloak margin over the sleeves.
 - The walker was out of frame in the shots of both units (`shots.py` frames it from `state`).
 
+**Drape 5: own stand arms, the yoke over the neckline, blouses and sashes** (#287; everything
+in `ACR-analysis/drape5/`: `sheet_before_after.png` (FrnBuk, IncSha, UsaMil, EngTap, EngKri,
+SpnKri, FrnKri; showcase | drape 5), `pair_*.png`, `before/`, `after/`, `glb/`,
+`layers_{before,after}.txt`, `tools/`, the exe built from this branch in `exe/`; ground white,
+HUD off, `ACR_LOD=0`, one field per driver process). Changes:
+- **The cloak is draped with the unit's own stand arms**: `drape.arms_down(stand)` takes the
+  clavicle, upper arm, forearm and hand rotations of `ch.stand` (set by the family before
+  `dress`; `clips.STAND_FREE` without one, so MaySha's and IncSha's drape arms are unchanged). `ARMS_DOWN` is
+  now `arms_down()`, not a hand copy. The frontier family sets `poses.STAND_MUSKET` (the
+  musketeer's stand: left upper arm forward, the right forearm up at the musket).
+- **The yoke ring over a layer's neckline** (`CAPE_NECK_OVER`, 4 cm): the layers a cloak lies
+  on count in its hanging-line hull up to 4 cm above the skin's cut-off at the neck, so the
+  yoke ring is raised over the unku's neckline instead of under it.
+- `civil.spec(drape=True)`: the peasant's bloused shirt and sash drafted and draped (the
+  frontier's `frn_blouse` and `frn_sash` in the unit's cloth) instead of their shells; the
+  smock (skirts) keeps its coat and only the sash is draped.
+
+`model_layers --steps 8`, poking / crossing, showcase → drape 5: frnbuk 290 / 304 → 207 / 520
+(fshirt → fcloak 328 crossing, all in the raised-arm clips ATTACK_CUT_FINISH / CRAWLARM, none in
+STAND or the walk), incsha 81 / 219 → 66 / 199, usamil 86 / 100 → 86 / 120, engtap 114 / 274 →
+86 / 322, engkri 101 / 364 → 88 / 359, spnkri 122 / 150 → 128 / 170, frnkri 119 / 119 → 122 / 129.
+
+In game:
+- **FrnBuk**: the blouse patches on the back are gone (a little white at the right armpit
+  and under the hem's left corner); the cape lies over the shoulders and arms, smooth, the
+  strap over it; the shell's jagged back plate is gone. The draped sash is narrow and gathered
+  in front. Clearly better: **on** (`drape=True`).
+- **IncSha**: no white unku bits at the shoulder tops or the back of the neck any more (the
+  yacolla's yoke now lies over the neckline); the collar is a little ragged in front.
+  Better: **on** (rebuilt).
+- **UsaMil** (blouse alone): the waistcoat is one draped piece, the shell's waistband step and
+  its teeth gone, the strap on it; a few white wisps at the shoulder seams as before. **On**.
+- **EngTap** (sash alone): a clean band instead of the shell's red zigzag. The hunting
+  shirt (still a shell with its cape) keeps its black flecks. **On**.
+- **EngKri** (sash over the smock): a clean band instead of the shell's teeth. **On**.
+- **SpnKri, FrnKri** (blouse and sash): the back is better, but in front the blouse opens
+  across the belly at the waist seam (skin shows in a slit above the breeches). **Off**: the
+  civil blouse needs its front skirt sewn to the body over the breeches (or a lower waist
+  seam) before it can go.
+- The walker is in frame now for FrnBuk and EngTap (`shots.py` frames the spawn); the others
+  walk out of the crop.
+- MaySha not rebuilt: `STAND_FREE` and `CAPE_NECK_OVER` leave the tilmatli as it was (it
+  lies over the hip cloth only).
+
 ### Roll-out list: shell garments to draft and drape
 
 Effort: S = a draft instance of an existing `tunic` / `cloak` / `band` (an hour with the
@@ -676,14 +720,14 @@ is now S + a check of its unit's stand arms; tunics and bands can go now.
 | meso | `maya_jacket` | tunic, short | S | |
 | meso | `ichcahuipilli` | tunic, quilted (thick, stiff) | M | never tried |
 | meso | `maxtlatl` | band + flaps | M | |
-| inca | `unku` | tunic | done (IncSha); S per unit | all unku variants are keys |
+| inca | `unku` | tunic | done (IncSha; neckline under the yoke since drape 5); S per unit | all unku variants are keys |
 | inca | `yacolla` | cloak | done (IncSha); S per unit | |
 | inca | `quilt` (quilted armour) | tunic, thick | M | |
-| frontier | `blouse` | tunic (`frn_blouse`) | S, clean already | can go on alone, without the cape |
-| frontier | `sash` | band (`frn_sash`) | S, clean already | |
-| frontier | `cloak` / `cape` | cloak (`frn_cape`) | arms down done; off | the musketeer's stand arms: blouse shows at the back |
-| conquista | (uses frontier's layers) | as frontier | S each | |
-| civil | `blouse`, `sash` | tunic, band | S | as frontier |
+| frontier | `blouse` | tunic (`frn_blouse`) | done, **on** for FrnBuk, UsaMil (drape 5) | |
+| frontier | `sash` | band (`frn_sash`) | done, **on** for FrnBuk, EngTap (drape 5) | FrnBuk's gathers narrow in front |
+| frontier | `cloak` / `cape` | cloak (`frn_cape`) | done, **on** for FrnBuk (drape 5) | draped with `poses.STAND_MUSKET`'s arms |
+| conquista | (uses frontier's layers) | as frontier | S each | SpnS15/FrnS15 drape their own 16th-century set (`conquista.DRAPE`): not tried |
+| civil | `blouse`, `sash` | tunic, band (`civil.spec(drape=True)`) | sash **on** for EngKri; blouse M | SpnKri/FrnKri off: the blouse opens at the waist seam in front |
 | civil | `habit` + `habit_legs` | tunic to the ankle, wide sleeves | M | |
 | civil | `cappa`, `hood` | cloak (+ a hood panel) | M | arms down |
 | cavalry | `coat` (riders' coats), `waistcoat` | the uniform `coat` / `waistcoat` drafts | M | the seat: skirts split over the saddle (`gear` seat) |
@@ -691,8 +735,8 @@ is now S + a check of its unit's stand arms; tunics and bands can go now.
 | cavalry | `sash` | band (over the shoulder: a bandolier variant) | M | |
 | cavalry | `breeches`, `boots`, cuffs, lapels | stay shells | – | tight or rigid, no teeth seen |
 
-Next: FrnBuk's cape with his own stand arms; the tunics and bands of the list (the frontier
-blouse and sash alone first: they are clean; IncSha's neckline; not done in drape 4).
+Next: the civil blouse's front (SpnKri, FrnKri); the pueblo tunic and sash and the maya
+jacket (not done in drape 5); the other meso/inca cloaks with their own stands (`ch.stand`).
 
 ## Pattern format
 
