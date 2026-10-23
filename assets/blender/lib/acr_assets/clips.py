@@ -736,3 +736,12 @@ def apply(arm_obj, name, clip):
             pb.scale = (1.0, 1.0, 1.0)
         arm_obj.animation_data.action = None
     return act
+
+
+# -- finishing blows (docs/melee.md, `finish.py`): the melee builders above also return the
+# finishing clips (`ATTACK_FINISH`, `ATTACK_<KIND>_FINISH`).
+import sys as _sys  # noqa: E402
+
+from . import finish as _finish  # noqa: E402
+
+_finish.register(_sys.modules[__name__])

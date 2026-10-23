@@ -346,6 +346,16 @@ fn point_blank(w: &World, i: usize, j: usize, loaded: bool) -> Option<(u8, i32, 
     Some((r as u8, a.damage, (a.pause * u.personal_delay / 100).max(1)))
 }
 
+/// Hit-locations rule: whether `i` finishes his victim standing over him (a melee index at a
+/// man on the ground, on foot): he closes in to [`crate::melee::FINISH_REACH`] and no
+/// minimum range holds him off (`docs/melee.md`, Finishing blows).
+fn stands_over(w: &World, i: usize, aim: Aim, ranged: bool) -> bool {
+    w.rules.hit_locations
+        && !ranged
+        && matches!(aim, Aim::Unit(j) if crate::melee::on_ground(&w.units[j].body))
+        && !crate::melee::rides(w, i)
+}
+
 /// `AttackObjLink` (0x51bcaf), once per tick for a unit with an attack order.
 pub fn attack_link(w: &mut World, i: usize, target: EntityId, prio: u8) {
     attack_link_aim(w, i, Aim::Unit(target.0 as usize), prio);
@@ -429,7 +439,8 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
                     dst1 -= 2 * (my_z - en_z);
                 }
                 let dr2 = (a.radius.1 + a.add_radius) * add_range / 100;
-                let in_range = dst >= a.radius.0 && dst1 <= dr2;
+                let min = if stands_over(w, i, aim, a.weapon.is_some()) { 0 } else { a.radius.0 };
+                let in_range = dst >= min && dst1 <= dr2;
                 let (damage, weapon) = (a.damage, a.weapon.is_some());
                 let pause = a.pause;
                 let u = &mut w.units[i];
@@ -549,8 +560,31 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
     let add = a.radius.1 * (add_range - 100) / 100 + e_add;
     let amove = anim_frames(t, AnimKind::MotionLs(k as u8)).is_some();
     let complex = t.motion_style == crate::catalog::MotionStyle::ComplexRotate;
+    // Hit-locations rule: a man on foot closes in to stand over a man on the ground before
+    // the finishing blow (`melee::FINISH_REACH`); riders strike from their reach.
+    let mut reach = a.radius.1 + add;
+    let mut min = a.radius.0;
+    if stands_over(w, i, aim, a.weapon.is_some()) {
+        let close = crate::melee::FINISH_REACH;
+        if close <= dst_c && dst_c < reach.max(close + 1) && !w.units[i].stand_ground {
+            // Within the weapon's reach but not over him yet: step straight in (his cell does
+            // not block), turning first.
+            let u = &mut w.units[i];
+            let ddir = en_dir.wrapping_sub(u.dir) as i8;
+            let mrot = t.rotate;
+            if i32::from(ddir).abs() < (mrot + mrot / 2).min(16) {
+                crate::motion::step_over(w, i, en_dir);
+            } else {
+                let r = mrot as u8;
+                u.dir = if ddir > 0 { u.dir.wrapping_add(r) } else { u.dir.wrapping_sub(r) };
+            }
+            return;
+        }
+        // Over him, no weapon's minimum range holds him off.
+        (reach, min) = (reach.min(close), 0);
+    }
     let u = &mut w.units[i];
-    if dst >= a.radius.0 && dst_c < a.radius.1 + add {
+    if dst >= min && dst_c < reach {
         let mut ddir = en_dir.wrapping_sub(u.dir) as i8;
         let mrot = t.rotate;
         let mrot1 = (mrot + mrot / 2).min(16);
@@ -633,8 +667,8 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
     } else if u.stand_ground {
         // Standing ground (0x5204aa): a target out of range is dropped, never chased.
         u.pop_order();
-    } else if dst < a.radius.0 {
-        let need = a.radius.0 - dst;
+    } else if dst < min {
+        let need = min - dst;
         too_close(w, i, e_pos, need);
     } else {
         // Walk in the index's walking stance if the type has one (`#MOTION_Lk`), otherwise
@@ -1310,11 +1344,34 @@ fn injure(
         }
         let injury = crate::body::injure(w, victim, maul, energy, region);
         let height = crate::melee::strike_height(region_of(injury.part), down);
-        return Blow { injury, strike: Some(Strike { kind, height, mounted }), critical: None };
+        return Blow { injury, strike: Some(Strike { kind, height, mounted, finishing: false }), critical: None };
     }
     // A rider's blow is a sabre's (or a lance's).
     if crate::melee::rides(w, victim) {
         w.units[victim].body.mounted = true;
+    }
+    // A melee blow (an index without a projectile) at a man on the ground finishes him: the
+    // attacker stands over him and strikes the heart, the throat or the skull; one blow
+    // kills, no roll for region or critical (`docs/melee.md`, Finishing blows).
+    let melee_index = w
+        .adv(w.units[sender].owner, w.units[sender].kind)
+        .attacks
+        .get(usize::from(att))
+        .is_some_and(|a| a.weapon.is_none());
+    if down
+        && melee_index
+        && let Some((part, vital)) = crate::melee::finishing_vital(kind)
+    {
+        let body_cause = match crate::body::Cause::of(cause, mounted) {
+            crate::body::Cause::Sabre if kind == StrikeKind::Thrust => crate::body::Cause::Bayonet,
+            c => c,
+        };
+        let mut injury = crate::body::injure_aimed(w, victim, body_cause, 100, part, None);
+        if !injury.outcome.kills() {
+            injury.outcome = crate::body::Outcome::Kill;
+        }
+        let strike = Strike { kind, height: StrikeHeight::Down, mounted, finishing: true };
+        return Blow { injury, strike: Some(strike), critical: Some(vital) };
     }
     // Aimed at a man on the ground: blades, balls, arrows, axes (not cannon or shell).
     let aimed = matches!(
@@ -1339,7 +1396,8 @@ fn injure(
         body_cause = crate::body::Cause::Bayonet;
     }
     let mut injury = crate::body::injure(w, victim, body_cause, energy, region);
-    let strike = Strike { kind, height: crate::melee::strike_height(region_of(injury.part), down), mounted };
+    let strike =
+        Strike { kind, height: crate::melee::strike_height(region_of(injury.part), down), mounted, finishing: false };
     let bonus = crate::melee::attacker_bonus(w, sender);
     let critical = crate::melee::critical(w, victim, &mut injury, strike, down, bonus);
     Blow { injury, strike: Some(strike), critical }
@@ -1580,7 +1638,7 @@ fn scripted_strike(
         (None, DeathCause::Thrown) => StrikeKind::Cut,
         _ => StrikeKind::Shot,
     };
-    Strike { kind, height: crate::melee::strike_height(region_of(injury.part), down), mounted }
+    Strike { kind, height: crate::melee::strike_height(region_of(injury.part), down), mounted, finishing: false }
 }
 
 /// A scripted hit for tests and the close-up bench (`docs/testing.md`, #277): `victim` is

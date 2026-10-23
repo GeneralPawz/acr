@@ -89,6 +89,9 @@ const TURN_EASE: f32 = 6.0;
 /// 0.5): a man 1.7 m off is cut ~0.95 m from the rider's middle, as far as a seated man's
 /// arm and sabre reach down to the ground.
 pub const NEAR_BODY: f32 = 0.75;
+/// The arm IK's weight on a finishing clip: the clip stands him over the man and drives the
+/// blow down; the layer only corrects a little.
+const FINISH_ARM: f32 = 0.5;
 /// How fast the arm weight follows the clip phase (1/s): sprite frames step, the arm eases.
 const ARM_RATE: f32 = 20.0;
 
@@ -173,6 +176,23 @@ pub fn clip_names(anim: &str, kind: Option<StrikeKind>, height: StrikeHeight) ->
     out
 }
 
+/// The finishing clips to try for the attack animation `anim` at a man on the ground
+/// (`docs/melee.md`, Finishing blows), best first: `ATTACK_<KIND>_FINISH`, `ATTACK_FINISH`.
+/// None for a point-blank shot (`ATTACK_SHOT_DOWN`) or a bite.
+pub fn finish_names(anim: &str, kind: Option<StrikeKind>) -> Vec<String> {
+    let base = anim.trim_start_matches(['#', '@']);
+    match kind {
+        Some(StrikeKind::Shot | StrikeKind::Bite) => Vec::new(),
+        Some(k) => vec![format!("{base}_{}_FINISH", kind_name(k)), format!("{base}_FINISH")],
+        None => vec![format!("{base}_FINISH")],
+    }
+}
+
+/// Whether a clip is a finishing blow (the man already stands over his victim).
+pub fn is_finish(name: &str) -> bool {
+    name.ends_with("_FINISH")
+}
+
 /// The strike clip for `u` when he plays an attack (`AnimKind::Attack`) at a unit and the
 /// model has one for the blow (`clip_names`); `None` keeps the `.MD` animation's clip. The
 /// kind comes from his latest blow at this victim (the first blow at him: by height only).
@@ -184,6 +204,13 @@ pub fn strike_clip(data: &ModelData, world: &World, u: &Unit) -> Option<usize> {
     let v = world.units.get(t.0 as usize).filter(|v| v.id == t && !v.building)?;
     let strike = last_strike(world.hits.iter(), u, t.0);
     let height = strike_height(v, strike);
+    // A man on the ground: the finishing blow, standing over him (not a point-blank shot).
+    if height == StrikeHeight::Down
+        && !is_rider(data)
+        && let Some(c) = finish_names(&u.anim.name(), strike.map(|s| s.kind)).iter().find_map(|n| data.clip(n))
+    {
+        return Some(c);
+    }
     let clip = clip_names(&u.anim.name(), strike.map(|s| s.kind), height).iter().find_map(|n| data.clip(n))?;
     // A rider cutting down: the side of the horse with the shorter turn.
     let name = &data.clips[clip].name;
@@ -561,6 +588,7 @@ impl Strikes {
                 smash: strike.is_some_and(|s| s.kind == StrikeKind::Smash),
                 rate: 1.0 - (-dt * TURN_RATE).exp(),
                 residual: strike_clip.is_some(),
+                finish: strike_clip.is_some_and(|c| is_finish(&c.name)),
                 // Ready (PSTAND, or a model with strike clips outside them): the trunk only
                 // turns to face the enemy (m2-melee6: the arm IK aimed an upright musket and
                 // pointed it backwards over the shoulder).
@@ -618,6 +646,9 @@ pub struct How {
     /// Ready, no blow: the trunk only turns about the vertical to face the target; no
     /// step, no arm IK, no turn of the weapon.
     pub ready: bool,
+    /// A finishing clip (`_FINISH`): he already stands over the man; no step in, no crouch,
+    /// the arm IK at [`FINISH_ARM`] (small corrections only).
+    pub finish: bool,
 }
 
 /// Bends the trunk of `skins` so that the weapon points at `target`; on foot, sinks into the
@@ -642,7 +673,13 @@ pub fn aim(rig: &Rig, skins: &mut [Skin], weapon: Held, target: Vec3, how: How, 
         }
         return turn * (1.0 - how.rate);
     }
-    let arm_w = if how.smash { how.arm * 0.3 } else { how.arm } * w;
+    let arm_w = if how.smash {
+        how.arm * 0.3
+    } else if how.finish {
+        how.arm * FINISH_ARM
+    } else {
+        how.arm
+    } * w;
     let down = height == StrikeHeight::Down;
     let (hips, spine, chest, hand) = (b("hips"), b("spine"), b("spine2"), b("hand_r"));
     let (upper, fore) = (b("upperarm_r"), b("forearm_r"));
@@ -662,7 +699,7 @@ pub fn aim(rig: &Rig, skins: &mut [Skin], weapon: Held, target: Vec3, how: How, 
         let back = Vec3::new(from.x - target.x, from.y - target.y, 0.0).normalize_or_zero();
         target + back * GUARD * (1.0 - how.arm)
     };
-    if !mounted {
+    if !mounted && !how.finish {
         // Step in: the man moves towards the victim by what his arm and weapon lack; at a
         // standing man only with the blow.
         let shoulder = rig.joint(skins, upper);
@@ -770,7 +807,8 @@ pub(super) fn probe(
     };
     // The point rides on the hand bone: its offset in the hand's frame.
     let off = linear_t(&skins[hand], point - rig.joint(&skins, hand));
-    let how = How { w: 1.0, arm: 1.0, mounted, height, smash: false, rate: 1.0, residual: true, ready: false };
+    let finish = data.clips.get(clip).is_some_and(|c| is_finish(&c.name));
+    let how = How { w: 1.0, arm: 1.0, mounted, height, smash: false, rate: 1.0, residual: true, ready: false, finish };
     let mut turn = Vec3::ZERO;
     let start = skins.clone();
     for _ in 0..12 {
@@ -819,6 +857,7 @@ mod tests {
             rate: 1.0,
             residual: false,
             ready: false,
+            finish: false,
         };
         aim(&rig, &mut skins, held, target, how, Vec3::ZERO);
         (rig.joint(&skins, hand) + linear(&skins[hand], local) * reach, target)
@@ -887,6 +926,16 @@ mod tests {
             clip_names("ATTACK", Some(StrikeKind::Thrust), StrikeHeight::Low),
             ["ATTACK_THRUST_LOW", "ATTACK_LOW", "ATTACK_THRUST_MID"]
         );
+    }
+
+    /// A man on the ground is finished by the kind's finishing clip; a point-blank shot keeps
+    /// its own.
+    #[test]
+    fn finish_names_by_kind() {
+        assert_eq!(finish_names("@ATTACK", Some(StrikeKind::Cut)), ["ATTACK_CUT_FINISH", "ATTACK_FINISH"]);
+        assert_eq!(finish_names("ATTACK", None), ["ATTACK_FINISH"]);
+        assert!(finish_names("ATTACK", Some(StrikeKind::Shot)).is_empty());
+        assert!(is_finish("ATTACK_THRUST_FINISH") && !is_finish("ATTACK_THRUST_DOWN"));
     }
 
     /// The strike clips measured offline (`ACR_PROBE_MODELS`: a folder of built `.glb`s;
@@ -993,6 +1042,7 @@ mod tests {
             rate: 1.0,
             residual: false,
             ready: true,
+            finish: false,
         };
         // The enemy to the side (skeleton H faces -y): a quarter turn, clamped to MAX_BEND.
         aim(&rig, &mut skins, held, Vec3::new(-1.7, 0.0, 1.15), how, Vec3::ZERO);
@@ -1036,6 +1086,7 @@ mod tests {
                 rate: 1.0,
                 residual: true,
                 ready: false,
+                finish: false,
             };
             aim(&rig, &mut skins, held, target, how, Vec3::ZERO);
             let axis = linear(&skins[hand], local);

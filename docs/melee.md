@@ -50,6 +50,35 @@ automatic search (`SearchVictim`) picks them:
   the others cut with the sabre. Against a man on the ground the height is `Down`, with
   `mounted: true`: the animation thrusts or cuts down from the saddle.
 
+## 2a. Finishing blows (m2-finish)
+
+A man on the ground is helpless: one blow ends him.
+
+- **Which blow.** Under the rule, a blow by a melee index (an attack without a projectile)
+  of a man (not an animal) at a man on the ground (`melee::on_ground`) is a **finishing
+  blow** (`combat::injure`): no region roll, no critical roll; the blow is aimed at the
+  part of `melee::finishing_vital` and kills (`Outcome::Kill`, or the torn outcome the
+  injury tables already gave): a thrust (bayonet, point, spear, lance) the heart (`Chest`,
+  `Vital::Heart`), a cut (tomahawk, sabre, sword edge, axe) the throat (`Head`,
+  `Vital::Neck`, dead at once here, not the timed bleeding), a smash (club, butt) the skull
+  (`Head`, `Vital::Brain`). The injury is drawn by `body::injure_aimed` (its usual
+  `rando()`s), energy 100. Riders finish too (from the saddle, at their reach).
+- **No failure chance.** The man lies at the attacker's feet and cannot parry or roll away;
+  a miss would only bring back the endless jabbing this replaces. The point-blank shot of a
+  loaded musketeer is not a finishing blow (its own damage, `Shot`/`Down`, unchanged).
+- **Closing in.** A man on foot finishing a man on the ground closes in to
+  `melee::FINISH_REACH` (27 px, ~0.9 m at 30 px/m) instead of striking from his weapon's
+  reach (~2 m): within the reach but not over him yet he steps straight in
+  (`motion::step_over`: the victim's cell does not block, the terrain does), turning first.
+  Over him no minimum attack range holds him off (`combat::stands_over`, also at the hit
+  frame). Riders keep their reach. A unit standing ground does not step in.
+- **Record.** `HitRecord::strike` is `Strike { kind, height: Down, mounted, finishing: true }`
+  and `critical` the vital (`Heart`, `Neck` or `Brain`).
+- Tests (`tests/melee.rs`): `one_finishing_blow_kills_a_crawler_from_close` (one blow kills a
+  crawler with 5000 life, struck from ≤ 30 px), `finishing_vitals_by_kind` (and the lancer
+  keeps his reach), `a_standing_duel_is_unchanged` (no finishing flag, struck from the
+  pike's reach), `rule_off_no_strikes_and_crawlers_untouched` and the pinned hashes.
+
 ## 3. Strike kinds
 
 | Weapon (`NRES.DAT` kind) | Attacker | Kind |
@@ -131,7 +160,7 @@ a vital hit hash as before.
 // acr_sim::melee, re-exported from acr_sim::combat
 pub enum StrikeKind { Thrust, Cut, Smash, Shot, Bite }
 pub enum StrikeHeight { High, Mid, Low, Down }
-pub struct Strike { pub kind: StrikeKind, pub height: StrikeHeight, pub mounted: bool }
+pub struct Strike { pub kind: StrikeKind, pub height: StrikeHeight, pub mounted: bool, pub finishing: bool }
 pub enum Vital { Brain, Neck, Heart, Lung, Liver, Spine, Femoral, Brachial }
 // HitRecord gets:
 pub strike: Option<Strike>,   // every hit on a body under the rule (melee and ranged)
@@ -475,6 +504,37 @@ seat 0.40 m right, 0.05 forward and 0.18 down, the trunk hanging out over the ri
 Frames: `ACR-analysis/cav17/sheet_club.png` (SiuKVog, `melee_bench` horse_crawl, old above,
 new below). In that run the victim stood (the crawl pose did not take) and the sim played
 the mid cut, so old and new look alike there; the probe is the check for the down cut.
+
+### Finishing clips (m2-finish)
+
+The user saw sabres and swords lunge at a crawler and hang in the lunge before the next
+jab. Now (sim, 2a) the attacker stands over the man and one blow ends it, and the models
+carry a finishing clip per weapon (`assets/blender/lib/acr_assets/finish.py`):
+
+- **Names:** `ATTACK_<KIND>_FINISH` (`THRUST`, `CUT`, `SMASH`) and `ATTACK_FINISH`.
+  `strike_view::strike_clip` prefers them for a man on the ground on foot
+  (`finish_names`: the kind's, then `ATTACK_FINISH`; before the first blow the kind is
+  unknown), never for a point-blank shot (`ATTACK_SHOT_DOWN` stays) or a rider.
+- **Clip:** the wind-up at frame 0 (raised, upright), the blow at frame 2 (the sim's hit
+  frame) on `finish.TARGET_FINISH` (0.9 m ahead, 0.2 m up, the man's chest), held one frame,
+  back to the stand by 30 % of the clip and kept: no lunge, nothing held.
+  - sword / sabre / hanger (`sword`): standing over him, the point stabbed down
+    one-handed, 30° off vertical (`SWORD_DOWN` 150°);
+  - spear / pike / halberd / spontoon (`spear`): both hands, the point driven down (156°);
+  - axe / tomahawk / war club / macuahuitl / stone club (`club`, `tomahawk`, meso's
+    macuahuitl): from overhead, a chop down (128°, the striking face's point vector);
+  - knife (`knife`, no unit uses it yet): down on the right knee, a stab;
+  - musket with bayonet (`finish.musket_clips`, line musketeers through `line._musket_clips`):
+    both hands high, the bayonet driven down, solved by `aim.place` (grip 1.44 m from the
+    point);
+  - point-blank shot: the existing `ATTACK_SHOT_DOWN`.
+- **Registration:** `finish.register(clips)` (the end of `clips.py`) wraps `sword_strikes`,
+  `club_strikes`, `spear_strikes` and `clips.MELEE`, so officers, sidearms, natives, inca and
+  meso spears get them; meso's own club hack and line's musket call `finish` directly.
+- **Layer** (`How::finish`): on a `_FINISH` clip no step in and no crouch (he already stands
+  over the man), the arm IK at `FINISH_ARM` (0.5) on top of the residual limits: small
+  corrections only. With the kill on the first blow the attack ends and he goes back to his
+  stand; the clip itself ends standing, so nothing freezes in a lunge.
 
 ### Not yet
 

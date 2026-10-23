@@ -11,7 +11,7 @@ use acr_sim::catalog::{Catalog, ObjectType};
 use acr_sim::combat::{DeathCause, StrikeHeight, StrikeKind, Vital};
 use acr_sim::formation::Formations;
 use acr_sim::map::MapGrid;
-use acr_sim::melee::{apply_vital, critical, on_ground};
+use acr_sim::melee::{FINISH_REACH, apply_vital, critical, on_ground};
 use acr_sim::wounds::HitRegion;
 use acr_sim::{Pos, Rules, TypeId, World};
 
@@ -123,6 +123,7 @@ fn critical_rates_within_their_ranges() {
             kind: StrikeKind::Thrust,
             height: if down { StrikeHeight::Down } else { StrikeHeight::Mid },
             mounted: false,
+            finishing: false,
         };
         let (mut n, mut hit) = (0, 0);
         while n < 800 {
@@ -208,4 +209,65 @@ fn rule_off_no_strikes_and_crawlers_untouched() {
     assert!(w.hits.iter().all(|h| h.strike.is_none() && h.critical.is_none()));
     assert!(!on_ground(&Body::default()));
     // The pinned original hashes are in `tests/wounds.rs` and `tests/plough.rs`.
+}
+
+/// A crawler with life for many blows dies of the first one: a finishing blow (the heart for
+/// a thrust), struck from within ~1 m (`FINISH_REACH`), not from the pike's reach.
+#[test]
+fn one_finishing_blow_kills_a_crawler_from_close() {
+    let (mut w, pik, _) = setup(ON);
+    w.spawn(pik, 0, Pos::from_pixels(2000, 2000), 0);
+    let c = w.spawn(pik, 1, Pos::from_pixels(2100, 2000), 128).0 as usize;
+    w.units[c].body = crawler();
+    w.units[c].life = 5000;
+    for _ in 0..600 {
+        w.step(&[]);
+        if w.hits.iter().any(|h| h.victim == c as u32) {
+            break;
+        }
+    }
+    let hits: Vec<_> = w.hits.iter().filter(|h| h.victim == c as u32).collect();
+    assert_eq!(hits.len(), 1, "one blow: {hits:?}");
+    let h = hits[0];
+    assert!(h.killed && !w.units[c].living(), "the blow kills: {h:?}");
+    let s = h.strike.expect("a strike");
+    assert!(s.finishing && s.height == StrikeHeight::Down && s.kind == StrikeKind::Thrust, "{s:?}");
+    assert_eq!(h.critical, Some(Vital::Heart));
+    let d = f64::from(h.dir.0).hypot(f64::from(h.dir.1));
+    assert!(d <= f64::from(FINISH_REACH) + 3.0, "he stands over him: {d} px");
+}
+
+/// A cut finishes at the throat, a smash at the skull; a rider strikes from his reach.
+#[test]
+fn finishing_vitals_by_kind() {
+    use acr_sim::melee::finishing_vital;
+    assert_eq!(finishing_vital(StrikeKind::Thrust), Some((Part::Chest, Vital::Heart)));
+    assert_eq!(finishing_vital(StrikeKind::Cut), Some((Part::Head, Vital::Neck)));
+    assert_eq!(finishing_vital(StrikeKind::Smash), Some((Part::Head, Vital::Brain)));
+    assert_eq!(finishing_vital(StrikeKind::Shot), None);
+    let (w, c) = finish(|_, lan| lan, 600);
+    let h = w.hits.iter().find(|h| h.victim == c as u32).expect("the lancer strikes");
+    assert!(h.strike.is_some_and(|s| s.finishing && s.mounted) && h.killed, "{h:?}");
+    let d = f64::from(h.dir.0).hypot(f64::from(h.dir.1));
+    assert!(d > f64::from(FINISH_REACH) + 3.0, "the rider keeps his reach: {d} px");
+}
+
+/// Two men on their feet fence as before: no finishing blows, struck from the weapon's reach.
+#[test]
+fn a_standing_duel_is_unchanged() {
+    let (mut w, pik, _) = setup(ON);
+    let a = w.spawn(pik, 0, Pos::from_pixels(2000, 2000), 0).0 as usize;
+    let b = w.spawn(pik, 1, Pos::from_pixels(2100, 2000), 128).0 as usize;
+    w.units[a].life = 5000;
+    w.units[b].life = 5000;
+    for _ in 0..300 {
+        w.step(&[]);
+    }
+    let blows: Vec<_> =
+        w.hits.iter().filter(|h| !on_ground(&w.units[h.victim as usize].body) || h.strike.is_some()).collect();
+    assert!(!blows.is_empty(), "they fence");
+    let first = blows[0];
+    assert!(!first.strike.expect("a strike").finishing, "{first:?}");
+    let d = f64::from(first.dir.0).hypot(f64::from(first.dir.1));
+    assert!(d > f64::from(FINISH_REACH) + 3.0, "from the pike's reach: {d} px");
 }

@@ -634,6 +634,25 @@ pub(crate) fn step(world: &mut World, i: usize, d: u8, back: bool) {
     occupancy.set_bar(u.cell.0, u.cell.1, lx);
 }
 
+/// One step towards direction `d` onto a man on the ground (hit-locations rule, not in the
+/// original: `docs/melee.md`, Finishing blows): like [`step`], but the victim's cell does not
+/// block, the attacker steps over him; the terrain still does.
+pub(crate) fn step_over(world: &mut World, i: usize, d: u8) {
+    let catalog = world.catalog.clone();
+    let World { units, occupancy, map, random, .. } = world;
+    let u = &mut units[i];
+    let t = catalog.get(u.kind);
+    let lx = u.lx;
+    occupancy.clr_bar(u.cell.0, u.cell.1, lx);
+    u.vel = (0, 0);
+    try_to_move(u, t, &map.land, random, d, 16);
+    if u.vel != (0, 0) {
+        u.cell = Unit::cell_of(u.pos, lx);
+    }
+    u.dir = d;
+    occupancy.set_bar(u.cell.0, u.cell.1, lx);
+}
+
 /// `TryToMove` (0x50b021), walking forwards. In stance `s ≠ 0` the unit plays
 /// `#MOTION_L{s−1}`/`#MOTION_R{s−1}` and its step is scaled by `RATE[s−1]/16` (0x50b13c);
 /// the look-ahead still counts the frames of `#MOTION_L`.

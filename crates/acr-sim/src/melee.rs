@@ -47,6 +47,9 @@ pub struct Strike {
     /// The attacker rides: a rider's blow comes from above (a lance thrust down, a sabre cut
     /// down).
     pub mounted: bool,
+    /// A finishing blow at a man on the ground ([`finishing_vital`]): the attacker stands
+    /// over him and one blow kills (the animation plays the finishing clip).
+    pub finishing: bool,
 }
 
 /// A vital zone within a region (`HitRecord::critical`).
@@ -95,6 +98,24 @@ pub fn rides(w: &World, i: usize) -> bool {
 pub fn lancer(md_name: &str) -> bool {
     let n = md_name.to_ascii_lowercase();
     ["lan", "kop", "pik", "spear", "lnc"].iter().any(|k| n.contains(k))
+}
+
+/// A foot soldier closes in to this distance (world pixels, ~0.9 m at 30 px/m) to finish a
+/// man on the ground, instead of striking from his weapon's reach (~2 m): he stands over
+/// him. Riders keep their reach (they strike down from the saddle).
+pub const FINISH_REACH: i32 = 27;
+
+/// The vital a finishing blow of `kind` ends a man on the ground with, and the part it is
+/// aimed at: a thrust (bayonet, point, spear) into the heart, a cut (tomahawk, sword edge,
+/// axe) across the throat, a smash (club, butt) on the skull. `None` for shots and bites
+/// (the point-blank shot keeps its own damage).
+pub fn finishing_vital(kind: StrikeKind) -> Option<(Part, Vital)> {
+    match kind {
+        StrikeKind::Thrust => Some((Part::Chest, Vital::Heart)),
+        StrikeKind::Cut => Some((Part::Head, Vital::Neck)),
+        StrikeKind::Smash => Some((Part::Head, Vital::Brain)),
+        StrikeKind::Shot | StrikeKind::Bite => None,
+    }
 }
 
 /// The kind of a blow by `weapon` (`NRES.DAT [WEAPONS]` kind) of `sender`.

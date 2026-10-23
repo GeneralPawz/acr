@@ -44,7 +44,7 @@ from . import aim as aiming
 from . import armature as am
 from . import body as bd
 from . import clips as wclips
-from . import crawl, faces, gear, heads, held, masks, outfit, poses, registry, rig, straps
+from . import crawl, faces, finish, gear, heads, held, masks, outfit, poses, registry, rig, straps
 from .humans import LAYER_OF, Character, prepare_export
 
 # The English musketeer's colours (`EngM18`): the defaults a nation overrides.
@@ -604,6 +604,7 @@ def _musket_clips(ctx, ch, md):
     # Charge bayonets: the same grip with the butt at the right hip.
     charge = aiming.hold(ch.arm, poses.CHARGE_MUSKET, pocket=(0.02, -0.12, -0.32), left_along=0.30)
     clips = poses.musketeer_clips(md, aim=aim, charge=charge, reload=reload)
+    clips.update(finish.musket_clips(ch.arm, md, charge))  # the bayonet's finishing blow
     kind = getattr(ch, "sidearm", None)
     drawn = sidearm_strikes(md, kind) if kind else {}
     if drawn:

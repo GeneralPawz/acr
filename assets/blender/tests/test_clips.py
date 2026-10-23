@@ -123,14 +123,16 @@ class Timing(unittest.TestCase):
 class Strikes(unittest.TestCase):
     def test_names_and_hit_frame(self):
         c = clips.unit_clips(ENGOF18, {0: "MECH"}, melee="sword")
+        finishing = {"ATTACK_FINISH", "ATTACK_THRUST_FINISH", "ATTACK_CUT_FINISH"}  # finish.py
         self.assertEqual(set(c), {"ATTACK", "ATTACK_CUT_MID", "ATTACK_CUT_HIGH", "ATTACK_THRUST_MID",
-                                  "ATTACK_THRUST_DOWN", "ATTACK_DOWN"})
+                                  "ATTACK_THRUST_DOWN", "ATTACK_DOWN"} | finishing)
         for k, v in c.items():
             self.assertEqual(v[-1][0], 51, k)
             self.assertEqual(v.event, clips.STRIKE_HIT_FRAME, k)
             self.assertIn(2, [f for f, _ in v], k)
         c = clips.unit_clips(DELPIK, {0: "PIKA"}, melee="spear")
-        self.assertEqual(set(c), {"ATTACK", "ATTACK_THRUST_MID", "ATTACK_THRUST_DOWN", "ATTACK_DOWN"})
+        self.assertEqual(set(c), {"ATTACK", "ATTACK_THRUST_MID", "ATTACK_THRUST_DOWN", "ATTACK_DOWN",
+                                  "ATTACK_FINISH", "ATTACK_THRUST_FINISH"})
 
     def test_points_on_the_targets(self):
         """At the hit frame the weapon's point (grip goal + axis x length) is on the target:
@@ -138,6 +140,8 @@ class Strikes(unittest.TestCase):
         for strikes, length in ((clips.sword_strikes(52), clips.SWORD_TIP), (clips.club_strikes(56), clips.CLUB_TIP),
                                 (clips.spear_strikes(69), clips.SPEAR_TIP)):
             for name, clip in strikes.items():
+                if name.endswith("_FINISH"):
+                    continue  # test_finish.py
                 hit = dict(clip)[2]
                 tip = tip_at(hit, length)
                 target = {"MID": clips.TARGET_MID, "HIGH": clips.TARGET_HIGH, "DOWN": clips.TARGET_DOWN}[name.split("_")[-1]]

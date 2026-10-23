@@ -33,7 +33,7 @@ SPEC keys (`spec` fills the defaults):
 import math
 
 from . import clips as cl
-from . import poses, registry, rig
+from . import finish, poses, registry, rig
 
 TORSO = {"hips", "spine", "spine1", "spine2", "clavicle_l", "clavicle_r"}
 UPPER = {"upperarm_l", "upperarm_r"}
@@ -718,6 +718,8 @@ def strikes(s, n):
     up = _raised(down, (-40, 0, 0), hand=hand)
     out = {"ATTACK_CUT_MID": cl._strike(n, over, mid, ready)}
     out["ATTACK_CUT_DOWN"] = out["ATTACK_DOWN"] = cl._strike(n, up, down, up)
+    if hand == "r":
+        out.update(finish.finish_clips(n, "club", tip))  # the chop down over a man on the ground
     return out
 
 
