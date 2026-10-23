@@ -11,7 +11,7 @@ from mathutils import Matrix, Vector
 
 from . import armature as am
 from . import body as bd
-from . import decay, detail, heads, limb, mbody, project, registry, rig
+from . import decay, detail, heads, held, limb, mbody, project, registry, rig
 
 # Layer order (#178) and the decay layer of every material key a unit may use; colours of
 # keys a unit's palette may leave out (sRGB). Families add keys with `registry.material`.
@@ -269,15 +269,16 @@ class Character:
         for o in objs:
             keys = list(o.get("acr_material_keys") or [self.keys[o.name]])
             samples = pooled.get(keys[0], [])
-            o.data.materials.clear()
+            slots = []
             for i, k in enumerate(keys):
                 rgb = palette[k] if k in palette else FALLBACK[k]
                 if len(samples) and i == 0 and k not in fixed:
                     seen = project.guided(samples, rgb)
                     rgb = tuple(mix * a + (1 - mix) * b for a, b in zip(seen, rgb))
-                o.data.materials.append(mat(k, rgb))
+                slots.append(mat(k, rgb))
                 if i == 0:
                     chosen[o.name] = rgb
+            held.set_materials(o.data, slots)  # keeps the faces' slots (drum, musket, saddle)
             detail.box_uv(o)
         for o in self.layers["bones"]:
             bd.set_material(o, mat("bone", palette.get("bone", (0.85, 0.81, 0.69))))

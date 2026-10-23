@@ -179,6 +179,20 @@ class Item:
         return keys, [keys.index(self.keys[p]) for p in self.parts]
 
 
+def set_materials(mesh, mats):
+    """Replaces the material slots of Blender mesh `mesh` by `mats`, keeping each face's
+    slot. `materials.clear()` alone drops the mesh's `material_index` attribute, so every
+    face of a multi-material item (the drum's hoops, heads and cords, the musket's lock)
+    would fall back to slot 0 (#287)."""
+    slots = [p.material_index for p in mesh.polygons] if len(mats) > 1 else None
+    mesh.materials.clear()
+    for m in mats:
+        mesh.materials.append(m)
+    if slots is not None:
+        for p, s in zip(mesh.polygons, slots):
+            p.material_index = min(s, len(mats) - 1)
+
+
 def _sub(a, b):
     return tuple(x - y for x, y in zip(a, b))
 

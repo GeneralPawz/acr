@@ -80,6 +80,54 @@ class Items(unittest.TestCase):
         self.assertEqual(len(slots), len(self.items["pistol"].faces))
 
 
+class _Poly:
+    def __init__(self, s):
+        self.material_index = s
+
+
+class _Slots(list):
+    """`Mesh.materials` as Blender has it: `clear()` also drops the faces' `material_index`."""
+
+    def __init__(self, mesh):
+        super().__init__()
+        self.mesh = mesh
+
+    def clear(self):
+        super().clear()
+        for p in self.mesh.polygons:
+            p.material_index = 0
+
+
+class _Mesh:
+    def __init__(self, face_slot):
+        self.polygons = [_Poly(s) for s in face_slot]
+        self.materials = _Slots(self)
+
+
+class Materials(unittest.TestCase):
+    def test_multi_material_items_keep_their_slots(self):
+        # The drum's hoops, vellum heads and cords must not all take the shell's facings
+        # colour when the materials are (re)assigned (#287).
+        multi = 0
+        for n in held.ITEMS:
+            it = held.build(n)
+            keys, face_slot = it.material_keys()
+            if len(keys) < 2:
+                continue
+            multi += 1
+            me = _Mesh(face_slot)
+            mats = [f"{n}.{k}" for k in keys]
+            held.set_materials(me, mats)
+            self.assertEqual(list(me.materials), mats, n)
+            self.assertEqual([p.material_index for p in me.polygons], face_slot, n)
+            self.assertEqual(len({p.material_index for p in me.polygons}), len(keys), n)
+            # Re-assigning (the outfit pass, export twins) keeps them too.
+            held.set_materials(me, [m + ".gltf" for m in mats])
+            self.assertEqual([p.material_index for p in me.polygons], face_slot, n)
+        self.assertIn("vellum", held.build("drum").material_keys()[0])
+        self.assertGreater(multi, 1)
+
+
 class Registry(unittest.TestCase):
     def test_shared_tables_are_the_registry(self):
         self.assertIs(registry.SPACING, registry.SPACING)

@@ -15,7 +15,7 @@ from mathutils.bvhtree import BVHTree
 
 from . import armature as am
 from . import body as bd
-from . import coat, decay, faces, mhead
+from . import coat, decay, faces, held, mhead
 
 HAIR_BASE = (0.80, 0.78, 0.75)  # neutral: the renderer multiplies the chosen hair colour in
 FACE_SIZE = 512  # the head's own texture
@@ -274,10 +274,7 @@ def finish_variants(ch, deflate=0.65):
         a = o.data.attributes.get("_limb") or o.data.attributes.new("_limb", "FLOAT", "POINT")
         for d in a.data:
             d.value = limb.TRUNK
-        o.data.materials.clear()
-        o.data.materials.append(hair)
-        if o.name.endswith("hair_queue"):
-            o.data.materials.append(ribbon)
+        held.set_materials(o.data, [hair, ribbon] if o.name.endswith("hair_queue") else [hair])
     return objs
 
 
