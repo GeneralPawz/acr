@@ -45,13 +45,16 @@ def _solve(arm_obj, spec, goals, iterations=6):
     # hand's own grip point from a pose without it.
     loose = {k: v for k, v in spec.items() if k != "world_loc"}
     am.pose(arm_obj, loose)
+    grip = bool(arm_obj.get("acr_grip"))
     for side, (point, pole) in goals.items():
         ua, fa = arm[f"upperarm_{side}"], arm[f"forearm_{side}"]
         a, b = ua.length, fa.length
         point, pole = Vector(point), Vector(pole)
         for _ in range(iterations):
-            if side == "r":
-                eff = arm["socket.hand_r"].head - fa.tail
+            if grip and side == "l":
+                point = _off_hand(arm_obj, spec, loose, goals, point)
+            if side == "r" or grip:
+                eff = arm[f"socket.hand_{side}"].head - fa.tail
             else:
                 eff = (arm["hand_l"].tail - fa.tail) * 0.5
             sh = ua.head.copy()
@@ -71,6 +74,39 @@ def _solve(arm_obj, spec, goals, iterations=6):
             am.pose(arm_obj, loose)
     am.pose(arm_obj, spec)
     return spec
+
+
+OFF_HAND = 0.08  # m: a left goal this near the right item's axis is a hand on it (grip mode)
+
+
+def _off_hand(arm_obj, spec, loose, goals, point):
+    """Grip mode (`grips.py`): a free left hand whose goal lies on (within `OFF_HAND` of)
+    the axis of the right hand's item holds that item: its fist's centre goes onto the axis
+    (the goal projected) and the hand turns the least so its knuckle line runs along it
+    (keyed as the hand's "world" in `spec` and `loose`). Returns the goal."""
+    from . import grips
+
+    held = arm_obj.get("acr_grip_held", ())
+    if "socket.hand_l" in held:
+        return point
+    key = next((k for k in ("socket.hand_r", "socket.club_r", "socket.blade_r") if k in held
+                and arm_obj.pose.bones[k].scale.x > 0.5), None)
+    if key is None:
+        return point
+    o, z = grips.item_axis(arm_obj, key)
+    if "r" in goals:
+        o = Vector(goals["r"][0])
+    v = point - o
+    on = o + z * v.dot(z)
+    if (point - on).length > OFF_HAND:
+        return point
+    r = grips.align_off_hand(arm_obj, "l", z).to_euler("XYZ")
+    for sp in (spec, loose):
+        w = dict(sp.get("world", {}))
+        w["hand_l"] = tuple(math.degrees(t) for t in r)
+        sp["world"] = w
+    am.pose(arm_obj, loose)
+    return on
 
 
 def hold(arm_obj, base, pocket=(0.03, -0.05, -0.04), left_along=0.34, left_drop=0.035,
@@ -133,7 +169,8 @@ def place(arm_obj, base, grip, right="grip", left=0.40, elbow_r=(-0.30, 0.15, -0
     _solve(arm_obj, spec, goals)
     # How far each hand ended from its goal (metres; reported by the build).
     am.pose(arm_obj, {k: v for k, v in spec.items() if k != "world_loc"})
-    at = {"r": arm["socket.hand_r"].head, "l": (arm["hand_l"].tail + arm["forearm_l"].tail) * 0.5}
+    at = {"r": arm["socket.hand_r"].head, "l": arm["socket.hand_l"].head if arm_obj.get("acr_grip")
+          else (arm["hand_l"].tail + arm["forearm_l"].tail) * 0.5}
     spec_err = {s: round((at[s] - p).length, 3) for s, (p, _) in goals.items()}
     am.pose(arm_obj, spec)
     print("ACR place errors (m):", spec_err)

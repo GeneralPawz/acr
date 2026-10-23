@@ -76,10 +76,15 @@ def pose(arm_obj, spec, frame=None, prefix="", keyed=None):
             if keyed is None or key in keyed[1]:
                 pb.keyframe_insert("location", frame=frame, group=pb.name)
     bpy.context.view_layer.update()
+    world = spec.get("world", {})
+    if arm_obj.get("acr_grip"):
+        _grip_hands(arm_obj, spec, world, frame, prefix)
     # "world": {bone: (rx, ry, rz)}: the bone's armature-space orientation = that rotation
     # applied to its rest orientation, whatever its parents do (a socket that keeps a
     # musket upright or aimed while the hand moves).
-    for key, r in spec.get("world", {}).items():
+    for key, r in world.items():
+        if arm_obj.get("acr_grip") and key in arm_obj.get("acr_grip_held", ()):
+            continue
         pb = arm_obj.pose.bones[prefix + key]
         target = euler(r) @ pb.bone.matrix_local.to_3x3()
         par = pb.parent
@@ -102,6 +107,41 @@ def pose(arm_obj, spec, frame=None, prefix="", keyed=None):
         if frame is not None:
             pb.keyframe_insert("rotation_quaternion", frame=frame, group=pb.name)
             pb.keyframe_insert("location", frame=frame, group=pb.name)
+
+
+def _grip_hands(arm_obj, spec, world, frame, prefix):
+    """Grip mode (`grips.py`): a held item's socket keeps its rest pose in the fist and the
+    hand turns instead, so the item takes the orientation the pose asks for: its "world"
+    rotation, or the one the socket's own key gives (the item upright in the socket's rest
+    frame turned with it, the rule before the fists). One socket per hand: an explicit
+    "world" first, then `socket.hand_*`."""
+    from . import grips
+
+    held = [k for k in arm_obj.get("acr_grip_held", ()) if prefix + k in arm_obj.pose.bones]
+    if not held:
+        return
+    targets = {}
+    for key in held:
+        pb = arm_obj.pose.bones[prefix + key]
+        rest = pb.bone.matrix_local.to_3x3()
+        rot = euler(world[key]) if key in world else pb.matrix.to_3x3() @ rest.inverted()
+        rank = (key in world, key.startswith("socket.hand"))
+        hand = pb.parent.name
+        if hand not in targets or rank > targets[hand][0]:
+            targets[hand] = (rank, key, rot)
+    for hand, (_rank, key, rot) in sorted(targets.items()):
+        grips.turn_hand(arm_obj, prefix + key, rot)
+        bpy.context.view_layer.update()
+        if frame is not None:
+            for name in (hand, prefix + key):
+                arm_obj.pose.bones[name].keyframe_insert("rotation_quaternion", frame=frame, group=name)
+    for key in held:
+        pb = arm_obj.pose.bones[prefix + key]
+        if pb.rotation_quaternion != Quaternion():
+            pb.rotation_quaternion = Quaternion()
+            if frame is not None:
+                pb.keyframe_insert("rotation_quaternion", frame=frame, group=pb.name)
+    bpy.context.view_layer.update()
 
 
 def add_clip(arm_obj, name, keys, prefix_keys=None):

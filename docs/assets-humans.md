@@ -287,6 +287,47 @@ one face twice over the same vertices made Blender's export report "mesh not val
 (m2-shared-moves; the swords' shell guard is a shallow closed lens for the same reason).
 Every item of `held.ITEMS` passes `Mesh.validate()`.
 
+### Grips: hands that hold their weapons (`held.GRIPS`, `grips.py`; m2-grips)
+
+Before, the item hung on `socket.hand_*` (beside the wrist, upright in the socket's rest
+frame) and a clip's `"world"` turned the *socket*, not the hand: the musket ran through the
+open mitten, a stick floated beside it, a spear crossed the closed hand at any angle.
+
+- **Grip spec** (`held.GRIPS`, pure): per item a `main` grip and, for two-handed items, an
+  `off` grip, each (z along the item's +Z from its origin, diameter): musket and matchlock
+  wrist 0 / fore-stock 0.34 m (`aim.hold`'s left hand); spear, pike, halberd, spontoon two
+  points 0.45 m apart; colour staff 0.32 m; blowpipe 0.42 m; swords, clubs, tomahawk,
+  macuahuitl, bow riser, drumstick, pistol one grip. `held.FIST` (28 mm) for an empty hand.
+- **Fists** (`grips.close`, called by `Character.body`, `grip=` sizes each hand): skeleton H
+  has finger bones, but the MakeHuman body merges the fingers into mittens at its budget,
+  so they carry no weights. The fist is baked into the rest mesh as the riders' already
+  was (`cavalry.close_hands`): hand vertices past the knuckle line (8 cm from the wrist)
+  roll round the grip axis, `diameter / 2 + 12 mm` before the hand's axis. Chosen over a
+  morph keyed per clip: the hands hold something in every clip, a morph target would add
+  a per-clip weight channel and its vertex deltas at every LOD, and the fist costs nothing.
+  Riders (prefixed rigs) keep `cavalry.close_hands`.
+- **Sockets in the fist** (`grips.setup`): `socket.hand_[lr]`, `socket.club_r` (and
+  `socket.blade_r`, copied from the right one) move to the fist's centre on the grip axis;
+  their rest frame turns from "upright" into the fist (`grips.frame`: +Z along the knuckle
+  line out of the thumb, -Y along the fingers), so code that reads the socket matrix as the
+  item's (`aim`: the musket axis, the stowed ramrod) is unchanged. `gear.hold` and every
+  family's own attach go through `grips.hold_matrix`.
+- **The hand turns, not the socket** (`armature.pose`, armatures with `acr_grip`): a held
+  grip socket (`acr_grip_held`) keeps its rest pose; the orientation the pose asks for the
+  item (its `"world"`, or the socket's own key) turns the hand. One socket per hand (an
+  explicit `"world"` first). The clips' data and the item orientations are unchanged.
+- **The off hand on the weapon** (`aim._off_hand`, in every `"reach"` solve): a free left
+  hand whose goal lies within 8 cm of the right item's axis (musket fore-stock, spear and
+  pike shaft, colour staff) puts its fist's centre on the axis and turns the least so its
+  knuckle line runs along it. The left goal of every IK is its fist's centre (was: the
+  palm). One-handed weapons leave the off hand a loose fist. The runtime strike layer
+  (`strike_view::aim`, two-handed weapons) puts the left fist's centre (knuckle line +
+  `FIST` before the palm), not the wrist, on the stock.
+- **Measure**: `ACR-analysis/grips/measure_grips.py` (Blender on a built `.blend`): per
+  clip and sampled frame, per hand, the palm centre's gap to the grip axis (minus the grip
+  radius) and the angle between the item axis and the knuckle line (0 across the palm,
+  90 through the hand).
+
 ### Clips by weapon (`acr_assets/clips.py` pure, `clips.apply` in Blender; batch 0b)
 
 Reusable clips for skeleton H, named as the `.MD` files name them; a family calls
@@ -300,7 +341,7 @@ each with `clips.apply(arm, name, clip)`. Stand, walk and death stay the family'
   to even (`clips.release_frame`: `combat.rs` (A), `max(f, 1)`, odd + 1); a melee blow on
   `poses.STRIKE_HIT_FRAME` (2). The family passes the active frames from its `.MD`.
 - **Poses** are `poses.py` specs plus `reach` ({"r"|"l": (grip point, elbow pole)}, solved by
-  `aim._solve`) and `show` ({socket: 0|1}: a socket's scale, keyed as a one-frame step: the
+  `aim._solve`; the goal is the fist's centre, `socket.hand_*`, see Grips) and `show` ({socket: 0|1}: a socket's scale, keyed as a one-frame step: the
   thrown tomahawk, the loosed arrow are gone until the next is drawn). The grip points are
   computed from the item geometry (`held.py`): the stick's tip on the drum head, the arrow
   from the string through the bow's grip, the weapon's `socket.tip` on the target at the hit.
