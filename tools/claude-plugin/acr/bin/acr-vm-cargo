@@ -1,0 +1,3 @@
+#!/bin/bash
+# Wrapper on the PATH (plugin bin/): see vm_cargo.py.
+exec python "$(dirname "$(readlink -f "$0")")/vm_cargo.py" "$@"

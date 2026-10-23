@@ -1,0 +1,11 @@
+{
+  "name": "acr-local",
+  "owner": { "name": "GeneralPawz" },
+  "plugins": [
+    {
+      "name": "acr",
+      "source": "./acr",
+      "description": "ACR team kit: agents, skills, VM tools and guard hooks."
+    }
+  ]
+}

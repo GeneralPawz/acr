@@ -1,0 +1,21 @@
+#!/bin/bash
+# Lands a worktree's branch on main: rebase onto origin/main, refuse on conflicts or
+# leftover markers, run the landing checks on the render VM, push HEAD to main.
+#   acr-land C:/Users/verwalter/WIP/ACR-wt/<name>     (coordinator only)
+# Prints one line per stage and the pushed range; exits non-zero (nothing pushed) on any failure.
+set -u
+wt="${1:?worktree path}"
+here="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+cd "$wt" || exit 2
+[ -z "$(git status --porcelain --untracked-files=no)" ] || { echo "FAIL dirty worktree (commit first)"; git status --short | head; exit 2; }
+git fetch -q origin || exit 2
+if ! git rebase -q origin/main >/dev/null 2>&1; then
+  echo "FAIL rebase conflicts:"; git diff --name-only --diff-filter=U; git rebase --abort; exit 3
+fi
+if git grep -nE '^(<<<<<<<|>>>>>>>) ' -- . ':!*.md' >/dev/null 2>&1; then echo "FAIL conflict markers"; exit 3; fi
+echo "rebased: $(git log --oneline origin/main..HEAD | wc -l) commit(s) on $(git rev-parse --short origin/main)"
+out="$(python "$here/vm_cargo.py" -- acr-check 2>&1 | grep -v 'time stamp')"
+echo "$out" | tail -60
+echo "$out" | grep -q '^FAIL' && { echo "FAIL checks: not pushed"; exit 4; }
+echo "$out" | grep -q '^PASS test' || { echo "FAIL checks did not run: not pushed"; exit 4; }
+git push -q origin HEAD:main 2>&1 | tail -2 && echo "PUSHED $(git rev-parse --short HEAD) to main"

@@ -1,0 +1,8 @@
+{
+  "name": "acr",
+  "version": "0.1.0",
+  "description": "ACR (American Conquest Rust rewrite) team kit: scoped agents (Blender artist, sim, render, UI, original researcher, visual verifier, scout), skills, VM build/render tools on the PATH, and guard hooks.",
+  "author": { "name": "GeneralPawz" },
+  "repository": "https://github.com/GeneralPawz/acr",
+  "keywords": ["acr", "american-conquest", "blender", "rust", "gamedev"]
+}
