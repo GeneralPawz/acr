@@ -25,7 +25,7 @@ MD = {
 }
 WEAPONS = {0: "PIKA"}
 PALETTE = {"leggings": (0.14, 0.20, 0.42), "flaps": (0.14, 0.20, 0.42), "breechcloth": (0.45, 0.10, 0.08),
-           "skin": (0.66, 0.44, 0.31)}
+           "skin": (0.80, 0.56, 0.39)}
 
 
 def spec():

@@ -40,12 +40,14 @@ from mathutils import Matrix, Vector
 from . import aim as aiming
 from . import armature as am
 from . import clips as cl
-from . import crawl, gear, heads, held, masks, mbody, outfit, poses, registry, rig, straps
+from . import crawl, faces, gear, heads, held, masks, mbody, outfit, poses, registry, rig, straps
 from .humans import LAYER_OF, Character, prepare_export
 
-# The Iroquois warrior's colours: a nation overrides them.
+# The Iroquois warrior's colours: a nation overrides them. The skin is a warm copper as in
+# the sprites (slice 1's darker brown plus the sprite mix came out near-black on the
+# field); it keeps the palette colour (`fixed`), a unit varies it a little.
 PALETTE = {
-    "skin": (0.62, 0.40, 0.28), "bone": (0.85, 0.81, 0.69), "hair": (0.06, 0.05, 0.05),
+    "skin": (0.80, 0.55, 0.38), "bone": (0.85, 0.81, 0.69), "hair": (0.06, 0.05, 0.05),
     "breechcloth": (0.16, 0.18, 0.30), "leggings": (0.50, 0.10, 0.08), "flaps": (0.50, 0.10, 0.08),
     "garter": (0.70, 0.55, 0.20), "moccasins": (0.45, 0.32, 0.20), "shirt": (0.86, 0.84, 0.78),
     "matchcoat": (0.20, 0.24, 0.36), "belt_hide": (0.30, 0.20, 0.12), "belts": (0.30, 0.20, 0.12),
@@ -56,21 +58,81 @@ PALETTE = {
     "paint_white": (0.86, 0.84, 0.78),
 }
 BUILD = {"width": 0.98, "shoulders": 1.08, "limbs": 1.15, "hips": 0.98, "belly": 0.95}
-DEFAULTS = {"build": BUILD, "weapon": "bow", "melee": "club", "mix": 0.4, "fixed": ("feather", "silver"),
+DEFAULTS = {"build": BUILD, "weapon": "bow", "melee": "club", "mix": 0.6, "fixed": ("skin", "feather", "silver"),
             "dress": ("breechcloth", "leggings", "moccasins"), "hair": "roach", "feathers": 2, "paint": "red_black",
-            "silver": False, "kit": ("knife",), "active": None, "gun_len": 1.45}
+            "silver": False, "kit": ("knife",), "active": None, "gun_len": 1.45, "headdress": None, "rattle": False,
+            "work": False}
 
 # Material keys and painters of the family (`registry`): stroud (trade wool) for the
 # breechcloth, leggings and blanket, buckskin for moccasins and pouches.
 registry.painter("stroud", like="wool", finish=(1.0, 0.40, 0.0))
 registry.painter("buckskin", like="leather", finish=(0.85, 0.0, 0.05))
+registry.painter("pelt", like="felt", finish=(1.0, 0.30, 0.0))  # a bear or wolf skin: matted, dull
 for _key, _layer, _painter, _fb in (
         ("breechcloth", "wool", "stroud", (0.16, 0.18, 0.30)), ("leggings", "wool", "stroud", (0.50, 0.10, 0.08)),
         ("flaps", "wool", "stroud", (0.50, 0.10, 0.08)), ("matchcoat", "wool", "stroud", (0.20, 0.24, 0.36)),
         ("moccasins", "leather", "buckskin", (0.45, 0.32, 0.20)), ("belt_hide", "leather", "buckskin", (0.30, 0.20, 0.12)),
         ("pouch", "leather", "buckskin", (0.36, 0.24, 0.14)), ("roach", "hair", None, (0.62, 0.12, 0.08)),
-        ("horn", "bone", None, (0.80, 0.72, 0.55)), ("silver", "metal", None, (0.80, 0.80, 0.82))):
+        ("horn", "bone", None, (0.80, 0.72, 0.55)), ("silver", "metal", None, (0.80, 0.80, 0.82)),
+        ("pelt", "hide", "pelt", (0.36, 0.27, 0.18)), ("gustoweh", "hide", "buckskin", (0.40, 0.28, 0.16)),
+        ("turtle", "bone", None, (0.34, 0.28, 0.16))):
     registry.material(_key, _layer, painter=_painter, fallback=_fb)
+
+
+# -- skin paint and face (the native variants of `masks` and `heads`) -------------------
+
+def paint_face_half(p, n, L, seed, side=1.0):
+    """`masks.paint_face_half` limited to the head. The shared mask's `_face` region has no
+    width limit: every front-facing texel from 27 cm below the head's top up, on the
+    painted side, takes the paint, and on these builds (shoulders 1.08, the trapezius high)
+    that is the shoulder, the top of the chest and the upper arm. Here the region stops at
+    the jaw (23 cm below the top) and 9 cm either side of the nose."""
+    import numpy as np
+
+    top = L["head_top"]
+    x, z = p[:, 0], p[:, 2]
+    w = masks.paint_face_half(p, n, L, seed, side=side)
+    head = masks._smooth(np, top - 0.235, top - 0.215, z) * masks._smooth(np, 0.095, 0.080, np.abs(x))
+    return w * head
+
+
+registry.mask("native_face_half", paint_face_half)
+FIXED_MASKS = {"paint_face_half": "native_face_half"}
+# Paint sets of the native units beyond `masks.PAINT_SETS` (one per unit type).
+PAINT_SETS = {
+    "black_red_chin": [("paint_face_half", "paint_black", {"side": 1.0}), ("paint_face_band", "paint_red", {"high": 0.20})],
+    "red_stripes": [("paint_stripes", "paint_red", {"period": 0.09}), ("paint_face_band", "paint_red", {})],
+    "white_band": [("paint_face_band", "paint_white", {"width": 0.04}), ("paint_dots", "paint_white", {"face": False})],
+}
+
+
+def body_paint(choice, palette):
+    """`masks.body_paint` with the native masks (`FIXED_MASKS`) and sets (`PAINT_SETS`)."""
+    sets = PAINT_SETS[choice] if choice in PAINT_SETS else masks.paint_set(choice)
+    return [masks.entry(FIXED_MASKS.get(m, m), ("skin",), masks._colour(palette, c), **params) for m, c, params in sets]
+
+
+class clean_shaven:
+    """The native face map (`heads.finish` inside this context): no beard zone (neither the
+    painted stubble of `heads.paint_face` nor `_FACE`'s beard channel, which the renderer
+    turns into stubble) and, for the shaved and plucked heads (`roach`, `lock`), no cropped
+    scalp along the hairline. `faces.zones` and `faces.HAIRLINE` are swapped for the call
+    and restored."""
+
+    def __init__(self, scalp=False):
+        self.scalp = scalp
+
+    def __enter__(self):
+        self.saved = faces.zones, faces.HAIRLINE
+        zones = self.saved[0]
+        faces.zones = lambda x, y, z: (0.0,) + tuple(zones(x, y, z))[1:]
+        if not self.scalp:
+            faces.HAIRLINE = [(a, 120.0) for a, _ in self.saved[1]]
+        return self
+
+    def __exit__(self, *exc):
+        faces.zones, faces.HAIRLINE = self.saved
+        return False
 
 LEGS = {"thigh_l", "thigh_r", "shin_l", "shin_r"}
 TORSO = {"hips", "spine", "spine1", "spine2", "clavicle_l", "clavicle_r"}
@@ -175,6 +237,47 @@ def _flap(ch, name, y0, z0, z1, w0, w1, out, back=False, rows=6, cols=4):
     return am.bind(obj, ch.arm)
 
 
+def _legging_flap(ch, side, z0=0.14, z1=0.76, rows=14):
+    """The legging's flap on the outer side of leg `side` (1 left, -1 right): a two-sided
+    fin from the outermost skin line (sampled in bands of height, smoothed) standing
+    2-4 cm out (widest at the ankle), each row skinned like its skin vertex."""
+    P, flesh = ch.prefix, ch.flesh
+    names = {g.index: g.name for g in flesh.vertex_groups}
+    legs = {P + b for b in LEGS}
+    rows_out = []
+    for r in range(rows + 1):
+        z = z0 + (z1 - z0) * r / rows
+        best = None
+        for v in flesh.data.vertices:
+            if abs(v.co.z - z) > 0.025 or v.co.x * side < 0.03:
+                continue
+            gs = {names[g.group]: g.weight for g in v.groups if g.weight > 0.01 and names.get(g.group) in legs}
+            if gs and (best is None or v.co.x * side > best[0].x * side):
+                best = (v.co.copy(), gs)
+        if best:
+            rows_out.append((z, best[0], best[1]))
+    # Smooth the line (the outermost vertex jumps a little from band to band).
+    pts = [c for _, c, _ in rows_out]
+    sm = [(pts[max(i - 1, 0)] + pts[i] * 2 + pts[min(i + 1, len(pts) - 1)]) / 4 for i in range(len(pts))]
+    verts, groups, faces_ = [], [], []
+    for (z, _c, gs), c in zip(rows_out, sm):
+        t = (z - z0) / (z1 - z0)
+        width = 0.040 - 0.018 * t
+        for dy in (-0.002, 0.002):
+            for dx in (-0.006, width):
+                verts.append((c.x + side * (0.009 + dx), c.y + dy, z))
+                groups.append(gs)
+    n = len(rows_out)
+    for i in range(n - 1):
+        a, b = 4 * i, 4 * (i + 1)
+        faces_ += [(a, a + 1, b + 1, b), (a + 2, b + 2, b + 3, a + 3), (a + 1, a + 3, b + 3, b + 1)]
+    faces_ += [(0, 2, 3, 1), (4 * (n - 1), 4 * (n - 1) + 1, 4 * (n - 1) + 3, 4 * (n - 1) + 2)]
+    if side < 0:
+        faces_ = [f[::-1] for f in faces_]
+    obj = _mesh(f"{ch.name}.legging_flap{'_l' if side > 0 else '_r'}", verts, faces_, groups)
+    return am.bind(obj, ch.arm)
+
+
 def dress(ch, s):
     """The garments of SPEC `s` as shells and modelled panels (the clothes layer)."""
     name, d = ch.name, s["dress"]
@@ -185,9 +288,10 @@ def dress(ch, s):
         ch.shoes["acr_material_keys"] = ["moccasins", "moccasins"]  # a tie, not a brass buckle
     if "leggings" in d:
         ch.shell("leggings", "leggings", lambda c, n, h, p: h in LEGS and 0.10 < c.z < 0.80, 0.009)
-        # The flap: the seam allowance standing out along the outer side of each leg.
-        ch.shell("flaps", "flaps", lambda c, n, h, p: h in LEGS and 0.14 < c.z < 0.76
-                 and (n.x > 0.55 if h.endswith("_l") else n.x < -0.55), 0.026)
+        # The flap: the seam allowance standing out along the outer side of each leg, a
+        # thin modelled fin (slice 1's offset shell of the outer faces read lumpy).
+        for side in (1.0, -1.0):
+            ch.add("clothes", _legging_flap(ch, side), "flaps")
         ch.shell("garters", "garter", lambda c, n, h, p: h in {"shin_l", "shin_r"} and knee - 0.08 < c.z < knee - 0.05, 0.016)
     if "shirt" in d:
         ch.shell("shirt", "shirt", lambda c, n, h, p: (h in TORSO and 0.80 < c.z < 1.50) or h in ARMS
@@ -208,6 +312,12 @@ def dress(ch, s):
         ch.shell("matchcoat", "matchcoat", lambda c, n, h, p: (h in TORSO and c.z > 1.02 + 0.9 * (0.18 - c.x) * (c.z < 1.6)
                                                                 and c.z < 1.52 and not (c.x < -0.12 and c.z > 1.25))
                  or (h == "upperarm_l") or (h in {"thigh_l"} and c.z > 0.70 and c.x > 0.0), 0.030)
+    if "cloak" in d:
+        # The shaman's fur cloak: a pelt over both shoulders and down the back to the
+        # seat, open in front below the collarbones; over the upper arms to mid-arm.
+        ch.shell("cloak", "pelt", lambda c, n, h, p: (h in TORSO and 0.92 < c.z < 1.56
+                                                       and (c.y > -0.02 or c.z > 1.40 or abs(c.x) > 0.16))
+                 or (h in {"upperarm_l", "upperarm_r"} and c.z > 1.22), 0.034)
     if s.get("silver"):
         ch.shell("armbands", "silver", lambda c, n, h, p: h in {"upperarm_l", "upperarm_r"}
                  and abs(c.z - (ch.arm.data.bones[ch.prefix + "upperarm_l"].head_local.z - 0.12)) < 0.018, 0.010)
@@ -280,6 +390,39 @@ def hair(ch, s):
             _card(bm, top + Vector((dx, 0, 0)), lean, Vector((1, 0, 0)), 0.20, 0.035, taper=0.3,
                   bend=Vector((0, 0.03, -0.04)))
         made.append(("feather", gear.from_bm(bm, f"{ch.name}.feathers")))
+    head_kind = s.get("headdress")
+    if head_kind:
+        # `gustoweh` (Iroquois): a fitted cap on a splint band, short feathers over the
+        # crown and one eagle feather standing up; `crown` (Huron, Delaware): a band with a
+        # ring of upright feathers. Band at the brow, rigid on the head.
+        bm = bmesh.new()
+        segs, rb, zb = 12, r * 1.02 + 0.012, centre.z + 0.01
+        for k in range(segs):
+            a0, a1 = 2 * math.pi * k / segs, 2 * math.pi * (k + 1) / segs
+            for rr, flip in ((rb, False), (rb - 0.004, True)):  # outer and inner face of the band
+                ring = [bm.verts.new((centre.x + math.sin(a) * rr, centre.y - math.cos(a) * rr * 1.08, zb + dz))
+                        for a in (a0, a1) for dz in (-0.025, 0.030)]
+                q = (ring[0], ring[2], ring[3], ring[1])
+                bm.faces.new(q[::-1] if flip else q)
+        if head_kind == "gustoweh":
+            for k in range(10):  # short feathers lying back over the crown
+                a = 2 * math.pi * k / 10
+                base = centre + Vector((math.sin(a) * r * 0.7, -math.cos(a) * r * 0.7, r * 0.75))
+                _card(bm, base, Vector((math.sin(a) * 0.5, 0.6 - math.cos(a) * 0.4, 0.5)), Vector((math.cos(a), math.sin(a), 0)),
+                      0.07, 0.03, taper=0.4)
+        made.append(("gustoweh", gear.from_bm(bm, f"{ch.name}.headband")))
+        bm = bmesh.new()
+        if head_kind == "gustoweh":
+            _card(bm, centre + Vector((0, 0.01, r * 0.98)), Vector((0, 0.15, 1)), Vector((1, 0, 0)), 0.26, 0.04, taper=0.3,
+                  bend=Vector((0, 0.05, 0)))
+        else:
+            for k in range(11):
+                a = math.radians(-100 + 200 * k / 10)
+                base = Vector((centre.x + math.sin(a) * rb, centre.y - math.cos(a) * rb * 1.08, zb + 0.02))
+                out = Vector((math.sin(a) * 0.25, -math.cos(a) * 0.25, 1.0))
+                _card(bm, base, out, Vector((math.cos(a), math.sin(a), 0)), 0.20 + 0.04 * math.sin(math.pi * k / 10), 0.035,
+                      taper=0.3)
+        made.append(("feather", gear.from_bm(bm, f"{ch.name}.headdress")))
     for key, o in made:
         gear.rigid(o, ch.arm, ch.prefix + "head", Matrix.Identity(4), part=1)
         ch.add("gear", o, key)
@@ -313,8 +456,12 @@ def kit(ch, s):
     name, k = ch.name, s["kit"]
     out = {}
     if "quiver" in k:
-        q = gear.held("quiver", f"{name}.quiver")
-        mouth = Vector(next(e for e in q.children if e.name.endswith("socket.mouth")).location)
+        # Smaller than `held.quiver`'s default (slice 1's read as big as the trunk): 48 cm,
+        # 8 cm across.
+        q = gear.held(held.quiver(arrows=6, length=0.48), f"{name}.quiver")
+        shrink = Matrix.Diagonal((0.72, 0.72, 0.86, 1.0))
+        q.data.transform(shrink)
+        mouth = shrink.to_3x3() @ Vector(next(e for e in q.children if e.name.endswith("socket.mouth")).location)
         rot = Matrix.Rotation(math.radians(-28), 4, "Y") @ Matrix.Rotation(math.radians(12), 4, "X")
         at = Vector(cl.QUIVER_MOUTH) - (rot.to_3x3() @ mouth)
         for e in list(q.children):
@@ -358,9 +505,30 @@ def kit(ch, s):
 
 # -- character --------------------------------------------------------------------------
 
+def _rattle(name):
+    """A turtle-shell rattle: the shell (a flattened dome over a flat plastron) on a
+    wooden handle (the turtle's stretched neck). Origin at the grip, +Z up the handle."""
+    bm = bmesh.new()
+    _box(bm, Vector((0, 0, 0.04)), (0.018, 0.018, 0.16))
+    ret = bmesh.ops.create_uvsphere(bm, u_segments=10, v_segments=6, radius=1.0)
+    sv = [v for v in ret["verts"]]
+    for v in sv:
+        v.co = Vector((v.co.x * 0.065, v.co.y * (0.030 if v.co.y < 0 else 0.012), v.co.z * 0.085 + 0.18))
+    return gear.from_bm(bm, name)
+
+
+def club_socket(table, prefix=""):
+    """The skeleton with a second right-hand socket `socket.club_r` (the archer's club,
+    shown only in the melee clips; the arrow's `socket.hand_r` is hidden then)."""
+    hs = next(b for b in table if b.name == prefix + "socket.hand_r")
+    return table + [rig.Bone(prefix + "socket.club_r", hs.parent, hs.head, hs.tail, False)]
+
+
 def make(root, name, s):
     """The warrior of SPEC `s` under `root`: body, dress, hair, strapped and held gear."""
-    ch = Character(root, name, s["build"])
+    two = s["weapon"] == "bow" and bool(s["melee"])
+    table = club_socket(rig.skeleton_h("", (0, 0, 0))) if two else None
+    ch = Character(root, name, s["build"], table=table)
     ch.body()
     dress(ch, s)
     if "belt_l" in s["kit"]:
@@ -374,6 +542,11 @@ def make(root, name, s):
     if w == "bow":
         gear.hold(ch, "longbow", f"{name}.bow", "socket.hand_l", slot="bow")
         gear.hold(ch, "arrow", f"{name}.arrow", "socket.hand_r", slot="arrow")
+        if two:
+            # The archer's melee weapon (`.MD` index 0, MECH): a war club or, with
+            # `melee` "tomahawk", a tomahawk, in its own socket (`club_socket`).
+            item = "tomahawk" if s["melee"] == "tomahawk" else "war_club"
+            gear.hold(ch, item, f"{name}.{item}", "socket.club_r", slot="club")
     elif w == "gun":
         am.pose(ch.arm, poses.STAND_MUSKET)
         gun = gear.musket(f"{name}.musket", length=s["gun_len"], bayonet=0.0)
@@ -389,7 +562,14 @@ def make(root, name, s):
         gear.hold(ch, item, f"{name}.{item}", "socket.hand_r", slot=w)
     else:
         raise ValueError(f"native weapon {w!r}")
-    ch.paint_masks = masks.body_paint(s["paint"], s["palette"]) if s["paint"] else []
+    if s.get("rattle"):
+        r = _rattle(f"{name}.rattle")
+        sock = am.world(ch.arm, "socket.hand_l")
+        rest_up = sock.to_3x3() @ ch.arm.pose.bones["socket.hand_l"].bone.matrix_local.to_3x3().inverted()
+        am.attach(r, ch.arm, "socket.hand_l", Matrix.Translation(sock.translation) @ rest_up.to_4x4())
+        ch.held["rattle"] = r
+        ch.keys[r.name] = "turtle"
+    ch.paint_masks = body_paint(s["paint"], s["palette"]) if s["paint"] else []
     return ch
 
 
@@ -414,10 +594,23 @@ def unit_clips(s):
         "DEATH": poses.death_keys(cl.bare(stand), lie),
         "DEATHLIE1": [(0.0, lie)],
     }
-    for k in ("PSTAND", "PSTAND1", "PSTAND2"):
+    for k in ("PSTAND", "PSTAND0", "PSTAND1", "PSTAND2", "PATTACK", "UATTACK", "PATTACK0", "UATTACK0", "PATTACK1",
+              "UATTACK1", "PATTACK2", "UATTACK2"):
         keys[k] = [(0.0, stand)]
     for k in ("MOTION_L", "MOTION_R", "MOTION_LB", "MOTION_RB"):
-        keys[k + "0"] = keys[k]
+        for sfx in "0123456789":
+            keys[k + sfx] = keys[k]
+    if s["work"]:
+        # The peasant's work (DelKri, as EngKri): REST, a look round; WORK, a two-handed
+        # swing (hoe, axe) from over the head down to the ground in front.
+        up = cl._with(STAND, upperarm_l=(-150, 10, 0), upperarm_r=(-150, -10, 0), forearm_l=(-20, 0, 0),
+                      forearm_r=(-20, 0, 0), spine=(-8, 0, 0))
+        down = cl._with(STAND, upperarm_l=(-50, 30, 0), upperarm_r=(-50, -30, 0), forearm_l=(-10, 0, 0),
+                        forearm_r=(-10, 0, 0), spine=(30, 0, 0), spine1=(10, 0, 0), thigh_l=(-10, -4, 0),
+                        thigh_r=(-10, 4, 0), shin_l=(15, 0, 0), shin_r=(15, 0, 0))
+        look = cl._with(STAND, head=(14, 0, 8), spine=(2, 0, 4), upperarm_l=(-2, 30, 0), upperarm_r=(-2, -30, 0))
+        keys["WORK"] = [(0.0, STAND), (0.45, up), (0.65, down), (1.0, STAND)]
+        keys["REST"] = [(0.0, STAND), (0.4, look), (0.7, look), (1.0, STAND)]
     out = {k: rig.clip_keys(rig.md_clip_frames(md[k])[0], v) for k, v in keys.items() if k in md}
     for k in ("DEATHLIE2", "DEATHLIE3"):
         if k in md:
@@ -427,7 +620,24 @@ def unit_clips(s):
     if s["melee"] in ("club", "tomahawk") and "ATTACK" in md:
         down = club_down(cl.md_frames(md["ATTACK"]))
         weapons["ATTACK_CUT_DOWN"] = weapons["ATTACK_DOWN"] = down
+    melee = {k for k in weapons if k == "ATTACK" or k.startswith("ATTACK_")}
     out.update({k: list(v) for k, v in weapons.items()})
+    if s["weapon"] == "bow" and s["melee"]:
+        # The archer strikes with his club (`socket.club_r`), the arrow hidden; every other
+        # clip hides the club. Every key carries both scales.
+        memo = {}
+
+        def shown(pose, club):
+            k = (id(pose), club)
+            if k not in memo:
+                show = dict(pose.get("show") or {}, **{"socket.club_r": club})
+                if club:
+                    show["socket.hand_r"] = 0
+                show.setdefault("socket.hand_r", 1)
+                memo[k] = dict(pose, show=show)
+            return memo[k]
+
+        out = {name: [(f, shown(p, 1 if name in melee else 0)) for f, p in keys_] for name, keys_ in out.items()}
     return out
 
 
@@ -474,9 +684,12 @@ def build(ctx, s):
     report = {}
     colours = ch.colours(ctx.ref, s["palette"], report=report, mix=s["mix"], fixed=s["fixed"])
     outfit.dress(ch, colours, LAYER_OF)
-    heads.finish(ch)
+    with clean_shaven(scalp=s["hair"] == "long"):
+        heads.finish(ch)
     ch.arm.animation_data.action = None
     am.pose(ch.arm, cl.solve(ch.arm, stand))
+    if "socket.club_r" in ch.arm.pose.bones:
+        ch.arm.pose.bones["socket.club_r"].scale = (0.0, 0.0, 0.0)
     if s["weapon"] == "gun":
         ch.arm.pose.bones[aiming.ROD_SOCKET].matrix = ch.arm.pose.bones["socket.hand_r"].matrix @ aiming.ROD_STOWED
     tris = ch.triangles()

@@ -2,7 +2,8 @@
 (`acr_assets.native`): a roach on the shaved head with two feathers, red and black face
 paint, a dark stroud breechcloth, red leggings with wide side flaps and garters, moccasins;
 a self bow, a quiver on the back, a knife at the belt. Fire arrow (index 1) and arrow
-(index 2) share the bow clip (the arrow leaves on frame 44); the melee (index 0) hacks.
+(index 2) share the bow clip (the arrow leaves on frame 44); the melee (index 0) hacks
+with a war club (`native.club_socket`: the arrow hidden, the club shown).
 """
 
 from acr_assets import native
