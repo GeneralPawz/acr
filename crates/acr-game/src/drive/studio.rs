@@ -93,10 +93,7 @@ pub fn frame(points: &[Vec3], orbit: Orbit, size: [f32; 2], margin: f32) -> Opti
     let ahead = [b.forward[0], b.forward[1]];
     let len = (ahead[0] * ahead[0] + ahead[1] * ahead[1]).sqrt().max(1e-6);
     let along = -centre[1] / orbit.pitch.sin().max(1e-3);
-    let target = [
-        centre[0] * b.right[0] + along * ahead[0] / len,
-        centre[0] * b.right[1] + along * ahead[1] / len,
-    ];
+    let target = [centre[0] * b.right[0] + along * ahead[0] / len, centre[0] * b.right[1] + along * ahead[1] / len];
     Some(Framing { target, scale })
 }
 
@@ -133,7 +130,8 @@ pub fn points(model: &ModelData, transform: &Mat4, clip: Option<usize>, time: f3
         Some(Slot::Node(n) | Slot::Joint { node: n, .. }) => Some(*n),
         None => None,
     };
-    let keep: Vec<bool> = (0..model.slots.len()).map(|j| node(j as u32).is_some_and(|n| in_part(model, n, part))).collect();
+    let keep: Vec<bool> =
+        (0..model.slots.len()).map(|j| node(j as u32).is_some_and(|n| in_part(model, n, part))).collect();
     let mut out = Vec::new();
     for p in &model.primitives {
         for v in &p.vertices {
@@ -144,7 +142,13 @@ pub fn points(model: &ModelData, transform: &Mat4, clip: Option<usize>, time: f3
             let total: f32 = v.weights.iter().sum();
             let mut q = [0.0; 3];
             for k in 0..4 {
-                let w = if total > 0.0 { v.weights[k] / total } else if k == 0 { 1.0 } else { 0.0 };
+                let w = if total > 0.0 {
+                    v.weights[k] / total
+                } else if k == 0 {
+                    1.0
+                } else {
+                    0.0
+                };
                 if w == 0.0 {
                     continue;
                 }
@@ -164,12 +168,26 @@ pub enum Task {
     /// Answered after one more frame (a pose or a camera shows then).
     Done,
     /// `studio`: spawn the units once the field is up, then wait for their models.
-    Populate { v: Value, ids: Vec<u32>, tries: u32 },
+    Populate {
+        v: Value,
+        ids: Vec<u32>,
+        tries: u32,
+    },
     /// `pose`, `camera` with `frame`, `measure` without `ticks`: once the models are drawn.
-    Wait { cmd: String, v: Value, tries: u32 },
+    Wait {
+        cmd: String,
+        v: Value,
+        tries: u32,
+    },
     Sheet(Box<Sheet>),
     /// `measure` with `ticks`: feet sampled every tick.
-    Walk { id: u32, left: u32, samples: Vec<Value>, feet: Vec<[Vec3; 2]>, hold: bool },
+    Walk {
+        id: u32,
+        left: u32,
+        samples: Vec<Value>,
+        feet: Vec<[Vec3; 2]>,
+        hold: bool,
+    },
 }
 
 pub enum Next {
@@ -716,14 +734,17 @@ mod tests {
     fn named_views_look_at_the_unit_from_the_right_side() {
         // Facing east (dir 0): the front view looks west at him, the back view east.
         let f = view_orbit("front", 0).unwrap();
-        let fwd = View3d { camera: Camera { x: 0.0, y: 0.0, scale: 1.0 }, size: [1.0; 2], orbit: Some(f) }.basis().forward;
+        let fwd =
+            View3d { camera: Camera { x: 0.0, y: 0.0, scale: 1.0 }, size: [1.0; 2], orbit: Some(f) }.basis().forward;
         assert!(fwd[0] < -0.9, "{fwd:?}");
         let b = view_orbit("back", 0).unwrap();
-        let fwd = View3d { camera: Camera { x: 0.0, y: 0.0, scale: 1.0 }, size: [1.0; 2], orbit: Some(b) }.basis().forward;
+        let fwd =
+            View3d { camera: Camera { x: 0.0, y: 0.0, scale: 1.0 }, size: [1.0; 2], orbit: Some(b) }.basis().forward;
         assert!(fwd[0] > 0.9, "{fwd:?}");
         // Facing south (dir 64): the front view looks north.
         let f = view_orbit("front", 64).unwrap();
-        let fwd = View3d { camera: Camera { x: 0.0, y: 0.0, scale: 1.0 }, size: [1.0; 2], orbit: Some(f) }.basis().forward;
+        let fwd =
+            View3d { camera: Camera { x: 0.0, y: 0.0, scale: 1.0 }, size: [1.0; 2], orbit: Some(f) }.basis().forward;
         assert!(fwd[1] < -0.9, "{fwd:?}");
         assert!(view_orbit("top", 0).unwrap().pitch > 1.3);
         assert!(view_orbit("below", 0).is_err());
