@@ -126,16 +126,18 @@ def _turn(d0, d):
     return tuple(math.degrees(x) for x in e)
 
 
-def reins_world(arm, targets, sides=("l", "r")):
+def reins_world(arm, targets, sides=("l", "r"), shoulders=None):
     """{"world": {...}} orientations of upper arm, forearm and hand per side so the wrist
     reaches `targets[side]` (armature space, rest) and the hand, closed, points forward
-    and down along the reins."""
+    and down along the reins. `shoulders` ({side: point}): the shoulders as the trunk is
+    posed (a rider leaning out); else at rest, and a leaning trunk carries the hand off
+    the target (m2-melee6: why the sabre's hand stopped ~1.45 m up)."""
     out = {}
     B = arm.data.bones
     for sd in sides:
         sgn = 1.0 if sd == "l" else -1.0
         up, fo, ha = B[P + "upperarm_" + sd], B[P + "forearm_" + sd], B[P + "hand_" + sd]
-        s = up.head_local
+        s = shoulders[sd] if shoulders else up.head_local
         l1, l2 = (up.tail_local - up.head_local).length, (ha.head_local - fo.head_local).length
         t = targets[sd]
         e = _ik(s, t, l1, l2, Vector((0.6 * sgn, 0.7, -0.4)))
@@ -626,6 +628,50 @@ def make(ctx, spec):
         """A point by the right hip (seated), moved by (dx, dy, dz)."""
         return Vector((-0.24 + dx, cy + dy, sad.z + dz))
 
+    def strike(trunk, point, axis, length, left_target):
+        """A blow measured at the weapon's point (m2-melee6): the trunk posed first, both
+        arms solved from the shoulders as posed, the left hand to `left_target` (None: on
+        the reins); the weapon (rest -Y along the fist) along `axis` and the right wrist
+        moved until the point, `length` past the fist's centre, lies on `point` (armature
+        space: the model's ground origin, -x right, -y forward) or as near as the arm
+        reaches: then the weapon is turned from the fist straight at the point."""
+        am.pose(ch.arm, trunk, prefix=P)
+        sh = {sd: ch.arm.pose.bones[P + "upperarm_" + sd].head.copy() for sd in "lr"}
+        axis = Vector(axis).normalized()
+        hand = _turn(Vector((0.0, -1.0, 0.0)), axis)
+        lw = left if left_target is None else reins_world(ch.arm, {"l": left_target}, sides=("l",), shoulders=sh)
+        wrist = point - axis * (length + 0.1)
+        spec = None
+        for k in range(8):
+            w = dict(lw, **reins_world(ch.arm, {"r": wrist}, sides=("r",), shoulders=sh))
+            w["hand_r"] = hand
+            spec = _with_world(trunk, w)
+            am.pose(ch.arm, spec, prefix=P)
+            fist = fist_centre(ch)[0]
+            at = fist + axis * length
+            if k >= 3 and (at - point).length > 0.05:
+                # Out of the arm's reach: the blade straight from the fist at the point.
+                axis = (point - fist).normalized()
+                hand = _turn(Vector((0.0, -1.0, 0.0)), axis)
+            wrist = wrist + (point - at)
+        print(f"STRIKE pose: point {tuple(round(v, 2) for v in at)} for {tuple(round(v, 2) for v in point)}, "
+              f"off {(at - point).length:.2f}, hand {tuple(round(v) for v in hand)}, "
+              f"shoulder {tuple(round(v, 2) for v in sh['r'])}, fist {tuple(round(v, 2) for v in fist)}")
+        return spec
+
+    def axis_of(down, out):
+        """Forward and `down` degrees under the horizontal, `out` degrees to the right
+        (negative: to the left)."""
+        d, o = math.radians(down), math.radians(out)
+        return (-math.cos(d) * math.sin(o), -math.cos(d) * math.cos(o), -math.sin(d))
+
+    # Standing in the stirrups: the seat raised, the knees opened (m2-melee6).
+    stirrups = dict(LEGS_SEAT, thigh_l=(-42, -16, 0), shin_l=(56, 0, 0), foot_l=(-14, 0, 0),
+                    thigh_r=(-42, 16, 0), shin_r=(56, 0, 0), foot_r=(-14, 0, 0))
+    pommel = Vector((0.0, sad.y - 0.22, sad.z + 0.12))
+    lance_len = LANCE[0] - LANCE[1] + 0.30
+    sabre_len = BLADE[0] + 0.04
+
     poses = {"seat": seat, "lean": _with_world(dict(LEGS_SEAT, spine=(-12, 0, 0)), both),
              "aim": _with_world(dict(LEGS_SEAT, **AIM_R, **AIM_L), {"socket.hand_r": (88, 0, 0)}),
              "cut_up": _with_world(dict(LEGS_SEAT, **CUT_UP_R), dict(left, **{"socket.hand_r": (-40, 0, 0)})),
@@ -643,8 +689,11 @@ def make(ctx, spec):
              # 0.25 m out: the man lies there when the horse turns 25° from him
              # (`strike_view::TURN_LANCE`). The steep 65° of m2-melee4 drove the point 0.9 m
              # into the ground and left the layer to flatten it.
-             "lance_down": _with_world(dict(LEGS_SEAT, spine=(-6, -8, 0), spine1=(-2, -4, 0)),
-                                       right(side(-0.20, -0.08, 0.52), (44, 8, 0))),
+             # m2-melee6: solved at the point (right 0.81, forward 1.73, up 0.20), the hand
+             # held out to the right of the shoulder and the lance only 3° out, so the shaft
+             # behind the grip passes outside the rider's body instead of through it.
+             "lance_down": strike(dict(LEGS_SEAT, spine=(-6, -8, 0), spine1=(-2, -4, 0)),
+                                  Vector((-0.81, -1.73, 0.20)), axis_of(44, 3), lance_len, None),
              "lance_mid": _with_world(dict(LEGS_SEAT, spine=(-14, 0, 8)), right(side(0.02, -0.66, 0.36), (2, 0, 0))),
              # Drawn sabre (`drawn`): raised over the right shoulder, the blade up and back;
              # the cuts down at a man on the ground right and left of the horse, and the cut
@@ -653,10 +702,20 @@ def make(ctx, spec):
              # Down right (m2-melee5): leaning far out over the right side, the hand low
              # beside the horse, the blade driven almost straight down at a man lying
              # about 1.2 m out (the horse turned 75° from him, `strike_view::TURN_SABRE`).
-             "sabre_down_r": _with_world(dict(LEGS_SEAT, spine=(-10, -30, 0), spine1=(-4, -14, 0)),
-                                         right(side(-0.65, -0.48, -0.23), (80, 15, 0))),
-             "sabre_down_l": _with_world(dict(LEGS_SEAT, spine=(-12, 14, -14), spine1=(-4, 6, 0)),
-                                         right(side(0.42, -0.36, 0.14), (70, -30, 0))),
+             # m2-melee6: standing in the stirrups, the seat shifted right, leaning far out
+             # over the right side (the seat over the right stirrup) with the left hand on
+             # the pommel, the arm extended down and the blade angled down at the near part
+             # of a man lying 0.95 m out at 75° (`strike_view::TURN_SABRE`, `NEAR_BODY`);
+             # solved at the point. 1.2 m out is beyond a seated man's arm and blade. The arm IK used the
+             # shoulder at rest before, so the lean carried the hand off its target.
+             "sabre_down_r": strike(dict(stirrups, root_loc=(-0.22, 0.0, -0.02), spine=(-20, -38, 0),
+                                         spine1=(-8, -22, 0), spine2=(-4, -14, 0)),
+                                    Vector((-0.92, -0.25, 0.20)), axis_of(62, 40), sabre_len, pommel),
+             # Down left (`strike_view::TURN_SABRE_L`, the man 40° left of the facing, 0.95 m
+             # out): across the neck, leaning out over the left shoulder.
+             "sabre_down_l": strike(dict(stirrups, root_loc=(0.20, 0.0, -0.02), spine=(-22, 34, -20),
+                                         spine1=(-8, 20, -10), spine2=(-4, 12, -6)),
+                                    Vector((0.61, -0.73, 0.20)), axis_of(55, -35), sabre_len, pommel),
              "sabre_mid": _with_world(dict(LEGS_SEAT, spine=(-8, -8, 6)), right(side(-0.16, -0.46, 0.36), (25, 25, 0))),
              # A gun upright, its butt on the right thigh (the socket turned from the aim's).
              "gun": _with_world(dict(LEGS_SEAT), right(side(0.04, -0.22, 0.12), None, (-2, 0, 0)))}

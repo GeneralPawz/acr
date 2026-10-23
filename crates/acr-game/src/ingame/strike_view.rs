@@ -38,8 +38,10 @@ pub const MAX_BEND: f32 = 1.3;
 pub const MAX_BEND_MOUNTED: f32 = 0.8;
 /// Share of the bend in the lower spine; the chest takes the rest.
 const LOWER: f32 = 0.55;
-/// How fast the layer fades in and out (1/s).
+/// How fast the layer fades in and out (1/s); on a strike clip it comes in faster, so the
+/// first blow does not land at a part weight (m2-melee6: it was ~0.55).
 const FADE: f32 = 8.0;
+const FADE_STRIKE: f32 = 30.0;
 /// The deepest crouch towards the ground (m).
 const CROUCH: f32 = 0.25;
 /// The longest step in towards a victim out of reach (m).
@@ -73,9 +75,16 @@ pub const BODY_RADIUS: f32 = 0.17;
 /// shoulder (~25°), the sabre cuts down beside the horse (~75°).
 pub const TURN_LANCE: f32 = 0.44;
 pub const TURN_SABRE: f32 = 1.31;
+/// The cut down left (`ATTACK_CUT_DOWN_L`, across the neck): the man ~40 deg left of the
+/// facing (a signed turn: negative is left).
+pub const TURN_SABRE_L: f32 = -0.70;
+/// How fast the horse's turn for a blow eases in and back (1/s).
+const TURN_EASE: f32 = 6.0;
 /// The point at a man on the ground aims at the near part of his body: this far from his
-/// ground point towards the attacker (m; a man lying is ~1.7 m long).
-pub const NEAR_BODY: f32 = 0.5;
+/// ground point towards the attacker (m; a man lying is ~1.7 m long). m2-melee6: 0.75 (was
+/// 0.5): a man 1.7 m off is cut ~0.95 m from the rider's middle, as far as a seated man's
+/// arm and sabre reach down to the ground.
+pub const NEAR_BODY: f32 = 0.75;
 /// How fast the arm weight follows the clip phase (1/s): sprite frames step, the arm eases.
 const ARM_RATE: f32 = 20.0;
 
@@ -171,41 +180,113 @@ pub fn strike_clip(data: &ModelData, world: &World, u: &Unit) -> Option<usize> {
     let v = world.units.get(t.0 as usize).filter(|v| v.id == t && !v.building)?;
     let strike = last_strike(world.hits.iter(), u, t.0);
     let height = strike_height(v, strike);
-    clip_names(&u.anim.name(), strike.map(|s| s.kind), height).iter().find_map(|n| data.clip(n))
+    let clip = clip_names(&u.anim.name(), strike.map(|s| s.kind), height).iter().find_map(|n| data.clip(n))?;
+    // A rider cutting down: the side of the horse with the shorter turn.
+    let name = &data.clips[clip].name;
+    if (name.ends_with("_DOWN") || name.ends_with("_DOWN_R"))
+        && down_turns(data, world, u).is_some_and(|(_, left)| left)
+    {
+        let base = u.anim.name();
+        let base = base.trim_start_matches(['#', '@']);
+        if let Some(l) = data.clip(&format!("{base}_CUT_DOWN_L")) {
+            return Some(l);
+        }
+    }
+    Some(clip)
+}
+
+/// Whether the model is a rider (it has the rider's bones).
+fn is_rider(data: &ModelData) -> bool {
+    data.nodes.iter().any(|n| n.name.ends_with("rider.hips"))
+}
+
+/// A sabre rider striking down at `u`'s victim: the yaw putting the man at the horse's right
+/// ([`TURN_SABRE`]) or left ([`TURN_SABRE_L`], when the model has `_CUT_DOWN_L`), whichever
+/// is the shorter turn from the unit's facing; and whether that is the left.
+fn down_turns(data: &ModelData, world: &World, u: &Unit) -> Option<(f32, bool)> {
+    if !is_rider(data) || !data.clips.iter().any(|c| c.name.ends_with("_CUT_DOWN_L")) {
+        return None;
+    }
+    let (dx, dy) = victim_offset(world, u)?;
+    let facing = acr_render::view3d::facing_yaw(u.dir);
+    let (r, l) = (yaw_with_side(dx, dy, TURN_SABRE), yaw_with_side(dx, dy, TURN_SABRE_L));
+    Some(if wrap(l - facing).abs() < wrap(r - facing).abs() { (l, true) } else { (r, false) })
+}
+
+/// An angle wrapped into -pi..pi.
+fn wrap(a: f32) -> f32 {
+    (a + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
+}
+
+/// The world offset (pixels) from `u` to his victim; `None` without one or on the same spot.
+fn victim_offset(world: &World, u: &Unit) -> Option<(f32, f32)> {
+    let t = u.target()?;
+    let v = world.units.get(t.0 as usize).filter(|v| v.id == t)?;
+    let (dx, dy) = ((v.pos.x - u.pos.x) as f32, (v.pos.y - u.pos.y) as f32);
+    (dx != 0.0 || dy != 0.0).then_some((dx, dy))
 }
 
 /// The yaw (radians, as `view3d::facing_yaw`) a rider's model takes while he strikes at a
 /// man on the ground with a strike clip: turned from the victim so that he lies at the
-/// rider's right side ([`TURN_LANCE`] with a lance, [`TURN_SABRE`] else), where the clip's
-/// blow lands. `None` for anyone else (the unit's own facing).
+/// rider's right side ([`TURN_LANCE`] with a lance, [`TURN_SABRE`] else) or, with
+/// `_CUT_DOWN_L`, at his left ([`TURN_SABRE_L`]), where the clip's blow lands. `None` for
+/// anyone else (the unit's own facing).
 pub fn strike_yaw(data: &ModelData, world: &World, u: &Unit, clip: usize) -> Option<f32> {
     let name = &data.clips.get(clip)?.name;
-    if !name.ends_with("_DOWN") && !name.ends_with("_DOWN_R") {
+    let left = name.ends_with("_DOWN_L");
+    if !name.ends_with("_DOWN") && !name.ends_with("_DOWN_R") && !left {
         return None;
     }
-    // A rider: the model has the rider's bones.
-    if !data.nodes.iter().any(|n| n.name.ends_with("rider.hips")) {
+    if !is_rider(data) {
         return None;
     }
-    let t = u.target()?;
-    let v = world.units.get(t.0 as usize).filter(|v| v.id == t)?;
-    let (dx, dy) = ((v.pos.x - u.pos.x) as f32, (v.pos.y - u.pos.y) as f32);
-    if dx == 0.0 && dy == 0.0 {
-        return None;
-    }
+    let (dx, dy) = victim_offset(world, u)?;
     // A lancer has no cutting clips.
     let lance = !data.clips.iter().any(|c| c.name.contains("_CUT_"));
-    Some(yaw_with_side(dx, dy, if lance { TURN_LANCE } else { TURN_SABRE }))
+    let turn = match (lance, left) {
+        (true, _) => TURN_LANCE,
+        (false, true) => TURN_SABRE_L,
+        (false, false) => TURN_SABRE,
+    };
+    Some(yaw_with_side(dx, dy, turn))
 }
 
 /// The model yaw that puts the world direction `(dx, dy)` (world pixels, y down the screen)
-/// `turn` radians to the right of the model's facing.
+/// `turn` radians to the right of the model's facing (negative: to the left).
 pub fn yaw_with_side(dx: f32, dy: f32, turn: f32) -> f32 {
     // `model_matrix`: the facing (glTF +z) is world (sin yaw, cos yaw), the right side
     // (glTF -x) world (-cos yaw, sin yaw).
     let to = dx.atan2(dy);
-    let right = |y: f32| -y.cos() * dx + y.sin() * dy;
-    if right(to - turn) >= right(to + turn) { to - turn } else { to + turn }
+    let right = |y: f32| (-y.cos() * dx + y.sin() * dy) * turn.signum();
+    let t = turn.abs();
+    if right(to - t) >= right(to + t) { to - t } else { to + t }
+}
+
+/// The horses' turns for a blow, eased in and back to the facing instead of snapping.
+#[derive(Default)]
+pub struct Turns {
+    yaw: HashMap<u32, f32>,
+}
+
+impl Turns {
+    /// The yaw for unit `id` this frame: towards `want` (a blow's `strike_yaw`) or back to
+    /// `facing`; `None` once back at the facing (the unit's own yaw then).
+    pub fn ease(&mut self, id: u32, want: Option<f32>, facing: f32, seconds: f32) -> Option<f32> {
+        let now = self.yaw.get(&id).copied().or(want.map(|_| facing))?;
+        let d = wrap(want.unwrap_or(facing) - now);
+        if want.is_none() && d.abs() < 0.02 {
+            self.yaw.remove(&id);
+            return None;
+        }
+        let next = now + d * (1.0 - (-seconds.clamp(0.0, 0.1) * TURN_EASE).exp());
+        self.yaw.insert(id, next);
+        Some(next)
+    }
+
+    /// Forgets unit `id` (dead or gone: his own yaw).
+    pub fn forget(&mut self, id: u32) {
+        self.yaw.remove(&id);
+    }
 }
 
 /// The weight of the arm IK at sprite frame `frame` of a strike clip of `frames` frames
@@ -373,9 +454,11 @@ impl Strikes {
         for (_, d) in near.into_iter().take(MEN) {
             let id = d.unit.id.0;
             let victim = d.unit.target().and_then(|t| by_unit.get(&t.0)).filter(|_| attacking(d.unit));
+            let strike_clip = d.clip.and_then(|c| d.data.clips.get(c)).filter(|c| c.name.contains('_'));
             let w = self.weight.entry(id).or_insert(0.0);
             let want = if victim.is_some() { 1.0 } else { 0.0 };
-            *w += (want - *w) * (1.0 - (-dt * FADE).exp());
+            let fade = if strike_clip.is_some() && victim.is_some() { FADE_STRIKE } else { FADE };
+            *w += (want - *w) * (1.0 - (-dt * fade).exp());
             let w = *w;
             if w < 0.01 && victim.is_none() {
                 continue;
@@ -430,7 +513,6 @@ impl Strikes {
             let held = Held { dir, reach, two_handed: wpn.muzzle, grip };
             // The arm follows the clip's phase when it is a strike clip (`strike_clip`), else
             // it stays on.
-            let strike_clip = d.clip.and_then(|c| d.data.clips.get(c)).filter(|c| c.name.contains('_'));
             let phase = strike_clip.map_or(1.0, |c| arm_weight(d.time * d.data.fps, c.duration * d.data.fps + 1.0));
             let (arm_w, turn) = self.arm.entry(id).or_insert((phase, Vec3::ZERO));
             *arm_w += (phase - *arm_w) * (1.0 - (-dt * ARM_RATE).exp());
@@ -442,6 +524,12 @@ impl Strikes {
                 smash: strike.is_some_and(|s| s.kind == StrikeKind::Smash),
                 rate: 1.0 - (-dt * TURN_RATE).exp(),
                 residual: strike_clip.is_some(),
+                // Ready (PSTAND, or a model with strike clips outside them): the trunk only
+                // turns to face the enemy (m2-melee6: the arm IK aimed an upright musket and
+                // pointed it backwards over the shoulder).
+                ready: strike_clip.is_none()
+                    && (!matches!(d.unit.anim, AnimKind::Attack(_))
+                        || d.data.clips.iter().any(|c| c.name.starts_with("ATTACK_"))),
             };
             *turn = aim(&self.rig, &mut skins, held, target, how, *turn);
             if !self.logged || debug {
@@ -490,6 +578,9 @@ pub struct How {
     pub rate: f32,
     /// A strike clip: the clip sets the weapon's angle, the layer takes up the residual.
     pub residual: bool,
+    /// Ready, no blow: the trunk only turns about the vertical to face the target; no
+    /// step, no arm IK, no turn of the weapon.
+    pub ready: bool,
 }
 
 /// Bends the trunk of `skins` so that the weapon points at `target`; on foot, sinks into the
@@ -500,9 +591,22 @@ pub struct How {
 /// frame's (clamped to [`MAX_TURN`], eased towards the wanted one by `how.rate`).
 pub fn aim(rig: &Rig, skins: &mut [Skin], weapon: Held, target: Vec3, how: How, turn: Vec3) -> Vec3 {
     let How { w, mounted, height, .. } = how;
+    let b = |n: &str| rig.bone(n);
+    if how.ready {
+        // The chest's facing (rest -y in skeleton H) turned onto the target, flat.
+        let flat = |v: Vec3| Vec3::new(v.x, v.y, 0.0);
+        let (spine, chest) = (b("spine"), b("spine2"));
+        for (bone, share) in [(spine, LOWER), (chest, 1.0)] {
+            let pivot = rig.joint(skins, bone);
+            let facing = flat(linear(&skins[chest], Vec3::new(0.0, -1.0, 0.0)));
+            let max = MAX_BEND * if bone == spine { LOWER } else { 1.0 - LOWER };
+            let q = bend(facing, flat(target - pivot), max, share * w);
+            rig.rotate_about(skins, bone, pivot, q);
+        }
+        return turn * (1.0 - how.rate);
+    }
     let arm_w = if how.smash { how.arm * 0.3 } else { how.arm } * w;
     let down = height == StrikeHeight::Down;
-    let b = |n: &str| rig.bone(n);
     let (hips, spine, chest, hand) = (b("hips"), b("spine"), b("spine2"), b("hand_r"));
     let (upper, fore) = (b("upperarm_r"), b("forearm_r"));
     let dir = weapon.dir.normalize_or_zero();
@@ -629,7 +733,7 @@ pub(super) fn probe(
     };
     // The point rides on the hand bone: its offset in the hand's frame.
     let off = linear_t(&skins[hand], point - rig.joint(&skins, hand));
-    let how = How { w: 1.0, arm: 1.0, mounted, height, smash: false, rate: 1.0, residual: true };
+    let how = How { w: 1.0, arm: 1.0, mounted, height, smash: false, rate: 1.0, residual: true, ready: false };
     let mut turn = Vec3::ZERO;
     let start = skins.clone();
     for _ in 0..12 {
@@ -669,8 +773,16 @@ mod tests {
         let target = Vec3::new(h.x + offset.x, h.y + offset.y, offset.z);
         let held = Held { dir, reach, two_handed: !mounted, grip: Vec3::ZERO };
         let local = linear_t(&skins[hand], dir);
-        let how =
-            How { w: 1.0, arm: 1.0, mounted, height: StrikeHeight::Down, smash: false, rate: 1.0, residual: false };
+        let how = How {
+            w: 1.0,
+            arm: 1.0,
+            mounted,
+            height: StrikeHeight::Down,
+            smash: false,
+            rate: 1.0,
+            residual: false,
+            ready: false,
+        };
         aim(&rig, &mut skins, held, target, how, Vec3::ZERO);
         (rig.joint(&skins, hand) + linear(&skins[hand], local) * reach, target)
     }
@@ -800,6 +912,59 @@ mod tests {
         }
     }
 
+    /// A signed turn puts the man to the left; the eased turn reaches the blow's yaw and
+    /// returns to the facing.
+    #[test]
+    fn horse_turns_left_and_eases() {
+        for (dx, dy) in [(60.0f32, 0.0f32), (0.0, -50.0), (-30.0, 40.0)] {
+            let y = yaw_with_side(dx, dy, -0.7);
+            let n = (dx * dx + dy * dy).sqrt();
+            let r = (-y.cos() * dx + y.sin() * dy) / n;
+            assert!((r + 0.7f32.sin()).abs() < 1e-3, "{dx},{dy}: {r}");
+        }
+        let mut t = Turns::default();
+        assert_eq!(t.ease(1, None, 0.3, 0.05), None);
+        let mut y = 0.0;
+        for _ in 0..60 {
+            y = t.ease(1, Some(1.2), 0.3, 0.05).unwrap();
+        }
+        assert!((y - 1.2).abs() < 0.01, "{y}");
+        let first = t.ease(1, None, 0.3, 0.05).unwrap();
+        assert!(first < 1.2 && first > 0.3, "{first}");
+        let mut back = Some(first);
+        for _ in 0..80 {
+            back = t.ease(1, None, 0.3, 0.05);
+        }
+        assert_eq!(back, None);
+    }
+
+    /// Ready (no strike clip): the trunk turns to the target about the vertical only; the
+    /// hand keeps its height (no arm IK).
+    #[test]
+    fn ready_only_turns_the_trunk() {
+        let rig = Rig::new(&skeleton_h());
+        let mut skins = rest(&rig);
+        let hand = rig.bone("hand_r");
+        let h0 = rig.joint(&skins, hand);
+        let held = Held { dir: Vec3::new(0.0, 0.0, 1.0), reach: 1.4, two_handed: true, grip: Vec3::ZERO };
+        let how = How {
+            w: 1.0,
+            arm: 1.0,
+            mounted: false,
+            height: StrikeHeight::Mid,
+            smash: false,
+            rate: 1.0,
+            residual: false,
+            ready: true,
+        };
+        // The enemy to the side (skeleton H faces -y): a quarter turn, clamped to MAX_BEND.
+        aim(&rig, &mut skins, held, Vec3::new(-1.7, 0.0, 1.15), how, Vec3::ZERO);
+        let h1 = rig.joint(&skins, hand);
+        assert!((h1.z - h0.z).abs() < 0.02, "hand height {h0:?} -> {h1:?}");
+        let f = linear(&skins[rig.bone("spine2")], Vec3::new(0.0, -1.0, 0.0));
+        assert!(f.z.abs() < 0.02 && f.x < -0.5, "chest facing {f:?}");
+    }
+
     /// A clip that already holds the weapon close to the target: the layer takes up the
     /// residual and the point ends within 15 cm, for a lance and a sabre at a point on the
     /// ground, without flattening the weapon.
@@ -833,6 +998,7 @@ mod tests {
                 smash: false,
                 rate: 1.0,
                 residual: true,
+                ready: false,
             };
             aim(&rig, &mut skins, held, target, how, Vec3::ZERO);
             let axis = linear(&skins[hand], local);

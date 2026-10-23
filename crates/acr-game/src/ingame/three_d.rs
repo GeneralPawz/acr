@@ -130,6 +130,8 @@ pub struct ThreeD {
     maulers: super::maul_view::Maulers,
     /// The coat skirts of the men near the camera (runtime cloth, docs/clothing.md).
     skirts: super::cloth_view::Skirts,
+    /// Riders' horses turned for a blow, eased (`strike_view::Turns`).
+    turns: super::strike_view::Turns,
     /// Seconds of the last frame and the world point at the window centre.
     frame_seconds: f32,
     pub focus: [f32; 2],
@@ -209,6 +211,7 @@ impl Default for ThreeD {
             crews: Default::default(),
             maulers: Default::default(),
             skirts: Default::default(),
+            turns: Default::default(),
             frame_seconds: 0.0,
             focus: [0.0; 2],
             ground_detailed: true,
@@ -559,13 +562,21 @@ impl ThreeD {
             }
             let (mut inst, at) = instance(u, death, index, model, terrain, self.gore, removed_at, wounds);
             // The strike clip for the blow (`docs/melee.md`, Strike clips), when the model has one.
-            if let Some(c) = super::strike_view::strike_clip(model, world, u) {
+            let clip = super::strike_view::strike_clip(model, world, u);
+            if let Some(c) = clip {
                 inst.clip = Some(c);
-                // A rider striking down turns his horse so the man lies at his side.
-                if let Some(yaw) = super::strike_view::strike_yaw(model, world, u, c) {
+            }
+            // A rider striking down turns his horse so the man lies at his side, eased in and
+            // back.
+            if u.alive && u.death == 0 && !u.building {
+                let want = clip.and_then(|c| super::strike_view::strike_yaw(model, world, u, c));
+                let facing = view3d::facing_yaw(u.dir);
+                if let Some(yaw) = self.turns.ease(u.id.0, want, facing, self.frame_seconds) {
                     let t = inst.transform[3];
                     inst.transform = view3d::model_matrix([t[0], t[1], t[2]], yaw, 1.0);
                 }
+            } else {
+                self.turns.forget(u.id.0);
             }
             if model.world_clock && !u.building {
                 inst.time = world_time(model, inst.clip, u, now, record.tick);

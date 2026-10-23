@@ -336,21 +336,71 @@ sabre hangs short of him), `run1/sheet_fence.png` and `run1/crop.png` (frame 26:
 bayonets stop at the chests). Rebuilt on the VM: EngD18 and PueVsdA (old ones in
 `showcase/backup-melee5/`).
 
+### Shoulders as posed, sides and the ready stance (m2-melee6)
+
+- **Why the sabre hand stopped ~1.45 m up:** `cavalry.reins_world` solved the arm from the
+  shoulder *at rest*; the arm's orientations are absolute, so a leaning trunk carried the
+  whole arm (and the hand) off its target. It now takes `shoulders` (as posed), and the
+  strike poses are solved at the weapon's point (`strike` in `cavalry.make`: trunk first,
+  the wrist moved until the point lies on the target, the blade turned straight at the
+  point when the arm cannot reach; the build log prints `STRIKE pose: ... off`).
+- **`sabre_down_r`:** standing in the stirrups (knees opened, seat 0.22 m over the right
+  stirrup), leaning far out (spine/spine1/spine2 Y -38/-22/-14°), the left hand on the
+  pommel, the arm extended down and the blade ~64° down. A man 1.2 m out (the old
+  `NEAR_BODY` 0.5) is beyond a seated man's arm and sabre (shoulder ~1.6 m up: 0.26 m
+  short even at that lean), so `NEAR_BODY` is 0.75: the near part of a man 1.7 m off,
+  ~0.95 m from the rider's middle.
+- **`sabre_down_l`** (across the neck, man 40° left, `TURN_SABRE_L`): solved the same way,
+  but the right arm across the body does not get there (below).
+- **Side by the shorter turn** (`strike_view::down_turns`): a sabre rider cutting down takes
+  `ATTACK_CUT_DOWN_L` when turning the horse so the man lies 40° to the left is shorter
+  than turning him 75° to the right. `yaw_with_side` takes a signed turn.
+- **The turn eases** (`strike_view::Turns`, in `three_d`): the yaw goes towards the blow's
+  at `TURN_EASE` (6/s) and back to the facing after it, no snap.
+- **Fade:** on a strike clip the layer fades in at `FADE_STRIKE` (30/s), so the first blow
+  lands at ~full weight instead of ~0.55.
+- **Ready stance** (`How::ready`: PSTAND, or a model with strike clips outside them): the
+  layer only turns the trunk about the vertical to face the enemy; no step, no arm IK, no
+  turn of the weapon, no left hand.
+- **`lance_down`** solved at its point too: the hand held out right of the shoulder
+  (x -0.71), the lance 3° out (was 8°), so the shaft behind the grip passes outside the
+  rider's torso.
+
+Measured at frame 2 (`probe_clips`, metres right/forward/up of the attacker):
+
+| Clip | Target | Clip alone: point, off | With the layer: off |
+|---|---|---|---|
+| PueVsdA `ATTACK_THRUST_DOWN` | 0.81/1.73/0.20 | 0.79/1.75/0.22, **0.03** | 0.00 |
+| EngD18 `ATTACK_CUT_DOWN` (=`_R`) | 0.95 m at 75°: 0.92/0.25/0.20 | 0.89/0.26/0.32, **0.12** | 0.07 |
+| EngD18 `ATTACK_CUT_DOWN_L` | 0.95 m at 40° left: -0.61/0.73/0.20 | -0.56/0.50/0.68, 0.54 | 0.24 |
+| EngM18 `ATTACK_THRUST_MID` | 0/1.50/1.15 | 0.11/1.79/1.27, 0.34 | 0.02 |
+| EngM18 `ATTACK_THRUST_DOWN` | 0/1.60/0.20 | 0.07/1.39/0.02, 0.29 | 0.01 |
+
+(Blender's own solve gave 0.05 for the sabre; the exported clip reads 0.12: the glTF bake
+and the `fist_centre` estimate differ by a few cm.)
+
+Renders (`ACR-analysis/melee6`, white field, HUD off, default bench distances):
+`sheet_horse_crawl.png` (frames 2–24: the cut in frames 18–22), `sheet_lance_crawl.png`
+(frames 4–11: the hit at frame 6–8), `sheet_fence.png` (frames 10–30; ready frames 10–20
+without the arm IK). Rebuilt on the VM: EngD18 and PueVsdA (old ones in
+`showcase/backup-melee6/`).
+
 ### Not yet
 
-- **Sabre down still short:** the clip alone ends 0.46 m short (the hand stops ~1.45 m up),
-  the layer leaves 0.20 m; the in-game first blow comes at layer weight ~0.55 (the fade
-  in), so it shows shorter. Next: a lower hand (stand in the stirrup, lean further) or a
-  longer reach down, and fade the layer in before the hit frame. The horse's turn snaps.
-  `ATTACK_CUT_DOWN_L` is still never chosen (the turn always puts the man on the right).
-- **Fencing outside the strike clip:** in the `.MD` frames (PSTAND, no strike clip) the
-  layer still aims an upright musket at full arm weight: the musket ends up pointing
-  backwards over the shoulder (`run1/crop.png`, frame 20). The strike frames are fine.
+- **Sabre down left:** `ATTACK_CUT_DOWN_L` ends 0.54 m short with the clip alone (0.24 with
+  the layer): the right shoulder stays ~1.9 m up when leaning left. Since the shorter turn
+  is often the left one, many cuts now use it. Needs a different blow (a backhand from
+  higher, or the horse turned further so the man lies at the right) or a lower target.
+- **Sabre down right:** 0.12 m with the clip alone (target 0.10), at the nearer
+  `NEAR_BODY` 0.75; at the old 1.2 m out it cannot reach.
+- **Ready stance:** the trunk turn is checked only at the bench's distance; in the `.MD`
+  ready frames the muskets still lie as the clip carries them (horizontal over the
+  shoulder, `melee6/sheet_fence.png` frames 10–20).
+- **Lance through the rider:** solved clear in Blender (hand 0.71 m right, 3° out) but only
+  checked from the left side in the render; a view from the front would confirm it.
 - **Looks:** the bayonets still pass through bodies in the `.MD` ATTACK/PSTAND frames,
   which the layer does not guard. The smash pose is unchecked in a render (the sim never
   picks `Smash`).
-- **Sabre side:** `ATTACK_CUT_DOWN_L` is built but never chosen: the clip name has no side,
-  and the sim's strike carries none. Picking it needs the victim's side of the horse.
 - Other riders with gun and sabre (SpnRei) do not draw the sabre (`drawn` only on EngD18).
 - No officer sword clips: no foot officer is built (EngKF18 is a mounted standard bearer).
   Which `.MD` would be the first foot officer to build is not settled yet (the unit lists sit
