@@ -289,7 +289,7 @@ class Character:
         procedural tile (cloth, leather, wood, ...) on the box-projected UV map `detail`.
         Bones and stump caps are flat. Returns {object: sRGB}."""
         objs = self.layers["flesh"] + self.layers["clothes"] + self.layers["gear"] + list(self.held.values())
-        objs = [o for o in objs if o.type == "MESH"]
+        objs = [o for o in objs if o.type == "MESH" and not o.get("acr_baked")]  # genfit: own texture
         info = {}
         if ref is not None:
             _image, info = project.project_uvs(objs, ref, mirror=self.symmetric, delight=delight, report=report,

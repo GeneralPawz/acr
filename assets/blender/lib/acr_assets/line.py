@@ -66,7 +66,8 @@ FIT = {
     "pack": [0.32, 0.10, 0.32], "pack_y": 0.1925, "skirt_gap": 72,
 }
 DEFAULTS = {"build": BUILD, "fit": FIT, "hat": "tricorn", "gear": ("crossbelts", "cartridge", "knapsack"),
-            "weapon": "musket", "mix": 0.5, "fixed": (), "lapels": "facings", "lace": None, "flag": None, "sidearm": None}
+            "weapon": "musket", "mix": 0.5, "fixed": (), "lapels": "facings", "lace": None, "flag": None, "sidearm": None,
+            "hat_source": None}
 
 
 def _cartridge(ch, name, s):
@@ -185,9 +186,18 @@ def make(root, name, s):
     # Held gear on sockets, placed in the standing pose (drops at death).
     am.pose(ch.arm, poses.STAND_MUSKET)
     lace = s["lace"] or {}
-    hat = registry.build_hat(s["hat"], f"{name}.{s['hat']}", **({"lace": lace["hat"]} if lace.get("hat") else {}))
-    am.attach(hat, ch.arm, "socket.hat", Matrix.Translation(am.world(ch.arm, "socket.hat").translation + Vector((0, 0, fit["hat_z"])))
-              @ Matrix.Rotation(math.radians(-6), 4, "X") @ Matrix.Scale(fit["hat_scale"], 4))
+    if s["hat_source"]:
+        # A generated hat (`genfit`, e.g. "pixal3d/eq_tricorn_officer.glb"): fitted to this
+        # head, baked texture, origin at the socket.
+        from . import genfit
+
+        sock = am.world(ch.arm, "socket.hat").translation
+        hat, ch.genfit = genfit.hat_on(ch, s["hat_source"], f"{name}.hat", sock)
+        am.attach(hat, ch.arm, "socket.hat", Matrix.Translation(sock))
+    else:
+        hat = registry.build_hat(s["hat"], f"{name}.{s['hat']}", **({"lace": lace["hat"]} if lace.get("hat") else {}))
+        am.attach(hat, ch.arm, "socket.hat", Matrix.Translation(am.world(ch.arm, "socket.hat").translation + Vector((0, 0, fit["hat_z"])))
+                  @ Matrix.Rotation(math.radians(-6), 4, "X") @ Matrix.Scale(fit["hat_scale"], 4))
     ch.held["hat"] = hat
     ch.keys[hat.name] = "hat"
     # Lace (`masks.lace`): braid round the brim, bars on the buttonholes of lapels and cuffs.
@@ -682,6 +692,8 @@ def build(ctx, s):
                    **faces.extras("regular"))
     ctx.stats = {"triangles": tris, "light": report, "colours": colours, "aim_errors_m": ctx.aim_errors,
                  "drape": getattr(ch, "drape_report", None)}
+    if getattr(ch, "genfit", None):
+        ctx.stats["hat_source"] = ch.genfit
 
 
 def pose_for(ch, s, clip):

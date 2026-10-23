@@ -535,6 +535,30 @@ every closed, connected piece of the gear materials and the slung musket, skinne
 the rest pose and every clip; the body and clothing vertices inside it by ray parity, per
 penetrating material, with the worst clip and frame.
 
+### Generated gear (`acr_assets/genfit.py`; m2-hat-module)
+
+Pixal3D image-to-3D models (about 49k triangles, 2k texture, 15-57k non-manifold edges) made
+game-ready. Sources are local only (`$ACR_SOURCES/generated/pixal3d/`, VM
+`/home/claude/sources/generated/pixal3d/`, locally `D:\ACR-models\generated\pixal3d\`, found
+beside `ACR_SOURCES`; never committed). `genfit.fit(rel)`: import (+Y-facing turned to -Y),
+repair (weld 0.4 mm, dissolve degenerate, drop crumbs and duplicate faces, split edges with
+three or more faces, fill holes up to 8 sides), orient and scale by `ITEMS` (held: principal
+axis on +Z, grip end at the origin, `kind` guard or head; worn: thinnest along Y, origin in
+the middle of the body side), headgear seated on the MakeHuman scalp (band plane above the
+eyes, raised until the crown clears; faces inside the scalp loft +2 mm dropped),
+collapse-decimate to `CATEGORIES` (headgear 4000, held 1500, worn 2000; a stalled collapse
+falls back to a 3° planar dissolve), Smart-UV, bake colour and tangent normals (1024 / 512
+px, packed, bound to the material). Stats per item: triangles, islands, `non_manifold`
+(source, repaired, final, kinds), `deviation` mean/p99/max, `band_gap_m`.
+
+A unit wears a generated hat with SPEC `hat_source` (`line.make`, e.g.
+`"pixal3d/eq_tricorn_officer.glb"`): fitted to that unit's head, origin at `socket.hat`, a
+decay material on the baked image and `acr_baked` (skipped by `Character.colours` and
+`outfit.dress`); `stats.json` key `hat_source` holds its numbers. Batch with renders:
+`tools/genfit_batch.py -- --unit <built unit glb> --out <dir> pixal3d/<item>.glb ...`; the
+first run (10 hats on EngMus, 12 other items) is in `ACR-analysis/genai/kit3/`
+(`_sheet_genfit.png`, `genfit_stats.json`).
+
 ## 1. What the sprites tell
 
 `ENGM18.MD` packs: `USERLC 1 EngM18G` (walk, `MOTION_*`), `2 EngM18B` (not referenced by any

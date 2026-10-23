@@ -300,7 +300,7 @@ def dress(ch, colours, layer_of, size=SIZE):
     objs = ch.layers["flesh"] + ch.layers["clothes"] + ch.layers["gear"] + list(ch.held.values())
     groups = {}
     for o in objs:
-        if o.type != "MESH":
+        if o.type != "MESH" or o.get("acr_baked"):  # genfit items keep their baked texture
             continue
         keys = list(o.get("acr_material_keys") or [ch.keys.get(o.name)])
         if len(keys) != 1 or keys[0] not in PAINTER:
