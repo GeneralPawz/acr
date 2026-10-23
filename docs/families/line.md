@@ -51,3 +51,17 @@ session folds these notes into docs/humans-roster.md.
   cannot be swapped mid-clip without a socket for it).
 - The colour cloth is a flat sheet with a static wave; the runtime cloth is still to come
   (groups `cloth`/`pin` are kept on the cloth object).
+- **The drum renders in one colour in game** (the shell's `facings` everywhere: no pale
+  vellum head, no wooden hoops), both as rigid gear and as a held object on `hips`; the
+  sprites show a white head and a brown shell. Next to check: how the renderer handles
+  several material slots on a held object.
+- In the blank-field idle the drummers stand in `STAND` (both sticks raised). The idle
+  frames did not show `REST` (drumming). While walking, the right arm reaches forward
+  nearly straight. Check `drum_march` on this rig.
+- Sprite check: SpnM18's sprite reads as white with **red** facings; the model follows
+  Kronoskaf's blue. The USA drummer's sprite is mostly white/blue, not the reversed red
+  coat of the 1779 regulations. Both are kept as period choices.
+- Strike probe (EngB18, the stick as weapon, `strike_view::probe`): ATTACK_THRUST_MID is
+  0.58 m short in the clip alone and 0.05 m off with the layer; ATTACK_CUT_MID 0.69 / 0.13;
+  ATTACK_THRUST_DOWN 0.94 / 0.32 (the stick is short, 0.28 m from the hand).
+- Triangles: drummers 11 792, standard bearers 11 550, SpnM18/UsaM18 11 688.
