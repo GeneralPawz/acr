@@ -803,6 +803,28 @@ Open: the look variants still cost a draw call per variant and primitive at leve
 (zoom 2 is mostly there: 438 draws); a far level across materials (an atlas) would
 make a soldier one draw.
 
+**Gore at the far levels and fewer look draws (m2-lod4).** Filmed on the blank field per
+forced level (`ACR_LOD=0..3`, `ACR-analysis/lod4/gore.py`; grids `base_close.png` before,
+`new_close.png` and `new_decay.png` after; rows: torn in two by a cannonball, legs off by a
+cannonball, musket wound, sabre cut on the arm (alive), sabre to the head, crawler; columns:
+the levels): from the welded far meshes a cut man's waistcoat showed stripes along the
+discarded line and the crawler's coat a white patch of shirt through it (level 2–3), since a
+welded triangle may join a kept part to a discarded one or take a corner from another
+part's bones. A damaged instance (`Damage` not none: cuts, fractures, a torn trunk, wound
+volumes, severed pieces) now never draws coarser than level 1 (`lod::DAMAGED_UP_TO`, also
+for its shadow); the per-primitive level-1 lists keep the part borders, and these frames
+match level 0. Whole corpses (decay masks, deflate, the inner bone layer) and living men
+look right from the far meshes. The cost is nil in a battle: few instances are damaged.
+
+The look variants: a run of draws that differ only in the variant (same model, level,
+decay) is split (`split_variants`): the primitives no variant touches are one draw across
+the whole run, only the touched ones stay a draw per variant. Monongahela `battle3`, zoom 2:
+438 → 288 draws; GPU time unchanged (`gputime.py`, two runs each: z1 22.9–23.0 → 23.1 ms,
+z2 36.5–36.6 → 36.1 ms), so per-draw cost is not what limits this tiler here; an atlas
+across materials was not tried. A slow zoom sweep through the thresholds (`zoomsweep.py`,
+0.5 → 2) shows no visible pop at battle sizes (`pop_l3_l2.png`, `pop_l2_l1.png`); the
+hysteresis stays at 15 %.
+
 **Crashes.** A lost GPU device and uncaught wgpu errors are logged (`acr-app`, `Gpu::new`),
 as are the quit and the end of the event loop; `gputime.py` in `ACR-analysis/lod3/` keeps
 the driver's stderr (where a stack overflow is reported) and prints the exit code on an

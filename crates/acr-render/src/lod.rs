@@ -23,6 +23,11 @@ pub const HYSTERESIS: f32 = 1.15;
 /// draw call per primitive it touches, and per-draw cost dominates on a tiler once the
 /// triangles are few; coarser levels draw the base look (hair and beards still vary).
 pub const LOOKS_UP_TO: usize = 1;
+/// The coarsest level for a damaged instance (cut, fractured, torn in two, or a severed
+/// piece): the far meshes weld the body parts, so a triangle may join a kept part to a
+/// discarded one or take its corner from another part's bones (a piece then drags
+/// stretched triangles); the level-1 lists keep the borders between parts.
+pub const DAMAGED_UP_TO: usize = FAR_FROM - 1;
 /// The first level drawn with the cheaper fragment shader (`fs_far` in model.wgsl).
 pub const FAR_FROM: usize = 2;
 /// Shadow casters are drawn this many levels coarser than seen.

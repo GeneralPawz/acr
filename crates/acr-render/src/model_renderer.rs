@@ -295,6 +295,9 @@ struct Draw {
     /// The look variant's vertex buffer.
     variant: Option<usize>,
     lod: usize,
+    /// The parts drawn: all, or only those the look variants touch (`Some(true)`, one draw
+    /// per variant) or leave (`Some(false)`, one draw across the variants).
+    touched: Option<bool>,
 }
 
 /// An instance prepared, before the draws are grouped.
@@ -305,6 +308,9 @@ struct Entry {
     variant: Option<usize>,
     /// Within the window (else only a shadow caster).
     on_screen: bool,
+    /// Cut, fractured, torn or a severed piece ([`Damage`]): never drawn from the far
+    /// meshes, whose welded triangles span body parts ([`lod::DAMAGED_UP_TO`]).
+    damaged: bool,
     origin: [f32; 3],
     /// Culling radius (world pixels).
     radius: f32,
@@ -358,6 +364,43 @@ impl GpuModel {
             self.far[lod].iter().filter(move |f| decaying || !f.inner).map(|f| (f.range.clone(), f.material, false));
         near.chain(far)
     }
+
+    /// The parts of [`Self::parts`] a draw takes ([`Draw::touched`]).
+    fn draw_parts(&self, d: &Draw) -> impl Iterator<Item = (Range<u32>, usize, bool)> + '_ {
+        let only = d.touched;
+        self.parts(d.lod, d.decaying).filter(move |&(.., t)| only.is_none_or(|o| o == t))
+    }
+}
+
+/// Splits the runs of draws that differ only in the look variant (sorted so, adjacent
+/// instances): the parts no variant touches become one draw across the run, only the touched
+/// ones stay a draw per variant. A soldier's face and body variants move a few of his ~23
+/// primitives, so a crowd of mixed looks costs a draw per material plus a few per variant
+/// instead of all of them per variant.
+fn split_variants(draws: Vec<Draw>) -> Vec<Draw> {
+    let mut out = Vec::with_capacity(draws.len());
+    let mut rest = draws.as_slice();
+    while let Some(first) = rest.first() {
+        let n = rest
+            .iter()
+            .take_while(|d| d.model == first.model && d.decaying == first.decaying && d.lod == first.lod)
+            .count();
+        let (run, tail) = rest.split_at(n);
+        rest = tail;
+        // Contiguous instances by construction ([`ModelRenderer::group_draws`]).
+        if run.len() < 2 || run.windows(2).any(|w| w[0].range.end != w[1].range.start) {
+            out.extend(run.iter().map(|d| Draw { range: d.range.clone(), ..*d }));
+            continue;
+        }
+        out.push(Draw {
+            range: first.range.start..run[run.len() - 1].range.end,
+            variant: None,
+            touched: Some(false),
+            ..*first
+        });
+        out.extend(run.iter().map(|d| Draw { range: d.range.clone(), touched: Some(true), ..*d }));
+    }
+    out
 }
 
 /// Memory and time of the look variants baked by [`ModelRenderer::add_model`].
@@ -1157,6 +1200,7 @@ impl ModelRenderer {
                 decaying,
                 variant,
                 on_screen,
+                damaged: !inst.damage.is_none(),
                 origin,
                 radius: model.radius * stretch,
             });
@@ -1327,17 +1371,18 @@ impl ModelRenderer {
                         decaying: e.decaying,
                         variant: v,
                         lod: l,
+                        touched: None,
                     }),
                 }
             }
-            draws
+            split_variants(draws)
         };
         // Far off, the face and body variants are not worth a draw call each.
         let main: Vec<_> = entries
             .iter()
             .filter(|e| e.on_screen)
             .map(|e| {
-                let l = level[e.model];
+                let l = if e.damaged { level[e.model].min(lod::DAMAGED_UP_TO) } else { level[e.model] };
                 (l, e.variant.filter(|_| l <= lod::LOOKS_UP_TO), e)
             })
             .collect();
@@ -1356,6 +1401,7 @@ impl ModelRenderer {
                 .map(|e| {
                     let l = match level[e.model] + lod::SHADOW_STEP {
                         _ if whole(e.model) => 0,
+                        l if e.damaged => l.min(lod::DAMAGED_UP_TO),
                         l if l >= lod::LEVELS - 1 => lod::SHADOW,
                         l => l,
                     };
@@ -1366,8 +1412,7 @@ impl ModelRenderer {
         self.shadow_draws = group(casters);
         self.draws = draws;
         self.triangles = [self.count_triangles(&self.draws), self.count_triangles(&self.shadow_draws)];
-        let calls =
-            |d: &[Draw]| -> usize { d.iter().map(|d| self.models[d.model].parts(d.lod, d.decaying).count()).sum() };
+        let calls = |d: &[Draw]| -> usize { d.iter().map(|d| self.models[d.model].draw_parts(d).count()).sum() };
         self.calls = [calls(&self.draws), calls(&self.shadow_draws)];
         gpu
     }
@@ -1376,7 +1421,7 @@ impl ModelRenderer {
         draws
             .iter()
             .map(|d| {
-                let per: u32 = self.models[d.model].parts(d.lod, d.decaying).map(|(r, ..)| r.len() as u32 / 3).sum();
+                let per: u32 = self.models[d.model].draw_parts(d).map(|(r, ..)| r.len() as u32 / 3).sum();
                 u64::from(per) * u64::from(d.range.end - d.range.start)
             })
             .sum()
@@ -1386,7 +1431,7 @@ impl ModelRenderer {
     fn draw_instances(&self, pass: &mut wgpu::RenderPass<'_>, draws: &[Draw]) {
         let stride = size_of::<GpuInstance>() as u64;
         for d in draws {
-            let (range, decaying) = (&d.range, d.decaying);
+            let range = &d.range;
             let m = &self.models[d.model];
             let look = d.variant.and_then(|v| m.variants.get(v));
             // The instances are bound from their first one: no base instance on WebGL2.
@@ -1396,7 +1441,7 @@ impl ModelRenderer {
             );
             pass.set_index_buffer(m.indices.slice(..), wgpu::IndexFormat::Uint32);
             let mut bound = None;
-            for (indices, material, touched) in m.parts(d.lod, decaying) {
+            for (indices, material, touched) in m.draw_parts(d) {
                 let from_look = touched && look.is_some();
                 if bound != Some(from_look) {
                     pass.set_vertex_buffer(0, look.filter(|_| from_look).unwrap_or(&m.vertices).slice(..));
