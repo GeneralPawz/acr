@@ -32,6 +32,20 @@ class Items(unittest.TestCase):
             for p in set(it.parts):
                 self.assertIn(it.keys[p], registry.LAYER_OF, (n, p))
 
+    def test_quiver_body_is_closed(self):
+        # The volume check (`gear_volume`) tests closed pieces only: the quiver's hide body
+        # (bottom and the cover at the mouth) is watertight, every edge shared by two faces.
+        it = held.quiver()
+        edges = {}
+        for f, part in zip(it.faces, it.parts):
+            if part != "quiver":
+                continue
+            for a, b in zip(f, (*f[1:], f[0])):
+                k = (min(a, b), max(a, b))
+                edges[k] = edges.get(k, 0) + 1
+        self.assertTrue(edges)
+        self.assertTrue(all(n == 2 for n in edges.values()))
+
     def test_tip_present_where_it_applies(self):
         for n, it in self.items.items():
             if n in held.TIP:

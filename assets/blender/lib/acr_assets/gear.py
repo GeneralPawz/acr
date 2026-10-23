@@ -236,7 +236,7 @@ def _seat_sources(ch, skip=()):
         bones = ch.arm.data.bones
         vw = [{names[e.group]: e.weight for e in v.groups if e.group in names and names[e.group] in bones and e.weight > 0}
               for v in me.vertices]
-        out.append((me, tree, vw))
+        out.append((me, tree, vw, [m @ v.co for v in me.vertices]))
     return out
 
 
@@ -244,7 +244,7 @@ def _cast(srcs, co, into, prefix=""):
     """The nearest surface hit along `into` from `SEAT_LEAD` in front of `co`: (gap, loc,
     normal against `into`, weights at the hit) or None. A negative gap: `co` is inside."""
     best = None
-    for me, tree, vw in srcs:
+    for me, tree, vw, _pts in srcs:
         loc, n, fi, t = tree.ray_cast(co - into * SEAT_LEAD, into, SEAT_LEAD + 0.25)
         if loc is not None and (best is None or t < best[0]):
             best = (t, loc, n, fi, me, vw)
@@ -268,6 +268,42 @@ def _norm(w, keep=4):
     top = sorted(w.items(), key=lambda kv: -kv[1])[:keep]
     tot = sum(x for _b, x in top) or 1.0
     return {b: x / tot for b, x in top if x / tot > 0.02}
+
+
+def _reverse_gap(cos, polys, srcs, into, prefix=""):
+    """The least gap seen from the surface: the rays from `_cast` start at the item's
+    vertices and miss the coat's folds and bumps between them (EngM18's knapsack had 12 coat
+    vertices inside it at rest). Every trunk vertex of `srcs` under the item (`cos`, `polys`;
+    its outline across `into`) is cast back against the item: the gap between it and the
+    item's contact side (the last face along `into`). None when nothing lies under it."""
+    from mathutils.bvhtree import BVHTree
+
+    into = Vector(into).normalized()
+    u = into.orthogonal().normalized()
+    w = into.cross(u)
+    tree = BVHTree.FromPolygons(cos, polys)
+    us, ws, ds = [c.dot(u) for c in cos], [c.dot(w) for c in cos], [c.dot(into) for c in cos]
+    lo, hi = min(ds), max(ds)
+    box = (min(us), max(us), min(ws), max(ws))
+    best = None
+    for _me, _tree, vw, pts in srcs:
+        for p, wt in zip(pts, vw):
+            pu, pw = p.dot(u), p.dot(w)
+            if not (box[0] <= pu <= box[1] and box[2] <= pw <= box[3]):
+                continue
+            depth = p.dot(into)
+            if depth < lo - 0.05 or depth > hi + 0.15 or not wt or _free(max(wt, key=wt.get), prefix):
+                continue
+            o, last = p + into * (lo - 0.02 - depth), None
+            for _k in range(8):
+                loc, _n, _fi, _t = tree.ray_cast(o, into, hi - lo + 0.05)
+                if loc is None:
+                    break
+                last, o = loc, loc + into * 1e-4
+            if last is not None:
+                g = depth - last.dot(into)
+                best = g if best is None else min(best, g)
+    return best
 
 
 def _gaps(obj, srcs, into, prefix=""):
@@ -308,7 +344,12 @@ def seat(ch, obj, world_matrix, into, gap=SEAT_GAP, soft=False, part=0, turn=Tru
         into = q @ into
         hits = _gaps(obj, srcs, into, ch.prefix)
     if hits:
-        d = min(h[0] for _i, h in hits) - gap
+        rev = _reverse_gap([v.co for v in me.vertices], [p.vertices for p in me.polygons], srcs, into, ch.prefix)
+        d = min(h[0] for _i, h in hits)
+        if rev is not None and rev < d:
+            print(f"seat {obj.name}: the surface reaches {round(d - rev, 4)} m nearer than the item's rays see")
+            d = rev
+        d -= gap
         me.transform(Matrix.Translation(into * d))
         move = Matrix.Translation(into * d) @ move
         hits = [(i, (h[0] - d, h[1], h[2], h[3])) for i, h in hits]
@@ -339,6 +380,77 @@ def seat(ch, obj, world_matrix, into, gap=SEAT_GAP, soft=False, part=0, turn=Tru
     ch.seat_moves[obj.name] = move
     print(f"seat {obj.name}: gap {before if before is None else round(before, 4)} -> "
           f"{after if after is None else round(after, 4)} m, frame {sorted(blend.items(), key=lambda kv: -kv[1])[:3]}")
+    return am.bind(obj, arm_obj=ch.arm)
+
+
+def _pieces(me):
+    """The connected pieces of mesh `me`: [[vertex index]]."""
+    parent = list(range(len(me.vertices)))
+
+    def root(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for e in me.edges:
+        a, b = root(e.vertices[0]), root(e.vertices[1])
+        if a != b:
+            parent[a] = b
+    out = {}
+    for i in range(len(me.vertices)):
+        out.setdefault(root(i), []).append(i)
+    return list(out.values())
+
+
+def seat_pieces(ch, obj, into, gap=SEAT_GAP, part=0):
+    """Seats every connected piece of `obj` (world rest pose; e.g. the bandolier's charges)
+    on its own: moved along `into` until it is `gap` off the surface under it (item rays and
+    `_reverse_gap`) and skinned with its own contact blend, so each bottle follows the part
+    of the chest it hangs on instead of one bone (EngMus's charges crossed the shirt and the
+    skin in WRITHE and CRAWLARM on `spine1` alone). No lag bone. Returns the bound object."""
+    into = Vector(into).normalized()
+    me = obj.data
+    me.transform(obj.matrix_world)
+    obj.matrix_world = Matrix.Identity(4)
+    srcs = _seat_sources(ch, skip=(obj,))
+    for g in list(obj.vertex_groups):
+        obj.vertex_groups.remove(g)
+    polys = [p.vertices for p in me.polygons]
+    worst = None
+    for piece in _pieces(me):
+        idx = set(piece)
+        hits = [(i, _cast(srcs, me.vertices[i].co, into, ch.prefix)) for i in piece]
+        hits = [(i, h) for i, h in hits if h is not None]
+        if not hits:
+            blend = {ch.prefix + "spine2": 1.0}
+        else:
+            cos = [me.vertices[i].co.copy() for i in piece]
+            local = {i: k for k, i in enumerate(piece)}
+            pp = [[local[i] for i in p] for p in polys if p[0] in idx]
+            d = min(h[0] for _i, h in hits)
+            rev = _reverse_gap(cos, pp, srcs, into, ch.prefix)
+            d = min(d, rev) if rev is not None else d
+            worst = d if worst is None else min(worst, d)
+            for i in piece:
+                me.vertices[i].co += into * (d - gap)
+            low = min(h[0] for _i, h in hits)
+            contact = [h for _i, h in hits if h[0] < low + 0.04]
+            blend = {}
+            for h in contact:
+                for b, x in h[3].items():
+                    blend[b] = blend.get(b, 0.0) + x / len(contact)
+            blend = _norm(blend) or {ch.prefix + "spine2": 1.0}
+        for b, x in blend.items():
+            g = obj.vertex_groups.get(b) or obj.vertex_groups.new(name=b)
+            g.add(piece, x, "REPLACE")
+    attr = me.attributes.get("part") or me.attributes.new("part", "INT", "POINT")
+    for a in attr.data:
+        a.value = part
+    if not hasattr(ch, "seat_report"):
+        ch.seat_report, ch.seat_moves = {}, {}
+    ch.seat_report[obj.name] = (worst, gap)
+    print(f"seat {obj.name}: {len(_pieces(me))} pieces, least gap {worst if worst is None else round(worst, 4)} -> {gap} m")
     return am.bind(obj, arm_obj=ch.arm)
 
 

@@ -224,8 +224,11 @@ SLING_TILT = -28
 SLING_GAP = 0.006  # m between the barrel and the coat
 # Sockets shown: in the strike clips and in every other clip (the ramrod's socket,
 # `aim.ROD_SOCKET`, hidden with the musket in the hand).
-SHOW_MELEE = {"socket.hand_r": 0, "socket.hand_l": 0, BLADE: 1, SLING: 1}
-SHOW_REST = {"socket.hand_r": 1, "socket.hand_l": 1, BLADE: 0, SLING: 0}
+# The sling's run over the shoulder (`_sling_run`): two deforming bones keyed with the
+# musket's socket, so the strap shows and hides with the slung musket.
+SLING_RUN_BONES = ("sling.run_hi", "sling.run_lo")
+SHOW_MELEE = {"socket.hand_r": 0, "socket.hand_l": 0, BLADE: 1, SLING: 1, **{b: 1 for b in SLING_RUN_BONES}}
+SHOW_REST = {"socket.hand_r": 1, "socket.hand_l": 1, BLADE: 0, SLING: 0, **{b: 0 for b in SLING_RUN_BONES}}
 
 
 def _add_sockets(arm_obj, prefix="", sling_at=SLING_AT):
@@ -274,6 +277,43 @@ def _sling_strap(gun):
     me.update()
 
 
+# From the upper band over the right shoulder, across the chest to the left hip and back up
+# the back to the lower swivel (XZ line, front and back, `straps.carry`).
+SLING_RUN = ((-0.10, 1.47), (0.16, 1.00))
+# Parents of `SLING_RUN_BONES`: the shoulder end rides the right clavicle, the hip end the
+# lower spine; the strap blends between them by height.
+SLING_RUN_PARENTS = ("clavicle_r", "spine")
+
+
+def _sling_run(ch, name):
+    """The slung musket's sling over the shoulder: a strap laid on the coat (`straps.carry`)
+    skinned to the two `SLING_RUN_BONES` only (blended by height between the shoulder and the
+    hip), which the clips scale with `socket.sling`: hidden, every vertex falls onto the line
+    between the two bones' heads (no area), shown it follows clavicle and spine."""
+    import bpy
+
+    (x0, z0), (x1, z1) = SLING_RUN
+    strap = straps.carry(ch, f"{name}.sling_run", (x0, z0), (x1, z1), width=0.03)
+    pre = ch.prefix
+    bpy.context.view_layer.objects.active = ch.arm
+    bpy.ops.object.mode_set(mode="EDIT")
+    ebs = ch.arm.data.edit_bones
+    for bone, parent, (x, z) in zip(SLING_RUN_BONES, SLING_RUN_PARENTS, ((x0, z0), (x1, z1))):
+        eb = ebs.get(pre + bone) or ebs.new(pre + bone)
+        eb.head, eb.tail = Vector((x, 0.0, z)), Vector((x, 0.0, z + 0.1))
+        eb.parent, eb.use_deform = ebs[pre + parent], True
+    bpy.ops.object.mode_set(mode="OBJECT")
+    for g in list(strap.vertex_groups):
+        strap.vertex_groups.remove(g)
+    hi = strap.vertex_groups.new(name=pre + SLING_RUN_BONES[0])
+    lo = strap.vertex_groups.new(name=pre + SLING_RUN_BONES[1])
+    for v in strap.data.vertices:
+        t = min(max((z0 - v.co.z) / (z0 - z1), 0.0), 1.0)
+        hi.add([v.index], 1.0 - t, "REPLACE")
+        lo.add([v.index], t, "REPLACE")
+    return strap
+
+
 def add_sidearm(ch, name, kind, musket_len):
     """The sidearm `kind` (`SIDEARMS`) on `socket.blade_r` and a second musket slung on the
     back (`socket.sling`); the clips key which is shown (`sidearm_strikes`, `key_show`)."""
@@ -293,6 +333,7 @@ def add_sidearm(ch, name, kind, musket_len):
     d = gear.seat_offset(ch, gun, at, (0.0, -1.0, 0.0), gap=SLING_GAP)
     _add_sockets(ch.arm, ch.prefix, Vector(SLING_AT) + d)
     am.pose(ch.arm, {})
+    _sling_run(ch, name)
     w = gear.hold(ch, item, f"{name}.{kind}", ch.prefix + BLADE, slot="sidearm")
     am.attach(gun, ch.arm, ch.prefix + SLING, Matrix.Translation(d) @ at)
     ch.held["musket_slung"] = gun
