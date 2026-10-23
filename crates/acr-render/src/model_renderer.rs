@@ -19,6 +19,7 @@ use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
 use crate::damage::{self, Damage};
+use crate::lod;
 use crate::looks;
 use crate::math::{self, Mat4};
 use crate::model::{ModelData, Vertex};
@@ -285,8 +286,33 @@ fn look_texels(look: Option<&looks::Look>, eye: f32, seed: u32) -> [[f32; 4]; 3]
     [[skin[0], skin[1], skin[2], l.stubble], [hair[0], hair[1], hair[2], l.morphs[7]], [l.pocks, side, eye, 1.0]]
 }
 
+/// One draw: the instances `range` of a model at a level of detail.
+struct Draw {
+    model: usize,
+    range: Range<u32>,
+    /// They decay (and draw the inner layers too).
+    decaying: bool,
+    /// The look variant's vertex buffer.
+    variant: Option<usize>,
+    lod: usize,
+}
+
+/// An instance prepared, before the draws are grouped.
+struct Entry {
+    gpu: GpuInstance,
+    model: usize,
+    decaying: bool,
+    variant: Option<usize>,
+    /// Within the window (else only a shadow caster).
+    on_screen: bool,
+    origin: [f32; 3],
+    /// Culling radius (world pixels).
+    radius: f32,
+}
+
 struct GpuPrimitive {
-    indices: Range<u32>,
+    /// The index ranges of the levels of detail ([`lod`]), the full mesh first.
+    lods: [Range<u32>; lod::LEVELS],
     /// Moved by the face and body morphs: drawn from the look variant's vertex buffer.
     touched: bool,
     material: usize,
@@ -335,9 +361,20 @@ pub struct ModelRenderer {
     cap: usize,
     /// The inside of wounds (#280): cavity, rib, bone end ([`damage::InsertKind`] order).
     inserts: [usize; 3],
-    /// Prepared for the next `render`: model, its instances, whether they decay, the look
-    /// variant they draw.
-    draws: Vec<(usize, Range<u32>, bool, Option<usize>)>,
+    /// Prepared for the next `render`: the instances on the screen.
+    draws: Vec<Draw>,
+    /// Prepared for the next `render_shadows`: the casters within the shadow map, coarser.
+    shadow_draws: Vec<Draw>,
+    /// The level of detail each model was drawn at last (hysteresis, [`lod::choose`]).
+    lod_last: Vec<Option<usize>>,
+    /// Levels of detail: off until the figures at levels 1-3 look right (docs/rendering-3d.md,
+    /// "Levels of detail"); `ACR_LOD=on` chooses by size, `ACR_LOD=<level>` forces a level.
+    pub lods: bool,
+    pub lod_force: Option<usize>,
+    /// Triangles drawn by the last `prepare`: models, shadow casters.
+    pub triangles: [u64; 2],
+    /// Draw calls of the last `prepare`: models, shadow casters.
+    pub calls: [usize; 2],
     /// The look variants of the last model added.
     pub look_stats: LookStats,
     /// The target does not encode sRGB: the shader does.
@@ -679,6 +716,15 @@ impl ModelRenderer {
             cap: 0,
             inserts: [0; 3],
             draws: Vec::new(),
+            shadow_draws: Vec::new(),
+            lod_last: Vec::new(),
+            lods: std::env::var("ACR_LOD").is_ok_and(|v| v != "off"),
+            lod_force: std::env::var("ACR_LOD")
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .map(|l| l.min(lod::LEVELS - 1)),
+            triangles: [0; 2],
+            calls: [0; 2],
             look_stats: LookStats::default(),
             encode_srgb: !target.is_srgb(),
             pose_count: 0,
@@ -739,16 +785,15 @@ impl ModelRenderer {
             for (k, p) in data.primitives.iter().enumerate().filter(|(_, p)| touched(p) == pass) {
                 // Indices are offset here: WebGL2 has no base vertex.
                 let base = vertices.len() as u32;
-                let start = indices.len() as u32;
                 vertices.extend_from_slice(&p.vertices);
-                indices.extend(p.indices.iter().map(|i| i + base));
-                let inner = data.materials.get(p.material).and_then(|m| m.decay).is_some_and(|d| d.inner);
-                slots[k] = Some(GpuPrimitive {
-                    indices: start..indices.len() as u32,
-                    touched: pass,
-                    material: p.material,
-                    inner,
+                let levels = lod::levels(&p.vertices, &p.indices);
+                let lods = std::array::from_fn(|l| {
+                    let start = indices.len() as u32;
+                    indices.extend(levels[l].iter().map(|i| i + base));
+                    start..indices.len() as u32
                 });
+                let inner = data.materials.get(p.material).and_then(|m| m.decay).is_some_and(|d| d.inner);
+                slots[k] = Some(GpuPrimitive { lods, touched: pass, material: p.material, inner });
             }
         }
         let primitives: Vec<GpuPrimitive> = slots.into_iter().flatten().collect();
@@ -899,15 +944,13 @@ impl ModelRenderer {
         order.sort_by_key(|&i| (instances[i].model, instances[i].decay > 0.0, variant_of(i)));
         let mut texels: Vec<[f32; 4]> = Vec::new();
         let mut poses: HashMap<(usize, Option<usize>, u32), u32> = HashMap::new();
-        let mut gpu: Vec<GpuInstance> = Vec::with_capacity(order.len());
+        let mut entries: Vec<Entry> = Vec::with_capacity(order.len());
         let mut data: Vec<[f32; 4]> = Vec::new();
         let mut caps: Vec<ModelInstance> = Vec::new();
-        self.draws.clear();
         let [w, h] = view.size;
         let cap_model = self.cap;
         let insert_models = self.inserts;
         let models = &self.models;
-        let draws = &mut self.draws;
         let custom = std::mem::take(&mut self.custom);
         let shadows_on = self.shadows;
         let mut casters: Vec<([f32; 3], f32)> = Vec::new();
@@ -942,6 +985,9 @@ impl ModelRenderer {
             if p[0] < -r || p[0] > w + r || p[1] < -r || p[1] > h + r || !(0.0..=1.0).contains(&p[2]) {
                 return;
             }
+            // Drawn in the 3D pass only when on the screen; the rest only cast.
+            let rs = (model.radius * stretch * 1.5 + 8.0) * view.camera.scale;
+            let on_screen = p[0] >= -rs && p[0] <= w + rs && p[1] >= -rs && p[1] <= h + rs;
             casters.push((origin, model.radius * stretch));
             let key = (inst.model, inst.clip, inst.time.to_bits());
             let base = if let Some(palette) = custom.get(&i) {
@@ -999,12 +1045,7 @@ impl ModelRenderer {
                     });
                 }
             }
-            let index = gpu.len() as u32;
             let decaying = inst.decay > 0.0;
-            match draws.last_mut() {
-                Some((m, range, d, v)) if *m == inst.model && *d == decaying && *v == variant => range.end = index + 1,
-                _ => draws.push((inst.model, index..index + 1, decaying, variant)),
-            }
             let first = data.len() as u32;
             let mut look_data = look_texels(look.as_ref().map(|c| &c.0), gpu_model.eye, inst.look.unwrap_or(0));
             // A crew's uniform rides on the look texels the crew does not use otherwise.
@@ -1016,11 +1057,19 @@ impl ModelRenderer {
                 }
             }
             instance_texels(inst, model.rig.as_ref(), &look_data, &mut data);
-            gpu.push(GpuInstance {
-                rows: math::affine_rows(&inst.transform),
-                params: [inst.decay, inst.morphs[0], inst.morphs[1], if inst.transparent { 1.0 } else { 0.0 }],
-                // The hair and beard variants shown (none without a look).
-                extra: [base, first, u32::from(inst.player), look.map_or(0, |c| c.0.node_mask())],
+            entries.push(Entry {
+                gpu: GpuInstance {
+                    rows: math::affine_rows(&inst.transform),
+                    params: [inst.decay, inst.morphs[0], inst.morphs[1], if inst.transparent { 1.0 } else { 0.0 }],
+                    // The hair and beard variants shown (none without a look).
+                    extra: [base, first, u32::from(inst.player), look.map_or(0, |c| c.0.node_mask())],
+                },
+                model: inst.model,
+                decaying,
+                variant,
+                on_screen,
+                origin,
+                radius: model.radius * stretch,
             });
         };
         for &i in &order {
@@ -1033,9 +1082,13 @@ impl ModelRenderer {
         // The instance data follows the palettes; `extra.y` becomes absolute.
         let data_base = texels.len() as u32;
         texels.extend_from_slice(&data);
-        gpu.iter_mut().for_each(|g| g.extra[1] += data_base);
+        entries.iter_mut().for_each(|e| e.gpu.extra[1] += data_base);
         self.pose_count = poses.len();
-        self.drawn = gpu.len();
+        // The sun's view of the models drawn, around the window centre.
+        let focus = view.target();
+        let reach = 1.1 * (w * w + h * h).sqrt() / view.camera.scale;
+        let fit = if shadows_on { shadow::fit(casters.iter().copied(), focus, reach) } else { None };
+        let gpu = self.group_draws(&entries, view.camera.scale, fit.as_ref().map(|f| (f.texel, focus, reach)));
 
         let rows = (texels.len() as u32).div_ceil(BONE_WIDTH).max(1);
         if rows > self.bones.height() {
@@ -1074,10 +1127,6 @@ impl ModelRenderer {
             ],
         };
         queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
-        // The sun's view of the models drawn, around the window centre.
-        let focus = view.target();
-        let reach = 1.1 * (w * w + h * h).sqrt() / view.camera.scale;
-        let fit = if shadows_on { shadow::fit(casters.iter().copied(), focus, reach) } else { None };
         self.shadow.upload(queue, fit.as_ref(), focus, reach);
         if let Some(fit) = &fit {
             let s = shadow::sun();
@@ -1094,13 +1143,13 @@ impl ModelRenderer {
     /// Draws the prepared instances into the shadow map (before the 3D pass); nothing when
     /// shadows are off or nothing casts.
     pub fn render_shadows(&self, encoder: &mut wgpu::CommandEncoder) {
-        if !self.shadow.active || self.draws.is_empty() {
+        if !self.shadow.active || self.shadow_draws.is_empty() {
             return;
         }
         let mut pass = self.shadow.begin(encoder);
         pass.set_pipeline(&self.shadow_pipeline);
         pass.set_bind_group(0, &self.shadow_globals_group, &[]);
-        self.draw_instances(&mut pass);
+        self.draw_instances(&mut pass, &self.shadow_draws);
     }
 
     /// Uploads the blood pools of the next `render` (after [`Self::prepare`], which sets the
@@ -1134,15 +1183,117 @@ impl ModelRenderer {
         pass.set_bind_group(0, &self.globals_group, &[]);
         pass.set_bind_group(2, &self.shadow.group, &[]);
         pass.set_stencil_reference(1);
-        self.draw_instances(pass);
+        self.draw_instances(pass, &self.draws);
+    }
+
+    /// Chooses the levels of detail and groups the prepared instances into the draws of the
+    /// 3D pass (those on the screen) and of the shadow map (`shadow`: its texel size, focus
+    /// and reach; the casters within the reach, coarser, the tiny ones skipped). Returns the
+    /// instance buffer: the 3D pass's instances, then the casters'.
+    fn group_draws(&mut self, entries: &[Entry], scale: f32, shadow: Option<(f32, [f32; 3], f32)>) -> Vec<GpuInstance> {
+        let n = self.models.len();
+        self.lod_last.resize(n, None);
+        let mut size = vec![0.0f32; n];
+        for e in entries {
+            size[e.model] = size[e.model].max(2.0 * e.radius * scale);
+        }
+        // Caps and wound inserts sit on a body at its own level: always whole (they are small).
+        let whole = |m: usize| !self.lods || m == self.cap || self.inserts.contains(&m);
+        let level: Vec<usize> = (0..n)
+            .map(|m| match self.lod_force {
+                _ if whole(m) || size[m] == 0.0 => 0,
+                Some(l) => l,
+                None => lod::choose(size[m], self.lod_last[m]),
+            })
+            .collect();
+        for m in (0..n).filter(|&m| size[m] > 0.0) {
+            if self.lod_last[m] != Some(level[m]) {
+                log::debug!("lod: model {m} at {:.0} px: level {}", size[m], level[m]);
+            }
+            self.lod_last[m] = Some(level[m]);
+        }
+        let mut gpu: Vec<GpuInstance> = Vec::with_capacity(entries.len() * 2);
+        // (level, look variant, instance) → draws, appending the instances.
+        let mut group = |mut list: Vec<(usize, Option<usize>, &Entry)>| -> Vec<Draw> {
+            list.sort_by_key(|&(l, v, e)| (e.model, e.decaying, v, l));
+            let mut draws: Vec<Draw> = Vec::new();
+            for (l, v, e) in list {
+                let index = gpu.len() as u32;
+                gpu.push(e.gpu);
+                match draws.last_mut() {
+                    Some(d) if d.model == e.model && d.decaying == e.decaying && d.variant == v && d.lod == l => {
+                        d.range.end = index + 1
+                    }
+                    _ => draws.push(Draw {
+                        model: e.model,
+                        range: index..index + 1,
+                        decaying: e.decaying,
+                        variant: v,
+                        lod: l,
+                    }),
+                }
+            }
+            draws
+        };
+        // Far off, the face and body variants are not worth a draw call each.
+        let main: Vec<_> = entries
+            .iter()
+            .filter(|e| e.on_screen)
+            .map(|e| {
+                let l = level[e.model];
+                (l, e.variant.filter(|_| l <= lod::LOOKS_UP_TO), e)
+            })
+            .collect();
+        self.drawn = main.len();
+        let draws = group(main);
+        let mut casters = Vec::new();
+        if let Some((texel, focus, reach)) = shadow {
+            casters = entries
+                .iter()
+                .filter(|e| {
+                    let d = math::sub(e.origin, focus);
+                    // Outside the map, or under two texels across: nothing to see.
+                    (d[0] * d[0] + d[1] * d[1]).sqrt() - e.radius <= reach && e.radius >= texel
+                })
+                // Coarser than seen; the shadow needs no face variant.
+                .map(|e| {
+                    let l = if whole(e.model) { 0 } else { (level[e.model] + lod::SHADOW_STEP).min(lod::LEVELS - 1) };
+                    (l, None, e)
+                })
+                .collect();
+        }
+        self.shadow_draws = group(casters);
+        self.draws = draws;
+        self.triangles = [self.count_triangles(&self.draws), self.count_triangles(&self.shadow_draws)];
+        let calls = |d: &[Draw]| -> usize {
+            d.iter().map(|d| self.models[d.model].primitives.iter().filter(|p| d.decaying || !p.inner).count()).sum()
+        };
+        self.calls = [calls(&self.draws), calls(&self.shadow_draws)];
+        gpu
+    }
+
+    fn count_triangles(&self, draws: &[Draw]) -> u64 {
+        draws
+            .iter()
+            .map(|d| {
+                let per: u32 = self.models[d.model]
+                    .primitives
+                    .iter()
+                    .filter(|p| d.decaying || !p.inner)
+                    .map(|p| p.lods[d.lod].len() as u32 / 3)
+                    .sum();
+                u64::from(per) * u64::from(d.range.end - d.range.start)
+            })
+            .sum()
     }
 
     /// The prepared draws, with the pipeline and group 0 bound.
-    fn draw_instances(&self, pass: &mut wgpu::RenderPass<'_>) {
+    fn draw_instances(&self, pass: &mut wgpu::RenderPass<'_>, draws: &[Draw]) {
         let stride = size_of::<GpuInstance>() as u64;
-        for (model, range, decaying, variant) in &self.draws {
-            let m = &self.models[*model];
-            let look = variant.and_then(|v| m.variants.get(v));
+        for d in draws {
+            let (range, decaying) = (&d.range, d.decaying);
+            let m = &self.models[d.model];
+            let look = d.variant.and_then(|v| m.variants.get(v));
             // The instances are bound from their first one: no base instance on WebGL2.
             pass.set_vertex_buffer(
                 1,
@@ -1150,14 +1301,14 @@ impl ModelRenderer {
             );
             pass.set_index_buffer(m.indices.slice(..), wgpu::IndexFormat::Uint32);
             let mut bound = None;
-            for p in m.primitives.iter().filter(|p| *decaying || !p.inner) {
+            for p in m.primitives.iter().filter(|p| decaying || !p.inner) {
                 let from_look = p.touched && look.is_some();
                 if bound != Some(from_look) {
                     pass.set_vertex_buffer(0, look.filter(|_| from_look).unwrap_or(&m.vertices).slice(..));
                     bound = Some(from_look);
                 }
                 pass.set_bind_group(1, &m.materials[p.material], &[]);
-                pass.draw_indexed(p.indices.clone(), 0, 0..range.end - range.start);
+                pass.draw_indexed(p.lods[d.lod].clone(), 0, 0..range.end - range.start);
             }
         }
     }

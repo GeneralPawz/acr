@@ -11,6 +11,7 @@ pub mod ground;
 pub mod ground_state;
 pub mod image;
 pub mod layers;
+pub mod lod;
 pub mod looks;
 pub mod math;
 pub mod model;

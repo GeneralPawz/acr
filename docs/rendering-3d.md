@@ -701,6 +701,44 @@ that noise; it repeats the vertex work of the models once more at 2048².
 About 17 µs of GPU time per drawn musketeer. Poses are cheap (one per distinct clip frame);
 the cost is the vertex work, so LODs and fewer triangles per figure are the next lever.
 
+### Levels of detail and the cost of a battle (m2-lod)
+
+GPU time per pass (`gputime`, Monongahela `battle3`, 1600 × 900, shadows on, after 300 ticks,
+mean of 60 frames, Snapdragon X; scripts and frames in `ACR-analysis/lod/`; about 480 models
+on the screen, 22 poses, 1742 instances):
+
+| ms | z1 main (405de52) | z1 `ACR_LOD` off | z1 `ACR_LOD=on` | z2 main | z2 off | z2 `on` |
+|---|---:|---:|---:|---:|---:|---:|
+| shadow map | 93.3 | 81.9 | 3.7 | 90.7 | 78.3 | 4.8 |
+| models | 88.8 | 84.0 | 20.2 | 88.0 | 93.5 | 22.9 |
+| triangles drawn / cast | 6.1 M / 6.1 M | 6.1 M / 6.1 M | 0.72 M / 0.31 M | | | 1.15 M / 0.44 M |
+
+- **Profile:** a musketeer is 11.4 k triangles, a dragoon or officer 22.9 k. Before, the 3D pass
+  drew every model inside the shadow culling margin (2.5 × the radius beyond the window), and
+  the shadow pass drew the same list again, whole, including casters outside the fitted map.
+  Both passes cost about 13–14 ms per million triangles here.
+- **Now:** the 3D pass draws only the models on the screen (1.5 × radius margin); the shadow
+  pass draws its own list: casters within the map's reach, none smaller than one texel in
+  radius, a level coarser than seen ([`lod::SHADOW_STEP`]) and without face variants. One
+  instance buffer holds both lists.
+- **Levels** (`lod.rs`): index-only, built in `add_model` (a few ms per model): every primitive
+  gets index lists for 100, 35, 12 and 3 % of its triangles from vertex clustering on the rest
+  pose. Vertices only merge within one body part (`_PART`), dominant joint and hair variant, so
+  skinning, morphs, `_LIMB`/`_GORE`, decay masks and the look variants' vertex buffers stay as
+  they are (the levels share the vertices). The level is chosen per model by its projected
+  size (2 × culling radius in screen pixels: 520, 260, 110 px; finer again only 15 % above a
+  threshold); caps and wound inserts are always whole; the face and body variants are drawn up
+  to level 1 only (each is a draw call per touched primitive: 880 draws → 81).
+- **Off by default.** The clustered levels draw the figures visibly smaller and thinner than the
+  full mesh (`ACR-analysis/lod/tri_z2.png`: off, forced level 0, level 1): the knapsack and the
+  coat's volume shrink. Until that is solved `ACR_LOD=on` (by size) or `ACR_LOD=<0..3>`
+  (forced) switch them on for comparisons. Next: a quadric simplifier (meshoptimizer at build
+  time in xtask, stored as `acr_lod` index lists in the glb) instead of clustering, then on.
+- **Fragments:** with the triangles cut, the 3D pass is fragment bound: about 12 of its 20 ms
+  at zoom 1 go to `fs_main` (a flat shader measured 8.5 ms). The cut's ragged noise and the
+  shreds' noise now run only near a cut or a hole (identical output); the rest of the cost is
+  still to be found (the sun's 3 × 3 taps are not it: shadows off saved nothing).
+
 ## Development aids
 
 `ACR_3D_COMPARE` (native only) compares models with their sprites: `overlay` draws the
@@ -717,7 +755,7 @@ the frame rate, the models drawn and the poses sampled.
 
 - No meshopt/Draco decoding, no KTX2 or JPEG textures: export models uncompressed with PNG
   textures (the pipeline's default).
-- No shadows from models; no nation colour mask yet (#162); no LODs.
+- No nation colour mask yet (#162); LODs are off by default (above).
 - Free camera: fog of war and the minimap frame follow the original view only (water: the
   surface of docs/water.md, a flat one under `water=original`); sprites (trees, units without models) show their stored direction.
 - Dropped gear (musket, hat) does not detach at death yet, only for crawlers and the

@@ -1028,11 +1028,15 @@ impl ThreeD {
         let elapsed = (now - since).as_secs_f32();
         if elapsed >= 5.0 {
             log::info!(
-                "3d: {:.1} fps, {} models drawn ({} poses) of {}, camera {:?}",
+                "3d: {:.1} fps, {} models drawn ({} poses) of {}, {}k triangles ({} draws), {}k cast ({} draws), camera {:?}",
                 self.frames as f32 / elapsed,
                 renderer.drawn,
                 renderer.pose_count,
                 self.instances.len(),
+                renderer.triangles[0] / 1000,
+                renderer.calls[0],
+                renderer.triangles[1] / 1000,
+                renderer.calls[1],
                 view3d.orbit
             );
             self.frames = 0;

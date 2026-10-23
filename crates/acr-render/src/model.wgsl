@@ -594,19 +594,24 @@ fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
             discard;
         }
     }
-    if (in.cut.x - in.cut.z * ragged(in.cut.y, in.rest.xyz) < 0.0) {
+    // The noise only near the cut: |ragged| < 0.05 (most fragments are far from any).
+    if (in.cut.x < abs(in.cut.z) * 0.05 && in.cut.x - in.cut.z * ragged(in.cut.y, in.rest.xyz) < 0.0) {
         discard;
     }
     // Torn out (#280): nothing inside a wound volume but shreds of skin and cloth hanging
     // into the hole from its edge; a ragged band of holes in the cloth around it.
     // Gear (a knapsack in the way) is torn too, but only flesh shows tissue.
     let hole = holes(in.rest.xyz, u32(in.spray_look.z + 0.5), in.cut.y);
-    let shred = noise3(in.rest.xyz * vec3<f32>(90.0, 30.0, 90.0) + vec3<f32>(hole.y * 3.0));
-    if (hole.x < 0.0 && !(front && hole.x > -0.22 && shred > 0.68)) {
-        discard;
-    }
-    if (front && hole.x >= 0.0 && hole.x < 0.1 && shred < 0.3 - hole.x * 2.0) {
-        discard;
+    // The shreds' noise only near a hole (below: the mauled colours within 0.7).
+    var shred = 0.5;
+    if (hole.x < 0.7) {
+        shred = noise3(in.rest.xyz * vec3<f32>(90.0, 30.0, 90.0) + vec3<f32>(hole.y * 3.0));
+        if (hole.x < 0.0 && !(front && hole.x > -0.22 && shred > 0.68)) {
+            discard;
+        }
+        if (front && hole.x >= 0.0 && hole.x < 0.1 && shred < 0.3 - hole.x * 2.0) {
+            discard;
+        }
     }
     // A stump cap's ragged outline (uv: the unit disc).
     if (material.look.x > 0.5) {
