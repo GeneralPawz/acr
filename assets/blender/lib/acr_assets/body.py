@@ -171,8 +171,10 @@ def parts(obj):
 def derive(src, name, keep_face, offset, border=False):
     """A clothing shell: the faces of `src` for which keep_face(centre, normal, home, part)
     holds, pushed out by `offset` metres along the rest normals; same weights, homes and
-    parts. With `border` the cut edges (not the part seams of `src`) are smoothed along
-    their curve and get a hem fold (`smooth_border`)."""
+    parts. With `border` (and `CONTOUR`) the shell is cut along an isoline through the
+    triangles of a smoothed selection field (`contour_cut`), pushed out along its own
+    normals and given a turned hem (`hem_border`); without `CONTOUR` whole faces are cut
+    and the border is smoothed (`smooth_border`)."""
     obj = src.copy()
     obj.data = src.data.copy()
     obj.data.name = name
@@ -193,17 +195,34 @@ def derive(src, name, keep_face, offset, border=False):
         part = f.verts[0][vpart] if vpart else 0
         if not keep_face(f.calc_center_median(), f.normal, home, part):
             kill.append(f)
-    if border and CLEAN_CUT:
-        kill = clean_cut(kill, bm.faces)
-    # Push before deleting (keyed by BMVert; delete() renumbers the indices).
-    seam = {frozenset(e.verts) for e in bm.edges if e.is_boundary}
-    if border and CLEAN_CUT:
-        seam = real_seams(bm, set(kill))
-    for v in bm.verts:
-        v.co += Vector(v[rn]) * offset
-    bmesh.ops.delete(bm, geom=kill, context="FACES")
-    if border:
-        smooth_border(bm, src, seam, offset)
+    if border and CONTOUR:
+        # A narrow selection (a diagonal strap, a strip of quills) can fade below the isoline
+        # when smoothed: then smooth less (at 0 passes the field is still cut through the
+        # triangles, only less round).
+        dead = {f.index for f in kill}
+        want = sum(f.calc_area() for f in bm.faces if f.index not in dead)
+        for passes in (CONTOUR_PASSES, 1, 0):
+            cut = bm.copy()
+            cut.faces.index_update()
+            contour_cut(cut, dead, passes)
+            if sum(f.calc_area() for f in cut.faces) >= 0.7 * want or passes == 0:
+                break
+            cut.free()
+        bm.free()
+        bm = cut
+        rn = bm.verts.layers.float_vector.get("rest_normal")
+        for v in bm.verts:
+            v.co += Vector(v[rn]) * offset
+        relax_border(bm)
+        hem_border(bm, offset)
+    else:
+        # Push before deleting (keyed by BMVert; delete() renumbers the indices).
+        seam = {frozenset(e.verts) for e in bm.edges if e.is_boundary}
+        for v in bm.verts:
+            v.co += Vector(v[rn]) * offset
+        bmesh.ops.delete(bm, geom=kill, context="FACES")
+        if border:
+            smooth_border(bm, src, seam, offset)
     bm.to_mesh(obj.data)
     bm.free()
     for a in list(obj.data.color_attributes):
@@ -212,63 +231,157 @@ def derive(src, name, keep_face, offset, border=False):
     return am.bind(obj, src.parent)
 
 
-BORDER_MOVE = 0.02  # m: the most a smoothed border vertex moves
-CLEAN_CUT = False  # ears and notches of the cut face set removed before the border is smoothed (#287 trisoup4)
+# Shells cut along a contour (#287 trisoup5, docs/clothing.md "Fifth trisoup pass").
+CONTOUR = True  # cut along an isoline of the smoothed face selection, not along whole faces
+CONTOUR_PASSES = 3  # smoothing passes of the selection field (welded over the hull's part seams)
+CONTOUR_SNAP = 0.1  # field values this close to the isoline snap onto it (no sliver triangles)
+STRIP_HEIGHT = 0.16  # m: a selection no taller than this is a strip (sash, belt, garter): cut level
+BORDER_MOVE = 0.015  # m: the most a border vertex moves when the border is relaxed along its curve
+HEM = 0.7  # the hem folds this share of the offset back towards the skin
 
 
-def clean_cut(kill, faces, rounds=4):
-    """The faces to delete for a shell, cleaned on the face graph: a kept face with two or
-    more edges on the cut (a tooth: one triangle of the decimated hull poking out of the
-    border) goes, a deleted face with two or more kept neighbours (a notch) stays, then the
-    teeth once more. The part seams of the source (edges with one face) do not count."""
-    dead = set(kill)
-
-    def cut_edges(f, gone):
-        n = 0
-        for e in f.edges:
-            other = [g for g in e.link_faces if g is not f]
-            if other and ((other[0] in dead) != gone):
-                n += 1
-        return n
-
-    kept = sum(1 for f in faces if f not in dead)
-    for r in range(rounds + 1):
-        ears = [f for f in faces if f not in dead and cut_edges(f, False) >= 2]
-        if len(ears) > 0.1 * kept:
-            ears = []  # a narrow strip (a sash) is all teeth: leave it to the smoothing
-        dead.update(ears)
-        if r == rounds:
-            break
-        notches = [f for f in faces if f in dead and cut_edges(f, True) >= 2]
-        dead.difference_update(notches)
-        if not ears and not notches:
-            break
-    return list(dead)
+def _pkey(co):
+    return (round(co.x, 5), round(co.y, 5), round(co.z, 5))
 
 
-def real_seams(bm, kill):
-    """The part seams of `src` (boundary edges: the hull is split at the part borders) that
-    stay seams in the shell: those whose twin edge across the border keeps its face too.
-    Where the face across is cut away the seam is the shell's outer border (FrnBuk's cloak:
-    172 of its 199 border edges ran along the jagged part borders and were never smoothed)."""
-    def key(v):
-        return tuple(round(c, 5) for c in v.co)
+def selection_field(bm, kill, passes=CONTOUR_PASSES):
+    """{BMVert: 0..1}: the share of kept faces round each vertex (area weighted, welded over
+    the part seams of the hull by position; `kill` holds the indices of the cut faces),
+    smoothed `passes` times over the mesh. Its 0.5
+    isoline follows the face selection without the teeth. A strip (kept faces within
+    `STRIP_HEIGHT` of height: sashes, belts, garters) is cut level instead: there the field
+    is a ramp in z through the band's top and bottom (still bounded sideways by the smoothed
+    selection), so both edges are level lines through the triangles, a clean ribbon."""
+    group = {}
+    for v in bm.verts:
+        group.setdefault(_pkey(v.co), []).append(v)
+    gid = {v: k for k, vs in group.items() for v in vs}
+    acc = {k: [0.0, 0.0] for k in group}
+    for f in bm.faces:
+        a = f.calc_area()
+        s = 0.0 if f.index in kill else 1.0
+        for v in f.verts:
+            acc[gid[v]][0] += a * s
+            acc[gid[v]][1] += a
+    val = {k: (s / w if w > 0 else 0.0) for k, (s, w) in acc.items()}
+    nbr = {k: set() for k in group}
+    for e in bm.edges:
+        a, b = gid[e.verts[0]], gid[e.verts[1]]
+        if a != b:
+            nbr[a].add(b)
+            nbr[b].add(a)
+    for _ in range(passes):
+        val = {k: 0.5 * x + 0.5 * (sum(val[j] for j in nbr[k]) / len(nbr[k]) if nbr[k] else x)
+               for k, x in val.items()}
+    kept = [f for f in bm.faces if f.index not in kill]
+    if kept:
+        zs = [f.calc_center_median().z for f in kept]
+        lo, hi = min(zs), max(zs)
+        if hi - lo < STRIP_HEIGHT:
+            edge = sum(e.calc_length() for f in kept for e in f.edges) / (3 * len(kept))
+            lo, hi = lo - 0.2 * edge, hi + 0.2 * edge
+            mid, half, ramp = (lo + hi) / 2, (hi - lo) / 2, max(0.25 * edge, 0.005)
+            for k, x in val.items():
+                tent = min(1.0, max(0.0, 0.5 + (half - abs(k[2] - mid)) / (2 * ramp)))
+                val[k] = min(tent, min(1.0, 2.0 * x))
+    return {v: val[gid[v]] for v in bm.verts}
 
-    twins = {}
+
+def contour_cut(bm, kill, passes=CONTOUR_PASSES):
+    """Cuts the shell along the 0.5 isoline of `selection_field`: each edge it crosses is
+    split where it crosses (weights and rest normals interpolated, home and part from the
+    nearer end), the split points are joined through each triangle and the outer side is
+    deleted. Twin edges on a part seam of the hull are split alike, so the seams stay closed."""
+    fld = selection_field(bm, kill, passes)
+    bmesh.ops.triangulate(bm, faces=bm.faces[:])
+    for v, x in fld.items():
+        if abs(x - 0.5) < CONTOUR_SNAP:
+            fld[v] = 0.5
+    home = bm.verts.layers.int.get("home")
+    vpart = bm.verts.layers.int.get("part")
+    rn = bm.verts.layers.float_vector.get("rest_normal")
+    for e in [e for e in bm.edges if (fld[e.verts[0]] - 0.5) * (fld[e.verts[1]] - 0.5) < 0]:
+        a, b = e.verts
+        t = (fld[a] - 0.5) / (fld[a] - fld[b])
+        ca, cb, na, nb = a.co.copy(), b.co.copy(), Vector(a[rn]), Vector(b[rn])
+        near = a if t < 0.5 else b
+        h = near[home] if home else 0
+        p = near[vpart] if vpart else 0
+        _e, nv = bmesh.utils.edge_split(e, a, t)
+        nv.co = ca.lerp(cb, t)
+        if home:
+            nv[home] = h
+        if vpart:
+            nv[vpart] = p
+        n = na.lerp(nb, t)
+        nv[rn] = n.normalized() if n.length > 1e-9 else na
+        fld[nv] = 0.5
+    for f in list(bm.faces):
+        on = [v for v in f.verts if fld[v] == 0.5]
+        if len(on) == 2 and any(fld[v] > 0.5 for v in f.verts) and any(fld[v] < 0.5 for v in f.verts):
+            if not any(on[1] in e.verts for e in on[0].link_edges):
+                bmesh.ops.connect_verts(bm, verts=on)
+    bmesh.ops.delete(bm, geom=[f for f in bm.faces if any(fld[v] < 0.5 for v in f.verts)], context="FACES")
+    bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context="VERTS")
+
+
+def outer_border(bm):
+    """The shell's open border: boundary edges without a twin at the same place (a twin is
+    the other side of a part seam of the hull, kept in the shell as well)."""
+    by = {}
     for e in bm.edges:
         if e.is_boundary:
-            twins.setdefault(frozenset(key(v) for v in e.verts), []).append(e)
-    seam = set()
-    for es in twins.values():
-        kept = [e for e in es if e.link_faces[0] not in kill]
-        if len(kept) > 1:
-            seam.update(frozenset(e.verts) for e in kept)
-    return seam
+            by.setdefault(frozenset(_pkey(v.co) for v in e.verts), []).append(e)
+    return [es[0] for es in by.values() if len(es) == 1]
+
+
+def relax_border(bm, iterations=4):
+    """Relaxes the outer border along its own curve (stretches running along a jagged part
+    seam of the hull come out smooth too). A vertex moves at most `BORDER_MOVE` and is never
+    projected onto another surface (the round-4 chin spikes); vertices that also lie on a
+    kept part seam stay put, so the seam stays closed."""
+    border = set(outer_border(bm))
+    nb = {}
+    for e in border:
+        a, b = e.verts
+        nb.setdefault(a, []).append(b)
+        nb.setdefault(b, []).append(a)
+    free = {v: ns for v, ns in nb.items()
+            if len(ns) == 2 and not any(e.is_boundary and e not in border for e in v.link_edges)}
+    start = {v: v.co.copy() for v in free}
+    for _ in range(iterations):
+        new = {v: v.co * 0.5 + (ns[0].co + ns[1].co) * 0.25 for v, ns in free.items()}
+        for v, c in new.items():
+            v.co = c
+    for v, c in start.items():
+        d = v.co - c
+        if d.length > BORDER_MOVE:
+            v.co = c + d * (BORDER_MOVE / d.length)
+
+
+def hem_border(bm, offset, hem=HEM):
+    """A turned hem: the outer border extruded `hem` * offset back towards the skin along
+    the shell's own rest normals (never onto another part's skin), so the edge reads as
+    cloth or plate with a thickness."""
+    cut = outer_border(bm)
+    if not cut or hem <= 0 or offset <= 0:
+        return
+    rn = bm.verts.layers.float_vector.get("rest_normal")
+    ext = bmesh.ops.extrude_edge_only(bm, edges=cut)
+    for v in (g for g in ext["geom"] if isinstance(g, bmesh.types.BMVert)):
+        v.co -= Vector(v[rn]) * (offset * hem)
+    # Face the hem away from the cloth it folds under (seen from below the edge).
+    for f in (g for g in ext["geom"] if isinstance(g, bmesh.types.BMFace)):
+        nbr = [o for e in f.edges for o in e.link_faces if o is not f]
+        if nbr:
+            f.normal_update()
+            if f.normal.dot(f.calc_center_median() - nbr[0].calc_center_median()) < 0:
+                f.normal_flip()
 
 
 def smooth_border(bm, src, seam, offset, iterations=10, hem=0.7):
-    """Cut edges of a shell made from a decimated hull zig-zag along the triangles: relax
-    the open border along its own curve (vertices on the part seams of `src`, `seam`, stay
+    """The whole-face cut's border (`CONTOUR` off) zig-zags along the triangles: relax the
+    open border along its own curve (vertices on the part seams of `src`, `seam`, stay
     put), relax the ring inside it, put both back `offset` above the skin of `src`, then
     fold a hem inwards (`hem` * offset) so the edge has a thickness."""
     me = src.data
@@ -289,18 +402,10 @@ def smooth_border(bm, src, seam, offset, iterations=10, hem=0.7):
     if not edge:
         return
     nb = {v: [e.other_vert(v) for e in v.link_edges if cut_edge(e)] for v in edge}
-    start = {v: v.co.copy() for v in edge}
     for _ in range(iterations):
         new = {v: (v.co * 0.5 + (ns[0].co + ns[1].co) * 0.25) for v, ns in nb.items() if len(ns) == 2}
         for v, c in new.items():
             v.co = c
-    if CLEAN_CUT:
-        # A border vertex moves at most `BORDER_MOVE` (a long chain round the neck hole
-        # otherwise shrinks onto the chin).
-        for v, c in start.items():
-            d = v.co - c
-            if d.length > BORDER_MOVE:
-                v.co = c + d * (BORDER_MOVE / d.length)
     lift(edge)
     eset = set(edge)
     ring = list({w for v in edge for f in v.link_faces for w in f.verts if w not in eset and not w.is_boundary})
