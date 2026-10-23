@@ -29,7 +29,7 @@ from mathutils import Matrix, Vector
 
 from . import armature as am
 from . import clips as cl
-from . import crawl, faces, gear, heads, held, line, officers, outfit, poses, registry, rig
+from . import crawl, drape, faces, frontier, gear, heads, held, line, officers, outfit, poses, registry, rig  # noqa: F401
 from .humans import LAYER_OF, prepare_export
 
 # The pike: 16 ft of ash (4.9 m) with a leaf head and langets.
@@ -203,10 +203,17 @@ registry.gear("pike_match", _match)
 
 # A 17th-century soldier over the line's: the long coat closed (lapels in the coat's cloth),
 # stockings for gaiters, buff belts.
-PALETTE = {"belts": (0.62, 0.45, 0.25), "gaiters": (0.55, 0.52, 0.48), "hat": (0.10, 0.09, 0.08),
+PALETTE = {"buff": (0.74, 0.58, 0.36), "fallband": (0.92, 0.91, 0.86), "slashes": (0.86, 0.80, 0.62),
+           "jackboots": (0.20, 0.13, 0.08), "belts": (0.62, 0.45, 0.25), "gaiters": (0.55, 0.52, 0.48), "hat": (0.10, 0.09, 0.08),
            "cartridge": (0.12, 0.09, 0.06), "match": (0.55, 0.45, 0.30), "armour": (0.50, 0.51, 0.53),
            "scabbard": (0.07, 0.06, 0.05), "brass": (0.72, 0.58, 0.30)}
-FIXED = ("belts", "match", "armour", "scabbard", "brass", "cartridge")
+FIXED = ("belts", "match", "armour", "scabbard", "brass", "cartridge", "buff", "fallband", "slashes", "jackboots")
+# The 17th century's own clothes (docs/clothing.md, "17th century"), drape order: the
+# breeches, stockings (the gaiter slot) and linen cuffs under a doublet with tabbed skirts
+# (musketeers) or a buff coat with cloth sleeves (pikemen, under the armour); the falling
+# band is modelled over them (`drape.falling_band`, gear).
+MUSKETEER_DRAPE = ("breeches", "gaiters", "shirt17", "doublet")
+PIKEMAN_DRAPE = ("breeches", "gaiters", "shirt17", "buffcoat")
 MUSKET_KEYS = ("STAND", "MOTION_L", "MOTION_R", "MOTION_LB", "MOTION_RB", "PATTACK", "UATTACK", "PSTAND", "ATTACK",
                "PATTACK1", "UATTACK1", "PSTAND1", "ATTACK1", "DEATH", "DEATHLIE1")
 
@@ -214,7 +221,15 @@ MUSKET_KEYS = ("STAND", "MOTION_L", "MOTION_R", "MOTION_LB", "MOTION_RB", "PATTA
 def _palette(palette):
     pal = dict(PALETTE, **(palette or {}))
     pal.setdefault("facings", pal.get("coat"))
+    # The doublet and the cloth sleeves in the unit's coat colour.
+    pal.setdefault("doublet", pal.get("coat"))
+    pal.setdefault("dsleeve", pal.get("coat"))
     return pal
+
+
+def _drape(kw, plan):
+    kw["build"] = dict({"drape": plan}, **(kw.get("build") or {}))
+    return kw
 
 
 def musketeer_spec(md, palette=None, hat="pike_broad", **kw):
@@ -224,7 +239,9 @@ def musketeer_spec(md, palette=None, hat="pike_broad", **kw):
     musket path keys (the stance-3 rest clips are not built)."""
     md = {k: v for k, v in md.items() if k in MUSKET_KEYS}
     pal = _palette(palette)
-    return line.spec(md, palette=pal, hat=hat, gear=("belt_l", "belt_r", "pike_apostles", "pike_match", "off_scabbard"),
+    _drape(kw, MUSKETEER_DRAPE)
+    return line.spec(md, palette=pal, hat=hat,
+                     gear=("belt_l", "belt_r", "falling_band", "pike_apostles", "pike_match", "off_scabbard"),
                      fixed=FIXED + tuple(kw.pop("fixed", ())), **kw)
 
 
@@ -236,14 +253,16 @@ def support_spec(md, weapon, palette=None, hat="pike_broad", **kw):
     if weapon == "drum" and "PSTAND" not in md and "MOTION_L0" not in md:
         md["PSTAND"] = "#PSTAND 9 1 0 0"
     pal = _palette(palette)
-    gear_ = ("belt_r",) if weapon == "drum" else ("belt_l",)
+    _drape(kw, MUSKETEER_DRAPE)
+    gear_ = ("belt_r", "falling_band") if weapon == "drum" else ("belt_l", "falling_band")
     return line.spec(md, palette=pal, hat=hat, gear=gear_, weapon=weapon, fixed=FIXED + tuple(kw.pop("fixed", ())), **kw)
 
 
 def pikeman_spec(md, palette=None, hat="pike_morion", **kw):
     """The pikeman: helmet, back and breast with tassets, a sword at the left hip, the pike."""
     pal = _palette(palette)
-    s = line.spec(md, palette=pal, hat=hat, gear=("pike_corselet", "off_scabbard"),
+    _drape(kw, PIKEMAN_DRAPE)
+    s = line.spec(md, palette=pal, hat=hat, gear=("falling_band", "pike_corselet", "off_scabbard"),
                   fixed=FIXED + tuple(kw.pop("fixed", ())), **kw)
     s["weapon"] = "pike"
     return s
@@ -423,15 +442,59 @@ def build_pikeman(ctx, s):
                  "clips": sorted(clips)}
 
 
+def matchlocks(ch, name, rest=True):
+    """The line's flintlock shapes swapped for `held.matchlock` (the musket in hand and the
+    slung one, same frame, sockets and slots), and with `rest` the forked musket rest
+    (`held.musket_rest`) in the left hand with the match."""
+    import bpy as _bpy
+
+    for slot in ("musket", "musket_slung"):
+        gun = ch.held.get(slot)
+        if gun is None:
+            continue
+        tmp = gear.held(held.matchlock(), f"{name}.matchlock_tmp")
+        old = gun.data
+        gun.data = tmp.data
+        gun.data.name = gun.name
+        gun["acr_material_keys"] = list(tmp["acr_material_keys"])
+        gun["acr_held_item"] = "matchlock"
+        for c in list(tmp.children):
+            _bpy.data.objects.remove(c)
+        _bpy.data.objects.remove(tmp)
+        _bpy.data.meshes.remove(old)
+    if rest:
+        am.pose(ch.arm, {})
+        gear.hold(ch, held.musket_rest(), f"{name}.musket_rest", ch.prefix + "socket.hand_l", slot="rest")
+        am.pose(ch.arm, poses.STAND_MUSKET)
+    return ch
+
+
+_LINE_MAKE = line.make
+
+
+def make_musketeer(root, name, s):
+    return matchlocks(_LINE_MAKE(root, name, s), name, rest=s["weapon"] == "musket")
+
+
 def build(ctx, s):
     if s["weapon"] == "pike":
         build_pikeman(ctx, s)
+    elif s["weapon"] == "musket":
+        # `line.build` has no hook for its `make` (line.py belongs to the moves work): it is
+        # swapped for the build's duration so the matchlock and the rest go in.
+        line.make = make_musketeer
+        try:
+            line.build(ctx, s)
+        finally:
+            line.make = _LINE_MAKE
     else:
         line.build(ctx, s)
 
 
 def make(root, name, s):
-    return make_pikeman(root, name, s) if s["weapon"] == "pike" else line.make(root, name, s)
+    if s["weapon"] == "pike":
+        return make_pikeman(root, name, s)
+    return make_musketeer(root, name, s) if s["weapon"] == "musket" else _LINE_MAKE(root, name, s)
 
 
 def pose_for(ch, s, clip):

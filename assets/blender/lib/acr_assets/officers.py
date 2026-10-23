@@ -63,6 +63,27 @@ def spec(md, palette=None, weapon="officer_sword", kit=KIT, lace=None, fixed=(),
     return s
 
 
+# The 17th-century officer (docs/families/officers.md, "17th century"): a buff coat with
+# cloth sleeves over breeches and long hose, bucket-top boots, a falling band over the
+# gorget, the sash round the waist, a broad felt hat (`pike_broad`). Drape order and kit:
+DRAPE17 = ("breeches", "hose", "shirt17", "buffcoat")
+KIT17 = ("bucket_boots", "off_gorget", "falling_band", "off_sash", "off_scabbard")
+PALETTE17 = {"buff": (0.74, 0.58, 0.36), "fallband": (0.93, 0.92, 0.88), "jackboots": (0.16, 0.11, 0.07),
+             "hose": (0.55, 0.50, 0.44), "hat": (0.10, 0.09, 0.08)}
+
+
+def spec17(md, palette=None, weapon="officer_sword", hat="pike_broad", **kw):
+    """A 17th-century officer's SPEC: `spec` with `DRAPE17`, `KIT17`, no lace; the cloth
+    sleeves (`dsleeve`) in the palette's coat colour."""
+    from . import frontier, pike  # noqa: F401  (registers the hat, the keys; pike the band and boots)
+
+    pal = dict(PALETTE17, **(palette or {}))
+    pal.setdefault("dsleeve", pal.get("coat", (0.62, 0.10, 0.07)))
+    build = dict({"drape": DRAPE17}, **(kw.pop("build", None) or {}))
+    return spec(md, palette=pal, weapon=weapon, kit=KIT17, lace={}, hat=hat, build=build,
+                fixed=("buff", "fallband", "jackboots") + tuple(kw.pop("fixed", ())), **kw)
+
+
 def _cloth_points(ch):
     import numpy as np
 

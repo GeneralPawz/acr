@@ -40,7 +40,8 @@ MEASURE = {
 }
 
 # Ease (cm of girth) per garment over the body.
-EASE = {"waistcoat": 8.0, "coat": 20.0, "breeches": 0.5, "gaiters": 1.0, "shirt": 2.0}
+EASE = {"waistcoat": 8.0, "coat": 20.0, "breeches": 0.5, "gaiters": 1.0, "shirt": 2.0,
+        "doublet": 12.0, "buffcoat": 16.0, "hose": 1.0, "slops": 26.0}
 
 # Wool broadcloth, linen and canvas: thickness (m) of the solidified cloth, sim settings.
 CLOTH = {
@@ -49,7 +50,16 @@ CLOTH = {
     "breeches": {"thickness": 0.0020, "mass": 0.30, "tension": 15.0, "bending": 0.6, "shrink": 0.08, "margin": 0.003},
     "gaiters": {"thickness": 0.0020, "mass": 0.30, "tension": 20.0, "bending": 1.0, "shrink": 0.04, "margin": 0.003},
     "shirt": {"thickness": 0.0012, "mass": 0.15, "tension": 10.0, "bending": 0.2, "shrink": 0.0, "margin": 0.002},
+    # 17th century: the doublet's wool, the buff coat's thick oiled leather (stiff and heavy:
+    # it stands off the body in few broad folds), knitted hose, full slops.
+    "doublet": {"thickness": 0.0025, "mass": 0.35, "tension": 18.0, "bending": 1.5, "shrink": 0.02, "margin": 0.005},
+    "buffcoat": {"thickness": 0.0045, "mass": 0.90, "tension": 40.0, "bending": 14.0, "shrink": 0.0, "margin": 0.007},
+    "hose": {"thickness": 0.0015, "mass": 0.20, "tension": 15.0, "bending": 0.4, "shrink": 0.06, "margin": 0.003},
+    "slops": {"thickness": 0.0025, "mass": 0.30, "tension": 12.0, "bending": 1.2, "shrink": 0.0, "margin": 0.004},
+    "shirt17": {"thickness": 0.0012, "mass": 0.15, "tension": 10.0, "bending": 0.2, "shrink": 0.0, "margin": 0.002},
 }
+CLOTH["doublet_slashed"] = CLOTH["doublet"]
+CLOTH["buffcoat_bare"] = CLOTH["buffcoat"]
 
 # Order in which the garments are draped (each collides with the body and those before).
 ORDER = ("breeches", "gaiters", "shirt", "waistcoat", "coat")
@@ -434,7 +444,177 @@ def shirt(m=MEASURE):
     return P, seams
 
 
-GARMENTS = {"coat": coat, "waistcoat": waistcoat, "breeches": breeches, "gaiters": gaiters, "shirt": shirt}
+# --------------------------------------------------------------------------- 17th century
+# (docs/clothing.md, "17th century"): the doublet, the buff coat, long hose and slops. The
+# bodies are the coat's draft fitted closer (less ease), sewn shut down the centre front.
+# Material keys (registered by `frontier.py`, `civil.py` and `outfit.py`): `doublet`,
+# `dsleeve` (cloth sleeves), `slashes` (the lining in the slashes), `buff`, `hose`, `slops`.
+
+SLASH = 1.0  # cm: width of a slash (an inlay strip of the lining's cloth)
+
+
+def _fitted(m, chest, waist):
+    """`m` with the girths taken in so that `coat`'s draft (ease `EASE["coat"]`) comes out
+    with `chest` and `waist` cm of ease."""
+    e = EASE["coat"]
+    return dict(m, chest=m["chest"] + chest - e, waist=m["waist"] + waist - e)
+
+
+def _slashes(base, garment, u_list, v0, v1, place, key="slashes", width=SLASH):
+    """Inlay strips (`tack` = `base`) from v0 to v1 at each u of `u_list`."""
+    out = {}
+    for k, u in enumerate(u_list):
+        nm = f"{base}_slash{k}"
+        out[nm] = Panel(nm, garment, key, [(u - width / 2, v0), (u + width / 2, v0), (u + width / 2, v1), (u - width / 2, v1)],
+                        {"bottom": (0, 1)}, dict(place, layer=1), tack=base)
+    return out
+
+
+def _tabbed(width, drop, tab=8.0, slit=None, flare=3.0):
+    """A skirt panel cut into tabs: v rises from the hem (0) to the waist (`drop`), u from 0
+    (the centre front or back) to `width` + `flare` at the hem; slits `slit` cm deep every
+    `tab` cm. Returns (outline, edges)."""
+    slit = drop * 0.75 if slit is None else slit
+    w0 = width + flare
+    n = max(1, int(round(w0 / tab)))
+    step = w0 / n
+    hem = [(0.0, 0.0)]
+    for k in range(1, n):
+        x = k * step
+        hem += [(x - 0.5, 0.0), (x, slit), (x + 0.5, 0.0)]
+    hem.append((w0, 0.0))
+    pts = hem + [(width, drop), (0.0, drop)]
+    k = len(hem) - 1
+    return pts, {"hem": (0, k), "side": (k, k + 1), "waist": (k + 1, k + 2), "front": (k + 2, 0)}
+
+
+def _body17(m, garment, key, sleeve_key, chest, waist, collar):
+    """Front, back and two-piece sleeves of `coat`'s draft fitted to `chest`/`waist` cm of
+    ease, without lapels, cuffs, turnbacks or skirts; the centre front sewn shut (hooks)."""
+    panels, seams = coat(_fitted(m, chest, waist))
+    keep = {"coat_front", "coat_back", "sleeve_top", "sleeve_under"} | ({"collar"} if collar else set())
+    panels = {k: p for k, p in panels.items() if k in keep}
+    for k, p in panels.items():
+        p.garment = garment
+        p.key = sleeve_key if k.startswith("sleeve") else key
+        p.place = dict(p.place, gap=min(p.place.get("gap", 2.0), 2.0))
+    seams = [sm for sm in seams if {x[0] for x in sm.a + sm.b} <= set(panels) and sm.a[0][1] != "hook"]
+    seams.append(Seam([("coat_front", "cf")], [("coat_front", "cf", False, "R")], garment, close=0.05))
+    for sm in seams:
+        sm.garment = garment
+    return panels, seams
+
+
+def doublet(m=MEASURE, tabs=True, slashed=False, key="doublet", sleeve_key="dsleeve", slash_key="slashes",
+            collar=True):
+    """The doublet (1620s-1650s): a fitted body closed down the front, a low stand collar,
+    two-piece sleeves, below the waist short skirts cut into tabs (`tabs`); `slashed`
+    sleeves show the lining through slashes down the top sleeve (paned)."""
+    panels, seams = _body17(m, "doublet", key, sleeve_key, chest=12.0, waist=10.0, collar=collar)
+    if tabs:
+        drop = 13.0
+        for nm, base, theta, d in (("tabs_front", "coat_front", 0.0, 1), ("tabs_back", "coat_back", 180.0, -1)):
+            pts, ed = _tabbed(panels[base].outline[1][0], drop)
+            panels[nm] = Panel(nm, "doublet", key, pts, ed,
+                               {"region": "torso", "theta": theta, "dir": d, "u0": 0.0, "at": "waist", "lift": -drop,
+                                "gap": 3.0}, skirt=True)
+            seams.append(Seam([(base, "waist")], [(nm, "waist", True)], "doublet", ease=0.3))
+    if slashed:
+        st = panels["sleeve_top"]
+        half = st.outline[1][0]
+        top = st.outline[2][1]
+        panels.update(_slashes("sleeve_top", "doublet", (-half * 0.5, 0.0, half * 0.5), 7.0, top - 4.0, st.place,
+                               slash_key))
+    return panels, seams
+
+
+def buffcoat(m=MEASURE, sleeves="dsleeve", key="buff", drop=None):
+    """The buff coat (1640s): thick oiled leather, fitted, hooked shut to the waist, long
+    skirts to above the knee (open at the back vent), sleeves of cloth (`sleeves` = its
+    key), of buff (`sleeves` = `key`) or none (`None`: under a pikeman's armour)."""
+    panels, seams = _body17(m, "buffcoat", key, sleeves or key, chest=16.0, waist=12.0, collar=False)
+    if sleeves is None:
+        panels = {k: p for k, p in panels.items() if not k.startswith("sleeve")}
+        seams = [sm for sm in seams if not any(x[0].startswith("sleeve") for x in sm.a + sm.b)]
+    fw = panels["coat_front"].outline[1][0]
+    bw = panels["coat_back"].outline[1][0]
+    drop = m["waist_to_knee"] - 10.0 if drop is None else drop
+    for nm, w, theta, d, last in (("buff_skirt_front", fw, 0.0, 1, "front"), ("buff_skirt_back", bw, 180.0, -1, "vent")):
+        panels[nm] = Panel(nm, "buffcoat", key, [(0.0, 0.0), (w + 7.0, 0.0), (w, drop), (0.0, drop)],
+                           {"hem": (0, 1), "side": (1, 2), "waist": (2, 3), last: (3, 0)},
+                           {"region": "torso", "theta": theta, "dir": d, "u0": 0.0, "at": "waist", "lift": -drop,
+                            "gap": 3.5}, skirt=True)
+    seams += [Seam([("coat_front", "waist")], [("buff_skirt_front", "waist", True)], "buffcoat", ease=0.3),
+              Seam([("coat_back", "waist")], [("buff_skirt_back", "waist", True)], "buffcoat", ease=0.3),
+              Seam([("buff_skirt_back", "side")], [("buff_skirt_front", "side")], "buffcoat", ease=0.2)]
+    return panels, seams
+
+
+def hose(m=MEASURE, key="hose", top=0.6):
+    """Long hose (stockings) from the instep to `top` x the knee-to-waist length above the
+    knee, close to the leg, seamed up the back; the top pinned (gartered under the slops)."""
+    calf = m["calf"] + 1.0
+    ank = m["ankle"] + 5.0
+    knee = m["knee"] + 1.0
+    h = m["knee_to_ankle"] - 1.0
+    up = m["waist_to_knee"] * top
+    thigh = m["thigh"] * 0.88 + 1.0
+    g = [(0.0, 0.0), (ank * 0.75, -4.0), (ank, 0.0), (calf, h * 0.55), (knee, h), (thigh, h + up), (0.0, h + up),
+         (0.0, h * 0.55)]
+    P = {"hose": Panel("hose", "hose", key, g, {"bottom": (0, 2), "outer": (2, 5), "top": (5, 6), "start": (6, 0)},
+                       {"region": "leg", "theta": 180.0, "dir": 1, "u0": 0.0, "at": "ankle", "lift": 1.0, "gap": 0.8,
+                        "pin": "top"})}
+    return P, [Seam([("hose", "start", True)], [("hose", "outer")], "hose", close=GAITER_CLOSE)]
+
+
+def slops(m=MEASURE, key="slops", slash_key="slashes", full=26.0, down=0.45, paned=True):
+    """Slops / trunk hose (16th century): the breeches' draft cut short (`down` x the
+    crotch-to-knee length below the crotch), `full` cm of girth over the thigh gathered into
+    a band round the thigh; `paned`: strips of the lining between the panes."""
+    rise = 27.0
+    leg0 = m["waist_to_knee"] - rise + 3.0
+    cut = leg0 * (1.0 - down)
+    mm = dict(m, waist_to_knee=m["waist_to_knee"] - cut, seat=m["seat"] + full * 0.6, thigh=m["thigh"] + full,
+              knee=m["thigh"] * 0.8 + full * 0.8)
+    panels, seams = breeches(mm)
+    band_g = m["thigh"] * 0.85 + 3.0
+    for p in panels.values():
+        p.garment = "slops"
+        p.key = key
+        if p.place["region"] == "leg":
+            p.place = dict(p.place, lift=p.place.get("lift", 0.0) + cut, gap=2.5)
+    panels["knee_band"].outline = [(0.0, 0.0), (band_g, 0.0), (band_g, 4.0), (0.0, 4.0)]
+    for sm in seams:
+        sm.garment = "slops"
+        if sm.a[0][:2] == ("knee_band", "bottom"):
+            sm.ease = 1.3
+    if paned:
+        fr, bk = panels["br_front"], panels["br_back"]
+        wf, leg_f = fr.outline[1][0], fr.outline[2][1]
+        wb = -bk.outline[6][0]
+        leg_b = bk.outline[5][1]
+        panels.update(_slashes("br_front", "slops", [wf * f for f in (0.3, 0.65)], 1.5, leg_f + 6.0, fr.place,
+                               slash_key, width=1.6))
+        panels.update(_slashes("br_back", "slops", [-wb * f for f in (0.3, 0.65)], 1.5, leg_b + 6.0, bk.place,
+                               slash_key, width=1.6))
+    return panels, seams
+
+
+def shirt17(m=MEASURE):
+    """The shirt's linen at the wrists only, deep turned-back cuffs (the falling band at the
+    neck is modelled on the doublet: `drape.falling_band`)."""
+    P, seams = shirt(m)
+    w = P["wristband"]
+    w.garment = "shirt17"
+    w.outline = [(0.0, 0.0), (m["wrist"] + 6.0, 0.0), (m["wrist"] + 6.0, 6.0), (0.0, 6.0)]
+    seams[0].garment = "shirt17"
+    return {"wristband": w}, seams
+
+
+GARMENTS = {"coat": coat, "waistcoat": waistcoat, "breeches": breeches, "gaiters": gaiters, "shirt": shirt,
+            "doublet": doublet, "doublet_slashed": lambda m=MEASURE: doublet(m, slashed=True),
+            "buffcoat": buffcoat, "buffcoat_bare": lambda m=MEASURE: buffcoat(m, sleeves=None),
+            "hose": hose, "slops": slops, "shirt17": shirt17}
 
 
 def uniform(m=MEASURE, garments=ORDER, patterns=None):

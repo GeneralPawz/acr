@@ -29,12 +29,12 @@ pub const LAYER_BIAS: f32 = 0.001;
 pub fn layer_rank(key: &str) -> Option<u8> {
     Some(match key {
         "skin" => 0,
-        "breeches" | "stockings" => 1,
-        "gaiters" | "garter" | "boots" | "boots_high" => 2,
+        "breeches" | "stockings" | "hose" => 1,
+        "gaiters" | "garter" | "boots" | "boots_high" | "jackboots" | "slops" => 2,
         "shirt" | "stock" => 3,
-        "waistcoat" => 4,
-        "coat" | "tunic" | "cloak" => 5,
-        "facings" | "lining" | "sash" => 6,
+        "waistcoat" | "doublet" | "dsleeve" => 4,
+        "coat" | "tunic" | "cloak" | "buff" => 5,
+        "facings" | "lining" | "sash" | "fallband" => 6,
         "belts" | "brass" => 7,
         "cartridge" | "knapsack" => 8,
         _ => return None,

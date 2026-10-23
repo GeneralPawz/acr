@@ -365,6 +365,11 @@ down to the jaw (`masks.FACE_DOWN`, 23.5 cm below the top of the head) and 9.5 c
 side of the nose (`FACE_HALF_WIDTH`); before, they reached every front-facing texel from
 27 cm below the top up (the shoulders and upper arms), and native.py registered a limited
 copy (`native_face_half`, now an alias).
+The head has its own texture (`heads.face_map`), so masks painted on the atlas never reached
+the face: `heads.face_masks` paints every entry whose keys the `skin` painter paints over
+the head's own texels too (same rest-pose positions and normals as the atlas), so the face
+paint of `native`, `meso` and `plains` shows (checked on IroLut and MayLut,
+`ACR-analysis/c17/sheet_c17.png`).
 
 - **Palette keys** (registered, with fallbacks): `lace` (gilt `(0.80, 0.64, 0.28)`; worsted
   white for soldiers via the palette), `paint_red` (red ochre), `paint_black`, `paint_white`.

@@ -623,25 +623,76 @@ def blowpipe(length=1.80):
     return it
 
 
+def matchlock(length=1.45):
+    """A 17th-century matchlock musket in `line`'s musket frame (gear.musket: +Z along the
+    barrel, origin at the grip 0.25 m above the butt, the barrel 1 cm in front of the
+    axis): a heavy straight stock with a fishtail butt, a long round barrel, the lock plate
+    on the right with the pan and the serpentine (the S-shaped arm holding the match over
+    the pan), the trigger bar below, and a short length of lit match in the serpentine's
+    jaws. `socket.muzzle` at the muzzle."""
+    it = Item("matchlock")
+    it.keys = {"stock": "wood", "barrel": "metal", "match": "cord"}
+    o = -0.25  # the butt
+    # Fishtail butt, wrist, fore-stock to 0.2 m short of the muzzle.
+    it.box((0, 0.012, o + 0.14), (0.045, 0.12, 0.28), "stock", taper=(0.75, 0.5), shift=(0.0, -0.02))
+    it.box((0, 0.0, o + 0.36), (0.034, 0.05, 0.16), "stock")
+    fz0, fz1 = o + 0.44, o + length - 0.20
+    it.box((0, 0.0, (fz0 + fz1) / 2), (0.03, 0.036, fz1 - fz0), "stock", taper=(0.85, 0.8))
+    # Barrel: octagonal at the breech, round on.
+    it.tube([((0, -0.01, o + 0.40), 0.0125), ((0, -0.01, o + 0.62), 0.012), ((0, -0.01, o + length), 0.0105)],
+            "barrel", n=6)
+    # Lock plate, pan and the serpentine on the right (-X).
+    it.box((-0.018, 0.002, o + 0.43), (0.004, 0.026, 0.13), "barrel")
+    it.box((-0.020, -0.012, o + 0.47), (0.016, 0.010, 0.022), "barrel")  # pan
+    s0 = (-0.022, 0.020, o + 0.39)
+    it.tube([(s0, 0.004), ((-0.024, 0.030, o + 0.42), 0.004), ((-0.024, 0.008, o + 0.45), 0.0035),
+             ((-0.023, -0.016, o + 0.462), 0.0035)], "barrel", n=4)
+    # Trigger bar: a long lever under the stock.
+    it.box((0, 0.034, o + 0.36), (0.006, 0.010, 0.10), "barrel")
+    # The match in the jaws, its lit end over the pan.
+    it.tube([((-0.023, -0.016, o + 0.462), 0.003), ((-0.023, -0.03, o + 0.50), 0.003)], "match", n=4)
+    it.sockets["socket.muzzle"] = (0.0, -0.01, o + length)
+    return it
+
+
+def musket_rest(length=1.25, grip=0.95):
+    """The forked musket rest: an ash staff with an iron fork (a U to lay the barrel in)
+    on top, an iron spike at the foot. Origin at the left hand's grip (`grip` m above the
+    foot), +Z up the staff; `socket.fork` in the fork."""
+    it = Item("musket_rest")
+    it.keys = {"staff": "wood", "iron": "metal"}
+    z0, z1 = -grip, length - grip
+    it.tube([((0, 0, z0 + 0.06), 0.012), ((0, 0, z1 - 0.06), 0.011)], "staff", n=5)
+    it.tube([((0, 0, z0), 0.0), ((0, 0, z0 + 0.07), 0.008)], "iron", n=4, caps=False)
+    fork = [((-0.05, 0, z1 + 0.04), 0.004), ((-0.045, 0, z1 - 0.01), 0.005), ((-0.02, 0, z1 - 0.05), 0.006),
+            ((0, 0, z1 - 0.06), 0.007), ((0.02, 0, z1 - 0.05), 0.006), ((0.045, 0, z1 - 0.01), 0.005),
+            ((0.05, 0, z1 + 0.04), 0.004)]
+    it.tube(fork, "iron", n=4)
+    it.sockets["socket.fork"] = (0.0, 0.0, z1 - 0.03)
+    return it
+
+
 ITEMS = {
     "drum": drum, "drumstick": drumstick, "colour": colour, "smallsword": smallsword, "hanger": hanger,
     "officer_sword": officer_sword, "spontoon": spontoon, "halberd": halberd, "longbow": longbow, "arrow": arrow,
     "quiver": quiver, "spear": spear, "war_club": war_club, "tomahawk": tomahawk, "macuahuitl": macuahuitl,
     "sling": sling, "shield": shield, "pistol": pistol, "blowpipe": blowpipe,
+    "matchlock": matchlock, "musket_rest": musket_rest,
 }
 # Triangle budget per item (a soldier is ~12k triangles; held gear stays small).
 BUDGET = {
     "drum": 400, "drumstick": 50, "colour": 200, "smallsword": 150, "hanger": 120, "officer_sword": 150,
     "spontoon": 120, "halberd": 150, "longbow": 160, "arrow": 40, "quiver": 220, "spear": 100, "war_club": 160,
     "tomahawk": 80, "macuahuitl": 140, "sling": 60, "shield": 180, "pistol": 100, "blowpipe": 80,
+    "matchlock": 160, "musket_rest": 80,
 }
 # The point a strike reaches with (docs/melee.md): melee weapons carry `socket.tip`,
 # firearms `socket.muzzle`; the rest have their own sockets.
 TIP = {"drumstick", "colour", "smallsword", "hanger", "officer_sword", "spontoon", "halberd", "arrow", "spear",
        "war_club", "tomahawk", "macuahuitl"}
-MUZZLE = {"pistol", "blowpipe"}
+MUZZLE = {"pistol", "blowpipe", "matchlock"}
 SOCKETS = {"drum": {"socket.head"}, "colour": {"socket.top"}, "longbow": {"socket.nock"}, "quiver": {"socket.mouth"},
-           "sling": {"socket.pouch", "socket.release"}, "shield": {"socket.arm"}}
+           "sling": {"socket.pouch", "socket.release"}, "shield": {"socket.arm"}, "musket_rest": {"socket.fork"}}
 
 
 def build(name, **kw):

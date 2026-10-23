@@ -1,5 +1,5 @@
-"""Spanish officer, late 17th century (`SpnOf17`, `SPNOF17.MD`, `MECH`): dark coat with red
-facings, a broad cocked hat laced in gold, the red sash of Spain, gilt gorget and an
+"""Spanish officer, late 17th century (`SpnOf17`, `SPNOF17.MD`, `MECH`): buff coat with dark
+sleeves, a falling band, bucket-top boots, a broad felt hat, the red sash of Spain, gilt gorget and an
 officer's sword.
 
 Family 4 (`acr_assets.officers`, docs/families/officers.md): the line uniform in finer cloth,
@@ -25,7 +25,7 @@ MD = {
 
 
 def spec():
-    return officers.spec(MD, hat="cocked",
+    return officers.spec17(MD,
                          palette={"coat": (0.20, 0.18, 0.16), "facings": (0.62, 0.08, 0.07), "lining": (0.62, 0.08, 0.07),
                                   "sash": (0.70, 0.07, 0.07)})
 

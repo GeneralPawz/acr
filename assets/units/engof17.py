@@ -1,5 +1,5 @@
-"""English officer, late 17th century (`EngOf17`, `ENGOF17.MD`, `PIKA`): red coat with
-blue facings, a broad cocked hat laced in gold, crimson sash, gilt gorget and a spontoon
+"""English officer, late 17th century (`EngOf17`, `ENGOF17.MD`, `PIKA`): buff coat with red
+sleeves, a falling band, bucket-top boots, a broad felt hat, crimson sash, gilt gorget and a spontoon
 (two-handed thrust, `PATTACK`/`PSTAND`: the spontoon levelled).
 
 Family 4 (`acr_assets.officers`, docs/families/officers.md): the line uniform in finer cloth,
@@ -28,7 +28,7 @@ MD = {
 
 
 def spec():
-    return officers.spec(MD, weapon="spontoon", hat="cocked",
+    return officers.spec17(MD, weapon="spontoon",
                          palette={"facings": (0.13, 0.17, 0.36), "lining": (0.13, 0.17, 0.36)})
 
 

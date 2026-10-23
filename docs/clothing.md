@@ -171,6 +171,47 @@ After the reconstructed patterns (Hunter, Rogers):
 The engm18 palette gives blue facings (a royal regiment), white turnbacks, white waistcoat
 and breeches, black gaiters.
 
+## 17th century (and the conquistadors' 16th)
+
+A unit chooses its own garments with `build["drape"]`: the garment names in drape order
+(inner first). `drape.dress` uses that set instead of the one its family's `make` asks for,
+so `line.make` and `frontier.make` drape them unchanged (`pike.MUSKETEER_DRAPE`,
+`pike.PIKEMAN_DRAPE`, `officers.DRAPE17`, `conquista.DRAPE`). Patterns in `garments.py`
+(`tests/test_garments.py`, `Period17`):
+
+| garment | cut | keys | cloth |
+|---|---|---|---|
+| `doublet` | the coat's body and two-piece sleeves fitted closer (12 cm ease at the chest), no lapels, cuffs or skirts, the centre front sewn shut; a low stand collar; short skirts (13 cm) cut into **tabs** (slits every ~8 cm), free cloth on the skirt bones | `doublet`, sleeves `dsleeve` | wool |
+| `doublet_slashed` | the same with three **slashes** down the top sleeve (inlay strips of the lining) | + `slashes` | |
+| `buffcoat` | fitted (16 cm ease), hooked shut to the waist, **skirts to above the knee** (front and back, sewn at the sides, a back vent), sleeves of cloth (`sleeves="dsleeve"`), of buff (`sleeves="buff"`) or none (`buffcoat_bare`) | `buff` | thick leather: mass 0.9, tension 40, bending 14 |
+| `hose` | long hose from the instep to mid-thigh, seamed up the back, the top pinned | `hose` | knit |
+| `slops` | trunk hose: the breeches cut short, 26 cm of extra girth over the thigh **gathered** into a thigh band (seam ease 1.3), paned (lining strips) | `slops`, `slashes` | wool |
+| `shirt17` | deep linen cuffs only (not simulated) | `shirt` | linen |
+
+Modelled, not draped (`drape.py`, registered gear):
+- **`falling_band`**: the wide linen collar. A grid round the neck (48 angles x 7 rings,
+  11.5 cm deep in front, 8.5 cm behind, split at the centre front), each vertex cast
+  straight down onto the draped clothes (not the skin: the chin caught the rays) and
+  lifted 8 mm, a turned-down lip; skinned like the cloth under it (`finish(..., under=)`).
+- **`bucket_boots`**: per leg, rings up the shin fitted per angle to the skin and the hose
+  plus 1 cm, then the bucket: the top flaring 6 cm out over the knee and its edge turned
+  down; skinned from the skin; key `jackboots` (painted like leather, no gaiter buttons).
+
+Materials (`outfit.py`): `buff` has its own painter `paint_buff` (oil-tanned, napped:
+a cloudy mottle where the oil took unevenly, a faint grain, greased dark at the hems and
+the front edges) with a matte finish and a soft sheen (`FINISH["buff"]` = roughness 0.92,
+sheen 0.30, gloss 0.02); `slashes` and `fallband` are linen cells, `jackboots` leather.
+Layer ranks (`acr_render::layers`): hose 1, slops and jackboots 2, doublet and dsleeve 4,
+buff 5, fallband 6.
+
+Rebuilt and checked on the blank field (sheet `ACR-analysis/c17/sheet_c17.png`: sprite,
+old, new, face): EngMus, EngPik, EngOf17, SpnS15. Known: the band is ragged along its outer
+edge and hidden under the buff coat's shoulders; the doublet's collar stands above the
+band; the buff coat's skirts hang flat (no pleats at the side); the slops gather little
+puff (no pressure in the sim). Not yet: the 17th-c. cavalry (`cavalry.py`: EngD17,
+FrnD17, SpnD17, the *KOf17), which need `buffcoat`, `falling_band` and `bucket_boots` on
+the rider (their `make` drapes its own set) and the matchlock or carbine.
+
 ## Numbers (engm18 on the VM)
 
 | garment | spacing | tris |

@@ -75,3 +75,69 @@ class Patterns(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _inside(pt, poly):
+    x, y = pt
+    c = False
+    for (x0, y0), (x1, y1) in zip(poly, poly[1:] + poly[:1]):
+        if (y0 > y) != (y1 > y) and x < x0 + (y - y0) * (x1 - x0) / (y1 - y0):
+            c = not c
+    return c
+
+
+class Period17(unittest.TestCase):
+    """The 17th century's garments (docs/clothing.md, "17th century")."""
+
+    NAMES = ("doublet", "doublet_slashed", "buffcoat", "buffcoat_bare", "hose", "slops", "shirt17")
+
+    def setUp(self):
+        self.uni = gm.uniform(garments=self.NAMES)
+
+    def test_registered_with_cloth_and_spacing(self):
+        from acr_assets import registry
+
+        for g in self.NAMES:
+            self.assertIn(g, gm.CLOTH)
+            self.assertIn(g, registry.SPACING)
+
+    def test_outlines_seams_and_inlays(self):
+        for g, (panels, seams) in self.uni.items():
+            for p in panels.values():
+                self.assertGreater(p.area(), 0.0, (g, p.name))
+                if p.tack:
+                    for q in p.outline:
+                        self.assertTrue(_inside(q, panels[p.tack].outline), (g, p.name, q))
+            for s in seams:
+                for name, edge, _rev, _side in s.a + s.b:
+                    self.assertIn(edge, panels[name].edges, (g, name, edge))
+                a, b = gm.seam_lengths(panels, s)
+                lo, hi = sorted((a, b))
+                self.assertLessEqual(hi, lo * (1.0 + s.ease) + 0.5, (g, s.a, s.b, a, b))
+
+    def test_period_cut(self):
+        m = gm.MEASURE
+        d, _ = self.uni["doublet"]
+        # Tabbed skirts: short, free, slit into tabs; closed down the front; no lapels.
+        self.assertTrue(d["tabs_front"].skirt and d["tabs_back"].skirt)
+        self.assertLess(d["tabs_front"].bounds()[3], 16.0)
+        self.assertGreaterEqual(len(d["tabs_front"].edge_points("hem")), 7)
+        self.assertNotIn("lapel", d)
+        ds, _ = self.uni["doublet_slashed"]
+        self.assertEqual({p.key for p in ds.values() if p.tack == "sleeve_top"}, {"slashes"})
+        # The buff coat: buff leather, skirts to above the knee, stiffer and heavier cloth.
+        b, _ = self.uni["buffcoat"]
+        self.assertEqual(b["coat_front"].key, "buff")
+        self.assertGreater(b["buff_skirt_front"].bounds()[3], m["waist_to_knee"] * 0.7)
+        self.assertGreater(gm.CLOTH["buffcoat"]["bending"], 4 * gm.CLOTH["doublet"]["bending"])
+        bare, _ = self.uni["buffcoat_bare"]
+        self.assertFalse(any(k.startswith("sleeve") for k in bare))
+        # Slops: full (gathered into the thigh band), paned.
+        sl, seams = self.uni["slops"]
+        band = next(s for s in seams if s.a[0][:2] == ("knee_band", "bottom"))
+        a, b2 = gm.seam_lengths(sl, band)
+        self.assertGreater(b2, a * 1.2)
+        self.assertTrue(any(p.key == "slashes" for p in sl.values()))
+        # Long hose reach above the knee.
+        h, _ = self.uni["hose"]
+        self.assertGreater(h["hose"].bounds()[3], m["knee_to_ankle"] + 20.0)

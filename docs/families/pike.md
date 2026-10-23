@@ -21,10 +21,17 @@ with the `#STAND` sprites (`line`'s `mix`); belts, armour, match and scabbard fi
 
 ## How it is built
 
-- Everything goes through `line.make` (draped coat, breeches, stockings for gaiters,
-  shoes). The coat's lapels take the coat's colour (`facings` defaults to `coat`), so the
-  coat reads closed and long-skirted. 17th-c. garments of the roster (doublet with tabbed
-  waist, falling band, buff coat cut) are **not** drafted yet: the line coat stands in.
+- Everything goes through `line.make` with the period's own drape set (`build["drape"]`,
+  docs/clothing.md "17th century"): musketeers, drummers and standard bearers
+  `MUSKETEER_DRAPE` (breeches, stockings, linen cuffs, a **doublet** with tabbed skirts in
+  the coat colour); pikemen `PIKEMAN_DRAPE` (a **buff coat** with cloth sleeves in the coat
+  colour, skirts to above the knee, under the corselet). All wear the **falling band**
+  (`falling_band` gear, modelled over the doublet or buff coat).
+- **Musketeers** carry the **matchlock** (`held.matchlock`: fishtail butt, lock plate, the
+  serpentine holding a length of match over the pan; it replaces the line's flintlock
+  mesh in the hand and on the sling, same frame and sockets) and the **forked rest**
+  (`held.musket_rest`) in the left hand with the coiled match. `line.build` has no hook
+  for its `make`: `pike.build` swaps `line.make` for the build's duration.
 - Registered here: hats `pike_broad` (broad felt, brim cocked up on the left), `pike_morion`,
   `pike_pot`; gear `pike_corselet` (breast and back fitted per angle to the draped cloth
   1.00-1.42 m, a peascod ridge, four tassets on `hips`), `pike_apostles` (nine charges down
@@ -88,8 +95,12 @@ slots): the pike's steel head and the musket's barrel now show apart from the wo
 
 ## Not yet
 
-- 17th-c. garments (doublet, falling band, buff coat, full breeches, boots), the broad hat's
-  plume; the matchlock's serpentine and the musket rest; de Gheyn's longer drill.
+- ~~17th-c. garments, the matchlock's serpentine and the musket rest~~ (m2-c17, sheet
+  `ACR-analysis/c17/sheet_c17.png`): doublet, buff coat, falling band, matchlock, rest. Still missing:
+  the broad hat's plume, de Gheyn's longer drill, clips that use the rest (it is carried,
+  not set under the barrel), slashed sleeves on the pike units (the option exists:
+  `doublet_slashed`). The falling band is ragged at its outer edge and hides under the
+  buff coat's shoulders; the doublet's red stand collar shows above it.
 - The stance-3 rest clips of the musketeers; FrnS17's REST.
 - ~~The musketeer's `0 MECH` is the bayonet lunge~~ (m2-shared-moves): EngMus, SpnMus and
   FrnS17 draw a sword (`pike.musketeer_spec(..., sidearm="sword")`, the musket slung);

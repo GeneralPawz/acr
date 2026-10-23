@@ -408,6 +408,7 @@ def face_map(ch, skin_rgb, beard=True, scalp=True):
     cov = covered.reshape(-1)
     col = np.tile(coat.lin(skin_rgb) * 0.85, (len(loc), 1)).astype(np.float32)
     col[cov] = paint_face(loc[cov], flat_n[cov], skin_rgb, beard=beard, scalp=scalp)
+    col[cov] = face_masks(ch, flat_p[cov], flat_n[cov], col[cov])
     occ = np.clip(ao.reshape(-1), 0.0, 1.0)
     col[cov] *= (0.72 + 0.28 * occ[cov] ** 0.9)[:, None]
     col = dilate(col.reshape(FACE_SIZE, FACE_SIZE, 3), cov.reshape(FACE_SIZE, FACE_SIZE)).reshape(-1, 3)
@@ -420,6 +421,24 @@ def face_map(ch, skin_rgb, beard=True, scalp=True):
     for pi in head:
         me.polygons[pi].material_index = slot
     return img
+
+
+def face_masks(ch, p, n, col):
+    """The character's paint masks on skin (`ch.paint_masks` entries whose keys are painted
+    by the `skin` painter: face paint of `masks.py`) over the head's own texels: the head
+    has its own texture (`face_map`), so the masks painted on the outfit atlas never reached
+    the face. `p`, `n`: rest-pose positions and normals (armature space, as the atlas)."""
+    from . import outfit, registry
+
+    entries = [e for e in getattr(ch, "paint_masks", ()) or ()
+               if "skin" in {registry.PAINTER.get(k) for k in e["keys"]}]
+    if not entries or not len(p):
+        return col
+    flesh = [v.co.z for o in ch.layers["flesh"] for v in o.data.vertices]
+    L = {"head_top": max(flesh) if flesh else 1.75}
+    for i, e in enumerate(entries):
+        col = outfit.apply_mask(e, p, n, col, L, seed=53 + 7 * i)
+    return col
 
 
 def _g(*pairs):

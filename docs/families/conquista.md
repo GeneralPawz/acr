@@ -13,9 +13,17 @@ unchanged. Scripts: `assets/units/{spns15,frns15,spnalb}.py`; tests
 | FrnS15 | dark red doublet, yellow-black striped slops and hose, red cap | no armour, dark red doublet, yellow slops and hose (no stripes yet), red flat cap, sword, arquebus |
 | SpnAlb | full white armour, red sleeves, morion, halberd | cuirass and tassets over a doublet with red sleeves, red slops, olive hose, combed morion with a red plume, sword, halberd (2.25 m, `held.halberd`) |
 
-The body is `frontier.make` with `conquista.spec`'s defaults: doublet and sleeves
-(`civil.peasant_coat` without skirts) in `doublet` / `dsleeve`, hose `fhose`, shells
-`blouse`, `slops`, `cuirass` (`metal`). Registered here: hats `morion`, `cabasset`,
+The body is `frontier.make` with `conquista.spec`'s defaults, its clothes draped from the
+period's own patterns (`conquista.DRAPE`, `build["drape"]`, docs/clothing.md "17th
+century"): long **hose** (key `hose`, the palette's `fhose` colour) to mid-thigh, paned
+**slops** gathered into a thigh band (`slops`, the lining `slashes` in the panes), linen
+cuffs and a **doublet with slashed sleeves** (`doublet`, `dsleeve`, `slashes`). The
+`blouse`/`slops`/`cuirass`/`tassets` shells are gone: the armour is modelled over the
+draped doublet, `c_cuirass` (breast and back fitted per angle to the cloth: a peascod
+breast swelling low, a medial ridge, the lower edge dipping to a point, a scooped neck,
+a fauld turned out at the waist; rigid on `spine1`) and, where the layers listed
+`tassets` (SpnAlb), `c_tassets` (four lapping lames on each thigh, rigid on the thigh).
+Sheet `ACR-analysis/c17/sheet_c17.png` (SpnS15). Registered here: hats `morion`, `cabasset`,
 `flat_cap`; gear `plume` (on the hat socket), `c_scabbard` (sheath and cup-hilt).
 
 ## Clips

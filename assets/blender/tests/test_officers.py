@@ -49,7 +49,7 @@ class OfficerScripts(unittest.TestCase):
     def test_scripts_use_the_family(self):
         for ty in OFFICERS:
             src = open(os.path.join(UNITS, ty.lower() + ".py"), encoding="utf-8").read()
-            self.assertIn("officers.spec(MD", src)
+            self.assertRegex(src, r"officers\.spec(17)?\(MD")
             self.assertIn("officers.build(ctx, spec())", src)
 
 

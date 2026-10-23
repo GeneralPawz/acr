@@ -720,6 +720,11 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None):
     `patterns[name]` when given (a family's one-off), else by `garments.GARMENTS` (the
     uniform and what families registered with `registry.garment`). Returns {object name:
     material key}."""
+    # A unit's own set (`build["drape"]`: garment names in drape order, e.g. the 17th
+    # century's hose, slops, doublet) replaces the set its family's `make` asks for.
+    plan = (getattr(ch, "build", None) or {}).get("drape")
+    if plan:
+        garments = tuple(plan)
     body = Body(ch)
     uni = gm.uniform(body.m, garments, patterns)
     colliders = [ch.flesh] + ([ch.shoes] if getattr(ch, "shoes", None) else [])
@@ -751,7 +756,7 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None):
         for i, (n, _s) in enumerate(finfo):
             fa.data[i].value = names.index(n)
         dt, gaps_sewn = 0.0, []
-        if g != "shirt":
+        if not g.startswith("shirt"):
             dt, gaps_sewn = simulate(obj, gm.CLOTH.get(g, gm.CLOTH["waistcoat"]), sew)
         ev = obj.data
         longest = max(((ev.vertices[e.vertices[0]].co - ev.vertices[e.vertices[1]].co).length
@@ -761,7 +766,7 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None):
             lab = "+".join(x[0] + "." + x[1] for x in seams[k].a) + "|" + "+".join(x[0] + "." + x[1] for x in seams[k].b)
             per_seam[lab] = max(per_seam.get(lab, 0.0), (ev.vertices[a].co - ev.vertices[b].co).length)
         gaps = sorted((ev.vertices[a].co - ev.vertices[b].co).length for a, b in sew)
-        base = WELD if g != "shirt" else 0.3
+        base = WELD if not g.startswith("shirt") else 0.3
         limits = [getattr(seams[k], "close", None) or base for k in pieces["_sew_id"]]
         welded = sum(1 for (a, b), lim in zip(sew, limits) if (ev.vertices[a].co - ev.vertices[b].co).length < lim)
         weld(obj, sew, limit=base, limits=limits)
@@ -772,6 +777,7 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None):
         new_under = []  # the parts of one garment rest on the layers before it, not on each other
         for n, pnl in panels.items():
             kinds.setdefault((pnl.key, pnl.skirt), []).append(names.index(n))
+        both = {k for k, sk in kinds if sk} & {k for k, sk in kinds if not sk}
         for (key, skirt), idx in kinds.items():
             part = obj.copy()
             part.data = obj.data.copy()
@@ -784,7 +790,8 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None):
             bm.to_mesh(part.data)
             bm.free()
             part.data.attributes.remove(part.data.attributes["panel"])
-            label = {("coat", True): "coat_skirts", ("lining", True): "turnbacks"}.get((key, skirt), key)
+            label = {("coat", True): "coat_skirts", ("lining", True): "turnbacks"}.get(
+                (key, skirt), f"{key}_skirts" if skirt and key in both else key)
             part.name = part.data.name = f"{ch.name}.{label}"
             if label in HEM:
                 hem(part, HEM[label])
@@ -1021,3 +1028,132 @@ def surface(objs, name):
     bm.to_mesh(me)
     bm.free()
     return bpy.data.objects.new(name, me)
+
+
+# --------------------------------------------------------------------------- modelled pieces
+# (docs/clothing.md, "17th century"): stiff pieces that are not draped, cast onto the draped
+# clothes and skinned like the layer under them.
+
+def _cloth_tree(objs):
+    vs, fs, off = [], [], 0
+    for o in objs:
+        m = o.matrix_world
+        vs += [m @ v.co for v in o.data.vertices]
+        fs += [[i + off for i in p.vertices] for p in o.data.polygons]
+        off += len(o.data.vertices)
+    return BVHTree.FromPolygons(vs, fs) if fs else None
+
+
+def falling_band(ch, name, width=(0.115, 0.085), key="fallband", n=48, rings=7, lift=0.008):
+    """The falling band: a wide linen collar lying flat on the doublet's shoulders, deeper in
+    front (`width` m front, back), split at the centre front. Each vertex is cast straight
+    down onto the clothes (`lift` above them) from a ring round the neck; skinned like the
+    cloth under it. Added to `ch`'s clothes with key `key`."""
+    cloth = [o for o in ch.layers["clothes"] if o.type == "MESH" and ch.keys.get(o.name) not in ("shoes",)]
+    tree = _cloth_tree(cloth)  # not the skin: rays near the neck found the chin and the face
+    seg = am.segments(ch.arm)
+    head, tail = seg[ch.prefix + "neck"]
+    cx, cy = head.x, head.y + 0.008
+    r0 = 0.062
+    bm = bmesh.new()
+    grid = []
+    for i in range(n + 1):
+        t = -math.pi / 2 + 2 * math.pi * (i + 0.5 * (i == 0) - 0.5 * (i == n)) / n  # split at the front (-Y)
+        front = max(0.0, -math.sin(t)) ** 2
+        w = width[1] + (width[0] - width[1]) * front
+        row = []
+        for k in range(rings + 1):
+            r = r0 + w * k / rings
+            o = Vector((cx + r * math.cos(t), cy + r * math.sin(t), head.z + 0.03))
+            hit = tree.ray_cast(o, Vector((0, 0, -1)), 0.35)
+            if hit[0] is None:
+                p = Vector((o.x, o.y, head.z - 0.03))
+            else:
+                nrm = hit[1] if hit[1].z > 0 else -hit[1]
+                p = hit[0] + nrm * lift
+            row.append(bm.verts.new(p))
+        grid.append(row)
+    for a, b in zip(grid, grid[1:]):
+        for k in range(rings):
+            bm.faces.new((a[k], b[k], b[k + 1], a[k + 1]))
+    # The edge turned down 6 mm, so the band reads as a flat collar with a thickness.
+    lip = [bm.verts.new(row[-1].co - Vector((0, 0, 0.006))) for row in grid]
+    for i in range(n):
+        bm.faces.new((grid[i][-1], grid[i + 1][-1], lip[i + 1], lip[i]))
+    me = bpy.data.meshes.new(f"{name}.{key}")
+    bm.to_mesh(me)
+    bm.free()
+    obj = bd.link(bpy.data.objects.new(f"{name}.{key}", me))
+    under = [o for o in cloth if not o.name.endswith("_skirts")]
+    finish(obj, ch, False, under=under)
+    return ch.add("clothes", obj, key, symmetric=True)
+
+
+def bucket_boots(ch, name, key="jackboots", n=16, offset=0.010):
+    """Bucket-top boots (modelled, not draped): per leg a tube from the shoe up the shin,
+    fitted per angle to the skin and the hose under it plus `offset`, then the bucket: the
+    top flaring wide over the knee and its edge turned down. Skinned like the skin."""
+    import numpy as np
+
+    P = ch.prefix
+    seg = am.segments(ch.arm)
+    pts = [(o.matrix_world @ v.co) for o in [ch.flesh] + [o for o in ch.layers["clothes"] if o.type == "MESH"
+                                                         and ch.keys.get(o.name) in ("hose", "stockings", "breeches")]
+           for v in o.data.vertices]
+    p = np.array([tuple(v) for v in pts], np.float32)
+    bm = bmesh.new()
+    for sfx in ("_l", "_r"):
+        knee, ankle = seg[P + "shin" + sfx]
+        hip = seg[P + "thigh" + sfx][0]
+        z_a, z_k = ankle.z + 0.05, knee.z
+
+        def centre(z):
+            if z <= z_k:
+                f = (z - ankle.z) / max(z_k - ankle.z, 1e-6)
+                return ankle.lerp(knee, f)
+            f = (z - z_k) / max(hip.z - z_k, 1e-6)
+            return knee.lerp(hip, f)
+
+        def radii(z):
+            c = centre(z)
+            sel = p[(np.abs(p[:, 2] - z) < 0.02) & (np.hypot(p[:, 0] - c.x, p[:, 1] - c.y) < 0.11)
+                    & (np.sign(p[:, 0] + 1e-6) == np.sign(c.x))]
+            a = np.arctan2(sel[:, 1] - c.y, sel[:, 0] - c.x)
+            r = np.hypot(sel[:, 0] - c.x, sel[:, 1] - c.y)
+            out = []
+            for i in range(n):
+                t = 2 * math.pi * i / n
+                d = np.abs((a - t + math.pi) % (2 * math.pi) - math.pi)
+                near = r[d < math.pi / n * 1.6]
+                out.append(float(near.max()) if len(near) else 0.06)
+            return c, out
+
+        prof = []
+        for k in range(6):  # the leg of the boot, ankle to knee
+            z = z_a + (z_k - 0.03 - z_a) * k / 5
+            c, rs = radii(z)
+            prof.append([(c, r + offset, z) for r in rs])
+        c, rs = radii(z_k + 0.02)
+        base = [max(r, prof[-1][i][1] - offset) + offset for i, r in enumerate(rs)]
+        for dz, grow in ((0.03, 0.012), (0.09, 0.040), (0.13, 0.060), (0.10, 0.075)):  # the bucket, then its lip
+            z = z_k + dz
+            c = centre(z)
+            prof.append([(c, b + grow, z) for b in base])
+        rings = []
+        for ring in prof:
+            rings.append([bm.verts.new((c.x + r * math.cos(2 * math.pi * i / n), c.y + r * math.sin(2 * math.pi * i / n), z))
+                          for i, (c, r, z) in enumerate(ring)])
+        for a, b in zip(rings, rings[1:]):
+            for i in range(n):
+                j = (i + 1) % n
+                bm.faces.new((a[i], a[j], b[j], b[i]))
+    me = bpy.data.meshes.new(f"{name}.{key}")
+    bm.to_mesh(me)
+    bm.free()
+    obj = bd.link(bpy.data.objects.new(f"{name}.{key}", me))
+    finish(obj, ch, False)
+    return ch.add("clothes", obj, key, symmetric=True)
+
+
+registry.gear("falling_band", lambda ch, name, s: falling_band(ch, name))
+registry.gear("bucket_boots", lambda ch, name, s: bucket_boots(ch, name))

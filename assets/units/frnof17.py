@@ -1,5 +1,5 @@
-"""French officer, late 17th century (`FrnOf17`, `FRNOF17.MD`, `MECH`): grey-white coat with
-blue facings, a broad cocked hat laced in gold, the white sash of France, gilt gorget and a
+"""French officer, late 17th century (`FrnOf17`, `FRNOF17.MD`, `MECH`): buff coat with grey-white
+sleeves, a falling band, bucket-top boots, a broad felt hat, the white sash of France, gilt gorget and a
 smallsword.
 
 Family 4 (`acr_assets.officers`, docs/families/officers.md): the line uniform in finer cloth,
@@ -25,7 +25,7 @@ MD = {
 
 
 def spec():
-    return officers.spec(MD, weapon="smallsword", hat="cocked",
+    return officers.spec17(MD, weapon="smallsword",
                          palette={"coat": (0.80, 0.78, 0.72), "facings": (0.13, 0.17, 0.40), "lining": (0.13, 0.17, 0.40),
                                   "sash": (0.90, 0.89, 0.85)})
 

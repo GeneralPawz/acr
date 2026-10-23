@@ -137,6 +137,118 @@ def _scabbard(ch, name, s):
     return ch.add("gear", hilt, "metal")
 
 
+def _plate(ch):
+    """(radius(t, z), cy) of the draped cloth round the trunk: radii per angle at 8
+    heights between 0.96 and 1.46 m, interpolated."""
+    from . import officers
+
+    p = officers._cloth_points(ch)
+    zs = [0.96 + 0.5 * k / 7 for k in range(8)]
+    bands = [officers._band(p, z - 0.03, z + 0.03, n=24, out=0.0) for z in zs]
+    cy = sorted(b[0] for b in bands)[len(bands) // 2]
+    n = 24
+
+    def radius(t, z):
+        f = min(max((z - zs[0]) / (zs[-1] - zs[0]) * 7, 0.0), 6.999)
+        k = int(f)
+        w = f - k
+        i = (t + math.pi) / (2 * math.pi) * n
+        i0 = int(math.floor(i)) % n
+        a = i - math.floor(i)
+        r0 = bands[k][1][i0] * (1 - a) + bands[k][1][(i0 + 1) % n] * a
+        r1 = bands[k + 1][1][i0] * (1 - a) + bands[k + 1][1][(i0 + 1) % n] * a
+        return r0 * (1 - w) + r1 * w
+
+    return radius, cy
+
+
+def _cuirass(ch, name, s):
+    """Breast and back (`armour`, rigid on `spine1`) fitted over the draped doublet: the
+    breast curved like a 16th-century peascod (the fullest point low on the belly, a
+    medial ridge, the lower edge dipping to a point in front), a scooped neck, arm openings
+    (the band stays inside the arms), a short flange (fauld) turned out at the waist."""
+    import bmesh
+    from mathutils import Matrix, Vector
+
+    from . import gear
+
+    radius, cy = _plate(ch)
+    n, rows = 32, 9
+    bm = bmesh.new()
+    grid = []
+    for k in range(rows + 1):
+        f = k / rows
+        row = []
+        for i in range(n):
+            t = -math.pi + 2 * math.pi * i / n
+            front = max(0.0, -math.sin(t))
+            side = abs(math.cos(t))
+            z_bot = 1.00 - 0.045 * front ** 3
+            z_top = 1.44 - 0.07 * front ** 2 - 0.03 * side ** 4
+            z = z_bot + f * (z_top - z_bot)
+            r = radius(t, z) + 0.010
+            # Peascod: the breast swells forward to a fullness low on the belly, the ridge.
+            bulge = 0.030 * math.exp(-((z - 1.10) / 0.11) ** 2) + 0.010
+            r += bulge * front ** 2 + 0.007 * front ** 12
+            # The sides drawn in under the arms, a flatter back.
+            r -= 0.006 * side ** 6 * (1.0 if z > 1.2 else 0.0)
+            row.append(bm.verts.new((math.cos(t) * r, cy + math.sin(t) * r, z)))
+        grid.append(row)
+    for a, b in zip(grid, grid[1:]):
+        for i in range(n):
+            j = (i + 1) % n
+            bm.faces.new((a[i], a[j], b[j], b[i]))
+    # The fauld: the lower edge turned out and down 2.5 cm.
+    lip = []
+    for v in grid[0]:
+        d = (v.co.xy - Vector((0.0, cy))).normalized() if (v.co.xy - Vector((0.0, cy))).length > 1e-6 else Vector((1, 0))
+        lip.append(bm.verts.new((v.co.x + d.x * 0.018, v.co.y + d.y * 0.018, v.co.z - 0.025)))
+    for i in range(n):
+        j = (i + 1) % n
+        bm.faces.new((lip[i], lip[j], grid[0][j], grid[0][i]))
+    obj = gear.from_bm(bm, f"{name}.cuirass")
+    gear.rigid(obj, ch.arm, "spine1", Matrix.Identity(4))
+    ch.add("gear", obj, "armour")
+    return obj
+
+
+def _tassets(ch, name, s, lames=4):
+    """Tassets: on each thigh a plate of `lames` overlapping curved lames hanging from the
+    fauld, each lame lapping over the one below (rigid on the thigh)."""
+    import bmesh
+    from mathutils import Matrix
+
+    from . import gear
+
+    radius, cy = _plate(ch)
+    out = None
+    for side, bone in ((1, "thigh_l"), (-1, "thigh_r")):
+        bm = bmesh.new()
+        t0, t1 = (math.radians(-125), math.radians(-60)) if side > 0 else (math.radians(-120), math.radians(-55))
+        if side < 0:
+            t0, t1 = -math.pi - t1, -math.pi - t0
+        for k in range(lames):
+            z0 = 0.985 - 0.058 * k
+            z1 = z0 - 0.07
+            ring0, ring1 = [], []
+            for j in range(6):
+                t = t0 + (t1 - t0) * j / 5
+                r0 = radius(t, 1.0) + 0.032 + 0.010 * k
+                r1 = r0 + 0.012
+                ring0.append(bm.verts.new((math.cos(t) * r0, cy + math.sin(t) * r0, z0)))
+                ring1.append(bm.verts.new((math.cos(t) * r1, cy + math.sin(t) * r1, z1)))
+            for j in range(5):
+                bm.faces.new((ring0[j], ring0[j + 1], ring1[j + 1], ring1[j]))
+                bm.faces.new((ring1[j], ring1[j + 1], ring0[j + 1], ring0[j]))
+        obj = gear.from_bm(bm, f"{name}.tasset_{bone[-1]}")
+        gear.rigid(obj, ch.arm, ch.prefix + bone, Matrix.Identity(4))
+        out = ch.add("gear", obj, "armour")
+    return out
+
+
+registry.material("armour", "metal", fallback=(0.50, 0.51, 0.53))
+registry.gear("c_cuirass", _cuirass)
+registry.gear("c_tassets", _tassets)
 registry.gear("plume", _plume)
 registry.gear("c_scabbard", _scabbard)
 registry.material("scabbard", "leather", painter="boots", fallback=(0.07, 0.06, 0.05))
@@ -148,10 +260,27 @@ DEFAULTS = {"body": "doublet", "sleeves": "dsleeve", "skirts": False, "legs": "f
             "hat_at": (0.0, 0.0, -0.02, -4), "gun": 1.38}
 
 
-def spec(md, **kw):
+# Draped (docs/clothing.md, "17th century"): long hose, paned slops gathered at the thigh,
+# the linen cuffs and a doublet with slashed sleeves; the armour is modelled over them
+# (`c_cuirass`, `c_tassets`), not the shells of `frontier._layer`.
+DRAPE = ("hose", "slops", "shirt17", "doublet_slashed")
+SHELLS = ("blouse", "slops", "cuirass", "tassets")
+
+
+def spec(md, palette=None, build=None, **kw):
     """A conquistador's SPEC: `frontier.spec` with the family's defaults (doublet, hose,
-    slops, cuirass, morion, scabbard, arquebus)."""
-    return frontier.spec(md, **dict(DEFAULTS, **kw))
+    slops, cuirass, morion, scabbard, arquebus): the clothes draped (`DRAPE`), the cuirass
+    and (where the layers list `tassets`) the tassets modelled."""
+    s = dict(DEFAULTS, **kw)
+    armour = ("c_cuirass",) * ("cuirass" in s["layers"]) + ("c_tassets",) * ("tassets" in s["layers"])
+    s["layers"] = tuple(x for x in s["layers"] if x not in SHELLS)
+    s["kit"] = tuple(s["kit"]) + armour
+    pal = dict(palette or {})
+    pal.setdefault("hose", pal.get("fhose", frontier.PALETTE["fhose"]))
+    pal.setdefault("slashes", (0.86, 0.80, 0.62))
+    pal.setdefault("shirt", (0.88, 0.86, 0.80))
+    return frontier.spec(md, palette=pal, build=dict({"drape": DRAPE}, **(build or {})),
+                         fixed=("slashes", "armour"), **s)
 
 
 # -- the halberdier ---------------------------------------------------------------------------

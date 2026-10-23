@@ -60,7 +60,9 @@ BUILTIN_PAINTERS = ("skin", "wool", "linen", "kersey", "gaiters", "boots", "belt
 PAINT_FN = {}  # painter name -> fn(p, n, rgb, L, seed)
 
 # Garments beyond garments.GARMENTS' uniform are added to that same dict; drape spacing (cm).
-SPACING = {"coat": 3.5, "waistcoat": 5.0, "breeches": 4.2, "gaiters": 3.5, "shirt": 2.0}
+SPACING = {"coat": 3.5, "waistcoat": 5.0, "breeches": 4.2, "gaiters": 3.5, "shirt": 2.0,
+           "doublet": 3.5, "doublet_slashed": 3.5, "buffcoat": 4.0, "buffcoat_bare": 4.0, "hose": 3.5, "slops": 3.5,
+           "shirt17": 2.0}
 
 HATS = {}  # name -> fn(object_name, **kw)
 MASKS = {}  # name -> fn(p, n, L, seed, **params)

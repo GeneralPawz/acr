@@ -93,7 +93,12 @@ puts the point into the man on the ground.
 ## Not yet
 
 - The spontoon's stab down (EngOf17) uses the shared `spear_strikes` at 1.6 m.
-- 17th-century officers wear the 18th-century line cut with a cocked hat; the long-skirted
-  coat, falling band and baldric of family 6 (`pikeshot.py`) are not there yet.
-- No boots (the line's gaiters), no pistol, no hand-on-hip in the walk's arm swing.
+- ~~17th-century officers wear the 18th-century line cut~~ (m2-c17): `officers.spec17`
+  (EngOf17, FrnOf17, SpnOf17) drapes `DRAPE17` (breeches, long hose, linen cuffs, a buff
+  coat with cloth sleeves in the coat colour) and adds `KIT17`: modelled bucket-top boots
+  (`bucket_boots`, `jackboots` key), gorget, falling band, sash, scabbard; the broad felt
+  hat `pike_broad`, no lace. Sheet `ACR-analysis/c17/sheet_c17.png`. Still no baldric, no pistol; the
+  bucket tops are wide and plain (no boot hose); the band hides under the buff coat at the
+  shoulders.
+- No pistol, no hand-on-hip in the walk's arm swing.
 - The sash is rigid on `hips`: it does not follow the trunk's bend in the stab.

@@ -351,3 +351,33 @@ def dress(ch, colours, layer_of, size=SIZE):
             o.data.materials.clear()
             o.data.materials.append(m)
     return img
+
+
+# -- 17th century (docs/clothing.md, "17th century") -------------------------------------
+
+def paint_buff(p, n, rgb, L, seed):
+    """Buff leather: oil-tanned hide with a napped (suede-like) face, matte; a soft cloudy
+    mottle where the oil took unevenly, a faint grain, darkened with grease and dirt on the
+    front edges, the cuffs and the skirt hems. Its finish (`FINISH["buff"]`) gives the nap
+    a soft sheen at grazing angles and no gloss."""
+    base = coat.lin(rgb)
+    cloud = coat.fbm(p, (18.0, 18.0, 12.0), seed, octaves=3)
+    grain = coat.fbm(p, 260.0, seed + 1, octaves=1)
+    col = base * (0.88 + 0.16 * cloud + 0.05 * grain)[:, None]
+    hem = coat.smooth(0.70, 0.55, p[:, 2]) * 0.35
+    front = coat.smooth(0.05, 0.0, np.abs(p[:, 0])) * coat.smooth(-0.08, -0.14, p[:, 1]) * 0.30
+    grease = np.clip(hem + front + coat.smooth(0.65, 0.85, coat.fbm(p, 9.0, seed + 3)) * 0.18, 0.0, 0.5)
+    return coat.mix(col, base * 0.55 + coat.lin((0.05, 0.04, 0.02)), grease)
+
+
+registry.painter("buff", fn=paint_buff, finish=(0.92, 0.30, 0.02))
+registry.material("buff", "leather", painter="buff", fallback=(0.74, 0.58, 0.36))
+# The lining showing through slashed sleeves and paned slops (silk or linen).
+registry.painter("slashes", like="linen", finish=(0.80, 0.35, 0.05))
+registry.material("slashes", "linen", painter="slashes", fallback=(0.86, 0.80, 0.62))
+# The falling band: starched white linen.
+registry.painter("fallband", like="linen", finish=(0.92, 0.15, 0.0))
+registry.material("fallband", "linen", painter="fallband", fallback=(0.92, 0.91, 0.86))
+# Bucket-top boots: brown or black waxed leather (no gaiter buttons: painted like leather).
+registry.painter("jackboots", like="leather", finish=(0.6, 0.0, 0.18))
+registry.material("jackboots", "leather", painter="jackboots", fallback=(0.20, 0.13, 0.08))
