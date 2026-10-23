@@ -339,6 +339,35 @@ shell's normals, not put back onto the nearest skin) and the 0.5 isoline lying h
 triangle outside the old face border; not yet checked pair by pair. Only MaySha (better on
 both counts) was copied to the showcase.
 
+**Sixth trisoup pass: the shoulder teeth are not a seam crack** (#287; diagnosis only, no
+code change; tools and crops in `ACR-analysis/trisoup6/`, `sheet_shoulder_diagnosis.png`).
+Hypothesis tested: shells offset along per-part normals, so the twins of a part seam
+(trunk | upper arm) drift apart and the layer below shows through. It does not hold:
+- `rest_normal` is computed on the hull before `split_parts`, so seam twins already share
+  one normal and are pushed identically. After `derive` every seam twin of every shell of
+  DelKri, SpnSha, MaySha, IncSha and FrnBuk is at exactly the same place (0 near-twins
+  within 3 mm on the shirt, cappa, habit, tilmatli, yacolla, unku, cloak; 1–4 at 2–3 mm on
+  habit_legs, hood and sash, none at the shoulder). The skinning keeps them together too:
+  in the exported glbs (DelKri, STAND) no twin pair of any mesh is more than 2 mm apart.
+- Offset fold-over is not it either: pushing the flesh out 2 / 4 / 6.5 cm along the rest
+  normals turns over only 2 / 8 / 22 faces in the shoulder zone (z 1.25–1.55, head part
+  excluded); the turned faces are at the hands, crotch and the head.
+- The hem is not it: `HEM = 0` leaves the shards unchanged.
+What the teeth are: **the shell's top border running across the trapezius**. The decimated
+MakeHuman shoulder line is a fan of long sliver triangles in which torso (clavicle) and
+upper-arm faces interleave (top view of the flesh coloured by part); the neck opening of
+every torso shell (the head part removed, plus the z limits: DelKri's shirt `c.z < 1.50`,
+the habit / cappa / yacolla / tilmatli borders) crosses that fan, and the isoline cut
+through the slivers leaves thin shards of cloth standing over the shoulder with skin (or
+the inner layer) between them. Seen from the back in game they are the dark spikes on
+DelKri's shirt and the white spikes through SpnSha's cappa. Side finding: 195–246 flesh
+vertices (armpits, hands, crotch) have a `rest_normal` opposite to the geometric normal
+(the bone-side flip in `hull` misfires where the home is the upper arm or a finger), so
+shells are pushed *into* the body there. Next: re-mesh the shoulder line of the MakeHuman
+body before the weights (no slivers across the trapezius), or keep the trapezius whole in
+every torso shell (cut the neck opening by distance from the neck bone, not by part / z),
+and drop the bone-side flip of the rest normals for a closed hull.
+
 engm18, 24 frames × 19 clips (crossing vertices / worst):
 
 | pair | before | after |
