@@ -780,6 +780,13 @@ described in [simulation.md](simulation.md#fog-of-war).
     y0 − 9, `(w − 12)·(D − delay)/D` + 2 long with `D = MaxDelay` (+0x8f, 1 if 0) or
     `delay` (+0x8c) if larger: empty right after a shot, full when loaded. The end caps
     then reach down to y0 − 9.
+- Canister mark (`ingame/canister_mark.rs`): a selected own cannon (a type with
+  `WEAPONINSECTOR`) shows a red X on the ground where its canister goes: the point of the
+  ground attack it is carrying out, else the point `KARTECH` aims at (0x4dc8fa:
+  `NewAttackPoint(x + TCos[dir], y + TSin[dir])`, 256 px ahead along its facing). Built from
+  the original as players describe it; the original's drawing routine was not located (no
+  reader of the sector weapon NM+0x2940 or of the ground-attack link 0x51bc5b in the
+  drawing code), so its exact sprite, colour and condition are not confirmed.
 - Panic shouts (0x600bc8, #209): with Tab on, every flight leg of a panicking unit adds one
   of the eight `FEAR_RNDM0..7` lines of `TEXT\MORALE_TEXT.TXT` ("Wir werden alle sterben
   ...", "Rette sich, wer kann!", picked with the C library's `rand() & 7`), centred at

@@ -1081,6 +1081,14 @@ The cannon (`ArtPus`, `USAGE PUSHKA`, `MOTIONSTYLE COMPLEXROTATE`; `artillery.rs
   there, a random number, kept); each shot of indices 4 and 5 costs 50 iron and 100 coal
   (`RASTRATA_NA_VISTREL2`, paid when the strike starts; without them the order ends). Index
   4 fires the cannon ball beyond 1500 px, index 5 canister below.
+- **Why a turn starts late** (checked on the blank field, `ACR-analysis/cannon`): the attack
+  link acts only at the end of the current animation, and a turn first changes stance
+  through `ARTPUS.MD`'s transition animations at two frames per tick: a deployed gun
+  (stance 5 or 6) limbers in `#UATTACK4/5` (171 frames, 8.5 s), lifts the trail in
+  `#PATTACK1` (71 frames, 3.5 s), turns 2 s per 16th (`#MOTION_L1/R1`, 40 frames), lowers
+  the trail in `#UATTACK1` (3.5 s) and deploys in `#PATTACK4/5` (8.5 s) before the shot; a
+  gun still in its 420-frame `#ATTACK4/5` (the shot and the reload drill) finishes it first.
+  The reload counter does not hold the turn. This is the original's data and order, kept.
 - **Canister** (`WEAPONINSECTOR a r1 r2 d1 d2 sector pct`, 0x52d6b8): after the shot every
   object in the touched cells of the sector, friend or foe, takes
   `d1 − (d − r1)·(d1 − d2)/(r2 − r1)`, scaled to `pct` % at the edge. A deployed cannon

@@ -13,7 +13,8 @@ use acr_render::model::{self, CREW, ModelData, Palette};
 use acr_render::model_renderer::{BloodPool, ModelInstance, Wounds};
 use acr_render::view3d::PIXELS_PER_METRE;
 use acr_sim::World;
-use acr_sim::world::Unit;
+use acr_sim::catalog::ObjectType;
+use acr_sim::world::{AnimKind, FRM_DEC, Unit};
 
 use crate::ui::settings::Gore;
 
@@ -105,6 +106,56 @@ pub struct Crews {
     nations_tick: u64,
     /// The palettes of this frame's gun and corpse instances (instance index → palette).
     pub poses: HashMap<usize, Palette>,
+    /// The yaw each gun (unit id) is drawn at, following its facing smoothly.
+    yaw: HashMap<u32, f32>,
+}
+
+/// A cannon's turn step: the sim turns it a 16th (16 of 256) per `#MOTION_L1`/`#MOTION_R1`
+/// cycle (`artillery::complex_rotate`, 0x50f7cb).
+const TURN_STEP: f32 = 16.0;
+
+/// The facing (in 256ths, fractional) gun `u` shows in its turn animation: the sim adds the
+/// 16th at the end of `#MOTION_L1` and takes it off at the start of `#MOTION_R1`, so the
+/// drawn facing moves through the step with the animation's frame instead.
+pub fn turning_dir(u: &Unit) -> f32 {
+    turning(u.dir, u.anim, u.frame, u.anim_frames)
+}
+
+fn turning(dir: u8, anim: AnimKind, frame: i32, frames: i32) -> f32 {
+    let p = (frame.max(0) as f32 / frames.max(1) as f32).clamp(0.0, 1.0);
+    let step = match anim {
+        AnimKind::MotionLs(1) => TURN_STEP * p,
+        AnimKind::MotionRs(1) => TURN_STEP * (1.0 - p),
+        _ => 0.0,
+    };
+    f32::from(dir) + step
+}
+
+/// The gun's real turning rate (radians per second): a 16th per turn cycle of `t`, whose
+/// frames advance [`FRM_DEC`] per tick.
+pub fn turn_rate(t: &ObjectType) -> f32 {
+    let frames = t.anims.get("#MOTION_L1").map_or(20.0, |a| f32::from(a.frames).max(2.0));
+    let cycle = frames / (FRM_DEC as f32 * acr_sim::ORIGINAL_TICKS_PER_SECOND as f32);
+    TURN_STEP / 256.0 * std::f32::consts::TAU / cycle
+}
+
+/// The clip and time a crewed gun shows in the trail's lift and drop around a turn
+/// (`#PATTACK1`/`#UATTACK1`, 71 frames, the sprites' `ArtPus_Pdg_pvrt`): the model has no
+/// clip of its own for them, so instead of standing still the crew works the trail in the
+/// `MOTION` clip. `None` in every other animation.
+pub fn trail_clip(model: &ModelData, u: &Unit) -> Option<(usize, f32)> {
+    let name = match u.anim {
+        AnimKind::PAttack(1) => "MOTION_L",
+        AnimKind::UAttack(1) => "MOTION_R",
+        _ => return None,
+    };
+    let c = model.clip(name)?;
+    let duration = model.clips[c].duration.max(1e-3);
+    Some((c, (u.frame.max(0) as f32 / model.fps) % duration))
+}
+
+fn wrap(a: f32) -> f32 {
+    (a + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
 }
 
 impl Crews {
@@ -115,11 +166,28 @@ impl Crews {
             self.lost.clear();
             self.corpses.clear();
             self.nations.clear();
+            self.yaw.clear();
         }
         if now >= self.nations_tick + 256 || now < self.nations_tick {
             self.nations.clear();
             self.nations_tick = now;
         }
+    }
+
+    /// The yaw gun `u` is drawn at this frame (`seconds` long): its facing through the turn
+    /// animation ([`turning_dir`]), followed at up to twice its turning rate, so the model
+    /// turns smoothly where the sim's facing steps (the sprite's 16 directions).
+    pub fn gun_yaw(&mut self, u: &Unit, t: &ObjectType, seconds: f32) -> f32 {
+        let want = -(turning_dir(u) - 64.0) * std::f32::consts::TAU / 256.0;
+        if !u.alive || u.death > 0 {
+            self.yaw.remove(&u.id.0);
+            return want;
+        }
+        let now = *self.yaw.entry(u.id.0).or_insert(want);
+        let max = 2.0 * turn_rate(t) * seconds.clamp(0.0, 0.1);
+        let next = now + wrap(want - now).clamp(-max, max);
+        self.yaw.insert(u.id.0, next);
+        next
     }
 
     /// The uniform of gun `u`: its type's nation, else its owner's.
@@ -254,6 +322,15 @@ mod tests {
         assert_eq!(shown(2), 0b1_0101);
         assert_eq!(shown(3), 0b1_0100);
         assert_eq!(shown(4), 0b1_0000);
+    }
+
+    #[test]
+    fn a_turn_moves_through_its_step() {
+        assert_eq!(turning(32, AnimKind::MotionLs(1), 10, 20), 40.0);
+        // Turning right the sim has already taken the 16th off: it starts at the old facing.
+        assert_eq!(turning(32, AnimKind::MotionRs(1), 0, 20), 48.0);
+        assert_eq!(turning(32, AnimKind::MotionRs(1), 20, 20), 32.0);
+        assert_eq!(turning(32, AnimKind::Stand, 10, 20), 32.0);
     }
 
     #[test]

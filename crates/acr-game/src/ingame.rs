@@ -21,6 +21,7 @@ use winit::keyboard::NamedKey;
 
 use crate::ui::{GameKind, GameSetup};
 
+mod canister_mark;
 mod cloth_view;
 mod controls;
 mod crew_view;
@@ -626,6 +627,10 @@ impl InGame {
                 let mut commands = std::mem::take(&mut self.commands);
                 self.save.log.command(world.tick.0, &commands);
                 commands.extend(orders);
+                // The editor's test switch: cannons always loaded (acts on the local world).
+                if self.editor.as_ref().is_some_and(|e| e.auto_reload) {
+                    editor::reload_guns(world);
+                }
                 world.step(&commands);
                 let _after = acr_sim::prof::Scope::new("game.after_tick");
                 weapon_sounds.append(&mut world.sounds);

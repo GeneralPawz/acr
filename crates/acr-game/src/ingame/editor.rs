@@ -59,6 +59,8 @@ pub enum Act {
     Owner,
     Facing(i32),
     Peace,
+    Reload,
+    AutoReload,
     Control,
     Hide,
 }
@@ -96,6 +98,8 @@ pub struct Editor {
     facing: [u8; 3],
     /// Fighting is off: every player is everybody's ally (set on start).
     pub peace: bool,
+    /// Every cannon is reloaded each tick (a test switch, off on start).
+    pub auto_reload: bool,
     /// The last placement or problem, shown under the panel.
     status: Vec<u8>,
     /// A press placed or hit the panel: its release does nothing else.
@@ -115,10 +119,25 @@ impl Default for Editor {
             // Player 1 faces north (up the screen), player 2 south, neutral east.
             facing: [192, 64, 0],
             peace: true,
+            auto_reload: false,
             status: b"Typ waehlen, dann auf die Karte klicken".to_vec(),
             swallow_release: false,
         }
     }
+}
+
+/// Reloads every cannon (`COMPLEXROTATE` type) of every player at once: its reload counter
+/// is cleared, so its next shot starts as soon as it is aimed. Returns the cannons reloaded.
+pub fn reload_guns(world: &mut World) -> usize {
+    let catalog = world.catalog.clone();
+    let mut n = 0;
+    for u in world.units.iter_mut().filter(|u| u.alive && !u.building) {
+        if catalog.get(u.kind).motion_style == acr_sim::catalog::MotionStyle::ComplexRotate {
+            u.delay = 0;
+            n += 1;
+        }
+    }
+    n
 }
 
 /// Types a tab lists: units and animals of the prefix that stand on land.
@@ -276,6 +295,9 @@ impl Editor {
         line(&mut out, &mut y, format!("Besitzer: {}", OWNERS[self.owner].1).into_bytes(), false, Some(Act::Owner));
         let peace = if self.peace { "Kampf: AUS (klicken: an)" } else { "Kampf: AN (klicken: aus)" };
         line(&mut out, &mut y, peace.as_bytes().to_vec(), !self.peace, Some(Act::Peace));
+        line(&mut out, &mut y, b"Kanonen sofort laden".to_vec(), false, Some(Act::Reload));
+        let auto = if self.auto_reload { "Kanonen: sofort nachladen AN" } else { "Kanonen: sofort nachladen AUS" };
+        line(&mut out, &mut y, auto.as_bytes().to_vec(), self.auto_reload, Some(Act::AutoReload));
         let me = OWNERS.iter().find(|o| o.0 == local).map_or("?", |o| o.1);
         line(&mut out, &mut y, format!("Ich steuere: {me}").into_bytes(), false, Some(Act::Control));
         y += 4;
@@ -343,6 +365,18 @@ impl Editor {
                 self.peace = !self.peace;
                 set_peace(world, self.peace);
                 self.status = if self.peace { b"Kampf aus".to_vec() } else { b"Kampf an!".to_vec() };
+            }
+            Act::Reload => {
+                let n = reload_guns(world);
+                self.status = format!("{n} Kanonen geladen").into_bytes();
+            }
+            Act::AutoReload => {
+                self.auto_reload = !self.auto_reload;
+                self.status = if self.auto_reload {
+                    b"Kanonen laden sofort nach".to_vec()
+                } else {
+                    b"Kanonen laden normal".to_vec()
+                };
             }
             Act::Control => return Some(if local == 0 { 1 } else { 0 }),
             Act::Hide => self.open = !self.open,

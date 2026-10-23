@@ -596,11 +596,19 @@ impl ThreeD {
                     machines.insert(u.id.0);
                 } else {
                     inst.uniform = self.crews.uniform(world, u);
+                    if let Some((c, time)) = super::crew_view::trail_clip(model, u) {
+                        (inst.clip, inst.time) = (Some(c), time);
+                    }
                 }
                 inst.decay = 0.0;
                 inst.morphs = [0.0; 2];
                 inst.wounds = Default::default();
-                let yaw = view3d::facing_yaw(u.dir);
+                // A gun turns smoothly through its 16 sprite directions (crew_view.rs).
+                let yaw = if model.crew.is_some() {
+                    self.crews.gun_yaw(u, world.catalog.get(u.kind), self.frame_seconds)
+                } else {
+                    view3d::facing_yaw(u.dir)
+                };
                 inst.transform = self
                     .water_view
                     .ship(u, now, terrain, ground, yaw, model.radius, water_seconds)

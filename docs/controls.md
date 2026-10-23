@@ -165,6 +165,8 @@ rules of the settings apply (`hit_locations`, `body_spacing`).
 | Richtung | the facing, in eight steps; kept per owner |
 | Besitzer | Spieler 1, Spieler 2 or Neutral (wild animals) |
 | Kampf | AUS: every player is everybody's ally, nobody attacks; AN: the sides fight |
+| Kanonen sofort laden | reloads every cannon on the field at once (its reload counter cleared) |
+| Kanonen: sofort nachladen | AN: every cannon is reloaded before each tick, so it fires as soon as it is aimed (a test switch; starts AUS) |
 | Ich steuere | which player's units the mouse selects and commands |
 
 A formation is placed standing on its slots with its officer, drummer and flag bearer, in the

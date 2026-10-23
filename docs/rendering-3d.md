@@ -248,6 +248,12 @@ per 0.55 m, the root sliding along with the cycle's bob).
   `DEATH` on their own clock, bleed and rot like the others, and the gun's own `DEATH`
   shows none of the crew. The corpses keep the transform of the moment they fell, so they
   stay where the man fell when the gun is moved on (checked: `guncrew3/sheet_losses.png`).
+- **Turning** (`crew_view::Crews::gun_yaw`): the sim turns a cannon a 16th (22.5°) per
+  `#MOTION_L1`/`#MOTION_R1` cycle and sets the 16th at the cycle's end (left) or start
+  (right), so its facing steps. The model is drawn at the facing moved through the step with
+  the cycle's frame (`turning_dir`), followed at up to twice the gun's turning rate (a 16th
+  per cycle at two frames per tick), so it turns smoothly; the turn cycles play the `MOTION`
+  clip (the crew walks the trail round, the wheels roll).
 - **The wreck:** the gun's `DEATH` throws the barrel off its trunnions, drops the left wheel
   and swaps the carriage for its charred copy (`wreck`, black). Seen from above, the black
   trail and a dead man's tricorn next to it read like a second barrel; there is no double

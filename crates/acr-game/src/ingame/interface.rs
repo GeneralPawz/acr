@@ -1956,6 +1956,13 @@ impl InGame {
         if let Some((_, (sx, sy))) = self.interface.right_drag {
             self.facing_arrow(bracket, terrain.height_at(sx, sy), &mut out);
         }
+        // Where the selected cannons' canister goes (canister_mark.rs).
+        for u in self.selected_units().filter(|u| u.owner == own) {
+            if let Some((x, y)) = super::canister_mark::aim(world, u) {
+                let red = rgba(nearest(&palette, [230, 20, 20]));
+                super::canister_mark::draw_x(red, x, (y >> 1) - terrain.height_at(x, y), &mut out);
+            }
+        }
         for m in &self.interface.markers {
             let h = terrain.height_at(m.x, m.y);
             out.push(
