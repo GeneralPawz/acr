@@ -78,19 +78,23 @@ needs no cloth simulation.
   the nape, in dyed deer hair (`roach`, red); the scalp lock a tuft of cards at the crown and
   a braid down the back. Feathers are cards set at the crown, leaning back. All rigid on the
   head bone (gear layer, part 1). The face map is `heads.face_map` painted clean-shaven
-  (`native.clean_shaven`: `faces.zones`' beard channel zeroed for the call, so neither the
-  painted stubble nor `_FACE`'s beard zone, which the renderer turns into stubble, is left;
-  for shaved and plucked heads, `roach` and `lock`, no cropped scalp along the hairline).
+  (`heads.finish(ch, beard=False, scalp=...)`: neither the painted stubble nor `_FACE`'s
+  beard zone, which the renderer turns into stubble, is left; for shaved and plucked heads,
+  `roach` and `lock`, `scalp=False`: no cropped scalp along the hairline). The earlier
+  `native.clean_shaven` context, which swapped `faces.zones` for the call, is gone.
 - **Skin:** a warm copper, `(0.80, 0.55, 0.38)` for the Iroquois, a little darker for the
   Huron and lighter for the Delaware, kept from the palette (`fixed`): slice 1 mixed 40 % of
   the sprites' shaded skin into a brown palette and came out near-black. The clothes take
   60 % of the sprite colour (they are brighter in the sprites).
-- **Body paint:** the face-half paint goes through `native.paint_face_half`. Bug in
-  `masks.paint_face_half` (for the shared slice): its region `masks._face` has no width
-  limit, so every front-facing texel from 27 cm below the head's top up on the painted side
-  is painted, which on these builds takes in the shoulder, the top of the chest and the
-  upper arm ("half the trunk" in slice 1). The native mask keeps it above the jaw (23 cm
-  below the top) and within 9 cm of the nose.
+- **Body paint:** the shared `masks.paint_face_half` stays on the face since #287's shared
+  look slice (`masks._face`: above the jaw, 23.5 cm below the top, and within 9.5 cm of the
+  nose); `native_face_half` (native's limited copy while the shared one painted the
+  shoulder, the top of the chest and the upper arm) is an alias of it now.
+- **Dark skin on the trunk, arms and legs** (slice 2, fixed in the shared look slice): the
+  scalp lock (key `hair`) shares the `skin` painter with the flesh, and `outfit.dress`
+  unwrapped each object over the whole cell, so the bake kept the scalp lock's texels and
+  the trunk sampled its dark hair paint. The painter's objects are packed together now
+  (`outfit.atlas_uv`).
 - **Materials (registered):** painters `stroud` (like wool) and `buckskin` (like leather);
   keys `breechcloth`, `leggings`, `flaps`, `matchcoat` (wool), `moccasins`, `belt_hide`,
   `pouch` (leather), `roach` (hair), `horn` (bone), `silver` (metal).

@@ -1,11 +1,10 @@
 # The Pueblo on foot (`acr_assets/pueblo.py`, #287)
 
 Family 10 of [humans-roster.md](../humans-roster.md). `pueblo.py` builds on
-[native.py](native.md) by import: the body, skin, moccasins, hair-free face (`clean_shaven`
-with the scalp painted), bow, quiver, trade gun, the archers' `socket.club_r`, `club_down`
+[native.py](native.md) by import: the body, skin, moccasins, hair-free face
+(`heads.finish(ch, beard=False, scalp=True)`: the scalp painted), bow, quiver, trade gun, the archers' `socket.club_r`, `club_down`
 and the paint sets are native's. The Southwest dress is added by wrapping native's
-`dress`, `hair` and `kit` for the length of a native call (`pueblo.hooks`, the pattern of
-`native.clean_shaven`), and the Woodlands ball club is swapped for a stone-headed club in
+`dress`, `hair` and `kit` for the length of a native call (`pueblo.hooks`), and the Woodlands ball club is swapped for a stone-headed club in
 `held.ITEMS` for that call. Nothing in native or the shared modules is edited.
 
 ## Unit scripts

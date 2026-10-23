@@ -424,23 +424,21 @@ def build_garment(body, garment, panels, seams, spacing):
         sides = ("L", "R") if all(lk[3] == "L" for lk in sm.a + sm.b) and all(panels[lk[0]].mirror for lk in sm.a + sm.b) else ("L",)
         for side in sides:
             def chain(ch_):
-                out = []
+                out, at = [], []
                 for name, edge, rev, s in ch_:
                     sd = side if s == "L" else "R"
-                    idx = pieces[(name, sd)].edge(edge)
+                    pc = pieces[(name, sd)]
+                    idx = pc.edge(edge)
                     if rev:
                         idx = idx[::-1]
-                    out += idx if not out or out[-1] != idx[0] else idx[1:]
-                return out
-            A, B = chain(sm.a), chain(sm.b)
-
-            def frac(idx):
-                d = [0.0]
-                for i, j in zip(idx, idx[1:]):
-                    d.append(d[-1] + 1.0)
-                return [x / max(d[-1], 1e-9) for x in d]
-
-            fa, fb = frac(A), frac(B)
+                    pts = [pc.uv[i - pc.base] for i in idx]
+                    if out and out[-1] == idx[0]:
+                        idx, pts = idx[1:], pts[1:]
+                    out += idx
+                    at += pts
+                return out, at
+            (A, at_a), (B, at_b) = chain(sm.a), chain(sm.b)
+            fa, fb = gm.seam_fractions(at_a), gm.seam_fractions(at_b)
             pairs = set()
             for i, f in zip(A, fa):
                 k = min(range(len(B)), key=lambda q: abs(fb[q] - f))
@@ -523,8 +521,9 @@ def simulate(obj, settings, sew=(), frames=None):
     return dt, gaps
 
 
-def weld(obj, sew, limit=0.02):
-    """Merges the sewn vertex pairs that met (within `limit`); drops the sewing edges."""
+def weld(obj, sew, limit=0.02, limits=None):
+    """Merges the sewn vertex pairs that met (within `limit`, or `limits[i]` per pair, the
+    seam's `close`); drops the sewing edges."""
     parent = {}
 
     def find(x):
@@ -533,8 +532,8 @@ def weld(obj, sew, limit=0.02):
         return x
 
     V = obj.data.vertices
-    for a, b in sew:
-        if (V[a].co - V[b].co).length < limit:
+    for i, (a, b) in enumerate(sew):
+        if (V[a].co - V[b].co).length < (limits[i] if limits else limit):
             ra, rb = find(a), find(b)
             if ra != rb:
                 parent[max(ra, rb)] = min(ra, rb)
@@ -762,8 +761,10 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None):
             lab = "+".join(x[0] + "." + x[1] for x in seams[k].a) + "|" + "+".join(x[0] + "." + x[1] for x in seams[k].b)
             per_seam[lab] = max(per_seam.get(lab, 0.0), (ev.vertices[a].co - ev.vertices[b].co).length)
         gaps = sorted((ev.vertices[a].co - ev.vertices[b].co).length for a, b in sew)
-        welded = sum(1 for x in gaps if x < WELD)
-        weld(obj, sew, limit=WELD if g != "shirt" else 0.3)
+        base = WELD if g != "shirt" else 0.3
+        limits = [getattr(seams[k], "close", None) or base for k in pieces["_sew_id"]]
+        welded = sum(1 for (a, b), lim in zip(sew, limits) if (ev.vertices[a].co - ev.vertices[b].co).length < lim)
+        weld(obj, sew, limit=base, limits=limits)
         if SOLIDIFY:
             solidify(obj, gm.CLOTH.get(g, gm.CLOTH["waistcoat"])["thickness"])
         # One object per (key, skirt).

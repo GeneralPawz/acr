@@ -1,7 +1,7 @@
 """The Pueblo on foot as one family (docs/humans-roster.md, family 10; docs/families/
 pueblo.md), built on `native.py`: the same body, skin, legging and moccasin pipeline, with
-the Southwest dress added by wrapping native's `dress`, `hair` and `kit` for the call (the
-way `native.clean_shaven` swaps `faces.zones`), never by editing native.
+the Southwest dress added by wrapping native's `dress`, `hair` and `kit` for the call,
+never by editing native.
 
 Southwest dress (all shells of the MakeHuman skin or modelled panels, deforming with it):
 - `kilt`: a woven cotton kilt wrapped round the hips to above the knee (a tube on the
@@ -408,8 +408,7 @@ def build_peasant(ctx, s):
     report = {}
     colours = ch.colours(ctx.ref, s["palette"], report=report, mix=s["mix"], fixed=s["fixed"])
     outfit.dress(ch, colours, LAYER_OF)
-    with native.clean_shaven(scalp=True):
-        heads.finish(ch)
+    heads.finish(ch, beard=False, scalp=True)
     ch.arm.animation_data.action = None
     for pb in ch.arm.pose.bones:
         pb.scale = (1.0, 1.0, 1.0)

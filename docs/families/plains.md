@@ -3,7 +3,7 @@
 Family 9 of [humans-roster.md](../humans-roster.md). `plains.py` builds on the Woodlands
 family ([native.md](native.md)) by import: a Plains unit is a `native` SPEC plus Plains keys,
 and `plains.build` runs native's pipeline with `native.dress` and `native.hair` wrapped for
-the call (restored afterwards, as `native.clean_shaven` swaps `faces.zones`). The riders
+the call (restored afterwards). The riders
 use `cavalry.build` with `cavalry.native_head` swapped for the Plains head (`plains.mounted`).
 No shared module was edited.
 
@@ -30,7 +30,7 @@ No shared module was edited.
   fringe comes with the war shirt; the legging fringe sits 4 cm out, at the flap's edge.
 - `braids` (default on): two tapered braids in front of the shoulders with two cloth wraps
   each (`wraps`), a thin hair mass at the back; the scalp keeps the face map's hairline
-  (`clean_shaven(scalp=True)`), no beard.
+  (`heads.finish(ch, beard=False, scalp=True)`), no beard.
 - `eagle`: single eagle feathers at the back of the head, each a white quill card
   (`feather`) and a dark tip card (`eagle_tip`).
 - `breastplate`: two columns of 11 bone tubes (`hairpipe`) on a hide strip, rigid on

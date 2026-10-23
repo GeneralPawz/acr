@@ -17,9 +17,10 @@ from . import coat, decay, registry
 
 SIZE = 1024
 # Painter of each material key (`humans.LAYER_OF` keys); keys not listed keep their material.
-# The draped garments' facings, lining and stock have own painters, so that they get their
-# own atlas cells and colours (a painter's cell has one colour); `KIND` maps such painters
-# to the one they paint like. `FINISH`: how each painter's cloth takes the light
+# A painter's objects share its atlas cell (packed together, `atlas_uv`), each painted in
+# its own key's colour (`split_by_colour`). The draped garments' facings, lining and stock
+# have own painters for their own finish; `KIND` maps such painters to the one they paint
+# like. `FINISH`: how each painter's cloth takes the light
 # (`acr_roughness`, `acr_sheen`, `acr_gloss` in the material extras): the game's
 # `model.wgsl` adds the sheen at grazing angles and the gloss as a highlight; the Blender
 # previews use Principled roughness, sheen and specular. Broadcloth is fulled and shorn:
@@ -174,6 +175,117 @@ def apply_mask(e, p, n, col, L, seed):
     return coat.mix(col, tint, np.clip(w, 0.0, 1.0))
 
 
+def atlas_uv(objs, region, name="atlas", angle=66.0):
+    """One Smart-UV map `name` for all of `objs` together, fitted into `region`: their
+    islands are packed side by side, never on top of each other (`coat.atlas_uv` unwraps one
+    object; the objects of one painter share its cell, and unwrapped one by one they all
+    filled it, so the bake kept the last object's texels and the others sampled them: the
+    scalp lock's hair painted over a native's trunk)."""
+    import math
+
+    import bpy
+
+    if len(objs) == 1:
+        return coat.atlas_uv(objs[0], region, name, angle)
+    for o in objs:
+        me = o.data
+        while len(me.uv_layers):
+            me.uv_layers.remove(me.uv_layers[0])
+        me.uv_layers.active = me.uv_layers.new(name=name)
+    vl = bpy.context.view_layer
+    for o in vl.objects:
+        o.select_set(False)
+    for o in objs:
+        o.select_set(True)
+    vl.objects.active = objs[0]
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.uv.smart_project(angle_limit=math.radians(angle), island_margin=0.006, scale_to_bounds=True)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    u0, v0, u1, v1 = region
+    pad = 2.0 / coat.SIZE
+    for o in objs:
+        for d in o.data.uv_layers[name].data:
+            u, v = d.uv
+            d.uv = (u0 + pad + u * (u1 - u0 - 2 * pad), v0 + pad + v * (v1 - v0 - 2 * pad))
+        o.select_set(False)
+
+
+def raster_labels(tris, size):
+    """Label image (size², int32, -1 where empty) of UV triangles `tris`: a list of
+    (label, (3, 2) uv array) each; texel centres inside a triangle take its label."""
+    lab = np.full((size, size), -1, np.int32)
+    for k, t in tris:
+        t = np.asarray(t, np.float64) * size - 0.5
+        x0, y0 = np.floor(t.min(0)).astype(int)
+        x1, y1 = np.ceil(t.max(0)).astype(int)
+        x0, y0, x1, y1 = max(x0, 0), max(y0, 0), min(x1, size - 1), min(y1, size - 1)
+        if x1 < x0 or y1 < y0:
+            continue
+        ys, xs = np.mgrid[y0:y1 + 1, x0:x1 + 1]
+        (ax, ay), (bx, by), (cx, cy) = t
+        den = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy)
+        if abs(den) < 1e-12:
+            continue
+        w0 = ((by - cy) * (xs - cx) + (cx - bx) * (ys - cy)) / den
+        w1 = ((cy - ay) * (xs - cx) + (ax - cx) * (ys - cy)) / den
+        inside = (w0 >= -1e-6) & (w1 >= -1e-6) & (1.0 - w0 - w1 >= -1e-6)
+        sub = lab[y0:y1 + 1, x0:x1 + 1]
+        sub[inside] = k
+    return lab
+
+
+def grow_labels(lab, want, steps=12):
+    """Spreads the labels of `lab` into the texels of `want` that have none (the bake's
+    margin round each island); what is left takes the most common label."""
+    lab = lab.copy()
+    for _ in range(steps):
+        miss = want & (lab < 0)
+        if not miss.any():
+            break
+        for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            nb = np.roll(np.roll(lab, dy, 0), dx, 1)
+            take = miss & (lab < 0) & (nb >= 0)
+            lab[take] = nb[take]
+    miss = want & (lab < 0)
+    if miss.any():
+        have = lab[lab >= 0]
+        lab[miss] = np.bincount(have).argmax() if have.size else 0
+    return lab
+
+
+def _labels(objs, size, covered):
+    """Which object (index into `objs`) owns each texel of the atlas (`atlas` UVs)."""
+    tris = []
+    for k, o in enumerate(objs):
+        me = o.data
+        me.calc_loop_triangles()
+        uv = me.uv_layers["atlas"].data
+        for lt in me.loop_triangles:
+            tris.append((k, [tuple(uv[li].uv) for li in lt.loops]))
+    return grow_labels(raster_labels(tris, size), covered.reshape(size, size)).reshape(-1)
+
+
+def split_by_colour(os_, colours, owner, every, m):
+    """The texels `m` of one painter's cell split by colour: [(mask, sRGB)], one entry per
+    distinct colour of the objects `os_` (`colours`: object name -> sRGB; `owner`: texel ->
+    index into `every`, or None when every painter has one object)."""
+    rgbs = [tuple(colours.get(o.name) or (0.5, 0.5, 0.5)) for o in os_]
+    if owner is None or len(set(rgbs)) == 1:
+        return [(m, rgbs[0])]
+    out = {}
+    for o, rgb in zip(os_, rgbs):
+        sel = m & (owner == every.index(o))
+        out[rgb] = out[rgb] | sel if rgb in out else sel
+    # Texels of the cell no object claims (none, after `grow_labels`) keep the first colour.
+    rest = m.copy()
+    for sel in out.values():
+        rest &= ~sel
+    first = rgbs[0]
+    out[first] = out[first] | rest
+    return [(sel, rgb) for rgb, sel in out.items()]
+
+
 def dress(ch, colours, layer_of, size=SIZE):
     """Paints one atlas for the dressed parts of character `ch` (`ch.keys`: object → material
     key, `colours`: object → sRGB from `Character.colours`) and gives them decaying
@@ -194,8 +306,7 @@ def dress(ch, colours, layer_of, size=SIZE):
     coat.SIZE = size
     try:
         for name, os_ in groups.items():
-            for o in os_:
-                coat.atlas_uv(o, rects[name])
+            atlas_uv(os_, rects[name])
         flesh = [v.co.z for o in ch.layers["flesh"] for v in o.data.vertices]
         L = {"head_top": max(flesh) if flesh else 1.75}
         pos, nrm, ao, covered = coat.bake([o for os_ in groups.values() for o in os_], size)
@@ -206,11 +317,16 @@ def dress(ch, colours, layer_of, size=SIZE):
     v, u = np.mgrid[0:size, 0:size]
     u, v = ((u + 0.5) / size).reshape(-1), ((v + 0.5) / size).reshape(-1)
     cov = covered.reshape(-1)
+    # Which object owns each texel: each gets its own colour (its material key's), painted
+    # in its painter's style; one painter's objects share its cell.
+    every = [o for _n, os_ in sorted(groups.items()) for o in os_]
+    owner = _labels(every, size, covered) if any(len(os_) > 1 for os_ in groups.values()) else None
     for i, (name, os_) in enumerate(sorted(groups.items())):
         u0, v0, u1, v1 = rects[name]
         m = cov & (u >= u0) & (u < u1) & (v >= v0) & (v < v1)
-        rgb = colours.get(os_[0].name) or (0.5, 0.5, 0.5)
-        out[m] = paint(KIND.get(name, name), flat_p[m], flat_n[m], rgb, L, seed=11 + 7 * i)
+        for sel, rgb in split_by_colour(os_, colours, owner, every, m):
+            if sel.any():
+                out[sel] = paint(KIND.get(name, name), flat_p[sel], flat_n[sel], rgb, L, seed=11 + 7 * i)
         for e in getattr(ch, "paint_masks", ()):
             if name in {PAINTER.get(k) for k in e["keys"]} and m.any():
                 out[m] = apply_mask(e, flat_p[m], flat_n[m], out[m], L, seed=11 + 7 * i)

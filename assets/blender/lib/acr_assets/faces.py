@@ -320,14 +320,16 @@ def morph(name, x, y, z):
     raise KeyError(name)
 
 
-def zones(x, y, z):
-    """The `_FACE` attribute (vec4): R beard (where stubble and beard grow), G wrinkles
-    (forehead, crow's feet, nasolabial folds), B pock marks and scars (cheeks, forehead,
-    nose), A the face front (1) for everything the renderer paints per soldier."""
+def zones(x, y, z, beard=True):
+    """The `_FACE` attribute (vec4): R beard (where stubble and beard grow; 0 everywhere for a
+    clean-shaven face, `beard` False), G wrinkles (forehead, crow's feet, nasolabial folds),
+    B pock marks and scars (cheeks, forehead, nose), A the face front (1) for everything the
+    renderer paints per soldier."""
     ax = abs(x)
     f = front(y)
     fw = front(y, 0.12)
     lips = _g((x, 0.0, 0.022), (z, -0.060, 0.008))
+    grow = beard
     beard = _smooth(-0.020, -0.040, z) * fw * (1.0 - lips) * _smooth(-0.15, -0.11, z)
     beard = max(beard, _g((x, 0.0, 0.03), (z, -0.049, 0.006)) * f * (1.0 - lips))
     wrink = max(_g((ax, 0.0, 0.05), (z, 0.050, 0.014)) * f,
@@ -336,7 +338,14 @@ def zones(x, y, z):
     pock = max(_g((ax, 0.040, 0.026), (z, -0.030, 0.026)) * front(y, 0.07),
                _g((ax, 0.0, 0.05), (z, 0.045, 0.02)) * f)
     k = near(x, y, z)
-    return (min(beard, 1.0) * k, min(wrink, 1.0) * k, min(pock, 1.0) * k, f * k)
+    return (min(beard, 1.0) * k if grow else 0.0, min(wrink, 1.0) * k, min(pock, 1.0) * k, f * k)
+
+
+def hairline(scalp=True):
+    """The hairline (`HAIRLINE`: (θ, φ) degrees) under which the face map paints the cropped
+    scalp; without a `scalp` (shaved or plucked heads: a roach, a scalp lock) it is lifted
+    over the crown (φ 120°), so no scalp is painted."""
+    return list(HAIRLINE) if scalp else [(a, 120.0) for a, _ in HAIRLINE]
 
 
 def region(variant, x, y, z):

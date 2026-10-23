@@ -85,9 +85,19 @@ def _front(np, n):
     return _smooth(np, 0.0, -0.35, n[:, 1])
 
 
+# The face's extent: down to the jaw (`FACE_DOWN` m below the top of the head, soft over
+# `FACE_SOFT`) and `FACE_HALF_WIDTH` m either side of the nose. Without the limits every
+# front-facing texel from 27 cm below the top up took the face's paint: the shoulders, the
+# top of the chest and the upper arms.
+FACE_DOWN = 0.235
+FACE_SOFT = 0.02
+FACE_HALF_WIDTH = 0.095
+
+
 def _face(np, p, n, L):
     top = L["head_top"]
-    return _front(np, n) * _smooth(np, top - 0.27, top - 0.22, p[:, 2]) * _smooth(np, top - 0.02, top - 0.05, p[:, 2])
+    head = _smooth(np, top - FACE_DOWN, top - FACE_DOWN + FACE_SOFT, p[:, 2])         * _smooth(np, FACE_HALF_WIDTH, FACE_HALF_WIDTH - 0.015, np.abs(p[:, 0]))
+    return _front(np, n) * head * _smooth(np, top - 0.02, top - 0.05, p[:, 2])
 
 
 def paint_face_half(p, n, L, seed, side=1.0):

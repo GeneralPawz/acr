@@ -110,13 +110,16 @@ class Seam:
     """Sews side `a` to side `b`; each side is a chain [(panel, edge, reversed, side)] whose
     runs are concatenated. Both chains run in the same direction on the body. A seam whose
     links are all "L" is sewn on both sides (once per mirrored copy); one with an "R" link
-    joins the drafted panel with its mirror (centre front/back) and is sewn once."""
+    joins the drafted panel with its mirror (centre front/back) and is sewn once. `close`
+    (m): a closure that must end shut (buttoned): its pairs are welded up to this distance
+    instead of `drape.WELD`."""
 
-    def __init__(self, a, b, garment, ease=0.15):
+    def __init__(self, a, b, garment, ease=0.15, close=None):
         self.a = [_link(x) for x in a]
         self.b = [_link(x) for x in b]
         self.garment = garment
         self.ease = ease  # the longer side may exceed the shorter by this fraction (gathered)
+        self.close = close
 
 
 def polyline_length(pts):
@@ -371,6 +374,21 @@ def breeches(m=MEASURE):
     return P, seams
 
 
+def seam_fractions(pts):
+    """Where each sample of a seam edge lies along it, 0..1 by the pattern's length (cm), so
+    the two sides pair up point for point: counting samples paired the corners of edges cut
+    into different numbers of samples (the gaiter's straight back edge against its slanted
+    outer edge) a sample or two apart, and those pairs pulled the cloth open (skin holes at
+    the shin of the stockings and leggings cut from the gaiter pattern)."""
+    d = [0.0]
+    for a, b in zip(pts, pts[1:]):
+        d.append(d[-1] + math.dist(a, b))
+    return [x / max(d[-1], 1e-9) for x in d]
+
+
+GAITER_CLOSE = 0.09  # m: the gaiter's buttoned seam is welded shut up to this gap
+
+
 def gaiters(m=MEASURE):
     """Knee-high gaiters of black canvas, buttoned up the outside, the front dropping over
     the instep of the shoe."""
@@ -392,8 +410,10 @@ def gaiters(m=MEASURE):
     v0, v1 = h - 6.0, h - 3.5
     P["garter"] = Panel("garter", "gaiters", "garter", [(0.0, v0), (edge_u(v0), v0), (edge_u(v1), v1), (0.0, v1)],
                         {"bottom": (0, 1), "top": (2, 3)}, dict(gplace, layer=1), tack="gaiter")
-    # The outside opening is buttoned: start and outer edges are sewn shut.
-    seams = [Seam([("gaiter", "start", True)], [("gaiter", "outer")], "gaiters")]
+    # The outside opening is buttoned: start and outer edges are sewn shut. Without the
+    # garter (the stockings and leggings cut from this pattern) the top pairs end 5..6 cm
+    # apart after the sim, over `drape.WELD`, and the open seam showed the shin: `close`.
+    seams = [Seam([("gaiter", "start", True)], [("gaiter", "outer")], "gaiters", close=GAITER_CLOSE)]
     return P, seams
 
 

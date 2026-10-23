@@ -2,7 +2,7 @@
 the 1830s as Catlin and Bodmer drew them, built on the Woodlands family (`native.py`) by
 import: a Plains unit is a `native` SPEC plus Plains keys, and `build` runs native's
 pipeline with two hooks (`native.dress` and `native.hair` are wrapped for the call and
-restored, as `native.clean_shaven` swaps `faces.zones`).
+restored).
 
 Plains SPEC keys (over `native.spec`'s):
 - `warshirt`: a buckskin war shirt (a shell over the trunk to the hip and the arms to the
@@ -287,8 +287,7 @@ def build(ctx, s):
     report = {}
     colours = ch.colours(ctx.ref, s["palette"], report=report, mix=s["mix"], fixed=s["fixed"])
     outfit.dress(ch, colours, LAYER_OF)
-    with native.clean_shaven(scalp=True):
-        heads.finish(ch)
+    heads.finish(ch, beard=False, scalp=True)
     ch.arm.animation_data.action = None
     am.pose(ch.arm, cl.solve(ch.arm, native.stand_of(s)))
     if "socket.club_r" in ch.arm.pose.bones:

@@ -39,8 +39,11 @@ the shells of #178 (`False`, the fallback).
    up to the top of the skin and on towards the other side, so the shoulder seams start a
    few cm apart instead of a body's depth. Left panels are drafted; the right ones are
    mirrored copies.
-5. **Sew**: the two sides of each seam are paired by arc-length fraction; the pairs become
-   loose edges, which Blender's cloth treats as sewing springs.
+5. **Sew**: the two sides of each seam are paired by arc-length fraction along the pattern
+   (`garments.seam_fractions`; until #287 it counted samples, which skewed the pairs of
+   edges cut into different numbers of samples and opened skin holes at the shins of the
+   stockings and leggings); the pairs become loose edges, which Blender's cloth treats as
+   sewing springs.
 6. **Simulate** (`drape.simulate`), one cloth object per garment in `garments.ORDER`
    (breeches, gaiters, shirt, waistcoat, coat), colliding with the skin, the shoes and the
    garments before it. Two phases in one run (keyframed settings):

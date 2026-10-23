@@ -34,8 +34,9 @@ section 2.7. The family adds what it needs by registering it (docs/assets-humans
 - **Painters:** `quilted` (diamond quilting), woven borders (`_hem`: red with yellow and
   turquoise stripes, at the hem of the maxtlatl ends, the hip cloth and the tilmatli), `jaguar`, `eagle`, `meso_hair` (strands with a sheen), `meso_trim` (striped
   bands), `feather` (barbs and mottle), `meso_stone` (veined jade and turquoise),
-  `meso_gold`. One painter per key (keys sharing a painter share an atlas cell, so a
-  colour: the long and short feathers came out one colour until each had its own). The bright keys (`quetzal`, `macaw`, `jade`, `turquoise`, `gold`,
+  `meso_gold`. One painter per key (keys sharing a painter shared a colour until the shared
+  look slice made `outfit.dress` paint per key: the long and short feathers came out one
+  colour until each had its own). The bright keys (`quetzal`, `macaw`, `jade`, `turquoise`, `gold`,
   `meso_trim`, `meso_hair`, `maxtlatl`) are `fixed`: never dulled by the sprite mix.
 - **Head** (`head_parts(kind, plume)`: Items skinned rigidly to the head, one key each, not
   dropped at death): hair as a cap close over the skull from a high hairline at the

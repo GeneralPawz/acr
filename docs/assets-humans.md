@@ -154,6 +154,12 @@ the variant meshes, so the game looks as before.
     hairline, a faint beard shadow.
   - Ageing for every man: uneven tone, sun spots, grime in the pores, forehead creases,
     frown lines, crow's feet, eye-bag lines, deep nasolabial folds, days of stubble.
+  - Clean-shaven faces: `heads.finish(ch, beard=False)` leaves out the beard channel of
+    `_FACE` (`faces.zones(..., beard=False)`; the renderer's per-soldier stubble) and the
+    painted beard shadow; `scalp=False` paints no cropped scalp along the hairline
+    (`faces.hairline(scalp)`), for shaved and plucked heads (a roach, a scalp lock). The
+    natives, Plains and Pueblo pass these (before, `native.clean_shaven` swapped
+    `faces.zones` and `faces.HAIRLINE` for the call).
   - The rest of the body keeps the shared outfit atlas. The dragoon rider, not dressed by
     `outfit`, gets the face map in his detail UV map.
 - **Asymmetry:** `faces.asym` (nose knocked aside, one brow and cheek higher) is added to
@@ -330,6 +336,11 @@ Painted masks over the outfit atlas, registered with `registry.mask(name, fn)`
 `outfit.dress` paints each over the cells of the painters of its material `keys`, after the
 cloth, in the lace or paint colour with a little mottle; with `frame` (an object name) in that
 object's own frame. No entries, no change: EngM18 and FrnM18 are unchanged.
+The face masks (`paint_face_half`, `paint_face_band`, the face dots) cover the face only:
+down to the jaw (`masks.FACE_DOWN`, 23.5 cm below the top of the head) and 9.5 cm either
+side of the nose (`FACE_HALF_WIDTH`); before, they reached every front-facing texel from
+27 cm below the top up (the shoulders and upper arms), and native.py registered a limited
+copy (`native_face_half`, now an alias).
 
 - **Palette keys** (registered, with fallbacks): `lace` (gilt `(0.80, 0.64, 0.28)`; worsted
   white for soldiers via the palette), `paint_red` (red ochre), `paint_black`, `paint_white`.
@@ -444,6 +455,15 @@ out too dark in the game), `outfit.dress` paints one 1024² atlas for the dresse
 the way the horse coats are painted (`coat.py`): each painter gets a rectangle through a
 Smart-UV map `atlas` (the skin a double one), Cycles bakes rest-pose position, normal and
 ambient occlusion per texel, and numpy paints:
+
+- All objects of one painter are unwrapped together (`outfit.atlas_uv`), so their islands
+  sit side by side in its cell. (Unwrapped one by one, each filled the whole cell and the
+  bake kept the last one's texels: a native's scalp lock, key `hair` on the `skin` painter,
+  painted its dark hair over the trunk, arms and legs.)
+- Each object keeps its own colour (its key's, `Character.colours`) in its painter's style:
+  the cell's texels are labelled by the UV triangles that own them (`raster_labels`,
+  `grow_labels` into the bake margin) and painted per colour (`split_by_colour`). Two keys
+  on one painter (`tunic` and `sash` on `wool`) no longer need a painter each.
 
 | Painter | Parts | Look |
 |---|---|---|

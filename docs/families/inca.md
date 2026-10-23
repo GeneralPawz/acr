@@ -23,7 +23,8 @@ and edits no shared module; it borrows meso's sandals, quilting painter, `_fan` 
   and a skirt tube standing off the legs from the hips to the knee (19.5/15 cm at the top,
   24.5/19.5 cm at the hem), one key per weave; quilted armour (3.6 cm shell); the yacolla
   (5.5 cm off the back, shoulders and the backs of the thighs).
-- **Painters** (one per key: `outfit.dress` paints one colour per painter): `unku_check`,
+- **Painters** (one per key, from when `outfit.dress` painted one colour per painter; now
+  per key, the painters stay for their styles): `unku_check`,
   `unku_plain`, `unku_tocapu`, `unku_royal` (tocapu squares from five motifs, diagonal,
   cross, chequer, nested square, steps, in six colours, black borders), `llautu` (a slanting
   braid of the unit colour, gold and black), `inca_plumes` (bands of colour across the fan,

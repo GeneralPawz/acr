@@ -93,11 +93,12 @@ ZONE_RELAX = 3
 BEARD_ZONE_GAIN = 0.7
 
 
-def zones(obj, fr):
-    """The `_FACE` attribute (glTF `_FACE`, vec4; `faces.zones`)."""
+def zones(obj, fr, beard=True):
+    """The `_FACE` attribute (glTF `_FACE`, vec4; `faces.zones`; no beard channel without
+    `beard`)."""
     me = obj.data
     a = me.attributes.get("_face") or me.attributes.new("_face", "FLOAT_COLOR", "POINT")
-    z = [list(faces.zones(*fr.local(v.co))) for v in me.vertices]
+    z = [list(faces.zones(*fr.local(v.co), beard=beard)) for v in me.vertices]
     # The beard zone is shaded per vertex in the renderer: relax it over the mesh so the
     # decimated face's large triangles do not show as dark wedges, and keep it softer.
     nb = [[] for _ in me.vertices]
@@ -355,7 +356,7 @@ def dilate(img, mask, steps=12):
     return img
 
 
-def face_map(ch, skin_rgb):
+def face_map(ch, skin_rgb, beard=True, scalp=True):
     """The head's own material and 512² texture: the head part of the skin gets its own
     material slot and, in the `atlas` UV map, a smart-project unwrap (`unwrap`); Cycles bakes
     position, normal and occlusion of a copy of the head, numpy paints it (`paint_face`)."""
@@ -406,7 +407,7 @@ def face_map(ch, skin_rgb):
     loc = np.stack([flat_p[:, 0] - fr.cx, flat_p[:, 1] - fr.y_front, flat_p[:, 2] - fr.eye_z], -1).astype(np.float32)
     cov = covered.reshape(-1)
     col = np.tile(coat.lin(skin_rgb) * 0.85, (len(loc), 1)).astype(np.float32)
-    col[cov] = paint_face(loc[cov], flat_n[cov], skin_rgb)
+    col[cov] = paint_face(loc[cov], flat_n[cov], skin_rgb, beard=beard, scalp=scalp)
     occ = np.clip(ao.reshape(-1), 0.0, 1.0)
     col[cov] *= (0.72 + 0.28 * occ[cov] ** 0.9)[:, None]
     col = dilate(col.reshape(FACE_SIZE, FACE_SIZE, 3), cov.reshape(FACE_SIZE, FACE_SIZE)).reshape(-1, 3)
@@ -428,10 +429,11 @@ def _g(*pairs):
     return np.exp(-e)
 
 
-def paint_face(p, n, rgb, seed=41):
+def paint_face(p, n, rgb, seed=41, beard=True, scalp=True):
     """Colours of head texels from head-local positions `p` (N, 3) and normals: weathered
     skin, eyes with whites, iris, lids and lashes, brows, nostrils, lips and the mouth line,
-    nasolabial folds, a cropped scalp along the hairline, a faint beard shadow."""
+    nasolabial folds, a cropped scalp along the hairline (`scalp`), a faint beard shadow
+    (`beard`)."""
     x, y, z = p[:, 0], p[:, 1], p[:, 2]
     ax = np.abs(x)
     base = coat.lin(rgb)
@@ -522,11 +524,14 @@ def paint_face(p, n, rgb, seed=41):
     cy, cz = faces.CENTRE[1], faces.CENTRE[2]
     th = np.degrees(np.arctan2(x, -(y - cy)))
     ph = np.degrees(np.arctan2(z - cz, np.hypot(x, y - cy)))
-    line_ph = np.interp(np.abs(th), [k for k, _ in faces.HAIRLINE], [v for _, v in faces.HAIRLINE])
+    hl = faces.hairline(scalp)
+    line_ph = np.interp(np.abs(th), [k for k, _ in hl], [v for _, v in hl])
     scalp = coat.smooth(-6.0, -1.0, ph - line_ph)  # dark under the tapered hair edge
     stip = coat.smooth(0.35, 0.65, fine)
     col = coat.mix(col, coat.lin((0.11, 0.08, 0.06)) * (0.8 + 0.4 * stip)[:, None], scalp * (0.6 + 0.3 * stip))
     # A faint beard shadow (the renderer adds the soldier's stubble from `_FACE`).
+    if not beard:
+        return col
     beard = np.fromiter((faces.zones(float(a), float(b), float(c))[0] for a, b, c in p), np.float32, len(p))
     # Unshaven: days of dark stubble in the beard zone (the renderer adds more per soldier).
     # Fine even stubble: a soft grey-blue shadow of shaved skin and sparse hair points,
@@ -538,21 +543,25 @@ def paint_face(p, n, rgb, seed=41):
     return col
 
 
-def finish(ch, objs=None, skin=None):
+def finish(ch, objs=None, skin=None, beard=True, scalp=True):
     """Face morphs on `objs` (default: flesh and clothes; a rider passes his own, not the
     horse's), `_FACE` on the `skin` meshes (default: `ch.flesh`), the head's face map,
     body morphs, the variants' finishing; skin materials get `acr_tint` "skin". Call after
-    `Character.morphs` and `outfit.dress`."""
+    `Character.morphs` and `outfit.dress`.
+
+    A clean-shaven face (the natives) passes `beard=False`: no beard channel in `_FACE` (the
+    renderer's stubble) and no painted beard shadow; `scalp=False` paints no cropped scalp
+    along the hairline (shaved or plucked heads: a roach, a scalp lock)."""
     fr = ch.face_frame
     objs = objs if objs is not None else ch.layers["flesh"] + ch.layers["clothes"]
     face_morphs(objs, fr)
     body_morphs(ch, objs)
     for o in skin or [ch.flesh]:
-        zones(o, fr)
+        zones(o, fr, beard=beard)
         for m in o.data.materials:
             if m is not None:
                 m["acr_tint"] = "skin"
     m0 = ch.flesh.data.materials[0]
-    face_map(ch, tuple(m0.get("acr_base_rgb", (0.8, 0.6, 0.48))))
+    face_map(ch, tuple(m0.get("acr_base_rgb", (0.8, 0.6, 0.48))), beard=beard, scalp=scalp)
     finish_variants(ch)
     ch.root["acr_face_frame"] = fr.as_list()

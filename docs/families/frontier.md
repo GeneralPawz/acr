@@ -28,7 +28,7 @@ and a wider fringe band at its edge), `blouse`, `sash`, `cloak`; family 12 adds 
 
 Registered here: cloth keys `hunting`, `leggings`, `fsash`, `fur`, `horn`, `pouch`,
 `fcloak`, `fshirt`, `fvest`, `fhose`, `doublet`, `dsleeve`, `slops`, `plume`, each with its
-own painter (one colour per painter); gear `horn`, `pouch`, `tomahawk_belt`, `knife`; hats
+own painter (from when `outfit.dress` painted one colour per painter; now per key); gear `horn`, `pouch`, `tomahawk_belt`, `knife`; hats
 `fur_cap`, `round_hat`, `buccaneer_hat`.
 
 ## Clips

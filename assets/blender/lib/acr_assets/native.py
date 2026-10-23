@@ -40,7 +40,7 @@ from mathutils import Matrix, Vector
 from . import aim as aiming
 from . import armature as am
 from . import clips as cl
-from . import crawl, faces, gear, heads, held, masks, mbody, outfit, poses, registry, rig, straps
+from . import crawl, gear, heads, held, masks, mbody, outfit, poses, registry, rig, straps
 from .humans import LAYER_OF, Character, prepare_export
 
 # The Iroquois warrior's colours: a nation overrides them. The skin is a warm copper as in
@@ -81,23 +81,15 @@ for _key, _layer, _painter, _fb in (
 
 # -- skin paint and face (the native variants of `masks` and `heads`) -------------------
 
-def paint_face_half(p, n, L, seed, side=1.0):
-    """`masks.paint_face_half` limited to the head. The shared mask's `_face` region has no
-    width limit: every front-facing texel from 27 cm below the head's top up, on the
-    painted side, takes the paint, and on these builds (shoulders 1.08, the trapezius high)
-    that is the shoulder, the top of the chest and the upper arm. Here the region stops at
-    the jaw (23 cm below the top) and 9 cm either side of the nose."""
-    import numpy as np
-
-    top = L["head_top"]
-    x, z = p[:, 0], p[:, 2]
-    w = masks.paint_face_half(p, n, L, seed, side=side)
-    head = masks._smooth(np, top - 0.235, top - 0.215, z) * masks._smooth(np, 0.095, 0.080, np.abs(x))
-    return w * head
+# `masks.paint_face_half` once had no width limit (every front-facing texel from 27 cm
+# below the top of the head, i.e. the shoulders and the upper arms); this name kept the
+# fixed copy. The shared mask is limited to the head now (`masks._face`), so the name is an
+# alias kept for the unit specs that use it.
+paint_face_half = masks.paint_face_half
 
 
 registry.mask("native_face_half", paint_face_half)
-FIXED_MASKS = {"paint_face_half": "native_face_half"}
+FIXED_MASKS = {}  # mask substitutions (none since `masks._face` is limited)
 # Paint sets of the native units beyond `masks.PAINT_SETS` (one per unit type).
 PAINT_SETS = {
     "black_red_chin": [("paint_face_half", "paint_black", {"side": 1.0}), ("paint_face_band", "paint_red", {"high": 0.20})],
@@ -111,28 +103,6 @@ def body_paint(choice, palette):
     sets = PAINT_SETS[choice] if choice in PAINT_SETS else masks.paint_set(choice)
     return [masks.entry(FIXED_MASKS.get(m, m), ("skin",), masks._colour(palette, c), **params) for m, c, params in sets]
 
-
-class clean_shaven:
-    """The native face map (`heads.finish` inside this context): no beard zone (neither the
-    painted stubble of `heads.paint_face` nor `_FACE`'s beard channel, which the renderer
-    turns into stubble) and, for the shaved and plucked heads (`roach`, `lock`), no cropped
-    scalp along the hairline. `faces.zones` and `faces.HAIRLINE` are swapped for the call
-    and restored."""
-
-    def __init__(self, scalp=False):
-        self.scalp = scalp
-
-    def __enter__(self):
-        self.saved = faces.zones, faces.HAIRLINE
-        zones = self.saved[0]
-        faces.zones = lambda x, y, z: (0.0,) + tuple(zones(x, y, z))[1:]
-        if not self.scalp:
-            faces.HAIRLINE = [(a, 120.0) for a, _ in self.saved[1]]
-        return self
-
-    def __exit__(self, *exc):
-        faces.zones, faces.HAIRLINE = self.saved
-        return False
 
 LEGS = {"thigh_l", "thigh_r", "shin_l", "shin_r"}
 TORSO = {"hips", "spine", "spine1", "spine2", "clavicle_l", "clavicle_r"}
@@ -684,8 +654,8 @@ def build(ctx, s):
     report = {}
     colours = ch.colours(ctx.ref, s["palette"], report=report, mix=s["mix"], fixed=s["fixed"])
     outfit.dress(ch, colours, LAYER_OF)
-    with clean_shaven(scalp=s["hair"] == "long"):
-        heads.finish(ch)
+    # Clean-shaven; the shaved and plucked heads (roach, scalp lock) without a cropped scalp.
+    heads.finish(ch, beard=False, scalp=s["hair"] == "long")
     ch.arm.animation_data.action = None
     am.pose(ch.arm, cl.solve(ch.arm, stand))
     if "socket.club_r" in ch.arm.pose.bones:

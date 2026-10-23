@@ -71,12 +71,14 @@ The priest: `STAND` (hands before the chest, book in the left), `REST` (reading)
   food) walks on the plain walk sprites, so loads show only in stances 2 and 4.
 - No tonsure on the priest (the head variants have no bald crown yet).
 - The palette keys are the family's own (`smock`, `band`, `vest`, `hose`, `habit`, `cappa`,
-  `sack`, `book`, each with its own painter): `outfit.dress` paints one colour per painter,
-  so two keys sharing a painter (`tunic` and `sash` on `wool`) come out in one colour.
+  `sack`, `book`, each with its own painter). Since the shared look slice `outfit.dress`
+  paints one colour per object (key), so two keys sharing a painter keep their colours; the
+  own painters stay for their finish.
 - The tool sockets are keyed to scale 0 by most clips; the export resets every pose bone's
   scale to 1 first, or the zero scale is baked into the tools' node transforms.
 - Look (first pass, ACR-analysis/fam-civil): the clothes and the priest read well; the
-  stockings show small skin holes on the shins (the gaiter pattern's seam), the sickle is
+  stockings showed small skin holes on the shins (the gaiter pattern's seam paired by
+  sample count; arc length since the shared look slice, `garments.seam_fractions`), the sickle is
   hard to see in `ATTACK3` (small, close to the body), the reaping stoop leans sideways,
   the sack sits too far back on the shoulder, the shell edges of the priest's cappa are
   ragged. Poses were set by hand, not fitted to the sprites (`tools/silhouette.py`).
