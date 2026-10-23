@@ -575,6 +575,35 @@ impl Ragdoll {
         }
     }
 
+    /// A blow of `impulse` (N·s) at `point` on `bone`, of which the struck body takes at most
+    /// `max_dv` (m/s) worth; the rest goes to the trunk (the root, or the first spine bone
+    /// while the root is pinned) at its centre. A light limb struck by a melee weapon is
+    /// pushed, not whipped into a spin that throws the whole body; the momentum is the same.
+    pub fn apply_blow(&self, world: &mut World, bone: usize, point: Vec3, impulse: Vec3, max_dv: f32) {
+        let id = self.bones[bone].body;
+        let j = impulse.length();
+        let own = j.min(world.body(id).mass * max_dv);
+        let share = if j > 0.0 { own / j } else { 1.0 };
+        world.apply_impulse(id, point, impulse * share);
+        if share < 1.0 {
+            let trunk = if world.body(self.bones[0].body).is_pinned() { 1.min(self.bones.len() - 1) } else { 0 };
+            let tid = self.bones[trunk].body;
+            let centre = world.body(tid).pos;
+            world.apply_impulse(tid, centre, impulse * (1.0 - share));
+        }
+    }
+
+    /// Every body moving at `vel` without spin. A pinned root moved by [`Ragdoll::place`]
+    /// jumps once per frame and leaves velocity spikes in the bodies hanging on it; a
+    /// survivor's ragdoll that is let go (he dies) starts from his ground velocity instead.
+    pub fn set_velocity(&self, world: &mut World, vel: Vec3) {
+        for rb in &self.bones {
+            let b = world.body(rb.body);
+            let (p, q) = (b.pos, b.rot);
+            world.set_body_state(rb.body, p, q, vel, Vec3::ZERO);
+        }
+    }
+
     /// Freezes the ragdoll in its current pose: a static corpse that costs nothing and
     /// still blocks others (one-sided, like the ground), until an explicit wake (an
     /// impulse, a new pose or tone).

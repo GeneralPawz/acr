@@ -563,6 +563,14 @@ pub fn calibrate() -> (f64, usize) {
     (best, (FRAME_BUDGET_US / best.max(1.0)).floor().min(POOL as f64) as usize)
 }
 
+/// A melee blow's impulse (N·s): about what a man's body takes from a sabre cut, a bayonet
+/// thrust or a musket butt (the weapon's momentum is mostly not handed over): it knocks him
+/// down where he stands, at most a step back (0.16 m/s for the whole body).
+const MELEE_IMPULSE: f32 = 12.0;
+/// The most a melee or thrown weapon's blow speeds up the struck body itself (m/s); the
+/// rest of the impulse goes to the trunk, so a hand or the head is not whipped.
+const MELEE_DV: f32 = 2.0;
+
 /// Impulse (N·s) of a blow by cause and energy (percent): a musket ball's momentum (30 g at
 /// about 300 m/s) when it stops in the body, a share of a cannonball's, the swing of a
 /// weapon.
@@ -574,7 +582,7 @@ fn impulse_of(cause: DeathCause, energy: u8) -> f32 {
         DeathCause::Grapeshot => 15.0 * e + 5.0,
         DeathCause::Cannonball => 60.0 + 240.0 * e,
         DeathCause::Explosion => 40.0 + 120.0 * e,
-        DeathCause::Melee => 18.0,
+        DeathCause::Melee => MELEE_IMPULSE,
         DeathCause::Thrown => 12.0,
         _ => 6.0,
     }
@@ -807,12 +815,19 @@ impl Ragdolls {
             log::info!("3d: ragdoll for unit {} (hit {:?})", hit.victim, hit.cause);
             self.take_hit(hit, d, now, killed(hit.victim), terrain);
         }
-        // Deaths of the hit after their hit (bled out, a second blow elsewhere).
+        // Deaths of the hit after their hit (bled out, a second blow elsewhere): let go from
+        // the pinned root at his ground velocity (see `take_hit`).
         let time = self.time;
-        for (v, a) in &mut self.actors {
-            if !a.dying && killed(*v) {
-                a.dying = true;
-                a.died = time;
+        let late: Vec<u32> = self.actors.iter().filter(|(v, a)| !a.dying && killed(**v)).map(|(v, _)| *v).collect();
+        for v in late {
+            let vel = self.ground_velocity(v, now);
+            let Some(a) = self.actors.get_mut(&v) else { continue };
+            a.dying = true;
+            a.died = time;
+            if a.slot != usize::MAX {
+                let r = &self.pool[a.slot].0;
+                r.set_pinned_root(&mut self.physics, false);
+                r.set_velocity(&mut self.physics, vel);
             }
         }
         let scope = acr_sim::prof::Scope::new("rag.drive");
@@ -875,6 +890,17 @@ impl Ragdolls {
         Some([p[0] * PIXELS_PER_METRE, -p[1] * PIXELS_PER_METRE, p[2] * PIXELS_PER_METRE])
     }
 
+    /// The unit's ground velocity (physics m/s) from its ground points of the last two ticks.
+    fn ground_velocity(&self, v: u32, now: u64) -> Vec3 {
+        match self.tracks.get(&v) {
+            Some(&(t, a, b)) if t + 1 >= now => {
+                let w = (physics_of(b) - physics_of(a)) * acr_sim::ORIGINAL_TICKS_PER_SECOND as f32;
+                Vec3::new(w.x, w.y, 0.0)
+            }
+            _ => Vec3::ZERO,
+        }
+    }
+
     fn take_hit(&mut self, hit: &HitRecord, d: &Drawn<'_>, now: u64, dies: bool, terrain: &TerrainData) {
         let v = hit.victim;
         let generic = self.maps.get(&d.model).and_then(Option::as_ref).and_then(|m| m.generic.as_ref());
@@ -888,17 +914,11 @@ impl Ragdolls {
             let Some(slot) = self.take_slot(v, d.model) else { return };
             let Some(map) = self.maps.get(&d.model).and_then(Option::as_ref) else { return };
             let skins = animated_skins(map, &d.data.pose(d.clip, d.time), &d.transform);
-            let vel = match self.tracks.get(&v) {
-                Some(&(t, a, b)) if t + 1 >= now => {
-                    let w = physics_of(b) - physics_of(a);
-                    w * acr_sim::ORIGINAL_TICKS_PER_SECOND as f32
-                }
-                _ => Vec3::ZERO,
-            };
+            let vel = self.ground_velocity(v, now);
             let r = &self.pool[slot].0;
             r.set_pinned_root(&mut self.physics, false);
             for (b, s) in skins.iter().enumerate() {
-                r.place(&mut self.physics, b, s, Vec3::new(vel.x, vel.y, 0.0));
+                r.place(&mut self.physics, b, s, vel);
             }
             // Out of the ground first: a lying or crawling pose sinks into it a little, and
             // the contacts would throw him up.
@@ -955,10 +975,18 @@ impl Ragdolls {
                 },
             );
         }
+        let ground_vel = self.ground_velocity(v, now);
         let Some(a) = self.actors.get_mut(&v) else { return };
         if dies && !a.dying {
             a.dying = true;
             a.died = self.time;
+            if !new {
+                // Let go from the pinned root: from his ground velocity, without the spikes
+                // the root's jumps left in his limbs.
+                let r = &self.pool[a.slot].0;
+                r.set_pinned_root(&mut self.physics, false);
+                r.set_velocity(&mut self.physics, ground_vel);
+            }
         }
         a.frozen = None;
         a.frozen_palette = None;
@@ -988,7 +1016,11 @@ impl Ragdolls {
         };
         // Thrown down and a little up for a goring.
         let lift = if maul == Some(2) { Vec3::new(0.0, 0.0, 0.35) } else { Vec3::ZERO };
-        self.physics.apply_impulse(body, point, (dir + lift) * j);
+        let max_dv = match (maul, hit.cause) {
+            (None, DeathCause::Melee | DeathCause::Thrown) => MELEE_DV,
+            _ => f32::INFINITY,
+        };
+        r.apply_blow(&mut self.physics, bone, point, (dir + lift) * j, max_dv);
         // The survivor's hips sway with the blow (the total momentum over his mass).
         a.sway_v += dir * (j / a.mass) * SWAY_GAIN;
         // A hard blow knocks a survivor down: he gets up when the clip takes him back (and the
@@ -1174,10 +1206,10 @@ impl Ragdolls {
                 // Before it is frozen the corpse relaxes: a faint pull towards the rest pose
                 // lowers a limb left propped up (an arm raised by the death reflex).
                 a.relaxed = Some(time);
-                r.set_pose(&mut self.physics, &vec![Quat::IDENTITY; r.len()]);
-                r.set_tone_all(&mut self.physics, Tone::FULL.scaled(RELAX_TONE));
-                for b in 0..r.len() {
-                    self.physics.wake(r.body(b));
+                if relax(r, &mut self.physics, a.human) {
+                    for b in 0..r.len() {
+                        self.physics.wake(r.body(b));
+                    }
                 }
             }
             if a.dying && a.frozen.is_none() && a.relaxed.is_some_and(|t| time - t > RELAX_S) {
@@ -1227,6 +1259,38 @@ impl Ragdolls {
             self.poses.insert(d.index, palette_of(map, &skins, &d.transform));
         }
     }
+}
+
+/// Before a corpse is frozen: an arm left propped up (its hand above the shoulder, raised by
+/// the death reflex) is pulled faintly towards the rest pose so it comes down; everything
+/// else keeps the pose it fell in (limp, its current pose as the target). Pulling the
+/// whole body towards the rest pose straightened the legs and rolled the corpse over a
+/// second after it had come to rest. Animals are left as they lie. Whether anything moves.
+fn relax(r: &Ragdoll, physics: &mut Physics, human: bool) -> bool {
+    r.target_current_pose(physics);
+    r.set_tone_all(physics, Tone::LIMP);
+    if !human {
+        return false;
+    }
+    let z = |physics: &Physics, n: &str| r.bone_index(n).map(|b| physics.body(r.body(b)).pos.z);
+    let mut any = false;
+    for side in ["_l", "_r"] {
+        let (Some(hand), Some(shoulder)) = (z(physics, &format!("hand{side}")), z(physics, &format!("upperarm{side}")))
+        else {
+            continue;
+        };
+        if hand < shoulder + 0.1 {
+            continue;
+        }
+        for n in ["upperarm", "forearm", "hand"] {
+            if let Some(b) = r.bone_index(&format!("{n}{side}")) {
+                r.set_target(physics, b, Quat::IDENTITY);
+                r.set_tone(physics, b, Tone::FULL.scaled(RELAX_TONE));
+                any = true;
+            }
+        }
+    }
+    any
 }
 
 /// The palette of an instance (transform `transform`) posed by skinning matrices per body
@@ -1288,6 +1352,59 @@ fn rot_about(rot: &[[f32; 4]; 4], p: [f32; 3]) -> Mat4 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A man fallen curled on his side, settled and asleep (the relax test's corpse).
+    fn curled_corpse() -> (f32, f32, Vec3, Vec3) {
+        let mut physics = Physics::new(Config::default());
+        let lying = Quat::from_axis_angle(Vec3::new(0.0, 1.0, 0.0), 1.5);
+        let r = Ragdoll::spawn(&mut physics, &skeleton_h(), 75.0, Vec3::new(0.0, 0.0, 0.2), lying);
+        r.set_tone_all(&mut physics, Tone::FULL);
+        for (n, flex) in [("thigh_l", 1.3), ("thigh_r", 1.0), ("shin_l", 2.0), ("shin_r", 1.6), ("spine1", 0.4)] {
+            let b = r.bone_index(n).unwrap();
+            let axis = r.joint_axis(&physics, b);
+            r.set_target(&mut physics, b, Quat::from_axis_angle(axis, flex));
+        }
+        let flat = |_: f32, _: f32| 0.0;
+        for _ in 0..60 {
+            physics.step(&flat);
+        }
+        r.set_tone_all(&mut physics, Tone::LIMP);
+        for _ in 0..600 {
+            if r.is_asleep(&physics) {
+                break;
+            }
+            physics.step(&flat);
+        }
+        assert!(r.is_asleep(&physics), "the corpse comes to rest");
+        let heading = |physics: &Physics| {
+            let p = |n: &str| physics.body(r.body(r.bone_index(n).unwrap())).pos;
+            let (hips, neck, knee) = (p("hips"), p("neck"), p("shin_l"));
+            ((neck.y - hips.y).atan2(neck.x - hips.x), (knee.y - hips.y).atan2(knee.x - hips.x), hips)
+        };
+        let (h0, k0, p0) = heading(&physics);
+        if relax(&r, &mut physics, true) {
+            for b in 0..r.len() {
+                physics.wake(r.body(b));
+            }
+        }
+        for _ in 0..(RELAX_S * 60.0) as usize {
+            physics.step(&flat);
+        }
+        let (h1, k1, p1) = heading(&physics);
+        let turn =
+            |a: f32, b: f32| (b - a + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+        (turn(h0, h1).abs(), turn(k0, k1).abs(), p0, p1)
+    }
+
+    #[test]
+    fn a_settled_corpse_keeps_its_heading_while_it_relaxes() {
+        // The old relax (the whole body pulled towards the rest pose) swung the legs 31°.
+        let (trunk, legs, p0, p1) = curled_corpse();
+        println!("relax: trunk turned {:.1}°, thigh {:.1}°", trunk.to_degrees(), legs.to_degrees());
+        assert!(trunk.to_degrees() < 3.0, "the trunk turned {:.1}°", trunk.to_degrees());
+        assert!(legs.to_degrees() < 3.0, "the legs swung {:.1}°", legs.to_degrees());
+        assert!((p1 - p0).length() < 0.03, "the hips moved {:?}", p1 - p0);
+    }
 
     #[test]
     fn inverse_of_a_model_matrix() {
