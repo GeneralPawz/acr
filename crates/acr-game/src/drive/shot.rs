@@ -29,6 +29,13 @@ fn target(device: &wgpu::Device, format: wgpu::TextureFormat, width: u32, height
 /// Draws the frame offscreen and writes it to `path`, cut to `crop` (x, y, w, h) if given.
 /// Returns the written size.
 pub fn screenshot(game: &mut Game, path: &str, crop: Option<[u32; 4]>) -> Result<[u32; 2], String> {
+    let (size, rgba) = capture(game, crop)?;
+    write_png(path, size, &rgba)?;
+    Ok(size)
+}
+
+/// Draws the frame offscreen and returns it as RGBA, cut to `crop` (x, y, w, h) if given.
+pub fn capture(game: &mut Game, crop: Option<[u32; 4]>) -> Result<([u32; 2], Vec<u8>), String> {
     let g = game.graphics.as_ref().ok_or("no GPU: start the driver with --drive-gpu for screenshots")?;
     let (device, queue) = (g.gpu.device.clone(), g.gpu.queue.clone());
     let format = g.gpu.config.format;
@@ -75,6 +82,11 @@ pub fn screenshot(game: &mut Game, path: &str, crop: Option<[u32; 4]>) -> Result
     }
     drop(data);
     buffer.unmap();
+    Ok(([cw, ch], rgba))
+}
+
+/// Writes RGBA pixels as a PNG, making its folder.
+pub fn write_png(path: &str, [cw, ch]: [u32; 2], rgba: &[u8]) -> Result<(), String> {
     if let Some(dir) = std::path::Path::new(path).parent().filter(|d| !d.as_os_str().is_empty()) {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
@@ -83,8 +95,8 @@ pub fn screenshot(game: &mut Game, path: &str, crop: Option<[u32; 4]>) -> Result
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
     let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
-    writer.write_image_data(&rgba).map_err(|e| e.to_string())?;
-    Ok([cw, ch])
+    writer.write_image_data(rgba).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// `gputime`: draws `frames` frames offscreen with the GPU timer on and returns the mean

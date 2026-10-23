@@ -81,6 +81,43 @@ impl InGame {
         self.centred = true;
     }
 
+    /// The studio's camera (#299): the ground point `target` (world pixels, z = 0) in the
+    /// middle of the window at `scale`, under the free camera turned and tilted by `orbit`.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn place_camera(&mut self, target: [f32; 2], scale: f32, orbit: acr_render::view3d::Orbit) {
+        self.three_d.set_free(orbit);
+        self.camera.scale = scale;
+        self.interface.modern.zoom = scale;
+        let window = self.interface.window;
+        self.camera.x = target[0] - window[0] / scale / 2.0;
+        self.camera.y = target[1] / 2.0 - window[1] / scale / 2.0;
+        self.centred = true;
+    }
+
+    /// The model and this frame's instance of a unit drawn as a model (#299).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn posed(
+        &self,
+        unit: u32,
+    ) -> Option<(&acr_render::model::ModelData, &acr_render::model_renderer::ModelInstance)> {
+        self.three_d.posed(unit)
+    }
+
+    /// Holds a unit's model at `clip` and `time` seconds (`None`: the game's clip again).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn hold_pose(&mut self, unit: u32, pose: Option<(usize, f32)>) {
+        match pose {
+            Some(p) => self.three_d.held.insert(unit, p),
+            None => self.three_d.held.remove(&unit),
+        };
+    }
+
+    /// The pose held for a unit, if any.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn held_pose(&self, unit: u32) -> Option<&(usize, f32)> {
+        self.three_d.held.get(&unit)
+    }
+
     /// The current camera: scale and, with the free camera, yaw and pitch.
     pub fn camera_scale(&self) -> f32 {
         self.camera.scale

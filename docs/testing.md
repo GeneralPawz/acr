@@ -119,6 +119,11 @@ its label to appear.
 | `{"cmd": "screenshot", "path": "out.png", "crop": [x, y, w, h]}` | only with `--drive-gpu` |
 | `{"cmd": "dialogs", "policy": "report"}` | `auto` or `report` |
 | `{"cmd": "camera", "x": 3000, "y": 9000, "zoom": 5, "yaw_deg": 0, "pitch_deg": 10}` | the close-up bench's camera, see below |
+| `{"cmd": "camera", "frame": [0], "view": "side", "part": "hands", "margin": 0.15}` | frames units or a body part (studio, see "The studio") |
+| `{"cmd": "studio", "ground": "white", "units": [{"type": "EngM18", "x": 7680, "y": 7680, "dir": 64}]}` | a held blank field with exactly these units (studio) |
+| `{"cmd": "pose", "id": 0, "clip": "ATTACK1", "frame": 12}` | holds a unit's model at a clip time (studio) |
+| `{"cmd": "sheet", "path": "s.png", "ids": [0], "views": ["front", "side"], "clips": [{"clip": "ATTACK1", "frames": [0, 10]}], "cell": [360, 480]}` | a labelled grid of posed views in one PNG (studio) |
+| `{"cmd": "measure", "id": 0, "ticks": 40}` | hand/grip and foot numbers of a unit (studio) |
 | `{"cmd": "spawn", "type": "EngM18", "x": 3000, "y": 9000, "dir": 0, "pose": "stand"}` | places a unit (bench) |
 | `{"cmd": "shadows", "on": false}` | sun shadows of the models forced off (`true`: on; no `on`: the `shadows` setting again); `ACR_SHADOWS=on\|off` does the same at start |
 | `{"cmd": "hit", "unit": 541, "cause": "musket", "region": "torso", "dir": [-1, 0], "energy": 80}` | a scripted hit (bench) |
@@ -255,6 +260,76 @@ Units of two owners fight on their own (an animal goes for an enemy within reach
 pair one owner when they should only stand. A slope or hill for gait tests:
 `{"cmd": "start", "blank": {"ground": "dirt", "slope": 8, "hill": true}}`; ships:
 `{"cmd": "start", "blank": {"water": true}}` and `spawn` e.g. `ShpPinta` at `[9600, 7680]`.
+
+### The studio (#299)
+
+Exact, repeatable shots and numbers of posed models for work on drills, skins, clothing
+and models, run on the render VM with `vm_drive.py` (`ACR-analysis/vm/README.md`). Only
+the driver and the render side are involved: the simulation is held (no ticks), never
+changed, so its pinned hashes stay. Needs `--drive-gpu` (the models are loaded by the GPU
+path) and `models=all` in the settings (the VM's showcase settings have it).
+
+- **`studio`**: starts the blank field (above) with `ground` `white` (default), `grass`,
+  `snow`, `dirt` or `greenscreen`, one human player, the HUD off and the fog open, spawns
+  `units` (each as `spawn` takes it; `x`, `y` default to the centre, 90 px apart,
+  `owner` 0) and holds the simulation unless `"run": true`. It answers once every unit is
+  drawn as a model, with the `units` (ids) and a `camera` framing them all (`view`,
+  default `three_quarter`). `light` is accepted; the light is the game's fixed sun. `size`,
+  `nation`, `hit_locations`, `body_spacing` pass through to the field. It loads the whole
+  game as the blank start does: about 0.5 s on the VM (loading only the listed models is
+  a later optimisation).
+- **`pose`**: `id`, `clip` (a clip name of the unit's model; default the clip shown) and
+  the time as `t` (seconds), `frame` (clip frames at the model's fps, 24) or `phase` (0..1
+  of the clip): the unit's model holds that frame until `"release": true`, and the
+  simulation is held (`"run": true` keeps it running; the held model then still shows the
+  pose). Answers `clip`, `t`, `frame`, `duration`, `fps`. Unknown clips list the model's
+  clips in the error.
+- **`camera` with `frame`**: `frame` (unit ids) is fitted into the window under the free
+  camera, whatever the `camera` setting: the bounds of the posed, skinned vertices (or of
+  `part`: `hands`, `head` (with the hat), `feet`, `weapon` (items on the hand sockets), by
+  each vertex's strongest bone) leave `margin` (a fraction of the window per side; 0.06,
+  0.15 for a part) free, so nothing is cut off. `view` is relative to the first unit's
+  facing: `front` (his face, 7° down), `back`, `side` (his right side), `three_quarter`
+  (front right, 20° down, default) or `top` (80° down); `yaw_deg`/`pitch_deg` override
+  the turn and tilt (absolute, as for the bench camera), `zoom` multiplies the fitted
+  scale. Answers the `target`, `zoom`, `yaw_deg`, `pitch_deg` and how many `points` were
+  framed.
+- **`sheet`**: renders a grid inside the game and writes one PNG to `path`: a row per
+  unit of `ids` × entry of `clips` × time (`{"clip": "ATTACK1", "frames": [0, 10, 20]}`,
+  or `"t": [..]` seconds, `"phase": [..]`), a column per `views` (default front, side,
+  three_quarter); each cell `cell` = [w, h] pixels (default 320 × 480, at most the window)
+  framed as `camera` with `frame` does (`part`, `margin`, `zoom`, `pitch_deg` apply to all
+  cells), with a label strip above it (`<id> <clip> F<frame> <view>`). The poses stay held
+  afterwards. A cell costs about one frame: a 3 × 3 sheet takes about 0.1 s.
+- **`measure`**: numbers for a unit drawn as a model, at its shown (or held) pose: `clip`,
+  `t`, `frame`, the `sockets` `socket.hand_*` (model space, metres) and per hand socket ×
+  item hanging on a hand socket (`engm18.musket`, `engm18.rammer`) the `distance_mm` to the
+  item's origin (its main grip, m2-grips), `along_mm` along its long axis (+Z) and the
+  `gap_mm` to that axis (an off hand on a two-handed item should have a small gap). With
+  `ticks`: n the simulation runs n ticks (the unit's hold is released; give it a walk with
+  `spawn`'s `pose: walk`) and `walk.samples` lists per tick the `tick`, `clip`, `t`,
+  `ground_m` and both feet (`foot_l`, `foot_r`: world metres, z above the ground point);
+  `walk.sliding` sums per foot the horizontal motion between ticks while the foot is
+  planted (within 3 cm of its lowest height) as `slide_m`. The simulation is held again
+  afterwards if it was.
+
+```text
+> {"cmd": "studio", "ground": "white", "units": [{"type": "EngM18", "x": 7680, "y": 7680, "dir": 64}]}
+< {"ok": true, "units": [{"id": 0, "type": "EngM18(EN)", ...}], "camera": {...}, "ms": 491, ...}
+> {"cmd": "sheet", "path": "sheet.png", "ids": [0], "views": ["front", "side", "three_quarter"], "clips": [{"clip": "ATTACK1", "frames": [0, 10, 20]}], "cell": [360, 480]}
+< {"ok": true, "path": "sheet.png", "size": [1080, 1500], "cells": 9, "ms": 105, ...}
+> {"cmd": "pose", "id": 0, "clip": "ATTACK1", "frame": 10}
+> {"cmd": "camera", "frame": [0], "view": "three_quarter", "part": "hands", "margin": 0.15}
+> {"cmd": "screenshot", "path": "hands.png"}
+> {"cmd": "measure", "id": 0}
+< {"ok": true, "measure": {"clip": "ATTACK1", "frame": 10.0, "hands": [{"socket": "socket.hand_r", "item": "engm18.musket", "distance_mm": 10.0, "along_mm": -10.0, "gap_mm": 0.0, ...}, ...]}}
+> {"cmd": "spawn", "type": "EngM18", "x": 7900, "y": 7900, "dir": 0, "pose": "walk"}
+> {"cmd": "measure", "id": 1, "ticks": 40}
+```
+
+`ACR-analysis/studio/steps.json` is this session as a `vm_drive.py` steps file.
+Not yet: `reload_models` (hot reload of rebuilt glbs), before/after sheets, cloth
+poke-through and eye-line numbers, loading only the listed models.
 
 ### The widget tree (`ui`)
 

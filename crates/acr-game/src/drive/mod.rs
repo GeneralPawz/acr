@@ -19,6 +19,7 @@ mod logger;
 mod protocol;
 mod shot;
 mod state;
+mod studio;
 mod tree;
 
 pub use logger::install as install_logger;
@@ -143,6 +144,8 @@ struct Job {
     /// A recording in progress (`record`).
     record: Option<Recording>,
     reply: Map<String, Value>,
+    /// A studio command's remaining work (#299).
+    studio: Option<studio::Task>,
     /// The first answer: the `ready` line.
     hello: bool,
 }
@@ -161,6 +164,7 @@ impl Job {
             shot: None,
             record: None,
             reply: Map::new(),
+            studio: None,
             hello: false,
         }
     }
@@ -502,6 +506,25 @@ impl Driver {
             } else {
                 job.settle_frames += 1;
                 return Ok(None);
+            }
+        }
+        if let Some(task) = job.studio.take() {
+            match studio::step(game, task, &mut job.reply)? {
+                studio::Next::Done => {}
+                studio::Next::Frame(task) => {
+                    job.studio = Some(task);
+                    return Ok(None);
+                }
+                studio::Next::Prime(task) => {
+                    if game.graphics.is_none() {
+                        return Err("the studio needs the GPU: start the driver with --drive-gpu".into());
+                    }
+                    shot::prime(game)?;
+                    job.studio = Some(task);
+                    job.settle = true;
+                    job.settle_frames = 0;
+                    return Ok(None);
+                }
             }
         }
         if let Some((path, crop, primed)) = job.shot.take() {
@@ -882,6 +905,28 @@ impl Driver {
                 let Mode::InGame(g) = &mut game.mode else { return Err("no game".into()) };
                 g.hud_hidden = !on;
                 Ok(false)
+            }
+            Request::Studio { cmd, v } => {
+                if cmd == "studio" {
+                    // The blank field, white unless asked, without HUD; then the units.
+                    let ground = v.get("ground").cloned().unwrap_or_else(|| json!("white"));
+                    let mut blank = json!({"ground": ground, "hud": false, "players": 1});
+                    for k in ["size", "hit_locations", "body_spacing", "nation"] {
+                        if let Some(x) = v.get(k) {
+                            blank[k] = x.clone();
+                        }
+                    }
+                    self.prepare(game, event_loop, Request::Start(protocol::blank(&blank)?), job)?;
+                    job.studio = Some(studio::Task::Populate { v, ids: Vec::new(), tries: 0 });
+                } else if cmd == "sheet" {
+                    if game.graphics.is_none() {
+                        return Err("no GPU: start the driver with --drive-gpu for sheets".into());
+                    }
+                    job.studio = Some(studio::sheet(&v)?);
+                } else {
+                    job.studio = Some(studio::Task::Wait { cmd, v, tries: 0 });
+                }
+                Ok(true)
             }
             Request::Quit => {
                 self.quit = true;

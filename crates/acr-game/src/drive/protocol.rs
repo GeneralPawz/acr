@@ -242,6 +242,12 @@ pub enum Request {
     },
     /// Shows or hides the interface (panel, minimap, cursor) over the game.
     Hud(bool),
+    /// The studio (#299, `drive::studio`): `studio`, `pose`, `camera` with `frame`, `sheet`,
+    /// `measure`; `cmd` is the command's name.
+    Studio {
+        cmd: String,
+        v: Value,
+    },
     Quit,
 }
 
@@ -254,7 +260,7 @@ fn uint(v: &Value, key: &str) -> Option<u64> {
 }
 
 /// The `blank` of a `start`: size, ground, slope, hill, water (see [`Start::Blank`]).
-fn blank(b: &Value) -> Result<Start, String> {
+pub(super) fn blank(b: &Value) -> Result<Start, String> {
     use crate::ui::setup::{BlankSetup, Ground, MapSize};
     let size = match b.get("size").and_then(Value::as_str).unwrap_or("normal") {
         "normal" => MapSize::Normal,
@@ -528,6 +534,8 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
         "dialogs" => Request::Dialogs(
             string(&v, "policy").as_deref().and_then(DialogPolicy::parse).ok_or("dialogs: policy auto or report")?,
         ),
+        "camera" if v.get("frame").is_some() => Request::Studio { cmd: "camera".into(), v: v.clone() },
+        "studio" | "pose" | "sheet" | "measure" => Request::Studio { cmd: cmd.to_owned(), v: v.clone() },
         "camera" => {
             let num = |k: &str| v.get(k).and_then(Value::as_f64);
             let (x, y) = match v.get("world").and_then(point) {

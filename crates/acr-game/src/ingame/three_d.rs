@@ -195,6 +195,10 @@ pub struct ThreeD {
     ground_data: Vec<Option<Vec<u8>>>,
     ground_requested: bool,
     ground_ready: Option<acr_render::ground::MaterialImages>,
+    /// The driver's studio (#299): clip and time held per unit (`pose`), and this frame's
+    /// instance index of each unit drawn as a model.
+    pub held: HashMap<u32, (usize, f32)>,
+    drawn: HashMap<u32, usize>,
 }
 
 /// `ACR_3D_COMPARE=overlay`: the sprites of units with a model are drawn half transparent
@@ -279,6 +283,8 @@ impl Default for ThreeD {
             ground_data: Vec::new(),
             ground_requested: false,
             ground_ready: None,
+            held: HashMap::new(),
+            drawn: HashMap::new(),
         }
     }
 }
@@ -320,6 +326,13 @@ impl ThreeD {
             yaw: orbit.yaw.rem_euclid(std::f32::consts::TAU),
             pitch: orbit.pitch.clamp(0.05, Orbit::MAX_PITCH),
         };
+    }
+
+    /// The model and this frame's instance of a unit drawn as a model (the studio, #299).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn posed(&self, unit: u32) -> Option<(&acr_render::model::ModelData, &ModelInstance)> {
+        let inst = self.instances.get(*self.drawn.get(&unit)?)?;
+        Some((self.renderer.as_ref()?.model(inst.model)?, inst))
     }
 
     /// Finds the model files among the game's paths.
@@ -533,6 +546,7 @@ impl ThreeD {
         self.instances.clear();
         self.pools.clear();
         self.shown.clear();
+        self.drawn.clear();
         self.request_ground(request);
         if self.models == Models::Off {
             return;
@@ -820,6 +834,11 @@ impl ThreeD {
             if model.crew.is_some() && !u.building {
                 self.crews.gun(u, model, self.instances.len(), &inst, now);
             }
+            // The studio's held pose (#299) wins over the game's clip.
+            if let Some(&(clip, time)) = self.held.get(&u.id.0) {
+                (inst.clip, inst.time) = (Some(clip), time);
+            }
+            self.drawn.insert(u.id.0, self.instances.len());
             self.instances.push(inst);
             self.shown.insert(u.id);
         }

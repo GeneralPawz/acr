@@ -134,6 +134,8 @@ pub struct InGame {
     three_d: three_d::ThreeD,
     /// The interface is hidden (the driver's `hud` command): only the world is drawn.
     pub hud_hidden: bool,
+    /// The driver's studio holds the simulation (#299): no ticks run, models keep drawing.
+    pub studio_hold: bool,
     /// The test editor's panel and state (editor games only).
     editor: Option<editor::Editor>,
     /// The editor's peace has been applied to the new world.
@@ -196,6 +198,7 @@ impl InGame {
             shouts: Default::default(),
             three_d: Default::default(),
             hud_hidden: false,
+            studio_hold: false,
             editor: None,
             editor_started: false,
         }
@@ -609,7 +612,7 @@ impl InGame {
             self.centre(window);
         }
         // A finished game cannot be paused (0x1100a78).
-        let paused = self.interface.paused && self.mission.ended.is_none();
+        let paused = (self.interface.paused || self.studio_hold) && self.mission.ended.is_none();
         if let (Some(world), Some(map)) = (&mut self.world, &self.map) {
             let more = self.mission.update(map, world, f64::from(seconds));
             self.requests.borrow_mut().extend(more);
