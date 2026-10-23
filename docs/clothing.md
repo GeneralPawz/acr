@@ -203,6 +203,56 @@ off, `ACR_LOD=0`, in `before/`, `v1/`, `after/`, sheet `sheet_before_v2.png`):
   sample unit pokes more than 400 vertices in the rest pose: a ratchet at the shipped level,
   to be lowered as the patches go.
 
+**Third trisoup pass** (#287; built and rendered on frnbuk and engof17 only, the VM takes
+about 4–5 min a unit; `model_layers --steps 8`; renders one blank field per driver process,
+white, HUD off, `ACR_LOD=0`; everything in `ACR-analysis/trisoup3/`: `before/`, `v1/`
+order and cull, `after/` order, cull and edge relax, `sheet_v1.png`, `sheet_before_after.png`,
+`build*.log`, `tools/`). Three new steps in `Character.morphs`, all **off**
+(`drape.ORDER`, `drape.CULL`, `drape.RELAX`, constants for the VM):
+
+- **Per-unit layer order** (`drape.layer_order`): for every pair of layers that lie on each
+  other, about 400 faces of each cast ±3 cm along their outward normal for the other; the
+  majority says which is outside. `OVER` keys (falling band, band, lapels, sashes, capes and
+  mantles, lace) win against cloth and belts, the skin is under all, brass keeps its base
+  rank, gear boxes go by the votes. Pairs are kept strongest first (one that closes a cycle
+  is dropped); a key's rank is the longest chain under it. It goes to the materials as
+  `acr_layer` (`Character.colours`, `outfit.dress`), which the shader's bias already read;
+  `acr_render::layers` now reads it too (else the key's rank). FrnBuk: belts 3 under the
+  cloak 4, shirt 2; EngOf17: band 6 over buff 5 (as before: the band was never ranked
+  under the coat; the coat pokes through it by more than the bias).
+- **Hidden faces deleted** (`drape.cull_hidden`): a garment face (not the skin, which
+  wounds and decay need; not the free skirts) goes when its corners, centre and a 1.5 cm
+  ring round it all find a higher-ranked layer along the face's outward normal, from 2.5 cm
+  under it (a layer poking through covers it) to 5 cm over it, turned the same way (not a
+  sleeve's inside seen from the torso). Rest pose only; the covering layers carry the
+  weights of the layer under them. EngOf17 11348 → 10264 triangles (mostly breeches and
+  hose under the buff coat and boots), FrnBuk 9807 → 9330 (397 shirt faces under the cloak).
+  A single normal ray per sample instead of a hemisphere: a hemisphere from a face that
+  pokes through escapes and keeps it.
+- **Free edges relaxed** (`drape.relax_edges`): ear triangles (two free edges) sharper than
+  22° deleted, then 10 Taubin passes along every free-edge loop, inner neighbours following
+  half the move, shape keys moved alike. No resample to 1.5 cm and no turned hem strip yet.
+
+| unit | poking before | order+cull | +relax | crossing before | order+cull | +relax |
+|---|---|---|---|---|---|---|
+| engof17 | 375 | 304 | 432 | 368 | 349 | 388 |
+| frnbuk | 234 | 179 | 222 | 266 | 253 | 256 |
+
+- **Renders**: order and cull change nothing visible (`sheet_v1.png`): the deleted faces were
+  hidden anyway. The sawteeth are the **outer** layer's own ragged border and its spikes,
+  not an inner layer showing: the falling band's lower edge on EngOf17's back is a row of
+  long thin triangles (not ears, so the relax keeps them), the buff coat pokes through the
+  band from below, FrnBuk's cloak ends in torn red points over the shirt, and the belt
+  vanishes under a fold of the shirt that lies outside it. With the relax FrnBuk's cloak
+  hem on the back is visibly smoother, but black slivers open at EngOf17's armholes and
+  back and white gaps on FrnBuk's side (free edges that are seams to a neighbour object
+  move apart), and poking rises over the 400 gate on EngOf17. Hence all three stay off;
+  no wound or decay check was rendered, as nothing is deleted by default.
+- Next: smooth only the free edges that are no seam (match coincident boundary vertices
+  across objects first and move them together), resample the band's and the cloak's hem
+  with a turned strip, and pull an inner layer under an outer *border* rather than under
+  its interior.
+
 engm18, 24 frames × 19 clips (crossing vertices / worst):
 
 | pair | before | after |
@@ -394,8 +444,9 @@ up from the side, frames `walk*`, `fall*`; `ACR_NO_CLOTH=1` for the skinned skir
 - No per-frame push-out of the layers (see "Layers": weights, push-in and a depth bias
   instead); the runtime cloth only for ragdolls (above).
 - Trisoup (#287): rest-pose pokes remain in every family (survey under "Layers");
-  `drape.settle` catches only part of them. Not done yet: settling along the outer
-  surface's normal, deleting fully covered inner faces over all clips, wider atlas gutters
+  `drape.settle` catches only part of them; `drape.layer_order`, `cull_hidden` and
+  `relax_edges` (third pass) are built but off. Not done yet: deleting covered inner faces
+  checked over all clips, seam-aware edge smoothing with a turned hem, wider atlas gutters
   (`outfit.atlas_uv` packs islands with a 0.006 margin of the *whole* atlas before it is
   scaled into a painter's cell, i.e. under 1 px in small cells, and pads cells by 2 px),
   and before/after renders.

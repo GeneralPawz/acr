@@ -1039,6 +1039,280 @@ def settle(ch, objs=None, margin=SETTLE_MARGIN, poke=SETTLE_POKE, rounds=SETTLE_
     return moved
 
 
+# -- Per-unit layer order and hidden faces (#287 trisoup3, docs/clothing.md "Layers") -----
+
+# Keys worn over whatever cloth or belt they meet, whatever the drape's votes say: collars,
+# falling bands, sashes, capes and mantles (a buff coat poking through the band at the
+# collar must not turn the band under it). Gear boxes (rank 8) still go by the votes.
+OVER = ("fallband", "band", "lapels", "sash", "fsash", "pue_sash", "fcloak", "cloak", "cappa", "tilmatli",
+        "yacolla", "pue_blanket", "lace")
+ORDER_SAMPLES = 400  # outward normals per layer sampled for the votes
+ORDER_REACH = 0.03  # m: another layer this far under or over a face is the layer it lies on
+ORDER_MIN = 6  # votes a pair needs before the drape orders it
+ORDER = False  # `layer_order` before the morphs: the unit's own `acr_layer` (off: see docs/clothing.md "Layers")
+CULL = False  # `cull_hidden` before the morphs (off: no visible change on the trisoup3 sample)
+CULL_DEPTH = 0.025  # m: a covering layer may lie this far *under* the face (it pokes through)
+CULL_REACH = 0.05  # m: ... or this far over it
+CULL_MARGIN = 0.015  # m: the ring round the face that must be covered too (a margin at openings)
+CULL_RING = 8  # ring samples
+
+
+def _layer_objs(ch):
+    """[(key, object)] of the single-material layers with a base rank."""
+    out = []
+    for o in ch.layers["flesh"] + ch.layers["clothes"] + ch.layers["gear"]:
+        if o.type != "MESH" or len(o.get("acr_material_keys") or ()) > 1 or not len(o.data.polygons):
+            continue
+        k = ch.keys.get(o.name)
+        if k in gm.LAYER_RANK:
+            out.append((k, o))
+    return out
+
+
+def _tree(objs, seg):
+    """One BVH over `objs` (world space) and the outward sign of each of its polygons."""
+    vs, ps, side = [], [], []
+    for o in objs:
+        mw = o.matrix_world
+        base = len(vs)
+        vs += [mw @ v.co for v in o.data.vertices]
+        ps += [tuple(base + i for i in p.vertices) for p in o.data.polygons]
+        side += _outward(o, seg)
+    return BVHTree.FromPolygons(vs, ps), side
+
+
+def _outward_normals(o, seg):
+    mw = o.matrix_world
+    rot = mw.to_3x3()
+    return [((rot @ p.normal).normalized() * s, mw @ p.center) for p, s in zip(o.data.polygons, _outward(o, seg))]
+
+
+def _body_segments(ch):
+    body = {ch.prefix + x for x in rig.BODY_BONES}
+    return {b: s for b, s in am.segments(ch.arm).items() if b in body}
+
+
+def layer_order(ch):
+    """The unit's own layer order, from its build: for every pair of layers that lie on each
+    other, sampled faces of each look `ORDER_REACH` under and over themselves along their
+    outward normal for the other; the majority says which is outside. Keys in `OVER` win
+    over cloth and belts; the skin is under everything. The pairs go strongest first (one
+    closing a cycle is dropped) and each key's rank is the longest chain under it (skin 0);
+    keys that touch nothing keep `garments.LAYER_RANK`. Returns {key: rank} and sets
+    `ch.layer_rank`; the materials carry it as the `acr_layer` extra (the shader's depth
+    bias and `acr_render::layers`)."""
+    _OUTWARD.clear()
+    seg = _body_segments(ch)
+    objs = _layer_objs(ch)
+    keys = sorted({k for k, _o in objs}, key=lambda k: (gm.LAYER_RANK[k], k))
+    by_key = {k: [o for kk, o in objs if kk == k] for k in keys}
+    trees = {k: _tree(by_key[k], seg) for k in keys}
+    votes = {}  # (under, over) -> n
+    for k in keys:
+        samples = []
+        for o in by_key[k]:
+            samples += _outward_normals(o, seg)
+        samples = samples[:: max(1, len(samples) // ORDER_SAMPLES)]
+        for k2 in keys:
+            if k2 == k:
+                continue
+            t, _side = trees[k2]
+            for n, c in samples:
+                loc, _hn, _fi, d = t.ray_cast(c - n * ORDER_REACH, n, 2 * ORDER_REACH)
+                if loc is None or abs(d - ORDER_REACH) < 0.0005:
+                    continue
+                pair = (k2, k) if d < ORDER_REACH else (k, k2)
+                votes[pair] = votes.get(pair, 0) + 1
+    edges = []
+    for i, a in enumerate(keys):
+        for b in keys[i + 1:]:
+            up, down = votes.get((a, b), 0), votes.get((b, a), 0)
+            # Buttons (brass) are domes on the cloth, not a layer: they keep their base rank.
+            if not up + down or a in SETTLE_NOT_OVER or b in SETTLE_NOT_OVER:
+                continue
+            if a == "skin" or b == "skin":
+                edges.append((1e9, "skin", b if a == "skin" else a))
+                continue
+            gear = gm.LAYER_RANK[a] >= 8 or gm.LAYER_RANK[b] >= 8
+            if (a in OVER) != (b in OVER) and not gear:
+                o = a if a in OVER else b
+                edges.append((1e8, b if o == a else a, o))
+                continue
+            if up + down < ORDER_MIN:
+                continue
+            u, o = (a, b) if up >= down else (b, a)
+            strength = abs(up - down) / (up + down)
+            if strength < 0.2:  # split votes: the base order
+                u, o = (a, b) if gm.LAYER_RANK[a] <= gm.LAYER_RANK[b] else (b, a)
+            edges.append((strength * (up + down), u, o))
+    edges.sort(key=lambda e: -e[0])
+    above = {k: set() for k in keys}
+
+    def reaches(x, y):
+        stack, seen = [x], set()
+        while stack:
+            z = stack.pop()
+            if z == y:
+                return True
+            if z not in seen:
+                seen.add(z)
+                stack += list(above[z])
+        return False
+
+    kept = []
+    for _s, u, o in edges:
+        if not reaches(o, u):
+            above[u].add(o)
+            kept.append((u, o))
+    rank = {k: (0 if k == "skin" else None) for k in keys}
+    for _ in range(len(keys) + 1):
+        for k in keys:
+            under = [rank[u] for u, o in kept if o == k]
+            if under and all(r is not None for r in under):
+                rank[k] = max(under) + 1
+    for k in keys:
+        if rank[k] is None:
+            rank[k] = gm.LAYER_RANK[k]
+    ch.layer_rank = rank
+    ch.layer_votes = {f"{u}<{o}": votes.get((u, o), 0) for u, o in kept}
+    return rank
+
+
+def cull_hidden(ch, rank=None, depth=CULL_DEPTH, reach=CULL_REACH, margin=CULL_MARGIN):
+    """Deletes the garment faces nobody can see (docs/clothing.md "Layers"): a face of a
+    cloth layer (not the skin, which wounds and decay need) goes when its corners, its centre
+    and a ring `margin` round its centre all find a layer ranked above it (`layer_order`)
+    along the face's outward normal, from `depth` under the face (a layer poking through it
+    covers it as well) to `reach` over it, turned the same way (not a sleeve's inside seen
+    from the torso). The free skirts and turnbacks neither cover (they swing) nor are culled;
+    the layers above follow the one under them by their weights, so what is covered at rest
+    stays covered. Returns {key: faces deleted}."""
+    rank = rank or getattr(ch, "layer_rank", None) or layer_order(ch)
+    _OUTWARD.clear()
+    seg = _body_segments(ch)
+    clothes = {o.name for o in ch.layers["clothes"]}
+    objs = [(k, o) for k, o in _layer_objs(ch) if k not in SETTLE_NOT_OVER]
+
+    def free(o):
+        return "skirt" in o.name or o.name.endswith("turnbacks")
+
+    out = {}
+    for k, o in objs:
+        if rank.get(k, 0) <= 0 or o.name not in clothes or free(o):
+            continue
+        cover = [x for kx, x in objs if rank.get(kx, 0) > rank[k] and not free(x)]
+        if not cover:
+            continue
+        t, side = _tree(cover, seg)
+        mw = o.matrix_world
+        rot = mw.to_3x3()
+        verts = [mw @ v.co for v in o.data.vertices]
+
+        def covered(p, n, t=t, side=side):
+            loc, hn, fi, _d = t.ray_cast(p - n * depth, n, depth + reach)
+            return loc is not None and (hn * side[fi]).dot(n) > 0.3
+
+        ring = [(math.cos(2 * math.pi * j / CULL_RING), math.sin(2 * math.pi * j / CULL_RING)) for j in range(CULL_RING)]
+        dead = []
+        for p, s in zip(o.data.polygons, _outward(o, seg)):
+            n = (rot @ p.normal).normalized() * s
+            c = mw @ p.center
+            a = n.orthogonal().normalized()
+            b = n.cross(a)
+            pts = [c] + [verts[i] for i in p.vertices] + [c + (a * x + b * y) * margin for x, y in ring]
+            if all(covered(q, n) for q in pts):
+                dead.append(p.index)
+        if not dead:
+            continue
+        bm = bmesh.new()
+        bm.from_mesh(o.data)
+        bm.faces.ensure_lookup_table()
+        bmesh.ops.delete(bm, geom=[bm.faces[i] for i in dead], context="FACES")
+        bm.to_mesh(o.data)
+        bm.free()
+        o.data.update()
+        _OUTWARD.pop(o.name, None)
+        out[k] = out.get(k, 0) + len(dead)
+    return out
+
+
+RELAX = False  # `relax_edges` before the morphs (off: smoother capes but opened seams on the trisoup3 sample)
+RELAX_EAR = 22.0  # degrees: a triangle hanging off the edge (two free edges) this sharp is a spike
+RELAX_ROUNDS = 10  # Taubin passes along each free edge loop
+RELAX_LAMBDA, RELAX_MU = 0.5, -0.53
+
+
+def relax_edges(ch, objs=None):
+    """Evens the free edges of the draped cloth (docs/clothing.md "Layers"): the drape's 4-5 cm
+    triangles end in a zigzag, and where such an edge lies on the layer below, each tooth
+    pokes in and out. First the spikes go (a triangle with two free edges and an angle under
+    `RELAX_EAR`), then every free-edge vertex is smoothed along its loop (Taubin: no
+    shrinking), its inner neighbours following half the move. Shape keys move with it.
+    Returns {key: (spikes removed, edge vertices moved)}."""
+    clothes = {o.name for o in ch.layers["clothes"]}
+    objs = objs if objs is not None else [o for k, o in _layer_objs(ch) if o.name in clothes and k != "skin"
+                                          and k not in SETTLE_NOT_OVER]
+    out = {}
+    for o in objs:
+        bm = bmesh.new()
+        bm.from_mesh(o.data)
+        spikes = 0
+        for _ in range(2):
+            ears = []
+            for f in bm.faces:
+                if len(f.verts) != 3 or sum(1 for e in f.edges if e.is_boundary) < 2:
+                    continue
+                if min(math.degrees(l.calc_angle()) for l in f.loops) < RELAX_EAR:
+                    ears.append(f)
+            if not ears:
+                break
+            bmesh.ops.delete(bm, geom=ears, context="FACES")
+            spikes += len(ears)
+        loose = [v for v in bm.verts if not v.link_faces]
+        if loose:
+            bmesh.ops.delete(bm, geom=loose, context="VERTS")
+        bm.verts.ensure_lookup_table()
+        nb = {}
+        for e in bm.edges:
+            if e.is_boundary:
+                a, b = e.verts
+                nb.setdefault(a.index, []).append(b.index)
+                nb.setdefault(b.index, []).append(a.index)
+        edge = [i for i, n in nb.items() if len(n) == 2]
+        pos = {i: bm.verts[i].co.copy() for i in nb}
+        start = {i: pos[i].copy() for i in edge}
+        for r in range(2 * RELAX_ROUNDS):
+            f = RELAX_LAMBDA if r % 2 == 0 else RELAX_MU
+            nxt = {}
+            for i in edge:
+                a, b = nb[i]
+                nxt[i] = pos[i] + ((pos[a] + pos[b]) * 0.5 - pos[i]) * f
+            pos.update(nxt)
+        delta = {i: pos[i] - start[i] for i in edge}
+        inner = {}
+        for i, d in delta.items():
+            for e in bm.verts[i].link_edges:
+                j = e.other_vert(bm.verts[i]).index
+                if j not in nb:
+                    inner.setdefault(j, []).append(d)
+        for j, ds in inner.items():
+            delta[j] = sum(ds, Vector()) * (0.5 / len(ds))
+        keys = list(bm.verts.layers.shape.values())
+        for i, d in delta.items():
+            v = bm.verts[i]
+            v.co += d
+            for lay in keys:
+                v[lay] += d
+        bm.to_mesh(o.data)
+        bm.free()
+        o.data.update()
+        k = ch.keys.get(o.name)
+        a, b = out.get(k, (0, 0))
+        out[k] = (a + spikes, b + len(edge))
+    return out
+
+
+
 def inherit_weights(obj, ch, under):
     """Replaces the weights of gear laid over the garments (the crossbelts) by those of the
     garment surface under each vertex (`transfer_weights` with `under`)."""

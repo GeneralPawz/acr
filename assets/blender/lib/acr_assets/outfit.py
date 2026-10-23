@@ -353,6 +353,8 @@ def dress(ch, colours, layer_of, size=SIZE):
             m = decay.material(f"{ch.name}.{key}.outfit", layer_of[key], colours.get(o.name, (0.5, 0.5, 0.5)),
                                image=img, uv_map="atlas", interpolation="Linear")
             m["acr_colour_from"] = "outfit"
+            if key in getattr(ch, "layer_rank", {}):
+                m["acr_layer"] = float(ch.layer_rank[key])  # the unit's own order (drape.layer_order)
             painter = PAINTER[key]
             m["acr_roughness"], m["acr_sheen"], m["acr_gloss"] = FINISH.get(painter, (0.9, 0.0, 0.0))
             o.data.materials.clear()

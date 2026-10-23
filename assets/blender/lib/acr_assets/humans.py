@@ -159,6 +159,18 @@ class Character:
         if SETTLE:
             self.settle_report = drape.settle(self)
             print(f"[{self.name}] settled under the layers above: {self.settle_report}")
+        # The unit's own layer order (`acr_layer` on the materials) and its hidden garment
+        # faces deleted (docs/clothing.md, "Layers").
+        order = None
+        if drape.ORDER or drape.CULL:
+            order = drape.layer_order(self)
+            print(f"[{self.name}] layer order: {order} from {self.layer_votes}")
+        if drape.RELAX:
+            print(f"[{self.name}] free edges relaxed: {drape.relax_edges(self)}")
+        if drape.CULL:
+            before = sum(self.triangles().values())
+            self.cull_report = drape.cull_hidden(self, order)
+            print(f"[{self.name}] hidden faces culled: {self.cull_report}, triangles {before} -> {sum(self.triangles().values())}")
         bones = [self.prefix + b for b in rig.BODY_BONES]
         for o in self.layers["flesh"] + self.layers["clothes"]:
             bd.toward_bones(o, self.arm, "deflate", deflate, bones)
@@ -271,6 +283,8 @@ class Character:
                 mats[k] = decay.material(n, LAYER_OF[key], rgb, image=img, uv_map="detail",
                                          metallic=0.6 if LAYER_OF[key] == "metal" else 0.0)
                 mats[k]["acr_colour_from"] = "sprite" if ref is not None else "palette"
+                if key in getattr(self, "layer_rank", {}):
+                    mats[k]["acr_layer"] = float(self.layer_rank[key])
             return mats[k]
 
         # Parts with the same key share one colour, taken from all their samples.

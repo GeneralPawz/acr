@@ -202,8 +202,12 @@ fn skin(palette: &crate::model::Palette, v: &(V3, [u32; 4], [f32; 4])) -> V3 {
 fn meshes(model: &ModelData) -> Vec<Mesh> {
     let mut out: Vec<Mesh> = Vec::new();
     for p in &model.primitives {
-        let key = material_key(&model.materials[p.material].name).to_owned();
-        let Some(rank) = layer_rank(&key) else { continue };
+        let mat = &model.materials[p.material];
+        let key = material_key(&mat.name).to_owned();
+        let Some(base) = layer_rank(&key) else { continue };
+        // The unit's own order (`extras.acr_layer`, `drape.layer_order`) as the renderer
+        // reads it, else the key's rank.
+        let rank = if mat.finish.layer > 0.0 { (mat.finish.layer / LAYER_BIAS).round() as u8 } else { base };
         let base = out.iter().position(|m| m.key == key);
         let m = match base {
             Some(i) => &mut out[i],
