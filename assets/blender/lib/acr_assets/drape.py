@@ -33,6 +33,15 @@ from . import registry, rig
 
 CAPE_ARM = 0.10  # m below the shoulder joint: the upper arm in a cloak's hull down to here
 CAPE_OVER = 0.012  # m: a cloak's hull lies this much further off the layers under it
+# Pose-space drape (docs/clothing.md "Drape 4"): cloaks are simulated on the body with the
+# arms down at the STAND angle (`clips.STAND_FREE`'s arms), then brought back to the A-pose
+# rest by inverse skinning with their own weights. Garments listed here (or with
+# `CLOTH[g]["arms_down"]`) are draped so.
+ARMS_DOWN = {"upperarm_l": (4, 22, 0), "forearm_l": (-12, 0, 0), "upperarm_r": (4, -22, 0), "forearm_r": (-12, 0, 0)}
+ARMS_DOWN_GARMENTS = {"tilmatli", "frn_cape"}
+CAPE_ARM_DOWN = 0.32  # m below the shoulder joint: with the arms down the cloak hangs over the upper arm
+POSED_SMOOTH = 8  # Taubin passes over a posed cloak after its sim: one-triangle pleats flattened
+ARM_HOMES = ("upperarm", "forearm", "hand", "index", "middle", "ring", "pinky", "thumb")
 SPACING = registry.SPACING  # cm (the waistcoat lies under the coat); families add with `registry.garment`
 SEW_FRAMES = 45  # sewing phase (no gravity), then the cloth settles
 FRAMES = 75
@@ -191,7 +200,7 @@ class Body:
             zc = self.neck_z + 0.02
             arms = ("upperarm_l", "upperarm_r")
             keep = np.isin(self.home, TORSO + ("neck", "thigh_l", "thigh_r") + arms) & (self.V[:, 2] < zc)
-            arm_z = float(self.seg["upperarm_l"][0][2]) - CAPE_ARM
+            arm_z = float(self.seg["upperarm_l"][0][2]) - (CAPE_ARM_DOWN if getattr(self, "_rest", None) else CAPE_ARM)
             keep &= ~(np.isin(self.home, arms) & (self.V[:, 2] < arm_z))
             pts = [self.V[keep]]
             if self._over is not None:
@@ -231,6 +240,28 @@ class Body:
         sl = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(H, axis=0), axis=1))])
         self._capes[key] = (sl, H[:, 0], H[:, 1])
         return self._capes[key]
+
+    def pose_arms(self, M):
+        """Moves the body's arm points (and the arm bone segments) by the posed bone
+        matrices `M` ({unprefixed bone: 4x4}, armature space); `None` restores the rest.
+        Clears the cached hanging lines."""
+        if M is None:
+            if getattr(self, "_rest", None) is not None:
+                self.V, self.seg = self._rest
+                self._rest = None
+        else:
+            self._rest = (self.V.copy(), dict(self.seg))
+            V = self.V.copy()
+            for b, m in M.items():
+                if not b.startswith(ARM_HOMES) or b not in self.seg:
+                    continue
+                sel = self.home == b
+                R, t = np.asarray(m)[:3, :3], np.asarray(m)[:3, 3]
+                V[sel] = V[sel] @ R.T + t
+                a, c = self.seg[b]
+                self.seg[b] = (R @ a + t, R @ c + t)
+            self.V = V
+        self._capes, self._cpts = {}, None
 
     def cape_over(self, objs):
         """The cloak's hull also covers these rest-pose layers (`dress`: everything made before
@@ -797,6 +828,103 @@ def cape_weights(obj, ch, body, under=()):
     return out, cl
 
 
+# -- pose-space drape (docs/clothing.md "Drape 4") --------------------------------------
+
+def pose_matrices(ch, spec):
+    """{prefixed bone: 4x4 numpy} skinning matrices (posed @ rest inverse, armature space)
+    of `spec` on the character's rig; the rig is back at rest afterwards."""
+    P = ch.prefix
+    am.pose(ch.arm, spec, prefix=P)
+    out = {pb.name: np.array(pb.matrix @ pb.bone.matrix_local.inverted()) for pb in ch.arm.pose.bones
+           if pb.name.startswith(P)}
+    am.pose(ch.arm, {}, prefix=P)
+    return out
+
+
+def _vertex_weights(obj):
+    names = {g.index: g.name for g in obj.vertex_groups}
+    return [{names[e.group]: e.weight for e in v.groups if e.group in names} for v in obj.data.vertices]
+
+
+def _blend(M, w):
+    """The blended skinning matrix of weights `w` ({bone: weight}); identity without any."""
+    tot = sum(x for b, x in w.items() if b in M)
+    if tot < 1e-6:
+        return np.eye(4)
+    return sum(M[b] * (x / tot) for b, x in w.items() if b in M)
+
+
+def pose_objects(objs, M, weights=None):
+    """Writes the linear-blend-skinned positions of `objs` (their vertex groups) into their
+    meshes (and shape keys' basis offsets kept). Returns the rest coordinates to restore."""
+    saved = []
+    for o in objs:
+        if o.type != "MESH" or not len(o.data.vertices):
+            continue
+        me = o.data
+        co = np.empty(len(me.vertices) * 3)
+        me.vertices.foreach_get("co", co)
+        co = co.reshape(-1, 3)
+        saved.append((o, co.copy()))
+        ws = weights if weights is not None else _vertex_weights(o)
+        out = np.array([(_blend(M, w) @ np.append(c, 1.0))[:3] for c, w in zip(co, ws)])
+        me.vertices.foreach_set("co", out.ravel())
+        me.update()
+    return saved
+
+
+def restore_objects(saved):
+    for o, co in saved:
+        o.data.vertices.foreach_set("co", co.ravel())
+        o.data.update()
+
+
+def taubin(obj, passes, lam=0.5, mu=-0.53, keep=()):
+    """Taubin smoothing (no shrink) of `obj`'s vertices but `keep`; a vertex on the cut edge
+    moves along the edge only (with its edge neighbours), so the hem keeps its length."""
+    me = obj.data
+    n = len(me.vertices)
+    co = np.empty(n * 3)
+    me.vertices.foreach_get("co", co)
+    co = co.reshape(-1, 3)
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    bm.verts.ensure_lookup_table()
+    nb = []
+    for v in bm.verts:
+        if v.is_boundary:
+            nb.append([e.other_vert(v).index for e in v.link_edges if e.is_boundary])
+        else:
+            nb.append([e.other_vert(v).index for e in v.link_edges if e.link_faces])
+    bm.free()
+    fixed = np.zeros(n, dtype=bool)
+    fixed[list(keep)] = True
+    for _ in range(passes):
+        for f in (lam, mu):
+            d = np.array([co[x].mean(axis=0) - co[i] if x else np.zeros(3) for i, x in enumerate(nb)])
+            d[fixed] = 0.0
+            co = co + f * d
+    me.vertices.foreach_set("co", co.ravel())
+    me.update()
+
+
+def unpose(obj, M, weights):
+    """Inverse skinning: each vertex of `obj` (posed) brought to the rest pose by the inverse
+    of its blended skinning matrix, so that skinning it with `weights` gives the posed shape
+    back. Returns the largest move (m)."""
+    me = obj.data
+    big = 0.0
+    for v, w in zip(me.vertices, weights):
+        B = _blend(M, w)
+        if np.allclose(B, np.eye(4), atol=1e-7):
+            continue
+        r = np.linalg.solve(B, np.append(np.array(v.co[:]), 1.0))[:3]
+        big = max(big, float(np.linalg.norm(r - np.array(v.co[:]))))
+        v.co = Vector(r)
+    me.update()
+    return big
+
+
 def finish(obj, ch, skirt, weights=None, under=(), cloth=None):
     """Weights, `_cloth`, homes and parts, split at the part borders, bound to the rig.
     `weights`: given per vertex ({bone: weight}) instead of transferred from the skin;
@@ -861,7 +989,14 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=()):
     stats["measure"] = {k: round(v, 1) for k, v in body.m.items()}
     for g in garments:
         panels, seams = uni[g]
-        if any(p.place.get("region") == "cape" for p in panels.values()):
+        cape = any(p.place.get("region") == "cape" for p in panels.values())
+        # Pose-space drape: the collision body and the layers beneath with the arms down.
+        posed = cape and (g in ARMS_DOWN_GARMENTS or gm.CLOTH.get(g, {}).get("arms_down"))
+        if posed:
+            M = pose_matrices(ch, ARMS_DOWN)
+            saved = pose_objects(list(dict.fromkeys(colliders + [o for o in ch.layers["clothes"] if o.name in made])), M)
+            body.pose_arms({k[len(ch.prefix):]: v for k, v in M.items()})
+        if cape:
             body.cape_over(list(over) + [o for o in ch.layers["clothes"] if o.name in made])
         verts, faces, finfo, sew, pieces = build_garment(body, g, panels, seams, SPACING.get(g, 3.5))
         me = bpy.data.meshes.new(f"{ch.name}.{g}.drape")
@@ -900,6 +1035,25 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=()):
         limits = [getattr(seams[k], "close", None) or base for k in pieces["_sew_id"]]
         welded = sum(1 for (a, b), lim in zip(sew, limits) if (ev.vertices[a].co - ev.vertices[b].co).length < lim)
         weld(obj, sew, limit=base, limits=limits)
+        unposed = 0.0
+        if posed:
+            # Weights from the posed skin and layers beneath, then back to the rest pose by
+            # their inverse; kept in the vertex groups (and `_capecl`) for the parts.
+            if POSED_SMOOTH:
+                pin = obj.vertex_groups.get("acr_pin")
+                keep = [v.index for v in obj.data.vertices if pin and any(e.group == pin.index for e in v.groups)]
+                taubin(obj, POSED_SMOOTH, keep=keep)
+            cw, ccl = cape_weights(obj, ch, body, under=under)
+            unposed = unpose(obj, M, cw)
+            for i, w in enumerate(cw):
+                for b, x in w.items():
+                    (obj.vertex_groups.get(b) or obj.vertex_groups.new(name=b)).add([i], x, "REPLACE")
+            ca = obj.data.attributes.new("_capecl", "FLOAT", "POINT")
+            ca.data.foreach_set("value", list(ccl))
+            restore_objects(saved)
+            body.pose_arms(None)
+            if cape:
+                body.cape_over(list(over) + [o for o in ch.layers["clothes"] if o.name in made])
         if SOLIDIFY:
             solidify(obj, gm.CLOTH.get(g, gm.CLOTH["waistcoat"])["thickness"])
         # One object per (key, skirt).
@@ -925,7 +1079,16 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=()):
             part.name = part.data.name = f"{ch.name}.{label}"
             if label in HEM:
                 hem(part, HEM[label])
-            if any(panels[names[i]].place["region"] == "cape" for i in idx):
+            if posed:
+                bones = set(ch.arm.data.bones.keys())
+                cw = [{b: x for b, x in w.items() if b in bones} for w in _vertex_weights(part)]
+                ccl = [d.value for d in part.data.attributes["_capecl"].data]
+                part.data.attributes.remove(part.data.attributes["_capecl"])
+                for vg in [vg for vg in part.vertex_groups if vg.name in bones]:
+                    part.vertex_groups.remove(vg)
+                part["acr_posed"] = 1  # draped with the arms down: the A-pose arm is under it
+                finish(part, ch, skirt, weights=cw, under=under, cloth=ccl)
+            elif any(panels[names[i]].place["region"] == "cape" for i in idx):
                 cw, ccl = cape_weights(part, ch, body, under=under)
                 finish(part, ch, skirt, weights=cw, under=under, cloth=ccl)
             else:
@@ -941,7 +1104,7 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=()):
             return round(1000 * xs[min(len(xs) - 1, int(q * len(xs)))], 1) if xs else 0.0
 
         gs = sorted(gaps_sewn)
-        stats[g] = {"sim_s": round(dt, 2), "sew": len(sew), "welded": welded, "verts_sim": len(verts),
+        stats[g] = {"unposed_m": round(unposed, 3), "sim_s": round(dt, 2), "sew": len(sew), "welded": welded, "verts_sim": len(verts),
                     "longest_edge_m": round(longest, 3), "gap_mm_p95": mm(gaps, 0.95), "gap_mm_max": mm(gaps, 1.0),
                     "gap_mm_max_after_sewing": mm(gs, 1.0), "within_5mm": sum(1 for x in gaps if x < 0.005),
                     "worst_seams_mm": {k: round(v * 1000) for k, v in sorted(per_seam.items(), key=lambda kv: -kv[1])[:5]}}
@@ -957,14 +1120,21 @@ def hide_skin(ch, garments, depth=0.012, reach=0.06):
     """Pushes the skin that lies under the garments `depth` towards the bones (it stays for
     decay and cuts but cannot poke through)."""
     fm = ch.flesh.data
-    polys, verts = [], []
-    for o in garments:
-        base = len(verts)
-        verts += [v.co.copy() for v in o.data.vertices]
-        polys += [[base + i for i in p.vertices] for p in o.data.polygons]
-    if not polys:
+
+    def tree_of(objs):
+        polys, verts = [], []
+        for o in objs:
+            base = len(verts)
+            verts += [v.co.copy() for v in o.data.vertices]
+            polys += [[base + i for i in p.vertices] for p in o.data.polygons]
+        return BVHTree.FromPolygons(verts, polys) if polys else None
+
+    tree = tree_of(garments)
+    if tree is None:
         return 0
-    tree = BVHTree.FromPolygons(verts, polys)
+    # A cloak draped with the arms down (`acr_posed`) lies through the A-pose arm at rest:
+    # the arm's skin is not under it in any clip that shows the arm.
+    arm_tree = tree_of([o for o in garments if not o.get("acr_posed")])
     seg = am.segments(ch.arm)
     bones = [ch.prefix + b for b in rig.BODY_BONES if not b.startswith(("hand", "head", "index", "middle", "ring",
                                                                         "pinky", "thumb"))]
@@ -973,7 +1143,8 @@ def hide_skin(ch, garments, depth=0.012, reach=0.06):
     for v, h in zip(fm.vertices, hs):
         if h not in bones or h.endswith(("neck",)):
             continue
-        hit = tree.ray_cast(v.co + v.normal * 0.001, v.normal, reach)
+        t = arm_tree if h[len(ch.prefix):].startswith(ARM_HOMES) else tree
+        hit = t.ray_cast(v.co + v.normal * 0.001, v.normal, reach) if t else (None,)
         if hit[0] is None:
             continue
         q = bd.seg_point(v.co, *seg[h])
@@ -1004,7 +1175,8 @@ def hide_under(ch, inner, outer, depth=0.006, reach=0.05):
     for v, h in zip(me.vertices, bd.homes(inner)):
         if h not in seg or h.endswith("neck"):
             continue
-        hit = tree.ray_cast(v.co + v.normal * 0.001, v.normal, reach)
+        t = arm_tree if h[len(ch.prefix):].startswith(ARM_HOMES) else tree
+        hit = t.ray_cast(v.co + v.normal * 0.001, v.normal, reach) if t else (None,)
         if hit[0] is None:
             continue
         # Single-sided cloth: the normal may point inwards; only push towards the bone.
@@ -1110,8 +1282,13 @@ def settle(ch, objs=None, margin=SETTLE_MARGIN, poke=SETTLE_POKE, rounds=SETTLE_
             mw = x.matrix_world
             trees.append((BVHTree.FromPolygons([mw @ v.co for v in x.data.vertices],
                                                [tuple(p.vertices) for p in x.data.polygons]),
-                          _outward(x, every)))
+                          _outward(x, every), bool(x.get("acr_posed"))))
         me = o.data
+        # Under a cloak draped with the arms down the A-pose arm (skin or sleeve) is not settled.
+        armv = set()
+        if any(t[2] for t in trees):
+            if "home" in me.attributes and o.get("acr_home_bones"):
+                armv = {i for i, h in enumerate(bd.homes(o)) if h[len(ch.prefix):].startswith(ARM_HOMES)}
         mw, inv = o.matrix_world, o.matrix_world.inverted()
         keep = set()
         if r == 0:
@@ -1134,7 +1311,9 @@ def settle(ch, objs=None, margin=SETTLE_MARGIN, poke=SETTLE_POKE, rounds=SETTLE_
                     continue
                 co = mw @ v.co
                 best = None
-                for t, side in trees:
+                for t, side, posed in trees:
+                    if posed and i in armv:
+                        continue
                     loc, n, fi, dist = t.find_nearest(co, poke)
                     if loc is None or dist < SETTLE_SEAM:
                         continue

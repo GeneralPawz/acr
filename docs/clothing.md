@@ -611,26 +611,68 @@ In game:
 - **DelKri**: not changed in drape 3 (the strap patches and shoulder wisps need the strap
   seated on the posed shirt): **off**.
 
+**Drape 4: cloaks draped with the arms down** (#287; everything in `ACR-analysis/drape4/`:
+`sheet_before_after.png` (MaySha, FrnBuk; showcase shell | drape 4), `pair_*.png`, `before/`,
+`after/`, `glb/` (final), `glb_v1/` (without the smoothing), `wire/`, `layers_{before,v1,after}.txt`,
+`tools/`; the exe built from this branch, ground white, HUD off, `ACR_LOD=0`). Changes:
+- **Pose-space drape** (`drape.dress`, for cape-region garments in `ARMS_DOWN_GARMENTS` or with
+  `CLOTH[g]["arms_down"]`: the tilmatli and the buccaneer's cape): the rig is posed with the
+  arms of `clips.STAND_FREE` (`ARMS_DOWN`, copied: upper arms (4, ±22, 0), forearms -12°),
+  the skin, the shoes, `over` and the layers draped before it are linear-blend skinned into
+  that pose (`pose_objects`, restored after), `Body.pose_arms` moves the measuring body's arm
+  points and bones, and the hanging-line hull takes the upper arm down to `CAPE_ARM_DOWN`
+  (0.32 m: the cloak hangs over the arm at the side, like a mantle). The cloak is placed,
+  sewn and settled there, then `taubin` (`POSED_SMOOTH` = 8 passes, the pinned yoke kept, the
+  cut edge moving along itself) flattens the one-triangle pleats left, its weights are taken
+  in the posed space (`cape_weights` from the posed skin and layers beneath), and `unpose`
+  brings each vertex back by the inverse of its blended skinning matrix. The cloak's weights
+  are trunk-only below the shoulder top, so almost all of it is unchanged by the inverse
+  (largest move in the report `unposed_m`); it lies through the raised A-pose arm at rest,
+  but that pose is never shown. The weights used for the inverse are the ones exported.
+- Such a cloak is marked `acr_posed`: `hide_skin` does not push the arm's skin under it and
+  `settle` does not pull arm vertices (skin, sleeves) under it (it would dent the arms).
+- Arm slits were not needed (not tried).
+
+`model_layers --steps 8`, poking / crossing, showcase (shell) → drape 4 without smoothing →
+drape 4: maysha 53 / 15 → 70 / 121 → 58 / 108, frnbuk 299 / 296 → 322 / 501 → 271 / 513. The
+crossings are the arms under the cloak in the raised-arm and crawl clips (CRAWLARM, ATTACK,
+DEATH: the cloak has no arm weights, the arms swing under it and come out through it when
+raised forward), e.g. FrnBuk's sleeves 328 of the 513; none in STAND or the walk.
+
+In game:
+- **MaySha**: no black inverted pleats left (drape 3 was covered in them; without the
+  smoothing about a dozen remained on the back). The tilmatli hangs from the shoulders over
+  the arms to the forearms, knotted on the right, open in front; it walks and lies with the
+  body. Clearly better than the shell's flat plate: **on** (`maysha.py` `drape=True`), copied
+  to the showcase (old glb in `showcase/backup-drape4/`).
+- **FrnBuk**: front and three-quarter clean (the cape over the shoulders and arms, no black
+  pleats, no blouse through it in front), but the back shows white patches of the blouse
+  through the cape at the left side and above the hem. Likely the musketeer's stand: his arms
+  are not at `STAND_FREE`, so the posed sleeves under the cape are not where the sim had them.
+  **Off**. Next: drape it with the unit's own STAND arms (the family's stand clip instead of
+  `STAND_FREE`), or a larger cloak margin over the sleeves.
+- The walker was out of frame in the shots of both units (`shots.py` frames it from `state`).
+
 ### Roll-out list: shell garments to draft and drape
 
 Effort: S = a draft instance of an existing `tunic` / `cloak` / `band` (an hour with the
 build and shots), M = a new draft parameter or panel (half a day), L = needs a missing
 mechanism (a day or more). Order within a family is the order to do them. The blocker for
-every **cloak** row is the arm problem above (fix it once in `drape.py`, M–L); tunics and
-bands can go now.
+every **cloak** row was the arm problem above: fixed in drape 4 (pose-space drape); a cloak
+is now S + a check of its unit's stand arms; tunics and bands can go now.
 
 | family | shell → draft | kind | effort | note |
 |---|---|---|---|---|
 | native (Woodlands) | `shirt` → `trade_shirt` | tunic | S per unit, after DelKri passes | strap seat on the posed shirt first (M) |
-| native | `matchcoat` (blanket over one shoulder) | cloak, `knot_at` under the arm | M + arm fix | like the tilmatli |
-| native | `cloak` (shaman's pelt) | cloak | S + arm fix | stiff hide: high bending |
+| native | `matchcoat` (blanket over one shoulder) | cloak, `knot_at` under the arm | M | like the tilmatli; add to `ARMS_DOWN_GARMENTS` |
+| native | `cloak` (shaman's pelt) | cloak | S (arms down) | stiff hide: high bending |
 | native | `breechcloth` + flaps | band + two hanging panels | M | flaps are modelled and clean: low priority |
 | plains | `war_shirt` | tunic, open sides, fringe stays a shell strip | M | hide: thicker cloth |
 | pueblo | `tunic` | tunic, no sleeves | S | |
 | pueblo | `sash` | band | S | |
-| pueblo | `blanket` | cloak | S + arm fix | |
+| pueblo | `blanket` | cloak | S (arms down) | |
 | pueblo | `jerkin` | tunic, open front | M | |
-| meso | `tilmatli` | cloak (`knot_at`) | done, waits for the arm fix | |
+| meso | `tilmatli` | cloak (`knot_at`) | done, **on** for MaySha (drape 4) | other meso units: S each |
 | meso | `maya_jacket` | tunic, short | S | |
 | meso | `ichcahuipilli` | tunic, quilted (thick, stiff) | M | never tried |
 | meso | `maxtlatl` | band + flaps | M | |
@@ -639,18 +681,18 @@ bands can go now.
 | inca | `quilt` (quilted armour) | tunic, thick | M | |
 | frontier | `blouse` | tunic (`frn_blouse`) | S, clean already | can go on alone, without the cape |
 | frontier | `sash` | band (`frn_sash`) | S, clean already | |
-| frontier | `cloak` / `cape` | cloak (`frn_cape`) | waits for the arm fix | |
+| frontier | `cloak` / `cape` | cloak (`frn_cape`) | arms down done; off | the musketeer's stand arms: blouse shows at the back |
 | conquista | (uses frontier's layers) | as frontier | S each | |
 | civil | `blouse`, `sash` | tunic, band | S | as frontier |
 | civil | `habit` + `habit_legs` | tunic to the ankle, wide sleeves | M | |
-| civil | `cappa`, `hood` | cloak (+ a hood panel) | M + arm fix | |
+| civil | `cappa`, `hood` | cloak (+ a hood panel) | M | arms down |
 | cavalry | `coat` (riders' coats), `waistcoat` | the uniform `coat` / `waistcoat` drafts | M | the seat: skirts split over the saddle (`gear` seat) |
 | cavalry | `buffcoat` | `buffcoat` draft | M | as the infantry's 17th century |
 | cavalry | `sash` | band (over the shoulder: a bandolier variant) | M | |
 | cavalry | `breeches`, `boots`, cuffs, lapels | stay shells | – | tight or rigid, no teeth seen |
 
-Next: the arm problem for cloaks (pose-space sim or arm slits), then the tunics and bands
-of the list (the frontier blouse and sash alone first: they are clean).
+Next: FrnBuk's cape with his own stand arms; the tunics and bands of the list (the frontier
+blouse and sash alone first: they are clean; IncSha's neckline; not done in drape 4).
 
 ## Pattern format
 
