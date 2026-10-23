@@ -1,0 +1,15 @@
+{
+ "agent": "sim-engineer",
+ "seed": "eval-c2-base",
+ "write": true,
+ "budget_usd": 5.0,
+ "timeout_s": 1800,
+ "prompt": "Bug report: in the editor, placing pikemen at level V (their TOUGH upgrade gives +50 % life) leaves the pikemen already standing at 100/150 life instead of 150/150. Researched LIFE upgrades in a normal game no longer refill existing units either. Fix it. This is an evaluation run: work only in the existing worktree {worktree} (already on its own branch; do not create a worktree), commit your fix there, and do NOT push anything. Run tests on the VM with acr-vm-cargo from that worktree.",
+ "grade": {
+  "diff_regex": [
+   "^\\+.*max_life"
+  ],
+  "max_files": 3,
+  "vm_test": "cargo test -q -p acr-sim --test upgrade"
+ }
+}

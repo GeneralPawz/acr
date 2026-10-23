@@ -1,0 +1,16 @@
+{
+ "agent": "original-researcher",
+ "prompt": "In the original game data, do any animal unit definitions (ANM*.MD) define sounds (SOUND lines)? Answer yes or no first, with evidence.",
+ "cwd": "C:/Users/verwalter/WIP/ACR-wt/acr-eval-repo",
+ "grade": {
+  "regex_all": [
+   "(?i)^\\W*(ANSWER:\\s*)?no\\b|\\bno\\b[^.]{0,40}(sound|SOUND)|none of"
+  ]
+ },
+ "budget_usd": 1.0,
+ "timeout_s": 600,
+ "bash": true,
+ "add_dirs": [
+  "C:/Users/verwalter/WIP/ACR-analysis/gamedata"
+ ]
+}

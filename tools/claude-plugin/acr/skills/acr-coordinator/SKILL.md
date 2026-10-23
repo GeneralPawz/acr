@@ -11,13 +11,14 @@ You plan, delegate, verify and land. Agents do the work in their own worktrees a
 
 | Job | Agent (`subagent_type`) | Model | Notes |
 |---|---|---|---|
-| "Where is X / what does doc Y say" | `acr:scout` | haiku | read-only; seconds |
-| "What does the original do" (data files, `.MD`, sprites, disassembly notes) | `acr:original-researcher` | see the eval table | read-only; cites offsets and values |
-| Does a picture show X? Before/after judgement | `acr:visual-verifier` | see the eval table | runs `acr-vm-drive` and the studio; PASS/FAIL/UNSURE per criterion |
-| Game rules in `acr-sim` (determinism, optional rules, commands) | `acr:sim-engineer` | see the eval table | unit tests and acr-check |
-| 3D views, gore, decals, particles, physics, performance | `acr:render-engineer` | see the eval table | profile numbers and sheets |
-| HUD, menus, dialogs, settings, editor, controls | `acr:ui-engineer` | see the eval table | driver `ui` and screenshots |
-| Models, rigs, clips, clothing, gear, crews (Blender) | `acr:blender-artist` | see the eval table | VM Blender builds, studio sheets and measures |
+| "Where is X / what does doc Y say" | `acr:scout` | haiku (pinned) | read-only; seconds, about $0.003 |
+| "What does the original do" (data files, `.MD`, sprites, disassembly notes) | `acr:original-researcher` | haiku (pinned) | read-only; cites values and addresses; about $0.01 |
+| Does a picture show X? Before/after judgement | `acr:visual-verifier` | haiku (pinned); pass `model: sonnet` for subtle criteria or after an UNSURE | live studio (MCP) or `acr-vm-drive`; PASS/FAIL/UNSURE per criterion |
+| Rebuild named assets and install them in the showcase | `acr:asset-builder` | haiku (pinned) | mechanical; reports stats deltas |
+| Game rules in `acr-sim` (determinism, optional rules, commands) | `acr:sim-engineer` | inherit (your model) until the coding evals finish | unit tests and acr-check |
+| 3D views, gore, decals, particles, physics, performance | `acr:render-engineer` | inherit (your model) until the coding evals finish | profile numbers and sheets |
+| HUD, menus, dialogs, settings, editor, controls | `acr:ui-engineer` | inherit (your model) until the coding evals finish | driver `ui` and screenshots |
+| Models, rigs, clips, clothing, gear, crews (Blender) | `acr:blender-artist` | inherit (your model) until the coding evals finish | VM Blender builds, studio sheets and measures |
 | Anything else | general-purpose | — | brief it with the `acr-workflow` skill name |
 
 The eval results that set these models are in `tools/claude-plugin/acr/evals/RESULTS.md`. When an agent of a cheaper model fails a task, rerun it once with the next model up via the Agent tool's `model` parameter, and note it in RESULTS.md.

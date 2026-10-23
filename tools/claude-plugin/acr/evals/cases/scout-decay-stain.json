@@ -1,0 +1,14 @@
+{
+ "agent": "scout",
+ "prompt": "In the ACR repo at C:/Users/verwalter/WIP/ACR-wt/acr-eval-repo: which settings.txt key turns the decay stains under corpses on or off, what is its default, and which module draws them?",
+ "cwd": "C:/Users/verwalter/WIP/ACR-wt/acr-eval-repo",
+ "grade": {
+  "regex_all": [
+   "decay_stain",
+   "(?i)gore\\W{0,3}=?\\W{0,3}full|full gore",
+   "seep\\.rs"
+  ]
+ },
+ "budget_usd": 1.0,
+ "timeout_s": 600
+}

@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "acr-studio": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp/acr_studio.py"]
+    }
+  }
+}

@@ -65,6 +65,23 @@ The best tool for looking at models and animations. These commands need `--drive
 
 Prefer `studio` + `pose` + `sheet` + `measure` over `start` + `wait` + `record` for any model or animation question. A held pose can still be overridden by strike, ragdoll or crew layers.
 
+
+## Live sessions: the `acr-studio` MCP tools
+
+For looking around interactively (pose, frame, look, adjust, look again), keep one game running instead of a new `acr-vm-drive` run per look:
+
+| Tool | Does |
+|---|---|
+| `open_session(worktree, build=true, models="")` | builds the worktree's game on the VM (about 1 min; `build=false` reuses the last build) and starts it on the GPU. `models` takes a glb folder or `wt:target/assets/units`. Returns the session id |
+| `send(session_id, requests)` | driver requests in order (`studio`, `pose`, `measure`, `camera`, `hit`, `wait`, …); one short answer per request |
+| `shot(session_id, camera={...}, max_px=640)` | applies the camera fields, screenshots, and returns the image trimmed to its content (`save_to` keeps the full PNG) |
+| `fetch_image(session_id, path)` | returns a file the game wrote (e.g. a `sheet`) |
+| `close_session(session_id)` | always, when done |
+
+- A typical round trip (open without a build, studio, pose, measure, shot) takes about 5 s.
+- Use `acr-vm-drive` instead for fixed scripts, batches and before/after runs that must be repeatable.
+- One session is one field: to change the field, close and open another.
+
 ## Recipes
 
 - **Animation check:** `studio` with the unit, then `sheet` over the clip's frames and views. For motion over time (walks, deaths): `record` with a framed `camera`, then `acr-shots sheet`.

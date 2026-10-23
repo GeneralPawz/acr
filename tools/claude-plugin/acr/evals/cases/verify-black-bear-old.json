@@ -1,0 +1,16 @@
+{
+ "agent": "visual-verifier",
+ "cwd": "C:/Users/verwalter/WIP/ACR-wt/acr-eval-repo",
+ "prompt": "Image: C:/Users/verwalter/WIP/ACR-analysis/evals/bears_old/bears.trim.png (already trimmed; do not run the game). Criterion 1: the right-hand bear is a distinct American black bear (mostly black fur, lighter muzzle), not a smaller copy of the brown bear on the left.",
+ "grade": {
+  "regex_all": [
+   "(?m)^\\W*1\\.?\\W*FAIL"
+  ]
+ },
+ "budget_usd": 1.0,
+ "timeout_s": 300,
+ "bash": true,
+ "add_dirs": [
+  "C:/Users/verwalter/WIP/ACR-analysis/evals"
+ ]
+}

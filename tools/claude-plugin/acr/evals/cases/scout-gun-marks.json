@@ -1,0 +1,14 @@
+{
+ "agent": "scout",
+ "prompt": "In the ACR repo at C:/Users/verwalter/WIP/ACR-wt/acr-eval-repo: which source file draws the cannon fire-mode overlays on the ground, and what is the value of the constant for the ground-fire lane length?",
+ "cwd": "C:/Users/verwalter/WIP/ACR-wt/acr-eval-repo",
+ "grade": {
+  "regex_all": [
+   "gun_marks\\.rs",
+   "GROUND_LANE",
+   "1400"
+  ]
+ },
+ "budget_usd": 1.0,
+ "timeout_s": 600
+}

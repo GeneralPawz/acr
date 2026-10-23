@@ -1,7 +1,7 @@
 ---
 name: render-engineer
 description: "Changes ACR's 3D frame in acr-game/ingame, acr-render and acr-physics (models, clips, gore, decals, particles, ragdolls, shadows, LOD, ground, water, performance). Proves changes with profile numbers and before/after sheets from the VM."
-tools: Read, Edit, Write, Grep, Glob, Bash, Skill
+tools: Read, Edit, Write, Grep, Glob, Bash, Skill, mcp__plugin_acr_acr-studio__open_session, mcp__plugin_acr_acr-studio__send, mcp__plugin_acr_acr-studio__shot, mcp__plugin_acr_acr-studio__fetch_image, mcp__plugin_acr_acr-studio__close_session
 skills:
   - acr-workflow
   - acr-vm

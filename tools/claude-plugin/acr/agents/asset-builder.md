@@ -2,6 +2,7 @@
 name: asset-builder
 description: "Mechanical ACR asset rebuilds. Rebuilds named units/animals/guns on the render VM from a given branch, runs the Blender tests, installs the glbs into the showcase with backups, and reports stats deltas. No modelling or code changes."
 tools: Bash, Read, Glob
+model: haiku
 skills:
   - acr-vm
 ---

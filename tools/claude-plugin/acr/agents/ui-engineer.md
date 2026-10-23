@@ -1,7 +1,7 @@
 ---
 name: ui-engineer
 description: "Changes ACR's HUD, menus and dialogs, Spieleinstellungen pages, settings.txt keys, the test editor and the control schemes, matching the original's interface. Verifies with the driver's ui tree, clicks and cropped screenshots."
-tools: Read, Edit, Write, Grep, Glob, Bash, Skill
+tools: Read, Edit, Write, Grep, Glob, Bash, Skill, mcp__plugin_acr_acr-studio__open_session, mcp__plugin_acr_acr-studio__send, mcp__plugin_acr_acr-studio__shot, mcp__plugin_acr_acr-studio__fetch_image, mcp__plugin_acr_acr-studio__close_session
 skills:
   - acr-workflow
   - acr-vm

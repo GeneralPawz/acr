@@ -1,0 +1,18 @@
+{
+ "agent": "original-researcher",
+ "prompt": "Does the original game's WEAPON.NDS define a mortar shell projectile that no unit type uses? Name it, its launch angle, and which weapon entry references it.",
+ "cwd": "C:/Users/verwalter/WIP/ACR-wt/acr-eval-repo",
+ "grade": {
+  "regex_all": [
+   "NUCL3M",
+   "\\b75\\b",
+   "DIMMORT1"
+  ]
+ },
+ "budget_usd": 1.0,
+ "timeout_s": 600,
+ "bash": true,
+ "add_dirs": [
+  "C:/Users/verwalter/WIP/ACR-analysis/gamedata"
+ ]
+}

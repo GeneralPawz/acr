@@ -1,0 +1,15 @@
+{
+ "agent": "render-engineer",
+ "seed": "eval-r1-base",
+ "write": true,
+ "budget_usd": 5.0,
+ "timeout_s": 1800,
+ "prompt": "Bug report: while a cannon turns, its 3D crew snaps to the plain standing pose for one tick between the 22.5\u00b0 turn steps (a visible flicker). Find the cause and fix it. This is an evaluation run: work only in the existing worktree {worktree} (already on its own branch; do not create a worktree), commit your fix there, and do NOT push anything. Run tests on the VM with acr-vm-cargo from that worktree.",
+ "grade": {
+  "diff_regex": [
+   "^\\+.*PStand\\(1\\)"
+  ],
+  "max_files": 3,
+  "vm_test": "cargo test -q -p acr-game crew_view"
+ }
+}

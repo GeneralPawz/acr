@@ -1,0 +1,16 @@
+{
+ "agent": "blender-artist",
+ "seed": "eval-b2-base",
+ "write": true,
+ "budget_usd": 6.0,
+ "timeout_s": 2400,
+ "prompt": "Bug report: after the latest change, the cannon crew's hands no longer sit on the ammunition chest's rope handles while they carry it (artpus). test_guncrew.Grips fails after a rebuild of artpus. Find the cause and fix it so the carriers' hands are back on the handles. This is an evaluation run: work only in the existing worktree {worktree} (already on its own branch; do not create a worktree), commit your fix there, and do NOT push anything. Build and test on the VM with acr-vm-cargo from that worktree.",
+ "grade": {
+  "diff_regex": [
+   "^\\+ARM_SPAN = 0\\.(8|9)"
+  ],
+  "max_files": 3,
+  "vm_cmd": "cargo xtask assets artpus >/dev/null 2>&1; python3 -m unittest discover -s assets/blender/tests 2>&1 | tail -2",
+  "vm_ok_regex": "^OK"
+ }
+}

@@ -1,0 +1,15 @@
+{
+ "agent": "sim-engineer",
+ "seed": "eval-c1-base",
+ "write": true,
+ "budget_usd": 4.0,
+ "timeout_s": 1500,
+ "prompt": "Bug report: in the test editor, the H (Halb) upgrade button applies too few upgrades for a type with an odd number of them, e.g. 3 of 7; it should apply the first half rounded up (4 of 7). Fix it. This is an evaluation run: work only in the existing worktree {worktree} (already on its own branch; do not create a worktree), commit your fix there, and do NOT push anything. Run tests on the VM with acr-vm-cargo from that worktree.",
+ "grade": {
+  "diff_regex": [
+   "^\\+.*div_ceil\\(2\\)|^\\+.*\\(ups \\+ 1\\) / 2"
+  ],
+  "max_files": 3,
+  "vm_test": "cargo test -q -p acr-game editor"
+ }
+}

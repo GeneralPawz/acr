@@ -1,7 +1,7 @@
 ---
 name: blender-artist
 description: "Builds and fixes ACR's 3D assets in scripted headless Blender 5.2 on the render VM. Covers humans, uniforms and drape, held gear and grips, horses, animals, guns and crews, and their clips. Measures before and after, and proves results with studio sheets. Use for any assets/**.py or acr_assets change."
-tools: Read, Edit, Write, Grep, Glob, Bash, Skill
+tools: Read, Edit, Write, Grep, Glob, Bash, Skill, mcp__plugin_acr_acr-studio__open_session, mcp__plugin_acr_acr-studio__send, mcp__plugin_acr_acr-studio__shot, mcp__plugin_acr_acr-studio__fetch_image, mcp__plugin_acr_acr-studio__close_session
 skills:
   - acr-workflow
   - acr-vm

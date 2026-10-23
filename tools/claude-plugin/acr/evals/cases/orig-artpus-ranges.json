@@ -1,0 +1,18 @@
+{
+ "agent": "original-researcher",
+ "prompt": "What are the original game's cannon (ArtPus) attack indices, their weapon kinds, and their attack ranges in pixels?",
+ "cwd": "C:/Users/verwalter/WIP/ACR-wt/acr-eval-repo",
+ "grade": {
+  "regex_all": [
+   "1500\\D{1,15}6000",
+   "KARTECH",
+   "IADRO"
+  ]
+ },
+ "budget_usd": 1.0,
+ "timeout_s": 600,
+ "bash": true,
+ "add_dirs": [
+  "C:/Users/verwalter/WIP/ACR-analysis/gamedata"
+ ]
+}

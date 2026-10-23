@@ -1,0 +1,14 @@
+{
+ "agent": "scout",
+ "prompt": "In the ACR repo at C:/Users/verwalter/WIP/ACR-wt/acr-eval-repo: which crew clip does a cannon show while the gun's animation is #PSTAND1 (between turn steps), how is it played, and which function holds that mapping?",
+ "cwd": "C:/Users/verwalter/WIP/ACR-wt/acr-eval-repo",
+ "grade": {
+  "regex_all": [
+   "TRAIL_WALK",
+   "(?i)hold",
+   "crew_work"
+  ]
+ },
+ "budget_usd": 1.0,
+ "timeout_s": 600
+}

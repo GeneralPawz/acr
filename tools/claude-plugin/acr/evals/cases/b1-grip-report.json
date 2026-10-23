@@ -1,0 +1,17 @@
+{
+ "agent": "blender-artist",
+ "write": false,
+ "bash": true,
+ "budget_usd": 3.0,
+ "timeout_s": 1500,
+ "prompt": "Rebuild the cannon asset artpus from the worktree {worktree} on the VM (change no file, commit nothing, push nothing) and report, from its stats.json, the worst (max) fist-to-grip miss in metres of every grip work, and name the work with the largest miss.",
+ "grade": {
+  "regex_all": [
+   "staff_l",
+   "0\\.22",
+   "0\\.09[45]",
+   "(?i)largest[^\\n]{0,80}staff|staff[^\\n]{0,80}(largest|worst)"
+  ]
+ },
+ "seed": "eval-base"
+}

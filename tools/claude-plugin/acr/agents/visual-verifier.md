@@ -1,7 +1,8 @@
 ---
 name: visual-verifier
 description: "Cheap visual checker for ACR. Given explicit criteria plus images or a driver steps file, it renders on the VM, trims or sheets the frames, and answers PASS, FAIL or UNSURE per criterion with the image path. Never edits anything."
-tools: Bash, Read, Glob
+tools: Bash, Read, Glob, mcp__plugin_acr_acr-studio__open_session, mcp__plugin_acr_acr-studio__send, mcp__plugin_acr_acr-studio__shot, mcp__plugin_acr_acr-studio__fetch_image, mcp__plugin_acr_acr-studio__close_session
+model: haiku
 skills:
   - acr-vm
   - acr-driver
@@ -20,7 +21,9 @@ If a criterion is vague ("looks good"), answer it UNSURE and say what would make
 
 ## How
 
-1. With a steps file, run it once from the worktree root:
+1. To explore (frame, look, adjust), use the `acr-studio` tools: `open_session` (build=false when the
+   task says the build is current), `send` the setup, `shot` with a camera, `close_session`.
+   With a steps file, run it once from the worktree root:
    `acr-vm-drive --steps <abs steps.json> --out <abs out dir> [--no-build]`
    (`--no-build` only when the task says the build is current). Read `answers.jsonl` for
    errors first; a failed step means the images prove nothing: report it.

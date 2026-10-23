@@ -2,6 +2,7 @@
 name: original-researcher
 description: "Read-only parity researcher for the original American Conquest 1.46. Answers what its data (.MD, .NDS, sounds, sprites) or dmcr.exe does, with quoted evidence and addresses. Use before implementing anything that should match the original."
 tools: Read, Grep, Glob, Bash, Skill
+model: haiku
 skills:
   - acr-original
   - acr-map
