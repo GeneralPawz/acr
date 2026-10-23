@@ -372,7 +372,8 @@ and drop the bone-side flip of the rest normals for a closed hull.
 (#287; built on the VM for DelKri, SpnSha, IncSha, MaySha, FrnBuk, IroLut, EngKri, EngM18;
 everything in `ACR-analysis/trisoup7/`: `sheet_before_after.png`, `before/`, `after/`,
 `glb_after/`, `layers_{before,after}.txt`, `sh/` stage crops, `tools/`). Three steps in
-`body.py`, all **off** by default (`SHOULDER_REMESH`, `NECK_CUT`, `HULL_WINDING`):
+`body.py`, all **off** by default (`SHOULDER_REMESH`, `NECK_CUT`, `HULL_WINDING`; the first two
+on since the eighth pass):
 - `remesh_shoulders` (called from `Character.body` after `mbody.build`, before the
   weights): the faces between 12 cm below the shoulder joint and 8 cm above the neck's root,
   out to 14 cm past the shoulder joint, are triangulated, long edges (> 1.6 × the median)
@@ -405,6 +406,49 @@ and in game) was copied to the showcase (old one in `backup-trisoup7/`). Next: b
 one flag at a time to find which one brings the strap and sash pokes (probably
 `HULL_WINDING`: outward normals at the armpits and hips move those shells), and seat the
 straps after the new shells.
+
+**Eighth trisoup pass: one flag at a time; neck cap and drafted bodies fixed; two flags on**
+(#287; VM builds of DelKri, SpnSha, IncSha, MaySha, FrnBuk, IroLut, EngKri, EngM18;
+everything in `ACR-analysis/trisoup8/`: `sheet_before_after.png` (main → this pass),
+`sheet_flags_back.png` and `sheet_flags_34.png` (base | hull | neck | shoulder),
+`layers_*.txt`, `shots_*/`, `glb_base/`, `glb_final/`, `tools/variant.sh`). `model_layers
+--steps 8`, poking / crossing:
+
+| unit | base (main) | `HULL_WINDING` | `NECK_CUT` | `SHOULDER_REMESH` | final |
+|---|---|---|---|---|---|
+| delkri | 396 / 229 | 408 / 184 | 392 / 218 | 355 / 214 | 355 / 211 |
+| spnsha | 111 / 202 | 83 / 173 | 81 / 201 | 103 / 202 | 79 / 192 |
+| incsha | 217 / 106 | 209 / 83 | 205 / 76 | 246 / 88 | 225 / 73 |
+| maysha | 62 / 19 | 99 / 21 | 64 / 18 | 55 / 21 | 53 / 15 |
+| frnbuk | 314 / 305 | 323 / 286 | 295 / 299 | 329 / 300 | 299 / 296 |
+| irolut | 106 / 71 | 102 / 65 | 106 / 71 | 103 / 57 | 103 / 57 |
+| engkri | 109 / 360 | same | same | 143 / 252 | same as base |
+| engm18 | 179 / 432 | same | same | 240 / 387 | same as base |
+
+Which flag does what (in game, `sheet_flags_*.png`):
+- `SHOULDER_REMESH` removes the shoulder teeth (SpnSha's cappa, DelKri's shirt, fewer on
+  FrnBuk) and brought **EngKri's sash bow** change: under a drafted coat (`drape.dress`) the
+  re-meshed body tears the coat at the back and the shoulders and moves the sash and the
+  skirts (EngKri, EngM18; the only flag that changes them at all). Now
+  `Character.body(shoulders=False)` for drafted bodies (civil peasants, frontier, line with
+  `garments`): the flag is **on** and only the shell-dressed bodies are re-meshed.
+- `NECK_CUT` brings **the V at the back of the neck** (IncSha, FrnBuk, SpnSha) and ate
+  SpnSha's hood (a collar standing round the neck). Fixed: `NeckField` centres the neck's
+  axis on the skin round it (the bone lies behind the middle of the neck, so the opening
+  reached further down the back than the front; shift at most 4 cm) and below the neck's
+  root counts the distance along the axis `NECK_DROP` (2.5) times: a flat elliptic cap
+  instead of a sphere, still a linear ramp of ±5 cm (a smooth isoline); `shell(neck=False)`
+  for the hood. Flag **on**: no V left, the hood is back.
+- `HULL_WINDING` changes nothing visible at this distance (crossing down, MaySha's poking
+  up 62 → 99): stays **off**.
+- **DelKri's quiver strap showing the shirt** is not one of the flags: main shows it too
+  (`shots_base/DelKri`). `bd.strap` now lifts the ribbon towards the ray's origin whatever
+  the winding of the face it hits; at rest the shirt still pokes through it at the shoulder
+  in 20 vertices, worst 6.5 mm (was 21 mm; `tools/strapprobe.py`), but the patches on the
+  back in STAND remain: next, sample the strap's surface finer or seat it from the posed
+  shirt.
+Copied to the showcase: DelKri, SpnSha, IncSha, MaySha, FrnBuk, IroLut (old ones in
+`showcase/backup-trisoup8/`); EngKri and EngM18 are unchanged.
 
 engm18, 24 frames × 19 clips (crossing vertices / worst):
 

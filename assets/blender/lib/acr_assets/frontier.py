@@ -279,7 +279,7 @@ def make(root, name, s):
     from .humans import Character
 
     ch = Character(root, name, s["build"])
-    ch.body()
+    ch.body(shoulders=False)  # a drafted coat
     ch.shoes = ch.add("clothes", mbody.shoes(ch.arm, ch.flesh, f"{name}.footwear", ch.prefix, key="shoes"),
                       "shoes", symmetric=True)
     ch.drape_report = {}

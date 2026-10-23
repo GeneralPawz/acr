@@ -101,8 +101,10 @@ class Character:
             self.symmetric.append(obj)
         return obj
 
-    def body(self, key="skin", bones=rig.BODY_BONES, faces=True):
-        """The skin hull; with `faces` a finer head with a modelled face (#283)."""
+    def body(self, key="skin", bones=rig.BODY_BONES, faces=True, shoulders=True):
+        """The skin hull; with `faces` a finer head with a modelled face (#283). `shoulders`:
+        re-mesh the shoulder line (`bd.SHOULDER_REMESH`); False under drafted garments
+        (`drape.dress`), whose coats come out torn over the re-meshed body (#287 trisoup8)."""
         P = self.prefix
         g = graph(self.build)
         cx = next(p for n, _par, p, _r in g if n == "skull")[0]
@@ -110,7 +112,7 @@ class Character:
         def mh_body(bm):
             seg = am.segments(self.arm)
             mbody.build(bm, seg, P, self.build)
-            if bd.SHOULDER_REMESH:
+            if bd.SHOULDER_REMESH and shoulders:
                 print(f"[{self.name}] shoulder line re-meshed: {bd.remesh_shoulders(bm, seg, P)}")
 
         def head(bm):
@@ -129,7 +131,8 @@ class Character:
         """A clothing shell of the flesh (`bd.derive`). A shell that covers the top of the
         trunk gets its neck opening cut by distance from the neck (`bd.neck_opening`, an
         ellipse `neck` metres outside the skin of the neck, default `bd.NECK_EASE`) instead of
-        by part and height, so the trapezius stays whole in it (#287 trisoup7)."""
+        by part and height, so the trapezius stays whole in it (#287 trisoup7). `neck=False`:
+        no opening (a hood or collar standing round the neck, trisoup8)."""
         P = self.prefix
         shoe = key in mbody.FOOTWEAR and self.build.get("mh_body", True)
         feet = {"foot_l", "foot_r", "toe_l", "toe_r"}
@@ -139,7 +142,7 @@ class Character:
             return keep_face(c, n, h, p) and not (shoe and h in feet and c.z < self.arm.data.bones[P + "foot_l"].head_local.z + 0.045)
 
         field = None
-        if bd.NECK_CUT and self.build.get("mh_body", True):
+        if bd.NECK_CUT and neck is not False and self.build.get("mh_body", True):
             opening = bd.neck_opening(self.flesh, self.arm, keep, P, neck)
             if opening:
                 keep, field = opening

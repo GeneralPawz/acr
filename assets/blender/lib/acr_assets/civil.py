@@ -505,8 +505,8 @@ def make(root, name, s):
     from .humans import Character
 
     ch = Character(root, name, s["build"], table=skeleton())
-    ch.body()
     priest = s["kind"] == "priest"
+    ch.body(shoulders=priest)  # the others wear a drafted coat
     ch.shoes = ch.add("clothes", mbody.shoes(ch.arm, ch.flesh, f"{name}.footwear", ch.prefix, key="shoes"),
                       "shoes", symmetric=True)
     if priest:
@@ -524,7 +524,7 @@ def make(root, name, s):
 
         ch.shell("cappa", "cappa", cloak, 0.040)
         ch.shell("hood", "cappa", lambda c, n, h, p: (h in {"spine2", "clavicle_l", "clavicle_r", "neck"} and c.z > 1.38
-                                                      and c.y > -0.06), 0.070)
+                                                      and c.y > -0.06), 0.070, neck=False)
         cape = bd.tube(ch.arm, f"{name}.cappa_skirt", rig.SKIRT_TOP + 0.02, 0.16, (0.22, 0.18), (0.31, 0.27),
                        gap_deg=70, columns=rig.SKIRT_COLUMNS)
         ch.add("clothes", cape, "cappa", symmetric=True)

@@ -132,7 +132,7 @@ def make(root, name, s):
     """The soldier of SPEC `s` under `root`: body, uniform, belts, strapped and held gear."""
     build, fit = s["build"], s["fit"]
     ch = Character(root, name, build)
-    ch.body()
+    ch.body(shoulders=not build.get("garments"))  # no re-mesh under drafted garments
 
     def front(c):
         return c.y < -0.04 and abs(c.x) < 0.075 and c.z < 1.41

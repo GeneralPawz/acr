@@ -195,7 +195,7 @@ def _closed_outward(mesh, holes=0.03):
 
 # --------------------------------------------------------------------------- shoulder line
 
-SHOULDER_REMESH = False  # relax the decimated MakeHuman shoulder line into even triangles (#287 trisoup7)
+SHOULDER_REMESH = True  # relax the decimated MakeHuman shoulder line into even triangles (#287 trisoup7)
 SLIVER = 4.0  # aspect ratio (longest edge / its height) above which a triangle is a sliver
 
 
@@ -415,27 +415,39 @@ def derive(src, name, keep_face, offset, border=False, field=None):
 
 
 # The neck opening of the trunk shells (#287 trisoup7, docs/clothing.md "Seventh trisoup pass").
-NECK_CUT = False  # cut the neck opening by distance from the neck, not by part and height
+NECK_CUT = True  # cut the neck opening by distance from the neck, not by part and height
 NECK_EASE = 0.015  # m: default opening, this far outside the skin of the neck
 NECK_ASPECT = 1.1  # front-back distances count this much more (a wider-than-deep ellipse)
 NECK_RAMP = 0.05  # m: half-width of the distance ramp (wider than the triangles: a smooth isoline)
 NECK_DEPTH = 0.12  # m below the neck bone's head where the opening's zone ends
 NECK_TOP = 0.04  # m above the neck bone's head: higher faces are not forced into the shell
+NECK_DROP = 2.5  # below the neck's root, distances along the neck's axis count this much more
 TRUNK = ("spine1", "spine2", "clavicle_l", "clavicle_r", "neck")
 
 
 class NeckField:
-    """Selection cap round the neck: 0.5 at `radius` from the neck bone (the front-back
-    distance scaled by `NECK_ASPECT`), ramping to 1 outward; None below the zone."""
+    """Selection cap round the neck: 0.5 at `radius` from the neck's axis (the bone moved
+    onto the centre of the neck skin by `shift`; front-back distances scaled by
+    `NECK_ASPECT`), ramping to 1 outward; None below the zone. Below the neck's root the
+    distance along the axis counts `NECK_DROP` times: a flat ellipsoid, so the opening does
+    not run down the back where the spine lies close under the skin (round 7's V)."""
 
-    def __init__(self, axis_a, axis_b, radius, low):
-        self.a, self.b, self.radius, self.low = axis_a, axis_b, radius, low
+    def __init__(self, axis_a, axis_b, radius, low, shift=None):
+        shift = Vector() if shift is None else shift
+        self.a, self.b = axis_a + shift, axis_b + shift
+        self.radius, self.low = radius, low
+        self.u = (self.b - self.a).normalized()
+
+    def offset(self, co):
+        # From the neck's axis, open-ended upwards: a tube round the neck above its root,
+        # a flattened cap below it.
+        return co - seg_point(co, self.a, self.b + (self.b - self.a) * 4.0)
 
     def dist(self, co):
-        # From the neck bone, open-ended upwards: round below the neck's root (the opening
-        # does not run down the back), a tube round the neck above it.
-        d = co - seg_point(co, self.a, self.b + (self.b - self.a) * 4.0)
-        return math.sqrt(d.x * d.x + (d.y * NECK_ASPECT) ** 2 + d.z * d.z)
+        d = self.offset(co)
+        ax = d.dot(self.u)
+        p = d - self.u * ax
+        return math.sqrt(p.x * p.x + (p.y * NECK_ASPECT) ** 2 + p.z * p.z + (ax * NECK_DROP) ** 2)
 
     def __call__(self, co):
         if co.z < self.low:
@@ -477,9 +489,19 @@ def neck_opening(flesh, arm_obj, keep, prefix="", ease=None):
         return None  # not on the top of the trunk, or over the head too (a hood)
     # The skin of the neck: its distance from the axis midway up the neck bone.
     zs = (a.z + 0.2 * (b.z - a.z), a.z + 0.5 * (b.z - a.z))
-    ring = sorted(probe.dist(v.co) for v in me.vertices if zs[0] < v.co.z < zs[1])
-    r = ring[len(ring) // 2] if ring else 0.06
-    field = NeckField(a, b, r + (NECK_EASE if ease is None else ease), low)
+    ring = [v.co for v in me.vertices if zs[0] < v.co.z < zs[1]]
+    # The bone lies behind the middle of the neck (the vertebrae): centre the axis on the
+    # skin round it, else the opening reaches further down the back than the front.
+    shift = Vector()
+    if ring:
+        offs = [probe.offset(co) for co in ring]
+        shift = Vector((sorted(o.x for o in offs)[len(offs) // 2], sorted(o.y for o in offs)[len(offs) // 2], 0.0))
+        if shift.length > 0.04:
+            shift *= 0.04 / shift.length
+    probe = NeckField(a, b, 0.0, low, shift)
+    dists = sorted(probe.dist(co) for co in ring)
+    r = dists[len(dists) // 2] if dists else 0.06
+    field = NeckField(a, b, r + (NECK_EASE if ease is None else ease), low, shift)
     top = a.z + NECK_TOP  # the neck's faces above this (the chin) stay with the head
 
     def keep2(c, n, h, p):
@@ -803,6 +825,8 @@ def strap(arm_obj, name, surface, a, b, width, offset, samples=12, bones=rig.BOD
                 hit, n, _i, _d = tree.ray_cast(Vector((p.x, sign * 1.0, p.z)), Vector((0, -sign, 0)))
                 if hit is None:
                     break
+                if n.y * sign < 0:  # a face wound inward: lift towards the ray's origin all the same
+                    n = -n
                 pair.append(hit + n * offset)
             if len(pair) == 2:
                 row.append(pair)
