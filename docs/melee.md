@@ -205,18 +205,55 @@ Bench: `ACR-analysis/melee-anim2/melee_bench.py` (white blank field, HUD off; th
 victim has lost both arms, so he writhes in place). Sheets: `melee-anim2/layer/` (old clips,
 new layer), `melee-anim2/clips/` (new EngM18 strike clips).
 
+### Phase, guard and turn (m2-melee-anim3)
+
+- **Arm weight by clip phase** (`strike_view::arm_weight`): on a strike clip the arm IK (and
+  the step in at a standing man) weighs 0.35 at the wind-up (first frame), rises to full at
+  the hit frame (`HIT_FRAME` 2), holds two frames, eases to 0.15 for the recovery and back
+  to 0.35 over the last fifth. The weight is eased per man over time (`ARM_RATE`), so the
+  sprite-frame steps do not jerk. The `.MD` clip (no strike clip) keeps full weight.
+- **Guard:** against a standing man the point aims `GUARD` (0.45 m) short of him, scaled by
+  `1 - arm`: the bayonets stay in front of the men and reach in only with the blow.
+- **Hand turn:** at most `MAX_TURN` (30°, was 90°), eased per man (`TURN_RATE`); a butt
+  smash (`Smash`) turns nothing and its arm IK weighs 0.3.
+- **Riders** bend at most `MAX_BEND_MOUNTED` (46°).
+- **Clip fallback:** a blow `High` or `Low` at a standing man falls back to the kind's `_MID`
+  clip (`ATTACK_THRUST_LOW` → `ATTACK_LOW` → `ATTACK_THRUST_MID`). Before, a `Thrust`/`Low`
+  found no clip and the `.MD` ATTACK played with the layer at full weight.
+- `ACR_STRIKE_DEBUG` logs the layer per man and frame (clip, phase, arm weight, weapon).
+- **Smash pose** (`poses.musketeer_strikes`): drawn back the muzzle points forward and up
+  (socket 62°), at the hit the butt is driven forward, the muzzle tipped back (-28°), with
+  little turn about the vertical (was -20/50 → -96/-20).
+- **Lance strike clips** (`cavalry.add_clips`, riders with `held: "lance"`: PueVsdA):
+  `ATTACK_THRUST_DOWN`, `ATTACK_DOWN`, `ATTACK_THRUST_MID`, `ATTACK_THRUST_HIGH` on
+  ATTACK's frames, the blow on frame 2: the lance drawn back high, then driven down past
+  the horse's right shoulder (`lance_down`) or level (`lance_mid`).
+
+**Rider debug.** The rider does reach the layer (mounted mapping and weapon found, weight
+rises to 1). The EngD18 bench showed no lean because the dragoon *shot* the crawler with his
+carbine (`Shot`/`Down`, ATTACK) and killed him within a second; the layer faded with the
+victim. With PueVsdA (melee only) the layer bends the rider visibly; at the old 75° limit he
+folded flat over the neck, hence `MAX_BEND_MOUNTED`.
+
+Bench: `ACR-analysis/melee-anim3/melee_bench.py` (adds `lance_crawl`, `lance_stand`; crop
+taller for riders). Sheets: `melee-anim3/run1` (layer before the fallback fix), `run2`,
+`run3` (current: `sheet_foot_stand.png`, `sheet_lance_crawl.png`). Rebuilt on the VM:
+EngM18 and PueVsdA, copied to `showcase/models` (old ones in `backup-melee-anim3/`).
+
 ### Not yet
 
-- **Looks:** against a crawler the bayonet now reaches him: a stab down with a step in.
-  Against a standing man the arm IK and the hand turn often fight the clip: the musket
-  swings about between frames, and the butt-smash keys hold the musket at odd angles.
-  The poses are first drafts.
-- **Riders** reach the layer in code, but the bench (EngD18 at a crawler) showed no lean
-  yet; not debugged. The dragoon still swings the carbine (`cavalry.add_clips`: draw the
-  sabre, sling the carbine) and there are no mounted strike clips (`ATTACK_CUT_DOWN`,
-  lance `ATTACK_THRUST_DOWN`).
-- No officer sword clips (no foot officer is built; EngKF18 is a mounted standard bearer),
-  no native club or tomahawk hack, no lance/spear clips for PueVsdA (`PIKA`) or SiuKStr.
+- **Looks:** standing musketeers in the bench mostly *shoot* each other (ATTACK1) and the
+  melee frames are few; the bayonets still pass through bodies in the `.MD` ATTACK/PSTAND
+  frames, which the layer does not guard. The lance thrust down is too shallow: at the hit
+  the lance still points forward past the man on the ground (the `lance_down` hand turn,
+  40°, is too little; the layer's lance reach is `REACH` 0.9 m while the point is ~2.3 m
+  out). The new smash pose is unchecked in a render (the sim never picks `Smash`).
+- **Dragoon sabre** not done: EngD18 still holds the carbine in melee. Drawing the sabre
+  needs a way to hide the carbine and show a drawn blade per clip (a keyed socket scale or
+  a second hand socket); no mounted sabre clips (`ATTACK_CUT_DOWN` left/right) yet. The
+  bench needs a victim that survives the carbine shot, or a melee-only order.
+- No officer sword clips: no foot officer is built (EngKF18 is a mounted standard bearer).
+  Which `.MD` would be the first foot officer to build is not settled yet (the unit lists sit
+  in the game archives; not looked up in this slice).
+- No native club or tomahawk hack; SiuKStr not given strike clips.
 - The sim never picks `Smash` for musketeers, so `ATTACK_SMASH_MID` is unused.
-- Only EngM18 was rebuilt (VM) and copied to the showcase models (old one in
-  `showcase/models/backup-melee-anim2/`).

@@ -41,7 +41,7 @@ from mathutils import Matrix, Vector
 
 from . import armature as am
 from . import body as bd
-from . import crawl, faces, gear, heads, horse, mount, rig
+from . import crawl, faces, gear, heads, horse, mount, poses, rig
 from .humans import Character, prepare_export
 
 P = "rider."
@@ -589,6 +589,12 @@ def make(ctx, spec):
              # Lance couched at the right hip, the point forward and up; the thrust.
              "lance": _with_world(dict(LEGS_SEAT), right(side(0, -0.12, 0.15), (-20, 0, 0))),
              "thrust": _with_world(dict(LEGS_SEAT, spine=(-10, 0, 8)), right(side(0.04, -0.62, 0.50), (-5, 0, 0))),
+             # Strike clips (docs/melee.md): the lance drawn back high, then driven down past
+             # the horse's right shoulder at a man on the ground, or level at a standing one.
+             "lance_back": _with_world(dict(LEGS_SEAT, spine=(4, 0, -6)), right(side(0.02, 0.10, 0.42), (-30, 0, 0))),
+             "lance_down": _with_world(dict(LEGS_SEAT, spine=(-24, 0, 10), spine1=(-8, 0, 0)),
+                                       right(side(-0.04, -0.50, -0.05), (40, 0, 0))),
+             "lance_mid": _with_world(dict(LEGS_SEAT, spine=(-14, 0, 8)), right(side(0.02, -0.66, 0.36), (2, 0, 0))),
              # A gun upright, its butt on the right thigh (the socket turned from the aim's).
              "gun": _with_world(dict(LEGS_SEAT), right(side(0.04, -0.22, 0.12), None, (-2, 0, 0)))}
     for k in ("lance", "gun", "flag"):
@@ -700,6 +706,14 @@ def add_clips(ch, md, motions=MOTIONS):
         else:
             cold = [(0.0, ride), (0.3, p["cut_up"]), (0.45, p["cut_down"]), (0.7, ride), (1.0, ride)]
         plan["ATTACK"] = (W["ATTACK"], cold)
+    if "ATTACK" in W and ch.ride == "lance":
+        # Strike clips on ATTACK's frames, the blow on `poses.STRIKE_HIT_FRAME`.
+        n = len(W["ATTACK"])
+        down = poses.strike_keys(n, p["lance_back"], p["lance_down"], ride)
+        mid = poses.strike_keys(n, p["lance_back"], p["lance_mid"], ride)
+        for name, keys in (("ATTACK_THRUST_DOWN", down), ("ATTACK_DOWN", down), ("ATTACK_THRUST_MID", mid),
+                           ("ATTACK_THRUST_HIGH", mid)):
+            plan[name] = (W["ATTACK"], keys)
     if "ATTACK1" in W:
         plan["ATTACK1"] = (W["ATTACK1"], [(0.0, p["aim"]), (0.08, dict(p["aim"], spine=(4, 0, 0))), (0.25, p["aim"]), (1.0, p["aim"])])
     for name, (hf, rk) in plan.items():

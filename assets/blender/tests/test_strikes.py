@@ -35,6 +35,14 @@ class StrikeClips(unittest.TestCase):
         self.assertLess(hit["root_loc"][1], -0.2)
         self.assertLess(hit["root_loc"][2], -0.15)
 
+    def test_smash_turns_the_musket_about_its_grip(self):
+        keys = dict(poses.musketeer_clips(MD)["ATTACK_SMASH_MID"])
+        back, hit = keys[0]["world"]["socket.hand_r"], keys[poses.STRIKE_HIT_FRAME]["world"]["socket.hand_r"]
+        # Drawn back the muzzle points forward and up; at the hit it tips back past upright,
+        # the butt forward; no wild turn about the vertical.
+        self.assertTrue(40 <= back[0] <= 80 and -45 <= hit[0] <= 0, (back, hit))
+        self.assertLessEqual(abs(back[2] - hit[2]), 30)
+
     def test_without_attack_line_no_strikes(self):
         self.assertFalse(any(k.startswith("ATTACK_") for k in poses.musketeer_clips({"STAND": MD["STAND"]})))
 

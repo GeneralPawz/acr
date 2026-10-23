@@ -227,11 +227,14 @@ def musketeer_strikes(ready, lunge, n):
                       world={"socket.hand_r": (138, 0, 0)})
     pull_out = _with(down_ready, root_loc=(0, -0.12, -0.14), thigh_l=(-40, -3, 0), shin_l=(50, 0, 0))
     # The butt smash: the musket swung round, butt first, from the right shoulder across.
-    butt_back = _with(ready, spine=(-4, 0, 34), spine2=(0, 0, 14), head=(4, 0, -24),
-                      world={"socket.hand_r": (-20, 0, 50)})
-    butt_hit = _with(ready, spine=(-16, 0, -30), spine2=(-6, 0, -16), head=(6, 0, 30),
+    # Drawn back: the musket still pointing forward and up past the right hip, the butt low
+    # behind; the hit: the butt driven forward and up at chest height, the muzzle tipped back
+    # over the right shoulder (the musket turns about its own grip, no wild spin).
+    butt_back = _with(ready, spine=(-4, 0, 18), spine2=(0, 0, 8), head=(4, 0, -14),
+                      world={"socket.hand_r": (62, 0, 18)})
+    butt_hit = _with(ready, spine=(-14, 0, -20), spine2=(-6, 0, -10), head=(6, 0, 20),
                      root_loc=(0, -0.10, -0.04), thigh_l=(-30, -3, 0), shin_l=(24, 0, 0),
-                     world={"socket.hand_r": (-96, 0, -20)})
+                     world={"socket.hand_r": (-28, 0, -8)})
     # Point-blank down: the musket at the hip, the muzzle on the man at the feet, the kick.
     shot_aim = _with(down_ready, world={"socket.hand_r": (128, 0, 0)})
     shot_kick = _with(shot_aim, spine=(-14, 0, -14), root_loc=(0, 0.06, -0.06), world={"socket.hand_r": (118, 0, 0)})
