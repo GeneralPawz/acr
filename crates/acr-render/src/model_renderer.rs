@@ -514,16 +514,25 @@ pub mod debug {
 }
 
 fn debug_flags() -> u32 {
-    let names =
-        ["living", "dead", "dead_volumes", "dead_plain", "inner", "caps", "gore", "holes", "looks", "old_inner", "no_clean"];
+    let names = [
+        "living",
+        "dead",
+        "dead_volumes",
+        "dead_plain",
+        "inner",
+        "caps",
+        "gore",
+        "holes",
+        "looks",
+        "old_inner",
+        "no_clean",
+    ];
     // `ACR_MODEL_DEBUG_FILE`: the list read from a file every frame (switched while running).
     let from_file = std::env::var("ACR_MODEL_DEBUG_FILE").ok().and_then(|f| std::fs::read_to_string(f).ok());
     from_file
         .ok_or(())
         .or_else(|_| std::env::var("ACR_MODEL_DEBUG").map_err(|_| ()))
-        .map(|v| {
-            v.split(',').filter_map(|w| names.iter().position(|n| *n == w.trim())).fold(0, |f, k| f | (1 << k))
-        })
+        .map(|v| v.split(',').filter_map(|w| names.iter().position(|n| *n == w.trim())).fold(0, |f, k| f | (1 << k)))
         .unwrap_or(0)
 }
 
@@ -726,38 +735,40 @@ impl ModelRenderer {
         let far_pipeline = model_pipeline("fs_far");
         let clean_pipeline = model_pipeline("fs_clean");
         let far_clean_pipeline = model_pipeline("fs_far_clean");
-        let shadow_pipeline = |fragment: &str| device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("model shadow"),
-            layout: Some(&shadow_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[
-                    Some(wgpu::VertexBufferLayout {
-                        array_stride: size_of::<Vertex>() as u64,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &vertex_attributes,
-                    }),
-                    Some(wgpu::VertexBufferLayout {
-                        array_stride: size_of::<GpuInstance>() as u64,
-                        step_mode: wgpu::VertexStepMode::Instance,
-                        attributes: &instance_attributes,
-                    }),
-                ],
-            },
-            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
-            depth_stencil: Some(shadow::caster_depth()),
-            multisample: Default::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some(fragment),
-                compilation_options: Default::default(),
-                targets: &[],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
+        let shadow_pipeline = |fragment: &str| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("model shadow"),
+                layout: Some(&shadow_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: Default::default(),
+                    buffers: &[
+                        Some(wgpu::VertexBufferLayout {
+                            array_stride: size_of::<Vertex>() as u64,
+                            step_mode: wgpu::VertexStepMode::Vertex,
+                            attributes: &vertex_attributes,
+                        }),
+                        Some(wgpu::VertexBufferLayout {
+                            array_stride: size_of::<GpuInstance>() as u64,
+                            step_mode: wgpu::VertexStepMode::Instance,
+                            attributes: &instance_attributes,
+                        }),
+                    ],
+                },
+                primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+                depth_stencil: Some(shadow::caster_depth()),
+                multisample: Default::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some(fragment),
+                    compilation_options: Default::default(),
+                    targets: &[],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
         let shadow_clean_pipeline = shadow_pipeline("fs_shadow_clean");
         let shadow_pipeline = shadow_pipeline("fs_shadow");
         // Blood pools: decals over the terrain's depth, blended, writing neither depth nor
@@ -1047,7 +1058,11 @@ impl ModelRenderer {
             })
             .collect();
         let procedural = data.decays_procedurally();
-        let discards = data.materials.iter().map(|m| m.alpha_cutoff.unwrap_or(0.0) > 0.0 || m.stump || m.tissue as u8 == 1).collect();
+        let discards = data
+            .materials
+            .iter()
+            .map(|m| m.alpha_cutoff.unwrap_or(0.0) > 0.0 || m.stump || m.tissue as u8 == 1)
+            .collect();
         let dissolve_from = |inner: Option<bool>| {
             data.materials
                 .iter()
@@ -1176,7 +1191,8 @@ impl ModelRenderer {
             let inst = if dbg == 0 {
                 inst
             } else {
-                let dead = inst.decay > 0.0 || inst.wounds.count > 0 || inst.wounds.blood > 0.0 || custom.contains_key(&i);
+                let dead =
+                    inst.decay > 0.0 || inst.wounds.count > 0 || inst.wounds.blood > 0.0 || custom.contains_key(&i);
                 let vol = inst.damage.volumes_len > 0;
                 if (dbg & debug::LIVING != 0 && !dead && i != usize::MAX)
                     || (dbg & debug::DEAD != 0 && dead)
@@ -1290,14 +1306,16 @@ impl ModelRenderer {
                     });
                 }
             }
-            // The inner layers (bones, an animal's meat) only once the skin opens, or where a
-            // wound may show them; before, they lie wholly inside the outer layers.
+            // The inner layers (bones, an animal's meat) of a body (a rig) only once the skin
+            // opens, or where a wound may show them; before, they lie wholly inside the outer
+            // layers. Gibs and other pieces without a rig show theirs (a bone chunk's bone).
             let intact = inst.damage.is_none();
             let dissolving = |at: f32| dissolve && at <= 1.0 && inst.decay > at;
-            let decaying = inst.decay > 0.0
-                && (dissolving(gpu_model.opens_at) || !intact || dbg & debug::OLD_INNER != 0)
-                && dbg & debug::INNER == 0;
-            let clean = intact && !inst.transparent && !dissolving(gpu_model.dissolves_at) && dbg & debug::NO_CLEAN == 0;
+            let enclosed = model.rig.is_some() && dbg & debug::OLD_INNER == 0;
+            let decaying =
+                inst.decay > 0.0 && (!enclosed || dissolving(gpu_model.opens_at) || !intact) && dbg & debug::INNER == 0;
+            let clean =
+                intact && !inst.transparent && !dissolving(gpu_model.dissolves_at) && dbg & debug::NO_CLEAN == 0;
             let first = data.len() as u32;
             let mut look_data = look_texels(look.as_ref().map(|c| &c.0), gpu_model.eye, inst.look.unwrap_or(0));
             // A crew's uniform rides on the look texels the crew does not use otherwise.
@@ -1492,7 +1510,15 @@ impl ModelRenderer {
             // The far levels last: they take the cheaper pipeline (`render`).
             // Within a draw front to back (`depth` in 0..1; the tiler's early depth test).
             list.sort_by_key(|&(l, v, e)| {
-                (l >= lod::FAR_FROM, e.model, e.decaying, e.clean, v, l, (e.depth.clamp(0.0, 1.0) * 16_777_215.0) as u32)
+                (
+                    l >= lod::FAR_FROM,
+                    e.model,
+                    e.decaying,
+                    e.clean,
+                    v,
+                    l,
+                    (e.depth.clamp(0.0, 1.0) * 16_777_215.0) as u32,
+                )
             });
             let mut draws: Vec<Draw> = Vec::new();
             for (l, v, e) in list {

@@ -931,6 +931,72 @@ frozen corpse into a persistent region of the bone texture, no per-frame upload)
 cached shadow contributions of static corpses (m2-shadowfix's files); incremental
 instance building for corpses (`3d.instances`, `models_prepare` 3.5 + 5.3 ms at +30 s).
 
+### The dead in the models pass (m2-perf3)
+
+**By kind.** `ACR_MODEL_DEBUG=<list>` (native, or `ACR_MODEL_DEBUG_FILE=<path>` re-read every
+frame to switch while running) leaves out or simplifies kinds of entries: `living`, `dead`,
+`dead_volumes`, `dead_plain`, `inner`, `caps`, `gore`, `holes`, `looks`; `old_inner` and
+`no_clean` restore the state before this work for A/B runs in one process
+(`ACR-analysis/perf3/ab.py`: the clash scene, each configuration 3–4 times interleaved,
+10 frames each; the GPU is shared with other sessions, so the minimum counts). At +30 s
+(models pass 74 ms, minimum of 3):
+
+| left out | models ms | the kind costs |
+|---|---:|---:|
+| nothing | 74.4 | |
+| the living | 38.1 | ≈ 36 |
+| corpses with wound volumes | 34.7 | **≈ 40** |
+| corpses without volumes | 70.1 | ≈ 4 |
+| caps and wound inserts | 69.0 | ≈ 5 |
+| blood, wounds, marks, spray (colour only) | 68.2 | ≈ 6 |
+| the volumes' `holes` test (still the `discard` pipeline) | 66.5 | ≈ 8 |
+| look variants | 64.5 | ≈ 10 |
+
+Under `gore=full` nearly every corpse carries wound volumes, so "the dead" are the wounded
+dead: they cost as much as all the living together. Their price is the `discard`
+pipeline (no early depth test on the tiler, `holes` evaluated for every fragment) and
+the inner layers, not the colour branches.
+
+**No `discard` where nothing drops (`fs_clean`, `fs_far_clean`, `fs_shadow_clean`).**
+`shade` takes a constant `clean`; its nine `discard`s are `if (!clean)`, which the compiler
+folds away. A part draws through the clean pipelines when the instance is intact
+(`Damage::is_none`), not half transparent and not dissolving (decay past the first dissolve
+window of any of its layers, `gore=full`), and its material has no alpha cut-out, is no
+stump cap and no wound cavity (`GpuModel::discards`). Clean parts draw first (near, then
+far), then the rest with the old pipelines; within each draw the instances go front to
+back. Shadow casters likewise: the clean ones with an empty fragment shader (depth only).
+The colour is unchanged: the same `shade`, and a clean entry's `discard`s could not fire.
+
+**Inner layers only when they can show.** The bone layer (a third of a man's triangles)
+was drawn for every corpse from its first tick of decay. Now, for a body with a rig, only
+once an outer layer dissolves (`GpuModel::opens_at`, the flesh at 0.20 under
+`gore=full`; never under `gore=reduced`) or when it is damaged (a wound or cut may show
+it). Gibs and pieces without a rig keep theirs from the start (a bone chunk's bone is
+outside), and animals (a guessed rig) are unchanged.
+
+| GPU ms (min / median of 4; +30 s: of 3) | before contact | contact | +30 s |
+|---|---:|---:|---:|
+| models main → m2-perf3 | 32.1 / 33.6 → **20.4 / 23.3** | 41.0 / 41.9 → **27.4 / 29.2** | 83.2 / 94.6 → **74.4 / 87.9** |
+| shadow map | 3.5 / 3.8 → 1.5 / 3.1 | 10.8 / 13.2 → 6.9 / 7.2 | 29.7 / 35.3 → 28.8 / 32.4 |
+| all passes | 52.9 / 57.7 → **35.4 / 37.7** | 59.2 / 66.1 → **46.9 / 48.7** | 123.5 / 146.2 → **109.5 / 127.2** |
+| `models_prepare` CPU | 2.3 → 2.2 | 4.5 → 3.5 | 7.6 → 6.4 |
+
+(`ACR-analysis/perf3/ab2.log`; an earlier run while another game shared the GPU,
+`ab1.log`, gave 2–3 × the times with the same direction.) The gain is largest while most
+men are alive and intact; at +30 s the wounded dead still draw with `discard`. Nothing
+changes visibly: the same frame paused, main against m2-perf3, differs only where the
+awake ragdolls move between two frames, as much as main against main
+(`ACR-analysis/perf3/closeup_main_new.png`: top main and m2-perf3 at zoom 4, below the
+pixels differing by more than 8 between two main frames and between main and m2-perf3).
+A first try that hid the inner layers of every intact corpse turned the gibs' bones flesh
+coloured, hence the rig test.
+
+Next levers for the dead: split a wounded corpse's parts by whether a volume can reach
+them (the capsules in the rest pose against each primitive's rest bounds), so only the
+parts around the wounds keep `discard`; that is ≈ 40 ms of the 74 at +30 s. Then a static
+pose for settled corpses (palette written once into a persistent region of the bone
+texture), cached shadows of static corpses, and incremental instance building.
+
 ### Input latency
 
 - **Hardware cursor** (native, `acr-game/src/hw_cursor.rs`): the cursor the interface
