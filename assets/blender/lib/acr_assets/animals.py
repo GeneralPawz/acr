@@ -653,6 +653,10 @@ def build(ctx, spec):
             m.data.color_attributes.remove(attr)
         while len(m.data.uv_layers) > 1:
             m.data.uv_layers.remove(m.data.uv_layers[-1])
+    if spec.get("recolour") == "black_bear":
+        from . import black_bear
+
+        black_bear.apply(arm, meshes)
     ctx.stats["source_triangles"] = sum(sum(len(p.vertices) - 2 for p in m.data.polygons) for m in meshes)
     ctx.stats["triangles"] = _decimate(meshes, spec.get("tris", 12000))
 
