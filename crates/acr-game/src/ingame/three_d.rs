@@ -132,6 +132,8 @@ pub struct ThreeD {
     /// paths in `acr_render::ground::texture_files` order), their contents as they come in
     /// and the decoded set waiting for the renderer.
     pub ground_detailed: bool,
+    /// The detailed ground's state draws craters and furrows: no flat dirt decals then.
+    pub ground_marks: bool,
     ground_files: Vec<Option<String>>,
     ground_data: Vec<Option<Vec<u8>>>,
     ground_requested: bool,
@@ -202,6 +204,7 @@ impl Default for ThreeD {
             frame_seconds: 0.0,
             focus: [0.0; 2],
             ground_detailed: true,
+            ground_marks: false,
             ground_files: Vec::new(),
             ground_data: Vec::new(),
             ground_requested: false,
@@ -802,7 +805,7 @@ impl ThreeD {
             super::debris::mist(hit, world.tick.0, self.gore, &ground, &mut self.pools);
         }
         // Earth churned up where rounds struck the ground (#226).
-        for impact in &world.impacts {
+        for impact in world.impacts.iter().filter(|_| !self.ground_marks) {
             super::splatter::impact(impact, world.tick.0, &ground, &mut self.pools);
         }
         // Every decal lies on the slope under it rather than flat at one height (#226).

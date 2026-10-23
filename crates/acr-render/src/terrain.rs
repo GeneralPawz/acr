@@ -450,6 +450,89 @@ struct MapTextures {
     height_range: (i32, i32),
 }
 
+/// The original view's zoom below which the detailed ground is not drawn.
+const DETAIL_MIN_ZOOM: f32 = 0.75;
+
+/// The ground state's textures (`ground_state.rs`): the atlas (RGBA8, filtered), the page
+/// table (R8Uint) and their bind group (group 3 of `ground.wgsl`), level ground at first.
+fn state_textures(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) -> (wgpu::Texture, wgpu::Texture, wgpu::BindGroupLayout, wgpu::BindGroup) {
+    use crate::ground_state::{ATLAS_SLOTS, PAGE_SIDE, TILE_TEXELS};
+    let side = (ATLAS_SLOTS * TILE_TEXELS) as u32;
+    let make = |label, size: u32, format| {
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d { width: size, height: size, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        })
+    };
+    let atlas = make("ground state", side, wgpu::TextureFormat::Rgba8Unorm);
+    let pages = make("ground state pages", PAGE_SIDE as u32, wgpu::TextureFormat::R8Uint);
+    queue.write_texture(
+        pages.as_image_copy(),
+        &vec![0u8; PAGE_SIDE * PAGE_SIDE],
+        wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(PAGE_SIDE as u32), rows_per_image: None },
+        wgpu::Extent3d { width: PAGE_SIDE as u32, height: PAGE_SIDE as u32, depth_or_array_layers: 1 },
+    );
+    let frag = wgpu::ShaderStages::FRAGMENT;
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("ground state"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: frag,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: frag,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Uint,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: frag,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
+    });
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("ground state"),
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        ..Default::default()
+    });
+    let atlas_view = atlas.create_view(&Default::default());
+    let pages_view = pages.create_view(&Default::default());
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("ground state"),
+        layout: &layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&atlas_view) },
+            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&pages_view) },
+            wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&sampler) },
+        ],
+    });
+    (atlas, pages, layout, group)
+}
+
 /// The detailed ground's uniform (`Detail` in `ground.wgsl`).
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -468,6 +551,10 @@ struct DetailGround {
     free_pipeline: wgpu::RenderPipeline,
     group: wgpu::BindGroup,
     depth: Option<((u32, u32), wgpu::TextureView)>,
+    /// The ground state (`ground_state.rs`): atlas, page table and their group (3).
+    state_atlas: wgpu::Texture,
+    state_pages: wgpu::Texture,
+    state_group: wgpu::BindGroup,
 }
 
 struct Target {
@@ -879,13 +966,14 @@ impl TerrainRenderer {
                 wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&sampler) },
             ],
         });
+        let (state_atlas, state_pages, state_layout, state_group) = state_textures(device, queue);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ground detail"),
             source: wgpu::ShaderSource::Wgsl(TERRAIN_DETAIL_SHADER.into()),
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("ground detail"),
-            bind_group_layouts: &[Some(&self.layout), None, Some(&layout)],
+            bind_group_layouts: &[Some(&self.layout), None, Some(&layout), Some(&state_layout)],
             immediate_size: 0,
         });
         // Over the original by the alpha (kept textures, water); the target's alpha stays.
@@ -938,8 +1026,43 @@ impl TerrainRenderer {
                 bias: Default::default(),
             }),
         );
-        self.detail =
-            Some(DetailGround { pipeline: pipeline("ground detail", None), free_pipeline, group, depth: None });
+        self.detail = Some(DetailGround {
+            pipeline: pipeline("ground detail", None),
+            free_pipeline,
+            group,
+            depth: None,
+            state_atlas,
+            state_pages,
+            state_group,
+        });
+    }
+
+    /// Uploads what changed in the ground state (docs/ground.md, phase 2), once the
+    /// detailed ground's textures are set.
+    pub fn upload_ground_state(&self, queue: &wgpu::Queue, state: &mut crate::ground_state::GroundState) {
+        use crate::ground_state::PAGE_SIDE;
+        let Some(detail) = &self.detail else { return };
+        if let Some(pages) = state.take_pages() {
+            queue.write_texture(
+                detail.state_pages.as_image_copy(),
+                pages,
+                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(PAGE_SIDE as u32), rows_per_image: None },
+                wgpu::Extent3d { width: PAGE_SIDE as u32, height: PAGE_SIDE as u32, depth_or_array_layers: 1 },
+            );
+        }
+        for (x, y, w, h, rows) in state.take_dirty() {
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &detail.state_atlas,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d { x, y, z: 0 },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &rows,
+                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4 * w), rows_per_image: None },
+                wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            );
+        }
     }
 
     /// Trampled soil (#223): darkens each vertex's light level by `amounts` (0..255 per
@@ -1159,7 +1282,9 @@ impl TerrainRenderer {
         // The detailed ground over the original (docs/ground.md); the zoomed-out view
         // stays the original.
         let drawn = self.drawn;
-        let Some(detail) = self.detail.as_mut().filter(|_| self.detailed && !zoomed && drawn > 0) else {
+        // Below zoom 0.75 the material mips have reached their mean: the original suffices.
+        let far = !view.is_free() && camera.scale < DETAIL_MIN_ZOOM;
+        let Some(detail) = self.detail.as_mut().filter(|_| self.detailed && !zoomed && !far && drawn > 0) else {
             return;
         };
         let out_size = output.texture().size();
@@ -1198,6 +1323,7 @@ impl TerrainRenderer {
         pass.set_pipeline(if depth.is_some() { &detail.free_pipeline } else { &detail.pipeline });
         pass.set_bind_group(0, &map.group, &[]);
         pass.set_bind_group(2, &detail.group, &[]);
+        pass.set_bind_group(3, &detail.state_group, &[]);
         pass.draw(0..drawn, 0..1);
     }
 

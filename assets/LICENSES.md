@@ -11,7 +11,7 @@ used locally only (its files and the models built from it are never committed).
 | WildMesh 3D "100 MODELS" (Realistic Animals: BrownBear, Buffalo, AmericanAligator, Leopard, Elk, Doe, ...) | the animals `assets/animals/*.py` (#287) | WildMesh 3D (https://www.patreon.com/wildmesh), partly with AnimalMesh 3D | WildMesh Standard License v1.1 (bought, `LICENSE-STANDARD.txt` next to the pack) | purchase, kept outside the repo; scripts read it via `ACR_SOURCES` |
 | Sparse Grass (`sparse_grass`) | detailed ground, class grass (docs/ground.md) | Amal Kumar (Poly Haven) | CC0 | https://polyhaven.com/a/sparse_grass |
 | Leafy Grass (`leafy_grass`) | detailed ground, class meadow (docs/ground.md) | Charlotte Baglioni (Poly Haven) | CC0 | https://polyhaven.com/a/leafy_grass |
-| Dry Ground 01 (`dry_ground_01`) | detailed ground, class dirt (docs/ground.md) | Rob Tuytel (Poly Haven) | CC0 | https://polyhaven.com/a/dry_ground_01 |
+| Dirt (`dirt`) | detailed ground, class dirt (docs/ground.md) | Charlotte Baglioni (Poly Haven) | CC0 | https://polyhaven.com/a/dirt |
 | Brown Mud 02 (`brown_mud_02`) | detailed ground, class mud (docs/ground.md) | Rob Tuytel (Poly Haven) | CC0 | https://polyhaven.com/a/brown_mud_02 |
 | Coast Sand 01 (`coast_sand_01`) | detailed ground, class sand (docs/ground.md) | Rob Tuytel (Poly Haven) | CC0 | https://polyhaven.com/a/coast_sand_01 |
 | Rocky Terrain 02 (`rocky_terrain_02`) | detailed ground, class rock (docs/ground.md) | Amal Kumar (Poly Haven) | CC0 | https://polyhaven.com/a/rocky_terrain_02 |

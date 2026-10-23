@@ -7,6 +7,7 @@
 pub mod damage;
 pub mod fog;
 pub mod ground;
+pub mod ground_state;
 pub mod image;
 pub mod layers;
 pub mod looks;

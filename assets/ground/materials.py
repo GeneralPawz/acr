@@ -6,7 +6,7 @@ The order is the layer order of the texture arrays; keep it in sync with
 SETS = {
     "grass": "sparse_grass",
     "meadow": "leafy_grass",
-    "dirt": "dry_ground_01",
+    "dirt": "dirt",
     "mud": "brown_mud_02",
     "sand": "coast_sand_01",
     "rock": "rocky_terrain_02",

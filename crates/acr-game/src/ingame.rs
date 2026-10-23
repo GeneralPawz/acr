@@ -30,6 +30,7 @@ mod dip;
 mod effects;
 mod gait_view;
 mod gore;
+mod ground_marks;
 mod interface;
 mod living_wounds;
 mod maul_view;
@@ -62,6 +63,11 @@ pub struct InGame {
     terrain: Option<TerrainData>,
     /// Trampled soil (render only, #223).
     trample: Option<trample::Trample>,
+    /// Marks in the detailed ground's state (docs/ground.md, phase 2; render only): in
+    /// detailed mode they replace the trample darkening and the dirt decals.
+    ground_marks: Option<ground_marks::GroundMarks>,
+    /// The trample darkening is cleared while the ground marks are on.
+    trample_cleared: bool,
     renderer: Option<TerrainRenderer>,
     /// The fog of war over the map view.
     fog_renderer: Option<FogRenderer>,
@@ -142,6 +148,8 @@ impl InGame {
             map: None,
             terrain: None,
             trample: None,
+            ground_marks: None,
+            trample_cleared: false,
             renderer: None,
             fog_renderer: None,
             uploaded: false,
@@ -329,6 +337,14 @@ impl InGame {
         self.world = Some(world);
     }
 
+    /// Whether the detailed ground's marks are drawn (3D mode, `ground=detailed`, textures
+    /// loaded).
+    fn ground_marks_on(&self) -> bool {
+        self.three_d.active()
+            && self.three_d.ground_detailed
+            && self.renderer.as_ref().is_some_and(TerrainRenderer::has_materials)
+    }
+
     /// Creates the renderer and uploads the map when both GPU and data are there.
     pub fn sync_gpu(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) {
         if self.renderer.is_none()
@@ -341,10 +357,23 @@ impl InGame {
             renderer.set_map(device, queue, terrain);
             self.uploaded = true;
         }
-        if let (Some(renderer), Some(trample)) = (&self.renderer, &mut self.trample)
-            && let Some(amounts) = trample.take_upload()
-        {
-            renderer.set_trample(queue, &amounts);
+        let marks_on = self.ground_marks_on();
+        self.three_d.ground_marks = marks_on;
+        if let (Some(renderer), Some(marks), true) = (&self.renderer, &mut self.ground_marks, marks_on) {
+            renderer.upload_ground_state(queue, &mut marks.state);
+        }
+        if let (Some(renderer), Some(trample)) = (&self.renderer, &mut self.trample) {
+            if marks_on {
+                // The ground state's compression replaces the per-vertex darkening.
+                if !std::mem::replace(&mut self.trample_cleared, true) {
+                    renderer.set_trample(queue, &vec![0; trample.len()]);
+                }
+            } else if let Some(amounts) = trample
+                .take_upload()
+                .or_else(|| std::mem::take(&mut self.trample_cleared).then(|| trample.force_upload()))
+            {
+                renderer.set_trample(queue, &amounts);
+            }
         }
         self.objects.sync_gpu(device, queue, format);
         self.three_d.sync_gpu(device, queue, format);
@@ -562,6 +591,7 @@ impl InGame {
                 self.save.log.dialog(world.tick.0, answer);
             }
         }
+        let marks_on = self.ground_marks_on();
         // A loaded game replays up to its saved tick first.
         if !self.fast_forward(seconds)
             && let Some(world) = &mut self.world
@@ -608,6 +638,9 @@ impl InGame {
                     self.trample
                         .get_or_insert_with(|| trample::Trample::new(terrain.width, terrain.height))
                         .tick(world);
+                }
+                if marks_on {
+                    self.ground_marks.get_or_insert_with(Default::default).tick(world);
                 }
             }
             self.requests.borrow_mut().extend(self.mission.take_requests());
