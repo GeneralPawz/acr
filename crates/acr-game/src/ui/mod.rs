@@ -176,6 +176,8 @@ pub struct Ui {
     in_game: bool,
     /// The game's cursor frame of `CURSOR_00.GP` and its hotspot, while no dialog is open.
     game_cursor: Option<(usize, [i32; 2])>,
+    /// The window shows the cursor as the system's (hardware) cursor: [`Ui::draws`] leaves it out.
+    hardware_cursor: bool,
     saves: Box<dyn acr_app::saves::SaveStore>,
     profiles: Box<dyn acr_app::saves::SaveStore>,
     /// Where the options are kept between runs (ACR's `settings.txt`, see
@@ -205,6 +207,7 @@ impl Ui {
             profile: Default::default(),
             in_game: false,
             game_cursor: None,
+            hardware_cursor: false,
             saves: Box::new(acr_app::saves::MemorySaves::default()),
             profiles: Box::new(acr_app::saves::MemorySaves::default()),
             settings_store: None,
@@ -262,6 +265,29 @@ impl Ui {
     /// The game's cursor (`CURSOR_00.GP` frame and hotspot); `None` shows the menu cursor.
     pub fn set_game_cursor(&mut self, cursor: Option<(usize, [i32; 2])>) {
         self.game_cursor = cursor;
+    }
+
+    /// The cursor is the window's system cursor from now on (`true`), or drawn again.
+    pub fn set_hardware_cursor(&mut self, on: bool) {
+        self.hardware_cursor = on;
+    }
+
+    /// The cursor's draw relative to the mouse (its sprite and where its origin lies), as
+    /// [`Ui::draws`] places it; `None` while the mouse is outside the window.
+    pub fn cursor_draw(&self) -> Option<Draw> {
+        self.mouse?;
+        Some(match self.game_cursor {
+            _ if self.in_game && !self.stack.is_empty() => Draw::game_frame(crate::hud::cursor::GP, 0, 0, 0, 0),
+            Some((frame, [hx, hy])) if self.in_game => Draw::game_frame(crate::hud::cursor::GP, frame, -hx, -hy, 0),
+            _ => Draw::frame(CURSOR, 0, 0, 0),
+        })
+    }
+
+    /// The cursor `draw`'s image and the offset of its top-left pixel from the mouse, or
+    /// `None` while its files load.
+    pub fn cursor_image(&self, draw: &Draw) -> Option<(acr_formats::raster::Image, [i32; 2])> {
+        let (image, offset) = draw::rasterize(&self.lib, &self.fonts, &draw.sprite)??;
+        Some((image, [draw.x + offset[0], draw.y + offset[1]]))
     }
 
     /// The mouse in canvas coordinates while the game has the input.
@@ -626,17 +652,8 @@ impl Ui {
         self.textures.resolve(device, queue, images, &self.lib, &self.fonts, canvas, &draws, &mut out);
         // The cursor goes anywhere in the window, also beside the menu canvas.
         let mut draws = Vec::new();
-        if let Some([x, y]) = self.mouse {
-            let (x, y) = (x.floor() as i32, y.floor() as i32);
-            match self.game_cursor {
-                _ if self.in_game && !self.stack.is_empty() => {
-                    draws.push(Draw::game_frame(crate::hud::cursor::GP, 0, x, y, 0))
-                }
-                Some((frame, [hx, hy])) if self.in_game => {
-                    draws.push(Draw::game_frame(crate::hud::cursor::GP, frame, x - hx, y - hy, 0))
-                }
-                _ => draws.push(Draw::frame(CURSOR, 0, x, y)),
-            }
+        if let (Some([x, y]), Some(cursor), false) = (self.mouse, self.cursor_draw(), self.hardware_cursor) {
+            draws.push(cursor.translated(x.floor() as i32, y.floor() as i32));
         }
         let window = Canvas { clip: Rect::ALL, ..*canvas };
         self.textures.resolve(device, queue, images, &self.lib, &self.fonts, &window, &draws, &mut out);

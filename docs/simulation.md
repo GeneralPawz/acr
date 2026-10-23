@@ -1675,6 +1675,12 @@ No game option writes it. How the map view draws the fog is in
   then places the map's units.
 - **Running.** `World::step(&commands)` runs one tick (`ORIGINAL_TICKS_PER_SECOND` = 10 for
   the original speed, paced by `FixedClock`). Commands are applied first, in order.
+  The game's frame (`acr-game` `Game::redraw`): winit delivers the window's input events
+  first (they only record state and queue commands), then `advance` runs the due ticks
+  (at most 4 per frame; time beyond is dropped, the game slows instead of spiralling) and
+  builds the 3D frame, then the cursor is set (a system cursor natively, docs/rendering-3d.md
+  "Input latency"), then the frame is drawn and presented. `acr_sim::prof` times the
+  parts (`ACR_PROFILE`, the driver's `profile`).
 - **Drawing.** For each unit with `alive` set (corpses included), use:
   - `pos` (1/16 px; `pos.pixels()`) and `dir` (0 = east, 64 = south);
   - `anim.name()`, the `.MD` animation slot such as `#MOTION_L`, `#ATTACK1`, `#DEATH`,

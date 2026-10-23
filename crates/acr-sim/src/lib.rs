@@ -44,6 +44,7 @@ pub mod motion;
 pub mod path;
 pub mod peace;
 pub mod predict;
+pub mod prof;
 pub mod projectile;
 pub mod replay;
 pub mod rng;

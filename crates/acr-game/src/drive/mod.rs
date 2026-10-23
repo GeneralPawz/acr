@@ -838,6 +838,17 @@ impl Driver {
                 job.reply.insert("impact".into(), impact);
                 Ok(false)
             }
+            Request::Profile => {
+                acr_sim::prof::enable(true);
+                let totals: serde_json::Map<String, serde_json::Value> = acr_sim::prof::take()
+                    .into_iter()
+                    .map(|(name, nanos, calls)| {
+                        (name.to_owned(), serde_json::json!({"ms": nanos as f64 / 1e6, "calls": calls}))
+                    })
+                    .collect();
+                job.reply.insert("profile".into(), totals.into());
+                Ok(false)
+            }
             Request::GpuTime(frames) => {
                 let timing = shot::gputime(game, frames)?;
                 job.reply.insert("gputime".into(), timing);

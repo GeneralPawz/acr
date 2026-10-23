@@ -183,6 +183,13 @@ impl Damage {
         *self == Damage::default()
     }
 
+    /// Anything but wound volumes: cuts, fractures, a torn trunk, the head or belly, a
+    /// severed piece. Wound volumes alone discard by the rest position (`holes` in
+    /// model.wgsl), which the far meshes keep, so they need no part borders.
+    pub fn splits_parts(&self) -> bool {
+        Damage { volumes: Default::default(), volumes_len: 0, ..*self } != Damage::default()
+    }
+
     pub fn limb(&self, l: Limb) -> &LimbDamage {
         &self.limbs[l as usize]
     }

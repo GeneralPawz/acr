@@ -831,6 +831,101 @@ the driver's stderr (where a stack overflow is reported) and prints the exit cod
 early end. Twelve runs (lod on, off, shadows off; main and this branch) did not reproduce
 the silent exit.
 
+## Where a battle's frame goes (m2-perf)
+
+The user's report: a big battle turns "almost unplayable (mouse lag)" once the formations
+clash, not before. **Profiler:** `acr_sim::prof` (named scopes, native only, no effect on
+the simulation's state): `ACR_PROFILE=1` logs every 5 s the frame rate and ms per frame per
+scope (`frame.advance`, `frame.acquire`, `frame.render_cpu`, `frame.present`, `sim.*`,
+`3d.*`, `rag.*`, `render.models_prepare`; `ticks`, `rag.steps(count)` and
+`rag.awake(count)` are counts shown as "ms"); the driver's `{"cmd":"profile"}` returns the
+totals since its last call. **Scene:** `ACR-analysis/perf/clash.py`: 700 against 700
+musketeers (melee only) meet on the blank field, hit locations, body spacing, gore full,
+models all, 1600 × 900, zoom 1; measured before contact, at contact (50 ticks) and 30 s
+later (50 ticks). CPU per driver frame (one tick, 0.1 s of game time, so the ragdolls run
+their 4 steps), GPU from `gputime` (10 frames). Snapdragon X; runs in
+`ACR-analysis/perf/clash_base2` (main) and `clash_new` (m2-perf).
+
+| ms per frame | before contact | contact main → m2-perf | +30 s main | +30 s m2-perf |
+|---|---:|---:|---:|---:|
+| sim tick (`sim.step`) | 1.3–2.3 | 3.2 → 2.6 | 3.1 | 2.5 |
+| · units (motion, paths) / spacing / victim search | 0.4 / 1.3 / 0.5 | 1.5 / 1.1 / 0.6 | 1.6 / 0.8 / 0.7 | |
+| 3D update (`3d.update`) | 2.5–3.5 | 23.6 → 9.1 | **52.2** | **18.7** |
+| · ragdoll physics (`rag.physics`) | 0 | 18.9 → 5.5 | **43.1** | **12.5** |
+| · awake ragdolls | 0 | 34 → 12 | 56 | 12 |
+| · instances / debris and decals / piles | 1.6–2.0 / 0 / 0 | 2.5 / 0.4 / 0 | 4.5 / 1.4 / 0.2 | 3.3 / 1.2 / 0.2 |
+| · cloth / gear / gaits / strikes | 0.02 / 0.14 / 0.3 / 0.4 | | 0.16 / 0.18 / 0.2 / 1.0 | 0.11 / 0.16 / 0.1 / 0.7 |
+| render CPU (of it `models_prepare`) | 3.6–6.1 (1.7–2.1) | 10.6 → 5.0 | 9.2 (5.7) | 7.7 (4.9) |
+| GPU models | 21–25 | 36 → 29 | **105** | **61** |
+| GPU shadow map | 31–37 | 48 → 43 | 87 | 64 |
+| GPU all passes | 54–65 | 87 → 74 | **196** | **128** |
+
+Ticks per frame never exceed the clock's cap of 4, and the simulation is not the problem
+(at most 3.2 ms a tick: body spacing, combat and paths together). The clash triggered two
+costs that grow with the fight:
+
+1. **Ragdoll physics** (CPU): the budget (60 awake on this machine) came from a
+   calibration of 66 µs per ragdoll step on flat ground; in the pile a step cost about
+   260 µs per ragdoll, and a slow frame steps up to 4 times, so physics took 43 ms per
+   frame and made the frames slower still. Now the budget follows the measured cost
+   (`docs/body-sim.md`, Budget): 12 awake in this scene, 12.5 ms. The others keep their
+   death clips (as beyond the budget before); those nearest the window centre get
+   ragdolls first.
+2. **Shot corpses drawn whole** (GPU): every instance with any `Damage` was held at
+   level 1 or finer (`lod::DAMAGED_UP_TO`), and under gore full every man shot or stabbed
+   carries wound volumes, so the battlefield's corpses and wounded drew their full
+   primitives. Wound volumes discard by the rest position (`holes` in model.wgsl), which
+   the far meshes keep; only cuts, fractures, a torn trunk, an open belly or a severed
+   piece need the part borders. The drawn list now caps only those
+   (`Damage::splits_parts`, the entry's `split`); the shadow casters' list is unchanged
+   (m2-shadowfix's). Models pass 105 → 61 ms; the frames of both runs look alike
+   (`ACR-analysis/perf/after30s_base_vs_new.png`, top main, bottom m2-perf). The shadow
+   map's drop (87 → 64) is mostly this tiler's run-to-run shift between passes (the
+   unchanged "before contact" frames moved 61 → 54 ms too).
+
+### Input latency
+
+- **Hardware cursor** (native, `acr-game/src/hw_cursor.rs`): the cursor the interface
+  draws (`CURSOR_00.GP` in the game with its animation and hotspots, `CURSOR_01.GP` in the
+  menus) becomes the window's system cursor (winit `CustomCursor`; the frame scaled with
+  bilinear filtering as the interface draws it, cached per frame and scale), and the
+  interface leaves it out of the frame. The pointer moves at the display's rate however
+  slowly the game draws. While a cursor's file loads it is drawn as before;
+  `ACR_SOFT_CURSOR` keeps the drawn cursor, and so do the test driver (its screenshots show
+  the cursor) and the browser.
+- **Frame queue:** the swapchain queues one frame (`desired_maximum_frame_latency` 1;
+  `ACR_FRAME_LATENCY` 1–3 overrides; the present mode stays the default, vsync). The game
+  runs the simulation and builds the 3D frame before it acquires the swapchain image, so
+  that work still overlaps the GPU's previous frame; only the command encoding waits.
+  With the GPU at 60–130 ms per frame in a big fight, a second queued frame added as much
+  again between an order and its sight.
+- **Input events** were already handled before each frame (winit's `window_event` only
+  records state and queues commands; `about_to_wait` requests the redraw), never behind
+  sim ticks.
+
+Latency was judged by design, not measured end to end (no input from the driver reaches the
+OS cursor): with the system cursor the pointer is the compositor's, at display rate (a
+mouse move to its sight ≈ one display refresh instead of one to three game frames, 60–400 ms
+in the clash before); an order's effect shows one game frame sooner. To try it: a big
+battle (or the blank field with two large armies), move the mouse over the fighting as
+the frame rate drops; `ACR_SOFT_CURSOR=1 ACR_FRAME_LATENCY=2` gives the old behaviour for
+comparison, `ACR_PROFILE=1` writes the breakdown to the log.
+
+### Next levers (measured, not done)
+
+- **GPU, the largest:** 128 ms per frame 30 s into the clash; models and shadow map are
+  about equal. The shadow casters of damaged instances are still held at level 1
+  (m2-shadowfix's list; the same `split` test would apply there). Static corpses (settled
+  ragdolls and lying clips) are skinned every frame; a cached pose or a baked mesh would
+  spare their vertex work. `fs_main`'s gore branches already test per-instance values,
+  so flags alone would gain little.
+- **Ragdoll cost per step** is 4 × the calibration in a pile: the frozen corpses of the
+  pool (96) still collide with the falling. Fewer frozen bodies kept, or contacts against
+  the awake only, would let more ragdolls run in the same 4 ms; the physics could also
+  step on a worker thread (native), overlapping the GPU.
+- **Render CPU** (5–8 ms, `models_prepare` 2–5 ms) and **3D instances** (2–4.5 ms) grow
+  with the corpses; both are per-instance loops that rayon could split (native).
+
 ## Development aids
 
 `ACR_3D_COMPARE` (native only) compares models with their sprites: `overlay` draws the

@@ -18,6 +18,8 @@ pub fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().collect();
     let drive = crate::drive::Options::from_args(&args);
     init_logging(drive.is_some());
+    // Where the frames' time goes, logged every 5 s (docs/rendering-3d.md).
+    acr_sim::prof::enable(std::env::var_os("ACR_PROFILE").is_some());
     if drive.is_some() {
         // The driver answers on stdout; errors go there too, not into a message box.
         return match run(drive) {

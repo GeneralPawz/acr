@@ -179,6 +179,11 @@ are piled. The renderer takes a palette from it per instance
   30 steps, best of three; awake ragdolls = floor(4000 µs / cost). Logged as
   `3d: ragdoll budget N awake (C µs per ragdoll step, ...)` (66 at 60 µs on the loaded dev
   machine). New hits beyond it keep their clips; hits nearest the window centre go first.
+  The budget then follows the measured cost (m2-perf): in a dense pile a step cost about
+  260 µs per awake ragdoll (4 × the calibration) and a slow frame runs up to 4 steps, so
+  56 awake ragdolls took 43 ms of every frame 30 s into a 700-against-700 melee. Now new
+  ragdolls start only while awake < 4000 µs / (measured µs per ragdoll step × steps per
+  frame), both running means, at most the calibration's and at least `MIN_AWAKE` (12).
 - **Bench:** `ACR-analysis/ragdoll/bench_ragdoll.py` (with `ACR_EXE`): six men in a row
   seen from the side — a musket wound from the front, musket kills from the side and the
   front, a cannonball kill, a crawler killed, a musket wound in the leg; 24 frames, one per

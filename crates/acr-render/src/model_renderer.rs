@@ -311,6 +311,10 @@ struct Entry {
     /// Cut, fractured, torn or a severed piece ([`Damage`]): never drawn from the far
     /// meshes, whose welded triangles span body parts ([`lod::DAMAGED_UP_TO`]).
     damaged: bool,
+    /// Damaged other than by wound volumes alone ([`Damage::splits_parts`]): the drawn
+    /// list keeps such an instance at [`lod::DAMAGED_UP_TO`]; volumes alone draw from the
+    /// far meshes (m2-perf: a battlefield of shot corpses otherwise drew whole).
+    split: bool,
     origin: [f32; 3],
     /// Culling radius (world pixels).
     radius: f32,
@@ -1201,6 +1205,7 @@ impl ModelRenderer {
                 variant,
                 on_screen,
                 damaged: !inst.damage.is_none(),
+                split: inst.damage.splits_parts(),
                 origin,
                 radius: model.radius * stretch,
             });
@@ -1382,7 +1387,7 @@ impl ModelRenderer {
             .iter()
             .filter(|e| e.on_screen)
             .map(|e| {
-                let l = if e.damaged { level[e.model].min(lod::DAMAGED_UP_TO) } else { level[e.model] };
+                let l = if e.split { level[e.model].min(lod::DAMAGED_UP_TO) } else { level[e.model] };
                 (l, e.variant.filter(|_| l <= lod::LOOKS_UP_TO), e)
             })
             .collect();

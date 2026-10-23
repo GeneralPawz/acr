@@ -225,6 +225,9 @@ pub enum Request {
     Impact(Value),
     /// `{"cmd":"gputime","frames":n}`: GPU milliseconds per pass, from timestamp queries.
     GpuTime(u32),
+    /// `{"cmd":"profile"}`: CPU milliseconds per profiler scope (`acr_sim::prof`) since
+    /// the last call, which also switches the profiler on.
+    Profile,
     /// `count` screenshots, one every `every` frames, into `dir` as `<prefix>NNN.png`.
     Record {
         dir: String,
@@ -529,6 +532,7 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
         "spawn" => Request::Spawn(v.clone()),
         "hit" => Request::Hit(v.clone()),
         "impact" => Request::Impact(v.clone()),
+        "profile" => Request::Profile,
         "gputime" => Request::GpuTime(uint(&v, "frames").unwrap_or(30).clamp(1, 1000) as u32),
         "record" => Request::Record {
             dir: string(&v, "dir").ok_or("record: missing \"dir\"")?,

@@ -514,6 +514,7 @@ impl ThreeD {
         };
         // Wounds where this tick's hits struck (#277), kept for the drawn and their corpses.
         let facing = |v: u32| world.units.get(v as usize).filter(|u| u.id.0 == v && !u.building).map(|u| u.dir);
+        let instances_scope = acr_sim::prof::Scope::new("3d.instances");
         self.wounds.take_hits(world.hits.iter(), now, self.gore, &facing);
         self.wounds.retain(&|v| world.units.get(v as usize).is_some_and(|u| u.id.0 == v && (u.alive || lingering(u))));
         for u in world.units.iter().filter(|u| (u.alive || lingering(u)) && u.inside_of.is_none()) {
@@ -726,6 +727,8 @@ impl ThreeD {
             self.instances.push(inst);
             self.shown.insert(u.id);
         }
+        drop(instances_scope);
+        let spray_scope = acr_sim::prof::Scope::new("3d.spray_trail");
         // Blood sprayed onto troops and buildings behind hit units (#220).
         for (i, sprayed) in super::splatter::sprayed_targets(&world.hits, world.tick.0, self.gore, &targets) {
             if !machines.contains(&targets[i].unit) {
@@ -748,7 +751,9 @@ impl ThreeD {
         }
         self.trail.expire(now);
         self.trail.pools(now, &mut self.pools);
+        drop(spray_scope);
         // Corpses that overlap lie on each other (#221).
+        let piles_scope = acr_sim::prof::Scope::new("3d.piles");
         let start = web_time::Instant::now();
         let rests = piles::stack(&footprints);
         self.pile_us += start.elapsed().as_micros();
@@ -770,6 +775,7 @@ impl ThreeD {
                 self.instances[i].transform = view3d::model_matrix_tilted(ground, yaw, 1.0, rest.pitch, rest.roll);
             }
         }
+        drop(piles_scope);
         // Animals stand over the men they maul (#276), before the ragdolls take the pose.
         {
             let renderer = self.renderer.as_ref();
@@ -797,6 +803,7 @@ impl ThreeD {
             self.maulers.place(world, self.frame_seconds, &rigged, &mut self.instances, &rig, &lying, &ground);
         }
         self.update_ragdolls(world, terrain, &rigged, &riders);
+        acr_sim::prof_scope!("3d.debris_decals");
         // Appended last: the indices above refer to one instance per unit.
         for (i, damage) in pieces {
             let body = self.instances[i];
@@ -910,7 +917,10 @@ impl ThreeD {
         let (drawn, mounted) = (drawn_of(rigged), drawn_of(riders));
         let hits: Vec<_> = world.hits.iter().collect();
         let killed = |v: u32| world.units.get(v as usize).is_none_or(|u| u.id.0 != v || !u.alive || u.death > 0);
-        ragdolls.update(world.tick.0, self.frame_seconds, &hits, &drawn, &mounted, self.focus, terrain, &killed);
+        {
+            acr_sim::prof_scope!("3d.ragdolls");
+            ragdolls.update(world.tick.0, self.frame_seconds, &hits, &drawn, &mounted, self.focus, terrain, &killed);
+        }
         for &i in ragdolls.poses.keys() {
             // The physics pose replaces the lying pose's flattening.
             self.instances[i].morphs[1] = 0.0;
@@ -918,10 +928,12 @@ impl ThreeD {
         // The skirts swing over the clip, the gait and the ragdoll (after the flattening:
         // a man on his clip keeps his morphs).
         if std::env::var_os("ACR_NO_CLOTH").is_none() {
+            acr_sim::prof_scope!("3d.cloth");
             self.skirts.update(self.frame_seconds, &drawn, self.focus, terrain, &mut ragdolls.poses);
         }
         // Knapsacks, quivers and the slung musket lag and bob on the living (`ACR_NO_GEAR` off).
         if std::env::var_os("ACR_NO_GEAR").is_none() {
+            acr_sim::prof_scope!("3d.gear");
             self.carried.update(self.frame_seconds, &[&drawn, &mounted], self.focus, &mut ragdolls.poses);
         }
     }
@@ -971,7 +983,10 @@ impl ThreeD {
         }
         renderer.shadows = shadows_override().unwrap_or(self.shadows);
         renderer.lods = self.lod;
-        renderer.prepare(device, queue, &view3d, shown, self.gore == Gore::Full);
+        {
+            acr_sim::prof_scope!("render.models_prepare");
+            renderer.prepare(device, queue, &view3d, shown, self.gore == Gore::Full);
+        }
         renderer.prepare_pools(device, queue, if models_phase { &self.pools[..] } else { &[] });
         let sprites = objects.prepare(
             device,
@@ -1278,7 +1293,11 @@ impl super::InGame {
         let c = self.camera;
         self.three_d.focus = [c.x + w / (2.0 * c.scale), 2.0 * (c.y + h / (2.0 * c.scale))];
         let requests = &self.requests;
-        self.three_d.update(world, terrain, &self.objects, &|p| requests.borrow_mut().push(p.to_owned()));
+        {
+            acr_sim::prof_scope!("3d.update");
+            self.three_d.update(world, terrain, &self.objects, &|p| requests.borrow_mut().push(p.to_owned()));
+        }
+        acr_sim::prof_scope!("3d.particles");
         self.three_d.update_particles(world, terrain, self.ground_marks.as_mut());
     }
 }

@@ -39,6 +39,15 @@ pub fn spawn(future: impl Future<Output = ()> + 'static) {
     wasm_bindgen_futures::spawn_local(future);
 }
 
+/// The frames the swapchain may queue: 1, or `ACR_FRAME_LATENCY` (native, 1–3).
+fn frame_latency() -> u32 {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(n) = std::env::var("ACR_FRAME_LATENCY").ok().and_then(|v| v.parse::<u32>().ok()) {
+        return n.clamp(1, 3);
+    }
+    1
+}
+
 pub struct Gpu {
     pub surface: wgpu::Surface<'static>,
     pub device: wgpu::Device,
@@ -86,9 +95,21 @@ impl Gpu {
             panic!("wgpu error: {error}");
         }));
         let size = window.inner_size();
-        let config = surface
+        let mut config = surface
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
             .ok_or("surface not supported by adapter")?;
+        // Low latency (docs/rendering-3d.md, "Input latency"): one frame queued instead of
+        // two, so what the player does shows a frame sooner when the GPU is the bottleneck.
+        // The game prepares the next frame (simulation, models) before it asks for the
+        // swapchain image, so that work still overlaps the GPU's previous frame.
+        // `ACR_FRAME_LATENCY` (native) overrides it.
+        config.desired_maximum_frame_latency = frame_latency();
+        log::info!(
+            "surface: {:?}, {} frame(s) queued, {:?}",
+            config.present_mode,
+            config.desired_maximum_frame_latency,
+            config.format
+        );
         surface.configure(&device, &config);
         Ok(Self { surface, device, queue, config })
     }

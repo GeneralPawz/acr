@@ -938,13 +938,17 @@ impl World {
     /// Advances the world by one tick: applies the commands in order, then runs every unit
     /// once, player by player (`LongProcesses`, 0x5112aa).
     pub fn step(&mut self, commands: &[Command]) {
+        crate::prof_scope!("sim.step");
         self.sounds.clear();
         self.born.clear();
         self.captured.clear();
         crate::combat::forget_hits(self);
         self.shouts.clear();
         crate::morale::decay(self);
-        crate::wounds::bleed(self);
+        {
+            crate::prof_scope!("sim.bleed");
+            crate::wounds::bleed(self);
+        }
         crate::body::get_up(self);
         crate::ground_fire::tick(self);
         for c in commands {
@@ -957,15 +961,22 @@ impl World {
         if let Some(def) = &self.catalog.market {
             self.market.process(def);
         }
-        crate::formation::run_brigades(self);
+        {
+            crate::prof_scope!("sim.brigades");
+            crate::formation::run_brigades(self);
+        }
         self.buckets.rebuild(self.map.land.width, &self.units);
         crate::economy::census(self, (self.tick.0 & 7) as u8);
         crate::economy::upkeep(self);
-        crate::combat::search_victims(self);
+        {
+            crate::prof_scope!("sim.search_victims");
+            crate::combat::search_victims(self);
+        }
         crate::ship::process_fishing(self);
         if self.tick.0 & 255 == 0 {
             crate::economy::bind_mines(self);
         }
+        let units_scope = crate::prof::Scope::new("sim.units");
         for player in 0..PLAYERS as u8 {
             for i in 0..self.units.len() {
                 let u = &self.units[i];
@@ -993,11 +1004,21 @@ impl World {
                 }
             }
         }
-        crate::spacing::separate(self);
+        drop(units_scope);
+        {
+            crate::prof_scope!("sim.spacing");
+            crate::spacing::separate(self);
+        }
         crate::capture::run(self);
-        crate::combat::object_loop(self);
+        {
+            crate::prof_scope!("sim.object_loop");
+            crate::combat::object_loop(self);
+        }
         crate::sprite::time_step(self);
-        crate::projectile::process(self);
+        {
+            crate::prof_scope!("sim.projectiles");
+            crate::projectile::process(self);
+        }
         self.tick.0 += 1;
     }
 

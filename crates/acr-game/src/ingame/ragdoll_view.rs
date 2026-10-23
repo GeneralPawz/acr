@@ -13,7 +13,11 @@
 //!   place of `DEATHLIE1`.
 //! - Budget: at most `budget` awake ragdolls, from a calibration at startup (the cost of a
 //!   ragdoll step against [`FRAME_BUDGET_US`]); nearest to the camera first. Above it the
-//!   clips play as before.
+//!   clips play as before. The budget follows the measured cost (m2-perf): in a dense
+//!   pile a step costs about three times the calibration, and a slow frame runs several
+//!   steps, so the awake ragdolls allowed are [`FRAME_BUDGET_US`] over the measured cost of
+//!   one ragdoll's steps per frame (never above the calibration, never below
+//!   [`MIN_AWAKE`]).
 //!
 //! Axes: physics is right-handed, metres, `x` east, `y` north, `z` up (`world / 30` with `y`
 //! negated); the skeleton space of skeleton H turned by the facing is the physics space
@@ -35,6 +39,8 @@ use acr_sim::world::Unit;
 /// Frame time given to body physics (µs): the budget of awake ragdolls is this over the
 /// measured cost of one ragdoll step.
 pub const FRAME_BUDGET_US: f64 = 4000.0;
+/// Awake ragdolls always allowed, however slow the steps.
+pub const MIN_AWAKE: usize = 12;
 /// Ragdolls kept in the physics world: the awake ones plus frozen corpses that still block
 /// falling bodies. Beyond it the oldest corpse keeps its pose but leaves the physics.
 const POOL: usize = 96;
@@ -484,6 +490,9 @@ pub struct Ragdolls {
     rig: acr_physics::gait::Rig,
     /// Awake ragdolls allowed (from the calibration).
     budget: usize,
+    /// Measured: µs per awake ragdoll and step, and steps per frame (running means).
+    step_cost_us: f64,
+    steps_per_frame: f64,
     time: f32,
     stepped: f32,
     last_tick: u64,
@@ -513,6 +522,8 @@ impl Default for Ragdolls {
             names: bone_names(),
             rig: acr_physics::gait::Rig::new(&skeleton_h()),
             budget,
+            step_cost_us: cost_us,
+            steps_per_frame: 1.0,
             time: 0.0,
             stepped: 0.0,
             last_tick: 0,
@@ -664,6 +675,24 @@ impl Ragdolls {
             .as_ref()
     }
 
+    /// Folds this frame's physics time (`us` for `steps` steps of `awake` ragdolls) into the
+    /// running means behind [`Self::allowed`].
+    fn measure(&mut self, us: f64, steps: usize, awake: usize) {
+        const K: f64 = 0.1;
+        if us.is_finite() && steps > 0 && awake >= 4 {
+            let per = us / (steps * awake) as f64;
+            self.step_cost_us += K * (per - self.step_cost_us);
+        }
+        self.steps_per_frame += K * (steps as f64 - self.steps_per_frame);
+    }
+
+    /// Awake ragdolls allowed now: [`FRAME_BUDGET_US`] over the measured cost of one
+    /// ragdoll's steps per frame, at most the calibration's and at least [`MIN_AWAKE`].
+    fn allowed(&self) -> usize {
+        let per_frame = self.step_cost_us.max(1.0) * self.steps_per_frame.max(1.0);
+        ((FRAME_BUDGET_US / per_frame) as usize).clamp(MIN_AWAKE.min(self.budget), self.budget)
+    }
+
     /// Awake ragdolls.
     fn awake(&self) -> usize {
         self.actors.values().filter(|a| a.frozen.is_none()).count()
@@ -763,7 +792,7 @@ impl Ragdolls {
                 continue;
             }
             let known = self.actors.contains_key(&hit.victim);
-            if !known && self.awake() >= self.budget {
+            if !known && self.awake() >= self.allowed() {
                 continue;
             }
             if self.mapping(d.model, d.data).is_none() {
@@ -780,10 +809,15 @@ impl Ragdolls {
                 a.died = time;
             }
         }
+        let scope = acr_sim::prof::Scope::new("rag.drive");
         self.drive(drawn, &by_unit, terrain);
+        drop(scope);
+        let scope = acr_sim::prof::Scope::new("rag.physics");
         // Fixed steps up to the game time.
         let ground = |x: f32, y: f32| ground_height(terrain, x, y);
         let mut n = 0;
+        let awake = self.awake();
+        let started = web_time::Instant::now();
         while self.stepped + STEP <= self.time && n < 4 {
             self.physics.step(&ground);
             self.stepped += STEP;
@@ -792,8 +826,14 @@ impl Ragdolls {
         if n == 4 {
             self.stepped = self.time;
         }
+        self.measure(started.elapsed().as_secs_f64() * 1e6, n, awake);
+        acr_sim::prof::add("rag.steps(count)", n as u64 * 1_000_000);
+        acr_sim::prof::add("rag.awake(count)", self.awake() as u64 * 1_000_000);
+        drop(scope);
+        let scope = acr_sim::prof::Scope::new("rag.settle_palettes");
         self.settle(&by_unit);
         self.palettes(drawn, &by_unit);
+        drop(scope);
         if std::env::var_os("ACR_NO_GAIT").is_none() {
             for d in drawn {
                 if d.data.clips.is_empty() {
@@ -803,6 +843,7 @@ impl Ragdolls {
                     self.mapping(d.model, d.data);
                 }
             }
+            acr_sim::prof_scope!("rag.gaits");
             self.gaits.update(seconds, drawn, &self.maps, focus, terrain, &mut self.poses);
         }
         // Attackers bend their weapon onto their victims (`docs/melee.md`, Animation).
@@ -814,6 +855,7 @@ impl Ragdolls {
             }
             // Riders (bones prefixed `rider.`) take part in the strikes only.
             let all: Vec<Drawn<'_>> = drawn.iter().chain(mounted).copied().collect();
+            acr_sim::prof_scope!("rag.strikes");
             self.strikes.update(seconds, &all, hits, &self.maps, focus, &mut self.poses);
         }
     }

@@ -13,6 +13,8 @@ mod diplomacy;
 pub mod drive;
 mod hit_sounds;
 mod hud;
+#[cfg(not(target_arch = "wasm32"))]
+mod hw_cursor;
 mod ingame;
 mod intro;
 mod mission;
@@ -76,6 +78,8 @@ pub struct Game {
     intro: intro::Intro,
     cursor: PhysicalPosition<f64>,
     last_frame: Option<web_time::Instant>,
+    /// `ACR_PROFILE`: frames since the last profile line and when it was written.
+    profile: Option<(web_time::Instant, u32)>,
     modifiers: ModifiersState,
     /// The options came from the settings file: the window takes their resolution.
     stored_settings: bool,
@@ -88,6 +92,9 @@ pub struct Game {
     /// The test driver (`--drive`): commands on stdin, answers on stdout.
     #[cfg(not(target_arch = "wasm32"))]
     driver: Option<Box<drive::Driver>>,
+    /// The cursor as the system's cursor (native, not under the test driver).
+    #[cfg(not(target_arch = "wasm32"))]
+    hw_cursor: hw_cursor::HardwareCursor,
 }
 
 impl Game {
@@ -105,6 +112,7 @@ impl Game {
             graphics: None,
             cursor: Default::default(),
             last_frame: None,
+            profile: None,
             modifiers: ModifiersState::empty(),
             stored_settings: false,
             layers: Vec::new(),
@@ -112,6 +120,8 @@ impl Game {
             in_flight: Default::default(),
             #[cfg(not(target_arch = "wasm32"))]
             driver: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            hw_cursor: hw_cursor::HardwareCursor::new(),
         }
     }
 
@@ -157,8 +167,37 @@ impl Game {
         let now = web_time::Instant::now();
         let dt = self.last_frame.map_or(0.0, |t| (now - t).as_secs_f64());
         self.last_frame = Some(now);
-        self.advance(dt, event_loop);
+        {
+            acr_sim::prof_scope!("frame.advance");
+            self.advance(dt, event_loop);
+        }
+        // Before drawing, so the frame leaves out a cursor the system now shows.
+        #[cfg(not(target_arch = "wasm32"))]
+        if let (Some(window), Some(size)) = (&self.window, self.frame_size()) {
+            self.hw_cursor.update(&mut self.ui, window, event_loop, Canvas::fit(size).scale);
+        }
         self.render();
+        self.profile_log(now);
+    }
+
+    /// With `ACR_PROFILE` set (native), logs every 5 s where the frames' time went
+    /// (`acr_sim::prof`, docs/rendering-3d.md).
+    fn profile_log(&mut self, now: web_time::Instant) {
+        if !acr_sim::prof::enabled() {
+            return;
+        }
+        let (since, frames) = self.profile.get_or_insert((now, 0));
+        *frames += 1;
+        let seconds = (now - *since).as_secs_f64();
+        if seconds >= 5.0 {
+            let totals = acr_sim::prof::take();
+            log::info!(
+                "profile: {:.1} fps over {seconds:.1} s, per frame:\n{}",
+                f64::from(*frames) / seconds,
+                acr_sim::prof::report(&totals, *frames)
+            );
+            self.profile = Some((now, 0));
+        }
     }
 
     /// The window size the game lays out for: the surface, or the test driver's virtual
@@ -250,10 +289,16 @@ impl Game {
     /// Draws the frame [`Game::advance`] prepared into the window.
     fn render(&mut self) {
         let Some(g) = &mut self.graphics else { return };
+        let acquire = acr_sim::prof::Scope::new("frame.acquire");
         let Some(frame) = g.gpu.next_frame() else { return };
+        drop(acquire);
         let view = frame.texture.create_view(&Default::default());
-        self.draw_frame(&view);
+        {
+            acr_sim::prof_scope!("frame.render_cpu");
+            self.draw_frame(&view);
+        }
         if let Some(g) = &self.graphics {
+            acr_sim::prof_scope!("frame.present");
             g.gpu.queue.present(frame);
         }
     }
@@ -484,6 +529,8 @@ impl Game {
         if let Some(window) = &self.window {
             window.set_cursor_visible(false);
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        self.hw_cursor.hidden();
         self.load_requested();
     }
 

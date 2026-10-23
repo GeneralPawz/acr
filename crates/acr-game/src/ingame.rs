@@ -612,6 +612,7 @@ impl InGame {
                 self.save.log.command(world.tick.0, &commands);
                 commands.extend(orders);
                 world.step(&commands);
+                let _after = acr_sim::prof::Scope::new("game.after_tick");
                 weapon_sounds.append(&mut world.sounds);
                 born.append(&mut world.born);
                 for &id in &world.shouts {
@@ -645,6 +646,7 @@ impl InGame {
                     self.ground_marks.get_or_insert_with(Default::default).tick(world);
                 }
             }
+            acr_sim::prof::add("ticks", u64::from(ticks));
             self.requests.borrow_mut().extend(self.mission.take_requests());
             self.update_diplomacy(f64::from(seconds));
             if let Some((x, y)) = self.mission.take_camera() {

@@ -101,7 +101,10 @@ pub fn gputime(game: &mut Game, frames: u32) -> Result<serde_json::Value, String
     let frames = frames.max(1);
     for _ in 0..frames {
         acr_render::gpu_timer::begin(&device, &queue)?;
-        game.draw_frame(&view);
+        {
+            acr_sim::prof_scope!("frame.render_cpu");
+            game.draw_frame(&view);
+        }
         for (label, ms) in acr_render::gpu_timer::finish(&device)? {
             match sums.iter_mut().find(|(l, _)| *l == label) {
                 Some(s) => s.1 += ms,
