@@ -368,6 +368,44 @@ body before the weights (no slivers across the trapezius), or keep the trapezius
 every torso shell (cut the neck opening by distance from the neck bone, not by part / z),
 and drop the bone-side flip of the rest normals for a closed hull.
 
+**Seventh trisoup pass: shoulder line, neck opening by distance, outward rest normals**
+(#287; built on the VM for DelKri, SpnSha, IncSha, MaySha, FrnBuk, IroLut, EngKri, EngM18;
+everything in `ACR-analysis/trisoup7/`: `sheet_before_after.png`, `before/`, `after/`,
+`glb_after/`, `layers_{before,after}.txt`, `sh/` stage crops, `tools/`). Three steps in
+`body.py`, all **off** by default (`SHOULDER_REMESH`, `NECK_CUT`, `HULL_WINDING`):
+- `remesh_shoulders` (called from `Character.body` after `mbody.build`, before the
+  weights): the faces between 12 cm below the shoulder joint and 8 cm above the neck's root,
+  out to 14 cm past the shoulder joint, are triangulated, long edges (> 1.6 × the median)
+  split, Delaunay flips (not across creases, no folds) and a tangential relax back onto the
+  surface, then two light smoothing passes for the points the decimation leaves standing up.
+  DelKri: slivers (aspect > 4) in the zone 12 → 6, 284 faces; the white/blue fan over the
+  acromion is gone in the stage crops (`sh/cmp.png`).
+- `neck_opening` (from `Character.shell(neck=...)`): a shell that keeps at least half of the
+  trunk faces in the 12 cm below the neck's root (and not the head) keeps every trunk and
+  neck face up to 4 cm above the root, and its contour field is capped by a distance field
+  from the neck bone (open-ended upwards, round below the root; front-back × 1.1): 0.5 at
+  the neck skin radius + `NECK_EASE` (1.5 cm, radius ≈ 8.4 cm), ramping over ±5 cm, so the
+  isoline is a smooth ellipse through the triangles whatever their shape. Got it: DelKri
+  shirt, FrnBuk cloak, IncSha unku and yacolla, MaySha tilmatli, SpnSha habit, cappa, hood
+  (the hood lies on the shoulders). The drafted garments (EngKri, EngM18) are not shells.
+- `HULL_WINDING`: the hull is closed but for small holes (86 open edges: the neck seam and
+  the ankles), consistently wound, each piece turned outward by its volume; the rest normals
+  are then the vertex normals, no bone-side flip. Flesh rest normals opposed to the surface:
+  195 → 0 (DelKri).
+In game (sheet, back / three-quarter / front): the shoulder teeth are gone from SpnSha's
+cappa (clearly better) and from the back of DelKri's shirt, fewer on FrnBuk's cloak; the
+opening dips into a small V at the back of the neck (IncSha, FrnBuk, SpnSha). But DelKri's
+quiver strap now shows the shirt through it in patches and EngKri's sash bow changed shape
+(the regression checks moved: the rest normals at the hips and armpits differ). `model_layers
+--steps 8` poking / crossing before → after: delkri 332 / 224 → 368 / 193, spnsha 77 / 216 →
+55 / 192, incsha 156 / 61 → 220 / 34, maysha 62 / 19 → 90 / 14, frnbuk 247 / 273 → 323 / 306,
+irolut 121 / 59 → 102 / 65, engkri 101 / 364 → 129 / 302, engm18 179 / 432 → 209 / 435.
+Not a clear improvement overall, so the flags stay off; only SpnSha (better on both counts
+and in game) was copied to the showcase (old one in `backup-trisoup7/`). Next: build with
+one flag at a time to find which one brings the strap and sash pokes (probably
+`HULL_WINDING`: outward normals at the armpits and hips move those shells), and seat the
+straps after the new shells.
+
 engm18, 24 frames × 19 clips (crossing vertices / worst):
 
 | pair | before | after |
