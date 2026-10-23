@@ -486,8 +486,9 @@ def _hold_tools(ch, name, items):
         sock = f"socket.{t}"
         w = am.world(ch.arm, sock)
         if t in HAND_TOOLS:
-            rest_up = w.to_3x3() @ ch.arm.pose.bones[sock].bone.matrix_local.to_3x3().inverted()
-            m = Matrix.Translation(w.translation) @ rest_up.to_4x4()
+            from . import grips
+
+            m = grips.hold_matrix(ch.arm, sock)
         else:
             # Across the shoulder: the long axis left-right, a little forward-down.
             m = Matrix.Translation(w.translation) @ Matrix.Rotation(math.radians(90), 4, "Y") \

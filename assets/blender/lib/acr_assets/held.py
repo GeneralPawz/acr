@@ -698,3 +698,58 @@ SOCKETS = {"drum": {"socket.head"}, "colour": {"socket.top"}, "longbow": {"socke
 def build(name, **kw):
     """The `Item` of library item `name` (keyword arguments to its builder)."""
     return ITEMS[name](**kw)
+
+
+# Grips (#287 m2-grips): where the hands close on each item, in the item frame (origin at
+# the main grip, +Z the long axis). `main` the holding hand's grip, `off` the other hand's
+# on a two-handed item (None: one-handed, the off hand stays a loose fist): (z along +Z,
+# diameter in metres). The grip axis is the item's +Z through (0, 0, z); the fist closes
+# round it (`grips.py`), its thumb towards +Z.
+class Grip:
+    __slots__ = ("main", "off")
+
+    def __init__(self, main, off=None):
+        self.main, self.off = main, off
+
+    def point(self, which="main"):
+        g = getattr(self, which)
+        return None if g is None else (0.0, 0.0, g[0])
+
+
+GRIPS = {
+    # The musket (`gear.musket`, `matchlock`): the wrist of the stock, the fore-stock under the
+    # barrel where `aim.hold` puts the left hand (0.34 m on).
+    "musket": Grip((0.0, 0.036), (0.34, 0.040)),
+    "matchlock": Grip((0.0, 0.036), (0.34, 0.040)),
+    # Pole arms: two points along the shaft (the clips' `left_along`).
+    "pike": Grip((0.0, 0.032), (0.45, 0.032)),
+    "spear": Grip((0.0, 0.030), (0.45, 0.030)),
+    "spontoon": Grip((0.0, 0.032), (0.45, 0.032)),
+    "halberd": Grip((0.0, 0.032), (0.45, 0.032)),
+    "colour": Grip((0.0, 0.032), (0.32, 0.032)),
+    "musket_rest": Grip((0.0, 0.030)),
+    # Hilts and hafts.
+    "smallsword": Grip((0.0, 0.025)),
+    "hanger": Grip((0.0, 0.025)),
+    "officer_sword": Grip((0.0, 0.025)),
+    "war_club": Grip((0.0, 0.034)),
+    "tomahawk": Grip((0.0, 0.026)),
+    "macuahuitl": Grip((0.0, 0.032)),
+    "pistol": Grip((0.0, 0.030)),
+    "blowpipe": Grip((0.0, 0.026), (0.42, 0.026)),
+    # The bow's riser, the drumstick's butt third.
+    "longbow": Grip((0.0, 0.038)),
+    "drumstick": Grip((0.0, 0.021)),
+    # Pinched or hooked rather than gripped: the arrow's nock, the sling's loop, the shield's
+    # strap; their fists close loosely (the default diameter).
+    "arrow": Grip((0.0, 0.009)),
+    "sling": Grip((0.0, 0.010)),
+    "shield": Grip((0.0, 0.030)),
+}
+# The fist a hand closes to with no grip spec (or an empty hand): the diameter it rolls round.
+FIST = 0.028
+
+
+def grip(name):
+    """The `Grip` of item `name` (None for an item held otherwise, e.g. the drum on a hook)."""
+    return GRIPS.get(name)

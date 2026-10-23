@@ -651,6 +651,9 @@ pub struct How {
     pub finish: bool,
 }
 
+/// The fist's grip axis before the hand's axis (m, `grips.radius_for(held.FIST)`).
+const FIST: f32 = 0.026;
+
 /// Bends the trunk of `skins` so that the weapon points at `target`; on foot, sinks into the
 /// knees towards the ground and steps in when the target is out of reach; then puts the
 /// weapon arm on the target by IK and turns the weapon onto it. Against a standing man the
@@ -763,11 +766,17 @@ pub fn aim(rig: &Rig, skins: &mut [Skin], weapon: Held, target: Vec3, how: How, 
     let turn = turn + (wanted - turn) * how.rate;
     rig.rotate_about(skins, hand, hand_at, Quat::from_rotvec(turn));
     if weapon.two_handed {
-        // The left hand on the stock, 0.45 m along the musket.
+        // The left hand on the stock, 0.45 m along the musket: the fist's centre on it (the
+        // baked fist's grip axis, `grips.py`: the knuckle line plus `FIST` before the palm),
+        // not the wrist.
         let grip = hand_at + linear(&skins[hand], local).normalize_or_zero() * 0.45;
         let (l_up, l_fore, l_hand) = (b("upperarm_l"), b("forearm_l"), b("hand_l"));
         let now = rig.joint(skins, l_hand);
-        rig.two_bone_ik(skins, l_up, l_fore, l_hand, now + (grip - now) * w, Vec3::new(0.0, 0.0, -1.0));
+        let d0 = (rig.tail[l_hand] - rig.head[l_hand]).normalize_or_zero();
+        let palm = Vec3::new(-1.0, 0.0, 0.0);
+        let palm = (palm - d0 * palm.dot(d0)).normalize_or_zero();
+        let fist = rig.end(skins, l_hand) - now + linear(&skins[l_hand], palm) * FIST;
+        rig.two_bone_ik(skins, l_up, l_fore, l_hand, now + (grip - fist - now) * w, Vec3::new(0.0, 0.0, -1.0));
     }
     turn
 }

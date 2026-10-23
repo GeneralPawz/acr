@@ -188,13 +188,14 @@ def held(item, name, keys=None):
 
 def hold(ch, item, name, socket="socket.hand_r", matrix=None, keys=None, slot=None):
     """Puts library item `item` on `socket` of character `ch` as held gear (dropped at
-    death): the item frame at `matrix` (world, rest of the clip's pose; default the
-    socket's own frame, upright like `line`'s musket). Returns the object."""
+    death): the item frame at `matrix` (world, rest of the clip's pose; default
+    `grips.hold_matrix`: in the fist's grip frame, or without fists upright in the socket's
+    rest frame like `line`'s musket). Returns the object."""
     obj = held(item, name, keys)
     if matrix is None:
-        sock = am.world(ch.arm, socket)
-        rest_up = sock.to_3x3() @ ch.arm.pose.bones[socket].bone.matrix_local.to_3x3().inverted()
-        matrix = Matrix.Translation(sock.translation) @ rest_up.to_4x4()
+        from . import grips
+
+        matrix = grips.hold_matrix(ch.arm, socket)
     am.attach(obj, ch.arm, socket, matrix)
     ch.held[slot or name.split(".", 1)[-1]] = obj
     ch.keys[obj.name] = obj["acr_material_keys"][0]

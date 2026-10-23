@@ -969,11 +969,9 @@ def adorn(ch, s):
 def _upright(ch, socket):
     from mathutils import Matrix
 
-    from . import armature as am
+    from . import grips
 
-    sock = am.world(ch.arm, socket)
-    rest_up = sock.to_3x3() @ ch.arm.pose.bones[socket].bone.matrix_local.to_3x3().inverted()
-    return Matrix.Translation(sock.translation) @ rest_up.to_4x4()
+    return grips.hold_matrix(ch.arm, socket)
 
 
 def arm(ch, s):

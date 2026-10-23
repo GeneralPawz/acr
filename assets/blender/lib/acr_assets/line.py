@@ -44,7 +44,7 @@ from . import aim as aiming
 from . import armature as am
 from . import body as bd
 from . import clips as wclips
-from . import crawl, faces, finish, gear, heads, held, masks, outfit, poses, registry, rig, straps
+from . import crawl, faces, finish, gear, grips, heads, held, masks, outfit, poses, registry, rig, straps
 from .humans import LAYER_OF, Character, prepare_export
 
 # The English musketeer's colours (`EngM18`): the defaults a nation overrides.
@@ -199,9 +199,7 @@ def make(root, name, s):
         gun = gear.musket(f"{name}.musket", length=fit["musket_len"], bayonet=0.0)
         gun["acr_material_keys"] = ["wood", "metal"]
         # The socket's orientation is "upright" in its rest frame; the clips turn it.
-        sock = am.world(ch.arm, "socket.hand_r")
-        rest_up = sock.to_3x3() @ ch.arm.pose.bones["socket.hand_r"].bone.matrix_local.to_3x3().inverted()
-        am.attach(gun, ch.arm, "socket.hand_r", Matrix.Translation(sock.translation + Vector((0.0, -0.01, 0.0))) @ rest_up.to_4x4())
+        am.attach(gun, ch.arm, "socket.hand_r", grips.hold_matrix(ch.arm, "socket.hand_r", (0.0, -0.01, 0.0)))
         ch.held["musket"] = gun
         ch.keys[gun.name] = "wood"
     else:

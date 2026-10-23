@@ -34,7 +34,7 @@ from mathutils import Matrix, Vector
 
 from . import armature as am
 from . import body as bd
-from . import civil, crawl, gear, heads, held, native, outfit, registry, rig
+from . import civil, crawl, gear, grips, heads, held, native, outfit, registry, rig
 from . import clips as cl
 from .humans import LAYER_OF, Character, prepare_export
 
@@ -318,9 +318,7 @@ def kit(ch, s):
         out[k] = ch.add("gear", o, k)
     if s["gourd"]:
         g = gear.held(gourd(), f"{name}.gourd")
-        sock = am.world(ch.arm, "socket.hand_l")
-        rest_up = sock.to_3x3() @ ch.arm.pose.bones["socket.hand_l"].bone.matrix_local.to_3x3().inverted()
-        am.attach(g, ch.arm, "socket.hand_l", Matrix.Translation(sock.translation) @ rest_up.to_4x4())
+        am.attach(g, ch.arm, "socket.hand_l", grips.hold_matrix(ch.arm, "socket.hand_l"))
         ch.held["rattle"] = g
         ch.keys[g.name] = "gourd"
     return out

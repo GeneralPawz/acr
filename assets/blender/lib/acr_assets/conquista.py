@@ -230,16 +230,20 @@ def _tassets(ch, name, s, lames=4):
         for k in range(lames):
             z0 = 0.985 - 0.058 * k
             z1 = z0 - 0.07
-            ring0, ring1 = [], []
+            ring0, ring1, back0, back1 = [], [], [], []
             for j in range(6):
                 t = t0 + (t1 - t0) * j / 5
                 r0 = radius(t, 1.0) + 0.032 + 0.010 * k
                 r1 = r0 + 0.012
                 ring0.append(bm.verts.new((math.cos(t) * r0, cy + math.sin(t) * r0, z0)))
                 ring1.append(bm.verts.new((math.cos(t) * r1, cy + math.sin(t) * r1, z1)))
+                # The inside on its own vertices 0.5 mm in (one face twice over the same
+                # vertices is "face already exists" in bmesh, `held.vane`).
+                back0.append(bm.verts.new((math.cos(t) * (r0 - 0.0005), cy + math.sin(t) * (r0 - 0.0005), z0)))
+                back1.append(bm.verts.new((math.cos(t) * (r1 - 0.0005), cy + math.sin(t) * (r1 - 0.0005), z1)))
             for j in range(5):
                 bm.faces.new((ring0[j], ring0[j + 1], ring1[j + 1], ring1[j]))
-                bm.faces.new((ring1[j], ring1[j + 1], ring0[j + 1], ring0[j]))
+                bm.faces.new((back1[j], back1[j + 1], back0[j + 1], back0[j]))
         obj = gear.from_bm(bm, f"{name}.tasset_{bone[-1]}")
         gear.rigid(obj, ch.arm, ch.prefix + bone, Matrix.Identity(4))
         out = ch.add("gear", obj, "armour")
