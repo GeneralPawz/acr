@@ -578,7 +578,16 @@ fn to_srgb(c: vec3<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    return shade(in, front, false);
+    return shade(in, front, false, false);
+}
+
+// The same for the parts that can drop nothing (m2-perf3): an intact instance that is
+// neither half transparent nor dissolving, in a material without a cut-out, cap or cavity
+// (`ModelRenderer`, `Entry::clean`). Without a `discard` in the shader the tiler keeps its
+// early depth test; the colour is the same as `fs_main`'s.
+@fragment
+fn fs_clean(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    return shade(in, front, false, true);
 }
 
 // The far levels of detail (lod.rs `FAR_FROM`): a figure under about 260 px, where a pixel
@@ -586,10 +595,16 @@ fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
 // instead of nine, no highlight on leather and brass; wounds, holes, cuts and decay as near.
 @fragment
 fn fs_far(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    return shade(in, front, true);
+    return shade(in, front, true, false);
 }
 
-fn shade(in: VsOut, front: bool, far: bool) -> vec4<f32> {
+@fragment
+fn fs_far_clean(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    return shade(in, front, true, true);
+}
+
+// `clean`: a constant per entry point; its `discard`s fold away (`fs_clean`).
+fn shade(in: VsOut, front: bool, far: bool, clean: bool) -> vec4<f32> {
     // Sampled first: derivatives need uniform control flow.
     let texel = textureSample(base_texture, base_sampler, in.uv);
     var c = material.base * texel;
@@ -597,18 +612,18 @@ fn shade(in: VsOut, front: bool, far: bool) -> vec4<f32> {
         c = c * in.color;
     }
     if (material.flags.z > 0.0 && c.a < material.flags.z) {
-        discard;
+        if (!clean) { discard; }
     }
     // Half transparent like the original's fading corpses: every other pixel (no sorting).
     if (in.params.w > 0.5) {
         let p = vec2<i32>(floor(in.pos.xy));
         if (((p.x + p.y) & 1) == 1) {
-            discard;
+            if (!clean) { discard; }
         }
     }
     // The noise only near the cut: |ragged| < 0.05 (most fragments are far from any).
     if (in.cut.x < abs(in.cut.z) * 0.05 && in.cut.x - in.cut.z * ragged(in.cut.y, in.rest.xyz) < 0.0) {
-        discard;
+        if (!clean) { discard; }
     }
     // Torn out (#280): nothing inside a wound volume but shreds of skin and cloth hanging
     // into the hole from its edge; a ragged band of holes in the cloth around it.
@@ -619,10 +634,10 @@ fn shade(in: VsOut, front: bool, far: bool) -> vec4<f32> {
     if (hole.x < 0.7) {
         shred = noise3(in.rest.xyz * vec3<f32>(90.0, 30.0, 90.0) + vec3<f32>(hole.y * 3.0));
         if (hole.x < 0.0 && !(front && hole.x > -0.22 && shred > 0.68)) {
-            discard;
+            if (!clean) { discard; }
         }
         if (front && hole.x >= 0.0 && hole.x < 0.1 && shred < 0.3 - hole.x * 2.0) {
-            discard;
+            if (!clean) { discard; }
         }
     }
     // A stump cap's ragged outline (uv: the unit disc).
@@ -630,14 +645,14 @@ fn shade(in: VsOut, front: bool, far: bool) -> vec4<f32> {
         let a = atan2(in.uv.y, in.uv.x);
         let edge = 0.9 + 0.1 * noise3(vec3<f32>(cos(a) * 3.0, sin(a) * 3.0, in.params.x * 0.0 + 1.7));
         if (length(in.uv) > edge) {
-            discard;
+            if (!clean) { discard; }
         }
     }
     // The wall of a wound cavity (an inside-out sphere): only the far side, facing the
     // viewer, so it is seen through the hole and closes a hole straight through.
     let kind = i32(round(material.look.y));
     if (kind == 1 && dot(normalize(in.normal), globals.forward.xyz) > 0.0) {
-        discard;
+        if (!clean) { discard; }
     }
     var rgb = c.rgb;
     // Each soldier's skin tone and hair colour, and the detail of his face (#283).
@@ -668,7 +683,7 @@ fn shade(in: VsOut, front: bool, far: bool) -> vec4<f32> {
             let p = ramp(decay, material.windows.z, material.windows.w);
             let th = p * (1.0 + material.edge.w);
             if (p > 0.0 && mask <= th) {
-                discard;
+                if (!clean) { discard; }
             }
             if (p > 0.0 && mask - th < material.edge.w) {
                 rgb = material.edge.rgb;
@@ -688,7 +703,7 @@ fn shade(in: VsOut, front: bool, far: bool) -> vec4<f32> {
     if (material.look.w > 0.5 && decay > 0.0) {
         rgb = rot(rgb, in.rest.xyz, decay, globals.params.y > 0.5);
         if (rgb.r < 0.0) {
-            discard;
+            if (!clean) { discard; }
         }
     }
     // Lambert from the upper left (the sprites' light), both faces lit.

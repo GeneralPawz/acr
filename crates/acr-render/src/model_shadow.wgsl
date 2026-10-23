@@ -50,3 +50,8 @@ fn fs_shadow(in: VsOut) {
         discard;
     }
 }
+
+// The casters that can drop nothing (`fs_clean`'s parts): depth only, early-z kept.
+@fragment
+fn fs_shadow_clean() {
+}

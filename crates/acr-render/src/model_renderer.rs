@@ -290,8 +290,10 @@ fn look_texels(look: Option<&looks::Look>, eye: f32, seed: u32) -> [[f32; 4]; 3]
 struct Draw {
     model: usize,
     range: Range<u32>,
-    /// They decay (and draw the inner layers too).
+    /// The inner layers show (decay opens the skin, or a wound): drawn too.
     decaying: bool,
+    /// The instances can drop no fragment ([`Entry::clean`]).
+    clean: bool,
     /// The look variant's vertex buffer.
     variant: Option<usize>,
     lod: usize,
@@ -305,6 +307,12 @@ struct Entry {
     gpu: GpuInstance,
     model: usize,
     decaying: bool,
+    /// Intact, not half transparent, not dissolving: its parts in materials that drop
+    /// nothing either ([`GpuModel::discards`]) draw without `discard` (`fs_clean`), so the
+    /// tiler keeps its early depth test for them.
+    clean: bool,
+    /// Depth in the window (0..1): the instances of a draw go front to back.
+    depth: f32,
     variant: Option<usize>,
     /// Within the window (else only a shadow caster).
     on_screen: bool,
@@ -346,6 +354,13 @@ struct GpuModel {
     indices: wgpu::Buffer,
     primitives: Vec<GpuPrimitive>,
     materials: Vec<wgpu::BindGroup>,
+    /// Per material: it can drop fragments whatever the instance (an alpha cut-out, a stump
+    /// cap's outline, a wound cavity's near wall).
+    discards: Vec<bool>,
+    /// The decay from which a layer dissolves (`gore=full`): the outer layers (the inner
+    /// ones show from then), and any layer (the instance drops fragments from then).
+    opens_at: f32,
+    dissolves_at: f32,
     /// The baked face and body variants (#283, [`ModelData::bake_looks`]): the touched
     /// primitives' vertices, which come first in [`Self::vertices`].
     variants: Vec<wgpu::Buffer>,
@@ -385,7 +400,9 @@ fn split_variants(draws: Vec<Draw>) -> Vec<Draw> {
     while let Some(first) = rest.first() {
         let n = rest
             .iter()
-            .take_while(|d| d.model == first.model && d.decaying == first.decaying && d.lod == first.lod)
+            .take_while(|d| {
+                d.model == first.model && d.decaying == first.decaying && d.clean == first.clean && d.lod == first.lod
+            })
             .count();
         let (run, tail) = rest.split_at(n);
         rest = tail;
@@ -417,6 +434,10 @@ pub struct ModelRenderer {
     pipeline: wgpu::RenderPipeline,
     /// The cheaper fragments of the far levels (from [`lod::FAR_FROM`]).
     far_pipeline: wgpu::RenderPipeline,
+    /// Both without `discard`, for the parts that drop nothing ([`Entry::clean`]).
+    clean_pipeline: wgpu::RenderPipeline,
+    far_clean_pipeline: wgpu::RenderPipeline,
+    shadow_clean_pipeline: wgpu::RenderPipeline,
     pool_pipeline: wgpu::RenderPipeline,
     pools: wgpu::Buffer,
     pool_count: u32,
@@ -468,6 +489,42 @@ pub struct ModelRenderer {
     shadow_pipeline: wgpu::RenderPipeline,
     shadow_globals: wgpu::Buffer,
     shadow_globals_group: wgpu::BindGroup,
+    /// Profiling switches (`ACR_MODEL_DEBUG`, native only, [`debug_flags`]).
+    debug: u32,
+    debug_file: bool,
+}
+
+/// `ACR_MODEL_DEBUG` (a comma list; native only, for profiling the models pass by kind):
+/// `living`, `dead`, `dead_volumes`, `dead_plain` leave out those instances; `inner` draws no
+/// inner decay layers; `caps` no caps and wound inserts; `gore` no blood, wounds, marks or
+/// spray; `holes` no wound volumes; `looks` no look variants.
+pub mod debug {
+    pub const LIVING: u32 = 1;
+    pub const DEAD: u32 = 2;
+    pub const DEAD_VOLUMES: u32 = 4;
+    pub const DEAD_PLAIN: u32 = 8;
+    pub const INNER: u32 = 16;
+    pub const CAPS: u32 = 32;
+    pub const GORE: u32 = 64;
+    pub const HOLES: u32 = 128;
+    pub const LOOKS: u32 = 256;
+    /// The state before m2-perf3: inner layers from the first decay, no clean pipeline.
+    pub const OLD_INNER: u32 = 512;
+    pub const NO_CLEAN: u32 = 1024;
+}
+
+fn debug_flags() -> u32 {
+    let names =
+        ["living", "dead", "dead_volumes", "dead_plain", "inner", "caps", "gore", "holes", "looks", "old_inner", "no_clean"];
+    // `ACR_MODEL_DEBUG_FILE`: the list read from a file every frame (switched while running).
+    let from_file = std::env::var("ACR_MODEL_DEBUG_FILE").ok().and_then(|f| std::fs::read_to_string(f).ok());
+    from_file
+        .ok_or(())
+        .or_else(|_| std::env::var("ACR_MODEL_DEBUG").map_err(|_| ()))
+        .map(|v| {
+            v.split(',').filter_map(|w| names.iter().position(|n| *n == w.trim())).fold(0, |f, k| f | (1 << k))
+        })
+        .unwrap_or(0)
 }
 
 /// `model.wgsl` with the shadow receiver (`shadow.wgsl`) and casters (`model_shadow.wgsl`).
@@ -667,7 +724,9 @@ impl ModelRenderer {
         };
         let pipeline = model_pipeline("fs_main");
         let far_pipeline = model_pipeline("fs_far");
-        let shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let clean_pipeline = model_pipeline("fs_clean");
+        let far_clean_pipeline = model_pipeline("fs_far_clean");
+        let shadow_pipeline = |fragment: &str| device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("model shadow"),
             layout: Some(&shadow_layout),
             vertex: wgpu::VertexState {
@@ -692,13 +751,15 @@ impl ModelRenderer {
             multisample: Default::default(),
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: Some("fs_shadow"),
+                entry_point: Some(fragment),
                 compilation_options: Default::default(),
                 targets: &[],
             }),
             multiview_mask: None,
             cache: None,
         });
+        let shadow_clean_pipeline = shadow_pipeline("fs_shadow_clean");
+        let shadow_pipeline = shadow_pipeline("fs_shadow");
         // Blood pools: decals over the terrain's depth, blended, writing neither depth nor
         // stencil (the models and sprites cover them).
         let pool_shader = device.create_shader_module(wgpu::include_wgsl!("blood.wgsl"));
@@ -780,6 +841,9 @@ impl ModelRenderer {
         let mut renderer = Self {
             pipeline,
             far_pipeline,
+            clean_pipeline,
+            far_clean_pipeline,
+            shadow_clean_pipeline,
             pool_pipeline,
             pools: pool_buffer(device, 64),
             pool_count: 0,
@@ -816,6 +880,8 @@ impl ModelRenderer {
             shadow_pipeline,
             shadow_globals,
             shadow_globals_group,
+            debug: debug_flags(),
+            debug_file: std::env::var("ACR_MODEL_DEBUG_FILE").is_ok(),
         };
         renderer.cap = renderer.add_model(device, queue, damage::procedural_cap());
         renderer.inserts = [
@@ -981,6 +1047,16 @@ impl ModelRenderer {
             })
             .collect();
         let procedural = data.decays_procedurally();
+        let discards = data.materials.iter().map(|m| m.alpha_cutoff.unwrap_or(0.0) > 0.0 || m.stump || m.tissue as u8 == 1).collect();
+        let dissolve_from = |inner: Option<bool>| {
+            data.materials
+                .iter()
+                .filter_map(|m| m.decay)
+                .filter(|d| inner.is_none_or(|i| d.inner == i))
+                .filter_map(|d| d.dissolve.map(|w| w[0]))
+                .fold(if procedural { 0.62 } else { 2.0 }, f32::min)
+        };
+        let (opens_at, dissolves_at) = (dissolve_from(Some(false)), dissolve_from(None));
         let materials = data
             .materials
             .iter()
@@ -1034,6 +1110,9 @@ impl ModelRenderer {
             primitives,
             far,
             materials,
+            discards,
+            opens_at,
+            dissolves_at,
             variants,
             eye,
         });
@@ -1088,10 +1167,42 @@ impl ModelRenderer {
         let custom = std::mem::take(&mut self.custom);
         let shadows_on = self.shadows;
         let mut casters: Vec<([f32; 3], f32)> = Vec::new();
+        if self.debug_file {
+            self.debug = debug_flags();
+        }
+        let dbg = self.debug;
         let mut push = |i: usize, inst: &ModelInstance, caps: &mut Vec<ModelInstance>| {
+            let tweaked;
+            let inst = if dbg == 0 {
+                inst
+            } else {
+                let dead = inst.decay > 0.0 || inst.wounds.count > 0 || inst.wounds.blood > 0.0 || custom.contains_key(&i);
+                let vol = inst.damage.volumes_len > 0;
+                if (dbg & debug::LIVING != 0 && !dead && i != usize::MAX)
+                    || (dbg & debug::DEAD != 0 && dead)
+                    || (dbg & debug::DEAD_VOLUMES != 0 && dead && vol)
+                    || (dbg & debug::DEAD_PLAIN != 0 && dead && !vol)
+                    || (dbg & debug::CAPS != 0 && i == usize::MAX)
+                {
+                    return;
+                }
+                let mut t = *inst;
+                if dbg & debug::GORE != 0 {
+                    t.wounds = Wounds::default();
+                    t.sprayed = Sprayed::default();
+                }
+                if dbg & debug::HOLES != 0 {
+                    t.damage.volumes_len = 0;
+                }
+                if dbg & debug::LOOKS != 0 {
+                    t.look = None;
+                }
+                tweaked = t;
+                &tweaked
+            };
             let gpu_model = &models[inst.model];
             let model = &gpu_model.data;
-            let look = chosen.get(i).copied().flatten();
+            let look = chosen.get(i).copied().flatten().filter(|_| dbg & debug::LOOKS == 0);
             let variant = look.and_then(|c| c.1);
             // Height: a uniform scale about the ground point.
             let scaled;
@@ -1179,7 +1290,14 @@ impl ModelRenderer {
                     });
                 }
             }
-            let decaying = inst.decay > 0.0;
+            // The inner layers (bones, an animal's meat) only once the skin opens, or where a
+            // wound may show them; before, they lie wholly inside the outer layers.
+            let intact = inst.damage.is_none();
+            let dissolving = |at: f32| dissolve && at <= 1.0 && inst.decay > at;
+            let decaying = inst.decay > 0.0
+                && (dissolving(gpu_model.opens_at) || !intact || dbg & debug::OLD_INNER != 0)
+                && dbg & debug::INNER == 0;
+            let clean = intact && !inst.transparent && !dissolving(gpu_model.dissolves_at) && dbg & debug::NO_CLEAN == 0;
             let first = data.len() as u32;
             let mut look_data = look_texels(look.as_ref().map(|c| &c.0), gpu_model.eye, inst.look.unwrap_or(0));
             // A crew's uniform rides on the look texels the crew does not use otherwise.
@@ -1200,6 +1318,8 @@ impl ModelRenderer {
                 },
                 model: inst.model,
                 decaying,
+                clean,
+                depth: p[2],
                 variant,
                 on_screen,
                 split: inst.damage.splits_parts(),
@@ -1282,9 +1402,13 @@ impl ModelRenderer {
             return;
         }
         let mut pass = self.shadow.begin(encoder);
-        pass.set_pipeline(&self.shadow_pipeline);
         pass.set_bind_group(0, &self.shadow_globals_group, &[]);
-        self.draw_instances(&mut pass, &self.shadow_draws);
+        for (pipeline, clean) in [(&self.shadow_clean_pipeline, true), (&self.shadow_pipeline, false)] {
+            if self.shadow_draws.iter().any(|d| self.has_parts(d, clean)) {
+                pass.set_pipeline(pipeline);
+                self.draw_instances(&mut pass, &self.shadow_draws, clean);
+            }
+        }
     }
 
     /// Uploads the blood pools of the next `render` (after [`Self::prepare`], which sets the
@@ -1318,11 +1442,19 @@ impl ModelRenderer {
         pass.set_bind_group(2, &self.shadow.group, &[]);
         pass.set_stencil_reference(1);
         // The draws are sorted by level: the near ones first, then the far ones' pipeline.
+        // First every part that can drop nothing, without `discard` (the tiler's early
+        // depth test stays on), then the rest.
         let split = self.draws.partition_point(|d| d.lod < lod::FAR_FROM);
-        for (pipeline, draws) in [(&self.pipeline, &self.draws[..split]), (&self.far_pipeline, &self.draws[split..])] {
-            if !draws.is_empty() {
+        let (near, far) = self.draws.split_at(split);
+        for (pipeline, draws, clean) in [
+            (&self.clean_pipeline, near, true),
+            (&self.far_clean_pipeline, far, true),
+            (&self.pipeline, near, false),
+            (&self.far_pipeline, far, false),
+        ] {
+            if draws.iter().any(|d| self.has_parts(d, clean)) {
                 pass.set_pipeline(pipeline);
-                self.draw_instances(pass, draws);
+                self.draw_instances(pass, draws, clean);
             }
         }
     }
@@ -1358,19 +1490,29 @@ impl ModelRenderer {
         // (level, look variant, instance) → draws, appending the instances.
         let mut group = |mut list: Vec<(usize, Option<usize>, &Entry)>| -> Vec<Draw> {
             // The far levels last: they take the cheaper pipeline (`render`).
-            list.sort_by_key(|&(l, v, e)| (l >= lod::FAR_FROM, e.model, e.decaying, v, l));
+            // Within a draw front to back (`depth` in 0..1; the tiler's early depth test).
+            list.sort_by_key(|&(l, v, e)| {
+                (l >= lod::FAR_FROM, e.model, e.decaying, e.clean, v, l, (e.depth.clamp(0.0, 1.0) * 16_777_215.0) as u32)
+            });
             let mut draws: Vec<Draw> = Vec::new();
             for (l, v, e) in list {
                 let index = gpu.len() as u32;
                 gpu.push(e.gpu);
                 match draws.last_mut() {
-                    Some(d) if d.model == e.model && d.decaying == e.decaying && d.variant == v && d.lod == l => {
+                    Some(d)
+                        if d.model == e.model
+                            && d.decaying == e.decaying
+                            && d.clean == e.clean
+                            && d.variant == v
+                            && d.lod == l =>
+                    {
                         d.range.end = index + 1
                     }
                     _ => draws.push(Draw {
                         model: e.model,
                         range: index..index + 1,
                         decaying: e.decaying,
+                        clean: e.clean,
                         variant: v,
                         lod: l,
                         touched: None,
@@ -1430,10 +1572,23 @@ impl ModelRenderer {
             .sum()
     }
 
-    /// The prepared draws, with the pipeline and group 0 bound.
-    fn draw_instances(&self, pass: &mut wgpu::RenderPass<'_>, draws: &[Draw]) {
+    /// A draw's part in `material` goes through the clean pipelines ([`Entry::clean`]).
+    fn clean_part(&self, d: &Draw, material: usize) -> bool {
+        d.clean && !self.models[d.model].discards[material]
+    }
+
+    fn has_parts(&self, d: &Draw, clean: bool) -> bool {
+        self.models[d.model].draw_parts(d).any(|(_, material, _)| self.clean_part(d, material) == clean)
+    }
+
+    /// The prepared draws' parts that are `clean` or not ([`Self::clean_part`]), with the
+    /// pipeline and group 0 bound.
+    fn draw_instances(&self, pass: &mut wgpu::RenderPass<'_>, draws: &[Draw], clean: bool) {
         let stride = size_of::<GpuInstance>() as u64;
         for d in draws {
+            if !self.has_parts(d, clean) {
+                continue;
+            }
             let range = &d.range;
             let m = &self.models[d.model];
             let look = d.variant.and_then(|v| m.variants.get(v));
@@ -1445,6 +1600,9 @@ impl ModelRenderer {
             pass.set_index_buffer(m.indices.slice(..), wgpu::IndexFormat::Uint32);
             let mut bound = None;
             for (indices, material, touched) in m.draw_parts(d) {
+                if self.clean_part(d, material) != clean {
+                    continue;
+                }
                 let from_look = touched && look.is_some();
                 if bound != Some(from_look) {
                     pass.set_vertex_buffer(0, look.filter(|_| from_look).unwrap_or(&m.vertices).slice(..));
