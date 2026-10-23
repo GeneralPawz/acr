@@ -1,6 +1,10 @@
 """English dragoon, 17th century (`EngD17`, `ENGD17.MD`) on the WildMesh horse (#287): the dragoon family
 (`acr_assets.cavalry`, docs/families/cavalry.md): a red coat, a red cap on a black turban, carbine and sabre; a dark dappled grey. Colours from the sprites (the
-palette guides them)."""
+palette guides them).
+
+17th-century kit (`dress` "buff17"): a buff coat with red cloth sleeves, falling band,
+bucket boots, a wheellock carbine and a drawn sword.
+"""
 
 from acr_assets import cavalry
 
@@ -26,9 +30,9 @@ MD = {
     "PSTAND1": "#PSTAND1 9 1 4 0",
 }
 
-PALETTE = dict(cavalry.PALETTE, **{"coat": (0.70, 0.10, 0.07), "facings": (0.70, 0.10, 0.07), "cap": (0.70, 0.10, 0.07), "hat": (0.10, 0.09, 0.08), "saddlecloth": (0.16, 0.12, 0.10), "waistcoat": (0.85, 0.80, 0.62)})
+PALETTE = dict(cavalry.PALETTE, **cavalry.PALETTE17, **{"dsleeve": (0.70, 0.10, 0.07), "coat": (0.70, 0.10, 0.07), "cap": (0.70, 0.10, 0.07), "hat": (0.10, 0.09, 0.08), "saddlecloth": (0.16, 0.12, 0.10), "waistcoat": (0.85, 0.80, 0.62)})
 
-SPEC = {"md": MD, "palette": PALETTE, "dress": "coat", "tack": "military", "held": None, "hat": 'bonnet', "gun": 'carbine', "drawn": True,
+SPEC = {"md": MD, "palette": PALETTE, "paint": True, "fixed": cavalry.FIXED17, "dress": "buff17", "tack": "military", "held": None, "hat": 'bonnet', "gun": 'wheellock', "blade": 'sword', "drawn": True,
         "coat": cavalry.HORSE_COATS["dapple"]}
 
 

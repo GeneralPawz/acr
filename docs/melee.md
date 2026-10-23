@@ -454,6 +454,28 @@ frames in `run1/<scene>/`, the bench `scripts/bench.py`. Rebuilt on the VM: EngB
 FrnBuk, SpnS15, IroTam, IroLut, SiuLut, SiuKVog and new SiuKLut, PueVsd (old ones in
 `showcase/backup-shared-moves/`).
 
+### Mounted war club (m2-cav17)
+
+The war club's head lies 0.165 m off its handle (`held.war_club` `socket.tip`
+(0, -0.165, 0.39)); `cavalry.solve_strike` took a point `CLUB_TIP` + 0.04 = 0.56 m along the
+axis, so the solved pose was wrong by the offset as well as short. It now takes the point
+as a vector in the hand's rest frame (`cavalry.weapon_tip`: the club's and the sword's from
+`held`, the sabre's (0, -0.94, 0.03)) and turns the weapon so the point, not the axis, lies
+on the line to the target. The cut down right has its own lean, `cavalry.CLUB_DOWN_R`: the
+seat 0.40 m right, 0.05 forward and 0.18 down, the trunk hanging out over the right side
+(spine X/Y 20/-80°, spine1 10/-35°, spine2 5/-20°), the club 60° down and 70° out
+(Blender's solve: 0.06 m). Probe (`probe_clips`, frame 2, `ACR-analysis/cav17/probe_*.txt`):
+
+| clip | target | clip alone: off | with the layer: off |
+|---|---|---|---|
+| SiuKLut, SiuKVog `ATTACK_CUT_DOWN` | 0.92/0.25/0.20 | **0.09** (was 0.59) | **0.04** (was 0.33) |
+| SiuKLut `ATTACK_CUT_DOWN_L` | -0.61/0.73/0.20 | 0.39 (was 0.48) | 0.17 (was 0.22) |
+| EngD17, SpnRei (sword) `ATTACK_CUT_DOWN` / `_L` | as above | 0.12 / 0.05 | 0.07 / 0.02 |
+
+Frames: `ACR-analysis/cav17/sheet_club.png` (SiuKVog, `melee_bench` horse_crawl, old above,
+new below). In that run the victim stood (the crawl pose did not take) and the sim played
+the mid cut, so old and new look alike there; the probe is the check for the down cut.
+
 ### Not yet
 
 - **Sabre down left:** fixed in family 5 (docs/families/cavalry.md): a cross-body cut,
@@ -464,9 +486,13 @@ FrnBuk, SpnS15, IroTam, IroLut, SiuLut, SiuKVog and new SiuKLut, PueVsd (old one
 - **Ready stance:** the trunk turn is checked only at the bench's distance; in the `.MD`
   ready frames the muskets still lie as the clip carries them (horizontal over the
   shoulder, `melee6/sheet_fence.png` frames 10–20).
-- **Club from the saddle:** a war club (0.52 m) from a seated man does not reach a man lying
-  0.95 m out (SiuKVog/SiuKLut 0.59 m clip, 0.33 m layer); a stirrup lean like the sabre's
-  or a nearer target would be needed.
+- **Club from the saddle:** fixed in m2-cav17 (below) for the cut down right; the cut down
+  left still falls 0.39 m short with the clip alone (0.17 with the layer).
+- **Drummer's stick jab** (EngB18 `ATTACK_THRUST_*`): `line.support_clips` passes `melee="sword"`
+  to `clips.unit_clips`, which solves with `SWORD_TIP` (0.86 m) for a 0.42 m stick (0.58
+  short with the clip alone). The fix is a `tip` argument through `unit_clips` to
+  `sword_strikes` with `held.drumstick`'s tip, and an EngB18 rebuild: line.py and the
+  drummers are not cavalry, so m2-cav17 left it.
 - **Native and plains down hacks** still use `native.club_down` (1.8 m, 0.24 short at
   frame 2); the shared `club_strikes` reaches 2.0 m with the club's point vector.
 - **Lance through the rider:** solved clear in Blender (hand 0.71 m right, 3° out) but only

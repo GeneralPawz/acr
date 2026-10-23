@@ -9,6 +9,11 @@ SpnReiG1/SpnReiG2 (`SPNREIG1.MD`, `SPNREIG2.MD`) are unused leftovers of this un
 nation lists them (only `SpnRei(SP)` is in SPAIN.NDS), so the game never makes one (the
 catalog has no such type); they swap only the body sprites (`SpnReiG1/G2`), have no LIFE,
 DAMAGE 1 and the icon `KIR`. This model is SpnRei's.
+
+Reworked (m2-cav17): a buff coat with buff sleeves under the cuirass and steel arm defences,
+falling band, bucket boots, a lobster-pot helmet (`zischagge`) with red and white plumes, a
+pair of wheellock pistols (one in the hand, one in the left holster) and a drawn sword for
+the cuts.
 """
 
 from acr_assets import cavalry
@@ -35,11 +40,11 @@ MD = {
     "PSTAND1": "#PSTAND1 9 1 4 0",
 }
 
-PALETTE = dict(cavalry.PALETTE, **{"coat": (0.72, 0.62, 0.45), "waistcoat": (0.72, 0.62, 0.45), "metal": (0.62, 0.63, 0.66),
-                                   "saddlecloth": (0.70, 0.10, 0.06), "breeches": (0.60, 0.15, 0.10), "sash": (0.75, 0.08, 0.06)})
+PALETTE = dict(cavalry.PALETTE, **cavalry.PALETTE17, **{"coat": (0.72, 0.62, 0.45), "waistcoat": (0.72, 0.62, 0.45), "metal": (0.62, 0.63, 0.66),
+                                   "saddlecloth": (0.70, 0.10, 0.06), "breeches": (0.72, 0.60, 0.42), "crest": (0.92, 0.90, 0.86), "sash": (0.75, 0.08, 0.06)})
 
-SPEC = {"md": MD, "palette": PALETTE, "dress": "coat", "armour": True, "tack": "military", "hat": "morion", "held": None,
-        "gun": "pistol", "motions": {"": ("G1_Trot", 2)}}
+SPEC = {"md": MD, "palette": PALETTE, "paint": True, "fixed": cavalry.FIXED17, "dress": "buff17", "sleeves": "buff", "armour": True, "arms": True, "tack": "military", "hat": "zischagge", "plume": True, "held": None,
+        "gun": "pistol", "holster": True, "drawn": True, "blade": "sword", "motions": {"": ("G1_Trot", 2)}}
 
 
 def build(ctx):

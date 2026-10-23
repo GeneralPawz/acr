@@ -87,14 +87,48 @@ follow through, lower, the hand to the quiver, draw, nock, ready; the ready stan
 the nocked bow. `blade` "club" draws a `held.war_club` on `socket.blade_r`. Units: SiuKLut
 (bow, club), SiuKVog (club), PueVsd (`hat` "band").
 
+## 17th century (m2-cav17)
+
+EngD17, FrnD17, SpnD17, EngKOf17, FrnKOf17, SpnKOf17 and SpnRei wear `dress` "buff17"
+(`cavalry.dress17`): breeches, a buff coat (a shell keyed `buff`, hooked shut, the skirt a
+tube to 0.60 m above the rider's origin, i.e. above the knee), sleeves of cloth (`dsleeve`,
+troopers: the sprite's coat colour) or of buff (`sleeves` "buff": officers, the reiter), a
+waist belt, the officers' sash (`uniform`), bucket-top boots (`drape.bucket_boots`) and a
+falling band (`drape.falling_band`) modelled on the shells. `paint` runs `outfit.dress`
+(the buff painter, linen, leather); `fixed` (`cavalry.FIXED17`: buff, band, boots) keeps
+those palette colours against the sprites (`cavalry.PALETTE17`).
+
+| key | values |
+|---|---|
+| `dress` | `"buff17"` |
+| `sleeves` | `"dsleeve"` (troopers) or `"buff"` |
+| `gun` | `"wheellock"`: a short long arm (`held.matchlock(length=0.95)`) held like the pistol, its muzzle socket dropped (`strike_view::weapon`) |
+| `hat` | `"zischagge"`: lobster-pot helmet (skull, low comb, peak with three face bars, cheek pieces, four-lame tail; `plume`: red and white plumes) |
+| `arms` | steel arm defences (`metal` shell over the sleeves) |
+| `holster` | the second of a pair of pistols in the left saddle holster (`holster_pistol`, rigid on the horse's `saddle` bone) |
+| `paint`, `fixed` | the realistic atlas; palette keys that keep their colour |
+
+| type | hat | arms |
+|---|---|---|
+| EngD17, FrnD17 | stocking cap (the sprites show one, no helmet) | wheellock carbine, sword drawn for the cuts |
+| SpnD17 | grey broad hat | wheellock carbine, sword |
+| *KOf17 | broad hat; buff sleeves, sash | pistol, sword |
+| SpnRei | zischagge with plumes; cuirass, arm defences, buff sleeves | a pair of pistols (hand, left holster), sword drawn for the cuts |
+
+The sprites show no cuirass on the dragoons and no helmet but the reiter's, so the troopers
+have none. SpnRei's sprite shows bright steel (not black), so its `metal` stays steel.
+Before/after sheet: `ACR-analysis/cav17/sheet_cav17.png` (sprites, old, new, head).
+
+Known: the falling band is ragged along its edge (as on foot); the buff skirt is a tube
+over the saddle, not draped; the 18th-c. ones keep `dress` "coat".
+
 ## Not yet
 
 - Facings, lace and sash are shells and thin geometry; at game zoom the lapels read as
   part of the waistcoat, the lace as a light edge. The colours come from the sprites
   (`mix` 1), so a facing the sprite barely shows takes the coat's or waistcoat's colour.
-- The coat is still the shell coat (no draped skirts, no turnbacks); the carbine is a box.
-- The French bonnet's turban is plain cloth, not fur; the 17th-c. officers wear the
-  18th-c. coat cut in buff or colour (no buff coat with sleeves of a different colour).
+- The coat is still the shell coat (no draped skirts, no turnbacks); the 18th-c. carbine is a box.
+- The French bonnet's turban is plain cloth, not fur.
 - The saddlecloth has no lace border (the sprites show yellow borders on French and
   English cloths).
 - The officers' pistol rides upright on the thigh like the carbine.

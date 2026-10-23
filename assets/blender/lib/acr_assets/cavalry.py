@@ -7,7 +7,14 @@ A unit script gives a spec and calls `build(ctx, spec)`:
     md        {key: ".MD line"} (`rig.md_clip_frames` reads the frame counts)
     palette   material keys -> colour (the sprite reference refines them)
     dress     "coat" (18th-century coat, waistcoat, breeches, high boots, cap), "native"
-              (bare chest, breechcloth, leggings)
+              (bare chest, breechcloth, leggings), "buff17" (17th century: a buff coat with
+              skirts to above the knee, sleeves of `sleeves`, a falling band, bucket boots;
+              `drape.falling_band`, `drape.bucket_boots`)
+    sleeves   buff17: "dsleeve" (cloth sleeves, troopers) or "buff" (officers)
+    arms      True: steel arm defences over the sleeves (`metal`, the reiter)
+    holster   True: a second pistol in the left holster (`holster_pistol`, the reiter's pair)
+    paint     True: the realistic atlas (`outfit.dress`: the buff painter, linen, leather)
+    fixed     material keys that keep their palette colour (`Character.colours`)
     tack      "military" (scripted saddle with pistol holsters on a saddlecloth),
               "blanket" (a blanket, no saddle, a rope bridle), "bare" (a rope bridle)
     held      gear in the right hand: "flag" (a standard, the fist round the pole), "lance"
@@ -17,7 +24,8 @@ A unit script gives a spec and calls `build(ctx, spec)`:
     hat       "cap" (tall mitre cap), "tricorne" (the line's felt tricorn), "bonnet" (a
               dragoon's stocking cap on a fur turban), "helmet" (light dragoon's leather
               helmet, brass comb, horsehair crest), "broad" (17th-century broad-brimmed hat
-              with a plume), "morion" (crested helmet with a plume), "feathers" (long hair,
+              with a plume), "morion" (crested helmet with a plume), "zischagge" (lobster-pot
+              helmet: skull, peak with face bars, cheek pieces, a laminated tail; `plume`), "feathers" (long hair,
               a feather or two upright), "crown" (long hair, a headband of feathers), None
     plume     tricorne: a feather edging round the brim (`crest`)
     facings   True: turned-back cuffs and lapels in `palette["facings"]`
@@ -29,7 +37,8 @@ A unit script gives a spec and calls `build(ctx, spec)`:
     shirt     natives: a shirt over the bare chest (`tunic`)
     armour    a steel cuirass over the coat (`metal`)
     shield    a round hide shield on the left forearm (`knapsack`)
-    gun       "carbine" or "pistol" (`held.pistol`) in the right fist: upright on the thigh while he rides,
+    gun       "carbine", "wheellock" (a short `held.matchlock`, the 17th century's carbine) or
+              "pistol" (`held.pistol`) in the right fist: upright on the thigh while he rides,
               level for the shot (ATTACK1, PATTACK1...)
     sabre     False: no sabre at the hip
     drawn     True: a drawn sabre for the melee clips besides the gun (EngD18): it sits on a
@@ -79,6 +88,10 @@ PALETTE = {
     "tunic": (0.80, 0.75, 0.62), "hair": (0.05, 0.04, 0.04), "knapsack": (0.80, 0.70, 0.55),
     "facings": (0.15, 0.20, 0.50), "lace": (0.80, 0.64, 0.28), "crest": (0.92, 0.90, 0.86), "brass": (0.72, 0.58, 0.30),
 }
+# The 17th-century riders (`dress` "buff17"): buff, linen band and blacked bucket boots keep
+# these colours (`FIXED17`); the cloth sleeves (`dsleeve`) take the sprite's coat colour.
+PALETTE17 = {"buff": (0.74, 0.58, 0.36), "fallband": (0.93, 0.92, 0.88), "jackboots": (0.16, 0.11, 0.07)}
+FIXED17 = ("buff", "fallband", "jackboots")
 # Horse coats by the sprites (`mount.COAT` tints: body, mane and tail).
 HORSE_COATS = {
     "black": {"body": (0.18, 0.15, 0.14), "hair": (0.08, 0.07, 0.06)},
@@ -118,6 +131,12 @@ FLAG_R = {"upperarm_r": (-20, -10, 0), "forearm_r": (-75, 0, 10)}
 # down over the horse's left shoulder (about 0.36 left, 0.51 ahead, 1.59 m up) and the
 # blade goes almost straight down past the neck: a cross-body cut (Blender's solve: 0.03 m).
 SABRE_DOWN_L = {"root_loc": (0.25, -0.15, -0.10), "spine": (60, 20, 25), "spine1": (25, 10, 15), "spine2": (12, 5, 10)}
+SABRE_DOWN_R = {"root_loc": (-0.22, 0.0, -0.02), "spine": (-20, -38, 0), "spine1": (-8, -22, 0), "spine2": (-4, -14, 0)}
+# The war club down right (SiuKVog, SiuKLut): the club reaches 0.42 m along its handle
+# (its head 0.165 m before it, `weapon_tip`), so the rider hangs far out over the right
+# side, the seat over the right stirrup.
+CLUB_DOWN_R = {"root_loc": (-0.40, -0.05, -0.18), "spine": (20, -80, 0), "spine1": (10, -35, 0), "spine2": (5, -20, 0)}
+CLUB_DOWN_R_AXIS = (60, 70)
 SABRE_DOWN_L_AT = Vector((0.61, -0.73, 0.20))
 SABRE_DOWN_L_AXIS = (80, -5)  # degrees down, out (negative: left); `axis_of`
 # Fists (`close_hands`): the mitten's fingers, from `KNUCKLE` metres past the wrist, wrap
@@ -455,6 +474,15 @@ def gun(ch, name, kind):
         for e in [c for c in obj.children if c.name.endswith("socket.muzzle")]:
             bpy.data.objects.remove(e)
         return obj
+    if kind == "wheellock":
+        # A short 17th-century long arm (`held.matchlock` at 0.95 m) held like the pistol.
+        from . import held as library
+
+        m = Matrix.Translation(c) @ Matrix.Rotation(math.radians(90), 4, "X") @ Matrix.Rotation(math.pi, 4, "Z")
+        obj = gear.hold(ch, library.matchlock(length=0.95), f"{name}", socket=P + "socket.hand_r", matrix=m, slot="gun")
+        for e in [c for c in obj.children if c.name.endswith("socket.muzzle")]:
+            bpy.data.objects.remove(e)
+        return obj
     ln = 1.05
     bm = bmesh.new()
     _box(bm, Vector((0, -ln / 2 + 0.12, 0.0)), (0.03, ln, 0.035))  # barrel and stock
@@ -487,6 +515,55 @@ def morion(ch, name, plume=True):
         bm = bmesh.new()
         _box(bm, sock + Vector((0, 0.10, 0.16)), (0.05, 0.06, 0.20), Matrix.Rotation(math.radians(-25), 4, "X"))
         _held(ch, f"{name}_plume", "sash", bm, "socket.hat", Matrix.Identity(4))
+    return obj
+
+
+def zischagge(ch, name, plume=None):
+    """A lobster-pot helmet (zischagge): a rounded skull with a low comb, a peak with three
+    face bars, cheek pieces and a tail of four lames over the nape (`metal`); `plume`: a
+    plume rising from the back of the comb (`sash` and `crest`, red and white)."""
+    sock = am.world(ch.arm, P + "socket.hat").translation + Vector((0, 0, -0.03))
+    bm = bmesh.new()
+    bmesh.ops.create_uvsphere(bm, u_segments=16, v_segments=8, radius=0.12)
+    for v in bm.verts:
+        v.co.z = max(v.co.z, -0.005) * 1.12
+        v.co.y *= 1.08
+    _box(bm, Vector((0, 0.0, 0.14)), (0.010, 0.17, 0.03))  # comb
+    _box(bm, Vector((0, -0.15, 0.0)), (0.19, 0.08, 0.008), Matrix.Rotation(math.radians(-12), 4, "X"))  # peak
+    for x in (-0.035, 0.0, 0.035):  # face bars from the peak to the chin
+        _tube(bm, Vector((x, -0.18, -0.005)), Vector((x * 0.8, -0.15, -0.20)), 0.005, 0.005, 5)
+    for sx in (-1, 1):  # cheek pieces
+        _box(bm, Vector((sx * 0.115, -0.03, -0.09)), (0.010, 0.10, 0.13), Matrix.Rotation(math.radians(sx * 6), 4, "Y"))
+    for k in range(4):  # the lobster tail
+        _box(bm, Vector((0, 0.12 + 0.018 * k, -0.02 - 0.045 * k)), (0.20 - 0.008 * k, 0.012, 0.05),
+             Matrix.Rotation(math.radians(20 + 6 * k), 4, "X"))
+    for v in bm.verts:
+        v.co += sock
+    obj = _held(ch, f"{name}_zischagge", "metal", bm, "socket.hat", Matrix.Identity(4))
+    if plume:
+        for i, (key, dx) in enumerate((("sash", -0.025), ("crest", 0.025))):
+            bm = bmesh.new()
+            pts = [sock + Vector((dx, 0.06 + 0.10 * t, 0.15 + 0.16 * t - 0.10 * t * t)) for t in (0.0, 0.35, 0.7, 1.0)]
+            for j, r in zip(range(3), (0.025, 0.035, 0.03)):
+                _tube(bm, pts[j], pts[j + 1], r, r * 0.8, 7)
+            _held(ch, f"{name}_plume{i}", key, bm, "socket.hat", Matrix.Identity(4))
+    return obj
+
+
+def holster_pistol(ch, hz, name):
+    """The second of a pair of pistols in the left saddle holster (`military_saddle`), its
+    butt out of the bearskin cap; rigid on the horse's `saddle` bone."""
+    sad = hz.head("saddle")
+    top = back_top(hz, sad.y)
+    w = max(_body_section(hz, sad.y, top - 0.08), 0.12)
+    a = Vector((w + 0.06, sad.y - 0.28, top + 0.04))
+    down = Vector((0.06, -0.10, -0.30)).normalized()
+    # `held.pistol`: the barrel +Z into the holster, the butt rising out of the cap.
+    rot = Vector((0, 0, 1)).rotation_difference(down).to_matrix().to_4x4()
+    obj = gear.held("pistol", f"{name}.holster_pistol")
+    for e in [c for c in obj.children if ".socket." in c.name]:
+        bpy.data.objects.remove(e)
+    gear.rigid(obj, hz.arm, "saddle", Matrix.Translation(a - down * 0.10) @ rot, part=horse.HORSE_PART)
     return obj
 
 
@@ -835,37 +912,52 @@ def bow_keys(n, release, p):
     return out
 
 
-def solve_strike(ch, left, trunk, point, axis, length, left_target):
+def solve_strike(ch, left, trunk, point, axis, length, left_target, tip=None):
     """A blow measured at the weapon's point (m2-melee6): the trunk posed first, both
     arms solved from the shoulders as posed, the left hand to `left_target` (None: on
     the reins, `left`); the weapon (rest -Y along the fist) along `axis` and the right
     wrist moved until the point, `length` past the fist's centre, lies on `point`
     (armature space: the model's ground origin, -x right, -y forward) or as near as the
-    arm reaches: then the weapon is turned from the fist straight at the point."""
+    arm reaches: then the weapon is turned from the fist straight at the point.
+    `tip`: the point in the hand's rest frame from the fist's centre when it lies off the
+    weapon's axis (a war club's head: `weapon_tip`); default `length` along rest -Y."""
     am.pose(ch.arm, trunk, prefix=P)
     sh = {sd: ch.arm.pose.bones[P + "upperarm_" + sd].head.copy() for sd in "lr"}
     axis = Vector(axis).normalized()
-    hand = _turn(Vector((0.0, -1.0, 0.0)), axis)
+    tip = Vector(tip) if tip is not None else Vector((0.0, -length, 0.0))
+    q = Vector((0.0, -1.0, 0.0)).rotation_difference(axis)
     lw = left if left_target is None else reins_world(ch.arm, {"l": left_target}, sides=("l",), shoulders=sh)
-    wrist = point - axis * (length + 0.1)
+    wrist = point - (q @ tip) - axis * 0.1
     spec = None
-    for k in range(8):
+    for k in range(10):
         w = dict(lw, **reins_world(ch.arm, {"r": wrist}, sides=("r",), shoulders=sh))
-        w["hand_r"] = hand
+        w["hand_r"] = tuple(math.degrees(x) for x in q.to_euler("XYZ"))
         spec = _with_world(trunk, w)
         am.pose(ch.arm, spec, prefix=P)
         fist = fist_centre(ch)[0]
-        at = fist + axis * length
+        at = fist + q @ tip
         if k >= 3 and (at - point).length > 0.05:
-            # Out of the arm's reach: the blade straight from the fist at the point.
-            axis = (point - fist).normalized()
-            hand = _turn(Vector((0.0, -1.0, 0.0)), axis)
+            # Out of the arm's reach: the weapon turned from the fist so its point lies
+            # on the line to the target.
+            q = (q @ tip).normalized().rotation_difference((point - fist).normalized()) @ q
         wrist = wrist + (point - at)
     ch.strike_off = (at - point).length
+    hand = tuple(math.degrees(x) for x in q.to_euler("XYZ"))
     print(f"STRIKE pose: point {tuple(round(v, 2) for v in at)} for {tuple(round(v, 2) for v in point)}, "
           f"off {(at - point).length:.2f}, hand {tuple(round(v) for v in hand)}, "
           f"shoulder {tuple(round(v, 2) for v in sh['r'])}, fist {tuple(round(v, 2) for v in fist)}")
     return spec
+
+
+def weapon_tip(kind):
+    """The drawn weapon's point in the hand's rest frame from the fist's centre (`blade`
+    puts the item's +Z along rest -Y: item (x, y, z) -> (x, -z, y))."""
+    if kind in ("club", "sword"):
+        from . import held as library
+
+        x, y, z = library.build("war_club" if kind == "club" else "officer_sword").sockets["socket.tip"]
+        return Vector((x, -z, y))
+    return Vector((0.0, -0.04 - BLADE[0], 0.03))
 
 
 def axis_of(down, out):
@@ -873,6 +965,29 @@ def axis_of(down, out):
     (negative: to the left)."""
     d, o = math.radians(down), math.radians(out)
     return (-math.cos(d) * math.sin(o), -math.cos(d) * math.cos(o), -math.sin(d))
+
+
+def dress17(ch, spec, name, origin):
+    """The 17th-century rider (`dress` "buff17"): breeches, a buff coat (hooked shut, its
+    skirts to above the knee, sleeves of `spec["sleeves"]`), a waist belt, the sash
+    (`uniform`), bucket-top boots over the shins and a falling band on the shoulders
+    (`drape.bucket_boots`, `drape.falling_band`: modelled on the shells, skinned like them)."""
+    from . import drape, frontier, pike  # noqa: F401  (register dsleeve, the band and the boots)
+
+    oz, cy = origin.z, origin.y
+    ch.shell("breeches", "breeches", lambda c, n, h, p: (h in {"hips"} | LEGS and c.z < 1.0 + oz), 0.010)
+    ch.shell("boots", "boots_high", lambda c, n, h, p: h in SHINS | FEET, 0.006)
+    ch.shell("buffcoat", "buff", lambda c, n, h, p: h in TORSO and 0.97 + oz < c.z < 1.48 + oz, 0.03)
+    ch.shell("sleeves", spec.get("sleeves", "dsleeve"), lambda c, n, h, p: h in ARMS, 0.03)
+    skirt = bd.tube(ch.arm, f"{name}.buff_skirt", rig.SKIRT_TOP + oz, 0.60 + oz, (0.20, 0.155), (0.25, 0.21), gap_deg=40,
+                    flare_back=0.03, columns=rig.SKIRT_COLUMNS, centre=(origin.x, origin.y), prefix=P)
+    ch.add("clothes", skirt, "buff", symmetric=True)
+    belt = bd.strap(ch.arm, f"{name}.belt", ch.flesh, Vector((0.12, cy, 1.47 + oz)), Vector((-0.17, cy, 0.95 + oz)),
+                    0.06, 0.045, bones=[P + b for b in rig.BODY_BONES])
+    ch.add("clothes", belt, "belts", symmetric=True)
+    uniform(ch, spec, oz, cy)
+    drape.bucket_boots(ch, name)
+    drape.falling_band(ch, name)
 
 
 def make(ctx, spec):
@@ -911,6 +1026,8 @@ def make(ctx, spec):
                         0.06, 0.04, bones=[P + b for b in rig.BODY_BONES])
         ch.add("clothes", belt, "belts", symmetric=True)
         uniform(ch, spec, oz, cy)
+    elif spec.get("dress") == "buff17":
+        dress17(ch, spec, name, origin)
     else:
         ch.shell("breechcloth", "breeches", lambda c, n, h, p: h in {"hips"} | LEGS and 0.80 + oz < c.z < 1.0 + oz, 0.012)
         ch.shell("leggings", "boots", lambda c, n, h, p: h in SHINS | FEET or (h in LEGS and c.z < 0.80 + oz), 0.012)
@@ -918,6 +1035,8 @@ def make(ctx, spec):
             ch.shell("shirt", "tunic", lambda c, n, h, p: (h in TORSO and 0.97 + oz < c.z < 1.47 + oz) or h in ARMS, 0.014)
     if spec.get("armour"):
         ch.shell("cuirass", "metal", lambda c, n, h, p: h in TORSO and 1.0 + oz < c.z < 1.46 + oz, 0.05)
+    if spec.get("arms"):
+        ch.shell("vambraces", "metal", lambda c, n, h, p: h in ARMS, 0.042)
     ch.bone_layer()
     ch.caps()
     extra = []
@@ -929,6 +1048,8 @@ def make(ctx, spec):
         # Leather like the rider's gear: decay material and colour from the sprites.
         sad_obj["acr_material_keys"] = ["saddle", "tack"]
         ch.add("gear", sad_obj, "saddle", symmetric=True)
+        if spec.get("holster"):
+            ch.add("gear", holster_pistol(ch, hz, name), "wood")
     ch.horse = {"mount": hz, "extra": extra}
 
     # Seated pose: legs, then arms solved onto the reins.
@@ -951,8 +1072,8 @@ def make(ctx, spec):
         """A point by the right hip (seated), moved by (dx, dy, dz)."""
         return Vector((-0.24 + dx, cy + dy, sad.z + dz))
 
-    def strike(trunk, point, axis, length, left_target):
-        return solve_strike(ch, left, trunk, point, axis, length, left_target)
+    def strike(trunk, point, axis, length, left_target, tip=None):
+        return solve_strike(ch, left, trunk, point, axis, length, left_target, tip)
 
     # Standing in the stirrups: the seat raised, the knees opened (m2-melee6).
     stirrups = dict(LEGS_SEAT, thigh_l=(-42, -16, 0), shin_l=(56, 0, 0), foot_l=(-14, 0, 0),
@@ -960,6 +1081,8 @@ def make(ctx, spec):
     pommel = Vector((0.0, sad.y - 0.22, sad.z + 0.12))
     lance_len = LANCE[0] - LANCE[1] + 0.30
     sabre_len = (CLUB_TIP if spec.get("blade") == "club" else BLADE[0]) + 0.04
+    club = spec.get("blade") == "club"
+    blade_tip = weapon_tip(spec.get("blade", "sabre"))
 
     poses = {"seat": seat, "lean": _with_world(dict(LEGS_SEAT, spine=(-12, 0, 0)), both),
              "aim": _with_world(dict(LEGS_SEAT, **AIM_R, **AIM_L), {"socket.hand_r": (88, 0, 0)}),
@@ -997,13 +1120,13 @@ def make(ctx, spec):
              # of a man lying 0.95 m out at 75° (`strike_view::TURN_SABRE`, `NEAR_BODY`);
              # solved at the point. 1.2 m out is beyond a seated man's arm and blade. The arm IK used the
              # shoulder at rest before, so the lean carried the hand off its target.
-             "sabre_down_r": strike(dict(stirrups, root_loc=(-0.22, 0.0, -0.02), spine=(-20, -38, 0),
-                                         spine1=(-8, -22, 0), spine2=(-4, -14, 0)),
-                                    Vector((-0.92, -0.25, 0.20)), axis_of(62, 40), sabre_len, pommel),
+             "sabre_down_r": strike(dict(stirrups, **(CLUB_DOWN_R if club else SABRE_DOWN_R)),
+                                    Vector((-0.92, -0.25, 0.20)), axis_of(*(CLUB_DOWN_R_AXIS if club else (62, 40))),
+                                    sabre_len, pommel, blade_tip),
              # Down left (`strike_view::TURN_SABRE_L`, the man 40° left of the facing, 0.95 m
              # out): across the neck, leaning out over the left shoulder.
              "sabre_down_l": strike(dict(stirrups, **SABRE_DOWN_L), SABRE_DOWN_L_AT, axis_of(*SABRE_DOWN_L_AXIS),
-                                    sabre_len, pommel),
+                                    sabre_len, pommel, blade_tip),
              "sabre_mid": _with_world(dict(LEGS_SEAT, spine=(-8, -8, 6)), right(side(-0.16, -0.46, 0.36), (25, 25, 0))),
              # A gun upright, its butt on the right thigh (the socket turned from the aim's).
              "gun": _with_world(dict(LEGS_SEAT), right(side(0.04, -0.22, 0.12), None, (-2, 0, 0)))}
@@ -1023,6 +1146,8 @@ def make(ctx, spec):
         native_head(ch, name, hat, cy)
     elif hat == "morion":
         morion(ch, name)
+    elif hat == "zischagge":
+        zischagge(ch, name, plume=spec.get("plume"))
     elif hat == "tricorne":
         tricorne(ch, name, lace=bool(spec.get("lace")), plume=spec.get("plume"))
     elif hat == "bonnet":
@@ -1226,7 +1351,13 @@ def build(ctx, spec):
     made = add_clips(ch, spec["md"], spec.get("motions", MOTIONS))
     am.set_clip(ch.arm, "STAND")
     report = {}
-    colours = ch.colours(ctx.ref, spec["palette"], report=report)
+    colours = ch.colours(ctx.ref, spec["palette"], report=report, fixed=spec.get("fixed", ()))
+    if spec.get("paint"):
+        # The realistic atlas (as the foot units): buff, linen, leather and cloth painters.
+        from . import outfit
+        from .humans import LAYER_OF
+
+        outfit.dress(ch, colours, LAYER_OF)
     heads.finish(ch, rider)
     am.set_clip(ch.arm, "STAND")
     ch.arm.animation_data.action = None
