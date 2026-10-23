@@ -640,7 +640,7 @@ impl ThreeD {
                     machines.insert(u.id.0);
                 } else {
                     inst.uniform = self.crews.uniform(world, u);
-                    if let Some((c, time)) = super::crew_view::trail_clip(model, u) {
+                    if let Some((c, time)) = self.crews.work(model, u, now) {
                         (inst.clip, inst.time) = (Some(c), time);
                     }
                 }

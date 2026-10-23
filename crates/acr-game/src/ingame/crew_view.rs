@@ -108,7 +108,13 @@ pub struct Crews {
     pub poses: HashMap<usize, Palette>,
     /// The yaw each gun (unit id) is drawn at, following its facing smoothly.
     yaw: HashMap<u32, f32>,
+    /// The crew's last work per gun (unit id): clip, time and the tick it was seen.
+    held: HashMap<u32, (usize, f32, u64)>,
 }
+
+/// Ticks of `#STAND` across which the crew keeps its last work: the sim stands a gun for one
+/// tick between lowering the trail and driving off (and between arriving and lifting it).
+const STAND_GAP: u64 = 2;
 
 /// A cannon's turn step: the sim turns it a 16th (16 of 256) per `#MOTION_L1`/`#MOTION_R1`
 /// cycle (`artillery::complex_rotate`, 0x50f7cb).
@@ -139,19 +145,61 @@ pub fn turn_rate(t: &ObjectType) -> f32 {
     TURN_STEP / 256.0 * std::f32::consts::TAU / cycle
 }
 
-/// The clip and time a crewed gun shows in the trail's lift and drop around a turn
-/// (`#PATTACK1`/`#UATTACK1`, 71 frames, the sprites' `ArtPus_Pdg_pvrt`): the model has no
-/// clip of its own for them, so instead of standing still the crew works the trail in the
-/// `MOTION` clip. `None` in every other animation.
-pub fn trail_clip(model: &ModelData, u: &Unit) -> Option<(usize, f32)> {
-    let name = match u.anim {
-        AnimKind::PAttack(1) => "MOTION_L",
-        AnimKind::UAttack(1) => "MOTION_R",
+/// How a crewed gun's crew works in an animation of the sim (the original's sprite packs):
+/// the clip, and whether the animation plays it backwards.
+fn crew_work(anim: AnimKind) -> Option<(&'static str, Play)> {
+    Some(match anim {
+        // Limbering for a move (`ArtPus_Pdg_Tlk`): the chest taken up, the wheels manned.
+        AnimKind::PAttack(0) => ("CHEST_CARRY", Play::Forward),
+        AnimKind::UAttack(0) => ("CHEST_CARRY", Play::Backward),
+        // Moving (`ArtPus_Tlk`): two push, two carry the chest; held between the cycles.
+        AnimKind::MotionLs(0) | AnimKind::MotionRs(0) => ("GUN_PUSH", Play::Forward),
+        AnimKind::PStand(0) => ("GUN_PUSH", Play::Hold),
+        // Turning (`ArtPus_Pdg_pvrt`, `ArtPus_pvrt`): the trail lifted, walked round a 16th
+        // per step (left forwards, right backwards), held up between the steps.
+        AnimKind::PAttack(1) => ("TRAIL_LIFT", Play::Forward),
+        AnimKind::UAttack(1) => ("TRAIL_LIFT", Play::Backward),
+        AnimKind::MotionLs(1) => ("TRAIL_WALK", Play::Forward),
+        AnimKind::MotionRs(1) => ("TRAIL_WALK", Play::Backward),
+        AnimKind::PStand(1) => ("TRAIL_WALK", Play::Hold),
         _ => return None,
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Play {
+    Forward,
+    Backward,
+    /// The first frame, held (a `#PSTAND` between the cycles).
+    Hold,
+}
+
+/// The time (seconds) into a clip of `duration` at `frame` of an animation of `frames`.
+fn play_time(play: Play, frame: i32, frames: i32, fps: f32, duration: f32) -> f32 {
+    let frame = frame.max(0) as f32;
+    let t = match play {
+        Play::Forward => frame / fps,
+        Play::Backward => (frames.max(1) - 1) as f32 / fps - frame / fps,
+        Play::Hold => 0.0,
     };
+    t.clamp(0.0, duration)
+}
+
+/// The clip and time a crewed gun shows while it limbers, moves and turns (#287, the sprites'
+/// crew roles): `CHEST_CARRY` (`#PATTACK0`/`#UATTACK0`), `GUN_PUSH` (`#MOTION_L0/R0`,
+/// `#PSTAND0`), `TRAIL_LIFT` (`#PATTACK1`/`#UATTACK1`) and `TRAIL_WALK` (`#MOTION_L1/R1`,
+/// `#PSTAND1` between the steps, so the trail stays up and nobody stands back between them).
+/// `None` in every other animation, or for a model without that clip.
+pub fn crew_clip(model: &ModelData, u: &Unit) -> Option<(usize, f32)> {
+    let (name, play) = crew_work(u.anim)?;
     let c = model.clip(name)?;
     let duration = model.clips[c].duration.max(1e-3);
-    Some((c, (u.frame.max(0) as f32 / model.fps) % duration))
+    let time = match play {
+        // A cycle loops over its animation.
+        Play::Forward if name == "GUN_PUSH" => (u.frame.max(0) as f32 / model.fps) % duration,
+        _ => play_time(play, u.frame, u.anim_frames, model.fps, duration),
+    };
+    Some((c, time))
 }
 
 fn wrap(a: f32) -> f32 {
@@ -167,6 +215,7 @@ impl Crews {
             self.corpses.clear();
             self.nations.clear();
             self.yaw.clear();
+            self.held.clear();
         }
         if now >= self.nations_tick + 256 || now < self.nations_tick {
             self.nations.clear();
@@ -188,6 +237,22 @@ impl Crews {
         let next = now + wrap(want - now).clamp(-max, max);
         self.yaw.insert(u.id.0, next);
         next
+    }
+
+    /// The crew's clip and time for gun `u` at tick `now` ([`crew_clip`]), its last work held
+    /// through a `#STAND` of up to [`STAND_GAP`] ticks so the men do not pop back to their
+    /// stations for a tick between two works.
+    pub fn work(&mut self, model: &ModelData, u: &Unit, now: u64) -> Option<(usize, f32)> {
+        if let Some((c, t)) = crew_clip(model, u) {
+            self.held.insert(u.id.0, (c, t, now));
+            return Some((c, t));
+        }
+        let &(c, t, at) = self.held.get(&u.id.0)?;
+        if u.alive && u.anim == AnimKind::Stand && now.saturating_sub(at) <= STAND_GAP {
+            return Some((c, t));
+        }
+        self.held.remove(&u.id.0);
+        None
     }
 
     /// The uniform of gun `u`: its type's nation, else its owner's.
@@ -331,6 +396,35 @@ mod tests {
         assert_eq!(turning(32, AnimKind::MotionRs(1), 0, 20), 48.0);
         assert_eq!(turning(32, AnimKind::MotionRs(1), 20, 20), 32.0);
         assert_eq!(turning(32, AnimKind::Stand, 10, 20), 32.0);
+    }
+
+    #[test]
+    fn a_turn_never_falls_back_to_standing() {
+        // Every animation of a turn, including the hold between its steps, has crew work.
+        for anim in [
+            AnimKind::PAttack(1),
+            AnimKind::MotionLs(1),
+            AnimKind::PStand(1),
+            AnimKind::MotionRs(1),
+            AnimKind::UAttack(1),
+        ] {
+            assert!(crew_work(anim).is_some(), "{anim:?}");
+        }
+        assert_eq!(crew_work(AnimKind::PStand(1)), Some(("TRAIL_WALK", Play::Hold)));
+        assert_eq!(crew_work(AnimKind::PStand(0)), Some(("GUN_PUSH", Play::Hold)));
+        assert_eq!(crew_work(AnimKind::Stand), None);
+    }
+
+    #[test]
+    fn transitions_play_backwards_when_undone() {
+        let fps = 24.0;
+        let d = 70.0 / fps;
+        assert_eq!(play_time(Play::Forward, 0, 71, fps, d), 0.0);
+        assert_eq!(play_time(Play::Backward, 0, 71, fps, d), d);
+        assert_eq!(play_time(Play::Backward, 70, 71, fps, d), 0.0);
+        assert_eq!(play_time(Play::Hold, 33, 71, fps, d), 0.0);
+        // A right step ends where a left one starts: the held pose between steps.
+        assert_eq!(play_time(Play::Backward, 39, 40, fps, 39.0 / fps), 0.0);
     }
 
     #[test]

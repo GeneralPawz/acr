@@ -132,13 +132,117 @@ def stand_keys():
     return {p: [(0, place(HELD[p], HOME[p][:2], HOME[p][2]))] for p in PREFIXES}
 
 
+# The ammunition chest (artpus.py's `chest` bone, on the ground beside the trail at rest):
+# its rope handles at the ends, metres from its bottom centre (x, z).
+CHEST_REST = (1.15, 3.5)
+CHEST_HANDLE = (0.34, 0.28)
+CHEST_SPAN = 0.52  # a carrier's hips from the chest's middle
+CARRY_Y = 3.8  # the carriers walk behind the trail end (2.75)
+CARRY_Z = 0.6  # the chest's bottom when carried (the handles at the hanging hands)
+# Lifting the trail for a turn: the carriage turns up about the axle (degrees about X).
+TRAIL_UP = 10.0
+# A 16th of a turn rolls the wheels a spoke's pitch (12 spokes): seamless between steps.
+TURN_ROLL = 30.0
+
+# Carrying the chest by its rope handle, the other hand free (the tool in the right).
+CARRY = dict(STAND, spine=(-2, 0, 0), ik="chest")
+# Bent down to the chest on the ground: knees bent, the back leaning in.
+STOOP = dict(STAND, spine=(-48, 0, 0), spine1=(-16, 0, 0), head=(28, 0, 0),
+             thigh_l=(-70, -3, 0), shin_l=(95, 0, 0), foot_l=(-25, 0, 0),
+             thigh_r=(-60, 3, 0), shin_r=(90, 0, 0), foot_r=(-30, 0, 0), root_loc=(0, 0.12, -0.4), ik="chest")
+# Heaving a wheel round by its spokes: the push and the deeper lean of the heave.
+HEAVE = dict(PUSH, spine=(-32, 0, 0), spine1=(-10, 0, 0), thigh_l=(-40, -3, 0), shin_l=(40, 0, 0),
+             thigh_r=(28, 3, 0), shin_r=(12, 0, 0), root_loc=(0, -0.08, -0.05))
+# The trail lifted on the handspike: upright enough to carry it, both hands on the lever.
+LIFT = dict(SPIKE, spine=(-16, 0, 0), spine1=(-6, 0, 0), head=(14, 0, 0),
+            thigh_l=(-14, -3, 0), shin_l=(16, 0, 0), thigh_r=(8, 3, 0), shin_r=(8, 0, 0))
+
+# Turning (the original's `ArtPus_pvrt`): c2 lifts the trail end with the handspike and walks
+# it round, c1 heaves the left wheel from behind, c0 the right one from in front (they turn
+# opposite ways about the axle), c3 stands by the chest set down beside the trail.
+TURN = {"c0.": (PUSH_X, -1.05, 180), "c1.": (-PUSH_X, 1.05, 0), "c2.": (0.0, 3.15, 0), "c3.": (1.3, 2.95, -90)}
+
+
 def motion_keys(n=36):
-    """Moving: c0/c1 push on the wheels from behind, c2 on the trail, c3 walks beside."""
+    """GUN_PUSH (`#MOTION_L0/R0`, the sprites' `ArtPus_Tlk`): c0/c1 push the gun on its wheels
+    from behind, c2/c3 carry the ammunition chest behind the trail between them."""
     plan = {"c0.": (tool(PUSH, UP), (PUSH_X, 1.05), 0), "c1.": (PUSH, (-PUSH_X, 1.05), 0),
-            "c2.": (tool(SPIKE, DOWN), (0.0, 3.15), 0), "c3.": (tool(STAND, UP), (1.45, 1.4), 0)}
+            "c2.": (tool(CARRY, UP), (-CHEST_SPAN, CARRY_Y), 0), "c3.": (tool(CARRY, UP), (CHEST_SPAN, CARRY_Y), 0)}
     out = {}
     for p, (pose, st, yaw) in plan.items():
         out[p] = [(f, place(s, st, yaw)) for f, s in _walk(pose, n)]
+    return out
+
+
+def chest_keys(n=41):
+    """CHEST_CARRY (`#PATTACK0`, 42 frames, `ArtPus_Pdg_Tlk`; `#UATTACK0` plays it backwards):
+    from the stations c0/c1 go to the wheels, c2/c3 to the chest's handles, stoop, lift it and
+    carry it in behind the trail."""
+    cx, cy = CHEST_REST
+    k = {p: [] for p in PREFIXES}
+
+    def at(p, f, pose, x, y, yaw):
+        k[p].append((f, place(pose, (x, y), yaw)))
+
+    for p, sd in (("c0.", 1), ("c1.", -1)):
+        pose = tool(PUSH, UP) if p == "c0." else PUSH
+        x, y, yaw = HOME[p]
+        at(p, 0, HELD[p], x, y, yaw)
+        at(p, 4, HELD[p], x, y, yaw)
+        at(p, 30, pose, sd * PUSH_X, 1.05, 0)
+        k[p].append((n, place(_walk(pose)[0][1], (sd * PUSH_X, 1.05), 0)))
+    for p, sd in (("c2.", -1), ("c3.", 1)):
+        x, y, yaw = HOME[p]
+        at(p, 0, HELD[p], x, y, yaw)
+        at(p, 14, tool(STAND, UP), cx + sd * CHEST_SPAN, cy, 0)
+        at(p, 20, tool(STOOP, UP), cx + sd * CHEST_SPAN, cy, 0)
+        at(p, 28, tool(CARRY, UP), cx + sd * CHEST_SPAN, cy, 0)
+        k[p].append((n, place(_walk(tool(CARRY, UP))[0][1], (sd * CHEST_SPAN, CARRY_Y), 0)))
+    return {p: stepped(ks, min_move=0.3) for p, ks in k.items()}
+
+
+def lift_keys(n=70):
+    """TRAIL_LIFT (`#PATTACK1`, 71 frames, `ArtPus_Pdg_pvrt`; `#UATTACK1` plays it backwards):
+    from the stations to the turn's, c2 sets the handspike in the trail and lifts it."""
+    k = {p: [] for p in PREFIXES}
+
+    def at(p, f, pose, x, y, yaw):
+        k[p].append((f, place(pose, (x, y), yaw)))
+
+    for p in PREFIXES:
+        x, y, yaw = HOME[p]
+        at(p, 0, HELD[p], x, y, yaw)
+        at(p, 6, HELD[p], x, y, yaw)
+    tx, ty, tyaw = TURN["c0."]
+    at("c0.", 36, tool(STAND, UP), tx, ty, tyaw)
+    at("c0.", 46, tool(PUSH, UP), tx, ty, tyaw)
+    at("c0.", n, tool(PUSH, UP), tx, ty, tyaw)
+    tx, ty, tyaw = TURN["c1."]
+    at("c1.", 36, STAND, tx, ty, tyaw)
+    at("c1.", 46, PUSH, tx, ty, tyaw)
+    at("c1.", n, PUSH, tx, ty, tyaw)
+    tx, ty, tyaw = TURN["c2."]
+    at("c2.", 30, tool(SPIKE, DOWN), tx, ty, tyaw)
+    at("c2.", 44, tool(SPIKE, DOWN), tx, ty, tyaw)
+    at("c2.", 66, tool(LIFT, DOWN), tx, ty, tyaw)
+    k["c2."].append((n, place(_walk(tool(LIFT, DOWN), 40, 2)[0][1], (tx, ty), tyaw)))
+    tx, ty, tyaw = TURN["c3."]
+    at("c3.", 36, tool(STAND, UP), tx, ty, tyaw)
+    at("c3.", n, tool(STAND, UP), tx, ty, tyaw)
+    return {p: stepped(ks) for p, ks in k.items()}
+
+
+def turn_keys(n=40):
+    """TRAIL_WALK (`#MOTION_L1`, 40 frames, `ArtPus_pvrt`; `#MOTION_R1` plays it backwards, and
+    `#PSTAND1` between the steps holds its first frame): c2 walks the lifted trail round, c0/c1
+    heave the wheels (WHEEL_HEAVE), c3 stands by the chest. First and last frames are alike."""
+    out = {"c2.": [(f, place(s, TURN["c2."][:2], TURN["c2."][2])) for f, s in _walk(tool(LIFT, DOWN), n, 2)]}
+    for p in ("c0.", "c1."):
+        x, y, yaw = TURN[p]
+        a, b = (tool(PUSH, UP), tool(HEAVE, UP)) if p == "c0." else (PUSH, HEAVE)
+        out[p] = [(f, place(a if (f // 10) % 2 == 0 else b, (x, y), yaw)) for f in range(0, n + 1, 10)]
+    x, y, yaw = TURN["c3."]
+    out["c3."] = [(0, place(tool(STAND, UP), (x, y), yaw)), (n, place(tool(STAND, UP), (x, y), yaw))]
     return out
 
 
@@ -263,7 +367,8 @@ def clips():
     st = stand_keys()
     mo = motion_keys()
     death, lie = death_keys()
-    return {"STAND": st, "MOTION_L": mo, "MOTION_R": mo, "ATTACK": attack_keys(), "DEATH": death, "DEATHLIE1": lie}
+    return {"STAND": st, "GUN_PUSH": mo, "CHEST_CARRY": chest_keys(), "TRAIL_LIFT": lift_keys(),
+            "TRAIL_WALK": turn_keys(), "ATTACK": attack_keys(), "DEATH": death, "DEATHLIE1": lie}
 
 
 # --- build (bpy) ---------------------------------------------------------------------------
@@ -594,7 +699,8 @@ def hands(arm, P, kind, marks, frame):
     """Hand IK of man `P` at `frame` for the task `kind` (the current pose is the key's):
     "staff" the left hand on the level staff; "spike" the handspike seated in the trail and
     the left hand down it; "linstock" the match on the vent; "wheel" both hands on the
-    spokes of his wheel. Returns the largest miss (m)."""
+    spokes of his wheel (behind or in front of it); "chest" the hand towards the ammunition
+    chest on its rope handle. Returns the largest miss (m)."""
     from mathutils import Vector
 
     B = arm.pose.bones
@@ -616,13 +722,26 @@ def hands(arm, P, kind, marks, frame):
         side = "wheel_r" if B[P + "hips"].head.x > 0 else "wheel_l"
         hub = B[side].head
         sgn = 1.0 if hub.x > 0 else -1.0
+        back = 1.0 if B[P + "hips"].head.y > hub.y else -1.0  # behind the wheel or in front
         held = sock.matrix.to_3x3().copy()
         miss = 0.0
         for sd, deg in SPOKES.items():
             a = math.radians(deg)
-            grip = Vector((hub.x + sgn * 0.06, hub.y + SPOKE_R * math.sin(a), hub.z + SPOKE_R * math.cos(a)))
+            grip = Vector((hub.x + sgn * 0.06, hub.y + back * SPOKE_R * math.sin(a), hub.z + SPOKE_R * math.cos(a)))
             miss = max(miss, _reach(arm, P, sd, grip, frame))
         _orient(sock, held)  # a staff in the hand stays upright
+        sock.keyframe_insert("rotation_quaternion", frame=frame, group=sock.name)
+        return miss
+    if kind == "chest" and "chest" in B:
+        # The hand on the chest's side takes its rope handle (the man faces along -Y: his
+        # left hand is towards +X).
+        chest = B["chest"]
+        sd = "l" if B[P + "hips"].head.x < chest.head.x else "r"
+        hx, hz = CHEST_HANDLE
+        grip = chest.matrix @ Vector((hx if sd == "l" else -hx, hz, 0.0))
+        held = sock.matrix.to_3x3().copy()
+        miss = _reach(arm, P, sd, grip, frame)
+        _orient(sock, held)
         sock.keyframe_insert("rotation_quaternion", frame=frame, group=sock.name)
         return miss
     return None

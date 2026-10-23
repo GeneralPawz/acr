@@ -252,8 +252,24 @@ per 0.55 m, the root sliding along with the cycle's bob).
   `#MOTION_L1`/`#MOTION_R1` cycle and sets the 16th at the cycle's end (left) or start
   (right), so its facing steps. The model is drawn at the facing moved through the step with
   the cycle's frame (`turning_dir`), followed at up to twice the gun's turning rate (a 16th
-  per cycle at two frames per tick), so it turns smoothly; the turn cycles play the `MOTION`
-  clip (the crew walks the trail round, the wheels roll).
+  per cycle at two frames per tick), so it turns smoothly.
+- **Crew work** (`crew_view::crew_clip`, `Crews::work`; the roles of the original's sprite
+  packs): `#PATTACK1` plays `TRAIL_LIFT` (`ArtPus_Pdg_pvrt`: c2 sets the handspike in the trail
+  and lifts it, c1 goes behind the left wheel, c0 in front of the right one, c3 to the
+  ammunition chest set down beside the trail), `#MOTION_L1` plays `TRAIL_WALK` (`ArtPus_pvrt`:
+  the trail walked round a 16th, the wheels heaved opposite ways by a spoke's pitch, so the
+  loop is seamless), `#MOTION_R1` plays it backwards and `#UATTACK1` `TRAIL_LIFT` backwards.
+  `#PSTAND1`, which the sim shows for one tick between two turn steps (and after a move, when
+  the gun keeps its trail up), holds `TRAIL_WALK`'s first frame. It used to fall back to
+  `STAND` (`clip_for_animation` finds no `PSTAND`), so every step popped the crew back to
+  their battery stations for a tick: the flicker between "leaning in" and "standing beside".
+  Moving (`#MOTION_L0/R0`, `ArtPus_Tlk`) plays `GUN_PUSH`: c0/c1 push on the wheels from
+  behind, c2/c3 carry the chest by its rope handles behind the trail; `#PSTAND0` holds it,
+  `#PATTACK0`/`#UATTACK0` play `CHEST_CARRY` forwards/backwards (the chest taken up from
+  beside the trail; the sim drives off from `#STAND` without them, as the original's sprites
+  switch straight from `pvrt` to `Tlk`). A `#STAND` of up to two ticks between two works
+  keeps the last work's pose. Checked on the blank field: `ACR-analysis/crew`
+  (`anim.log` per tick, `before_*_sheet.png` / `after_*_sheet.png`).
 - **The wreck:** the gun's `DEATH` throws the barrel off its trunnions, drops the left wheel
   and swaps the carriage for its charred copy (`wreck`, black). Seen from above, the black
   trail and a dead man's tricorn next to it read like a second barrel; there is no double

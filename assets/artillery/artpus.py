@@ -3,9 +3,13 @@ assets/LICENSES.md; its truck carriage is a naval one, so it is not used); the t
 field carriage with its trail is scripted here.
 
 Rig: `gun` (whole piece: recoil, tilt) > `carriage` > `intact`/`wreck` (cheeks, transoms,
-charred copy), `barrel` (at the trunnions: kick, elevation); `wheel_l`/`wheel_r` (roll).
-Clips on the sprite frames (24 fps, the `.MD` frame counts): `STAND`, `MOTION_L`/`MOTION_R`
-(36 frames: one turn of the wheels), `ATTACK` (420 frames: lay, fire at 29, recoil, sponge
+charred copy), `barrel` (at the trunnions: kick, elevation); `wheel_l`/`wheel_r` (roll);
+`chest` (the ammunition chest, on the ground beside the trail unless carried).
+Clips on the sprite frames (24 fps, the `.MD` frame counts): `STAND`, `GUN_PUSH` (moving,
+`#MOTION_L0/R0`, 36 frames: one turn of the wheels, two men pushing, two carrying the
+ammunition chest), `CHEST_CARRY` (`#PATTACK0`, 42: the chest taken up), `TRAIL_LIFT`
+(`#PATTACK1`, 71: the trail lifted for a turn), `TRAIL_WALK` (`#MOTION_L1`, 41: a 16th of
+a turn, the trail walked round, the wheels heaved), `ATTACK` (420 frames: lay, fire at 29, recoil, sponge
 and load, run back into battery), `DEATH` (73: a wheel smashed, the barrel thrown off its
 trunnions, the carriage charred) and `DEATHLIE1` (its end).
 The crew of the original's sprites (#287): four artillerymen on skeleton H in the same armature
@@ -114,6 +118,32 @@ def _barrel():
     return barrel
 
 
+def _chest():
+    """The ammunition chest: a planked box (0.6 x 0.4 x 0.36 m) with a lid, two iron bands
+    and rope handles at its ends; its bottom centre at the origin."""
+    w, d, h = 0.6, 0.4, 0.36
+    box = _box("artpus.chest_box", _section(-d / 2, -w / 2, w / 2, 0.0, h) + _section(d / 2, -w / 2, w / 2, 0.0, h))
+    lid = _box("artpus.chest_lid", _section(-d / 2 - 0.015, -w / 2 - 0.015, w / 2 + 0.015, h - 0.01, h + 0.035)
+               + _section(d / 2 + 0.015, -w / 2 - 0.015, w / 2 + 0.015, h - 0.01, h + 0.035))
+    surfaces.apply([box, lid], [], default="timber")
+    iron = vs.flat_material("artpus.iron", (0.08, 0.08, 0.085))
+    bands = [_box(f"artpus.chest_band{i}", _section(-d / 2 - 0.008, x - 0.02, x + 0.02, 0.0, h + 0.02)
+                  + _section(d / 2 + 0.008, x - 0.02, x + 0.02, 0.0, h + 0.02)) for i, x in enumerate((-0.2, 0.2))]
+    for b in bands:
+        b.data.materials.append(iron)
+    rope = vs.flat_material("artpus.rope", (0.42, 0.33, 0.2))
+    loops = []
+    hx, hz = guncrew.CHEST_HANDLE
+    for sx in (-1, 1):
+        bpy.ops.mesh.primitive_torus_add(major_radius=0.07, minor_radius=0.012, major_segments=12, minor_segments=4,
+                                         location=(sx * (w / 2 + 0.03), 0, hz), rotation=(0, math.pi / 2, 0))
+        t = bpy.context.active_object
+        bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
+        t.data.materials.append(rope)
+        loops.append(t)
+    return vs.join([box, lid] + bands + loops, "artpus.chest")
+
+
 def build(ctx):
     root = ctx.root
     root["acr_machine"] = True
@@ -148,12 +178,16 @@ def build(ctx):
         ("barrel", tuple(TRUNNION), "carriage"),
         ("wheel_l", (-WHEEL_X, 0, AXLE_Z), "gun"),
         ("wheel_r", (WHEEL_X, 0, AXLE_Z), "gun"),
+        ("chest", (*guncrew.CHEST_REST, 0.0), None),
     ])
     vs.attach(carriage, arm, "intact")
     vs.attach(burnt, arm, "wreck")
     vs.attach(barrel, arm, "barrel")
     vs.attach(wheels[0], arm, "wheel_l")
     vs.attach(wheels[1], arm, "wheel_r")
+    chest = _chest()
+    vs.transform([chest], Matrix.Translation(Vector((*guncrew.CHEST_REST, 0.0))))
+    vs.attach(chest, arm, "chest")
     crew = guncrew.build(root, arm)
     hands = guncrew.key_clips(arm, _clips(arm))
     from acr_assets.humans import prepare_export
@@ -168,6 +202,9 @@ def build(ctx):
 
 
 HIDE = {"wreck": {"scale": (vs.HIDDEN,) * 3}, "intact": {}}
+# Every bone a clip leaves alone keyed at rest on its first frame, so no clip inherits a pose
+# (the chest carried, the trail lifted) from the clip keyed before it.
+REST = {b: {} for b in ("gun", "carriage", "barrel", "wheel_l", "wheel_r", "chest")}
 STEP = ("wreck", "intact")
 
 
@@ -177,17 +214,38 @@ def _roll(metres):
 
 
 def _clips(arm):
-    acts = {"STAND": vs.clip(arm, "STAND", [(0, {**HIDE, "gun": {}, "barrel": {}})], step=STEP)}
-    # One turn of the wheels per 36-frame cycle (seamless loop), the trail bobbing a little.
+    acts = {"STAND": vs.clip(arm, "STAND", [(0, {**HIDE, **REST})], step=STEP)}
+    # GUN_PUSH (`#MOTION_L0/R0`): one turn of the wheels per 36-frame cycle (seamless loop),
+    # the trail bobbing a little, the chest carried behind the trail.
+    cx, cy = guncrew.CHEST_REST
+    carried = (-cx, guncrew.CARRY_Y - cy, guncrew.CARRY_Z)
     keys = [(f, {"wheel_l": {"rot": (-360 * f / 36, 0, 0)}, "wheel_r": {"rot": (-360 * f / 36, 0, 0)},
-                 "gun": {"rot": (0.6 * math.sin(f / 36 * 4 * math.pi), 0, 0)}}) for f in range(0, 37, 6)]
-    keys[0][1].update(HIDE)
-    for name in ("MOTION_L", "MOTION_R"):
-        acts[name] = vs.clip(arm, name, keys, step=STEP)
+                 "gun": {"rot": (0.6 * math.sin(f / 36 * 4 * math.pi), 0, 0)},
+                 "chest": {"loc": (carried[0], carried[1], carried[2] + 0.015 * math.cos(f / 36 * 6 * math.pi))}})
+            for f in range(0, 37, 6)]
+    keys[0] = (0, {**HIDE, **REST, **keys[0][1]})
+    acts["GUN_PUSH"] = vs.clip(arm, "GUN_PUSH", keys, step=STEP)
+    # CHEST_CARRY (`#PATTACK0`, `#UATTACK0` backwards): the chest lifted and carried in.
+    keys = [(0, {**HIDE, **REST}), (20, {"chest": {}}),
+            (28, {"chest": {"loc": (0, 0, carried[2])}}),
+            (41, {"chest": {"loc": (carried[0], carried[1], carried[2] + 0.015)}})]
+    acts["CHEST_CARRY"] = vs.clip(arm, "CHEST_CARRY", keys, step=STEP)
+    # TRAIL_LIFT (`#PATTACK1`, `#UATTACK1` backwards): the trail lifted on the handspike.
+    up = {"carriage": {"rot": (guncrew.TRAIL_UP, 0, 0)}}
+    keys = [(0, {**HIDE, **REST}), (44, {"carriage": {}}),
+            (66, up), (70, up)]
+    acts["TRAIL_LIFT"] = vs.clip(arm, "TRAIL_LIFT", keys, step=STEP)
+    # TRAIL_WALK (`#MOTION_L1`, `#MOTION_R1` backwards): the trail walked round a 16th, the
+    # wheels heaved opposite ways about the axle by a spoke's pitch.
+    r = guncrew.TURN_ROLL
+    keys = [(f, {**up, "wheel_l": {"rot": (r * f / 40, 0, 0)}, "wheel_r": {"rot": (-r * f / 40, 0, 0)}})
+            for f in range(0, 41, 10)]
+    keys[0] = (0, {**HIDE, **REST, **keys[0][1]})
+    acts["TRAIL_WALK"] = vs.clip(arm, "TRAIL_WALK", keys, step=STEP)
     # Fire at frame 29: the piece jumps back 0.9 m, the muzzle kicks up; sponge and load;
     # the crew runs it back into battery.
     back = 0.9
-    keys = [(0, {**HIDE, "gun": {}, "barrel": {}, "wheel_l": {}, "wheel_r": {}}),
+    keys = [(0, {**HIDE, **REST}),
             (28, {"gun": {}, "barrel": {}, "wheel_l": {}, "wheel_r": {}}),
             (30, {"gun": {"loc": (0, back * 0.6, 0.04), "rot": (-2.5, 0, 0)}, "barrel": {"rot": (-5, 0, 0)},
                   "wheel_l": {"rot": (-_roll(back * 0.6), 0, 0)}, "wheel_r": {"rot": (-_roll(back * 0.6), 0, 0)}}),
@@ -205,8 +263,7 @@ def _clips(arm):
            "wheel_l": {"rot": (20, 78, 0), "loc": (-0.35, 0.3, -0.62)},
            "wheel_r": {"rot": (-30, 0, 0)},
            "barrel": {"rot": (9, 18, 25), "loc": (-0.35, -0.2, -0.62)}}
-    keys = [(0, {"wreck": {"scale": (vs.HIDDEN,) * 3}, "intact": {}, "gun": {}, "wheel_l": {}, "wheel_r": {},
-                 "barrel": {}}),
+    keys = [(0, {**HIDE, **REST}),
             (4, {"wreck": {"scale": (1, 1, 1)}, "intact": {"scale": (vs.HIDDEN,) * 3},
                  "gun": {"rot": (-3, 4, 0), "loc": (0, 0.15, 0.08)}, "barrel": {"rot": (-8, 0, 0)}}),
             (14, {"gun": {"rot": (-2, -8, 0), "loc": (0, 0.1, -0.15)},
@@ -214,6 +271,6 @@ def _clips(arm):
                   "barrel": {"rot": (4, 10, 12), "loc": (-0.15, -0.1, -0.25)}}),
             (28, end), (72, end)]
     acts["DEATH"] = vs.clip(arm, "DEATH", keys, step=STEP)
-    acts["DEATHLIE1"] = vs.clip(arm, "DEATHLIE1", [(0, {"wreck": {"scale": (1, 1, 1)}, "intact": {"scale": (vs.HIDDEN,) * 3},
-                                     **end})], step=STEP)
+    acts["DEATHLIE1"] = vs.clip(arm, "DEATHLIE1", [(0, {**REST, "wreck": {"scale": (1, 1, 1)},
+                                                                 "intact": {"scale": (vs.HIDDEN,) * 3}, **end})], step=STEP)
     return acts

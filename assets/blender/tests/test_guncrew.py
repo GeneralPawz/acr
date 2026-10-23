@@ -13,8 +13,10 @@ from acr_assets import guncrew  # noqa: E402
 class Drill(unittest.TestCase):
     def test_clips_cover_the_gun_frames(self):
         c = guncrew.clips()
-        self.assertEqual(set(c), {"STAND", "MOTION_L", "MOTION_R", "ATTACK", "DEATH", "DEATHLIE1"})
-        for clip, n in (("ATTACK", 419), ("MOTION_L", 36), ("DEATH", 72)):
+        self.assertEqual(set(c), {"STAND", "GUN_PUSH", "CHEST_CARRY", "TRAIL_LIFT", "TRAIL_WALK", "ATTACK", "DEATH",
+                                  "DEATHLIE1"})
+        for clip, n in (("ATTACK", 419), ("GUN_PUSH", 36), ("CHEST_CARRY", 41), ("TRAIL_LIFT", 70),
+                        ("TRAIL_WALK", 40), ("DEATH", 72)):
             for p, ks in c[clip].items():
                 frames = [f for f, _ in ks]
                 self.assertEqual(frames, sorted(frames), (clip, p))
@@ -50,6 +52,30 @@ class Drill(unittest.TestCase):
         self.assertTrue({"staff", "wheel"} <= kinds)
         self.assertIn("spike", {s.get("ik") for f, s in guncrew.attack_keys()["c2."]})
         self.assertEqual({s.get("ik") for f, s in guncrew.death_keys()[0]["c1."]}, {None})
+
+    def test_a_turn_is_one_continuous_action(self):
+        """TRAIL_LIFT starts at the stations and ends where TRAIL_WALK starts, which ends where
+        it starts (`#PSTAND1` between the steps holds that pose): nobody pops back."""
+        c = guncrew.clips()
+        for p in guncrew.PREFIXES:
+            self.assertEqual(c["TRAIL_LIFT"][p][0][1], c["STAND"][p][0][1], p)
+            self.assertEqual(c["TRAIL_LIFT"][p][-1][1], c["TRAIL_WALK"][p][0][1], p)
+            self.assertEqual(c["TRAIL_WALK"][p][-1][1], c["TRAIL_WALK"][p][0][1], p)
+            self.assertEqual(c["CHEST_CARRY"][p][0][1], c["STAND"][p][0][1], p)
+            self.assertEqual(c["CHEST_CARRY"][p][-1][1], c["GUN_PUSH"][p][0][1], p)
+        self.assertIn("spike", {s.get("ik") for _, s in c["TRAIL_WALK"]["c2."]})
+        for p in ("c0.", "c1."):
+            self.assertEqual({s.get("ik") for _, s in c["TRAIL_WALK"][p]}, {"wheel"}, p)
+
+    def test_two_push_and_two_carry_the_chest(self):
+        c = guncrew.clips()["GUN_PUSH"]
+        self.assertEqual({s.get("ik") for _, s in c["c0."]} | {s.get("ik") for _, s in c["c1."]}, {"wheel"})
+        xs = []
+        for p in ("c2.", "c3."):
+            self.assertEqual({s.get("ik") for _, s in c[p]}, {"chest"}, p)
+            xs.append(c[p][0][1]["root_loc"][0])
+        self.assertLess(xs[0], 0.0)
+        self.assertGreater(xs[1], 0.0)
 
 
 if __name__ == "__main__":
