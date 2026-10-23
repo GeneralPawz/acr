@@ -191,10 +191,57 @@ pub fn levels(vertices: &[Vertex], indices: &[u32]) -> [Vec<u32>; LEVELS + 1] {
         out[level] = prev.clone();
     }
     let target = ((tris as f32 * SHADOW_RATIO) as usize).max(4) * 3;
-    let mut dest = vec![0u32; prev.len()];
-    let n = if target < prev.len() { meshopt_rs::simplify::simplify_sloppy(&mut dest, &prev, &pos, target) } else { 0 };
-    dest.truncate(n);
-    out[SHADOW] = if dest.is_empty() { prev } else { dest };
+    out[SHADOW] = sloppy(vertices, &prev, &pos, target);
+    out
+}
+
+/// "Sloppy" grid simplification of `indices` towards `target` indices, each hair or beard
+/// variant on its own (and the rest apart from them), over only the vertices the group uses.
+/// meshopt picks each grid cell's representative among *all* the positions it is given, so
+/// with the whole buffer a body triangle could take a corner from an unworn hair variant,
+/// which `vs_main` throws off screen (clip `(2, 2, 2)`): such a triangle smeared from the
+/// soldier towards the corner of the shadow map, a streak far longer than any shadow.
+fn sloppy(vertices: &[Vertex], indices: &[u32], pos: &[Pos], target: usize) -> Vec<u32> {
+    if target >= indices.len() {
+        return indices.to_vec();
+    }
+    let mut groups: Vec<(i32, Vec<u32>)> = Vec::new();
+    for t in indices.as_chunks::<3>().0 {
+        let key = vertices[t[0] as usize].body[3].round() as i32;
+        match groups.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, list)) => list.extend_from_slice(t),
+            None => groups.push((key, t.to_vec())),
+        }
+    }
+    let mut out = Vec::with_capacity(target);
+    for (_, list) in groups {
+        let want = (list.len() * target / indices.len()).max(3) / 3 * 3;
+        if want >= list.len() {
+            out.extend_from_slice(&list);
+            continue;
+        }
+        // The group's own vertices, numbered locally.
+        let mut local: HashMap<u32, u32> = HashMap::new();
+        let mut used: Vec<u32> = Vec::new();
+        let remapped: Vec<u32> = list
+            .iter()
+            .map(|&i| {
+                *local.entry(i).or_insert_with(|| {
+                    used.push(i);
+                    used.len() as u32 - 1
+                })
+            })
+            .collect();
+        let sub: Vec<Pos> = used.iter().map(|&i| pos[i as usize]).collect();
+        let mut dest = vec![0u32; remapped.len()];
+        let n = meshopt_rs::simplify::simplify_sloppy(&mut dest, &remapped, &sub, want);
+        dest.truncate(n);
+        if dest.is_empty() {
+            out.extend_from_slice(&list);
+        } else {
+            out.extend(dest.iter().map(|&i| used[i as usize]));
+        }
+    }
     out
 }
 
@@ -234,10 +281,7 @@ pub fn far_shadow(vertices: &[Vertex], indices: &[u32], full: usize) -> Vec<u32>
         return indices.to_vec();
     }
     let pos: Vec<Pos> = vertices.iter().map(|v| Pos(v.position)).collect();
-    let mut dest = vec![0u32; indices.len()];
-    let n = meshopt_rs::simplify::simplify_sloppy(&mut dest, indices, &pos, target);
-    dest.truncate(n);
-    if dest.is_empty() { indices.to_vec() } else { dest }
+    sloppy(vertices, indices, &pos, target)
 }
 
 /// The first level that may simplify the welded shape.
@@ -344,6 +388,41 @@ mod tests {
             }
         }
         grid.iter().filter(|&&f| f).count()
+    }
+
+    #[test]
+    fn shadow_list_keeps_to_its_own_vertices() {
+        // A head (variant 0) and two hair variants over it, a little apart, and a list of the
+        // head alone: the sloppy grid may take no corner from the hair (meshopt picks cell
+        // representatives among every position it is given), nor join two variants.
+        let bumpy = |v: &mut Vec<Vertex>| {
+            v.iter_mut().for_each(|x| x.position[2] = 0.1 * (7.0 * x.position[0]).sin() * (5.0 * x.position[1]).cos())
+        };
+        let (mut v, head) = grid(24);
+        bumpy(&mut v);
+        let mut all = head.clone();
+        for variant in [1.0, 2.0] {
+            let (mut hv, hi) = grid(24);
+            bumpy(&mut hv);
+            let base = v.len() as u32;
+            hv.iter_mut().for_each(|x| {
+                x.position[0] += 0.013 * variant;
+                x.position[2] += 0.02 * variant;
+                x.body[3] = variant;
+            });
+            v.extend(hv);
+            all.extend(hi.iter().map(|k| k + base));
+        }
+        let own = far_shadow(&v, &head, head.len() / 3);
+        assert!(!own.is_empty() && own.len() < head.len());
+        assert!(own.iter().all(|&k| (k as usize) < 25 * 25), "a corner from outside the list");
+        for list in [far_shadow(&v, &all, all.len() / 3), levels(&v, &all)[SHADOW].clone()] {
+            assert!(list.len() < all.len());
+            for t in list.as_chunks::<3>().0 {
+                let w = t.map(|k| v[k as usize].body[3]);
+                assert!(w[0] == w[1] && w[1] == w[2], "a triangle across hair variants: {w:?}");
+            }
+        }
     }
 
     /// The levels of real models: `ACR_LOD_MODELS=<folder of .glb> cargo test --release -p
