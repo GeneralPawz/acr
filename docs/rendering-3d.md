@@ -102,7 +102,8 @@ Sprites bring their shadows painted in; the models cast theirs from a sun
 - **The sun** is the light the models were already shaded by, the game's
   `SetLight(-15, 14, 30)` (world: from the west, from the south, i.e. the viewer's side, and
   56° up). Shadows therefore fall east-north-east, to the right and up on the screen, about
-  0.7 × the caster's height long, consistent with the models' own Lambert light. Open
+  0.7 × the caster's height long (checked on the blank field: a soldier and a horseman at
+  zoom 3, `ACR-analysis/shadowfix/`), consistent with the models' own Lambert light. Open
   point: the sprites' painted shadows (units, trees) are short blobs leaning a little to
   the left, i.e. a higher sun from the east; `shadow::LIGHT` is the one constant to change
   (it lights the models too, so both move together).
@@ -739,6 +740,14 @@ on the screen, 22 poses, 1742 instances):
   variants are drawn up to level 1 only.
 - **Shadow casters** take one level coarser than seen; from level 3 on a fifth list made by
   meshoptimizer's "sloppy" grid simplification (3 %, no seams or borders: a shadow has none).
+  `lod::sloppy` runs it per hair/beard variant and over only the vertices that group uses:
+  meshoptimizer picks each grid cell's representative among *every* position it is given, and
+  given the whole model's buffer it took corners from unworn hair variants, which `vs_main`
+  throws to clip `(2, 2, 2)`. Those triangles smeared from each soldier towards the shadow
+  map's corner (light right + up, i.e. north: up the screen): the "way too long" streaks of
+  large battles at zoom 1 (`lod::tests::shadow_list_keeps_to_its_own_vertices`).
+  The streaks were huge triangles, so the fix also cut the shadow pass on Monongahela
+  `battle3` (tick 1500, zoom 1, 1600 × 900) from 19.8 to 5.8–5.9 ms GPU time.
 - **Silhouette** (`lod::tests::real_models`, ignored; `ACR_LOD_MODELS=<folder>`): filled pixels
   of the rest pose projected along each axis, the worst axis against level 0
   (`ACR-analysis/lod2/silhouette_models.txt`): soldiers (engm18, engkf18, engd18, puevsda,
