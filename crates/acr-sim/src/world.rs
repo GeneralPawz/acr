@@ -521,6 +521,9 @@ pub struct World {
     /// for the renderer only (craters, scuffs, impact sounds): kept and capped like `hits`.
     /// Not part of the state hash, not saved.
     pub impacts: std::collections::VecDeque<crate::combat::ImpactRecord>,
+    /// Recent shell fragments (hit-locations rule, [`crate::shrapnel`]), oldest first, for
+    /// the renderer only (streaks): kept and capped like `hits`. Not hashed, not saved.
+    pub fragments: std::collections::VecDeque<crate::shrapnel::Fragment>,
     /// The flight direction of the round now doing damage (world pixels, not normalised),
     /// set by the projectiles around their damage so that hits record where the ball really
     /// came from (a ricochet) rather than the attacker. Render only, not hashed.
@@ -686,6 +689,7 @@ impl World {
             deaths: Default::default(),
             hits: Default::default(),
             impacts: Default::default(),
+            fragments: Default::default(),
             hit_dir: None,
             hit_energy: None,
             hit_height: None,

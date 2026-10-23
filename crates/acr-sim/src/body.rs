@@ -121,6 +121,11 @@ pub struct Body {
     pub spine: u8,
     /// A lung hit: he went down and does not get up again.
     pub collapsed: bool,
+    /// Shell fragment wounds (`crate::shrapnel`): life lost per second while
+    /// [`Body::seep_s`] lasts, on top of [`Body::bleeding`]'s stumps and open breaks.
+    pub seep: u8,
+    /// Seconds the fragment wounds still bleed (counted down by `crate::wounds::bleed`).
+    pub seep_s: u8,
 }
 
 impl Hash for Body {
@@ -135,6 +140,9 @@ impl Hash for Body {
             if self.bleed_out != 0 || self.spine != 0 || self.collapsed {
                 (self.bleed_out, self.spine, self.collapsed).hash(state);
             }
+            if self.seep_s != 0 {
+                (self.seep, self.seep_s).hash(state);
+            }
         }
     }
 }
@@ -147,6 +155,11 @@ pub const BLEED_BELOW: i32 = 4;
 pub const BLEED_HAND_FOOT: i32 = 2;
 pub const BLEED_OPEN_FRACTURE: i32 = 2;
 pub const BLEED_BELLY: i32 = 5;
+
+/// Energy below which a shell fragment takes no limb off (`crate::shrapnel`).
+pub const FRAGMENT_SEVERS: u8 = 45;
+/// Energy from which a shell fragment to the head kills; below it a deep wound.
+pub const FRAGMENT_HEAD_KILL: u8 = 40;
 
 /// Crawling speed in percent with two, one and no working arms.
 pub const CRAWL_SPEED: [i32; 3] = [15, 8, 0];
@@ -307,6 +320,9 @@ impl Body {
             if limb.fracture.is_some_and(|b| b.kind == FractureKind::Open) {
                 sum += BLEED_OPEN_FRACTURE;
             }
+        }
+        if self.seep_s > 0 {
+            sum += i32::from(self.seep);
         }
         // A bigger body has more blood to lose: an animal loses it by its size.
         sum * i32::from(self.animal.max(1))
@@ -675,11 +691,18 @@ pub fn limb_outcome(cause: Cause, energy: u8, leg: bool, level: u8, roll: i32) -
         },
         Cause::Cannonball if energy >= BALL_SEVERS && roll < 85 => (Outcome::Off, level),
         Cause::Cannonball => (Outcome::Fracture(FractureKind::Open), level),
-        Cause::Shell => match roll {
-            0..50 => (Outcome::Wound, level),
-            50..80 => (Outcome::Fracture(ball_break(50, 30)), level),
-            _ => (Outcome::Off, level),
-        },
+        // A shell's blast (energy 100) or one of its fragments (`crate::shrapnel`): the
+        // weaker the fragment, the more often a flesh wound; below [`FRAGMENT_SEVERS`] it
+        // takes nothing off.
+        Cause::Shell => {
+            let weak = (100 - i32::from(energy.min(100))) / 2;
+            let off = 80 + weak * 2;
+            match roll {
+                r if r < 50 + weak => (Outcome::Wound, level),
+                r if r < off || energy < FRAGMENT_SEVERS => (Outcome::Fracture(ball_break(50 + weak, 30)), level),
+                _ => (Outcome::Off, level),
+            }
+        }
         Cause::Sabre => match roll {
             0..20 => (Outcome::Off, level.max(joint)),
             20..80 => (Outcome::DeepWound, level),
@@ -759,7 +782,7 @@ pub fn trunk_outcome(cause: Cause, energy: u8, part: Part, level: u8, roll: i32)
         Cause::Musket if energy >= BALL_CLOSE => belly(MUSKET_BELLY),
         Cause::Musket => Outcome::Wound,
         Cause::Grapeshot | Cause::Sabre => belly(10),
-        Cause::Shell => belly(20),
+        Cause::Shell => belly(20 * i32::from(energy.min(100)) / 100),
         // A deep stab or gash.
         Cause::Bayonet if roll < BAYONET_BELLY => Outcome::BellyOpen,
         Cause::Thrown if roll < THROWN_BELLY => Outcome::BellyOpen,
@@ -804,6 +827,8 @@ pub fn head_outcome_e(cause: Cause, energy: u8, roll: i32) -> Outcome {
         Cause::Claw if roll >= CLAW_HEAD_KILL[usize::from(energy < CLAW_TEARS)] => Outcome::DeepWound,
         Cause::Bite if roll >= BITE_HEAD_KILL => Outcome::DeepWound,
         Cause::Gore if roll >= GORE_HEAD_KILL => Outcome::DeepWound,
+        // A small shell fragment cuts the scalp or the face (no roll: the blast always kills).
+        Cause::Shell if energy < FRAGMENT_HEAD_KILL => Outcome::DeepWound,
         _ => Outcome::Kill,
     }
 }

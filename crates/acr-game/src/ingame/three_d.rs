@@ -24,6 +24,8 @@ use crate::ui::settings::{CameraMode, Gore, Models, Settings};
 /// Where models are looked for: `<game folder>\ACR\Models\<name>.glb` (normalised game path),
 /// `<name>` the `.MD` `NAME` in lower case (`EngM18` → `engm18.glb`).
 pub const MODEL_DIR: &str = "ACR/MODELS/";
+/// How far a shell burst throws the remains lying around it (world pixels, 4 m).
+const BLAST_RADIUS: f32 = 120.0;
 /// How long 3D corpses lie by default (minutes of game time, setting `corpse_minutes`).
 const CORPSE_MINUTES: u64 = 5;
 /// The death counter above which a sprite corpse turns half transparent (0x506ed5).
@@ -97,6 +99,10 @@ pub struct ThreeD {
     shots: Vec<[f32; 2]>,
     /// How long 3D corpses lie (ticks, `corpse_minutes`).
     corpse_ticks: u64,
+    /// Shell bursts up to this tick have thrown the remains around them, and this frame's
+    /// new bursts (world pixels) for the ragdolls.
+    last_blast: u64,
+    blasts: Vec<[f32; 2]>,
     free: bool,
     pub orbit: Orbit,
     keys: HeldKeys,
@@ -189,6 +195,8 @@ impl Default for ThreeD {
             particles: Default::default(),
             particle_renderer: None,
             shots: Vec::new(),
+            last_blast: 0,
+            blasts: Vec::new(),
             corpse_ticks: CORPSE_MINUTES * 60 * acr_sim::ORIGINAL_TICKS_PER_SECOND as u64,
             free: false,
             orbit: Orbit::ORIGINAL,
@@ -240,6 +248,7 @@ impl ThreeD {
         self.corpse_ticks = u64::from(settings.corpse_minutes) * 60 * acr_sim::ORIGINAL_TICKS_PER_SECOND as u64;
         self.free = settings.camera == CameraMode::Free;
         self.ground_detailed = settings.ground_detailed;
+        model::set_decay_cap(if settings.corpse_decay_half { model::HALF_DECAY } else { 1.0 });
         log::info!("3d: models {:?}, camera {:?}, gore {:?}", settings.models, settings.camera, settings.gore);
     }
 
@@ -847,6 +856,30 @@ impl ThreeD {
             |h: &acr_sim::combat::HitRecord, rig: &acr_render::damage::Rig| wounds.hit_volumes(h.victim, h.tick, rig);
         self.debris.take_hits(world.hits.iter(), now, self.gore, &unit, &death, &tears, &self.gibs, &ground);
         self.debris.expire(now, self.corpse_ticks);
+        // Shell bursts throw the remains lying around them with the mud (gibs, pieces and
+        // gear here, the corpses in the ragdolls).
+        if now < self.last_blast {
+            self.last_blast = 0;
+        }
+        self.blasts.clear();
+        for i in world
+            .impacts
+            .iter()
+            .filter(|i| i.tick > self.last_blast && i.cause == acr_sim::combat::DeathCause::Explosion)
+        {
+            let at = [i.pos.0 as f32, i.pos.1 as f32];
+            if !self.blasts.iter().any(|b| (b[0] - at[0]).abs() + (b[1] - at[1]).abs() < 20.0) {
+                self.blasts.push(at);
+            }
+        }
+        self.last_blast = world.impacts.back().map_or(self.last_blast, |i| i.tick.max(self.last_blast));
+        if !self.blasts.is_empty() {
+            acr_sim::prof_scope!("3d.blast_debris");
+            for &at in &self.blasts {
+                let n = self.debris.blast(at, BLAST_RADIUS, now, &ground);
+                log::debug!("3d: blast at {at:?} threw {n} pieces");
+            }
+        }
         self.debris.draw(now, self.corpse_ticks, &ground, &mut self.instances, &mut self.pools);
         for hit in world.hits.iter().filter(|h| !machines.contains(&h.victim)) {
             super::splatter::splatter(hit, world.tick.0, self.gore, &ground, &mut self.pools);
@@ -928,6 +961,12 @@ impl ThreeD {
         let killed = |v: u32| world.units.get(v as usize).is_none_or(|u| u.id.0 != v || !u.alive || u.death > 0);
         {
             acr_sim::prof_scope!("3d.ragdolls");
+            for &at in &self.blasts {
+                acr_sim::prof_scope!("3d.blast_corpses");
+                let n = ragdolls.blast(at, BLAST_RADIUS, world.tick.0, &drawn, &killed, terrain);
+                log::info!("3d: blast at {at:?} threw {n} corpses");
+            }
+            self.blasts.clear();
             ragdolls.update(world.tick.0, self.frame_seconds, &hits, &drawn, &mounted, self.focus, terrain, &killed);
         }
         for &i in ragdolls.poses.keys() {

@@ -708,7 +708,7 @@ impl Driver {
             Request::Start(start) => {
                 match start {
                     Start::Map(path) => game.start_map(&path),
-                    Start::Blank { setup, players, nation, hit_locations, body_spacing, hud } => {
+                    Start::Blank { setup, players, nation, hit_locations, body_spacing, hud, corpse_decay_half } => {
                         // Human players only: no AI gives orders, no start units come.
                         let players = (0..players)
                             .map(|i| PlayerSetup {
@@ -731,6 +731,10 @@ impl Driver {
                         }));
                         if let Mode::InGame(g) = &mut game.mode {
                             g.hud_hidden = !hud;
+                        }
+                        if let Some(half) = corpse_decay_half {
+                            use acr_render::model::{HALF_DECAY, set_decay_cap};
+                            set_decay_cap(if half { HALF_DECAY } else { 1.0 });
                         }
                     }
                     Start::Random {

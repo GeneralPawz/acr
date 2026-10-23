@@ -8,6 +8,11 @@
 //!   dead by a cannonball is torn apart and makes no sound: only the wounded scream.
 //!   Only the [`MAX_AUDIBLE`] agonies nearest the view centre make sounds; the others wait
 //!   silently while they last, also when they are out of hearing.
+//! - **Wounded by shell fragments** (hit-locations rule, `acr_sim::shrapnel`): a man a
+//!   fragment struck but did not kill cries out like the dying. A critical wound (a vital
+//!   hit, a limb off, the belly open, an open break) keeps him screaming and moaning until
+//!   he dies ([`CRY_ON_TICKS`] between sounds at most); a light one stops after
+//!   [`LIGHT_CRY_TICKS`]. They share the [`MAX_AUDIBLE`] voices with the dying.
 //! - **Panic:** units that start a flight leg in panic (`World::shouts`, 0x600bc8) shout in
 //!   fear ([`FEAR`]): one shout per brigade (or loose unit) every [`PANIC_GROUP_TICKS`], and
 //!   one in all every [`PANIC_GLOBAL_TICKS`], the one nearest the view centre.
@@ -45,6 +50,11 @@ pub const GROUPS: &[(&str, &[&str])] = &[
 const SECOND: u64 = 10;
 /// Agonies that make sounds at once at most.
 pub const MAX_AUDIBLE: usize = 4;
+/// How long a man lightly wounded by a shell fragment cries out (ticks): 3–5 s.
+pub const LIGHT_CRY_TICKS: (u64, u64) = (3 * SECOND, 5 * SECOND);
+/// A critically wounded man cries out until he dies; at most this long (ticks) without a
+/// death seen, so a lost unit does not cry for ever.
+pub const CRY_ON_TICKS: u64 = 600 * SECOND;
 /// A brigade (or a loose unit) shouts in fear at most once in this many ticks.
 pub const PANIC_GROUP_TICKS: u64 = 4 * SECOND;
 /// Fearful shouts in all at most once in this many ticks.
@@ -97,6 +107,26 @@ struct Dying {
     next: u64,
     /// Sounds made so far.
     sounds: u32,
+    /// Wounded, not dying (shell fragments): his cries go on until `end` or his death, at
+    /// full strength.
+    wounded: bool,
+}
+
+/// How long a man wounded but not killed by `hit` cries out (ticks), if he does: a shell
+/// fragment's critical wound until he dies, a light one a few seconds.
+pub fn cry_ticks(hit: &HitRecord) -> Option<u64> {
+    use acr_sim::body::{FractureKind, Outcome};
+    if hit.killed || hit.building || hit.cause != DeathCause::Explosion {
+        return None;
+    }
+    let injury = hit.injury?;
+    let critical = hit.critical.is_some()
+        || matches!(injury.outcome, Outcome::Off | Outcome::BellyOpen | Outcome::Fracture(FractureKind::Open));
+    if critical {
+        return Some(CRY_ON_TICKS);
+    }
+    let (min, max) = LIGHT_CRY_TICKS;
+    Some(min + u64::from(hash(u64::from(hit.victim), hit.tick)) % (max - min + 1))
 }
 
 /// A unit that started a flight leg in panic.
@@ -133,11 +163,13 @@ impl Agony {
     /// call (`human` tells soldiers from animals by unit index), the next sounds of the
     /// nearest ones, the fearful shouts of `fleeing` and the din, heard in the view
     /// `[left, top, width, height]` under `fog`.
+    #[allow(clippy::too_many_arguments)]
     pub fn update<'a>(
         &mut self,
         hits: impl IntoIterator<Item = &'a HitRecord>,
         fleeing: &[Fleeing],
         human: impl Fn(u32) -> bool,
+        alive: impl Fn(u32) -> bool,
         now: u64,
         view: [f32; 4],
         fog: Option<&Fog>,
@@ -150,6 +182,26 @@ impl Agony {
         let after = self.cursor;
         for hit in hits.into_iter().filter(|h| h.tick > after) {
             self.cursor = self.cursor.max(hit.tick);
+            if !hit.killed
+                && human(hit.victim)
+                && let Some(len) = cry_ticks(hit)
+            {
+                let end = hit.tick + len;
+                match self.dying.iter_mut().find(|d| d.victim == hit.victim) {
+                    // A worse wound cries longer.
+                    Some(d) => d.end = d.end.max(end),
+                    None => self.dying.push(Dying {
+                        victim: hit.victim,
+                        pos: (hit.pos.0 as f32, hit.pos.1 as f32 / 2.0),
+                        start: hit.tick,
+                        end,
+                        next: hit.tick,
+                        sounds: 0,
+                        wounded: true,
+                    }),
+                }
+                continue;
+            }
             if !hit.killed || hit.building || !human(hit.victim) {
                 continue;
             }
@@ -167,9 +219,12 @@ impl Agony {
                     end: hit.tick + len,
                     next: hit.tick,
                     sounds: 0,
+                    wounded: false,
                 });
             }
         }
+        // The wounded stop crying when they die (a death of their own may start an agony).
+        self.dying.retain(|d| !d.wounded || alive(d.victim));
         out.extend(self.agonies(now, view, fog));
         out.extend(self.panic(fleeing, view, fog));
         out.extend(self.din(now));
@@ -206,6 +261,9 @@ impl Agony {
             // The scream at the fall; then moans and gasps, quieter as life ebbs away.
             let (name, fade) = if d.sounds == 0 {
                 (SCREAM, 1.0)
+            } else if d.wounded {
+                // The wounded scream and moan on, not ebbing away.
+                (if h.is_multiple_of(3) { SCREAM } else { MOAN }, 0.7 + 0.3 * ((h >> 4) % 4) as f32 / 3.0)
             } else {
                 let left = (d.end - now) as f32 / (d.end - d.start).max(1) as f32;
                 (if h.is_multiple_of(3) { GASP } else { MOAN }, 0.25 + 0.6 * left)
@@ -287,6 +345,37 @@ mod tests {
         }
     }
 
+    fn fragment(tick: u64, victim: u32, outcome: acr_sim::body::Outcome) -> HitRecord {
+        use acr_sim::body::{Cause, Injury, LimbId, Part};
+        let injury = Injury { part: Part::Limb(LimbId::LegL), level: 100, outcome, energy: 40, cause: Cause::Shell };
+        HitRecord { killed: false, injury: Some(injury), ..kill(tick, victim, 1512, DeathCause::Explosion) }
+    }
+
+    #[test]
+    fn a_fragment_wound_cries_briefly_a_critical_one_until_death() {
+        use acr_sim::body::Outcome;
+        // Light: a few seconds, then silence while he lives on.
+        let hits = [fragment(1, 3, Outcome::Wound)];
+        let mut a = Agony::default();
+        let mut sounds = Vec::new();
+        for now in 1..200 {
+            sounds.extend(a.update(&hits, &[], |_| true, |_| true, now, VIEW, None));
+        }
+        assert!(!sounds.is_empty() && sounds.len() <= 4, "{}", sounds.len());
+        assert!(a.dying.is_empty());
+        // Critical (a leg off): on and on while he lives, silent once he is dead.
+        let hits = [fragment(1, 4, Outcome::Off)];
+        let mut a = Agony::default();
+        let mut n = 0;
+        for now in 1..600 {
+            n += a.update(&hits, &[], |_| true, |_| now < 400, now, VIEW, None).len();
+        }
+        assert!(n > 15, "{n}");
+        assert!(a.dying.is_empty());
+        // Not for the killed, not for other causes.
+        assert_eq!(cry_ticks(&HitRecord { cause: DeathCause::Gunshot, ..fragment(1, 5, Outcome::Wound) }), None);
+    }
+
     fn dying(cause: DeathCause) -> Vec<u32> {
         (0..1000).filter(|&v| agony_ticks(v, cause).is_some()).collect()
     }
@@ -313,7 +402,7 @@ mod tests {
         // Fewer kills than the din needs.
         let hits: Vec<_> = (0..DIN_MIN_KILLS as u32 - 1).map(|v| kill(1, v, 1512, DeathCause::Cannonball)).collect();
         let mut a = Agony::default();
-        let sounds = a.update(&hits, &[], |_| true, 1, VIEW, None);
+        let sounds = a.update(&hits, &[], |_| true, |_| true, 1, VIEW, None);
         assert!(sounds.iter().all(|e| e.name != SCREAM && e.name != MOAN && e.name != GASP));
     }
 
@@ -330,7 +419,7 @@ mod tests {
         let mut a = Agony::default();
         let mut sounds = Vec::new();
         for now in 5..5 + len + 50 {
-            sounds.extend(a.update(&hits, &[], |_| true, now, VIEW, None));
+            sounds.extend(a.update(&hits, &[], |_| true, |_| true, now, VIEW, None));
         }
         assert_eq!(sounds[0].name, SCREAM);
         assert!(sounds.len() >= 3, "{}", sounds.len());
@@ -348,15 +437,15 @@ mod tests {
         let hits: Vec<_> =
             victims.iter().enumerate().map(|(i, &v)| kill(1, v, 1512 + 10 * i as i32, DeathCause::Grapeshot)).collect();
         let mut a = Agony::default();
-        let first = a.update(&hits, &[], |_| true, 1, VIEW, None);
+        let first = a.update(&hits, &[], |_| true, |_| true, 1, VIEW, None);
         assert_eq!(names(&first), [SCREAM; MAX_AUDIBLE]);
         // Not the farthest, 40 px off: pan 80, its left channel would lose 0.8 dB.
         assert!(first.iter().all(|e| e.pan < 0.08));
         // Animals and units out of hearing do not count.
         let mut b = Agony::default();
-        assert!(b.update(&hits, &[], |_| false, 1, VIEW, None).is_empty());
+        assert!(b.update(&hits, &[], |_| false, |_| true, 1, VIEW, None).is_empty());
         let far: Vec<_> = victims.iter().map(|&v| kill(1, v, 5000, DeathCause::Grapeshot)).collect();
-        assert!(Agony::default().update(&far, &[], |_| true, 1, VIEW, None).is_empty());
+        assert!(Agony::default().update(&far, &[], |_| true, |_| true, 1, VIEW, None).is_empty());
     }
 
     #[test]
@@ -365,16 +454,23 @@ mod tests {
         let mut a = Agony::default();
         let none: [HitRecord; 0] = [];
         // A whole brigade flees: one shout, from the nearest.
-        let out =
-            a.update(&none, &[flee(10, 7, 1600.0), flee(10, 7, 1520.0), flee(10, 8, 1700.0)], |_| true, 10, VIEW, None);
+        let out = a.update(
+            &none,
+            &[flee(10, 7, 1600.0), flee(10, 7, 1520.0), flee(10, 8, 1700.0)],
+            |_| true,
+            |_| true,
+            10,
+            VIEW,
+            None,
+        );
         assert_eq!(names(&out), [FEAR]);
         assert!(out[0].pan < 0.2);
         // Too soon for anyone.
-        assert!(a.update(&none, &[flee(12, 8, 1512.0)], |_| true, 12, VIEW, None).is_empty());
+        assert!(a.update(&none, &[flee(12, 8, 1512.0)], |_| true, |_| true, 12, VIEW, None).is_empty());
         // Another group after the global pause; brigade 7 still waits.
-        assert!(a.update(&none, &[flee(22, 7, 1512.0)], |_| true, 22, VIEW, None).is_empty());
-        assert_eq!(a.update(&none, &[flee(22, 8, 1512.0)], |_| true, 22, VIEW, None).len(), 1);
-        assert_eq!(a.update(&none, &[flee(50, 7, 1512.0)], |_| true, 50, VIEW, None).len(), 1);
+        assert!(a.update(&none, &[flee(22, 7, 1512.0)], |_| true, |_| true, 22, VIEW, None).is_empty());
+        assert_eq!(a.update(&none, &[flee(22, 8, 1512.0)], |_| true, |_| true, 22, VIEW, None).len(), 1);
+        assert_eq!(a.update(&none, &[flee(50, 7, 1512.0)], |_| true, |_| true, 50, VIEW, None).len(), 1);
     }
 
     #[test]
@@ -383,14 +479,14 @@ mod tests {
         // Killed by gunshots that do not linger, out of the agony.
         let quick: Vec<_> = (0..1000).filter(|&v| agony_ticks(v, DeathCause::Gunshot).is_none()).take(20).collect();
         let few: Vec<_> = quick[..3].iter().map(|&v| kill(1, v, 1512, DeathCause::Gunshot)).collect();
-        assert!((1..100).all(|now| a.update(&few, &[], |_| true, now, VIEW, None).is_empty()));
+        assert!((1..100).all(|now| a.update(&few, &[], |_| true, |_| true, now, VIEW, None).is_empty()));
         let mut b = Agony::default();
         let many: Vec<_> = quick.iter().map(|&v| kill(1, v, 1512, DeathCause::Gunshot)).collect();
-        let din: Vec<_> = (1..100).flat_map(|now| b.update(&many, &[], |_| true, now, VIEW, None)).collect();
+        let din: Vec<_> = (1..100).flat_map(|now| b.update(&many, &[], |_| true, |_| true, now, VIEW, None)).collect();
         assert!(din.len() >= 5, "{}", din.len());
         assert!(din.iter().all(|e| e.volume < 0.5 && e.pan.abs() >= 0.5));
         // It dies down once the kills are old.
-        assert!((200..300).all(|now| b.update(&many, &[], |_| true, now, VIEW, None).is_empty()));
+        assert!((200..300).all(|now| b.update(&many, &[], |_| true, |_| true, now, VIEW, None).is_empty()));
     }
 
     #[test]

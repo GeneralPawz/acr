@@ -23,6 +23,8 @@ const FLIGHT: u64 = 7;
 /// Energy (0..100) from which a cannonball hit counts as point blank: gibs and mist (the
 /// energy from which a trunk hit may pulverize).
 const POINT_BLANK: u8 = acr_sim::body::BALL_PULVERIZES;
+/// Pieces a blast throws again at most ([`Debris::blast`]).
+pub const BLAST_CAP: usize = 24;
 /// Gibs a pulverized body leaves at least, and how many more at most.
 const GIBS: (u32, u32) = (4, 4);
 
@@ -64,6 +66,9 @@ struct Item {
     spin: f32,
     tick: u64,
     flight: u64,
+    /// The tick its last flight began: the hit, or a shell's blast that threw it again
+    /// ([`Debris::blast`]); its decay still runs from `tick`.
+    launched: u64,
     /// Radius of its blood pool once landed (metres; 0 for none).
     pool: f32,
     seed: f32,
@@ -232,6 +237,7 @@ impl Debris {
             spin: 0.5 + rng.next() * 1.5,
             tick,
             flight: FLIGHT,
+            launched: tick,
             pool,
             seed: rng.next() * 97.0,
             scale: 1.0,
@@ -297,6 +303,39 @@ impl Debris {
         self.items.retain(|i| now.saturating_sub(i.tick) < lifetime);
     }
 
+    /// A shell burst at `at` (world pixels): pieces, gibs and gear lying within `radius` are
+    /// thrown again, outwards and the farther the nearer they lay, at most [`BLAST_CAP`]
+    /// of them, nearest first. Returns how many flew.
+    pub fn blast(&mut self, at: [f32; 2], radius: f32, now: u64, ground: &dyn Fn(f32, f32) -> [f32; 3]) -> usize {
+        let mut near: Vec<(f32, usize)> = self
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, i)| i.tick <= now && now >= i.launched + i.flight)
+            .filter_map(|(k, i)| {
+                let d = ((i.to[0] - at[0]).powi(2) + (i.to[1] - at[1]).powi(2)).sqrt();
+                (d < radius).then_some((d, k))
+            })
+            .collect();
+        near.sort_by(|a, b| a.0.total_cmp(&b.0));
+        near.truncate(BLAST_CAP);
+        let mut rng = Rng::new(now, (at[0] as u32) ^ (at[1] as u32).rotate_left(16));
+        for &(d, k) in &near {
+            let item = &mut self.items[k];
+            let (dx, dy) = if d > 0.5 { ((item.to[0] - at[0]) / d, (item.to[1] - at[1]) / d) } else { (1.0, 0.0) };
+            let push = (1.0 - d / radius) * (0.6 + 0.8 * rng.next()) * 3.0 * PIXELS_PER_METRE;
+            let angle = (rng.next() - 0.5) * 0.8;
+            let (s, c) = angle.sin_cos();
+            let (dx, dy) = (dx * c - dy * s, dx * s + dy * c);
+            item.from = ground(item.to[0], item.to[1]);
+            item.to = [item.to[0] + dx * push, item.to[1] + dy * push];
+            item.launched = now;
+            item.flight = FLIGHT;
+            item.spin += 0.5 + rng.next() * 2.0;
+        }
+        near.len()
+    }
+
     /// This frame's instances and blood pools of the debris.
     pub fn draw(
         &self,
@@ -309,7 +348,8 @@ impl Debris {
         let removed_at = (2 * lifetime).min(u64::from(u16::MAX)) as u16;
         for item in self.items.iter().filter(|i| i.tick <= now) {
             let age = now - item.tick;
-            let t = if item.flight == 0 { 1.0 } else { (age as f32 / item.flight as f32).min(1.0) };
+            let flown = now.saturating_sub(item.launched);
+            let t = if item.flight == 0 { 1.0 } else { (flown as f32 / item.flight as f32).min(1.0) };
             let land = ground(item.to[0], item.to[1]);
             let at = if t < 1.0 {
                 let lerp = |a: f32, b: f32| a + (b - a) * t;

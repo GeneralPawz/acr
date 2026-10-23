@@ -798,7 +798,8 @@ impl InGame {
             })
         };
         let now = world.tick.0;
-        let events = self.agony.update(&world.hits, &fleeing, human, now, view, self.mission.fog());
+        let alive = |victim: u32| world.units.get(victim as usize).is_some_and(|u| u.living());
+        let events = self.agony.update(&world.hits, &fleeing, human, alive, now, view, self.mission.fog());
         for e in &events {
             log::debug!("agony sound {} at tick {now} (pan {:.2}, volume {:.2})", e.name, e.pan, e.volume);
         }

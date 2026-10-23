@@ -970,7 +970,25 @@ impl ModelData {
 /// with `#DEATHLIE2`): it starts where the original turns the corpse half transparent
 /// (`docs/assets-humans.md`, "Decay").
 pub fn corpse_decay(death: u16, removed_at: u16) -> f32 {
-    ((f32::from(death) - 100.0) / (f32::from(removed_at) - 100.0).max(1.0)).clamp(0.0, 1.0)
+    ((f32::from(death) - 100.0) / (f32::from(removed_at) - 100.0).max(1.0)).clamp(0.0, decay_cap())
+}
+
+/// Where decay stops with `corpse_decay=half` (settings): the flesh half rotted (its
+/// dissolve runs 0.20–0.52), hair and cloth going, the bones not yet bleached (0.50 on) and
+/// the corpse not sunk (0.78 on).
+pub const HALF_DECAY: f32 = 0.45;
+
+/// The highest decay a corpse reaches (bits of an `f32`; 1.0 by default).
+static DECAY_CAP: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3f80_0000);
+
+/// The highest decay a corpse reaches: 1 (bones), or [`HALF_DECAY`] with `corpse_decay=half`.
+pub fn decay_cap() -> f32 {
+    f32::from_bits(DECAY_CAP.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// Sets [`decay_cap`] (the `corpse_decay` setting), clamped to 0..=1.
+pub fn set_decay_cap(cap: f32) {
+    DECAY_CAP.store(cap.clamp(0.0, 1.0).to_bits(), std::sync::atomic::Ordering::Relaxed);
 }
 
 /// `clamp((x − a) / (b − a), 0, 1)`.

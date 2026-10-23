@@ -89,6 +89,14 @@ pub fn bleed(w: &mut World) {
         let mut loss = u.body.bleeding();
         // A vital hit (`crate::melee`): the life left runs out with the seconds left.
         let (timed, life) = (u.body.bleed_out, u.life);
+        // Shell fragment wounds (`crate::shrapnel`) bleed for their seconds, then clot.
+        if w.units[i].body.seep_s > 0 {
+            let b = &mut w.units[i].body;
+            b.seep_s -= 1;
+            if b.seep_s == 0 {
+                b.seep = 0;
+            }
+        }
         if timed > 0 {
             w.units[i].body.bleed_out -= 1;
             loss = if timed == 1 { i32::MAX } else { loss.saturating_add((life / i32::from(timed)).max(1)) };

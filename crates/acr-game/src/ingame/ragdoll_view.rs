@@ -47,6 +47,11 @@ pub const MIN_AWAKE: usize = 12;
 /// falling bodies (static capsules, m2-perf2: they cost a step nothing but the contacts
 /// they actually make). Beyond it the oldest corpse keeps its pose but leaves the physics.
 const POOL: usize = 192;
+/// Corpses a shell burst throws at most ([`Ragdolls::blast`]).
+pub const BLAST_CAP: usize = 12;
+/// A corpse's speed outwards and up at the burst point (m/s), falling to 0 at the edge.
+const BLAST_OUT: f32 = 6.0;
+const BLAST_UP: f32 = 5.0;
 /// Physics step (s).
 const STEP: f32 = 1.0 / 60.0;
 /// Hip sway per m/s of the blow's momentum over the body's mass.
@@ -581,7 +586,8 @@ fn impulse_of(cause: DeathCause, energy: u8) -> f32 {
         DeathCause::Arrow => 4.0,
         DeathCause::Grapeshot => 15.0 * e + 5.0,
         DeathCause::Cannonball => 60.0 + 240.0 * e,
-        DeathCause::Explosion => 40.0 + 120.0 * e,
+        // The blast (energy 100) as before; a small fragment barely moves him.
+        DeathCause::Explosion => 6.0 + 154.0 * e * e,
         DeathCause::Melee => MELEE_IMPULSE,
         DeathCause::Thrown => 12.0,
         _ => 6.0,
@@ -879,6 +885,80 @@ impl Ragdolls {
             acr_sim::prof_scope!("rag.strikes");
             self.strikes.update(seconds, &all, hits, &self.maps, focus, &mut self.poses);
         }
+    }
+
+    /// A shell burst at `at` (world pixels) throws the corpses lying within `radius`: a
+    /// frozen corpse wakes, one without a ragdoll gets one from its lying pose (within the
+    /// awake budget), and each flies outwards and up, the harder the nearer it lay; at most
+    /// [`BLAST_CAP`] of them, nearest first. Returns how many flew.
+    #[allow(clippy::too_many_arguments)]
+    pub fn blast(
+        &mut self,
+        at: [f32; 2],
+        radius: f32,
+        now: u64,
+        drawn: &[Drawn<'_>],
+        killed: &dyn Fn(u32) -> bool,
+        terrain: &TerrainData,
+    ) -> usize {
+        let mut near: Vec<(f32, usize)> = drawn
+            .iter()
+            .enumerate()
+            .filter(|(_, d)| !d.unit.building && !d.unit.body.mounted && killed(d.unit.id.0))
+            .filter_map(|(i, d)| {
+                let (dx, dy) = (d.transform[3][0] - at[0], d.transform[3][1] - at[1]);
+                let r = (dx * dx + dy * dy).sqrt();
+                (r < radius).then_some((r, i))
+            })
+            .collect();
+        near.sort_by(|a, b| a.0.total_cmp(&b.0));
+        near.truncate(BLAST_CAP);
+        let mut thrown = 0;
+        for (r, i) in near {
+            let d = &drawn[i];
+            let v = d.unit.id.0;
+            let known = self.actors.get(&v).is_some_and(|a| a.slot != usize::MAX);
+            if !known && self.awake() >= self.allowed() {
+                continue;
+            }
+            if self.mapping(d.model, d.data).is_none() {
+                continue;
+            }
+            if let Some(a) = self.actors.get_mut(&v)
+                && a.slot != usize::MAX
+            {
+                a.relaxed = None;
+                let r = &self.pool[a.slot].0;
+                for b in 0..r.len() {
+                    self.physics.wake(r.body(b));
+                }
+            }
+            let (dx, dy) = (d.transform[3][0] - at[0], d.transform[3][1] - at[1]);
+            let hit = HitRecord {
+                tick: now,
+                victim: v,
+                pos: (d.transform[3][0] as i32, d.transform[3][1] as i32),
+                dir: ((dx * 64.0) as i32, (dy * 64.0) as i32),
+                cause: DeathCause::Explosion,
+                killed: true,
+                building: false,
+                region: Some(acr_sim::wounds::HitRegion::Torso),
+                injury: None,
+                strike: None,
+                critical: None,
+            };
+            self.take_hit(&hit, d, now, true, terrain);
+            let Some(a) = self.actors.get_mut(&v).filter(|a| a.slot != usize::MAX) else { continue };
+            a.relaxed = None;
+            // Thrown: outwards and up, by the distance (physics axes: y north).
+            let k = 1.0 - r / radius;
+            let out = Vec3::new(dx, -dy, 0.0).normalize_or_zero();
+            let h = (v.wrapping_mul(2_654_435_761) >> 20) as f32 / 4096.0;
+            let vel = out * (BLAST_OUT * k * (0.7 + 0.6 * h)) + Vec3::new(0.0, 0.0, BLAST_UP * k * (0.6 + 0.8 * h));
+            self.pool[a.slot].0.set_velocity(&mut self.physics, vel);
+            thrown += 1;
+        }
+        thrown
     }
 
     /// Where the bone `name` of `unit`'s ragdoll is (world pixels), while it has one (an
@@ -1201,7 +1281,7 @@ impl Ragdolls {
             if a.dying
                 && a.frozen.is_none()
                 && a.relaxed.is_none()
-                && (r.is_asleep(&self.physics) || time - a.died > 8.0)
+                && (r.is_asleep(&self.physics) || time - a.died.max(a.since) > 8.0)
             {
                 // Before it is frozen the corpse relaxes: a faint pull towards the rest pose
                 // lowers a limb left propped up (an arm raised by the death reflex).

@@ -305,7 +305,10 @@ Per corpse one value from the death counter (`Unit::death`):
 `decay = clamp((death − 100) / (removed − 100), 0, 1)`, `removed` = 2000 for types with
 `#DEATHLIE2`, else 1200 (the original's removal). From it: the morph weights
 `deflate = ramp(decay, 0.18, 0.55)`, `lie_flat = 1` while lying (`#DEATHLIE*`), and a sink of
-`ramp(decay, 0.78, 1) · 0.20 m`. The fragment shader applies each material's
+`ramp(decay, 0.78, 1) · 0.20 m`. With `corpse_decay=half` (settings; driver blank start
+`"corpse_decay": "half"`) decay stops at `model::HALF_DECAY` (0.45): the flesh half
+dissolved, hair and cloth going, never bleached bones or the sink, for looking at thrown
+remains. The fragment shader applies each material's
 `extras.acr_decay` (discolour towards the tint, dissolve by the `COLOR_0` mask
 `0.75 R + 0.25 G` with a dark rotten edge) exactly as `docs/assets-humans.md` gives it;
 dissolving is alpha-tested (`discard`), nothing is blended or sorted. `gore=reduced` keeps

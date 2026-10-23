@@ -1864,6 +1864,7 @@ pub fn record_impact(w: &mut World, pos: (i32, i32), dir: (i32, i32), cause: Dea
 
 /// Drops the hits and impacts older than [`HIT_KEEP`] ticks (at the start of every step).
 pub fn forget_hits(w: &mut World) {
+    crate::shrapnel::forget(w);
     while w.hits.front().is_some_and(|h| h.tick + HIT_KEEP < w.tick.0) {
         w.hits.pop_front();
     }

@@ -539,6 +539,7 @@ pub fn explode(w: &mut World, slot: usize, ground: bool) {
             let at = (p.pos.0 >> 14, p.pos.1 >> 14);
             let water = w.rules.hit_locations && ground_media(w, at.0, at.1) == media::WATER;
             crate::ground_fire::shell_burst(w, sender, p.att, at, water);
+            crate::shrapnel::burst(w, sender, p.att, at, wp.radius >> 4);
         }
     }
     if w.projectiles.media == -1 {

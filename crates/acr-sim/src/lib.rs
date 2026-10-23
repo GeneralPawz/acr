@@ -49,6 +49,7 @@ pub mod projectile;
 pub mod replay;
 pub mod rng;
 pub mod ship;
+pub mod shrapnel;
 pub mod spacing;
 pub mod sprite;
 pub mod states;

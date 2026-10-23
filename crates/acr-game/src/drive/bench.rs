@@ -261,7 +261,21 @@ pub fn impact(game: &mut Game, v: &Value) -> Result<Value, String> {
     let (cause, _) = cause(v.get("cause").and_then(Value::as_str).unwrap_or("cannonball"))?;
     let world = g.world_mut().ok_or("no world yet")?;
     acr_sim::combat::record_impact(world, at, dir, cause);
-    Ok(json!({ "tick": world.tick.0, "at": [at.0, at.1], "dir": [dir.0, dir.1], "cause": format!("{cause:?}") }))
+    // `"by": unit` with a shell attack: the shell's fragments fly (hit-locations rule).
+    let by = v.get("by").and_then(Value::as_u64).map(|b| b as usize);
+    let mut fragments = 0;
+    if cause == DeathCause::Explosion
+        && let Some(b) = by
+    {
+        let att = acr_sim::shrapnel::shell_attack(world, b).ok_or("impact: \"by\" has no shell attack")?;
+        let before = world.fragments.len();
+        acr_sim::shrapnel::burst(world, Some(b), att, at, 0);
+        fragments = world.fragments.len() - before;
+    }
+    Ok(json!({
+        "tick": world.tick.0, "at": [at.0, at.1], "dir": [dir.0, dir.1], "cause": format!("{cause:?}"),
+        "fragments": fragments,
+    }))
 }
 
 #[cfg(test)]

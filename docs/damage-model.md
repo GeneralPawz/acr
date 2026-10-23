@@ -147,6 +147,47 @@ Each limb hit draws from the world RNG (`rando()`), only with the rule on:
 
 The values are constants in `body.rs` and tests pin their spread.
 
+### Shell fragments (`acr_sim::shrapnel`)
+
+With the rule on, a shell (`IADROMOR`, `VAFLIA`) bursting on the ground also throws 14–26
+fragments (sim RNG, once per shell and tick) on top of the original's round damage, which
+stays as it is (with the rule off nothing here runs: no draw, unchanged hash):
+
+- each flies in a random direction for 40–100 % of `REACH` (210 px, about 7 m; at least
+  twice the blast radius) and strikes the first man or animal within `BODY` (8 px) of its
+  line; buildings, guns and ships are not struck;
+- its mass is 1..100, squared towards small (mostly splinters, now and then a large piece);
+- energy = `(25 + 3/4 mass)`, falling to half at the end of its flight; damage
+  `1 + mass × energy / 200` (1 for a splinter, about 50 for a large piece close by);
+- the hit goes through `MakeDamage` with `World::hit_energy` and the fragment's direction,
+  so region, outcome and critical roll as for any hit (`Cause::Shell`). The shell row is
+  energy-scaled: the flesh-wound share grows by `(100 − e) / 2`, nothing comes off below
+  `FRAGMENT_SEVERS` (45), a head hit below `FRAGMENT_HEAD_KILL` (40) is a deep wound and
+  the belly opens by `20 × e / 100` %. At energy 100 (the blast itself) the row is unchanged;
+- a survivor's wound bleeds (`Body::seep` life per second for `Body::seep_s` seconds,
+  counted down in `wounds::bleed`, part of `bleeding()` so blood drops follow him): a
+  flesh wound 1/s for 6 s, a deep wound or closed break 2/s for 20 s, an open break, a
+  stump or an open belly 1/s more for 40 s (on top of their own bleeding). Hashed only while
+  it runs.
+
+`World::fragments` (render only, not hashed) holds each flight; the particles show it as a
+short streak of glowing specks, with a blood spurt (and flesh scraps from a large piece)
+where it struck. The wounded cry out (`acr-game/src/agony.rs`, `cry_ticks`): a critical
+fragment wound (a vital, a limb off, the belly open, an open break) screams and moans on
+until he dies, a light one for 3–5 s; they share the four agony voices.
+
+Shell bursts also throw the remains around them (render only, `three_d.rs`, 4 m): up to 12
+corpses, nearest first, get a ragdoll (a frozen one wakes, others start from their lying
+pose within the awake budget) and fly outwards and up (6 and 5 m/s at the burst, 0 at the
+edge); up to 24 lying pieces, gibs and dropped gear are thrown again (`Debris::blast`),
+their decay still running from their first fall. Measured (release, blank field, 40
+corpses, one burst throwing 12): the blast itself 0.42 ms once; then `rag.physics` 1.7 ms
+per frame at the recorder's 4 steps a frame (about 0.45 ms per step with 12 awake), inside
+the 4 ms body-physics budget, falling back as they freeze again.
+
+Test driver: `{"cmd":"impact","at":[x,y],"cause":"shell","by":unit}` bursts a shell of
+`unit`'s shell attack there (its fragments fly; answers `fragments`).
+
 **Cannonball energy (#262, "a direct hit should shred the troop").** A 6 to 12 pdr roundshot
 keeps lethal energy over its whole flight (hundreds of metres, bounces included) and through
 several men, so the energy at a man is what the bodies before him left of the ball

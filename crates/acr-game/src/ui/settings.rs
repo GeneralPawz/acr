@@ -39,6 +39,10 @@ pub struct Settings {
     /// ACR: how long 3D corpses lie and decay, in minutes of game time (the simulation
     /// removes them after about a minute as the original does; the renderer keeps them).
     pub corpse_minutes: u32,
+    /// ACR: how far 3D corpses rot (`corpse_decay=full|half`, full by default): `half`
+    /// stops at the half-rotted stage, never the bones (`acr_render::model::HALF_DECAY`),
+    /// to look at thrown remains.
+    pub corpse_decay_half: bool,
     /// ACR (#225, #254): new games use the optional hit-location rule (wounds, lost limbs,
     /// bleeding out); `hit_locations=on|off`, off (the original rules) by default.
     pub hit_locations: bool,
@@ -127,6 +131,7 @@ impl Default for Settings {
             camera: CameraMode::Fixed,
             gore: Gore::Full,
             corpse_minutes: 5,
+            corpse_decay_half: false,
             hit_locations: false,
             body_spacing: false,
             shadows: true,
@@ -198,7 +203,7 @@ impl Settings {
         format!(
             "sound_volume={}\nmusic_volume={}\nmusic_mode={}\ngame_mode={}\nscroll_speed={}\nframe_time={}\n\
              resolution={}\nrecord={}\nrecord_file={hex}\ncontrols={controls}\nedge_scroll={}\n\
-             models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\nhit_locations={}\nbody_spacing={}\nshadows={}\nlod={}\nwater={}\n\
+             models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\ncorpse_decay={}\nhit_locations={}\nbody_spacing={}\nshadows={}\nlod={}\nwater={}\n\
              ground={}\n",
             self.sound_volume,
             self.music_volume,
@@ -210,6 +215,7 @@ impl Settings {
             u8::from(self.record),
             u8::from(self.edge_scroll),
             self.corpse_minutes,
+            if self.corpse_decay_half { "half" } else { "full" },
             if self.hit_locations { "on" } else { "off" },
             if self.body_spacing { "on" } else { "off" },
             if self.shadows { "on" } else { "off" },
@@ -254,6 +260,7 @@ impl Settings {
                 }
                 "camera" => s.camera = if value == "free" { CameraMode::Free } else { CameraMode::Fixed },
                 "hit_locations" => s.hit_locations = value == "on",
+                "corpse_decay" => s.corpse_decay_half = value == "half",
                 "body_spacing" => s.body_spacing = value == "on",
                 "shadows" => s.shadows = value != "off",
                 "lod" => s.lod = value != "off",
@@ -300,6 +307,7 @@ mod tests {
             water_detailed: false,
             ground_detailed: false,
             corpse_minutes: 12,
+            corpse_decay_half: true,
             hit_locations: true,
             body_spacing: true,
         };

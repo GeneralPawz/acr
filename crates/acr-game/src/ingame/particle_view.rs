@@ -82,6 +82,8 @@ pub struct ParticleView {
     /// come between two frames of one tick).
     last_hit: u64,
     hits_done: Vec<u32>,
+    /// Shell fragments up to this tick have been thrown (`World::fragments`).
+    last_fragment: u64,
     /// The tick of the last update: going back means another game.
     tick: u64,
 }
@@ -542,6 +544,70 @@ pub fn shred(sink: &mut dyn ParticleSink, at: [f32; 3], dir: [f32; 2], level: u8
     });
 }
 
+/// Seconds a shell fragment's streak flies: it reaches its end and is gone.
+const FRAGMENT_FLIGHT: f32 = 0.18;
+
+/// A shell fragment's streak: a few glowing specks one behind the other along its flight
+/// from the burst (about knee to chest high) to where it struck or fell, bigger for a
+/// bigger piece. They vanish at the end of the flight instead of landing.
+fn fragment(sink: &mut dyn ParticleSink, f: &acr_sim::shrapnel::Fragment, ground: f32, blood: bool, seed: u32) {
+    let (dx, dy) = ((f.to.0 - f.from.0) as f32, (f.to.1 - f.from.1) as f32);
+    let len = (dx * dx + dy * dy).sqrt().max(1.0);
+    let rise = if f.victim.is_some() { 6.0 } else { -24.0 };
+    let dir = [dx / len, dy / len, rise / len];
+    let size = 1.5 + 2.5 * f32::from(f.mass) / 100.0;
+    let speed = len / FRAGMENT_FLIGHT;
+    let specks = 3 + u32::from(f.mass) / 34;
+    for i in 0..specks {
+        // Each speck starts a little behind the one before: a short streak.
+        let back = i as f32 * 4.0;
+        let at = [f.from.0 as f32 - dir[0] * back, f.from.1 as f32 - dir[1] * back, ground + 22.0];
+        sink.emit(&Burst {
+            at,
+            dir,
+            spread: 0.0,
+            speed: [speed, speed],
+            count: 1,
+            kind: ParticleKind::Splinter,
+            life: [FRAGMENT_FLIGHT + back / speed; 2],
+            size: [size * (1.0 - 0.15 * i as f32); 2],
+            color: [255, 196 - 30 * i.min(3) as u8, 90],
+            scatter: 0.0,
+            seed: seed.wrapping_add(i),
+        });
+    }
+    // Where it struck a man: a spurt of blood, and scraps of flesh from a big piece (the
+    // Gore particles of `shred`, full gore only).
+    if blood && f.victim.is_some() {
+        let at = [f.to.0 as f32, f.to.1 as f32, ground + 30.0];
+        let k = f32::from(f.mass) / 100.0;
+        sink.emit(&Burst {
+            dir: [dir[0], dir[1], 0.4],
+            spread: 0.7,
+            speed: [40.0, 90.0 + 120.0 * k],
+            count: 3 + (10.0 * k) as u16,
+            life: [0.6, 1.2],
+            size: [0.5, 1.2],
+            color: BLOOD_DROP,
+            scatter: 2.0,
+            ..burst(at, ParticleKind::Droplet, seed ^ 0xf7a9)
+        });
+        if f.mass > 40 {
+            sink.emit(&Burst {
+                dir: [dir[0], dir[1], 0.5],
+                spread: 0.8,
+                speed: [50.0, 160.0],
+                count: (6.0 * k) as u16,
+                life: [2.0, 3.0],
+                size: [0.8, 2.0],
+                color: FLESH,
+                scatter: 3.0,
+                ..burst(at, ParticleKind::Gore, seed ^ 0x6a5e)
+            });
+        }
+    }
+}
+
 impl ParticleView {
     /// One frame: new impacts and footfalls throw particles (`earth`: the detailed ground is
     /// on; `wet`: the detailed water is), then everything moves by `dt` seconds. `shots` are
@@ -569,6 +635,7 @@ impl ParticleView {
             self.last_impact = 0;
             self.last_hit = 0;
             self.hits_done.clear();
+            self.last_fragment = 0;
         }
         self.tick = now;
         let fresh = |i: &&ImpactRecord| i.tick > self.last_impact;
@@ -616,6 +683,14 @@ impl ParticleView {
                 let seed = hash(hit.victim ^ hash(hit.tick as u32 ^ 0x5eed));
                 shred(&mut self.particles, [at[0], at[1], ground_z(terrain, at[0], at[1])], dir, level, low, seed);
             }
+        }
+        for (k, f) in world.fragments.iter().filter(|f| f.tick > self.last_fragment).enumerate() {
+            let z = ground_z(terrain, f.from.0 as f32, f.from.1 as f32);
+            let seed = hash(f.from.0 as u32 ^ hash(f.to.1 as u32) ^ hash(f.tick as u32 + k as u32));
+            fragment(&mut self.particles, f, z, blood, seed);
+        }
+        if let Some(last) = world.fragments.back() {
+            self.last_fragment = self.last_fragment.max(last.tick);
         }
         if wet {
             for (k, &at) in shots.iter().enumerate() {

@@ -139,6 +139,8 @@ pub enum Start {
         hit_locations: bool,
         body_spacing: bool,
         hud: bool,
+        /// `"corpse_decay": "half"|"full"` overrides the setting (`corpse_decay`).
+        corpse_decay_half: Option<bool>,
     },
 }
 
@@ -323,6 +325,7 @@ fn blank(b: &Value) -> Result<Start, String> {
         hit_locations: b.get("hit_locations").and_then(Value::as_bool).unwrap_or(false),
         body_spacing: b.get("body_spacing").and_then(Value::as_bool).unwrap_or(false),
         hud: b.get("hud").and_then(Value::as_bool).unwrap_or(true),
+        corpse_decay_half: b.get("corpse_decay").and_then(Value::as_str).map(|v| v == "half"),
     })
 }
 
@@ -687,6 +690,7 @@ mod tests {
             hit_locations: false,
             body_spacing: false,
             hud: true,
+            corpse_decay_half: None,
         }) = r
         else {
             panic!()
