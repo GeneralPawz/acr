@@ -387,10 +387,9 @@ without the arm IK). Rebuilt on the VM: EngD18 and PueVsdA (old ones in
 
 ### Not yet
 
-- **Sabre down left:** `ATTACK_CUT_DOWN_L` ends 0.54 m short with the clip alone (0.24 with
-  the layer): the right shoulder stays ~1.9 m up when leaning left. Since the shorter turn
-  is often the left one, many cuts now use it. Needs a different blow (a backhand from
-  higher, or the horse turned further so the man lies at the right) or a lower target.
+- **Sabre down left:** fixed in family 5 (docs/families/cavalry.md): a cross-body cut,
+  the trunk bent forward and turned left; 0.06 m with the clip alone (was 0.54), 0.01 with
+  the layer. m2-melee6's negative X on the spine leaned the rider *back*.
 - **Sabre down right:** 0.12 m with the clip alone (target 0.10), at the nearer
   `NEAR_BODY` 0.75; at the old 1.2 m out it cannot reach.
 - **Ready stance:** the trunk turn is checked only at the bench's distance; in the `.MD`
