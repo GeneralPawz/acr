@@ -132,6 +132,10 @@ pub struct PairReport {
     /// [`TOLERANCE`], less than [`POKE`]), and the deepest of them (m).
     pub poking: usize,
     pub poke_worst: f32,
+    /// Of the poking ones, those whose own normal points against the outer triangle's (one
+    /// of the two cloths is turned inwards there, so the poke may be the measurement's, not
+    /// the model's).
+    pub poke_against: usize,
     /// Crossing (vertex, frame) samples.
     pub samples: usize,
     /// The deepest crossing (m) and where: clip name and frame.
@@ -234,6 +238,24 @@ pub fn check(model: &ModelData, steps: usize) -> Vec<PairReport> {
         .map(|(_, _, pal)| meshes.iter().map(|m| m.verts.iter().map(|v| skin(pal, v)).collect()).collect())
         .collect();
     let mut out = Vec::new();
+    // Rest vertex normals from the winding (area-weighted), to tell a poke through a cloth
+    // turned the other way.
+    let vnormals: Vec<Vec<V3>> = meshes
+        .iter()
+        .zip(&posed)
+        .map(|(m, pos)| {
+            let mut n = vec![[0.0; 3]; pos.len()];
+            for t in &m.tris {
+                let (a, b, c) = (pos[t[0] as usize], pos[t[1] as usize], pos[t[2] as usize]);
+                let f = cross(sub(b, a), sub(c, a));
+                for &i in t {
+                    let v: &mut V3 = &mut n[i as usize];
+                    *v = [v[0] + f[0], v[1] + f[1], v[2] + f[2]];
+                }
+            }
+            n
+        })
+        .collect();
     for (ii, inner) in meshes.iter().enumerate() {
         for (oi, outer) in meshes.iter().enumerate() {
             if outer.rank <= inner.rank {
@@ -272,6 +294,7 @@ pub fn check(model: &ModelData, steps: usize) -> Vec<PairReport> {
                 if d > TOLERANCE && d < POKE {
                     report.poking += 1;
                     report.poke_worst = report.poke_worst.max(d);
+                    report.poke_against += usize::from(dot(vnormals[ii][vi], normal(op, outer.tris[t0])) < 0.0);
                     continue;
                 }
                 if d >= 0.0 || d <= -REACH {
@@ -321,14 +344,16 @@ pub fn check(model: &ModelData, steps: usize) -> Vec<PairReport> {
 /// A plain-text table of the reports.
 pub fn table(reports: &[PairReport]) -> String {
     use std::fmt::Write as _;
-    let mut s = String::from("inner        outer        poking poke_mm covered crossing samples worst_mm  at\n");
+    let mut s =
+        String::from("inner        outer        poking against poke_mm covered crossing samples worst_mm  at\n");
     for r in reports {
         let _ = writeln!(
             s,
-            "{:<12} {:<12} {:>6} {:>7.1} {:>7} {:>8} {:>7} {:>8.1}  {} {}",
+            "{:<12} {:<12} {:>6} {:>7} {:>7.1} {:>7} {:>8} {:>7} {:>8.1}  {} {}",
             r.inner,
             r.outer,
             r.poking,
+            r.poke_against,
             r.poke_worst * 1000.0,
             r.covered,
             r.crossing,
@@ -376,5 +401,30 @@ mod tests {
         let reports = check(&model, 12);
         let belts: usize = reports.iter().filter(|r| r.outer == "belts").map(|r| r.crossing).sum();
         assert!(belts <= 12, "{}", table(&reports));
+    }
+
+    /// The sample of #287's second trisoup pass and the most rest-pose pokes one may keep
+    /// (`model_layers --max-poking`): a ratchet at the shipped level (66-375 per unit at
+    /// `drape.SETTLE` off), to be lowered as the patches are fixed.
+    const SETTLED_UNITS: [&str; 9] =
+        ["frnbuk", "engof17", "engmus", "spns15", "delkri", "engm18", "frnm18", "irolut", "mayvoi"];
+    const MAX_POKING: usize = 400;
+
+    /// The units of #287's second trisoup pass (`ACR_MODELS_DIR`, each skipped when missing):
+    /// none pokes more than [`MAX_POKING`] inner vertices through the layer on it in the rest
+    /// pose.
+    #[test]
+    fn settled_units_poke_little() {
+        let Some(dir) = std::env::var_os("ACR_MODELS_DIR") else { return };
+        let mut over = Vec::new();
+        for unit in SETTLED_UNITS {
+            let Ok(bytes) = std::fs::read(std::path::Path::new(&dir).join(format!("{unit}.glb"))) else { continue };
+            let model = ModelData::from_glb(&bytes).unwrap();
+            let poking: usize = check(&model, 1).iter().map(|r| r.poking).sum();
+            if poking > MAX_POKING {
+                over.push(format!("{unit} {poking}"));
+            }
+        }
+        assert!(over.is_empty(), "poking over {MAX_POKING}: {over:?}");
     }
 }

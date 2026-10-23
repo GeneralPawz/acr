@@ -18,9 +18,11 @@ from . import decay, detail, heads, held, limb, mbody, project, registry, rig
 # keys a unit's palette may leave out (sRGB). Families add keys with `registry.material`.
 LAYER_OF = registry.LAYER_OF
 FALLBACK = registry.FALLBACK
-# `drape.settle` before the morphs (docs/clothing.md, "Layers"). Off until checked on renders:
-# on frnbuk and engof17 it moves 50-100 vertices but leaves most rest-pose pokes the layer
-# check counts (see "Known problems"). `ACR_SETTLE=1` in the Blender environment switches it on.
+# `drape.settle` before the morphs (docs/clothing.md, "Layers"): every inner layer pushed
+# along the outer layer's normal to a few mm under it, cloth polygons turned outwards. Off:
+# on the #287 trisoup2 sample it cut the counted pokes (2034 -> 1307, mostly the turned
+# winding) but not the patches on the renders, and it opened new slivers on EngOf17.
+# `ACR_SETTLE=1` in a local Blender switches it on (the VM gets no env).
 SETTLE = bool(os.environ.get("ACR_SETTLE"))
 
 
