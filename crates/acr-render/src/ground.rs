@@ -6,11 +6,27 @@
 //! the map keeps its colours from afar and gets real soil up close. Paving, logs and water
 //! keep the original (class [`KEEP`]). Render only.
 
-/// Material classes in the layer order of the texture arrays (`assets/ground/materials.py`).
-pub const CLASSES: [&str; 9] = ["grass", "meadow", "dirt", "mud", "sand", "rock", "forest", "snow", "field"];
+/// Material classes; class `i` draws texture layer `i` (`assets/ground/materials.py`).
+pub const CLASSES: [&str; 15] = [
+    "grass", "meadow", "dirt", "mud", "sand", "rock", "forest", "snow", "field", "cracked", "red", "gravel", "desert",
+    "steppe", "snowy",
+];
 
-/// Metres one repeat of each class's texture covers.
-pub const REPEAT_METRES: [f32; 9] = [2.5, 2.0, 3.0, 2.5, 2.5, 4.0, 2.5, 3.0, 3.0];
+/// Texture layers: one per class in class order, then the second sets ([`SECOND`]).
+pub const LAYERS: [&str; 20] = [
+    "grass", "meadow", "dirt", "mud", "sand", "rock", "forest", "snow", "field", "cracked", "red", "gravel", "desert",
+    "steppe", "snowy", "grass2", "meadow2", "dirt2", "desert2", "rock2",
+];
+
+/// Metres one repeat of each layer's texture covers.
+pub const REPEAT_METRES: [f32; 20] = [
+    2.0, 2.0, 3.0, 2.5, 3.0, 3.0, 2.5, 3.0, 3.0, 3.0, 2.5, 2.0, 3.0, 2.5, 3.0, // classes
+    2.5, 3.0, 3.0, 3.0, 4.0, // second sets
+];
+
+/// Per class the layer of its second set, mixed in by low-frequency noise against tiling (its
+/// own layer: the same set at a larger, turned repeat).
+pub const SECOND: [u8; 15] = [15, 16, 17, 3, 4, 19, 6, 7, 8, 9, 10, 11, 18, 13, 14];
 
 /// The class of textures drawn as in the original (paving, logs, water).
 pub const KEEP: u8 = 255;
@@ -24,6 +40,12 @@ const R: u8 = 5;
 const F: u8 = 6;
 const W: u8 = 7;
 const L: u8 = 8;
+const C: u8 = 9;
+const E: u8 = 10;
+const V: u8 = 11;
+const T: u8 = 12;
+const P: u8 = 13;
+const N: u8 = 14;
 const K: u8 = KEEP;
 
 /// The class of each `TILES3.BMP` texture, from its contact sheet (`ACR-analysis/ground/
@@ -31,17 +53,17 @@ const K: u8 = KEEP;
 #[rustfmt::skip]
 pub const TILE_CLASS: [u8; 136] = [
     G, M, M, M, G, G, M, M, R, R, R, R, // 0
-    G, M, R, D, G, M, G, M, G, M, G, M, // 12
-    K, K, R, L, F, U, U, R, L, R, D, W, // 24
-    K, K, R, G, K, K, D, D, K, K, R, R, // 36
-    K, U, U, U, D, U, U, U, R, R, F, F, // 48
-    K, K, F, M, M, M, U, D, M, M, U, D, // 60
-    S, L, S, S, K, K, S, S, R, R, R, R, // 72
-    D, L, R, R, K, K, R, R, L, M, D, W, // 84
-    M, R, R, W, S, S, S, W, S, S, S, W, // 96
-    S, S, W, L, S, L, S, K, D, M, M, M, // 108
-    S, D, D, D, S, S, D, D, S, D, D, D, // 120
-    S, D, D, D,                         // 132
+    G, M, V, D, G, M, G, M, G, M, G, M, // 12
+    K, K, V, L, F, U, U, R, L, R, D, N, // 24
+    K, K, R, G, K, K, C, C, K, K, R, R, // 36
+    K, U, U, U, C, U, U, U, R, R, F, F, // 48
+    K, K, F, M, M, M, E, D, M, M, E, D, // 60
+    S, L, E, S, K, K, E, S, R, R, R, R, // 72
+    D, L, R, V, K, K, R, V, L, P, P, W, // 84
+    M, V, R, W, S, S, S, W, S, S, S, W, // 96
+    S, S, W, L, E, L, S, K, P, P, P, P, // 108
+    T, T, T, T, T, T, T, T, T, T, T, T, // 120
+    T, T, T, T,                         // 132
 ];
 
 /// The material class of original texture `tile`.
@@ -49,10 +71,10 @@ pub fn class_of(tile: u8) -> u8 {
     TILE_CLASS.get(usize::from(tile)).copied().unwrap_or(KEEP)
 }
 
-/// Game paths of the packed textures: per class `<class>_a.png` (albedo, height) and
-/// `<class>_n.png` (normal, roughness), in class order, a before n.
+/// Game paths of the packed textures: per layer `<layer>_a.png` (albedo, height) and
+/// `<layer>_n.png` (normal, roughness), in layer order, a before n.
 pub fn texture_files() -> Vec<String> {
-    CLASSES
+    LAYERS
         .iter()
         .flat_map(|c| [format!("ACR/Models/ground/{c}_a.png"), format!("ACR/Models/ground/{c}_n.png")])
         .collect()
@@ -65,9 +87,9 @@ pub type MaterialSet = (Vec<Vec<u8>>, Vec<Vec<u8>>);
 /// images, RGBA8, all `size` × `size`, with their mipmaps.
 pub struct MaterialImages {
     pub size: u32,
-    /// Per class: (albedo mips, normal mips), level 0 first.
+    /// Per layer: (albedo mips, normal mips), level 0 first.
     pub layers: Vec<MaterialSet>,
-    /// Mean albedo per class (linear RGB), what the tint replaces.
+    /// Mean albedo per layer (linear RGB), what the tint replaces.
     pub means: Vec<[f32; 3]>,
 }
 
@@ -119,17 +141,17 @@ impl MaterialImages {
     /// Decodes the files of [`texture_files`] (same order). `skip` drops that many top
     /// levels (the browser takes half the resolution).
     pub fn decode(files: &[Vec<u8>], skip: usize) -> Result<Self, String> {
-        if files.len() != CLASSES.len() * 2 {
-            return Err(format!("{} ground textures, expected {}", files.len(), CLASSES.len() * 2));
+        if files.len() != LAYERS.len() * 2 {
+            return Err(format!("{} ground textures, expected {}", files.len(), LAYERS.len() * 2));
         }
         let mut size = 0;
         let mut layers = Vec::new();
         let mut means = Vec::new();
         for (i, pair) in files.as_chunks::<2>().0.iter().enumerate() {
-            let (sa, a) = decode_png(&pair[0]).map_err(|e| format!("{}_a.png: {e}", CLASSES[i]))?;
-            let (sn, n) = decode_png(&pair[1]).map_err(|e| format!("{}_n.png: {e}", CLASSES[i]))?;
+            let (sa, a) = decode_png(&pair[0]).map_err(|e| format!("{}_a.png: {e}", LAYERS[i]))?;
+            let (sn, n) = decode_png(&pair[1]).map_err(|e| format!("{}_n.png: {e}", LAYERS[i]))?;
             if sa != sn || (size != 0 && sa != size) {
-                return Err(format!("{}: sizes differ", CLASSES[i]));
+                return Err(format!("{}: sizes differ", LAYERS[i]));
             }
             size = sa;
             let mut a = mips(sa, a);
@@ -158,6 +180,19 @@ mod tests {
         // Water and paving keep the original.
         assert_eq!(class_of(89), KEEP);
         assert_eq!(class_of(200), KEEP);
+    }
+
+    #[test]
+    fn layers_match_classes() {
+        assert_eq!(LAYERS[..CLASSES.len()], CLASSES);
+        assert!(SECOND.iter().all(|&l| usize::from(l) < LAYERS.len()));
+        assert!(TILE_CLASS.iter().all(|&c| c == KEEP || usize::from(c) < CLASSES.len()));
+        // The new splits: desert soil, red soil, cracked earth, snow on rock, roads.
+        assert_eq!(CLASSES[usize::from(class_of(125))], "desert");
+        assert_eq!(CLASSES[usize::from(class_of(70))], "red");
+        assert_eq!(CLASSES[usize::from(class_of(52))], "cracked");
+        assert_eq!(CLASSES[usize::from(class_of(35))], "snowy");
+        assert_eq!(CLASSES[usize::from(class_of(14))], "gravel");
     }
 
     #[test]

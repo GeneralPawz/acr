@@ -10,8 +10,10 @@ struct Detail {
     sun: vec4<f32>,
     // Brightness of light levels 0..31 relative to the texel (AGEW_1DR.GRD).
     shade: array<vec4<f32>, 8>,
-    // Per class: mean albedo (linear) and world pixels per texture repeat.
-    classes: array<vec4<f32>, 16>,
+    // Per class: the texture layer of its second set (ground.rs SECOND).
+    second: array<vec4<f32>, 4>,
+    // Per texture layer (class i is layer i): mean albedo (linear) and world pixels per repeat.
+    layers: array<vec4<f32>, 32>,
     // Per original texture: mean colour (linear) and class (255: keep).
     tiles: array<vec4<f32>, 256>,
 };
@@ -134,24 +136,38 @@ fn value_noise(p: vec2<f32>) -> f32 {
 }
 
 struct Sample {
+    // rgb: the albedo over the layer's mean albedo (the detail ratio), a: height.
     albedo: vec4<f32>,
     normal: vec4<f32>,
+    // The luminance of the albedo over that of the layer's mean.
+    lratio: f32,
 };
 
-// One class at a world point: two scales mixed by low-frequency noise against tiling. The
-// gradients of `xy` come from uniform control flow (the classes differ per triangle).
-fn sample_class(kind: u32, xy: vec2<f32>, gx: vec2<f32>, gy: vec2<f32>, mixer: f32) -> Sample {
-    let k = 1.0 / detail.classes[kind].w;
-    let uv = xy * k;
-    let uv2 = rotate_detail(uv) + vec2<f32>(0.37, 0.71);
-    let layer = i32(kind);
+// One layer sampled at `uv` with gradients `gx`, `gy`, as a detail ratio over its mean.
+fn sample_layer(layer: u32, uv: vec2<f32>, gx: vec2<f32>, gy: vec2<f32>) -> Sample {
+    let a = textureSampleGrad(albedo, material_sampler, uv, i32(layer), gx, gy);
+    let mean = max(detail.layers[layer].rgb, vec3<f32>(0.02));
     var s: Sample;
-    let a1 = textureSampleGrad(albedo, material_sampler, uv, layer, gx * k, gy * k);
-    let a2 = textureSampleGrad(albedo, material_sampler, uv2, layer, rotate_detail(gx * k), rotate_detail(gy * k));
-    let n1 = textureSampleGrad(normals, material_sampler, uv, layer, gx * k, gy * k);
-    let n2 = textureSampleGrad(normals, material_sampler, uv2, layer, rotate_detail(gx * k), rotate_detail(gy * k));
-    s.albedo = mix(a1, a2, mixer);
-    s.normal = mix(n1, n2, mixer);
+    s.albedo = vec4<f32>(clamp(a.rgb / mean, vec3<f32>(0.25), vec3<f32>(2.2)), a.a);
+    s.lratio = clamp(luminance(a.rgb) / max(luminance(mean), 0.01), 0.25, 2.2);
+    s.normal = textureSampleGrad(normals, material_sampler, uv, i32(layer), gx, gy);
+    return s;
+}
+
+// One class at a world point: its set at its repeat and its second set (or the same set) at
+// a turned, larger repeat, mixed by low-frequency noise against tiling. The gradients of `xy`
+// come from uniform control flow (the classes differ per triangle).
+fn sample_class(kind: u32, xy: vec2<f32>, gx: vec2<f32>, gy: vec2<f32>, mixer: f32) -> Sample {
+    let k = 1.0 / detail.layers[kind].w;
+    let other = u32(detail.second[kind / 4u][kind % 4u]);
+    // The second sample is turned and about 1.9 x larger than its layer's repeat.
+    let k2 = 1.0 / detail.layers[other].w;
+    let s1 = sample_layer(kind, xy * k, gx * k, gy * k);
+    let s2 = sample_layer(other, rotate_detail(xy * k2) + vec2<f32>(0.37, 0.71), rotate_detail(gx * k2), rotate_detail(gy * k2));
+    var s: Sample;
+    s.albedo = mix(s1.albedo, s2.albedo, mixer);
+    s.normal = mix(s1.normal, s2.normal, mixer);
+    s.lratio = mix(s1.lratio, s2.lratio, mixer);
     return s;
 }
 
@@ -216,11 +232,10 @@ fn fs_detail(in: DetailOut) -> @location(0) vec4<f32> {
             kept += wgt;
             continue;
         }
-        let mean = max(detail.classes[cls[i]].rgb, vec3<f32>(0.02));
         // Detail mostly as luminance: a full per-channel ratio crushes the blue of grass
         // and over-saturates (docs/ground.md, calibration).
-        let ratio = clamp(samples[i].albedo.rgb / mean, vec3<f32>(0.25), vec3<f32>(2.2));
-        let lratio = clamp(luminance(samples[i].albedo.rgb) / max(luminance(mean), 0.01), 0.25, 2.2);
+        let ratio = samples[i].albedo.rgb;
+        let lratio = samples[i].lratio;
         let tint = mix(vec3<f32>(luminance(tints[i])), tints[i], TINT_SATURATION);
         colour += wgt * tint * mix(vec3<f32>(lratio), ratio, CHROMA_DETAIL);
         normal += wgt * vec3<f32>(samples[i].normal.xy * 2.0 - 1.0, 0.0);

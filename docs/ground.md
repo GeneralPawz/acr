@@ -34,36 +34,56 @@ and the hashes stay as they are.
 `TILES3.BMP` (`ACR-analysis/ground/tiles3_sheet.png`; note that the BMP is stored
 bottom-up, so texture *t* is at row 33 − *t*/4). The table is `acr_render::ground::TILE_CLASS`.
 
-| class | Poly Haven set | repeat | e.g. textures |
+| class | set (second set) | repeat | textures |
 |---|---|---|---|
-| grass | `sparse_grass` | 2.5 m | 0 (the editor's green), 4, 5, 12, 16, 18, 20, 22, 39 |
-| meadow | `leafy_grass` | 2 m | 1–3, 6, 7, 13, 17, 19, 21, 23, 63–65, 68, 69, 93, 96 |
-| dirt | `dirt` (was `dry_ground_01`, cracked clay) | 3 m | 15, 34, 42, 43, 52, 67, 71 (blank `dirt`), 84, 94, 116, 121–135 |
-| mud | `brown_mud_02` | 2.5 m | 29, 30, 49–51, 53–55, 66, 70 |
-| sand | `coast_sand_01` | 2.5 m | 72, 74, 75, 78, 79, 100–109, 112, 114, 120 |
-| rock | `rocky_terrain_02` | 4 m | 8–11, 14, 26, 31, 33, 38, 46, 47, 56, 57, 80–83, 86, 87, 90, 91 |
-| forest floor | `forest_floor` | 2.5 m | 28, 58, 59, 62 |
-| snow | `snow_02` | 3 m | 35, 95, 99, 103 (blank `snow`), 107, 110 |
+| grass | ambientCG `Grass001` (`Grass004`) | 2 m (2.5 m) | 0 (the editor's green), 4, 5, 12, 16, 18, 20, 22, 39 |
+| meadow | ambientCG `Grass007` (`Ground037`, grass with bare patches) | 2 m (3 m) | 1–3, 6, 7, 13, 17, 19, 21, 23, 63–65, 68, 69, 96 |
+| dirt | `dirt` (`park_dirt`) | 3 m | 15, 34, 67, 71 (blank `dirt`), 84 |
+| mud | `brown_mud_02` | 2.5 m | 29, 30, 49–51, 53–55 (grey swamp mud) |
+| sand | `sand_01` | 3 m | 72, 75, 79, 100–102, 104–106, 108, 109, 114 |
+| rock | `rock_ground` (`rocky_terrain_02`, mossy) | 3 m (4 m) | 8–11, 31, 33, 38, 46, 47, 56, 57, 80–83, 86, 90, 97, 98 |
+| forest floor | `forest_ground_04` | 2.5 m | 28, 58, 59, 62 |
+| snow | `snow_02` | 3 m | 95, 99, 103 (blank `snow`), 107, 110 |
 | field | `dry_mud_field_001` | 3 m | 27, 32, 73, 85, 92, 111, 113 |
+| cracked | `mud_cracked_dry_03` | 3 m | 42, 43, 52 (dry cracked earth, town squares) |
+| red | `red_dirt_mud_01` | 2.5 m | 66, 70, 74, 78, 112 (red-brown soil and red sand) |
+| gravel | `gravel_ground_01` | 2 m | 14, 26, 87, 91 (gravel, roads) |
+| desert | `dry_ground_rocks` (`sandy_gravel_02`) | 3 m | 120–135 (tan dry soil and shore, e.g. Single2, the Columbus maps) |
+| steppe | `grass_ground` (dry grass on soil) | 2.5 m | 93, 94, 116–119 |
+| snowy | `snow_03` (snow over ground) | 3 m | 35 |
 | keep (original) | none | | paving and cobbles 24, 25, 36, 37, 40, 41, 44, 45, 48; logs 76, 77; water 60, 61, 88, 89, 115 |
 
-**Assets.** The maps are CC0 from Poly Haven: diffuse, OpenGL normal, roughness and
-displacement, at 2k.
-- `assets/ground/fetch_polyhaven.py` downloads them into
-  `D:\ACR-models\polyhaven-textures\<id>\`, with a `SOURCE.json` per set.
-- `cargo xtask ground [--src] [--out] [--size]` runs `assets/ground/pack.py`, which writes
-  two 1024² PNGs per class into `<out>/ground/`: `<class>_a.png` (albedo RGB + height A)
-  and `<class>_n.png` (normal RG + roughness B).
-- The class order is `assets/ground/materials.py` = `acr_render::ground::CLASSES`.
-- The files are about 46 MB and are not committed. The game looks them up as
+The split (m2-ground-pbr) follows `tiles3_sheet.png` and the mean colour of each texture
+(`ACR-analysis/genai/ground/scripts/tilemeans.py`); a class histogram of every shipped map is
+`scripts/maphist.py`. Grass, meadow and rock cover 85–95 % of most maps (rock up to 66 % on
+`usa02` and the Pizarro maps), dirt and desert the Columbus maps and `Single2`, red soil
+26–34 % of `battle1` and `battle2` (much of it a lakebed under water); real snow covers under
+1 % of any map, so the snow classes are shown on the blank field. No tile is a ploughed
+field or a distinct road surface: roads in AC are paving (*keep*) or gravel.
+
+**Assets.** The maps are CC0 from Poly Haven and ambientCG: diffuse, OpenGL normal,
+roughness and displacement, at 2k.
+- `assets/ground/fetch_polyhaven.py` downloads Poly Haven sets into
+  `D:\ACR-models\polyhaven-textures\<id>\`; the later downloads are in
+  `polyhaven-textures2\` and `ambientcg\` (ledger `D:\ACR-models\LEDGER.csv`), with a
+  `SOURCE.json` per set.
+- `cargo xtask ground [--src] [--out] [--size]` runs `assets/ground/pack.py` over the
+  sources root (default `D:\ACR-models`), which writes two 1024² PNGs per texture layer
+  into `<out>/ground/`: `<layer>_a.png` (albedo RGB + height A) and `<layer>_n.png` (normal
+  RG + roughness B). It reads both the Poly Haven and the ambientCG file names.
+- The layers are `assets/ground/materials.py` = `acr_render::ground::LAYERS`: the 15
+  classes (`CLASSES`, class *i* is layer *i*), then the five second sets `grass2`,
+  `meadow2`, `dirt2`, `desert2`, `rock2` (`SECOND` maps a class to its second layer).
+- The files are about 105 MB (40 PNGs) and are not committed. The game looks them up as
   `ACR\Models\ground\*.png`: in the game folder, or natively in `ACR_MODELS_DIR\ground\`.
 - Credits are in `assets/LICENSES.md`.
 
-**Loading.** `ThreeD` asks for the 18 files once 3D mode is active, decodes them and builds
-box-filtered mipmaps on the CPU (0.34 s natively). `TerrainRenderer::set_materials` uploads
+**Loading.** `ThreeD` asks for the 40 files once 3D mode is active, decodes them and builds
+box-filtered mipmaps on the CPU (0.34 s natively for the first 18; 40 files take 0.41 s on
+the render VM, 18 took 0.18 s there). `TerrainRenderer::set_materials` uploads
 them as two `texture_2d_array`s: albedo as `Rgba8UnormSrgb`, normals as `Rgba8Unorm`.
-- Memory: 9 × 2 × 1024² × 4 B × 4/3 ≈ 100 MB natively.
-- The browser drops the top level: 512², about 25 MB.
+- Memory: 20 layers × 2 × 1024² × 4 B × 4/3 ≈ 224 MB natively (9 layers were 100 MB).
+- The browser drops the top level: 512², about 56 MB.
 - If a file is missing, the original ground stays and the log says so.
 
 **Drawing** (`ground.wgsl`, appended to `terrain.wgsl`). After the present pass, the mesh
@@ -80,7 +100,10 @@ is drawn once more, straight into the output (no palette target):
   albedo`, clamped to 0.25..2.2. This is the low-frequency macro tint that keeps the map's
   AC colours; from afar the mips go to the mean and the ratio goes to 1.
 - **Anti-tiling:** two samples per class, at the repeat and at a turned repeat about 1.9 ×
-  larger, mixed by value noise with a period of about 5 m. Sampling uses
+  larger, mixed by value noise with a period of about 5 m. Classes with a second set (grass,
+  meadow, dirt, rock, desert) take the second sample from that set, so two photographs
+  alternate; the others repeat their own set. Each sample is divided by its own layer's mean
+  before the mix, so the tile tint is kept. The sample count is unchanged. Sampling uses
   `textureSampleGrad` with the gradients taken in uniform control flow.
 - **Light:** the original light level (and so the trample darkening), mapped to brightness
   by `shade[level]`. That is the luminance ratio of `AGEW_1DR.GRD` row 64 + level over the
@@ -143,6 +166,22 @@ the normal per distinct class, with shared classes reused).
 - **Dirt** uses Poly Haven `dirt` (loose soil, CC0) instead of cracked clay.
 - **Skip:** the pass is not drawn below zoom 0.75 in the original view.
 - **Triplanar:** not done yet.
+
+**More sets (m2-ground-pbr).** Six new classes (cracked, red, gravel, desert, steppe,
+snowy); better sets for grass and meadow (ambientCG grass instead of the brownish Poly Haven
+turf), sand, rock (grey stony ground; the mossy `rocky_terrain_02` is its second set) and
+forest floor; second sets for five classes. The normal maps were already in use (`micro`).
+- Measured (RX 9060 XT, 1600 × 900, HUD off, fog off, zoom 1, `gputime` 2 × 30 frames, the
+  `ground` segment, main → branch): battle3 grass and rock at (14720, 3456) 0.28–0.35 →
+  0.29–0.39 ms; Single2 shore and desert at (7552, 6272) 0.37–0.40 → 0.39–0.45 ms; battle1
+  cracked plaza at (7040, 8064) 0.30–0.37 → 0.32–0.37 ms; the blank snow field with patches
+  0.31–0.35 → 0.30–0.36 ms. About +0.02 ms: a second set costs no extra sample, only cache
+  misses on another layer.
+- Frames: `ACR-analysis/genai/ground/` (`sheet_<scene>.png`: main and branch at zoom 1,
+  zoom 4 and the free camera; `steps/`, `before/`, `after/`).
+- `snow_01` showed regular ripples at zoom 1, so `snow_02` stays.
+- Not done: second sets for the other ten classes (11 MB per layer natively), a shore class
+  apart from the desert tiles, triplanar mapping.
 
 ## Phase 2: ground state texture
 

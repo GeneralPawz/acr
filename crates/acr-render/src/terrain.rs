@@ -548,7 +548,10 @@ fn state_textures(
 struct DetailUniform {
     sun: [f32; 4],
     shade: [f32; 32],
-    classes: [[f32; 4]; 16],
+    /// Per class the layer of its second set (`ground::SECOND`).
+    second: [f32; 16],
+    /// Per layer: mean albedo (linear) and world pixels per repeat.
+    layers: [[f32; 4]; 32],
     tiles: [[f32; 4]; 256],
 }
 
@@ -910,12 +913,16 @@ impl TerrainRenderer {
         let mut uniform = DetailUniform {
             sun: [sun[0] / len, sun[1] / len, sun[2] / len, if self.output.is_srgb() { 1.0 } else { 0.0 }],
             shade: *shade,
-            classes: [[0.0; 4]; 16],
+            second: [0.0; 16],
+            layers: [[0.0; 4]; 32],
             tiles: [[0.0; 4]; 256],
         };
         for (i, mean) in images.means.iter().enumerate() {
             let repeat = crate::ground::REPEAT_METRES[i] * crate::view3d::PIXELS_PER_METRE;
-            uniform.classes[i] = [mean[0], mean[1], mean[2], repeat];
+            uniform.layers[i] = [mean[0], mean[1], mean[2], repeat];
+        }
+        for (out, &layer) in uniform.second.iter_mut().zip(&crate::ground::SECOND) {
+            *out = f32::from(layer);
         }
         for (out, t) in uniform.tiles.iter_mut().zip(tiles) {
             *out = *t;

@@ -58,7 +58,7 @@ fn main() -> ExitCode {
         Some("jev") => drive::run_jev(&args[1..], game_dir.clone()),
         Some("ground") => {
             let root = workspace_root();
-            let src = option("--src").unwrap_or_else(|| r"D:\ACR-models\polyhaven-textures".to_owned());
+            let src = option("--src").unwrap_or_else(|| r"D:\ACR-models".to_owned());
             let out = option("--out").map_or_else(|| root.join("target").join("assets"), PathBuf::from);
             let size = option("--size").unwrap_or_else(|| "1024".to_owned());
             let status = std::process::Command::new("python")

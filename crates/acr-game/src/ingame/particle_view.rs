@@ -19,7 +19,7 @@ use acr_sim::combat::{DeathCause, HitRecord, ImpactRecord};
 use super::ground_marks::{Footfall, Gait};
 
 /// Soil colour (sRGB) of each material class (`ground::CLASSES` order), for clods and dust.
-const SOIL: [[u8; 3]; 9] = [
+const SOIL: [[u8; 3]; 15] = [
     [96, 76, 52],    // grass: the soil under the turf
     [100, 80, 54],   // meadow
     [118, 94, 66],   // dirt
@@ -29,6 +29,12 @@ const SOIL: [[u8; 3]; 9] = [
     [74, 58, 42],    // forest
     [232, 234, 240], // snow
     [110, 86, 58],   // field
+    [150, 124, 92],  // cracked
+    [126, 76, 44],   // red
+    [128, 120, 106], // gravel
+    [176, 150, 108], // desert
+    [118, 100, 66],  // steppe
+    [226, 228, 232], // snowy
 ];
 const OTHER_SOIL: [u8; 3] = [104, 86, 64];
 const GRASS: [u8; 3] = [78, 104, 44];
@@ -63,8 +69,9 @@ impl Soil {
         Self {
             color: if wet { SOIL[3] } else { SOIL.get(usize::from(class)).copied().unwrap_or(OTHER_SOIL) },
             wet,
-            dusty: !wet && matches!(name, "dirt" | "sand" | "field"),
-            turf: matches!(name, "grass" | "meadow" | "field"),
+            dusty: !wet
+                && matches!(name, "dirt" | "sand" | "field" | "cracked" | "red" | "gravel" | "desert" | "steppe"),
+            turf: matches!(name, "grass" | "meadow" | "field" | "steppe"),
         }
     }
 
