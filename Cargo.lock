@@ -72,7 +72,6 @@ dependencies = [
  "web-sys",
  "web-time",
  "wgpu",
- "windows",
  "winit",
  "winresource",
 ]

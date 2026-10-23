@@ -18,10 +18,6 @@ pub struct Audio {
     pending: Option<String>,
     sounds: HashMap<String, Option<Sound>>,
     volumes: (f32, f32),
-    /// "Spotify mitmischen": no playlist; Spotify is ducked under the effects.
-    external: bool,
-    #[cfg(not(target_arch = "wasm32"))]
-    ducker: Option<crate::spotify::SpotifyDucker>,
     /// When the output meter was last logged.
     reported: web_time::Instant,
     /// When a lost output was last looked after.
@@ -53,9 +49,6 @@ impl Audio {
             pending: None,
             sounds: HashMap::new(),
             volumes: (1.0, 0.7),
-            external: false,
-            #[cfg(not(target_arch = "wasm32"))]
-            ducker: None,
             reported: web_time::Instant::now(),
             recovered: web_time::Instant::now(),
         }
@@ -101,35 +94,13 @@ impl Audio {
                 log::info!("audio: output started");
                 self.output = Some(output);
                 self.set_volumes(self.volumes.0, self.volumes.1);
-                self.set_external(self.external);
             }
             Err(e) => log::warn!("no audio: {e}"),
         }
     }
 
     pub fn stop(&mut self) {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.ducker = None;
-        }
         self.output = None;
-    }
-
-    /// Switches "Spotify mitmischen" on or off: the playlist stops and Spotify follows the
-    /// effects' loudness (Windows; elsewhere only the playlist stops).
-    pub fn set_external(&mut self, on: bool) {
-        self.external = on;
-        if on && let Some(Ok(mut mixer)) = self.output.as_ref().map(|o| o.mixer.lock()) {
-            mixer.set_music(None);
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        match (&self.ducker, &self.output) {
-            (None, Some(output)) if on => {
-                self.ducker = Some(crate::spotify::SpotifyDucker::start(output.mixer.clone()))
-            }
-            (Some(_), _) if !on => self.ducker = None,
-            _ => {}
-        }
     }
 
     /// True once the audio device is open.
@@ -149,7 +120,7 @@ impl Audio {
     /// The track to load when nothing is playing; it is then expected in `on_loaded`.
     pub fn next_track(&mut self) -> Option<String> {
         let output = self.output.as_ref()?;
-        if self.external || self.pending.is_some() || self.tracks.is_empty() {
+        if self.pending.is_some() || self.tracks.is_empty() {
             return None;
         }
         if output.mixer.lock().map(|m| m.music_playing()).unwrap_or(true) {

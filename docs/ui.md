@@ -137,13 +137,10 @@ Abbruch (0xff) are `GP_TextButton`s on `Interf2\Buttons` frame 0 at (472, 577) a
 
 In ACR the resolution sets the window size (the menus always scale 1024×768).
 
-ACR adds a third music choice, "Spotify mitmischen" (both options dialogs, `music_mode=2`):
-the game plays no music of its own, and on Windows it lowers the volume of Spotify's audio
-sessions (the Windows volume mixer) under the battle noise. The effects' loudness (RMS of
-the mixed effects, `Mixer::sfx_level`) drives an envelope (attack 0.15 s, release 2 s);
-from 0.02 to 0.14 Spotify goes down to 40 % of its volume. A volume the player sets in
-Spotify meanwhile becomes the new full volume; leaving the mode or the game restores it
-(`crates/acr-game/src/spotify.rs`). In the browser the choice only turns the music off.
+The music box has the original's two lines (`NOCD`, `RNDMUS`). An earlier ACR third line,
+"Spotify mitmischen" (`music_mode=2`, ducking Spotify under the battle noise), was removed:
+to listen to other music, switch the game's music off and keep the effects. A
+`settings.txt` that still has `music_mode=2` loads as no music.
 
 ACR adds one combo box for the control scheme (#129, [controls.md](controls.md)) beside the
 section label `INTF_OPT_GO` at (619, 419), where the background has free paper between the
@@ -882,6 +879,35 @@ described in [simulation.md](simulation.md#fog-of-war).
     game speed (`100 − FPSTime`).
   - OK and Abbruch on `G_Load_Game` frame 1. Enter and Escape work.
   - OK changes the simulation's tick rate and the scroll speed.
+
+ACR adds two more pages in the same frame (`ui/screens/game_options.rs`). A text button
+right on the first heading's line ("Weitere Optionen »", then "Seite 2/3: Grafik »",
+"Seite 3/3: Zurück »") turns the pages; OK takes the choices of all three, Abbruch none.
+Rows are 27 px apart from the first heading, labels and boxes where the original page has
+them (+76 / +239): headings on its heading rows (203, 257, 365), a combo box or a note on
+every other row, since the frame has the empty boxes (230, 284, 392) and the sliders'
+tracks (311, 338, 419, 446) drawn in. The settings each line writes are in
+[rendering-3d.md](rendering-3d.md#settings).
+
+| Page | Heading | Line | Choices | Setting |
+|---|---|---|---|---|
+| 2 | Gefecht | Blutdarstellung | Voll / Verringert / Aus (Original) | `gore` |
+| 2 | Tote und Spuren | Verwesung | Bis auf die Knochen / Nur halb | `corpse_decay` |
+| 2 | | Liegezeit | 1 … 60 Minuten | `corpse_minutes` |
+| 2 | | Schlachtfeldspuren | Verblassen / Bleiben (ganze Schlacht) | `battlefield_marks` |
+| 2 | Regeln | (note: "Gelten ab der nächsten Schlacht") | | |
+| 2 | | Trefferzonen | Aus (Original) / An | `hit_locations` |
+| 2 | | Körperabstand | Aus (Original) / An | `body_spacing` |
+| 3 | 3D-Grafik | 3D-Modelle | Aus (Original) / Einheiten / Einheiten und Gebäude | `models` |
+| 3 | Darstellung | Kamera | Fest (Original) / Frei | `camera` |
+| 3 | | Schatten, Detailstufen | An / Aus | `shadows`, `lod` |
+| 3 | Wasser und Boden | (note: "Nur in der 3D-Ansicht") | | |
+| 3 | | Wasser, Boden | Detailliert / Original | `water`, `ground` |
+
+All but the two rules take effect at once on OK. The rules are part of the simulation (the
+setup a replay or savegame hashes): a battle keeps the rules it began with, the new choice
+applies from the next battle, as the note under the heading says. Driver check with
+screenshots: `ACR-analysis/settings/after.jsonl`.
 
 ### Mission windows and messages
 

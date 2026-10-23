@@ -114,6 +114,9 @@ pub struct ThreeD {
     trail_tick: u64,
     /// The tick of the last update: going back means another game, the debris is dropped.
     debris_tick: u64,
+    /// `battlefield_marks=keep`: the marks that stay for the whole battle.
+    marks_keep: bool,
+    kept: super::kept_marks::KeptMarks,
     models: Models,
     gore: Gore,
     /// Sun shadows of the models (`shadows` setting; [`set_shadows_override`] wins).
@@ -248,6 +251,8 @@ impl Default for ThreeD {
             wounds: Default::default(),
             trail_tick: u64::MAX,
             debris_tick: 0,
+            marks_keep: false,
+            kept: Default::default(),
             shown: HashSet::new(),
             frames: 0,
             since: None,
@@ -283,6 +288,11 @@ impl ThreeD {
         self.corpse_ticks = u64::from(settings.corpse_minutes) * 60 * acr_sim::ORIGINAL_TICKS_PER_SECOND as u64;
         self.free = settings.camera == CameraMode::Free;
         self.ground_detailed = settings.ground_detailed;
+        if self.marks_keep && !settings.marks_keep {
+            // Back to fading: what was kept goes, the world's recent marks show again.
+            self.kept.clear();
+        }
+        self.marks_keep = settings.marks_keep;
         model::set_decay_cap(if settings.corpse_decay_half { model::HALF_DECAY } else { 1.0 });
         log::info!("3d: models {:?}, camera {:?}, gore {:?}", settings.models, settings.camera, settings.gore);
     }
@@ -536,6 +546,7 @@ impl ThreeD {
             // A loaded game or a restart: the debris belongs to another battle.
             self.debris.clear();
             self.wounds.clear();
+            self.kept.clear();
         }
         self.debris_tick = now;
         self.request_gore(request);
@@ -602,8 +613,13 @@ impl ThreeD {
                 p.radius *= (rig.trunk.radius_at(0.5) / 0.16).clamp(0.6, 2.5);
             }
             // Ships and guns leave no blood.
-            if !model.machine {
-                self.pools.extend(pool);
+            if !model.machine
+                && let Some(p) = pool
+            {
+                if self.marks_keep && u.death > 0 {
+                    self.kept.corpse_pool(u.id.0, &p);
+                }
+                self.pools.push(p);
             }
             // The wounds of his hits, alive and dead; they replace the corpse's guessed ones.
             if !u.building {
@@ -890,7 +906,12 @@ impl ThreeD {
         let tears =
             |h: &acr_sim::combat::HitRecord, rig: &acr_render::damage::Rig| wounds.hit_volumes(h.victim, h.tick, rig);
         self.debris.take_hits(world.hits.iter(), now, self.gore, &unit, &death, &tears, &self.gibs, &ground);
-        self.debris.expire(now, self.corpse_ticks);
+        if self.marks_keep {
+            // Rubble stays: the newest pieces, gibs and gear, rotting down to bones.
+            self.debris.keep_newest(super::debris::KEEP_CAP);
+        } else {
+            self.debris.expire(now, self.corpse_ticks);
+        }
         // Shell bursts throw the remains lying around them with the mud (gibs, pieces and
         // gear here, the corpses in the ragdolls).
         if now < self.last_blast {
@@ -930,17 +951,66 @@ impl ThreeD {
                 log::debug!("3d: blast at {:?} threw {n} pieces", b.at);
             }
         }
-        self.debris.draw(now, self.corpse_ticks, &ground, &mut self.instances, &mut self.pools);
-        for hit in world.hits.iter().filter(|h| !machines.contains(&h.victim)) {
+        self.debris.draw(now, self.corpse_ticks, self.marks_keep, &ground, &mut self.instances, &mut self.pools);
+        if self.marks_keep {
+            self.keep_marks(world, &machines, &ground);
+        }
+        let (hits_until, impacts_until) = (self.kept.hits_until, self.kept.impacts_until);
+        for hit in world.hits.iter().filter(|h| !machines.contains(&h.victim) && h.tick > hits_until) {
             super::splatter::splatter(hit, world.tick.0, self.gore, &ground, &mut self.pools);
             super::debris::mist(hit, world.tick.0, self.gore, &ground, &mut self.pools);
         }
         // Earth churned up where rounds struck the ground (#226).
-        for impact in world.impacts.iter().filter(|_| !self.ground_marks) {
+        for impact in world.impacts.iter().filter(|i| !self.ground_marks && i.tick > impacts_until) {
             super::splatter::impact(impact, world.tick.0, &ground, &mut self.pools);
         }
         // Every decal lies on the slope under it rather than flat at one height (#226).
         super::splatter::lay_on_ground(&mut self.pools, &ground);
+        // The kept marks were laid when they were kept.
+        self.kept.draw(&mut self.pools);
+    }
+
+    /// `battlefield_marks=keep`: copies the settled decals of hits and impacts, and the pools
+    /// of corpses gone this frame, into the kept marks (`kept_marks.rs`).
+    fn keep_marks(
+        &mut self,
+        world: &World,
+        machines: &std::collections::HashSet<u32>,
+        ground: &dyn Fn(f32, f32) -> [f32; 3],
+    ) {
+        acr_sim::prof_scope!("3d.kept_marks");
+        let now = world.tick.0;
+        let mut fresh = Vec::new();
+        let settled = |tick: u64| tick + super::kept_marks::SETTLED <= now;
+        let since = self.kept.hits_until;
+        for hit in world.hits.iter().filter(|h| h.tick > since && settled(h.tick)) {
+            if !machines.contains(&hit.victim) {
+                let at = hit.tick + super::kept_marks::SETTLED;
+                super::splatter::splatter(hit, at, self.gore, ground, &mut fresh);
+                super::debris::mist(hit, at, self.gore, ground, &mut fresh);
+            }
+            self.kept.hits_until = hit.tick;
+        }
+        let since = self.kept.impacts_until;
+        for impact in world.impacts.iter().filter(|i| i.tick > since && settled(i.tick)) {
+            if !self.ground_marks {
+                super::splatter::impact(impact, impact.tick + super::kept_marks::SETTLED, ground, &mut fresh);
+            }
+            self.kept.impacts_until = impact.tick;
+        }
+        super::splatter::lay_on_ground(&mut fresh, ground);
+        for p in fresh {
+            self.kept.keep(p);
+        }
+        self.kept.end_corpses(ground);
+        if now.is_multiple_of(500) && !self.kept.is_empty() {
+            log::info!(
+                "3d: {} kept marks ({} merged), {} debris",
+                self.kept.len(),
+                self.kept.merged,
+                self.debris.len()
+            );
+        }
     }
 
     /// Particles of this frame (after [`Self::update`]): impacts and the footfalls of the

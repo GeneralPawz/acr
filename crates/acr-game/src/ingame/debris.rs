@@ -25,6 +25,8 @@ const FLIGHT: u64 = 7;
 const POINT_BLANK: u8 = acr_sim::body::BALL_PULVERIZES;
 /// Pieces a blast throws again at most ([`Debris::blast`]).
 pub const BLAST_CAP: usize = 24;
+/// Pieces, gibs and gear kept at most with `battlefield_marks=keep`.
+pub const KEEP_CAP: usize = 1500;
 /// Gibs a pulverized body leaves at least, and how many more at most.
 const GIBS: (u32, u32) = (4, 4);
 
@@ -298,6 +300,14 @@ impl Debris {
         }
     }
 
+    /// `battlefield_marks=keep`: forgets all but the newest `cap` pieces.
+    pub fn keep_newest(&mut self, cap: usize) {
+        if self.items.len() > cap {
+            let n = self.items.len() - cap;
+            self.items.drain(..n);
+        }
+    }
+
     /// Forgets debris older than `lifetime` ticks.
     pub fn expire(&mut self, now: u64, lifetime: u64) {
         self.items.retain(|i| now.saturating_sub(i.tick) < lifetime);
@@ -351,6 +361,7 @@ impl Debris {
         &self,
         now: u64,
         lifetime: u64,
+        keep: bool,
         ground: &dyn Fn(f32, f32) -> [f32; 3],
         instances: &mut Vec<ModelInstance>,
         pools: &mut Vec<BloodPool>,
@@ -416,7 +427,11 @@ impl Debris {
                     centre: land,
                     radius: item.pool * (0.4 + 0.6 * grow) * PIXELS_PER_METRE,
                     age: model::ramp(age as f32, 60.0, 900.0),
-                    fade: 1.0 - model::ramp(age as f32, lifetime as f32 * 0.8, lifetime as f32),
+                    fade: if keep {
+                        1.0
+                    } else {
+                        1.0 - model::ramp(age as f32, lifetime as f32 * 0.8, lifetime as f32)
+                    },
                     seed: item.seed,
                     ..Default::default()
                 });

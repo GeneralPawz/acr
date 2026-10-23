@@ -35,6 +35,7 @@ mod gear_view;
 mod gore;
 mod ground_marks;
 mod interface;
+mod kept_marks;
 mod living_wounds;
 mod maul_view;
 mod panels;

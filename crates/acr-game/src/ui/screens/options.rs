@@ -7,7 +7,7 @@
 
 use super::super::dialog::{Align, CANCEL, Kind, OK, WidgetId};
 use super::super::draw::Draw;
-use super::super::settings::{CONTROL_CHOICES, RESOLUTIONS, SPOTIFY, Settings};
+use super::super::settings::{CONTROL_CHOICES, RESOLUTIONS, Settings};
 use super::super::{Ctx, Input, Nav, Screen};
 use super::{Menu, font};
 
@@ -130,7 +130,7 @@ impl Screen for Options {
         self.resolution = combo(m, 284, resolutions, s.resolution);
         let modes = vec![ctx.texts.get("SLOWMOD").to_vec(), ctx.texts.get("FASTMOD").to_vec()];
         self.game_mode = combo(m, 448, modes, s.game_mode);
-        let music = vec![ctx.texts.get("NOCD").to_vec(), ctx.texts.get("RNDMUS").to_vec(), SPOTIFY.to_vec()];
+        let music = vec![ctx.texts.get("NOCD").to_vec(), ctx.texts.get("RNDMUS").to_vec()];
         self.music_mode = combo(m, 340, music, s.music_mode);
         // ACR: the control scheme (#129) beside the game options' heading.
         let controls = CONTROL_CHOICES.iter().map(|c| c.0.to_vec()).collect();

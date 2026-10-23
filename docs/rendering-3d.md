@@ -22,9 +22,56 @@ parameters: [assets-humans.md](assets-humans.md).
 | `shadows` | `on`, `off` | `on` | sun shadows of the 3D models on the ground and on each other (below); tests switch them with `ACR_SHADOWS=on\|off` or the driver's `{"cmd": "shadows", "on": false}` |
 | `ground` | `detailed`, `original` | `detailed` | the ground in 3D mode (`models` not `off` or `camera=free`): material textures over the original tiles, [ground.md](ground.md); sprite mode always draws the original |
 | `gore` | `full`, `reduced`, `off` | `full` | 3D corpses: `full` decompose (#178), `reduced` discolour, collapse and sink without dissolving, `off` fade like the original (every other pixel once the death counter passes 100) |
+| `battlefield_marks` | `fade`, `keep` | `fade` | `keep`: craters, scuffs, blood splatter and pools and the debris of the fallen stay for the whole battle (below, "Kept battlefield marks") |
 
 Sprites stay the default; with `models=off` and `camera=fixed` the frame is drawn exactly as
-before (no depth buffer, no extra pass). There is no menu entry yet.
+before (no depth buffer, no extra pass). The game menu's options dialog (Spieleinstellungen)
+sets these on its pages 2 and 3 ([ui.md](ui.md#game-menu-0x5d9c30-and-game-options-0x5dbe10));
+`gore`, `corpse_minutes`, `corpse_decay`, `battlefield_marks` and the graphics take effect at
+once, `hit_locations` and `body_spacing` from the next battle.
+
+### Kept battlefield marks
+
+`battlefield_marks=keep` (`ingame/kept_marks.rs`, render only, the simulation and its
+hashes unchanged). The decals of hits and ground impacts are derived each frame from
+`World::hits` / `World::impacts`, which the simulation drops after `HIT_KEEP` (750 ticks);
+corpse pools go with their corpses, debris after `corpse_minutes`. With `keep`:
+
+- a hit's splatter and mist and an impact's crater or scuff are copied, dried and fully
+  visible, 500 ticks after the hit (`SETTLED`) and drawn from the copy from then on;
+- a corpse's pool is copied when the corpse goes (its biggest state);
+- debris (severed pieces, gibs, dropped gear) no longer expires; the newest 1500 stay
+  (`debris::KEEP_CAP`), rotting down to bones, their pools no longer fading;
+- on the detailed ground craters, furrows and scorch are stamps in the ground state
+  (`ground_marks.rs`) whose displacement and scorch stay with either setting (only the
+  compression and mud recover); the atlas is fixed (64 tiles of 256², 16 MB), the least
+  recently stamped tile is recycled.
+
+Bounded: a mark landing on a kept mark of the same kind (blood pool, droplet, smear,
+crater, scuff) within 0.6 of its radius merges into it (areas add, up to 1.8× its first
+radius) instead of adding a decal; beyond 8192 kept decals (`kept_marks::CAP`) the oldest
+go. Kept decals are laid on the slope once, when kept.
+
+Cost: one kept decal is a `BloodPool` (about 76 bytes, plus its first radius) on the CPU
+and one 64-byte `GpuPool` instance re-uploaded each frame with the others; at the cap about
+1.2 MB in all. Drawing is the decals' instanced quads (`blood.wgsl`), as for live ones.
+Measured on the blank editor field (release, `models=all`, `ground=original` so impacts are
+decals, HUD off; `ACR-analysis/settings/marks_bench.py`, 300 frames after the simulation
+dropped every record):
+
+| run | kept decals | `3d.update` CPU ms/frame | GPU ms/frame |
+|---|---|---|---|
+| 600 impacts, `fade` | 0 | 0.27 | 8.0 |
+| 600 impacts, `keep` | 486 (114 merged) | 0.31 | 5.5 |
+| 9000 impacts over 10000 × 6700 px, `fade` | 0 | 0.36 | 5.6 |
+| 9000 impacts over 10000 × 6700 px, `keep` | 3085 (1011 merged) | 0.45 | 2.0 |
+
+(The simulation caps the impacts it records within `HIT_KEEP`, so not all 9000 reach the
+renderer.) About 0.03 ms CPU per 1000 kept decals; the GPU time on this machine varies by more
+than the decals cost (the terrain pass alone moved 0.2–4.5 ms between runs), so it is not
+separated. The cap (8192) bounds both; at that density a crater-strewn field merges long
+before it.
+
 
 **Free camera keys** (`camera=free` only): `,` and `.` turn the view, Page Up / Page Down tilt
 it (15°–80°), End returns to the original angle. The camera turns about the ground point at

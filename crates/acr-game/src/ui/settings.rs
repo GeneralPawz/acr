@@ -1,8 +1,5 @@
 //! Player options edited in the options screen (0x5c9740).
 
-/// The third music choice: no own music, Spotify mixed in ([`Settings::external_music`]).
-pub const SPOTIFY: &[u8] = b"Spotify mitmischen";
-
 /// The original's option globals, with their ranges.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
@@ -10,8 +7,8 @@ pub struct Settings {
     pub sound_volume: i32,
     /// `MidiSound`: music volume 0..=100.
     pub music_volume: i32,
-    /// Music mode: 0 no music (`NOCD`), 1 random tracks (`RNDMUS`), 2 Spotify mixed in
-    /// (ACR, [`SPOTIFY`]).
+    /// Music mode: 0 no music (`NOCD`), 1 random tracks (`RNDMUS`). The removed third
+    /// choice (2, "Spotify mitmischen") reads as no music.
     pub music_mode: usize,
     /// Game mode: 0 slow (`SLOWMOD`), 1 fast (`FASTMOD`).
     pub game_mode: usize,
@@ -62,6 +59,10 @@ pub struct Settings {
     /// material textures over the original tiles (docs/ground.md). Sprite mode always
     /// draws the original ground.
     pub ground_detailed: bool,
+    /// ACR: `battlefield_marks=fade|keep` (fade by default): with `keep` craters, scorch,
+    /// earth scuffs, blood pools and the debris of the fallen stay for the whole battle
+    /// (render only, capped and merged; `ingame/kept_marks.rs`, docs/rendering-3d.md).
+    pub marks_keep: bool,
 }
 
 /// `models=off|units|all`: sprites everywhere (the original), 3D units, 3D units and
@@ -138,6 +139,7 @@ impl Default for Settings {
             lod: true,
             water_detailed: true,
             ground_detailed: true,
+            marks_keep: false,
         }
     }
 }
@@ -148,12 +150,6 @@ impl Settings {
         let gain = |v: i32| (v.clamp(0, 100) as f32 / 100.0).powi(2);
         let music = if self.music_mode == 1 { gain(self.music_volume) } else { 0.0 };
         (gain(self.sound_volume), music)
-    }
-
-    /// "Spotify mitmischen" (music choice 2): no own music, Spotify ducked under the
-    /// battle noise.
-    pub fn external_music(&self) -> bool {
-        self.music_mode == 2
     }
 
     /// Edge scrolling in effect: always with the original controls.
@@ -204,7 +200,7 @@ impl Settings {
             "sound_volume={}\nmusic_volume={}\nmusic_mode={}\ngame_mode={}\nscroll_speed={}\nframe_time={}\n\
              resolution={}\nrecord={}\nrecord_file={hex}\ncontrols={controls}\nedge_scroll={}\n\
              models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\ncorpse_decay={}\nhit_locations={}\nbody_spacing={}\nshadows={}\nlod={}\nwater={}\n\
-             ground={}\n",
+             ground={}\nbattlefield_marks={}\n",
             self.sound_volume,
             self.music_volume,
             self.music_mode,
@@ -222,6 +218,7 @@ impl Settings {
             if self.lod { "on" } else { "off" },
             if self.water_detailed { "detailed" } else { "original" },
             if self.ground_detailed { "detailed" } else { "original" },
+            if self.marks_keep { "keep" } else { "fade" },
         )
     }
 
@@ -236,7 +233,7 @@ impl Settings {
             match key {
                 "sound_volume" => s.sound_volume = int.map_or(s.sound_volume, |v| v.clamp(0, 100)),
                 "music_volume" => s.music_volume = int.map_or(s.music_volume, |v| v.clamp(0, 100)),
-                "music_mode" => s.music_mode = int.map_or(s.music_mode, |v| v.clamp(0, 2) as usize),
+                "music_mode" => s.music_mode = int.map_or(s.music_mode, |v| usize::from(v == 1)),
                 "game_mode" => s.game_mode = int.map_or(s.game_mode, |v| v.clamp(0, 1) as usize),
                 "scroll_speed" => s.scroll_speed = int.map_or(s.scroll_speed, |v| v.clamp(2, 10)),
                 "frame_time" => s.frame_time = int.map_or(s.frame_time, |v| v.clamp(0, 100)),
@@ -266,6 +263,7 @@ impl Settings {
                 "lod" => s.lod = value != "off",
                 "water" => s.water_detailed = value != "original",
                 "ground" => s.ground_detailed = value != "original",
+                "battlefield_marks" => s.marks_keep = value == "keep",
                 "corpse_minutes" => s.corpse_minutes = int.map_or(s.corpse_minutes, |v| v.clamp(1, 60) as u32),
                 "gore" => {
                     s.gore = match value {
@@ -310,8 +308,12 @@ mod tests {
             corpse_decay_half: true,
             hit_locations: true,
             body_spacing: true,
+            marks_keep: true,
         };
         assert_eq!(Settings::decode(&s.encode()), s);
+        // The removed "Spotify mitmischen" (music_mode=2) reads as no music.
+        assert_eq!(Settings::decode("music_mode=2\nspotify=1").music_mode, 0);
+        assert_eq!(Settings::decode("music_mode=1").music_mode, 1);
         assert_eq!(Settings::decode("corpse_minutes=500").corpse_minutes, 60);
         assert_eq!(Settings::decode(""), Settings::default());
         let odd = Settings::decode("scroll_speed=99\nfoo=1\nresolution=x\ncontrols=modern\nmodels=3d\ngore=off");
