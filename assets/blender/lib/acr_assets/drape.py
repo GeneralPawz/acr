@@ -31,6 +31,8 @@ from . import body as bd
 from . import garments as gm
 from . import registry, rig
 
+CAPE_ARM = 0.10  # m below the shoulder joint: the upper arm in a cloak's hull down to here
+CAPE_OVER = 0.012  # m: a cloak's hull lies this much further off the layers under it
 SPACING = registry.SPACING  # cm (the waistcoat lies under the coat); families add with `registry.garment`
 SEW_FRAMES = 45  # sewing phase (no gravity), then the cloth settles
 FRAMES = 75
@@ -154,7 +156,7 @@ class Body:
         self.top_z = np.array([float(top[np.abs(np.abs(top[:, 0]) - x) < 0.015][:, 2].max())
                                if np.any(np.abs(np.abs(top[:, 0]) - x) < 0.015) else self.fold_z for x in self.top_x])
         self.top_z = np.maximum(self.top_z, self.fold_z)
-        self._capes, self._cpts, self._cy = {}, None, 0.0
+        self._capes, self._cpts, self._cy, self._over = {}, None, 0.0, None
         self.land = {"waist": self.waist_z, "knee": self.knee_z, "ankle": self.ankle_z, "wrist": None,
                      "collar": self.neck_z + 0.035, "stock": self.neck_z + 0.03}
         # Torso ellipses per height (2 cm steps): centre y, half widths.
@@ -189,8 +191,19 @@ class Body:
             zc = self.neck_z + 0.02
             arms = ("upperarm_l", "upperarm_r")
             keep = np.isin(self.home, TORSO + ("neck", "thigh_l", "thigh_r") + arms) & (self.V[:, 2] < zc)
-            keep &= ~(np.isin(self.home, arms) & (self.V[:, 2] < float(self.seg["upperarm_l"][0][2]) - 0.06))
-            self._cpts = self.V[keep]
+            arm_z = float(self.seg["upperarm_l"][0][2]) - CAPE_ARM
+            keep &= ~(np.isin(self.home, arms) & (self.V[:, 2] < arm_z))
+            pts = [self.V[keep]]
+            if self._over is not None:
+                # The layers the cloak lies on (a blouse, a tunic, a hip cloth): their
+                # outer surface, `CAPE_OVER` m further out, by the same rule.
+                Q, home = self._over
+                ok = np.isin(home, TORSO + ("neck", "thigh_l", "thigh_r") + arms) & (Q[:, 2] < zc)
+                ok &= ~(np.isin(home, arms) & (Q[:, 2] < arm_z))
+                d = Q[ok, :2] - np.array((0.0, self.ellipse(self.neck_z)[0]))
+                r = np.maximum(np.linalg.norm(d, axis=1), 1e-6)[:, None]
+                pts.append(np.hstack([Q[ok, :2] + d / r * CAPE_OVER, Q[ok, 2:]]))
+            self._cpts = np.vstack(pts)
             self._cy = self.ellipse(self.neck_z)[0]
         t = math.radians(key[0])
         d = np.array((math.sin(t), -math.cos(t)))
@@ -218,6 +231,19 @@ class Body:
         sl = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(H, axis=0), axis=1))])
         self._capes[key] = (sl, H[:, 0], H[:, 1])
         return self._capes[key]
+
+    def cape_over(self, objs):
+        """The cloak's hull also covers these rest-pose layers (`dress`: everything made before
+        it). Clears the cached hanging lines."""
+        qs = [np.array([tuple(o.matrix_world @ v.co) for v in o.data.vertices])
+              for o in objs if o.type == "MESH" and len(o.data.vertices)]
+        if qs:
+            Q = np.vstack(qs)
+            self._over = (Q, _nearest_bone(Q, self.seg, [b for b in rig.BODY_BONES
+                                                          if b in self.seg and not b.startswith(FINGERS)]))
+        else:
+            self._over = None
+        self._capes, self._cpts = {}, None
 
     def cape_at(self, th, s, gap, step=3.0):
         """Point (x, y, z) of the cloak's hanging surface at theta `th`, `s` m from the neck
@@ -561,8 +587,8 @@ def simulate(obj, settings, sew=(), frames=None):
     cs.air_damping = 5.0
     cc = mod.collision_settings
     cc.distance_min = settings.get("margin", 0.004)
-    cc.use_self_collision = False
-    cc.self_distance_min = 0.002
+    cc.use_self_collision = bool(settings.get("self"))
+    cc.self_distance_min = settings.get("self_gap", 0.002)
     cc.collision_quality = 3
     mod.point_cache.frame_start = 1
     mod.point_cache.frame_end = frames
@@ -835,6 +861,8 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=()):
     stats["measure"] = {k: round(v, 1) for k, v in body.m.items()}
     for g in garments:
         panels, seams = uni[g]
+        if any(p.place.get("region") == "cape" for p in panels.values()):
+            body.cape_over(list(over) + [o for o in ch.layers["clothes"] if o.name in made])
         verts, faces, finfo, sew, pieces = build_garment(body, g, panels, seams, SPACING.get(g, 3.5))
         me = bpy.data.meshes.new(f"{ch.name}.{g}.drape")
         me.from_pydata(verts, [tuple(e) for e in sew], faces)

@@ -63,7 +63,9 @@ CLOTH = {
 CLOTH["frn_blouse"] = dict(CLOTH["shirt"], margin=0.003, bending=0.3)
 CLOTH["trade_shirt"] = dict(CLOTH["shirt"], margin=0.003, bending=0.8)
 CLOTH["unku"] = {"thickness": 0.0020, "mass": 0.30, "tension": 15.0, "bending": 1.0, "shrink": 0.0, "margin": 0.004}
-CLOTH["frn_cape"] = CLOTH["yacolla"] = CLOTH["tilmatli"] = dict(CLOTH["coat"], margin=0.006, bending=1.5)
+# Cloaks: a wider collision margin (they lie on draped layers), self-collision for the folds.
+CLOTH["frn_cape"] = CLOTH["yacolla"] = dict(CLOTH["coat"], margin=0.009, bending=1.5)
+CLOTH["tilmatli"] = dict(CLOTH["coat"], margin=0.009, bending=1.5, self=True, self_gap=0.004)
 CLOTH["frn_sash"] = {"thickness": 0.0025, "mass": 0.30, "tension": 15.0, "bending": 0.6, "shrink": 0.10,
                      "margin": 0.004}
 CLOTH["doublet_slashed"] = CLOTH["doublet"]

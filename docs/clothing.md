@@ -550,6 +550,108 @@ the hanging part is coarse at the hem), a larger `gap` / `margin` where a cloak 
 draped layer, and self-collision for the tilmatli's folds. Conversion list for the other
 families: not yet (only one cloak passes).
 
+**Drape 3: cloaks over the layers beneath; why the tilmatli and the buccaneer's cape still
+fail** (#287; everything in `ACR-analysis/drape3/`: `sheet_before_after.png`, `pair_*.png`,
+`wire/` (rest and STAND wireframe crops, `*_d2_d3.png`, `*_d3_arm30.png`), `before/`,
+`after/`, `glb/`, `glb_arm10/`, `layers_*.txt`, `tools/` (`build.sh`, `shots.py` now framing
+the walker from `state`, `wire.py`, `pair.py`, `sheet.py`); the exe built from this branch,
+ground white). Changes kept:
+- **The cloak's hull covers the layers under it**: `Body.cape_over` adds the rest-pose
+  vertices of everything the cloak lies on (`over` and the garments draped before it in the
+  same `dress`, skirts included) to the hanging-line hull, `CAPE_OVER` (1.2 cm) further out;
+  so the yoke is pinned outside the blouse, the unku or the sash, not inside them.
+- Cloak collision margin 9 mm (was 6); the tilmatli self-collides (`CLOTH[...]["self"]`,
+  4 mm), opt-in per cloth.
+
+Tried and dropped: a denser cape mesh (`SPACING` 2.4–2.6 cm instead of 3.0–3.5) and the
+whole upper arm in the hull (`CAPE_ARM` 0.30 m instead of 0.10).
+
+Causes, from the wireframe crops (rest pose and STAND):
+- **The crumple is the arms, not the mesh resolution.** The back panels are smooth; every
+  pleat sits where the hanging line, falling straight from the shoulder cap, meets the upper
+  arm of the A-pose rest body. The sim pushes the cloth out round the arm and it buckles into
+  pleats one triangle wide; the forearm comes out through the side. A denser mesh only makes
+  more, smaller pleats; the whole upper arm in the hull makes a bell to the elbow and still
+  buckles below it.
+- **The dark "holes" are pleats turned inside out**: triangles of those folds face inwards
+  and render black (the denser mesh gave many more of them: MaySha and FrnBuk were worse in
+  game). Not skin showing through.
+- **FrnBuk's blouse showed through** because the yoke was pinned inside the blouse (30 cm of
+  ease stands well off the skin): fixed by the hull over the layers (the back is now red to
+  the sash), but the shoulders crumple like MaySha's.
+So the shoulder-cape and the tilmatli need the arm handled before they can pass: drape them
+on a rest body with the arms down (a pose-space sim: the arms rotated to the STAND angle for
+the sim, the result un-posed by the arm bones' inverse), or cut the cloak's sides round the
+arm (an arm slit, like a poncho's). Then the pleats over the arm do not form at all.
+
+`model_layers --steps 8`, poking / crossing, showcase (shell) → drape 2 → drape 3 (the
+denser test build): maysha 53 / 15 → 67 / 136 → 81 / 84, frnbuk 299 / 296 → 539 / 558 →
+627 / 607 (`layers_cloaks.txt`).
+
+`model_layers --steps 8`, IncSha drape 2 (the showcase) → drape 3 (crossing vertices):
+unku → yacolla 109 → 84 (samples 1877 → 1579), skin → yacolla 44 → 31, skin → unku
+66 → 68; poking at rest 81 → 67… 76; all 219 → 183 (with the denser mesh: 167). Row by
+row, the 219 of drape 2 were: the stride legs through the knee-length unku skirt in
+MOTION_L/R (66; free cloth on the skirt bones, the runtime cloth moves it; the shell unku
+was shorter and tighter), the yacolla's free part against the unku in the crawl and death
+clips (109; both free cloths on different skirt weights) and the skin against the yacolla's
+skirt in CRAWLARM / ATTACK (44). None is in STAND or the walk's upper body: harmless in game; the yacolla rows drop by a quarter with the hull over the unku.
+
+In game:
+- **IncSha** (on since drape 2), rebuilt with the drape 3 code: the yacolla now lies over the
+  unku and opens a little wider in front; the white unku bits at the shoulder tops and the
+  back of the neck are about the same (the unku's neckline stands above the yacolla's yoke:
+  the unku's neck hole sits higher than the cloak's neck ring; next: lower the unku's neck
+  or raise the yoke's ring by the unku's height there). Not clearly better: the showcase
+  keeps the drape 2 glb.
+- **MaySha**: smoother at the back, but the sides crumple over the arms with many black
+  inverted pleats: **off**.
+- **FrnBuk**: the blouse no longer shows on the back, but the cape is ragged and black-flecked
+  over the shoulders: **off**.
+- **DelKri**: not changed in drape 3 (the strap patches and shoulder wisps need the strap
+  seated on the posed shirt): **off**.
+
+### Roll-out list: shell garments to draft and drape
+
+Effort: S = a draft instance of an existing `tunic` / `cloak` / `band` (an hour with the
+build and shots), M = a new draft parameter or panel (half a day), L = needs a missing
+mechanism (a day or more). Order within a family is the order to do them. The blocker for
+every **cloak** row is the arm problem above (fix it once in `drape.py`, M–L); tunics and
+bands can go now.
+
+| family | shell → draft | kind | effort | note |
+|---|---|---|---|---|
+| native (Woodlands) | `shirt` → `trade_shirt` | tunic | S per unit, after DelKri passes | strap seat on the posed shirt first (M) |
+| native | `matchcoat` (blanket over one shoulder) | cloak, `knot_at` under the arm | M + arm fix | like the tilmatli |
+| native | `cloak` (shaman's pelt) | cloak | S + arm fix | stiff hide: high bending |
+| native | `breechcloth` + flaps | band + two hanging panels | M | flaps are modelled and clean: low priority |
+| plains | `war_shirt` | tunic, open sides, fringe stays a shell strip | M | hide: thicker cloth |
+| pueblo | `tunic` | tunic, no sleeves | S | |
+| pueblo | `sash` | band | S | |
+| pueblo | `blanket` | cloak | S + arm fix | |
+| pueblo | `jerkin` | tunic, open front | M | |
+| meso | `tilmatli` | cloak (`knot_at`) | done, waits for the arm fix | |
+| meso | `maya_jacket` | tunic, short | S | |
+| meso | `ichcahuipilli` | tunic, quilted (thick, stiff) | M | never tried |
+| meso | `maxtlatl` | band + flaps | M | |
+| inca | `unku` | tunic | done (IncSha); S per unit | all unku variants are keys |
+| inca | `yacolla` | cloak | done (IncSha); S per unit | |
+| inca | `quilt` (quilted armour) | tunic, thick | M | |
+| frontier | `blouse` | tunic (`frn_blouse`) | S, clean already | can go on alone, without the cape |
+| frontier | `sash` | band (`frn_sash`) | S, clean already | |
+| frontier | `cloak` / `cape` | cloak (`frn_cape`) | waits for the arm fix | |
+| conquista | (uses frontier's layers) | as frontier | S each | |
+| civil | `blouse`, `sash` | tunic, band | S | as frontier |
+| civil | `habit` + `habit_legs` | tunic to the ankle, wide sleeves | M | |
+| civil | `cappa`, `hood` | cloak (+ a hood panel) | M + arm fix | |
+| cavalry | `coat` (riders' coats), `waistcoat` | the uniform `coat` / `waistcoat` drafts | M | the seat: skirts split over the saddle (`gear` seat) |
+| cavalry | `buffcoat` | `buffcoat` draft | M | as the infantry's 17th century |
+| cavalry | `sash` | band (over the shoulder: a bandolier variant) | M | |
+| cavalry | `breeches`, `boots`, cuffs, lapels | stay shells | – | tight or rigid, no teeth seen |
+
+Next: the arm problem for cloaks (pose-space sim or arm slits), then the tunics and bands
+of the list (the frontier blouse and sash alone first: they are clean).
+
 ## Pattern format
 
 ```python
