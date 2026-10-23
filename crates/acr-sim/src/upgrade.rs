@@ -207,6 +207,60 @@ fn objects_of(w: &World, player: u8, kind: TypeId) -> Vec<usize> {
     (0..w.units.len()).filter(|&i| w.units[i].alive && w.units[i].owner == player && w.units[i].kind == kind).collect()
 }
 
+/// The upgrades that change a player's characteristics of `kind` (unit categories and
+/// costs), in tech order: the test editor's upgrade levels (`ingame/editor.rs`) apply a
+/// share of them. Left out: `[PRIVATE]` and stage upgrades, the categories acting on the
+/// researching building (`SINGLE_*`, `PERSONALLIFE`) and the one-off `HEALING`.
+pub fn of_type(catalog: &crate::catalog::Catalog, kind: TypeId) -> Vec<UpgradeId> {
+    let personal = [ctg::SINGLE_INSIDE, ctg::SINGLE_ATTPAUSE, ctg::MOREFARMS_SINGLE, ctg::PERSONALLIFE, ctg::HEALING];
+    (0..catalog.tech.upgrades.len())
+        .map(|i| UpgradeId(i as u16))
+        .filter(|&up| {
+            let def = catalog.tech.upgrade(up);
+            !def.individual
+                && !def.stage_up
+                && match &def.effect {
+                    Effect::Units { category, units, .. } => units.contains(&kind) && !personal.contains(category),
+                    Effect::Cost { units, .. } => units.contains(&kind),
+                    _ => false,
+                }
+        })
+        .collect()
+}
+
+/// Sets `player`'s characteristics of `kind` to the type's own plus the effects of the
+/// first `n` of [`of_type`], on this type only (an upgrade naming several types leaves the
+/// others alone), and marks no upgrade done. The player's existing objects of the type take
+/// the resulting maximum life (their life capped by it). For the test editor.
+pub fn set_type_level(w: &mut World, player: u8, kind: TypeId, n: usize) {
+    let catalog = w.catalog.clone();
+    w.players[usize::from(player)].adv.remove(&kind);
+    for up in of_type(&catalog, kind).into_iter().take(n) {
+        match &catalog.tech.upgrade(up).effect {
+            Effect::Units { category, select, value, .. } => {
+                let v = value.unwrap_or(Value { op: 3, n: 0 });
+                let slots = slots(&w.adv(player, kind), select);
+                apply_unit(w, player, kind, *category, &slots, v, None);
+            }
+            Effect::Cost { values, .. } => {
+                for &(r, v) in values {
+                    let a = adv_mut(w, player, kind);
+                    a.cost[r] = v.apply(a.cost[r]);
+                }
+            }
+            _ => {}
+        }
+    }
+    let life = w.adv(player, kind).life;
+    for b in objects_of(w, player, kind) {
+        let u = &mut w.units[b];
+        if !u.building && u.living() {
+            u.max_life = life;
+            u.life = u.life.min(life);
+        }
+    }
+}
+
 /// `PerformNewUpgrade` (0x532281): applies an upgrade's effect for `player`, then enables
 /// its `[UPGRADELINKS]` and performs its `[AUTOUPGRADE]`s. `maker` is the building that
 /// researched it.

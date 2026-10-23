@@ -46,12 +46,19 @@ const OWNERS: [(u8, &str); 3] = [(0, "Spieler 1"), (1, "Spieler 2"), (7, "Neutra
 const FACINGS: [&str; 8] = ["Ost", "Suedost", "Sued", "Suedwest", "West", "Nordwest", "Nord", "Nordost"];
 /// Space between formations placed side by side, world pixels.
 const FORMATION_GAP: i32 = 64;
+/// Upgrade levels: the button behind a list row and the name in the settings.
+const LEVELS: [(&str, &str); 3] = [("B", "Basis"), ("H", "Halb"), ("V", "Voll")];
+/// Width of one level button behind a list row.
+const LEVEL_W: i32 = 20;
 
 /// A click target of the panel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Act {
     Tab(usize),
     Pick(TypeId),
+    /// Picks the type at an upgrade level (a button behind its list row).
+    PickLevel(TypeId, usize),
+    Level(i32),
     ScrollUp,
     ScrollDown,
     Count(i32),
@@ -96,6 +103,9 @@ pub struct Editor {
     form: usize,
     owner: usize,
     facing: [u8; 3],
+    /// Upgrade level of placed types, an index in [`LEVELS`]: none, the first half of the
+    /// type's upgrades or all of them ([`acr_sim::upgrade::of_type`]).
+    level: usize,
     /// Fighting is off: every player is everybody's ally (set on start).
     pub peace: bool,
     /// Every cannon is reloaded each tick (a test switch, off on start).
@@ -118,6 +128,7 @@ impl Default for Editor {
             owner: 0,
             // Player 1 faces north (up the screen), player 2 south, neutral east.
             facing: [192, 64, 0],
+            level: 0,
             peace: true,
             auto_reload: false,
             status: b"Typ waehlen, dann auf die Karte klicken".to_vec(),
@@ -255,10 +266,21 @@ impl Editor {
         y += TABS.len().div_ceil(4) as i32 * ROW + 4;
         let list = types(world, self.tab);
         line(&mut out, &mut y, b"  ^ hoch".to_vec(), false, (self.scroll > 0).then_some(Act::ScrollUp));
+        let buttons = LEVEL_W * LEVELS.len() as i32;
         for &kind in list.iter().skip(self.scroll).take(LIST_ROWS) {
             let mut text = names(kind);
-            text.truncate(40);
-            line(&mut out, &mut y, text, self.pick == Some(kind), Some(Act::Pick(kind)));
+            text.truncate(34);
+            let picked = self.pick == Some(kind);
+            out.push(Item { rect: Rect::new(X0, y, W - buttons, ROW), text, hot: picked, act: Some(Act::Pick(kind)) });
+            for (l, (label, _)) in LEVELS.iter().enumerate() {
+                out.push(Item {
+                    rect: Rect::new(X0 + W - buttons + l as i32 * LEVEL_W, y, LEVEL_W, ROW),
+                    text: label.as_bytes().to_vec(),
+                    hot: picked && self.level == l,
+                    act: Some(Act::PickLevel(kind, l)),
+                });
+            }
+            y += ROW;
         }
         for _ in list.len().saturating_sub(self.scroll).min(LIST_ROWS)..LIST_ROWS {
             line(&mut out, &mut y, Vec::new(), false, None);
@@ -285,6 +307,9 @@ impl Editor {
             _ => "lose".into(),
         };
         pair(&mut out, &mut y, format!("Formation: {form}"), Act::Form(-1), Act::Form(1));
+        let ups = self.pick.map_or(0, |k| acr_sim::upgrade::of_type(&world.catalog, k).len());
+        let level = format!("Ausbau: {} ({}/{ups})", LEVELS[self.level].1, level_count(self.level, ups));
+        pair(&mut out, &mut y, level, Act::Level(-1), Act::Level(1));
         pair(
             &mut out,
             &mut y,
@@ -346,6 +371,12 @@ impl Editor {
                 self.pick = if self.pick == Some(k) { None } else { Some(k) };
                 self.form = self.form.min(formations(world, k).len());
             }
+            Act::PickLevel(k, l) => {
+                self.pick = Some(k);
+                self.level = l;
+                self.form = self.form.min(formations(world, k).len());
+            }
+            Act::Level(d) => self.level = (self.level as i32 + d).rem_euclid(LEVELS.len() as i32) as usize,
             Act::ScrollUp => self.scroll = self.scroll.saturating_sub(LIST_ROWS / 2),
             Act::ScrollDown => {
                 let n = types(world, self.tab).len();
@@ -396,7 +427,20 @@ impl Editor {
     pub fn place(&mut self, world: &mut World, at: (i32, i32)) {
         let Some(kind) = self.pick else { return };
         let (n, owner, dir) = (self.count() as usize, self.owner(), self.facing());
-        let placed = match self.formation(world) {
+        // The level holds for the owner's every object of the placed types, as researched
+        // upgrades do: set before spawning, so the new men start at full upgraded life.
+        let form = self.formation(world);
+        let mut kinds = vec![kind];
+        if let Some(c) = &form {
+            let o = world.formations.officers.get(&c.officer).cloned().unwrap_or_default();
+            kinds.extend([Some(c.officer), o.drummer, o.flag].into_iter().flatten());
+        }
+        let ups = acr_sim::upgrade::of_type(&world.catalog, kind).len();
+        for &k in &kinds {
+            let n = level_count(self.level, acr_sim::upgrade::of_type(&world.catalog, k).len());
+            acr_sim::upgrade::set_type_level(world, owner, k, n);
+        }
+        let placed = match form {
             Some(choice) => place_formations(world, kind, &choice, n, owner, at, dir),
             None => {
                 let t = world.catalog.get(kind);
@@ -410,9 +454,19 @@ impl Editor {
         set_peace(world, self.peace);
         let name = world.catalog.get(kind).id.clone();
         self.status = match placed {
-            Ok(k) => format!("{k} x {name} platziert").into_bytes(),
+            Ok(k) => format!("{k} x {name}, Ausbau {}/{ups}", level_count(self.level, ups)).into_bytes(),
             Err(e) => e.into_bytes(),
         };
+    }
+}
+
+/// How many of a type's `ups` upgrades level `level` applies: none, the first half
+/// (rounded up) or all.
+fn level_count(level: usize, ups: usize) -> usize {
+    match level {
+        0 => 0,
+        1 => ups.div_ceil(2),
+        _ => ups,
     }
 }
 
@@ -587,5 +641,14 @@ mod tests {
         e.count = (e.count as i32 - 1).clamp(0, COUNTS.len() as i32 - 1) as usize;
         assert_eq!(e.count(), 1);
         assert!(COUNTS.contains(&196));
+    }
+
+    #[test]
+    fn levels_apply_none_half_or_all_upgrades() {
+        assert_eq!([0, 1, 2].map(|l| level_count(l, 7)), [0, 4, 7]);
+        assert_eq!([0, 1, 2].map(|l| level_count(l, 0)), [0, 0, 0]);
+        let mut e = Editor::default();
+        e.level = (e.level as i32 - 1).rem_euclid(LEVELS.len() as i32) as usize;
+        assert_eq!(LEVELS[e.level].1, "Voll", "stepping back from Basis wraps to Voll");
     }
 }

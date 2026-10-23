@@ -179,14 +179,23 @@ rules of the settings apply (`hit_locations`, `body_spacing`).
 |---|---|
 | ENG … IRO, Tiere, Kanonen | lists the land units of a nation, the animals or the cannons |
 | a unit | picks it (again: unpicks); while picked, a left click on the map places it |
+| B H V behind a unit | picks it at an upgrade level: Basis (none), Halb (the first half of its upgrades, rounded up) or Voll (all) |
 | Anzahl | 1, 5, 10, 15, 36, 72, 120, 196, 392, 588, 784 or 980 |
 | Formation | lose (a square block) or the formations the type's officers lead: Linie, Kolonne, Karree for infantry, the cavalry wedges as named in `ORD_GROUPS.LST` |
+| Ausbau | the upgrade level, as with the buttons; shows how many of the picked type's upgrades it applies |
 | Richtung | the facing, in eight steps; kept per owner |
 | Besitzer | Spieler 1, Spieler 2 or Neutral (wild animals) |
 | Kampf | AUS: every player is everybody's ally, nobody attacks; AN: the sides fight |
 | Kanonen sofort laden | reloads every cannon on the field at once (its reload counter cleared) |
 | Kanonen: sofort nachladen | AN: every cannon is reloaded before each tick, so it fires as soon as it is aimed (a test switch; starts AUS) |
 | Ich steuere | which player's units the mouse selects and commands |
+
+The upgrade level applies the upgrades that change the type's characteristics (damage,
+protection, life, range, cannon spread `RAZBROS`, reload pause, speed, cost; `upgrade::of_type`,
+in the nation file's order) as if researched, without marking them researched. Like researched
+upgrades it holds per owner and type: placing a type at another level changes that owner's
+units of the type already standing too, so compare levels between Spieler 1 and Spieler 2. A
+formation's officer, drummer and flag bearer get the same level of their own upgrades.
 
 A formation is placed standing on its slots with its officer, drummer and flag bearer, in the
 smallest size that holds the count; above the largest size (196) several are placed side by
