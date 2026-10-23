@@ -290,8 +290,11 @@ def build(ctx, s):
     heads.finish(ch, beard=False, scalp=True)
     ch.arm.animation_data.action = None
     am.pose(ch.arm, cl.solve(ch.arm, native.stand_of(s)))
-    if "socket.club_r" in ch.arm.pose.bones:
-        ch.arm.pose.bones["socket.club_r"].scale = (0.0, 0.0, 0.0)
+    # Every socket at scale 1 for the export: a 0 here bakes a 0 scale into the club's own
+    # node and hides it in every clip (m2-shared-moves; docs/melee.md, m2-melee4). The
+    # clips key the sockets' scales.
+    for pb in ch.arm.pose.bones:
+        pb.scale = (1.0, 1.0, 1.0)
     tris = ch.triangles()
     prepare_export(ch.all_meshes(), ctx.root, acr_triangles=sum(tris.values()), acr_clips=names,
                    acr_limb_radius=ch.limb_radius, acr_light=report.get("light_dir_camera", []),

@@ -93,4 +93,6 @@ camera reaches them; PueLut draws, PueS15 presents, PueVog lunges with the club.
 - The melee strikes were not probed with `strike_view` in this slice.
 - No shield or rabbit stick on the foot units (the sprites show none); the painted hide
   shield is PueVsda's.
-- `PueVsd` (the Woodlands nations' horseman) needs a cavalry script of its own.
+- ~~`PueVsd` needs a cavalry script of its own~~ (m2-shared-moves): `units/puevsd.py`,
+  PueVsda's rider with the Pueblo look (hair cut to the jaw, a knot at the nape, a red cloth
+  band round the brow: `cavalry` `hat` "band"); lance `ATTACK_THRUST_DOWN` 0.03 (layer 0.00).

@@ -306,10 +306,12 @@ def _hilt(it, grip=0.10, guard="shell", knuckle=True):
              ((0, 0, -g), 0.0)], "hilt", n=6, caps=False)
     if guard == "shell":
         ring = it.ring((0, 0, g + 0.005), 0.045, 8, scale=(0.6, 1.0))
-        c = it.v((0, 0, g + 0.012))
+        # A shallow lens: dished up to `c` above, down to `c2` below (two faces on the same
+        # three vertices would be no valid mesh).
+        c, c2 = it.v((0, 0, g + 0.012)), it.v((0, 0, g + 0.001))
         for i in range(8):
             it.f((ring[i], ring[(i + 1) % 8], c), "hilt")
-            it.f((ring[(i + 1) % 8], ring[i], c), "hilt")
+            it.f((ring[(i + 1) % 8], ring[i], c2), "hilt")
     else:
         it.box((0, 0, g + 0.006), (0.016, 0.10, 0.012), "hilt")
     if knuckle:
@@ -424,6 +426,17 @@ def longbow(length=1.45, brace=0.15):
     return it
 
 
+def vane(it, pts, part, gap=0.0004):
+    """A two-sided triangle (a fletching): two faces on their own vertices, `gap` m apart
+    along the normal (one face twice over the same vertices is no valid mesh)."""
+    a, b, c = pts
+    n = _norm(_cross(_sub(b, a), _sub(c, a)))
+    front = [it.v(tuple(p[i] + n[i] * gap / 2 for i in range(3))) for p in pts]
+    back = [it.v(tuple(p[i] - n[i] * gap / 2 for i in range(3))) for p in pts]
+    it.f(front, part)
+    it.f(tuple(reversed(back)), part)
+
+
 def arrow(length=0.72):
     """An arrow: cane or wood shaft, a stone or iron head (`socket.tip`) and three
     fletchings. Origin at the nock (the drawing hand)."""
@@ -434,10 +447,8 @@ def arrow(length=0.72):
     for i in range(3):
         a = 2 * math.pi * i / 3
         d = (math.cos(a), math.sin(a), 0.0)
-        p = [it.v((d[0] * 0.004, d[1] * 0.004, 0.02)), it.v((d[0] * 0.004, d[1] * 0.004, 0.16)),
-             it.v((d[0] * 0.016, d[1] * 0.016, 0.05))]
-        it.f(p, "fletch")
-        it.f(tuple(reversed(p)), "fletch")
+        vane(it, [(d[0] * 0.004, d[1] * 0.004, 0.02), (d[0] * 0.004, d[1] * 0.004, 0.16),
+                  (d[0] * 0.016, d[1] * 0.016, 0.05)], "fletch")
     it.sockets["socket.tip"] = (0.0, -0.018 * 0.15, length + 0.018 * 0.25)
     return it
 
@@ -460,10 +471,8 @@ def quiver(arrows=6, length=0.62):
         a = 2 * math.pi * i / arrows
         x, y = math.cos(a) * r * 0.5, math.sin(a) * r * 0.5
         it.tube([(at(x, y, length - 0.25), 0.004), (at(x, y, length + 0.12), 0.004)], "shaft", n=3)
-        p = [it.v(at(x, y, length + 0.03)), it.v(at(x, y, length + 0.12)), it.v(at(x + 0.012 * math.cos(a),
-                                                                                  y + 0.012 * math.sin(a), length + 0.05))]
-        it.f(p, "fletch")
-        it.f(tuple(reversed(p)), "fletch")
+        vane(it, [at(x, y, length + 0.03), at(x, y, length + 0.12),
+                  at(x + 0.012 * math.cos(a), y + 0.012 * math.sin(a), length + 0.05)], "fletch")
     it.sockets["socket.mouth"] = at(0, 0, length)
     return it
 
@@ -529,11 +538,8 @@ def macuahuitl(length=0.90, blades=7):
         for i in range(blades):
             z = 0.16 + (top - 0.20) * (i + 0.5) / blades
             ww = w * (1.0 + 0.15 * (z - 0.10) / (top - 0.10)) / 2
-            a = it.v((0.0, s * ww, z - 0.035))
-            b = it.v((0.0, s * ww, z + 0.035))
-            c = it.v((0.0, s * (ww + 0.025), z + 0.005))
-            it.f((a, b, c), "blades")
-            it.f((c, b, a), "blades")
+            vane(it, [(0.0, s * ww, z - 0.035), (0.0, s * ww, z + 0.035), (0.0, s * (ww + 0.025), z + 0.005)],
+                 "blades", gap=0.002)
     it.sockets["socket.tip"] = (0.0, 0.0, top)
     return it
 

@@ -76,6 +76,17 @@ In that scene the officer (`ATTACK_RADIUS 0 20 60`, shorter than the dragoon's 4
 rides up onto the man and the cut is hard to see from the side; the dragoon's cut ends at
 the man's body.
 
+## Mounted bow and club (m2-shared-moves)
+
+`held` "bow": the bow in the left fist (the fist turned upright: `bow_pose` sets the hand's
+world orientation so the item's +Z is the bow), an arrow in the right fist (nock at the
+fist), a quiver rigid on `spine2`. `bow_poses` turns the trunk left (spine Z -18/-16/-12°,
+the head +40° back to the target), the bow arm out at shoulder height; `bow_keys` keys
+ready, half, full draw, loose on `spec["release"]` (the `.MD`'s SETACTIVEPOINT rounded up),
+follow through, lower, the hand to the quiver, draw, nock, ready; the ready stances hold
+the nocked bow. `blade` "club" draws a `held.war_club` on `socket.blade_r`. Units: SiuKLut
+(bow, club), SiuKVog (club), PueVsd (`hat` "band").
+
 ## Not yet
 
 - Facings, lace and sash are shells and thin geometry; at game zoom the lapels read as

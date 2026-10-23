@@ -55,8 +55,12 @@ session folds these notes into docs/humans-roster.md.
   vellum head, no wooden hoops), both as rigid gear and as a held object on `hips`; the
   sprites show a white head and a brown shell. Next to check: how the renderer handles
   several material slots on a held object.
-- In the blank-field idle the drummers stand in `STAND` (both sticks raised). The idle
-  frames did not show `REST` (drumming). While walking, the right arm reaches forward
+- ~~In the blank-field idle the drummers stand in `STAND` (both sticks raised)~~
+  (m2-shared-moves): `STAND` is `clips.drum_ready`, both sticks low over the head, the
+  tips 3.5 cm above it (the sim plays STAND nearly always, motion.rs). The drummer's jab
+  (`0 PIKA`) uses `sword_strikes` with the sword's length on a 0.28 m stick: 0.58 m short
+  (layer 0.01–0.05); a hanger sidearm would fit it.
+- `line.spec(..., sidearm=...)` gives gun units a drawn sidearm (docs/assets-humans.md). While walking, the right arm reaches forward
   nearly straight. Check `drum_march` on this rig.
 - Sprite check: SpnM18's sprite reads as white with **red** facings; the model follows
   Kronoskaf's blue. The USA drummer's sprite is mostly white/blue, not the reversed red

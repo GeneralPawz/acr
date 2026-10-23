@@ -20,7 +20,8 @@ use std::collections::HashMap;
 
 use acr_physics::gait::{self, Rig, Skin};
 use acr_physics::{Quat, Vec3, skeleton_h};
-use acr_render::model::ModelData;
+use acr_render::math::Mat4;
+use acr_render::model::{ModelData, Node};
 use acr_sim::combat::{HitRecord, Strike, StrikeHeight, StrikeKind};
 use acr_sim::world::{AnimKind, Unit, World};
 
@@ -370,33 +371,65 @@ struct Weapon {
 /// socket's axis and [`REACH`].
 const HIDDEN: f32 = 0.2;
 
-/// The weapon of a model, found by node names (`*socket.hand_r`, `*socket.muzzle` under it,
-/// `*socket.tip` under the hand: a lance on the hand bone, a sabre on a second socket).
-fn weapon(data: &ModelData) -> Option<Weapon> {
-    let socket = data.nodes.iter().position(|n| n.name.ends_with("socket.hand_r"))?;
-    let hand = data.nodes[socket].parent;
+/// The right-hand weapon sockets, best first: the main weapon (`socket.hand_r`), a second
+/// one drawn for melee (`socket.blade_r`: a dragoon's sabre, a musketeer's sidearm) and an
+/// archer's club (`socket.club_r`). The clips key their scale: the visible one holds the
+/// weapon in use.
+const SOCKETS: [&str; 3] = ["socket.hand_r", "socket.blade_r", "socket.club_r"];
+
+/// A socket whose scale is below this (relative to its parent) is hidden in the clip.
+const SHOWN: f32 = 0.5;
+
+/// The weapons of a model, one per right-hand socket of [`SOCKETS`] (in that order), found
+/// by node names: `*socket.muzzle` under the socket, `*socket.tip` under the socket (for
+/// `socket.hand_r` also elsewhere under the hand: a lance on the hand bone), else the held
+/// item's first node.
+fn weapons(nodes: &[Node]) -> Vec<Weapon> {
     let under = |i: usize, of: Option<usize>| {
-        let mut n = data.nodes[i].parent;
+        let mut n = nodes[i].parent;
         while let Some(p) = n {
             if Some(p) == of {
                 return true;
             }
-            n = data.nodes[p].parent;
+            n = nodes[p].parent;
         }
         false
     };
-    let named = |s: &str, of| (0..data.nodes.len()).find(|&i| data.nodes[i].name.ends_with(s) && under(i, of));
-    let muzzle = named("socket.muzzle", Some(socket));
-    let tip = named("socket.tip", hand);
-    let held = || {
-        (0..data.nodes.len()).find(|&i| data.nodes[i].parent == Some(socket) && !data.nodes[i].name.contains("socket."))
+    let sockets: Vec<usize> = SOCKETS.iter().filter_map(|s| nodes.iter().position(|n| n.name.ends_with(s))).collect();
+    // Under another weapon socket than `socket`.
+    let elsewhere = |i: usize, socket: usize| sockets.iter().any(|&o| o != socket && under(i, Some(o)));
+    let named = |s: &str, of: Option<usize>, socket: usize| {
+        (0..nodes.len()).find(|&i| nodes[i].name.ends_with(s) && under(i, of) && !elsewhere(i, socket))
     };
-    Some(Weapon {
-        socket,
-        tip: muzzle.or(tip).or_else(held),
-        muzzle: muzzle.is_some(),
-        point: muzzle.or(tip).is_some(),
-    })
+    sockets
+        .iter()
+        .map(|&socket| {
+            let hand = nodes[socket].parent;
+            let muzzle = named("socket.muzzle", Some(socket), socket);
+            let tip = named("socket.tip", Some(socket), socket).or_else(|| {
+                if nodes[socket].name.ends_with(SOCKETS[0]) { named("socket.tip", hand, socket) } else { None }
+            });
+            let held =
+                (0..nodes.len()).find(|&i| nodes[i].parent == Some(socket) && !nodes[i].name.contains("socket."));
+            Weapon { socket, tip: muzzle.or(tip).or(held), muzzle: muzzle.is_some(), point: muzzle.or(tip).is_some() }
+        })
+        .collect()
+}
+
+/// The weapon in use in a pose (`globals`: the nodes' model matrices): the first of
+/// `weapons` whose socket is shown (its scale against its parent's at least [`SHOWN`]),
+/// else the first.
+fn pick(weapons: &[Weapon], nodes: &[Node], globals: &[Mat4]) -> Option<Weapon> {
+    let scale = |i: usize| {
+        let m = &globals[i];
+        Vec3::new(m[0][0], m[0][1], m[0][2]).length()
+    };
+    let shown = |w: &&Weapon| {
+        let s = scale(w.socket);
+        let p = nodes[w.socket].parent.map_or(1.0, scale);
+        p > 1e-6 && s / p >= SHOWN
+    };
+    weapons.iter().find(shown).or(weapons.first()).copied()
 }
 
 /// The strike layer of the 3D view.
@@ -405,7 +438,7 @@ pub struct Strikes {
     /// Riders' mappings (bones prefixed `rider.`), by model.
     riders: HashMap<usize, Option<Mapping>>,
     /// The weapon of each model.
-    weapons: HashMap<usize, Option<Weapon>>,
+    weapons: HashMap<usize, Vec<Weapon>>,
     /// Each man's weight of the layer (0..1).
     weight: HashMap<u32, f32>,
     /// Each man's arm weight (follows the clip phase, `arm_weight`) and the weapon's turn
@@ -479,14 +512,15 @@ impl Strikes {
                 }
                 continue;
             };
-            let Some(wpn) = *self.weapons.entry(d.model).or_insert_with(|| weapon(d.data)) else {
+            let globals = d.data.globals(d.clip, d.time);
+            let found = self.weapons.entry(d.model).or_insert_with(|| weapons(&d.data.nodes));
+            let Some(wpn) = pick(found, &d.data.nodes, &globals) else {
                 if debug {
                     log::info!("3d: strike layer: unit {id} model {} has no weapon", d.model);
                 }
                 continue;
             };
             let palette = d.data.pose(d.clip, d.time);
-            let globals = d.data.globals(d.clip, d.time);
             let before = animated_skins(map, &palette, &d.transform);
             let mut skins = before.clone();
             let ground = physics_of([v.transform[3][0], v.transform[3][1], v.transform[3][2]]);
@@ -717,10 +751,10 @@ pub(super) fn probe(
     let rider = Mapping::with_prefix(data, "rider.");
     let mounted = rider.is_some();
     let map = rider.or_else(|| Mapping::with_prefix(data, ""))?;
-    let wpn = weapon(data)?;
     let transform = acr_render::view3d::model_matrix([0.0; 3], 0.0, 1.0);
     let time = frame / data.fps;
     let globals = data.globals(Some(clip), time);
+    let wpn = pick(&weapons(&data.nodes), &data.nodes, &globals)?;
     let palette = data.pose(Some(clip), time);
     let mut skins = animated_skins(&map, &palette, &transform);
     let (hand_at, _) = node_frame(&globals, wpn.socket, Vec3::Y, &transform);
@@ -1021,5 +1055,39 @@ mod tests {
         assert!((at.x - (1.67 - BODY_RADIUS)).abs() < 1e-5 && (at.z - 1.15).abs() < 1e-5, "{at:?}");
         let down = target_point(Vec3::new(2.0, 0.0, 0.0), me, StrikeHeight::Down, false, NEAR_BODY);
         assert!((down.x - (2.0 - NEAR_BODY)).abs() < 1e-5, "{down:?}");
+    }
+
+    /// An archer with a club: the arrow on `socket.hand_r`, the club on `socket.club_r`;
+    /// the visible socket's weapon is picked (the club in melee, the arrow else).
+    #[test]
+    fn the_shown_socket_holds_the_weapon() {
+        let node = |name: &str, parent: Option<usize>| Node {
+            name: name.into(),
+            parent,
+            translation: [0.0; 3],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            scale: [1.0; 3],
+        };
+        let nodes = vec![
+            node("hand_r", None),
+            node("socket.hand_r", Some(0)),
+            node("arrow", Some(1)),
+            node("arrow.socket.tip", Some(2)),
+            node("socket.club_r", Some(0)),
+            node("war_club", Some(4)),
+            node("war_club.socket.tip", Some(5)),
+        ];
+        let found = weapons(&nodes);
+        assert_eq!(found.len(), 2);
+        assert_eq!((found[0].socket, found[0].tip), (1, Some(3)));
+        assert_eq!((found[1].socket, found[1].tip), (4, Some(6)));
+        let scaled = |s: f32| [[s, 0.0, 0.0, 0.0], [0.0, s, 0.0, 0.0], [0.0, 0.0, s, 0.0], [0.0, 0.0, 0.0, 1.0]];
+        let pose = |arrow: f32, club: f32| {
+            vec![scaled(1.0), scaled(arrow), scaled(arrow), scaled(arrow), scaled(club), scaled(club), scaled(club)]
+        };
+        assert_eq!(pick(&found, &nodes, &pose(0.0, 1.0)).map(|w| w.socket), Some(4));
+        assert_eq!(pick(&found, &nodes, &pose(1.0, 0.0)).map(|w| w.socket), Some(1));
+        // Both hidden: the main socket.
+        assert_eq!(pick(&found, &nodes, &pose(0.0, 0.0)).map(|w| w.socket), Some(1));
     }
 }

@@ -145,6 +145,33 @@ class Strikes(unittest.TestCase):
                     target = clips.add(target, (0, 0, 0.12))
                 self.assertLess(dist(tip, target), 0.01, name)
 
+    def test_down_blows_lean_forward(self):
+        """Positive spine X bends forward on skeleton H (m2-shared-moves): the blows down
+        lean over the man, at 2.0 m."""
+        for base in (clips.STOOP, clips.CLUB_STOOP):
+            self.assertGreater(base["spine"][0], 20)
+            self.assertLess(base["root_loc"][1], -0.7)
+        self.assertGreater(clips.LEAN["spine"][0], 0)
+        self.assertAlmostEqual(clips.TARGET_DOWN[1], -2.0)
+
+    def test_point_off_the_axis(self):
+        """`grip_for` with the point as a vector in the item frame (an axe's edge): the
+        point lands on the target; the club's and tomahawk's points are `held`'s."""
+        r = (130, 0, 0)
+        for tip in (clips.MELEE_TIP["club"], clips.MELEE_TIP["tomahawk"]):
+            g = clips.grip_for(clips.TARGET_DOWN, r, tip)
+            self.assertLess(dist(clips.add(g, clips.rot(r, tip)), clips.TARGET_DOWN), 1e-9)
+        self.assertEqual(tuple(held.build("war_club").sockets["socket.tip"]), clips.MELEE_TIP["club"])
+        self.assertEqual(tuple(held.build("tomahawk").sockets["socket.tip"]), clips.MELEE_TIP["tomahawk"])
+
+    def test_drummer_stands_ready(self):
+        """STAND: both stick tips just over the drum head (not raised)."""
+        p = clips.STAND_DRUM
+        for side in ("r", "l"):
+            grip = p["reach"][side][0]
+            tip = clips.stick_tip(grip, p["world"][f"socket.hand_{side}"])
+            self.assertLess(dist(tip, clips.DRUM_HEAD), 0.09, side)
+
     def test_held_lengths(self):
         self.assertAlmostEqual(held.build("spear").sockets["socket.tip"][2], clips.SPEAR_TIP, delta=0.03)
         self.assertAlmostEqual(held.build("arrow").sockets["socket.tip"][2], clips.ARROW, delta=0.01)

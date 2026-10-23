@@ -11,7 +11,9 @@ A unit script gives a spec and calls `build(ctx, spec)`:
     tack      "military" (scripted saddle with pistol holsters on a saddlecloth),
               "blanket" (a blanket, no saddle, a rope bridle), "bare" (a rope bridle)
     held      gear in the right hand: "flag" (a standard, the fist round the pole), "lance"
-              (couched, thrust in ATTACK), None (reins)
+              (couched, thrust in ATTACK), "bow" (a mounted archer: the bow in the left fist,
+              an arrow in the right, a quiver on the back; ATTACK1/ATTACK2 draw, loose and
+              nock the next, `bow_poses`), None (reins)
     hat       "cap" (tall mitre cap), "tricorne" (the line's felt tricorn), "bonnet" (a
               dragoon's stocking cap on a fur turban), "helmet" (light dragoon's leather
               helmet, brass comb, horsehair crest), "broad" (17th-century broad-brimmed hat
@@ -22,8 +24,8 @@ A unit script gives a spec and calls `build(ctx, spec)`:
     lace      True (officers): lace on cuffs and lapel edges and round the tricorne's brim
               (`palette["lace"]`, geometry: the rider's clothes are shells, not painted)
     sash      True (officers): a waist sash (`sash`)
-    blade     the drawn blade (`drawn`): "sabre" (dragoons) or "sword" (officers:
-              `held.officer_sword`)
+    blade     the drawn blade (`drawn`): "sabre" (dragoons), "sword" (officers:
+              `held.officer_sword`) or "club" (native riders: `held.war_club`)
     shirt     natives: a shirt over the bare chest (`tunic`)
     armour    a steel cuirass over the coat (`metal`)
     shield    a round hide shield on the left forearm (`knapsack`)
@@ -125,6 +127,16 @@ KNUCKLE, GRIP = 0.08, 0.03
 FLAG_HAND = (-90, 0, 0)
 LANCE = (2.9, 0.65)  # length, and how far it reaches behind the grip (metres)
 BLADE = (0.86, 0.10)  # a drawn sabre: blade length, hilt behind the grip (metres)
+CLUB_TIP = 0.52  # a war club: grip to the striking face (`clips.CLUB_TIP`)
+ARROW = 0.72  # nock to head (`held.arrow`)
+BOW_NOCK = 0.105  # the string behind the bow's grip at brace (`held.longbow`)
+# Mounted archer (`bow_poses`): the trunk turned left (negative Z brings the left shoulder
+# forward), the head turned back to the target ahead.
+BOW_TRUNK = {"spine": (0, 0, -18), "spine1": (0, 0, -16), "spine2": (0, 0, -12), "head": (4, 0, 40)}
+# Where the arrow is shot (armature space: -y forward, +x left), relative to the left
+# shoulder as posed: the bow arm out at shoulder height.
+BOW_FULL = (0.02, -0.58, 0.04)
+BOW_LOW = (0.06, -0.36, -0.30)
 # Socket scales (1 shown, 0 hidden) of a rider with a drawn sabre (`drawn`).
 SHOW_REST = {"socket.hand_r": 1.0, "socket.hip_l": 1.0, "socket.blade_r": 0.0}
 SHOW_MELEE = {"socket.hand_r": 0.0, "socket.hip_l": 0.0, "socket.blade_r": 1.0}
@@ -397,6 +409,10 @@ def blade(ch, name, kind="sabre"):
     to the point, a grip and a guard (`metal`), the point marked by `socket.tip`."""
     c, rot = fist_centre(ch)
     m = Matrix.Translation(c) @ rot.to_4x4()
+    if kind == "club":
+        # A war club (`held.war_club`): its handle (+Z) along the fist, `socket.tip` on the ball.
+        return gear.hold(ch, "war_club", name, socket=P + "socket.blade_r",
+                         matrix=m @ Matrix.Rotation(math.radians(90), 4, "X"), slot="blade")
     if kind == "sword":
         # An officer's sword (`held.officer_sword`, brass hilt): its +Z along the fist (-Y).
         return gear.hold(ch, "officer_sword", name, socket=P + "socket.blade_r",
@@ -594,9 +610,23 @@ def uniform(ch, spec, oz, cy):
 
 def native_head(ch, name, kind, cy):
     """Long black hair down the back (`hair`) and feathers (`cap`): "feathers" (two
-    upright at the back) or "crown" (a headband of feathers all round)."""
+    upright at the back), "crown" (a headband of feathers all round) or "band" (the Pueblo
+    look: the hair cut to the jaw at the sides, a knot at the nape, a folded cloth band
+    round the brow)."""
     head = am.world(ch.arm, P + "head").translation
     bm = bmesh.new()
+    if kind == "band":
+        sock = am.world(ch.arm, P + "socket.hat").translation
+        _box(bm, Vector((0, cy + 0.045, head.z + 0.02)), (0.175, 0.11, 0.20))
+        _box(bm, Vector((0, cy + 0.11, head.z - 0.06)), (0.07, 0.05, 0.08))  # the knot
+        _held(ch, f"{name}_hair", "hair", bm, "head", Matrix.Identity(4))
+        bm = bmesh.new()
+        n = 14
+        for i in range(n):
+            a = 2 * math.pi * (i + 0.5) / n
+            r = Vector((math.sin(a) * 0.098, -math.cos(a) * 0.108 + 0.01, 0))
+            _box(bm, sock + r + Vector((0, 0, -0.06)), (0.048, 0.016, 0.035), Matrix.Rotation(a, 4, "Z"))
+        return _held(ch, f"{name}_band", "cap", bm, "socket.hat", Matrix.Identity(4))
     _box(bm, Vector((0, cy + 0.075, head.z - 0.02)), (0.17, 0.06, 0.36))
     for v in bm.verts:
         if v.co.z < head.z - 0.1:
@@ -714,6 +744,95 @@ def lie_spot(hz):
     head = last["head"].translation
     along = Vector((head.x - s.x, head.y - s.y, 0.0)).normalized()
     return (s.x + d.x * 1.0 - along.x * 0.8, s.y + d.y * 1.0 - along.y * 0.8, 0.13), math.degrees(math.atan2(along.x, -along.y))
+
+
+def bow(ch, name):
+    """A mounted archer's bow in the left fist (its +Z along the fist's axis: the clips
+    turn the fist upright), an arrow in the right (nock at the fist), a quiver on the back
+    (its mouth behind the right shoulder). Call in the seat pose."""
+    out = {}
+    for item, side, socket in (("longbow", "l", "socket.hand_l"), ("arrow", "r", "socket.hand_r")):
+        c, rot = fist_centre(ch, side)
+        m = Matrix.Translation(c) @ rot.to_4x4() @ Matrix.Rotation(math.radians(90), 4, "X")
+        out[item] = gear.hold(ch, item, f"{name}.{item}", socket=P + socket, matrix=m, slot=item)
+    sh = ch.arm.pose.bones[P + "upperarm_r"].head
+    at = Vector((sh.x * 0.3, sh.y + 0.20, sh.z - 0.30))
+    out["quiver"] = gear.hold(ch, "quiver", f"{name}.quiver", socket=P + "spine2", slot="quiver",
+                              matrix=Matrix.Translation(at) @ Matrix.Rotation(math.radians(-22), 4, "Y"))
+    ch.quiver_mouth = at + Vector((-0.20, 0.0, 0.40))
+    return out
+
+
+def bow_pose(ch, left, trunk, bow_at, bow_axis, nock_at, arrow_dir, shown=True):
+    """A pose of the bow clips: the trunk, the left fist at `bow_at` (the bow along
+    `bow_axis`), the right fist at `nock_at` (the arrow along `arrow_dir`); without
+    `shown` the arrow is gone (loosed)."""
+    am.pose(ch.arm, trunk, prefix=P)
+    sh = {sd: ch.arm.pose.bones[P + "upperarm_" + sd].head.copy() for sd in "lr"}
+    ba, ad = Vector(bow_axis).normalized(), Vector(arrow_dir).normalized()
+    w = reins_world(ch.arm, {"l": Vector(bow_at) - ba * KNUCKLE, "r": Vector(nock_at) - ad * KNUCKLE}, shoulders=sh)
+    w["hand_l"] = _turn(Vector((0.0, -1.0, 0.0)), ba)
+    w["hand_r"] = _turn(Vector((0.0, -1.0, 0.0)), ad)
+    spec = _with_world(trunk, w)
+    spec["show"] = {"socket.hand_r": 1.0 if shown else 0.0}
+    return spec
+
+
+def bow_poses(ch, seat):
+    """{name: pose} of the mounted archer (`held` "bow"): `bow_ready` (nocked, the bow low
+    before the body), `bow_half`, `bow_full` (drawn, the arrow level ahead), `bow_loosed`,
+    `bow_follow`, `bow_low` (empty), `bow_grasp` (the hand at the quiver), `bow_drawn`
+    (the arrow out), `bow_nocking`."""
+    trunk = dict(seat)
+    trunk.pop("world", None)
+    trunk = dict(trunk, **BOW_TRUNK)
+    am.pose(ch.arm, trunk, prefix=P)
+    sh = ch.arm.pose.bones[P + "upperarm_l"].head.copy()
+    full = sh + Vector(BOW_FULL)
+    low = sh + Vector(BOW_LOW)
+    half = (full + low) / 2
+    up, tipped = Vector((0.0, -0.10, 1.0)), Vector((0.0, -0.60, 0.80))
+    fwd = Vector((0.0, -1.0, 0.0))
+
+    def string(b):
+        return b + Vector((0.0, BOW_NOCK, 0.0))
+
+    def at(b, axis, nock, shown=True):
+        d = (b - nock).normalized() if shown else fwd
+        return bow_pose(ch, {}, trunk, b, axis, nock, d, shown)
+
+    mouth = getattr(ch, "quiver_mouth", sh + Vector((-0.30, 0.25, 0.10)))
+    return {
+        "bow_ready": at(low, tipped, string(low)),
+        "bow_half": at(half, up, string(half) + Vector((0.0, 0.22, 0.0))),
+        "bow_full": at(full, up, full + Vector((0.0, ARROW - 0.04, 0.01))),
+        "bow_loosed": at(full, up, full + Vector((0.03, ARROW + 0.06, 0.03)), shown=False),
+        "bow_follow": at(full + Vector((0.0, 0.03, -0.03)), up, full + Vector((0.06, ARROW + 0.10, 0.0)), shown=False),
+        "bow_low": at(low, tipped, low + Vector((-0.10, 0.25, 0.10)), shown=False),
+        "bow_grasp": bow_pose(ch, {}, trunk, low, tipped, mouth, Vector((0.0, 0.3, -1.0)), shown=True),
+        "bow_drawn": bow_pose(ch, {}, trunk, low, tipped, mouth + Vector((0.05, -0.10, 0.20)), Vector((0.0, 0.2, -1.0))),
+        "bow_nocking": at(low, tipped, string(low) + Vector((-0.04, 0.02, 0.06))),
+    }
+
+
+def bow_keys(n, release, p):
+    """ATTACK1 / ATTACK2 of a mounted archer (`SiuKLut`: 86 frames, the arrow leaves on
+    72): ready, raise and draw, hold, loose on `release`, follow through, lower, reach to
+    the quiver, draw an arrow, nock it, ready (as `clips.bow` on foot)."""
+    last = n - 1
+    rel = min(release, last)
+    rest = last - rel
+    keys = [(0, "bow_ready"), (rel * 0.3, "bow_half"), (rel * 0.6, "bow_full"), (rel - 1, "bow_full"),
+            (rel, "bow_loosed"), (rel + 2, "bow_follow"), (rel + rest * 0.25, "bow_low"), (rel + rest * 0.45, "bow_grasp"),
+            (rel + rest * 0.6, "bow_drawn"), (rel + rest * 0.8, "bow_nocking"), (last, "bow_ready")]
+    out = []
+    for f, k in keys:
+        f = min(max(int(round(f)), 0), last)
+        if out and out[-1][0] == f:
+            out[-1] = (f, p[k])
+        else:
+            out.append((f, p[k]))
+    return out
 
 
 def solve_strike(ch, left, trunk, point, axis, length, left_target):
@@ -840,7 +959,7 @@ def make(ctx, spec):
                     thigh_r=(-42, 16, 0), shin_r=(56, 0, 0), foot_r=(-14, 0, 0))
     pommel = Vector((0.0, sad.y - 0.22, sad.z + 0.12))
     lance_len = LANCE[0] - LANCE[1] + 0.30
-    sabre_len = BLADE[0] + 0.04
+    sabre_len = (CLUB_TIP if spec.get("blade") == "club" else BLADE[0]) + 0.04
 
     poses = {"seat": seat, "lean": _with_world(dict(LEGS_SEAT, spine=(-12, 0, 0)), both),
              "aim": _with_world(dict(LEGS_SEAT, **AIM_R, **AIM_L), {"socket.hand_r": (88, 0, 0)}),
@@ -900,7 +1019,7 @@ def make(ctx, spec):
     am.pose(ch.arm, poses[ch.ride], prefix=P)
 
     hat = spec.get("hat", "cap")
-    if hat in ("feathers", "crown"):
+    if hat in ("feathers", "crown", "band"):
         native_head(ch, name, hat, cy)
     elif hat == "morion":
         morion(ch, name)
@@ -932,6 +1051,12 @@ def make(ctx, spec):
         lance(ch, f"{name}.lance")
     if spec.get("shield"):
         shield(ch, f"{name}.shield")
+    if spec.get("held") == "bow":
+        am.pose(ch.arm, poses["seat"], prefix=P)
+        bow(ch, name)
+        poses.update(bow_poses(ch, poses["seat"]))
+        am.pose(ch.arm, poses[ch.ride], prefix=P)
+        ch.show = {"socket.hand_r": 1.0}
     if spec.get("drawn"):
         am.pose(ch.arm, poses["seat"], prefix=P)
         blade(ch, f"{name}.blade", spec.get("blade", "sabre"))
@@ -989,6 +1114,8 @@ def ride_pose(spec):
     held = spec.get("held")
     if held in ("flag", "lance"):
         return held
+    if held == "bow":
+        return "seat"
     return "gun" if spec.get("gun") else "seat"
 
 
@@ -1048,7 +1175,18 @@ def add_clips(ch, md, motions=MOTIONS):
                            ("ATTACK_CUT_DOWN_R", cut(p["sabre_down_r"])), ("ATTACK_CUT_DOWN_L", cut(p["sabre_down_l"])),
                            ("ATTACK_CUT_MID", cut(p["sabre_mid"])), ("ATTACK_CUT_HIGH", cut(p["sabre_mid"]))):
             plan[name] = (W["ATTACK"], keys)
-    if "ATTACK1" in W:
+    if "ATTACK1" in W and "bow_ready" in p:
+        # The mounted archer (`held` "bow"): ATTACK1 (fire arrow) and ATTACK2 (arrow) draw and
+        # loose on the `.MD`'s SETACTIVEPOINT (`bow_release`); the ready stances hold the bow.
+        n = len(W["ATTACK1"])
+        keys = bow_keys(n, getattr(ch, "bow_release", int(n * 0.83)), p)
+        for k in ("ATTACK1", "ATTACK2"):
+            if k in md:
+                plan[k] = (W["ATTACK1"], [(f / max(n - 1, 1), s) for f, s in keys])
+        for k in ("PATTACK1", "UATTACK1", "PSTAND1", "PATTACK2", "UATTACK2", "PSTAND2"):
+            if k in md:
+                plan[k] = (W["STAND"], [(0.0, p["bow_ready"])])
+    elif "ATTACK1" in W:
         plan["ATTACK1"] = (W["ATTACK1"], [(0.0, p["aim"]), (0.08, dict(p["aim"], spine=(4, 0, 0))), (0.25, p["aim"]), (1.0, p["aim"])])
     for name, (hf, rk) in plan.items():
         n = len(hf)
@@ -1078,6 +1216,8 @@ def unscale(ch):
 
 def build(ctx, spec):
     ch = make(ctx, spec)
+    if spec.get("release"):
+        ch.bow_release = spec["release"]
     hz = ch.horse["mount"]
     heads.variants(ch)
     ch.morphs()

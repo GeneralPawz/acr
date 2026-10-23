@@ -53,8 +53,11 @@ Strike clips on ATTACK's frames, the blow on frame 2 (`officers.sword_strikes`,
 *back*: the right shoulder ended 0.09 m in front of the hips instead of over the man, and
 the IK left the hand 0.45 m short. The first EngOf18 build probed the stab down 0.46 m off
 the target with the clip alone. The family keeps its own blows (`stab_down`, `stab_raised`,
-`cut`) with the trunk bent forward (spine +25..30°); `clips.py` is not touched (shared;
-`club_strikes` uses the same `STOOP` and will have the same short reach).
+`cut`) with the trunk bent forward (spine +25..30°). m2-shared-moves made these the shared
+`clips.STOOP` / `clips.LEAN` (same numbers): `stab_down`/`cut` could call
+`clips.sword_strikes` now; officers.py keeps its musket-and-swap build (`line.make` with
+the musket, then the weapon on `socket.hand_r`); `line.add_sidearm` does not simplify it
+(the officer has no musket to sling).
 
 **The stab down** (`ATTACK_THRUST_DOWN`): wind-up with the hilt raised high, the point
 down; at frame 2 a long lunge (left foot ~1.3 m forward, right leg straight behind, hips

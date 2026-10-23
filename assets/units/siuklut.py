@@ -1,0 +1,49 @@
+"""Sioux mounted archer (`SiuKLut`, `SIUKLUT.MD`, "Berittener Bogenschütze"): Plains
+(docs/families/plains.md) on the WildMesh horse (`acr_assets.cavalry`, the head from
+`acr_assets.plains`): long hair in two wrapped braids with an eagle feather, a buckskin shirt,
+a red breechcloth, buckskin leggings; bareback on a blanket with a rope bridle. The bow
+from horseback (`held` "bow": the bow in the left fist, a quiver on the back): ATTACK1 (fire
+arrow, OSTRELA) and ATTACK2 (arrow, STRELA) draw, loose on frame 72 (`SETACTIVEPOINT
+#ATTACK1 71`) and nock the next; ATTACK (index 0, MECH) is the cut with a war club drawn
+on `socket.blade_r`, the arrow hidden. He gallops (`cavalry.NATIVE_MOTIONS`).
+"""
+
+from acr_assets import cavalry, plains
+
+TYPE = "SiuKLut"
+CHECKS = ["--anim STAND", "--anim DEATHLIE1"]
+
+MD = {
+    "REST": "@REST 9 4 0 85",
+    "STAND": "#STAND 9 1 4 0",
+    "PSTAND": "#PSTAND 9 1 4 0",
+    "PSTAND1": "#PSTAND1 9 1 4 0",
+    "PSTAND2": "#PSTAND2 9 1 4 0",
+    "MOTION_L": "@MOTION_L 9 0 0 4",
+    "MOTION_R": "@MOTION_R 9 0 5 9",
+    "MOTION_RB": "@MOTION_RB 9 0 9 5",
+    "MOTION_LB": "@MOTION_LB 9 0 4 0",
+    "MOTION_L0": "@MOTION_L0 9 0 0 4",
+    "MOTION_R0": "@MOTION_R0 9 0 5 9",
+    "MOTION_RB0": "@MOTION_RB0 9 0 9 5",
+    "MOTION_LB0": "@MOTION_LB0 9 0 4 0",
+    "ATTACK2": "@ATTACK2 9 1 0 85",
+    "ATTACK1": "@ATTACK1 9 1 0 85",
+    "ATTACK": "@ATTACK 9 2 0 61",
+    "DEATH": "@DEATH 9 3 0 41",
+    "DEATHLIE1": "#DEATHLIE1 9 1 3 41",
+    "DEATHLIE2": "#DEATHLIE2 9 1 3 41",
+    "DEATHLIE3": "#DEATHLIE3 9 1 3 41",
+}
+
+PALETTE = dict(cavalry.PALETTE, **{"skin": (0.72, 0.48, 0.33), "tunic": (0.78, 0.66, 0.48), "breeches": (0.58, 0.10, 0.07),
+                                   "boots": (0.66, 0.52, 0.34), "saddlecloth": (0.20, 0.30, 0.55), "knapsack": (0.88, 0.84, 0.72),
+                                   "cap": (0.94, 0.92, 0.88), "hair": (0.05, 0.04, 0.04)})
+
+SPEC = {"md": MD, "palette": PALETTE, "dress": "native", "shirt": True, "tack": "blanket", "hat": "feathers", "held": "bow",
+        "release": 72, "shield": False, "sabre": False, "drawn": True, "blade": "club", "seat_dz": -0.05,
+        "motions": cavalry.NATIVE_MOTIONS, "coat": {"body": (0.45, 0.28, 0.16), "hair": (0.12, 0.09, 0.07)}}
+
+
+def build(ctx):
+    plains.mounted(ctx, SPEC, head="eagle")

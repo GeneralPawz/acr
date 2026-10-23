@@ -92,7 +92,11 @@ def add(a, b, s=1.0):
 
 
 def grip_for(tip, r, length):
-    """The grip that puts an item's point `length` along its axis at `tip`."""
+    """The grip that puts an item's point at `tip`: `length` along its axis, or, a tuple,
+    the point's place in the item frame (an axe's edge lies before its handle: `held`'s
+    `socket.tip`)."""
+    if isinstance(length, (tuple, list)):
+        return add(tip, rot(r, tuple(length)), -1.0)
     return add(tip, axis(r), -length)
 
 
@@ -357,7 +361,22 @@ def drum_pose(right_down, left_down, base=None, lift=0.10):
     return p
 
 
-STAND_DRUM = drum_pose(False, False)
+def drum_ready(lift=0.035):
+    """Ready to drum: both sticks held low over the head as for a stroke, the tips `lift`
+    above it (the idle drummer's STAND: the sim plays STAND nearly always, motion.rs)."""
+    p = dict(STAND_FREE)
+    p["world"] = {}
+    reach = {}
+    for side, strike, r, pole in (("r", STRIKE_R, STICK_DOWN_R, (-0.35, 0.15, -0.20)),
+                                  ("l", STRIKE_L, STICK_DOWN_L, (0.35, 0.15, -0.20))):
+        grip = grip_for(add(strike, DRUM_NORMAL, lift), r, STICK)
+        p["world"][f"socket.hand_{side}"] = r
+        reach[side] = (tuple(round(c, 4) for c in grip), pole)
+    p["reach"] = reach
+    return p
+
+
+STAND_DRUM = drum_ready()
 
 
 def drum_roll(n, beat=2):
@@ -452,14 +471,32 @@ def _blow(base, r_point, weapon_rot, l_point=None, pole=(-0.35, 0.15, -0.20), **
 
 LUNGE = {"root_loc": (0, -0.22, -0.08), "thigh_l": (-38, -3, 0), "shin_l": (34, 0, 0), "thigh_r": (18, 3, 0),
          "shin_r": (14, 0, 0), "spine": (-12, 0, -6)}
-STOOP = {"root_loc": (0, -0.38, -0.28), "thigh_l": (-64, -3, 0), "shin_l": (80, 0, 0), "foot_l": (-14, 0, 0),
-         "thigh_r": (24, 3, 0), "shin_r": (48, 0, 0), "foot_r": (-12, 0, 0), "spine": (-36, 0, -8),
-         "spine1": (-14, 0, 0), "spine2": (-6, 0, 0), "head": (-12, 0, 0)}
+# The blow down at a man on the ground: a long lunge (the left foot ~1.3 m forward, the right
+# leg straight behind, the hips ~0.78 m up), the trunk bent FORWARD over the man (positive
+# spine X bends forward on skeleton H; until m2-shared-moves it was negative and the blows
+# fell 0.45-0.9 m short).
+STOOP = {"root_loc": (0, -0.80, -0.27), "thigh_l": (-76, -3, 0), "shin_l": (84, 0, 0), "foot_l": (8, 0, 0),
+         "thigh_r": (40, 3, 0), "shin_r": (22, 0, 0), "foot_r": (-30, 0, 0), "spine": (30, 0, -8),
+         "spine1": (10, 0, 0), "spine2": (4, 0, 0), "head": (18, 0, 0)}
+# The cut's lean: the trunk in towards the man (forward), the left foot a step out.
+LEAN = {"spine": (8, 0, -14), "spine1": (4, 0, 0), "root_loc": (0, -0.14, -0.04), "thigh_l": (-26, -3, 0),
+        "shin_l": (20, 0, 0)}
 # Targets (docs/melee.md, "Targets"): a standing man's body surface at the fencing distance
-# (1.67 m centre to centre: 1.50 m ahead), his chest or head; a man on the ground at 1.6 m.
+# (1.67 m centre to centre: 1.50 m ahead), his chest or head; a man on the ground where the
+# sim leaves him before a man on foot, 2.0 m centre to centre (2.57 m when the attacker walks
+# up: the strike layer's step takes the rest).
 TARGET_MID = (0.0, -1.50, 1.15)
 TARGET_HIGH = (0.0, -1.50, 1.55)
-TARGET_DOWN = (0.0, -1.60, 0.20)
+TARGET_DOWN = (0.0, -2.0, 0.20)
+
+
+def stoop_raised(hit, r_point, weapon_rot, pole=(-0.35, 0.20, -0.05)):
+    """The wind-up of a blow down: the lunge half taken, the trunk half bent, the weapon
+    raised at `r_point`."""
+    base = _with({k: v for k, v in hit.items() if k not in ("reach", "world")}, root_loc=(0, -0.40, -0.10),
+                 spine=(12, 0, -4), spine1=(4, 0, 0), thigh_l=(-40, -3, 0), shin_l=(40, 0, 0), thigh_r=(20, 3, 0),
+                 shin_r=(14, 0, 0), foot_l=(0, 0, 0), foot_r=(0, 0, 0))
+    return _blow(base, r_point, weapon_rot, pole=pole)
 
 
 def _strike(n, windup, hit, recover):
@@ -476,15 +513,15 @@ def sword_strikes(n, tip=SWORD_TIP):
     up = _blow(dict(STAND_FREE, spine=(2, 0, 16)), (-0.30, 0.02, 1.72), (-40, 0, 30))
     cut_mid_r = (88, 0, 18)
     cut_high_r = (74, 0, 16)
-    lean = dict(STAND_FREE, spine=(-10, 0, -14), root_loc=(0, -0.12, -0.03), thigh_l=(-24, -3, 0), shin_l=(18, 0, 0))
+    lean = dict(STAND_FREE, **LEAN)
     cut_mid = _blow(lean, grip_for(TARGET_MID, cut_mid_r, tip), cut_mid_r)
     cut_high = _blow(lean, grip_for(TARGET_HIGH, cut_high_r, tip), cut_high_r)
     thrust_r = (90, 0, 0)
     drawn = _blow(STAND_FREE, (-0.18, -0.10, 1.20), thrust_r)
     lunge = _blow(dict(STAND_FREE, **LUNGE), grip_for(TARGET_MID, thrust_r, tip), thrust_r)
-    down_r = (148, 0, 0)
-    stoop_up = _blow(dict(STAND_FREE, **dict(STOOP, root_loc=(0, -0.26, -0.18))), add(grip_for(TARGET_DOWN, down_r, tip), (0, 0.10, 0.25)), (120, 0, 0))
-    stab = _blow(dict(STAND_FREE, **STOOP), grip_for(TARGET_DOWN, down_r, tip), down_r)
+    down_r = (140, 0, 0)
+    stab = _blow(dict(STAND_FREE, **STOOP), grip_for(TARGET_DOWN, down_r, tip), down_r, pole=(-0.30, 0.25, -0.10))
+    stoop_up = stoop_raised(stab, add(stab["reach"]["r"][0], (0, 0.12, 0.42)), (165, 0, 0))
     return {
         "ATTACK_CUT_MID": _strike(n, up, cut_mid, guard),
         "ATTACK_CUT_HIGH": _strike(n, up, cut_high, guard),
@@ -492,6 +529,13 @@ def sword_strikes(n, tip=SWORD_TIP):
         "ATTACK_THRUST_DOWN": _strike(n, stoop_up, stab, stoop_up),
         "ATTACK_DOWN": _strike(n, stoop_up, stab, stoop_up),
     }
+
+
+# The club's hack down: the stoop deeper (the club is ~0.35 m shorter than a sword), the
+# head of the club square onto the man.
+CLUB_DOWN = 130
+CLUB_STOOP = dict(STOOP, root_loc=(0, -1.08, -0.38), thigh_l=(-88, -3, 0), shin_l=(92, 0, 0), thigh_r=(52, 3, 0),
+                  spine=(42, 0, -8), spine1=(16, 0, 0), spine2=(8, 0, 0))
 
 
 def club_strikes(n, tip=CLUB_TIP):
@@ -502,12 +546,12 @@ def club_strikes(n, tip=CLUB_TIP):
     ready = _blow(STAND_FREE, (-0.22, -0.22, 1.12), (30, 0, 0))
     over = _blow(dict(STAND_FREE, spine=(4, 0, 12), spine2=(2, 0, 6)), (-0.16, 0.12, 1.86), (-75, 0, 0))
     mid_r = (78, 0, 6)
-    step = dict(STAND_FREE, **dict(LUNGE, root_loc=(0, -0.30, -0.06)))
+    step = dict(STAND_FREE, **dict(LUNGE, root_loc=(0, -0.44, -0.08), spine=(16, 0, -6), spine1=(6, 0, 0)))
     hack_mid = _blow(step, grip_for(add(TARGET_MID, (0, 0, 0.12)), mid_r, tip), mid_r)
-    down_r = (150, 0, 0)
-    over_down = _blow(dict(STAND_FREE, **dict(STOOP, root_loc=(0, -0.30, -0.15), spine=(-20, 0, 0))),
-                      (-0.14, -0.30, 1.60), (-40, 0, 0))
-    hack_down = _blow(dict(STAND_FREE, **STOOP), grip_for(TARGET_DOWN, down_r, tip), down_r)
+    down_r = (CLUB_DOWN, 0, 0)
+    hack_down = _blow(dict(STAND_FREE, **CLUB_STOOP), grip_for(TARGET_DOWN, down_r, tip), down_r,
+                      pole=(-0.30, 0.25, -0.10))
+    over_down = stoop_raised(hack_down, add(hack_down["reach"]["r"][0], (0, 0.45, 0.70)), (-40, 0, 0))
     return {
         "ATTACK_CUT_MID": _strike(n, over, hack_mid, ready),
         "ATTACK_CUT_DOWN": _strike(n, over_down, hack_down, over_down),
@@ -557,6 +601,9 @@ def with_shield(pose):
 # -- by unit -------------------------------------------------------------------------------
 
 MELEE = {"sword": sword_strikes, "club": club_strikes, "tomahawk": club_strikes, "spear": spear_strikes}
+# The striking point in the item frame of the weapons whose point lies off the handle's
+# axis (`held.war_club`, `held.tomahawk` `socket.tip`), for `unit_clips`.
+MELEE_TIP = {"club": (0.0, -0.165, 0.39), "tomahawk": (0.0, -0.146, 0.38)}
 
 
 def md_frames(line):
@@ -595,7 +642,7 @@ def unit_clips(md, weapons, melee=None, active=None, thrown="tomahawk"):
         elif kind == "MEDIK":
             out[key] = heal(n, active.get(key, 1))
         elif kind in ("MECH", "PIKA") and i == 0 and melee:
-            strikes = MELEE[melee](n)
+            strikes = MELEE[melee](n, **({"tip": MELEE_TIP[melee]} if melee in MELEE_TIP else {}))
             out.update(strikes)
             first = "ATTACK_CUT_MID" if "ATTACK_CUT_MID" in strikes else "ATTACK_THRUST_MID"
             out[key] = strikes[first]

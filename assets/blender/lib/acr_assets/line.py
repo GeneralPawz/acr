@@ -25,6 +25,10 @@ parameters (`spec`), then `build(ctx)` calls `line.build(ctx, SPEC)`.
   pike in the right hand, `clips.colour_clips`);
 - `flag`: the colour's design (`FLAGS`: `union`, `france`, `burgundy`, `stripes`), painted on
   the cloth in its own frame over `palette["flag"]` (the field);
+- `sidearm`: None or `sword`, `hanger`, `tomahawk`: a second weapon drawn for melee on its
+  own right-hand socket (`socket.blade_r`, like the dragoon's sabre); in the strike clips
+  (`ATTACK`, `ATTACK_*`) it is shown and the musket hidden in the hand and slung on the back
+  (`socket.sling`), every other clip the other way round (`add_sidearm`, `sidearm_strikes`);
 - `lace`: None (no lace) or {"hat": braid width in m on the tricorn's brim, "buttonholes":
   True for bars of lace on the lapels and cuffs}, in `palette["lace"]` (`masks.py`).
 
@@ -62,7 +66,7 @@ FIT = {
     "pack": [0.32, 0.10, 0.32], "pack_y": 0.1925, "skirt_gap": 72,
 }
 DEFAULTS = {"build": BUILD, "fit": FIT, "hat": "tricorn", "gear": ("crossbelts", "cartridge", "knapsack"),
-            "weapon": "musket", "mix": 0.5, "fixed": (), "lapels": "facings", "lace": None, "flag": None}
+            "weapon": "musket", "mix": 0.5, "fixed": (), "lapels": "facings", "lace": None, "flag": None, "sidearm": None}
 
 
 def _cartridge(ch, name, s):
@@ -194,7 +198,132 @@ def make(root, name, s):
         ch.keys[gun.name] = "wood"
     else:
         raise ValueError(f"line infantry weapon {s['weapon']!r}")
+    if s.get("sidearm"):
+        add_sidearm(ch, name, s["sidearm"], fit["musket_len"])
     return ch
+
+
+# -- sidearm: a second weapon drawn for melee (m2-shared-moves) ---------------------------
+
+# Sidearm kind: (held item, melee clips of `clips.MELEE`).
+SIDEARMS = {"sword": ("smallsword", "sword"), "hanger": ("hanger", "sword"), "tomahawk": ("tomahawk", "tomahawk")}
+BLADE = "socket.blade_r"
+SLING = "socket.sling"
+# The slung musket on the back: its middle between the shoulder blades, the muzzle up over
+# the right shoulder (`SLING_TILT` degrees from upright), the barrel against the coat.
+SLING_AT = (0.0, 0.20, 1.18)
+SLING_TILT = -28
+# Sockets shown: in the strike clips and in every other clip (the ramrod's socket,
+# `aim.ROD_SOCKET`, hidden with the musket in the hand).
+SHOW_MELEE = {"socket.hand_r": 0, "socket.hand_l": 0, BLADE: 1, SLING: 1}
+SHOW_REST = {"socket.hand_r": 1, "socket.hand_l": 1, BLADE: 0, SLING: 0}
+
+
+def _add_sockets(arm_obj, prefix=""):
+    """Adds `socket.blade_r` (beside `socket.hand_r`, same frame) and `socket.sling` (on
+    `spine2`, on the back) to a built armature; non-deforming."""
+    import bpy
+
+    bpy.context.view_layer.objects.active = arm_obj
+    bpy.ops.object.mode_set(mode="EDIT")
+    ebs = arm_obj.data.edit_bones
+    hs = ebs[prefix + "socket.hand_r"]
+    if prefix + BLADE not in ebs:
+        eb = ebs.new(prefix + BLADE)
+        eb.head, eb.tail, eb.roll = hs.head.copy(), hs.tail.copy(), hs.roll
+        eb.parent, eb.use_deform = hs.parent, False
+    if prefix + SLING not in ebs:
+        eb = ebs.new(prefix + SLING)
+        eb.head, eb.tail = Vector(SLING_AT), Vector(SLING_AT) + Vector((0.0, 0.0, 0.1))
+        eb.parent, eb.use_deform = ebs[prefix + "spine2"], False
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+
+def add_sidearm(ch, name, kind, musket_len):
+    """The sidearm `kind` (`SIDEARMS`) on `socket.blade_r` and a second musket slung on the
+    back (`socket.sling`); the clips key which is shown (`sidearm_strikes`, `key_show`)."""
+    import bpy
+
+    item, _melee = SIDEARMS[kind]
+    _add_sockets(ch.arm, ch.prefix)
+    am.pose(ch.arm, {})
+    w = gear.hold(ch, item, f"{name}.{kind}", ch.prefix + BLADE, slot="sidearm")
+    gun = gear.musket(f"{name}.musket_slung", length=musket_len, bayonet=0.0)
+    for c in list(gun.children):  # the muzzle empty: the slung musket is no weapon
+        bpy.data.objects.remove(c)
+    gun["acr_material_keys"] = ["wood", "metal"]
+    t = math.radians(SLING_TILT)
+    axis = Vector((math.sin(t), 0.0, math.cos(t)))
+    grip = Vector(SLING_AT) - axis * (musket_len / 2 - 0.25)
+    am.attach(gun, ch.arm, ch.prefix + SLING, Matrix.Translation(grip) @ Matrix.Rotation(t, 4, "Y")
+              @ Matrix.Rotation(math.radians(180), 4, "Z"))
+    ch.held["musket_slung"] = gun
+    ch.keys[gun.name] = "wood"
+    ch.sidearm = kind
+    am.pose(ch.arm, poses.STAND_MUSKET)
+    return w
+
+
+def with_sidearm(make_fn, kind):
+    """`make_fn(root, name, s)` (a family's `make`, e.g. `frontier.make`) with the sidearm
+    `kind` added (`add_sidearm`); for `frontier.build(ctx, s, make_fn=...)`."""
+
+    def make_armed(root, name, s):
+        ch = make_fn(root, name, s)
+        add_sidearm(ch, name, kind, s.get("gun") or FIT["musket_len"])
+        return ch
+
+    return make_armed
+
+
+def sidearm_strikes(md, kind):
+    """{clip: Clip} of the sidearm's blows on ATTACK's frames (`clips.MELEE`, the weapon's
+    point from `held.py`), every key showing the sidearm and the slung musket; ATTACK plays
+    the first (a cut)."""
+    item, melee = SIDEARMS[kind]
+    if "ATTACK" not in md:
+        return {}
+    tip = tuple(held.build(item).sockets["socket.tip"])  # the point in the item frame
+    strikes = dict(wclips.MELEE[melee](wclips.md_frames(md["ATTACK"]), tip=tip))
+    strikes["ATTACK"] = strikes["ATTACK_CUT_MID"]
+    memo = {}
+
+    def drawn(pose):
+        if id(pose) not in memo:
+            p = dict(pose)
+            world = dict(p.get("world", {}))
+            if "socket.hand_r" in world:
+                world[BLADE] = world["socket.hand_r"]
+            p["world"] = world
+            p["show"] = dict(SHOW_MELEE)
+            memo[id(pose)] = p
+        return memo[id(pose)]
+
+    return {k: wclips.Clip([(f, drawn(p)) for f, p in c], c.event) for k, c in strikes.items()}
+
+
+def key_show(arm_obj, act, show, prefix=""):
+    """Keys the socket scales `show` ({socket: 0 | 1}) constant over action `act`."""
+    arm_obj.animation_data_create()
+    arm_obj.animation_data.action = act
+    if hasattr(arm_obj.animation_data, "action_slot") and act.slots:
+        arm_obj.animation_data.action_slot = act.slots[0]
+    for sock, v in show.items():
+        pb = arm_obj.pose.bones.get(prefix + sock)
+        if pb is None:
+            continue
+        pb.scale = (float(v),) * 3
+        pb.keyframe_insert("scale", frame=0, group=pb.name)
+    for pb in arm_obj.pose.bones:
+        pb.scale = (1.0, 1.0, 1.0)
+    arm_obj.animation_data.action = None
+
+
+def unscale(arm_obj):
+    """Every pose bone's scale back to 1 (a socket left hidden by the last keyed clip would
+    bake a 0 scale into its held item at export: docs/melee.md, m2-melee4)."""
+    for pb in arm_obj.pose.bones:
+        pb.scale = (1.0, 1.0, 1.0)
 
 
 # -- drummers and standard bearers (family 2) ---------------------------------------------
@@ -396,16 +525,29 @@ def _musket_clips(ctx, ch, md):
     # Charge bayonets: the same grip with the butt at the right hip.
     charge = aiming.hold(ch.arm, poses.CHARGE_MUSKET, pocket=(0.02, -0.12, -0.32), left_along=0.30)
     clips = poses.musketeer_clips(md, aim=aim, charge=charge, reload=reload)
+    kind = getattr(ch, "sidearm", None)
+    drawn = sidearm_strikes(md, kind) if kind else {}
+    if drawn:
+        # The musket's blows give way to the sidearm's (`add_sidearm`).
+        clips = {k: v for k, v in clips.items() if k != "ATTACK" and not k.startswith("ATTACK_")}
     for clip, keys in clips.items():
-        am.add_clip(ch.arm, clip, keys)
+        act = am.add_clip(ch.arm, clip, keys)
         if clip == "ATTACK1":
             aiming.bake_musket(ch.arm, clip, keys, rod_phases=poses.ROD_PHASES)
         else:
             aiming.stow_rammer(ch.arm, clip)
+        if kind:
+            key_show(ch.arm, act, SHOW_REST, ch.prefix)
+    for clip, keys in drawn.items():
+        wclips.apply(ch.arm, clip, keys)
     # Crawl clips of the wounded (#262): keyframed, looping.
     for clip, keys in crawl.clips().items():
-        am.add_clip(ch.arm, clip, keys)
+        act = am.add_clip(ch.arm, clip, keys)
         aiming.stow_rammer(ch.arm, clip)
+        if kind:
+            key_show(ch.arm, act, SHOW_REST, ch.prefix)
+    if kind:
+        unscale(ch.arm)
 
 
 def build(ctx, s):
@@ -437,6 +579,7 @@ def build(ctx, s):
     heads.finish(ch)  # face and body morphs, `_FACE`, variants (#283)
     # The exported scene pose (glTF node transforms) is STAND.
     ch.arm.animation_data.action = None
+    unscale(ch.arm)
     if musket:
         am.pose(ch.arm, poses.STAND_MUSKET)
         ch.arm.pose.bones[aiming.ROD_SOCKET].matrix = ch.arm.pose.bones["socket.hand_r"].matrix @ aiming.ROD_STOWED

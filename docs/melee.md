@@ -385,6 +385,75 @@ Renders (`ACR-analysis/melee6`, white field, HUD off, default bench distances):
 without the arm IK). Rebuilt on the VM: EngD18 and PueVsdA (old ones in
 `showcase/backup-melee6/`).
 
+### Shared moves: forward stoop, sidearms, the visible socket (m2-shared-moves)
+
+- **The shared stoop leaned back.** Positive spine X bends the trunk *forward* on skeleton
+  H; `clips.STOOP` and the cut's lean in `sword_strikes` / `club_strikes` used negative X,
+  so the shared blows down fell 0.45–0.9 m short (officers, native, meso, inca, pike and
+  conquista kept local forward versions). Now `clips.STOOP` is the officers' long lunge
+  (hips 0.80 m forward and 0.27 m down, spine +30/+10/+4°), `clips.LEAN` the forward cut
+  lean, `clips.CLUB_STOOP` a deeper lunge for the shorter club (hips 1.08 m forward, spine
+  +42°), `stoop_raised` the wind-up, and `clips.TARGET_DOWN` is 2.0 m ahead (the sim's
+  distance at a man on the ground; 2.57 m after walking up: the layer's step does the rest).
+  The club's mid hack leans forward too (spine +16°, hips 0.44 m forward).
+- **Points off the axis.** An axe's or a club's `socket.tip` lies 0.15–0.17 m before its
+  handle (`held.tomahawk` (0, -0.146, 0.38), `held.war_club` (0, -0.165, 0.39)); a clip that
+  took only the length along the axis missed by ~0.2 m. `clips.grip_for` takes the point as
+  a vector in the item frame; the sidearms pass it.
+- **Sidearms** (`line.py` SPEC `sidearm`, docs/assets-humans.md): the musket hidden in the
+  hand and slung on the back, the sidearm on `socket.blade_r` for `ATTACK` / `ATTACK_*`.
+  Units: FrnBuk, EngTap, EngTapDragon, UsaMil (tomahawk), SpnS15, FrnS15 (sword, through
+  `frontier.build(..., make_fn=line.with_sidearm(frontier.make, ...))`), EngMus, SpnMus,
+  FrnS17 (sword, `pike.musketeer_spec(..., sidearm="sword")`).
+- **The visible socket** (`strike_view::weapons` / `pick`): a model's weapon sockets, best
+  first, are `socket.hand_r`, `socket.blade_r`, `socket.club_r`; the layer takes the first
+  one shown in the current pose (its scale against its parent's ≥ 0.5). Archers with a club
+  on `socket.club_r` (native, plains) aimed the hidden arrow before and missed by 2+ m.
+  Test `the_shown_socket_holds_the_weapon`. The club archers' `.glb`s also baked a 0 scale
+  into the club's node (native.py / plains.py set the socket to 0 before the export, the
+  m2-melee4 trap): they now reset every bone's scale to 1.
+- **Mounted bow and club** (`cavalry.py`): `held` "bow" (`bow`, `bow_poses`, `bow_keys`:
+  the trunk turned left, the bow arm out at shoulder height, draw, loose on the `.MD`'s
+  release, reach to the quiver on the back, nock), `blade` "club" (a war club drawn on
+  `socket.blade_r`). SiuKLut (bow and club), SiuKVog (club).
+
+Measured at frame 2 (`probe_clips`, metres right/forward/up; `ACR-analysis/shared-moves/probe_*.txt`):
+
+| Clip | Target | Clip alone: off | With the layer: off |
+|---|---|---|---|
+| EngMus (sword) `ATTACK_CUT_MID` / `_HIGH` / `ATTACK_THRUST_MID` | 0/1.50/1.15, 1.55 | 0.00 / 0.00 / 0.00 | 0.00 / 0.00 / 0.01 |
+| EngMus `ATTACK_THRUST_DOWN` | 0/2.00/0.20 (2.57) | **0.00** (0.57) | 0.03 (0.00) |
+| SpnS15 (sword) `ATTACK_CUT_MID` / `ATTACK_THRUST_DOWN` | 1.50/1.15 / 2.00/0.20 | 0.00 / 0.00 | 0.00 / 0.03 |
+| FrnBuk (tomahawk) `ATTACK_CUT_MID` | 0/1.50/1.27 | 0.00 (0.15 with the length only) | 0.01 |
+| FrnBuk `ATTACK_CUT_DOWN` | 0/2.00/0.20 (2.57) | **0.00** (0.57; 0.21 with the length only) | 0.04 (0.02) |
+| SiuLut, IroLut (club on `socket.club_r`) `ATTACK_CUT_MID` | 0/1.50/1.27 | 0.00 (was 2.64: the hidden arrow) | 0.01 (was 2.10) |
+| SiuLut, IroLut `ATTACK_CUT_DOWN` (native's own `club_down`) | 0/1.80/0.20 (2.0) | 0.24 (0.44) | 0.03 (0.03) |
+| IroTam `ATTACK_CUT_MID` / `ATTACK_CUT_DOWN` (own) | 1.50/1.27 / 1.80/0.20 | 0.00 / 0.23 | 0.01 / 0.02 |
+| EngB18 `ATTACK_THRUST_DOWN` / `_MID` (stick, sword length) | 2.00/0.20 / 1.50/1.15 | 0.58 / 0.58 | 0.01 / 0.05 |
+| SiuKVog, SiuKLut (club) `ATTACK_CUT_DOWN` | 0.92/0.25/0.20 | 0.59 | 0.33 |
+| SiuKVog `ATTACK_CUT_DOWN_L` | -0.61/0.73/0.20 | 0.48 | 0.22 |
+| PueVsd `ATTACK_THRUST_DOWN` | 0.81/1.73/0.20 | 0.03 | 0.00 |
+
+Blender's solve on the shell body (`ACR-analysis/shared-moves/scripts/shared_solve.py`,
+officer body; `frontier_solve.py`, FrnBuk's): `sword_strikes` all 0.00 (down at 2.0 m);
+`club_strikes` 0.00 / 0.00 (mid / down at 2.0 m, tomahawk point vector).
+
+Families with local forward blows that can switch to the shared ones now: officers
+(`stab_down` = `clips.STOOP` + the same numbers; `cut` = `clips.LEAN`), native
+(`club_down` at 1.8 m: the shared hack reaches 2.0 m), meso and inca (their down blows
+copy the officers' stoop), pike (`DOWN_BASE`); conquista's halberd stays its own (a
+two-handed pole). Not switched here (not this slice's files).
+
+Renders (`ACR-analysis/shared-moves/`, white field, HUD off): `sheet_sidearm_mus.png`
+(EngMus: the sword drawn, the musket slung, the stab down; then back to the musket),
+`sheet_sidearm_buk.png` (FrnBuk's tomahawk), `sheet_sidearm_s15.png` (SpnS15),
+`sheet_club_archer.png` (SiuLut's war club blow, then the bow), `sheet_mounted_archer.png`
+(SiuKLut: draw, loose, nock; the arrows fly), `sheet_mounted_club.png` (SiuKVog),
+`sheet_drummer_idle.png` (EngB18: the left one in STAND, ready), `sheet_puevsd_lance.png`;
+frames in `run1/<scene>/`, the bench `scripts/bench.py`. Rebuilt on the VM: EngB18, EngMus,
+FrnBuk, SpnS15, IroTam, IroLut, SiuLut, SiuKVog and new SiuKLut, PueVsd (old ones in
+`showcase/backup-shared-moves/`).
+
 ### Not yet
 
 - **Sabre down left:** fixed in family 5 (docs/families/cavalry.md): a cross-body cut,
@@ -395,6 +464,11 @@ without the arm IK). Rebuilt on the VM: EngD18 and PueVsdA (old ones in
 - **Ready stance:** the trunk turn is checked only at the bench's distance; in the `.MD`
   ready frames the muskets still lie as the clip carries them (horizontal over the
   shoulder, `melee6/sheet_fence.png` frames 10–20).
+- **Club from the saddle:** a war club (0.52 m) from a seated man does not reach a man lying
+  0.95 m out (SiuKVog/SiuKLut 0.59 m clip, 0.33 m layer); a stirrup lean like the sabre's
+  or a nearer target would be needed.
+- **Native and plains down hacks** still use `native.club_down` (1.8 m, 0.24 short at
+  frame 2); the shared `club_strikes` reaches 2.0 m with the club's point vector.
 - **Lance through the rider:** solved clear in Blender (hand 0.71 m right, 3° out) but only
   checked from the left side in the render; a view from the front would confirm it.
 - **Looks:** the bayonets still pass through bodies in the `.MD` ATTACK/PSTAND frames,

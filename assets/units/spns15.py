@@ -5,7 +5,7 @@ sword on the left hip and the arquebus.
 Family 12 (`acr_assets.conquista`, docs/families/conquista.md).
 """
 
-from acr_assets import conquista
+from acr_assets import conquista, frontier, line
 
 TYPE = "SpnS15"
 CHECKS = ["--anim STAND", "--anim DEATHLIE1"]
@@ -39,7 +39,7 @@ def spec():
 
 
 def build(ctx):
-    conquista.build(ctx, spec())
+    frontier.build(ctx, spec(), make_fn=line.with_sidearm(frontier.make, "sword"))
 
 
 def pose_for(ch, clip):

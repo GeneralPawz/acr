@@ -5,7 +5,7 @@ hat cocked as a tricorn, powder horn and shot pouch on a strap, and his musket.
 Family 11 (`acr_assets.frontier`, docs/families/frontier.md).
 """
 
-from acr_assets import frontier
+from acr_assets import frontier, line
 
 TYPE = "UsaMil"
 CHECKS = ["--anim STAND", "--anim DEATHLIE1"]
@@ -42,7 +42,7 @@ def spec():
 
 
 def build(ctx):
-    frontier.build(ctx, spec())
+    frontier.build(ctx, spec(), make_fn=line.with_sidearm(frontier.make, "tomahawk"))
 
 
 def pose_for(ch, clip):

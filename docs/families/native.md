@@ -136,7 +136,10 @@ short, the layer 4 cm. The shared `club_strikes` down hack leans the trunk back 
 spine X) and fell 0.92 m short on IroTam; `native.club_down` replaces `ATTACK_CUT_DOWN` /
 `ATTACK_DOWN` for club and tomahawk units with a forward lunge (spine +36°): clip tip 7 cm
 off at 1.6 m and 43 cm at 2.0 m (the arm cannot reach further), layer 2–3 cm; IroLut's 20 cm
-/ 4 cm at 2.0 m. Drop it once `clips.py` leans forward.
+/ 4 cm at 2.0 m. Drop it once `clips.py` leans forward (m2-shared-moves: it does; the
+shared hack reaches 2.0 m with the club's off-axis point, `clips.MELEE_TIP`). The
+archer's club socket now turns with the clip and is exported at scale 1 (it was baked
+at 0 and never shown).
 
 Slice 1's open points (dark skin, paint on the trunk, stubble, lumpy flaps, the archers'
 melee with the arrow hand, the big quiver) are fixed in slice 2 (above).

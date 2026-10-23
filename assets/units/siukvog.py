@@ -4,7 +4,7 @@
 black-tipped feathers standing up and back, a short trailer), two wrapped braids, a white
 buckskin shirt, a red breechcloth, buckskin leggings, a painted hide shield on the left arm;
 bareback on a red blanket with a rope bridle, a spotted horse. ATTACK (index 0, MECH) is the
-cavalry cut. He gallops (`cavalry.NATIVE_MOTIONS`).
+cavalry cut with a war club (`blade` "club", drawn on `socket.blade_r`). He gallops (`cavalry.NATIVE_MOTIONS`).
 """
 
 from acr_assets import cavalry, plains
@@ -35,7 +35,7 @@ PALETTE = dict(cavalry.PALETTE, **{"skin": (0.72, 0.48, 0.33), "tunic": (0.84, 0
                                    "cap": (0.94, 0.92, 0.88), "hair": (0.05, 0.04, 0.04)})
 
 SPEC = {"md": MD, "palette": PALETTE, "dress": "native", "shirt": True, "tack": "blanket", "hat": "crown", "held": None,
-        "shield": True, "sabre": False, "seat_dz": -0.05, "motions": cavalry.NATIVE_MOTIONS,
+        "shield": True, "sabre": False, "drawn": True, "blade": "club", "seat_dz": -0.05, "motions": cavalry.NATIVE_MOTIONS,
         "coat": {"body": (0.92, 0.90, 0.86), "hair": (0.25, 0.22, 0.20)}}
 
 

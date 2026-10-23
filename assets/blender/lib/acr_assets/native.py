@@ -601,10 +601,15 @@ def unit_clips(s):
             k = (id(pose), club)
             if k not in memo:
                 show = dict(pose.get("show") or {}, **{"socket.club_r": club})
+                world = dict(pose.get("world") or {})
                 if club:
                     show["socket.hand_r"] = 0
+                    # The strike clips turn `socket.hand_r`: the club's socket turns with it
+                    # (m2-shared-moves: it stayed in the hand's rest frame, 0.75 m off).
+                    if "socket.hand_r" in world:
+                        world["socket.club_r"] = world["socket.hand_r"]
                 show.setdefault("socket.hand_r", 1)
-                memo[k] = dict(pose, show=show)
+                memo[k] = dict(pose, show=show, world=world)
             return memo[k]
 
         out = {name: [(f, shown(p, 1 if name in melee else 0)) for f, p in keys_] for name, keys_ in out.items()}
@@ -658,8 +663,11 @@ def build(ctx, s):
     heads.finish(ch, beard=False, scalp=s["hair"] == "long")
     ch.arm.animation_data.action = None
     am.pose(ch.arm, cl.solve(ch.arm, stand))
-    if "socket.club_r" in ch.arm.pose.bones:
-        ch.arm.pose.bones["socket.club_r"].scale = (0.0, 0.0, 0.0)
+    # Every socket at scale 1 for the export: a 0 here bakes a 0 scale into the club's own
+    # node and hides it in every clip (m2-shared-moves; docs/melee.md, m2-melee4). The
+    # clips key the sockets' scales.
+    for pb in ch.arm.pose.bones:
+        pb.scale = (1.0, 1.0, 1.0)
     if s["weapon"] == "gun":
         ch.arm.pose.bones[aiming.ROD_SOCKET].matrix = ch.arm.pose.bones["socket.hand_r"].matrix @ aiming.ROD_STOWED
     tris = ch.triangles()

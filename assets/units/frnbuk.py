@@ -6,7 +6,7 @@ knife, and the long buccaneer musket.
 Family 11 (`acr_assets.frontier`, docs/families/frontier.md).
 """
 
-from acr_assets import frontier
+from acr_assets import frontier, line
 
 TYPE = "FrnBuk"
 CHECKS = ["--anim STAND", "--anim DEATHLIE1"]
@@ -43,7 +43,7 @@ def spec():
 
 
 def build(ctx):
-    frontier.build(ctx, spec())
+    frontier.build(ctx, spec(), make_fn=line.with_sidearm(frontier.make, "tomahawk"))
 
 
 def pose_for(ch, clip):

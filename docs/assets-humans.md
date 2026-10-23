@@ -281,6 +281,12 @@ All scripted Blender meshes, no third-party models (so nothing new in
 `assets/LICENSES.md`); a CC0 replacement (Poly Haven, Kenney, Quaternius) can swap in
 behind the same `Item` data later.
 
+Two-sided thin parts (the arrow's and the quiver's fletchings, the macuahuitl's obsidian
+blades) are `held.vane`: two faces on their own vertices a fraction of a millimetre apart;
+one face twice over the same vertices made Blender's export report "mesh not valid"
+(m2-shared-moves; the swords' shell guard is a shallow closed lens for the same reason).
+Every item of `held.ITEMS` passes `Mesh.validate()`.
+
 ### Clips by weapon (`acr_assets/clips.py` pure, `clips.apply` in Blender; batch 0b)
 
 Reusable clips for skeleton H, named as the `.MD` files name them; a family calls
@@ -313,6 +319,7 @@ each with `clips.apply(arm, name, clip)`. Stand, walk and death stay the family'
 | `ATTACK1` sling: load, whirl overhead (a quarter turn every 2 frames), overhand cast (`sling`) | IncPra (KAMEN) | 68 | 56 |
 | `ATTACK1` blowpipe: load, raise to the lips, blow (`blowpipe`; new item `held.blowpipe`) | IncTrb (VAFLIA) | 61 | 18 |
 | `ATTACK`/`ATTACK1` heal: hands out over the man, then a slow rise and sink (`heal`) | SpnSha, `*Sha` (MEDIK) | 200 / 75-101 | 2 |
+| `STAND` ready to drum: both sticks low over the head, the tips 3.5 cm above it (`drum_ready`; the sim plays STAND nearly always) | `*B18` | 1 | - |
 | `REST` drumming: alternate strokes every 2 frames, a flam every 8th (`drum_roll`) | `*B18` | 70 | - |
 | `MOTION_L`/`_R` (and `_L0`/`_R0`) marching with the drum (`drum_march`) | `*B18` | 10 | - |
 | `STAND`, `REST` colour waved (figure of eight, a sweep every 30 frames), `MOTION_L`/`_R` carried (`colour_*`) | `*F18`, `*F17` | 1 / 120 / 10 | - |
@@ -323,9 +330,26 @@ each with `clips.apply(arm, name, clip)`. Stand, walk and death stay the family'
 
 The melee index also sets `ATTACK` to the first strike clip (the `.MD` fallback). Targets
 (docs/melee.md): a standing man's surface 1.50 m ahead (chest 1.15 m, head 1.55 m up), a man
-on the ground at 1.6 m; the tests check the point at frame 2 within 1 cm of them (the clip's
-data; the IK's reach is the next check, `strike_view::probe` on a built model: no unit with
-these clips is built yet). Tests: `tests/test_clips.py`. Contact sheet:
+on the ground at 2.0 m (where the sim leaves him before a man on foot; m2-shared-moves, was
+1.6 m); the tests check the point at frame 2 within 1 cm of them (the clip's data; the IK's
+reach is checked by Blender's solve and `strike_view::probe` on a built model).
+
+**Forward lean (m2-shared-moves).** Positive spine X bends the trunk *forward* on skeleton
+H. `clips.STOOP` (the blow down: a long lunge, left foot ~1.3 m forward, right leg straight,
+hips ~0.78 m up, spine/spine1/spine2 +30/+10/+4°), `clips.LEAN` (the cut's lean, +8°) and
+the club's hack (`CLUB_STOOP`, deeper: +36°, hips 0.95 m forward) lean forward now; before,
+they bent back and the blows down fell 0.45–0.9 m short. `stoop_raised` is the wind-up.
+
+**Sidearms on gun units (`line.py`, SPEC `sidearm`: `sword`, `hanger`, `tomahawk`).**
+`line.add_sidearm` adds two non-deforming sockets to the built armature: `socket.blade_r`
+(beside `socket.hand_r`, same frame: the sidearm, as the dragoon's drawn sabre) and
+`socket.sling` (on `spine2`: a second musket slung across the back, muzzle up over the right
+shoulder). `line.sidearm_strikes` replaces the musket's `ATTACK`/`ATTACK_*` with the
+sidearm's (`clips.MELEE`, the item's real `socket.tip`), every key showing the sidearm and
+the slung musket and hiding the musket in the hand and the ramrod's socket (`SHOW_MELEE`);
+every other clip keys the reverse (`SHOW_REST`, `line.key_show`). `line.unscale` resets the
+bone scales before export. A family that builds its own soldier passes
+`make_fn=line.with_sidearm(frontier.make, kind)` to `frontier.build`. Tests: `tests/test_clips.py`. Contact sheet:
 `tools/clips_sheet.py --part clips|masks` (the MakeHuman test figure at each key frame).
 
 ### Lace and body paint (`acr_assets/masks.py`, `outfit.apply_mask`; batch 0b)

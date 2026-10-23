@@ -36,7 +36,7 @@ MD = {
 
 
 def spec():
-    return pike.musketeer_spec(MD, palette={"coat": (0.60, 0.46, 0.28), "breeches": (0.52, 0.10, 0.08), "gaiters": (0.45, 0.40, 0.34)})
+    return pike.musketeer_spec(MD, palette={"coat": (0.60, 0.46, 0.28), "breeches": (0.52, 0.10, 0.08), "gaiters": (0.45, 0.40, 0.34)}, sidearm="sword")
 
 
 def make(root, name, build=None):

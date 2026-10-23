@@ -91,6 +91,10 @@ slots): the pike's steel head and the musket's barrel now show apart from the wo
 - 17th-c. garments (doublet, falling band, buff coat, full breeches, boots), the broad hat's
   plume; the matchlock's serpentine and the musket rest; de Gheyn's longer drill.
 - The stance-3 rest clips of the musketeers; FrnS17's REST.
-- The musketeer's `0 MECH` is the bayonet lunge, not a butt stroke or the sword.
+- ~~The musketeer's `0 MECH` is the bayonet lunge~~ (m2-shared-moves): EngMus, SpnMus and
+  FrnS17 draw a sword (`pike.musketeer_spec(..., sidearm="sword")`, the musket slung);
+  EngMus probe: `ATTACK_CUT_MID` / `_HIGH` / `ATTACK_THRUST_MID` 0.00, `ATTACK_THRUST_DOWN`
+  0.00 at 2.0 m (0.57 at 2.57 m, layer 0.00). The pikemen's `DOWN_BASE` could now use
+  `clips.STOOP`.
 - `SETACTIVEPOINT #ATTACK1` (EngMus 13, SpnMus 12, FrnS17 19) is not passed to the musket
   path (the line's own fire frame is used).

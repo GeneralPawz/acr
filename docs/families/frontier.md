@@ -42,8 +42,11 @@ makes are listed in the glb (`frontier.CLIPS` plus the strikes and crawl).
 
 - The sprites' extra stances (`MOTION_*0..4`, `ATTACK2` (PIKA), `ATTACK3` / `PSTAND3`) are
   not modelled; the game plays the plain clips.
-- `MECH` uses the musket's blows; the tomahawk stays in the belt (no held tomahawk clip,
-  `line.make`'s musket path has no second hand weapon).
+- ~~`MECH` uses the musket's blows~~ (m2-shared-moves): EngTap, EngTapDragon, UsaMil and
+  FrnBuk draw a tomahawk for melee (`line.with_sidearm(frontier.make, "tomahawk")`, the
+  musket slung on the back; docs/melee.md). FrnBuk probe at frame 2: `ATTACK_CUT_MID` 0.00,
+  `ATTACK_CUT_DOWN` 0.00 at 2.0 m (layer 0.04). The belt tomahawk of `tomahawk_belt` still
+  shows while the drawn one is in the hand.
 - No real fringe geometry: a fringe band shell at the cape's edge; no capot/tuque (no
   Canadian militia unit exists in the roster).
 - Poses not fitted to the sprites (`tools/silhouette.py`).

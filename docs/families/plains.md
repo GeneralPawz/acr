@@ -59,12 +59,16 @@ Glbs: siulut 3.5 MB, siukri 3.9 MB, siukpik 11.8 MB, siukvog 11.9 MB (the horse)
 of the action field), frames in `ACR-analysis/fam-plains/frames`.
 
 Open points:
-- `SiuKLut` not built (no mounted bow in `cavalry.py`; a shared slice).
+- ~~`SiuKLut` not built~~ (m2-shared-moves): `cavalry` `held` "bow" (bow from horseback,
+  quiver on the back, release on frame 72) and a war club drawn for melee (`blade` "club");
+  SiuKVog draws the war club too. From the saddle the club (0.52 m) does not reach a man
+  lying 0.95 m out: `ATTACK_CUT_DOWN` 0.59 m off with the clip alone, 0.33 with the layer.
 - SiuLut's chest reads as a dark slab on the field: the known trunk-patch bug darkens the
   bare trunk and the hair-pipe breastplate does not read through it yet.
 - The sprites are more colourful (red and white trade cloth, SiuKri's long dress reads as a
   woman's); the 3D keeps buckskin.
 - The action field (each unit facing an enemy at 90 px) did not start a fight in 36 ticks,
-  so the sheet's last column is a stand frame; the melee strikes were not probed
-  (`strike_view` picks `socket.hand_r` for archers, a known shared bug).
+  so the sheet's last column is a stand frame. The archers' club (`socket.club_r`) is now
+  the layer's weapon in melee (`strike_view::pick`), the club's node no longer baked at
+  scale 0 and its socket turned with the clip (m2-shared-moves, docs/melee.md).
 - The mounted close-ups frame the horse, cutting the rider's head.

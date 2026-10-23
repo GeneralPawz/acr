@@ -33,7 +33,11 @@ The body is `frontier.make` with `conquista.spec`'s defaults: doublet and sleeve
 
 ## Known gaps
 
-- MECH of the arquebusiers uses the musket blows; the sword stays sheathed; no rodela.
+- ~~MECH of the arquebusiers uses the musket blows~~ (m2-shared-moves): SpnS15 and FrnS15
+  draw a sword for melee (`frontier.build(..., make_fn=line.with_sidearm(frontier.make,
+  "sword"))`, the arquebus slung); SpnS15 probe: `ATTACK_CUT_MID` 0.00, `ATTACK_THRUST_DOWN`
+  0.00 at 2.0 m. The sheathed sword (`c_scabbard`) still shows beside the drawn one; no rodela.
+- The halberd's own forward stoop (`halberd_strikes`) stays (a two-handed pole).
 - The halberd's cut (`ATTACK_CUT_*`) is not made; only thrusts.
 - FrnS15's stripes on the slops (a paint mask) are not done.
 - Extra sprite stances (`ATTACK3`, `PSTAND3`) are not modelled.
