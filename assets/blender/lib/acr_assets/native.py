@@ -82,6 +82,25 @@ STAND_ARMED = cl.STAND_ARMED
 STAND_SPEAR = cl._with(cl.STAND_FREE, forearm_r=(-50, 0, 10), world={"socket.hand_r": (4, 0, 0)})
 
 
+# The hack down at a man on the ground, leaning FORWARD (positive spine X bends forward on
+# skeleton H; the shared `clips.club_strikes` stoop leans back and falls ~0.9 m short):
+# a long lunge, the trunk bent over the front knee, the blade's face on a man lying 1.8 m
+# ahead (the sim fences at 1.6-2.0 m; the strike layer takes the rest).
+DOWN_AT = 1.8
+LUNGE_DOWN = {"root_loc": (0, -0.75, -0.30), "thigh_l": (-64, -3, 0), "shin_l": (80, 0, 0), "foot_l": (-14, 0, 0),
+              "thigh_r": (24, 3, 0), "shin_r": (48, 0, 0), "foot_r": (-12, 0, 0), "spine": (36, 0, 6),
+              "spine1": (14, 0, 0), "spine2": (6, 0, 0), "head": (-14, 0, 0)}
+
+
+def club_down(n, tip=cl.CLUB_TIP, at=DOWN_AT):
+    """`ATTACK_CUT_DOWN` (= `ATTACK_DOWN`) leaning forward over the lunge."""
+    down_r = (150, 0, 0)
+    hit = cl._blow(dict(cl.STAND_FREE, **LUNGE_DOWN), cl.grip_for((0.0, -at, 0.20), down_r, tip), down_r)
+    over = cl._blow(dict(cl.STAND_FREE, **dict(LUNGE_DOWN, root_loc=(0, -0.55, -0.18), spine=(14, 0, 0))),
+                    (-0.14, -0.70, 1.50), (-40, 0, 0))
+    return cl._strike(n, over, hit, over)
+
+
 def spec(md, weapons, palette=None, build=None, **kw):
     """A full SPEC: the defaults with `palette` and `build` merged key by key."""
     unknown = set(kw) - set(DEFAULTS)
@@ -405,6 +424,9 @@ def unit_clips(s):
             out[k] = out["DEATHLIE1"]
     weapons = cl.unit_clips(md, s["weapons"], melee=s["melee"], active=s["active"],
                             thrown="tomahawk")
+    if s["melee"] in ("club", "tomahawk") and "ATTACK" in md:
+        down = club_down(cl.md_frames(md["ATTACK"]))
+        weapons["ATTACK_CUT_DOWN"] = weapons["ATTACK_DOWN"] = down
     out.update({k: list(v) for k, v in weapons.items()})
     return out
 

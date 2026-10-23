@@ -13,7 +13,7 @@ frames, and `native.spec(MD, WEAPONS, ...)`.
 
 | unit | weapon | melee (index 0) | dress | hair | paint | kit |
 |---|---|---|---|---|---|---|
-| `IroLut` | bow (fire arrow 1, arrow 2; loosed on 44) | club strikes with the arrow hand | breechcloth, red leggings, moccasins | roach, 2 feathers | `red_black` | quiver, knife |
+| `IroLut` | bow (fire arrow 1, arrow 2; loosed on 44) | club strikes with the arrow hand (`club_down` for the down hack) | breechcloth, red leggings, moccasins | roach, 2 feathers | `red_black` | quiver, knife |
 | `IroStr` | trade gun (`poses.musketeer_clips`, shot on 16) | musket thrust and butt | as IroLut | roach, 1 feather | `black_stripes` | strap, powder horn, shot pouch, knife |
 | `IroTam` | tomahawk throw (gone on 16) | tomahawk hack (`club_strikes`) | + blue matchcoat over the left shoulder, silver gorget and arm bands | roach, 2 feathers | `red_hands` | knife |
 | `DelPik` | spear (`spear_strikes`, PIKA) | the thrust | + linen trade shirt, blue leggings | scalp lock and braid, 3 feathers | `red_face_half` | knife |
@@ -93,7 +93,12 @@ Blank field (white ground, HUD off) frames in `ACR-analysis/fam-woodlands/frames
 the sheet `ACR-analysis/fam-woodlands/sheet_woodlands.png` (sprite, front, back, close-up,
 clips in action). `strike_view` probe on DelPik (`ACR-analysis/fam-woodlands/probe.txt`):
 `ATTACK_THRUST_MID` clip tip 1 cm off the target (layer 0), `ATTACK_THRUST_DOWN` 3 cm
-(layer 5 cm).
+(layer 5 cm); at 2.0 m (the sim's distance at a man on the ground) the clip is 43 cm
+short, the layer 4 cm. The shared `club_strikes` down hack leans the trunk back (negative
+spine X) and fell 0.92 m short on IroTam; `native.club_down` replaces `ATTACK_CUT_DOWN` /
+`ATTACK_DOWN` for club and tomahawk units with a forward lunge (spine +36°): clip tip 7 cm
+off at 1.6 m and 43 cm at 2.0 m (the arm cannot reach further), layer 2–3 cm; IroLut's 20 cm
+/ 4 cm at 2.0 m. Drop it once `clips.py` leans forward.
 
 Open: the skin comes out darker than the sprites (sprite mix on a dark palette; lighten
 `skin` or raise `fixed`); `red_black` paints half the trunk, not only the face (to check in
