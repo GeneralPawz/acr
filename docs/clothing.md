@@ -284,6 +284,61 @@ generators:
   smoothed per-vertex field (an isoline through the triangles) instead of whole faces, and
   lift the border onto the skin of its own part only.
 
+**Fifth trisoup pass: shells cut along a contour** (#287; everything in
+`ACR-analysis/trisoup5/`). Every `ch.shell` garment goes through `body.derive` (with the
+MakeHuman body): cavalry (boots, breechcloth, breeches, buffcoat, coat, cuffs, cuff_lace,
+cuirass, lapels, lapel_lace, leggings, sash, shirt, sleeves, vambraces, waistcoat), civil
+(blouse, cappa, habit, habit_legs, hood, sash), frontier (blouse, cape, cloak, cuirass,
+fringe, sash, slops, tassets), guncrew and line (breeches, coat, cuffs, gaiters,
+waistcoat), inca (hair, quilt, unku, yacolla), meso (ichcahuipilli, maxtlatl, maya_jacket,
+sandals, tilmatli, tlahuiztli), native (armbands, belt, breechcloth, cloak, garters,
+leggings, matchcoat, shirt), plains (shoulder_strips, sleeve_strips, war_shirt), pueblo
+(bandolier, blanket, jerkin, sash, tunic, wraps). Now (`body.CONTOUR`, **on**; `CLEAN_CUT`
+removed):
+
+- **The field:** `keep_face` still picks faces, but the cut follows `selection_field`: per
+  vertex the area-weighted share of kept faces round it (welded by position over the
+  hull's part seams, so both sides of a seam get the same value), smoothed 3 times
+  (`CONTOUR_PASSES`). Values within 0.1 of 0.5 snap onto the line (no slivers).
+- **The cut** (`contour_cut`): every edge the 0.5 isoline crosses is split where it crosses
+  (weights and rest normals interpolated, home and part from the nearer end; the twin
+  edges on a part seam are split alike, so seams stay closed), the two points are joined
+  through the triangle, the outer side deleted. The border is a curve through the
+  triangles, not a staircase of faces. If the smoothing eats a narrow diagonal selection
+  (less than 70 % of the picked area left: a bandolier, strips of quills) it is redone with
+  1 pass, then 0.
+- **Strips** (kept faces within `STRIP_HEIGHT` = 16 cm of height: sashes, belts, garters,
+  armbands, the fringe): the field is a ramp in z through the band's top and bottom (bounded
+  sideways by the smoothed selection), so both edges are level lines through the
+  triangles: a clean ribbon round the body instead of a row of teeth. (Not a separate
+  ribbon mesh along a curve: the level cut gives the same edge and keeps the skin's weights.)
+- **Offset and border:** the cut shell is pushed out by its offset along its own
+  interpolated rest normals; the outer border (boundary edges without a twin across a part
+  seam) is relaxed along its curve 4 times, each vertex at most 1.5 cm (`BORDER_MOVE`),
+  and **never projected onto the skin** (round 4 put the neck hole onto the chin).
+- **Hem** (`hem_border`): the outer border is extruded 0.7 × the offset back towards the
+  skin along the shell's own normals, so the edge reads as cloth or plate.
+
+Stage renders (`tools/stages.py` with `ACR_CONTOUR=0/1`, `stages_0/`, `stages_1/`; the
+native units do not build in the local stage tool, `uv.smart_project` needs a context):
+`sheet_stages.png` (FrnBuk, SpnSha, IncSha, MaySha, SpnS15, PueSha; before row over after
+row). The teeth are gone from FrnBuk's cloak, blouse and sash (the sash is now a level band;
+before it had flaps up the sides), IncSha's unku and yacolla, MaySha's tilmatli, PueSha's
+bandolier; SpnSha's hood is one collar instead of loose shards. SpnS15's cuirass and slops
+are not shells (unchanged). In game (`before/`, `after/`, `sheet_before_after.png`: FrnBuk,
+SpnSha, IncSha, MaySha, SpnS15, DelKri, IroLut, blank field, white, HUD off, `ACR_LOD=0`)
+the change is small at this distance: the edges are slightly cleaner, but **the big teeth
+that remain** (the white zig-zag under FrnBuk's red cape and at its hem, the white spikes at
+the back of SpnSha's cappa) look the same before and after, so they are not the shell cut
+(next: render those meshes alone; the FrnBuk ones may be the fringe/cape, the SpnSha ones
+the habit through the cappa). `model_layers --steps 8` (poking / crossing, before → after):
+delkri 332 / 224 → 396 / 229, frnbuk 247 / 273 → 315 / 305, incsha 156 / 61 → 217 / 106,
+irolut 121 / 59 → 106 / 71, maysha 67 / 26 → 62 / 19, spns15 226 / 408 → 234 / 421,
+spnsha 77 / 216 → 111 / 202: more poking on most, probably the hem (now pushed along the
+shell's normals, not put back onto the nearest skin) and the 0.5 isoline lying half a
+triangle outside the old face border; not yet checked pair by pair. Only MaySha (better on
+both counts) was copied to the showcase.
+
 engm18, 24 frames × 19 clips (crossing vertices / worst):
 
 | pair | before | after |
