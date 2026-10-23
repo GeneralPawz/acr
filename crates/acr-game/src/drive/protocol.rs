@@ -221,6 +221,8 @@ pub enum Request {
     Spawn(Value),
     /// A scripted hit (`drive::bench::hit`).
     Hit(Value),
+    /// A scripted round striking the ground or water, hitting no one (`drive::bench::impact`).
+    Impact(Value),
     /// `count` screenshots, one every `every` frames, into `dir` as `<prefix>NNN.png`.
     Record {
         dir: String,
@@ -524,6 +526,7 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
         "shadows" => Request::Shadows(v.get("on").and_then(Value::as_bool)),
         "spawn" => Request::Spawn(v.clone()),
         "hit" => Request::Hit(v.clone()),
+        "impact" => Request::Impact(v.clone()),
         "record" => Request::Record {
             dir: string(&v, "dir").ok_or("record: missing \"dir\"")?,
             prefix: string(&v, "prefix").unwrap_or_else(|| "frame".into()),
@@ -614,6 +617,7 @@ mod tests {
         let (_, r) = parse(r#"{"cmd": "record", "dir": "out", "count": 3, "every": 4}"#).unwrap();
         assert_eq!(r, Request::Record { dir: "out".into(), prefix: "frame".into(), count: 3, every: 4, crop: None });
         assert!(matches!(parse(r#"{"cmd": "hit", "unit": 5}"#).unwrap().1, Request::Hit(_)));
+        assert!(matches!(parse(r#"{"cmd": "impact", "at": [900, 900]}"#).unwrap().1, Request::Impact(_)));
         assert!(parse(r#"{"cmd": "camera", "x": 1}"#).is_err());
     }
 

@@ -225,6 +225,31 @@ pub fn hit(game: &mut Game, v: &Value) -> Result<Value, String> {
     }))
 }
 
+/// `{"cmd":"impact","at":[x,y],"dir":[dx,dy],"speed":px_per_tick,"cause":"cannonball"}`: a
+/// round striking the ground (or water) at world pixel `at` and hitting no one, as a missed
+/// shot is recorded (`World::impacts`, render only): craters, furrows and earth fountains can
+/// be filmed without casualties. `dir` is the flight direction (default east), `speed` the
+/// ball's speed in px per tick (default 12).
+pub fn impact(game: &mut Game, v: &Value) -> Result<Value, String> {
+    let Mode::InGame(g) = &mut game.mode else { return Err("no game".into()) };
+    let at = match v.get("at").and_then(Value::as_array).map(Vec::as_slice) {
+        Some([x, y]) => (x.as_f64().unwrap_or(0.0) as i32, y.as_f64().unwrap_or(0.0) as i32),
+        _ => return Err("impact: missing \"at\": [x, y] (world pixels)".into()),
+    };
+    let (dx, dy) = match v.get("dir").and_then(Value::as_array).map(Vec::as_slice) {
+        Some([x, y]) => (x.as_f64().unwrap_or(0.0), y.as_f64().unwrap_or(0.0)),
+        _ => (1.0, 0.0),
+    };
+    let len = (dx * dx + dy * dy).sqrt().max(1e-6);
+    // `flight_dir`: the velocity in 1/64 px per tick.
+    let speed = v.get("speed").and_then(Value::as_f64).unwrap_or(12.0) * 64.0;
+    let dir = ((dx / len * speed).round() as i32, (dy / len * speed).round() as i32);
+    let (cause, _) = cause(v.get("cause").and_then(Value::as_str).unwrap_or("cannonball"))?;
+    let world = g.world_mut().ok_or("no world yet")?;
+    acr_sim::combat::record_impact(world, at, dir, cause);
+    Ok(json!({ "tick": world.tick.0, "at": [at.0, at.1], "dir": [dir.0, dir.1], "cause": format!("{cause:?}") }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

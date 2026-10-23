@@ -24,9 +24,27 @@ struct Walker {
     left: bool,
 }
 
+/// A step that left a print, for the particles (mud flicks, dust).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Footfall {
+    pub gait: Gait,
+    pub at: [f32; 2],
+    /// Heading (unit).
+    pub along: [f32; 2],
+    /// Distance since the last print per tick (world px per tick).
+    pub speed: f32,
+    pub unit: u32,
+    pub tick: u64,
+}
+
+/// Footfalls kept at most between two frames.
+const MAX_FOOTFALLS: usize = 1024;
+
 #[derive(Default)]
 pub struct GroundMarks {
     pub state: GroundState,
+    /// This frame's steps, for the particles (taken by the 3D view).
+    pub footfalls: Vec<Footfall>,
     walkers: HashMap<u32, Walker>,
     bodies: HashSet<u32>,
     last_impact: u64,
@@ -168,6 +186,9 @@ impl GroundMarks {
                 w.since = 0.0;
                 w.left = !w.left;
                 let along = [dx / d, dy / d];
+                if matches!(gait, Gait::Boots | Gait::Hooves) && self.footfalls.len() < MAX_FOOTFALLS {
+                    self.footfalls.push(Footfall { gait, at, along, speed: d, unit: u.id.0, tick: world.tick.0 });
+                }
                 for s in prints(gait, at, w.last, along, w.left) {
                     self.state.stamp(&s);
                 }

@@ -254,6 +254,39 @@ camera-facing quads with a depth fade.
   smoke (smoke stays the existing sprite effect);
 - later: water splashes for balls on water.
 
+**Built (m2-ground3), first version (option A):**
+- `acr_render::particles`: a fixed pool of 4096 (`MAX_PARTICLES`, allocated once), swap
+  removal, gravity and drag per kind, a ground hit with one bounce for clods, then a rest
+  (clods 6–18 s, mud 2.5–7.5 s, grass 3–9 s), shrinking away in the last second. Kinds:
+  `Clod`, `Mud`, `Dust`, `Grass`, `Spray`, `Droplet`, `Splinter` (not emitted yet). The
+  `Burst`/`ParticleSink` interface of docs/water.md, refined with size, colour, scatter and
+  a hash seed. Clods and mud that land leave a small print in the ground state
+  (`Particles::take_landings`, at most 256 per frame).
+- Drawing (`particles.wgsl`): one instance buffer (24 bytes per particle), six vertices
+  per instance, camera-facing quads that keep their centre's depth pulled towards the
+  camera by their radius (so a clod on a slope is not cut). Hard kinds are lumpy lit
+  impostors (an outline from three sines of the seed, a bulging normal, sun diffuse, grain,
+  a glint on mud and drops) drawn first with depth writes; dust and spray are soft puffs
+  drawn after, without depth writes. Drawn after the water in the 3D pass. No shadows, no
+  depth fade against the ground.
+- Emitters (`acr-game/src/ingame/particle_view.rs`, render only, hashes of the impact or
+  footfall): a cannonball's earth fountain thrown forward along the flight (35–105 clods
+  plus fine earth, grass bits on turf, a dust puff, scaled by the speed in `flight_dir`; each
+  bounce is an impact), a shell's ring of 160 clods and dark dust, a musket ball's small puff
+  and crumbs, grapeshot pits, mud flicked back from hooves on wet ground (the mud class or
+  the ground state's mud), dust under hooves on dry ground, a column's haze (one puff for
+  about every third step on dirt, sand and field), and balls into water (see
+  docs/water.md). The soil colour comes from the class under the point
+  (`TerrainData::tile_at`); mud replaces clods on wet ground. Earth needs `ground=detailed`
+  (marks on), water `water=detailed`.
+- Cost (release, `cargo test --release -p acr-render particle_cost -- --ignored
+  --nocapture`): about 4000 live (half clods, half dust) step plus instance fill
+  ≈ 0.066 ms per frame on the Snapdragon X, well under the 0.5 ms budget. The GPU cost is not
+  measured (no timestamp queries yet).
+- Driver: `{"cmd":"impact","at":[x,y],"dir":[dx,dy],"speed":12,"cause":"cannonball"}`
+  records a round striking the ground or water that hits no one, so craters, furrows and
+  fountains can be filmed without casualties. Scene: `ACR-analysis/ground3/scripts/scene.py`.
+
 ## Phase 4: dung
 
 Horses and other animals drop dung over time. A render-side hash per (unit id, minute)
@@ -302,9 +335,11 @@ after about 20 minutes. Its cost is negligible: a few hundred instances at most.
   field's `patches`, frames and a first measurement.
 - Phase 1 finish partly built (calibration from the battle3 measurement, `dirt` set, skip
   below zoom 0.75); phase 2 first version built (state texture, stamps, shading).
+- Phase 3 first version built (m2-ground3): the particle pool, renderer and emitters, the
+  driver's `impact`.
 - Next: re-measure battle3, triplanar, a scene where the marks are not under casualties,
-  blood in the state, POM and a finer mesh near the camera, a GPU timer, then phase 3
-  (particles and the `Burst`/`ParticleSink` interface of docs/water.md) and dung.
+  blood in the state, POM and a finer mesh near the camera, a GPU timer, particle
+  shadows and splinters, then dung.
 - Earlier plan: calibrate the tint and shade against the original (a mean-colour check per zoom
   on the blank field), triplanar on steep slopes, and a skip below zoom 0.75. Then phase 2
   (the ground state texture with boot and hoof stamps and cannonball craters and furrows),

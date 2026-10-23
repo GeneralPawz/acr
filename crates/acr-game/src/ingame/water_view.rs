@@ -128,9 +128,11 @@ impl WaterView {
     }
 
     /// Notes shot that falls into the water this tick: a ring and a boil of foam where it
-    /// lands (`projectile.rs` bursts on `media::WATER` the same way).
-    pub fn shots(&mut self, world: &World, terrain: &TerrainData, seconds: f32) {
-        let Some(sea) = terrain.water() else { return };
+    /// lands (`projectile.rs` bursts on `media::WATER` the same way). Returns where new rings
+    /// started (a splash goes up there).
+    pub fn shots(&mut self, world: &World, terrain: &TerrainData, seconds: f32) -> Vec<[f32; 2]> {
+        let mut fresh = Vec::new();
+        let Some(sea) = terrain.water() else { return fresh };
         for p in world.projectiles.iter() {
             let (x, y, z) = (p.pos.0 >> 14, p.pos.1 >> 14, p.pos.2 >> 14);
             if p.vel.2 > 0 || z > SPLASH_HEIGHT + (terrain.height_at(x, y)).max(0) {
@@ -140,14 +142,23 @@ impl WaterView {
             if water::depth_units(sea, at[0], at[1]) < 1.0 {
                 continue;
             }
-            // One ring per landing: the ball may show for a tick or two at the surface.
-            let fresh = self.disturbances.rings.iter().all(|r| {
-                let d = [r.at[0] - at[0], r.at[1] - at[1]];
-                d[0] * d[0] + d[1] * d[1] > 40.0 * 40.0 || seconds - r.time > 0.6
-            });
-            if fresh {
-                self.disturbances.rings.push(Ring { at, time: seconds, strength: 1.0 });
+            if self.ring(at, seconds) {
+                fresh.push(at);
             }
         }
+        fresh
+    }
+
+    /// A ring where shot fell into the water at `at`, unless one just started there (the
+    /// ball may show for a tick or two at the surface). True when it is new.
+    pub fn ring(&mut self, at: [f32; 2], seconds: f32) -> bool {
+        let fresh = self.disturbances.rings.iter().all(|r| {
+            let d = [r.at[0] - at[0], r.at[1] - at[1]];
+            d[0] * d[0] + d[1] * d[1] > 40.0 * 40.0 || seconds - r.time > 0.6
+        });
+        if fresh {
+            self.disturbances.rings.push(Ring { at, time: seconds, strength: 1.0 });
+        }
+        fresh
     }
 }

@@ -88,6 +88,11 @@ pub struct ThreeD {
     water: Option<acr_render::water::WaterRenderer>,
     /// Ships riding the waves, their wakes, and shot falling into the water (render only).
     water_view: super::water_view::WaterView,
+    /// Earth, dust, mud and water thrown into the air (docs/ground.md phase 3).
+    particles: super::particle_view::ParticleView,
+    particle_renderer: Option<acr_render::particles::ParticleRenderer>,
+    /// Where balls fell into the water this frame (a splash each).
+    shots: Vec<[f32; 2]>,
     /// How long 3D corpses lie (ticks, `corpse_minutes`).
     corpse_ticks: u64,
     free: bool,
@@ -174,6 +179,9 @@ impl Default for ThreeD {
             water_detailed: true,
             water: None,
             water_view: Default::default(),
+            particles: Default::default(),
+            particle_renderer: None,
+            shots: Vec::new(),
             corpse_ticks: CORPSE_MINUTES * 60 * acr_sim::ORIGINAL_TICKS_PER_SECOND as u64,
             free: false,
             orbit: Orbit::ORIGINAL,
@@ -361,6 +369,7 @@ impl ThreeD {
         let renderer = self.renderer.get_or_insert_with(|| ModelRenderer::new(device, queue, format));
         self.depth.get_or_insert_with(|| DepthTarget::new(device, format));
         self.water.get_or_insert_with(|| acr_render::water::WaterRenderer::new(device, format));
+        self.particle_renderer.get_or_insert_with(|| acr_render::particles::ParticleRenderer::new(device, format));
         for (name, model) in self.parsed.drain(..) {
             if name == GORE {
                 // The pack is split into its nodes; the torn cap replaces the procedural one
@@ -479,7 +488,8 @@ impl ThreeD {
         // The water's clock (as `render` passes to the surface) for ship motion and rings.
         let water_seconds = self.started.elapsed().as_secs_f32();
         self.water_view.begin(now, water_seconds);
-        self.water_view.shots(world, terrain, water_seconds);
+        let shots = self.water_view.shots(world, terrain, water_seconds);
+        self.shots.extend(shots);
         // Corpses the simulation removed (after about a minute, as the original) stay in 3D
         // until their own lifetime ends (`corpse_minutes`), so battlefields fill and piles
         // grow; their units keep position, facing and lying pose. An animal becomes a
@@ -812,6 +822,41 @@ impl ThreeD {
         super::splatter::lay_on_ground(&mut self.pools, &ground);
     }
 
+    /// Particles of this frame (after [`Self::update`]): impacts and the footfalls of the
+    /// ground marks throw earth, mud, dust and water; landed clods mark the ground state.
+    pub fn update_particles(
+        &mut self,
+        world: &World,
+        terrain: &TerrainData,
+        marks: Option<&mut super::ground_marks::GroundMarks>,
+    ) {
+        let mut marks = marks;
+        let mut footfalls = marks.as_mut().map(|m| std::mem::take(&mut m.footfalls)).unwrap_or_default();
+        if self.models != Models::Off {
+            let water_seconds = self.started.elapsed().as_secs_f32();
+            let water_view = &mut self.water_view;
+            let mut ring = |at: [f32; 2]| water_view.ring(at, water_seconds);
+            self.particles.update(
+                world,
+                terrain,
+                marks.as_deref().map(|m| &m.state),
+                &footfalls,
+                self.ground_marks,
+                water_detailed(self.water_detailed),
+                self.frame_seconds,
+                &self.shots,
+                &mut ring,
+            );
+        }
+        self.shots.clear();
+        if let Some(m) = marks {
+            self.particles.stamp_landings(&mut m.state);
+            // Keep the list's capacity.
+            footfalls.clear();
+            m.footfalls = footfalls;
+        }
+    }
+
     /// Body physics of the hit and the dying (#278): ragdolls pose their instances.
     fn update_ragdolls(
         &mut self,
@@ -917,6 +962,9 @@ impl ThreeD {
             }
             _ => None,
         };
+        if let Some(particles) = self.particle_renderer.as_mut() {
+            particles.prepare(queue, &view3d, &mut self.particles.particles);
+        }
         renderer.render_shadows(encoder);
         let mut pass = depth.begin(device, encoder, view, size);
         if let Some(ground) = ground {
@@ -928,6 +976,9 @@ impl ThreeD {
         }
         if let Some(water) = water {
             water.render(&mut pass);
+        }
+        if let Some(particles) = &self.particle_renderer {
+            particles.render(&mut pass);
         }
         depth.reset_ground(&mut pass);
         if sprites {
@@ -1175,6 +1226,7 @@ impl super::InGame {
         self.three_d.focus = [c.x + w / (2.0 * c.scale), 2.0 * (c.y + h / (2.0 * c.scale))];
         let requests = &self.requests;
         self.three_d.update(world, terrain, &self.objects, &|p| requests.borrow_mut().push(p.to_owned()));
+        self.three_d.update_particles(world, terrain, self.ground_marks.as_mut());
     }
 }
 

@@ -281,6 +281,15 @@ impl TerrainData {
         self.water.as_ref().map(|(w, h, cells)| (*w, *h, &cells[..]))
     }
 
+    /// The original texture of the vertex nearest to world pixel `(x, y)` (vertices every
+    /// 32 px, odd columns half a row lower).
+    pub fn tile_at(&self, x: i32, y: i32) -> u8 {
+        let col = ((x + 16) >> 5).clamp(0, self.width as i32 - 1);
+        let shift = if col & 1 == 1 { 16 } else { 0 };
+        let row = ((y + 16 - shift) >> 5).clamp(0, self.height as i32 - 1);
+        self.vertices.get(row as usize * self.width + col as usize).map_or(0, |v| v[0])
+    }
+
     /// Ground height at world pixel `(x, y)`: the plane through the triangle below
     /// (`GetHeight`, 0x4D0530, ported with its integer rounding).
     pub fn height_at(&self, x: i32, y: i32) -> i32 {

@@ -35,6 +35,7 @@ mod interface;
 mod living_wounds;
 mod maul_view;
 mod panels;
+mod particle_view;
 mod piles;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod probe;

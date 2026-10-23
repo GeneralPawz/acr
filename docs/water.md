@@ -194,9 +194,8 @@ slowly. Render only, like the ragdolls.
 
 ### Splash particles: a shared interface
 
-The ground particle system (m2-ground, `docs/ground.md`) has not been pushed yet. Both
-systems should use one instanced billboard renderer with this small interface, which
-whichever lands first implements:
+Built with the ground's particles (`acr_render::particles`, docs/ground.md phase 3). The
+interface as first planned:
 
 ```rust
 /// One burst, emitted by game-state observers (render only, never read by acr-sim).
@@ -211,6 +210,13 @@ pub struct Burst {
 }
 pub trait ParticleSink { fn emit(&mut self, burst: Burst); }
 ```
+
+As built, `Burst` also carries `size`, `color`, `scatter` and a hash `seed`, and the sink
+takes `&Burst`. A ball into water (`WaterView::shots` for balls seen at the surface, or an
+impact recorded on water, one splash per ring) throws a column of spray along the flight,
+droplets that fall back and vanish on the surface, and a ring of low spray at its foot;
+`WaterView::ring` starts the ring and says whether it is new, so one ball splashes once.
+Droplets do not start rings of their own yet.
 
 The renderer uses CPU-integrated particles (gravity, drag), up to 4096, in one instanced
 draw with soft alpha. They are depth-tested against the 3D pass and lit by

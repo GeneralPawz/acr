@@ -833,6 +833,11 @@ impl Driver {
                 job.reply.insert("hit".into(), hit);
                 Ok(false)
             }
+            Request::Impact(v) => {
+                let impact = bench::impact(game, &v)?;
+                job.reply.insert("impact".into(), impact);
+                Ok(false)
+            }
             Request::Record { dir, prefix, count, every, crop } => {
                 if game.graphics.is_none() {
                     return Err("no GPU: start the driver with --drive-gpu to record".into());
