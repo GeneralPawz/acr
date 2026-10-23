@@ -10,6 +10,7 @@ with the cloth, before `bone_layer` (`line.STRAPS`).
 """
 
 from mathutils import Vector
+from mathutils.bvhtree import BVHTree
 
 from . import body as bd
 from . import registry
@@ -64,6 +65,40 @@ registry.gear("belt_r", belt_r)
 CARRY_OFFSET = 0.004  # m over the outermost surface (clothes, belts) under the strap
 
 
+def clear_folds(strap, surf, offset, k=5):
+    """Lifts a strap laid by `bd.strap` (rows of edge pairs) wherever the surface under it
+    rises between its edges or between its rows (a draped shirt's folds): `k` rays across
+    each row and half way to the next, both pairs moved out until all clear by `offset`."""
+    me = surf.data
+    tree = BVHTree.FromPolygons([v.co for v in me.vertices], [p.vertices for p in me.polygons])
+    ymid = sum(v.co.y for v in me.vertices) / max(len(me.vertices), 1)
+    V = strap.data.vertices
+    n = len(V) // 2
+    lift = [0.0] * n
+    for i in range(n):
+        a, b = V[2 * i].co.copy(), V[2 * i + 1].co.copy()
+        sign = 1.0 if (a.y + b.y) / 2 > ymid else -1.0
+        nxt = i + 1 if i + 1 < n and ((V[2 * i + 2].co.y + V[2 * i + 3].co.y) / 2 > ymid) == (sign > 0) else None
+        rows = [(a, b, (i,))]
+        if nxt is not None:
+            rows.append(((a + V[2 * nxt].co) / 2, (b + V[2 * nxt + 1].co) / 2, (i, nxt)))
+        for p0, p1, who in rows:
+            for t in range(k + 1):
+                p = p0 + (p1 - p0) * (t / k)
+                hit, _n, _i, _d = tree.ray_cast(Vector((p.x, sign * 1.0, p.z)), Vector((0.0, -sign, 0.0)))
+                if hit is None:
+                    continue
+                need = (hit.y + sign * offset - p.y) * sign
+                for j in who:
+                    lift[j] = max(lift[j], need)
+    for i, d in enumerate(lift):
+        if d > 0.0:
+            s = 1.0 if (V[2 * i].co.y + V[2 * i + 1].co.y) / 2 > ymid else -1.0
+            V[2 * i].co.y += s * d
+            V[2 * i + 1].co.y += s * d
+    strap.data.update()
+
+
 def carry(ch, obj_name, frm, to, width=0.035, key="belts", offset=CARRY_OFFSET, samples=24):
     """A carrying strap from `frm` to `to` (XZ line, front and back like `belt`) laid over the
     outermost surface: the skin, the clothes and the belts on them, `offset` off it; it takes
@@ -75,5 +110,6 @@ def carry(ch, obj_name, frm, to, width=0.035, key="belts", offset=CARRY_OFFSET, 
     surf = drape.surface([ch.flesh, *under], f"{obj_name}.surface")
     a, b = Vector((frm[0], 0.0, frm[-1])), Vector((to[0], 0.0, to[-1]))  # (x, z) or (x, y, z)
     b = bd.strap(ch.arm, obj_name, surf, a, b, width, offset, samples=samples)
+    clear_folds(b, surf, offset)
     drape.inherit_weights(b, ch, under)
     return ch.add("gear", b, key, symmetric=True)

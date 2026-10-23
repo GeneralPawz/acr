@@ -453,7 +453,7 @@ def kit(ch, s):
             bpy.data.objects.remove(e)
         # On its strap (over the right shoulder, across the chest to the left hip), seated on
         # the back and skinned to the blended back frame (`gear.seat`).
-        straps.carry(ch, f"{name}.quiver_strap", QUIVER_STRAP[0], QUIVER_STRAP[1], key="hide")
+        straps.carry(ch, f"{name}.quiver_strap", QUIVER_STRAP[0], QUIVER_STRAP[1], key="hide", samples=48)
         gear.seat(ch, q, Matrix.Translation(at) @ rot, (0.0, -1.0, 0.0))
         out["quiver"] = ch.add("gear", q, "hide")
     if "horn" in k:

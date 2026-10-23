@@ -60,7 +60,8 @@ CLOTH = {
 }
 # Drafted instead of shells (#287 drape pilot): linen and cotton shirts and tunics, wool and
 # cotton cloaks, a wool sash that shrinks onto the shirt.
-CLOTH["frn_blouse"] = CLOTH["trade_shirt"] = dict(CLOTH["shirt"], margin=0.003, bending=0.3)
+CLOTH["frn_blouse"] = dict(CLOTH["shirt"], margin=0.003, bending=0.3)
+CLOTH["trade_shirt"] = dict(CLOTH["shirt"], margin=0.003, bending=0.8)
 CLOTH["unku"] = {"thickness": 0.0020, "mass": 0.30, "tension": 15.0, "bending": 1.0, "shrink": 0.0, "margin": 0.004}
 CLOTH["frn_cape"] = CLOTH["yacolla"] = CLOTH["tilmatli"] = dict(CLOTH["coat"], margin=0.006, bending=1.5)
 CLOTH["frn_sash"] = {"thickness": 0.0025, "mass": 0.30, "tension": 15.0, "bending": 0.6, "shrink": 0.10,
@@ -659,7 +660,8 @@ def tunic(m=MEASURE, garment="tunic", key="tunic", sleeves=True, chest=24.0, wai
                            {"hem": (0, 1), "side": (1, 2), "waist": (2, 3), mid: (3, 0)},
                            {"region": "torso", "theta": theta, "dir": d, "u0": 0.0, "at": "waist", "lift": -below,
                             "gap": 2.5}, skirt=True)
-        seams.append(Seam([(base, "waist")], [(nm, "waist", True)], garment, ease=0.3))
+        # Welded shut wherever it closed (the skirts hang off the waist seam).
+        seams.append(Seam([(base, "waist")], [(nm, "waist", True)], garment, ease=0.3, close=0.08))
         seams.append(Seam([(nm, mid)], [(nm, mid, False, "R")], garment, close=0.05))
     seams.append(Seam([("skirt_back", "side")], [("skirt_front", "side")], garment, ease=0.2))
     for sm in seams:
@@ -667,29 +669,48 @@ def tunic(m=MEASURE, garment="tunic", key="tunic", sleeves=True, chest=24.0, wai
     return panels, seams
 
 
-def cloak(m=MEASURE, garment="cloak", key="cloak", drop=20.0, front=12.0, spread=10.0, knot=3.0, gap=5.0):
-    """A cloak or mantle hung from the shoulders: one panel per side (mirrored, sewn down
-    the centre back) from its hem `drop` cm below the waist up the back, over the shoulders
-    (the drape's over-the-shoulder placement) and `front` cm down the chest, with a neck
-    hole where it crosses the shoulders, `spread` cm wider than the back so it falls over
-    the upper arms; the fronts knotted at the throat (`knot` cm sewn shut), open below.
-    The buccaneer's cape, the yacolla, the tilmatli."""
-    back = drop + m["nape_to_waist"] - 14.0  # hem to the shoulder fold
-    vc = back + 16.0  # the top of the shoulder, where the neck hole is centred
-    depth = m["chest"] * 0.13 + 2.0  # from the top of the shoulder down to the front
-    vf = vc + depth + front
-    hr = m["neck"] / (2 * math.pi) + 2.5  # neck hole radius (cm)
-    w = (m["chest"] + 12.0) / 4.0 + spread
-    arc = [(hr * math.sin(math.radians(a)), vc + hr * math.cos(math.radians(a))) for a in range(30, 180, 30)]
-    pts = [(0.0, 0.0), (w, 0.0), (w + 2.0, vf), (4.0, vf), (0.0, vc + hr + knot), (0.0, vc + hr)] + arc + [(0.0, vc - hr)]
-    n = len(pts)
-    P = {"cloak": Panel("cloak", garment, key, pts,
-                        {"hem": (0, 1), "edge": (1, 2), "front_hem": (2, 3), "front": (3, 4), "knot": (4, 5),
-                         "neck": (5, n - 1), "cb": (n - 1, 0)},
-                        {"region": "torso", "theta": 180.0, "dir": -1, "u0": 0.0, "at": "waist", "lift": -drop,
-                         "gap": gap})}
-    seams = [Seam([("cloak", "cb")], [("cloak", "cb", False, "R")], garment),
-             Seam([("cloak", "knot")], [("cloak", "knot", False, "R")], garment, close=0.05)]
+def cloak(m=MEASURE, garment="cloak", key="cloak", drop=20.0, front=12.0, spread=10.0, knot=3.0, gap=2.5,
+          yoke=7.0, knot_at=None):
+    """A cloak or mantle hung from a yoke on the shoulders (drape region `cape`: u runs
+    round the neck, v = cm from the neck ring down over the shoulder hull and on down,
+    docs/clothing.md "Drape 2"). The yoke (the first `yoke` cm round the neck) is placed on
+    the shoulders and pinned while the rest drapes. Symmetric (`knot_at` None): one panel per
+    side, sewn down the centre back, `drop` cm below the waist at the back, `spread` cm longer
+    over the shoulders, `front` cm down the chest; the fronts knotted at the throat (`knot`
+    cm sewn shut), open below. `knot_at` (degrees, drape theta: -45 = the wearer's right
+    front shoulder): one panel round the neck from the knot back to it, knotted there (the
+    tilmatli). The buccaneer's cape, the yacolla, the tilmatli."""
+    back = m["nape_to_waist"] + drop + 2.0  # neck ring to the hem at the centre back
+    fr = 10.0 + front  # neck ring to the hem at the centre front
+    side = back + spread * 0.6
+    hr = m["neck"] / (2 * math.pi) + gap  # the neck ring's radius (cm)
+    one = knot_at is None
+    turn = 180.0 if one else 360.0
+    # u spans the neck ring 2.2 times over (the cloth's rest shape is its placed shape, so
+    # this only sets the mesh density round the shoulders and the hem).
+    U = math.pi * hr * turn / 180.0 * 2.2
+
+    def length(th):  # neck ring to the hem at drape theta `th`
+        c = math.cos(math.radians(th))  # 1 centre front, -1 centre back
+        return side + (fr - side) * max(c, 0.0) + (back - side) * max(-c, 0.0)
+
+    th0 = 180.0 if one else float(knot_at)
+    n = 16 if one else 32
+    u1 = 0.0 if one else 3.0  # the hem ends at the centre back seam, or at the knot's other front
+    hem = [(u, length(th0 - turn * u / U)) for u in (U - 3.0 - (U - 3.0 - u1) * k / n for k in range(n + 1))]
+    if one:
+        pts = [(0.0, 0.0), (U, 0.0), (U, knot)] + hem
+        edges = {"neck": (0, 1), "knot": (1, 2), "front": (2, 3), "hem": (3, len(pts) - 1), "cb": (len(pts) - 1, 0)}
+        seams = [Seam([("cloak", "cb")], [("cloak", "cb", False, "R")], garment),
+                 Seam([("cloak", "knot")], [("cloak", "knot", False, "R")], garment, close=0.05)]
+    else:
+        pts = [(0.0, 0.0), (U, 0.0), (U, knot)] + hem + [(0.0, knot)]
+        e = len(pts) - 1
+        edges = {"neck": (0, 1), "knot_b": (1, 2), "front_b": (2, 3), "hem": (3, e - 1), "front_a": (e - 1, e),
+                 "knot_a": (e, 0)}
+        seams = [Seam([("cloak", "knot_a", True)], [("cloak", "knot_b")], garment, close=0.05)]
+    pl = {"region": "cape", "theta": th0, "turn": turn, "span": U, "gap": gap, "pin_v": yoke}
+    P = {"cloak": Panel("cloak", garment, key, pts, edges, pl, mirror=one)}
     return P, seams
 
 
@@ -713,13 +734,13 @@ GARMENTS = {"coat": coat, "waistcoat": waistcoat, "breeches": breeches, "gaiters
             "frn_blouse": lambda m=MEASURE: tunic(m, "frn_blouse", "fshirt", chest=30.0, waist=34.0, below=14.0),
             "frn_sash": lambda m=MEASURE: band(m, "frn_sash", "fsash"),
             "frn_cape": lambda m=MEASURE: cloak(m, "frn_cape", "fcloak", drop=18.0, front=10.0, spread=9.0),
-            "trade_shirt": lambda m=MEASURE: tunic(m, "trade_shirt", "shirt", chest=22.0, waist=26.0, below=28.0),
+            "trade_shirt": lambda m=MEASURE: tunic(m, "trade_shirt", "shirt", chest=12.0, waist=12.0, below=28.0, flare=2.0),
             "unku": lambda m=MEASURE: tunic(m, "unku", "unku_plain", sleeves=False, chest=26.0, waist=30.0,
                                             below=m["waist_to_knee"] - 4.0, flare=2.0),
             "yacolla": lambda m=MEASURE: cloak(m, "yacolla", "yacolla", drop=m["waist_to_knee"] - 18.0, front=14.0,
                                                spread=12.0),
             "tilmatli": lambda m=MEASURE: cloak(m, "tilmatli", "tilmatli", drop=m["waist_to_knee"] - 22.0, front=16.0,
-                                                spread=10.0)}
+                                                spread=10.0, knot_at=-45.0)}
 
 
 def uniform(m=MEASURE, garments=ORDER, patterns=None):

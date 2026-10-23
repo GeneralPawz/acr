@@ -32,7 +32,7 @@ MD = {
 WEAPONS = {0: 'MECH', 1: 'MEDIK'}
 ACTIVE = {'ATTACK1': 1}
 
-SPEC = inca.spec(MD, weapons=WEAPONS, active=ACTIVE, unku="tocapu", yacolla=True, head="llautu", plumes=7, plume_len=0.24, spools=True, hand_r="champi",
+SPEC = inca.spec(MD, weapons=WEAPONS, active=ACTIVE, unku="tocapu", yacolla=True, drape=True, head="llautu", plumes=7, plume_len=0.24, spools=True, hand_r="champi",
                  melee="club", palette={"unku_tocapu": (0.90, 0.88, 0.80), "yacolla": (0.07, 0.06, 0.06),
                                          "inca_plumes": (0.95, 0.75, 0.10)})
 

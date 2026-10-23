@@ -508,6 +508,48 @@ handle them, see below), the stock under the waistcoat and coat collar in the de
 (the neck is excluded from the push-in), the skin and waistcoat under the coat at the
 armpits in raised-arm and crawl frames (DEATH, CRAWL2, ATTACK1).
 
+**Drape 2: cloaks from a pinned yoke, a fitted trade shirt** (#287; everything in
+`ACR-analysis/drape2/`: `sheet_before_after.png`, `before/` (the pilot's showcase shots),
+`after/`, `glb/`, `layers_*.txt`, `tools/`). Changes:
+- **Cloaks** (`garments.cloak`) are placed by their own drape region `cape`: u runs round
+  the neck ring (`theta`, `turn`, `span`), v is the distance from the neck ring along the
+  cloak's hanging line, `Body.cape`: per 3° of azimuth the upper convex hull of the body
+  (torso, the neck below the ring, the shoulder caps, the thighs) seen along the ray from the
+  neck axis, offset by `gap`, then straight down from its outermost point. The cloth's rest
+  shape is its placed shape, so the panel only sets the domain (hem lengths per azimuth:
+  front, side, back) and the mesh density. The **yoke** (`place["pin_v"]`, the first 7 cm
+  from the neck ring, the knot included) is pinned through sewing and settling. The
+  tilmatli is one piece round the neck knotted on the right shoulder (`knot_at=-45`); the
+  yacolla and the buccaneer's cape are two halves sewn down the centre back, knotted at the
+  throat. Weights (`drape.cape_weights`): from the skin or layer under it, the limb bones
+  taken out (half the arm share kept on the shoulder top), below the waist blended into
+  the skirt bones (with the runtime `_cloth` amount of a coat skirt).
+- **Trade shirt**: 12 cm ease at chest and waist (was 22 / 26), bending 0.8; the tunic's
+  waist seam welds up to 8 cm (`close`). The quiver strap is laid with 48 samples and
+  `straps.clear_folds` lifts each row until rays across its width and half way to the next
+  row clear the surface by the offset.
+
+`model_layers --steps 8`, poking / crossing, showcase → drape 2: incsha 225 / 73 → 81 / 219
+(the crossings mostly the yacolla's free part against the unku in stride), maysha 53 / 15 →
+67 / 136, frnbuk 299 / 296 → 539 / 558, delkri 355 / 211 → 260 / 187.
+
+In game (blank field, ACR_LOD=0; the exe used drew the textured ground, not white):
+- **The cloaks stay on**: all three hang from the shoulders, none slides off.
+- **IncSha's yacolla** reads right: a black mantle down the back to the knees, open in
+  front over the unku, walks and lies with the body. Left: small white patches of the
+  unku on the shoulder tops. **On** (`incsha.py` `drape=True`, unku and yacolla draped).
+- **MaySha's tilmatli** is on the shoulders and knotted, but crumpled and shows small dark
+  holes (the hipcloth/skin poking through the folds): **off**, the shell stays.
+- **FrnBuk's cape** sits on the shoulders but is ragged, with holes and the blouse through
+  it: **off**.
+- **DelKri's shirt** is slimmer and the hem teeth are gone, but the quiver strap still shows
+  patches at the back and the shoulder seams show wisps: not clearly better, **off**.
+
+Next: more mesh density in the cape region (`span` gives the round-the-neck resolution;
+the hanging part is coarse at the hem), a larger `gap` / `margin` where a cloak lies on a
+draped layer, and self-collision for the tilmatli's folds. Conversion list for the other
+families: not yet (only one cloak passes).
+
 ## Pattern format
 
 ```python

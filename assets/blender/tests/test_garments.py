@@ -159,9 +159,15 @@ class DrapePilot(Period17):
         self.assertIn("sleeve_top", shirt)
         for g in ("frn_cape", "yacolla", "tilmatli"):
             cl, seams = self.uni[g]
-            # Over the shoulders and down the front, with a neck hole and a knot.
-            self.assertGreater(cl["cloak"].bounds()[3], m["nape_to_waist"] + 30.0)
-            self.assertEqual({s.b[0][3] for s in seams}, {"R"})
+            # Hung from a pinned yoke round the neck, down past the waist at the back, knotted.
+            self.assertGreater(cl["cloak"].bounds()[3], m["nape_to_waist"] + 15.0)
+            self.assertEqual(cl["cloak"].place["region"], "cape")
+            self.assertGreater(cl["cloak"].place["pin_v"], 0.0)
+            self.assertTrue(any(s.close for s in seams))
+        # Symmetric cloaks: sewn down the centre back; the tilmatli: one piece knotted on the
+        # right shoulder.
+        self.assertEqual({s.b[0][3] for s in self.uni["yacolla"][1]}, {"R"})
+        self.assertFalse(self.uni["tilmatli"][0]["cloak"].mirror)
         sash, _ = self.uni["frn_sash"]
         self.assertGreater(sash["band"].bounds()[2] - sash["band"].bounds()[0], m["waist"])
         self.assertEqual(gm.keyed(gm.GARMENTS["unku"], "unku_tocapu")()[0]["coat_front"].key, "unku_tocapu")

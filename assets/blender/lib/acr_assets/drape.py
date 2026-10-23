@@ -154,6 +154,7 @@ class Body:
         self.top_z = np.array([float(top[np.abs(np.abs(top[:, 0]) - x) < 0.015][:, 2].max())
                                if np.any(np.abs(np.abs(top[:, 0]) - x) < 0.015) else self.fold_z for x in self.top_x])
         self.top_z = np.maximum(self.top_z, self.fold_z)
+        self._capes, self._cpts, self._cy = {}, None, 0.0
         self.land = {"waist": self.waist_z, "knee": self.knee_z, "ankle": self.ankle_z, "wrist": None,
                      "collar": self.neck_z + 0.035, "stock": self.neck_z + 0.03}
         # Torso ellipses per height (2 cm steps): centre y, half widths.
@@ -174,6 +175,65 @@ class Body:
             per = math.pi * (3 * (a0 + b0) - math.sqrt((3 * a0 + b0) * (a0 + 3 * b0)))
             f = _girth([tuple(q[:2]) for q in sel]) / 100.0 / per
             self.ell[k] = (cy, a0 * f, b0 * f)
+
+    def cape(self, th, gap):
+        """The cloak's hanging line at drape theta `th` (degrees), `gap` m off the skin: the
+        upper convex hull of the body (torso, neck below the ring, shoulder caps, thighs)
+        seen along the ray from the neck axis, from the neck ring over the shoulder and down,
+        then straight down from its outermost point. Returns (s, h, z): arc length from the
+        neck ring, distance from the neck axis, height (m)."""
+        key = (int(round(th)) % 360, round(gap, 4))
+        if key in self._capes:
+            return self._capes[key]
+        if self._cpts is None:
+            zc = self.neck_z + 0.02
+            arms = ("upperarm_l", "upperarm_r")
+            keep = np.isin(self.home, TORSO + ("neck", "thigh_l", "thigh_r") + arms) & (self.V[:, 2] < zc)
+            keep &= ~(np.isin(self.home, arms) & (self.V[:, 2] < float(self.seg["upperarm_l"][0][2]) - 0.06))
+            self._cpts = self.V[keep]
+            self._cy = self.ellipse(self.neck_z)[0]
+        t = math.radians(key[0])
+        d = np.array((math.sin(t), -math.cos(t)))
+        rel = self._cpts[:, :2] - np.array((0.0, self._cy))
+        h = rel @ d
+        lat = np.abs(rel @ np.array((-d[1], d[0])))
+        sel = (h > 0.0) & (lat < np.maximum(0.015, h * 0.12))
+        pts = sorted(zip(h[sel].tolist(), self._cpts[sel, 2].tolist()))
+        hull = []
+        for p in pts:  # upper hull, left to right
+            while len(hull) >= 2 and ((hull[-1][0] - hull[-2][0]) * (p[1] - hull[-2][1])
+                                      - (hull[-1][1] - hull[-2][1]) * (p[0] - hull[-2][0])) >= 0:
+                hull.pop()
+            hull.append(p)
+        top = max(range(len(hull)), key=lambda i: hull[i][1])
+        hull = hull[top:]
+        hull.append((hull[-1][0], 0.05))
+        H = np.array(hull)
+        seg = np.diff(H, axis=0)
+        seg /= np.maximum(np.linalg.norm(seg, axis=1)[:, None], 1e-9)
+        nrm = np.stack([-seg[:, 1], seg[:, 0]], axis=1)  # up and out
+        vn = np.vstack([nrm[:1], nrm[:-1] + nrm[1:], nrm[-1:]])
+        vn /= np.maximum(np.linalg.norm(vn, axis=1)[:, None], 1e-9)
+        H = H + vn * gap
+        sl = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(H, axis=0), axis=1))])
+        self._capes[key] = (sl, H[:, 0], H[:, 1])
+        return self._capes[key]
+
+    def cape_at(self, th, s, gap, step=3.0):
+        """Point (x, y, z) of the cloak's hanging surface at theta `th`, `s` m from the neck
+        ring (profiles every `step` degrees, blended)."""
+        k0 = math.floor(th / step) * step
+        f = (th - k0) / step
+        out = np.zeros(3)
+        for k, w in ((k0, 1.0 - f), (k0 + step, f)):
+            if w <= 0.0:
+                continue
+            sl, h, z = self.cape(k, gap)
+            hh = float(np.interp(s, sl, h))
+            zz = float(np.interp(s, sl, z)) - max(0.0, s - sl[-1])
+            t = math.radians(k)
+            out += w * np.array((hh * math.sin(t), self._cy - hh * math.cos(t), zz))
+        return out
 
     def ellipse(self, z):
         k = min(max(int(round(z / 0.02)), min(self.ell)), max(self.ell))
@@ -299,6 +359,17 @@ def place(body, panel, uv):
     sgn = pl.get("dir", 1)
     u0 = pl.get("u0", 0.0)
     out, axis = [], []
+    if reg == "cape":
+        # A cloak from its yoke (docs/clothing.md "Drape 2"): u round the neck ring from
+        # `theta` turning `turn` degrees over `span` cm (towards the wearer's left), v = cm
+        # from the neck ring down the hanging line (`Body.cape`).
+        th0, turn, span = pl.get("theta", 180.0), pl.get("turn", 180.0), pl["span"]
+        for u, v in uv:
+            th = th0 - turn * min(max(u / span, 0.0), 1.0)
+            p = body.cape_at(th, v / 100.0, gap)
+            out.append(tuple(p))
+            axis.append((0.0, body._cy, float(p[2]) - 0.05))
+        return out, axis
     if reg in ("torso", "neck"):
         z0 = body.land[pl["at"]]
         for u, v in uv:
@@ -674,7 +745,33 @@ def _follow_thigh(w, co, t, P=""):
     return out
 
 
-def finish(obj, ch, skirt, weights=None, under=()):
+ARM_BONES = ("upperarm", "forearm", "hand", "index", "middle", "ring", "pinky", "thumb", "thigh", "shin", "foot")
+
+
+def cape_weights(obj, ch, body, under=()):
+    """A cloak's weights (docs/clothing.md "Drape 2"): the yoke on the shoulders from the
+    skin or layer under it, the free part from the trunk only (the arms swing under it, no
+    limb bone drags it), below the waist blended into the skirt bones like a coat's skirts.
+    Returns (weights, cloth amounts)."""
+    P = ch.prefix
+    ws = transfer_weights(obj, ch.flesh, ch.arm, under=under)
+    out, cl = [], []
+    for w, v in zip(ws, obj.data.vertices):
+        z = v.co.z
+        a = min(max((z - (body.fold_z - 0.04)) / 0.06, 0.0), 1.0) * 0.5  # arm share on the shoulder top
+        w = {b: x * (a if b[len(P):].startswith(ARM_BONES) else 1.0) for b, x in w.items()}
+        tot = sum(w.values())
+        w = {b: x / tot for b, x in w.items()} if tot > 1e-6 else {P + "spine2": 1.0}
+        sk, t = skirt_weights(v.co, P)
+        f = min(max((rig.SKIRT_TOP + 0.04 - z) / 0.12, 0.0), 1.0)
+        if f > 0.0:
+            w = {b: w.get(b, 0.0) * (1.0 - f) + sk.get(b, 0.0) * f for b in set(w) | set(sk)}
+        out.append({b: x for b, x in w.items() if x > 0.01})
+        cl.append(t * f)
+    return out, cl
+
+
+def finish(obj, ch, skirt, weights=None, under=(), cloth=None):
     """Weights, `_cloth`, homes and parts, split at the part borders, bound to the rig.
     `weights`: given per vertex ({bone: weight}) instead of transferred from the skin;
     `under`: inner layers to take the weights from where they are nearer than the skin."""
@@ -683,7 +780,7 @@ def finish(obj, ch, skirt, weights=None, under=()):
     if pin:
         obj.vertex_groups.remove(pin)
     if weights is not None:
-        ws, cl = weights, [0.0] * len(weights)
+        ws, cl = weights, list(cloth) if cloth is not None else [0.0] * len(weights)
     elif skirt:
         ws, cl = zip(*(skirt_weights(v.co, P) for v in obj.data.vertices))
         ws = [_follow_thigh(w, v.co, t, P) for w, v, t in zip(ws, obj.data.vertices, cl)]
@@ -750,6 +847,9 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=()):
             if isinstance(key, tuple) and pc.panel.place.get("pin"):
                 e = pc.edge(pc.panel.place["pin"])
                 pins += [i for i in e[len(e) // 4:len(e) - len(e) // 4] if i not in seam_v]
+            if isinstance(key, tuple) and pc.panel.place.get("pin_v"):
+                # A cloak's yoke: everything within `pin_v` cm of the neck ring.
+                pins += [pc.base + i for i, (_u, v) in enumerate(pc.uv) if v <= pc.panel.place["pin_v"]]
         if pins:
             obj.vertex_groups.new(name="acr_pin").add(pins, 1.0, "REPLACE")
         fa = me.attributes.new("panel", "INT", "FACE")
@@ -797,7 +897,11 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=()):
             part.name = part.data.name = f"{ch.name}.{label}"
             if label in HEM:
                 hem(part, HEM[label])
-            finish(part, ch, skirt, under=under)
+            if any(panels[names[i]].place["region"] == "cape" for i in idx):
+                cw, ccl = cape_weights(part, ch, body, under=under)
+                finish(part, ch, skirt, weights=cw, under=under, cloth=ccl)
+            else:
+                finish(part, ch, skirt, under=under)
             ch.add("clothes", part, key, symmetric=True)
             made[part.name] = key
             if not skirt:
