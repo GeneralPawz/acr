@@ -281,6 +281,7 @@ impl Game {
         }
         g.images.prepare(&g.gpu.device, &g.gpu.queue, g.gpu.size(), &draws);
         let mut encoder = g.gpu.device.create_command_encoder(&Default::default());
+        acr_render::gpu_timer::mark_encoder(&mut encoder, "start");
         let mut load = wgpu::LoadOp::Clear(wgpu::Color::BLACK);
         let mut fog = None;
         if let Mode::InGame(game) = &mut self.mode
@@ -315,6 +316,8 @@ impl Game {
                 None => g.images.render(&mut pass),
             }
         }
+        acr_render::gpu_timer::mark_encoder(&mut encoder, "interface");
+        acr_render::gpu_timer::resolve(&mut encoder);
         g.gpu.queue.submit([encoder.finish()]);
     }
 

@@ -1219,13 +1219,17 @@ impl DepthTarget {
     }
 
     /// Opens the 3D pass over `color` (kept) with a cleared depth and stencil buffer of the
-    /// output size.
+    /// output size. `resume` instead keeps the depth and stencil of the previous pass, which
+    /// then must have been opened with `keep` (the GPU timer splits the pass so).
+    #[allow(clippy::too_many_arguments)]
     pub fn begin<'e>(
         &mut self,
         device: &wgpu::Device,
         encoder: &'e mut wgpu::CommandEncoder,
         color: &wgpu::TextureView,
         size: [f32; 2],
+        keep: bool,
+        resume: bool,
     ) -> wgpu::RenderPass<'e> {
         let size = ((size[0] as u32).max(1), (size[1] as u32).max(1));
         if self.size != size || self.view.is_none() {
@@ -1253,8 +1257,14 @@ impl DepthTarget {
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: depth,
-                depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Discard }),
-                stencil_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(0), store: wgpu::StoreOp::Discard }),
+                depth_ops: Some(wgpu::Operations {
+                    load: if resume { wgpu::LoadOp::Load } else { wgpu::LoadOp::Clear(1.0) },
+                    store: if keep { wgpu::StoreOp::Store } else { wgpu::StoreOp::Discard },
+                }),
+                stencil_ops: Some(wgpu::Operations {
+                    load: if resume { wgpu::LoadOp::Load } else { wgpu::LoadOp::Clear(0) },
+                    store: if keep { wgpu::StoreOp::Store } else { wgpu::StoreOp::Discard },
+                }),
             }),
             timestamp_writes: None,
             occlusion_query_set: None,

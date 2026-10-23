@@ -72,6 +72,16 @@ pub struct ParticleView {
     tick: u64,
 }
 
+/// The brown-grey of a cloud that hangs after a strike: the dust, greyer and darker.
+fn haze(soil: Soil) -> [u8; 3] {
+    soil.dust().map(|c| ((u16::from(c) + 120) * 2 / 5) as u8)
+}
+
+/// Torn sods on dry turf, else `earth`.
+fn sod_or(soil: Soil, earth: ParticleKind) -> ParticleKind {
+    if soil.turf && !soil.wet { ParticleKind::Sod } else { earth }
+}
+
 /// A burst with the common defaults.
 fn burst(at: [f32; 3], kind: ParticleKind, seed: u32) -> Burst {
     Burst {
@@ -155,35 +165,56 @@ pub fn impact(
     let earth = if soil.wet { ParticleKind::Mud } else { ParticleKind::Clod };
     match cause {
         DeathCause::Cannonball => {
-            // The fountain is thrown forward along the flight, sized by the ball's energy.
+            // A 6-12 pdr ball grazing turf throws a sheet of earth 2-4 m up and forward: a fan
+            // of mid-size clods, torn sods, crumbs, a quick dust burst and a cloud that hangs.
+            let s = e.sqrt();
+            let [dx, dy] = dir;
+            for (k, yaw) in [-0.55f32, -0.27, 0.0, 0.27, 0.55].into_iter().enumerate() {
+                let (sy, cy) = yaw.sin_cos();
+                let h = [dx * cy - dy * sy, dx * sy + dy * cy];
+                // The sides of the fan fly lower and shorter than its middle.
+                let side = 1.0 - yaw.abs() * 0.5;
+                sink.emit(&Burst {
+                    dir: [h[0] * 0.8, h[1] * 0.8, side],
+                    spread: 0.2,
+                    speed: [160.0 * s * side, 320.0 * s * side],
+                    count: (8.0 + 10.0 * e) as u16,
+                    life: [2.5, 4.5],
+                    size: [1.6, 3.4],
+                    color: soil.color,
+                    scatter: 7.0,
+                    ..burst(at, earth, seed ^ (k as u32).wrapping_mul(0x2545_f491))
+                });
+            }
+            // Torn sods (20-40 cm) on turf, big lumps elsewhere.
             sink.emit(&Burst {
-                dir: fwd(0.7),
-                spread: 0.5,
-                speed: [110.0 * e.sqrt(), 300.0 * e.sqrt()],
-                count: (35.0 + 35.0 * e) as u16,
-                life: [2.0, 4.0],
-                size: [1.3, 5.0],
+                dir: fwd(0.9),
+                spread: 0.4,
+                speed: [120.0 * s, 250.0 * s],
+                count: (3.0 + 4.0 * e) as u16,
+                life: [3.0, 5.0],
+                size: [3.2, 6.0],
                 color: soil.color,
                 scatter: 6.0,
-                ..burst(at, earth, seed)
+                ..burst(at, sod_or(soil, earth), seed ^ 0x50d)
             });
-            // Fine earth higher up and back.
+            // Crumbs, higher up.
             sink.emit(&Burst {
-                dir: fwd(0.25),
-                spread: 0.35,
-                speed: [160.0 * e.sqrt(), 360.0 * e.sqrt()],
-                count: (12.0 * e) as u16 + 4,
+                dir: fwd(0.35),
+                spread: 0.4,
+                speed: [180.0 * s, 360.0 * s],
+                count: (14.0 * e) as u16 + 4,
                 life: [2.0, 4.0],
-                size: [0.6, 1.4],
+                size: [0.6, 1.3],
                 color: soil.color,
-                scatter: 4.0,
+                scatter: 5.0,
                 ..burst(at, earth, seed ^ 0x77)
             });
             if soil.turf {
                 sink.emit(&Burst {
                     dir: fwd(0.6),
                     spread: 0.7,
-                    speed: [80.0, 220.0 * e.sqrt()],
+                    speed: [80.0, 220.0 * s],
                     count: (14.0 * e) as u16 + 2,
                     life: [2.5, 4.0],
                     size: [1.6, 2.6],
@@ -193,26 +224,39 @@ pub fn impact(
                 });
             }
             let wet = if soil.wet { 0.5 } else { 1.0 };
+            // The burst of dust thrown with the sheet.
             sink.emit(&Burst {
-                dir: fwd(0.5),
-                spread: 0.9,
-                speed: [25.0, 80.0 * e.sqrt()],
-                count: ((6.0 + 6.0 * e) * wet) as u16,
-                life: [2.5, 4.5],
-                size: [9.0, 18.0],
+                dir: fwd(0.8),
+                spread: 0.6,
+                speed: [60.0, 170.0 * s],
+                count: ((8.0 + 6.0 * e) * wet) as u16,
+                life: [1.8, 3.2],
+                size: [8.0, 15.0],
                 color: soil.dust(),
-                scatter: 10.0,
+                scatter: 8.0,
                 ..burst([at[0], at[1], at[2] + 6.0], ParticleKind::Dust, seed ^ 0x1234)
+            });
+            // A short brown-grey cloud that hangs over the strike.
+            sink.emit(&Burst {
+                dir: fwd(0.4),
+                spread: 1.1,
+                speed: [10.0, 45.0],
+                count: ((4.0 + 3.0 * e) * wet) as u16,
+                life: [5.0, 8.0],
+                size: [14.0, 24.0],
+                color: haze(soil),
+                scatter: 16.0,
+                ..burst([at[0], at[1], at[2] + 10.0], ParticleKind::Dust, seed ^ 0x4321)
             });
         }
         DeathCause::Explosion => {
-            // A ring of earth: a wide cone up, the heavy clods low and far.
+            // A ring of earth: a wide cone up, the heavy clods low and far, sods among them.
             sink.emit(&Burst {
                 spread: 1.25,
                 speed: [140.0, 360.0],
                 count: 130,
                 life: [2.0, 4.0],
-                size: [1.0, 5.0],
+                size: [1.0, 4.0],
                 color: soil.color,
                 scatter: 14.0,
                 ..burst(at, earth, seed)
@@ -228,14 +272,48 @@ pub fn impact(
                 ..burst(at, earth, seed ^ 0x77)
             });
             sink.emit(&Burst {
-                spread: 1.45,
-                speed: [50.0, 150.0],
+                spread: 1.0,
+                speed: [150.0, 300.0],
+                count: 10,
+                life: [3.0, 5.0],
+                size: [3.0, 6.0],
+                color: soil.color,
+                scatter: 12.0,
+                ..burst(at, sod_or(soil, earth), seed ^ 0x50d)
+            });
+            let dark = soil.dust().map(|c| (u16::from(c) * 3 / 10 + 8) as u8);
+            // The dark column of earth and smoke straight up from the burst.
+            sink.emit(&Burst {
+                spread: 0.16,
+                speed: [140.0, 400.0],
                 count: 26,
-                life: [3.0, 5.5],
-                size: [14.0, 30.0],
-                color: soil.dust().map(|c| (u16::from(c) * 3 / 4) as u8),
-                scatter: 20.0,
+                life: [3.0, 5.0],
+                size: [9.0, 18.0],
+                color: dark,
+                scatter: 6.0,
                 ..burst([at[0], at[1], at[2] + 8.0], ParticleKind::Dust, seed ^ 0x1234)
+            });
+            // The ring rolling out along the ground.
+            sink.emit(&Burst {
+                spread: 1.5,
+                speed: [110.0, 220.0],
+                count: 24,
+                life: [2.5, 4.5],
+                size: [12.0, 22.0],
+                color: soil.dust().map(|c| (u16::from(c) * 3 / 4) as u8),
+                scatter: 12.0,
+                ..burst([at[0], at[1], at[2] + 5.0], ParticleKind::Dust, seed ^ 0x2468)
+            });
+            // What hangs after it.
+            sink.emit(&Burst {
+                spread: 1.2,
+                speed: [10.0, 40.0],
+                count: 8,
+                life: [6.0, 9.0],
+                size: [20.0, 32.0],
+                color: haze(soil),
+                scatter: 26.0,
+                ..burst([at[0], at[1], at[2] + 14.0], ParticleKind::Dust, seed ^ 0x4321)
             });
         }
         DeathCause::Grapeshot => {
@@ -480,6 +558,7 @@ mod tests {
         assert!(count(&fast, ParticleKind::Clod) > count(&slow, ParticleKind::Clod));
         assert!(count(&fast, ParticleKind::Grass) > 0 && count(&fast, ParticleKind::Dust) > 0);
         assert!(fast.0[0].dir[0] > 0.5);
+        assert!(count(&fast, ParticleKind::Sod) > 0, "turf tears sods");
         let mut mud = Record::default();
         impact(&mut mud, DeathCause::Cannonball, [0.0; 3], [1.0, 0.0], 1.0, Some(Soil::of_class(3, false)), 1);
         assert!(count(&mud, ParticleKind::Mud) > 0 && count(&mud, ParticleKind::Clod) == 0);

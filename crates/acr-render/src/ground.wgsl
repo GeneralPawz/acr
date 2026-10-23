@@ -252,8 +252,11 @@ fn fs_detail(in: DetailOut) -> @location(0) vec4<f32> {
         colour = mix(colour, vec3<f32>(l) * vec3<f32>(1.15, 0.95, 0.7), 0.6 * st.r) * (1.0 - 0.3 * st.r);
         // Churned mud: dark and brown.
         colour = mix(colour, vec3<f32>(l) * vec3<f32>(1.1, 0.85, 0.6) * 0.45, 0.7 * st.g);
+        // Dug ground (holes and their thrown rims) shows bare soil: brown, no grass.
+        let dug = clamp(abs(disp) * 5.0, 0.0, 0.85);
+        colour = mix(colour, vec3<f32>(l) * vec3<f32>(1.2, 0.9, 0.6) * 0.7, dug);
         // Holes are darker inside (soil in shade, moister).
-        colour = colour * (1.0 - clamp(-disp * 2.0, 0.0, 0.3));
+        colour = colour * (1.0 - clamp(-disp * 2.5, 0.0, 0.45));
         // Scorch: black-brown.
         colour = mix(colour, vec3<f32>(0.025, 0.02, 0.015), 0.85 * st.b);
     }

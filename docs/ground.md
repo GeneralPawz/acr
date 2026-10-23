@@ -287,6 +287,66 @@ camera-facing quads with a depth fade.
   records a round striking the ground or water that hits no one, so craters, furrows and
   fountains can be filmed without casualties. Scene: `ACR-analysis/ground3/scripts/scene.py`.
 
+**Impact realism and GPU timer (m2-ground4):**
+- **GPU timer** (`acr_render::gpu_timer`, driver `{"cmd":"gputime","frames":n}`): timestamp
+  queries at the pass boundaries, mean ms per segment over `n` offscreen frames. It needs
+  `TIMESTAMP_QUERY` and `TIMESTAMP_QUERY_INSIDE_ENCODERS` (requested where the adapter has
+  them; WebGL2 replies `"supported": false` with the reason). Timestamps inside a pass were
+  useless on the Snapdragon X (Adreno, a tiler: all work of the 3D pass landed on its first
+  mark), so while timing the 3D pass is split at each segment into passes that keep depth
+  and stencil (a little extra load/store; one pass as before when not timing). Segments:
+  `terrain` (palette pass + present), `ground` (detailed material pass), `shadow map`,
+  `terrain depth`, `models`, `ground shadows` (shadow decals), `water`, `particles`,
+  `sprites`, `interface`.
+- **Measured** (Monongahela `battle3`, 1600 × 900, Snapdragon X, DX12, about 2700 models,
+  shadows on, after 300 ticks, mean of 60 frames; `ACR-analysis/ground4/timing-*`):
+
+  | ms | z1 detailed | z1 original | z2 detailed | z2 original |
+  |---|---:|---:|---:|---:|
+  | terrain (palette + present) | 0.33 | 0.32 | 0.18 | 0.17 |
+  | ground (material pass) | 1.68 | – | 1.68 | – |
+  | water | 0.16 | 0.01 | 0.12 | 0.01 |
+  | shadow map | 93.3 | 92.8 | 90.7 | 90.9 |
+  | models | 88.8 | 86.4 | 88.0 | 87.6 |
+  | ground shadows | 0.39 | 0.39 | 0.24 | 0.24 |
+  | particles (none live) | 0.01 | 0.01 | 0.01 | 0.01 |
+  | sprites | 0.39 | 0.22 | 0.32 | 0.15 |
+  | total | 185.2 | 180.2 | 181.4 | 179.2 |
+
+  The detailed ground and water cost about 1.8–2 ms; the models and their shadow map cost
+  about 180 ms, two orders of magnitude more: that is where a battle's GPU time goes (a
+  matter for the model renderer, not the ground). On the blank field at 1280 × 720 during
+  one impact: particles 0.36 ms (zoom 2), 1.2 ms (free camera, zoom 4, close-up fill of
+  the big dust puffs), 0.15 ms (shell, zoom 2); the material pass 3.1–4.4 ms there
+  (the whole screen is detailed ground).
+- **Cannonball:** a sheet of earth thrown 2–4 m up and forward: a fan of five narrow bursts
+  (±0.55 rad, the sides lower and shorter) of mid-size clods (11–23 cm), torn sods (new kind
+  `Sod`: a slab, 20–40 cm, grass on its top edge, matted roots, earth below; big lumps on
+  bare ground), crumbs, grass bits, a quick dust burst and a brown-grey cloud that hangs
+  5–8 s.
+- **Shell:** the ring of clods and sods, a dark column of earth and smoke straight up, a
+  dust ring rolling out along the ground, and a hanging cloud.
+- **Dust and spray:** three octaves of value noise (procedural, no texture) shape and dent
+  each puff, turning slowly; lit as a dented ball, denser parts darker. Soft contact: a
+  puff fades out towards the ground by the height of each fragment above it (the
+  particle's clearance from the CPU step plus the quad's up vector), so there is no hard
+  line where it meets the ground. It is not a depth-buffer fade: the 3D pass cannot sample
+  its own depth attachment (and WebGL2 would need a copy); against models a puff still
+  cuts.
+- **Craters and furrows:** the ball's crater is 0.55 m, −24 cm with a +8 cm rim, the furrow
+  2.4 m long, 22 cm wide, −12 cm. The ground shader shows dug ground (holes and rims) as
+  bare brown soil and darkens holes more (up to 45 %). The crater carries no extra mud: the
+  fountain reads the state under it and would turn to mud.
+- **Frames** (`ACR-analysis/ground4/`, blank field 1280 × 720, HUD off, one round per
+  driver process, `scripts/impact.py`): `sheet_z2.png`, `sheet_free.png`, `sheet_shell.png`
+  (before = main, after = this branch, ticks 2–22 then +200) and `pair_*_t6.png`.
+- **Not done:** the battle3 per-class colour calibration after the desaturation, and
+  triplanar mapping.
+- **Honest look:** better than the crumbs and blob: the fan reads, the furrow and crater
+  read at zoom 2, the dust has body. Still impostors: at zoom 2 a sod is a few pixels and
+  its grass top barely shows; the clods are flat-lit discs without shadows; the dust is
+  still a sprite cloud rather than a volume.
+
 ## Phase 4: dung
 
 Horses and other animals drop dung over time. A render-side hash per (unit id, minute)
@@ -337,7 +397,8 @@ after about 20 minutes. Its cost is negligible: a few hundred instances at most.
   below zoom 0.75); phase 2 first version built (state texture, stamps, shading).
 - Phase 3 first version built (m2-ground3): the particle pool, renderer and emitters, the
   driver's `impact`.
-- Next: re-measure battle3, triplanar, a scene where the marks are not under casualties,
+- Impact realism and the GPU timer built (m2-ground4).
+- Next: re-measure battle3 colours, triplanar, a scene where the marks are not under casualties,
   blood in the state, POM and a finer mesh near the camera, a GPU timer, particle
   shadows and splinters, then dung.
 - Earlier plan: calibrate the tint and shade against the original (a mean-colour check per zoom

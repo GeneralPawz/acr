@@ -118,13 +118,15 @@ pub fn crater(cause: DeathCause, at: [f32; 2], dir: [f32; 2]) -> Vec<Stamp> {
     };
     match cause {
         DeathCause::Cannonball => {
-            let mut out = vec![base(0.45, -0.18, 0.05, 0.0)];
+            let mut out = vec![base(0.55, -0.24, 0.08, 0.0)];
             if dir != [0.0, 0.0] {
-                // The ball ploughs on before it rises: a furrow along the flight.
-                let to = [at[0] + dir[0] * metres(1.8), at[1] + dir[1] * metres(1.8)];
+                // The ball ploughs on before it rises: a furrow along the flight, the turf
+                // torn open (fresh soil, shaded by its depth: no mud here, or the fountain
+                // thrown from it would read the ground as wet).
+                let to = [at[0] + dir[0] * metres(2.4), at[1] + dir[1] * metres(2.4)];
                 out.push(Stamp {
                     shape: Shape::Stroke { to },
-                    ..Stamp::print(at, dir, [metres(0.16), metres(0.16)], -0.08, 0.6)
+                    ..Stamp::print(at, dir, [metres(0.22), metres(0.22)], -0.12, 0.8)
                 });
             }
             out

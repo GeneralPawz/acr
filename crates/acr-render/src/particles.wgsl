@@ -21,6 +21,9 @@ const KIND_GRASS: u32 = 3u;
 const KIND_SPRAY: u32 = 4u;
 const KIND_DROPLET: u32 = 5u;
 const KIND_SPLINTER: u32 = 6u;
+const KIND_SOD: u32 = 7u;
+// The grass on a sod's top (linear).
+const SOD_GRASS: vec3<f32> = vec3<f32>(0.045, 0.085, 0.02);
 
 struct VsOut {
     @builtin(position) clip: vec4<f32>,
@@ -29,6 +32,8 @@ struct VsOut {
     // kind, turn, opacity, seed
     @location(2) @interpolate(flat) params: vec4<u32>,
     @location(3) @interpolate(flat) resting: u32,
+    // Soft kinds: the fragment's height above the ground and the radius (world px).
+    @location(4) soft: vec2<f32>,
 };
 
 @vertex
@@ -51,6 +56,10 @@ fn vs_particle(
     if kind == KIND_GRASS || kind == KIND_SPLINTER {
         q = vec2<f32>(c.x * 0.28, c.y * 1.6);
     }
+    // Sods are slabs: wider than thick.
+    if kind == KIND_SOD {
+        q = vec2<f32>(c.x * 1.15, c.y * 0.7);
+    }
     let cs = cos(turn);
     let sn = sin(turn);
     if kind != KIND_DUST && kind != KIND_SPRAY {
@@ -68,11 +77,35 @@ fn vs_particle(
     out.color = vec4<f32>(pow(color.rgb, vec3<f32>(2.2)), f32(kind));
     out.params = vec4<u32>(kind, params.x, params.y, params.z);
     out.resting = params.w;
+    // The ground under a soft puff is its clearance below the centre; the quad faces the
+    // camera, so a corner's height is the centre's plus the up vector's z.
+    out.soft = vec2<f32>(f32(params.w) + globals.up.z * q.y * size, size);
     return out;
 }
 
 fn hash11(n: f32) -> f32 {
     return fract(sin(n * 12.9898) * 43758.547);
+}
+
+fn hash21(p: vec2<f32>) -> f32 {
+    return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.547);
+}
+
+// Value noise, 0..1.
+fn vnoise(p: vec2<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    let a = hash21(i);
+    let b = hash21(i + vec2<f32>(1.0, 0.0));
+    let c = hash21(i + vec2<f32>(0.0, 1.0));
+    let d = hash21(i + vec2<f32>(1.0, 1.0));
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+// Three octaves of value noise, 0..1.
+fn fbm(p: vec2<f32>) -> f32 {
+    return 0.55 * vnoise(p) + 0.3 * vnoise(p * 2.13 + vec2<f32>(5.2, 1.3)) + 0.15 * vnoise(p * 4.37 + vec2<f32>(1.7, 9.2));
 }
 
 // A lumpy outline: the radius (0..1) of the shape at angle `a` for seed `s`.
@@ -105,22 +138,55 @@ fn fs_particle(in: VsOut) -> @location(0) vec4<f32> {
     let r = length(uv);
     let sun = globals.sun.xyz;
     if kind == KIND_DUST || kind == KIND_SPRAY {
-        // A soft puff with a ragged edge; lit from the sun's side a little.
-        let a = atan2(uv.y, uv.x);
-        let edge = 0.8 + 0.12 * sin(a * 4.0 + seed) + 0.08 * sin(a * 7.0 + seed * 1.7);
-        let d = r / edge;
-        var alpha = exp(-3.2 * d * d) * opacity;
+        // A billowing puff: a gaussian broken up by turning noise, lit as a ball whose
+        // surface the noise dents, and faded where it meets the ground (no hard line).
+        let turn = f32(in.params.y) / 256.0 * 6.2831853;
+        let cs = cos(turn);
+        let sn = sin(turn);
+        let ruv = vec2<f32>(uv.x * cs - uv.y * sn, uv.x * sn + uv.y * cs);
+        let o = vec2<f32>(seed * 0.37, seed * 0.61);
+        let billow = fbm(ruv * 1.9 + o);
+        let fine = vnoise(ruv * 5.3 + o * 1.7);
+        let d = r / (0.75 + 0.35 * billow);
+        var alpha = exp(-2.6 * d * d) * (0.35 + 0.9 * billow) * (0.8 + 0.3 * fine) * opacity;
         if kind == KIND_DUST {
-            alpha = alpha * 0.55;
+            alpha = alpha * 0.62;
         } else {
             alpha = alpha * 0.8;
         }
+        alpha = alpha * smoothstep(0.0, max(in.soft.y * 0.45, 1.0), in.soft.x);
         if alpha < 0.004 {
             discard;
         }
-        let n = normalize(globals.right.xyz * uv.x + globals.up.xyz * uv.y + globals.toward.xyz * 0.8);
-        let light = 0.75 + 0.35 * max(dot(n, sun), 0.0);
+        let bump = vec2<f32>(fbm(ruv * 1.9 + o + vec2<f32>(0.15, 0.0)) - billow, fbm(ruv * 1.9 + o + vec2<f32>(0.0, 0.15)) - billow);
+        let n = normalize(
+            globals.right.xyz * (uv.x - bump.x * 4.0) + globals.up.xyz * (uv.y - bump.y * 4.0) + globals.toward.xyz * 0.7,
+        );
+        // Dense parts are darker inside (self-shadowed), the sun side lighter.
+        let light = (0.5 + 0.55 * max(dot(n, sun), 0.0)) * (0.8 + 0.25 * billow);
         return finish(in.color.rgb * light, alpha);
+    }
+    if kind == KIND_SOD {
+        // A slab: a lumpy outline over the squashed quad, grass on the top edge (in its own
+        // turning frame), earth below, lit as a flat-ish block.
+        let s = seed / 255.0;
+        let a = atan2(uv.y, uv.x);
+        let edge_s = 0.85 + 0.08 * sin(a * 3.0 + s * 6.3) + 0.06 * sin(a * 6.0 + s * 2.1);
+        if max(abs(uv.x), abs(uv.y) * 1.1) > edge_s || r > edge_s * 1.12 {
+            discard;
+        }
+        let top = uv.y + 0.08 * sin(uv.x * 23.0 + s * 40.0) + 0.05 * sin(uv.x * 51.0 + s * 13.0);
+        let n = normalize(globals.right.xyz * uv.x * 0.6 + globals.up.xyz * uv.y * 0.9 + globals.toward.xyz);
+        let diffuse = max(dot(n, sun), 0.0);
+        let grain = 0.8 + 0.4 * hash11(floor(uv.x * 6.0 + 7.0) * 13.0 + floor(uv.y * 6.0 + 7.0) * 7.0 + seed);
+        var base = in.color.rgb * grain;
+        if top > 0.3 {
+            base = SOD_GRASS * (0.75 + 0.5 * hash11(floor(uv.x * 14.0) + seed));
+        } else if top > 0.18 {
+            // Roots: dark, matted.
+            base = in.color.rgb * 0.55;
+        }
+        return finish(base * (0.35 + 0.85 * diffuse), opacity);
     }
     var edge = 1.0;
     if kind == KIND_GRASS || kind == KIND_SPLINTER {

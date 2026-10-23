@@ -64,6 +64,11 @@ impl Gpu {
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("acr"),
+                // Timestamp queries for the driver's `gputime`, where the adapter has them.
+                required_features: adapter.features()
+                    & (wgpu::Features::TIMESTAMP_QUERY
+                        | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS
+                        | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES),
                 required_limits: wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits()),
                 ..Default::default()
             })

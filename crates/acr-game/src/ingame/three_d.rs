@@ -965,26 +965,47 @@ impl ThreeD {
         if let Some(particles) = self.particle_renderer.as_mut() {
             particles.prepare(queue, &view3d, &mut self.particles.particles);
         }
+        use acr_render::gpu_timer::mark_encoder;
+        // The GPU timer (`gputime`) splits the 3D pass at each segment: timestamps inside a
+        // pass are not reliable on tiling GPUs. Otherwise it is one pass, as always.
+        let split = acr_render::gpu_timer::active();
+        mark_encoder(encoder, "3d prepare");
         renderer.render_shadows(encoder);
-        let mut pass = depth.begin(device, encoder, view, size);
+        mark_encoder(encoder, "shadow map");
+        let mut pass = depth.begin(device, encoder, view, size, split, false);
+        macro_rules! segment {
+            ($label:expr) => {
+                if split {
+                    drop(pass);
+                    mark_encoder(encoder, $label);
+                    pass = depth.begin(device, encoder, view, size, true, true);
+                }
+            };
+        }
         if let Some(ground) = ground {
             ground.render_depth(&mut pass);
         }
+        segment!("terrain depth");
         renderer.render(&mut pass);
+        segment!("models");
         if let Some(ground) = ground {
             ground.render_shadows(device, &mut pass, renderer.shadow());
         }
+        segment!("ground shadows");
         if let Some(water) = water {
             water.render(&mut pass);
         }
+        segment!("water");
         if let Some(particles) = &self.particle_renderer {
             particles.render(&mut pass);
         }
+        segment!("particles");
         depth.reset_ground(&mut pass);
         if sprites {
             objects.draw(&mut pass, true);
         }
         drop(pass);
+        mark_encoder(encoder, "sprites");
         self.frames += 1;
         let now = web_time::Instant::now();
         let since = *self.since.get_or_insert(now);

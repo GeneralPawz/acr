@@ -38,6 +38,8 @@ pub enum ParticleKind {
     Droplet = 5,
     /// A wood splinter (for later: buildings, fences, felled trees).
     Splinter = 6,
+    /// A torn sod: a flat slab of earth with grass on top, tumbling; lies like a clod.
+    Sod = 7,
 }
 
 impl ParticleKind {
@@ -50,6 +52,7 @@ impl ParticleKind {
     fn drag(self) -> f32 {
         match self {
             Self::Clod => 0.15,
+            Self::Sod => 0.2,
             Self::Mud => 0.3,
             Self::Dust => 2.2,
             Self::Grass => 3.0,
@@ -70,13 +73,14 @@ impl ParticleKind {
 
     /// Kinds that come to rest on the ground (the others vanish there or float).
     fn lies(self) -> bool {
-        matches!(self, Self::Clod | Self::Mud | Self::Grass | Self::Splinter)
+        matches!(self, Self::Clod | Self::Mud | Self::Grass | Self::Splinter | Self::Sod)
     }
 
     /// Seconds a resting particle lies before it is gone (scaled by a hash, 0.5–1.5).
     fn rest_seconds(self) -> f32 {
         match self {
             Self::Clod => 12.0,
+            Self::Sod => 16.0,
             Self::Mud => 5.0,
             Self::Grass => 6.0,
             Self::Splinter => 20.0,
@@ -139,6 +143,8 @@ struct Particle {
     kind: ParticleKind,
     seed: u8,
     landed: bool,
+    /// Height above the ground at the last step (world px), for the soft kinds' fade.
+    clear: f32,
 }
 
 /// One instance of `particles.wgsl`: centre, radius, colour and kind, turn, opacity, seed.
@@ -236,6 +242,7 @@ impl ParticleSink for Particles {
                 kind: b.kind,
                 seed: (hash(b.seed.wrapping_add(i)) & 0xff) as u8,
                 landed: false,
+                clear: 255.0,
             });
         }
     }
@@ -276,11 +283,13 @@ impl Particles {
             p.pos = math::add(p.pos, math::scale(p.vel, dt));
             if kind == ParticleKind::Dust {
                 // Dust floats: it never sinks into the ground.
-                let g = ground(p.pos[0], p.pos[1]) + p.size * 0.5;
-                p.pos[2] = p.pos[2].max(g);
+                let floor = ground(p.pos[0], p.pos[1]);
+                p.pos[2] = p.pos[2].max(floor + p.size * 0.5);
+                p.clear = p.pos[2] - floor;
                 continue;
             }
             let g = ground(p.pos[0], p.pos[1]);
+            p.clear = p.pos[2] - g;
             let lift = if kind.lies() { p.size * 0.35 } else { 0.0 };
             if p.pos[2] > g + lift || p.vel[2] > 0.0 {
                 continue;
@@ -293,12 +302,18 @@ impl Particles {
             p.pos[2] = g + lift;
             if !p.landed {
                 p.landed = true;
-                if matches!(kind, ParticleKind::Clod | ParticleKind::Mud) && self.landings.len() < MAX_LANDINGS {
+                if matches!(kind, ParticleKind::Clod | ParticleKind::Mud | ParticleKind::Sod)
+                    && self.landings.len() < MAX_LANDINGS
+                {
                     self.landings.push(Landing { at: [p.pos[0], p.pos[1]], size: p.size, kind });
                 }
             }
             // A bounce, a skid, then rest (mud and grass stick).
-            let bounce = if kind == ParticleKind::Clod { 0.3 } else { 0.0 };
+            let bounce = match kind {
+                ParticleKind::Clod => 0.3,
+                ParticleKind::Sod => 0.15,
+                _ => 0.0,
+            };
             if -p.vel[2] * bounce > 25.0 {
                 p.vel = [p.vel[0] * 0.5, p.vel[1] * 0.5, -p.vel[2] * bounce];
             } else {
@@ -332,12 +347,21 @@ impl Particles {
                     _ => (p.size * ((p.life - p.age) / 1.0).min(1.0), 1.0),
                 };
                 let spin = if p.rest.is_finite() { p.rest } else { p.age };
-                let turn = (f32::from(p.seed) + spin * (60.0 + f32::from(p.seed))) as u32 & 0xff;
+                // Soft puffs turn slowly (their noise rolls), hard ones tumble.
+                let rate = if soft { 4.0 + f32::from(p.seed) / 32.0 } else { 60.0 + f32::from(p.seed) };
+                let turn = (f32::from(p.seed) + spin * rate) as u32 & 0xff;
                 self.instances.push(Instance {
                     pos: p.pos,
                     size,
                     color: [p.color[0], p.color[1], p.color[2], p.kind as u8],
-                    params: [turn as u8, (alpha.clamp(0.0, 1.0) * 255.0) as u8, p.seed, u8::from(p.rest.is_finite())],
+                    // The last byte: resting for the hard kinds, the height above the ground
+                    // (world px) for the soft ones (their fade at the ground).
+                    params: [
+                        turn as u8,
+                        (alpha.clamp(0.0, 1.0) * 255.0) as u8,
+                        p.seed,
+                        if soft { p.clear.clamp(0.0, 255.0) as u8 } else { u8::from(p.rest.is_finite()) },
+                    ],
                 });
             }
         }

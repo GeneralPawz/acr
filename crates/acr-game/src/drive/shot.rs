@@ -86,3 +86,34 @@ pub fn screenshot(game: &mut Game, path: &str, crop: Option<[u32; 4]>) -> Result
     writer.write_image_data(&rgba).map_err(|e| e.to_string())?;
     Ok([cw, ch])
 }
+
+/// `gputime`: draws `frames` frames offscreen with the GPU timer on and returns the mean
+/// milliseconds per segment (docs/ground.md), or why the device cannot time.
+pub fn gputime(game: &mut Game, frames: u32) -> Result<serde_json::Value, String> {
+    let g = game.graphics.as_ref().ok_or("no GPU: start the driver with --drive-gpu")?;
+    let (device, queue) = (g.gpu.device.clone(), g.gpu.queue.clone());
+    if let Err(why) = acr_render::gpu_timer::supported(&device) {
+        return Ok(serde_json::json!({ "supported": false, "reason": why }));
+    }
+    let texture = target(&device, g.gpu.config.format, g.gpu.config.width, g.gpu.config.height);
+    let view = texture.create_view(&Default::default());
+    let mut sums: Vec<(&'static str, f64)> = Vec::new();
+    let frames = frames.max(1);
+    for _ in 0..frames {
+        acr_render::gpu_timer::begin(&device, &queue)?;
+        game.draw_frame(&view);
+        for (label, ms) in acr_render::gpu_timer::finish(&device)? {
+            match sums.iter_mut().find(|(l, _)| *l == label) {
+                Some(s) => s.1 += ms,
+                None => sums.push((label, ms)),
+            }
+        }
+    }
+    let n = f64::from(frames);
+    let total: f64 = sums.iter().map(|(_, ms)| ms).sum::<f64>() / n;
+    let ms: serde_json::Map<String, serde_json::Value> =
+        sums.iter().map(|(l, s)| ((*l).to_owned(), serde_json::json!((s / n * 1000.0).round() / 1000.0))).collect();
+    Ok(
+        serde_json::json!({ "supported": true, "frames": frames, "ms": ms, "total_ms": (total * 1000.0).round() / 1000.0 }),
+    )
+}

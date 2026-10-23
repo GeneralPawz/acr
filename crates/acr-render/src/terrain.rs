@@ -1288,6 +1288,7 @@ impl TerrainRenderer {
             pass.set_bind_group(1, &target.group, &[]);
             pass.draw(0..3, 0..1);
         }
+        crate::gpu_timer::mark_encoder(encoder, "terrain");
         // The detailed ground over the original (docs/ground.md); the zoomed-out view
         // stays the original.
         let drawn = self.drawn;
@@ -1334,6 +1335,8 @@ impl TerrainRenderer {
         pass.set_bind_group(2, &detail.group, &[]);
         pass.set_bind_group(3, &detail.state_group, &[]);
         pass.draw(0..drawn, 0..1);
+        drop(pass);
+        crate::gpu_timer::mark_encoder(encoder, "ground");
     }
 
     /// Writes the terrain's depth into the 3D pass (`model_renderer::DepthTarget`) for the
