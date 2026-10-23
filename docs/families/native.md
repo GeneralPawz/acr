@@ -13,16 +13,23 @@ frames, and `native.spec(MD, WEAPONS, ...)`.
 
 | unit | weapon | melee (index 0) | dress | hair | paint | kit |
 |---|---|---|---|---|---|---|
-| `IroLut` | bow (fire arrow 1, arrow 2; loosed on 44) | club strikes with the arrow hand (`club_down` for the down hack) | breechcloth, red leggings, moccasins | roach, 2 feathers | `red_black` | quiver, knife |
+| `IroLut` | bow (fire arrow 1, arrow 2; loosed on 44) | war club in its own socket (`socket.club_r`, the arrow hidden), `club_down` for the down hack | breechcloth, red leggings, moccasins | roach, 2 feathers | `red_black` | quiver, knife |
 | `IroStr` | trade gun (`poses.musketeer_clips`, shot on 16) | musket thrust and butt | as IroLut | roach, 1 feather | `black_stripes` | strap, powder horn, shot pouch, knife |
 | `IroTam` | tomahawk throw (gone on 16) | tomahawk hack (`club_strikes`) | + blue matchcoat over the left shoulder, silver gorget and arm bands | roach, 2 feathers | `red_hands` | knife |
 | `DelPik` | spear (`spear_strikes`, PIKA) | the thrust | + linen trade shirt, blue leggings | scalp lock and braid, 3 feathers | `red_face_half` | knife |
+| `IroVog` | trade gun | musket | + fine blue matchcoat, silver gorget and arm bands | scalp lock, **gustoweh** | `red_face_half` | strap, horn, pouch, knife |
+| `HurVog` | trade gun | musket | + scarlet matchcoat, silver; green breechcloth, blue leggings | scalp lock, feather **crown** | `black_red_chin` | strap, horn, pouch, knife |
+| `DelVog` | trade gun | musket | + shirt, dark blue matchcoat, silver; red breechcloth, blue leggings | scalp lock, feather **crown** | `red_stripes` | strap, horn, pouch, knife |
+| `HurS15` | trade gun (SPEC over IroStr) | musket | green breechcloth, blue leggings | black roach, 1 feather | `white_dots` | strap, horn, pouch, knife |
+| `DelS15` | trade gun (SPEC over IroStr) | musket | + shirt, red breechcloth, blue leggings | scalp lock, 2 feathers | `black_stripes` | strap, horn, pouch, knife |
+| `HurLut` | bow (SPEC over IroLut) | war club | green breechcloth, blue leggings | black roach, 3 feathers | `black_face_half` | quiver, knife |
+| `DelLut` | bow (SPEC over IroLut) | tomahawk (`socket.club_r`) | red breechcloth, blue leggings | scalp lock, 2 feathers | `red_black` | quiver, knife |
+| `DelKri` | bow (loosed on 25) | war club; WORK (two-handed swing) and REST (look round) as EngKri's | + shirt | scalp lock | none | quiver, knife |
+| `IroSha`, `HurSha`, `DelSha` | heal (MEDIK, `clips.heal`), turtle rattle in the left hand | war club (ATTACK, `club_strikes`, `club_down`) | + fur cloak (`pelt`; DelSha over a shirt) | long hair, 1-2 feathers | `white_band` | knife |
 
-Left for the next slices: IroVog, IroSha, HurLut, HurS15, HurSha, HurVog, DelKri, DelLut,
-DelS15, DelSha, DelVog. HurLut/DelLut and HurS15/DelS15 are a SPEC each over IroLut/IroStr
-(colours, hair, paint); the chiefs need a gustoweh (Iroquois) or a feather headdress, the
-shamans a fur cloak and rattle and a looping `MEDIK` clip (`clips.heal`), DelKri the
-peasant's work clips (as EngKri).
+All 15 Woodlands units are built (slice 2). Iroquois wear red leggings and the red roach,
+Huron green breechcloths, blue leggings and a black roach, Delaware a red breechcloth, blue
+leggings and the scalp lock; skin tones vary a little by nation (`palette["skin"]`).
 
 ## SPEC keys
 
@@ -30,11 +37,18 @@ peasant's work clips (as EngKri).
   musket, rammer, aim, reload; `gun_len`), `tomahawk`, `club`, `spear` (on `socket.hand_r`);
   `melee`: the `clips.MELEE` kind of index 0 or None.
 - `dress`: any of `breechcloth`, `leggings`, `moccasins`, `shirt`, `matchcoat`.
-- `hair`: `roach`, `lock`, `long`; `feathers`: how many; `paint`: a `masks.PAINT_SETS` name
+- `hair`: `roach`, `lock`, `long`; `feathers`: how many; `headdress`: `gustoweh` (a cap on a
+  splint band, short feathers over the crown, one eagle feather upright) or `crown` (a band
+  with a ring of upright feathers); `paint`: a `masks.PAINT_SETS` or `native.PAINT_SETS` name
   (one per unit type: one atlas per model); `silver`: gorget and arm bands.
-- `kit`: `quiver`, `belt_l` (the strap over the left shoulder, `straps.py`), `horn`,
+- `rattle`: the shaman's turtle-shell rattle in the left hand; `work`: the peasant's WORK and
+  REST clips; `dress` may add `cloak` (the shaman's fur, material key `pelt`).
+- `kit`: `quiver` (48 cm, 8 cm across: `held.quiver` shrunk), `belt_l` (the strap over the left shoulder, `straps.py`), `horn`,
   `pouch`, `knife`.
-- `palette`, `mix` (sprite share, 0.4), `fixed` (feathers and silver keep the palette).
+- `palette`, `mix` (sprite share, 0.6), `fixed` (skin, feathers and silver keep the palette).
+- A bow unit with a `melee` gets a second right-hand socket `socket.club_r` (`club_socket`)
+  holding a war club (or tomahawk): every clip keys both sockets' scale, the melee clips
+  (`ATTACK`, `ATTACK_*`) show the club and hide the arrow, all others the reverse.
 
 ## How the dress is made
 
@@ -47,8 +61,15 @@ needs no cloth simulation.
   weights go half way to the thighs (left and right across the width), so a stride swings
   the flap instead of poking through it.
 - **Leggings:** stroud from ankle to high thigh, with the side-seam flap standing out along
-  the outer side of each leg (a shell of the outward-facing faces, 2.6 cm off the skin) and
-  garters under the knee.
+  the outer side of each leg and garters under the knee. The flap is a thin modelled fin
+  (`_legging_flap`): the outermost skin line sampled in 14 bands from 14 to 76 cm, smoothed,
+  the fin 4 cm wide at the ankle, 2 cm at the thigh, each row skinned like its skin vertex
+  (slice 1's 2.6 cm offset shell of the outer faces read lumpy).
+- **Fur cloak (shamans):** a shell 3.4 cm off the skin over both shoulders, the back to the
+  seat and the upper arms, open in front below the collarbones; key `pelt` (painter `pelt`,
+  like felt: matted, dull).
+- **Headdress (chiefs):** `gustoweh` or `crown` (above), rigid on the head.
+- **Rattle:** a turtle shell (flattened dome) on a handle in the left hand, key `turtle`.
 - **Moccasins:** `mbody.shoes` over the last with a thin sole and no heel, in buckskin; the
   instep buckle's slot takes the buckskin too (a tie).
 - **Trade shirt:** linen, loose to mid-thigh, sleeves to the wrist; belt and flaps go over it.
@@ -56,7 +77,20 @@ needs no cloth simulation.
 - **Hair:** the roach is two rows of tapered cards from the forehead line over the crown to
   the nape, in dyed deer hair (`roach`, red); the scalp lock a tuft of cards at the crown and
   a braid down the back. Feathers are cards set at the crown, leaning back. All rigid on the
-  head bone (gear layer, part 1). The face map is the shared one (`heads.face_map`).
+  head bone (gear layer, part 1). The face map is `heads.face_map` painted clean-shaven
+  (`native.clean_shaven`: `faces.zones`' beard channel zeroed for the call, so neither the
+  painted stubble nor `_FACE`'s beard zone, which the renderer turns into stubble, is left;
+  for shaved and plucked heads, `roach` and `lock`, no cropped scalp along the hairline).
+- **Skin:** a warm copper, `(0.80, 0.55, 0.38)` for the Iroquois, a little darker for the
+  Huron and lighter for the Delaware, kept from the palette (`fixed`): slice 1 mixed 40 % of
+  the sprites' shaded skin into a brown palette and came out near-black. The clothes take
+  60 % of the sprite colour (they are brighter in the sprites).
+- **Body paint:** the face-half paint goes through `native.paint_face_half`. Bug in
+  `masks.paint_face_half` (for the shared slice): its region `masks._face` has no width
+  limit, so every front-facing texel from 27 cm below the head's top up on the painted side
+  is painted, which on these builds takes in the shoulder, the top of the chest and the
+  upper arm ("half the trunk" in slice 1). The native mask keeps it above the jaw (23 cm
+  below the top) and within 9 cm of the nose.
 - **Materials (registered):** painters `stroud` (like wool) and `buckskin` (like leather);
   keys `breechcloth`, `leggings`, `flaps`, `matchcoat` (wool), `moccasins`, `belt_hide`,
   `pouch` (leather), `roach` (hair), `horn` (bone), `silver` (metal).
@@ -100,7 +134,5 @@ spine X) and fell 0.92 m short on IroTam; `native.club_down` replaces `ATTACK_CU
 off at 1.6 m and 43 cm at 2.0 m (the arm cannot reach further), layer 2–3 cm; IroLut's 20 cm
 / 4 cm at 2.0 m. Drop it once `clips.py` leans forward.
 
-Open: the skin comes out darker than the sprites (sprite mix on a dark palette; lighten
-`skin` or raise `fixed`); `red_black` paints half the trunk, not only the face (to check in
-`masks.paint_face_half`); the shared face map paints a European stubble; the leggings'
-flap shells read bulky at close range; archers hack with the arrow hand.
+Slice 1's open points (dark skin, paint on the trunk, stubble, lumpy flaps, the archers'
+melee with the arrow hand, the big quiver) are fixed in slice 2 (above).
