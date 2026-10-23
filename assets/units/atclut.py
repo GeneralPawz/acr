@@ -1,6 +1,7 @@
 """Aztec archer (`AtcLut`, `ATCLUT.MD`, ACTEC): maxtlatl and a short quilted ichcahuipilli,
 sandals, a feather headband; bow in the left hand, the arrow in the right, a quiver on the
-back (OSTRELA and STRELA: ATTACK1/ATTACK2, release on 44); melee (MECH) a hack.
+back (OSTRELA and STRELA: ATTACK1/ATTACK2, release on 44); melee (MECH) the bow in both hands
+chopped down like a staff (no other weapon in the sprites).
 """
 
 from acr_assets import meso
@@ -33,7 +34,7 @@ WEAPONS = {0: 'MECH', 1: 'OSTRELA', 2: 'STRELA'}
 ACTIVE = {'ATTACK1': 44, 'ATTACK2': 44}
 
 SPEC = meso.spec(MD, weapons=WEAPONS, active=ACTIVE, dress=("maxtlatl", "ichcahuipilli", "sandals"), head="band", hand_r="arrow", bow=True, shield=None,
-                 melee="club", paint="black_stripes")
+                 melee="bow", paint="black_stripes")
 
 
 def build(ctx):

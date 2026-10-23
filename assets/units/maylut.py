@@ -31,7 +31,7 @@ MD = {
 WEAPONS = {0: 'MECH', 1: 'OSTRELA', 2: 'STRELA'}
 ACTIVE = {'ATTACK1': 44, 'ATTACK2': 44}
 
-SPEC = meso.spec(MD, weapons=WEAPONS, active=ACTIVE, dress=("hipcloth", "sandals"), head="band", hand_r="arrow", bow=True, shield=None, melee="club",
+SPEC = meso.spec(MD, weapons=WEAPONS, active=ACTIVE, dress=("hipcloth", "sandals"), head="band", hand_r="arrow", bow=True, shield=None, melee="bow",
                  paint="red_face_half")
 
 

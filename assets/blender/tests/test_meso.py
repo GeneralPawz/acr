@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.join(HERE, "..", "lib"))
 from acr_assets import clips, held, meso, registry  # noqa: E402
 
 UNITS = os.path.join(HERE, "..", "..", "units")
-NAMES = ("mayvoi", "atcmet", "atclut", "maylut", "maypik", "atcvog", "mayvog", "atcsha", "maysha")
+NAMES = ("mayvoi", "atcmet", "atclut", "maylut", "maypik", "atcvog", "mayvog", "atcsha", "maysha", "maykri")
 
 
 def unit(name):
@@ -45,20 +45,46 @@ class MesoTest(unittest.TestCase):
             self.assertIn("l", pose["reach"])  # the chimalli held before the body
 
     def test_items_and_headgear(self):
-        for kind in ("jaguar", "eagle", "crest", "maya", "topknot", "band"):
-            it = meso.helmet(kind)
-            keys, _ = it.material_keys()
+        for kind in meso.HELMETS:
+            keys, _ = meso.helmet(kind).material_keys()
             self.assertEqual(len(keys), 1, kind)  # one key: painted in one atlas cell
-            self.assertIn(keys[0], registry.LAYER_OF)
-            self.assertLess(it.triangles(), 600, kind)
+        for kind in meso.HEADS:
+            parts = meso.head_parts(kind)
+            self.assertTrue(parts, kind)
+            for it, key in parts:
+                self.assertEqual(it.material_keys()[0], [key], kind)  # one key per piece
+                self.assertIn(key, registry.LAYER_OF)
+            self.assertLess(sum(it.triangles() for it, _ in parts), 2000, kind)
+            hair = [it for it, key in parts if key == "meso_hair"]
+            if hair:  # the face is free: no hair below the hairline in front
+                front = [v for v in hair[0].verts if v[1] < -0.08]
+                self.assertGreater(min(v[2] for v in front), -0.06, kind)
         sh = meso.chimalli()
         self.assertEqual(sh.material_keys()[0], ["chimalli"])
         self.assertIn("socket.hook", meso.atlatl().sockets)
         self.assertGreater(meso.dart().sockets["socket.tip"][2], 0.9)
-        self.assertAlmostEqual(meso.tips({"hand_r": "macuahuitl"}), held.macuahuitl().sockets["socket.tip"][2])
+        self.assertAlmostEqual(meso.tips({"hand_r": "macuahuitl", "melee": "club"}),
+                               meso.macuahuitl().sockets["socket.tip"][2])
+        mac = meso.macuahuitl()
+        width = max(v[1] for v in mac.verts) - min(v[1] for v in mac.verts)
+        self.assertGreater(width, 0.16)  # a broad paddle with the blades proud of both edges
+
+    def test_down_strikes_reach_the_man_on_the_ground(self):
+        for name in ("mayvoi", "maypik", "atclut"):
+            made, _ = meso.unit_clips(unit(name).SPEC)
+            down = made["ATTACK_DOWN"]
+            pose = dict(down)[clips.STRIKE_HIT_FRAME] if isinstance(down, dict) else [p for f, p in down
+                                                                                     if f == clips.STRIKE_HIT_FRAME][0]
+            self.assertGreater(pose["spine"][0], 0, name)  # the trunk bent forward
+
+    def test_peasant_work_sets(self):
+        made, _ = meso.unit_clips(unit("maykri").SPEC)
+        for k in ("WORK", "ATTACK1", "ATTACK3", "PATTACK4", "ATTACK4", "ATTACK5", "MOTION_L4", "REST"):
+            self.assertIn(k, made)
 
     def test_registered(self):
-        for key in ("ichcahuipilli", "maxtlatl", "tilmatli", "jaguar", "eagle", "plumes", "sandals", "chimalli"):
+        for key in ("ichcahuipilli", "maxtlatl", "tilmatli", "jaguar", "eagle", "plumes", "sandals", "chimalli", "quetzal",
+                    "macaw", "jade", "turquoise", "gold", "meso_trim", "meso_hair"):
             self.assertIn(key, registry.LAYER_OF)
         for mask in ("chimalli_halves", "chimalli_rings", "chimalli_quarters"):
             self.assertIn(mask, registry.MASKS)
