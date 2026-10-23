@@ -515,7 +515,9 @@ def make(root, name, s):
     two = s["weapon"] == "bow" and bool(s["melee"])
     table = club_socket(rig.skeleton_h("", (0, 0, 0))) if two else None
     ch = Character(root, name, s["build"], table=table)
-    ch.body(shoulders="trade_shirt" not in s["dress"])  # draped cloth tears over the re-meshed shoulders
+    w = s["weapon"]
+    grip = held.fists("arrow", "longbow") if w == "bow" else         held.fists({"gun": "musket", "club": "war_club"}.get(w, w))
+    ch.body(shoulders="trade_shirt" not in s["dress"], grip=grip)  # draped cloth tears over the re-meshed shoulders
     dress(ch, s)
     if "belt_l" in s["kit"]:
         ch.strap_surface, ch.strap_offsets, ch.strap_under = ch.flesh, (0.026 if "shirt" in s["dress"] else 0.010,) * 2, None

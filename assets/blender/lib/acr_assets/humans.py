@@ -126,7 +126,7 @@ class Character:
         if faces:
             heads.head_weights(self)
         bd.split_parts(self.flesh, lambda b: rig.part_of_bone(b[len(P):]))
-        if grip and not P:
+        if grip is not False and grip is not None and not P:
             # Fists round the grips and the hand sockets in them (`grips.py`); riders
             # (prefixed) close their own (`cavalry.close_hands`).
             from . import grips

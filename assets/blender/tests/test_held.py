@@ -214,3 +214,11 @@ class GripTest(unittest.TestCase):
             self.assertIsNotNone(held.GRIPS[two].off, two)
         for one in ("smallsword", "hanger", "war_club", "tomahawk", "macuahuitl", "longbow", "drumstick"):
             self.assertIsNone(held.GRIPS[one].off, one)
+
+    def test_fists_per_item(self):
+        self.assertEqual(held.fists("musket"), {"r": 0.036, "l": 0.040})
+        self.assertEqual(held.fists("arrow", "longbow"), {"r": 0.009, "l": 0.038})
+        self.assertEqual(held.fists("spear", "shield"), {"r": 0.030, "l": 0.030})
+        self.assertEqual(held.fists("war_club"), {"r": 0.034})
+        self.assertEqual(held.fists(None), {})
+        self.assertEqual(held.fists("dart_unknown"), {})

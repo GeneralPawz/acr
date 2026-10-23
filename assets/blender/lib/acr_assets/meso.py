@@ -1038,7 +1038,11 @@ def make(root, name, s):
     from .humans import Character
 
     ch = Character(root, name, s["build"])
-    ch.body(shoulders=not s.get("drape"))  # draped cloth tears over the re-meshed shoulders
+    from . import held
+
+    left = "longbow" if s["bow"] else "shield" if s["shield"] else None
+    grip = held.fists({"axe": "tomahawk", "dart": "spear"}.get(s["hand_r"], s["hand_r"]), left)
+    ch.body(shoulders=not s.get("drape"), grip=grip)  # draped cloth tears over the re-meshed shoulders
     dress(ch, s)
     adorn(ch, s)
     ch.bone_layer()

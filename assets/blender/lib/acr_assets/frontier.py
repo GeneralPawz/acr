@@ -278,12 +278,12 @@ def make(root, name, s):
     from mathutils import Matrix, Vector
 
     from . import armature as am
-    from . import drape, gear, line, mbody, poses
+    from . import drape, gear, held, line, mbody, poses
     from . import garments as gm
     from .humans import Character
 
     ch = Character(root, name, s["build"])
-    ch.body(shoulders=False)  # a drafted coat
+    ch.body(shoulders=False, grip=held.fists("musket" if s.get("gun") else None))  # a drafted coat
     ch.shoes = ch.add("clothes", mbody.shoes(ch.arm, ch.flesh, f"{name}.footwear", ch.prefix, key="shoes"),
                       "shoes", symmetric=True)
     ch.drape_report = {}

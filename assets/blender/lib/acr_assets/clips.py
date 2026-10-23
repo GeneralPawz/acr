@@ -701,7 +701,7 @@ def solve(arm_obj, pose):
     am.pose(arm_obj, spec)
     arm = arm_obj.pose.bones
     goals = {s: (Vector(p), arm[f"upperarm_{s}"].head + Vector(pole)) for s, (p, pole) in reach.items()}
-    return aim._solve(arm_obj, spec, goals)
+    return aim._solve(arm_obj, spec, goals, show=pose.get("show"))
 
 
 def apply(arm_obj, name, clip):

@@ -600,7 +600,10 @@ def make(root, name, s):
     from .humans import Character
 
     ch = Character(root, name, s["build"])
-    ch.body(shoulders=not s["drape"])  # draped cloth tears over the re-meshed shoulders
+    from . import held
+
+    grip = held.fists({"champi": "war_club"}.get(s["hand_r"], s["hand_r"]), "longbow" if s["bow"] else None)
+    ch.body(shoulders=not s["drape"], grip=grip)  # draped cloth tears over the re-meshed shoulders
     dress(ch, s)
     hair(ch)
     if s["spools"]:
