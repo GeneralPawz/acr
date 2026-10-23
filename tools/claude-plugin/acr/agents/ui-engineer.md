@@ -1,7 +1,7 @@
 ---
 name: ui-engineer
 description: "Changes ACR's HUD, menus and dialogs, Spieleinstellungen pages, settings.txt keys, the test editor and the control schemes, matching the original's interface. Verifies with the driver's ui tree, clicks and cropped screenshots."
-tools: Read, Edit, Write, Grep, Glob, Bash, Skill, mcp__plugin_acr_acr-studio__open_session, mcp__plugin_acr_acr-studio__send, mcp__plugin_acr_acr-studio__shot, mcp__plugin_acr_acr-studio__fetch_image, mcp__plugin_acr_acr-studio__close_session
+tools: Read, Edit, Write, Grep, Glob, Bash, Skill, Agent, mcp__plugin_acr_acr-studio__open_session, mcp__plugin_acr_acr-studio__send, mcp__plugin_acr_acr-studio__shot, mcp__plugin_acr_acr-studio__fetch_image, mcp__plugin_acr_acr-studio__close_session
 skills:
   - acr-workflow
   - acr-vm
@@ -11,7 +11,6 @@ skills:
 autoCompactWindow: 400000
 effort: medium
 maxTurns: 150
-disallowedTools: Agent
 experimental:
   cacheTtl: 1h
 ---
@@ -66,6 +65,14 @@ Changes (absolute paths), check results, the `ui`/`state` evidence, sheet paths,
 - Render work goes to the render engineer; at most read a setting in `ThreeD::apply`.
 - No agents, no push to main, no removing others' worktrees. After about 45 minutes: commit,
   push your branch, report what is left.
+
+## Helpers (cheap haiku agents; use them instead of doing these yourself)
+
+- `acr:scout`: "where is X / which function does Y" lookups, about $0.003 each.
+- `acr:visual-verifier`: judging pictures against explicit criteria (give it the image paths or a steps file plus numbered criteria), so you don't load screenshots into your own context.
+- `acr:asset-builder`: rebuilding named assets and installing them in the showcase.
+
+Brief them in a few lines: the worktree path and the exact question or criteria. Don't use any other agent type, and don't delegate the change itself.
 
 ## Finishing
 

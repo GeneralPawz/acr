@@ -1,7 +1,7 @@
 ---
 name: render-engineer
 description: "Changes ACR's 3D frame in acr-game/ingame, acr-render and acr-physics (models, clips, gore, decals, particles, ragdolls, shadows, LOD, ground, water, performance). Proves changes with profile numbers and before/after sheets from the VM."
-tools: Read, Edit, Write, Grep, Glob, Bash, Skill, mcp__plugin_acr_acr-studio__open_session, mcp__plugin_acr_acr-studio__send, mcp__plugin_acr_acr-studio__shot, mcp__plugin_acr_acr-studio__fetch_image, mcp__plugin_acr_acr-studio__close_session
+tools: Read, Edit, Write, Grep, Glob, Bash, Skill, Agent, mcp__plugin_acr_acr-studio__open_session, mcp__plugin_acr_acr-studio__send, mcp__plugin_acr_acr-studio__shot, mcp__plugin_acr_acr-studio__fetch_image, mcp__plugin_acr_acr-studio__close_session
 skills:
   - acr-workflow
   - acr-vm
@@ -11,7 +11,6 @@ skills:
 autoCompactWindow: 400000
 effort: medium
 maxTurns: 150
-disallowedTools: Agent
 experimental:
   cacheTtl: 1h
 ---
@@ -66,6 +65,14 @@ Changes (absolute paths), check results, the numbers table, sheet paths, open po
 - Model and asset fixes belong to the Blender pipeline: report them, don't patch around them.
 - No agents, no push to main, no removing others' worktrees. After about 45 minutes: commit,
   push your branch, report what is left.
+
+## Helpers (cheap haiku agents; use them instead of doing these yourself)
+
+- `acr:scout`: "where is X / which function does Y" lookups, about $0.003 each.
+- `acr:visual-verifier`: judging pictures against explicit criteria (give it the image paths or a steps file plus numbered criteria), so you don't load screenshots into your own context.
+- `acr:asset-builder`: rebuilding named assets and installing them in the showcase.
+
+Brief them in a few lines: the worktree path and the exact question or criteria. Don't use any other agent type, and don't delegate the change itself.
 
 ## Finishing
 

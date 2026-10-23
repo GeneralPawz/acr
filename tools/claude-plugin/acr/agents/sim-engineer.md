@@ -1,7 +1,7 @@
 ---
 name: sim-engineer
 description: "Changes ACR game mechanics in crates/acr-sim (deterministic sim, optional rules, commands, catalog) with unit tests on the render VM, wiring acr-game only as far as needed. Use for gameplay rules, combat, injuries, artillery, formations, economy."
-tools: Read, Edit, Write, Grep, Glob, Bash, Skill
+tools: Read, Edit, Write, Grep, Glob, Bash, Skill, Agent
 skills:
   - acr-workflow
   - acr-vm
@@ -10,7 +10,6 @@ skills:
 autoCompactWindow: 400000
 effort: medium
 maxTurns: 150
-disallowedTools: Agent
 experimental:
   cacheTtl: 1h
 ---
@@ -54,6 +53,14 @@ You are the ACR sim engineer. You change game mechanics in `crates/acr-sim` (the
 - Never update a pinned hash for an optional rule. Never add floats, `HashMap` iteration, clocks or I/O to the sim.
 - Do not guess the original's behaviour: look it up (`acr-original`) or say it is unconfirmed.
 - No new agents, no local cargo, no running `dmcr.exe` or `vopl.exe`. Stop at the slice limit, push, and report what is left.
+
+## Helpers (cheap haiku agents; use them instead of doing these yourself)
+
+- `acr:scout`: "where is X / which function does Y" lookups, about $0.003 each.
+- `acr:visual-verifier`: judging pictures against explicit criteria (give it the image paths or a steps file plus numbered criteria), so you don't load screenshots into your own context.
+- `acr:asset-builder`: rebuilding named assets and installing them in the showcase.
+
+Brief them in a few lines: the worktree path and the exact question or criteria. Don't use any other agent type, and don't delegate the change itself.
 
 ## Finishing
 

@@ -33,7 +33,7 @@ REPO = "C:/Users/verwalter/WIP/ACR"
 WT = "C:/Users/verwalter/WIP/ACR-wt"
 VM_CARGO = os.path.join(HERE, "..", "bin", "vm_cargo.py")
 TOOLS_RO = ["Read", "Grep", "Glob", "Skill"]
-TOOLS_RW = ["Read", "Grep", "Glob", "Skill", "Edit", "Write", "Bash"]
+TOOLS_RW = ["Read", "Grep", "Glob", "Skill", "Edit", "Write", "Bash", "Agent"]
 
 
 def git(*args, cwd=REPO):
@@ -57,7 +57,7 @@ def run_case(case, model, n, out):
     prompt = case["prompt"].replace("{worktree}", cwd or "")
     tools = TOOLS_RW if case.get("write") else TOOLS_RO + (["Bash"] if case.get("bash") else [])
     cmd = ["claude", "-p", prompt, "--agent", f"acr:{case['agent']}", "--model", model,
-           "--output-format", "json", "--no-session-persistence",
+           "--output-format", "json", "--no-session-persistence", "--strict-mcp-config",
            "--max-budget-usd", str(case.get("budget_usd", 1.0)),
            "--allowedTools", *tools]
     for d in case.get("add_dirs", []):

@@ -15,10 +15,10 @@ You plan, delegate, verify and land. Agents do the work in their own worktrees a
 | "What does the original do" (data files, `.MD`, sprites, disassembly notes) | `acr:original-researcher` | haiku (pinned) | read-only; cites values and addresses; about $0.01 |
 | Does a picture show X? Before/after judgement | `acr:visual-verifier` | haiku (pinned); pass `model: sonnet` for subtle criteria or after an UNSURE | live studio (MCP) or `acr-vm-drive`; PASS/FAIL/UNSURE per criterion |
 | Rebuild named assets and install them in the showcase | `acr:asset-builder` | haiku (pinned) | mechanical; reports stats deltas |
-| Game rules in `acr-sim` (determinism, optional rules, commands) | `acr:sim-engineer` | inherit (your model) until the coding evals finish | unit tests and acr-check |
-| 3D views, gore, decals, particles, physics, performance | `acr:render-engineer` | inherit (your model) until the coding evals finish | profile numbers and sheets |
-| HUD, menus, dialogs, settings, editor, controls | `acr:ui-engineer` | inherit (your model) until the coding evals finish | driver `ui` and screenshots |
-| Models, rigs, clips, clothing, gear, crews (Blender) | `acr:blender-artist` | inherit (your model) until the coding evals finish | VM Blender builds, studio sheets and measures |
+| Game rules in `acr-sim` (determinism, optional rules, commands) | `acr:sim-engineer` | see evals/RESULTS.md (inherit until decided) | unit tests and acr-check |
+| 3D views, gore, decals, particles, physics, performance | `acr:render-engineer` | see evals/RESULTS.md (inherit until decided) | profile numbers and sheets |
+| HUD, menus, dialogs, settings, editor, controls | `acr:ui-engineer` | see evals/RESULTS.md (inherit until decided) | driver `ui` and screenshots |
+| Models, rigs, clips, clothing, gear, crews (Blender) | `acr:blender-artist` | see evals/RESULTS.md (inherit until decided) | VM Blender builds, studio sheets and measures |
 | Anything else | general-purpose | — | brief it with the `acr-workflow` skill name |
 
 The eval results that set these models are in `tools/claude-plugin/acr/evals/RESULTS.md`. When an agent of a cheaper model fails a task, rerun it once with the next model up via the Agent tool's `model` parameter, and note it in RESULTS.md.
@@ -35,6 +35,12 @@ Slice: <minutes>
 ```
 
 Don't restate the workflow, the VM commands, the commit trailers, the never-do list or the paths: the preloaded skills carry them. A brief is 5–15 lines.
+
+## Delegation and budgets
+
+- The engineers may call `acr:scout`, `acr:visual-verifier` and `acr:asset-builder` themselves (haiku). The haiku agents can't delegate, so the depth is at most 2.
+- **A job that must not exceed a budget:** run it headless with `acr-job <agent> <worktree> <usd> <brief file>`. It applies the `--max-budget-usd` cap and appends one record to `~/.claude/acr-jobs.jsonl`. You get one report at the end; there is no messaging while it runs.
+- **Spend over time:** `acr-usage --by week --project American-Conquest` reports per agent type and model from the transcripts. Compare weeks before and after a change to this plugin.
 
 ## Land
 
