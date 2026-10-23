@@ -7,7 +7,7 @@ direction 104). They live outside the repo, like every base model:
 `/home/claude/sources/generated` on the render VM); Tripo wins where both exist.
 
 `building(ctx, type)` imports one, keeps its base colour (texture shrunk to `tex` px), and
-fits it to the sprite: `genfit.fit` searches the turn about +Z (10 degree steps, then the
+fits it to the sprite: `spritefit.fit` searches the turn about +Z (10 degree steps, then the
 best four refined) and the uniform scale and ground shift that maximise the silhouette IoU
 against the reference `acr model-ref` drew (`ctx.ref`, the ground point at its anchor, so
 `LOCATION` is accounted for). The lowest point stands at z = 0. The result is decimated to
@@ -31,7 +31,7 @@ import bpy
 import numpy as np
 from mathutils import Matrix
 
-from . import genfit
+from . import spritefit
 from . import ships as sh
 from . import vessels as vs
 
@@ -98,15 +98,15 @@ def _load(ctx, type_, tex):
 
 
 def _matrix(f):
-    r = Matrix([list(row) for row in genfit.rot(f["yaw"], f["pitch"])]).to_4x4()
+    r = Matrix([list(row) for row in spritefit.rot(f["yaw"], f["pitch"])]).to_4x4()
     return (Matrix.Translation((f["shift"][0], f["shift"][1], 0.0)) @ Matrix.Scale(f["scale"], 4)
             @ Matrix.Translation((0.0, 0.0, f["lift"])) @ r)
 
 
 def _final_iou(obj, m, anchor, real_dir):
     pts = sample(obj, 200000, seed=1)
-    uv = genfit.project(pts, real_dir) + np.asarray(anchor, float)
-    return round(genfit.iou(genfit.raster(uv, m.shape), m), 3)
+    uv = spritefit.project(pts, real_dir) + np.asarray(anchor, float)
+    return round(spritefit.iou(spritefit.raster(uv, m.shape), m), 3)
 
 
 def _size(obj):
@@ -125,7 +125,7 @@ def building(ctx, type_, budget=12000, tex=1024, pitch=0.0):
     obj = _load(ctx, type_, tex)
     view = ref.views[0]
     m = mask(view)
-    f = genfit.fit(sample(obj), m, ref.anchor, view.dir, pitch=pitch)
+    f = spritefit.fit(sample(obj), m, ref.anchor, view.dir, pitch=pitch)
     vs.transform([obj], _matrix(f))
     ctx.stats["fit"] = {k: (round(x, 4) if isinstance(x, float) else x) for k, x in f.items() if k != "screen"}
     ctx.stats["fit"]["shift"] = [round(x, 3) for x in f["shift"]]
@@ -144,24 +144,24 @@ def ship(ctx, type_, length, draft, budget=16000, tex=1024, view_dir=104.0, wrec
     obj = _load(ctx, type_, tex)
     view = min(ref.views, key=lambda w: abs(w.dir - view_dir))
     m = mask(view)
-    f = genfit.fit(sample(obj), m, ref.anchor, view.dir)
+    f = spritefit.fit(sample(obj), m, ref.anchor, view.dir)
     # Snap the long axis to Y, keeping the bow where the fit put it (south).
     v, _ = _arrays(obj)
-    p = v @ genfit.rot(f["yaw"], 0.0).T
+    p = v @ spritefit.rot(f["yaw"], 0.0).T
     xy = p[:, :2] - p[:, :2].mean(axis=0)
     w, vec = np.linalg.eigh(xy.T @ xy)
     ax = vec[:, 1]
     turn = math.degrees(math.atan2(ax[0], ax[1]))  # angle of the long axis from +Y
     turn = (turn + 90) % 180 - 90
     yaw = f["yaw"] + turn
-    p = v @ genfit.rot(yaw, 0.0).T
+    p = v @ spritefit.rot(yaw, 0.0).T
     ext = p.max(axis=0) - p.min(axis=0)
     sprite_len = ext[1] * f["scale"]
     k = length / ext[1]
     lift = -p[:, 2].min() * k - draft
     cy = (p[:, 1].max() + p[:, 1].min()) / 2
     cx = (p[:, 0].max() + p[:, 0].min()) / 2
-    r = Matrix([list(row) for row in genfit.rot(yaw, 0.0)]).to_4x4()
+    r = Matrix([list(row) for row in spritefit.rot(yaw, 0.0)]).to_4x4()
     mat = Matrix.Translation((-cx * k, -cy * k, lift)) @ Matrix.Scale(k, 4) @ r
     vs.transform([obj], mat)
     ctx.stats["fit"] = {"yaw": round(f["yaw"], 1), "snap": round(turn, 1), "iou": round(f["iou"], 3),

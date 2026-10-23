@@ -21,7 +21,7 @@ assets/
       export.py           glTF export settings
       kit.py              building kit: palisades, log walls, roofs, scaffolds, rubble
       detail.py           procedural detail tiles (cloth, leather, wood) and box UVs
-      genbuild.py genfit.py  generated (Tripo, Meshy) buildings and ships fitted to the sprite
+      genbuild.py spritefit.py  generated (Tripo, Meshy) buildings and ships fitted to the sprite
       rig.py armature.py body.py humans.py horse.py gear.py poses.py decay.py
                           characters: see docs/assets-humans.md
     build.py              entry: builds one asset script
@@ -326,7 +326,7 @@ One four-line script per type calls `genbuild.building(ctx, TYPE, budget)` or
 `genbuild.ship(ctx, TYPE, length, draft)`; the build needs the game folder, as the fit uses
 the sprite reference.
 
-- **Fit** (`acr_assets.genfit`, pure numpy, `tests/test_genfit.py`): the surface is sampled
+- **Fit** (`acr_assets.spritefit`, pure numpy, `tests/test_spritefit.py`): the surface is sampled
   into 300k points; for every turn about +Z (10 degree steps; the best four refined) the
   points are projected through the original camera, and the uniform scale and ground shift
   that put them onto the sprite's silhouette are searched in screen space (an orthographic
