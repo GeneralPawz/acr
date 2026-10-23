@@ -27,7 +27,7 @@ MD = {
 WEAPONS = {0: 'MECH', 1: 'MEDIK'}
 ACTIVE = {'ATTACK1': 1}
 
-SPEC = meso.spec(MD, weapons=WEAPONS, active=ACTIVE, dress=("hipcloth", "tilmatli", "sandals"), head="maya", hand_r="macuahuitl", shield=None, melee="club",
+SPEC = meso.spec(MD, weapons=WEAPONS, active=ACTIVE, dress=("hipcloth", "tilmatli", "sandals"), head="maya", hand_r="macuahuitl", shield=None, melee="club", drape=True,
                  paint="white_dots", palette={"tilmatli": (0.88, 0.85, 0.78)})
 
 
