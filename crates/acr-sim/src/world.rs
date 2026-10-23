@@ -1291,6 +1291,18 @@ impl World {
             }
             Command::GroupFormations { player, units } => crate::grouping::group(self, *player, units),
             Command::UngroupFormations { player, units } => crate::grouping::ungroup(self, *player, units),
+            Command::Destruct { player, units } => {
+                // `KillSelected` (0x4dc83c): every own object that still lives, also a man out
+                // of the fight (who takes no other order) and a building.
+                let mut ids: Vec<usize> = units.iter().map(|id| id.0 as usize).collect();
+                ids.sort_unstable();
+                ids.dedup();
+                for i in ids {
+                    if self.units.get(i).is_some_and(|u| u.living() && u.owner == *player) {
+                        crate::combat::destruct_building(self, i);
+                    }
+                }
+            }
             Command::Patrol { player, units, x, y } => {
                 let ids = self.owned(*player, units);
                 crate::motion::patrol(self, &ids, *x, *y);

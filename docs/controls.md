@@ -67,6 +67,7 @@ panels) the left button works as always, also with Ctrl. The wheel does nothing 
 | Recall control group | 0..9 | 0..9; **pressed twice** quickly (0.5 s): also centre the view on the group |
 | Add control group to the selection | Shift + 0..9 | Shift + 0..9 |
 | Jump to the next selected unit | Space | Space |
+| Kill the selected own units (buildings: set on fire) | Delete | Delete |
 | Centre the view on the selection | – | **Home** |
 | Leave the build, rally point or attack-ground mode | Escape | Escape |
 | Game menu | F12, Escape (ACR) | F12, Escape when nothing is to be cancelled |
@@ -87,6 +88,24 @@ panels) the left button works as always, also with Ctrl. The wheel does nothing 
 
 Escape in the modern scheme first leaves a build or rally point mode, then cancels a drag
 in progress, and only then opens the game menu.
+
+**Delete** kills the selected own objects at once, without asking, as in the original
+(pseudo key 0xc8, network command 0x21, `KillSelected` 0x4dc83c; ACR's `Command::Destruct`):
+units die with their death animation and leave a corpse, a finished building of a
+`SLOWDEATH` type drops to 1999 life and burns down, other buildings collapse. It works in
+both schemes and in the editor.
+
+### What can be selected
+
+Only living, fighting units: a dying man or a corpse is never picked by a click, a
+rectangle, a double click, a recalled control group or a formation icon, and a selected
+unit leaves the selection the tick it starts to die (the original's `Die` takes it out of
+selection and formation at once). Under the hit-locations rule a man out of the fight (a
+crawler with a leg gone, or a man without a working arm) cannot be selected either and
+leaves the selection: he takes no orders anyway and drags himself away from the enemy. The
+original has no such men. A man only knocked down gets up again and stays selectable. The
+same rule gives the soldier counts on the formation icons (selection panel and army list):
+they drop the moment a soldier dies or goes out of the fight, not when his corpse vanishes.
 
 ### Leader chords (modern)
 

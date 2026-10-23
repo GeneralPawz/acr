@@ -151,6 +151,10 @@ pub enum Command {
     /// The `CM_UNGRP` button (0x59, `UnGroupSelectedUnits` 0x43d717): the formations of the
     /// units leave their groups.
     UngroupFormations { player: PlayerId, units: Vec<EntityId> },
+    /// The Delete key (pseudo key 0xc8, network command 0x21, executor `KillSelected`
+    /// 0x4dc83c): `DestructBuilding` (0x4e7720) on every selected object. Finished `SLOWDEATH`
+    /// buildings drop to 1999 life and burn down; everything else dies with a corpse.
+    Destruct { player: PlayerId, units: Vec<EntityId> },
 }
 
 impl Command {
@@ -194,7 +198,8 @@ impl Command {
             | Command::Reform { player, .. }
             | Command::Fill { player, .. }
             | Command::GroupFormations { player, .. }
-            | Command::UngroupFormations { player, .. } => *player,
+            | Command::UngroupFormations { player, .. }
+            | Command::Destruct { player, .. } => *player,
         }
     }
 }

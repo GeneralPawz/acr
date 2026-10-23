@@ -550,7 +550,7 @@ impl InGame {
         for b in brigades {
             let Some(br) = world.brigades.get(usize::from(b)) else { continue };
             for &m in br.members.iter().skip(2).flatten() {
-                if !picked.contains(&m) && world.unit(m).is_some_and(|u| u.living() && u.brigade == Some(b)) {
+                if !picked.contains(&m) && interface::fighting_member(world, b, m).is_some() {
                     picked.push(m);
                 }
             }
@@ -573,7 +573,7 @@ impl InGame {
         let caught: Vec<&acr_sim::Unit> = world
             .units
             .iter()
-            .filter(|u| u.alive && u.inside_of.is_none() && u.owner == own)
+            .filter(|u| interface::selectable(u) && u.inside_of.is_none() && u.owner == own)
             .filter(|u| {
                 let (bx, by, w, h) = self.unit_box(u);
                 bx <= x1 && bx + w > x0 && by <= y1 && by + h > y0
@@ -683,6 +683,7 @@ impl InGame {
                 self.update_stats();
                 self.watch_queues(ticks);
                 self.select_formed();
+                self.prune_selection();
             }
             if ticks > 0 {
                 self.animation_sounds(window);

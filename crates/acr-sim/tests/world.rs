@@ -325,3 +325,20 @@ fn formations_group_and_ungroup() {
     assert_eq!(w.formation_groups[0].sets, vec![vec![0], vec![0, 1, 2]]);
     assert!(w.formation_groups[0].is_group(&[2, 1, 0]));
 }
+
+#[test]
+fn destruct_kills_the_own_living_units_only() {
+    let (mut w, mus, _) = setup();
+    let mine = w.spawn(mus, 0, Pos::from_pixels(1500, 1500), 0);
+    let theirs = w.spawn(mus, 1, Pos::from_pixels(1600, 1500), 0);
+    let keep = w.spawn(mus, 0, Pos::from_pixels(1700, 1500), 0);
+    // Another player cannot kill them; the owner kills only the listed ones.
+    w.step(&[Command::Destruct { player: 1, units: vec![mine] }]);
+    assert!(w.units[mine.0 as usize].living());
+    w.step(&[Command::Destruct { player: 0, units: vec![mine, theirs, mine] }]);
+    assert!(!w.units[mine.0 as usize].living(), "the own unit dies");
+    assert!(w.units[theirs.0 as usize].living() && w.units[keep.0 as usize].living());
+    // A dead unit is not killed again.
+    w.step(&[Command::Destruct { player: 0, units: vec![mine, keep] }]);
+    assert!(!w.units[keep.0 as usize].living());
+}

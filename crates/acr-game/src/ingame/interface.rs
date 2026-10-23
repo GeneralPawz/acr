@@ -388,7 +388,27 @@ impl InGame {
 
     pub(super) fn selected_units(&self) -> impl Iterator<Item = &Unit> {
         let world = self.world.as_ref();
-        self.selected.iter().filter_map(move |&id| world.and_then(|w| w.unit(id)).filter(|u| u.alive))
+        self.selected.iter().filter_map(move |&id| world.and_then(|w| w.unit(id)).filter(|u| selectable(u)))
+    }
+
+    /// Dead, dying and (hit-locations rule) out-of-the-fight units leave the selection
+    /// ([`selectable`]). Called after a tick.
+    pub(super) fn prune_selection(&mut self) {
+        let Some(world) = &self.world else { return };
+        self.selected.retain(|&id| world.unit(id).is_some_and(selectable));
+    }
+
+    /// The Delete key (0x4a33a7: pseudo key 0xc8 → 0x4c2c61 → network command 0x21,
+    /// `KillSelected` 0x4dc83c): the own selected objects die (finished `SLOWDEATH`
+    /// buildings set on fire). No confirmation, as in the original.
+    pub(super) fn destruct_selected(&mut self) {
+        if self.mission.ended.is_some() {
+            return;
+        }
+        let Some(world) = &self.world else { return };
+        if let Some(c) = destruct_command(world, self.own(), &self.selected) {
+            self.commands.push(c);
+        }
     }
 
     /// The local player's selected objects, for the state commands.
@@ -561,7 +581,7 @@ impl InGame {
         for &b in &brigades {
             let Some(br) = world.brigades.get(usize::from(b)) else { continue };
             let Some(slot) = free.next() else { break };
-            let soldiers: Vec<&Unit> = br.members.iter().skip(3).flatten().filter_map(|&m| world.unit(m)).collect();
+            let soldiers = formation_soldiers(world, b);
             let (life, max) = soldiers.iter().fold((0, 0), |(l, m), u| (l + u.life, m + u.max_life.max(1)));
             view.icons.push(Icon {
                 frame: br.kind.and_then(icon_of).unwrap_or(0),
@@ -599,7 +619,7 @@ impl InGame {
             .enumerate()
             .filter(|(_, br)| br.alive && br.owner == own && usize::from(br.number) < slots)
             .collect();
-        let alive = |b: usize, m: EntityId| world.unit(m).filter(|u| u.alive && u.brigade == Some(b as u16));
+        let alive = |b: usize, m: EntityId| fighting_member(world, b as u16, m);
         let soldiers = |b: usize, br: &acr_sim::formation::Brigade| -> Vec<EntityId> {
             br.members.iter().skip(3).flatten().copied().filter(|&m| alive(b, m).is_some()).collect()
         };
@@ -1447,9 +1467,7 @@ impl InGame {
                     return;
                 };
                 for &m in br.members.iter().skip(2).flatten() {
-                    if world.unit(m).is_some_and(|u| u.living() && u.brigade == Some(brigade))
-                        && !self.selected.contains(&m)
-                    {
+                    if fighting_member(world, brigade, m).is_some() && !self.selected.contains(&m) {
                         self.selected.push(m);
                     }
                 }
@@ -1638,7 +1656,7 @@ impl InGame {
         let Some(b) = world.unit(officer).and_then(|u| u.brigade) else { return };
         let members = world.brigades.get(usize::from(b)).map(|br| br.members.clone()).unwrap_or_default();
         for m in members.into_iter().skip(2).flatten() {
-            if !self.selected.contains(&m) && world.unit(m).is_some_and(|u| u.living()) {
+            if !self.selected.contains(&m) && world.unit(m).is_some_and(selectable) {
                 self.selected.push(m);
             }
         }
@@ -2132,7 +2150,7 @@ impl InGame {
         world
             .units
             .iter()
-            .filter(|u| u.alive && u.inside_of.is_none() && keep(u))
+            .filter(|u| selectable(u) && u.inside_of.is_none() && keep(u))
             .filter(|u| {
                 let (x0, y0, w, h) = self.unit_box(u);
                 (x0..x0 + w).contains(&px) && (y0..y0 + h).contains(&py)
@@ -2333,7 +2351,7 @@ impl InGame {
         self.selected = world
             .units
             .iter()
-            .filter(|u| u.alive && u.inside_of.is_none() && u.owner == own && u.kind == kind)
+            .filter(|u| selectable(u) && u.inside_of.is_none() && u.owner == own && u.kind == kind)
             .filter(|u| if u.brigade.is_some() { formed } else { free })
             .filter(|u| {
                 let [sx, sy] = self.screen_of(u);
@@ -2533,6 +2551,7 @@ impl InGame {
             }
             Key::Named(NamedKey::Tab) => self.interface.hud.life_bars = !self.interface.hud.life_bars,
             Key::Named(NamedKey::Space) => self.centre_next(),
+            Key::Named(NamedKey::Delete) => self.destruct_selected(),
             Key::Character(c) => {
                 let Some(ch) = c.chars().next().filter(|ch| ch.is_ascii()) else { return GameKey::None };
                 let ch = ch.to_ascii_uppercase() as u8;
@@ -2572,7 +2591,7 @@ impl InGame {
         let alive: Vec<EntityId> = self.interface.groups[n]
             .iter()
             .copied()
-            .filter(|&id| self.world.as_ref().and_then(|w| w.unit(id)).is_some_and(|u| u.alive))
+            .filter(|&id| self.world.as_ref().and_then(|w| w.unit(id)).is_some_and(selectable))
             .collect();
         if mods.shift_key() {
             for id in alive {
@@ -2814,6 +2833,40 @@ fn selected_brigades(world: &acr_sim::World, own: u8, selected: &[EntityId]) -> 
     ids
 }
 
+/// Whether a unit can be selected or counted as a soldier: living (not dying, no corpse) and,
+/// under the hit-locations rule (#262), not out of the fight (a crawler or a man without a
+/// working arm, who takes no orders, [`acr_sim::body::Body::out_of_fight`]). A man only
+/// knocked down gets up again and stays selectable. Without the rule every body is whole,
+/// so this is `living()`; the original takes a dying man out of selection and formation at
+/// once (`Die` 0x4e77a0 calls `UnRegisterNewUnit` 0x42e2bd).
+pub(super) fn selectable(u: &Unit) -> bool {
+    u.living() && !u.body.out_of_fight()
+}
+
+/// A member of brigade `b` that still fights ([`selectable`]): the soldiers the formation
+/// icons count. ACR keeps a dead man's id in his brigade until the corpse is gone, where
+/// the original's `Die` empties his slot.
+pub(super) fn fighting_member(world: &acr_sim::World, b: u16, m: EntityId) -> Option<&Unit> {
+    world.unit(m).filter(|u| selectable(u) && u.brigade == Some(b))
+}
+
+/// The soldiers a formation's icon counts (0x606d10): the members from the fourth on that
+/// still fight ([`fighting_member`]).
+pub(super) fn formation_soldiers(world: &acr_sim::World, b: u16) -> Vec<&Unit> {
+    let Some(br) = world.brigades.get(usize::from(b)) else { return Vec::new() };
+    br.members.iter().skip(3).flatten().filter_map(|&m| fighting_member(world, b, m)).collect()
+}
+
+/// The Delete key's command: the player's own selected objects that can still be selected.
+pub(super) fn destruct_command(world: &acr_sim::World, own: u8, selected: &[EntityId]) -> Option<Command> {
+    let units: Vec<EntityId> = selected
+        .iter()
+        .copied()
+        .filter(|&id| world.unit(id).is_some_and(|u| selectable(u) && u.owner == own))
+        .collect();
+    (!units.is_empty()).then_some(Command::Destruct { player: own, units })
+}
+
 /// `ImCorrectBrigadesSelection` (0x41f3fb, after a selection 0x4da424 and a recalled group
 /// 0x4d6387): a selected member of an own formation selects the formation's soldiers
 /// (`ImSelBrigade` 0x4e1365: the members from the third on that are not selected yet,
@@ -2823,7 +2876,7 @@ pub(super) fn corrected_selection(world: &acr_sim::World, own: u8, mut selected:
     let select = |selected: &mut Vec<EntityId>, b: u16| {
         let Some(br) = world.brigades.get(usize::from(b)).filter(|br| br.alive && br.owner == own) else { return };
         for &m in br.members.iter().skip(2).flatten() {
-            if world.unit(m).is_some_and(|u| u.living() && u.brigade == Some(b)) && !selected.contains(&m) {
+            if fighting_member(world, b, m).is_some() && !selected.contains(&m) {
                 selected.push(m);
             }
         }
@@ -2909,6 +2962,91 @@ mod tests {
         assert_eq!(sel.len(), 30);
         assert!(formations[1].1.iter().all(|s| sel.contains(s)));
         assert!(!formations[2].1.iter().any(|s| sel.contains(s)));
+    }
+
+    #[test]
+    fn dead_dying_and_crawling_men_are_neither_selected_nor_counted() {
+        use acr_formats::defs::{OrderGroups, OrderList, UnitDef};
+        use acr_sim::Pos;
+        use acr_sim::body::{KNEE, LimbId};
+        use acr_sim::catalog::{Catalog, ObjectType};
+        use acr_sim::formation::Formations;
+        use acr_sim::map::MapGrid;
+        use std::sync::Arc;
+        let mut c = Catalog::new();
+        let def = |officer: &str| {
+            format!(
+                "NAME X
+USERLC 0 G SHADOW 0 0
+#STAND 9 1 0 0
+@MOTION_L 9 0 0 9
+@MOTION_R 9 0 10 19
+                 LIFE 100
+GEOMETRY 1 10 40
+{officer}[END]
+"
+            )
+        };
+        let mus = c.add(ObjectType::from_def("Mus(EN)", &UnitDef::parse(def("").as_bytes())));
+        let off = c.add(ObjectType::from_def(
+            "Off(EN)",
+            &UnitDef::parse(
+                def("OFFICER
+")
+                .as_bytes(),
+            ),
+        ));
+        let f = Formations::new(
+            &OrderList::parse(
+                b"#LINE15 SYM2 19 2 9 3 1 2
+   C   C   C
+      
+***************
+#END
+#EXIT
+",
+            ),
+            &OrderGroups::parse(
+                b"1
+LINE 0 1 #LINE15
+",
+            ),
+        );
+        let mut w = acr_sim::World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(f));
+        let officer = w.spawn(off, 0, Pos::from_pixels(1500, 2000), 0);
+        let soldiers: Vec<EntityId> =
+            (0..15).map(|i| w.spawn(mus, 0, Pos::from_pixels(1400 + 20 * (i % 5), 2100 + 20 * (i / 5)), 0)).collect();
+        w.step(&[Command::Form { player: 0, officer, units: soldiers.clone(), kind: "LINE".into() }]);
+        let b = w.unit(soldiers[0]).unwrap().brigade.expect("formed");
+        let count = |w: &acr_sim::World| formation_soldiers(w, b).len();
+        let start = count(&w);
+        assert!(start >= 13, "{start} soldiers counted");
+        // A dying man (his body still lies there, `alive`) leaves the count at once.
+        let dying = soldiers[5];
+        w.kill(dying);
+        assert!(w.unit(dying).is_some(), "the body is still there");
+        assert_eq!(count(&w), start - 1);
+        assert!(!corrected_selection(&w, 0, vec![soldiers[6]]).contains(&dying));
+        // A crawler (hit-locations rule) is out of the fight: not counted, not selectable.
+        let crawler = soldiers[7];
+        w.units[crawler.0 as usize].body.limbs[LimbId::LegL as usize].lost = KNEE;
+        assert!(w.units[crawler.0 as usize].body.out_of_fight());
+        assert!(!selectable(&w.units[crawler.0 as usize]));
+        assert_eq!(count(&w), start - 2);
+        assert!(!corrected_selection(&w, 0, vec![soldiers[6]]).contains(&crawler));
+        // A man only knocked down gets up again and stays selectable.
+        w.units[soldiers[8].0 as usize].body.down = 10;
+        assert!(selectable(&w.units[soldiers[8].0 as usize]));
+        // Delete: only the own living, fighting men of the selection.
+        let selected = vec![dying, crawler, soldiers[9], officer];
+        assert_eq!(
+            destruct_command(&w, 0, &selected),
+            Some(Command::Destruct { player: 0, units: vec![soldiers[9], officer] })
+        );
+        assert_eq!(destruct_command(&w, 1, &selected), None, "not the player's own");
+        w.step(&[destruct_command(&w, 0, &selected).unwrap()]);
+        assert!(!w.units[soldiers[9].0 as usize].living() && !w.units[officer.0 as usize].living());
+        assert_eq!(count(&w), start - 3);
     }
 
     #[test]
