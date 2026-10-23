@@ -7,9 +7,12 @@ pixels (30 per metre): the hut is 185 x 96 px (6.2 x 3.2 m), eaves at 70 px (2.3
 at 99 px (3.3 m), long axis 46 degrees from east (north-east on screen).
 """
 
-from acr_assets import materials, project, scene, shapes
+from acr_assets import genbuild, materials, project, scene, shapes
 
 TYPE = "IncDo1"
+# True: the generated model (Meshy, from the sprite; `acr_assets.genbuild`) instead of the
+# scripted hut.
+GENERATED = False
 
 # Fitted plan (world pixels, game axes: x east, y south; z up; angles like RealDir).
 CENTRE = (-8.6, 24.1)
@@ -30,6 +33,8 @@ NET = ("net", (0.75, 0.75, 0.70))
 
 
 def build(ctx):
+    if GENERATED:
+        return genbuild.building(ctx, TYPE, budget=8000)
     root = ctx.root
     parts = []  # (object, (material name, flat sRGB colour))
 
