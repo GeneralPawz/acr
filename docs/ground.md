@@ -38,7 +38,7 @@ bottom-up, so texture *t* is at row 33 − *t*/4). The table is `acr_render::gro
 |---|---|---|---|
 | grass | `sparse_grass` | 2.5 m | 0 (the editor's green), 4, 5, 12, 16, 18, 20, 22, 39 |
 | meadow | `leafy_grass` | 2 m | 1–3, 6, 7, 13, 17, 19, 21, 23, 63–65, 68, 69, 93, 96 |
-| dirt | `dry_ground_01` | 3 m | 15, 34, 42, 43, 52, 67, 71 (blank `dirt`), 84, 94, 116, 121–135 |
+| dirt | `dirt` (was `dry_ground_01`, cracked clay) | 3 m | 15, 34, 42, 43, 52, 67, 71 (blank `dirt`), 84, 94, 116, 121–135 |
 | mud | `brown_mud_02` | 2.5 m | 29, 30, 49–51, 53–55, 66, 70 |
 | sand | `coast_sand_01` | 2.5 m | 72, 74, 75, 78, 79, 100–109, 112, 114, 120 |
 | rock | `rocky_terrain_02` | 4 m | 8–11, 14, 26, 31, 33, 38, 46, 47, 56, 57, 80–83, 86, 87, 90, 91 |
@@ -133,6 +133,17 @@ the normal per distinct class, with shared classes reused).
   stretch the texture.
 - The shore is a soft alpha cut to the original water, which is still the palette tint.
 
+**Phase 1 finish (m2-ground2):**
+- **Calibration.** On battle3 (`cmp_map_z2.png`) the luminance matched (63 vs 62) but the
+  detailed grass was far more saturated (mean HSV saturation 178 vs 144) and its blue was
+  crushed (mean RGB 76,64,22 vs 74,62,33): the per-channel ratio `albedo / class mean`
+  multiplies the strong chroma of the photo into the tint. Now the material's detail is
+  mostly luminance (`CHROMA_DETAIL` = 0.35 of the per-channel ratio) and the tile tint is
+  desaturated to `TINT_SATURATION` = 0.82. Not yet re-measured on battle3.
+- **Dirt** uses Poly Haven `dirt` (loose soil, CC0) instead of cracked clay.
+- **Skip:** the pass is not drawn below zoom 0.75 in the original view.
+- **Triplanar:** not done yet.
+
 ## Phase 2: ground state texture
 
 One RGBA texture per map stores what happens to the ground. It replaces the per-vertex
@@ -181,6 +192,38 @@ trample darkening and the flat dirt and crater decals.
   occlusion mapping (8–16 steps, fewer with distance) for the small relief. Far away the
   plain mesh stays. In the original view, displacement only shades (normals, POM), because
   the painter's order of the ground must stay.
+
+**Built (m2-ground2), as a first version:**
+- `acr_render::ground_state::GroundState`: tiles of 256² texels of 5 px (≈ 17 cm), 1280 px
+  per tile, allocated on the first stamp into an 8 × 8 slot atlas (2048² RGBA8 = 16 MB on
+  every platform; the least recently stamped tile is recycled when it is full), and a
+  64 × 64 `R8Uint` page table. One RGBA8 texture: R compression, G mud, B scorch,
+  A displacement (±25 cm); **blood is not in it yet** (the pool decal stays).
+- Stamps are painted on the CPU (ellipse, stroke, crater with rim) and only the changed
+  rectangles are uploaded (`TerrainRenderer::upload_ground_state`). Holes take the deeper
+  value, rims the higher, so repeated marks never dig without end. Recovery: one tile per
+  tick fades compression and mud by 0.9997 per tick; prints shallower than 4 cm level out,
+  craters and ruts stay.
+- Marks (`acr-game/src/ingame/ground_marks.rs`, render only, after each tick): boots
+  (one print per 0.375 m, alternating feet), hoof pairs (deeper, −3.5 cm, wider apart,
+  some mud), two gun wheel ruts 1.5 m apart, crawl drags, a body press where a man or
+  horse fell, cannonball craters (−18 cm, rim +5 cm) with a 1.8 m furrow along the flight
+  at every impact (each bounce of #258 is one), scorched shell craters, grapeshot pits.
+- Detailed mode replaces the per-vertex trample darkening (cleared once, restored when the
+  ground returns to original) and the flat dirt/crater decals; original mode keeps both.
+- Shading (`fs_detail`): compression darkens and desaturates towards bare soil, mud darkens
+  and gets a sun glint, holes are darker, scorch goes black-brown, and the displacement's
+  slope (finite differences of 4 more state taps) bends the normal.
+- Limits: a 17 cm texel is coarser than a boot (28 × 11 cm), so a boot print is a soft
+  dent of about 25 cm, not a sole; prints read as a darker trodden band rather than single
+  steps except up close. No parallax occlusion and no finer mesh yet: the relief is
+  shading only. No GPU timer measurement yet.
+- Frames: `ACR-analysis/ground2/detailed/` (`scripts/scene.py`: a company, three dragoons
+  and a gun on patrol over grass and a mud patch, an enemy gun firing on them). The gun's
+  two ruts show clearly at zoom 2; the men died early under the cannon, so their prints and
+  the craters are mostly under bodies and blood in these frames. Driver note: `wait` does
+  not render, so the scene records one frame first to upload the materials (the marks
+  only run once they are loaded).
 
 ## Phase 3: particles
 
@@ -257,7 +300,12 @@ after about 20 minutes. Its cost is negligible: a few hundred instances at most.
 
 - Phase 1 is built: setting, classes, CC0 sets, packing, loading, drawing, the blank
   field's `patches`, frames and a first measurement.
-- Next: calibrate the tint and shade against the original (a mean-colour check per zoom
+- Phase 1 finish partly built (calibration from the battle3 measurement, `dirt` set, skip
+  below zoom 0.75); phase 2 first version built (state texture, stamps, shading).
+- Next: re-measure battle3, triplanar, a scene where the marks are not under casualties,
+  blood in the state, POM and a finer mesh near the camera, a GPU timer, then phase 3
+  (particles and the `Burst`/`ParticleSink` interface of docs/water.md) and dung.
+- Earlier plan: calibrate the tint and shade against the original (a mean-colour check per zoom
   on the blank field), triplanar on steep slopes, and a skip below zoom 0.75. Then phase 2
   (the ground state texture with boot and hoof stamps and cannonball craters and furrows),
   then phase 3.

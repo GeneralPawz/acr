@@ -59,6 +59,17 @@ impl Trample {
         }
     }
 
+    /// Vertices.
+    pub fn len(&self) -> usize {
+        self.wear.len()
+    }
+
+    /// The wear as 0..255 per vertex now, changed or not.
+    pub fn force_upload(&mut self) -> Vec<u8> {
+        self.dirty = false;
+        self.wear.iter().enumerate().map(|(v, &w)| amount(w, v)).collect()
+    }
+
     /// The wear as 0..255 per vertex for the renderer if it changed since the last call:
     /// a ragged edge (per-vertex noise), no trace below a fifth of full wear.
     pub fn take_upload(&mut self) -> Option<Vec<u8>> {

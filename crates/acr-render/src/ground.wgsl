@@ -20,6 +20,42 @@ struct Detail {
 @group(2) @binding(1) var albedo: texture_2d_array<f32>;
 @group(2) @binding(2) var normals: texture_2d_array<f32>;
 @group(2) @binding(3) var material_sampler: sampler;
+// The ground state (ground_state.rs): R compression, G mud, B scorch, A displacement.
+@group(3) @binding(0) var state_atlas: texture_2d<f32>;
+@group(3) @binding(1) var state_pages: texture_2d<u32>;
+@group(3) @binding(2) var state_sampler: sampler;
+
+const STATE_TEXEL_PX: f32 = 5.0;
+const STATE_TILE: f32 = 256.0;
+const STATE_SLOTS: u32 = 8u;
+const STATE_PAGES: i32 = 64;
+// Metres of displacement at the channel's ends, and world pixels per metre.
+const STATE_DISP_M: f32 = 0.25;
+const PX_PER_M: f32 = 30.0;
+
+// The ground state at world point `p` (level, untouched ground where no tile is).
+fn ground_state(p: vec2<f32>) -> vec4<f32> {
+    let tile = vec2<i32>(floor(p / (STATE_TEXEL_PX * STATE_TILE)));
+    if (any(tile < vec2<i32>(0)) || any(tile >= vec2<i32>(STATE_PAGES))) {
+        return vec4<f32>(0.0, 0.0, 0.0, 128.0 / 255.0);
+    }
+    let slot = textureLoad(state_pages, tile, 0).r;
+    if (slot == 0u) {
+        return vec4<f32>(0.0, 0.0, 0.0, 128.0 / 255.0);
+    }
+    let s = slot - 1u;
+    let local = clamp(p / STATE_TEXEL_PX - vec2<f32>(tile) * STATE_TILE, vec2<f32>(0.5), vec2<f32>(STATE_TILE - 0.5));
+    let uv = (vec2<f32>(f32(s % STATE_SLOTS), f32(s / STATE_SLOTS)) * STATE_TILE + local) / (f32(STATE_SLOTS) * STATE_TILE);
+    return textureSampleLevel(state_atlas, state_sampler, uv, 0.0);
+}
+
+fn luminance(c: vec3<f32>) -> f32 {
+    return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
+}
+
+// Calibration against the original on battle3 (docs/ground.md).
+const TINT_SATURATION: f32 = 0.82;
+const CHROMA_DETAIL: f32 = 0.35;
 
 struct DetailOut {
     @builtin(position) pos: vec4<f32>,
@@ -181,8 +217,12 @@ fn fs_detail(in: DetailOut) -> @location(0) vec4<f32> {
             continue;
         }
         let mean = max(detail.classes[cls[i]].rgb, vec3<f32>(0.02));
+        // Detail mostly as luminance: a full per-channel ratio crushes the blue of grass
+        // and over-saturates (docs/ground.md, calibration).
         let ratio = clamp(samples[i].albedo.rgb / mean, vec3<f32>(0.25), vec3<f32>(2.2));
-        colour += wgt * tints[i] * ratio;
+        let lratio = clamp(luminance(samples[i].albedo.rgb) / max(luminance(mean), 0.01), 0.25, 2.2);
+        let tint = mix(vec3<f32>(luminance(tints[i])), tints[i], TINT_SATURATION);
+        colour += wgt * tint * mix(vec3<f32>(lratio), ratio, CHROMA_DETAIL);
         normal += wgt * vec3<f32>(samples[i].normal.xy * 2.0 - 1.0, 0.0);
     }
     total = max(total, 1e-4);
@@ -191,7 +231,32 @@ fn fs_detail(in: DetailOut) -> @location(0) vec4<f32> {
         discard;
     }
     colour /= land;
-    let nt = normal.xy / land;
+    var nt = normal.xy / land;
+
+    // The ground state: trampled, churned, scorched, dug.
+    let st = ground_state(xy);
+    let disp = (st.a - 128.0 / 255.0) * (255.0 / 127.0) * STATE_DISP_M;
+    if (any(st != vec4<f32>(0.0, 0.0, 0.0, 128.0 / 255.0))) {
+        // The displacement's slope (metres per metre) from its neighbours, into the normal.
+        let e = STATE_TEXEL_PX;
+        let k = (255.0 / 127.0) * STATE_DISP_M * PX_PER_M / (2.0 * e);
+        let hx = (ground_state(xy + vec2<f32>(e, 0.0)).a - ground_state(xy - vec2<f32>(e, 0.0)).a) * k;
+        let hy = (ground_state(xy + vec2<f32>(0.0, e)).a - ground_state(xy - vec2<f32>(0.0, e)).a) * k;
+        nt = nt + vec2<f32>(-hx, hy);
+        let len = length(nt);
+        if (len > 0.9) {
+            nt = nt * (0.9 / len);
+        }
+        // Compressed: flattened grass, darker, duller, towards bare soil.
+        let l = luminance(colour);
+        colour = mix(colour, vec3<f32>(l) * vec3<f32>(1.15, 0.95, 0.7), 0.6 * st.r) * (1.0 - 0.3 * st.r);
+        // Churned mud: dark and brown.
+        colour = mix(colour, vec3<f32>(l) * vec3<f32>(1.1, 0.85, 0.6) * 0.45, 0.7 * st.g);
+        // Holes are darker inside (soil in shade, moister).
+        colour = colour * (1.0 - clamp(-disp * 2.0, 0.0, 0.3));
+        // Scorch: black-brown.
+        colour = mix(colour, vec3<f32>(0.025, 0.02, 0.015), 0.85 * st.b);
+    }
 
     // The geometric normal from the surface; the material's normal map on top of it.
     if (n.z < 0.0) {
@@ -205,6 +270,9 @@ fn fs_detail(in: DetailOut) -> @location(0) vec4<f32> {
     // The relief light is in the original level already; the normal map adds the small one.
     let micro = (0.5 + 0.5 * max(dot(np, sun), 0.0)) / (0.5 + 0.5 * max(dot(n, sun), 0.0));
     var rgb = colour * shade_at(in.light) * micro;
+    // Wet mud glints under the sun (a view from the south above, as the original's).
+    let half_v = normalize(sun + normalize(vec3<f32>(0.0, 0.6, 0.8)));
+    rgb += vec3<f32>(0.35) * st.g * st.g * pow(max(dot(np, half_v), 0.0), 48.0) * shade_at(in.light);
 
     // Water with the original tint (original view, no water surface of docs/water.md):
     // the original's tinted lakebed shows through. The water surface covers this lakebed.
