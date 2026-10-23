@@ -94,12 +94,23 @@ def _off_hand(arm_obj, spec, loose, goals, point):
     if key is None:
         return point
     o, z = grips.item_axis(arm_obj, key)
-    if "r" in goals:
+    if key in spec.get("world_loc", {}):
+        o = Vector(spec["world_loc"][key])  # the musket placed in armature space (`place`)
+    elif "r" in goals:
         o = Vector(goals["r"][0])
     v = point - o
     on = o + z * v.dot(z)
     if (point - on).length > OFF_HAND:
         return point
+    # Out of the arm's reach (the fist's centre lies a hand further on than the palm the
+    # poses were made for): slide along the shaft towards the shoulder until it reaches.
+    arm = arm_obj.pose.bones
+    sh = arm["upperarm_l"].head
+    reach = 0.97 * (arm["upperarm_l"].length + arm["forearm_l"].length + (arm["socket.hand_l"].head - arm["hand_l"].head).length)
+    s0, h = (sh - o).dot(z), ((sh - o) - z * (sh - o).dot(z)).length
+    if h < reach:
+        span = math.sqrt(reach * reach - h * h)
+        on = o + z * min(max(v.dot(z), s0 - span), s0 + span)
     r = grips.align_off_hand(arm_obj, "l", z).to_euler("XYZ")
     for sp in (spec, loose):
         w = dict(sp.get("world", {}))
