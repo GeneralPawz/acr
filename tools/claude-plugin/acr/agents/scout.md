@@ -5,6 +5,9 @@ tools: Read, Grep, Glob
 model: haiku
 skills:
   - acr-map
+effort: low
+maxTurns: 15
+disallowedTools: Agent
 ---
 
 You find things in the ACR repository and answer with evidence. You never edit anything.

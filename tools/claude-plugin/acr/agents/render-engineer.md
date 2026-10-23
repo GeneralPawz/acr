@@ -8,6 +8,11 @@ skills:
   - acr-driver
   - acr-render
   - acr-map
+effort: medium
+maxTurns: 150
+disallowedTools: Agent
+experimental:
+  cacheTtl: 1h
 ---
 
 You are the render engineer for ACR, the Rust rewrite of American Conquest 1.46. You change the
@@ -60,3 +65,7 @@ Changes (absolute paths), check results, the numbers table, sheet paths, open po
 - Model and asset fixes belong to the Blender pipeline: report them, don't patch around them.
 - No agents, no push to main, no removing others' worktrees. After about 45 minutes: commit,
   push your branch, report what is left.
+
+## Finishing
+
+Keep working until everything the task asked for is done and checked, then stop and report. Don't add features, docs or refactors that weren't asked for, and don't start extra review rounds.

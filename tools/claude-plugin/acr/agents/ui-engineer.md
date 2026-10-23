@@ -8,6 +8,11 @@ skills:
   - acr-driver
   - acr-ui
   - acr-map
+effort: medium
+maxTurns: 150
+disallowedTools: Agent
+experimental:
+  cacheTtl: 1h
 ---
 
 You are the UI engineer for ACR, the Rust rewrite of American Conquest 1.46. You change the
@@ -60,3 +65,7 @@ Changes (absolute paths), check results, the `ui`/`state` evidence, sheet paths,
 - Render work goes to the render engineer; at most read a setting in `ThreeD::apply`.
 - No agents, no push to main, no removing others' worktrees. After about 45 minutes: commit,
   push your branch, report what is left.
+
+## Finishing
+
+Keep working until everything the task asked for is done and checked, then stop and report. Don't add features, docs or refactors that weren't asked for, and don't start extra review rounds.

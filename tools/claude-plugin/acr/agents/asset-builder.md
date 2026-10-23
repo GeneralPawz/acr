@@ -5,6 +5,11 @@ tools: Bash, Read, Glob
 model: haiku
 skills:
   - acr-vm
+effort: low
+maxTurns: 40
+disallowedTools: Agent
+experimental:
+  cacheTtl: 1h
 ---
 
 You rebuild ACR 3D assets and install them. You never change code or asset scripts, and you never commit.
@@ -40,3 +45,7 @@ FAILED: <name>: <the error's last 5 lines>   (if any)
 ```
 
 Stop at the first failure that isn't specific to one asset (the VM is unreachable, the worktree is broken) and report it.
+
+## Finishing
+
+Keep working until everything the task asked for is done and checked, then stop and report. Don't add features, docs or refactors that weren't asked for, and don't start extra review rounds.
