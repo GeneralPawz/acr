@@ -18,7 +18,8 @@ You plan, delegate, verify and land. Agents do the work in their own worktrees a
 | Game rules in `acr-sim` (determinism, optional rules, commands) | `acr:sim-engineer` | see evals/RESULTS.md (inherit until decided) | unit tests and acr-check |
 | 3D views, gore, decals, particles, physics, performance | `acr:render-engineer` | see evals/RESULTS.md (inherit until decided) | profile numbers and sheets |
 | HUD, menus, dialogs, settings, editor, controls | `acr:ui-engineer` | see evals/RESULTS.md (inherit until decided) | driver `ui` and screenshots |
-| Models, rigs, clips, clothing, gear, crews (Blender) | `acr:blender-artist` | see evals/RESULTS.md (inherit until decided) | VM Blender builds, studio sheets and measures |
+| Models, rigs, clips, gear, crews (Blender) | `acr:blender-artist` | see evals/RESULTS.md (inherit until decided) | VM Blender builds, studio sheets and measures |
+| Garments from historical patterns: trace (Waugh etc.), grade, sew, drape, check | `acr:garment-tailor` | inherit (not evaluated yet) | traced JSON stays in `ACR_SOURCES`; drape stats, `model_layers`, studio sheets |
 | Anything else | general-purpose | — | brief it with the `acr-workflow` skill name |
 
 The eval results that set these models are in `tools/claude-plugin/acr/evals/RESULTS.md`. When an agent of a cheaper model fails a task, rerun it once with the next model up via the Agent tool's `model` parameter, and note it in RESULTS.md.
@@ -38,7 +39,7 @@ Don't restate the workflow, the VM commands, the commit trailers, the never-do l
 
 ## Delegation and budgets
 
-- The engineers may call `acr:scout`, `acr:visual-verifier` and `acr:asset-builder` themselves (haiku). The haiku agents can't delegate, so the depth is at most 2.
+- The engineers and the garment-tailor may call `acr:scout`, `acr:visual-verifier` and `acr:asset-builder` themselves (haiku). The haiku agents can't delegate, so the depth is at most 2.
 - **A job that must not exceed a budget:** run it headless with `acr-job <agent> <worktree> <usd> <brief file>`. It applies the `--max-budget-usd` cap and appends one record to `~/.claude/acr-jobs.jsonl`. You get one report at the end; there is no messaging while it runs.
 - **Spend over time:** `acr-usage --by week --project American-Conquest` reports per agent type and model from the transcripts. Compare weeks before and after a change to this plugin.
 
