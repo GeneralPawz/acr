@@ -57,6 +57,12 @@ ARMS_DOWN = arms_down()  # the default (STAND_FREE's arms)
 CAPE_ARM_DOWN = 0.32  # m below the shoulder joint: with the arms down the cloak hangs over the upper arm
 POSED_SMOOTH = 8  # Taubin passes over a posed cloak after its sim: one-triangle pleats flattened
 ARM_HOMES = ("upperarm", "forearm", "hand", "index", "middle", "ring", "pinky", "thumb")
+HAND_HOMES = ("hand", "index", "middle", "ring", "pinky", "thumb")
+
+
+def _hand_bone(name):
+    """Whether bone `name` (any rig prefix) is a hand or finger bone."""
+    return name.endswith(("hand_l", "hand_r")) or any(f in name for f in HAND_HOMES[1:])
 SPACING = registry.SPACING  # cm (the waistcoat lies under the coat); families add with `registry.garment`
 SEW_FRAMES = 45  # sewing phase (no gravity), then the cloth settles
 FRAMES = 75
@@ -748,23 +754,27 @@ def transfer_weights(obj, flesh, arm_obj, keep=4, under=()):
     srcs = []
     for o in [flesh, *under]:
         fm = o.data
-        if not fm.polygons:
-            continue
-        tree = BVHTree.FromPolygons([v.co for v in fm.vertices], [p.vertices for p in fm.polygons])
         names = {g.index: g.name for g in o.vertex_groups}
         vw = [{names[e.group]: e.weight for e in v.groups if e.group in names} for v in fm.vertices]
-        srcs.append((fm, tree, vw))
+        # Not the skin's hands: the fists (`grips.close`) curl the fingers in at the thigh,
+        # where a skirt would take the hand's weights and swing with it.
+        polys = [p for p in fm.polygons if o is not flesh or not all(
+            vw[i] and _hand_bone(max(vw[i], key=vw[i].get))
+            for i in p.vertices)]
+        if not polys:
+            continue
+        tree = BVHTree.FromPolygons([v.co for v in fm.vertices], [p.vertices for p in polys])
+        srcs.append((fm, tree, vw, polys))
     out = []
     for v in obj.data.vertices:
         best = None
-        for fm, tree, vw in srcs:
+        for fm, tree, vw, polys in srcs:
             loc, _n, fi, d = tree.find_nearest(v.co)
             if fi is not None and (best is None or d < best[3]):
-                best = (fm, vw, loc, d, fi)
+                best = (fm, vw, loc, d, polys[fi])
         w = {}
         if best is not None:
-            fm, vw, loc, _d, fi = best
-            poly = fm.polygons[fi]
+            fm, vw, loc, _d, poly = best
             ds = [max((fm.vertices[i].co - loc).length, 1e-5) for i in poly.vertices]
             inv = [1.0 / d for d in ds]
             s = sum(inv)
