@@ -1081,6 +1081,8 @@ The cannon (`ArtPus`, `USAGE PUSHKA`, `MOTIONSTYLE COMPLEXROTATE`; `artillery.rs
   there, a random number, kept); each shot of indices 4 and 5 costs 50 iron and 100 coal
   (`RASTRATA_NA_VISTREL2`, paid when the strike starts; without them the order ends). Index
   4 fires the cannon ball beyond 1500 px, index 5 canister below.
+  With the hit-locations rule the fire mode decides instead (`artillery::gun_shot`,
+  `docs/damage-model.md`, "Gun modes").
 - **Why a turn starts late** (checked on the blank field, `ACR-analysis/cannon`): the attack
   link acts only at the end of the current animation, and a turn first changes stance
   through `ARTPUS.MD`'s transition animations at two frames per tick: a deployed gun

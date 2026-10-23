@@ -21,7 +21,6 @@ use winit::keyboard::NamedKey;
 
 use crate::ui::{GameKind, GameSetup};
 
-mod canister_mark;
 mod cloth_view;
 mod controls;
 mod crew_view;
@@ -34,6 +33,7 @@ mod gait_view;
 mod gear_view;
 mod gore;
 mod ground_marks;
+mod gun_marks;
 mod interface;
 mod kept_marks;
 mod living_wounds;

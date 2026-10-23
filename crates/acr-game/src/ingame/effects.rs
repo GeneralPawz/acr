@@ -450,6 +450,7 @@ mod tests {
             sender: None,
             att: 0,
             plough: Default::default(),
+            shot: Default::default(),
             dest_obj: None,
         }
     }

@@ -1977,12 +1977,9 @@ impl InGame {
         if let Some((_, (sx, sy))) = self.interface.right_drag {
             self.facing_arrow(bracket, terrain.height_at(sx, sy), &mut out);
         }
-        // Where the selected cannons' canister goes (canister_mark.rs).
-        for u in self.selected_units().filter(|u| u.owner == own) {
-            if let Some((x, y)) = super::canister_mark::aim(world, u) {
-                let red = rgba(nearest(&palette, [230, 20, 20]));
-                super::canister_mark::draw_x(red, x, (y >> 1) - terrain.height_at(x, y), &mut out);
-            }
+        // Interface marks: hidden with the interface (the driver's `hud` off).
+        if !self.interface.hud.zoom && !self.hud_hidden {
+            self.gun_marks(ctx, world, terrain, &palette, &mut out);
         }
         for m in &self.interface.markers {
             let h = terrain.height_at(m.x, m.y);
@@ -2080,6 +2077,50 @@ impl InGame {
                 line(out, c, at(x - 12, y), at(x, y + 12));
                 line(out, c, at(x + 12, y), at(x, y - 12));
                 line(out, c, at(x + 12, y), at(x, y + 12));
+            }
+        }
+    }
+
+    /// What the selected own guns' fire modes cover on the ground (`gun_marks.rs`): their
+    /// current attack or facing, or, while aiming, the ground point under the cursor (the
+    /// attack-ground mode) or the enemy under it.
+    fn gun_marks(
+        &self,
+        ctx: &Ctx,
+        world: &acr_sim::World,
+        terrain: &acr_render::terrain::TerrainData,
+        palette: &acr_formats::Palette,
+        out: &mut Vec<Draw>,
+    ) {
+        use super::gun_marks::{self, Aim, Colours};
+        let own = self.own();
+        let rgba = |i: u8| {
+            let [r, g, b] = palette.rgb(i);
+            [r, g, b, 255]
+        };
+        let cs = Colours {
+            mark: rgba(nearest(palette, color::BRACKETS)),
+            dark: rgba(nearest(palette, [40, 40, 0])),
+            grey: rgba(nearest(palette, [150, 150, 150])),
+        };
+        let cursor = self.cursor.filter(|&c| !self.over_hud(ctx, c));
+        let aiming = cursor.and_then(|c| {
+            if self.interface.attack_ground_mode {
+                let (x, y) = self.world_at(c);
+                return Some(Aim { to: Some((x, y)), point: true, building: false });
+            }
+            let e = world.unit(self.unit_at(c, |u| u.owner != own)?)?;
+            Some(Aim { to: Some(e.pos.pixels()), point: false, building: e.building })
+        });
+        let at = |x: f64, y: f64| {
+            let (x, y) = (x as i32, y as i32);
+            (x, (y >> 1) - terrain.height_at(x, y))
+        };
+        for u in self.selected_units().filter(|u| u.owner == own && u.inside_of.is_none()) {
+            let Some(s) = world.catalog.get(u.kind).sector_weapon else { continue };
+            let Some(aim) = aiming.or_else(|| gun_marks::current(world, u)) else { continue };
+            if let Some(m) = gun_marks::mark(world, u, aim) {
+                gun_marks::draw(&m, &s, cs, &at, out);
             }
         }
     }

@@ -248,3 +248,103 @@ pub fn complex_rotate(w: &mut World, i: usize) {
         }
     }
 }
+
+/// A cannon's fire mode with [`crate::Rules::hit_locations`] on (`docs/damage-model.md`,
+/// "Gun modes"). Without the rule the original picks the attack index by distance alone
+/// (canister `KARTECH` within its 1500 px, the ball `IADRO` from 1500 to 6000 px).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum GunMode {
+    /// Canister: the `KARTECH` / `PREKARTECH` buttons, the automatic volley and an attack on
+    /// men within the canister's reach. Unchanged from the original.
+    Canister = 1,
+    /// Ground fire (`ATTACKGROUND`): a ball at low elevation that first grazes at the point
+    /// and skips on along the lane behind it.
+    Ground = 2,
+    /// Direct fire (an attack on a building, or on men beyond canister reach): a flatter
+    /// ball straight at the aim point with half the dispersion; a miss still bounces on.
+    Direct = 3,
+}
+
+impl GunMode {
+    /// The mode a projectile carries ([`crate::projectile::Projectile::shot`]), 0 for none.
+    pub fn from_u8(v: u8) -> Option<Self> {
+        match v {
+            1 => Some(Self::Canister),
+            2 => Some(Self::Ground),
+            3 => Some(Self::Direct),
+            _ => None,
+        }
+    }
+
+    /// The elevation (degrees) of the ball's `ANGLE` flight, `None` for the weapon's own.
+    pub fn elevation(self) -> Option<i32> {
+        match self {
+            Self::Canister => None,
+            Self::Ground => Some(GROUND_ELEVATION),
+            Self::Direct => Some(DIRECT_ELEVATION),
+        }
+    }
+}
+
+/// Ground fire: the nearest first graze (world px, 20 m at 30 px/m; on the game's compressed
+/// ranges about 120 m of a real 6–12 pdr). Closer the ball would bury itself instead of
+/// skipping, so the gun fires canister there.
+pub const GROUND_MIN: i32 = 600;
+/// Ground fire: elevation of the ball's flight (degrees; the weapon's own `NUCL2P` is 10°).
+pub const GROUND_ELEVATION: i32 = 2;
+/// Direct fire: elevation of the ball's flight (degrees).
+pub const DIRECT_ELEVATION: i32 = 5;
+/// Direct fire: the share (percent) of `RAZBROS` dispersion left.
+pub const DIRECT_SCATTER: i32 = 50;
+/// Direct fire: a ball strikes the building it is laid on within this many px of its
+/// position (or its `ADDSHOTRADIUS` if larger)...
+pub const DIRECT_BUILDING_REACH: i32 = 64;
+/// ...and below this height (px, about 6 m at 30 px/m) over its ground.
+pub const DIRECT_BUILDING_TOP: i32 = 180;
+/// The lane a ground-fire ball skips along behind its first graze (world px, measured on the
+/// blank field with the original weapons; the overlay draws it).
+pub const GROUND_LANE: i32 = 1400;
+/// How far a direct-fire ball bounces on past a miss (world px, measured likewise).
+pub const DIRECT_LANE: i32 = 700;
+
+/// The attack index of a type's ball (`WEAPONKIND IADRO`).
+pub fn ball_index(t: &ObjectType) -> Option<usize> {
+    t.attacks.iter().position(|a| a.kind == "IADRO")
+}
+
+/// The mode, attack index and minimum distance (px) of cannon `i`'s next shot at a target
+/// `dst` px away: a point attack (`point`, with `times` shots left, 1 for `KARTECH` and the
+/// automatic volley) or an object (`building`). `None` without the hit-locations rule and for
+/// anything that is not a gun with canister and ball.
+pub fn gun_shot(
+    w: &World,
+    i: usize,
+    point: bool,
+    times: u16,
+    building: bool,
+    dst: i32,
+) -> Option<(GunMode, usize, i32)> {
+    if !w.rules.hit_locations {
+        return None;
+    }
+    let u = &w.units[i];
+    let t = w.catalog.get(u.kind);
+    let can = usize::from(t.sector_weapon?.att);
+    let ball = ball_index(t)?;
+    let ta = w.adv(u.owner, u.kind);
+    let cr = ta.attacks.get(can)?.radius;
+    ta.attacks.get(ball)?;
+    let mode = if point {
+        if times != 1 && dst >= GROUND_MIN { GunMode::Ground } else { GunMode::Canister }
+    } else if building || dst > cr.1 {
+        GunMode::Direct
+    } else {
+        GunMode::Canister
+    };
+    Some(match mode {
+        GunMode::Canister => (mode, can, cr.0),
+        GunMode::Ground => (mode, ball, GROUND_MIN),
+        GunMode::Direct => (mode, ball, 0),
+    })
+}
