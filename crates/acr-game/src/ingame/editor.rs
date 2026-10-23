@@ -17,7 +17,7 @@ const YELLOW: FontId = FontId("SmallYellowFont");
 /// Panel origin and width on the interface canvas, and the row height.
 const X0: i32 = 8;
 const Y0: i32 = 64;
-const W: i32 = 260;
+const W: i32 = 300;
 const ROW: i32 = 16;
 /// Unit types shown at once in the list.
 const LIST_ROWS: usize = 14;
@@ -269,7 +269,7 @@ impl Editor {
         let buttons = LEVEL_W * LEVELS.len() as i32;
         for &kind in list.iter().skip(self.scroll).take(LIST_ROWS) {
             let mut text = names(kind);
-            text.truncate(34);
+            text.truncate(33);
             let picked = self.pick == Some(kind);
             out.push(Item { rect: Rect::new(X0, y, W - buttons, ROW), text, hot: picked, act: Some(Act::Pick(kind)) });
             for (l, (label, _)) in LEVELS.iter().enumerate() {
