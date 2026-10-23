@@ -997,6 +997,59 @@ parts around the wounds keep `discard`; that is ≈ 40 ms of the 74 at +30 s. Th
 pose for settled corpses (palette written once into a persistent region of the bone
 texture), cached shadows of static corpses, and incremental instance building.
 
+### Wound volumes by zone (m2-perf4)
+
+**Zones** (`zones.rs`): every triangle of a model with a rig gets one of 22 zones (each body
+part halved: limbs by `_LIMB`, trunk and head by height; the gear; the parts the look
+variants move). A vertex whose triangles disagree is copied (the look variants' own
+vertices never are: their buffers hold just them), and the zone rides in `body.w` above the
+hair variant (`variant + 1 + 256 × (zone + 1)`). An instance damaged by wound volumes alone
+(not `split`, not half transparent, not dissolving) is *zoned*: `zones::mask` marks the zones
+whose rest-pose bounds a capsule reaches (its axis sampled, widened by `holes`' 2.6 radii,
+so never less), in `extra.z` from bit 8. Such a draw goes through both pipelines: `vs_clean`
+(the clean pipelines) throws the reached zones' triangles off screen, `vs_main` (the
+`discard` pipelines) the others, so each triangle draws once; materials that drop fragments
+anyway draw whole with `discard`. With `INNER_HIDDEN` (the inner layers show only through
+the wounds) the bones of the unreached zones are not drawn at all. Shadow casters likewise.
+`ACR_MODEL_DEBUG=no_zones` restores the state before.
+
+**Measured: no gain in the clash scene.** `ACR-analysis/perf4/ab.py` (zones against
+`no_zones` in one process, interleaved; `ab1.log`, quick reruns `q1.log`, `q2.log` at +30 s):
+
+| GPU ms (min / median) | before contact (of 4) | contact (of 4) | +30 s (of 4) | +30 s rerun (of 3) |
+|---|---:|---:|---:|---:|
+| models `no_zones` → zones | 19.6 / 20.8 → 18.2 / 20.5 | 25.8 / 25.8 → 26.3 / 26.4 | 72.8 / 84.6 → 75.2 / 86.0 | 65.1 / 67.2 → 66.0 / 66.4 |
+| shadow map | 1.6 / 1.6 → 1.6 / 1.7 | 9.2 / 9.5 → 9.7 / 10.1 | 23.3 / 26.7 → 24.9 / 28.6 | 20.5 / 20.9 → 22.2 / 23.1 |
+| all passes | 23.5 / 24.8 → 22.2 / 24.5 | 38.7 / 38.8 → 39.5 / 39.6 | 98.8 / 115.0 → 102.8 / 117.6 | 88.2 / 93.0 → 90.2 / 91.5 |
+| `models_prepare` CPU | 2.2 → 2.5 | 3.1 → 3.5 | 7.5 → 6.9 | 4.8 → 5.6 |
+
+Why: at +30 s of ~3900 prepared entries (drawn and casters, with caps and gibs) only ~350
+drop fragments at all; 196 are zoned, 158 `split` (cuts, fractures: per-part lists, level
+1). A zoned corpse's volumes reach 10.6 of its 22 zones on average (a melee gash is long, a
+torn chunk's reach 2.6 radii, up to 8 volumes), so half the body keeps `discard` anyway. And
+the `discard` itself is cheap on this tiler: perf3's `no_clean` (everything through the
+`discard` pipelines) was 74.5 against 74.4 ms at +30 s, `holes` off saved 8. The ≈ 40 ms of
+"corpses with wound volumes" in perf3's table are what *drawing those corpses* costs at all
+(with their caps, inserts and the `split` ones held at level 1), not their pipeline. The
+paused close-up is unchanged (`ACR-analysis/perf4/ab1/shot*_*.png`: `no_zones` against
+zones 164 and 51 pixels differing by more than 8, `no_zones` against itself 387 and 309,
+the awake ragdolls moving between frames).
+
+**Static corpses and cached shadows (designed, not done).** The ragdoll palettes come from
+`three_d.rs` (`set_custom_poses`, keyed by the instance's slot, rebuilt every frame). A
+static pose needs a stable key (the body's id) and a version (bumped when the body wakes or
+the corpse's look changes): the renderer keeps such palettes in a persistent region at the
+start of the bone texture (allocated by id, freed when the corpse goes, written with
+`write_texture` of that row range only when the version changes); the game skips evaluating
+a frozen body's palette. Instance building can then keep the frozen corpses' `Entry` and
+data texels between frames and redo only their culling and level. A cached shadow layer
+for them would render the static casters into a second depth texture when their set or
+the light fit (`shadow::fit`, which follows the window centre) changes, and the caster
+pass would start by copying it (`copy_texture_to_texture` of depth works on WebGL2 only
+for whole textures of the same format, so a full-screen depth-writing blit is the safe
+path) instead of clearing; the fit moves with the camera, so it pays only while the view
+stands still, and it is a quality risk at the fit's edges.
+
 ### Input latency
 
 - **Hardware cursor** (native, `acr-game/src/hw_cursor.rs`): the cursor the interface
@@ -1028,6 +1081,11 @@ the frame rate drops; `ACR_SOFT_CURSOR=1 ACR_FRAME_LATENCY=2` gives the old beha
 comparison, `ACR_PROFILE=1` writes the breakdown to the log.
 
 ### Next levers (measured, not done)
+
+- **The wounded dead's count, not their pipeline** (m2-perf4): 158 `split` corpses at +30 s
+  draw at level 1 (per-part lists, 3–6 × the far meshes' triangles). Far meshes welded
+  within each body part (as `lod::levels` welds by part) would let them draw far; drawing
+  their caps and inserts only at the near levels is the other half.
 
 - **GPU, the largest:** 128 ms per frame 30 s into the clash; models and shadow map are
   about equal. The shadow casters of damaged instances are still held at level 1

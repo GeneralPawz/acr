@@ -25,6 +25,7 @@ use crate::math::{self, Mat4};
 use crate::model::{ModelData, Vertex};
 use crate::shadow::{self, ShadowMap};
 use crate::view3d::View3d;
+use crate::zones;
 
 /// Depth and stencil of the 3D pass (supported everywhere, WebGL2 included).
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
@@ -294,6 +295,8 @@ struct Draw {
     decaying: bool,
     /// The instances can drop no fragment ([`Entry::clean`]).
     clean: bool,
+    /// The instances draw by zones ([`Entry::zoned`]).
+    zoned: bool,
     /// The look variant's vertex buffer.
     variant: Option<usize>,
     lod: usize,
@@ -311,6 +314,9 @@ struct Entry {
     /// nothing either ([`GpuModel::discards`]) draw without `discard` (`fs_clean`), so the
     /// tiler keeps its early depth test for them.
     clean: bool,
+    /// Damaged by wound volumes alone, else as `clean`: the zones no volume reaches
+    /// ([`zones`]) draw through the clean pipelines, the rest with `discard` (m2-perf4).
+    zoned: bool,
     /// Depth in the window (0..1): the instances of a draw go front to back.
     depth: f32,
     variant: Option<usize>,
@@ -357,6 +363,9 @@ struct GpuModel {
     /// Per material: it can drop fragments whatever the instance (an alpha cut-out, a stump
     /// cap's outline, a wound cavity's near wall).
     discards: Vec<bool>,
+    /// The rest-pose bounds of the triangle zones ([`zones`]; empty without a rig): a wound
+    /// volume that cannot reach a zone leaves its triangles to the clean pipelines.
+    zones: Vec<zones::Bounds>,
     /// The decay from which a layer dissolves (`gore=full`): the outer layers (the inner
     /// ones show from then), and any layer (the instance drops fragments from then).
     opens_at: f32,
@@ -401,7 +410,11 @@ fn split_variants(draws: Vec<Draw>) -> Vec<Draw> {
         let n = rest
             .iter()
             .take_while(|d| {
-                d.model == first.model && d.decaying == first.decaying && d.clean == first.clean && d.lod == first.lod
+                d.model == first.model
+                    && d.decaying == first.decaying
+                    && d.clean == first.clean
+                    && d.zoned == first.zoned
+                    && d.lod == first.lod
             })
             .count();
         let (run, tail) = rest.split_at(n);
@@ -511,6 +524,8 @@ pub mod debug {
     /// The state before m2-perf3: inner layers from the first decay, no clean pipeline.
     pub const OLD_INNER: u32 = 512;
     pub const NO_CLEAN: u32 = 1024;
+    /// The state before m2-perf4: a corpse with wound volumes draws whole with `discard`.
+    pub const NO_ZONES: u32 = 2048;
 }
 
 fn debug_flags() -> u32 {
@@ -526,6 +541,7 @@ fn debug_flags() -> u32 {
         "looks",
         "old_inner",
         "no_clean",
+        "no_zones",
     ];
     // `ACR_MODEL_DEBUG_FILE`: the list read from a file every frame (switched while running).
     let from_file = std::env::var("ACR_MODEL_DEBUG_FILE").ok().and_then(|f| std::fs::read_to_string(f).ok());
@@ -681,13 +697,16 @@ impl ModelRenderer {
             depth_fail_op: wgpu::StencilOperation::Keep,
             pass_op: wgpu::StencilOperation::Replace,
         };
+        // The clean fragment shaders pair with `vs_clean` (zoned instances: the triangles no
+        // wound volume reaches), the others with `vs_main` (the rest).
+        let vertex_for = |fragment: &str| if fragment.contains("clean") { "vs_clean" } else { "vs_main" };
         let model_pipeline = |fragment: &str| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(fragment),
                 layout: Some(&layout),
                 vertex: wgpu::VertexState {
                     module: &shader,
-                    entry_point: Some("vs_main"),
+                    entry_point: Some(vertex_for(fragment)),
                     compilation_options: Default::default(),
                     buffers: &[
                         Some(wgpu::VertexBufferLayout {
@@ -741,7 +760,7 @@ impl ModelRenderer {
                 layout: Some(&shadow_layout),
                 vertex: wgpu::VertexState {
                     module: &shader,
-                    entry_point: Some("vs_main"),
+                    entry_point: Some(vertex_for(fragment)),
                     compilation_options: Default::default(),
                     buffers: &[
                         Some(wgpu::VertexBufferLayout {
@@ -987,10 +1006,14 @@ impl ModelRenderer {
         let mut indices: Vec<u32> = Vec::new();
         // The look variants: the primitives they touch first, so a variant's buffer holds
         // just those and shares the index numbering.
-        let baked = data.bake_looks().unwrap_or_default();
+        let mut baked = data.bake_looks().unwrap_or_default();
         let touched = |p: &crate::model::Primitive| !baked.is_empty() && !p.look_morphs.is_empty();
         let mut slots: Vec<Option<GpuPrimitive>> = (0..data.primitives.len()).map(|_| None).collect();
+        let mut touched_end = 0;
         for pass in [true, false] {
+            if !pass {
+                touched_end = vertices.len();
+            }
             for (k, p) in data.primitives.iter().enumerate().filter(|(_, p)| touched(p) == pass) {
                 // Indices are offset here: WebGL2 has no base vertex.
                 let base = vertices.len() as u32;
@@ -1007,6 +1030,11 @@ impl ModelRenderer {
         }
         let primitives: Vec<GpuPrimitive> = slots.into_iter().flatten().collect();
         let far = Self::far_meshes(&mut vertices, &mut indices, &primitives);
+        let zones = if data.rig.is_some() {
+            zones::split(&mut vertices, &mut indices, touched_end, &mut baked)
+        } else {
+            Vec::new()
+        };
         let variants: Vec<wgpu::Buffer> = baked
             .iter()
             .map(|v| {
@@ -1126,6 +1154,7 @@ impl ModelRenderer {
             far,
             materials,
             discards,
+            zones,
             opens_at,
             dissolves_at,
             variants,
@@ -1316,6 +1345,18 @@ impl ModelRenderer {
                 inst.decay > 0.0 && (!enclosed || dissolving(gpu_model.opens_at) || !intact) && dbg & debug::INNER == 0;
             let clean =
                 intact && !inst.transparent && !dissolving(gpu_model.dissolves_at) && dbg & debug::NO_CLEAN == 0;
+            let zoned = !intact
+                && !inst.damage.splits_parts()
+                && !gpu_model.zones.is_empty()
+                && !inst.transparent
+                && !dissolving(gpu_model.dissolves_at)
+                && dbg & (debug::NO_CLEAN | debug::NO_ZONES) == 0;
+            let zone_bits = if zoned {
+                let hidden = if enclosed && !dissolving(gpu_model.opens_at) { zones::INNER_HIDDEN } else { 0 };
+                zones::ZONED | hidden | (zones::mask(&gpu_model.zones, inst.damage.volumes()) << zones::SHIFT)
+            } else {
+                0
+            };
             let first = data.len() as u32;
             let mut look_data = look_texels(look.as_ref().map(|c| &c.0), gpu_model.eye, inst.look.unwrap_or(0));
             // A crew's uniform rides on the look texels the crew does not use otherwise.
@@ -1332,11 +1373,12 @@ impl ModelRenderer {
                     rows: math::affine_rows(&inst.transform),
                     params: [inst.decay, inst.morphs[0], inst.morphs[1], if inst.transparent { 1.0 } else { 0.0 }],
                     // The hair and beard variants shown (none without a look).
-                    extra: [base, first, u32::from(inst.player), look.map_or(0, |c| c.0.node_mask())],
+                    extra: [base, first, u32::from(inst.player) | zone_bits, look.map_or(0, |c| c.0.node_mask())],
                 },
                 model: inst.model,
                 decaying,
                 clean,
+                zoned,
                 depth: p[2],
                 variant,
                 on_screen,
@@ -1515,6 +1557,7 @@ impl ModelRenderer {
                     e.model,
                     e.decaying,
                     e.clean,
+                    e.zoned,
                     v,
                     l,
                     (e.depth.clamp(0.0, 1.0) * 16_777_215.0) as u32,
@@ -1529,6 +1572,7 @@ impl ModelRenderer {
                         if d.model == e.model
                             && d.decaying == e.decaying
                             && d.clean == e.clean
+                            && d.zoned == e.zoned
                             && d.variant == v
                             && d.lod == l =>
                     {
@@ -1539,6 +1583,7 @@ impl ModelRenderer {
                         range: index..index + 1,
                         decaying: e.decaying,
                         clean: e.clean,
+                        zoned: e.zoned,
                         variant: v,
                         lod: l,
                         touched: None,
@@ -1598,13 +1643,17 @@ impl ModelRenderer {
             .sum()
     }
 
-    /// A draw's part in `material` goes through the clean pipelines ([`Entry::clean`]).
-    fn clean_part(&self, d: &Draw, material: usize) -> bool {
-        d.clean && !self.models[d.model].discards[material]
+    /// A draw's part in `material` goes through the clean pipelines (`clean`) or the
+    /// `discard` ones: an [`Entry::clean`] draw's through the clean ones, a zoned draw's
+    /// through both (the vertex shader leaves each triangle to one of them), materials that
+    /// drop fragments anyway only through the `discard` ones.
+    fn in_pass(&self, d: &Draw, material: usize, clean: bool) -> bool {
+        let drops = self.models[d.model].discards[material];
+        if clean { (d.clean || d.zoned) && !drops } else { !d.clean || drops }
     }
 
     fn has_parts(&self, d: &Draw, clean: bool) -> bool {
-        self.models[d.model].draw_parts(d).any(|(_, material, _)| self.clean_part(d, material) == clean)
+        self.models[d.model].draw_parts(d).any(|(_, material, _)| self.in_pass(d, material, clean))
     }
 
     /// The prepared draws' parts that are `clean` or not ([`Self::clean_part`]), with the
@@ -1626,7 +1675,7 @@ impl ModelRenderer {
             pass.set_index_buffer(m.indices.slice(..), wgpu::IndexFormat::Uint32);
             let mut bound = None;
             for (indices, material, touched) in m.draw_parts(d) {
-                if self.clean_part(d, material) != clean {
+                if !self.in_pass(d, material, clean) {
                     continue;
                 }
                 let from_look = touched && look.is_some();

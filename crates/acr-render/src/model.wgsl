@@ -144,6 +144,40 @@ fn apply(r0: vec4<f32>, r1: vec4<f32>, r2: vec4<f32>, p: vec4<f32>) -> vec3<f32>
 
 @vertex
 fn vs_main(v: VertexIn, inst: InstanceIn) -> VsOut {
+    return vs_body(v, inst, false);
+}
+
+// The clean pipelines' vertex shader (`fs_clean`, `fs_far_clean`, `fs_shadow_clean`).
+@vertex
+fn vs_clean(v: VertexIn, inst: InstanceIn) -> VsOut {
+    return vs_body(v, inst, true);
+}
+
+// Zones (m2-perf4, `zones.rs`): `body.w` = hair variant + 1 + 256 × (zone + 1); an instance
+// with `ZONED` in `extra.z` (wound volumes alone) has a bit per zone a volume can reach from
+// bit 8. The clean pipelines (`clean`) drop the reached zones' triangles, the `discard`
+// pipelines the others, so each triangle draws once and only near a wound without early
+// depth; materials that drop fragments anyway draw only with `discard`, whole. With
+// `INNER_HIDDEN` the inner layers (bones) draw only in the reached zones: elsewhere the
+// intact skin hides them.
+fn zone_off(bw: u32, zf: u32, clean: bool) -> bool {
+    if ((zf & 0x40000000u) == 0u) {
+        return false;
+    }
+    let z = bw >> 8u;
+    let near = z == 0u || ((zf >> (7u + z)) & 1u) == 1u;
+    let inner = material.flags.w > 0.5 && material.look.x < 0.5;
+    if (inner && (zf & 0x80000000u) != 0u && !near) {
+        return true;
+    }
+    let drops = material.flags.z > 0.0 || material.look.x > 0.5 || i32(round(material.look.y)) == 1;
+    if (drops) {
+        return false;
+    }
+    return near == clean;
+}
+
+fn vs_body(v: VertexIn, inst: InstanceIn, clean: bool) -> VsOut {
     let base = inst.extra.x;
     var r0 = vec4<f32>(0.0);
     var r1 = vec4<f32>(0.0);
@@ -264,9 +298,11 @@ fn vs_main(v: VertexIn, inst: InstanceIn) -> VsOut {
     out.part = v.body.x;
     out.face = v.face;
     out.world = world;
-    // A hair or beard variant this soldier does not wear: off screen.
-    let variant = u32(round(v.body.w));
-    if (variant > 0u && ((inst.extra.w >> (variant - 1u)) & 1u) == 0u) {
+    // A hair or beard variant this soldier does not wear, or a zone the other pipeline
+    // draws: off screen.
+    let bw = u32(round(v.body.w));
+    let variant = bw & 255u;
+    if ((variant > 0u && ((inst.extra.w >> (variant - 1u)) & 1u) == 0u) || zone_off(bw, inst.extra.z, clean)) {
         out.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0);
     }
     return out;
