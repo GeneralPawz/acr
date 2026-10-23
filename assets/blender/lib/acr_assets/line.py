@@ -19,7 +19,12 @@ parameters (`spec`), then `build(ctx)` calls `line.build(ctx, SPEC)`.
 - `hat`: a registered hat (`registry.hat`): `tricorn`, `slouch` or `cocked` (`gear.py`);
 - `gear`: registered gear (`registry.gear`): the straps over the draped coat
   (`straps.py`: `crossbelts`, `belt_l`, `belt_r`) and strapped gear: `cartridge`, `knapsack`;
-- `weapon`: `musket` (with rammer, aim, reload and charge clips);
+- `weapon`: `musket` (with rammer, aim, reload and charge clips), `drum` (the side drum
+  on the hips bone below the `belt_r` carriage belt, sticks in both hands,
+  `clips.drummer_clips`, a thrust for `0 PIKA`) or `colour` (the regimental colour on its
+  pike in the right hand, `clips.colour_clips`);
+- `flag`: the colour's design (`FLAGS`: `union`, `france`, `burgundy`, `stripes`), painted on
+  the cloth in its own frame over `palette["flag"]` (the field);
 - `lace`: None (no lace) or {"hat": braid width in m on the tricorn's brim, "buttonholes":
   True for bars of lace on the lapels and cuffs}, in `palette["lace"]` (`masks.py`).
 
@@ -34,7 +39,8 @@ from mathutils import Matrix, Vector
 from . import aim as aiming
 from . import armature as am
 from . import body as bd
-from . import crawl, faces, gear, heads, masks, outfit, poses, registry, rig, straps
+from . import clips as wclips
+from . import crawl, faces, gear, heads, held, masks, outfit, poses, registry, rig, straps
 from .humans import LAYER_OF, Character, prepare_export
 
 # The English musketeer's colours (`EngM18`): the defaults a nation overrides.
@@ -56,7 +62,7 @@ FIT = {
     "pack": [0.32, 0.10, 0.32], "pack_y": 0.1925, "skirt_gap": 72,
 }
 DEFAULTS = {"build": BUILD, "fit": FIT, "hat": "tricorn", "gear": ("crossbelts", "cartridge", "knapsack"),
-            "weapon": "musket", "mix": 0.5, "fixed": (), "lapels": "facings", "lace": None}
+            "weapon": "musket", "mix": 0.5, "fixed": (), "lapels": "facings", "lace": None, "flag": None}
 
 
 def _cartridge(ch, name, s):
@@ -173,7 +179,11 @@ def make(root, name, s):
     # Lace (`masks.lace`): braid round the brim, bars on the buttonholes of lapels and cuffs.
     ch.paint_masks = masks.lace(s["palette"], hat=hat.name if hat.get("acr_lace") else None,
                                 width=lace.get("hat") or 0.012, buttonholes=lace.get("buttonholes", False)) if lace else []
-    if s["weapon"] == "musket":
+    if s["weapon"] == "drum":
+        _drum(ch, name)
+    elif s["weapon"] == "colour":
+        _colour(ch, name, s)
+    elif s["weapon"] == "musket":
         gun = gear.musket(f"{name}.musket", length=fit["musket_len"], bayonet=0.0)
         gun["acr_material_keys"] = ["wood", "metal"]
         # The socket's orientation is "upright" in its rest frame; the clips turn it.
@@ -187,10 +197,186 @@ def make(root, name, s):
     return ch
 
 
-def build(ctx, s):
-    """Builds, animates, paints and prepares for export the soldier of SPEC `s`."""
-    md = s["md"]
-    ch = make(ctx.root, ctx.name, s)
+# -- drummers and standard bearers (family 2) ---------------------------------------------
+
+# The colour's cloth in an own material and painter cell, so the nation's design can be
+# painted on it (`held.colour` keeps the cloth in the shared `colour` key, flat).
+registry.painter("flag", like="linen", finish=(1.0, 0.55, 0.15))
+registry.material("flag", "linen", painter="flag", fallback=(0.70, 0.12, 0.10))
+registry.material("flag_a", "linen", fallback=(0.92, 0.90, 0.84))  # the design's first colour
+registry.material("flag_b", "linen", fallback=(0.66, 0.08, 0.08))  # its second
+registry.material("flag_c", "linen", fallback=(0.10, 0.16, 0.42))  # its third
+
+# The cloth of `held.colour` in its item frame: flying to +X from the staff, the top edge
+# at FLAG_TOP, `FLAG_SIZE` (fly, hoist) m.
+FLAG_TOP = 2.9 - 0.9 - 0.04
+FLAG_SIZE = (1.8, 1.65)
+
+
+def _flag_uv(p):
+    """(u, v) on the cloth: u 0 at the staff to 1 at the fly, v 0 at the top to 1 below."""
+    return (p[:, 0] - 0.02) / FLAG_SIZE[0], (FLAG_TOP - p[:, 2]) / FLAG_SIZE[1]
+
+
+def _band(np, d, half, soft=0.004):
+    """1 inside |d| < half, soft at the edge."""
+    return np.clip((half - np.abs(d)) / soft + 0.5, 0.0, 1.0)
+
+
+def flag_cross(p, n, L, seed, width=0.10):
+    """An upright cross through the centre (St George's, the French white cross); `width`
+    a fraction of the fly."""
+    import numpy as np
+
+    u, v = _flag_uv(p)
+    h = FLAG_SIZE[1] / FLAG_SIZE[0]
+    return np.maximum(_band(np, u - 0.5, width / 2), _band(np, (v - 0.5) * h, width / 2))
+
+
+def flag_saltire(p, n, L, seed, width=0.10, ragged=False):
+    """A diagonal cross corner to corner (St Andrew's; with `ragged` the Cross of Burgundy,
+    knots of cut-off branches along each arm)."""
+    import numpy as np
+
+    u, v = _flag_uv(p)
+    x, y = (u - 0.5) * FLAG_SIZE[0], (v - 0.5) * FLAG_SIZE[1]
+    a = math.atan2(FLAG_SIZE[1], FLAG_SIZE[0])
+    d1 = x * math.sin(a) - y * math.cos(a)
+    d2 = x * math.sin(a) + y * math.cos(a)
+    half = width * FLAG_SIZE[0] / 2
+    if not ragged:
+        return np.maximum(_band(np, d1, half, 0.01), _band(np, d2, half, 0.01))
+    t1 = x * math.cos(a) + y * math.sin(a)
+    t2 = x * math.cos(a) - y * math.sin(a)
+    half1 = half * (1.0 + 0.6 * (np.cos(t1 * 2 * math.pi / 0.21) > 0.6))
+    half2 = half * (1.0 + 0.6 * (np.cos(t2 * 2 * math.pi / 0.21 + 1.0) > 0.6))
+    return np.maximum(_band(np, d1, half1, 0.01), _band(np, d2, half2, 0.01))
+
+
+def flag_stripes(p, n, L, seed, count=13):
+    """Every other one of `count` horizontal stripes (the 2nd, 4th, ...)."""
+    import numpy as np
+
+    _u, v = _flag_uv(p)
+    k = np.floor(np.clip(v, 0.0, 0.9999) * count)
+    return ((k % 2) == 1).astype(np.float32)
+
+
+def flag_canton(p, n, L, seed, w=0.42, h=7 / 13):
+    """The upper quarter at the staff."""
+    import numpy as np
+
+    u, v = _flag_uv(p)
+    return ((u < w) & (v < h)).astype(np.float32)
+
+
+for _name, _fn in (("flag_cross", flag_cross), ("flag_saltire", flag_saltire), ("flag_stripes", flag_stripes),
+                   ("flag_canton", flag_canton)):
+    registry.mask(_name, _fn)
+
+# Colour designs, simple and of the period: [(mask, palette key, params)] over the field
+# (`palette["flag"]`).
+FLAGS = {
+    # The King's colour (the Union of 1707-1801, without St Patrick's saltire): blue field,
+    # St Andrew's white saltire, St George's red cross fimbriated white.
+    "union": [("flag_saltire", "flag_a", {"width": 0.11}), ("flag_cross", "flag_a", {"width": 0.20}),
+              ("flag_cross", "flag_b", {"width": 0.12})],
+    # A French regimental colour: the white cross through coloured quarters.
+    "france": [("flag_cross", "flag_a", {"width": 0.13})],
+    # The Spanish infantry's colour: the red ragged Cross of Burgundy on white.
+    "burgundy": [("flag_saltire", "flag_b", {"width": 0.06, "ragged": True})],
+    # A Continental colour (1775-77): thirteen red and white stripes, a plain blue canton.
+    "stripes": [("flag_stripes", "flag_a", {}), ("flag_canton", "flag_c", {})],
+}
+
+
+def flag_masks(design, palette, cloth):
+    """`ch.paint_masks` entries of colour design `design` on the cloth object `cloth`."""
+    return [masks.entry(m, ("flag",), tuple(palette.get(k) or registry.FALLBACK[k]), frame=cloth, **params)
+            for m, k, params in FLAGS[design]]
+
+
+def _subset(it, parts, name):
+    """The faces of item `it` in `parts` as an own `held.Item` (sockets and groups kept)."""
+    out = held.Item(name)
+    out.keys = {p: k for p, k in it.keys.items() if p in parts}
+    remap = {}
+    for f, part in zip(it.faces, it.parts):
+        if part not in parts:
+            continue
+        for i in f:
+            if i not in remap:
+                remap[i] = out.v(it.verts[i])
+        out.f([remap[i] for i in f], part)
+    out.sockets = dict(it.sockets)
+    groups = {g: [remap[i] for i in idx if i in remap] for g, idx in it.groups.items()}
+    out.groups = {g: idx for g, idx in groups.items() if idx}
+    return out
+
+
+def _drum(ch, name):
+    """The side drum on the hips (its head at `clips.DRUM_HEAD`, hanging from the
+    `belt_r` carriage belt on the left thigh) and a drumstick in each hand."""
+    import bpy
+
+    am.pose(ch.arm, {})
+    it = held.build("drum")
+    drum = gear.held(it, f"{name}.drum")
+    for c in list(drum.children):  # the item's socket empties: not exported
+        bpy.data.objects.remove(c)
+    r = am.euler(wclips.DRUM_ROT)
+    m = Matrix.Translation(Vector(wclips.DRUM_HEAD) - r @ Vector(it.sockets["socket.head"])) @ r.to_4x4()
+    # On the hips bone like a held item (one material per part: shell, hoops, vellum, cords;
+    # rigid gear would take one colour); it falls with the man.
+    am.attach(drum, ch.arm, "hips", m)
+    ch.held["drum"] = drum
+    ch.keys[drum.name] = "facings"
+    for side in ("r", "l"):
+        gear.hold(ch, "drumstick", f"{name}.stick_{side}", f"socket.hand_{side}", slot=f"stick_{side}")
+
+
+def _colour(ch, name, s):
+    """The regimental colour on its pike in the right hand: staff and finial one held
+    object, the cloth another (key `flag`, the nation's design painted on it)."""
+    am.pose(ch.arm, {})
+    it = held.build("colour")
+    staff = _subset(it, {"staff", "finial"}, "colour")
+    cloth = _subset(it, {"cloth"}, "colour_cloth")
+    cloth.keys = {"cloth": "flag"}
+    gear.hold(ch, staff, f"{name}.colour", "socket.hand_r", slot="colour")
+    flag = gear.hold(ch, cloth, f"{name}.colour_cloth", "socket.hand_r", slot="colour_cloth")
+    ch.flag = flag.name
+
+
+def support_clips(md, active=None):
+    """{clip: Clip} of a drummer (`weapon` drum) or standard bearer (colour): the clips.py
+    builders, the backward walk (the forward clips reversed, as the `.MD` plays them), the
+    `0 PIKA` stances (the stand) and the fall from the free stand."""
+    drummer = "MOTION_L0" in md or "PSTAND" in md
+    out = wclips.drummer_clips(md) if drummer else wclips.colour_clips(md)
+    stand = out["STAND"][0][1]
+    for sfx in ("", "0"):
+        for back, fwd in (("MOTION_LB", "MOTION_R"), ("MOTION_RB", "MOTION_L")):
+            if f"{back}{sfx}" in md and f"{fwd}{sfx}" in out:
+                c = out[f"{fwd}{sfx}"]
+                last = c[-1][0]
+                out[f"{back}{sfx}"] = [(last - f, p) for f, p in reversed(c)]
+    if drummer:
+        # `0 PIKA`: a thrust on ATTACK's frames (the stick jabs: the drummer's hanger stays
+        # sheathed) and the strike clips of docs/melee.md with it.
+        out.update(wclips.unit_clips(md, {0: "PIKA"}, melee="sword", active=active))
+        for k in ("PSTAND", "PATTACK", "UATTACK"):
+            if k in md:
+                out[k] = wclips.frames(wclips.md_frames(md[k]), [(0, stand)])
+    lie = poses.lie_prone()
+    for k, keys in (("DEATH", poses.death_keys(wclips.STAND_FREE, lie)), ("DEATHLIE1", [(0.0, lie)])):
+        if k in md:
+            out[k] = rig.clip_keys(wclips.md_frames(md[k]), keys)
+    return out
+
+
+def _musket_clips(ctx, ch, md):
+    """The musket's rammer and the musketeer clips (aim, reload, charge, crawl)."""
     # Ramrod (in its pipes; drawn in the reload of ATTACK1): on the free left-hand socket,
     # placed on every frame by `aim.bake_musket` / `aim.stow_rammer`.
     rod = gear.rammer(f"{ctx.name}.rammer")
@@ -220,6 +406,29 @@ def build(ctx, s):
     for clip, keys in crawl.clips().items():
         am.add_clip(ch.arm, clip, keys)
         aiming.stow_rammer(ch.arm, clip)
+
+
+def build(ctx, s):
+    """Builds, animates, paints and prepares for export the soldier of SPEC `s`."""
+    md = s["md"]
+    ch = make(ctx.root, ctx.name, s)
+    musket = s["weapon"] == "musket"
+    extra = []
+    if musket:
+        _musket_clips(ctx, ch, md)
+    else:
+        if s["weapon"] == "colour" and s["flag"]:
+            ch.paint_masks = list(ch.paint_masks) + flag_masks(s["flag"], s["palette"], ch.flag)
+        heads.variants(ch)
+        ch.morphs(extra_deflate=ch.layers["gear"])
+        ch.masks()
+        ctx.aim_errors = None
+        for clip, keys in support_clips(md, s.get("active")).items():
+            wclips.apply(ch.arm, clip, keys)
+            if clip not in md:
+                extra.append(clip)
+        for clip, keys in crawl.clips().items():
+            am.add_clip(ch.arm, clip, keys)
     am.set_clip(ch.arm, "STAND")
     report = {}
     colours = ch.colours(ctx.ref, s["palette"], report=report, mix=s["mix"], fixed=s["fixed"])
@@ -228,10 +437,13 @@ def build(ctx, s):
     heads.finish(ch)  # face and body morphs, `_FACE`, variants (#283)
     # The exported scene pose (glTF node transforms) is STAND.
     ch.arm.animation_data.action = None
-    am.pose(ch.arm, poses.STAND_MUSKET)
-    ch.arm.pose.bones[aiming.ROD_SOCKET].matrix = ch.arm.pose.bones["socket.hand_r"].matrix @ aiming.ROD_STOWED
+    if musket:
+        am.pose(ch.arm, poses.STAND_MUSKET)
+        ch.arm.pose.bones[aiming.ROD_SOCKET].matrix = ch.arm.pose.bones["socket.hand_r"].matrix @ aiming.ROD_STOWED
+    else:
+        am.pose(ch.arm, wclips.bare(wclips.solve(ch.arm, support_clips(md)["STAND"][0][1])))
     tris = ch.triangles()
-    prepare_export(ch.all_meshes(), ctx.root, acr_triangles=sum(tris.values()), acr_clips=list(md) + list(crawl.CLIPS),
+    prepare_export(ch.all_meshes(), ctx.root, acr_triangles=sum(tris.values()), acr_clips=list(md) + extra + list(crawl.CLIPS),
                    acr_limb_radius=ch.limb_radius,
                    acr_light=report.get("light_dir_camera", []), acr_layers=list(ch.layers),
                    **faces.extras("regular"))
@@ -241,6 +453,10 @@ def build(ctx, s):
 
 def pose_for(ch, s, clip):
     """Shows the first frame of `clip` (the last of DEATH) for the silhouette tool."""
-    keys = poses.musketeer_clips(s["md"])[clip]
-    ch._pose_spec = keys[-1][1] if clip == "DEATH" else keys[0][1]
+    if s["weapon"] == "musket":
+        keys = poses.musketeer_clips(s["md"])[clip]
+    else:
+        keys = support_clips(s["md"])[clip]
+    pose = keys[-1][1] if clip == "DEATH" else keys[0][1]
+    ch._pose_spec = pose if s["weapon"] == "musket" else wclips.bare(wclips.solve(ch.arm, pose))
     am.pose(ch.arm, ch._pose_spec)
