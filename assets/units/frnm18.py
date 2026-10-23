@@ -2,7 +2,10 @@
 (`acr_assets.line`) as the sprite shows him: a dark blue coat with red cuffs, collar and
 turnbacks (the colours of the Gardes françaises; the line's white-grey coat would lose the
 sprite's look), white waistcoat and breeches, black gaiters, buff belts, tricorn,
-Charleville musket. Colours mixed with the `#STAND` sprites like EngM18's.
+Charleville musket. Colours mixed with the `#STAND` sprites like EngM18's. The sprite's
+chest is white: the coat's lapels are cut from white cloth (`lapels`; the uniform draft
+cuts them from the red facings), and they and the waistcoat keep the palette's white
+(`fixed`) instead of taking the red the projection finds beside them.
 """
 
 from acr_assets import line
@@ -30,12 +33,12 @@ MD = {
 
 PALETTE = {
     "coat": (0.12, 0.17, 0.38), "facings": (0.62, 0.08, 0.07), "lining": (0.62, 0.08, 0.07),
-    "waistcoat": (0.86, 0.85, 0.80), "breeches": (0.86, 0.85, 0.80), "belts": (0.80, 0.70, 0.45),
+    "waistcoat": (0.86, 0.85, 0.80), "lapels": (0.86, 0.85, 0.80), "breeches": (0.86, 0.85, 0.80), "belts": (0.80, 0.70, 0.45),
 }
 
 
 def spec():
-    return line.spec(MD, palette=PALETTE)
+    return line.spec(MD, palette=PALETTE, lapels="lapels", fixed=("waistcoat", "lapels"))
 
 
 def make(root, name, build=None):

@@ -212,6 +212,69 @@ the variant meshes, so the game looks as before.
   from a 32-bit hash (`_mix32`, `Rng`) that the renderer ports to Rust to get the same look
   per unit id.
 
+## Family registry and held gear (#287, batch 0a)
+
+### Family registry (`acr_assets/registry.py`, pure Python)
+
+A family module (`line.py`, later `native.py`, `meso.py`, ...) registers what it adds at
+import time instead of editing the shared tables. The shared modules read the registry's
+dicts (`humans.LAYER_OF`, `humans.FALLBACK`, `outfit.PAINTER`, `outfit.KIND`,
+`outfit.FINISH` and `drape.SPACING` *are* `registry.LAYER_OF`, ...). Registering a name
+again with the same value is allowed; another value raises `ValueError`.
+
+| call | adds |
+|---|---|
+| `registry.material(key, layer, painter=None, fallback=None)` | a material key: decay layer (`flesh hair bone wool linen leather wood metal hide`), outfit painter (None: keeps the detail tile), colour when the palette leaves it out |
+| `registry.painter(name, fn=None, like=None, finish=(r, sheen, gloss))` | an outfit painter: `fn(p, n, rgb, L, seed) -> (N, 3)` linear colours (as `outfit.paint`), or `like` a built-in one (own atlas cell and colour, painted like it) |
+| `registry.garment(name, draft, cloth, ease=None, spacing=3.5)` | a sewing pattern in `garments.GARMENTS` (`draft(measure) -> (panels, seams)`) with its sim settings (`garments.CLOTH` keys); drape it with `drape.dress(ch, garments=(..., name))` |
+| `drape.dress(ch, garments=..., patterns={name: draft})` | a one-off draft that overrides or adds a garment for one unit |
+| `registry.hat(name, fn)` / `registry.build_hat(name, obj_name)` | a hat builder, origin at the crown socket |
+| `registry.gear(name, fn)` / `registry.build_gear(names, ch, name, spec)` | strapped gear, `fn(ch, name, spec) -> object` |
+
+`line.py` is the example: it registers its hats (`tricorn`, `slouch`, `cocked`), its
+strapped gear (`cartridge`, `knapsack`) and the `lapels` key and painter (lapels in an own
+cloth, drafted through `patterns`). Its spec has two new keys: `fixed` (palette keys that keep
+the palette colour: `Character.colours(fixed=...)` skips the sprite mix for them) and
+`lapels` (`facings` or `lapels`). FrnM18 uses both: the sprite's chest is white, and the
+uniform draft had cut the lapels from the red facings (the "red waistcoat"); now they are
+white cloth, the waistcoat and lapels fixed. EngM18 rebuilds pixel-identical (blank field,
+front and back; `ACR-analysis/humans-b0a/frames/{old,new}`, `frnm18_before_after.png`).
+
+### Held gear (`acr_assets/held.py` pure, `gear.held` / `gear.hold`)
+
+Library items as mesh data: origin at the grip (drum: the carriage hook; sling: the finger
+loop; shield: the hand grip), long axis +Z, edge or face -Y. `gear.held(item, name,
+keys={part: key})` makes the object (one material slot per key, `acr_material_keys`,
+sockets as empties `<name>.socket.*`, vertex groups); `gear.hold(ch, item, name, socket,
+matrix)` puts it on a socket as held gear (dropped at death). New material keys:
+`vellum`, `cord`, `colour`, `hide`, `stone`, `feather`. Tests: `tests/test_held.py`
+(sockets, tips, budgets, sizes); contact sheets `tools/held_sheet.py --row short|long`.
+
+| item | tris (budget) | sockets |
+|---|---|---|
+| `drum` (side drum, shell in `facings`, rope cords) | 284 (400) | `head` |
+| `drumstick` | 46 (50) | `tip` |
+| `colour` (6 ft 6 in silk on a 9 ft 10 in pike; groups `cloth`, `pin`) | 130 (200) | `tip`, `top` |
+| `smallsword` | 98 (150) | `tip` |
+| `hanger` (1751, curved, brass hilt) | 86 (120) | `tip` |
+| `officer_sword` (spadroon) | 90 (150) | `tip` |
+| `spontoon` | 74 (120) | `tip` |
+| `halberd` | 92 (150) | `tip` |
+| `longbow` (Woodlands self bow, braced) | 152 (160) | `nock` |
+| `arrow` | 32 (40) | `tip` |
+| `quiver` (with 6 arrows) | 98 (220) | `mouth` |
+| `spear` (head `metal`, remap to `stone`) | 62 (100) | `tip` |
+| `war_club` (ball-headed, spike) | 150 (160) | `tip` |
+| `tomahawk` | 56 (80) | `tip` |
+| `macuahuitl` (obsidian blades, `stone`) | 78 (140) | `tip` |
+| `sling` | 28 (60) | `pouch`, `release` |
+| `shield` (round hide) | 138 (180) | `arm` |
+| `pistol` | 92 (100) | `muzzle` |
+
+All scripted Blender meshes, no third-party models (so nothing new in
+`assets/LICENSES.md`); a CC0 replacement (Poly Haven, Kenney, Quaternius) can swap in
+behind the same `Item` data later.
+
 ## 1. What the sprites tell
 
 `ENGM18.MD` packs: `USERLC 1 EngM18G` (walk, `MOTION_*`), `2 EngM18B` (not referenced by any

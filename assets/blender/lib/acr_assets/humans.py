@@ -11,23 +11,12 @@ from mathutils import Matrix, Vector
 
 from . import armature as am
 from . import body as bd
-from . import decay, detail, heads, limb, mbody, project, rig
+from . import decay, detail, heads, limb, mbody, project, registry, rig
 
-# Layer order (#178) and the decay layer of every material key a unit may use.
-LAYER_OF = {
-    "skin": "flesh", "hair": "hair", "bone": "bone",
-    "coat": "wool", "tunic": "wool", "sash": "wool", "cloak": "wool", "facings": "wool", "lining": "wool",
-    "stock": "leather", "garter": "leather",
-    "waistcoat": "linen", "breeches": "linen", "shirt": "linen", "stockings": "linen",
-    "gaiters": "leather", "belts": "leather", "hat": "leather", "boots": "leather", "shoes": "leather",
-    "cartridge": "leather", "knapsack": "leather", "saddle": "leather", "tack": "leather",
-    "wood": "wood", "metal": "metal", "brass": "metal",
-    "horse": "hide", "mane": "hide", "hooves": "bone", "saddlecloth": "wool", "boots_high": "leather", "cap": "leather",
-}
-
-
-# Colours of keys a unit's palette may leave out (sRGB).
-FALLBACK = {"brass": (0.72, 0.58, 0.30), "metal": (0.55, 0.55, 0.57), "garter": (0.07, 0.06, 0.05)}
+# Layer order (#178) and the decay layer of every material key a unit may use; colours of
+# keys a unit's palette may leave out (sRGB). Families add keys with `registry.material`.
+LAYER_OF = registry.LAYER_OF
+FALLBACK = registry.FALLBACK
 
 
 def graph(build=None):
@@ -239,12 +228,14 @@ class Character:
             write(o, [limb.TRUNK] * len(o.data.vertices))
         self.limb_radius = {n: limb.radius_profile(radius[n]) for n in limb.LIMB_ORDER}
 
-    def colours(self, ref, palette, delight=0.0, report=None, mix=1.0):
+    def colours(self, ref, palette, delight=0.0, report=None, mix=1.0, fixed=()):
         """Materials: one colour per part, the robust dominant colour of the part in the
         sprite reference near its `palette` colour (`project.guided`; current pose = the
         reference's; mirrored views for the symmetric parts; `delight` > 0 divides the
         sprites by a fitted shading first), blended with the palette colour by `mix`
-        (1 = sprite only); without a reference the palette. Each colour becomes a small
+        (1 = sprite only); without a reference the palette. Keys in `fixed` keep their
+        palette colour whatever the sprite shows (a white waistcoat the projection would
+        tint with the coat's red). Each colour becomes a small
         procedural tile (cloth, leather, wood, ...) on the box-projected UV map `detail`.
         Bones and stump caps are flat. Returns {object: sRGB}."""
         objs = self.layers["flesh"] + self.layers["clothes"] + self.layers["gear"] + list(self.held.values())
@@ -281,7 +272,7 @@ class Character:
             o.data.materials.clear()
             for i, k in enumerate(keys):
                 rgb = palette[k] if k in palette else FALLBACK[k]
-                if len(samples) and i == 0:
+                if len(samples) and i == 0 and k not in fixed:
                     seen = project.guided(samples, rgb)
                     rgb = tuple(mix * a + (1 - mix) * b for a, b in zip(seen, rgb))
                 o.data.materials.append(mat(k, rgb))

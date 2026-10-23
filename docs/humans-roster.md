@@ -215,10 +215,13 @@ scripts, so the agents of a batch touch disjoint files. The shared files (`garme
 
 - **Batch 0 (sequential, ~4 slices):**
   1. `line.py`, the family pattern (done here).
-  2. Hooks so families add without editing shared tables: `outfit.register(painter,
-     kind, finish)`; garment patterns passed from a family module
-     (`drape.dress(ch, garments=..., patterns=...)`); held gear in `gear.py` (drum, flag on
-     a staff, sword, bow, quiver, spear, club).
+  2. Hooks so families add without editing shared tables (done, batch 0a:
+     `acr_assets/registry.py`: `material`, `painter`, `garment`, `hat`, `gear`;
+     `drape.dress(ch, garments=..., patterns=...)`; palette keys `fixed` against the sprite
+     mix); held gear library `held.py` + `gear.held`/`gear.hold` (drum and sticks, colour
+     on a pike, smallsword, hanger, officer's sword, spontoon, halberd, longbow, arrow,
+     quiver, spear, war club, tomahawk, macuahuitl, sling, shield, pistol). See
+     assets-humans.md, "Family registry and held gear".
   3. A clips module `clips.py`: bow, thrown weapon, sling, blowpipe, heal, drum, flag carry,
      one-handed cut and thrust on foot (docs/melee.md names).
   4. Lace and paint masks in `outfit` (lace on the facings, body paint on the skin).
@@ -245,8 +248,9 @@ bytes; 344 bytes differ) and its blank-field frame (white ground, HUD off) is
 pixel-identical. Frames in `ACR-analysis/humans/frames/{old,new}/`, the sheet
 `ACR-analysis/humans/sheet_line_before_after.png`.
 
-Open: FrnM18's waistcoat takes the sprite's red (the projection's pick at `mix` 0.5); a
-list of palette-only keys in the spec would keep it white.
+FrnM18's "red waistcoat" was the lapels, cut from the red facings by the uniform draft:
+batch 0a cuts them from white cloth (`lapels="lapels"`) and keeps waistcoat and lapels at
+the palette's white (`fixed`).
 
 ## 5. Roster
 Human types: **104** (25 mounted, 79 on foot), **11** with a 3D model; the cannon's crew counted apart.

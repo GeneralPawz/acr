@@ -9,11 +9,20 @@ parameters (`spec`), then `build(ctx)` calls `line.build(ctx, SPEC)`.
 - `palette`: colours by material key (sRGB) over `PALETTE`: the nation's coat, the
   regiment's `facings`, the `lining` of the turnbacks, `waistcoat`, `breeches`, `gaiters`,
   `belts`, `hat`, ... Sprite colours are mixed in with `mix`;
+- `lapels`: the material key of the coat's lapels: `facings` (the uniform's draft) or
+  `lapels` (an own colour, `palette["lapels"]`: FrnM18's white lapels over the white
+  waistcoat, a coat drafted through `drape.dress(patterns=...)`);
+- `fixed`: palette keys that keep their palette colour (no sprite mix), e.g. FrnM18's white
+  waistcoat, which the projection would tint with the coat;
 - `build`: body build (`Character` build; `garments` False builds the shells of #178);
 - `fit`: part sizes fitted to the sprite silhouette (hat, musket, pack, shell skirt);
-- `hat`: `tricorn`, `slouch` or `cocked` (`gear.py`);
-- `gear`: strapped gear, any of `crossbelts`, `cartridge`, `knapsack`;
+- `hat`: a registered hat (`registry.hat`): `tricorn`, `slouch` or `cocked` (`gear.py`);
+- `gear`: `crossbelts` (straps over the draped coat) and registered strapped gear
+  (`registry.gear`): `cartridge`, `knapsack`;
 - `weapon`: `musket` (with rammer, aim, reload and charge clips).
+
+The family registers its hats and strapped gear with `registry` at import (the example for
+the other family modules: docs/assets-humans.md, "Family registry").
 """
 
 import math
@@ -23,7 +32,7 @@ from mathutils import Matrix, Vector
 from . import aim as aiming
 from . import armature as am
 from . import body as bd
-from . import crawl, faces, gear, heads, outfit, poses, rig
+from . import crawl, faces, gear, heads, outfit, poses, registry, rig
 from .humans import LAYER_OF, Character, prepare_export
 
 # The English musketeer's colours (`EngM18`): the defaults a nation overrides.
@@ -45,8 +54,42 @@ FIT = {
     "pack": [0.32, 0.10, 0.32], "pack_y": 0.1925, "skirt_gap": 72,
 }
 DEFAULTS = {"build": BUILD, "fit": FIT, "hat": "tricorn", "gear": ("crossbelts", "cartridge", "knapsack"),
-            "weapon": "musket", "mix": 0.5}
-HATS = {"tricorn": gear.tricorn, "slouch": gear.slouch_hat, "cocked": gear.cocked_hat}
+            "weapon": "musket", "mix": 0.5, "fixed": (), "lapels": "facings"}
+
+
+def _cartridge(ch, name, s):
+    box = gear.box(f"{name}.cartridge_box", (0.16, 0.06, 0.12))
+    gear.rigid(box, ch.arm, "hips", Matrix.Translation((-0.15, 0.17, 0.97)) @ Matrix.Rotation(math.radians(30), 4, "Z"))
+    return ch.add("gear", box, "cartridge")
+
+
+def _knapsack(ch, name, s):
+    pack = gear.box(f"{name}.knapsack", tuple(s["fit"]["pack"]))
+    gear.rigid(pack, ch.arm, "spine2", Matrix.Translation((0, s["fit"]["pack_y"], 1.28)))
+    return ch.add("gear", pack, "knapsack")
+
+
+registry.hat("tricorn", gear.tricorn)
+registry.hat("slouch", gear.slouch_hat)
+registry.hat("cocked", gear.cocked_hat)
+registry.gear("cartridge", _cartridge)
+registry.gear("knapsack", _knapsack)
+# Lapels in an own colour: an own atlas cell, painted like the coat's broadcloth.
+registry.painter("lapels", like="wool", finish=(1.0, 0.45, 0.0))
+registry.material("lapels", "wool", painter="lapels", fallback=(0.86, 0.85, 0.80))
+
+
+def _coat_with(key):
+    """The uniform coat's draft with the lapels cut from cloth of material `key`."""
+    from . import garments as gm
+
+    def draft(m):
+        panels, seams = gm.coat(m)
+        panels["lapel"].key = key
+        return panels, seams
+
+    return draft
+STRAPS = ("crossbelts",)  # gear drawn with the cloth (not a registered builder)
 
 TORSO = {"hips", "spine", "spine1", "spine2", "clavicle_l", "clavicle_r"}
 ARMS = {"upperarm_l", "upperarm_r", "forearm_l", "forearm_r"}
@@ -57,7 +100,7 @@ FEET = {"foot_l", "foot_r", "toe_l", "toe_r"}
 
 def spec(md, palette=None, build=None, fit=None, **kw):
     """A full SPEC: the defaults with `palette`, `build`, `fit` merged key by key and the
-    other keys (`hat`, `gear`, `weapon`, `mix`) replaced."""
+    other keys (`hat`, `gear`, `weapon`, `mix`, `fixed`) replaced."""
     unknown = set(kw) - set(DEFAULTS)
     if unknown:
         raise KeyError(f"unknown SPEC keys {sorted(unknown)}")
@@ -81,12 +124,14 @@ def make(root, name, s):
         ch.shoes = ch.add("clothes", mbody.shoes(ch.arm, ch.flesh, f"{name}.footwear", ch.prefix, key="shoes"),
                           "shoes", symmetric=True)
         ch.drape_report = {}
-        made = drape.dress(ch, report=ch.drape_report)
+        patterns = {"coat": _coat_with(s["lapels"])} if s["lapels"] != "facings" else None
+        made = drape.dress(ch, report=ch.drape_report, patterns=patterns)
         cloth = [o for o in ch.layers["clothes"] if o.name in made]
         drape.hide_skin(ch, cloth)
         # Covered under-layers keep a margin below the layers on them (docs/clothing.md, "Layers").
         fixed = [o for o in cloth if not o.name.endswith(("coat_skirts", "turnbacks"))]
-        for inner, outer, depth in (("waistcoat", ("coat", "facings"), 0.006), ("shirt", ("coat", "facings"), 0.004),
+        for inner, outer, depth in (("waistcoat", ("coat", "facings", "lapels"), 0.006),
+                                    ("shirt", ("coat", "facings", "lapels"), 0.004),
                                     ("breeches", ("waistcoat", "gaiters"), 0.004)):
             for o in fixed:
                 if made[o.name] == inner:
@@ -120,18 +165,11 @@ def make(root, name, s):
     ch.caps()
 
     # Strapped gear (rest pose, rigid on deforming bones: follows `deflate`).
-    if "cartridge" in s["gear"]:
-        box = gear.box(f"{name}.cartridge_box", (0.16, 0.06, 0.12))
-        gear.rigid(box, ch.arm, "hips", Matrix.Translation((-0.15, 0.17, 0.97)) @ Matrix.Rotation(math.radians(30), 4, "Z"))
-        ch.add("gear", box, "cartridge")
-    if "knapsack" in s["gear"]:
-        pack = gear.box(f"{name}.knapsack", tuple(fit["pack"]))
-        gear.rigid(pack, ch.arm, "spine2", Matrix.Translation((0, fit["pack_y"], 1.28)))
-        ch.add("gear", pack, "knapsack")
+    registry.build_gear([g for g in s["gear"] if g not in STRAPS], ch, name, s)
 
     # Held gear on sockets, placed in the standing pose (drops at death).
     am.pose(ch.arm, poses.STAND_MUSKET)
-    hat = HATS[s["hat"]](f"{name}.{s['hat']}")
+    hat = registry.build_hat(s["hat"], f"{name}.{s['hat']}")
     am.attach(hat, ch.arm, "socket.hat", Matrix.Translation(am.world(ch.arm, "socket.hat").translation + Vector((0, 0, fit["hat_z"])))
               @ Matrix.Rotation(math.radians(-6), 4, "X") @ Matrix.Scale(fit["hat_scale"], 4))
     ch.held["hat"] = hat
@@ -185,7 +223,7 @@ def build(ctx, s):
         aiming.stow_rammer(ch.arm, clip)
     am.set_clip(ch.arm, "STAND")
     report = {}
-    colours = ch.colours(ctx.ref, s["palette"], report=report, mix=s["mix"])
+    colours = ch.colours(ctx.ref, s["palette"], report=report, mix=s["mix"], fixed=s["fixed"])
     # Realistic cloth, skin and leather painted over those colours (#217).
     outfit.dress(ch, colours, LAYER_OF)
     heads.finish(ch)  # face and body morphs, `_FACE`, variants (#283)

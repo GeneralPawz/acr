@@ -29,9 +29,9 @@ from mathutils.geometry import delaunay_2d_cdt
 from . import armature as am
 from . import body as bd
 from . import garments as gm
-from . import rig
+from . import registry, rig
 
-SPACING = {"coat": 3.5, "waistcoat": 5.0, "breeches": 4.2, "gaiters": 3.5, "shirt": 2.0}  # cm (the waistcoat lies under the coat)
+SPACING = registry.SPACING  # cm (the waistcoat lies under the coat); families add with `registry.garment`
 SEW_FRAMES = 45  # sewing phase (no gravity), then the cloth settles
 FRAMES = 75
 SEW_FORCE = 40.0
@@ -578,7 +578,7 @@ def solidify(obj, thickness):
 # Edge depth (m) of the hems: a rim along the cut edges of the coat skirts, the turnbacks
 # and the facings (cuffs, lapels, collar), turned inwards: the broadcloth's turned hem and
 # the thickness of the facings show at the edge instead of a paper-thin outline.
-HEM = {"coat_skirts": 0.006, "turnbacks": 0.006, "facings": 0.005}
+HEM = {"coat_skirts": 0.006, "turnbacks": 0.006, "facings": 0.005, "lapels": 0.005}
 
 
 def hem(obj, depth):
@@ -715,11 +715,14 @@ def finish(obj, ch, skirt, weights=None, under=()):
     return am.bind(obj, ch.arm)
 
 
-def dress(ch, garments=gm.ORDER, report=None):
-    """Drapes the uniform on character `ch` (rest pose) and adds the garments to its
-    `clothes` layer. Returns {object name: material key}."""
+def dress(ch, garments=gm.ORDER, report=None, patterns=None):
+    """Drapes the garments `garments` (in order: each rests on those before) on character
+    `ch` (rest pose) and adds them to its `clothes` layer. A garment is drafted by
+    `patterns[name]` when given (a family's one-off), else by `garments.GARMENTS` (the
+    uniform and what families registered with `registry.garment`). Returns {object name:
+    material key}."""
     body = Body(ch)
-    uni = gm.uniform(body.m, garments)
+    uni = gm.uniform(body.m, garments, patterns)
     colliders = [ch.flesh] + ([ch.shoes] if getattr(ch, "shoes", None) else [])
     for o in colliders:
         _collision(o)
@@ -729,7 +732,7 @@ def dress(ch, garments=gm.ORDER, report=None):
     stats["measure"] = {k: round(v, 1) for k, v in body.m.items()}
     for g in garments:
         panels, seams = uni[g]
-        verts, faces, finfo, sew, pieces = build_garment(body, g, panels, seams, SPACING[g])
+        verts, faces, finfo, sew, pieces = build_garment(body, g, panels, seams, SPACING.get(g, 3.5))
         me = bpy.data.meshes.new(f"{ch.name}.{g}.drape")
         me.from_pydata(verts, [tuple(e) for e in sew], faces)
         obj = bd.link(bpy.data.objects.new(f"{ch.name}.{g}.drape", me))
@@ -750,7 +753,7 @@ def dress(ch, garments=gm.ORDER, report=None):
             fa.data[i].value = names.index(n)
         dt, gaps_sewn = 0.0, []
         if g != "shirt":
-            dt, gaps_sewn = simulate(obj, gm.CLOTH[g], sew)
+            dt, gaps_sewn = simulate(obj, gm.CLOTH.get(g, gm.CLOTH["waistcoat"]), sew)
         ev = obj.data
         longest = max(((ev.vertices[e.vertices[0]].co - ev.vertices[e.vertices[1]].co).length
                        for e in ev.edges if not e.is_loose), default=0.0)
@@ -762,7 +765,7 @@ def dress(ch, garments=gm.ORDER, report=None):
         welded = sum(1 for x in gaps if x < WELD)
         weld(obj, sew, limit=WELD if g != "shirt" else 0.3)
         if SOLIDIFY:
-            solidify(obj, gm.CLOTH[g]["thickness"])
+            solidify(obj, gm.CLOTH.get(g, gm.CLOTH["waistcoat"])["thickness"])
         # One object per (key, skirt).
         kinds = {}
         new_under = []  # the parts of one garment rest on the layers before it, not on each other
@@ -802,7 +805,7 @@ def dress(ch, garments=gm.ORDER, report=None):
                     "worst_seams_mm": {k: round(v * 1000) for k, v in sorted(per_seam.items(), key=lambda kv: -kv[1])[:5]}}
         for o in ch.layers["clothes"]:
             if o.name in made:
-                _collision(o, thickness=gm.CLOTH[g].get("margin", 0.004))
+                _collision(o, thickness=gm.CLOTH.get(g, gm.CLOTH["waistcoat"]).get("margin", 0.004))
     for o in list(ch.layers["clothes"]) + [ch.flesh]:
         _collision(o, False)
     return made
@@ -929,7 +932,8 @@ def buttons(ch, cloth, name):
                 nrm = -nrm
             spots[key].append((o, co, nrm, r, face))
 
-    facings = by_key.get("facings", [])
+    # Lapels in an own cloth (`lapels` key, line.py) carry the lapel buttons too.
+    facings = by_key.get("facings", []) + by_key.get("lapels", [])
     for o in facings:
         V = np.array([v.co[:] for v in o.data.vertices])
         if not len(V):

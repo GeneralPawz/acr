@@ -417,6 +417,12 @@ def shirt(m=MEASURE):
 GARMENTS = {"coat": coat, "waistcoat": waistcoat, "breeches": breeches, "gaiters": gaiters, "shirt": shirt}
 
 
-def uniform(m=MEASURE, garments=ORDER):
-    """{garment: (panels, seams)} for the British infantry uniform, drafted to `m`."""
-    return {g: GARMENTS[g](m) for g in garments}
+def uniform(m=MEASURE, garments=ORDER, patterns=None):
+    """{garment: (panels, seams)} drafted to `m`: the British infantry uniform by default;
+    `patterns` {name: draft} overrides or adds drafts (families register theirs with
+    `registry.garment`, which adds to `GARMENTS`, `CLOTH` and `EASE`)."""
+    drafts = dict(GARMENTS, **(patterns or {}))
+    missing = [g for g in garments if g not in drafts]
+    if missing:
+        raise KeyError(f"no sewing pattern for {missing} (register it with registry.garment)")
+    return {g: drafts[g](m) for g in garments}

@@ -13,35 +13,22 @@ materials. Deterministic (seeded noise).
 
 import numpy as np
 
-from . import coat, decay
+from . import coat, decay, registry
 
 SIZE = 1024
 # Painter of each material key (`humans.LAYER_OF` keys); keys not listed keep their material.
-PAINTER = {
-    "skin": "skin", "hair": "skin",
-    "coat": "wool", "tunic": "wool", "sash": "wool", "cloak": "wool",
-    # Draped garments (docs/clothing.md): own painters, so that the facings and the lining
-    # get their own atlas cells and colours (a painter's cell has one colour).
-    "facings": "facings", "lining": "lining", "stock": "stock",
-    "waistcoat": "kersey", "breeches": "kersey", "shirt": "linen", "stockings": "linen",
-    "gaiters": "gaiters", "boots": "boots", "shoes": "boots", "boots_high": "boots",
-    "belts": "belts", "hat": "felt", "cap": "felt",
-    "cartridge": "leather", "knapsack": "leather", "garter": "leather", "saddle": "leather", "tack": "leather",
-}
-# Painters that paint like another one.
-KIND = {"facings": "wool", "lining": "wool", "stock": "linen"}
-# How each painter's cloth takes the light (`acr_roughness`, `acr_sheen`, `acr_gloss` in the
-# material extras): the game's `model.wgsl` adds the sheen at grazing angles and the gloss as
-# a highlight; the Blender previews use Principled roughness, sheen and specular.
-# Broadcloth is fulled and shorn: matte, a soft sheen at the silhouette only. Kersey (the
-# waistcoat and breeches) and linen are flatter; the gaiters are black linen or wool, not
-# leather; shoes are blacked leather with a dull gloss.
-FINISH = {
-    "wool": (1.0, 0.45, 0.0), "facings": (1.0, 0.45, 0.0), "lining": (1.0, 0.35, 0.0),
-    "kersey": (1.0, 0.25, 0.0), "linen": (0.95, 0.12, 0.0), "stock": (0.95, 0.25, 0.0),
-    "gaiters": (1.0, 0.30, 0.0), "felt": (1.0, 0.30, 0.0),
-    "boots": (0.6, 0.0, 0.18), "belts": (0.8, 0.0, 0.05), "leather": (0.7, 0.0, 0.10), "skin": (0.75, 0.0, 0.0),
-}
+# The draped garments' facings, lining and stock have own painters, so that they get their
+# own atlas cells and colours (a painter's cell has one colour); `KIND` maps such painters
+# to the one they paint like. `FINISH`: how each painter's cloth takes the light
+# (`acr_roughness`, `acr_sheen`, `acr_gloss` in the material extras): the game's
+# `model.wgsl` adds the sheen at grazing angles and the gloss as a highlight; the Blender
+# previews use Principled roughness, sheen and specular. Broadcloth is fulled and shorn:
+# matte, a soft sheen at the silhouette only. Kersey (the waistcoat and breeches) and linen
+# are flatter; the gaiters are black linen or wool, not leather; shoes are blacked leather
+# with a dull gloss. All three tables live in `registry` (families add painters there).
+PAINTER = registry.PAINTER
+KIND = registry.KIND
+FINISH = registry.FINISH
 HAIR = (0.24, 0.16, 0.10)
 BRASS = (0.78, 0.62, 0.27)
 
@@ -78,6 +65,8 @@ def _buttons(p, n, xs, z0, z1, step, radius, front=True):
 
 
 def paint(kind, p, n, rgb, L, seed):
+    if kind in registry.PAINT_FN:
+        return registry.PAINT_FN[kind](p, n, rgb, L, seed)
     base = coat.lin(rgb)
     fine = coat.fbm(p, 260.0, seed, octaves=1)
     broad = coat.fbm(p, 9.0, seed + 5)

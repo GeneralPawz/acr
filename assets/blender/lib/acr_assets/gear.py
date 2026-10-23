@@ -147,3 +147,50 @@ def rigid(obj, arm_obj, bone, world_matrix, part=0):
     for d in attr.data:
         d.value = part
     return am.bind(obj, arm_obj)
+
+
+def held(item, name, keys=None):
+    """A library item (`held.Item` or its name in `held.ITEMS`) as an object `name`: one
+    mesh in the item frame (origin at the grip, +Z the long axis), a material slot per
+    material key (`acr_material_keys`; `keys` {part: key} remaps parts, e.g. a spear's
+    head to `stone`), its sockets as empties `<name>.socket.*` under it (the strike layer
+    finds `*socket.tip`) and its vertex groups (`cloth`, `pin`). Materials come from
+    `Character.colours` like the musket's."""
+    from . import held as library
+
+    it = library.build(item) if isinstance(item, str) else item
+    if keys:
+        it.keys = dict(it.keys, **keys)
+    slots, face_slot = it.material_keys()
+    me = bpy.data.meshes.new(name)
+    me.from_pydata(it.verts, [], it.faces)
+    for p, s in zip(me.polygons, face_slot):
+        p.material_index = s
+    me.update()
+    obj = link(bpy.data.objects.new(name, me))
+    obj["acr_material_keys"] = slots
+    obj["acr_held_item"] = it.name
+    for g, idx in it.groups.items():
+        obj.vertex_groups.new(name=g).add(idx, 1.0, "REPLACE")
+    for s, co in it.sockets.items():
+        e = bpy.data.objects.new(f"{name}.{s}", None)
+        e.empty_display_size = 0.05
+        link(e)
+        e.parent = obj
+        e.location = co
+    return obj
+
+
+def hold(ch, item, name, socket="socket.hand_r", matrix=None, keys=None, slot=None):
+    """Puts library item `item` on `socket` of character `ch` as held gear (dropped at
+    death): the item frame at `matrix` (world, rest of the clip's pose; default the
+    socket's own frame, upright like `line`'s musket). Returns the object."""
+    obj = held(item, name, keys)
+    if matrix is None:
+        sock = am.world(ch.arm, socket)
+        rest_up = sock.to_3x3() @ ch.arm.pose.bones[socket].bone.matrix_local.to_3x3().inverted()
+        matrix = Matrix.Translation(sock.translation) @ rest_up.to_4x4()
+    am.attach(obj, ch.arm, socket, matrix)
+    ch.held[slot or name.split(".", 1)[-1]] = obj
+    ch.keys[obj.name] = obj["acr_material_keys"][0]
+    return obj
