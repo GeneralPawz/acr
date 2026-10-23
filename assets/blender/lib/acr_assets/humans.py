@@ -108,7 +108,10 @@ class Character:
         cx = next(p for n, _par, p, _r in g if n == "skull")[0]
 
         def mh_body(bm):
-            mbody.build(bm, am.segments(self.arm), P, self.build)
+            seg = am.segments(self.arm)
+            mbody.build(bm, seg, P, self.build)
+            if bd.SHOULDER_REMESH:
+                print(f"[{self.name}] shoulder line re-meshed: {bd.remesh_shoulders(bm, seg, P)}")
 
         def head(bm):
             self.face_frame = heads.refine(bm, cx, mh_body if self.build.get("mh_body", True) else None)
@@ -122,7 +125,11 @@ class Character:
         self.add("flesh", self.flesh, key, symmetric=True)
         return self.flesh
 
-    def shell(self, name, key, keep_face, offset, symmetric=True):
+    def shell(self, name, key, keep_face, offset, symmetric=True, neck=None):
+        """A clothing shell of the flesh (`bd.derive`). A shell that covers the top of the
+        trunk gets its neck opening cut by distance from the neck (`bd.neck_opening`, an
+        ellipse `neck` metres outside the skin of the neck, default `bd.NECK_EASE`) instead of
+        by part and height, so the trapezius stays whole in it (#287 trisoup7)."""
         P = self.prefix
         shoe = key in mbody.FOOTWEAR and self.build.get("mh_body", True)
         feet = {"foot_l", "foot_r", "toe_l", "toe_r"}
@@ -131,7 +138,13 @@ class Character:
             h = h[len(P):]
             return keep_face(c, n, h, p) and not (shoe and h in feet and c.z < self.arm.data.bones[P + "foot_l"].head_local.z + 0.045)
 
-        obj = bd.derive(self.flesh, f"{self.name}.{name}", keep, offset, border=self.build.get("mh_body", True))
+        field = None
+        if bd.NECK_CUT and self.build.get("mh_body", True):
+            opening = bd.neck_opening(self.flesh, self.arm, keep, P, neck)
+            if opening:
+                keep, field = opening
+                print(f"[{self.name}] {name}: neck opening by distance, radius {field.radius:.3f}")
+        obj = bd.derive(self.flesh, f"{self.name}.{name}", keep, offset, border=self.build.get("mh_body", True), field=field)
         obj = self.add("clothes", obj, key, symmetric)
         if shoe and not getattr(self, "shoes", None):
             # The MakeHuman feet stay bare skin; footwear gets a shoe over a last (#287).

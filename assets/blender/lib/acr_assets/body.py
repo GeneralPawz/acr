@@ -125,15 +125,197 @@ def hull(arm_obj, name, graph, bones=rig.BODY_BONES, subdivide=1, head=None):
     for poly in mesh.polygons:
         poly.use_smooth = True
     hs = skin_weights(obj, arm_obj, bones)
-    # Outward rest normals: the vertex normal, flipped where it points at its own bone.
     seg = am.segments(arm_obj)
     rn = mesh.attributes.new("rest_normal", "FLOAT_VECTOR", "POINT")
-    for v in mesh.vertices:
-        n = v.normal.copy()
-        if n.dot(v.co - seg_point(v.co, *seg[hs[v.index]])) < 0:
-            n.negate()
-        rn.data[v.index].vector = n
+    if HULL_WINDING and _closed_outward(mesh):
+        # A closed hull: the winding (made outward by volume) gives the outward normal; the
+        # bone-side flip misfires at the armpits, hands and crotch (#287 trisoup7).
+        mesh.update()
+        for v in mesh.vertices:
+            rn.data[v.index].vector = v.normal.copy()
+    else:
+        # Outward rest normals: the vertex normal, flipped where it points at its own bone.
+        for v in mesh.vertices:
+            n = v.normal.copy()
+            if n.dot(v.co - seg_point(v.co, *seg[hs[v.index]])) < 0:
+                n.negate()
+            rn.data[v.index].vector = n
     return am.bind(obj, arm_obj)
+
+
+HULL_WINDING = False  # closed hull: rest normals from the outward winding, no bone-side flip
+
+
+def _closed_outward(mesh, holes=0.03):
+    """True when `mesh` is closed but for small holes (at most `holes` of its edges on one
+    face) and consistently wound; each connected piece is then turned so that the volume it
+    encloses (about its centre) is positive: an outward winding."""
+    bm = bmesh.new()
+    bm.from_mesh(mesh)
+    open_ = sum(len(e.link_faces) == 1 for e in bm.edges)
+    if not bm.faces or any(len(e.link_faces) > 2 for e in bm.edges) or open_ > holes * len(bm.edges):
+        bm.free()
+        return False
+    for e in bm.edges:
+        if len(e.link_faces) == 2:
+            l1, l2 = (next(lp for lp in f.loops if lp.edge is e) for f in e.link_faces)
+            if l1.vert is l2.vert:  # both faces run the edge the same way
+                bm.free()
+                return False
+    seen = set()
+    turned = False
+    for f0 in bm.faces:
+        if f0.index in seen:
+            continue
+        piece, stack = [], [f0]
+        seen.add(f0.index)
+        while stack:
+            f = stack.pop()
+            piece.append(f)
+            for e in f.edges:
+                for g in e.link_faces:
+                    if g.index not in seen:
+                        seen.add(g.index)
+                        stack.append(g)
+        c = sum((v.co for f in piece for v in f.verts), Vector()) / sum(len(f.verts) for f in piece)
+        vol = 0.0
+        for f in piece:
+            vs = [v.co - c for v in f.verts]
+            for i in range(1, len(vs) - 1):
+                vol += vs[0].dot(vs[i].cross(vs[i + 1]))
+        if vol < 0:
+            turned = True
+            for f in piece:
+                f.normal_flip()
+    if turned:
+        bm.to_mesh(mesh)
+    bm.free()
+    return True
+
+
+# --------------------------------------------------------------------------- shoulder line
+
+SHOULDER_REMESH = False  # relax the decimated MakeHuman shoulder line into even triangles (#287 trisoup7)
+SLIVER = 4.0  # aspect ratio (longest edge / its height) above which a triangle is a sliver
+
+
+def _aspect(f):
+    a = f.calc_area()
+    if a < 1e-12:
+        return 1e9
+    return max(e.calc_length() for e in f.edges) ** 2 / (2.0 * a)
+
+
+def _opposite(e, f):
+    return next(v for v in f.verts if v not in e.verts)
+
+
+def _flip_wanted(e):
+    """Delaunay test on the two triangles of `e`, guarded against folds: flip when the
+    angles opposite `e` sum to more than 180 degrees and the new edge is shorter."""
+    f1, f2 = e.link_faces
+    c, d = _opposite(e, f1), _opposite(e, f2)
+    a, b = e.verts
+    if c is d or any(d in w.verts for w in c.link_edges):
+        return False
+    ang = (a.co - c.co).angle(b.co - c.co, 0.0) + (a.co - d.co).angle(b.co - d.co, 0.0)
+    if ang <= math.pi + 1e-3:
+        return False
+    if f1.normal.dot(f2.normal) < 0.5:  # a crease (armpit, collar bone): keep it
+        return False
+    # Both new triangles must keep the orientation of the old ones.
+    n = (f1.normal + f2.normal).normalized()
+    for p, q, r in ((c.co, d.co, a.co), (d.co, c.co, b.co)):
+        if (q - p).cross(r - p).dot(n) == 0:
+            return False
+    s1 = (d.co - c.co).cross(a.co - c.co).dot(n)
+    s2 = (b.co - c.co).cross(d.co - c.co).dot(n)
+    return (s1 > 0) == (s2 > 0) and abs(s1) > 1e-9 and abs(s2) > 1e-9
+
+
+def remesh_shoulders(bm, seg, prefix="", iterations=4):
+    """Re-meshes the shoulder line of the decimated MakeHuman body (in `bm`, before the
+    weights): the faces above the armpits and below the neck seam, from the neck out over the
+    acromion, are triangulated, their long edges split, Delaunay edge flips remove the slivers
+    and the vertices are relaxed tangentially and put back on the original surface. Torso and
+    upper-arm triangles then no longer interleave in a fan across the trapezius (the shell
+    tops cut through it in thin shards, docs/clothing.md "Sixth trisoup pass")."""
+    P = prefix
+    sh = seg[P + "upperarm_l"][0]
+    neck = seg[P + "neck"][0]
+    cx = seg[P + "hips"][0][0]
+    lo, hi = sh[2] - 0.12, neck[2] + 0.08
+    reach = abs(sh[0] - cx) + 0.14
+
+    def inside(co):
+        return lo < co.z < hi and abs(co.x - cx) < reach
+
+    tree = BVHTree.FromBMesh(bm)
+    faces = [f for f in bm.faces if all(inside(v.co) for v in f.verts)]
+    if not faces:
+        return {}
+    before = sum(_aspect(t) > SLIVER for t in faces if len(t.verts) == 3)
+    bmesh.ops.triangulate(bm, faces=faces)
+
+    def region():
+        return [f for f in bm.faces if all(inside(v.co) for v in f.verts)]
+
+    lens = sorted(e.calc_length() for f in region() for e in f.edges)
+    target = lens[len(lens) // 2]
+    splits = flips = 0
+    for _ in range(iterations):
+        fs = set(region())
+        # Split the long edges (both faces in the region, so the border stays put).
+        long = [e for e in {e for f in fs for e in f.edges}
+                if e.calc_length() > 1.6 * target and len(e.link_faces) == 2 and all(g in fs for g in e.link_faces)]
+        if long:
+            splits += len(long)
+            bmesh.ops.subdivide_edges(bm, edges=long, cuts=1, use_grid_fill=False)
+            bmesh.ops.triangulate(bm, faces=[f for f in bm.faces if len(f.verts) > 3])
+        for _f in range(6):
+            fs = set(region())
+            changed = 0
+            for e in [e for f in fs for e in f.edges]:
+                if not e.is_valid or len(e.link_faces) != 2 or not all(g in fs and len(g.verts) == 3 for g in e.link_faces):
+                    continue
+                for g in e.link_faces:
+                    g.normal_update()
+                if _flip_wanted(e):
+                    ne = bmesh.utils.edge_rotate(e, True)
+                    if ne is not None:
+                        changed += 1
+                        for g in ne.link_faces:
+                            fs.add(g)
+                            g.normal_update()
+            flips += changed
+            if not changed:
+                break
+        # Tangential relaxation, back onto the original surface.
+        fs = set(region())
+        free = {v for f in fs for v in f.verts if not v.is_boundary and all(g in fs for g in v.link_faces)}
+        for _r in range(2):
+            new = {}
+            for v in free:
+                ns = [e.other_vert(v).co for e in v.link_edges]
+                c = sum(ns, Vector()) / len(ns)
+                v.normal_update()
+                d = c - v.co
+                d -= v.normal * d.dot(v.normal)
+                new[v] = v.co + d * 0.5
+            for v, c in new.items():
+                loc, _n, _i, _d = tree.find_nearest(c)
+                v.co = loc if loc is not None else c
+    # The points the decimation left standing up over the acromion and trapezius: a light
+    # full smoothing of the free vertices (a few mm off the convex shoulder).
+    fs = set(region())
+    free = [v for f in fs for v in f.verts if not v.is_boundary and all(g in fs for g in v.link_faces)]
+    for _ in range(2):
+        bmesh.ops.smooth_vert(bm, verts=list(set(free)), factor=0.5, use_axis_x=True, use_axis_y=True, use_axis_z=True)
+    bm.normal_update()
+    fs = region()
+    after = sum(_aspect(t) > SLIVER for t in fs)
+    return {"slivers": (before, after), "faces": len(fs), "edge": round(target, 3), "splits": splits,
+            "flips": flips, "zone": (round(lo, 3), round(hi, 3), round(reach, 3))}
 
 
 def split_parts(obj, part_of_bone=rig.part_of_bone):
@@ -168,13 +350,14 @@ def parts(obj):
     return [d.value for d in a.data] if a else [0] * len(obj.data.vertices)
 
 
-def derive(src, name, keep_face, offset, border=False):
+def derive(src, name, keep_face, offset, border=False, field=None):
     """A clothing shell: the faces of `src` for which keep_face(centre, normal, home, part)
     holds, pushed out by `offset` metres along the rest normals; same weights, homes and
     parts. With `border` (and `CONTOUR`) the shell is cut along an isoline through the
     triangles of a smoothed selection field (`contour_cut`), pushed out along its own
     normals and given a turned hem (`hem_border`); without `CONTOUR` whole faces are cut
-    and the border is smoothed (`smooth_border`)."""
+    and the border is smoothed (`smooth_border`). `field(co)` (0..1, or None) caps the
+    selection field per vertex (the neck opening, `neck_opening`)."""
     obj = src.copy()
     obj.data = src.data.copy()
     obj.data.name = name
@@ -204,7 +387,7 @@ def derive(src, name, keep_face, offset, border=False):
         for passes in (CONTOUR_PASSES, 1, 0):
             cut = bm.copy()
             cut.faces.index_update()
-            contour_cut(cut, dead, passes)
+            contour_cut(cut, dead, passes, field)
             if sum(f.calc_area() for f in cut.faces) >= 0.7 * want or passes == 0:
                 break
             cut.free()
@@ -231,6 +414,82 @@ def derive(src, name, keep_face, offset, border=False):
     return am.bind(obj, src.parent)
 
 
+# The neck opening of the trunk shells (#287 trisoup7, docs/clothing.md "Seventh trisoup pass").
+NECK_CUT = False  # cut the neck opening by distance from the neck, not by part and height
+NECK_EASE = 0.015  # m: default opening, this far outside the skin of the neck
+NECK_ASPECT = 1.1  # front-back distances count this much more (a wider-than-deep ellipse)
+NECK_RAMP = 0.05  # m: half-width of the distance ramp (wider than the triangles: a smooth isoline)
+NECK_DEPTH = 0.12  # m below the neck bone's head where the opening's zone ends
+NECK_TOP = 0.04  # m above the neck bone's head: higher faces are not forced into the shell
+TRUNK = ("spine1", "spine2", "clavicle_l", "clavicle_r", "neck")
+
+
+class NeckField:
+    """Selection cap round the neck: 0.5 at `radius` from the neck bone (the front-back
+    distance scaled by `NECK_ASPECT`), ramping to 1 outward; None below the zone."""
+
+    def __init__(self, axis_a, axis_b, radius, low):
+        self.a, self.b, self.radius, self.low = axis_a, axis_b, radius, low
+
+    def dist(self, co):
+        # From the neck bone, open-ended upwards: round below the neck's root (the opening
+        # does not run down the back), a tube round the neck above it.
+        d = co - seg_point(co, self.a, self.b + (self.b - self.a) * 4.0)
+        return math.sqrt(d.x * d.x + (d.y * NECK_ASPECT) ** 2 + d.z * d.z)
+
+    def __call__(self, co):
+        if co.z < self.low:
+            return None
+        return min(1.0, max(0.0, 0.5 + (self.dist(co) - self.radius) / (2.0 * NECK_RAMP)))
+
+
+def neck_opening(flesh, arm_obj, keep, prefix="", ease=None):
+    """For a shell that covers the top of the trunk (at least half of the trunk faces in the
+    zone below the neck kept by `keep`) and not the head (a hood): (keep', field) where keep' keeps every trunk and
+    neck face of the zone (the trapezius whole) and `field` cuts the opening at `ease` metres
+    outside the neck skin. None for other shells."""
+    P = prefix
+    seg = am.segments(arm_obj)
+    a, b = seg[P + "neck"]
+    low = a.z - NECK_DEPTH
+    hs = homes(flesh)
+    me = flesh.data
+    probe = NeckField(a, b, 0.0, low)
+    zone, kept, head, hooded = [], 0, 0, 0
+    for p in me.polygons:
+        c = p.center
+        votes = {}
+        for i in p.vertices:
+            votes[hs[i]] = votes.get(hs[i], 0) + 1
+        h = max(votes, key=votes.get)
+        if c.z > b.z and h[len(P):] == "head":
+            head += 1
+            hooded += bool(keep(c, p.normal, h, 0))
+        if c.z < low or c.z > b.z:
+            continue
+        if h[len(P):] not in TRUNK:
+            continue
+        zone.append(p.index)
+        if h[len(P):] != "neck" and keep(c, p.normal, h, 0):
+            kept += 1
+    trunk = [i for i in zone if hs[me.polygons[i].vertices[0]][len(P):] != "neck"]
+    if not trunk or kept < 0.5 * len(trunk) or hooded > 0.1 * max(head, 1):
+        return None  # not on the top of the trunk, or over the head too (a hood)
+    # The skin of the neck: its distance from the axis midway up the neck bone.
+    zs = (a.z + 0.2 * (b.z - a.z), a.z + 0.5 * (b.z - a.z))
+    ring = sorted(probe.dist(v.co) for v in me.vertices if zs[0] < v.co.z < zs[1])
+    r = ring[len(ring) // 2] if ring else 0.06
+    field = NeckField(a, b, r + (NECK_EASE if ease is None else ease), low)
+    top = a.z + NECK_TOP  # the neck's faces above this (the chin) stay with the head
+
+    def keep2(c, n, h, p):
+        if low <= c.z <= top and h[len(P):] in TRUNK:
+            return True
+        return keep(c, n, h, p)
+
+    return keep2, field
+
+
 # Shells cut along a contour (#287 trisoup5, docs/clothing.md "Fifth trisoup pass").
 CONTOUR = True  # cut along an isoline of the smoothed face selection, not along whole faces
 CONTOUR_PASSES = 3  # smoothing passes of the selection field (welded over the hull's part seams)
@@ -244,7 +503,7 @@ def _pkey(co):
     return (round(co.x, 5), round(co.y, 5), round(co.z, 5))
 
 
-def selection_field(bm, kill, passes=CONTOUR_PASSES):
+def selection_field(bm, kill, passes=CONTOUR_PASSES, field=None):
     """{BMVert: 0..1}: the share of kept faces round each vertex (area weighted, welded over
     the part seams of the hull by position; `kill` holds the indices of the cut faces),
     smoothed `passes` times over the mesh. Its 0.5
@@ -284,15 +543,20 @@ def selection_field(bm, kill, passes=CONTOUR_PASSES):
             for k, x in val.items():
                 tent = min(1.0, max(0.0, 0.5 + (half - abs(k[2] - mid)) / (2 * ramp)))
                 val[k] = min(tent, min(1.0, 2.0 * x))
+    if field is not None:
+        for k in val:
+            cap = field(Vector(k))
+            if cap is not None:
+                val[k] = min(val[k], cap)
     return {v: val[gid[v]] for v in bm.verts}
 
 
-def contour_cut(bm, kill, passes=CONTOUR_PASSES):
+def contour_cut(bm, kill, passes=CONTOUR_PASSES, field=None):
     """Cuts the shell along the 0.5 isoline of `selection_field`: each edge it crosses is
     split where it crosses (weights and rest normals interpolated, home and part from the
     nearer end), the split points are joined through each triangle and the outer side is
     deleted. Twin edges on a part seam of the hull are split alike, so the seams stay closed."""
-    fld = selection_field(bm, kill, passes)
+    fld = selection_field(bm, kill, passes, field)
     bmesh.ops.triangulate(bm, faces=bm.faces[:])
     for v, x in fld.items():
         if abs(x - 0.5) < CONTOUR_SNAP:
