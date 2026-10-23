@@ -74,7 +74,10 @@ fn run(drive: Option<crate::drive::Options>) -> Result<(), String> {
     if let Ok(map) = std::env::var("ACR_START_MAP") {
         game.start_map(&map);
     }
-    event_loop.run_app(&mut game).map_err(|e| e.to_string())
+    let ended = event_loop.run_app(&mut game).map_err(|e| e.to_string());
+    log::info!("event loop ended: {ended:?}");
+    log::logger().flush();
+    ended
 }
 
 /// ACR's own files from outside the game folder, which take precedence over the game folder's

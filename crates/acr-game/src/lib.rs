@@ -325,6 +325,7 @@ impl Game {
         match action {
             ui::Action::None => {}
             ui::Action::Quit => {
+                log::info!("quit");
                 self.audio.stop();
                 event_loop.exit();
             }

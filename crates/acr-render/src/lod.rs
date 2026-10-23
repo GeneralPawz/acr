@@ -100,6 +100,18 @@ fn simplify(indices: &[u32], pos: &[Pos], target: usize, error: f32) -> Vec<u32>
 /// vertex at its position whose normal is nearest the triangle's (the far levels only: a UV
 /// seam may smear across a few pixels there).
 fn simplify_welded(vertices: &[Vertex], indices: &[u32], locks: &[Pos], target: usize, error: f32) -> Vec<u32> {
+    simplify_welded_by(vertices, indices, locks, target, error, region)
+}
+
+/// [`simplify_welded`] with vertices welded only within one `region`.
+fn simplify_welded_by(
+    vertices: &[Vertex],
+    indices: &[u32],
+    locks: &[Pos],
+    target: usize,
+    error: f32,
+    region: fn(&Vertex) -> (i32, i32),
+) -> Vec<u32> {
     let mut ids: HashMap<([u32; 3], (i32, i32)), u32> = HashMap::new();
     let mut members: Vec<Vec<u32>> = Vec::new();
     let mut pos: Vec<Pos> = Vec::new();
@@ -179,6 +191,48 @@ pub fn levels(vertices: &[Vertex], indices: &[u32]) -> [Vec<u32>; LEVELS + 1] {
     dest.truncate(n);
     out[SHADOW] = if dest.is_empty() { prev } else { dest };
     out
+}
+
+/// The hair or beard variant of a vertex alone: the far mesh may join body parts (a cut then
+/// discards along a coarser line) but never two hair variants (one at most is worn).
+fn hair(v: &Vertex) -> (i32, i32) {
+    (0, v.body[3].round() as i32)
+}
+
+/// The far meshes' share of a model's full triangles (per material), levels
+/// [`FAR_FROM`].. .
+pub const FAR_RATIO: [f32; LEVELS - FAR_FROM] = [0.12, 0.06];
+/// The far meshes' error caps, relative to the extent of all the material's primitives
+/// together (a soldier: about 1.8 m, so 3.6 and 7 cm).
+pub const FAR_ERROR: [f32; LEVELS - FAR_FROM] = [0.02, 0.04];
+
+/// A far mesh of one material (level `level` ≥ [`FAR_FROM`], built per model rather than
+/// per primitive): `indices` are the concatenated lists of every primitive with that material
+/// (into the model's vertices) at the level before, simplified as one welded shape with only
+/// the hair variants apart, so the small gear (buttons, straps, buckles, the separate pieces
+/// of a uniform) melts into the rest. `full` is the material's triangles at level 0.
+pub fn far_mesh(vertices: &[Vertex], indices: &[u32], full: usize, level: usize) -> Vec<u32> {
+    let (ratio, error) = (FAR_RATIO[level - FAR_FROM], FAR_ERROR[level - FAR_FROM]);
+    let target = ((full as f32 * ratio) as usize).max(4) * 3;
+    if indices.len() < 48 || target >= indices.len() {
+        return indices.to_vec();
+    }
+    let list = simplify_welded_by(vertices, indices, &[], target, error, hair);
+    if list.is_empty() || list.len() >= indices.len() { indices.to_vec() } else { list }
+}
+
+/// The shadow casters' list of a far mesh: "sloppy" grid simplification ([`SHADOW_RATIO`] of
+/// the material's `full` triangles).
+pub fn far_shadow(vertices: &[Vertex], indices: &[u32], full: usize) -> Vec<u32> {
+    let target = ((full as f32 * SHADOW_RATIO) as usize).max(4) * 3;
+    if target >= indices.len() {
+        return indices.to_vec();
+    }
+    let pos: Vec<Pos> = vertices.iter().map(|v| Pos(v.position)).collect();
+    let mut dest = vec![0u32; indices.len()];
+    let n = meshopt_rs::simplify::simplify_sloppy(&mut dest, indices, &pos, target);
+    dest.truncate(n);
+    if dest.is_empty() { indices.to_vec() } else { dest }
 }
 
 /// The first level that may simplify the welded shape.
@@ -301,11 +355,34 @@ mod tests {
             let Ok(data) = crate::model::ModelData::from_glb(&std::fs::read(&path).unwrap()) else { continue };
             let t = std::time::Instant::now();
             let mut tris: [Vec<[[f32; 3]; 3]>; LEVELS] = Default::default();
+            // The last level as the renderer builds it: one far mesh per material.
+            let mut all: Vec<Vertex> = Vec::new();
+            let mut groups: Vec<(usize, Vec<u32>, usize)> = Vec::new();
             for p in &data.primitives {
                 let l = levels(&p.vertices, &p.indices);
-                for k in 0..LEVELS {
+                for k in 0..FAR_FROM {
                     tris[k].extend(l[k].as_chunks::<3>().0.iter().map(|t| t.map(|i| p.vertices[i as usize].position)));
                 }
+                let base = all.len() as u32;
+                all.extend_from_slice(&p.vertices);
+                let g = match groups.iter().position(|g| g.0 == p.material) {
+                    Some(g) => g,
+                    None => {
+                        groups.push((p.material, Vec::new(), 0));
+                        groups.len() - 1
+                    }
+                };
+                groups[g].1.extend(l[FAR_FROM - 1].iter().map(|i| i + base));
+                groups[g].2 += p.indices.len() / 3;
+            }
+            let mut shadow_tris = 0;
+            for (_, near, full) in &groups {
+                let mut list = near.clone();
+                for (k, t) in tris.iter_mut().enumerate().skip(FAR_FROM) {
+                    list = far_mesh(&all, &list, *full, k);
+                    t.extend(list.as_chunks::<3>().0.iter().map(|t| t.map(|i| all[i as usize].position)));
+                }
+                shadow_tris += far_shadow(&all, &list, *full).len() / 3;
             }
             let ms = t.elapsed().as_secs_f32() * 1000.0;
             if std::env::var("ACR_LOD_PRIMS").is_ok() {
@@ -351,7 +428,7 @@ mod tests {
                     worst(px) * 100.0
                 );
             }
-            println!("{line}");
+            println!("{line} | shadow {shadow_tris} tris, {} materials", groups.len());
         }
     }
 }

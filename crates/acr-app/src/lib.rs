@@ -74,6 +74,17 @@ impl Gpu {
             })
             .await
             .map_err(|e| e.to_string())?;
+        // A lost device or an uncaught validation error otherwise ends the process with
+        // nothing in the log (the window has no console).
+        device.set_device_lost_callback(|reason, message| {
+            log::error!("GPU device lost ({reason:?}): {message}");
+            log::logger().flush();
+        });
+        device.on_uncaptured_error(Arc::new(|error: wgpu::Error| {
+            log::error!("uncaptured GPU error: {error}");
+            log::logger().flush();
+            panic!("wgpu error: {error}");
+        }));
         let size = window.inner_size();
         let config = surface
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))

@@ -771,6 +771,44 @@ run (a forced level 2 run: 14.9 + 22.9 ms). Next: merge the small gear primitive
 before simplifying, an impostor or a single-primitive far mesh for level 3, and instancing the
 look variants.
 
+**Far meshes per material (m2-lod3).** From level 2 on a model no longer draws its primitives:
+`ModelRenderer::far_meshes` joins, per material (and inner decay layer), the primitives'
+level-1 lists and simplifies them as one welded shape without the region locks, only the
+hair variants kept apart (`lod::far_mesh`: 12 % of the triangles with a 2 % error cap for level 2, 6 % and 4 % for
+level 3, relative to the whole material's extent), so buttons, straps and the separate
+pieces of a uniform melt into the rest; the shadow list is a sloppy grid of level 3
+(`lod::far_shadow`). `_PART`/`_LIMB` stay per vertex, so cuts still discard, along a
+coarser line. Each far list gets its own copy of the vertices it uses (appended to the
+model's buffer). One draw per material instead of per primitive (a musketeer: 23
+materials). Triangles per level (`lod::tests::real_models`, L2 / L3, worst silhouette
+change at the level's size): engm18 2376 / 1173 (−3.6 / −7.1 %, before 3793 / 2900),
+engd18 3693 / 1885 (−1.4 / −4.8 %), puevsda 3236 / 1610, siukstr 3194 / 1606, anmmed
+1387 / 687, anmoln 1403 / 696 (−10 / −18 %, thin limbs). The error cap still stops level 3
+above the 600–1000 aimed at for a soldier.
+
+GPU time after m2-lod3 (`ACR-analysis/lod3/`, `runs.py`, two runs each, same scene):
+
+| ms | z1 main (5c3f6ad) | z1 m2-lod3 | z2 main | z2 m2-lod3 | z1 / z2 off |
+|---|---:|---:|---:|---:|---:|
+| shadow map | 3.2 | 8.6–8.7 | 7.3–7.4 | 10.9–11.8 | 107.6 / 91.7 |
+| models | 26.3–26.6 | 11.6–11.7 | 36.1–36.2 | 22.4–23.4 | 122.8 / 110.5 |
+| all passes | 32.6–32.9 | 23.1–23.2 | 46.3 | 36.6–36.8 | 234.4 / 205.6 |
+| shadows off: all passes | 39.4 | 19.7 | 52.1 | 31.7 | |
+| triangles drawn / cast | 1.57 M / 0.34 M | 0.77 M / 0.13 M | 2.36 M / 0.71 M | 1.81 M / 0.42 M | 6.1 M / 6.1 M |
+
+The split between the shadow map and the models pass is not to be trusted on this tiler:
+the shadow pass "rose" while it casts a third of the triangles, and with shadows off the
+models pass costs more than models plus shadows with them on; the sum is the measure.
+Open: the look variants still cost a draw call per variant and primitive at levels 0–1
+(zoom 2 is mostly there: 438 draws); a far level across materials (an atlas) would
+make a soldier one draw.
+
+**Crashes.** A lost GPU device and uncaught wgpu errors are logged (`acr-app`, `Gpu::new`),
+as are the quit and the end of the event loop; `gputime.py` in `ACR-analysis/lod3/` keeps
+the driver's stderr (where a stack overflow is reported) and prints the exit code on an
+early end. Twelve runs (lod on, off, shadows off; main and this branch) did not reproduce
+the silent exit.
+
 ## Development aids
 
 `ACR_3D_COMPARE` (native only) compares models with their sprites: `overlay` draws the

@@ -321,8 +321,19 @@ struct GpuPrimitive {
     inner: bool,
 }
 
+/// One material's far mesh ([`GpuModel::far`]).
+struct FarPart {
+    range: Range<u32>,
+    material: usize,
+    inner: bool,
+}
+
 struct GpuModel {
     data: ModelData,
+    /// The far levels (from [`lod::FAR_FROM`], and the shadow list): one index range per
+    /// material instead of one per primitive, the coarsest simplified as one shape
+    /// ([`lod::far_mesh`]); empty for the near levels.
+    far: [Vec<FarPart>; lod::LEVELS + 1],
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
     primitives: Vec<GpuPrimitive>,
@@ -332,6 +343,21 @@ struct GpuModel {
     variants: Vec<wgpu::Buffer>,
     /// Eye height of the rest pose (m, `extras.acr_face_frame`).
     eye: f32,
+}
+
+impl GpuModel {
+    /// What a draw at `lod` draws: (index range, material, from the look variant's vertices).
+    fn parts(&self, lod: usize, decaying: bool) -> impl Iterator<Item = (Range<u32>, usize, bool)> + '_ {
+        let merged = !self.far[lod].is_empty();
+        let near = self
+            .primitives
+            .iter()
+            .filter(move |p| !merged && (decaying || !p.inner))
+            .map(move |p| (p.lods[lod].clone(), p.material, p.touched));
+        let far =
+            self.far[lod].iter().filter(move |f| decaying || !f.inner).map(|f| (f.range.clone(), f.material, false));
+        near.chain(far)
+    }
 }
 
 /// Memory and time of the look variants baked by [`ModelRenderer::add_model`].
@@ -782,6 +808,57 @@ impl ModelRenderer {
         })
     }
 
+    /// The far levels of a model whose primitives' levels are in `indices` (appended to it):
+    /// per material (and inner layer), the primitives' lists of the level before
+    /// [`lod::FAR_FROM`] joined and simplified as one ([`lod::far_mesh`]) for each far level,
+    /// the shadow list [`lod::far_shadow`] of the last.
+    ///
+    /// Each list gets its own copy of the vertices it uses, appended to `vertices`: a joined
+    /// list would otherwise span the whole model's vertices, and a tiler may shade every vertex
+    /// between the lowest and the highest index of a draw (the shadow pass doubled so).
+    fn far_meshes(
+        vertices: &mut Vec<Vertex>,
+        indices: &mut Vec<u32>,
+        primitives: &[GpuPrimitive],
+    ) -> [Vec<FarPart>; lod::LEVELS + 1] {
+        const { assert!(lod::LOOKS_UP_TO < lod::FAR_FROM && lod::FAR_FROM == lod::LEVELS - 2) };
+        let mut groups: Vec<(usize, bool)> = Vec::new();
+        for p in primitives {
+            if !groups.contains(&(p.material, p.inner)) {
+                groups.push((p.material, p.inner));
+            }
+        }
+        let mut far: [Vec<FarPart>; lod::LEVELS + 1] = Default::default();
+        for (material, inner) in groups {
+            let members: Vec<&GpuPrimitive> =
+                primitives.iter().filter(|p| p.material == material && p.inner == inner).collect();
+            let full: usize = members.iter().map(|p| p.lods[0].len() / 3).sum();
+            let near: Vec<u32> = members
+                .iter()
+                .flat_map(|p| {
+                    let r = &p.lods[lod::FAR_FROM - 1];
+                    indices[r.start as usize..r.end as usize].to_vec()
+                })
+                .collect();
+            let middle = lod::far_mesh(vertices, &near, full, lod::FAR_FROM);
+            let last = lod::far_mesh(vertices, &middle, full, lod::LEVELS - 1);
+            let shadow = lod::far_shadow(vertices, &last, full);
+            for (level, list) in [(lod::FAR_FROM, middle), (lod::LEVELS - 1, last), (lod::SHADOW, shadow)] {
+                let start = indices.len() as u32;
+                let mut copy: HashMap<u32, u32> = HashMap::new();
+                for i in list {
+                    let j = *copy.entry(i).or_insert_with(|| {
+                        vertices.push(vertices[i as usize]);
+                        vertices.len() as u32 - 1
+                    });
+                    indices.push(j);
+                }
+                far[level].push(FarPart { range: start..indices.len() as u32, material, inner });
+            }
+        }
+        far
+    }
+
     /// Uploads a model; returns its index for [`ModelInstance::model`].
     pub fn add_model(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, data: ModelData) -> usize {
         let mut vertices: Vec<Vertex> = Vec::new();
@@ -807,6 +884,7 @@ impl ModelRenderer {
             }
         }
         let primitives: Vec<GpuPrimitive> = slots.into_iter().flatten().collect();
+        let far = Self::far_meshes(&mut vertices, &mut indices, &primitives);
         let variants: Vec<wgpu::Buffer> = baked
             .iter()
             .map(|v| {
@@ -909,6 +987,7 @@ impl ModelRenderer {
             vertices: vertex_buffer,
             indices: index_buffer,
             primitives,
+            far,
             materials,
             variants,
             eye,
@@ -1287,9 +1366,8 @@ impl ModelRenderer {
         self.shadow_draws = group(casters);
         self.draws = draws;
         self.triangles = [self.count_triangles(&self.draws), self.count_triangles(&self.shadow_draws)];
-        let calls = |d: &[Draw]| -> usize {
-            d.iter().map(|d| self.models[d.model].primitives.iter().filter(|p| d.decaying || !p.inner).count()).sum()
-        };
+        let calls =
+            |d: &[Draw]| -> usize { d.iter().map(|d| self.models[d.model].parts(d.lod, d.decaying).count()).sum() };
         self.calls = [calls(&self.draws), calls(&self.shadow_draws)];
         gpu
     }
@@ -1298,12 +1376,7 @@ impl ModelRenderer {
         draws
             .iter()
             .map(|d| {
-                let per: u32 = self.models[d.model]
-                    .primitives
-                    .iter()
-                    .filter(|p| d.decaying || !p.inner)
-                    .map(|p| p.lods[d.lod].len() as u32 / 3)
-                    .sum();
+                let per: u32 = self.models[d.model].parts(d.lod, d.decaying).map(|(r, ..)| r.len() as u32 / 3).sum();
                 u64::from(per) * u64::from(d.range.end - d.range.start)
             })
             .sum()
@@ -1323,14 +1396,14 @@ impl ModelRenderer {
             );
             pass.set_index_buffer(m.indices.slice(..), wgpu::IndexFormat::Uint32);
             let mut bound = None;
-            for p in m.primitives.iter().filter(|p| decaying || !p.inner) {
-                let from_look = p.touched && look.is_some();
+            for (indices, material, touched) in m.parts(d.lod, decaying) {
+                let from_look = touched && look.is_some();
                 if bound != Some(from_look) {
                     pass.set_vertex_buffer(0, look.filter(|_| from_look).unwrap_or(&m.vertices).slice(..));
                     bound = Some(from_look);
                 }
-                pass.set_bind_group(1, &m.materials[p.material], &[]);
-                pass.draw_indexed(p.lods[d.lod].clone(), 0, 0..range.end - range.start);
+                pass.set_bind_group(1, &m.materials[material], &[]);
+                pass.draw_indexed(indices, 0, 0..range.end - range.start);
             }
         }
     }
