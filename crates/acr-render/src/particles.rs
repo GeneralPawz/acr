@@ -40,6 +40,9 @@ pub enum ParticleKind {
     Splinter = 6,
     /// A torn sod: a flat slab of earth with grass on top, tumbling; lies like a clod.
     Sod = 7,
+    /// A scrap of flesh or bone from a body torn by a ball (#262): a lumpy impostor like a
+    /// clod, tinted by its burst, that lies a while without marking the ground.
+    Gore = 8,
 }
 
 impl ParticleKind {
@@ -59,6 +62,7 @@ impl ParticleKind {
             Self::Spray => 1.4,
             Self::Droplet => 0.5,
             Self::Splinter => 0.4,
+            Self::Gore => 0.2,
         }
     }
 
@@ -73,7 +77,7 @@ impl ParticleKind {
 
     /// Kinds that come to rest on the ground (the others vanish there or float).
     fn lies(self) -> bool {
-        matches!(self, Self::Clod | Self::Mud | Self::Grass | Self::Splinter | Self::Sod)
+        matches!(self, Self::Clod | Self::Mud | Self::Grass | Self::Splinter | Self::Sod | Self::Gore)
     }
 
     /// Seconds a resting particle lies before it is gone (scaled by a hash, 0.5–1.5).
@@ -84,6 +88,7 @@ impl ParticleKind {
             Self::Mud => 5.0,
             Self::Grass => 6.0,
             Self::Splinter => 20.0,
+            Self::Gore => 20.0,
             _ => 0.0,
         }
     }
@@ -310,7 +315,7 @@ impl Particles {
             }
             // A bounce, a skid, then rest (mud and grass stick).
             let bounce = match kind {
-                ParticleKind::Clod => 0.3,
+                ParticleKind::Clod | ParticleKind::Gore => 0.3,
                 ParticleKind::Sod => 0.15,
                 _ => 0.0,
             };

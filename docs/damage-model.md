@@ -136,7 +136,7 @@ Each limb hit draws from the world RNG (`rando()`), only with the rule on:
 | musket ball (close, e ≥ 75) | fracture (open 2/3) 45, off at hand/forearm/foot 6, wound 49 | wound, belly open 8 | kill |
 | musket ball (far) | fracture (open 2/3) 45, hand/foot off 2, wound 53 | wound | kill |
 | grapeshot | wound 40, fracture 35, off below elbow/knee 25 | wound, belly open 10 | kill |
-| cannonball | off at the hit level 85 (e ≥ 30), crushed fracture otherwise | e ≥ 60: torn in two, e ≥ 90: pulverized; else chest crushed (kill) or belly open | headless |
+| cannonball | e ≥ 40: legs: torn in two at the hips (both legs stay, the torso is thrown); arms: on through the chest (as a trunk hit there). Spent (e < 40): off at the hit level 85 (e ≥ 15), crushed fracture otherwise | e ≥ 70: pulverized 65, torn in two 35; e ≥ 40: torn in two; else chest crushed (kill) or belly open | headless |
 | shell (explosion) | 1–3 fragments: wound / fracture / off by distance | belly open 20 | kill |
 | sabre (cavalry melee) | off hand/forearm 20, deep wound 60, fracture 20 | wound, belly open 10 | kill 50 |
 | bayonet / pike | wound 85, fracture 15 | deep wound, belly open 20 | kill |
@@ -146,6 +146,24 @@ Each limb hit draws from the world RNG (`rando()`), only with the rule on:
 | gore (elk, bison) | deep puncture 60, closed fracture 25, open 15 | belly or pelvis punctured open 45 (e < 80: 25); chest: kill 15 at e ≥ 80, else deep wound | kill 40, else deep wound |
 
 The values are constants in `body.rs` and tests pin their spread.
+
+**Cannonball energy (#262, "a direct hit should shred the troop").** A 6 to 12 pdr roundshot
+keeps lethal energy over its whole flight (hundreds of metres, bounces included) and through
+several men, so the energy at a man is what the bodies before him left of the ball
+(`projectile::Plough`: 100, 80, 60, 40, 20 % for the 1st to 5th body), not the range. Before,
+the table took a limb off and left the rest whole for leg and arm hits (45 % of the regions,
+80 % legs for a low rolling ball) and for chest hits below e 60, so most direct hits
+"tumbled over in one piece". Now (`BALL_SEVERS` 15, `BALL_TEARS` 40, `BALL_PULVERIZES` 70,
+`BALL_PULVERIZE_SHARE` 65, `BALL_HIPS` 236, `BALL_CHEST` 70; `body::ball_through`):
+
+| Body along the ball | Energy | Trunk | Legs | Arms | Head |
+|---|---|---|---|---|---|
+| 1st, 2nd | 100, 80 | pulverized 65, torn in two 35 | torn at the hips | pulverized 65, torn across the chest 35 | headless |
+| 3rd, 4th | 60, 40 | torn in two | torn at the hips | torn across the chest | headless |
+| 5th (spent) | 20 | chest crushed or belly open | off 85, crushed fracture 15 | off 85, crushed 15 | headless |
+
+Only men (an animal's limb keeps the limb table). The same draws as before, so the rule off
+keeps its hashes.
 
 ### Mauling (#276)
 
@@ -266,9 +284,14 @@ On top of the existing contract (`docs/assets-humans.md`):
   **smear**: a continuous ribbon the width of the body with ragged edges and drag streaks.
   It is denser where they are slow, has a wider patch where they pause and a pool where
   they die, and dries from glossy red to brown-black.
-- **Mist:** for pulverized and point-blank cannonball hits, a short-lived red particle burst
-  that drifts and settles as fine spray on the ground and on nearby troops (the spray of
-  #239).
+- **Mist:** for pulverized and point-blank cannonball hits (e ≥ 70), a short-lived red
+  particle burst that drifts and settles as fine spray on the ground and on nearby troops
+  (the spray of #239). Every body torn by a ball (pulverized, torn in two, a limb or the
+  head torn off) also throws particles (`particle_view::shred`, full gore only): a red mist
+  of soft puffs, blood drops flung along the flight, and scraps of flesh and bone
+  (`ParticleKind::Gore`, glossy lumps that lie 20 s without marking the ground); a
+  pulverized body twice as many. The torn-in-two lower half (the legs, after a ball at the
+  hips) stays on the ground; the upper half is thrown.
 - **Gore setting:**
   - `full`: everything;
   - `reduced`: no guts, gibs or mist, and pieces without caps' flesh;

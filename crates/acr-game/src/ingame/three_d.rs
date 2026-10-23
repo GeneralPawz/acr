@@ -876,6 +876,7 @@ impl ThreeD {
             let mut ring = |at: [f32; 2]| water_view.ring(at, water_seconds);
             self.particles.update(
                 world,
+                self.gore == Gore::Full,
                 terrain,
                 marks.as_deref().map(|m| &m.state),
                 &footfalls,

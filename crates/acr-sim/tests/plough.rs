@@ -75,13 +75,17 @@ fn with_hit_locations_the_ball_ploughs_through_five_men_losing_energy() {
     let on = Rules { hit_locations: true, body_spacing: false };
     let (w, men, _) = file_shot(on);
     let lives: Vec<_> = men.iter().map(|&m| (life(&w, m), dead(&w, m))).collect();
-    // 500, 400 and 300 kill the first three (life 300); 200 and 100 wound the next two (less
-    // the shield of 1); then the ball is spent and the last two are untouched.
+    // 500, 400 and 300 kill the first three (life 300); the fourth takes 200, but the ball
+    // still has 40 % of its energy and tears him apart (`body::BALL_TEARS`); the fifth (100,
+    // less the shield of 1) is wounded by the spent ball; then the last two are untouched.
     assert_eq!(PLOUGH_BODIES, 5);
-    assert!(lives[..3].iter().all(|&(_, d)| d), "{lives:?}");
+    assert!(lives[..4].iter().all(|&(_, d)| d), "{lives:?}");
+    // A direct hit tears each of them apart, whichever region it struck: nobody tumbles
+    // over in one piece (#262).
+    let torn: Vec<_> = men[..4].iter().map(|m| w.deaths.get(&m.0).and_then(|d| d.torn)).collect();
+    assert!(torn.iter().all(Option::is_some), "{torn:?}");
     // The wounded may have lost the limb the ball struck and bleed (#254), so at most that.
-    let (fourth, fifth) = (lives[3], lives[4]);
-    assert!(!fourth.1 && (1..=99).contains(&fourth.0), "{lives:?}");
+    let fifth = lives[4];
     assert!(!fifth.1 && (100..=199).contains(&fifth.0), "{lives:?}");
     assert_eq!(lives[5..], [(300, false), (300, false)], "{lives:?}");
     // Each man is hit once, along the flight.

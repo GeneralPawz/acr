@@ -547,12 +547,24 @@ fn pct(w: &mut World) -> i32 {
     (w.random.rando() * 100) >> 15
 }
 
-/// Cannonball energy (percent) from which a limb hit takes the limb off.
-pub const BALL_SEVERS: u8 = 30;
-/// … and from which a trunk hit tears the body in two.
-pub const BALL_TEARS: u8 = 60;
-/// … and from which nothing whole is left.
-pub const BALL_PULVERIZES: u8 = 90;
+/// Cannonball energy (percent) from which a limb hit takes the limb off. A ball's energy is
+/// what the bodies before it left of it (`projectile::Plough`: 100, 80, 60, 40, 20); a 6 to
+/// 12 pdr roundshot keeps enough to kill over its whole flight and through several men, so
+/// only the last, spent ball leaves a man in one piece (#262, the user's report "a direct
+/// hit just tumbled him over").
+pub const BALL_SEVERS: u8 = 15;
+/// … and from which any hit on a man tears him apart: a trunk hit tears the body in two, a
+/// leg hit takes the legs and throws the torso (torn in two at the hips), an arm hit goes
+/// on through the chest beside it.
+pub const BALL_TEARS: u8 = 40;
+/// … and from which a trunk (or arm) hit leaves nothing whole by [`BALL_PULVERIZE_SHARE`]
+/// percent (the rest are torn in two).
+pub const BALL_PULVERIZES: u8 = 70;
+pub const BALL_PULVERIZE_SHARE: i32 = 65;
+/// Trunk levels (0 shoulders .. 255 hips) of a body torn by a ball through the legs (at the
+/// hips: the legs stay, the torso is thrown) and through an arm (across the chest).
+pub const BALL_HIPS: u8 = 236;
+pub const BALL_CHEST: u8 = 70;
 
 /// Musket-ball energy (percent, by range) from which a ball tears chunks: a limb off at the
 /// hand, forearm or foot, a belly open.
@@ -713,6 +725,33 @@ pub fn limb_outcome(cause: Cause, energy: u8, leg: bool, level: u8, roll: i32) -
     }
 }
 
+/// A cannonball with [`BALL_TEARS`] energy or more striking a man's limb does not stop at
+/// it: through the legs it takes both and throws the torso (torn in two at the hips,
+/// [`BALL_HIPS`]); through an arm it goes on across the chest ([`BALL_CHEST`]: pulverized
+/// from [`BALL_PULVERIZES`] by [`BALL_PULVERIZE_SHARE`] percent, else torn in two there).
+/// `None`: the limb table stands (a spent ball, or not a ball).
+pub fn ball_through(cause: Cause, energy: u8, leg: bool, roll: i32) -> Option<(Part, u8, Outcome)> {
+    if cause != Cause::Cannonball || energy < BALL_TEARS {
+        return None;
+    }
+    Some(if leg {
+        (Part::Pelvis, BALL_HIPS, Outcome::Torn(Torn::InTwo { level: BALL_HIPS }))
+    } else {
+        (Part::Chest, BALL_CHEST, trunk_outcome(cause, energy, Part::Chest, BALL_CHEST, roll))
+    })
+}
+
+/// [`limb_outcome`] for a hit on `limb`, or on a man (not an animal) the ball going through
+/// ([`ball_through`]).
+fn limb_injury(w: &World, victim: usize, cause: Cause, energy: u8, limb: LimbId, level: u8, roll: i32) -> Injury {
+    let man = w.units[victim].body.animal == 0;
+    if let Some((part, level, outcome)) = ball_through(cause, energy, limb.is_leg(), roll).filter(|_| man) {
+        return Injury { part, level, outcome, energy, cause };
+    }
+    let (outcome, level) = limb_outcome(cause, energy, limb.is_leg(), level, roll);
+    Injury { part: Part::Limb(limb), level, outcome, energy, cause }
+}
+
 /// The outcome of a trunk hit on `part` by percentage `roll`.
 pub fn trunk_outcome(cause: Cause, energy: u8, part: Part, level: u8, roll: i32) -> Outcome {
     let belly = |chance: i32| if roll < chance { Outcome::BellyOpen } else { Outcome::Wound };
@@ -725,7 +764,9 @@ pub fn trunk_outcome(cause: Cause, energy: u8, part: Part, level: u8, roll: i32)
         Cause::Bayonet if roll < BAYONET_BELLY => Outcome::BellyOpen,
         Cause::Thrown if roll < THROWN_BELLY => Outcome::BellyOpen,
         Cause::Bayonet | Cause::Thrown => Outcome::DeepWound,
-        Cause::Cannonball if energy >= BALL_PULVERIZES => Outcome::Torn(Torn::Pulverized),
+        Cause::Cannonball if energy >= BALL_PULVERIZES && roll < BALL_PULVERIZE_SHARE => {
+            Outcome::Torn(Torn::Pulverized)
+        }
         Cause::Cannonball if energy >= BALL_TEARS => Outcome::Torn(Torn::InTwo { level }),
         Cause::Cannonball if part == Part::Chest => Outcome::Kill,
         Cause::Cannonball => Outcome::BellyOpen,
@@ -791,8 +832,7 @@ pub fn injure(w: &mut World, victim: usize, cause: Cause, energy: u8, region: Hi
             let lost = w.units[victim].body.limb(limb).lost;
             let level = (u32::from(level_roll(w)) * u32::from(lost) / 255) as u8;
             let roll = pct(w);
-            let (outcome, level) = limb_outcome(cause, energy, limb.is_leg(), level, roll);
-            (Injury { part: Part::Limb(limb), level, outcome, energy, cause }, roll)
+            (limb_injury(w, victim, cause, energy, limb, level, roll), roll)
         }
         HitRegion::Torso => {
             let level = level_roll(w);
@@ -830,8 +870,7 @@ pub fn injure_aimed(w: &mut World, victim: usize, cause: Cause, energy: u8, part
             let lost = w.units[victim].body.limb(limb).lost;
             let level = level.min(lost.saturating_sub(1));
             let roll = pct(w);
-            let (outcome, level) = limb_outcome(cause, energy, limb.is_leg(), level, roll);
-            (Injury { part, level, outcome, energy, cause }, roll)
+            (limb_injury(w, victim, cause, energy, limb, level, roll), roll)
         }
         Part::Head => {
             let roll = if head_rolls(cause) || w.units[victim].body.animal != 0 { pct(w) } else { 0 };

@@ -6,8 +6,8 @@ use std::sync::Arc;
 use acr_formats::defs::UnitDef;
 use acr_formats::defs::nres::weapon_kinds;
 use acr_sim::body::{
-    ANKLE, Body, Cause, ELBOW, Fracture, FractureKind, Injury, KNEE, Limb, LimbId, Outcome, Part, Torn, WHOLE, WRIST,
-    apply, injure, leave_fight,
+    ANKLE, BALL_HIPS, Body, Cause, ELBOW, Fracture, FractureKind, Injury, KNEE, Limb, LimbId, Outcome, Part, Torn,
+    WHOLE, WRIST, apply, injure, leave_fight,
 };
 use acr_sim::catalog::{Catalog, ObjectType};
 use acr_sim::combat::{DeathCause, make_damage};
@@ -120,20 +120,37 @@ fn outcomes_spread_by_cause() {
     assert!((10..=30).contains(&share(&sabre, |o| *o == Outcome::Off)));
     assert!((50..=70).contains(&share(&sabre, |o| *o == Outcome::DeepWound)));
 
-    // A cannonball takes most limbs off with energy, only crushes them without.
-    let ball = spread(Cause::Cannonball, 100, HitRegion::Legs, 400);
-    assert!((75..=95).contains(&share(&ball, |o| *o == Outcome::Off)));
-    let spent = spread(Cause::Cannonball, 20, HitRegion::Legs, 100);
-    assert!(spent.iter().all(|o| *o == Outcome::Fracture(FractureKind::Open)));
-    // Through the trunk: pulverized, torn in two, or a crushed chest / an open belly.
-    let full = spread(Cause::Cannonball, 95, HitRegion::Torso, 50);
-    assert!(full.iter().all(|o| *o == Outcome::Torn(Torn::Pulverized)));
-    let half = spread(Cause::Cannonball, 70, HitRegion::Torso, 50);
+    // A cannonball with real energy tears a man apart (#262: "a direct hit should shred
+    // the troop"): through the legs it takes both and throws the torso, through an arm it
+    // goes on across the chest, through the trunk it pulverizes or tears him in two.
+    let torn = |o: &Outcome| matches!(o, Outcome::Torn(Torn::InTwo { .. } | Torn::Pulverized));
+    let pulp = |o: &Outcome| *o == Outcome::Torn(Torn::Pulverized);
+    for e in [100, 80, 70] {
+        let full = spread(Cause::Cannonball, e, HitRegion::Torso, 400);
+        let p = share(&full, pulp);
+        assert!((55..=75).contains(&p) && full.iter().all(torn), "{e}: {p}");
+        let arms = spread(Cause::Cannonball, e, HitRegion::Arms, 400);
+        let p = share(&arms, pulp);
+        assert!((55..=75).contains(&p) && arms.iter().all(torn), "{e}: {p}");
+    }
+    for e in [100, 60, 40] {
+        let legs = spread(Cause::Cannonball, e, HitRegion::Legs, 100);
+        assert!(legs.iter().all(|o| *o == Outcome::Torn(Torn::InTwo { level: BALL_HIPS })), "{e}");
+    }
+    let half = spread(Cause::Cannonball, 60, HitRegion::Torso, 100);
     assert!(half.iter().all(|o| matches!(o, Outcome::Torn(Torn::InTwo { .. }))));
-    let low = spread(Cause::Cannonball, 40, HitRegion::Torso, 400);
+    let half = spread(Cause::Cannonball, 40, HitRegion::Torso, 100);
+    assert!(half.iter().all(|o| matches!(o, Outcome::Torn(Torn::InTwo { .. }))));
+    // Only a spent ball (the fifth man, energy 20) leaves him in one piece: a limb off or
+    // crushed, the chest crushed or the belly open.
+    let ball = spread(Cause::Cannonball, 20, HitRegion::Legs, 400);
+    assert!((75..=95).contains(&share(&ball, |o| *o == Outcome::Off)));
+    let spent = spread(Cause::Cannonball, 10, HitRegion::Legs, 100);
+    assert!(spent.iter().all(|o| *o == Outcome::Fracture(FractureKind::Open)));
+    let low = spread(Cause::Cannonball, 20, HitRegion::Torso, 400);
     let kill = share(&low, |o| *o == Outcome::Kill);
     assert!((25..=50).contains(&kill) && low.iter().all(|o| matches!(o, Outcome::Kill | Outcome::BellyOpen)), "{kill}");
-    let heads = spread(Cause::Cannonball, 40, HitRegion::Head, 10);
+    let heads = spread(Cause::Cannonball, 20, HitRegion::Head, 10);
     assert!(heads.iter().all(|o| *o == Outcome::Torn(Torn::Headless)));
     // Heads: a ball kills, a sabre half the time.
     assert!(spread(Cause::Musket, 100, HitRegion::Head, 20).iter().all(|o| *o == Outcome::Kill));

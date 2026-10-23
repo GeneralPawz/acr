@@ -20,8 +20,9 @@ use crate::ui::settings::Gore;
 
 /// Ticks a thrown piece flies (the game runs 10 ticks a second).
 const FLIGHT: u64 = 7;
-/// Energy (0..100) from which a cannonball hit counts as point blank: gibs and mist.
-const POINT_BLANK: u8 = 90;
+/// Energy (0..100) from which a cannonball hit counts as point blank: gibs and mist (the
+/// energy from which a trunk hit may pulverize).
+const POINT_BLANK: u8 = acr_sim::body::BALL_PULVERIZES;
 /// Gibs a pulverized body leaves at least, and how many more at most.
 const GIBS: (u32, u32) = (4, 4);
 

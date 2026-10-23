@@ -22,6 +22,7 @@ const KIND_SPRAY: u32 = 4u;
 const KIND_DROPLET: u32 = 5u;
 const KIND_SPLINTER: u32 = 6u;
 const KIND_SOD: u32 = 7u;
+const KIND_GORE: u32 = 8u;
 // The grass on a sod's top (linear).
 const SOD_GRASS: vec3<f32> = vec3<f32>(0.045, 0.085, 0.02);
 
@@ -217,7 +218,7 @@ fn fs_particle(in: VsOut) -> @location(0) vec4<f32> {
     // Crumbs: a little grain inside the clod.
     let grain = 0.85 + 0.3 * hash11(floor(uv.x * 4.0 + 7.0) * 13.0 + floor(uv.y * 4.0 + 7.0) * 7.0 + seed);
     var rgb = in.color.rgb * (0.35 + 0.85 * diffuse) * grain;
-    if kind == KIND_MUD || kind == KIND_DROPLET {
+    if kind == KIND_MUD || kind == KIND_DROPLET || kind == KIND_GORE {
         // Wet: a sharp glint of the sun.
         let h = normalize(sun + globals.toward.xyz);
         let spec = pow(max(dot(n, h), 0.0), 40.0);

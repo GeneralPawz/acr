@@ -13,7 +13,8 @@ use acr_render::terrain::TerrainData;
 use acr_render::view3d::COS_E;
 use acr_render::water;
 use acr_sim::World;
-use acr_sim::combat::{DeathCause, ImpactRecord};
+use acr_sim::body::{Outcome, Torn};
+use acr_sim::combat::{DeathCause, HitRecord, ImpactRecord};
 
 use super::ground_marks::{Footfall, Gait};
 
@@ -33,6 +34,15 @@ const OTHER_SOIL: [u8; 3] = [104, 86, 64];
 const GRASS: [u8; 3] = [78, 104, 44];
 const WATER_SPRAY: [u8; 3] = [226, 234, 238];
 const WATER_DROP: [u8; 3] = [196, 212, 222];
+/// Blood: the mist of a body torn by a ball, its drops, flesh and bone scraps (#262).
+const BLOOD_MIST: [u8; 3] = [150, 14, 12];
+const BLOOD_DROP: [u8; 3] = [118, 6, 6];
+const FLESH: [u8; 3] = [132, 28, 24];
+const BONE: [u8; 3] = [214, 204, 182];
+/// True height (world px) of a man's middle, where a ball tears him (0.9 m), and of his
+/// legs (0.45 m).
+const MIDDLE: f32 = 27.0;
+const KNEES: f32 = 13.5;
 
 /// The ground under a point, as the particles see it.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -68,6 +78,10 @@ impl Soil {
 pub struct ParticleView {
     pub particles: Particles,
     last_impact: u64,
+    /// The tick of the last hits shredded and the victims done at it (a scripted hit can
+    /// come between two frames of one tick).
+    last_hit: u64,
+    hits_done: Vec<u32>,
     /// The tick of the last update: going back means another game.
     tick: u64,
 }
@@ -455,16 +469,91 @@ fn on_water(terrain: &TerrainData, x: f32, y: f32) -> bool {
     terrain.water().is_some_and(|sea| water::depth_units(sea, x, y) >= 1.0)
 }
 
+/// How hard a hit tears a body (#262, `docs/damage-model.md` "Mist"): 2 pulverized, 1 torn
+/// in two or a limb or the head torn off by a ball, 0 nothing to spray.
+pub fn shred_level(hit: &HitRecord) -> u8 {
+    let Some(injury) = hit.injury else { return 0 };
+    let ball = matches!(hit.cause, DeathCause::Cannonball | DeathCause::Explosion);
+    match injury.outcome {
+        Outcome::Torn(Torn::Pulverized) => 2,
+        Outcome::Torn(Torn::InTwo { .. }) => 1,
+        Outcome::Off | Outcome::Torn(Torn::Headless) if ball && injury.energy >= acr_sim::body::BALL_SEVERS => 1,
+        _ => 0,
+    }
+}
+
+/// The burst of a body torn by a ball at `at` (the ground under the victim, true height in
+/// z) along `dir` (unit, horizontal): a red mist that hangs and drifts, blood drops flung
+/// along the flight, and scraps of flesh and bone that tumble and lie. `level` from
+/// [`shred_level`]; `low`: the ball took the legs.
+pub fn shred(sink: &mut dyn ParticleSink, at: [f32; 3], dir: [f32; 2], level: u8, low: bool, seed: u32) {
+    if level == 0 {
+        return;
+    }
+    let k = f32::from(level);
+    let at = [at[0], at[1], at[2] + if low { KNEES } else { MIDDLE }];
+    let fwd = |up: f32| [dir[0], dir[1], up];
+    // The mist: a cloud thrown forward and all around, slow to fall.
+    sink.emit(&Burst {
+        dir: fwd(0.6),
+        spread: 1.3,
+        speed: [30.0, 140.0 * k],
+        count: (30.0 * k) as u16,
+        life: [0.8, 1.8],
+        size: [4.0, 9.0 + 3.0 * k],
+        color: BLOOD_MIST,
+        scatter: 6.0,
+        ..burst(at, ParticleKind::Spray, seed)
+    });
+    // Drops flung far along the flight.
+    sink.emit(&Burst {
+        dir: fwd(0.35),
+        spread: 0.8,
+        speed: [90.0, 260.0 + 80.0 * k],
+        count: (45.0 * k) as u16,
+        life: [1.5, 2.5],
+        size: [0.6, 1.6],
+        color: BLOOD_DROP,
+        scatter: 4.0,
+        ..burst(at, ParticleKind::Droplet, seed ^ 0x0b1d)
+    });
+    // Scraps of flesh, and a few of bone.
+    sink.emit(&Burst {
+        dir: fwd(0.5),
+        spread: 1.0,
+        speed: [60.0, 200.0 + 60.0 * k],
+        count: (16.0 * k) as u16,
+        life: [2.0, 3.0],
+        size: [1.0, 3.0],
+        color: FLESH,
+        scatter: 5.0,
+        ..burst(at, ParticleKind::Gore, seed ^ 0x9e57)
+    });
+    sink.emit(&Burst {
+        dir: fwd(0.5),
+        spread: 1.0,
+        speed: [60.0, 220.0],
+        count: (5.0 * k) as u16,
+        life: [2.0, 3.0],
+        size: [0.6, 1.6],
+        color: BONE,
+        scatter: 4.0,
+        ..burst(at, ParticleKind::Gore, seed ^ 0xb0e5)
+    });
+}
+
 impl ParticleView {
     /// One frame: new impacts and footfalls throw particles (`earth`: the detailed ground is
     /// on; `wet`: the detailed water is), then everything moves by `dt` seconds. `shots` are
     /// where balls fell into water this frame (`WaterView::shots`, a splash each); `ring`
     /// starts a water ring for an impact on water and says whether it is new (no splash
-    /// twice for one ball).
+    /// twice for one ball). `blood`: bodies torn by balls burst into mist, drops and scraps
+    /// ([`shred`], the full gore setting).
     #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
         world: &World,
+        blood: bool,
         terrain: &TerrainData,
         state: Option<&GroundState>,
         footfalls: &[Footfall],
@@ -478,6 +567,8 @@ impl ParticleView {
         if now < self.tick {
             self.particles.clear();
             self.last_impact = 0;
+            self.last_hit = 0;
+            self.hits_done.clear();
         }
         self.tick = now;
         let fresh = |i: &&ImpactRecord| i.tick > self.last_impact;
@@ -501,6 +592,30 @@ impl ParticleView {
         }
         if let Some(last) = world.impacts.back() {
             self.last_impact = self.last_impact.max(last.tick);
+        }
+        if blood {
+            let since = self.last_hit;
+            for hit in world.hits.iter().filter(|h| h.tick >= since) {
+                if hit.tick > self.last_hit {
+                    self.last_hit = hit.tick;
+                    self.hits_done.clear();
+                }
+                if self.hits_done.contains(&hit.victim) {
+                    continue;
+                }
+                self.hits_done.push(hit.victim);
+                let level = shred_level(hit);
+                if level == 0 {
+                    continue;
+                }
+                let at = [hit.pos.0 as f32, hit.pos.1 as f32];
+                let (dx, dy) = (hit.dir.0 as f32, hit.dir.1 as f32);
+                let len = (dx * dx + dy * dy).sqrt();
+                let dir = if len > 0.0 { [dx / len, dy / len] } else { [0.0; 2] };
+                let low = hit.injury.is_some_and(|i| i.level == acr_sim::body::BALL_HIPS);
+                let seed = hash(hit.victim ^ hash(hit.tick as u32 ^ 0x5eed));
+                shred(&mut self.particles, [at[0], at[1], ground_z(terrain, at[0], at[1])], dir, level, low, seed);
+            }
         }
         if wet {
             for (k, &at) in shots.iter().enumerate() {
@@ -568,6 +683,20 @@ mod tests {
         let mut shell = Record::default();
         impact(&mut shell, DeathCause::Explosion, [0.0; 3], [0.0, 0.0], 1.0, Some(grass), 1);
         assert!(count(&shell, ParticleKind::Clod) >= 150);
+    }
+
+    #[test]
+    fn a_torn_body_bursts_into_mist_drops_and_scraps() {
+        let (mut pulp, mut half, mut none) = (Record::default(), Record::default(), Record::default());
+        shred(&mut pulp, [0.0; 3], [1.0, 0.0], 2, false, 1);
+        shred(&mut half, [0.0; 3], [1.0, 0.0], 1, true, 1);
+        shred(&mut none, [0.0; 3], [1.0, 0.0], 0, false, 1);
+        assert!(none.0.is_empty());
+        for kind in [ParticleKind::Spray, ParticleKind::Droplet, ParticleKind::Gore] {
+            assert!(count(&pulp, kind) > count(&half, kind) && count(&half, kind) > 0, "{kind:?}");
+        }
+        assert!(pulp.0.iter().all(|b| b.dir[0] > 0.5 && b.at[2] > half.0[0].at[2]));
+        assert!(pulp.0.iter().any(|b| b.color == BLOOD_MIST) && pulp.0.iter().any(|b| b.color == BONE));
     }
 
     #[test]
