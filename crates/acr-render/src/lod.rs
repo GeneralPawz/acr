@@ -2,14 +2,11 @@
 //!
 //! Index-only: every level is a new index list over the primitive's own vertices, so skin
 //! weights, morph targets, `_PART`/`_LIMB`/`_GORE`, the hair variant, decay colours and the
-//! look variants' vertex buffers stay exactly as loaded. The lists come from vertex
-//! clustering on the rest pose: vertices in one grid cell that belong to the same body part,
-//! dominant joint and hair variant collapse onto the one nearest the cell's mean, and the
-//! triangles that collapse vanish. The cell size is searched per level for the ratio of
-//! [`RATIOS`]. Built when a model is added (a few ms per model, no asset change).
+//! look variants' vertex buffers stay exactly as loaded. The lists come from quadric error
+//! simplification on the rest pose ([`levels`], meshopt-rs) with the borders between body
+//! parts and hair variants locked. Built when a model is added (no asset change).
 
-use std::collections::HashMap;
-use std::hash::{BuildHasherDefault, Hasher};
+use std::collections::{HashMap, HashSet};
 
 use crate::model::Vertex;
 
@@ -19,15 +16,22 @@ pub const LEVELS: usize = 4;
 pub const RATIOS: [f32; LEVELS] = [1.0, 0.35, 0.12, 0.03];
 /// Projected size (screen pixels across the model's culling sphere) below which a model
 /// drops to level 1, 2, 3.
-pub const SIZES: [f32; LEVELS - 1] = [520.0, 260.0, 110.0];
+pub const SIZES: [f32; LEVELS - 1] = [520.0, 260.0, 160.0];
 /// Hysteresis: a model returns to a finer level only this much above the threshold.
 pub const HYSTERESIS: f32 = 1.15;
 /// The finest level drawing the baked face and body variants (#283): each variant is a
 /// draw call per primitive it touches, and per-draw cost dominates on a tiler once the
 /// triangles are few; coarser levels draw the base look (hair and beards still vary).
 pub const LOOKS_UP_TO: usize = 1;
+/// The first level drawn with the cheaper fragment shader (`fs_far` in model.wgsl).
+pub const FAR_FROM: usize = 2;
 /// Shadow casters are drawn this many levels coarser than seen.
 pub const SHADOW_STEP: usize = 1;
+/// The extra list for shadow casters past the last level ([`levels`] returns it after the
+/// levels): "sloppy" grid simplification to this share of the triangles, which keeps no seams
+/// or borders (a shadow has neither) and only roughly the shape.
+pub const SHADOW: usize = LEVELS;
+pub const SHADOW_RATIO: f32 = 0.03;
 
 /// The level for a projected size, staying at `last` within the hysteresis band.
 pub fn choose(size_px: f32, last: Option<usize>) -> usize {
@@ -39,131 +43,150 @@ pub fn choose(size_px: f32, last: Option<usize>) -> usize {
     }
 }
 
-#[derive(Default)]
-struct KeyHasher(u64);
+/// The body part and hair variant of a vertex: borders between them never move.
+fn region(v: &Vertex) -> (i32, i32) {
+    (v.body[0].round() as i32, v.body[3].round() as i32)
+}
 
-impl Hasher for KeyHasher {
-    fn finish(&self) -> u64 {
+/// Rest-pose position as the simplifier sees it.
+#[derive(Clone, Copy)]
+struct Pos([f32; 3]);
+
+impl meshopt_rs::vertex::Position for Pos {
+    fn pos(&self) -> [f32; 3] {
         self.0
     }
-    fn write(&mut self, bytes: &[u8]) {
-        for &b in bytes {
-            self.0 = (self.0 ^ u64::from(b)).wrapping_mul(0x100_0000_01b3);
-        }
-    }
-    fn write_u64(&mut self, v: u64) {
-        self.0 = (self.0.rotate_left(29) ^ v).wrapping_mul(0x9e37_79b9_7f4a_7c15);
-    }
 }
 
-type Map<K, V> = HashMap<K, V, BuildHasherDefault<KeyHasher>>;
-
-fn group(v: &Vertex) -> u64 {
-    let (mut j, mut w) = (0, f32::MIN);
-    for k in 0..4 {
-        if v.weights[k] > w {
-            (j, w) = (v.joints[k], v.weights[k]);
-        }
-    }
-    let part = (v.body[0] + 1.0).clamp(0.0, 255.0) as u64;
-    let hair = v.body[3].clamp(0.0, 255.0) as u64;
-    (u64::from(j) & 0xfff) | part << 12 | hair << 20
+/// Bit-exact position key (the simplifier groups vertices by identical position).
+fn key(p: [f32; 3]) -> [u32; 3] {
+    p.map(f32::to_bits)
 }
 
-/// The index list of one clustering with cells of `cell` metres.
-fn cluster(vertices: &[Vertex], used: &[u32], groups: &[u64], indices: &[u32], cell: f32) -> Vec<u32> {
-    let key = |i: u32| {
-        let p = vertices[i as usize].position;
-        let q = |c: f32| ((c / cell).floor() as i64 & 0xffff) as u64;
-        (q(p[0]) | q(p[1]) << 16 | q(p[2]) << 32, groups[i as usize])
-    };
-    // Mean per cell, then the vertex nearest to it.
-    let mut sums: Map<(u64, u64), ([f32; 3], f32)> = Map::default();
-    for &i in used {
-        let p = vertices[i as usize].position;
-        let e = sums.entry(key(i)).or_insert(([0.0; 3], 0.0));
-        (0..3).for_each(|c| e.0[c] += p[c]);
-        e.1 += 1.0;
-    }
-    let mut best: Map<(u64, u64), (u32, f32)> = Map::default();
-    for &i in used {
-        let k = key(i);
-        let (s, n) = sums[&k];
-        let p = vertices[i as usize].position;
-        let d: f32 = (0..3).map(|c| (p[c] - s[c] / n).powi(2)).sum();
-        let e = best.entry(k).or_insert((i, f32::MAX));
-        if d < e.1 {
-            *e = (i, d);
-        }
-    }
-    let mut out = Vec::new();
-    let mut seen: Map<(u32, u32, u32), ()> = Map::default();
+/// The positions to lock: those whose vertices (or the triangles around them) span two body
+/// parts or hair variants. meshopt-rs (a port of meshoptimizer 0.15) has no vertex locks, but it
+/// classifies a position shared by more than two vertices as `Locked`, so one unreferenced copy
+/// appended to the vertices pins it.
+fn locks(vertices: &[Vertex], indices: &[u32]) -> Vec<Pos> {
+    let mut first: HashMap<[u32; 3], (i32, i32)> = HashMap::new();
+    let mut locked: HashSet<[u32; 3]> = HashSet::new();
     for t in indices.as_chunks::<3>().0 {
-        let r = [best[&key(t[0])].0, best[&key(t[1])].0, best[&key(t[2])].0];
-        if r[0] == r[1] || r[1] == r[2] || r[0] == r[2] {
-            continue;
+        let r = t.map(|i| region(&vertices[i as usize]));
+        let mixed = r[0] != r[1] || r[1] != r[2];
+        for k in 0..3 {
+            let p = key(vertices[t[k] as usize].position);
+            if mixed || *first.entry(p).or_insert(r[k]) != r[k] {
+                locked.insert(p);
+            }
         }
-        // Rotate so the smallest comes first: the same triangle twice is dropped.
-        let m = (0..3).min_by_key(|&k| r[k]).unwrap_or(0);
-        let c = (r[m], r[(m + 1) % 3], r[(m + 2) % 3]);
-        if seen.insert(c, ()).is_none() {
-            out.extend([c.0, c.1, c.2]);
+    }
+    let mut keys: Vec<[u32; 3]> = locked.into_iter().collect();
+    keys.sort_unstable();
+    keys.into_iter().map(|k| Pos(k.map(f32::from_bits))).collect()
+}
+
+fn simplify(indices: &[u32], pos: &[Pos], target: usize, error: f32) -> Vec<u32> {
+    if target >= indices.len() {
+        return indices.to_vec();
+    }
+    let mut dest = vec![0u32; indices.len()];
+    let n = meshopt_rs::simplify::simplify(&mut dest, indices, pos, target, error);
+    dest.truncate(n);
+    dest
+}
+
+/// Simplification of the shape alone: vertices at one position (and in one region) are welded,
+/// so hard edges and UV seams no longer stop it; each corner of a kept triangle then takes the
+/// vertex at its position whose normal is nearest the triangle's (the far levels only: a UV
+/// seam may smear across a few pixels there).
+fn simplify_welded(vertices: &[Vertex], indices: &[u32], locks: &[Pos], target: usize, error: f32) -> Vec<u32> {
+    let mut ids: HashMap<([u32; 3], (i32, i32)), u32> = HashMap::new();
+    let mut members: Vec<Vec<u32>> = Vec::new();
+    let mut pos: Vec<Pos> = Vec::new();
+    let welded: Vec<u32> = indices
+        .iter()
+        .map(|&i| {
+            let v = &vertices[i as usize];
+            let id = *ids.entry((key(v.position), region(v))).or_insert_with(|| {
+                pos.push(Pos(v.position));
+                members.push(Vec::new());
+                pos.len() as u32 - 1
+            });
+            if !members[id as usize].contains(&i) {
+                members[id as usize].push(i);
+            }
+            id
+        })
+        .collect();
+    pos.extend_from_slice(locks);
+    let kept = simplify(&welded, &pos, target, error);
+    let mut out = Vec::with_capacity(kept.len());
+    for t in kept.as_chunks::<3>().0 {
+        let p = t.map(|w| pos[w as usize].0);
+        let (u, v) = ((0..3).map(|c| p[1][c] - p[0][c]), (0..3).map(|c| p[2][c] - p[0][c]));
+        let (u, v): (Vec<f32>, Vec<f32>) = (u.collect(), v.collect());
+        let n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+        for &w in t {
+            let best = members[w as usize].iter().copied().max_by(|&a, &b| {
+                let d = |i: u32| (0..3).map(|c| vertices[i as usize].normal[c] * n[c]).sum::<f32>();
+                d(a).total_cmp(&d(b))
+            });
+            out.push(best.unwrap_or(0));
         }
     }
     out
 }
 
 /// The index lists of every level of one primitive; level 0 is `indices` itself.
-pub fn levels(vertices: &[Vertex], indices: &[u32]) -> [Vec<u32>; LEVELS] {
-    let mut out: [Vec<u32>; LEVELS] = Default::default();
+///
+/// Quadric error simplification (meshoptimizer's edge collapse onto existing vertices, so the
+/// lists stay index-only): it keeps the silhouette and the attribute seams (positions shared
+/// by vertices with other normals or UVs collapse together or not at all); the borders between
+/// body parts and hair variants are locked. Each level simplifies the one before. Where the
+/// seams stop it far short of the ratio, the far levels simplify the welded shape
+/// ([`simplify_welded`]).
+pub fn levels(vertices: &[Vertex], indices: &[u32]) -> [Vec<u32>; LEVELS + 1] {
+    let mut out: [Vec<u32>; LEVELS + 1] = Default::default();
     out[0] = indices.to_vec();
     let tris = indices.len() / 3;
-    let mut used: Vec<u32> = indices.to_vec();
-    used.sort_unstable();
-    used.dedup();
-    if tris < 16 || used.is_empty() {
+    if tris < 16 {
         for l in out.iter_mut().skip(1) {
             *l = indices.to_vec();
         }
         return out;
     }
-    let groups: Vec<u64> = vertices.iter().map(group).collect();
-    let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
-    for &i in &used {
-        let p = vertices[i as usize].position;
-        for c in 0..3 {
-            lo[c] = lo[c].min(p[c]);
-            hi[c] = hi[c].max(p[c]);
-        }
-    }
-    let diag = (0..3).map(|c| (hi[c] - lo[c]).powi(2)).sum::<f32>().sqrt().max(1e-4);
+    let locks = locks(vertices, indices);
+    let mut pos: Vec<Pos> = vertices.iter().map(|v| Pos(v.position)).collect();
+    pos.extend_from_slice(&locks);
     let mut prev = indices.to_vec();
-    let mut low = diag / 2000.0;
     for (level, ratio) in RATIOS.iter().enumerate().skip(1) {
-        let target = ((tris as f32 * ratio) as usize).max(4);
-        // The smallest cell (log scale) giving at most `target` triangles.
-        let mut a = low.ln();
-        let mut b = diag.ln();
-        let mut found: Option<(f32, Vec<u32>)> = None;
-        for _ in 0..9 {
-            let m = 0.5 * (a + b);
-            let list = cluster(vertices, &used, &groups, indices, m.exp());
-            if list.len() / 3 <= target {
-                b = m;
-                found = Some((m.exp(), list));
-            } else {
-                a = m;
+        let target = ((tris as f32 * ratio) as usize).max(4) * 3;
+        let mut list = simplify(&prev, &pos, target, MAX_ERROR[level]);
+        if level >= WELDED_FROM && list.len() > target * 3 / 2 {
+            let welded = simplify_welded(vertices, &prev, &locks, target, MAX_ERROR[level]);
+            if welded.len() < list.len() {
+                list = welded;
             }
         }
-        let (cell, list) = found.unwrap_or_else(|| (diag, cluster(vertices, &used, &groups, indices, diag)));
-        // Never more than the finer level; keep a little when everything collapsed.
-        let list = if list.is_empty() || list.len() > prev.len() { prev.clone() } else { list };
-        low = cell;
-        out[level] = list.clone();
-        prev = list;
+        if !list.is_empty() && list.len() < prev.len() {
+            prev = list;
+        }
+        out[level] = prev.clone();
     }
+    let target = ((tris as f32 * SHADOW_RATIO) as usize).max(4) * 3;
+    let mut dest = vec![0u32; prev.len()];
+    let n = if target < prev.len() { meshopt_rs::simplify::simplify_sloppy(&mut dest, &prev, &pos, target) } else { 0 };
+    dest.truncate(n);
+    out[SHADOW] = if dest.is_empty() { prev } else { dest };
     out
 }
+
+/// The first level that may simplify the welded shape.
+pub const WELDED_FROM: usize = 2;
+
+/// The largest error per level the simplifier may accept, relative to the primitive's extent:
+/// it stops short of the ratio rather than spoil the shape.
+pub const MAX_ERROR: [f32; LEVELS] = [0.0, 0.01, 0.015, 0.02];
 
 #[cfg(test)]
 mod tests {
@@ -237,5 +260,98 @@ mod tests {
         // Back just above it: stays coarse; well above: finer.
         assert_eq!(choose(t * 1.05, Some(1)), 1);
         assert_eq!(choose(t * 1.2, Some(1)), 0);
+    }
+
+    /// Filled pixels of the triangles projected along `axis` into an `n` × `n` grid over `lo..hi`.
+    fn silhouette(tris: &[[[f32; 3]; 3]], axis: usize, lo: [f32; 3], hi: [f32; 3], n: usize) -> usize {
+        let (a, b) = ((axis + 1) % 3, (axis + 2) % 3);
+        let s = (hi[a] - lo[a]).max(hi[b] - lo[b]).max(1e-6) / n as f32;
+        let mut grid = vec![false; n * n];
+        for t in tris {
+            let p = t.map(|v| [(v[a] - lo[a]) / s, (v[b] - lo[b]) / s]);
+            let x0 = p.iter().map(|q| q[0]).fold(f32::MAX, f32::min).floor().max(0.0) as usize;
+            let x1 = (p.iter().map(|q| q[0]).fold(f32::MIN, f32::max).ceil() as usize).min(n - 1);
+            let y0 = p.iter().map(|q| q[1]).fold(f32::MAX, f32::min).floor().max(0.0) as usize;
+            let y1 = (p.iter().map(|q| q[1]).fold(f32::MIN, f32::max).ceil() as usize).min(n - 1);
+            let e = |u: [f32; 2], v: [f32; 2], x: f32, y: f32| (v[0] - u[0]) * (y - u[1]) - (v[1] - u[1]) * (x - u[0]);
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
+                    let w = [e(p[0], p[1], fx, fy), e(p[1], p[2], fx, fy), e(p[2], p[0], fx, fy)];
+                    if w.iter().all(|&w| w >= 0.0) || w.iter().all(|&w| w <= 0.0) {
+                        grid[y * n + x] = true;
+                    }
+                }
+            }
+        }
+        grid.iter().filter(|&&f| f).count()
+    }
+
+    /// The levels of real models: `ACR_LOD_MODELS=<folder of .glb> cargo test --release -p
+    /// acr-render lod::tests::real_models -- --ignored --nocapture`. Prints triangles and the
+    /// silhouette area per level against level 0 (three axes, the worst one).
+    #[test]
+    #[ignore]
+    fn real_models() {
+        let Ok(dir) = std::env::var("ACR_LOD_MODELS") else { return };
+        let mut paths: Vec<_> = std::fs::read_dir(dir).unwrap().flatten().map(|e| e.path()).collect();
+        paths.retain(|p| p.extension().is_some_and(|e| e == "glb"));
+        paths.sort();
+        for path in paths {
+            let Ok(data) = crate::model::ModelData::from_glb(&std::fs::read(&path).unwrap()) else { continue };
+            let t = std::time::Instant::now();
+            let mut tris: [Vec<[[f32; 3]; 3]>; LEVELS] = Default::default();
+            for p in &data.primitives {
+                let l = levels(&p.vertices, &p.indices);
+                for k in 0..LEVELS {
+                    tris[k].extend(l[k].as_chunks::<3>().0.iter().map(|t| t.map(|i| p.vertices[i as usize].position)));
+                }
+            }
+            let ms = t.elapsed().as_secs_f32() * 1000.0;
+            if std::env::var("ACR_LOD_PRIMS").is_ok() {
+                for p in &data.primitives {
+                    let l = levels(&p.vertices, &p.indices);
+                    let locks = locks(&p.vertices, &p.indices).len();
+                    let mut parts: Vec<(i32, i32)> = p.vertices.iter().map(region).collect();
+                    parts.sort_unstable();
+                    parts.dedup();
+                    println!(
+                        "  prim mat {} verts {} locks {} regions {} tris {:?}",
+                        p.material,
+                        p.vertices.len(),
+                        locks,
+                        parts.len(),
+                        l.each_ref().map(|x| x.len() / 3)
+                    );
+                }
+            }
+            let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+            for v in tris[0].iter().flatten() {
+                for c in 0..3 {
+                    lo[c] = lo[c].min(v[c]);
+                    hi[c] = hi[c].max(v[c]);
+                }
+            }
+            let mut line = format!("{:<14} {:>6.0} ms", path.file_stem().unwrap().to_string_lossy(), ms);
+            for k in 0..LEVELS {
+                // At 400 px and at the size the level is first used.
+                let px = if k == 0 { 400 } else { SIZES[k - 1] as usize };
+                let worst = |n: usize| {
+                    (0..3)
+                        .map(|axis| {
+                            let a0 = silhouette(&tris[0], axis, lo, hi, n) as f32;
+                            silhouette(&tris[k], axis, lo, hi, n) as f32 / a0.max(1.0) - 1.0
+                        })
+                        .fold(0.0f32, |w, d| if d.abs() > w.abs() { d } else { w })
+                };
+                line += &format!(
+                    " | L{k} {:>6} tris {:+5.1} / {:+5.1} %",
+                    tris[k].len(),
+                    worst(400) * 100.0,
+                    worst(px) * 100.0
+                );
+            }
+            println!("{line}");
+        }
     }
 }

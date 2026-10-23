@@ -48,6 +48,9 @@ pub struct Settings {
     /// ACR: sun shadows of the 3D models (`shadows=on|off`, on by default;
     /// docs/rendering-3d.md "Shadows").
     pub shadows: bool,
+    /// ACR: levels of detail of the 3D models (`lod=on|off`, on by default;
+    /// docs/rendering-3d.md "Levels of detail"): distant figures drawn with fewer triangles.
+    pub lod: bool,
     /// ACR: the water surface of the 3D path (`water=detailed|original`, detailed by
     /// default; docs/water.md): waves, reflection and foam, or the original's depth tint.
     pub water_detailed: bool,
@@ -127,6 +130,7 @@ impl Default for Settings {
             hit_locations: false,
             body_spacing: false,
             shadows: true,
+            lod: true,
             water_detailed: true,
             ground_detailed: true,
         }
@@ -194,7 +198,7 @@ impl Settings {
         format!(
             "sound_volume={}\nmusic_volume={}\nmusic_mode={}\ngame_mode={}\nscroll_speed={}\nframe_time={}\n\
              resolution={}\nrecord={}\nrecord_file={hex}\ncontrols={controls}\nedge_scroll={}\n\
-             models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\nhit_locations={}\nbody_spacing={}\nshadows={}\nwater={}\n\
+             models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\nhit_locations={}\nbody_spacing={}\nshadows={}\nlod={}\nwater={}\n\
              ground={}\n",
             self.sound_volume,
             self.music_volume,
@@ -209,6 +213,7 @@ impl Settings {
             if self.hit_locations { "on" } else { "off" },
             if self.body_spacing { "on" } else { "off" },
             if self.shadows { "on" } else { "off" },
+            if self.lod { "on" } else { "off" },
             if self.water_detailed { "detailed" } else { "original" },
             if self.ground_detailed { "detailed" } else { "original" },
         )
@@ -251,6 +256,7 @@ impl Settings {
                 "hit_locations" => s.hit_locations = value == "on",
                 "body_spacing" => s.body_spacing = value == "on",
                 "shadows" => s.shadows = value != "off",
+                "lod" => s.lod = value != "off",
                 "water" => s.water_detailed = value != "original",
                 "ground" => s.ground_detailed = value != "original",
                 "corpse_minutes" => s.corpse_minutes = int.map_or(s.corpse_minutes, |v| v.clamp(1, 60) as u32),
@@ -290,6 +296,7 @@ mod tests {
             camera: CameraMode::Free,
             gore: Gore::Reduced,
             shadows: false,
+            lod: false,
             water_detailed: false,
             ground_detailed: false,
             corpse_minutes: 12,

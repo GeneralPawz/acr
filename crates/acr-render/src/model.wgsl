@@ -578,6 +578,18 @@ fn to_srgb(c: vec3<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    return shade(in, front, false);
+}
+
+// The far levels of detail (lod.rs `FAR_FROM`): a figure under about 260 px, where a pixel
+// spans a centimetre or more. No face detail (stubble, wrinkles, pock marks), one shadow tap
+// instead of nine, no highlight on leather and brass; wounds, holes, cuts and decay as near.
+@fragment
+fn fs_far(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    return shade(in, front, true);
+}
+
+fn shade(in: VsOut, front: bool, far: bool) -> vec4<f32> {
     // Sampled first: derivatives need uniform control flow.
     let texel = textureSample(base_texture, base_sampler, in.uv);
     var c = material.base * texel;
@@ -636,7 +648,7 @@ fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
         let l1 = look_texel(d, marks, 1u);
         if (material.look.z < 1.5) {
             rgb = rgb * l0.rgb;
-            if (in.face.x + in.face.y + in.face.z > 0.0) {
+            if (!far && in.face.x + in.face.y + in.face.z > 0.0) {
                 rgb = face_detail(rgb, in.rest.xyz, in.face, l0, l1, look_texel(d, marks, 2u));
             }
         } else if (material.look.z > 2.5) {
@@ -754,7 +766,12 @@ fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
         wet = max(wet, gash);
     }
     // The sun's direct light is blocked where a model's shadow falls (shadow.wgsl).
-    let vis = sun_visibility(in.world, n);
+    var vis = 1.0;
+    if (far) {
+        vis = sun_visibility_one(in.world, n);
+    } else {
+        vis = sun_visibility(in.world, n);
+    }
     let sun = max(dot(n, globals.light.xyz), 0.0) * vis;
     let lit = globals.light.w + (1.0 - globals.light.w) * sun;
     let albedo = rgb;
@@ -767,7 +784,7 @@ fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
         let lum = dot(albedo, vec3<f32>(0.3, 0.55, 0.15));
         rgb = rgb + material.cloth.x * graze * (0.5 + 0.5 * lit) * (0.55 * albedo + vec3<f32>(0.25 * lum + 0.025));
     }
-    if (material.cloth.y > 0.0) {
+    if (!far && material.cloth.y > 0.0) {
         let h = normalize(globals.light.xyz - globals.forward.xyz);
         let spec = pow(max(dot(n, h), 0.0), 24.0);
         rgb = rgb + material.cloth.y * spec * vis * mix(vec3<f32>(1.0), albedo * 2.5, 0.5);
@@ -782,6 +799,24 @@ fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
         rgb = to_srgb(rgb);
     }
     return vec4<f32>(rgb, 1.0);
+}
+
+// `sun_visibility` (shadow.wgsl) with one bilinear tap, for the far levels.
+fn sun_visibility_one(world: vec3<f32>, normal: vec3<f32>) -> f32 {
+    if (shadow_params.params.x < 0.5) {
+        return 1.0;
+    }
+    let c = shadow_params.matrix * vec4<f32>(world + normal * shadow_params.extra.x, 1.0);
+    let uv = vec2<f32>(c.x * 0.5 + 0.5, 0.5 - c.y * 0.5);
+    let lit = textureSampleCompareLevel(shadow_map, shadow_compare, uv, min(c.z, 1.0) - shadow_params.params.z);
+    let edge = min(min(uv.x, uv.y), min(1.0 - uv.x, 1.0 - uv.y));
+    var fade = smoothstep(0.0, 0.02, edge);
+    let reach = shadow_params.fade.w;
+    fade = fade * (1.0 - smoothstep(reach * 0.8, reach, length(world.xy - shadow_params.fade.xy)));
+    if (c.z < 0.0) {
+        fade = 0.0;
+    }
+    return mix(1.0, lit, fade);
 }
 
 // The depth reset after the models (see DepthTarget::reset_ground): a full-screen triangle at

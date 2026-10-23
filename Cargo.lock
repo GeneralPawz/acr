@@ -104,6 +104,7 @@ dependencies = [
  "bytemuck",
  "gltf",
  "log",
+ "meshopt-rs",
  "naga",
  "png",
  "serde_json",
@@ -1383,6 +1384,12 @@ checksum = "6b0ca1155a9ecc25aa12e8313a119f32edf0255fea2f44839c4ac0a12b2ac157"
 dependencies = [
  "libc",
 ]
+
+[[package]]
+name = "meshopt-rs"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3e1e0ce77ff0b408e7d8a822cc5181997309a3825b4e9bfe0b6a04fd9c92f05"
 
 [[package]]
 name = "miniz_oxide"

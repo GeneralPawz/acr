@@ -83,6 +83,8 @@ pub struct ThreeD {
     gore: Gore,
     /// Sun shadows of the models (`shadows` setting; [`set_shadows_override`] wins).
     shadows: bool,
+    /// `lod=on|off` (docs/rendering-3d.md, "Levels of detail").
+    lod: bool,
     /// The water surface (`water=detailed`, docs/water.md); `ACR_WATER` wins.
     water_detailed: bool,
     water: Option<acr_render::water::WaterRenderer>,
@@ -178,6 +180,7 @@ impl Default for ThreeD {
             models: Models::Off,
             gore: Gore::Full,
             shadows: true,
+            lod: true,
             water_detailed: true,
             water: None,
             water_view: Default::default(),
@@ -229,6 +232,7 @@ impl ThreeD {
         self.models = settings.models;
         self.gore = settings.gore;
         self.shadows = settings.shadows;
+        self.lod = settings.lod;
         self.water_detailed = settings.water_detailed;
         self.corpse_ticks = u64::from(settings.corpse_minutes) * 60 * acr_sim::ORIGINAL_TICKS_PER_SECOND as u64;
         self.free = settings.camera == CameraMode::Free;
@@ -959,6 +963,7 @@ impl ThreeD {
             renderer.set_custom_poses(poses);
         }
         renderer.shadows = shadows_override().unwrap_or(self.shadows);
+        renderer.lods = self.lod;
         renderer.prepare(device, queue, &view3d, shown, self.gore == Gore::Full);
         renderer.prepare_pools(device, queue, if models_phase { &self.pools[..] } else { &[] });
         let sprites = objects.prepare(

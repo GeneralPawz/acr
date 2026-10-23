@@ -312,7 +312,7 @@ struct Entry {
 
 struct GpuPrimitive {
     /// The index ranges of the levels of detail ([`lod`]), the full mesh first.
-    lods: [Range<u32>; lod::LEVELS],
+    lods: [Range<u32>; lod::LEVELS + 1],
     /// Moved by the face and body morphs: drawn from the look variant's vertex buffer.
     touched: bool,
     material: usize,
@@ -344,6 +344,8 @@ pub struct LookStats {
 
 pub struct ModelRenderer {
     pipeline: wgpu::RenderPipeline,
+    /// The cheaper fragments of the far levels (from [`lod::FAR_FROM`]).
+    far_pipeline: wgpu::RenderPipeline,
     pool_pipeline: wgpu::RenderPipeline,
     pools: wgpu::Buffer,
     pool_count: u32,
@@ -367,9 +369,11 @@ pub struct ModelRenderer {
     shadow_draws: Vec<Draw>,
     /// The level of detail each model was drawn at last (hysteresis, [`lod::choose`]).
     lod_last: Vec<Option<usize>>,
-    /// Levels of detail: off until the figures at levels 1-3 look right (docs/rendering-3d.md,
-    /// "Levels of detail"); `ACR_LOD=on` chooses by size, `ACR_LOD=<level>` forces a level.
+    /// Levels of detail by projected size (docs/rendering-3d.md, "Levels of detail"), on by
+    /// default (the game's `lod=on|off`). `ACR_LOD` overrides it (native only): `off`, `on`,
+    /// or `<level>` forcing one level.
     pub lods: bool,
+    pub lod_override: Option<bool>,
     pub lod_force: Option<usize>,
     /// Triangles drawn by the last `prepare`: models, shadow casters.
     pub triangles: [u64; 2],
@@ -540,54 +544,58 @@ impl ModelRenderer {
             depth_fail_op: wgpu::StencilOperation::Keep,
             pass_op: wgpu::StencilOperation::Replace,
         };
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("model"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[
-                    Some(wgpu::VertexBufferLayout {
-                        array_stride: size_of::<Vertex>() as u64,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &vertex_attributes,
-                    }),
-                    Some(wgpu::VertexBufferLayout {
-                        array_stride: size_of::<GpuInstance>() as u64,
-                        step_mode: wgpu::VertexStepMode::Instance,
-                        attributes: &instance_attributes,
-                    }),
-                ],
-            },
-            // Clothes are thin shells seen from both sides (holes when they decay): no culling.
-            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(wgpu::CompareFunction::Less),
-                stencil: wgpu::StencilState {
-                    front: stencil_mark,
-                    back: stencil_mark,
-                    read_mask: 0xff,
-                    write_mask: 0xff,
+        let model_pipeline = |fragment: &str| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(fragment),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: Default::default(),
+                    buffers: &[
+                        Some(wgpu::VertexBufferLayout {
+                            array_stride: size_of::<Vertex>() as u64,
+                            step_mode: wgpu::VertexStepMode::Vertex,
+                            attributes: &vertex_attributes,
+                        }),
+                        Some(wgpu::VertexBufferLayout {
+                            array_stride: size_of::<GpuInstance>() as u64,
+                            step_mode: wgpu::VertexStepMode::Instance,
+                            attributes: &instance_attributes,
+                        }),
+                    ],
                 },
-                bias: Default::default(),
-            }),
-            multisample: Default::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: target,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
+                // Clothes are thin shells seen from both sides (holes when they decay): no culling.
+                primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
+                    stencil: wgpu::StencilState {
+                        front: stencil_mark,
+                        back: stencil_mark,
+                        read_mask: 0xff,
+                        write_mask: 0xff,
+                    },
+                    bias: Default::default(),
+                }),
+                multisample: Default::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some(fragment),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: target,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let pipeline = model_pipeline("fs_main");
+        let far_pipeline = model_pipeline("fs_far");
         let shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("model shadow"),
             layout: Some(&shadow_layout),
@@ -700,6 +708,7 @@ impl ModelRenderer {
             .create_view(&Default::default());
         let mut renderer = Self {
             pipeline,
+            far_pipeline,
             pool_pipeline,
             pools: pool_buffer(device, 64),
             pool_count: 0,
@@ -718,7 +727,8 @@ impl ModelRenderer {
             draws: Vec::new(),
             shadow_draws: Vec::new(),
             lod_last: Vec::new(),
-            lods: std::env::var("ACR_LOD").is_ok_and(|v| v != "off"),
+            lods: true,
+            lod_override: std::env::var("ACR_LOD").ok().map(|v| v != "off"),
             lod_force: std::env::var("ACR_LOD")
                 .ok()
                 .and_then(|v| v.parse::<usize>().ok())
@@ -1179,11 +1189,17 @@ impl ModelRenderer {
         if self.draws.is_empty() {
             return;
         }
-        pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.globals_group, &[]);
         pass.set_bind_group(2, &self.shadow.group, &[]);
         pass.set_stencil_reference(1);
-        self.draw_instances(pass, &self.draws);
+        // The draws are sorted by level: the near ones first, then the far ones' pipeline.
+        let split = self.draws.partition_point(|d| d.lod < lod::FAR_FROM);
+        for (pipeline, draws) in [(&self.pipeline, &self.draws[..split]), (&self.far_pipeline, &self.draws[split..])] {
+            if !draws.is_empty() {
+                pass.set_pipeline(pipeline);
+                self.draw_instances(pass, draws);
+            }
+        }
     }
 
     /// Chooses the levels of detail and groups the prepared instances into the draws of the
@@ -1198,7 +1214,8 @@ impl ModelRenderer {
             size[e.model] = size[e.model].max(2.0 * e.radius * scale);
         }
         // Caps and wound inserts sit on a body at its own level: always whole (they are small).
-        let whole = |m: usize| !self.lods || m == self.cap || self.inserts.contains(&m);
+        let lods = self.lod_override.unwrap_or(self.lods);
+        let whole = |m: usize| !lods || m == self.cap || self.inserts.contains(&m);
         let level: Vec<usize> = (0..n)
             .map(|m| match self.lod_force {
                 _ if whole(m) || size[m] == 0.0 => 0,
@@ -1215,7 +1232,8 @@ impl ModelRenderer {
         let mut gpu: Vec<GpuInstance> = Vec::with_capacity(entries.len() * 2);
         // (level, look variant, instance) → draws, appending the instances.
         let mut group = |mut list: Vec<(usize, Option<usize>, &Entry)>| -> Vec<Draw> {
-            list.sort_by_key(|&(l, v, e)| (e.model, e.decaying, v, l));
+            // The far levels last: they take the cheaper pipeline (`render`).
+            list.sort_by_key(|&(l, v, e)| (l >= lod::FAR_FROM, e.model, e.decaying, v, l));
             let mut draws: Vec<Draw> = Vec::new();
             for (l, v, e) in list {
                 let index = gpu.len() as u32;
@@ -1257,7 +1275,11 @@ impl ModelRenderer {
                 })
                 // Coarser than seen; the shadow needs no face variant.
                 .map(|e| {
-                    let l = if whole(e.model) { 0 } else { (level[e.model] + lod::SHADOW_STEP).min(lod::LEVELS - 1) };
+                    let l = match level[e.model] + lod::SHADOW_STEP {
+                        _ if whole(e.model) => 0,
+                        l if l >= lod::LEVELS - 1 => lod::SHADOW,
+                        l => l,
+                    };
                     (l, None, e)
                 })
                 .collect();

@@ -721,23 +721,55 @@ on the screen, 22 poses, 1742 instances):
   pass draws its own list: casters within the map's reach, none smaller than one texel in
   radius, a level coarser than seen ([`lod::SHADOW_STEP`]) and without face variants. One
   instance buffer holds both lists.
-- **Levels** (`lod.rs`): index-only, built in `add_model` (a few ms per model): every primitive
-  gets index lists for 100, 35, 12 and 3 % of its triangles from vertex clustering on the rest
-  pose. Vertices only merge within one body part (`_PART`), dominant joint and hair variant, so
-  skinning, morphs, `_LIMB`/`_GORE`, decay masks and the look variants' vertex buffers stay as
-  they are (the levels share the vertices). The level is chosen per model by its projected
-  size (2 × culling radius in screen pixels: 520, 260, 110 px; finer again only 15 % above a
-  threshold); caps and wound inserts are always whole; the face and body variants are drawn up
-  to level 1 only (each is a draw call per touched primitive: 880 draws → 81).
-- **Off by default.** The clustered levels draw the figures visibly smaller and thinner than the
-  full mesh (`ACR-analysis/lod/tri_z2.png`: off, forced level 0, level 1): the knapsack and the
-  coat's volume shrink. Until that is solved `ACR_LOD=on` (by size) or `ACR_LOD=<0..3>`
-  (forced) switch them on for comparisons. Next: a quadric simplifier (meshoptimizer at build
-  time in xtask, stored as `acr_lod` index lists in the glb) instead of clustering, then on.
-- **Fragments:** with the triangles cut, the 3D pass is fragment bound: about 12 of its 20 ms
-  at zoom 1 go to `fs_main` (a flat shader measured 8.5 ms). The cut's ragged noise and the
-  shreds' noise now run only near a cut or a hole (identical output); the rest of the cost is
-  still to be found (the sun's 3 × 3 taps are not it: shadows off saved nothing).
+- **Levels** (`lod.rs`, m2-lod2): index-only, built in `add_model` (5–35 ms per model): every
+  primitive gets index lists for up to 100, 35, 12 and 3 % of its triangles from quadric error
+  simplification on the rest pose (`meshopt-rs`, a pure Rust port of meshoptimizer 0.15, MIT;
+  builds for wasm, so no asset change). Edge collapses onto existing vertices keep the
+  silhouette and the attribute seams; positions where two body parts (`_PART`) or hair variants
+  meet are locked (the port has no lock flag: one unreferenced copy of such a position makes
+  the simplifier classify it `Locked`). Levels 2–3 simplify the position-welded shape where
+  the seams stop the first pass far short (each corner then takes the vertex at its position
+  whose normal is nearest the triangle's). Each level stops at an error cap
+  (`lod::MAX_ERROR`: 1, 1.5, 2 % of the primitive's extent) rather than reach its ratio, so a
+  soldier keeps about 48 / 21 / 13 % of its triangles. Skinning, morphs, `_LIMB`/`_GORE`, decay
+  masks and the look variants' vertex buffers stay as they are (the levels share the vertices).
+  The level is chosen per model by its projected size (2 × culling radius in screen pixels:
+  520, 260, 160 px; finer again only 15 % above a threshold), so close-ups (the bench, the free
+  camera near) stay at level 0; caps and wound inserts are always whole; the face and body
+  variants are drawn up to level 1 only.
+- **Shadow casters** take one level coarser than seen; from level 3 on a fifth list made by
+  meshoptimizer's "sloppy" grid simplification (3 %, no seams or borders: a shadow has none).
+- **Silhouette** (`lod::tests::real_models`, ignored; `ACR_LOD_MODELS=<folder>`): filled pixels
+  of the rest pose projected along each axis, the worst axis against level 0
+  (`ACR-analysis/lod2/silhouette_models.txt`): soldiers (engm18, engkf18, engd18, puevsda,
+  siukstr) −0.3…−1 % at level 1, −2…−3 % at level 2, −5…−7 % at level 3; the Iroquois
+  −0.4…−1.5 / −2…−5 / −5…−7 % except thin-limbed anmcrosm, anmoln, anmjug (−8…−17 % at 2,
+  −12…−30 % at 3: thin feathers and limbs); ships −5 / −14 / −28 % (rigging; still open). The
+  clustering before shrank the figures visibly (`ACR-analysis/lod/tri_z2.png`); the battle
+  frames per forced level are in `ACR-analysis/lod2/levels_z2.png` (off, 1, 2, 3, by size).
+- **On by default**: `lod=on|off` in the settings file; `ACR_LOD` (native) overrides it: `off`,
+  `on`, or `<0..3>` forcing a level.
+- **Fragments:** levels 2–3 draw with `fs_far` (a second pipeline over the same `shade`
+  function, draws sorted near first): no face detail (stubble, wrinkles, pock marks, five value
+  noises), one shadow tap instead of nine, no highlight on leather and brass; wounds, holes,
+  cuts, decay and the look colours as near. The cut's ragged noise and the shreds' noise run
+  only near a cut or a hole.
+
+GPU time after m2-lod2 (same scene and script, `ACR-analysis/lod2/`, two runs of the default):
+
+| ms | z1 off | z1 clustering (m2-lod) | z1 default | z2 off | z2 default |
+|---|---:|---:|---:|---:|---:|
+| shadow map | 76.3 | 3.7 | 3.3–3.5 | 79.3 | 7.4–7.7 |
+| models | 87.0 | 20.2 | 26.5–29.1 | 87.8 | 36.2–39.6 |
+| all passes | | | 33.0–36.0 | 171.3 | 46.4–50.3 |
+| triangles drawn / cast | 6.1 M / 6.1 M | 0.72 M / 0.31 M | 1.57 M / 0.34 M | | 2.36 M / 0.71 M |
+
+The models pass is still about 3 × the 10 ms goal at zoom 1: the quadric levels keep 2–3 × the
+clustered triangles (a musketeer's level 3 is 2.9 k of 11.4 k, held by the region locks and the
+many small gear primitives), and per-pass times on this tiler shift between passes from run to
+run (a forced level 2 run: 14.9 + 22.9 ms). Next: merge the small gear primitives per material
+before simplifying, an impostor or a single-primitive far mesh for level 3, and instancing the
+look variants.
 
 ## Development aids
 
@@ -755,7 +787,7 @@ the frame rate, the models drawn and the poses sampled.
 
 - No meshopt/Draco decoding, no KTX2 or JPEG textures: export models uncompressed with PNG
   textures (the pipeline's default).
-- No nation colour mask yet (#162); LODs are off by default (above).
+- No nation colour mask yet (#162).
 - Free camera: fog of war and the minimap frame follow the original view only (water: the
   surface of docs/water.md, a flat one under `water=original`); sprites (trees, units without models) show their stored direction.
 - Dropped gear (musket, hat) does not detach at death yet, only for crawlers and the
