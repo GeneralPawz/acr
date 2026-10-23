@@ -9,7 +9,7 @@ lying on the ground next to the stump) and `STUMP`. Wind: every vertex carries `
 (1 on leaves). A vertex shader moves `p += dir * (x * A_trunk * sin(t) + y * A_branch *
 sin(2.3 t + 6.28 z)) + n * w * A_leaf * sin(7 t + 6.28 z)` (`model.wgsl` `sway`,
 docs/rendering-3d.md "Wind"); the felled tree's weights are 0. `COLOR_0` darkens the inside of
-the crown (ambient occlusion baked per vertex).
+the crown (ambient occlusion baked per vertex; `ao` is the render colour, not `_wind`).
 
 The crown clumps are the k-means clusters of the sprite's crown pixels (14 clusters, screen
 position and area), placed in the plane through the trunk with a seeded depth spread; the
@@ -64,6 +64,9 @@ def _ao(obj, values):
         g = values[i]
         d.color = (g, g, g, 1.0)
     obj.data.color_attributes.active_color = a
+    # Render-active too: the exporter's `COLOR_0` is the render colour, which was `_wind` (the
+    # first colour attribute): its phase and flutter channels tinted the crown dark purple.
+    obj.data.color_attributes.render_color_index = obj.data.color_attributes.find("ao")
 
 
 def tree(parent, name, top):

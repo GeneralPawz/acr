@@ -34,6 +34,8 @@ assets/
   buildings/atccen.py ... generated models, one four-line script per type (genbuild)
   units/engm18.py engkri.py engd18.py   musketeer, peasant, dragoon
   nature/broadleaf.py     a tree (TREES.GP frame 104) with wind and felled/stump states
+  nature/<model>.py       28 trees, bushes and rocks from Poly Haven / Sketchfab (acr_assets/nature.py:
+                          cards, _WIND, alpha-mask leaves); map_objects.json maps TREELIST/STONLIST to them
 target/assets/            output (git-ignored): <category>/<name>.glb, ref/<TYPE>/, check/<name>/
 ```
 
