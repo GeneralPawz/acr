@@ -686,6 +686,9 @@ pub fn find_unit_position(w: &mut World, kind: TypeId, at: Pos) -> (i32, i32) {
     let r2 = t.radius2 << 4;
     let lx = ((r2 + 3) >> 7).max(1);
     let msx = 240 << w.map.shift;
+    // Under body spacing a spot is also taken by a unit still walking to it (the units
+    // trained one after another get distinct spots instead of all the first free one).
+    let spacing = w.rules.body_spacing;
     let free = |w: &World, x: i32, y: i32| {
         if x >> 9 <= 0 || y >> 9 <= 0 || x >> 9 >= msx || y >> 9 >= msx {
             return false;
@@ -696,11 +699,12 @@ pub fn find_unit_position(w: &mut World, kind: TypeId, at: Pos) -> (i32, i32) {
         }
         let (gx, gy) = (x >> 11, y >> 11);
         !w.units.iter().any(|u| {
-            u.living()
-                && u.inside_of.is_none()
-                && ((u.pos.x >> 11) - gx).abs() <= 1
-                && ((u.pos.y >> 11) - gy).abs() <= 1
-                && norma(u.pos.x - x, u.pos.y - y) < r2 + 8 + (catalog.get(u.kind).radius2 << 4)
+            let near = |p: Pos| {
+                ((p.x >> 11) - gx).abs() <= 1
+                    && ((p.y >> 11) - gy).abs() <= 1
+                    && norma(p.x - x, p.y - y) < r2 + 8 + (catalog.get(u.kind).radius2 << 4)
+            };
+            u.living() && u.inside_of.is_none() && (near(u.pos) || spacing && claimed(u).is_some_and(near))
         })
     };
     for ring in &crate::trig::rings()[..50] {
@@ -715,6 +719,18 @@ pub fn find_unit_position(w: &mut World, kind: TypeId, at: Pos) -> (i32, i32) {
         }
     }
     (at.x, at.y)
+}
+
+/// Where a walking unit is finally headed: its last move order (the bottom of the order
+/// stack), 1/16 px.
+fn claimed(u: &Unit) -> Option<Pos> {
+    match u.orders.first()? {
+        Order::SmartSendTo { x, y, .. } => Some(Pos::new(x << 4, y << 4)),
+        Order::SendTo { cell, .. } => {
+            Some(Pos::new(crate::path::cell_center(cell.0, u.lx), crate::path::cell_center(cell.1, u.lx)))
+        }
+        _ => None,
+    }
 }
 
 /// `TakeResourceFromSpriteLink` (0x5f75b3), every tick, no randomness: the mine adds
