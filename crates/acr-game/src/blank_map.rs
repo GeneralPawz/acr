@@ -157,6 +157,7 @@ mod tests {
             hill: Some((5000, 5000, 400, 100)),
             water: Some((8000, 8000, 640, 640)),
             patches: vec![(5000, 5000, 100, 71)],
+            editor: false,
         };
         let map = build(&b);
         let heights = map.heights.as_ref().unwrap();

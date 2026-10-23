@@ -27,6 +27,7 @@ mod crew_view;
 mod damage_view;
 mod debris;
 mod dip;
+mod editor;
 mod effects;
 mod gait_view;
 mod gear_view;
@@ -129,6 +130,10 @@ pub struct InGame {
     three_d: three_d::ThreeD,
     /// The interface is hidden (the driver's `hud` command): only the world is drawn.
     pub hud_hidden: bool,
+    /// The test editor's panel and state (editor games only).
+    editor: Option<editor::Editor>,
+    /// The editor's peace has been applied to the new world.
+    editor_started: bool,
 }
 
 impl InGame {
@@ -187,6 +192,8 @@ impl InGame {
             shouts: Default::default(),
             three_d: Default::default(),
             hud_hidden: false,
+            editor: None,
+            editor_started: false,
         }
     }
 
@@ -203,6 +210,7 @@ impl InGame {
         if let GameKind::Blank(b) = &self.setup.kind {
             self.map = Some(crate::blank_map::build(b));
             self.objects.reset();
+            self.editor = b.editor.then(editor::Editor::default);
         }
         self.objects.start(&|p| self.requests.borrow_mut().push(p.to_owned()));
         self.objects.start_effects(&|p| self.requests.borrow_mut().push(p.to_owned()));
@@ -504,6 +512,7 @@ impl InGame {
         let mut out = Vec::new();
         self.mission.draws(ctx, self.interface.hud.screen(), &mut out);
         self.save_overlay(&mut out);
+        self.editor_overlay(ctx, &mut out);
         out
     }
 
@@ -580,6 +589,12 @@ impl InGame {
             self.objects.update(map, terrain, &|p| self.requests.borrow_mut().push(p.to_owned()));
         }
         self.build_world();
+        if !self.editor_started
+            && let (Some(e), Some(world)) = (&self.editor, &mut self.world)
+        {
+            editor::set_peace(world, e.peace);
+            self.editor_started = true;
+        }
         if !self.centred && self.uploaded {
             self.centre(window);
         }

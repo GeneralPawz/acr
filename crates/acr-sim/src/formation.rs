@@ -577,6 +577,33 @@ fn create(
     create_at(world, officer, Some(officer), drummer, flag, soldiers, shape);
 }
 
+/// The editor's direct placement (not in the original): a brigade of `shape` from units
+/// already spawned, standing on its slots at `(x, y)` (world pixels) facing `dir` at once,
+/// instead of walking there; `commanders` are the officer, drummer and flag bearer. Returns
+/// the brigade.
+pub fn create_placed(
+    world: &mut World,
+    (officer, drummer, flag): (usize, Option<usize>, Option<usize>),
+    soldiers: &[usize],
+    shape: usize,
+    (x, y): (i32, i32),
+    dir: u8,
+) -> usize {
+    create(world, officer, drummer, flag, soldiers, shape);
+    let b = world.brigades.len() - 1;
+    place(world, b, x << 4, y << 4, dir, true);
+    let br = world.brigades[b].clone();
+    for (m, &slot) in br.members.iter().zip(&br.slots) {
+        if let Some(i) = alive(world, *m) {
+            let u = &mut world.units[i];
+            u.pos = Pos::from_pixels(slot.0, slot.1);
+            u.dir = dir;
+        }
+    }
+    send_members(world, b, FORM_PRIO);
+    b
+}
+
 /// [`create`] placed on unit `lead`, with an optional officer.
 fn create_at(
     world: &mut World,

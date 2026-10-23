@@ -182,6 +182,7 @@ impl Screen for MainMenu {
             (Page::Main, item::OPTIONS) => return Nav::Push(Box::new(super::options::Options::default())),
             (Page::Main, item::LOAD) => return Nav::Push(Box::new(LoadGame::main_menu())),
             (Page::Main, item::EXIT) => return Nav::Quit,
+            (Page::Main, item::EDITOR) => return Nav::Start(Box::new(editor_setup())),
             (Page::Single, item::SUB_1 | item::SUB_2 | item::SUB_3) => {
                 let next: Box<dyn Screen> = match param {
                     item::SUB_1 => Box::new(super::campaign::Campaigns::default()),
@@ -209,5 +210,25 @@ impl Screen for MainMenu {
 
     fn busy(&self) -> bool {
         self.slide.is_some()
+    }
+}
+
+/// The test editor (docs/controls.md, "Editor"): a blank grass field for two human
+/// players, with the placing panel; the setting rules (hit locations, body spacing) apply.
+fn editor_setup() -> crate::ui::GameSetup {
+    use crate::ui::setup::{BlankSetup, Control, PlayerSetup};
+    use crate::ui::{GameKind, GameSetup};
+    let player = |i: usize, name: &[u8]| PlayerSetup {
+        name: name.to_vec(),
+        nation: i,
+        color: i as u8,
+        team: 0,
+        control: Control::Human,
+    };
+    GameSetup {
+        kind: GameKind::Blank(BlankSetup { editor: true, ..Default::default() }),
+        players: vec![player(0, b"Spieler 1"), player(1, b"Spieler 2")],
+        local_player: 0,
+        rules: Default::default(),
     }
 }

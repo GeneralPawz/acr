@@ -83,6 +83,9 @@ pub struct BlankSetup {
     /// Round patches of other ground textures `(x, y, radius, texture)`, painted in order
     /// (for the detailed ground's transitions, docs/ground.md). Not saved.
     pub patches: Vec<(i32, i32, i32, u8)>,
+    /// The test editor's field (main menu "Editor"): the placing panel is shown and
+    /// fighting starts switched off ([`crate::ingame`], `editor`).
+    pub editor: bool,
 }
 
 /// The one ground texture of a blank field.

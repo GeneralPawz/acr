@@ -277,7 +277,7 @@ impl InGame {
         self.interface.canvas
     }
 
-    fn canvas_point(&self, p: [f32; 2]) -> [f32; 2] {
+    pub(super) fn canvas_point(&self, p: [f32; 2]) -> [f32; 2] {
         self.interface.canvas.to_virtual(p)
     }
 
@@ -1860,7 +1860,7 @@ impl InGame {
     }
 
     /// Whether a window point is over the interface.
-    fn over_hud(&self, ctx: &Ctx, at: [f32; 2]) -> bool {
+    pub(super) fn over_hud(&self, ctx: &Ctx, at: [f32; 2]) -> bool {
         let p = self.canvas_point(at);
         self.interface.hud.covers(ctx, &self.interface.view, p) || self.diplomacy.covers(p)
     }
@@ -2147,6 +2147,9 @@ impl InGame {
 
     /// Left button. Returns what the app should do.
     pub fn left_button(&mut self, ctx: &Ctx, pressed: bool) -> GameMouse {
+        if self.editor_left(ctx, pressed) {
+            return GameMouse::None;
+        }
         // The modern controls: Ctrl + left drag on the map pans; without moving it is a
         // plain click.
         if pressed
@@ -2377,6 +2380,9 @@ impl InGame {
     /// move marker. On the map the order is given on release: a drag of more than 30 map
     /// pixels moves to the press point facing the drag's direction (0x4c4cea..0x4c5891).
     pub fn right_button(&mut self, ctx: &Ctx, pressed: bool) {
+        if self.editor_right(pressed) {
+            return;
+        }
         if !pressed {
             self.right_release();
             return;
@@ -2491,7 +2497,7 @@ impl InGame {
         if let Key::Named(named) = key {
             self.on_key(*named, pressed);
         }
-        if self.three_d.key(key, pressed) {
+        if self.editor_key(key, pressed) || self.three_d.key(key, pressed) {
             return GameKey::None;
         }
         if let Some(used) = self.modern_key(ctx, key, pressed) {

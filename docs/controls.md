@@ -138,3 +138,27 @@ Keys of the `[FIXED_PRODUCE]` lists of the 12 playable nations (number of entrie
 B 8, C 7, D 14, E 30, F 31, G 4, H 11, I 7, J 11, K 12, L 7, M 4, N 27, O 7, P 9, Q 67,
 R 19, S 7, T 26, U 8, W 30, Y 21. The game screen's own keys come first: U, I, M, Q, O and L
 toggle their panels and views and never reach these icons.
+
+## Editor (test field)
+
+The main menu's "Editor" opens a blank grass field for two human players with a placing
+panel at the top left (`crates/acr-game/src/ingame/editor.rs`). Unlike the original's editor
+it places many units at once and whole formations ready-formed; it acts on the local world
+directly (like the test driver's `spawn`), so an editor game is not a network game. The
+rules of the settings apply (`hit_locations`, `body_spacing`).
+
+| Panel line | What it does |
+|---|---|
+| ENG … IRO, Tiere, Kanonen | lists the land units of a nation, the animals or the cannons |
+| a unit | picks it (again: unpicks); while picked, a left click on the map places it |
+| Anzahl | 1, 5, 10, 15, 36, 72, 120, 196, 392, 588, 784 or 980 |
+| Formation | lose (a square block) or the formations the type's officers lead: Linie, Kolonne, Karree for infantry, the cavalry wedges as named in `ORD_GROUPS.LST` |
+| Richtung | the facing, in eight steps; kept per owner |
+| Besitzer | Spieler 1, Spieler 2 or Neutral (wild animals) |
+| Kampf | AUS: every player is everybody's ally, nobody attacks; AN: the sides fight |
+| Ich steuere | which player's units the mouse selects and commands |
+
+A formation is placed standing on its slots with its officer, drummer and flag bearer, in the
+smallest size that holds the count; above the largest size (196) several are placed side by
+side across the facing. Right click stops placing; F2 or the title folds the panel; the
+wheel over the panel scrolls the list. Fighting starts switched off.

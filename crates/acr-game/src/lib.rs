@@ -762,7 +762,9 @@ impl Game {
             && game.ready()
             && !self.ui.dialog_open()
         {
-            game.wheel(lines);
+            if !game.editor_wheel(&self.ui.ctx(), lines) {
+                game.wheel(lines);
+            }
             return;
         }
         self.ui_input(ui::Input::Wheel(lines), event_loop);

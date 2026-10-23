@@ -309,7 +309,15 @@ fn blank(b: &Value) -> Result<Start, String> {
         })
         .unwrap_or_default();
     Ok(Start::Blank {
-        setup: BlankSetup { size, ground, slope, hill, water, patches },
+        setup: BlankSetup {
+            size,
+            ground,
+            slope,
+            hill,
+            water,
+            patches,
+            editor: b.get("editor").and_then(Value::as_bool).unwrap_or(false),
+        },
         players: uint(b, "players").unwrap_or(2).clamp(1, 2) as usize,
         nation: uint(b, "nation").unwrap_or(0) as usize,
         hit_locations: b.get("hit_locations").and_then(Value::as_bool).unwrap_or(false),
