@@ -275,6 +275,85 @@ All scripted Blender meshes, no third-party models (so nothing new in
 `assets/LICENSES.md`); a CC0 replacement (Poly Haven, Kenney, Quaternius) can swap in
 behind the same `Item` data later.
 
+### Clips by weapon (`acr_assets/clips.py` pure, `clips.apply` in Blender; batch 0b)
+
+Reusable clips for skeleton H, named as the `.MD` files name them; a family calls
+`clips.unit_clips(md, weapons, melee=..., active=...)` (by `WEAPONKIND` index: index i plays
+`ATTACK<i>`, `ATTACK` for 0), `clips.drummer_clips(md)` or `clips.colour_clips(md)` and keys
+each with `clips.apply(arm, name, clip)`. Stand, walk and death stay the family's
+(`poses.walk_cycle`, `poses.death_keys`). Each clip is a `Clip` ([(frame, pose)]) with
+`event`: the frame of the release, heal or hit.
+
+- **Timing.** A missile leaves (and a heal lands) on `SETACTIVEPOINT #ATTACKn f` rounded up
+  to even (`clips.release_frame`: `combat.rs` (A), `max(f, 1)`, odd + 1); a melee blow on
+  `poses.STRIKE_HIT_FRAME` (2). The family passes the active frames from its `.MD`.
+- **Poses** are `poses.py` specs plus `reach` ({"r"|"l": (grip point, elbow pole)}, solved by
+  `aim._solve`) and `show` ({socket: 0|1}: a socket's scale, keyed as a one-frame step: the
+  thrown tomahawk, the loosed arrow are gone until the next is drawn). The grip points are
+  computed from the item geometry (`held.py`): the stick's tip on the drum head, the arrow
+  from the string through the bow's grip, the weapon's `socket.tip` on the target at the hit.
+- **Item placement** the clips assume: bow on `socket.hand_l`, arrow, tomahawk, spear, sling,
+  blowpipe, colour, sword, club on `socket.hand_r` (`gear.hold` default: upright in the
+  socket's rest frame); drumsticks on both hands; the drum rigid on `hips` with its head's
+  centre at `clips.DRUM_HEAD`, rotation `clips.DRUM_ROT` (the sheet tool shows how);
+  shield on `socket.hand_l`.
+
+| clip (builder) | units | frames | event |
+|---|---|---|---|
+| `ATTACK1`/`ATTACK2` bow: nocked low, raise and draw, full draw, loose, follow through, reach to the quiver, nock (`bow`) | `*Lut` (STRELA, OSTRELA) | 79 (IroLut) | release 44 |
+| `PSTAND<i>`, `PATTACK<i>`, `UATTACK<i>` (bow ready) | `*Lut` | .MD | - |
+| `ATTACK1` tomahawk throw: wind-up over the shoulder, cast, follow through, draw the next (`throw`) | IroTam (TAMAGAVK) | 50 | 16 |
+| `ATTACK1` spear throw (`throw(..., "spear")`) | AtcMet (KOPIE) | 55 | 28 |
+| `ATTACK1` sling: load, whirl overhead (a quarter turn every 2 frames), overhand cast (`sling`) | IncPra (KAMEN) | 68 | 56 |
+| `ATTACK1` blowpipe: load, raise to the lips, blow (`blowpipe`; new item `held.blowpipe`) | IncTrb (VAFLIA) | 61 | 18 |
+| `ATTACK`/`ATTACK1` heal: hands out over the man, then a slow rise and sink (`heal`) | SpnSha, `*Sha` (MEDIK) | 200 / 75-101 | 2 |
+| `REST` drumming: alternate strokes every 2 frames, a flam every 8th (`drum_roll`) | `*B18` | 70 | - |
+| `MOTION_L`/`_R` (and `_L0`/`_R0`) marching with the drum (`drum_march`) | `*B18` | 10 | - |
+| `STAND`, `REST` colour waved (figure of eight, a sweep every 30 frames), `MOTION_L`/`_R` carried (`colour_*`) | `*F18`, `*F17` | 1 / 120 / 10 | - |
+| `ATTACK_CUT_MID`, `ATTACK_CUT_HIGH`, `ATTACK_THRUST_MID` (lunge), `ATTACK_THRUST_DOWN` = `ATTACK_DOWN` (`sword_strikes`) | officers (MECH) | ATTACK's (52) | hit 2 |
+| `ATTACK_CUT_MID`, `ATTACK_CUT_DOWN` = `ATTACK_DOWN` club or tomahawk hack (`club_strikes`) | natives (MECH) | ATTACK's | hit 2 |
+| `ATTACK_THRUST_MID`, `ATTACK_THRUST_DOWN` = `ATTACK_DOWN` two-handed spear (`spear_strikes`) | DelPik, MayPik, IncPik (PIKA) | ATTACK's | hit 2 |
+| shield block: `clips.with_shield(pose)` (a guard pose, no clip) | shields | - | - |
+
+The melee index also sets `ATTACK` to the first strike clip (the `.MD` fallback). Targets
+(docs/melee.md): a standing man's surface 1.50 m ahead (chest 1.15 m, head 1.55 m up), a man
+on the ground at 1.6 m; the tests check the point at frame 2 within 1 cm of them (the clip's
+data; the IK's reach is the next check, `strike_view::probe` on a built model: no unit with
+these clips is built yet). Tests: `tests/test_clips.py`. Contact sheet:
+`tools/clips_sheet.py --part clips|masks` (the MakeHuman test figure at each key frame).
+
+### Lace and body paint (`acr_assets/masks.py`, `outfit.apply_mask`; batch 0b)
+
+Painted masks over the outfit atlas, registered with `registry.mask(name, fn)`
+(`fn(p, n, L, seed, **params) -> weights`). A character lists what it wears in
+`ch.paint_masks` (entries from `masks.entry`, `masks.lace`, `masks.body_paint`);
+`outfit.dress` paints each over the cells of the painters of its material `keys`, after the
+cloth, in the lace or paint colour with a little mottle; with `frame` (an object name) in that
+object's own frame. No entries, no change: EngM18 and FrnM18 are unchanged.
+
+- **Palette keys** (registered, with fallbacks): `lace` (gilt `(0.80, 0.64, 0.28)`; worsted
+  white for soldiers via the palette), `paint_red` (red ochre), `paint_black`, `paint_white`.
+- **Lace:** `hat_lace` (braid round the tricorn's brim edge, `gear.tricorn(lace=width)` /
+  `cocked_hat(lace=...)` sets `acr_lace`; painted in the hat's frame), `buttonhole_lace`
+  (bars across the lapels every 5.5 cm and across the cuffs along the forearm, on the
+  `facings`/`lapels` cloth). Line spec key `lace`: `{"hat": 0.012, "buttonholes": True}`
+  (default None); `registry.build_hat(name, obj, **kw)` passes `lace` on.
+- **Body paint:** `paint_face_half`, `paint_face_band` (across the eyes), `paint_stripes`
+  (chest and upper arms), `paint_hands` (hand prints on the chest), `paint_dots` (cheeks,
+  chest); sets in `masks.PAINT_SETS` (`red_face_half`, `black_face_half`, `red_black`,
+  `black_stripes`, `red_hands`, `white_dots`), picked by name or by an integer seed
+  (`masks.paint_set(seed)`: deterministic). Per-instance paint in the game would need atlas
+  variants (one atlas per model now): a family picks per unit, or builds variants.
+
+### Straps (`acr_assets/straps.py`; batch 0b)
+
+The crossbelts moved out of `line.py` into registered gear (`registry.gear`): `crossbelts`
+(EngM18's two buff belts), `belt_l` (over the left shoulder to the right hip: the colour
+belt, a pouch strap), `belt_r` (over the right shoulder to the left hip: the drum's carriage
+belt). The family sets `ch.strap_surface`, `ch.strap_offsets`, `ch.strap_under` and builds
+the names of `straps.STRAPS` its spec lists with the cloth, before `bone_layer`
+(`line.make`). EngM18 and FrnM18 rebuild unchanged: glTF JSON, vertices and textures byte-identical to batch 0a's build; the only bytes that differ (262 and 348) are the triangle order of the hidden bone layer, the same triangles (Blender's nondeterminism; batch 0a saw 344). Builds in `ACR-analysis/humans-b0b/build.log`, sheets `sheet_clips.png`, `sheet_masks.png` there.
+
 ## 1. What the sprites tell
 
 `ENGM18.MD` packs: `USERLC 1 EngM18G` (walk, `MOTION_*`), `2 EngM18B` (not referenced by any

@@ -17,9 +17,11 @@ parameters (`spec`), then `build(ctx)` calls `line.build(ctx, SPEC)`.
 - `build`: body build (`Character` build; `garments` False builds the shells of #178);
 - `fit`: part sizes fitted to the sprite silhouette (hat, musket, pack, shell skirt);
 - `hat`: a registered hat (`registry.hat`): `tricorn`, `slouch` or `cocked` (`gear.py`);
-- `gear`: `crossbelts` (straps over the draped coat) and registered strapped gear
-  (`registry.gear`): `cartridge`, `knapsack`;
-- `weapon`: `musket` (with rammer, aim, reload and charge clips).
+- `gear`: registered gear (`registry.gear`): the straps over the draped coat
+  (`straps.py`: `crossbelts`, `belt_l`, `belt_r`) and strapped gear: `cartridge`, `knapsack`;
+- `weapon`: `musket` (with rammer, aim, reload and charge clips);
+- `lace`: None (no lace) or {"hat": braid width in m on the tricorn's brim, "buttonholes":
+  True for bars of lace on the lapels and cuffs}, in `palette["lace"]` (`masks.py`).
 
 The family registers its hats and strapped gear with `registry` at import (the example for
 the other family modules: docs/assets-humans.md, "Family registry").
@@ -32,7 +34,7 @@ from mathutils import Matrix, Vector
 from . import aim as aiming
 from . import armature as am
 from . import body as bd
-from . import crawl, faces, gear, heads, outfit, poses, registry, rig
+from . import crawl, faces, gear, heads, masks, outfit, poses, registry, rig, straps
 from .humans import LAYER_OF, Character, prepare_export
 
 # The English musketeer's colours (`EngM18`): the defaults a nation overrides.
@@ -54,7 +56,7 @@ FIT = {
     "pack": [0.32, 0.10, 0.32], "pack_y": 0.1925, "skirt_gap": 72,
 }
 DEFAULTS = {"build": BUILD, "fit": FIT, "hat": "tricorn", "gear": ("crossbelts", "cartridge", "knapsack"),
-            "weapon": "musket", "mix": 0.5, "fixed": (), "lapels": "facings"}
+            "weapon": "musket", "mix": 0.5, "fixed": (), "lapels": "facings", "lace": None}
 
 
 def _cartridge(ch, name, s):
@@ -89,7 +91,7 @@ def _coat_with(key):
         return panels, seams
 
     return draft
-STRAPS = ("crossbelts",)  # gear drawn with the cloth (not a registered builder)
+STRAPS = straps.STRAPS  # gear drawn with the cloth, before the bone layer
 
 TORSO = {"hips", "spine", "spine1", "spine2", "clavicle_l", "clavicle_r"}
 ARMS = {"upperarm_l", "upperarm_r", "forearm_l", "forearm_r"}
@@ -149,18 +151,11 @@ def make(root, name, s):
                         gap_deg=fit["skirt_gap"], flare_back=0.03, columns=rig.SKIRT_COLUMNS)
         ch.add("clothes", skirt, "coat", symmetric=True)
         surf, offsets = ch.flesh, (0.038, 0.042)
-    if "crossbelts" in s["gear"]:
-        n = 28 if build.get("garments") else 12  # follow the folds of the draped coat
-        b1 = bd.strap(ch.arm, f"{name}.crossbelts", surf, Vector((0.12, 0, 1.47)), Vector((-0.17, 0, 0.95)), 0.06,
-                      offsets[0], samples=n)
-        b2 = bd.strap(ch.arm, f"{name}.crossbelt2", surf, Vector((-0.12, 0, 1.47)), Vector((0.17, 0, 0.95)), 0.06,
-                      offsets[1], samples=n)
-        if build.get("garments"):
-            # The belts take the weights of the garment under them: they move with the coat.
-            for b in (b1, b2):
-                drape.inherit_weights(b, ch, fixed)
-        ch.add("clothes", b1, "belts", symmetric=True)
-        ch.add("clothes", b2, "belts", symmetric=True)
+    # Straps over the clothes (`straps.py`, registered gear): they follow the draped cloth
+    # and take the weights of the garments under them (they move with the coat).
+    ch.strap_surface, ch.strap_offsets = surf, offsets
+    ch.strap_under = fixed if build.get("garments") else None
+    registry.build_gear([g for g in s["gear"] if g in STRAPS], ch, name, s)
     ch.bone_layer()
     ch.caps()
 
@@ -169,11 +164,15 @@ def make(root, name, s):
 
     # Held gear on sockets, placed in the standing pose (drops at death).
     am.pose(ch.arm, poses.STAND_MUSKET)
-    hat = registry.build_hat(s["hat"], f"{name}.{s['hat']}")
+    lace = s["lace"] or {}
+    hat = registry.build_hat(s["hat"], f"{name}.{s['hat']}", **({"lace": lace["hat"]} if lace.get("hat") else {}))
     am.attach(hat, ch.arm, "socket.hat", Matrix.Translation(am.world(ch.arm, "socket.hat").translation + Vector((0, 0, fit["hat_z"])))
               @ Matrix.Rotation(math.radians(-6), 4, "X") @ Matrix.Scale(fit["hat_scale"], 4))
     ch.held["hat"] = hat
     ch.keys[hat.name] = "hat"
+    # Lace (`masks.lace`): braid round the brim, bars on the buttonholes of lapels and cuffs.
+    ch.paint_masks = masks.lace(s["palette"], hat=hat.name if hat.get("acr_lace") else None,
+                                width=lace.get("hat") or 0.012, buttonholes=lace.get("buttonholes", False)) if lace else []
     if s["weapon"] == "musket":
         gun = gear.musket(f"{name}.musket", length=fit["musket_len"], bayonet=0.0)
         gun["acr_material_keys"] = ["wood", "metal"]

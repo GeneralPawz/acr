@@ -589,23 +589,37 @@ def pistol(length=0.48):
     return it
 
 
+def blowpipe(length=1.80):
+    """An Andean blowpipe (`IncTrb`, `VAFLIA`): a cane tube bound with cord at the mouth end
+    and at the middle. Origin at the right hand's grip just before the mouthpiece
+    (`socket.mouth`, 0.04 m behind), the bore along +Z to `socket.muzzle`."""
+    it = Item("blowpipe")
+    it.keys = {"pipe": "wood", "binding": "cord"}
+    it.tube([((0, 0, -0.04), 0.016), ((0, 0, length - 0.04), 0.012)], "pipe", n=6)
+    for z in (0.02, length * 0.5):
+        it.tube([((0, 0, z - 0.03), 0.018), ((0, 0, z + 0.03), 0.018)], "binding", n=6)
+    it.sockets["socket.mouth"] = (0.0, 0.0, -0.04)
+    it.sockets["socket.muzzle"] = (0.0, 0.0, length - 0.04)
+    return it
+
+
 ITEMS = {
     "drum": drum, "drumstick": drumstick, "colour": colour, "smallsword": smallsword, "hanger": hanger,
     "officer_sword": officer_sword, "spontoon": spontoon, "halberd": halberd, "longbow": longbow, "arrow": arrow,
     "quiver": quiver, "spear": spear, "war_club": war_club, "tomahawk": tomahawk, "macuahuitl": macuahuitl,
-    "sling": sling, "shield": shield, "pistol": pistol,
+    "sling": sling, "shield": shield, "pistol": pistol, "blowpipe": blowpipe,
 }
 # Triangle budget per item (a soldier is ~12k triangles; held gear stays small).
 BUDGET = {
     "drum": 400, "drumstick": 50, "colour": 200, "smallsword": 150, "hanger": 120, "officer_sword": 150,
     "spontoon": 120, "halberd": 150, "longbow": 160, "arrow": 40, "quiver": 220, "spear": 100, "war_club": 160,
-    "tomahawk": 80, "macuahuitl": 140, "sling": 60, "shield": 180, "pistol": 100,
+    "tomahawk": 80, "macuahuitl": 140, "sling": 60, "shield": 180, "pistol": 100, "blowpipe": 80,
 }
 # The point a strike reaches with (docs/melee.md): melee weapons carry `socket.tip`,
 # firearms `socket.muzzle`; the rest have their own sockets.
 TIP = {"drumstick", "colour", "smallsword", "hanger", "officer_sword", "spontoon", "halberd", "arrow", "spear",
        "war_club", "tomahawk", "macuahuitl"}
-MUZZLE = {"pistol"}
+MUZZLE = {"pistol", "blowpipe"}
 SOCKETS = {"drum": {"socket.head"}, "colour": {"socket.top"}, "longbow": {"socket.nock"}, "quiver": {"socket.mouth"},
            "sling": {"socket.pouch", "socket.release"}, "shield": {"socket.arm"}}
 

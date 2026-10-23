@@ -22,6 +22,9 @@ imported twice); a different value raises, so two families cannot silently fight
 - `hat(name, fn)`: `fn(object_name) -> object`, origin at the crown socket (`gear.tricorn`).
 - `gear(name, fn)`: strapped gear, `fn(ch, name, spec) -> object or None`; the family calls
   `build_gear(...)` for the names its spec lists.
+- `mask(name, fn)`: a painted mask over the outfit atlas (lace, body paint: `masks.py`),
+  `fn(p, n, L, seed, **params) -> (N,)` weights 0..1; a character lists the masks it wears
+  in `ch.paint_masks` (`masks.entry`).
 """
 
 LAYER_OF = {
@@ -59,7 +62,8 @@ PAINT_FN = {}  # painter name -> fn(p, n, rgb, L, seed)
 # Garments beyond garments.GARMENTS' uniform are added to that same dict; drape spacing (cm).
 SPACING = {"coat": 3.5, "waistcoat": 5.0, "breeches": 4.2, "gaiters": 3.5, "shirt": 2.0}
 
-HATS = {}  # name -> fn(object_name)
+HATS = {}  # name -> fn(object_name, **kw)
+MASKS = {}  # name -> fn(p, n, L, seed, **params)
 GEAR = {}  # name -> fn(ch, name, spec)
 
 LAYERS = ("flesh", "hair", "bone", "wool", "linen", "leather", "wood", "metal", "hide")
@@ -124,10 +128,16 @@ def gear(name, fn):
     _put(GEAR, name, fn, "gear")
 
 
-def build_hat(name, obj_name):
+def mask(name, fn):
+    """Registers painted mask `name` (`masks.py`)."""
+    _put(MASKS, name, fn, "mask")
+
+
+def build_hat(name, obj_name, **kw):
+    """Builds hat `name` (keyword arguments to its builder, e.g. `lace` for the tricorn)."""
     if name not in HATS:
         raise KeyError(f"hat {name!r} is not registered (have {sorted(HATS)})")
-    return HATS[name](obj_name)
+    return HATS[name](obj_name, **kw)
 
 
 def build_gear(names, ch, name, spec):

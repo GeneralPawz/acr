@@ -159,6 +159,21 @@ def paint(kind, p, n, rgb, L, seed):
     return coat.mix(col, base * 1.4 + 0.05, scuff)
 
 
+def apply_mask(e, p, n, col, L, seed):
+    """Paints mask entry `e` (`masks.entry`) over the colours `col` of texels at `p`, `n`:
+    in the frame of object `e["frame"]` when set, the mask's colour with a little mottle."""
+    if e.get("frame"):
+        import bpy
+
+        m = np.array(bpy.data.objects[e["frame"]].matrix_world.inverted(), np.float32)
+        p = p @ m[:3, :3].T + m[:3, 3]
+        n = n @ np.linalg.inv(m[:3, :3])
+        n = n / np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-6)
+    w = registry.MASKS[e["mask"]](p, n, L, seed, **e.get("params", {}))
+    tint = coat.lin(e["rgb"]) * (0.88 + 0.16 * coat.fbm(p, 300.0, seed + 31, octaves=1))[:, None]
+    return coat.mix(col, tint, np.clip(w, 0.0, 1.0))
+
+
 def dress(ch, colours, layer_of, size=SIZE):
     """Paints one atlas for the dressed parts of character `ch` (`ch.keys`: object → material
     key, `colours`: object → sRGB from `Character.colours`) and gives them decaying
@@ -196,6 +211,9 @@ def dress(ch, colours, layer_of, size=SIZE):
         m = cov & (u >= u0) & (u < u1) & (v >= v0) & (v < v1)
         rgb = colours.get(os_[0].name) or (0.5, 0.5, 0.5)
         out[m] = paint(KIND.get(name, name), flat_p[m], flat_n[m], rgb, L, seed=11 + 7 * i)
+        for e in getattr(ch, "paint_masks", ()):
+            if name in {PAINTER.get(k) for k in e["keys"]} and m.any():
+                out[m] = apply_mask(e, flat_p[m], flat_n[m], out[m], L, seed=11 + 7 * i)
     occ = np.clip(ao.reshape(-1), 0.0, 1.0)
     out *= (0.55 + 0.45 * occ ** 0.8)[:, None]
     px = np.ones((size * size, 4), np.float32)

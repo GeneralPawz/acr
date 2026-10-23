@@ -213,7 +213,7 @@ Shared code first, then one agent per family; each family has its own module and
 scripts, so the agents of a batch touch disjoint files. The shared files (`garments.py`,
 `outfit.py`, `poses.py`, `gear.py`, `drape.py`) change only in batch 0.
 
-- **Batch 0 (sequential, ~4 slices):**
+- **Batch 0 (sequential, ~4 slices; done):**
   1. `line.py`, the family pattern (done here).
   2. Hooks so families add without editing shared tables (done, batch 0a:
      `acr_assets/registry.py`: `material`, `painter`, `garment`, `hat`, `gear`;
@@ -222,9 +222,20 @@ scripts, so the agents of a batch touch disjoint files. The shared files (`garme
      on a pike, smallsword, hanger, officer's sword, spontoon, halberd, longbow, arrow,
      quiver, spear, war club, tomahawk, macuahuitl, sling, shield, pistol). See
      assets-humans.md, "Family registry and held gear".
-  3. A clips module `clips.py`: bow, thrown weapon, sling, blowpipe, heal, drum, flag carry,
-     one-handed cut and thrust on foot (docs/melee.md names).
-  4. Lace and paint masks in `outfit` (lace on the facings, body paint on the skin).
+  3. A clips module `clips.py` (done, batch 0b): bow, thrown tomahawk and spear, sling,
+     blowpipe (new held item `blowpipe`), heal, drumming and marching with the drum, colour
+     carry and wave, one-handed sword cut and thrust, club or tomahawk hack, spear thrust,
+     shield guard; `.MD` names, the release on the `SETACTIVEPOINT` frame rounded up to even,
+     melee hits on frame 2. See assets-humans.md, "Clips by weapon".
+  4. Lace and paint masks (done, batch 0b): `masks.py` + `outfit.apply_mask` (registered
+     masks, `ch.paint_masks`): hat lace (`gear.tricorn(lace=...)`), buttonhole lace on
+     lapels and cuffs (`lace` palette key, line spec `lace`), body paint sets (face halves,
+     bands, stripes, hand prints, dots in `paint_red`/`paint_black`/`paint_white`). The
+     crossbelts are registered gear in `straps.py` (`crossbelts`, `belt_l`, `belt_r`).
+
+  **Batch 0 is done.** For batch 1: import `clips`, `masks`, `straps` from the family
+  module; do not edit them (or `poses`, `outfit`, `gear`, `held`, `registry`): register
+  instead, and put a family-only clip in the family module.
 - **Batch 1 (6 agents in parallel):** family 1 rest (SpnM18, UsaM18) + family 2; family 3
   Woodlands; family 4 officers; family 5 cavalry specs; family 7 Mesoamerica; family 13
   civilians.

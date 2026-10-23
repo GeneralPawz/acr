@@ -20,8 +20,10 @@ def from_bm(bm, name):
     return link(bpy.data.objects.new(name, me))
 
 
-def tricorn(name, n=16):
-    """Black felt tricorn, origin at the crown socket; brim turned up on three sides."""
+def tricorn(name, n=16, lace=None):
+    """Black felt tricorn, origin at the crown socket; brim turned up on three sides. `lace`:
+    the width (m) of braid round the brim's edge, painted in the palette's `lace` colour
+    (`masks.hat_lace`; the object carries `acr_lace`, `masks.lace` makes the entry)."""
     bm = bmesh.new()
     inner, outer = [], []
     for i in range(n):
@@ -38,7 +40,10 @@ def tricorn(name, n=16):
                                 matrix=Matrix.Translation((0, 0, 0.012)))
     for v in top["verts"]:
         v.co.y *= 1.1
-    return from_bm(bm, name)
+    obj = from_bm(bm, name)
+    if lace:
+        obj["acr_lace"] = float(lace)
+    return obj
 
 
 def slouch_hat(name, n=14):
@@ -59,9 +64,9 @@ def slouch_hat(name, n=14):
     return from_bm(bm, name)
 
 
-def cocked_hat(name, n=14):
+def cocked_hat(name, n=14, lace=None):
     """Bicorne-like dragoon hat (a tricorn with the front corner flattened)."""
-    obj = tricorn(name, n)
+    obj = tricorn(name, n, lace=lace)
     for v in obj.data.vertices:
         if v.co.y < -0.12:
             v.co.y *= 0.8
