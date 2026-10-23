@@ -35,6 +35,10 @@ TARGET_FINISH = (-0.05, -0.90, 0.20)
 # forward on skeleton H), the left foot a short step in.
 OVER = {"root_loc": (0, -0.10, -0.10), "thigh_l": (-30, -3, 0), "shin_l": (36, 0, 0), "thigh_r": (14, 3, 0),
         "shin_r": (18, 0, 0), "spine": (18, 0, -6), "spine1": (8, 0, 0), "spine2": (4, 0, 0), "head": (22, 0, 0)}
+# The chop: an axe's or a club's head lies only ~0.4 m from the hand, so he bends down deep
+# over the man (the hand ~0.55 m up at the blow; m2-finish probe: 0.29 m short standing).
+CHOP = dict(OVER, root_loc=(0, -0.16, -0.30), thigh_l=(-62, -3, 0), shin_l=(74, 0, 0), thigh_r=(30, 3, 0),
+            shin_r=(44, 0, 0), foot_r=(-10, 0, 0), spine=(40, 0, -6), spine1=(14, 0, 0), spine2=(6, 0, 0))
 # Raised for the blow: upright, on straight legs.
 RAISE = {"root_loc": (0, -0.04, 0.0), "thigh_l": (-14, -3, 0), "shin_l": (12, 0, 0), "spine": (-4, 0, -4),
          "head": (16, 0, 0)}
@@ -72,7 +76,7 @@ def _poses(kind, tip):
     from . import clips as cl
 
     if kind in ("club", "tomahawk"):
-        hit = cl._blow(dict(cl.STAND_FREE, **OVER), cl.grip_for(TARGET_FINISH, CLUB_DOWN, tip), CLUB_DOWN,
+        hit = cl._blow(dict(cl.STAND_FREE, **CHOP), cl.grip_for(TARGET_FINISH, CLUB_DOWN, tip), CLUB_DOWN,
                        pole=(-0.30, 0.25, -0.10))
         up = cl._blow(dict(cl.STAND_FREE, **RAISE), (-0.14, 0.06, 1.90), (-50, 0, 0))
         return up, hit

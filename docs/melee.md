@@ -536,7 +536,23 @@ carry a finishing clip per weapon (`assets/blender/lib/acr_assets/finish.py`):
   corrections only. With the kill on the first blow the attack ends and he goes back to his
   stand; the clip itself ends standing, so nothing freezes in a lunge.
 
+Probe (`probe_clips`, frame 2, target right 0.05 / fwd 0.90 / up 0.20; clip alone, with the
+layer): EngM18 (bayonet) 0.02 / 0.00, EngOf18 (sword) 0.00 / 0.00, SpnS15 (sword sidearm)
+0.00 / 0.00, DelPik (spear) 0.01 / 0.00, MayVoi (macuahuitl) 0.00 / 0.00, IroTam and FrnBuk
+(tomahawk) 0.00 / 0.00 (0.29 / 0.26 standing upright: the axe's head lies 0.4 m from the
+hand, so the chop bends deep, `finish.CHOP`). Renders (`ACR-analysis/finish/`, white field,
+HUD off, release exe from m2-finish, `scripts/bench.py`, crawler at 70 px): `sheet_<scene>.png`
+(every 2nd frame of 40), frames in `run1/<scene>/`. Rebuilt on the VM: EngM18, EngOf18,
+IroTam, MayVoi, DelPik, SpnS15, FrnBuk (old ones in `showcase/backup-finish/`).
+
 ### Not yet
+
+- **Finishing, looks:** the attacker stands at 0.9 m from the victim's ground point, but a
+  man lying stretched towards him reaches under his feet (EngOf18 sheet: he stands on the
+  legs). Aim at the near side of the body or turn the attacker beside him. A loaded
+  musketeer plays `ATTACK_FINISH` before his point-blank shot (the kind is unknown before the
+  first hit). No knife unit and no butt-only musket unit is built, so `knife` is untested
+  on a model.
 
 - **Sabre down left:** fixed in family 5 (docs/families/cavalry.md): a cross-body cut,
   the trunk bent forward and turned left; 0.06 m with the clip alone (was 0.54), 0.01 with
