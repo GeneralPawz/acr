@@ -37,6 +37,8 @@ struct Globals {
     forward: vec4<f32>,
     // x: encode sRGB here (the target is not sRGB), y: dissolve allowed, z: bone texture width.
     params: vec4<f32>,
+    // Wind: world direction x, y (unit), strength (0: still), time (s).
+    wind: vec4<f32>,
 };
 
 struct Material {
@@ -77,6 +79,8 @@ struct VertexIn {
     @location(8) body: vec4<f32>,
     // _FACE: beard, wrinkle, pock zones, face front (0 without)
     @location(14) face: vec4<f32>,
+    // _WIND: trunk bend, branch weight, phase, leaf flutter (0 without; trees and foliage)
+    @location(15) wind: vec4<f32>,
 };
 
 struct InstanceIn {
@@ -246,9 +250,12 @@ fn vs_main(v: VertexIn, inst: InstanceIn) -> VsOut {
     // residual crossing under skinning never flickers through (the instance's scale: its
     // first column).
     let unit = length(vec3<f32>(inst.row0.x, inst.row1.x, inst.row2.x));
-    let world = apply(inst.row0, inst.row1, inst.row2, vec4<f32>(local, 1.0))
+    var world = apply(inst.row0, inst.row1, inst.row2, vec4<f32>(local, 1.0))
         - globals.forward.xyz * (material.cloth.z * unit);
     let world_n = apply(inst.row0, inst.row1, inst.row2, vec4<f32>(local_n, 0.0));
+    if (globals.wind.z > 0.0 && any(v.wind != vec4<f32>(0.0))) {
+        world = world + sway(v.wind, world.xy, world_n, inst.row0.w + inst.row1.w) * unit;
+    }
     var out: VsOut;
     out.pos = globals.view_proj * vec4<f32>(world, 1.0);
     out.normal = world_n;
@@ -270,6 +277,30 @@ fn vs_main(v: VertexIn, inst: InstanceIn) -> VsOut {
         out.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0);
     }
     return out;
+}
+
+// Wind (docs/rendering-3d.md "Wind"), world metres: the trunk leans downwind and rocks with
+// its height² (`w.x`), gusts running across the field (`at`, world pixels); the branches swing
+// faster at their clump's phase (`w.y`, `w.z`); the leaves flutter along their normal (`w.w`).
+// `seed` (the instance's ground point) keeps neighbouring trees out of step.
+const WIND_LEAN: f32 = 0.06;
+const WIND_ROCK: f32 = 0.07;
+const WIND_BRANCH: f32 = 0.05;
+const WIND_FLUTTER: f32 = 0.02;
+
+fn sway(w: vec4<f32>, at: vec2<f32>, n: vec3<f32>, seed: f32) -> vec3<f32> {
+    let s = globals.wind.z;
+    let t = globals.wind.w;
+    let dir = globals.wind.xy;
+    let wave = dot(at, dir) * 0.004;
+    let gust = 0.5 + 0.5 * sin(t * 0.37 - wave * 0.3 + seed * 0.011);
+    let ph = w.z * 6.2832;
+    let trunk = w.x * s * (WIND_LEAN * gust + WIND_ROCK * sin(t * 1.1 - wave + seed * 0.007) * (0.4 + 0.6 * gust));
+    let branch = w.y * s * WIND_BRANCH * sin(t * 2.3 + ph + seed * 0.013) * (0.5 + 0.5 * gust);
+    let side = vec2<f32>(-dir.y, dir.x) * (w.y * s * WIND_BRANCH * 0.5 * sin(t * 1.7 + ph * 1.3));
+    let flutter = w.w * s * WIND_FLUTTER * sin(t * 7.0 + ph * 3.0 + dot(at, vec2<f32>(0.11, 0.07)));
+    let nl = n / max(length(n), 1e-5);
+    return vec3<f32>(dir * (trunk + branch) + side, 0.0) + nl * flutter;
 }
 
 // How far a carcass without masks sinks into the ground at the end (metres).

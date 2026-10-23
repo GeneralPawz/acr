@@ -862,6 +862,13 @@ impl Driver {
                 job.steps.push_back(Step::Frame);
                 Ok(true)
             }
+            Request::Props { model, at, wind } => {
+                let Mode::InGame(g) = &mut game.mode else { return Err("no game".into()) };
+                job.reply.insert("props".into(), json!(at.len()));
+                g.place_props(&model, at, wind);
+                job.steps.push_back(Step::Frame);
+                Ok(true)
+            }
             Request::Spawn(v) => {
                 let unit = bench::spawn(game, &v)?;
                 job.reply.insert("unit".into(), unit);

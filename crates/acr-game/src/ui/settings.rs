@@ -52,6 +52,9 @@ pub struct Settings {
     /// ACR: levels of detail of the 3D models (`lod=on|off`, on by default;
     /// docs/rendering-3d.md "Levels of detail"): distant figures drawn with fewer triangles.
     pub lod: bool,
+    /// ACR: wind sways the trees and foliage of the 3D path (`wind=on|off`, on by default;
+    /// docs/rendering-3d.md "Wind"): a vertex-shader bend from the models' `_WIND` weights.
+    pub wind: bool,
     /// ACR: the water surface of the 3D path (`water=detailed|original`, detailed by
     /// default; docs/water.md): waves, reflection and foam, or the original's depth tint.
     pub water_detailed: bool,
@@ -143,6 +146,7 @@ impl Default for Settings {
             body_spacing: false,
             shadows: true,
             lod: true,
+            wind: true,
             water_detailed: true,
             ground_detailed: true,
             marks_keep: false,
@@ -210,7 +214,7 @@ impl Settings {
         format!(
             "sound_volume={}\nmusic_volume={}\nmusic_mode={}\ngame_mode={}\nscroll_speed={}\nframe_time={}\n\
              resolution={}\nrecord={}\nrecord_file={hex}\ncontrols={controls}\nedge_scroll={}\n\
-             models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\ncorpse_decay={}\nhit_locations={}\nbody_spacing={}\nshadows={}\nlod={}\nwater={}\n\
+             models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\ncorpse_decay={}\nhit_locations={}\nbody_spacing={}\nshadows={}\nlod={}\nwind={}\nwater={}\n\
              ground={}\nbattlefield_marks={}\n{}",
             self.sound_volume,
             self.music_volume,
@@ -227,6 +231,7 @@ impl Settings {
             if self.body_spacing { "on" } else { "off" },
             if self.shadows { "on" } else { "off" },
             if self.lod { "on" } else { "off" },
+            if self.wind { "on" } else { "off" },
             if self.water_detailed { "detailed" } else { "original" },
             if self.ground_detailed { "detailed" } else { "original" },
             if self.marks_keep { "keep" } else { "fade" },
@@ -281,6 +286,7 @@ impl Settings {
                 "body_spacing" => s.body_spacing = value == "on",
                 "shadows" => s.shadows = value != "off",
                 "lod" => s.lod = value != "off",
+                "wind" => s.wind = value != "off",
                 "water" => s.water_detailed = value != "original",
                 "ground" => s.ground_detailed = value != "original",
                 "battlefield_marks" => s.marks_keep = value == "keep",
@@ -329,6 +335,7 @@ mod tests {
             gore: Gore::Reduced,
             shadows: false,
             lod: false,
+            wind: false,
             water_detailed: false,
             ground_detailed: false,
             corpse_minutes: 12,

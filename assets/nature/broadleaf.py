@@ -7,7 +7,8 @@ lying on the ground next to the stump) and `STUMP`. Wind: every vertex carries `
 (vec4): x trunk bend weight (0 at the root, 1 at the crown top, quadratic), y branch weight
 (distance from the trunk axis / crown radius), z phase (per clump, 0..1), w leaf flutter
 (1 on leaves). A vertex shader moves `p += dir * (x * A_trunk * sin(t) + y * A_branch *
-sin(2.3 t + 6.28 z)) + n * w * A_leaf * sin(7 t + 6.28 z)`. `COLOR_0` darkens the inside of
+sin(2.3 t + 6.28 z)) + n * w * A_leaf * sin(7 t + 6.28 z)` (`model.wgsl` `sway`,
+docs/rendering-3d.md "Wind"); the felled tree's weights are 0. `COLOR_0` darkens the inside of
 the crown (ambient occlusion baked per vertex).
 
 The crown clumps are the k-means clusters of the sprite's crown pixels (14 clusters, screen
@@ -196,6 +197,9 @@ def make(root, name):
         for v in o.data.vertices:
             if v.co.z < 0.03:
                 v.co.z = 0.03 + 0.1 * (v.co.z - 0.03) / (1 + abs(v.co.z))
+        # A lying tree does not sway.
+        for d in o.data.attributes["_wind"].data:
+            d.color = (0.0, 0.0, 0.0, 0.0)
     return {"groups": groups, "trunks": [trunk, t2], "crowns": [crown, c2], "stumps": [st, st2]}
 
 

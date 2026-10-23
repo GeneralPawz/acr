@@ -20,6 +20,7 @@ parameters: [assets-humans.md](assets-humans.md).
 | `models` | `off`, `units`, `all` | `off` | `units`: units with a model are drawn in 3D; `all`: finished buildings too (under construction, burning down and ruined they stay sprites) |
 | `camera` | `fixed`, `free` | `fixed` | `free`: the camera turns and tilts (below) |
 | `shadows` | `on`, `off` | `on` | sun shadows of the 3D models on the ground and on each other (below); tests switch them with `ACR_SHADOWS=on\|off` or the driver's `{"cmd": "shadows", "on": false}` |
+| `wind` | `on`, `off` | `on` | wind sways trees and foliage that carry `_WIND` weights (below, "Wind"); the driver's `props` request takes `"wind": false` |
 | `ground` | `detailed`, `original` | `detailed` | the ground in 3D mode (`models` not `off` or `camera=free`): material textures over the original tiles, [ground.md](ground.md); sprite mode always draws the original |
 | `gore` | `full`, `reduced`, `off` | `full` | 3D corpses: `full` decompose (#178), `reduced` discolour, collapse and sink without dissolving, `off` fade like the original (every other pixel once the death counter passes 100) |
 | `battlefield_marks` | `fade`, `keep` | `fade` | `keep`: craters, scuffs, blood splatter and pools and the debris of the fallen stay for the whole battle (below, "Kept battlefield marks") |
@@ -239,6 +240,36 @@ ground) lie at the far plane, under every model.
 - Light: Lambert from the game's light vector `(-15, 14, 30)` (upper left, towards the
   viewer) with half ambient; colours are linear, sRGB is encoded by the target or the shader.
 
+### Wind (trees and foliage)
+
+Trees and foliage sway in the vertex shader from per-vertex weights baked by the asset
+(`assets/nature/broadleaf.py`): `_WIND` (vec4) x trunk bend (0 at the root, 1 at the crown
+top, height²), y branch weight (distance from the trunk axis / crown radius), z phase (0..1,
+one per leaf clump), w leaf flutter (1 on leaves, 0 on bark). `COLOR_0` stays the decay mask
+or vertex colour. The loader reads `_WIND` as `Unorm8x4` into vertex location 15 (the last
+free one; 0 for every model without it, which the shader skips).
+
+`model.wgsl` `sway` adds, in world metres after the instance transform (so the shadow map,
+drawn with the same `vs_main`, sways too):
+
+- trunk: `x · s · (0.06 · gust + 0.07 · sin(1.1 t − k·p + seed) · (0.4 + 0.6 · gust))` along
+  the wind, with `gust = 0.5 + 0.5 sin(0.37 t − 0.3 k·p + seed)`: a lean that breathes and a
+  rock, gusts travelling across the field (`k·p` = world position along the wind × 0.004);
+- branches: `y · s · 0.05 · sin(2.3 t + 2π z + seed)` along the wind and half that across it;
+- leaves: `w · s · 0.02 · sin(7 t + 6π z + p · (0.11, 0.07))` along the normal.
+
+`seed` is the instance's ground point, so neighbours are out of step. `globals.wind` holds the
+direction (`WIND_DIR`, from the west-north-west), strength `s` (`WIND_STRENGTH` 1; 0 with
+`wind=off`) and the clock (frame seconds summed in `ThreeD::tick`, wrapping at an hour).
+
+Map trees are still sprites; the driver places tree models with `{"cmd": "props", "model":
+"broadleaf", "at": [[x, y], ...], "wind": true}` (render only; a standing tree drops its
+`.felled` and `.stump` nodes). Cost (render VM, RX 9060 XT, blank grass field, 420 broadleaf
+trees ≈ 730 k triangles at zoom 1, `gputime` 120 frames, two runs each, steps in
+`ACR-analysis/genai/wind/steps/field_{on,off}.json`): all passes 0.69–1.54 ms with wind,
+0.86–0.89 ms without: no cost above the run-to-run noise. The vertex grows by 4 bytes
+(120 instead of 116).
+
 ### Animation states (#166)
 
 The model plays the clip named like the unit's current `.MD` animation, at the time of the
@@ -285,8 +316,8 @@ beard, colouring and height. Models without it draw exactly as before.
   colour ÷ linear neutral base `(0.80, 0.78, 0.75)`).
 - **Height:** a uniform scale `height_m / 1.73` about the ground point, applied to the
   instance transform before the caps and inserts are placed.
-- **`_FACE`:** read as `Unorm8x4` into vertex location 14, so 15 of WebGL2's 16 locations
-  are now used. Per soldier, the fragment shades stubble (beard zone × stubble), forehead
+- **`_FACE`:** read as `Unorm8x4` into vertex location 14 (`_WIND` took the last one, 15:
+  all 16 of WebGL2's locations are used). Per soldier, the fragment shades stubble (beard zone × stubble), forehead
   folds (wrinkle zone × `face_age`), pock marks (pock zone × pocks) and, for 15 %, a pale
   scar slanting across one cheek (face front, at `acr_face_frame` eye height − 4 cm).
 - **Instance data:** 3 look texels follow the marks in the bone texture (`look_texel`).

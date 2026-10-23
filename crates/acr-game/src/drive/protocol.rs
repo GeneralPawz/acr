@@ -221,6 +221,13 @@ pub enum Request {
     },
     /// Sun shadows forced on or off over the setting (`None`: the setting again).
     Shadows(Option<bool>),
+    /// Trees or foliage drawn at ground points (render only): `model` (a `.glb` name),
+    /// `at` (`[[x, y], ...]` world pixels), `wind` (bool over the setting).
+    Props {
+        model: String,
+        at: Vec<[i32; 2]>,
+        wind: Option<bool>,
+    },
     /// A unit placed for the bench (`drive::bench::spawn`).
     Spawn(Value),
     /// A scripted hit (`drive::bench::hit`).
@@ -551,6 +558,17 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
             Request::Camera { x: x as i32, y: y as i32, zoom: num("zoom").map(|z| z as f32), lift, orbit }
         }
         "shadows" => Request::Shadows(v.get("on").and_then(Value::as_bool)),
+        "props" => Request::Props {
+            model: string(&v, "model").ok_or("props: missing \"model\"")?,
+            at: v
+                .get("at")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter().filter_map(|p| Some([p.get(0)?.as_i64()? as i32, p.get(1)?.as_i64()? as i32])).collect()
+                })
+                .unwrap_or_default(),
+            wind: v.get("wind").and_then(Value::as_bool),
+        },
         "spawn" => Request::Spawn(v.clone()),
         "hit" => Request::Hit(v.clone()),
         "impact" => Request::Impact(v.clone()),

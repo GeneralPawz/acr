@@ -114,6 +114,11 @@ impl InGame {
 
     /// The pose held for a unit, if any.
     #[cfg(not(target_arch = "wasm32"))]
+    /// Trees or foliage of model `name` at these ground points (render only; `drive` `props`).
+    pub fn place_props(&mut self, name: &str, at: Vec<[i32; 2]>, wind: Option<bool>) {
+        self.three_d.set_props(name, at, wind);
+    }
+
     pub fn held_pose(&self, unit: u32) -> Option<&(usize, f32)> {
         self.three_d.held.get(&unit)
     }

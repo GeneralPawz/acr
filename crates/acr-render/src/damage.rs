@@ -1090,6 +1090,7 @@ fn vertex(position: Vec3, normal: Vec3, color: [f32; 4]) -> Vertex {
         morph: [[0.0; 3]; 2],
         body: [-1.0, -1.0, 0.5, 0.0],
         face: [0; 4],
+        wind: [0; 4],
     }
 }
 
@@ -1143,6 +1144,7 @@ pub fn procedural_cap() -> ModelData {
                 morph: [[0.0; 3]; 2],
                 body: [-1.0, -1.0, 0.5, 0.0],
                 face: [0; 4],
+                wind: [0; 4],
             });
         }
     }

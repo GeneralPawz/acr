@@ -234,6 +234,9 @@ struct Globals {
     light: [f32; 4],
     forward: [f32; 4],
     params: [f32; 4],
+    /// Wind (docs/rendering-3d.md "Wind"): world direction x, y (unit), strength (0: still),
+    /// time (s).
+    wind: [f32; 4],
 }
 
 #[repr(C)]
@@ -498,6 +501,9 @@ pub struct ModelRenderer {
     custom: HashMap<usize, crate::model::Palette>,
     /// Sun shadows (`shadow.rs`): on unless switched off (the `shadows` setting).
     pub shadows: bool,
+    /// Wind for the `_WIND` weights of trees and foliage (docs/rendering-3d.md "Wind"): world
+    /// direction x, y (unit), strength (0: still, the `wind=off` setting), time in seconds.
+    pub wind: [f32; 4],
     shadow: ShadowMap,
     /// The models into the shadow map: `vs_main` through the light's globals, `fs_shadow`.
     shadow_pipeline: wgpu::RenderPipeline,
@@ -684,11 +690,11 @@ impl ModelRenderer {
             bind_group_layouts: &[Some(&globals_layout), Some(&material_layout)],
             immediate_size: 0,
         });
-        // 15 of the 16 locations WebGL2 has: wounds, spray and damage live in the bone texture.
+        // All 16 locations WebGL2 has: wounds, spray and damage live in the bone texture.
         let vertex_attributes = wgpu::vertex_attr_array![
             0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4,
             4 => Uint32x4, 5 => Float32x4, 6 => Float32x3, 7 => Float32x3, 8 => Float32x4,
-            14 => Unorm8x4
+            14 => Unorm8x4, 15 => Unorm8x4
         ];
         let instance_attributes = wgpu::vertex_attr_array![
             9 => Float32x4, 10 => Float32x4, 11 => Float32x4, 12 => Float32x4, 13 => Uint32x4
@@ -905,6 +911,7 @@ impl ModelRenderer {
             drawn: 0,
             custom: HashMap::new(),
             shadows: true,
+            wind: [1.0, 0.0, 0.0, 0.0],
             shadow,
             shadow_pipeline,
             shadow_globals,
@@ -1416,6 +1423,7 @@ impl ModelRenderer {
                 BONE_WIDTH as f32,
                 0.0,
             ],
+            wind: self.wind,
         };
         queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
         self.shadow.upload(queue, fit.as_ref(), focus, reach);

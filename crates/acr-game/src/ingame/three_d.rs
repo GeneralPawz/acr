@@ -78,6 +78,12 @@ struct Gear {
 
 /// The `gore.glb` pack (#262): gibs, guts and the stump cap.
 const GORE: &str = "GORE";
+/// The wind (docs/rendering-3d.md "Wind"): world direction (unit; from the west-north-west),
+/// strength (1: a fresh breeze, ~0.13 m of lean and rock at a 5 m crown) and the period the
+/// shader's clock wraps at (seconds; f32 keeps its sines smooth well below it).
+const WIND_DIR: [f32; 2] = [0.94, 0.34];
+const WIND_STRENGTH: f32 = 1.0;
+const WIND_PERIOD: f32 = 3600.0;
 
 /// Held gear a crawler or a disarmed man no longer carries: long weapons and the hat.
 fn held_gear(node: &str) -> bool {
@@ -126,6 +132,14 @@ pub struct ThreeD {
     shadows: bool,
     /// `lod=on|off` (docs/rendering-3d.md, "Levels of detail").
     lod: bool,
+    /// `wind=on|off` (docs/rendering-3d.md, "Wind"); the driver's `props` request wins.
+    wind: bool,
+    wind_override: Option<bool>,
+    /// The wind's clock: frame seconds summed (wraps at [`WIND_PERIOD`]).
+    wind_clock: f32,
+    /// Trees and foliage placed by the driver (`props`, render only): model `NAME` and
+    /// ground points (world pixels). Map trees are still sprites.
+    props: Vec<(String, [i32; 2])>,
     /// The water surface (`water=detailed`, docs/water.md); `ACR_WATER` wins.
     water_detailed: bool,
     water: Option<acr_render::water::WaterRenderer>,
@@ -233,6 +247,10 @@ impl Default for ThreeD {
             gore: Gore::Full,
             shadows: true,
             lod: true,
+            wind: true,
+            wind_override: None,
+            wind_clock: 0.0,
+            props: Vec::new(),
             water_detailed: true,
             water: None,
             water_view: Default::default(),
@@ -303,6 +321,7 @@ impl ThreeD {
         self.gore = settings.gore;
         self.shadows = settings.shadows;
         self.lod = settings.lod;
+        self.wind = settings.wind;
         self.water_detailed = settings.water_detailed;
         self.corpse_ticks = u64::from(settings.corpse_minutes) * 60 * acr_sim::ORIGINAL_TICKS_PER_SECOND as u64;
         self.free = settings.camera == CameraMode::Free;
@@ -492,6 +511,13 @@ impl ThreeD {
                     gear.unarmed = Some(renderer.add_model(device, queue, unarmed));
                 }
             }
+            // A tree drawn standing: its felled and stump states are left out (`acr_state`
+            // groups, docs/assets.md "States").
+            let model = if self.props.iter().any(|(n, _)| *n == name) {
+                model.without_nodes(|n| n.contains(".felled") || n.contains(".stump"))
+            } else {
+                model
+            };
             let index = renderer.add_model(device, queue, model);
             self.gear.insert(index, gear);
             self.loaded.insert(name, Some(index));
@@ -522,6 +548,7 @@ impl ThreeD {
     /// Turns and tilts the free camera by the held keys.
     pub fn tick(&mut self, seconds: f32) {
         self.frame_seconds = seconds;
+        self.wind_clock = (self.wind_clock + seconds.clamp(0.0, 0.25)) % WIND_PERIOD;
         if !self.free {
             return;
         }
@@ -1029,6 +1056,7 @@ impl ThreeD {
                 log::info!("3d: {} decay stains", self.seeps.len());
             }
         }
+        self.draw_props(terrain, request);
         // Every decal lies on the slope under it rather than flat at one height (#226).
         super::splatter::lay_on_ground(&mut self.pools, &ground);
         // The kept marks were laid when they were kept.
@@ -1175,6 +1203,52 @@ impl ThreeD {
         }
     }
 
+    /// The driver's trees and foliage (`props`): replaces the placed ones; `wind` overrides
+    /// the setting (`None`: the setting again).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_props(&mut self, name: &str, at: Vec<[i32; 2]>, wind: Option<bool>) {
+        let name = name.to_uppercase();
+        self.props = at.into_iter().map(|p| (name.clone(), p)).collect();
+        self.wind_override = wind;
+    }
+
+    /// Appends the props' instances (standing, at time 0; each turned by a hash of its place).
+    fn draw_props(&mut self, terrain: &TerrainData, request: &dyn Fn(&str)) {
+        for (name, [x, y]) in &self.props {
+            let Some(path) = self.files.get(name.as_str()) else { continue };
+            let index = match self.loaded.get(name.as_str()) {
+                Some(Some(i)) => *i,
+                Some(None) => continue,
+                None => {
+                    let key = acr_formats::normalize_path(path);
+                    if !self.requested.contains_key(&key) && !self.parsed.iter().any(|(n, _)| n == name) {
+                        self.requested.insert(key, name.clone());
+                        request(path);
+                    }
+                    continue;
+                }
+            };
+            let Some(model) = self.renderer.as_ref().and_then(|r| r.model(index)) else { continue };
+            let ground = view3d::ground_point(*x, *y, terrain.height_at(*x, *y));
+            let turn = (x.wrapping_mul(73_856_093) ^ y.wrapping_mul(19_349_663)).rem_euclid(256) as u8;
+            self.instances.push(ModelInstance {
+                model: index,
+                clip: model.clip_for_animation("#STAND"),
+                time: 0.0,
+                transform: view3d::model_matrix(ground, view3d::facing_yaw(turn), 1.0),
+                decay: 0.0,
+                morphs: [0.0; 2],
+                transparent: false,
+                player: 0,
+                wounds: Default::default(),
+                sprayed: Default::default(),
+                damage: Default::default(),
+                look: None,
+                uniform: None,
+            });
+        }
+    }
+
     /// Asks for `gore.glb` (gibs, guts, the stump cap) once gore is shown.
     fn request_gore(&mut self, request: &dyn Fn(&str)) {
         if self.gore == Gore::Off || self.loaded.contains_key(GORE) || self.parsed.iter().any(|(n, _)| n == GORE) {
@@ -1220,6 +1294,8 @@ impl ThreeD {
         }
         renderer.shadows = shadows_override().unwrap_or(self.shadows);
         renderer.lods = self.lod;
+        let strength = if self.wind_override.unwrap_or(self.wind) { WIND_STRENGTH } else { 0.0 };
+        renderer.wind = [WIND_DIR[0], WIND_DIR[1], strength, self.wind_clock];
         {
             acr_sim::prof_scope!("render.models_prepare");
             renderer.prepare(device, queue, &view3d, shown, self.gore == Gore::Full);

@@ -60,6 +60,9 @@ pub struct Vertex {
     pub body: [f32; 4],
     /// `_FACE` (#283, flesh only): beard, wrinkle, pock zones and the face front, 0 without.
     pub face: [u8; 4],
+    /// `_WIND` (trees and foliage, docs/rendering-3d.md "Wind"): trunk bend (0 at the root,
+    /// 1 at the crown top), branch weight, phase (0..1, per clump), leaf flutter; 0 without.
+    pub wind: [u8; 4],
 }
 
 /// One entry of a model's matrix palette.
@@ -519,6 +522,7 @@ impl ModelData {
                         morph: [[0.0; 3]; 2],
                         body: [-1.0, -1.0, 0.5, variant],
                         face: [0; 4],
+                        wind: [0; 4],
                     })
                     .collect();
                 if let Some(it) = reader.read_normals() {
@@ -546,6 +550,12 @@ impl ModelData {
                         .iter_mut()
                         .zip(it)
                         .for_each(|(v, x)| v.face = x.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8));
+                }
+                if let Some(it) = custom("WIND").and_then(|a| gltf::accessor::Iter::<[f32; 4]>::new(a, get)) {
+                    vertices
+                        .iter_mut()
+                        .zip(it)
+                        .for_each(|(v, x)| v.wind = x.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8));
                 }
                 if skinned && let (Some(js), Some(ws)) = (reader.read_joints(0), reader.read_weights(0)) {
                     for ((v, j), w) in vertices.iter_mut().zip(js.into_u16()).zip(ws.into_f32()) {
