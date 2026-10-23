@@ -1190,8 +1190,7 @@ def hide_under(ch, inner, outer, depth=0.006, reach=0.05):
     for v, h in zip(me.vertices, bd.homes(inner)):
         if h not in seg or h.endswith("neck"):
             continue
-        t = arm_tree if h[len(ch.prefix):].startswith(ARM_HOMES) else tree
-        hit = t.ray_cast(v.co + v.normal * 0.001, v.normal, reach) if t else (None,)
+        hit = tree.ray_cast(v.co + v.normal * 0.001, v.normal, reach)
         if hit[0] is None:
             continue
         # Single-sided cloth: the normal may point inwards; only push towards the bone.
