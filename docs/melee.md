@@ -277,20 +277,75 @@ The exporter takes held objects relative to their bone *as posed*: a socket left
 by the last keyed clip baked a 0 scale into the drawn sabre's own node. `cavalry.unscale`
 resets the rider's bone scales before the export.
 
+### Clip first, then a residual layer (m2-melee5)
+
+Method: each strike clip is measured offline at its hit frame, without the game, then the
+layer is checked on the same pose. `strike_view::probe` poses a built `.glb` at the origin
+and returns the weapon's point (`socket.tip` / `socket.muzzle`) from the clip alone and
+after `aim`; the test `probe_clips` prints it for `ACR_PROBE_MODELS` (a folder of `.glb`s)
+and `ACR_PROBE` (`model:clip:frame:right,fwd,up;...`, metres from the attacker's ground
+point); without the variables it does nothing.
+
+- **Melee distance** (driver logs, `ACR_STRIKE_DEBUG` now logs `victim at`): riders strike a
+  man on the ground at 1.7–2.0 m (centre to centre: PueVsdA 1.9, EngD18 1.7, also when
+  they ride in from 5 m); musketeers fence at 1.67–1.73 m. The victim is straight ahead.
+- **The rider's rig was off.** The layer's joints are skeleton H's (`Rig::joint`); a rider's
+  model is bound elsewhere (seated), so his rig hand lay ~0.3–0.5 m behind and 0.2–0.4 m
+  below the real hand socket (musketeer: 0.06 m). The layer corrected that phantom error and
+  swung the lance flat and past the man: the cause of the lance's ~20°. `Held::grip` now
+  carries the socket's offset from the rig hand (in the hand's frame) and the point, the arm
+  IK and the hand's turn use it.
+- **`lance_down` was too steep:** the clip alone drove the point 0.9 m into the ground
+  (66° down from a hand 1.41 m up). A 2.5 m lance meets the ground ~1.8 m out only from a
+  hand ~1.9 m up at ~44°: the new pose raises the hand (`side(-0.20, -0.08, 0.52)`), the
+  lance 44° down and 8° out (`(44, 8, 0)`).
+- **The horse turns** (`strike_yaw`, render side; a rider with a `_DOWN`/`_DOWN_R` strike
+  clip): the model's yaw is set so the man lies `TURN_LANCE` (25°) right of the facing for a
+  lancer (the point passes the horse's right shoulder), `TURN_SABRE` (75°) for a sabre
+  (beside the horse). It snaps with the clip (no easing yet).
+- **`sabre_down_r`** leans further out (spine Y -30°, chest -14°), the hand aimed low beside
+  the horse and the blade near vertical (`(80, 15, 0)`); the IK does not get the hand below
+  ~1.45 m, so the clip alone still ends 0.46 m short of the near part of the man.
+- **Residual layer:** on a strike clip (`How::residual`) the trunk bends at most
+  `RESIDUAL_BEND` (~14°) and the hand turns at most `RESIDUAL_TURN` (~10°), and after the
+  arm IK the hand is turned back onto the clip's weapon axis: the layer moves the weapon
+  for distance and height but can never flatten the clip's angle. Test
+  `the_layer_takes_up_a_residual` (lance 2.5 m at 43° down, sabre 0.9 m at 69°, target
+  0.2 m off: point within 15 cm, angle kept within 15°).
+- **Targets** (`target_point`): a standing man is struck at his body's surface
+  (`BODY_RADIUS` 0.17 m short of his axis), so a bayonet stops there; a man on the ground at
+  his ground point, by a rider's sabre (reach < 1.5 m) `NEAR_BODY` (0.5 m) nearer: the near
+  part of his body.
+
+Measured at frame 2 (`probe_clips`, physics metres right/forward/up of the attacker):
+
+| Clip | Target | Clip alone: point, off | With the layer: off |
+|---|---|---|---|
+| PueVsdA `ATTACK_THRUST_DOWN` (old) | 0.50/1.50/0.20 | 0.48/1.17/-0.90, 1.15 | 1.09 |
+| PueVsdA `ATTACK_THRUST_DOWN` (new) | man at 1.9 m, 25°: 0.81/1.73/0.20 | 0.76/1.79/0.16, **0.08** | **0.06** |
+| same, target 0.24 m off | 0.75/1.60/0.30 | 0.24 | 0.12 |
+| EngD18 `ATTACK_CUT_DOWN` (old) | 0.80/0.60/0.20 | 0.98/0.39/0.75, 0.62 | 0.53 |
+| EngD18 `ATTACK_CUT_DOWN` (new) | near part, 1.2 m at 75°: 1.16/0.31/0.20 | 0.94/0.22/0.60, 0.46 | 0.20 |
+| EngM18 `ATTACK_THRUST_MID` | body surface at 1.67 m: 0/1.50/1.15 | 0.11/1.79/1.27, 0.33 | (in game: stops at the chest) |
+| EngM18 `ATTACK_THRUST_DOWN` | 0/1.60/0.20 | 0.07/1.39/0.02, 0.29 | 0.06 (before `grip`) |
+
+Renders (`ACR-analysis/melee5`, white field, HUD off, `BENCH_DIST` in `melee_bench.py`):
+`sheet_lance_crawl_hit.png` (frame 9: the lance ~44° down, its point at the man's legs),
+`sheet_horse_crawl_hit.png` (frames 1–3: the horse turned, the man at its right; the
+sabre hangs short of him), `run1/sheet_fence.png` and `run1/crop.png` (frame 26: the
+bayonets stop at the chests). Rebuilt on the VM: EngD18 and PueVsdA (old ones in
+`showcase/backup-melee5/`).
+
 ### Not yet
 
-- **Lance down still misses:** with the reach right, at the hit the lance still points
-  ~20° down and its point lands about a metre past the man on the ground (`run3`); the
-  clip's 65° hand turn is not what shows. Either the `lance_down` hand euler does not turn
-  the fist the way assumed (unchecked: the bench with `ACR_NO_STRIKE` did not show the
-  strike clip either), or the layer's arm IK (aimed with the clip's axis, then at most
-  `MAX_TURN` 30°) flattens it. Next: render the clip alone in Blender, then a larger turn
-  for riders.
-- **Sabre at the ground:** the bench victim lies ~2 m ahead of the horse, out of a sabre's
-  reach: at the hit the blade is level by the horse's side. A victim beside the horse is
-  needed to judge `ATTACK_CUT_DOWN`; `ATTACK_CUT_MID` is unchecked in a render.
-- **Fencing** (`foot_fence`): the men close in and the muskets pass through both bodies
-  in the strike frames; the guard is not tuned yet.
+- **Sabre down still short:** the clip alone ends 0.46 m short (the hand stops ~1.45 m up),
+  the layer leaves 0.20 m; the in-game first blow comes at layer weight ~0.55 (the fade
+  in), so it shows shorter. Next: a lower hand (stand in the stirrup, lean further) or a
+  longer reach down, and fade the layer in before the hit frame. The horse's turn snaps.
+  `ATTACK_CUT_DOWN_L` is still never chosen (the turn always puts the man on the right).
+- **Fencing outside the strike clip:** in the `.MD` frames (PSTAND, no strike clip) the
+  layer still aims an upright musket at full arm weight: the musket ends up pointing
+  backwards over the shoulder (`run1/crop.png`, frame 20). The strike frames are fine.
 - **Looks:** the bayonets still pass through bodies in the `.MD` ATTACK/PSTAND frames,
   which the layer does not guard. The smash pose is unchecked in a render (the sim never
   picks `Smash`).

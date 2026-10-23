@@ -61,6 +61,21 @@ const GUARD: f32 = 0.45;
 /// follows (1/s).
 const MAX_TURN: f32 = 0.52;
 const TURN_RATE: f32 = 14.0;
+/// On a strike clip the clip sets the weapon's angle; the layer only takes up the residual:
+/// the trunk bends at most `RESIDUAL_BEND` (~14°) and the hand turns at most
+/// `RESIDUAL_TURN` (~10°), so it can never flatten the clip's blow (m2-melee5).
+const RESIDUAL_BEND: f32 = 0.25;
+const RESIDUAL_TURN: f32 = 0.17;
+/// A standing man's body as a capsule about his axis (m): the point stops at its surface.
+pub const BODY_RADIUS: f32 = 0.17;
+/// How far the horse turns from the victim at a blow at a man on the ground (radians, from
+/// the facing towards the rider's right): the lance's point passes the horse's right
+/// shoulder (~25°), the sabre cuts down beside the horse (~75°).
+pub const TURN_LANCE: f32 = 0.44;
+pub const TURN_SABRE: f32 = 1.31;
+/// The point at a man on the ground aims at the near part of his body: this far from his
+/// ground point towards the attacker (m; a man lying is ~1.7 m long).
+pub const NEAR_BODY: f32 = 0.5;
 /// How fast the arm weight follows the clip phase (1/s): sprite frames step, the arm eases.
 const ARM_RATE: f32 = 20.0;
 
@@ -159,6 +174,40 @@ pub fn strike_clip(data: &ModelData, world: &World, u: &Unit) -> Option<usize> {
     clip_names(&u.anim.name(), strike.map(|s| s.kind), height).iter().find_map(|n| data.clip(n))
 }
 
+/// The yaw (radians, as `view3d::facing_yaw`) a rider's model takes while he strikes at a
+/// man on the ground with a strike clip: turned from the victim so that he lies at the
+/// rider's right side ([`TURN_LANCE`] with a lance, [`TURN_SABRE`] else), where the clip's
+/// blow lands. `None` for anyone else (the unit's own facing).
+pub fn strike_yaw(data: &ModelData, world: &World, u: &Unit, clip: usize) -> Option<f32> {
+    let name = &data.clips.get(clip)?.name;
+    if !name.ends_with("_DOWN") && !name.ends_with("_DOWN_R") {
+        return None;
+    }
+    // A rider: the model has the rider's bones.
+    if !data.nodes.iter().any(|n| n.name.ends_with("rider.hips")) {
+        return None;
+    }
+    let t = u.target()?;
+    let v = world.units.get(t.0 as usize).filter(|v| v.id == t)?;
+    let (dx, dy) = ((v.pos.x - u.pos.x) as f32, (v.pos.y - u.pos.y) as f32);
+    if dx == 0.0 && dy == 0.0 {
+        return None;
+    }
+    // A lancer has no cutting clips.
+    let lance = !data.clips.iter().any(|c| c.name.contains("_CUT_"));
+    Some(yaw_with_side(dx, dy, if lance { TURN_LANCE } else { TURN_SABRE }))
+}
+
+/// The model yaw that puts the world direction `(dx, dy)` (world pixels, y down the screen)
+/// `turn` radians to the right of the model's facing.
+pub fn yaw_with_side(dx: f32, dy: f32, turn: f32) -> f32 {
+    // `model_matrix`: the facing (glTF +z) is world (sin yaw, cos yaw), the right side
+    // (glTF -x) world (-cos yaw, sin yaw).
+    let to = dx.atan2(dy);
+    let right = |y: f32| -y.cos() * dx + y.sin() * dy;
+    if right(to - turn) >= right(to + turn) { to - turn } else { to + turn }
+}
+
 /// The weight of the arm IK at sprite frame `frame` of a strike clip of `frames` frames
 /// (`poses.strike_keys`): it rises from the wind-up to full at the hit frame, holds two
 /// frames, eases down for the recovery, stays low and rises again in the last fifth (the
@@ -203,6 +252,22 @@ pub fn bend(from: Vec3, to: Vec3, max: f32, share: f32) -> Quat {
     }
     let angle = s.atan2(a.dot(b)).min(max) * share;
     Quat::from_axis_angle(axis * (1.0 / s), angle)
+}
+
+/// The point the weapon aims at on a victim whose ground point is `ground`, struck at
+/// `height` by a man standing at `me` (physics): a man on the ground `near` m towards the
+/// attacker from his ground point (a rider's sabre: the near part of his body, [`NEAR_BODY`];
+/// a lance or a bayonet: his middle); a standing man at the surface of his body
+/// ([`BODY_RADIUS`]), so the point stops there instead of running through him.
+pub fn target_point(ground: Vec3, me: Vec3, height: StrikeHeight, mounted: bool, near: f32) -> Vec3 {
+    let flat = Vec3::new(me.x - ground.x, me.y - ground.y, 0.0);
+    let back = flat.normalize_or_zero();
+    let off = match height {
+        StrikeHeight::Down => near.min(flat.length() * 0.5),
+        _ if mounted => 0.0,
+        _ => BODY_RADIUS,
+    };
+    ground + back * off + Vec3::new(0.0, 0.0, metres(height))
 }
 
 /// The weapon nodes of a model: the right hand's socket, the node giving the weapon's axis
@@ -341,7 +406,7 @@ impl Strikes {
             let ground = physics_of([v.transform[3][0], v.transform[3][1], v.transform[3][2]]);
             let strike = last_strike(hits.iter().copied(), d.unit, v.unit.id.0);
             let height = strike_height(v.unit, strike);
-            let target = ground + Vec3::new(0.0, 0.0, metres(height));
+            let me = physics_of([d.transform[3][0], d.transform[3][1], d.transform[3][2]]);
             // The weapon as the clip holds it: from the hand's socket to the muzzle, else
             // along the held weapon.
             let (hand_at, socket_axis) = node_frame(&globals, wpn.socket, Vec3::Y, &d.transform);
@@ -358,7 +423,11 @@ impl Strikes {
                 None => (socket_axis.normalize_or_zero(), REACH),
             };
             let dir = if dir == Vec3::ZERO { Vec3::new(0.0, -1.0, 0.0) } else { dir };
-            let held = Held { dir, reach, two_handed: wpn.muzzle };
+            let near = if mounted && reach < 1.5 { NEAR_BODY } else { 0.0 };
+            let target = target_point(ground, me, height, v.unit.body.mounted, near);
+            let hb = self.rig.bone("hand_r");
+            let grip = linear_t(&before[hb], hand_at - self.rig.joint(&before, hb));
+            let held = Held { dir, reach, two_handed: wpn.muzzle, grip };
             // The arm follows the clip's phase when it is a strike clip (`strike_clip`), else
             // it stays on.
             let strike_clip = d.clip.and_then(|c| d.data.clips.get(c)).filter(|c| c.name.contains('_'));
@@ -372,16 +441,18 @@ impl Strikes {
                 height,
                 smash: strike.is_some_and(|s| s.kind == StrikeKind::Smash),
                 rate: 1.0 - (-dt * TURN_RATE).exp(),
+                residual: strike_clip.is_some(),
             };
             *turn = aim(&self.rig, &mut skins, held, target, how, *turn);
             if !self.logged || debug {
                 self.logged = true;
                 log::info!(
-                    "3d: strike layer: unit {id}{} at {} {height:?} ({strike:?}), clip {:?} phase {phase:.2} arm {:.2} w {w:.2}, weapon axis {dir:?} reach {reach:.2}",
+                    "3d: strike layer: unit {id}{} at {} {height:?} ({strike:?}), clip {:?} phase {phase:.2} arm {:.2} w {w:.2}, weapon axis {dir:?} reach {reach:.2}, victim at {:?} m",
                     if mounted { " (mounted)" } else { "" },
                     v.unit.id.0,
                     strike_clip.map(|c| c.name.as_str()),
                     how.arm,
+                    ground - me,
                 );
             }
             poses.insert(d.index, repose(map, &palette, &before, &skins, &d.transform));
@@ -398,6 +469,11 @@ pub struct Held {
     pub dir: Vec3,
     pub reach: f32,
     pub two_handed: bool,
+    /// Where the weapon's hand socket sits from the rig's hand joint (in the hand's rest
+    /// frame). The rig's joints are skeleton H's; a rider's model is bound elsewhere (seated,
+    /// on the horse), so his rig hand lies ~0.45 m from the real one (m2-melee5): without
+    /// this the layer corrected a phantom error and swung the lance off.
+    pub grip: Vec3,
 }
 
 /// How `aim` poses a man: the layer's weight `w` (the attack stance), the arm IK's weight
@@ -412,6 +488,8 @@ pub struct How {
     pub height: StrikeHeight,
     pub smash: bool,
     pub rate: f32,
+    /// A strike clip: the clip sets the weapon's angle, the layer takes up the residual.
+    pub residual: bool,
 }
 
 /// Bends the trunk of `skins` so that the weapon points at `target`; on foot, sinks into the
@@ -431,7 +509,8 @@ pub fn aim(rig: &Rig, skins: &mut [Skin], weapon: Held, target: Vec3, how: How, 
     // The weapon turns with the hand (the socket rides on it): its axis in the hand's rest
     // frame (skins are rotations from the rest pose).
     let local = linear_t(&skins[hand], dir);
-    let tip = |skins: &[Skin]| rig.joint(skins, hand) + linear(&skins[hand], local) * weapon.reach;
+    let grip = weapon.grip;
+    let tip = |skins: &[Skin]| rig.joint(skins, hand) + linear(&skins[hand], grip + local * weapon.reach);
     let feet = [[b("thigh_l"), b("shin_l"), b("foot_l")], [b("thigh_r"), b("shin_r"), b("foot_r")]];
     let planted = feet.map(|l| rig.joint(skins, l[2]));
     // A standing man: the point stays short of him but at the blow (fencing distance).
@@ -471,7 +550,13 @@ pub fn aim(rig: &Rig, skins: &mut [Skin], weapon: Held, target: Vec3, how: How, 
     }
     for (bone, share) in [(spine, LOWER), (chest, 1.0)] {
         let pivot = rig.joint(skins, bone);
-        let most = if mounted { MAX_BEND_MOUNTED } else { MAX_BEND };
+        let most = if how.residual {
+            RESIDUAL_BEND
+        } else if mounted {
+            MAX_BEND_MOUNTED
+        } else {
+            MAX_BEND
+        };
         let max = most * if bone == spine { LOWER } else { 1.0 - LOWER };
         let q = bend(tip(skins) - pivot, target - pivot, max, share * w);
         rig.rotate_about(skins, bone, pivot, q);
@@ -480,14 +565,23 @@ pub fn aim(rig: &Rig, skins: &mut [Skin], weapon: Held, target: Vec3, how: How, 
     // weapon kept at its bent angle), weighted by the clip phase.
     let hand_at = rig.joint(skins, hand);
     let axis = linear(&skins[hand], local).normalize_or_zero();
-    let want = hand_at + ((target - axis * weapon.reach) - hand_at) * arm_w;
+    let want = hand_at + ((target - axis * weapon.reach - linear(&skins[hand], grip)) - hand_at) * arm_w;
     let hint = Vec3::new(0.0, 0.0, -1.0).cross(axis).normalize_or_zero();
     rig.two_bone_ik(skins, upper, fore, hand, want, hint);
+    if how.residual {
+        // The IK turns the forearm and with it the hand; on a strike clip the weapon keeps
+        // the clip's angle (a long lance would swing far): the hand turned back onto it.
+        let after = linear(&skins[hand], local).normalize_or_zero();
+        let back = bend(after, axis, std::f32::consts::PI, 1.0);
+        let at = rig.joint(skins, hand) + linear(&skins[hand], grip);
+        rig.rotate_about(skins, hand, at, back);
+    }
     // Then the weapon turned from the hand onto the target: clamped and eased over frames,
     // so the clip's swing shows and the point does not jump.
-    let hand_at = rig.joint(skins, hand);
+    let hand_at = rig.joint(skins, hand) + linear(&skins[hand], grip);
     let now = linear(&skins[hand], local);
-    let wanted = if how.smash { Vec3::ZERO } else { bend(now, target - hand_at, MAX_TURN, arm_w).to_rotvec() };
+    let max_turn = if how.residual { RESIDUAL_TURN } else { MAX_TURN };
+    let wanted = if how.smash { Vec3::ZERO } else { bend(now, target - hand_at, max_turn, arm_w).to_rotvec() };
     let turn = turn + (wanted - turn) * how.rate;
     rig.rotate_about(skins, hand, hand_at, Quat::from_rotvec(turn));
     if weapon.two_handed {
@@ -498,6 +592,51 @@ pub fn aim(rig: &Rig, skins: &mut [Skin], weapon: Held, target: Vec3, how: How, 
         rig.two_bone_ik(skins, l_up, l_fore, l_hand, now + (grip - now) * w, Vec3::new(0.0, 0.0, -1.0));
     }
     turn
+}
+
+/// The weapon's point of a model playing `clip` at sprite frame `frame`, standing at the
+/// origin and facing physics -y (yaw 0): where the clip alone puts it and where it is after
+/// the layer aims it at `target` (physics, from his ground point) at full weight (`arm` 1, the
+/// turn converged). `None` without a weapon or a mapping. For offline checks of the clips
+/// (`probe_clips`, `docs/melee.md`).
+#[cfg(test)]
+pub(super) fn probe(
+    data: &ModelData,
+    clip: usize,
+    frame: f32,
+    target: Vec3,
+    height: StrikeHeight,
+) -> Option<(Vec3, Vec3, Vec3)> {
+    let rider = Mapping::with_prefix(data, "rider.");
+    let mounted = rider.is_some();
+    let map = rider.or_else(|| Mapping::with_prefix(data, ""))?;
+    let wpn = weapon(data)?;
+    let transform = acr_render::view3d::model_matrix([0.0; 3], 0.0, 1.0);
+    let time = frame / data.fps;
+    let globals = data.globals(Some(clip), time);
+    let palette = data.pose(Some(clip), time);
+    let mut skins = animated_skins(&map, &palette, &transform);
+    let (hand_at, _) = node_frame(&globals, wpn.socket, Vec3::Y, &transform);
+    let point = node_frame(&globals, wpn.tip.filter(|_| wpn.point)?, Vec3::Y, &transform).0;
+    let rig = Rig::new(&skeleton_h());
+    let hand = rig.bone("hand_r");
+    let grip = linear_t(&skins[hand], hand_at - rig.joint(&skins, hand));
+    let held = Held {
+        dir: (point - hand_at).normalize_or_zero(),
+        reach: (point - hand_at).length(),
+        two_handed: wpn.muzzle,
+        grip,
+    };
+    // The point rides on the hand bone: its offset in the hand's frame.
+    let off = linear_t(&skins[hand], point - rig.joint(&skins, hand));
+    let how = How { w: 1.0, arm: 1.0, mounted, height, smash: false, rate: 1.0, residual: true };
+    let mut turn = Vec3::ZERO;
+    let start = skins.clone();
+    for _ in 0..12 {
+        skins = start.clone();
+        turn = aim(&rig, &mut skins, held, target, how, turn);
+    }
+    Some((point, rig.joint(&skins, hand) + linear(&skins[hand], off), hand_at))
 }
 
 /// `m`'s rotation applied to `v`.
@@ -528,9 +667,10 @@ mod tests {
         let dir = Vec3::new(0.0, -1.0, 0.0);
         let h = rig.joint(&skins, hand);
         let target = Vec3::new(h.x + offset.x, h.y + offset.y, offset.z);
-        let held = Held { dir, reach, two_handed: !mounted };
+        let held = Held { dir, reach, two_handed: !mounted, grip: Vec3::ZERO };
         let local = linear_t(&skins[hand], dir);
-        let how = How { w: 1.0, arm: 1.0, mounted, height: StrikeHeight::Down, smash: false, rate: 1.0 };
+        let how =
+            How { w: 1.0, arm: 1.0, mounted, height: StrikeHeight::Down, smash: false, rate: 1.0, residual: false };
         aim(&rig, &mut skins, held, target, how, Vec3::ZERO);
         (rig.joint(&skins, hand) + linear(&skins[hand], local) * reach, target)
     }
@@ -598,5 +738,119 @@ mod tests {
             clip_names("ATTACK", Some(StrikeKind::Thrust), StrikeHeight::Low),
             ["ATTACK_THRUST_LOW", "ATTACK_LOW", "ATTACK_THRUST_MID"]
         );
+    }
+
+    /// The strike clips measured offline (`ACR_PROBE_MODELS`: a folder of built `.glb`s;
+    /// skipped without it): the weapon's point at the hit frame, the clip alone and after
+    /// the layer, against a target on the ground.
+    #[test]
+    fn probe_clips() {
+        let Some(dir) = std::env::var_os("ACR_PROBE_MODELS") else { return };
+        let dir = std::path::PathBuf::from(dir);
+        let at = |v: &str| -> Vec3 {
+            let n: Vec<f32> = v.split(',').map(|x| x.trim().parse().unwrap()).collect();
+            Vec3::new(n[0], n[1], n[2])
+        };
+        let spec = std::env::var("ACR_PROBE").unwrap_or_default();
+        for item in spec.split(';').filter(|s| !s.is_empty()) {
+            // model:clip:frame:right,forward,up
+            let f: Vec<&str> = item.split(':').collect();
+            let bytes = std::fs::read(dir.join(format!("{}.glb", f[0]))).unwrap();
+            let data = ModelData::from_glb(&bytes).unwrap();
+            let clip = data.clip(f[1]).unwrap_or_else(|| panic!("no clip {}", f[1]));
+            let frame: f32 = f[2].parse().unwrap();
+            // right (-x), forward (-y), up.
+            let r = at(f[3]);
+            let target = Vec3::new(-r.x, -r.y, r.z);
+            let height = if r.z < 0.6 { StrikeHeight::Down } else { StrikeHeight::Mid };
+            let (clip_tip, layer_tip, hand_at) = probe(&data, clip, frame, target, height).unwrap();
+            let rel = |p: Vec3| format!("right {:.2} fwd {:.2} up {:.2}", -p.x, -p.y, p.z);
+            let d = clip_tip - hand_at;
+            let k = if d.z.abs() > 1e-4 { (target.z - hand_at.z) / d.z } else { 0.0 };
+            println!(
+                "PROBE hand {} axis {} reach {:.2}, line at target height {}",
+                rel(hand_at),
+                rel(d.normalize_or_zero()),
+                d.length(),
+                rel(hand_at + d * k)
+            );
+            println!(
+                "PROBE {} {} f{}: target {} | clip tip {} (off {:.2}) | layer tip {} (off {:.2})",
+                f[0],
+                f[1],
+                frame,
+                rel(target),
+                rel(clip_tip),
+                (clip_tip - target).length(),
+                rel(layer_tip),
+                (layer_tip - target).length()
+            );
+        }
+    }
+
+    /// The horse turns so that the victim lies `turn` to the rider's right.
+    #[test]
+    fn horse_turns_the_victim_to_the_right() {
+        for (dx, dy) in [(60.0f32, 0.0f32), (0.0, -50.0), (-30.0, 40.0)] {
+            let y = yaw_with_side(dx, dy, 0.44);
+            let n = (dx * dx + dy * dy).sqrt();
+            let f = (y.sin() * dx + y.cos() * dy) / n;
+            let r = (-y.cos() * dx + y.sin() * dy) / n;
+            assert!((f - 0.44f32.cos()).abs() < 1e-3 && (r - 0.44f32.sin()).abs() < 1e-3, "{dx},{dy}: {f} {r}");
+        }
+    }
+
+    /// A clip that already holds the weapon close to the target: the layer takes up the
+    /// residual and the point ends within 15 cm, for a lance and a sabre at a point on the
+    /// ground, without flattening the weapon.
+    #[test]
+    fn the_layer_takes_up_a_residual() {
+        let rig = Rig::new(&skeleton_h());
+        let hand = rig.bone("hand_r");
+        // The clip's arm: the hand bent forward in front of the right shoulder.
+        let clip = || {
+            let mut skins = rest(&rig);
+            let (up, fore) = (rig.bone("upperarm_r"), rig.bone("forearm_r"));
+            let at = rig.joint(&skins, up) + Vec3::new(0.0, -0.35, -0.25);
+            rig.two_bone_ik(&mut skins, up, fore, hand, at, Vec3::new(0.0, 0.0, -1.0));
+            skins
+        };
+        let h = rig.joint(&clip(), hand);
+        for (reach, down) in [(2.5f32, 0.75f32), (0.9, 1.2)] {
+            // The weapon forward and down at `down` radians; the target lies 0.2 m from where
+            // the clip's point is.
+            let dir = Vec3::new(0.0, -down.cos(), -down.sin());
+            let clip_tip = h + dir * reach;
+            let target = clip_tip + Vec3::new(0.1, -0.12, 0.12);
+            let mut skins = clip();
+            let held = Held { dir, reach, two_handed: false, grip: Vec3::ZERO };
+            let local = linear_t(&skins[hand], dir);
+            let how = How {
+                w: 1.0,
+                arm: 1.0,
+                mounted: true,
+                height: StrikeHeight::Down,
+                smash: false,
+                rate: 1.0,
+                residual: true,
+            };
+            aim(&rig, &mut skins, held, target, how, Vec3::ZERO);
+            let axis = linear(&skins[hand], local);
+            let tip = rig.joint(&skins, hand) + axis * reach;
+            assert!((tip - target).length() < 0.15, "{reach}: tip {tip:?} target {target:?}");
+            let now_down = (-axis.z / axis.length()).asin();
+            assert!(now_down > down - 0.26, "{reach}: flattened to {now_down} from {down}");
+        }
+    }
+
+    /// The point at a standing man stops at his body's surface; at a man on the ground it
+    /// aims at the near part of him.
+    #[test]
+    fn the_point_stops_at_the_body() {
+        let me = Vec3::new(0.0, 0.0, 0.0);
+        let at = target_point(Vec3::new(1.67, 0.0, 0.0), me, StrikeHeight::Mid, false, NEAR_BODY);
+        assert!((at.x - (1.67 - BODY_RADIUS)).abs() < 1e-5 && (at.z - 1.15).abs() < 1e-5, "{at:?}");
+        let down = target_point(Vec3::new(2.0, 0.0, 0.0), me, StrikeHeight::Down, false, NEAR_BODY);
+        assert!((down.x - (2.0 - NEAR_BODY)).abs() < 1e-5, "{down:?}");
     }
 }

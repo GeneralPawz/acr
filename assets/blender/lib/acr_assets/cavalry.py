@@ -637,17 +637,24 @@ def make(ctx, spec):
              # Strike clips (docs/melee.md): the lance drawn back high, then driven down past
              # the horse's right shoulder at a man on the ground, or level at a standing one.
              "lance_back": _with_world(dict(LEGS_SEAT, spine=(4, 0, -6)), right(side(0.02, 0.10, 0.42), (-30, 0, 0))),
-             # Down: the hand turned 65° down, the rider leaning out over the right side
-             # (not folded over the neck), the point past the shoulder at the ground.
-             "lance_down": _with_world(dict(LEGS_SEAT, spine=(-12, -16, 4), spine1=(-4, -6, 0)),
-                                       right(side(-0.14, -0.30, -0.02), (65, 0, 0))),
+             # Down (m2-melee5, measured offline at the hit frame): the hand raised to about
+             # 1.95 m, a little behind the seat, the lance 44° down and 8° out to the right,
+             # so its point (2.5 m from the hand) meets the ground about 1.8 m ahead and
+             # 0.25 m out: the man lies there when the horse turns 25° from him
+             # (`strike_view::TURN_LANCE`). The steep 65° of m2-melee4 drove the point 0.9 m
+             # into the ground and left the layer to flatten it.
+             "lance_down": _with_world(dict(LEGS_SEAT, spine=(-6, -8, 0), spine1=(-2, -4, 0)),
+                                       right(side(-0.20, -0.08, 0.52), (44, 8, 0))),
              "lance_mid": _with_world(dict(LEGS_SEAT, spine=(-14, 0, 8)), right(side(0.02, -0.66, 0.36), (2, 0, 0))),
              # Drawn sabre (`drawn`): raised over the right shoulder, the blade up and back;
              # the cuts down at a man on the ground right and left of the horse, and the cut
              # at a standing man (the blade level with his shoulder).
              "sabre_up": _with_world(dict(LEGS_SEAT, spine=(4, 0, -10)), right(side(0.06, 0.04, 0.78), (-110, 0, 0))),
-             "sabre_down_r": _with_world(dict(LEGS_SEAT, spine=(-12, -18, 0), spine1=(-4, -8, 0)),
-                                         right(side(-0.22, -0.30, 0.02), (70, 30, 0))),
+             # Down right (m2-melee5): leaning far out over the right side, the hand low
+             # beside the horse, the blade driven almost straight down at a man lying
+             # about 1.2 m out (the horse turned 75° from him, `strike_view::TURN_SABRE`).
+             "sabre_down_r": _with_world(dict(LEGS_SEAT, spine=(-10, -30, 0), spine1=(-4, -14, 0)),
+                                         right(side(-0.65, -0.48, -0.23), (80, 15, 0))),
              "sabre_down_l": _with_world(dict(LEGS_SEAT, spine=(-12, 14, -14), spine1=(-4, 6, 0)),
                                          right(side(0.42, -0.36, 0.14), (70, -30, 0))),
              "sabre_mid": _with_world(dict(LEGS_SEAT, spine=(-8, -8, 6)), right(side(-0.16, -0.46, 0.36), (25, 25, 0))),

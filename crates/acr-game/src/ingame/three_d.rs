@@ -561,6 +561,11 @@ impl ThreeD {
             // The strike clip for the blow (`docs/melee.md`, Strike clips), when the model has one.
             if let Some(c) = super::strike_view::strike_clip(model, world, u) {
                 inst.clip = Some(c);
+                // A rider striking down turns his horse so the man lies at his side.
+                if let Some(yaw) = super::strike_view::strike_yaw(model, world, u, c) {
+                    let t = inst.transform[3];
+                    inst.transform = view3d::model_matrix([t[0], t[1], t[2]], yaw, 1.0);
+                }
             }
             if model.world_clock && !u.building {
                 inst.time = world_time(model, inst.clip, u, now, record.tick);
