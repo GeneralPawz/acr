@@ -39,13 +39,14 @@ pub fn spawn(future: impl Future<Output = ()> + 'static) {
     wasm_bindgen_futures::spawn_local(future);
 }
 
-/// The frames the swapchain may queue: 1, or `ACR_FRAME_LATENCY` (native, 1–3).
+/// The frames the swapchain may queue: 2, or `ACR_FRAME_LATENCY` (native, 1–3). One frame
+/// lost the device on the Snapdragon X DX12 driver within seconds (2026-10-23).
 fn frame_latency() -> u32 {
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(n) = std::env::var("ACR_FRAME_LATENCY").ok().and_then(|v| v.parse::<u32>().ok()) {
         return n.clamp(1, 3);
     }
-    1
+    2
 }
 
 pub struct Gpu {
@@ -98,8 +99,8 @@ impl Gpu {
         let mut config = surface
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
             .ok_or("surface not supported by adapter")?;
-        // Low latency (docs/rendering-3d.md, "Input latency"): one frame queued instead of
-        // two, so what the player does shows a frame sooner when the GPU is the bottleneck.
+        // Two frames queued: one (lower latency, docs/rendering-3d.md, "Input latency") lost
+        // the device on the Snapdragon X DX12 driver; the hardware cursor keeps input responsive.
         // The game prepares the next frame (simulation, models) before it asks for the
         // swapchain image, so that work still overlaps the GPU's previous frame.
         // `ACR_FRAME_LATENCY` (native) overrides it.

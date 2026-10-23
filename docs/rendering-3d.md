@@ -941,8 +941,10 @@ instance building for corpses (`3d.instances`, `models_prepare` 3.5 + 5.3 ms at 
   slowly the game draws. While a cursor's file loads it is drawn as before;
   `ACR_SOFT_CURSOR` keeps the drawn cursor, and so do the test driver (its screenshots show
   the cursor) and the browser.
-- **Frame queue:** the swapchain queues one frame (`desired_maximum_frame_latency` 1;
-  `ACR_FRAME_LATENCY` 1–3 overrides; the present mode stays the default, vsync). The game
+- **Frame queue:** the swapchain queues two frames (`desired_maximum_frame_latency` 2;
+  `ACR_FRAME_LATENCY` 1–3 overrides; the present mode stays the surface default). One
+  frame lost the GPU device within seconds on the Snapdragon X DX12 driver (2026-10-23),
+  so the default went back to two; the hardware cursor keeps the pointer responsive. The game
   runs the simulation and builds the 3D frame before it acquires the swapchain image, so
   that work still overlaps the GPU's previous frame; only the command encoding waits.
   With the GPU at 60–130 ms per frame in a big fight, a second queued frame added as much
