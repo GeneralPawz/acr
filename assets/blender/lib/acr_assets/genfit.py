@@ -8,16 +8,22 @@ thousand non-manifold edges and loose crumbs. `fit(rel)` turns it into one item:
 
 1. import, join, turn +Y-facing to -Y (Pixal3D faces the camera at +Y);
 2. repair: weld, dissolve degenerate faces, drop loose crumbs (< 5 % of the largest
-   island), fill small holes, recalculate normals (`non_manifold` before/after);
-3. orient and scale by category (`ITEMS`): headgear width along X; a held item's long axis
-   on +Z with the grip end at the origin, its blade/head width along Y; worn gear thinnest
+   island), fill small holes, recalculate normals (`non_manifold` before/after); drop the
+   white backdrop sheet Pixal3D extrudes behind an item (`drop_backdrop`), then orient again;
+3. orient and scale by category (`ITEMS`): headgear width along X; a held item's flat
+   (least-variance) side along X, the long side of its least-area outline on +Z with the
+   grip end at the origin, its blade/head width along Y (a pistol: barrel +Z, butt +Y,
+   origin at the wrist, `_butt_grip`); props stand on z = 0; worn gear thinnest
    along Y, the body side at +Y;
 4. headgear: band plane above the eyes of the MakeHuman scalp, raised until the crown
    clears it; faces inside a scalp-shaped loft (radius rings raycast from the head, plus
    `EASE`) are dropped, so the head opening fits (`band_gap_m`);
 5. collapse-decimate a seam-free copy (UVs removed, welded) to the category budget;
-6. Smart-UV, bake base colour and tangent normals from the source (Cycles, selected to
-   active), both images packed and bound to the material (no magenta);
+6. Smart-UV, bake base colour (EMIT of the source albedo: a DIFFUSE bake multiplies by
+   1 - metallic and blackened metal) and tangent normals from the source (Cycles, selected
+   to active); missed texels are measured (`tex_unbaked_frac`: transparent texels inside
+   the UV islands, margin 0) and then filled by dilation; both images packed and bound to
+   the material (no magenta). Images are PNG: the renderer decodes PNG only;
 7. origin: headgear at `socket.hat` (world position given), held items at the grip point
    (`grip_fraction`: the guard or the head along the long axis), worn gear at the middle
    of the body side; `acr_grip` / `acr_length` on the object for FABRIK grips.
@@ -40,6 +46,7 @@ CATEGORIES = {
     "headgear": {"tris": 4000, "tex": 1024},
     "held": {"tris": 1500, "tex": 512},
     "worn": {"tris": 2000, "tex": 512},
+    "prop": {"tris": 3000, "tex": 1024},
 }
 
 # Item: category, real size in m (headgear: width along X; held: length; worn: largest
@@ -93,6 +100,15 @@ ITEMS = {
     "eq_shield_chimalli": {"category": "worn", "size": 0.60, "layer": "hide"},
     "eq_shield_inca": {"category": "worn", "size": 0.50, "layer": "hide"},
     "eq_shield_round_hide": {"category": "worn", "size": 0.55, "layer": "hide"},
+    "eq_sling_inca": {"category": "held", "size": 1.00, "layer": "linen", "grip": 0.05},
+    # props (standing on the ground, size = largest extent)
+    "art_ammo_chest": {"category": "prop", "size": 0.90, "layer": "wood"},
+    "art_canister_rounds": {"category": "prop", "size": 0.30, "layer": "metal"},
+    "art_cannonballs": {"category": "prop", "size": 0.50, "layer": "metal"},
+    "art_field_gun": {"category": "prop", "size": 2.60, "layer": "wood"},
+    "art_limber": {"category": "prop", "size": 2.80, "layer": "wood"},
+    "mortar": {"category": "prop", "size": 1.00, "layer": "metal"},
+    "saddle": {"category": "prop", "size": 0.70, "layer": "leather"},
 }
 
 BAND = 0.035     # default band plane above the eye line (m)
@@ -338,6 +354,84 @@ def repair(ob, weld):
     return _non_manifold(ob.data)
 
 
+def is_backdrop(n_faces, open_edges, thin_frac):
+    """A bright face region is the image backdrop Pixal3D extrudes behind an item (a white
+    sheet) when its perimeter is open (at least sqrt(n) open edges: a sheet, not a closed
+    part such as a drum head or a pale belt) or most of it is paper-thin (two layers)."""
+    return n_faces >= 8 and (open_edges >= math.sqrt(n_faces) or thin_frac > 0.5)
+
+
+BRIGHT = 0.72     # backdrop texels: every channel at least this (sRGB) ...
+GREY = 0.10       # ... and channels within this of each other
+
+
+def drop_backdrop(ob):
+    """Deletes the white backdrop sheet (`is_backdrop`) from a repaired source; returns the
+    number of faces removed. Faces are bright by the source texture at their UV centre."""
+    import bmesh
+    import numpy as np
+    from mathutils.bvhtree import BVHTree
+
+    img = _base_image(ob)
+    if img is None or not img.size[0]:
+        return 0
+    w, h = img.size
+    px = np.empty(w * h * 4, np.float32)
+    img.pixels.foreach_get(px)
+    px = px.reshape(h, w, 4)
+    bm = bmesh.new()
+    bm.from_mesh(ob.data)
+    uvl = bm.loops.layers.uv.active
+    if uvl is None:
+        bm.free()
+        return 0
+    bm.faces.ensure_lookup_table()
+    size = max(_ext(ob))
+    bright = set()
+    for f in bm.faces:
+        u = sum(lp[uvl].uv.x for lp in f.loops) / len(f.loops)
+        v = sum(lp[uvl].uv.y for lp in f.loops) / len(f.loops)
+        c = px[min(h - 1, max(0, int((v % 1.0) * h))), min(w - 1, max(0, int((u % 1.0) * w))), :3]
+        if c.min() >= BRIGHT and c.max() - c.min() <= GREY:
+            bright.add(f.index)
+    if not bright:
+        bm.free()
+        return 0
+    tree = BVHTree.FromBMesh(bm)
+    gone, seen = [], set()
+    for i in sorted(bright):
+        if i in seen:
+            continue
+        stack, reg = [bm.faces[i]], []
+        seen.add(i)
+        while stack:
+            f = stack.pop()
+            reg.append(f)
+            for e in f.edges:
+                for g in e.link_faces:
+                    if g.index in bright and g.index not in seen:
+                        seen.add(g.index)
+                        stack.append(g)
+        open_edges = len({e.index for f in reg for e in f.edges if e.is_boundary})
+        thin = 0
+        for f in reg[:: max(1, len(reg) // 200)]:
+            c, n = f.calc_center_median(), f.normal
+            hit = tree.ray_cast(c - n * 1e-5 * size, -n, 0.004 * size)
+            thin += hit[0] is not None
+        if is_backdrop(len(reg), open_edges, thin / max(1, len(reg[:: max(1, len(reg) // 200)]))):
+            gone += reg
+    bmesh.ops.delete(bm, geom=gone, context="FACES")
+    bm.faces.ensure_lookup_table()
+    comps = _components(bm)
+    if comps:
+        bmesh.ops.delete(bm, geom=[f for c in comps[1:] if len(c) < CRUMB * len(comps[0]) for f in c], context="FACES")
+    bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context="VERTS")
+    bm.to_mesh(ob.data)
+    bm.free()
+    ob.data.update()
+    return len(gone)
+
+
 def _components(bm):
     """Connected face islands, largest first."""
     seen, out = set(), []
@@ -373,15 +467,39 @@ def _ext(ob):
     return [h - l for l, h in zip(lo, hi)]
 
 
+def min_area_angle(pts2, step_deg=1.0):
+    """Angle (radians) that turns 2D points `pts2` (n x 2 array) so their axis-aligned
+    bounding rectangle has the least area (rotating calipers by search)."""
+    import numpy as np
+
+    a = np.radians(np.arange(0.0, 90.0, step_deg))
+    c, s = np.cos(a), np.sin(a)
+    x = pts2[:, :1] * c - pts2[:, 1:] * s
+    y = pts2[:, :1] * s + pts2[:, 1:] * c
+    area = (x.max(0) - x.min(0)) * (y.max(0) - y.min(0))
+    return float(a[int(area.argmin())])
+
+
 def _align_principal(ob):
-    """Turns `ob` so its principal (longest) axis lies along Z, the second along Y."""
+    """Turns `ob` so its thinnest direction (least variance: the flat of a blade, the side
+    of a pistol) is X, and in the plane across it the least-area bounding rectangle's long
+    side is Z, the short side Y. The PCA long axis alone tilts an L-shaped item (a pistol's
+    butt pulls it off the barrel)."""
     import numpy as np
     from mathutils import Matrix
 
     v = np.array([c[:] for c in _coords(ob)])
     v = v - v.mean(0)
     w, e = np.linalg.eigh(np.cov(v.T))
-    z, y = e[:, 2], e[:, 1]
+    x, u, t = e[:, 0], e[:, 1], e[:, 2]
+    p2 = np.stack([v @ t, v @ u], 1)[:: max(1, len(v) // 8000)]
+    a = min_area_angle(p2)
+    z = math.cos(a) * t - math.sin(a) * u
+    y = math.sin(a) * t + math.cos(a) * u
+    ez = np.ptp(v @ z)
+    ey = np.ptp(v @ y)
+    if ey > ez:
+        z, y = y, -z
     x = np.cross(y, z)
     ob.data.transform(Matrix([list(x), list(y), list(z)]).to_4x4())
     ob.data.update()
@@ -415,7 +533,7 @@ def place(ob, it):
     size = ext[0] if cat == "headgear" else max(ext)
     s = it["size"] / size
     c = Vector([(a + b) / 2 for a, b in zip(lo, hi)])
-    if cat == "headgear":
+    if cat in ("headgear", "prop"):
         t = Matrix.Translation((-c.x, -c.y, -lo[2]))
     else:
         t = Matrix.Translation(-c)
@@ -448,16 +566,45 @@ def held_grip(ob, it, bins=40):
         ob.data.transform(Matrix.Rotation(math.pi, 4, "Y"))
         cs = _coords(ob)
         lo, hi = _extent(cs)
+        widths = widths[::-1]
     ob.data.transform(Matrix.Translation((0, 0, -lo[2])))
     z = frac * L
     # the grip point: middle of the cross-section at z
     band = [c for c in _coords(ob) if abs(c.z - z) < L / bins] or _coords(ob)
     gx = (max(c.x for c in band) + min(c.x for c in band)) / 2
     gy = (max(c.y for c in band) + min(c.y for c in band)) / 2
+    extra = {}
+    if it.get("grip_at") == "peak":
+        z, gy, extra = _butt_grip(ob, widths, L, bins)
+        band = [c for c in _coords(ob) if abs(c.z - z) < L / bins] or _coords(ob)
+        gx = (max(c.x for c in band) + min(c.x for c in band)) / 2
     ob.data.transform(Matrix.Translation((-gx, -gy, -z)))
     ob.data.update()
-    return {"grip_end": end, "grip_fraction": round(frac, 3), "length_m": round(L, 3),
-            "widths_cm": [round(w * 100, 1) for w in widths]}
+    return dict({"grip_end": end, "grip_fraction": round(frac, 3), "length_m": round(L, 3),
+                 "widths_cm": [round(w * 100, 1) for w in widths]}, **extra)
+
+
+def _butt_grip(ob, widths, L, bins):
+    """A pistol (`grip_at: peak`), butt end at z = 0, barrel up +Z: turns the butt to +Y
+    (`held.pistol`: the butt down and back from the grip, the barrel in front of it) and
+    returns the wrist (z, y) and stats. The barrel axis is the middle of the muzzle
+    quarter's cross-section; the wrist is the middle of the wide stretch (width at least
+    3/4 of the peak), a quarter of the way from the barrel axis to the butt's far side."""
+    from mathutils import Matrix
+
+    cs = _coords(ob)
+    muz = [c for c in cs if c.z > 0.8 * L] or cs
+    yb = (max(c.y for c in muz) + min(c.y for c in muz)) / 2
+    wide = [k for k, w in enumerate(widths) if w >= 0.75 * max(widths)]
+    z = (min(wide) + max(wide) + 1) / 2 / bins * L
+    band = [c for c in cs if abs(c.z - z) < 0.15 * L] or cs
+    lo_y, hi_y = min(c.y for c in band), max(c.y for c in band)
+    if (yb - lo_y) > (hi_y - yb):  # the butt hangs to -Y: turn it over to +Y
+        ob.data.transform(Matrix.Rotation(math.pi, 4, "Z"))
+        yb, lo_y, hi_y = -yb, -hi_y, -lo_y
+    far = hi_y
+    gy = yb + 0.25 * (far - yb)
+    return z, gy, {"butt_drop_m": round(far - yb, 3), "wrist_z_m": round(z, 3)}
 
 
 def head_of(flesh_mesh_obj, head_center=None):
@@ -553,6 +700,15 @@ def _apply_decimate(ob, tris):
     import bpy
 
     bpy.context.view_layer.objects.active = ob
+    if _tris(ob.data) > 2 * tris:
+        # flat stretches first (a blade's flats, a box's sides): merging coplanar faces costs
+        # no shape, so the collapse spends its budget on the outline and thin edges
+        m = ob.modifiers.new("flat", "DECIMATE")
+        m.decimate_type = "DISSOLVE"
+        m.angle_limit = math.radians(1)
+        bpy.ops.object.modifier_apply(modifier=m.name)
+        m = ob.modifiers.new("tri", "TRIANGULATE")
+        bpy.ops.object.modifier_apply(modifier=m.name)
     last = None
     for _ in range(16):
         n = _tris(ob.data)
@@ -574,7 +730,7 @@ def _apply_decimate(ob, tris):
         last = n
 
 
-def _bake(src, low, img, kind, reach):
+def _bake(src, low, img, kind, reach, margin=4):
     import bpy
 
     sc = bpy.context.scene
@@ -590,17 +746,95 @@ def _bake(src, low, img, kind, reach):
     src.select_set(True)
     low.select_set(True)
     bpy.context.view_layer.objects.active = low
-    kw = dict(use_selected_to_active=True, cage_extrusion=reach, max_ray_distance=2 * reach, margin=4)
-    if kind == "DIFFUSE":
-        bpy.ops.object.bake(type="DIFFUSE", pass_filter={"COLOR"}, **kw)
+    kw = dict(use_selected_to_active=True, cage_extrusion=reach, max_ray_distance=3 * reach, margin=margin)
+    if kind == "EMIT":
+        bpy.ops.object.bake(type="EMIT", **kw)
     else:
         bpy.ops.object.bake(type="NORMAL", normal_space="TANGENT", **kw)
 
 
+def _emissive(src):
+    """Turns the source's materials into pure emission of their base-colour chain. A
+    DIFFUSE colour bake multiplies by (1 - metallic): Pixal3D's metal-roughness texture made
+    helmets almost black. Emission returns the albedo as stored (sRGB in, sRGB out)."""
+    for m in src.data.materials:
+        if not (m and m.node_tree):
+            continue
+        nt = m.node_tree
+        bsdf = next((x for x in nt.nodes if x.type == "BSDF_PRINCIPLED"), None)
+        out = next((x for x in nt.nodes if x.type == "OUTPUT_MATERIAL"), None)
+        if bsdf is None or out is None:
+            continue
+        em = nt.nodes.new("ShaderNodeEmission")
+        em.inputs["Strength"].default_value = 1.0
+        bc = bsdf.inputs["Base Color"]
+        if bc.is_linked:
+            nt.links.new(bc.links[0].from_socket, em.inputs["Color"])
+        else:
+            em.inputs["Color"].default_value = bc.default_value
+        nt.links.new(em.outputs["Emission"], out.inputs["Surface"])
+
+
+def uv_mask(tris_uv, res):
+    """Boolean res x res mask (row = v) of the texels whose centres lie in any UV triangle
+    (`tris_uv`: list of three (u, v) pairs)."""
+    import numpy as np
+
+    m = np.zeros((res, res), bool)
+    for (a, b, c) in tris_uv:
+        xs = [a[0] * res - 0.5, b[0] * res - 0.5, c[0] * res - 0.5]
+        ys = [a[1] * res - 0.5, b[1] * res - 0.5, c[1] * res - 0.5]
+        x0, x1 = max(0, int(math.floor(min(xs)))), min(res - 1, int(math.ceil(max(xs))))
+        y0, y1 = max(0, int(math.floor(min(ys)))), min(res - 1, int(math.ceil(max(ys))))
+        if x1 < x0 or y1 < y0:
+            continue
+        gx, gy = np.meshgrid(np.arange(x0, x1 + 1), np.arange(y0, y1 + 1))
+        d = (ys[1] - ys[2]) * (xs[0] - xs[2]) + (xs[2] - xs[1]) * (ys[0] - ys[2])
+        if abs(d) < 1e-12:
+            continue
+        l1 = ((ys[1] - ys[2]) * (gx - xs[2]) + (xs[2] - xs[1]) * (gy - ys[2])) / d
+        l2 = ((ys[2] - ys[0]) * (gx - xs[2]) + (xs[0] - xs[2]) * (gy - ys[2])) / d
+        e = -1e-6
+        m[y0:y1 + 1, x0:x1 + 1] |= (l1 >= e) & (l2 >= e) & (1 - l1 - l2 >= e)
+    return m
+
+
+def dilate_fill(rgb, known, steps=64):
+    """Fills texels not `known` (bool h x w) of `rgb` (h x w x 3) with the mean of their
+    known 8-neighbours, ring by ring, until all are known or `steps` rings are done.
+    Returns the filled array and the known mask after."""
+    import numpy as np
+
+    rgb = rgb.copy()
+    known = known.copy()
+    for _ in range(steps):
+        if known.all():
+            break
+        acc = np.zeros_like(rgb)
+        cnt = np.zeros(known.shape)
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                if dy == 0 and dx == 0:
+                    continue
+                k = np.roll(np.roll(known, dy, 0), dx, 1)
+                acc += np.roll(np.roll(rgb, dy, 0), dx, 1) * k[..., None]
+                cnt += k
+        new = (~known) & (cnt > 0)
+        if not new.any():
+            break
+        rgb[new] = acc[new] / cnt[new][:, None]
+        known = known | new
+    return rgb, known
+
+
 def bake(src, low, name, tex, reach):
-    """Smart-UV on `low`, bakes base colour and normals from `src`, and binds both images
-    (packed) in one Principled material: colour → Base Color, normal → Normal Map."""
+    """Smart-UV on `low`, bakes base colour (emission of the source albedo) and normals from
+    `src`, and binds both images (packed) in one Principled material: colour → Base Color,
+    normal → Normal Map. The colour bake has no margin into a transparent image, so texels
+    the rays missed stay transparent: `unbaked` is their share of the texels inside the UV
+    islands. Then misses and the margins are filled from baked neighbours (dilation)."""
     import bpy
+    import numpy as np
 
     bpy.ops.object.select_all(action="DESELECT")
     low.select_set(True)
@@ -617,22 +851,31 @@ def bake(src, low, name, tex, reach):
     bake_node.name = "genfit.bake"
     low.data.materials.clear()
     low.data.materials.append(mat)
-    simg = _base_image(src)
-    fill = (0.5, 0.5, 0.5, 1.0)
-    if simg is not None and simg.size[0]:
-        px = simg.pixels[:]
-        k = max(1, len(px) // 4 // 4096)
-        r = sorted(px[i * 4] for i in range(0, len(px) // 4, k))
-        g = sorted(px[i * 4 + 1] for i in range(0, len(px) // 4, k))
-        b = sorted(px[i * 4 + 2] for i in range(0, len(px) // 4, k))
-        fill = (r[len(r) // 2], g[len(g) // 2], b[len(b) // 2], 1.0)
-    col = bpy.data.images.new(name + ".col", tex, tex)
-    col.generated_color = fill
+    _emissive(src)
+    col = bpy.data.images.new(name + ".col", tex, tex, alpha=True)
+    col.generated_color = (0.0, 0.0, 0.0, 0.0)
     nrm = bpy.data.images.new(name + ".nrm", tex, tex)
     nrm.generated_color = (0.5, 0.5, 1.0, 1.0)
     nrm.colorspace_settings.name = "Non-Color"
-    _bake(src, low, col, "DIFFUSE", reach)
+    _bake(src, low, col, "EMIT", reach, margin=0)
     _bake(src, low, nrm, "NORMAL", reach)
+    px = np.empty(tex * tex * 4, np.float32)
+    col.pixels.foreach_get(px)
+    px = px.reshape(tex, tex, 4)
+    known = px[..., 3] > 0.5
+    uvl = low.data.uv_layers.active.data
+    tris = [tuple(tuple(uvl[li].uv) for li in p.loop_indices[:3]) for p in low.data.polygons if p.loop_total == 3]
+    tris += [(tuple(uvl[p.loop_indices[0]].uv), tuple(uvl[p.loop_indices[k]].uv), tuple(uvl[p.loop_indices[k + 1]].uv))
+             for p in low.data.polygons if p.loop_total > 3 for k in range(1, p.loop_total - 1)]
+    mask = uv_mask(tris, tex)
+    unbaked = float((mask & ~known).sum()) / max(1, int(mask.sum()))
+    fill = tuple(float(np.median(px[..., i][known])) if known.any() else 0.5 for i in range(3)) + (1.0,)
+    rgb, k2 = dilate_fill(px[..., :3], known)
+    rgb[~k2] = fill[:3]
+    px[..., :3] = rgb
+    px[..., 3] = 1.0
+    col.pixels.foreach_set(px.ravel())
+    col.update()
     bsdf = nt.nodes["Principled BSDF"]
     bsdf.inputs["Roughness"].default_value = 0.85
     bake_node.image = col
@@ -644,12 +887,7 @@ def bake(src, low, name, tex, reach):
     nt.links.new(nm.outputs["Normal"], bsdf.inputs["Normal"])
     for im in (col, nrm):
         im.pack()
-    # texels still the fill colour: not reached by the bake
-    cp = col.pixels[:]
-    step = max(1, len(cp) // 4 // 20000)
-    idx = range(0, len(cp) // 4, step)
-    same = sum(1 for i in idx if abs(cp[i * 4] - fill[0]) + abs(cp[i * 4 + 1] - fill[1]) + abs(cp[i * 4 + 2] - fill[2]) < 1e-4)
-    return mat, col, nrm, round(same / len(idx), 3), fill
+    return mat, col, nrm, round(unbaked, 4), fill
 
 
 def _deviation(src, low, cutter=None, n=6000):
@@ -691,6 +929,10 @@ def fit(rel, head=None, socket=None, scalp=None, name=None, keep_source=False):
     st.update(place(src, it))
     weld = WELD
     nm1 = repair(src, weld)
+    st["backdrop_faces_removed"] = drop_backdrop(src)
+    if st["backdrop_faces_removed"]:
+        # the backdrop sheet skewed the box: orient and scale again without it
+        st.update(place(src, it))
     st["source_islands"] = _islands(src.data)
     if cat == "held":
         st.update(held_grip(src, it))
@@ -744,7 +986,7 @@ def fit(rel, head=None, socket=None, scalp=None, name=None, keep_source=False):
         st["band_gap_m"] = {"min": round(gaps[0], 4), "median": round(gaps[len(gaps) // 2], 4)} if gaps else None
     lo, hi = _extent(_coords(low))
     size = max(h - l for l, h in zip(lo, hi))
-    _mat, col, _nrm, unbaked, fill = bake(src, low, name, budget["tex"], max(0.004, 0.015 * size))
+    _mat, col, _nrm, unbaked, fill = bake(src, low, name, budget["tex"], max(0.004, 0.02 * size))
     st["tex_px"] = budget["tex"]
     st["tex_unbaked_frac"] = unbaked
     low["acr_fill_rgb"] = list(fill[:3])

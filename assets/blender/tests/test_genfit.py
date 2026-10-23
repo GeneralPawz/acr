@@ -113,5 +113,43 @@ class Grip(unittest.TestCase):
         self.assertLess(f, 0.1)
 
 
+class Backdrop(unittest.TestCase):
+    def test_sheet_vs_closed(self):
+        self.assertTrue(genfit.is_backdrop(400, 80, 0.0))     # open sheet
+        self.assertTrue(genfit.is_backdrop(400, 0, 0.9))      # two-layer paper sheet
+        self.assertFalse(genfit.is_backdrop(400, 3, 0.1))     # drum head, pale belt
+        self.assertFalse(genfit.is_backdrop(4, 4, 1.0))       # a speck
+
+
+try:
+    import numpy as np
+except ImportError:  # the Blender-free test run may lack numpy
+    np = None
+
+
+@unittest.skipIf(np is None, "numpy")
+class Raster(unittest.TestCase):
+    def test_min_area_angle(self):
+        # a 1 x 0.1 bar turned by 30 degrees comes back axis-aligned
+        t = np.radians(30)
+        pts = np.array([[x, y] for x in np.linspace(-0.5, 0.5, 21) for y in (-0.05, 0.05)])
+        r = pts @ np.array([[np.cos(t), np.sin(t)], [-np.sin(t), np.cos(t)]])
+        a = genfit.min_area_angle(r)
+        self.assertAlmostEqual(min(abs(np.degrees(a) - d) for d in (30, 60, 120)), 0, delta=1.0)
+
+    def test_uv_mask(self):
+        m = genfit.uv_mask([((0, 0), (1, 0), (0, 1))], 16)
+        self.assertEqual(int(m.sum()), 136)  # texel centres on or below the diagonal
+
+    def test_dilate_fill(self):
+        rgb = np.zeros((8, 8, 3))
+        known = np.zeros((8, 8), bool)
+        rgb[0, 0] = (1, 0.5, 0)
+        known[0, 0] = True
+        out, k = genfit.dilate_fill(rgb, known)
+        self.assertTrue(k.all())
+        self.assertTrue(np.allclose(out[4, 4], (1, 0.5, 0)))
+
+
 if __name__ == "__main__":
     unittest.main()
