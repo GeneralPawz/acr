@@ -80,6 +80,10 @@ The user's build reads `C:\Users\verwalter\WIP\ACR-analysis\showcase\models\<nam
 2. Delete `models\<name>.glb`, then copy the new glb in. Never write over it in place (`cp` onto it, `Set-Content`, `>`): that rewrites every linked copy, the backups included.
 3. Say in your report which files went in and where the backup is. `acr-vm-drive` syncs the showcase models up before each run.
 
+## Known open defects
+
+Read [references/open-defects.md](references/open-defects.md) before working on humans: shared bugs with their workarounds, and the rebuild debt.
+
 ## Pitfalls (from history; each one cost a rebuild)
 
 1. `Mesh.materials.clear()` also drops the `material_index` attribute in Blender 5.2: every face falls to slot 0 and the exporter drops the unused slots (drum, musket, saddle in one colour; 9883ad7). Use `held.set_materials(mesh, mats)`.

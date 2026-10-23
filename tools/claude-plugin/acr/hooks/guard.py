@@ -61,6 +61,9 @@ def main():
     is_subagent = bool(data.get("agent_id") or data.get("agent_type"))
     in_acr = bool(re.search(r"(?i)[\\/]ACR(-wt[\\/][^\\/\s\"']+|[\\/]|$|\s|\")", cwd + " " + cmd)) or "ACR-wt" in cwd
 
+    # Anywhere in the command, also inside a quoted VM command (acr-vm-cargo -- '...').
+    if re.search(r"xtask\s+assets\b[^;&|\n]*\s(--help|-h)\b", cmd):
+        block("Blocked: `cargo xtask assets --help` builds every asset (also on the VM). Read xtask/src/assets.rs instead.")
     for seg in SEGMENT_SPLIT.split(cmd):
         toks = tokens(seg)
         if not toks:
