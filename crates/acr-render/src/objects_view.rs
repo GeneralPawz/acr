@@ -31,6 +31,8 @@ pub struct ObjectsView {
     dynamic: Vec<SceneSprite>,
     /// The zoomed-out view: sprites come from their `L_Mode` twins.
     pub zoomed: bool,
+    /// Frames left out of the scene, see [`ObjectsView::set_hidden`].
+    hidden: std::collections::HashSet<crate::scene::FrameKey>,
 }
 
 impl Default for ObjectsView {
@@ -52,6 +54,7 @@ impl ObjectsView {
             dynamic_units: false,
             dynamic: Vec::new(),
             zoomed: false,
+            hidden: Default::default(),
         }
     }
 
@@ -148,8 +151,9 @@ impl ObjectsView {
             return;
         }
         self.waiting = false;
-        let scene =
+        let mut scene =
             if self.dynamic_units { self.assets.static_scene(map, terrain) } else { self.assets.scene(map, terrain) };
+        scene.set_hidden(self.hidden.clone());
         if !scene.missing.is_empty() {
             log::warn!("objects without a sprite: {:?}", scene.missing);
         }
@@ -165,6 +169,14 @@ impl ObjectsView {
             // Frames are uploaded as they are first drawn ([`ObjectsView::render`]).
             self.atlas = Some(self.assets.atlas(renderer, device, queue));
         }
+    }
+
+    /// Static sprites of these frames are left out (map objects drawn as models).
+    pub fn set_hidden(&mut self, frames: std::collections::HashSet<crate::scene::FrameKey>) {
+        if let Some(scene) = self.scene.as_mut() {
+            scene.set_hidden(frames.clone());
+        }
+        self.hidden = frames;
     }
 
     pub fn count(&self) -> usize {

@@ -21,6 +21,7 @@ parameters: [assets-humans.md](assets-humans.md).
 | `camera` | `fixed`, `free` | `fixed` | `free`: the camera turns and tilts (below) |
 | `shadows` | `on`, `off` | `on` | sun shadows of the 3D models on the ground and on each other (below); tests switch them with `ACR_SHADOWS=on\|off` or the driver's `{"cmd": "shadows", "on": false}` |
 | `wind` | `on`, `off` | `on` | wind sways trees and foliage that carry `_WIND` weights (below, "Wind"); the driver's `props` request takes `"wind": false` |
+| `map_models` | `on`, `off` | `on` | the map's trees and stones are drawn as models where `assets/nature/map_objects.json` names one (below, "Map trees and stones"); the driver's `{"cmd": "map_models", "on": false}` switches it |
 | `ground` | `detailed`, `original` | `detailed` | the ground in 3D mode (`models` not `off` or `camera=free`): material textures over the original tiles, [ground.md](ground.md); sprite mode always draws the original |
 | `gore` | `full`, `reduced`, `off` | `full` | 3D corpses: `full` decompose (#178), `reduced` discolour, collapse and sink without dissolving, `off` fade like the original (every other pixel once the death counter passes 100) |
 | `battlefield_marks` | `fade`, `keep` | `fade` | `keep`: craters, scuffs, blood splatter and pools and the debris of the fallen stay for the whole battle (below, "Kept battlefield marks") |
@@ -262,13 +263,52 @@ drawn with the same `vs_main`, sways too):
 direction (`WIND_DIR`, from the west-north-west), strength `s` (`WIND_STRENGTH` 1; 0 with
 `wind=off`) and the clock (frame seconds summed in `ThreeD::tick`, wrapping at an hour).
 
-Map trees are still sprites; the driver places tree models with `{"cmd": "props", "model":
+Map trees with a model in `map_objects.json` are drawn as models (next section); the driver places tree models with `{"cmd": "props", "model":
 "broadleaf", "at": [[x, y], ...], "wind": true}` (render only; a standing tree drops its
 `.felled` and `.stump` nodes). Cost (render VM, RX 9060 XT, blank grass field, 420 broadleaf
 trees ≈ 730 k triangles at zoom 1, `gputime` 120 frames, two runs each, steps in
 `ACR-analysis/genai/wind/steps/field_{on,off}.json`): all passes 0.69–1.54 ms with wind,
 0.86–0.89 ms without: no cost above the run-to-run noise. The vertex grows by 4 bytes
 (120 instead of 116).
+
+### Map trees and stones
+
+`map_models=on` (`ingame/map_models.rs`, render only): the map's `TREELIST` and `STONLIST`
+objects (`World::objects`, static for the whole battle) are drawn as models where
+`assets/nature/map_objects.json` names one; the others keep their sprite.
+
+- **Table** (compiled in with `include_str!`): `{"TREELIST": {"104": "broadleaf", "10-14":
+  {"model": "pine", "scale": 1.2}}, "STONLIST": {...}}`. Keys are sprite indices (the frame
+  of `TREES.GP` / `STONES.GP`, the line of the `.LST`) or ranges; the model name is the stem
+  of `ACR\Models\<name>.glb` (`target/assets/nature/<name>.glb`); keys starting with `_`
+  are comments. The models are loaded like units' (lazily, on first need) and drop their
+  `.felled` and `.stump` nodes.
+- **Scale:** `scale` from the table, else fitted to the sprite: the frame's opaque top above
+  its ground point (`DY − min y` of the frame box, screen pixels) / cos 30° over the model's
+  rest height (`ModelData::rest_height`) × 30 px/m, clamped to 0.25–4.
+- **Place and turn:** at the object's ground point (`view3d::ground_point`, terrain height),
+  standing (`#STAND`, time 0), turned by the props' hash of the place
+  (`map_models::turn`), never the sim RNG. Wind and shadows come with the model's `_WIND`
+  weights and the shadow map.
+- **Sprites:** the replaced frames go to `ObjectsView::set_hidden` (kept over scene
+  rebuilds); `Scene::visible` leaves them out, also in the zoomed-out view. `models=off` or
+  `map_models=off` brings every sprite back at once.
+- **Cost:** the transforms are built once per map and model set (`MapModels::place`); per
+  frame only the objects inside the view's ground rectangle (`View3d::ground_bounds` up to
+  2000 px high, plus 600 px for crowns and shadows) become instances (`3d.map_objects`).
+- `game.log` names the densest 1024 px cell of trees and the most used tree types of the map
+  (`3d: map trees: ...`), for tests and for filling the table.
+
+Cost (render VM, RX 9060 XT, release, 1600 × 900, random map seed 5, fog off, fixed camera at
+zoom 1 on the densest wood `[11776, 14848]`, every `TREELIST` type mapped to `broadleaf`:
+8379 objects as models; `gputime` and `profile` over 120 frames, off/on/off/on, two runs;
+steps in `ACR-analysis/genai/mapobj/steps/perf.json`):
+
+| | off | on |
+|---|---|---|
+| GPU, all passes | 0.38–0.46 ms | 0.83–0.93 ms (models 0.35, shadow map 0.17, ground shadows 0.08; sprites 0.16 → 0.03) |
+| CPU `3d.map_objects` | – | 0.05–0.08 ms |
+| CPU `render.models_prepare` | 0.17–0.22 ms | 0.33–0.44 ms |
 
 ### Animation states (#166)
 

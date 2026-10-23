@@ -723,6 +723,21 @@ impl ModelData {
         self.clips.iter().position(|c| c.name.eq_ignore_ascii_case(name))
     }
 
+    /// The top of the rest pose above the model's origin, in metres (glTF +y).
+    pub fn rest_height(&self) -> f32 {
+        let palette = self.pose(None, 0.0);
+        let mut top: f32 = 0.0;
+        for p in &self.primitives {
+            for v in &p.vertices {
+                let rows = &palette[v.joints[0] as usize];
+                let y =
+                    rows[1][0] * v.position[0] + rows[1][1] * v.position[1] + rows[1][2] * v.position[2] + rows[1][3];
+                top = top.max(y);
+            }
+        }
+        top
+    }
+
     fn rest_radius(&self) -> f32 {
         let palette = self.pose(None, 0.0);
         let mut r: f32 = 0.0;

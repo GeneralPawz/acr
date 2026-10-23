@@ -514,6 +514,13 @@ impl MissionLink {
         self.scripts.as_ref().and_then(|s| s.state().fog.as_ref()).or(self.fog.as_ref())
     }
 
+    /// Reveals the whole map from the next tick on, as on the blank field (the driver's
+    /// `fog` request).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_open_fog(&mut self, open: bool) {
+        self.open_fog = open;
+    }
+
     /// The fog to draw: none on a revealed map (the driver's blank field).
     pub fn drawn_fog(&self) -> Option<&acr_sim::fog::Fog> {
         self.fog().filter(|_| !self.open_fog)

@@ -1,0 +1,13 @@
+{
+  "_doc": "Map objects drawn as 3D models: TREELIST/STONLIST sprite index or range -> model name (target/assets/nature/<name>.glb), or {\"model\": name, \"scale\": s}. docs/rendering-3d.md \"Map trees and stones\". Stub (leafy TREES.GP frames) until the nature models land.",
+  "TREELIST": {
+    "2-12": "broadleaf",
+    "17-20": "broadleaf",
+    "23-25": "broadleaf",
+    "33-37": "broadleaf",
+    "40-47": "broadleaf",
+    "53-55": "broadleaf",
+    "98-110": "broadleaf"
+  },
+  "STONLIST": {}
+}

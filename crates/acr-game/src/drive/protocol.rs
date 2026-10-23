@@ -221,6 +221,10 @@ pub enum Request {
     },
     /// Sun shadows forced on or off over the setting (`None`: the setting again).
     Shadows(Option<bool>),
+    /// The fog of war on or off (off: the whole map revealed, as on the blank field).
+    Fog(bool),
+    /// The map's trees and stones as models switched on or off over `map_models`.
+    MapModels(bool),
     /// Trees or foliage drawn at ground points (render only): `model` (a `.glb` name),
     /// `at` (`[[x, y], ...]` world pixels), `wind` (bool over the setting).
     Props {
@@ -558,6 +562,8 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
             Request::Camera { x: x as i32, y: y as i32, zoom: num("zoom").map(|z| z as f32), lift, orbit }
         }
         "shadows" => Request::Shadows(v.get("on").and_then(Value::as_bool)),
+        "fog" => Request::Fog(v.get("on").and_then(Value::as_bool).unwrap_or(true)),
+        "map_models" => Request::MapModels(v.get("on").and_then(Value::as_bool).unwrap_or(true)),
         "props" => Request::Props {
             model: string(&v, "model").ok_or("props: missing \"model\"")?,
             at: v

@@ -112,6 +112,18 @@ impl InGame {
         };
     }
 
+    /// The whole map revealed or the fog of war again (`drive` `fog`).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_open_fog(&mut self, open: bool) {
+        self.mission.set_open_fog(open);
+    }
+
+    /// The map's trees and stones as models on or off (`drive` `map_models`).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_map_models(&mut self, on: bool) {
+        self.three_d.set_map_models(on);
+    }
+
     /// The pose held for a unit, if any.
     #[cfg(not(target_arch = "wasm32"))]
     /// Trees or foliage of model `name` at these ground points (render only; `drive` `props`).

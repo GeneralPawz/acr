@@ -78,6 +78,10 @@ struct Gear {
 
 /// The `gore.glb` pack (#262): gibs, guts and the stump cap.
 const GORE: &str = "GORE";
+/// Culling of map objects drawn as models (`update_models`): the highest ground plus a tall
+/// crown (true world pixels), and the margin for crowns and shadows reaching into the view.
+const MAP_VIEW_TOP: f32 = 2000.0;
+const MAP_VIEW_MARGIN: f32 = 600.0;
 /// The wind (docs/rendering-3d.md "Wind"): world direction (unit; from the west-north-west),
 /// strength (1: a fresh breeze, ~0.13 m of lean and rock at a 5 m crown) and the period the
 /// shader's clock wraps at (seconds; f32 keeps its sines smooth well below it).
@@ -140,6 +144,14 @@ pub struct ThreeD {
     /// Trees and foliage placed by the driver (`props`, render only): model `NAME` and
     /// ground points (world pixels). Map trees are still sprites.
     props: Vec<(String, [i32; 2])>,
+    /// The map's trees and stones drawn as models (`map_models=on|off`, docs/rendering-3d.md
+    /// "Map trees and stones").
+    map_models: super::map_models::MapModels,
+    /// Rest heights (metres) of the models placed for map objects, by model index.
+    map_heights: HashMap<usize, f32>,
+    /// The world rectangle `[x0, y0, x1, y1]` this frame can show map objects in (set by
+    /// `update_models`; `None`: all).
+    pub(super) map_view: Option<[f32; 4]>,
     /// The water surface (`water=detailed`, docs/water.md); `ACR_WATER` wins.
     water_detailed: bool,
     water: Option<acr_render::water::WaterRenderer>,
@@ -251,6 +263,9 @@ impl Default for ThreeD {
             wind_override: None,
             wind_clock: 0.0,
             props: Vec::new(),
+            map_models: super::map_models::MapModels::new(),
+            map_heights: HashMap::new(),
+            map_view: None,
             water_detailed: true,
             water: None,
             water_view: Default::default(),
@@ -322,6 +337,7 @@ impl ThreeD {
         self.shadows = settings.shadows;
         self.lod = settings.lod;
         self.wind = settings.wind;
+        self.map_models.on = settings.map_models;
         self.water_detailed = settings.water_detailed;
         self.corpse_ticks = u64::from(settings.corpse_minutes) * 60 * acr_sim::ORIGINAL_TICKS_PER_SECOND as u64;
         self.free = settings.camera == CameraMode::Free;
@@ -513,7 +529,8 @@ impl ThreeD {
             }
             // A tree drawn standing: its felled and stump states are left out (`acr_state`
             // groups, docs/assets.md "States").
-            let model = if self.props.iter().any(|(n, _)| *n == name) {
+            let model = if self.props.iter().any(|(n, _)| *n == name) || self.map_models.names().contains(name.as_str())
+            {
                 model.without_nodes(|n| n.contains(".felled") || n.contains(".stump"))
             } else {
                 model
@@ -575,6 +592,9 @@ impl ThreeD {
         self.shown.clear();
         self.drawn.clear();
         self.request_ground(request);
+        if self.models == Models::Off || !self.map_models.on {
+            self.map_models.clear();
+        }
         if self.models == Models::Off {
             return;
         }
@@ -1057,6 +1077,10 @@ impl ThreeD {
             }
         }
         self.draw_props(terrain, request);
+        {
+            acr_sim::prof_scope!("3d.map_objects");
+            self.draw_map_objects(world, terrain, objects, request);
+        }
         // Every decal lies on the slope under it rather than flat at one height (#226).
         super::splatter::lay_on_ground(&mut self.pools, &ground);
         // The kept marks were laid when they were kept.
@@ -1247,6 +1271,84 @@ impl ThreeD {
                 uniform: None,
             });
         }
+    }
+
+    /// The map's trees and stones whose sprite type has a model (`map_models`): standing, at
+    /// time 0, turned by a hash of the place and scaled to the sprite's height.
+    fn draw_map_objects(
+        &mut self,
+        world: &World,
+        terrain: &TerrainData,
+        objects: &ObjectsView,
+        request: &dyn Fn(&str),
+    ) {
+        if !self.map_models.on || world.objects.is_empty() {
+            return;
+        }
+        let mut ready: HashMap<String, (usize, f32)> = HashMap::new();
+        let names: Vec<String> = self.map_models.names().into_iter().map(str::to_owned).collect();
+        for name in names {
+            let Some(path) = self.files.get(name.as_str()) else { continue };
+            match self.loaded.get(name.as_str()) {
+                Some(Some(i)) => {
+                    let Some(model) = self.renderer.as_ref().and_then(|r| r.model(*i)) else { continue };
+                    let height = *self.map_heights.entry(*i).or_insert_with(|| model.rest_height());
+                    ready.insert(name, (*i, height));
+                }
+                Some(None) => {}
+                None => {
+                    let key = acr_formats::normalize_path(path);
+                    if !self.requested.contains_key(&key) && !self.parsed.iter().any(|(n, _)| *n == name) {
+                        self.requested.insert(key, name.clone());
+                        request(path);
+                    }
+                }
+            }
+        }
+        self.map_models.place(&world.objects, &ready, objects.objects(), objects.ready(), terrain);
+        let Some(renderer) = self.renderer.as_ref() else { return };
+        let [x0, y0, x1, y1] = self.map_view.unwrap_or([f32::MIN, f32::MIN, f32::MAX, f32::MAX]);
+        let mut clips: HashMap<usize, Option<usize>> = HashMap::new();
+        for &(index, transform) in &self.map_models.placed {
+            let [x, y] = [transform[3][0], transform[3][1]];
+            if x < x0 || x > x1 || y < y0 || y > y1 {
+                continue;
+            }
+            let clip = match clips.get(&index) {
+                Some(c) => *c,
+                None => {
+                    let Some(model) = renderer.model(index) else { continue };
+                    *clips.entry(index).or_insert(model.clip_for_animation("#STAND"))
+                }
+            };
+            self.instances.push(ModelInstance {
+                model: index,
+                clip,
+                time: 0.0,
+                transform,
+                decay: 0.0,
+                morphs: [0.0; 2],
+                transparent: false,
+                player: 0,
+                wounds: Default::default(),
+                sprayed: Default::default(),
+                damage: Default::default(),
+                look: None,
+                uniform: None,
+            });
+        }
+    }
+
+    /// `map_models` on or off (the setting, or the driver).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_map_models(&mut self, on: bool) {
+        self.map_models.on = on;
+    }
+
+    /// The sprite frames now drawn as models, once they changed (for
+    /// [`ObjectsView::set_hidden`]).
+    pub fn take_map_hidden(&mut self) -> Option<HashSet<acr_render::scene::FrameKey>> {
+        std::mem::take(&mut self.map_models.hidden_changed).then(|| self.map_models.hidden.clone())
     }
 
     /// Asks for `gore.glb` (gibs, guts, the stump cap) once gore is shown.
@@ -1605,10 +1707,19 @@ impl super::InGame {
         let [w, h] = window;
         let c = self.camera;
         self.three_d.focus = [c.x + w / (2.0 * c.scale), 2.0 * (c.y + h / (2.0 * c.scale))];
+        // Map objects whose ground point is up to `MAP_VIEW_MARGIN` beyond what the view shows of
+        // ground up to `MAP_VIEW_TOP` high: tall crowns and long shadows reach in.
+        let view = View3d { camera: c, size: window, orbit: self.three_d.orbit() };
+        let [x0, y0, x1, y1] = view.ground_bounds(-100.0, MAP_VIEW_TOP);
+        self.three_d.map_view =
+            Some([x0 - MAP_VIEW_MARGIN, y0 - MAP_VIEW_MARGIN, x1 + MAP_VIEW_MARGIN, y1 + MAP_VIEW_MARGIN]);
         let requests = &self.requests;
         {
             acr_sim::prof_scope!("3d.update");
             self.three_d.update(world, terrain, &self.objects, &|p| requests.borrow_mut().push(p.to_owned()));
+        }
+        if let Some(hidden) = self.three_d.take_map_hidden() {
+            self.objects.set_hidden(hidden);
         }
         acr_sim::prof_scope!("3d.particles");
         self.three_d.update_particles(world, terrain, self.ground_marks.as_mut());

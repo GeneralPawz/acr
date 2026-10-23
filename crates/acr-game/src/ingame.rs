@@ -37,6 +37,7 @@ mod gun_marks;
 mod interface;
 mod kept_marks;
 mod living_wounds;
+mod map_models;
 mod maul_view;
 mod panels;
 mod particle_view;

@@ -862,6 +862,20 @@ impl Driver {
                 job.steps.push_back(Step::Frame);
                 Ok(true)
             }
+            Request::Fog(on) => {
+                let Mode::InGame(g) = &mut game.mode else { return Err("no game".into()) };
+                g.set_open_fog(!on);
+                job.reply.insert("fog".into(), Value::Bool(on));
+                job.steps.push_back(Step::Frame);
+                Ok(true)
+            }
+            Request::MapModels(on) => {
+                let Mode::InGame(g) = &mut game.mode else { return Err("no game".into()) };
+                g.set_map_models(on);
+                job.reply.insert("map_models".into(), Value::Bool(on));
+                job.steps.push_back(Step::Frame);
+                Ok(true)
+            }
             Request::Props { model, at, wind } => {
                 let Mode::InGame(g) = &mut game.mode else { return Err("no game".into()) };
                 job.reply.insert("props".into(), json!(at.len()));

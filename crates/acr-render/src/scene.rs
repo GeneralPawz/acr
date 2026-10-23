@@ -341,6 +341,9 @@ pub struct Scene {
     sorted_from: usize,
     /// Objects without a known look, by kind.
     pub missing: HashMap<String, usize>,
+    /// Frames of map objects drawn as models instead (docs/rendering-3d.md "Map trees and
+    /// stones"): left out of [`Scene::visible`].
+    hidden: HashSet<FrameKey>,
 }
 
 impl Scene {
@@ -404,7 +407,13 @@ impl Scene {
         }
         sprites.sort_by_key(SceneSprite::key);
         let sorted_from = sprites.iter().position(|s| s.layer == Layer::Sorted).unwrap_or(sprites.len());
-        Self { sprites, sorted_from, missing }
+        Self { sprites, sorted_from, missing, hidden: HashSet::new() }
+    }
+
+    /// Leaves the static sprites of these frames out from now on (map objects drawn as
+    /// models); an empty set draws every sprite again.
+    pub fn set_hidden(&mut self, frames: HashSet<FrameKey>) {
+        self.hidden = frames;
     }
 
     pub fn sprites(&self) -> &[SceneSprite] {
@@ -438,8 +447,9 @@ impl Scene {
             lo..hi
         };
         let (g, s) = (rows(ground), rows(sorted));
+        let hidden = &self.hidden;
         ground[g].iter().chain(&sorted[s]).filter_map(move |s| {
-            if (s.x as f32) < x0 || (s.x as f32) > x1 {
+            if (s.x as f32) < x0 || (s.x as f32) > x1 || (!hidden.is_empty() && hidden.contains(&s.frame)) {
                 return None;
             }
             let [px, py] = camera.project(s.x, s.y, 0);
@@ -785,6 +795,16 @@ impl MapObjects {
         let base = atlas.atlas.frame_count();
         renderer.extend(device, queue, &mut atlas.atlas, &decoded);
         atlas.index.extend(keys.into_iter().enumerate().map(|(i, k)| (k, base + i)));
+    }
+
+    /// The sprite list of a map object group (`TREELIST.LST`, ...), once loaded.
+    pub fn list(&self, group: SpriteGroup) -> Option<&SpriteList> {
+        self.lists.get(&group)
+    }
+
+    /// The opaque box `(min_x, min_y, max_x, max_y)` of a loaded frame.
+    pub fn frame_bounds(&self, (pack, frame): &FrameKey) -> Option<(i32, i32, i32, i32)> {
+        self.decode_one(pack, *frame)?.bounds()
     }
 
     /// The `L_Mode` twin of a frame, if its pack is loaded and has the frame.
@@ -1283,10 +1303,11 @@ LOCATION -400 -300 900 700
 
     #[test]
     fn dynamic_sprites_merge_into_draw_order() {
-        let scene = Scene {
+        let mut scene = Scene {
             sprites: vec![sprite(Layer::Ground, 5), sprite(Layer::Sorted, 10), sprite(Layer::Sorted, 30)],
             sorted_from: 1,
             missing: HashMap::new(),
+            hidden: HashSet::new(),
         };
         let mut extra = [sprite(Layer::Sorted, 20)];
         extra[0].frame.1 = 1;
@@ -1300,6 +1321,10 @@ LOCATION -400 -300 900 700
             merged.iter().map(|s| s.sort).collect()
         };
         assert_eq!(order, vec![5, 10, 20, 30]);
+        // Frames drawn as models instead (map objects) are left out.
+        scene.set_hidden(HashSet::from([("A.GP".to_owned(), 0)]));
+        let camera = Camera { x: -100.0, y: -100.0, scale: 1.0 };
+        assert_eq!(scene.visible(&camera, [800.0, 600.0], 256.0).count(), 0);
     }
 
     #[test]
@@ -1315,6 +1340,7 @@ LOCATION -400 -300 900 700
             ],
             sorted_from: 2,
             missing: HashMap::new(),
+            hidden: HashSet::new(),
         };
         let unit = [named("ENGM18.GP", Layer::Sorted, 20)];
         let camera = Camera { x: -100.0, y: -100.0, scale: 1.0 };
