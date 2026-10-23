@@ -232,6 +232,7 @@ impl Game {
         }
         self.load_requested();
         self.play_sounds();
+        self.audio.report();
         if let Mode::InGame(game) = &self.mode
             && let Some(reason) = game.failure()
         {

@@ -35,22 +35,53 @@ pub struct Mixer {
     /// Loudness (RMS, 0..=1) of the sound effects in the last rendered block, after
     /// `sfx_volume`, without the music: for ducking other applications' music.
     pub sfx_level: f32,
+    /// Output meter since the last [`Mixer::take_meter`]: for the log, to tell silence
+    /// from a device that never pulls samples.
+    meter: Meter,
+}
+
+/// What the mixer rendered since the meter was last read.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Meter {
+    /// Calls of [`Mixer::render`] (device callbacks).
+    pub blocks: u32,
+    /// Output frames rendered.
+    pub frames: u64,
+    /// Largest absolute output sample (after clamping).
+    pub peak: f32,
+    /// Sound effects started.
+    pub started: u32,
 }
 
 impl Mixer {
     /// `rate` is the output sample rate.
     pub fn new(rate: u32) -> Self {
-        Self { rate, voices: Vec::new(), next_id: 0, music: None, sfx_volume: 1.0, music_volume: 0.7, sfx_level: 0.0 }
+        Self {
+            rate,
+            voices: Vec::new(),
+            next_id: 0,
+            music: None,
+            sfx_volume: 1.0,
+            music_volume: 0.7,
+            sfx_level: 0.0,
+            meter: Meter::default(),
+        }
     }
 
     pub fn rate(&self) -> u32 {
         self.rate
     }
 
+    /// The output sample rate changed (the device was opened again).
+    pub fn set_rate(&mut self, rate: u32) {
+        self.rate = rate.max(1);
+    }
+
     /// Starts a sound. `pan` ranges from -1 (left) to 1 (right).
     pub fn play(&mut self, sound: Sound, volume: f32, pan: f32) -> VoiceId {
         let id = VoiceId(self.next_id);
         self.next_id += 1;
+        self.meter.started += 1;
         let pan = pan.clamp(-1.0, 1.0);
         let gain = [volume * (1.0 - pan.max(0.0)), volume * (1.0 + pan.min(0.0))];
         self.voices.push(Voice { id, sound, position: 0.0, gain });
@@ -77,6 +108,16 @@ impl Mixer {
         });
     }
 
+    /// The meter since the last call, then reset.
+    pub fn take_meter(&mut self) -> Meter {
+        std::mem::take(&mut self.meter)
+    }
+
+    /// Sound effects playing now.
+    pub fn voice_count(&self) -> usize {
+        self.voices.len()
+    }
+
     /// True while music is set and has not run out.
     pub fn music_playing(&self) -> bool {
         self.music.is_some()
@@ -84,6 +125,14 @@ impl Mixer {
 
     /// Fills `out` (interleaved, `channels` per frame) with the mix, overwriting it.
     pub fn render(&mut self, out: &mut [f32], channels: u16) {
+        self.mix(out, channels);
+        out.iter_mut().for_each(|s| *s = s.clamp(-1.0, 1.0));
+        self.meter.blocks += 1;
+        self.meter.frames += (out.len() / usize::from(channels.max(1))) as u64;
+        self.meter.peak = out.iter().fold(self.meter.peak, |p, s| p.max(s.abs()));
+    }
+
+    fn mix(&mut self, out: &mut [f32], channels: u16) {
         out.fill(0.0);
         let channels = usize::from(channels.max(1));
         let frames = out.len() / channels;
@@ -143,7 +192,6 @@ impl Mixer {
                 music.position += step;
             }
         }
-        out.iter_mut().for_each(|s| *s = s.clamp(-1.0, 1.0));
     }
 }
 
@@ -165,6 +213,18 @@ mod tests {
         assert_eq!(out, [0.5, 0.5, 0.5, 0.5]);
         m.render(&mut out, 2);
         assert!(!m.is_playing(id));
+    }
+
+    #[test]
+    fn meter_counts_blocks_and_peak() {
+        let mut m = Mixer::new(100);
+        m.play(sound(100, &[16384, -24576, 0]), 1.0, 0.0);
+        let mut out = [0.0; 2];
+        m.render(&mut out, 1);
+        m.render(&mut out, 1);
+        let meter = m.take_meter();
+        assert_eq!((meter.blocks, meter.frames, meter.peak, meter.started), (2, 4, 0.75, 1));
+        assert_eq!(m.take_meter(), Meter::default());
     }
 
     #[test]

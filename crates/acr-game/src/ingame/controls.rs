@@ -1,14 +1,16 @@
 //! ACR's optional modern controls (#129, see docs/controls.md): the mouse wheel zooms about
 //! the point under the cursor, Ctrl + left drag and middle drag pan the map, W/A/S/D pan
 //! like the arrow keys, Home centres the selection and a control group digit pressed twice
-//! centres the group. The original controls stay the default and are not changed by any of
+//! centres the group, Ctrl + click takes units out of the selection. The original controls stay the default and are not changed by any of
 //! this: every entry point here returns at once unless the modern scheme is chosen.
 
 use acr_render::terrain::Camera;
+use acr_sim::world::EntityId;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 
-use super::interface::GameKey;
+use super::interface::{GameKey, corrected_selection};
 use super::{CLICK_SLOP, InGame};
+use crate::hud::HudCommand;
 use crate::ui::Ctx;
 use crate::ui::settings::{Controls, Settings};
 
@@ -62,6 +64,32 @@ pub(super) fn dragged(start: Camera, from: [f32; 2], at: [f32; 2]) -> Camera {
 pub(super) fn wheel_zoom(level: f32, lines: f32) -> f32 {
     let next = (level * ZOOM_STEP.powf(lines)).clamp(MIN_ZOOM, MAX_ZOOM);
     if next.log2().abs() < 0.02 { 1.0 } else { next }
+}
+
+/// `selected` without the units a Ctrl + click on the map hit (`hit`, the units a plain click
+/// there would select): those, the formations grouped with theirs and every member of
+/// their formations (also the officer and drummer a plain click leaves out).
+pub(super) fn deselected(world: &acr_sim::World, own: u8, selected: &[EntityId], hit: Vec<EntityId>) -> Vec<EntityId> {
+    let hit = corrected_selection(world, own, hit);
+    let brigades: Vec<u16> = hit.iter().filter_map(|&id| world.unit(id)?.brigade).collect();
+    let in_hit_brigade =
+        |id: EntityId| world.unit(id).is_some_and(|u| u.brigade.is_some_and(|b| brigades.contains(&b)));
+    selected.iter().copied().filter(|&id| !hit.contains(&id) && !in_hit_brigade(id)).collect()
+}
+
+/// The selected units an icon of the selection panel or the army list stands for: a type
+/// icon its free units of that type, a formation icon its members. `None` for other icons.
+pub(super) fn icon_units(world: &acr_sim::World, selected: &[EntityId], command: &HudCommand) -> Option<Vec<EntityId>> {
+    let of = |f: &dyn Fn(&acr_sim::Unit) -> bool| {
+        selected.iter().copied().filter(|&id| world.unit(id).is_some_and(f)).collect::<Vec<_>>()
+    };
+    match command {
+        HudCommand::SelectType(kind) => Some(of(&|u| u.brigade.is_none() && u.kind.0 as usize == *kind)),
+        HudCommand::SelectBrigade(b) | HudCommand::ArmySelect { brigade: b, .. } => {
+            Some(of(&|u| u.brigade == Some(*b)))
+        }
+        _ => None,
+    }
 }
 
 /// What starts a pan.
@@ -119,6 +147,30 @@ impl InGame {
     /// The modern controls are chosen.
     pub(super) fn modern(&self) -> bool {
         self.interface.modern.scheme == Controls::Modern
+    }
+
+    /// A click now takes units out of the selection: modern controls, Ctrl held (without
+    /// Shift or Alt).
+    pub(super) fn ctrl_deselects(&self) -> bool {
+        let mods = self.interface.mods;
+        self.modern() && mods.control_key() && !mods.shift_key() && !mods.alt_key()
+    }
+
+    /// A Ctrl + click on the map (modern controls) on a selected unit: the unit leaves the
+    /// selection with its whole formation. True if it did; otherwise (nothing selected hit,
+    /// or a building, rally, patrol or attack-ground click pending) it is a plain click.
+    pub(super) fn ctrl_click_deselect(&mut self) -> bool {
+        let i = &self.interface;
+        if !self.ctrl_deselects() || i.placing.is_some() || i.rally_mode || i.patrol_mode || i.attack_ground_mode {
+            return false;
+        }
+        let (Some(at), Some(world)) = (self.cursor, &self.world) else { return false };
+        let hit = self.pick(at, at);
+        if !hit.iter().any(|id| self.selected.contains(id)) {
+            return false;
+        }
+        self.selected = deselected(world, self.own(), &self.selected, hit);
+        true
     }
 
     /// Takes the control scheme of the options. Back to the original controls, the view
@@ -379,6 +431,65 @@ mod tests {
         // Zooming in and out again returns to the same camera.
         let there = zoom_about(zoom_about(camera, [300.0, 200.0], 2.0), [300.0, 200.0], 1.0);
         assert!(near(there.x, camera.x) && near(there.y, camera.y));
+    }
+
+    #[test]
+    fn ctrl_click_takes_formations_and_types_out() {
+        use acr_formats::defs::{OrderGroups, OrderList, UnitDef};
+        use acr_sim::catalog::{Catalog, ObjectType};
+        use acr_sim::formation::Formations;
+        use acr_sim::map::MapGrid;
+        use acr_sim::{Command, Pos};
+        use std::sync::Arc;
+        let mut c = Catalog::new();
+        let def = |extra: &str| {
+            format!(
+                "NAME X\r\nUSERLC 0 G SHADOW 0 0\r\n#STAND 9 1 0 0\r\n@MOTION_L 9 0 0 9\r\n@MOTION_R 9 0 10 19\r\n\
+                 LIFE 100\r\nGEOMETRY 1 10 40\r\n{extra}[END]\r\n"
+            )
+        };
+        let mus = c.add(ObjectType::from_def("Mus(EN)", &UnitDef::parse(def("").as_bytes())));
+        let off = c.add(ObjectType::from_def("Off(EN)", &UnitDef::parse(def("OFFICER\r\n").as_bytes())));
+        let horse = c.add(ObjectType::from_def("Dra(EN)", &UnitDef::parse(def("").as_bytes())));
+        let f = Formations::new(
+            &OrderList::parse(
+                b"#LINE15 SYM2 19 2 9 3 1 2\r\n   C   C   C\r\n      \r\n***************\r\n#END\r\n#EXIT\r\n",
+            ),
+            &OrderGroups::parse(b"1\r\nLINE 0 1 #LINE15\r\n"),
+        );
+        let mut w = acr_sim::World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(f));
+        let officer = w.spawn(off, 0, Pos::from_pixels(1500, 2000), 0);
+        let soldiers: Vec<EntityId> =
+            (0..15).map(|i| w.spawn(mus, 0, Pos::from_pixels(1400 + 20 * (i % 5), 2100 + 20 * (i / 5)), 0)).collect();
+        w.step(&[Command::Form { player: 0, officer, units: soldiers.clone(), kind: "LINE".into() }]);
+        let b = w.unit(soldiers[0]).unwrap().brigade.expect("formed");
+        let horses: Vec<EntityId> = (0..3).map(|i| w.spawn(horse, 0, Pos::from_pixels(900 + 40 * i, 900), 0)).collect();
+        let free_mus = w.spawn(mus, 0, Pos::from_pixels(700, 700), 0);
+        let mut selected = vec![officer];
+        selected.extend(&soldiers);
+        selected.extend(&horses);
+        selected.push(free_mus);
+
+        // A click on one horse takes that horse out; on a soldier, the whole formation with
+        // its officer.
+        let kept = deselected(&w, 0, &selected, vec![horses[1]]);
+        assert_eq!(kept.len(), selected.len() - 1);
+        assert!(!kept.contains(&horses[1]));
+        let kept = deselected(&w, 0, &selected, vec![soldiers[4]]);
+        assert_eq!(kept, [horses[0], horses[1], horses[2], free_mus]);
+
+        // The horses' type icon: the free horses; the formation's icon: all its members. The
+        // free musketeer of the formation's type stays out of the formation's icon.
+        let units = icon_units(&w, &selected, &HudCommand::SelectType(horse.0 as usize)).unwrap();
+        assert_eq!(units, horses);
+        let units = icon_units(&w, &selected, &HudCommand::SelectType(mus.0 as usize)).unwrap();
+        assert_eq!(units, [free_mus]);
+        let units = icon_units(&w, &selected, &HudCommand::SelectBrigade(b)).unwrap();
+        assert_eq!(units.len(), 16);
+        assert!(!units.contains(&free_mus));
+        let army = icon_units(&w, &selected, &HudCommand::ArmySelect { brigade: b, add: false }).unwrap();
+        assert_eq!(army, units);
+        assert_eq!(icon_units(&w, &selected, &HudCommand::Fill), None);
     }
 
     #[test]

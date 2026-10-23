@@ -22,6 +22,10 @@ pub struct Audio {
     external: bool,
     #[cfg(not(target_arch = "wasm32"))]
     ducker: Option<crate::spotify::SpotifyDucker>,
+    /// When the output meter was last logged.
+    reported: web_time::Instant,
+    /// When a lost output was last looked after.
+    recovered: web_time::Instant,
 }
 
 impl Audio {
@@ -37,6 +41,7 @@ impl Audio {
             .collect();
         let seed =
             web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0);
+        log::info!("audio: {} music track(s)", tracks.len());
         let mut rng = Rng::new(seed, 1);
         for i in (1..tracks.len()).rev() {
             tracks.swap(i, rng.below(i as u32 + 1) as usize);
@@ -51,7 +56,39 @@ impl Audio {
             external: false,
             #[cfg(not(target_arch = "wasm32"))]
             ducker: None,
+            reported: web_time::Instant::now(),
+            recovered: web_time::Instant::now(),
         }
+    }
+
+    /// Once a frame: reopens a lost output (every 2 s until it works) and every 10 s logs
+    /// what reached the device (blocks, peak, underruns) and what played.
+    pub fn report(&mut self) {
+        let Some(output) = &mut self.output else { return };
+        let now = web_time::Instant::now();
+        if now.duration_since(self.recovered).as_secs_f32() >= 2.0 {
+            self.recovered = now;
+            output.recover();
+        }
+        if now.duration_since(self.reported).as_secs_f32() < 10.0 {
+            return;
+        }
+        self.reported = now;
+        let underruns = output.take_underruns();
+        let Ok(mut mixer) = output.mixer.lock() else { return };
+        let meter = mixer.take_meter();
+        log::info!(
+            "audio: {} block(s), {} frame(s) at {} Hz, peak {:.3}, {underruns} underrun(s), {} effect(s) started, {} playing, music {}, volumes {:.2}/{:.2}",
+            meter.blocks,
+            meter.frames,
+            mixer.rate(),
+            meter.peak,
+            meter.started,
+            mixer.voice_count(),
+            if mixer.music_playing() { "on" } else { "off" },
+            mixer.sfx_volume,
+            mixer.music_volume,
+        );
     }
 
     /// Opens the audio device. In the browser this must run inside a user gesture.
@@ -61,6 +98,7 @@ impl Audio {
         }
         match AudioOutput::start() {
             Ok(output) => {
+                log::info!("audio: output started");
                 self.output = Some(output);
                 self.set_volumes(self.volumes.0, self.volumes.1);
                 self.set_external(self.external);
@@ -132,6 +170,7 @@ impl Audio {
         match (VorbisMusic::new(bytes.to_vec()), &self.output) {
             (Ok(music), Some(output)) => {
                 if let Ok(mut mixer) = output.mixer.lock() {
+                    log::info!("audio: music {path}");
                     mixer.set_music(Some(Box::new(music)));
                 }
             }
