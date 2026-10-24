@@ -742,6 +742,7 @@ impl Driver {
                         hud,
                         corpse_decay_half,
                         decay_stain,
+                        ground_cover,
                     } => {
                         // Human players only: no AI gives orders, no start units come.
                         let players = (0..players)
@@ -768,6 +769,7 @@ impl Driver {
                             if let Some(on) = decay_stain {
                                 g.set_decay_stain(on);
                             }
+                            g.set_ground_cover(ground_cover);
                         }
                         if let Some(half) = corpse_decay_half {
                             use acr_render::model::{HALF_DECAY, set_decay_cap};
@@ -956,7 +958,9 @@ impl Driver {
                     // The blank field, white unless asked, without HUD; then the units.
                     let ground = v.get("ground").cloned().unwrap_or_else(|| json!("white"));
                     let mut blank = json!({"ground": ground, "hud": false, "players": 1});
-                    for k in ["size", "hit_locations", "body_spacing", "mortars", "corpse_piles", "nation"] {
+                    for k in
+                        ["size", "hit_locations", "body_spacing", "mortars", "corpse_piles", "nation", "ground_cover"]
+                    {
                         if let Some(x) = v.get(k) {
                             blank[k] = x.clone();
                         }

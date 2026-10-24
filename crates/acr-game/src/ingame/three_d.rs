@@ -316,6 +316,11 @@ pub struct ThreeD {
     cover: acr_render::ground_cover::GroundCover,
     cover_renderer: Option<acr_render::ground_cover::GroundCoverRenderer>,
     pub(super) cover_view: Option<View3d>,
+    /// The frame shows a flat backdrop instead of the ground (`InGame::backdrop`: the blank
+    /// field's `white` and `greenscreen`): no cover there, whatever the tile class says.
+    pub(super) backdrop: bool,
+    /// The driver's `ground_cover` (`blank`, `studio`) over the setting and the backdrop.
+    pub(super) cover_forced: Option<bool>,
     /// Rain, snow or fog (#224, `weather` setting; the driver's `weather` overrides it).
     weather: Weather,
     weather_override: Option<Weather>,
@@ -458,6 +463,8 @@ impl Default for ThreeD {
             cover: Default::default(),
             cover_renderer: None,
             cover_view: None,
+            backdrop: false,
+            cover_forced: None,
             weather: Weather::Off,
             weather_override: None,
             weather_renderer: None,
@@ -1676,10 +1683,11 @@ impl ThreeD {
         }
     }
 
-    /// Whether the ground cover draws: the setting (or `ACR_GROUND_COVER`), the detailed
-    /// ground with its marks, not zoomed out (`cover_view`) and no snow.
+    /// Whether the ground cover draws: `ACR_GROUND_COVER`, else the driver's `ground_cover`,
+    /// else the setting on a real ground (none under a flat backdrop); and the detailed ground
+    /// with its marks, not zoomed out (`cover_view`) and no snow.
     fn cover_on(&self) -> bool {
-        ground_cover_override().unwrap_or(self.ground_cover)
+        ground_cover_override().or(self.cover_forced).unwrap_or(self.ground_cover && !self.backdrop)
             && self.ground_marks
             && self.cover_view.is_some()
             && self.weather() != Weather::Snow
@@ -1687,6 +1695,18 @@ impl ThreeD {
 
     /// Places the ground cover around this frame's view (`ground_cover.rs`).
     fn update_cover(&mut self, terrain: &TerrainData, state: Option<&acr_render::ground_state::GroundState>) {
+        let class = |x: f32, y: f32| acr_render::ground::class_of(terrain.tile_at(x as i32, y as i32));
+        let height = |x: f32, y: f32| super::particle_view::ground_z(terrain, x, y);
+        self.place_cover(&class, &height, state);
+    }
+
+    /// [`Self::update_cover`] over any ground: `class` and `height` at a world point.
+    fn place_cover(
+        &mut self,
+        class: &dyn Fn(f32, f32) -> u8,
+        height: &dyn Fn(f32, f32) -> f32,
+        state: Option<&acr_render::ground_state::GroundState>,
+    ) {
         let view = match self.cover_view {
             Some(v) if self.cover_on() && acr_render::ground_cover::zoom_fade(v.camera.scale) > 0.0 => v,
             _ => {
@@ -1695,10 +1715,8 @@ impl ThreeD {
             }
         };
         acr_sim::prof_scope!("3d.ground_cover");
-        let class = |x: f32, y: f32| acr_render::ground::class_of(terrain.tile_at(x as i32, y as i32));
-        let height = |x: f32, y: f32| super::particle_view::ground_z(terrain, x, y);
         let seconds = self.started.elapsed().as_secs_f32();
-        self.cover.update(&view, seconds, &class, &height, state);
+        self.cover.update(&view, seconds, class, height, state);
     }
 
     /// Body physics of the hit and the dying (#278): ragdolls pose their instances.
@@ -2397,6 +2415,7 @@ impl super::InGame {
         // ground up to `MAP_VIEW_TOP` high: tall crowns and long shadows reach in.
         let view = View3d { camera: c, size: window, orbit: self.three_d.orbit() };
         self.three_d.cover_view = (!self.interface.hud.zoom).then_some(view);
+        self.three_d.backdrop = self.backdrop().is_some();
         let [x0, y0, x1, y1] = view.ground_bounds(-100.0, MAP_VIEW_TOP);
         self.three_d.map_view =
             Some([x0 - MAP_VIEW_MARGIN, y0 - MAP_VIEW_MARGIN, x1 + MAP_VIEW_MARGIN, y1 + MAP_VIEW_MARGIN]);
@@ -2417,4 +2436,35 @@ impl super::InGame {
 /// skeleton (marks and torn volumes only).
 fn wound_rig(model: &acr_render::model::ModelData) -> Option<&acr_render::damage::Rig> {
     model.rig.as_ref().or(model.beast_rig.as_ref())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::setup::Ground;
+
+    /// The blank field's ground under the view at its centre, as `InGame` sets it up.
+    fn blank_cover(ground: Ground, forced: Option<bool>) -> usize {
+        let mut t = ThreeD { ground_marks: true, cover_forced: forced, ..Default::default() };
+        let camera = Camera { x: 7680.0 - 800.0, y: 3840.0 - 450.0, scale: 1.0 };
+        t.cover_view = Some(View3d { camera, size: [1600.0, 900.0], orbit: None });
+        t.backdrop = crate::blank_map::backdrop(ground).is_some();
+        let class = acr_render::ground::class_of(crate::blank_map::texture(ground));
+        t.place_cover(&|_, _| class, &|_, _| 0.0, None);
+        t.cover.instances().0.len()
+    }
+
+    #[test]
+    fn no_ground_cover_on_a_backdrop() {
+        if ground_cover_override().is_some() {
+            return;
+        }
+        // Grass grows on the green field; white and greenscreen are that field under a flat
+        // colour, so nothing grows there unless the driver asks for it.
+        assert!(blank_cover(Ground::Grass, None) > 0);
+        assert_eq!(blank_cover(Ground::White, None), 0);
+        assert_eq!(blank_cover(Ground::Greenscreen, None), 0);
+        assert!(blank_cover(Ground::White, Some(true)) > 0);
+        assert_eq!(blank_cover(Ground::Grass, Some(false)), 0);
+    }
 }

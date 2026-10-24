@@ -149,6 +149,9 @@ pub enum Start {
         corpse_decay_half: Option<bool>,
         /// `"decay_stain": "on"|"off"` overrides the setting (`decay_stain`).
         decay_stain: Option<bool>,
+        /// `"ground_cover": true|false` (or `"on"|"off"`) overrides the setting
+        /// (`ground_cover`); unset, a `white` or `greenscreen` ground has none.
+        ground_cover: Option<bool>,
     },
 }
 
@@ -366,6 +369,12 @@ pub(super) fn blank(b: &Value) -> Result<Start, String> {
         hud: b.get("hud").and_then(Value::as_bool).unwrap_or(true),
         corpse_decay_half: b.get("corpse_decay").and_then(Value::as_str).map(|v| v == "half"),
         decay_stain: b.get("decay_stain").and_then(Value::as_str).map(|v| v == "on"),
+        ground_cover: match b.get("ground_cover") {
+            None | Some(Value::Null) => None,
+            Some(Value::Bool(on)) => Some(*on),
+            Some(Value::String(v)) if v == "on" || v == "off" => Some(v == "on"),
+            Some(_) => return Err("blank: ground_cover is true, false, \"on\" or \"off\"".into()),
+        },
     })
 }
 
@@ -762,6 +771,7 @@ mod tests {
             hud: true,
             corpse_decay_half: None,
             decay_stain: None,
+            ground_cover: None,
         }) = r
         else {
             panic!()
@@ -773,6 +783,9 @@ mod tests {
         let (_, r) = parse(r#"{"cmd": "start", "blank": {"size": "large", "hill": {"height": 50}}}"#).unwrap();
         let Request::Start(Start::Blank { setup, .. }) = r else { panic!() };
         assert_eq!(setup.hill, Some((15360, 15360, 600, 50)));
+        let (_, r) = parse(r#"{"cmd": "start", "blank": {"ground": "white", "ground_cover": "on"}}"#).unwrap();
+        let Request::Start(Start::Blank { ground_cover, .. }) = r else { panic!() };
+        assert_eq!(ground_cover, Some(true));
         assert!(parse(r#"{"cmd": "start", "blank": {"ground": "lava"}}"#).is_err());
         let (_, r) = parse(r#"{"cmd": "start", "blank": {"ground": "greenscreen", "hud": false}}"#).unwrap();
         let Request::Start(Start::Blank { setup, hud: false, .. }) = r else { panic!() };

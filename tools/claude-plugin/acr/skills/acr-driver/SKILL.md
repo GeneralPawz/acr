@@ -36,7 +36,7 @@ The blank field's `centre` is `[7680, 7680]` (normal size). `dir` runs 0..255: 0
 
 | Request | Use |
 |---|---|
-| `start` + `blank`: `ground` (grass, dirt, snow, white, greenscreen), `hud`, `hit_locations`, `body_spacing`, `editor`, `slope`, `hill`, `water`, `corpse_decay`, `decay_stain` | the field |
+| `start` + `blank`: `ground` (grass, dirt, snow, white, greenscreen), `hud`, `hit_locations`, `body_spacing`, `editor`, `slope`, `hill`, `water`, `corpse_decay`, `decay_stain`, `ground_cover` (off on white/greenscreen unless `true`) | the field |
 | `spawn`: `type` (catalog id or a part, e.g. `EngM18`, `ArtPus`, `AnmMedSm`), `x`, `y`, `dir`, `owner`, `pose` (stand, walk, crawl), `lost`, `wounds`, `life`, `hold_fire`, `resources` | one unit; the answer gives `unit.id` |
 | `camera`: `x`, `y`, `zoom` (5 means a man about 270 px tall), `yaw_deg` (0 = looks north), `pitch_deg` (10 = near side view), `lift` (px above ground, 27 = waist) | close-up; `"free": true` for free orbit |
 | `hit`: `unit`, `cause` (musket, arrow, cannonball, grapeshot, shell, sabre, bayonet, axe, claw), `region` or `part` + `level`, `dir`, `energy`, `damage` (1000 kills) | a scripted hit through the real injury path |
@@ -56,7 +56,7 @@ The best tool for looking at models and animations. These commands need `--drive
 
 | Request | Use |
 |---|---|
-| `{"cmd":"studio","ground":"white","units":[{"type":"EngM18","x":7680,"y":7680,"dir":0}]}` | a blank field with only these units, HUD off, sim held; answers the ids and a framing camera |
+| `{"cmd":"studio","ground":"white","units":[{"type":"EngM18","x":7680,"y":7680,"dir":0}]}` | a blank field with only these units, HUD off, sim held, no ground cover on white (`"ground_cover":true` adds it); answers the ids and a framing camera |
 | `{"cmd":"pose","id":0,"clip":"ATTACK1","frame":12}` (or `"t"` in seconds, `"phase"` 0..1; `"run":true`, `"release":true`) | holds the model at that clip time |
 | `{"cmd":"camera","frame":[0],"view":"side","part":"hands","margin":0.15}` | fits the posed model or a part (hands, head, feet, weapon) into the window. Views: front, back, side (his right), three_quarter, top; relative to his facing |
 | `{"cmd":"sheet","path":"s.png","ids":[0],"views":["front","side","three_quarter"],"clips":[{"clip":"ATTACK1","frames":[0,10,20]}],"cell":[360,500]}` | a labelled grid rendered in the game: rows are unit × time, columns are views |

@@ -235,13 +235,29 @@ impl InGame {
         self.objects.start_effects(&|p| self.requests.borrow_mut().push(p.to_owned()));
     }
 
-    /// Sounds started by the game since the last call.
+    /// The flat colour drawn instead of the ground, if any (the blank field's `white` and
+    /// `greenscreen`). Nothing grows on it: the 3D view drops its ground cover then.
+    fn backdrop(&self) -> Option<wgpu::Color> {
+        match &self.setup.kind {
+            GameKind::Blank(b) => crate::blank_map::backdrop(b.ground).map(|[r, g, b]| wgpu::Color { r, g, b, a: 1.0 }),
+            _ => None,
+        }
+    }
+
+    /// The driver's `ground_cover`: forces the ground cover on or off for this game (`None`:
+    /// the setting, none under a backdrop).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_ground_cover(&mut self, on: Option<bool>) {
+        self.three_d.cover_forced = on;
+    }
+
     /// Turns the decay stains on or off for this game (the driver's `decay_stain`).
     #[cfg(not(target_arch = "wasm32"))]
     pub fn set_decay_stain(&mut self, on: bool) {
         self.three_d.set_decay_stain(on);
     }
 
+    /// Sounds started by the game since the last call.
     pub fn take_sound_events(&mut self) -> Vec<SoundEvent> {
         std::mem::take(&mut self.sound_events)
     }
@@ -987,6 +1003,7 @@ impl InGame {
         view: &wgpu::TextureView,
         size: [f32; 2],
     ) {
+        let backdrop = self.backdrop();
         if let Some(renderer) = &mut self.renderer {
             renderer.zoomed = self.interface.hud.zoom;
             renderer.orbit = self.three_d.orbit();
@@ -995,12 +1012,7 @@ impl InGame {
             if let Some(images) = self.three_d.take_ground() {
                 renderer.set_materials(device, queue, &images);
             }
-            renderer.backdrop = match &self.setup.kind {
-                GameKind::Blank(b) => {
-                    crate::blank_map::backdrop(b.ground).map(|[r, g, b]| wgpu::Color { r, g, b, a: 1.0 })
-                }
-                _ => None,
-            };
+            renderer.backdrop = backdrop;
             renderer.render(device, queue, encoder, view, size, &self.camera);
         }
         self.objects.zoomed = self.interface.hud.zoom;

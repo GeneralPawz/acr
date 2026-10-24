@@ -241,12 +241,15 @@ every texture 0, no sprites, no units, an empty `SEA2`; `acr-game/src/blank_map.
 | `hud` | `false` hides the interface from the start, like `{"cmd": "hud", "on": false}` |
 | `corpse_decay` | `full` or `half`: overrides the setting ([rendering-3d.md](rendering-3d.md)) |
 | `decay_stain` | `on` or `off`: overrides the setting (the ground stains under decaying corpses, [rendering-3d.md](rendering-3d.md#decay-stains)) |
+| `ground_cover` | `true`/`false` (or `on`/`off`): overrides the setting (grass, flowers, ferns, [ground.md](ground.md) "Phase 5: ground cover"); unset: off on `white` and `greenscreen`, else the setting. `ACR_GROUND_COVER` still wins |
 
 **`white` and `greenscreen`**: the ground is cleared to pure white (255, 255, 255) or pure
 green (0, 255, 0) instead of drawn: no texture, noise, relief light, water tint or fog. The
 terrain still gives the 3D pass its depth, so models stand on it as usual (keep these
 fields flat: a slope would only show in the units' feet). With `hud` off the frames hold
 the units and the backdrop only, for checking animations frame by frame or keying them out.
+No ground cover grows on a backdrop (anything that draws one drops it, `InGame::backdrop`)
+unless `ground_cover` asks for it; trample marks, craters and blood still draw as before.
 
 A second `start` in the same driver process does not load yet: run one process per field.
 `ACR-analysis/bench/bench_blank.py` (`python -I bench_blank.py [out_dir]`) places a bear
@@ -287,7 +290,7 @@ path) and `models=all` in the settings (the VM's showcase settings have it).
   `owner` 0) and holds the simulation unless `"run": true`. It answers once every unit is
   drawn as a model, with the `units` (ids) and a `camera` framing them all (`view`,
   default `three_quarter`). `light` is accepted; the light is the game's fixed sun. `size`,
-  `nation`, `hit_locations`, `body_spacing` pass through to the field. It loads the whole
+  `nation`, `hit_locations`, `body_spacing`, `ground_cover` pass through to the field. It loads the whole
   game as the blank start does: about 0.5 s on the VM (loading only the listed models is
   a later optimisation).
 - **`pose`**: `id`, `clip` (a clip name of the unit's model; default the clip shown) and
