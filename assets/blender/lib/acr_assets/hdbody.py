@@ -2,21 +2,26 @@
 
 MakeHuman 1.x base mesh (CC0) at full resolution with its UVs, young male targets, reposed
 onto skeleton H (`mbody.repose`), finger bones refitted to MakeHuman's finger joints, heat
-weights (4 per vertex) with the finger joints sharpened, Catmull-Clark level 1, knuckles and
-palm creases, then a symmetric collapse to about `MASTER_TRIS`. Skin: the MakeHuman CC0
+weights with the finger joints sharpened, Catmull-Clark level 1, knuckles and palm creases,
+then a symmetric collapse to about `MASTER_TRIS` with the UV seams locked; weights limited to
+4 per vertex and normalised after every collapse (`limit_weights`), meshes parented to the
+armature. Skin: the MakeHuman CC0
 diffuse upscaled to 4k with the portrait blended into the face, a physically scaled
 micro-normal (`micro_height`: grain, furrows and pores in millimetres over the real texel
 size, a few degrees of normal tilt, not the old cobbled bump) and a roughness with an oily
-T-zone. LODs come from the weighted base cage, decimated with the UV seams and borders
-locked (`seam_lock`), each with its own baked normal and albedo.
+T-zone. LODs come from the weighted base cage: a free collapse to the target (locking the
+source seams cannot reach 800: they alone hold 1,122 vertices), then fresh UVs cut along the
+source seams (`lod_seams`) and an angle-based unwrap, and normal and albedo baked from the
+master into each LOD's own atlas (512 px for the 800 crowd level).
 
 Sources are local-only (`ACR_SOURCES/makehuman/`: `data/3dobjs/base.obj`, the two macro
 targets, `young_lightskinned_male_diffuse.png`; the portrait from `generated/faces`). The
 numpy parts below need no `bpy` and are tested in `tests/test_hdbody.py`.
 
 stats (`ctx.stats["hd"]`): `master_tris`, `lod_tris`, `uv_seam_integrity` (share of
-triangles per mesh whose corners and centre lie in one UV island of the source),
-`uv_islands`, `unweighted_verts`, `micro_normal_deg` (mean and p99 tilt), `finger_verts`.
+triangles per mesh whose corners and centre lie in one UV island: for the master against the source atlas, for a LOD against its own), `uv_flipped`,
+`uv_islands`, `unweighted_verts`, `weights` (per mesh: max influences, max sum error),
+`lod_unwrap`, `lod_seam_edges`, `micro_normal_deg` (mean and p99 tilt), `finger_verts`.
 """
 
 import math
@@ -192,12 +197,19 @@ def seam_integrity(raster, tri_uv):
     return float(ok.mean())
 
 
-def uv_flipped(tri_uv):
-    """Triangles wound against the majority in UV space (folded UVs)."""
+def flipped_index(tri_uv):
+    """Indices of the triangles wound against the majority in UV space (folded UVs)."""
     uv = np.asarray(tri_uv, float)
+    if not len(uv):
+        return np.zeros(0, int)
     s = (uv[:, 1, 0] - uv[:, 0, 0]) * (uv[:, 2, 1] - uv[:, 0, 1]) - (uv[:, 2, 0] - uv[:, 0, 0]) * (uv[:, 1, 1] - uv[:, 0, 1])
     pos, neg = int((s > 0).sum()), int((s < 0).sum())
-    return min(pos, neg)
+    return np.nonzero(s < 0 if pos >= neg else s > 0)[0]
+
+
+def uv_flipped(tri_uv):
+    """Count of triangles wound against the majority in UV space (folded UVs)."""
+    return len(flipped_index(tri_uv))
 
 
 def seam_vertices(tri_uv, tri_v):
@@ -216,6 +228,33 @@ def seam_vertices(tri_uv, tri_v):
         if k == 1:
             out.update((a, b))
     return sorted(out)
+
+
+def bary_uv(p, tri_p, tri_uv):
+    """UV at point `p` from one triangle (corner positions (3, 3), corner UVs (3, 2)): `p`
+    projected onto the triangle's plane, barycentric weights (extrapolated outside it)."""
+    a, b, c = (np.asarray(x, float) for x in tri_p)
+    v0, v1, v2 = b - a, c - a, np.asarray(p, float) - a
+    d00, d01, d11 = v0 @ v0, v0 @ v1, v1 @ v1
+    d20, d21 = v2 @ v0, v2 @ v1
+    den = d00 * d11 - d01 * d01
+    if abs(den) < 1e-18:
+        return np.asarray(tri_uv, float).mean(0)
+    v = (d11 * d20 - d01 * d21) / den
+    w = (d00 * d21 - d01 * d20) / den
+    t = np.asarray(tri_uv, float)
+    return (1 - v - w) * t[0] + v * t[1] + w * t[2]
+
+
+SEAM_JUMP = 0.04  # UV distance (atlas units) that marks a source seam between two LOD faces
+
+
+def limit_influences(groups, limit=4):
+    """[(group, weight)] of one vertex: the `limit` strongest, summing to 1 (the renderer
+    skins 4 joints; the exporter would otherwise drop the weakest silently)."""
+    g = sorted(((int(k), float(w)) for k, w in groups if w > 0), key=lambda t: (-t[1], t[0]))[:limit]
+    s = sum(w for _k, w in g)
+    return [(k, w / s) for k, w in g] if s > 0 else []
 
 
 def chain_weights(s, joints, band):
@@ -576,8 +615,7 @@ def build_master(ctx, arm, portrait=None, master_tris=MASTER_TRIS):
     body.select_set(True)
     arm.select_set(True)
     bpy.context.view_layer.objects.active = arm
-    bpy.ops.object.parent_set(type="ARMATURE_AUTO")
-    body.parent = ctx.root
+    bpy.ops.object.parent_set(type="ARMATURE_AUTO")  # parented to the armature (glTF skin)
     st["finger_verts"] = _sharpen_fingers(body, arm)
     bpy.context.view_layer.objects.active = body
     bpy.ops.object.mode_set(mode="WEIGHT_PAINT")
@@ -600,11 +638,8 @@ def build_master(ctx, arm, portrait=None, master_tris=MASTER_TRIS):
     bpy.context.view_layer.objects.active = body
     bpy.ops.object.modifier_apply(modifier="sub")
     st["knuckle_verts"] = _knuckles(body, arm)
-    d = body.modifiers.new("dec", "DECIMATE")
-    d.ratio = min(1.0, master_tris / max(_tris(body), 1))
-    d.use_symmetry = True
-    d.symmetry_axis = "X"
-    bpy.ops.object.modifier_apply(modifier="dec")
+    st["uv_flipped_subsurf"] = uv_flipped(_tri_arrays(body.data)[0])
+    st["uv_flipped_collapse"] = _collapse_unfolded(body, master_tris)
     for p in body.data.polygons:
         p.use_smooth = True
     for ob in (body, cage):
@@ -613,7 +648,10 @@ def build_master(ctx, arm, portrait=None, master_tris=MASTER_TRIS):
     vg = eyes.vertex_groups.new(name="head")
     vg.add(list(range(len(eyes.data.vertices))), 1.0, "REPLACE")
     eyes.modifiers.new("Armature", "ARMATURE").object = arm
+    eyes.parent = arm
+    eyes.matrix_parent_inverse = arm.matrix_world.inverted()
     st["master_tris"] = _tris(body)
+    st["weights"] = {"master": limit_weights(body)}
 
     # ---- skin maps (albedo with the portrait, micro-normal, zone roughness)
     alb, nrm, h, ms = skin_maps(os.path.join(root, "young_lightskinned_male_diffuse.png"))
@@ -734,16 +772,156 @@ def seam_lock(ob):
     return vg, len(seam)
 
 
+def _collapse_unfolded(body, target, rounds=4, radius=0.012):
+    """Symmetric collapse of `body` to about `target` triangles with the UV seams locked;
+    where a collapse folds the UVs, the vertices round the fold are locked as well and the
+    collapse is redone from the subdivided mesh. Returns the fold count per round."""
+    import bpy
+    from mathutils.kdtree import KDTree
+
+    src = body.data.copy()
+    kd = KDTree(len(src.vertices))
+    for v in src.vertices:
+        kd.insert(v.co, v.index)
+    kd.balance()
+    extra, history = set(), []
+    for _r in range(rounds):
+        if _r:
+            old = body.data
+            body.data = src.copy()
+            bpy.data.meshes.remove(old)
+        vg, _n = seam_lock(body)
+        if extra:
+            vg.add(sorted(extra), 0.0, "REPLACE")
+        bpy.context.view_layer.objects.active = body
+        d = body.modifiers.new("dec", "DECIMATE")
+        d.ratio = min(1.0, target / max(_tris(body), 1))
+        d.use_symmetry = True
+        d.symmetry_axis = "X"
+        d.vertex_group = vg.name
+        d.vertex_group_factor = 1000.0
+        bpy.ops.object.modifier_apply(modifier="dec")
+        body.vertex_groups.remove(body.vertex_groups["lock"])
+        tri_uv, tri_v = _tri_arrays(body.data)
+        bad = flipped_index(tri_uv)
+        history.append(len(bad))
+        if not len(bad):
+            break
+        co = body.data.vertices
+        for i in bad:
+            for vi in tri_v[int(i)]:
+                p = co[int(vi)].co
+                for _c, j, _d in kd.find_range(p, radius):
+                    extra.add(j)
+                    # the mirror side too (the collapse is symmetric)
+                for _c, j, _d in kd.find_range((-p.x, p.y, p.z), radius):
+                    extra.add(j)
+    bpy.data.meshes.remove(src)
+    return history
+
+
+def limit_weights(ob, limit=4):
+    """At most `limit` influences per vertex, normalised (`limit_influences`); returns the
+    measured {max_influences, max_sum_error} after."""
+    vgs = ob.vertex_groups
+    for v in ob.data.vertices:
+        cur = [(g.group, g.weight) for g in v.groups]
+        new = limit_influences(cur, limit)
+        keep = {k for k, _w in new}
+        for k, _w in cur:
+            if k not in keep:
+                vgs[k].remove([v.index])
+        for k, w in new:
+            vgs[k].add([v.index], w, "REPLACE")
+    most, err = 0, 0.0
+    for v in ob.data.vertices:
+        ws = [g.weight for g in v.groups if g.weight > 0]
+        most = max(most, len(ws))
+        err = max(err, abs(sum(ws) - 1.0) if ws else 1.0)
+    return {"max_influences": most, "max_sum_error": round(err, 5)}
+
+
+def lod_seams(ob, cage):
+    """Marks as UV seams the LOD edges where the source atlas jumps: each LOD face takes the
+    UVs of its nearest cage triangle, and an edge whose midpoint gets UVs further apart than
+    `SEAM_JUMP` from its two faces lies on a source seam. Mesh borders are seams too.
+    Returns the seam edge count."""
+    import bmesh
+    from mathutils.bvhtree import BVHTree
+
+    cme = cage.data
+    tri_uv, tri_v = _tri_arrays(cme)
+    cp = np.array([v.co for v in cme.vertices])
+    bvh = BVHTree.FromPolygons([v.co.copy() for v in cme.vertices], [tuple(int(i) for i in t) for t in tri_v])
+    bm = bmesh.new()
+    bm.from_mesh(ob.data)
+    near = {}
+    for f in bm.faces:
+        near[f.index] = bvh.find_nearest(f.calc_center_median())[2]
+    n = 0
+    for e in bm.edges:
+        lf = list(e.link_faces)
+        seam = len(lf) != 2
+        if not seam:
+            a, b = near[lf[0].index], near[lf[1].index]
+            if a != b:
+                m = np.array((e.verts[0].co + e.verts[1].co) * 0.5)
+                ua = bary_uv(m, cp[tri_v[a]], tri_uv[a])
+                ub = bary_uv(m, cp[tri_v[b]], tri_uv[b])
+                seam = float(np.linalg.norm(ua - ub)) > SEAM_JUMP
+        e.seam = seam
+        n += seam
+    bm.to_mesh(ob.data)
+    bm.free()
+    return n
+
+
+def _unwrap(ob, px):
+    """Fresh UVs for a LOD: angle-based unwrap along `lod_seams`, packed with a margin of a
+    few texels; folded faces are cut free and unwrapped again (up to 3 times), else a smart
+    projection. Returns the method used."""
+    import bpy
+
+    bpy.ops.object.select_all(action="DESELECT")
+    ob.select_set(True)
+    bpy.context.view_layer.objects.active = ob
+    margin = 6.0 / px
+    for method in ("ANGLE_BASED",) * 4 + ("SMART",):
+        bpy.ops.object.mode_set(mode="EDIT")
+        bpy.ops.mesh.select_all(action="SELECT")
+        if method == "SMART":
+            bpy.ops.uv.smart_project(angle_limit=math.radians(60), island_margin=margin)
+        else:
+            bpy.ops.uv.unwrap(method=method, margin=margin)
+        bpy.ops.object.mode_set(mode="OBJECT")
+        me = ob.data
+        tri_uv, _tv = _tri_arrays(me)
+        bad = flipped_index(tri_uv)
+        if not len(bad):
+            break
+        # Cut the folded faces and their neighbours free (they sit where a chart wraps
+        # round a limb the seam detection left closed) and unwrap again.
+        polys = {me.loop_triangles[int(i)].polygon_index for i in bad}
+        verts = {v for p in polys for v in me.polygons[p].vertices}
+        for e in me.edges:
+            if e.vertices[0] in verts or e.vertices[1] in verts:
+                e.use_seam = True
+    return method
+
+
 def build_lods(ctx, body, cage, arm, lods=LODS):
-    """LOD meshes from the cage: seam-locked collapse, then normal and albedo baked from the
-    master per LOD. Returns the LOD objects (rest pose required)."""
+    """LOD meshes from the cage: a free symmetric collapse to the target, fresh UVs cut along
+    the source seams (`lod_seams`, `_unwrap`), weights limited to 4, then normal and albedo
+    baked from the master into each LOD's own atlas. Returns the LOD objects (rest pose
+    required). `uv_seam_integrity` / `uv_flipped` of a LOD are measured on its own atlas."""
     import bpy
 
     st = ctx.stats["hd"]
     sc = _cycles()
     out = []
     st["lod_tris"] = {}
-    st["seam_verts"] = {}
+    st["lod_seam_edges"] = {}
+    st["lod_unwrap"] = {}
     mods = [(o, m) for o in (body, cage) for m in o.modifiers if m.type == "ARMATURE"]
     for _o, m in mods:
         m.show_render = m.show_viewport = False
@@ -754,22 +932,23 @@ def build_lods(ctx, body, cage, arm, lods=LODS):
         bpy.context.scene.collection.objects.link(ob)
         for m in list(ob.modifiers):
             ob.modifiers.remove(m)
-        vg, nseam = seam_lock(ob)
-        st["seam_verts"][str(tris)] = nseam
         bpy.context.view_layer.objects.active = ob
         d = ob.modifiers.new("dec", "DECIMATE")
         d.ratio = tris / _tris(ob)
         d.use_symmetry = True
-        d.vertex_group = vg.name
-        d.vertex_group_factor = 50.0
+        d.use_collapse_triangulate = True
         bpy.ops.object.modifier_apply(modifier="dec")
-        ob.vertex_groups.remove(ob.vertex_groups["lock"])
         for p in ob.data.polygons:
             p.use_smooth = True
+        st["lod_seam_edges"][str(tris)] = lod_seams(ob, cage)
+        st["lod_unwrap"][str(tris)] = _unwrap(ob, px)
+        st["weights"][str(tris)] = limit_weights(ob)
         st["lod_tris"][str(tris)] = _tris(ob)
-        tri_uv, _tv = _tri_arrays(ob.data)
-        st["uv_seam_integrity"][str(tris)] = round(seam_integrity(ctx._hd_raster, tri_uv), 4)
+        tri_uv, tri_v = _tri_arrays(ob.data)
+        lab, _k = island_labels(tri_uv, tri_v)
+        st["uv_seam_integrity"][str(tris)] = round(seam_integrity(island_raster(tri_uv, lab, px), tri_uv), 4)
         st["uv_flipped"][str(tris)] = uv_flipped(tri_uv)
+        sc.render.bake.margin = max(2, px // 128)
         nimg = bpy.data.images.new(f"lod{tris}_normal", px, px)
         nimg.colorspace_settings.name = "Non-Color"
         aimg = bpy.data.images.new(f"lod{tris}_albedo", px, px)
@@ -803,11 +982,13 @@ def build_lods(ctx, body, cage, arm, lods=LODS):
         ob.data.materials.append(lm)
         bpy.data.materials.remove(mat)
         ob.modifiers.new("Armature", "ARMATURE").object = arm
-        ob.parent = ctx.root
+        ob.parent = arm
+        ob.matrix_parent_inverse = arm.matrix_world.inverted()
         ob["acr_lod_of"] = body.name
         ob["acr_lod_tris"] = tris
         out.append(ob)
     for _o, m in mods:
         m.show_render = m.show_viewport = True
+    sc.render.bake.margin = 8
     bpy.data.objects.remove(cage)
     return out

@@ -11,6 +11,7 @@ import sys
 import bpy
 
 from acr_assets import armature as am
+from acr_assets import aim as aiming
 from acr_assets import hdbody, poses, rig
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -30,7 +31,14 @@ def build(ctx):
     body, eyes, cage = hdbody.build_master(ctx, arm, os.path.join(hdbody._sources(), PORTRAIT))
     lods = hdbody.build_lods(ctx, body, cage, arm)
     grip = hdbody.grip_spec(arm)
-    clips = poses.musketeer_clips(MD)
+    # The two-handed holds IK-solved on this body, so FIRE_AIMED, FIRE_HIP and the reload
+    # exist (and get the grip) as on the line musketeer.
+    aim = aiming.hold(arm, poses.AIM_MUSKET)
+    hip = aiming.hip(arm, poses.HIP_MUSKET)
+    reload = aiming.drill(arm, poses.RELOAD_STEPS, {})
+    charge = aiming.hold(arm, poses.CHARGE_MUSKET, pocket=(0.02, -0.12, -0.32), left_along=0.30)
+    clips = poses.musketeer_clips(MD, aim=aim, charge=charge, reload=reload, hip=hip)
+    ctx.stats["hd"]["grip_clips"] = sorted(k for k in clips if k not in hdbody.GRIP_CLIPS_SKIP)
     for name, keys in clips.items():
         if name not in hdbody.GRIP_CLIPS_SKIP:
             keys = [(f, {**spec, **grip}) for f, spec in keys]

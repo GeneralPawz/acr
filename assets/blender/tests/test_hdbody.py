@@ -79,5 +79,22 @@ class Fingers(unittest.TestCase):
         self.assertAlmostEqual(w[4, 3], 1.0)  # tip
 
 
+class Lods(unittest.TestCase):
+    def test_limit_influences(self):
+        out = hdbody.limit_influences([(3, 0.1), (1, 0.4), (7, 0.05), (2, 0.3), (5, 0.2), (9, 0.0)])
+        self.assertEqual([k for k, _w in out], [1, 2, 5, 3])
+        self.assertAlmostEqual(sum(w for _k, w in out), 1.0)
+        self.assertEqual(hdbody.limit_influences([]), [])
+
+    def test_bary_uv_flags_a_seam(self):
+        tri = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], float)
+        uv_a = np.array([[0.1, 0.1], [0.2, 0.1], [0.1, 0.2]])
+        uv_b = uv_a + [0.5, 0.0]  # the same triangle in another island
+        m = np.array([0.5, 0.5, 0.01])  # projected onto the plane
+        self.assertTrue(np.allclose(hdbody.bary_uv(m, tri, uv_a), [0.15, 0.15]))
+        jump = np.linalg.norm(hdbody.bary_uv(m, tri, uv_a) - hdbody.bary_uv(m, tri, uv_b))
+        self.assertGreater(jump, hdbody.SEAM_JUMP)
+
+
 if __name__ == "__main__":
     unittest.main()
