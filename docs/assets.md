@@ -395,14 +395,26 @@ faces below a cut 0.35..0.8 m up) + `<name>.stump_break` (bark wall, pale fresh 
 + `<name>.felled_break` (its torn foot), lying `breaks.FELL_DEG` (= `map_models::FALL_ANGLE`,
 1.48 rad) towards +X about the ground point, everything below the ground crushed onto it
 (`breaks.ground`), sway 0 but leaf flutter; `<name>.scar` (fresh wood where bark tore off on
-the -X side just above the cut, splinters) and, on rocks, `<name>.chip` (a ragged lighter
-facet on the -X face). The renderer draws a felled tree as the stump at its place plus the
-felled model turned to the fall direction and swung down over `FALL_TICKS`
-(`map_models::felled_transform`), a splintered tree with its scar turned to face the ball
-(`facing`), a chipped rock with its chip as built. Stats `struck`: `cut_m`, `trunk_r_m`,
-`stump_triangles`, `felled_triangles`, `scar_triangles`, `felled_min_z_m`,
-`felled_length_m`, `bark_rgb`; rocks `chip_r_m`, `chip_rgb`. LODs come from `lod.rs` at load
-like every model.
+the -X side just above the cut, splinters) and, on rocks, `<name>.chip.<k>` for k in 0..8
+(`CHIP_SIDES`: a ragged lighter facet at half height where a ball flying at k/8 of a turn
+from +X towards +Y first meets the rock). The renderer draws a felled tree as the stump at
+its place plus the felled model turned to the fall direction, pitched and rolled onto the
+ground under it and swung down over `FALL_TICKS` (`map_models::felled_transform`,
+`lie_on_ground`: the pitch is the steepest rise from the foot to the ground at 1/5..5/5 of
+the standing model's radius, so the rigid trunk rests on the highest ground under it; the
+roll is the ground's tilt across it half way out), a splintered tree with its scar turned to
+face the ball (`facing`), a chipped rock with the chip set nearest the ball's heading in the
+rock's frame (`chip_side`; older glbs with one `.chip` group show it on every hit). The
+bark colour of the break parts comes from the trunk's bark texels, else a bark-named image
+(`BARK_WORDS`: broadleaf_ez's `branches` image sits in a slot taken for leaves), else the
+trunk's non-green atlas texels, else the bark material's colour (stats `bark_from`). Stumps
+and felled parts cast shadows like any model (50 felled broadleaf_ez cost 0.09 ms in the
+shadow map against 0.82 ms standing: a lying crown covers far fewer shadow texels and less
+overdraw from the sun; one felled tree darkens 17.1k px of white ground, standing 21.7k).
+Stats `struck`: `cut_m`, `trunk_r_m`, `stump_triangles`, `felled_triangles`,
+`scar_triangles`, `felled_min_z_m`, `felled_length_m`, `bark_rgb`, `bark_from`; rocks
+`chip_r_m` (per side), `chip_triangles`, `chip_rgb`. LODs come from `lod.rs` at load like
+every model.
 
 **Exact poses in Blender renders (`acr_assets.posecheck`).** Every render of a built model
 in a clip pose goes through `posecheck.Poser`: `render_views.py`, `tools/preview.py`,

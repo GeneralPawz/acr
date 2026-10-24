@@ -825,6 +825,12 @@ impl ThreeD {
                     let part = model.only_groups(|n| n.contains(key));
                     struck_parts.push((!part.primitives.is_empty()).then_some(part));
                 }
+                // A rock's chip marks, one per ball heading (`<name>.chip.<k>`).
+                for k in 0..super::map_models::CHIP_SIDES {
+                    let end = format!(".chip.{k}");
+                    let part = model.only_groups(|n| n.ends_with(&end));
+                    struck_parts.push((!part.primitives.is_empty()).then_some(part));
+                }
             }
             let model = if self.props.iter().any(|(n, _)| *n == name) || map_model {
                 model.without_nodes(|n| STRUCK_GROUPS.iter().any(|g| n.contains(g)))
@@ -867,7 +873,9 @@ impl ThreeD {
             if struck_parts.iter().any(Option::is_some) {
                 let mut ids = struck_parts.into_iter().map(|m| m.map(|m| renderer.add_model(device, queue, m)));
                 let mut next = || ids.next().flatten();
-                let parts = StruckParts { stump: next(), felled: next(), scar: next(), chip: next() };
+                let (stump, felled, scar, chip) = (next(), next(), next(), next());
+                let chips = std::array::from_fn(|_| next());
+                let parts = StruckParts { stump, felled, scar, chip, chips };
                 self.struck_parts.insert(index, parts);
             }
             if let Some(ruin) = ruin {
@@ -2057,16 +2065,27 @@ impl ThreeD {
                     if parts.stump.is_some() && parts.felled.is_some() =>
                 {
                     shown[0] = parts.stump.map(|s| (s, transform));
-                    shown[1] =
-                        parts.felled.map(|f| (f, super::map_models::felled_transform(transform, dir, tick, now)));
+                    // Its reach: the standing model's radius (the parts keep it; world pixels at
+                    // scale 1) at its scale (the matrix maps metres to world pixels).
+                    let stretch = (transform[0][0].powi(2) + transform[0][1].powi(2) + transform[0][2].powi(2)).sqrt()
+                        / acr_render::view3d::PIXELS_PER_METRE;
+                    let length = renderer.model(index).map_or(0.0, |m| m.radius) * stretch;
+                    shown[1] = parts.felled.map(|f| {
+                        let m = super::map_models::felled_transform(transform, dir, tick, now, length, |x, y| {
+                            terrain.height_at(x, y)
+                        });
+                        (f, m)
+                    });
                 }
                 Some(&acr_sim::ball_terrain::Struck::Splintered { dir, .. }) => {
                     shown[1] = parts.scar.map(|s| (s, super::map_models::facing(transform, dir)));
                 }
-                Some(&acr_sim::ball_terrain::Struck::Chipped { .. }) => {
-                    // On the rock's own -X face: turning only the chip would lift it off a rock
-                    // that is not round.
-                    shown[1] = parts.chip.map(|c| (c, transform));
+                Some(&acr_sim::ball_terrain::Struck::Chipped { dir, .. }) => {
+                    // The marks built where a ball of this heading meets the rock (turning one
+                    // would lift it off a rock that is not round); older models have one set,
+                    // on their -X face.
+                    let side = super::map_models::chip_side(transform, dir);
+                    shown[1] = parts.chips[side].or(parts.chip).map(|c| (c, transform));
                 }
                 Some(_) => {
                     let k = self.map_models.objs[n];
@@ -2535,7 +2554,10 @@ struct StruckParts {
     stump: Option<usize>,
     felled: Option<usize>,
     scar: Option<usize>,
+    /// All chip marks (models with one set only).
     chip: Option<usize>,
+    /// The chip marks by ball heading ([`super::map_models::chip_side`]).
+    chips: [Option<usize>; super::map_models::CHIP_SIDES],
 }
 
 /// The construction stage and section state groups of a building model (#302) as models of

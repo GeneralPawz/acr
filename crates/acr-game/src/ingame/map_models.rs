@@ -257,14 +257,69 @@ pub fn facing(base: Mat4, dir: u8) -> Mat4 {
     rotated(&base, [0.0, 0.0, 1.0], dy.atan2(dx) - now)
 }
 
+/// Chip mark sets a rock model carries (`<name>.chip.<k>`, `acr_assets.nature.CHIP_SIDES`):
+/// set k is where a ball flying at k / CHIP_SIDES of a turn from the model's +X towards
+/// Blender's +Y meets the rock.
+pub const CHIP_SIDES: usize = 8;
+
+/// The chip mark set of a rock placed at `base` for a ball heading `dir`: the heading in the
+/// model's own frame (glTF x = Blender x; glTF z = Blender -y), to the nearest set.
+pub fn chip_side(base: Mat4, dir: u8) -> usize {
+    let [dx, dy] = dir_vec(dir);
+    let along = |c: usize| {
+        let v = [base[c][0], base[c][1], base[c][2]];
+        (dx * v[0] + dy * v[1]) / (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).max(1e-9)
+    };
+    let (bx, by) = (along(0), -along(2));
+    let turns = by.atan2(bx) / std::f32::consts::TAU;
+    ((turns * CHIP_SIDES as f32).round() as i64).rem_euclid(CHIP_SIDES as i64) as usize
+}
+
 /// The transform of a tree's felled state (`<name>.felled`, built lying [`FALL_ANGLE`] towards
-/// +X about its ground point, crushed onto the ground there): turned to the fall direction and,
-/// while it falls, turned back up by the part of the fall still to come. The stump stays at
-/// `base`.
-pub fn felled_transform(base: Mat4, dir: u8, tick: u64, now: f32) -> Mat4 {
+/// +X about its ground point, crushed onto the ground there): turned to the fall direction,
+/// pitched and rolled to the ground under it ([`lie_on_ground`]; `length` its reach in world
+/// pixels, `height` the game's ground height) and, while it falls, turned back up by the part
+/// of the fall still to come. The stump stays at `base`.
+pub fn felled_transform(
+    base: Mat4,
+    dir: u8,
+    tick: u64,
+    now: f32,
+    length: f32,
+    height: impl Fn(i32, i32) -> i32,
+) -> Mat4 {
     let t = ((now - tick as f32) / FALL_TICKS).clamp(0.0, 1.0);
     let [dx, dy] = dir_vec(dir);
-    rotated(&facing(base, dir), [-dy, dx, 0.0], -FALL_ANGLE * (1.0 - t * t))
+    let (pitch, roll) = lie_on_ground(base, dir, length, height);
+    let lying = rotated(&rotated(&facing(base, dir), [dx, dy, 0.0], roll), [-dy, dx, 0.0], pitch);
+    rotated(&lying, [-dy, dx, 0.0], -FALL_ANGLE * (1.0 - t * t))
+}
+
+/// Pitch and roll (radians, about up × fall direction and about the fall direction) that lay
+/// a felled tree of `length` world pixels from its foot at `base` onto the ground: a rigid
+/// trunk rests on the highest ground under it, so the pitch is the steepest rise from the
+/// foot to the ground along its length (a dip leaves it bridging, a slope down tips it down
+/// to touch); the roll follows the ground across the crown, half the length out.
+pub fn lie_on_ground(base: Mat4, dir: u8, length: f32, height: impl Fn(i32, i32) -> i32) -> (f32, f32) {
+    let [dx, dy] = dir_vec(dir);
+    let [x0, y0] = [base[3][0], base[3][1]];
+    let z = |x: f32, y: f32| view3d::ground_point(x as i32, y as i32, height(x as i32, y as i32))[2];
+    let foot = z(x0, y0);
+    let rise = (1..=5)
+        .map(|k| {
+            let s = length * k as f32 / 5.0;
+            ((z(x0 + dx * s, y0 + dy * s) - foot) / s).atan()
+        })
+        .fold(f32::MIN, f32::max);
+    // Positive about up × dir turns the trunk down.
+    let pitch = if length > 0.0 { -rise } else { 0.0 };
+    let (s, w) = (0.5 * length, 0.15 * length);
+    let [cx, cy] = [x0 + dx * s, y0 + dy * s];
+    // A positive turn about dir lifts the side up × dir = (-dy, dx).
+    let side = z(cx - dy * w, cy + dx * w);
+    let other = z(cx + dy * w, cy - dx * w);
+    let roll = if w > 0.0 { ((side - other) / (2.0 * w)).atan() } else { 0.0 };
+    (pitch, roll)
 }
 
 /// The transform of map object `k` as a ball left it (`World::struck`, rule `ball_terrain`;
@@ -352,7 +407,7 @@ mod tests {
             assert!((x[0] * dx + x[1] * dy) / scale > 0.999, "{dir}: {x:?}");
             assert_eq!(f[3], base[3]);
             // Lying at the end: the model is only turned about up.
-            let end = felled_transform(base, dir, 10, 100.0);
+            let end = felled_transform(base, dir, 10, 100.0, 200.0, |_, _| 0);
             for c in 0..3 {
                 for r in 0..3 {
                     assert!((end[c][r] - f[c][r]).abs() < 1e-4 * scale);
@@ -360,11 +415,54 @@ mod tests {
             }
             // At the strike the lying model is turned back upright: its up axis tips by
             // FALL_ANGLE away from the fall, its +X (the lying trunk) points nearly up.
-            let start = felled_transform(base, dir, 10, 10.0);
+            let start = felled_transform(base, dir, 10, 10.0, 200.0, |_, _| 0);
             let up = [start[1][0], start[1][1], start[1][2]];
             assert!((up[0] * dx + up[1] * dy) / scale < -0.99, "{dir}: {up:?}");
             assert!(start[0][2] / scale > 0.99, "{dir}: {:?}", start[0]);
         }
+    }
+
+    #[test]
+    fn a_felled_tree_lies_along_the_slope_under_it() {
+        let base = view3d::model_matrix([1000.0, 1000.0, 0.0], 0.0, 1.0);
+        let len = 1000.0;
+        // Ground rising 1 in 4 to the east (height in screen pixels: world z = h / COS_E).
+        let ramp = |x: i32, _y: i32| ((x - 1000) as f32 * 0.25 * view3d::COS_E) as i32;
+        // Felled east, uphill: the crown end rises with the ground; across it is level.
+        let (pitch, roll) = lie_on_ground(base, 0, len, ramp);
+        assert!((pitch + 0.25f32.atan()).abs() < 0.02, "{pitch}");
+        assert!(roll.abs() < 0.02, "{roll}");
+        let m = felled_transform(base, 0, 0, 100.0, len, ramp);
+        // The lying model's +X (the trunk) climbs at the ramp's angle.
+        let x = [m[0][0], m[0][1], m[0][2]];
+        assert!((x[2] / x[0] - 0.25).abs() < 0.03, "{x:?}");
+        // Felled north (dir 192, -y) across the same ramp: rolled, its up × dir side (east) up.
+        let (pitch, roll) = lie_on_ground(base, 192, len, ramp);
+        assert!(pitch.abs() < 0.02, "{pitch}");
+        assert!((roll - 0.25f32.atan()).abs() < 0.02, "{roll}");
+        // Downhill: tipped down to touch the ground.
+        let (pitch, _) = lie_on_ground(base, 128, len, ramp);
+        assert!((pitch - 0.25f32.atan()).abs() < 0.02, "{pitch}");
+        // Flat ground: nothing.
+        assert_eq!(lie_on_ground(base, 40, len, |_, _| 0), (0.0, 0.0));
+    }
+
+    #[test]
+    fn a_chip_faces_the_ball() {
+        // Unturned: Blender +X is world east, Blender +Y world north (-y).
+        let base = view3d::model_matrix([500.0, 500.0, 0.0], 0.0, 0.7);
+        assert_eq!(chip_side(base, 0), 0); // east
+        assert_eq!(chip_side(base, 192), 2); // north: Blender +Y
+        assert_eq!(chip_side(base, 128), 4); // west
+        assert_eq!(chip_side(base, 64), 6); // south
+        // A rock turned a quarter: the heading in its own frame turns back by as much.
+        let turned = view3d::model_matrix([500.0, 500.0, 0.0], std::f32::consts::FRAC_PI_2, 1.0);
+        let east = chip_side(turned, 0);
+        let x = [turned[0][0], turned[0][1]];
+        // Its +X points north or south; a ball flying east meets it from its side.
+        assert!(x[0].abs() < 1e-3);
+        assert!(east == 2 || east == 6, "{east}");
+        assert_eq!(chip_side(turned, 128), (east + 4) % 8);
     }
 
     #[test]

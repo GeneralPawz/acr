@@ -597,9 +597,11 @@ def _copy_cut(ctx, obj, name, z, above, keep=None):
     return out
 
 
-def _texel_rgb(obj, pick):
+def _texel_rgb(obj, pick, opaque=True, texel=None):
     """Mean sRGB colour of the texels under the faces `pick(poly)` accepts (their loops' uvs
-    in the base colour image of each face's material); None without any."""
+    and the face centre's in the base colour image of each face's material); None without any.
+    `opaque` skips texels with alpha under 0.5 (leaf cards); bark images often carry something
+    else in alpha. `texel(rgb)` may reject texels by colour."""
     me = obj.data
     uv = me.uv_layers.active
     if uv is None:
@@ -615,15 +617,70 @@ def _texel_rgb(obj, pick):
         if img.name not in pixels:
             pixels[img.name] = np.array(img.pixels[:], np.float32).reshape(img.size[1], img.size[0], 4)
         px = pixels[img.name]
-        for li in p.loop_indices:
-            u, v = uv.data[li].uv
+        uvs = [uv.data[li].uv for li in p.loop_indices]
+        mid = (sum(u for u, _v in uvs) / len(uvs), sum(v for _u, v in uvs) / len(uvs))
+        for u, v in uvs + [mid]:
             x = int((u % 1.0) * (px.shape[1] - 1))
             y = int((v % 1.0) * (px.shape[0] - 1))
-            if px[y, x, 3] > 0.5:
+            if (not opaque or px[y, x, 3] > 0.5) and (texel is None or texel(px[y, x, :3])):
                 for c in range(3):
                     tot[c] += float(px[y, x, c])
                 n += 1
     return [round(t / n, 3) for t in tot] if n else None
+
+
+def _srgb(c):
+    """Linear (a Principled base colour value) to sRGB. (Byte images' `pixels` are already
+    sRGB.)"""
+    c = max(0.0, min(1.0, c))
+    return 12.92 * c if c <= 0.0031308 else 1.055 * c ** (1 / 2.4) - 0.055
+
+
+BARK_WORDS = ("bark", "branch", "trunk", "wood", "stem")
+
+
+def _bark_rgb(obj, cut, cx, cy, r):
+    """The bark colour of a tree's new break parts and where it came from: the texels under
+    the trunk's bark faces that reach the band 0..2 cut (centre within 2 r of the trunk axis),
+    else a bark-named image's (`BARK_WORDS`) opaque texels, else the opaque ones under any trunk face there (a shared bark and leaf atlas), else under
+    every bark face, else the bark material's flat colour."""
+    def is_bark(p):
+        slots = obj.material_slots
+        mat = slots[p.material_index].material if slots else None
+        return mat is not None and mat.get("acr_nature") == "bark"
+
+    zs = [v.co.z for v in obj.data.vertices]
+
+    def trunk(p):
+        lo = min(zs[i] for i in p.vertices)
+        hi = max(zs[i] for i in p.vertices)
+        return lo <= 2.0 * cut and hi >= 0.0 and math.hypot(p.center.x - cx, p.center.y - cy) < 2.0 * r
+
+    rgb = _texel_rgb(obj, lambda p: trunk(p) and is_bark(p), opaque=False)
+    if rgb:
+        return rgb, "trunk"
+    # A bark image in a slot taken for leaves (broadleaf_ez's `branches.011`): its opaque
+    # texels.
+    named = {i for i, sl in enumerate(obj.material_slots)
+             if (img := _image_of(sl.material)[0]) is not None
+             and any(w in img.name.lower() for w in BARK_WORDS)}
+    rgb = _leaf_rgb(obj, named)
+    if rgb:
+        return rgb, "bark_image"
+    # One atlas for bark and leaves: its opaque texels under the trunk that are not leaf
+    # green.
+    rgb = _texel_rgb(obj, trunk, texel=lambda c: c[1] <= 1.08 * c[0])
+    if rgb:
+        return rgb, "trunk_atlas"
+    rgb = _texel_rgb(obj, is_bark, opaque=False)
+    if rgb:
+        return rgb, "bark"
+    for slot in obj.material_slots:
+        if slot.material is not None and slot.material.get("acr_nature") == "bark":
+            img, flat = _image_of(slot.material)
+            if img is None:
+                return [round(_srgb(c), 3) for c in flat[:3]], "flat"
+    return [0.30, 0.24, 0.18], "default"
 
 
 def _spike(bm, base, tip, width, side, mat):
@@ -673,8 +730,7 @@ def _tree_states(ctx, obj, seed):
     prof = breaks.profile(n, seed, rough)
     foot_prof = breaks.profile(n, seed + 1, rough * 0.8)
     # The bark colour of the new parts: the texels under the trunk band's faces.
-    bark_rgb = _texel_rgb(obj, lambda p: abs(p.center.z - cut) < 0.5 * cut
-                          and math.hypot(p.center.x - cx, p.center.y - cy) < 1.5 * r) or [0.30, 0.24, 0.18]
+    bark_rgb, bark_from = _bark_rgb(obj, cut, cx, cy, r)
     bark = _tile_material(f"{name}.bark_break", tuple(bark_rgb), "wood")
     fresh = _tile_material(f"{name}.fresh_wood", FRESH_WOOD, "wood")
 
@@ -788,44 +844,58 @@ def _tree_states(ctx, obj, seed):
         "felled_length_m": round(max(c.x for c in lying) - min(c.x for c in lying), 2),
         "felled_height_m": round(max(c.z for c in lying), 2),
         "bark_rgb": bark_rgb,
+        "bark_from": bark_from,
     }
 
 
+CHIP_SIDES = 8  # chip marks built per rock, one for each ball heading (renderer: `CHIP_SIDES`)
+
+
 def _chip(ctx, obj, seed):
-    """A big rock's chip marks (rule `ball_terrain`): `<name>.chip`, a ragged facet of fresh,
-    lighter stone on the -X face at half the height (where a ball flying +X hits it), a little
-    proud of the surface. Returns the `struck` stats."""
+    """A big rock's chip marks (rule `ball_terrain`): `<name>.chip.<k>` for k in
+    0..CHIP_SIDES, a ragged facet of fresh, lighter stone at half the height where a ball
+    flying at 2 pi k / CHIP_SIDES from +X (towards +Y) first meets the rock, a little proud of
+    the surface. The renderer shows the one nearest the ball's heading in the rock's frame.
+    Returns the `struck` stats."""
     me = obj.data
     bvh = BVHTree.FromObject(obj, bpy.context.evaluated_depsgraph_get())
     xs = [v.co.x for v in me.vertices]
     ys = [v.co.y for v in me.vertices]
     hi = max(v.co.z for v in me.vertices)
-    cy = (min(ys) + max(ys)) / 2
+    cx, cy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
+    reach = max(max(xs) - min(xs), max(ys) - min(ys)) + 1.0
     rgb = _leaf_rgb(obj, set(range(len(obj.material_slots)))) or [0.5, 0.48, 0.45]
     pale = tuple(round(min(1.0, 0.45 * c + 0.55 * 0.80), 3) for c in rgb)
     mat = _tile_material(f"{ctx.name}.chip", pale, "plain")
     rnd = random.Random(seed + 5)
     size = min(max(xs) - min(xs), max(ys) - min(ys), hi)
-    bm = bmesh.new()
-    made = []
-    for dy, dz, k in ((0.0, 0.5, 0.22),):
-        hit, nrm, _i, _d = bvh.ray_cast(Vector((min(xs) - 1.0, cy + dy * size, hi * dz)), Vector((1, 0, 0)))
-        if hit is None:
-            continue
-        nrm = nrm.normalized()
-        t1 = nrm.cross(Vector((0, 0, 1))).normalized()
-        t2 = nrm.cross(t1).normalized()
-        rad = size * k
-        centre = bm.verts.new(hit + nrm * 0.004)
-        ring = []
-        for j in range(9):
-            a = 2 * math.pi * j / 9
-            ring.append(bm.verts.new(hit + nrm * 0.015 + (t1 * math.cos(a) + t2 * math.sin(a)) * rad * rnd.uniform(0.6, 1.0)))
-        for j in range(9):
-            bm.faces.new((centre, ring[j], ring[(j + 1) % 9]))
-        made.append(round(rad, 3))
-    chip = _part(ctx, f"{ctx.name}.chip", bm, [mat])
-    return {"chip_r_m": made, "chip_triangles": len(chip.data.polygons), "chip_rgb": list(pale)}
+    made, tris = [], 0
+    for k in range(CHIP_SIDES):
+        a = 2 * math.pi * k / CHIP_SIDES
+        way = Vector((math.cos(a), math.sin(a), 0.0))
+        start = Vector((cx, cy, hi * 0.5)) - way * reach
+        hit, nrm, _i, _d = bvh.ray_cast(start, way)
+        bm = bmesh.new()
+        if hit is not None:
+            nrm = nrm.normalized()
+            t1 = nrm.cross(Vector((0, 0, 1)))
+            t1 = t1.normalized() if t1.length > 1e-4 else Vector((1, 0, 0))
+            t2 = nrm.cross(t1).normalized()
+            rad = size * 0.22
+            centre = bm.verts.new(hit + nrm * 0.004)
+            ring = []
+            for j in range(9):
+                b = 2 * math.pi * j / 9
+                ring.append(bm.verts.new(hit + nrm * 0.015
+                                         + (t1 * math.cos(b) + t2 * math.sin(b)) * rad * rnd.uniform(0.6, 1.0)))
+            for j in range(9):
+                bm.faces.new((centre, ring[j], ring[(j + 1) % 9]))
+            made.append(round(rad, 3))
+        else:
+            made.append(None)
+        chip = _part(ctx, f"{ctx.name}.chip.{k}", bm, [mat])
+        tris += len(chip.data.polygons)
+    return {"chip_r_m": made, "chip_triangles": tris, "chip_rgb": list(pale)}
 
 
 # Map objects generated from their own sprite (`map`): triangle budget and texture per kind.
