@@ -13,12 +13,16 @@ import bpy
 from mathutils import Quaternion, Vector
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
-from acr_assets import grips, limits  # noqa: E402
+from acr_assets import grips, limits, posecheck  # noqa: E402
 
 OUT = sys.argv[sys.argv.index("--") + 1]
 os.makedirs(OUT, exist_ok=True)
 sc = bpy.context.scene
 arm = next(o for o in sc.objects if o.type == "ARMATURE")
+# The export pose as saved; every clip starts from it (a bone switched to quaternion
+# rotation by `hand_pose` would otherwise ignore the clips' Euler keys).
+poser = posecheck.Poser(sc)
+POSES = posecheck.poses_path(bpy.data.filepath)
 for o in sc.objects:
     if o.type == "MESH" and ("acr_lod" in o or ".lod" in o.name.lower()):
         o.hide_render = True
@@ -87,19 +91,14 @@ def shoot(tag, stock=False, side="r"):
         bpy.data.objects.remove(st)
 
 
-def clip(name, frame=None):
-    ad = arm.animation_data or arm.animation_data_create()
-    act = bpy.data.actions[name]
-    ad.action = act
-    if hasattr(ad, "action_slot") and act.slots:
-        ad.action_slot = act.slots[0]
-    f0, f1 = (int(x) for x in act.frame_range)
-    sc.frame_set((f0 + f1) // 2 if frame is None else frame)
+def clip(name, frame=0):
+    """Clip frame `frame` (0 = first; FIRE_AIMED presents there), checked against the build."""
+    dumped = POSES and str(frame) in posecheck.load(POSES)["clips"].get(name, {})
+    poser.play(name, frame, check=POSES if dumped else None)
 
 
 def hand_pose(fn):
-    if arm.animation_data:
-        arm.animation_data.action = None
+    poser.reset()
     for pb in arm.pose.bones:
         key, _s = limits.key_of(pb.name)
         pb.rotation_mode = "QUATERNION"
@@ -114,8 +113,7 @@ if text is not None:  # the solved fist (hdman: `hdbody.fist_spec`)
 
     from acr_assets import armature as am
 
-    if arm.animation_data:
-        arm.animation_data.action = None
+    poser.reset()
     am.pose(arm, json.loads(text.as_string())["fist"])
 else:
     hand_pose(lambda n, k: Quaternion((1, 0, 0), math.radians(limits.limit(n)["x"][1] * (0.6 if k.startswith("thumb") else 0.95))))
@@ -125,6 +123,6 @@ shoot("grip_stand", stock=True)
 clip("FIRE_AIMED")
 shoot("grip_fire_aimed", stock=True)
 shoot("grip_fire_aimed_left", stock=True, side="l")
-clip("ATTACK1")
+clip("ATTACK1", (poser.clip_range("ATTACK1")[1] - poser.clip_range("ATTACK1")[0]) // 2)  # mid-reload
 shoot("grip_reload", stock=True)
 print("ACR hand close-ups in", OUT)

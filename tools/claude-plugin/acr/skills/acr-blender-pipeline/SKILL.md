@@ -24,7 +24,7 @@ Every model is a Python script that Blender 5.2 runs headless (`-b --factory-sta
 | `assets/blender/build.py` | entry: runs one script in an empty scene, `export.export_glb`, writes `<name>.stats.json` from `ctx.stats` (+ `glb_bytes`) |
 | `assets/blender/lib/acr_assets/` | the library; module map in `references/modules.md` |
 | `assets/blender/tests/` | pure-Python unittests (no `bpy`) |
-| `assets/blender/tools/` | `preview.py` (lit renders of a glb), `silhouette.py` (fit to sprites), `palette_check.py` (colours per region against the sprites), `clips_sheet.py`, `held_sheet.py`, `makehuman_*.py` (derive `data/makehuman/*.json`) |
+| `assets/blender/tools/` | `render_pose.py` (Cycles proof renders in exact clip poses, checked against the build: `acr_assets.posecheck`), `preview.py` (lit renders of a glb), `silhouette.py` (fit to sprites), `palette_check.py` (colours per region against the sprites), `clips_sheet.py`, `held_sheet.py`, `makehuman_*.py` (derive `data/makehuman/*.json`) |
 | `target/assets/<category>/<name>.glb` | output (git-ignored), with `.stats.json`, and `.blend` with `--blend` |
 | `assets/LICENSES.md` | every third-party source: author, licence, URL, how it is used |
 
@@ -95,6 +95,7 @@ Read [references/open-defects.md](references/open-defects.md) before working on 
 7. Blender 5 actions are layered: `action.fcurves` is empty; use `armature._fcurves(act)` and set `animation_data.action_slot`.
 8. `bmesh.ops.delete` renumbers vertices (key data by `BMVert`, not index); new shape keys start at value 1.0 in 5.2; one face twice over the same vertices makes the export report "mesh not valid" (use `held.vane`; `Mesh.validate()`).
 9. `faces.new(...): face already exists` broke SpnAlb (`conquista._tassets`, `docs/humans-roster.md` §6).
-10. Generic viewers multiply `COLOR_0` into the colour; the renderer reads it as the decay mask. Judge looks in the game or with `tools/preview.py`, not in a glTF viewer.
-11. Shell garments derived from the body hull leave jagged "teeth"; draped garments are clean (`docs/clothing.md`, trisoup). Prefer converting a garment to a draft over patching a shell.
-12. A shared target dir across worktrees runs stale binaries; on the VM each worktree has its own.
+10. A render of a glb or `--blend` in a clip pose must go through `acr_assets.posecheck.Poser` (or `tools/render_pose.py`): setting `animation_data.action` yourself leaves unkeyed bones in the last clip's pose (packed STAND keys almost nothing), slot 0 may belong to another node, and a bone switched to quaternion rotation ignores Euler keys. `build.py` writes `<name>.poses.json`; `play(clip, frame, check=...)` fails on a mismatch. Musket clips aim at frame 0; their middle is the reload.
+11. Generic viewers multiply `COLOR_0` into the colour; the renderer reads it as the decay mask. Judge looks in the game or with `tools/preview.py`, not in a glTF viewer.
+12. Shell garments derived from the body hull leave jagged "teeth"; draped garments are clean (`docs/clothing.md`, trisoup). Prefer converting a garment to a draft over patching a shell.
+13. A shared target dir across worktrees runs stale binaries; on the VM each worktree has its own.

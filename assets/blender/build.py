@@ -100,6 +100,7 @@ def main(argv):
     if a.blend:
         import bpy
 
+        os.makedirs(os.path.dirname(os.path.abspath(a.blend)), exist_ok=True)
         bpy.ops.wm.save_as_mainfile(filepath=os.path.abspath(a.blend))
     # The limit constraints (`armature.apply_limits`) stay in the .blend; the clips already
     # respect them, and the exporter would bake every constrained bone's channels.
@@ -110,8 +111,15 @@ def main(argv):
             for pb in ob.pose.bones:
                 for c in [c for c in pb.constraints if c.name.startswith("acr_limit")]:
                     pb.constraints.remove(c)
+    # The export pose, before the exporter runs; the clip poses after it (`posecheck`).
+    from acr_assets import posecheck
+
+    poser = posecheck.Poser() if any(o.type == "ARMATURE" for o in bpy.data.objects) and bpy.data.actions else None
     size = export.export_glb(os.path.abspath(a.out), a.compress, getattr(module, "IMAGE_FORMAT", "AUTO"))
     ctx.stats["glb_bytes"] = size
+    if poser is not None:
+        # What proof renders of the glb check their pose against (`posecheck.verify`).
+        posecheck.dump(os.path.abspath(a.out), poser)
     if export.LAST_PACK:
         ctx.stats["pack"] = export.LAST_PACK
     with open(os.path.splitext(os.path.abspath(a.out))[0] + ".stats.json", "w", encoding="utf-8") as f:

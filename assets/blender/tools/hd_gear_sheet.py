@@ -3,7 +3,10 @@ authored levels (`extras.acr_lod`), and renders named views on a light grey stud
 
 blender -b --factory-startup -P hd_gear_sheet.py -- <glb> <out dir> <mode> [clip ...]
 mode `kit`: the laid-out kit from above and the musket in 4 views plus the lock and the butt.
-mode `man`: the unit in each named clip (first frame) from the front-left, full figure."""
+mode `man`: the unit in each named clip from the front-left, full figure: clip frame 0, or
+`CLIP:FRAME`. Poses go through `acr_assets.posecheck` (export pose, then only that clip; checked
+against `<name>.poses.json` beside the glb). FIRE_AIMED, FIRE_HIP and ATTACK1 present from
+frame 0 to the shot; their middle is the reload, not the aim."""
 
 import math
 import os
@@ -12,12 +15,15 @@ import sys
 import bpy
 from mathutils import Vector
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
+from acr_assets import posecheck  # noqa: E402
+
 argv = sys.argv[sys.argv.index("--") + 1:]
 glb, out, mode = argv[0], argv[1], argv[2]
 clips = argv[3:]
 os.makedirs(out, exist_ok=True)
 bpy.ops.wm.read_factory_settings(use_empty=True)
-bpy.ops.import_scene.gltf(filepath=glb)
+posecheck.import_glb(glb)
 for ob in bpy.data.objects:
     if "acr_lod" in ob.keys():
         ob.hide_render = True
@@ -96,19 +102,14 @@ if mode == "kit":
     butt = mw @ Vector((0.0, -0.05, -0.22))
     shot("musket_butt", butt, side - ax * 0.6 + up * 0.2, 0.30, up=up)
 else:
-    arm = next(o for o in bpy.data.objects if o.type == "ARMATURE")
-    acts = {a.name: a for a in bpy.data.actions}
-    for clip in clips:
-        act = next((a for n, a in acts.items() if n == clip or n.startswith(clip + "_") or n.startswith(clip)), None)
-        if act is None:
-            print("no clip", clip, sorted(acts))
-            continue
-        arm.animation_data_create()
-        arm.animation_data.action = act
-        if hasattr(arm.animation_data, "action_slot") and act.slots:
-            arm.animation_data.action_slot = act.slots[0]
-        f = int(sum(act.frame_range) // 2) if clip.startswith("FIRE") else int(act.frame_range[0])  # the aim mid-clip
-        sc.frame_set(f)
+    poser = posecheck.Poser(sc)
+    poses = posecheck.poses_path(glb)
+    for job in clips:
+        clip, _, f = job.partition(":")
+        f = int(f or 0)
+        dumped = poses and str(f) in posecheck.load(poses)["clips"].get(clip, {})
+        poser.play(clip, f, check=poses if dumped else None)
+        clip = clip if not f else f"{clip}_{f}"
         shot(f"man_{clip}", (0.0, 0.0, 1.0), (-0.7, -1.0, 0.25), 2.3)
         shot(f"man_{clip}_hands", (0.0, -0.2, 1.3), (-0.7, -1.0, 0.25), 0.9)
         shot(f"man_{clip}_side", (0.0, 0.0, 1.1), (1.0, -0.15, 0.1), 2.3)

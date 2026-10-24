@@ -13,12 +13,18 @@ import sys
 import bpy
 from mathutils import Vector
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "lib"))
+from acr_assets import armature as am  # noqa: E402
+from acr_assets import posecheck  # noqa: E402
+
 argv = sys.argv[sys.argv.index("--") + 1:]
 OUT, JOBS = argv[0], json.load(open(argv[1]))
 os.makedirs(OUT, exist_ok=True)
 sc = bpy.context.scene
 arm = next(o for o in sc.objects if o.type == "ARMATURE")
 body = bpy.data.objects["hd.body"]
+# Every pose starts from the saved pose; only the asked clip applies (`posecheck`).
+poser = posecheck.Poser(sc)
 
 prefs = bpy.context.preferences.addons["cycles"].preferences
 try:
@@ -86,29 +92,28 @@ def fingers(mode):
 
 
 def set_pose(action, t):
-    ad = arm.animation_data or arm.animation_data_create()
     if action is None:
-        ad.action = None
+        poser.reset()
         for pb in arm.pose.bones:
             pb.matrix_basis.identity()
         sc.frame_set(1)
         return
-    act = bpy.data.actions[action]
-    ad.action = act
-    if hasattr(ad, "action_slot") and act.slots:
-        ad.action_slot = act.slots[0]
-    f0, f1 = act.frame_range
+    f0, f1 = poser.clip_range(action)
     if t == "aim":  # the frame with the left hand furthest forward at chest height or above (levelled)
         best = None
-        for f in range(int(f0), int(f1) + 1):
-            sc.frame_set(f)
+        for f in range(0, f1 - f0 + 1):
+            poser.play(action, f)
             p = arm.matrix_world @ arm.pose.bones["hand_l"].head
             z = -p.y if p.z > 1.25 else -9
             if best is None or z > best[0] + 1e-4:
                 best = (z, f)
-        sc.frame_set(best[1])
+        poser.play(action, best[1])
         return
-    sc.frame_set(int(round(f0 + (f1 - f0) * t)))
+    poser.play(action, int(round((f1 - f0) * t)))
+
+
+def keys_fingers(action):
+    return action is not None and any('"index_01' in fc.data_path for fc in am._fcurves(bpy.data.actions[action]))
 
 
 def bbox():
@@ -126,7 +131,8 @@ def bbox():
 VIEWS = {"front": (0, 4), "3q": (-40, 8), "back": (180, 6), "side": (-90, 4)}
 for j in JOBS:
     set_pose(j.get("action"), j.get("t", 0.0))
-    fingers("grip" if j.get("action") in ("FIRE_AIMED", "ATTACK1", "ATTACK") else "relaxed")
+    if not keys_fingers(j.get("action")):  # a clip with finger keys (the contact grip) keeps them
+        fingers("grip" if j.get("action") in ("FIRE_AIMED", "ATTACK1", "ATTACK") else "relaxed")
     bpy.context.view_layer.update()
     w, h = j.get("res", (720, 1080))
     sc.render.resolution_x, sc.render.resolution_y = w, h

@@ -29,6 +29,7 @@ assets/
     render_views.py       entry: renders a model in the stored directions (sprite check)
     tools/silhouette.py   fits poses/proportions to the sprite silhouettes (development)
     tools/preview.py      lit renders, free views and decay stages of a built glTF
+    tools/render_pose.py  Cycles proof renders of a glb or --blend in exact clip poses
     tests/                `python -m unittest discover -s assets/blender/tests` (CI runs it)
   buildings/incdo1.py     an asset (one script per model, grouped by category)
   buildings/engkre.py     the wooden fort: stages, section states, ruin, fire anchors
@@ -385,6 +386,24 @@ animation that shows them: `STANDLO`, `BUILDLO_2`, `DEATHLIE1`, a list for sever
 model-ref --sections S` draws every section in state S after the animation's parts, as a
 finished building does; `render_views.py` plays the clip named after the reference's
 animation and shows only the matching states.
+
+**Exact poses in Blender renders (`acr_assets.posecheck`).** Every render of a built model
+in a clip pose goes through `posecheck.Poser`: `render_views.py`, `tools/preview.py`,
+`tools/render_pose.py`, `tools/hd_gear_sheet.py`, `tools/hand_closeups.py`,
+`tools/hd_human/hd_render.py`. It imports a glb through `gltf_pack.REST_CLIP`, puts every bone
+and animated node back to the export pose (the node transforms the game plays clips over),
+then applies only the asked clip at clip frame N (0 = its first frame, 24 fps). Without
+that, Blender keeps a bone the clip does not key (the packer drops channels equal to the node
+pose, so STAND keys almost nothing) in the pose of whatever clip ran before: HdEngM18's STAND
+rendered with the arms raised. A tool that switched bones to quaternion rotation silenced
+every Euler-keyed clip in a `--blend` (the old hand close-ups). `build.py` dumps the pose of
+every bone (skinned head position, rotation and scale of its deformation, so independent of
+the importer's bone axes) at every 4th frame, the middle and the last frame of every clip
+into `<name>.poses.json`; `Poser.play(clip, frame, check=poses)` compares the shown pose
+with it and raises `PoseMismatch` beyond 5 mm or 2 degrees. Musket clips present from frame 0
+to the shot; the middle of FIRE_AIMED and ATTACK1 is the reload (musket upright), not the aim.
+
+    blender -b --factory-startup --python assets/blender/tools/render_pose.py --         target/assets/units/hdman.glb <out> fire=FIRE_AIMED:0:3q grip=FIRE_AIMED:0:-60,10:hand_r:0.5
 
 **Generic ruins (#303).** `genbuild.building` ends with `ruin.add`: the intact mesh goes into
 `<name>.finished` (`STANDLO`) and a `<name>.ruin` group (`DEATHLIE1`/`DEATHLIE2`) is built

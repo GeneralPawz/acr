@@ -13,37 +13,19 @@ import argparse
 import math
 import os
 import sys
-import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "lib"))
 
 import bpy  # noqa: E402
 
-from acr_assets import Reference, camera, gltf_pack, scene  # noqa: E402
+from acr_assets import Reference, camera, posecheck, scene  # noqa: E402
 from acr_assets import conventions as cv  # noqa: E402
 
 
-def _play(obj, act):
-    obj.animation_data.action = act
-    if act is not None and hasattr(obj.animation_data, "action_slot"):
-        slots = [sl for sl in act.slots if sl.target_id_type == "OBJECT"]
-        match = [sl for sl in slots if obj.name in sl.name_display] or slots
-        if match:
-            obj.animation_data.action_slot = match[0]
-
-
-def import_glb(path):
-    """Imports an ACR glb with the extra clip `gltf_pack.REST_CLIP`: packed clips leave out
-    channels that equal the node's transform, which Blender would otherwise fill from the
-    last clip it evaluated."""
-    with open(path, "rb") as f:
-        data = gltf_pack.with_rest_clip(f.read())
-    with tempfile.TemporaryDirectory() as tmp:
-        p = os.path.join(tmp, os.path.basename(path))
-        with open(p, "wb") as f:
-            f.write(data)
-        bpy.ops.import_scene.gltf(filepath=p)
+# Imports through `gltf_pack.REST_CLIP` (packed clips leave out channels that equal the
+# node's transform, which Blender would otherwise fill from the last clip it evaluated).
+import_glb = posecheck.import_glb
 
 
 def show_state(s, ref):
@@ -54,20 +36,17 @@ def show_state(s, ref):
     state. Untagged nodes always show."""
     anim = ref.anim.lstrip("#@")
     sections = getattr(ref, "sections", -1)
-    for obj in s.objects:
-        if obj.type == "ARMATURE":
-            obj.animation_data_create()
-            # Bones the clip does not key keep the node transforms (`import_glb`).
-            rest = bpy.data.actions.get(gltf_pack.REST_CLIP)
-            if rest is not None:
-                _play(obj, rest)
-                s.frame_set(0)
-            act = bpy.data.actions.get(anim)
-            _play(obj, act)
-            if act is None:
+    # Every bone and node at its node transform, then only this clip (`posecheck.Poser`).
+    poser = posecheck.Poser(s)
+    if bpy.data.actions.get(anim) is not None:
+        poser.play(anim, 0)
+    else:
+        poser.reset()
+        for obj in s.objects:
+            if obj.type == "ARMATURE":
                 for pb in obj.pose.bones:
                     pb.matrix_basis.identity()
-    s.frame_set(0)
+        s.frame_set(0)
 
     def visible(obj):
         while obj is not None:
