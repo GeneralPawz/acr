@@ -23,6 +23,9 @@ pub struct Rules {
     /// Mortars (`ArtMrt`) with engagement zones ([`crate::mortar`], `docs/simulation.md`,
     /// "Mortar").
     pub mortars: bool,
+    /// Corpse piles are obstacles: dense piles slow the men who cross them, big ones are
+    /// walked around ([`crate::piles`], `docs/simulation.md`, "Corpse piles").
+    pub corpse_piles: bool,
 }
 
 impl std::hash::Hash for Rules {
@@ -31,6 +34,9 @@ impl std::hash::Hash for Rules {
         (self.hit_locations, self.body_spacing).hash(state);
         if self.mortars {
             self.mortars.hash(state);
+        }
+        if self.corpse_piles {
+            (3u8, self.corpse_piles).hash(state);
         }
     }
 }

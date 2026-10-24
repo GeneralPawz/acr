@@ -22,7 +22,8 @@
 //! dialogs: count, per close: tick delta | answer
 //! diplomacy (version 2): count, per input: tick delta | 0 request bytes, or 1 building index
 //! camera x | camera y (world pixels) | selection: count + ids | groups: count, per group: ids
-//! rules (version 3): bits of the optional rules of the setup (bit 0 hit locations, #225)
+//! rules (version 3): bits of the optional rules of the setup (bit 0 hit locations, #225; bit 1
+//! body spacing; bit 2 mortars, #301; bit 3 corpse piles, #222)
 //! ```
 //!
 //! The name, time and setup come first so that the load dialog can list savegames
@@ -195,7 +196,8 @@ impl SaveGame {
         }
         w.u(u64::from(self.setup.rules.hit_locations)
             | u64::from(self.setup.rules.body_spacing) << 1
-            | u64::from(self.setup.rules.mortars) << 2);
+            | u64::from(self.setup.rules.mortars) << 2
+            | u64::from(self.setup.rules.corpse_piles) << 3);
         w.0
     }
 
@@ -233,8 +235,12 @@ impl SaveGame {
         let groups = (0..n).map(|_| r.ids()).collect::<Result<Vec<_>, _>>()?;
         if version >= 3 {
             let bits = r.u()?;
-            setup.rules =
-                acr_sim::Rules { hit_locations: bits & 1 != 0, body_spacing: bits & 2 != 0, mortars: bits & 4 != 0 };
+            setup.rules = acr_sim::Rules {
+                hit_locations: bits & 1 != 0,
+                body_spacing: bits & 2 != 0,
+                mortars: bits & 4 != 0,
+                corpse_piles: bits & 8 != 0,
+            };
         }
         if r.pos != data.len() {
             return Err(err("trailing bytes"));
@@ -859,6 +865,9 @@ mod tests {
             groups: vec![],
         };
         save.setup.rules.hit_locations = true;
+        save.setup.rules.corpse_piles = true;
+        assert_eq!(SaveGame::decode(&save.encode()).unwrap(), save);
+        save.setup.rules.corpse_piles = false;
         let mut bytes = save.encode();
         assert_eq!(SaveGame::decode(&bytes).unwrap(), save);
         // A version 2 save has no rules: the original ones.

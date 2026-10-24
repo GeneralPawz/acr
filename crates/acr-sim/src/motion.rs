@@ -311,10 +311,21 @@ pub fn process_unit(world: &mut World, i: usize) {
     let map = world.map.clone();
     let world_adv = world.adv(world.units[i].owner, world.units[i].kind);
     let ship = crate::ship::is_ship(catalog.get(world.units[i].kind));
-    let World { units, occupancy, random, buckets, .. } = world;
+    let World { units, occupancy, random, buckets, piles, .. } = world;
     let u = &mut units[i];
     let t = catalog.get(u.kind);
     let lay = layer(&map, t);
+    // Corpse piles (#222, optional rule): walkers on land path around the blocked piles,
+    // unless they already stand on one (then the plain land map lets them out).
+    let lay = match piles.lock() {
+        Some(p)
+            if t.medium == crate::catalog::Medium::Land
+                && !(p.check_bar(u.cell.0, u.cell.1, u.lx, u.lx) && !lay.check_bar(u.cell.0, u.cell.1, u.lx, u.lx)) =>
+        {
+            p
+        }
+        _ => lay,
+    };
     let areas =
         if t.medium == crate::catalog::Medium::Water { map.water_areas.as_ref() } else { map.land_areas.as_ref() };
     match u.orders.last().cloned() {
@@ -345,6 +356,8 @@ pub fn process_unit(world: &mut World, i: usize) {
     let rate = if u.stance == 0 { 16 } else { adv_rate(&catalog, u, &world_adv) };
     // Leg wounds (#225, optional rule) slow the walk.
     let rate = u.body.walk_rate(rate);
+    // So do dense corpse piles (#222, optional rule).
+    let rate = piles.walk_rate(u.pos, rate);
     match motion_handler(u, t, lay, occupancy, random, buckets, rate) {
         Some(Signal::Push(cell)) => remove_fools(world, i, cell),
         Some(Signal::Engage(j)) => {

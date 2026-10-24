@@ -196,6 +196,8 @@ pub fn fly_corpses(w: &mut World) {
         w.units[i].pos = Pos::new(t.pos.0 >> 4, t.pos.1 >> 4);
         if ground >= t.pos.2 >> 8 {
             w.thrown.remove(k);
+            // Corpse piles (#222, optional rule): the body counts where it lands.
+            crate::piles::moved(w, i);
         } else {
             w.thrown[k] = t;
             k += 1;

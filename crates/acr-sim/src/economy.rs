@@ -938,6 +938,7 @@ fn storm(w: &mut World, i: usize, b: usize) {
                 crate::combat::die(w, d);
                 w.units[d].inside_of = None;
                 w.units[d].alive = false;
+                crate::piles::forget(w, d);
             }
         }
     }

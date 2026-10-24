@@ -1963,12 +1963,15 @@ pub fn die(w: &mut World, i: usize) {
             w.units[k].inside_of = None;
             die(w, k);
             w.units[k].alive = false;
+            crate::piles::forget(w, k);
         }
     }
     if w.units[i].building {
         destroyed_building_explodes(w, i);
     }
     crate::projectile::throw_corpse(w, i);
+    // Corpse piles (#222, optional rule): the body joins the pile under it.
+    crate::piles::add(w, i);
 }
 
 /// The end of `Die` for a building (0x4e84c7..0x4e8678): unless its `delay` (OB+0x8c) is
@@ -2314,89 +2317,99 @@ pub fn search_victims(w: &mut World) {
 pub fn object_loop(w: &mut World) {
     let catalog = w.catalog.clone();
     for i in 0..w.units.len() {
-        let u = &mut w.units[i];
-        if !u.alive {
-            continue;
+        let corpse = w.units[i].alive && w.units[i].death != 0;
+        object_one(w, &catalog, i);
+        if corpse && !w.units[i].alive {
+            // Corpse piles (#222, optional rule): the removed body leaves its pile.
+            crate::piles::forget(w, i);
         }
-        let t = catalog.get(u.kind);
-        if u.death != 0 {
-            if u.death == 1 {
-                if anim_frames(t, AnimKind::Death).is_none() {
-                    u.alive = false;
-                    continue;
-                }
-                set_anim(u, t, AnimKind::Death);
-                u.frame = 0;
+    }
+}
+
+/// One object of [`object_loop`].
+fn object_one(w: &mut World, catalog: &crate::catalog::Catalog, i: usize) {
+    let u = &mut w.units[i];
+    if !u.alive {
+        return;
+    }
+    let t = catalog.get(u.kind);
+    if u.death != 0 {
+        if u.death == 1 {
+            if anim_frames(t, AnimKind::Death).is_none() {
+                u.alive = false;
+                return;
             }
-            if u.anim == AnimKind::Death {
-                u.frame += FRM_DEC;
-                if u.frame >= u.anim_frames - FRM_DEC {
-                    if t.economy.meat.is_some() {
-                        // The body becomes a carcass sprite (0x511f4b).
-                        if crate::sprite::leave_carcass(w, i) {
-                            w.units[i].alive = false;
-                            continue;
-                        }
-                    }
-                    let u = &mut w.units[i];
-                    if anim_frames(t, AnimKind::DeathLie(1)).is_some() {
-                        set_anim(u, t, AnimKind::DeathLie(1));
-                        u.frame = 0;
-                    } else {
-                        u.alive = false;
+            set_anim(u, t, AnimKind::Death);
+            u.frame = 0;
+        }
+        if u.anim == AnimKind::Death {
+            u.frame += FRM_DEC;
+            if u.frame >= u.anim_frames - FRM_DEC {
+                if t.economy.meat.is_some() {
+                    // The body becomes a carcass sprite (0x511f4b).
+                    if crate::sprite::leave_carcass(w, i) {
+                        w.units[i].alive = false;
+                        return;
                     }
                 }
-            } else {
-                u.death = u.death.saturating_add(1);
-                let next = match u.death {
-                    1201.. if u.anim == AnimKind::DeathLie(1) => Some(2),
-                    1601.. if u.anim == AnimKind::DeathLie(2) => Some(3),
-                    _ => None,
-                };
-                if let Some(n) = next {
-                    if anim_frames(t, AnimKind::DeathLie(n)).is_some() {
-                        set_anim(u, t, AnimKind::DeathLie(n));
-                        u.frame = 0;
-                    } else {
-                        u.alive = false;
-                    }
-                }
-                if u.death > CORPSE_LIFETIME {
-                    u.alive = false;
-                }
-            }
-            let u = &mut w.units[i];
-            u.death = u.death.saturating_add(1);
-            continue;
-        }
-        crate::economy::starve(w, i);
-        let u = &mut w.units[i];
-        if u.death != 0 {
-            continue;
-        }
-        if u.building && u.life < u.max_life / 2 {
-            // Smoke of a damaged building (0x511be2): a random number even without FOGGING.
-            w.random.rando();
-        }
-        let u = &mut w.units[i];
-        if u.delay > 0 {
-            if !t.slow_recharge {
-                u.delay = (u.delay - FRM_DEC).max(0);
-            } else if u.stand_time > 20 && u.orders.is_empty() && (u.frame >> 1) == ((u.anim_frames - 1) >> 1) {
-                let reload = AnimKind::Attack(3);
-                if u.stance != 4 {
-                    u.stance = 4;
-                    try_to_stand(u, t, &mut w.random, false);
-                } else if u.anim != reload {
-                    u.delay = (u.delay - anim_frames(t, reload).unwrap_or(1)).max(0);
-                    set_anim(u, t, reload);
+                let u = &mut w.units[i];
+                if anim_frames(t, AnimKind::DeathLie(1)).is_some() {
+                    set_anim(u, t, AnimKind::DeathLie(1));
                     u.frame = 0;
-                    u.in_motion = false;
+                } else {
+                    u.alive = false;
                 }
             }
-        } else if u.stance == 4 {
-            u.stance = 0;
+        } else {
+            u.death = u.death.saturating_add(1);
+            let next = match u.death {
+                1201.. if u.anim == AnimKind::DeathLie(1) => Some(2),
+                1601.. if u.anim == AnimKind::DeathLie(2) => Some(3),
+                _ => None,
+            };
+            if let Some(n) = next {
+                if anim_frames(t, AnimKind::DeathLie(n)).is_some() {
+                    set_anim(u, t, AnimKind::DeathLie(n));
+                    u.frame = 0;
+                } else {
+                    u.alive = false;
+                }
+            }
+            if u.death > CORPSE_LIFETIME {
+                u.alive = false;
+            }
         }
+        let u = &mut w.units[i];
+        u.death = u.death.saturating_add(1);
+        return;
+    }
+    crate::economy::starve(w, i);
+    let u = &mut w.units[i];
+    if u.death != 0 {
+        return;
+    }
+    if u.building && u.life < u.max_life / 2 {
+        // Smoke of a damaged building (0x511be2): a random number even without FOGGING.
+        w.random.rando();
+    }
+    let u = &mut w.units[i];
+    if u.delay > 0 {
+        if !t.slow_recharge {
+            u.delay = (u.delay - FRM_DEC).max(0);
+        } else if u.stand_time > 20 && u.orders.is_empty() && (u.frame >> 1) == ((u.anim_frames - 1) >> 1) {
+            let reload = AnimKind::Attack(3);
+            if u.stance != 4 {
+                u.stance = 4;
+                try_to_stand(u, t, &mut w.random, false);
+            } else if u.anim != reload {
+                u.delay = (u.delay - anim_frames(t, reload).unwrap_or(1)).max(0);
+                set_anim(u, t, reload);
+                u.frame = 0;
+                u.in_motion = false;
+            }
+        }
+    } else if u.stance == 4 {
+        u.stance = 0;
     }
 }
 

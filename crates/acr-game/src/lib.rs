@@ -459,6 +459,10 @@ impl Game {
         if self.ui.settings().mortars {
             setup.rules.mortars = true;
         }
+        // And `corpse_piles=on` (#222, docs/simulation.md "Corpse piles").
+        if self.ui.settings().corpse_piles {
+            setup.rules.corpse_piles = true;
+        }
         let mut game = ingame::InGame::new(setup);
         game.apply_settings(self.ui.settings());
         game.start(&self.assets.paths());

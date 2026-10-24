@@ -1350,6 +1350,40 @@ löschen", "Feuer frei" and "Feuer einstellen", which send these two commands, a
 of their zones and minimum range (docs/ui.md, "Mortar buttons"). The driver's `state` with
 `units` shows a mortar's `mortar: {zones: [[x, y, r], ...], firing}`.
 
+### Corpse piles (optional rule, #222)
+
+Not in the original game, where corpses never hinder anyone (`Die` 0x4e77a0 frees the
+dead man's cell). With `Rules::corpse_piles` on (setting `corpse_piles=on`, driver `start`
+option `corpse_piles`, savegame rules bit 3) dense piles of bodies hinder the living
+(`crates/acr-sim/src/piles.rs`):
+
+- **Count.** The sim counts corpses per 32 px pile cell (about 1 m² at 30 px per metre).
+  A body counts from `Die` until the object loop (0x5118b3) removes it: after
+  `CORPSE_LIFETIME` 2000 ticks of lying, as a carcass, or at once for a type without
+  `#DEATHLIE1`; a script's `RemoveUnits` and a garrison or storm defender who is "gone at
+  once" never count. A body thrown by a `DETONATOR` blast (0x559f20) counts where it lands.
+  Men, riders and animals on land count; buildings, guns and ships do not. Updates happen on
+  death, removal and landing only; nothing scans the units.
+- **Rough ground.** From `ROUGH` 4 bodies in a cell, a man standing on it walks at half his
+  rate (after the stance rate and leg wounds; `motion::process_unit`).
+- **Obstacle.** From `BLOCKED` 7 bodies the cell's 2 × 2 lock cells are set in a copy of the
+  land lock map (made when the first pile blocks, cleared again where the land itself is
+  free when the count drops). Land walkers use that map for their path search
+  (`CreatePrePath`) and steps, so they walk around the pile like around a rock; a detour is
+  as long as the pre-path search finds. A man standing on a blocked pile uses the plain land
+  map, so he can climb out; a goal inside a pile moves to the nearest free spot
+  (`FindBestPosition`).
+- **Decay** is the corpses' own: the count drops as the object loop removes them.
+- **Off** (the default): nothing is counted, no lock map is made, no random number is
+  drawn; `World::piles` and the rule are hashed only when non-empty or on, so the pinned
+  hashes stay. Tests: `crates/acr-sim/tests/piles.rs`.
+
+Not covered: cannons and the push of formations (`spacing`) ignore the piles, the
+coarse area routing (`TOP1`) does not know them, and `RemoveFools` may still swap a man into
+a blocked cell. The options page has no row yet (both columns of Spieleinstellungen
+page 2 are full): the planned line is "Leichenhaufen als Hindernis", `Aus (Original)` /
+`An`; until then the rule is the setting `corpse_piles=on`.
+
 ### Worked timing (musketeer, 10 ticks/s)
 
 - First shot: `#PATTACK1` (63 frames, 32 ticks), then 7 ticks to the active frame 14. The

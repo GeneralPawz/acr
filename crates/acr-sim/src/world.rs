@@ -577,6 +577,9 @@ pub struct World {
     /// Mortars' engagement zones ([`crate::Rules::mortars`], [`crate::mortar`]); hashed only
     /// while some mortar has zones.
     pub mortar_zones: crate::mortar::Zones,
+    /// Corpses per pile cell ([`crate::Rules::corpse_piles`], [`crate::piles`]); hashed only
+    /// while some corpse is counted.
+    pub piles: crate::piles::Piles,
 }
 
 /// Unit indices per 128 px cell (8 × 8 lock cells).
@@ -725,6 +728,7 @@ impl World {
             rules: Default::default(),
             ground_fires: Default::default(),
             mortar_zones: Default::default(),
+            piles: Default::default(),
         }
     }
 
@@ -961,6 +965,7 @@ impl World {
         u.alive = false;
         u.orders.clear();
         self.bars.remove(id.0);
+        crate::piles::forget(self, id.0 as usize);
     }
 
     /// Advances the world by one tick: applies the commands in order, then runs every unit
@@ -1397,6 +1402,7 @@ impl World {
         let hash = if self.rules == crate::Rules::default() { hash } else { state_hash(&(hash, self.rules)) };
         let hash = if self.ground_fires.list.is_empty() { hash } else { state_hash(&(hash, &self.ground_fires)) };
         let hash = if self.mortar_zones.is_empty() { hash } else { state_hash(&(hash, &self.mortar_zones)) };
+        let hash = if self.piles.is_empty() { hash } else { state_hash(&(hash, &self.piles)) };
         // The peace time, only in games that have one.
         if self.peace == crate::peace::Peace::default() { hash } else { state_hash(&(hash, &self.peace)) }
     }

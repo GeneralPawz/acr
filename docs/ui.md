@@ -941,7 +941,8 @@ tracks (311, 338, 419, 446) drawn in. The settings each line writes are in
 All but the two rules take effect at once on OK. The rules are part of the simulation (the
 setup a replay or savegame hashes): a battle keeps the rules it began with, the new choice
 applies from the next battle, as the heading says (the note that said it on its own row
-gave way to the `Mörser` line, #301). The modern controls'
+gave way to the `Mörser` line, #301). The corpse-piles rule (#222, `corpse_piles=on`) has no row
+yet, since page 2 is full; its planned line is "Leichenhaufen als Hindernis", Aus (Original) / An. The modern controls'
 Ctrl + Space, C switches the free camera for the running battle only
 ([controls.md](controls.md#leader-chords-modern)); OK on these pages sets it back to the
 `Kamera` line. Driver check with

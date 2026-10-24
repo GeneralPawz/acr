@@ -49,6 +49,10 @@ pub struct Settings {
     /// ACR: new games use the optional mortars rule (`ArtMrt` units with engagement zones,
     /// docs/simulation.md "Mortar"); `mortars=on|off`, off by default.
     pub mortars: bool,
+    /// ACR: new games use the optional corpse-piles rule (#222: dense corpse piles slow the
+    /// men who cross them, big ones are walked around; docs/simulation.md "Corpse piles");
+    /// `corpse_piles=on|off`, off by default.
+    pub corpse_piles: bool,
     /// ACR: sun shadows of the 3D models (`shadows=on|off`, on by default;
     /// docs/rendering-3d.md "Shadows").
     pub shadows: bool,
@@ -159,6 +163,7 @@ impl Default for Settings {
             hit_locations: false,
             body_spacing: false,
             mortars: false,
+            corpse_piles: false,
             shadows: true,
             lod: true,
             material_detail: true,
@@ -232,7 +237,7 @@ impl Settings {
         format!(
             "sound_volume={}\nmusic_volume={}\nmusic_mode={}\ngame_mode={}\nscroll_speed={}\nframe_time={}\n\
              resolution={}\nrecord={}\nrecord_file={hex}\ncontrols={controls}\nedge_scroll={}\n\
-             models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\ncorpse_decay={}\nhit_locations={}\nbody_spacing={}\nmortars={}\nshadows={}\nlod={}\nmaterial_detail={}\nwind={}\nmap_models={}\nwater={}\n\
+             models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\ncorpse_decay={}\nhit_locations={}\nbody_spacing={}\nmortars={}\ncorpse_piles={}\nshadows={}\nlod={}\nmaterial_detail={}\nwind={}\nmap_models={}\nwater={}\n\
              ground={}\nbattlefield_marks={}\nweather={}\n{}",
             self.sound_volume,
             self.music_volume,
@@ -248,6 +253,7 @@ impl Settings {
             if self.hit_locations { "on" } else { "off" },
             if self.body_spacing { "on" } else { "off" },
             if self.mortars { "on" } else { "off" },
+            if self.corpse_piles { "on" } else { "off" },
             if self.shadows { "on" } else { "off" },
             if self.lod { "on" } else { "off" },
             if self.material_detail { "on" } else { "off" },
@@ -307,6 +313,7 @@ impl Settings {
                 "corpse_decay" => s.corpse_decay_half = value == "half",
                 "body_spacing" => s.body_spacing = value == "on",
                 "mortars" => s.mortars = value == "on",
+                "corpse_piles" => s.corpse_piles = value == "on",
                 "shadows" => s.shadows = value != "off",
                 "lod" => s.lod = value != "off",
                 "material_detail" => s.material_detail = value != "off",
@@ -372,6 +379,7 @@ mod tests {
             hit_locations: true,
             body_spacing: true,
             mortars: true,
+            corpse_piles: true,
             marks_keep: true,
             weather: Weather::Snow,
         };
