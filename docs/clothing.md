@@ -1081,6 +1081,11 @@ The opt-in `assets/units/hdengm18.py` uses the HD skin and procedural 1768 draft
    pivots and orientations. `skirt_keys` copies the leg keys into them in every clip,
    including runs, firing, reload, melee and deaths. Matching deformation makes covered
    breeches under these panels removable. The chains remain separate garment bones.
+   The HD skirts use straight grain supports 25 mm outside the widest breeches section
+   in each column, rather than following individual thigh bumps. Waist weights blend
+   from the bodice over 10 cm; the internal waist hem is removed, coincident torso seam
+   vertices joined, and the tangent faired across the sewing line. White turnbacks stay
+   in the same settled panel surface.
 4. **Materials and gore:** tiled wool/linen/leather maps and metal buttons remain. Every
    outfit primitive retains its material's decay windows, `COLOR_0` decay mask, `_GORE`
    and integer `_PART`. The game's cut caps close a severed sleeve without inner skin.

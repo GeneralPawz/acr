@@ -224,6 +224,7 @@ def tailor_trim(ob, garment, body_tree):
     relax_tailoring(ob, garment, body_tree)
     if garment != "coat":
         return
+    hang_skirts(ob)
     names = list(garments.coat()[0])
     ids = {names.index(n) for n in ("collar", "cuff")}
     bm = bmesh.new()
@@ -231,6 +232,49 @@ def tailor_trim(ob, garment, body_tree):
     panel = bm.faces.layers.int["panel"]
     bmesh.ops.delete(bm, geom=[f for f in bm.faces if f[panel] in ids], context="FACES")
     bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context="VERTS")
+    bm.to_mesh(ob.data)
+    bm.free()
+
+
+def hang_skirts(ob):
+    """Fair the settled skirts into continuous gravity lines from the sewn waist.
+
+    Work before material splitting: the lining and red wool share the same vertices,
+    and the waist anchor belongs to both bodice and skirt. Keep small baked folds.
+    """
+    import bmesh
+    from . import garments
+
+    names = list(garments.coat()[0])
+    body_ids = {names.index(n) for n in ("coat_front", "coat_back", "lapel")}
+    skirt_ids = {names.index(n) for n in ("skirt_front", "skirt_back", "turnback")}
+    bm = bmesh.new()
+    bm.from_mesh(ob.data)
+    panel = bm.faces.layers.int["panel"]
+    drop = bm.verts.layers.float.get("hd_skirt_drop") or bm.verts.layers.float.new("hd_skirt_drop")
+    skirt = {v for f in bm.faces if f[panel] in skirt_ids for v in f.verts}
+    waist = [v for v in skirt if any(f[panel] in body_ids for f in v.link_faces)]
+    if not waist:
+        raise ValueError("HD coat has no sewn waist anchors")
+    anchors = sorted((math.atan2(v.co.x, -v.co.y), math.hypot(v.co.x, v.co.y), v.co.z) for v in waist)
+    angles = [a-2*math.pi for a, _r, _z in anchors]+[a for a, _r, _z in anchors]+[a+2*math.pi for a, _r, _z in anchors]
+    radii = [r for _a, r, _z in anchors]*3
+    heights = [z for _a, _r, z in anchors]*3
+    for v in skirt:
+        a = math.atan2(v.co.x, -v.co.y)
+        r0, z0 = float(np.interp(a, angles, radii)), float(np.interp(a, angles, heights))
+        d = max(0.0, z0-v.co.z)
+        v[drop] = d
+        t = min(1.0, d/0.44)
+        r = math.hypot(v.co.x, v.co.y)
+        residual = max(-0.003, min(0.003, (r-r0)*0.12))
+        target = r0+0.045*t+residual*min(1.0, d/0.08)
+        blend = min(1.0, d/0.07)
+        blend = blend*blend*(3-2*blend)
+        if r > 1e-6:
+            v.co.x *= 1+blend*(target/r-1)
+            v.co.y *= 1+blend*(target/r-1)
+    bmesh.ops.recalc_face_normals(bm, faces=list(bm.faces))
     bm.to_mesh(ob.data)
     bm.free()
 
@@ -781,6 +825,23 @@ def lay_skirts(pieces, keys):
     """
     from mathutils.bvhtree import BVHTree
     from mathutils import Vector
+    from mathutils.kdtree import KDTree
+
+    # Exact seam weights from the bodice, fading into the underlying breeches over
+    # the upper 10 cm. A waist vertex must not suddenly switch to the thigh.
+    coat_verts, coat_weights = [], []
+    for source in pieces:
+        if keys[source.name] != "coat" or source.name.endswith(LOOSE):
+            continue
+        names = {g.index: g.name for g in source.vertex_groups}
+        for v in source.data.vertices:
+            if v.co.z < 1.18:
+                coat_verts.append(v.co.copy())
+                coat_weights.append({names[e.group]: e.weight for e in v.groups})
+    seam = KDTree(len(coat_verts))
+    for i, p in enumerate(coat_verts):
+        seam.insert(p, i)
+    seam.balance()
 
     breeches = [o for o in pieces if keys[o.name] == "breeches"]
     verts, tris, source_weights = [], [], []
@@ -792,20 +853,54 @@ def lay_skirts(pieces, keys):
         source.data.calc_loop_triangles()
         tris.extend(tuple(base + i for i in t.vertices) for t in source.data.loop_triangles)
     inner = BVHTree.FromPolygons(verts, tris, all_triangles=True)
+    # A hanging panel clears the widest part of the breeches below its column.
+    # Following each local thigh bump independently creates the old forward belly
+    # half-way down the skirt. The support line is constant down the grain.
+    azimuths = np.linspace(-math.pi, math.pi, 65)
+    envelope = []
+    for a in azimuths:
+        radial = Vector((math.sin(a), -math.cos(a), 0))
+        radii = []
+        for z in np.linspace(0.60, 1.00, 13):
+            hit = inner.ray_cast(radial*0.5+Vector((0, 0, z)), -radial, 0.5)[0]
+            if hit is not None:
+                radii.append(hit.dot(radial))
+        envelope.append(max(radii, default=0.16)+0.025)
     for ob in pieces:
         if not ob.name.endswith(LOOSE):
             continue
+        # The split garment's generic hem also rimmed its sewn waist. Remove that
+        # internal rim, leaving the actual shared sewing line continuous.
+        import bmesh
+
+        bm = bmesh.new()
+        bm.from_mesh(ob.data)
+        drop = bm.verts.layers.float.get("hd_skirt_drop")
+        if drop:
+            bmesh.ops.delete(bm, geom=[f for f in bm.faces if all(v[drop] < 0.006 for v in f.verts)], context="FACES")
+            bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context="VERTS")
+        bm.to_mesh(ob.data)
+        bm.free()
+        drops = ob.data.attributes.get("hd_skirt_drop")
         ws = []
         for v in ob.data.vertices:
+            drop = drops.data[v.index].value if drops else max(0, 1.05-v.co.z)
+            blend = min(1.0, drop/0.10)
+            blend = blend*blend*(3-2*blend)
+            _p, si, _d = seam.find(v.co)
+            a = math.atan2(v.co.x, -v.co.y)
+            r = math.hypot(v.co.x, v.co.y)
+            hanging = float(np.interp(a, azimuths, envelope))+0.01*drop
+            shape_blend = min(1.0, drop/0.075)
+            shape_blend = shape_blend*shape_blend*(3-2*shape_blend)
+            if r > 1e-6:
+                v.co.x *= 1+shape_blend*(hanging/r-1)
+                v.co.y *= 1+shape_blend*(hanging/r-1)
             side = 1 if v.co.x > 0 else -1
             leg = max(0.0, min(1.0, (0.97 - v.co.z) / 0.12))
             outward = Vector((v.co.x - side * 0.09 * leg, v.co.y, 0)).normalized()
             loc, _n, ti, distance = inner.ray_cast(v.co + outward * 0.06, -outward, 0.14)
-            if loc is not None:
-                gap = 0.06 - distance
-                if gap < 0.025:
-                    v.co += outward * min(0.05, 0.025 - gap)
-            else:
+            if loc is None:
                 loc, _n, ti, _dist = inner.find_nearest(v.co)
             ia, ib, ic = tris[ti]
             a, b, c = verts[ia], verts[ib], verts[ic]
@@ -817,6 +912,10 @@ def lay_skirts(pieces, keys):
             for vi, share in ((ia, 1 - wb - wc), (ib, wb), (ic, wc)):
                 for bone, value in source_weights[vi].items():
                     w[bone] = w.get(bone, 0.0) + value * max(0, share)
+            # Remap leg weights only after blending the common waist influence.
+            w = {b: x*blend for b, x in w.items()}
+            for b, x in coat_weights[si].items():
+                w[b] = w.get(b, 0)+x*(1-blend)
             ws.append(w)
         ob.data.update()
         for vg in list(ob.vertex_groups):
@@ -1124,6 +1223,47 @@ def join(name, objs, arm):
     return ob, hdbody.limit_weights(ob)
 
 
+def stitch_waist(ob):
+    """Join the sewn bodice/skirt vertices, preserving the torso's gore part.
+
+    Keeping coincident pieces separate leaves a hard normal line even after the
+    internal hem is removed. Only the coat's torso seam is welded here.
+    """
+    import bmesh
+    from mathutils import Vector
+
+    bm = bmesh.new()
+    bm.from_mesh(ob.data)
+    part = bm.verts.layers.float.get("_part")
+    candidates = [v for v in bm.verts if 0.97 < v.co.z < 1.15 and
+                  any(".coat." in ob.data.materials[f.material_index].name for f in v.link_faces) and
+                  (part is None or v[part] == 0)]
+    before = len(bm.verts)
+    bmesh.ops.remove_doubles(bm, verts=candidates, dist=0.0003)
+    joined = before-len(bm.verts)
+    # Fair the tangent across the sewing line too. The separate simulations leave
+    # a tiny shelf at the waist even when the endpoints agree exactly.
+    band = [v for v in bm.verts if 0.96 < v.co.z < 1.17 and
+            any(".coat." in ob.data.materials[f.material_index].name for f in v.link_faces) and
+            (part is None or v[part] == 0)]
+    for _ in range(24):
+        moved = {}
+        for v in band:
+            nbr = [e.other_vert(v) for e in v.link_edges]
+            if nbr:
+                avg = sum((q.co for q in nbr), Vector())/len(nbr)
+                strength = min(1.0, (v.co.z-0.96)/0.05, (1.17-v.co.z)/0.05)
+                q = v.co.lerp(avg, 0.45*strength)
+                q.z = v.co.z
+                moved[v] = q
+        for v, q in moved.items():
+            v.co = q
+    bm.to_mesh(ob.data)
+    bm.free()
+    ob.data.update()
+    return joined
+
+
 def _decimated(o, ratio):
     import bpy
 
@@ -1191,6 +1331,7 @@ def build(ctx, arm, body, body_lods=(), palette=None):
     mats = {}
     finish_pieces(pieces, keys, palette, mats, ctx.name)
     outfit, st["weights"] = join(f"{ctx.name}.hd.outfit", pieces, arm)
+    st["waist_vertices_joined"] = stitch_waist(outfit)
     st["quality"] = mesh_quality(outfit)
     st["tris"] = {"master": _tris(outfit)}
     levels = []
