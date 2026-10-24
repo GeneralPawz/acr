@@ -10,7 +10,8 @@
 //! explosions spray low and wide at the victim's feet instead (#226).
 //!
 //! Rounds striking the ground (`World::impacts`) leave churned earth the same way: a crater
-//! for cannonballs and shells, a scuff for musket balls, grapeshot and arrows (#226).
+//! for cannonballs and shells, a scuff for musket balls, grapeshot and arrows (#226). In rain
+//! the blood soaks in darker and wider ([`soak`]).
 
 use acr_render::model::ramp;
 use acr_render::model_renderer::{BloodPool, Dirt, Sprayed};
@@ -176,6 +177,18 @@ pub fn lay_on_ground(pools: &mut [BloodPool], ground: &dyn Fn(f32, f32) -> [f32;
         let r = p.radius * (1.0 + p.stretch);
         p.centre[2] = ground(p.centre[0], p.centre[1])[2];
         p.tilt = tilt(ground, p.centre[0], p.centre[1], r);
+    }
+}
+
+/// Blood on wet ground (`wet` 0..1, 1 in rain): diluted, it runs a quarter wider and soaks
+/// in darker at once instead of staying bright red. Earth, stains and kept marks stay.
+pub fn soak(pools: &mut [BloodPool], wet: f32) {
+    if wet <= 0.0 {
+        return;
+    }
+    for p in pools.iter_mut().filter(|p| p.dirt == Dirt::None) {
+        p.radius *= 1.0 + 0.25 * wet;
+        p.age += (1.0 - p.age) * 0.4 * wet;
     }
 }
 
@@ -476,6 +489,23 @@ mod tests {
         for (dx, dy) in [(-10.0, -10.0), (10.0, 10.0), (10.0, -10.0)] {
             let z = pools[0].centre[2] + pools[0].tilt[0] * dx + pools[0].tilt[1] * dy;
             assert_eq!(z, ground(100.0 + dx, 50.0 + dy)[2]);
+        }
+    }
+
+    #[test]
+    fn rain_soaks_blood_darker_and_wider() {
+        let mut d = drops(&hit(DeathCause::Gunshot), 110, Gore::Full);
+        d.extend(earth(&impact(DeathCause::Cannonball), 110));
+        let dry = d.clone();
+        soak(&mut d, 0.0);
+        assert_eq!(d, dry);
+        soak(&mut d, 1.0);
+        for (w, p) in d.iter().zip(&dry) {
+            if p.dirt == Dirt::None {
+                assert!(w.radius > p.radius && w.age >= 0.4 && w.age > p.age, "{w:?}");
+            } else {
+                assert_eq!(w, p);
+            }
         }
     }
 

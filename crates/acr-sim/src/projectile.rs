@@ -571,8 +571,9 @@ pub fn explode(w: &mut World, slot: usize, ground: bool) {
     if p.damage != 0 {
         let last_hit = w.hits.back().copied();
         w.hit_dir = Some(flight_dir(&p));
+        w.hit_at = Some((p.pos.0 >> 14, p.pos.1 >> 14));
         ball_damage(w, slot, &p, wp.radius, sender, None);
-        w.hit_dir = None;
+        (w.hit_dir, w.hit_at) = (None, None);
         if ground {
             note_impact(w, &p, w.hits.back().copied() != last_hit);
             let at = (p.pos.0 >> 14, p.pos.1 >> 14);
@@ -730,9 +731,10 @@ pub fn process(w: &mut World) {
                 let mut q = w.projectiles.slots[slot].unwrap_or(p);
                 let back = steps - k;
                 q.pos = (p.pos.0 - p.vel.0 / steps * back, p.pos.1 - p.vel.1 / steps * back, p.pos.2);
+                w.hit_at = Some((q.pos.0 >> 14, q.pos.1 >> 14));
                 ball_damage(w, slot, &q, wp.radius, sender, blast);
             }
-            w.hit_dir = None;
+            (w.hit_dir, w.hit_at) = (None, None);
             w.hit_height = None;
         }
         if ground > z {

@@ -917,7 +917,9 @@ dropped at the start of each step, at most `HIT_CAP` (4096) are kept. Like `deat
 not part of the state hash and not saved (a loaded game replays its commands). The
 direction is the round's own flight while a projectile does the damage (`World::hit_dir`,
 set around the damage in `projectile::explode` and the `DAMAGEHEIGHT` damage of a rolling
-ball), so a ricocheting cannonball sprays along its bounce, not attacker → victim.
+ball), so a ricocheting cannonball sprays along its bounce, not attacker → victim. A
+round striking a building records where it struck (`World::hit_at`, set beside `hit_dir`)
+instead of the building's centre (#226).
 
 `World::impacts` (`combat::ImpactRecord`) keeps the rounds that struck the ground the same
 way (same `HIT_KEEP`, `HIT_CAP`, not hashed, not saved): tick, position, flight direction
@@ -964,6 +966,26 @@ earth colours (`BloodPool::dirt`, `look.z` 2 and 3 in `blood.wgsl`), shown with 
 earth thrown out along its flight), a shell a round 0.9 m one; musket balls (0.12 m),
 grapeshot (0.14 m) and arrows (0.08 m) a dusty scuff. The fresh earth greys and fades
 like the droplets.
+
+In rain (`weather`, #224) fresh blood decals soak in (`splatter::soak`): a quarter wider
+and darker at once (`age` raised by 0.4 of what is left), as diluted blood on wet ground;
+earth, decay stains and kept marks stay as they are. Snow and fog leave blood bright.
+
+The particles of a hit (#226, `particle_view.rs`, `ParticleView::update`):
+
+- `wall_hit`: a round striking a building's wall throws wood splinters (`Splinter`) back
+  out towards the shooter, chips of stone (`Clod`) for cannonballs and shells, and a puff
+  of grey-brown dust off the wall at 1–2.5 m. Scaled by the cause (cannonball 1, shell 0.8,
+  grapeshot 0.45, musket 0.2, arrow 0.1). Wood and dust: every `gore` setting. Muskets
+  rarely reach it: a garrisoned building's weapons do no damage to walls and record no hit.
+- `spurt`: a melee blow or thrown weapon throws 8 or 6 drops (1.6× for a kill) from the
+  chest along the blow; a shell burst that does not tear the body throws 14 up and all
+  around. `gore=full` only, like `shred`.
+
+On the blank field (RX 9060 XT, 1600 × 900, zoom 1, `ACR-analysis/genai/hits/battle.json`:
+300 v 300 musketeers and 6 guns a side firing, `gputime` 30 frames twice at 200 and 300
+ticks) the GPU sum stays 2.27–2.54 ms on main and 2.27–2.57 ms on the branch; the particle
+pass 0.007–0.015 ms on both.
 
 The same spray lands on models behind the victim (#220, `splatter::sprayed_targets`):
 troops within the cone (up to the cause's reach, at least 0.25 m wide) get speckles on the

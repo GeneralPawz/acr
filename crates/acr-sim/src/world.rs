@@ -528,6 +528,10 @@ pub struct World {
     /// set by the projectiles around their damage so that hits record where the ball really
     /// came from (a ricochet) rather than the attacker. Render only, not hashed.
     pub hit_dir: Option<(i32, i32)>,
+    /// Where that round is (world pixels): a hit on a building records it instead of the
+    /// building's centre, so splinters and dust fly off the wall it struck (#226). Render
+    /// only, not hashed.
+    pub hit_at: Option<(i32, i32)>,
     /// The energy (0..=100) of the ploughing ball now doing damage, and its height above
     /// the ground (pixels) where it strikes, for the injuries of the hit-locations rule
     /// (`crate::body::injure`). Set by the projectiles around their damage; not hashed.
@@ -702,6 +706,7 @@ impl World {
             impacts: Default::default(),
             fragments: Default::default(),
             hit_dir: None,
+            hit_at: None,
             hit_energy: None,
             hit_height: None,
             hit_cause: None,

@@ -551,6 +551,92 @@ pub fn shred(sink: &mut dyn ParticleSink, at: [f32; 3], dir: [f32; 2], level: u8
     });
 }
 
+/// Wood and plaster of a building's wall, for what a round knocks off it (#226).
+const WOOD: [u8; 3] = [150, 112, 70];
+const WALL_DUST: [u8; 3] = [170, 156, 134];
+const STONE: [u8; 3] = [128, 120, 108];
+
+/// What a round of `cause` striking a building's wall at `at` (true height in z) throws,
+/// flying along `dir` (unit, horizontal): splinters and chips knocked back out of the wall
+/// towards the shooter and a cloud of dust off the wall (#226). Wood and dust, not gore:
+/// shown with every gore setting.
+pub fn wall_hit(sink: &mut dyn ParticleSink, cause: DeathCause, at: [f32; 3], dir: [f32; 2], seed: u32) {
+    let k = match cause {
+        DeathCause::Cannonball => 1.0,
+        DeathCause::Explosion => 0.8,
+        DeathCause::Grapeshot => 0.45,
+        DeathCause::Gunshot => 0.2,
+        DeathCause::Arrow => 0.1,
+        _ => return,
+    };
+    let back = |up: f32| [-dir[0], -dir[1], up];
+    // Splinters: thrown back out of the hole, tumbling down to lie at the wall's foot.
+    sink.emit(&Burst {
+        dir: back(0.45),
+        spread: 0.9,
+        speed: [60.0, 120.0 + 180.0 * k],
+        count: 2 + (22.0 * k) as u16,
+        life: [1.6, 2.6],
+        size: [1.0, 2.0 + 3.0 * k],
+        color: WOOD,
+        scatter: 2.0 + 4.0 * k,
+        ..burst(at, ParticleKind::Splinter, seed)
+    });
+    // Chips of stone and plaster from a ball or a shell.
+    if k >= 0.8 {
+        sink.emit(&Burst {
+            dir: back(0.3),
+            spread: 0.8,
+            speed: [80.0, 260.0],
+            count: (10.0 * k) as u16,
+            life: [2.0, 3.0],
+            size: [1.2, 2.8],
+            color: STONE,
+            scatter: 5.0,
+            ..burst(at, ParticleKind::Clod, seed ^ 0xc41b)
+        });
+    }
+    // Dust puffed off the wall, drifting and sinking.
+    sink.emit(&Burst {
+        dir: back(0.25),
+        spread: 1.2,
+        speed: [15.0, 40.0 + 70.0 * k],
+        count: 2 + (12.0 * k) as u16,
+        life: [1.4, 2.8 + k],
+        size: [5.0, 8.0 + 12.0 * k],
+        color: WALL_DUST,
+        scatter: 3.0 + 8.0 * k,
+        ..burst(at, ParticleKind::Dust, seed ^ 0xd057)
+    });
+}
+
+/// The blood of a melee blow or a thrown weapon (a spurt along the blow, from the chest) or
+/// of a shell burst that did not tear the body (drops all around) at the victim standing on
+/// `at` (true height in z), `dir` the blow's direction (unit, may be zero) (#226).
+pub fn spurt(sink: &mut dyn ParticleSink, cause: DeathCause, at: [f32; 3], dir: [f32; 2], killed: bool, seed: u32) {
+    let (count, spread, up) = match cause {
+        DeathCause::Melee => (8.0, 0.8, 0.35),
+        DeathCause::Thrown => (6.0, 0.6, 0.3),
+        // Up and all around.
+        DeathCause::Explosion => (14.0, 1.35, 0.0),
+        _ => return,
+    };
+    let dir = if cause == DeathCause::Explosion { [0.0, 0.0, 1.0] } else { [dir[0], dir[1], up] };
+    let k = if killed { 1.6 } else { 1.0 };
+    let at = [at[0], at[1], at[2] + 36.0];
+    sink.emit(&Burst {
+        dir,
+        spread,
+        speed: [30.0, 90.0 + 30.0 * k],
+        count: (count * k) as u16,
+        life: [0.6, 1.2],
+        size: [0.5, 1.3],
+        color: BLOOD_DROP,
+        scatter: 3.0,
+        ..burst(at, ParticleKind::Droplet, seed)
+    });
+}
+
 /// Seconds a shell fragment's streak flies: it reaches its end and is gone.
 const FRAGMENT_FLIGHT: f32 = 0.18;
 
@@ -636,7 +722,8 @@ impl ParticleView {
     /// where balls fell into water this frame (`WaterView::shots`, a splash each); `ring`
     /// starts a water ring for an impact on water and says whether it is new (no splash
     /// twice for one ball). `blood`: bodies torn by balls burst into mist, drops and scraps
-    /// ([`shred`], the full gore setting).
+    /// ([`shred`], the full gore setting), melee blows spurt ([`spurt`]); rounds striking
+    /// a building knock splinters and dust off the wall where they struck ([`wall_hit`]).
     #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
@@ -682,7 +769,7 @@ impl ParticleView {
         if let Some(last) = world.impacts.back() {
             self.last_impact = self.last_impact.max(last.tick);
         }
-        if blood {
+        {
             let since = self.last_hit;
             for hit in world.hits.iter().filter(|h| h.tick >= since) {
                 if hit.tick > self.last_hit {
@@ -693,17 +780,28 @@ impl ParticleView {
                     continue;
                 }
                 self.hits_done.push(hit.victim);
-                let level = shred_level(hit);
-                if level == 0 {
-                    continue;
-                }
                 let at = [hit.pos.0 as f32, hit.pos.1 as f32];
                 let (dx, dy) = (hit.dir.0 as f32, hit.dir.1 as f32);
                 let len = (dx * dx + dy * dy).sqrt();
                 let dir = if len > 0.0 { [dx / len, dy / len] } else { [0.0; 2] };
-                let low = hit.injury.is_some_and(|i| i.level == acr_sim::body::BALL_HIPS);
                 let seed = hash(hit.victim ^ hash(hit.tick as u32 ^ 0x5eed));
-                shred(&mut self.particles, [at[0], at[1], ground_z(terrain, at[0], at[1])], dir, level, low, seed);
+                if hit.building {
+                    // Where the round struck (`World::hit_at`), between waist and eaves height.
+                    let z = ground_z(terrain, at[0], at[1]) + 30.0 + 45.0 * unit(seed, 1);
+                    wall_hit(&mut self.particles, hit.cause, [at[0], at[1], z], dir, seed);
+                    continue;
+                }
+                if !blood {
+                    continue;
+                }
+                let ground = [at[0], at[1], ground_z(terrain, at[0], at[1])];
+                let level = shred_level(hit);
+                if level == 0 {
+                    spurt(&mut self.particles, hit.cause, ground, dir, hit.killed, seed);
+                    continue;
+                }
+                let low = hit.injury.is_some_and(|i| i.level == acr_sim::body::BALL_HIPS);
+                shred(&mut self.particles, ground, dir, level, low, seed);
             }
         }
         for (k, f) in world.fragments.iter().filter(|f| f.tick > self.last_fragment).enumerate() {
@@ -794,6 +892,38 @@ mod tests {
         }
         assert!(pulp.0.iter().all(|b| b.dir[0] > 0.5 && b.at[2] > half.0[0].at[2]));
         assert!(pulp.0.iter().any(|b| b.color == BLOOD_MIST) && pulp.0.iter().any(|b| b.color == BONE));
+    }
+
+    #[test]
+    fn a_ball_knocks_splinters_and_dust_back_off_a_wall() {
+        let mut ball = Record::default();
+        wall_hit(&mut ball, DeathCause::Cannonball, [0.0, 0.0, 50.0], [1.0, 0.0], 3);
+        let mut shot = Record::default();
+        wall_hit(&mut shot, DeathCause::Gunshot, [0.0, 0.0, 50.0], [1.0, 0.0], 3);
+        for kind in [ParticleKind::Splinter, ParticleKind::Dust] {
+            assert!(count(&ball, kind) > count(&shot, kind) && count(&shot, kind) > 0, "{kind:?}");
+        }
+        // Back towards the shooter (the round flew east).
+        assert!(ball.0.iter().all(|b| b.dir[0] < 0.0));
+        let mut none = Record::default();
+        wall_hit(&mut none, DeathCause::Melee, [0.0; 3], [1.0, 0.0], 3);
+        assert!(none.0.is_empty());
+    }
+
+    #[test]
+    fn blows_spurt_along_and_bursts_all_around() {
+        let mut blow = Record::default();
+        spurt(&mut blow, DeathCause::Melee, [0.0; 3], [0.0, 1.0], false, 1);
+        assert!(count(&blow, ParticleKind::Droplet) > 0 && blow.0[0].dir[1] > 0.5);
+        let mut kill = Record::default();
+        spurt(&mut kill, DeathCause::Melee, [0.0; 3], [0.0, 1.0], true, 1);
+        assert!(count(&kill, ParticleKind::Droplet) > count(&blow, ParticleKind::Droplet));
+        let mut shell = Record::default();
+        spurt(&mut shell, DeathCause::Explosion, [0.0; 3], [0.0, 1.0], false, 1);
+        assert!(shell.0[0].dir == [0.0, 0.0, 1.0] && shell.0[0].spread > 1.0);
+        let mut musket = Record::default();
+        spurt(&mut musket, DeathCause::Gunshot, [0.0; 3], [0.0, 1.0], false, 1);
+        assert!(musket.0.is_empty());
     }
 
     #[test]

@@ -1703,7 +1703,8 @@ pub struct HitRecord {
     pub tick: u64,
     /// The unit hit (index).
     pub victim: u32,
-    /// Where the victim stood (world pixels).
+    /// Where the victim stood (world pixels); for a round striking a building, where it
+    /// struck (`World::hit_at`).
     pub pos: (i32, i32),
     /// The direction of the blow, from the attacker to the victim (world pixels, not
     /// normalised; zero when they stand on the same point).
@@ -1849,10 +1850,15 @@ fn record_hit(
         w.hits.pop_front();
     }
     let dir = w.hit_dir.filter(|&d| d != (0, 0)).unwrap_or((vx - sx, vy - sy));
+    // A round striking a building: where it struck the wall (#226).
+    let pos = match w.hit_at {
+        Some(at) if w.units[victim].building => at,
+        _ => (vx, vy),
+    };
     w.hits.push_back(HitRecord {
         tick: w.tick.0,
         victim: victim as u32,
-        pos: (vx, vy),
+        pos,
         dir,
         cause,
         killed,

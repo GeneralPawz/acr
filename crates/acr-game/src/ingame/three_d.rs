@@ -1248,6 +1248,9 @@ impl ThreeD {
         }
         // Every decal lies on the slope under it rather than flat at one height (#226).
         super::splatter::lay_on_ground(&mut self.pools, &ground);
+        // Rain dilutes the fresh blood: wider and darker (#226).
+        let wet = if self.weather() == Weather::Rain { 1.0 } else { 0.0 };
+        super::splatter::soak(&mut self.pools, wet);
         // The kept marks were laid when they were kept.
         self.kept.draw(&mut self.pools);
         // The decay stains lie under all other decals (drawn first, blended over by blood).
