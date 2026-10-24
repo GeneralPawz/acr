@@ -310,6 +310,14 @@ fn vs_main(v: VertexIn, inst: InstanceIn) -> VsOut {
         out.spray_look.w = -1.0;
     }
     out.cut = vec4<f32>(clamp(keep, -1.0, 1.0), v.body.z, side, belly);
+    // A building under construction (#302, `Rise`, after the drape): the distance below its
+    // height (metres, unclamped so it interpolates exactly over long walls) and the
+    // scaffold band as a negative `cut.w` tell the fragment shaders (`rising`).
+    if ((flags & 8u) != 0u) {
+        let r = look_texel(d, u32(round(look.w)), 3u + select(0u, 2u, (flags & 2u) != 0u));
+        out.cut = vec4<f32>(r.x - local.y, v.body.z, 1.0, -r.y);
+        out.rest = vec4<f32>(local, local.y);
+    }
     out.part = v.body.x;
     out.face = v.face;
     out.world = world;
@@ -552,7 +560,7 @@ fn scarred(rgb_in: vec3<f32>, p: vec3<f32>, d: u32, far: bool) -> vec3<f32> {
     let head = texel(d + 3u);
     let flags = u32(round(head.z));
     let start = d + 4u + select(0u, 28u, (flags & 1u) != 0u) + 2u * u32(round(max(head.w, 0.0))) + 3u
-        + select(0u, 2u, (flags & 2u) != 0u);
+        + select(0u, 2u, (flags & 2u) != 0u) + select(0u, 1u, (flags & 8u) != 0u);
     let h = texel(start);
     let n = u32(h.x + 0.5);
     let mx = max(rgb.r, max(rgb.g, rgb.b));
@@ -741,6 +749,41 @@ fn sprayed(rgb: vec3<f32>, rest: vec3<f32>, spray: vec4<f32>, look: vec2<f32>) -
     return mix(rgb, red, a);
 }
 
+// A building under construction (#302, docs/rendering-3d.md "Construction and upgrades"):
+// how far `p` (model frame, metres) lies below the cut line, `below` the distance under
+// the flat cut. The line steps in courses of about 0.3 m that change every metre or so
+// along the walls, as logs or stones laid one course at a time.
+fn rising_below(below: f32, p: vec3<f32>) -> f32 {
+    let cell = floor(vec2<f32>(p.x + p.z * 0.37, p.z - p.x * 0.37) * 0.9);
+    let course = floor(hash3(vec3<f32>(cell, 3.7)) * 3.0) * 0.3;
+    return below + course - 0.6;
+}
+
+// The scaffold band under the cut line (`below` metres under it, `band` deep): fresh timber
+// and bare masonry, upright poles about every 2 m, plank ledgers every 1.2 m, a pale
+// rough edge along the cut.
+fn rising(rgb_in: vec3<f32>, p: vec3<f32>, n: vec3<f32>, below: f32, band: f32) -> vec3<f32> {
+    var rgb = rgb_in;
+    let t = clamp(below / band, 0.0, 1.0);
+    if (t >= 1.0) {
+        return rgb;
+    }
+    // Fresh and unweathered near the top: lighter, warmer.
+    let fresh = mix(rgb * 1.25 + vec3<f32>(0.06, 0.04, 0.0), rgb, t);
+    rgb = fresh;
+    // Upright poles about every 2 m along the wall (across its normal `n`, world; a
+    // building stands unturned, so model x and z run along world x and y), a ledger plank
+    // every 1.2 m.
+    let along = p.x * n.y - p.z * n.x;
+    let pole = 1.0 - smoothstep(0.06, 0.1, abs(fract(along * 0.5) - 0.5) * 2.0);
+    let ledger = smoothstep(0.88, 0.93, abs(fract(p.y / 1.2) - 0.5) * 2.0);
+    let wood = vec3<f32>(0.52, 0.38, 0.22) * (0.8 + 0.4 * noise3(p * vec3<f32>(2.0, 18.0, 2.0)));
+    rgb = mix(rgb, wood, max(pole, ledger * step(0.2, t)) * (1.0 - t * 0.5));
+    // The rough, pale top of the last course.
+    let edge = 1.0 - smoothstep(0.03, 0.12, below);
+    return mix(rgb, vec3<f32>(0.68, 0.6, 0.48), edge * 0.7);
+}
+
 // Look texel `k` of an instance (after its marks): see the header.
 fn look_texel(d: u32, marks: u32, k: u32) -> vec4<f32> {
     let damaged = (u32(round(texel(d + 3u).z)) & 1u) != 0u;
@@ -829,7 +872,11 @@ fn shade(in: VsOut, front: bool, far: bool, clean: bool) -> vec4<f32> {
         }
     }
     // The noise only near the cut: |ragged| < 0.05 (most fragments are far from any).
-    if (in.cut.x < abs(in.cut.z) * 0.05 && in.cut.x - in.cut.z * ragged(in.cut.y, in.rest.xyz) < 0.0) {
+    if (in.cut.w >= 0.0 && in.cut.x < abs(in.cut.z) * 0.05 && in.cut.x - in.cut.z * ragged(in.cut.y, in.rest.xyz) < 0.0) {
+        if (!clean) { discard; }
+    }
+    // A building under construction (#302): nothing above its stepped cut line.
+    if (in.cut.w < 0.0 && rising_below(in.cut.x, in.rest.xyz) < 0.0) {
         if (!clean) { discard; }
     }
     // Torn out (#280): nothing inside a wound volume but shreds of skin and cloth hanging
@@ -905,6 +952,9 @@ fn shade(in: VsOut, front: bool, far: bool, clean: bool) -> vec4<f32> {
     }
     if (in.spray_look.w < -0.5) {
         rgb = scarred(rgb, in.rest.xyz, u32(in.spray_look.z + 0.5), far);
+    }
+    if (in.cut.w < 0.0) {
+        rgb = rising(rgb, in.rest.xyz, normalize(in.normal), rising_below(in.cut.x, in.rest.xyz), -in.cut.w);
     }
     if (material.flags.w < 0.5 && in.spray_look.x > 0.0) {
         rgb = sprayed(rgb, in.rest.xyz, in.spray, in.spray_look.xy);

@@ -173,6 +173,27 @@ pub fn spawn(game: &mut Game, v: &Value) -> Result<Value, String> {
     if v.get("hold_fire").and_then(Value::as_bool) == Some(true) {
         u.melee_only = true;
     }
+    // A building under construction (#302): `progress` 0..1 of its `BUILDSTAGES`, shown with
+    // its `#BUILDLO_k` (`construction::stage_anim`); `sections`: the section states, one per
+    // `ADDSECTION` in order (0 none, 1 being built, 2 done, 3 ruin).
+    if let Some(p) = v.get("progress").and_then(Value::as_f64) {
+        let world = g.world().ok_or("no world")?;
+        let max = world.max_stage(&world.units[i]);
+        let stage = ((p.clamp(0.0, 1.0) * f64::from(max)) as i32).min(max);
+        let u = &mut g.world_mut().ok_or("no world")?.units[i];
+        u.stage = stage;
+        if stage < max {
+            u.anim = acr_sim::world::AnimKind::BuildLo((stage * 4 / max.max(1)).clamp(0, 3) as u8);
+            u.frame = 0;
+        }
+    }
+    if let Some(list) = v.get("sections").and_then(Value::as_array) {
+        let u = &mut g.world_mut().ok_or("no world")?.units[i];
+        for (s, state) in list.iter().enumerate().take(5) {
+            let state = state.as_u64().unwrap_or(0).min(3) as u16;
+            u.stages = acr_sim::upgrade::with_section(u.stages, s as u8, state);
+        }
+    }
     let world = g.world().ok_or("no world")?;
     Ok(
         json!({"id": id.0, "type": world.catalog.get(kind).id, "pose": format!("{pose:?}").to_lowercase(), "life": world.units[i].life}),

@@ -1191,6 +1191,22 @@ impl ModelData {
             self.primitives.iter().filter(|p| !self.primitive_node(p).is_some_and(dropped)).cloned().collect();
         Self { primitives, ..self.clone() }
     }
+
+    /// The model with only the meshes on nodes that `keep` accepts or that hang below one it
+    /// accepts (one state group of a building: a construction stage, a section state).
+    pub fn only_groups(&self, keep: impl Fn(&str) -> bool) -> ModelData {
+        let kept = |mut n: usize| loop {
+            if keep(&self.nodes[n].name) {
+                return true;
+            }
+            match self.nodes[n].parent {
+                Some(p) => n = p,
+                None => return false,
+            }
+        };
+        let primitives = self.primitives.iter().filter(|p| self.primitive_node(p).is_some_and(kept)).cloned().collect();
+        Self { primitives, ..self.clone() }
+    }
 }
 
 /// The decay of a corpse (0 fresh .. 1 gone) from its death counter (`Unit::death`, +1 per

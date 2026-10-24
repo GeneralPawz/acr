@@ -393,6 +393,7 @@ impl Crews {
                 look: None,
                 uniform: c.uniform,
                 drape: None,
+                rise: None,
             });
             if gore != Gore::Off {
                 let d = f32::from(counter);

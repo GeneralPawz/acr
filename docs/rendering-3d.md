@@ -17,7 +17,7 @@ parameters: [assets-humans.md](assets-humans.md).
 
 | key | values | default | |
 |---|---|---|---|
-| `models` | `off`, `units`, `all` | `off` | `units`: units with a model are drawn in 3D; `all`: buildings too, finished, burning down, falling in and as ruins (#303), with their hit damage (#304); under construction they stay sprites |
+| `models` | `off`, `units`, `all` | `off` | `units`: units with a model are drawn in 3D; `all`: buildings too: under construction and upgraded (#302), finished, burning down, falling in and as ruins (#303), with their hit damage (#304) |
 | `camera` | `fixed`, `free` | `fixed` | `free`: the camera turns and tilts (below); the modern controls' Ctrl + Space, C switches it for the running battle |
 | `shadows` | `on`, `off` | `on` | sun shadows of the 3D models on the ground and on each other (below); tests switch them with `ACR_SHADOWS=on\|off` or the driver's `{"cmd": "shadows", "on": false}` |
 | `material_detail` | `on`, `off` | `on` | the models' glTF normal maps and a faint highlight from their roughness and metallic (below, "Material detail (#234)"); `off` is the plain Lambert look; tests switch it with `ACR_MATERIAL_DETAIL=on\|off` or the driver's `{"cmd": "material_detail", "on": false}` |
@@ -1187,8 +1187,8 @@ height; real point lights; burning men panicking (sim, follow-up).
   fly over its footprint (`FireView::buildings`). The original's `DESTRUCT` explosions
   (`combat::destroyed_building_explodes`) burst over it as before.
 - **Ruin:** a model with state groups (`<name>.finished`, `.build<k>`, `.section<s>_<k>`,
-  `.ruin`; docs/assets.md "States") draws `finished` plus `section*_0` while standing and
-  its `.ruin` group alone once fallen (`ModelData::without_groups`); others stay as the
+  `.ruin`; docs/assets.md "States") draws `finished` plus its sections in their states
+  while standing ("Construction and upgrades (#302)") and its `.ruin` group alone once fallen (`ModelData::without_groups`); others stay as the
   squashed, charred mesh. Every generated building (`genbuild`) carries a generic ruin
   (`acr_assets/ruin.py`, docs/assets.md "States"). A ruin state appears black and cools to
   burn 0.3 over 4 s (it carries its own soot). Flames go on for 20 s, smoke for 90 s.
@@ -1213,6 +1213,53 @@ Ruins of EngSkl, EngCen, DelCen and an EngSkl burn → collapse → ruin sheet:
 
 Open: the collapse is hidden under the `DESTRUCT` explosions' smoke; pre-fractured
 pieces falling in.
+
+#### Construction and upgrades (#302)
+
+`build_view.rs`, render only, with `models=all`. A building whose stage is below its
+`BUILDSTAGES` (alive, not dying) is drawn as a model too:
+
+- **Stage groups:** a model with `<name>.build<k>` groups (EngKre) draws the group of the
+  `#BUILDLO_k` the simulation shows (k = stage·4 / stages, `construction::stage_anim`) with
+  the parts outside every group, as a model of its own (`ModelData::without_groups`, built
+  at load, `ThreeD::states`).
+- **Rising (every other model):** `Rise` on the instance (flag bit 3 of the instance data,
+  one texel after the drape, before the scars): the model is cut at a height that climbs
+  from a 0.3 m foundation course at stage 0 to its top (`build_view::rise`, the top from
+  `ruin_view::anchors`). The cut line steps in courses of 0.3 m that change about every
+  metre along the walls (`rising_below` in `model.wgsl`), as logs or stones laid one course
+  at a time; a 1.4 m band under it shows fresh, lighter material, upright poles about every
+  2 m along the wall (across the fragment's normal), plank ledgers every 1.2 m and a pale
+  rough top (`rising`). The vertex shader passes the distance below the cut unclamped in
+  `cut.x` (it interpolates exactly over long walls) and the band as a negative `cut.w`;
+  `fs_main` and `fs_shadow` drop what lies above. A rising instance is never `clean`.
+  No fires for the life it has not got yet (`lost` is 0 while under construction).
+- **Sections (upgrades):** the simulation keeps a fort's upgrade as section states on the
+  same building (`Unit::stages`, five 3-bit fields: 0 none, 1 being built, 2 done, 3 ruin;
+  `upgrade::section_state`, raised by `UPSTAGEn`). A model with `<name>.section<s>_<state>`
+  groups (EngKre: the wooden corner, the stone house in scaffolding, the stone house, its
+  ruin) draws each section's current state as an overlay instance with the building's
+  transform and look (`ModelData::only_groups`). A single-mesh model draws `<NAME>UP.glb`
+  instead of `<NAME>.glb` once every section of the type is done (`build_view::upgraded`),
+  where that file exists.
+- **Base/Up pairs:** every Pixal3D `*Base`/`*Up` pair is an `ADDSECTION` type: AtcKre (3
+  sections), AtcVer (2), EngKre (1), EngKre2 (1), FrnKre (2), FrnKre2 (1), IncDo3, IncKre
+  (3), MayKre, PueGor (4), SpnKre (3), UsaKre (1). `assets/buildings/usakreup.py` builds the
+  UsaKre one (fitted to `model-ref --sections 2`); the others need the same one-line script.
+- **Driver:** `spawn` takes `progress` (0..1 of `BUILDSTAGES`, with its `#BUILDLO_k`) and
+  `sections` (a state per `ADDSECTION`, in order).
+
+Measured (render VM, RX 9060 XT, 1600×900, blank grass field, free camera at zoom 0.7 over
+a 5×5 grid of EngSkl, steps `ACR-analysis/genai/build-stages/scripts/perf_*.json`, two runs
+each): sum of all GPU passes 1.31–1.35 ms all finished, 1.47–1.56 ms all at 50 %
+(models 0.58 → 0.64–0.69 ms, shadow map 0.10 → 0.19–0.20 ms: the rising casters go
+through the `discard` pipeline); `3d.instances` 0.012–0.013 → 0.013–0.021 ms a frame.
+Frames and sheets (generic 0–100 %, EngKre `BUILDLO_0..3`, sections and UsaKre Base/Up):
+`ACR-analysis/genai/build-stages/`.
+
+Open: the Up scripts for the other eleven pairs; a scaffold as geometry standing above the
+cut (poles and platforms); per-section Up models for forts with several sections (one Up
+model shows all of them done).
 
 #### Hit damage on buildings (#304)
 

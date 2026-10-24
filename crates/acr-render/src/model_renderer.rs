@@ -69,6 +69,18 @@ pub struct ModelInstance {
     pub uniform: Option<[[f32; 3]; 2]>,
     /// A corpse bent over the bodies or ground under it (#229); `None` keeps it straight.
     pub drape: Option<Drape>,
+    /// A building under construction (#302): drawn up to a height; `None` draws it whole.
+    pub rise: Option<Rise>,
+}
+
+/// A building rising under construction (#302, `model.wgsl` `rising`): only what lies below
+/// `height` (metres above the model's ground point, glTF y after the node transforms) is
+/// drawn, the cut line stepped like courses of logs or stones, and a band of `band` metres
+/// under it shows a scaffold of poles and planks over fresh timber.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Rise {
+    pub height: f32,
+    pub band: f32,
 }
 
 /// A lying body's bend (#229, `model.wgsl`): the model's up (glTF +y, metres) is raised by
@@ -375,11 +387,16 @@ fn instance_texels(
         w1,
         [s.point[0], s.point[1], s.point[2], s.radius],
         // Bit 0: damaged; bit 1: draped (the drape follows the look); bit 2: scarred (the
-        // scars follow the drape).
+        // scars follow the drape and the rise); bit 3: rising (after the drape).
         [
             s.amount.clamp(0.0, 1.0),
             s.age.clamp(0.0, 1.0),
-            f32::from(u8::from(damaged) | (u8::from(inst.drape.is_some()) << 1) | (u8::from(scars.is_some()) << 2)),
+            f32::from(
+                u8::from(damaged)
+                    | (u8::from(inst.drape.is_some()) << 1)
+                    | (u8::from(scars.is_some()) << 2)
+                    | (u8::from(inst.rise.is_some()) << 3),
+            ),
             marks.len() as f32,
         ],
     ]);
@@ -395,6 +412,10 @@ fn instance_texels(
     // The drape follows the look (`model.wgsl`, `vs_main`).
     if let Some(d) = inst.drape {
         out.extend([d.heights, [d.first, d.spacing, 0.0, 0.0]]);
+    }
+    // A building's rise follows the drape (`model.wgsl`, `vs_main`).
+    if let Some(r) = inst.rise {
+        out.push([r.height, r.band.max(0.01), 0.0, 0.0]);
     }
     // A building's scars follow the drape (`model.wgsl`, `scarred`).
     if let Some(s) = scars {
@@ -1520,8 +1541,11 @@ impl ModelRenderer {
             let enclosed = model.rig.is_some() && dbg & debug::OLD_INNER == 0;
             let decaying =
                 inst.decay > 0.0 && (!enclosed || dissolving(gpu_model.opens_at) || !intact) && dbg & debug::INNER == 0;
-            let clean =
-                intact && !inst.transparent && !dissolving(gpu_model.dissolves_at) && dbg & debug::NO_CLEAN == 0;
+            let clean = intact
+                && !inst.transparent
+                && inst.rise.is_none()
+                && !dissolving(gpu_model.dissolves_at)
+                && dbg & debug::NO_CLEAN == 0;
             let first = data.len() as u32;
             let mut look_data =
                 look_texels(look.as_ref().map(|c| &c.0), gpu_model.eye, inst.look.unwrap_or(0), gpu_model.face_tiles);

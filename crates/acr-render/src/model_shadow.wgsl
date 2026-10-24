@@ -21,7 +21,10 @@ fn fs_shadow(in: VsOut) {
             discard;
         }
     }
-    if (in.cut.x - in.cut.z * ragged(in.cut.y, in.rest.xyz) < 0.0) {
+    if (in.cut.w >= 0.0 && in.cut.x - in.cut.z * ragged(in.cut.y, in.rest.xyz) < 0.0) {
+        discard;
+    }
+    if (in.cut.w < 0.0 && rising_below(in.cut.x, in.rest.xyz) < 0.0) {
         discard;
     }
     if (holes(in.rest.xyz, u32(in.spray_look.z + 0.5), in.cut.y).x < 0.0) {

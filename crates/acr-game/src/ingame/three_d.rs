@@ -322,6 +322,8 @@ pub struct ThreeD {
     shown: HashSet<EntityId>,
     /// Building models with a ruin state group (#303): the ruin's model by the standing one.
     ruins: HashMap<usize, usize>,
+    /// Building models with construction stage or section groups (#302), by the finished one.
+    states: HashMap<usize, BuildingStates>,
     /// Fire anchors of building models (#303, `ruin_view`), by model.
     anchors: HashMap<usize, super::ruin_view::Anchors>,
     /// Burning and fallen buildings this frame, for their fire, smoke and dust.
@@ -457,6 +459,7 @@ impl Default for ThreeD {
             kept: Default::default(),
             shown: HashSet::new(),
             ruins: HashMap::new(),
+            states: HashMap::new(),
             anchors: HashMap::new(),
             burning: Vec::new(),
             building_hits: Default::default(),
@@ -745,15 +748,45 @@ impl ThreeD {
                 .iter()
                 .any(|n| state_group(&n.name) == Some("ruin"))
                 .then(|| model.without_groups(|n| state_group(n).is_some_and(|s| s != "ruin")));
-            let model = if model.nodes.iter().any(|n| state_group(&n.name).is_some()) {
-                model.without_groups(|n| state_group(n).is_some_and(|s| s != "finished" && !s.ends_with("_0")))
-            } else {
+            // Construction stages (#302) as models of their own, each with the parts outside
+            // every group; section states as overlays drawn over the finished building.
+            let groups: Vec<String> =
+                model.nodes.iter().filter_map(|n| state_group(&n.name)).map(str::to_owned).collect();
+            let stages: Vec<Option<ModelData>> = (0..4)
+                .map(|k| {
+                    let g = format!("build{k}");
+                    groups
+                        .contains(&g)
+                        .then(|| model.without_groups(|n| state_group(n).is_some_and(|s| s != g.as_str())))
+                })
+                .collect();
+            let mut sections: Vec<((u8, u16), ModelData)> = Vec::new();
+            for g in &groups {
+                if let Some(key) = super::build_view::section_group(g)
+                    && !sections.iter().any(|(k, _)| *k == key)
+                {
+                    sections.push((key, model.only_groups(|n| state_group(n) == Some(g.as_str()))));
+                }
+            }
+            let model = if groups.is_empty() {
                 model
+            } else {
+                model.without_groups(|n| state_group(n).is_some_and(|s| s != "finished"))
             };
             let index = renderer.add_model(device, queue, model);
             if let Some(ruin) = ruin {
                 let r = renderer.add_model(device, queue, ruin);
                 self.ruins.insert(index, r);
+            }
+            if stages.iter().any(Option::is_some) || !sections.is_empty() {
+                let mut states = BuildingStates::default();
+                for (k, m) in stages.into_iter().enumerate() {
+                    states.build[k] = m.map(|m| renderer.add_model(device, queue, m));
+                }
+                for (key, m) in sections {
+                    states.sections.push((key.0, key.1, renderer.add_model(device, queue, m)));
+                }
+                self.states.insert(index, states);
             }
             self.gear.insert(index, gear);
             self.loaded.insert(name, Some(index));
@@ -819,6 +852,7 @@ impl ThreeD {
         }
         let defs = objects.objects();
         let mut names: HashMap<acr_sim::TypeId, String> = HashMap::new();
+        let mut ups: HashMap<acr_sim::TypeId, String> = HashMap::new();
         // Corpses drawn as models: instance index, sunk ground point, yaw, footprint.
         let mut corpses: Vec<(usize, [f32; 3], f32)> = Vec::new();
         let mut footprints: Vec<piles::Footprint> = Vec::new();
@@ -879,16 +913,29 @@ impl ThreeD {
         self.building_hits.take(world);
         self.scars.clear();
         let mut arrows: Vec<acr_render::math::Mat4> = Vec::new();
+        // The section overlays of the building being drawn (#302).
+        let mut sections: Vec<usize> = Vec::new();
         self.wounds.retain(&|v| world.units.get(v as usize).is_some_and(|u| u.id.0 == v && (u.alive || lingering(u))));
         self.burns.retain(|v| world.units.get(v as usize).is_some_and(|u| u.id.0 == v && (u.alive || lingering(u))));
         for u in world.units.iter().filter(|u| (u.alive || lingering(u)) && u.inside_of.is_none()) {
-            // Buildings: finished, burning down, falling in and as ruins (#303); under
-            // construction they stay sprites.
+            // Buildings: under construction (#302), finished, burning down, falling in and as
+            // ruins (#303).
             let fallen = u.building && u.death > 0 && u.stage >= world.max_stage(u);
-            if u.building && (self.models != Models::All || !(finished(world, u) || fallen)) {
+            let constructing = u.building && u.alive && u.death == 0 && u.stage < world.max_stage(u);
+            if u.building && (self.models != Models::All || !(finished(world, u) || fallen || constructing)) {
                 continue;
             }
-            let name = names.entry(u.kind).or_insert_with(|| definition_name(&world.catalog.get(u.kind).id));
+            let mut name = names.entry(u.kind).or_insert_with(|| definition_name(&world.catalog.get(u.kind).id));
+            // Upgraded (#302): every section done draws the `<NAME>UP` model where there is one.
+            if u.building
+                && !constructing
+                && super::build_view::upgraded(&world.catalog.get(u.kind).economy.sections, u.stages)
+            {
+                let up = ups.entry(u.kind).or_insert_with(|| format!("{name}UP"));
+                if self.files.contains_key(up.as_str()) {
+                    name = up;
+                }
+            }
             let Some(path) = self.files.get(name.as_str()) else { continue };
             let index = match self.loaded.get(name.as_str()) {
                 Some(Some(i)) => *i,
@@ -967,7 +1014,8 @@ impl ThreeD {
             // anchors, sunk and squashed (or its ruin state) once it died.
             if u.building {
                 let anchors = self.anchors.entry(index).or_insert_with(|| super::ruin_view::anchors(model));
-                let lost = 1.0 - u.life.max(0) as f32 / u.max_life.max(1) as f32;
+                // Under construction its life follows the stages: no fires for that.
+                let lost = if constructing { 0.0 } else { 1.0 - u.life.max(0) as f32 / u.max_life.max(1) as f32 };
                 let dead = (u.death > 0)
                     .then(|| now.saturating_sub(record.tick) as f32 / acr_sim::ORIGINAL_TICKS_PER_SECOND as f32);
                 let ruin = self.ruins.get(&index).copied();
@@ -982,6 +1030,30 @@ impl ThreeD {
                 }
                 if look.fire.flames + look.fire.smoking + look.fire.dust > 0.0 {
                     self.burning.push(look.fire);
+                }
+                let states = self.states.get(&index);
+                if constructing {
+                    // Its stage group, else the model rising with the progress (#302).
+                    let k = match u.anim {
+                        AnimKind::BuildLo(k) => super::build_view::stage_group(k),
+                        _ => 0,
+                    };
+                    match states.and_then(|s| s.build[k]) {
+                        Some(m) => inst.model = m,
+                        None => {
+                            let progress = u.stage.max(0) as f32 / world.max_stage(u).max(1) as f32;
+                            inst.rise = Some(super::build_view::rise(progress, anchors.top));
+                        }
+                    }
+                } else if !look.show_ruin
+                    && let Some(states) = states
+                {
+                    // Its sections in their states (#302), drawn as it is.
+                    for &(s, state, m) in &states.sections {
+                        if acr_sim::upgrade::section_state(u.stages, s) == state {
+                            sections.push(m);
+                        }
+                    }
                 }
                 // Holes, pocks, scorch and stuck arrows where rounds struck it (#304).
                 if let Some(scars) = self.building_hits.place(u, index, model, &inst, &mut arrows) {
@@ -1206,6 +1278,9 @@ impl ThreeD {
                 (inst.clip, inst.time) = (Some(clip), time);
             }
             self.drawn.insert(u.id.0, self.instances.len());
+            for m in sections.drain(..) {
+                extra.push(ModelInstance { model: m, ..inst });
+            }
             self.instances.push(inst);
             self.shown.insert(u.id);
         }
@@ -1226,6 +1301,7 @@ impl ThreeD {
                     look: None,
                     uniform: None,
                     drape: None,
+                    rise: None,
                 });
             }
         }
@@ -1676,6 +1752,7 @@ impl ThreeD {
                 look: None,
                 uniform: None,
                 drape: None,
+                rise: None,
             });
         }
     }
@@ -1743,6 +1820,7 @@ impl ThreeD {
                 look: None,
                 uniform: None,
                 drape: None,
+                rise: None,
             });
         }
     }
@@ -2112,6 +2190,14 @@ fn state_group(name: &str) -> Option<&str> {
         .then_some(last)
 }
 
+/// The construction stage and section state groups of a building model (#302) as models of
+/// their own: `build[k]` for `#BUILDLO_k`, sections as (section, state, model).
+#[derive(Default)]
+struct BuildingStates {
+    build: [Option<usize>; 4],
+    sections: Vec<(u8, u16, usize)>,
+}
+
 /// A building that stands finished (not under construction, not falling down).
 fn finished(world: &World, u: &Unit) -> bool {
     u.stage >= world.max_stage(u) && !matches!(u.anim, AnimKind::BuildLo(_) | AnimKind::Death | AnimKind::DeathLie(_))
@@ -2165,6 +2251,7 @@ fn instance(
         look: (!u.building).then_some(u.id.0),
         uniform: None,
         drape: None,
+        rise: None,
     };
     (instance, ground)
 }
