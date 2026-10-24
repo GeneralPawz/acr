@@ -815,12 +815,24 @@ Numbers on EngMus (VM, 24 Oct 2026; drafted garments in brackets):
 | traced doublet (head split by length, sleeve widened) | | | 288 / 276 | |
 | traced doublet (head split by length, sleeve as traced) | 231/234 | 57 (collar) | 250 / 259 | |
 | traced doublet + breeches | 234/234, 123/131 | 30, 83 (inseam) | 353 / 331 | |
+| drafted, shirt hidden under the doublet | | | 258 / 200 | |
+| traced doublet, shirt hidden, belts 20/24 mm off | 231/234 | 57 (collar) | 237 / 239 | |
+| traced doublet + breeches, same | 234/234, 123/131 | 30, 83 (inseam) | 347 / 267 | |
 
 The waist band must be pinned (`place.pin` "top": tied to the doublet with points): unpinned,
 the full breeches slid down into a puff at the knee, with bare thighs. That failed drape still
 welded 131/131 and measured 265 / 219, so check the sheet before you trust the layer numbers.
-The traced doublet's extra crossings are skin and shirt through the sleeves and body in strike and fire
-poses, and its fuller sleeves now touch the bandolier and cartridges. Not modelled: the
+Per pair (traced doublet against the drafted, crossing vertices): skin through the
+doublet 51 vs 39 and the sleeves 42 vs 29 (strike and crawl frames: the fuller cut stands
+off the skin it takes its weights from), the falling band through the bandolier 43 vs 22,
+doublet through the bandolier 20 vs 12. The shirt is now hidden under `doublet` and
+`dsleeve` like the line's under the coat (`line.make`, all draped pike units), and under a
+traced doublet the belts lie 20/24 mm off the cloth (`pike.TRACED_STRAP_OFFSETS`,
+`build["strap_offsets"]`); on the drafted doublet those offsets measured worse (213
+crossing). With the breeches the doublet's poking rises at the band and belts (doublet
+through fallband 64, through belts 38): the gathered waist pushes the doublet out. Casting
+the falling band below the belts (leaving `belts` out of its ray tree) cut poking by 36-71
+but raised crossing by 10-14: not kept. Not modelled: the
 lacing band, the open sleeve slit to X, padding.
 
 ## The British infantry uniform (1768 Royal Warrant)

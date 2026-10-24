@@ -230,6 +230,12 @@ def _palette(palette):
     return pal
 
 
+# The belts' distance off the draped cloth under a traced doublet (m; the line's 0.014,
+# 0.018): its collar and fuller sleeve heads stand higher (docs/clothing.md "Traced
+# patterns": crossings 252 -> 239). On the drafted doublet the line's offsets measure better.
+TRACED_STRAP_OFFSETS = (0.020, 0.024)
+
+
 def _drape(kw, plan):
     kw["build"] = dict({"drape": plan}, **(kw.get("build") or {}))
     return kw
@@ -267,6 +273,8 @@ def musketeer_spec(md, palette=None, hat="pike_broad", **kw):
         rel = kw.pop(key, None)
         if rel:
             swap[slot] = traced_garment(rel, slot)
+    if "doublet" in swap:
+        kw["build"] = dict({"strap_offsets": TRACED_STRAP_OFFSETS}, **(kw.get("build") or {}))
     _drape(kw, tuple(swap.get(g, g) for g in MUSKETEER_DRAPE))
     return line.spec(md, palette=pal, hat=hat,
                      gear=("belt_l", "belt_r", "falling_band", "pike_apostles", "pike_match", "off_scabbard"),

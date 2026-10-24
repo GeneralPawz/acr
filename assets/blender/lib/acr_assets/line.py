@@ -155,13 +155,15 @@ def make(root, name, s):
         fixed = [o for o in cloth if not o.name.endswith(("coat_skirts", "turnbacks"))]
         for inner, outer, depth in (("waistcoat", ("coat", "facings", "lapels"), 0.006),
                                     ("shirt", ("coat", "facings", "lapels"), 0.004),
-                                    ("breeches", ("waistcoat", "gaiters"), 0.004)):
+                                    ("breeches", ("waistcoat", "gaiters"), 0.004),
+                                    # The 17th century's shirt under the doublet and its sleeves.
+                                    ("shirt", ("doublet", "dsleeve"), 0.004)):
             for o in fixed:
                 if made[o.name] == inner:
                     drape.hide_under(ch, o, [x for x in fixed if made[x.name] in outer], depth)
         surf = drape.surface(cloth, f"{name}.belt_surface")
         drape.buttons(ch, cloth, name)
-        offsets = (0.014, 0.018)
+        offsets = tuple(build.get("strap_offsets", (0.014, 0.018)))
     else:
         ch.shell("waistcoat", "waistcoat", lambda c, n, h, p: h in TORSO and 0.97 < c.z < 1.47, 0.012)
         ch.shell("coat", "coat", lambda c, n, h, p: (h in TORSO and 0.97 < c.z < 1.49 and not front(c)) or h in ARMS, fit["coat"])
