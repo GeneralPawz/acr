@@ -167,6 +167,10 @@ pub struct Finish {
     /// material key's [`crate::layers::layer_rank`]): a millimetre of an inner layer crossing
     /// the one above it under skinning does not show through (docs/clothing.md, "Layers").
     pub layer: f32,
+    /// The least width (screen px) the material's thin parts keep at any zoom (0: none;
+    /// `model.wgsl` `vs_main`): vertices nearer the model's z axis than half of it are pushed
+    /// out to it, so a thin shaft never falls below a pixel and flickers away when zoomed out.
+    pub thin: f32,
 }
 
 /// Which per-soldier colour a material takes (`extras.acr_tint`).
@@ -570,6 +574,7 @@ impl ModelData {
                                 },
                                 |x| x as f32,
                             ),
+                        thin: 0.0,
                     }),
                     surface: Surface {
                         normal: m.normal_texture().map(|t| t.texture().source().index()),

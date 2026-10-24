@@ -14,6 +14,7 @@ use acr_render::model_renderer::{ModelInstance, ModelRenderer};
 use acr_render::particles::{Burst, ParticleKind, ParticleSink, hash, unit};
 use acr_render::view3d::{COS_E, PIXELS_PER_METRE};
 use acr_sim::World;
+use acr_sim::artillery::GunMode;
 use acr_sim::combat::DeathCause;
 use acr_sim::projectile::Projectile;
 use acr_sim::weapon::Propagation;
@@ -91,6 +92,10 @@ const GUN_MUZZLE: f32 = 0.9 * PIXELS_PER_METRE;
 /// How deep a stuck arrow's head goes into the ground (metres), and at most this many lie.
 const STUCK_DEPTH: f32 = 0.12;
 const STUCK_CAP: usize = 2048;
+/// How far a shell turns over per tick (rad).
+const SHELL_SPIN: f32 = 0.3;
+/// A shell's burst looked ahead for at most this many ticks.
+const SHELL_LOOKAHEAD: u32 = 1200;
 /// A cannonball's trail: a puff every this many world px, at most this many a frame.
 const TRAIL_STEP: f32 = 2.5;
 const TRAIL_MAX: u32 = 32;
@@ -193,14 +198,19 @@ impl Missiles {
                 p.pos.1 as f32 * k + vel[1] * frac,
                 p.pos.2 as f32 * k / COS_E + vel[2] * frac + 0.5 * az * frac * frac,
             ];
-            // A gun's arc starts a few pixels above the ground (its sprite's offset shows the
-            // muzzle height): raised by up to the muzzle's height, down to nothing over the
-            // last stretch before it lands.
-            if world.catalog.weapons.get(p.weapon).propagation == Propagation::Angle {
+            let angle = world.catalog.weapons.get(p.weapon).propagation == Propagation::Angle;
+            let mut dir = normalize([vel[0], vel[1], vel[2] + az * frac]);
+            // A shell's high arc is drawn as its own parabola from the muzzle to the burst.
+            let arc = if kind == Round::Shell && angle { shell_arc(world, p, frac, ground) } else { None };
+            if let Some((a, d)) = arc {
+                (at, dir) = (a, d);
+            } else if angle {
+                // A gun's arc starts a few pixels above the ground (its sprite's offset shows
+                // the muzzle height): raised by up to the muzzle's height, down to nothing over
+                // the last stretch before it lands.
                 let left = ((p.dest.0 as f32 * k - at[0]).powi(2) + (p.dest.1 as f32 * k - at[1]).powi(2)).sqrt();
                 at[2] += (left * 0.1).min(GUN_MUZZLE);
             }
-            let dir = normalize([vel[0], vel[1], vel[2] + az * frac]);
             // Turning over: per tick of its life, from a phase of its own.
             let turn = (p.frame as f32 + frac) + 6.0 * unit(seed, 1);
             let (model, transform) = match kind {
@@ -229,11 +239,10 @@ impl Missiles {
                     (models.ball, oriented(at, dir, 0.0, 0.0, [r; 3]))
                 }
                 Round::Shell => {
-                    let m = oriented(at, dir, 0.0, turn * 0.9, [1.0; 3]);
-                    if new_tick {
-                        let tip = math::transform_point(&m, [0.0, missiles::SHELL_FUSE, 0.0]);
-                        fuse(sink, tip, seed ^ now as u32);
-                    }
+                    // A slow turn over (a shell barely spins), the fuse sparking every frame.
+                    let m = oriented(at, dir, 0.0, turn * SHELL_SPIN, [1.0; 3]);
+                    let tip = math::transform_point(&m, [0.0, missiles::SHELL_FUSE, 0.0]);
+                    fuse(sink, tip, seed ^ hash(now as u32 ^ (self.since * 1000.0) as u32), new_tick);
                     (models.shell, m)
                 }
                 Round::Tomahawk => (models.tomahawk, oriented(at, dir, 0.0, turn * 1.7, [1.0; 3])),
@@ -449,14 +458,73 @@ fn trail(sink: &mut dyn ParticleSink, from: Vec3, to: Vec3, seed: u32) {
     }
 }
 
-/// A burning fuse: sparks thrown off its tip and a wisp of smoke.
-fn fuse(sink: &mut dyn ParticleSink, tip: Vec3, seed: u32) {
+/// A shell's place and heading (true world px, unit) on a ballistic parabola from the
+/// muzzle to where the simulation will burst it, `frac` of the tick on (render only).
+///
+/// The simulation's `ANGLE` flight (`projectile::create`) starts at the sprite's muzzle a
+/// few px above the ground and is integrated with `vz += az` each tick; it bursts within
+/// 16 px of `dest` or below the ground. Its z does come down to the ground there, but drawn
+/// as it is (`/ COS_E`, plus the up to 0.9 m raise of the flat gun arcs) it peaked about 15 %
+/// higher than the elevation gives and was still 1.5 m up at the last tick before the burst.
+/// Here the shell's ticks flown `k` come from its climb (`vz0 = |v| tan(elevation)`, less
+/// `az` per tick), the ticks left `r` from running the simulation's own steps on to the
+/// burst, and the height is the parabola through the muzzle (`GUN_MUZZLE` above the ground
+/// at the start) and the ground at the burst whose launch angle is the elevation: it peaks a
+/// quarter of the range times its tangent high and lands on the burst at its tick. The
+/// horizontal place stays the simulation's (constant speed), so this is a true ballistic arc.
+fn shell_arc(world: &World, p: &Projectile, frac: f32, ground: &dyn Fn(f32, f32) -> f32) -> Option<(Vec3, Vec3)> {
+    if p.az >= 0 {
+        return None;
+    }
+    let wp = world.catalog.weapons.get(p.weapon);
+    let deg = GunMode::from_u8(p.shot.mode).and_then(|m| m.elevation()).unwrap_or(wp.speed);
+    let tan = f64::from(deg).to_radians().tan();
+    let (vx, vy, vz, az) = (i64::from(p.vel.0), i64::from(p.vel.1), i64::from(p.vel.2), i64::from(p.az));
+    let v = ((vx * vx + vy * vy) as f64).sqrt().floor();
+    let vz0 = (v * tan).trunc();
+    let flown = ((vz0 - vz as f64) / -(az as f64)).round().max(0.0) as i64;
+    // The simulation's steps run on to the burst (`projectile::process` (b)–(d)).
+    let dest = (i64::from(p.dest.0), i64::from(p.dest.1), i64::from(p.dest.2));
+    let (mut x, mut y, mut z, mut vz) = (i64::from(p.pos.0), i64::from(p.pos.1), i64::from(p.pos.2), vz);
+    let mut left = 0i64;
+    while left < i64::from(SHELL_LOOKAHEAD) {
+        left += 1;
+        vz += az;
+        (x, y, z) = (x + vx, y + vy, z + vz);
+        let near = (z - dest.2).abs() + (y - dest.1).abs() + (x - dest.0).abs() < 0x40000;
+        let below = i64::from(world.map.heights.at((x >> 14) as i32, (y >> 14) as i32)) > z >> 14;
+        if near || below {
+            break;
+        }
+    }
+    let k = 1.0 / 16384.0;
+    let step = [vx as f32 * k, vy as f32 * k];
+    let now = [p.pos.0 as f32 * k, p.pos.1 as f32 * k];
+    let start = [now[0] - step[0] * flown as f32, now[1] - step[1] * flown as f32];
+    let burst = [now[0] + step[0] * left as f32, now[1] + step[1] * left as f32];
+    let span = [burst[0] - start[0], burst[1] - start[1]];
+    let range = (span[0] * span[0] + span[1] * span[1]).sqrt();
+    if range < 1.0 {
+        return None;
+    }
+    let u = ((flown as f32 + frac) / (flown + left) as f32).clamp(0.0, 1.0);
+    let h0 = ground(start[0], start[1]) + GUN_MUZZLE;
+    let h1 = ground(burst[0], burst[1]);
+    let peak = range * tan as f32 / 4.0;
+    let h = h0 + (h1 - h0) * u + 4.0 * peak * u * (1.0 - u);
+    let climb = (h1 - h0) + 4.0 * peak * (1.0 - 2.0 * u);
+    let at = [start[0] + span[0] * u, start[1] + span[1] * u, h];
+    Some((at, normalize([span[0], span[1], climb])))
+}
+
+/// A burning fuse: sparks thrown off its tip every frame and a wisp of smoke once a tick.
+fn fuse(sink: &mut dyn ParticleSink, tip: Vec3, seed: u32, smoke: bool) {
     sink.emit(&Burst {
         at: tip,
         dir: [0.0, 0.0, 1.0],
         spread: 1.4,
         speed: [20.0, 60.0],
-        count: 4,
+        count: 1,
         kind: ParticleKind::Ember,
         life: [0.15, 0.35],
         size: [0.4, 0.8],
@@ -464,6 +532,9 @@ fn fuse(sink: &mut dyn ParticleSink, tip: Vec3, seed: u32) {
         scatter: 0.3,
         seed,
     });
+    if !smoke {
+        return;
+    }
     sink.emit(&Burst {
         at: tip,
         dir: [0.0, 0.0, 1.0],

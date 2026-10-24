@@ -33,7 +33,7 @@ struct Globals {
     view_proj: mat4x4<f32>,
     // Direction to the light (world), ambient share in w.
     light: vec4<f32>,
-    // View direction (world, into the screen).
+    // View direction (world, into the screen); w: world px per screen px (0: the shadow map).
     forward: vec4<f32>,
     // x: encode sRGB here (the target is not sRGB), y: dissolve allowed, z: bone texture width,
     // w: material detail (normal maps and the highlight, #234).
@@ -69,6 +69,8 @@ struct Material {
     // Surface detail (#234): glTF metallic and roughness factors, the normal map's scale (0:
     // none), 1 with a metallic-roughness texture (G roughness, B metal).
     pbr: vec4<f32>,
+    // x: the least screen width (px) of thin parts (0: none; arrows).
+    thin: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> globals: Globals;
@@ -251,6 +253,17 @@ fn vs_main(v: VertexIn, inst: InstanceIn) -> VsOut {
         // Belly wound on the front of the torso: x within 0.12 m, y around the belly.
         let b = (v.position - vec3<f32>(0.0, pc.z, 0.12)) / vec3<f32>(0.13, 0.1, 0.12);
         belly = select(0.0, belly * clamp(1.0 - length(b), 0.0, 1.0), part == 0);
+    }
+    // Thin parts (an arrow's shaft) keep `material.thin.x` px of width at any zoom: points
+    // nearer the model's z axis than half of it are pushed out to it (the instance's scale is
+    // world px per model metre).
+    if (material.thin.x > 0.0 && globals.forward.w > 0.0) {
+        let scale = length(vec3<f32>(inst.row0.x, inst.row1.x, inst.row2.x));
+        let least = 0.5 * material.thin.x * globals.forward.w / max(scale, 1e-6);
+        let r = length(p.xy);
+        if (r > 1e-6 && r < least) {
+            p = vec3<f32>(p.xy * (least / r), p.z);
+        }
     }
     var local = apply(r0, r1, r2, vec4<f32>(p, 1.0));
     var local_n = apply(r0, r1, r2, vec4<f32>(n, 0.0));

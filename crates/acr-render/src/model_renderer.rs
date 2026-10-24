@@ -358,6 +358,8 @@ struct MaterialUniform {
     /// Surface detail (#234, [`crate::model::Surface`]): metallic, roughness, normal map
     /// scale (0: no normal map), 1 with a metallic-roughness texture.
     pbr: [f32; 4],
+    /// x: the least screen width (px) of the thin parts ([`crate::model::Finish::thin`]).
+    thin: [f32; 4],
 }
 
 #[repr(C)]
@@ -1313,6 +1315,7 @@ impl ModelRenderer {
                         if m.surface.normal.is_some_and(|t| t < images.len()) { m.surface.normal_scale } else { 0.0 },
                         if m.surface.metal_rough.is_some_and(|t| t < images.len()) { 1.0 } else { 0.0 },
                     ],
+                    thin: [m.finish.thin, 0.0, 0.0, 0.0],
                 };
                 let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("model material"),
@@ -1627,7 +1630,8 @@ impl ModelRenderer {
         let globals = Globals {
             view_proj: view.world_to_clip(),
             light: [LIGHT[0] / len, LIGHT[1] / len, LIGHT[2] / len, AMBIENT],
-            forward: [forward[0], forward[1], forward[2], 0.0],
+            // w: world px per screen px (thin parts' least width; 0 in the shadow map).
+            forward: [forward[0], forward[1], forward[2], 1.0 / view.camera.scale.max(1e-3)],
             params: [
                 if self.encode_srgb { 1.0 } else { 0.0 },
                 if dissolve { 1.0 } else { 0.0 },

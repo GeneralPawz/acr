@@ -1,7 +1,9 @@
 //! Code-built models of the rounds in flight (#308, docs/rendering-3d.md "Projectiles"):
 //! arrows, a musket ball's streak, cannonballs, shells, tomahawks, spears and stones. glTF
 //! metres, +y up, the flight along +z; vertex colours (linear) on one plain material each.
-//! The thin ones are drawn a little thicker than life so they still show at the game's zoom.
+//! Arrows are true to life (a 9.6 mm shaft) and keep at least a pixel of width at any zoom
+//! through their material's `Finish::thin` (`model.wgsl`); the others are drawn a little
+//! thicker than life so they still show at the game's zoom.
 
 use crate::math::{self, Vec3};
 use crate::model::{Material, ModelData, Primitive, Tissue, Vertex};
@@ -17,6 +19,10 @@ const FUSE: [f32; 4] = [0.55, 0.42, 0.25, 1.0];
 
 /// Length of an arrow (metres): its tip sits at the origin, the nock at −z.
 pub const ARROW_LENGTH: f32 = 0.8;
+/// An arrow shaft's radius (metres): 9.6 mm thick, as real arrows (8–10 mm).
+pub const ARROW_RADIUS: f32 = 0.0048;
+/// The least screen width (px) an arrow keeps when zoomed out (`Finish::thin`).
+const ARROW_LEAST_PX: f32 = 1.0;
 
 #[derive(Default)]
 struct Mesh {
@@ -148,6 +154,11 @@ impl Mesh {
     }
 
     fn model(self, name: &str) -> ModelData {
+        self.model_thin(name, 0.0)
+    }
+
+    /// The model, its thin parts kept at least `thin` px wide on screen (`Finish::thin`).
+    fn model_thin(self, name: &str, thin: f32) -> ModelData {
         let material = Material {
             name: name.into(),
             base_color: [1.0; 4],
@@ -159,7 +170,7 @@ impl Mesh {
             tissue: Tissue::None,
             tint: Default::default(),
             face_tiles: 1,
-            finish: Default::default(),
+            finish: crate::model::Finish { thin, ..Default::default() },
             surface: Default::default(),
         };
         ModelData::single(
@@ -184,20 +195,24 @@ fn normalize(v: Vec3) -> Vec3 {
     if l > 0.0 { math::scale(v, 1.0 / l) } else { [0.0, 1.0, 0.0] }
 }
 
-/// An arrow (or a crossbow bolt): an iron head with its tip at the origin, the shaft back
-/// along −z to the nock, three grey feathers near it.
+/// An arrow (or a crossbow bolt): an iron head with its tip at the origin, the shaft
+/// ([`ARROW_RADIUS`]) back along −z to the nock, three grey feathers near it; at least
+/// [`ARROW_LEAST_PX`] wide on screen.
 pub fn arrow() -> ModelData {
     let mut m = Mesh::default();
     let l = ARROW_LENGTH;
-    m.loft(&[(-l, 0.0), (-l + 0.01, 0.016), (-0.07, 0.016), (-0.07, 0.0)], 5, PALE_WOOD, [0.0; 2]);
-    m.loft(&[(-0.08, 0.0), (-0.075, 0.028), (0.0, 0.0)], 4, IRON, [0.0; 2]);
+    let r = ARROW_RADIUS;
+    m.loft(&[(-l, 0.0), (-l + 0.004, r), (-0.07, r), (-0.07, 0.0)], 6, PALE_WOOD, [0.0; 2]);
+    // A broad iron head 40 mm across and a small horn nock, so both still read.
+    m.loft(&[(-0.085, 0.0), (-0.08, 0.006), (-0.06, 0.02), (0.0, 0.0)], 4, IRON, [0.0; 2]);
+    m.loft(&[(-l, 0.0), (-l + 0.002, 0.006), (-l + 0.02, 0.006), (-l + 0.022, 0.0)], 4, FEATHER, [0.0; 2]);
     for k in 0..3 {
         let a = k as f32 / 3.0 * std::f32::consts::TAU + 0.5;
         let (c, s) = (a.cos(), a.sin());
-        let r = |w: f32, z: f32| [c * w, s * w, z];
-        m.card([r(0.012, -l + 0.03), r(0.05, -l + 0.06), r(0.04, -l + 0.2), r(0.012, -l + 0.22)], FEATHER);
+        let p = |w: f32, z: f32| [c * w, s * w, z];
+        m.card([p(r, -l + 0.03), p(0.04, -l + 0.06), p(0.035, -l + 0.2), p(r, -l + 0.22)], FEATHER);
     }
-    m.model("missile_arrow")
+    m.model_thin("missile_arrow", ARROW_LEAST_PX)
 }
 
 /// A musket ball's streak: a spindle from −1 to 0 along z, widest near its head, of unit

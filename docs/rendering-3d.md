@@ -1391,16 +1391,28 @@ with `ThreeD::draws_rounds`). Smoke, flashes, explosions and debris keep their s
   `vel` (and `az`) by the share of the tick the frame is into, so rounds fly smoothly between
   ticks. +z of the model along the velocity. A gun's `ANGLE` arc starts a few pixels above
   the ground in the simulation (the sprite's offset shows the muzzle): it is raised by
-  `0.1 ×` the distance left to `dest`, at most 0.9 m. The missile models are added with
+  `0.1 ×` the distance left to `dest`, at most 0.9 m (cannonballs and grapeshot).
+- **Shells** (`missile_view::shell_arc`) fly a true parabola instead: the ticks flown come
+  from the climb (`vz0 = |v| · tan(elevation)` less `az` a tick; the elevation of the
+  `GunMode`, a mortar's 60°, else the weapon's `ANGLE`), the ticks left from running the
+  simulation's own steps on to the burst (within 16 px of `dest` or below the ground, at
+  most 1200). The height is the parabola from 0.9 m above the muzzle's ground to the ground
+  at the burst with the elevation as its launch angle (peak `range · tan / 4`), the
+  horizontal place the simulation's, so the shell lands on the burst at its tick. The
+  simulation's own z also comes down there; drawn directly it peaked about 15 % higher and
+  was still 1.5 m up at the last tick. Shells turn over slowly (0.3 rad a tick); the fuse
+  throws an ember every frame and smoke once a tick. The missile models are added with
   `ModelRenderer::add_small_model` and always drawn at full detail: the far levels dropped
   the thin shafts entirely.
-- **Looks:** arrows 0.8 m with an iron head and three feathers, shafts 32 mm thick (about
-  three times life, to show at the game's zoom); cannonballs dark spheres of 0.09 m (life
+- **Looks:** arrows 0.8 m with a 40 mm iron head, a nock and three feathers, shafts 9.6 mm
+  thick as in life; their material's `Finish::thin` (1 px) keeps them at least a pixel wide
+  at any zoom: `vs_main` pushes vertices nearer the model's z axis than half a pixel out to
+  it (`globals.forward.w` is world px per screen px, 0 in the shadow map), so the mesh stays
+  thin close up and the shaft never flickers away zoomed out; cannonballs dark spheres of 0.09 m (life
   0.047 m) trailing a thin pale ribbon: every frame small swelling, fading puffs (`Dust`,
   1.4–2 px, 0.7–1 s) every 2.5 px of the way flown since the last frame (at most 32 a frame,
   a ball's last position kept per slot), so the trail is continuous between ticks; grapeshot
-  0.03 m; shells 0.11 m tumbling, with embers and a wisp of smoke off the fuse tip every
-  tick; tomahawks turn end over end (1.7 rad per tick), stones tumble, spears roll. The
+  0.03 m; shells 0.11 m; tomahawks turn end over end (1.7 rad per tick), stones tumble, spears roll. The
   phase is a hash of the slot, weapon and shooter.
 - **Musket balls** are line traces in the simulation (0x5589ec), never objects in flight:
   for each `Gunshot` hit or impact of the current tick a thin pale streak (`streak`, 2.2 m,
