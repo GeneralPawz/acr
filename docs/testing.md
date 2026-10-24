@@ -446,6 +446,13 @@ Only requests that set a scene up work there: `start` with `blank`, `spawn`, `hi
 `hud`, `state`, `command`, `ui`, `textures`; waits, screenshots, `frametimes`, `gputime` and
 the studio need the native driver's fixed-step frames, the page takes its screenshots itself.
 
+**Measured** (render VM, ANGLE on Vulkan/RADV, 1600 × 900, one `hdman.glb` zoomed 1..9;
+`ACR-analysis/genai/browser-test/`): no console errors or warnings on either build; the
+switch to the master's 4 k maps at zoom 7 stalled the page 233 and 817 ms on the main-thread
+decode (205dbcb), 67, 67 and 100 ms with `createImageBitmap` decodes, strip uploads and GPU
+mips, the game's own frame work there at most 6 ms; zoom 3 (2 k level) 50–117 ms against
+none. Every other frame stays at the 16.7 ms vsync.
+
 **Installed on the VM** (user space, `~/browser/venv`): Python Playwright 1.64.1 with its
 Chromium build 1248 (`~/.cache/ms-playwright`; `playwright install --with-deps chromium`
 added the system libraries with sudo). No Node and no wasm-bindgen CLI: `cargo xtask web`
