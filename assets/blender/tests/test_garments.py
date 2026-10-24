@@ -147,7 +147,8 @@ class DrapePilot(Period17):
     """Shell garments drafted and draped instead (#287 drape pilot): shirts and tunics,
     cloaks, the sash."""
 
-    NAMES = ("frn_blouse", "frn_sash", "frn_cape", "trade_shirt", "unku", "yacolla", "tilmatli", "nat_leggings")
+    NAMES = ("frn_blouse", "frn_sash", "frn_cape", "trade_shirt", "unku", "yacolla", "tilmatli", "nat_leggings",
+             "nat_breechcloth")
 
     def test_period_cut(self):
         m = gm.MEASURE
@@ -175,12 +176,22 @@ class DrapePilot(Period17):
         # side and closed, the top pinned, a garter inlay below the knee.
         leg, seams = self.uni["nat_leggings"]
         lo = leg["legging"]
-        self.assertGreater(lo.bounds()[3], m["knee_to_ankle"] + 20.0)
+        self.assertGreater(lo.bounds()[3], m["knee_to_ankle"] + 15.0)
         self.assertGreater(lo.outline[1][0], m["ankle"])
         self.assertEqual((lo.place["region"], lo.place["theta"], lo.place["pin"]), ("leg", 90.0, "top"))
         self.assertTrue(seams[0].close)
         self.assertEqual((leg["garter"].tack, leg["garter"].key), ("legging", "garter"))
         self.assertLess(leg["garter"].bounds()[3], m["knee_to_ankle"])
+        # The breechcloth (#307): one strip through the crotch and over the belt, flaps wider
+        # than the gathered band, the folds over the belt pinned, the marks in order.
+        bc, seams = self.uni["nat_breechcloth"]
+        c = bc["cloth"]
+        vf, vb, L = c.place["marks"]
+        self.assertEqual((c.place["region"], c.mirror, seams), ("sagittal", False, []))
+        self.assertTrue(0.0 < vf < vb < L and abs(c.bounds()[3] - L) < 1e-6)
+        self.assertGreater(vb - vf, m["seat"] * 0.5)
+        self.assertGreater(c.bounds()[2] - c.bounds()[0], 20.0)
+        self.assertTrue(all(vf - 2.0 <= lo < hi <= vb + 2.0 for lo, hi in c.place["pin_vr"]))
 
 
 class LayerRanks(unittest.TestCase):

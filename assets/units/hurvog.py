@@ -40,7 +40,7 @@ PALETTE = {"breechcloth": (0.16, 0.34, 0.2), "leggings": (0.14, 0.18, 0.36), "fl
 
 
 def spec():
-    return native.spec(MD, WEAPONS, palette=PALETTE, active=ACTIVE, hair="lock", feathers=0, headdress="crown", silver=True, paint="black_red_chin", dress=("breechcloth", "leggings", "moccasins", "matchcoat"), kit=("belt_l", "horn", "pouch", "knife"), weapon="gun", melee=None)
+    return native.spec(MD, WEAPONS, drape=("leggings",), palette=PALETTE, active=ACTIVE, hair="lock", feathers=0, headdress="crown", silver=True, paint="black_red_chin", dress=("breechcloth", "leggings", "moccasins", "matchcoat"), kit=("belt_l", "horn", "pouch", "knife"), weapon="gun", melee=None)
 
 
 def build(ctx):

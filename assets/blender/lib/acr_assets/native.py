@@ -31,7 +31,8 @@ SPEC keys (all but `md` and `weapons` optional):
 - `hair`, `feathers`, `paint`, `silver` (True: gorget and arm bands), `kit`: strapped gear
   (`quiver`, `horn`, `pouch`, `knife`);
 - `drape`: pieces of `dress` drafted and draped instead of shells (#307): `leggings`
-  (`garments.side_leggings`, with its garters; the flaps stay modelled).
+  (`garments.side_leggings`, with its garters; the flaps stay modelled), `breechcloth`
+  (`garments.breechcloth`: one strip between the legs and over the belt, `_flap_weights`).
 """
 
 import math
@@ -48,10 +49,11 @@ from .humans import LAYER_OF, Character, prepare_export
 # The Iroquois warrior's colours: a nation overrides them. The skin is a warm copper as in
 # the sprites (slice 1's darker brown plus the sprite mix came out near-black on the
 # field); it keeps the palette colour (`fixed`), a unit varies it a little.
+# Garters: dark (worsted tape or hide; the sprites' garters read 0.15-0.43, #307).
 PALETTE = {
     "skin": (0.80, 0.55, 0.38), "bone": (0.85, 0.81, 0.69), "hair": (0.06, 0.05, 0.05),
     "breechcloth": (0.16, 0.18, 0.30), "leggings": (0.50, 0.10, 0.08), "flaps": (0.50, 0.10, 0.08),
-    "garter": (0.70, 0.55, 0.20), "moccasins": (0.45, 0.32, 0.20), "shirt": (0.86, 0.84, 0.78),
+    "garter": (0.30, 0.25, 0.17), "moccasins": (0.45, 0.32, 0.20), "shirt": (0.86, 0.84, 0.78),
     "matchcoat": (0.20, 0.24, 0.36), "belt_hide": (0.30, 0.20, 0.12), "belts": (0.30, 0.20, 0.12),
     "roach": (0.62, 0.12, 0.08), "feather": (0.88, 0.85, 0.78), "silver": (0.80, 0.80, 0.82),
     "horn": (0.80, 0.72, 0.55), "pouch": (0.36, 0.24, 0.14), "hide": (0.55, 0.40, 0.26),
@@ -209,6 +211,38 @@ def _flap(ch, name, y0, z0, z1, w0, w1, out, back=False, rows=6, cols=4):
     return am.bind(obj, ch.arm)
 
 
+def _flap_weights(ch, obj, z0=1.03, off=0.02):
+    """The draped breechcloth's flaps (the cloth standing more than `off` m off the skin, and
+    all of it below the crotch) skinned like the modelled flaps (`_flap`): the hips, the hem
+    going 60 % to the thighs across the width, so a stride swings the flap instead of
+    poking through it. The band between the legs keeps the weights of the layer beneath."""
+    from mathutils.bvhtree import BVHTree
+
+    P, fl = ch.prefix, ch.flesh
+    tree = BVHTree.FromPolygons([v.co for v in fl.data.vertices], [p.vertices for p in fl.data.polygons])
+    cz = min((v.co.z for v in fl.data.vertices if abs(v.co.x) < 0.012 and v.co.z > 0.6), default=0.82)
+    vs = obj.data.vertices
+    z1 = min(v.co.z for v in vs)
+    w = max(max(abs(v.co.x) for v in vs) * 2.0, 1e-3)
+    groups = {n: obj.vertex_groups.get(P + n) or obj.vertex_groups.new(name=P + n) for n in ("hips", "thigh_l", "thigh_r")}
+    flap = []
+    for v in vs:
+        d = tree.find_nearest(v.co)[3]
+        if v.co.z < cz or (d is not None and d > off):
+            flap.append(v.index)
+    for g in obj.vertex_groups:
+        g.remove(flap)
+    for i in flap:
+        co = vs[i].co
+        t = min(max((z0 - co.z) / (z0 - z1), 0.0), 1.0)
+        k = 0.6 * t  # linear: the flap follows the thighs sooner than `_flap`'s (the legging tops)
+        groups["hips"].add([i], 1.0 - k, "REPLACE")
+        if k > 0:
+            groups["thigh_l"].add([i], k * min(max(0.5 + co.x / w, 0.0), 1.0), "REPLACE")
+            groups["thigh_r"].add([i], k * min(max(0.5 - co.x / w, 0.0), 1.0), "REPLACE")
+    return len(flap)
+
+
 def _legging_flap(ch, side, z0=0.14, z1=0.76, rows=14, surface=None):
     """The legging's flap on the outer side of leg `side` (1 left, -1 right): a two-sided
     fin from the outermost skin line (sampled in bands of height, smoothed) standing
@@ -282,7 +316,19 @@ def dress(ch, s):
         ch.shell("shirt", "shirt", lambda c, n, h, p: (h in TORSO and 0.80 < c.z < 1.50) or h in ARMS
                  or (h in {"thigh_l", "thigh_r"} and c.z > 0.74), 0.013)
     belt_off = 0.024 if "shirt" in d else 0.012
-    if "breechcloth" in d:
+    if "breechcloth" in d and "breechcloth" in s["drape"]:
+        # One drafted strip between the legs and over the belt, its ends the flaps (#307).
+        from . import drape
+
+        ch.shell("belt", "belt_hide", lambda c, n, h, p: h in {"hips", "spine"} and 0.98 < c.z < 1.03, belt_off + 0.004)
+        over = [o for o in ch.layers["clothes"] if o.type == "MESH" and o is not getattr(ch, "shoes", None)]
+        ch.drape_report = getattr(ch, "drape_report", {})
+        made = drape.dress(ch, garments=("nat_breechcloth",), over=over, report=ch.drape_report)
+        drape.hide_skin(ch, [o for o in ch.layers["clothes"] if o.name in made])
+        for o in ch.layers["clothes"]:
+            if o.name in made:
+                _flap_weights(ch, o)
+    elif "breechcloth" in d:
         ch.shell("belt", "belt_hide", lambda c, n, h, p: h in {"hips", "spine"} and 0.98 < c.z < 1.03, belt_off + 0.004)
         ch.shell("breechcloth", "breechcloth", lambda c, n, h, p: h in {"hips", "thigh_l", "thigh_r"} and 0.80 < c.z < 0.99
                  and abs(c.x) < 0.075, belt_off)
@@ -293,10 +339,13 @@ def dress(ch, s):
         ch.add("clothes", _flap(ch, "flap_back", y_back, 1.03, 0.56, 0.24, 0.27, 0.05, back=True), "breechcloth")
     if "matchcoat" in d:
         # A blanket over the left shoulder and under the right arm: the trunk above a line
-        # from the right hip to the left armpit, and the left upper arm.
-        ch.shell("matchcoat", "matchcoat", lambda c, n, h, p: (h in TORSO and c.z > 1.02 + 0.9 * (0.18 - c.x) * (c.z < 1.6)
+        # from the right hip to the left armpit, and the left upper arm; over the left hip
+        # unless the breechcloth is draped (then it stays above the belt and the flaps).
+        low = 0.06 if "breechcloth" in s["drape"] else 0.0
+        hip = not low
+        ch.shell("matchcoat", "matchcoat", lambda c, n, h, p: (h in TORSO and c.z > 1.02 + low + 0.9 * (0.18 - c.x) * (c.z < 1.6)
                                                                 and c.z < 1.52 and not (c.x < -0.12 and c.z > 1.25))
-                 or (h == "upperarm_l") or (h in {"thigh_l"} and c.z > 0.70 and c.x > 0.0), 0.030)
+                 or (h == "upperarm_l") or (hip and h in {"thigh_l"} and c.z > 0.70 and c.x > 0.0), 0.030)
     if "cloak" in d:
         # The shaman's fur cloak: a pelt over both shoulders and down the back to the
         # seat, open in front below the collarbones; over the upper arms to mid-arm.

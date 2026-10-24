@@ -71,6 +71,7 @@ CLOTH["frn_sash"] = {"thickness": 0.0025, "mass": 0.30, "tension": 15.0, "bendin
 # Trade stroud (a heavy, napped wool): the Woodland side-seam leggings (#307).
 CLOTH["nat_leggings"] = {"thickness": 0.0025, "mass": 0.35, "tension": 18.0, "bending": 1.2, "shrink": 0.03,
                          "margin": 0.004}
+CLOTH["nat_breechcloth"] = dict(CLOTH["nat_leggings"], margin=0.005, bending=0.8, self=True, self_gap=0.004)
 CLOTH["doublet_slashed"] = CLOTH["doublet"]
 CLOTH["buffcoat_bare"] = CLOTH["buffcoat"]
 
@@ -747,7 +748,7 @@ def band(m=MEASURE, garment="band", key="sash", width=10.0, ease=6.0, lift=-7.0)
     return P, [Seam([("band", "start", True)], [("band", "end")], garment, close=0.05)]
 
 
-def side_leggings(m=MEASURE, garment="nat_leggings", key="leggings", ease=6.0, top=0.5, garter="garter"):
+def side_leggings(m=MEASURE, garment="nat_leggings", key="leggings", ease=6.0, top=0.4, garter="garter"):
     """Woodland side-seam leggings of trade stroud (#307): a cloth tube from the ankle to
     `top` x the knee-to-waist length above the knee (tied up to the belt), `ease` cm looser
     than the leg at every girth, sewn up the outer side (the wide seam allowance, the flap,
@@ -774,6 +775,26 @@ def side_leggings(m=MEASURE, garment="nat_leggings", key="leggings", ease=6.0, t
     return P, [Seam([("legging", "start", True)], [("legging", "outer")], garment, close=GAITER_CLOSE)]
 
 
+def breechcloth(m=MEASURE, garment="nat_breechcloth", key="breechcloth", front=43.0, back=47.0, width=(24.0, 26.0),
+                crotch=9.0):
+    """Woodland breechcloth (#307): one strip of stroud passed between the legs and over the
+    belt front and back, the ends hanging as flaps `front` and `back` cm below the belt,
+    `width` (front, back) cm wide; between the legs it is gathered to `crotch` cm (the
+    taper stands for the gathers). v runs from the front hem along the body's mid line
+    (`drape` region `sagittal`); the band's nominal length comes from the seat girth and is
+    fitted to the body's own line when placed; the folds over the belt are pinned."""
+    band = m["seat"] * 0.62
+    vf, vb = front, front + band
+    L = vb + back
+    wf, wb, wc = width[0] / 2, width[1] / 2, crotch / 2
+    g = [(-wf, 0.0), (wf, 0.0), (wf, vf), (wc, vf + 10.0), (wc, vb - 10.0), (wb, vb), (wb, L), (-wb, L),
+         (-wb, vb), (-wc, vb - 10.0), (-wc, vf + 10.0), (-wf, vf)]
+    place = {"region": "sagittal", "gap": 1.2, "over": 2.2, "front": front, "back": back, "marks": (vf, vb, L),
+             "pin_vr": [(vf - 1.5, vf + 4.0), (vb - 4.0, vb + 1.5)]}
+    return {"cloth": Panel("cloth", garment, key, g, {"front_hem": (0, 1), "back_hem": (6, 7)}, place,
+                           mirror=False)}, []
+
+
 GARMENTS = {"coat": coat, "waistcoat": waistcoat, "breeches": breeches, "gaiters": gaiters, "shirt": shirt,
             "doublet": doublet, "doublet_slashed": lambda m=MEASURE: doublet(m, slashed=True),
             "buffcoat": buffcoat, "buffcoat_bare": lambda m=MEASURE: buffcoat(m, sleeves=None),
@@ -788,6 +809,7 @@ GARMENTS = {"coat": coat, "waistcoat": waistcoat, "breeches": breeches, "gaiters
             "yacolla": lambda m=MEASURE: cloak(m, "yacolla", "yacolla", drop=m["waist_to_knee"] - 18.0, front=14.0,
                                                spread=12.0),
             "nat_leggings": side_leggings,
+            "nat_breechcloth": breechcloth,
             "tilmatli": lambda m=MEASURE: cloak(m, "tilmatli", "tilmatli", drop=m["waist_to_knee"] - 22.0, front=16.0,
                                                 spread=10.0, knot_at=-45.0)}
 

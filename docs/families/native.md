@@ -23,12 +23,14 @@ frames, and `native.spec(MD, WEAPONS, ...)`.
 | `HurS15` | trade gun (SPEC over IroStr) | musket | green breechcloth, blue leggings | black roach, 1 feather | `white_dots` | strap, horn, pouch, knife |
 | `DelS15` | trade gun (SPEC over IroStr) | musket | + shirt, red breechcloth, blue leggings | scalp lock, 2 feathers | `black_stripes` | strap, horn, pouch, knife |
 | `HurLut` | bow (SPEC over IroLut) | war club | green breechcloth, blue leggings | black roach, 3 feathers | `black_face_half` | quiver, knife |
-| `DelLut` | bow (SPEC over IroLut) | tomahawk (`socket.club_r`) | tan breechcloth, buckskin leggings (sprite) | scalp lock, 2 feathers | `red_black` | quiver, knife |
+| `DelLut` | bow (SPEC over IroLut) | tomahawk (`socket.club_r`) | tan breechcloth (draped), buckskin leggings, dark garters, tan matchcoat (sprite) | scalp lock, 2 feathers | `red_black` | quiver, knife |
 | `DelKri` | bow (loosed on 25) | war club; WORK (two-handed swing) and REST (look round) as EngKri's | + shirt | scalp lock | none | quiver, knife |
 | `IroSha`, `HurSha`, `DelSha` | heal (MEDIK, `clips.heal`), turtle rattle in the left hand | war club (ATTACK, `club_strikes`, `club_down`) | + fur cloak (`pelt`; DelSha over a shirt) | long hair, 1-2 feathers | `white_band` | knife |
 
-SPEC `drape`: pieces of `dress` drafted and draped instead of shells (#307; `leggings`, on
-for DelLut; docs/clothing.md roll-out list). All 15 Woodlands units are built (slice 2). Iroquois wear red leggings and the red roach,
+SPEC `drape`: pieces of `dress` drafted and draped instead of shells (#307; docs/clothing.md
+roll-out list): `leggings` on for DelLut, IroLut, IroStr, IroTam, IroVog, HurLut, HurS15 and
+HurVog (the Delaware with a shirt and the shamans keep the shells until the shirt and the
+cloak are draped); `breechcloth` on for DelLut, who also wears a tan matchcoat (sprite). All 15 Woodlands units are built (slice 2). Iroquois wear red leggings and the red roach,
 Huron green breechcloths, blue leggings and a black roach, Delaware a red breechcloth, blue
 leggings and the scalp lock; skin tones vary a little by nation (`palette["skin"]`).
 
@@ -57,6 +59,14 @@ Shells of the MakeHuman skin (`Character.shell`) and modelled panels, not draped
 everything deforms with the body, so nothing cuts through in any clip, and the build
 needs no cloth simulation.
 
+- **Draped breechcloth** (SPEC `drape`): `garments.breechcloth`, one strip of stroud (24 cm
+  wide in front, 26 at the back, gathered to 9 cm between the legs) laid along the body's
+  mid line (`drape` region `sagittal`, `Body.sagittal`): from the front hem up over the
+  belt, down the belly, under the crotch, up the seat and over the belt to the back hem;
+  the folds over the belt are pinned (`pin_vr`). The flaps (cloth more than 2 cm off the
+  skin, and all below the crotch) are skinned like the modelled ones, linearly to 60 %
+  thighs at the hem (`_flap_weights`); the band takes the weights of the layer beneath. A
+  matchcoat over a draped breechcloth stays above the belt (no hip part).
 - **Breechcloth:** a band through a hide belt and two flaps (`_flap`: a thin slab, 22–27 cm
   wide, hanging 43–47 cm) front and back over the belt, leaning out at the hem; the hem's
   weights go half way to the thighs (left and right across the width), so a stride swings

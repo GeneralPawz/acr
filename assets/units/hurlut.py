@@ -37,7 +37,7 @@ PALETTE = {"breechcloth": (0.16, 0.34, 0.2), "leggings": (0.14, 0.18, 0.36), "fl
 
 
 def spec():
-    return native.spec(MD, WEAPONS, palette=PALETTE, active=ACTIVE, melee="club", hair="roach", feathers=3, paint="black_face_half", kit=("quiver", "knife"), weapon="bow")
+    return native.spec(MD, WEAPONS, drape=("leggings",), palette=PALETTE, active=ACTIVE, melee="club", hair="roach", feathers=3, paint="black_face_half", kit=("quiver", "knife"), weapon="bow")
 
 
 def build(ctx):

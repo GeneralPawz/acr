@@ -334,6 +334,33 @@ class Body:
         q = axis_a + np.outer((near - axis_a) @ u, u)
         return float(np.percentile(np.linalg.norm(near - q, axis=1), 80))
 
+    def sagittal(self, gap, over=0.02, front=0.44, back=0.48, out=0.03):
+        """The breechcloth's line in the mid plane (x = 0), (y, z) per point, from the front
+        hem up over the belt (`over` m out at the belt's top, waist_z), down the belly, under
+        the crotch, up the seat, over the belt and down to the back hem (`front`, `back` m
+        below the belt, leaning `out`); `gap` m off the skin. Returns the points and the
+        indices of the front and back belt tops (the folds)."""
+        mid = self.V[np.abs(self.V[:, 0]) < 0.04]
+        cz = float(np.percentile(self.V[(np.abs(self.V[:, 0]) < 0.012) & (self.V[:, 2] > 0.6), 2], 1))
+        top = self.waist_z
+
+        def prof(z):
+            sel = mid[np.abs(mid[:, 2] - z) < 0.015]
+            if len(sel) < 4:
+                sel = mid[np.argsort(np.abs(mid[:, 2] - z))[:12]]
+            return float(np.percentile(sel[:, 1], 2)), float(np.percentile(sel[:, 1], 98))
+
+        f0, b0 = prof(top - 0.02)
+        zs = np.linspace(top - 0.02, cz + 0.03, 8)
+        pts = [(f0 - over - out, top - front), (f0 - over, top), (f0 - gap * 0.5, top + 0.005)]
+        pts += [(prof(z)[0] - gap, z) for z in zs]
+        fc, bc = prof(cz + 0.03)
+        pts += [(fc + (bc - fc) * t, cz - gap) for t in (0.2, 0.5, 0.8)]
+        pts += [(prof(z)[1] + gap, z) for z in zs[::-1]]
+        pts += [(b0 + gap * 0.5, top + 0.005), (b0 + over, top), (b0 + over + out, top - back)]
+        self.crotch_z = cz
+        return pts, 1, len(pts) - 2
+
 
 # --------------------------------------------------------------------------- panels
 
@@ -438,6 +465,26 @@ def place(body, panel, uv):
     sgn = pl.get("dir", 1)
     u0 = pl.get("u0", 0.0)
     out, axis = [], []
+    if reg == "sagittal":
+        # A breechcloth (`garments.breechcloth`): u across from the middle, v along
+        # `Body.sagittal`; the draft's `marks` (v of the front and back belt folds, the
+        # length) map piecewise onto the line, so the band through the crotch takes the
+        # body's own length.
+        pts, i_f, i_b = body.sagittal(gap, over=pl.get("over", 2.0) / 100.0, front=pl["front"] / 100.0,
+                                      back=pl["back"] / 100.0)
+        P2 = np.array(pts)
+        cum = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(P2, axis=0), axis=1))]) * 100.0
+        vf, vb, L = pl["marks"]
+        knots_v, knots_s = (0.0, vf, vb, L), (0.0, cum[i_f], cum[i_b], cum[-1])
+        cy, cz = float(np.mean(P2[:, 0])), float(np.mean(P2[:, 1]))
+        for u, v in uv:
+            s = float(np.interp(v, knots_v, knots_s))
+            y, z = float(np.interp(s, cum, P2[:, 0])), float(np.interp(s, cum, P2[:, 1]))
+            out.append((u / 100.0, y, z))
+            # Outwards: away from the middle of the hips; the flaps (outside the folds) away
+            # from the body as well.
+            axis.append((u / 100.0, cy, cz if cum[i_f] < s < cum[i_b] else z))
+        return out, axis
     if reg == "cape":
         # A cloak from its yoke (docs/clothing.md "Drape 2"): u round the neck ring from
         # `theta` turning `turn` degrees over `span` cm (towards the wearer's left), v = cm
@@ -1144,6 +1191,10 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=()):
             if isinstance(key, tuple) and pc.panel.place.get("pin_v"):
                 # A cloak's yoke: everything within `pin_v` cm of the neck ring.
                 pins += [pc.base + i for i, (_u, v) in enumerate(pc.uv) if v <= pc.panel.place["pin_v"]]
+            if isinstance(key, tuple) and pc.panel.place.get("pin_vr"):
+                # Bands of v (cm): the breechcloth's folds over the belt.
+                pins += [pc.base + i for i, (_u, v) in enumerate(pc.uv)
+                         if any(lo <= v <= hi for lo, hi in pc.panel.place["pin_vr"])]
         if pins:
             obj.vertex_groups.new(name="acr_pin").add(pins, 1.0, "REPLACE")
         fa = me.attributes.new("panel", "INT", "FACE")

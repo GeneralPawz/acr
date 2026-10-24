@@ -34,12 +34,15 @@ MD = {
 WEAPONS = {0: "MECH", 1: "OSTRELA", 2: "STRELA"}
 ACTIVE = {"ATTACK1": 44, "ATTACK2": 44}
 # Colours from the sprite (palette check, ACR-analysis/genai/palette-check): a tan deerskin
-# breechcloth, smoke-browned buckskin leggings with lighter flaps; no blue in the sprite.
-PALETTE = {"breechcloth": (0.66, 0.58, 0.4), "leggings": (0.42, 0.32, 0.2), "flaps": (0.55, 0.4, 0.26), "skin": (0.82, 0.57, 0.4)}
+# breechcloth, smoke-browned buckskin leggings with lighter flaps; no blue in the sprite; a
+# tan blanket (matchcoat) over the left shoulder; dark garters (#307: the gold read 16.8 off).
+PALETTE = {"breechcloth": (0.66, 0.58, 0.4), "leggings": (0.42, 0.32, 0.2), "flaps": (0.55, 0.4, 0.26), "skin": (0.82, 0.57, 0.4),
+           "matchcoat": (0.7, 0.62, 0.42), "garter": (0.36, 0.29, 0.17)}
 
 
 def spec():
-    return native.spec(MD, WEAPONS, palette=PALETTE, active=ACTIVE, melee="tomahawk", hair="lock", feathers=2, paint="red_black", kit=("quiver", "knife"), weapon="bow", drape=("leggings",))
+    return native.spec(MD, WEAPONS, palette=PALETTE, active=ACTIVE, melee="tomahawk", hair="lock", feathers=2, paint="red_black", kit=("quiver", "knife"), weapon="bow",
+                       dress=("breechcloth", "leggings", "moccasins", "matchcoat"), drape=("leggings", "breechcloth"))
 
 
 def build(ctx):
