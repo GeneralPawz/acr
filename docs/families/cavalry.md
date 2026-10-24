@@ -122,6 +122,17 @@ Before/after sheet: `ACR-analysis/cav17/sheet_cav17.png` (sprites, old, new, hea
 Known: the falling band is ragged along its edge (as on foot); the buff skirt is a tube
 over the saddle, not draped; the 18th-c. ones keep `dress` "coat".
 
+## The reload in the saddle
+
+The dragoons' `.MD` comments out `SLOWRECHARGE`: the original loads mounted inside
+`@ATTACK1` (156 frames, shot on frame 20). Every rider with `gun` "carbine" or "wheellock"
+and no `held` item (`reloads`) gets `poses.MOUNTED_RELOAD` there (`reload_clip`): across
+the body to half-cock, take, bite, prime and shut; upright by the horse's right shoulder to
+pour, draw the rammer, ram once, return it; poise and present. The reins stay in the left
+hand, which holds the fore-end; the horse plays `Idle`. `stats.json` `reload` (fists from
+their goals as played). Details in `docs/assets-humans.md`, "Reload drill". Sheet:
+`ACR-analysis/genai/dragoon-reload/engd18_reload_sheet.png`.
+
 ## Not yet
 
 - Facings, lace and sash are shells and thin geometry; at game zoom the lapels read as

@@ -185,6 +185,51 @@ def rod_phases(md_lines):
         out[clip] = plan["ATTACK1"][1]
     return out
 
+
+# The mounted reload (dragoons: EngD18, FrnD17/18, SpnD17/18, UsaD18, EngD17, SiuKStr). Their
+# `.MD` has `SLOWRECHARGE` and `#ATTACK3` commented out ("/SLOWRECHARGE"): the reload is in
+# `@ATTACK1` itself (156 frames of sprite set 4), the shot on `SETACTIVEPOINT #ATTACK1 19`
+# (frame 20), then the sprites bring the carbine down and load it in the saddle (frames
+# 88-155 are the ram the commented `#ATTACK3`/`#TRANS3X` would have looped). Drill after the
+# cavalry exercise: the carbine brought across the body, butt on the right thigh, muzzle up
+# to the left front, held with the bridle hand (the reins stay in the left hand, which takes
+# the fore-end); half-cock, cartridge from the pouch, bitten, the pan primed and shut; the
+# carbine raised steeper, charge and ball poured, the rammer drawn, rammed once, returned;
+# poised on the thigh and presented. Steps (`cavalry.reload_steps` places them): the
+# carbine's butt and muzzle direction by anchors of the seated rider, each hand a distance
+# along the carbine from the grip (metres; the muzzle at `CARBINE_MUZZLE`) or an anchor.
+MOUNTED_SHOT = 20
+CARBINE_MUZZLE = 0.93
+MOUNTED_FRAMES = 156
+MOUNTED_RELOAD = [
+    (0, "@aim"), (19, "@aim"), (MOUNTED_SHOT, "@fire"), (23, "@aim"),
+    (34, "across"), (40, "half_cock"), (47, "cartridge"), (54, "bite"), (61, "pan"), (66, "shut"),
+    (76, "upright"), (82, "pour"), (88, "grasp_rod"), (94, "rod_out"), (100, "ram_up"), (106, "ram_down"),
+    (112, "ram_up"), (118, "rod_out"), (126, "return_rod"), (138, "poise"), (155, "@aim"),
+]
+# The rammer: in its pipes, drawn up along the barrel, turned over, down the bore (rammed
+# once), back (`aim._rod` modes); shown only while out of its pipes.
+MOUNTED_ROD = [(88, "stowed"), (94, "slide"), (97, "swing"), (100, "bore"), (112, "bore"), (115, "swing"),
+               (118, "slide"), (126, "stowed")]
+
+
+def mounted_reload_plan(md_lines):
+    """(keys [(frame, step)], rod [(frame, mode)]) of the mounted reload on the frames of
+    `md_lines["ATTACK1"]` (156 for every dragoon; others scaled), or None without ATTACK1."""
+    if "ATTACK1" not in md_lines:
+        return None
+    n = rig.md_clip_frames(md_lines["ATTACK1"])[0]
+    k = (n - 1) / (MOUNTED_FRAMES - 1)
+
+    def fit(seq):
+        out = {}
+        for f, x in seq:
+            out[int(round(f * k))] = x
+        return sorted(out.items())
+
+    return fit(MOUNTED_RELOAD), fit(MOUNTED_ROD)
+
+
 THRUST = {
     "spine": (-14, 0, 8), "spine1": (-6, 0, 0),
     "upperarm_r": (-40, -40, -10), "forearm_r": (-30, 0, 20),

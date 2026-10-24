@@ -547,22 +547,22 @@ ROD_SOCKET = "socket.hand_l"
 ROD_LENGTH = 0.9
 
 
-def _rod(mode, arm, musket):
+def _rod(mode, arm, musket, prefix="", length=ROD_LENGTH, stowed=ROD_STOWED):
     """The ramrod's matrix (tail at the origin, +Z to the head) in `mode`: "stowed" in its
     pipes; "slide" drawn up along the barrel, the right hand near its head; "swing" turned
     out to the man's right, held in the middle; "bore" head down the barrel, the hand at
-    its tail."""
+    its tail. `prefix`, `length`, `stowed`: a rider's carbine (`cavalry.reload_clip`)."""
     if mode == "stowed":
-        return musket @ ROD_STOWED
-    hand = arm["hand_r"]
+        return musket @ stowed
+    hand = arm[prefix + "hand_r"]
     palm = (hand.head + hand.tail) / 2
     m3 = musket.to_3x3()
     axis = m3 @ Vector((0, 0, 1))
     on_bore = musket.translation + axis * (palm - musket.translation).dot(axis)
     if mode == "slide":
-        r, held, at = m3, ROD_LENGTH - 0.03, on_bore + m3 @ Vector((0, -0.02, 0))
+        r, held, at = m3, length - 0.03, on_bore + m3 @ Vector((0, -0.02, 0))
     elif mode == "swing":
-        r, held, at = m3 @ Matrix.Rotation(math.radians(-80), 3, "Y"), ROD_LENGTH * 0.5, palm
+        r, held, at = m3 @ Matrix.Rotation(math.radians(-80), 3, "Y"), length * 0.5, palm
     else:
         r, held, at = m3 @ Matrix.Rotation(math.pi, 3, "X"), 0.02, on_bore
     m = r.to_4x4()
@@ -570,18 +570,18 @@ def _rod(mode, arm, musket):
     return m
 
 
-def _rod_at(phases, f, arm, musket):
+def _rod_at(phases, f, arm, musket, **kw):
     """The rod on frame `f` between the (frame, mode) `phases` (before and after them: the
-    first's and the last's mode; stowed without phases)."""
+    first's and the last's mode; stowed without phases). `kw`: `_rod`'s options."""
     if not phases:
-        return _rod("stowed", arm, musket)
+        return _rod("stowed", arm, musket, **kw)
     if f <= phases[0][0]:
-        return _rod(phases[0][1], arm, musket)
+        return _rod(phases[0][1], arm, musket, **kw)
     if f >= phases[-1][0]:
-        return _rod(phases[-1][1], arm, musket)
+        return _rod(phases[-1][1], arm, musket, **kw)
     i = max(j for j, (k, _) in enumerate(phases) if k <= f)
     (f0, a), (f1, b) = phases[i], phases[i + 1]
-    m0, m1 = _rod(a, arm, musket), _rod(b, arm, musket)
+    m0, m1 = _rod(a, arm, musket, **kw), _rod(b, arm, musket, **kw)
     if a == b:
         return m0
     t = (f - f0) / (f1 - f0)

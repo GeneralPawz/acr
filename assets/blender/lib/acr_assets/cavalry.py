@@ -66,6 +66,7 @@ from mathutils import Matrix, Vector
 
 from . import armature as am
 from . import body as bd
+from . import aim as aiming
 from . import crawl, faces, gear, heads, horse, mount, poses, registry, rig
 from .humans import Character, prepare_export
 
@@ -463,8 +464,11 @@ def shield(ch, name, radius=0.27):
 
 def gun(ch, name, kind):
     """A carbine or a pistol in the right hand, set for the shot: call with the aim pose
-    (the socket level), the barrel forward."""
+    (the socket level), the barrel forward. Keeps the carbine's frame in the socket's
+    (`ch.carbine`: origin the fist's centre, +Y to the muzzle, +Z up) for the reload."""
     c, _rot = fist_centre(ch)
+    s_aim = ch.arm.pose.bones[P + "socket.hand_r"].matrix.copy()
+    ch.carbine = s_aim.inverted() @ _frame(c, Vector((0.0, -1.0, 0.0)), Vector((0.0, 0.0, 1.0)))
     if kind == "pistol":
         # The library's flintlock (`held.pistol`): barrel (+Z) forward, butt down.
         m = Matrix.Translation(c) @ Matrix.Rotation(math.radians(90), 4, "X") @ Matrix.Rotation(math.pi, 4, "Z")
@@ -791,11 +795,15 @@ MOTIONS = {"": ("G2_Canter", 2), "1": ("G3_Gallop", 2)}
 NATIVE_MOTIONS = {"": ("G3_Gallop", 2)}
 
 
-def horse_clips(md, motions=MOTIONS):
+def horse_clips(md, motions=MOTIONS, reload=False):
+    """`reload`: the horse stands in its idle through ATTACK1 (the mounted reload) instead
+    of the fidget."""
     out = {}
     for key, clip in GAITS.items():
         if key in ("ATTACK", "ATTACK1") and key not in md:
             continue
+        if key == "ATTACK1" and reload:
+            clip = ("Idle", "loop", None)
         n = clip[2] or (frames(md, key) if key in md else 1)
         out[key] = (clip[0], clip[1], n) + tuple(clip[3:])
     # MOTION_L covers its share of the cycles (by frames), MOTION_R the rest.
@@ -967,6 +975,220 @@ def axis_of(down, out):
     return (-math.cos(d) * math.sin(o), -math.cos(d) * math.cos(o), -math.sin(d))
 
 
+# ----------------------------------------------------------------------------- mounted reload
+
+# The carbine's rammer (`aim._rod`): length, and its place in the pipes in the rod frame
+# (`_rod_frame`: +Z along the barrel from the grip, -Y under it).
+CARBINE_ROD = (0.75, Matrix.Translation((0.0, -0.02, 0.15)))
+ROD_SOCKET = "socket.hand_l"
+LOOK = {"head": (18, 0, -14), "spine": (6, 0, 0)}
+# Steps of `poses.MOUNTED_RELOAD`: the carbine by "butt" (anchor, offset) and "at" (where
+# the barrel points: anchor, offset), or by "muzzle" (anchor, offset) and "dir" (the
+# barrel's direction); "right"/"left" a distance along the carbine from the grip, or
+# (anchor, offset); "body" the trunk and head. Anchors (`_anchors`, the seated rider):
+# "thigh" the right hip joint, "chest" between the shoulders, "mouth", "pouch" the
+# cartridge pouch behind the right hip. Offsets and directions in the armature's axes:
+# +x left, -y forward, +z up (metres). Loading, the carbine stands almost upright by the
+# horse's right shoulder, the butt down by the right knee and the muzzle before the right
+# shoulder, so the rammer stays within the arm's 0.65 m reach.
+_ACROSS = dict(butt=("thigh", (0.03, -0.16, 0.10)), at=("chest", (0.45, -0.50, 0.10)), right=0.0, left=0.50, body=LOOK)
+_UPRIGHT = dict(muzzle=("chest", (-0.28, -0.30, 0.15)), dir=(0.05, -0.12, 0.99), right=0.0, left=0.60,
+                body={"spine": (2, 0, 0), "head": (6, 0, -8)})
+RELOAD_STEPS = {
+    "across": dict(_ACROSS),
+    "half_cock": dict(_ACROSS, right=0.06),
+    "cartridge": dict(_ACROSS, right=("pouch", (0.0, 0.0, 0.0)), body={"spine": (2, 0, 0), "head": (6, 0, -25)}),
+    "bite": dict(_ACROSS, right=("mouth", (0.0, -0.06, -0.02)), body={"spine": (0, 0, 0), "head": (-4, 0, -6)}),
+    "pan": dict(_ACROSS, right=0.08),
+    "shut": dict(_ACROSS, right=0.04),
+    "upright": dict(_UPRIGHT, right=poses.CARBINE_MUZZLE),
+    "pour": dict(_UPRIGHT, right=poses.CARBINE_MUZZLE + 0.04, body={"spine": (2, 0, 0), "head": (2, 0, -8)}),
+    "grasp_rod": dict(_UPRIGHT, right=poses.CARBINE_MUZZLE - 0.08),
+    "rod_out": dict(_UPRIGHT, right=poses.CARBINE_MUZZLE + 0.36, body={"spine": (0, 0, 0), "head": (-2, 0, -8)}),
+    "ram_up": dict(_UPRIGHT, right=poses.CARBINE_MUZZLE + 0.24),
+    "ram_down": dict(_UPRIGHT, right=poses.CARBINE_MUZZLE + 0.04),
+    "return_rod": dict(_UPRIGHT, right=poses.CARBINE_MUZZLE - 0.10),
+    "poise": dict(butt=("thigh", (0.0, -0.14, 0.12)), at=("chest", (-0.10, -0.45, 0.60)), right=0.0, left=0.40,
+                  body={"spine": (0, 0, 0), "head": (6, 0, -6)}),
+}
+
+
+def reloads(spec):
+    """Whether the rider loads his long arm in ATTACK1 (`poses.MOUNTED_RELOAD`): a carbine
+    or a wheellock, an ATTACK1 (the shot) and the right hand free of flag, lance and bow."""
+    return spec.get("gun") in ("carbine", "wheellock") and "ATTACK1" in spec["md"] and spec.get("held") is None
+
+
+def _frame(origin, y, up):
+    """A matrix at `origin` with +Y along `y` and +Z towards `up`."""
+    y = Vector(y).normalized()
+    z = (Vector(up) - y * Vector(up).dot(y)).normalized()
+    x = y.cross(z)
+    m = Matrix((x, y, z)).transposed().to_4x4()
+    m.translation = origin
+    return m
+
+
+def _rod_frame(c):
+    """`aim._rod`'s musket frame (+Z along the barrel, -Y under it) of carbine frame `c`."""
+    return c @ Matrix(((-1, 0, 0, 0), (0, 0, 1, 0), (0, 1, 0, 0), (0, 0, 0, 1)))
+
+
+def _root(ch):
+    """The rider's root matrix (armature space; the saddle carries it)."""
+    return ch.arm.pose.bones[P + "root"].matrix.copy()
+
+
+def _anchors(ch):
+    """The anchor points of the seated rider (armature space, current pose)."""
+    pb = ch.arm.pose.bones
+    thigh = pb[P + "thigh_r"].head.copy()
+    chest = (pb[P + "upperarm_l"].head + pb[P + "upperarm_r"].head) * 0.5
+    mouth = pb[P + "head"].head + Vector((0.0, -0.11, 0.05))
+    return {"thigh": thigh, "chest": chest, "mouth": mouth, "pouch": thigh + Vector((-0.06, 0.20, 0.22))}
+
+
+def reload_steps(ch):
+    """{step: {"carbine": frame, "goals": {side: point in the carbine's frame}, "body": spec}}
+    in the rider's root frame (`_root`), from `RELOAD_STEPS` on the seated pose, plus "@aim"
+    (the aim's carbine and fists as posed)."""
+    seat = {k: v for k, v in ch.poses["seat"].items() if k != "world"}
+    am.pose(ch.arm, ch.poses["seat"], prefix=P)
+    r0 = _root(ch).inverted()
+    a = {k: r0 @ v for k, v in _anchors(ch).items()}
+    axes = r0.to_3x3()  # armature axes into the root's frame
+
+    def point(t):
+        return a[t[0]] + axes @ Vector(t[1])
+
+    out = {}
+    for name, st in RELOAD_STEPS.items():
+        if "muzzle" in st:
+            d = (axes @ Vector(st["dir"])).normalized()
+            grip = point(st["muzzle"]) - d * poses.CARBINE_MUZZLE
+        else:
+            butt = point(st["butt"])
+            d = (point(st["at"]) - butt).normalized()
+            grip = butt + d * 0.12
+        c = _frame(grip, d, axes @ Vector((0.0, 0.5, 0.85)))
+        goals = {}
+        for sd in ("r", "l"):
+            t = st["right" if sd == "r" else "left"]
+            g = c @ Vector((0.0, t, 0.0)) if isinstance(t, (int, float)) else point(t)
+            goals[sd] = c.inverted() @ g
+        out[name] = {"carbine": c, "goals": goals, "body": dict(seat, **st["body"])}
+    # The aim: the carbine as the hand holds it, both fists where they are.
+    am.pose(ch.arm, ch.poses["aim"], prefix=P)
+    r0 = _root(ch).inverted()
+    c = r0 @ ch.arm.pose.bones[P + "socket.hand_r"].matrix @ ch.carbine
+    goals = {sd: c.inverted() @ (r0 @ fist_centre(ch, sd)[0]) for sd in ("r", "l")}
+    body = {k: v for k, v in ch.poses["aim"].items() if k != "world" and not k.startswith(("upperarm", "forearm", "hand"))}
+    out["@aim"] = {"carbine": c, "goals": goals, "body": body}
+    return out
+
+
+def _blend(a, b, t):
+    """Step `a` a fraction `t` of the way to `b`: the carbine's frame slerped and lerped,
+    the hands' goals lerped in its frame, the body's angles lerped."""
+    ca, cb = a["carbine"], b["carbine"]
+    c = ca.to_quaternion().slerp(cb.to_quaternion(), t).to_matrix().to_4x4()
+    c.translation = ca.translation.lerp(cb.translation, t)
+    goals = {sd: a["goals"][sd].lerp(b["goals"][sd], t) for sd in ("r", "l")}
+    body = {}
+    for k in sorted(set(a["body"]) | set(b["body"])):
+        va, vb = a["body"].get(k, (0.0, 0.0, 0.0)), b["body"].get(k, (0.0, 0.0, 0.0))
+        body[k] = tuple(x + (y - x) * t for x, y in zip(va, vb))
+    return {"carbine": c, "goals": goals, "body": body}
+
+
+def _solve_step(ch, step):
+    """The rider's spec for `step` (`_blend`) on the horse as posed now: the body first,
+    then both arms solved from the shoulders as posed so each fist's centre reaches its
+    goal, the carbine placed in armature space on the right-hand socket. Returns (spec,
+    carbine frame in armature space)."""
+    am.pose(ch.arm, {}, prefix=P)
+    c = _root(ch) @ step["carbine"]
+    goals = {sd: c @ g for sd, g in step["goals"].items()}
+    body = step["body"]
+    am.pose(ch.arm, body, prefix=P)
+    sh = {sd: ch.arm.pose.bones[P + "upperarm_" + sd].head.copy() for sd in "lr"}
+    sock = c @ ch.carbine.inverted()
+    rest = ch.arm.pose.bones[P + "socket.hand_r"].bone.matrix_local.to_3x3()
+    rot = tuple(math.degrees(x) for x in (sock.to_3x3() @ rest.inverted()).to_euler("XYZ"))
+    wrist = {sd: goals[sd].copy() for sd in "lr"}
+    spec = None
+    for _ in range(6):
+        w = reins_world(ch.arm, wrist, shoulders=sh)
+        w["socket.hand_r"] = rot
+        spec = _with_world(body, w)
+        spec["world_loc"] = {"socket.hand_r": tuple(sock.translation)}
+        am.pose(ch.arm, spec, prefix=P)
+        for sd in "lr":
+            wrist[sd] = wrist[sd] + (goals[sd] - fist_centre(ch, sd)[0])
+    return spec, c
+
+
+def reload_clip(ch, md, horse_frames):
+    """ATTACK1 of a rider who loads in the saddle (`poses.MOUNTED_RELOAD`): the aim and the
+    shot as before, then every frame of the drill solved on the horse as posed (`_key`
+    solves the lazy specs on their frame), the rammer keyed per frame (`aim._rod`); writes
+    `ch.reload_stats` (each fist's centre from its goal on the carbine, as played)."""
+    keys, rod = poses.mounted_reload_plan(md)
+    steps, p = ch.reload, ch.poses
+    rod_kw = {"prefix": P, "length": CARBINE_ROD[0], "stowed": CARBINE_ROD[1]}
+    goals_at = {}
+
+    def lazy(a, b, t):
+        def solve(f):
+            step = _blend(steps[a], steps[b], t)
+            spec, c = _solve_step(ch, step)
+            goals_at[f] = (step["goals"], a if t < 0.5 else b)
+            shown = 1.0 if rod[0][0] < f < rod[-1][0] else 0.0
+            spec["show"] = {ROD_SOCKET: shown}
+
+            def after(frame):
+                pb = ch.arm.pose.bones[P + ROD_SOCKET]
+                aiming._key(pb, aiming._rod_at(rod, frame, ch.arm.pose.bones, _rod_frame(c), **rod_kw), frame)
+                pb.scale = (shown, shown, shown)
+                pb.keyframe_insert("scale", frame=frame, group=pb.name)
+            spec["_after"] = after
+            return spec
+        return solve
+
+    fixed = {"@aim": p["aim"], "@fire": dict(p["aim"], spine=(4, 0, 0))}
+    rider = []
+    for i, (f0, a) in enumerate(keys):
+        rider.append((f0, fixed[a] if a.startswith("@") else lazy(a, a, 0.0)))
+        if i + 1 == len(keys):
+            break
+        f1, b = keys[i + 1]
+        if a.startswith("@") and b.startswith("@"):
+            continue
+        for f in range(f0 + 1, f1):
+            rider.append((f, lazy(a, b, (f - f0) / (f1 - f0))))
+    _key(ch, "ATTACK1", horse_frames, rider)
+    # As played: each fist's centre from its goal on the carbine (socket x `ch.carbine`).
+    am.set_clip(ch.arm, "ATTACK1")
+    miss = []
+    for f in sorted(goals_at):
+        bpy.context.scene.frame_set(f)
+        bpy.context.view_layer.update()
+        c = ch.arm.pose.bones[P + "socket.hand_r"].matrix @ ch.carbine
+        goals, near = goals_at[f]
+        for sd in ("r", "l"):
+            miss.append(((fist_centre(ch, sd)[0] - c @ goals[sd]).length, f, sd, near))
+    ch.arm.animation_data.action = None
+    if miss:
+        worst = max(miss)
+        by_step = {}
+        for d, _f, sd, near in miss:
+            k = f"{near}.{sd}"
+            by_step[k] = round(max(by_step.get(k, 0.0), d), 3)
+        ch.reload_stats = {"frames": len(goals_at), "mean_m": round(sum(d for d, *_ in miss) / len(miss), 4),
+                           "max_m": round(worst[0], 4), "worst": [worst[1], worst[2]], "max_by_step": by_step}
+        print("ACR mounted reload:", ch.reload_stats)
+
+
 def dress17(ch, spec, name, origin):
     """The 17th-century rider (`dress` "buff17"): breeches, a buff coat (hooked shut, its
     skirts to above the knee, sleeves of `spec["sleeves"]`), a waist belt, the sash
@@ -993,7 +1215,7 @@ def dress17(ch, spec, name, origin):
 def make(ctx, spec):
     name, root = ctx.name, ctx.root
     md = spec["md"]
-    hz = mount.load(name, root, horse_clips(md, spec.get("motions", MOTIONS)), coat=spec.get("coat"))
+    hz = mount.load(name, root, horse_clips(md, spec.get("motions", MOTIONS), reloads(spec)), coat=spec.get("coat"))
     centre_fall(hz)
     tack = spec.get("tack", "military")
     if tack == "military":
@@ -1139,6 +1361,13 @@ def make(ctx, spec):
     if spec.get("gun"):
         am.pose(ch.arm, poses["aim"], prefix=P)
         gun(ch, f"{name}.gun", spec["gun"])
+    if reloads(spec):
+        am.pose(ch.arm, poses["seat"], prefix=P)
+        rod = gear.rammer(f"{name}.rammer", length=CARBINE_ROD[0])
+        am.attach(rod, ch.arm, P + ROD_SOCKET, am.world(ch.arm, P + ROD_SOCKET))
+        ch.held["rammer"] = rod
+        ch.keys[rod.name] = "metal"
+        ch.reload = reload_steps(ch)
     am.pose(ch.arm, poses[ch.ride], prefix=P)
 
     hat = spec.get("hat", "cap")
@@ -1187,6 +1416,9 @@ def make(ctx, spec):
         blade(ch, f"{name}.blade", spec.get("blade", "sabre"))
         am.pose(ch.arm, poses[ch.ride], prefix=P)
         ch.show = dict(SHOW_REST)
+    if reloads(spec):
+        # The rammer shows only while it is out of its pipes (`reload_clip`).
+        ch.show = dict(getattr(ch, "show", None) or {}, **{ROD_SOCKET: 0.0})
     if spec.get("sabre", True):
         sab = gear.sabre(f"{name}.sabre")
         am.attach(sab, ch.arm, P + "socket.hip_l", Matrix.Translation(am.world(ch.arm, P + "socket.hip_l").translation)
@@ -1209,11 +1441,16 @@ def _keyed(arm, specs):
 
 
 def _key(ch, name, horse_frames, rider_keys):
-    keyed = _keyed(ch.arm, [{k: v for k, v in s.items() if k != "show"} for _f, s in rider_keys])
+    keyed = _keyed(ch.arm, [{k: v for k, v in s.items() if k != "show"} for _f, s in rider_keys if not callable(s)])
     show = getattr(ch, "show", None)
 
     def pose(arm, s, f):
-        am.pose(arm, {k: v for k, v in s.items() if k != "show"}, frame=f, prefix=P, keyed=keyed)
+        # A callable is solved on its frame, the horse already posed (`reload_clip`); its
+        # "_after" keys what depends on the posed rider (the rammer).
+        if callable(s):
+            s = s(f)
+        after = s.get("_after")
+        am.pose(arm, {k: v for k, v in s.items() if k not in ("show", "_after")}, frame=f, prefix=P, keyed=keyed)
         # A rider with a drawn sabre: every clip keys the sockets' scale (`SHOW_*`); a clip
         # without the channel would show them all.
         for bone, default in (show or {}).items():
@@ -1221,6 +1458,8 @@ def _key(ch, name, horse_frames, rider_keys):
             pb = arm.pose.bones[P + bone]
             pb.scale = (k, k, k)
             pb.keyframe_insert("scale", frame=f, group=pb.name)
+        if after:
+            after(f)
 
     mount.key_clip(ch.arm, name, horse_frames, rider_keys, pose)
 
@@ -1311,11 +1550,14 @@ def add_clips(ch, md, motions=MOTIONS):
         for k in ("PATTACK1", "UATTACK1", "PSTAND1", "PATTACK2", "UATTACK2", "PSTAND2"):
             if k in md:
                 plan[k] = (W["STAND"], [(0.0, p["bow_ready"])])
-    elif "ATTACK1" in W:
+    elif "ATTACK1" in W and not getattr(ch, "reload", None):
         plan["ATTACK1"] = (W["ATTACK1"], [(0.0, p["aim"]), (0.08, dict(p["aim"], spine=(4, 0, 0))), (0.25, p["aim"]), (1.0, p["aim"])])
     for name, (hf, rk) in plan.items():
         n = len(hf)
         _key(ch, name, hf, [(int(round(t * (n - 1))), s) for t, s in rk])
+    if "ATTACK1" in W and getattr(ch, "reload", None):
+        reload_clip(ch, md, W["ATTACK1"])
+        plan["ATTACK1"] = None
     lie_loc = ch.lie["world_loc"]["root"]
     for name, ks in crawl.clips().items():
         rider_keys = []
@@ -1387,3 +1629,5 @@ def build(ctx, spec):
     unscale(ch)
     ctx.stats = {"triangles": tris, "colours": colours, "horse": hz.stats, "corpse": corpse,
                  "fist_vertices": getattr(ch, "fist_vertices", 0)}
+    if getattr(ch, "reload_stats", None):
+        ctx.stats["reload"] = ch.reload_stats

@@ -726,7 +726,16 @@ the aim or STAND) and `PSTAND3` cover interrupted reloads. A unit script lists t
 HurVog, DelS15, DelVog; frontier EngTap, EngTapDragon, FrnBuk, FrnS15, SpnS15, UsaMil
 (`frontier.CLIPS`); the pike-family musketeers (EngMus, FrnS17, SpnMus) and PueS15 have
 their own ATTACK3 (EngStr has no script yet). The dragoons (EngD18, FrnD17/18, SpnD17/18,
-UsaD18) are `SLOWRECHARGE` without `#ATTACK3`: no reload stance. ATTACK1's drill is fitted to its frame
+UsaD18) have `SLOWRECHARGE`, `#ATTACK3` and `#TRANS3X` commented out (`/SLOWRECHARGE`): they
+load in the saddle within `@ATTACK1` (156 frames, the shot on frame 20, the ram in sprite
+frames 88-155). `cavalry.reload_clip` keys `poses.MOUNTED_RELOAD` there for every rider with a
+carbine or wheellock (`cavalry.reloads`: EngD17/18, FrnD17/18, SpnD17/18, UsaD18, SiuKStr):
+the carbine across the body (butt on the right thigh, the bridle hand on the fore-end) for
+half-cock, cartridge, bite, prime and shut; then almost upright by the horse's right
+shoulder to pour, draw the rammer (`aim._rod`, a 0.75 m rod on `socket.hand_l`, shown only
+while out), ram once and return it; poise and present. Each frame is solved on the horse
+as posed (it stands in its `Idle` loop), `stats.json` `reload`: fists from their goals as
+played (EngD18 mean 0.9 mm, max 40 mm) and `max_by_step`. ATTACK1's drill is fitted to its frame
 count (`poses._fit`: DelS15 49 frames, SpnS15 109). The renderer plays the ram once per
 reload: while the counter still holds more than one play (`delay > anim_frames`) it holds
 `ATTACK3`'s first frame (`RAM_HOLD`), and rams on the last play (`ingame/three_d.rs`).

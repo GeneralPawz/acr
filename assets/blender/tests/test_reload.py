@@ -107,5 +107,35 @@ class ReloadDrill(unittest.TestCase):
         self.assertEqual(plays, 5)
 
 
+class MountedReload(unittest.TestCase):
+    """The dragoons reload in ATTACK1 itself (ENGD18.MD: "/SLOWRECHARGE", 156 frames)."""
+
+    MD = {"ATTACK1": "@ATTACK1 9 4 0 155"}
+
+    def test_drill_on_attack1(self):
+        keys, _rod = poses.mounted_reload_plan(self.MD)
+        frames = [f for f, _ in keys]
+        self.assertEqual(frames[0], 0)
+        self.assertEqual(frames[-1], 155)
+        self.assertEqual(frames, sorted(set(frames)))
+        self.assertEqual(dict(keys)[poses.MOUNTED_SHOT], "@fire")
+        self.assertEqual(keys[-1][1], "@aim")
+        names = [s for _f, s in keys]
+        for step in ("half_cock", "cartridge", "bite", "pan", "shut", "pour", "rod_out", "return_rod"):
+            self.assertIn(step, names)
+
+    def test_rams_once(self):
+        keys, rod = poses.mounted_reload_plan(self.MD)
+        names = [s for _f, s in keys]
+        self.assertEqual(names.count("ram_down"), 1)
+        modes = [m for _f, m in rod]
+        self.assertEqual((modes[0], modes[-1]), ("stowed", "stowed"))
+        kf = {s: f for f, s in keys}
+        self.assertTrue(rod[0][0] >= kf["pour"] and rod[-1][0] <= kf["poise"])
+
+    def test_no_attack1(self):
+        self.assertIsNone(poses.mounted_reload_plan({"STAND": "#STAND 9 1 0 0"}))
+
+
 if __name__ == "__main__":
     unittest.main()
