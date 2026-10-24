@@ -917,6 +917,11 @@ impl ThreeD {
         let mut sections: Vec<usize> = Vec::new();
         self.wounds.retain(&|v| world.units.get(v as usize).is_some_and(|u| u.id.0 == v && (u.alive || lingering(u))));
         self.burns.retain(|v| world.units.get(v as usize).is_some_and(|u| u.id.0 == v && (u.alive || lingering(u))));
+        // Arrows stuck in bodies (#308) go with the corpse.
+        self.missiles.body.retain(&|v| {
+            self.gore != Gore::Off
+                && world.units.get(v as usize).is_some_and(|u| u.id.0 == v && (u.alive || lingering(u)))
+        });
         for u in world.units.iter().filter(|u| (u.alive || lingering(u)) && u.inside_of.is_none()) {
             // Buildings: under construction (#302), finished, burning down, falling in and as
             // ruins (#303).
@@ -1491,6 +1496,20 @@ impl ThreeD {
             let height = |x: f32, y: f32| super::particle_view::ground_z(terrain, x, y);
             let sink = &mut self.particles.particles;
             self.missiles.draw(world, &height, self.corpse_ticks, self.frame_seconds, &mut self.instances, sink);
+        }
+        // Arrows and spears stuck in the men they hit (#308): on the bone, through clips,
+        // ragdolls and corpses; not with the original fade (gore=off).
+        if self.gore != Gore::Off {
+            self.missiles.stick(world);
+        }
+        {
+            let renderer = self.renderer.as_ref();
+            let model = |i: usize| renderer.and_then(|r| r.model(i));
+            let mut poses = vec![&self.crews.poses];
+            if let Some(r) = self.ragdolls.as_ref() {
+                poses.push(&r.poses);
+            }
+            self.missiles.draw_body(&self.drawn, &model, &poses, &mut self.instances);
         }
         if self.marks_keep {
             self.keep_marks(world, &machines, &ground);

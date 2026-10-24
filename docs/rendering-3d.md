@@ -1327,7 +1327,9 @@ with `ThreeD::draws_rounds`). Smoke, flashes, explosions and debris keep their s
   the thin shafts entirely.
 - **Looks:** arrows 0.8 m with an iron head and three feathers, shafts 32 mm thick (about
   three times life, to show at the game's zoom); cannonballs dark spheres of 0.09 m (life
-  0.047 m) with five pale puffs per tick; grapeshot
+  0.047 m) trailing a thin pale ribbon: every frame small swelling, fading puffs (`Dust`,
+  1.4–2 px, 0.7–1 s) every 2.5 px of the way flown since the last frame (at most 32 a frame,
+  a ball's last position kept per slot), so the trail is continuous between ticks; grapeshot
   0.03 m; shells 0.11 m tumbling, with embers and a wisp of smoke off the fuse tip every
   tick; tomahawks turn end over end (1.7 rad per tick), stones tumble, spears roll. The
   phase is a hash of the slot, weapon and shooter.
@@ -1339,15 +1341,37 @@ with `ThreeD::draws_rounds`). Smoke, flashes, explosions and debris keep their s
   no one) sticks an arrow 0.12 m into the ground on the bearing of the nearest arrow seen
   in the last two ticks (else of the impact), 35–55° down: the simulation's arrows fly
   nearly flat and would lie hidden in the grass at their true angle.
-  They stay `corpse_minutes` (at most 2048). Arrows in bodies and buildings are not drawn
-  yet.
+  They stay `corpse_minutes` (at most 2048). Arrows in buildings: `building_hits.rs` (#304).
+- **Arrows in bodies** (`ingame/body_arrows.rs`): every `Arrow` hit on a man (bolts too;
+  a `Thrown` hit only when a spear was seen flying within 90 px of the victim, so tomahawks
+  and stones never stick) leaves its shaft in him. The part and level come from
+  `HitRecord::injury` (hit locations), else from a hash of the hit (trunk 55 %, limbs 37 %,
+  head 8 %). The flight is the nearest arrow or spear seen in the last two ticks, else the
+  blow's bearing coming down 8–30°, turned into his model frame by his facing at the hit
+  and wobbled by the hash. In the rest pose the shaft enters square to the bone from the
+  side it flew at (turned around the bone by up to ±0.7 rad), a third of its length in
+  (limbs at most 2r + 5 cm, the head 1.7r, so the point can show through; spears 0.3 m),
+  on the palette slot of that chain segment (`Rig::limbs`, `trunk`, `neck`). Each frame it
+  is drawn as `transform × palette[slot] × rest`, with the crew or ragdoll palette where
+  there is one and else `ModelData::pose` of the instance's clip and time (cached per unit
+  while clip and time stay, so held corpses cost nothing): it follows clips, falls,
+  ragdolls and corpses. A cut limb, a lost head or a body torn in two drops the shafts in
+  the part gone. They stay while the man lives (the original heals no wounds) and with his
+  corpse until it goes; at most 6 per man (his oldest goes) and 1536 in all. Not with
+  `gore=off` (the original fade), nor on riders and animals (no skeleton-H `rig`).
 
 Cost (RX 9060 XT, blank grass field, 100 archers and 200 musketeers firing at 60 peasants,
 zoom 1, two runs of 80 ticks): `3d.missiles` 0.021 and 0.024 ms per frame. Proof frames:
 `ACR-analysis/genai/projectiles/proof/` (steps in `../steps/proof_*.json`).
 
-Open: arrows stuck in bodies (gore) and buildings (#304); streaks for building hits; the
-cannonball trail reads as a dotted line at high zoom (one burst per tick).
+Arrows in bodies (same VM, blank grass, 20 musketeers each struck by 1–3 scripted arrow hits,
+half then killed; steps `ACR-analysis/genai/projectiles/body/steps/hits.json`, 100 frames):
+`3d.body_arrows` 0.006 ms per frame for about 45 shafts; GPU sum of all passes 0.763 ms
+against 0.755 ms on main. A real volley (20 archers into the line, `steps/volley.json`):
+0.005 ms. Frames: `ACR-analysis/genai/projectiles/body/`.
+
+Open: streaks for building hits; arrows in riders and animals; shafts on a corpse late in
+its procedural decay keep the rest-pose depth while the body collapses.
 
 ## Camera math
 

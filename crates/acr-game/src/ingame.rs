@@ -21,6 +21,7 @@ use winit::keyboard::NamedKey;
 
 use crate::ui::{GameKind, GameSetup};
 
+mod body_arrows;
 mod build_view;
 mod building_hits;
 mod cloth_view;

@@ -6,7 +6,7 @@
 //! slots, impacts and hits are only read; variety comes from hashes of the slot and the
 //! tick. The 2D sprites of the rounds drawn here are left out (`effects::projectile_sprites`).
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 use acr_render::math::{self, Mat4, Vec3};
 use acr_render::missiles;
@@ -91,14 +91,22 @@ const GUN_MUZZLE: f32 = 0.9 * PIXELS_PER_METRE;
 /// How deep a stuck arrow's head goes into the ground (metres), and at most this many lie.
 const STUCK_DEPTH: f32 = 0.12;
 const STUCK_CAP: usize = 2048;
+/// A cannonball's trail: a puff every this many world px, at most this many a frame.
+const TRAIL_STEP: f32 = 2.5;
+const TRAIL_MAX: u32 = 32;
 
 #[derive(Default)]
 pub struct Missiles {
     models: Option<Models>,
     stuck: VecDeque<Stuck>,
-    /// Arrows in flight at the last two ticks drawn: point and direction (true world px).
-    flying: Vec<(Vec3, Vec3)>,
-    flown: Vec<(Vec3, Vec3)>,
+    /// Arrows and spears (`true`) in flight at the last two ticks drawn: point and
+    /// direction (true world px).
+    flying: Vec<(Vec3, Vec3, bool)>,
+    flown: Vec<(Vec3, Vec3, bool)>,
+    /// Cannonballs drawn last frame by slot: their seed and where (for the trail's way).
+    balls: HashMap<usize, (u32, Vec3)>,
+    /// Arrows, bolts and spears stuck in the men they hit (#308).
+    pub body: super::body_arrows::BodyArrows,
     /// The tick of the last update, the newest impact taken, and the real seconds since
     /// the tick changed and the last tick's length (for drawing between ticks).
     tick: u64,
@@ -134,6 +142,8 @@ impl Missiles {
         self.stuck.clear();
         self.flying.clear();
         self.flown.clear();
+        self.balls.clear();
+        self.body.clear();
         self.last_impact = 0;
     }
 
@@ -169,6 +179,7 @@ impl Missiles {
         // How far into the tick this frame is: rounds move on along their velocity.
         let frac = if self.tick_seconds > 0.0 { (self.since / self.tick_seconds).min(1.0) } else { 0.0 };
         let mut drawn = 0;
+        let mut balls = HashMap::new();
         for (slot, p) in world.projectiles.slots.iter().enumerate() {
             let Some(p) = p else { continue };
             let Some(kind) = round(world, p) else { continue };
@@ -195,14 +206,25 @@ impl Missiles {
             let (model, transform) = match kind {
                 Round::Arrow => {
                     if new_tick {
-                        self.flying.push((at, dir));
+                        self.flying.push((at, dir, false));
                     }
                     (models.arrow, oriented(at, dir, 0.0, 0.0, [1.0; 3]))
                 }
                 Round::Cannonball | Round::Grapeshot => {
                     let r = if kind == Round::Cannonball { BALL_RADIUS } else { GRAPE_RADIUS };
-                    if new_tick && kind == Round::Cannonball {
-                        trail(sink, at, vel, seed ^ now as u32);
+                    if kind == Round::Cannonball {
+                        // The way since the last frame (at most one tick's): a dense,
+                        // continuous trail between the frames, not puffs once per tick.
+                        let from = match self.balls.get(&slot) {
+                            Some(&(s, last)) if s == seed => {
+                                let d = math::sub(at, last);
+                                let (step, reach) = (math::dot(d, d), math::dot(vel, vel) * 2.25 + 1.0);
+                                if step <= reach { last } else { math::sub(at, vel) }
+                            }
+                            _ => math::sub(at, math::scale(vel, frac.max(0.2))),
+                        };
+                        trail(sink, from, at, seed ^ hash(now as u32 ^ (self.since * 1000.0) as u32));
+                        balls.insert(slot, (seed, at));
                     }
                     (models.ball, oriented(at, dir, 0.0, 0.0, [r; 3]))
                 }
@@ -215,13 +237,23 @@ impl Missiles {
                     (models.shell, m)
                 }
                 Round::Tomahawk => (models.tomahawk, oriented(at, dir, 0.0, turn * 1.7, [1.0; 3])),
-                Round::Spear => (models.spear, oriented(at, dir, turn * 0.8, 0.0, [1.0; 3])),
+                Round::Spear => {
+                    if new_tick {
+                        self.flying.push((at, dir, true));
+                    }
+                    (models.spear, oriented(at, dir, turn * 0.8, 0.0, [1.0; 3]))
+                }
                 Round::Stone => (models.stone, oriented(at, dir, turn, turn * 1.3, [1.0; 3])),
             };
             out.push(instance(model, transform, false));
         }
+        self.balls = balls;
         if new_tick && now.is_multiple_of(20) && (drawn > 0 || !self.stuck.is_empty()) {
-            log::info!("3d: {drawn} rounds in flight, {} arrows stuck", self.stuck.len());
+            log::info!(
+                "3d: {drawn} rounds in flight, {} arrows stuck, {} in bodies",
+                self.stuck.len(),
+                self.body.len()
+            );
         }
         // Arrows that missed (an impact of an arrow) stick where they struck.
         let fresh = world.impacts.iter().filter(|i| i.tick > self.last_impact && i.cause == DeathCause::Arrow);
@@ -233,7 +265,8 @@ impl Missiles {
                 .flown
                 .iter()
                 .chain(&self.flying)
-                .map(|&(a, d)| ((a[0] - p[0]).abs() + (a[1] - p[1]).abs(), d))
+                .filter(|f| !f.2)
+                .map(|&(a, d, _)| ((a[0] - p[0]).abs() + (a[1] - p[1]).abs(), d))
                 .filter(|&(dist, _)| dist < 60.0)
                 .min_by(|a, b| a.0.total_cmp(&b.0));
             let d = match near {
@@ -326,6 +359,39 @@ fn oriented(at: Vec3, fwd: Vec3, roll: f32, pitch: f32, scale: [f32; 3]) -> Mat4
     [col(x, scale[0]), col(y, scale[1]), col(z, scale[2]), [at[0], at[1], at[2], 1.0]]
 }
 
+impl Missiles {
+    /// Takes the new arrow and spear hits into the bodies (#308), with the flight of the
+    /// round seen nearest the victim when there is one.
+    pub fn stick(&mut self, world: &World) {
+        let now = world.tick.0;
+        let facing = |v: u32| world.units.get(v as usize).filter(|u| u.id.0 == v && !u.building).map(|u| u.dir);
+        let (flown, flying) = (&self.flown, &self.flying);
+        let flight = |p: [f32; 2], spear: bool| {
+            flown
+                .iter()
+                .chain(flying)
+                .filter(|f| f.2 == spear)
+                .map(|&(a, d, _)| ((a[0] - p[0]).abs() + (a[1] - p[1]).abs(), d))
+                .filter(|&(dist, _)| dist < 90.0)
+                .min_by(|a, b| a.0.total_cmp(&b.0))
+                .map(|(_, d)| d)
+        };
+        self.body.take_hits(world.hits.iter(), now, &facing, &flight);
+    }
+
+    /// The shafts stuck in bodies appended to `out` (see `BodyArrows::draw`).
+    pub fn draw_body<'a>(
+        &mut self,
+        drawn: &HashMap<u32, usize>,
+        model: &dyn Fn(usize) -> Option<&'a acr_render::model::ModelData>,
+        poses: &[&HashMap<usize, acr_render::model::Palette>],
+        out: &mut Vec<ModelInstance>,
+    ) {
+        let Some(models) = self.models else { return };
+        self.body.draw(drawn, model, poses, (models.arrow, models.spear), out);
+    }
+}
+
 /// `m` with its x and y axes set to `radius` and its z to `length` (metres, unit-sized model).
 fn stretch(mut m: Mat4, radius: f32, length: f32) -> Mat4 {
     for (c, s) in [(0, radius), (1, radius), (2, length)] {
@@ -358,21 +424,26 @@ fn instance(model: usize, transform: Mat4, transparent: bool) -> ModelInstance {
     }
 }
 
-/// A cannonball's faint trail: a few pale puffs along the last tick's way.
-fn trail(sink: &mut dyn ParticleSink, at: Vec3, vel: Vec3, seed: u32) {
-    for k in 0..5u32 {
-        let back = math::sub(at, math::scale(vel, k as f32 / 5.0));
+/// A cannonball's faint trail from `from` to `to` (this frame's way): small pale puffs
+/// every [`TRAIL_STEP`] px, overlapping, that swell and fade, so it reads as one ribbon
+/// thinning out behind the ball (at most [`TRAIL_MAX`] a frame).
+fn trail(sink: &mut dyn ParticleSink, from: Vec3, to: Vec3, seed: u32) {
+    let way = math::sub(to, from);
+    let len = math::dot(way, way).sqrt();
+    let n = ((len / TRAIL_STEP).ceil() as u32).clamp(1, TRAIL_MAX);
+    for k in 0..n {
+        let at = math::add(from, math::scale(way, (k as f32 + 0.5) / n as f32));
         sink.emit(&Burst {
-            at: back,
+            at,
             dir: [0.0, 0.0, 1.0],
             spread: 1.0,
-            speed: [2.0, 6.0],
+            speed: [1.0, 3.0],
             count: 1,
             kind: ParticleKind::Dust,
-            life: [0.8, 1.4],
-            size: [2.0, 3.5],
-            color: [196, 194, 188],
-            scatter: 0.5,
+            life: [0.7, 1.0],
+            size: [1.4, 2.0],
+            color: [200, 198, 192],
+            scatter: 0.2,
             seed: seed ^ hash(k),
         });
     }
