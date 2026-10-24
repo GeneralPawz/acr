@@ -289,7 +289,7 @@ path) and `models=all` in the settings (the VM's showcase settings have it).
   `units` (each as `spawn` takes it; `x`, `y` default to the centre, 90 px apart,
   `owner` 0) and holds the simulation unless `"run": true`. It answers once every unit is
   drawn as a model, with the `units` (ids) and a `camera` framing them all (`view`,
-  default `three_quarter`). `light` is accepted; the light is the game's fixed sun. `size`,
+  default `three_quarter`, not the original angle: see `camera` below). `light` is accepted; the light is the game's fixed sun. `size`,
   `nation`, `hit_locations`, `body_spacing`, `ground_cover` pass through to the field. It loads the whole
   game as the blank start does: about 0.5 s on the VM (loading only the listed models is
   a later optimisation).
@@ -309,6 +309,18 @@ path) and `models=all` in the settings (the VM's showcase settings have it).
   the turn and tilt (absolute, as for the bench camera), `zoom` multiplies the fitted
   scale. Answers the `target`, `zoom`, `yaw_deg`, `pitch_deg` and how many `points` were
   framed.
+  **Not for sprite comparisons:** the studio camera is an inspection camera. Its default
+  `three_quarter` turns 45° from the unit's facing and looks 20° down (the original looks
+  north, 30° down), and its zoom is whatever fits the window, so a framed model or a
+  `sheet` cell is neither at the sprite's angle nor at its size (a sheet once read as
+  "models 1.4× the sprite"). `"yaw_deg": 0, "pitch_deg": 30` gives the original angle
+  (`Orbit::ORIGINAL`, the same picture as the fixed camera), but the scale stays fitted.
+  To compare a model with its sprite, use the plain bench `camera` (`x`, `y`, `"zoom": 1`,
+  `"lift": 0`, no `yaw`/`pitch`) once with `models=off` and once with `models=all` in the
+  settings (`ACR_SETTINGS_DIR`; from Git Bash write `//home/...` so the path is not
+  rewritten). Measured that way (2026-10-24, shadows off, VM): EngDo1, EngCen, SiuMel,
+  EngM18 and DelLut draw within 0.93–1.12 of the sprite's height and 0.82–1.02 of its
+  width; at zoom 1 one model metre is 30 px, as the sprites.
 - **`sheet`**: renders a grid inside the game and writes one PNG to `path`: a row per
   unit of `ids` × entry of `clips` × time (`{"clip": "ATTACK1", "frames": [0, 10, 20]}`,
   or `"t": [..]` seconds, `"phase": [..]`), a column per `views` (default front, side,
