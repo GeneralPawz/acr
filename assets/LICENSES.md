@@ -140,3 +140,14 @@ Notes:
     helpers) and the centres of the base mesh's `joint-*` helper cubes, in the same units.
     Made by `assets/blender/tools/makehuman_body.py`; the build reposes it onto skeleton H
     and decimates it (`acr_assets/mbody.py`).
+
+## MakeHuman system assets, skins (CC0 1.0), local-only
+
+- **Files:** none committed. `assets/blender/tools/hd_human/tex.py` reads
+  `skins/young_caucasian_male/young_lightskinned_male_diffuse.png` (2048 px) from
+  `makehuman_system_assets_cc0.zip`
+  (<https://files2.makehumancommunity.org/asset_packs/makehuman_system_assets/makehuman_system_assets_cc0.zip>).
+- **Licence:** CC0 1.0; the `.mhmat` header says "This asset was explicitly released as CC0 in
+  september 2020" (Data Collection AB, Joel Palmius, Jonas Hauquier).
+- **How it is used:** upscaled to the 4k albedo of the HD human prototype, with the face
+  portrait baked over it. The result stays on the VM and in ACR-analysis.
