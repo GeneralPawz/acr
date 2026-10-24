@@ -3,7 +3,8 @@
 musket grip on the fingers; its LOD chain (10k / 3k / 800, each with its own seam-cut
 atlas and baked normal and albedo) rides in the same glb as nodes with `extras.acr_lod` =
 1..3 and `acr_lod_of` = the master's node, on the master's skin (docs/rendering-3d.md,
-"Authored levels"). Needs the local MakeHuman sources under ACR_SOURCES/makehuman (see
+"Authored levels"). Holds the `gear_hd` musket and bayonet masters (with their own levels)
+on socket.hand_r. Needs the local MakeHuman sources under ACR_SOURCES/makehuman (see
 hdbody)."""
 
 import os
@@ -13,7 +14,7 @@ import bpy
 
 from acr_assets import armature as am
 from acr_assets import aim as aiming
-from acr_assets import hdbody, poses, rig
+from acr_assets import gear_hd, hdbody, poses, rig
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from engm18 import MD  # noqa: E402
@@ -31,6 +32,11 @@ def build(ctx):
     # measured on the same stock as the baseline.
     old_grip = hdbody.grip_spec(arm)
     grip = hdbody.contact_grip(ctx, arm, body)
+    # The Short Land Pattern master with its levels and the fixed bayonet on socket.hand_r,
+    # in gear.musket's frame (`gear_hd.hold`, m2-hd-musket).
+    gun, gun_lods = gear_hd.build_item(ctx, "musket")
+    bay, bay_lods = gear_hd.build_item(ctx, "bayonet")
+    gear_hd.hold(arm, gun, gun_lods, bay, bay_lods)
     # The two-handed holds IK-solved on this body, so FIRE_AIMED, FIRE_HIP and the reload
     # exist (and get the grip) as on the line musketeer.
     aim = aiming.hold(arm, poses.AIM_MUSKET)

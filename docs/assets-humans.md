@@ -579,6 +579,27 @@ every closed, connected piece of the gear materials and the slung musket, skinne
 the rest pose and every clip; the body and clothing vertices inside it by ray parity, per
 penetrating material, with the worst clip and frame.
 
+### High-detail gear masters (`acr_assets/gear_hd.py`; m2-hd-musket)
+
+Masters first, levels derived, for the HD units. The British line soldier's kit, modelled
+from reference dimensions (no third-party source): the Short Land Pattern musket (42"
+barrel, 1.47 m, 0.75 bore, walnut stock lofted from `STOCK`, brass butt plate, guard, side
+plate, pipes and nose cap, steel lock with plate, cock, jaws, flint, frizzen, pan and
+spring, ramrod, two swivels; 26.5k triangles), the socket bayonet (0.43 m) and its
+scabbard, cartridge box with flap and badge, two buff crossbelts with buckles and the belt
+plate, hanger and scabbard, cheese-box canteen, soft canvas knapsack with flap and straps.
+Procedural materials (object space) are baked per item into its own atlas: albedo with
+ambient occlusion, metallic-roughness (G, B), tangent normal. Levels: collapse to 30 / 10 /
+3 % with the master's UVs, albedo and metallic-roughness scaled, the normal baked from the
+master, as `acr_lod` / `acr_lod_of` nodes ("Authored levels", rendering-3d.md); the kit's
+crowd level may later merge into the body's. The musket keeps `gear.musket`'s frame (+Z
+the barrel, +Y the top, origin on the wrist's centre line, the lock on -X) and
+`gear_hd.grip_geometry()` gives the wrist and fore-end centre lines and diameters as data.
+`hdman` holds it and the fixed bayonet on `socket.hand_r` (`gear_hd.hold`); `props/hdkit`
+lays the whole kit out. Proof renders: `tools/hd_gear_sheet.py` (Cycles, `kit` / `man`).
+Open: the HD ramrod is fixed in its pipes (hdman has no `aim.bake_musket` rod yet); the kit
+is not worn (crossbelts and packs need the HD outfit's body).
+
 ### Generated gear (`acr_assets/genfit.py`; m2-hat-module)
 
 Pixal3D image-to-3D models (about 49k triangles, 2k texture, 15-57k non-manifold edges) made
