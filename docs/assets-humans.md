@@ -132,6 +132,22 @@ of variant meshes in a 3.27 MB glb.
     `$ACR_SOURCES/faces/<unit>.png`: an sRGB image in this layout (size 1024–2048, kept as
     a power of two). It replaces the painted colours (paint masks still go on top); without
     one the face is painted as before. Generated faces never go in the repo.
+  - **Frontal portraits (#306, opt-in):** with `ACR_FACE_GUIDE=<dir>` the build writes
+    `<unit>.guide.png`, the painted face seen from the front (768², framed by
+    `faces.PORTRAIT_BOX`, no face paint). An image model (FLUX.2 klein 4B img2img on the VM,
+    `~/imggen/batch.py`) turns it into a photo; `assets/blender/tools/face_portrait.py GUIDE
+    PHOTO OUT` aligns the photo's brows, eyes, nostrils and mouth back onto the guide (scale,
+    aspect, shift by FFT cross-correlation; the model drifts 0–16 % in scale and 5–8 % down).
+    With `$ACR_FACES/<unit>.portrait.png` present (only `ACR_FACES`, never the default),
+    `heads._blend_portrait` projects it along -Y onto the face front inside the ellipse
+    `PORTRAIT_AXES`, fades it into the painted skin from `PORTRAIT_FADE`, matches its colour to
+    the painted skin on the rim (`stats.json` `face_uv.<unit>.portrait.rim_ratio`), then the
+    face paint and the occlusion go on top. Sources: `D:\ACR-models\generated\faces\` (VM
+    `~/sources/generated/faces`): `raw/`, `aligned/`, `set_a/`. Cost: engm18 2 173 116 →
+    2 172 984 B, dellut 1 238 732 → 1 244 988 B. Open: the renderer has one face texture per
+    model, so every soldier of a unit shows the same portrait; a per-soldier pick needs a
+    renderer change (an atlas of 4 portraits plus a per-instance UV offset from `looks.rs`,
+    or face variant nodes in `VARIANT_NODES`).
 - **Body (#287, `acr_assets/mbody.py`):** below the head the skin hull is the MakeHuman 1.x
   base body (CC0, `assets/blender/data/makehuman/body.json`, from
   `assets/blender/tools/makehuman_body.py`), not the Skin-modifier hull: feet with heel,

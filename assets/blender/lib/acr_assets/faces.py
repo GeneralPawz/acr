@@ -130,6 +130,43 @@ def face_source(name, environ=None, exists=os.path.isfile):
     return path if exists(path) else None
 
 
+# Frontal portraits (#306): a photo-like face generated over the head's own frontal guide
+# (`heads.face_map` writes `<unit>.guide.png` into `$ACR_FACE_GUIDE`), projected back
+# along -Y onto the face front. The frame both share: head-local x0, x1, z0, z1 (metres),
+# square, the model's left (+x) on the image's right as in a photo of the face.
+PORTRAIT_BOX = (-0.11, 0.11, -0.16, 0.06)
+PORTRAIT_GUIDE_PX = 768
+# The face area the portrait covers: an ellipse around (0, PORTRAIT_CENTRE_Z) with these
+# half axes; it fades into the painted skin from PORTRAIT_FADE of the radius outwards.
+PORTRAIT_CENTRE_Z = -0.035
+PORTRAIT_AXES = (0.066, 0.098)
+PORTRAIT_FADE = 0.72
+
+
+def portrait_source(name, environ=None, exists=os.path.isfile):
+    """Path of unit `name`'s frontal portrait (`<unit>.portrait.png` in `$ACR_FACES`), or
+    None. Only taken from `$ACR_FACES`: generated faces stay opt-in."""
+    env = os.environ if environ is None else environ
+    folder = env.get("ACR_FACES")
+    if not folder:
+        return None
+    path = os.path.join(folder, f"{name.lower()}.portrait.png")
+    return path if exists(path) else None
+
+
+def portrait_px(x, z, w, h):
+    """Image coordinates (column, row; row 0 at the top) of head-local (x, z) in a
+    `w` x `h` portrait framed by PORTRAIT_BOX. Plain arithmetic: floats or numpy arrays."""
+    x0, x1, z0, z1 = PORTRAIT_BOX
+    return (x - x0) / (x1 - x0) * w, (z1 - z) / (z1 - z0) * h
+
+
+def portrait_radius(x, z):
+    """Elliptic radius of (x, z) in the portrait's face area: 1 on its rim."""
+    ax, az = PORTRAIT_AXES
+    return ((x / ax) ** 2 + ((z - PORTRAIT_CENTRE_Z) / az) ** 2) ** 0.5
+
+
 def ear(x, y, z):
     """1 on the ears (the box the hairline leaves bare in `region`), else 0."""
     return 1.0 if abs(x) > 0.055 and 0.080 < y < 0.125 and -0.04 < z < 0.02 else 0.0

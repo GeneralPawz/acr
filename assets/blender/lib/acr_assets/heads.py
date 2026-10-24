@@ -506,8 +506,16 @@ def face_map(ch, skin_rgb, beard=True, scalp=True):
     else:
         col = np.tile(coat.lin(skin_rgb) * 0.85, (len(loc), 1)).astype(np.float32)
         col[cov] = paint_face(loc[cov], flat_n[cov], skin_rgb, beard=beard, scalp=scalp)
-        col[cov] = face_masks(ch, flat_p[cov], flat_n[cov], col[cov])
+        # A frontal portrait (#306) replaces the painted face front; face paint goes on it.
+        por = faces.portrait_source(ch.name)
+        guide = os.environ.get("ACR_FACE_GUIDE")
         occ = np.clip(ao.reshape(-1), 0.0, 1.0)
+        if guide:
+            g = col[cov] * (0.72 + 0.28 * occ[cov] ** 0.9)[:, None]
+            _write_guide(ch.name, loc[cov], flat_n[cov], g)
+        if por:
+            col[cov], st["portrait"] = _blend_portrait(por, loc[cov], flat_n[cov], col[cov], occ[cov])
+        col[cov] = face_masks(ch, flat_p[cov], flat_n[cov], col[cov])
         col[cov] *= (0.72 + 0.28 * occ[cov] ** 0.9)[:, None]
         col = dilate(col.reshape(size_px, size_px, 3), cov.reshape(size_px, size_px)).reshape(-1, 3)
     img = _image(f"{ch.name}.face", col, size_px)
@@ -519,6 +527,67 @@ def face_map(ch, skin_rgb, beard=True, scalp=True):
     for pi in head:
         me.polygons[pi].material_index = slot
     return img
+
+
+def _frontal(loc, n):
+    """Texels seen from the front: on the face side and turned towards -Y."""
+    return (loc[:, 1] < 0.07) & (n[:, 1] < -0.05)
+
+
+def _write_guide(name, loc, n, col):
+    """The painted face seen from the front (orthographic along +Y, framed by
+    `faces.PORTRAIT_BOX`) on white: the guide an image model turns into a photo-like
+    portrait that keeps our eyes, nose and mouth where the mesh has them (#306)."""
+    s = faces.PORTRAIT_GUIDE_PX
+    img = np.ones((s, s, 3), np.float32)
+    m = _frontal(loc, n)
+    c, r = faces.portrait_px(loc[m, 0], loc[m, 2], s, s)
+    c, r = c.astype(int), r.astype(int)
+    inside = (c >= 0) & (c < s) & (r >= 0) & (r < s)
+    order = np.argsort(-loc[m, 1][inside])  # far first: the nearest texel wins
+    rr, cc = r[inside][order], c[inside][order]
+    img[rr, cc] = coat.to_srgb(col[m][inside][order])
+    hit = np.zeros((s, s), bool)
+    hit[rr, cc] = True
+    img = dilate(img, hit, steps=2)
+    out = bpy.data.images.new(f"{name}.guide", s, s, alpha=False)
+    px = np.ones((s, s, 4), np.float32)
+    px[..., :3] = img[::-1]  # Blender rows start at the bottom
+    out.pixels.foreach_set(px.ravel())
+    out.filepath_raw = os.path.join(os.environ["ACR_FACE_GUIDE"], f"{name.lower()}.guide.png")
+    out.file_format = "PNG"
+    out.save()
+    bpy.data.images.remove(out)
+
+
+def _blend_portrait(path, loc, n, col, occ):
+    """Projects the frontal portrait at `path` (framed by `faces.PORTRAIT_BOX`) along -Y onto
+    the face texels and fades it into the painted skin over the rim of the face area; its
+    colour is matched to the painted skin on that rim, so the unit's skin tint and the
+    per-soldier tints still hold. Returns the colours and the numbers for `stats.json`."""
+    src = bpy.data.images.load(os.path.abspath(path))
+    w, h = src.size
+    px = np.array(src.pixels[:], np.float32).reshape(h, w, 4)[::-1, :, :3]
+    bpy.data.images.remove(src)
+    px = coat.lin(px).astype(np.float32)
+    c, r = faces.portrait_px(loc[:, 0], loc[:, 2], w, h)
+    c = np.clip(c - 0.5, 0, w - 1.001)
+    r = np.clip(r - 0.5, 0, h - 1.001)
+    c0, r0 = c.astype(int), r.astype(int)
+    fc, fr_ = (c - c0)[:, None], (r - r0)[:, None]
+    smp = (px[r0, c0] * (1 - fc) * (1 - fr_) + px[r0, c0 + 1] * fc * (1 - fr_)
+           + px[r0 + 1, c0] * (1 - fc) * fr_ + px[r0 + 1, c0 + 1] * fc * fr_)
+    rad = faces.portrait_radius(loc[:, 0], loc[:, 2])
+    wgt = coat.smooth(1.0, faces.PORTRAIT_FADE, rad) * coat.smooth(-0.15, -0.55, n[:, 1]) * _frontal(loc, n)
+    ring = (rad > 0.6) & (rad < 0.95) & (wgt > 0.05)
+    ratio = np.ones(3, np.float32)
+    if ring.sum() > 50:
+        ratio = np.clip(col[ring].mean(0) / np.maximum(smp[ring].mean(0), 1e-4), 0.5, 2.0)
+    # The baked occlusion goes over both afterwards; the photo has its own, so half of it
+    # is divided back out under the portrait.
+    smp = smp * ratio / (0.86 + 0.14 * np.clip(occ, 0, 1) ** 0.9)[:, None]
+    out = coat.mix(col, smp, wgt)
+    return out, {"texels": int((wgt > 0.5).sum()), "rim_ratio": [round(float(v), 3) for v in ratio]}
 
 
 def face_masks(ch, p, n, col):

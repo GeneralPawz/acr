@@ -29,6 +29,17 @@ class FaceSource(unittest.TestCase):
         self.assertEqual(faces.face_size(2048), 2048)
         self.assertEqual(faces.face_size(4096), faces.FACE_SIZE_MAX)
 
+    def test_portrait(self):
+        ok = {os.path.join("/f", "engm18.portrait.png")}.__contains__
+        self.assertEqual(faces.portrait_source("EngM18", {"ACR_FACES": "/f"}, ok), os.path.join("/f", "engm18.portrait.png"))
+        self.assertIsNone(faces.portrait_source("engm18", {"ACR_SOURCES": "/f"}, ok))
+        x0, x1, z0, z1 = faces.PORTRAIT_BOX
+        self.assertEqual(faces.portrait_px(x0, z1, 768, 768), (0.0, 0.0))
+        c, r = faces.portrait_px(0.0, 0.0, 768, 768)
+        self.assertAlmostEqual(c, 384.0)
+        self.assertLess(r, 384.0)  # the eyes above the frame's middle
+        self.assertAlmostEqual(faces.portrait_radius(faces.PORTRAIT_AXES[0], faces.PORTRAIT_CENTRE_Z), 1.0)
+
 
 class Fields(unittest.TestCase):
     def test_mirror_symmetric(self):
