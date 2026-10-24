@@ -1098,6 +1098,21 @@ against one another. `model_layers --every-frame` checks every authored frame, i
 each clip's endpoint; `--steps 8` remains useful for the historical comparison. Proof
 renders use `posecheck` / `render_pose.py` and the build's pose dump.
 
+The HD collar and round cuffs use `outfit_hd.tailored_trim`: the coat simulation stays
+unchanged, then the authored `collar` and `cuff` panel faces are removed by pattern ID.
+Closed parametric bands replace them, with outward 4 mm solidify thickness and closed
+rims. The collar/stock fit smooth ellipses to horizontal neck-mesh sections, avoiding
+grazing rays that pick up shoulders. Skin overlaps remain intact at neck/wrist openings
+at every body level, so moving rims do not expose triangular skin-cut holes.
+The cuffs enclose the sleeve's measured radial envelope at 3 mm clearance and
+overlap the retained sleeve ends by 20 mm; hidden sleeve tips are removed only inside
+that cuff window. Each cuff has three mesh buttons and a small linen wristband. A
+separate white linen stock sits inside the blue collar; its front knot and folded ends
+use the existing `fallband` layer (above the stock, alongside the facing). Cylindrical
+UVs keep the bands' weave continuous. Weights transfer from skin/sleeve surfaces and
+are limited to four. `outfit.collar_cuffs` records profiles, button counts, measured
+thickness ranges, boundary/nonmanifold edge counts, and weight errors per piece.
+
 ## Known problems
 
 - Not every sewn pair meets within 5 mm: in the coat 166 of 251 do, 242 within 4.5 cm

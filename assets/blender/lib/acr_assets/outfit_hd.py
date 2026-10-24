@@ -44,7 +44,8 @@ FABRIC = {  # key -> (fabric, decay layer)
     "coat": ("wool", "wool"), "coat_skirts": ("wool", "wool"), "facings": ("wool", "wool"),
     "lapels": ("wool", "wool"), "lining": ("wool", "wool"), "turnbacks": ("wool", "wool"),
     "waistcoat": ("wool", "wool"), "breeches": ("wool", "wool"), "gaiters": ("wool", "wool"),
-    "shirt": ("linen", "linen"), "stock": ("linen", "leather"), "shoes": ("leather", "leather"),
+    "shirt": ("linen", "linen"), "stock": ("linen", "leather"), "fallband": ("linen", "linen"),
+    "shoes": ("leather", "leather"),
     "brass": ("metal", "metal"), "metal": ("metal", "metal"),
 }
 
@@ -202,13 +203,272 @@ def drape_alone(name, arm, body, garments=GARMENTS, spacing=SPACING_CM):
             made = drape.dress(ch, garments=(g,), report=r,
                                weld_limit=0.12 if g != "shirt" else None,
                                hem_even=False,
-                               post_weld=lambda ob, garment: relax_tailoring(ob, garment, body_tree))
+                               post_weld=lambda ob, garment: tailor_trim(ob, garment, body_tree))
             r = dict(r.get(g, {}), s=round(time.time() - t0, 1))
             rep[g] = r
             objs += ch.layers["clothes"]
             keys.update(made)
             print(f"[outfit_hd] {g} draped alone: {r}", flush=True)
     return objs, keys, rep
+
+
+def tailor_trim(ob, garment, body_tree):
+    """Keep the coat simulation unchanged; replace only its collar/cuff panels.
+
+    Remove by authored panel ID, before material splitting: spatial masks can mistake
+    a lapel for the collar or leave a stray cuff triangle behind.
+    """
+    import bmesh
+    from . import garments
+
+    relax_tailoring(ob, garment, body_tree)
+    if garment != "coat":
+        return
+    names = list(garments.coat()[0])
+    ids = {names.index(n) for n in ("collar", "cuff")}
+    bm = bmesh.new()
+    bm.from_mesh(ob.data)
+    panel = bm.faces.layers.int["panel"]
+    bmesh.ops.delete(bm, geom=[f for f in bm.faces if f[panel] in ids], context="FACES")
+    bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context="VERTS")
+    bm.to_mesh(ob.data)
+    bm.free()
+
+
+def tailored_trim(name, arm, body, pieces, keys, skin):
+    """Closed shaped wool facings, linen stock and wristbands on the visible outfit.
+
+    Smooth profiles replace crushed simulated facings. Solidify adds outward thickness
+    and closed rims; the underlying sleeve supplies the cuff weights. Nothing here
+    changes the coat above the cuff, the skirt, the body rig or its animation.
+    """
+    import bpy
+    import bmesh
+    from mathutils import Vector
+    from . import armature, drape, hdbody
+
+    made, report = [], {"profile": "neck_band", "cuffs": {}, "pieces": {}}
+
+    def piece(label, key, verts, faces, thickness, under=()):
+        me = bpy.data.meshes.new(f"{name}.{label}")
+        me.from_pydata(verts, [], faces)
+        ob = bpy.data.objects.new(me.name, me)
+        bpy.context.collection.objects.link(ob)
+        bm = bmesh.new()
+        bm.from_mesh(me)
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+        bm.to_mesh(me)
+        bm.free()
+        for i, weights in enumerate(drape.transfer_weights(ob, body, arm, under=under)):
+            for bone, weight in weights.items():
+                (ob.vertex_groups.get(bone) or ob.vertex_groups.new(name=bone)).add([i], weight, "REPLACE")
+        armature.bind(ob, arm)
+        hdbody.limit_weights(ob)
+        if thickness:
+            solid = ob.modifiers.new("closed folded cloth", "SOLIDIFY")
+            solid.thickness, solid.offset = thickness, 1.0
+            solid.use_rim = True
+            solid.use_even_offset = True
+            # Apply before the armature, so the rim shares the surface's weights.
+            ob.modifiers.move(len(ob.modifiers) - 1, 0)
+            with bpy.context.temp_override(object=ob, active_object=ob):
+                bpy.ops.object.modifier_apply(modifier=solid.name)
+        ob["hd_trim"] = True
+        bm = bmesh.new()
+        bm.from_mesh(ob.data)
+        measured = {"boundary_edges": sum(e.is_boundary for e in bm.edges),
+                    "nonmanifold_edges": sum(not e.is_manifold for e in bm.edges),
+                    "weights": hdbody.limit_weights(ob)}
+        if thickness:
+            n = len(verts)
+            ds = sorted((ob.data.vertices[i+n].co-ob.data.vertices[i].co).length*1000 for i in range(n))
+            measured["thickness_mm_range"] = [round(ds[0], 3), round(ds[-1], 3)]
+        report["pieces"][label] = measured
+        bm.free()
+        keys[ob.name] = key
+        made.append(ob)
+        return ob
+
+    def band(label, key, rings, thickness, under=()):
+        n = len(rings[0])
+        verts = [p for row in rings for p in row]
+        faces = [(j*n+i, j*n+(i+1)%n, (j+1)*n+(i+1)%n, (j+1)*n+i)
+                 for j in range(len(rings)-1) for i in range(n)]
+        ob = piece(label, key, verts, faces, thickness, under)
+        # Unbroken cylindrical grain on each band, including the folded rims.
+        uv = ob.data.uv_layers.new(name="UVMap")
+        circumference = sum((Vector(rings[0][(i+1)%n])-Vector(rings[0][i])).length for i in range(n))
+        centers = [sum((Vector(p) for p in row), Vector())/n for row in rings]
+        for p in ob.data.polygons:
+            indices = [ob.data.loops[li].vertex_index % len(verts) for li in p.loop_indices]
+            seam = any(i % n == 0 for i in indices) and any(i % n == n-1 for i in indices)
+            for li, vi in zip(p.loop_indices, indices):
+                j, i = divmod(vi, n)
+                u = n if seam and i == 0 else i
+                uv.data[li].uv = (u/n*circumference/TILE_M, (centers[j]-centers[0]).length/TILE_M)
+        return ob
+
+    def neck_point(a, z, gap):
+        radial = Vector((math.sin(a), -math.cos(a), 0))
+        # The HD neck is forward of the skeleton's origin. Probe from outside
+        # inwards: a ray starting at y=0 can already be behind the neck and miss
+        # its back half, which left the old stock with only a few surviving faces.
+        hit = skin.ray_cast(Vector((0, -0.045, z))+radial*0.22, -radial, 0.44)[0]
+        if hit is None:
+            raise ValueError(f"HD neck profile misses skin at {z}")
+        return hit + radial * gap
+
+    # Fit three smooth elliptical sections above the shoulder transition. Projecting
+    # each collar vertex onto the body independently follows the shoulder triangles
+    # at the lower edge and makes a ragged, flapping rim instead of a tailored band.
+    neck_sections = []
+    body.data.calc_loop_triangles()
+    for z in (1.540, 1.545, 1.550):
+        pts = []
+        for tri in body.data.loop_triangles:
+            vs = [body.data.vertices[i].co for i in tri.vertices]
+            if min(v.z for v in vs) > z or max(v.z for v in vs) < z:
+                continue
+            for p, q in zip(vs, vs[1:]+vs[:1]):
+                if (p.z-z)*(q.z-z) < 0:
+                    hit = p.lerp(q, (z-p.z)/(q.z-p.z))
+                    if abs(hit.x) < 0.13 and -0.16 < hit.y < 0.10:
+                        pts.append(hit)
+        if not pts:
+            raise ValueError(f"No HD neck section at {z}")
+        cy = (min(p.y for p in pts)+max(p.y for p in pts))/2
+        rx = max(abs(p.x) for p in pts)
+        ry = (max(p.y for p in pts)-min(p.y for p in pts))/2
+        scale = max((abs(p.x/rx)**3+abs((p.y-cy)/ry)**3)**(1/3) for p in pts)
+        neck_sections.append((z, cy, rx*scale, ry*scale))
+    report["neck_sections_m"] = neck_sections
+
+    def smooth_neck(a, z, gap):
+        t = max(0.0, min(2.0, (z-1.540)/0.005))
+        i = min(1, int(t))
+        u = t-i
+        p, q = neck_sections[i], neck_sections[i+1]
+        cy, rx, ry = [p[k]*(1-u)+q[k]*u for k in (1, 2, 3)]
+        sa, ca = math.sin(a), math.cos(a)
+        den = (abs(sa)**3+abs(ca)**3)**(1/3)
+        return Vector(((rx+gap)*sa/den, cy-(ry+gap)*ca/den, z))
+
+    # Both bands close at centre back. A low front clears the chin; the stock rises
+    # above the blue wool, with a small woven fold rather than a raw triangular edge.
+    angles = [2*math.pi*i/64 for i in range(64)]
+    collar, stock = [], []
+    for t in (0.0, 0.08, 0.35, 0.65, 0.92, 1.0):
+        cr, sr = [], []
+        for a in angles:
+            back = (1-math.cos(a))/2
+            cr.append(smooth_neck(a, 1.493 + 0.022*back + 0.042*t,
+                                 0.012 + 0.012*(1-t) + 0.0007*math.sin(math.pi*t)))
+            sr.append(smooth_neck(a, 1.509 + 0.014*back + 0.044*t,
+                                 0.003 + 0.0005*math.sin(4*math.pi*t)))
+        collar.append(cr)
+        stock.append(sr)
+    sleeves = [o for o in pieces if keys[o.name] == "coat"]
+    band("collar", "facings", collar, 0.004, under=sleeves)
+    band("stock", "stock", stock, 0.001)
+    # Rounded knot and two short folded linen ends, following the throat/chest.
+    knot_z = 1.532
+    knot_y = smooth_neck(0, knot_z, 0.026).y
+    rings = []
+    for z, width, depth in ((1.521, 0.006, 0.003), (1.525, 0.011, 0.007),
+                            (1.535, 0.010, 0.008), (1.541, 0.004, 0.002)):
+        rings.append([(width*math.sin(a), knot_y-depth*math.cos(a), z) for a in angles])
+    band("stock_knot", "fallband", rings, 0.001)
+    for side in (-1, 1):
+        verts = []
+        for t, width in ((0, 0.006), (0.25, 0.012), (0.85, 0.014), (1, 0.010)):
+            z = 1.526 - 0.048*t
+            for u in (-1, 0, 1):
+                x = side*(0.006+0.012*t) + u*width
+                p = neck_point(math.atan2(x, 0.065), z, 0.027)
+                verts.append((x, p.y-0.002*(1-u*u), z))
+        faces = [(j*3+i, j*3+i+1, (j+1)*3+i+1, (j+1)*3+i)
+                 for j in range(3) for i in range(2)]
+        piece(f"stock_end_{side}", "fallband", verts, faces, 0.001)
+    report["collar_thickness_mm"] = 4.0
+    report["stock_thickness_mm"] = 1.0
+
+    sleeve_tree = _tree(sleeves)
+    for side in ("l", "r"):
+        bone = arm.data.bones[f"forearm_{side}"]
+        wrist = bone.tail_local.copy()
+        axis = (wrist-bone.head_local).normalized()
+        back = Vector((0, 1, 0))
+        back = (back-axis*back.dot(axis)).normalized()
+        across = axis.cross(back).normalized()
+        # A smooth circular profile encloses every sleeve probe. Its inner face is
+        # 3 mm above the highest sleeve fold, not buried in the red sleeve surface.
+        radii = []
+        for t in (-0.120, -0.110, -0.100):
+            center = wrist + axis*t
+            ds = []
+            for a in angles:
+                radial = back*math.cos(a)+across*math.sin(a)
+                loc = sleeve_tree.ray_cast(center+radial*0.16, -radial, 0.16)[0]
+                if loc is not None:
+                    ds.append((loc-center).length)
+            radii.extend(ds)
+        if not radii:
+            raise ValueError(f"No sleeve beneath HD cuff {side}")
+        radius = max(radii)+0.003
+        cuff_rings = []
+        for t in (-0.120, -0.118, -0.112, -0.064, -0.010, -0.004, -0.002):
+            # A subtle rolled silhouette at both turned edges.
+            r = radius + (0.0008 if t in (-0.118, -0.004) else 0)
+            cuff_rings.append([wrist+axis*t+(back*math.cos(a)+across*math.sin(a))*r for a in angles])
+        cuff = band(f"cuff_{side}", "facings", cuff_rings, 0.004, under=sleeves)
+        # Remove hidden sleeve ends, including loose seam/hem triangles. A 20 mm
+        # overlap under the closed cuff covers its interface in the animated poses.
+        for ob in sleeves:
+            keep = []
+            for v in ob.data.vertices:
+                rel = v.co-wrist
+                t = rel.dot(axis)
+                near = (rel-axis*t).length < radius+0.03 and -0.100 < t < 0.08
+                keep.append(not near)
+            _delete_faces(ob, keep)
+        linen = []
+        for t, r in ((-0.018, radius-0.002), (-0.002, radius-0.002),
+                     (0.006, radius-0.009), (0.010, radius-0.014)):
+            row = []
+            for a in angles:
+                radial = back*math.cos(a)+across*math.sin(a)
+                center = wrist+axis*t
+                q = center+radial*r
+                if t == 0.010:
+                    loc = skin.ray_cast(center+radial*0.12, -radial, 0.24)[0]
+                    if loc is not None:
+                        q = loc+radial*0.003
+                row.append(q)
+            linen.append(row)
+        band(f"shirt_cuff_{side}", "shirt", linen, 0.001, under=(cuff,))
+        # Three closed domed button meshes on the outer/back face of each cuff.
+        out = (back+across*(0.6 if side == "l" else -0.6)).normalized()
+        tangent = axis.cross(out).normalized()
+        for k, t in enumerate((-0.094, -0.061, -0.028)):
+            center = wrist+axis*t+out*(radius+0.0045)
+            vs = [center+out*0.003]
+            vs += [center+(axis*math.cos(a)+tangent*math.sin(a))*0.008 for a in angles[::4]]
+            vs.append(center-out*0.001)
+            fs = [(0, 1+i, 1+(i+1)%16) for i in range(16)]
+            fs += [(17, 1+(i+1)%16, 1+i) for i in range(16)]
+            piece(f"cuff_button_{side}_{k}", "brass", vs, fs, 0, under=(cuff,))
+        report["cuffs"][side] = {"thickness_mm": 4.0, "sleeve_clearance_min_mm": 3.0,
+                                  "inner_radius_mm": round(radius*1000, 2),
+                                  "sleeve_overlap_mm": 20.0, "closure_seam_mm": 0.0,
+                                  "buttons": 3}
+    # The original shirt contains only the two wristbands and the stock.
+    for ob in list(pieces):
+        if keys[ob.name] in ("shirt", "stock"):
+            pieces.remove(ob)
+            keys.pop(ob.name)
+            bpy.data.objects.remove(ob, do_unlink=True)
+    pieces.extend(made)
+    return report
 
 
 def shoes(name, arm, body, skins=()):
@@ -518,7 +778,19 @@ def _clamp(ob, outer_tree, body_tree, own_normals=False, offset=OFFSET, rounds=3
     return len(moved), pokes
 
 
-def compose(body_tree, objs, keys, rank, skins=()):
+def _skin_openings(sk, covered, arm):
+    """Keep skin across the collar/wrist openings, including their hidden overlap.
+
+    Cutting at individual cloth-ray hits makes triangular holes above a moving hem.
+    The short intact overlap stays inside the closed trim and follows its weights.
+    """
+    wrists = [arm.data.bones[f"hand_{s}"].head_local for s in ("l", "r")]
+    return [c and not (v.co.z > 1.44 and abs(v.co.x) < 0.14) and
+            not any((v.co-w).length < 0.07 for w in wrists)
+            for c, v in zip(covered, sk.data.vertices)]
+
+
+def compose(body_tree, objs, keys, rank, skins=(), arm=None):
     """The visible-layers-only outfit: deletes covered inner faces (and the skin under the
     clothes, `skins`), pushes what stays under the layer on it. `body_tree`: BVH of the
     whole rest skin (the outward normals); `rank(key)` -> layer rank. Returns stats."""
@@ -529,7 +801,7 @@ def compose(body_tree, objs, keys, rank, skins=()):
     hiding = [o for o in objs if not o.name.endswith(LOOSE)]
     for o in order:
         r = rank(keys[o.name])
-        if keys[o.name] in ("shoes", "brass", "coat", "facings", "lapels") or o.name.endswith(LOOSE):
+        if o.get("hd_trim") or keys[o.name] in ("shoes", "brass", "coat", "facings", "lapels") or o.name.endswith(LOOSE):
             continue
         outer = [x for x in hiding if rank(keys[x.name]) > r and x is not o]
         if keys[o.name] == "breeches":
@@ -569,6 +841,8 @@ def compose(body_tree, objs, keys, rank, skins=()):
     for sk in skins:
         sk.data.update()
         cov = _covered(sk, tree, body_tree, own_normals=True)
+        if arm is not None:
+            cov = _skin_openings(sk, cov, arm)
         st["culled_faces"][sk.name] = _delete_faces(sk, [not c for c in cov])
         # Never move the exposed skin boundary: doing so tears the neck into spikes.
         st["moved_verts"][sk.name], st["pokes"][sk.name] = 0, 0
@@ -670,6 +944,21 @@ def finish_pieces(objs, keys, palette, mats, prefix="hd"):
         key = keys[o.name]
         fabric, layer = FABRIC.get(key, ("wool", "wool"))
         mkey = {"coat_skirts": "coat", "turnbacks": "lining"}.get(key, key)
+        if o.get("hd_trim"):
+            # White linen over the blue collar, independent of the historical black
+            # stock palette used by the ordinary line-unit draft.
+            trimkey = f"{key}.trim"
+            if trimkey not in mats:
+                rgb = palette.get("shirt", (0.90, 0.87, 0.78)) if key in ("stock", "fallband") else palette.get(key, (0.5, 0.5, 0.5))
+                m = weave_material(f"{prefix}.{key}.trim", rgb, fabric)
+                m["acr_decay"] = decay.extras(layer)
+                mats[trimkey] = m
+            o.data.materials.clear()
+            o.data.materials.append(mats[trimkey])
+            if not o.data.uv_layers:
+                _uv(o)
+            gore(o, layer)
+            continue
         if mkey in mats:
             mats[key] = mats[mkey]
         if key not in mats:
@@ -746,22 +1035,27 @@ def build(ctx, arm, body, body_lods=(), palette=None):
         keys[sh.name] = key
     st["drape_s"] = round(time.time() - t0, 1)
 
+    # Compose/cull against the actual new trim, not the discarded simulated bands.
+    # Otherwise their old jagged silhouettes leave holes in the exposed neck/wrists.
+    st["collar_cuffs"] = tailored_trim(ctx.name, arm, body, pieces, keys, body_tree)
+
     def rank(k):
         return {"coat_skirts": 5, "turnbacks": 6, "shoes": 1.5}.get(k, gm.LAYER_RANK.get(k, 5))
 
     st["source_tris"] = {o.name: _tris(o) for o in pieces}
     t1 = time.time()
-    st["compose"] = compose(body_tree, pieces, keys, rank, skins=(body,))
+    st["compose"] = compose(body_tree, pieces, keys, rank, skins=(body,), arm=arm)
     st["hidden_skin_faces"] = hide_tailored_skin((body, *body_lods), arm)
     clothing_tree = _tree(pieces)
     for skin in body_lods:
         covered = _covered(skin, clothing_tree, body_tree, own_normals=True)
+        covered = _skin_openings(skin, covered, arm)
         st["compose"]["culled_faces"][skin.name] = _delete_faces(skin, [not c for c in covered])
     st["compose_s"] = round(time.time() - t1, 1)
     ch = _Ch(ctx.name, arm, body, ())
     for o in pieces:
         ch.add("clothes", o, keys[o.name])
-    st["buttons"] = [o.name for o in drape.buttons(ch, list(pieces), f"{ctx.name}.hd")]
+    st["buttons"] = [o.name for o in drape.buttons(ch, [o for o in pieces if not o.get("hd_trim")], f"{ctx.name}.hd")]
     for o in ch.layers["clothes"]:
         if o not in pieces:
             pieces.append(o)
