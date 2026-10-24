@@ -757,6 +757,23 @@ attributes 13, 14) and a `BloodPool`:
   the front. Blood runs down from them (in the rest pose), fresh red drying to brown with
   the decay. Dirt rises from the ground in patches (`0.8 · ramp(death, 60, 900)`), burns
   char the body. The bone layer gets none of it.
+- **Burns on the living and the dead (#207):** `Wounds::burn` is the largest of the
+  cause's (table), `FireView::burn` (a man who burns or burned, see "Fire" below) and the
+  driver's `burn` (`gore::Burns`, render only), so a burning man chars while he still
+  stands and keeps it on his corpse. The shader darkens by 0.45 × the amount (soot) and
+  chars the patches where the rest-pose noise exceeds 1 − amount, so the charred share
+  grows with it (0.3: patches, 0.6: most of him, 1: black all over); the old curve was a
+  step near 1 and showed nothing below it. `gore=off`: none. Proof (blank field, white,
+  EngM18): `ACR-analysis/genai/gore/burn-amounts.png` (1.0, 0.6, 0.3, 0 standing).
+- **Hunger (#207):** a starved corpse (`DeathCause::Hunger`, `economy::starve`) draws the
+  `emaciated` morph at weight 1. The vertex slots are full, so `model.rs` loads
+  `emaciated` into the second morph slot of models without `lie_flat` (every skeleton-H
+  human; `ModelData::emaciated`), and `ModelInstance::morphs[2]` is its weight
+  (`morphs[1]`, `lie_flat`, goes to that slot on the other models). The sim keeps no
+  hunger state on the living, so only the dead show it. `gore=off`: none.
+- **Tint noise:** blood, dirt and burn patches use the shader's rest-position noise
+  (`noise3`), not `_GORE.yzw`: only `_GORE.x` (the cut edge) has a vertex slot. Both are
+  noise fields over the rest pose, so the look is the same kind.
 - Pools are a decal pipeline (`blood.wgsl`) drawn before the models over the terrain's
   depth, alpha blended, writing no depth: a noisy round pool under the chest (0.55 m ahead
   of the ground point, where a body lying face down has it) with a narrowing trail away
@@ -777,8 +794,8 @@ attributes 13, 14) and a `BloodPool`:
   from glossy red to brown-black over 40..900 ticks and fade over the last 20 % of their
   3000 ticks; the pool where he dies comes from the death.
 - `gore=reduced`: one wound, half the blood, half-size pools; `gore=off`: none of it.
-- Not done yet (#183): cause-specific death clips, the `emaciated` morph for hunger, stuck
-  missiles, pools that outlive the corpse. Dismemberment: see the next section.
+- Not done yet (#183): cause-specific death clips, stuck missiles, pools that outlive the
+  corpse. Dismemberment: see the next section.
 
 #### Cut, broken and torn bodies (#262)
 
@@ -810,7 +827,8 @@ The renderer half of `docs/damage-model.md` §3 (`acr_render::damage`): a `Damag
   `damage::procedural_cap` (rings: bone white, red flesh, skin rim; wet highlight; ragged
   outline in the shader) until `ModelRenderer::set_cap` swaps in the modelled cap of
   `gore.glb` (a unit disc in xy facing +z). The old joint-only caps (`*.caps` meshes) are
-  no longer loaded.
+  no longer loaded (`model.rs` skips `<name>.caps`; #207's per-joint caps are covered by the
+  placed caps, which also fit cuts between joints).
 - Not yet: the trunk's torn-edge strip (the trunk cut uses the disc).
 
 #### Torn-out tissue: wound volumes (#280)
@@ -1099,8 +1117,8 @@ particles, only with models on) draws fire from the simulation's state, render o
   died burning (`DeathCause::Burned`) keeps low flames along his length for 8 s and
   smoulders for 40 s.
 - **Burn amount for the tint (#207):** `ThreeD::burn(unit index)` / `FireView::burn`, 0..1:
-  grows by 1/8 a second while he burns and stays; a burned corpse is at least 0.6. The
-  model tint itself is #207's (corpses already char by cause, table above).
+  grows by 1/8 a second while he burns and stays; a burned corpse is at least 0.6. It
+  drives the charring tint of his model (`Wounds::burn`, "Deaths by cause" above).
 - **Rain** (`weather`): flames 0.6 times as large and as many, twice the smoke, pale grey
   (steam) instead of dark.
 - **Particles** (`acr_render::particles`): new kinds `Flame` (rises at 90 px/s², a

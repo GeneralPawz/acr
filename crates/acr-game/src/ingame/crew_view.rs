@@ -379,7 +379,7 @@ impl Crews {
                 time,
                 transform: c.transform,
                 decay,
-                morphs,
+                morphs: [morphs[0], morphs[1], 0.0],
                 transparent: gore == Gore::Off,
                 player: c.player,
                 wounds: Wounds {

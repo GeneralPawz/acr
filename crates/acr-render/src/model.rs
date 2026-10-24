@@ -12,7 +12,8 @@
 //!   ([`crate::damage`]); meshes named `*.caps` (the old stump caps) and the hair and beard
 //!   variants `*.hair_*` / `*.beard_*` (#283, not chosen per soldier yet) are skipped;
 //! - the morph targets `deflate` and `lie_flat` (by `extras.targetNames`, else the first
-//!   two), positions only; the face and body targets `face_*`/`body_*` (#283), kept on the
+//!   two), positions only; a model without `lie_flat` (skeleton H) carries `emaciated`
+//!   (hunger, #207) in the second slot instead ([`ModelData::emaciated`]); the face and body targets `face_*`/`body_*` (#283), kept on the
 //!   CPU for [`ModelData::bake_looks`]; `_FACE`, and the hair and beard variant meshes
 //!   `*.hair_*`/`*.beard_*` (marked in `body.w`, see `crate::looks`);
 //! - materials: base colour factor and texture (PNG), `extras.acr_decay` (the decay layer of
@@ -39,6 +40,9 @@ pub const CLIP_FPS: f32 = 24.0;
 
 /// Names of the two morph targets the decay drives (`docs/assets-humans.md`).
 pub const MORPH_NAMES: [&str; 2] = ["deflate", "lie_flat"];
+/// The hunger morph (#183, #207): loaded into the second morph slot of models without
+/// `lie_flat` (the vertex slots are full on WebGL2), see [`ModelData::emaciated`].
+pub const EMACIATED: &str = "emaciated";
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
@@ -51,7 +55,8 @@ pub struct Vertex {
     /// Palette slots and their weights.
     pub joints: [u32; 4],
     pub weights: [f32; 4],
-    /// Position offsets of the morph targets [`MORPH_NAMES`].
+    /// Position offsets of the morph targets [`MORPH_NAMES`] (the second: [`EMACIATED`] on
+    /// models with [`ModelData::emaciated`]).
     pub morph: [[f32; 3]; 2],
     /// Damage coordinates (`docs/damage-model.md`): `_PART` (body part 0..9 of `rig.PARTS`,
     /// −1 none), `_LIMB` (level 0..1 along the limb, −1 trunk or unknown; derived from the
@@ -200,7 +205,8 @@ pub struct Primitive {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
     pub material: usize,
-    /// Which of the morph targets [`MORPH_NAMES`] the primitive has.
+    /// Which of the morph targets [`MORPH_NAMES`] the primitive has (the second: [`EMACIATED`]
+    /// on models with [`ModelData::emaciated`]).
     pub morphs: [bool; 2],
     /// The face and body targets (#283) it has: index into [`crate::looks::LOOK_MORPHS`]
     /// and the position offsets, baked into variants on the CPU.
@@ -280,6 +286,10 @@ pub struct ModelData {
     pub looks: Option<Looks>,
     /// The crew of a gun (#287, `acr_assets/guncrew.py`); `None` for every other model.
     pub crew: Option<Crew>,
+    /// The second morph slot holds `emaciated` (#207), not `lie_flat`: no primitive has
+    /// `lie_flat` and one has `emaciated`. The instance's weight for it is
+    /// `ModelInstance::morphs[2]`.
+    pub emaciated: bool,
 }
 
 /// The men of a gun model (#287): the bones `c0.`..`c3.` and what hangs on them, so a fallen
@@ -527,6 +537,9 @@ impl ModelData {
         let mut primitives = Vec::new();
         let mut skinned_prims: Vec<bool> = Vec::new();
         let mut has_limb = false;
+        let (mut has_lie_flat, mut has_emaciated) = (false, false);
+        // Primitives whose second slot holds `emaciated`.
+        let mut lean_prims = Vec::new();
         let mut scene_nodes: Vec<gltf::Node<'_>> = Vec::new();
         let mut stack: Vec<gltf::Node<'_>> = scene.nodes().collect();
         while let Some(n) = stack.pop() {
@@ -635,6 +648,8 @@ impl ModelData {
                 }
                 let mut morphs = [false; 2];
                 let mut look_morphs = Vec::new();
+                // `emaciated` takes the second slot when the mesh has no `lie_flat`.
+                let lean = !names.iter().any(|n| n == MORPH_NAMES[1]);
                 for (t, (positions, _, _)) in reader.read_morph_targets().enumerate() {
                     let name = names.get(t).map(String::as_str);
                     if let Some(l) = name.and_then(crate::looks::look_morph) {
@@ -644,9 +659,12 @@ impl ModelData {
                         continue;
                     }
                     let k = match name {
+                        Some(EMACIATED) if lean => Some(1),
                         Some(n) => MORPH_NAMES.iter().position(|m| *m == n),
                         None => (t < 2).then_some(t),
                     };
+                    has_lie_flat |= k == Some(1) && name != Some(EMACIATED);
+                    has_emaciated |= k == Some(1) && name == Some(EMACIATED);
                     if let (Some(k), Some(positions)) = (k, positions) {
                         morphs[k] = true;
                         vertices.iter_mut().zip(positions).for_each(|(v, d)| v.morph[k] = d);
@@ -661,6 +679,9 @@ impl ModelData {
                 }
                 let material = prim.material().index().unwrap_or(default_material);
                 skinned_prims.push(skinned);
+                if lean && morphs[1] {
+                    lean_prims.push(primitives.len());
+                }
                 primitives.push(Primitive { vertices, indices, material, morphs, look_morphs });
             }
         }
@@ -762,6 +783,15 @@ impl ModelData {
             variants: (0..crate::looks::VARIANTS).map(crate::looks::variant_weights).collect(),
             eye: floats::<3>(e.get("acr_face_frame")).map_or(1.61, |f| f[2]),
         });
+        // A model with both: the slot is `lie_flat`'s, the lean primitives lose `emaciated`.
+        let emaciated = has_emaciated && !has_lie_flat;
+        if has_emaciated && has_lie_flat {
+            for &i in &lean_prims {
+                let p: &mut Primitive = &mut primitives[i];
+                p.morphs[1] = false;
+                p.vertices.iter_mut().for_each(|v| v.morph[1] = [0.0; 3]);
+            }
+        }
         let mut model = Self {
             nodes,
             order,
@@ -780,6 +810,7 @@ impl ModelData {
             beast_rig,
             looks,
             crew: None,
+            emaciated,
         };
         model.radius = model.rest_radius();
         if machine {
@@ -850,6 +881,7 @@ impl ModelData {
             beast_rig: None,
             looks: None,
             crew: None,
+            emaciated: false,
         };
         model.radius = model.rest_radius();
         model

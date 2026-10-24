@@ -47,6 +47,39 @@ pub fn look(cause: DeathCause) -> CauseLook {
     }
 }
 
+/// Charring forced on units by the driver's `burn` (#207), 0..1 per unit id, over the
+/// burn amount of `fire_view` ([`Wounds::burn`] takes the largest of them and the cause's).
+/// Render only.
+#[derive(Debug, Default)]
+pub struct Burns {
+    units: std::collections::HashMap<u32, f32>,
+}
+
+impl Burns {
+    /// Sets a unit's charring (the driver's `burn`; 0 forgets it).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub fn set(&mut self, id: u32, amount: f32) {
+        if amount > 0.0 {
+            self.units.insert(id, amount.min(1.0));
+        } else {
+            self.units.remove(&id);
+        }
+    }
+
+    /// A unit's charring, 0..1.
+    pub fn amount(&self, id: u32) -> f32 {
+        self.units.get(&id).copied().unwrap_or(0.0)
+    }
+
+    pub fn retain(&mut self, keep: impl Fn(u32) -> bool) {
+        self.units.retain(|&id, _| keep(id));
+    }
+
+    pub fn clear(&mut self) {
+        self.units.clear();
+    }
+}
+
 /// The parts of a unit its corpse's look depends on.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Body {
@@ -135,6 +168,17 @@ mod tests {
 
     fn corpse_at(death: u16, dir: u8) -> Body {
         Body { id: 7, pos: (1000, 1000), dir, death }
+    }
+
+    #[test]
+    fn forced_burns() {
+        let mut b = Burns::default();
+        b.set(4, 0.5);
+        b.set(3, 2.0);
+        assert_eq!((b.amount(3), b.amount(4)), (1.0, 0.5));
+        b.retain(|id| id == 4);
+        b.set(4, 0.0);
+        assert_eq!((b.amount(3), b.amount(4)), (0.0, 0.0));
     }
 
     #[test]

@@ -462,9 +462,13 @@ fn wounded(rgb_in: vec3<f32>, rest: vec4<f32>, w0: vec4<f32>, w1: vec4<f32>, dec
     let low = 1.0 - smoothstep(0.05, 0.6, rest.w);
     let patches = smoothstep(0.35, 0.7, noise3(p * 6.0) + 0.25 * low);
     rgb = mix(rgb, vec3<f32>(0.17, 0.13, 0.08), clamp(w0.w * patches * (0.45 + 0.55 * low), 0.0, 0.85));
-    // Burns: charred patches.
-    let charred = smoothstep(0.3, 0.6, noise3(p * 8.0) * 0.7 + w1.x * 0.6) * w1.x;
-    rgb = mix(rgb, vec3<f32>(0.025, 0.02, 0.018), clamp(charred, 0.0, 1.0));
+    // Burns (#207): soot over all, charred patches that spread with the amount (a man who
+    // burned a little shows a few, a burned corpse is black all over).
+    let burn = clamp(w1.x, 0.0, 1.0);
+    let edge = 1.0 - burn;
+    let charred = smoothstep(edge - 0.15, edge, noise3(p * 8.0)) * smoothstep(0.0, 0.1, burn);
+    rgb = rgb * (1.0 - 0.45 * burn);
+    rgb = mix(rgb, vec3<f32>(0.025, 0.02, 0.018), charred);
     return rgb;
 }
 

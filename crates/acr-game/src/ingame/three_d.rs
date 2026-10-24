@@ -224,6 +224,8 @@ pub struct ThreeD {
     trail: super::trail::Trails,
     /// Wounds where the hits struck, on the living and their corpses (#277).
     wounds: super::living_wounds::LivingWounds,
+    /// Charring forced by the driver's `burn` (#207), by unit id; over `fire`'s.
+    pub(crate) burns: super::gore::Burns,
     /// The last tick drops were added for (frames redraw a tick several times).
     trail_tick: u64,
     /// The tick of the last update: going back means another game, the debris is dropped.
@@ -414,6 +416,7 @@ impl Default for ThreeD {
             pools: Vec::new(),
             trail: super::trail::Trails::default(),
             wounds: Default::default(),
+            burns: Default::default(),
             trail_tick: u64::MAX,
             debris_tick: 0,
             marks_keep: false,
@@ -770,6 +773,7 @@ impl ThreeD {
             // A loaded game or a restart: the debris belongs to another battle.
             self.debris.clear();
             self.wounds.clear();
+            self.burns.clear();
             self.kept.clear();
             self.seeps.clear();
         }
@@ -797,6 +801,7 @@ impl ThreeD {
         let instances_scope = acr_sim::prof::Scope::new("3d.instances");
         self.wounds.take_hits(world.hits.iter(), now, self.gore, &facing);
         self.wounds.retain(&|v| world.units.get(v as usize).is_some_and(|u| u.id.0 == v && (u.alive || lingering(u))));
+        self.burns.retain(|v| world.units.get(v as usize).is_some_and(|u| u.id.0 == v && (u.alive || lingering(u))));
         for u in world.units.iter().filter(|u| (u.alive || lingering(u)) && u.inside_of.is_none()) {
             if u.building && (self.models != Models::All || !finished(world, u)) {
                 continue;
@@ -865,8 +870,17 @@ impl ThreeD {
                 if wounds.marks_len > 0 {
                     wounds.count = 0;
                 }
+                // Charred where he burned, alive and dead (#207, `fire_view`); the cause chars a
+                // corpse too.
+                if self.gore != Gore::Off {
+                    wounds.burn = wounds.burn.max(self.fire.burn(u.id.0)).max(self.burns.amount(u.id.0));
+                }
             }
             let (mut inst, at) = instance(u, death, index, model, terrain, self.gore, removed_at, wounds);
+            // Starved: the `emaciated` morph (#207), on models that carry it.
+            if u.death > 0 && self.gore != Gore::Off && record.cause == acr_sim::combat::DeathCause::Hunger {
+                inst.morphs[2] = 1.0;
+            }
             // The strike clip for the blow (`docs/melee.md`, Strike clips), when the model has one.
             let clip = super::strike_view::strike_clip(model, world, u);
             if let Some(c) = clip {
@@ -912,7 +926,7 @@ impl ThreeD {
                     }
                 }
                 inst.decay = 0.0;
-                inst.morphs = [0.0; 2];
+                inst.morphs = [0.0; 3];
                 inst.wounds = Default::default();
                 // A gun turns smoothly through its 16 sprite directions (crew_view.rs).
                 let yaw = if model.crew.is_some() {
@@ -1490,7 +1504,7 @@ impl ThreeD {
                 time: 0.0,
                 transform: view3d::model_matrix(ground, view3d::facing_yaw(turn), 1.0),
                 decay: 0.0,
-                morphs: [0.0; 2],
+                morphs: [0.0; 3],
                 transparent: false,
                 player: 0,
                 wounds: Default::default(),
@@ -1557,7 +1571,7 @@ impl ThreeD {
                 time: 0.0,
                 transform,
                 decay: 0.0,
-                morphs: [0.0; 2],
+                morphs: [0.0; 3],
                 transparent: false,
                 player: 0,
                 wounds: Default::default(),
@@ -1944,7 +1958,7 @@ fn instance(
         time,
         transform: view3d::model_matrix(placed, yaw, 1.0),
         decay,
-        morphs,
+        morphs: [morphs[0], morphs[1], 0.0],
         transparent,
         player: u.owner,
         wounds,

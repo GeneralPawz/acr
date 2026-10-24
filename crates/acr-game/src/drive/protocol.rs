@@ -227,6 +227,12 @@ pub enum Request {
     },
     /// Sun shadows forced on or off over the setting (`None`: the setting again).
     Shadows(Option<bool>),
+    /// `{"cmd": "burn", "unit": 3, "amount": 1.0}`: the charring a unit's model shows
+    /// (render only, #207), as if he had burned; 0 forgets it.
+    Burn {
+        unit: u32,
+        amount: f32,
+    },
     /// Normal maps and the glTF highlight (#234) forced on or off over the `material_detail`
     /// setting (`None`: the setting again).
     MaterialDetail(Option<bool>),
@@ -578,6 +584,10 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
             Request::Camera { x: x as i32, y: y as i32, zoom: num("zoom").map(|z| z as f32), lift, orbit }
         }
         "shadows" => Request::Shadows(v.get("on").and_then(Value::as_bool)),
+        "burn" => Request::Burn {
+            unit: uint(&v, "unit").ok_or("burn: missing \"unit\"")? as u32,
+            amount: v.get("amount").and_then(Value::as_f64).unwrap_or(1.0) as f32,
+        },
         "material_detail" => Request::MaterialDetail(v.get("on").and_then(Value::as_bool)),
         "weather" => Request::Weather(match string(&v, "mode") {
             Some(m) => Some(acr_render::weather::Weather::parse(&m).ok_or(format!("weather: unknown mode {m:?}"))?),

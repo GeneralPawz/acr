@@ -48,8 +48,9 @@ pub struct ModelInstance {
     pub transform: Mat4,
     /// Decay 0..1 (`docs/assets-humans.md`).
     pub decay: f32,
-    /// Weights of the morph targets `deflate` and `lie_flat`.
-    pub morphs: [f32; 2],
+    /// Weights of the morph targets `deflate`, `lie_flat` and `emaciated` (hunger, #207;
+    /// drawn only by models whose second slot holds it, [`ModelData::emaciated`]).
+    pub morphs: [f32; 3],
     /// Every other pixel only (the original's half transparent corpses).
     pub transparent: bool,
     pub player: u8,
@@ -1364,7 +1365,7 @@ impl ModelRenderer {
                         clip: None,
                         time: 0.0,
                         transform: math::mul(&inst.transform, &math::mul(&bone, &cap.rest_matrix())),
-                        morphs: [0.0; 2],
+                        morphs: [0.0; 3],
                         wounds: Default::default(),
                         sprayed: Default::default(),
                         damage: Damage::default(),
@@ -1383,7 +1384,7 @@ impl ModelRenderer {
                         clip: None,
                         time: 0.0,
                         transform: math::mul(&inst.transform, &math::mul(&bone, &ins.rest)),
-                        morphs: [0.0; 2],
+                        morphs: [0.0; 3],
                         wounds: Default::default(),
                         sprayed: Default::default(),
                         damage: Damage::default(),
@@ -1416,7 +1417,12 @@ impl ModelRenderer {
             entries.push(Entry {
                 gpu: GpuInstance {
                     rows: math::affine_rows(&inst.transform),
-                    params: [inst.decay, inst.morphs[0], inst.morphs[1], if inst.transparent { 1.0 } else { 0.0 }],
+                    params: [
+                        inst.decay,
+                        inst.morphs[0],
+                        inst.morphs[if model.emaciated { 2 } else { 1 }],
+                        if inst.transparent { 1.0 } else { 0.0 },
+                    ],
                     // The hair and beard variants shown (none without a look).
                     extra: [base, first, u32::from(inst.player), look.map_or(0, |c| c.0.node_mask())],
                 },

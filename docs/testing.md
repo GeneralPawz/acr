@@ -126,6 +126,7 @@ its label to appear.
 | `{"cmd": "measure", "id": 0, "ticks": 40}` | hand/grip and foot numbers of a unit (studio) |
 | `{"cmd": "spawn", "type": "EngM18", "x": 3000, "y": 9000, "dir": 0, "pose": "stand"}` | places a unit (bench) |
 | `{"cmd": "shadows", "on": false}` | sun shadows of the models forced off (`true`: on; no `on`: the `shadows` setting again); `ACR_SHADOWS=on\|off` does the same at start |
+| `{"cmd": "burn", "unit": 3, "amount": 1.0}` | the unit's model charred as if he had burned (render only, #207; 0 forgets it; default amount 1); a corpse shows the larger of it and its cause's |
 | `{"cmd": "material_detail", "on": false}` | normal maps and the glTF highlight of the models (#234) forced off (`true`: on; no `on`: the `material_detail` setting again); `ACR_MATERIAL_DETAIL=on\|off` does the same at start |
 | `{"cmd": "weather", "mode": "rain"}` | rain, snow, fog or off over the `weather` setting (no `mode`: the setting again); answers `weather` (docs/rendering-3d.md "Weather (#224)") |
 | `{"cmd": "map_models", "on": false}` | the map's trees and stones as sprites (`true`: as models where `map_objects.json` has one), over the `map_models` setting |
@@ -174,7 +175,8 @@ frame. Start a random map with the hit-locations rule and the settings `models=a
   state): musketeers fight with the bayonet and dragoons with the sabre instead of shooting,
   also no point-blank shot at a man on the ground. Answers `unit.id` (and `life`).
 - **`hit`**: `unit` (an id) is struck by `cause` (`musket`, `arrow`, `cannonball`,
-  `grapeshot`, `shell`, `sabre`, `bayonet`, `axe`) on `region` (`legs`, `arms`, `torso`,
+  `grapeshot`, `shell`, `sabre`, `bayonet`, `axe`; `hunger` kills him as starvation does,
+  without an injury) on `region` (`legs`, `arms`, `torso`,
   `head`; drawn as in battle if left out) from direction `dir` (towards the victim, world
   axes) with `energy` 0..100 (default 100) and `damage` life points (default 1: only the
   injury's outcome kills; give e.g. 1000 to kill). `part` (`arm_l`, `arm_r`, `leg_l`, `leg_r`, `head`, `chest`,

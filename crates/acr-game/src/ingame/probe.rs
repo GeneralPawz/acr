@@ -112,6 +112,12 @@ impl InGame {
         };
     }
 
+    /// Chars a unit's model as if he had burned (`drive` `burn`, render only, #207).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_burn(&mut self, unit: u32, amount: f32) {
+        self.three_d.burns.set(unit, amount);
+    }
+
     /// The whole map revealed or the fog of war again (`drive` `fog`).
     #[cfg(not(target_arch = "wasm32"))]
     pub fn set_open_fog(&mut self, open: bool) {

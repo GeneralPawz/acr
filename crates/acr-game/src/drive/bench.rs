@@ -197,6 +197,16 @@ pub fn hit(game: &mut Game, v: &Value) -> Result<Value, String> {
     let Mode::InGame(g) = &mut game.mode else { return Err("no game".into()) };
     let unit = v.get("unit").and_then(Value::as_u64).ok_or("hit: missing \"unit\" (an id)")? as usize;
     let name = v.get("cause").and_then(Value::as_str).unwrap_or("musket");
+    // Starved (#207): dies as `economy::starve` kills, no injury.
+    if name == "hunger" {
+        let world = g.world_mut().ok_or("no world yet")?;
+        if !world.unit(EntityId(unit as u32)).is_some_and(|u| u.alive && u.death == 0) {
+            return Err(format!("unit {unit} is not alive"));
+        }
+        acr_sim::combat::record_death(world, unit, acr_sim::combat::DeathRecord::of(DeathCause::Hunger, None));
+        acr_sim::combat::die(world, unit);
+        return Ok(json!({"unit": unit, "tick": world.tick.0, "cause": "Hunger", "killed": true}));
+    }
     let maul = maul(name);
     let (cause, mounted) = if maul.is_some() { (DeathCause::Melee, false) } else { cause(name)? };
     let region = v.get("region").and_then(Value::as_str).map(region).transpose()?;
