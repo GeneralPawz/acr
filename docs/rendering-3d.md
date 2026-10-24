@@ -2099,21 +2099,65 @@ battle (or the blank field with two large armies), move the mouse over the fight
 the frame rate drops; `ACR_SOFT_CURSOR=1 ACR_FRAME_LATENCY=2` gives the old behaviour for
 comparison, `ACR_PROFILE=1` writes the breakdown to the log.
 
+### A large mission: "Das Französische Heer." (m2-perf5)
+
+The user's report: the French army single mission (`#SINGLE8`, `Missions\Singles\Single8`)
+gets "a bit laggy once troops started getting into fights". 4502 French (2220 FrnS17,
+1764 FrnM18, 480 FrnD18, guns, officers) against 2046 EngM18 and 28 English buildings; the
+3D view builds 9600–10600 instances per frame and draws 520–580 of them. Script
+`ACR-analysis/perf5/mission.json` (the menus, then all French ordered to the British town;
+the fast troops meet the English around (10000, 4000) from tick ≈ 2000), render VM (RX 9060
+XT, Vulkan), showcase settings, 1600 × 900, zoom 1, HUD off; a driver frame is one tick
+(4 ragdoll steps). Main e19129b, `ACR-analysis/perf5/mis_main1`; also
+`ACR-analysis/perf/mission_profile.md`.
+
+| ms per frame | marching (camera on the army) | fight | fight +30 s |
+|---|---:|---:|---:|
+| sim tick (`sim.step`; of it spacing) | 4.6 (2.8) | 4.3 (2.1) | 3.6 (2.0) |
+| 3D update (`3d.update`) | 14.4 | 19.5 | 21.6 |
+| · instances (`3d.instances`) | **12.2** | **10.7** | **11.6** |
+| · ragdolls (of it `rag.physics`; awake) | 1.2 (0; 0) | 5.8 (3.7; 37) | 6.2 (3.8; 43) |
+| · debris and decals | 0.2 | 2.1 | 2.8 |
+| render CPU (of it `models_prepare`) | 10.1 (6.8) | 8.2 (4.8) | 6.6 (3.9) |
+| GPU all passes (models / shadow map) | 3.4 (1.7 / 0.9) | 3.4 (1.4 / 1.0) | 3.5 (1.5 / 1.1) |
+| GPU all passes, `ACR_LOD=off` | 20.4 / 20.2 | 5.3 / 5.3 | 5.7 / 5.5 |
+
+On this machine the frame is CPU bound (≈ 30 ms); the GPU idles. The clash on the same VM
+(`perf5/clash_main1`): `3d.update` 2.6 / 5.6 / 8.9, `3d.instances` 2.1 / 2.3 / 3.4, render
+CPU 1.9 / 2.7 / 4.4, GPU 2.1 / 2.6 / 3.9 ms before / at / 30 s after contact. The mission's
+cost is the map's unit count, not the fight: `3d.instances` walks every unit of the map
+(pools, stains, wounds, clip choice, gear) whether it is in view or not, and
+`models_prepare` every built instance. The fight adds ragdolls (≈ 5 ms) and decals (≈ 2.5).
+The authored levels and texture streaming are in this run (main); LOD off (all at level 0)
+is the row above: the authored levels spare ≈ 17 of 20 ms GPU over the marching army
+(and ≈ 2 in the fight). CPU scopes vary by ±25 % between runs (the LOD-off run gave
+`3d.instances` 9.0 / 11.0 / 14.3 ms).
+
 ### Next levers (measured, not done)
 
-- **GPU, the largest:** 128 ms per frame 30 s into the clash; models and shadow map are
-  about equal. The shadow casters of damaged instances are still held at level 1
-  (m2-shadowfix's list; the same `split` test would apply there). Static corpses (settled
-  ragdolls and lying clips) are skinned every frame; a cached pose or a baked mesh would
-  spare their vertex work. `fs_main`'s gore branches already test per-instance values,
-  so flags alone would gain little.
-- **Ragdoll cost per step:** done in m2-perf2 (static corpses, parallel islands) and
-  m2-rag-perf (steps on a worker); see "Ragdoll steps off the render thread" above. In the
-  clash a step still costs about 2 × the calibration (VM: 36 against 18 µs) for the
-  contacts that really happen in a pile; a segment test that dropped corpse capsules out
-  of reach before the substeps gained nothing (physics bench, pile 24.6 → 26.2 µs).
-- **Render CPU** (5–8 ms, `models_prepare` 2–5 ms) and **3D instances** (2–4.5 ms) grow
-  with the corpses; both are per-instance loops that rayon could split (native).
+Ranked by the measured share they could spare. VM numbers for the mission; Snapdragon X
+numbers (the user's laptop) for the GPU from the clash above.
+
+1. **View cull before `3d.instances`' per-unit work** (CPU, ≈ 9–11 of 12 ms in the
+   mission): 95 % of the instances built are not drawn and cast no shadow in view. Units
+   outside the view and the shadow reach can skip the clip, wound, gear and look work; what
+   must stay map-wide (kept marks, ragdoll bookkeeping, pools that persist) stays. The same
+   cull before `models_prepare` (≈ 3–6 ms) once the entries are fewer. Rayon over the loop
+   (m2-par-loops) divides what remains.
+2. **Ragdoll physics in piles** (≈ 4 ms of 6 in the fight at 4 steps, measured on main
+   e19129b before m2-rag-perf moved the steps to a worker; see "Ragdoll steps off the
+   render thread" above): a step still costs about 2 × the calibration for the contacts
+   that really happen in a pile.
+3. **Static corpses' pose** (GPU, Snapdragon): the frozen corpses' palettes are already
+   reused on the CPU (`frozen_palette`); they are still uploaded and skinned every frame.
+   A persistent region of the bone texture per frozen body (written when it changes) and a
+   cached shadow layer for static casters (designed in m2-perf4's notes) would spare the
+   upload and part of the shadow map; the VM shows no measurable GPU cost (3.5 ms).
+4. **Decals and debris** (2–3 ms in the fight): `3d.debris_decals` grows with the dead.
+
+Done meanwhile: the shadow casters follow `Damage::splits_parts` like the drawn list
+(9030897); `fs_main`'s gore branches already test per-instance values, so flags alone
+would gain little.
 
 ## Development aids
 
