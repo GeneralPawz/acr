@@ -356,11 +356,15 @@ fn anim_sound(effects: &acr_formats::UnitDef, anim: &str, step: usize) -> Option
 /// The sprites of the projectiles, smoke and explosions in flight (0x557cb0): frame
 /// `frame` of the weapon's animation (clamped to the last), facing its flight, at
 /// `(x, y/2 − z)`, sorted at the ground row plus the shot point's height (and 300 for
-/// `[HILAYER]`). `WHITE` weapons lighten.
-pub fn projectile_sprites(world: &World, objects: &ObjectsView, out: &mut Vec<SceneSprite>) {
+/// `[HILAYER]`). `WHITE` weapons lighten. With `rounds_3d` the rounds drawn as models
+/// (`missile_view::round`, #308) are left out.
+pub fn projectile_sprites(world: &World, objects: &ObjectsView, rounds_3d: bool, out: &mut Vec<SceneSprite>) {
     let assets = objects.objects();
     let Some(effects) = assets.effects() else { return };
     for p in world.projectiles.iter() {
+        if rounds_3d && super::missile_view::round(world, p).is_some() {
+            continue;
+        }
         let wp = world.catalog.weapons.get(p.weapon);
         let Some(anim) = effects.animation(&wp.anim) else { continue };
         let (dir, mirrored) = direction(p, anim.directions.max(1) as usize);

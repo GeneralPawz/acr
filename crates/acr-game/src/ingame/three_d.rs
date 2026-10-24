@@ -270,6 +270,8 @@ pub struct ThreeD {
     particles: super::particle_view::ParticleView,
     /// Shell fires and burning men (#256): flames, smoke, scorch; the burn amount.
     fire: super::fire_view::FireView,
+    /// The rounds in flight and the arrows stuck in the ground (#308).
+    missiles: super::missile_view::Missiles,
     particle_renderer: Option<acr_render::particles::ParticleRenderer>,
     /// Grass tufts, flowers, ferns, litter and pebbles on the detailed ground
     /// (`ground_cover=on|off`, docs/ground.md "Phase 5: ground cover"); `ACR_GROUND_COVER`
@@ -410,6 +412,7 @@ impl Default for ThreeD {
             water_view: Default::default(),
             particles: Default::default(),
             fire: Default::default(),
+            missiles: Default::default(),
             particle_renderer: None,
             ground_cover: true,
             cover: Default::default(),
@@ -589,6 +592,11 @@ impl ThreeD {
     }
 
     /// `ACR_3D_COMPARE=overlay`: the unit's sprite is drawn half transparent over its model.
+    /// The rounds in flight are drawn as models (#308): their sprites are left out.
+    pub fn draws_rounds(&self) -> bool {
+        self.models != Models::Off && self.missiles.ready()
+    }
+
     pub fn ghost(&self, unit: EntityId) -> bool {
         self.compare == Compare::Overlay && self.shown.contains(&unit)
     }
@@ -676,6 +684,7 @@ impl ThreeD {
         self.particle_renderer.get_or_insert_with(|| acr_render::particles::ParticleRenderer::new(device, format));
         self.weather_renderer.get_or_insert_with(|| acr_render::weather::WeatherRenderer::new(device, format));
         self.cover_renderer.get_or_insert_with(|| acr_render::ground_cover::GroundCoverRenderer::new(device, format));
+        self.missiles.upload(renderer, device, queue);
         for (name, model) in self.parsed.drain(..) {
             if name == GORE {
                 // The pack is split into its nodes; the torn cap replaces the procedural one
@@ -825,6 +834,7 @@ impl ThreeD {
             self.burns.clear();
             self.kept.clear();
             self.seeps.clear();
+            self.missiles.clear();
         }
         self.debris_tick = now;
         self.burning.clear();
@@ -1392,6 +1402,11 @@ impl ThreeD {
         let stain: Option<&dyn Fn(f32, f32) -> f32> =
             if self.stain && self.gore != Gore::Off { Some(&turf) } else { None };
         self.debris.draw(now, self.corpse_ticks, self.marks_keep, &ground, &mut self.instances, &mut self.pools, stain);
+        {
+            let height = |x: f32, y: f32| super::particle_view::ground_z(terrain, x, y);
+            let sink = &mut self.particles.particles;
+            self.missiles.draw(world, &height, self.corpse_ticks, self.frame_seconds, &mut self.instances, sink);
+        }
         if self.marks_keep {
             self.keep_marks(world, &machines, &ground);
         }

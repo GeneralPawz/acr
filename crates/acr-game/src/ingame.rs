@@ -41,6 +41,7 @@ mod kept_marks;
 mod living_wounds;
 mod map_models;
 mod maul_view;
+mod missile_view;
 mod mortar_ui;
 mod panels;
 mod particle_view;
@@ -960,7 +961,7 @@ impl InGame {
                 });
             }
         }
-        effects::projectile_sprites(world, &self.objects, &mut out);
+        effects::projectile_sprites(world, &self.objects, self.three_d.draws_rounds(), &mut out);
         self.effects.fire_sprites(world, &self.objects, &|id| self.three_d.shows(id), &mut out);
         effects::ground_fire_sprites(world, &self.objects, &mut out);
         out

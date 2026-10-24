@@ -1248,6 +1248,39 @@ covers about half the window); an unhurt fort draws as on main (0.17 ms both).
 Open: fire arrows are not told from arrows in the hit record (no scorch from them yet);
 the record has no height (hashed); knocked-out chunks as geometry or debris pieces.
 
+### Projectiles (#308)
+
+With models on, the rounds in flight are drawn as code-built models
+(`acr-render/src/missiles.rs`) by `ingame/missile_view.rs`, called from `ThreeD::update`
+after the debris; their `WEAPON.ADS` sprites are left out (`effects::projectile_sprites`
+with `ThreeD::draws_rounds`). Smoke, flashes, explosions and debris keep their sprites.
+
+- **Which objects:** `missile_view::round`: a `FLY`, `ANGLE` or `REFLECT` object whose
+  shooter's attack (`p.sender`, `p.att`) is a missile weapon of `NRES.DAT [WEAPONS]`:
+  `STRELA*`/`OSTRELA` arrow, `IADRO` cannonball, `KARTECH` grapeshot, `IADROMOR`/`VAFLIA`
+  shell, `TAMAGAVK` tomahawk, `KOPIE` spear, `KAMEN` stone.
+- **Placement:** at `pos >> 14`, the height `z / COS_E` like the ground, moved on along
+  `vel` (and `az`) by the share of the tick the frame is into, so rounds fly smoothly between
+  ticks. +z of the model along the velocity.
+- **Looks:** arrows 0.8 m with an iron head and three feathers, shafts drawn ~1.5× thick;
+  cannonballs dark spheres of 0.07 m (life 0.047 m) with three pale puffs per tick; grapeshot
+  0.03 m; shells 0.11 m tumbling, with embers and a wisp of smoke off the fuse tip every
+  tick; tomahawks turn end over end (1.7 rad per tick), stones tumble, spears roll. The
+  phase is a hash of the slot, weapon and shooter.
+- **Musket balls** are line traces in the simulation (0x5589ec), never objects in flight:
+  for each `Gunshot` hit or impact of the current tick a thin pale streak (`streak`, 2.2 m,
+  0.022 m radius, dithered half transparent) runs from 1.4 m above the shooter (`pos − dir`)
+  to the victim's chest or the ground, at 4500 px/s through the tick.
+- **Stuck arrows:** an arrow impact (a miss: `note_impact` records arrows only when they hit
+  no one) sticks an arrow 0.18 m into the ground along the direction of the nearest arrow
+  seen in the last two ticks (else 40° down along the impact), with a small hashed wobble.
+  They stay `corpse_minutes` (at most 2048). Arrows in bodies and buildings are not drawn
+  yet.
+
+Open: proof frames of each round in flight (the first slice's scenes had the targets
+charge into melee), the cost of a 200-musket and 100-archer volley, arrows stuck in bodies
+(gore) and buildings (#304), muzzle-to-target streaks for building hits.
+
 ## Camera math
 
 World coordinates of the 3D path are world pixels: `x` east, `y` south, `z` up as a true

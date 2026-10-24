@@ -15,6 +15,7 @@ pub mod layers;
 pub mod lod;
 pub mod looks;
 pub mod math;
+pub mod missiles;
 pub mod model;
 pub mod model_renderer;
 pub mod objects_view;
