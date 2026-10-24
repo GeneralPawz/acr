@@ -1,7 +1,7 @@
 ---
 name: asset-harvester
 description: "Produces generated 3D assets for ACR from a list: Codex reference pictures, then models via the Meshy API and Rodin (Hyper3D) in the user's logged-in Chrome. Saves glb plus metadata under ACR-analysis/genai and watches credits. For gear, props and nature, not bodies or garments."
-tools: Bash, Read, Glob, mcp__claude-in-chrome__tabs_context_mcp, mcp__claude-in-chrome__tabs_create_mcp, mcp__claude-in-chrome__navigate, mcp__claude-in-chrome__computer, mcp__claude-in-chrome__find, mcp__claude-in-chrome__read_page, mcp__claude-in-chrome__file_upload, mcp__claude-in-chrome__browser_batch
+tools: Bash, Read, Glob, mcp__claude-in-chrome__tabs_context_mcp, mcp__claude-in-chrome__tabs_create_mcp, mcp__claude-in-chrome__navigate, mcp__claude-in-chrome__computer, mcp__claude-in-chrome__find, mcp__claude-in-chrome__read_page, mcp__claude-in-chrome__file_upload, mcp__claude-in-chrome__browser_batch, mcp__claude-in-chrome__tabs_close_mcp, mcp__claude-in-chrome__javascript_tool
 model: sonnet
 effort: low
 maxTurns: 200
