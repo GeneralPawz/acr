@@ -237,6 +237,9 @@ struct Globals {
     /// Wind (docs/rendering-3d.md "Wind"): world direction x, y (unit), strength (0: still),
     /// time (s).
     wind: [f32; 4],
+    /// Weather (`weather.rs`): wet, snow, ground mist, its height; the fog colour (linear).
+    weather: [f32; 4],
+    fog: [f32; 4],
 }
 
 #[repr(C)]
@@ -506,6 +509,8 @@ pub struct ModelRenderer {
     /// Wind for the `_WIND` weights of trees and foliage (docs/rendering-3d.md "Wind"): world
     /// direction x, y (unit), strength (0: still, the `wind=off` setting), time in seconds.
     pub wind: [f32; 4],
+    /// The weather's look of the models (`weather::Look::model`, `model_fog`); zero: none.
+    pub weather: [[f32; 4]; 2],
     shadow: ShadowMap,
     /// The models into the shadow map: `vs_main` through the light's globals, `fs_shadow`.
     shadow_pipeline: wgpu::RenderPipeline,
@@ -914,6 +919,7 @@ impl ModelRenderer {
             custom: HashMap::new(),
             shadows: true,
             wind: [1.0, 0.0, 0.0, 0.0],
+            weather: [[0.0; 4]; 2],
             shadow,
             shadow_pipeline,
             shadow_globals,
@@ -1427,6 +1433,8 @@ impl ModelRenderer {
                 0.0,
             ],
             wind: self.wind,
+            weather: self.weather[0],
+            fog: self.weather[1],
         };
         queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
         self.shadow.upload(queue, fit.as_ref(), focus, reach);

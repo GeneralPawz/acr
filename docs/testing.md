@@ -126,6 +126,7 @@ its label to appear.
 | `{"cmd": "measure", "id": 0, "ticks": 40}` | hand/grip and foot numbers of a unit (studio) |
 | `{"cmd": "spawn", "type": "EngM18", "x": 3000, "y": 9000, "dir": 0, "pose": "stand"}` | places a unit (bench) |
 | `{"cmd": "shadows", "on": false}` | sun shadows of the models forced off (`true`: on; no `on`: the `shadows` setting again); `ACR_SHADOWS=on\|off` does the same at start |
+| `{"cmd": "weather", "mode": "rain"}` | rain, snow, fog or off over the `weather` setting (no `mode`: the setting again); answers `weather` (docs/rendering-3d.md "Weather (#224)") |
 | `{"cmd": "map_models", "on": false}` | the map's trees and stones as sprites (`true`: as models where `map_objects.json` has one), over the `map_models` setting |
 | `{"cmd": "fog", "on": false}` | the whole map revealed from the next tick, as on the blank field (`true`: the fog of war again); for shots of a real map |
 | `{"cmd": "hit", "unit": 541, "cause": "musket", "region": "torso", "dir": [-1, 0], "energy": 80}` | a scripted hit (bench) |

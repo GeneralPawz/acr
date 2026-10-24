@@ -553,6 +553,8 @@ struct DetailUniform {
     /// Per layer: mean albedo (linear) and world pixels per repeat.
     layers: [[f32; 4]; 32],
     tiles: [[f32; 4]; 256],
+    /// Weather (`weather::Look::model`): wet, snow, mist, mist height.
+    weather: [f32; 4],
 }
 
 /// The detailed ground (docs/ground.md), once its textures are loaded.
@@ -567,6 +569,9 @@ struct DetailGround {
     state_atlas: wgpu::Texture,
     state_pages: wgpu::Texture,
     state_group: wgpu::BindGroup,
+    /// The [`DetailUniform`] buffer (its `weather` changes per frame).
+    buffer: wgpu::Buffer,
+    weather: std::cell::Cell<[f32; 4]>,
 }
 
 struct Target {
@@ -916,6 +921,7 @@ impl TerrainRenderer {
             second: [0.0; 16],
             layers: [[0.0; 4]; 32],
             tiles: [[0.0; 4]; 256],
+            weather: [0.0; 4],
         };
         for (i, mean) in images.means.iter().enumerate() {
             let repeat = crate::ground::REPEAT_METRES[i] * crate::view3d::PIXELS_PER_METRE;
@@ -1050,7 +1056,20 @@ impl TerrainRenderer {
             state_atlas,
             state_pages,
             state_group,
+            buffer,
+            weather: std::cell::Cell::new([0.0; 4]),
         });
+    }
+
+    /// The weather's look of the detailed ground (`weather::Look::model`): wet soil, snow on
+    /// the upward faces. Written only when it changes.
+    pub fn set_weather(&self, queue: &wgpu::Queue, weather: [f32; 4]) {
+        let Some(detail) = self.detail.as_ref() else { return };
+        if detail.weather.get() != weather {
+            detail.weather.set(weather);
+            let offset = std::mem::offset_of!(DetailUniform, weather) as u64;
+            queue.write_buffer(&detail.buffer, offset, bytemuck::bytes_of(&weather));
+        }
     }
 
     /// Uploads what changed in the ground state (docs/ground.md, phase 2), once the

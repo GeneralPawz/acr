@@ -13,6 +13,7 @@ use acr_render::scene::{Placement, definition_name};
 use acr_render::terrain::{Camera, TerrainData, TerrainRenderer};
 use acr_render::view3d::{self, Orbit, PIXELS_PER_METRE, View3d};
 use acr_render::water::Disturbances;
+use acr_render::weather::Weather;
 use acr_sim::World;
 use acr_sim::world::{AnimKind, EntityId, Unit};
 use winit::keyboard::{Key, NamedKey};
@@ -263,6 +264,10 @@ pub struct ThreeD {
     /// Earth, dust, mud and water thrown into the air (docs/ground.md phase 3).
     particles: super::particle_view::ParticleView,
     particle_renderer: Option<acr_render::particles::ParticleRenderer>,
+    /// Rain, snow or fog (#224, `weather` setting; the driver's `weather` overrides it).
+    weather: Weather,
+    weather_override: Option<Weather>,
+    weather_renderer: Option<acr_render::weather::WeatherRenderer>,
     /// Where balls fell into the water this frame (a splash each).
     shots: Vec<[f32; 2]>,
     /// How long 3D corpses lie (ticks, `corpse_minutes`).
@@ -374,6 +379,9 @@ impl Default for ThreeD {
             water_view: Default::default(),
             particles: Default::default(),
             particle_renderer: None,
+            weather: Weather::Off,
+            weather_override: None,
+            weather_renderer: None,
             shots: Vec::new(),
             last_blast: 0,
             last_graze: 0,
@@ -440,6 +448,7 @@ impl ThreeD {
         self.shadows = settings.shadows;
         self.lod = settings.lod;
         self.wind = settings.wind;
+        self.weather = settings.weather;
         self.map_models.on = settings.map_models;
         self.water_detailed = settings.water_detailed;
         self.corpse_ticks = u64::from(settings.corpse_minutes) * 60 * acr_sim::ORIGINAL_TICKS_PER_SECOND as u64;
@@ -615,6 +624,7 @@ impl ThreeD {
         self.depth.get_or_insert_with(|| DepthTarget::new(device, format));
         self.water.get_or_insert_with(|| acr_render::water::WaterRenderer::new(device, format));
         self.particle_renderer.get_or_insert_with(|| acr_render::particles::ParticleRenderer::new(device, format));
+        self.weather_renderer.get_or_insert_with(|| acr_render::weather::WeatherRenderer::new(device, format));
         for (name, model) in self.parsed.drain(..) {
             if name == GORE {
                 // The pack is split into its nodes; the torn cap replaces the procedural one
@@ -1540,8 +1550,14 @@ impl ThreeD {
         }
         renderer.shadows = shadows_override().unwrap_or(self.shadows);
         renderer.lods = self.lod;
-        let strength = if self.wind_override.unwrap_or(self.wind) { WIND_STRENGTH } else { 0.0 };
+        let weather = self.weather_override.unwrap_or(self.weather);
+        let look = weather.look();
+        let strength = if self.wind_override.unwrap_or(self.wind) { WIND_STRENGTH * weather.wind_scale() } else { 0.0 };
         renderer.wind = [WIND_DIR[0], WIND_DIR[1], strength, self.wind_clock];
+        renderer.weather = [look.model(), look.model_fog()];
+        if let Some(ground) = ground {
+            ground.set_weather(queue, look.model());
+        }
         {
             acr_sim::prof_scope!("render.models_prepare");
             renderer.prepare(device, queue, &view3d, shown, self.gore == Gore::Full);
@@ -1566,6 +1582,9 @@ impl ThreeD {
         };
         if let Some(particles) = self.particle_renderer.as_mut() {
             particles.prepare(queue, &view3d, &mut self.particles.particles);
+        }
+        if let Some(w) = self.weather_renderer.as_mut() {
+            w.prepare(queue, &view3d, weather, self.started.elapsed().as_secs_f32(), WIND_DIR);
         }
         use acr_render::gpu_timer::mark_encoder;
         // The GPU timer (`gputime`) splits the 3D pass at each segment: timestamps inside a
@@ -1602,12 +1621,20 @@ impl ThreeD {
             particles.render(&mut pass);
         }
         segment!("particles");
+        if let Some(w) = &self.weather_renderer {
+            w.render_mist(&mut pass);
+        }
+        segment!("weather mist");
         depth.reset_ground(&mut pass);
         if sprites {
             objects.draw(&mut pass, true);
         }
+        segment!("sprites");
+        if let Some(w) = &self.weather_renderer {
+            w.render(&mut pass);
+        }
         drop(pass);
-        mark_encoder(encoder, "sprites");
+        mark_encoder(encoder, "weather");
         self.frames += 1;
         let now = web_time::Instant::now();
         let since = *self.since.get_or_insert(now);
@@ -1632,6 +1659,18 @@ impl ThreeD {
 }
 
 impl ThreeD {
+    /// The weather drawn: the driver's override, else the setting.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub fn weather(&self) -> Weather {
+        self.weather_override.unwrap_or(self.weather)
+    }
+
+    /// The driver's `weather` request (`None`: back to the setting).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub fn set_weather_override(&mut self, weather: Option<Weather>) {
+        self.weather_override = weather;
+    }
+
     /// True when this frame's 3D pass draws the water surface in place of the terrain's
     /// depth tint (`water=detailed`, models on and their renderer up, not zoomed out).
     pub fn draws_water(&self, zoomed: bool) -> bool {

@@ -16,6 +16,8 @@ struct Detail {
     layers: array<vec4<f32>, 32>,
     // Per original texture: mean colour (linear) and class (255: keep).
     tiles: array<vec4<f32>, 256>,
+    // Weather (weather.rs): wet, snow, ground mist, mist height.
+    weather: vec4<f32>,
 };
 
 @group(2) @binding(0) var<uniform> detail: Detail;
@@ -291,6 +293,18 @@ fn fs_detail(in: DetailOut) -> @location(0) vec4<f32> {
     // Wet mud glints under the sun (a view from the south above, as the original's).
     let half_v = normalize(sun + normalize(vec3<f32>(0.0, 0.6, 0.8)));
     rgb += vec3<f32>(0.35) * st.g * st.g * pow(max(dot(np, half_v), 0.0), 48.0) * shade_at(in.light);
+    if (detail.weather.y > 0.0) {
+        // A light snow cover on the faces turned up, patchy, thinner where churned.
+        let blot = value_noise(xy / 37.0) * 0.6 + value_noise(xy / 9.0) * 0.4;
+        let cover = detail.weather.y * smoothstep(0.82, 0.97, np.z + (blot - 0.5) * 0.22)
+            * (1.0 - 0.8 * max(st.g, st.b)) * 0.4;
+        rgb = mix(rgb, vec3<f32>(0.62, 0.65, 0.72) * shade_at(in.light), cover);
+    }
+    if (detail.weather.x > 0.0) {
+        // Rain-wet soil: darker, with a broad dim gloss under the sun.
+        rgb = rgb * (1.0 - 0.3 * detail.weather.x);
+        rgb += vec3<f32>(0.10) * detail.weather.x * pow(max(dot(np, half_v), 0.0), 16.0) * shade_at(in.light);
+    }
 
     // Water with the original tint (original view, no water surface of docs/water.md):
     // the original's tinted lakebed shows through. The water surface covers this lakebed.

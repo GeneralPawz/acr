@@ -26,6 +26,7 @@ parameters: [assets-humans.md](assets-humans.md).
 | `gore` | `full`, `reduced`, `off` | `full` | 3D corpses: `full` decompose (#178), `reduced` discolour, collapse and sink without dissolving, `off` fade like the original (every other pixel once the death counter passes 100) |
 | `battlefield_marks` | `fade`, `keep` | `fade` | `keep`: craters, scuffs, blood splatter and pools and the debris of the fallen stay for the whole battle (below, "Kept battlefield marks") |
 | `decay_stain` | `on`, `off` | `on` with `gore=full`, else `off` | the fluids of decaying corpses stain the ground under them (below, "Decay stains"); written only once set |
+| `weather` | `off`, `rain`, `snow`, `fog` | `off` | rain, snow or fog over the 3D frame, a look only with no gameplay effect (below, "Weather (#224)"); the driver's `{"cmd": "weather", "mode": "rain"}` overrides it (without `mode`: back to the setting) |
 
 Sprites stay the default; with `models=off` and `camera=fixed` the frame is drawn exactly as
 before (no depth buffer, no extra pass). The game menu's options dialog (Spieleinstellungen)
@@ -311,6 +312,50 @@ measurable either: random map seed 5, fog off, fixed camera at zoom 1 on the den
 after (models 0.60–0.76 → 0.60–0.77, shadow map 0.28–0.37 → 0.28–0.36). Frame strips per
 species (gameplay zoom and close-up, 6 frames 0.8 s apart, with a motion map) and of the
 wood: `ACR-analysis/genai/wind2/strip_*.png`, `forest_*.png`.
+
+### Weather (#224)
+
+`weather=off|rain|snow|fog` (`acr-render` `weather.rs`, `weather.wgsl`; render only, no
+gameplay effect, sim and replays untouched). It draws only in the 3D pass, so with
+`models=off` and the fixed camera nothing changes. The numbers of each mode are in
+`Weather::look`.
+
+| Part | Where | Rain | Snow | Fog |
+|---|---|---|---|---|
+| Drops | `vs_drop`/`fs_drop`, last in the 3D pass, depth-tested against the models | streaks along the fall (640 px/s, 24 px blur, at least 1 px wide), one per 260 px² of ground | flakes falling 42 px/s, drifting 34 px/s downwind and swaying, one per 520 px² | none |
+| Light grade | `fs_grade`: the frame × the blend constant + a lift, over terrain, models and sprites | × (0.70, 0.74, 0.82): darker, cooler | × (0.94, 0.97, 1.0) + (0.05, 0.06, 0.08): brighter, colder | × (0.90, 0.92, 0.95) |
+| Distance fog | `fs_fog`: the ground point under each pixel, its distance ahead of the window centre | 0.22 at most | 0.28 | 0.55, from 500 px before the centre, scale 1800 px |
+| Ground mist | `fs_mist` where no model drew (stencil 0), before the sprites; `model.wgsl` mixes the same by `exp(−z / 45 px)` so legs fade and heads stay clear | 0.06 | 0.05 | 0.32 |
+| Ground | `ground.wgsl` `detail.weather` (the detailed ground only) | albedo × 0.7, a broad gloss | patchy snow on faces with `n.z` over about 0.85, less where churned or scorched, at most 40 % | slightly wet (0.3) |
+| Models | `model.wgsl` `globals.weather`, `globals.fog` | albedo × 0.82, a dim broad gloss | none | mist only |
+| Trees' wind | `ModelRenderer::wind` strength × `Weather::wind_scale` | × 2.2 | × 1.4 | × 1 |
+
+- **Drops without a vertex buffer.** Each instance hashes its place in a box and falls by
+  the render clock, wrapped into the box (`fract`), so the drops are fixed in the world as the
+  camera moves. The box is the ground the view shows up to its height (`View3d::
+  ground_bounds`, capped at 5000 px a side for the low free camera); the count is the box's
+  ground area × the density, capped at `MAX_DROPS` 24000. Zoomed in, fewer drops are drawn.
+  WebGL2 safe: only `vertex_index`, `instance_index` and one uniform buffer.
+- **Readability.** The HUD, selection marks and health bars draw after the 3D pass and are
+  untouched. The fog keeps units readable at gameplay zoom: the 1600 × 900 frame at zoom 1
+  shows every regiment (`ACR-analysis/genai/weather/`).
+- **The blend constant** is clamped to 0..1 by WebGL2, so the snow's brightening is the lift.
+- **Mist on hills:** the models' mist thins with true height, so men on a hill stand clearer
+  than the ground mist around them (low-lying fog in the valleys).
+
+GPU cost (`gputime`, RX 9060 XT on the render VM, Monongahela `battle3`, 1600 × 900, zoom 1,
+tick about 320, 60 frames, two alternating runs each; `ACR-analysis/genai/weather/modes.json`):
+
+| mode | sum of all passes (ms) | `weather` (drops, fog, grade) | `weather mist` | `ground` |
+|---|---:|---:|---:|---:|
+| off | 3.27–3.30 | 0.007 | 0.007 | 0.306 |
+| rain | 3.41–3.42 | 0.108 | 0.033 | 0.309 |
+| snow | 3.45 | 0.080 | 0.033 | 0.385 |
+| fog | 3.36 | 0.064 | 0.033 | 0.308 |
+
+Open: sound (the mixer has no looping voice yet: rain and wind loops and thunder need a
+looping voice in `acr-audio` and own CC0 recordings in `assets/sounds/`), the options menu
+entry, gameplay effects (wet powder, slower marching, shorter sight in fog) as optional rules.
 
 ### Map trees and stones
 

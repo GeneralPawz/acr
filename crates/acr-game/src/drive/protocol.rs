@@ -221,6 +221,9 @@ pub enum Request {
     },
     /// Sun shadows forced on or off over the setting (`None`: the setting again).
     Shadows(Option<bool>),
+    /// `{"cmd": "weather", "mode": "rain"}`: off, rain, snow or fog over the `weather`
+    /// setting; without `mode` back to the setting.
+    Weather(Option<acr_render::weather::Weather>),
     /// The fog of war on or off (off: the whole map revealed, as on the blank field).
     Fog(bool),
     /// The map's trees and stones as models switched on or off over `map_models`.
@@ -562,6 +565,10 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
             Request::Camera { x: x as i32, y: y as i32, zoom: num("zoom").map(|z| z as f32), lift, orbit }
         }
         "shadows" => Request::Shadows(v.get("on").and_then(Value::as_bool)),
+        "weather" => Request::Weather(match string(&v, "mode") {
+            Some(m) => Some(acr_render::weather::Weather::parse(&m).ok_or(format!("weather: unknown mode {m:?}"))?),
+            None => None,
+        }),
         "fog" => Request::Fog(v.get("on").and_then(Value::as_bool).unwrap_or(true)),
         "map_models" => Request::MapModels(v.get("on").and_then(Value::as_bool).unwrap_or(true)),
         "props" => Request::Props {

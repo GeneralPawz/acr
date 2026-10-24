@@ -39,6 +39,10 @@ struct Globals {
     params: vec4<f32>,
     // Wind: world direction x, y (unit), strength (0: still), time (s).
     wind: vec4<f32>,
+    // Weather (weather.rs): wet, snow, ground mist, the mist's height (world px).
+    weather: vec4<f32>,
+    // The weather's fog colour (linear).
+    fog: vec4<f32>,
 };
 
 struct Material {
@@ -838,6 +842,8 @@ fn shade(in: VsOut, front: bool, far: bool, clean: bool) -> vec4<f32> {
     }
     let sun = max(dot(n, globals.light.xyz), 0.0) * vis;
     let lit = globals.light.w + (1.0 - globals.light.w) * sun;
+    // Rain soaks everything darker (weather.rs).
+    rgb = rgb * (1.0 - 0.18 * globals.weather.x);
     let albedo = rgb;
     rgb = rgb * lit;
     // Cloth: the fibres of the nap catch the light at grazing angles, a soft pale rim where
@@ -858,6 +864,16 @@ fn shade(in: VsOut, front: bool, far: bool, clean: bool) -> vec4<f32> {
         let h = normalize(globals.light.xyz - globals.forward.xyz);
         let nh = max(dot(n, h), 0.0);
         rgb = rgb + sheen * wet * pow(nh, 40.0) + broad * wet * pow(nh, 6.0);
+    }
+    if (globals.weather.x > 0.0 && !far) {
+        // Rain-wet surfaces: a broad, dim gloss under the sun.
+        let h = normalize(globals.light.xyz - globals.forward.xyz);
+        rgb = rgb + vec3<f32>(0.05) * globals.weather.x * pow(max(dot(n, h), 0.0), 18.0) * vis;
+    }
+    if (globals.weather.z > 0.0) {
+        // The ground mist thins with height: legs fade into it, heads stay clear.
+        let m = globals.weather.z * exp(-max(in.world.z, 0.0) / globals.weather.w);
+        rgb = mix(rgb, globals.fog.rgb, m);
     }
     if (globals.params.x > 0.5) {
         rgb = to_srgb(rgb);

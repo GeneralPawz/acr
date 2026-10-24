@@ -124,6 +124,13 @@ impl InGame {
         self.three_d.set_map_models(on);
     }
 
+    /// Rain, snow or fog over the setting (`drive` `weather`; `None`: the setting).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_weather(&mut self, weather: Option<acr_render::weather::Weather>) -> acr_render::weather::Weather {
+        self.three_d.set_weather_override(weather);
+        self.three_d.weather()
+    }
+
     /// The pose held for a unit, if any.
     #[cfg(not(target_arch = "wasm32"))]
     /// Trees or foliage of model `name` at these ground points (render only; `drive` `props`).

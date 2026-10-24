@@ -74,7 +74,12 @@ pub struct Settings {
     /// dying around it; docs/rendering-3d.md). `None` (not in the file): on with
     /// `gore=full`, off otherwise ([`Settings::decay_stain`]).
     pub decay_stain: Option<bool>,
+    /// ACR (#224): `weather=off|rain|snow|fog` (off by default): rain, snow or fog over the
+    /// 3D path, a look only (docs/rendering-3d.md "Weather (#224)"); no gameplay effect.
+    pub weather: Weather,
 }
+
+pub use acr_render::weather::Weather;
 
 /// `models=off|units|all`: sprites everywhere (the original), 3D units, 3D units and
 /// buildings.
@@ -154,6 +159,7 @@ impl Default for Settings {
             water_detailed: true,
             ground_detailed: true,
             marks_keep: false,
+            weather: Weather::Off,
         }
     }
 }
@@ -219,7 +225,7 @@ impl Settings {
             "sound_volume={}\nmusic_volume={}\nmusic_mode={}\ngame_mode={}\nscroll_speed={}\nframe_time={}\n\
              resolution={}\nrecord={}\nrecord_file={hex}\ncontrols={controls}\nedge_scroll={}\n\
              models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\ncorpse_decay={}\nhit_locations={}\nbody_spacing={}\nshadows={}\nlod={}\nwind={}\nmap_models={}\nwater={}\n\
-             ground={}\nbattlefield_marks={}\n{}",
+             ground={}\nbattlefield_marks={}\nweather={}\n{}",
             self.sound_volume,
             self.music_volume,
             self.music_mode,
@@ -240,6 +246,7 @@ impl Settings {
             if self.water_detailed { "detailed" } else { "original" },
             if self.ground_detailed { "detailed" } else { "original" },
             if self.marks_keep { "keep" } else { "fade" },
+            self.weather.name(),
             match self.decay_stain {
                 Some(true) =>
                     "decay_stain=on
@@ -296,6 +303,7 @@ impl Settings {
                 "water" => s.water_detailed = value != "original",
                 "ground" => s.ground_detailed = value != "original",
                 "battlefield_marks" => s.marks_keep = value == "keep",
+                "weather" => s.weather = Weather::parse(value).unwrap_or_default(),
                 "decay_stain" => {
                     s.decay_stain = match value {
                         "on" => Some(true),
@@ -351,6 +359,7 @@ mod tests {
             hit_locations: true,
             body_spacing: true,
             marks_keep: true,
+            weather: Weather::Snow,
         };
         assert_eq!(Settings::decode(&s.encode()), s);
         // The removed "Spotify mitmischen" (music_mode=2) reads as no music.
@@ -369,6 +378,8 @@ decay_stain=on"
         );
         assert!(!Settings::decode("decay_stain=off").decay_stain());
         assert_eq!(Settings::decode(""), Settings::default());
+        assert_eq!(Settings::decode("weather=fog").weather, Weather::Fog);
+        assert_eq!(Settings::decode("weather=hail").weather, Weather::Off);
         let odd = Settings::decode("scroll_speed=99\nfoo=1\nresolution=x\ncontrols=modern\nmodels=3d\ngore=off");
         assert_eq!((odd.scroll_speed, odd.resolution, odd.controls), (10, 1, Controls::Modern));
         assert_eq!((odd.models, odd.camera, odd.gore), (Models::Off, CameraMode::Fixed, Gore::Off));
