@@ -332,7 +332,11 @@ fn look_texels(look: Option<&looks::Look>, eye: f32, seed: u32, face_tiles: u8) 
     } else {
         -1.0
     };
-    [[skin[0], skin[1], skin[2], l.stubble], [hair[0], hair[1], hair[2], l.morphs[7]], [l.pocks, side, eye, 1.0 + f32::from(looks::face_tile(seed, face_tiles))]]
+    [
+        [skin[0], skin[1], skin[2], l.stubble],
+        [hair[0], hair[1], hair[2], l.morphs[7]],
+        [l.pocks, side, eye, 1.0 + f32::from(looks::face_tile(seed, face_tiles))],
+    ]
 }
 
 /// One draw: the instances `range` of a model at a level of detail.
@@ -1414,7 +1418,8 @@ impl ModelRenderer {
             let clean =
                 intact && !inst.transparent && !dissolving(gpu_model.dissolves_at) && dbg & debug::NO_CLEAN == 0;
             let first = data.len() as u32;
-            let mut look_data = look_texels(look.as_ref().map(|c| &c.0), gpu_model.eye, inst.look.unwrap_or(0), gpu_model.face_tiles);
+            let mut look_data =
+                look_texels(look.as_ref().map(|c| &c.0), gpu_model.eye, inst.look.unwrap_or(0), gpu_model.face_tiles);
             // A crew's uniform rides on the look texels the crew does not use otherwise.
             if let (None, Some(u), Some(crew)) = (look, inst.uniform, model.crew.as_ref()) {
                 // The colour and the base's luminance (`model.wgsl`: the cloth keeps its shading).
