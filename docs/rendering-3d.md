@@ -537,6 +537,9 @@ the death record's tick on once dead (ships: one sprite frame per direction, a s
 outlasts `#DEATH`). A root with `extras.acr_machine = true` is no body: no blood pools,
 sprays, splatter or corpse wounds, no corpse pile, no decay and no corpse sink. Ships stand at
 the terrain height of their ground point like every model; water is a tint on that ground.
+A building with `acr_clock = "world"` and a clip named `WORK` plays that clip, looping on the
+game clock, whenever it stands finished: the moving `#WORK` layer of the sprite (0x50927a),
+e.g. the sails of `SpnMel` on their own node (`assets/buildings/spnmel.py`).
 
 **Gun crew (#287).** The cannon's crew is part of its model (`acr_assets/guncrew.py`,
 bones `c0.`..`c3.`), so it runs on the gun's sprite clock and the linstock touches the vent
