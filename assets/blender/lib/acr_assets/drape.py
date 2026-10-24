@@ -1131,10 +1131,14 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=()):
         ev = obj.data
         longest = max(((ev.vertices[e.vertices[0]].co - ev.vertices[e.vertices[1]].co).length
                        for e in ev.edges if not e.is_loose), default=0.0)
-        per_seam = {}
+        per_seam, worst_at = {}, (0.0, None)
         for (a, b), k in zip(sew, pieces["_sew_id"]):
             lab = "+".join(x[0] + "." + x[1] for x in seams[k].a) + "|" + "+".join(x[0] + "." + x[1] for x in seams[k].b)
-            per_seam[lab] = max(per_seam.get(lab, 0.0), (ev.vertices[a].co - ev.vertices[b].co).length)
+            gap = (ev.vertices[a].co - ev.vertices[b].co).length
+            per_seam[lab] = max(per_seam.get(lab, 0.0), gap)
+            if gap > worst_at[0]:
+                mid = (ev.vertices[a].co + ev.vertices[b].co) / 2
+                worst_at = (gap, [round(100 * c, 1) for c in mid])
         gaps = sorted((ev.vertices[a].co - ev.vertices[b].co).length for a, b in sew)
         base = WELD if not g.startswith("shirt") else 0.3
         limits = [getattr(seams[k], "close", None) or base for k in pieces["_sew_id"]]
@@ -1216,7 +1220,9 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=()):
         stats[g] = {"unposed_m": round(unposed, 3), "sim_s": round(dt, 2), "sew": len(sew), "welded": welded, "verts_sim": len(verts),
                     "longest_edge_m": round(longest, 3), "gap_mm_p95": mm(gaps, 0.95), "gap_mm_max": mm(gaps, 1.0),
                     "gap_mm_max_after_sewing": mm(gs, 1.0), "within_5mm": sum(1 for x in gaps if x < 0.005),
-                    "worst_seams_mm": {k: round(v * 1000) for k, v in sorted(per_seam.items(), key=lambda kv: -kv[1])[:5]}}
+                    "worst_seams_mm": {k: round(v * 1000) for k, v in sorted(per_seam.items(), key=lambda kv: -kv[1])[:5]},
+                    # the widest pair's midpoint (cm, rest pose, model axes: -Y the front, +Z up)
+                    "worst_gap_at_cm": worst_at[1]}
         for o in ch.layers["clothes"]:
             if o.name in made:
                 _collision(o, thickness=gm.CLOTH.get(g, gm.CLOTH["waistcoat"]).get("margin", 0.004))

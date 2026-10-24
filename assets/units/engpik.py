@@ -29,7 +29,7 @@ MD = {
 
 # None: the drafted buff coat (`garments.buffcoat`); "waugh/buffcoat_1640": the buff leather
 # doublet traced from Waugh's Diagram IX (ACR_SOURCES/patterns, docs/clothing.md "Traced patterns").
-COAT_PATTERN = None
+COAT_PATTERN = "waugh/buffcoat_1640"
 BREECHES_PATTERN = None
 
 

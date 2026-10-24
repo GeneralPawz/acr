@@ -787,7 +787,12 @@ the repo holds only the code and synthetic test patterns.
   coat_pattern="waugh/doublet_1635", breeches_pattern="waugh/breeches_1640")` registers
   each (`pike.traced_garment`, cloth of the JSON's `cloth`) and drapes it in place of
   `doublet` / `breeches`. `engmus.COAT_PATTERN` and `engmus.BREECHES_PATTERN` stay `None`
-  (the drafted garments) until the traced ones match their layer numbers.
+  (the drafted garments) until the traced ones match their layer numbers;
+  `engpik.COAT_PATTERN` is `"waugh/buffcoat_1640"` (round 6). The rule for a default:
+  crossing not above the drafted, poking at most 10% above, `gear_volume` not worse, the
+  studio sheet passed.
+- `stats.json` `drape.<garment>.worst_gap_at_cm`: the widest sewn pair's midpoint (cm, rest
+  pose, model axes), so a seam gap can be placed without a render.
 
 **Waugh Diagram VIII** (book p. 26, PDF p. 15), the linen doublet c. 1635-40 (V&A), for
 EngMus. Scale from the margin ruler, 63.9 px/in at 300 dpi. Seven panels: front and back (cut
@@ -841,10 +846,21 @@ Numbers on EngMus (VM, 24 Oct 2026; drafted garments in brackets):
 | round 5: drafted, breeches hidden under the doublet | 193/201, 118/128 | 110, 94 | 261 / 188 | |
 | round 5: traced breeches (CF retraced, `u0_edge`) | 131/133 | 64 (band) | 298 / 209 | |
 | round 5: traced doublet + breeches | 234/234, 131/133 | 28, 64 (band) | 322 / 212 | |
+| round 6: same, breeches back hem re-read as a curve | 234/234, 128/133 | 26, 65 (band, at the right hip, z 103 cm) | 317 / 215 | |
+| round 6: same, legs lifted 2 cm, band 1 cm lower | 130/133 | 64 (band, same place), outseam 59 | 309 / 229 | |
 
 Numbers on EngPik (round 5): drafted buff coat welded 175/187, `gap_mm_max` 89, 241 / 310;
 traced Diagram IX 136/136, 32 (sleeve head), 253 / 310 (skin through the buff 70/43 -> 35/23,
 cloth sleeves through the buff 22/13 -> 46/35); `gear_volume` 0 closed items in both.
+Round 6: the traced buff coat is EngPik's default (`engpik.COAT_PATTERN`): crossing equal
+(310), poking 5% above (253 vs 241), rebuilt twice to the same numbers. Its sleeve weights
+are not the cause of the cloth sleeves through the buff (`model_layers` 46 poking, 37
+crossing; drafted 22 / 10): plain transfer weights measured 272 / 313, the arm proxy 1.5 cm
+out 253 / 314. The pokes sit at the sleeve head under the buff's armhole in the rest pose.
+EngMus stays drafted: the traced pair measures 317 / 215 against 261 / 188; the extra
+crossing is the doublet through the belts (26 vs 12) and the falling band through the belts
+(36 vs 22). The band seam's widest pair is at the side of the hip, not at the CF, and
+lifting the legs did not close it.
 
 The waist band must be pinned (`place.pin` "top": tied to the doublet with points): unpinned,
 the full breeches slid down into a puff at the knee, with bare thighs. That failed drape still
