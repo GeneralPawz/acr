@@ -103,8 +103,9 @@ def main():
         bpy.ops.object.select_all(action="DESELECT")
         ob.select_set(True)
         bpy.context.view_layer.objects.active = ob
+        # PNG: the renderer decodes PNG only; the normal map goes out as normalTexture
         bpy.ops.export_scene.gltf(filepath=os.path.join(out, it["name"] + ".glb"), use_selection=True,
-                                  export_image_format="JPEG", export_jpeg_quality=90)
+                                  export_image_format="AUTO")
         if hat:
             ob.location = sock
             bpy.context.view_layer.update()

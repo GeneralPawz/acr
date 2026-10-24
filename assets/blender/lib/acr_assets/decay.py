@@ -294,7 +294,17 @@ def export_material(mat):
         uv.uv_map = mat["acr_uv"]
         links.new(uv.outputs["UV"], tex.inputs["Vector"])
         links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
+        if "acr_normal_image" in mat:
+            # baked tangent normal map (genfit): glTF normalTexture on the same uvs
+            nt = nodes.new("ShaderNodeTexImage")
+            nt.image = bpy.data.images[mat["acr_normal_image"]]
+            nm = nodes.new("ShaderNodeNormalMap")
+            nm.uv_map = mat["acr_uv"]
+            links.new(uv.outputs["UV"], nt.inputs["Vector"])
+            links.new(nt.outputs["Color"], nm.inputs["Color"])
+            links.new(nm.outputs["Normal"], bsdf.inputs["Normal"])
     else:
         bsdf.inputs["Base Color"].default_value = lin(tuple(mat["acr_base_rgb"]))
+    bsdf.inputs["Metallic"].default_value = float(mat.get("acr_metallic", 0.0))
     m.diffuse_color = mat.diffuse_color
     return m

@@ -271,9 +271,15 @@ missing), the material uniform their factors in `pbr`. `globals.params.w` is the
   leather and brass and the wet highlights stay as they were and take the bent normal.
 - **Off:** no normal map and no highlight, the frame as before the change (the far levels
   never draw either).
-- **Assets:** on 2026-10-24 no installed model carries a normal map: `nature.py`
-  `build_generated` and `genfit.py` drop the baked one, the procedural trees have none.
-  Checked with `prop_ruin_chapel` built with the map kept.
+- **Assets:** the pipeline keeps normal maps (tangent space, OpenGL convention, green +Y =
+  glTF), roughness and metallic as factors (0.85 / 0, metal gear 0.5 / 0.3):
+  `genfit.py` (gear and `nature.build_generated` props: the baked map at the category's
+  `nrm` px, 1024 headgear, 512 others), `genbuild.py` (the source's map, or a 512 px bake of
+  what the decimation took off: `normal_baked_px`), `nature.build` (the Poly Haven and
+  Sketchfab source maps at 512 px through the collapse decimation: `normal_maps`; the
+  procedural trees have none). Size cost: buildings +0.35–0.44 MB, ruins +0.43–0.51 MB,
+  trees and rocks +0.6–1.1 MB. Checked in the game with `material_detail` on and off (relief,
+  nothing black or inverted): `ACR-analysis/genai/materials/assets/`.
 - **Cost** (render VM, RX 9060 XT, Vulkan, 1600 × 900, Monongahela `battle3` at tick 305,
   zoom 1, about 1700 men and horses and the forest as models; `gputime` 60 frames, two runs
   each, alternating in one process): models pass 2.965 and 2.942 ms on, 2.955 and 2.925 ms

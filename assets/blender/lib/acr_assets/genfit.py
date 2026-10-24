@@ -23,7 +23,9 @@ thousand non-manifold edges and loose crumbs. `fit(rel)` turns it into one item:
    1 - metallic and blackened metal) and tangent normals from the source (Cycles, selected
    to active); missed texels are measured (`tex_unbaked_frac`: transparent texels inside
    the UV islands, margin 0) and then filled by dilation; both images packed and bound to
-   the material (no magenta). Images are PNG: the renderer decodes PNG only;
+   the material (no magenta), normal map at the category's `nrm` px, roughness 0.85 and
+   metallic 0 (layer "metal": `ROUGHNESS`, `METALLIC`). Images are PNG: the renderer
+   decodes PNG only; the glb keeps the normal map (`normalTexture`);
 7. origin: headgear at `socket.hat` (world position given), held items at the grip point
    (`grip_fraction`: the guard or the head along the long axis), worn gear at the middle
    of the body side; `acr_grip` / `acr_length` on the object for FABRIK grips.
@@ -41,13 +43,18 @@ decay material on its baked image and `acr_baked`, so `Character.colours` and
 import math
 import os
 
-# Category: triangle budget, texture size (px), bake cage (fraction of the item's size).
+# Category: triangle budget, texture size (px), normal-map size (px, at most `tex`).
 CATEGORIES = {
-    "headgear": {"tris": 4000, "tex": 1024},
-    "held": {"tris": 1500, "tex": 512},
-    "worn": {"tris": 2000, "tex": 512},
-    "prop": {"tris": 3000, "tex": 1024},
+    "headgear": {"tris": 4000, "tex": 1024, "nrm": 1024},
+    "held": {"tris": 1500, "tex": 512, "nrm": 512},
+    "worn": {"tris": 2000, "tex": 512, "nrm": 512},
+    "prop": {"tris": 3000, "tex": 1024, "nrm": 512},
 }
+# Metallic factor of the exported material by decay layer: the albedo is baked (shading
+# and the metal's tint included), so only real metal keeps a little (helmets, blades,
+# barrels); the renderer only tints the highlight with it (docs/rendering-3d.md).
+METALLIC = {"metal": 0.3}
+ROUGHNESS = {"metal": 0.5}
 
 # Item: category, real size in m (headgear: width along X; held: length; worn: largest
 # extent), decay layer, optional `band` (headgear: band plane above the eye line, m),
@@ -934,12 +941,14 @@ def dilate_fill(rgb, known, steps=64):
     return rgb, known
 
 
-def bake(src, low, name, tex, reach):
+def bake(src, low, name, tex, reach, nrm_px=None, layer=None):
     """Smart-UV on `low`, bakes base colour (emission of the source albedo) and normals from
     `src`, and binds both images (packed) in one Principled material: colour → Base Color,
     normal → Normal Map. The colour bake has no margin into a transparent image, so texels
     the rays missed stay transparent: `unbaked` is their share of the texels inside the UV
-    islands. Then misses and the margins are filled from baked neighbours (dilation)."""
+    islands. Then misses and the margins are filled from baked neighbours (dilation). The
+    normal map (OpenGL convention, green +Y = +v: glTF's) is scaled to `nrm_px`; roughness
+    and metallic are factors by `layer` (`ROUGHNESS`, `METALLIC`)."""
     import bpy
     import numpy as np
 
@@ -984,7 +993,10 @@ def bake(src, low, name, tex, reach):
     col.pixels.foreach_set(px.ravel())
     col.update()
     bsdf = nt.nodes["Principled BSDF"]
-    bsdf.inputs["Roughness"].default_value = 0.85
+    bsdf.inputs["Roughness"].default_value = ROUGHNESS.get(layer, 0.85)
+    bsdf.inputs["Metallic"].default_value = METALLIC.get(layer, 0.0)
+    if nrm_px and nrm_px < tex:
+        nrm.scale(nrm_px, nrm_px)
     bake_node.image = col
     nt.links.new(bake_node.outputs["Color"], bsdf.inputs["Base Color"])
     nt_n = nt.nodes.new("ShaderNodeTexImage")
@@ -993,6 +1005,7 @@ def bake(src, low, name, tex, reach):
     nt.links.new(nt_n.outputs["Color"], nm.inputs["Color"])
     nt.links.new(nm.outputs["Normal"], bsdf.inputs["Normal"])
     for im in (col, nrm):
+        im.file_format = "PNG"
         im.pack()
     return mat, col, nrm, round(unbaked, 4), fill
 
@@ -1096,8 +1109,11 @@ def fit(rel, head=None, socket=None, scalp=None, name=None, keep_source=False, r
         st["band_gap_m"] = {"min": round(gaps[0], 4), "median": round(gaps[len(gaps) // 2], 4)} if gaps else None
     lo, hi = _extent(_coords(low))
     size = max(h - l for l, h in zip(lo, hi))
-    _mat, col, _nrm, unbaked, fill = bake(src, low, name, budget["tex"], max(0.004, 0.02 * size))
+    nrm_px = min(budget["tex"], budget.get("nrm", budget["tex"]))
+    _mat, col, _nrm, unbaked, fill = bake(src, low, name, budget["tex"], max(0.004, 0.02 * size), nrm_px,
+                                          it.get("layer"))
     st["tex_px"] = budget["tex"]
+    st["normal_px"] = nrm_px
     st["tex_unbaked_frac"] = unbaked
     low["acr_fill_rgb"] = list(fill[:3])
     # origin
@@ -1121,17 +1137,24 @@ def fit(rel, head=None, socket=None, scalp=None, name=None, keep_source=False, r
 
 
 def game_material(ob, layer):
-    """Swaps the baked Principled material for a decay material on the baked colour image
-    (the renderer reads base colour; the normal map stays out of the unit) and marks the
-    object `acr_baked` so the unit's colour and outfit passes keep it."""
+    """Swaps the baked Principled material for a decay material on the baked colour image,
+    keeping the baked normal map (`acr_normal_image`, bound by `decay.export_material`) and
+    the layer's metallic and roughness, and marks the object `acr_baked` so the unit's
+    colour and outfit passes keep it."""
     from . import decay
 
-    col = next(n.image for n in ob.data.materials[0].node_tree.nodes
-               if n.type == "TEX_IMAGE" and n.image and n.image.name.endswith(".col"))
+    imgs = [n.image for n in ob.data.materials[0].node_tree.nodes if n.type == "TEX_IMAGE" and n.image]
+    col = next(i for i in imgs if i.name.endswith(".col"))
+    nrm = next((i for i in imgs if i.name.endswith(".nrm")), None)
     rgb = tuple(ob.get("acr_fill_rgb", (0.5, 0.5, 0.5)))
     m = decay.material(f"{ob.name}.genfit", layer, rgb,
-                       image=col, uv_map=ob.data.uv_layers[0].name, interpolation="Linear")
+                       image=col, uv_map=ob.data.uv_layers[0].name, interpolation="Linear",
+                       roughness=ROUGHNESS.get(layer, 0.85), metallic=METALLIC.get(layer, 0.0))
     m["acr_colour_from"] = "generated"
+    m["acr_roughness"] = ROUGHNESS.get(layer, 0.85)
+    m["acr_metallic"] = METALLIC.get(layer, 0.0)
+    if nrm is not None:
+        m["acr_normal_image"] = nrm.name
     ob.data.materials.clear()
     ob.data.materials.append(m)
     ob["acr_baked"] = True

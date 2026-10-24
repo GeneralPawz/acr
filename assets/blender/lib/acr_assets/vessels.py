@@ -95,9 +95,11 @@ def transform(objs, matrix):
         o.data.update()
 
 
-def base_colour_only(objs, max_size=1024, tint=None):
-    """Every material keeps its base colour (texture or factor) and loses normal, metal and
-    roughness maps; textures are shrunk to `max_size` and go out as PNG."""
+def base_colour_only(objs, max_size=1024, tint=None, keep_normal=False):
+    """Every material keeps its base colour (texture or factor) and loses metal and
+    roughness maps (roughness 0.85, metallic 0: the generated albedo has its shading baked
+    in), and its normal map unless `keep_normal` (then the tangent Normal Map chain stays, its
+    image linear: glTF normalTexture); textures are shrunk to `max_size` and go out as PNG."""
     seen = set()
     for o in objs:
         for slot in o.material_slots:
@@ -109,7 +111,14 @@ def base_colour_only(objs, max_size=1024, tint=None):
             bsdf = next((n for n in nt.nodes if n.type == "BSDF_PRINCIPLED"), None)
             if bsdf is None:
                 continue
+            nmap = None
+            if keep_normal and bsdf.inputs["Normal"].links:
+                nmap = bsdf.inputs["Normal"].links[0].from_node
+                if nmap.type != "NORMAL_MAP" or nmap.space != "TANGENT":
+                    nmap = None
             for name in ("Normal", "Metallic", "Roughness", "Specular IOR Level", "Emission Color"):
+                if name == "Normal" and nmap is not None:
+                    continue
                 inp = bsdf.inputs.get(name)
                 if inp is not None:
                     for link in list(inp.links):
@@ -119,8 +128,10 @@ def base_colour_only(objs, max_size=1024, tint=None):
             for n in list(nt.nodes):
                 if n.type == "TEX_IMAGE" and not _feeds(n, bsdf):
                     nt.nodes.remove(n)
-                elif n.type == "NORMAL_MAP":
+                elif n.type == "NORMAL_MAP" and n is not nmap:
                     nt.nodes.remove(n)
+                elif n.type == "TEX_IMAGE" and nmap is not None and _feeds(n, nmap, 2):
+                    n.image.colorspace_settings.name = "Non-Color"
             if tint is not None:
                 _tint(nt, bsdf, tint)
     for img in bpy.data.images:

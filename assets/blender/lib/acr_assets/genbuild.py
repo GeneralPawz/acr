@@ -6,8 +6,9 @@ direction 104). They live outside the repo, like every base model:
 `$ACR_SOURCES/generated/{tripo,meshy}/<Type>_sprite.glb` (`D:\\ACR-models\\generated` locally,
 `/home/claude/sources/generated` on the render VM); Tripo wins where both exist.
 
-`building(ctx, type)` imports one, keeps its base colour (texture shrunk to `tex` px), and
-fits it to the sprite: `spritefit.fit` searches the turn about +Z (10 degree steps, then the
+`building(ctx, type)` imports one, keeps its base colour and its tangent normal map (both
+shrunk to `tex` px; stats `normal_maps`; a source without one gets the relief the decimation
+took off baked at `nrm` px, `normal_baked_px`), and fits it to the sprite: `spritefit.fit` searches the turn about +Z (10 degree steps, then the
 best four refined) and the uniform scale and ground shift that maximise the silhouette IoU
 against the reference `acr model-ref` drew (`ctx.ref`, the ground point at its anchor, so
 `LOCATION` is accounted for). The lowest point stands at z = 0. The result is decimated to
@@ -88,7 +89,9 @@ def _load(ctx, type_, tex):
     service, path = source(type_)
     objs = vs.import_file(path)
     tris = vs.triangles(objs)
-    vs.base_colour_only(objs, max_size=tex)
+    vs.base_colour_only(objs, max_size=tex, keep_normal=True)
+    ctx.stats["normal_maps"] = sorted({list(img.size)[0] for img in bpy.data.images
+                                       if img.users and img.colorspace_settings.name == "Non-Color" and img.size[0]})
     obj = vs.join(objs, f"{ctx.root.name}.model")
     v, _ = _arrays(obj)
     c = (v.min(axis=0) + v.max(axis=0)) / 2
@@ -120,7 +123,37 @@ def _need_ref(ctx):
     return ctx.ref
 
 
-def building(ctx, type_, budget=12000, tex=1024, pitch=0.0):
+def bake_normal(high, low, px, name):
+    """Bakes the tangent normal map (OpenGL, green +Y: glTF) of `high` onto `low` (its
+    decimated copy, same uvs) at `px` and binds it to `low`'s one material; returns the px or
+    None (no uvs, several materials, or a normal map kept from the source)."""
+    from . import genfit
+    from . import nature
+
+    me = low.data
+    if not me.uv_layers or len(me.materials) != 1 or me.materials[0] is None:
+        return None
+    nt = me.materials[0].node_tree
+    bsdf = next((n for n in nt.nodes if n.type == "BSDF_PRINCIPLED"), None)
+    if bsdf is None or bsdf.inputs["Normal"].links:
+        return None
+    img = bpy.data.images.new(name + ".nrm", px, px)
+    img.generated_color = (0.5, 0.5, 1.0, 1.0)
+    img.colorspace_settings.name = "Non-Color"
+    node = nt.nodes.new("ShaderNodeTexImage")
+    node.name = "genfit.bake"
+    node.image = img
+    v, _ = _arrays(low)
+    size = float((v.max(axis=0) - v.min(axis=0)).max())
+    genfit._bake(high, low, img, "NORMAL", max(0.01, 0.005 * size))
+    nt.nodes.remove(node)
+    img.file_format = "PNG"
+    img.pack()
+    nature.bind_normal(nt, bsdf, img)
+    return px
+
+
+def building(ctx, type_, budget=12000, tex=1024, pitch=0.0, nrm=512):
     ref = _need_ref(ctx)
     obj = _load(ctx, type_, tex)
     view = ref.views[0]
@@ -129,7 +162,14 @@ def building(ctx, type_, budget=12000, tex=1024, pitch=0.0):
     vs.transform([obj], _matrix(f))
     ctx.stats["fit"] = {k: (round(x, 4) if isinstance(x, float) else x) for k, x in f.items() if k != "screen"}
     ctx.stats["fit"]["shift"] = [round(x, 3) for x in f["shift"]]
+    high = obj.copy()
+    high.data = obj.data.copy()
+    bpy.context.scene.collection.objects.link(high)
     ctx.stats["triangles"] = vs.decimate(obj, budget)
+    if not ctx.stats["normal_maps"]:
+        # no normal map in the source: bake what the decimation took off
+        ctx.stats["normal_baked_px"] = bake_normal(high, obj, nrm, obj.name)
+    bpy.data.objects.remove(high, do_unlink=True)
     ctx.stats["iou"] = _final_iou(obj, m, ref.anchor, view.dir)
     ctx.stats["size_m"] = _size(obj)
     obj.parent = ctx.root

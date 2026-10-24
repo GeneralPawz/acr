@@ -18,7 +18,9 @@
 What it does: imports and joins the kept nodes, puts the trunk base on the ground point,
 scales to `height`, cuts to `budget` (bark: collapse decimation; leaf cards: whole cards are
 dropped by a seeded draw and the kept ones grow to keep the crown's cover), rebuilds every
-material as one base-colour PNG (max 512 px) on a Principled BSDF, leaf cards through a Round
+material as one base-colour PNG (max 512 px) on a Principled BSDF (roughness 0.9, metallic 0,
+the source's tangent normal map kept as a linear PNG of at most 512 px where it has one:
+`normal_maps` in the stats; the collapse decimation keeps the uvs), leaf cards through a Round
 node on the image alpha (exported as `alphaMode: MASK`), and removes all colour attributes:
 the renderer multiplies `COLOR_0` into the colour, and the sources' baked vertex colours
 (black or AO) made crowns dark. Wind (`_WIND`, the same channels as `broadleaf.py`): x trunk
@@ -86,6 +88,56 @@ def _image_of(mat):
     return None, flat
 
 
+def _normal_of(mat):
+    """(image, strength) of the source's tangent-space normal map (the image behind a Normal
+    Map node on the Principled Normal input), or (None, 1.0)."""
+    if mat is None or not mat.use_nodes:
+        return None, 1.0
+    bsdf = next((n for n in mat.node_tree.nodes if n.type == "BSDF_PRINCIPLED"), None)
+    if bsdf is None or not bsdf.inputs["Normal"].links:
+        return None, 1.0
+    nm = bsdf.inputs["Normal"].links[0].from_node
+    if nm.type != "NORMAL_MAP" or nm.space != "TANGENT" or not nm.inputs["Color"].links:
+        return None, 1.0
+    tex = nm.inputs["Color"].links[0].from_node
+    if tex.type != "TEX_IMAGE" or tex.image is None:
+        return None, 1.0
+    return tex.image, float(nm.inputs["Strength"].default_value)
+
+
+def normal_png(img, size, name):
+    """A packed linear PNG copy of normal map `img`, at most `size` px (glTF normalTexture:
+    OpenGL convention, green +Y, which is what Blender bakes and glTF sources carry)."""
+    if img.size[0] == 0 and img.filepath:
+        img.reload()
+    w, h = img.size
+    if w == 0:
+        return None
+    px = _pixels(img)
+    out = bpy.data.images.new(name, w, h, alpha=False)
+    out.colorspace_settings.name = "Non-Color"
+    out.pixels.foreach_set(np.clip(px, 0, 1).ravel())
+    if max(w, h) > size:
+        k = size / max(w, h)
+        out.scale(max(1, int(w * k)), max(1, int(h * k)))
+    out.file_format = "PNG"
+    out.filepath_raw = name + ".png"
+    out.pack()
+    return out
+
+
+def bind_normal(nt, bsdf, img, strength=1.0):
+    """Normal Map (tangent) of `img` into the Principled Normal: exported as normalTexture
+    with `scale` = strength."""
+    tex = nt.nodes.new("ShaderNodeTexImage")
+    tex.image = img
+    tex.interpolation = "Linear"
+    nm = nt.nodes.new("ShaderNodeNormalMap")
+    nm.inputs["Strength"].default_value = strength
+    nt.links.new(tex.outputs["Color"], nm.inputs["Color"])
+    nt.links.new(nm.outputs["Normal"], bsdf.inputs["Normal"])
+
+
 def _is_leaf(name, words):
     n = name.lower()
     return any(w in n for w in words)
@@ -141,10 +193,11 @@ def _level(img, target, opaque):
     return _put(img, px, ".lit"), gain
 
 
-def _materials(obj, leaf_words, snow, level, gains, recolour=False):
+def _materials(obj, leaf_words, snow, level, gains, recolour=False, normal_sizes=None):
     """Rebuilds every slot as image -> Principled (leaf cards: alpha -> Round -> Alpha)."""
     leaf_slots = set()
     done = {}
+    normals = {} if normal_sizes is None else normal_sizes
     for i, slot in enumerate(obj.material_slots):
         src = slot.material
         name = src.name if src else f"mat{i}"
@@ -155,6 +208,7 @@ def _materials(obj, leaf_words, snow, level, gains, recolour=False):
             slot.material = done[name]
             continue
         img, flat = _image_of(src)
+        nimg, nstr = _normal_of(src)
         if img is not None and img.size[0] == 0 and img.filepath:
             img.reload()
         if img is not None and max(img.size) > MAX_TEX:
@@ -188,6 +242,12 @@ def _materials(obj, leaf_words, snow, level, gains, recolour=False):
                 nt.links.new(rnd.outputs[0], bsdf.inputs["Alpha"])
         else:
             bsdf.inputs["Base Color"].default_value = flat
+        if nimg is not None:
+            # the source's normal map, kept through the decimation (collapse keeps the uvs)
+            n = normal_png(nimg, MAX_TEX, f"{obj.name}.{i}.nrm")
+            if n is not None:
+                bind_normal(nt, bsdf, n, nstr)
+                normals[name] = list(n.size)
         mat["acr_nature"] = "leaves" if leaf else "bark"
         done[name] = mat
         slot.material = mat
@@ -356,8 +416,9 @@ def build(ctx, spec):
         obj.data.color_attributes.remove(attr)
     leaf_words = spec.get("leaves", LEAF_WORDS if kind != "rock" else ())
     gains = {}
+    normals = {}
     leaf_slots = _materials(obj, leaf_words, spec.get("snow", 0.0), spec.get("leaf_level", LEAF_LEVEL), gains,
-                            spec.get("recolour", False))
+                            spec.get("recolour", False), normals)
     budget = spec.get("budget", 6000)
     cards = None
     if leaf_slots:
@@ -415,6 +476,7 @@ def build(ctx, spec):
         "cards": cards,
         "leaf_gain": {k: round(v, 2) for k, v in sorted(gains.items())},
         "materials": sorted(s.material.name for s in obj.material_slots if s.material),
+        "normal_maps": {k: v for k, v in sorted(normals.items())},
     }
 
 
@@ -488,7 +550,8 @@ def _map_tone(low, view):
     from . import conventions as cv
 
     me = low.data
-    node = next(n for n in me.materials[0].node_tree.nodes if n.type == "TEX_IMAGE" and n.image)
+    bsdf = next(n for n in me.materials[0].node_tree.nodes if n.type == "BSDF_PRINCIPLED")
+    node = bsdf.inputs["Base Color"].links[0].from_node
     img = node.image
     w, h = img.size
     px = _pixels(img)
@@ -547,7 +610,7 @@ def build_generated(ctx, spec):
                 the sprite's brightness: `_map_tone`; needs the game folder)
         turn    degrees about +Z
 
-    The baked normal map is dropped (the renderer reads base colour only). Stats: the
+    The baked normal map is kept (`normal_map_px`), roughness 0.85, metallic 0. Stats: the
     `genfit.fit` numbers (`source_triangles`, `triangles`, `deviation`, `tex_unbaked_frac`,
     `backdrop_faces_removed`, `size_m`) plus `wind`, `flutter_frac`."""
     from . import genfit
@@ -566,18 +629,10 @@ def build_generated(ctx, spec):
         row = dict(MAP_KINDS[mp], category="prop", size=round(float(size), 3), layer="stone")
     low, st = genfit.fit(spec["source"], name=f"{ctx.name}.mesh", row=row)
     me = low.data
-    # base colour only: drop the normal-map chain and its image
-    for m in me.materials:
-        nt = m.node_tree
-        for n in list(nt.nodes):
-            if n.type == "NORMAL_MAP" or (n.type == "TEX_IMAGE" and n.image and n.image.name.endswith(".nrm")):
-                if n.type == "TEX_IMAGE":
-                    img = n.image
-                    nt.nodes.remove(n)
-                    bpy.data.images.remove(img)
-                else:
-                    nt.nodes.remove(n)
-    img = next(n.image for n in me.materials[0].node_tree.nodes if n.type == "TEX_IMAGE" and n.image)
+    # the baked normal map stays (normalTexture; genfit.CATEGORIES "nrm" px)
+    nrm = _normal_of(me.materials[0])[0]
+    st["normal_map_px"] = list(nrm.size) if nrm is not None else None
+    img = _image_of(me.materials[0])[0]
     px = np.empty(img.size[0] * img.size[1] * 4, np.float32)
     img.pixels.foreach_get(px)
     px = px.reshape(-1, 4)
@@ -595,7 +650,7 @@ def build_generated(ctx, spec):
     mode = spec.get("sway")
     rgb = None
     if mode == "green":
-        img = next(n.image for n in me.materials[0].node_tree.nodes if n.type == "TEX_IMAGE" and n.image)
+        img = _image_of(me.materials[0])[0]
         w, h = img.size
         px = np.empty(w * h * 4, np.float32)
         img.pixels.foreach_get(px)
