@@ -133,6 +133,26 @@ hand, which holds the fore-end; the horse plays `Idle`. `stats.json` `reload` (f
 their goals as played). Details in `docs/assets-humans.md`, "Reload drill". Sheet:
 `ACR-analysis/genai/dragoon-reload/engd18_reload_sheet.png`.
 
+## The horse: detail, reins, hair, levels (#233)
+
+`mount.PARTS` is the master: the pack's hide whole (28.3 k triangles; at 9 k it showed
+facets over barrel, neck and croup), hair cards 14 k, bridle, bit rings and reins
+(`saddle2`) 9 k. `mount.lods` adds three authored levels of the horse mesh
+(`mount.LOD_PARTS`: 14.8 k, 5.3 k, 1.9 k; `extras.acr_lod` / `acr_lod_of`, materials shared,
+docs/rendering-3d.md "Authored levels"); `stats.json` `horse.lod_triangles`.
+
+`mount.follow_reins` keys the pack's rein ends (`reins_01_<side>`, `posFix`) into the
+rider's fists (`socket.hand_<side>`) on every frame of every clip: the left rein in the left
+fist, the right one in the right fist while that is on the reins and otherwise in the left
+fist 3 cm to the right (aim, cut, the mounted reload); both let go as the rider's root leaves
+his seat (thrown, corpses). `stats.json` `horse.reins`: the end's miss against its fist over
+the held side-frames, before and after, and the frames let go per clip.
+
+`mount.hair_wind` gives the mane, forelock and tail cards `_WIND` (branch swing and flutter
+from 0 at the hide to 1 at 0.6 m off it, a phase per 6 cm clump), so the game's wind sways
+them on top of the pack's tail bones. The hair stays `alphaMode: MASK`; hide, eyes and tack
+are opaque.
+
 ## Not yet
 
 - Facings, lace and sash are shells and thin geometry; at game zoom the lapels read as

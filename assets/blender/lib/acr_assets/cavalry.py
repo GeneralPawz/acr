@@ -1591,6 +1591,9 @@ def build(ctx, spec):
     rider = ch.layers["flesh"] + ch.layers["clothes"]
     ch.masks()
     made = add_clips(ch, spec["md"], spec.get("motions", MOTIONS))
+    # The reins' ends in the rider's fists through every clip; the mane and tail in the wind.
+    hz.stats["reins"] = mount.follow_reins(ch.arm, list(ch.arm.get("acr_clips", [])), prefix=P)
+    mount.hair_wind(hz)
     am.set_clip(ch.arm, "STAND")
     report = {}
     colours = ch.colours(ctx.ref, spec["palette"], report=report, fixed=spec.get("fixed", ()))
@@ -1608,6 +1611,7 @@ def build(ctx, spec):
         part = o.data.attributes.get("_part") or o.data.attributes.new("_part", "FLOAT", "POINT")
         for d in part.data:
             d.value = float(horse.HORSE_PART)
+    horse_meshes += mount.lods(hz)
     tris = ch.triangles()
     tris["horse"] = hz.stats["triangles"]
     for o in ch.horse["extra"]:

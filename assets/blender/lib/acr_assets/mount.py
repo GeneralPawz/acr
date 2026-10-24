@@ -12,7 +12,9 @@ builds its rider on skeleton H and `join`s the two armatures: the rider's root h
 horse's `saddle` bone, so he follows the back through every gait. `key_clip` keys a combined
 clip: the horse's sampled frames and the rider's pose specs.
 
-The pack's own saddle and bridle (leather, its reins on rein bones) stay; `saddlecloth`
+The pack's own saddle and bridle (leather, its reins on rein bones) stay, the reins' ends
+keyed into the rider's fists (`follow_reins`), the hair cards swaying in the wind
+(`hair_wind`), the mesh with authored levels (`lods`); `saddlecloth`
 adds a cloth in the regiment's colour under the saddle, cut from the horse's back.
 """
 
@@ -23,15 +25,21 @@ import bpy
 from mathutils import Matrix, Vector
 
 from . import animals as an
+from . import armature as am
 
 BLEND = "wildmesh/Horse/SK_Horse.blend"
 WITHERS = 1.5  # metres, ground to the top of the withers in the idle pose
-TRIS = 16000
-# Triangles per material of the pack (#233 follow-up), within `TRIS`: an even ratio left the
-# hide 3.6 k while the alpha hair cards kept 8 k, so the barrel, neck and head showed facets
-# in the free camera. Alpha cards still read as strands with far fewer triangles; the eyes
-# (3.9 k in the pack) are two small balls.
-PARTS = {"body": 9000, "hair": 3600, "saddle2": 2000, "saddle1": 1200, "eye": 200}
+# Triangles per material of the pack in the master (#233): high detail first. The hide keeps
+# all of the pack's 28 k triangles (decimated to 9 k it showed facets over the barrel, neck and
+# croup in the free camera); hair cards, bridle and reins keep about half. `LOD_PARTS` are the
+# authored levels (`lods`) the game draws further out.
+PARTS = {"body": 30000, "hair": 14000, "saddle2": 9000, "saddle1": 3200, "eye": 800}
+TRIS = sum(PARTS.values())
+LOD_PARTS = (
+    {"body": 9000, "hair": 3600, "saddle2": 2000, "saddle1": 1200, "eye": 200},
+    {"body": 3200, "hair": 1400, "saddle2": 600, "saddle1": 400, "eye": 60},
+    {"body": 1100, "hair": 500, "saddle2": 160, "saddle1": 120, "eye": 24},
+)
 SRC_FPS = 30
 # Leg bones whose fallen pose is relaxed (bent a little) instead of the standing pose's.
 # Fallen legs (#287): (bone, degrees, towards): each joint bends its bone towards the tail
@@ -432,8 +440,6 @@ def key_clip(arm, name, horse_frames, rider_keys, pose, prefix="rider."):
                 pb.keyframe_insert("scale", frame=f, group=pb.name)
         if f in rider_at:
             pose(arm, rider_at[f], f)
-    from . import armature as am
-
     for fc in am._fcurves(act):
         for kp in fc.keyframe_points:
             kp.interpolation = "LINEAR"
@@ -548,3 +554,148 @@ def saddlecloth(horse, name, rgb, half_len=0.36, drop=0.42, offset=0.018, rows=1
     horse.stats["saddlecloth"] = {"triangles": 2 * len(me.polygons), "min_gap_mm": round(min(gaps) * 1000, 1),
                                   "max_gap_mm": round(max(gaps) * 1000, 1)}
     return obj
+
+
+# ----------------------------------------------------------------------------- reins, hair, LODs
+
+# The pack's reins end in bones on the saddle (`reins_01_<side>`, its `inner` child the end in
+# the fist, `posFix` a second grip bone); their middle hangs from the neck and the front from
+# the head (the bit ring).
+REIN_BONES = {sd: (f"reins_01_{sd}", f"reins_01_posFix_{sd}") for sd in ("l", "r")}
+REIN_TAKE = (0.10, 0.22)  # right fist off its rein end (m): the left fist takes both reins
+REIN_DROP = (0.35, 0.60)  # rider's root off his seat on the saddle (m): let go (thrown, dead)
+REIN_SPLIT = 0.03  # both reins in the left fist: the right one this far to the right
+
+
+def _smooth(x, a, b):
+    t = min(max((x - a) / (b - a), 0.0), 1.0)
+    return t * t * (3.0 - 2.0 * t)
+
+
+def follow_reins(arm, clips, prefix="rider."):
+    """Keys the reins' ends into the rider's fists on every frame of `clips` (#233): the left
+    rein in the left fist, the right one in the right fist while it is on the reins, else in the
+    left fist beside the left rein (aiming, cutting, the mounted reload); let go when the rider
+    leaves the saddle (thrown, the corpses). The pack's reins stayed on the saddle
+    bones, so they missed the fists in every clip that moves the hands. Returns the miss of
+    the rein end against its fist (m) before and after over the held frames (side x frame) and
+    the frames let go per clip."""
+    pb = arm.pose.bones
+    if "reins_01_inner_l" not in pb or prefix + "socket.hand_l" not in pb:
+        return {}
+    gap = {"before": [], "after": []}
+    let_go = {}
+
+    def rest():
+        # A channel a clip does not key plays at rest in the game, but keeps in Blender what
+        # the last clip shown left there (STAND's rider 1.4 m off his seat after an ATTACK).
+        for p in pb:
+            p.location, p.scale = Vector(), Vector((1.0, 1.0, 1.0))
+            p.rotation_quaternion, p.rotation_euler = (1.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0)
+
+    rest()
+    am.set_clip(arm, "STAND", 0)
+    seat = pb["saddle"].matrix.inverted() @ pb[prefix + "root"].head
+    for name in clips:
+        act = bpy.data.actions.get(name)
+        if act is None:
+            continue
+        s, e = (int(round(x)) for x in act.frame_range)
+        rest()
+        for f in range(s, e + 1):
+            am.set_clip(arm, name, f)
+            fist = {sd: pb[prefix + "socket.hand_" + sd].head.copy() for sd in ("l", "r")}
+            end = {sd: pb["reins_01_inner_" + sd].head.copy() for sd in ("l", "r")}
+            take = _smooth((fist["r"] - end["r"]).length, *REIN_TAKE)
+            want = {"l": fist["l"], "r": fist["r"].lerp(fist["l"] + Vector((-REIN_SPLIT, 0.0, 0.0)), take)}
+            off = (pb["saddle"].matrix.inverted() @ pb[prefix + "root"].head - seat).length
+            hold = 1.0 - _smooth(off, *REIN_DROP)
+            held = []
+            for sd in ("l", "r"):
+                d = want[sd] - end[sd]
+                if hold > 0.999:
+                    gap["before"].append(d.length)
+                    held.append(sd)
+                else:
+                    let_go[name] = let_go.get(name, 0) + 1
+                for bone in REIN_BONES[sd]:
+                    if bone not in pb:
+                        continue
+                    m = pb[bone].matrix.copy()
+                    m.translation += d * hold
+                    pb[bone].matrix = m
+                    pb[bone].keyframe_insert("location", frame=f, group=bone)
+            bpy.context.view_layer.update()
+            for sd in held:
+                gap["after"].append((want[sd] - pb["reins_01_inner_" + sd].head).length)
+        for fc in am._fcurves(act):
+            for kp in fc.keyframe_points:
+                kp.interpolation = "LINEAR"
+    arm.animation_data.action = None
+
+    def summ(v):
+        return {"mean_m": round(sum(v) / len(v), 4), "max_m": round(max(v), 4)} if v else {}
+
+    return {"held": len(gap["before"]), "let_go": let_go, "before": summ(gap["before"]), "after": summ(gap["after"])}
+
+
+def hair_wind(horse, reach=0.6, seed=233, cell=0.06):
+    """`_WIND` on the mane, forelock and tail cards (docs/rendering-3d.md "Wind"): the branch
+    swing `y` and the flutter `w` grow from 0 at the roots (on the hide) to the tips `reach`
+    metres off it, a phase `z` per clump of cards; no trunk bend. The game sways them with the
+    trees' wind on top of the clips' own tail and mane motion. Returns the hair vertices."""
+    import random
+
+    from mathutils.bvhtree import BVHTree
+
+    body = horse.meshes[0]
+    me = body.data
+    mats = me.materials
+    hide = [p for p in me.polygons if mats[p.material_index] and "body" in mats[p.material_index].name.lower()]
+    hair = {i for p in me.polygons if mats[p.material_index] and any(k in mats[p.material_index].name.lower() for k in CARDS)
+            for i in p.vertices}
+    tree = BVHTree.FromPolygons([v.co for v in me.vertices], [tuple(p.vertices) for p in hide])
+    active = me.color_attributes.active_color_name
+    a = me.attributes.new("_wind", "FLOAT_COLOR", "POINT")
+    # Not COLOR_0: that is the decay mask (the horse has none).
+    me.color_attributes.active_color_name = active or "none"
+    rnd = random.Random(seed)
+
+    def key(co):
+        return tuple(int(math.floor(c / cell)) for c in co)
+
+    phases = {k: None for k in (key(me.vertices[i].co) for i in hair)}
+    for k in sorted(phases):
+        phases[k] = rnd.random()
+    top = 0.0
+    for i, v in enumerate(me.vertices):
+        if i not in hair:
+            a.data[i].color = (0.0, 0.0, 0.0, 0.0)
+            continue
+        t = min(tree.find_nearest(v.co)[3] / reach, 1.0)
+        y = 0.8 * t ** 1.3
+        top = max(top, y)
+        a.data[i].color = (0.0, y, phases[key(v.co)], t)
+    horse.stats["hair_wind"] = {"vertices": len(hair), "max_branch": round(top, 3)}
+    return len(hair)
+
+
+def lods(horse, levels=LOD_PARTS):
+    """The authored levels of the horse's mesh (docs/rendering-3d.md "Authored levels"): copies
+    collapsed per material to `levels` (weights, `_part` and `_wind` kept, the master's
+    materials shared), as `extras.acr_lod` = 1.. / `acr_lod_of`. Returns the level objects."""
+    m = horse.meshes[0]
+    out = []
+    for k, budget in enumerate(levels, 1):
+        lo = m.copy()
+        lo.data = m.data.copy()
+        for col in m.users_collection:
+            col.objects.link(lo)
+        lo.name = f"{m.name}.lod{k}"
+        _decimate_parts([lo], budget)
+        lo["acr_lod"] = k
+        lo["acr_lod_of"] = m.name
+        lo["acr_lod_tris"] = sum(_tris_by_material(lo).values())
+        out.append(lo)
+    horse.stats["lod_triangles"] = [lo["acr_lod_tris"] for lo in out]
+    return out
