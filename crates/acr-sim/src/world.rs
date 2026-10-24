@@ -566,6 +566,9 @@ pub struct World {
     /// Fires left on the ground by bursting shells (only with the rule
     /// [`crate::Rules::hit_locations`]); hashed only while there are some.
     pub ground_fires: crate::ground_fire::GroundFires,
+    /// Mortars' engagement zones ([`crate::Rules::mortars`], [`crate::mortar`]); hashed only
+    /// while some mortar has zones.
+    pub mortar_zones: crate::mortar::Zones,
 }
 
 /// Unit indices per 128 px cell (8 × 8 lock cells).
@@ -711,6 +714,7 @@ impl World {
             ai: [false; PLAYERS],
             rules: Default::default(),
             ground_fires: Default::default(),
+            mortar_zones: Default::default(),
         }
     }
 
@@ -968,6 +972,7 @@ impl World {
         for c in commands {
             self.apply(c);
         }
+        crate::mortar::tick(self);
         crate::peace::tick(self);
         crate::desant::tick(self);
         crate::economy::city_tick(self);
@@ -1290,6 +1295,16 @@ impl World {
                     }
                 }
             }
+            Command::MortarZones { player, units, zones } => {
+                for i in self.owned(*player, units) {
+                    crate::mortar::set_zones(self, i, zones);
+                }
+            }
+            Command::MortarFire { player, units, on } => {
+                for i in self.owned(*player, units) {
+                    crate::mortar::set_fire(self, i, *on);
+                }
+            }
             Command::Board { player, units, transport } => {
                 let t = transport.0 as usize;
                 if self.units.get(t).is_some_and(|u| u.owner == *player) {
@@ -1371,6 +1386,7 @@ impl World {
         // Likewise the optional rules, only when some are on, and shell fires while some burn.
         let hash = if self.rules == crate::Rules::default() { hash } else { state_hash(&(hash, self.rules)) };
         let hash = if self.ground_fires.list.is_empty() { hash } else { state_hash(&(hash, &self.ground_fires)) };
+        let hash = if self.mortar_zones.is_empty() { hash } else { state_hash(&(hash, &self.mortar_zones)) };
         // The peace time, only in games that have one.
         if self.peace == crate::peace::Peace::default() { hash } else { state_hash(&(hash, &self.peace)) }
     }

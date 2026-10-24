@@ -46,6 +46,9 @@ pub struct Settings {
     /// ACR: new games use the optional body-spacing rule (men, horses and animals take up
     /// space, docs/body-spacing.md); `body_spacing=on|off`, off by default.
     pub body_spacing: bool,
+    /// ACR: new games use the optional mortars rule (`ArtMrt` units with engagement zones,
+    /// docs/simulation.md "Mortar"); `mortars=on|off`, off by default.
+    pub mortars: bool,
     /// ACR: sun shadows of the 3D models (`shadows=on|off`, on by default;
     /// docs/rendering-3d.md "Shadows").
     pub shadows: bool,
@@ -152,6 +155,7 @@ impl Default for Settings {
             decay_stain: None,
             hit_locations: false,
             body_spacing: false,
+            mortars: false,
             shadows: true,
             lod: true,
             wind: true,
@@ -224,7 +228,7 @@ impl Settings {
         format!(
             "sound_volume={}\nmusic_volume={}\nmusic_mode={}\ngame_mode={}\nscroll_speed={}\nframe_time={}\n\
              resolution={}\nrecord={}\nrecord_file={hex}\ncontrols={controls}\nedge_scroll={}\n\
-             models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\ncorpse_decay={}\nhit_locations={}\nbody_spacing={}\nshadows={}\nlod={}\nwind={}\nmap_models={}\nwater={}\n\
+             models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\ncorpse_decay={}\nhit_locations={}\nbody_spacing={}\nmortars={}\nshadows={}\nlod={}\nwind={}\nmap_models={}\nwater={}\n\
              ground={}\nbattlefield_marks={}\nweather={}\n{}",
             self.sound_volume,
             self.music_volume,
@@ -239,6 +243,7 @@ impl Settings {
             if self.corpse_decay_half { "half" } else { "full" },
             if self.hit_locations { "on" } else { "off" },
             if self.body_spacing { "on" } else { "off" },
+            if self.mortars { "on" } else { "off" },
             if self.shadows { "on" } else { "off" },
             if self.lod { "on" } else { "off" },
             if self.wind { "on" } else { "off" },
@@ -296,6 +301,7 @@ impl Settings {
                 "hit_locations" => s.hit_locations = value == "on",
                 "corpse_decay" => s.corpse_decay_half = value == "half",
                 "body_spacing" => s.body_spacing = value == "on",
+                "mortars" => s.mortars = value == "on",
                 "shadows" => s.shadows = value != "off",
                 "lod" => s.lod = value != "off",
                 "wind" => s.wind = value != "off",
@@ -358,6 +364,7 @@ mod tests {
             decay_stain: Some(false),
             hit_locations: true,
             body_spacing: true,
+            mortars: true,
             marks_keep: true,
             weather: Weather::Snow,
         };

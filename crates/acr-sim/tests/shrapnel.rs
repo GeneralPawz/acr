@@ -67,7 +67,7 @@ fn setup(rules: Rules) -> (World, TypeId, TypeId, TypeId, TypeId) {
     (w, mor, tgt, sol, can)
 }
 
-const ON: Rules = Rules { hit_locations: true, body_spacing: false };
+const ON: Rules = Rules { hit_locations: true, body_spacing: false, mortars: false };
 
 /// A mortar shells a target with a ring of soldiers around it; the world after `ticks`.
 fn shell(rules: Rules, ticks: u32) -> World {

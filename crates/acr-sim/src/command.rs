@@ -78,6 +78,12 @@ pub enum Command {
     /// priority 0x90): units that may (`ARTPODGOTOVKA`, cannons) fire at it until stopped,
     /// with `ADDRANGE` % of their range and `ADDPAUSE` % of their reload.
     AttackGround { player: PlayerId, units: Vec<EntityId>, x: i32, y: i32 },
+    /// Give mortars their engagement zones (not in the original game; [`crate::Rules::mortars`],
+    /// [`crate::mortar::set_zones`]): circles on the ground (world px) they shell in turn once
+    /// told to fire. No zones clear them.
+    MortarZones { player: PlayerId, units: Vec<EntityId>, zones: Vec<crate::mortar::Zone> },
+    /// Start or stop mortars shelling their zones ([`crate::mortar::set_fire`]).
+    MortarFire { player: PlayerId, units: Vec<EntityId>, on: bool },
     /// Board a transport (`GoToTransport` 0x54d78d, priority 0x90): land units walk to its
     /// landing point and over the water into it. The transport must have docked once.
     Board { player: PlayerId, units: Vec<EntityId>, transport: EntityId },
@@ -185,6 +191,8 @@ impl Command {
             | Command::MoveFacing { player, .. }
             | Command::ScriptMove { player, .. }
             | Command::AttackGround { player, .. }
+            | Command::MortarZones { player, .. }
+            | Command::MortarFire { player, .. }
             | Command::FriendlyFire { player, .. }
             | Command::MeleeOnly { player, .. }
             | Command::StopProduction { player, .. }

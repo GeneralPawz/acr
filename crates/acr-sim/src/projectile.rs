@@ -306,7 +306,7 @@ pub fn create(
         dest_obj,
         // A bounce goes on with what is left of the ball (only set with the rule on).
         plough: if wp.damage_height != 0 { w.plough_carry.unwrap_or_default() } else { Plough::default() },
-        shot: if w.rules.hit_locations { w.shot_carry } else { Shot::default() },
+        shot: if w.rules.hit_locations || w.rules.mortars { w.shot_carry } else { Shot::default() },
     };
     let (dx, dy, dz) = (d.0 - xs, d.1 - ys, d.2 - zs);
     let mut explode_now = false;

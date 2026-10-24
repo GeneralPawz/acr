@@ -40,6 +40,7 @@ pub mod map;
 pub mod market;
 pub mod melee;
 pub mod morale;
+pub mod mortar;
 pub mod motion;
 pub mod path;
 pub mod peace;

@@ -264,6 +264,9 @@ pub enum GunMode {
     /// Direct fire (an attack on a building, or on men beyond canister reach): a flatter
     /// ball straight at the aim point with half the dispersion; a miss still bounces on.
     Direct = 3,
+    /// A mortar's shell ([`crate::Rules::mortars`], [`crate::mortar`]): a high arc that bursts
+    /// where it falls.
+    Mortar = 4,
 }
 
 impl GunMode {
@@ -273,6 +276,7 @@ impl GunMode {
             1 => Some(Self::Canister),
             2 => Some(Self::Ground),
             3 => Some(Self::Direct),
+            4 => Some(Self::Mortar),
             _ => None,
         }
     }
@@ -283,6 +287,7 @@ impl GunMode {
             Self::Canister => None,
             Self::Ground => Some(GROUND_ELEVATION),
             Self::Direct => Some(DIRECT_ELEVATION),
+            Self::Mortar => Some(crate::mortar::ELEVATION),
         }
     }
 }
@@ -316,7 +321,8 @@ pub fn ball_index(t: &ObjectType) -> Option<usize> {
 /// The mode, attack index and minimum distance (px) of cannon `i`'s next shot at a target
 /// `dst` px away: a point attack (`point`, with `times` shots left, 1 for `KARTECH` and the
 /// automatic volley) or an object (`building`). `None` without the hit-locations rule and for
-/// anything that is not a gun with canister and ball.
+/// anything that is not a gun with canister and ball. A mortar ([`crate::Rules::mortars`])
+/// always fires its shell, no nearer than [`crate::mortar::MIN_RANGE`].
 pub fn gun_shot(
     w: &World,
     i: usize,
@@ -325,11 +331,19 @@ pub fn gun_shot(
     building: bool,
     dst: i32,
 ) -> Option<(GunMode, usize, i32)> {
-    if !w.rules.hit_locations {
+    if !w.rules.hit_locations && !w.rules.mortars {
         return None;
     }
     let u = &w.units[i];
     let t = w.catalog.get(u.kind);
+    if w.rules.mortars && t.mortar {
+        let k = crate::mortar::shell_index(t)?;
+        let min = w.adv(u.owner, u.kind).attacks.get(k)?.radius.0.max(crate::mortar::MIN_RANGE);
+        return Some((GunMode::Mortar, k, min));
+    }
+    if !w.rules.hit_locations {
+        return None;
+    }
     let can = usize::from(t.sector_weapon?.att);
     let ball = ball_index(t)?;
     let ta = w.adv(u.owner, u.kind);
@@ -345,6 +359,6 @@ pub fn gun_shot(
     Some(match mode {
         GunMode::Canister => (mode, can, cr.0),
         GunMode::Ground => (mode, ball, GROUND_MIN),
-        GunMode::Direct => (mode, ball, 0),
+        GunMode::Direct | GunMode::Mortar => (mode, ball, 0),
     })
 }

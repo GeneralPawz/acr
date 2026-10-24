@@ -1261,6 +1261,41 @@ tenth of its life (so it never burns to death), and a unit that dies burning is 
 - 2D draws three flames of the burning-building loop (`[FIRES]` `#DFIRE2`) per fire, fewer
   as it burns down (`effects::ground_fire_sprites`, sprite path; not checked in the 3D view).
 
+### Mortar (optional rule, #301)
+
+Not in the original game. Period field guns fired solid shot almost flat, so indirect fire
+comes as its own unit, not as a high-arc mode of `ArtPus`. With `Rules::mortars` on
+(setting `mortars=on`, driver `start` option `mortars`, savegame rules bit 2) the game adds,
+before the world is made, an `ArtMrt(XX)` type after the original types for every
+`ArtPus(XX)` (`mortar::append_types`; off, the catalog, the type ids and the state hash
+stay as they were):
+
+- A copy of the field gun (`md_name` stays `ArtPus`, so it draws with the gun's sprite and
+  model for now) without canister: `WEAPONINSECTOR` and the `KARTECH` attack go.
+- The ball attack fires the original's unused mortar shell `NUCL3M` (`WEAPON.NDS` line 38:
+  `#NUCL2 800 60 NONE HI_GRAVITY3 ANGLE 75 -1`; at the burst its `[SYNCWEAPON]` throws the
+  `NUCLM` fragments and the `PU2` blast) as weapon kind `IADROMOR`
+  (`DeathCause::Explosion`), from `MIN_RANGE` 600 to `MAX_RANGE` 4000 px, reloading
+  `RELOAD_PCT` 150 % of the gun's `ATTACK_PAUSE`.
+- The shell flies at `ELEVATION` 60° (`GunMode::Mortar`, carried by the projectile like the
+  other gun modes); the scatter is the gun's `RAZBROS` through `CreateRazbros` (0x51b917),
+  which grows with the range. With hit locations also on, the burst throws shell fragments
+  and leaves a ground fire (above); with mortars alone it does the original's round damage.
+- It gets the gun's `TypeTech` and access rules and follows it in every build list that
+  holds the gun. Upgrades of the gun do not reach it yet.
+
+**Zones.** `Command::MortarZones` (replay tag 33) gives mortars up to `MAX_ZONES` 8 circles
+(radius clamped to 32..800 px; none clears them), `Command::MortarFire` (tag 34) starts or
+stops their fire. After the commands of a tick (`mortar::tick`), every firing mortar that is
+idle (no order) looks at its zones in turn from the one after its last target, takes the
+first whose enemies (living, on the map, no buildings) have their centre within its reach
+and no nearer than its minimum, and lays one round there through `NewAttackPoint`
+(0x51b4aa, priority 0x90, one shot). The zones (`World::mortar_zones`) are hashed only
+while some mortar has them; a dead mortar's go. A ground attack inside the minimum range
+fires only once the gun has drawn back beyond it, like the field gun's ball inside its
+`ATTACK_RADIUS` minimum. No random number is drawn beyond the shot's own. `tests/mortar.rs`
+covers the types, the zone fire, the minimum range and the rule off.
+
 ### Worked timing (musketeer, 10 ticks/s)
 
 - First shot: `#PATTACK1` (63 frames, 32 ticks), then 7 ticks to the active frame 14. The

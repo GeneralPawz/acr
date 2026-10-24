@@ -241,6 +241,10 @@ pub fn draw(m: &Mark, s: &SectorWeapon, cs: Colours, at: At, out: &mut Vec<Draw>
             let lane = f64::from(artillery::DIRECT_LANE);
             outlined(out, cs, at, g, (g.0 + u.0 * lane, g.1 + u.1 * lane), dashed);
         }
+        GunMode::Mortar => {
+            ground_line(out, cs.mark, at, o, g, dotted);
+            outlined_arc(out, cs, at, g, 48.0, (0.0, std::f64::consts::TAU), dashed);
+        }
     }
 }
 

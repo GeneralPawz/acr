@@ -128,6 +128,8 @@ pub enum Start {
         hit_locations: bool,
         /// The optional body-spacing rule (`docs/body-spacing.md`).
         body_spacing: bool,
+        /// The optional mortars rule (`ArtMrt` types, `docs/simulation.md` "Mortar").
+        mortars: bool,
     },
     /// The blank test field ("The blank field" in `docs/testing.md`): `players` (1 or 2)
     /// without start units and without AI, `nation` for the local player.
@@ -138,6 +140,7 @@ pub enum Start {
         nation: usize,
         hit_locations: bool,
         body_spacing: bool,
+        mortars: bool,
         hud: bool,
         /// `"corpse_decay": "half"|"full"` overrides the setting (`corpse_decay`).
         corpse_decay_half: Option<bool>,
@@ -346,6 +349,7 @@ pub(super) fn blank(b: &Value) -> Result<Start, String> {
         nation: uint(b, "nation").unwrap_or(0) as usize,
         hit_locations: b.get("hit_locations").and_then(Value::as_bool).unwrap_or(false),
         body_spacing: b.get("body_spacing").and_then(Value::as_bool).unwrap_or(false),
+        mortars: b.get("mortars").and_then(Value::as_bool).unwrap_or(false),
         hud: b.get("hud").and_then(Value::as_bool).unwrap_or(true),
         corpse_decay_half: b.get("corpse_decay").and_then(Value::as_str).map(|v| v == "half"),
         decay_stain: b.get("decay_stain").and_then(Value::as_str).map(|v| v == "on"),
@@ -539,6 +543,7 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
                     difficulty: uint(&r, "difficulty").unwrap_or(1) as usize,
                     hit_locations: r.get("hit_locations").and_then(Value::as_bool).unwrap_or(false),
                     body_spacing: r.get("body_spacing").and_then(Value::as_bool).unwrap_or(false),
+                    mortars: r.get("mortars").and_then(Value::as_bool).unwrap_or(false),
                 })
             }
         }
@@ -719,7 +724,8 @@ mod tests {
                 size: 0,
                 difficulty: 1,
                 hit_locations: false,
-                body_spacing: false
+                body_spacing: false,
+                mortars: false
             })
         );
         let (_, r) = parse(r#"{"cmd": "load_map", "map": "Missions\\a.m3d"}"#).unwrap();
@@ -731,6 +737,7 @@ mod tests {
             nation: 0,
             hit_locations: false,
             body_spacing: false,
+            mortars: false,
             hud: true,
             corpse_decay_half: None,
             decay_stain: None,

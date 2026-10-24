@@ -111,7 +111,7 @@ its label to appear.
 | `{"cmd": "state"}` | see below; `"units": true` lists every object, `"owner": n` and `"type": "Mus"` filter, `"visible_only": true` respects the fog, `"detail": true` adds each object's orders, animation and frame, stances, reload counter (`delay`), direction and switches, and the listed objects' `activity` |
 | `{"cmd": "command", "command": {"type": "move", "units": [1, 2], "x": 3000, "y": 9000}}` | a simulation command for setup (below) |
 | `{"cmd": "select", "units": [10, 11]}` | replaces the selection (setup; prefer `drag`/`click` to test the interface) |
-| `{"cmd": "start", "random": {"nation": 1, "seed": 5}}` | a random map without the menus; also `opponents`, `resources`, `size`, `difficulty`, `hit_locations` (the optional rule, #225), `body_spacing` (the optional rule, `docs/body-spacing.md`) |
+| `{"cmd": "start", "random": {"nation": 1, "seed": 5}}` | a random map without the menus; also `opponents`, `resources`, `size`, `difficulty`, `hit_locations` (the optional rule, #225), `body_spacing` (the optional rule, `docs/body-spacing.md`), `mortars` (the optional rule, `simulation.md` "Mortar") |
 | `{"cmd": "start", "map": "Missions\\Singles\\Single7\\Single7.m3d"}` | a map file (alias `load_map`) |
 | `{"cmd": "start", "blank": {"ground": "grass"}}` | the blank test field, see "The blank field" below |
 | `{"cmd": "hud", "on": false}` | hides the interface (panel, minimap, cursor): frames show the world only; `true` brings it back |
@@ -145,7 +145,7 @@ filter `{"owner": 0, "type": "Mus"}` for every living match):
 `move`, `attack_move`, `patrol`, `attack_ground` (`x`, `y`), `stop`, `attack` (`target`), `gather` (`x`,
 `y`), `repair` / `enter` (`building`), `leave` (`building`), `build` (`kind`, `x`, `y`),
 `produce` (`building`, `kind`, `count`), `rally` (`building`, `x`, `y`), `form` (`officer`, `kind` such as `#LINE15`),
-`disband` (`officer`), `friendly_fire` (`on`: shoot through own units). Type names are catalog ids such as `SpnKri(SP)`.
+`disband` (`officer`), `friendly_fire` (`on`: shoot through own units), `mortar_zones` (`zones`: `[[x, y, r], ...]`, mortars rule) and `mortar_fire` (`on`). Type names are catalog ids such as `SpnKri(SP)`.
 
 ### The close-up bench (#277)
 
@@ -229,6 +229,7 @@ every texture 0, no sprites, no units, an empty `SEA2`; `acr-game/src/blank_map.
 | `patches` | `[{"x", "y", "radius", "texture"}, ...]`: round patches of other `TILES3.BMP` textures (vertex textures), painted in order, for ground transitions ([ground.md](ground.md)); not saved |
 | `hit_locations` | the optional rule, as for `random` (or the setting) |
 | `body_spacing` | the optional body-spacing rule, as for `random` (or the setting) |
+| `mortars` | the optional mortars rule: `ArtMrt(XX)` types to `spawn` (simulation.md "Mortar") |
 | `hud` | `false` hides the interface from the start, like `{"cmd": "hud", "on": false}` |
 | `corpse_decay` | `full` or `half`: overrides the setting ([rendering-3d.md](rendering-3d.md)) |
 | `decay_stain` | `on` or `off`: overrides the setting (the ground stains under decaying corpses, [rendering-3d.md](rendering-3d.md#decay-stains)) |

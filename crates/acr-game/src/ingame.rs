@@ -349,7 +349,11 @@ impl InGame {
     /// Builds the world once the map and the simulation data are complete.
     fn build_world(&mut self) {
         let (None, Some(map), true) = (&self.world, &self.map, self.sim_assets.ready()) else { return };
-        let data = self.sim_assets.build();
+        let mut data = self.sim_assets.build();
+        // Mortars rule: the `ArtMrt` types come after the original ones (#301).
+        if self.setup.rules.mortars {
+            acr_sim::mortar::append_types(&mut data.catalog);
+        }
         let (mut world, report) = World::from_map(map, &data.shapes, Arc::new(data.catalog), Arc::new(data.formations));
         world.rules = self.setup.rules;
         log::info!("world: {} units, {} map objects, {report:?}", world.units.len(), world.objects.len());

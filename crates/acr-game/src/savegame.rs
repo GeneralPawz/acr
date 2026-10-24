@@ -193,7 +193,9 @@ impl SaveGame {
         for g in &self.groups {
             w.ids(g);
         }
-        w.u(u64::from(self.setup.rules.hit_locations) | u64::from(self.setup.rules.body_spacing) << 1);
+        w.u(u64::from(self.setup.rules.hit_locations)
+            | u64::from(self.setup.rules.body_spacing) << 1
+            | u64::from(self.setup.rules.mortars) << 2);
         w.0
     }
 
@@ -231,7 +233,8 @@ impl SaveGame {
         let groups = (0..n).map(|_| r.ids()).collect::<Result<Vec<_>, _>>()?;
         if version >= 3 {
             let bits = r.u()?;
-            setup.rules = acr_sim::Rules { hit_locations: bits & 1 != 0, body_spacing: bits & 2 != 0 };
+            setup.rules =
+                acr_sim::Rules { hit_locations: bits & 1 != 0, body_spacing: bits & 2 != 0, mortars: bits & 4 != 0 };
         }
         if r.pos != data.len() {
             return Err(err("trailing bytes"));

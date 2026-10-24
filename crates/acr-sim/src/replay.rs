@@ -339,6 +339,21 @@ impl Writer {
                 self.i(*x);
                 self.i(*y);
             }
+            Command::MortarZones { player, units, zones } => {
+                self.0.extend_from_slice(&[33, *player]);
+                self.ids(units);
+                self.u(zones.len() as u64);
+                for z in zones {
+                    self.i(z.x);
+                    self.i(z.y);
+                    self.i(z.r);
+                }
+            }
+            Command::MortarFire { player, units, on } => {
+                self.0.extend_from_slice(&[34, *player]);
+                self.ids(units);
+                self.0.push(u8::from(*on));
+            }
             Command::Board { player, units, transport } => {
                 self.0.extend_from_slice(&[26, *player]);
                 self.ids(units);
@@ -470,6 +485,16 @@ impl<'a> Reader<'a> {
                 off_y: self.i()?,
             },
             23 => Command::AttackGround { player, units: self.ids()?, x: self.i()?, y: self.i()? },
+            33 => {
+                let units = self.ids()?;
+                let n = self.u()?;
+                let mut zones = Vec::new();
+                for _ in 0..n.min(256) {
+                    zones.push(crate::mortar::Zone { x: self.i()?, y: self.i()?, r: self.i()? });
+                }
+                Command::MortarZones { player, units, zones }
+            }
+            34 => Command::MortarFire { player, units: self.ids()?, on: self.byte()? != 0 },
             24 => Command::FriendlyFire { player, units: self.ids()?, shoot_own: self.byte()? != 0 },
             25 => Command::MeleeOnly { player, units: self.ids()?, on: self.byte()? != 0 },
             28 => Command::StopProduction { player, buildings: self.ids()?, stop: self.byte()? != 0 },
@@ -547,6 +572,16 @@ mod tests {
                     off_y: 7,
                 },
                 Command::AttackGround { player: 3, units: vec![EntityId(8)], x: 4000, y: 50 },
+                Command::MortarZones {
+                    player: 3,
+                    units: vec![EntityId(8), EntityId(14)],
+                    zones: vec![
+                        crate::mortar::Zone { x: 2000, y: -30, r: 200 },
+                        crate::mortar::Zone { x: 2400, y: 900, r: 120 },
+                    ],
+                },
+                Command::MortarZones { player: 3, units: vec![EntityId(8)], zones: vec![] },
+                Command::MortarFire { player: 3, units: vec![EntityId(8)], on: true },
                 Command::Board { player: 3, units: vec![EntityId(9)], transport: EntityId(10) },
                 Command::Unload { player: 3, transport: EntityId(10) },
                 Command::GroupFormations { player: 1, units: vec![EntityId(11), EntityId(12)] },
@@ -559,7 +594,7 @@ mod tests {
         let back = Replay::decode(&bytes).unwrap();
         assert_eq!(back, r);
         assert_eq!(back.entries.len(), 2, "empty ticks are not stored");
-        assert_eq!(back.commands_at(9).len(), 39);
+        assert_eq!(back.commands_at(9).len(), 42);
         assert!(back.commands_at(5).is_empty());
     }
 

@@ -663,6 +663,9 @@ pub struct ObjectType {
     pub res_subst: bool,
     /// `ARTPODGOTOVKA` (NM+0x172c bit1): the player may order attacks on the ground.
     pub ground_attack: bool,
+    /// A mortar appended under [`crate::Rules::mortars`] ([`crate::mortar::append_types`]);
+    /// never set from the original data.
+    pub mortar: bool,
     /// `RASTRATA_NA_VISTREL i n (RES v)*n` / `..VISTREL2 i1 i2 n ..` (NM+0x2927..): shots of
     /// attack index `i1` or `i2` cost these resources (cannons: iron and coal).
     pub shot_cost: Option<(u8, u8, [i32; 8])>,
@@ -895,6 +898,7 @@ impl ObjectType {
                 })
                 .unwrap_or_default(),
             ground_attack: def.has("ARTPODGOTOVKA"),
+            mortar: false,
             res_subst: def.has("RESSUBST"),
             can_stop_build: def.has("CANSTOPBUILD"),
             transport: def.has("TRANSPORT"),

@@ -310,6 +310,28 @@ pub fn command(game: &Game, v: &Value) -> Result<Vec<Command>, String> {
         "attack" => one(Command::Attack { player, units: units()?, target: id(v, "target")? }),
         "attack_ground" => one(Command::AttackGround { player, units: units()?, x: int(v, "x")?, y: int(v, "y")? }),
         "canister" => one(Command::Canister { player, units: units()? }),
+        // Mortars rule: "zones": [[x, y, r], ...] (world px); none clears them.
+        "mortar_zones" => {
+            let zones = v
+                .get("zones")
+                .and_then(Value::as_array)
+                .ok_or("mortar_zones: missing \"zones\" ([[x, y, r], ...])")?
+                .iter()
+                .map(|z| {
+                    let n = |k: usize| z.get(k).and_then(Value::as_i64).map(|v| v as i32);
+                    match (n(0), n(1), n(2)) {
+                        (Some(x), Some(y), Some(r)) => Ok(acr_sim::mortar::Zone { x, y, r }),
+                        _ => Err("mortar_zones: a zone is [x, y, r]".to_string()),
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            one(Command::MortarZones { player, units: units()?, zones })
+        }
+        "mortar_fire" => one(Command::MortarFire {
+            player,
+            units: units()?,
+            on: v.get("on").and_then(Value::as_bool).unwrap_or(true),
+        }),
         "friendly_fire" => one(Command::FriendlyFire {
             player,
             units: units()?,

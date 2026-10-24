@@ -36,7 +36,7 @@ const NRES: &[u8] =
     b"[WEAPONS]\r\n#GENSHIELD 13\r\nMECH 21 19 O\r\nSTRELA 1 14 HRB\r\nPIKA 11 17 O\r\nIADRO 2 15 HX\r\n\
     VISTREL 12 18 HRB\r\n[UNITKINDS]\r\n";
 
-const ON: Rules = Rules { hit_locations: true, body_spacing: false };
+const ON: Rules = Rules { hit_locations: true, body_spacing: false, mortars: false };
 
 /// Pikemen and a lancer (a rider with `MECH`, named as a lancer).
 fn setup(rules: Rules) -> (World, TypeId, TypeId) {

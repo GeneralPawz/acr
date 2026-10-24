@@ -182,7 +182,10 @@ mod tests {
             let data = vfs.read(&p).ok();
             queue.extend(assets.add_file(&p, data.as_deref()));
         }
-        let data = assets.build();
+        let mut data = assets.build();
+        if setup.rules.mortars {
+            acr_sim::mortar::append_types(&mut data.catalog);
+        }
         let map = M3dMap::parse(&vfs.read(&m.map).unwrap()).unwrap();
         let (mut world, _) = World::from_map(&map, &data.shapes, Arc::new(data.catalog), Arc::new(data.formations));
         world.rules = setup.rules;

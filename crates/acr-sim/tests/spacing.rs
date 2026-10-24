@@ -19,7 +19,7 @@ const CENTER: &str = "NAME Cen\r\nBUILDING\r\nLIFE 1000\r\nLOCATION 0 0 64 64\r\
     CONCENTRATOR 1 2 3\r\nMFARM 40\r\nBUILDSTAGES 10\r\nPRICE 1 WOOD 100\r\nLOCKPOINTS 9 0 0 1 0 2 0 0 1 1 1 2 1 0 2 1 2 2 2\r\n\
     [END]\r\n";
 
-const ON: Rules = Rules { hit_locations: false, body_spacing: true };
+const ON: Rules = Rules { hit_locations: false, body_spacing: true, mortars: false };
 /// Two men's radii, 1/16 px (2 × 0.3 m at 30 px per metre).
 const TWO_MEN: i32 = 2 * 144;
 
@@ -124,7 +124,7 @@ fn a_crowd_fills_an_area_as_big_as_its_bodies() {
 fn with_the_rule_off_nothing_changes() {
     // The off rule is the default: same state, same hash as before the rule existed (the
     // pinned hashes of the other tests check that); on, the crowd ends elsewhere.
-    let off = crowd(Rules { hit_locations: false, body_spacing: false });
+    let off = crowd(Rules { hit_locations: false, body_spacing: false, mortars: false });
     assert_eq!(off, crowd(Rules::default()));
     assert_ne!(off.3, crowd(ON).3);
 }

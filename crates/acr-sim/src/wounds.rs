@@ -13,13 +13,26 @@ use crate::catalog::MotionStyle;
 
 /// Optional rules chosen when a game starts (recorded in the game setup and savegames).
 /// The default is the original game.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Rules {
     /// Hits land on body regions with lasting injuries ([`crate::body::Body`]).
     pub hit_locations: bool,
     /// Men, horses and animals have bodies that take up space and push each other apart
     /// ([`crate::spacing`], `docs/body-spacing.md`).
     pub body_spacing: bool,
+    /// Mortars (`ArtMrt`) with engagement zones ([`crate::mortar`], `docs/simulation.md`,
+    /// "Mortar").
+    pub mortars: bool,
+}
+
+impl std::hash::Hash for Rules {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Later rules count only when on, so the hashes of games with the earlier ones stay.
+        (self.hit_locations, self.body_spacing).hash(state);
+        if self.mortars {
+            self.mortars.hash(state);
+        }
+    }
 }
 
 /// The body region a hit landed on.

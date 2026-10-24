@@ -455,6 +455,10 @@ impl Game {
         if self.ui.settings().body_spacing {
             setup.rules.body_spacing = true;
         }
+        // And `mortars=on` (#301, docs/simulation.md "Mortar").
+        if self.ui.settings().mortars {
+            setup.rules.mortars = true;
+        }
         let mut game = ingame::InGame::new(setup);
         game.apply_settings(self.ui.settings());
         game.start(&self.assets.paths());
