@@ -30,6 +30,12 @@ class Tools(unittest.TestCase):
             for k in it.parts:
                 self.assertIn(it.keys[k], registry.LAYER_OF, (n, k))
 
+    def test_hand_tools_in_gear_budget(self):
+        # Hand tools are seen close up in the work clips: 0.5-1.5k triangles each (#205).
+        for n in civil.HAND_TOOLS:
+            self.assertTrue(500 <= civil.ITEMS[n]().triangles() <= 1500, n)
+        self.assertIn("dagger", civil.ITEMS)
+
     def test_tips(self):
         for n in civil.HAND_TOOLS:
             tip = civil.ITEMS[n]().sockets["socket.tip"]

@@ -1,9 +1,9 @@
 """Sioux villager (`SiuKri`, `SIUKRI.MD`, the peasant): Plains (`acr_assets.plains` over
 `acr_assets.native`, docs/families/plains.md). A buckskin shirt with quilled strips over the
 shoulders and down the sleeves and strand fringe under the arms, a breechcloth, fringed
-buckskin leggings, moccasins, two wrapped braids, no paint; a stone-headed war club. WORK and
-ATTACK1 (the harvest) are the two-handed swing, REST a look round; the melee (index 0) is
-ATTACK5, the club blow (the `.MD` has no ATTACK: the strikes are made on ATTACK5's frames).
+buckskin leggings, moccasins, two wrapped braids, no paint; an iron trade axe (`held.tomahawk`),
+its tool and weapon. WORK and ATTACK1 (the harvest) are the two-handed swing, REST a look round;
+the melee (index 0) is ATTACK5, the axe's hack (the `.MD` has no ATTACK: the strikes are made on ATTACK5's frames).
 """
 
 from acr_assets import plains
@@ -51,7 +51,7 @@ PALETTE = {"breechcloth": (0.50, 0.12, 0.08), "skin": (0.80, 0.55, 0.38)}
 
 
 def spec():
-    return plains.spec(MD, WEAPONS, palette=PALETTE, weapon="club", melee="club", paint=None, work=True, eagle=0,
+    return plains.spec(MD, WEAPONS, palette=PALETTE, weapon="tomahawk", melee="tomahawk", paint=None, work=True, eagle=0,
                        warshirt=True, kit=("knife",))
 
 

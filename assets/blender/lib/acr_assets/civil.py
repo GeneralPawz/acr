@@ -68,43 +68,106 @@ SICKLE_TIP = 0.30
 HAMMER_TIP = 0.30
 
 
+def _loft(it, sections, part, n, frame, caps=(True, True)):
+    """Rings of `n` vertices through `sections` [((x, y, z), (ru, rw))] in the plane `frame`
+    = (u, w), bridged in order (a forged head whose thickness and height change along it)."""
+    rings = [it.ring(c, 1.0, n, frame, r) for c, r in sections]
+    for a, b in zip(rings, rings[1:]):
+        it.bridge(a, b, part)
+    if caps[0]:
+        it.cap(rings[0], part, flip=True)
+    if caps[1]:
+        it.cap(rings[-1], part)
+    return rings
+
+
+# Ring planes across the long axis of a head lying along -Y (u up, w across).
+_ACROSS_Y = ((0.0, 0.0, 1.0), (-1.0, 0.0, 0.0))
+
+
+def _haft(it, z0, z1, r0, r1, part, n=12, rings=12, knob=0.0):
+    """A turned haft from z0 to z1, radius r0 to r1 with a slight swell a third up and an
+    optional knob (`knob` extra radius) at the butt."""
+    path = []
+    for k in range(rings + 1):
+        t = k / rings
+        r = r0 + (r1 - r0) * t + 0.002 * math.sin(math.pi * min(t * 1.5, 1.0))
+        if knob and t < 0.12:
+            r += knob * (1.0 - t / 0.12)
+        path.append(((0.0, 0.0, z0 + (z1 - z0) * t), r))
+    it.tube(path, part, n=n)
+
+
 def axe(length=AXE_LEN):
-    """A felling axe: ash haft, the grip 8 cm above its end, an iron head with the edge
-    forward (-Y) and a flat poll behind (`socket.tip` at the middle of the edge)."""
+    """An English felling axe of the period: an ash haft with a swelled butt knob, the grip
+    8 cm above its end; a forged iron head lofted from the flat poll (+Y) through the eye to
+    a flared, thin bit with the edge forward (-Y) (`socket.tip` at the middle of the edge)."""
     it = held.Item("axe")
     it.keys = {"haft": "wood", "head": "metal"}
     z1 = length - 0.10 - 0.08
-    it.tube([((0, 0, -0.08), 0.017), ((0, 0, 0.30), 0.015), ((0, 0, z1 + 0.04), 0.016)], "haft", n=6)
-    it.box((0, 0.015, z1), (0.032, 0.06, 0.07), "head")
-    it.box((0, -0.065, z1), (0.014, 0.10, 0.06), "head", taper=(0.6, 1.0))
-    it.box((0, -0.12, z1), (0.006, 0.02, 0.12), "head")
+    _haft(it, -0.08, z1 + 0.045, 0.018, 0.015, "haft", n=12, rings=14, knob=0.006)
+    # (y, half thickness x, half height z, z offset): poll, eye, cheeks, flared bit, edge.
+    prof = [(0.040, 0.016, 0.030, 0.0), (0.030, 0.019, 0.034, 0.0), (0.0, 0.021, 0.036, 0.0),
+            (-0.030, 0.015, 0.032, 0.0), (-0.060, 0.010, 0.034, -0.002), (-0.085, 0.006, 0.042, -0.004),
+            (-0.105, 0.0035, 0.052, -0.006), (-0.122, 0.0015, 0.060, -0.008), (-0.130, 0.0006, 0.062, -0.008)]
+    _loft(it, [((0.0, y, z1 + dz), (hz, hx)) for y, hx, hz, dz in prof], "head", 16, _ACROSS_Y)
     it.sockets["socket.tip"] = (0.0, -0.13, z1)
     return it
 
 
 def sickle():
-    """A reaping sickle: a short wooden handle, the iron blade bent forward and round to the
-    left (+X) in a half moon (`socket.tip` at the point)."""
+    """A reaping sickle: a turned wooden handle with an iron ferrule, the iron blade bent
+    forward and round to the left (+X) in a half moon, thin at the edge (`socket.tip` at the
+    point)."""
     it = held.Item("sickle")
     it.keys = {"handle": "wood", "blade": "metal"}
-    it.tube([((0, 0, -0.04), 0.016), ((0, 0, 0.09), 0.014)], "handle", n=6)
+    _haft(it, -0.045, 0.085, 0.017, 0.014, "handle", n=12, rings=8, knob=0.004)
+    it.tube([((0, 0, 0.080), 0.0155), ((0, 0, 0.100), 0.014), ((0, 0, 0.108), 0.006)], "blade", n=12)
     pts = []
-    for k in range(7):
-        a = math.radians(-90 + 210 * k / 6)
-        pts.append(((0.10 * (1 + math.sin(a)) * 0.9, -0.10 * math.cos(a) * 0.4, 0.10 + 0.13 * (1 + math.sin(a)) * 0.5
-                     + 0.06 * k / 6), 0.008 if k < 6 else 0.0))
-    it.tube(pts, "blade", n=4, scale=(1.0, 0.35))
+    m = 20
+    for k in range(m + 1):
+        a = math.radians(-90 + 210 * k / m)
+        pts.append(((0.10 * (1 + math.sin(a)) * 0.9, -0.10 * math.cos(a) * 0.4,
+                     0.10 + 0.13 * (1 + math.sin(a)) * 0.5 + 0.06 * k / m), 0.010 * (1.0 - 0.6 * k / m) if k < m else 0.0))
+    it.tube(pts, "blade", n=6, scale=(1.0, 0.28))
     it.sockets["socket.tip"] = pts[-1][0]
     return it
 
 
 def hammer():
-    """A carpenter's hammer: a wooden handle, an iron head across it, the face forward (-Y)."""
+    """A carpenter's claw hammer: a turned wooden handle, an iron head across it with a
+    round face forward (-Y), the neck and a split claw behind."""
     it = held.Item("hammer")
     it.keys = {"handle": "wood", "head": "metal"}
-    it.tube([((0, 0, -0.04), 0.013), ((0, 0, 0.30), 0.012)], "handle", n=6)
-    it.box((0, -0.01, 0.30), (0.03, 0.13, 0.03), "head", taper=(0.8, 0.8))
-    it.sockets["socket.tip"] = (0.0, -0.075, 0.30)
+    _haft(it, -0.04, 0.315, 0.0135, 0.0115, "handle", n=10, rings=10, knob=0.004)
+    z = 0.30
+    face = [(-0.078, 0.013, 0.013), (-0.074, 0.016, 0.016), (-0.050, 0.015, 0.015), (-0.030, 0.012, 0.012),
+            (-0.015, 0.016, 0.017), (0.015, 0.016, 0.017), (0.025, 0.011, 0.013)]
+    _loft(it, [((0.0, y, z), (hz, hx)) for y, hx, hz in face], "head", 14, _ACROSS_Y)
+    for side in (-1, 1):  # the claw: two tapering prongs curving down
+        pts = []
+        for k in range(7):
+            t = k / 6
+            pts.append(((side * 0.006 * (1 + t), 0.025 + 0.055 * t, z - 0.035 * t * t), 0.0075 * (1 - 0.8 * t)))
+        it.tube(pts, "head", n=6, scale=(0.6, 1.0))
+    it.sockets["socket.tip"] = (0.0, -0.078, z)
+    return it
+
+
+def dagger():
+    """A plain belt dagger in a leather sheath (European peasants' side arm): the sheath
+    from the origin down (-Z) with an iron chape, a short iron crossguard, a wooden grip
+    and a round pommel above it (+Z)."""
+    it = held.Item("dagger")
+    it.keys = {"sheath": "belts", "iron": "metal", "grip": "wood"}
+    sh = [((0, 0, -0.20), 0.004), ((0, 0, -0.17), 0.011), ((0, 0, -0.08), 0.015), ((0, 0, -0.005), 0.018)]
+    it.tube([((0, 0, -0.215), 0.0)] + sh, "sheath", n=10, scale=(1.0, 0.45))
+    it.tube([((0, 0, -0.205), 0.0), ((0, 0, -0.19), 0.008), ((0, 0, -0.165), 0.0125)], "iron", n=10,
+            scale=(1.0, 0.5), caps=False)
+    it.box((0, 0, 0.004), (0.010, 0.075, 0.009), "iron", taper=(0.9, 0.9))
+    it.tube([((0, 0, 0.009), 0.010), ((0, 0, 0.040), 0.012), ((0, 0, 0.075), 0.010)], "grip", n=10)
+    it.tube([((0, 0, 0.073), 0.0), ((0, 0, 0.076), 0.010), ((0, 0, 0.086), 0.0135), ((0, 0, 0.096), 0.010),
+             ((0, 0, 0.099), 0.0)], "iron", n=10)
     return it
 
 
@@ -150,8 +213,8 @@ def cross():
     return it
 
 
-ITEMS = {"axe": axe, "sickle": sickle, "hammer": hammer, "sack": sack, "bundle": bundle, "book": book, "cross": cross}
-BUDGET = {"axe": 120, "sickle": 80, "hammer": 60, "sack": 140, "bundle": 160, "book": 24, "cross": 24}
+ITEMS = {"axe": axe, "sickle": sickle, "hammer": hammer, "dagger": dagger, "sack": sack, "bundle": bundle, "book": book, "cross": cross}
+BUDGET = {"axe": 1500, "sickle": 1500, "hammer": 1500, "dagger": 600, "sack": 140, "bundle": 160, "book": 24, "cross": 24}
 TIP = {"axe": AXE_TIP, "sickle": SICKLE_TIP, "hammer": HAMMER_TIP}
 
 # Socket bones of the tools: (parent, offset of the head from the parent socket's head or
@@ -221,6 +284,36 @@ def _two(base, r_point, rot, below=0.09):
     return _tool(base, r_point, rot, cl.add(r_point, cl.axis(rot), -below))
 
 
+def _lerp(a, b, t):
+    if isinstance(a, dict) or isinstance(b, dict):
+        a, b = a or {}, b or {}
+        return {k: _lerp(a.get(k), b.get(k), t) for k in sorted(set(a) | set(b))}
+    if a is None:  # a bone only one of the two keys turns: rest (0) in the other
+        a = tuple(0.0 for _ in b)
+    if b is None:
+        b = tuple(0.0 for _ in a)
+    if isinstance(a, (int, float)):
+        return a + (b - a) * t
+    return tuple(_lerp(x, y, t) for x, y in zip(a, b))
+
+
+def _dense_two(keys, below=0.09):
+    """Two-handed `_two` keys made one per frame: the body, the right grip and the tool's
+    world rotation interpolated, the left hand's goal put back on the haft each frame (IK
+    solved only on keys lets the left fist drift off the haft between them; pitfall 5)."""
+    out = []
+    for (f0, p0), (f1, p1) in zip(keys, keys[1:]):
+        out.append((f0, p0))
+        for f in range(f0 + 1, f1):
+            t = (f - f0) / (f1 - f0)
+            body = _lerp(cl.bare(p0), cl.bare(p1), t)
+            rot = _lerp(p0["world"]["socket.hand_r"], p1["world"]["socket.hand_r"], t)
+            r_point = _lerp(p0["reach"]["r"][0], p1["reach"]["r"][0], t)
+            out.append((f, _two(body, r_point, rot, below)))
+    out.append(keys[-1])
+    return out
+
+
 def chop_keys():
     """#ATTACK1 (27 frames): the axe from over the right shoulder in a flat diagonal cut into
     the trunk (`TREE`) on frame 15, the follow-through, back to the ready."""
@@ -235,7 +328,7 @@ def chop_keys():
     mid_r = (40, -60, 50)
     mid = _two(_with(base, spine=(-8, 0, 6)), (-0.24, -0.20, 1.30), mid_r)
     after = _two(_with(base, spine=(-16, 0, -18)), cl.add(cl.grip_for(TREE, hit_r, AXE_TIP), (0.05, 0.03, -0.02)), hit_r)
-    return [(0, ready), (8, up), (12, mid), (15, hit), (18, after), (22, ready), (26, ready)]
+    return _dense_two([(0, ready), (8, up), (12, mid), (15, hit), (18, after), (22, ready), (26, ready)])
 
 
 def reap_keys(n=57, impacts=IMPACT["ATTACK3"]):
@@ -462,7 +555,7 @@ PALETTE = {
     "shirt": (0.86, 0.84, 0.78), "vest": (0.22, 0.26, 0.32), "hose": (0.78, 0.76, 0.70),
     "shoes": (0.22, 0.14, 0.08), "hat": (0.47, 0.36, 0.22), "wood": (0.50, 0.34, 0.18), "metal": (0.50, 0.50, 0.52),
     "sack": (0.72, 0.64, 0.48), "cord": (0.60, 0.52, 0.38),
-    "habit": (0.86, 0.84, 0.78), "cappa": (0.10, 0.10, 0.11), "book": (0.55, 0.08, 0.07), "vellum": (0.86, 0.80, 0.66),
+    "habit": (0.86, 0.84, 0.78), "cappa": (0.10, 0.10, 0.11), "book": (0.55, 0.08, 0.07), "vellum": (0.86, 0.80, 0.66), "belts": (0.30, 0.19, 0.11),
 }
 BUILD = {"width": 0.97, "belly": 1.05, "limbs": 1.1}
 
@@ -494,6 +587,22 @@ def _hold_tools(ch, name, items):
             m = Matrix.Translation(w.translation) @ Matrix.Rotation(math.radians(90), 4, "Y") \
                 @ Matrix.Rotation(math.radians(8), 4, "X")
         gear.hold(ch, ITEMS[t](), f"{name}.{t}", socket=sock, matrix=m, slot=t)
+
+
+def _belt_dagger(ch, name):
+    """The dagger in its sheath at the left hip (+X), hilt up and a little forward, its flat
+    side on the hip, seated on the outermost cloth (`gear.seat`): worn, not dropped."""
+    from mathutils import Matrix
+
+    from . import gear
+
+    obj = gear.held(dagger(), f"{name}.dagger")
+    at = Matrix.Translation(DAGGER_AT) @ Matrix.Rotation(math.radians(18), 4, "X")         @ Matrix.Rotation(math.radians(90), 4, "Z")
+    gear.seat(ch, obj, at, (-1.0, 0.25, 0.0), turn=False)
+    return ch.add("gear", obj, "belts")
+
+
+DAGGER_AT = (0.24, -0.05, 1.00)  # rest-pose start of the seat ray, the hilt's foot
 
 
 def make(root, name, s):
@@ -566,6 +675,7 @@ def make(root, name, s):
         ch.held["hat"] = hat
         ch.keys[hat.name] = "hat"
         _hold_tools(ch, name, HAND_TOOLS + tuple(SHOULDER))
+        _belt_dagger(ch, name)
     else:
         gear.hold(ch, book(), f"{name}.book", socket="socket.hand_l", slot="book")
         cr = gear.held(cross(), f"{name}.cross")
@@ -578,6 +688,36 @@ def clips_of(s):
     if s["kind"] == "priest":
         return priest_clips(s["md"])
     return peasant_clips(s["md"])
+
+
+# Two-handed work clips: the left fist on the tool's haft (`_two`), measured as played.
+TWO_HANDED = {"ATTACK1": "axe"}
+
+
+def _grip_stats(ch, clips):
+    """Left fist to the haft line of the two-handed tools on every frame as played: the
+    distance of `socket.hand_l` from the line through `socket.hand_r` along the tool's long
+    axis, {clip: {frames, mean_m, max_m, worst}} (test limits mean < 0.01, max < 0.10 m)."""
+    import bpy
+
+    from . import armature as am
+
+    out = {}
+    for clip, tool in TWO_HANDED.items():
+        if clip not in clips or tool not in ch.held:
+            continue
+        obj = ch.held[tool]
+        d = []
+        for f in range(clips[clip][-1][0] + 1):
+            am.set_clip(ch.arm, clip, f)
+            bpy.context.view_layer.update()
+            o = am.world(ch.arm, "socket.hand_r").translation
+            ax = obj.matrix_world.col[2].to_3d().normalized()
+            v = am.world(ch.arm, "socket.hand_l").translation - o
+            d.append((v - ax * v.dot(ax)).length)
+        worst = max(range(len(d)), key=d.__getitem__)
+        out[clip] = {"frames": len(d), "mean_m": round(sum(d) / len(d), 4), "max_m": round(d[worst], 4), "worst": worst}
+    return out
 
 
 def build(ctx, s):
@@ -598,6 +738,7 @@ def build(ctx, s):
         keys = list(keys)
         keys[0] = (keys[0][0], _show(keys[0][1], ()))
         cl.apply(ch.arm, clip, keys)
+    grips = _grip_stats(ch, clips) if s["kind"] != "priest" else {}
     am.set_clip(ch.arm, "STAND")
     report = {}
     colours = ch.colours(ctx.ref, s["palette"], report=report, mix=s["mix"], fixed=s["fixed"])
@@ -615,7 +756,8 @@ def build(ctx, s):
                    acr_limb_radius=ch.limb_radius, acr_light=report.get("light_dir_camera", []),
                    acr_layers=list(ch.layers), **faces.extras("civilian"))
     ctx.stats = {"triangles": tris, "colours": colours, "drape": getattr(ch, "drape_report", None),
-                 "events": {k: c.event for k, c in clips.items() if getattr(c, "event", None) is not None}}
+                 "events": {k: c.event for k, c in clips.items() if getattr(c, "event", None) is not None},
+                 "hands": {"grips": grips}, "seat": getattr(ch, "seat_report", None)}
 
 
 def pose_for(ch, s, clip):

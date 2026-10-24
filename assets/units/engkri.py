@@ -1,7 +1,8 @@
 """English peasant (`EngKri`, `ENGKRI.MD`, "Bauer"): family 13 (`acr_assets.civil`). A dark
 red-brown smock-frock to mid-thigh over the shirt (one draped garment, sleeves and body in
 the tunic cloth), a red sash, light linen breeches, grey stockings, brown shoes, a slouch
-hat; felling axe, sickle, hammer, sack and firewood with the work clips of the sprite packs.
+hat; a belt dagger; felling axe, sickle, hammer, sack and firewood with the work clips of the
+sprite packs.
 """
 
 from acr_assets import civil
