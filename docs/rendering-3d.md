@@ -1737,8 +1737,8 @@ model first draws at that level (`acr-render/src/tex_cache.rs`, m2-tex-stream).
   pixels). Everything else (the coarsest level, primitives without a level, models without
   authored levels) is decoded at load as before.
 - **Request:** `group_draws` calls `want_textures(model, level)` for each authored model and
-  level drawn this frame; `TexCache::want` marks a resident picture used or queues a
-  `Decoder` job. Shadows need no pictures.
+  level wanted or shown this frame; `TexCache::want` marks a resident picture used or queues
+  a `Decoder` job. Shadows ask for none (they draw at a level whose pictures are in).
 - **Decode:** native: one `acr-texture` thread per picture (PNG or JPEG to RGBA). wasm32: the
   browser's `createImageBitmap` on a `Blob` of the encoded bytes (`tex_cache::browser_decode`,
   web-sys, async via `wasm-bindgen-futures`), which decodes off the main thread; options
@@ -1751,15 +1751,25 @@ model first draws at that level (`acr-render/src/tex_cache.rs`, m2-tex-stream).
   no source origin there, hence the cropped strips). Then the mips on the GPU, then the
   texture binds (a 4 k map with mips written at once stalled one frame by 190 ms on the
   RX 9060 XT).
-- **Stand-in:** until a material's pictures are in, `GpuModel::group` binds the material in
-  the same place of the next coarser level the model carries (`stand_ins`; its pictures share
-  the master's UV layout, `hdbody.build_lods`), down the chain to the coarsest, which is always
-  loaded. Nothing draws untextured; a material without any stand-in samples white for the
-  missing picture.
+- **Stand-in level:** a mesh only ever samples its own material's pictures (`GpuModel::group`):
+  each authored level has its own UV layout and atlases (`hdbody.build_lods`), so another
+  level's picture paints wrong or black patches (the former material stand-in did, on HD
+  faces and hands, m2-standin-uv). Instead `group_draws` draws a model whose wanted level is
+  not `level_ready` (a material of it lacks a streamed picture) at the next coarser level
+  that is (`shown_level`): its own mesh, UVs and pictures, down to the coarsest, which is
+  always loaded. It asks for the pictures of the wanted level and of every level between it
+  and the one shown, so a close-up goes coarsest, then level 1 (small maps, decoded first),
+  then the master. Shadows step the same way. A split body never draws coarser than
+  `DAMAGED_UP_TO`; at that level a missing picture samples white (never another level's).
+  Test: `model_renderer::tests::draws_never_take_another_levels_textures`.
+- **Time to full detail:** a 4 k PNG takes about 0.2–0.3 s to decode on its thread (the three
+  master maps in parallel), then 11 frames of upload. The "6,000 frames" seen in the driver
+  were a `wait` of 200 held ticks, which runs frames at about 0.04 ms without vsync: the
+  maps were in after a fraction of a second of wall time (numbers below).
 - **Eviction:** `TexCache::evict` each frame drops pictures unused for `IDLE` (1,800) frames,
   and, while the streamed pictures exceed `BUDGET` (512 MB native, 192 MB wasm), the least
-  recently used ones unused for `GRACE` (120) frames. The material falls back to its
-  stand-in; a later draw asks again. Tests: `tex_cache::tests`.
+  recently used ones unused for `GRACE` (120) frames. The model then draws at the stand-in
+  level; a later draw asks again. Tests: `tex_cache::tests`.
 - **Mips:** made on the GPU for every model texture, loaded or streamed, except
   nearest-filtered ones (projected sprite colours): `mipgen::MipGen`, one render pass per
   level that samples the level above (a one-level view; the GL backend sets

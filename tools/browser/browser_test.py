@@ -61,6 +61,11 @@ def main():
     ap.add_argument("--hold-s", type=float, default=8.0, help="seconds at the last zoom")
     ap.add_argument("--gpu", choices=["vulkan", "swiftshader", "gl"], default="vulkan")
     ap.add_argument("--timeout-s", type=float, default=180.0)
+    ap.add_argument("--strip", type=int, default=0,
+                    help="instead of the zoom steps: N screenshots back to back from the first frame "
+                         "at a close camera (--strip-zoom), s*.png with the game frame in strip.json")
+    ap.add_argument("--strip-zoom", type=float, default=14.0)
+    ap.add_argument("--strip-lift", type=float, default=48.0)
     a = ap.parse_args()
     out = pathlib.Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -124,6 +129,23 @@ def main():
         t0 = time.time()
         start = drive({"cmd": "start", "blank": {"ground": "grass", "hud": False, "players": 1}})
         cx, cy = start.get("centre", [7680, 7680])
+        if a.strip:
+            # The close-up from the unit's first frame: streaming in progress shows here.
+            drive({"cmd": "camera", "x": cx, "y": cy, "zoom": a.strip_zoom, "yaw_deg": 20, "pitch_deg": 8,
+                   "lift": a.strip_lift, "free": True})
+            drive({"cmd": "spawn", "type": a.unit, "x": cx, "y": cy, "dir": 64, "owner": 0})
+            strip = []
+            for i in range(a.strip):
+                name = "s%03d.png" % i
+                page.screenshot(path=str(out / name))
+                ans = drive({"cmd": "textures"})
+                strip.append({"png": name, "t": round(time.time() - t0, 3), "frame": ans.get("frame"),
+                              "textures": ans.get("textures")})
+            browser.close()
+            (out / "strip.json").write_text(json.dumps(strip, indent=1))
+            print(json.dumps({"renderer": renderer, "console_errors": len(errors), "first_errors": errors[:10],
+                              "first": strip[0], "last": strip[-1]}))
+            return 0
         drive({"cmd": "spawn", "type": a.unit, "x": cx, "y": cy, "dir": 64, "owner": 0})
         drive({"cmd": "camera", "x": cx, "y": cy, "zoom": 1})
         time.sleep(3.0)

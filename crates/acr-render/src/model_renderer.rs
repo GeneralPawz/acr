@@ -514,13 +514,11 @@ struct GpuModel {
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
     primitives: Vec<GpuPrimitive>,
-    /// Per material; `None` while a streamed picture of it is missing: [`Self::group`] binds
-    /// its stand-in's instead (docs/rendering-3d.md "Texture streaming").
-    materials: Vec<Option<wgpu::BindGroup>>,
+    /// Per material: always its own pictures (white for one not loaded); a level whose
+    /// pictures are not all in is not drawn ([`Self::level_ready`], docs/rendering-3d.md
+    /// "Texture streaming").
+    materials: Vec<wgpu::BindGroup>,
     uniforms: Vec<wgpu::Buffer>,
-    /// Per material of a finer authored level: the material of the next coarser level drawn
-    /// in its place until its pictures are in.
-    stand_in: Vec<Option<usize>>,
     /// Per material: its authored level when finer than the coarsest ([`model::material_levels`]).
     levels: Vec<Option<u8>>,
     /// Per image: the texture, `None` while a streamed one is not loaded.
@@ -547,17 +545,21 @@ struct GpuModel {
 }
 
 impl GpuModel {
-    /// The bind group drawn for `material`: its own, else the stand-in chain's first.
+    /// The bind group drawn for `material`: always its own. Another level's pictures belong
+    /// to another UV layout (`hdbody.build_lods` packs each level's own atlases).
     fn group(&self, material: usize) -> &wgpu::BindGroup {
-        let mut k = material;
-        loop {
-            match (&self.materials[k], self.stand_in[k]) {
-                (Some(g), _) => return g,
-                (None, Some(next)) => k = next,
-                // Not reached: a material without stand-in always has its group.
-                (None, None) => unreachable!("material {k} has neither group nor stand-in"),
-            }
-        }
+        &self.materials[material]
+    }
+
+    /// All pictures `material` samples are in (a streamed one loaded, or none streamed).
+    fn material_ready(&self, material: usize) -> bool {
+        self.images_of(material)
+            .all(|i| self.views[i].is_some() || self.data.encoded.get(i).is_none_or(Option::is_none))
+    }
+
+    /// Every material drawn at `lod` has its own pictures in.
+    fn level_ready(&self, lod: usize) -> bool {
+        self.parts(lod, true).all(|(_, k, _)| self.material_ready(k))
     }
 
     /// The images `material` samples.
@@ -749,27 +751,11 @@ fn upload_texture(
     texture.create_view(&Default::default())
 }
 
-/// Per material of a finer authored level (`levels`, [`crate::model::material_levels`]): the
-/// material in the same place among those of the next coarser level the model carries.
-fn stand_ins(data: &ModelData, levels: &[Option<u8>]) -> Vec<Option<usize>> {
-    // Each material's level from the primitives that use it (the coarsest's too).
-    let mut level_of: Vec<Option<u8>> = vec![None; data.materials.len()];
-    for p in &data.primitives {
-        if let (Some(l), Some(slot)) = (p.lod, level_of.get_mut(p.material)) {
-            *slot = Some(slot.map_or(l, |s| s.max(l)));
-        }
-    }
-    let at = |l: u8| -> Vec<usize> { (0..data.materials.len()).filter(|&k| level_of[k] == Some(l)).collect() };
-    levels
-        .iter()
-        .enumerate()
-        .map(|(k, level)| {
-            let level = (*level)?;
-            let place = at(level).iter().position(|&m| m == k)?;
-            let next = (level + 1..=u8::MAX).map(at).find(|list| !list.is_empty())?;
-            Some(next[place.min(next.len() - 1)])
-        })
-        .collect()
+/// The level a model wanted at `wanted` draws at: the first from it, coarser up to `last`,
+/// whose materials all have their own pictures in (`ready`), so a mesh never samples pictures
+/// made for another level's UVs while the finer ones stream; `wanted` when none is.
+fn shown_level(wanted: usize, last: usize, ready: impl Fn(usize) -> bool) -> usize {
+    (wanted..=last.max(wanted)).find(|&l| ready(l)).unwrap_or(wanted)
 }
 
 pub struct ModelRenderer {
@@ -1463,7 +1449,6 @@ impl ModelRenderer {
             })
             .collect();
         let levels = crate::model::material_levels(&data.primitives, data.materials.len());
-        let stand_in = stand_ins(&data, &levels);
         let texture_bytes = |streamed: bool| -> u64 {
             (0..data.images.len())
                 .filter(|&i| views[i].is_none() == streamed)
@@ -1563,7 +1548,6 @@ impl ModelRenderer {
             far,
             materials: Vec::new(),
             uniforms,
-            stand_in,
             levels,
             views,
             srgb,
@@ -1583,17 +1567,14 @@ impl ModelRenderer {
         index
     }
 
-    /// The bind group of a model's material, `None` while a streamed picture of it is missing
-    /// and a stand-in draws in its place (without one, white takes the missing picture's place).
-    fn material_group(&self, device: &wgpu::Device, model: usize, k: usize) -> Option<wgpu::BindGroup> {
+    /// The bind group of a model's material: its own pictures, white for one not loaded (a
+    /// level with such a material is not drawn while it streams, [`GpuModel::level_ready`]).
+    fn material_group(&self, device: &wgpu::Device, model: usize, k: usize) -> wgpu::BindGroup {
         let g = &self.models[model];
         let m = &g.data.materials[k];
-        if g.stand_in[k].is_some() && g.images_of(k).any(|i| g.views[i].is_none()) {
-            return None;
-        }
         let view = |t: Option<usize>| t.and_then(|t| g.views.get(t)).and_then(Option::as_ref).unwrap_or(&self.white);
         let sampler = if m.nearest { &self.nearest } else { &self.linear };
-        Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("model material"),
             layout: &self.material_layout,
             entries: &[
@@ -1609,7 +1590,7 @@ impl ModelRenderer {
                     resource: wgpu::BindingResource::TextureView(view(m.surface.metal_rough)),
                 },
             ],
-        }))
+        })
     }
 
     /// Asks for the streamed pictures of `model`'s materials at authored `level` (drawn this
@@ -2086,6 +2067,18 @@ impl ModelRenderer {
             }
             self.lod_last[m] = Some(level[m]);
         }
+        // An authored level draws only once its own pictures are in; until then the next
+        // coarser level that has them (its own mesh, UVs and pictures) stands in.
+        let ready: Vec<[bool; lod::LEVELS + 1]> = (0..n)
+            .map(|m| {
+                let g = &self.models[m];
+                std::array::from_fn(|l| !g.authored || size[m] == 0.0 || g.level_ready(l))
+            })
+            .collect();
+        let shown = |m: usize, wanted: usize, last: usize| shown_level(wanted, last, |l| ready[m][l]);
+        // (model, level) of the streamed pictures to ask for: the wanted level and every
+        // coarser one down to the level shown in its place.
+        let mut wants: Vec<(usize, usize)> = Vec::new();
         let mut gpu: Vec<GpuInstance> = Vec::with_capacity(entries.len() * 2);
         // (level, look variant, instance) → draws, appending the instances.
         let mut group = |mut list: Vec<(usize, Option<usize>, &Entry)>| -> Vec<Draw> {
@@ -2134,7 +2127,13 @@ impl ModelRenderer {
             .iter()
             .filter(|e| e.on_screen)
             .map(|e| {
-                let l = if e.split { level[e.model].min(lod::DAMAGED_UP_TO) } else { level[e.model] };
+                let wanted = if e.split { level[e.model].min(lod::DAMAGED_UP_TO) } else { level[e.model] };
+                let at = shown(e.model, wanted, lod::LEVELS - 1);
+                if self.models[e.model].authored {
+                    wants.extend((wanted..=at).map(|l| (e.model, l)));
+                }
+                // A split body stays off the welded lists (white until its level is in).
+                let l = if e.split { at.min(lod::DAMAGED_UP_TO) } else { at };
                 (l, e.variant.filter(|_| l <= lod::LOOKS_UP_TO), e)
             })
             .collect();
@@ -2154,9 +2153,11 @@ impl ModelRenderer {
                     let l = match level[e.model] + lod::SHADOW_STEP {
                         _ if whole(e.model) => 0,
                         // As drawn: only a body split into parts stays off the welded lists.
-                        l if e.split => l.min(lod::DAMAGED_UP_TO),
+                        l if e.split => {
+                            shown(e.model, l.min(lod::DAMAGED_UP_TO), lod::LEVELS - 1).min(lod::DAMAGED_UP_TO)
+                        }
                         l if l >= lod::LEVELS - 1 => lod::SHADOW,
-                        l => l,
+                        l => shown(e.model, l, lod::SHADOW),
                     };
                     (l, None, e)
                 })
@@ -2164,12 +2165,10 @@ impl ModelRenderer {
         }
         self.shadow_draws = group(casters);
         self.draws = draws;
-        // The streamed pictures of the authored levels drawn (`tex_cache`).
-        let mut drawn: Vec<(usize, usize)> =
-            self.draws.iter().filter(|d| self.models[d.model].authored).map(|d| (d.model, d.lod)).collect();
-        drawn.sort_unstable();
-        drawn.dedup();
-        for (model, level) in drawn {
+        // The streamed pictures of the authored levels wanted and drawn (`tex_cache`).
+        wants.sort_unstable();
+        wants.dedup();
+        for (model, level) in wants {
             self.want_textures(model, level);
         }
         self.triangles = [self.count_triangles(&self.draws), self.count_triangles(&self.shadow_draws)];
@@ -2368,5 +2367,64 @@ pub fn depth_test_only() -> wgpu::DepthStencilState {
         depth_compare: Some(wgpu::CompareFunction::LessEqual),
         stencil: Default::default(),
         bias: Default::default(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{Primitive, Vertex};
+
+    fn primitive(material: usize, lod: Option<u8>) -> Primitive {
+        let vertices = (0..3)
+            .map(|i| Vertex { position: [i as f32, (i * i) as f32, 0.0], ..<Vertex as bytemuck::Zeroable>::zeroed() })
+            .collect();
+        Primitive { vertices, indices: vec![0, 1, 2], material, morphs: [false; 2], look_morphs: Vec::new(), lod }
+    }
+
+    /// No draw samples a texture set made for another level's UVs: whichever streamed pictures
+    /// are in, every material drawn at the level shown is its own level's (or shared by all
+    /// levels) and has its pictures in. An HD man: master (0), levels 1 to 3 with their own
+    /// atlases (materials 0..3: skin, 4..7: coat), a shared material 8 drawn at every level.
+    #[test]
+    fn draws_never_take_another_levels_textures() {
+        let have = [0u8, 1, 2, 3];
+        let mut prims: Vec<Primitive> =
+            (0..4u8).flat_map(|l| [primitive(l.into(), Some(l)), primitive(4 + usize::from(l), Some(l))]).collect();
+        prims.push(primitive(8, None));
+        let levels = crate::model::material_levels(&prims, 9);
+        assert_eq!(&levels[..4], &[Some(0), Some(1), Some(2), None], "the coarsest is always loaded");
+        // Per level: the materials drawn ([`lod::authored`]; a primitive without level at all).
+        let drawn: Vec<Vec<usize>> = (0..lod::LEVELS)
+            .map(|l| {
+                prims
+                    .iter()
+                    .filter(|p| {
+                        p.lod.is_none_or(|own| !lod::authored(&p.vertices, &p.indices, own, &have)[l].is_empty())
+                    })
+                    .map(|p| p.material)
+                    .collect()
+            })
+            .collect();
+        // Every set of loaded streamed levels (bits 0..2), every wanted level.
+        for loaded in 0u8..8 {
+            let ready_material = |k: usize| levels[k].is_none_or(|l| loaded & (1 << l) != 0);
+            let ready = |l: usize| drawn[l].iter().all(|&k| ready_material(k));
+            for wanted in 0..lod::LEVELS {
+                let at = shown_level(wanted, lod::LEVELS - 1, ready);
+                assert!(at >= wanted, "never finer than wanted");
+                for &k in &drawn[at] {
+                    assert!(ready_material(k), "loaded {loaded:03b}, wanted {wanted}: material {k} at {at} not in");
+                    assert!(
+                        levels[k].is_none_or(|own| usize::from(own) == at),
+                        "material {k} of level {:?} drawn at level {at}",
+                        levels[k]
+                    );
+                }
+                if ready(wanted) {
+                    assert_eq!(at, wanted, "loaded {loaded:03b}: the wanted level once its pictures are in");
+                }
+            }
+        }
     }
 }
