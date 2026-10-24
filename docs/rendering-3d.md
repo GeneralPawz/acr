@@ -2216,14 +2216,31 @@ Ranked by the measured share they could spare. VM numbers for the mission; Snapd
 numbers (the user's laptop) for the GPU from the clash above.
 
 1. **The sequential rest of the CPU frame** after m2-par-loops (view cull and parallel
-   loops, above: mission `3d.instances` 12 → 3–4 ms, `models_prepare` 7 → 2 ms):
-   `group_draws` (its sorts) and the uploads in `models_prepare`, and the corpses, which
-   `3d.instances` always builds. Culling them well off the view needs, per culled corpse:
-   `Seeps::corpse` kept as seen (else `Seeps::end` fades or keeps its stain), no ragdoll
-   actor (`rigged` drops it), its gear already laid (`Debris::lay_gear` at the landing),
-   `unit_models` still filled (pieces of a hit on it) and its footprint for the piles at
-   the edge; blasts off the view then no longer throw it (frames differ after scrolling
-   back).
+   loops, above: mission `3d.instances` 12 → 3–4 ms, `models_prepare` 7 → 2 ms).
+   - `models_prepare` is split by the profiler scopes `render.mp_staging` (the parallel
+     per-instance work), `render.mp_layout` (palettes and data in order), `render.mp_group_draws`
+     and `render.mp_upload` (`ModelRenderer::prepare_ns`; m2-perf7). Render VM under load,
+     ms per frame: clash +30 s 2.3 = 1.3 / 0.35 / 0.36 / 0.30; mission #SINGLE8 fight
+     +60 s 1.3–1.6 = 0.9–1.2 / 0.13–0.21 / 0.10–0.11 / 0.10–0.13. The sequential part is
+     ≈ 1 ms only in the clash (everything in view); in the mission it is ≈ 0.35–0.45 ms.
+   - The corpses, which `3d.instances` always builds. A cull of settled corpses well off
+     the view (m2-perf7, not landed: `ACR-analysis/perf7/corpse_cull_wip.patch`) kept, per
+     culled corpse, its pool, `Seeps::corpse` (seen), kept pool, `unit_models` entry and
+     footprint with its rest unused; it culled only corpses with no ragdoll or a frozen one
+     (kept by a `Ragdolls::off_view` set so `settle` does not drop it), the gear laid or
+     none, not pulverized, not the victim of a hit newer than the ragdolls' `hit_seen`, and
+     farther than a blast's reach + 64 px (Chebyshev) from this frame's untaken shell bursts
+     and grazes. Note that a corpse keeps `alive` set until the simulation removes it
+     (`death` ≥ 1000): test `death > 0`, not `!alive`. Measured on the mission with the
+     camera moved from the fight to the British town: 570 of the corpses culled, 1836 → 1266
+     instances built, `3d.instances` 3.6–4.3 → 3.3–3.9 ms (noise of the loaded VM is as
+     large). Not landed: with the ragdoll steps inline (`ACR_RAG_INLINE=1`) two runs culling
+     only the living differ by 2 pixels in the frame over the town, the corpse cull by 151
+     (small red specks around the living English there), and the fight +60 s by 726–911
+     against 199. Something drawn in view still depends on the corpses off it; the
+     re-entry frames themselves stay within the run-to-run noise (206–355 against 299–359).
+     Find that dependence first (candidates: the ragdoll budget, `allowed()` from measured
+     step costs; the blood sprayed onto `targets`; the splatter decals).
 2. **Ragdoll physics in piles** (≈ 4 ms of 6 in the fight at 4 steps, measured on main
    e19129b before m2-rag-perf moved the steps to a worker; see "Ragdoll steps off the
    render thread" above): a step still costs about 2 × the calibration for the contacts

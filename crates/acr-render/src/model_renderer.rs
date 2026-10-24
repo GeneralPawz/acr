@@ -825,6 +825,10 @@ pub struct ModelRenderer {
     pub triangles: [u64; 2],
     /// Draw calls of the last `prepare`: models, shadow casters.
     pub calls: [usize; 2],
+    /// Wall time of the last `prepare`'s parts (ns): the per-instance work (looks, staging,
+    /// poses, caps), the palette layout, [`Self::group_draws`], the uploads. Zero in the
+    /// browser (no clock there).
+    pub prepare_ns: [u64; 4],
     /// The look variants of the last model added.
     pub look_stats: LookStats,
     /// The target does not encode sRGB: the shader does.
@@ -1263,6 +1267,7 @@ impl ModelRenderer {
                 .map(|l| l.min(lod::LEVELS - 1)),
             triangles: [0; 2],
             calls: [0; 2],
+            prepare_ns: [0; 4],
             look_stats: LookStats::default(),
             encode_srgb: !target.is_srgb(),
             pose_count: 0,
@@ -1715,6 +1720,7 @@ impl ModelRenderer {
         dissolve: bool,
     ) {
         self.pump_textures(device, queue);
+        let mut clock = lap_start();
         let mut order: Vec<usize> = (0..instances.len()).filter(|&i| instances[i].model < self.models.len()).collect();
         // Each soldier's look (#283) and the baked variant nearest to it.
         let chosen: Vec<Option<(looks::Look, Option<usize>)>> = crate::par::map(instances, |inst| {
@@ -1917,6 +1923,7 @@ impl ModelRenderer {
         let caps: Vec<ModelInstance> =
             crate::par::map(&staged, |s| s.as_ref().map_or_else(Vec::new, caps_of)).into_iter().flatten().collect();
         let staged_caps = crate::par::map(&caps, |inst| stage(usize::MAX, inst));
+        self.prepare_ns[0] = lap(&mut clock);
         // The palettes in order, each shared pose once (sampled above in this order; the caps'
         // poses, after them, here), then the instance data.
         let mut next = 0;
@@ -1965,7 +1972,9 @@ impl ModelRenderer {
         let focus = view.target();
         let reach = 1.1 * (w * w + h * h).sqrt() / view.camera.scale;
         let fit = if shadows_on { shadow::fit(casters.iter().copied(), focus, reach) } else { None };
+        self.prepare_ns[1] = lap(&mut clock);
         let gpu = self.group_draws(&entries, view.camera.scale, fit.as_ref().map(|f| (f.texel, focus, reach)));
+        self.prepare_ns[2] = lap(&mut clock);
 
         let rows = (texels.len() as u32).div_ceil(BONE_WIDTH).max(1);
         if rows > self.bones.height() {
@@ -1990,6 +1999,7 @@ impl ModelRenderer {
         if !gpu.is_empty() {
             queue.write_buffer(&self.instances, 0, bytemuck::cast_slice(&gpu));
         }
+        self.prepare_ns[3] = lap(&mut clock);
         let len = math::dot(LIGHT, LIGHT).sqrt();
         let forward = view.basis().forward;
         let globals = Globals {
@@ -2414,6 +2424,26 @@ pub fn depth_test_only() -> wgpu::DepthStencilState {
         stencil: Default::default(),
         bias: Default::default(),
     }
+}
+
+/// A clock for [`ModelRenderer::prepare_ns`]: none in the browser (`std::time::Instant`
+/// panics there).
+fn lap_start() -> Option<std::time::Instant> {
+    #[cfg(not(target_arch = "wasm32"))]
+    return Some(std::time::Instant::now());
+    #[cfg(target_arch = "wasm32")]
+    None
+}
+
+/// Nanoseconds since `clock`, which moves on to now.
+fn lap(clock: &mut Option<std::time::Instant>) -> u64 {
+    let now = lap_start();
+    let ns = match (*clock, now) {
+        (Some(a), Some(b)) => (b - a).as_nanos() as u64,
+        _ => 0,
+    };
+    *clock = now;
+    ns
 }
 
 #[cfg(test)]

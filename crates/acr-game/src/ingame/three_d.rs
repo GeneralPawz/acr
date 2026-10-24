@@ -2212,6 +2212,11 @@ impl ThreeD {
         {
             acr_sim::prof_scope!("render.models_prepare");
             renderer.prepare(device, queue, &view3d, shown, self.gore == Gore::Full);
+            let [staging, layout, group, upload] = renderer.prepare_ns;
+            acr_sim::prof::add("render.mp_staging", staging);
+            acr_sim::prof::add("render.mp_layout", layout);
+            acr_sim::prof::add("render.mp_group_draws", group);
+            acr_sim::prof::add("render.mp_upload", upload);
         }
         renderer.prepare_pools(device, queue, if models_phase { &self.pools[..] } else { &[] });
         let sprites = {
