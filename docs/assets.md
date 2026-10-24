@@ -545,6 +545,13 @@ inside the transport (`desant.rs`), so none are drawn on deck.
   `NetBlg7`, `NetBlg8` (stone towers come out as smooth lumps), `SpnRudCo`, `SpnRudIr`,
   `SpnRudSt` (the mine pit is filled in); `AtcKre` (melted, no better input) and `IncDo3`
   (`acr model-ref` finds no `#STANDLO` picture) still have no model.
+  The third batch (#305) scripts the melted ones with `acr_assets.stonebuild` (masonry
+  blocks, stairs, merlons, timbers, rubble heaps and an open or floored pit funnel; one mesh,
+  one `surfaces` kind per material slot, turn, scale and shift fitted to the `#STANDLO`
+  sprite, then the generic ruin): `NetBlg1/3/4/7/8`, `SpnRudCo/Ir/St`, `AtcKre`, sprite
+  IoU 0.61-0.86 (stats `iou`, `fit`, `blocks`). They are blockouts in shape, without the
+  sprites' carving. `IncDo3` draws its finished state from sections (`#STANDLO` has 0
+  frames, frames 4-11 of `INCDO3.GP`) and is still left out.
 - Types with a scripted model keep it; `GENERATED = True` in `incdo1.py`, `shppinta.py`,
   `shpsanta.py`, `shpfregat.py` builds the generated one instead.
 - Stats: `source`, `source_triangles`, `triangles`, `fit` (yaw, scale, shift, raster IoU,
