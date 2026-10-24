@@ -839,6 +839,18 @@ described in [simulation.md](simulation.md#fog-of-war).
   the cursor instead: the ground point under it in the attack-ground mode, else the enemy
   under it. The mode is the sim's own choice (`artillery::gun_shot`) with the hit-locations
   rule, else the original's by distance. Not drawn in the zoomed-out view.
+  - **Zielhilfe** (ACR): with own guns (`WEAPONINSECTOR` types) or, under the mortars rule,
+    own mortars selected, command slot 20 shows the original's `CEN02SP` icon (a cannon
+    with its dotted flight; `ICONS.GP` frame 93), framed yellow while the guides show, hint
+    "Zielhilfe ausblenden" / "Zielhilfe einblenden". A click hides or shows the gun marks
+    and the mortars' rings and zones (the zone being set still follows the cursor). The
+    switch is the local player's, not a command (no replay, no sim effect); it is kept in
+    `settings.txt` as `aim_guides=on|off` (on by default) for later games.
+  - Since 2026-10 the gun marks and the formation marks are drawn as lines one window pixel
+    wide at every zoom (`Draw::line`, `ui/draw.rs` `line_runs`): at zoom 1 the pixels of
+    `DrawLine` (0x4012ff), zoomed in crisp instead of scaled-up blocks. Driver check:
+    `ACR-analysis/aim-toggle/` (`after.json`, `sheet_squares.png`, `sheet_gun.png`,
+    `sheet_panel.png`).
 - Panic shouts (0x600bc8, #209): with Tab on, every flight leg of a panicking unit adds one
   of the eight `FEAR_RNDM0..7` lines of `TEXT\MORALE_TEXT.TXT` ("Wir werden alle sterben
   ...", "Rette sich, wer kann!", picked with the C library's `rand() & 7`), centred at

@@ -22,7 +22,6 @@ use acr_sim::artillery::{self, GunMode};
 use acr_sim::catalog::SectorWeapon;
 use acr_sim::world::{Order, Unit};
 
-use crate::hud::line;
 use crate::ui::draw::Draw;
 
 /// What a gun aims at: a ground point or an object's position, or (`to: None`) its facing.
@@ -107,16 +106,20 @@ pub struct Colours {
 
 type At<'a> = &'a dyn Fn(f64, f64) -> (i32, i32);
 
+/// The colour of a line and how many window pixels lower it is drawn (1: the dark edge).
+type Ink = ([u8; 4], u8);
+
 /// A ground line from `a` to `b` (world px) in steps of 16 px following the ground, drawn
-/// where `pattern(along)` holds (`along` in world px from `a`).
-fn ground_line(out: &mut Vec<Draw>, c: [u8; 4], at: At, a: (f64, f64), b: (f64, f64), pattern: fn(f64) -> bool) {
+/// where `pattern(along)` holds (`along` in world px from `a`), one window pixel wide at any
+/// zoom ([`Draw::line`]).
+fn ground_line(out: &mut Vec<Draw>, (c, drop): Ink, at: At, a: (f64, f64), b: (f64, f64), pattern: fn(f64) -> bool) {
     let len = ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
     let n = (len / 16.0).ceil().max(1.0) as i32;
     let p = |t: f64| at(a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t);
     for k in 0..n {
         let (t0, t1) = (f64::from(k) / f64::from(n), f64::from(k + 1) / f64::from(n));
         if pattern(len * (t0 + t1) / 2.0) {
-            line(out, c, p(t0), p(t1));
+            out.push(Draw::line(c, p(t0), p(t1)).dropped(drop));
         }
     }
 }
@@ -141,30 +144,30 @@ fn polar(o: (f64, f64), a: f64, r: f64) -> (f64, f64) {
 }
 
 /// An arc around `o` of radius `r` from angle `a0` to `a1`.
-fn arc(out: &mut Vec<Draw>, c: [u8; 4], at: At, o: (f64, f64), r: f64, (a0, a1): (f64, f64), pattern: fn(f64) -> bool) {
+fn arc(
+    out: &mut Vec<Draw>,
+    (c, drop): Ink,
+    at: At,
+    o: (f64, f64),
+    r: f64,
+    (a0, a1): (f64, f64),
+    pattern: fn(f64) -> bool,
+) {
     let n = ((a1 - a0).abs() * r / 16.0).ceil().max(2.0) as i32;
     for k in 0..n {
         let t0 = a0 + (a1 - a0) * f64::from(k) / f64::from(n);
         let t1 = a0 + (a1 - a0) * f64::from(k + 1) / f64::from(n);
         if pattern(r * ((t0 + t1) / 2.0 - a0).abs()) {
             let (p, q) = (polar(o, t0, r), polar(o, t1, r));
-            line(out, c, at(p.0, p.1), at(q.0, q.1));
+            out.push(Draw::line(c, at(p.0, p.1), at(q.0, q.1)).dropped(drop));
         }
-    }
-}
-
-/// `at` one screen pixel lower: the dark edge under a mark.
-fn lower(at: At<'_>) -> impl Fn(f64, f64) -> (i32, i32) + '_ {
-    move |x, y| {
-        let p = at(x, y);
-        (p.0, p.1 + 1)
     }
 }
 
 /// A line in the mark's yellow over its dark edge.
 fn outlined(out: &mut Vec<Draw>, cs: Colours, at: At, a: (f64, f64), b: (f64, f64), pattern: fn(f64) -> bool) {
-    ground_line(out, cs.dark, &lower(at), a, b, pattern);
-    ground_line(out, cs.mark, at, a, b, pattern);
+    ground_line(out, (cs.dark, 1), at, a, b, pattern);
+    ground_line(out, (cs.mark, 0), at, a, b, pattern);
 }
 
 /// An arc in the mark's yellow over its dark edge.
@@ -177,20 +180,20 @@ fn outlined_arc(
     a: (f64, f64),
     pattern: fn(f64) -> bool,
 ) {
-    arc(out, cs.dark, &lower(at), o, r, a, pattern);
-    arc(out, cs.mark, at, o, r, a, pattern);
+    arc(out, (cs.dark, 1), at, o, r, a, pattern);
+    arc(out, (cs.mark, 0), at, o, r, a, pattern);
 }
 
 /// The grey ring of radius `r` around `o`, dashed, hatched diagonally every 64 px inside.
 fn too_close(out: &mut Vec<Draw>, cs: Colours, at: At, o: (f64, f64), r: f64) {
-    arc(out, cs.grey, at, o, r, (0.0, std::f64::consts::TAU), dashed);
+    arc(out, (cs.grey, 0), at, o, r, (0.0, std::f64::consts::TAU), dashed);
     let s = std::f64::consts::FRAC_1_SQRT_2;
     let mut off = -r + 32.0;
     while off < r {
         let half = (r * r - off * off).sqrt();
         // Across (1, −1)/√2 by `off`, along (1, 1)/√2 by ±half.
         let m = (o.0 + off * s, o.1 - off * s);
-        ground_line(out, cs.grey, at, (m.0 - half * s, m.1 - half * s), (m.0 + half * s, m.1 + half * s), dotted);
+        ground_line(out, (cs.grey, 0), at, (m.0 - half * s, m.1 - half * s), (m.0 + half * s, m.1 + half * s), dotted);
         off += 64.0;
     }
 }
@@ -216,10 +219,10 @@ pub fn draw(m: &Mark, s: &SectorWeapon, cs: Colours, at: At, out: &mut Vec<Draw>
                 outlined(out, cs, at, polar(o, a, r1), polar(o, a, r2), dashed);
             }
             outlined_arc(out, cs, at, o, r2, (dir - half, dir + half), dashed);
-            arc(out, cs.mark, at, o, r2 / 2.0, (dir - half, dir + half), dotted);
+            arc(out, (cs.mark, 0), at, o, r2 / 2.0, (dir - half, dir + half), dotted);
         }
         GunMode::Ground => {
-            ground_line(out, cs.mark, at, o, g, dotted);
+            ground_line(out, (cs.mark, 0), at, o, g, dotted);
             outlined_arc(out, cs, at, g, 24.0, (0.0, std::f64::consts::TAU), solid);
             let lane = f64::from(artillery::GROUND_LANE);
             let w = 32.0;
@@ -244,7 +247,7 @@ pub fn draw(m: &Mark, s: &SectorWeapon, cs: Colours, at: At, out: &mut Vec<Draw>
             outlined(out, cs, at, g, (g.0 + u.0 * lane, g.1 + u.1 * lane), dashed);
         }
         GunMode::Mortar => {
-            ground_line(out, cs.mark, at, o, g, dotted);
+            ground_line(out, (cs.mark, 0), at, o, g, dotted);
             outlined_arc(out, cs, at, g, 48.0, (0.0, std::f64::consts::TAU), dashed);
         }
     }

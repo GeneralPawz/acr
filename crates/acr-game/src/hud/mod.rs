@@ -166,6 +166,9 @@ pub enum HudCommand {
     /// Mortars rule (ACR, #301), "Zielzone setzen": the next click or drag on the map adds
     /// an engagement zone to the selected mortars.
     MortarZoneMode,
+    /// ACR, "Zielhilfe": show or hide the guns' and mortars' aim guides on the ground
+    /// (`gun_marks.rs`; the `aim_guides` setting).
+    AimGuides,
     /// Mortars rule, "Zonen löschen": the selected mortars lose their zones.
     MortarClearZones,
     /// Mortars rule, "Feuer frei" (true) / "Feuer einstellen": shell the zones or stop.

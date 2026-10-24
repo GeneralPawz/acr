@@ -288,6 +288,11 @@ impl Game {
                 }
                 let (l, images, cursor) = game.interface(&self.ui.ctx(), size, game_dt);
                 layers = l;
+                // The "Zielhilfe" icon's switch is kept in `settings.txt` (`aim_guides`).
+                let guides = game.aim_guides();
+                if guides != self.ui.settings().aim_guides {
+                    self.ui.change_settings(|s| s.aim_guides = guides);
+                }
                 // Mission pages, hints and the end of the game over the interface.
                 layers.push((game.screen_canvas(), game.overlay(&self.ui.ctx())));
                 for (name, image) in images {

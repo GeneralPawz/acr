@@ -91,6 +91,10 @@ pub enum Sprite {
     GameTextFaded { font: FontId, text: Vec<u8>, fade: u8 },
     /// An image set with [`Textures::set_image`].
     Image(&'static str),
+    /// A line from the draw position to the position plus `Draw::size` (canvas pixels, both
+    /// ends drawn), one window pixel wide at any canvas scale and `drop` window pixels lower
+    /// (a dark edge under a mark): crisp when the map is zoomed ([`Draw::line`]).
+    Line { color: [u8; 4], drop: u8 },
 }
 
 /// One sprite placed on the canvas.
@@ -163,6 +167,27 @@ impl Draw {
         }
     }
 
+    /// A line from `a` to `b` (canvas pixels, both ends drawn), one window pixel wide at any
+    /// scale ([`Sprite::Line`]).
+    pub fn line(color: [u8; 4], a: (i32, i32), b: (i32, i32)) -> Self {
+        Self {
+            sprite: Sprite::Line { color, drop: 0 },
+            x: a.0,
+            y: a.1,
+            size: [b.0 - a.0, b.1 - a.1],
+            clip: Rect::ALL,
+            alpha: 1.0,
+        }
+    }
+
+    /// The same line `drop` window pixels lower.
+    pub fn dropped(mut self, drop: u8) -> Self {
+        if let Sprite::Line { drop: d, .. } = &mut self.sprite {
+            *d = drop;
+        }
+        self
+    }
+
     /// The same draw with the colours of the game screen (dialogs over the game).
     pub fn in_game(mut self) -> Self {
         self.sprite = match self.sprite {
@@ -224,6 +249,7 @@ impl Textures {
                 k,
                 Sprite::Frame { .. }
                     | Sprite::Fill(_)
+                    | Sprite::Line { .. }
                     | Sprite::GameFrame { .. }
                     | Sprite::GameFrameRemap { .. }
                     | Sprite::Image(_)
@@ -264,6 +290,17 @@ impl Textures {
                 self.cache.insert(d.sprite.clone(), raster);
             }
             let Some(Some(raster)) = self.cache.get(&d.sprite) else { continue };
+            if let Sprite::Line { drop, .. } = d.sprite {
+                line_runs(canvas, d, f32::from(drop), |dst| {
+                    out.push(ImageDraw {
+                        texture: raster.texture.clone(),
+                        dst,
+                        src: [0.0, 0.0, 1.0, 1.0],
+                        color: [1.0, 1.0, 1.0, d.alpha],
+                    })
+                });
+                continue;
+            }
             let (w, h) = (raster.texture.width as i32, raster.texture.height as i32);
             let size = if matches!(d.sprite, Sprite::Fill(_) | Sprite::Image(_)) { d.size } else { [w, h] };
             let dst = Rect::new(d.x + raster.offset[0], d.y + raster.offset[1], size[0], size[1]);
@@ -290,6 +327,59 @@ impl Textures {
     }
 }
 
+/// The window rectangles (`[x, y, w, h]`) of line `d` on `canvas`: its ends at the centres of
+/// their canvas pixels, stepped in whole window pixels like `DrawLine` (0x4012ff) steps in
+/// screen pixels, consecutive pixels of a row (column) joined, `drop` pixels lower. At scale 1
+/// these are the pixels of the original's line; zoomed in the line stays one pixel wide.
+fn line_runs(canvas: &Canvas, d: &Draw, drop: f32, mut run: impl FnMut([f32; 4])) {
+    let clip = d.clip.intersect(&canvas.clip);
+    if clip.is_empty() {
+        return;
+    }
+    let window = |x: i32, y: i32| {
+        let [wx, wy, ..] = canvas.to_window([x as f32 + 0.5, y as f32 + 0.5, 0.0, 0.0]);
+        (wx.floor() as i64, wy.floor() as i64)
+    };
+    // The clip in window pixels (pixels whose centre lies inside).
+    let [cx, cy, cw, ch] =
+        canvas.to_window([clip.x0 as f32, clip.y0 as f32, clip.width() as f32, clip.height() as f32]);
+    let (cx0, cy0) = ((cx - 0.5).ceil() as i64, (cy - 0.5).ceil() as i64);
+    let (cx1, cy1) = ((cx + cw - 0.5).ceil() as i64, (cy + ch - 0.5).ceil() as i64);
+    let (x0, y0) = window(d.x, d.y);
+    let (x1, y1) = window(d.x + d.size[0], d.y + d.size[1]);
+    if x0.max(x1) < cx0 || x0.min(x1) >= cx1 || y0.max(y1) < cy0 || y0.min(y1) >= cy1 {
+        return;
+    }
+    let (dx, dy) = (x1 - x0, y1 - y0);
+    let n = dx.abs().max(dy.abs());
+    let at = |k: i64| {
+        if n == 0 {
+            return (x0, y0);
+        }
+        let round = |d: i64| (2 * d * k + n * d.signum()) / (2 * n);
+        (x0 + round(dx), y0 + round(dy))
+    };
+    let horizontal = dx.abs() >= dy.abs();
+    let mut emit = |a: (i64, i64), b: (i64, i64)| {
+        let (rx0, ry0) = (a.0.min(b.0).max(cx0), a.1.min(b.1).max(cy0));
+        let (rx1, ry1) = ((a.0.max(b.0) + 1).min(cx1), (a.1.max(b.1) + 1).min(cy1));
+        if rx0 < rx1 && ry0 < ry1 {
+            run([rx0 as f32, ry0 as f32 + drop, (rx1 - rx0) as f32, (ry1 - ry0) as f32]);
+        }
+    };
+    let mut start = at(0);
+    let mut last = start;
+    for k in 1..=n {
+        let p = at(k);
+        if if horizontal { p.1 != start.1 } else { p.0 != start.0 } {
+            emit(start, last);
+            start = p;
+        }
+        last = p;
+    }
+    emit(start, last);
+}
+
 /// `None` while inputs are still loading, `Some(None)` if the sprite cannot be drawn.
 type Rasterized = Option<Option<(Image, [i32; 2])>>;
 
@@ -309,7 +399,9 @@ pub(crate) fn rasterize(lib: &Library, fonts: &Fonts, sprite: &Sprite) -> Raster
             Some(rasterize_frame(&file, *frame, &palette))
         }
         Sprite::Text { font, text } => fonts.rasterize(lib, *font, text),
-        Sprite::Fill(color) => Some(Some((Image { width: 1, height: 1, rgba: color.to_vec() }, [0, 0]))),
+        Sprite::Fill(color) | Sprite::Line { color, .. } => {
+            Some(Some((Image { width: 1, height: 1, rgba: color.to_vec() }, [0, 0])))
+        }
         Sprite::GameFrame { gp, frame, player } => {
             let palette_path = acr_formats::sprite_palette(gp);
             if !lib.settled(gp) || !lib.settled(palette_path) {
@@ -372,6 +464,47 @@ pub fn rasterize_frame_as(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The window pixels a line covers.
+    fn pixels(canvas: &Canvas, d: &Draw) -> Vec<(i32, i32)> {
+        let mut px = Vec::new();
+        line_runs(canvas, d, 0.0, |[x, y, w, h]| {
+            for i in 0..w as i32 {
+                for j in 0..h as i32 {
+                    px.push((x as i32 + i, y as i32 + j));
+                }
+            }
+        });
+        px.sort_unstable();
+        px
+    }
+
+    #[test]
+    fn lines_match_the_original_at_scale_1_and_stay_thin_zoomed() {
+        // At scale 1 the pixels of `hud::line` (`DrawLine`), shifted by the origin.
+        let canvas = Canvas::new(1.0, [-100.0, -50.0]);
+        for (a, b) in [((0, 0), (12, -6)), ((100, 60), (88, 66)), ((5, 5), (5, 9)), ((3, 3), (3, 3))] {
+            let mut fills = Vec::new();
+            crate::hud::line(&mut fills, [255; 4], a, b);
+            let mut want: Vec<(i32, i32)> = fills
+                .iter()
+                .flat_map(|f| {
+                    (0..f.size[0]).flat_map(move |i| (0..f.size[1]).map(move |j| (f.x + i - 100, f.y + j - 50)))
+                })
+                .collect();
+            want.sort_unstable();
+            assert_eq!(pixels(&canvas, &Draw::line([255; 4], a, b)), want, "{a:?} {b:?}");
+        }
+        // Zoomed four times: four times as long, still one pixel per step.
+        let canvas = Canvas::new(4.0, [0.0, 0.0]);
+        let px = pixels(&canvas, &Draw::line([255; 4], (0, 0), (12, -6)));
+        assert_eq!(px.len(), 49);
+        assert_eq!((px[0], px[48]), ((2, 2), (50, -22)));
+        // Off the canvas: nothing.
+        let canvas = Canvas { clip: Rect::new(0, 0, 10, 10), ..Canvas::new(1.0, [0.0, 0.0]) };
+        assert!(pixels(&canvas, &Draw::line([255; 4], (20, 20), (30, 25))).is_empty());
+        assert_eq!(pixels(&canvas, &Draw::line([255; 4], (5, 5), (15, 5))).len(), 5);
+    }
 
     #[test]
     fn rects() {

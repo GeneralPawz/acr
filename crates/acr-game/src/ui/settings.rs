@@ -86,6 +86,10 @@ pub struct Settings {
     /// earth scuffs, blood pools and the debris of the fallen stay for the whole battle
     /// (render only, capped and merged; `ingame/kept_marks.rs`, docs/rendering-3d.md).
     pub marks_keep: bool,
+    /// ACR: `aim_guides=on|off` (on by default): the selected cannons' and mortars' aim
+    /// guides on the ground (`ingame/gun_marks.rs`), switched by their command icon
+    /// "Zielhilfe" in a game, which writes it back here (docs/ui.md "Gun marks").
+    pub aim_guides: bool,
     /// ACR: `decay_stain=on|off`: a decaying corpse's fluids soak into the ground under it
     /// (a cadaver decomposition island: a dark, greasy stain drying to brown, the grass
     /// dying around it; docs/rendering-3d.md). `None` (not in the file): on with
@@ -193,6 +197,7 @@ impl Default for Settings {
             ground_cover: true,
             ground_detailed: true,
             marks_keep: false,
+            aim_guides: true,
             weather: Weather::Off,
         }
     }
@@ -271,7 +276,7 @@ impl Settings {
             "sound_volume={}\nmusic_volume={}\nmusic_mode={}\ngame_mode={}\nscroll_speed={}\nframe_time={}\n\
              resolution={}\nrecord={}\nrecord_file={hex}\ncontrols={controls}\nedge_scroll={}\n\
              models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\ncorpse_decay={}\nhit_locations={}\nbody_spacing={}\nmortars={}\ncorpse_piles={}\ncannon_fire={}\nshadows={}\nlod={}\nmaterial_detail={}\nwind={}\nmap_models={}\nwater={}\n\
-             ground={}\nground_cover={}\nbattlefield_marks={}\nweather={}\n{}{}{}",
+             ground={}\nground_cover={}\nbattlefield_marks={}\nweather={}\naim_guides={}\n{}{}{}",
             self.sound_volume,
             self.music_volume,
             self.music_mode,
@@ -298,6 +303,7 @@ impl Settings {
             if self.ground_cover { "on" } else { "off" },
             if self.marks_keep { "keep" } else { "fade" },
             self.weather.name(),
+            if self.aim_guides { "on" } else { "off" },
             match self.decay_stain {
                 Some(true) =>
                     "decay_stain=on
@@ -388,6 +394,7 @@ impl Settings {
                 "ground" => s.ground_detailed = value != "original",
                 "ground_cover" => s.ground_cover = value != "off",
                 "battlefield_marks" => s.marks_keep = value == "keep",
+                "aim_guides" => s.aim_guides = value != "off",
                 "weather" => s.weather = Weather::parse(value).unwrap_or_default(),
                 "group_move" => {
                     s.group_move = match value {
@@ -465,6 +472,7 @@ mod tests {
             corpse_piles: true,
             cannon_fire: true,
             marks_keep: true,
+            aim_guides: false,
             weather: Weather::Snow,
         };
         assert_eq!(Settings::decode(&s.encode()), s);

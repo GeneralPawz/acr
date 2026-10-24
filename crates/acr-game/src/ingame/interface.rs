@@ -181,6 +181,8 @@ pub struct State {
     pub attack_ground_mode: bool,
     /// Mortars rule (#301): "Zielzone setzen" was pressed (`mortar_ui.rs`).
     pub(super) mortar: super::mortar_ui::ZoneMode,
+    /// The guns' and mortars' aim guides are shown (`aim_guides`, the "Zielhilfe" icon).
+    aim_guides: bool,
     /// Space cycles through the selection (0x4c6020).
     next_centred: usize,
     /// The market's amount and chosen slots (ECO+0x2a0, +0x2a4, +0x2a8), kept for the game.
@@ -241,6 +243,7 @@ impl Default for State {
             select_formed: None,
             attack_ground_mode: false,
             mortar: Default::default(),
+            aim_guides: true,
             next_centred: 0,
             market_amount: 0,
             market_sell: None,
@@ -269,6 +272,13 @@ impl InGame {
         self.interface.scroll_speed = settings.scroll_speed.clamp(2, 10);
         self.apply_controls(settings);
         self.three_d.apply(settings);
+        self.interface.aim_guides = settings.aim_guides;
+    }
+
+    /// Whether the aim guides are shown: the app writes a switch by the "Zielhilfe" icon back
+    /// to `settings.txt` (`aim_guides`), so it holds for the next games too.
+    pub fn aim_guides(&self) -> bool {
+        self.interface.aim_guides
     }
 
     pub fn set_modifiers(&mut self, mods: ModifiersState) {
@@ -579,6 +589,7 @@ impl InGame {
         self.idle_icons(&data, outline, &mut view.icons);
         self.switch_icons(ctx, &data, outline, &mut view.icons);
         self.mortar_icons(&data, outline, &mut view.icons);
+        self.aim_guide_icon(&data, outline, &mut view.icons);
         let Some(world) = &self.world else { return view };
         let objects = self.objects.objects();
         // The type icons, then the formation icons, take the first slots the commands leave
@@ -978,6 +989,33 @@ impl InGame {
             selected: self.interface.attack_ground_mode,
             hint: ctx.texts.get("ATGHINT").to_vec(),
             action: Some(HudCommand::AttackGroundMode),
+            ..Icon::default()
+        });
+    }
+
+    /// ACR's "Zielhilfe" icon (not in the original; docs/ui.md "Gun marks"): with own guns
+    /// (`WEAPONINSECTOR` types) or, under the mortars rule, own mortars selected, slot 20
+    /// shows the original's `CEN02SP` picture (a cannon with its dotted flight), framed
+    /// yellow while the aim guides are shown; a click shows or hides them. Not a command:
+    /// replays and the simulation never see it.
+    fn aim_guide_icon(&self, data: &HudData, outline: u8, icons: &mut Vec<Icon>) {
+        const SLOT: usize = 20;
+        let Some(world) = &self.world else { return };
+        let own = self.own();
+        let guns = self.selected_units().any(|u| {
+            let t = world.catalog.get(u.kind);
+            u.owner == own && u.death == 0 && (t.sector_weapon.is_some() || (world.rules.mortars && t.mortar))
+        });
+        let Some(frame) = data.icon("CEN02SP").filter(|_| guns) else { return };
+        let on = self.interface.aim_guides;
+        icons.retain(|i| i.slot != SLOT);
+        icons.push(Icon {
+            frame,
+            slot: SLOT,
+            outline: Some(outline),
+            selected: on,
+            hint: if on { b"Zielhilfe ausblenden".to_vec() } else { b"Zielhilfe einblenden".to_vec() },
+            action: Some(HudCommand::AimGuides),
             ..Icon::default()
         });
     }
@@ -1612,6 +1650,7 @@ impl InGame {
             // 0x606650: the next left click on the map sets the patrol point (0x4c28aa).
             HudCommand::PatrolMode => self.interface.patrol_mode = true,
             HudCommand::AttackGroundMode => self.interface.attack_ground_mode = true,
+            HudCommand::AimGuides => self.interface.aim_guides = !self.interface.aim_guides,
             HudCommand::MortarZoneMode | HudCommand::MortarClearZones | HudCommand::MortarFire(_) => {
                 self.mortar_command(&command)
             }
@@ -2015,6 +2054,7 @@ impl InGame {
             self.facing_arrow(bracket, terrain.height_at(sx, sy), &mut out);
         }
         // Interface marks: hidden with the interface (the driver's `hud` off).
+        // The "Zielhilfe" icon hides the guides; the zone being set still follows the cursor.
         if !self.interface.hud.zoom && !self.hud_hidden {
             self.gun_marks(ctx, world, terrain, &palette, &mut out);
         }
@@ -2067,7 +2107,8 @@ impl InGame {
     /// order) a cross 2 pixels wide at the slot it walks to. Both in
     /// `GetPaletteColor(255, 255, 0)`, raw palette index 0xC9 in formation melee (0x41e50c).
     /// The lines follow the ground height at their ends (0x41c75b). The bounding box after
-    /// the loop is never drawn (a jump skips it, 0x41cbfc).
+    /// the loop is never drawn (a jump skips it, 0x41cbfc). ACR draws them one window pixel
+    /// wide at every zoom ([`Draw::line`]): the original's pixels at zoom 1, crisp beyond.
     fn formation_marks(
         &self,
         world: &acr_sim::World,
@@ -2106,14 +2147,14 @@ impl InGame {
                     continue;
                 };
                 if keep && let Some(&(sx, sy)) = br.slots.get(k) {
-                    line(out, c, at(sx, sy - 2), at(sx, sy + 2));
-                    line(out, c, at(sx - 2, sy), at(sx + 2, sy));
+                    out.push(Draw::line(c, at(sx, sy - 2), at(sx, sy + 2)));
+                    out.push(Draw::line(c, at(sx - 2, sy), at(sx + 2, sy)));
                 }
                 let (x, y) = (u.pos.x >> 4, u.pos.y >> 4);
-                line(out, c, at(x - 12, y), at(x, y - 12));
-                line(out, c, at(x - 12, y), at(x, y + 12));
-                line(out, c, at(x + 12, y), at(x, y - 12));
-                line(out, c, at(x + 12, y), at(x, y + 12));
+                out.push(Draw::line(c, at(x - 12, y), at(x, y - 12)));
+                out.push(Draw::line(c, at(x - 12, y), at(x, y + 12)));
+                out.push(Draw::line(c, at(x + 12, y), at(x, y - 12)));
+                out.push(Draw::line(c, at(x + 12, y), at(x, y + 12)));
             }
         }
     }
@@ -2153,14 +2194,15 @@ impl InGame {
             let (x, y) = (x as i32, y as i32);
             (x, (y >> 1) - terrain.height_at(x, y))
         };
-        for u in self.selected_units().filter(|u| u.owner == own && u.inside_of.is_none()) {
+        let guides = self.interface.aim_guides;
+        for u in self.selected_units().filter(|u| guides && u.owner == own && u.inside_of.is_none()) {
             let Some(s) = world.catalog.get(u.kind).sector_weapon else { continue };
             let Some(aim) = aiming.or_else(|| gun_marks::current(world, u)) else { continue };
             if let Some(m) = gun_marks::mark(world, u, aim) {
                 gun_marks::draw(&m, &s, cs, &at, out);
             }
         }
-        self.mortar_marks(world, cs, &at, cursor, out);
+        self.mortar_marks(world, cs, &at, cursor, guides, out);
     }
 
     /// The inaccessible areas (key Q, 0x518306): every blocked 16 × 16 cell of the land

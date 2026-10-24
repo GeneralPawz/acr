@@ -168,19 +168,24 @@ impl InGame {
     }
 
     /// The selected own mortars' marks: a hatched grey ring of the minimum range, a dashed
-    /// circle per zone and, in the zone mode, the zone being set under the cursor.
+    /// circle per zone (both only with the aim `guides` on) and, in the zone mode, the zone
+    /// being set under the cursor.
     pub(super) fn mortar_marks(
         &self,
         world: &World,
         cs: Colours,
         at: &dyn Fn(f64, f64) -> (i32, i32),
         cursor: Option<[f32; 2]>,
+        guides: bool,
         out: &mut Vec<Draw>,
     ) {
         let own = self.own();
         let mut any = false;
         for u in self.selected_units().filter(|u| u.owner == own && u.inside_of.is_none() && is_mortar(world, u)) {
             any = true;
+            if !guides {
+                continue;
+            }
             let t = world.catalog.get(u.kind);
             let adv = world.adv(u.owner, u.kind);
             let min = mortar::shell_index(t).and_then(|k| adv.attacks.get(k)).map_or(0, |a| a.radius.0);

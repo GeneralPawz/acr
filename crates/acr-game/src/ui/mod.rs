@@ -614,6 +614,17 @@ impl Ui {
         &self.settings
     }
 
+    /// Changes an option from inside a game (the "Zielhilfe" icon) and keeps it in the
+    /// settings store, like the options dialog's OK.
+    pub fn change_settings(&mut self, change: impl FnOnce(&mut Settings)) {
+        change(&mut self.settings);
+        if let Some(store) = &mut self.settings_store
+            && let Err(e) = store.write(SETTINGS_FILE, self.settings.encode().as_bytes())
+        {
+            log::warn!("cannot store the options: {e}");
+        }
+    }
+
     /// Image draws for the current frame, in window pixels: `layers` (each with its own
     /// canvas, e.g. the in-game interface), then the screens and the cursor; with the number
     /// of draws from the first layer (the in-game world overlays, which the fog covers).
