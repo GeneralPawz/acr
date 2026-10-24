@@ -1168,6 +1168,18 @@ Towers, forts and Indian buildings shoot from their `EX_SHOTS`/`EX_SHOTS2` point
 - A `B` weapon (muskets, arrows) hitting a building only hurts its garrison (0x4e8870):
   `rando()·101 >> 15 < PROMAX[attacker's PROMAXCTG]` misses, else a random unit inside takes
   the damage. A building's garrison dies with it.
+- **Shooting at a garrison.** Against a `CANBEKILLEDINSIDE` building (NM+0x172c bit 2: the
+  houses, mills, blockhouses, forts) with someone inside (OB+0xf0), every attack index with a
+  weapon fits besides those whose `ATTMASK`/`CANKILL` covers its material (`AttackObjLink`
+  0x51c232..0x51c2aa, 0x51f12e), so musketeers ordered to attack a garrisoned house shoot it
+  and each ball goes through the `B` roll above. An attacker with a fire weapon kind (`F`/`X`,
+  NM+0x172e bit 0, 0x5005fe) gets this only while the building burns (OB+0x26 bit 1). Once the
+  last man inside is dead the index no longer fits and the attack ends (0x51f3df).
+  `AttackObj` itself checks no materials; the search (`SearchVictim`, kill mask NM+0x2861 at
+  0x52718d against NM+0x2862 at 0x525c5a) has no such exception, so riflemen do not pick
+  garrisons by themselves. A unit dying inside leaves the inside list (`Die`
+  0x4e7bf8..0x4e7d08). Cannon balls (`IADRO`, no `B`) hurt the building itself; its garrison
+  dies with it.
 - Building boxes (`3DBARS x y l w h`, `bars.rs`; `Add3DBar` 0x443697 at creation, removed at
   death): 45°-turned rectangles in 256 px cells, entered in the cells of nine sample points
   only, as in the engine. They stop projectiles and traces and hide units from searches.

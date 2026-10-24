@@ -389,6 +389,10 @@ pub struct Role {
     /// `CANSTORM` (NM+0x172c bit5): may go into buildings (`GoToMine`) besides peasants, and
     /// so storm enemy ones.
     pub can_storm: bool,
+    /// `CANBEKILLEDINSIDE` (NM+0x172c bit2): while someone is inside (OB+0xf0), any attack
+    /// index with a weapon may be used against this building (`AttackObjLink` 0x51c232,
+    /// 0x51f12e), so musketeers can shoot at its garrison.
+    pub can_be_killed_inside: bool,
     /// `HIGHUNIT` (NM+0x172e bit2) cannot go into `HIGHUNITCANTENTER` buildings (bit3).
     pub high_unit: bool,
     pub high_unit_cant_enter: bool,
@@ -420,6 +424,7 @@ fn role(def: &UnitDef) -> Role {
         capture: false,
         cant_capture: false,
         can_storm: false,
+        can_be_killed_inside: false,
         high_unit: false,
         high_unit_cant_enter: false,
         ves: 10,
@@ -454,6 +459,7 @@ fn role(def: &UnitDef) -> Role {
             "CAPTURE" => r.capture = true,
             "CANTCAPTURE" => r.cant_capture = true,
             "CANSTORM" => r.can_storm = true,
+            "CANBEKILLEDINSIDE" => r.can_be_killed_inside = true,
             "HIGHUNIT" => r.high_unit = true,
             "HIGHUNITCANTENTER" => r.high_unit_cant_enter = true,
             "VES" => r.ves = c.int(0).unwrap_or(10),

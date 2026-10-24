@@ -135,8 +135,10 @@ pub fn attack_obj_times(w: &mut World, i: usize, j: usize, prio: u8, placement: 
     let u = &w.units[i];
     let t = w.adv(u.owner, u.kind);
     let materials = w.catalog.get(e.kind).materials;
-    // CheckAttAbility: some index can attack this material.
-    if !t.attacks.iter().any(|a| a.usable() && a.mask & materials != 0) {
+    let garrison = shoots_garrison(w, i, j);
+    // CheckAttAbility: some index can attack this material, or has a weapon against a
+    // garrison (the attack link's test, 0x51f12e).
+    if !t.attacks.iter().any(|a| a.usable() && (a.mask & materials != 0 || garrison && a.weapon.is_some())) {
         return false;
     }
     // CreateOrder (0x525752) refuses units walking with UnlimitedMotion, except a panicking
@@ -430,6 +432,9 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
             return;
         }
     }
+    // A garrisoned target building: every index with a weapon fits besides the material
+    // test (0x51c232..0x51c2aa, 0x51f12e).
+    let garrison = matches!(aim, Aim::Unit(j) if shoots_garrison(w, i, j));
     // The target's position, aim height, extra range and materials (a point: none, 0xFF).
     let (e_pos, e_dstz, e_add, e_mat, e_bld) = match aim {
         Aim::Unit(j) => {
@@ -574,7 +579,7 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
         } else {
             a.detect.0 <= dst && dst <= a.detect.1
         };
-        ok && a.mask & e_mat != 0
+        ok && (a.mask & e_mat != 0 || garrison && a.weapon.is_some())
     };
     let mut chosen = (0..ta.attacks.len()).rev().find(|&k| fits(k));
     if u.melee_only && !e_bld {
@@ -582,7 +587,7 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
         chosen = Some(0);
     }
     if let Some((_, k, _)) = gun
-        && ta.attacks[k].mask & e_mat != 0
+        && (ta.attacks[k].mask & e_mat != 0 || garrison && ta.attacks[k].weapon.is_some())
     {
         chosen = Some(k);
     }
@@ -1606,6 +1611,20 @@ fn section_ruin(w: &mut World, b: usize, s: u8) {
     }
 }
 
+/// Whether `i` may use any weapon index against building `j` for its garrison
+/// (`AttackObjLink` 0x51c232..0x51c2aa): `j`'s type has `CANBEKILLEDINSIDE` (NM+0x172c
+/// bit2) and someone is inside (OB+0xf0); an attacker with a fire weapon kind (`F`/`X`,
+/// NM+0x172e bit0, set at 0x5005fe) only while the building burns (OB+0x26 bit1), else it
+/// sets it on fire by its materials as before.
+pub fn shoots_garrison(w: &World, i: usize, j: usize) -> bool {
+    let (Some(u), Some(e)) = (w.units.get(i), w.units.get(j)) else { return false };
+    if !e.building || e.inside.is_empty() || !w.catalog.get(e.kind).role.can_be_killed_inside {
+        return false;
+    }
+    let fire = w.catalog.get(u.kind).attacks.iter().any(|a| w.catalog.weapon_flags(&a.kind) & (FIRE | FIRE_SLOW) != 0);
+    !fire || e.burning
+}
+
 /// 0x4e8870: a shot at a garrisoned building may hit one of the units inside. Misses with
 /// `rando()·101 >> 15 < PROMAX[attacker's PROMAXCTG]`; a unit's melee index 0 does nothing.
 fn garrison_damage(w: &mut World, b: usize, dmg: i32, s: usize, att: u8) {
@@ -1956,6 +1975,15 @@ pub fn die(w: &mut World, i: usize) {
     u.burning = false;
     if !u.building && u.inside_of.is_none() {
         w.occupancy.clr_bar(u.cell.0, u.cell.1, u.lx);
+    }
+    // A unit dying inside a building (OB+0x28) leaves every inside list (0x4e7bf8..0x4e7d08:
+    // its index is cut out of `Inside` at OB+0xf5 and OB+0xf0 counts down), so the next shot
+    // at the garrison picks among the living.
+    if let Some(b) = w.units[i].inside_of {
+        let id = w.units[i].id;
+        if let Some(bu) = w.units.get_mut(b.0 as usize) {
+            bu.inside.retain(|&e| e != id);
+        }
     }
     w.bars.remove(i as u32);
     // A building's garrison dies with it (0x4e7b1d) and is gone at once.
