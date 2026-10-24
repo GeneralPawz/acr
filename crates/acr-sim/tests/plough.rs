@@ -75,7 +75,7 @@ fn originally_a_low_ball_kills_the_whole_file() {
 
 #[test]
 fn with_hit_locations_the_ball_ploughs_through_five_men_losing_energy() {
-    let on = Rules { hit_locations: true, body_spacing: false, mortars: false, corpse_piles: false };
+    let on = Rules { hit_locations: true, body_spacing: false, mortars: false, corpse_piles: false, group_move: false };
     let (w, men, _) = file_shot(on);
     let lives: Vec<_> = men.iter().map(|&m| (life(&w, m), dead(&w, m))).collect();
     // 500, 400 and 300 kill the first three (life 300); the fourth takes 200, but the ball
@@ -145,7 +145,7 @@ fn aimed_shot(rules: Rules) -> (World, Vec<(u32, u8)>) {
 
 #[test]
 fn with_hit_locations_the_aimed_strike_and_each_bounce_cost_the_ball_energy() {
-    let on = Rules { hit_locations: true, body_spacing: false, mortars: false, corpse_piles: false };
+    let on = Rules { hit_locations: true, body_spacing: false, mortars: false, corpse_piles: false, group_move: false };
     let (w, hits) = aimed_shot(on);
     // The first strike counts against the ball's bodies: one ball, at most five men, each once.
     assert!(!hits.is_empty() && hits.len() <= usize::from(PLOUGH_BODIES), "{hits:?}");

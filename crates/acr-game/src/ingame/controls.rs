@@ -299,6 +299,11 @@ impl InGame {
                 if pressed && mods.alt_key() && !mods.control_key() && self.mortar_key(ch) {
                     return Some(GameKey::None);
                 }
+                // Ctrl + A: every own troop (not the buildings) is selected.
+                if pressed && ch == b'A' && mods.control_key() && !mods.alt_key() && !mods.shift_key() {
+                    self.select_all_troops();
+                    return Some(GameKey::None);
+                }
                 let i = PAN_KEYS.iter().position(|&k| k == ch)?;
                 if !pressed {
                     // Released: always let go, whatever the modifiers are now.
@@ -403,6 +408,26 @@ impl InGame {
         if twice {
             self.centre_selection();
         }
+    }
+
+    /// Ctrl + A (modern controls): selects all own troops that can take orders: living,
+    /// not buildings, not inside a building, not `unlimited`; whole formations with them.
+    pub(super) fn select_all_troops(&mut self) {
+        let own = self.own();
+        let Some(world) = &self.world else { return };
+        self.selected = world
+            .units
+            .iter()
+            .filter(|u| {
+                u.owner == own
+                    && !u.building
+                    && !u.unlimited
+                    && u.inside_of.is_none()
+                    && super::interface::selectable(u)
+            })
+            .map(|u| u.id)
+            .collect();
+        self.correct_brigades();
     }
 
     /// Centres the camera on the middle of the selection.

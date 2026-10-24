@@ -26,6 +26,11 @@ pub struct Rules {
     /// Corpse piles are obstacles: dense piles slow the men who cross them, big ones are
     /// walked around ([`crate::piles`], `docs/simulation.md`, "Corpse piles").
     pub corpse_piles: bool,
+    /// Group moves send every selected formation (the original takes at most 32,
+    /// 0x4ac997) and give several formations their own places around the target: lines
+    /// one behind the other, columns side by side, loose units behind them
+    /// ([`crate::motion::group_send_ex`], `docs/simulation.md`, "Group moves").
+    pub group_move: bool,
 }
 
 impl std::hash::Hash for Rules {
@@ -37,6 +42,9 @@ impl std::hash::Hash for Rules {
         }
         if self.corpse_piles {
             (3u8, self.corpse_piles).hash(state);
+        }
+        if self.group_move {
+            (4u8, self.group_move).hash(state);
         }
     }
 }

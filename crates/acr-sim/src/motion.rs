@@ -878,8 +878,12 @@ pub fn group_send_ex(world: &mut World, ids: &[usize], x: i32, y: i32, mv: Group
     let mut brigades: Vec<u16> = ids.iter().filter_map(|&i| world.units[i].brigade).collect();
     brigades.sort_unstable();
     brigades.dedup();
-    // At most 32 brigades take part (0x4ac997).
-    brigades.truncate(32);
+    // At most 32 brigades take part (0x4ac997: `cmp [ebp-8], 0x20; jge`): the members of
+    // the others are not free units either, so they stay where they are. The group-move
+    // rule sends them all.
+    if !world.rules.group_move {
+        brigades.truncate(32);
+    }
     let free: Vec<usize> = ids.iter().copied().filter(|&i| world.units[i].brigade.is_none()).collect();
     let (mut x16, mut y16) = (x << 4, y << 4);
     // The brigades' mean facing (0x4aca49..0x4acacf: the sum of their direction vectors / 4).
@@ -915,7 +919,26 @@ pub fn group_send_ex(world: &mut World, ids: &[usize], x: i32, y: i32, mv: Group
         }
     }
     let turn = dir.map_or(0, |d| d.wrapping_sub(mean_dir));
-    if !brigades.is_empty() {
+    // Group-move rule: several formations get their own places (`group_places`), and the
+    // loose units stand behind them instead of on the same point.
+    let mut free_target = (x16, y16);
+    if world.rules.group_move && brigades.len() > 1 {
+        let d = dir.unwrap_or(mean_dir);
+        let (places, back) = group_places(world, &brigades, x16 >> 4, y16 >> 4, d);
+        for (b, px, py) in places {
+            world.brigades[usize::from(b)].att_enm = prio & 0x7f == 0;
+            crate::formation::send(world, usize::from(b), px << 4, py << 4, Some(d));
+            crate::formation::cancel_stand_ground(world, usize::from(b), false);
+        }
+        if !free.is_empty() {
+            // The front of the loose units' grid one gap behind the last formation.
+            let (fx, fy) = (crate::trig::cos(d), crate::trig::sin(d));
+            let grid = place(world, &free, x16, y16, vx, vy);
+            let front = grid.iter().map(|&(_, (sx, sy))| ((sx - x16) * fx + (sy - y16) * fy) >> 8).max().unwrap_or(0);
+            let shift = front + ((back + GROUP_ROW_GAP) << 4);
+            free_target = (x16 - ((shift * fx) >> 8), y16 - ((shift * fy) >> 8));
+        }
+    } else if !brigades.is_empty() {
         let centers: Vec<(i32, i32)> = brigades
             .iter()
             .map(|&b| crate::formation::center(world, usize::from(b)).map_or((x, y), |c| (c.0 >> 4, c.1 >> 4)))
@@ -949,6 +972,7 @@ pub fn group_send_ex(world: &mut World, ids: &[usize], x: i32, y: i32, mv: Group
     if free.is_empty() {
         return;
     }
+    let (x16, y16) = free_target;
     let slots = place(world, &free, x16, y16, vx, vy);
     let map = world.map.clone();
     for (i, (sx, sy)) in slots {
@@ -977,6 +1001,86 @@ pub fn group_send_ex(world: &mut World, ids: &[usize], x: i32, y: i32, mv: Group
             _ => {}
         }
     }
+}
+
+/// Group-move rule: the gap between formations one behind the other (px, about 3 m).
+const GROUP_ROW_GAP: i32 = 96;
+/// Group-move rule: the gap between formations side by side (px).
+const GROUP_SIDE_GAP: i32 = 32;
+/// Group-move rule: lines stand this many deep (fewer lines: one row each).
+const GROUP_LINE_ROWS: usize = 3;
+/// Group-move rule: rows of lines wider than this (px) make the block deeper instead.
+const GROUP_MAX_FRONT: i32 = 2400;
+
+/// Group-move rule (not in the original, which keeps each formation's place relative to
+/// the group, 0x4ace11): places for several formations sent to `(x, y)` (px) facing `dir`.
+/// Lines (wider than deep) stand three deep, one behind the other with a gap, as many
+/// side by side as needed (deeper once a row would be wider than `GROUP_MAX_FRONT`);
+/// columns and squares stand side by side behind them. The formations most to the front
+/// take the front row and, within a row, keep their order across the way, so their paths
+/// do not cross. The block is centred on the target.
+/// Returns `(brigade, x, y)` in px and how far the block reaches behind the target (px).
+fn group_places(world: &World, brigades: &[u16], x: i32, y: i32, dir: u8) -> (Vec<(u16, i32, i32)>, i32) {
+    let (fx, fy) = (crate::trig::cos(dir), crate::trig::sin(dir));
+    // Across the way, to the right of the facing.
+    let (ax, ay) = (-fy, fx);
+    struct F {
+        b: u16,
+        w: i32,
+        d: i32,
+        along: i64,
+        across: i64,
+    }
+    let mut lines = Vec::new();
+    let mut columns = Vec::new();
+    for &b in brigades {
+        let br = &world.brigades[usize::from(b)];
+        let (w, d) = world.formations.shapes.get(br.shape).map_or((32, 32), crate::formation::Shape::extent);
+        let (cx, cy) = crate::formation::center(world, usize::from(b)).map_or((x, y), |c| (c.0 >> 4, c.1 >> 4));
+        let along = i64::from(cx) * i64::from(fx) + i64::from(cy) * i64::from(fy);
+        let across = i64::from(cx) * i64::from(ax) + i64::from(cy) * i64::from(ay);
+        let f = F { b, w, d, along, across };
+        if w > d { lines.push(f) } else { columns.push(f) }
+    }
+    // Rows from the front: `(members, depth)`.
+    let mut rows: Vec<Vec<F>> = Vec::new();
+    if !lines.is_empty() {
+        // Three deep, or deeper when the rows would grow wider than `GROUP_MAX_FRONT`.
+        let n = lines.len();
+        let widest = lines.iter().map(|f| f.w).max().unwrap_or(1);
+        let fit = usize::try_from(GROUP_MAX_FRONT / (widest + GROUP_SIDE_GAP)).unwrap_or(0).max(1);
+        let depth = n.min(GROUP_LINE_ROWS).max(n.div_ceil(fit));
+        let per_row = n.div_ceil(depth);
+        lines.sort_by_key(|f| (std::cmp::Reverse(f.along), f.b));
+        let mut it = lines.into_iter();
+        for _ in 0..depth {
+            let row: Vec<F> = it.by_ref().take(per_row).collect();
+            if !row.is_empty() {
+                rows.push(row);
+            }
+        }
+    }
+    if !columns.is_empty() {
+        rows.push(columns);
+    }
+    let row_depth: Vec<i32> = rows.iter().map(|r| r.iter().map(|f| f.d).max().unwrap_or(0)).collect();
+    let total = row_depth.iter().sum::<i32>() + GROUP_ROW_GAP * (rows.len() as i32 - 1);
+    let mut out = Vec::with_capacity(brigades.len());
+    // Distance of the current row's front edge ahead of the target.
+    let mut front = total / 2;
+    for (mut row, rd) in rows.into_iter().zip(row_depth) {
+        row.sort_by_key(|f| (f.across, f.b));
+        let width = row.iter().map(|f| f.w).sum::<i32>() + GROUP_SIDE_GAP * (row.len() as i32 - 1);
+        let mut left = -width / 2;
+        let along = front - rd / 2;
+        for f in row {
+            let across = left + f.w / 2;
+            left += f.w + GROUP_SIDE_GAP;
+            out.push((f.b, x + ((along * fx + across * ax) >> 8), y + ((along * fy + across * ay) >> 8)));
+        }
+        front -= rd + GROUP_ROW_GAP;
+    }
+    (out, total - total / 2)
 }
 
 /// 0x41bfdb with order type 1: a turn to `dir` put in front of the orders.

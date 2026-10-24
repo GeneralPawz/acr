@@ -73,6 +73,7 @@ panels) the left button works as always, also with Ctrl. The wheel does nothing 
 | Jump to the next selected unit | Space | Space |
 | Kill the selected own units (buildings: set on fire) | Delete | Delete |
 | Centre the view on the selection | – | **Home** |
+| Select all own troops (no buildings) | – | **Ctrl + A** |
 | Leave the build, rally point or attack-ground mode | Escape | Escape |
 | Game menu | F12, Escape (ACR) | F12, Escape when nothing is to be cancelled |
 | Cancel a drag (rectangle, facing arrow, pan) | – | **Escape** (the rectangle restores the previous selection) |
@@ -90,6 +91,13 @@ panels) the left button works as always, also with Ctrl. The wheel does nothing 
 | Command and production icons | letters, see below | the same, but **Alt + W/A/S/D** for W, A, S, D |
 | Mortars (rule `mortars`): set a zone, clear the zones, fire on/off | the icons (ui.md "Mortar buttons") | the icons, or **Alt + Z**, **Alt + X**, **Alt + F** |
 | Fullscreen (ACR) | F11, Alt + Enter | F11, Alt + Enter |
+
+**Ctrl + A** (modern) selects every own unit that takes orders: living, not a building,
+not inside a building, not out of the fight; formations come whole. The original binds no
+Ctrl + A (`Keyboard.dat` has no modifier entries, and the A pan key passes Ctrl + A on),
+so the original scheme ignores it. A move of such a selection sends every formation under
+the `group_move` rule, which is on by default with the modern controls (docs/simulation.md
+"Group moves": the original sends at most 32 formations).
 
 Escape in the modern scheme first leaves a build or rally point mode, then cancels a drag
 in progress, and only then opens the game menu.

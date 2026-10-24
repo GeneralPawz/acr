@@ -289,6 +289,32 @@ engine's 0x41db45 gets 0x8e / 0x80 and the type); the `0x11eaf5c` flag is reset 
 `SGP_*` moves, while the engine keeps the value of the last `SelSendTo`; `GroupMovePurpose`'s
 `AttEnm` mark for `flags & 1` (0x5786b0) is not set.
 
+**The 32-formation cap.** `GroupSend` collects at most 32 brigades (0x4ac997: `cmp
+[ebp-8], 0x20; jge` past the brigade loop). Members of the 33rd and later selected
+formations are not free units either, so they get no order at all: select a large army
+(e.g. "Das französische Heer") and send it, and every formation beyond the 32nd stays
+put. ACR keeps this by default (`tests/group_move.rs`
+`the_original_sends_only_32_formations`).
+
+**Optional rule `group_move`** (`Rules::group_move`, settings `group_move=on|off`, by
+default on with `controls=modern`; savegame rules bit 4; driver `start` option
+`"group_move": true`). Off, nothing changes and no state is added. On:
+
+- every selected formation is sent (no 32 cap);
+- with two or more formations, each gets its own place around the target instead of its
+  old place relative to the group (`motion::group_places`). Lines (frontage wider than
+  depth, `Shape::extent`: 32 px per file and per rank) stand three deep, one behind the
+  other with a 96 px gap (about 3 m), as many side by side (32 px apart) as needed; once a
+  row would be wider than 2400 px the block grows deeper. Columns and squares stand side by
+  side in a row behind the lines. Formations most to the front take the front row and keep
+  their left-to-right order inside a row, so paths do not cross. The block is centred on
+  the target and every formation faces the travel direction;
+- the free units' grid (`Place`, unchanged) stands one gap behind the rear row instead of
+  on the target, so they do not march into the formations;
+- one formation (with or without free units) moves exactly as in the original.
+
+No `rando()` is drawn on either path. Tests: `tests/group_move.rs`.
+
 ## Motion
 
 Every infantry and cavalry unit uses `MOTIONSTYLE` 0 (`FASTROTATE&MOVE`, `MotionHandler1`

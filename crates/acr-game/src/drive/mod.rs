@@ -752,6 +752,7 @@ impl Driver {
                         body_spacing,
                         mortars,
                         corpse_piles,
+                        group_move,
                         hud,
                         corpse_decay_half,
                         decay_stain,
@@ -775,7 +776,7 @@ impl Driver {
                             kind: ui::GameKind::Blank(setup),
                             players,
                             local_player: 0,
-                            rules: acr_sim::Rules { hit_locations, body_spacing, mortars, corpse_piles },
+                            rules: acr_sim::Rules { hit_locations, body_spacing, mortars, corpse_piles, group_move },
                         }));
                         if let Mode::InGame(g) = &mut game.mode {
                             g.hud_hidden = !hud;
@@ -800,6 +801,7 @@ impl Driver {
                         body_spacing,
                         mortars,
                         corpse_piles,
+                        group_move,
                     } => {
                         let mut players = vec![PlayerSetup {
                             name: b"Driver".to_vec(),
@@ -833,7 +835,7 @@ impl Driver {
                             kind: ui::GameKind::RandomMap(map),
                             players,
                             local_player: 0,
-                            rules: acr_sim::Rules { hit_locations, body_spacing, mortars, corpse_piles },
+                            rules: acr_sim::Rules { hit_locations, body_spacing, mortars, corpse_piles, group_move },
                         }));
                     }
                 }
@@ -980,9 +982,16 @@ impl Driver {
                     // The blank field, white unless asked, without HUD; then the units.
                     let ground = v.get("ground").cloned().unwrap_or_else(|| json!("white"));
                     let mut blank = json!({"ground": ground, "hud": false, "players": 1});
-                    for k in
-                        ["size", "hit_locations", "body_spacing", "mortars", "corpse_piles", "nation", "ground_cover"]
-                    {
+                    for k in [
+                        "size",
+                        "hit_locations",
+                        "body_spacing",
+                        "mortars",
+                        "corpse_piles",
+                        "group_move",
+                        "nation",
+                        "ground_cover",
+                    ] {
                         if let Some(x) = v.get(k) {
                             blank[k] = x.clone();
                         }

@@ -132,6 +132,8 @@ pub enum Start {
         mortars: bool,
         /// The optional corpse-piles rule (#222, `docs/simulation.md` "Corpse piles").
         corpse_piles: bool,
+        /// The optional group-move rule (`docs/simulation.md` "Group moves").
+        group_move: bool,
     },
     /// The blank test field ("The blank field" in `docs/testing.md`): `players` (1 or 2)
     /// without start units and without AI, `nation` for the local player.
@@ -144,6 +146,7 @@ pub enum Start {
         body_spacing: bool,
         mortars: bool,
         corpse_piles: bool,
+        group_move: bool,
         hud: bool,
         /// `"corpse_decay": "half"|"full"` overrides the setting (`corpse_decay`).
         corpse_decay_half: Option<bool>,
@@ -372,6 +375,7 @@ pub(super) fn blank(b: &Value) -> Result<Start, String> {
         body_spacing: b.get("body_spacing").and_then(Value::as_bool).unwrap_or(false),
         mortars: b.get("mortars").and_then(Value::as_bool).unwrap_or(false),
         corpse_piles: b.get("corpse_piles").and_then(Value::as_bool).unwrap_or(false),
+        group_move: b.get("group_move").and_then(Value::as_bool).unwrap_or(false),
         hud: b.get("hud").and_then(Value::as_bool).unwrap_or(true),
         corpse_decay_half: b.get("corpse_decay").and_then(Value::as_str).map(|v| v == "half"),
         decay_stain: b.get("decay_stain").and_then(Value::as_str).map(|v| v == "on"),
@@ -573,6 +577,7 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
                     body_spacing: r.get("body_spacing").and_then(Value::as_bool).unwrap_or(false),
                     mortars: r.get("mortars").and_then(Value::as_bool).unwrap_or(false),
                     corpse_piles: r.get("corpse_piles").and_then(Value::as_bool).unwrap_or(false),
+                    group_move: r.get("group_move").and_then(Value::as_bool).unwrap_or(false),
                 })
             }
         }
@@ -762,7 +767,8 @@ mod tests {
                 hit_locations: false,
                 body_spacing: false,
                 mortars: false,
-                corpse_piles: false
+                corpse_piles: false,
+                group_move: false,
             })
         );
         let (_, r) = parse(r#"{"cmd": "load_map", "map": "Missions\\a.m3d"}"#).unwrap();
@@ -776,6 +782,7 @@ mod tests {
             body_spacing: false,
             mortars: false,
             corpse_piles: false,
+            group_move: false,
             hud: true,
             corpse_decay_half: None,
             decay_stain: None,

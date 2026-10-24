@@ -146,6 +146,17 @@ impl Shape {
         Some((left, right))
     }
 
+    /// Frontage and depth in world pixels: soldier slots stand 16 px apart per half cell
+    /// across and 32 px per line (the scale of [`Shape::positions`]), plus one slot.
+    pub fn extent(&self) -> (i32, i32) {
+        let cells = self.slot_cells();
+        let x = cells.iter().map(|c| c.1);
+        let r = cells.iter().map(|c| c.0);
+        let (xmin, xmax) = (x.clone().min().unwrap_or(0), x.max().unwrap_or(0));
+        let (rmin, rmax) = (r.clone().min().unwrap_or(0), r.max().unwrap_or(0));
+        ((xmax - xmin) * 16 + 32, (rmax - rmin) * 32 + 32)
+    }
+
     /// Slot positions (1/16 px) for a formation centred at `(x0, y0)` facing `dir`
     /// (`Arrange`, 0x4ad9af). Diagonal facings come out about 6 % smaller, as in the engine.
     pub fn positions(&self, x0: i32, y0: i32, dir: u8) -> Vec<(i32, i32)> {

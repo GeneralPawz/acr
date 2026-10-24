@@ -197,7 +197,8 @@ impl SaveGame {
         w.u(u64::from(self.setup.rules.hit_locations)
             | u64::from(self.setup.rules.body_spacing) << 1
             | u64::from(self.setup.rules.mortars) << 2
-            | u64::from(self.setup.rules.corpse_piles) << 3);
+            | u64::from(self.setup.rules.corpse_piles) << 3
+            | u64::from(self.setup.rules.group_move) << 4);
         w.0
     }
 
@@ -240,6 +241,7 @@ impl SaveGame {
                 body_spacing: bits & 2 != 0,
                 mortars: bits & 4 != 0,
                 corpse_piles: bits & 8 != 0,
+                group_move: bits & 16 != 0,
             };
         }
         if r.pos != data.len() {

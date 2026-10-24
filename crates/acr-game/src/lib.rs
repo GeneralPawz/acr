@@ -466,6 +466,11 @@ impl Game {
         if self.ui.settings().corpse_piles {
             setup.rules.corpse_piles = true;
         }
+        // And `group_move` (on by default with the modern controls; docs/simulation.md
+        // "Group moves").
+        if self.ui.settings().group_move() {
+            setup.rules.group_move = true;
+        }
         let mut game = ingame::InGame::new(setup);
         game.apply_settings(self.ui.settings());
         game.start(&self.assets.paths());

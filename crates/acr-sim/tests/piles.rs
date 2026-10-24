@@ -15,7 +15,8 @@ use acr_sim::{Command, Pos, Rules, TypeId, World};
 const MAN: &str = "NAME Man\r\nUSERLC 0 G SHADOW 0 0\r\n#STAND 9 1 0 0\r\n@MOTION_L 9 0 0 9\r\n\
     @MOTION_R 9 0 10 19\r\n@DEATH 9 0 0 39\r\n#DEATHLIE1 9 1 0 39\r\nLIFE 100\r\nGEOMETRY 1 10 40\r\n[END]\r\n";
 
-const ON: Rules = Rules { hit_locations: false, body_spacing: false, mortars: false, corpse_piles: true };
+const ON: Rules =
+    Rules { hit_locations: false, body_spacing: false, mortars: false, corpse_piles: true, group_move: false };
 
 /// The walker's row (px) and his start and goal columns.
 const ROW: i32 = 1008;

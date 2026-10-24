@@ -46,7 +46,8 @@ IADROMOR 0 7 -
 [UNITKINDS]
 ";
 
-const ON: Rules = Rules { hit_locations: false, body_spacing: false, mortars: true, corpse_piles: false };
+const ON: Rules =
+    Rules { hit_locations: false, body_spacing: false, mortars: true, corpse_piles: false, group_move: false };
 
 /// The catalog: gun, soldier and a fort that builds the gun.
 fn catalog() -> (Catalog, TypeId, TypeId, TypeId) {

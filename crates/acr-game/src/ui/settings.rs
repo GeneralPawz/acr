@@ -87,6 +87,11 @@ pub struct Settings {
     /// dying around it; docs/rendering-3d.md). `None` (not in the file): on with
     /// `gore=full`, off otherwise ([`Settings::decay_stain`]).
     pub decay_stain: Option<bool>,
+    /// ACR: `group_move=on|off`: group moves send every selected formation (the original
+    /// only 32) and place several formations next to and behind each other
+    /// (`acr_sim::Rules::group_move`, docs/simulation.md "Group moves"). `None` (not in the
+    /// file): on with `controls=modern`, off otherwise ([`Settings::group_move`]).
+    pub group_move: Option<bool>,
     /// ACR (#224): `weather=off|rain|snow|fog` (off by default): rain, snow or fog over the
     /// 3D path, a look only (docs/rendering-3d.md "Weather (#224)"); no gameplay effect.
     pub weather: Weather,
@@ -163,6 +168,7 @@ impl Default for Settings {
             corpse_minutes: 5,
             corpse_decay_half: false,
             decay_stain: None,
+            group_move: None,
             hit_locations: false,
             body_spacing: false,
             mortars: false,
@@ -185,6 +191,12 @@ impl Settings {
     /// Whether decaying corpses stain the ground (`decay_stain`, by default with `gore=full`).
     pub fn decay_stain(&self) -> bool {
         self.decay_stain.unwrap_or(self.gore == Gore::Full)
+    }
+
+    /// Whether group moves follow the group-move rule (`group_move`, by default with the
+    /// modern controls).
+    pub fn group_move(&self) -> bool {
+        self.group_move.unwrap_or(self.controls == Controls::Modern)
     }
 
     /// Effect and music gain for the mixer (0..=1).
@@ -242,7 +254,7 @@ impl Settings {
             "sound_volume={}\nmusic_volume={}\nmusic_mode={}\ngame_mode={}\nscroll_speed={}\nframe_time={}\n\
              resolution={}\nrecord={}\nrecord_file={hex}\ncontrols={controls}\nedge_scroll={}\n\
              models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\ncorpse_decay={}\nhit_locations={}\nbody_spacing={}\nmortars={}\ncorpse_piles={}\nshadows={}\nlod={}\nmaterial_detail={}\nwind={}\nmap_models={}\nwater={}\n\
-             ground={}\nground_cover={}\nbattlefield_marks={}\nweather={}\n{}",
+             ground={}\nground_cover={}\nbattlefield_marks={}\nweather={}\n{}{}",
             self.sound_volume,
             self.music_volume,
             self.music_mode,
@@ -274,6 +286,15 @@ impl Settings {
 ",
                 Some(false) =>
                     "decay_stain=off
+",
+                None => "",
+            },
+            match self.group_move {
+                Some(true) =>
+                    "group_move=on
+",
+                Some(false) =>
+                    "group_move=off
 ",
                 None => "",
             },
@@ -340,6 +361,13 @@ impl Settings {
                 "ground_cover" => s.ground_cover = value != "off",
                 "battlefield_marks" => s.marks_keep = value == "keep",
                 "weather" => s.weather = Weather::parse(value).unwrap_or_default(),
+                "group_move" => {
+                    s.group_move = match value {
+                        "on" => Some(true),
+                        "off" => Some(false),
+                        _ => None,
+                    }
+                }
                 "decay_stain" => {
                     s.decay_stain = match value {
                         "on" => Some(true),
@@ -394,6 +422,7 @@ mod tests {
             corpse_minutes: 12,
             corpse_decay_half: true,
             decay_stain: Some(false),
+            group_move: Some(false),
             hit_locations: true,
             body_spacing: true,
             mortars: true,
@@ -417,6 +446,17 @@ decay_stain=on"
             .decay_stain()
         );
         assert!(!Settings::decode("decay_stain=off").decay_stain());
+        // The group-move rule follows the controls unless set.
+        assert!(!Settings::decode("").group_move());
+        assert!(Settings::decode("controls=modern").group_move());
+        assert!(
+            !Settings::decode(
+                "controls=modern
+group_move=off"
+            )
+            .group_move()
+        );
+        assert!(Settings::decode("group_move=on").group_move());
         assert_eq!(Settings::decode(""), Settings::default());
         assert_eq!(Settings::decode("weather=fog").weather, Weather::Fog);
         assert_eq!(Settings::decode("weather=hail").weather, Weather::Off);
