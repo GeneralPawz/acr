@@ -362,6 +362,13 @@ nearest the window centre that no ragdoll holds; `ACR_NO_GAIT` turns it off).
   lifted, it blends back to the clip over 0.12 s. The hips sink where a planted leg cannot
   reach, and planted feet tilt with the ground. Bench: planted contacts miss their point by
   1.3–2.9 mm on average (24–55 mm at worst, where a leg is out of reach).
+- **Own animation of the other slots:** the posed body goes back to the palette by
+  `ragdoll_view::repose`: each slot (fingers, sockets and the gear on them) moves with its
+  body bone and keeps its clip pose relative to it. A socket the clip keys to scale 0 (the
+  peasant's tools and sack while walking, a slung musket, `line.key_show`) stays hidden;
+  `palette_of` rebuilt them from the rest pose and showed every tool (EngKri, EngMus,
+  EngTap). A ragdoll has no clip: the slots its clip had collapsed when the physics took
+  over stay collapsed (`hidden_slots`, `hide`).
 - **Limp** (`Body::leg` < 100 on both legs): the loop's samples on the bad leg take
   `1 − 0.6 · severity` of their time (a short, quick step); in its swing the bad leg is held
   straighter and the hip hikes; the trunk leans over the good leg. The hand on the side of a

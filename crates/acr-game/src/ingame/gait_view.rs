@@ -21,7 +21,7 @@ use acr_render::terrain::TerrainData;
 use acr_render::view3d;
 use acr_sim::body::{Body, LimbId};
 
-use super::ragdoll_view::{Drawn, Mapping, animated_skins, ground_height, palette_of, physics_of};
+use super::ragdoll_view::{Drawn, Mapping, animated_skins, ground_height, physics_of, repose};
 
 /// Men nearest the window centre that get the gait layer.
 const MEN: usize = 48;
@@ -174,12 +174,16 @@ impl Gaits {
                 phase = gait::limp_warp(&clipm.cycle, l.bad, l.severity, phase);
             }
             let pose = d.data.pose(Some(clip), phase * clipm.duration);
-            let mut skins = animated_skins(map, &pose, &d.transform);
+            let before = animated_skins(map, &pose, &d.transform);
+            let mut skins = before.clone();
             // The visible body: where the pushes and pulls brought it.
             let shift = (vis - sim) + man.dir * lead;
             self.rig.translate(&mut skins, 0, Vec3::new(shift.x, shift.y, 0.0));
             self.pose(&mut skins, clipm, man, phase, limp, body, &ground, dt);
-            poses.insert(d.index, palette_of(map, &skins, &d.transform));
+            // Each slot moves with its bone but keeps its own animation: a socket the clip
+            // keys to scale 0 (a tool shown only while working) stays hidden, fingers keep
+            // their grip.
+            poses.insert(d.index, repose(map, &pose, &before, &skins, &d.transform));
             self.men.insert(d.unit.id.0, taken);
         }
         self.men.retain(|_, m| m.seen);

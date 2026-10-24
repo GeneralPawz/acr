@@ -477,6 +477,9 @@ struct Actor {
     /// The frozen corpse's palette and the instance transform it was made for: reused
     /// every frame while the corpse lies where it lay.
     frozen_palette: Option<(Mat4, Palette)>,
+    /// Palette slots the clip had hidden (a socket keyed to scale 0) when the physics took
+    /// over: they stay hidden ([`hidden_slots`]).
+    hidden: Vec<usize>,
     /// Physics time the corpse began to relax before it is frozen ([`RELAX_S`]).
     relaxed: Option<f32>,
     /// A skeleton-H man; else an animal (no reflexes, steps or knock-downs).
@@ -996,7 +999,9 @@ impl Ragdolls {
         if new {
             let Some(slot) = self.take_slot(v, d.model) else { return };
             let Some(map) = self.maps.get(&d.model).and_then(Option::as_ref) else { return };
-            let skins = animated_skins(map, &d.data.pose(d.clip, d.time), &d.transform);
+            let clip_pose = d.data.pose(d.clip, d.time);
+            let hidden = hidden_slots(&clip_pose);
+            let skins = animated_skins(map, &clip_pose, &d.transform);
             let vel = self.ground_velocity(v, now);
             let r = &self.pool[slot].0;
             r.set_pinned_root(&mut self.physics, false);
@@ -1052,6 +1057,7 @@ impl Ragdolls {
                     step: None,
                     frozen: None,
                     frozen_palette: None,
+                    hidden,
                     relaxed: None,
                     human,
                     mass,
@@ -1327,7 +1333,9 @@ impl Ragdolls {
             if let Some(f) = &a.frozen {
                 let fresh = a.frozen_palette.as_ref().is_some_and(|(t, _)| *t == d.transform);
                 if !fresh {
-                    a.frozen_palette = Some((d.transform, palette_of(map, f, &d.transform)));
+                    let mut p = palette_of(map, f, &d.transform);
+                    hide(&mut p, &a.hidden);
+                    a.frozen_palette = Some((d.transform, p));
                 }
                 if let Some((_, p)) = &a.frozen_palette {
                     self.poses.insert(d.index, p.clone());
@@ -1339,7 +1347,30 @@ impl Ragdolls {
             }
             let r = &self.pool[a.slot].0;
             let skins: Vec<[[f32; 4]; 4]> = (0..r.len()).map(|b| r.skin_matrix(&self.physics, b)).collect();
-            self.poses.insert(d.index, palette_of(map, &skins, &d.transform));
+            let mut p = palette_of(map, &skins, &d.transform);
+            hide(&mut p, &a.hidden);
+            self.poses.insert(d.index, p);
+        }
+    }
+}
+
+/// The slots of `palette` (a clip's pose) whose matrix the clip collapsed: a socket keyed to
+/// scale 0 hides the gear on it (docs/assets-humans.md, `key_show`). [`palette_of`] builds
+/// every slot from its body bone and the rest pose, which would show them all.
+pub(super) fn hidden_slots(palette: &Palette) -> Vec<usize> {
+    palette
+        .iter()
+        .enumerate()
+        .filter(|(_, rows)| rows.iter().all(|r| r[..3].iter().all(|v| v.abs() < 1e-6)))
+        .map(|(s, _)| s)
+        .collect()
+}
+
+/// Collapses the slots `hidden` of `palette` to a point, as the clip had them.
+pub(super) fn hide(palette: &mut Palette, hidden: &[usize]) {
+    for &s in hidden {
+        if let Some(rows) = palette.get_mut(s) {
+            *rows = [[0.0; 4]; 3];
         }
     }
 }
@@ -1487,6 +1518,30 @@ mod tests {
         assert!(trunk.to_degrees() < 3.0, "the trunk turned {:.1}°", trunk.to_degrees());
         assert!(legs.to_degrees() < 3.0, "the legs swung {:.1}°", legs.to_degrees());
         assert!((p1 - p0).length() < 0.03, "the hips moved {:?}", p1 - p0);
+    }
+
+    #[test]
+    fn gear_a_clip_hides_stays_hidden_when_the_body_is_posed() {
+        // Slot 0: the hand (a body bone); slot 1: a tool on a socket the clip keys to scale 0
+        // (EngKri's axe while walking). The gait and the ragdolls move the bones.
+        let map = Mapping { slot_bone: vec![0, 0], bind: vec![math::IDENTITY; 2], bone_slot: vec![0], generic: None };
+        let transform = view3d::model_matrix([100.0, 200.0, 30.0], 0.7, 1.0);
+        let hand = math::affine_rows(&math::IDENTITY);
+        let clip: Palette = vec![hand, [[0.0; 4]; 3]];
+        let before = animated_skins(&map, &clip, &transform);
+        let mut after = before.clone();
+        after[0][3][0] += 0.2;
+        let collapsed = |rows: &[[f32; 4]; 3]| rows.iter().all(|r| r[..3].iter().all(|v| v.abs() < 1e-6));
+        // The gait: each slot keeps its own animation relative to its bone.
+        let walked = repose(&map, &clip, &before, &after, &transform);
+        assert!(!collapsed(&walked[0]) && walked[0] != clip[0], "the hand moves: {:?}", walked[0]);
+        assert!(collapsed(&walked[1]), "the hidden tool stays a point: {:?}", walked[1]);
+        // The ragdoll: built from the rest pose, so the clip's hidden slots are put back.
+        assert_eq!(hidden_slots(&clip), vec![1]);
+        let mut fallen = palette_of(&map, &after, &transform);
+        assert!(!collapsed(&fallen[1]), "the rest pose shows every tool");
+        hide(&mut fallen, &hidden_slots(&clip));
+        assert!(collapsed(&fallen[1]) && !collapsed(&fallen[0]));
     }
 
     #[test]
