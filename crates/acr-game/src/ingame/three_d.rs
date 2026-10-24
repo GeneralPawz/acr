@@ -663,9 +663,7 @@ impl ThreeD {
     pub fn veils(&self, world: &World, p: &acr_sim::projectile::Projectile) -> bool {
         let (x, y) = (p.pos.0 >> 14, p.pos.1 >> 14);
         self.veils.iter().any(|&(vx, vy, r, kind)| {
-            (x - vx).abs() <= r
-                && (y - vy).abs() <= r
-                && world.catalog.get(kind).destruct.ids.contains(&Some(p.weapon))
+            (x - vx).abs() <= r && (y - vy).abs() <= r && world.catalog.get(kind).destruct.ids.contains(&Some(p.weapon))
         })
     }
 
