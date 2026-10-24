@@ -332,13 +332,21 @@ JPEG, below). Blender 5.2's exporter also offers:
 
 **Packing (#199).** Without `--compress`, `acr_assets.gltf_pack` rewrites the exported
 file (pure Python, `ACR_GLTF_PACK=0` skips it; what it did lands in `stats.json` `pack`),
-all in core glTF 2.0 types the renderer reads, no extension required:
+in glTF 2.0 types the renderer reads plus one extension, `KHR_mesh_quantization`:
 
 - `WEIGHTS_0` as normalised bytes summing to 255; `COLOR_0`, `_GORE`, `_FACE`, `_WIND` as
   normalised bytes; `TEXCOORD_n` in 0..1 as normalised shorts. `_PART` and `_LIMB` stay
-  float (a vertex attribute element is 4-byte aligned anyway); positions, normals and
-  morph targets stay float (that needs `KHR_mesh_quantization`); dense morph targets become
+  float (a vertex attribute element is 4-byte aligned anyway); dense morph targets become
   sparse where smaller;
+- positions and morph-target positions as normalised shorts over one power-of-two cube per
+  file, normals as normalised bytes (`QUANTIZE`, `NORMAL_BITS`; `KHR_mesh_quantization`,
+  #199). The dequantisation (scale and offset) goes where the spec puts it, into the skins'
+  inverse bind matrices and the static mesh nodes' transforms, so Blender and other viewers
+  import the model unchanged; `extras.acr_dequant = [s, ox, oy, oz]` on each touched mesh,
+  skin and node lets `model.rs` give back the float positions, bind matrices and node
+  transforms (`parse_gltf`, `vec3_f32`, `dequant`). Static meshes whose node has children
+  or is animated keep float positions. Packing an already packed file again quantises it
+  and leaves its clips alone;
 - clip rotations as normalised shorts; sampled linear channels keep only the keys that
   interpolation does not reproduce within 2e-4 rad / 2e-4 m; constant channels keep their
   ends, and drop out when they equal the node's own transform (the exported STAND pose the
@@ -353,6 +361,24 @@ all in core glTF 2.0 types the renderer reads, no extension required:
 - the other PNGs re-encoded losslessly (ancillary chunks dropped, constant opaque alpha
   removed, an indexed PNG when the image has at most 256 colours, adaptive filters, zlib 9);
   identical images, views and accessors stored once.
+
+Quantisation (2026-10-25, the showcase glbs packed again as installed, lossless otherwise;
+`acr-render --example model_diff` and the frames in `ACR-analysis/small-gltf/run/`):
+
+| File | before | after | parse (VM) | largest change |
+|---|---:|---:|---|---|
+| `engm18.glb` | 2.81 MB | 2.44 MB | 18.3 → 17.6 ms | 0.026 mm skinned over 34 clips, normals 0.36° |
+| `engdo1.glb` | 1.19 MB | 1.01 MB | 9.2 → 5.6 ms | 0.20 mm |
+| `birch.glb` | 0.42 MB | 0.30 MB | 2.4 → 1.9 ms | 0.21 mm |
+| `gore.glb` | 2.88 MB | 1.74 MB | 7.0 → 2.8 ms | 0.05 mm |
+| `artpus.glb` (unpacked build) | 9.76 MB | 5.91 MB | 49.5 → 42.1 ms | 0.88 mm (clip keys) |
+| `hdengm18.glb` (89 % pictures) | 41.6 MB | 40.8 MB | 169 → 168 ms | 0.026 mm |
+| all 310 showcase glbs | 722 MB | 627 MB | | |
+
+Clip names and lengths stay the same. Game frames of a posed EngM18 (14 cells), the
+EngDo1/birch/two-musketeer field and the two men cut by balls and decayed (1,800 ticks)
+differ from the float files in at most 219 of 1.44 M pixels (edge pixels). GPU memory does
+not change: the renderer expands every vertex to its float layout at load.
 
 The renderer reads custom attributes of any component type (`model.rs` `custom_f32`) and
 decodes PNG and JPEG images (`decode_png`, `decode_jpeg` with `zune-jpeg`).

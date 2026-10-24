@@ -471,6 +471,61 @@ where
     })
 }
 
+/// A `VEC3` attribute as floats, whatever its component type: float, or the normalised and
+/// plain integers `KHR_mesh_quantization` allows for positions, normals and morph targets.
+fn vec3_f32<'a, 's, F>(a: &gltf::Accessor<'a>, get: F) -> Option<Vec<[f32; 3]>>
+where
+    F: Clone + Fn(gltf::Buffer<'a>) -> Option<&'s [u8]>,
+{
+    use gltf::accessor::{DataType, Dimensions, Iter};
+    if a.dimensions() != Dimensions::Vec3 {
+        return None;
+    }
+    let (scale, min) = match (a.normalized(), a.data_type()) {
+        (true, DataType::U8) => (255.0, 0.0),
+        (true, DataType::U16) => (65535.0, 0.0),
+        (true, DataType::I8) => (127.0, -1.0),
+        (true, DataType::I16) => (32767.0, -1.0),
+        _ => (1.0, f32::MIN),
+    };
+    let f = move |x: f32| (x / scale).max(min);
+    macro_rules! read {
+        ($t:ty) => {
+            Iter::<[$t; 3]>::new(a.clone(), get)?.map(|e| e.map(|x| f(x as f32))).collect()
+        };
+    }
+    Some(match a.data_type() {
+        DataType::F32 => Iter::<[f32; 3]>::new(a.clone(), get)?.collect(),
+        DataType::U8 => read!(u8),
+        DataType::U16 => read!(u16),
+        DataType::I8 => read!(i8),
+        DataType::I16 => read!(i16),
+        DataType::U32 => return None,
+    })
+}
+
+/// `extras.acr_dequant = [s, ox, oy, oz]`: the dequantisation `gltf_pack.py` folded into a
+/// mesh's positions (`p = o + s q`), a skin's inverse bind matrices or a node's transform.
+fn dequant(raw: &gltf::json::Extras) -> Option<[f32; 4]> {
+    floats(extras_json(raw)?.get("acr_dequant"))
+}
+
+/// The glTF document, accepting `KHR_mesh_quantization` (the `gltf` crate does not list it,
+/// but every reader here takes integer positions, normals and morph targets).
+fn parse_gltf(bytes: &[u8]) -> Result<gltf::Gltf, String> {
+    const QUANT: &str = "KHR_mesh_quantization";
+    let (json, blob) = if bytes.starts_with(b"glTF") {
+        let glb = gltf::Glb::from_slice(bytes).map_err(|e| format!("glTF: {e}"))?;
+        (glb.json.into_owned(), glb.bin.map(std::borrow::Cow::into_owned))
+    } else {
+        (bytes.to_vec(), None)
+    };
+    let mut root = gltf::json::Root::from_slice(&json).map_err(|e| format!("glTF: {e}"))?;
+    root.extensions_required.retain(|e| e != QUANT);
+    let document = gltf::Document::from_json(root).map_err(|e| format!("glTF: {e}"))?;
+    Ok(gltf::Gltf { document, blob })
+}
+
 /// The level of each material in a model with authored levels: `Some(k)` when only
 /// primitives of level `k`, finer than the coarsest the model carries, use it; `None` for the
 /// rest (the coarsest level's, those of primitives without a level, unused ones), and for all
@@ -560,7 +615,7 @@ fn decode_jpeg(bytes: &[u8]) -> Result<Image, String> {
 impl ModelData {
     /// Reads a `.glb` file (or a `.gltf` whose buffers are all embedded in the binary chunk).
     pub fn from_glb(bytes: &[u8]) -> Result<Self, String> {
-        let gltf = gltf::Gltf::from_slice(bytes).map_err(|e| format!("glTF: {e}"))?;
+        let gltf = parse_gltf(bytes)?;
         let doc = &gltf.document;
         let blob = gltf.blob.as_deref();
         let buffers: Vec<Option<&[u8]>> = doc
@@ -576,7 +631,13 @@ impl ModelData {
         let mut nodes: Vec<Node> = doc
             .nodes()
             .map(|n| {
-                let (t, r, s) = n.transform().decomposed();
+                let (mut t, r, mut s) = n.transform().decomposed();
+                if let Some([q, o @ ..]) = dequant(n.extras()) {
+                    // node' = node * Tr(o) * Scale(q): S = S' / q, t = t' - R (S o).
+                    s = s.map(|x| x / q);
+                    let v = math::quat_rotate(r, [o[0] * s[0], o[1] * s[1], o[2] * s[2]]);
+                    t = [t[0] - v[0], t[1] - v[1], t[2] - v[2]];
+                }
                 Node { name: n.name().unwrap_or("").to_owned(), parent: None, translation: t, rotation: r, scale: s }
             })
             .collect();
@@ -722,8 +783,17 @@ impl ModelData {
             // Slots this node's vertices refer to: its joints, or the node itself.
             let joints: Vec<u32> = match node.skin() {
                 Some(skin) => {
-                    let ibms: Vec<Mat4> =
+                    let mut ibms: Vec<Mat4> =
                         skin.reader(&get).read_inverse_bind_matrices().map(|it| it.collect()).unwrap_or_default();
+                    if let Some([q, o @ ..]) = dequant(skin.extras()) {
+                        // IBM' = IBM * Tr(o) * Scale(q), columns first.
+                        for m in &mut ibms {
+                            for c in m.iter_mut().take(3) {
+                                *c = c.map(|x| x / q);
+                            }
+                            m[3] = std::array::from_fn(|r| m[3][r] - o[0] * m[0][r] - o[1] * m[1][r] - o[2] * m[2][r]);
+                        }
+                    }
                     skin.joints()
                         .enumerate()
                         .map(|(j, joint)| {
@@ -762,10 +832,17 @@ impl ModelData {
                     continue;
                 }
                 let reader = prim.reader(&get);
-                let Some(positions) = reader.read_positions() else { continue };
+                let Some(positions) = prim.get(&gltf::Semantic::Positions).and_then(|a| vec3_f32(&a, get)) else {
+                    continue;
+                };
+                let (q, o) = match dequant(mesh.extras()) {
+                    Some([q, o @ ..]) => (q, o),
+                    None => (1.0, [0.0; 3]),
+                };
                 let mut vertices: Vec<Vertex> = positions
+                    .into_iter()
                     .map(|p| Vertex {
-                        position: p,
+                        position: std::array::from_fn(|k| o[k] + q * p[k]),
                         normal: [0.0, 1.0, 0.0],
                         uv: [0.0; 2],
                         color: [1.0; 4],
@@ -777,8 +854,12 @@ impl ModelData {
                         wind: [0; 4],
                     })
                     .collect();
-                if let Some(it) = reader.read_normals() {
-                    vertices.iter_mut().zip(it).for_each(|(v, n)| v.normal = n);
+                if let Some(a) = prim.get(&gltf::Semantic::Normals) {
+                    let unit = a.data_type() != gltf::accessor::DataType::F32;
+                    for (v, n) in vertices.iter_mut().zip(vec3_f32(&a, get).unwrap_or_default()) {
+                        // Quantised normals are a little off unit length.
+                        v.normal = if unit { math::normalize(n) } else { n };
+                    }
                 }
                 if let Some(it) = reader.read_tex_coords(0) {
                     vertices.iter_mut().zip(it.into_f32()).for_each(|(v, t)| v.uv = t);
@@ -820,7 +901,11 @@ impl ModelData {
                 let mut look_morphs = Vec::new();
                 // `emaciated` takes the second slot when the mesh has no `lie_flat`.
                 let lean = !names.iter().any(|n| n == MORPH_NAMES[1]);
-                for (t, (positions, _, _)) in reader.read_morph_targets().enumerate() {
+                for (t, target) in prim.morph_targets().enumerate() {
+                    let positions = target
+                        .positions()
+                        .and_then(|a| vec3_f32(&a, get))
+                        .map(|d| d.into_iter().map(move |d| d.map(|x| q * x)));
                     let name = names.get(t).map(String::as_str);
                     if let Some(l) = name.and_then(crate::looks::look_morph) {
                         if let Some(positions) = positions {

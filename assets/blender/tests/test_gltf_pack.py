@@ -185,5 +185,53 @@ class Jpeg(unittest.TestCase):
         self.assertNotIn("jpeg", plain)
 
 
+class Quantize(unittest.TestCase):
+    """KHR_mesh_quantization: a static mesh on a turned, scaled node keeps its world
+    positions (node' * q == node * p) and its normals, within the rounding."""
+
+    def test_static_mesh_world_positions_kept(self):
+        doc, blob = g.read_glb(_glb())
+        pos = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)]
+        nrm = [(0.0, 0.0, 1.0), (0.6, 0.0, 0.8), (0.0, 0.6, 0.8)]
+        data = struct.pack("<9f", *[x for e in nrm for x in e])
+        doc["bufferViews"].append({"buffer": 0, "byteOffset": len(blob), "byteLength": len(data)})
+        blob += data
+        doc["accessors"].append({"bufferView": len(doc["bufferViews"]) - 1, "componentType": g.FLOAT, "count": 3,
+                                 "type": "VEC3"})
+        doc["meshes"][0]["primitives"][0]["attributes"]["NORMAL"] = len(doc["accessors"]) - 1
+        r = (0.0, 0.0, math.sin(0.3), math.cos(0.3))
+        doc["nodes"].append({"name": "hut", "mesh": 0, "translation": [5, 0, 2], "rotation": list(r),
+                             "scale": [2, 2, 2]})
+        doc["buffers"] = [{"byteLength": len(blob)}]
+        out, stats = g.pack_bytes(g.write_glb(doc, blob))
+        self.assertEqual(stats["quantized"]["meshes"], 1)
+        d2, b2 = g.read_glb(out)
+        self.assertIn("KHR_mesh_quantization", d2["extensionsRequired"])
+        views = [b2[v["byteOffset"]:v["byteOffset"] + v["byteLength"]] for v in d2["bufferViews"]]
+        attr = d2["meshes"][0]["primitives"][0]["attributes"]
+        a = d2["accessors"][attr["POSITION"]]
+        self.assertEqual((a["componentType"], a.get("normalized")), (g.SHORT, True))
+        q = g.read_accessor(d2, views, a)
+        old, new = doc["nodes"][1], d2["nodes"][1]
+
+        def world(n, p):
+            s, t = n["scale"], n["translation"]
+            v = [p[k] * s[k] for k in range(3)]
+            x, y, z, w = n["rotation"]
+            uv = [y * v[2] - z * v[1], z * v[0] - x * v[2], x * v[1] - y * v[0]]
+            uuv = [y * uv[2] - z * uv[1], z * uv[0] - x * uv[2], x * uv[1] - y * uv[0]]
+            return [t[k] + v[k] + 2 * (w * uv[k] + uuv[k]) for k in range(3)]
+
+        for p, e in zip(pos, q):
+            for x, y in zip(world(old, p), world(new, e)):
+                self.assertAlmostEqual(x, y, delta=2e-4)
+        self.assertEqual(new["extras"]["acr_dequant"], d2["meshes"][0]["extras"]["acr_dequant"])
+        na = d2["accessors"][attr["NORMAL"]]
+        self.assertEqual(na["componentType"], g.BYTE)
+        for e, f in zip(nrm, g.read_accessor(d2, views, na)):
+            for x, y in zip(e, f):
+                self.assertAlmostEqual(x, y, delta=1 / 127)
+
+
 if __name__ == "__main__":
     unittest.main()

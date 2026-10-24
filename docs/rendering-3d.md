@@ -2275,7 +2275,8 @@ the frame rate, the models drawn and the poses sampled.
 ## Limits and open points
 
 - No meshopt/Draco decoding, no KTX2 or WebP textures: export models uncompressed with PNG
-  or JPEG textures (the pipeline's default).
+  or JPEG textures (the pipeline's default). `KHR_mesh_quantization` is read (integer
+  positions, normals and morph targets; assets.md "Export and compression").
 - No nation colour mask yet (#162).
 - Free camera: water is the surface of docs/water.md (a flat one under `water=original`);
   buildings, trees and effects drawn as sprites keep their one picture from any side (units

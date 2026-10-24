@@ -60,6 +60,20 @@ pub fn normalize_quat(q: [f32; 4]) -> [f32; 4] {
     if len > 0.0 { q.map(|v| v / len) } else { [0.0, 0.0, 0.0, 1.0] }
 }
 
+/// `v` at unit length (unchanged when zero).
+pub fn normalize(v: Vec3) -> Vec3 {
+    let len = dot(v, v).sqrt();
+    if len > 0.0 { v.map(|x| x / len) } else { v }
+}
+
+/// `v` turned by the unit quaternion `q` (x, y, z, w).
+pub fn quat_rotate(q: [f32; 4], v: Vec3) -> Vec3 {
+    let cross = |a: Vec3, b: Vec3| [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    let uv = cross([q[0], q[1], q[2]], v);
+    let uuv = cross([q[0], q[1], q[2]], uv);
+    std::array::from_fn(|k| v[k] + 2.0 * (q[3] * uv[k] + uuv[k]))
+}
+
 /// Spherical interpolation along the shorter arc (normalised linear for close quaternions).
 pub fn slerp(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
     let mut d = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];

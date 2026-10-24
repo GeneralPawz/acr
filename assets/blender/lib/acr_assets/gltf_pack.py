@@ -19,9 +19,17 @@ frame. This pass rewrites the binary chunk with core glTF 2.0 types the renderer
   materials (leaf cards, hair) stay lossless PNG;
 - identical images, buffer views and accessors stored once.
 
+- with `KHR_mesh_quantization` (`quantize`): positions and morph-target positions as
+  normalised shorts over one cube per file, normals as normalised bytes (`NORMAL_BITS`).
+  The dequantisation (one uniform power-of-two scale and an offset) goes where the spec
+  puts it: into the inverse bind matrices of skins and into the transform of a static
+  mesh's node, so other glTF readers see the model unchanged. Each touched mesh, skin and
+  node also carries `extras.acr_dequant = [s, ox, oy, oz]`, which `model.rs` uses to give
+  back the float positions, bind matrices and node transforms as before. Static meshes
+  whose node has children or is animated keep float positions.
+
 `_PART` and `_LIMB` stay float: a vertex attribute element takes 4 bytes anyway (glTF
-aligns each one to 4), and `_PART` holds part numbers, not 0..1 values. Positions, normals
-and morph targets stay float (quantising them needs `KHR_mesh_quantization`).
+aligns each one to 4), and `_PART` holds part numbers, not 0..1 values.
 """
 
 import hashlib
@@ -34,6 +42,9 @@ ROT_TOL = 2e-4      # rad: a dropped rotation key is reproduced within this angl
 MOVE_TOL = 2e-4     # m (and scale units) for translation and scale keys
 DROP_REST = True    # drop constant channels equal to the node transform
 JPEG_QUALITY = 88   # opaque base colours as JPEG (when an encoder is passed)
+QUANTIZE = True     # KHR_mesh_quantization for positions, morph positions and normals
+NORMAL_BITS = 8     # normals as normalised bytes (16: shorts)
+QUANT_EXT = "KHR_mesh_quantization"
 
 FLOAT, BYTE, UBYTE, SHORT, USHORT, UINT = 5126, 5120, 5121, 5122, 5123, 5125
 SIZE = {BYTE: 1, UBYTE: 1, SHORT: 2, USHORT: 2, UINT: 4, FLOAT: 4}
@@ -306,6 +317,163 @@ class _Packer:
                                        "values": {"bufferView": self.new_view(val)}}
                         stats["sparse_morphs"] = stats.get("sparse_morphs", 0) + 1
 
+    # --- KHR_mesh_quantization
+    def _sparse_values(self, a):
+        """(indices, float VEC3 values) of a sparse float accessor without a base view."""
+        sp = a["sparse"]
+        n = sp["count"]
+        ict = sp["indices"]["componentType"]
+        idx = struct.unpack_from("<" + FMT[ict] * n, self.views[sp["indices"]["bufferView"]],
+                                 sp["indices"].get("byteOffset", 0))
+        raw = self.views[sp["values"]["bufferView"]]
+        off = sp["values"].get("byteOffset", 0)
+        return idx, [struct.unpack_from("<fff", raw, off + 12 * i) for i in range(n)]
+
+    def quantize(self, stats):
+        doc = self.doc
+        acc = doc["accessors"]
+        nodes = doc.get("nodes", [])
+        meshes = doc.get("meshes", [])
+        animated = {ch["target"].get("node") for a in doc.get("animations", []) for ch in a["channels"]}
+        users = {}
+        for ni, n in enumerate(nodes):
+            if "mesh" in n:
+                users.setdefault(n["mesh"], []).append(ni)
+
+        def static_ok(ni):
+            n = nodes[ni]
+            return not n.get("children") and ni not in animated and "matrix" not in n
+
+        def float_pos(p):
+            a = acc[p["attributes"]["POSITION"]]
+            return a["componentType"] == FLOAT and "sparse" not in a and "min" in a
+
+        chosen = []
+        for mi, mesh in enumerate(meshes):
+            us = users.get(mi, [])
+            skinned = ["skin" in nodes[ni] for ni in us]
+            if not us or (any(skinned) and not all(skinned)):
+                continue
+            if not all(skinned) and not all(static_ok(ni) for ni in us):
+                continue
+            prims = [p for p in mesh["primitives"] if "POSITION" in p["attributes"]]
+            if prims and all(float_pos(p) for p in prims):
+                chosen.append(mi)
+        # Normals need no transform (the scale is uniform): every float normal.
+        normals = set()
+        for mesh in meshes:
+            for p in mesh["primitives"]:
+                ai = p["attributes"].get("NORMAL")
+                if ai is not None and acc[ai]["componentType"] == FLOAT and "sparse" not in acc[ai]:
+                    normals.add(ai)
+        for ai in sorted(normals):
+            vals = read_accessor(doc, self.views, acc[ai])
+            if NORMAL_BITS == 8:
+                q = [tuple(min(127, max(-127, round(v * 127))) for v in e) for e in vals]
+                self.put(acc[ai], q, BYTE, True, ARRAY_BUFFER)
+            else:
+                self.put(acc[ai], snorm16(vals), SHORT, True, ARRAY_BUFFER)
+        if normals:
+            stats["normals_quantized"] = len(normals)
+            self._use_ext()
+        if not chosen:
+            return
+        # One cube for the file: the centre of every chosen position, the half extent
+        # covering positions and morph offsets alike.
+        pos_acc, morph_acc = set(), set()
+        for mi in chosen:
+            for p in meshes[mi]["primitives"]:
+                if "POSITION" in p["attributes"]:
+                    pos_acc.add(p["attributes"]["POSITION"])
+                for t in p.get("targets", []):
+                    if "POSITION" in t:
+                        morph_acc.add(t["POSITION"])
+        lo = [min(acc[ai]["min"][k] for ai in pos_acc) for k in range(3)]
+        hi = [max(acc[ai]["max"][k] for ai in pos_acc) for k in range(3)]
+        o = [(a + b) / 2 for a, b in zip(lo, hi)]
+        half = max([(b - a) / 2 for a, b in zip(lo, hi)] + [1e-6])
+        morph_vals = {}
+        for ai in sorted(morph_acc):
+            a = acc[ai]
+            if a["componentType"] != FLOAT:
+                continue
+            if "sparse" in a:
+                if "bufferView" in a:
+                    continue
+                morph_vals[ai] = self._sparse_values(a)
+            else:
+                morph_vals[ai] = (None, read_accessor(doc, self.views, a))
+            half = max([half] + [abs(v) for e in morph_vals[ai][1] for v in e])
+        # A power-of-two scale: s * q / 32767 differs from the float only by the rounding.
+        s = 2.0 ** math.ceil(math.log2(half))
+        d = [s] + o
+
+        def q16(vals, off):
+            return [tuple(min(32767, max(-32767, round((v - c) / s * 32767))) for v, c in zip(e, off))
+                    for e in vals]
+
+        for ai in sorted(pos_acc):
+            a = acc[ai]
+            q = q16(read_accessor(doc, self.views, a), o)
+            self.put(a, q, SHORT, True, ARRAY_BUFFER)
+            a["min"] = [min(e[k] for e in q) / 32767 for k in range(3)]
+            a["max"] = [max(e[k] for e in q) / 32767 for k in range(3)]
+        for ai, (idx, vals) in morph_vals.items():
+            a = acc[ai]
+            q = q16(vals, (0.0, 0.0, 0.0))
+            if idx is None:
+                self.put(a, q, SHORT, True, ARRAY_BUFFER)
+            else:
+                a["sparse"]["values"] = {"bufferView": self.new_view(b"".join(struct.pack("<hhh", *e) for e in q))}
+                a["componentType"] = SHORT
+                a["normalized"] = True
+            a.pop("min", None)
+            a.pop("max", None)
+        for mi in chosen:
+            meshes[mi].setdefault("extras", {})["acr_dequant"] = d
+        skins = set()
+        for mi in chosen:
+            for ni in users[mi]:
+                n = nodes[ni]
+                if "skin" in n:
+                    skins.add(n["skin"])
+                elif "acr_dequant" not in n.get("extras", {}):
+                    self._node_dequant(n, d)
+        for si in sorted(skins):
+            skin = doc["skins"][si]
+            if "inverseBindMatrices" in skin:
+                # IBM' = IBM * Tr(o) * Scale(s), column-major.
+                out = []
+                for m in read_accessor(doc, self.views, acc[skin["inverseBindMatrices"]]):
+                    c = [m[4 * j:4 * j + 4] for j in range(4)]
+                    c3 = tuple(o[0] * c[0][r] + o[1] * c[1][r] + o[2] * c[2][r] + c[3][r] for r in range(4))
+                    out.append(tuple(x * s for x in c[0] + c[1] + c[2]) + c3)
+                skin["inverseBindMatrices"] = self.put_float(out, "MAT4")
+            skin.setdefault("extras", {})["acr_dequant"] = d
+        stats["quantized"] = {"meshes": len(chosen), "positions": len(pos_acc), "morphs": len(morph_vals),
+                              "scale": s}
+        self._use_ext()
+
+    def _use_ext(self):
+        for key in ("extensionsUsed", "extensionsRequired"):
+            lst = self.doc.setdefault(key, [])
+            if QUANT_EXT not in lst:
+                lst.append(QUANT_EXT)
+
+    @staticmethod
+    def _node_dequant(n, d):
+        """node' = node * Tr(o) * Scale(s): t' = t + R S o, S' = S s (s uniform)."""
+        s, o = d[0], d[1:]
+        t = n.get("translation", [0.0, 0.0, 0.0])
+        x, y, z, w = n.get("rotation", [0.0, 0.0, 0.0, 1.0])
+        sc = n.get("scale", [1.0, 1.0, 1.0])
+        v = [o[k] * sc[k] for k in range(3)]
+        uv = [y * v[2] - z * v[1], z * v[0] - x * v[2], x * v[1] - y * v[0]]
+        uuv = [y * uv[2] - z * uv[1], z * uv[0] - x * uv[2], x * uv[1] - y * uv[0]]
+        n["translation"] = [t[k] + v[k] + 2 * (w * uv[k] + uuv[k]) for k in range(3)]
+        n["scale"] = [sc[k] * s for k in range(3)]
+        n.setdefault("extras", {})["acr_dequant"] = d
+
     # --- clips
     def clips(self, stats):
         acc = self.doc["accessors"]
@@ -514,6 +682,14 @@ class _Packer:
 COMPONENTS_TYPE = {1: "SCALAR", 2: "VEC2", 3: "VEC3", 4: "VEC4"}
 
 
+def _clips_packed(doc):
+    """True when the clips were already reduced (rotations stored as shorts): packing an
+    installed glb again then leaves its keys alone."""
+    acc = doc.get("accessors", [])
+    return any(acc[a["samplers"][ch["sampler"]]["output"]].get("componentType") == SHORT
+               for a in doc.get("animations", []) for ch in a["channels"] if ch["target"]["path"] == "rotation")
+
+
 def pack_bytes(data, jpeg=None):
     """The packed glb and what changed. `jpeg(pixels, quality)` encodes (h, w, 3) uint8 pixels
     as JPEG bytes; without it every image stays PNG."""
@@ -524,7 +700,10 @@ def pack_bytes(data, jpeg=None):
     stats = {}
     p.attributes(stats)
     p.morphs(stats)
-    p.clips(stats)
+    if QUANTIZE:
+        p.quantize(stats)
+    if not _clips_packed(doc):
+        p.clips(stats)
     p.images(stats, jpeg)
     blob = p.finish()
     return write_glb(doc, blob), stats
