@@ -176,10 +176,18 @@ impl Audio {
         Some(mixer.play(sound, volume, pan))
     }
 
-    /// Plays a made sound (the weather's) at `volume` and `pan`, scaled by the effects volume.
+    /// Plays a made sound (the weather's) at `volume` and `pan`, scaled by the effects volume;
+    /// it ducks under the battle as ambience.
     pub fn play_sound(&mut self, sound: Sound, volume: f32, pan: f32) -> Option<acr_audio::VoiceId> {
         let mut mixer = self.output.as_ref()?.mixer.lock().ok()?;
-        Some(mixer.play(sound, volume, pan))
+        Some(mixer.play_ambient(sound, volume, pan))
+    }
+
+    /// Changes a loop's volume (before the effects volume).
+    pub fn set_volume(&mut self, voice: acr_audio::VoiceId, volume: f32) {
+        if let Some(Ok(mut mixer)) = self.output.as_ref().map(|o| o.mixer.lock()) {
+            mixer.set_volume(voice, volume);
+        }
     }
 
     /// Loops a made sound at `volume` (scaled by the effects volume), fading in over `fade`

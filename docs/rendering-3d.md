@@ -449,28 +449,59 @@ tick about 320, 60 frames, two alternating runs each; `ACR-analysis/genai/weathe
 **Options:** Spieleinstellungen page 3, "Landschaft (nur 3D)", line `Wetter` (Aus
 (Original) / Regen / Schnee / Nebel), at once on OK ([ui.md](ui.md#game-menu-0x5d9c30-and-game-options-0x5dbe10)).
 
-**Sound** (`acr-game` `weather_sound.rs`): the weather drawn (`InGame::weather_heard`: the
-override or the setting, off without the 3D pass and outside a game) picks the loops.
+**Storm on the wind clock** (`acr-render` `weather.rs`): the rain's strength, the lightning
+and the gusts are plain functions of `ThreeD::wind_clock` (the clock the trees sway on), so
+the picture and the sound agree without sharing state, and nothing reads the simulation or
+its RNG.
 
-| Mode | Loops (volume before the effects volume) | One-shots |
+| Function | What | Drawn | Heard |
+|---|---|---|---|
+| `rain_intensity(clock)` | 0.4 (drizzle) .. 1 (downpour), three sines of 53, 21 and 8.3 s | the drop count × it (`WeatherRenderer::set_storm`) | light and heavy rain crossfaded by it |
+| `strike(slot)` | one strike in two of three 24 s slots (a hash of the slot): flash time `at`, thunder `delay` 0.8–6.8 s (270 m to 2.3 km), `near` 1..0, `pan` ±0.6 | `flash(clock)`: two or three flickers over 0.5 s, raising the light grade towards 1 (× 0.6) and lifting it by up to (0.10, 0.11, 0.14), brighter when near; rain only | a thunder roll at `at + delay` |
+| `gust(at, dir, clock)` | `gust` of `model.wgsl`, the same numbers | the trees' sway | the wind's swell at the window centre × the weather's wind strength (`ThreeD::wind_at`; none with `wind=off`) |
+
+**Sound** (`acr-game` `weather_sound.rs`, #224): `InGame::weather_heard` gives each frame the
+weather drawn (the override or the setting; off without the 3D pass and outside a game), the
+wind clock, the rain's strength, the wind at the window centre and the camera's nearness (0
+zoomed out, 1/3 at scale 1, 1 from scale 4; `weather_sound::nearness`).
+
+| Mode | Loops (volume before the effects volume and the ducking) | One-shots |
 |---|---|---|
-| rain | rain 0.45, wind 0.18 | a thunder roll every 14–44 s, volume 0.35–0.8, panned up to ±0.6 |
-| snow | wind 0.35 | none |
-| fog, off | none | none |
+| rain | light rain 0.4 × √(1 − s) and heavy rain 0.5 × √s (s: the strength from 0.4..1 to 0..1), both × (0.4 + 0.6 × nearness); wind 0.22 × (0.2 + 0.8 g); howl 0.12 × g³ (g: the gust) | thunder at each strike's `at + delay`, volume 0.5 + 0.5 × near, a crack in the near rolls (near > 0.6), slower and deeper far ones; drips from nearness 0.5 on, up to 3 a second × the strength, volume up to 0.22, panned ±0.8 |
+| snow | muffled wind 0.4 × (0.25 + 0.75 g) (0.4 × 0.2 with `wind=off`) | none |
+| fog | a distant rumble 0.09 (a little more zoomed out) | none |
+| off | none | none |
 
-- The sounds are made in code from seeded noise at 22050 Hz on first use, so there is no
-  recording and nothing to license: rain 6 s (noise band-passed to about 0.8–7 kHz plus
-  about 60 drop ticks a second), wind 8 s (noise low-passed at 150–500 Hz, gusts of 8, 4
-  and 8/3 s that repeat with the loop), three thunder rolls of 5–7 s (a crack, a 90–180 Hz
-  rumble with three swells). The loops' last 0.5 s (rain) or 1 s (wind) are crossfaded into
-  their starts, so they loop without a click.
-- `acr-audio`'s `Mixer::play_looped` loops a voice (fading in), `fade_out` ends it, both
-  over 2 s when the mode changes; the voices are effects, so `sound_volume` scales them.
+- **Made in code** from seeded noise at 22050 Hz on first use (no recording, nothing to
+  license): light rain 6 s (1.5–9 kHz hiss, 35 bright drop ticks a second), heavy rain 7 s
+  (0.5–6 kHz, 260 ticks a second, sheets swelling three times a loop), wind 10 s (120–450 Hz),
+  howl 10 s (a narrow resonance wandering 360–720 Hz), muffled wind (the wind low-passed
+  twice more at 240 Hz), distant rumble 12 s (below about 70 Hz in slow swells, a faint
+  hiss), two near thunder rolls of 5–6 s (a crack, a 90–180 Hz rumble), two far ones of
+  7–8 s (55–110 Hz, a 0.5 s rise), six drips of 0.2 s (a plink rising from 0.9–2.6 kHz by
+  70 % in 30 ms after a splash tick). Loops crossfade their last 0.5–1 s into their start.
+  The different loop lengths keep the layers from repeating together.
+- **Ducking:** the loops (`Mixer::play_looped`) and the one-shots (`play_ambient`) are
+  ambience. Each mixer block renders the other effects first and takes their RMS; the
+  ambience then plays at `1 / (1 + 8 × level)`, at least 0.25, the level following at once
+  and falling with 1.2 s (1/e), the gain ramped over the block. A volley takes the rain
+  down to about 0.3 and it comes back in about 2 s (`Mixer::ducking`). The volume is the
+  effects volume (`sound_volume`); there is no separate weather volume.
+- **Proof:** `ACR_WEATHER_WAV=<dir> cargo test -p acr-game weather_captures -- --ignored`
+  writes 30 s captures (`rain.wav`, `snow.wav`, `fog.wav`, 44.1 kHz stereo, through the real
+  mixer, 60 updates a second), a CSV per second of strength, gust, nearness and ducking, and
+  the strikes (`events.txt`). Captures and spectrograms: `ACR-analysis/genai/weather-sound/`.
+  In `rain.wav`: close rain 0–8 s, the flash at 4.0 s and a far roll from 8.0 s (near 0.46),
+  zooming out 8–12 s (the hiss falls, the drips stop), zoomed out 12–16 s, a gust with the
+  howl at 5–8 s and 13–15 s, a stand-in volley 21–26 s with the rain ducked under it and
+  coming back 26–29 s, the downpour from 19 s.
 - `game.log` says `weather sound: <mode>` on each change (the driver runs without an audio
-  device, so the log is its check).
+  device, so the log is its check). Tests: `weather_sound` (loops close, levels follow the
+  strength, zoom and gusts, a roll after the flash, ducking under a volley),
+  `weather::tests::storm_follows_the_clock`, `mixer::tests::ambience_ducks_under_the_battle`.
 
 Open: gameplay effects (wet powder, slower marching, shorter sight in fog) as optional rules;
-recorded CC0 sounds instead of the made ones, if wanted.
+recorded CC0 sounds instead of the made ones, if wanted; a separate weather volume.
 
 ### Map trees and stones
 

@@ -238,8 +238,8 @@ impl Game {
         self.load_requested();
         self.play_sounds();
         self.audio.report();
-        let weather = match &self.mode {
-            Mode::InGame(game) => game.weather_heard(),
+        let weather = match (&self.mode, self.frame_size()) {
+            (Mode::InGame(game), Some(size)) => game.weather_heard(size),
             _ => Default::default(),
         };
         self.weather_sound.update(weather, dt as f32, &mut self.audio);

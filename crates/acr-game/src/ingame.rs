@@ -512,8 +512,22 @@ impl InGame {
 
     /// The weather to hear (`weather_sound`): the weather drawn, off without the 3D pass
     /// (it draws only there).
-    pub fn weather_heard(&self) -> acr_render::weather::Weather {
-        if self.three_d.active() { self.three_d.weather() } else { Default::default() }
+    /// `window` is the window size in pixels.
+    pub fn weather_heard(&self, window: [f32; 2]) -> crate::weather_sound::Heard {
+        if !self.three_d.active() {
+            return Default::default();
+        }
+        let s = self.camera.scale;
+        // The window centre on the ground (world y is twice the screen's).
+        let at = [self.camera.x + window[0] / s * 0.5, (self.camera.y + window[1] / s * 0.5) * 2.0];
+        let (intensity, _) = self.three_d.storm();
+        crate::weather_sound::Heard {
+            weather: self.three_d.weather(),
+            clock: self.three_d.wind_clock(),
+            intensity,
+            wind: self.three_d.wind_at(at),
+            near: if self.interface.hud.zoom { 0.0 } else { crate::weather_sound::nearness(s) },
+        }
     }
 
     /// What the ambient sounds need: the view in original pixels and the map's water.

@@ -128,6 +128,14 @@ const WIND_DIR: [f32; 2] = [0.94, 0.34];
 const WIND_STRENGTH: f32 = 1.0;
 const WIND_PERIOD: f32 = 3600.0;
 
+/// The rain's strength and the lightning flash of `weather` at wind clock `clock`.
+fn storm_at(weather: Weather, clock: f32) -> (f32, f32) {
+    match weather {
+        Weather::Rain => (acr_render::weather::rain_intensity(clock), acr_render::weather::flash(clock)),
+        _ => (1.0, 0.0),
+    }
+}
+
 /// Held gear a crawler, a disarmed or a killed man no longer carries: long weapons, a
 /// rider's carbine and sabre, and the hat.
 fn held_gear(node: &str) -> bool {
@@ -2042,6 +2050,7 @@ impl ThreeD {
         renderer.lods = self.lod;
         renderer.material_detail = material_detail_override().unwrap_or(self.material_detail);
         let weather = self.weather_override.unwrap_or(self.weather);
+        let storm = storm_at(weather, self.wind_clock);
         let look = weather.look();
         let strength = if self.wind_override.unwrap_or(self.wind) { WIND_STRENGTH * weather.wind_scale() } else { 0.0 };
         renderer.wind = [WIND_DIR[0], WIND_DIR[1], strength, self.wind_clock];
@@ -2081,6 +2090,7 @@ impl ThreeD {
             c.prepare(queue, &view3d, on.then_some(&mut self.cover), renderer.wind);
         }
         if let Some(w) = self.weather_renderer.as_mut() {
+            w.set_storm(storm.0, storm.1);
             w.prepare(queue, &view3d, weather, self.started.elapsed().as_secs_f32(), WIND_DIR);
         }
         use acr_render::gpu_timer::mark_encoder;
@@ -2176,6 +2186,28 @@ impl ThreeD {
     #[allow(dead_code)]
     pub fn burn(&self, index: u32) -> f32 {
         self.fire.burn(index)
+    }
+
+    /// The rain's strength and the lightning flash now (`acr_render::weather`), both on the
+    /// wind clock, as `weather_sound` hears them.
+    pub fn storm(&self) -> (f32, f32) {
+        storm_at(self.weather(), self.wind_clock)
+    }
+
+    /// The wind clock (seconds, wraps at [`WIND_PERIOD`]) the trees sway and the storm runs
+    /// on.
+    pub fn wind_clock(&self) -> f32 {
+        self.wind_clock
+    }
+
+    /// The trees' wind at world point `at` now: its strength (0 with `wind=off`) times the
+    /// gust there, as `model.wgsl` sways them, in units of [`WIND_STRENGTH`].
+    pub fn wind_at(&self, at: [f32; 2]) -> f32 {
+        if !self.wind_override.unwrap_or(self.wind) {
+            return 0.0;
+        }
+        let strength = self.weather().wind_scale();
+        strength * acr_render::weather::gust(at, WIND_DIR, self.wind_clock)
     }
 
     /// The weather drawn: the driver's override, else the setting.

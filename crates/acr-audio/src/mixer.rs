@@ -21,7 +21,16 @@ struct Voice {
     level: f32,
     target: f32,
     ramp: f32,
+    /// The weather's ambience: ducks under the other sound effects ([`Mixer::ducking`]).
+    ambient: bool,
 }
+
+/// How deep the ambience ducks under the battle: its gain is `1 / (1 + DUCK_DEPTH * level)`
+/// with the other effects' RMS level, at least [`DUCK_FLOOR`]; the level follows at once and
+/// falls back with [`DUCK_RELEASE`] (seconds, 1/e).
+const DUCK_DEPTH: f32 = 8.0;
+const DUCK_FLOOR: f32 = 0.25;
+const DUCK_RELEASE: f32 = 1.2;
 
 struct MusicStream {
     source: Box<dyn MusicSource>,
@@ -41,6 +50,9 @@ pub struct Mixer {
     /// Output meter since the last [`Mixer::take_meter`]: for the log, to tell silence
     /// from a device that never pulls samples.
     meter: Meter,
+    /// The other effects' level the ambience ducks under, and the ambience's gain now.
+    duck_level: f32,
+    duck_gain: f32,
 }
 
 /// What the mixer rendered since the meter was last read.
@@ -67,6 +79,8 @@ impl Mixer {
             sfx_volume: 1.0,
             music_volume: 0.7,
             meter: Meter::default(),
+            duck_level: 0.0,
+            duck_gain: 1.0,
         }
     }
 
@@ -86,15 +100,40 @@ impl Mixer {
         self.meter.started += 1;
         let pan = pan.clamp(-1.0, 1.0);
         let gain = [volume * (1.0 - pan.max(0.0)), volume * (1.0 + pan.min(0.0))];
-        self.voices.push(Voice { id, sound, position: 0.0, gain, looping: false, level: 1.0, target: 1.0, ramp: 0.0 });
+        self.voices.push(Voice {
+            id,
+            sound,
+            position: 0.0,
+            gain,
+            looping: false,
+            level: 1.0,
+            target: 1.0,
+            ramp: 0.0,
+            ambient: false,
+        });
         id
+    }
+
+    /// Starts an ambience sound (a thunder roll, a drip): like [`Mixer::play`], but it ducks
+    /// under the other effects.
+    pub fn play_ambient(&mut self, sound: Sound, volume: f32, pan: f32) -> VoiceId {
+        let id = self.play(sound, volume, pan);
+        if let Some(v) = self.voices.last_mut() {
+            v.ambient = true;
+        }
+        id
+    }
+
+    /// The ambience's gain under the other effects now (1: no ducking).
+    pub fn ducking(&self) -> f32 {
+        self.duck_gain
     }
 
     /// Starts a sound that loops until [`Mixer::fade_out`] or [`Mixer::stop`], fading in over
     /// `fade` seconds. The loop runs from the last frame straight into the first, so the
-    /// sound should be made seamless.
+    /// sound should be made seamless. It is ambience: it ducks under the other effects.
     pub fn play_looped(&mut self, sound: Sound, volume: f32, fade: f32) -> VoiceId {
-        let id = self.play(sound, volume, 0.0);
+        let id = self.play_ambient(sound, volume, 0.0);
         let ramp = self.ramp(fade);
         if let Some(v) = self.voices.last_mut() {
             v.looping = true;
@@ -176,7 +215,8 @@ impl Mixer {
         let rate = f64::from(self.rate);
 
         let sfx = self.sfx_volume;
-        self.voices.retain_mut(|voice| {
+        // The battle first, then the ambience ducked under it.
+        let render = |voice: &mut Voice, out: &mut [f32], gain: (f32, f32)| -> bool {
             let step = f64::from(voice.sound.rate) / rate;
             let src_channels = usize::from(voice.sound.channels);
             let src_frames = voice.sound.frames();
@@ -197,6 +237,8 @@ impl Mixer {
                     };
                 }
                 let t = (voice.position - index as f64) as f32;
+                // The gain ramps over the block (the ducking moves smoothly).
+                let sfx = gain.0 + gain.1 * frame as f32 / frames as f32;
                 for (c, slot) in out[frame * channels..][..channels].iter_mut().enumerate() {
                     let sc = c.min(src_channels - 1);
                     let a = f32::from(voice.sound.samples[index * src_channels + sc]);
@@ -209,7 +251,17 @@ impl Mixer {
                 }
             }
             true
-        });
+        };
+        self.voices.retain_mut(|voice| voice.ambient || render(voice, out, (sfx, 0.0)));
+        if frames > 0 {
+            let rms = (out.iter().map(|s| s * s).sum::<f32>() / out.len() as f32).sqrt();
+            let fall = (-(frames as f32) / (DUCK_RELEASE * rate as f32)).exp();
+            self.duck_level = rms.max(self.duck_level * fall);
+        }
+        let from = self.duck_gain;
+        let to = (1.0 / (1.0 + DUCK_DEPTH * self.duck_level)).max(DUCK_FLOOR);
+        self.duck_gain = to;
+        self.voices.retain_mut(|voice| !voice.ambient || render(voice, out, (sfx * from, sfx * (to - from))));
 
         if let Some(music) = &mut self.music {
             let step = f64::from(music.rate) / rate;
@@ -319,6 +371,26 @@ mod tests {
         let mut out = [0.0; 4];
         m.render(&mut out, 1);
         assert_eq!(out, [0.125, 0.25, 0.375, 0.5]);
+    }
+
+    #[test]
+    fn ambience_ducks_under_the_battle() {
+        let mut m = Mixer::new(100);
+        let rain = m.play_looped(sound(100, &[8192, 8192, 8192]), 1.0, 0.0);
+        let mut out = [0.0; 10];
+        m.render(&mut out, 1);
+        assert_eq!(m.ducking(), 1.0);
+        assert_eq!(out[9], 0.25);
+        // A loud shot: the rain ducks, smoothly over the block, then comes back.
+        m.play(sound(100, &[16384; 12]), 1.0, 0.0);
+        m.render(&mut out, 1);
+        let ducked = m.ducking();
+        assert!(ducked < 0.3, "{ducked}");
+        assert!(out[0] > out[9]);
+        for _ in 0..60 {
+            m.render(&mut out, 1);
+        }
+        assert!(m.ducking() > 0.9 && m.is_playing(rain), "{}", m.ducking());
     }
 
     struct Blocks(Vec<Vec<i16>>);
