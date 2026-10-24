@@ -462,6 +462,16 @@ def place(body, panel, uv):
             t = float(np.interp(abs(arc), cum, ts))
             p = np.array((math.sin(t) * a, cy - math.cos(t) * b, z))
             ax = np.array((0.0, cy, z))
+            if reg == "neck" and pl.get("dip"):
+                # The neckline falls from the nape to the throat: a level ring round the
+                # neck runs through the jaw in front, and the drape pushes it out and up
+                # across the chin and mouth. `dip` (cm) lowers the front, eased round.
+                f = ((1.0 + math.cos(t)) / 2.0) ** 2
+                zd = z - pl["dip"] / 100.0 * f
+                cy, a, b = body.ellipse(max(zd, body.neck_z - 0.01))  # the neck's own ring, not the shoulders'
+                a, b = a + gap, b + gap
+                p = np.array((math.sin(t) * a, cy - math.cos(t) * b, zd))
+                ax = np.array((0.0, cy, zd))
             if reg == "torso" and z > body.fold_z - 0.08 and pl.get("theta", 0.0) in (0.0, 180.0):
                 # Over the shoulder: flat across (x = u), up to the top of the shoulder,
                 # then on towards the other side; blended in over 8 cm below the fold.

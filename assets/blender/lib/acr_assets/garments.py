@@ -294,7 +294,8 @@ def coat(m=MEASURE):
     half_neck = m["neck"] / 2.0 + 2.0
     P["collar"] = Panel("collar", "coat", "facings", [(0.0, 0.0), (half_neck, 0.0), (half_neck - 1.0, 3.5), (0.0, 4.0)],
                         {"base": (0, 1), "top": (2, 3)},
-                        {"region": "neck", "theta": 180.0, "dir": -1, "u0": 0.0, "at": "collar", "gap": 1.2})
+                        {"region": "neck", "theta": 180.0, "dir": -1, "u0": 0.0, "at": "collar", "gap": 1.2,
+                         "dip": COLLAR_DIP})
     seams = [
         Seam([("coat_front", "side")], [("coat_back", "side")], "coat"),
         Seam([("coat_front", "shoulder")], [("coat_back", "shoulder")], "coat", ease=0.25),
@@ -472,6 +473,9 @@ def shirt(m=MEASURE):
 # Material keys (registered by `frontier.py`, `civil.py` and `outfit.py`): `doublet`,
 # `dsleeve` (cloth sleeves), `slashes` (the lining in the slashes), `buff`, `hose`, `slops`.
 
+# cm: the stand collar's front sits this much below its back (`drape.place`, "dip"): the
+# neckline falls from the nape to the throat, and a level collar runs through the jaw.
+COLLAR_DIP = 5.0
 SLASH = 1.0  # cm: width of a slash (an inlay strip of the lining's cloth)
 
 

@@ -751,7 +751,11 @@ Seam(a, b, garment, ease=0.15)
   front, 90 = the wearer's left; arm 0 = top of the arm, 90 = front; leg 0 = front,
   90 = outside), `dir` (+1 when u runs towards increasing theta), `u0` (the u at theta),
   `at` (landmark: `waist`, `knee`, `ankle`, `wrist`, `collar`, `stock`), `lift` (cm, v = 0
-  sits this far above the landmark), `gap` (cm off the skin), `pin` (an edge to pin).
+  sits this far above the landmark), `gap` (cm off the skin), `pin` (an edge to pin), `dip`
+  (neck only, cm: the front sits this much lower than the back, eased round. The coat's
+  stand collar dips `garments.COLLAR_DIP` = 5 cm: placed level, its front ran through the
+  jaw and the drape pushed it out across the chin and mouth, a facings-coloured sliver over
+  the face of every line infantryman; model_layers poking 240 -> 182 on EngM18).
 - `key`: material key (`humans.LAYER_OF`, `outfit.PAINTER`); `skirt` marks free cloth;
   `tack` makes the panel an inlay of the named panel (drafted in the same frame).
 - A seam side is a chain of `(panel, edge, reversed, side)`; both chains run the same way on
