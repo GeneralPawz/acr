@@ -71,6 +71,9 @@ pub struct Settings {
     /// ACR: the water surface of the 3D path (`water=detailed|original`, detailed by
     /// default; docs/water.md): waves, reflection and foam, or the original's depth tint.
     pub water_detailed: bool,
+    /// ACR: grass tufts, flowers, ferns, leaf litter and pebbles on the detailed ground
+    /// (`ground_cover=on|off`, on by default; docs/ground.md "Phase 5: ground cover").
+    pub ground_cover: bool,
     /// ACR: the ground in 3D mode (`ground=detailed|original`, detailed by default):
     /// material textures over the original tiles (docs/ground.md). Sprite mode always
     /// draws the original ground.
@@ -170,6 +173,7 @@ impl Default for Settings {
             wind: true,
             map_models: true,
             water_detailed: true,
+            ground_cover: true,
             ground_detailed: true,
             marks_keep: false,
             weather: Weather::Off,
@@ -238,7 +242,7 @@ impl Settings {
             "sound_volume={}\nmusic_volume={}\nmusic_mode={}\ngame_mode={}\nscroll_speed={}\nframe_time={}\n\
              resolution={}\nrecord={}\nrecord_file={hex}\ncontrols={controls}\nedge_scroll={}\n\
              models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\ncorpse_decay={}\nhit_locations={}\nbody_spacing={}\nmortars={}\ncorpse_piles={}\nshadows={}\nlod={}\nmaterial_detail={}\nwind={}\nmap_models={}\nwater={}\n\
-             ground={}\nbattlefield_marks={}\nweather={}\n{}",
+             ground={}\nground_cover={}\nbattlefield_marks={}\nweather={}\n{}",
             self.sound_volume,
             self.music_volume,
             self.music_mode,
@@ -261,6 +265,7 @@ impl Settings {
             if self.map_models { "on" } else { "off" },
             if self.water_detailed { "detailed" } else { "original" },
             if self.ground_detailed { "detailed" } else { "original" },
+            if self.ground_cover { "on" } else { "off" },
             if self.marks_keep { "keep" } else { "fade" },
             self.weather.name(),
             match self.decay_stain {
@@ -332,6 +337,7 @@ impl Settings {
                 "map_models" => s.map_models = value != "off",
                 "water" => s.water_detailed = value != "original",
                 "ground" => s.ground_detailed = value != "original",
+                "ground_cover" => s.ground_cover = value != "off",
                 "battlefield_marks" => s.marks_keep = value == "keep",
                 "weather" => s.weather = Weather::parse(value).unwrap_or_default(),
                 "decay_stain" => {
@@ -383,6 +389,7 @@ mod tests {
             wind: false,
             map_models: false,
             water_detailed: false,
+            ground_cover: false,
             ground_detailed: false,
             corpse_minutes: 12,
             corpse_decay_half: true,

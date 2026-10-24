@@ -26,6 +26,7 @@ parameters: [assets-humans.md](assets-humans.md).
 | `lod` | `on`, `off` | `on` | the models' distance levels, built at load by `lod.rs` (below); `ACR_LOD` overrides it |
 | `water` | `detailed`, `original` | `detailed` | the water surface in 3D mode, [water.md](water.md); native override `ACR_WATER` |
 | `ground` | `detailed`, `original` | `detailed` | the ground in 3D mode (`models` not `off` or `camera=free`): material textures over the original tiles, [ground.md](ground.md); sprite mode always draws the original |
+| `ground_cover` | `on`, `off` | `on` | grass tufts, flowers, ferns, leaf litter and pebbles on the detailed ground, swaying with the wind (`ground_cover.rs`, [ground.md](ground.md) "Phase 5: ground cover"); needs `ground=detailed`, hidden zoomed out and under snow; `ACR_GROUND_COVER=on|off` wins (native) |
 | `gore` | `full`, `reduced`, `off` | `full` | 3D corpses: `full` decompose (#178), `reduced` discolour, collapse and sink without dissolving, `off` fade like the original (every other pixel once the death counter passes 100) |
 | `corpse_minutes` | 1 to 60 | `5` | how long a corpse lies before it goes (game minutes) |
 | `corpse_decay` | `full`, `half` | `full` | `half`: decay stops at `model::HALF_DECAY` (0.45), for looking at thrown flesh; the driver's blank start takes `"corpse_decay"` too |

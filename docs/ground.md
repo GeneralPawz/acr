@@ -395,12 +395,54 @@ other assets) plus a stamp in the ground state. It ages: fresh and glossy, then 
 dark, flattened when trampled (when the compression channel rises over it), and gone
 after about 20 minutes. Its cost is negligible: a few hundred instances at most.
 
-## Phase 5: vegetation (later, plan only)
+## Phase 5: ground cover (built) and trees (plan)
 
-- **Grass:** instanced blade cards near the camera (within about 25 m, only under zoom ≥ 2
-  or the free camera), placed from a jittered grid per class (grass, meadow, field), with
-  wind by a world-space noise. The compression channel flattens and darkens them, and
-  scorch removes them. Density fades with distance into the material.
+**Ground cover** (`acr_render::ground_cover`, `ground_cover.wgsl`; m2-ground-cover). Setting
+`ground_cover=on|off`, default `on`; it draws only with the detailed ground and its marks
+(`ground=detailed`, 3D mode, textures loaded), not in the zoomed-out view and not under
+`weather=snow`. `ACR_GROUND_COVER=on|off` overrides it on native builds (tests, timing).
+
+- **Placement:** a jittered grid of 12 px (40 cm) cells. Each cell's hash of its grid
+  position decides whether it holds a piece (the class's density), the kind, the spot in
+  the cell, the size, the turn and the tint variation: the same field always grows the same
+  cover, independent of the sim. The class is the one of the vertex under the piece
+  (`TerrainData::tile_at` → `TILE_CLASS`).
+- **Per class** (`COVER`): grass 55 % of cells (5 % of them flowers), meadow 65 % (14 %
+  flowers), forest floor 50 % (litter 55 %, ferns 30 %, grass), steppe 50 % dry grass, field
+  15 % dry grass, dirt 10 %, rock 16 % and gravel 16 % mostly pebbles, desert 9 %, sand 4 %,
+  cracked and red soil 5–6 % dry tufts and pebbles, mud 3 % grass; snow, snowy ground and
+  the kept original textures none.
+- **Cards:** no textures and no asset-pipeline meshes; the shapes are cut in the fragment
+  shader. Upright kinds (grass 16–30 cm, dry grass 22–42 cm, flowers, ferns 32–55 cm) are
+  three crossed cards (18 vertices) with 5–9 tapering blades, flower heads in four colours
+  on stems, or two arching fronds with leaflets; blades stay at least about a pixel wide.
+  Flat kinds (leaf litter, pebbles) are one card on the ground with five leaves or three lit
+  lumpy stones. Opaque (alpha-tested, depth-written), drawn after the ground shadows; they
+  do not receive model shadows yet.
+- **Wind:** the models' `globals.wind` (`wind` setting, scaled by the weather): a slow sway
+  rolling over the field plus a flutter, bending each card by its height squared (25 % of
+  the height at the tip at strength 1).
+- **Fade:** each piece has a rank (its hash over the density); the shader grows a piece in
+  and out as the zoom fade (0 below zoom 0.55, all from 1.3) passes its rank, so the
+  gameplay zoom shows a thinned, fine-grained cover and zooming in fills it without pops.
+  The free camera also fades it out between 55 and 110 m from its target.
+- **Interactions (ground state):** where the compression channel (boots, hooves, bodies)
+  rises, the cards are laid over and darkened (fully above 0.45) and thinned (from 0.25);
+  scorch over 40/255 (shell craters, `fire_view` fires) and dug ground (displacement beyond
+  ±14/255 ≈ 2.8 cm: craters, furrows, ruts) clear it. Chunks of 16 × 16 cells are cached
+  and re-placed every second (4 stale chunks per frame, new chunks up to 96 per frame), so
+  marks reach the cover within a second or two.
+- **Cost** (RX 9060 XT on the render VM, 1600 × 900, blank field with a meadow patch of
+  radius 2600 px, 240 men marching, zoom 1; `ACR-analysis/genai/groundcover/steps/
+  bench.json`, two runs): GPU `ground cover` 0.136–0.147 ms (off 0.007); CPU
+  `3d.ground_cover` 0.11 ms per frame (6.6–6.8 ms over 61 frames). Under the 0.3 ms target,
+  so on by default. Not measured on the Snapdragon tiler or WebGL2 yet.
+- **Frames:** `ACR-analysis/genai/groundcover/sheet_{meadow,forest,desert,steppe}.png`
+  (rows off/on, columns zoom 1, zoom 3, free camera; `scripts/steps.py`, `sheets.py`).
+- **Limits:** the driver's `wait` renders nothing, so marches under `wait` leave no boot
+  prints; trampling is shown by the unit test only (`trodden_and_burnt_ground_thins_the_cover`).
+  No shadows on the cards. In the original view depth is the row, so a card is pulled 3 px
+  towards the camera against the slope behind it.
 - **Trees:** Poly Haven CC0 trees (`D:\ACR-models\polyhaven`) built into glb with 3 LODs
   plus an impostor (an octahedral or 8-view billboard atlas). The tree sprites are replaced
   by them in 3D mode, keeping the map's positions and kinds. A cannonball hit (render-side

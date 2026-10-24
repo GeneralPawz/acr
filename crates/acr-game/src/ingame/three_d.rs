@@ -271,6 +271,13 @@ pub struct ThreeD {
     /// Shell fires and burning men (#256): flames, smoke, scorch; the burn amount.
     fire: super::fire_view::FireView,
     particle_renderer: Option<acr_render::particles::ParticleRenderer>,
+    /// Grass tufts, flowers, ferns, litter and pebbles on the detailed ground
+    /// (`ground_cover=on|off`, docs/ground.md "Phase 5: ground cover"); `ACR_GROUND_COVER`
+    /// wins. `cover_view` is this frame's view, set before `update`.
+    ground_cover: bool,
+    cover: acr_render::ground_cover::GroundCover,
+    cover_renderer: Option<acr_render::ground_cover::GroundCoverRenderer>,
+    pub(super) cover_view: Option<View3d>,
     /// Rain, snow or fog (#224, `weather` setting; the driver's `weather` overrides it).
     weather: Weather,
     weather_override: Option<Weather>,
@@ -393,6 +400,10 @@ impl Default for ThreeD {
             particles: Default::default(),
             fire: Default::default(),
             particle_renderer: None,
+            ground_cover: true,
+            cover: Default::default(),
+            cover_renderer: None,
+            cover_view: None,
             weather: Weather::Off,
             weather_override: None,
             weather_renderer: None,
@@ -472,6 +483,7 @@ impl ThreeD {
         self.corpse_ticks = u64::from(settings.corpse_minutes) * 60 * acr_sim::ORIGINAL_TICKS_PER_SECOND as u64;
         self.free = settings.camera == CameraMode::Free;
         self.ground_detailed = settings.ground_detailed;
+        self.ground_cover = settings.ground_cover;
         if self.marks_keep && !settings.marks_keep {
             // Back to fading: what was kept goes, the world's recent marks show again.
             self.kept.clear();
@@ -643,6 +655,7 @@ impl ThreeD {
         self.water.get_or_insert_with(|| acr_render::water::WaterRenderer::new(device, format));
         self.particle_renderer.get_or_insert_with(|| acr_render::particles::ParticleRenderer::new(device, format));
         self.weather_renderer.get_or_insert_with(|| acr_render::weather::WeatherRenderer::new(device, format));
+        self.cover_renderer.get_or_insert_with(|| acr_render::ground_cover::GroundCoverRenderer::new(device, format));
         for (name, model) in self.parsed.drain(..) {
             if name == GORE {
                 // The pack is split into its nodes; the torn cap replaces the procedural one
@@ -1405,12 +1418,38 @@ impl ThreeD {
             );
         }
         self.shots.clear();
+        self.update_cover(terrain, marks.as_deref().map(|m| &m.state));
         if let Some(m) = marks {
             self.particles.stamp_landings(&mut m.state);
             // Keep the list's capacity.
             footfalls.clear();
             m.footfalls = footfalls;
         }
+    }
+
+    /// Whether the ground cover draws: the setting (or `ACR_GROUND_COVER`), the detailed
+    /// ground with its marks, not zoomed out (`cover_view`) and no snow.
+    fn cover_on(&self) -> bool {
+        ground_cover_override().unwrap_or(self.ground_cover)
+            && self.ground_marks
+            && self.cover_view.is_some()
+            && self.weather() != Weather::Snow
+    }
+
+    /// Places the ground cover around this frame's view (`ground_cover.rs`).
+    fn update_cover(&mut self, terrain: &TerrainData, state: Option<&acr_render::ground_state::GroundState>) {
+        let view = match self.cover_view {
+            Some(v) if self.cover_on() && acr_render::ground_cover::zoom_fade(v.camera.scale) > 0.0 => v,
+            _ => {
+                self.cover.clear();
+                return;
+            }
+        };
+        acr_sim::prof_scope!("3d.ground_cover");
+        let class = |x: f32, y: f32| acr_render::ground::class_of(terrain.tile_at(x as i32, y as i32));
+        let height = |x: f32, y: f32| super::particle_view::ground_z(terrain, x, y);
+        let seconds = self.started.elapsed().as_secs_f32();
+        self.cover.update(&view, seconds, &class, &height, state);
     }
 
     /// Body physics of the hit and the dying (#278): ragdolls pose their instances.
@@ -1675,6 +1714,10 @@ impl ThreeD {
         if let Some(particles) = self.particle_renderer.as_mut() {
             particles.prepare(queue, &view3d, &mut self.particles.particles);
         }
+        if let Some(c) = self.cover_renderer.as_mut() {
+            let on = self.cover_view.is_some() && !objects.zoomed;
+            c.prepare(queue, &view3d, on.then_some(&mut self.cover), renderer.wind);
+        }
         if let Some(w) = self.weather_renderer.as_mut() {
             w.prepare(queue, &view3d, weather, self.started.elapsed().as_secs_f32(), WIND_DIR);
         }
@@ -1705,6 +1748,10 @@ impl ThreeD {
             ground.render_shadows(device, &mut pass, renderer.shadow());
         }
         segment!("ground shadows");
+        if let Some(c) = &self.cover_renderer {
+            c.render(&mut pass);
+        }
+        segment!("ground cover");
         if let Some(water) = water {
             water.render(&mut pass);
         }
@@ -1800,6 +1847,19 @@ pub fn set_shadows_override(on: Option<bool>) {
         Some(true) => 2,
     };
     SHADOWS_OVERRIDE.store(v, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// `ACR_GROUND_COVER=on|off` (native only) over the `ground_cover` setting, for tests.
+fn ground_cover_override() -> Option<bool> {
+    static ENV: std::sync::OnceLock<Option<bool>> = std::sync::OnceLock::new();
+    *ENV.get_or_init(|| {
+        let env = if cfg!(target_arch = "wasm32") { None } else { std::env::var("ACR_GROUND_COVER").ok() };
+        match env.as_deref() {
+            Some("off" | "0") => Some(false),
+            Some("on" | "1") => Some(true),
+            _ => None,
+        }
+    })
 }
 
 fn shadows_override() -> Option<bool> {
@@ -2038,6 +2098,7 @@ impl super::InGame {
         // Map objects whose ground point is up to `MAP_VIEW_MARGIN` beyond what the view shows of
         // ground up to `MAP_VIEW_TOP` high: tall crowns and long shadows reach in.
         let view = View3d { camera: c, size: window, orbit: self.three_d.orbit() };
+        self.three_d.cover_view = (!self.interface.hud.zoom).then_some(view);
         let [x0, y0, x1, y1] = view.ground_bounds(-100.0, MAP_VIEW_TOP);
         self.three_d.map_view =
             Some([x0 - MAP_VIEW_MARGIN, y0 - MAP_VIEW_MARGIN, x1 + MAP_VIEW_MARGIN, y1 + MAP_VIEW_MARGIN]);
