@@ -196,7 +196,8 @@ const FLASH_LIFT: [f32; 3] = [0.10, 0.11, 0.14];
 /// rain heard.
 pub fn rain_intensity(clock: f32) -> f32 {
     use std::f32::consts::TAU;
-    let s = 0.55 + 0.3 * (clock * TAU / 53.0 + 1.3).sin()
+    let s = 0.55
+        + 0.3 * (clock * TAU / 53.0 + 1.3).sin()
         + 0.17 * (clock * TAU / 21.0 + 0.4).sin()
         + 0.08 * (clock * TAU / 8.3).sin();
     0.4 + 0.6 * s.clamp(0.0, 1.0)
