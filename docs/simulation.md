@@ -1204,9 +1204,23 @@ weapon was dropped.
   (`World::owned`), `attack_obj` refuses him (so he neither attacks nor hits back), and
   when the hit puts him out he drops his orders and drags himself 600 px away from the
   nearest enemy (`body::leave_fight`, a plain `SendTo`; he stays in his brigade).
-- Bleeding, once a second (`BLEED_EVERY` 10 ticks, `wounds::bleed`): a stump above the
-  knee or elbow 6 life, below 4, a lost hand or foot 2, an open fracture 2, an open belly
-  5; at no life he dies with `DeathCause::BledOut`.
+- Bleeding, once a second (`BLEED_EVERY` 10 ticks, `wounds::bleed`): a leg stump above
+  the knee 6 life, below 4, a lost foot 2; a man's arm bleeds slower (#254, `BLEED_ARM`:
+  above the elbow 4, below 3, a lost hand 1; an animal's front legs bleed as legs); an
+  open fracture 2, an open belly 5; at no life he dies with `DeathCause::BledOut`. A man
+  who lost a leg therefore dies after ⌈life / rate⌉ seconds unless something else kills him
+  first; his life bar runs down with it (`Unit::life`).
+- Limb loss and crawling (#254) come out of the outcome tables above: a heavy hit (a
+  cannonball below `BALL_TEARS`, grapeshot at 25 %, a rider's sabre at 20 %, a close
+  musket ball rarely) takes the limb off at a level (`Limb::lost`); a leg at function 0
+  makes `Body::crawling` true, which is the crawl state the renderer maps to its clips
+  (`damage_view::crawl_clip`: `CRAWL2`, `CRAWL1`, `CRAWLARM`, `WRITHE`). One arm lost:
+  he drops the musket (`Body::disarmed`), fires no more and fights on with the bayonet.
+- Render hooks (not hashed): the body (`Unit::body`, its `limbs[..].lost` levels for the
+  missing limb and the stump cap), `World::hits` (each `HitRecord::injury` with part,
+  level and outcome) and `DeathRecord::body`. There is no separate bleed stream: the
+  renderer samples every living unit with `Body::bleeding() > 0` each `trail::EVERY`
+  ticks at its position (`ingame/trail.rs`, a smear for crawlers, drops for walkers).
 - `DeathRecord::body` is the body at death (with the killing injury) and
   `DeathRecord::torn` how it was torn apart (in two at a level, pulverized, headless).
 

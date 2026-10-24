@@ -164,6 +164,10 @@ pub const BLEED_ABOVE: i32 = 6;
 pub const BLEED_BELOW: i32 = 4;
 /// … a lost hand or foot.
 pub const BLEED_HAND_FOOT: i32 = 2;
+/// A man's arm stump bleeds slower than a leg's (#254: the brachial artery is narrower than
+/// the femoral): above the elbow, below it, a lost hand. An animal's front legs (in the arm
+/// slots) bleed as legs.
+pub const BLEED_ARM: [i32; 3] = [4, 3, 1];
 pub const BLEED_OPEN_FRACTURE: i32 = 2;
 pub const BLEED_BELLY: i32 = 5;
 
@@ -320,12 +324,17 @@ impl Body {
             let joint = if k < 2 { ELBOW } else { KNEE };
             let tip = if k < 2 { WRIST } else { ANKLE };
             if limb.severed() {
-                sum += if limb.lost < joint {
-                    BLEED_ABOVE
+                let at = if limb.lost < joint {
+                    0
                 } else if limb.lost < tip {
-                    BLEED_BELOW
+                    1
                 } else {
-                    BLEED_HAND_FOOT
+                    2
+                };
+                sum += if k < 2 && self.animal == 0 {
+                    BLEED_ARM[at]
+                } else {
+                    [BLEED_ABOVE, BLEED_BELOW, BLEED_HAND_FOOT][at]
                 };
             }
             if limb.fracture.is_some_and(|b| b.kind == FractureKind::Open) {

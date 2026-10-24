@@ -180,3 +180,101 @@ fn lost_legs_crawl_and_bleed_out() {
     assert!(w.units[p.0 as usize].death > 0, "bled out");
     assert_eq!(w.deaths[&p.0].cause, DeathCause::BledOut);
 }
+
+/// Strikes fresh pikemen (spawned one after another, so each strike draws on) with `hit`
+/// until the limb comes off; the world and the man, or `None` within 40 tries.
+fn sever(rules: Rules, limb: LimbId, hit: acr_sim::combat::ScriptedHit) -> Option<(World, usize)> {
+    let (mut w, pik, _) = setup();
+    w.rules = rules;
+    for k in 0..40 {
+        let p = w.spawn(pik, 0, Pos::from_pixels(1000 + 40 * k, 2000), 0).0 as usize;
+        acr_sim::combat::scripted_hit(&mut w, p, hit);
+        if w.units[p].body.limb(limb).severed() && w.units[p].living() {
+            return Some((w, p));
+        }
+    }
+    None
+}
+
+fn aimed(cause: acr_sim::combat::DeathCause, limb: LimbId, level: u8, energy: u8) -> acr_sim::combat::ScriptedHit {
+    acr_sim::combat::ScriptedHit {
+        cause,
+        mounted: cause == acr_sim::combat::DeathCause::Melee,
+        region: None,
+        dir: (10, 0),
+        energy,
+        dmg: 1,
+        aim: Some((acr_sim::body::Part::Limb(limb), Some(level))),
+        maul: None,
+    }
+}
+
+/// A spent cannonball (#254) takes the leg off above the knee: the man falls and crawls
+/// (the renderer's crawl state is `Body::crawling`), is out of the fight, bleeds the
+/// stump's 6 life every second and dies "bled out" after exactly ⌈life / 6⌉ seconds.
+#[test]
+fn a_severed_leg_crawls_and_bleeds_out_in_whole_seconds() {
+    use acr_sim::combat::DeathCause;
+    let run = || {
+        let (mut w, p) =
+            sever(ON, LimbId::LegL, aimed(DeathCause::Cannonball, LimbId::LegL, 60, 30)).expect("a ball severs");
+        let b = w.units[p].body;
+        assert!(b.limb(LimbId::LegL).lost == 60 && b.crawling() && b.out_of_fight());
+        assert_eq!(b.bleeding(), acr_sim::body::BLEED_ABOVE);
+        let (life, rate) = (w.units[p].life, b.bleeding());
+        let mut seconds = 0;
+        let mut last = life;
+        for _ in 0..2000 {
+            w.step(&[]);
+            let u = &w.units[p];
+            if !u.living() {
+                seconds += 1;
+                break;
+            }
+            if u.life != last {
+                assert_eq!(last - u.life, rate, "one stump's loss per second");
+                assert!(u.body.crawling());
+                last = u.life;
+                seconds += 1;
+            }
+        }
+        assert_eq!(seconds, (life + rate - 1) / rate, "bled out after ⌈{life} / {rate}⌉ seconds");
+        assert_eq!(w.deaths[&(p as u32)].cause, DeathCause::BledOut);
+        w.state_hash()
+    };
+    assert_eq!(run(), run(), "deterministic");
+}
+
+/// A rider's sabre (by chance) takes the arm off: he bleeds slower than from a leg and,
+/// one arm short, drops his musket and never fires (he still stands and fights).
+#[test]
+fn a_severed_arm_bleeds_slower_and_never_fires() {
+    use acr_sim::combat::DeathCause;
+    let (w, p) = sever(ON, LimbId::ArmR, aimed(DeathCause::Melee, LimbId::ArmR, 60, 80)).expect("a sabre severs");
+    let b = w.units[p].body;
+    assert!(b.bleeding() > 0 && b.bleeding() < acr_sim::body::BLEED_ABOVE, "{}", b.bleeding());
+    assert!(b.disarmed() && !b.crawling());
+
+    let (mut w, pik, mus) = setup();
+    w.rules = ON;
+    let shooter = w.spawn(mus, 0, Pos::from_pixels(2000, 2000), 0);
+    let target = w.spawn(pik, 1, Pos::from_pixels(2300, 2000), 128);
+    w.units[shooter.0 as usize].body.limbs[LimbId::ArmL as usize].lost = 150;
+    w.units[shooter.0 as usize].life = 10_000;
+    w.step(&[Command::Attack { player: 0, units: vec![shooter], target }]);
+    for _ in 0..60 {
+        w.step(&[Command::Stop { player: 1, units: vec![target] }]);
+    }
+    assert!(w.projectiles.iter().next().is_none());
+    assert!(w.hits.iter().all(|h| h.cause != DeathCause::Gunshot));
+}
+
+/// The same scripted strikes with the rule off: no region, no injury, no bleeding, and the
+/// state hash of the original rules.
+#[test]
+fn without_the_rule_a_ball_severs_nothing() {
+    use acr_sim::combat::DeathCause;
+    let mut hit = aimed(DeathCause::Cannonball, LimbId::LegL, 60, 30);
+    hit.aim = None;
+    assert!(sever(Rules::default(), LimbId::LegL, hit).is_none());
+}

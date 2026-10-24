@@ -236,9 +236,10 @@ fn bleeding_by_the_table() {
     assert_eq!(rate(&|b| limb(b, LimbId::LegL).lost = KNEE - 1), 6);
     assert_eq!(rate(&|b| limb(b, LimbId::LegL).lost = KNEE), 4);
     assert_eq!(rate(&|b| limb(b, LimbId::LegL).lost = ANKLE), 2);
-    assert_eq!(rate(&|b| limb(b, LimbId::ArmL).lost = ELBOW - 1), 6);
-    assert_eq!(rate(&|b| limb(b, LimbId::ArmL).lost = ELBOW), 4);
-    assert_eq!(rate(&|b| limb(b, LimbId::ArmL).lost = WRIST), 2);
+    // A man's arm stumps bleed slower (#254).
+    assert_eq!(rate(&|b| limb(b, LimbId::ArmL).lost = ELBOW - 1), 4);
+    assert_eq!(rate(&|b| limb(b, LimbId::ArmL).lost = ELBOW), 3);
+    assert_eq!(rate(&|b| limb(b, LimbId::ArmL).lost = WRIST), 1);
     assert_eq!(rate(&|b| limb(b, LimbId::LegR).fracture = open), 2);
     assert_eq!(rate(&|b| b.belly_open = true), 5);
     let all = |b: &mut Body| {
@@ -246,7 +247,7 @@ fn bleeding_by_the_table() {
         limb(b, LimbId::ArmR).lost = 10;
         limb(b, LimbId::LegR).lost = 200;
     };
-    assert_eq!(rate(&all), 5 + 6 + 4);
+    assert_eq!(rate(&all), 5 + 4 + 4);
     assert_eq!(Body::default().limbs[0].lost, WHOLE);
 }
 

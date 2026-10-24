@@ -100,9 +100,12 @@ Body {
 
   | Wound | Life per second |
   |---|---|
-  | stump above the knee or elbow | 6 |
-  | stump below the knee or elbow | 4 |
-  | hand or foot lost | 2 |
+  | leg stump above the knee | 6 |
+  | leg stump below the knee | 4 |
+  | foot lost | 2 |
+  | arm stump above the elbow (`BLEED_ARM`, #254) | 4 |
+  | arm stump below the elbow | 3 |
+  | hand lost | 1 |
   | open fracture | 2 |
   | belly open | 5 |
 
