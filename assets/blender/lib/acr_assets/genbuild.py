@@ -214,6 +214,7 @@ def from_sprite(ctx, type_, budget=12000, tex=1024, nrm=512, rel=None):
         ctx.stats["tone"] = nature._map_tone(obj, view)
     ctx.stats["size_m"] = _size(obj)
     obj.parent = ctx.root
+    __import__("acr_assets.ruin", fromlist=["add"]).add(ctx, obj)  # the `.ruin` state (#303, acr_assets/ruin.py)
     return obj
 
 
