@@ -147,7 +147,7 @@ class DrapePilot(Period17):
     """Shell garments drafted and draped instead (#287 drape pilot): shirts and tunics,
     cloaks, the sash."""
 
-    NAMES = ("frn_blouse", "frn_sash", "frn_cape", "trade_shirt", "unku", "yacolla", "tilmatli")
+    NAMES = ("frn_blouse", "frn_sash", "frn_cape", "trade_shirt", "unku", "yacolla", "tilmatli", "nat_leggings")
 
     def test_period_cut(self):
         m = gm.MEASURE
@@ -171,6 +171,16 @@ class DrapePilot(Period17):
         sash, _ = self.uni["frn_sash"]
         self.assertGreater(sash["band"].bounds()[2] - sash["band"].bounds()[0], m["waist"])
         self.assertEqual(gm.keyed(gm.GARMENTS["unku"], "unku_tocapu")()[0]["coat_front"].key, "unku_tocapu")
+        # Side-seam leggings (#307): high on the thigh, looser than the leg, sewn up the outer
+        # side and closed, the top pinned, a garter inlay below the knee.
+        leg, seams = self.uni["nat_leggings"]
+        lo = leg["legging"]
+        self.assertGreater(lo.bounds()[3], m["knee_to_ankle"] + 20.0)
+        self.assertGreater(lo.outline[1][0], m["ankle"])
+        self.assertEqual((lo.place["region"], lo.place["theta"], lo.place["pin"]), ("leg", 90.0, "top"))
+        self.assertTrue(seams[0].close)
+        self.assertEqual((leg["garter"].tack, leg["garter"].key), ("legging", "garter"))
+        self.assertLess(leg["garter"].bounds()[3], m["knee_to_ankle"])
 
 
 class LayerRanks(unittest.TestCase):

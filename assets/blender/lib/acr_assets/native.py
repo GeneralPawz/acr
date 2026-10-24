@@ -29,7 +29,9 @@ SPEC keys (all but `md` and `weapons` optional):
   `clips.MELEE` kind of index 0 (`club`, `tomahawk`, `spear`; None: no strikes);
 - `dress`: any of `breechcloth`, `leggings`, `moccasins`, `shirt`, `matchcoat`;
 - `hair`, `feathers`, `paint`, `silver` (True: gorget and arm bands), `kit`: strapped gear
-  (`quiver`, `horn`, `pouch`, `knife`).
+  (`quiver`, `horn`, `pouch`, `knife`);
+- `drape`: pieces of `dress` drafted and draped instead of shells (#307): `leggings`
+  (`garments.side_leggings`, with its garters; the flaps stay modelled).
 """
 
 import math
@@ -61,7 +63,7 @@ BUILD = {"width": 0.98, "shoulders": 1.08, "limbs": 1.15, "hips": 0.98, "belly":
 DEFAULTS = {"build": BUILD, "weapon": "bow", "melee": "club", "mix": 0.6, "fixed": ("skin", "feather", "silver"),
             "dress": ("breechcloth", "leggings", "moccasins"), "hair": "roach", "feathers": 2, "paint": "red_black",
             "silver": False, "kit": ("knife",), "active": None, "gun_len": 1.45, "headdress": None, "rattle": False,
-            "work": False}
+            "work": False, "drape": ()}
 
 # Material keys and painters of the family (`registry`): stroud (trade wool) for the
 # breechcloth, leggings and blanket, buckskin for moccasins and pouches.
@@ -207,11 +209,13 @@ def _flap(ch, name, y0, z0, z1, w0, w1, out, back=False, rows=6, cols=4):
     return am.bind(obj, ch.arm)
 
 
-def _legging_flap(ch, side, z0=0.14, z1=0.76, rows=14):
+def _legging_flap(ch, side, z0=0.14, z1=0.76, rows=14, surface=None):
     """The legging's flap on the outer side of leg `side` (1 left, -1 right): a two-sided
     fin from the outermost skin line (sampled in bands of height, smoothed) standing
-    2-4 cm out (widest at the ankle), each row skinned like its skin vertex."""
-    P, flesh = ch.prefix, ch.flesh
+    2-4 cm out (widest at the ankle), each row skinned like its skin vertex; `surface`: the
+    draped leggings to stand out from instead of the skin."""
+    P, flesh = ch.prefix, surface or ch.flesh
+    inset = 0.009 if surface is None else 0.007
     names = {g.index: g.name for g in flesh.vertex_groups}
     legs = {P + b for b in LEGS}
     rows_out = []
@@ -235,7 +239,7 @@ def _legging_flap(ch, side, z0=0.14, z1=0.76, rows=14):
         width = 0.040 - 0.018 * t
         for dy in (-0.002, 0.002):
             for dx in (-0.006, width):
-                verts.append((c.x + side * (0.009 + dx), c.y + dy, z))
+                verts.append((c.x + side * (inset + dx), c.y + dy, z))
                 groups.append(gs)
     n = len(rows_out)
     for i in range(n - 1):
@@ -256,7 +260,18 @@ def dress(ch, s):
         ch.shoes = ch.add("clothes", mbody.shoes(ch.arm, ch.flesh, f"{name}.footwear", ch.prefix, offset=0.005, sole=0.006,
                                                  heel=0.002, key="moccasins"), "moccasins", symmetric=True)
         ch.shoes["acr_material_keys"] = ["moccasins", "moccasins"]  # a tie, not a brass buckle
-    if "leggings" in d:
+    if "leggings" in d and "leggings" in s["drape"]:
+        # Drafted side-seam leggings with their garters, draped on the legs and moccasins;
+        # the flap stands out over the draped cloth.
+        from . import drape
+
+        ch.drape_report = getattr(ch, "drape_report", {})
+        made = drape.dress(ch, garments=("nat_leggings",), report=ch.drape_report)
+        drape.hide_skin(ch, [o for o in ch.layers["clothes"] if o.name in made])
+        leg = next(o for o in ch.layers["clothes"] if o.name in made and made[o.name] == "leggings")
+        for side in (1.0, -1.0):
+            ch.add("clothes", _legging_flap(ch, side, surface=leg), "flaps")
+    elif "leggings" in d:
         ch.shell("leggings", "leggings", lambda c, n, h, p: h in LEGS and 0.10 < c.z < 0.80, 0.009)
         # The flap: the seam allowance standing out along the outer side of each leg, a
         # thin modelled fin (slice 1's offset shell of the outer faces read lumpy).
@@ -294,7 +309,8 @@ def dress(ch, s):
         from . import drape
 
         over = [o for o in ch.layers["clothes"] if o.type == "MESH" and o is not getattr(ch, "shoes", None)]
-        made = drape.dress(ch, garments=("trade_shirt",), over=over)
+        ch.drape_report = getattr(ch, "drape_report", {})
+        made = drape.dress(ch, garments=("trade_shirt",), over=over, report=ch.drape_report)
         drape.hide_skin(ch, [o for o in ch.layers["clothes"] if o.name in made])
     if s.get("silver"):
         ch.shell("armbands", "silver", lambda c, n, h, p: h in {"upperarm_l", "upperarm_r"}
@@ -690,7 +706,7 @@ def build(ctx, s):
                    acr_layers=list(ch.layers), acr_family="native")
     ctx.stats = {"triangles": tris, "light": report, "colours": colours,
                  "aim_errors_m": getattr(ctx, "aim_errors", None), "fire": getattr(ctx, "fire", None),
-                 "reload": getattr(ctx, "reload", None)}
+                 "reload": getattr(ctx, "reload", None), "drape": getattr(ch, "drape_report", None)}
 
 
 def pose_for(ch, s, clip):

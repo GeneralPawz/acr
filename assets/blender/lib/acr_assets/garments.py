@@ -68,6 +68,9 @@ CLOTH["frn_cape"] = CLOTH["yacolla"] = dict(CLOTH["coat"], margin=0.009, bending
 CLOTH["tilmatli"] = dict(CLOTH["coat"], margin=0.009, bending=1.5, self=True, self_gap=0.004)
 CLOTH["frn_sash"] = {"thickness": 0.0025, "mass": 0.30, "tension": 15.0, "bending": 0.6, "shrink": 0.10,
                      "margin": 0.004}
+# Trade stroud (a heavy, napped wool): the Woodland side-seam leggings (#307).
+CLOTH["nat_leggings"] = {"thickness": 0.0025, "mass": 0.35, "tension": 18.0, "bending": 1.2, "shrink": 0.03,
+                         "margin": 0.004}
 CLOTH["doublet_slashed"] = CLOTH["doublet"]
 CLOTH["buffcoat_bare"] = CLOTH["buffcoat"]
 
@@ -744,6 +747,33 @@ def band(m=MEASURE, garment="band", key="sash", width=10.0, ease=6.0, lift=-7.0)
     return P, [Seam([("band", "start", True)], [("band", "end")], garment, close=0.05)]
 
 
+def side_leggings(m=MEASURE, garment="nat_leggings", key="leggings", ease=6.0, top=0.5, garter="garter"):
+    """Woodland side-seam leggings of trade stroud (#307): a cloth tube from the ankle to
+    `top` x the knee-to-waist length above the knee (tied up to the belt), `ease` cm looser
+    than the leg at every girth, sewn up the outer side (the wide seam allowance, the flap,
+    is modelled on top, `native._legging_flap`); a `garter` tied round below the knee (an
+    inlay, as the gaiter's)."""
+    ank = m["ankle"] + ease + 3.0  # loose over the moccasin's cuff
+    calf = m["calf"] + ease
+    knee = m["knee"] + ease
+    thigh = m["thigh"] * 0.92 + ease
+    h = m["knee_to_ankle"] - 2.0
+    up = m["waist_to_knee"] * top
+    g = [(0.0, 0.0), (ank, 0.0), (calf, h * 0.55), (knee, h), (thigh, h + up), (0.0, h + up), (0.0, h),
+         (0.0, h * 0.55)]
+    place = {"region": "leg", "theta": 90.0, "dir": 1, "u0": 0.0, "at": "ankle", "lift": 2.0, "gap": 1.0}
+    P = {"legging": Panel("legging", garment, key, g, {"bottom": (0, 1), "outer": (1, 4), "top": (4, 5),
+                                                       "start": (5, 0)}, dict(place, pin="top"))}
+    if garter:
+        def edge_u(v):
+            return calf + (knee - calf) * (v - h * 0.55) / (h * 0.45) - 0.02  # just inside the edge
+
+        v0, v1 = h - 7.0, h - 4.5
+        P["garter"] = Panel("garter", garment, garter, [(0.0, v0), (edge_u(v0), v0), (edge_u(v1), v1), (0.0, v1)],
+                            {"bottom": (0, 1), "top": (2, 3)}, dict(place, layer=1), tack="legging")
+    return P, [Seam([("legging", "start", True)], [("legging", "outer")], garment, close=GAITER_CLOSE)]
+
+
 GARMENTS = {"coat": coat, "waistcoat": waistcoat, "breeches": breeches, "gaiters": gaiters, "shirt": shirt,
             "doublet": doublet, "doublet_slashed": lambda m=MEASURE: doublet(m, slashed=True),
             "buffcoat": buffcoat, "buffcoat_bare": lambda m=MEASURE: buffcoat(m, sleeves=None),
@@ -757,6 +787,7 @@ GARMENTS = {"coat": coat, "waistcoat": waistcoat, "breeches": breeches, "gaiters
                                             below=m["waist_to_knee"] - 4.0, flare=2.0),
             "yacolla": lambda m=MEASURE: cloak(m, "yacolla", "yacolla", drop=m["waist_to_knee"] - 18.0, front=14.0,
                                                spread=12.0),
+            "nat_leggings": side_leggings,
             "tilmatli": lambda m=MEASURE: cloak(m, "tilmatli", "tilmatli", drop=m["waist_to_knee"] - 22.0, front=16.0,
                                                 spread=10.0, knot_at=-45.0)}
 

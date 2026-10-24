@@ -27,7 +27,8 @@ frames, and `native.spec(MD, WEAPONS, ...)`.
 | `DelKri` | bow (loosed on 25) | war club; WORK (two-handed swing) and REST (look round) as EngKri's | + shirt | scalp lock | none | quiver, knife |
 | `IroSha`, `HurSha`, `DelSha` | heal (MEDIK, `clips.heal`), turtle rattle in the left hand | war club (ATTACK, `club_strikes`, `club_down`) | + fur cloak (`pelt`; DelSha over a shirt) | long hair, 1-2 feathers | `white_band` | knife |
 
-All 15 Woodlands units are built (slice 2). Iroquois wear red leggings and the red roach,
+SPEC `drape`: pieces of `dress` drafted and draped instead of shells (#307; `leggings`, on
+for DelLut; docs/clothing.md roll-out list). All 15 Woodlands units are built (slice 2). Iroquois wear red leggings and the red roach,
 Huron green breechcloths, blue leggings and a black roach, Delaware a red breechcloth, blue
 leggings and the scalp lock; skin tones vary a little by nation (`palette["skin"]`).
 

@@ -711,6 +711,7 @@ is now S + a check of its unit's stand arms; tunics and bands can go now.
 | native | `matchcoat` (blanket over one shoulder) | cloak, `knot_at` under the arm | M | like the tilmatli; add to `ARMS_DOWN_GARMENTS` |
 | native | `cloak` (shaman's pelt) | cloak | S (arms down) | stiff hide: high bending |
 | native | `breechcloth` + flaps | band + two hanging panels | M | flaps are modelled and clean: low priority |
+| native | `leggings` + `garters` | `nat_leggings` (`garments.side_leggings`: a tube sewn up the outer side, garter inlay, top pinned) | done, **on** for DelLut (#307, SPEC `drape=("leggings",)`); S per unit | the flap fin stands out from the draped legging (`native._legging_flap(surface=)`). DelLut, shell → draped: `model_layers` poking 132 → 119, crossing 105 → 63; quiver `gear_volume` 148 → 136; IoU STAND 0.499 → 0.508, DEATHLIE1 0.051 → 0.055; 54 / 54 pairs welded, gap_mm_max 19.5; palette ΔE leggings 6.3 → 7.1, flaps 9.9 → 4.6, garter 17.7 (gold, sprite darker). Open: legging top under the breechcloth band crosses in the walk (6 vertices, 36 mm) |
 | plains | `war_shirt` | tunic, open sides, fringe stays a shell strip | M | hide: thicker cloth |
 | pueblo | `tunic` | tunic, no sleeves | S | |
 | pueblo | `sash` | band | S | |
