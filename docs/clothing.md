@@ -1058,6 +1058,37 @@ wrong side of a leg swinging past them, so the thigh share does the thighs.
 Bench: `ACR-analysis/clothing/cloth/cloth_bench.py` (a walker and a man shot dead, close
 up from the side, frames `walk*`, `fall*`; `ACR_NO_CLOTH=1` for the skinned skirts).
 
+## High-detail outfits (m2-hd-outfit)
+
+The HD body (`acr_assets.hdbody`) is dressed the way open-world games do it, not by stacking
+layers in one cloth simulation (that poked 30 %, threw 3 m spikes and took 13 min):
+`acr_assets.outfit_hd`, first unit `assets/units/hdengm18.py` (opt-in, `TYPE` EngM18).
+
+1. **Each garment alone** (`drape_alone`): `drape.dress` with one garment of the 1768 set on
+   the HD skin (measured by `drape.Body` through a patched `mbody.repose`), panels at 1.5 cm,
+   the usual short damped sim and welds. About 76 s for all five on the VM.
+2. **One outfit mesh of the visible layers** (`compose`): from the outermost rank down, faces
+   of an inner layer whose corners all have an outer layer within 5 cm along the skin normal
+   are deleted (the skin too: about 20k of 78k triangles go); what stays is pushed 3 mm under
+   the layer on it (nearest point and a ray along the normal down to 12 mm, the layer check's
+   `POKE`). Loose parts (coat skirts, turnbacks) hide nothing and are lifted 3 mm over the
+   layers under them instead. Shoes are a 4 mm shell of the foot faces.
+3. **Cloth:** tiled twill / plain-weave albedo (1k per key), normal (2k per fabric) and
+   roughness on box-projected UVs (5 cm repeat); brass and pewter buttons (`drape.buttons`).
+   Weights from the skin, at most 4, normalised.
+4. **Gore and decay:** `_PART` from the strongest bone, `_GORE` and the decay mask per layer,
+   `acr_decay` extras on every material (the skin material is renamed `<unit>.skin.*` so
+   its key is `skin`). The renderer's placed caps close a cut sleeve, so no inner body is kept.
+5. **Levels:** the composed pieces decimated to 10k / 3k / 800 before the cut and composed
+   again against the body's level of the same rank, written with `acr_lod` / `acr_lod_of`.
+6. **Skirt swing:** `skirt_swing` keys the skirt bones a key behind the thighs in the
+   `MOTION_*` clips.
+
+`stats.json` → `outfit`: `drape` per garment, `compose.culled_faces` / `moved_verts` /
+`pokes` (rest pose, > 1 mm), `tris` per level, `skin_tris_after`, `drape_s`, `total_s`.
+Run `model_layers` on a copy without the level nodes: the check merges every primitive
+of a material key, so the levels count as poking against the master.
+
 ## Known problems
 
 - Not every sewn pair meets within 5 mm: in the coat 166 of 251 do, 242 within 4.5 cm
