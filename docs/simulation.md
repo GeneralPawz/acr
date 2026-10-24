@@ -658,6 +658,12 @@ Implemented in `combat.rs`, recovered from `SearchVictim` (0x52622b), `AttackObj
     0x556af4, 32 px steps). It is attacked with priority 1.
   - Cannons (`WEAPONINSECTOR`) never search; they only fire canister on their own (see
     Artillery).
+  - With `hit_locations` on, a man on the ground (crawling or down) is a candidate only
+    within 150 px of the searcher (`docs/melee.md` §1). A shooter without orders therefore
+    leaves a crawler in range alone. In the mixed scene of #194 (unit 16, enemy 56 at
+    490 px) this was the whole cause: the search ran as scheduled, the crawler lay in its
+    square and passed every other test, and only the reach test dropped him. With the rule
+    off he is taken like any other enemy, as in the original.
 - **`AttackObj`** refuses a target the unit cannot hurt, or an order with priority below the
   current one. Player orders have priority 16, so moving units do not get distracted. With
   priority < 5 the unit only switches to a strictly closer enemy. (The engine compares the

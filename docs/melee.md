@@ -26,7 +26,8 @@ automatic search (`SearchVictim`) picks them:
   the offset is taken off again before the search radius test.
 - **Only within reach.** A man on the ground is a candidate only within `DOWN_REACH`
   (150 px) of the searcher: men finish off the wounded next to them, they do not walk or
-  shoot at crawlers further away.
+  shoot at crawlers further away. A ready musketeer without orders stands idle next to a crawler 490 px away
+  (#194, `ACR-analysis/musket-idle`) until a standing enemy enters his search circle.
 - **No swarming.** At most `DOWN_ATTACKERS` (2) enemies go for one man on the ground at a
   time. The counts are built once per tick from the attack orders and grow as the search
   hands out new targets.
