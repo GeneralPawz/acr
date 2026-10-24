@@ -1,6 +1,6 @@
 """Delaware archer (`DelLut`, `DELLUT.MD`; a SPEC over IroLut): Woodlands (`acr_assets.native`,
 docs/families/native.md): the scalp lock with two
-feathers, red and black face paint, a red breechcloth, blue leggings, moccasins; a self bow and quiver,
+feathers, red and black face paint, a tan deerskin breechcloth, buckskin leggings, moccasins; a self bow and quiver,
 a tomahawk for the melee (index 0), a knife.
 """
 
@@ -33,7 +33,9 @@ MD = {
 }
 WEAPONS = {0: "MECH", 1: "OSTRELA", 2: "STRELA"}
 ACTIVE = {"ATTACK1": 44, "ATTACK2": 44}
-PALETTE = {"breechcloth": (0.58, 0.12, 0.08), "leggings": (0.16, 0.22, 0.42), "flaps": (0.16, 0.22, 0.42), "skin": (0.82, 0.57, 0.4)}
+# Colours from the sprite (palette check, ACR-analysis/genai/palette-check): a tan deerskin
+# breechcloth, smoke-browned buckskin leggings with lighter flaps; no blue in the sprite.
+PALETTE = {"breechcloth": (0.66, 0.58, 0.4), "leggings": (0.42, 0.32, 0.2), "flaps": (0.55, 0.4, 0.26), "skin": (0.82, 0.57, 0.4)}
 
 
 def spec():

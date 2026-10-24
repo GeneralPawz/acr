@@ -210,6 +210,16 @@ renderer); a face is visible or hidden as a whole; the mirrored half of unit dir
 nothing; a model seen from the side of a building's single view shows flat colours there.
 Building models therefore hold up from all sides in shape but not yet in texture.
 
+### Palette check (`assets/blender/tools/palette_check.py`)
+
+Compares a built model's colours with its sprites per material region (coat, facings,
+leggings, ...): the model is rendered unlit in `STAND` through the original camera, scaled to
+the sprite's silhouette area, and each region's dominant sprite colour (trimmed CIELAB median,
+team-colour pixels left out by diffing two `--player` references) is compared with the
+model's (CIEDE2000, lightness weighted half; `acr_assets.palette`). About 2 s per unit.
+Values over 30 on large regions are candidates; check them by eye, since sprite coats run
+longer than the models' and shading lifts skin and faces to 20-35.
+
 ## Realistic surfaces for buildings (`acr_assets.surfaces`)
 
 A realistic look matters more than matching the sprites (user decision, #214): buildings use

@@ -24,7 +24,7 @@ Every model is a Python script that Blender 5.2 runs headless (`-b --factory-sta
 | `assets/blender/build.py` | entry: runs one script in an empty scene, `export.export_glb`, writes `<name>.stats.json` from `ctx.stats` (+ `glb_bytes`) |
 | `assets/blender/lib/acr_assets/` | the library; module map in `references/modules.md` |
 | `assets/blender/tests/` | pure-Python unittests (no `bpy`) |
-| `assets/blender/tools/` | `preview.py` (lit renders of a glb), `silhouette.py` (fit to sprites), `clips_sheet.py`, `held_sheet.py`, `makehuman_*.py` (derive `data/makehuman/*.json`) |
+| `assets/blender/tools/` | `preview.py` (lit renders of a glb), `silhouette.py` (fit to sprites), `palette_check.py` (colours per region against the sprites), `clips_sheet.py`, `held_sheet.py`, `makehuman_*.py` (derive `data/makehuman/*.json`) |
 | `target/assets/<category>/<name>.glb` | output (git-ignored), with `.stats.json`, and `.blend` with `--blend` |
 | `assets/LICENSES.md` | every third-party source: author, licence, URL, how it is used |
 

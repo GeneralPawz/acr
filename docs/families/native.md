@@ -23,7 +23,7 @@ frames, and `native.spec(MD, WEAPONS, ...)`.
 | `HurS15` | trade gun (SPEC over IroStr) | musket | green breechcloth, blue leggings | black roach, 1 feather | `white_dots` | strap, horn, pouch, knife |
 | `DelS15` | trade gun (SPEC over IroStr) | musket | + shirt, red breechcloth, blue leggings | scalp lock, 2 feathers | `black_stripes` | strap, horn, pouch, knife |
 | `HurLut` | bow (SPEC over IroLut) | war club | green breechcloth, blue leggings | black roach, 3 feathers | `black_face_half` | quiver, knife |
-| `DelLut` | bow (SPEC over IroLut) | tomahawk (`socket.club_r`) | red breechcloth, blue leggings | scalp lock, 2 feathers | `red_black` | quiver, knife |
+| `DelLut` | bow (SPEC over IroLut) | tomahawk (`socket.club_r`) | tan breechcloth, buckskin leggings (sprite) | scalp lock, 2 feathers | `red_black` | quiver, knife |
 | `DelKri` | bow (loosed on 25) | war club; WORK (two-handed swing) and REST (look round) as EngKri's | + shirt | scalp lock | none | quiver, knife |
 | `IroSha`, `HurSha`, `DelSha` | heal (MEDIK, `clips.heal`), turtle rattle in the left hand | war club (ATTACK, `club_strikes`, `club_down`) | + fur cloak (`pelt`; DelSha over a shirt) | long hair, 1-2 feathers | `white_band` | knife |
 
