@@ -464,6 +464,13 @@ inside the transport (`desant.rs`), so none are drawn on deck.
   types were generated twice (`<Type>Base`: every section in its first state, `<Type>Up`:
   all sections built); the renderer draws one model per finished building and never swaps by
   section state, so the scripts use `Base` and `Up` stays unused.
+  The second batch (#305) added 25 types the same way (second houses `*Do2`/`MayDo3`,
+  `EngBlg2`, `MayBlg2`, `MayCen2`, `EngFer`, `FrnKuz`, `SiuHra`, `SiuPst`, `SpnSkl`, the
+  neutral `NetBlg`, `NetBlg2`, `NetBlg5`, `NetBlg6`, `SpnRud`, `MisPal`), sprite IoU
+  0.76–0.96. Left out because Pixal3D melted them: `NetBlg1`, `NetBlg3`, `NetBlg4`,
+  `NetBlg7`, `NetBlg8` (stone towers come out as smooth lumps), `SpnRudCo`, `SpnRudIr`,
+  `SpnRudSt` (the mine pit is filled in); `AtcKre` (melted, no better input) and `IncDo3`
+  (`acr model-ref` finds no `#STANDLO` picture) still have no model.
 - Types with a scripted model keep it; `GENERATED = True` in `incdo1.py`, `shppinta.py`,
   `shpsanta.py`, `shpfregat.py` builds the generated one instead.
 - Stats: `source`, `source_triangles`, `triangles`, `fit` (yaw, scale, shift, raster IoU,
