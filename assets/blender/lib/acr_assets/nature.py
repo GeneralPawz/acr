@@ -11,6 +11,11 @@
     recolour  turn red texels leaf green (atlases with an autumn crown only)
     max_width narrow a too wide crown to this many metres (x and y)
     turn      degrees about +Z (models face -Y)
+    dry       0..1: leaf cards towards a darker straw brown (dead, dry bushes; wilting crowns)
+    keep      share of the leaf cards kept, without growing the kept ones (a sparse crown)
+    lie       a fallen tree: {"deg": tip about +Y, crown towards +X, "squash": height factor
+              of the lying crown (broken branches)}; centred on its ground point, trunk and
+              branch sway 0, the leaves' flutter kept
     wind      the species' sway (below): {"trunk", "branch", "flutter", "tempo"} scales (default
               WIND[kind]), "bend" the trunk's exponent (2), "crown" flutter on the bark above
               this share of the height for crowns without leaf cards (birch, pine)
@@ -193,7 +198,18 @@ def _level(img, target, opaque):
     return _put(img, px, ".lit"), gain
 
 
-def _materials(obj, leaf_words, snow, level, gains, recolour=False, normal_sizes=None):
+def _dry(img, amount):
+    """Dead, dry foliage: towards a darker straw brown (TREES.GP 143-172: about sRGB 0.35, 0.28,
+    0.18 on the twigs); the whole card darkens by up to 40 % with `amount` (`_level` only
+    brightens)."""
+    px = _pixels(img)
+    lum = (px[:, :3] @ np.array([0.3, 0.55, 0.15], np.float32))[:, None]
+    brown = lum * np.array([1.25, 1.0, 0.72], np.float32)
+    px[:, :3] = (px[:, :3] * (1 - amount) + brown * amount) * (1 - 0.4 * amount)
+    return _put(img, px, ".dry")
+
+
+def _materials(obj, leaf_words, snow, level, gains, recolour=False, normal_sizes=None, dry=0.0):
     """Rebuilds every slot as image -> Principled (leaf cards: alpha -> Round -> Alpha)."""
     leaf_slots = set()
     done = {}
@@ -218,6 +234,8 @@ def _materials(obj, leaf_words, snow, level, gains, recolour=False, normal_sizes
             img = _green(img)
         if img is not None and leaf:
             img, gains[name] = _level(img, level, True)
+            if dry:
+                img = _dry(img, dry)
             if snow:
                 img = _whiten(img, snow)
         elif img is not None:
@@ -294,9 +312,10 @@ def _islands(bm, faces):
     return out
 
 
-def _thin_cards(obj, leaf_slots, target, seed):
+def _thin_cards(obj, leaf_slots, target, seed, grow=True):
     """Drops whole leaf cards until about `target` leaf triangles remain; the kept cards grow
-    by sqrt(source / kept) (at most 1.8) about their centre. Returns (kept, source) cards."""
+    by sqrt(source / kept) (at most 1.8) about their centre unless `grow` is off. Returns
+    (kept, source) cards."""
     bm = bmesh.new()
     bm.from_mesh(obj.data)
     leaf = [f for f in bm.faces if f.material_index in leaf_slots]
@@ -311,7 +330,7 @@ def _thin_cards(obj, leaf_slots, target, seed):
     rnd.shuffle(order)
     keep_n = max(3, int(len(parts) * target / tris))
     keep = set(order[:keep_n])
-    grow = min(1.8, math.sqrt(len(parts) / keep_n))
+    grow = min(1.8, math.sqrt(len(parts) / keep_n)) if grow else 1.0
     drop = []
     for k, p in enumerate(parts):
         if k in keep:
@@ -394,6 +413,28 @@ def _wind(obj, kind, leaf_slots, seed, bend_pow=2.0, crown=None):
     return crown_r
 
 
+def _lay_down(obj, lie):
+    """A fallen tree (TREES.GP 431-446): tipped `deg` about +Y around a cut 0.3 m up (the crown
+    towards +X), the height times `squash` (the crown breaks on the ground), whatever would go
+    into the ground squashed onto it, then centred on its ground point (the middle of the
+    footprint, as the sprites' DX DY). Trunk and branch sway 0, the leaves keep their flutter."""
+    me = obj.data
+    me.transform(Matrix.Rotation(math.radians(lie.get("deg", 88.0)), 4, "Y") @ Matrix.Translation((0, 0, -0.3)))
+    k = lie.get("squash", 1.0)
+    for v in me.vertices:
+        z = v.co.z
+        if z < 0.03:
+            z = 0.03 + 0.1 * (z - 0.03) / (1 + abs(z))
+        v.co.z = 0.03 + (z - 0.03) * k if z > 0.03 else z
+    xs = [v.co.x for v in me.vertices]
+    ys = [v.co.y for v in me.vertices]
+    lo = min(v.co.z for v in me.vertices)
+    me.transform(Matrix.Translation((-(min(xs) + max(xs)) / 2, -(min(ys) + max(ys)) / 2, -lo - 0.02)))
+    for d in me.attributes["_wind"].data:
+        c = d.color
+        d.color = (0.0, 0.0, c[2], c[3])
+
+
 def white(obj):
     """A white `COLOR_0`, active and render-active. `_wind` is a colour attribute too: as the
     only one it became `COLOR_0`, which the renderer multiplies into the colour (rocks black,
@@ -418,9 +459,12 @@ def build(ctx, spec):
     gains = {}
     normals = {}
     leaf_slots = _materials(obj, leaf_words, spec.get("snow", 0.0), spec.get("leaf_level", LEAF_LEVEL), gains,
-                            spec.get("recolour", False), normals)
+                            spec.get("recolour", False), normals, spec.get("dry", 0.0))
     budget = spec.get("budget", 6000)
     cards = None
+    if leaf_slots and spec.get("keep"):
+        leaf_tris = sum(len(p.vertices) - 2 for p in obj.data.polygons if p.material_index in leaf_slots)
+        sparse = _thin_cards(obj, leaf_slots, int(leaf_tris * spec["keep"]), spec.get("seed", 7) + 1, grow=False)
     if leaf_slots:
         leaf_tris = sum(len(p.vertices) - 2 for p in obj.data.polygons if p.material_index in leaf_slots)
         bark_tris = vs.triangles([obj]) - leaf_tris
@@ -456,6 +500,8 @@ def build(ctx, spec):
     wind.update({k: v for k, v in spec.get("wind", {}).items() if k in wind})
     crown_r = _wind(obj, kind, leaf_slots, spec.get("seed", 7), spec.get("wind", {}).get("bend", 2.0),
                     spec.get("wind", {}).get("crown"))
+    if spec.get("lie"):
+        _lay_down(obj, spec["lie"])
     white(obj)
     me.calc_loop_triangles()
     xs = [v.co.x for v in me.vertices]
@@ -474,6 +520,7 @@ def build(ctx, spec):
         "wind": wind_k,
         "leaf_rgb": _leaf_rgb(obj, leaf_slots),
         "cards": cards,
+        "sparse_cards": sparse if leaf_slots and spec.get("keep") else None,
         "leaf_gain": {k: round(v, 2) for k, v in sorted(gains.items())},
         "materials": sorted(s.material.name for s in obj.material_slots if s.material),
         "normal_maps": {k: v for k, v in sorted(normals.items())},

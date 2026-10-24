@@ -42,7 +42,9 @@ assets/
                           dragoon, ...); shared character code in acr_assets (humans, outfit, garments, ...)
   nature/broadleaf.py     a tree (TREES.GP frame 104) with wind and felled/stump states
   nature/<model>.py       28 trees, bushes and rocks from Poly Haven / Sketchfab (acr_assets/nature.py:
-                          cards, _WIND, alpha-mask leaves); map_objects.json maps TREELIST/STONLIST to them
+                          cards, _WIND, alpha-mask leaves; SPEC dry/keep/lie: bush_dry, fallen_tree);
+                          map_objects.json maps TREELIST/STONLIST to them
+  nature/flowers.py flag.py  scripted map objects (TREELIST 327-330, 331/471): flat colours, _WIND
   nature/prop_*.py nat_*.py  13 map props from generated models (Pixal3D, Rodin; local-only
                           sources) via nature.build_generated + genfit.fit (prop rows in
                           genfit.ITEMS: size, `tris`, `tex`); hard props carry zero _WIND,
