@@ -41,6 +41,8 @@ pub struct Fragment {
     pub victim: Option<u32>,
     /// A shell's casing, earth thrown up by a ball, or a man's bones.
     pub kind: Kind,
+    /// Thrown by a mortar's shell ([`crate::mortar::fired_by`]): the renderer draws fewer.
+    pub mortar: bool,
 }
 
 /// Life lost per second and seconds of bleeding of a fragment wound by its outcome: a light
@@ -157,6 +159,7 @@ fn throw(w: &mut World, s: usize, att: u8, (x, y): (i32, i32), dir: u8, profile:
     {
         return;
     }
+    let mortar = crate::mortar::fired_by(w.units.get(s).map(|u| u.kind), &w.catalog);
     let reach = profile.reach;
     // Everyone with a body within reach, by unit index (deterministic order).
     let (cx, cy) = (x >> 7, y >> 7);
@@ -214,7 +217,7 @@ fn throw(w: &mut World, s: usize, att: u8, (x, y): (i32, i32), dir: u8, profile:
         if w.fragments.len() >= HIT_CAP {
             w.fragments.pop_front();
         }
-        w.fragments.push_back(Fragment { tick: now, from: (x, y), to, mass, victim, kind: profile.kind });
+        w.fragments.push_back(Fragment { tick: now, from: (x, y), to, mass, victim, kind: profile.kind, mortar });
     }
 }
 

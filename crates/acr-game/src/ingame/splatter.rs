@@ -451,7 +451,7 @@ mod tests {
     }
 
     fn impact(cause: DeathCause) -> ImpactRecord {
-        ImpactRecord { tick: 100, pos: (2000, 1500), dir: (0, 500), cause }
+        ImpactRecord { tick: 100, pos: (2000, 1500), dir: (0, 500), cause, mortar: false }
     }
 
     fn earth(i: &ImpactRecord, now: u64) -> Vec<BloodPool> {

@@ -105,6 +105,33 @@ fn sod_or(soil: Soil, earth: ParticleKind) -> ParticleKind {
     if soil.turf && !soil.wet { ParticleKind::Sod } else { earth }
 }
 
+/// A mortar's shell (rule `mortars`, `ImpactRecord::mortar`) bursts smaller than a
+/// howitzer's: this share of the particles and of the reach of earth and smoke, and of the
+/// fragment streaks (render only; its damage is the shell's own).
+pub const MORTAR_SCALE: f32 = 0.6;
+
+/// Passes bursts on scaled down by `k` (a mortar's shell, [`MORTAR_SCALE`]): `k` of the
+/// particles, flying `√k` as fast so they reach `k` as far and high, puffs `√k` as big, the
+/// scatter `k` and the life 85 % (the cloud clears sooner).
+struct Scaled<'a> {
+    sink: &'a mut dyn ParticleSink,
+    k: f32,
+}
+
+impl ParticleSink for Scaled<'_> {
+    fn emit(&mut self, b: &Burst) {
+        let (k, r) = (self.k, self.k.sqrt());
+        self.sink.emit(&Burst {
+            count: ((f32::from(b.count) * k).round() as u16).max(1),
+            speed: b.speed.map(|v| v * r),
+            size: b.size.map(|v| v * r),
+            scatter: b.scatter * k,
+            life: b.life.map(|v| v * 0.85),
+            ..*b
+        });
+    }
+}
+
 /// A burst with the common defaults.
 fn burst(at: [f32; 3], kind: ParticleKind, seed: u32) -> Burst {
     Burst {
@@ -762,8 +789,14 @@ impl ParticleView {
                     impact(&mut self.particles, i.cause, [at[0], at[1], z], dir, energy, None, seed);
                 }
             } else if earth {
-                let soil = soil_at(terrain, state, at[0], at[1]);
-                impact(&mut self.particles, i.cause, [at[0], at[1], z], dir, energy, Some(soil), seed);
+                let soil = Some(soil_at(terrain, state, at[0], at[1]));
+                let at = [at[0], at[1], z];
+                if i.mortar {
+                    let sink = &mut Scaled { sink: &mut self.particles, k: MORTAR_SCALE };
+                    impact(sink, i.cause, at, dir, energy, soil, seed);
+                } else {
+                    impact(&mut self.particles, i.cause, at, dir, energy, soil, seed);
+                }
             }
         }
         if let Some(last) = world.impacts.back() {
@@ -807,6 +840,10 @@ impl ParticleView {
         for (k, f) in world.fragments.iter().filter(|f| f.tick > self.last_fragment).enumerate() {
             let z = ground_z(terrain, f.from.0 as f32, f.from.1 as f32);
             let seed = hash(f.from.0 as u32 ^ hash(f.to.1 as u32) ^ hash(f.tick as u32 + k as u32));
+            // A mortar's shell: only some of its fragments streak (they still strike).
+            if f.mortar && unit(seed, 7) >= MORTAR_SCALE {
+                continue;
+            }
             fragment(&mut self.particles, f, z, blood, seed);
         }
         if let Some(last) = world.fragments.back() {
@@ -878,6 +915,19 @@ mod tests {
         let mut shell = Record::default();
         impact(&mut shell, DeathCause::Explosion, [0.0; 3], [0.0, 0.0], 1.0, Some(grass), 1);
         assert!(count(&shell, ParticleKind::Clod) >= 150);
+    }
+
+    #[test]
+    fn a_mortar_shell_bursts_smaller() {
+        let grass = Some(Soil::of_class(0, false));
+        let (mut shell, mut mortar) = (Record::default(), Record::default());
+        impact(&mut shell, DeathCause::Explosion, [0.0; 3], [0.0, 0.0], 1.0, grass, 1);
+        let sink = &mut Scaled { sink: &mut mortar, k: MORTAR_SCALE };
+        impact(sink, DeathCause::Explosion, [0.0; 3], [0.0; 2], 1.0, grass, 1);
+        let (a, b) = (count(&shell, ParticleKind::Clod), count(&mortar, ParticleKind::Clod));
+        assert!(b * 10 >= a * 5 && b * 10 <= a * 7, "{a} -> {b}");
+        let top = |r: &Record| r.0.iter().map(|b| b.speed[1]).fold(0.0, f32::max);
+        assert!(top(&mortar) < top(&shell) * 0.8);
     }
 
     #[test]

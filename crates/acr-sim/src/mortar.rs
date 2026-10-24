@@ -143,6 +143,13 @@ fn patch(attacks: &mut [Attack], ball: usize, can: Option<usize>, weapon: Option
     }
 }
 
+/// Whether a round of a unit of type `kind` is a mortar's shell. Only the rule adds
+/// mortar types, so off this is always false. Its shell starts no ground fire
+/// ([`crate::ground_fire::shell_burst`]) and is drawn as a smaller burst (render only).
+pub fn fired_by(kind: Option<TypeId>, c: &Catalog) -> bool {
+    kind.is_some_and(|k| c.get(k).mortar)
+}
+
 /// Whether unit `i` is a mortar the rule lets take zones.
 fn is_mortar(w: &World, i: usize) -> bool {
     w.rules.mortars && w.units.get(i).is_some_and(|u| w.catalog.get(u.kind).mortar)

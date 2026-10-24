@@ -56,6 +56,15 @@ impl Blast {
         }
     }
 
+    /// A mortar's smaller shell ([`super::particle_view::MORTAR_SCALE`] of the reach, the
+    /// pieces and the corpses thrown).
+    fn mortar(at: [f32; 2]) -> Self {
+        let k = super::particle_view::MORTAR_SCALE;
+        let n = |v: usize| ((v as f32 * k).round() as usize).max(1);
+        let s = Self::shell(at);
+        Self { radius: s.radius * k, pieces: n(s.pieces), corpses: n(s.corpses), ..s }
+    }
+
     fn graze(at: [f32; 2]) -> Self {
         Self { at, radius: GRAZE_RADIUS, pieces: GRAZE_PIECES, corpses: GRAZE_CORPSES, force: GRAZE_FORCE }
     }
@@ -1378,7 +1387,7 @@ impl ThreeD {
         {
             let at = [i.pos.0 as f32, i.pos.1 as f32];
             if !near(&self.blasts, at) {
-                self.blasts.push(Blast::shell(at));
+                self.blasts.push(if i.mortar { Blast::mortar(at) } else { Blast::shell(at) });
             }
         }
         self.last_blast = world.impacts.back().map_or(self.last_blast, |i| i.tick.max(self.last_blast));

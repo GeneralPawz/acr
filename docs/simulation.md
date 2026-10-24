@@ -1302,7 +1302,8 @@ tenth of its life (so it never burns to death), and a unit that dies burning is 
   round shot `IADRO` and grapeshot `KARTECH`) that bursts on the ground (`ExplodeAnmObject`
   with terrain contact and damage) leaves a fire there (`World::ground_fires`), unless the
   ground is water or a fire already burns within its radius (a shell's children burst at
-  the same point; a child bouncing on starts its own). Radius 40 px (about 1.3 m),
+  the same point; a child bouncing on starts its own; a mortar's shell, rule `mortars`,
+  starts none). Radius 40 px (about 1.3 m),
   burning `BURN_TICKS` 300 ticks (30 s). No random number is drawn.
 - Once a second (after the bleeding) every soldier (not a building, cannon or ship) inside a
   fire catches fire: `Unit::burning` goes on and `Body::burn` is set to 5 s. While it
@@ -1375,7 +1376,13 @@ stay as they were):
 - The shell flies at `ELEVATION` 60° (`GunMode::Mortar`, carried by the projectile like the
   other gun modes); the scatter is the gun's `RAZBROS` through `CreateRazbros` (0x51b917),
   which grows with the range. With hit locations also on, the burst throws shell fragments
-  and leaves a ground fire (above); with mortars alone it does the original's round damage.
+  but leaves no ground fire, so nobody catches fire or panics from it (user decision; a
+  howitzer's `IADROMOR` shell still does, `ground_fire::shell_burst` asks
+  `mortar::fired_by`); with mortars alone it does the original's round damage. Neither
+  `IADROMOR` (`NRES` flags `-`) nor its children carry the `X`/`F` fire flags. The shell's
+  impacts and fragments carry `mortar: true` (render only, not hashed): the 3D view draws
+  a smaller burst (rendering-3d.md, "particles of a hit"); damage and radius are the
+  shell's own.
 - It gets the gun's `TypeTech` and access rules and follows it in every build list that
   holds the gun. Upgrades of the gun do not reach it yet.
 
@@ -1389,7 +1396,8 @@ and no nearer than its minimum, and lays one round there through `NewAttackPoint
 while some mortar has them; a dead mortar's go. A ground attack inside the minimum range
 fires only once the gun has drawn back beyond it, like the field gun's ball inside its
 `ATTACK_RADIUS` minimum. No random number is drawn beyond the shot's own. `tests/mortar.rs`
-covers the types, the zone fire, the minimum range and the rule off.
+covers the types, the zone fire, the minimum range, the rule off, and that a mortar's
+shell starts no fire while a howitzer's still does.
 
 **Controls.** The rule is the line `Mörser` of the game options' rules
 (docs/ui.md, "Game menu"); selected mortars get the icons "Zielzone setzen", "Zonen

@@ -578,6 +578,9 @@ fn note_impact(w: &mut World, p: &Projectile, hit: bool) {
     let always = matches!(cause, DeathCause::Cannonball | DeathCause::Explosion);
     if always || (!hit && cause != DeathCause::Unknown && cause != DeathCause::Melee) {
         crate::combat::record_impact(w, (p.pos.0 >> 14, p.pos.1 >> 14), flight_dir(p), cause);
+        if let Some(i) = w.impacts.back_mut() {
+            i.mortar = crate::mortar::fired_by(w.units.get(s).map(|u| u.kind), &w.catalog);
+        }
     }
 }
 

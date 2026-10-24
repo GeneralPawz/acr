@@ -208,3 +208,56 @@ fn clearing_the_zones_stops_the_fire() {
     w.step(&[Command::MortarZones { player: 0, units: vec![m], zones: vec![] }]);
     assert!(w.mortar_zones.is_empty());
 }
+
+/// Mortars and hit locations on: the mortar's shells burst (fragments, round damage) but
+/// start no ground fire and set nobody burning; the renderer learns they are a mortar's.
+#[test]
+fn a_mortar_shell_starts_no_fire() {
+    let rules = Rules { hit_locations: true, ..ON };
+    let (mut w, mrt, sol) = setup(rules);
+    let m = w.spawn(mrt, 0, Pos::from_pixels(800, 2000), 0);
+    for k in 0..24 {
+        w.spawn(sol, 1, Pos::from_pixels(2500 + (k % 6) * 40, 1940 + (k / 6) * 40), 128);
+    }
+    w.step(&[
+        Command::MortarZones { player: 0, units: vec![m], zones: vec![Zone { x: 2600, y: 2000, r: 200 }] },
+        Command::MortarFire { player: 0, units: vec![m], on: true },
+    ]);
+    let mut bursts = 0;
+    for _ in 0..900 {
+        w.step(&[]);
+        assert!(w.ground_fires.list.is_empty(), "tick {}: a mortar shell left a fire", w.tick.0);
+        assert!(!w.units.iter().any(|u| u.burning), "tick {}: someone burns", w.tick.0);
+        bursts = bursts.max(w.impacts.iter().filter(|i| i.cause == acr_sim::combat::DeathCause::Explosion).count());
+    }
+    assert!(bursts > 0, "no shell burst");
+    assert!(w.impacts.iter().all(|i| i.mortar), "impacts marked as a mortar's");
+    assert!(!w.fragments.is_empty() && w.fragments.iter().all(|f| f.mortar), "fragments flew, marked");
+}
+
+/// A howitzer's shell (`IADROMOR` on a gun that is no mortar) still leaves its fire and
+/// sets the men in it burning; a mortar's at the same time does not.
+#[test]
+fn a_howitzer_shell_still_starts_a_fire() {
+    let (mut c, _, sol, _) = catalog();
+    mortar::append_types(&mut c);
+    let how_md = GUN.replace("WEAPONKIND 1 IADRO\r\n", "WEAPONKIND 1 IADROMOR\r\n");
+    let how = c.add(ObjectType::from_def("How(EN)", &UnitDef::parse(how_md.as_bytes())));
+    let mrt = c.find("ArtMrt(EN)").unwrap();
+    let mut w = World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(Formations::default()));
+    w.rules = Rules { hit_locations: true, ..ON };
+    let h = w.spawn(how, 0, Pos::from_pixels(400, 1000), 0).0 as usize;
+    let m = w.spawn(mrt, 0, Pos::from_pixels(400, 3000), 0).0 as usize;
+    let near_h = w.spawn(sol, 1, Pos::from_pixels(2000, 1000), 128).0 as usize;
+    let near_m = w.spawn(sol, 1, Pos::from_pixels(2000, 3000), 128).0 as usize;
+    let (ah, am) = (acr_sim::shrapnel::shell_attack(&w, h).unwrap(), acr_sim::shrapnel::shell_attack(&w, m).unwrap());
+    acr_sim::ground_fire::shell_burst(&mut w, Some(h), ah, (2000, 1000), false);
+    acr_sim::ground_fire::shell_burst(&mut w, Some(m), am, (2000, 3000), false);
+    assert_eq!(w.ground_fires.list.len(), 1, "only the howitzer's shell burns");
+    assert_eq!((w.ground_fires.list[0].x, w.ground_fires.list[0].y), (2000, 1000));
+    for _ in 0..20 {
+        w.step(&[]);
+    }
+    assert!(w.units[near_h].burning, "the man in the howitzer's fire burns");
+    assert!(!w.units[near_m].burning, "the man where the mortar's shell fell does not");
+}

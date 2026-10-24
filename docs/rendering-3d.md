@@ -1028,6 +1028,14 @@ The particles of a hit (#226, `particle_view.rs`, `ParticleView::update`):
 - `spurt`: a melee blow or thrown weapon throws 8 or 6 drops (1.6× for a kill) from the
   chest along the blow; a shell burst that does not tear the body throws 14 up and all
   around. `gore=full` only, like `shred`.
+- A mortar's shell (`ImpactRecord::mortar`, rule `mortars`) bursts smaller than a
+  howitzer's: `MORTAR_SCALE` 0.6 of the earth, sods and dust (the `Scaled` sink: 0.6 of the
+  count, √0.6 of the speed so they reach 0.6 as far and high, puffs √0.6 as big, the
+  scatter 0.6, the life 85 %), 0.6 of the fragment streaks (`Fragment::mortar`, picked by
+  hash; every fragment still strikes in the sim), and a blast (`Blast::mortar`) that throws
+  pieces and corpses over 0.6 of the radius, 0.6 as many. It leaves no shell fire, so no
+  flare. There is no separate flash or camera shake; the original's `PU2` explosion
+  sprite and the crater stamp stay as they are.
 
 On the blank field (RX 9060 XT, 1600 × 900, zoom 1, `ACR-analysis/genai/hits/battle.json`:
 300 v 300 musketeers and 6 guns a side firing, `gputime` 30 frames twice at 200 and 300
@@ -1148,8 +1156,9 @@ particles, only with models on) draws fire from the simulation's state, render o
   arithmetic hash, as `sin` hashes of large arguments show blocks on dark smoke). The three
   emissive kinds are drawn last of the soft kinds, premultiplied with a small alpha, so
   they mostly add light. Variety from hashes of the fire or unit and an emission counter.
-- The driver's `impact` with `"cause": "shell", "by": <mortar>` also starts the shell fire
-  (`ground_fire::shell_burst`), so a line of fires can be set without waiting for mortars.
+- The driver's `impact` with `"cause": "shell", "by": <howitzer>` also starts the shell
+  fire (`ground_fire::shell_burst`), so a line of fires can be set without waiting for
+  shells; `"by": <mortar>` (`ArtMrt`) starts none and draws the mortar's smaller burst.
 
 Cost, RX 9060 XT, blank grass field, 10 shell fires 45 px apart in a line with two men
 walking through (`ACR-analysis/genai/fire/scripts/perf.json`), zoom 1, 1600x900:

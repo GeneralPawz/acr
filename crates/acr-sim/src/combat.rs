@@ -1890,6 +1890,9 @@ pub struct ImpactRecord {
     pub dir: (i32, i32),
     /// The shooter's weapon ([`DeathCause::of_weapon`]).
     pub cause: DeathCause,
+    /// A mortar's shell (rule `mortars`, [`crate::mortar::fired_by`]): the renderer draws
+    /// a smaller burst.
+    pub mortar: bool,
 }
 
 /// The cause of a round fired by attack `att` of unit `sender` (alive or not).
@@ -1904,7 +1907,7 @@ pub fn record_impact(w: &mut World, pos: (i32, i32), dir: (i32, i32), cause: Dea
     if w.impacts.len() >= HIT_CAP {
         w.impacts.pop_front();
     }
-    w.impacts.push_back(ImpactRecord { tick: w.tick.0, pos, dir, cause });
+    w.impacts.push_back(ImpactRecord { tick: w.tick.0, pos, dir, cause, mortar: false });
 }
 
 /// Drops the hits and impacts older than [`HIT_KEEP`] ticks (at the start of every step).

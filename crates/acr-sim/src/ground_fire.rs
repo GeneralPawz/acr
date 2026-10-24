@@ -58,14 +58,18 @@ fn has_body(w: &World, i: usize) -> bool {
 }
 
 /// A round of `sender`'s attack `att` burst on the ground at `(x, y)` (pixels): a shell
-/// leaves a fire unless the ground is water or a fire already burns there (a shell's
-/// fragments burst at the same point).
+/// leaves a fire unless the ground is water, a fire already burns there (a shell's
+/// fragments burst at the same point) or the shell is a mortar's (rule `mortars`).
 pub fn shell_burst(w: &mut World, sender: Option<usize>, att: u8, (x, y): (i32, i32), water: bool) {
     if !w.rules.hit_locations || water {
         return;
     }
     let Some(s) = sender else { return };
     if crate::combat::cause_of_attack(w, s, att) != crate::combat::DeathCause::Explosion {
+        return;
+    }
+    // A mortar's shell bursts without fire (user decision): nobody catches fire from it.
+    if crate::mortar::fired_by(w.units.get(s).map(|u| u.kind), &w.catalog) {
         return;
     }
     if w.ground_fires.list.iter().any(|f| crate::trig::norma(f.x - x, f.y - y) < f.radius) {

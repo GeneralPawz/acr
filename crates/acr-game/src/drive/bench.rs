@@ -257,8 +257,9 @@ pub fn hit(game: &mut Game, v: &Value) -> Result<Value, String> {
 /// round striking the ground (or water) at world pixel `at` and hitting no one, as a missed
 /// shot is recorded (`World::impacts`, render only): craters, furrows and earth fountains can
 /// be filmed without casualties. `dir` is the flight direction (default east), `speed` the
-/// ball's speed in px per tick (default 12). A shell `"by"` a mortar or howitzer also leaves
-/// a shell fire (`ground_fire::shell_burst`, rule `hit_locations`).
+/// ball's speed in px per tick (default 12). A shell `"by"` a howitzer also leaves a shell
+/// fire (`ground_fire::shell_burst`, rule `hit_locations`); one by a mortar (`ArtMrt`, rule
+/// `mortars`) leaves none and bursts smaller.
 pub fn impact(game: &mut Game, v: &Value) -> Result<Value, String> {
     let Mode::InGame(g) = &mut game.mode else { return Err("no game".into()) };
     let at = match v.get("at").and_then(Value::as_array).map(Vec::as_slice) {
@@ -278,6 +279,11 @@ pub fn impact(game: &mut Game, v: &Value) -> Result<Value, String> {
     acr_sim::combat::record_impact(world, at, dir, cause);
     // `"by": unit` with a shell attack: the shell's fragments fly (hit-locations rule).
     let by = v.get("by").and_then(Value::as_u64).map(|b| b as usize);
+    // A mortar's shell draws a smaller burst and leaves no fire (rule `mortars`).
+    let mortar = acr_sim::mortar::fired_by(by.and_then(|b| world.units.get(b)).map(|u| u.kind), &world.catalog);
+    if let Some(i) = world.impacts.back_mut() {
+        i.mortar = mortar;
+    }
     let mut fragments = 0;
     if cause == DeathCause::Explosion
         && let Some(b) = by
