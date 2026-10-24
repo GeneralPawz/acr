@@ -15,9 +15,19 @@ the nearest surface it is behind). The summary and the tolerance check are plain
 COUNT_M = 0.002  # m: a vertex deeper than this counts as inside
 TOL_M = 0.01  # m: the deepest allowed penetration of a checked clip (`over`)
 NEAR_M = 0.10  # m: body triangles this near the musket's box are tested against it
-DEPTH_CAP_M = 0.04  # m: musket vertices further behind the nearest face are not counted (the
-# sign test of an open garment shell is unreliable beyond); a depth of 0.04 means "0.04 or more"
+DEPTH_MAX_M = 0.30  # m: the deepest a musket vertex is looked for behind the nearest face
+# Ray directions of the parity test (`_inside`): not along the axes, so no ray grazes the
+# body's symmetry plane or a horizontal cut.
+RAYS = ((0.577, 0.577, 0.577), (-0.577, 0.577, -0.577), (0.577, -0.577, -0.577),
+        (-0.577, -0.577, 0.577), (0.80, 0.0, 0.60), (0.0, -0.60, -0.80))
+RAYS_INSIDE = 5  # of `RAYS` with an odd count of crossings: inside (a hole or a flap may spoil one)
 HAND_BONES = ("hand_", "thumb_", "index_", "middle_", "ring_", "pinky_", "socket.")
+
+
+def parity_inside(counts, need=RAYS_INSIDE):
+    """True when at least `need` of the rays' crossing `counts` are odd (the point is inside
+    the mesh); an open shell's edge or a single flap spoils fewer rays than that."""
+    return sum(1 for c in counts if c % 2) >= need
 
 
 def summarise(frames):
@@ -134,6 +144,99 @@ def _tris(me, np):
     return t.reshape(-1, 3)
 
 
+def _crossings(bvh, p, d, limit=24):
+    """How often the ray from `p` along `d` crosses the mesh of `bvh`."""
+    n, o = 0, p.copy()
+    for _ in range(limit):
+        hit = bvh.ray_cast(o, d)
+        if hit[0] is None:
+            break
+        n += 1
+        o = hit[0] + d * 1e-5
+    return n
+
+
+def _inside(bvh, p):
+    from mathutils import Vector
+
+    return parity_inside([_crossings(bvh, p, Vector(d)) for d in RAYS])
+
+
+def gun_hits(gw, co, tri, all_tri, flip, hand_tri=None):
+    """[(index, depth m, nearest surface point, outward normal)] of the musket's vertices
+    `gw` (armature space) inside one skinned mesh (vertices `co`, the triangles `tri` with the
+    hands left out, `all_tri` every triangle as lists, `flip` its winding): behind the nearest
+    surface and confirmed by ray parity against the whole mesh (`_inside`), so the open edge
+    of a garment shell does not count and a butt deep in the chest does (m2-aim-fix). A vertex
+    whose nearest triangle of all is a hand's (`hand_tri`: a mask over `all_tri`) is in the
+    fist by design and left out."""
+    import numpy as np
+    from mathutils import Vector
+    from mathutils.bvhtree import BVHTree
+
+    blo, bhi = gw.min(0) - NEAR_M, gw.max(0) + NEAR_M
+    near = ((co >= blo) & (co <= bhi)).all(1)
+    sel = tri[near[tri].any(1)]
+    if not len(sel):
+        return []
+    cl = co.tolist()
+    bvh = BVHTree.FromPolygons(cl, sel.tolist())
+    full, out = None, []
+    olo, ohi = co.min(0), co.max(0)
+    for i in np.nonzero(((gw >= olo) & (gw <= ohi)).all(1))[0]:
+        p = Vector(gw[i])
+        hit = bvh.find_nearest(p, DEPTH_MAX_M)
+        if hit[0] is None or flip * (p - hit[0]).dot(hit[1]) >= 0 or hit[3] <= COUNT_M * 0.5:
+            continue
+        if full is None:
+            full = BVHTree.FromPolygons(cl, all_tri)
+        if hand_tri is not None and hand_tri[full.find_nearest(p)[2]]:
+            continue
+        if _inside(full, p):
+            out.append((int(i), hit[3], hit[0], hit[1] * flip))
+    return out
+
+
+def prepare(arm_obj, bodies=None):
+    """[(mesh, triangles without the hands, every triangle as lists, winding)] of the skinned
+    meshes of the man (`gun_hits`'s inputs; default `_skinned`)."""
+    import numpy as np
+
+    out = []
+    for ob in (bodies if bodies is not None else _skinned(arm_obj)):
+        tri = _tris(ob.data, np)
+        hand = _hand_mask(ob, np)
+        out.append((ob, tri[~hand[tri].any(1)], tri.tolist(), outward(ob, np), hand[tri].any(1)))
+    return out
+
+
+def push_out(arm_obj, gun, info):
+    """At the current pose (meshes evaluated: `show`): (deepest depth m, the move in
+    armature space that takes the musket's deepest vertex out of the man along the surface's
+    outward normal, plus `COUNT_M`), or (0, None) when it is clear."""
+    import bpy
+    import numpy as np
+
+    dg = bpy.context.evaluated_depsgraph_get()
+    inv = np.array(arm_obj.matrix_world.inverted())
+    mg = inv @ np.array(gun.matrix_world)
+    gco = np.empty(len(gun.data.vertices) * 3)
+    gun.data.vertices.foreach_get("co", gco)
+    gw = gco.reshape(-1, 3) @ mg[:3, :3].T + mg[:3, 3]
+    best = (0.0, None)
+    for ob, tri, all_tri, wind, hand_tri in info:
+        me = ob.evaluated_get(dg).data
+        co = np.empty(len(me.vertices) * 3)
+        me.vertices.foreach_get("co", co)
+        mb = inv @ np.array(ob.matrix_world)
+        flip = wind * (-1.0 if np.linalg.det(mb[:3, :3]) < 0 else 1.0)
+        co = co.reshape(-1, 3) @ mb[:3, :3].T + mb[:3, 3]
+        for _i, d, _q, n in gun_hits(gw, co, tri, all_tri, flip, hand_tri):
+            if d > best[0]:
+                best = (d, n.normalized() * (d + COUNT_M))
+    return best
+
+
 def measure(arm_obj, clips, gun=None, extra=None):
     """{"clips": {clip: summary}, "all": ...} of the musket against the man over every frame
     of `clips` (action names), each played on `arm_obj`. `gun`: the musket object (default
@@ -154,11 +257,12 @@ def measure(arm_obj, clips, gun=None, extra=None):
     gbvh = BVHTree.FromPolygons([tuple(c) for c in gco], [tuple(int(i) for i in t) for t in gtri])
     lo, hi = gco.min(0), gco.max(0)
     gwind = outward(gun, np)
-    info = []
+    info, all_tri = [], {}
     for ob in bodies:
         tri = _tris(ob.data, np)
         hand = _hand_mask(ob, np)
         info.append((ob, tri[~hand[tri].any(1)], hand, outward(ob, np)))
+        all_tri[ob.name] = (tri.tolist(), hand[tri].any(1))
     # The levels of detail are not evaluated meanwhile (they are hidden in the viewport); the
     # measured meshes are (a mesh hidden in the viewport keeps its last evaluated shape).
     hidden = [o for o in bpy.data.objects if "acr_lod" in o and not o.hide_viewport]
@@ -204,19 +308,10 @@ def measure(arm_obj, clips, gun=None, extra=None):
                             if hit[3] > COUNT_M:
                                 bin_[0] += 1
                             bin_[1] = max(bin_[1], hit[3])
-                    # Musket vertices behind the body's surface near it.
-                    blo, bhi = gw.min(0) - NEAR_M, gw.max(0) + NEAR_M
-                    near = ((co >= blo) & (co <= bhi)).all(1)
-                    sel = tri[near[tri].any(1)]
-                    if not len(sel):
-                        continue
-                    bvh = BVHTree.FromPolygons([tuple(c) for c in co], [tuple(int(i) for i in t) for t in sel])
-                    for p in gw:
-                        hit = bvh.find_nearest(Vector(p), DEPTH_CAP_M)
-                        if hit[0] is not None and flip * (Vector(p) - hit[0]).dot(hit[1]) < 0:
-                            if hit[3] > COUNT_M:
-                                gin[0] += 1
-                            gin[1] = max(gin[1], hit[3])
+                    for _i, d, _q, _n in gun_hits(gw, co, tri, *all_tri[ob.name][:1], flip, all_tri[ob.name][1]):
+                        if d > COUNT_M:
+                            gin[0] += 1
+                        gin[1] = max(gin[1], d)
                 frames.append((f, tuple(gin), tuple(bin_)))
             per_clip[clip] = summarise(frames)
     finally:

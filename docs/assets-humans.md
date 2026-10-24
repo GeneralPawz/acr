@@ -834,18 +834,24 @@ Both are keyed on every frame of the hold before the shot and baked per frame
 
 **Musket contacts, measured (m2-aim-hd).** `acr_assets.penetration` measures the held musket
 against the man over every frame of every clip (`stats.json` `musket_penetration`: per clip
-the musket vertices behind the nearest body or outfit surface, `gun_in_body`, and the body
-vertices inside the musket, `body_in_gun`, each with the deepest and the most per frame; hands
-and levels left out; a depth of 0.04 m means "0.04 or more", the side test of an open garment
-shell being unreliable deeper). `aim.contacts` writes `fire_contacts`: per fire clip the butt
-plate's signed gap to the surface (`aim.butt_gap`, negative inside) and the right wrist's bend
+the musket vertices inside the body or outfit, `gun_in_body`, and the body vertices inside
+the musket, `body_in_gun`, each with the deepest and the most per frame; levels left out). A
+musket vertex counts when it lies behind the nearest surface (up to 0.30 m deep, no longer
+capped at 0.04 m) and ray parity confirms it (`penetration.gun_hits`: at least 5 of 6 rays
+cross the whole mesh an odd number of times), so the open edge of a garment shell does not
+count and a butt deep in the chest does; a vertex whose nearest triangle is a hand's lies in
+the fist by design. `aim.contacts` writes `fire_contacts`: per fire clip the butt plate's
+signed gap to the surface (`aim.butt_gap`, negative inside) and the right wrist's bend
 (`aim.wrist_deg`). `tests/test_penetration.py` gates the fire clips at 1 cm with
-`ACR_PENETRATION_GATE=1`; it is opt-in because the present still puts the butt into the
-shoulder or neck on every musketeer: the pocket is a fixed offset from the shoulder joint,
-and `aim.present` places the musket through the eye only 2.6 cm above its axis, so the butt
-lies at jaw height unless the head bows to the end of its search range. A fix must raise the
-right shoulder (clavicle) and drop the head further onto the comb, then seat the butt by
-contact.
+`ACR_PENETRATION_GATE=1`; it stays opt-in while the present penetrates: on a077049 the reload
+frames of FIRE_AIMED reach 0.10 m (hdman) and 0.06 m (engm18). The aimed hold itself (frame
+0, PSTAND1) measures clean on hdman: its butt plate floats 3.7 cm behind the shoulder
+(`butt_gap` +0.037), so the side view reads as "through the shoulder" without a crossing. A
+fix must raise the right clavicle, drop the head onto the comb (eye about 5 cm above the axis)
+and seat the butt by contact; a search that seats it by sliding along the axis alone runs
+into the deltoid of the raised arm (m2-aim-fix: `butt_gap` −0.035 after a 0.25 m slide).
+`penetration.push_out` gives the move that takes the musket's deepest vertex out of the man,
+for such a contact solve.
 
 **Reload drill (#255).** A `SLOWRECHARGE` musketeer (EngM18, FrnM18, UsaM18, IroStr...:
 the `.MD` has `#ATTACK3`) does not reload in `ATTACK1`: the sim plays `#ATTACK3` again and

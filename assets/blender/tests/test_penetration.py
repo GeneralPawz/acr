@@ -34,6 +34,14 @@ class Summary(unittest.TestCase):
         self.assertEqual(s["body_in_gun"], {"max_n": 5, "depth_m": 0.02})
         self.assertEqual(s["worst_frame"], 1)
 
+    def test_parity_inside(self):
+        # Inside a closed body every ray crosses once; outside a garment tube twice or not at
+        # all; behind a single flap or past a hole only some rays cross an odd count.
+        self.assertTrue(pen.parity_inside([1, 1, 3, 1, 1, 1]))
+        self.assertTrue(pen.parity_inside([1, 1, 1, 1, 1, 0]))
+        self.assertFalse(pen.parity_inside([0, 2, 0, 2, 0, 0]))
+        self.assertFalse(pen.parity_inside([1, 0, 1, 0, 0, 0]))
+
     def test_over_tolerance(self):
         ok = pen.summarise([(0, (0, 0.002), (0, 0.0))])
         bad = pen.summarise([(0, (40, 0.08), (0, 0.0))])
