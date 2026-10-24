@@ -60,16 +60,21 @@ wood.use_nodes = True
 wood.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0.28, 0.14, 0.06, 1)
 
 
-def shoot(tag, stock=False):
+def shoot(tag, stock=False, side="r"):
     bpy.context.view_layer.update()
     st = None
     if stock:
-        d = arm.get("acr_stock", {}).get("r", 0.036)
-        bpy.ops.mesh.primitive_cylinder_add(radius=d / 2, depth=0.30, vertices=48)
+        # the wrist of the stock in the right hand, the fore-end (40 mm) along the same axis
+        d = arm.get("acr_stock", {}).get(side, 0.036)
+        bpy.ops.mesh.primitive_cylinder_add(radius=d / 2, depth=0.30 if side == "r" else 1.2, vertices=48)
         st = bpy.context.active_object
         st.data.materials.append(wood)
         st.matrix_world = arm.matrix_world @ grips.hold_matrix(arm, "socket.hand_r")
-    pb = arm.pose.bones["middle_01_r"]
+        if side == "l":
+            o, z = grips.item_axis(arm, "socket.hand_r")
+            h = arm.pose.bones["socket.hand_l"].head
+            st.matrix_world.translation = arm.matrix_world @ (o + z * (h - o).dot(z))
+    pb = arm.pose.bones["middle_01" + "_" + side]
     c = arm.matrix_world @ pb.head
     for v, (az, el) in zip("abc", ((80, 15), (-30, 30), (170, -20))):
         a, e = math.radians(az), math.radians(el)
@@ -103,10 +108,23 @@ def hand_pose(fn):
 
 hand_pose(lambda n, k: Quaternion())
 shoot("open")
-hand_pose(lambda n, k: Quaternion((1, 0, 0), math.radians(limits.limit(n)["x"][1] * (0.6 if k.startswith("thumb") else 0.95))))
+text = bpy.data.texts.get("acr_hand_poses")
+if text is not None:  # the solved fist (hdman: `hdbody.fist_spec`)
+    import json
+
+    from acr_assets import armature as am
+
+    if arm.animation_data:
+        arm.animation_data.action = None
+    am.pose(arm, json.loads(text.as_string())["fist"])
+else:
+    hand_pose(lambda n, k: Quaternion((1, 0, 0), math.radians(limits.limit(n)["x"][1] * (0.6 if k.startswith("thumb") else 0.95))))
 shoot("fist")
 clip("STAND")
 shoot("grip_stand", stock=True)
 clip("FIRE_AIMED")
 shoot("grip_fire_aimed", stock=True)
+shoot("grip_fire_aimed_left", stock=True, side="l")
+clip("ATTACK1")
+shoot("grip_reload", stock=True)
 print("ACR hand close-ups in", OUT)

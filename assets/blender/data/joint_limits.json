@@ -1,5 +1,5 @@
 {
- "about": "Anatomical joint limits of skeleton H (acr_assets/limits.py; docs/assets-humans.md 'Joint limits'). Degrees, the bone's local Euler XYZ (Blender: R = Rz Ry Rx) relative to its rest pose; left side given, the right mirrors (x the same, y and z negated). Local frames: Y along the bone; vertical bones +Z forward, level bones +Z up (armature.build), fingers and thumb +Z palmar (flexion = +X). 'cone': swing of the bone's axis from rest and twist about it. Ranges: AAOS 'Joint Motion: Method of Measuring and Recording' (1965) and Norkin & White, 'Measurement of Joint Motion' (5th ed., 2016), widened by a few degrees where the rest pose is not neutral (A-pose arms 35 deg out).",
+ "about": "Anatomical joint limits of skeleton H (acr_assets/limits.py; docs/assets-humans.md 'Joint limits'). Degrees, the bone's local Euler XYZ (Blender: R = Rz Ry Rx) relative to its rest pose; left side given, the right mirrors (x the same, y and z negated). Local frames: Y along the bone; vertical bones +Z forward, level bones +Z up (armature.build), fingers and thumb +Z palmar (flexion = +X). 'cone': swing of the bone's axis from rest and twist about it. Ranges: AAOS 'Joint Motion: Method of Measuring and Recording' (1965) and Norkin & White, 'Measurement of Joint Motion' (5th ed., 2016), widened by a few degrees where the rest pose is not neutral (A-pose arms 35 deg out). Thumb CMC (thumb_01): flexion x, opposition (axial turn) y 0-45, palmar abduction z 0-70 (Norkin & White, CMC abduction 0-70; Kapandji, 'The Physiology of the Joints' vol. 1, opposition).",
  "tolerance_deg": 5,
  "bones": {
   "hips": {"kind": "free"},
@@ -12,7 +12,7 @@
   "upperarm": {"kind": "cone", "swing": 155, "twist": [-90, 90]},
   "forearm": {"kind": "hinge", "x": [0, 150], "y": [-90, 90], "z": [-10, 10]},
   "hand": {"kind": "euler", "x": [-30, 20], "y": [-15, 15], "z": [-80, 70]},
-  "thumb_01": {"kind": "euler", "x": [-20, 50], "y": [-15, 45], "z": [-20, 60]},
+  "thumb_01": {"kind": "euler", "x": [-20, 50], "y": [-15, 45], "z": [-20, 70]},
   "thumb_02": {"kind": "hinge", "x": [-10, 60], "y": [-8, 8], "z": [-10, 10]},
   "thumb_03": {"kind": "hinge", "x": [-15, 80], "y": [-5, 5], "z": [-5, 5]},
   "finger_01": {"kind": "euler", "x": [-20, 90], "y": [-10, 10], "z": [-20, 20]},

@@ -184,16 +184,37 @@ def pad_gap(head, y, z, length, pad, o, a, r, samples=9):
     return best
 
 
-def wrap_chain(chain, o, a, r, step=1.0):
+def cloud_gap(pts, o, a, r):
+    """The smallest gap (m; negative = inside) of points `pts` from the cylinder of radius
+    `r` round the line (`o`, unit `a`)."""
+    return min(line_distance(p, o, a) for p in pts) - r
+
+
+def _turn(h, x, t, heads, frames, clouds, start):
+    """Turns bones `start`.. of a chain (heads, frames, point clouds) about axis `x` through
+    `h` by `t` radians, in place."""
+    for j in range(start, len(heads)):
+        heads[j] = _add(h, _rot(_sub(heads[j], h), x, t))
+        frames[j] = tuple(_rot(v, x, t) for v in frames[j])
+        if clouds[j] is not None:
+            clouds[j] = [_add(h, _rot(_sub(p, h), x, t)) for p in clouds[j]]
+
+
+def wrap_chain(chain, o, a, r, step=1.0, clearance=0.0, out=None):
     """Curls one finger (or the thumb) round a cylinder: `chain` = [(head, x, y, z, length,
-    pad, (lo, hi))] per bone in rest (armature space: head, unit local axes, the palmar pad
-    thickness, the flexion range in degrees), proximal first; the cylinder is the line
-    (`o`, unit `a`) with radius `r`. Each joint flexes about its local X, in turn, by the
-    least angle in range that brings its pad onto the surface (the angle where the gap
-    crosses zero, refined by bisection); a pad that cannot reach stops at the range's top.
-    Returns ([degrees per bone], [gap per bone in m at the solution])."""
+    pad, (lo, hi)[, axis])] per bone in rest (armature space: head, unit local axes, the
+    palmar pad, the flexion range in degrees), proximal first; the cylinder is the line
+    (`o`, unit `a`) with radius `r`. `pad` is the pad's thickness along local +Z (m), or the
+    bone's skin as a list of rest points (armature space), whose closest point then counts.
+    Each joint flexes about its local X (or `axis`), in turn, from rest (or the range's
+    bottom) by the least angle in range that brings its skin `clearance` m off the surface
+    (the angle where the gap crosses it, refined by bisection); skin already inside opens
+    the joint until it clears, down to the range's bottom; a pad that cannot reach stops at
+    the range's top. Returns ([degrees per bone], [gap per bone in m at the solution]);
+    a list `out` receives the posed point clouds."""
     heads = [c[0] for c in chain]
     frames = [(c[1], c[2], c[3]) for c in chain]
+    clouds = [list(c[5]) if isinstance(c[5], (list, tuple)) else None for c in chain]
     angles, gaps = [], []
     for i, c in enumerate(chain):
         length, pad, (lo, hi) = c[4], c[5], c[6]
@@ -201,38 +222,105 @@ def wrap_chain(chain, o, a, r, step=1.0):
         x, y, z = frames[i]
         if len(c) > 7 and c[7] is not None:  # a joint turning about its own axis (the CMC)
             x = c[7]
+        cloud = clouds[i]
 
         def gap(deg):
             t = math.radians(deg)
-            return pad_gap(h, _rot(y, x, t), _rot(z, x, t), length, pad, o, a, r)
+            if cloud is not None:
+                return min(line_distance(_add(h, _rot(_sub(p, h), x, t)), o, a) for p in cloud) - r - clearance
+            return pad_gap(h, _rot(y, x, t), _rot(z, x, t), length, pad, o, a, r) - clearance
 
-        deg = lo
-        g0 = gap(lo)
-        if g0 > 0:
-            d = lo
-            found = None
+        def bisect(out, inside):
+            for _ in range(20):
+                m = 0.5 * (out + inside)
+                if gap(m) > 0:
+                    out = m
+                else:
+                    inside = m
+            return out, inside
+
+        start = min(max(0.0, lo), hi)
+        deg = start
+        if gap(start) > 0:
+            d, found = start, None
             while d < hi:
                 d2 = min(hi, d + step)
                 if gap(d2) <= 0:
                     found = (d, d2)
                     break
                 d = d2
-            if found is None:
-                deg = hi
-            else:
-                a0, a1 = found
-                for _ in range(20):
-                    m = 0.5 * (a0 + a1)
-                    if gap(m) > 0:
-                        a0 = m
-                    else:
-                        a1 = m
-                deg = a1
+            deg = hi if found is None else bisect(*found)[1]
+        else:
+            d, found = start, None
+            while d > lo:
+                d2 = max(lo, d - step)
+                if gap(d2) > 0:
+                    found = (d2, d)
+                    break
+                d = d2
+            deg = lo if found is None else bisect(*found)[0]
         angles.append(deg)
-        gaps.append(gap(deg))
-        # Turn the rest of the chain with this joint.
-        t = math.radians(deg)
-        for j in range(i + 1, len(chain)):
-            heads[j] = _add(h, _rot(_sub(heads[j], h), x, t))
-            frames[j] = tuple(_rot(v, x, t) for v in frames[j])
+        gaps.append(gap(deg) + clearance)
+        _turn(h, x, math.radians(deg), heads, frames, clouds, i)
+    if out is not None:
+        out.extend(clouds)
     return angles, gaps
+
+
+def _centroid(pts):
+    n = float(len(pts))
+    return tuple(sum(p[k] for p in pts) / n for k in range(3))
+
+
+def oppose_thumb(chain, o, a, r, target, cmc, step=10.0, clearance=0.0):
+    """The thumb round the far side of a cylinder: `chain` as `wrap_chain` (metacarpal,
+    proximal, distal phalanx; skin as point clouds), `cmc` = ((lo, hi) about local X
+    (flexion), Y (opposition: the axial turn), Z (abduction)) of the carpometacarpal joint.
+    Searches the CMC angles on a grid (then a finer one round the best), wraps MCP and IP
+    round the cylinder for each (`wrap_chain`) and keeps the pose whose phalanges touch the
+    cylinder without entering it and whose tip lies nearest `target` (a
+    point, e.g. over the index finger's middle phalanx). Returns ((x, y, z) CMC degrees,
+    [MCP, IP] degrees, [gap per bone in m], tip distance in m)."""
+    h0 = chain[0][0]
+    x0, y0, z0 = chain[0][1], chain[0][2], chain[0][3]
+
+    def at(ex, ey, ez):
+        heads = [c[0] for c in chain]
+        frames = [(c[1], c[2], c[3]) for c in chain]
+        clouds = [list(c[5]) if isinstance(c[5], (list, tuple)) else None for c in chain]
+        for ax, deg in ((x0, ex), (y0, ey), (z0, ez)):  # local XYZ Euler: X first, about the rest axes
+            _turn(h0, ax, math.radians(deg), heads, frames, clouds, 0)
+        g0 = (cloud_gap(clouds[0], o, a, r) if clouds[0] is not None else
+              pad_gap(heads[0], frames[0][1], frames[0][2], chain[0][4], chain[0][5], o, a, r))
+        rest = [(heads[k], *frames[k], chain[k][4], clouds[k] if clouds[k] is not None else chain[k][5],
+                 chain[k][6]) for k in (1, 2)]
+        cc = []
+        ang, gaps = wrap_chain(rest, o, a, r, step=2.0, clearance=clearance, out=cc)
+        tip = _centroid(cc[1]) if cc[1] is not None else heads[2]
+        dist = math.sqrt(sum(v * v for v in _sub(tip, target)))
+        deep = min([g0] + gaps)
+        score = dist + 3 * sum(max(g, 0.0) for g in gaps) + (1.0 + 100 * -deep if deep < -0.001 else 0.0)
+        return score, ang, [g0] + gaps, dist
+
+    def grid(rx, ry, rz, st):
+        best = None
+        def steps(lo, hi):
+            n = max(1, int(round((hi - lo) / st)))
+            return [lo + (hi - lo) * k / n for k in range(n + 1)]
+        for ex in steps(*rx):
+            for ey in steps(*ry):
+                for ez in steps(*rz):
+                    s = at(ex, ey, ez)
+                    if best is None or s[0] < best[0][0]:
+                        best = (s, (ex, ey, ez))
+        return best
+
+    (rx, ry, rz) = cmc
+    best = grid(rx, ry, rz, step)
+    e = best[1]
+    clip = [(max(lo, v - step / 2), min(hi, v + step / 2)) for v, (lo, hi) in zip(e, cmc)]
+    fine = grid(*clip, step / 4)
+    if fine[0][0] < best[0][0]:
+        best = fine
+    (score, ang, gaps, dist), e = best
+    return tuple(round(v, 2) for v in e), ang, gaps, dist

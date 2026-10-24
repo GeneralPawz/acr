@@ -728,12 +728,21 @@ cylinder of the real diameter (`hdbody.STOCK`: wrist of the stock 36 mm right, f
 armature goes into grip mode with the right socket held, so the clips turn the hand to the
 musket. Each finger chain then flexes joint by joint about its local X, within the table,
 until its measured pad (`_pads`: the palmar skin's distance from the bone) touches the
-cylinder (`limits.wrap_chain`); the thumb's metacarpal swings straight towards the stock
-at the CMC (≤50°) before MCP and IP flex. `grip_gaps` measures the posed skin against the
+cylinder (`limits.wrap_chain`, on the bone's own skin: `_clouds`, the vertices it
+carries most, 0.6 mm clearance `GRIP_CLEAR`; skin already inside opens the joint). The
+thumb opposes round the far side (`limits.oppose_thumb`): a grid over the CMC's flexion,
+opposition and abduction within the table (palmar abduction 0–70°, Norkin & White;
+opposition 0–45°, Kapandji), MCP and IP wrapped for each, scored by contact, no
+penetration and the tip's distance to a point 9 mm out from the index finger's middle
+phalanx. `fist_spec` wraps the same way round an 18 mm cylinder (the closed fist, kept in
+the `.blend` text `acr_hand_poses` for the close-ups). No CC0 hand poses ship with
+MakeHuman 1.x (the system-assets pack and MPFB2 hold only body poses), so the grips start
+from the solver, not a retargeted pose. `grip_gaps` measures the posed skin against the
 cylinder into `stats.json` `hd.grip` (per finger the worst phalanx's closest approach in
-mm, the palm, the deepest point, vertices >1 mm inside), for the old fixed curl
-(`STAND_before`) and the contact grip in STAND, FIRE_AIMED, FIRE_HIP (identical by
-construction: the stock is fixed in the hand). `tools/hand_closeups.py` renders the hand
+mm, the palm, the deepest point, vertices >1 mm inside, and `cross`: vertices of each
+finger >1 mm inside its neighbour), for the old fixed curl (`STAND_before`), the contact
+grip in STAND, FIRE_AIMED, FIRE_HIP, ATTACK1 (the reload), the left hand against the
+musket's axis and the 40 mm fore-end (`<clip>_left`), and the fist (`hd.fist.gaps`). `tools/hand_closeups.py` renders the hand
 open, in a fist at the limits and on the stock.
 
 ## 3. Layers

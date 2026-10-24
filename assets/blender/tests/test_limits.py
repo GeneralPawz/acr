@@ -104,6 +104,46 @@ class Wrap(unittest.TestCase):
         self.assertEqual(ang, [90, 100, 80])
 
 
+    def cloud_finger(self):
+        # the same finger with its skin as points: a ring of 8 mm round each bone's middle
+        out = []
+        for h, x, y, z, ln, _pad, rng in self.finger():
+            pts = [tuple(h[k] + y[k] * ln * t + z[k] * 0.008 * c + x[k] * 0.008 * s for k in range(3))
+                   for t in (0.3, 0.6, 0.9) for c, s in ((1, 0), (0.7, 0.7), (0.7, -0.7), (0, 1), (0, -1))]
+            out.append((h, x, y, z, ln, pts, rng))
+        return out
+
+    def test_skin_points_touch(self):
+        r = 0.019
+        o, a = (0.0, -(r + 0.010), -0.005), (1.0, 0.0, 0.0)
+        posed = []
+        ang, gaps = limits.wrap_chain(self.cloud_finger(), o, a, r, clearance=0.0005, out=posed)
+        for g, pts, d, c in zip(gaps, posed, ang, self.cloud_finger()):
+            self.assertGreater(g, 0.0)
+            if d < c[6][1]:  # reached the stock before its range's end
+                self.assertLess(g, 0.002)
+            self.assertAlmostEqual(limits.cloud_gap(pts, o, a, r), g, places=6)
+        self.assertGreater(sum(ang), 100)
+
+    def test_thumb_opposes_within_cmc(self):
+        r = 0.018
+        o, a = (0.0, -(r + 0.010), -0.005), (1.0, 0.0, 0.0)
+        # a thumb beside the finger, from the base of the palm
+        x, y, z = (-1.0, 0.0, 0.0), (0.0, 0.0, -1.0), (0.0, -1.0, 0.0)
+        chain, p = [], (0.03, 0.0, 0.04)
+        for i, ln in enumerate((0.045, 0.032, 0.028)):
+            chain.append((p, x, y, z, ln, 0.008, tuple(limits.limit(f"thumb_0{i + 1}_l")["x"])))
+            p = (p[0], p[1], p[2] - ln)
+        lim = limits.limit("thumb_01_l")
+        cmc = (tuple(lim["x"]), tuple(lim["y"]), tuple(lim["z"]))
+        target = (0.0, -(2 * r + 0.02), -0.02)
+        e, ang, gaps, dist = limits.oppose_thumb(chain, o, a, r, target, cmc, clearance=0.0005)
+        for v, (lo, hi) in zip(e, cmc):
+            self.assertTrue(lo <= v <= hi)
+        self.assertGreater(min(gaps[1:]), -0.001)  # the phalanges (the metacarpal is scored)
+        self.assertEqual(len(ang), 2)
+
+
 class Clips(unittest.TestCase):
     """Built models: every frame of every clip within the limits (the build's audit,
     `armature.audit_limits`). Skips models not built."""

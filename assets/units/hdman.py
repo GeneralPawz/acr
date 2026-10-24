@@ -7,6 +7,7 @@ atlas and baked normal and albedo) rides in the same glb as nodes with `extras.a
 on socket.hand_r. Needs the local MakeHuman sources under ACR_SOURCES/makehuman (see
 hdbody)."""
 
+import json
 import os
 import sys
 
@@ -32,6 +33,9 @@ def build(ctx):
     # measured on the same stock as the baseline.
     old_grip = hdbody.grip_spec(arm)
     grip = hdbody.contact_grip(ctx, arm, body)
+    fist = hdbody.fist_spec(ctx, arm)
+    # The hand poses for tools/hand_closeups.py (a text block: not exported).
+    bpy.data.texts.new("acr_hand_poses").write(json.dumps({"grip": grip, "fist": fist}))
     # The Short Land Pattern master with its levels and the fixed bayonet on socket.hand_r,
     # in gear.musket's frame (`gear_hd.hold`, m2-hd-musket).
     gun, gun_lods = gear_hd.build_item(ctx, "musket")
@@ -56,13 +60,19 @@ def build(ctx):
     gst = ctx.stats["hd"]["grip"]
     am.pose(arm, {**poses.STAND_MUSKET, **old_grip})
     gst["STAND_before"] = hdbody.grip_gaps(arm, body)
-    for clip in ("FIRE_AIMED", "FIRE_HIP"):
+    # Per clip (ATTACK1 = the reload): the right hand on the wrist of the stock, the left on
+    # the fore-end (the musket's axis, `socket.hand_r`) where it holds it.
+    for clip in ("FIRE_AIMED", "FIRE_HIP", "ATTACK1"):
         if clip in clips:
             frames = [f for f, _s in clips[clip]]
             am.set_clip(arm, clip, frames[len(frames) // 2])
             gst[clip] = hdbody.grip_gaps(arm, body)
+            gst[clip + "_left"] = hdbody.grip_gaps(arm, body, "l", on="socket.hand_r",
+                                                   diameter=hdbody.STOCK["l"])
             arm.animation_data.action = None
     am.pose(arm, {**poses.STAND_MUSKET, **grip})
     gst["STAND"] = hdbody.grip_gaps(arm, body)
+    am.pose(arm, {**poses.STAND_MUSKET, **fist})
+    ctx.stats["hd"]["fist"]["gaps"] = hdbody.grip_gaps(arm, body)
     for level, ob in enumerate(lods, 1):  # authored levels in the glb (docs/rendering-3d.md)
         ob["acr_lod"] = level

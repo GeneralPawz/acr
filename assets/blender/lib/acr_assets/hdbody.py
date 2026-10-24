@@ -575,7 +575,6 @@ def grip_spec(arm, sides=("_l", "_r")):
 # Diameters of what the hands hold (m): the wrist of the musket's stock in the right hand,
 # the fore-stock in the left (`held.GRIPS["musket"]`).
 STOCK = {"r": 0.036, "l": 0.040}
-_hand_verts = {}  # contact_grip -> grip_gaps: {hand or finger bone: vertex indices}
 STOCK_BACK = 0.0  # the stock's axis this far behind the knuckle line (proximal: the thenar pushes it out)
 
 
@@ -606,84 +605,146 @@ def _pads(body, arm, dom):
     return out
 
 
-def contact_grip(ctx, arm, body, diameters=STOCK):
-    """The musket grip by contact (docs/assets-humans.md "Contact grip"): each hand's stock is
-    a cylinder of its real diameter lying across the palm behind the knuckles, along the
-    grip frame's axis (`grips.frame`); `socket.hand_[lr]` moves onto that axis with the grip
-    frame (as `grips.setup`), and the armature goes into grip mode with the right socket
-    held, so the clips turn the hand to the musket. Every finger and the thumb then curl
-    joint by joint, within their limits, until each pad touches the cylinder
-    (`limits.wrap_chain`). Returns the pose spec; fills ctx.stats["hd"]["grip"]."""
-    import bpy
-    from mathutils import Matrix, Vector
+def _clouds(body, arm, dom, keep=48):
+    """{finger or thumb bone: its skin as rest points (armature space)}: the vertices the bone
+    carries most, between 10 (proximal phalanges 35) and 95 % of its length (the joints blend with the neighbours),
+    thinned evenly to at most `keep`."""
+    co = np.array([v.co for v in body.data.vertices])
+    out = {}
+    for sfx in ("_l", "_r"):
+        for f in FINGERS:
+            for j in (1, 2, 3):
+                b = arm.data.bones[f"{f}_0{j}{sfx}"]
+                idx = dom.get(b.name)
+                if idx is None or not len(idx):
+                    continue
+                p = co[idx]
+                h, y = np.array(b.head_local), np.array(b.matrix_local.to_3x3().col[1])
+                t = (p - h) @ y
+                # the proximal phalanx's base is the palm's web: it would hold the joint open
+                p = p[(t > (0.35 if j == 1 else 0.10) * b.length) & (t < 0.95 * b.length)]
+                if len(p) > keep:
+                    p = p[np.linspace(0, len(p) - 1, keep).astype(int)]
+                out[b.name] = [tuple(float(c) for c in q) for q in p]
+    return out
+
+
+GRIP_CLEAR = 0.0006  # m: the skin's aim off the stock (skinning blends the joints by about this)
+FIST = {"r": 0.018, "l": 0.018}  # m: the "stock" a closed fist wraps (the finger tips at the palm)
+THUMB_OVER = 0.009  # m: the thumb's tip this far out from the index finger's middle phalanx
+_cache = {}  # contact_grip -> fist_spec, grip_gaps: rest skin, dominant groups, pads, clouds
+
+
+def _wrap_hands(arm, diameters, back=0.0):
+    """Both hands wrapped round cylinders of `diameters` across the palm at the knuckle line
+    (`contact_grip`): every finger by `limits.wrap_chain` on its skin, then the thumb round
+    the far side onto the index finger's middle phalanx (`limits.oppose_thumb`, the CMC
+    within the table). Returns (pose spec, {side: (axis origin, grip frame)}, stats)."""
+    from mathutils import Euler, Vector
 
     from . import grips, limits
 
-    st = ctx.stats.setdefault("hd", {}).setdefault("grip", {})
-    dom = _dominant(body)
-    pads = _pads(body, arm, dom)
-    spec, want = {}, {}
+    dom, pads, clouds, rest = _cache["dom"], _cache["pads"], _cache["clouds"], _cache["co"]
+    spec, axes, st = {}, {}, {}
     for sd in ("l", "r"):
         sfx = "_" + sd
         r = diameters[sd] / 2
         fr = grips.frame(arm, sd)
-        a, d = fr.col[2].normalized(), -fr.col[1].normalized()
         heads = [arm.data.bones[f"{f}_01{sfx}"].head_local for f in FINGERS[1:]]
+        a, d = fr.col[2].normalized(), -fr.col[1].normalized()
         mid = sum(heads, Vector()) / len(heads)
         zp = sum((arm.data.bones[f"{f}_01{sfx}"].matrix_local.to_3x3().col[2] for f in FINGERS[1:]), Vector())
         zp = (zp - a * zp.dot(a) - d * zp.dot(d)).normalized()
         palm = float(np.mean([pads[f"{f}_01{sfx}"] for f in FINGERS[1:]]))
-        o = mid + zp * (palm + r) - d * STOCK_BACK
+        o = mid + zp * (palm + r) - d * back
         # The palm (thenar and hypothenar included) just touches the stock: push the axis
         # out of the rest skin of the hand.
-        hco = np.array([body.data.vertices[i].co for i in dom.get(f"hand{sfx}", [])])
+        hidx = dom.get(f"hand{sfx}")
+        hco = rest[hidx] if hidx is not None else np.zeros((0, 3))
+        av = np.array(a)
         for _ in range(3):
             if not len(hco):
                 break
             rel = hco - np.array(o)
-            av = np.array(a)
-            inside = float((np.linalg.norm(rel - np.outer(rel @ av, av), axis=1) - r).min())
-            # only the stretch of the stock the hand spans
+            inside = float((np.linalg.norm(rel - np.outer(rel @ av, av), axis=1) - r).min()) - GRIP_CLEAR
             if inside >= -0.0005:
                 break
             o = o + zp * (-inside)
-        sock = arm.data.bones[f"socket.hand{sfx}"]
-        want[sock.name] = (o, fr @ sock.matrix_local.to_3x3())
-        solved = {}
-        for f in FINGERS:
-            chain = []
-            axis = None
-            for j in (1, 2, 3):
-                b = arm.data.bones[f"{f}_0{j}{sfx}"]
-                m = b.matrix_local.to_3x3()
-                rng = tuple(limits.limit(b.name)["x"])
-                if f == "thumb" and j == 1:
-                    # Opposition: the metacarpal swings at the CMC straight towards the stock
-                    # (within the CMC's 50 degree cone), then MCP and IP flex round it.
-                    h = b.head_local
-                    v = (o + a * (h - o).dot(a)) - h
-                    y = m.col[1]
-                    v = v - y * v.dot(y)
-                    axis = y.cross(v).normalized()
-                    rng = (0, 50)
-                chain.append((tuple(b.head_local), tuple(m.col[0]), tuple(m.col[1]), tuple(m.col[2]), b.length,
-                              pads[b.name], rng, tuple(axis) if (f == "thumb" and j == 1) else None))
-            ang, gaps = limits.wrap_chain(chain, tuple(o), tuple(a), r)
+        axes[sd] = (o, fr)
+        solved, posed = {}, {}
+
+        def link(b):
+            m = b.matrix_local.to_3x3()
+            return (tuple(b.head_local), tuple(m.col[0]), tuple(m.col[1]), tuple(m.col[2]), b.length,
+                    clouds.get(b.name) or pads[b.name], tuple(limits.limit(b.name)["x"]))
+
+        def put(b, euler_local):
+            rot = b.matrix_local.to_3x3()
+            e = (rot @ Euler(euler_local, "XYZ").to_matrix() @ rot.inverted()).to_euler("XYZ")
+            spec[b.name] = tuple(round(math.degrees(x), 3) for x in e)
+
+        for f in FINGERS[1:]:
+            bones = [arm.data.bones[f"{f}_0{j}{sfx}"] for j in (1, 2, 3)]
+            out = []
+            ang, gaps = limits.wrap_chain([link(b) for b in bones], tuple(o), tuple(a), r,
+                                          clearance=GRIP_CLEAR, out=out)
+            posed[f] = out
             solved[f] = {"deg": [round(x, 1) for x in ang], "gap_mm": [round(g * 1000, 1) for g in gaps]}
-            for j, deg in zip((1, 2, 3), ang):
-                b = arm.data.bones[f"{f}_0{j}{sfx}"]
-                rest = b.matrix_local.to_3x3()
-                if f == "thumb" and j == 1:
-                    e = Matrix.Rotation(math.radians(deg), 3, axis).to_euler("XYZ")
-                else:
-                    e = (rest @ Matrix.Rotation(math.radians(deg), 3, "X") @ rest.inverted()).to_euler("XYZ")
-                spec[b.name] = tuple(round(math.degrees(x), 3) for x in e)
+            for b, deg in zip(bones, ang):
+                put(b, (math.radians(deg), 0.0, 0.0))
+        # The thumb: over the stock onto the index finger's middle phalanx, a finger's
+        # thickness out from the stock.
+        tb = [arm.data.bones[f"thumb_0{j}{sfx}"] for j in (1, 2, 3)]
+        c = np.mean(np.array(posed["index"][1]), axis=0)
+        rel = c - np.array(o)
+        u = rel - av * float(rel @ av)
+        target = tuple(c + u / np.linalg.norm(u) * THUMB_OVER)
+        lim = limits.limit(tb[0].name)
+        cmc = (tuple(lim["x"]), tuple(lim["y"]), tuple(lim["z"]))
+        e, ang, gaps, dist = limits.oppose_thumb([link(b) for b in tb], tuple(o), tuple(a), r, target, cmc,
+                                                clearance=GRIP_CLEAR)
+        put(tb[0], tuple(math.radians(v) for v in e))
+        for b, deg in zip(tb[1:], ang):
+            put(b, (math.radians(deg), 0.0, 0.0))
+        solved["thumb"] = {"cmc_xyz": list(e), "deg": [round(x, 1) for x in ang],
+                           "gap_mm": [round(g * 1000, 1) for g in gaps], "tip_mm": round(dist * 1000, 1)}
         st[f"solve{sfx}"] = solved
         st[f"stock{sfx}"] = {"diameter_mm": round(diameters[sd] * 1000, 1),
                              "from_knuckles_mm": round(float((o - mid).dot(zp)) * 1000, 1)}
+    return spec, axes, st
+
+
+def _prime(arm, body):
+    """Fills `_cache` from the rest body (`contact_grip`, or `grip_gaps` on a loaded file)."""
+    from . import limits
+
+    dom = _dominant(body)
+    _cache.update(dom=dom, co=np.array([v.co for v in body.data.vertices]), pads=_pads(body, arm, dom),
+                  clouds=_clouds(body, arm, dom),
+                  hand={k: v for k, v in dom.items() if limits.key_of(k)[0] and (
+                      k.startswith("hand_") or limits.key_of(k)[0].startswith(("finger", "thumb")))})
+
+
+def contact_grip(ctx, arm, body, diameters=STOCK):
+    """The musket grip by contact (docs/assets-humans.md "Contact grip"): each hand's stock is
+    a cylinder of its real diameter lying across the palm at the knuckles, along the grip
+    frame's axis (`grips.frame`); `socket.hand_[lr]` moves onto that axis with the grip
+    frame (as `grips.setup`), and the armature goes into grip mode with the right socket
+    held, so the clips turn the hand to the musket. Every finger then curls joint by joint,
+    within its limits, until its skin touches the cylinder (`limits.wrap_chain`), and the
+    thumb opposes round the far side (`limits.oppose_thumb`). Returns the pose spec; fills
+    ctx.stats["hd"]["grip"]; `fist_spec` then gives the closed fist."""
+    import bpy
+
+    st = ctx.stats.setdefault("hd", {}).setdefault("grip", {})
+    _prime(arm, body)
+    spec, axes, sst = _wrap_hands(arm, diameters, STOCK_BACK)
+    st.update(sst)
     bpy.context.view_layer.objects.active = arm
     bpy.ops.object.mode_set(mode="EDIT")
-    for name, (c, m) in want.items():
+    for sd, (c, fr) in axes.items():
+        name = f"socket.hand_{sd}"
+        m = fr @ arm.data.bones[name].matrix_local.to_3x3()
         eb = arm.data.edit_bones[name]
         eb.head, eb.tail = c, c + m.col[1] * 0.10
         eb.align_roll(m.col[2])
@@ -691,36 +752,72 @@ def contact_grip(ctx, arm, body, diameters=STOCK):
     arm["acr_grip"] = 1
     arm["acr_grip_held"] = ["socket.hand_r"]
     arm["acr_stock"] = dict(diameters)
-    st["pads_mm"] = {k: round(v * 1000, 1) for k, v in sorted(pads.items()) if k.endswith("_r")}
-    _hand_verts.clear()  # not an ID property: those export as glTF extras
-    _hand_verts.update({k: v for k, v in dom.items() if limits.key_of(k)[0] and (
-        k.startswith("hand_") or limits.key_of(k)[0].startswith(("finger", "thumb")))})
+    st["pads_mm"] = {k: round(v * 1000, 1) for k, v in sorted(_cache["pads"].items()) if k.endswith("_r")}
     return spec
 
 
-def grip_gaps(arm, body, side="r"):
-    """The posed skin of hand `side` against its stock (the cylinder round the item axis of
-    `socket.hand_<side>`, `acr_stock` diameter): per finger the worst of its phalanges'
-    closest approach (mm; pads touching = about 0, negative = inside), the palm's, the
-    deepest point and the vertices more than 1 mm inside."""
+def fist_spec(ctx, arm, diameters=FIST):
+    """The closed fist (after `contact_grip`): the fingers wrapped round a thin cylinder in
+    the palm, so they close side by side instead of passing through each other, the thumb
+    across the index finger. Fills ctx.stats["hd"]["fist"]."""
+    spec, _axes, st = _wrap_hands(arm, diameters)
+    ctx.stats.setdefault("hd", {})["fist"] = st
+    return spec
+
+
+PAIRS = (("thumb", "index"), ("index", "middle"), ("middle", "ring"), ("ring", "pinky"))
+
+
+def _crossing(co, nrm, a_idx, b_idx, depth=0.001, near=0.008):
+    """(count, deepest m) of the vertices of set a more than `depth` behind the surface of
+    set b (their nearest b vertex's normal), within `near` of it: skin inside a neighbour."""
+    if not len(a_idx) or not len(b_idx):
+        return 0, 0.0
+    A, B, NB = co[a_idx], co[b_idx], nrm[b_idx]
+    count, deepest = 0, 0.0
+    for k in range(0, len(A), 512):
+        blk = A[k:k + 512]
+        d2 = ((blk[:, None, :] - B[None, :, :]) ** 2).sum(-1)
+        j = d2.argmin(1)
+        dist = np.sqrt(d2[np.arange(len(blk)), j])
+        s = ((blk - B[j]) * NB[j]).sum(-1)
+        hit = (s < -depth) & (dist < near)
+        count += int(hit.sum())
+        if hit.any():
+            deepest = min(deepest, float(s[hit].min()))
+    return count, deepest
+
+
+def grip_gaps(arm, body, side="r", on=None, diameter=None):
+    """The posed skin of hand `side` against its stock: the cylinder of `diameter` (default
+    `acr_stock`) round the item axis of grip socket `on` (default `socket.hand_<side>`; the
+    left hand on the musket: `socket.hand_r` and the fore-end). Per finger and the thumb the
+    worst of its phalanges' closest approach (mm; touching = about 0, negative = inside),
+    the palm's, the deepest point, the vertices more than 1 mm inside, and `cross`: vertices
+    of each finger more than 1 mm inside its neighbour (thumb-index, index-middle, ...)."""
     import bpy
 
     from . import grips
 
+    if "hand" not in _cache:
+        _prime(arm, body)
     bpy.context.view_layer.update()
     dg = bpy.context.evaluated_depsgraph_get()
     ev = body.evaluated_get(dg)
     me = ev.to_mesh()
     co = np.empty(len(me.vertices) * 3)
+    nrm = np.empty(len(me.vertices) * 3)
     me.vertices.foreach_get("co", co)
+    me.vertices.foreach_get("normal", nrm)
     ev.to_mesh_clear()
-    co = co.reshape(-1, 3)
+    co, nrm = co.reshape(-1, 3), nrm.reshape(-1, 3)
     m = np.array(arm.matrix_world.inverted() @ body.matrix_world)
     co = co @ m[:3, :3].T + m[:3, 3]
-    o, z = grips.item_axis(arm, f"socket.hand_{side}")
+    nrm = nrm @ m[:3, :3].T
+    o, z = grips.item_axis(arm, on or f"socket.hand_{side}")
     o, z = np.array(o), np.array(z)
-    r = arm["acr_stock"][side] / 2
-    verts = {k: v for k, v in _hand_verts.items() if k.endswith("_" + side)}
+    r = (diameter if diameter is not None else arm["acr_stock"][side]) / 2
+    verts = {k: v for k, v in _cache["hand"].items() if k.endswith("_" + side)}
     rel = co - o
     dist = np.linalg.norm(rel - np.outer(rel @ z, z), axis=1) - r
     out = {}
@@ -733,6 +830,14 @@ def grip_gaps(arm, body, side="r"):
     allv = np.concatenate(list(verts.values()))
     out["deepest"] = round(float(dist[allv].min()) * 1000, 1)
     out["inside"] = int((dist[allv] < -0.001).sum())
+    fv = {f: np.concatenate([verts[n] for n in (f"{f}_0{j}_{side}" for j in (1, 2, 3)) if n in verts])
+          for f in FINGERS}
+    cross = {}
+    for f1, f2 in PAIRS:
+        n1, d1 = _crossing(co, nrm, fv[f1], fv[f2])
+        n2, d2 = _crossing(co, nrm, fv[f2], fv[f1])
+        cross[f"{f1}-{f2}"] = [n1 + n2, round(min(d1, d2) * 1000, 1)]
+    out["cross"] = cross
     return out
 
 
