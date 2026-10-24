@@ -104,6 +104,18 @@ class Panel:
             out.append(self.outline[k])
         return out
 
+    def u_on(self, edge, v):
+        """u of `edge` at height `v` (linear between its points; held at its ends past them).
+        `place["u0_edge"]` uses it: a slanted seam (a full breeches' inseam) stays on one
+        line of the limb at every height instead of wrapping round it."""
+        pts = sorted(self.edge_points(edge), key=lambda p: p[1])
+        if v <= pts[0][1]:
+            return pts[0][0]
+        for (u0, v0), (u1, v1) in zip(pts, pts[1:]):
+            if v <= v1:
+                return u0 + (u1 - u0) * ((v - v0) / (v1 - v0) if v1 > v0 else 1.0)
+        return pts[-1][0]
+
     def area(self):
         """Signed area (cm², positive counter-clockwise)."""
         a = 0.0

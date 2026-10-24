@@ -301,9 +301,16 @@ def support_spec(md, weapon, palette=None, hat="pike_broad", **kw):
 
 
 def pikeman_spec(md, palette=None, hat="pike_morion", **kw):
-    """The pikeman: helmet, back and breast with tassets, a sword at the left hip, the pike."""
+    """The pikeman: helmet, back and breast with tassets, a sword at the left hip, the pike.
+    `coat_pattern` "waugh/buffcoat_1640" (Diagram IX), `breeches_pattern`: traced garments in
+    place of the drafted buff coat or breeches (docs/clothing.md "Traced patterns")."""
     pal = _palette(palette)
-    _drape(kw, PIKEMAN_DRAPE)
+    swap = {}
+    for key, slot in (("coat_pattern", "buffcoat"), ("breeches_pattern", "breeches")):
+        rel = kw.pop(key, None)
+        if rel:
+            swap[slot] = traced_garment(rel, slot)
+    _drape(kw, tuple(swap.get(g, g) for g in PIKEMAN_DRAPE))
     s = line.spec(md, palette=pal, hat=hat, gear=("falling_band", "pike_corselet", "off_scabbard"),
                   fixed=FIXED + tuple(kw.pop("fixed", ())), **kw)
     s["weapon"] = "pike"

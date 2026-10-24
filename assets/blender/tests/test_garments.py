@@ -290,6 +290,14 @@ class Traced(unittest.TestCase):
         self.assertAlmostEqual(panels["front"].outline[2][0], 25 * (1.0 + (120 / 100 - 1.0) * 0.5))
         self.assertAlmostEqual(panels["front"].outline[1][0], 25.0)
 
+    def test_u_on_an_edge_follows_its_slant(self):
+        p = gm.Panel("leg", "t", "t", [(0, -50), (20, -50), (20, 10), (-20, 10), (-20, 0)],
+                     {"hem": (0, 1), "inseam": (4, 0)}, {"region": "leg", "u0_edge": "inseam"})
+        self.assertAlmostEqual(p.u_on("inseam", -50), 0.0)
+        self.assertAlmostEqual(p.u_on("inseam", -25), -10.0)
+        self.assertAlmostEqual(p.u_on("inseam", 5), -20.0)  # held past the crotch
+        self.assertAlmostEqual(p.u_on("inseam", -60), 0.0)
+
     def test_bad_patterns_are_refused(self):
         clockwise = synthetic_pattern()
         clockwise["panels"][0]["outline"].reverse()

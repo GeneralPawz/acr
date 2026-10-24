@@ -804,7 +804,24 @@ deskewed by -0.95 deg; 64.0 px/in. Front, back and the waist band; eight seams. 
 (1.6x) is gathered into the band (seam ease 0.75). The leg runs 57 cm from the crotch to the
 hem, worn bloused and gathered at the knee: v below the crotch is graded so the hem lands
 1 cm below the knee; widths and the rise are `fixed` (about 28 cm over the thigh; no rise
-measure yet). The waist band is pinned. Padding and pockets are not cut.
+measure yet). The waist band is pinned. Padding and pockets are not cut. The front's CF
+curve follows the panel's own (inner) edge; the outer line with cross ticks is the fly strip.
+The inseam slants about 20 cm across each panel from hem to crotch: the leg panels set
+`place["u0_edge"]: "inseam"` (`Panel.u_on`, `drape.place`), so u is measured from the inseam
+at every height and the seam stays on the inner leg instead of wrapping round the thigh
+(inseam gap 83 -> 30 mm, welded 123/131 -> 131/133). Breeches under a doublet are hidden
+4 mm under it (`line.make`, like the shirt): the gathered band no longer pushes the doublet
+out (drafted EngMus too: 258/200 -> 261/188).
+
+**Waugh Diagram IX** (book p. 26, PDF p. 15, lower half), buff leather doublet c. 1640
+(Masner), for EngPik behind `engpik.COAT_PATTERN` (`pike.pikeman_spec(..., coat_pattern=
+"waugh/buffcoat_1640")`, in place of the drafted `buffcoat`). Same ruler as VIII. Front and
+back cut in one with flared skirts (drawn overlapping at the side; the side seam sewn to the
+hem, the back's small step at the waist kept), the CF laced to the waist (`close`) and open
+below, the CB sewn to the waist with a vent below, the folded one-piece sleeve straightened
+as in VIII (keyed `dsleeve`: cloth sleeves under the armour; buff in the original). No
+collar. Wearer: chest 86, waist 85 (straight body), back 39 cm with a 5 cm `lift`; ease 16;
+skirt 32 cm below the waist.
 
 Numbers on EngMus (VM, 24 Oct 2026; drafted garments in brackets):
 
@@ -821,6 +838,13 @@ Numbers on EngMus (VM, 24 Oct 2026; drafted garments in brackets):
 | traced doublet, sleeve weights smoothed 3 passes (`drape.sleeve_weights`) | | | 236 / 229 | |
 | same, smoothed 6 / 12 passes | | | 235 / 242, 236 / 249 | |
 | same, arm proxy 2 cm out, no smoothing / 3.5 cm and 8 passes | | | 237 / 251, 235 / 242 | |
+| round 5: drafted, breeches hidden under the doublet | 193/201, 118/128 | 110, 94 | 261 / 188 | |
+| round 5: traced breeches (CF retraced, `u0_edge`) | 131/133 | 64 (band) | 298 / 209 | |
+| round 5: traced doublet + breeches | 234/234, 131/133 | 28, 64 (band) | 322 / 212 | |
+
+Numbers on EngPik (round 5): drafted buff coat welded 175/187, `gap_mm_max` 89, 241 / 310;
+traced Diagram IX 136/136, 32 (sleeve head), 253 / 310 (skin through the buff 70/43 -> 35/23,
+cloth sleeves through the buff 22/13 -> 46/35); `gear_volume` 0 closed items in both.
 
 The waist band must be pinned (`place.pin` "top": tied to the doublet with points): unpinned,
 the full breeches slid down into a puff at the knee, with bare thighs. That failed drape still

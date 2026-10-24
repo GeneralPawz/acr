@@ -518,7 +518,10 @@ def place(body, panel, uv):
         else:
             r = body.limb_radius(bones, p, a, b)
         r += gap
-        t = th0 + sgn * (u - u0) / 100.0 / r
+        # `u0_edge`: u measured from that edge at this height (the traced breeches' inseam
+        # slants 20 cm across the panel: measured from u0 it wraps round the thigh).
+        ue = panel.u_on(pl["u0_edge"], v) if pl.get("u0_edge") else u0
+        t = th0 + sgn * (u - ue) / 100.0 / r
         out.append((p[0] + math.sin(t) * r, p[1] - math.cos(t) * r, z))
         axis.append((p[0], p[1], z))
     return out, axis
