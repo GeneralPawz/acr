@@ -158,6 +158,7 @@ impl Mesh {
             stump: false,
             tissue: Tissue::None,
             tint: Default::default(),
+            face_tiles: 1,
             finish: Default::default(),
             surface: Default::default(),
         };
