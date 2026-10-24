@@ -131,7 +131,8 @@ pub fn skeleton_h() -> Vec<BoneDesc> {
                 wrist,
                 0.04,
                 0.016,
-                Hinge { flex: FWD, lo: 0.0, hi: 145.0 },
+                // Elbow: `forearm` of assets/blender/data/joint_limits.json (AAOS 0-150).
+                Hinge { flex: FWD, lo: 0.0, hi: 150.0 },
                 arm,
             ),
             bone(
@@ -161,7 +162,8 @@ pub fn skeleton_h() -> Vec<BoneDesc> {
                 [hx * 1.05, 0.02, 0.085],
                 0.05,
                 0.0465,
-                Hinge { flex: BACK, lo: 0.0, hi: 150.0 },
+                // Knee: `shin` of joint_limits.json (AAOS 0-135; flexion is -X there).
+                Hinge { flex: BACK, lo: 0.0, hi: 140.0 },
                 leg,
             ),
             bone(
@@ -685,5 +687,33 @@ mod tests {
         assert_eq!(s.len(), 22);
         let sum: f32 = s.iter().map(|b| b.mass_fraction).sum();
         assert!((sum - 1.0).abs() < 1e-4, "{sum}");
+    }
+
+    /// `[lo, hi]` of axis `ax` of bone `key` in the asset pipeline's joint-limit table.
+    fn table_range(key: &str, ax: &str) -> [f32; 2] {
+        let json = include_str!("../../../assets/blender/data/joint_limits.json");
+        let at = json.find(&format!("\"{key}\": {{")).expect(key);
+        let rest = &json[at..];
+        let i = rest.find(&format!("\"{ax}\": [")).expect(ax) + ax.len() + 5;
+        let j = rest[i..].find(']').unwrap() + i;
+        let v: Vec<f32> = rest[i..j].split(',').map(|x| x.trim().parse().unwrap()).collect();
+        [v[0], v[1]]
+    }
+
+    /// Elbows and knees bend as far as the Blender rig's limits allow (one table:
+    /// assets/blender/data/joint_limits.json, docs/assets-humans.md "Joint limits").
+    #[test]
+    fn hinges_match_the_asset_limits() {
+        let s = skeleton_h();
+        let hinge = |name: &str| match s.iter().find(|b| b.name == name).unwrap().joint {
+            JointSpec::Hinge { lo, hi, .. } => [lo, hi],
+            j => panic!("{name}: {j:?}"),
+        };
+        for side in ["l", "r"] {
+            assert_eq!(hinge(&format!("forearm_{side}")), table_range("forearm", "x"));
+            // The knee flexes about -X in the rig's frame: the table's range negated.
+            let [lo, hi] = table_range("shin", "x");
+            assert_eq!(hinge(&format!("shin_{side}")), [-hi, -lo]);
+        }
     }
 }

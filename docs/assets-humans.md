@@ -649,7 +649,7 @@ root (ground point, no deform)
 └ hips ─ spine ─ spine1 ─ spine2 ─ neck ─ head ─ socket.hat
   │                         ├ socket.back
   │                         └ clavicle_[lr] ─ upperarm ─ forearm ─ hand ─ socket.hand_[lr]
-  │                                                               ├ thumb_01..03
+  │                                                               ├ thumb_01..03 (metacarpal, MCP, IP)
   │                                                               └ index/middle/ring/pinky_01..03
   ├ thigh_[lr] ─ shin ─ foot ─ toe
   ├ socket.hip_l (bayonet/sword)   socket.hip_r (cartridge box)
@@ -665,6 +665,55 @@ Bone rolls are deterministic but not yet matched to a particular BVH convention:
 must go through rest-pose world rotations (as Blender's retarget tools and `armature.pose` do).
 `armature.pose()` takes Euler angles about the *armature* axes of the rest pose (relative to the
 parent), which made the poses readable without caring about rolls.
+
+### Joint limits (`acr_assets/limits.py` pure, `assets/blender/data/joint_limits.json`; m2-joint-limits)
+
+One table of anatomical ranges for every deforming bone of skeleton H, in the bone's local
+Euler XYZ relative to rest, left side given and the right mirrored (x the same, y and z
+negated). Sources: AAOS "Joint Motion: Method of Measuring and Recording" and Norkin & White,
+"Measurement of Joint Motion" (5th ed.). Local frames: Y along the bone; vertical bones +Z
+forward, level bones +Z up; **fingers and thumb +Z palmar** (`armature._roll_axis`,
+`hdbody._refit_fingers`), so flexion is +X on both hands. Finger MCP −20..90° with ±20°
+abduction, PIP −5..100°, DIP −5..80°; thumb CMC (`thumb_01` is the first metacarpal, from
+MakeHuman's `finger-1-1`) −20..50° flexion, −20..60° abduction, −15..45° opposition twist, MCP
+−10..60°, IP −15..80°; elbow 0..150°, knee 0..140° (−X is flexion there; no hyperextension past the 5° tolerance), wrist 80°/70°
+flexion/extension; the shoulder is a 155° swing cone with ±90° twist; hips are free (deaths
+lie the body down). Tolerance 5°.
+
+- **In the rig:** `armature.build` adds LIMIT_ROTATION constraints (local space) on the
+  finger and thumb bones; `armature.pose` clamps every finger and thumb key to the table.
+  `build.py` strips the constraints before the export (the exporter would bake every
+  constrained channel); the `.blend` keeps them.
+- **Audit:** `build.py` checks every frame of every clip of each skeleton-H armature
+  (`armature.audit_limits`, F-curves, riders' and crews' prefixed bones only) into
+  `stats.json` `limits` = `{frames, violations, worst, by_bone}`. `test_limits.Clips` fails
+  on any finger or thumb violation in the built `hdman`, `engm18`, `delkri`, `engd18`.
+- **Ragdoll:** `ragdoll::skeleton_h` takes the elbow and knee hinges from the same table;
+  its test `hinges_match_the_asset_limits` reads the JSON.
+- **Open (m2-joint-limits, first slice):** the arm clips break the limits widely. engm18:
+  4439 violations in 1439 frames, worst forearm_r 171° (ATTACK1), hand_r 158°, hand_l 158°
+  (grip mode turns the hand freely to the musket: forearm twist lands in the wrist); delkri
+  2954, engd18 1920 (rider forearms 170°), spine up to 26° past its per-segment range in
+  the reload. The arm IK (`aim._solve`, `grips.turn_hand`) must solve within the table
+  before the constraints can be active on arms.
+
+### Contact grip (`hdbody.contact_grip`, `hdbody.grip_gaps`; m2-joint-limits)
+
+The HD body's musket grip by contact instead of fixed curl angles: each hand's stock is a
+cylinder of the real diameter (`hdbody.STOCK`: wrist of the stock 36 mm right, fore-stock
+40 mm left) across the palm at the knuckle line along the grip frame's axis
+(`grips.frame`), pushed out until the rest skin of the palm just touches it.
+`socket.hand_[lr]` move onto that axis with the grip frame (as `grips.setup`) and the
+armature goes into grip mode with the right socket held, so the clips turn the hand to the
+musket. Each finger chain then flexes joint by joint about its local X, within the table,
+until its measured pad (`_pads`: the palmar skin's distance from the bone) touches the
+cylinder (`limits.wrap_chain`); the thumb's metacarpal swings straight towards the stock
+at the CMC (≤50°) before MCP and IP flex. `grip_gaps` measures the posed skin against the
+cylinder into `stats.json` `hd.grip` (per finger the worst phalanx's closest approach in
+mm, the palm, the deepest point, vertices >1 mm inside), for the old fixed curl
+(`STAND_before`) and the contact grip in STAND, FIRE_AIMED, FIRE_HIP (identical by
+construction: the stock is fixed in the hand). `tools/hand_closeups.py` renders the hand
+open, in a fist at the limits and on the stock.
 
 ## 3. Layers
 

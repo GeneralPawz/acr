@@ -26,7 +26,11 @@ def build(ctx):
     arm = am.build(f"{ctx.name}.rig", rig.skeleton_h(), parent=ctx.root)
     body, eyes, cage = hdbody.build_master(ctx, arm, os.path.join(hdbody._sources(), PORTRAIT))
     lods = hdbody.build_lods(ctx, body, cage, arm)
-    grip = hdbody.grip_spec(arm)
+    # The contact grip (docs/assets-humans.md "Contact grip"): the sockets move onto the
+    # stock's axis in the fist and the fingers wrap it; the fixed-angle curl it replaced is
+    # measured on the same stock as the baseline.
+    old_grip = hdbody.grip_spec(arm)
+    grip = hdbody.contact_grip(ctx, arm, body)
     # The two-handed holds IK-solved on this body, so FIRE_AIMED, FIRE_HIP and the reload
     # exist (and get the grip) as on the line musketeer.
     aim = aiming.hold(arm, poses.AIM_MUSKET)
@@ -43,6 +47,16 @@ def build(ctx):
     ctx.stats["triangles"] = {"master": ctx.stats["hd"]["master_tris"]}
     am.set_clip(arm, "STAND")
     arm.animation_data.action = None
+    gst = ctx.stats["hd"]["grip"]
+    am.pose(arm, {**poses.STAND_MUSKET, **old_grip})
+    gst["STAND_before"] = hdbody.grip_gaps(arm, body)
+    for clip in ("FIRE_AIMED", "FIRE_HIP"):
+        if clip in clips:
+            frames = [f for f, _s in clips[clip]]
+            am.set_clip(arm, clip, frames[len(frames) // 2])
+            gst[clip] = hdbody.grip_gaps(arm, body)
+            arm.animation_data.action = None
     am.pose(arm, {**poses.STAND_MUSKET, **grip})
+    gst["STAND"] = hdbody.grip_gaps(arm, body)
     for level, ob in enumerate(lods, 1):  # authored levels in the glb (docs/rendering-3d.md)
         ob["acr_lod"] = level

@@ -27,12 +27,113 @@ def build(name, table, parent=None):
         eb.head, eb.tail = Vector(b.head), Vector(b.tail)
         eb.use_deform = b.deform
         d = (eb.tail - eb.head).normalized()
-        eb.align_roll(Vector((0, -1, 0)) if abs(d.z) > 0.7 else Vector((0, 0, 1)))
+        eb.align_roll(_roll_axis(b.name, d))
         if b.parent:
             eb.parent = arm.edit_bones[b.parent]
             eb.use_connect = (eb.parent.tail - eb.head).length < 1e-4
     bpy.ops.object.mode_set(mode="OBJECT")
+    apply_limits(obj)
     return obj
+
+
+HAND_BONES = ("thumb_", "index_", "middle_", "ring_", "pinky_")
+
+
+def _clamp(bone, q):
+    """`q` (local) with its Euler XYZ angles clamped to `bone`'s limits (fingers and thumb:
+    every authored hand pose stays anatomical)."""
+    from . import limits
+
+    lim = limits.limit(bone)
+    if lim is None or lim["kind"] not in ("euler", "hinge"):
+        return q
+    e = q.to_euler("XYZ")
+    for i, ax in enumerate("xyz"):
+        lo, hi = (math.radians(v) for v in lim[ax])
+        e[i] = min(hi, max(lo, e[i]))
+    return e.to_quaternion()
+
+
+def _roll_axis(name, d):
+    """The direction local +Z takes (`limits`): palmar for finger and thumb bones (towards
+    the thigh, so flexion is +X on both hands), else forward for vertical bones and up for
+    level ones."""
+    from . import limits
+
+    key, side = limits.key_of(name)
+    if key and key.startswith(("finger_", "thumb_")):
+        n = Vector((1.0 if side == "r" else -1.0, 0.0, 0.0))
+        return n - d * n.dot(d)
+    return Vector((0, -1, 0)) if abs(d.z) > 0.7 else Vector((0, 0, 1))
+
+
+def apply_limits(arm_obj, hands_only=True):
+    """LIMIT_ROTATION constraints (local space, `limits` table) on the deforming bones of
+    skeleton H in `arm_obj`: by default on the finger and thumb bones only (the clips of the
+    other bones are audited, not clamped: `audit_limits`). Cone bones get none."""
+    from . import limits
+
+    n = 0
+    for pb in arm_obj.pose.bones:
+        key, _side = limits.key_of(pb.name)
+        lim = limits.limit(pb.name)
+        if lim is None or lim["kind"] not in ("euler", "hinge"):
+            continue
+        if hands_only and not key.startswith(("finger_", "thumb_")):
+            continue
+        c = pb.constraints.new("LIMIT_ROTATION")
+        c.name = "acr_limit"
+        c.owner_space = "LOCAL"
+        c.euler_order = "XYZ"
+        for ax in "xyz":
+            lo, hi = lim[ax]
+            setattr(c, f"use_limit_{ax}", True)
+            setattr(c, f"min_{ax}", math.radians(lo))
+            setattr(c, f"max_{ax}", math.radians(hi))
+        n += 1
+    return n
+
+
+def audit_limits(arm_obj):
+    """Every frame of every clip of `arm_obj` against the joint limits (`limits.excess`,
+    beyond the table's tolerance), read from the actions' F-curves: {"frames", "violations",
+    "worst": [clip, bone, frame, degrees], "by_bone": {bone: [count, max degrees]}}."""
+    from . import limits
+
+    tol = limits.table()["tolerance_deg"]
+    bones = [b.name for b in arm_obj.data.bones if b.use_deform and limits.limit(b.name)]
+    # A rider's or crew's skeleton shares the armature with a horse or gun: only its bones.
+    if any(b.startswith(limits.PREFIXES) for b in bones):
+        bones = [b for b in bones if b.startswith(limits.PREFIXES)]
+    frames = viol = 0
+    worst = None
+    by_bone = {}
+    for clip in arm_obj.get("acr_clips", []):
+        act = bpy.data.actions.get(clip)
+        if act is None:
+            continue
+        curves = {}
+        for fc in _fcurves(act):
+            if fc.data_path.endswith("rotation_quaternion"):
+                curves.setdefault(fc.data_path.split('"')[1], {})[fc.array_index] = fc
+        f0, f1 = (int(round(v)) for v in act.frame_range)
+        for f in range(f0, f1 + 1):
+            frames += 1
+            for b in bones:
+                fc = curves.get(b)
+                if not fc:
+                    continue
+                q = tuple(fc[i].evaluate(f) if i in fc else (1.0 if i == 0 else 0.0) for i in range(4))
+                e = limits.excess(b, q)
+                if e is None or e <= tol:
+                    continue
+                viol += 1
+                cnt, mx = by_bone.get(b, (0, 0.0))
+                by_bone[b] = [cnt + 1, round(max(mx, e), 1)]
+                if worst is None or e > worst[3]:
+                    worst = [clip, b, f, round(e, 1)]
+    return {"frames": frames, "violations": viol, "worst": worst,
+            "by_bone": dict(sorted(by_bone.items()))}
 
 
 def segments(arm_obj):
@@ -65,6 +166,8 @@ def pose(arm_obj, spec, frame=None, prefix="", keyed=None):
         rest = pb.bone.matrix_local.to_3x3()
         r = spec.get(key)
         q = Quaternion() if r is None else (rest.inverted() @ euler(r) @ rest).to_quaternion()
+        if r is not None and key.startswith(HAND_BONES):
+            q = _clamp(key, q)
         pb.rotation_mode = "QUATERNION"
         pb.rotation_quaternion = q
         pb.location = (0, 0, 0)

@@ -35,6 +35,32 @@ class Context:
         self.refs = {}
 
 
+def _audit_limits(ctx):
+    """Every clip of every skeleton-H armature against the joint limits (`armature.
+    audit_limits`, docs/assets-humans.md "Joint limits") into ctx.stats["limits"]."""
+    import bpy
+
+    from acr_assets import armature, limits
+
+    out = None
+    for ob in sorted(bpy.data.objects, key=lambda o: o.name):
+        if ob.type != "ARMATURE" or not ob.get("acr_clips"):
+            continue
+        if not any(limits.key_of(b.name)[0] == "forearm" for b in ob.data.bones):
+            continue
+        a = armature.audit_limits(ob)
+        if out is None:
+            out = a
+            continue
+        out["frames"] += a["frames"]
+        out["violations"] += a["violations"]
+        out["by_bone"].update(a["by_bone"])
+        if a["worst"] and (out["worst"] is None or a["worst"][3] > out["worst"][3]):
+            out["worst"] = a["worst"]
+    if out is not None:
+        ctx.stats["limits"] = out
+
+
 def main(argv):
     p = argparse.ArgumentParser(prog="build.py")
     p.add_argument("asset")
@@ -67,12 +93,22 @@ def main(argv):
         print("ACR warning: string hashes are randomised; run through `cargo xtask assets` "
               "(PYTHONHASHSEED=0 --python-use-system-env) for a repeatable build")
     module.build(ctx)
+    _audit_limits(ctx)
     for k, v in BUILD_STATS.items():
         ctx.stats.setdefault(k, v)
     if a.blend:
         import bpy
 
         bpy.ops.wm.save_as_mainfile(filepath=os.path.abspath(a.blend))
+    # The limit constraints (`armature.apply_limits`) stay in the .blend; the clips already
+    # respect them, and the exporter would bake every constrained bone's channels.
+    import bpy
+
+    for ob in bpy.data.objects:
+        if ob.type == "ARMATURE":
+            for pb in ob.pose.bones:
+                for c in [c for c in pb.constraints if c.name.startswith("acr_limit")]:
+                    pb.constraints.remove(c)
     size = export.export_glb(os.path.abspath(a.out), a.compress, getattr(module, "IMAGE_FORMAT", "AUTO"))
     ctx.stats["glb_bytes"] = size
     if export.LAST_PACK:
