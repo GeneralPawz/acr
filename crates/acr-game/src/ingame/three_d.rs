@@ -266,6 +266,8 @@ pub struct ThreeD {
     water_view: super::water_view::WaterView,
     /// Earth, dust, mud and water thrown into the air (docs/ground.md phase 3).
     particles: super::particle_view::ParticleView,
+    /// Shell fires and burning men (#256): flames, smoke, scorch; the burn amount.
+    fire: super::fire_view::FireView,
     particle_renderer: Option<acr_render::particles::ParticleRenderer>,
     /// Rain, snow or fog (#224, `weather` setting; the driver's `weather` overrides it).
     weather: Weather,
@@ -382,6 +384,7 @@ impl Default for ThreeD {
             water: None,
             water_view: Default::default(),
             particles: Default::default(),
+            fire: Default::default(),
             particle_renderer: None,
             weather: Weather::Off,
             weather_override: None,
@@ -1328,6 +1331,15 @@ impl ThreeD {
                 &self.shots,
                 &mut ring,
             );
+            let rain = self.weather() == Weather::Rain;
+            self.fire.update(
+                world,
+                terrain,
+                &mut self.particles.particles,
+                marks.as_deref_mut().map(|m| &mut m.state),
+                self.frame_seconds,
+                rain,
+            );
         }
         self.shots.clear();
         if let Some(m) = marks {
@@ -1674,6 +1686,13 @@ impl ThreeD {
 }
 
 impl ThreeD {
+    /// How charred unit `index` is (0..1): grows while he burns, stays on the corpse of the
+    /// burned (`fire_view.rs`). For the model's burn tint (#207).
+    #[allow(dead_code)]
+    pub fn burn(&self, index: u32) -> f32 {
+        self.fire.burn(index)
+    }
+
     /// The weather drawn: the driver's override, else the setting.
     pub fn weather(&self) -> Weather {
         self.weather_override.unwrap_or(self.weather)

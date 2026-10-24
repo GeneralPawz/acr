@@ -1264,7 +1264,8 @@ tenth of its life (so it never burns to death), and a unit that dies burning is 
 - The fires are part of the state hash only while some burn (`Body::burn` only while not
   0). They are not saved: savegames replay their commands and the fires come back.
 - 2D draws three flames of the burning-building loop (`[FIRES]` `#DFIRE2`) per fire, fewer
-  as it burns down (`effects::ground_fire_sprites`, sprite path; not checked in the 3D view).
+  as it burns down (`effects::ground_fire_sprites`, sprite path); the 3D view draws flames, smoke and a
+  scorched patch (`docs/rendering-3d.md` "Fire: shell fires and burning men").
 - A soldier already burning from an `X`/`F` weapon when a shell fire catches him keeps
   `Unit::burning` after his 5 s are up (`Body::burn_kept`): the original's flag never goes
   out. The renderer shows a burning man by `Unit::burning` (and `Body::burn`, the seconds

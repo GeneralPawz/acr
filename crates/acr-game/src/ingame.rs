@@ -29,6 +29,7 @@ mod debris;
 mod dip;
 mod editor;
 mod effects;
+mod fire_view;
 mod gait_view;
 mod gear_view;
 mod gore;

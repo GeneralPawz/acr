@@ -43,12 +43,32 @@ pub enum ParticleKind {
     /// A scrap of flesh or bone from a body torn by a ball (#262): a lumpy impostor like a
     /// clod, tinted by its burst, that lies a while without marking the ground.
     Gore = 8,
+    /// A tongue of flame (#256 fires): rises fast, flickers, gone in a fraction of a second.
+    /// Emissive, added to what is behind it.
+    Flame = 9,
+    /// A glowing ember: a spark that drifts up and winks out. Emissive.
+    Ember = 10,
+    /// Smoke of a fire: a dark (in rain pale) puff that rises, grows a lot and hangs.
+    Smoke = 11,
+    /// The light a fire throws on the ground and on what stands in it: a faint warm disc
+    /// that does not move, re-emitted while the fire burns. Emissive.
+    Glow = 12,
 }
 
 impl ParticleKind {
     /// Soft kinds blend without writing depth, after the hard ones.
     pub fn soft(self) -> bool {
-        matches!(self, Self::Dust | Self::Spray)
+        matches!(self, Self::Dust | Self::Spray | Self::Smoke) || self.emissive()
+    }
+
+    /// Fire light: drawn after the other soft kinds, added rather than laid over.
+    pub fn emissive(self) -> bool {
+        matches!(self, Self::Flame | Self::Ember | Self::Glow)
+    }
+
+    /// Soft kinds that float and never sink into the ground.
+    fn floats(self) -> bool {
+        matches!(self, Self::Dust | Self::Smoke | Self::Flame | Self::Ember | Self::Glow)
     }
 
     /// Velocity lost per second (fraction).
@@ -63,6 +83,10 @@ impl ParticleKind {
             Self::Droplet => 0.5,
             Self::Splinter => 0.4,
             Self::Gore => 0.2,
+            Self::Flame => 2.5,
+            Self::Ember => 1.2,
+            Self::Smoke => 1.1,
+            Self::Glow => 20.0,
         }
     }
 
@@ -71,6 +95,11 @@ impl ParticleKind {
             // Warm dust hangs and rises a little.
             Self::Dust => -6.0,
             Self::Spray => GRAVITY * 0.7,
+            // Hot gas: flames lick up, sparks and smoke ride the plume.
+            Self::Flame => -90.0,
+            Self::Ember => -30.0,
+            Self::Smoke => -18.0,
+            Self::Glow => 0.0,
             _ => GRAVITY,
         }
     }
@@ -286,10 +315,12 @@ impl Particles {
             let keep = (1.0 - kind.drag() * dt).max(0.0);
             p.vel = math::scale(p.vel, keep);
             p.pos = math::add(p.pos, math::scale(p.vel, dt));
-            if kind == ParticleKind::Dust {
-                // Dust floats: it never sinks into the ground.
+            if kind.floats() {
+                // Dust, smoke and fire float: they never sink into the ground (the glow lies
+                // on it).
                 let floor = ground(p.pos[0], p.pos[1]);
-                p.pos[2] = p.pos[2].max(floor + p.size * 0.5);
+                let lift = if kind == ParticleKind::Glow { 1.0 } else { p.size * 0.5 };
+                p.pos[2] = p.pos[2].max(floor + lift);
                 p.clear = p.pos[2] - floor;
                 continue;
             }
@@ -335,19 +366,32 @@ impl Particles {
         self.landings.drain(..)
     }
 
-    /// Fills this frame's instances (hard kinds first), returning them.
+    /// Fills this frame's instances (hard kinds first, fire light last), returning them.
     pub fn instances(&mut self) -> &[Instance] {
         self.instances.clear();
-        for soft in [false, true] {
-            if soft {
+        for group in 0..3u8 {
+            let soft = group > 0;
+            if group == 1 {
                 self.soft_from = self.instances.len();
             }
-            for p in self.pool.iter().filter(|p| p.kind.soft() == soft) {
+            for p in self.pool.iter().filter(|p| p.kind.soft() == soft && (group == 2) == p.kind.emissive()) {
                 let t = p.age / p.life.max(1e-3);
                 let (size, alpha) = match p.kind {
                     // Grows as it spreads, fades in quickly and out slowly.
                     ParticleKind::Dust => (p.size * (1.0 + 1.6 * t.sqrt()), (t * 8.0).min(1.0) * (1.0 - t)),
                     ParticleKind::Spray => (p.size * (1.0 + 0.8 * t), (1.0 - t) * (1.0 - t)),
+                    ParticleKind::Smoke => (p.size * (1.0 + 3.0 * t.sqrt()), (t * 6.0).min(1.0) * (1.0 - t)),
+                    // A tongue swells, then shrinks to its tip as it burns out.
+                    ParticleKind::Flame => {
+                        (p.size * (0.55 + 0.9 * (t * std::f32::consts::PI).sin()), (1.0 - t * t).max(0.0))
+                    }
+                    // Sparks twinkle.
+                    ParticleKind::Ember => {
+                        let wink = 0.6 + 0.4 * (p.age * 23.0 + f32::from(p.seed)).sin();
+                        (p.size, (1.0 - t) * wink)
+                    }
+                    // Fades in and out, so two overlapping glows give a steady flicker.
+                    ParticleKind::Glow => (p.size, (t * std::f32::consts::PI).sin()),
                     // Hard kinds shrink away in the last second instead of fading.
                     _ => (p.size * ((p.life - p.age) / 1.0).min(1.0), 1.0),
                 };

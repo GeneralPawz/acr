@@ -1048,6 +1048,51 @@ the vertex texture: up to `TRAMPLE_DARKEN` (10) levels darker through the origin
 darkness table, with a ragged edge from per-vertex noise; bright textures (light 0, water)
 stay. Not saved: a loaded game starts with fresh ground.
 
+#### Fire: shell fires and burning men (#256)
+
+`ingame/fire_view.rs` (`FireView`, called from `ThreeD::update_particles` after the impact
+particles, only with models on) draws fire from the simulation's state, render only:
+
+- **Shell fires** (`World::ground_fires`, rule `hit_locations`): per fire 40 flames, 10
+  embers, 4 glows and 6 smoke puffs a second (emission carried over between frames, so it
+  does not depend on the frame rate), flaring up over 2 s and dying down over the last 6 s
+  of its 30 s; smoke goes on at a quarter while it dies. Flames scatter over 0.75 of its
+  radius.
+- **Scorch:** once a second over a fire's first 10 s four overlapping ellipses go into the
+  ground state's scorch channel, from 0.25 to 1.0; scorch is never faded, so the black
+  patch stays after the fire (detailed ground only, like craters).
+- **Burning men** (`Unit::burning`: shell fires and the original's `X`/`F` weapons, whose
+  flag never goes out): three bands of flames over his height (legs, chest, head; 2.4 m tall
+  on horseback), embers, a glow at his feet and smoke from his head. The particles stay in
+  the world, so a walking man leaves a trail of flames and smoke. The corpse of a man who
+  died burning (`DeathCause::Burned`) keeps low flames along his length for 8 s and
+  smoulders for 40 s.
+- **Burn amount for the tint (#207):** `ThreeD::burn(unit index)` / `FireView::burn`, 0..1:
+  grows by 1/8 a second while he burns and stays; a burned corpse is at least 0.6. The
+  model tint itself is #207's (corpses already char by cause, table above).
+- **Rain** (`weather`): flames 0.6 times as large and as many, twice the smoke, pale grey
+  (steam) instead of dark.
+- **Particles** (`acr_render::particles`): new kinds `Flame` (rises at 90 px/s², a
+  teardrop of noise from white-yellow root to dull red tip), `Ember` (a twinkling spark),
+  `Glow` (a still, faint warm disc on the ground: the fire's light, cheaper than a point
+  light) and `Smoke` (like dust, but rises, grows to four times its size and uses an
+  arithmetic hash, as `sin` hashes of large arguments show blocks on dark smoke). The three
+  emissive kinds are drawn last of the soft kinds, premultiplied with a small alpha, so
+  they mostly add light. Variety from hashes of the fire or unit and an emission counter.
+- The driver's `impact` with `"cause": "shell", "by": <mortar>` also starts the shell fire
+  (`ground_fire::shell_burst`), so a line of fires can be set without waiting for mortars.
+
+Cost, RX 9060 XT, blank grass field, 10 shell fires 45 px apart in a line with two men
+walking through (`ACR-analysis/genai/fire/scripts/perf.json`), zoom 1, 1600x900:
+
+| | particles pass | all passes | `3d.particles` CPU |
+|---|---|---|---|
+| 10 fires burning (two runs of 30 frames) | 0.21, 0.30 ms | 0.84, 0.95 ms | 0.034 ms/frame |
+| the same field after they burnt out | 0.02 ms | 0.76, 0.67 ms | 0.001 ms/frame |
+
+Open: flames on the bones (spine, limbs) of the posed model instead of bands over his
+height; real point lights; burning men panicking (sim, follow-up).
+
 ## Camera math
 
 World coordinates of the 3D path are world pixels: `x` east, `y` south, `z` up as a true

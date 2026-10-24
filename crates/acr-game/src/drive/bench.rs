@@ -243,7 +243,8 @@ pub fn hit(game: &mut Game, v: &Value) -> Result<Value, String> {
 /// round striking the ground (or water) at world pixel `at` and hitting no one, as a missed
 /// shot is recorded (`World::impacts`, render only): craters, furrows and earth fountains can
 /// be filmed without casualties. `dir` is the flight direction (default east), `speed` the
-/// ball's speed in px per tick (default 12).
+/// ball's speed in px per tick (default 12). A shell `"by"` a mortar or howitzer also leaves
+/// a shell fire (`ground_fire::shell_burst`, rule `hit_locations`).
 pub fn impact(game: &mut Game, v: &Value) -> Result<Value, String> {
     let Mode::InGame(g) = &mut game.mode else { return Err("no game".into()) };
     let at = match v.get("at").and_then(Value::as_array).map(Vec::as_slice) {
@@ -271,6 +272,9 @@ pub fn impact(game: &mut Game, v: &Value) -> Result<Value, String> {
         let before = world.fragments.len();
         acr_sim::shrapnel::burst(world, Some(b), att, at, 0);
         fragments = world.fragments.len() - before;
+        // And the fire it leaves on dry ground (hit-locations rule, `ground_fire.rs`).
+        let water = v.get("water").and_then(Value::as_bool).unwrap_or(false);
+        acr_sim::ground_fire::shell_burst(world, Some(b), att, at, water);
     }
     // A ball of `by`'s cannon grazing there: the earth it throws up (hit-locations rule).
     if cause == DeathCause::Cannonball
