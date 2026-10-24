@@ -58,9 +58,10 @@ STAFF_OUT = dict(STAFF_IN, spine=(-4, 0, 0), upperarm_r=(-40, -14, -6), forearm_
                  upperarm_l=(-48, 20, 14), forearm_l=(-50, 0, -10), thigh_l=(-10, -3, 0), shin_l=(10, 0, 0))
 # Arms out and forward, head down: pushing on wheel spokes or reaching into the muzzle.
 PUSH = {
-    "spine": (-22, 0, 0), "spine1": (-8, 0, 0), "head": (14, 0, 0),
-    "upperarm_r": (-68, -10, 0), "forearm_r": (-18, 0, 0), "upperarm_l": (-68, 10, 0), "forearm_l": (-18, 0, 0),
-    "thigh_l": (-30, -3, 0), "shin_l": (30, 0, 0), "thigh_r": (20, 3, 0), "shin_r": (10, 0, 0),
+    "spine": (-40, 0, 0), "spine1": (-14, 0, 0), "head": (34, 0, 0),
+    "upperarm_r": (-60, -10, 0), "forearm_r": (-20, 0, 0), "upperarm_l": (-60, 10, 0), "forearm_l": (-20, 0, 0),
+    "thigh_l": (-38, -3, 0), "shin_l": (48, 0, 0), "foot_l": (-8, 0, 0),
+    "thigh_r": (26, 3, 0), "shin_r": (14, 0, 0), "foot_r": (14, 0, 0), "root_loc": (0, 0, -0.07),
     "ik": "wheel",
 }
 REACH = dict(STAND, spine=(-18, 0, 0), spine1=(-8, 0, 0), head=(16, 0, 0),
@@ -117,6 +118,9 @@ def _walk(pose, n=36, strides=3):
 
 
 PUSH_X = 1.02  # the wheel pushers stand just outside their wheel (x = 0.82)
+# and this far behind (or in front of) the axle: leant well in, their shoulders clear of the
+# rim their hands are on (the original's `ArtPus_Tlk`: backs near level, heads at the hubs).
+PUSH_Y = 1.45
 
 # Stations (x, y, yaw) in battery.
 HOME = {
@@ -136,7 +140,7 @@ def stand_keys():
 # its rope handles at the ends, metres from its bottom centre (x, z).
 CHEST_REST = (1.15, 3.5)
 CHEST_HANDLE = (0.34, 0.28)
-CHEST_SPAN = 0.52  # a carrier's hips from the chest's middle
+CHEST_SPAN = 0.64  # a carrier's hips from the chest's middle: clear of its end and rope loop
 CARRY_Y = 3.8  # the carriers walk behind the trail end (2.75)
 CARRY_Z = 0.6  # the chest's bottom when carried (the handles at the hanging hands)
 # Lifting the trail for a turn: the carriage turns up about the axle (degrees about X).
@@ -151,8 +155,8 @@ STOOP = dict(STAND, spine=(-48, 0, 0), spine1=(-16, 0, 0), head=(28, 0, 0),
              thigh_l=(-70, -3, 0), shin_l=(95, 0, 0), foot_l=(-25, 0, 0),
              thigh_r=(-60, 3, 0), shin_r=(90, 0, 0), foot_r=(-30, 0, 0), root_loc=(0, 0.12, -0.4), ik="chest")
 # Heaving a wheel round by its spokes: the push and the deeper lean of the heave.
-HEAVE = dict(PUSH, spine=(-32, 0, 0), spine1=(-10, 0, 0), thigh_l=(-40, -3, 0), shin_l=(40, 0, 0),
-             thigh_r=(28, 3, 0), shin_r=(12, 0, 0), root_loc=(0, -0.08, -0.05))
+HEAVE = dict(PUSH, spine=(-48, 0, 0), spine1=(-16, 0, 0), thigh_l=(-46, -3, 0), shin_l=(56, 0, 0),
+             thigh_r=(34, 3, 0), shin_r=(10, 0, 0), root_loc=(0, -0.08, -0.11))
 # The trail lifted on the handspike: upright enough to carry it, both hands on the lever.
 LIFT = dict(SPIKE, spine=(-16, 0, 0), spine1=(-6, 0, 0), head=(14, 0, 0),
             thigh_l=(-14, -3, 0), shin_l=(16, 0, 0), thigh_r=(8, 3, 0), shin_r=(8, 0, 0))
@@ -160,13 +164,13 @@ LIFT = dict(SPIKE, spine=(-16, 0, 0), spine1=(-6, 0, 0), head=(14, 0, 0),
 # Turning (the original's `ArtPus_pvrt`): c2 lifts the trail end with the handspike and walks
 # it round, c1 heaves the left wheel from behind, c0 the right one from in front (they turn
 # opposite ways about the axle), c3 stands by the chest set down beside the trail.
-TURN = {"c0.": (PUSH_X, -1.05, 180), "c1.": (-PUSH_X, 1.05, 0), "c2.": (0.0, 3.15, 0), "c3.": (1.3, 2.95, -90)}
+TURN = {"c0.": (PUSH_X, -PUSH_Y, 180), "c1.": (-PUSH_X, PUSH_Y, 0), "c2.": (0.0, 3.15, 0), "c3.": (1.3, 2.95, -90)}
 
 
 def motion_keys(n=36):
     """GUN_PUSH (`#MOTION_L0/R0`, the sprites' `ArtPus_Tlk`): c0/c1 push the gun on its wheels
     from behind, c2/c3 carry the ammunition chest behind the trail between them."""
-    plan = {"c0.": (tool(PUSH, UP), (PUSH_X, 1.05), 0), "c1.": (PUSH, (-PUSH_X, 1.05), 0),
+    plan = {"c0.": (tool(PUSH, UP), (PUSH_X, PUSH_Y), 0), "c1.": (PUSH, (-PUSH_X, PUSH_Y), 0),
             "c2.": (tool(CARRY, UP), (-CHEST_SPAN, CARRY_Y), 0), "c3.": (tool(CARRY, UP), (CHEST_SPAN, CARRY_Y), 0)}
     out = {}
     for p, (pose, st, yaw) in plan.items():
@@ -189,8 +193,8 @@ def chest_keys(n=41):
         x, y, yaw = HOME[p]
         at(p, 0, HELD[p], x, y, yaw)
         at(p, 4, HELD[p], x, y, yaw)
-        at(p, 30, pose, sd * PUSH_X, 1.05, 0)
-        k[p].append((n, place(_walk(pose)[0][1], (sd * PUSH_X, 1.05), 0)))
+        at(p, 30, pose, sd * PUSH_X, PUSH_Y, 0)
+        k[p].append((n, place(_walk(pose)[0][1], (sd * PUSH_X, PUSH_Y), 0)))
     for p, sd in (("c2.", -1), ("c3.", 1)):
         x, y, yaw = HOME[p]
         at(p, 0, HELD[p], x, y, yaw)
@@ -226,9 +230,11 @@ def lift_keys(n=70):
     at("c2.", 44, tool(SPIKE, DOWN), tx, ty, tyaw)
     at("c2.", 66, tool(LIFT, DOWN), tx, ty, tyaw)
     k["c2."].append((n, place(_walk(tool(LIFT, DOWN), 40, 2)[0][1], (tx, ty), tyaw)))
-    tx, ty, tyaw = TURN["c3."]
-    at("c3.", 36, tool(STAND, UP), tx, ty, tyaw)
-    at("c3.", n, tool(STAND, UP), tx, ty, tyaw)
+    tx, ty, _tyaw = TURN["c3."]
+    ready = _walk(tool(STAND, UP), 40, 1)[0][1]  # TRAIL_WALK's first frame: turned to step along
+    at("c3.", 36, tool(STAND, UP), tx, ty, turn_heading(tx, ty))
+    at("c3.", 52, ready, tx, ty, turn_heading(tx, ty))
+    k["c3."].append((n, place(ready, (tx, ty), turn_heading(tx, ty))))
     return {p: stepped(ks) for p, ks in k.items()}
 
 
@@ -241,9 +247,28 @@ def turn_keys(n=40):
         x, y, yaw = TURN[p]
         a, b = (tool(PUSH, UP), tool(HEAVE, UP)) if p == "c0." else (PUSH, HEAVE)
         out[p] = [(f, place(a if (f // 10) % 2 == 0 else b, (x, y), yaw)) for f in range(0, n + 1, 10)]
-    x, y, yaw = TURN["c3."]
-    out["c3."] = [(0, place(tool(STAND, UP), (x, y), yaw)), (n, place(tool(STAND, UP), (x, y), yaw))]
+    # c3 steps along with the turn: the ground turns under the gun (a 16th per cycle the
+    # other way), so at his station it runs past him at `turn_slip` per cycle; he walks
+    # against it on the spot, one stride (two steps) per cycle, his feet keeping pace with it.
+    x, y, _yaw = TURN["c3."]
+    out["c3."] = [(f, place(s, (x, y), turn_heading(x, y))) for f, s in _walk(tool(STAND, UP), n, 1)]
     return out
+
+
+TURN_STEP = 22.5  # degrees the sim turns the gun per `#MOTION_L1` cycle (clockwise from above)
+
+
+def turn_slip(x, y):
+    """Metres the ground runs past station (x, y) in one turn cycle (gun frame)."""
+    return math.hypot(x, y) * math.radians(TURN_STEP)
+
+
+def turn_heading(x, y):
+    """The yaw (degrees) a man at station (x, y) faces to walk against the ground running past
+    him in `#MOTION_L1`: the gun turns clockwise seen from above (`crew_view::gun_yaw`, its
+    facing growing), so the ground turns anticlockwise under it, and he walks clockwise."""
+    # Clockwise tangent at (x, y) is (y, -x); a man at yaw looks along (sin yaw, -cos yaw).
+    return math.degrees(math.atan2(y, x))
 
 
 def attack_keys():
@@ -267,9 +292,9 @@ def attack_keys():
     for i, f in enumerate(range(178, 236, 14)):  # ram twice home
         at("c0.", f, tool(STAFF_OUT if i % 2 == 0 else STAFF_IN, LEVEL), -0.08, -1.9 if i % 2 == 0 else -1.45, 180)
     at("c0.", 246, tool(STAND, UP), 0.6, -1.9, 180)
-    at("c0.", 290, tool(STAND, UP), PUSH_X, 1.15 + B, 0)
-    at("c0.", 300, tool(PUSH, UP), PUSH_X, 1.05 + B, 0)
-    at("c0.", 400, tool(PUSH, UP), PUSH_X, 1.05, 0)
+    at("c0.", 290, tool(STAND, UP), PUSH_X, PUSH_Y + 0.1 + B, 0)
+    at("c0.", 300, tool(PUSH, UP), PUSH_X, PUSH_Y + B, 0)
+    at("c0.", 400, tool(PUSH, UP), PUSH_X, PUSH_Y, 0)
     at("c0.", 419, tool(STAND, UP), 1.25, -0.2, -90)
     # c1: clear, then cartridge and ball from the bag into the muzzle.
     at("c1.", 0, STAND, -1.25, -0.2, 90)
@@ -282,9 +307,9 @@ def attack_keys():
     at("c1.", 150, REACH, -0.75, -0.75, 90)
     at("c1.", 162, REACH, -0.65, -0.75, 90)
     at("c1.", 172, STAND, -1.05, -0.75, 90)
-    at("c1.", 290, STAND, -PUSH_X, 1.15 + B, 0)
-    at("c1.", 300, PUSH, -PUSH_X, 1.05 + B, 0)
-    at("c1.", 400, PUSH, -PUSH_X, 1.05, 0)
+    at("c1.", 290, STAND, -PUSH_X, PUSH_Y + 0.1 + B, 0)
+    at("c1.", 300, PUSH, -PUSH_X, PUSH_Y + B, 0)
+    at("c1.", 400, PUSH, -PUSH_X, PUSH_Y, 0)
     at("c1.", 419, STAND, -1.25, -0.2, 90)
     # c2: lays the gun with the handspike, stands clear, serves the vent, primes.
     at("c2.", 0, tool(SPIKE, DOWN), 0.0, 3.15, 0)
@@ -406,12 +431,12 @@ def deploy_keys(n=170):
     for p, sd in (("c0.", 1), ("c1.", -1)):
         push, heave = (tool(PUSH, UP), tool(HEAVE, UP)) if p == "c0." else (PUSH, HEAVE)
         stand = tool(STAND, UP) if p == "c0." else STAND
-        at(p, 34, stand, sd * PUSH_X, 1.15, 0)
-        at(p, 44, push, sd * PUSH_X, 1.05, 0)
+        at(p, 34, stand, sd * PUSH_X, PUSH_Y + 0.1, 0)
+        at(p, 44, push, sd * PUSH_X, PUSH_Y, 0)
         for i, f in enumerate(range(h0, h1 + 1, 10)):
-            at(p, f, heave if i % 2 else push, sd * PUSH_X, 1.05, 0)
-        at(p, 110, push, sd * PUSH_X, 1.05, 0)
-        at(p, 120, stand, sd * PUSH_X, 1.15, 0)
+            at(p, f, heave if i % 2 else push, sd * PUSH_X, PUSH_Y, 0)
+        at(p, 110, push, sd * PUSH_X, PUSH_Y, 0)
+        at(p, 120, stand, sd * PUSH_X, PUSH_Y + 0.1, 0)
         x, y, yaw = HOME[p]
         at(p, 146, HELD[p], x, y, yaw)
         at(p, n, HELD[p], x, y, yaw)
@@ -688,11 +713,11 @@ def key_clips(arm, actions, plan=None, marks=None):
 
 FELLOE_R = 0.66  # the felloe's middle (m from the hub): the wheel men's hands
 RIM_OUT = 0.03  # the fists' centres outside the felloe's middle (fingers round it)
-RIMS = {"r": 36.0, "l": 62.0}  # degrees behind (or in front of) the top of the wheel, per hand
+RIMS = {"r": 62.0, "l": 82.0}  # degrees behind (or in front of) the top of the wheel, per hand (low: leant in)
 CHEST_GRIP = (0.33, 0.35)  # the top of a rope loop: (x from the chest's middle, z over its bottom)
 STAFF_GRIP = -0.35  # the left hand on a level staff, metres behind the right (towards the butt)
 SPIKE_GRIP = 0.22  # the left hand on the handspike's lever, behind the right
-SPIKE_SEAT = 2.45  # y of the handspike's seat on the trail (m, gun frame)
+SPIKE_SEAT = 2.64  # y of the handspike's seat in the trail end's ring (m, gun frame)
 SPIKE_IN = 0.10  # the handspike's head this far past its seat (under the trail's ring)
 SPIKE_ARM = 0.36  # the right fist this far from the shoulder on the handspike
 ARM_SPAN = 0.85  # a goal at most this share of the arm's full reach away (never straight)
@@ -726,11 +751,27 @@ def gun_marks(arm):
             top = [v for v in vs_ if abs(v.x) < 0.04 and abs(v.y - y) < 0.05] or vs_
             pt = Vector((0.0, y, max(v.z for v in top) + 0.01))
         else:
-            near = [v for v in vs_ if abs(v.y - SPIKE_SEAT) < 0.08] or vs_
-            pt = Vector((0.0, SPIKE_SEAT, max(v.z for v in near) - 0.02))
+            # The trail's top at the seat, between the nearest vertices before and behind it
+            # (none lie within a few cm of it: the old window fell back to the whole
+            # carriage's top, 0.7 m over the trail, and the handspike was seated in the air).
+            trail = [v for v in vs_ if abs(v.x) < 0.3 and abs(v.y - SPIKE_SEAT) < 0.6]
+            pt = Vector((0.0, SPIKE_SEAT, _top_at(trail, SPIKE_SEAT) - 0.02))
         pb = arm.pose.bones[o.parent_bone]
         out[o.parent_bone] = (o.parent_bone, pb.matrix.inverted() @ pt)
     return out
+
+
+def _top_at(vs, y):
+    """The top (z) of the vertices `vs` at `y`: their highest at the nearest y on either side,
+    interpolated."""
+    before = [v for v in vs if v.y <= y]
+    after = [v for v in vs if v.y >= y]
+    if not before or not after:
+        return max(v.z for v in (before or after))
+    yb, ya = max(v.y for v in before), min(v.y for v in after)
+    zb = max(v.z for v in before if abs(v.y - yb) < 1e-3)
+    za = max(v.z for v in after if abs(v.y - ya) < 1e-3)
+    return zb if ya - yb < 1e-6 else zb + (za - zb) * (y - yb) / (ya - yb)
 
 
 def _mark(arm, marks, name):
@@ -866,10 +907,15 @@ def goals(arm, P, kind, marks):
                               hub.z + FELLOE_R * math.cos(a)))
         return out
     if kind == "chest" and "chest" in B:
+        # The rope loop at his end of the chest, in the hand nearer it. (Picking the loop by
+        # the chest bone's local X put each carrier's hand on the far loop, so the body was
+        # stepped across into the chest and into the other carrier: m2-cannon-crew.)
         chest = B["chest"]
-        sd = "l" if B[P + "hips"].head.x < chest.head.x else "r"
         hx, hz = CHEST_GRIP
-        return {sd: chest.matrix @ Vector((hx if sd == "l" else -hx, hz, 0.0))}
+        hips = B[P + "hips"].head
+        loop = min((chest.matrix @ Vector((x, hz, 0.0)) for x in (hx, -hx)), key=lambda g: (g - hips).length)
+        sd = min("lr", key=lambda d: (B[P + "upperarm_" + d].head - loop).length)
+        return {sd: loop}
     if kind == "spike" and "intact" in marks:
         seat = _mark(arm, marks, "intact")
         u = (B[P + "upperarm_r"].head - seat).normalized()

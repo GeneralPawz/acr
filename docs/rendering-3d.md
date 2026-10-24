@@ -658,7 +658,8 @@ per 0.55 m, the root sliding along with the cycle's bob).
   and lifts it, c1 goes behind the left wheel, c0 in front of the right one, c3 to the
   ammunition chest set down beside the trail), `#MOTION_L1` plays `TRAIL_WALK` (`ArtPus_pvrt`:
   the trail walked round a 16th, the wheels heaved opposite ways by a spoke's pitch, so the
-  loop is seamless), `#MOTION_R1` plays it backwards and `#UATTACK1` `TRAIL_LIFT` backwards.
+  loop is seamless; c3 walks on the spot one stride per cycle, facing along the ground that
+  runs past his station while the model turns, `guncrew.turn_heading`/`turn_slip`), `#MOTION_R1` plays it backwards and `#UATTACK1` `TRAIL_LIFT` backwards.
   `#PSTAND1`, which the sim shows for one tick between two turn steps (and after a move, when
   the gun keeps its trail up), holds `TRAIL_WALK`'s first frame. It used to fall back to
   `STAND` (`clip_for_animation` finds no `PSTAND`), so every step popped the crew back to
@@ -686,9 +687,14 @@ per 0.55 m, the root sliding along with the cycle's bob).
   nearer than 0.24 m; the trail man stands where his right fist on the seated handspike
   is 0.36 m from the shoulder), then the arms (`_reach`: two-bone IK whose goal is the
   fist's centre, `socket.hand_*` of the grips system, the hand keeping its orientation).
-  Goals (`goals`): the felloe's middle (0.66 m from the hub) 36° and 62° behind or in
-  front of the top, 3 cm outside it; the top of the chest's rope loop; the handspike's
-  head 0.10 m past its seat under the trail's ring (the left fist 0.22 m behind the right, on the lever end); the left
+  Goals (`goals`): the felloe's middle (0.66 m from the hub) 62° and 82° behind or in
+  front of the top, 3 cm outside it (the wheel men 1.45 m behind or in front of the axle,
+  leant well in, as `ArtPus_Tlk` draws them); the top of the rope loop at the carrier's own
+  end of the chest (the nearer loop and hand; it used to be the far one, which stepped both
+  carriers into the chest and each other); the handspike's
+  head 0.10 m past its seat in the trail end's ring (y 2.64, on the trail's top: the seat
+  used to fall back to the carriage's top, 0.7 m over the trail, so the spike was seated in
+  the air) (the left fist 0.22 m behind the right, on the lever end); the left
   fist 0.35 m towards the butt of the level staff. `measure` reads the misses on every frame as played
   (keys interpolated) into `artpus.stats.json` `hands.grips` (per grip: frames, mean, max,
   worst clip/man/frame); `test_guncrew.Grips` holds every max under 3 cm.

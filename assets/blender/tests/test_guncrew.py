@@ -68,6 +68,23 @@ class Drill(unittest.TestCase):
         for p in ("c0.", "c1."):
             self.assertEqual({s.get("ik") for _, s in c["TRAIL_WALK"][p]}, {"wheel"}, p)
 
+    def test_the_firer_steps_through_the_turn(self):
+        """c3 walks on the spot through TRAIL_WALK (one stride per cycle), facing along the
+        ground that runs past his station while the gun turns."""
+        c3 = guncrew.clips()["TRAIL_WALK"]["c3."]
+        self.assertGreater(len({s["thigh_l"] for _, s in c3}), 1)
+        x, y = c3[0][1]["root_loc"][:2]
+        self.assertAlmostEqual(c3[0][1]["root"][2], guncrew.turn_heading(x, y))
+        # The ground runs past him clockwise: the facing is the clockwise tangent.
+        yaw = math.radians(guncrew.turn_heading(1.0, 0.0))
+        self.assertAlmostEqual(math.sin(yaw), 0.0)
+        self.assertAlmostEqual(-math.cos(yaw), -1.0)
+        self.assertAlmostEqual(guncrew.turn_slip(x, y), math.hypot(x, y) * math.radians(22.5))
+
+    def test_carriers_stand_clear_of_the_chest(self):
+        """The carriers' hips stand clear of the chest's ends and rope loops (0.37 m out)."""
+        self.assertGreater(guncrew.CHEST_SPAN - 0.37, 0.2)
+
     def test_two_push_and_two_carry_the_chest(self):
         c = guncrew.clips()["GUN_PUSH"]
         self.assertEqual({s.get("ik") for _, s in c["c0."]} | {s.get("ik") for _, s in c["c1."]}, {"wheel"})
@@ -135,6 +152,9 @@ class Grips(unittest.TestCase):
         # The handspike (the turn's and the laying's lever) is held exactly.
         for what in ("spike_l", "spike_seat"):
             self.assertLess(grips[what]["max_m"], 0.01, (what, grips[what]))
+        # Its seat is on the trail's top (0.25 m over the ground, the trail bone's local y the
+        # height over the axle at 0.72), not the carriage's top 0.7 m over it (m2-cannon-crew).
+        self.assertLess(st["hands"]["marks_rest"]["intact"][1], -0.3, st["hands"]["marks_rest"])
 
 
 if __name__ == "__main__":
