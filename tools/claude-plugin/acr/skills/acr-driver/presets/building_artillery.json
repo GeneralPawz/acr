@@ -1,0 +1,14 @@
+[
+ {"cmd": "start", "blank": {"players": 2, "hud": false, "hit_locations": true}},
+ {"cmd": "spawn", "type": "SpnDo1", "owner": 1, "x": 8180, "y": 7680, "dir": 0, "life": 20000},
+ {"cmd": "spawn", "type": "ArtPus", "x": 7180, "y": 7680, "dir": 0, "resources": 100000},
+ {"cmd": "wait", "ticks": 2},
+ {"cmd": "command", "command": {"type": "attack", "units": [1], "target": 0}},
+ {"cmd": "camera", "x": 7680, "y": 7680, "zoom": 1.2, "yaw_deg": 0, "pitch_deg": 35},
+ {"cmd": "record", "dir": "fire", "count": 10, "every": 20},
+ {"cmd": "state", "units": true, "detail": true},
+ {"cmd": "wait", "ticks": 600},
+ {"cmd": "state", "units": true, "detail": true},
+ {"cmd": "screenshot", "path": "after.png"},
+ {"cmd": "quit"}
+]

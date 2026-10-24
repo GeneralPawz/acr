@@ -72,13 +72,14 @@ For looking around interactively (pose, frame, look, adjust, look again), keep o
 
 | Tool | Does |
 |---|---|
-| `open_session(worktree, build=true, models="")` | builds the worktree's game on the VM (about 1 min; `build=false` reuses the last build) and starts it on the GPU. `models` takes a glb folder or `wt:target/assets/units`. Returns the session id |
+| `open_session(worktree, build=true, models="")` | builds the worktree's game on the VM (incremental builds take seconds; `build=false` reuses the last build) and starts it on the GPU. `models` takes a glb folder or `wt:target/assets/units`. Returns the session id |
 | `send(session_id, requests)` | driver requests in order (`studio`, `pose`, `measure`, `camera`, `hit`, `wait`, …); one short answer per request |
 | `shot(session_id, camera={...}, max_px=640)` | applies the camera fields, screenshots, and returns the image trimmed to its content (`save_to` keeps the full PNG) |
 | `fetch_image(session_id, path)` | returns a file the game wrote (e.g. a `sheet`) |
 | `close_session(session_id)` | always, when done |
 
-- **Timeouts (nothing blocks forever):** `open_session` sync + build 10 min, start (ready line) 2 min; `send` 60 s per request (`timeout=` raises it for a long `wait`, `sheet` or `record`); `shot`/`fetch_image` 60 s. On a timeout the tool returns `ERROR: ...` with the tail of the game log, and the session is closed (its game killed by the PID in `<run folder>/pid`, folder removed), because a late answer would desync it. Open a new session after that. `open_session` first kills and cleans any earlier session of the same worktree; `close_session` kills by PID. Env overrides: `ACR_STUDIO_BUILD_TIMEOUT`, `_START_TIMEOUT`, `_SEND_TIMEOUT`.
+- **One try, then `acr-vm-drive`.** `open_session` returns `session ...` or `ERROR: ...` (with the reason) within 6 min in total, sync and build included; while it works it reports progress ("building: Compiling acr-game (1:10 of max 6:00)"). After **one** ERROR, do not retry or wait: run the same requests as a steps file with `acr-vm-drive` (a scene preset below is a good start). Sessions of different worktrees run in parallel (own run folder per session; one game per session on the shared GPU display).
+- **Timeouts:** `open_session` 6 min total (the ready line within 90 s of it); `send` 60 s per request (`timeout=` raises it for a long `wait`, `sheet` or `record`); `shot`/`fetch_image` 60 s. On a send/shot timeout the tool returns `ERROR: ...` with the tail of the game log and closes the session (game killed by the PID in `<run folder>/pid`), because a late answer would desync it. A build that hits the limit keeps running on the VM, so a later `open_session` is quick. `open_session` first closes any earlier session of the same worktree, and sessions idle for 30 min. Env overrides: `ACR_STUDIO_OPEN_TIMEOUT`, `_START_TIMEOUT`, `_SEND_TIMEOUT`, `_IDLE_REAP`.
 - A typical round trip (open without a build, studio, pose, measure, shot) takes about 5 s.
 - Use `acr-vm-drive` instead for fixed scripts, batches and before/after runs that must be repeatable.
 - One session is one field: to change the field, close and open another.
@@ -89,3 +90,27 @@ For looking around interactively (pose, frame, look, adjust, look again), keep o
 - **Before/after:** run the same steps against main and against your branch. Use `--no-build` with `--models` when only models changed. Sheet the two side by side.
 - **Kill for corpse or decay checks:** `hit` with `damage: 1000`, then `wait` the ticks you need (`corpse_minutes` in the settings; decay runs over the corpse's lifetime).
 - **Measure, don't just look:** read `answers.jsonl` (`state` with `detail` gives the animation, frame and positions) and `game.log`, and judge by numbers where you can.
+
+## Scene presets
+
+Tested steps files in `presets/` (this skill's folder), verified on main 2026-10-24. Blank grass field (walk: white), HUD off, hit locations on, owner 0 shoots east at owner 1. Run one as is:
+`acr-vm-drive --steps <plugin>/skills/acr-driver/presets/<file> --out C:/abs/out [--no-build] [--models ...]`,
+or copy it, change unit types and camera, and feed the requests to studio `send` (drop `start`; use `studio` or keep `start` as the first request of a fresh session).
+
+| File | Shows | Checked by (answers.jsonl) |
+| --- | --- | --- |
+| `archer_volley.json` | 5 `HurLut` archers volley at 5 stationary targets 460 px away; frames in `volley/` | archers stay at x 7450; target life 2000 to 1884 |
+| `musket_volley.json` | 5 `EngM18` fire a volley at targets 500 px away; `volley/` | shooters stay put, reload (`delay`) runs; target life drops |
+| `cannon_ground.json` | `ArtPus` fires at a ground point 1000 px east; `fire/`, `after.png` | `AttackPoint` order, reload counter running, iron and coal paid |
+| `mortar_ground.json` | `ArtMrt` (rule `mortars`) shells a ground point 1400 px east; `fire/` | as the cannon; craters at the point |
+| `building_artillery.json` | `ArtPus` shoots a `SpnDo1` house (life 20000 so it lasts); `fire/` | house life 20000 to 8116 over 780 ticks |
+| `melee_clash.json` | 12 `EngM18` against 12 `SpnMus`, both `hold_fire` (bayonets only), meet in the middle; `clash/` | 24 men down to 9 by tick 286, all between x 7590 and 7800 |
+| `walk_line.json` | one `EngM18` walks 1400 px east in a straight line, side camera, 12 frames in `gait/` | x 7080 to 8472, `Motion*` animation |
+
+Why the presets look like this (the traps that cost earlier runs their time box):
+- **Stationary targets** are `pose: "crawl"` men of owner 1 with `life: 2000`: they take no orders and do not fight back. Shooters do not pick crawlers on their own, so each shooter gets an explicit `attack` command. A standing enemy, even with `hold_fire`, charges into melee; a hit crawler may crawl a little.
+- **Archers charge** when the target is beyond their range (they walk up to about 480 px): keep archers within about 460 px, muskets within about 500 px.
+- **Guns** need `resources` on the spawn (a shot costs iron and coal), else they never fire. A gun reloads slowly (`delay` 1600 ticks for `ArtPus`, 2400 for `ArtMrt`): expect one shot per 300 ticks.
+- `attack_ground` and `attack` work on guns; a mortar needs `"mortars": true` in `start.blank`.
+
+Missing in the driver (`command`, `drive/state.rs`): no `stand_ground`, `hold_fire` (the sim's `HoldFire`), `melee_only`, `face` or `move_facing` orders, although the sim has `Command::StandGround`, `HoldFire`, `MeleeOnly`, `Face` and `MoveFacing`. Commands are always sent as player 0, so owner 1's units cannot be ordered (an order for them is queued but does nothing). Spawn has only `hold_fire` (melee only).

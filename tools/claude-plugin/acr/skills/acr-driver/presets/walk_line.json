@@ -1,0 +1,12 @@
+[
+ {"cmd": "start", "blank": {"players": 1, "hud": false, "ground": "white"}},
+ {"cmd": "spawn", "type": "EngM18", "x": 7080, "y": 7680, "dir": 0},
+ {"cmd": "wait", "ticks": 2},
+ {"cmd": "command", "command": {"type": "move", "units": [0], "x": 8480, "y": 7680}},
+ {"cmd": "wait", "ticks": 100},
+ {"cmd": "camera", "x": 7680, "y": 7680, "zoom": 2.0, "yaw_deg": 0, "pitch_deg": 8},
+ {"cmd": "record", "dir": "gait", "count": 12, "every": 5},
+ {"cmd": "wait", "ticks": 200},
+ {"cmd": "state", "units": true, "detail": true},
+ {"cmd": "quit"}
+]

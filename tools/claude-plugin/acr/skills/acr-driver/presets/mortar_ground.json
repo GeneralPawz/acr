@@ -1,0 +1,14 @@
+[
+ {"cmd": "start", "blank": {"players": 2, "hud": false, "hit_locations": true, "mortars": true}},
+ {"cmd": "spawn", "type": "ArtMrt", "x": 6980, "y": 7680, "dir": 0, "resources": 100000},
+ {"cmd": "wait", "ticks": 2},
+ {"cmd": "command", "command": {"type": "attack_ground", "units": [0], "x": 8380, "y": 7680}},
+ {"cmd": "wait", "ticks": 20},
+ {"cmd": "camera", "x": 7680, "y": 7680, "zoom": 0.7, "yaw_deg": 0, "pitch_deg": 35},
+ {"cmd": "record", "dir": "fire", "count": 10, "every": 6},
+ {"cmd": "wait", "ticks": 300},
+ {"cmd": "state", "units": true, "detail": true},
+ {"cmd": "state"},
+ {"cmd": "screenshot", "path": "after.png"},
+ {"cmd": "quit"}
+]

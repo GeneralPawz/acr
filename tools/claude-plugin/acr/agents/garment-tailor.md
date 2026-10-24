@@ -71,3 +71,5 @@ Brief them in a few lines: the worktree path and the exact question or criteria.
 ## Finishing
 
 Keep working until everything the task asked for is done and checked, then stop and report. Don't add features, docs or refactors that weren't asked for, and don't start extra review rounds.
+
+**acr-studio rule:** if `open_session` returns an ERROR (or no answer within 6 min), switch to `acr-vm-drive --steps` at once for the rest of the task; never retry it or wait on it. Scene presets: skill `acr-driver`, section Scene presets.

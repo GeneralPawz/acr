@@ -39,7 +39,8 @@ def sync_dir(local, remote, timeout=None):
     """Sends the files of `local` whose MD5 differs from `remote` (VM path). A size check alone
     kept stale copies of rebuilt glbs that came out with the same byte size."""
     listing = subprocess.run(vm_cargo.SSH + [f"mkdir -p {remote} && cd {remote} && find . -maxdepth 1 -type f "
-                                             f"-exec md5sum {{}} +"], capture_output=True, text=True, timeout=timeout).stdout
+                                             f"-exec md5sum {{}} +"], capture_output=True, text=True, timeout=timeout,
+                             stdin=subprocess.DEVNULL).stdout
     have = {}
     for line in listing.splitlines():
         parts = line.split(None, 1)
@@ -65,6 +66,17 @@ def sync_dir(local, remote, timeout=None):
     return len(send)
 
 
+def sync_showcase(timeout=None):
+    """Brings ~/showcase on the VM up to date with the local showcase (models, their
+    subfolders such as ground/, settings). Returns how many model files were sent."""
+    n = sync_dir(os.path.join(SHOWCASE, "models"), "~/showcase/models", timeout)
+    for sub in sorted(os.listdir(os.path.join(SHOWCASE, "models"))):  # e.g. ground/ (texture pack)
+        if os.path.isdir(os.path.join(SHOWCASE, "models", sub)):
+            n += sync_dir(os.path.join(SHOWCASE, "models", sub), f"~/showcase/models/{sub}", timeout)
+    sync_dir(os.path.join(SHOWCASE, "settings"), "~/showcase/settings", timeout)
+    return n
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--steps", required=True)
@@ -87,11 +99,7 @@ def main():
         if "path" in s and not os.path.isabs(s["path"]) and not s["path"].startswith("/"):
             s["path"] = f"{rout}/{s['path']}"
 
-    n = sync_dir(os.path.join(SHOWCASE, "models"), "~/showcase/models")
-    for sub in sorted(os.listdir(os.path.join(SHOWCASE, "models"))):  # e.g. ground/ (texture pack)
-        if os.path.isdir(os.path.join(SHOWCASE, "models", sub)):
-            n += sync_dir(os.path.join(SHOWCASE, "models", sub), f"~/showcase/models/{sub}")
-    sync_dir(os.path.join(SHOWCASE, "settings"), "~/showcase/settings")
+    n = sync_showcase()
     if n:
         print(f"vm_drive: {n} showcase model(s) updated on the VM", file=sys.stderr)
     # The models folder of this run: the showcase models with the overrides on top.
