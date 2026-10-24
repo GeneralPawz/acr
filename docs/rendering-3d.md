@@ -23,7 +23,7 @@ parameters: [assets-humans.md](assets-humans.md).
 | `material_detail` | `on`, `off` | `on` | the models' glTF normal maps and a faint highlight from their roughness and metallic (below, "Material detail (#234)"); `off` is the plain Lambert look; tests switch it with `ACR_MATERIAL_DETAIL=on\|off` or the driver's `{"cmd": "material_detail", "on": false}` |
 | `wind` | `on`, `off` | `on` | wind sways trees and foliage that carry `_WIND` weights (below, "Wind"); the driver's `props` request takes `"wind": false` |
 | `map_models` | `on`, `off` | `on` | the map's trees and stones are drawn as models where `assets/nature/map_objects.json` names one (below, "Map trees and stones"); the driver's `{"cmd": "map_models", "on": false}` switches it |
-| `lod` | `on`, `off` | `on` | the models' distance levels, built at load by `lod.rs` (below); `ACR_LOD` overrides it |
+| `lod` | `on`, `off` | `on` | the models' distance levels, built at load by `lod.rs` or carried by the glb ("Authored levels"); `ACR_LOD` overrides it |
 | `water` | `detailed`, `original` | `detailed` | the water surface in 3D mode, [water.md](water.md); native override `ACR_WATER` |
 | `ground` | `detailed`, `original` | `detailed` | the ground in 3D mode (`models` not `off` or `camera=free`): material textures over the original tiles, [ground.md](ground.md); sprite mode always draws the original |
 | `ground_cover` | `on`, `off` | `on` | grass tufts, flowers, ferns, leaf litter and pebbles on the detailed ground, swaying with the wind (`ground_cover.rs`, [ground.md](ground.md) "Phase 5: ground cover"); needs `ground=detailed`, hidden zoomed out and under snow; `ACR_GROUND_COVER=on|off` wins (native) |
@@ -1670,6 +1670,63 @@ as are the quit and the end of the event loop; `gputime.py` in `ACR-analysis/lod
 the driver's stderr (where a stack overflow is reported) and prints the exit code on an
 early end. Twelve runs (lod on, off, shadows off; main and this branch) did not reproduce
 the silent exit.
+
+### Authored levels (m2-hd-lod-render)
+
+High-detail masters bring their own levels, made offline in Blender (`acr_assets.hdbody`
+`build_lods`: seam-locked decimation, normal and albedo baked from the master per level), and
+the renderer draws those instead of index lists of its own.
+
+- **Format:** one glb. A level is a mesh node with `extras.acr_lod` = 1, 2, 3 (or a node
+  name ending `.lod1` … `.lod3`) and `extras.acr_lod_of` = the name of the master node it
+  replaces (else the name before `.lod<k>`). Each level has its own material and textures
+  and is skinned to the master's skin, so the skeleton, the clips and the palettes are
+  shared. Nodes neither a level nor a master (the eyes, gear) draw at every level with the
+  index levels of `lod.rs`. `Primitive::lod` holds the role; `lod::authored` gives a level's
+  lists (a missing level draws the next finer one); the far meshes are not built for such a
+  model. A model without levels loads as before. `hdman.py` writes its chain so (the
+  sidecar `hdman.lods.glb` is gone).
+- **Choice:** `lod::AUTHORED_SIZES` (2 × culling radius in px; about 2 × a man's height):
+  600, 240, 80 px, i.e. the master while a man is over about 300 px tall (zoom 5.5), 10 k
+  down to 120 px (zoom 2.2), 3 k down to 40 px, the crowd level below 40 px (zoom 0.75; at
+  zoom 1 a man is 54 px). The 15 % hysteresis of `lod::choose` applies. Levels from 2 take
+  `fs_far`. Shadows cast one level coarser; from the crowd level a "sloppy" list of
+  `lod::AUTHORED_SHADOW` (400) triangles.
+- **Cross-fade:** not built. A WebGL2-safe one would draw both levels for about 0.3 s with
+  complementary screen-door masks (`discard` by a 4 × 4 Bayer threshold against a per-instance
+  fade in the instance texels), so the pair goes through `fs_main`, not `fs_clean`; with the
+  hysteresis no pop was visible at battle sizes (above), so it waits for a close-up need.
+- **Impostors (design note):** below about 15 px a man is a few dozen pixels; an octahedral
+  impostor atlas per type and clip frame (8 × 8 views of the crowd level, baked in Blender or
+  at load into one texture) drawn as instanced quads would replace the 800 triangles by 2.
+  Clip frames multiply the atlas (STAND, MOTION_L, ATTACK: about 60 frames), so it pays
+  only for the original's zoom-out views of big battles.
+- **Test aid:** `ACR_LOD_TINT=1` (native) tints each authored level's materials (master
+  white, 10 k green, 3 k yellow, crowd red); `ACR_LOD=<k>` forces a level as before.
+- **Texture memory:** images are uploaded whole as RGBA8 without mips (no streaming, no
+  compressed formats on WebGL2 here). `hdman.glb` (35 MB file): 245 MB of textures, 201 MB
+  of them the master's three 4 k maps, then 2 k (34 MB), 1 k (8.4 MB), 512 (2.1 MB) for the
+  levels, plus 7.8 MB of vertex and index buffers; the old `engm18.glb` 0.3 MB of textures.
+  The far levels never touch the 4 k maps, so a later step could load the master's maps
+  only when a model first draws at level 0.
+
+Measured on the render VM (RX 9060 XT, 1600 × 900, shadows on), blank field, grass, HUD
+off, 1,024 EngM18 in a 32 × 32 block, one owner, after 20 ticks; CPU `profile` over 50
+frames, GPU `gputime` 30 frames, two runs each (scripts, frames and logs in
+`ACR-analysis/genai/hd-lod-render/`, `steps/crowd.json`):
+
+| ms per frame | old body z1 | HD z1 (level 2) | HD z1 forced crowd | old z2 | HD z2 (level 2) |
+|---|---:|---:|---:|---:|---:|
+| GPU total | 1.68 | 3.64 | 3.00 | 2.60 | 3.63 |
+| models pass | 0.78 | 2.78 | 2.16 | 1.82 | 2.84 |
+| shadow map | 0.25 | 0.19 (1.09 with the crowd mesh as caster) | 0.19 | 0.24 | 0.19 |
+| CPU `3d.update` | 2.0–2.8 | 1.8–2.4 | 2.1 | 2.0–2.7 | 2.0–2.3 |
+
+The CPU side does not change (one palette per instance either way). The models pass is
+2–3 × the old body's because the old body's far mesh at these sizes is about 700 triangles
+and the HD body's "800" level is 2,470 (the decimation stops short; `hdbody.LODS`); the 3 k
+level is 3,000. Proof sheets: `sheet-proof-hd-tint.png` (zoom 0.5, 1, 2, 4 and a free
+close-up: red, yellow, yellow, green, white), `sheet-proof-hd.png`, `sheet-proof-old.png`.
 
 ## Where a battle's frame goes (m2-perf)
 

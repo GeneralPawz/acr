@@ -5,6 +5,10 @@
 //! look variants' vertex buffers stay exactly as loaded. The lists come from quadric error
 //! simplification on the rest pose ([`levels`], meshopt-rs) with the borders between body
 //! parts and hair variants locked. Built when a model is added (no asset change).
+//!
+//! A model whose glb carries its own levels ([`crate::model::Primitive::lod`], the HD body)
+//! draws those instead: each its own mesh, material and textures on the master's skin
+//! ([`authored`], [`AUTHORED_SIZES`]); only its other primitives take the index levels.
 
 use std::collections::{HashMap, HashSet};
 
@@ -38,15 +42,50 @@ pub const SHADOW_STEP: usize = 1;
 pub const SHADOW: usize = LEVELS;
 pub const SHADOW_RATIO: f32 = 0.03;
 
+/// [`SIZES`] for a model with authored levels. The size is twice the culling radius, about
+/// twice a man's height (radius 1.8 m), so the HD master (78 k triangles) gives way to its
+/// 10 k level when the man is under about 300 px tall (zoom 5.5), to 3 k under 120 px
+/// (zoom 2.2), and to the crowd level (about 800) under 40 px (zoom 0.75; at zoom 1 he is
+/// 54 px).
+pub const AUTHORED_SIZES: [f32; LEVELS - 1] = [600.0, 240.0, 80.0];
+
 /// The level for a projected size, staying at `last` within the hysteresis band.
 pub fn choose(size_px: f32, last: Option<usize>) -> usize {
-    let plain = SIZES.iter().take_while(|&&t| size_px < t).count();
+    choose_in(&SIZES, size_px, last)
+}
+
+/// [`choose`] over the thresholds `sizes`.
+pub fn choose_in(sizes: &[f32; LEVELS - 1], size_px: f32, last: Option<usize>) -> usize {
+    let plain = sizes.iter().take_while(|&&t| size_px < t).count();
     match last {
         // Coarser at once; finer only when clearly above the threshold.
-        Some(l) if plain < l => SIZES.iter().take_while(|&&t| size_px < t * HYSTERESIS).count().min(l),
+        Some(l) if plain < l => sizes.iter().take_while(|&&t| size_px < t * HYSTERESIS).count().min(l),
         _ => plain,
     }
 }
+
+/// The index lists of an authored primitive at level `own` (0: the master) when the model
+/// carries the levels `have` (ascending, 0 first): its whole list at its own level and at the
+/// levels up to the next one it carries (a gap draws the coarsest level below it), nothing at
+/// the others; the shadow list is the coarsest level's, "sloppy" to [`AUTHORED_SHADOW`].
+pub fn authored(vertices: &[Vertex], indices: &[u32], own: u8, have: &[u8]) -> [Vec<u32>; LEVELS + 1] {
+    let mut out: [Vec<u32>; LEVELS + 1] = Default::default();
+    for (l, list) in out.iter_mut().enumerate().take(LEVELS) {
+        let shown = have.iter().copied().filter(|&h| usize::from(h) <= l).max();
+        if shown == Some(own) {
+            *list = indices.to_vec();
+        }
+    }
+    if have.iter().max() == Some(&own) {
+        let pos: Vec<Pos> = vertices.iter().map(|v| Pos(v.position)).collect();
+        out[SHADOW] = sloppy(vertices, indices, &pos, AUTHORED_SHADOW * 3);
+    }
+    out
+}
+
+/// The shadow casters' triangles of an authored model's coarsest level (a soldier's index
+/// levels cast about 350).
+pub const AUTHORED_SHADOW: usize = 400;
 
 /// The body part and hair variant of a vertex: borders between them never move.
 fn region(v: &Vertex) -> (i32, i32) {
@@ -352,6 +391,20 @@ mod tests {
             let h: Vec<f32> = t.iter().map(|&k| v[k as usize].body[3]).collect();
             assert!(h.iter().all(|&x| x == h[0]), "a triangle across hair variants");
         }
+    }
+
+    #[test]
+    fn authored_levels_fill_gaps() {
+        let (v, i) = grid(2);
+        // Master and levels 1 and 3: level 1 also stands in for 2.
+        let have = [0, 1, 3];
+        let n = |own| authored(&v, &i, own, &have).map(|l| l.len() / 3);
+        assert_eq!(n(0), [8, 0, 0, 0, 0]);
+        assert_eq!(n(1), [0, 8, 8, 0, 0]);
+        assert_eq!(n(3), [0, 0, 0, 8, 8]);
+        // The crowd level below about 40 px.
+        assert_eq!(choose_in(&AUTHORED_SIZES, 2.0 * 39.0, None), 3);
+        assert_eq!(choose_in(&AUTHORED_SIZES, 700.0, None), 0);
     }
 
     #[test]

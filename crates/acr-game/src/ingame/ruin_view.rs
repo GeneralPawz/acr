@@ -119,6 +119,7 @@ pub fn chunks(model: &ModelData) -> Vec<Chunk> {
                 material: p.material,
                 morphs: p.morphs,
                 look_morphs: p.look_morphs.iter().map(|(k, _)| (*k, Vec::new())).collect(),
+                lod: None,
             };
             for t in p.indices.as_chunks::<3>().0 {
                 let c = t.iter().fold([0.0f32; 3], |c, &i| {
