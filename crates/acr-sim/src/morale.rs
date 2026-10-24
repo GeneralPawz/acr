@@ -334,17 +334,28 @@ pub fn start_panic(w: &mut World, i: usize) {
 /// `Danger` (0x600670), in 16 px units: `1000/(d + 50)` for every enemy unit in the 128 px
 /// cells of rings 0..=6 around `(tx, ty)`, `20000/(d + 50)` for enemy buildings with a
 /// garrison.
-fn danger(w: &World, tx: i32, ty: i32, mask: u8) -> i32 {
+///
+/// A burning man's flight (`burning`: his index, rule `hit_locations`, `ground_fire::panic`)
+/// also counts his own side's living units like enemies and every shell fire like a
+/// garrisoned building, so he runs away from his comrades and the flames. Not in the
+/// original.
+fn danger(w: &World, tx: i32, ty: i32, mask: u8, burning: Option<usize>) -> i32 {
     let (cx, cy) = (tx >> 3, ty >> 3);
     let mut sum = 0;
     for r in 0..=6 {
         for &(a, b) in ring(r) {
             for &k in w.buckets.get(cx + a, cy + b) {
                 let e = &w.units[k as usize];
-                if e.nmask & mask == 0 {
+                let comrade = burning.is_some_and(|i| i != k as usize && e.living() && e.nmask & mask != 0);
+                if e.nmask & mask == 0 || comrade {
                     sum += 1000 / (norma(tx - (e.pos.x >> 8), ty - (e.pos.y >> 8)) + 50);
                 }
             }
+        }
+    }
+    if burning.is_some() {
+        for f in &w.ground_fires.list {
+            sum += 20000 / (norma(tx - (f.x >> 4), ty - (f.y >> 4)) + 50);
         }
     }
     for e in w.units.iter().filter(|e| e.building && e.living() && !e.inside.is_empty() && e.nmask & mask == 0) {
@@ -378,7 +389,9 @@ pub fn panic_link(w: &mut World, i: usize) {
         let (x, y) = w.units[i].pos.pixels();
         fear(w, x, y, w.units[i].owner, 256, 0);
     }
-    if w.random.rando() < t.fear.psixoz << 5 {
+    // A burning man runs until `ground_fire::panic` ends his flight: no calming down.
+    let burning = (w.rules.hit_locations && w.units[i].body.flee != 0).then_some(i);
+    if burning.is_none() && w.random.rando() < t.fear.psixoz << 5 {
         if t.peasant || i32::from(step) <= catalog.morale.steps {
             w.units[i].pop_order();
             return;
@@ -423,8 +436,9 @@ pub fn panic_link(w: &mut World, i: usize) {
         if w.map.land.check_bar(tx - 1, ty - 1, 3, 3) {
             continue;
         }
-        let d = danger(w, tx, ty, mask);
-        let v = d + (w.random.rando() & 7);
+        let d = danger(w, tx, ty, mask, burning);
+        // A burning man runs more erratically: a wider random term (the same draw).
+        let v = d + (w.random.rando() & if burning.is_some() { 0x3f } else { 7 });
         if v < best {
             (best, target) = (v, Some((tx, ty)));
         }

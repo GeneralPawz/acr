@@ -103,6 +103,8 @@ pub struct Body {
     /// `Unit::burning` was already on (an `X`/`F` weapon, `NRES`) when a shell fire caught
     /// him, so the end of [`Body::burn`] leaves it on.
     pub burn_kept: bool,
+    /// Seconds a burning man still runs in panic (`crate::ground_fire::panic`); 0: not.
+    pub flee: u8,
     /// The long weapon (musket, pike) was dropped; set once, the renderer leaves it lying.
     pub dropped: bool,
     /// A rider (set at his first injury): the horse carries him, so his legs never make him
@@ -148,6 +150,9 @@ impl Hash for Body {
             }
             if self.burn_kept {
                 self.burn_kept.hash(state);
+            }
+            if self.flee != 0 {
+                self.flee.hash(state);
             }
         }
     }

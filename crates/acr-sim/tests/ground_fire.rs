@@ -168,6 +168,9 @@ fn a_fire_weapon_flame_outlasts_the_shell_fire() {
     let i = s.0 as usize;
     // Set on fire by an `X`/`F` weapon before (the original's flag, which never goes out).
     w.units[i].burning = true;
+    // A man who cannot panic (walking with `UnlimitedMotion`, as out of a building): a man
+    // who can runs and his flight ends the flames (`tests/burn_panic.rs`).
+    w.units[i].unlimited = true;
     w.ground_fires.list.push(GroundFire { x: 2000, y: 2000, radius: RADIUS, start: 0 });
     while w.units[i].body.burn == 0 {
         w.step(&[]);

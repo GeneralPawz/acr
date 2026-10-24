@@ -1260,7 +1260,7 @@ tenth of its life (so it never burns to death), and a unit that dies burning is 
 - Once a second (after the bleeding) every soldier (not a building, cannon or ship) inside a
   fire catches fire: `Unit::burning` goes on and `Body::burn` is set to 5 s. While it
   runs he loses 8 life a second through `MakeDamage` without a sender, so he can burn to
-  death (`DeathCause::Burned`); out of the fire he goes out after the 5 s. No panic yet.
+  death (`DeathCause::Burned`); out of the fire he goes out after the 5 s.
 - The fires are part of the state hash only while some burn (`Body::burn` only while not
   0). They are not saved: savegames replay their commands and the fires come back.
 - 2D draws three flames of the burning-building loop (`[FIRES]` `#DFIRE2`) per fire, fewer
@@ -1270,6 +1270,25 @@ tenth of its life (so it never burns to death), and a unit that dies burning is 
   `Unit::burning` after his 5 s are up (`Body::burn_kept`): the original's flag never goes
   out. The renderer shows a burning man by `Unit::burning` (and `Body::burn`, the seconds
   left from a shell fire).
+- **Burning men panic** (`ground_fire::panic`, once a second after the burn). In the
+  original only kills raise fear (`Fear` 0x601960 is called from `MakeDamage` 0x4e8f92 and
+  0x4e9c4d and from `PanicLink` 0x600720; `StartPanic` 0x600e20 only from `TryPanic`
+  0x6017a0), so burning frightens no one there. With the rule a living soldier on fire
+  (a shell fire or an `X`/`F` weapon) who is not running yet gets the original's panic order
+  (`morale::start_panic`: he leaves his formation, which breaks up below 5 others, and
+  takes no orders while his 128 px legs run with `UnlimitedMotion`) and `Body::flee` = 4 s
+  (`FLEE_SECONDS`). While `flee` runs, `PanicLink` skips its calm-down draw (`PSIXOZ`), and
+  its `Danger` (0x600670) also counts his own side's living units like enemies
+  (`1000/(d+50)`) and every shell fire like a garrisoned building (`20000/(d+50)`), with a
+  random term `rando() & 63` instead of `& 7` (the same draw): he runs an erratic path away
+  from the flames and his comrades. His second leg frightens his comrades through `Fear`
+  (fear type 0, 256 px) as any panic does, so neighbours may flee too. When `flee` is up
+  one `rando()`: below `OUT_CHANCE` 16384 (one half) rolling and running put the flames out
+  (`Unit::burning` off, even an `X`/`F` weapon's flag, `Body::burn` 0) and he stops where he
+  is, his orders cleared; otherwise he falls, burned to death (`MakeDamage` of his life,
+  `DeathCause::Burned`). A shell fire's flames that end during the flight end it without a
+  draw. The renderer needs nothing new: the flight shows the run clip, the fall `DEATH`.
+  `Body::flee` hashes only while not 0. `tests/burn_panic.rs`.
 
 #### Direct hits: torn apart or a blood mist (#256)
 

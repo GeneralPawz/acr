@@ -20,6 +20,11 @@ pub const EVERY: u64 = 10;
 pub const BURN_SECONDS: u8 = 5;
 /// Life a burning soldier loses every second.
 pub const BURN_LOSS: i32 = 8;
+/// Seconds a burning man runs in panic before the flames go out or he falls.
+pub const FLEE_SECONDS: u8 = 4;
+/// Chance (out of 32768, one `rando()`) that his rolling and running put the flames out at
+/// the end of his panic; otherwise he falls and burns to death.
+pub const OUT_CHANCE: i32 = 16384;
 
 /// One fire on the ground (world pixels). Its age is `tick - start`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -109,5 +114,54 @@ pub fn tick(w: &mut World) {
                 u.body.burn_kept = false;
             }
         }
+    }
+    panic(w);
+}
+
+/// Burning men panic (once a second, after the burn): a living soldier on fire (a shell
+/// fire or an `X`/`F` weapon) who is not running yet breaks from his formation and flees
+/// through the original's panic order (`StartPanic` 0x600e20, `PanicLink` 0x600720: legs of
+/// 128 px with `UnlimitedMotion`, taking no orders; its second leg frightens his comrades
+/// through `Fear` 0x601960, fear type 0), but for [`FLEE_SECONDS`], away from the fires and
+/// his comrades (`morale::panic_link`). Then one `rando()`: below [`OUT_CHANCE`] the flames
+/// are out (even the original's never-ending flag) and he stops; otherwise he falls, burned
+/// to death. Not in the original: there only kills raise fear (`MakeDamage` 0x4e8f92,
+/// 0x4e9c4d). Only with the rule.
+fn panic(w: &mut World) {
+    for i in 0..w.units.len() {
+        let u = &w.units[i];
+        if !u.living() || !has_body(w, i) {
+            continue;
+        }
+        if u.body.flee == 0 {
+            if u.burning && !u.panicking() && !u.unlimited {
+                crate::morale::start_panic(w, i);
+                if matches!(w.units[i].orders.last(), Some(crate::world::Order::Panic { .. })) {
+                    w.units[i].body.flee = FLEE_SECONDS;
+                }
+            }
+            continue;
+        }
+        let u = &mut w.units[i];
+        u.body.flee -= 1;
+        if u.burning && u.body.flee > 0 {
+            continue;
+        }
+        // The flight is over (or the shell fire's flames already went out).
+        if u.burning && w.random.rando() >= OUT_CHANCE {
+            let life = w.units[i].life;
+            crate::combat::make_damage(w, i, life, None, 0xFF);
+            if !w.units[i].living() {
+                continue;
+            }
+        }
+        let World { units, occupancy, .. } = w;
+        let u = &mut units[i];
+        (u.burning, u.body.burn, u.body.burn_kept, u.body.flee) = (false, 0, false, 0);
+        u.orders.clear();
+        u.path.clear();
+        u.dest = None;
+        u.prio = 0;
+        crate::economy::settle(u, occupancy);
     }
 }
