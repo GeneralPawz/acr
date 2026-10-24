@@ -720,6 +720,21 @@ falls off. Render only; placement is hashed from the hit (tick, victim), never t
   that variant, and the musket and hat (`node_part`, turned to lie flat by
   `debris::lying_flat`) lie on the ground where he was when it happened, until
   `corpse_minutes` have passed.
+- **Gear dropped at death (#206):** a killed man (skeleton H, or a rider with `rider.*`
+  bones) keeps his musket, pike, carbine (`gun`), sabre (`sabre`, `blade`) and hat on their
+  sockets while he falls; at the landing (his `#DEATHLIE*`, or the end of the death clip)
+  his model turns into the variant without them and each item that shows then (not scaled
+  to nothing by the clip) lies on the ground beside him (`three_d::laid_gear`,
+  `Debris::lay_gear`). An item starts where it is in the landing pose (the clip's node, or
+  under a ragdoll the bone its socket hangs on) and turned as it is; a long one (half
+  length > 0.3 m) turns alongside the body (hips to head), up to ±0.35 rad off by a hash of
+  (unit, item); everything is pushed sideways out of the body (0.3 m plus its reach from
+  the hips-head segment). It lies flat on the ground's slope (`model_matrix_tilted`), ages
+  from the death tick, so it rots, sinks and goes with the corpse, and a shell blast throws
+  it like other debris. Render only: positions and turns come from the pose and hashes,
+  never the sim RNG. `gore=off` keeps the original: the gear stays on the fading corpse.
+  Proof: `ACR-analysis/genai/deathgear/` (`volley.json`, `orbit-before-after.png`,
+  `after-death.png`).
 - `gore=reduced`: pieces and caps, no guts, gibs or mist; `gore=off`: none of it.
 
 #### Hits and blood splatter
@@ -1258,6 +1273,7 @@ the frame rate, the models drawn and the poses sampled.
 - No nation colour mask yet (#162).
 - Free camera: fog of war and the minimap frame follow the original view only (water: the
   surface of docs/water.md, a flat one under `water=original`); sprites (trees, units without models) show their stored direction.
-- Dropped gear (musket, hat) does not detach at death yet, only for crawlers and the
-  disarmed (#262 S5); strapped gear floats over a deflated body (assets-humans.md, insight 6).
+- Gear dropped at death (#206) avoids the man's own body only, not a horse or a
+  neighbouring corpse; strapped gear floats over a deflated body (assets-humans.md,
+  insight 6).
 - No blending between clips; morph target normals are ignored.

@@ -300,6 +300,29 @@ impl Debris {
         }
     }
 
+    /// Whether unit `id`'s held gear already lies on the ground.
+    pub fn has_dropped(&self, id: u32) -> bool {
+        self.dropped.contains(&id)
+    }
+
+    /// Lays the held gear of unit `id`, killed at `tick`, where it fell (#206): per item its
+    /// model, the model's origin on the ground (world x, y) and its yaw. It lies from the
+    /// landing on, rots, sinks and goes with the corpse (both age from the death).
+    pub fn lay_gear(&mut self, id: u32, laid: &[(usize, [f32; 2], f32)], player: u8, tick: u64, now: u64) {
+        if !self.dropped.insert(id) {
+            return;
+        }
+        for (k, &(model, to, yaw)) in laid.iter().enumerate() {
+            let mut rng = Rng::new(tick, id ^ (k as u32).rotate_left(8) ^ 0x51ed);
+            self.push(What::Gear, UnitModel { model, player }, [to[0], to[1], 0.0], to, &mut rng, tick, 0.0);
+            if let Some(last) = self.items.last_mut() {
+                last.yaw = yaw;
+                last.flight = 0;
+                last.launched = now;
+            }
+        }
+    }
+
     /// `battlefield_marks=keep`: forgets all but the newest `cap` pieces.
     pub fn keep_newest(&mut self, cap: usize) {
         if self.items.len() > cap {
@@ -398,6 +421,15 @@ impl Debris {
                         m[3][k] += target - q[k];
                     }
                     (m, damage)
+                }
+                What::Gear if t >= 1.0 => {
+                    // Settled flat on the ground's slope (#206).
+                    let (s, c) = item.yaw.sin_cos();
+                    let d = 0.3 * PIXELS_PER_METRE;
+                    let h = |dx: f32, dy: f32| ground(land[0] + dx, land[1] + dy)[2];
+                    let pitch = (h(s * d, c * d) - h(-s * d, -c * d)) / (2.0 * d);
+                    let roll = (h(-c * d, s * d) - h(c * d, -s * d)) / (2.0 * d);
+                    (view3d::model_matrix_tilted(ground_at, item.yaw, item.scale, pitch, roll), Damage::default())
                 }
                 What::Gib | What::Gear => {
                     let base = view3d::model_matrix(ground_at, item.yaw, item.scale);
@@ -509,11 +541,21 @@ pub fn guts(id: u32, at: Vec3, yaw: f32, decay: f32, player: u8, gibs: &GibModel
     }
 }
 
+/// How a piece of held gear lies ([`lying_flat`]): its longest axis in its mesh's own
+/// coordinates (a unit axis), and where along glTF x it reaches when lying (metres from its
+/// origin: the middle and half the length).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Lying {
+    pub axis: [f32; 3],
+    pub mid: f32,
+    pub half: f32,
+}
+
 /// Held gear cut from its unit model (`ModelData::node_part`) turned to lie on the ground:
 /// its longest axis along glTF x, resting on y = 0.
-pub fn lying_flat(mut m: model::ModelData) -> model::ModelData {
+pub fn lying_flat(mut m: model::ModelData) -> (model::ModelData, Lying) {
     let Some(node) = m.mesh_nodes().first().and_then(|name| m.nodes.iter().position(|n| n.name == *name)) else {
-        return m;
+        return (m, Lying::default());
     };
     let points = || m.primitives.iter().flat_map(|p| p.vertices.iter().map(|v| v.position));
     let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
@@ -525,20 +567,23 @@ pub fn lying_flat(mut m: model::ModelData) -> model::ModelData {
     }
     let size: [f32; 3] = std::array::from_fn(|k| hi[k] - lo[k]);
     let h = std::f32::consts::FRAC_1_SQRT_2;
-    let rotation = if size[1] >= size[0] && size[1] >= size[2] {
-        [0.0, 0.0, -h, h]
+    let (rotation, axis) = if size[1] >= size[0] && size[1] >= size[2] {
+        ([0.0, 0.0, -h, h], [0.0, 1.0, 0.0])
     } else if size[2] >= size[0] {
-        [0.0, h, 0.0, h]
+        ([0.0, h, 0.0, h], [0.0, 0.0, 1.0])
     } else {
-        [0.0, 0.0, 0.0, 1.0]
+        ([0.0, 0.0, 0.0, 1.0], [1.0, 0.0, 0.0])
     };
     let scale = m.nodes[node].scale;
     let turn = math::from_trs([0.0; 3], rotation, scale);
     let bottom = points().map(|p| math::transform_point(&turn, p)[1]).fold(f32::MAX, f32::min);
+    let (lo, hi) = points()
+        .map(|p| math::transform_point(&turn, p)[0])
+        .fold((f32::MAX, f32::MIN), |(lo, hi), x| (lo.min(x), hi.max(x)));
     let n = &mut m.nodes[node];
     n.rotation = rotation;
     n.translation = [0.0, -bottom.min(1.0), 0.0];
-    m
+    (m, Lying { axis, mid: (lo + hi) / 2.0, half: (hi - lo) / 2.0 })
 }
 
 /// The colour of a unit's coat (linear RGB): the commonest colour of its upper sleeves.

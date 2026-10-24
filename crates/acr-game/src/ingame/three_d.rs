@@ -74,6 +74,8 @@ struct Gear {
     unarmed: Option<usize>,
     /// The musket and hat alone, to lie on the ground.
     dropped: Vec<usize>,
+    /// Per dropped item: its node in the unit model and how it lies.
+    nodes: Vec<(usize, super::debris::Lying)>,
 }
 
 /// The `gore.glb` pack (#262): gibs, guts and the stump cap.
@@ -89,10 +91,111 @@ const WIND_DIR: [f32; 2] = [0.94, 0.34];
 const WIND_STRENGTH: f32 = 1.0;
 const WIND_PERIOD: f32 = 3600.0;
 
-/// Held gear a crawler or a disarmed man no longer carries: long weapons and the hat.
+/// Held gear a crawler, a disarmed or a killed man no longer carries: long weapons, a
+/// rider's carbine and sabre, and the hat.
 fn held_gear(node: &str) -> bool {
     let n = node.rsplit('.').next().unwrap_or(node);
-    ["musket", "rammer", "pike", "tricorn", "hat", "cap"].contains(&n)
+    ["musket", "rammer", "pike", "gun", "sabre", "blade", "tricorn", "hat", "cap"].contains(&n)
+}
+
+/// Clearance of dropped gear from the body's axis (hips to head) of its dead owner (m).
+const GEAR_CLEAR_M: f32 = 0.3;
+
+/// Where a killed man's held gear lies once he is down (#206): per visible item its model,
+/// its origin on the ground (world x, y) and its yaw. Each item starts where it is in his
+/// landing pose (the clip's, or under a ragdoll its socket's bone from `bone`) and turned as
+/// it is; a long one (musket, carbine, sabre) turns to lie alongside the body, a little off
+/// by a hash of (unit, item), and everything is pushed out of the body to lie beside him.
+fn laid_gear(
+    model: &ModelData,
+    gear: &Gear,
+    inst: &ModelInstance,
+    bone: &dyn Fn(&str) -> Option<[f32; 3]>,
+    id: u32,
+    tick: u64,
+) -> Vec<(usize, [f32; 2], f32)> {
+    use acr_render::math;
+    let globals = model.globals(inst.clip, inst.time);
+    let world = |n: usize| math::mul(&inst.transform, &globals[n]);
+    let node = |name: &str| {
+        let rider = format!("rider.{name}");
+        model.nodes.iter().position(|n| n.name == name).or_else(|| model.nodes.iter().position(|n| n.name == rider))
+    };
+    let short = |name: &str| name.rsplit('.').next().unwrap_or(name).to_owned();
+    // A ragdoll's bone, else the clip's (world pixels).
+    let point = |name: &str| -> Option<[f32; 2]> {
+        if let Some(p) = bone(name) {
+            return Some([p[0], p[1]]);
+        }
+        let p = math::transform_point(&world(node(name)?), [0.0; 3]);
+        Some([p[0], p[1]])
+    };
+    let (Some(hips), Some(head)) = (point("hips"), point("head")) else { return Vec::new() };
+    let body = [head[0] - hips[0], head[1] - hips[1]];
+    let len = (body[0] * body[0] + body[1] * body[1]).sqrt().max(1e-3);
+    let axis = [body[0] / len, body[1] / len];
+    let ragdoll = bone("hips").is_some();
+    let mut out = Vec::new();
+    for (k, (&model_index, &(n, lying))) in gear.dropped.iter().zip(&gear.nodes).enumerate() {
+        let m = world(n);
+        // A hidden item (scaled to nothing by its clip) does not fall.
+        let x = [m[0][0], m[0][1], m[0][2]];
+        if math::dot(x, x) < 1e-6 {
+            continue;
+        }
+        let mut rng = super::splatter::Rng::new(tick, id ^ (k as u32).wrapping_mul(0x9e37) ^ 0x6ea2);
+        // Its direction as it was (the clip's), a hashed one under a ragdoll or when upright.
+        let o = math::transform_point(&m, [0.0; 3]);
+        let tip = math::transform_point(&m, lying.axis);
+        let mut d = [tip[0] - o[0], tip[1] - o[1]];
+        let full = math::dot(math::sub(tip, o), math::sub(tip, o)).sqrt();
+        let dl = (d[0] * d[0] + d[1] * d[1]).sqrt();
+        if ragdoll || dl < 0.3 * full {
+            let a = rng.next() * std::f32::consts::TAU;
+            d = [a.cos(), a.sin()];
+        } else {
+            d = [d[0] / dl, d[1] / dl];
+        }
+        // Its middle where it was: under a ragdoll, the bone its socket hangs on.
+        let socket = model.nodes[n].parent.and_then(|p| model.nodes[p].parent).map(|p| short(&model.nodes[p].name));
+        let held = socket.filter(|_| ragdoll).and_then(|s| bone(&s));
+        let mut c = match held {
+            Some(p) => [p[0], p[1]],
+            None => [o[0] + d[0] * lying.mid * PIXELS_PER_METRE, o[1] + d[1] * lying.mid * PIXELS_PER_METRE],
+        };
+        let long = lying.half > 0.3;
+        let mut sin = 1.0;
+        if long {
+            // Alongside the body, up to 0.35 rad off.
+            let sign = if d[0] * axis[0] + d[1] * axis[1] < 0.0 { -1.0 } else { 1.0 };
+            let turn = (rng.next() - 0.5) * 0.7;
+            let (s, co) = turn.sin_cos();
+            let a = [axis[0] * sign, axis[1] * sign];
+            d = [a[0] * co - a[1] * s, a[0] * s + a[1] * co];
+            sin = s.abs();
+        }
+        // Out of the body: from the nearest point of the hips-head segment, sideways.
+        let t = (((c[0] - hips[0]) * axis[0] + (c[1] - hips[1]) * axis[1]) / len).clamp(0.0, 1.0);
+        let q = [hips[0] + body[0] * t, hips[1] + body[1] * t];
+        let (mut nx, mut ny) = (c[0] - q[0], c[1] - q[1]);
+        let off = (nx * nx + ny * ny).sqrt();
+        if off < 1e-3 {
+            let side = if rng.next() < 0.5 { -1.0 } else { 1.0 };
+            (nx, ny) = (-axis[1] * side, axis[0] * side);
+        } else {
+            (nx, ny) = (nx / off, ny / off);
+        }
+        let reach = if long { lying.half * sin } else { lying.half };
+        let clear = (GEAR_CLEAR_M + reach + 0.1 * rng.next()) * PIXELS_PER_METRE;
+        if off < clear {
+            c = [q[0] + nx * clear, q[1] + ny * clear];
+        }
+        // glTF x lies along `d` (x turns to world (cos yaw, -sin yaw)).
+        let yaw = (-d[1]).atan2(d[0]);
+        let mid = lying.mid * PIXELS_PER_METRE;
+        out.push((model_index, [c[0] - d[0] * mid, c[1] - d[1] * mid], yaw));
+    }
+    out
 }
 
 /// Gear that lies on the ground once dropped (the rammer stays in the musket).
@@ -532,12 +635,17 @@ impl ThreeD {
                 continue;
             }
             let mut gear = Gear::default();
-            if model.rig.is_some() {
+            // Men of skeleton H and riders (`rider.*` bones).
+            if model.rig.is_some() || model.nodes.iter().any(|n| n.name == "rider.hips") {
                 let unarmed = model.without_nodes(held_gear);
                 if unarmed.primitives.len() < model.primitives.len() {
                     for node in model.mesh_nodes().into_iter().filter(|n| lies_on_ground(n)) {
-                        if let Some(part) = model.node_part(node) {
-                            gear.dropped.push(renderer.add_model(device, queue, super::debris::lying_flat(part)));
+                        if let Some(part) = model.node_part(node)
+                            && let Some(n) = model.nodes.iter().position(|m| m.name == node)
+                        {
+                            let (part, lying) = super::debris::lying_flat(part);
+                            gear.dropped.push(renderer.add_model(device, queue, part));
+                            gear.nodes.push((n, lying));
                         }
                     }
                     gear.unarmed = Some(renderer.add_model(device, queue, unarmed));
@@ -857,6 +965,26 @@ impl ThreeD {
             {
                 inst.model = unarmed;
                 self.debris.drop_gear(u.id.0, &gear.dropped, u.owner, at, now);
+            }
+            // Killed (#206): his held gear stays in his hands and on his head while he falls
+            // and lies beside him from the landing on (the death clip's end, or `#DEATHLIE`).
+            if !living
+                && !u.building
+                && let Some(gear) = self.gear.get(&index)
+                && let Some(unarmed) = gear.unarmed
+            {
+                let landed = matches!(u.anim, AnimKind::DeathLie(_))
+                    || inst.clip.and_then(|c| model.clips.get(c)).is_none_or(|c| inst.time >= c.duration);
+                if self.debris.has_dropped(u.id.0) {
+                    inst.model = unarmed;
+                } else if landed && self.gore != Gore::Off {
+                    let ragdolls = self.ragdolls.as_ref();
+                    let bone = |name: &str| ragdolls.and_then(|r| r.bone_world(u.id.0, name));
+                    let tick = if record.tick > 0 { record.tick } else { now };
+                    let laid = laid_gear(model, gear, &inst, &bone, u.id.0, tick);
+                    self.debris.lay_gear(u.id.0, &laid, u.owner, tick, now);
+                    inst.model = unarmed;
+                }
             }
             if damage.belly_open && self.gore == Gore::Full {
                 let yaw = view3d::facing_yaw(u.dir);
