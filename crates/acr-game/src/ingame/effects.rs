@@ -32,16 +32,25 @@ const FRM_DEC: usize = 2;
 /// stands, folded to 0..=π; `true` when it is mirrored (moving right, or a standing one
 /// facing a destination to the right: 0x557e58 tests the `x` it fed to `fpatan`, the
 /// destination's `dx` for a standing object, #242).
-pub fn direction(p: &Projectile, dirs: usize) -> (usize, bool) {
+///
+/// Seen from the free camera turned by `yaw` (radians, `Orbit::yaw`; 0 for the original
+/// view) the flight's ground part is turned into the camera's frame first (#309).
+pub fn direction(p: &Projectile, dirs: usize, yaw: f32) -> (usize, bool) {
     if dirs <= 1 {
         return (0, false);
     }
-    let (vx, vy, vz) = p.vel;
-    let (a, right) = if vx == 0 && vy == 0 {
-        let dx = p.dest.0 - p.pos.0;
-        (f64::from(dx).atan2(f64::from(p.dest.1 - p.pos.1)), dx > 0)
+    let (s, c) = f64::from(yaw).sin_cos();
+    let turn = |x: i32, y: i32| {
+        let (x, y) = (f64::from(x), f64::from(y));
+        if yaw == 0.0 { (x, y) } else { (x * c + y * s, y * c - x * s) }
+    };
+    let (vx, vy) = turn(p.vel.0, p.vel.1);
+    let vz = f64::from(p.vel.2);
+    let (a, right) = if p.vel.0 == 0 && p.vel.1 == 0 {
+        let (dx, dy) = turn(p.dest.0 - p.pos.0, p.dest.1 - p.pos.1);
+        (dx.atan2(dy), dx > 0.0)
     } else {
-        (f64::from(-vx).atan2(f64::from(vy - 2 * vz)), vx > 0)
+        ((-vx).atan2(vy - 2.0 * vz), vx > 0.0)
     };
     let a = if a >= 3.1415297 { a - 6.28305854 } else { a };
     let n = (2 * dirs - 2) as i64;
@@ -358,7 +367,7 @@ fn anim_sound(effects: &acr_formats::UnitDef, anim: &str, step: usize) -> Option
 /// `(x, y/2 − z)`, sorted at the ground row plus the shot point's height (and 300 for
 /// `[HILAYER]`). `WHITE` weapons lighten. With `rounds_3d` the rounds drawn as models
 /// (`missile_view::round`, #308) are left out.
-pub fn projectile_sprites(world: &World, objects: &ObjectsView, rounds_3d: bool, out: &mut Vec<SceneSprite>) {
+pub fn projectile_sprites(world: &World, objects: &ObjectsView, rounds_3d: bool, yaw: f32, out: &mut Vec<SceneSprite>) {
     let assets = objects.objects();
     let Some(effects) = assets.effects() else { return };
     for p in world.projectiles.iter() {
@@ -367,7 +376,7 @@ pub fn projectile_sprites(world: &World, objects: &ObjectsView, rounds_3d: bool,
         }
         let wp = world.catalog.weapons.get(p.weapon);
         let Some(anim) = effects.animation(&wp.anim) else { continue };
-        let (dir, mirrored) = direction(p, anim.directions.max(1) as usize);
+        let (dir, mirrored) = direction(p, anim.directions.max(1) as usize, yaw);
         let Some((frame, (dx, dy))) = assets.effect_look(&wp.anim, p.frame.max(0) as usize, dir) else { continue };
         let (x, y, z) = (p.pos.0 >> 14, p.pos.1 >> 14, p.pos.2 >> 14);
         out.push(SceneSprite {
@@ -472,22 +481,25 @@ mod tests {
     #[test]
     fn projectiles_face_their_flight() {
         // 17 directions from down the screen (0) to up (16); moving right mirrors.
-        assert_eq!(direction(&shot((0, 1 << 14, 0), (0, 0)), 17), (0, false));
-        assert_eq!(direction(&shot((0, -(1 << 14), 0), (0, 0)), 17), (16, false));
-        assert_eq!(direction(&shot((-(1 << 14), 0, 0), (0, 0)), 17), (8, false));
-        assert_eq!(direction(&shot((1 << 14, 0, 0), (0, 0)), 17), (8, true));
+        assert_eq!(direction(&shot((0, 1 << 14, 0), (0, 0)), 17, 0.0), (0, false));
+        assert_eq!(direction(&shot((0, -(1 << 14), 0), (0, 0)), 17, 0.0), (16, false));
+        assert_eq!(direction(&shot((-(1 << 14), 0, 0), (0, 0)), 17, 0.0), (8, false));
+        assert_eq!(direction(&shot((1 << 14, 0, 0), (0, 0)), 17, 0.0), (8, true));
         // Rising counts as moving up the screen (45° here).
-        assert_eq!(direction(&shot((-(1 << 14), 0, 1 << 13), (0, 0)), 17).0, 12);
+        assert_eq!(direction(&shot((-(1 << 14), 0, 1 << 13), (0, 0)), 17, 0.0).0, 12);
         // A standing object (a musket's smoke) faces its destination, mirrored when it lies
         // to the right (0x557e58, #242): a shot to the north-east puffs north-east.
-        assert_eq!(direction(&shot((0, 0, 0), (2000, 1000)), 17), (8, true));
-        assert_eq!(direction(&shot((0, 0, 0), (0, 1000)), 9), (4, false));
-        let (ne, nw) = (direction(&shot((0, 0, 0), (2000, 0)), 17), direction(&shot((0, 0, 0), (0, 0)), 17));
+        assert_eq!(direction(&shot((0, 0, 0), (2000, 1000)), 17, 0.0), (8, true));
+        assert_eq!(direction(&shot((0, 0, 0), (0, 1000)), 9, 0.0), (4, false));
+        let (ne, nw) = (direction(&shot((0, 0, 0), (2000, 0)), 17, 0.0), direction(&shot((0, 0, 0), (0, 0)), 17, 0.0));
         assert_eq!(ne, (nw.0, !nw.1));
         assert!(ne.1);
         // Like a ball flying the same way.
-        assert_eq!(ne, direction(&shot((1 << 14, -(1 << 14), 0), (0, 0)), 17));
-        assert_eq!(direction(&shot((5, 5, 5), (0, 0)), 1), (0, false));
+        assert_eq!(ne, direction(&shot((1 << 14, -(1 << 14), 0), (0, 0)), 17, 0.0));
+        assert_eq!(direction(&shot((5, 5, 5), (0, 0)), 1, 0.0), (0, false));
+        // The free camera looking east (#309): a shot flying east flies away from it.
+        let east = direction(&shot((1 << 14, 0, 0), (0, 0)), 17, std::f32::consts::FRAC_PI_2);
+        assert_eq!(east, direction(&shot((0, -(1 << 14), 0), (0, 0)), 17, 0.0));
     }
 
     #[test]

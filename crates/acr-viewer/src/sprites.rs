@@ -206,6 +206,7 @@ impl SpriteView {
             mirrored: false,
             white: false,
             depth: 0.0,
+            fog: 0.0,
         };
         if !self.grid {
             return vec![draw(self.frame, ((width - cell_w) / 2.0).floor(), ((height - cell_h) / 2.0).floor())];

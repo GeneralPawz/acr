@@ -183,10 +183,47 @@ acr-game
    3b. *water surface* (`water.rs`, docs/water.md): Gerstner waves, depth colour over the
       lakebed, Fresnel sky and shore foam, depth-tested and not written; with
       `water=detailed` it replaces the tint of step 1 (also under the free camera);
+   3c. *world fog* (free camera with fog of war only, #309): the pass is split here and
+      `fog_world.rs` reads the depth (below, "Fog of war under the free camera");
    4. *ground reset*: a full-screen triangle at the far plane where stencil is 0, so the
       sprites draw over the terrain as in the original;
    5. *sprites* in their usual order with a depth test (no writes) against the models.
-4. Fog of war and interface as before.
+4. Fog of war and interface as before; under the free camera the screen overlay is left out
+   for the world fog of step 3c.
+
+### Fog of war under the free camera (#309)
+
+The original's overlay (`fog.rs`, 0x4bee1e) darkens screen cells of the original view, so
+the fixed camera keeps it unchanged. Under the free camera the fog lies on the world
+instead:
+
+- `three_d.rs` `ground_fog` moves the fog grid (`acr_sim::fog::Fog::cells`, 128 px cells
+  stamped at the projected point `y − 2·h`) onto the ground once per frame: cell `(cx, cy)`
+  takes the grid's value at its ground point's projection, interpolated along `y`. Visibility
+  itself is untouched: hidden enemies stay hidden by the same rules as in the 2D view.
+- `fog_world.rs`/`fog_world.wgsl`: after the water, particles and mist, the 3D pass ends; a
+  full-screen pass reads its depth (the depth texture now also has `TEXTURE_BINDING`, read
+  through a depth-only view), rebuilds the world point of each pixel with the inverse of
+  `View3d::world_to_clip`, interpolates the ground grid bilinearly at its `x`, `y`, turns the
+  value into the darkness row of 0x484e63 and blends black of `AGEW_1DR.GRD`'s opacity, as
+  `fog.wgsl` does. A model or tree is as dark as the ground it stands on, from any side; the
+  edges are smooth. The 3D pass then resumes (depth and stencil kept) with the ground reset.
+- Sprites, drawn after it, take the same share of black at their ground point
+  (`WorldFogRenderer::black_at` → `SpriteDraw::fog`, instance location 5 of `sprite.wgsl`,
+  the former padding).
+- The minimap draws the free camera's footprint (the window corners' rays on `z = 0`, a
+  trapezoid) instead of the rectangle (`interface.rs` `minimap_frame`, `minimap::compose`);
+  a click still centres the camera, which turns about the window centre.
+- Sprites of units without a model and projectiles pick their direction relative to the
+  camera's yaw (`unit_sprites`, `effects::direction`), so they do not show their back when
+  the camera is turned. Buildings, map objects (trees, stones), fires and other effects have
+  one fixed picture and stay as they are.
+
+Cost (render VM, RX 9060 XT, release, 1600 × 900, Miss7E01 at tick 100, free camera zoom 0.4,
+yaw 45°, pitch 35°, `gputime` over 30 frames, two runs): `world fog` 0.047–0.057 ms; the other
+passes unchanged within 0.001 ms with the fog off (`{"cmd":"fog","on":false}`). On a tiler the
+split costs one more store and load of the colour and depth targets; only the free camera with
+fog of war pays it. Steps: `ACR-analysis/genai/free-fog/shots_final.json`.
 
 ### Sun shadows
 
@@ -1793,8 +1830,9 @@ the frame rate, the models drawn and the poses sampled.
 - No meshopt/Draco decoding, no KTX2 or WebP textures: export models uncompressed with PNG
   or JPEG textures (the pipeline's default).
 - No nation colour mask yet (#162).
-- Free camera: fog of war and the minimap frame follow the original view only (water: the
-  surface of docs/water.md, a flat one under `water=original`); sprites (trees, units without models) show their stored direction.
+- Free camera: water is the surface of docs/water.md (a flat one under `water=original`);
+  buildings, trees and effects drawn as sprites keep their one picture from any side (units
+  and projectiles turn with the camera, #309).
 - Gear dropped at death (#206) avoids the man's own body only, not a horse or a
   neighbouring corpse; strapped gear floats over a deflated body (assets-humans.md,
   insight 6).

@@ -33,6 +33,8 @@ struct Instance {
     @location(3) param: u32,
     // Depth in the 3D pass (0 otherwise).
     @location(4) depth: f32,
+    // Fog of war under the free camera: the share of black (fog_world.rs).
+    @location(5) fog: f32,
 };
 
 struct VsOut {
@@ -41,6 +43,7 @@ struct VsOut {
     @location(1) @interpolate(flat) src: vec4<u32>,
     @location(2) @interpolate(flat) kind: u32,
     @location(3) @interpolate(flat) param: u32,
+    @location(4) @interpolate(flat) fog: f32,
 };
 
 @vertex
@@ -53,6 +56,7 @@ fn vs_main(@builtin(vertex_index) vi: u32, inst: Instance) -> VsOut {
     out.src = inst.src;
     out.kind = inst.kind;
     out.param = inst.param;
+    out.fog = inst.fog;
     return out;
 }
 
@@ -62,7 +66,8 @@ fn palette_color(index: u32) -> vec3<f32> {
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    let c = layer_color(in);
+    let l = layer_color(in);
+    let c = vec4<f32>(l.rgb * (1.0 - in.fog), l.a);
     if ((in.kind & TRANSPARENT) != 0u) {
         return vec4<f32>(c.rgb, c.a * 0.5);
     }

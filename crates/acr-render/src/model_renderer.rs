@@ -1884,6 +1884,8 @@ impl ModelRenderer {
 pub struct DepthTarget {
     size: (u32, u32),
     view: Option<wgpu::TextureView>,
+    /// The depth aspect alone, for passes that read the depth (the free camera's fog).
+    depth_only: Option<wgpu::TextureView>,
     reset: wgpu::RenderPipeline,
 }
 
@@ -1932,7 +1934,7 @@ impl DepthTarget {
             multiview_mask: None,
             cache: None,
         });
-        Self { size: (0, 0), view: None, reset }
+        Self { size: (0, 0), view: None, depth_only: None, reset }
     }
 
     /// Opens the 3D pass over `color` (kept) with a cleared depth and stencil buffer of the
@@ -1957,10 +1959,14 @@ impl DepthTarget {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: DEPTH_FORMAT,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             });
             self.view = Some(texture.create_view(&Default::default()));
+            self.depth_only = Some(texture.create_view(&wgpu::TextureViewDescriptor {
+                aspect: wgpu::TextureAspect::DepthOnly,
+                ..Default::default()
+            }));
             self.size = size;
         }
         let depth = self.view.as_ref().expect("created above");
@@ -1987,6 +1993,11 @@ impl DepthTarget {
             occlusion_query_set: None,
             multiview_mask: None,
         })
+    }
+
+    /// The depth of the last pass (opened with `keep`), once [`DepthTarget::begin`] made one.
+    pub fn depth_view(&self) -> Option<&wgpu::TextureView> {
+        self.depth_only.as_ref()
     }
 
     /// Moves every pixel no model drew to the far plane: sprites then draw over the terrain

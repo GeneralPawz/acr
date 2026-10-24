@@ -838,6 +838,9 @@ pub struct Placement<'a> {
     pub terrain: &'a TerrainData,
     /// Every sprite in front of the models (comparing models with sprites).
     pub on_top: bool,
+    /// The fog of war's share of black at a world ground point (`x`, `y`), for sprites under
+    /// the free camera's world fog (#309).
+    pub fog: Option<&'a dyn Fn(i32, i32) -> f32>,
 }
 
 impl Placement<'_> {
@@ -938,6 +941,7 @@ impl SceneAtlas {
         let mut out = Vec::with_capacity(placed.len());
         for (s, [ax, ay], h) in placed {
             let depth = placement.map_or(0.0, |p| p.depth(s, zoomed, h));
+            let fog = placement.and_then(|p| p.fog).map_or(0.0, |f| f(s.x, s.y));
             let twin =
                 zoomed.then(|| zoom_pack(&s.frame.0)).flatten().and_then(|p| self.index.get(&(p, s.frame.1)).copied());
             let (frame, x, y, scale) = if let Some(frame) = twin {
@@ -957,6 +961,7 @@ impl SceneAtlas {
                 mirrored: s.mirrored,
                 white: s.white,
                 depth,
+                fog,
             });
         }
         out

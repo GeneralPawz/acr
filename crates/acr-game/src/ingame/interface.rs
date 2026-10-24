@@ -299,6 +299,23 @@ impl InGame {
         )
     }
 
+    /// The free camera's ground footprint (the window corners' rays on `z = 0`) in minimap
+    /// pixels, `None` with the fixed camera (#309).
+    fn minimap_frame(&self, window: [f32; 2]) -> Option<[[i32; 2]; 4]> {
+        let view = self.three_d.free_view(self.camera, window)?;
+        let k = (1 << self.shift()) as f32;
+        // Far corners of a low camera reach the horizon: keep them near the map.
+        let side = minimap::SIDE as f32;
+        let [w, h] = window;
+        Some([[0.0, 0.0], [w, 0.0], [w, h], [0.0, h]].map(|px| {
+            let (o, d) = view.ray(px);
+            let t = o[2] / -d[2].min(-1e-3);
+            let p = [o[0] + t * d[0], o[1] + t * d[1]];
+            let m = |v: f32| (v / (CELL[0] * k)).clamp(-2.0 * side, 3.0 * side) as i32;
+            [m(p[0]), m(p[1])]
+        }))
+    }
+
     /// Centres the camera on a minimap pixel (0x4c5c9a).
     fn centre_on_minimap(&mut self, px: [f32; 2], window: [f32; 2]) {
         let k = (1 << self.shift()) as f32;
@@ -469,7 +486,8 @@ impl InGame {
     fn build_view(&mut self, ctx: &Ctx, window: [f32; 2]) -> View {
         let (camera, view_size) = self.minimap_camera(window);
         let player = self.own();
-        let mut view = View { player, camera, view: view_size, ..View::default() };
+        let frame = self.minimap_frame(window);
+        let mut view = View { player, camera, view: view_size, frame, ..View::default() };
         let nations = self.nations(ctx);
         self.panel_view(ctx, &mut view);
         let Some(world) = &self.world else { return view };

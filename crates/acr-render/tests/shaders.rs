@@ -4,7 +4,7 @@
 use naga::back::glsl;
 use naga::valid::{Capabilities, ValidationFlags, Validator};
 
-const SHADERS: [(&str, &str); 12] = [
+const SHADERS: [(&str, &str); 13] = [
     ("ground_cover.wgsl", include_str!("../src/ground_cover.wgsl")),
     ("weather.wgsl", include_str!("../src/weather.wgsl")),
     ("particles.wgsl", include_str!("../src/particles.wgsl")),
@@ -16,6 +16,7 @@ const SHADERS: [(&str, &str); 12] = [
     ("blood.wgsl", include_str!("../src/blood.wgsl")),
     ("terrain.wgsl", include_str!("../src/terrain.wgsl")),
     ("fog.wgsl", include_str!("../src/fog.wgsl")),
+    ("fog_world.wgsl", include_str!("../src/fog_world.wgsl")),
     ("image.wgsl", include_str!("../src/image.wgsl")),
     ("sprite.wgsl", include_str!("../src/sprite.wgsl")),
 ];

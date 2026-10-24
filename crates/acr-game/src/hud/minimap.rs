@@ -134,6 +134,7 @@ pub fn compose(
     dots: &[Dot],
     fog: Option<&[bool]>,
     camera: Option<Rect>,
+    frame: Option<[[i32; 2]; 4]>,
     palette: &acr_formats::Palette,
 ) -> acr_formats::raster::Image {
     let (w, h) = (placement.rect.width(), placement.rect.height());
@@ -169,7 +170,18 @@ pub fn compose(
             }
         }
     }
-    if let Some(r) = camera {
+    if let Some(corners) = frame {
+        // The free camera's footprint: its four ground edges, one pixel wide.
+        for i in 0..4 {
+            let [a, b] = [corners[i], corners[(i + 1) % 4]].map(|[x, y]| [x - ox, y - oy]);
+            let n = (b[0] - a[0]).abs().max((b[1] - a[1]).abs()).max(1);
+            for k in 0..=n {
+                let x = a[0] + (b[0] - a[0]) * k / n;
+                let y = a[1] + (b[1] - a[1]) * k / n;
+                put(&mut idx, x, y, WHITE);
+            }
+        }
+    } else if let Some(r) = camera {
         let (x0, y0, x1, y1) = (r.x0 - ox, r.y0 - oy, r.x1 - 1 - ox, r.y1 - 1 - oy);
         for x in x0..=x1 {
             put(&mut idx, x, y0, WHITE);

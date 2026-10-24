@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use acr_formats::M3dMap;
 use acr_render::fog::{FogRenderer, FogShades};
+use acr_render::fog_world::WorldFogRenderer;
 use acr_render::objects_view::ObjectsView;
 use acr_render::scene::SceneSprite;
 use acr_render::terrain::{Camera, GroundAssets, TerrainData, TerrainRenderer};
@@ -86,6 +87,8 @@ pub struct InGame {
     renderer: Option<TerrainRenderer>,
     /// The fog of war over the map view.
     fog_renderer: Option<FogRenderer>,
+    /// The fog of war on the world under the free camera (#309).
+    world_fog: Option<WorldFogRenderer>,
     uploaded: bool,
     objects: ObjectsView,
     sim_assets: SimAssets,
@@ -173,6 +176,7 @@ impl InGame {
             trample_cleared: false,
             renderer: None,
             fog_renderer: None,
+            world_fog: None,
             uploaded: false,
             objects: ObjectsView::new().with_dynamic_units(),
             sim_assets: SimAssets::default(),
@@ -387,6 +391,7 @@ impl InGame {
         {
             self.renderer = Some(TerrainRenderer::new(device, queue, format, assets));
             self.fog_renderer = Some(FogRenderer::new(device, format, &assets.fog_darkness()));
+            self.world_fog = Some(WorldFogRenderer::new(device, format, &assets.fog_darkness()));
         }
         if let (Some(renderer), Some(terrain), false) = (&mut self.renderer, &self.terrain, self.uploaded) {
             renderer.set_map(device, queue, terrain);
@@ -924,6 +929,10 @@ impl InGame {
         };
         let objects = self.objects.objects();
         let transparent = self.interface.hud.transparent;
+        // The free camera turned by `yaw`: sprites face the camera as they would the
+        // original one, by the direction relative to it (#309). Buildings keep theirs.
+        let yaw = self.three_d.orbit().map_or(0.0, |o| o.yaw);
+        let turn = (yaw * 256.0 / std::f32::consts::TAU).round() as i32 as u8;
         let mut out = Vec::with_capacity(world.units.len());
         // Units inside buildings are not drawn (`Hidden`).
         for u in world.units.iter().filter(|u| u.alive && u.inside_of.is_none() && !self.three_d.shows(u.id)) {
@@ -935,7 +944,8 @@ impl InGame {
                 && u.stage >= world.max_stage(u)
                 && !matches!(u.anim, AnimKind::BuildLo(_) | AnimKind::Death | AnimKind::DeathLie(_));
             let sections = finished.then_some(u.stages);
-            let Some(mut look) = objects.animation_look(&kind.id, &anim, u.dir, step, sections) else { continue };
+            let dir = if u.building { u.dir } else { u.dir.wrapping_sub(turn) };
+            let Some(mut look) = objects.animation_look(&kind.id, &anim, dir, step, sections) else { continue };
             // On top: the `#WORK` frame of a finished building (0x50927a).
             if finished {
                 look.parts.extend(objects.work_part(&kind.id, self.effects.work_step(u.id)));
@@ -963,7 +973,7 @@ impl InGame {
                 });
             }
         }
-        effects::projectile_sprites(world, &self.objects, self.three_d.draws_rounds(), &mut out);
+        effects::projectile_sprites(world, &self.objects, self.three_d.draws_rounds(), yaw, &mut out);
         self.effects.fire_sprites(world, &self.objects, &|id| self.three_d.shows(id), &mut out);
         effects::ground_fire_sprites(world, &self.objects, &mut out);
         out
@@ -997,11 +1007,26 @@ impl InGame {
         if self.three_d.active() {
             let ground = self.renderer.as_ref();
             let terrain = self.terrain.as_ref();
-            self.three_d.render(device, queue, encoder, view, size, &self.camera, ground, terrain, &mut self.objects);
+            let fog = self.mission.drawn_fog().map(acr_sim::fog::Fog::cells);
+            let world_fog = self.world_fog.as_mut().map(|f| (f, fog));
+            self.three_d.render(
+                device,
+                queue,
+                encoder,
+                view,
+                size,
+                &self.camera,
+                ground,
+                terrain,
+                &mut self.objects,
+                world_fog,
+            );
         } else {
             self.objects.render(device, queue, encoder, view, size, &self.camera);
         }
-        let shades = self.fog_shades(size);
+        // The free camera's fog lies on the world instead (#309).
+        let on_world = self.three_d.active() && self.world_fog.as_ref().is_some_and(WorldFogRenderer::active);
+        let shades = if on_world { None } else { self.fog_shades(size) };
         if let Some(fog) = &mut self.fog_renderer {
             fog.prepare(device, queue, &self.camera, shades.as_ref());
         }

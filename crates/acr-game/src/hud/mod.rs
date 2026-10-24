@@ -268,6 +268,9 @@ pub struct View {
     /// Camera position and view size in minimap pixels.
     pub camera: [f32; 2],
     pub view: [f32; 2],
+    /// The free camera's ground footprint in minimap pixels (window corners top left, top
+    /// right, bottom right, bottom left), drawn instead of the rectangle (#309).
+    pub frame: Option<[[i32; 2]; 4]>,
     /// The local player has mission messages: the drop-down offers `UM_HIST` (0x4c6cb0).
     pub history: bool,
     /// Dark 2 × 2 blocks of the minimap (fog of war), `FOG_SIDE²` entries.
@@ -448,7 +451,7 @@ impl Default for Hud {
 }
 
 /// What the minimap image was last composed from: placement, dots, camera, fog.
-type MinimapState = (Placement, Vec<minimap::Dot>, Option<Rect>, Option<Rc<Vec<bool>>>);
+type MinimapState = (Placement, Vec<minimap::Dot>, Option<Rect>, Option<Rc<Vec<bool>>>, Option<[[i32; 2]; 4]>);
 
 /// Name of the minimap image in [`crate::ui::draw::Textures`].
 pub const MINIMAP_IMAGE: &str = "hud:minimap";
@@ -514,12 +517,12 @@ impl Hud {
             (view.view[0] as i32).max(1),
             (view.view[1] as i32).max(1),
         );
-        let state = (placement, view.dots.clone(), Some(camera), view.fog.clone());
+        let state = (placement, view.dots.clone(), Some(camera), view.fog.clone(), view.frame);
         if !self.minimap_dirty && self.last_minimap.as_ref() == Some(&state) {
             return None;
         }
         let fog = view.fog.as_deref().map(Vec::as_slice);
-        let image = minimap::compose(map, &placement, &view.dots, fog, Some(camera), &palette);
+        let image = minimap::compose(map, &placement, &view.dots, fog, Some(camera), view.frame, &palette);
         self.last_minimap = Some(state);
         self.minimap_dirty = false;
         Some(image)

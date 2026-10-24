@@ -6,7 +6,9 @@
 use std::collections::{HashMap, HashSet};
 
 use acr_render::damage::{Damage, Keep, Limb};
+use acr_render::fog_world::WorldFogRenderer;
 use acr_render::model::{self, ModelData};
+
 use acr_render::model_renderer::{BloodPool, DepthTarget, Drape, ModelInstance, ModelRenderer, Wounds};
 use acr_render::objects_view::ObjectsView;
 use acr_render::scene::{Placement, definition_name};
@@ -21,6 +23,31 @@ use winit::keyboard::{Key, NamedKey};
 use super::debris::UnitModel;
 use super::piles;
 use crate::ui::settings::{CameraMode, Gore, Models, Settings};
+
+/// The free camera's fog renderer and this frame's fog grid (`acr_sim::fog::Fog::cells`).
+pub type WorldFog<'a> = (&'a mut WorldFogRenderer, Option<(i32, &'a [u16])>);
+
+/// The fog grid moved from its projection onto the ground (#309): the sim stamps and the
+/// original draws it at `(x, y − 2·h)`, the screen point of the ground, so cell `(cx, cy)`
+/// here (centred on world `(128·(cx − 3), 128·(cy − 3))`) takes the grid's value at that
+/// point's projection, interpolated along `y`. The free camera then looks the fog up by the
+/// world `x`, `y` alone: a model or tree is as dark as the ground it stands on, from any side.
+fn ground_fog(out: &mut Vec<u16>, width: i32, cells: &[u16], terrain: &TerrainData) {
+    out.clear();
+    if width <= 0 {
+        return;
+    }
+    let rows = cells.len() as i32 / width;
+    let at = |cx: i32, cy: i32| f32::from(cells[(cy.clamp(0, rows - 1) * width + cx) as usize]);
+    for cy in 0..rows {
+        for cx in 0..width {
+            let (x, y) = (128 * (cx - 3), 128 * (cy - 3));
+            let q = (y - 2 * terrain.height_at(x, y)) as f32 / 128.0 + 3.0;
+            let (row, t) = (q.floor() as i32, q - q.floor());
+            out.push((at(cx, row) + (at(cx, row + 1) - at(cx, row)) * t) as u16);
+        }
+    }
+}
 
 /// Where models are looked for: `<game folder>\ACR\Models\<name>.glb` (normalised game path),
 /// `<name>` the `.MD` `NAME` in lower case (`EngM18` → `engm18.glb`).
@@ -315,6 +342,8 @@ pub struct ThreeD {
     loaded: HashMap<String, Option<usize>>,
     renderer: Option<ModelRenderer>,
     depth: Option<DepthTarget>,
+    /// The fog grid on the ground for the free camera's world fog ([`ground_fog`]).
+    fog_cells: Vec<u16>,
     instances: Vec<ModelInstance>,
     /// Blood pools under this frame's corpses and splatter behind hit units.
     pools: Vec<BloodPool>,
@@ -448,6 +477,7 @@ impl Default for ThreeD {
             loaded: HashMap::new(),
             renderer: None,
             depth: None,
+            fog_cells: Vec::new(),
             instances: Vec::new(),
             pools: Vec::new(),
             trail: super::trail::Trails::default(),
@@ -1883,13 +1913,25 @@ impl ThreeD {
         ground: Option<&TerrainRenderer>,
         terrain: Option<&TerrainData>,
         objects: &mut ObjectsView,
+        world_fog: Option<WorldFog<'_>>,
     ) {
         let models_phase = self.models_phase();
+        // The free camera's fog of war on the world (#309): the fixed camera keeps the
+        // original's screen overlay.
+        let world_fog = world_fog.and_then(|(f, grid)| {
+            f.clear();
+            grid.filter(|_| self.free).map(|g| (f, g))
+        });
         let (Some(renderer), Some(depth), Some(terrain)) = (&mut self.renderer, &mut self.depth, terrain) else {
             objects.render(device, queue, encoder, view, size, camera);
             return;
         };
         let view3d = View3d { camera: *camera, size, orbit: self.free.then_some(self.orbit) };
+        let world_fog = world_fog.map(|(f, (width, cells))| {
+            acr_sim::prof_scope!("render.world_fog");
+            ground_fog(&mut self.fog_cells, width, cells, terrain);
+            (f, (width, &self.fog_cells[..]))
+        });
         let shown = if models_phase { &self.instances[..] } else { &[] };
         if models_phase {
             // Ragdolls and the gun crews' masked poses (#287).
@@ -1916,13 +1958,15 @@ impl ThreeD {
             renderer.prepare(device, queue, &view3d, shown, self.gore == Gore::Full);
         }
         renderer.prepare_pools(device, queue, if models_phase { &self.pools[..] } else { &[] });
-        let sprites = objects.prepare(
-            device,
-            queue,
-            size,
-            camera,
-            Some(Placement { view: &view3d, terrain, on_top: self.compare == Compare::Overlay }),
-        );
+        let sprites = {
+            let sprite_fog = world_fog.as_ref().map(|(f, grid)| {
+                let (f, grid): (&WorldFogRenderer, _) = (f, *grid);
+                move |x: i32, y: i32| f.black_at(grid, x as f32, y as f32)
+            });
+            let fog = sprite_fog.as_ref().map(|f| f as &dyn Fn(i32, i32) -> f32);
+            let on_top = self.compare == Compare::Overlay;
+            objects.prepare(device, queue, size, camera, Some(Placement { view: &view3d, terrain, on_top, fog }))
+        };
         let water = match self.water.as_mut() {
             Some(w) if !objects.zoomed && (self.free || water_detailed(self.water_detailed)) => {
                 let seconds = self.started.elapsed().as_secs_f32();
@@ -1950,7 +1994,7 @@ impl ThreeD {
         mark_encoder(encoder, "3d prepare");
         renderer.render_shadows(encoder);
         mark_encoder(encoder, "shadow map");
-        let mut pass = depth.begin(device, encoder, view, size, split, false);
+        let mut pass = depth.begin(device, encoder, view, size, split || world_fog.is_some(), false);
         macro_rules! segment {
             ($label:expr) => {
                 if split {
@@ -1986,6 +2030,17 @@ impl ThreeD {
             w.render_mist(&mut pass);
         }
         segment!("weather mist");
+        if let Some((fog, grid)) = world_fog {
+            // It reads the depth of the ground and the models, so between passes and before
+            // the ground reset; sprites drawn after it take their shade in `objects`.
+            drop(pass);
+            if let Some(d) = depth.depth_view() {
+                fog.prepare(device, queue, &view3d, Some(grid), d);
+                fog.render(encoder, view);
+            }
+            mark_encoder(encoder, "world fog");
+            pass = depth.begin(device, encoder, view, size, split, true);
+        }
         depth.reset_ground(&mut pass);
         if sprites {
             objects.draw(&mut pass, true);

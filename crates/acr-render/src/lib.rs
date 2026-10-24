@@ -6,6 +6,7 @@
 
 pub mod damage;
 pub mod fog;
+pub mod fog_world;
 pub mod gpu_timer;
 pub mod ground;
 pub mod ground_cover;
@@ -95,7 +96,8 @@ struct Instance {
     param: u32,
     /// Depth (0..1) in the 3D pass.
     depth: f32,
-    _pad: u32,
+    /// Share of black the fog of war adds (free camera).
+    fog: f32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -146,6 +148,9 @@ pub struct SpriteDraw {
     pub white: bool,
     /// Depth (0..1) against 3D models, used by [`SpriteRenderer::render_depth`]; 0 otherwise.
     pub depth: f32,
+    /// Share of black the fog of war adds (0..1): the free camera's world fog is drawn
+    /// before the sprites, so they take theirs here (`fog_world`); 0 otherwise.
+    pub fog: f32,
 }
 
 pub struct SpriteRenderer {
@@ -229,8 +234,7 @@ impl SpriteRenderer {
             bind_group_layouts: &[Some(&globals_layout), Some(&page_layout)],
             immediate_size: 0,
         });
-        let attributes =
-            wgpu::vertex_attr_array![0 => Float32x4, 1 => Uint32x4, 2 => Uint32, 3 => Uint32, 4 => Float32];
+        let attributes = wgpu::vertex_attr_array![0 => Float32x4, 1 => Uint32x4, 2 => Uint32, 3 => Uint32, 4 => Float32, 5 => Float32];
         let pipeline = |depth_stencil| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("sprite"),
@@ -392,7 +396,7 @@ impl SpriteRenderer {
                         | if sprite.white { WHITE } else { 0 },
                     param,
                     depth: sprite.depth.clamp(0.0, 1.0),
-                    _pad: 0,
+                    fog: sprite.fog.clamp(0.0, 1.0),
                 });
             }
         }
