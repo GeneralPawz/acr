@@ -1244,8 +1244,11 @@ pieces falling in.
   where that file exists.
 - **Base/Up pairs:** every Pixal3D `*Base`/`*Up` pair is an `ADDSECTION` type: AtcKre (3
   sections), AtcVer (2), EngKre (1), EngKre2 (1), FrnKre (2), FrnKre2 (1), IncDo3, IncKre
-  (3), MayKre, PueGor (4), SpnKre (3), UsaKre (1). `assets/buildings/usakreup.py` builds the
-  UsaKre one (fitted to `model-ref --sections 2`); the others need the same one-line script.
+  (3), MayKre, PueGor (4), SpnKre (3), UsaKre (1). `assets/buildings/<type>up.py` builds the
+  Up model (fitted to `model-ref --sections 2`) for every pair with a `from_sprite` base:
+  AtcVer, EngKre2, FrnKre, FrnKre2, IncKre, MayKre, PueGor, SpnKre, UsaKre (sprite IoU
+  0.82-0.94). Left out: EngKre (scripted, with section groups), AtcKre and IncDo3 (no base
+  model). FrnKre is not in the game's catalog (the driver's `spawn FrnKre` finds FrnKre2).
 - **Driver:** `spawn` takes `progress` (0..1 of `BUILDSTAGES`, with its `#BUILDLO_k`) and
   `sections` (a state per `ADDSECTION`, in order).
 
