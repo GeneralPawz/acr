@@ -203,7 +203,8 @@ pub struct TerrainData {
     /// Vertices per row and vertex rows.
     pub width: usize,
     pub height: usize,
-    heights: Vec<i16>,
+    /// The vertex heights and the lookup clamp, shared with [`HeightField`] copies.
+    field: HeightField,
     /// Per vertex: texture, light level, random lift, zoomed-view blend weight.
     vertices: Vec<[u8; 4]>,
     /// Per cell (column pair, row): transition variants S0..S6, 0.
@@ -213,6 +214,14 @@ pub struct TerrainData {
     water: Option<(usize, usize, Vec<u8>)>,
     /// Lowest and highest vertex height.
     pub height_range: (i32, i32),
+}
+
+/// The ground heights of a map alone (`GetHeight`'s data): cheap to clone (shared), `Send`,
+/// for work off the render thread such as the ragdoll physics.
+#[derive(Clone)]
+pub struct HeightField {
+    width: usize,
+    heights: std::sync::Arc<[i16]>,
     /// Edge of the square that clamps height lookups, in world pixels.
     playable: i32,
 }
@@ -262,18 +271,18 @@ impl TerrainData {
         Ok(Self {
             width,
             height,
-            heights: heights.cells.clone(),
+            field: HeightField { width, heights: heights.cells.clone().into(), playable: size.playable_size() },
             vertices,
             sections,
             zoom_layers,
             water,
             height_range: range,
-            playable: size.playable_size(),
         })
     }
 
-    fn h(&self, index: usize) -> i32 {
-        self.heights.get(index).copied().map_or(0, i32::from)
+    /// The heights alone, shared (see [`HeightField`]).
+    pub fn height_field(&self) -> HeightField {
+        self.field.clone()
     }
 
     /// The `SEA2` depth grid (32 px cells): width, height and the bytes (water above 127).
@@ -288,6 +297,17 @@ impl TerrainData {
         let shift = if col & 1 == 1 { 16 } else { 0 };
         let row = ((y + 16 - shift) >> 5).clamp(0, self.height as i32 - 1);
         self.vertices.get(row as usize * self.width + col as usize).map_or(0, |v| v[0])
+    }
+
+    /// Ground height at world pixel `(x, y)` ([`HeightField::height_at`]).
+    pub fn height_at(&self, x: i32, y: i32) -> i32 {
+        self.field.height_at(x, y)
+    }
+}
+
+impl HeightField {
+    fn h(&self, index: usize) -> i32 {
+        self.heights.get(index).copied().map_or(0, i32::from)
     }
 
     /// Ground height at world pixel `(x, y)`: the plane through the triangle below
@@ -1117,7 +1137,7 @@ impl TerrainRenderer {
     }
 
     pub fn set_map(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, data: &TerrainData) {
-        let heights: Vec<u8> = data.heights.iter().flat_map(|h| h.to_le_bytes()).collect();
+        let heights: Vec<u8> = data.field.heights.iter().flat_map(|h| h.to_le_bytes()).collect();
         let vertices: Vec<u8> = data.vertices.iter().flatten().copied().collect();
         let sections: Vec<u8> = data.sections.iter().flatten().copied().collect();
         let zoom_layers: Vec<u8> = data.zoom_layers.iter().flatten().copied().collect();
@@ -1468,17 +1488,16 @@ mod tests {
 
     fn terrain(height: impl Fn(usize, usize) -> i16) -> TerrainData {
         let rows = 64;
-        let heights = (0..W * rows).map(|v| height(v % W, v / W)).collect();
+        let heights: Vec<i16> = (0..W * rows).map(|v| height(v % W, v / W)).collect();
         TerrainData {
             width: W,
             height: rows,
-            heights,
+            field: HeightField { width: W, heights: heights.into(), playable: 15360 },
             vertices: Vec::new(),
             sections: Vec::new(),
             zoom_layers: Vec::new(),
             water: None,
             height_range: (0, 0),
-            playable: 15360,
         }
     }
 

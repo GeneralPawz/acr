@@ -2026,6 +2026,43 @@ parts around the wounds keep `discard`; that is ≈ 40 ms of the 74 at +30 s. Th
 pose for settled corpses (palette written once into a persistent region of the bone
 texture), cached shadows of static corpses, and incremental instance building.
 
+### Ragdoll steps off the render thread (m2-rag-perf)
+
+On native the physics steps that fall due in a frame run on a worker thread
+(`Ragdolls::dispatch` at the end of `ThreeD::update`, `Ragdolls::join` at the start of the
+next): they overlap the render's CPU work, the GPU wait and the next ticks of the
+simulation. The worker samples the ground from `HeightField` (acr-render `terrain.rs`: the
+map's heights shared behind an `Arc`, the same `GetHeight` port). A frame's palettes
+therefore show the physics as the previous frame's steps left it, one frame (at most 4
+steps, 67 ms) behind; hits, the drive of the muscles and the settling still run on the
+render thread before the steps, in the same order as before apart from the settling
+moving ahead of them. Ragdolls are render only, so no hash is touched; the steps
+themselves are unchanged (deterministic per island). The budget follows the worker's
+measured time as before (4000 µs of physics per frame). `ACR_RAG_INLINE=1` steps on the
+render thread as before (the browser always does). Profiler: `rag.worker` (the worker's
+time per frame), `rag.join` (the wait for it at the next frame).
+
+Clash scene (`ACR-analysis/rag-perf/clash.json`, `mkclash.py` of perf5: 700 against 700,
+`ACR_PROFILE=1`, driver frame = one tick = 4 steps), one build, `ACR_RAG_INLINE=1` against
+threaded, two runs each, render VM (Ryzen, RX 9060 XT, loaded by other builds; runs
+`inl2`/`inl3`, `thr2`/`thr3`):
+
+| ms per frame (render thread) | contact inline → threaded | +30 s inline → threaded |
+|---|---:|---:|
+| ragdoll physics on the render thread (`rag.physics` → `rag.join`) | 2.5–3.0 → 0.0–1.2 | **4.1 → 0.4–0.5** |
+| worker (`rag.worker`) | | 4.0 |
+| 3D update (`3d.update`) | 6.1–7.3 → 3.8 (8.0 in a loaded run) | **9.6 → 6.3–6.4** |
+| awake ragdolls (mean) | 23–24 → 24 | 30–34 → 26–28 |
+| µs per awake ragdoll step | 26–32 | 31–37 |
+| render CPU / GPU all passes | 3.2 / 2.5 → 3.1 / 2.6 | 4.8 / 3.8 → 5.0 / 3.7 |
+
+The calibration on the VM gives 18–23 µs per step (budget at the pool's 192); in the pile a
+step costs about 2 × that, so the 4 ms let 26–34 ragdolls be awake at 4 steps per frame. With
+the steps on a worker that 4 ms no longer adds to the frame unless the rest of the frame is
+shorter. The piles look alike (`ACR-analysis/rag-perf/close_inline_vs_thread.png`: the
+same moment 30 s into the clash at zoom 4, inline left, threaded right; the falls differ by
+the hits taken, as between two inline runs).
+
 ### Input latency
 
 - **Hardware cursor** (native, `acr-game/src/hw_cursor.rs`): the cursor the interface
@@ -2064,10 +2101,11 @@ comparison, `ACR_PROFILE=1` writes the breakdown to the log.
   ragdolls and lying clips) are skinned every frame; a cached pose or a baked mesh would
   spare their vertex work. `fs_main`'s gore branches already test per-instance values,
   so flags alone would gain little.
-- **Ragdoll cost per step** is 4 × the calibration in a pile: the frozen corpses of the
-  pool (96) still collide with the falling. Fewer frozen bodies kept, or contacts against
-  the awake only, would let more ragdolls run in the same 4 ms; the physics could also
-  step on a worker thread (native), overlapping the GPU.
+- **Ragdoll cost per step:** done in m2-perf2 (static corpses, parallel islands) and
+  m2-rag-perf (steps on a worker); see "Ragdoll steps off the render thread" above. In the
+  clash a step still costs about 2 × the calibration (VM: 36 against 18 µs) for the
+  contacts that really happen in a pile; a segment test that dropped corpse capsules out
+  of reach before the substeps gained nothing (physics bench, pile 24.6 → 26.2 µs).
 - **Render CPU** (5–8 ms, `models_prepare` 2–5 ms) and **3D instances** (2–4.5 ms) grow
   with the corpses; both are per-instance loops that rayon could split (native).
 

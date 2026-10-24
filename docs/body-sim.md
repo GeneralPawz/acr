@@ -219,7 +219,11 @@ are piled. The renderer takes a palette from it per instance
   pile no longer raises the cost (about 35 µs per awake ragdoll step in the clash), and
   the pool of ragdolls kept in the physics is 192 (frozen corpses cost a step nothing but
   the contacts made with them). A frozen corpse's palette is made once and reused while
-  its instance stays put.
+  its instance stays put. m2-rag-perf: on native the steps run on a worker thread between
+  one frame's update and the next (`Ragdolls::dispatch`, `join`; `ACR_RAG_INLINE` keeps them
+  on the render thread), so the 4 ms of physics overlap the render and the GPU; the budget
+  follows the worker's measured time (`docs/rendering-3d.md`, "Ragdoll steps off the render
+  thread").
 - **Bench:** `ACR-analysis/ragdoll/bench_ragdoll.py` (with `ACR_EXE`): six men in a row
   seen from the side — a musket wound from the front, musket kills from the side and the
   front, a cannonball kill, a crawler killed, a musket wound in the leg; 24 frames, one per

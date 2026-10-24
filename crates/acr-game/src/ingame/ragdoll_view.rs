@@ -520,6 +520,13 @@ pub struct Ragdolls {
     /// Walking and crawling over the clips (#279).
     gaits: super::gait_view::Gaits,
     strikes: super::strike_view::Strikes,
+    /// Physics steps due towards `time` and not yet run ([`Self::dispatch`]), and the awake
+    /// ragdolls when they fell due.
+    due: (usize, usize),
+    /// Native: the due steps running on a worker thread from the end of one frame's update
+    /// to the start of the next ([`Self::join`]): the world, the µs taken, steps, awake.
+    #[cfg(not(target_arch = "wasm32"))]
+    job: Option<std::thread::JoinHandle<(Physics, f64, usize, usize)>>,
 }
 
 impl Default for Ragdolls {
@@ -547,8 +554,23 @@ impl Default for Ragdolls {
             poses: HashMap::new(),
             gaits: Default::default(),
             strikes: Default::default(),
+            due: (0, 0),
+            #[cfg(not(target_arch = "wasm32"))]
+            job: None,
         }
     }
+}
+
+/// Whether the physics steps run on a worker thread, overlapping the render (native, unless
+/// `ACR_RAG_INLINE` is set).
+fn threaded() -> bool {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ON.get_or_init(|| std::env::var_os("ACR_RAG_INLINE").is_none())
+    }
+    #[cfg(target_arch = "wasm32")]
+    false
 }
 
 /// Cost of a ragdoll step on this machine: 8 limp ragdolls falling on flat ground, 30
@@ -679,6 +701,8 @@ pub struct Drawn<'a> {
 
 impl Ragdolls {
     pub fn clear(&mut self) {
+        self.join();
+        self.due = (0, 0);
         for (r, user, _) in &mut self.pool {
             *user = None;
             r.freeze(&mut self.physics);
@@ -714,6 +738,63 @@ impl Ragdolls {
     fn allowed(&self) -> usize {
         let per_frame = self.step_cost_us.max(1.0) * self.steps_per_frame.max(1.0);
         ((FRAME_BUDGET_US / per_frame) as usize).clamp(MIN_AWAKE.min(self.budget), self.budget)
+    }
+
+    /// Takes the world back from the worker once its steps are done (waits for them); a no-op
+    /// when none run. Call before anything reads or changes the physics in a frame.
+    pub fn join(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(job) = self.job.take() {
+            let scope = acr_sim::prof::Scope::new("rag.join");
+            match job.join() {
+                Ok((physics, us, steps, awake)) => {
+                    self.physics = physics;
+                    self.measure(us, steps, awake);
+                    acr_sim::prof::add("rag.worker", (us * 1000.0) as u64);
+                }
+                // The world is lost with the worker: start an empty one.
+                Err(_) => {
+                    log::error!("3d: ragdoll physics worker panicked");
+                    self.physics = Physics::new(Config::default());
+                    self.pool.clear();
+                    self.actors.clear();
+                }
+            }
+            drop(scope);
+        }
+    }
+
+    /// Runs the physics steps that fell due in [`Self::update`] over `terrain`: on a worker
+    /// thread that overlaps the render and the next frame's simulation (native; joined by
+    /// the next [`Self::join`]), else here. The palettes of a frame show the physics as the
+    /// previous frame's steps left it, one frame (at most 4 steps, 67 ms) behind.
+    pub fn dispatch(&mut self, terrain: &TerrainData) {
+        let (n, awake) = std::mem::take(&mut self.due);
+        if n == 0 {
+            return;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.join();
+            let mut physics = std::mem::replace(&mut self.physics, Physics::new(Config::default()));
+            let field = terrain.height_field();
+            let spawned = std::thread::Builder::new().name("acr-ragdolls".into()).spawn(move || {
+                let ground = |x: f32, y: f32| ground_height_at(&|x, y| field.height_at(x, y), x, y);
+                let started = web_time::Instant::now();
+                for _ in 0..n {
+                    physics.step(&ground);
+                }
+                (physics, started.elapsed().as_secs_f64() * 1e6, n, awake)
+            });
+            match spawned {
+                Ok(job) => self.job = Some(job),
+                Err(e) => log::error!("3d: ragdoll physics worker: {e}"),
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (terrain, awake);
+        }
     }
 
     /// Awake ragdolls.
@@ -768,6 +849,7 @@ impl Ragdolls {
         killed: &dyn Fn(u32) -> bool,
     ) {
         self.poses.clear();
+        self.join();
         if now < self.last_tick {
             self.clear();
             self.hit_seen = None;
@@ -843,20 +925,26 @@ impl Ragdolls {
         self.drive(drawn, &by_unit, terrain);
         drop(scope);
         let scope = acr_sim::prof::Scope::new("rag.physics");
-        // Fixed steps up to the game time.
-        let ground = |x: f32, y: f32| ground_height(terrain, x, y);
+        // Fixed steps up to the game time: here, or on the worker from `dispatch`.
         let mut n = 0;
         let awake = self.awake();
-        let started = web_time::Instant::now();
         while self.stepped + STEP <= self.time && n < 4 {
-            self.physics.step(&ground);
             self.stepped += STEP;
             n += 1;
         }
         if n == 4 {
             self.stepped = self.time;
         }
-        self.measure(started.elapsed().as_secs_f64() * 1e6, n, awake);
+        if threaded() {
+            self.due = (n, awake);
+        } else {
+            let ground = |x: f32, y: f32| ground_height(terrain, x, y);
+            let started = web_time::Instant::now();
+            for _ in 0..n {
+                self.physics.step(&ground);
+            }
+            self.measure(started.elapsed().as_secs_f64() * 1e6, n, awake);
+        }
         acr_sim::prof::add("rag.steps(count)", n as u64 * 1_000_000);
         acr_sim::prof::add("rag.awake(count)", self.awake() as u64 * 1_000_000);
         drop(scope);
@@ -907,6 +995,7 @@ impl Ragdolls {
         killed: &dyn Fn(u32) -> bool,
         terrain: &TerrainData,
     ) -> usize {
+        self.join();
         let mut near: Vec<(f32, usize)> = drawn
             .iter()
             .enumerate()
@@ -970,6 +1059,11 @@ impl Ragdolls {
     /// Where the bone `name` of `unit`'s ragdoll is (world pixels), while it has one (an
     /// animal mauling him stands over it, `maul_view.rs`).
     pub fn bone_world(&self, unit: u32, name: &str) -> Option<[f32; 3]> {
+        // While the worker steps, the world here is an empty stand-in.
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.job.is_some() {
+            return None;
+        }
         let a = self.actors.get(&unit).filter(|a| a.slot != usize::MAX)?;
         let r = &self.pool.get(a.slot)?.0;
         let (p, _) = r.bone_transform(&self.physics, r.bone_index(name)?);
@@ -1450,8 +1544,16 @@ pub(super) fn node_frame(globals: &[Mat4], node: usize, axis: Vec3, transform: &
 
 /// Height of the terrain (physics metres) under the physics point `(x, y)`.
 pub(super) fn ground_height(terrain: &TerrainData, x: f32, y: f32) -> f32 {
+    ground_height_at(&|x, y| terrain.height_at(x, y), x, y)
+}
+
+/// [`ground_height`] over any height lookup (world pixels), e.g. a [`HeightField`] off the
+/// render thread.
+///
+/// [`HeightField`]: acr_render::terrain::HeightField
+fn ground_height_at(height_at: &dyn Fn(i32, i32) -> i32, x: f32, y: f32) -> f32 {
     let (wx, wy) = ((x * PIXELS_PER_METRE) as i32, (-y * PIXELS_PER_METRE) as i32);
-    view3d::ground_point(wx, wy, terrain.height_at(wx, wy))[2] / PIXELS_PER_METRE
+    view3d::ground_point(wx, wy, height_at(wx, wy))[2] / PIXELS_PER_METRE
 }
 
 /// The rotation `rot` about the point `p`.

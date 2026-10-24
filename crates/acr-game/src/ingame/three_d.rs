@@ -927,6 +927,11 @@ impl ThreeD {
         if self.models == Models::Off {
             return;
         }
+        // The ragdoll steps of the last frame ran on a worker over the render: the world back
+        // before anything below reads a body (`bone_world`).
+        if let Some(r) = self.ragdolls.as_mut() {
+            r.join();
+        }
         let defs = objects.objects();
         let mut names: HashMap<acr_sim::TypeId, String> = HashMap::new();
         let mut ups: HashMap<acr_sim::TypeId, String> = HashMap::new();
@@ -1673,6 +1678,10 @@ impl ThreeD {
         // The decay stains lie under all other decals (drawn first, blended over by blood).
         if self.stain || self.marks_keep {
             self.pools.sort_by_key(|p| p.dirt != acr_render::model_renderer::Dirt::Seep);
+        }
+        // This frame's ragdoll steps run on a worker while the frame renders.
+        if let Some(r) = self.ragdolls.as_mut() {
+            r.dispatch(terrain);
         }
     }
 
