@@ -180,6 +180,18 @@ pub fn lay_on_ground(pools: &mut [BloodPool], ground: &dyn Fn(f32, f32) -> [f32;
     }
 }
 
+/// [`lay_on_ground`] over many decals, in parallel on native (`acr_render::par`).
+pub fn lay_on_ground_par(pools: &mut [BloodPool], ground: &(dyn Fn(f32, f32) -> [f32; 3] + Sync)) {
+    let laid = acr_render::par::map(pools, |p| {
+        let r = p.radius * (1.0 + p.stretch);
+        (ground(p.centre[0], p.centre[1])[2], tilt(ground, p.centre[0], p.centre[1], r))
+    });
+    for (p, (z, t)) in pools.iter_mut().zip(laid) {
+        p.centre[2] = z;
+        p.tilt = t;
+    }
+}
+
 /// Blood on wet ground (`wet` 0..1, 1 in rain): diluted, it runs a quarter wider and soaks
 /// in darker at once instead of staying bright red. Earth, stains and kept marks stay.
 pub fn soak(pools: &mut [BloodPool], wet: f32) {

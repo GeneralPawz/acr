@@ -1573,6 +1573,9 @@ impl ThreeD {
             }
         }
         acr_sim::prof_scope!("3d.debris_decals");
+        // Debris and decals well off this frame's view are left out, as the living are
+        // (m2-perf6): nothing reads them but the draw.
+        let far_view = (self.held.is_empty() && cull_enabled()).then_some(self.cull_view).flatten();
         // Appended last: the indices above refer to one instance per unit.
         for (i, damage) in pieces {
             let body = self.instances[i];
@@ -1582,6 +1585,7 @@ impl ThreeD {
         // The fallen of the gun crews, each a corpse of his own (#287).
         {
             let renderer = self.renderer.as_ref();
+            acr_sim::prof_scope!("3d.crew_corpses");
             self.crews.corpses(
                 |i| renderer.and_then(|r| r.model(i)),
                 now,
@@ -1606,7 +1610,10 @@ impl ThreeD {
         let wounds = &self.wounds;
         let tears =
             |h: &acr_sim::combat::HitRecord, rig: &acr_render::damage::Rig| wounds.hit_volumes(h.victim, h.tick, rig);
-        self.debris.take_hits(world.hits.iter(), now, self.gore, &unit, &death, &tears, &self.gibs, &ground);
+        {
+            acr_sim::prof_scope!("3d.debris_hits");
+            self.debris.take_hits(world.hits.iter(), now, self.gore, &unit, &death, &tears, &self.gibs, &ground);
+        }
         if self.marks_keep {
             // Rubble stays: the newest pieces, gibs and gear, rotting down to bones.
             self.debris.keep_newest(super::debris::KEEP_CAP);
@@ -1655,7 +1662,20 @@ impl ThreeD {
         let turf = |x: f32, y: f32| f32::from(u8::from(super::particle_view::soil_at(terrain, None, x, y).turf));
         let stain: Option<&dyn Fn(f32, f32) -> f32> =
             if self.stain && self.gore != Gore::Off { Some(&turf) } else { None };
-        self.debris.draw(now, self.corpse_ticks, self.marks_keep, &ground, &mut self.instances, &mut self.pools, stain);
+        {
+            acr_sim::prof_scope!("3d.debris_draw");
+            let shown = |x: f32, y: f32| !far_view.is_some_and(|v| off_view_at(&v, terrain, x, y));
+            self.debris.draw(
+                now,
+                self.corpse_ticks,
+                self.marks_keep,
+                &ground,
+                &shown,
+                &mut self.instances,
+                &mut self.pools,
+                stain,
+            );
+        }
         {
             let height = |x: f32, y: f32| super::particle_view::ground_z(terrain, x, y);
             let sink = &mut self.particles.particles;
@@ -1676,16 +1696,23 @@ impl ThreeD {
             self.missiles.draw_body(&self.drawn, &model, &poses, &mut self.instances);
         }
         if self.marks_keep {
+            acr_sim::prof_scope!("3d.keep_marks");
             self.keep_marks(world, &machines, &ground);
         }
         let (hits_until, impacts_until) = (self.kept.hits_until, self.kept.impacts_until);
-        for hit in world.hits.iter().filter(|h| !machines.contains(&h.victim) && h.tick > hits_until) {
-            super::splatter::splatter(hit, world.tick.0, self.gore, &ground, &mut self.pools);
-            super::debris::mist(hit, world.tick.0, self.gore, &ground, &mut self.pools);
-        }
-        // Earth churned up where rounds struck the ground (#226).
-        for impact in world.impacts.iter().filter(|i| !self.ground_marks && i.tick > impacts_until) {
-            super::splatter::impact(impact, world.tick.0, &ground, &mut self.pools);
+        {
+            acr_sim::prof_scope!("3d.splatter");
+            // The spray of a hit well off the view lands well off it too (a few metres).
+            let near = |(x, y): (i32, i32)| !far_view.is_some_and(|v| off_view_at(&v, terrain, x as f32, y as f32));
+            for hit in world.hits.iter().filter(|h| !machines.contains(&h.victim) && h.tick > hits_until && near(h.pos))
+            {
+                super::splatter::splatter(hit, world.tick.0, self.gore, &ground, &mut self.pools);
+                super::debris::mist(hit, world.tick.0, self.gore, &ground, &mut self.pools);
+            }
+            // Earth churned up where rounds struck the ground (#226).
+            for impact in world.impacts.iter().filter(|i| !self.ground_marks && i.tick > impacts_until && near(i.pos)) {
+                super::splatter::impact(impact, world.tick.0, &ground, &mut self.pools);
+            }
         }
         // The decay stains, of corpses lying and gone (`decay_stain`).
         if self.stain {
@@ -1708,7 +1735,13 @@ impl ThreeD {
             self.draw_map_objects(world, terrain, objects, request);
         }
         // Every decal lies on the slope under it rather than flat at one height (#226).
-        super::splatter::lay_on_ground(&mut self.pools, &ground);
+        {
+            acr_sim::prof_scope!("3d.lay_decals");
+            if let Some(v) = far_view {
+                self.pools.retain(|p| !off_view_at(&v, terrain, p.centre[0], p.centre[1]));
+            }
+            super::splatter::lay_on_ground_par(&mut self.pools, &ground);
+        }
         // Rain dilutes the fresh blood: wider and darker (#226).
         let wet = if self.weather() == Weather::Rain { 1.0 } else { 0.0 };
         super::splatter::soak(&mut self.pools, wet);
@@ -2467,7 +2500,16 @@ fn finished(world: &World, u: &Unit) -> bool {
 /// shadows fall and a scrolling view moves a frame on before they show).
 fn off_view(view: &View3d, terrain: &TerrainData, u: &Unit) -> bool {
     let (x, y) = (u.pos.x >> 4, u.pos.y >> 4);
-    let p = view.project(view3d::unit_ground_point(x, y, terrain.height_at(x, y)));
+    off_projected(view, view.project(view3d::unit_ground_point(x, y, terrain.height_at(x, y))))
+}
+
+/// [`off_view`] for a point on the ground (world pixels): a decal or a piece of debris.
+fn off_view_at(view: &View3d, terrain: &TerrainData, x: f32, y: f32) -> bool {
+    let (xi, yi) = (x as i32, y as i32);
+    off_projected(view, view.project(view3d::ground_point(xi, yi, terrain.height_at(xi, yi))))
+}
+
+fn off_projected(view: &View3d, p: [f32; 3]) -> bool {
     let [w, h] = view.size;
     let m = 0.5 * w.max(h) + 200.0 * view.camera.scale;
     p[0] < -m || p[0] > w + m || p[1] < -m || p[1] > h + m || !(0.0..=1.0).contains(&p[2])

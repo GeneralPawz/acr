@@ -211,7 +211,7 @@ pub fn separate(w: &mut World) {
     }
     // Shapes per type, then the bodies in unit order.
     let mut shapes: Vec<Option<Option<Shape>>> = vec![None; w.catalog.len()];
-    let mut bodies: Vec<(usize, i32, i32, Shape, u8)> = Vec::new();
+    let mut bodies: Vec<Body> = Vec::new();
     for (i, u) in w.units.iter().enumerate() {
         if !has_body(u) {
             continue;
@@ -225,6 +225,165 @@ pub fn separate(w: &mut World) {
     if bodies.len() < 2 {
         return;
     }
+    let push = {
+        crate::prof_scope!("sim.spacing_pairs");
+        pushes(&bodies)
+    };
+    let map = w.map.clone();
+    for (b, &(i, ..)) in bodies.iter().enumerate() {
+        let (mut px, mut py) = push[b];
+        if px == 0 && py == 0 {
+            continue;
+        }
+        let len = isqrt(px * px + py * py);
+        if len > i64::from(MAX_PUSH) {
+            px = px * i64::from(MAX_PUSH) / len;
+            py = py * i64::from(MAX_PUSH) / len;
+        }
+        let (px, py) = (px as i32, py as i32);
+        // The whole push, else along one axis, else none.
+        for (qx, qy) in [(px, py), (px, 0), (0, py)] {
+            if (qx, qy) != (0, 0) && try_push(w, &map.land, i, qx, qy) {
+                break;
+            }
+        }
+    }
+}
+
+/// A body for the pair search: unit index, position, shape, heading.
+type Body = (usize, i32, i32, Shape, u8);
+
+/// The push (1/16 px, before the cap) of every body from the bodies it overlaps.
+///
+/// Every pair closer than their reaches is worked once, by the lower index, or by the only
+/// one of the two that searches far enough (a man two cells from a horse). The bodies are
+/// sorted by cell into one table (each cell's bodies in unit order, with their largest
+/// reach); a body scans each row of its search range from one lookup and skips cells too
+/// far for any of their bodies. The pairs and their pushes are those of the plain search
+/// over every cell (`pushes_reference`), and integer sums do not depend on the order.
+fn pushes(bodies: &[Body]) -> Vec<(i64, i64)> {
+    let key = |x: i32, y: i32| ((y >> GRID_SHIFT) as i64) << 32 | ((x >> GRID_SHIFT) as u32 as i64);
+    let mut order: Vec<(i64, u32)> =
+        bodies.iter().enumerate().map(|(b, &(_, x, y, ..))| (key(x, y), b as u32)).collect();
+    order.sort_unstable();
+    // The bodies in cell order, and the cells: key, first and end in `sorted`, largest reach.
+    let sorted: Vec<(u32, Body)> = order.iter().map(|&(_, b)| (b, bodies[b as usize])).collect();
+    let mut cells: Vec<(i64, u32, u32, i32)> = Vec::new();
+    for (n, &(k, b)) in order.iter().enumerate() {
+        let reach = bodies[b as usize].3.reach();
+        match cells.last_mut() {
+            Some(c) if c.0 == k => {
+                c.2 = n as u32 + 1;
+                c.3 = c.3.max(reach);
+            }
+            _ => cells.push((k, n as u32, n as u32 + 1, reach)),
+        }
+    }
+    let side = 1i64 << GRID_SHIFT;
+    let mut push = vec![(0i64, 0i64); bodies.len()];
+    for (a, &(ia, xa, ya, sa, da)) in bodies.iter().enumerate() {
+        let (gx, gy) = (xa >> GRID_SHIFT, ya >> GRID_SHIFT);
+        let range = range_of(sa);
+        let seg_a = segment(xa, ya, da, sa);
+        let mut work = |cx: i32, cy: i32, cell: &(i64, u32, u32, i32)| {
+            // Too far for any body in the cell: its nearest point lies beyond both reaches.
+            let (x0, y0) = (i64::from(cx) * side, i64::from(cy) * side);
+            let ex = (x0 - i64::from(xa)).max(i64::from(xa) - (x0 + side - 1)).max(0);
+            let ey = (y0 - i64::from(ya)).max(i64::from(ya) - (y0 + side - 1)).max(0);
+            let far = i64::from(sa.reach() + cell.3);
+            if ex * ex + ey * ey >= far * far {
+                return;
+            }
+            for &(b, (ib, xb, yb, sb, db)) in &sorted[cell.1 as usize..cell.2 as usize] {
+                let b = b as usize;
+                let rb = range_of(sb);
+                let b_sees_a = (cx - gx).abs() <= rb && (cy - gy).abs() <= rb;
+                if b == a || (b < a && b_sees_a) {
+                    continue;
+                }
+                let (cdx, cdy) = (i64::from(xb - xa), i64::from(yb - ya));
+                let reach = i64::from(sa.reach() + sb.reach());
+                if cdx * cdx + cdy * cdy >= reach * reach {
+                    continue;
+                }
+                if let Some((dxa, dya, dxb, dyb)) = pair(seg_a, (ia, sa, da), (ib, xb, yb, sb, db), cdx, cdy) {
+                    push[a].0 += dxa;
+                    push[a].1 += dya;
+                    push[b].0 += dxb;
+                    push[b].1 += dyb;
+                }
+            }
+        };
+        for cy in gy - range..=gy + range {
+            // Cells left of x = 0 (none on a map) sort after the row's others: one by one.
+            for cx in gx - range..(gx + range + 1).min(0) {
+                let k = i64::from(cy) << 32 | (cx as u32 as i64);
+                let at = cells.partition_point(|c| c.0 < k);
+                if let Some(cell) = cells.get(at).filter(|c| c.0 == k) {
+                    work(cx, cy, cell);
+                }
+            }
+            let (lo, hi) = ((gx - range).max(0), gx + range);
+            if lo > hi {
+                continue;
+            }
+            let (klo, khi) = (i64::from(cy) << 32 | i64::from(lo), i64::from(cy) << 32 | i64::from(hi));
+            let mut at = cells.partition_point(|c| c.0 < klo);
+            while let Some(cell) = cells.get(at).filter(|c| c.0 <= khi) {
+                work((cell.0 as u32) as i32, cy, cell);
+                at += 1;
+            }
+        }
+    }
+    push
+}
+
+/// The pushes `(a, b)` of one pair within reach (`cdx, cdy` from `a` to `b`), `None` when
+/// the bodies do not overlap.
+fn pair(
+    seg_a: (P, P),
+    (ia, sa, da): (usize, Shape, u8),
+    (ib, xb, yb, sb, db): Body,
+    cdx: i64,
+    cdy: i64,
+) -> Option<(i64, i64, i64, i64)> {
+    let need = i64::from(sa.radius + sb.radius);
+    let (pa, pb, crossing) = closest(seg_a, segment(xb, yb, db, sb));
+    let (dx, dy) = (pb.0 - pa.0, pb.1 - pa.1);
+    let d2 = dx * dx + dy * dy;
+    if !crossing && d2 >= need * need {
+        return None;
+    }
+    let d = isqrt(d2);
+    // Unit direction ×256 from a to b: between the closest points; centre to centre when
+    // the segments cross or touch.
+    let (mut ux, mut uy) = if d > 0 && !crossing {
+        (dx * 256 / d, dy * 256 / d)
+    } else {
+        let c = isqrt(cdx * cdx + cdy * cdy);
+        if c == 0 {
+            let (x, y) = SPREAD[(ia ^ ib) & 7];
+            (i64::from(x), i64::from(y))
+        } else {
+            (cdx * 256 / c, cdy * 256 / c)
+        }
+    };
+    if sa.half_len > 0 && sb.half_len > 0 {
+        (ux, uy) = sideways(ux, uy, da, cdx, cdy, ia ^ ib);
+    }
+    // Crossing segments are deeper in each other than their distance says.
+    let overlap = if crossing { need + d } else { need - d };
+    let (ma, mb) = (i64::from(sa.mass), i64::from(sb.mass));
+    // Soft: half the overlap per tick, shared by the other's mass.
+    let pa = overlap * mb / (ma + mb) / 2;
+    let pb = overlap * ma / (ma + mb) / 2;
+    Some((-(ux * pa / 256), -(uy * pa / 256), ux * pb / 256, uy * pb / 256))
+}
+
+/// The pair loop as it was before the cell table (m2-perf6): the reference the test
+/// `pushes_match_the_reference` holds [`pushes`] to.
+#[cfg(test)]
+fn pushes_reference(bodies: &[Body]) -> Vec<(i64, i64)> {
     // Spatial hash: body indices sorted by grid cell (stable, so ties keep unit order).
     let key = |x: i32, y: i32| ((y >> GRID_SHIFT) as i64) << 32 | ((x >> GRID_SHIFT) as u32 as i64);
     let mut order: Vec<(i64, u32)> =
@@ -295,25 +454,7 @@ pub fn separate(w: &mut World) {
             }
         }
     }
-    let map = w.map.clone();
-    for (b, &(i, ..)) in bodies.iter().enumerate() {
-        let (mut px, mut py) = push[b];
-        if px == 0 && py == 0 {
-            continue;
-        }
-        let len = isqrt(px * px + py * py);
-        if len > i64::from(MAX_PUSH) {
-            px = px * i64::from(MAX_PUSH) / len;
-            py = py * i64::from(MAX_PUSH) / len;
-        }
-        let (px, py) = (px as i32, py as i32);
-        // The whole push, else along one axis, else none.
-        for (qx, qy) in [(px, py), (px, 0), (0, py)] {
-            if (qx, qy) != (0, 0) && try_push(w, &map.land, i, qx, qy) {
-                break;
-            }
-        }
-    }
+    push
 }
 
 /// Moves unit `i` by `(dx, dy)` (1/16 px) if it stays off locked cells; a standing unit
@@ -352,5 +493,39 @@ mod tests {
         assert_eq!((HORSE.radius, HORSE.half_len, HORSE.reach()), (168, 408, 576)); // 10.5, 25.5, 36 px
         assert_eq!(isqrt(1_000_000), 1000);
         assert_eq!(isqrt(99), 9);
+    }
+
+    #[test]
+    fn pushes_match_the_reference() {
+        // Dense crowds of men, riders and a big animal, some on one point, near x = 0 and
+        // on cell edges: the cell table finds the same pairs as the plain search.
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut next = |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n) as i32
+        };
+        let big = Shape { radius: cm(60), half_len: cm(40), mass: 12 };
+        for round in 0..40 {
+            let n = 50 + 40 * round;
+            let span = 2000 + 400 * round;
+            let mut bodies: Vec<Body> = Vec::new();
+            for i in 0..n {
+                let s = match next(10) {
+                    0 | 1 => HORSE,
+                    2 if round % 3 == 0 => big,
+                    _ => MAN,
+                };
+                let (x, y) = if i > 0 && next(8) == 0 {
+                    let p = bodies[next(i as u64) as usize];
+                    (p.1, p.2)
+                } else {
+                    (next(span as u64), next(span as u64) + if round % 2 == 0 { 0 } else { 5000 })
+                };
+                bodies.push((i * 3 + 1, x, y, s, next(256) as u8));
+            }
+            assert_eq!(pushes(&bodies), pushes_reference(&bodies), "round {round}");
+        }
     }
 }

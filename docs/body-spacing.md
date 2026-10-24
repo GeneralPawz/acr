@@ -166,6 +166,15 @@ all 120.
 about 4.6–5.0 ms per tick for the whole step with the rule off, 6.2–6.7 ms with it on, so
 1.2–1.7 ms per tick for the rule in the densest case (the runs are noisy).
 
+The pair search (m2-perf6, `spacing::pushes`) sorts the bodies by 64 px cell into one table
+(each cell's bodies in unit order with their largest reach), scans each row of a body's
+search range from one lookup and skips a cell whose nearest point is beyond both reaches.
+It works the same pairs, each by the same body, as the plain search over every cell
+(kept as `pushes_reference`; the test `pushes_match_the_reference` compares the pushes on
+dense random crowds with riders and animals), so the state hashes do not move. Render VM,
+"Das Französische Heer." (#SINGLE8, 6500 bodies): `sim.spacing` 2.1–2.4 → 1.2–1.4 ms per
+tick; the clash 0.8 → 0.45 ms.
+
 ## Using it
 
 - Setting `body_spacing=on` in `settings.txt` turns it on for every new game (it goes into

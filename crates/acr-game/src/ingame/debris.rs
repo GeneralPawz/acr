@@ -387,12 +387,15 @@ impl Debris {
         lifetime: u64,
         keep: bool,
         ground: &dyn Fn(f32, f32) -> [f32; 3],
+        shown: &dyn Fn(f32, f32) -> bool,
         instances: &mut Vec<ModelInstance>,
         pools: &mut Vec<BloodPool>,
         stain: Option<&dyn Fn(f32, f32) -> f32>,
     ) {
         let removed_at = (2 * lifetime).min(u64::from(u16::MAX)) as u16;
-        for item in self.items.iter().filter(|i| i.tick <= now) {
+        // Well off the view (where it flies from and where it lands): nothing to draw.
+        let near = |i: &&Item| shown(i.to[0], i.to[1]) || shown(i.from[0], i.from[1]);
+        for item in self.items.iter().filter(|i| i.tick <= now).filter(near) {
             let age = now - item.tick;
             let flown = now.saturating_sub(item.launched);
             let t = if item.flight == 0 { 1.0 } else { (flown as f32 / item.flight as f32).min(1.0) };

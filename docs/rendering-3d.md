@@ -2111,6 +2111,41 @@ fight they differ only where the awake ragdolls differ between two runs of the s
 What stays sequential in `models_prepare`: `group_draws` (sorts) and the uploads, about
 1 ms of the 2.5 at +30 s.
 
+### Debris, decals and the body spacing (m2-perf6)
+
+- **Decals and debris off the view:** with the view cull above, the spray, mist and churned
+  earth of a hit or impact well off the view (`off_view_at`, the same margin) are not
+  made, the decals still left there are dropped before they are laid on the ground, and a
+  piece, gib or dropped gear whose start and landing both lie well off the view is not
+  built (`Debris::draw`, `shown`). Nothing but the draw reads them; the kept marks and
+  decay stains keep their own state and are untouched.
+- **Laying decals** (`splatter::lay_on_ground_par`: the height and slope under each decal)
+  runs on `acr_render::par::map`.
+- **Body spacing** (sim, `sim.spacing`): a cell table instead of a lookup per cell, same
+  pairs and pushes (`docs/body-spacing.md` "Cost").
+- New profiler scopes: `3d.debris_draw`, `3d.debris_hits`, `3d.splatter`, `3d.lay_decals`,
+  `3d.keep_marks`, `3d.crew_corpses` (inside `3d.debris_decals`), `sim.spacing_pairs`.
+
+Render VM, release, ms per tick, main 1878609 (`perf6/mis_main1`, `par-loops/mis_rebased`)
+against m2-perf6 (`mis_new2`, `mis_new3`), clash 1 + 2 runs (`ACR-analysis/perf6/`,
+`sc.py`):
+
+| scene, phase | `sim.spacing` | `sim.step` | `3d.debris_decals` |
+|---|---:|---:|---:|
+| mission, before | 2.4–3.2 → 1.4–1.8 | 3.6–5.5 → 2.7–4.2 | 0.1–0.4 → 0.2–0.3 |
+| mission, fight | 2.2–2.3 → 1.2–1.3 | 4.4–4.8 → 3.5–3.7 | 1.3–1.4 → 1.0–1.1 |
+| mission, fight +30 s | 2.1 → 1.2 | 4.5–4.7 → 3.9–4.1 | 1.8 → 1.4–1.5 |
+| clash, contact | 0.8 → 0.45–0.5 | 2.0–2.4 → 1.8–2.1 | 0.2–0.3 → 0.3–0.4 |
+| clash, +30 s | 0.7–0.8 → 0.45 | 2.0–2.4 → 1.9–2.0 | 0.7–0.8 → 0.8–1.0 |
+
+The clash keeps everything in view, so its decals gain nothing (the parallel laying is
+within the noise). The mission's state answers (counts, impacts, population at ticks 331,
+2305, 2607) are equal to main's; its frames before the fight, at +30 s and after the camera
+jump and back are pixel-identical to main in one of the two runs (the other differs in
+56 pixels where two runs of one build differ; `sheet_mission.png`, `sheet_clash.png`).
+What stays in `3d.debris_decals` at +30 s (≈ 1.4 ms): the laying of the decals in view
+(0.4), the spray of hits in view (0.2), map objects (0.2), the debris hits (0.2).
+
 ### Input latency
 
 - **Hardware cursor** (native, `acr-game/src/hw_cursor.rs`): the cursor the interface
@@ -2183,7 +2218,12 @@ numbers (the user's laptop) for the GPU from the clash above.
 1. **The sequential rest of the CPU frame** after m2-par-loops (view cull and parallel
    loops, above: mission `3d.instances` 12 → 3–4 ms, `models_prepare` 7 → 2 ms):
    `group_draws` (its sorts) and the uploads in `models_prepare`, and the corpses, which
-   `3d.instances` always builds (piles, ragdolls and marks need them).
+   `3d.instances` always builds. Culling them well off the view needs, per culled corpse:
+   `Seeps::corpse` kept as seen (else `Seeps::end` fades or keeps its stain), no ragdoll
+   actor (`rigged` drops it), its gear already laid (`Debris::lay_gear` at the landing),
+   `unit_models` still filled (pieces of a hit on it) and its footprint for the piles at
+   the edge; blasts off the view then no longer throw it (frames differ after scrolling
+   back).
 2. **Ragdoll physics in piles** (≈ 4 ms of 6 in the fight at 4 steps, measured on main
    e19129b before m2-rag-perf moved the steps to a worker; see "Ragdoll steps off the
    render thread" above): a step still costs about 2 × the calibration for the contacts
@@ -2193,7 +2233,11 @@ numbers (the user's laptop) for the GPU from the clash above.
    A persistent region of the bone texture per frozen body (written when it changes) and a
    cached shadow layer for static casters (designed in m2-perf4's notes) would spare the
    upload and part of the shadow map; the VM shows no measurable GPU cost (3.5 ms).
-4. **Decals and debris** (2–3 ms in the fight): `3d.debris_decals` grows with the dead.
+4. **Decals and debris** (1.4 ms in the mission fight after m2-perf6, above): what is left
+   is in view; the splatter of a hit is rebuilt every frame from all recent hits and could
+   be cached once dried.
+5. **Sim** (mission ≈ 3.5–4 ms per tick after m2-perf6): `sim.spacing` 1.2,
+   `sim.search_victims` 0.8–1.0, `sim.units` 0.6, `sim.projectiles` 0.6–0.8.
 
 Done meanwhile: the shadow casters follow `Damage::splits_parts` like the drawn list
 (9030897); `fs_main`'s gore branches already test per-instance values, so flags alone
