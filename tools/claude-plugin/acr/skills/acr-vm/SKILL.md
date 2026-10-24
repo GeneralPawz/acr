@@ -23,7 +23,7 @@ acr-vm-cargo -- cargo xtask assets artpus \
     --get 'target/assets/units/artpus.glb=C:/Users/verwalter/WIP/ACR-analysis/x/artpus.glb'
 ```
 
-- `--get REMOTE=LOCAL` fetches a file or folder afterwards. REMOTE is relative to the worktree on the VM; LOCAL is an absolute Windows path.
+- `--get REMOTE=LOCAL` fetches a file or folder afterwards. `--get` may stand before or after `--`. REMOTE is relative to the worktree on the VM (xtask writes target/assets there). A failed fetch prints an error and exits 3; LOCAL is an absolute Windows path.
 - `--no-sync` skips the upload.
 - Each worktree has its own target dir on the VM. A cold check takes about 1m45s, an incremental one about 15 s, a release build about 1 min.
 - `cargo xtask assets <names>` runs Blender right there. Never use `--help`: it builds everything.

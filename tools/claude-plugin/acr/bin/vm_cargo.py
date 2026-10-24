@@ -11,8 +11,8 @@ there in bash, in ~/wt/NAME, with:
     RUSTC_WRAPPER=sccache            (dependencies compiled once for all branches)
     ACR_GAME_DIR=~/game/American Conquest, ACR_SOURCES=~/sources, BLENDER=/opt/blender/blender
 At most two commands build at once (VM slots); others wait. Output streams back; the exit
-code is CMD's. `--get` fetches files or folders afterwards (REMOTE relative to the
-worktree, or absolute starting with ~ or /; LOCAL an absolute Windows path).
+code is CMD's. `--get` fetches files or folders afterwards (REMOTE `target/...` is in
+~/target/NAME, other relative paths in the worktree, or absolute starting with ~ or /; LOCAL an absolute Windows path).
 
 The landing checks are `acr-check` on the VM (this folder's acr-check.sh, installed into
 ~/bin on every sync).
@@ -20,7 +20,7 @@ The landing checks are `acr-check` on the VM (this folder's acr-check.sh, instal
 Examples (Git Bash, from a worktree):
     acr-vm-cargo -- acr-check
     acr-vm-cargo -- cargo test -q -p acr-sim --test plough
-    acr-vm-cargo --get 'target/assets/units/artpus.glb=C:/x/artpus.glb' -- cargo xtask assets artpus
+    acr-vm-cargo -- cargo xtask assets artpus --get 'target/assets/units/artpus.glb=C:/x/artpus.glb'
 """
 
 import argparse
@@ -73,14 +73,21 @@ def run(name, command):
 
 
 def get(name, pairs):
+    failed = False
     for p in pairs:
         remote, local = p.split("=", 1)
+        # MSYS may have rewritten a leading-slash REMOTE into a Windows path; undo that.
+        if "=" not in p:
+            print(f"vm_cargo: --get needs REMOTE=LOCAL, got {p!r}", file=sys.stderr)
+            failed = True
+            continue
         if not remote.startswith(("/", "~")):
             remote = f"~/wt/{name}/{remote}"
         parent, base = os.path.split(remote.rstrip("/"))
         data = subprocess.run(SSH + [f"cd {parent} && tar czf - {shlex.quote(base)}"], capture_output=True)
         if data.returncode != 0:
             print(f"vm_cargo: cannot fetch {remote}: {data.stderr.decode(errors='replace')}", file=sys.stderr)
+            failed = True
             continue
         with tarfile.open(fileobj=io.BytesIO(data.stdout), mode="r:gz") as tar:
             members = tar.getmembers()
@@ -97,6 +104,7 @@ def get(name, pairs):
                         with open(dest, "wb") as f:
                             f.write(tar.extractfile(m).read())
         print(f"vm_cargo: fetched {remote} -> {local}", file=sys.stderr)
+    return failed
 
 
 def main():
@@ -108,6 +116,19 @@ def main():
     ap.add_argument("cmd", nargs=argparse.REMAINDER)
     a = ap.parse_args()
     cmd = a.cmd[1:] if a.cmd[:1] == ["--"] else a.cmd
+    # `acr-vm-cargo -- CMD --get R=L` : --get after the command is ours, not CMD's.
+    rest, i = [], 0
+    while i < len(cmd):
+        if cmd[i] == "--get" and i + 1 < len(cmd):
+            a.get.append(cmd[i + 1])
+            i += 2
+        elif cmd[i].startswith("--get="):
+            a.get.append(cmd[i][6:])
+            i += 1
+        else:
+            rest.append(cmd[i])
+            i += 1
+    cmd = rest
     wt = subprocess.run(["git", "-C", a.wt, "rev-parse", "--show-toplevel"],
                         capture_output=True, text=True, check=True).stdout.strip()
     name = a.name or os.path.basename(wt)
@@ -116,7 +137,8 @@ def main():
     code = 0
     if cmd:
         code = run(name, " ".join(cmd) if len(cmd) > 1 else cmd[0])
-    get(name, a.get)
+    if get(name, a.get) and code == 0:
+        code = 3
     return code
 
 
