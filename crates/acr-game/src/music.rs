@@ -176,6 +176,33 @@ impl Audio {
         Some(mixer.play(sound, volume, pan))
     }
 
+    /// Loops a sound effect at `volume` and `pan` until [`Audio::stop_voice`] (a crowd's din,
+    /// [`crate::crowd_sounds`]); change it with [`Audio::set_gain`].
+    pub fn play_repeating(&mut self, path: &str, bytes: &[u8], volume: f32, pan: f32) -> Option<acr_audio::VoiceId> {
+        let output = self.output.as_ref()?;
+        let sound = self
+            .sounds
+            .entry(path.to_owned())
+            .or_insert_with(|| Sound::parse(bytes).map_err(|e| log::error!("{path}: {e}")).ok())
+            .clone()?;
+        let mut mixer = output.mixer.lock().ok()?;
+        Some(mixer.play_repeating(sound, volume, pan))
+    }
+
+    /// Changes a voice's volume (before the effects volume) and pan.
+    pub fn set_gain(&mut self, voice: acr_audio::VoiceId, volume: f32, pan: f32) {
+        if let Some(Ok(mut mixer)) = self.output.as_ref().map(|o| o.mixer.lock()) {
+            mixer.set_gain(voice, volume, pan);
+        }
+    }
+
+    /// Ends a voice at once.
+    pub fn stop_voice(&mut self, voice: acr_audio::VoiceId) {
+        if let Some(Ok(mut mixer)) = self.output.as_ref().map(|o| o.mixer.lock()) {
+            mixer.stop(voice);
+        }
+    }
+
     /// Plays a made sound (the weather's) at `volume` and `pan`, scaled by the effects volume;
     /// it ducks under the battle as ambience.
     pub fn play_sound(&mut self, sound: Sound, volume: f32, pan: f32) -> Option<acr_audio::VoiceId> {

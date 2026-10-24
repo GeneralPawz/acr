@@ -772,7 +772,7 @@ impl InGame {
         let Some(u) = world.unit(unit) else { return };
         let Some(def) = self.objects.objects().definition(&world.catalog.get(u.kind).id) else { return };
         if let Some(name) = def.all(keyword).next().and_then(|c| c.word(0)) {
-            self.sound_events.push(SoundEvent { name: name.to_owned(), pan: 0.0, volume: 1.0 });
+            self.sound_events.push(SoundEvent { name: name.to_owned(), pan: 0.0, volume: 1.0, at: None });
         }
     }
 
@@ -801,7 +801,7 @@ impl InGame {
                 && let Some(v) = crate::animal_sounds::voice(id)
             {
                 log::debug!("animal sound {} of {id} (pan {pan:.2}, volume {volume:.2})", v.attack);
-                events.push(SoundEvent { name: v.attack.to_owned(), pan, volume });
+                events.push(SoundEvent { name: v.attack.to_owned(), pan, volume, at: None });
             }
             let anim = anim_name(u.anim);
             for c in def.all("SOUND") {
@@ -809,7 +809,8 @@ impl InGame {
                 // Animation names may carry a variant digit (`#MOTION_L0`).
                 let base = on.trim_end_matches(|ch: char| ch.is_ascii_digit());
                 if frame == u.frame && base.eq_ignore_ascii_case(&anim) {
-                    events.push(SoundEvent { name: name.to_owned(), pan, volume });
+                    // Marching feet and death cries count towards their crowd ([`crate::crowd_sounds`]).
+                    events.push(SoundEvent { name: name.to_owned(), pan, volume, at: Some(x) });
                 }
             }
         }
@@ -836,7 +837,7 @@ impl InGame {
             let (x, y) = ((u.pos.x >> 4) as f32, (u.pos.y >> 5) as f32);
             if let Some((volume, pan)) = unit_sounds::placed(x, y, view, self.mission.fog()) {
                 log::trace!("born sound {name} (pan {pan:.2}, volume {volume:.2})");
-                self.sound_events.push(SoundEvent { name: name.to_owned(), pan, volume });
+                self.sound_events.push(SoundEvent { name: name.to_owned(), pan, volume, at: None });
             }
         }
     }
@@ -921,7 +922,7 @@ impl InGame {
         for _ in 0..ticks.min(8) {
             for (name, x, y) in self.effects.tick(world, &self.objects, rect) {
                 if let Some((volume, pan)) = unit_sounds::placed(x as f32, y as f32, view, fog) {
-                    events.push(SoundEvent { name, pan, volume });
+                    events.push(SoundEvent { name, pan, volume, at: None });
                 }
             }
         }

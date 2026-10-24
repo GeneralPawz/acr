@@ -19,6 +19,7 @@ use acr_formats::normalize_path;
 use acr_sim::Rng;
 use acr_sim::fog::Fog;
 
+use crate::crowd_sounds::{Change, Crowds};
 use crate::music::Audio;
 
 pub const SOUND_LIST: &str = "SOUNDLIST.TXT";
@@ -83,6 +84,9 @@ pub struct SoundEvent {
     pub name: String,
     pub pan: f32,
     pub volume: f32,
+    /// Where a placed `.MD` sound is (world x in original screen pixels), for the crowd
+    /// groups ([`crate::crowd_sounds`]); `None` for the others.
+    pub at: Option<f32>,
 }
 
 pub struct UnitSounds {
@@ -99,6 +103,9 @@ pub struct UnitSounds {
     danger: u32,
     /// ACR's own groups (hit, pain and agony sounds, [`crate::hit_sounds`], [`crate::agony`]): name → game paths.
     own: HashMap<String, Vec<String>>,
+    /// The din of marching crowds (`INGROUP`/`FORGROUP`), and the voices of those playing.
+    crowds: Option<Crowds>,
+    crowd_voices: HashMap<String, VoiceId>,
 }
 
 impl Default for UnitSounds {
@@ -128,6 +135,8 @@ impl UnitSounds {
             field: Ambient::default(),
             danger: 0,
             own,
+            crowds: None,
+            crowd_voices: HashMap::new(),
         }
     }
 
@@ -152,6 +161,7 @@ impl UnitSounds {
                     }
                 }
             }
+            self.crowds = Some(Crowds::new(&list)).filter(Crowds::any);
             self.list = Some(list);
             return true;
         }
@@ -167,6 +177,9 @@ impl UnitSounds {
     /// Plays one variant of each event's group like the original's `PlayEffect`.
     pub fn play(&mut self, events: &[SoundEvent], audio: &mut Audio) {
         for event in events {
+            if let (Some(crowds), Some(x)) = (&mut self.crowds, event.at) {
+                crowds.heard(&event.name, x);
+            }
             let (files, danger) = match self.list.as_ref().and_then(|l| l.get(&event.name)) {
                 Some(sound) => (&sound.files, sound.modifiers.iter().any(|m| m.eq_ignore_ascii_case("DANGER"))),
                 None => match self.own.get(&event.name) {
@@ -208,6 +221,57 @@ impl UnitSounds {
             out.extend(self.ambient_frame(view));
         }
         out
+    }
+
+    /// The crowds' `view.ticks` game frames: fades, pans, starts and stops their loops.
+    pub fn crowds(&mut self, view: &AmbientView, audio: &mut Audio) {
+        let Some(crowds) = &mut self.crowds else { return };
+        let centre = view.view[0] + view.view[2] / 2.0;
+        for _ in 0..view.ticks {
+            for change in crowds.frame(centre) {
+                match change {
+                    Change::Start { name, group, count } => {
+                        let file = self.list.as_ref().and_then(|l| l.get(&name)).and_then(|s| s.files.first());
+                        let Some(key) = file.map(|f| normalize_path(f)) else { continue };
+                        log::info!(
+                            "crowd sound {name} ({key}) starts at frame {}: group {group}, {count} sounds in the last window, {} crowd voices",
+                            crowds.elapsed,
+                            crowds.playing.len()
+                        );
+                        if let Some(Some(bytes)) = self.samples.get(&key)
+                            && let Some(voice) = audio.play_repeating(&key, bytes, 0.0, 0.0)
+                        {
+                            self.crowd_voices.insert(name, voice);
+                        }
+                    }
+                    Change::Set { name, volume, pan } => {
+                        if let Some(&voice) = self.crowd_voices.get(&name) {
+                            audio.set_gain(voice, volume, pan);
+                        }
+                    }
+                    Change::Stop { name } => {
+                        log::info!(
+                            "crowd sound {name} stops at frame {}, {} crowd voices",
+                            crowds.elapsed,
+                            crowds.playing.len()
+                        );
+                        if let Some(voice) = self.crowd_voices.remove(&name) {
+                            audio.stop_voice(voice);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Ends the crowds' loops and counts (leaving the game).
+    pub fn stop_crowds(&mut self, audio: &mut Audio) {
+        for (_, voice) in self.crowd_voices.drain() {
+            audio.stop_voice(voice);
+        }
+        if let Some(list) = &self.list {
+            self.crowds = Some(Crowds::new(list)).filter(Crowds::any);
+        }
     }
 
     /// `rand() & 0x7fff` of the original's sound code (0x585d27).
@@ -257,7 +321,7 @@ impl UnitSounds {
 
 fn event(name: String, x: f32, y: f32, view: [f32; 4], fog: Option<&Fog>) -> Option<SoundEvent> {
     let (volume, pan) = placed(x, y, view, fog)?;
-    Some(SoundEvent { name, pan, volume })
+    Some(SoundEvent { name, pan, volume, at: None })
 }
 
 /// Original pixels around the view in which world sounds are still heard (0x586807):

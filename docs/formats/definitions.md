@@ -446,11 +446,15 @@ not exist.
 
 ```text
 TREE1 4                    name, number of files
-DANGER | INGROUP n | FORGROUP a b c     optional modifiers (meaning open)
+DANGER | INGROUP n | FORGROUP a b c     optional modifiers
 Sound\ResDer1.wav          n paths relative to the game directory
 ```
 
-Paths repeat to weight the random choice (`DEASE` lists six death cries). `.MD` files
+Paths repeat to weight the random choice (`DEASE` lists six death cries). `DANGER` keeps
+the land ambience quiet for 400 frames; `INGROUP n` counts the sound towards group `n`,
+and `FORGROUP n min max` makes the sound group `n`'s crowd, looping while more than `min`
+of its sounds were heard in the last 11 frames (`max` unused; `docs/simulation.md` "Crowd
+sounds"). `.MD` files
 reference sounds by name in `SOUND`, `SELECT_SOUND`, `ORDER_SOUND`, `BORN_SOUND`; all
 references of loaded files resolve.
 
@@ -497,7 +501,6 @@ directions.
   a missing animation, missing `PIECE` files): presumably ignored.
 - `.NDS`: `[UNITLOCK]`, `[SPECIAL_UPGRADE]`/`[SPECIAL_UNIT]` integers, `[AUTOUPGRADE]`,
   `#TX` in `NATIONS.LST`, per-category upgrade effect semantics.
-- `SOUNDLIST.TXT` modifiers `DANGER`, `INGROUP n`, `FORGROUP a b c`.
 - `.SMP`: `VERT` bytes, `PIX1` values, `NRG1`, `ZONE`, the two `LOCK` lists, `SPRT`
   group tags; whether `OBJS.owner` is a player index.
 - `.LNK`: `kind`, `value`, `flags`.

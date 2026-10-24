@@ -1046,6 +1046,34 @@ order) and draws random numbers.
   table (0x4903a2). Animation sounds (`SOUND 1 #DFIRE2 FIRE1` in `WEAPON.ADS`) start when
   `frame/2` reaches the sound's frame (0x5295eb).
 
+- **Crowd sounds** (`SOUNDLIST.TXT` `INGROUP n` / `FORGROUP n min max`; `acr-game`
+  `crowd_sounds.rs`): a placed sound of an `INGROUP n` group counts towards group `n` each
+  time it is asked to play in earshot (0x584f34, called from the placed play 0x5864ff even
+  when every variant is busy). The counts run in windows of 11 game frames (0x585347, once
+  per frame from the main loop 0x4a6287: the counter 0x28b8950 rolls the table +0x1b84 into
+  +0x1784 when it passes 10). While the last window counted more than `min`, each further
+  sound of the group starts one of its `FORGROUP n` sounds (two random tries for one not
+  yet playing; 0x585058) as a silent loop (-10000, `DSBPLAY_LOOPING`, 0x584ea4) at the
+  sound's x, or pulls the playing one's x towards it by 1/16 (0x58513d), so it sits where
+  most of the group is heard. Each frame a crowd sound is panned like any placed sound
+  (`2 (x − centre)`, ±4000; 0x58526a) and its volume (hundredths of a dB) moves by
+  `max(|v| / 5, 10)`: up from at most -8000 to 0 while the group's count is above `min`,
+  else down; at -8000 or below it stops (0x5853f0..0x5854ad). `max` has no effect. The
+  shipped list makes five crowds: walking Indians (`PUSTIHKAIND`, group 4; 19 `.MD`, e.g.
+  `IROLUT.MD` `SOUND 1 #MOTION_L0 PUSTIHKAIND`) above 75 bring war cries (`PUSTIHA`,
+  `Sound\new\indscrm1.wav`), walking and galloping horses (`PUSTIHKAKON` 3, `LOBEG` 2)
+  above 75 a herd (`HORSIDUT` `horses.wav`, `HORSVINA` `horsbeg5.wav`), marching European
+  infantry (`PUSTIHKA` 5, 14 `.MD` such as `ENGM18.MD`) above 254 and death cries (`DEASE`
+  1) above 5 an infantry crowd (`DEASEB`, `DEASEA`: `Sound\new\pehota.wav`). Each
+  crowd sound plays at most once, so any number of marching men adds at most one looping
+  voice per group (four samples). Drummers' `BARABAN` (`SOUND 1 #MOTION_L BARABAN`) and
+  officers' `ORDER_SOUND OFICERCOM` are plain unit sounds and already played. ACR runs a
+  frame per tick, as for the ambience. Measured on the blank field (render VM, steps in
+  `ACR-analysis/march-shouts/`): 20 marching Iroquois (`IroLut`) stay below 75; 40 make 89
+  a window and start the war cries; 120 Iroquois and 1000 `EngM18` make 360 and 1216, one
+  voice each; when they halt the counts drop and each crowd fades out and stops 33 frames
+  later.
+
 - **Hit and pain sounds** (ACR only, #243; `acr-game` `hit_sounds.rs`): the hits in
   `World::hits` after the last one heard play an impact where the victim stands (placed like
   other world sounds): musket balls, arrows, thrown weapons and grapeshot `ACR_HIT_BODY`,

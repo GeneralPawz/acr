@@ -568,7 +568,7 @@ impl Agony {
                     mix.wounded_volume * (0.7 + 0.3 * worse),
                 )
             };
-            out.push(SoundEvent { name: name.to_owned(), pan, volume: (volume * gain).min(1.0) });
+            out.push(SoundEvent { name: name.to_owned(), pan, volume: (volume * gain).min(1.0), at: None });
             self.suffer_last = Some(now);
             let (a, b) = pause;
             self.suffer_next.insert(s.victim, now + a + u64::from(h >> 8) % (b - a + 1));
@@ -622,7 +622,7 @@ impl Agony {
                 let left = (d.end - now) as f32 / (d.end - d.start).max(1) as f32;
                 (if h.is_multiple_of(3) { GASP } else { MOAN }, 0.25 + 0.6 * left)
             };
-            out.push(SoundEvent { name: name.to_owned(), pan, volume: volume * fade });
+            out.push(SoundEvent { name: name.to_owned(), pan, volume: volume * fade, at: None });
             d.sounds += 1;
             // 1.2–2.8 s to the next sound (the scream itself lasts up to 3 s).
             let pause = if d.sounds == 1 { 25 } else { 12 } + u64::from(h >> 8) % 17;
@@ -652,7 +652,7 @@ impl Agony {
         self.panic_last = Some(f.tick);
         let panic_group = self.mix.panic_group;
         self.panic_group.retain(|_, t| *t + panic_group > f.tick);
-        vec![SoundEvent { name: FEAR.to_owned(), pan, volume }]
+        vec![SoundEvent { name: FEAR.to_owned(), pan, volume, at: None }]
     }
 
     /// Now and then a distant scream or shout while many have died nearby lately.
@@ -674,7 +674,7 @@ impl Agony {
         let side = if h & 0x200 == 0 { -1.0 } else { 1.0 };
         let pan = side * (0.5 + (h >> 10 & 0xff) as f32 / 255.0 * 0.4);
         let volume = 0.15 + (kills.min(30) as f32 / 30.0) * 0.2;
-        vec![SoundEvent { name: name.to_owned(), pan, volume }]
+        vec![SoundEvent { name: name.to_owned(), pan, volume, at: None }]
     }
 }
 

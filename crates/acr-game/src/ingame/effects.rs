@@ -466,7 +466,7 @@ pub fn weapon_sounds(
         .filter_map(|s| {
             let name = world.catalog.weapons.list.get(usize::from(s.weapon))?.sound.clone()?;
             let (volume, pan) = unit_sounds::placed(s.x as f32, s.y as f32, view, fog)?;
-            Some(SoundEvent { name, pan, volume })
+            Some(SoundEvent { name, pan, volume, at: None })
         })
         .collect()
 }

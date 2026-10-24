@@ -141,6 +141,7 @@ pub fn hit_sounds<'a>(
                 name: name.to_owned(),
                 pan,
                 volume,
+                at: None,
             }));
         }
     }

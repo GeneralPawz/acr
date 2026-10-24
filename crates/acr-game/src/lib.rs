@@ -9,6 +9,7 @@ mod agony;
 mod animal_sounds;
 mod blank_map;
 mod canvas;
+mod crowd_sounds;
 mod diplomacy;
 pub mod drive;
 mod hit_sounds;
@@ -273,6 +274,7 @@ impl Game {
             {
                 let ambient = self.unit_sounds.ambient(&view);
                 self.unit_sounds.play(&ambient, &mut self.audio);
+                self.unit_sounds.crowds(&view, &mut self.audio);
             }
             if game.ready() {
                 if !self.ui.in_game() {
@@ -548,6 +550,7 @@ impl Game {
             _ => self.ui.leave_game(),
         }
         self.mode = Mode::Menus;
+        self.unit_sounds.stop_crowds(&mut self.audio);
         if let Some(window) = &self.window {
             window.set_cursor_visible(false);
         }

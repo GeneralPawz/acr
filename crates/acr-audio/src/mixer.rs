@@ -98,8 +98,7 @@ impl Mixer {
         let id = VoiceId(self.next_id);
         self.next_id += 1;
         self.meter.started += 1;
-        let pan = pan.clamp(-1.0, 1.0);
-        let gain = [volume * (1.0 - pan.max(0.0)), volume * (1.0 + pan.min(0.0))];
+        let gain = gains(volume, pan);
         self.voices.push(Voice {
             id,
             sound,
@@ -141,6 +140,23 @@ impl Mixer {
             v.ramp = ramp;
         }
         id
+    }
+
+    /// Starts a sound like [`Mixer::play`] that loops until [`Mixer::stop`] (a crowd's din);
+    /// unlike [`Mixer::play_looped`] it is no ambience and does not duck.
+    pub fn play_repeating(&mut self, sound: Sound, volume: f32, pan: f32) -> VoiceId {
+        let id = self.play(sound, volume, pan);
+        if let Some(v) = self.voices.last_mut() {
+            v.looping = true;
+        }
+        id
+    }
+
+    /// Changes a playing voice's volume and pan.
+    pub fn set_gain(&mut self, id: VoiceId, volume: f32, pan: f32) {
+        if let Some(v) = self.voices.iter_mut().find(|v| v.id == id) {
+            v.gain = gains(volume, pan);
+        }
     }
 
     /// Changes a playing voice's volume (both sides; the pan is reset).
@@ -296,6 +312,12 @@ impl Mixer {
     }
 }
 
+/// Left and right gain of `volume` at `pan` (-1 left .. 1 right): the far side loses.
+fn gains(volume: f32, pan: f32) -> [f32; 2] {
+    let pan = pan.clamp(-1.0, 1.0);
+    [volume * (1.0 - pan.max(0.0)), volume * (1.0 + pan.min(0.0))]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -303,6 +325,20 @@ mod tests {
 
     fn sound(rate: u32, samples: &[i16]) -> Sound {
         Sound { rate, channels: 1, samples: Arc::from(samples) }
+    }
+
+    #[test]
+    fn repeating_voice_loops_and_follows_its_gain() {
+        let mut m = Mixer::new(100);
+        let id = m.play_repeating(sound(100, &[16384, 16384, 16384]), 1.0, 0.0);
+        let mut out = [0.0; 16];
+        m.render(&mut out, 2);
+        assert!(m.is_playing(id) && out.iter().all(|s| (s - 0.5).abs() < 1e-6));
+        m.set_gain(id, 1.0, 0.5);
+        m.render(&mut out, 2);
+        assert!((out[0] - 0.25).abs() < 1e-6 && (out[1] - 0.5).abs() < 1e-6);
+        m.stop(id);
+        assert!(!m.is_playing(id));
     }
 
     #[test]

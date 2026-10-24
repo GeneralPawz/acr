@@ -53,7 +53,7 @@ impl InGame {
         // A link click plays `DialogsSystem::ClickSound`, the `STANDART` group.
         let click = sounds.iter().any(|s| s == crate::ui::dialog::sound::CLICK);
         if click {
-            self.sound_events.push(SoundEvent { name: "STANDART".into(), pan: 0.0, volume: 1.0 });
+            self.sound_events.push(SoundEvent { name: "STANDART".into(), pan: 0.0, volume: 1.0, at: None });
         }
         if let Some(action) = action {
             self.dip_action(action);
