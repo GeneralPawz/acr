@@ -8,6 +8,8 @@
     budget    triangle budget of the whole model
     leaves    material-name parts of the leaf cards (alpha mask, wind flutter)
     snow      whiten the leaf cards (0..1) for a snow-laden variant
+    recolour  turn red texels leaf green (atlases with an autumn crown only)
+    max_width narrow a too wide crown to this many metres (x and y)
     turn      degrees about +Z (models face -Y)
 
 What it does: imports and joins the kept nodes, puts the trunk base on the ground point,
@@ -103,6 +105,18 @@ def _whiten(img, amount):
     return _put(img, px, ".snow")
 
 
+def _green(img):
+    """Red texels (r well above g and b) become leaf green: the Proto Series atlases carry
+    only their red (autumn) crown strip."""
+    px = _pixels(img)
+    r, g, b = px[:, 0].copy(), px[:, 1].copy(), px[:, 2].copy()
+    red = (r > 1.3 * g) & (r > 1.3 * b)
+    px[red, 0] = g[red] * 0.6 + 0.05
+    px[red, 1] = r[red] * 0.62
+    px[red, 2] = b[red] * 0.5
+    return _put(img, px, ".green")
+
+
 def _level(img, target, opaque):
     """Brightens the image so its mean (sRGB, over the opaque texels of a card) reaches
     `target`: the sources' leaf atlases are often dark (oak 0.16), and the renderer's Lambert
@@ -120,7 +134,7 @@ def _level(img, target, opaque):
     return _put(img, px, ".lit"), gain
 
 
-def _materials(obj, leaf_words, snow, level, gains):
+def _materials(obj, leaf_words, snow, level, gains, recolour=False):
     """Rebuilds every slot as image -> Principled (leaf cards: alpha -> Round -> Alpha)."""
     leaf_slots = set()
     done = {}
@@ -139,13 +153,14 @@ def _materials(obj, leaf_words, snow, level, gains):
         if img is not None and max(img.size) > MAX_TEX:
             k = MAX_TEX / max(img.size)
             img.scale(max(1, int(img.size[0] * k)), max(1, int(img.size[1] * k)))
+        if img is not None and recolour:
+            img = _green(img)
         if img is not None and leaf:
             img, gains[name] = _level(img, level, True)
-        elif img is not None:
-            # A generated copy of the pixels: a packed, rescaled file image went out black.
-            img = _put(img, _pixels(img), ".png")
             if snow:
                 img = _whiten(img, snow)
+        elif img is not None:
+            img = _put(img, _pixels(img), ".png")
         mat = bpy.data.materials.new(f"{obj.name}.{'leaves' if leaf else 'bark'}.{i}")
         mat.use_nodes = True
         nt = mat.node_tree
@@ -330,7 +345,8 @@ def build(ctx, spec):
         obj.data.color_attributes.remove(attr)
     leaf_words = spec.get("leaves", LEAF_WORDS if kind != "rock" else ())
     gains = {}
-    leaf_slots = _materials(obj, leaf_words, spec.get("snow", 0.0), spec.get("leaf_level", LEAF_LEVEL), gains)
+    leaf_slots = _materials(obj, leaf_words, spec.get("snow", 0.0), spec.get("leaf_level", LEAF_LEVEL), gains,
+                            spec.get("recolour", False))
     budget = spec.get("budget", 6000)
     cards = None
     if leaf_slots:
@@ -353,8 +369,13 @@ def build(ctx, spec):
         ys = [v.co.y for v in me.vertices]
         cx, cy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
     k = spec["height"] / (hi - lo)
+    # A crown wider than `max_width` (m) narrows to it (x and y only).
+    width = max(max(v.co.x for v in me.vertices) - min(v.co.x for v in me.vertices),
+                max(v.co.y for v in me.vertices) - min(v.co.y for v in me.vertices)) * k
+    kxy = min(1.0, spec.get("max_width", 1e9) / width)
     sink = spec.get("sink", 0.03 if kind != "rock" else 0.08)
-    vs.transform([obj], Matrix.Rotation(math.radians(spec.get("turn", 0.0)), 4, "Z") @ Matrix.Scale(k, 4)
+    vs.transform([obj], Matrix.Rotation(math.radians(spec.get("turn", 0.0)), 4, "Z")
+                 @ Matrix.Diagonal((k * kxy, k * kxy, k, 1.0))
                  @ Matrix.Translation((-cx, -cy, -lo - sink / k)))
     obj.parent = ctx.root
     for p in me.polygons:

@@ -6,7 +6,7 @@ Source: dariiiii, "Coniferous Forest Assets Pack" (tree C), Sketchfab, CC-BY 4.0
 from acr_assets import nature
 
 TYPE = "TREELIST:131"
-SPEC = {"source": "sketchfab2/coniferous-forest-assets-pack/scene.gltf", "nodes": ["Object_13", "Object_14"], "kind": "tree", "height": 12.0, "budget": 6000, "leaves": ["branchmat"]}
+SPEC = {"source": "sketchfab2/coniferous-forest-assets-pack/scene.gltf", "nodes": ["Object_13", "Object_14"], "kind": "tree", "height": 12.0, "budget": 6000, "leaves": ["branchmat"], "max_width": 5.5}
 
 
 def build(ctx):

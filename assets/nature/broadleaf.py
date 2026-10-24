@@ -42,6 +42,7 @@ TRUNK = [(0, 1.0), (-20, 0.5), (-40, 4.0), (-55, 2.0), (-75, 0.0), (-95, -6.0)]
 # Bare branches the sprite shows below and beside the crown (screen x, y of the tip).
 BRANCHES = [(-38.0, -50.0), (-30.0, -78.0), (34.0, -46.0), (18.0, -40.0)]
 FIT = {"clump_scale": 1.675, "depth": 25.0, "trunk_r": 3.6, "flatten": 1.1}
+LEAF_LEVEL = 0.33
 PALETTE = {"bark": (0.30, 0.24, 0.18), "leaves": (0.20, 0.30, 0.13), "cut": (0.72, 0.60, 0.42)}
 
 
@@ -140,7 +141,7 @@ def tree(parent, name, top):
         rel = v.co - centre
         horiz = Vector((rel.x, rel.y, 0)).length
         wind.append((min(v.co.z / top, 1.0) ** 2, min(horiz / crown_r, 1.0), p, 1.0))
-        ao.append(0.7 + 0.3 * min(rel.length / crown_r, 1.0))
+        ao.append(0.85 + 0.15 * min(rel.length / crown_r, 1.0))
     _wind(crown, wind)
     _ao(crown, ao)
     for p in me.polygons:
@@ -223,6 +224,11 @@ def build(ctx):
         colours["leaves"] = project.guided(info[objs[1].name][2], PALETTE["leaves"], radius=0.25)
         for o in objs:
             o.data.uv_layers.remove(o.data.uv_layers["sprite"])
+    # The sprite's crown colour (about sRGB 0.16, 0.28, 0.16) times the crown's AO read near
+    # black under the renderer's Lambert: lift it to the nature models' leaf level (0.33).
+    lv = sum(colours["leaves"]) / 3
+    if lv < LEAF_LEVEL:
+        colours["leaves"] = tuple(min(1.0, c * LEAF_LEVEL / lv) for c in colours["leaves"])
     pose_for(model, None)
     for o in ctx.root.children_recursive:
         o.hide_render = False

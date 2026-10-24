@@ -6,7 +6,7 @@ Source: bitgem, "Pine Tree - Proto Series - Free", Sketchfab, CC-BY 4.0 (assets/
 from acr_assets import nature
 
 TYPE = "TREELIST:93"
-SPEC = {"source": "sketchfab2/pine-tree-proto-series-free/scene.gltf", "kind": "tree", "height": 6.0, "budget": 3000, "leaves": []}
+SPEC = {"source": "sketchfab2/pine-tree-proto-series-free/scene.gltf", "kind": "tree", "height": 6.0, "budget": 3000, "leaves": [], "recolour": True}
 
 
 def build(ctx):
