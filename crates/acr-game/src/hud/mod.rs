@@ -163,6 +163,13 @@ pub enum HudCommand {
     /// `ATTACKGROUND` (`ATGHINT`, 0x5f5dad): the next map click is the point the selected
     /// cannons bombard.
     AttackGroundMode,
+    /// Mortars rule (ACR, #301), "Zielzone setzen": the next click or drag on the map adds
+    /// an engagement zone to the selected mortars.
+    MortarZoneMode,
+    /// Mortars rule, "Zonen löschen": the selected mortars lose their zones.
+    MortarClearZones,
+    /// Mortars rule, "Feuer frei" (true) / "Feuer einstellen": shell the zones or stop.
+    MortarFire(bool),
     /// `ENABLE_ATTACK` / `DISABLE_ATTACK` (`SetSearchVictim`, 0x4d76cf): hold fire or not.
     HoldFire(bool),
     /// `SHOTMYUNITS` / `KEEPMYUNITS` (network command 0x5e): shoot through own units or not.

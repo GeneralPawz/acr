@@ -88,6 +88,7 @@ panels) the left button works as always, also with Ctrl. The wheel does nothing 
 | 4× zoomed-out view | L | L |
 | Slow/fast game mode | Ctrl + D (no effect: the simulation has one mode) | Ctrl + D |
 | Command and production icons | letters, see below | the same, but **Alt + W/A/S/D** for W, A, S, D |
+| Mortars (rule `mortars`): set a zone, clear the zones, fire on/off | the icons (ui.md "Mortar buttons") | the icons, or **Alt + Z**, **Alt + X**, **Alt + F** |
 | Fullscreen (ACR) | F11, Alt + Enter | F11, Alt + Enter |
 
 Escape in the modern scheme first leaves a build or rally point mode, then cancels a drag
@@ -142,7 +143,8 @@ W, A, S and D are command and production letters in the original (see below: S i
 `Stand_Ground_ON`, D `Attack_OFF`, and the production keys of the nation files use W 30
 times, A 8 times). The modern scheme deliberately uses them for panning and moves these icon keys to
 **Alt + W/A/S/D**; `Keyboard.dat` has no Alt entries, so nothing else moves. Ctrl + W/A/S/D
-keep their original meaning. No other key changes: Home, the middle button and the wheel
+keep their original meaning. With the mortars rule and mortars selected, Alt + Z, Alt + X
+and Alt + F press the mortar icons (also no `Keyboard.dat` entries). No other key changes: Home, the middle button and the wheel
 are unused by the original game screen, and the double tap of a digit still recalls the
 group first.
 

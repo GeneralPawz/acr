@@ -144,6 +144,11 @@ pub fn state(
                 if let Some(b) = u.brigade {
                     o.insert("brigade".into(), b.into());
                 }
+                // Mortars rule: the zones ([x, y, r]) and whether it shells them.
+                if let Some(m) = world.mortar_zones.get(&u.id) {
+                    let zones: Vec<Value> = m.zones.iter().map(|z| json!([z.x, z.y, z.r])).collect();
+                    o.insert("mortar".into(), json!({"zones": zones, "firing": m.firing}));
+                }
                 if detail {
                     o.insert("dir".into(), u.dir.into());
                     o.insert(

@@ -11,7 +11,9 @@
 //!   graze, a ring there, and the dashed lane it skips along with a tick at each likely skip;
 //! - **direct fire** (an attack on a building, or on men beyond canister reach): a solid line
 //!   to the aim point with a cross bar and a dashed line on to where a miss bounces out;
-//! - the **minimum distance** of a ball mode: a hatched grey ring around the gun.
+//! - the **minimum distance** of a ball mode: a hatched grey ring around the gun;
+//! - a selected **mortar** (#301, [`mortar`]): the hatched ring of its minimum range and a
+//!   dashed circle with a centre cross per engagement zone.
 //!
 //! Positions are world pixels; `at` maps them to world screen pixels on the ground.
 
@@ -245,6 +247,23 @@ pub fn draw(m: &Mark, s: &SectorWeapon, cs: Colours, at: At, out: &mut Vec<Draw>
             ground_line(out, cs.mark, at, o, g, dotted);
             outlined_arc(out, cs, at, g, 48.0, (0.0, std::f64::consts::TAU), dashed);
         }
+    }
+}
+
+/// A mortar's engagement zone (#301): a dashed circle with a small cross at its centre.
+pub fn zone(z: &acr_sim::mortar::Zone, cs: Colours, at: At, out: &mut Vec<Draw>) {
+    let c = (f64::from(z.x), f64::from(z.y));
+    outlined_arc(out, cs, at, c, f64::from(z.r), (0.0, std::f64::consts::TAU), dashed);
+    outlined(out, cs, at, (c.0 - 16.0, c.1), (c.0 + 16.0, c.1), solid);
+    outlined(out, cs, at, (c.0, c.1 - 16.0), (c.0, c.1 + 16.0), solid);
+}
+
+/// A selected mortar's marks (#301): the hatched grey ring of its minimum range `min`
+/// around `from` and its zones.
+pub fn mortar(from: (i32, i32), min: i32, zones: &[acr_sim::mortar::Zone], cs: Colours, at: At, out: &mut Vec<Draw>) {
+    too_close(out, cs, at, (f64::from(from.0), f64::from(from.1)), f64::from(min));
+    for z in zones {
+        zone(z, cs, at, out);
     }
 }
 

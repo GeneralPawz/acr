@@ -519,6 +519,22 @@ cursor is drawn anywhere in the window, also beside the menu canvas.
       fields; switching it back on plants at once). Each two-state icon shows the frame and
       hint of the current state (`STOPBUILD_OFF`/`_ON`, `FISHING_ON_TXT`/`_OFF_TXT`,
       `MAKEZASEV`/`DONTMAKEZASEV`) and switches to the other.
+- Mortar buttons (ACR, #301, not in the original; `ingame/mortar_ui.rs`): with the
+  mortars rule on and own mortars (`ArtMrt`) among the selection, four icons in the
+  command icons' style (owner outline, yellow frame while on) at slots the guns leave free:
+  | Slot | Icon (`ICONLIST.TXT`) | Hint | Does |
+  |---|---|---|---|
+  | 15 | `Rally_Point` | Zielzone setzen | the next left click on the map adds a zone of 150 px there, a left drag one as wide as the drag (32..800 px); each selected mortar gets `MortarZones` with its zones plus the new one (at most 8, the oldest goes). Cursor frame 9 like the attack-ground mode; Shift keeps the mode; Escape or a right click leaves it |
+  | 16 | `Cancel` | Zonen löschen | `MortarZones` without zones (also stops the fire) |
+  | 27 | `FireKartech_Cannon` | Feuer frei | `MortarFire` on; highlighted while some selected mortar fires |
+  | 28 | `Attack_OFF` | Feuer einstellen | `MortarFire` off; highlighted while some has zones and holds |
+
+  The modern scheme adds the keys to the hints ("(Alt+Z)", [controls.md](controls.md)).
+  The marks: a selected mortar shows the hatched grey ring of its minimum range (600 px)
+  and a dashed yellow circle with a centre cross per zone (`gun_marks::mortar`); in the zone
+  mode the zone being set follows the cursor (150 px) or the drag. Driver check:
+  `ACR-analysis/genai/mortar/ui/` (`after.json`, the `state` answers' `mortar` field,
+  `sheet_hud.png`, `after/overlay.png`).
 - Hotkeys: `Data\Keyboard.dat` (in `Patch02.GS1`) maps `[CTRL|ALT|SHIFT] KEY : ICON`.
   The key presses the shown icon of that name.
 
@@ -900,8 +916,8 @@ ACR adds two more pages in the same frame (`ui/screens/game_options.rs`). A text
 right on the first heading's line ("Weitere Optionen »", then "Seite 2/3: Grafik »",
 "Seite 3/3: Zurück »") turns the pages; OK takes the choices of all three, Abbruch none.
 Rows are 27 px apart from the first heading, labels and boxes where the original page has
-them (+76 / +239): headings on its heading rows (203, 257, 365), a combo box or a note on
-every other row, since the frame has the empty boxes (230, 284, 392) and the sliders'
+them (+76 / +239): headings on its heading rows (203, 257, 365), a combo box on every other
+row, since the frame has the empty boxes (230, 284, 392) and the sliders'
 tracks (311, 338, 419, 446) drawn in. The settings each line writes are in
 [rendering-3d.md](rendering-3d.md#settings).
 
@@ -911,9 +927,9 @@ tracks (311, 338, 419, 446) drawn in. The settings each line writes are in
 | 2 | Tote und Spuren | Verwesung | Knochen / Nur halb, each mit / ohne Bodenfleck | `corpse_decay`, `decay_stain` (one box: the page's rows are the frame's) |
 | 2 | | Liegezeit | 1 … 60 Minuten | `corpse_minutes` |
 | 2 | | Schlachtfeldspuren | Verblassen / Bleiben (ganze Schlacht) | `battlefield_marks` |
-| 2 | Regeln | (note: "Gelten ab der nächsten Schlacht") | | |
-| 2 | | Trefferzonen | Aus (Original) / An | `hit_locations` |
+| 2 | Regeln (ab nächster Schlacht) | Trefferzonen | Aus (Original) / An | `hit_locations` |
 | 2 | | Körperabstand | Aus (Original) / An | `body_spacing` |
+| 2 | | Mörser | Aus (Original) / An: Mörser mit Zielzonen | `mortars` ([simulation.md](simulation.md#mortar-optional-rule-301)) |
 | 3 | 3D-Grafik | 3D-Modelle | Aus (Original) / Einheiten / Einheiten und Gebäude | `models` |
 | 3 | Darstellung | Kamera | Fest (Original) / Frei | `camera` |
 | 3 | | Schatten, Details | An / Schatten aus / Detailstufen aus / Beide aus | `shadows`, `lod` (one box, so the landscape group has room for the weather) |
@@ -924,7 +940,8 @@ tracks (311, 338, 419, 446) drawn in. The settings each line writes are in
 
 All but the two rules take effect at once on OK. The rules are part of the simulation (the
 setup a replay or savegame hashes): a battle keeps the rules it began with, the new choice
-applies from the next battle, as the note under the heading says. The modern controls'
+applies from the next battle, as the heading says (the note that said it on its own row
+gave way to the `Mörser` line, #301). The modern controls'
 Ctrl + Space, C switches the free camera for the running battle only
 ([controls.md](controls.md#leader-chords-modern)); OK on these pages sets it back to the
 `Kamera` line. Driver check with

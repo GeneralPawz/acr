@@ -363,7 +363,7 @@ running game the tree also has `messages` (mission hints and texts over the map)
 `type`), `formations` (`brigade`, `members`), `counts` per owner of living `units`,
 finished `buildings`, building `sites` and `burning` objects by type, `mission` (`ended`: `won`/`lost`/null,
 `objectives`). With `"units": true`: `units` with `id`, `type`, `owner`, `x`, `y`,
-`life`, `building`, `finished`, `inside`, `burning`, `brigade` and `screen` (window position, when
+`life`, `building`, `finished`, `inside`, `burning`, `brigade`, `mortar` (mortars rule: `zones` `[[x, y, r], ...]` and `firing`, once it has zones) and `screen` (window position, when
 in view). With `"detail": true`, `activity` sums up the listed objects: `units`, `attacking`
 (an attack is the current order), `aside` (a move in front of an attack it resumes, e.g. a
 musketeer stepping out of a friend's way), `idle` (no orders) and `reloading`.

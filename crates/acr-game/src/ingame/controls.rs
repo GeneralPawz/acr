@@ -172,7 +172,13 @@ impl InGame {
     /// or a building, rally, patrol or attack-ground click pending) it is a plain click.
     pub(super) fn ctrl_click_deselect(&mut self) -> bool {
         let i = &self.interface;
-        if !self.ctrl_deselects() || i.placing.is_some() || i.rally_mode || i.patrol_mode || i.attack_ground_mode {
+        if !self.ctrl_deselects()
+            || i.placing.is_some()
+            || i.rally_mode
+            || i.patrol_mode
+            || i.attack_ground_mode
+            || i.mortar.on
+        {
             return false;
         }
         let (Some(at), Some(world)) = (self.cursor, &self.world) else { return false };
@@ -289,6 +295,10 @@ impl InGame {
         match key {
             Key::Character(c) => {
                 let ch = c.chars().next().filter(char::is_ascii_alphabetic)?.to_ascii_uppercase() as u8;
+                // Mortars rule: Alt + Z/X/F press the mortar icons (`mortar_ui.rs`).
+                if pressed && mods.alt_key() && !mods.control_key() && self.mortar_key(ch) {
+                    return Some(GameKey::None);
+                }
                 let i = PAN_KEYS.iter().position(|&k| k == ch)?;
                 if !pressed {
                     // Released: always let go, whatever the modifiers are now.

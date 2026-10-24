@@ -45,18 +45,17 @@ fn on_off(on: bool) -> usize {
     usize::from(on)
 }
 
-/// What a row of a page holds: a heading, a choice, or a note in a box.
+/// What a row of a page holds: a heading or a choice.
 enum Row {
     Heading(&'static [u8]),
     Choice(Choice),
-    Note(&'static [u8]),
 }
 
 /// The rows of a page (relative y), as the original page's: headings on its headings' rows
 /// (203, 257, 365), combo boxes on the rest, where the frame has the empty boxes and the
 /// sliders' tracks drawn in ([`BOX_ROWS`]).
 const ROW_Y: [i32; 10] = [203, 230, 257, 284, 311, 338, 365, 392, 419, 446];
-/// The rows that always show a box (a combo box or a note)
+/// The rows that always show a box (a combo box)
 #[cfg(test)]
 const BOX_ROWS: [i32; 7] = [230, 284, 311, 338, 392, 419, 446];
 
@@ -113,8 +112,9 @@ const BATTLE: &[Row] = &[
         get: |s| on_off(s.marks_keep),
         set: |s, i| s.marks_keep = i == 1,
     }),
-    Row::Heading(b"Regeln"),
-    Row::Note(b"Gelten ab der n\xe4chsten Schlacht"),
+    // The note "Gelten ab der naechsten Schlacht" went into the heading to make room for the
+    // mortars rule (#301).
+    Row::Heading(b"Regeln (ab n\xe4chster Schlacht)"),
     Row::Choice(Choice {
         label: b"Trefferzonen",
         lines: &[b"Aus (Original)", b"An: Wunden, Glieder, Verbluten"],
@@ -126,6 +126,12 @@ const BATTLE: &[Row] = &[
         lines: &[b"Aus (Original)", b"An: K\xf6rper brauchen Platz"],
         get: |s| on_off(s.body_spacing),
         set: |s, i| s.body_spacing = i == 1,
+    }),
+    Row::Choice(Choice {
+        label: b"M\xf6rser",
+        lines: &[b"Aus (Original)", b"An: M\xf6rser mit Zielzonen"],
+        get: |s| on_off(s.mortars),
+        set: |s, i| s.mortars = i == 1,
     }),
 ];
 
@@ -313,9 +319,6 @@ impl GameOptions {
             let mut combos = Vec::new();
             for (i, (row, &y)) in rows(self.page).iter().zip(&ROW_Y).enumerate() {
                 match row {
-                    Row::Note(text) => {
-                        m.d.add_text(ctx.lib, ctx.fonts, ox + 262, oy + y + 3, text, YELLOW, Align::Left);
-                    }
                     Row::Heading(text) => {
                         m.d.add_text(ctx.lib, ctx.fonts, ox + 66, oy + y, text, font::F18W, Align::Left);
                     }

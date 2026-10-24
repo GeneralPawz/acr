@@ -39,6 +39,7 @@ mod kept_marks;
 mod living_wounds;
 mod map_models;
 mod maul_view;
+mod mortar_ui;
 mod panels;
 mod particle_view;
 mod piles;

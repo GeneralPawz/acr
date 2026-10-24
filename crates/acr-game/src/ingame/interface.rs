@@ -179,6 +179,8 @@ pub struct State {
     /// The attack-ground icon was pressed: the next click on the map is the point to
     /// bombard (`0x28ead0b`).
     pub attack_ground_mode: bool,
+    /// Mortars rule (#301): "Zielzone setzen" was pressed (`mortar_ui.rs`).
+    pub(super) mortar: super::mortar_ui::ZoneMode,
     /// Space cycles through the selection (0x4c6020).
     next_centred: usize,
     /// The market's amount and chosen slots (ECO+0x2a0, +0x2a4, +0x2a8), kept for the game.
@@ -238,6 +240,7 @@ impl Default for State {
             form_menu: 0,
             select_formed: None,
             attack_ground_mode: false,
+            mortar: Default::default(),
             next_centred: 0,
             market_amount: 0,
             market_sell: None,
@@ -557,6 +560,7 @@ impl InGame {
         self.attack_ground_icon(ctx, &data, outline, &mut view.icons);
         self.idle_icons(&data, outline, &mut view.icons);
         self.switch_icons(ctx, &data, outline, &mut view.icons);
+        self.mortar_icons(&data, outline, &mut view.icons);
         let Some(world) = &self.world else { return view };
         let objects = self.objects.objects();
         // The type icons, then the formation icons, take the first slots the commands leave
@@ -1583,6 +1587,9 @@ impl InGame {
             // 0x606650: the next left click on the map sets the patrol point (0x4c28aa).
             HudCommand::PatrolMode => self.interface.patrol_mode = true,
             HudCommand::AttackGroundMode => self.interface.attack_ground_mode = true,
+            HudCommand::MortarZoneMode | HudCommand::MortarClearZones | HudCommand::MortarFire(_) => {
+                self.mortar_command(&command)
+            }
             HudCommand::HoldFire(hold) => {
                 let units = self.own_selected_units();
                 self.commands.push(Command::HoldFire { player, units, hold });
@@ -1871,6 +1878,8 @@ impl InGame {
             _ if self.interface.patrol_mode && !over_hud => cursor::frame::PATROL,
             // The attack-ground cursor (`0x66a910`, 0x4c24c3).
             _ if self.interface.attack_ground_mode && !over_hud => cursor::frame::ATTACK_GROUND,
+            // Mortars rule: the zone mode takes the same cursor.
+            _ if self.interface.mortar.on && !over_hud => cursor::frame::ATTACK_GROUND,
             Some(context) => context.cursor(),
             None => cursor::frame::ARROW,
         };
@@ -2123,6 +2132,7 @@ impl InGame {
                 gun_marks::draw(&m, &s, cs, &at, out);
             }
         }
+        self.mortar_marks(world, cs, &at, cursor, out);
     }
 
     /// The inaccessible areas (key Q, 0x518306): every blocked 16 × 16 cell of the land
@@ -2304,6 +2314,7 @@ impl InGame {
             self.dip_check_building(at);
         }
         if !pressed && self.drag_from.is_none() {
+            self.mortar_release(at);
             self.dip_release();
             self.interface.hud.release();
             return GameMouse::None;
@@ -2334,6 +2345,9 @@ impl InGame {
     /// keeps the mode) or while picking a rally point. True if it was used.
     fn map_click(&mut self, at: [f32; 2]) -> bool {
         let player = self.own();
+        if self.mortar_press(at) {
+            return true;
+        }
         if self.interface.patrol_mode {
             self.interface.patrol_mode = false;
             let (x, y) = self.world_at(at);
@@ -2558,7 +2572,9 @@ impl InGame {
         let on = self.interface.placing.is_some()
             || self.interface.rally_mode
             || self.interface.patrol_mode
-            || self.interface.attack_ground_mode;
+            || self.interface.attack_ground_mode
+            || self.interface.mortar.on;
+        self.interface.mortar = Default::default();
         self.interface.placing = None;
         self.interface.rally_mode = false;
         self.interface.patrol_mode = false;

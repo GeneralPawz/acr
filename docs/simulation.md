@@ -1296,6 +1296,12 @@ fires only once the gun has drawn back beyond it, like the field gun's ball insi
 `ATTACK_RADIUS` minimum. No random number is drawn beyond the shot's own. `tests/mortar.rs`
 covers the types, the zone fire, the minimum range and the rule off.
 
+**Controls.** The rule is the line `Mörser` of the game options' rules
+(docs/ui.md, "Game menu"); selected mortars get the icons "Zielzone setzen", "Zonen
+löschen", "Feuer frei" and "Feuer einstellen", which send these two commands, and the marks
+of their zones and minimum range (docs/ui.md, "Mortar buttons"). The driver's `state` with
+`units` shows a mortar's `mortar: {zones: [[x, y, r], ...], firing}`.
+
 ### Worked timing (musketeer, 10 ticks/s)
 
 - First shot: `#PATTACK1` (63 frames, 32 ticks), then 7 ticks to the active frame 14. The
