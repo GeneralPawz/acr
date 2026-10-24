@@ -424,9 +424,10 @@ def build_generated(ctx, spec):
     item's `tris`, base colour baked, standing on z = 0, facing -Y at its `size`). SPEC:
 
         source  path below the generated sources ("pixal3d/prop_ruin_wall.glb")
-        wind    None (hard props: zero `_WIND`), "stalk" (sways with height, leaves flutter:
+        sway    None (hard props: zero `_WIND`), "stalk" (sways with height, leaves flutter:
                 maize, dry bushes) or "green" (green texels flutter: pumpkin leaves);
-                `genfit.prop_wind`
+                `genfit.prop_wind`; the root's `acr_wind` scales: `WIND["rock"]` for hard
+                props, `WIND["bush"]` otherwise
         sink    metres below the ground point (default 0.03; on slopes nothing floats)
         turn    degrees about +Z
 
@@ -459,7 +460,7 @@ def build_generated(ctx, spec):
     vs.transform([low], Matrix.Rotation(math.radians(spec.get("turn", 0.0)), 4, "Z") @ Matrix.Translation((0, 0, -sink)))
     low.parent = ctx.root
     # per-vertex baked colour (for "green" flutter)
-    mode = spec.get("wind")
+    mode = spec.get("sway")
     rgb = None
     if mode == "green":
         img = next(n.image for n in me.materials[0].node_tree.nodes if n.type == "TEX_IMAGE" and n.image)
@@ -495,7 +496,7 @@ def build_generated(ctx, spec):
         flutter += ch[3] > 0
     white(low)
     ctx.root["acr_nature"] = "prop"
-    ctx.root["acr_wind"] = "_WIND: x trunk bend, y branch, z phase, w leaf flutter"
+    ctx.root["acr_wind"] = [float(k) for k in WIND["bush" if mode else "rock"]]
     xs = [v.co.x for v in me.vertices]
     ys = [v.co.y for v in me.vertices]
     zs = [v.co.z for v in me.vertices]
@@ -503,7 +504,7 @@ def build_generated(ctx, spec):
         "kind": "prop",
         "source": spec["source"],
         "size_m": [round(max(xs) - min(xs), 2), round(max(ys) - min(ys), 2), round(max(zs), 2)],
-        "wind": mode,
+        "sway": mode,
         "flutter_frac": round(flutter / max(1, len(me.vertices)), 3),
     })
     ctx.stats = st

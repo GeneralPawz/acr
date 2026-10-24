@@ -8,7 +8,7 @@ through `acr_assets.nature.build_generated`.
 from acr_assets import nature
 
 TYPE = "TREELIST:467"
-SPEC = {"source": "pixal3d/prop_ruin_chapel.glb", "wind": None}
+SPEC = {"source": "pixal3d/prop_ruin_chapel.glb", "sway": None}
 
 
 def build(ctx):

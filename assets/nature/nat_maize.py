@@ -7,7 +7,7 @@ through `acr_assets.nature.build_generated`.
 
 from acr_assets import nature
 
-SPEC = {"source": "rodin/nat_maize.glb", "wind": "stalk"}
+SPEC = {"source": "rodin/nat_maize.glb", "sway": "stalk"}
 
 
 def build(ctx):

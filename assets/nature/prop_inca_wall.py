@@ -7,7 +7,7 @@ through `acr_assets.nature.build_generated`.
 
 from acr_assets import nature
 
-SPEC = {"source": "rodin/prop_inca_wall.glb", "wind": None}
+SPEC = {"source": "rodin/prop_inca_wall.glb", "sway": None}
 
 
 def build(ctx):
