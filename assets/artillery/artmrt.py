@@ -6,7 +6,8 @@ from the model's 34° to the shell's 60° (`GunMode::Mortar`).
 Rig: `gun` (whole piece: the jolt of the shot) > `bed` > `intact`/`wreck` (bed, charred
 copy), `barrel` (at the trunnions: kick) > `flash` (the fire at the muzzle, shown from the
 shot frame for 5 frames). The sim draws the mortar with the field gun's `.MD` (`ArtPus`),
-so the clips are the cannon's (`artpus.py`): `STAND`, `GUN_PUSH`, `CHEST_CARRY`,
+so the clips are the cannon's (`artpus.py`): `STAND`, `GUN_PUSH` (the bed carried
+`mortarcrew.LIFT` up by its iron handles, added here: the source bed has none), `CHEST_CARRY`,
 `TRAIL_LIFT`, `TRAIL_WALK`, `DEPLOY`, `ATTACK` (420 frames, the shot at 29), `DEATH` (73)
 and `DEATHLIE1`. The crew of three (`acr_assets.mortarcrew`, bones `c0.`..`c2.`): two
 loaders and the firer with the linstock.
@@ -119,8 +120,53 @@ def _flash(centre, ax, radius):
     return vs.join(out, "artmrt.flash")
 
 
-def _marks(arm, vent, rims):
-    """{name: (bone, local point)} for the crew's IK: the vent, the muzzle's rim each side."""
+def _handles(bed):
+    """Iron lifting handles the source bed lacks (added for the carry, `mortarcrew` "Moving"):
+    a bail on each side cheek at `mortarcrew.HANDLE_Y` and one on the rear transom, their
+    grip bars `mortarcrew.GRIP_Z` over the ground, `HANDLE_OUT` outside the bed. Returns
+    (object, {mark: grip point}, {"side_top_m", "rear_top_m"})."""
+    vs_ = [v.co for v in bed.data.vertices]
+    xmax = max(abs(v.x) for v in vs_)
+    ymax = max(v.y for v in vs_)
+    cheek = [v.z for v in vs_ if abs(v.x) > xmax - 0.1 and abs(v.y - mortarcrew.HANDLE_Y) < 0.25] or [0.3]
+    rear = [v.z for v in vs_ if v.y > ymax - 0.12 and abs(v.x) < 0.3] or [0.3]
+    side_top, rear_top = max(cheek), max(rear)
+    gz, out, half, r = mortarcrew.GRIP_Z, mortarcrew.HANDLE_OUT, mortarcrew.GRIP_LEN / 2, 0.014
+    bm = bmesh.new()
+
+    def bar(a, b):
+        a, b = Vector(a), Vector(b)
+        d = b - a
+        rot = d.normalized().to_track_quat("Z", "Y").to_matrix().to_4x4()
+        bmesh.ops.create_cone(bm, cap_ends=True, segments=6, radius1=r, radius2=r, depth=d.length,
+                              matrix=Matrix.Translation((a + b) / 2) @ rot)
+
+    grips = {}
+    for sd, name in ((-1, "handle_l"), (1, "handle_r")):
+        x0, x1, y = sd * (xmax - 0.02), sd * (xmax + out), mortarcrew.HANDLE_Y
+        for dy in (-half, half):
+            bar((x0, y + dy, side_top - 0.04), (x1, y + dy, side_top))
+            bar((x1, y + dy, side_top - 0.01), (x1, y + dy, gz + r))
+        bar((x1, y - half - r, gz), (x1, y + half + r, gz))
+        grips[name] = Vector((x1, y, gz))
+    y0, y1 = ymax - 0.02, ymax + out
+    for dx in (-half, half):
+        bar((dx, y0, rear_top - 0.04), (dx, y1, rear_top))
+        bar((dx, y1, rear_top - 0.01), (dx, y1, gz + r))
+    bar((-half - r, y1, gz), (half + r, y1, gz))
+    grips["rear"] = Vector((0.0, y1, gz))
+    me = bpy.data.meshes.new("artmrt.handles")
+    bm.to_mesh(me)
+    bm.free()
+    o = bpy.data.objects.new(me.name, me)
+    bpy.context.scene.collection.objects.link(o)
+    o.data.materials.append(vs.flat_material(me.name, (0.10, 0.10, 0.11)))
+    return o, grips, {"side_top_m": round(side_top, 3), "rear_top_m": round(rear_top, 3)}
+
+
+def _marks(arm, vent, rims, grips):
+    """{name: (bone, local point)} for the crew's IK: the vent, the muzzle's rim each side,
+    the lifting handles (on the bed, so they rise with the gun when it is carried)."""
     for pb in arm.pose.bones:
         pb.location, pb.scale = (0, 0, 0), (1, 1, 1)
         pb.rotation_mode = "QUATERNION"
@@ -130,6 +176,9 @@ def _marks(arm, vent, rims):
     out = {"barrel": ("barrel", m @ vent)}
     for k, p in rims.items():
         out[k] = ("barrel", m @ p)
+    m = arm.pose.bones["intact"].matrix.inverted()
+    for k, p in grips.items():
+        out[k] = ("intact", m @ p)
     return out
 
 
@@ -144,6 +193,7 @@ def build(ctx):
     tube = vs.join(barrel, "artmrt.barrel")
     burnt = vs.burnt_copy(bed, "artmrt.bed_burnt", 2_500)
     flash = _flash(muzzle, ax, radius)
+    handles, grips, bed_tops = _handles(bed)
     arm = vs.rig(root, "artmrt.rig", [
         ("gun", (0, 0, 0), None),
         ("bed", (0, 0, 0), "gun"),
@@ -153,12 +203,13 @@ def build(ctx):
         ("flash", tuple(muzzle), "barrel"),
     ])
     vs.attach(bed, arm, "intact")
+    vs.attach(handles, arm, "intact")
     vs.attach(burnt, arm, "wreck")
     vs.attach(tube, arm, "barrel")
     vs.attach(flash, arm, "flash")
     side = Vector((1, 0, 0))
     rims = {"muzzle_l": muzzle - side * (radius + 0.02), "muzzle_r": muzzle + side * (radius + 0.02)}
-    marks = _marks(arm, vent, rims)
+    marks = _marks(arm, vent, rims, grips)
     crew = guncrew.build(root, arm, "artmrt", kits=mortarcrew.KITS)
     hands = guncrew.key_clips(arm, _clips(arm), plan=mortarcrew.clips(), marks=marks)
     from acr_assets.humans import prepare_export
@@ -166,7 +217,8 @@ def build(ctx):
     prepare_export([o for ch in crew for o in ch.all_meshes()])
     meshes = [o for o in bpy.context.scene.objects if o.type == "MESH"]
     ctx.stats.update({"triangles": vs.triangles(meshes), "barrel": vs.triangles([tube]),
-                      "bed": vs.triangles([bed]),
+                      "bed": vs.triangles([bed]), "handles": vs.triangles([handles]), **bed_tops,
+                      "carried_lift_m": mortarcrew.LIFT,
                       "crew": vs.triangles([o for ch in crew for o in ch.all_meshes()]),
                       "elevation_deg": {"source": round(src_elev, 1), "built": ELEVATION},
                       "muzzle_m": [round(x, 3) for x in muzzle], "muzzle_radius_m": round(radius, 3),
@@ -186,8 +238,14 @@ def _still(arm, name, n):
 
 def _clips(arm):
     acts = {"STAND": vs.clip(arm, "STAND", [(0, {**HIDE, **REST})], step=STEP)}
-    for name, n in (("GUN_PUSH", 36), ("CHEST_CARRY", 41), ("TRAIL_LIFT", 70), ("TRAIL_WALK", 40), ("DEPLOY", 170)):
+    for name, n in (("TRAIL_LIFT", 70), ("TRAIL_WALK", 40)):
         acts[name] = _still(arm, name, n)
+    # Carried: the bed up `mortarcrew.LIFT` on its handles while moving, lifted at the end of
+    # CHEST_CARRY (taking up), set down early in DEPLOY.
+    for name, ks in mortarcrew.gun_lift().items():
+        keys = [(f, {"gun": {"loc": (0, 0, z)}}) for f, z in ks]
+        keys[0][1].update({**HIDE, "bed": {}, "barrel": {}})
+        acts[name] = vs.clip(arm, name, keys, step=STEP)
     # The shot at 29: the flash out of the muzzle for FLASH_FRAMES, the bed jolted down and
     # back on the ground, the barrel kicking in its trunnions; it settles by 40.
     f = mortarcrew.FIRE

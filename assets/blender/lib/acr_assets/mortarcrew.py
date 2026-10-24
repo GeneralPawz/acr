@@ -10,12 +10,13 @@ field gun's `.MD` (`ArtPus`), so the clips are the cannon's, filled with a morta
   c1 loader (right): the shell from his bag, lowered in with c0
   c2 firer: the linstock with its slow match; primes the vent
 
+Moving (`GUN_PUSH`; `CHEST_CARRY` takes it up, `DEPLOY` sets it down): c0/c1 carry the bed
+by the iron handles on its sides, c2 by the one at its rear (see `CARRY_AT`).
+
 `ATTACK` (420 frames, the shot at frame 29 like the cannon's): c2 touches the linstock to
 the vent (24..29), the flash and the bed's jolt (artmrt.py), the loaders stand clear
 (26..44); c0 charges the bore (70..120), both lower the shell in (140..190), c2 primes
-(250..275). `GUN_PUSH` (moving): c0/c1 haul the bed by its front rings, c2 follows;
-`CHEST_CARRY` (taking up), `DEPLOY` (setting down) walk between that and the stations;
-`TRAIL_LIFT`/`TRAIL_WALK` (turning): c0/c1 heave the bed round at its rear corners.
+(250..275). `TRAIL_LIFT`/`TRAIL_WALK` (turning): c0/c1 heave the bed round at its rear corners.
 
 Pure data here (no bpy).
 """
@@ -34,15 +35,39 @@ HOME = {
     "c2.": (0.95, 0.55, -90),
 }
 HELD = {"c0.": gc.STAND, "c1.": gc.STAND, "c2.": gc.tool(gc.STAND, gc.UP)}
-# Hauling the bed by its front rings (walking towards -Y in front of it).
-HAUL = {"c0.": (-0.62, -1.25, 0), "c1.": (0.62, -1.25, 0), "c2.": (0.35, 1.25, 0)}
+# Moving (history: a mortar had no wheels; on the field men shifted it by its lifting handles
+# or with handspikes through the bed, light Coehorn mortars carried by 2-4 men): c0/c1 carry
+# the bed by the iron handles on its side cheeks (`HANDLE_Y`), facing the way it goes (-Y),
+# c2 behind it by the handle on its rear transom, the linstock in his other hand. The bed
+# rides `LIFT` off the ground. The handles are added to the source bed by artmrt.py.
+LIFT = 0.15  # m the bed is carried off the ground
+HANDLE_Y = 0.0  # the side handles' middle (bed frame, m)
+HANDLE_OUT = 0.07  # the handles' grip bars outside the bed's side and rear
+GRIP_Z = 0.66  # the grip bars over the ground with the bed set down
+GRIP_LEN = 0.2
+CARRY_AT = {"c0.": (-0.98, HANDLE_Y, 0), "c1.": (0.98, HANDLE_Y, 0), "c2.": (-0.2, 1.15, 0)}
+CARRY_IK = {"c0.": "handle", "c1.": "handle", "c2.": "rear"}
+# Under the load: the trunk a little forward, the head up to see the way, the free arm
+# hanging; the knees bent (`_bend`). Positive spine X leans the trunk forward (the gun crew's
+# HAULING, PUSH and REACH lean back with their negative spine: the "pushing" look).
+CARRYING = dict(gc.STAND, spine=(9, 0, 0), spine1=(4, 0, 0), head=(-7, 0, 0),
+                upperarm_l=(4, 12, 0), forearm_l=(-8, 0, 0), upperarm_r=(4, -12, 0), forearm_r=(-8, 0, 0))
+# Stooped to the handles to lift or set down the bed: knees deep, back straight and inclined.
+SETTING = dict(CARRYING, spine=(26, 0, 0), spine1=(8, 0, 0), head=(-16, 0, 0),
+               thigh_l=(-48, -3, 0), shin_l=(70, 0, 0), foot_l=(-22, 0, 0),
+               thigh_r=(-48, 3, 0), shin_r=(70, 0, 0), foot_r=(-22, 0, 0), root_loc=(0, 0.12, -0.17))
+CARRY_STRIDES = 4  # short steps: four cycles over GUN_PUSH's 36 frames
+LEG_SCALE = 0.7  # of the walk cycle's leg swing
+KNEE = {"thigh": -20.0, "shin": 32.0, "foot": -12.0}  # the bend added to every walking key
+KNEE_DROP = 0.045  # m the hips sink with it
+TAKE_UP = (26, 36)  # CHEST_CARRY: stooped to the handles at 26, the bed up by 36
+SET_DOWN = (10, 26)  # DEPLOY: carried until 10, set down by 26, hands off at 32
+
 # Heaving the bed round at its rear corners (facing it from behind).
 HEAVE = {"c0.": (-0.62, 1.15, 0), "c1.": (0.62, 1.15, 0), "c2.": (1.25, 0.6, -90)}
 # Loading: a step nearer the muzzle.
 LOAD = {"c0.": (-0.85, -0.5, 90), "c1.": (0.85, -0.5, -90)}
 
-HAULING = dict(gc.STAND, spine=(-14, 0, 0), spine1=(-4, 0, 0), head=(10, 0, 0),
-               upperarm_l=(20, 16, 0), upperarm_r=(20, -16, 0), forearm_l=(-10, 0, 0), forearm_r=(-10, 0, 0))
 STOOPED = {k: v for k, v in gc.STOOP.items() if k != "ik"}
 BRACED = dict(gc.HEAVE)
 BRACED.pop("ik", None)
@@ -58,42 +83,88 @@ def stand_keys():
     return {p: [(0, gc.place(HELD[p], HOME[p][:2], HOME[p][2]))] for p in PREFIXES}
 
 
+def _bend(spec):
+    """A walking key made a carrier's: shorter leg swing, knees bent, hips lower."""
+    d = dict(spec)
+    for k in gc.LEG_BONES:
+        x, y, z = d.get(k, (0, 0, 0))
+        d[k] = (x * LEG_SCALE + KNEE[k.split("_")[0]], y, z)
+    lx, ly, lz = d.get("root_loc", (0, 0, 0))
+    d["root_loc"] = (lx, ly, lz * LEG_SCALE - KNEE_DROP)
+    return d
+
+
+def _carry_pose(p):
+    pose = dict(CARRYING, ik=CARRY_IK[p])
+    if p == "c2.":  # the linstock upright in his right hand, as he stands with it
+        pose.update({b: gc.STAND[b] for b in ("upperarm_r", "forearm_r", "hand_r")})
+        return gc.tool(pose, gc.UP)
+    return pose
+
+
+def _carry_walk(p, n=36):
+    return [(f, _bend(s)) for f, s in gc._walk(_carry_pose(p), n, CARRY_STRIDES)]
+
+
+def _setting(p):
+    pose = dict(SETTING, ik=CARRY_IK[p])
+    if p == "c2.":
+        pose.update({b: gc.STAND[b] for b in ("upperarm_r", "forearm_r", "hand_r")})
+        return gc.tool(pose, gc.UP)
+    return pose
+
+
 def motion_keys(n=36):
-    """GUN_PUSH: c0/c1 haul the bed, c2 walks behind it."""
+    """GUN_PUSH: the bed carried `LIFT` up by its handles, short steps, knees bent."""
     out = {}
     for p in PREFIXES:
-        x, y, yaw = HAUL[p]
-        pose = _held(p, HAULING if p != "c2." else gc.STAND)
-        out[p] = [(f, gc.place(s, (x, y), yaw)) for f, s in gc._walk(pose, n)]
+        x, y, yaw = CARRY_AT[p]
+        out[p] = [(f, gc.place(s, (x, y), yaw)) for f, s in _carry_walk(p, n)]
     return out
 
 
-def _between(a, b, n, hold=4):
-    """Each man from stations `a` (with the stand pose) to the first key of `b`'s walk."""
+def chest_keys(n=41):
+    """CHEST_CARRY (`#PATTACK0`, taking up): from the stations to the handles, stoop, lift the
+    bed (`gun_lift`) and step off into GUN_PUSH's first key."""
+    s0, s1 = TAKE_UP
     k = {}
     for p in PREFIXES:
-        (xa, ya, ra), (xb, yb, rb) = a[p], b[p]
-        pa = HELD[p]
-        pb = _held(p, HAULING if p != "c2." else gc.STAND)
-        k[p] = gc.stepped([(0, gc.place(pa, (xa, ya), ra)), (hold, gc.place(pa, (xa, ya), ra)),
-                           (n, gc.place(gc._walk(pb)[0][1], (xb, yb), rb))], min_move=0.3)
+        (xa, ya, ra), (xb, yb, rb) = HOME[p], CARRY_AT[p]
+        stand = dict(_carry_pose(p), **{b: v for b, v in gc.STAND.items() if b.startswith(("spine", "head"))})
+        stand.pop("ik")
+        k[p] = gc.stepped([(0, gc.place(HELD[p], (xa, ya), ra)), (4, gc.place(HELD[p], (xa, ya), ra)),
+                           (s0 - 6, gc.place(stand, (xb, yb), rb)), (s0, gc.place(_setting(p), (xb, yb), rb)),
+                           (s1, gc.place(_bend(_carry_pose(p)), (xb, yb), rb)),
+                           (n, gc.place(_carry_walk(p)[0][1], (xb, yb), rb))], min_move=0.3)
     return k
-
-
-def chest_keys(n=41):
-    """CHEST_CARRY (`#PATTACK0`): from the stations to the hauling places."""
-    return _between(HOME, HAUL, n)
 
 
 def deploy_keys(n=170):
-    """DEPLOY (`#PATTACK4/5`): from the hauling places back to the stations."""
+    """DEPLOY (`#PATTACK4/5`, arriving): the bed carried in, a plain stoop to set it down
+    (`gun_lift`), the hands off, upright, then back to the stations."""
+    s0, s1 = SET_DOWN
     k = {}
     for p in PREFIXES:
-        (xa, ya, ra), (xb, yb, rb) = HAUL[p], HOME[p]
-        pa = _held(p, HAULING if p != "c2." else gc.STAND)
-        k[p] = gc.stepped([(0, gc.place(pa, (xa, ya), ra)), (20, gc.place(pa, (xa, ya), ra)),
-                           (70, gc.place(HELD[p], (xb, yb), rb)), (n, gc.place(HELD[p], (xb, yb), rb))])
+        (xa, ya, ra), (xb, yb, rb) = CARRY_AT[p], HOME[p]
+        up = dict(_carry_pose(p), **{b: v for b, v in gc.STAND.items() if b.startswith(("spine", "head"))})
+        up.pop("ik")
+        off = dict(_setting(p))
+        off.pop("ik")
+        k[p] = gc.stepped([(0, gc.place(_carry_walk(p)[0][1], (xa, ya), ra)),
+                           (s0, gc.place(_bend(_carry_pose(p)), (xa, ya), ra)),
+                           (s1, gc.place(_setting(p), (xa, ya), ra)), (s1 + 6, gc.place(off, (xa, ya), ra)),
+                           (s1 + 18, gc.place(up, (xa, ya), ra)),
+                           (80, gc.place(HELD[p], (xb, yb), rb)), (n, gc.place(HELD[p], (xb, yb), rb))],
+                          min_move=0.3)
     return k
+
+
+def gun_lift(push=36, chest=41, deploy=170):
+    """{clip: [(frame, z)]}: the bed's height off the ground (artmrt.py's `gun` bone) in the
+    clips that carry it."""
+    return {"GUN_PUSH": [(0, LIFT), (push, LIFT)],
+            "CHEST_CARRY": [(0, 0.0), (TAKE_UP[0], 0.0), (TAKE_UP[1], LIFT), (chest, LIFT)],
+            "DEPLOY": [(0, LIFT), (SET_DOWN[0], LIFT), (SET_DOWN[1], 0.0), (deploy, 0.0)]}
 
 
 def lift_keys(n=70):

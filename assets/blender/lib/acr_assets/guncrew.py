@@ -847,7 +847,9 @@ def goals(arm, P, kind, marks):
     "chest" the hand on the chest's side on the top of its rope loop, "spike" the right fist
     on the handspike with its head under the trail's ring (`SPIKE_IN` past the seat),
     "staff" the left on the level staff, "muzzle" the right on the rim of a mortar's muzzle
-    (marks `muzzle_l`/`muzzle_r`, the side nearer the man). The left hand on the handspike
+    (marks `muzzle_l`/`muzzle_r`, the side nearer the man), any other kind with marks of
+    its name the nearest of them by the nearer hand ("handle", "rear": the mortar's lifting
+    handles). The left hand on the handspike
     follows the right (`solve`)."""
     from mathutils import Vector
 
@@ -879,6 +881,14 @@ def goals(arm, P, kind, marks):
         hips = B[P + "hips"].head
         rims = [_mark(arm, marks, m) for m in ("muzzle_l", "muzzle_r")]
         return {"r": min(rims, key=lambda g: (g - hips).length)}
+    # A handle on the piece (the mortar's lifting handles, marks `<kind>`, `<kind>_l`,
+    # `<kind>_r`): the one nearest the man, taken by the hand whose shoulder is nearer.
+    near = [_mark(arm, marks, m) for m in (kind, kind + "_l", kind + "_r") if m in marks]
+    if near and kind not in ("linstock", "spike", "staff", "wheel", "chest"):
+        hips = B[P + "hips"].head
+        g = min(near, key=lambda g: (g - hips).length)
+        sd = min("lr", key=lambda s: (B[P + "upperarm_" + s].head - g).length)
+        return {sd: g}
     return {}
 
 

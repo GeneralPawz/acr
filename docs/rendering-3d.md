@@ -619,7 +619,12 @@ per 0.55 m, the root sliding along with the cycle's bob).
   plays the field gun's `.MD` keys, so it carries the cannon's clip names. Three men
   (`c0.`..`c2.`: two loaders whose right hands go to the muzzle's rim, IK kind `muzzle`; the
   firer with the linstock on the vent at frame 29), a bed without wheels, the barrel fixed at
-  60° and a `flash` bone at the muzzle shown for 5 frames from the shot. A man falls per
+  60° and a `flash` bone at the muzzle shown for 5 frames from the shot. Moving, the crew
+  carries it (a mortar had no wheels; light ones were carried by 2-4 men by their handles
+  or on handspikes): c0/c1 by iron handles on the bed's sides, c2 by one at its rear (the
+  handles are added to the source bed), the bed `mortarcrew.LIFT` 0.15 m up on the `gun`
+  bone in `GUN_PUSH`, lifted at the end of `CHEST_CARRY`, set down early in `DEPLOY`; the
+  sim only moves the unit (IK kinds `handle`/`rear`, `guncrew.goals`). A man falls per
   third of the lost life (c1, c0, then the firer c2), each bleeding under where he lies.
 - **Losses** (`acr-game/src/ingame/crew_view.rs`): the sim keeps the gun a single unit with
   one life; with `k = ceil(n · life / max_life)` of the model's `n` men standing (the
