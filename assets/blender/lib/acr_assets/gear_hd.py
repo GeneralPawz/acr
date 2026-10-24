@@ -146,6 +146,9 @@ MATS = {
     "wood": ((0.42, 0.27, 0.13), (0.20, 0.12, 0.055), 0.0, (0.60, 0.82), "grain_y", (70.0, 6.0, 70.0), 0.2),
     "canvas": ((0.47, 0.38, 0.23), (0.33, 0.26, 0.15), 0.0, (0.82, 0.96), "weave", (420.0, 420.0, 420.0), 0.3),
     "cord": ((0.50, 0.42, 0.28), (0.30, 0.24, 0.15), 0.0, (0.85, 0.95), "pores", (400.0, 400.0, 400.0), 0.3),
+    "felt": ((0.040, 0.038, 0.037), (0.012, 0.011, 0.011), 0.0, (0.88, 0.98), "pores", (600.0, 600.0, 600.0), 0.15),
+    "tape": ((0.86, 0.85, 0.80), (0.62, 0.60, 0.55), 0.0, (0.80, 0.92), "weave", (900.0, 900.0, 900.0), 0.2),
+    "cockade": ((0.030, 0.028, 0.028), (0.008, 0.008, 0.008), 0.0, (0.55, 0.75), "weave", (1400.0, 1400.0, 1400.0), 0.3),
 }
 
 
@@ -602,15 +605,17 @@ def crossbelts_mesh(name="crossbelts"):
     return _finish_mesh(b, name)
 
 
-def hanger_mesh(name="hanger"):
+def hanger_mesh(name="hanger", blade=True):
     """Infantry hanger (short sword): slightly curved 0.64 m blade, brass hilt with a
-    ribbed grip, knuckle bow and pommel, along +Z from the grip (origin)."""
+    ribbed grip, knuckle bow and pommel, along +Z from the grip (origin). `blade=False`: the
+    hilt only (worn in its scabbard, `kit_hd`)."""
     b = Builder()
-    blade = 0.64
-    path = [(0.0, -0.025 * (k / 30) ** 2, -0.01 - blade * k / 30) for k in range(31)]
-    sec = [(0.0, 0.003), (0.014, 0.0012), (0.016, 0.0), (0.014, -0.0012), (0.0, -0.003), (-0.012, -0.0022), (-0.013, 0.0), (-0.012, 0.0022)]
-    b.sweep(path, [(n_, s_) for s_, n_ in sec], "steel", side=(1, 0, 0),
-            scales=[1.0 - 0.75 * (k / 30) ** 3 for k in range(31)])
+    if blade:
+        length = 0.64
+        path = [(0.0, -0.025 * (k / 30) ** 2, -0.01 - length * k / 30) for k in range(31)]
+        sec = [(0.0, 0.003), (0.014, 0.0012), (0.016, 0.0), (0.014, -0.0012), (0.0, -0.003), (-0.012, -0.0022), (-0.013, 0.0), (-0.012, 0.0022)]
+        b.sweep(path, [(n_, s_) for s_, n_ in sec], "steel", side=(1, 0, 0),
+                scales=[1.0 - 0.75 * (k / 30) ** 3 for k in range(31)])
     grip = [(t, 0.0135 + 0.0012 * math.sin(2 * math.pi * 7 * t) - 0.002 * abs(t - 0.5)) for t in [k / 28 for k in range(29)]]
     b.tube(0.0, 0.10, grip, "brass", n=20)
     b.tube(0.10, 0.125, [(0, 0.012), (0.3, 0.016), (0.7, 0.014), (1.0, 0.004)], "brass", n=20)
@@ -678,6 +683,110 @@ def knapsack_mesh(name="knapsack"):
         b.prism(rounded_rect(0.024, 0.018, 0.003, 3), (x, D * 0.95 + 0.007, -H * 0.4), (1, 0, 0), (0, 0, 1), (0, 1, 0), 0.0, 0.0035, "brass")
         b.box((x, D * 0.95 + 0.004, -H * 0.15), (0.034, 0.003, 0.30), "buff", r=0.001, n=1)
     return _finish_mesh(b, name)
+
+
+def belt_plate_mesh(name="belt_plate"):
+    """Oval brass belt plate (76 x 60 mm) facing -Y, origin on its back."""
+    b = Builder()
+    b.prism(ellipse(0.038, 0.030, 40), (0.0, 0.0, 0.0), (1, 0, 0), (0, 0, 1), (0, -1, 0), 0.0, 0.0026, "brass")
+    b.prism(ellipse(0.032, 0.024, 40), (0.0, 0.0, 0.0), (1, 0, 0), (0, 0, 1), (0, -1, 0), 0.0026, 0.0036, "brass")
+    return _finish_mesh(b, name)
+
+
+def buckle_mesh(name="buckle"):
+    """Brass frame buckle with its steel tongue facing -Y (72 x 56 mm), origin on its back."""
+    b = Builder()
+    b.prism(rounded_rect(0.036, 0.028, 0.004, 3), (0.0, 0.0, 0.0), (1, 0, 0), (0, 0, 1), (0, -1, 0), 0.0, 0.004, "brass")
+    b.prism(rounded_rect(0.030, 0.022, 0.002, 3), (0.0, 0.0, 0.0), (1, 0, 0), (0, 0, 1), (0, -1, 0), 0.004, 0.0041, "buff")
+    b.box((0.0, -0.005, 0.0), (0.004, 0.003, 0.05), "steel", r=0.0012, n=2)
+    return _finish_mesh(b, name)
+
+
+def _cyclic_tube(b, centres, normals, ups, r, mat, n=6):
+    """A closed tube of radius `r` through the closed loop `centres` (section in the plane of
+    `normals` and `ups`)."""
+    from mathutils import Vector
+
+    mi = b._m(mat)
+    rings = []
+    for c, nn, uu in zip(centres, normals, ups):
+        c, nn, uu = Vector(c), Vector(nn), Vector(uu)
+        rings.append([b.bm.verts.new(c + nn * (r * math.cos(2 * math.pi * k / n)) + uu * (r * math.sin(2 * math.pi * k / n)))
+                      for k in range(n)])
+    for i in range(len(rings)):
+        a, c = rings[i], rings[(i + 1) % len(rings)]
+        for k in range(n):
+            j = (k + 1) % n
+            b.bm.faces.new((a[k], a[j], c[j], c[k])).material_index = mi
+
+
+TRICORN_CORNERS = (-90.0, 30.0, 150.0)  # plan angles of the three points (front at -Y)
+
+
+def tricorn_shape(a, rx, ry, side=(0.030, 0.085), corner=(0.075, 0.030), sharp=10):
+    """(crown edge point (x, y), outward plan direction, reach, rise) of the brim at plan
+    angle `a` (radians): a mid-side brim reaches `side[0]` out and is cocked `side[1]` up,
+    a point reaches `corner[0]` and rises `corner[1]`."""
+    c = max(max(0.0, math.cos(a - math.radians(k))) ** sharp for k in TRICORN_CORNERS)
+    ex, ey = rx * math.cos(a), ry * math.sin(a)
+    nx, ny = ex / rx ** 2, ey / ry ** 2
+    ln = math.hypot(nx, ny)
+    return (ex, ey), (nx / ln, ny / ln), side[0] + (corner[0] - side[0]) * c, side[1] + (corner[1] - side[1]) * c
+
+
+def tricorn_mesh(name="tricorn", rx=0.088, ry=0.102, crown=0.10, n=96, m=10):
+    """Black felt tricorn: an oval crown (`rx`, `ry` inside at the band, `crown` m high), the
+    brim cocked up on three sides into three points (front and two at the back,
+    `TRICORN_CORNERS`), a white tape edge, the black silk cockade on the left front cock with
+    its tape loop and brass button. Origin at the crown's opening (the hat band), +Z up, the
+    front point towards -Y. Felt 3 mm (solidified)."""
+    import bpy
+
+    b = Builder()
+    crown_rings = []
+    for t, s in ((0.0, 1.0), (0.35, 0.995), (0.7, 0.975), (0.88, 0.95), (0.96, 0.90), (1.0, 0.80)):
+        crown_rings.append([(rx * s * math.cos(2 * math.pi * k / n), ry * s * math.sin(2 * math.pi * k / n), crown * t) for k in range(n)])
+    b.loft(crown_rings, "felt", caps=(False, True))
+    rings, edge, enorm, eup = [], [], [], []
+    for j in range(m + 1):
+        th = (math.pi / 2) * j / m
+        ring = []
+        for k in range(n):
+            a = 2 * math.pi * k / n
+            (ex, ey), (dx, dy), w, h = tricorn_shape(a, rx, ry)
+            out = w * math.sin(th) + 0.002
+            ring.append((ex + dx * out, ey + dy * out, h * (1 - math.cos(th)) - 0.002))
+            if j == m:
+                edge.append(ring[-1])
+                enorm.append((dx, dy, 0.0))
+                eup.append((0.0, 0.0, 1.0))
+        rings.append(ring)
+    b.loft(rings, "felt", caps=(False, False))
+    ob = b.to_object(name + ".tmp")
+    sol = ob.modifiers.new("felt", "SOLIDIFY")
+    sol.thickness = 0.003
+    sol.offset = 0.0
+    _select_only(ob)
+    bpy.ops.object.modifier_apply(modifier="felt")
+    # Tape edge, cockade, loop and button: a second builder joined on.
+    t = Builder()
+    _cyclic_tube(t, edge, enorm, eup, 0.0035, "tape", n=6)
+    a = math.radians(-30.0)  # the left front cock (wearer's left is +X)
+    (ex, ey), (dx, dy), w, h = tricorn_shape(a, rx, ry)
+    th = 0.80 * math.pi / 2
+    out = w * math.sin(th) + 0.002 + 0.003
+    c = (ex + dx * out, ey + dy * out, h * (1 - math.cos(th)))
+    u = (-dy, dx, 0.0)
+    lobes = [(0.034 + 0.003 * math.cos(24 * 2 * math.pi * k / 96)) for k in range(96)]
+    rosette = [(r * math.cos(2 * math.pi * k / 96), r * math.sin(2 * math.pi * k / 96)) for k, r in enumerate(lobes)]
+    t.prism(rosette, c, u, (0, 0, 1), (dx, dy, 0.0), 0.0, 0.004, "cockade")
+    t.prism(rounded_rect(0.006, 0.045, 0.002, 2), (c[0], c[1], c[2] - 0.005), u, (0, 0, 1), (dx, dy, 0.0), 0.004, 0.0055, "tape")
+    t.prism(ellipse(0.008, 0.008, 20), (c[0], c[1], c[2] - 0.030), u, (0, 0, 1), (dx, dy, 0.0), 0.0055, 0.0085, "brass")
+    tape = t.to_object(name + ".trim")
+    _select_only(ob, tape)
+    bpy.ops.object.join()
+    ob.name = ob.data.name = name
+    return ob
 
 
 # ----------------------------------------------------------------------------- bakes and LODs
@@ -858,7 +967,10 @@ def finish(ob, px, stats, ratios=LOD_RATIOS, lod_tex=LOD_TEX):
     for level, (target, lpx) in enumerate(zip(lod_targets(tris, ratios), lod_tex), 1):
         lo = ob.copy()
         lo.data = ob.data.copy()
-        lo.name = f"{nm}.lod{level}"
+        # The level ends in the item key (`<unit>.lod1.musket`), so the game drops a held
+        # item's levels with it at death (`three_d::held_gear` reads the last name part).
+        base, _, item = nm.rpartition(".")
+        lo.name = f"{base}.lod{level}.{item}" if base else f"{nm}.lod{level}"
         bpy.context.scene.collection.objects.link(lo)
         d = lo.modifiers.new("dec", "DECIMATE")
         d.ratio = min(1.0, target / tris)
@@ -898,14 +1010,19 @@ ITEMS = {
     "hanger_scabbard": (lambda name: scabbard_mesh(name, length=0.66, width=0.036), 1024),
     "canteen": (canteen_mesh, 2048),
     "knapsack": (knapsack_mesh, 2048),
+    "hanger_hilt": (lambda name: hanger_mesh(name, blade=False), 1024),
+    "belt_plate": (belt_plate_mesh, 512),
+    "buckle": (buckle_mesh, 512),
+    "tricorn": (tricorn_mesh, 2048),
 }
 
 
-def build_item(ctx, key, prefix=None):
-    """Builds, bakes and LODs item `key`; returns (master, [levels])."""
+def build_item(ctx, key, prefix=None, **shape):
+    """Builds, bakes and LODs item `key` (`shape`: keyword arguments of its mesh function,
+    e.g. the tricorn's crown fitted to the head); returns (master, [levels])."""
     fn, px = ITEMS[key]
     name = f"{prefix or ctx.name}.{key}"
-    ob = fn(name)
+    ob = fn(name, **shape)
     st = ctx.stats.setdefault("gear_hd", {})
     lods = finish(ob, px, st)
     if key == "musket":
