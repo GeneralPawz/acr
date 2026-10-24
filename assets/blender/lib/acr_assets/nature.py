@@ -9,6 +9,9 @@
     leaves    material-name parts of the leaf cards (alpha mask, wind flutter)
     snow      whiten the leaf cards (0..1) for a snow-laden variant
     recolour  turn red texels leaf green (atlases with an autumn crown only)
+    crown_cards  a solid blob crown in a shared atlas becomes leaf cards (`_card_crown`):
+              {"cards", "size" and "depth" (shares of the height), "low" (share of the height
+              under which green faces stay), "rgb" (sRGB crown colour)}
     max_width narrow a too wide crown to this many metres (x and y)
     turn      degrees about +Z (models face -Y)
     dry       0..1: leaf cards towards a darker straw brown (dead, dry bushes; wilting crowns)
@@ -314,6 +317,138 @@ def _islands(bm, faces):
     return out
 
 
+def leaf_atlas(rgb, seed, size=256):
+    """RGBA pixels (sRGB, rows bottom up, float 0..1) of a 2 x 2 atlas of leaf sprays: per cell
+    a thin twig from the cell's foot and 16 small ovate leaves along it, each leaf's colour
+    jittered about `rgb` and a little darker at its edge; the four cells differ in tint
+    (plain, lighter, darker, yellower) so neighbouring cards do not repeat. Transparent texels
+    carry the mean leaf colour (no dark fringe in the mip levels)."""
+    rnd = random.Random(seed)
+    half = size // 2
+    px = np.zeros((size, size, 4), np.float32)
+    base = np.array(rgb, np.float32)
+    tints = (np.array([1.0, 1.0, 1.0]), np.array([1.12, 1.1, 1.0]), np.array([0.85, 0.88, 0.9]),
+             np.array([1.1, 1.0, 0.8]))
+    yy, xx = np.mgrid[0:half, 0:half].astype(np.float32)
+    for cell in range(4):
+        ox, oy = (cell % 2) * half, (cell // 2) * half
+        tile = np.zeros((half, half, 4), np.float32)
+        tint = base * tints[cell]
+        # The twig: from the foot (bottom middle) up, bending a little aside.
+        bend = rnd.uniform(-0.25, 0.25) * half
+        for t in np.linspace(0.0, 0.85, 60):
+            m = (xx - (half / 2 + bend * t * t)) ** 2 + (yy - (2 + t * (half - 8))) ** 2 < 1.6 ** 2
+            tile[m] = (0.30, 0.24, 0.17, 1.0)
+        for _k in range(16):
+            t = rnd.uniform(0.15, 0.95)
+            cx = half / 2 + bend * t * t + rnd.uniform(-0.3, 0.3) * half
+            cy = 2 + t * (half - 8) + rnd.uniform(-0.08, 0.08) * half
+            ang = rnd.uniform(0, math.pi)
+            ln = rnd.uniform(0.11, 0.17) * half
+            wd = ln * rnd.uniform(0.5, 0.65)
+            ca, sa = math.cos(ang), math.sin(ang)
+            u = ((xx - cx) * ca + (yy - cy) * sa) / ln
+            v = (-(xx - cx) * sa + (yy - cy) * ca) / wd
+            # Ovate: narrower towards the tip (u > 0).
+            d = u * u + v * v * (1.0 + 0.5 * np.clip(u, 0, 1))
+            m = d < 1.0
+            if not m.any():
+                continue
+            c = tint * rnd.uniform(0.85, 1.15) + np.array([rnd.uniform(-0.03, 0.03), rnd.uniform(-0.03, 0.03), 0.0])
+            tile[m, :3] = np.clip(c, 0, 1) * (1.0 - 0.25 * d[m])[:, None]
+            tile[m, 3] = 1.0
+        px[oy:oy + half, ox:ox + half] = tile
+    opaque = px[:, :, 3] > 0.5
+    px[~opaque, :3] = px[opaque, :3].mean(axis=0) if opaque.any() else base
+    return px
+
+
+def _card_crown(obj, cc, seed, level):
+    """Replaces a solid crown (the Proto birch's leaf-green blobs in its one bark atlas) by leaf
+    cards (SPEC `crown_cards`): the faces whose texel is leaf green (g above r and b) above
+    `low` of the height go; `cards` quads (about `size` of the height across) take their place,
+    each at a seeded point on a removed face pushed inwards by up to `depth` of the height,
+    facing between the face's normal, up and a random direction, on one of the four sprays of
+    a new `leaf_atlas` in colour `rgb` (sRGB, the original's sprite crown), levelled like the
+    other leaf cards. Returns (leaf slot index, removed faces, cards)."""
+    me = obj.data
+    lo = min(v.co.z for v in me.vertices)
+    h = max(v.co.z for v in me.vertices) - lo
+    img, _flat = _image_of(me.materials[0])
+    px = np.array(img.pixels[:], np.float32).reshape(img.size[1], img.size[0], 4)
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    uv = bm.loops.layers.uv.active
+    crown = []
+    for f in bm.faces:
+        u = sum((lp[uv].uv for lp in f.loops), Vector((0.0, 0.0))) / len(f.loops)
+        c = px[int((u.y % 1.0) * (px.shape[0] - 1)), int((u.x % 1.0) * (px.shape[1] - 1)), :3]
+        if c[1] > 1.08 * c[0] and c[1] > c[2] and f.calc_center_median().z > lo + cc.get("low", 0.25) * h:
+            crown.append(f)
+    rnd = random.Random(seed + 31)
+    tris = []
+    for f in crown:
+        co = [v.co.copy() for v in f.verts]
+        for k in range(1, len(co) - 1):
+            a, b, c = co[0], co[k], co[k + 1]
+            tris.append((a, b, c, f.normal.copy(), (b - a).cross(c - a).length / 2))
+    n_cards = cc.get("cards", 800)
+    picks = rnd.choices(range(len(tris)), weights=[t[4] for t in tris], k=n_cards)
+    bmesh.ops.delete(bm, geom=crown, context="FACES")
+    bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context="VERTS")
+    slot = len(me.materials)
+    size = cc.get("size", 0.06) * h / 2
+    depth = cc.get("depth", 0.07) * h
+    for i in picks:
+        a, b, c, nrm, _area = tris[i]
+        r1, r2 = rnd.random(), rnd.random()
+        if r1 + r2 > 1:
+            r1, r2 = 1 - r1, 1 - r2
+        p = a + (b - a) * r1 + (c - a) * r2 - nrm * depth * rnd.random() ** 0.7
+        rv = Vector((rnd.gauss(0, 1), rnd.gauss(0, 1), rnd.gauss(0, 1))).normalized()
+        n = (nrm * 0.6 + rv * 0.8 + Vector((0, 0, 0.35))).normalized()
+        t = n.cross(Vector((0, 0, 1)) if abs(n.z) < 0.9 else Vector((1, 0, 0))).normalized()
+        roll = rnd.uniform(0, 2 * math.pi)
+        t = (t * math.cos(roll) + n.cross(t) * math.sin(roll)).normalized()
+        s = size * rnd.uniform(0.8, 1.2)
+        bt = n.cross(t) * s
+        t = t * s
+        cell = rnd.randrange(4)
+        u0, v0 = (cell % 2) * 0.5, (cell // 2) * 0.5
+        face = bm.faces.new([bm.verts.new(p + q) for q in (-t - bt, t - bt, t + bt, -t + bt)])
+        face.material_index = slot
+        for lp, (du, dv) in zip(face.loops, ((0, 0), (1, 0), (1, 1), (0, 1))):
+            lp[uv].uv = (u0 + 0.005 + du * 0.49, v0 + 0.005 + dv * 0.49)
+    bm.to_mesh(me)
+    bm.free()
+    leaf = leaf_atlas(cc.get("rgb", (0.27, 0.38, 0.14)), seed)
+    im = bpy.data.images.new(f"{obj.name}.leafcards", leaf.shape[1], leaf.shape[0], alpha=True)
+    im.pixels.foreach_set(leaf.ravel())
+    im, _gain = _level(im, level, True)
+    im.file_format = "PNG"
+    im.filepath_raw = im.name + ".png"
+    im.pack()
+    mat = bpy.data.materials.new(f"{obj.name}.leaves.{slot}")
+    mat.use_nodes = True
+    nt = mat.node_tree
+    nt.nodes.clear()
+    out = nt.nodes.new("ShaderNodeOutputMaterial")
+    bsdf = nt.nodes.new("ShaderNodeBsdfPrincipled")
+    nt.links.new(bsdf.outputs[0], out.inputs[0])
+    bsdf.inputs["Roughness"].default_value = 0.9
+    bsdf.inputs["Metallic"].default_value = 0.0
+    tex = nt.nodes.new("ShaderNodeTexImage")
+    tex.image = im
+    nt.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
+    rnd_n = nt.nodes.new("ShaderNodeMath")
+    rnd_n.operation = "ROUND"
+    nt.links.new(tex.outputs["Alpha"], rnd_n.inputs[0])
+    nt.links.new(rnd_n.outputs[0], bsdf.inputs["Alpha"])
+    mat["acr_nature"] = "leaves"
+    me.materials.append(mat)
+    return slot, len(crown), n_cards
+
+
 def _thin_cards(obj, leaf_slots, target, seed, grow=True):
     """Drops whole leaf cards until about `target` leaf triangles remain; the kept cards grow
     by sqrt(source / kept) (at most 1.8) about their centre unless `grow` is off. Returns
@@ -462,6 +597,12 @@ def build(ctx, spec):
     normals = {}
     leaf_slots = _materials(obj, leaf_words, spec.get("snow", 0.0), spec.get("leaf_level", LEAF_LEVEL), gains,
                             spec.get("recolour", False), normals, spec.get("dry", 0.0))
+    card_crown = None
+    if spec.get("crown_cards"):
+        slot, removed, made = _card_crown(obj, spec["crown_cards"], spec.get("seed", 7),
+                                          spec.get("leaf_level", LEAF_LEVEL))
+        leaf_slots.add(slot)
+        card_crown = {"removed_faces": removed, "cards": made}
     budget = spec.get("budget", 6000)
     cards = None
     if leaf_slots and spec.get("keep"):
@@ -527,6 +668,7 @@ def build(ctx, spec):
         "wind": wind_k,
         "leaf_rgb": _leaf_rgb(obj, leaf_slots),
         "cards": cards,
+        "crown_cards": card_crown,
         "sparse_cards": sparse if leaf_slots and spec.get("keep") else None,
         "leaf_gain": {k: round(v, 2) for k, v in sorted(gains.items())},
         "materials": sorted(s.material.name for s in obj.material_slots if s.material),
