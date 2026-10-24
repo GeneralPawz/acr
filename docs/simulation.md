@@ -1054,6 +1054,39 @@ order) and draws random numbers.
   - Din: with at least 6 kills in hearing within the last 15 s, a quiet scream or fearful
     shout from beyond the view's left or right edge (volume 0.15–0.35, pan 0.5–0.9), every
     `24 s / kills` (1–4 s) plus up to 0.7 s.
+  - Badly wounded survivors (hit-locations rule, #253): a living man whose life is not full
+    and whose body scores at least 4 (`agony::severity`: a limb off 3, an open break 3, a
+    closed one 2, a joint out 1, a flesh wound 1 up to 3 a limb, a head or chest wound 2,
+    the belly open 6, bleeding out from a vital hit 4, the spine 4, a lung 3, bleeding
+    fragment wounds 1) moans or gasps where he is every 5–10 s at 42–60 % of the placed
+    volume (louder the worse). He falls silent when healed (full life, `HEALING`), dead
+    (a death may start his agony above) or out of hearing. A man in his agony or crying
+    from a fragment wound is not heard twice.
+  - Burning men (`Unit::burning`: shell fires, `X`/`F` weapons; #253) scream with the
+    agony screams (no fire samples are approved) every 1.2–2.2 s at full volume.
+  - Caps: only the 2 nearest badly wounded and the 2 nearest burning men in hearing are
+    voiced (the burning first), their sounds in all at most once every 1.5 s and none in
+    an update the dying are heard in. All these sounds together (agony, wounded, burning,
+    panic, din) keep a budget of 2 a second on average and 4 at once; over it the din gives
+    way first, then the wounded and burning, the moans of the dying, fear, and last the
+    screams of the falling.
+  - Tuning: every number above is in `agony::Mix` (`Mix::DEFAULT`). Natively the variable
+    `ACR_AGONY_MIX` overrides any of them without a build, as `key=value` pairs separated
+    by commas (times in ticks, ranges `from-to`), e.g.
+    `ACR_AGONY_MIX="max_per_second=3,burst=5,max_dying=6,wounded_pause=30-60,din_min_kills=10"`;
+    keys `max_per_second`, `burst`, `max_dying`, `max_wounded`, `max_burning`,
+    `suffer_gap`, `wounded_pause`, `burning_pause`, `wounded_volume`, `burning_volume`,
+    `severity`, `panic_group`, `panic_gap`, `din_window`, `din_min_kills`, `din_ticks`,
+    `din_pause`. With `RUST_LOG=acr_game::agony=debug` the log has one `agony mix` line per
+    second of game time with a sound: what played, what the budget left out and how many
+    dying, badly wounded and burning men were in hearing.
+  - Measured (render VM, Monongahela `battle3.m3d`, 1500 ticks = 150 s from the start,
+    the default camera, showcase settings with `hit_locations=on`; steps and the summing
+    script in `ACR-analysis/agony-snd/`): before the budget 2.36 sounds/s (0.36 screams,
+    0.50 moans, 0.26 gasps, 0.24 wounded, 0.49 fear, 0.51 din; up to 9 in one second);
+    with it 1.39/s (0.19 screams, 0.27 moans, 0.15 gasps, 0.17 wounded, 0 burning,
+    0.31 fear, 0.31 din; at most 4 in one second, 0.95/s left out), with up to 37 dying
+    and 43 badly wounded in hearing at once.
 
 ### Buildings that shoot
 

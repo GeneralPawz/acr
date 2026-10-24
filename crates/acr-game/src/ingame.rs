@@ -180,7 +180,7 @@ impl InGame {
             sound_events: Vec::new(),
             last_frames: HashMap::new(),
             hit_cursor: 0,
-            agony: Default::default(),
+            agony: crate::agony::Agony::new(crate::agony::Mix::from_env()),
             fleeing: Vec::new(),
             camera: Camera { x: 0.0, y: 0.0, scale: 1.0 },
             centred: false,
@@ -843,7 +843,25 @@ impl InGame {
         };
         let now = world.tick.0;
         let alive = |victim: u32| world.units.get(victim as usize).is_some_and(|u| u.living());
-        let events = self.agony.update(&world.hits, &fleeing, human, alive, now, view, self.mission.fog());
+        // Living men who burn, or whose wounds (hit-locations rule) are not healed (#253).
+        let suffering: Vec<_> = world
+            .units
+            .iter()
+            .enumerate()
+            .filter(|(_, u)| {
+                u.living()
+                    && !u.building
+                    && (u.burning || (u.life < u.max_life && u.body != acr_sim::body::Body::default()))
+            })
+            .filter(|&(i, _)| human(i as u32))
+            .map(|(i, u)| crate::agony::Suffering {
+                victim: i as u32,
+                pos: ((u.pos.x >> 4) as f32, (u.pos.y >> 5) as f32),
+                severity: if u.life < u.max_life { crate::agony::severity(&u.body) } else { 0 },
+                burning: u.burning,
+            })
+            .collect();
+        let events = self.agony.update(&world.hits, &fleeing, &suffering, human, alive, now, view, self.mission.fog());
         for e in &events {
             log::debug!("agony sound {} at tick {now} (pan {:.2}, volume {:.2})", e.name, e.pan, e.volume);
         }
