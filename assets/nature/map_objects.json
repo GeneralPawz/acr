@@ -87,119 +87,7 @@
     "381-395": "oak",
     "396-398": "dead_tree",
     "399-410": "stone_a",
-    "411-426": "shrub",
-    "427": {
-      "model": "map_t427",
-      "scale": 1.0
-    },
-    "428": {
-      "model": "map_t428",
-      "scale": 1.0
-    },
-    "430": {
-      "model": "map_t430",
-      "scale": 1.0
-    },
-    "434": {
-      "model": "map_t434",
-      "scale": 1.0
-    },
-    "447": {
-      "model": "map_t447",
-      "scale": 1.0
-    },
-    "448": {
-      "model": "map_t448",
-      "scale": 1.0
-    },
-    "449": {
-      "model": "map_t449",
-      "scale": 1.0
-    },
-    "450": {
-      "model": "map_t450",
-      "scale": 1.0
-    },
-    "451": {
-      "model": "map_t451",
-      "scale": 1.0
-    },
-    "452": {
-      "model": "map_t452",
-      "scale": 1.0
-    },
-    "453": {
-      "model": "map_t453",
-      "scale": 1.0
-    },
-    "454": {
-      "model": "map_t454",
-      "scale": 1.0
-    },
-    "455": {
-      "model": "map_t455",
-      "scale": 1.0
-    },
-    "456": {
-      "model": "map_t456",
-      "scale": 1.0
-    },
-    "457": {
-      "model": "map_t457",
-      "scale": 1.0
-    },
-    "458": {
-      "model": "map_t458",
-      "scale": 1.0
-    },
-    "459": {
-      "model": "map_t459",
-      "scale": 1.0
-    },
-    "460": {
-      "model": "map_t460",
-      "scale": 1.0
-    },
-    "461": {
-      "model": "map_t461",
-      "scale": 1.0
-    },
-    "462": {
-      "model": "map_t462",
-      "scale": 1.0
-    },
-    "463": {
-      "model": "map_t463",
-      "scale": 1.0
-    },
-    "464": {
-      "model": "map_t464",
-      "scale": 1.0
-    },
-    "465": {
-      "model": "map_t465",
-      "scale": 1.0
-    },
-    "466": {
-      "model": "map_t466",
-      "scale": 1.0
-    },
-    "467": {
-      "model": "map_t467",
-      "scale": 1.0
-    },
-    "468": {
-      "model": "map_t468",
-      "scale": 1.0
-    },
-    "469": {
-      "model": "map_t469",
-      "scale": 1.0
-    },
-    "470": {
-      "model": "map_t470",
-      "scale": 1.0
-    }
+    "411-426": "shrub"
   },
   "STONLIST": {
     "0-3": "stone_a",
@@ -232,5 +120,6 @@
     "94": "rock_moss_b",
     "95-127": "stone_b",
     "128-131": "stone_a"
-  }
+  },
+  "_held_back": "map_t* ruins/rubble: wait for sprite-facing (no random yaw) and the dark-model fix"
 }
