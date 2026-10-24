@@ -234,6 +234,9 @@ def _palette(palette):
 # 0.018): its collar and fuller sleeve heads stand higher (docs/clothing.md "Traced
 # patterns": crossings 252 -> 239). On the drafted doublet the line's offsets measure better.
 TRACED_STRAP_OFFSETS = (0.020, 0.024)
+# A traced garment's full sleeves take their weights from the arm skin pushed out `offset` m,
+# smoothed `smooth` passes over the sleeve (`drape.sleeve_weights`).
+TRACED_SLEEVE_WEIGHTS = {"offset": 0.0, "smooth": 3}
 
 
 def _drape(kw, plan):
@@ -254,7 +257,10 @@ def traced_garment(rel, cloth="doublet"):
     name = draft.pattern["garment"]
     if name not in gm.GARMENTS:
         cloth = draft.pattern.get("cloth", cloth)
-        registry.garment(name, draft, gm.CLOTH[cloth] if isinstance(cloth, str) else cloth,
+        cloth = dict(gm.CLOTH[cloth] if isinstance(cloth, str) else cloth)
+        if any(p.get("place", {}).get("region") == "arm" for p in draft.pattern["panels"]):
+            cloth.setdefault("sleeve_weights", dict(TRACED_SLEEVE_WEIGHTS))
+        registry.garment(name, draft, cloth,
                          ease=_girth_ease(draft.pattern.get("ease")), spacing=draft.pattern.get("spacing", 3.5))
     return name
 

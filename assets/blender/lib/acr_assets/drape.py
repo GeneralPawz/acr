@@ -794,6 +794,83 @@ def transfer_weights(obj, flesh, arm_obj, keep=4, under=()):
     return out
 
 
+def smooth_weights(obj, ws, passes, keep=4, fixed=()):
+    """`ws` ({bone: weight} per vertex of `obj`) averaged `passes` times with the vertex's
+    edge neighbours (half own, half the neighbours' mean), cut to `keep` bones; vertices in
+    `fixed` keep theirs."""
+    fixed = set(fixed)
+    nb = [[] for _ in obj.data.vertices]
+    for e in obj.data.edges:
+        a, b = e.vertices
+        nb[a].append(b)
+        nb[b].append(a)
+    ws = [dict(w) for w in ws]
+    for _ in range(passes):
+        nxt = []
+        for i, w in enumerate(ws):
+            if not nb[i] or i in fixed:
+                nxt.append(w)
+                continue
+            out = {b: 0.5 * x for b, x in w.items()}
+            k = 0.5 / len(nb[i])
+            for j in nb[i]:
+                for b, x in ws[j].items():
+                    out[b] = out.get(b, 0.0) + k * x
+            nxt.append(out)
+        ws = nxt
+    res = []
+    for w in ws:
+        top = sorted(w.items(), key=lambda kv: -kv[1])[:keep]
+        tot = sum(x for _b, x in top) or 1.0
+        res.append({b: x / tot for b, x in top if x / tot > 0.02})
+    return res
+
+
+def sleeve_weights(obj, ch, offset=0.02, passes=3, keep=4):
+    """Weights of a full sleeve (docs/clothing.md "Traced patterns"): from a proxy of the
+    arm's skin pushed out `offset` m along its normals (about the sleeve's own stand-off),
+    so a vertex finds the arm surface straight under it rather than the nearest skin round
+    the elbow or the armpit; then smoothed over the sleeve (`smooth_weights`), so the cloth
+    bends in an arc over the joint instead of folding into the skin. Arm faces only (no
+    hands), each side its own arm. The open edges (armhole, wrist) keep the plain transfer's
+    weights, so the sleeve stays on the body's armhole seam."""
+    fm = ch.flesh.data
+    names = {g.index: g.name for g in ch.flesh.vertex_groups}
+    vw = [{names[e.group]: e.weight for e in v.groups if e.group in names} for v in fm.vertices]
+    co = [v.co + v.normal * offset for v in fm.vertices]
+    trees = {}
+    for side in ("_l", "_r"):
+        polys = []
+        for p in fm.polygons:
+            tops = [max(vw[i], key=vw[i].get) for i in p.vertices if vw[i]]
+            if tops and all(t.endswith(side) and ("upperarm" in t or "forearm" in t) for t in tops):
+                polys.append(p)
+        if polys:
+            trees[side] = (BVHTree.FromPolygons(co, [p.vertices for p in polys]), polys)
+    ws = []
+    for v in obj.data.vertices:
+        side = "_l" if v.co.x > 0 else "_r"
+        w = {}
+        if side in trees:
+            tree, polys = trees[side]
+            loc, _n, fi, _d = tree.find_nearest(v.co)
+            if fi is not None:
+                poly = polys[fi]
+                inv = [1.0 / max((co[i] - loc).length, 1e-5) for i in poly.vertices]
+                s = sum(inv)
+                for i, k in zip(poly.vertices, inv):
+                    for b, x in vw[i].items():
+                        w[b] = w.get(b, 0.0) + x * k / s
+        ws.append(w)
+    plain = transfer_weights(obj, ch.flesh, ch.arm, keep=keep)
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    edge = [v.index for v in bm.verts if v.is_boundary]
+    bm.free()
+    ws = [f if (not w or i in edge) else w for i, (w, f) in enumerate(zip(ws, plain))]
+    return smooth_weights(obj, ws, passes, keep=keep, fixed=edge)
+
+
 def skirt_weights(co, prefix=""):
     """Weights of a coat-skirt vertex on the skirt bones (as `body.tube` with columns)."""
     top, bottom = rig.SKIRT_TOP, rig.SKIRT_BOTTOM
@@ -1116,6 +1193,10 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=()):
             elif any(panels[names[i]].place["region"] == "cape" for i in idx):
                 cw, ccl = cape_weights(part, ch, body, under=under)
                 finish(part, ch, skirt, weights=cw, under=under, cloth=ccl)
+            elif gm.CLOTH.get(g, {}).get("sleeve_weights") and all(
+                    panels[names[i]].place["region"] == "arm" for i in idx):
+                sw = gm.CLOTH[g]["sleeve_weights"]
+                finish(part, ch, skirt, weights=sleeve_weights(part, ch, sw["offset"], sw["smooth"]))
             else:
                 finish(part, ch, skirt, under=under)
             ch.add("clothes", part, key, symmetric=True)

@@ -818,6 +818,9 @@ Numbers on EngMus (VM, 24 Oct 2026; drafted garments in brackets):
 | drafted, shirt hidden under the doublet | | | 258 / 200 | |
 | traced doublet, shirt hidden, belts 20/24 mm off | 231/234 | 57 (collar) | 237 / 239 | |
 | traced doublet + breeches, same | 234/234, 123/131 | 30, 83 (inseam) | 347 / 267 | |
+| traced doublet, sleeve weights smoothed 3 passes (`drape.sleeve_weights`) | | | 236 / 229 | |
+| same, smoothed 6 / 12 passes | | | 235 / 242, 236 / 249 | |
+| same, arm proxy 2 cm out, no smoothing / 3.5 cm and 8 passes | | | 237 / 251, 235 / 242 | |
 
 The waist band must be pinned (`place.pin` "top": tied to the doublet with points): unpinned,
 the full breeches slid down into a puff at the knee, with bare thighs. That failed drape still
@@ -830,7 +833,14 @@ doublet through the bandolier 20 vs 12. The shirt is now hidden under `doublet` 
 traced doublet the belts lie 20/24 mm off the cloth (`pike.TRACED_STRAP_OFFSETS`,
 `build["strap_offsets"]`); on the drafted doublet those offsets measured worse (213
 crossing). With the breeches the doublet's poking rises at the band and belts (doublet
-through fallband 64, through belts 38): the gathered waist pushes the doublet out. Casting
+through fallband 64, through belts 38): the gathered waist pushes the doublet out. A traced garment's
+full sleeves take their weights from the arm skin only (upper arm and forearm faces of their
+side, `drape.sleeve_weights`, switched by the cloth's `sleeve_weights` that
+`pike.TRACED_SLEEVE_WEIGHTS` sets), smoothed over the sleeve with the armhole and wrist edges
+held at the plain transfer's weights: skin through the sleeves 42 -> 32, shirt through the
+sleeves 25 -> 19 crossing. Pushing the arm proxy out to the sleeve's stand-off or smoothing
+more measured worse (table): the crossings left are not a weighting problem alone, and the
+traced doublet stays behind the switch (goal 202 crossing). Casting
 the falling band below the belts (leaving `belts` out of its ray tree) cut poking by 36-71
 but raised crossing by 10-14: not kept. Not modelled: the
 lacing band, the open sleeve slit to X, padding.
