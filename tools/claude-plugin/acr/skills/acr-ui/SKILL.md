@@ -63,9 +63,11 @@ Side panels are laid out for `RealLx` = 1024 and moved by `RealLx − 1024`.
   Pages 2 `BATTLE` and 3 `GRAPHICS` are `&[Row]` (`Heading`, `Choice { label, lines, get,
   set }`, `Note`), one per `ROW_Y` (203 … 446, 27 px apart): headings on 203, 257, 365, a box
   on every other row where the frame has one drawn in.
-- **Both ACR pages are full** (10 rows). A new choice either joins an existing box (`Verwesung`
-  packs `corpse_decay` and `decay_stain` into four lines) or needs a fourth page (`PAGES`,
-  `rows()`, the page button texts "Weitere Optionen »", "Seite 2/3: Grafik »", "Seite 3/3: Zurück »").
+- **Four pages since 5c58525:** 1 original, 2 blood/decay/marks, 3 graphics and landscape, 4
+  "Realismus (ab nächster Schlacht)" with the `acr_sim::Rules` flags (Trefferzonen, Körperabstand,
+  Leichenhaufen, Mörser). Pages 2 and 4 have free rows; page 3 is full (combined boxes such as
+  "Schatten, Details", "Wasser, Boden"). A new choice goes to the page of its kind; a new optional
+  rule goes to page 4. Paging lives in `PAGES` / `rows()` ("Seite x/4"); the row test allows short pages.
 - OK takes all pages (`collect`), Abbruch none. Test: `every_choice_round_trips_its_setting`.
 - Open it in a game: `key Escape` (game menu), `click "Spieleinstellungen"`, then the page buttons.
 
