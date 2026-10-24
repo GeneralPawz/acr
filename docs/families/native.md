@@ -23,14 +23,14 @@ frames, and `native.spec(MD, WEAPONS, ...)`.
 | `HurS15` | trade gun (SPEC over IroStr) | musket | green breechcloth, blue leggings | black roach, 1 feather | `white_dots` | strap, horn, pouch, knife |
 | `DelS15` | trade gun (SPEC over IroStr) | musket | + shirt, red breechcloth, blue leggings | scalp lock, 2 feathers | `black_stripes` | strap, horn, pouch, knife |
 | `HurLut` | bow (SPEC over IroLut) | war club | green breechcloth, blue leggings | black roach, 3 feathers | `black_face_half` | quiver, knife |
-| `DelLut` | bow (SPEC over IroLut) | tomahawk (`socket.club_r`) | tan breechcloth (draped), buckskin leggings, dark garters, tan matchcoat (sprite) | scalp lock, 2 feathers | `red_black` | quiver, knife |
+| `DelLut` | bow (SPEC over IroLut) | tomahawk (`socket.club_r`) | tan breechcloth (draped), buckskin leggings, dark garters (sprite; its tan wrap over one shoulder waits for a draped matchcoat) | scalp lock, 2 feathers | `red_black` | quiver, knife |
 | `DelKri` | bow (loosed on 25) | war club; WORK (two-handed swing) and REST (look round) as EngKri's | + shirt | scalp lock | none | quiver, knife |
 | `IroSha`, `HurSha`, `DelSha` | heal (MEDIK, `clips.heal`), turtle rattle in the left hand | war club (ATTACK, `club_strikes`, `club_down`) | + fur cloak (`pelt`; DelSha over a shirt) | long hair, 1-2 feathers | `white_band` | knife |
 
 SPEC `drape`: pieces of `dress` drafted and draped instead of shells (#307; docs/clothing.md
 roll-out list): `leggings` on for DelLut, IroLut, IroStr, IroTam, IroVog, HurLut, HurS15 and
 HurVog (the Delaware with a shirt and the shamans keep the shells until the shirt and the
-cloak are draped); `breechcloth` on for DelLut, who also wears a tan matchcoat (sprite). All 15 Woodlands units are built (slice 2). Iroquois wear red leggings and the red roach,
+cloak are draped); `breechcloth` on for DelLut. All 15 Woodlands units are built (slice 2). Iroquois wear red leggings and the red roach,
 Huron green breechcloths, blue leggings and a black roach, Delaware a red breechcloth, blue
 leggings and the scalp lock; skin tones vary a little by nation (`palette["skin"]`).
 
