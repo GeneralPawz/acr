@@ -66,14 +66,16 @@ lowest row below the model's, mean over the directions, screen px:
 | EngD18 | 4.3 | 1.3 |
 | EngPik | 2.6 | −0.4 |
 | SpnM18 | 3.5 | 0.5 |
-| DelKri | −1.0 | −4.0 (−0.4 with `lift` 0.15 m) |
+| DelKri | −1.0 | −4.0 (−4.75 with `scale` 1.1; IoU 0.44 → 0.51) |
 
 DelKri is the exception: its sprites draw the feet about 4 px higher against the anchor than
-the other units' (sprite and model are the same height, 48 against 47 px), so with #196 its
-model stood 4.25 px low. The asset fixes it: `native` SPEC key `lift` raises the root,
-`delkri.py` sets `LIFT = 0.15` m (4 px / 30 px per m / cos 30°). Measured as above (VM,
-2026-10-25, `ACR-analysis/horse-rect/`): lowest-row difference −4.25 → −0.38 px, IoU at the
-placement 0.444 → 0.481, best shift dy −5.4 → −1.4. In close-ups the feet hover 0.15 m.
+the other units', and a taller, broader man than the native build (head 5 px higher, area
+about 470 against 390 px). The asset fits the man, not the feet: `native` SPEC key `scale`
+scales the model about its ground point, `delkri.py` sets `SCALE = 1.1`. The feet stay on
+the ground (a lift that met the sprite's feet left them hovering 0.15 m in close-ups and was
+rejected). Measured as above (VM, 2026-10-25, `ACR-analysis/horse-rect/`): IoU at the
+placement 0.444 → 0.511 (best shift 0.555 → 0.571), head row 5 px → 0–1 px low, lowest-row
+difference −4.25 → −4.75 px.
 
 ## Screenshots
 

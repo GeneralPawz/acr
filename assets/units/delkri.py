@@ -68,15 +68,14 @@ MD = {
 }
 WEAPONS = {0: "MECH", 1: "OSTRELA", 2: "STRELA"}
 ACTIVE = {"ATTACK1": 25, "ATTACK2": 25}
-# The DELKRI sprites draw the feet about 4 px (zoom 1) higher against the anchor than the
-# other units' sprites, which the renderer meets with `view3d::UNIT_SOUTH` (#196): the model
-# stands 0.15 m (4 px / 30 px per m / cos 30) up so its feet meet the sprite's again.
-LIFT = 0.15
+# The DELKRI sprites draw a taller, broader man than the native build (head 5 px higher at
+# zoom 1, 48 against 47 px tall): the model is scaled about its feet to meet the head.
+SCALE = 1.1
 PALETTE = {"breechcloth": (0.58, 0.12, 0.08), "leggings": (0.16, 0.22, 0.42), "flaps": (0.16, 0.22, 0.42), "skin": (0.82, 0.57, 0.4)}
 
 
 def spec():
-    return native.spec(MD, WEAPONS, palette=PALETTE, active=ACTIVE, melee="club", hair="lock", feathers=0, paint=None, work=True, dress=("breechcloth", "leggings", "moccasins", "shirt"), kit=("quiver", "knife"), weapon="bow", lift=LIFT)
+    return native.spec(MD, WEAPONS, palette=PALETTE, active=ACTIVE, melee="club", hair="lock", feathers=0, paint=None, work=True, dress=("breechcloth", "leggings", "moccasins", "shirt"), kit=("quiver", "knife"), weapon="bow", scale=SCALE)
 
 
 def build(ctx):

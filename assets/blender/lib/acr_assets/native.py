@@ -65,7 +65,7 @@ BUILD = {"width": 0.98, "shoulders": 1.08, "limbs": 1.15, "hips": 0.98, "belly":
 DEFAULTS = {"build": BUILD, "weapon": "bow", "melee": "club", "mix": 0.6, "fixed": ("skin", "feather", "silver"),
             "dress": ("breechcloth", "leggings", "moccasins"), "hair": "roach", "feathers": 2, "paint": "red_black",
             "silver": False, "kit": ("knife",), "active": None, "gun_len": 1.45, "headdress": None, "rattle": False,
-            "work": False, "drape": (), "lift": 0.0}
+            "work": False, "drape": (), "scale": 1.0}
 
 # Material keys and painters of the family (`registry`): stroud (trade wool) for the
 # breechcloth, leggings and blanket, buckskin for moccasins and pouches.
@@ -802,9 +802,9 @@ def build(ctx, s):
     if s["weapon"] == "gun":
         ch.arm.pose.bones[aiming.ROD_SOCKET].matrix = ch.arm.pose.bones["socket.hand_r"].matrix @ aiming.ROD_STOWED
     tris = ch.triangles()
-    # `lift`: the root raised by this many metres, for a unit whose sprites draw the feet
-    # above the anchor where the others draw them below it (DelKri, #196).
-    ctx.root.location.z += s["lift"]
+    # `scale`: the whole man about his ground point, for a unit whose sprites draw him
+    # taller than the family's build (DelKri, #196).
+    ctx.root.scale = (s["scale"],) * 3
     prepare_export(ch.all_meshes(), ctx.root, acr_triangles=sum(tris.values()), acr_clips=names,
                    acr_limb_radius=ch.limb_radius, acr_light=report.get("light_dir_camera", []),
                    acr_layers=list(ch.layers), acr_family="native")
