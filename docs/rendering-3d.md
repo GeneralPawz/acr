@@ -1739,13 +1739,18 @@ model first draws at that level (`acr-render/src/tex_cache.rs`, m2-tex-stream).
 - **Request:** `group_draws` calls `want_textures(model, level)` for each authored model and
   level drawn this frame; `TexCache::want` marks a resident picture used or queues a
   `Decoder` job. Shadows need no pictures.
-- **Decode:** native: one `acr-texture` thread per picture (decode plus the mip chain);
-  wasm32: one picture per frame on the main thread (no threads; a 4 k JPEG and its mips
-  stall that frame for a few hundred ms there). Off-thread in the browser would take
-  `createImageBitmap` from JS, which acr-render does not bind.
-- **Upload:** in strips of `UPLOAD_PER_FRAME` bytes (8 MB native, 2 MB wasm) into a texture
-  with all its mips; it binds only once complete (a 4 k map with mips at once stalled one
-  frame by 190 ms on the RX 9060 XT).
+- **Decode:** native: one `acr-texture` thread per picture (PNG or JPEG to RGBA). wasm32: the
+  browser's `createImageBitmap` on a `Blob` of the encoded bytes (`tex_cache::browser_decode`,
+  web-sys, async via `wasm-bindgen-futures`), which decodes off the main thread; options
+  `premultiplyAlpha: none`, `colorSpaceConversion: none`, so normal and roughness maps keep
+  their values. The bitmap is then cut into strips of `strip_rows` rows (cropped bitmaps,
+  also async). Without a window the old path stays: one picture per frame on the main thread.
+- **Upload:** level 0 in strips of `UPLOAD_PER_FRAME` bytes (8 MB native, 2 MB wasm):
+  `write_texture` rows (native) or one `copy_external_image_to_texture` per bitmap strip
+  (wasm; wgpu's WebGL2 backend runs it as `texSubImage2D` from the `ImageBitmap`, but allows
+  no source origin there, hence the cropped strips). Then the mips on the GPU, then the
+  texture binds (a 4 k map with mips written at once stalled one frame by 190 ms on the
+  RX 9060 XT).
 - **Stand-in:** until a material's pictures are in, `GpuModel::group` binds the material in
   the same place of the next coarser level the model carries (`stand_ins`; its pictures share
   the master's UV layout, `hdbody.build_lods`), down the chain to the coarsest, which is always
@@ -1755,16 +1760,35 @@ model first draws at that level (`acr-render/src/tex_cache.rs`, m2-tex-stream).
   and, while the streamed pictures exceed `BUDGET` (512 MB native, 192 MB wasm), the least
   recently used ones unused for `GRACE` (120) frames. The material falls back to its
   stand-in; a later draw asks again. Tests: `tex_cache::tests`.
-- **Mips:** `tex_cache::mip_chain`, 2 × 2 boxes down to 1 × 1, sRGB pictures averaged in
-  linear light, for every model texture except nearest-filtered ones (projected sprite
-  colours); the linear sampler filters between mips. +33 % memory per picture.
-- **Compressed formats (not built):** BC7 (desktop) or ASTC (mobile) via KTX2 would cut a
+- **Mips:** made on the GPU for every model texture, loaded or streamed, except
+  nearest-filtered ones (projected sprite colours): `mipgen::MipGen`, one render pass per
+  level that samples the level above (a one-level view; the GL backend sets
+  `TEXTURE_BASE_LEVEL`/`MAX_LEVEL`) with a linear filter at the centre of each 2 × 2 block,
+  down to 1 × 1 (`mipgen::mip_levels`). sRGB textures average in linear light (decode on
+  sampling, encode on writing). Model textures carry `RENDER_ATTACHMENT` for it. The linear
+  sampler filters between mips. +33 % memory per picture. The pictures match the former CPU
+  chain within 2 of 255 per channel (screenshots below).
+- **Compressed formats (not built; design note):** BC7 (desktop) or ASTC (mobile) via KTX2 would cut a
   4 k map from 85 MB (with mips) to 21 MB. WebGL2 exposes them only as extensions
   (`EXT_texture_compression_bptc`, `WEBGL_compressed_texture_astc`), so the glb would need
   both plus an RGBA fallback, or Basis Universal (`KHR_texture_basisu`, UASTC transcoded at
   load to whatever the device has: wgpu `Features::TEXTURE_COMPRESSION_BC/ASTC`). It needs
   a transcoder crate that builds for wasm, a `KHR_texture_basisu` reader in `model.rs` and a
   `toktx`/`basisu` step in `gltf_pack.py`; mips would come from the file.
+  - WebGL2 support: Chrome and Edge on desktop expose `EXT_texture_compression_bptc` (BC7)
+    and S3TC (BC1–3); Android and iOS expose ETC2 (core in WebGL2 on mobile GPUs, often
+    emulated and slow on desktop ANGLE) and ASTC. wgpu's GL backend reports
+    `TEXTURE_COMPRESSION_BC`, `_ETC2`, `_ASTC` from those extensions; the device must ask for
+    the feature, so it needs a probe at adapter creation and a fallback.
+  - Sizes for one 4 k map with mips: RGBA8 85 MB on the GPU; BC7, ASTC 4 × 4 or ETC2 RGBA
+    21 MB; ETC2 RGB or BC1 11 MB. On disk UASTC with RDO and zstd about 8–12 MB (the JPEG is
+    about 3–5 MB), ETC1S about 1–2 MB at visibly lower quality.
+  - Costs (estimates, not measured): transcoding UASTC to BC7 is a fast block remap, tens of
+    ms per 4 k map in wasm on the main thread, so it would want strips or a Web Worker too;
+    the usual transcoder is Binomial's C++ (the `basis-universal` crate wraps it and needs a
+    C++ toolchain for `wasm32-unknown-unknown`); the KTX2 container itself is easy (`ktx2`
+    crate). No mip generation, no decode, 4 × less upload and
+    memory. Normal maps need BC5/EAC RG for quality.
 
 Measured on the render VM (RX 9060 XT, 1600 × 900, shadows on), blank field, grass, HUD
 off, 1,000 HD men (`hdman.glb` as `EngM18`) in a 32 × 32 block; the camera at zoom 1, then a
@@ -1782,6 +1806,26 @@ with the driver requests only (`m2-tex-stream-base`) in `main-1`, the branch in
 | zoom-in, 240 frames: mean / max ms | 20.3 / 34.0 | 19.5–19.7 / 32.7 |
 | back at zoom 1, 60 frames: mean / max ms | 6.0 / 21.9 | 3.3 / 6.3 |
 | zoom 1, 1,900 frames: mean / max ms | 6.0 / 20.6 | 4.6 / 5.3 |
+
+Off-thread decode and GPU mips (m2-wasm-decode), same steps and machine, runs one after
+the other (`ACR-analysis/genai/wasm-decode/`, `main-2/3`, `branch-2/3`, steps `zoom.json`,
+`--models hd-lod-render/models-hd`):
+
+| ms per frame, mean / max | main (f106991) | branch |
+|---|---:|---:|
+| zoom 1, 60 frames | 7.1 / 114, 6.0 / 103 | 7.1 / 118, 6.0 / 97 |
+| zoom-in, 240 frames (masters stream in) | 20.8 / 33.6, 22.9 / 55.1 | 21.1 / 57.0, 19.7 / 35.4 |
+| back at zoom 1, 60 frames | 6.1 / 10.7, 4.9 / 7.1 | 5.7 / 10.4, 4.8 / 6.5 |
+| zoom 1, 1,900 frames | 5.7 / 13.9, 4.5 / 23.5 | 5.6 / 18.9, 5.0 / 5.8 |
+
+Native does not change measurably: the decode was already on threads, and the close-up's
+frames are the 38 M triangles' (the maxima move between runs either way). Screenshots of
+both differ by at most 2 of 255 per channel (`sheet-mips.png`). The point is the browser:
+there the old path decoded a 4 k JPEG (zune-jpeg in wasm) and built its mips on the main
+thread in one frame, an estimated 300–500 ms per master map; now that frame runs only a
+2 MB strip copy, and the picture's last frame its mip passes (13 small draws). No browser
+runs on the render VM (no Chromium, Node or `wasm-bindgen` CLI), so this is not measured
+in a browser yet.
 
 The three master maps arrive within 1–2 s of the zoom (decode on threads, 8 MB a frame);
 before that the master mesh draws with the 10 k level's pictures. The first frame of each

@@ -22,6 +22,7 @@ use crate::damage::{self, Damage};
 use crate::lod;
 use crate::looks;
 use crate::math::{self, Mat4};
+use crate::mipgen;
 use crate::model::{ModelData, Vertex};
 use crate::shadow::{self, ShadowMap};
 use crate::tex_cache;
@@ -638,72 +639,114 @@ pub struct TextureStats {
     pub evictions: u64,
 }
 
-/// A streamed picture going up ([`ModelRenderer::uploads`]): the next mip level and row.
+/// A streamed picture going up ([`ModelRenderer::uploads`]): its full size in strips, then
+/// the mips on the GPU.
 struct Upload {
     key: tex_cache::Key,
-    chain: Vec<crate::model::Image>,
+    pixels: tex_cache::Pixels,
     texture: wgpu::Texture,
-    level: usize,
-    row: u32,
+    /// The next row (RGBA) or strip (browser bitmaps).
+    next: u32,
 }
 
 impl Upload {
-    /// Writes rows up to `budget` bytes (at least one); true once all levels are up.
+    /// Writes rows up to `budget` bytes (at least one); true once the full size is up.
     fn write(&mut self, queue: &wgpu::Queue, budget: &mut u64) -> bool {
-        while let Some(img) = self.chain.get(self.level) {
-            let row_bytes = u64::from(img.width) * 4;
-            let rows = ((*budget / row_bytes) as u32).clamp(1, img.height - self.row);
-            let from = (u64::from(self.row) * row_bytes) as usize;
-            queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &self.texture,
-                    mip_level: self.level as u32,
-                    origin: wgpu::Origin3d { x: 0, y: self.row, z: 0 },
-                    aspect: wgpu::TextureAspect::All,
-                },
-                &img.rgba[from..from + (u64::from(rows) * row_bytes) as usize],
-                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(img.width * 4), rows_per_image: None },
-                wgpu::Extent3d { width: img.width, height: rows, depth_or_array_layers: 1 },
-            );
-            *budget = budget.saturating_sub(u64::from(rows) * row_bytes);
-            self.row += rows;
-            if self.row == img.height {
-                (self.level, self.row) = (self.level + 1, 0);
+        match &self.pixels {
+            tex_cache::Pixels::Rgba(img) => {
+                let row_bytes = u64::from(img.width) * 4;
+                while self.next < img.height && *budget > 0 {
+                    let rows = ((*budget / row_bytes) as u32).clamp(1, img.height - self.next);
+                    let from = (u64::from(self.next) * row_bytes) as usize;
+                    queue.write_texture(
+                        wgpu::TexelCopyTextureInfo {
+                            texture: &self.texture,
+                            mip_level: 0,
+                            origin: wgpu::Origin3d { x: 0, y: self.next, z: 0 },
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        &img.rgba[from..from + (u64::from(rows) * row_bytes) as usize],
+                        wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(img.width * 4),
+                            rows_per_image: None,
+                        },
+                        wgpu::Extent3d { width: img.width, height: rows, depth_or_array_layers: 1 },
+                    );
+                    *budget = budget.saturating_sub(u64::from(rows) * row_bytes);
+                    self.next += rows;
+                }
+                self.next >= img.height
             }
-            if *budget == 0 {
-                break;
+            #[cfg(target_arch = "wasm32")]
+            tex_cache::Pixels::Bitmaps { width, strips, .. } => {
+                while let Some((y, strip)) = strips.get(self.next as usize) {
+                    if *budget == 0 {
+                        break;
+                    }
+                    let rows = strip.height();
+                    queue.copy_external_image_to_texture(
+                        &wgpu::CopyExternalImageSourceInfo {
+                            source: wgpu::ExternalImageSource::ImageBitmap(strip.clone()),
+                            origin: wgpu::Origin2d::ZERO,
+                            flip_y: false,
+                        },
+                        wgpu::CopyExternalImageDestInfo {
+                            texture: &self.texture,
+                            mip_level: 0,
+                            origin: wgpu::Origin3d { x: 0, y: *y, z: 0 },
+                            aspect: wgpu::TextureAspect::All,
+                            color_space: wgpu::PredefinedColorSpace::Srgb,
+                            premultiplied_alpha: false,
+                        },
+                        wgpu::Extent3d { width: *width, height: rows, depth_or_array_layers: 1 },
+                    );
+                    strip.close();
+                    *budget = budget.saturating_sub(u64::from(*width) * u64::from(rows) * 4);
+                    self.next += 1;
+                }
+                self.next as usize >= strips.len()
             }
         }
-        self.level >= self.chain.len()
     }
 }
 
-/// A texture from a mip chain (the full size first).
+/// An empty model texture of `width` x `height`, with a full mip chain when `mips`
+/// ([`mipgen::MipGen`] fills it from level 0).
+fn model_texture(device: &wgpu::Device, label: &str, width: u32, height: u32, srgb: bool, mips: bool) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        mip_level_count: if mips { mipgen::mip_levels(width, height) } else { 1 },
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: if srgb { wgpu::TextureFormat::Rgba8UnormSrgb } else { wgpu::TextureFormat::Rgba8Unorm },
+        // RENDER_ATTACHMENT: the mip passes, and the browser's bitmap copies.
+        usage: wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_DST
+            | wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    })
+}
+
+/// A texture from a decoded picture, its mips made on the GPU when `mips`.
 fn upload_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    chain: &[crate::model::Image],
+    mipgen: &mut mipgen::MipGen,
+    image: &crate::model::Image,
     srgb: bool,
+    mips: bool,
 ) -> wgpu::TextureView {
-    let top = &chain[0];
-    let data: Vec<u8> = chain.iter().flat_map(|c| c.rgba.iter().copied()).collect();
-    device
-        .create_texture_with_data(
-            queue,
-            &wgpu::TextureDescriptor {
-                label: Some("model texture"),
-                size: wgpu::Extent3d { width: top.width, height: top.height, depth_or_array_layers: 1 },
-                mip_level_count: chain.len() as u32,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: if srgb { wgpu::TextureFormat::Rgba8UnormSrgb } else { wgpu::TextureFormat::Rgba8Unorm },
-                usage: wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            },
-            wgpu::util::TextureDataOrder::LayerMajor,
-            &data,
-        )
-        .create_view(&Default::default())
+    let texture = model_texture(device, "model texture", image.width, image.height, srgb, mips);
+    queue.write_texture(
+        texture.as_image_copy(),
+        &image.rgba,
+        wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(image.width * 4), rows_per_image: None },
+        wgpu::Extent3d { width: image.width, height: image.height, depth_or_array_layers: 1 },
+    );
+    mipgen.generate(device, queue, &texture);
+    texture.create_view(&Default::default())
 }
 
 /// Per material of a finer authored level (`levels`, [`crate::model::material_levels`]): the
@@ -754,6 +797,8 @@ pub struct ModelRenderer {
     decoder: tex_cache::Decoder,
     /// Decoded pictures going up in strips of [`tex_cache::UPLOAD_PER_FRAME`] bytes a frame.
     uploads: std::collections::VecDeque<Upload>,
+    /// The mip levels of every model texture.
+    mipgen: mipgen::MipGen,
     /// GPU bytes of the model textures loaded with their models (not streamed).
     eager_bytes: u64,
     models: Vec<GpuModel>,
@@ -1155,7 +1200,7 @@ impl ModelRenderer {
                 address_mode_v: wgpu::AddressMode::Repeat,
                 mag_filter: filter,
                 min_filter: filter,
-                // Model textures carry mips (`tex_cache::mip_chain`).
+                // Model textures carry mips (`mipgen`).
                 mipmap_filter: if filter == wgpu::FilterMode::Linear {
                     wgpu::MipmapFilterMode::Linear
                 } else {
@@ -1202,6 +1247,7 @@ impl ModelRenderer {
             textures: Default::default(),
             decoder: Default::default(),
             uploads: Default::default(),
+            mipgen: mipgen::MipGen::new(device),
             eager_bytes: 0,
             models: Vec::new(),
             cap: 0,
@@ -1412,9 +1458,8 @@ impl ModelRenderer {
                 if img.rgba.is_empty() && data.encoded.get(i).is_some_and(Option::is_some) {
                     return None;
                 }
-                let chain = if mips[i] { tex_cache::mip_chain(img, srgb[i]) } else { vec![img.clone()] };
-                self.eager_bytes += chain.iter().map(|c| c.rgba.len() as u64).sum::<u64>();
-                Some(upload_texture(device, queue, &chain, srgb[i]))
+                self.eager_bytes += tex_cache::texture_bytes(img.width, img.height, mips[i]);
+                Some(upload_texture(device, queue, &mut self.mipgen, img, srgb[i], mips[i]))
             })
             .collect();
         let levels = crate::model::material_levels(&data.primitives, data.materials.len());
@@ -1586,24 +1631,12 @@ impl ModelRenderer {
         self.textures.tick();
         for done in self.decoder.poll() {
             let (model, image) = done.key;
-            match done.chain {
-                Ok(chain) if model < self.models.len() => {
-                    let top = &chain[0];
-                    let texture = device.create_texture(&wgpu::TextureDescriptor {
-                        label: Some("model texture (streamed)"),
-                        size: wgpu::Extent3d { width: top.width, height: top.height, depth_or_array_layers: 1 },
-                        mip_level_count: chain.len() as u32,
-                        sample_count: 1,
-                        dimension: wgpu::TextureDimension::D2,
-                        format: if done.srgb {
-                            wgpu::TextureFormat::Rgba8UnormSrgb
-                        } else {
-                            wgpu::TextureFormat::Rgba8Unorm
-                        },
-                        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                        view_formats: &[],
-                    });
-                    self.uploads.push_back(Upload { key: done.key, chain, texture, level: 0, row: 0 });
+            match done.pixels {
+                Ok(pixels) if model < self.models.len() => {
+                    let (width, height) = pixels.size();
+                    let texture =
+                        model_texture(device, "model texture (streamed)", width, height, done.srgb, done.mips);
+                    self.uploads.push_back(Upload { key: done.key, pixels, texture, next: 0 });
                 }
                 Ok(_) => {}
                 Err(e) => {
@@ -1621,10 +1654,12 @@ impl ModelRenderer {
             }
             let Some(up) = self.uploads.pop_front() else { break };
             let (model, image) = up.key;
-            let bytes: u64 = up.chain.iter().map(|c| c.rgba.len() as u64).sum();
+            let (width, height) = up.pixels.size();
+            let bytes = tex_cache::texture_bytes(width, height, up.texture.mip_level_count() > 1);
             if model >= self.models.len() || !self.textures.loaded(up.key, bytes) {
                 continue;
             }
+            self.mipgen.generate(device, queue, &up.texture);
             self.models[model].views[image] = Some(up.texture.create_view(&Default::default()));
             self.refresh_groups(device, model, image);
             log::info!("textures: model {model} image {image} in, {:.1} MB", bytes as f64 / 1e6);

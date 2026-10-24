@@ -5,8 +5,9 @@
 //! finer levels encoded until a model first draws at such a level. [`TexCache`] tracks those
 //! pictures (pending, resident, failed) and picks the ones to drop: unused for
 //! [`TexCache::idle`] frames, or the least recently used beyond the memory budget once unused
-//! for [`TexCache::grace`] frames. [`Decoder`] decodes them off the main thread (native) or
-//! one per frame (wasm, no threads), and builds the mip chain ([`mip_chain`]).
+//! for [`TexCache::grace`] frames. [`Decoder`] decodes them off the main thread: on threads
+//! (native) or with the browser's `createImageBitmap` (wasm). The mips are made on the GPU
+//! ([`crate::mipgen`]).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -141,48 +142,6 @@ impl TexCache {
     }
 }
 
-/// The mip chain of `image`, the full size first, each level a 2 × 2 box of the one above
-/// (odd sizes clamp the last row and column). sRGB pictures average in linear light.
-pub fn mip_chain(image: &Image, srgb: bool) -> Vec<Image> {
-    let to_linear: Vec<f32> = (0..256)
-        .map(|c| {
-            let c = c as f32 / 255.0;
-            if srgb { if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) } } else { c }
-        })
-        .collect();
-    let to_byte = |v: f32| -> u8 {
-        let v = v.clamp(0.0, 1.0);
-        let e = if srgb { if v <= 0.0031308 { v * 12.92 } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 } } else { v };
-        (e * 255.0 + 0.5) as u8
-    };
-    let mut chain = vec![image.clone()];
-    loop {
-        let top = chain.last().expect("the full size");
-        if (top.width <= 1 && top.height <= 1) || top.rgba.len() != (top.width * top.height * 4) as usize {
-            break;
-        }
-        let (w, h) = ((top.width / 2).max(1), (top.height / 2).max(1));
-        let mut rgba = Vec::with_capacity((w * h * 4) as usize);
-        for y in 0..h {
-            for x in 0..w {
-                let at = |dx: u32, dy: u32| {
-                    let (sx, sy) = ((2 * x + dx).min(top.width - 1), (2 * y + dy).min(top.height - 1));
-                    ((sy * top.width + sx) * 4) as usize
-                };
-                let px = [at(0, 0), at(1, 0), at(0, 1), at(1, 1)];
-                for c in 0..3 {
-                    let sum: f32 = px.iter().map(|&p| to_linear[usize::from(top.rgba[p + c])]).sum();
-                    rgba.push(to_byte(sum / 4.0));
-                }
-                let alpha: u32 = px.iter().map(|&p| u32::from(top.rgba[p + 3])).sum();
-                rgba.push(((alpha + 2) / 4) as u8);
-            }
-        }
-        chain.push(Image { width: w, height: h, rgba });
-    }
-    chain
-}
-
 /// GPU bytes of a picture of this size with (or without) its mip chain.
 pub fn texture_bytes(width: u32, height: u32, mips: bool) -> u64 {
     let mut total = 0;
@@ -196,6 +155,11 @@ pub fn texture_bytes(width: u32, height: u32, mips: bool) -> u64 {
     }
 }
 
+/// Rows per upload strip of a picture `width` wide ([`UPLOAD_PER_FRAME`] bytes, at least one).
+pub fn strip_rows(width: u32) -> u32 {
+    (UPLOAD_PER_FRAME / (u64::from(width.max(1)) * 4)).clamp(1, u64::from(u32::MAX)) as u32
+}
+
 /// One picture to decode.
 pub struct Job {
     pub key: Key,
@@ -204,26 +168,91 @@ pub struct Job {
     pub mips: bool,
 }
 
-/// A decoded picture: its mip chain, or why it failed.
+/// The full-size pixels of a decoded picture (the mips are made on the GPU, [`crate::mipgen`]).
+pub enum Pixels {
+    Rgba(Image),
+    /// wasm32: decoded by the browser off the main thread (`createImageBitmap`), cut into
+    /// strips of [`strip_rows`] rows: (first row, strip).
+    #[cfg(target_arch = "wasm32")]
+    Bitmaps {
+        width: u32,
+        height: u32,
+        strips: Vec<(u32, web_sys::ImageBitmap)>,
+    },
+}
+
+impl Pixels {
+    pub fn size(&self) -> (u32, u32) {
+        match self {
+            Pixels::Rgba(img) => (img.width, img.height),
+            #[cfg(target_arch = "wasm32")]
+            Pixels::Bitmaps { width, height, .. } => (*width, *height),
+        }
+    }
+}
+
+/// A decoded picture, or why it failed.
 pub struct Done {
     pub key: Key,
     pub srgb: bool,
-    pub chain: Result<Vec<Image>, String>,
+    pub mips: bool,
+    pub pixels: Result<Pixels, String>,
 }
 
 fn run(job: Job) -> Done {
-    let chain =
-        crate::model::decode_image(&job.bytes).map(|img| if job.mips { mip_chain(&img, job.srgb) } else { vec![img] });
-    Done { key: job.key, srgb: job.srgb, chain }
+    let pixels = crate::model::decode_image(&job.bytes).map(Pixels::Rgba);
+    Done { key: job.key, srgb: job.srgb, mips: job.mips, pixels }
 }
 
-/// Decodes [`Job`]s: on a thread each (native), or one per [`Decoder::poll`] on the caller's
-/// thread (wasm32 has no threads).
+/// Decodes a PNG or JPEG with the browser's `createImageBitmap` (off the main thread), then
+/// cuts it into strips for the per-frame upload budget. Colours stay as stored: no colour
+/// space conversion, no premultiplied alpha.
+#[cfg(target_arch = "wasm32")]
+async fn browser_decode(bytes: &[u8]) -> Result<Pixels, String> {
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_futures::JsFuture;
+    let err = |e: wasm_bindgen::JsValue| format!("createImageBitmap: {e:?}");
+    let window = web_sys::window().ok_or("no window")?;
+    let parts = js_sys::Array::of1(&js_sys::Uint8Array::from(bytes));
+    let blob = web_sys::Blob::new_with_u8_array_sequence(&parts).map_err(err)?;
+    let options = web_sys::ImageBitmapOptions::new();
+    options.set_premultiply_alpha(web_sys::PremultiplyAlpha::None);
+    options.set_color_space_conversion(web_sys::ColorSpaceConversion::None);
+    let promise = window.create_image_bitmap_with_blob_and_image_bitmap_options(&blob, &options).map_err(err)?;
+    let full: web_sys::ImageBitmap = JsFuture::from(promise).await.map_err(err)?.dyn_into().map_err(err)?;
+    let (width, height) = (full.width(), full.height());
+    let rows = strip_rows(width);
+    if rows >= height {
+        return Ok(Pixels::Bitmaps { width, height, strips: vec![(0, full)] });
+    }
+    let mut strips = Vec::new();
+    for y in (0..height).step_by(rows as usize) {
+        let n = rows.min(height - y);
+        let promise = window
+            .create_image_bitmap_with_image_bitmap_and_a_sx_and_a_sy_and_a_sw_and_a_sh_and_a_options(
+                &full,
+                0,
+                y as i32,
+                width as i32,
+                n as i32,
+                &options,
+            )
+            .map_err(err)?;
+        strips.push((y, JsFuture::from(promise).await.map_err(err)?.dyn_into().map_err(err)?));
+    }
+    full.close();
+    Ok(Pixels::Bitmaps { width, height, strips })
+}
+
+/// Decodes [`Job`]s: on a thread each (native), or by the browser's `createImageBitmap`
+/// (wasm32, no threads; one per [`Decoder::poll`] on the caller's thread without a window).
 pub struct Decoder {
     #[cfg(not(target_arch = "wasm32"))]
     sender: std::sync::mpsc::Sender<Done>,
     #[cfg(not(target_arch = "wasm32"))]
     receiver: std::sync::mpsc::Receiver<Done>,
+    #[cfg(target_arch = "wasm32")]
+    done: std::rc::Rc<std::cell::RefCell<Vec<Done>>>,
     #[cfg(target_arch = "wasm32")]
     queue: std::collections::VecDeque<Job>,
 }
@@ -237,7 +266,7 @@ impl Default for Decoder {
             Self { sender, receiver }
         }
         #[cfg(target_arch = "wasm32")]
-        Self { queue: Default::default() }
+        Self { done: Default::default(), queue: Default::default() }
     }
 }
 
@@ -254,7 +283,17 @@ impl Decoder {
             }
         }
         #[cfg(target_arch = "wasm32")]
-        self.queue.push_back(job);
+        {
+            if web_sys::window().is_none() {
+                self.queue.push_back(job);
+                return;
+            }
+            let done = self.done.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let pixels = browser_decode(&job.bytes).await;
+                done.borrow_mut().push(Done { key: job.key, srgb: job.srgb, mips: job.mips, pixels });
+            });
+        }
     }
 
     /// The pictures decoded since the last call.
@@ -265,7 +304,9 @@ impl Decoder {
         }
         #[cfg(target_arch = "wasm32")]
         {
-            self.queue.pop_front().map(run).into_iter().collect()
+            let mut out = std::mem::take(&mut *self.done.borrow_mut());
+            out.extend(self.queue.pop_front().map(run));
+            out
         }
     }
 }
@@ -339,18 +380,10 @@ mod tests {
     }
 
     #[test]
-    fn mip_chain_halves_to_one_texel() {
-        let img = Image { width: 5, height: 2, rgba: (0..40).map(|i| if i % 4 == 3 { 255 } else { 200 }).collect() };
-        let chain = mip_chain(&img, true);
-        let sizes: Vec<(u32, u32)> = chain.iter().map(|i| (i.width, i.height)).collect();
-        assert_eq!(sizes, vec![(5, 2), (2, 1), (1, 1)]);
-        assert_eq!(chain[2].rgba, vec![200, 200, 200, 255], "a flat colour stays");
-        let bytes: u64 = chain.iter().map(|i| i.rgba.len() as u64).sum();
-        assert_eq!(bytes, texture_bytes(5, 2, true));
-        // Black and white average to mid grey in linear light, brighter than 128 in sRGB.
-        let bw = Image { width: 2, height: 1, rgba: vec![0, 0, 0, 255, 255, 255, 255, 255] };
-        assert_eq!(mip_chain(&bw, true)[1].rgba[0], 188);
-        assert_eq!(mip_chain(&bw, false)[1].rgba[0], 128);
+    fn strips_fit_the_budget() {
+        assert_eq!(u64::from(strip_rows(4096)) * 4096 * 4, UPLOAD_PER_FRAME);
+        assert_eq!(strip_rows(u32::MAX), 1, "at least one row");
+        assert!(u64::from(strip_rows(16)) * 64 <= UPLOAD_PER_FRAME);
     }
 
     #[test]
