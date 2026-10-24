@@ -27,7 +27,7 @@ pub struct Settings {
     /// controls; the modern scheme can switch it off.
     pub edge_scroll: bool,
     /// ACR (#163): which objects are drawn as 3D models where a model exists
-    /// (docs/rendering-3d.md). Only in `settings.txt` / `localStorage` for now.
+    /// (docs/rendering-3d.md). Spieleinstellungen page 3 sets it, as do `settings.txt` / `localStorage`.
     pub models: Models,
     /// ACR (#164): the original fixed camera or the free one.
     pub camera: CameraMode,
@@ -299,7 +299,18 @@ impl Settings {
                         .filter_map(|i| u8::from_str_radix(value.get(2 * i..2 * i + 2)?, 16).ok())
                         .collect()
                 }
-                "controls" => s.controls = if value == "modern" { Controls::Modern } else { Controls::Original },
+                "controls" => {
+                    s.controls = match value {
+                        "modern" => Controls::Modern,
+                        "original" => Controls::Original,
+                        other => {
+                            log::warn!(
+                                "settings: unknown controls value {other:?} (original or modern), using original"
+                            );
+                            Controls::Original
+                        }
+                    }
+                }
                 "edge_scroll" => s.edge_scroll = value != "0",
                 "models" => {
                     s.models = match value {

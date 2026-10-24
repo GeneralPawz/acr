@@ -46,7 +46,7 @@ def export_glb(path, compression="none", image_format="AUTO"):
         export_morph_normal=False,
         export_animations=True,
         export_animation_mode="ACTIONS",
-        # Placeholder clips are linear between their keys: export the keys, not samples.
+        # Clips stay sampled (docs/assets-slice.md): force one sample per frame, not the keys.
         export_force_sampling=True,
         export_optimize_animation_size=True,
         # Keep a clip's constant channels: a one-frame clip (STAND) is all constants.

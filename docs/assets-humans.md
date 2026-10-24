@@ -597,8 +597,8 @@ frame), `5 EngM18P` (`STAND` frame 0, `PATTACK`/`UATTACK`: reloading), `6 EngM18
 
 ## 2. Skeleton H
 
-59 bones (52 deforming), metres, rest pose = relaxed A-pose (arms 35° out), facing −Y, built
-by `h_rig.build()`:
+75 bones (60 deforming), metres, rest pose = relaxed A-pose (arms 35° out), facing −Y, from
+`rig.skeleton_h()` (`armature.build` makes the Blender armature):
 
 ```
 root (ground point, no deform)
@@ -609,6 +609,8 @@ root (ground point, no deform)
   │                                                               └ index/middle/ring/pinky_01..03
   ├ thigh_[lr] ─ shin ─ foot ─ toe
   ├ socket.hip_l (bayonet/sword)   socket.hip_r (cartridge box)
+  ├ skirt_[fl,fr,bl,br]_01 ─ _02   (coat skirt, four columns, deform)
+  └ socket.hit_[head,chest,belly,back,arm_l,arm_r,thigh_l,thigh_r]   (stuck missiles, no deform)
 ```
 
 Retargeting a BVH drill (CMU/Mixamo-like) is a name map: Hips→hips, Spine/Spine1/Spine2→
@@ -616,8 +618,8 @@ spine/spine1/spine2 (Chest), Neck→neck, Head→head, LeftShoulder→clavicle_l
 LeftArm→upperarm_l, LeftForeArm→forearm_l, LeftHand→hand_l, LeftUpLeg→thigh_l, LeftLeg→shin_l,
 LeftFoot→foot_l, LeftToeBase→toe_l, finger chains by name; the root motion goes to `root`.
 Bone rolls are deterministic but not yet matched to a particular BVH convention: a retarget
-must go through rest-pose world rotations (as Blender's retarget tools and `h_rig.pose` do).
-`h_rig.pose()` takes Euler angles about the *armature* axes of the rest pose (relative to the
+must go through rest-pose world rotations (as Blender's retarget tools and `armature.pose` do).
+`armature.pose()` takes Euler angles about the *armature* axes of the rest pose (relative to the
 parent), which made the poses readable without caring about rolls.
 
 ## 3. Layers
@@ -629,17 +631,19 @@ parent), which made the poses readable without caring about rolls.
 | clothes | **shells derived from the body**: a face subset (by height and the face's bone), pushed out along the normals by 1–4 cm; straps ray-cast onto the body; skirt as a lofted tube | copied from the body (straps: same smooth rule) | 1796 / 1636 |
 | gear | separate meshes parented to socket bones | – (bone parent) | 236 / 84 |
 
-Total EngM18 **5760 tris**, EngKri 5536 tris, no textures (vertex colour + flat material
-colours). `engm18.glb` (uncompressed, 3 clips sampled, 12 meshes, 13 materials): **601 KB**,
-of which the JSON chunk is 151 KB.
+Total EngM18 **5760 tris**, EngKri 5536 tris (the first slice; the draped engm18 has 11.7k, see
+[clothing.md](clothing.md)). The first slice had no textures (vertex colour + flat material
+colours); units now use the baked outfit atlas (`outfit.py`, below). The sizes below are the
+The first slice's `engm18.glb` (uncompressed, 3 clips sampled, 12 meshes, 13 materials) was **601 KB**,
+of which the JSON chunk was 151 KB.
 
 Every decaying mesh carries the colour attribute `decay_mask` (glTF `COLOR_0`): R
 low-frequency noise, rank-normalised per mesh (threshold x removes a fraction x of the
 surface, so dissolving runs evenly in time), G per-vertex white noise (frays the edges),
-B layer code / 8, A 1. Two shape keys (glTF morph targets) belong to the decay too:
+B layer code / 8, A 1. The shape key (glTF morph target) of the decay:
 `deflate` (flesh and clothes: every vertex moves 35 % towards its bone; the clothes collapse
-onto the skeleton as the flesh goes) and `lie_flat` (coat/tunic skirt: squashes the rigid tube
-so it lies flat on a prone corpse; 1 while lying).
+onto the skeleton as the flesh goes); the first run also had `lie_flat` (squashed the rigid skirt tube
+flat on a prone corpse), which skirt bones (`skirt_*`) replaced: the `DEATHLIE*` clips lay it flat.
 
 ### Realistic clothes, skin and leather (`acr_assets.outfit`, #217)
 
@@ -802,7 +806,7 @@ stages above from the original camera, 3×), `decay-close.png`, `free-view.png`,
 2. **Derived clothing shells solve interpenetration for free:** the same vertices with the
    same weights deform exactly like the skin, so clothes never cut into the body in any pose.
    Only free parts (coat skirt) and rigid parts can interpenetrate: the skirt is a stiff tube
-   that bulged up 20 cm on a prone corpse until the `lie_flat` morph target, and it will cut
+   that bulged up 20 cm on a prone corpse until the first run's `lie_flat` morph target (now skirt bones), and it will cut
    into the legs when walking (needs a few skirt bones or a cloth bake).
 3. **The decay reads well only with collapse:** dissolving flesh under intact clothes is
    invisible from the original camera; clothes must deflate onto the bones (morph target)
@@ -842,11 +846,11 @@ stages above from the original camera, 3×), `decay-close.png`, `free-view.png`,
   as data + armature build + `pose` in armature axes), body/shell derivation, strap casting,
   a decay-material helper that writes `extras.acr_decay`, and an export option for colour
   attributes + morph targets (`export_vertex_color`, `export_morph`). Per-asset budget for a
-  foot soldier: ≤ 6k tris all layers, ≤ 4k without the bone layer, ≤ 600 KB uncompressed glb
+  foot soldier: ≤ 6k tris all layers (the draped engm18 has 11.7k, docs/clothing.md), ≤ 4k without the bone layer, ≤ 600 KB uncompressed glb
   (meshopt should take it well under 200 KB; most of the JSON is sampled animation).
 - **#166 (animation states):** clip names = `.MD` keys (`STAND`, `DEATH`, `DEATHLIE1`, ...);
   key placeholder clips on sprite frame numbers so `#DEATH`'s 71 frames map 1:1. Events
-  needed: `land` (detach held gear, set `lie_flat`), `shot`, `impact`.
+  needed: `land` (detach held gear), `shot`, `impact`.
 - **#168 (vertical slice):** keep skeleton H and the derived-shell approach for EngM18;
   project sprite colours onto the shells; add skirt bones; tune the lying pose per stored
   direction against `#DEATHLIE1`.

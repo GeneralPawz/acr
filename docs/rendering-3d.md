@@ -23,17 +23,22 @@ parameters: [assets-humans.md](assets-humans.md).
 | `material_detail` | `on`, `off` | `on` | the models' glTF normal maps and a faint highlight from their roughness and metallic (below, "Material detail (#234)"); `off` is the plain Lambert look; tests switch it with `ACR_MATERIAL_DETAIL=on\|off` or the driver's `{"cmd": "material_detail", "on": false}` |
 | `wind` | `on`, `off` | `on` | wind sways trees and foliage that carry `_WIND` weights (below, "Wind"); the driver's `props` request takes `"wind": false` |
 | `map_models` | `on`, `off` | `on` | the map's trees and stones are drawn as models where `assets/nature/map_objects.json` names one (below, "Map trees and stones"); the driver's `{"cmd": "map_models", "on": false}` switches it |
+| `lod` | `on`, `off` | `on` | the models' distance levels, built at load by `lod.rs` (below); `ACR_LOD` overrides it |
+| `water` | `detailed`, `original` | `detailed` | the water surface in 3D mode, [water.md](water.md); native override `ACR_WATER` |
 | `ground` | `detailed`, `original` | `detailed` | the ground in 3D mode (`models` not `off` or `camera=free`): material textures over the original tiles, [ground.md](ground.md); sprite mode always draws the original |
 | `gore` | `full`, `reduced`, `off` | `full` | 3D corpses: `full` decompose (#178), `reduced` discolour, collapse and sink without dissolving, `off` fade like the original (every other pixel once the death counter passes 100) |
+| `corpse_minutes` | 1 to 60 | `5` | how long a corpse lies before it goes (game minutes) |
+| `corpse_decay` | `full`, `half` | `full` | `half`: decay stops at `model::HALF_DECAY` (0.45), for looking at thrown flesh; the driver's blank start takes `"corpse_decay"` too |
 | `battlefield_marks` | `fade`, `keep` | `fade` | `keep`: craters, scuffs, blood splatter and pools and the debris of the fallen stay for the whole battle (below, "Kept battlefield marks") |
 | `decay_stain` | `on`, `off` | `on` with `gore=full`, else `off` | the fluids of decaying corpses stain the ground under them (below, "Decay stains"); written only once set |
 | `weather` | `off`, `rain`, `snow`, `fog` | `off` | rain, snow or fog over the 3D frame, a look only with no gameplay effect (below, "Weather (#224)"); the driver's `{"cmd": "weather", "mode": "rain"}` overrides it (without `mode`: back to the setting) |
+| `hit_locations`, `body_spacing`, `mortars`, `corpse_piles` | `on`, `off` | `off` | the optional `acr_sim::Rules`, page 4 of the options; they apply from the next battle ([simulation.md](simulation.md)) |
 
 Sprites stay the default; with `models=off` and `camera=fixed` the frame is drawn exactly as
 before (no depth buffer, no extra pass). The game menu's options dialog (Spieleinstellungen)
-sets these on its pages 2 and 3 ([ui.md](ui.md#game-menu-0x5d9c30-and-game-options-0x5dbe10));
+sets these on its pages 2 to 4 ([ui.md](ui.md#game-menu-0x5d9c30-and-game-options-0x5dbe10));
 `gore`, `corpse_minutes`, `corpse_decay`, `decay_stain`, `battlefield_marks` and the graphics take effect at
-once, `hit_locations` and `body_spacing` from the next battle.
+once, the four rules (page 4) from the next battle.
 
 ### Decay stains
 
@@ -505,7 +510,7 @@ beard, colouring and height. Models without it draw exactly as before.
   the model's vertex buffer so that a variant buffer shares the index numbering.
   - A soldier draws the variant nearest to his own weights. Draws are grouped by (model,
     decaying, variant), and the touched primitives bind the variant's buffer.
-  - `deflate` and `lie_flat` still run on the GPU on top.
+  - `deflate` (and `lie_flat` on models that have it) still run on the GPU on top.
   - Cost: engm18, 4800 of 7122 vertices touched, so 16 × 4800 × 124 B ≈ 9.3 MiB of
     vertex buffers per model type (the base buffer is 0.86 MiB). engkri needs 8.9 MiB.
     The glb loads in about 25 ms (release), of which baking takes 3.6 ms.
@@ -670,7 +675,7 @@ per 0.55 m, the root sliding along with the cycle's bob).
 Per corpse one value from the death counter (`Unit::death`):
 `decay = clamp((death − 100) / (removed − 100), 0, 1)`, `removed` = 2000 for types with
 `#DEATHLIE2`, else 1200 (the original's removal). From it: the morph weights
-`deflate = ramp(decay, 0.18, 0.55)`, `lie_flat = 1` while lying (`#DEATHLIE*`), and a sink of
+`deflate = ramp(decay, 0.18, 0.55)`, `lie_flat = 1` while lying (`#DEATHLIE*`; only models that carry the morph, not skeleton H, whose skirt bones do it), and a sink of
 `ramp(decay, 0.78, 1) · 0.20 m`. With `corpse_decay=half` (settings; driver blank start
 `"corpse_decay": "half"`) decay stops at `model::HALF_DECAY` (0.45): the flesh half
 dissolved, hair and cloth going, never bleached bones or the sink, for looking at thrown

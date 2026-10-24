@@ -1209,9 +1209,9 @@ while they are the default; `tests/wounds.rs` pins the hash of a fight). On:
   renderer (wounds and blood, #183); both are `None` without the rule.
 - Savegames keep the rule (version 3, at the end of the file); older saves load with the
   original rules. Starting a game with it: set `rules.hit_locations` in the `GameSetup`, or
-  through the driver `{"cmd": "start", "random": {"seed": 5, "hit_locations": true}}`. There
-  is no menu entry yet.
-
+  through the driver `{"cmd": "start", "random": {"seed": 5, "hit_locations": true}}`, or
+  Spieleinstellungen page 4 (`Trefferzonen`, applies from the next battle). There
+  Spieleinstellungen page 4 (`Trefferzonen`, applies from the next battle).
 #### The body: injuries, crawling, bleeding out (#254, #262)
 
 The full model is in `docs/damage-model.md` (section 1); `acr_sim::body` implements it.
@@ -1260,8 +1260,8 @@ weapon was dropped.
 In 3D a crawler lies prone (the `DEATHLIE1` pose) and drags himself along head first, and
 the bleeding leave a drop of blood every second that dries and fades over five minutes
 (render only). Cut limbs, fractures and debris on the models come with the render slices of
-#262. The setting `hit_locations=on` (in `settings.txt` / browser storage, no menu entry
-yet) turns the rule on for every new game; the setup and savegames keep it.
+#262. The setting `hit_locations=on` (Spieleinstellungen page 4, `settings.txt` / browser storage)
+turns the rule on for every new game; the setup and savegames keep it.
 
 A second optional rule, `body_spacing` (men, horses and animals take up space and push
 each other apart), is described in `docs/body-spacing.md`.

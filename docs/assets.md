@@ -22,8 +22,9 @@ assets/
       kit.py              building kit: palisades, log walls, roofs, scaffolds, rubble
       detail.py           procedural detail tiles (cloth, leather, wood) and box UVs
       genbuild.py spritefit.py  generated (Tripo, Meshy) buildings and ships fitted to the sprite
-      rig.py armature.py body.py humans.py horse.py gear.py poses.py decay.py
+      rig.py armature.py body.py humans.py outfit.py horse.py gear.py poses.py decay.py ...
                           characters: see docs/assets-humans.md
+      (61 modules in all besides `__init__.py`: `ls assets/blender/lib/acr_assets`)
     build.py              entry: builds one asset script
     render_views.py       entry: renders a model in the stored directions (sprite check)
     tools/silhouette.py   fits poses/proportions to the sprite silhouettes (development)
@@ -37,7 +38,8 @@ assets/
   props/longhouse.py      scripted Iroquois longhouse, 24 x 6 x 6 m, bark courses, ribs, poles,
                           smoke holes, hide doors (acr_assets/scripted.py: procedural colour,
                           normal map and roughness, poles, panels); no TYPE (fits HurDo1)
-  units/engm18.py engkri.py engd18.py   musketeer, peasant, dragoon
+  units/<type>.py        104 unit scripts, one per type (engm18.py musketeer, engkri.py peasant, engd18.py
+                          dragoon, ...); shared character code in acr_assets (humans, outfit, garments, ...)
   nature/broadleaf.py     a tree (TREES.GP frame 104) with wind and felled/stump states
   nature/<model>.py       28 trees, bushes and rocks from Poly Haven / Sketchfab (acr_assets/nature.py:
                           cards, _WIND, alpha-mask leaves); map_objects.json maps TREELIST/STONLIST to them
@@ -410,7 +412,7 @@ the sprite reference.
 
 ## Not done yet
 
-- Size budgets per asset class, LODs, the nation-colour mask channel (#162).
+- Size budgets per asset class (LODs are built by the renderer at load, `lod.rs`), the nation-colour mask channel (#162).
 - Animated models: clip timing against the original frame counts (#165).
 - Mirrored directions and multi-view blending for units; light removal from projected
   sprite colours.

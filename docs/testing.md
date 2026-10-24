@@ -111,7 +111,7 @@ its label to appear.
 | `{"cmd": "state"}` | see below; `"units": true` lists every object, `"owner": n` and `"type": "Mus"` filter, `"visible_only": true` respects the fog, `"detail": true` adds each object's orders, animation and frame, stances, reload counter (`delay`), direction and switches, and the listed objects' `activity` |
 | `{"cmd": "command", "command": {"type": "move", "units": [1, 2], "x": 3000, "y": 9000}}` | a simulation command for setup (below) |
 | `{"cmd": "select", "units": [10, 11]}` | replaces the selection (setup; prefer `drag`/`click` to test the interface) |
-| `{"cmd": "start", "random": {"nation": 1, "seed": 5}}` | a random map without the menus; also `opponents`, `resources`, `size`, `difficulty`, `hit_locations` (the optional rule, #225), `body_spacing` (the optional rule, `docs/body-spacing.md`), `mortars` (the optional rule, `simulation.md` "Mortar"), `corpse_piles` (the optional rule, `simulation.md` "Corpse piles") |
+| `{"cmd": "start", "random": {"nation": 1, "seed": 5}}` | a random map without the menus; also `opponents`, `resources`, `size`, `difficulty`, `hit_locations` (the optional rule, #225), `body_spacing` (the optional rule, `docs/body-spacing.md`), `mortars` (the optional rule, `simulation.md` "Mortar"), `corpse_piles` (the optional rule, `simulation.md` "Corpse piles"); the rules default to off, the `settings.txt` rules are not read |
 | `{"cmd": "start", "map": "Missions\\Singles\\Single7\\Single7.m3d"}` | a map file (alias `load_map`) |
 | `{"cmd": "start", "blank": {"ground": "grass"}}` | the blank test field, see "The blank field" below |
 | `{"cmd": "hud", "on": false}` | hides the interface (panel, minimap, cursor): frames show the world only; `true` brings it back |
@@ -131,6 +131,9 @@ its label to appear.
 | `{"cmd": "weather", "mode": "rain"}` | rain, snow, fog or off over the `weather` setting (no `mode`: the setting again); answers `weather` (docs/rendering-3d.md "Weather (#224)") |
 | `{"cmd": "map_models", "on": false}` | the map's trees and stones as sprites (`true`: as models where `map_objects.json` has one), over the `map_models` setting |
 | `{"cmd": "fog", "on": false}` | the whole map revealed from the next tick, as on the blank field (`true`: the fog of war again); for shots of a real map |
+| `{"cmd": "props", "model": "broadleaf", "at": [[7600, 7700]], "wind": true}` | trees or foliage of a model at ground points (render only; `wind` forces the sway on or off); answers `props` (the count) |
+| `{"cmd": "profile"}` | the simulation's per-system times since the last call: `profile` maps a name to `{"ms", "calls"}` (turns the profiler on at the first call) |
+| `{"cmd": "gputime", "frames": 30}` | draws `frames` (default 30) frames offscreen with the GPU timer on; answers `gputime` with the mean ms per segment, or why the device cannot time (docs/ground.md) |
 | `{"cmd": "hit", "unit": 541, "cause": "musket", "region": "torso", "dir": [-1, 0], "energy": 80}` | a scripted hit (bench) |
 | `{"cmd": "record", "dir": "frames", "count": 20, "every": 3, "crop": [x, y, w, h]}` | `count` screenshots, one every `every` frames (= ticks in a game), as `<dir>/frame000.png`...; `prefix` changes `frame`; answers `paths` (only with `--drive-gpu`) |
 | `{"cmd": "quit"}` | ends the game |
@@ -230,10 +233,11 @@ every texture 0, no sprites, no units, an empty `SEA2`; `acr-game/src/blank_map.
 | `hill` | `true` (radius 600, height 100 px at the centre) or `{"x", "y", "radius", "height"}`: a round cosine hill |
 | `water` | `true` (2000 × 1200 px east of the centre) or `{"x", "y", "w", "h"}`: a rectangle of `SEA2` depth, shallow at its edge and deep (200; ships float above 130, land units stop above 128) from 160 px in; the terrain stays at its height (water is drawn flat). With models the 3D path draws the water surface (docs/water.md) under both cameras; `ACR_WATER=original` keeps the original tint |
 | `patches` | `[{"x", "y", "radius", "texture"}, ...]`: round patches of other `TILES3.BMP` textures (vertex textures), painted in order, for ground transitions ([ground.md](ground.md)); not saved |
-| `hit_locations` | the optional rule, as for `random` (or the setting) |
-| `body_spacing` | the optional body-spacing rule, as for `random` (or the setting) |
+| `hit_locations` | the optional rule, as for `random`; default `false`: the setting is not read |
+| `body_spacing` | the optional body-spacing rule, as for `random`; default `false`: the setting is not read |
 | `mortars` | the optional mortars rule: `ArtMrt(XX)` types to `spawn` (simulation.md "Mortar") |
 | `corpse_piles` | the optional corpse-piles rule: dense piles slow, big ones block (simulation.md "Corpse piles") |
+| `editor` | `true`: the test editor's field (placing panel shown, fighting off at the start; docs/ui.md) |
 | `hud` | `false` hides the interface from the start, like `{"cmd": "hud", "on": false}` |
 | `corpse_decay` | `full` or `half`: overrides the setting ([rendering-3d.md](rendering-3d.md)) |
 | `decay_stain` | `on` or `off`: overrides the setting (the ground stains under decaying corpses, [rendering-3d.md](rendering-3d.md#decay-stains)) |
