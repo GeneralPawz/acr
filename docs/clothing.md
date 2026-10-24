@@ -1110,6 +1110,12 @@ the calf weights into rigid foot weights. Shoe geometry is seated in the unchang
 STAND pose at 3 mm ground clearance; `render_pose.py --ground` supplies a z=0 floor
 for the contact proof. `outfit.footwear` records the measured instep clearance.
 
+The HD coat's buckled armhole fronts are retopologised after the single solve, using
+their shared settled boundary and a subdivided front patch. Its points fit to front
+skin rays at 18 mm clearance, avoiding nearest-point jumps into the armpit. The lapel
+inlays have no internal cut rim; their coincident torso vertices join the red wool.
+`outfit.quality.chest_patch_faces` and `chest_patch_reversed_faces` record that patch.
+
 The HD collar and round cuffs use `outfit_hd.tailored_trim`: the coat simulation stays
 unchanged, then the authored `collar` and `cuff` panel faces are removed by pattern ID.
 Closed parametric bands replace them, with outward 4 mm solidify thickness and closed

@@ -163,6 +163,10 @@ def mesh_quality(ob):
     out = {"longest_edge_m": max((e.calc_length() for e in bm.edges), default=0.0),
            "shoulder_edges": len(angles),
            "shoulder_rms_deg": (sum(a * a for a in angles) / len(angles)) ** 0.5 if angles else 0.0}
+    patch = bm.faces.layers.int.get("hd_chest_patch")
+    if patch:
+        out["chest_patch_faces"] = sum(bool(f[patch]) for f in bm.faces)
+        out["chest_patch_reversed_faces"] = sum(bool(f[patch]) and f.normal.y > 0 for f in bm.faces)
     bm.free()
     return out
 
@@ -224,6 +228,7 @@ def tailor_trim(ob, garment, body_tree):
     relax_tailoring(ob, garment, body_tree)
     if garment != "coat":
         return
+    patch_chest(ob, body_tree)
     hang_skirts(ob)
     names = list(garments.coat()[0])
     ids = {names.index(n) for n in ("collar", "cuff")}
@@ -234,6 +239,78 @@ def tailor_trim(ob, garment, body_tree):
     bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context="VERTS")
     bm.to_mesh(ob.data)
     bm.free()
+
+
+def patch_chest(ob, body_tree):
+    """Retopologise the buckled armhole fronts, sharing the settled patch boundary.
+
+    The old sewn cap had overlapping, reversed triangles in this window. Fill the
+    local patch with a connected grid and fit it from the front, so the projection
+    cannot jump into the armpit. This is fitting after the single garment solve.
+    """
+    import bmesh
+    from mathutils import Vector
+    from . import garments
+
+    bm = bmesh.new()
+    bm.from_mesh(ob.data)
+    bmesh.ops.remove_doubles(bm, verts=list(bm.verts), dist=1e-6)
+    mark = bm.faces.layers.int.get("hd_chest_patch") or bm.faces.layers.int.new("hd_chest_patch")
+    panel = bm.faces.layers.int.get("panel")
+    front_id = list(garments.coat()[0]).index("coat_front")
+    wool_ids = {list(garments.coat()[0]).index(n) for n in ("coat_front", "sleeve_top", "sleeve_under")}
+    gone = []
+    for f in bm.faces:
+        p = f.calc_center_median()
+        if 1.18 < p.z < 1.455 and 0.105 < abs(p.x) < 0.275 and p.y < -0.025 and (panel is None or f[panel] in wool_ids):
+            gone.append(f)
+    old_boundary = {e for e in bm.edges if e.is_boundary}
+    bmesh.ops.delete(bm, geom=gone, context="FACES")
+    bmesh.ops.delete(bm, geom=[e for e in bm.edges if not e.link_faces], context="EDGES")
+    edges = [e for e in bm.edges if e.is_boundary and e not in old_boundary and
+             all(1.13 < v.co.z < 1.49 and abs(v.co.x) > 0.08 for v in e.verts)]
+    filled = bmesh.ops.holes_fill(bm, edges=edges, sides=0)["faces"]
+    for f in filled:
+        f[mark] = 1
+        if panel is not None:
+            f[panel] = front_id
+    triangles = bmesh.ops.triangulate(bm, faces=filled)["faces"]
+    for f in triangles:
+        f[mark] = 1
+        if panel is not None:
+            f[panel] = front_id
+    splits = {e for f in triangles for e in f.edges}
+    if splits:
+        bmesh.ops.subdivide_edges(bm, edges=list(splits), cuts=3, use_grid_fill=True)
+    patch = {v for f in bm.faces if f[mark] for v in f.verts}
+    for v in patch:
+        hit = body_tree.ray_cast(Vector((v.co.x, -0.5, v.co.z)), Vector((0, 1, 0)), 0.65)[0]
+        if hit is not None:
+            v.co.y = hit.y-0.018
+    bmesh.ops.recalc_face_normals(bm, faces=list(bm.faces))
+    # Give the new front grid consistent winding even beside a non-manifold sew.
+    for f in bm.faces:
+        if f[mark] and f.normal.y > 0:
+            f.normal_flip()
+    bm.to_mesh(ob.data)
+    bm.free()
+    ob.data.update()
+
+
+def strip_inlay_rims(pieces, keys):
+    """The lapels are inlays in the coat, so their shared red/blue edge has no cut rim."""
+    import bmesh
+
+    for ob in pieces:
+        if keys[ob.name] != "facings" or ob.get("hd_trim"):
+            continue
+        bm = bmesh.new()
+        bm.from_mesh(ob.data)
+        # Draft panels are triangles. Only the generic solidify hem added quads.
+        bmesh.ops.delete(bm, geom=[f for f in bm.faces if len(f.verts) == 4], context="FACES")
+        bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context="VERTS")
+        bm.to_mesh(ob.data)
+        bm.free()
 
 
 def hang_skirts(ob):
@@ -1264,6 +1341,24 @@ def stitch_waist(ob):
     return joined
 
 
+def stitch_front_inlays(ob):
+    """Smooth shared wool/inlay seams while retaining integer torso part IDs."""
+    import bmesh
+
+    bm = bmesh.new()
+    bm.from_mesh(ob.data)
+    part = bm.verts.layers.float.get("_part")
+    vs = [v for v in bm.verts if 1.03 < v.co.z < 1.49 and abs(v.co.x)<0.15 and
+          (part is None or v[part] == 0) and any(
+              any(k in ob.data.materials[f.material_index].name for k in (".coat.", ".facings.")) for f in v.link_faces)]
+    before = len(bm.verts)
+    bmesh.ops.remove_doubles(bm, verts=vs, dist=1e-5)
+    count = before-len(bm.verts)
+    bm.to_mesh(ob.data)
+    bm.free()
+    return count
+
+
 def _decimated(o, ratio):
     import bpy
 
@@ -1295,6 +1390,7 @@ def build(ctx, arm, body, body_lods=(), palette=None):
     t0 = time.time()
     pieces, keys, st["drape"] = drape_alone(ctx.name, arm, body)
     body_tree = _tree([body])
+    strip_inlay_rims(pieces, keys)
     fit_stock(pieces, keys, body_tree)
     lay_skirts(pieces, keys)
     for sh, key in shoes(ctx.name, arm, body, body_lods):
@@ -1332,6 +1428,7 @@ def build(ctx, arm, body, body_lods=(), palette=None):
     finish_pieces(pieces, keys, palette, mats, ctx.name)
     outfit, st["weights"] = join(f"{ctx.name}.hd.outfit", pieces, arm)
     st["waist_vertices_joined"] = stitch_waist(outfit)
+    st["inlay_vertices_joined"] = stitch_front_inlays(outfit)
     st["quality"] = mesh_quality(outfit)
     st["tris"] = {"master": _tris(outfit)}
     levels = []
