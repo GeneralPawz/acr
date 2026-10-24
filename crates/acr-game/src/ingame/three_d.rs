@@ -1183,6 +1183,8 @@ impl ThreeD {
             let clip = super::strike_view::strike_clip(model, world, u);
             if let Some(c) = clip {
                 inst.clip = Some(c);
+                // A long `ATTACK` repeats the blow instead of standing between blows.
+                inst.time = super::strike_view::strike_time(u.frame, u.anim_frames, &model.clips[c], model.fps);
             }
             // A SLOWRECHARGE musketeer replays #ATTACK3 until his reload counter is down to one
             // play (`combat.rs`, the slow-recharge branch): he rams on that last play only and

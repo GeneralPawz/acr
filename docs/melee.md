@@ -222,6 +222,19 @@ we build has a `SETACTIVEPOINT #ATTACK`, so that is frame 1 rounded up to even: 
 (`poses.STRIKE_HIT_FRAME`). The clips open at the end of the wind-up, hit at frame 2, hold,
 recover, and wind up again by the end (`ATTACK` loops while the fight goes on).
 
+**Repeated blows (m2-stab-pause).** The sim lands one blow per `ATTACK` cycle, but the
+original's sprites thrust several times per cycle (`ENGM18U.GP` 71 frames, about five
+thrusts; `ENGPIKU.GP` 21 frames, two). Played once per cycle, the clip thrust once and then
+stood in the recovery and wind-up: 3.3 s for EngM18 and every musketeer with a 71-frame
+`ATTACK`, 0.8 s for the pikeman. `strike_view::strike_time` now splits the cycle into
+`round(last / BLOW_FRAMES)` blows (`BLOW_FRAMES` 13: EngM18 five of 14 frames, EngPik two of
+10); each plays the wind-up and the blow (frames 0..4) at the clip's speed and the rest of
+the clip compressed. The first blow stays on the sim's hit frame 2; the others do not land.
+Finishing blows (`_FINISH`), shots (`_SHOT_`) and cycles under 20 frames keep the sprite
+frames. Render only. Proof: `ACR-analysis/genai/stab-pause/` (`strip_*`, `dense_*` before
+and after; `dbg_*/game.log` with `ACR_STRIKE_DEBUG`: the arm phase now cycles every 7 ticks
+for EngM18, every 5 for EngPik).
+
 Built so far (`poses.musketeer_strikes`, all musketeers built by `musketeer_clips`: EngM18):
 `ATTACK_THRUST_MID` (bayonet lunge), `ATTACK_THRUST_DOWN` and `ATTACK_DOWN` (a long step in,
 knees bent, the muzzle 48° down), `ATTACK_SMASH_MID` (butt stroke; not chosen by the sim yet),

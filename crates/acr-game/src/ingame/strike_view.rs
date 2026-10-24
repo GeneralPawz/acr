@@ -21,7 +21,7 @@ use std::collections::HashMap;
 use acr_physics::gait::{self, Rig, Skin};
 use acr_physics::{Quat, Vec3, skeleton_h};
 use acr_render::math::Mat4;
-use acr_render::model::{ModelData, Node};
+use acr_render::model::{Clip, ModelData, Node};
 use acr_sim::combat::{HitRecord, Strike, StrikeHeight, StrikeKind};
 use acr_sim::world::{AnimKind, Unit, World};
 
@@ -411,6 +411,42 @@ pub fn arm_weight(frame: f32, frames: f32) -> f32 {
     } else {
         ease(ARM_RECOVER, ARM_WINDUP, (f - up) / (last - up))
     }
+}
+
+/// About how many sprite frames (2 per tick) one blow of a strike clip takes. The original's
+/// `ATTACK` sprites thrust several times per cycle (EngM18U: 71 frames, about five thrusts;
+/// EngPikU: 21 frames, two), but the sim lands one blow per cycle, at `HIT_FRAME`. Played
+/// once per cycle the clip thrust once and then stood for up to 3 s; it now repeats about
+/// every `BLOW_FRAMES` frames.
+pub const BLOW_FRAMES: i32 = 13;
+/// The sprite frames from the wind-up through the blow and its hold (`poses.strike_keys`),
+/// played at the clip's own speed in every repeat.
+const LEAD_FRAMES: f32 = HIT_FRAME + 2.0;
+
+/// The clip time (s) of strike clip `clip` at sim frame `frame` of an `ATTACK` of `frames`
+/// frames. Short cycles, finishing blows and shots play the clip on the sprite frames. A long
+/// cycle is split into `k = round(last / BLOW_FRAMES)` blows of an even number of frames (the last
+/// takes the rest); each plays the wind-up and the blow (`LEAD_FRAMES`) at the clip's speed
+/// and the recovery and the next wind-up compressed into the rest. The first blow still
+/// lands on `HIT_FRAME`, the sim's hit frame; the others are thrusts that do not land
+/// (render only, from the sim frame alone).
+pub fn strike_time(frame: i32, frames: i32, clip: &Clip, fps: f32) -> f32 {
+    let (f, last) = (frame.max(0), frames - 1);
+    let k = (2 * last + BLOW_FRAMES) / (2 * BLOW_FRAMES);
+    let clast = clip.duration * fps;
+    if k < 2 || clast <= LEAD_FRAMES + 1.0 || is_finish(&clip.name) || clip_kind(&clip.name) == Some(StrikeKind::Shot) {
+        return f as f32 / fps;
+    }
+    let p = (last / k) & !1;
+    let s = (f / p).min(k - 1);
+    let len = if s == k - 1 { last - s * p } else { p } as f32;
+    let l = (f - s * p) as f32;
+    let c = if l <= LEAD_FRAMES {
+        l
+    } else {
+        LEAD_FRAMES + (l - LEAD_FRAMES) * (clast - LEAD_FRAMES) / (len - LEAD_FRAMES)
+    };
+    c.min(clast) / fps
 }
 
 /// Whether the unit's animation is an attack stance (getting ready, standing ready, the strike
@@ -981,6 +1017,27 @@ mod tests {
         let h = rig.joint(&rest(&rig), rig.bone("hand_r"));
         let (tip, target) = strike(true, 2.3, Vec3::new(0.2, -2.0, h.z - 1.0));
         assert!((tip - target).length() < 0.2, "tip {tip:?} target {target:?}");
+    }
+
+    /// A long `ATTACK` thrusts several times; the first blow stays on the sim's hit frame.
+    #[test]
+    fn long_attacks_repeat_the_blow() {
+        let clip = |name: &str, n: f32| Clip { name: name.into(), duration: (n - 1.0) / 24.0, channels: Vec::new() };
+        let frame = |f, n: i32, c: &Clip| strike_time(f, n, c, 24.0) * 24.0;
+        // EngM18: 71 frames, five blows of 14 frames.
+        let m = clip("ATTACK_THRUST_MID", 71.0);
+        for s in 0..5 {
+            assert!((frame(14 * s + 2, 71, &m) - HIT_FRAME).abs() < 1e-4, "blow {s}");
+            assert!(frame(14 * s + 12, 71, &m) > 50.0, "wind-up {s}");
+        }
+        assert!((frame(70, 71, &m) - 70.0).abs() < 1e-4);
+        // EngPik: 21 frames, two blows of 10.
+        let p = clip("ATTACK_THRUST_MID", 21.0);
+        assert!((frame(12, 21, &p) - HIT_FRAME).abs() < 1e-4);
+        // Finishing blows and shots keep the sprite frames.
+        for name in ["ATTACK_THRUST_FINISH", "ATTACK_SHOT_DOWN"] {
+            assert!((frame(30, 71, &clip(name, 71.0)) - 30.0).abs() < 1e-4, "{name}");
+        }
     }
 
     /// The arm is full at the hit frame, low in the recovery, rising again for the wind-up.
