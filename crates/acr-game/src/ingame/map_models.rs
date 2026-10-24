@@ -118,6 +118,9 @@ pub struct MapModels {
     pub table: HashMap<(SpriteGroup, u16), Choice>,
     /// Model index and transform per drawn object.
     pub placed: Vec<(usize, Mat4)>,
+    /// The `World::objects` index of each [`MapModels::placed`] entry (for
+    /// `World::struck`, [`struck_transform`]).
+    pub objs: Vec<usize>,
     /// What [`MapModels::placed`] was built for: objects, models ready, sprites ready,
     /// the first object's place.
     key: Option<PlaceKey>,
@@ -139,6 +142,7 @@ impl MapModels {
     /// Nothing placed, every sprite drawn.
     pub fn clear(&mut self) {
         self.placed.clear();
+        self.objs.clear();
         self.key = None;
         if !self.hidden.is_empty() {
             self.hidden.clear();
@@ -162,9 +166,12 @@ impl MapModels {
         }
         self.key = key;
         self.placed.clear();
+        self.objs.clear();
         let mut hidden = HashSet::new();
         let mut scales: HashMap<(SpriteGroup, u16), f32> = HashMap::new();
-        for o in objects.iter().filter(|o| matches!(o.group, SpriteGroup::Trees | SpriteGroup::Stones)) {
+        for (k, o) in
+            objects.iter().enumerate().filter(|(_, o)| matches!(o.group, SpriteGroup::Trees | SpriteGroup::Stones))
+        {
             let Some(choice) = self.table.get(&(o.group, o.index)) else { continue };
             let Some(&(model, height)) = ready.get(&choice.model) else { continue };
             let scale = *scales.entry((o.group, o.index)).or_insert_with(|| {
@@ -173,6 +180,7 @@ impl MapModels {
             let ground = view3d::ground_point(o.x, o.y, terrain.height_at(o.x, o.y));
             let dir = if choice.sprite_turn { SPRITE_DIR } else { turn(o.x, o.y) };
             self.placed.push((model, view3d::model_matrix(ground, view3d::facing_yaw(dir), scale)));
+            self.objs.push(k);
             if let Some(list) = sprites.list(o.group) {
                 hidden.insert((list.gp_path(), usize::from(o.index)));
             }
@@ -210,6 +218,72 @@ impl MapModels {
     }
 }
 
+/// Ticks a struck tree takes to fall (it speeds up as it goes, like a falling pole).
+const FALL_TICKS: f32 = 24.0;
+/// A felled tree lies at this angle from upright (its crown props it up a little).
+const FALL_ANGLE: f32 = 1.48;
+/// Ticks a knocked stone takes to slide and tumble to its new place.
+const SLIDE_TICKS: f32 = 10.0;
+
+/// `m` with its axes turned by `angle` about the world `axis` (unit), its place kept.
+fn rotated(m: &Mat4, axis: [f32; 3], angle: f32) -> Mat4 {
+    let (s, c) = angle.sin_cos();
+    let turn = |v: [f32; 3]| {
+        // Rodrigues: v cos + (a × v) sin + a (a · v)(1 − cos).
+        let d = axis[0] * v[0] + axis[1] * v[1] + axis[2] * v[2];
+        let x = [axis[1] * v[2] - axis[2] * v[1], axis[2] * v[0] - axis[0] * v[2], axis[0] * v[1] - axis[1] * v[0]];
+        [0, 1, 2].map(|i| v[i] * c + x[i] * s + axis[i] * d * (1.0 - c))
+    };
+    let mut out = *m;
+    for col in out.iter_mut().take(3) {
+        let v = turn([col[0], col[1], col[2]]);
+        col[..3].copy_from_slice(&v);
+    }
+    out
+}
+
+/// A sim direction (0 east, 64 south) as a world unit vector.
+fn dir_vec(dir: u8) -> [f32; 2] {
+    let a = f32::from(dir) * std::f32::consts::TAU / 256.0;
+    [a.cos(), a.sin()]
+}
+
+/// The transform of map object `k` as a ball left it (`World::struck`, rule `ball_terrain`;
+/// render only): a felled tree falls away from the impact about its foot and then lies; a
+/// knocked stone slides and tumbles to its new place; anything else stands as placed.
+pub fn struck_transform(
+    base: Mat4,
+    k: usize,
+    struck: &acr_sim::ball_terrain::StruckMap,
+    now: f32,
+    height: impl Fn(i32, i32) -> i32,
+) -> Mat4 {
+    use acr_sim::ball_terrain::Struck;
+    match struck.get(&(k as u32)) {
+        Some(&Struck::Felled { dir, tick }) => {
+            let t = ((now - tick as f32) / FALL_TICKS).clamp(0.0, 1.0);
+            let [dx, dy] = dir_vec(dir);
+            // About the horizontal axis up × fall direction: the top swings towards `dir`.
+            rotated(&base, [-dy, dx, 0.0], FALL_ANGLE * t * t)
+        }
+        Some(&Struck::Moved { dx, dy, from, tick }) => {
+            let t = ((now - tick as f32) / SLIDE_TICKS).clamp(0.0, 1.0);
+            let ease = 1.0 - (1.0 - t) * (1.0 - t);
+            // `base` stands on the map place; `from` and `(dx, dy)` are offsets from it.
+            let x = base[3][0] + from.0 as f32 + (dx - from.0) as f32 * ease;
+            let y = base[3][1] + from.1 as f32 + (dy - from.1) as f32 * ease;
+            let (mx, my) = ((dx - from.0) as f32, (dy - from.1) as f32);
+            let len = (mx * mx + my * my).sqrt().max(1.0);
+            // Tumbles about the axis across its way, a quarter turn per 20 px rolled.
+            let mut m = rotated(&base, [-my / len, mx / len, 0.0], len * ease / 20.0 * std::f32::consts::FRAC_PI_2);
+            let g = view3d::ground_point(x as i32, y as i32, height(x as i32, y as i32));
+            m[3] = [g[0], g[1], g[2], 1.0];
+            m
+        }
+        _ => base,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -230,6 +304,21 @@ mod tests {
         );
         assert!(t.contains_key(&(SpriteGroup::Stones, 0)));
         assert!(!t.contains_key(&(SpriteGroup::Trees, 13)));
+    }
+
+    #[test]
+    fn a_felled_tree_falls_towards_its_direction() {
+        use acr_sim::ball_terrain::{Struck, StruckMap};
+        let base = view3d::model_matrix([100.0, 100.0, 0.0], 0.0, 1.0);
+        let mut struck = StruckMap::new();
+        struck.insert(3, Struck::Felled { dir: 0, tick: 10 });
+        let up = |m: &Mat4| [m[1][0], m[1][1], m[1][2]];
+        assert_eq!(struck_transform(base, 3, &struck, 10.0, |_, _| 0), base);
+        let lying = struck_transform(base, 3, &struck, 100.0, |_, _| 0);
+        // The model's up axis now points east and nearly level.
+        assert!(up(&lying)[0] > 0.9 * up(&base)[2] && up(&lying)[2].abs() < 0.2 * up(&base)[2], "{:?}", up(&lying));
+        assert_eq!(lying[3], base[3]);
+        assert_eq!(struck_transform(base, 4, &struck, 100.0, |_, _| 0), base);
     }
 
     #[test]

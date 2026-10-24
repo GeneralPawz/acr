@@ -19,6 +19,7 @@ pub mod aiplace;
 pub mod armies;
 pub mod artillery;
 pub mod assets;
+pub mod ball_terrain;
 pub mod bars;
 pub mod body;
 pub mod capture;

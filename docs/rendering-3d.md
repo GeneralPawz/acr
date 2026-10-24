@@ -520,6 +520,12 @@ objects (`World::objects`, static for the whole battle) are drawn as models wher
 - **Scale:** `scale` from the table, else fitted to the sprite: the frame's opaque top above
   its ground point (`DY − min y` of the frame box, screen pixels) / cos 30° over the model's
   rest height (`ModelData::rest_height`) × 30 px/m, clamped to 0.25–4.
+- **Struck by balls** (rule `ball_terrain`, `map_models::struck_transform`, from
+  `World::struck`): a felled tree tips over about its foot towards the ball's flight
+  (`FALL_TICKS` 24, ease-in, to `FALL_ANGLE` 1.48 rad) and lies; a knocked stone slides and
+  tumbles to its new place (`SLIDE_TICKS` 10). Every strike throws splinters, chips and dust
+  (`particle_view::wall_hit`). The `.felled`/`.stump` nodes of `broadleaf` are not used yet
+  (map trees have none).
 - **Place and turn:** at the object's ground point (`view3d::ground_point`, terrain height),
   standing (`#STAND`, time 0), turned by the props' hash of the place
   (`map_models::turn`), never the sim RNG. Wind and shadows come with the model's `_WIND`

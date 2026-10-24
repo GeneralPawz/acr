@@ -1437,6 +1437,38 @@ pulverized (no draw) (`body::shell_direct`, from the burst distance
 0x5578f0 round damage, no injuries). `tests/ground_fire.rs`
 `a_shell_at_a_mans_feet_leaves_a_mist_closer_ones_are_torn_in_two`.
 
+#### Balls against trees and stones (optional rule `ball_terrain`)
+
+**The original:** balls fly through woods and rocks. `ProcessExpl` (0x557fa0) calls only the
+terrain height (0x4d0530), the building boxes (`Bar3DHeight`/`Bar3DOwner` 0x443b06 /
+0x443d37), `MakeDamage`, `MakeRoundDamage` and the explosion; no map-sprite lookup. Trees
+never run out when cut (empty `[WORKTRANSFORM]`, "Gathering"), ordinary trees and `ST*`
+stones never block paths ("Passability"), and nothing in the engine has a line of sight
+(the fog is a radius stamp, "Fog of war").
+
+**The rule** (`Rules::ball_terrain`, `acr_sim::ball_terrain`; acts only with
+`hit_locations`, on ploughing balls, `Plough`): after each move (`projectile::process`, before
+the destination test) the ball's way of this tick is tested against `World::objects`, the
+nearest first, while the ball is below `TRUNK_TOP` 100 px (stones `STONE_TOP` 40 px):
+
+- **Trees** (`TREELIST` objects that are wood sources; reach `TRUNK_REACH` 10 px): girth
+  20..80 % from a hash of the place (`ball_terrain::girth`, no `rando()`). A ball with that
+  much energy (`Plough::energy`) fells the tree towards its flight and loses half the girth
+  (`Plough::lost`, also slowing it by that share); a weaker ball splinters it and stops.
+- **Small stones** (ground cell free; reach 12 px): knocked `STONE_PUSH` 40 px, 45° off the
+  ball's way to the side it lay; the ball loses `STONE_LOSS` 20 %. **Big rocks** (a locked
+  ground cell, i.e. a `[LOCK]` rock; reach 24 px) chip and stop the ball.
+- State: `World::struck` (`Struck::Felled/Splintered/Moved/Chipped` with tick and direction),
+  hashed only while not empty; `Plough::lost` hashes only while non-zero. Off, nothing is
+  tested, nothing drawn, and the pinned hashes hold.
+- Paths and resources stay consistent: a felled tree is still a wood source (its trunk lies
+  there) and trees never blocked; knocked stones are the non-blocking kind; rocks stay.
+- Switched on by `ball_terrain=on|off` in `settings.txt` (default: on with `controls=modern`,
+  only together with `hit_locations`), savegame rules bit 6, the driver's `start` key
+  `ball_terrain`. The driver's `map_object` request puts trees and stones on the blank field
+  (`ball_terrain::add_object`); `state` lists `struck` and the last `impacts`.
+- Tests: `tests/ball_terrain.rs`.
+
 ### Mortar (optional rule, #301)
 
 Not in the original game. Period field guns fired solid shot almost flat, so indirect fire

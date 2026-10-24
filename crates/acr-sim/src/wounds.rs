@@ -37,6 +37,9 @@ pub struct Rules {
     /// (the default) round shot lights no man under hit locations; without hit locations
     /// the original's flag is set as before either way.
     pub cannon_fire: bool,
+    /// Cannonballs break trees and knock stones aside (with [`Rules::hit_locations`] on):
+    /// [`crate::ball_terrain`], `docs/simulation.md`, "Balls against trees and stones".
+    pub ball_terrain: bool,
 }
 
 impl std::hash::Hash for Rules {
@@ -54,6 +57,9 @@ impl std::hash::Hash for Rules {
         }
         if self.cannon_fire {
             (5u8, self.cannon_fire).hash(state);
+        }
+        if self.ball_terrain {
+            (6u8, self.ball_terrain).hash(state);
         }
     }
 }

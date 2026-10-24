@@ -1951,7 +1951,17 @@ impl ThreeD {
         let Some(renderer) = self.renderer.as_ref() else { return };
         let [x0, y0, x1, y1] = self.map_view.unwrap_or([f32::MIN, f32::MIN, f32::MAX, f32::MAX]);
         let mut clips: HashMap<usize, Option<usize>> = HashMap::new();
-        for &(index, transform) in &self.map_models.placed {
+        let now = world.tick.0 as f32;
+        for (n, &(index, transform)) in self.map_models.placed.iter().enumerate() {
+            // Felled trees and knocked stones (rule `ball_terrain`).
+            let transform = match self.map_models.objs.get(n) {
+                Some(&k) if !world.struck.is_empty() => {
+                    super::map_models::struck_transform(transform, k, &world.struck, now, |x, y| {
+                        terrain.height_at(x, y)
+                    })
+                }
+                _ => transform,
+            };
             let [x, y] = [transform[3][0], transform[3][1]];
             if x < x0 || x > x1 || y < y0 || y > y1 {
                 continue;

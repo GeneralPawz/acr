@@ -82,6 +82,7 @@ fn with_hit_locations_the_ball_ploughs_through_five_men_losing_energy() {
         corpse_piles: false,
         group_move: false,
         cannon_fire: false,
+        ball_terrain: false,
     };
     let (w, men, _) = file_shot(on);
     let lives: Vec<_> = men.iter().map(|&m| (life(&w, m), dead(&w, m))).collect();
@@ -159,6 +160,7 @@ fn with_hit_locations_the_aimed_strike_and_each_bounce_cost_the_ball_energy() {
         corpse_piles: false,
         group_move: false,
         cannon_fire: false,
+        ball_terrain: false,
     };
     let (w, hits) = aimed_shot(on);
     // The first strike counts against the ball's bodies: one ball, at most five men, each once.

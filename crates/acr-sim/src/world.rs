@@ -580,6 +580,9 @@ pub struct World {
     /// Corpses per pile cell ([`crate::Rules::corpse_piles`], [`crate::piles`]); hashed only
     /// while some corpse is counted.
     pub piles: crate::piles::Piles,
+    /// Trees and stones struck by balls ([`crate::Rules::ball_terrain`],
+    /// [`crate::ball_terrain`]); hashed only while some object is struck.
+    pub struck: crate::ball_terrain::StruckMap,
 }
 
 /// Unit indices per 128 px cell (8 × 8 lock cells).
@@ -729,6 +732,7 @@ impl World {
             ground_fires: Default::default(),
             mortar_zones: Default::default(),
             piles: Default::default(),
+            struck: Default::default(),
         }
     }
 
@@ -1403,6 +1407,7 @@ impl World {
         let hash = if self.ground_fires.list.is_empty() { hash } else { state_hash(&(hash, &self.ground_fires)) };
         let hash = if self.mortar_zones.is_empty() { hash } else { state_hash(&(hash, &self.mortar_zones)) };
         let hash = if self.piles.is_empty() { hash } else { state_hash(&(hash, &self.piles)) };
+        let hash = if self.struck.is_empty() { hash } else { state_hash(&(hash, &self.struck)) };
         // The peace time, only in games that have one.
         if self.peace == crate::peace::Peace::default() { hash } else { state_hash(&(hash, &self.peace)) }
     }

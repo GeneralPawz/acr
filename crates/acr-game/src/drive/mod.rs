@@ -754,6 +754,7 @@ impl Driver {
                         corpse_piles,
                         group_move,
                         cannon_fire,
+                        ball_terrain,
                         hud,
                         corpse_decay_half,
                         decay_stain,
@@ -784,6 +785,7 @@ impl Driver {
                                 corpse_piles,
                                 group_move,
                                 cannon_fire,
+                                ball_terrain,
                             },
                         }));
                         if let Mode::InGame(g) = &mut game.mode {
@@ -811,6 +813,7 @@ impl Driver {
                         corpse_piles,
                         group_move,
                         cannon_fire,
+                        ball_terrain,
                     } => {
                         let mut players = vec![PlayerSetup {
                             name: b"Driver".to_vec(),
@@ -851,6 +854,7 @@ impl Driver {
                                 corpse_piles,
                                 group_move,
                                 cannon_fire,
+                                ball_terrain,
                             },
                         }));
                     }
@@ -955,6 +959,11 @@ impl Driver {
                 job.reply.insert("impact".into(), impact);
                 Ok(false)
             }
+            Request::MapObject(v) => {
+                let objects = bench::map_object(game, &v)?;
+                job.reply.insert("objects".into(), objects);
+                Ok(false)
+            }
             Request::Profile => {
                 acr_sim::prof::enable(true);
                 let totals: serde_json::Map<String, serde_json::Value> = acr_sim::prof::take()
@@ -1006,6 +1015,7 @@ impl Driver {
                         "corpse_piles",
                         "group_move",
                         "cannon_fire",
+                        "ball_terrain",
                         "nation",
                         "ground_cover",
                     ] {

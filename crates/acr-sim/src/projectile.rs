@@ -84,6 +84,9 @@ pub struct Plough {
     pub n: u8,
     /// Ground contacts so far (each costs [`BOUNCE_LOSS`]).
     pub bounces: u8,
+    /// Energy (percent) lost to trees and stones ([`crate::Rules::ball_terrain`],
+    /// [`crate::ball_terrain`]).
+    pub lost: u8,
 }
 
 impl std::hash::Hash for Plough {
@@ -93,6 +96,9 @@ impl std::hash::Hash for Plough {
         }
         if self.bounces != 0 {
             self.bounces.hash(state);
+        }
+        if self.lost != 0 {
+            (6u8, self.lost).hash(state);
         }
     }
 }
@@ -106,7 +112,8 @@ impl Plough {
     /// The energy left for the next body, in percent of the ball's (100, 80, … 20, less
     /// [`BOUNCE_LOSS`] per ground contact).
     pub fn energy(&self) -> u8 {
-        (100 - PLOUGH_LOSS * i32::from(self.n) - BOUNCE_LOSS * i32::from(self.bounces)).max(0) as u8
+        (100 - PLOUGH_LOSS * i32::from(self.n) - BOUNCE_LOSS * i32::from(self.bounces) - i32::from(self.lost)).max(0)
+            as u8
     }
 
     /// A ground contact: the ball loses [`BOUNCE_LOSS`] of its energy.
@@ -720,6 +727,11 @@ pub fn process(w: &mut World) {
         p.vel.2 += p.az;
         p.pos = (p.pos.0 + p.vel.0, p.pos.1 + p.vel.1, p.pos.2 + p.vel.2);
         w.projectiles.slots[slot] = Some(p);
+        // Ball-terrain rule: a ploughing ball meets the trees and stones on its way.
+        if w.rules.ball_terrain && ploughs(w, &p) && crate::ball_terrain::meet(w, slot) {
+            continue;
+        }
+        let Some(p) = w.projectiles.slots[slot] else { continue };
         // Hit-locations rule: a direct-fire ball strikes the building it was laid on when it
         // flies into it (within its `ADDSHOTRADIUS`, at least 64 px, and below its top).
         if let Some(b) = direct_target(w, &p) {

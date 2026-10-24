@@ -77,6 +77,7 @@ const ON: Rules = Rules {
     corpse_piles: false,
     group_move: false,
     cannon_fire: false,
+    ball_terrain: false,
 };
 
 /// A mortar shells a target; returns the world after `ticks` and the first fire seen.

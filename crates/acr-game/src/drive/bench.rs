@@ -1,6 +1,7 @@
 //! The close-up bench (#277, `docs/testing.md`): soldiers placed where the test wants them,
 //! scripted hits through the simulation's body path, and the camera close up.
 
+use acr_formats::m3d::SpriteGroup;
 use acr_sim::Pos;
 use acr_sim::body::{self, Injury, KNEE, LimbId, Outcome, Part};
 use acr_sim::combat::{DeathCause, ScriptedHit, scripted_hit};
@@ -281,6 +282,31 @@ pub fn hit(game: &mut Game, v: &Value) -> Result<Value, String> {
 /// ball's speed in px per tick (default 12). A shell `"by"` a howitzer also leaves a shell
 /// fire (`ground_fire::shell_burst`, rule `hit_locations`); one by a mortar (`ArtMrt`, rule
 /// `mortars`) leaves none and bursts smaller.
+/// `{"cmd": "map_object", "group": "tree"|"stone", "index": n, "at": [[x, y], ...],
+/// "rock": bool}`: trees (wood sources) or stones put on the map as `World::objects`, so
+/// balls meet them under the `ball_terrain` rule; a `rock` locks its ground cells. Drawn as
+/// models with `map_models` where the table names `index`. Returns the struck-state keys.
+pub fn map_object(game: &mut Game, v: &Value) -> Result<Value, String> {
+    let Mode::InGame(g) = &mut game.mode else { return Err("no game".into()) };
+    let tree = match v.get("group").and_then(Value::as_str).unwrap_or("tree") {
+        "tree" => true,
+        "stone" => false,
+        o => return Err(format!("map_object: group {o:?} is not \"tree\" or \"stone\"")),
+    };
+    let index = v.get("index").and_then(Value::as_u64).unwrap_or(0) as u16;
+    let rock = v.get("rock").and_then(Value::as_bool).unwrap_or(false);
+    let at: Vec<(i32, i32)> = v
+        .get("at")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(|p| Some((p.get(0)?.as_i64()? as i32, p.get(1)?.as_i64()? as i32))).collect())
+        .unwrap_or_default();
+    let world = g.world_mut().ok_or("no world yet")?;
+    let group = if tree { SpriteGroup::Trees } else { SpriteGroup::Stones };
+    let ids: Vec<usize> =
+        at.iter().map(|&(x, y)| acr_sim::ball_terrain::add_object(world, group, index, x, y, tree, rock)).collect();
+    Ok(json!(ids))
+}
+
 pub fn impact(game: &mut Game, v: &Value) -> Result<Value, String> {
     let Mode::InGame(g) = &mut game.mode else { return Err("no game".into()) };
     let at = match v.get("at").and_then(Value::as_array).map(Vec::as_slice) {

@@ -33,6 +33,7 @@ const ON: Rules = Rules {
     corpse_piles: false,
     group_move: true,
     cannon_fire: false,
+    ball_terrain: false,
 };
 
 struct Setup {

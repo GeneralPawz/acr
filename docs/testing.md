@@ -256,6 +256,7 @@ every texture 0, no sprites, no units, an empty `SEA2`; `acr-game/src/blank_map.
 | `corpse_piles` | the optional corpse-piles rule: dense piles slow, big ones block (simulation.md "Corpse piles") |
 | `group_move` | the optional group-move rule: every selected formation moves, several stand in lines and rows (simulation.md "Group moves"); also on through `controls=modern` in settings.txt |
 | `cannon_fire` | the optional cannon-fire rule: under `hit_locations` a round-shot hit sets a man on fire (simulation.md "Shell fires"); default `false` |
+| `ball_terrain` | the optional ball-terrain rule: under `hit_locations` balls fell trees and knock stones (simulation.md "Balls against trees and stones"); put them there with `{"cmd": "map_object", "group": "tree"\|"stone", "index": 0, "at": [[x, y]], "rock": false}`; default `false` |
 | `editor` | `true`: the test editor's field (placing panel shown, fighting off at the start; docs/ui.md) |
 | `hud` | `false` hides the interface from the start, like `{"cmd": "hud", "on": false}` |
 | `corpse_decay` | `full` or `half`: overrides the setting ([rendering-3d.md](rendering-3d.md)) |

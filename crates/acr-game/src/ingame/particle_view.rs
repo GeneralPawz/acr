@@ -85,6 +85,8 @@ impl Soil {
 pub struct ParticleView {
     pub particles: Particles,
     last_impact: u64,
+    /// Trees and stones struck up to this tick have thrown (`World::struck`).
+    last_struck: u64,
     /// The tick of the last hits shredded and the victims done at it (a scripted hit can
     /// come between two frames of one tick).
     last_hit: u64,
@@ -769,6 +771,7 @@ impl ParticleView {
         if now < self.tick {
             self.particles.clear();
             self.last_impact = 0;
+            self.last_struck = 0;
             self.last_hit = 0;
             self.hits_done.clear();
             self.last_fragment = 0;
@@ -801,6 +804,39 @@ impl ParticleView {
         }
         if let Some(last) = world.impacts.back() {
             self.last_impact = self.last_impact.max(last.tick);
+        }
+        // Trees and stones a ball struck (rule `ball_terrain`): splinters, chips and dust
+        // knocked back off the trunk or the stone at the ball's height, as off a wall.
+        if !world.struck.is_empty() {
+            let since = self.last_struck;
+            for (&k, s) in world.struck.iter().filter(|(_, s)| s.tick() > since) {
+                let Some(o) = world.objects.get(k as usize) else { continue };
+                let (x, y) = acr_sim::ball_terrain::place(world, k as usize);
+                // A knocked stone throws from where it lay.
+                let (x, y) = match *s {
+                    acr_sim::ball_terrain::Struck::Moved { from, .. } => (o.x + from.0, o.y + from.1),
+                    _ => (x, y),
+                };
+                let dir = match *s {
+                    acr_sim::ball_terrain::Struck::Felled { dir, .. }
+                    | acr_sim::ball_terrain::Struck::Splintered { dir, .. }
+                    | acr_sim::ball_terrain::Struck::Chipped { dir, .. } => dir,
+                    acr_sim::ball_terrain::Struck::Moved { dx, dy, from, .. } => {
+                        acr_sim::trig::get_dir(dx - from.0, dy - from.1)
+                    }
+                };
+                let a = f32::from(dir) * std::f32::consts::TAU / 256.0;
+                let seed = hash(k ^ hash(s.tick() as u32 ^ 0x7ee5));
+                let z = ground_z(terrain, x as f32, y as f32) + 12.0 + 20.0 * unit(seed, 2);
+                wall_hit(
+                    &mut self.particles,
+                    DeathCause::Cannonball,
+                    [x as f32, y as f32, z],
+                    [a.cos(), a.sin()],
+                    seed,
+                );
+                self.last_struck = self.last_struck.max(s.tick());
+            }
         }
         {
             let since = self.last_hit;

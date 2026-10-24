@@ -199,7 +199,8 @@ impl SaveGame {
             | u64::from(self.setup.rules.mortars) << 2
             | u64::from(self.setup.rules.corpse_piles) << 3
             | u64::from(self.setup.rules.group_move) << 4
-            | u64::from(self.setup.rules.cannon_fire) << 5);
+            | u64::from(self.setup.rules.cannon_fire) << 5
+            | u64::from(self.setup.rules.ball_terrain) << 6);
         w.0
     }
 
@@ -244,6 +245,7 @@ impl SaveGame {
                 corpse_piles: bits & 8 != 0,
                 group_move: bits & 16 != 0,
                 cannon_fire: bits & 32 != 0,
+                ball_terrain: bits & 64 != 0,
             };
         }
         if r.pos != data.len() {

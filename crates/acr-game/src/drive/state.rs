@@ -95,6 +95,16 @@ pub fn state(
     let brigades: Vec<Value> =
         formations(world, me).into_iter().map(|(b, n)| json!({"brigade": b, "members": n})).collect();
     m.insert("formations".into(), brigades.into());
+    // Trees and stones struck by balls (rule `ball_terrain`), and the impacts kept.
+    if !world.struck.is_empty() {
+        let struck: Vec<Value> =
+            world.struck.iter().map(|(k, s)| json!({"object": k, "struck": format!("{s:?}")})).collect();
+        m.insert("struck".into(), struck.into());
+    }
+    m.insert(
+        "impacts".into(),
+        world.impacts.iter().rev().take(8).map(|i| json!([i.tick, i.pos.0, i.pos.1])).collect::<Vec<_>>().into(),
+    );
     // Counts per owner: units, finished buildings, building sites and burning objects by type.
     let mut counts: BTreeMap<u8, [BTreeMap<String, u32>; 4]> = BTreeMap::new();
     for u in world.units.iter().filter(|u| u.living()) {

@@ -477,6 +477,10 @@ impl Game {
         if self.ui.settings().cannon_fire {
             setup.rules.cannon_fire = true;
         }
+        // And `ball_terrain` (with hit locations, on by default with the modern controls).
+        if self.ui.settings().ball_terrain() {
+            setup.rules.ball_terrain = true;
+        }
         let mut game = ingame::InGame::new(setup);
         game.apply_settings(self.ui.settings());
         game.start(&self.assets.paths());

@@ -136,6 +136,8 @@ pub enum Start {
         group_move: bool,
         /// The optional cannon-fire rule (round shot sets men on fire under hit locations).
         cannon_fire: bool,
+        /// The optional ball-terrain rule (balls break trees and knock stones under hit locations).
+        ball_terrain: bool,
     },
     /// The blank test field ("The blank field" in `docs/testing.md`): `players` (1 or 2)
     /// without start units and without AI, `nation` for the local player.
@@ -151,6 +153,8 @@ pub enum Start {
         group_move: bool,
         /// The optional cannon-fire rule (round shot sets men on fire under hit locations).
         cannon_fire: bool,
+        /// The optional ball-terrain rule (balls break trees and knock stones under hit locations).
+        ball_terrain: bool,
         hud: bool,
         /// `"corpse_decay": "half"|"full"` overrides the setting (`corpse_decay`).
         corpse_decay_half: Option<bool>,
@@ -266,6 +270,8 @@ pub enum Request {
     Hit(Value),
     /// A scripted round striking the ground or water, hitting no one (`drive::bench::impact`).
     Impact(Value),
+    /// Trees or stones put on the map as simulated map objects (`drive::bench::map_object`).
+    MapObject(Value),
     /// `{"cmd":"gputime","frames":n}`: GPU milliseconds per pass, from timestamp queries.
     GpuTime(u32),
     /// `{"cmd":"frametimes","frames":n}`: wall milliseconds of `n` frames drawn back to back
@@ -381,6 +387,7 @@ pub(super) fn blank(b: &Value) -> Result<Start, String> {
         corpse_piles: b.get("corpse_piles").and_then(Value::as_bool).unwrap_or(false),
         group_move: b.get("group_move").and_then(Value::as_bool).unwrap_or(false),
         cannon_fire: b.get("cannon_fire").and_then(Value::as_bool).unwrap_or(false),
+        ball_terrain: b.get("ball_terrain").and_then(Value::as_bool).unwrap_or(false),
         hud: b.get("hud").and_then(Value::as_bool).unwrap_or(true),
         corpse_decay_half: b.get("corpse_decay").and_then(Value::as_str).map(|v| v == "half"),
         decay_stain: b.get("decay_stain").and_then(Value::as_str).map(|v| v == "on"),
@@ -584,6 +591,7 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
                     corpse_piles: r.get("corpse_piles").and_then(Value::as_bool).unwrap_or(false),
                     group_move: r.get("group_move").and_then(Value::as_bool).unwrap_or(false),
                     cannon_fire: r.get("cannon_fire").and_then(Value::as_bool).unwrap_or(false),
+                    ball_terrain: r.get("ball_terrain").and_then(Value::as_bool).unwrap_or(false),
                 })
             }
         }
@@ -635,6 +643,7 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
         "spawn" => Request::Spawn(v.clone()),
         "hit" => Request::Hit(v.clone()),
         "impact" => Request::Impact(v.clone()),
+        "map_object" => Request::MapObject(v.clone()),
         "profile" => Request::Profile,
         "gputime" => Request::GpuTime(uint(&v, "frames").unwrap_or(30).clamp(1, 1000) as u32),
         "frametimes" => Request::FrameTimes(uint(&v, "frames").unwrap_or(60).clamp(1, 10000) as u32),
@@ -776,6 +785,7 @@ mod tests {
                 corpse_piles: false,
                 group_move: false,
                 cannon_fire: false,
+                ball_terrain: false,
             })
         );
         let (_, r) = parse(r#"{"cmd": "load_map", "map": "Missions\\a.m3d"}"#).unwrap();
@@ -791,6 +801,7 @@ mod tests {
             corpse_piles: false,
             group_move: false,
             cannon_fire: false,
+            ball_terrain: false,
             hud: true,
             corpse_decay_half: None,
             decay_stain: None,
