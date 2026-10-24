@@ -176,6 +176,26 @@ impl Audio {
         Some(mixer.play(sound, volume, pan))
     }
 
+    /// Plays a made sound (the weather's) at `volume` and `pan`, scaled by the effects volume.
+    pub fn play_sound(&mut self, sound: Sound, volume: f32, pan: f32) -> Option<acr_audio::VoiceId> {
+        let mut mixer = self.output.as_ref()?.mixer.lock().ok()?;
+        Some(mixer.play(sound, volume, pan))
+    }
+
+    /// Loops a made sound at `volume` (scaled by the effects volume), fading in over `fade`
+    /// seconds, until [`Audio::fade_out`].
+    pub fn play_loop(&mut self, sound: Sound, volume: f32, fade: f32) -> Option<acr_audio::VoiceId> {
+        let mut mixer = self.output.as_ref()?.mixer.lock().ok()?;
+        Some(mixer.play_looped(sound, volume, fade))
+    }
+
+    /// Fades a voice out over `fade` seconds and ends it.
+    pub fn fade_out(&mut self, voice: acr_audio::VoiceId, fade: f32) {
+        if let Some(Ok(mut mixer)) = self.output.as_ref().map(|o| o.mixer.lock()) {
+            mixer.fade_out(voice, fade);
+        }
+    }
+
     /// Whether a voice started by [`Audio::play_at`] is still playing.
     pub fn is_playing(&self, voice: acr_audio::VoiceId) -> bool {
         self.output.as_ref().and_then(|o| o.mixer.lock().ok()).is_some_and(|m| m.is_playing(voice))

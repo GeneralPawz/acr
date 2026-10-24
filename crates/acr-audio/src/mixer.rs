@@ -15,6 +15,12 @@ struct Voice {
     /// Position in source frames, fractional for resampling.
     position: f64,
     gain: [f32; 2],
+    /// Starts again from the beginning at its end (a weather loop) instead of ending.
+    looping: bool,
+    /// Fade: the current level (0..=1), its target and the change per output frame.
+    level: f32,
+    target: f32,
+    ramp: f32,
 }
 
 struct MusicStream {
@@ -80,8 +86,43 @@ impl Mixer {
         self.meter.started += 1;
         let pan = pan.clamp(-1.0, 1.0);
         let gain = [volume * (1.0 - pan.max(0.0)), volume * (1.0 + pan.min(0.0))];
-        self.voices.push(Voice { id, sound, position: 0.0, gain });
+        self.voices.push(Voice { id, sound, position: 0.0, gain, looping: false, level: 1.0, target: 1.0, ramp: 0.0 });
         id
+    }
+
+    /// Starts a sound that loops until [`Mixer::fade_out`] or [`Mixer::stop`], fading in over
+    /// `fade` seconds. The loop runs from the last frame straight into the first, so the
+    /// sound should be made seamless.
+    pub fn play_looped(&mut self, sound: Sound, volume: f32, fade: f32) -> VoiceId {
+        let id = self.play(sound, volume, 0.0);
+        let ramp = self.ramp(fade);
+        if let Some(v) = self.voices.last_mut() {
+            v.looping = true;
+            v.level = if ramp < 1.0 { 0.0 } else { 1.0 };
+            v.ramp = ramp;
+        }
+        id
+    }
+
+    /// Changes a playing voice's volume (both sides; the pan is reset).
+    pub fn set_volume(&mut self, id: VoiceId, volume: f32) {
+        if let Some(v) = self.voices.iter_mut().find(|v| v.id == id) {
+            v.gain = [volume; 2];
+        }
+    }
+
+    /// Fades a voice out over `fade` seconds, then ends it.
+    pub fn fade_out(&mut self, id: VoiceId, fade: f32) {
+        let ramp = self.ramp(fade);
+        if let Some(v) = self.voices.iter_mut().find(|v| v.id == id) {
+            v.target = 0.0;
+            v.ramp = ramp;
+        }
+    }
+
+    /// The level change per output frame of a fade over `secs` (1: at once).
+    fn ramp(&self, secs: f32) -> f32 {
+        if secs > 0.0 { (1.0 / (secs * self.rate as f32)).min(1.0) } else { 1.0 }
     }
 
     pub fn stop(&mut self, id: VoiceId) {
@@ -140,18 +181,32 @@ impl Mixer {
             let src_channels = usize::from(voice.sound.channels);
             let src_frames = voice.sound.frames();
             for frame in 0..frames {
-                let index = voice.position as usize;
+                let mut index = voice.position as usize;
                 if index + 1 >= src_frames {
-                    return false;
+                    if !voice.looping || src_frames < 2 {
+                        return false;
+                    }
+                    voice.position -= (src_frames - 1) as f64;
+                    index = voice.position as usize;
+                }
+                if voice.level != voice.target {
+                    voice.level = if voice.level < voice.target {
+                        (voice.level + voice.ramp).min(voice.target)
+                    } else {
+                        (voice.level - voice.ramp).max(voice.target)
+                    };
                 }
                 let t = (voice.position - index as f64) as f32;
                 for (c, slot) in out[frame * channels..][..channels].iter_mut().enumerate() {
                     let sc = c.min(src_channels - 1);
                     let a = f32::from(voice.sound.samples[index * src_channels + sc]);
                     let b = f32::from(voice.sound.samples[(index + 1) * src_channels + sc]);
-                    *slot += (a + (b - a) * t) / 32768.0 * voice.gain[c.min(1)] * sfx;
+                    *slot += (a + (b - a) * t) / 32768.0 * voice.gain[c.min(1)] * voice.level * sfx;
                 }
                 voice.position += step;
+                if voice.level <= 0.0 && voice.target <= 0.0 {
+                    return false;
+                }
             }
             true
         });
@@ -237,6 +292,33 @@ mod tests {
         let mut out = [0.0; 2];
         m.render(&mut out, 2);
         assert_eq!(out, [0.5, 0.0]);
+    }
+
+    #[test]
+    fn loops_until_faded_out() {
+        let mut m = Mixer::new(100);
+        let id = m.play_looped(sound(100, &[0, 16384, 0]), 1.0, 0.0);
+        let mut out = [0.0; 6];
+        m.render(&mut out, 1);
+        // Frames 0, 1 and back to 0 (the last frame is the first again): a seamless cycle.
+        assert_eq!(out, [0.0, 0.5, 0.0, 0.5, 0.0, 0.5]);
+        assert!(m.is_playing(id));
+        m.set_volume(id, 0.5);
+        m.render(&mut out, 1);
+        assert_eq!(out[1], 0.25);
+        m.fade_out(id, 0.04);
+        m.render(&mut out, 1);
+        assert_eq!(out[1], 0.125);
+        assert!(!m.is_playing(id));
+    }
+
+    #[test]
+    fn fades_in() {
+        let mut m = Mixer::new(100);
+        m.play_looped(sound(100, &[16384, 16384, 16384]), 1.0, 0.04);
+        let mut out = [0.0; 4];
+        m.render(&mut out, 1);
+        assert_eq!(out, [0.125, 0.25, 0.375, 0.5]);
     }
 
     struct Blocks(Vec<Vec<i16>>);

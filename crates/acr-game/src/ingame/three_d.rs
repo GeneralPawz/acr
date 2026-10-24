@@ -1660,7 +1660,6 @@ impl ThreeD {
 
 impl ThreeD {
     /// The weather drawn: the driver's override, else the setting.
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn weather(&self) -> Weather {
         self.weather_override.unwrap_or(self.weather)
     }

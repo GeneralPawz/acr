@@ -481,6 +481,12 @@ impl InGame {
         std::mem::take(&mut self.ambient_ticks)
     }
 
+    /// The weather to hear (`weather_sound`): the weather drawn, off without the 3D pass
+    /// (it draws only there).
+    pub fn weather_heard(&self) -> acr_render::weather::Weather {
+        if self.three_d.active() { self.three_d.weather() } else { Default::default() }
+    }
+
     /// What the ambient sounds need: the view in original pixels and the map's water.
     pub fn ambient_view(&self, ticks: u32, window: [f32; 2]) -> Option<crate::unit_sounds::AmbientView<'_>> {
         let (map, terrain) = (self.map.as_ref()?, self.terrain.as_ref()?);

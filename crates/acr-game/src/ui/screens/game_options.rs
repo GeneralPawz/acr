@@ -10,7 +10,7 @@
 
 use super::super::dialog::{Align, CANCEL, Kind, OK, WidgetId};
 use super::super::draw::Draw;
-use super::super::settings::{CONTROL_CHOICES, CameraMode, Gore, Models, RESOLUTIONS, Settings};
+use super::super::settings::{CONTROL_CHOICES, CameraMode, Gore, Models, RESOLUTIONS, Settings, Weather};
 use super::super::{Ctx, Input, Nav, Screen};
 use super::{Menu, font};
 use crate::ui::fonts::FontId;
@@ -149,26 +149,36 @@ const GRAPHICS: &[Row] = &[
         get: |s| on_off(s.camera == CameraMode::Free),
         set: |s, i| s.camera = if i == 1 { CameraMode::Free } else { CameraMode::Fixed },
     }),
+    // Shadows and detail levels share one box (like water and ground), so the trees move
+    // up here and the landscape group has a row for the weather.
     Row::Choice(Choice {
-        label: b"Schatten",
-        lines: &[b"An", b"Aus"],
-        get: |s| on_off(!s.shadows),
-        set: |s, i| s.shadows = i == 0,
+        label: b"Schatten, Details",
+        lines: &[b"An", b"Schatten aus", b"Detailstufen aus", b"Beide aus"],
+        get: |s| 2 * on_off(!s.lod) + on_off(!s.shadows),
+        set: |s, i| {
+            s.shadows = i % 2 == 0;
+            s.lod = i < 2;
+        },
     }),
-    Row::Choice(Choice {
-        label: b"Detailstufen",
-        lines: &[b"An", b"Aus"],
-        get: |s| on_off(!s.lod),
-        set: |s, i| s.lod = i == 0,
-    }),
-    // The note "Nur in der 3D-Ansicht" went into the heading, and water and ground share
-    // one box, so the trees and the wind have their rows.
-    Row::Heading(b"Landschaft (nur 3D)"),
     Row::Choice(Choice {
         label: b"3D-B\xe4ume, Steine",
         lines: &[b"An", b"Aus"],
         get: |s| on_off(!s.map_models),
         set: |s, i| s.map_models = i == 0,
+    }),
+    // The note "Nur in der 3D-Ansicht" went into the heading, and water and ground share
+    // one box. The weather is a look only (#224, docs/rendering-3d.md "Weather").
+    Row::Heading(b"Landschaft (nur 3D)"),
+    Row::Choice(Choice {
+        label: b"Wetter",
+        lines: &[b"Aus (Original)", b"Regen", b"Schnee", b"Nebel"],
+        get: |s| match s.weather {
+            Weather::Off => 0,
+            Weather::Rain => 1,
+            Weather::Snow => 2,
+            Weather::Fog => 3,
+        },
+        set: |s, i| s.weather = [Weather::Off, Weather::Rain, Weather::Snow, Weather::Fog][i.min(3)],
     }),
     Row::Choice(Choice {
         label: b"Wind",

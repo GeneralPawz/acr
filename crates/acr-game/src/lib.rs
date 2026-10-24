@@ -27,6 +27,7 @@ mod random_map;
 mod savegame;
 pub mod ui;
 mod unit_sounds;
+mod weather_sound;
 #[cfg(target_arch = "wasm32")]
 mod web;
 
@@ -74,6 +75,7 @@ pub struct Game {
     mode: Mode,
     audio: music::Audio,
     unit_sounds: unit_sounds::UnitSounds,
+    weather_sound: weather_sound::WeatherSound,
     intro: intro::Intro,
     cursor: PhysicalPosition<f64>,
     last_frame: Option<web_time::Instant>,
@@ -105,6 +107,7 @@ impl Game {
             mode: Mode::Intro,
             audio: music::Audio::new(&paths),
             unit_sounds: unit_sounds::UnitSounds::new(),
+            weather_sound: Default::default(),
             intro: intro::Intro::new(&paths),
             assets,
             window: None,
@@ -232,6 +235,11 @@ impl Game {
         self.load_requested();
         self.play_sounds();
         self.audio.report();
+        let weather = match &self.mode {
+            Mode::InGame(game) => game.weather_heard(),
+            _ => Default::default(),
+        };
+        self.weather_sound.update(weather, dt as f32, &mut self.audio);
         if let Mode::InGame(game) = &self.mode
             && let Some(reason) = game.failure()
         {

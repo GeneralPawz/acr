@@ -916,8 +916,9 @@ tracks (311, 338, 419, 446) drawn in. The settings each line writes are in
 | 2 | | Körperabstand | Aus (Original) / An | `body_spacing` |
 | 3 | 3D-Grafik | 3D-Modelle | Aus (Original) / Einheiten / Einheiten und Gebäude | `models` |
 | 3 | Darstellung | Kamera | Fest (Original) / Frei | `camera` |
-| 3 | | Schatten, Detailstufen | An / Aus | `shadows`, `lod` |
-| 3 | Landschaft (nur 3D) | 3D-Bäume, Steine | An / Aus | `map_models` |
+| 3 | | Schatten, Details | An / Schatten aus / Detailstufen aus / Beide aus | `shadows`, `lod` (one box, so the landscape group has room for the weather) |
+| 3 | | 3D-Bäume, Steine | An / Aus | `map_models` |
+| 3 | Landschaft (nur 3D) | Wetter | Aus (Original) / Regen / Schnee / Nebel | `weather` (a look and its sound, no gameplay effect) |
 | 3 | | Wind | An / Aus | `wind` |
 | 3 | | Wasser, Boden | Detailliert / Wasser original / Boden original / Original | `water`, `ground` (one box: the page's rows are the frame's) |
 
@@ -927,7 +928,9 @@ applies from the next battle, as the note under the heading says. The modern con
 Ctrl + Space, C switches the free camera for the running battle only
 ([controls.md](controls.md#leader-chords-modern)); OK on these pages sets it back to the
 `Kamera` line. Driver check with
-screenshots: `ACR-analysis/settings/after.jsonl`.
+screenshots: `ACR-analysis/settings/after.jsonl`; the `Wetter` line (combo, OK, the
+driver's `weather` answering `rain`, the line still `Regen` when reopened):
+`ACR-analysis/genai/weather/ui/` (`steps/set_rain.json`, `sheet_page3.png`).
 
 ### Mission windows and messages
 

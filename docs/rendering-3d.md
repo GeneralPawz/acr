@@ -353,9 +353,31 @@ tick about 320, 60 frames, two alternating runs each; `ACR-analysis/genai/weathe
 | snow | 3.45 | 0.080 | 0.033 | 0.385 |
 | fog | 3.36 | 0.064 | 0.033 | 0.308 |
 
-Open: sound (the mixer has no looping voice yet: rain and wind loops and thunder need a
-looping voice in `acr-audio` and own CC0 recordings in `assets/sounds/`), the options menu
-entry, gameplay effects (wet powder, slower marching, shorter sight in fog) as optional rules.
+**Options:** Spieleinstellungen page 3, "Landschaft (nur 3D)", line `Wetter` (Aus
+(Original) / Regen / Schnee / Nebel), at once on OK ([ui.md](ui.md#game-menu-0x5d9c30-and-game-options-0x5dbe10)).
+
+**Sound** (`acr-game` `weather_sound.rs`): the weather drawn (`InGame::weather_heard`: the
+override or the setting, off without the 3D pass and outside a game) picks the loops.
+
+| Mode | Loops (volume before the effects volume) | One-shots |
+|---|---|---|
+| rain | rain 0.45, wind 0.18 | a thunder roll every 14–44 s, volume 0.35–0.8, panned up to ±0.6 |
+| snow | wind 0.35 | none |
+| fog, off | none | none |
+
+- The sounds are made in code from seeded noise at 22050 Hz on first use, so there is no
+  recording and nothing to license: rain 6 s (noise band-passed to about 0.8–7 kHz plus
+  about 60 drop ticks a second), wind 8 s (noise low-passed at 150–500 Hz, gusts of 8, 4
+  and 8/3 s that repeat with the loop), three thunder rolls of 5–7 s (a crack, a 90–180 Hz
+  rumble with three swells). The loops' last 0.5 s (rain) or 1 s (wind) are crossfaded into
+  their starts, so they loop without a click.
+- `acr-audio`'s `Mixer::play_looped` loops a voice (fading in), `fade_out` ends it, both
+  over 2 s when the mode changes; the voices are effects, so `sound_volume` scales them.
+- `game.log` says `weather sound: <mode>` on each change (the driver runs without an audio
+  device, so the log is its check).
+
+Open: gameplay effects (wet powder, slower marching, shorter sight in fog) as optional rules;
+recorded CC0 sounds instead of the made ones, if wanted.
 
 ### Map trees and stones
 
