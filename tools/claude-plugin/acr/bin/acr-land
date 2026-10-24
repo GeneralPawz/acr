@@ -18,4 +18,8 @@ out="$(python "$here/vm_cargo.py" -- acr-check 2>&1 | grep -v 'time stamp')"
 echo "$out" | tail -60
 echo "$out" | grep -q '^FAIL' && { echo "FAIL checks: not pushed"; exit 4; }
 echo "$out" | grep -q '^PASS test' || { echo "FAIL checks did not run: not pushed"; exit 4; }
-git push -q origin HEAD:main 2>&1 | tail -2 && echo "PUSHED $(git rev-parse --short HEAD) to main"
+if push_out="$(git push -q origin HEAD:main 2>&1)"; then
+  echo "$push_out" | tail -2; echo "PUSHED $(git rev-parse --short HEAD) to main"
+else
+  echo "$push_out" | tail -3; echo "FAIL push rejected (main moved?): not pushed, rerun acr-land"; exit 5
+fi
