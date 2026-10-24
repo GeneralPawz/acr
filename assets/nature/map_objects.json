@@ -87,72 +87,7 @@
     "381-395": "oak",
     "396-398": "dead_tree",
     "399-410": "stone_a",
-    "411-426": "shrub",
-    "431": {
-      "model": "nat_fallen_log",
-      "scale": 1.2
-    },
-    "433": {
-      "model": "nat_fallen_log",
-      "scale": 1.2
-    },
-    "435-436": {
-      "model": "nat_fallen_log",
-      "scale": 1.3
-    },
-    "437": {
-      "model": "nat_fallen_log",
-      "scale": 1.7
-    },
-    "438": {
-      "model": "nat_fallen_log",
-      "scale": 1.4
-    },
-    "439": {
-      "model": "nat_fallen_log",
-      "scale": 1.8
-    },
-    "440": {
-      "model": "nat_fallen_log",
-      "scale": 1.4
-    },
-    "441": {
-      "model": "nat_fallen_log",
-      "scale": 1.1
-    },
-    "444": {
-      "model": "nat_fallen_log",
-      "scale": 0.6
-    },
-    "445": {
-      "model": "nat_fallen_log",
-      "scale": 0.9
-    },
-    "446": {
-      "model": "nat_fallen_log",
-      "scale": 1.6
-    },
-    "452": {
-      "model": "prop_ruin_wall",
-      "scale": 1.0
-    },
-    "458": {
-      "model": "prop_ruin_wall",
-      "scale": 0.5
-    },
-    "465-466": "prop_ruin_wall",
-    "465": {
-      "model": "prop_ruin_wall",
-      "scale": 1.3
-    },
-    "466": {
-      "model": "prop_ruin_wall",
-      "scale": 1.4
-    },
-    "467": {
-      "model": "prop_ruin_chapel",
-      "scale": 1.0
-    }
+    "411-426": "shrub"
   },
   "STONLIST": {
     "0-3": "stone_a",
