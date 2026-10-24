@@ -109,6 +109,29 @@ ITEMS = {
     "art_limber": {"category": "prop", "size": 2.80, "layer": "wood"},
     "mortar": {"category": "prop", "size": 1.00, "layer": "metal"},
     "saddle": {"category": "prop", "size": 0.70, "layer": "leather"},
+    # map props (assets/nature/prop_*.py, nat_*.py via `nature.build_generated`): own
+    # triangle budget and texture per row (`tris`, `tex` override the category). Rows
+    # without a script failed (docs/assets.md "Generated map props"); kept to retry.
+    "prop_well_stone": {"category": "prop", "size": 1.8, "layer": "wood", "tris": 2000, "tex": 512},
+    "prop_well_colonial": {"category": "prop", "size": 2.4, "layer": "wood", "tris": 2500, "tex": 512},
+    "prop_ruin_wall": {"category": "prop", "size": 5.0, "layer": "wood", "tris": 4000, "tex": 1024},
+    "prop_ruin_chapel": {"category": "prop", "size": 8.0, "layer": "wood", "tris": 6000, "tex": 1024},
+    "prop_inca_wall": {"category": "prop", "size": 5.0, "layer": "wood", "tris": 4000, "tex": 1024},
+    "prop_wigwam": {"category": "prop", "size": 4.0, "layer": "hide", "tris": 3500, "tex": 1024},
+    "prop_burial_scaffold": {"category": "prop", "size": 3.0, "layer": "wood", "tris": 2500, "tex": 512},
+    "prop_grave_cross": {"category": "prop", "size": 1.1, "layer": "wood", "tris": 600, "tex": 512},
+    "prop_firewood": {"category": "prop", "size": 1.4, "layer": "wood", "tris": 1500, "tex": 512},
+    "prop_palisade_gate": {"category": "prop", "size": 4.0, "layer": "wood", "tris": 3000, "tex": 1024},
+    "prop_maya_stela": {"category": "prop", "size": 3.0, "layer": "wood", "tris": 2000, "tex": 512},
+    "prop_aztec_altar": {"category": "prop", "size": 2.0, "layer": "wood", "tris": 2000, "tex": 512},
+    "prop_market_stall": {"category": "prop", "size": 3.0, "layer": "wood", "tris": 3000, "tex": 1024},
+    "prop_cannon_rack": {"category": "prop", "size": 2.0, "layer": "wood", "tris": 2000, "tex": 512},
+    "prop_bones": {"category": "prop", "size": 1.2, "layer": "wood", "tris": 1200, "tex": 512},
+    "nat_stone_pile": {"category": "prop", "size": 1.5, "layer": "wood", "tris": 1500, "tex": 512},
+    "nat_fallen_log": {"category": "prop", "size": 5.0, "layer": "wood", "tris": 2000, "tex": 512},
+    "nat_dry_bush": {"category": "prop", "size": 1.5, "layer": "wood", "tris": 3000, "tex": 512},
+    "nat_pumpkins": {"category": "prop", "size": 1.2, "layer": "wood", "tris": 1500, "tex": 512},
+    "nat_maize": {"category": "prop", "size": 2.2, "layer": "wood", "tris": 3000, "tex": 512},
 }
 
 BAND = 0.035     # default band plane above the eye line (m)
@@ -153,6 +176,26 @@ def summary(dists):
         return {"mean_m": None, "p99_m": None, "max_m": None}
     p99 = d[min(len(d) - 1, int(math.ceil(0.99 * len(d))) - 1)]
     return {"mean_m": round(sum(d) / len(d), 5), "p99_m": round(p99, 4), "max_m": round(d[-1], 4)}
+
+
+def prop_wind(z, top, horiz, reach, mode, rgb=None, phase=0.0):
+    """The `_WIND` channels (x trunk bend, y branch, z phase, w leaf flutter) of one vertex of
+    a generated prop: `mode` None (hard props: zeros), "stalk" (the whole plant sways with
+    height, leaves flutter from a fifth of the height up: maize, dry bushes) or "green" (only
+    green texels flutter, nothing bends: pumpkin leaves). `rgb` is the vertex's baked colour."""
+    if not mode or top <= 0:
+        return (0.0, 0.0, 0.0, 0.0)
+    h = min(max(z / top, 0.0), 1.0)
+    if mode == "stalk":
+        bend = min(1.0, top / 6.0)
+        w = min(1.0, max(0.0, (h - 0.2) / 0.3))
+        y = min(horiz / max(reach, 1e-6), 1.0) * min(1.0, reach / 2.5)
+        return (bend * h * h, y, phase if w else 0.0, w)
+    if mode == "green":
+        r, g, b = rgb if rgb is not None else (0.0, 0.0, 0.0)
+        w = 1.0 if g > r + 0.02 and g > b + 0.04 else 0.0
+        return (0.0, 0.0, phase if w else 0.0, w)
+    raise ValueError(f"unknown wind mode {mode!r}")
 
 
 def islands(n, edges):
@@ -696,6 +739,53 @@ def seat_on_head(src, it, scalp, head):
     return {"band_z": round(band_z, 3), "lift_m": round(lift, 4), "top_z": round(dz + top, 3)}
 
 
+def _outward(ob):
+    """Turns faces outward on a decimated generated prop: after the collapse stretches of
+    Pixal3D's soup faced inward (dark under Lambert). Normals are made consistent per island,
+    then each face is tested by a ray along its normal and one against it: a face whose front
+    is enclosed and whose back is open faces inward. An island where most faces do is flipped
+    whole, then single faces. Returns {inward_before, inward_after} as shares of the faces."""
+    import bmesh
+    from mathutils.bvhtree import BVHTree
+
+    bm = bmesh.new()
+    bm.from_mesh(ob.data)
+    bm.faces.ensure_lookup_table()
+    size = max(_ext(ob)) or 1.0
+
+    def inward():
+        tree = BVHTree.FromBMesh(bm)
+        eps, far = 1e-4 * size, 4.0 * size
+        out = set()
+        for f in bm.faces:
+            c, n = f.calc_center_median(), f.normal
+            if n.length < 0.5:
+                continue
+            front = tree.ray_cast(c + n * eps, n, far)[0] is not None
+            back = tree.ray_cast(c - n * eps, -n, far)[0] is not None
+            if front and not back:
+                out.add(f.index)
+        return out
+
+    before = inward()
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    bm.faces.ensure_lookup_table()
+    bad = inward()
+    for isl in _components(bm):
+        if sum(f.index in bad for f in isl) > len(isl) / 2:
+            bmesh.ops.reverse_faces(bm, faces=isl)
+    bm.faces.ensure_lookup_table()
+    bad = inward()
+    bmesh.ops.reverse_faces(bm, faces=[bm.faces[i] for i in sorted(bad)])
+    bm.faces.ensure_lookup_table()
+    after = inward()
+    n = max(1, len(bm.faces))
+    bm.to_mesh(ob.data)
+    bm.free()
+    ob.data.update()
+    return {"inward_before": round(len(before) / n, 3), "inward_after": round(len(after) / n, 3)}
+
+
 def _apply_decimate(ob, tris):
     import bpy
 
@@ -920,7 +1010,7 @@ def fit(rel, head=None, socket=None, scalp=None, name=None, keep_source=False):
 
     it = item(rel)
     cat = it["category"]
-    budget = CATEGORIES[cat]
+    budget = dict(CATEGORIES[cat], **{k: it[k] for k in ("tris", "tex") if k in it})
     name = name or it["name"]
     st = {"item": it["name"], "category": cat}
     src = load(source_path(rel), name + ".source")
@@ -970,6 +1060,8 @@ def fit(rel, head=None, socket=None, scalp=None, name=None, keep_source=False):
     bm.to_mesh(low.data)
     bm.free()
     _apply_decimate(low, budget["tris"])
+    if cat == "prop":
+        st["normals"] = _outward(low)
     st["triangles"] = _tris(low.data)
     st["islands"] = _islands(low.data)
     st["non_manifold"] = {"source": nm0, "repaired": nm1, "final": _non_manifold(low.data), "kinds": _nm_kinds(src.data)}

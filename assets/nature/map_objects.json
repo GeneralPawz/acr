@@ -1,5 +1,5 @@
 {
-  "_doc": "Map objects drawn as 3D models: TREELIST/STONLIST sprite index or range -> model name (target/assets/nature/<name>.glb), or {\"model\": name, \"scale\": s}. docs/rendering-3d.md \"Map trees and stones\". Models: assets/nature/*.py (acr_assets/nature.py), matched by look to the TREES.GP / STONES.GP frames. Unmapped: dry twig bushes 143-172, flags 331/471, Rushmore 225, flowers 327-330, ground debris and fallen trees 427-451, ruins 452-470; STONLIST skulls 75-79 and the head 132.",
+  "_doc": "Map objects drawn as 3D models: TREELIST/STONLIST sprite index or range -> model name (target/assets/nature/<name>.glb), or {\"model\": name, \"scale\": s}. docs/rendering-3d.md \"Map trees and stones\". Models: assets/nature/*.py (acr_assets/nature.py), matched by look to the TREES.GP / STONES.GP frames. Unmapped: dry twig bushes 143-172, flags 331/471, Rushmore 225, flowers 327-330, stone rubble 427-430/434/447-451, standing dead brush 442-443, ruins 453-457/459-464/468-470 (pillars, lintels, rubble); generated props (prop_*/nat_*, acr_assets.nature.build_generated): fallen trees 431-446, ruin walls 452/458/465-466, ruin tower 467; STONLIST skulls 75-79 and the head 132.",
   "TREELIST": {
     "0": "broadleaf_ez",
     "1": "dead_tree",
@@ -87,7 +87,72 @@
     "381-395": "oak",
     "396-398": "dead_tree",
     "399-410": "stone_a",
-    "411-426": "shrub"
+    "411-426": "shrub",
+    "431": {
+      "model": "nat_fallen_log",
+      "scale": 1.2
+    },
+    "433": {
+      "model": "nat_fallen_log",
+      "scale": 1.2
+    },
+    "435-436": {
+      "model": "nat_fallen_log",
+      "scale": 1.3
+    },
+    "437": {
+      "model": "nat_fallen_log",
+      "scale": 1.7
+    },
+    "438": {
+      "model": "nat_fallen_log",
+      "scale": 1.4
+    },
+    "439": {
+      "model": "nat_fallen_log",
+      "scale": 1.8
+    },
+    "440": {
+      "model": "nat_fallen_log",
+      "scale": 1.4
+    },
+    "441": {
+      "model": "nat_fallen_log",
+      "scale": 1.1
+    },
+    "444": {
+      "model": "nat_fallen_log",
+      "scale": 0.6
+    },
+    "445": {
+      "model": "nat_fallen_log",
+      "scale": 0.9
+    },
+    "446": {
+      "model": "nat_fallen_log",
+      "scale": 1.6
+    },
+    "452": {
+      "model": "prop_ruin_wall",
+      "scale": 1.0
+    },
+    "458": {
+      "model": "prop_ruin_wall",
+      "scale": 0.5
+    },
+    "465-466": "prop_ruin_wall",
+    "465": {
+      "model": "prop_ruin_wall",
+      "scale": 1.3
+    },
+    "466": {
+      "model": "prop_ruin_wall",
+      "scale": 1.4
+    },
+    "467": {
+      "model": "prop_ruin_chapel",
+      "scale": 1.0
+    }
   },
   "STONLIST": {
     "0-3": "stone_a",

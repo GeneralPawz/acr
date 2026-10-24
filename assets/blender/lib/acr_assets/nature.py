@@ -416,3 +416,94 @@ def build(ctx, spec):
         "leaf_gain": {k: round(v, 2) for k, v in sorted(gains.items())},
         "materials": sorted(s.material.name for s in obj.material_slots if s.material),
     }
+
+
+def build_generated(ctx, spec):
+    """A map prop from a generated model (Pixal3D or Rodin, `$ACR_SOURCES/generated/<source>`,
+    local only) through `genfit.fit` (prop category: backdrop dropped, decimated to the
+    item's `tris`, base colour baked, standing on z = 0, facing -Y at its `size`). SPEC:
+
+        source  path below the generated sources ("pixal3d/prop_ruin_wall.glb")
+        wind    None (hard props: zero `_WIND`), "stalk" (sways with height, leaves flutter:
+                maize, dry bushes) or "green" (green texels flutter: pumpkin leaves);
+                `genfit.prop_wind`
+        sink    metres below the ground point (default 0.03; on slopes nothing floats)
+        turn    degrees about +Z
+
+    The baked normal map is dropped (the renderer reads base colour only). Stats: the
+    `genfit.fit` numbers (`source_triangles`, `triangles`, `deviation`, `tex_unbaked_frac`,
+    `backdrop_faces_removed`, `size_m`) plus `wind`, `flutter_frac`."""
+    from . import genfit
+
+    low, st = genfit.fit(spec["source"], name=f"{ctx.name}.mesh")
+    me = low.data
+    # base colour only: drop the normal-map chain and its image
+    for m in me.materials:
+        nt = m.node_tree
+        for n in list(nt.nodes):
+            if n.type == "NORMAL_MAP" or (n.type == "TEX_IMAGE" and n.image and n.image.name.endswith(".nrm")):
+                if n.type == "TEX_IMAGE":
+                    img = n.image
+                    nt.nodes.remove(n)
+                    bpy.data.images.remove(img)
+                else:
+                    nt.nodes.remove(n)
+    img = next(n.image for n in me.materials[0].node_tree.nodes if n.type == "TEX_IMAGE" and n.image)
+    px = np.empty(img.size[0] * img.size[1] * 4, np.float32)
+    img.pixels.foreach_get(px)
+    px = px.reshape(-1, 4)
+    st["tex_black_frac"] = round(float((px[:, :3].max(1) < 0.05).mean()), 3)
+    st["tex_mean_rgb"] = [round(float(c), 3) for c in px[:, :3].mean(0)]
+    me.validate()
+    sink = spec.get("sink", 0.03)
+    vs.transform([low], Matrix.Rotation(math.radians(spec.get("turn", 0.0)), 4, "Z") @ Matrix.Translation((0, 0, -sink)))
+    low.parent = ctx.root
+    # per-vertex baked colour (for "green" flutter)
+    mode = spec.get("wind")
+    rgb = None
+    if mode == "green":
+        img = next(n.image for n in me.materials[0].node_tree.nodes if n.type == "TEX_IMAGE" and n.image)
+        w, h = img.size
+        px = np.empty(w * h * 4, np.float32)
+        img.pixels.foreach_get(px)
+        px = px.reshape(h, w, 4)
+        uv = me.uv_layers.active.data
+        acc = np.zeros((len(me.vertices), 4))
+        for lp in me.loops:
+            u, v = uv[lp.index].uv
+            c = px[min(h - 1, max(0, int(v * h))), min(w - 1, max(0, int(u * w))), :3]
+            acc[lp.vertex_index, :3] += c
+            acc[lp.vertex_index, 3] += 1
+        rgb = acc[:, :3] / np.maximum(acc[:, 3:], 1)
+    top = max(v.co.z for v in me.vertices)
+    reach = max(0.3, max(Vector((v.co.x, v.co.y)).length for v in me.vertices))
+    cell = reach / 2.0
+    rnd = random.Random(spec.get("seed", 7))
+    keys = {}
+    for v in me.vertices:
+        keys[(int(math.floor(v.co.x / cell)), int(math.floor(v.co.y / cell)), int(math.floor(v.co.z / cell)))] = None
+    for k in sorted(keys):
+        keys[k] = rnd.random()
+    a = me.attributes.new("_wind", "FLOAT_COLOR", "POINT")
+    flutter = 0
+    for i, v in enumerate(me.vertices):
+        co = v.co
+        ph = keys[(int(math.floor(co.x / cell)), int(math.floor(co.y / cell)), int(math.floor(co.z / cell)))]
+        ch = genfit.prop_wind(co.z, top, Vector((co.x, co.y)).length, reach, mode,
+                              tuple(rgb[i]) if rgb is not None else None, ph)
+        a.data[i].color = ch
+        flutter += ch[3] > 0
+    white(low)
+    ctx.root["acr_nature"] = "prop"
+    ctx.root["acr_wind"] = "_WIND: x trunk bend, y branch, z phase, w leaf flutter"
+    xs = [v.co.x for v in me.vertices]
+    ys = [v.co.y for v in me.vertices]
+    zs = [v.co.z for v in me.vertices]
+    st.update({
+        "kind": "prop",
+        "source": spec["source"],
+        "size_m": [round(max(xs) - min(xs), 2), round(max(ys) - min(ys), 2), round(max(zs), 2)],
+        "wind": mode,
+        "flutter_frac": round(flutter / max(1, len(me.vertices)), 3),
+    })
+    ctx.stats = st

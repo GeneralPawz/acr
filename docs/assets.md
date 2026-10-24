@@ -36,6 +36,15 @@ assets/
   nature/broadleaf.py     a tree (TREES.GP frame 104) with wind and felled/stump states
   nature/<model>.py       28 trees, bushes and rocks from Poly Haven / Sketchfab (acr_assets/nature.py:
                           cards, _WIND, alpha-mask leaves); map_objects.json maps TREELIST/STONLIST to them
+  nature/prop_*.py nat_*.py  13 map props from generated models (Pixal3D, Rodin; local-only
+                          sources) via nature.build_generated + genfit.fit (prop rows in
+                          genfit.ITEMS: size, `tris`, `tex`); hard props carry zero _WIND,
+                          maize sways ("stalk"); fallen trees and ruins in map_objects.json.
+                          Failed and left without a script (rows kept to retry): nat_stone_pile,
+                          nat_dry_bush, nat_pumpkins, prop_bones, prop_firewood,
+                          prop_grave_cross (dense nested soup crumples and bakes dark),
+                          prop_maya_stela (backdrop sheet kept); longhouse and mission_bell
+                          skipped (bad sources; a longhouse wants a scripted barrel vault)
 target/assets/            output (git-ignored): <category>/<name>.glb, ref/<TYPE>/, check/<name>/
 ```
 

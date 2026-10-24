@@ -15,7 +15,9 @@ class Tables(unittest.TestCase):
         for n, it in genfit.ITEMS.items():
             self.assertIn(it["category"], genfit.CATEGORIES, n)
             self.assertIn(it["layer"], decay.LAYERS, n)
-            self.assertTrue(0.05 < it["size"] < 5.0, n)
+            self.assertTrue(0.05 < it["size"] < (10.0 if n.startswith(("prop_", "nat_")) else 5.0), n)
+            if "tris" in it:
+                self.assertTrue(500 <= it["tris"] <= 6000, n)
             if "grip" in it:
                 self.assertTrue(0.0 < it["grip"] < 1.0, n)
 
@@ -28,6 +30,24 @@ class Tables(unittest.TestCase):
         self.assertEqual(genfit.item("pixal3d/eq_tricorn_officer.glb")["category"], "headgear")
         with self.assertRaises(KeyError):
             genfit.item("pixal3d/unknown.glb")
+
+
+class PropWind(unittest.TestCase):
+    def test_hard_props_zero(self):
+        self.assertEqual(genfit.prop_wind(1.0, 2.0, 0.5, 1.0, None), (0.0, 0.0, 0.0, 0.0))
+
+    def test_stalk(self):
+        low = genfit.prop_wind(0.1, 2.0, 0.1, 0.5, "stalk", phase=0.3)
+        top = genfit.prop_wind(2.0, 2.0, 0.5, 0.5, "stalk", phase=0.3)
+        self.assertEqual(low[3], 0.0)
+        self.assertEqual(low[2], 0.0)
+        self.assertEqual(top[3], 1.0)
+        self.assertAlmostEqual(top[0], 2.0 / 6.0)
+        self.assertAlmostEqual(top[2], 0.3)
+
+    def test_green(self):
+        self.assertEqual(genfit.prop_wind(0.2, 1.0, 0, 1, "green", (0.2, 0.5, 0.1), 0.4)[3], 1.0)
+        self.assertEqual(genfit.prop_wind(0.2, 1.0, 0, 1, "green", (0.8, 0.5, 0.1), 0.4), (0.0, 0.0, 0.0, 0.0))
 
 
 class Sources(unittest.TestCase):
