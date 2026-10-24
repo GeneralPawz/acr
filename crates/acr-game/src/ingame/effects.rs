@@ -366,8 +366,17 @@ fn anim_sound(effects: &acr_formats::UnitDef, anim: &str, step: usize) -> Option
 /// `frame` of the weapon's animation (clamped to the last), facing its flight, at
 /// `(x, y/2 − z)`, sorted at the ground row plus the shot point's height (and 300 for
 /// `[HILAYER]`). `WHITE` weapons lighten. With `rounds_3d` the rounds drawn as models
-/// (`missile_view::round`, #308) are left out.
-pub fn projectile_sprites(world: &World, objects: &ObjectsView, rounds_3d: bool, yaw: f32, out: &mut Vec<SceneSprite>) {
+/// (`missile_view::round`, #308) are left out. A `veiled` explosion (over a building falling
+/// in as a model, `ThreeD::veils`, #303) is drawn half transparent and only for the first
+/// [`VEIL_SHARE`] of its frames.
+pub fn projectile_sprites(
+    world: &World,
+    objects: &ObjectsView,
+    rounds_3d: bool,
+    yaw: f32,
+    veiled: &dyn Fn(&Projectile) -> bool,
+    out: &mut Vec<SceneSprite>,
+) {
     let assets = objects.objects();
     let Some(effects) = assets.effects() else { return };
     for p in world.projectiles.iter() {
@@ -376,6 +385,10 @@ pub fn projectile_sprites(world: &World, objects: &ObjectsView, rounds_3d: bool,
         }
         let wp = world.catalog.weapons.get(p.weapon);
         let Some(anim) = effects.animation(&wp.anim) else { continue };
+        let veil = veiled(p);
+        if veil && p.frame.max(0) as f32 >= VEIL_SHARE * anim.frame_refs().len() as f32 {
+            continue;
+        }
         let (dir, mirrored) = direction(p, anim.directions.max(1) as usize, yaw);
         let Some((frame, (dx, dy))) = assets.effect_look(&wp.anim, p.frame.max(0) as usize, dir) else { continue };
         let (x, y, z) = (p.pos.0 >> 14, p.pos.1 >> 14, p.pos.2 >> 14);
@@ -389,12 +402,15 @@ pub fn projectile_sprites(world: &World, objects: &ObjectsView, rounds_3d: bool,
             dy: dy - z,
             sort: (y >> 1) + p.extra + if wp.hi_layer { HI_LAYER } else { 0 },
             player: 0,
-            transparent: false,
+            transparent: veil,
             mirrored,
             white: wp.transparency == transparency::WHITE,
         });
     }
 }
+
+/// The share of a veiled explosion's frames drawn (`projectile_sprites`).
+const VEIL_SHARE: f32 = 0.2;
 
 /// Where the flames of a shell fire stand, relative to its centre (in units of its radius).
 const GROUND_FLAMES: [(i32, i32); 3] = [(0, 0), (-1, 1), (1, -1)];

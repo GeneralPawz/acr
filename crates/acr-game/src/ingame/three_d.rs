@@ -362,6 +362,14 @@ pub struct ThreeD {
     anchors: HashMap<usize, super::ruin_view::Anchors>,
     /// Burning and fallen buildings this frame, for their fire, smoke and dust.
     burning: Vec<super::ruin_view::Burning>,
+    /// The pieces that break off falling building models (#303, `ruin_view::chunks`): model,
+    /// centre and radius of each, by the building's model; made on its first collapse.
+    chunks: HashMap<usize, Vec<(usize, acr_render::math::Vec3, f32)>>,
+    /// Building models whose pieces `sync_gpu` makes next.
+    chunks_wanted: HashSet<usize>,
+    /// Buildings falling in as models this frame (#303): map x, y, the reach of their
+    /// `DESTRUCT` explosions (pixels) and their type, for [`Self::veils`].
+    veils: Vec<(i32, i32, i32, acr_sim::TypeId)>,
     /// Hit damage on buildings (#304): scars by the building's instance index this frame,
     /// and the stuck arrows' model.
     building_hits: super::building_hits::BuildingHits,
@@ -499,6 +507,9 @@ impl Default for ThreeD {
             states: HashMap::new(),
             anchors: HashMap::new(),
             burning: Vec::new(),
+            chunks: HashMap::new(),
+            chunks_wanted: HashSet::new(),
+            veils: Vec::new(),
             building_hits: Default::default(),
             scars: HashMap::new(),
             arrow_model: None,
@@ -646,6 +657,18 @@ impl ThreeD {
         self.models != Models::Off && self.missiles.ready()
     }
 
+    /// Whether `p` is a `DESTRUCT` explosion of a building falling in as a model (#303): its
+    /// sprite is drawn thin and cut short, so the collapse shows. Sprite buildings and the
+    /// original look (models off) keep the whole explosion.
+    pub fn veils(&self, world: &World, p: &acr_sim::projectile::Projectile) -> bool {
+        let (x, y) = (p.pos.0 >> 14, p.pos.1 >> 14);
+        self.veils.iter().any(|&(vx, vy, r, kind)| {
+            (x - vx).abs() <= r
+                && (y - vy).abs() <= r
+                && world.catalog.get(kind).destruct.ids.contains(&Some(p.weapon))
+        })
+    }
+
     pub fn ghost(&self, unit: EntityId) -> bool {
         self.compare == Compare::Overlay && self.shown.contains(&unit)
     }
@@ -734,6 +757,16 @@ impl ThreeD {
         self.weather_renderer.get_or_insert_with(|| acr_render::weather::WeatherRenderer::new(device, format));
         self.cover_renderer.get_or_insert_with(|| acr_render::ground_cover::GroundCoverRenderer::new(device, format));
         self.missiles.upload(renderer, device, queue);
+        // The pieces of buildings that began to fall in (#303).
+        for index in std::mem::take(&mut self.chunks_wanted) {
+            let Some(model) = renderer.model(index) else { continue };
+            let started = web_time::Instant::now();
+            let pieces = super::ruin_view::chunks(model);
+            let list: Vec<_> =
+                pieces.into_iter().map(|c| (renderer.add_model(device, queue, c.model), c.centre, c.radius)).collect();
+            log::info!("3d: {} building pieces in {:?}", list.len(), started.elapsed());
+            self.chunks.insert(index, list);
+        }
         for (name, model) in self.parsed.drain(..) {
             if name == GORE {
                 // The pack is split into its nodes; the torn cap replaces the procedural one
@@ -884,6 +917,7 @@ impl ThreeD {
         if self.models == Models::Off || !self.map_models.on {
             self.map_models.clear();
         }
+        self.veils.clear();
         if self.models == Models::Off {
             return;
         }
@@ -1070,8 +1104,49 @@ impl ThreeD {
                 {
                     inst.model = r;
                 }
-                if look.fire.flames + look.fire.smoking + look.fire.dust > 0.0 {
-                    self.burning.push(look.fire);
+                let mut fire = look.fire;
+                // Falling in: the `DESTRUCT` flash over it thins (`veils`) and pieces of its
+                // roof and walls break off, tumble down and settle in the rubble.
+                if let Some(t) = dead {
+                    if t < super::ruin_view::COLLAPSE_SECONDS + 1.0 {
+                        let reach = (fire.half[0].max(fire.half[1]) as i32).max(32) + 48;
+                        self.veils.push((x, y, reach, u.kind));
+                    }
+                    match self.chunks.get(&index) {
+                        None => {
+                            self.chunks_wanted.insert(index);
+                        }
+                        Some(list) => {
+                            for (k, &(m, centre, radius)) in list.iter().enumerate() {
+                                let Some((transform, landed)) =
+                                    super::ruin_view::chunk_fall(ground, u.id.0, k, centre, radius, t)
+                                else {
+                                    continue;
+                                };
+                                if (0.0..super::ruin_view::LANDING_DUST).contains(&landed) {
+                                    fire.landings.push([transform[3][0], transform[3][1], ground[2]]);
+                                }
+                                extra.push(ModelInstance {
+                                    model: m,
+                                    clip: None,
+                                    time: 0.0,
+                                    transform,
+                                    rise: None,
+                                    damage: Default::default(),
+                                    // Less charred than the burnt-out shell: the broken
+                                    // planks and thatch read against it.
+                                    wounds: Wounds {
+                                        burn: inst.wounds.burn.min(super::ruin_view::CHUNK_BURN),
+                                        ..inst.wounds
+                                    },
+                                    ..inst
+                                });
+                            }
+                        }
+                    }
+                }
+                if fire.flames + fire.smoking + fire.dust > 0.0 || !fire.landings.is_empty() {
+                    self.burning.push(fire);
                 }
                 let states = self.states.get(&index);
                 if constructing {

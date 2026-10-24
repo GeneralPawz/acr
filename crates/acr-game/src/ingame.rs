@@ -989,7 +989,8 @@ impl InGame {
                 });
             }
         }
-        effects::projectile_sprites(world, &self.objects, self.three_d.draws_rounds(), yaw, &mut out);
+        let veiled = |p: &acr_sim::projectile::Projectile| self.three_d.veils(world, p);
+        effects::projectile_sprites(world, &self.objects, self.three_d.draws_rounds(), yaw, &veiled, &mut out);
         self.effects.fire_sprites(world, &self.objects, &|id| self.three_d.shows(id), &mut out);
         effects::ground_fire_sprites(world, &self.objects, &mut out);
         out

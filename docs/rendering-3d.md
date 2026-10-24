@@ -1232,7 +1232,22 @@ height; real point lights; burning men panicking (sim, follow-up).
   0.4 m, tilts up to 8° about an axis picked by its id (3° stay) and is squashed to 30 % of
   its height, charring to black (burn 0.55 → 1). Pale dust (smoke particles) and splinters
   fly over its footprint (`FireView::buildings`). The original's `DESTRUCT` explosions
-  (`combat::destroyed_building_explodes`) burst over it as before.
+  (`combat::destroyed_building_explodes`) burst over it, but thinned so the collapse shows:
+  while a building falls in as a model (`ThreeD::veils`: its death up to 1 s after the
+  collapse, explosions of its own `DESTRUCT` weapons within its footprint plus 48 px),
+  their sprites are drawn half transparent and only for the first 20 % of their frames
+  (`effects::projectile_sprites`, `VEIL_SHARE`). Sprite buildings and `models=off` keep the
+  whole explosion.
+- **Falling pieces:** on its first collapse `sync_gpu` splits six pieces off the finished
+  model (`ruin_view::chunks`): the triangles whose centre lies in one of `CHUNK_BOXES`
+  (four roof corners, a piece of the front and of the back wall, as fractions of the
+  model's bounds), each a model of its own with its textures shrunk to 256 px (11–13 ms
+  once per building type for EngSkl and EngBlg, logged as `building pieces`). Each breaks
+  off 0.35–1.25 s after the death where the falling model has it then, flies outwards at
+  1–2.6 m/s and up at 0.4–1.6 m/s, tumbling, under gravity; it bounces once (30 % of the
+  speed kept) and lies still in the rubble, charred up to burn 0.4 only so it reads
+  against the black shell; after 25 s it sinks away over 4 s (`chunk_fall`, from the unit
+  id). A puff of dust rises where it lands (0.5 s, `Burning::landings`).
 - **Ruin:** a model with state groups (`<name>.finished`, `.build<k>`, `.section<s>_<k>`,
   `.ruin`; docs/assets.md "States") draws `finished` plus its sections in their states
   while standing ("Construction and upgrades (#302)") and its `.ruin` group alone once fallen (`ModelData::without_groups`); others stay as the
@@ -1258,8 +1273,15 @@ With the smoke columns: GPU particles pass 1.41 → 0.76 ms in the same run (bur
 Ruins of EngSkl, EngCen, DelCen and an EngSkl burn → collapse → ruin sheet:
 `ACR-analysis/genai/destruction/ruins/`.
 
-Open: the collapse is hidden under the `DESTRUCT` explosions' smoke; pre-fractured
-pieces falling in.
+Thinned explosions and falling pieces (same VM and size, blank grass field, EngSkl and
+EngBlg spawned at 20/3000 life, free camera and the fixed camera at zoom 1, 50 frames from
+just before the death; steps `ACR-analysis/genai/collapse/steps.json`, EngBlg free camera
+window): `3d.update` 0.066 → 0.079 ms a frame, `3d.instances` 0.019 → 0.029 ms,
+`3d.particles` 0.080 → 0.086–0.092 ms; GPU sum of all passes 1.46 → 1.38–1.42 ms after
+the collapse (noise). Sheets main against branch: `ACR-analysis/genai/collapse/compare-seq*.png`.
+
+Open: the pieces show the outer surface only (no broken edges or inner faces), and the
+standing model keeps their triangles, so they are hidden in it until it moved away.
 
 #### Construction and upgrades (#302)
 

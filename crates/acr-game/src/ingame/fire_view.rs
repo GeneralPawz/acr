@@ -377,6 +377,23 @@ impl FireView {
                 };
                 self.emit(sink, key | 4, dt, 50.0 * b.dust, debris);
             }
+            // A puff where a falling piece strikes the ground.
+            for (j, &at) in b.landings.iter().enumerate().take(255) {
+                let puff = Burst {
+                    at: [at[0], at[1], at[2] + metres(0.2)],
+                    dir: [0.0, 0.0, 1.0],
+                    spread: 1.2,
+                    speed: [15.0, 45.0],
+                    count: 1,
+                    kind: ParticleKind::Smoke,
+                    life: [1.0, 2.2],
+                    size: [metres(0.4), metres(0.9)],
+                    color: DUST,
+                    scatter: metres(0.5),
+                    seed: 0,
+                };
+                self.emit(sink, key | ((j as u64) << 4) | 5, dt, 24.0, puff);
+            }
         }
     }
 }
