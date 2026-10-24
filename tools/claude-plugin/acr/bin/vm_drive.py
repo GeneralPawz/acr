@@ -35,11 +35,11 @@ import vm_cargo  # noqa: E402
 SHOWCASE = r"C:\Users\verwalter\WIP\ACR-analysis\showcase"
 
 
-def sync_dir(local, remote):
+def sync_dir(local, remote, timeout=None):
     """Sends the files of `local` whose MD5 differs from `remote` (VM path). A size check alone
     kept stale copies of rebuilt glbs that came out with the same byte size."""
     listing = subprocess.run(vm_cargo.SSH + [f"mkdir -p {remote} && cd {remote} && find . -maxdepth 1 -type f "
-                                             f"-exec md5sum {{}} +"], capture_output=True, text=True).stdout
+                                             f"-exec md5sum {{}} +"], capture_output=True, text=True, timeout=timeout).stdout
     have = {}
     for line in listing.splitlines():
         parts = line.split(None, 1)
@@ -61,7 +61,7 @@ def sync_dir(local, remote):
     with tarfile.open(fileobj=buf, mode="w") as tar:
         for f in send:
             tar.add(os.path.join(local, f), arcname=f)
-    subprocess.run(vm_cargo.SSH + [f"tar xf - -C {remote}"], input=buf.getvalue(), check=True)
+    subprocess.run(vm_cargo.SSH + [f"tar xf - -C {remote}"], input=buf.getvalue(), check=True, timeout=timeout)
     return len(send)
 
 

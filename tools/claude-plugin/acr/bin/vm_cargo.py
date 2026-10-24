@@ -45,7 +45,7 @@ def files(wt):
     return [f for f in out.decode("utf-8").split("\0") if f and os.path.isfile(os.path.join(wt, f))]
 
 
-def sync(wt, name):
+def sync(wt, name, timeout=None):
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz", compresslevel=3) as tar:
         for f in files(wt):
@@ -55,7 +55,7 @@ def sync(wt, name):
            f"tar xzf - -C ~/stage/{name}; install -m 755 ~/stage/{name}/.acr-check.sh ~/bin/acr-check; "
            f"rm ~/stage/{name}/.acr-check.sh; rsync -rl --checksum --delete "
            f"--exclude=/target --exclude=/target-win ~/stage/{name}/ ~/wt/{name}/")
-    r = subprocess.run(SSH + [cmd], input=buf.getvalue())
+    r = subprocess.run(SSH + [cmd], input=buf.getvalue(), timeout=timeout)
     if r.returncode != 0:
         sys.exit(f"vm_cargo: sync failed ({r.returncode})")
 

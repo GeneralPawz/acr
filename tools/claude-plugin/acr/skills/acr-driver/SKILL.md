@@ -78,6 +78,7 @@ For looking around interactively (pose, frame, look, adjust, look again), keep o
 | `fetch_image(session_id, path)` | returns a file the game wrote (e.g. a `sheet`) |
 | `close_session(session_id)` | always, when done |
 
+- **Timeouts (nothing blocks forever):** `open_session` sync + build 10 min, start (ready line) 2 min; `send` 60 s per request (`timeout=` raises it for a long `wait`, `sheet` or `record`); `shot`/`fetch_image` 60 s. On a timeout the tool returns `ERROR: ...` with the tail of the game log, and the session is closed (its game killed by the PID in `<run folder>/pid`, folder removed), because a late answer would desync it. Open a new session after that. `open_session` first kills and cleans any earlier session of the same worktree; `close_session` kills by PID. Env overrides: `ACR_STUDIO_BUILD_TIMEOUT`, `_START_TIMEOUT`, `_SEND_TIMEOUT`.
 - A typical round trip (open without a build, studio, pose, measure, shot) takes about 5 s.
 - Use `acr-vm-drive` instead for fixed scripts, batches and before/after runs that must be repeatable.
 - One session is one field: to change the field, close and open another.
