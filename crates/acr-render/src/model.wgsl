@@ -61,7 +61,8 @@ struct Material {
     // (1 skin, 2 hair), w: procedural decay (a model without masks).
     look: vec4<f32>,
     // x: sheen at grazing angles (cloth), y: gloss (blacked leather, brass), z: depth bias
-    // towards the camera (model metres) by the clothing layer (docs/clothing.md, "Layers").
+    // towards the camera (model metres) by the clothing layer (docs/clothing.md, "Layers"),
+    // w: tiles per side of a face texture with several heads (#306; 0: a plain texture).
     cloth: vec4<f32>,
     // The model's wind (root `extras.acr_wind`): trunk, branch and flutter scales, tempo.
     wind: vec4<f32>,
@@ -288,6 +289,13 @@ fn vs_main(v: VertexIn, inst: InstanceIn) -> VsOut {
     out.pos = globals.view_proj * vec4<f32>(world, 1.0);
     out.normal = world_n;
     out.uv = v.uv;
+    // A face texture of several head tiles (#306): the UVs lie on the first; the look's
+    // third texel (w = 1 + tile) moves them onto this soldier's.
+    if (material.cloth.w > 0.5) {
+        let g = u32(round(material.cloth.w));
+        let tile = u32(max(round(look_texel(d, u32(round(look.w)), 2u).w) - 1.0, 0.0));
+        out.uv = v.uv + vec2<f32>(f32(tile % g), f32(tile / g)) / material.cloth.w;
+    }
     out.color = v.color;
     out.params = inst.params;
     out.rest = vec4<f32>(v.position, local.y);

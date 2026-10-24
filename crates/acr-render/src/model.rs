@@ -124,6 +124,10 @@ pub struct Material {
     pub tissue: Tissue,
     /// `extras.acr_tint` (#283): tinted per soldier with his skin tone or hair colour.
     pub tint: Tint,
+    /// `extras.acr_face_tiles` (#306): the texture is a grid of this many whole head tiles
+    /// (`looks::tile_grid` per side), the UVs on the first; each soldier shows the one
+    /// [`crate::looks::face_tile`] picks. 1: a plain texture.
+    pub face_tiles: u8,
     /// How the surface takes the light (`extras.acr_sheen`, `acr_gloss`; docs/clothing.md).
     pub finish: Finish,
     /// The glTF normal and metallic-roughness maps and factors (#234).
@@ -551,6 +555,10 @@ impl ModelData {
                         Some(t) if t == "facings" => Tint::Facings,
                         _ => Tint::None,
                     },
+                    face_tiles: extras_json(m.extras())
+                        .as_ref()
+                        .and_then(|e| e.get("acr_face_tiles")?.as_u64())
+                        .map_or(1, |n| n.clamp(1, u64::from(crate::looks::FACE_TILES_MAX)) as u8),
                     finish: extras_json(m.extras()).as_ref().map_or_else(Finish::default, |e| Finish {
                         sheen: e.get("acr_sheen").and_then(serde_json::Value::as_f64).unwrap_or(0.0) as f32,
                         gloss: e.get("acr_gloss").and_then(serde_json::Value::as_f64).unwrap_or(0.0) as f32,
@@ -585,6 +593,7 @@ impl ModelData {
             stump: false,
             tissue: Tissue::None,
             tint: Tint::None,
+            face_tiles: 1,
             finish: Finish::default(),
             surface: Surface::default(),
         });

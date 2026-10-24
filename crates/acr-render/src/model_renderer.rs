@@ -320,9 +320,9 @@ fn instance_texels(inst: &ModelInstance, rig: Option<&damage::Rig>, look: &[[f32
 }
 
 /// The look texels of an instance (`model.wgsl`, `look_texel`): skin tint (linear) and
-/// stubble; hair tint and age; pocks, scar side (-1, 0, 1), eye height (rest pose, m), 1.
-/// Neutral without a look.
-fn look_texels(look: Option<&looks::Look>, eye: f32, seed: u32) -> [[f32; 4]; 3] {
+/// stubble; hair tint and age; pocks, scar side (-1, 0, 1), eye height (rest pose, m),
+/// 1 + the face tile (#306, of `face_tiles`). Neutral without a look.
+fn look_texels(look: Option<&looks::Look>, eye: f32, seed: u32, face_tiles: u8) -> [[f32; 4]; 3] {
     let Some(l) = look else { return [[1.0, 1.0, 1.0, 0.0], [1.0, 1.0, 1.0, 0.0], [0.0; 4]] };
     let (skin, hair) = looks::tints(l);
     let side = if !l.scar {
@@ -332,7 +332,7 @@ fn look_texels(look: Option<&looks::Look>, eye: f32, seed: u32) -> [[f32; 4]; 3]
     } else {
         -1.0
     };
-    [[skin[0], skin[1], skin[2], l.stubble], [hair[0], hair[1], hair[2], l.morphs[7]], [l.pocks, side, eye, 1.0]]
+    [[skin[0], skin[1], skin[2], l.stubble], [hair[0], hair[1], hair[2], l.morphs[7]], [l.pocks, side, eye, 1.0 + f32::from(looks::face_tile(seed, face_tiles))]]
 }
 
 /// One draw: the instances `range` of a model at a level of detail.
@@ -415,6 +415,8 @@ struct GpuModel {
     variants: Vec<wgpu::Buffer>,
     /// Eye height of the rest pose (m, `extras.acr_face_frame`).
     eye: f32,
+    /// Head tiles of the face texture (#306, [`crate::model::Material::face_tiles`]); 1: none to pick.
+    face_tiles: u8,
 }
 
 impl GpuModel {
@@ -1174,7 +1176,13 @@ impl ModelRenderer {
                         m.tint as u8 as f32,
                         if procedural { 1.0 } else { 0.0 },
                     ],
-                    cloth: [m.finish.sheen, m.finish.gloss, m.finish.layer, 0.0],
+                    // w: tiles per side of a face texture with several heads (#306).
+                    cloth: [
+                        m.finish.sheen,
+                        m.finish.gloss,
+                        m.finish.layer,
+                        if m.face_tiles > 1 { f32::from(looks::tile_grid(m.face_tiles)) } else { 0.0 },
+                    ],
                     wind: data.wind,
                     pbr: [
                         m.surface.metallic,
@@ -1205,6 +1213,7 @@ impl ModelRenderer {
                 })
             })
             .collect();
+        let face_tiles = data.materials.iter().map(|m| m.face_tiles).max().unwrap_or(1);
         self.models.push(GpuModel {
             data,
             vertices: vertex_buffer,
@@ -1217,6 +1226,7 @@ impl ModelRenderer {
             dissolves_at,
             variants,
             eye,
+            face_tiles,
         });
         self.models.len() - 1
     }
@@ -1404,7 +1414,7 @@ impl ModelRenderer {
             let clean =
                 intact && !inst.transparent && !dissolving(gpu_model.dissolves_at) && dbg & debug::NO_CLEAN == 0;
             let first = data.len() as u32;
-            let mut look_data = look_texels(look.as_ref().map(|c| &c.0), gpu_model.eye, inst.look.unwrap_or(0));
+            let mut look_data = look_texels(look.as_ref().map(|c| &c.0), gpu_model.eye, inst.look.unwrap_or(0), gpu_model.face_tiles);
             // A crew's uniform rides on the look texels the crew does not use otherwise.
             if let (None, Some(u), Some(crew)) = (look, inst.uniform, model.crew.as_ref()) {
                 // The colour and the base's luminance (`model.wgsl`: the cloth keeps its shading).

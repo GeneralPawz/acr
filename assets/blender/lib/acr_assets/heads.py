@@ -436,13 +436,18 @@ def dilate(img, mask, steps=12):
     return img
 
 
-def face_map(ch, skin_rgb, beard=True, scalp=True):
+def face_map(ch, skin_rgb, beard=True, scalp=True, tiles=faces.PORTRAIT_TILES):
     """The head's own material and texture: the head part of the skin gets its own material
     slot and, in the `atlas` UV map, its own layout (`unwrap_head`: one coherent island) on
     a separate image (`faces.FACE_SIZE`, 1024²). Cycles bakes position, normal and occlusion
     of a copy of the head, numpy paints it (`paint_face`). A baked face for the unit
     (`faces.face_source`: `$ACR_SOURCES/faces/<unit>.png` in this layout) replaces the
-    painted colours (paint masks still go on top); without one the face is painted."""
+    painted colours (paint masks still go on top); without one the face is painted.
+
+    Frontal portraits (#306, `faces.portrait_sources`, at most `tiles`) go over the painted
+    face front, one whole head tile each: with more than one the texture is a grid of tiles
+    (`faces.tile_grid`), the head's UVs point at the first, and `extras.acr_face_tiles` tells
+    the renderer how many it may pick from per soldier."""
     fr = ch.face_frame
     flesh = ch.flesh
     me = flesh.data
@@ -504,29 +509,56 @@ def face_map(ch, skin_rgb, beard=True, scalp=True):
         col = coat.lin(px).astype(np.float32)
         col[cov] = face_masks(ch, flat_p[cov], flat_n[cov], col[cov])
     else:
-        col = np.tile(coat.lin(skin_rgb) * 0.85, (len(loc), 1)).astype(np.float32)
-        col[cov] = paint_face(loc[cov], flat_n[cov], skin_rgb, beard=beard, scalp=scalp)
-        # A frontal portrait (#306) replaces the painted face front; face paint goes on it.
-        por = faces.portrait_source(ch.name)
+        base = np.tile(coat.lin(skin_rgb) * 0.85, (len(loc), 1)).astype(np.float32)
+        base[cov] = paint_face(loc[cov], flat_n[cov], skin_rgb, beard=beard, scalp=scalp)
+        # Frontal portraits (#306) replace the painted face front; face paint goes on them.
         guide = os.environ.get("ACR_FACE_GUIDE")
         occ = np.clip(ao.reshape(-1), 0.0, 1.0)
         if guide:
-            g = col[cov] * (0.72 + 0.28 * occ[cov] ** 0.9)[:, None]
+            g = base[cov] * (0.72 + 0.28 * occ[cov] ** 0.9)[:, None]
             _write_guide(ch.name, loc[cov], flat_n[cov], g)
-        if por:
-            col[cov], st["portrait"] = _blend_portrait(por, loc[cov], flat_n[cov], col[cov], occ[cov])
-        col[cov] = face_masks(ch, flat_p[cov], flat_n[cov], col[cov])
-        col[cov] *= (0.72 + 0.28 * occ[cov] ** 0.9)[:, None]
-        col = dilate(col.reshape(size_px, size_px, 3), cov.reshape(size_px, size_px)).reshape(-1, 3)
+        cols = []
+        for por in faces.portrait_sources(ch.name, tiles=tiles) or [None]:
+            col = base.copy()
+            if por:
+                col[cov], pst = _blend_portrait(por, loc[cov], flat_n[cov], col[cov], occ[cov])
+                st.setdefault("portraits", []).append(dict(pst, file=os.path.basename(por)))
+            col[cov] = face_masks(ch, flat_p[cov], flat_n[cov], col[cov])
+            col[cov] *= (0.72 + 0.28 * occ[cov] ** 0.9)[:, None]
+            cols.append(dilate(col.reshape(size_px, size_px, 3), cov.reshape(size_px, size_px)).reshape(-1, 3))
+        col = cols[0]
+        if len(cols) > 1:
+            col = _tile_faces(cols, size_px, uv, head, me)
+            size_px *= faces.tile_grid(len(cols))
+            st.update(face_tiles=len(cols), texture_px=size_px)
     img = _image(f"{ch.name}.face", col, size_px)
     m = decay.material(f"{ch.name}.face", "flesh", skin_rgb, image=img, uv_map=uvname, interpolation="Linear")
     m["acr_colour_from"] = "outfit"
     m["acr_tint"] = "skin"
+    if st.get("face_tiles", 1) > 1:
+        m["acr_face_tiles"] = st["face_tiles"]
     me.materials.append(m)
     slot = len(me.materials) - 1
     for pi in head:
         me.polygons[pi].material_index = slot
     return img
+
+
+def _tile_faces(cols, size, uv, head, me):
+    """The head tiles `cols` (each `size`² texels, rows from the bottom) as one grid texture,
+    tile k at column k % g and row k // g from the top (glTF's image order; unused cells
+    repeat the first); the head polygons' UVs move into the first tile."""
+    g = faces.tile_grid(len(cols))
+    out = np.zeros((g * size, g * size, 3), np.float32)
+    for k in range(g * g):
+        c, r = k % g, k // g
+        y0 = (g - 1 - r) * size
+        out[y0:y0 + size, c * size:(c + 1) * size] = cols[k if k < len(cols) else 0].reshape(size, size, 3)
+    for pi in head:
+        for li in me.polygons[pi].loop_indices:
+            u, v = uv.data[li].uv
+            uv.data[li].uv = (u / g, 1.0 - (1.0 - v) / g)
+    return out.reshape(-1, 3)
 
 
 def _frontal(loc, n):

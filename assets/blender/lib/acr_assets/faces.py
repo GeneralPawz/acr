@@ -143,15 +143,41 @@ PORTRAIT_AXES = (0.066, 0.098)
 PORTRAIT_FADE = 0.72
 
 
-def portrait_source(name, environ=None, exists=os.path.isfile):
-    """Path of unit `name`'s frontal portrait (`<unit>.portrait.png` in `$ACR_FACES`), or
-    None. Only taken from `$ACR_FACES`: generated faces stay opt-in."""
+# Several portraits per unit (#306): up to PORTRAIT_TILES go into one face texture as a
+# grid of whole head tiles (`heads.face_map`, material `extras.acr_face_tiles`); the
+# renderer picks one per soldier from his look seed (`acr-render` `looks::face_tile`).
+PORTRAIT_TILES = 4
+# The default set for European units, read from `$ACR_SOURCES` (local-only generated faces;
+# a build without them paints the face). `ACR_PORTRAITS=0` switches the default off.
+PORTRAIT_DIR = os.path.join("generated", "faces", "aligned")
+PORTRAIT_SET = ("eu1_s1", "eu2_s1", "eu3_s1", "eu4_s1")
+EUROPEAN = ("eng", "frn", "spn", "usa")
+
+
+def portrait_sources(name, environ=None, exists=os.path.isfile, tiles=PORTRAIT_TILES):
+    """Paths of unit `name`'s frontal portraits, at most `tiles`, or []: first
+    `$ACR_FACES/<unit>.portrait<k>.png` (k = 1..) or `<unit>.portrait.png`, else for
+    European units (name prefix in EUROPEAN) the default set under `$ACR_SOURCES`."""
     env = os.environ if environ is None else environ
+    n = name.lower()
     folder = env.get("ACR_FACES")
-    if not folder:
-        return None
-    path = os.path.join(folder, f"{name.lower()}.portrait.png")
-    return path if exists(path) else None
+    if folder:
+        found = [p for p in (os.path.join(folder, f"{n}.portrait{k}.png") for k in range(1, tiles + 1)) if exists(p)]
+        one = os.path.join(folder, f"{n}.portrait.png")
+        if found or exists(one):
+            return found or [one]
+    if env.get("ACR_PORTRAITS", "1") == "0" or not n.startswith(EUROPEAN) or not env.get("ACR_SOURCES"):
+        return []
+    return [p for p in (os.path.join(env["ACR_SOURCES"], PORTRAIT_DIR, f"{k}.png") for k in PORTRAIT_SET[:tiles])
+            if exists(p)]
+
+
+def tile_grid(n):
+    """Tiles per side of the face texture holding `n` head tiles (1 for one)."""
+    g = 1
+    while g * g < n:
+        g += 1
+    return g
 
 
 def portrait_px(x, z, w, h):

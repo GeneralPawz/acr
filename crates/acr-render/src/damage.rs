@@ -1105,6 +1105,7 @@ fn single(name: &str, vertices: Vec<Vertex>, indices: Vec<u32>, tissue: Tissue) 
         stump: false,
         tissue,
         tint: Default::default(),
+        face_tiles: 1,
         finish: Default::default(),
         surface: Default::default(),
     };
@@ -1170,6 +1171,7 @@ pub fn procedural_cap() -> ModelData {
         stump: true,
         tissue: Tissue::None,
         tint: Default::default(),
+        face_tiles: 1,
         finish: Default::default(),
         surface: Default::default(),
     };

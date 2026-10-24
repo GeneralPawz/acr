@@ -31,8 +31,21 @@ class FaceSource(unittest.TestCase):
 
     def test_portrait(self):
         ok = {os.path.join("/f", "engm18.portrait.png")}.__contains__
-        self.assertEqual(faces.portrait_source("EngM18", {"ACR_FACES": "/f"}, ok), os.path.join("/f", "engm18.portrait.png"))
-        self.assertIsNone(faces.portrait_source("engm18", {"ACR_SOURCES": "/f"}, ok))
+        self.assertEqual(faces.portrait_sources("EngM18", {"ACR_FACES": "/f"}, ok), [os.path.join("/f", "engm18.portrait.png")])
+        self.assertEqual(faces.portrait_sources("engm18", {"ACR_SOURCES": "/f"}, ok), [])
+        # The default set: European units only, from $ACR_SOURCES, off by ACR_PORTRAITS=0.
+        lib = [os.path.join("/s", faces.PORTRAIT_DIR, f"{k}.png") for k in faces.PORTRAIT_SET]
+        have = set(lib).__contains__
+        self.assertEqual(faces.portrait_sources("EngM18", {"ACR_SOURCES": "/s"}, have), lib)
+        self.assertEqual(faces.portrait_sources("EngM18", {"ACR_SOURCES": "/s"}, have, tiles=1), lib[:1])
+        self.assertEqual(faces.portrait_sources("DelLut", {"ACR_SOURCES": "/s"}, have), [])
+        self.assertEqual(faces.portrait_sources("EngM18", {"ACR_SOURCES": "/s", "ACR_PORTRAITS": "0"}, have), [])
+        self.assertEqual(faces.portrait_sources("EngM18", {}, have), [])
+        # Numbered portraits in $ACR_FACES come first.
+        mine = {os.path.join("/f", f"engm18.portrait{k}.png") for k in (1, 2)} | set(lib)
+        self.assertEqual(faces.portrait_sources("EngM18", {"ACR_FACES": "/f", "ACR_SOURCES": "/s"}, mine.__contains__),
+                         [os.path.join("/f", "engm18.portrait1.png"), os.path.join("/f", "engm18.portrait2.png")])
+        self.assertEqual([faces.tile_grid(n) for n in (1, 2, 4, 5)], [1, 2, 2, 3])
         x0, x1, z0, z1 = faces.PORTRAIT_BOX
         self.assertEqual(faces.portrait_px(x0, z1, 768, 768), (0.0, 0.0))
         c, r = faces.portrait_px(0.0, 0.0, 768, 768)

@@ -537,7 +537,16 @@ beard, colouring and height. Models without it draw exactly as before.
   scar slanting across one cheek (face front, at `acr_face_frame` eye height − 4 cm).
 - **Instance data:** 3 look texels follow the marks in the bone texture (`look_texel`).
   They hold the skin tint and stubble, the hair tint and age, and the pocks, scar side,
-  eye height and a has-look flag. Instances without a look get neutral texels.
+  eye height and 1 + the face tile. Instances without a look get neutral texels (tile 0).
+- **Face tiles (#306):** a face material with `extras.acr_face_tiles` = n > 1
+  (`Material::face_tiles`) holds n whole head tiles in a grid (`looks::tile_grid`: 2 × 2 for
+  4), its UVs on the first. `looks::face_tile(seed, n)` picks the soldier's tile from its own
+  hash of the unit id (`mix32(seed ^ 0x5F0C_E7A1) % n`), so the portrait varies independently
+  of the morphs. The pick rides in the third look texel's w (no new vertex location or
+  varying); the material uniform's `cloth.w` holds the grid, and `vs_main` shifts the UV by
+  (tile % g, tile / g) / g. WebGL2-safe; one texture per model, no extra draws. Proof:
+  `C:\Users\verwalter\WIP\ACR-analysis\genai\faces-tex\atlas\` (12 EngM18, studio,
+  `group_painted_vs_atlas.png`, `closeups_painted_vs_atlas.png`).
 
 Close-up check: `ACR-analysis/looks/looks_bench.py` places 8 EngM18 and 8 EngKri in rows
 facing the camera at zoom 5 and 12.

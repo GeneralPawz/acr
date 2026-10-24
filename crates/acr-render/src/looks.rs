@@ -233,6 +233,24 @@ impl Look {
     }
 }
 
+/// The most head tiles a face texture holds (#306, `faces.PORTRAIT_TILES` in the build; a
+/// 3 x 3 grid at most).
+pub const FACE_TILES_MAX: u8 = 9;
+
+/// Tiles per side of a face texture holding `n` head tiles (`faces.tile_grid`).
+pub fn tile_grid(n: u8) -> u8 {
+    (1..=3).find(|g| g * g >= n).unwrap_or(3)
+}
+
+/// The face tile (#306) soldier `seed` shows of a texture holding `n`: its own hash of the
+/// seed, so the portrait varies independently of the face shape drawn by [`choose`].
+pub fn face_tile(seed: u32, n: u8) -> u8 {
+    if n <= 1 {
+        return 0;
+    }
+    (mix32(seed ^ 0x5F0C_E7A1) % u32::from(n)) as u8
+}
+
 /// Number of face and body variants baked per model ([`crate::model::ModelData::looks`]).
 pub const VARIANTS: usize = 16;
 
@@ -389,5 +407,17 @@ mod tests {
         for (k, w) in v.iter().enumerate() {
             assert_eq!(nearest_variant(&v, w), k);
         }
+    }
+
+    #[test]
+    fn face_tiles_spread_over_a_unit() {
+        assert_eq!([1, 2, 4, 5, 9].map(tile_grid), [1, 2, 2, 3, 3]);
+        assert_eq!(face_tile(7, 1), 0);
+        let mut seen = [0; 4];
+        for seed in 0..12 * 50 {
+            seen[usize::from(face_tile(seed, 4))] += 1;
+        }
+        // Every tile about a quarter of the soldiers.
+        assert!(seen.iter().all(|&n| n > 100 && n < 200), "{seen:?}");
     }
 }

@@ -605,7 +605,7 @@ def build(root, gun_arm, name="artpus", kits=None):
         if FACES and ch.face_frame is not None:
             from . import heads
 
-            heads.face_map(ch, PALETTE["skin"])
+            heads.face_map(ch, PALETTE["skin"], tiles=1)  # no look texel: one tile
             # A plain skin colour: `acr_tint` "skin" would read a look texel the gun has not.
             for m in ch.flesh.data.materials:
                 if m is not None and "acr_tint" in m:
