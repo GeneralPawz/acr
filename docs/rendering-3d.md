@@ -398,6 +398,17 @@ objects (`World::objects`, static for the whole battle) are drawn as models wher
   standing (`#STAND`, time 0), turned by the props' hash of the place
   (`map_models::turn`), never the sim RNG. Wind and shadows come with the model's `_WIND`
   weights and the shadow map.
+- **Models fitted to their own sprite** (`map_t<N>`, ruins and rubble 427–470, built by
+  `acr_assets.nature.build_generated` with `map`, docs/assets.md): the entry
+  `{"model": "map_t452", "turn": "sprite"}` keeps the sprite's facing instead of the hash,
+  `RealDir` 64 (`map_models::SPRITE_DIR`, yaw 0: the one view `acr model-ref` gives a list
+  frame and the fit used), so walls, arches and colonnades line up as in the original; the
+  scale is 1 (built at the sprite's size) unless the entry gives one. Trees and rocks keep
+  the random turn. Their base colour is brought up to the sprite's brightness at build time
+  (`nature._map_tone`, docs/assets.md): the renderer reads base colour only, and Pixal3D had
+  put part of some pillars' look into metallic, which drew them nearly black. All map_t
+  models are mapped but the tower 467 (a blob, 9 % of its texture unbaked) and the fallen
+  column 468 (drawn with black speckles; 2 mesh islands, likely a second shell).
 - **Sprites:** the replaced frames go to `ObjectsView::set_hidden` (kept over scene
   rebuilds); `Scene::visible` leaves them out, also in the zoomed-out view. `models=off` or
   `map_models=off` brings every sprite back at once.

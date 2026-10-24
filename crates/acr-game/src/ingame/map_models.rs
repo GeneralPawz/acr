@@ -1,7 +1,8 @@
 //! The map's trees and stones (`TREELIST`, `STONLIST` objects) drawn as 3D models where
 //! `assets/nature/map_objects.json` names one; the others keep their sprite
 //! (docs/rendering-3d.md "Map trees and stones"). Render only: the places come from
-//! `World::objects`, each turn from a hash of the place, never from the simulation's RNG.
+//! `World::objects`, each turn from a hash of the place (or the sprite's own facing), never
+//! from the simulation's RNG.
 
 use std::collections::{HashMap, HashSet};
 
@@ -12,8 +13,9 @@ use acr_render::terrain::TerrainData;
 use acr_render::view3d::{self, COS_E, PIXELS_PER_METRE};
 use acr_sim::world::MapObject;
 
-/// The table: `{"TREELIST": {"104": "broadleaf", "10-14": {"model": "pine", "scale": 1.2}},
-/// "STONLIST": {...}}`; keys starting with `_` are comments.
+/// The table: `{"TREELIST": {"104": "broadleaf", "10-14": {"model": "pine", "scale": 1.2},
+/// "452": {"model": "map_t452", "turn": "sprite"}}, "STONLIST": {...}}`; keys starting with
+/// `_` are comments.
 const TABLE: &str = include_str!("../../../../assets/nature/map_objects.json");
 
 /// The scale of a model fitted to its sprite stays within these bounds (a frame whose box
@@ -27,7 +29,16 @@ pub struct Choice {
     pub model: String,
     /// The model's scale; `None`: its rest height fitted to the sprite's height.
     pub scale: Option<f32>,
+    /// `"turn": "sprite"`: a model built from and fitted to this very sprite (`map_t<N>`,
+    /// `acr_assets.nature._map_fit`) keeps the sprite's facing, `RealDir` 64 (yaw 0, the
+    /// view the fit used), and its built size (scale 1 unless `scale` says otherwise);
+    /// otherwise turned by [`turn`], the hash of the place.
+    pub sprite_turn: bool,
 }
+
+/// The facing of a model fitted to its sprite: the reference view's `RealDir`
+/// (`acr model-ref` `list_ref`: one view, `stored_direction` 64).
+pub const SPRITE_DIR: u8 = 64;
 
 /// Sprite type → model, from the JSON table.
 pub fn parse(text: &str) -> HashMap<(SpriteGroup, u16), Choice> {
@@ -53,11 +64,22 @@ pub fn parse(text: &str) -> HashMap<(SpriteGroup, u16), Choice> {
                 continue;
             };
             let choice = match value {
-                serde_json::Value::String(m) => Choice { model: m.to_ascii_uppercase(), scale: None },
+                serde_json::Value::String(m) => {
+                    Choice { model: m.to_ascii_uppercase(), scale: None, sprite_turn: false }
+                }
                 serde_json::Value::Object(o) => {
                     let Some(m) = o.get("model").and_then(serde_json::Value::as_str) else { continue };
+                    let sprite_turn = match o.get("turn") {
+                        None => false,
+                        Some(serde_json::Value::String(t)) if t == "sprite" => true,
+                        Some(t) => {
+                            log::warn!("map_objects.json: {list} {key}: turn {t} is not \"sprite\"");
+                            false
+                        }
+                    };
                     let scale = o.get("scale").and_then(serde_json::Value::as_f64).map(|s| s as f32);
-                    Choice { model: m.to_ascii_uppercase(), scale }
+                    let scale = scale.or(sprite_turn.then_some(1.0));
+                    Choice { model: m.to_ascii_uppercase(), scale, sprite_turn }
                 }
                 _ => continue,
             };
@@ -149,7 +171,8 @@ impl MapModels {
                 choice.scale.or_else(|| sprite_scale(sprites, o.group, o.index, height)).unwrap_or(1.0)
             });
             let ground = view3d::ground_point(o.x, o.y, terrain.height_at(o.x, o.y));
-            self.placed.push((model, view3d::model_matrix(ground, view3d::facing_yaw(turn(o.x, o.y)), scale)));
+            let dir = if choice.sprite_turn { SPRITE_DIR } else { turn(o.x, o.y) };
+            self.placed.push((model, view3d::model_matrix(ground, view3d::facing_yaw(dir), scale)));
             if let Some(list) = sprites.list(o.group) {
                 hidden.insert((list.gp_path(), usize::from(o.index)));
             }
@@ -194,12 +217,17 @@ mod tests {
     #[test]
     fn table_takes_indices_ranges_and_scales() {
         let t = parse(
-            r#"{"TREELIST": {"_note": "x", "3": "broadleaf", "10-12": {"model": "Pine", "scale": 1.5}},
+            r#"{"TREELIST": {"_note": "x", "3": "broadleaf", "10-12": {"model": "Pine", "scale": 1.5},
+                "452": {"model": "map_t452", "turn": "sprite"}},
                 "STONLIST": {"0": "rock"}, "HOLELIST": {"1": "hole"}}"#,
         );
-        assert_eq!(t.len(), 5);
-        assert_eq!(t[&(SpriteGroup::Trees, 3)], Choice { model: "BROADLEAF".into(), scale: None });
-        assert_eq!(t[&(SpriteGroup::Trees, 11)], Choice { model: "PINE".into(), scale: Some(1.5) });
+        assert_eq!(t.len(), 6);
+        assert_eq!(t[&(SpriteGroup::Trees, 3)], Choice { model: "BROADLEAF".into(), scale: None, sprite_turn: false });
+        assert_eq!(t[&(SpriteGroup::Trees, 11)], Choice { model: "PINE".into(), scale: Some(1.5), sprite_turn: false });
+        assert_eq!(
+            t[&(SpriteGroup::Trees, 452)],
+            Choice { model: "MAP_T452".into(), scale: Some(1.0), sprite_turn: true }
+        );
         assert!(t.contains_key(&(SpriteGroup::Stones, 0)));
         assert!(!t.contains_key(&(SpriteGroup::Trees, 13)));
     }

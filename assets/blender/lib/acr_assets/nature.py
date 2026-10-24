@@ -421,6 +421,11 @@ def build(ctx, spec):
 # Map objects generated from their own sprite (`map`): triangle budget and texture per kind.
 MAP_KINDS = {"ruin": {"tris": 4000, "tex": 1024}, "rubble": {"tris": 1000, "tex": 512}}
 LEVEL_KEEP = 0.01  # `_map_fit` keeps the levelling unless it costs more sprite IoU than this
+MAP_GAIN_MAX = 2.0  # `_map_tone` brightens a baked map texture at most this much
+# The game's model light (acr-render shadow::LIGHT, east-south-up, here Blender's east-north-up)
+# and its unlit share (model_renderer AMBIENT): `_map_tone` matches the sprite as the game draws it.
+GAME_LIGHT = (-15.0, -14.0, 30.0)
+GAME_AMBIENT = 0.5
 
 
 def _map_fit(low, m, anchor, real_dir):
@@ -468,6 +473,63 @@ def _map_fit(low, m, anchor, real_dir):
     }
 
 
+def _map_tone(low, view):
+    """Brings the baked base colour of a map model up to its sprite's brightness. Pixal3D
+    returns PBR materials and reads some stone sprites as metal: pillars and blocks
+    (TREELIST 454, 456, 458, 459, 463, 469) came with metallic 0.17-0.78 and a base colour
+    up to a third darker than the sprite, which a PBR viewer lights with reflections but the
+    game, which reads base colour only (Lambert, half ambient), drew nearly black. Compares
+    the mean luminance (sRGB) of the sprite's opaque pixels with the model as the game
+    shades it on the faces the sprite camera sees (area seen along `conventions.FORWARD`,
+    the model already turned and fitted to the sprite view): base colour times the game's
+    light (`GAME_LIGHT`, `GAME_AMBIENT`; linear light, so lit^(1/2.2) in sRGB). Brightens by
+    their ratio, never darkens, at most `MAP_GAIN_MAX`. Returns stats {sprite, model (the
+    unlit base colour), shaded, gain}."""
+    from . import conventions as cv
+
+    me = low.data
+    node = next(n for n in me.materials[0].node_tree.nodes if n.type == "TEX_IMAGE" and n.image)
+    img = node.image
+    w, h = img.size
+    px = _pixels(img)
+    lum_w = np.array([0.3, 0.55, 0.15], np.float32)
+    ref = bpy.data.images.load(view.image)
+    rp = _pixels(ref)
+    bpy.data.images.remove(ref)
+    sprite = float((rp[rp[:, 3] >= 0.5, :3] @ lum_w).mean())
+    me.calc_loop_triangles()
+    uv = np.empty(len(me.loops) * 2, np.float32)
+    me.uv_layers.active.data.foreach_get("uv", uv)
+    uv = uv.reshape(-1, 2)
+    loops = np.empty(len(me.loop_triangles) * 3, np.int32)
+    me.loop_triangles.foreach_get("loops", loops)
+    loops = loops.reshape(-1, 3)
+    co = np.empty(len(me.vertices) * 3, np.float32)
+    me.vertices.foreach_get("co", co)
+    co = co.reshape(-1, 3)
+    verts = np.empty(len(me.loop_triangles) * 3, np.int32)
+    me.loop_triangles.foreach_get("vertices", verts)
+    t = co[verts.reshape(-1, 3)]
+    fn = np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0])
+    seen = np.clip(-(fn @ np.asarray(cv.FORWARD, np.float32)), 0, None)
+    light = np.asarray(GAME_LIGHT, np.float32) / np.linalg.norm(GAME_LIGHT)
+    nrm = fn / np.maximum(np.linalg.norm(fn, axis=1, keepdims=True), 1e-12)
+    lit = GAME_AMBIENT + (1.0 - GAME_AMBIENT) * np.clip(nrm @ light, 0, None)
+    c = uv[loops].mean(axis=1)
+    tex = px.reshape(h, w, 4)[np.clip((c[:, 1] * h).astype(int), 0, h - 1), np.clip((c[:, 0] * w).astype(int), 0, w - 1), :3]
+    alb = tex @ lum_w
+    total = max(float(seen.sum()), 1e-9)
+    model = float((alb * seen).sum() / total)
+    shaded = float((alb * lit ** (1 / 2.2) * seen).sum() / total)
+    gain = min(MAP_GAIN_MAX, max(1.0, sprite / max(shaded, 1e-3)))
+    if gain > 1.0:
+        px[:, :3] *= gain
+        node.image = _put(img, px, ".tone")
+        node.image.pack()
+        bpy.data.images.remove(img)
+    return {"sprite": round(sprite, 3), "model": round(model, 3), "shaded": round(shaded, 3), "gain": round(gain, 3)}
+
+
 def build_generated(ctx, spec):
     """A map prop from a generated model (Pixal3D or Rodin, `$ACR_SOURCES/generated/<source>`,
     local only) through `genfit.fit` (prop category: backdrop dropped, decimated to the
@@ -481,7 +543,8 @@ def build_generated(ctx, spec):
         sink    metres below the ground point (default 0.03; on slopes nothing floats)
         map     "ruin" or "rubble": a map object generated from its own TREELIST sprite in
                 the game's view (`MAP_KINDS` budget, built at the sprite's size, stood
-                upright and fitted to that sprite: `_map_fit`; needs the game folder)
+                upright and fitted to that sprite: `_map_fit`, its base colour brought up to
+                the sprite's brightness: `_map_tone`; needs the game folder)
         turn    degrees about +Z
 
     The baked normal map is dropped (the renderer reads base colour only). Stats: the
@@ -524,6 +587,7 @@ def build_generated(ctx, spec):
     if mp:
         st["map_kind"] = mp
         st.update(_map_fit(low, sil, ref.anchor, ref.views[0].dir))
+        st["tone"] = _map_tone(low, ref.views[0])
     sink = spec.get("sink", 0.03)
     vs.transform([low], Matrix.Rotation(math.radians(spec.get("turn", 0.0)), 4, "Z") @ Matrix.Translation((0, 0, -sink)))
     low.parent = ctx.root

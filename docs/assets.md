@@ -54,8 +54,17 @@ assets/
                           pitch/roll within ±12° that puts most of the surface on the lowest
                           2 % of the height; undone if it lowers the sprite IoU by more
                           than 0.01), then fits scale and ground shift to the sprite
-                          with the turn held at 0 (built at the sprite's size: table scale 1).
-                          Stats `iou_raw` (no upright turn), `iou_camera`, `iou`, `upright`, `fit`.
+                          with the turn held at 0 (built at the sprite's size: table scale 1;
+                          the game keeps that facing with "turn": "sprite"). nature._map_tone
+                          then brightens the baked base colour until the faces the sprite
+                          camera sees, shaded with the game's light (half ambient), reach
+                          the sprite's mean luminance (never darker, at most ×2): Pixal3D
+                          read pillars and blocks as metal (454, 456, 458, 459, 463, 469:
+                          metallic 0.17–0.78 against 0.00 on the good ones, base colour up
+                          to a third darker than the sprite), which the game's base-colour
+                          Lambert drew nearly black (gains 1.4–1.8; the others 1.0–1.5).
+                          Stats `iou_raw` (no upright turn), `iou_camera`, `iou`,
+                          `upright`, `fit`, `tone`.
 target/assets/            output (git-ignored): <category>/<name>.glb, ref/<TYPE>/, check/<name>/
 ```
 
