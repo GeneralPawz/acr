@@ -17,3 +17,16 @@ Run on the VM (paths are examples):
 
 Sources: makehuman/data from github.com/makehumancommunity/makehuman; skins from
 makehuman_system_assets_cc0.zip (files2.makehumancommunity.org); see assets/LICENSES.md.
+
+## Garments on the master (`hd_garments.py`, prototype)
+
+The EngM18 outfit (full linen shirt, breeches, gaiters, waistcoat, coat) from the pipeline's
+1768 drafts (`garments.py`), graded to the HD skin and draped with `drape.dress` under HD
+settings patched in for the run only (nothing in `acr_assets` changes): panels meshed at
+1.2 cm, every layer simulated in order on the solidified layers beneath (linen 0.5 mm, wool
+1.5-2.5 mm, collision distances 2.5-3.8 mm), a damped end so the cloth comes to rest (end
+speed and kinetic energy in the stats), weights from the surface beneath, the skin under
+the clothes pushed in (`drape.hide_skin`; an untouched `hd.flesh` copy stays for checks).
+
+    blender -b out/hd.blend --python hd_garments.py -- <worktree>/assets/blender/lib out/hd_dressed.blend 1.2
+    blender -b out/hd_dressed.blend --python hd_render.py -- out/dressed jobs.json
