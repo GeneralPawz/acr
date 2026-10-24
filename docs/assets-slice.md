@@ -66,12 +66,14 @@ lowest row below the model's, mean over the directions, screen px:
 | EngD18 | 4.3 | 1.3 |
 | EngPik | 2.6 | −0.4 |
 | SpnM18 | 3.5 | 0.5 |
-| DelKri | −1.0 | −4.0 |
+| DelKri | −1.0 | −4.0 (−0.4 with `lift` 0.15 m) |
 
-DelKri is the exception: its model's feet already stood level with its sprite's
-(`model-check` best shift (0, −3) at the anchor, mean IoU 0.515; 0.480 at the game's
-placement), so it now stands 3–4 px low. That is an asset fix (the model is smaller than
-the sprite: 387 against 577 px in direction 0), not a placement one.
+DelKri is the exception: its sprites draw the feet about 4 px higher against the anchor than
+the other units' (sprite and model are the same height, 48 against 47 px), so with #196 its
+model stood 4.25 px low. The asset fixes it: `native` SPEC key `lift` raises the root,
+`delkri.py` sets `LIFT = 0.15` m (4 px / 30 px per m / cos 30°). Measured as above (VM,
+2026-10-25, `ACR-analysis/horse-rect/`): lowest-row difference −4.25 → −0.38 px, IoU at the
+placement 0.444 → 0.481, best shift dy −5.4 → −1.4. In close-ups the feet hover 0.15 m.
 
 ## Screenshots
 
