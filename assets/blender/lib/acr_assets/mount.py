@@ -60,6 +60,7 @@ def load(name, parent, clips, withers=WITHERS, tris=TRIS, coat=None):
         for part, rgb in (coat or COAT).items():
             if im.users and part in im.name.lower():
                 _tint(im, rgb)
+    cards = _alpha_cards()
     arm = next(o for o in objs if o.type == "ARMATURE")
     meshes = [o for o in objs if o.type == "MESH" and (o.parent == arm or any(
         m.type == "ARMATURE" and m.object == arm for m in o.modifiers))]
@@ -84,7 +85,7 @@ def load(name, parent, clips, withers=WITHERS, tris=TRIS, coat=None):
             m.data.color_attributes.remove(attr)
         while len(m.data.uv_layers) > 1:
             m.data.uv_layers.remove(m.data.uv_layers[-1])
-    stats = {"source_bones": len(arm.data.bones)}
+    stats = {"source_bones": len(arm.data.bones), "alpha_cards": cards}
     _prune(arm, meshes)
     stats["bones"] = len(arm.data.bones)
     stats["source_triangles"] = sum(sum(len(p.vertices) - 2 for p in m.data.polygons) for m in meshes)
@@ -157,6 +158,36 @@ def load(name, parent, clips, withers=WITHERS, tris=TRIS, coat=None):
 
 # The pack's horse is grey (its textures are a grey coat): tinted to a bay with a dark mane.
 COAT = {"body": (0.62, 0.40, 0.24), "hair": (0.30, 0.21, 0.14)}
+
+
+# Materials of the pack drawn as alpha-tested strand cards (mane, tail, forelock).
+CARDS = ("hair",)
+
+
+def _alpha_cards(parts=CARDS):
+    """The pack's mane and tail are strand cards whose texture is 75 % transparent, but its
+    material leaves the alpha unplugged, so they exported opaque: dark sheets instead of
+    strands (#233). Plugs the image alpha through a Round node into the BSDF's alpha, which
+    the exporter writes as `alphaMode: MASK` (cutoff 0.5). Returns the materials changed."""
+    done = []
+    for mat in sorted(bpy.data.materials, key=lambda m: m.name):
+        if not mat.users or not mat.node_tree or not any(k in mat.name.lower() for k in parts):
+            continue
+        nt = mat.node_tree
+        bsdf = next((n for n in nt.nodes if n.type == "BSDF_PRINCIPLED"), None)
+        if bsdf is None or not bsdf.inputs["Base Color"].links:
+            continue
+        tex = bsdf.inputs["Base Color"].links[0].from_node
+        if tex.type != "TEX_IMAGE":
+            continue
+        for link in list(bsdf.inputs["Alpha"].links):
+            nt.links.remove(link)
+        rnd = nt.nodes.new("ShaderNodeMath")
+        rnd.operation = "ROUND"
+        nt.links.new(tex.outputs["Alpha"], rnd.inputs[0])
+        nt.links.new(rnd.outputs[0], bsdf.inputs["Alpha"])
+        done.append(mat.name)
+    return done
 
 
 def _tint(im, rgb):
