@@ -74,11 +74,20 @@ pub struct GroundState {
     pages_dirty: bool,
     stamps: u64,
     fade_next: usize,
+    /// Fades so far: varies the rounding of [`GroundState::fade`].
+    fades: u32,
 }
 
 impl Default for GroundState {
     fn default() -> Self {
-        Self { pages: vec![0; PAGE_SIDE * PAGE_SIDE], slots: Vec::new(), pages_dirty: true, stamps: 0, fade_next: 0 }
+        Self {
+            pages: vec![0; PAGE_SIDE * PAGE_SIDE],
+            slots: Vec::new(),
+            pages_dirty: true,
+            stamps: 0,
+            fade_next: 0,
+            fades: 0,
+        }
     }
 }
 
@@ -246,10 +255,16 @@ impl GroundState {
         let i = self.fade_next % n;
         self.fade_next = (i + 1) % n;
         let k = keep.powi(n as i32);
+        self.fades = self.fades.wrapping_add(1);
+        let seed = self.fades.wrapping_mul(0x9e37_79b9);
         let slot = &mut self.slots[i];
-        for t in slot.data.as_chunks_mut::<4>().0 {
-            t[0] = (f32::from(t[0]) * k) as u8;
-            t[1] = (f32::from(t[1]) * k) as u8;
+        for (j, t) in slot.data.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+            // Dithered rounding: truncating took a whole step per call, so a slot alone
+            // lost 1/255 a tick and every path was gone in seconds whatever `keep` said.
+            let d = ((j as u32).wrapping_mul(0x85eb_ca6b) ^ seed) >> 8;
+            let d = d as f32 / (1u32 << 24) as f32;
+            t[0] = (f32::from(t[0]) * k + d) as u8;
+            t[1] = (f32::from(t[1]) * k + d) as u8;
             // Prints shallower than 4 cm level out where the soil has recovered.
             if t[0] < 40 && t[3] < LEVEL && t[3] > LEVEL - 20 {
                 t[3] += 1;
@@ -346,6 +361,20 @@ mod tests {
         let t = g.texel(100.0, 100.0);
         assert!(t[0] < 120, "{t:?}");
         assert!(t[3] < 10, "a deep hole stays: {t:?}");
+    }
+
+    #[test]
+    fn compression_fades_at_its_rate() {
+        // One slot fades every tick: 600 ticks at 0.9997 keep 84 % (truncating left 0).
+        let mut g = GroundState::new();
+        g.stamp(&Stamp::print([100.0, 100.0], [1.0, 0.0], [20.0, 20.0], -0.01, 0.6));
+        let r0 = f32::from(g.texel(100.0, 100.0)[0]);
+        for _ in 0..600 {
+            g.fade(0.9997);
+        }
+        let r = f32::from(g.texel(100.0, 100.0)[0]);
+        let want = r0 * 0.9997f32.powi(600);
+        assert!((r - want).abs() < 8.0, "{r0} -> {r}, want {want}");
     }
 
     #[test]

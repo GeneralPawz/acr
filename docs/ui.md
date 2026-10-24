@@ -912,15 +912,15 @@ described in [simulation.md](simulation.md#fog-of-war).
   - OK and Abbruch on `G_Load_Game` frame 1. Enter and Escape work.
   - OK changes the simulation's tick rate and the scroll speed.
 
-ACR adds three more pages in the same frame (`ui/screens/game_options.rs`). A text button
-right on the first heading's line ("Weitere Optionen »", then "Seite 2/4: Grafik »",
-"Seite 3/4: Realismus »", "Seite 4/4: Zurück »") turns the pages; OK takes the choices of
-all four, Abbruch none.
+ACR adds four more pages in the same frame (`ui/screens/game_options.rs`). A text button
+right on the first heading's line ("Weitere Optionen »", then "Seite 2/5: Grafik »",
+"Seite 3/5: Details »", "Seite 4/5: Realismus »", "Seite 5/5: Zurück »") turns the pages;
+OK takes the choices of all five, Abbruch none.
 Rows are 27 px apart from the first heading, labels and boxes where the original page has
 them (+76 / +239): headings on its heading rows (203, 257, 365), a combo box on every other
 row, since the frame has the empty boxes (230, 284, 392) and the sliders'
-tracks (311, 338, 419, 446) drawn in. A page with fewer rows (2 and 4 leave the third
-group, 365 … 446, empty) covers the frame's boxes below its last row with a strip of the
+tracks (311, 338, 419, 446) drawn in. A page with fewer rows (2 and 5 leave the third
+group, 365 … 446, empty, 4 all below 284) covers the frame's boxes below its last row with a strip of the
 frame from the plain heading row 257 (box column only, one row high). The settings each line
 writes are in
 [rendering-3d.md](rendering-3d.md#settings).
@@ -938,10 +938,12 @@ writes are in
 | 3 | Landschaft (nur 3D) | Wetter | Aus (Original) / Regen / Schnee / Nebel | `weather` (a look and its sound, no gameplay effect) |
 | 3 | | Wind | An / Aus | `wind` |
 | 3 | | Wasser, Boden | Detailliert / Wasser original / Boden original / Original | `water`, `ground` (one box: the page's rows are the frame's) |
-| 4 | Realismus (ab nächster Schlacht) | Trefferzonen | Aus (Original) / An: Wunden, Glieder, Verbluten | `hit_locations` |
-| 4 | Truppen und Gelände | Körperabstand | Aus (Original) / An: Körper brauchen Platz | `body_spacing` |
-| 4 | | Leichenhaufen | Aus (Original) / An: als Hindernis | `corpse_piles` ([simulation.md](simulation.md#corpse-piles-optional-rule-222)) |
-| 4 | | Mörser | Aus (Original) / An: Mörser mit Zielzonen | `mortars` ([simulation.md](simulation.md#mortar-optional-rule-301)) |
+| 4 | 3D-Details | Materialdetails | An / Aus | `material_detail` (page 3 is full) |
+| 4 | Boden (nur 3D) | Bodenbewuchs | An / Aus | `ground_cover` ([ground.md](ground.md)) |
+| 5 | Realismus (ab nächster Schlacht) | Trefferzonen | Aus (Original) / An: Wunden, Glieder, Verbluten | `hit_locations` |
+| 5 | Truppen und Gelände | Körperabstand | Aus (Original) / An: Körper brauchen Platz | `body_spacing` |
+| 5 | | Leichenhaufen | Aus (Original) / An: als Hindernis | `corpse_piles` ([simulation.md](simulation.md#corpse-piles-optional-rule-222)) |
+| 5 | | Mörser | Aus (Original) / An: Mörser mit Zielzonen | `mortars` ([simulation.md](simulation.md#mortar-optional-rule-301)) |
 
 All but the four rules (page 4, every optional `acr_sim::Rules` flag) take effect at once on OK. The rules are part of the simulation (the
 setup a replay or savegame hashes): a battle keeps the rules it began with, the new choice

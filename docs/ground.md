@@ -241,7 +241,8 @@ trample darkening and the flat dirt and crater decals.
 - Stamps are painted on the CPU (ellipse, stroke, crater with rim) and only the changed
   rectangles are uploaded (`TerrainRenderer::upload_ground_state`). Holes take the deeper
   value, rims the higher, so repeated marks never dig without end. Recovery: one tile per
-  tick fades compression and mud by 0.9997 per tick; prints shallower than 4 cm level out,
+  tick fades compression and mud by 0.9997 per tick (dithered rounding: truncating the bytes
+  took a whole step per pass, so with few tiles every path was gone in seconds); prints shallower than 4 cm level out,
   craters and ruts stay.
 - Marks (`acr-game/src/ingame/ground_marks.rs`, render only, after each tick): boots
   (one print per 0.375 m, alternating feet), hoof pairs (deeper, −3.5 cm, wider apart,

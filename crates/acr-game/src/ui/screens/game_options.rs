@@ -4,8 +4,8 @@
 //! Enter and Escape work (the loop calls `StdKeys`). OK stores `FPSTime = 100 − speed` and
 //! `ScrollSpeed = slider + 2`, game mode, resolution and volumes.
 //!
-//! ACR adds three pages in the same frame ("Weitere Optionen", docs/ui.md): the battle's
-//! looks ([`BATTLE`]), the 3D graphics ([`GRAPHICS`]) and the optional realism rules
+//! ACR adds four pages in the same frame ("Weitere Optionen", docs/ui.md): the battle's
+//! looks ([`BATTLE`]), the 3D graphics ([`GRAPHICS`], [`DETAILS`]) and the optional realism rules
 //! ([`REALISM`]). The rules go into a new battle's setup only (they are part of the
 //! simulation), which their page's heading says.
 
@@ -28,8 +28,8 @@ const YELLOW: FontId = FontId("YellowFont");
 const ABORT: i32 = 0xff;
 /// `UserParam` of the page switch (ACR).
 const NEXT_PAGE: i32 = 0xfe;
-/// Pages: the original's, [`BATTLE`], [`GRAPHICS`], [`REALISM`].
-const PAGES: usize = 4;
+/// Pages: the original's, [`BATTLE`], [`GRAPHICS`], [`DETAILS`], [`REALISM`].
+const PAGES: usize = 5;
 
 /// One line of an ACR page: a label and a combo box over a setting.
 struct Choice {
@@ -182,7 +182,29 @@ const GRAPHICS: &[Row] = &[
     }),
 ];
 
-/// Page 4: the optional realism rules (`acr_sim::Rules`), each off as the original plays by
+/// Page 4: the 3D switches that no longer fit on [`GRAPHICS`] (its rows are the frame's),
+/// one row per [`ROW_Y`], the third group empty.
+const DETAILS: &[Row] = &[
+    Row::Heading(b"3D-Details"),
+    Row::Choice(Choice {
+        // `material_detail`: normal and roughness maps on the models.
+        label: b"Materialdetails",
+        lines: &[b"An", b"Aus"],
+        get: |s| on_off(!s.material_detail),
+        set: |s, i| s.material_detail = i == 0,
+    }),
+    Row::Heading(b"Boden (nur 3D)"),
+    Row::Choice(Choice {
+        // `ground_cover` (docs/ground.md "Phase 5: ground cover"): grass, flowers, ferns,
+        // litter and pebbles on the detailed ground.
+        label: b"Bodenbewuchs",
+        lines: &[b"An", b"Aus"],
+        get: |s| on_off(!s.ground_cover),
+        set: |s, i| s.ground_cover = i == 0,
+    }),
+];
+
+/// Page 5: the optional realism rules (`acr_sim::Rules`), each off as the original plays by
 /// default; one row per [`ROW_Y`], the third group empty.
 const REALISM: &[Row] = &[
     // The note "Gelten ab der naechsten Schlacht" is in the heading (#301).
@@ -215,11 +237,12 @@ const REALISM: &[Row] = &[
     }),
 ];
 
-/// The rows of ACR page `page` (1 to 3).
+/// The rows of ACR page `page` (1 to 4).
 fn rows(page: usize) -> &'static [Row] {
     match page {
         1 => BATTLE,
         2 => GRAPHICS,
+        3 => DETAILS,
         _ => REALISM,
     }
 }
@@ -298,9 +321,10 @@ impl GameOptions {
         // ACR: the page switch, right-aligned on the first heading's line.
         let label: &[u8] = match self.page {
             0 => b"Weitere Optionen \xbb",
-            1 => b"Seite 2/4: Grafik \xbb",
-            2 => b"Seite 3/4: Realismus \xbb",
-            _ => b"Seite 4/4: Zur\xfcck \xbb",
+            1 => b"Seite 2/5: Grafik \xbb",
+            2 => b"Seite 3/5: Details \xbb",
+            3 => b"Seite 4/5: Realismus \xbb",
+            _ => b"Seite 5/5: Zur\xfcck \xbb",
         };
         let width = ctx.fonts.width(ctx.lib, font::F18Y3, label);
         m.entry(ctx, ox + 534 - width, oy + 203, label, [font::F18W, font::F18Y3, font::F18Y3], Align::Left, NEXT_PAGE);
@@ -447,7 +471,7 @@ mod tests {
         // Every row has its place; the frame's boxes and tracks are covered (by a choice, or
         // a plain strip after a short page's last row), headings free.
         assert!(!BOX_ROWS.contains(&PLAIN_ROW));
-        for page in [BATTLE, GRAPHICS, REALISM] {
+        for page in [BATTLE, GRAPHICS, DETAILS, REALISM] {
             assert!(page.len() <= ROW_Y.len());
             for (row, y) in page.iter().zip(ROW_Y) {
                 assert_eq!(BOX_ROWS.contains(&y), !matches!(row, Row::Heading(_)), "row {y}");
