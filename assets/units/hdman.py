@@ -15,7 +15,7 @@ import bpy
 
 from acr_assets import armature as am
 from acr_assets import aim as aiming
-from acr_assets import gear_hd, hdbody, poses, rig
+from acr_assets import gear_hd, hdbody, penetration, poses, rig
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from engm18 import MD  # noqa: E402
@@ -76,3 +76,7 @@ def build(ctx):
     ctx.stats["hd"]["fist"]["gaps"] = hdbody.grip_gaps(arm, body)
     for level, ob in enumerate(lods, 1):  # authored levels in the glb (docs/rendering-3d.md)
         ob["acr_lod"] = level
+    # The musket against the body over every frame of every clip (m2-aim-hd).
+    ctx.stats["musket_penetration"] = penetration.measure(arm, sorted(clips), gun=gun)
+    ctx.stats["fire_contacts"] = aiming.contacts(arm)
+    am.pose(arm, {**poses.STAND_MUSKET, **fist})

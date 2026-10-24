@@ -8,9 +8,11 @@ sources under ACR_SOURCES/makehuman (see hdbody). No hat or gear yet."""
 import os
 import sys
 
+import bpy
+
 from acr_assets import aim as aiming
 from acr_assets import armature as am
-from acr_assets import decay, hdbody, outfit_hd, poses, rig
+from acr_assets import decay, gear_hd, hdbody, outfit_hd, penetration, poses, rig
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from engm18 import MD, PALETTE  # noqa: E402
@@ -34,6 +36,10 @@ def build(ctx):
     for ob in (body, *lods):
         outfit_hd.gore(ob, "flesh")
     grip = hdbody.grip_spec(arm)
+    # The HD musket on the hand for the contact and penetration measurements; removed again
+    # below (no gear yet).
+    gun, gun_lods = gear_hd.build_item(ctx, "musket")
+    gear_hd.hold(arm, gun, gun_lods)
     aim = aiming.hold(arm, poses.AIM_MUSKET)
     hip = aiming.hip(arm, poses.HIP_MUSKET)
     reload = aiming.drill(arm, poses.RELOAD_STEPS, {})
@@ -56,3 +62,10 @@ def build(ctx):
     for level, (ob, oo) in enumerate(zip(lods, olods), 1):
         ob["acr_lod"] = level
         oo["acr_lod"] = level
+    # The musket against the body and outfit over every frame of every clip (m2-aim-hd).
+    ctx.stats["musket_penetration"] = penetration.measure(arm, sorted(clips), gun=gun)
+    ctx.stats["fire_contacts"] = aiming.contacts(arm)
+    ctx.stats.pop("gear_hd", None)
+    for ob in [*gun.children, gun, *gun_lods]:
+        bpy.data.objects.remove(ob)
+    am.pose(arm, {**poses.STAND_MUSKET, **grip})

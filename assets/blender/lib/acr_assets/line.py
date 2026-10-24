@@ -661,6 +661,13 @@ def _musket_clips(ctx, ch, md):
             key_show(ch.arm, act, SHOW_REST, ch.prefix)
     if kind:
         unscale(ch.arm)
+    # The musket against the man over every frame of every clip (m2-aim-hd).
+    import bpy
+
+    from . import penetration
+
+    ctx.penetration = penetration.measure(ch.arm, sorted(a.name for a in bpy.data.actions if a.name.isupper()))
+    ctx.fire_contacts = aiming.contacts(ch.arm)
 
 
 def build(ctx, s):
@@ -706,7 +713,9 @@ def build(ctx, s):
                    **faces.extras("regular"))
     ctx.stats = {"triangles": tris, "light": report, "colours": colours, "aim_errors_m": ctx.aim_errors,
                  "drape": getattr(ch, "drape_report", None), "fire": getattr(ctx, "fire", None),
-                 "reload": getattr(ctx, "reload", None)}
+                 "reload": getattr(ctx, "reload", None),
+                 "musket_penetration": getattr(ctx, "penetration", None),
+                 "fire_contacts": getattr(ctx, "fire_contacts", None)}
     if getattr(ch, "genfit", None):
         ctx.stats["hat_source"] = ch.genfit
 

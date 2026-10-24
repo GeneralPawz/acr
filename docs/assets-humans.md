@@ -832,6 +832,21 @@ Both are keyed on every frame of the hold before the shot and baked per frame
 (fists from the grip axis; two per frame). `gear.musket` has its top (barrel, comb) towards
 +Y since #296: with -Y up the grip frame held it barrel-down at the present.
 
+**Musket contacts, measured (m2-aim-hd).** `acr_assets.penetration` measures the held musket
+against the man over every frame of every clip (`stats.json` `musket_penetration`: per clip
+the musket vertices behind the nearest body or outfit surface, `gun_in_body`, and the body
+vertices inside the musket, `body_in_gun`, each with the deepest and the most per frame; hands
+and levels left out; a depth of 0.04 m means "0.04 or more", the side test of an open garment
+shell being unreliable deeper). `aim.contacts` writes `fire_contacts`: per fire clip the butt
+plate's signed gap to the surface (`aim.butt_gap`, negative inside) and the right wrist's bend
+(`aim.wrist_deg`). `tests/test_penetration.py` gates the fire clips at 1 cm with
+`ACR_PENETRATION_GATE=1`; it is opt-in because the present still puts the butt into the
+shoulder or neck on every musketeer: the pocket is a fixed offset from the shoulder joint,
+and `aim.present` places the musket through the eye only 2.6 cm above its axis, so the butt
+lies at jaw height unless the head bows to the end of its search range. A fix must raise the
+right shoulder (clavicle) and drop the head further onto the comb, then seat the butt by
+contact.
+
 **Reload drill (#255).** A `SLOWRECHARGE` musketeer (EngM18, FrnM18, UsaM18, IroStr...:
 the `.MD` has `#ATTACK3`) does not reload in `ATTACK1`: the sim plays `#ATTACK3` again and
 again straight after `#ATTACK1`, each play taking its 88 frames off the reload counter

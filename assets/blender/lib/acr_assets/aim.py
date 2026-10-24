@@ -147,6 +147,102 @@ def left_on_shaft(arm_obj, spec, along=0.30, drop=0.45):
     return _solve(arm_obj, dict(spec), {"l": (goal, goal + Vector((0.0, 0.0, -drop)))})
 
 
+# Contacts of the shouldered musket, measured (m2-aim-hd): the butt plate against the man's
+# surface (`butt_gap`) and the right wrist's bend (`wrist_deg`), for `contacts`.
+BUTT_PLATE_M = 0.012  # m: the musket's vertices this near its rear end are the butt plate
+_butt_cache = {}
+
+
+def _butt_points(arm_obj):
+    """The butt plate's vertices of the held musket (armature space, current pose), or None."""
+    from . import penetration
+
+    gun = penetration.find_musket(arm_obj)
+    if gun is None:
+        return None
+    if gun.name not in _butt_cache:
+        z0 = min(v.co.z for v in gun.data.vertices)
+        _butt_cache[gun.name] = [v.co.copy() for v in gun.data.vertices if v.co.z < z0 + BUTT_PLATE_M]
+    m = arm_obj.matrix_world.inverted() @ gun.matrix_world
+    return [m @ c for c in _butt_cache[gun.name]]
+
+
+def butt_gap(arm_obj):
+    """Signed distance (m) of the butt plate's deepest point from the man's surface (body,
+    clothes, straps; hands and levels left out): negative inside. None without a musket or
+    with no surface within 0.2 m."""
+    import numpy as np
+    from mathutils.bvhtree import BVHTree
+
+    from . import penetration
+
+    pts = _butt_points(arm_obj)
+    if not pts:
+        return None
+    dg = bpy.context.evaluated_depsgraph_get()
+    inv = arm_obj.matrix_world.inverted()
+    p = np.array([tuple(x) for x in pts])
+    lo, hi = p.min(0) - 0.2, p.max(0) + 0.2
+    best = None
+    for ob in penetration._skinned(arm_obj):
+        key = ("tri", ob.name)
+        if key not in _butt_cache:
+            tri = penetration._tris(ob.data, np)
+            hand = penetration._hand_mask(ob, np, penetration.HAND_BONES + ("forearm_",))  # the stock lies along it
+            _butt_cache[key] = (tri[~hand[tri].any(1)], penetration.outward(ob, np))
+        tri, wind = _butt_cache[key]
+        me = ob.evaluated_get(dg).data
+        co = np.empty(len(me.vertices) * 3)
+        me.vertices.foreach_get("co", co)
+        mb = np.array(inv @ ob.matrix_world)
+        flip = wind * (-1.0 if np.linalg.det(mb[:3, :3]) < 0 else 1.0)  # inward winding, mirroring
+        co = co.reshape(-1, 3) @ mb[:3, :3].T + mb[:3, 3]
+        near = ((co >= lo) & (co <= hi)).all(1)
+        sel = tri[near[tri].any(1)]
+        if not len(sel):
+            continue
+        bvh = BVHTree.FromPolygons([tuple(c) for c in co], [tuple(int(i) for i in t) for t in sel])
+        for q in pts:
+            hit = bvh.find_nearest(q, 0.2)
+            if hit[0] is None:
+                continue
+            d = hit[3] if flip * (q - hit[0]).dot(hit[1]) >= 0 else -hit[3]
+            best = d if best is None else min(best, d)
+    return best
+
+
+def wrist_deg(arm_obj, side="r"):
+    """The wrist's bend (degrees, flexion and deviation, the twist left out): the angle
+    between the hand's direction and where the forearm would carry it from rest."""
+    arm = arm_obj.pose.bones
+    fa, ha = arm[f"forearm_{side}"], arm[f"hand_{side}"]
+    yh = ha.bone.matrix_local.to_3x3() @ Vector((0, 1, 0))
+    carried = (fa.matrix.to_3x3() @ fa.bone.matrix_local.to_3x3().inverted()) @ yh
+    now = ha.matrix.to_3x3() @ Vector((0, 1, 0))
+    return round(math.degrees(carried.angle(now, 0.0)), 1)
+
+
+def contacts(arm_obj, clips=("FIRE_AIMED", "FIRE_HIP")):
+    """`stats.json` "fire_contacts" (m2-aim-hd): per clip at its first frame (the aimed
+    hold), the butt plate's signed gap to the man's surface (m, negative inside) and the
+    right wrist's bend (degrees)."""
+    from . import penetration
+
+    out = {}
+    restore = penetration.show(penetration._skinned(arm_obj))
+    try:
+        for clip in clips:
+            if clip in bpy.data.actions:
+                am.set_clip(arm_obj, clip, int(bpy.data.actions[clip].frame_range[0]))
+                gap = butt_gap(arm_obj)
+                out[clip] = {"butt_gap_m": None if gap is None else round(gap, 4), "wrist_deg": wrist_deg(arm_obj, "r")}
+    finally:
+        restore()
+        arm_obj.animation_data.action = None
+    print("ACR fire contacts (m2-aim-hd):", out)
+    return out
+
+
 def hold(arm_obj, base, pocket=(0.03, -0.05, -0.04), left_along=0.34, left_drop=0.035,
          elbow_r=(0.35, -0.15, -0.35), elbow_l=0.45):
     """`base` (a pose spec with the musket socket's "world" orientation) with both arms
