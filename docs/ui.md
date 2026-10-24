@@ -912,13 +912,17 @@ described in [simulation.md](simulation.md#fog-of-war).
   - OK and Abbruch on `G_Load_Game` frame 1. Enter and Escape work.
   - OK changes the simulation's tick rate and the scroll speed.
 
-ACR adds two more pages in the same frame (`ui/screens/game_options.rs`). A text button
-right on the first heading's line ("Weitere Optionen »", then "Seite 2/3: Grafik »",
-"Seite 3/3: Zurück »") turns the pages; OK takes the choices of all three, Abbruch none.
+ACR adds three more pages in the same frame (`ui/screens/game_options.rs`). A text button
+right on the first heading's line ("Weitere Optionen »", then "Seite 2/4: Grafik »",
+"Seite 3/4: Realismus »", "Seite 4/4: Zurück »") turns the pages; OK takes the choices of
+all four, Abbruch none.
 Rows are 27 px apart from the first heading, labels and boxes where the original page has
 them (+76 / +239): headings on its heading rows (203, 257, 365), a combo box on every other
 row, since the frame has the empty boxes (230, 284, 392) and the sliders'
-tracks (311, 338, 419, 446) drawn in. The settings each line writes are in
+tracks (311, 338, 419, 446) drawn in. A page with fewer rows (2 and 4 leave the third
+group, 365 … 446, empty) covers the frame's boxes below its last row with a strip of the
+frame from the plain heading row 257 (box column only, one row high). The settings each line
+writes are in
 [rendering-3d.md](rendering-3d.md#settings).
 
 | Page | Heading | Line | Choices | Setting |
@@ -927,9 +931,6 @@ tracks (311, 338, 419, 446) drawn in. The settings each line writes are in
 | 2 | Tote und Spuren | Verwesung | Knochen / Nur halb, each mit / ohne Bodenfleck | `corpse_decay`, `decay_stain` (one box: the page's rows are the frame's) |
 | 2 | | Liegezeit | 1 … 60 Minuten | `corpse_minutes` |
 | 2 | | Schlachtfeldspuren | Verblassen / Bleiben (ganze Schlacht) | `battlefield_marks` |
-| 2 | Regeln (ab nächster Schlacht) | Trefferzonen | Aus (Original) / An | `hit_locations` |
-| 2 | | Körperabstand | Aus (Original) / An | `body_spacing` |
-| 2 | | Mörser | Aus (Original) / An: Mörser mit Zielzonen | `mortars` ([simulation.md](simulation.md#mortar-optional-rule-301)) |
 | 3 | 3D-Grafik | 3D-Modelle | Aus (Original) / Einheiten / Einheiten und Gebäude | `models` |
 | 3 | Darstellung | Kamera | Fest (Original) / Frei | `camera` |
 | 3 | | Schatten, Details | An / Schatten aus / Detailstufen aus / Beide aus | `shadows`, `lod` (one box, so the landscape group has room for the weather) |
@@ -937,18 +938,25 @@ tracks (311, 338, 419, 446) drawn in. The settings each line writes are in
 | 3 | Landschaft (nur 3D) | Wetter | Aus (Original) / Regen / Schnee / Nebel | `weather` (a look and its sound, no gameplay effect) |
 | 3 | | Wind | An / Aus | `wind` |
 | 3 | | Wasser, Boden | Detailliert / Wasser original / Boden original / Original | `water`, `ground` (one box: the page's rows are the frame's) |
+| 4 | Realismus (ab nächster Schlacht) | Trefferzonen | Aus (Original) / An: Wunden, Glieder, Verbluten | `hit_locations` |
+| 4 | Truppen und Gelände | Körperabstand | Aus (Original) / An: Körper brauchen Platz | `body_spacing` |
+| 4 | | Leichenhaufen | Aus (Original) / An: als Hindernis | `corpse_piles` ([simulation.md](simulation.md#corpse-piles-optional-rule-222)) |
+| 4 | | Mörser | Aus (Original) / An: Mörser mit Zielzonen | `mortars` ([simulation.md](simulation.md#mortar-optional-rule-301)) |
 
-All but the two rules take effect at once on OK. The rules are part of the simulation (the
+All but the four rules (page 4, every optional `acr_sim::Rules` flag) take effect at once on OK. The rules are part of the simulation (the
 setup a replay or savegame hashes): a battle keeps the rules it began with, the new choice
-applies from the next battle, as the heading says (the note that said it on its own row
-gave way to the `Mörser` line, #301). The corpse-piles rule (#222, `corpse_piles=on`) has no row
-yet, since page 2 is full; its planned line is "Leichenhaufen als Hindernis", Aus (Original) / An. The modern controls'
+applies from the next battle (the game setup reads them, `lib.rs`), as page 4's heading
+says. They moved off page 2 when the corpse-piles rule (#222) needed a line and page 2 was
+full; page 2 keeps the battle's looks. The modern controls'
 Ctrl + Space, C switches the free camera for the running battle only
 ([controls.md](controls.md#leader-chords-modern)); OK on these pages sets it back to the
 `Kamera` line. Driver check with
 screenshots: `ACR-analysis/settings/after.jsonl`; the `Wetter` line (combo, OK, the
 driver's `weather` answering `rain`, the line still `Regen` when reopened):
-`ACR-analysis/genai/weather/ui/` (`steps/set_rain.json`, `sheet_page3.png`).
+`ACR-analysis/genai/weather/ui/` (`steps/set_rain.json`, `sheet_page3.png`). The realism
+page (paging 1 → 4 → 1, `Leichenhaufen` set to `An`, Enter saving `corpse_piles=on`, with
+both control schemes): `ACR-analysis/genai/rules_page/` (`steps_after.json`,
+`sheet_before_after.png`).
 
 ### Mission windows and messages
 

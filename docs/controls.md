@@ -20,9 +20,9 @@ The choice is stored with the other options when you press OK: in
 in the browser's `localStorage` entry `acr-settings` on the web. The scroll speed slider
 (*Scrolltempo*) also sets how fast the keys pan in the modern scheme.
 
-The game menu's *Spieleinstellungen* has two more pages ("Weitere Optionen »"): blood and
-decay, how long the dead lie, whether craters and blood stay (*Schlachtfeldspuren*), the
-optional rules (from the next battle) and the 3D graphics ([ui.md](ui.md)).
+The game menu's *Spieleinstellungen* has three more pages ("Weitere Optionen »"): blood and
+decay, how long the dead lie, whether craters and blood stay (*Schlachtfeldspuren*); the 3D
+graphics; and the optional realism rules (from the next battle) ([ui.md](ui.md)).
 
 How the original's keys work inside is described in [ui.md](ui.md#keys-0x4a30e8-and-scrolling-0x4c5910).
 

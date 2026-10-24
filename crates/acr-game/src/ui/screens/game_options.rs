@@ -4,12 +4,13 @@
 //! Enter and Escape work (the loop calls `StdKeys`). OK stores `FPSTime = 100 − speed` and
 //! `ScrollSpeed = slider + 2`, game mode, resolution and volumes.
 //!
-//! ACR adds two pages in the same frame ("Weitere Optionen", docs/ui.md): the battle's
-//! looks and the optional rules ([`BATTLE`]), and the 3D graphics ([`GRAPHICS`]). The rules
-//! go into a new battle's setup only (they are part of the simulation), which the page says.
+//! ACR adds three pages in the same frame ("Weitere Optionen", docs/ui.md): the battle's
+//! looks ([`BATTLE`]), the 3D graphics ([`GRAPHICS`]) and the optional realism rules
+//! ([`REALISM`]). The rules go into a new battle's setup only (they are part of the
+//! simulation), which their page's heading says.
 
 use super::super::dialog::{Align, CANCEL, Kind, OK, WidgetId};
-use super::super::draw::Draw;
+use super::super::draw::{Draw, Rect};
 use super::super::settings::{CONTROL_CHOICES, CameraMode, Gore, Models, RESOLUTIONS, Settings, Weather};
 use super::super::{Ctx, Input, Nav, Screen};
 use super::{Menu, font};
@@ -27,8 +28,8 @@ const YELLOW: FontId = FontId("YellowFont");
 const ABORT: i32 = 0xff;
 /// `UserParam` of the page switch (ACR).
 const NEXT_PAGE: i32 = 0xfe;
-/// Pages: the original's, [`BATTLE`], [`GRAPHICS`].
-const PAGES: usize = 3;
+/// Pages: the original's, [`BATTLE`], [`GRAPHICS`], [`REALISM`].
+const PAGES: usize = 4;
 
 /// One line of an ACR page: a label and a combo box over a setting.
 struct Choice {
@@ -55,12 +56,11 @@ enum Row {
 /// (203, 257, 365), combo boxes on the rest, where the frame has the empty boxes and the
 /// sliders' tracks drawn in ([`BOX_ROWS`]).
 const ROW_Y: [i32; 10] = [203, 230, 257, 284, 311, 338, 365, 392, 419, 446];
-/// The rows that always show a box (a combo box)
-#[cfg(test)]
+/// The rows that always show a box (a combo box or a slider's track).
 const BOX_ROWS: [i32; 7] = [230, 284, 311, 338, 392, 419, 446];
 
-/// Page 2: the battle's looks and the optional rules (German like the game's texts, Latin-1),
-/// one row per [`ROW_Y`].
+/// Page 2: the battle's looks (German like the game's texts, Latin-1), one row per
+/// [`ROW_Y`]; the third group stays empty since the rules moved to [`REALISM`].
 const BATTLE: &[Row] = &[
     Row::Heading(b"Gefecht"),
     Row::Choice(Choice {
@@ -111,27 +111,6 @@ const BATTLE: &[Row] = &[
         lines: &[b"Verblassen", b"Bleiben (ganze Schlacht)"],
         get: |s| on_off(s.marks_keep),
         set: |s, i| s.marks_keep = i == 1,
-    }),
-    // The note "Gelten ab der naechsten Schlacht" went into the heading to make room for the
-    // mortars rule (#301).
-    Row::Heading(b"Regeln (ab n\xe4chster Schlacht)"),
-    Row::Choice(Choice {
-        label: b"Trefferzonen",
-        lines: &[b"Aus (Original)", b"An: Wunden, Glieder, Verbluten"],
-        get: |s| on_off(s.hit_locations),
-        set: |s, i| s.hit_locations = i == 1,
-    }),
-    Row::Choice(Choice {
-        label: b"K\xf6rperabstand",
-        lines: &[b"Aus (Original)", b"An: K\xf6rper brauchen Platz"],
-        get: |s| on_off(s.body_spacing),
-        set: |s, i| s.body_spacing = i == 1,
-    }),
-    Row::Choice(Choice {
-        label: b"M\xf6rser",
-        lines: &[b"Aus (Original)", b"An: M\xf6rser mit Zielzonen"],
-        get: |s| on_off(s.mortars),
-        set: |s, i| s.mortars = i == 1,
     }),
 ];
 
@@ -203,10 +182,51 @@ const GRAPHICS: &[Row] = &[
     }),
 ];
 
-/// The rows of ACR page `page` (1 or 2).
+/// Page 4: the optional realism rules (`acr_sim::Rules`), each off as the original plays by
+/// default; one row per [`ROW_Y`], the third group empty.
+const REALISM: &[Row] = &[
+    // The note "Gelten ab der naechsten Schlacht" is in the heading (#301).
+    Row::Heading(b"Realismus (ab n\xe4chster Schlacht)"),
+    Row::Choice(Choice {
+        label: b"Trefferzonen",
+        lines: &[b"Aus (Original)", b"An: Wunden, Glieder, Verbluten"],
+        get: |s| on_off(s.hit_locations),
+        set: |s, i| s.hit_locations = i == 1,
+    }),
+    Row::Heading(b"Truppen und Gel\xe4nde"),
+    Row::Choice(Choice {
+        label: b"K\xf6rperabstand",
+        lines: &[b"Aus (Original)", b"An: K\xf6rper brauchen Platz"],
+        get: |s| on_off(s.body_spacing),
+        set: |s, i| s.body_spacing = i == 1,
+    }),
+    Row::Choice(Choice {
+        // `corpse_piles` (#222): dense piles slow the men crossing, big ones are walked around.
+        label: b"Leichenhaufen",
+        lines: &[b"Aus (Original)", b"An: als Hindernis"],
+        get: |s| on_off(s.corpse_piles),
+        set: |s, i| s.corpse_piles = i == 1,
+    }),
+    Row::Choice(Choice {
+        label: b"M\xf6rser",
+        lines: &[b"Aus (Original)", b"An: M\xf6rser mit Zielzonen"],
+        get: |s| on_off(s.mortars),
+        set: |s, i| s.mortars = i == 1,
+    }),
+];
+
+/// The rows of ACR page `page` (1 to 3).
 fn rows(page: usize) -> &'static [Row] {
-    if page == 1 { BATTLE } else { GRAPHICS }
+    match page {
+        1 => BATTLE,
+        2 => GRAPHICS,
+        _ => REALISM,
+    }
 }
+
+/// A heading row of the frame whose box column is plain parchment: the empty box rows of a
+/// short page are covered with this strip of the frame.
+const PLAIN_ROW: i32 = 257;
 
 #[derive(Default)]
 pub struct GameOptions {
@@ -278,8 +298,9 @@ impl GameOptions {
         // ACR: the page switch, right-aligned on the first heading's line.
         let label: &[u8] = match self.page {
             0 => b"Weitere Optionen \xbb",
-            1 => b"Seite 2/3: Grafik \xbb",
-            _ => b"Seite 3/3: Zur\xfcck \xbb",
+            1 => b"Seite 2/4: Grafik \xbb",
+            2 => b"Seite 3/4: Realismus \xbb",
+            _ => b"Seite 4/4: Zur\xfcck \xbb",
         };
         let width = ctx.fonts.width(ctx.lib, font::F18Y3, label);
         m.entry(ctx, ox + 534 - width, oy + 203, label, [font::F18W, font::F18Y3, font::F18Y3], Align::Left, NEXT_PAGE);
@@ -316,6 +337,13 @@ impl GameOptions {
             self.scroll = slider(m, 429, 8, s.scroll_speed - 2);
             self.speed = slider(m, 455, 100, 100 - s.frame_time.clamp(0, 100));
         } else {
+            // A page shorter than the frame: its empty boxes and tracks covered with a plain
+            // strip of the frame (the box column, one row high).
+            for &y in ROW_Y.iter().skip(rows(self.page).len()).filter(|y| BOX_ROWS.contains(y)) {
+                m.d.set_clip(Some(Rect::new(ox + 230, oy + y - 3, 310, 27)));
+                m.d.add_gp_picture(ctx.lib, ox + 3, oy + 126 + y - PLAIN_ROW, DIALOG, 1);
+                m.d.set_clip(None);
+            }
             let mut combos = Vec::new();
             for (i, (row, &y)) in rows(self.page).iter().zip(&ROW_Y).enumerate() {
                 match row {
@@ -416,12 +444,28 @@ mod tests {
                 }
             }
         }
-        // Every row has its place; the frame's boxes and tracks are covered, headings free.
-        for page in [BATTLE, GRAPHICS] {
-            assert_eq!(page.len(), ROW_Y.len());
+        // Every row has its place; the frame's boxes and tracks are covered (by a choice, or
+        // a plain strip after a short page's last row), headings free.
+        assert!(!BOX_ROWS.contains(&PLAIN_ROW));
+        for page in [BATTLE, GRAPHICS, REALISM] {
+            assert!(page.len() <= ROW_Y.len());
             for (row, y) in page.iter().zip(ROW_Y) {
                 assert_eq!(BOX_ROWS.contains(&y), !matches!(row, Row::Heading(_)), "row {y}");
             }
         }
+        // The optional rules (`acr_sim::Rules`) are all on the realism page, off = original.
+        let labels = |page: &[Row]| -> Vec<&[u8]> {
+            page.iter().filter_map(|r| if let Row::Choice(c) = r { Some(c.label) } else { None }).collect()
+        };
+        assert_eq!(labels(REALISM), [&b"Trefferzonen"[..], b"K\xf6rperabstand", b"Leichenhaufen", b"M\xf6rser"]);
+        assert_eq!(labels(BATTLE), [&b"Blutdarstellung"[..], b"Verwesung", b"Liegezeit", b"Schlachtfeldspuren"]);
+        let mut s = Settings::default();
+        for row in REALISM {
+            let Row::Choice(c) = row else { continue };
+            assert_eq!(c.lines[0], b"Aus (Original)");
+            assert_eq!((c.get)(&s), 0);
+            (c.set)(&mut s, 1);
+        }
+        assert!(s.hit_locations && s.body_spacing && s.corpse_piles && s.mortars);
     }
 }

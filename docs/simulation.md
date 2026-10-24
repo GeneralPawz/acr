@@ -1380,9 +1380,8 @@ option `corpse_piles`, savegame rules bit 3) dense piles of bodies hinder the li
 
 Not covered: cannons and the push of formations (`spacing`) ignore the piles, the
 coarse area routing (`TOP1`) does not know them, and `RemoveFools` may still swap a man into
-a blocked cell. The options page has no row yet (both columns of Spieleinstellungen
-page 2 are full): the planned line is "Leichenhaufen als Hindernis", `Aus (Original)` /
-`An`; until then the rule is the setting `corpse_piles=on`.
+a blocked cell. In Spieleinstellungen it is the line `Leichenhaufen` (`Aus (Original)` /
+`An: als Hindernis`) on page 4, Realismus ([ui.md](ui.md)); the setting is `corpse_piles=on`.
 
 ### Worked timing (musketeer, 10 ticks/s)
 
