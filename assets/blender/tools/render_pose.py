@@ -102,6 +102,7 @@ def main(argv):
         bpy.ops.wm.read_factory_settings(use_empty=True)
         if legacy:
             bpy.ops.import_scene.gltf(filepath=model)
+            posecheck.game_colours()  # only the pose is the old way, not the colours
         else:
             posecheck.import_glb(model)
     sc = bpy.context.scene

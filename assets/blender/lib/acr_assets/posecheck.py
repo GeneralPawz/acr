@@ -259,6 +259,32 @@ def import_glb(path):
         with open(p, "wb") as f:
             f.write(data)
         bpy.ops.import_scene.gltf(filepath=p)
+    game_colours()
+
+
+def game_colours():
+    """Shows imported materials the way the game does: Blender's glTF importer always
+    multiplies `COLOR_0` into the base colour, but on a material with `extras.acr_decay`
+    `COLOR_0` is the decay mask (noise in R and G, B = 0), which the game never uses as a
+    colour (`model.wgsl` `shade`, `flags.y`); multiplied in, it turned bare skin green.
+    Cuts those links (the socket falls back to white); other materials keep their vertex
+    colour. Returns the number of links cut."""
+    n = 0
+    for mat in bpy.data.materials:
+        if "acr_decay" not in mat.keys() or not mat.node_tree:
+            continue
+        tree = mat.node_tree
+        for node in tree.nodes:
+            if node.bl_idname != "ShaderNodeVertexColor":
+                continue
+            for link in list(node.outputs[0].links):
+                sock = link.to_socket
+                tree.links.remove(link)
+                if hasattr(sock, "default_value") and len(sock.default_value) == 4:
+                    sock.default_value = (1.0, 1.0, 1.0, 1.0)
+                n += 1
+    print(f"ACR game colours: {n} decay-mask colour links cut")
+    return n
 
 
 def poses_path(glb_or_blend):
