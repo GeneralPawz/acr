@@ -2,14 +2,15 @@
 //! the point under the cursor, Ctrl + left drag and middle drag pan the map, W/A/S/D pan
 //! like the arrow keys, Home centres the selection and a control group digit pressed twice
 //! centres the group, Ctrl + click takes units out of the selection, Shift + right drag
-//! orbits the free camera. The original controls stay the default and are not changed by any of
-//! this: every entry point here returns at once unless the modern scheme is chosen.
+//! orbits the free camera, the army list picks like a file list (Ctrl toggles, Shift takes
+//! a range). The original controls stay the default and are not changed by any of this:
+//! every entry point here returns at once unless the modern scheme is chosen.
 
 use acr_render::terrain::Camera;
 use acr_sim::world::EntityId;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 
-use super::interface::{GameKey, corrected_selection};
+use super::interface::{GameKey, corrected_selection, fighting_member, formation_soldiers};
 use super::{CLICK_SLOP, InGame};
 use crate::hud::HudCommand;
 use crate::ui::Ctx;
@@ -125,6 +126,78 @@ pub(super) fn icon_units(world: &acr_sim::World, selected: &[EntityId], command:
     }
 }
 
+/// How a click on a formation of the army list picks (modern controls), by the modifiers
+/// held, as in a file list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PanelPick {
+    /// A plain click: only that formation; it becomes the anchor.
+    One,
+    /// Ctrl + click: that formation in or out of the selection; it becomes the anchor.
+    Toggle,
+    /// Shift + click: the formations from the anchor to it, in the list's order.
+    Range,
+    /// Ctrl + Shift + click: that range added.
+    AddRange,
+}
+
+impl PanelPick {
+    pub(super) fn of(mods: ModifiersState) -> Self {
+        match (mods.control_key(), mods.shift_key()) {
+            (false, false) => Self::One,
+            (true, false) => Self::Toggle,
+            (false, true) => Self::Range,
+            (true, true) => Self::AddRange,
+        }
+    }
+}
+
+/// The formations selected after a click on `clicked` in the army list (`order`, the
+/// formations in slot order) and the new anchor. `chosen` are the formations selected
+/// before. A range without an anchor in the list is the clicked formation alone.
+pub(super) fn panel_pick(
+    order: &[u16],
+    chosen: &[u16],
+    anchor: Option<u16>,
+    clicked: u16,
+    pick: PanelPick,
+) -> (Vec<u16>, Option<u16>) {
+    let at = |b: u16| order.iter().position(|&o| o == b);
+    let in_order = |set: &dyn Fn(u16) -> bool| order.iter().copied().filter(|&b| set(b)).collect::<Vec<_>>();
+    let range = match (anchor.and_then(at), at(clicked)) {
+        (Some(a), Some(c)) => order[a.min(c)..=a.max(c)].to_vec(),
+        _ => vec![clicked],
+    };
+    let keep_anchor = if anchor.and_then(at).is_some() { anchor } else { Some(clicked) };
+    match pick {
+        PanelPick::One => (vec![clicked], Some(clicked)),
+        PanelPick::Toggle => {
+            let was = chosen.contains(&clicked);
+            (in_order(&|b| if b == clicked { !was } else { chosen.contains(&b) }), Some(clicked))
+        }
+        PanelPick::Range => (range, keep_anchor),
+        PanelPick::AddRange => (in_order(&|b| chosen.contains(&b) || range.contains(&b)), keep_anchor),
+    }
+}
+
+/// The formations the army list shows, in slot order: the player's living formations among
+/// the first slots that still have a soldier (as `InGame::army_icons`).
+pub(super) fn army_order(world: &acr_sim::World, own: u8, slots: usize) -> Vec<u16> {
+    let mut listed: Vec<(u16, u16)> = world
+        .brigades
+        .iter()
+        .enumerate()
+        .filter(|(b, br)| {
+            br.alive
+                && br.owner == own
+                && usize::from(br.number) < slots
+                && !formation_soldiers(world, *b as u16).is_empty()
+        })
+        .map(|(b, br)| (br.number, b as u16))
+        .collect();
+    listed.sort_unstable();
+    listed.into_iter().map(|(_, b)| b).collect()
+}
+
 /// What starts a pan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum PanButton {
@@ -161,6 +234,9 @@ pub(super) struct Modern {
     leader: Option<web_time::Instant>,
     /// Shift + right drag under the free camera: the press point and the turn and tilt then.
     pub orbit: Option<([f32; 2], acr_render::view3d::Orbit)>,
+    /// The army list's anchor: the formation of the last plain or Ctrl + click, where a
+    /// Shift + click's range starts ([`panel_pick`]).
+    pub army_anchor: Option<u16>,
 }
 
 impl Default for Modern {
@@ -175,6 +251,7 @@ impl Default for Modern {
             last_group: None,
             leader: None,
             orbit: None,
+            army_anchor: None,
         }
     }
 }
@@ -190,6 +267,48 @@ impl InGame {
     pub(super) fn ctrl_deselects(&self) -> bool {
         let mods = self.interface.mods;
         self.modern() && mods.control_key() && !mods.shift_key() && !mods.alt_key()
+    }
+
+    /// A click on a formation of the army list with the modern controls ([`PanelPick`]): the
+    /// picked formations' flag bearers and soldiers are selected, the list's other formations
+    /// leave the selection. A plain or Shift + click starts a new selection, Ctrl keeps the
+    /// free units and formations outside the list. Several formations selected then move as
+    /// a group (`group_move`).
+    pub(super) fn army_pick(&mut self, brigade: u16) {
+        let own = self.own();
+        let pick = PanelPick::of(self.interface.mods);
+        let Some(world) = &self.world else { return };
+        let order = army_order(world, own, (crate::hud::ARMY_ROWS - 1) * crate::hud::ARMY_COLUMNS);
+        let members = |b: u16| -> Vec<EntityId> {
+            world.brigades.get(usize::from(b)).map_or(Vec::new(), |br| {
+                br.members
+                    .iter()
+                    .skip(2)
+                    .flatten()
+                    .copied()
+                    .filter(|&m| fighting_member(world, b, m).is_some())
+                    .collect()
+            })
+        };
+        let chosen: Vec<u16> =
+            order.iter().copied().filter(|&b| members(b).iter().any(|m| self.selected.contains(m))).collect();
+        let (picked, anchor) = panel_pick(&order, &chosen, self.interface.modern.army_anchor, brigade, pick);
+        let mut selected = std::mem::take(&mut self.selected);
+        if matches!(pick, PanelPick::One | PanelPick::Range) {
+            selected.clear();
+        } else {
+            let out: Vec<EntityId> = order.iter().filter(|b| !picked.contains(b)).flat_map(|&b| members(b)).collect();
+            selected.retain(|id| !out.contains(id));
+        }
+        for b in picked {
+            for m in members(b) {
+                if !selected.contains(&m) {
+                    selected.push(m);
+                }
+            }
+        }
+        self.selected = selected;
+        self.interface.modern.army_anchor = anchor;
     }
 
     /// A Ctrl + click on the map (modern controls) on a selected unit: the unit leaves the
@@ -620,6 +739,43 @@ mod tests {
         let army = icon_units(&w, &selected, &HudCommand::ArmySelect { brigade: b, add: false }).unwrap();
         assert_eq!(army, units);
         assert_eq!(icon_units(&w, &selected, &HudCommand::Fill), None);
+    }
+
+    #[test]
+    fn army_list_picks_like_a_file_list() {
+        use PanelPick::*;
+        let order = [4, 1, 7, 2, 9];
+        // A plain click: that one, the anchor.
+        assert_eq!(panel_pick(&order, &[4, 2], None, 1, One), (vec![1], Some(1)));
+        // Shift: from the anchor to the clicked one in the list's order, either way; the
+        // anchor stays.
+        assert_eq!(panel_pick(&order, &[1], Some(1), 2, Range), (vec![1, 7, 2], Some(1)));
+        assert_eq!(panel_pick(&order, &[1, 7, 2], Some(1), 4, Range), (vec![4, 1], Some(1)));
+        // Without an anchor in the list, Shift picks the one and anchors there.
+        assert_eq!(panel_pick(&order, &[], None, 7, Range), (vec![7], Some(7)));
+        assert_eq!(panel_pick(&order, &[], Some(3), 7, Range), (vec![7], Some(7)));
+        // Ctrl toggles and moves the anchor.
+        assert_eq!(panel_pick(&order, &[1, 2], Some(1), 9, Toggle), (vec![1, 2, 9], Some(9)));
+        assert_eq!(panel_pick(&order, &[1, 2, 9], Some(9), 1, Toggle), (vec![2, 9], Some(1)));
+        // Ctrl + Shift adds the range to what is chosen.
+        assert_eq!(panel_pick(&order, &[4], Some(7), 9, AddRange), (vec![4, 7, 2, 9], Some(7)));
+        // A chain: click 4, Shift + click 7 (three formations), Ctrl + click 1 out, Ctrl +
+        // Shift + click 9 adds 1..9 from the new anchor.
+        let (s, a) = panel_pick(&order, &[], None, 4, One);
+        let (s, a) = panel_pick(&order, &s, a, 7, Range);
+        assert_eq!(s, [4, 1, 7]);
+        let (s, a) = panel_pick(&order, &s, a, 1, Toggle);
+        assert_eq!((s.clone(), a), (vec![4, 7], Some(1)));
+        let (s, _) = panel_pick(&order, &s, a, 9, AddRange);
+        assert_eq!(s, order);
+    }
+
+    #[test]
+    fn modifiers_choose_the_pick() {
+        assert_eq!(PanelPick::of(ModifiersState::empty()), PanelPick::One);
+        assert_eq!(PanelPick::of(ModifiersState::CONTROL), PanelPick::Toggle);
+        assert_eq!(PanelPick::of(ModifiersState::SHIFT), PanelPick::Range);
+        assert_eq!(PanelPick::of(ModifiersState::CONTROL | ModifiersState::SHIFT), PanelPick::AddRange);
     }
 
     #[test]

@@ -33,7 +33,8 @@ How the original's keys work inside is described in [ui.md](ui.md#keys-0x4a30e8-
 | Select a unit or building | left click | left click (also Ctrl + left click) |
 | Select with a rectangle | left drag | left drag |
 | Add to the selection | Shift + click or drag | Shift + click or drag |
-| Take out of the selection | – | **Ctrl + click** on a selected unit (its whole formation), or on a type or formation icon of the selection panel or the army list |
+| Take out of the selection | – | **Ctrl + click** on a selected unit (its whole formation), or on a type or formation icon of the selection panel |
+| Pick formations in the army list (top left) | click selects it, Shift + click adds it | click selects one (the anchor), **Ctrl + click** toggles one, **Shift + click** the range from the anchor, **Ctrl + Shift + click** adds the range |
 | Select all units of that type on the screen | double click (Shift adds) | double click (Shift adds) |
 | Move, attack, gather, enter, repair (context order) | right click | right click |
 | Move and face a direction | right drag (more than 30 map pixels) | right drag |
@@ -47,13 +48,24 @@ How the original's keys work inside is described in [ui.md](ui.md#keys-0x4a30e8-
 | Centre the view | left click or drag on the minimap | the same |
 | Order to a point on the minimap | right click on the minimap | the same |
 
+The army list at the top left (the `ORDERS_LIST` icon opens it, docs/ui.md) picks like a
+file list with the modern controls (`InGame::army_pick`, `panel_pick` in
+`ingame/controls.rs`): a plain click selects that formation alone and makes it the anchor;
+Ctrl + click puts a formation in or out of the selection and moves the anchor there;
+Shift + click selects the formations from the anchor to the clicked one in the list's
+order (slot order, the numbers on the icons); Ctrl + Shift + click adds that range. Plain
+and Shift + click start a new selection; with Ctrl the free units and other selected
+objects stay. The picked formations have the yellow frame. A move order then sends them as
+a group (`group_move`, on by default with the modern controls; docs/simulation.md "Group
+moves"), each to its own place. The original (0x6064b0) selects on a click and adds with
+Shift.
+
 Ctrl + left click without moving on a unit that is selected takes it out of the selection:
 a free unit alone, a formation member with its whole formation (officer and drummer too)
 and the formations grouped with it. So with horsemen and infantry selected, Ctrl + click on
 a horseman drops that horseman, and Ctrl + click on the horsemen's icon in the selection
 panel drops all of them. On the panel, a type icon stands for the selected free units of
-that type, a formation icon (also in the army list at the top left) for that formation's
-members. Anywhere else (no selected unit hit, or while placing a building, a rally point,
+that type, a formation icon for that formation's members. Anywhere else (no selected unit hit, or while placing a building, a rally point,
 a patrol point or an attack-ground point) Ctrl + left click does exactly what a plain left
 click does: it selects, places a building or sets a rally point. Shift + Ctrl + click is a
 plain Shift + click. In the original, Ctrl changes nothing about

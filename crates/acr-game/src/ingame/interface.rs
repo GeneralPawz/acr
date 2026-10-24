@@ -1429,6 +1429,13 @@ impl InGame {
 
     /// Runs a command of the interface.
     fn hud_command(&mut self, command: HudCommand) {
+        // Modern controls: the army list picks like a file list (plain, Ctrl, Shift).
+        if self.modern()
+            && let HudCommand::ArmySelect { brigade, .. } = command
+        {
+            self.army_pick(brigade);
+            return;
+        }
         let player = self.own();
         let deselect = self.ctrl_deselects();
         let Some(world) = &self.world else { return };

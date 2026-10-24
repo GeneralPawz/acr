@@ -395,7 +395,8 @@ cursor is drawn anywhere in the window, also beside the menu canvas.
     and the yellow frame when one of them is selected (0x49464d). A click (0x6064b0) selects
     it through `ImSelBrigade` (0x4d75a6 → 0x4e1365, network command 0x3b): without Shift the
     selection is cleared first; the members from the third on (flag bearer and soldiers)
-    join it. The mouse over one (0x606500 → `0x66a8e8` = the brigade's index) marks the
+    join it. ACR's modern controls pick like a file list instead (Ctrl toggles, Shift
+    takes the range from the anchor, docs/controls.md). The mouse over one (0x606500 → `0x66a8e8` = the brigade's index) marks the
     mean position of its members on the minimap (0x4c107f): an octagon of eight
     `DrawLine`s in `GetPaletteColor(255, 255, 0)`, 5 px across the sides and 2 px across the
     corners, at `minimap + 1 + RealX >> 10`.
