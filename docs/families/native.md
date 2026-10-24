@@ -30,7 +30,8 @@ frames, and `native.spec(MD, WEAPONS, ...)`.
 SPEC `drape`: pieces of `dress` drafted and draped instead of shells (#307; docs/clothing.md
 roll-out list): `leggings` on for DelLut, IroLut, IroStr, IroTam, IroVog, HurLut, HurS15 and
 HurVog (the Delaware with a shirt and the shamans keep the shells until the shirt and the
-cloak are draped); `breechcloth` on for DelLut. All 15 Woodlands units are built (slice 2). Iroquois wear red leggings and the red roach,
+cloak are draped); `breechcloth` on for the same eight (the flaps take the legging's weights
+where they lie on a legging top, `native._flap_weights`). All 15 Woodlands units are built (slice 2). Iroquois wear red leggings and the red roach,
 Huron green breechcloths, blue leggings and a black roach, Delaware a red breechcloth, blue
 leggings and the scalp lock; skin tones vary a little by nation (`palette["skin"]`).
 

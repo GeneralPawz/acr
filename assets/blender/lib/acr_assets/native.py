@@ -232,15 +232,66 @@ def _flap_weights(ch, obj, z0=1.03, off=0.02):
             flap.append(v.index)
     for g in obj.vertex_groups:
         g.remove(flap)
+    # The draped leggings beneath (`ch.legging_cloth`): where the flap lies on a legging top
+    # it takes the legging's weights, fully within `near[0]` m, blending out by `near[1]`
+    # (past `acr_render::layers::REACH`), so a parted leg carries the flap over its top
+    # instead of coming out through it (#307: 38 crossings, 40 mm, in ATTACK_CUT_FINISH).
+    under = _surface_weights(getattr(ch, "legging_cloth", ()))
+    near = (0.015, 0.045)
     for i in flap:
         co = vs[i].co
         t = min(max((z0 - co.z) / (z0 - z1), 0.0), 1.0)
         k = 0.6 * t  # linear: the flap follows the thighs sooner than `_flap`'s (the legging tops)
-        groups["hips"].add([i], 1.0 - k, "REPLACE")
+        ws = {P + "hips": 1.0 - k}
         if k > 0:
-            groups["thigh_l"].add([i], k * min(max(0.5 + co.x / w, 0.0), 1.0), "REPLACE")
-            groups["thigh_r"].add([i], k * min(max(0.5 - co.x / w, 0.0), 1.0), "REPLACE")
+            ws[P + "thigh_l"] = k * min(max(0.5 + co.x / w, 0.0), 1.0)
+            ws[P + "thigh_r"] = k * min(max(0.5 - co.x / w, 0.0), 1.0)
+        if under:
+            d, wl = under(co)
+            s = min(max((near[1] - d) / (near[1] - near[0]), 0.0), 1.0) if wl else 0.0
+            if s > 0:
+                ws = {b: ws.get(b, 0.0) * (1 - s) + wl.get(b, 0.0) * s for b in set(ws) | set(wl)}
+                ws = dict(sorted(ws.items(), key=lambda kv: -kv[1])[:4])
+                tot = sum(ws.values()) or 1.0
+                ws = {b: x / tot for b, x in ws.items()}
+        for b, x in ws.items():
+            if x > 0.0:
+                g = groups.get(b[len(P):]) or obj.vertex_groups.get(b) or obj.vertex_groups.new(name=b)
+                g.add([i], x, "REPLACE")
     return len(flap)
+
+
+def _surface_weights(objs):
+    """A lookup co -> (distance m, {bone: weight}) on the nearest face of `objs` (skinned,
+    rest pose), the face's weights interpolated by inverse distance to its corners; None
+    without objects."""
+    from mathutils.bvhtree import BVHTree
+
+    verts, polys, wts = [], [], []
+    for o in objs:
+        names = {g.index: g.name for g in o.vertex_groups}
+        base = len(verts)
+        for v in o.data.vertices:
+            verts.append(v.co.copy())
+            wts.append({names[e.group]: e.weight for e in v.groups if e.group in names and e.weight > 0
+                        and not names[e.group].startswith("acr_")})
+        polys += [[base + i for i in p.vertices] for p in o.data.polygons]
+    if not polys:
+        return None
+    tree = BVHTree.FromPolygons(verts, polys)
+
+    def look(co):
+        loc, _n, fi, d = tree.find_nearest(co)
+        if fi is None:
+            return 1e9, {}
+        inv = [1.0 / max((verts[i] - loc).length, 1e-5) for i in polys[fi]]
+        w = {}
+        for i, k in zip(polys[fi], inv):
+            for b, x in wts[i].items():
+                w[b] = w.get(b, 0.0) + x * k / sum(inv)
+        return d, w
+
+    return look
 
 
 def _legging_flap(ch, side, z0=0.14, z1=0.76, rows=14, surface=None):
@@ -303,6 +354,7 @@ def dress(ch, s):
         made = drape.dress(ch, garments=("nat_leggings",), report=ch.drape_report)
         drape.hide_skin(ch, [o for o in ch.layers["clothes"] if o.name in made])
         leg = next(o for o in ch.layers["clothes"] if o.name in made and made[o.name] == "leggings")
+        ch.legging_cloth = [o for o in ch.layers["clothes"] if o.name in made]
         for side in (1.0, -1.0):
             ch.add("clothes", _legging_flap(ch, side, surface=leg), "flaps")
     elif "leggings" in d:

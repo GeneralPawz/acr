@@ -48,7 +48,7 @@ ACTIVE = {"ATTACK1": 15}
 
 
 def spec():
-    return native.spec(MD, WEAPONS, drape=("leggings",), active=ACTIVE, weapon="gun", melee=None, hair="roach", feathers=1,
+    return native.spec(MD, WEAPONS, drape=("leggings", "breechcloth"), active=ACTIVE, weapon="gun", melee=None, hair="roach", feathers=1,
                        paint="black_stripes", kit=("belt_l", "horn", "pouch", "knife"))
 
 
