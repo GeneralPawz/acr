@@ -504,12 +504,14 @@ per 0.55 m, the root sliding along with the cycle's bob).
   plays the field gun's `.MD` keys, so it carries the cannon's clip names. Three men
   (`c0.`..`c2.`: two loaders whose right hands go to the muzzle's rim, IK kind `muzzle`; the
   firer with the linstock on the vent at frame 29), a bed without wheels, the barrel fixed at
-  60° and a `flash` bone at the muzzle shown for 5 frames from the shot. Open: `crew_view`
-  still counts four men (`CREW`, `FALL_ORDER` starts with `c3.`, absent here, so the first
-  quarter of the life costs no visible man) and bleeds pools at the cannon's `HOME`.
+  60° and a `flash` bone at the muzzle shown for 5 frames from the shot. A man falls per
+  third of the lost life (c1, c0, then the firer c2), each bleeding under where he lies.
 - **Losses** (`acr-game/src/ingame/crew_view.rs`): the sim keeps the gun a single unit with
-  one life; with `k = ceil(4 · life / max_life)` men standing, a man falls each time `k`
-  drops (c3 the firer, c1 the loader, c0 the rammer, c2 the layer, who stays longest).
+  one life; with `k = ceil(n · life / max_life)` of the model's `n` men standing (the
+  highest `cN.` prefix + 1, at most `CREW` = 4), a man falls each time `k` drops, in
+  `Crew::fall` order, derived from the model's own stations (`cN.hips` in `STAND`): the
+  rearmost stays longest, the others fall from the highest number down (field gun: c3 the
+  firer, c1 the loader, c0 the rammer, c2 the layer; mortar: c1, c0, the firer c2).
   `ModelData::crew` (`model.rs`, found on machine models with nodes `c0.`..`c3.`) knows the
   palette slots of each man (his bones and the gear on his sockets); `Crew::mask` collapses
   the rows of the fallen to one point, so their triangles vanish, and the gun's instance
@@ -517,7 +519,8 @@ per 0.55 m, the root sliding along with the cycle's bob).
   instance of the gun model posed in its `DEATH` clip (then `DEATHLIE1`) with only his
   slots shown, at the gun's transform of the moment he fell. That corpse decays like any
   other (`corpse_decay` on its own clock, `deflate`/`lie_flat`), carries blood and dirt and
-  bleeds a pool at his station (`HOME`); it lies `corpse_minutes`. The drill goes on with the
+  bleeds a pool under his hips where he lies (`Crew::lying`: the end of `DEATH`); it lies
+  `corpse_minutes`. The drill goes on with the
   men left on the sim's timing; their tasks are not handed over (each man's tool hangs on
   his own bones, so another man's track would show the wrong tool), so a gap shows where a
   lost man worked. When the gun is destroyed, the men still standing become such corpses

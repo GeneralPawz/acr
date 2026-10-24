@@ -258,20 +258,44 @@ pub struct ModelData {
 }
 
 /// The men of a gun model (#287): the bones `c0.`..`c3.` and what hangs on them, so a fallen
-/// man can be hidden from the gun and drawn alone as his own corpse.
+/// man can be hidden from the gun and drawn alone as his own corpse. The field gun has four
+/// (`ArtPus`), the mortar three (`ArtMrt`, #301).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Crew {
     /// Per palette slot: the man (0..4) it belongs to, `None` for the gun.
     pub slots: Vec<Option<u8>>,
+    /// The order the men fall in ([`Crew::fall_order`]), one entry per man in the model.
+    pub fall: Vec<u8>,
+    /// Per man: where his hips are in his `STAND` pose (model space, on the ground).
+    pub stations: Vec<[f32; 3]>,
+    /// Per man: where his hips are once he lies dead (the end of `DEATH`, else `DEATHLIE1`),
+    /// on the ground: where his corpse bleeds.
+    pub lying: Vec<[f32; 3]>,
     /// The base colours (`extras.acr_base_rgb`) of the coat and the waistcoat that a
     /// uniform replaces, their luminance kept as shading ([`Tint::Coat`], [`Tint::Facings`]).
     pub base: [[f32; 3]; 2],
 }
 
-/// Number of men in a gun crew.
+/// The most men a gun crew has (the field gun's four); the gun's bit in a shown mask.
 pub const CREW: usize = 4;
 
 impl Crew {
+    /// The men in the model.
+    pub fn men(&self) -> usize {
+        self.fall.len()
+    }
+
+    /// The order men at `stations` fall in: the rearmost (least glTF z, the gun facing +z)
+    /// stays longest, as the field gun's layer at the trail and the mortar's firer behind
+    /// the bed serve the vent and can fire; the others fall from the highest number down
+    /// (the field gun: firer, loader, rammer, layer = 3, 1, 0, 2; the mortar: 1, 0, 2).
+    pub fn fall_order(stations: &[[f32; 3]]) -> Vec<u8> {
+        let last = (0..stations.len()).min_by(|&a, &b| stations[a][2].total_cmp(&stations[b][2]));
+        let mut order: Vec<u8> = (0..stations.len()).rev().filter(|&m| Some(m) != last).map(|m| m as u8).collect();
+        order.extend(last.map(|m| m as u8));
+        order
+    }
+
     /// The pose `palette` with the men not in `shown` (a bit per man; the gun is bit 4)
     /// moved to one point: their triangles collapse and are not drawn.
     pub fn mask(&self, palette: &mut Palette, shown: u8) {
@@ -822,9 +846,25 @@ impl ModelData {
                 Slot::Node(n) | Slot::Joint { node: n, .. } => of_node(n),
             })
             .collect();
-        if slots.iter().all(Option::is_none) {
-            return None;
-        }
+        let men = slots.iter().flatten().map(|&m| usize::from(m) + 1).max()?;
+        // Each man's hips, put on the ground, in a pose of the gun.
+        let hips: Vec<Option<usize>> = (0..men)
+            .map(|m| {
+                let named = |end: &str| self.nodes.iter().position(|n| n.name == format!("c{m}.{end}"));
+                named("hips").or_else(|| named("root"))
+            })
+            .collect();
+        let at = |clip: Option<usize>, time: f32| -> Vec<[f32; 3]> {
+            let g = self.globals(clip, time);
+            hips.iter().map(|h| h.map_or([0.0; 3], |h| [g[h][3][0], 0.0, g[h][3][2]])).collect()
+        };
+        let stations = at(self.clip("STAND"), 0.0);
+        let lying = match (self.clip("DEATH"), self.clip("DEATHLIE1")) {
+            (Some(d), _) => at(Some(d), self.clips[d].duration),
+            (None, Some(l)) => at(Some(l), 0.0),
+            (None, None) => stations.clone(),
+        };
+        let fall = Crew::fall_order(&stations);
         let mut base = [[1.0; 3]; 2];
         for (m, json) in self.materials.iter_mut().zip(doc.materials()) {
             if m.tint != Tint::None || !m.name.contains(".crew") {
@@ -842,7 +882,7 @@ impl ModelData {
                 base[k] = rgb;
             }
         }
-        Some(Crew { slots, base })
+        Some(Crew { slots, fall, stations, lying, base })
     }
 
     /// Local transforms of all nodes: the rest pose with `clip` applied at `time` seconds.

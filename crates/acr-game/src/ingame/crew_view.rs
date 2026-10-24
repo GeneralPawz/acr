@@ -1,6 +1,8 @@
 //! Gun crews (#287, docs/rendering-3d.md "Gun crew"): the sim keeps a gun one unit with one
-//! life, so its crew's losses are read from that life. With `k = ceil(4 · life / max_life)`
-//! men standing, a man falls each time `k` drops (firer, loader, rammer, layer in that order):
+//! life, so its crew's losses are read from that life. With `k = ceil(n · life / max_life)`
+//! of the model's `n` men standing (four at the field gun, three at the mortar), a man falls
+//! each time `k` drops (in [`model::Crew::fall`] order: the field gun's firer, loader,
+//! rammer, layer):
 //! his bones are collapsed in the gun's pose, and he is drawn on his own (the gun model posed
 //! in its `DEATH` clip with only him shown) where he stood, as a corpse that bleeds a pool
 //! and rots like any other; the men still standing when the gun is destroyed become such
@@ -18,31 +20,22 @@ use acr_sim::world::{AnimKind, FRM_DEC, Unit};
 
 use crate::ui::settings::Gore;
 
-/// The order the men fall in: the firer, the loader, the rammer, the layer (who stays
-/// longest: he serves the vent and can fire).
-pub const FALL_ORDER: [u8; CREW] = [3, 1, 0, 2];
 /// The bit of the gun itself in a shown mask ([`model::Crew::mask`]).
 const GUN: u8 = 1 << CREW;
-/// Where each man stands in battery (glTF metres: x, up, z = −Blender y), `guncrew.HOME`.
-const HOME: [[f32; 3]; CREW] = [[1.25, 0.0, 0.2], [-1.25, 0.0, 0.2], [0.0, 0.0, -3.15], [1.3, 0.0, -0.9]];
 
-/// Men standing at `life` of `max_life`: `ceil(4 · life / max_life)`, 0..=4.
-pub fn standing(life: i32, max_life: i32) -> usize {
+/// Men standing of a crew of `men` at `life` of `max_life`: `ceil(men · life / max_life)`.
+pub fn standing(life: i32, max_life: i32, men: usize) -> usize {
     if max_life <= 0 {
-        return CREW;
+        return men;
     }
     let life = i64::from(life.clamp(0, max_life));
-    ((CREW as i64 * life + i64::from(max_life) - 1) / i64::from(max_life)) as usize
+    ((men as i64 * life + i64::from(max_life) - 1) / i64::from(max_life)) as usize
 }
 
-/// The men lost first when `lost` have fallen.
-fn fallen(lost: usize) -> &'static [u8] {
-    &FALL_ORDER[..lost.min(CREW)]
-}
-
-/// The shown mask of a gun that lost `lost` men: the gun and the men left.
-pub fn shown(lost: usize) -> u8 {
-    fallen(lost).iter().fold(GUN | ((1 << CREW) - 1), |m, &f| m & !(1 << f))
+/// The shown mask of a gun whose men fall in `fall` order and that lost `lost` of them: the
+/// gun and the men left.
+pub fn shown(fall: &[u8], lost: usize) -> u8 {
+    fall[..lost.min(fall.len())].iter().fold(GUN | ((1 << CREW) - 1), |m, &f| m & !(1 << f))
 }
 
 /// The uniform of a nation's artillery (linear, as the model's palette): coat, waistcoat.
@@ -321,12 +314,13 @@ impl Crews {
         let lost = self.lost.entry(u.id.0).or_insert(0);
         // The men left fall with a destroyed gun: corpses of their own too, so they bleed
         // and rot and stay where they fell (the gun's `DEATH` hides them).
-        let k = if u.alive { standing(u.life, u.max_life) } else { 0 };
-        if u.alive && k == CREW {
+        let men = crew.men();
+        let k = if u.alive { standing(u.life, u.max_life, men) } else { 0 };
+        if u.alive && k == men {
             // Unhurt (or a new gun on this id).
             *lost = 0;
         }
-        for &man in &FALL_ORDER[(*lost).min(CREW)..CREW - k.min(CREW)] {
+        for &man in &crew.fall[(*lost).min(men)..men - k.min(men)] {
             self.corpses.push(Corpse {
                 man,
                 tick: now,
@@ -337,10 +331,10 @@ impl Crews {
                 seed: ((u.id.0.wrapping_mul(2_654_435_761) >> 8) % 1000) as f32 / 1000.0 + f32::from(man) * 0.13,
             });
         }
-        *lost = (*lost).max(CREW - k.min(CREW));
+        *lost = (*lost).max(men - k.min(men));
         if *lost > 0 {
             let mut palette = model.pose(inst.clip, inst.time);
-            crew.mask(&mut palette, shown(*lost));
+            crew.mask(&mut palette, shown(&crew.fall, *lost));
             self.poses.insert(index, palette);
         }
     }
@@ -401,7 +395,9 @@ impl Crews {
             });
             if gore != Gore::Off {
                 let d = f32::from(counter);
-                let at = math::transform_point(&c.transform, HOME[usize::from(c.man)]);
+                // Under him where he lies (the model's own crew, not the field gun's stations).
+                let Some(&lies) = crew.lying.get(usize::from(c.man)) else { continue };
+                let at = math::transform_point(&c.transform, lies);
                 pools.push(BloodPool {
                     centre: at,
                     radius: 0.5 * PIXELS_PER_METRE * (0.35 + 0.65 * model::ramp(d, 5.0, 140.0)),
@@ -421,22 +417,49 @@ mod tests {
 
     #[test]
     fn men_fall_by_quarters_of_life() {
-        assert_eq!(standing(100, 100), 4);
-        assert_eq!(standing(76, 100), 4);
-        assert_eq!(standing(75, 100), 3);
-        assert_eq!(standing(26, 100), 2);
-        assert_eq!(standing(1, 100), 1);
-        assert_eq!(standing(0, 100), 0);
-        assert_eq!(standing(5, 0), 4);
+        assert_eq!(standing(100, 100, 4), 4);
+        assert_eq!(standing(76, 100, 4), 4);
+        assert_eq!(standing(75, 100, 4), 3);
+        assert_eq!(standing(26, 100, 4), 2);
+        assert_eq!(standing(1, 100, 4), 1);
+        assert_eq!(standing(0, 100, 4), 0);
+        assert_eq!(standing(5, 0, 4), 4);
     }
 
     #[test]
+    fn a_mortar_loses_a_man_per_third() {
+        assert_eq!(standing(100, 100, 3), 3);
+        assert_eq!(standing(67, 100, 3), 3);
+        assert_eq!(standing(66, 100, 3), 2);
+        assert_eq!(standing(34, 100, 3), 2);
+        assert_eq!(standing(33, 100, 3), 1);
+        assert_eq!(standing(0, 100, 3), 0);
+    }
+
+    /// The field gun's stations (`guncrew.HOME`, glTF: x, up, z = -Blender y).
+    const FIELD_GUN: [[f32; 3]; 4] = [[1.25, 0.0, 0.2], [-1.25, 0.0, 0.2], [0.0, 0.0, -3.15], [1.3, 0.0, -0.9]];
+    /// The mortar's (`mortarcrew.HOME`).
+    const MORTAR: [[f32; 3]; 3] = [[-0.95, 0.0, 0.45], [0.95, 0.0, 0.45], [0.95, 0.0, -0.55]];
+
+    #[test]
     fn the_layer_stays_longest() {
-        assert_eq!(shown(0), 0b1_1111);
-        assert_eq!(shown(1), 0b1_0111);
-        assert_eq!(shown(2), 0b1_0101);
-        assert_eq!(shown(3), 0b1_0100);
-        assert_eq!(shown(4), 0b1_0000);
+        let fall = model::Crew::fall_order(&FIELD_GUN);
+        assert_eq!(fall, [3, 1, 0, 2]);
+        assert_eq!(shown(&fall, 0), 0b1_1111);
+        assert_eq!(shown(&fall, 1), 0b1_0111);
+        assert_eq!(shown(&fall, 2), 0b1_0101);
+        assert_eq!(shown(&fall, 3), 0b1_0100);
+        assert_eq!(shown(&fall, 4), 0b1_0000);
+    }
+
+    #[test]
+    fn the_mortar_firer_stays_longest() {
+        let fall = model::Crew::fall_order(&MORTAR);
+        assert_eq!(fall, [1, 0, 2]);
+        // Every loss hides a man the model has (bit 3 is no one's).
+        assert_eq!(shown(&fall, 1) & 0b0111, 0b0101);
+        assert_eq!(shown(&fall, 2) & 0b0111, 0b0100);
+        assert_eq!(shown(&fall, 3) & 0b0111, 0);
     }
 
     #[test]
