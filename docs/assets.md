@@ -387,6 +387,23 @@ model-ref --sections S` draws every section in state S after the animation's par
 finished building does; `render_views.py` plays the clip named after the reference's
 animation and shows only the matching states.
 
+**Struck map objects (rule `ball_terrain`).** `nature.build` derives the struck states of
+every map tree (kind `tree`, not lying) and rock from the standing model, as extra nodes the
+standing draw leaves out (`three_d.rs` `STRUCK_GROUPS`): `<name>.stump` (the tree's own
+faces below a cut 0.35..0.8 m up) + `<name>.stump_break` (bark wall, pale fresh wood
+`FRESH_WOOD`, standing splinters, `breaks.profile`); `<name>.felled` (the rest of the tree)
++ `<name>.felled_break` (its torn foot), lying `breaks.FELL_DEG` (= `map_models::FALL_ANGLE`,
+1.48 rad) towards +X about the ground point, everything below the ground crushed onto it
+(`breaks.ground`), sway 0 but leaf flutter; `<name>.scar` (fresh wood where bark tore off on
+the -X side just above the cut, splinters) and, on rocks, `<name>.chip` (a ragged lighter
+facet on the -X face). The renderer draws a felled tree as the stump at its place plus the
+felled model turned to the fall direction and swung down over `FALL_TICKS`
+(`map_models::felled_transform`), a splintered tree with its scar turned to face the ball
+(`facing`), a chipped rock with its chip as built. Stats `struck`: `cut_m`, `trunk_r_m`,
+`stump_triangles`, `felled_triangles`, `scar_triangles`, `felled_min_z_m`,
+`felled_length_m`, `bark_rgb`; rocks `chip_r_m`, `chip_rgb`. LODs come from `lod.rs` at load
+like every model.
+
 **Exact poses in Blender renders (`acr_assets.posecheck`).** Every render of a built model
 in a clip pose goes through `posecheck.Poser`: `render_views.py`, `tools/preview.py`,
 `tools/render_pose.py`, `tools/hd_gear_sheet.py`, `tools/hand_closeups.py`,

@@ -364,6 +364,8 @@ pub struct ThreeD {
     shown: HashSet<EntityId>,
     /// Building models with a ruin state group (#303): the ruin's model by the standing one.
     ruins: HashMap<usize, usize>,
+    /// Map trees and rocks with struck state groups (rule `ball_terrain`), by the standing model.
+    struck_parts: HashMap<usize, StruckParts>,
     /// Building models with construction stage or section groups (#302), by the finished one.
     states: HashMap<usize, BuildingStates>,
     /// Fire anchors of building models (#303, `ruin_view`), by model.
@@ -514,6 +516,7 @@ impl Default for ThreeD {
             kept: Default::default(),
             shown: HashSet::new(),
             ruins: HashMap::new(),
+            struck_parts: HashMap::new(),
             states: HashMap::new(),
             anchors: HashMap::new(),
             burning: Vec::new(),
@@ -812,11 +815,19 @@ impl ThreeD {
                     gear.unarmed = Some(renderer.add_model(device, queue, unarmed));
                 }
             }
-            // A tree drawn standing: its felled and stump states are left out (`acr_state`
-            // groups, docs/assets.md "States").
-            let model = if self.props.iter().any(|(n, _)| *n == name) || self.map_models.names().contains(name.as_str())
-            {
-                model.without_nodes(|n| n.contains(".felled") || n.contains(".stump"))
+            // A tree drawn standing: its felled and stump states, splinter scar and chip
+            // marks are left out (`acr_state` groups, docs/assets.md "States" and "Struck map
+            // objects"); a map model's struck states become models of their own.
+            let map_model = self.map_models.names().contains(name.as_str());
+            let mut struck_parts = Vec::new();
+            if map_model {
+                for key in STRUCK_GROUPS {
+                    let part = model.only_groups(|n| n.contains(key));
+                    struck_parts.push((!part.primitives.is_empty()).then_some(part));
+                }
+            }
+            let model = if self.props.iter().any(|(n, _)| *n == name) || map_model {
+                model.without_nodes(|n| STRUCK_GROUPS.iter().any(|g| n.contains(g)))
             } else {
                 model
             };
@@ -853,6 +864,12 @@ impl ThreeD {
                 model.without_groups(|n| state_group(n).is_some_and(|s| s != "finished"))
             };
             let index = renderer.add_model(device, queue, model);
+            if struck_parts.iter().any(Option::is_some) {
+                let mut ids = struck_parts.into_iter().map(|m| m.map(|m| renderer.add_model(device, queue, m)));
+                let mut next = || ids.next().flatten();
+                let parts = StruckParts { stump: next(), felled: next(), scar: next(), chip: next() };
+                self.struck_parts.insert(index, parts);
+            }
             if let Some(ruin) = ruin {
                 let r = renderer.add_model(device, queue, ruin);
                 self.ruins.insert(index, r);
@@ -2025,43 +2042,67 @@ impl ThreeD {
         let mut clips: HashMap<usize, Option<usize>> = HashMap::new();
         let now = world.tick.0 as f32;
         for (n, &(index, transform)) in self.map_models.placed.iter().enumerate() {
-            // Felled trees and knocked stones (rule `ball_terrain`).
-            let transform = match self.map_models.objs.get(n) {
-                Some(&k) if !world.struck.is_empty() => {
-                    super::map_models::struck_transform(transform, k, &world.struck, now, |x, y| {
-                        terrain.height_at(x, y)
-                    })
-                }
-                _ => transform,
-            };
             let [x, y] = [transform[3][0], transform[3][1]];
             if x < x0 || x > x1 || y < y0 || y > y1 {
                 continue;
             }
-            let clip = match clips.get(&index) {
-                Some(c) => *c,
-                None => {
-                    let Some(model) = renderer.model(index) else { continue };
-                    *clips.entry(index).or_insert(model.clip_for_animation("#STAND"))
+            // Felled trees, splintered trunks, chipped rocks and knocked stones (rule
+            // `ball_terrain`): the model's struck states where it has them (docs/assets.md
+            // "Struck map objects"), else the standing model tipped over or moved.
+            let struck = self.map_models.objs.get(n).and_then(|k| world.struck.get(&(*k as u32)));
+            let parts = self.struck_parts.get(&index).copied().unwrap_or_default();
+            let mut shown: [Option<(usize, acr_render::math::Mat4)>; 2] = [Some((index, transform)), None];
+            match struck {
+                Some(&acr_sim::ball_terrain::Struck::Felled { dir, tick })
+                    if parts.stump.is_some() && parts.felled.is_some() =>
+                {
+                    shown[0] = parts.stump.map(|s| (s, transform));
+                    shown[1] =
+                        parts.felled.map(|f| (f, super::map_models::felled_transform(transform, dir, tick, now)));
                 }
-            };
-            self.instances.push(ModelInstance {
-                model: index,
-                clip,
-                time: 0.0,
-                transform,
-                decay: 0.0,
-                morphs: [0.0; 3],
-                transparent: false,
-                player: 0,
-                wounds: Default::default(),
-                sprayed: Default::default(),
-                damage: Default::default(),
-                look: None,
-                uniform: None,
-                drape: None,
-                rise: None,
-            });
+                Some(&acr_sim::ball_terrain::Struck::Splintered { dir, .. }) => {
+                    shown[1] = parts.scar.map(|s| (s, super::map_models::facing(transform, dir)));
+                }
+                Some(&acr_sim::ball_terrain::Struck::Chipped { .. }) => {
+                    // On the rock's own -X face: turning only the chip would lift it off a rock
+                    // that is not round.
+                    shown[1] = parts.chip.map(|c| (c, transform));
+                }
+                Some(_) => {
+                    let k = self.map_models.objs[n];
+                    let t = super::map_models::struck_transform(transform, k, &world.struck, now, |x, y| {
+                        terrain.height_at(x, y)
+                    });
+                    shown[0] = Some((index, t));
+                }
+                None => {}
+            }
+            for (index, transform) in shown.into_iter().flatten() {
+                let clip = match clips.get(&index) {
+                    Some(c) => *c,
+                    None => {
+                        let Some(model) = renderer.model(index) else { continue };
+                        *clips.entry(index).or_insert(model.clip_for_animation("#STAND"))
+                    }
+                };
+                self.instances.push(ModelInstance {
+                    model: index,
+                    clip,
+                    time: 0.0,
+                    transform,
+                    decay: 0.0,
+                    morphs: [0.0; 3],
+                    transparent: false,
+                    player: 0,
+                    wounds: Default::default(),
+                    sprayed: Default::default(),
+                    damage: Default::default(),
+                    look: None,
+                    uniform: None,
+                    drape: None,
+                    rise: None,
+                });
+            }
         }
     }
 
@@ -2481,6 +2522,20 @@ fn state_group(name: &str) -> Option<&str> {
     (name.contains('.')
         && (last == "finished" || last == "ruin" || last.strip_prefix("build").is_some_and(digits) || section))
         .then_some(last)
+}
+
+/// Node name parts of a map model's struck state groups (rule `ball_terrain`, docs/assets.md
+/// "Struck map objects"), in [`StruckParts`] order: stump (and its break), the felled trunk and
+/// crown (and its foot), the splinter scar, the chip marks.
+const STRUCK_GROUPS: [&str; 4] = [".stump", ".felled", ".scar", ".chip"];
+
+/// The struck states of a map model as models of their own.
+#[derive(Clone, Copy, Default)]
+struct StruckParts {
+    stump: Option<usize>,
+    felled: Option<usize>,
+    scar: Option<usize>,
+    chip: Option<usize>,
 }
 
 /// The construction stage and section state groups of a building model (#302) as models of

@@ -47,7 +47,9 @@ import bmesh
 import bpy
 import numpy as np
 from mathutils import Matrix, Vector
+from mathutils.bvhtree import BVHTree
 
+from . import breaks, detail
 from . import vessels as vs
 
 LEAF_WORDS = ("leaf", "leav", "twig", "frond", "needle", "branches", "bush", "shrub", "fern", "phong3")
@@ -503,6 +505,11 @@ def build(ctx, spec):
     if spec.get("lie"):
         _lay_down(obj, spec["lie"])
     white(obj)
+    struck = None
+    if kind == "tree" and not spec.get("lie"):
+        struck = _tree_states(ctx, obj, spec.get("seed", 7))
+    elif kind == "rock":
+        struck = _chip(ctx, obj, spec.get("seed", 7))
     me.calc_loop_triangles()
     xs = [v.co.x for v in me.vertices]
     ys = [v.co.y for v in me.vertices]
@@ -524,7 +531,301 @@ def build(ctx, spec):
         "leaf_gain": {k: round(v, 2) for k, v in sorted(gains.items())},
         "materials": sorted(s.material.name for s in obj.material_slots if s.material),
         "normal_maps": {k: v for k, v in sorted(normals.items())},
+        "struck": struck,
     }
+
+
+# Fresh split wood (sRGB): pale, yellowish, as oak and pine look just after a break.
+FRESH_WOOD = (0.82, 0.70, 0.50)
+
+
+def _tile_material(name, rgb, kind):
+    """A Principled material on a `detail` tile of colour `rgb` (sRGB), on uv map `detail`."""
+    mat = bpy.data.materials.new(name)
+    nt = mat.node_tree
+    bsdf = nt.nodes["Principled BSDF"]
+    tex = nt.nodes.new("ShaderNodeTexImage")
+    tex.image = detail.tile(name, rgb, kind)
+    uv = nt.nodes.new("ShaderNodeUVMap")
+    uv.uv_map = "detail"
+    nt.links.new(uv.outputs["UV"], tex.inputs["Vector"])
+    nt.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
+    bsdf.inputs["Roughness"].default_value = 0.9
+    mat["acr_colour"] = list(rgb)
+    return mat
+
+
+def _part(ctx, name, bm, mats):
+    """Object `name` under the root from bmesh `bm` (freed): materials `mats` by face
+    `material_index`, no sway, white `COLOR_0`, `detail` uvs, flat shaded."""
+    me = bpy.data.meshes.new(name)
+    bm.to_mesh(me)
+    bm.free()
+    for mt in mats:
+        me.materials.append(mt)
+    obj = bpy.data.objects.new(name, me)
+    obj.parent = ctx.root
+    bpy.context.scene.collection.objects.link(obj)
+    a = me.attributes.new("_wind", "FLOAT_COLOR", "POINT")
+    for d in a.data:
+        d.color = (0.0, 0.0, 0.0, 0.0)
+    white(obj)
+    detail.box_uv(obj, scale=6.0)
+    for p in me.polygons:
+        p.use_smooth = False
+    return obj
+
+
+def _copy_cut(ctx, obj, name, z, above, keep=None):
+    """A copy of `obj` (materials, uvs, attributes) cut by the plane at height `z`, the part
+    above it (`above`) or below, and of that only the faces `keep(face)` accepts."""
+    me = obj.data.copy()
+    me.name = name
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    geom = list(bm.verts) + list(bm.edges) + list(bm.faces)
+    bmesh.ops.bisect_plane(bm, geom=geom, dist=1e-5, plane_co=(0, 0, z), plane_no=(0, 0, 1),
+                           clear_inner=above, clear_outer=not above)
+    drop = [f for f in bm.faces if keep is not None and not keep(f)]
+    if drop:
+        bmesh.ops.delete(bm, geom=drop, context="FACES")
+    bm.to_mesh(me)
+    bm.free()
+    out = bpy.data.objects.new(name, me)
+    out.parent = ctx.root
+    bpy.context.scene.collection.objects.link(out)
+    return out
+
+
+def _texel_rgb(obj, pick):
+    """Mean sRGB colour of the texels under the faces `pick(poly)` accepts (their loops' uvs
+    in the base colour image of each face's material); None without any."""
+    me = obj.data
+    uv = me.uv_layers.active
+    if uv is None:
+        return None
+    pixels = {}
+    tot, n = [0.0, 0.0, 0.0], 0
+    for p in me.polygons:
+        if not pick(p):
+            continue
+        img, _flat = _image_of(obj.material_slots[p.material_index].material if obj.material_slots else None)
+        if img is None or not img.size[0]:
+            continue
+        if img.name not in pixels:
+            pixels[img.name] = np.array(img.pixels[:], np.float32).reshape(img.size[1], img.size[0], 4)
+        px = pixels[img.name]
+        for li in p.loop_indices:
+            u, v = uv.data[li].uv
+            x = int((u % 1.0) * (px.shape[1] - 1))
+            y = int((v % 1.0) * (px.shape[0] - 1))
+            if px[y, x, 3] > 0.5:
+                for c in range(3):
+                    tot[c] += float(px[y, x, c])
+                n += 1
+    return [round(t / n, 3) for t in tot] if n else None
+
+
+def _spike(bm, base, tip, width, side, mat):
+    """A thin splinter: a three-sided wedge from `base` to `tip`, `width` wide along `side`."""
+    a = bm.verts.new(base - side * width)
+    b = bm.verts.new(base + side * width)
+    up = (tip - base).normalized().cross(side).normalized() * width * 0.6
+    c = bm.verts.new(base + up)
+    t = bm.verts.new(tip)
+    for f in ((a, b, t), (b, c, t), (c, a, t)):
+        bm.faces.new(f).material_index = mat
+
+
+def _tree_states(ctx, obj, seed):
+    """The struck states of a map tree (rule `ball_terrain`, docs/assets.md "Struck map
+    objects"), derived from the standing tree `obj` so they match it:
+
+    - `<name>.stump` (the tree's own faces below a jagged break 0.35..0.8 m up) and
+      `<name>.stump_break` (the break: bark wall, pale fresh wood on top, standing splinters);
+    - `<name>.felled` (the rest of the tree, crown and all) and `<name>.felled_break` (its torn
+      foot), lying `breaks.FELL_DEG` towards +X about the ground point, whatever would go into
+      the ground crushed onto it; trunk and branch sway 0, the leaves keep their flutter;
+    - `<name>.scar` (bark torn off on the -X side for 0.5 m above the break, splinters out) for a
+      tree that stopped a ball.
+    The renderer turns +X to the ball's flight. Returns the `struck` stats."""
+    me = obj.data
+    name = ctx.name
+    hi = max(v.co.z for v in me.vertices)
+    cut = min(0.8, max(0.35, 0.09 * hi))
+    # The trunk: vertices of a band under the break (above the root flare, below the first
+    # forks), near their centre.
+    band = [v.co for v in me.vertices if 0.15 <= v.co.z <= cut]
+    if len(band) < 8:
+        band = [v.co for v in me.vertices if v.co.z <= cut * 1.6]
+    cx = sum(c.x for c in band) / len(band)
+    cy = sum(c.y for c in band) / len(band)
+    # Twice: the first centre and median pull towards low branches and roots.
+    r = 0.45
+    for _ in range(3):
+        near = [c for c in band if math.hypot(c.x - cx, c.y - cy) < 2.0 * r] or band
+        cx = sum(c.x for c in near) / len(near)
+        cy = sum(c.y for c in near) / len(near)
+        d = sorted(math.hypot(c.x - cx, c.y - cy) for c in near)
+        r = min(0.4, max(0.06, 0.012 * hi, d[len(d) // 4]))
+    rough = max(0.05, 0.6 * r)
+    n = 16
+    prof = breaks.profile(n, seed, rough)
+    foot_prof = breaks.profile(n, seed + 1, rough * 0.8)
+    # The bark colour of the new parts: the texels under the trunk band's faces.
+    bark_rgb = _texel_rgb(obj, lambda p: abs(p.center.z - cut) < 0.5 * cut
+                          and math.hypot(p.center.x - cx, p.center.y - cy) < 1.5 * r) or [0.30, 0.24, 0.18]
+    bark = _tile_material(f"{name}.bark_break", tuple(bark_rgb), "wood")
+    fresh = _tile_material(f"{name}.fresh_wood", FRESH_WOOD, "wood")
+
+    def by_trunk(f):
+        return all(math.hypot(v.co.x - cx, v.co.y - cy) < 3.0 * r for v in f.verts)
+
+    stump = _copy_cut(ctx, obj, f"{name}.stump", cut, False, by_trunk)
+    felled = _copy_cut(ctx, obj, f"{name}.felled", cut, True)
+    for dd in stump.data.attributes["_wind"].data:
+        dd.color = (0.0, 0.0, 0.0, 0.0)
+    rnd = random.Random(seed + 11)
+    centre = Vector((cx, cy, 0.0))
+
+    def ring_pt(k, rad, z):
+        a = 2 * math.pi * k / n
+        return centre + Vector((math.cos(a) * rad, math.sin(a) * rad, z))
+
+    # The stump's break: a bark wall from under the break up to the jagged rim, fresh wood
+    # from the rim down to a rougher core; four splinters stand up from the rim.
+    bm = bmesh.new()
+    low = [bm.verts.new(ring_pt(k, r * 1.04, cut - 0.08)) for k in range(n)]
+    rim = [bm.verts.new(ring_pt(k, r * 0.98, cut + prof[k])) for k in range(n)]
+    core = [bm.verts.new(ring_pt(k, r * 0.5, cut + 0.35 * prof[k] + rnd.uniform(0, 0.03))) for k in range(n)]
+    mid = bm.verts.new(centre + Vector((rnd.uniform(-0.2, 0.2) * r, rnd.uniform(-0.2, 0.2) * r, cut + 0.04)))
+    for k in range(n):
+        j = (k + 1) % n
+        bm.faces.new((low[k], low[j], rim[j], rim[k])).material_index = 0
+        bm.faces.new((rim[k], rim[j], core[j], core[k])).material_index = 1
+        bm.faces.new((core[k], core[j], mid)).material_index = 1
+    for k in sorted(rnd.sample(range(n), 4)):
+        a = 2 * math.pi * k / n
+        out = Vector((math.cos(a), math.sin(a), 0.0))
+        base = ring_pt(k, r * 0.8, cut + prof[k] * 0.6)
+        tip = base + Vector((0, 0, rough * rnd.uniform(1.5, 3.0))) + out * r * rnd.uniform(0.1, 0.5)
+        _spike(bm, base, tip, r * 0.12, Vector((-out.y, out.x, 0.0)), 1)
+    stump_break = _part(ctx, f"{name}.stump_break", bm, [bark, fresh])
+
+    # The felled trunk's foot: the matching tear, a bark wall over the cut hanging down into a
+    # ragged lip, fresh wood under it, splinters pointing down.
+    bm = bmesh.new()
+    top = [bm.verts.new(ring_pt(k, r * 1.04, cut + 0.08)) for k in range(n)]
+    lip = [bm.verts.new(ring_pt(k, r * 0.98, cut - foot_prof[k])) for k in range(n)]
+    core = [bm.verts.new(ring_pt(k, r * 0.5, cut - 0.35 * foot_prof[k] - rnd.uniform(0, 0.03))) for k in range(n)]
+    foot = bm.verts.new(centre + Vector((0, 0, cut - 0.03)))
+    for k in range(n):
+        j = (k + 1) % n
+        bm.faces.new((top[j], top[k], lip[k], lip[j])).material_index = 0
+        bm.faces.new((lip[j], lip[k], core[k], core[j])).material_index = 1
+        bm.faces.new((core[j], core[k], foot)).material_index = 1
+    for k in sorted(rnd.sample(range(n), 3)):
+        a = 2 * math.pi * k / n
+        out = Vector((math.cos(a), math.sin(a), 0.0))
+        base = ring_pt(k, r * 0.75, cut - foot_prof[k] * 0.5)
+        tip = base - Vector((0, 0, rough * rnd.uniform(1.2, 2.4))) + out * r * rnd.uniform(0.1, 0.4)
+        _spike(bm, base, tip, r * 0.1, Vector((-out.y, out.x, 0.0)), 1)
+    felled_break = _part(ctx, f"{name}.felled_break", bm, [bark, fresh])
+
+    # Lying: turned about +Y through the ground point, crown east; whatever went into the
+    # ground crushed onto it. A lying tree does not sway; its leaves still flutter.
+    for o in (felled, felled_break):
+        m = o.data
+        for v in m.vertices:
+            x, y, z = breaks.lay(tuple(v.co))
+            v.co = Vector((x, y, breaks.ground(z)))
+        for dd in m.attributes["_wind"].data:
+            c = dd.color
+            dd.color = (0.0, 0.0, c[2], c[3])
+
+    # The scar: a torn patch of fresh wood just outside the bark on the -X side (where a ball
+    # flying +X meets the trunk), ragged at its edges, with splinters sticking out.
+    z0 = cut + 0.1
+    side = sorted(math.hypot(v.co.x - cx, v.co.y - cy) for v in me.vertices if z0 <= v.co.z <= z0 + 0.5
+                  and math.hypot(v.co.x - cx, v.co.y - cy) < 1.5 * r
+                  and math.cos(math.atan2(v.co.y - cy, v.co.x - cx) - math.pi) > 0.8)
+    rs = (side[int(len(side) * 0.75)] if side else r) + 0.012
+    bm = bmesh.new()
+    na, nz = 6, 5
+    grid = []
+    for i in range(nz):
+        z = z0 + 0.5 * i / (nz - 1)
+        row = []
+        for k in range(na):
+            a = math.pi + math.radians(-48 + 96 * k / (na - 1))
+            edge = i in (0, nz - 1) or k in (0, na - 1)
+            rad = rs * (0.98 if edge else 1.0 - 0.06 * rnd.random())
+            zz = z + (rnd.uniform(-0.08, 0.08) if edge else 0.0)
+            row.append(bm.verts.new(centre + Vector((math.cos(a) * rad, math.sin(a) * rad, zz))))
+        grid.append(row)
+    for i in range(nz - 1):
+        for k in range(na - 1):
+            bm.faces.new((grid[i][k], grid[i][k + 1], grid[i + 1][k + 1], grid[i + 1][k])).material_index = 0
+    for _j in range(3):
+        a = math.pi + rnd.uniform(-0.5, 0.5)
+        out = Vector((math.cos(a), math.sin(a), 0.0))
+        base = centre + out * rs + Vector((0, 0, z0 + rnd.uniform(0.1, 0.4)))
+        tip = base + out * rnd.uniform(0.12, 0.3) + Vector((0, 0, rnd.uniform(-0.1, 0.15)))
+        _spike(bm, base, tip, 0.025, Vector((0, 0, 1.0)), 0)
+    scar = _part(ctx, f"{name}.scar", bm, [fresh])
+
+    def tris(objs):
+        return sum(sum(len(p.vertices) - 2 for p in o.data.polygons) for o in objs)
+
+    lying = [v.co for o in (felled, felled_break) for v in o.data.vertices]
+    return {
+        "cut_m": round(cut, 3),
+        "trunk_r_m": round(r, 3),
+        "stump_triangles": tris([stump, stump_break]),
+        "felled_triangles": tris([felled, felled_break]),
+        "scar_triangles": tris([scar]),
+        "felled_min_z_m": round(min(c.z for c in lying), 3),
+        "felled_length_m": round(max(c.x for c in lying) - min(c.x for c in lying), 2),
+        "felled_height_m": round(max(c.z for c in lying), 2),
+        "bark_rgb": bark_rgb,
+    }
+
+
+def _chip(ctx, obj, seed):
+    """A big rock's chip marks (rule `ball_terrain`): `<name>.chip`, a ragged facet of fresh,
+    lighter stone on the -X face at half the height (where a ball flying +X hits it), a little
+    proud of the surface. Returns the `struck` stats."""
+    me = obj.data
+    bvh = BVHTree.FromObject(obj, bpy.context.evaluated_depsgraph_get())
+    xs = [v.co.x for v in me.vertices]
+    ys = [v.co.y for v in me.vertices]
+    hi = max(v.co.z for v in me.vertices)
+    cy = (min(ys) + max(ys)) / 2
+    rgb = _leaf_rgb(obj, set(range(len(obj.material_slots)))) or [0.5, 0.48, 0.45]
+    pale = tuple(round(min(1.0, 0.45 * c + 0.55 * 0.80), 3) for c in rgb)
+    mat = _tile_material(f"{ctx.name}.chip", pale, "plain")
+    rnd = random.Random(seed + 5)
+    size = min(max(xs) - min(xs), max(ys) - min(ys), hi)
+    bm = bmesh.new()
+    made = []
+    for dy, dz, k in ((0.0, 0.5, 0.22),):
+        hit, nrm, _i, _d = bvh.ray_cast(Vector((min(xs) - 1.0, cy + dy * size, hi * dz)), Vector((1, 0, 0)))
+        if hit is None:
+            continue
+        nrm = nrm.normalized()
+        t1 = nrm.cross(Vector((0, 0, 1))).normalized()
+        t2 = nrm.cross(t1).normalized()
+        rad = size * k
+        centre = bm.verts.new(hit + nrm * 0.004)
+        ring = []
+        for j in range(9):
+            a = 2 * math.pi * j / 9
+            ring.append(bm.verts.new(hit + nrm * 0.015 + (t1 * math.cos(a) + t2 * math.sin(a)) * rad * rnd.uniform(0.6, 1.0)))
+        for j in range(9):
+            bm.faces.new((centre, ring[j], ring[(j + 1) % 9]))
+        made.append(round(rad, 3))
+    chip = _part(ctx, f"{ctx.name}.chip", bm, [mat])
+    return {"chip_r_m": made, "chip_triangles": len(chip.data.polygons), "chip_rgb": list(pale)}
 
 
 # Map objects generated from their own sprite (`map`): triangle budget and texture per kind.

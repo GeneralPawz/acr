@@ -283,7 +283,7 @@ pub fn hit(game: &mut Game, v: &Value) -> Result<Value, String> {
 /// fire (`ground_fire::shell_burst`, rule `hit_locations`); one by a mortar (`ArtMrt`, rule
 /// `mortars`) leaves none and bursts smaller.
 /// `{"cmd": "map_object", "group": "tree"|"stone", "index": n, "at": [[x, y], ...],
-/// "rock": bool}`: trees (wood sources) or stones put on the map as `World::objects`, so
+/// "rock": bool, "struck": "felled", "dir": 0}`: trees (wood sources) or stones put on the map as `World::objects`, so
 /// balls meet them under the `ball_terrain` rule; a `rock` locks its ground cells. Drawn as
 /// models with `map_models` where the table names `index`. Returns the struck-state keys.
 pub fn map_object(game: &mut Game, v: &Value) -> Result<Value, String> {
@@ -304,6 +304,22 @@ pub fn map_object(game: &mut Game, v: &Value) -> Result<Value, String> {
     let group = if tree { SpriteGroup::Trees } else { SpriteGroup::Stones };
     let ids: Vec<usize> =
         at.iter().map(|&(x, y)| acr_sim::ball_terrain::add_object(world, group, index, x, y, tree, rock)).collect();
+    // Already struck (render tests and the frame-time bench): `"struck": "felled" |
+    // "splintered" | "chipped"` from flight direction `"dir"` (0 east, 64 south), now.
+    if let Some(kind) = v.get("struck").and_then(Value::as_str) {
+        use acr_sim::ball_terrain::Struck;
+        let dir = v.get("dir").and_then(Value::as_u64).unwrap_or(0) as u8;
+        let tick = world.tick.0;
+        let state = match kind {
+            "felled" => Struck::Felled { dir, tick },
+            "splintered" => Struck::Splintered { hits: 1, dir, tick },
+            "chipped" => Struck::Chipped { chips: 1, dir, tick },
+            o => return Err(format!("map_object: struck {o:?} is not felled, splintered or chipped")),
+        };
+        for &k in &ids {
+            world.struck.insert(k as u32, state);
+        }
+    }
     Ok(json!(ids))
 }
 

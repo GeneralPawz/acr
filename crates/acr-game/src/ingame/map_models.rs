@@ -248,8 +248,28 @@ fn dir_vec(dir: u8) -> [f32; 2] {
     [a.cos(), a.sin()]
 }
 
+/// `base` turned about the world's up axis so that the model's +X points along `dir`: the
+/// struck states of a map model (stump, felled, scar, chip groups, docs/assets.md "Struck map
+/// objects") are built for a ball flying +X.
+pub fn facing(base: Mat4, dir: u8) -> Mat4 {
+    let [dx, dy] = dir_vec(dir);
+    let now = base[0][1].atan2(base[0][0]);
+    rotated(&base, [0.0, 0.0, 1.0], dy.atan2(dx) - now)
+}
+
+/// The transform of a tree's felled state (`<name>.felled`, built lying [`FALL_ANGLE`] towards
+/// +X about its ground point, crushed onto the ground there): turned to the fall direction and,
+/// while it falls, turned back up by the part of the fall still to come. The stump stays at
+/// `base`.
+pub fn felled_transform(base: Mat4, dir: u8, tick: u64, now: f32) -> Mat4 {
+    let t = ((now - tick as f32) / FALL_TICKS).clamp(0.0, 1.0);
+    let [dx, dy] = dir_vec(dir);
+    rotated(&facing(base, dir), [-dy, dx, 0.0], -FALL_ANGLE * (1.0 - t * t))
+}
+
 /// The transform of map object `k` as a ball left it (`World::struck`, rule `ball_terrain`;
-/// render only): a felled tree falls away from the impact about its foot and then lies; a
+/// render only), for models without struck states: a felled tree falls away from the impact
+/// about its foot and then lies; a
 /// knocked stone slides and tumbles to its new place; anything else stands as placed.
 pub fn struck_transform(
     base: Mat4,
@@ -319,6 +339,32 @@ mod tests {
         assert!(up(&lying)[0] > 0.9 * up(&base)[2] && up(&lying)[2].abs() < 0.2 * up(&base)[2], "{:?}", up(&lying));
         assert_eq!(lying[3], base[3]);
         assert_eq!(struck_transform(base, 4, &struck, 100.0, |_, _| 0), base);
+    }
+
+    #[test]
+    fn felled_state_turns_to_the_fall_and_stands_up_at_the_start() {
+        let base = view3d::model_matrix([100.0, 100.0, 0.0], 0.7, 1.0);
+        let scale = (base[1][0].powi(2) + base[1][1].powi(2) + base[1][2].powi(2)).sqrt();
+        for dir in [0u8, 64, 100, 200] {
+            let [dx, dy] = dir_vec(dir);
+            let f = facing(base, dir);
+            let x = [f[0][0], f[0][1]];
+            assert!((x[0] * dx + x[1] * dy) / scale > 0.999, "{dir}: {x:?}");
+            assert_eq!(f[3], base[3]);
+            // Lying at the end: the model is only turned about up.
+            let end = felled_transform(base, dir, 10, 100.0);
+            for c in 0..3 {
+                for r in 0..3 {
+                    assert!((end[c][r] - f[c][r]).abs() < 1e-4 * scale);
+                }
+            }
+            // At the strike the lying model is turned back upright: its up axis tips by
+            // FALL_ANGLE away from the fall, its +X (the lying trunk) points nearly up.
+            let start = felled_transform(base, dir, 10, 10.0);
+            let up = [start[1][0], start[1][1], start[1][2]];
+            assert!((up[0] * dx + up[1] * dy) / scale < -0.99, "{dir}: {up:?}");
+            assert!(start[0][2] / scale > 0.99, "{dir}: {:?}", start[0]);
+        }
     }
 
     #[test]
