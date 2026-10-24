@@ -17,7 +17,7 @@ parameters: [assets-humans.md](assets-humans.md).
 
 | key | values | default | |
 |---|---|---|---|
-| `models` | `off`, `units`, `all` | `off` | `units`: units with a model are drawn in 3D; `all`: buildings too, finished, burning down, falling in and as ruins (#303); under construction they stay sprites |
+| `models` | `off`, `units`, `all` | `off` | `units`: units with a model are drawn in 3D; `all`: buildings too, finished, burning down, falling in and as ruins (#303), with their hit damage (#304); under construction they stay sprites |
 | `camera` | `fixed`, `free` | `fixed` | `free`: the camera turns and tilts (below); the modern controls' Ctrl + Space, C switches it for the running battle |
 | `shadows` | `on`, `off` | `on` | sun shadows of the 3D models on the ground and on each other (below); tests switch them with `ACR_SHADOWS=on\|off` or the driver's `{"cmd": "shadows", "on": false}` |
 | `material_detail` | `on`, `off` | `on` | the models' glTF normal maps and a faint highlight from their roughness and metallic (below, "Material detail (#234)"); `off` is the plain Lambert look; tests switch it with `ACR_MATERIAL_DETAIL=on\|off` or the driver's `{"cmd": "material_detail", "on": false}` |
@@ -1204,6 +1204,49 @@ Ruins of EngSkl, EngCen, DelCen and an EngSkl burn → collapse → ruin sheet:
 
 Open: the collapse is hidden under the `DESTRUCT` explosions' smoke; pre-fractured
 pieces falling in.
+
+#### Hit damage on buildings (#304)
+
+`building_hits.rs`, render only, with `models=all` (buildings in 3D); not gore, so shown
+with every gore setting. Each hit record on a building (`HitRecord::building`) is placed
+once, deterministic from the record and a hash of (victim, tick, its place among the
+tick's building hits):
+
+- **Placing:** a ray against the model's triangles (pose at time 0, model frame, built
+  once per model on its first hit) through the point the round struck (`World::hit_at`;
+  a hit recorded at the building's centre, e.g. a scripted `hit`, is spread over the face
+  towards the shooter), along the flight: level at 12–62 % of the model's height for balls
+  and shot, plunging 14–39° for arrows (walls and roofs). The first face met takes it.
+- **Scars** (`model_renderer::Scars`, `model.wgsl` `scarred`): a cannonball's hole
+  (0.2–0.3 m: a dark ragged hole, pale splinters round it on wood, a rounder crater with
+  radial cracks on stone and plaster; wood is told from the fragment's colour, warm against
+  grey), musket and grapeshot pocks (0.035–0.09 m), a shell's scorch (0.7–1.1 m of soot
+  climbing the wall, a chipped crater) and an arrow's puncture. They lie in the model frame
+  after the node transforms (the vertex shader passes that position as `rest` for a scarred
+  instance, flag bit 2 of the instance data) and are drawn only within 1.2 radii of the
+  struck face's plane. 32 per building (`MAX_SCARS`): pocks and punctures go first, then
+  scorches, holes last.
+- **Stuck arrows:** `damage::procedural_arrow` (0.62 m, three vanes) at the hit point along
+  the flight, a little off it, tip 7 cm in; 24 per building (`MAX_ARROWS`), the oldest go.
+  They are instances appended after the units.
+- **Battered:** from 50 % of its life lost on, cracks (the contour of a noise) and soot
+  patches grow over the whole model, full at 0 life. A repair takes away the oldest scars
+  and arrows in the share of the lost life it mends, all at full life. A building that
+  burns down or falls loses them (`ruin_view` draws it then).
+- **GPU layout:** after the instance's data, look and drape: a header (count, batter, soot,
+  groups), a sphere per group of 8 neighbouring scars (sorted by bearing around the model,
+  then height) and two texels per scar. A fragment tests the spheres and reads only the
+  scars of the near groups.
+
+Measured (render VM, RX 9060 XT, 1600×900, blank grass field, free camera at zoom 1.5 on
+an EngKre after 63 scripted hits (30 musket, 20 arrow, 10 cannonball, 3 shell; 56 % life
+lost) next to an EngDo1 after 35; steps `ACR-analysis/genai/building-hits/steps.json` from
+`mk_steps.py`): GPU models pass 0.23 ms on main, 0.58–0.69 ms with the scars (the fort
+covers about half the window); an unhurt fort draws as on main (0.17 ms both).
+`3d.instances` 0.057 → 0.12–0.15 ms a frame. Frames: `ACR-analysis/genai/building-hits/`.
+
+Open: fire arrows are not told from arrows in the hit record (no scorch from them yet);
+the record has no height (hashed); knocked-out chunks as geometry or debris pieces.
 
 ## Camera math
 

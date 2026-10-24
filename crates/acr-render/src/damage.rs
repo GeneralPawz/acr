@@ -1079,6 +1079,50 @@ pub fn procedural_bone() -> ModelData {
     single("wound_bone", vertices, indices, Tissue::Bone)
 }
 
+/// An arrow stuck in a wall (#304): the tip at the origin, the shaft back along −z to the
+/// nock 0.62 m behind, with three fletchings near it (metres; a bit thicker than a real
+/// arrow so it reads at gameplay zoom).
+pub fn procedural_arrow() -> ModelData {
+    const SIDES: usize = 5;
+    const RADIUS: f32 = 0.016;
+    const LENGTH: f32 = 0.62;
+    let shaft = [0.30, 0.19, 0.09, 1.0];
+    let feather = [0.92, 0.9, 0.84, 1.0];
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    for s in 0..SIDES {
+        let a = s as f32 / SIDES as f32 * std::f32::consts::TAU;
+        let n = [a.cos(), a.sin(), 0.0];
+        vertices.push(vertex([n[0] * RADIUS, n[1] * RADIUS, 0.0], n, shaft));
+        vertices.push(vertex([n[0] * RADIUS, n[1] * RADIUS, -LENGTH], n, shaft));
+    }
+    for s in 0..SIDES {
+        let (a0, a1) = ((2 * s) as u32, (2 * ((s + 1) % SIDES)) as u32);
+        indices.extend([a0, a0 + 1, a1, a1, a0 + 1, a1 + 1]);
+    }
+    let nock = vertices.len() as u32;
+    vertices.push(vertex([0.0, 0.0, -LENGTH], [0.0, 0.0, -1.0], shaft));
+    for s in 0..SIDES {
+        let (a0, a1) = ((2 * s + 1) as u32, (2 * ((s + 1) % SIDES) + 1) as u32);
+        indices.extend([a0, nock, a1]);
+    }
+    // Fletchings: three thin vanes, 0.15 m long, 0.05 m high, both faces drawn.
+    for k in 0..3 {
+        let a = k as f32 / 3.0 * std::f32::consts::TAU + 0.3;
+        let (c, sn) = (a.cos(), a.sin());
+        let n = [-sn, c, 0.0];
+        let at = |out: f32, z: f32| [c * (RADIUS + out), sn * (RADIUS + out), z];
+        let first = vertices.len() as u32;
+        for p in [at(0.0, -LENGTH + 0.02), at(0.0, -LENGTH + 0.16), at(0.05, -LENGTH + 0.05), at(0.045, -LENGTH + 0.01)]
+        {
+            vertices.push(vertex(p, n, feather));
+        }
+        indices.extend([first, first + 1, first + 2, first, first + 2, first + 3]);
+        indices.extend([first, first + 2, first + 1, first, first + 3, first + 2]);
+    }
+    single("stuck_arrow", vertices, indices, Tissue::None)
+}
+
 fn vertex(position: Vec3, normal: Vec3, color: [f32; 4]) -> Vertex {
     Vertex {
         position,

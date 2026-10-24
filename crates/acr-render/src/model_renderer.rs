@@ -161,6 +161,78 @@ impl Wounds {
     }
 }
 
+/// Most scars kept per building ([`Scars::list`]).
+pub const MAX_SCARS: usize = 32;
+
+/// What a round left on a building's wall or roof (#304, `model.wgsl` `scarred`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScarKind {
+    /// A cannonball's hole: dark and ragged, a splintered rim on wood, cracked and chipped on
+    /// stone and plaster.
+    Hole = 0,
+    /// A musket ball's or grapeshot's pock.
+    Pock = 1,
+    /// Soot of a shell burst, climbing up the wall, with a chipped crater in the middle.
+    Scorch = 2,
+    /// Where an arrow went in (the arrow itself is a model of its own).
+    Puncture = 3,
+}
+
+/// One scar on a building (#304), in the model's frame after its node transforms (glTF
+/// metres, the pose at time 0): the shader projects it onto the surface along `normal`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Scar {
+    pub point: [f32; 3],
+    /// The struck surface's outward normal (unit).
+    pub normal: [f32; 3],
+    /// Radius (metres).
+    pub radius: f32,
+    pub kind: ScarKind,
+    /// 0..1, varies the outline.
+    pub seed: f32,
+}
+
+/// A building's hit damage (#304): its scars, and the cracks and soot over the whole model
+/// that grow with the life it lost.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Scars {
+    pub list: Vec<Scar>,
+    /// Cracks all over, 0..1.
+    pub batter: f32,
+    /// Soot all over, 0..1.
+    pub soot: f32,
+}
+
+/// Scars per group of [`Scars`] on the GPU: a fragment tests the groups' spheres first and
+/// reads the scars of the near ones only.
+pub const SCAR_GROUP: usize = 8;
+
+impl Scars {
+    /// A header texel (count, batter, soot, groups), a sphere per group of [`SCAR_GROUP`]
+    /// (centre, radius: all its scars can reach), then two texels per scar: [point, radius],
+    /// [normal, kind + seed · 0.9]. The groups are neighbours: ordered by the bearing around
+    /// the model's middle, then by height.
+    fn texels(&self, out: &mut Vec<[f32; 4]>) {
+        let mut list: Vec<Scar> = self.list[..self.list.len().min(MAX_SCARS)].to_vec();
+        let bearing = |s: &Scar| (s.point[2].atan2(s.point[0]) * 4.0).round() as i32;
+        list.sort_by(|a, b| bearing(a).cmp(&bearing(b)).then(a.point[1].total_cmp(&b.point[1])));
+        let groups = list.len().div_ceil(SCAR_GROUP);
+        out.push([list.len() as f32, self.batter.clamp(0.0, 1.0), self.soot.clamp(0.0, 1.0), groups as f32]);
+        for g in list.chunks(SCAR_GROUP) {
+            let k = 1.0 / g.len() as f32;
+            let c = g.iter().fold([0.0; 3], |c, s| math::add(c, math::scale(s.point, k)));
+            // How far the shader draws a scar: a hole's cracks 3.2 radii, the others 1.4.
+            let reach = |s: &Scar| s.radius * if s.kind == ScarKind::Hole { 3.2 } else { 1.4 };
+            let r = g.iter().map(|s| math::dot(math::sub(s.point, c), math::sub(s.point, c)).sqrt() + reach(s));
+            out.push([c[0], c[1], c[2], r.fold(0.0, f32::max)]);
+        }
+        for s in &list {
+            out.push([s.point[0], s.point[1], s.point[2], s.radius]);
+            out.push([s.normal[0], s.normal[1], s.normal[2], s.kind as u8 as f32 + s.seed.clamp(0.0, 1.0) * 0.9]);
+        }
+    }
+}
+
 /// A pool of blood on the ground under a corpse, or (`splatter`) a droplet sprayed onto the
 /// ground behind a hit unit.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -286,8 +358,14 @@ struct GpuInstance {
 }
 
 /// The data texels of an instance in the bone texture: wounds, spray and (when damaged)
-/// the damage block of [`damage::pack`].
-fn instance_texels(inst: &ModelInstance, rig: Option<&damage::Rig>, look: &[[f32; 4]; 3], out: &mut Vec<[f32; 4]>) {
+/// the damage block of [`damage::pack`]; a building's [`Scars`] last.
+fn instance_texels(
+    inst: &ModelInstance,
+    rig: Option<&damage::Rig>,
+    look: &[[f32; 4]; 3],
+    scars: Option<&Scars>,
+    out: &mut Vec<[f32; 4]>,
+) {
     let [w0, w1] = inst.wounds.gpu();
     let s = &inst.sprayed;
     let damaged = !inst.damage.is_none();
@@ -296,11 +374,12 @@ fn instance_texels(inst: &ModelInstance, rig: Option<&damage::Rig>, look: &[[f32
         w0,
         w1,
         [s.point[0], s.point[1], s.point[2], s.radius],
-        // Bit 0: damaged; bit 1: draped (the drape follows the look).
+        // Bit 0: damaged; bit 1: draped (the drape follows the look); bit 2: scarred (the
+        // scars follow the drape).
         [
             s.amount.clamp(0.0, 1.0),
             s.age.clamp(0.0, 1.0),
-            f32::from(u8::from(damaged) | (u8::from(inst.drape.is_some()) << 1)),
+            f32::from(u8::from(damaged) | (u8::from(inst.drape.is_some()) << 1) | (u8::from(scars.is_some()) << 2)),
             marks.len() as f32,
         ],
     ]);
@@ -316,6 +395,10 @@ fn instance_texels(inst: &ModelInstance, rig: Option<&damage::Rig>, look: &[[f32
     // The drape follows the look (`model.wgsl`, `vs_main`).
     if let Some(d) = inst.drape {
         out.extend([d.heights, [d.first, d.spacing, 0.0, 0.0]]);
+    }
+    // A building's scars follow the drape (`model.wgsl`, `scarred`).
+    if let Some(s) = scars {
+        s.texels(out);
     }
 }
 
@@ -510,6 +593,8 @@ pub struct ModelRenderer {
     cap: usize,
     /// The inside of wounds (#280): cavity, rib, bone end ([`damage::InsertKind`] order).
     inserts: [usize; 3],
+    /// Buildings' hit damage (#304) for the next `prepare`, by instance index.
+    scars: HashMap<usize, Scars>,
     /// Prepared for the next `render`: the instances on the screen.
     draws: Vec<Draw>,
     /// Prepared for the next `render_shadows`: the casters within the shadow map, coarser.
@@ -940,6 +1025,7 @@ impl ModelRenderer {
             models: Vec::new(),
             cap: 0,
             inserts: [0; 3],
+            scars: HashMap::new(),
             draws: Vec::new(),
             shadow_draws: Vec::new(),
             lod_last: Vec::new(),
@@ -1246,6 +1332,12 @@ impl ModelRenderer {
         self.custom = poses;
     }
 
+    /// Hit damage (#304) for the next [`ModelRenderer::prepare`]: instance index → its
+    /// building's scars. Used once.
+    pub fn set_scars(&mut self, scars: HashMap<usize, Scars>) {
+        self.scars = scars;
+    }
+
     /// Samples the poses, uploads palettes and instances for `instances` seen through
     /// `view`; `dissolve` lets decaying layers dissolve (the gore setting).
     pub fn prepare(
@@ -1281,6 +1373,7 @@ impl ModelRenderer {
         let insert_models = self.inserts;
         let models = &self.models;
         let custom = std::mem::take(&mut self.custom);
+        let scars = std::mem::take(&mut self.scars);
         let shadows_on = self.shadows;
         let mut casters: Vec<([f32; 3], f32)> = Vec::new();
         if self.debug_file {
@@ -1428,7 +1521,7 @@ impl ModelRenderer {
                     look_data[k] = [u[k][0], u[k][1], u[k][2], 0.2126 * b[0] + 0.7152 * b[1] + 0.0722 * b[2]];
                 }
             }
-            instance_texels(inst, model.rig.as_ref(), &look_data, &mut data);
+            instance_texels(inst, model.rig.as_ref(), &look_data, scars.get(&i), &mut data);
             entries.push(Entry {
                 gpu: GpuInstance {
                     rows: math::affine_rows(&inst.transform),

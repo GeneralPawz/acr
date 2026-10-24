@@ -303,6 +303,12 @@ fn vs_main(v: VertexIn, inst: InstanceIn) -> VsOut {
     out.wounds1 = texel(d + 1u);
     out.spray = texel(d + 2u);
     out.spray_look = vec4<f32>(look.xy, f32(d), look.w);
+    // A building with hit damage (#304, `scarred`): its scars lie in the model's frame after
+    // the node transforms, and a marks count of −1 tells the fragment shader.
+    if ((flags & 4u) != 0u) {
+        out.rest = vec4<f32>(local, local.y);
+        out.spray_look.w = -1.0;
+    }
     out.cut = vec4<f32>(clamp(keep, -1.0, 1.0), v.body.z, side, belly);
     out.part = v.body.x;
     out.face = v.face;
@@ -534,6 +540,116 @@ fn marked(rgb_in: vec3<f32>, p: vec3<f32>, d: u32, n: u32) -> vec3<f32> {
     return rgb;
 }
 
+// Hit damage on a building (#304, docs/rendering-3d.md "Hit damage on buildings"): the
+// scars after the instance's data, look and drape (a header [count, batter, soot, groups],
+// a sphere per group of 8 (centre, reach), then two texels each: [centre, radius], [outward normal, kind + seed · 0.9]; `p` in the
+// model's frame after its node transforms, metres). Kinds: 0 a ball's hole, 1 a pock, 2 a
+// shell's scorch, 3 an arrow's puncture. Wood (a warm colour) splinters pale around a hole,
+// stone and plaster (grey) crack and chip. Over the whole model cracks and soot grow with
+// the lost life (`batter`, `soot`).
+fn scarred(rgb_in: vec3<f32>, p: vec3<f32>, d: u32, far: bool) -> vec3<f32> {
+    var rgb = rgb_in;
+    let head = texel(d + 3u);
+    let flags = u32(round(head.z));
+    let start = d + 4u + select(0u, 28u, (flags & 1u) != 0u) + 2u * u32(round(max(head.w, 0.0))) + 3u
+        + select(0u, 2u, (flags & 2u) != 0u);
+    let h = texel(start);
+    let n = u32(h.x + 0.5);
+    let mx = max(rgb.r, max(rgb.g, rgb.b));
+    let wood = smoothstep(0.1, 0.28, (rgb.r - rgb.b) / max(mx, 0.02));
+    // Fresh wood is pale yellow under the weathered surface, fresh stone a light grey.
+    let fresh = mix(vec3<f32>(0.46, 0.44, 0.41), vec3<f32>(0.62, 0.47, 0.27), wood);
+    let soot_rgb = vec3<f32>(0.03, 0.027, 0.024);
+    // Battered all over: crooked cracks (the contour of a noise) and soot in patches.
+    if (h.y > 0.0) {
+        let ridge = abs(noise3(p * vec3<f32>(1.3, 2.2, 1.3)) - 0.5);
+        let wide = 0.012 + 0.025 * h.y;
+        let crack = (1.0 - smoothstep(wide * 0.4, wide, ridge)) * smoothstep(0.55 - 0.35 * h.y, 0.8 - 0.3 * h.y, noise3(p * 3.1 + vec3<f32>(7.0)));
+        rgb = mix(rgb, rgb * 0.18, crack * min(h.y * 1.6, 1.0));
+    }
+    if (h.z > 0.0) {
+        let patches = smoothstep(0.62 - 0.3 * h.z, 0.9 - 0.25 * h.z, noise3(p * 0.9 + vec3<f32>(3.0)));
+        rgb = mix(rgb, soot_rgb, patches * h.z * 0.8);
+    }
+    var hole = 0.0;
+    var rim = 0.0;
+    var dark = 0.0;
+    var halo = 0.0;
+    let groups = u32(h.w + 0.5);
+    let first = start + 1u + groups;
+    for (var g = 0u; g < groups; g = g + 1u) {
+        // A group of 8 neighbouring scars (`SCAR_GROUP`): skipped when out of its sphere's reach.
+        let sphere = texel(start + 1u + g);
+        let gq = p - sphere.xyz;
+        if (dot(gq, gq) > sphere.w * sphere.w) {
+            continue;
+        }
+        for (var i = g * 8u; i < min(n, g * 8u + 8u); i = i + 1u) {
+            // The far ones cost one fetch.
+            let a = texel(first + 2u * i);
+            let r = max(a.w, 0.01);
+            let q = p - a.xyz;
+            if (dot(q, q) > r * r * 10.3) {
+                continue;
+            }
+            let b = texel(first + 2u * i + 1u);
+            let off = dot(q, b.xyz);
+            // Only on the struck face, not through the wall or round a corner.
+            if (abs(off) > max(r, 0.12) * 1.2) {
+                continue;
+            }
+            let flat = q - b.xyz * off;
+            let dist = length(flat);
+            let kind = floor(b.w + 0.01);
+            let seed = fract(b.w) * 107.0;
+            let up = select(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0), abs(b.y) > 0.9);
+            let u = normalize(cross(up, b.xyz));
+            let v = cross(b.xyz, u);
+            let ang = atan2(dot(flat, v), dot(flat, u));
+            let ring = vec3<f32>(cos(ang), sin(ang), seed);
+            if (kind < 0.5) {
+                // A ball's hole: splinters (sharp, many) round a hole in wood, a rounder crater
+                // with radial cracks in stone.
+                let spikes = pow(noise3(ring * vec3<f32>(4.5, 4.5, 1.0)), 3.0) * 1.6 * wood;
+                let lumps = (noise3(ring * vec3<f32>(1.6, 1.6, 1.0)) - 0.5) * 0.6;
+                let edge = r * (0.85 + lumps + spikes * 0.6);
+                hole = max(hole, 1.0 - smoothstep(edge * 0.8, edge, dist));
+                let outer = r * (1.25 + spikes * 1.4 + 0.5 * (1.0 - wood));
+                let band = (1.0 - smoothstep(outer * 0.75, outer, dist)) * step(edge * 0.9, dist);
+                if (!far) {
+                    let grain = noise3(p * vec3<f32>(60.0, 9.0, 60.0) + vec3<f32>(seed));
+                    rim = max(rim, band * (0.55 + 0.45 * grain));
+                } else {
+                    rim = max(rim, band * 0.7);
+                }
+                // Radial cracks in stone and plaster.
+                let spoke = abs(fract(ang * 1.1 + noise3(ring * 2.0) * 0.6 + seed) - 0.5);
+                let reach = r * (1.6 + 1.6 * noise3(ring * 3.0));
+                let crack = (1.0 - smoothstep(0.012, 0.03, spoke * dist / r * 0.25)) * (1.0 - smoothstep(reach * 0.6, reach, dist));
+                dark = max(dark, crack * (1.0 - wood) * step(edge, dist) * 0.85);
+                halo = max(halo, 1.0 - smoothstep(r, r * 2.6, dist + (noise3(p * 8.0) - 0.5) * r));
+            } else if (kind < 1.5 || kind > 2.5) {
+                // A pock (an arrow's puncture smaller and darker): a dark pit, a pale chipped ring.
+                let pit = 1.0 - smoothstep(r * 0.45, r * 0.75, dist + (noise3(ring * 3.0) - 0.5) * r * 0.4);
+                hole = max(hole, pit * select(0.85, 1.0, kind > 2.5));
+                rim = max(rim, (1.0 - smoothstep(r * 0.8, r * 1.3, dist)) * step(r * 0.6, dist) * select(0.6, 0.2, kind > 2.5));
+            } else {
+                // A shell's scorch: soot climbing the wall (up is model +y), a chipped crater.
+                let climb = select(1.0, 0.5, flat.y > 0.0);
+                let e = length(vec3<f32>(flat.x, flat.y * climb, flat.z)) + (noise3(p * 3.0 + vec3<f32>(seed)) - 0.5) * r * 0.7;
+                dark = max(dark, (1.0 - smoothstep(r * 0.35, r, e)) * 0.92);
+                hole = max(hole, 1.0 - smoothstep(r * 0.1, r * 0.17, dist + (noise3(ring * 2.5) - 0.5) * r * 0.08));
+                rim = max(rim, (1.0 - smoothstep(r * 0.17, r * 0.26, dist)) * 0.5);
+            }
+        }
+    }
+    rgb = rgb * (1.0 - 0.4 * halo);
+    rgb = mix(rgb, fresh * (0.8 + 0.3 * noise3(p * 40.0)), rim);
+    rgb = mix(rgb, soot_rgb, dark);
+    rgb = mix(rgb, vec3<f32>(0.018, 0.014, 0.011), hole);
+    return rgb;
+}
+
 // Fibres of torn muscle and cloth: noise stretched along the body's long axis (rest y).
 fn strands(p: vec3<f32>, seed: f32) -> f32 {
     return noise3(vec3<f32>(p.x * 150.0, p.y * 26.0, p.z * 150.0) + vec3<f32>(seed));
@@ -749,7 +865,7 @@ fn shade(in: VsOut, front: bool, far: bool, clean: bool) -> vec4<f32> {
     // Each soldier's skin tone and hair colour, and the detail of his face (#283).
     if (material.look.z > 0.5) {
         let d = u32(in.spray_look.z + 0.5);
-        let marks = u32(in.spray_look.w + 0.5);
+        let marks = u32(max(in.spray_look.w, 0.0) + 0.5);
         let l0 = look_texel(d, marks, 0u);
         let l1 = look_texel(d, marks, 1u);
         if (material.look.z < 1.5) {
@@ -786,6 +902,9 @@ fn shade(in: VsOut, front: bool, far: bool, clean: bool) -> vec4<f32> {
     }
     if (material.flags.w < 0.5 && in.spray_look.w > 0.5) {
         rgb = marked(rgb, in.rest.xyz, u32(in.spray_look.z + 0.5), u32(in.spray_look.w + 0.5));
+    }
+    if (in.spray_look.w < -0.5) {
+        rgb = scarred(rgb, in.rest.xyz, u32(in.spray_look.z + 0.5), far);
     }
     if (material.flags.w < 0.5 && in.spray_look.x > 0.0) {
         rgb = sprayed(rgb, in.rest.xyz, in.spray, in.spray_look.xy);

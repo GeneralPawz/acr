@@ -315,6 +315,11 @@ pub struct ThreeD {
     anchors: HashMap<usize, super::ruin_view::Anchors>,
     /// Burning and fallen buildings this frame, for their fire, smoke and dust.
     burning: Vec<super::ruin_view::Burning>,
+    /// Hit damage on buildings (#304): scars by the building's instance index this frame,
+    /// and the stuck arrows' model.
+    building_hits: super::building_hits::BuildingHits,
+    scars: HashMap<usize, acr_render::model_renderer::Scars>,
+    arrow_model: Option<usize>,
     /// Frames and time since the last performance line in the log.
     frames: u32,
     since: Option<web_time::Instant>,
@@ -442,6 +447,9 @@ impl Default for ThreeD {
             ruins: HashMap::new(),
             anchors: HashMap::new(),
             burning: Vec::new(),
+            building_hits: Default::default(),
+            scars: HashMap::new(),
+            arrow_model: None,
             frames: 0,
             since: None,
             pile_us: 0,
@@ -660,6 +668,9 @@ impl ThreeD {
             return;
         }
         let renderer = self.renderer.get_or_insert_with(|| ModelRenderer::new(device, queue, format));
+        if self.arrow_model.is_none() {
+            self.arrow_model = Some(renderer.add_model(device, queue, acr_render::damage::procedural_arrow()));
+        }
         self.depth.get_or_insert_with(|| DepthTarget::new(device, format));
         self.water.get_or_insert_with(|| acr_render::water::WaterRenderer::new(device, format));
         self.particle_renderer.get_or_insert_with(|| acr_render::particles::ParticleRenderer::new(device, format));
@@ -846,6 +857,9 @@ impl ThreeD {
         let facing = |v: u32| world.units.get(v as usize).filter(|u| u.id.0 == v && !u.building).map(|u| u.dir);
         let instances_scope = acr_sim::prof::Scope::new("3d.instances");
         self.wounds.take_hits(world.hits.iter(), now, self.gore, &facing);
+        self.building_hits.take(world);
+        self.scars.clear();
+        let mut arrows: Vec<acr_render::math::Mat4> = Vec::new();
         self.wounds.retain(&|v| world.units.get(v as usize).is_some_and(|u| u.id.0 == v && (u.alive || lingering(u))));
         self.burns.retain(|v| world.units.get(v as usize).is_some_and(|u| u.id.0 == v && (u.alive || lingering(u))));
         for u in world.units.iter().filter(|u| (u.alive || lingering(u)) && u.inside_of.is_none()) {
@@ -949,6 +963,10 @@ impl ThreeD {
                 }
                 if look.fire.flames + look.fire.smoking + look.fire.dust > 0.0 {
                     self.burning.push(look.fire);
+                }
+                // Holes, pocks, scorch and stuck arrows where rounds struck it (#304).
+                if let Some(scars) = self.building_hits.place(u, index, model, &inst, &mut arrows) {
+                    self.scars.insert(self.instances.len(), scars);
                 }
             }
             // Starved: the `emaciated` morph (#207), on models that carry it.
@@ -1171,6 +1189,26 @@ impl ThreeD {
             self.drawn.insert(u.id.0, self.instances.len());
             self.instances.push(inst);
             self.shown.insert(u.id);
+        }
+        if let Some(arrow) = self.arrow_model {
+            for transform in arrows {
+                self.instances.push(ModelInstance {
+                    model: arrow,
+                    clip: None,
+                    time: 0.0,
+                    transform,
+                    decay: 0.0,
+                    morphs: [0.0; 3],
+                    transparent: false,
+                    player: 0,
+                    wounds: Default::default(),
+                    sprayed: Default::default(),
+                    damage: Default::default(),
+                    look: None,
+                    uniform: None,
+                    drape: None,
+                });
+            }
         }
         drop(instances_scope);
         let spray_scope = acr_sim::prof::Scope::new("3d.spray_trail");
@@ -1739,6 +1777,7 @@ impl ThreeD {
                 poses.extend(std::mem::take(&mut r.poses));
             }
             renderer.set_custom_poses(poses);
+            renderer.set_scars(self.scars.clone());
         }
         renderer.shadows = shadows_override().unwrap_or(self.shadows);
         renderer.lods = self.lod;
