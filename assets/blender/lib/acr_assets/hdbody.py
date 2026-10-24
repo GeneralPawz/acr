@@ -959,11 +959,7 @@ def build_master(ctx, arm, portrait=None, master_tris=MASTER_TRIS):
     skin = skin_material(f"{ctx.name}.hd.skin", final, nrm_img, rough_img, 1.0)
     body.data.materials.append(skin)
     cage.data.materials.append(skin)
-    em = bpy.data.materials.new(f"{ctx.name}.hd.eye")
-    em.use_nodes = True
-    em.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0.85, 0.83, 0.8, 1)
-    em.node_tree.nodes["Principled BSDF"].inputs["Roughness"].default_value = 0.08
-    eyes.data.materials.append(em)
+    eyes.data.materials.append(eye_material(f"{ctx.name}.hd.eye", eyes))
     del sc
     tri_uv, tri_v = _tri_arrays(cage.data)
     lab, k = island_labels(tri_uv, tri_v)
@@ -974,6 +970,60 @@ def build_master(ctx, arm, portrait=None, master_tris=MASTER_TRIS):
     st["uv_flipped"] = {"master": uv_flipped(mt_uv)}
     ctx._hd_raster = raster
     return body, eyes, cage
+
+
+EYE_IRIS = (0.30, 0.19, 0.09)  # brown iris (sRGB)
+
+
+def eye_albedo(n=256, iris=EYE_IRIS, iris_r=0.25, pupil_r=0.09, seed=5):
+    """Eye texture (n x n x 3, sRGB 0..1) for `eye_uvs`: the front of the eyeball maps to the
+    disc of radius 0.5 round the centre; sclera, an iris of radius `iris_r` with radial
+    fibres and a dark limbal ring, a pupil of `pupil_r`."""
+    rng = np.random.default_rng(seed)
+    y, x = (np.mgrid[0:n, 0:n] + 0.5) / n - 0.5
+    r = np.hypot(x, y)
+    ang = np.arctan2(y, x)
+    sclera = np.array([0.90, 0.87, 0.83]) * (1.0 - 0.10 * np.clip((r - 0.30) / 0.2, 0, 1))[..., None]
+    fib = 0.75 + 0.25 * np.sin(ang * 61 + rng.uniform(0, 6)) * np.sin(ang * 23 + 1.3)
+    shade = (fib * (0.65 + 0.55 * np.clip((r - pupil_r) / (iris_r - pupil_r), 0, 1)))[..., None]
+    col = np.where((r < iris_r)[..., None], np.array(iris) * shade, sclera)
+    ring = np.clip(1.0 - np.abs(r - iris_r) / 0.025, 0, 1)[..., None]
+    col = col * (1.0 - 0.6 * ring)
+    col = np.where((r < pupil_r)[..., None], np.array([0.02, 0.02, 0.02]), col)
+    return np.clip(col, 0, 1)
+
+
+def eye_uvs(eyes):
+    """UVs of the eyeballs looking down -Y: per eye (by side), the front hemisphere
+    projected onto the disc of radius 0.5 round (0.5, 0.5), the back on the sclera."""
+    me = eyes.data
+    co = np.array([v.co[:] for v in me.vertices])
+    uv = me.uv_layers.get("UVMap") or me.uv_layers.new(name="UVMap")
+    side = co[:, 0] > 0
+    c = {s: co[side == s].mean(0) for s in (True, False) if (side == s).any()}
+    rad = {s: np.linalg.norm(co[side == s] - c[s], axis=1).max() for s in c}
+    for p in me.polygons:
+        for li in p.loop_indices:
+            vi = me.loops[li].vertex_index
+            s = bool(side[vi])
+            d = (co[vi] - c[s]) / rad[s]
+            uv.data[li].uv = (0.5 + 0.5 * d[0], 0.5 + 0.5 * d[2]) if d[1] < 0 else (0.02, 0.02)
+
+
+def eye_material(name, eyes):
+    """The eyes' material: `eye_albedo` on `eye_uvs`, glossy."""
+    import bpy
+
+    eye_uvs(eyes)
+    m = bpy.data.materials.new(name)
+    m.use_nodes = True
+    nt = m.node_tree
+    bs = nt.nodes["Principled BSDF"]
+    tex = nt.nodes.new("ShaderNodeTexImage")
+    tex.image = _image(name + ".albedo", eye_albedo())
+    nt.links.new(tex.outputs["Color"], bs.inputs["Base Color"])
+    bs.inputs["Roughness"].default_value = 0.08
+    return m
 
 
 def _portrait_bake(body, eyes, alb_img, portrait, QJ, st):

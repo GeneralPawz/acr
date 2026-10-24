@@ -96,5 +96,17 @@ class Lods(unittest.TestCase):
         self.assertGreater(jump, hdbody.SEAM_JUMP)
 
 
+class Eyes(unittest.TestCase):
+    def test_eye_albedo_has_pupil_iris_and_sclera(self):
+        a = hdbody.eye_albedo(128)
+        self.assertEqual(a.shape, (128, 128, 3))
+        c = a[64, 64]
+        self.assertLess(c.max(), 0.05)  # pupil
+        iris = a[64, 64 + int(0.18 * 128)]
+        self.assertGreater(iris[0], iris[2])  # brown: more red than blue
+        self.assertLess(iris.max(), 0.6)
+        self.assertGreater(a[64, 64 + int(0.40 * 128)].min(), 0.6)  # sclera
+
+
 if __name__ == "__main__":
     unittest.main()

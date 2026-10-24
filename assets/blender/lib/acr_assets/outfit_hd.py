@@ -47,7 +47,9 @@ FABRIC = {  # key -> (fabric, decay layer)
     "shirt": ("linen", "linen"), "stock": ("linen", "leather"), "shoes": ("leather", "leather"),
     "brass": ("metal", "metal"), "metal": ("metal", "metal"),
 }
-SHOE_LIFT = 0.004  # m: the shoe shell off the foot skin
+SHOE_LIFT = 0.006  # m: the shoe hull off the foot skin
+SHOE_VOXEL = 0.004  # m: remesh of the shoe hull
+SHOE_TRIS = 1600  # both shoes
 
 
 # ----------------------------------------------------------------------------- pure
@@ -189,41 +191,127 @@ def drape_alone(name, arm, body, garments=GARMENTS, spacing=SPACING_CM):
 
 
 def shoes(name, arm, body):
-    """Low shoes: the foot and toe faces of the skin, `SHOE_LIFT` out along the normals,
-    with the skin's weights (a shell on the smooth HD skin has no teeth)."""
+    """Closed low shoes: per foot the convex hull of the foot and toe skin (lifted
+    `SHOE_LIFT` along the normals: one rounded toe, a flat sole under the arch), voxel
+    remeshed at `SHOE_VOXEL`, smoothed and decimated to `SHOE_TRIS`, weighted from the
+    nearest foot skin. The foot inside is culled with the skin under the clothes
+    (`compose`, `cull_feet`); `shoe_buckles` adds the buckles."""
+    import bmesh
     import bpy
+    from mathutils.kdtree import KDTree
 
     from . import body as bd
 
     names = {g.index: g.name for g in body.vertex_groups}
     me = body.data
-    foot = []
-    for v in me.vertices:
-        if v.groups:
-            g = max(v.groups, key=lambda e: e.weight)
-            foot.append(names[g.group].startswith(("foot", "toe")))
-        else:
-            foot.append(False)
-    ob = body.copy()
-    ob.data = body.data.copy()
-    ob.name = ob.data.name = f"{name}.shoes"
-    bd.link(ob)
-    import bmesh
-
+    foot = foot_mask(body)
+    idx = [i for i, f in enumerate(foot) if f]
     bm = bmesh.new()
-    bm.from_mesh(ob.data)
-    bm.verts.ensure_lookup_table()
-    bmesh.ops.delete(bm, geom=[f for f in bm.faces if not all(foot[v.index] for v in f.verts)], context="FACES")
-    bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context="VERTS")
-    bm.normal_update()
-    for v in bm.verts:
-        v.co += v.normal * SHOE_LIFT
-    bm.to_mesh(ob.data)
+    for side in (1, -1):
+        vs = [bm.verts.new(me.vertices[i].co + me.vertices[i].normal * SHOE_LIFT) for i in idx
+              if me.vertices[i].co.x * side > 0]
+        res = bmesh.ops.convex_hull(bm, input=vs)
+        inner = {v for v in res["geom_interior"] + res["geom_unused"] if isinstance(v, bmesh.types.BMVert)}
+        bmesh.ops.delete(bm, geom=list(inner), context="VERTS")
+    m2 = bpy.data.meshes.new(f"{name}.shoes")
+    bm.to_mesh(m2)
     bm.free()
-    ob.data.materials.clear()
-    for m in list(ob.modifiers):
-        if m.type != "ARMATURE":
-            ob.modifiers.remove(m)
+    ob = bpy.data.objects.new(f"{name}.shoes", m2)
+    bd.link(ob)
+    bpy.context.view_layer.objects.active = ob
+    for typ, attrs in (("REMESH", {"mode": "VOXEL", "voxel_size": SHOE_VOXEL}),
+                       ("SMOOTH", {"factor": 0.5, "iterations": 2}),
+                       ("DECIMATE", {"ratio": 1.0})):
+        md = ob.modifiers.new(typ.lower(), typ)
+        for k, x in attrs.items():
+            setattr(md, k, x)
+        if typ == "DECIMATE":
+            md.ratio = min(1.0, SHOE_TRIS / max(1, _tris_eval(ob)))
+        bpy.ops.object.modifier_apply(modifier=md.name)
+    kd = KDTree(len(idx))
+    for k, i in enumerate(idx):
+        kd.insert(me.vertices[i].co, k)
+    kd.balance()
+    groups = {}
+    for v in ob.data.vertices:
+        _co, k, _d = kd.find(v.co)
+        for e in me.vertices[idx[k]].groups:
+            gn = names[e.group]
+            g = groups.get(gn) or ob.vertex_groups.new(name=gn)
+            groups[gn] = g
+            g.add([v.index], e.weight, "REPLACE")
+    for p in ob.data.polygons:
+        p.use_smooth = True
+    ob.modifiers.new("Armature", "ARMATURE").object = arm
+    ob.parent = arm
+    ob.matrix_parent_inverse = arm.matrix_world.inverted()
+    return ob
+
+
+def foot_mask(ob):
+    """Per vertex: its strongest bone is a foot or toe bone."""
+    names = {g.index: g.name for g in ob.vertex_groups}
+    out = []
+    for v in ob.data.vertices:
+        g = max(v.groups, key=lambda e: e.weight) if v.groups else None
+        out.append(bool(g) and names[g.group].startswith(("foot", "toe")))
+    return out
+
+
+def cull_feet(ob):
+    """Deletes the skin's foot and toe faces (inside the closed shoes); returns the count."""
+    m = foot_mask(ob)
+    return _delete_faces(ob, [not x for x in m])
+
+
+def _tris_eval(ob):
+    import bpy
+
+    ev = ob.evaluated_get(bpy.context.evaluated_depsgraph_get())
+    me = ev.to_mesh()
+    n = sum(len(p.vertices) - 2 for p in me.polygons)
+    ev.to_mesh_clear()
+    return n
+
+
+def shoe_buckles(name, arm, shoe, size=(0.034, 0.026, 0.004)):
+    """A brass buckle on each shoe's instep: a flat box on the top of the shoe a third of
+    the way from the ankle to the toe, on the `foot_*` bone."""
+    import bmesh
+    import bpy
+    from mathutils import Matrix, Vector
+
+    from . import body as bd
+
+    tree = _tree([shoe])
+    bm = bmesh.new()
+    for side in ("l", "r"):
+        b = arm.data.bones[f"foot_{side}"]
+        head, tail = arm.matrix_world @ b.head_local, arm.matrix_world @ b.tail_local
+        p = head.lerp(tail, 0.45)
+        hit = tree.ray_cast(Vector((p.x, p.y, p.z + 0.3)), Vector((0, 0, -1)), 0.6)
+        if hit[0] is None:
+            continue
+        n = hit[1].normalized()
+        fwd = (tail - head)
+        fwd.z = 0
+        fwd = (fwd - n * fwd.dot(n)).normalized()
+        x = fwd.cross(n).normalized()
+        rot = Matrix((x, fwd, n)).transposed().to_4x4()
+        geom = bmesh.ops.create_cube(bm, size=1.0)["verts"]
+        bmesh.ops.transform(bm, verts=geom, matrix=Matrix.Translation(hit[0] + n * size[2] * 0.5) @ rot
+                            @ Matrix.Diagonal((size[0], size[1], size[2], 1.0)))
+    me = bpy.data.meshes.new(f"{name}.buckles")
+    bm.to_mesh(me)
+    bm.free()
+    ob = bpy.data.objects.new(f"{name}.buckles", me)
+    bd.link(ob)
+    for side in ("l", "r"):
+        g = ob.vertex_groups.new(name=f"foot_{side}")
+        g.add([v.index for v in me.vertices if (v.co.x > 0) == (side == "l")], 1.0, "REPLACE")
+    ob.modifiers.new("Armature", "ARMATURE").object = arm
+    ob.parent = arm
+    ob.matrix_parent_inverse = arm.matrix_world.inverted()
     return ob
 
 
@@ -500,11 +588,16 @@ def build(ctx, arm, body, body_lods=(), palette=None):
         lp = [_decimated(o, target / total) for o in pieces]
         level_pieces.append(({x.name: keys[o.name] for x, o in zip(lp, pieces)}, lp))
     st["compose"] = compose(body_tree, pieces, keys, rank, skins=(body,))
+    st["feet_culled"] = {sk.name: cull_feet(sk) for sk in (body, *body_lods)}
     st["compose_s"] = round(time.time() - t1, 1)
     ch = _Ch(ctx.name, arm, body, ())
     for o in pieces:
         ch.add("clothes", o, keys[o.name])
     st["buttons"] = [o.name for o in drape.buttons(ch, list(pieces), f"{ctx.name}.hd")]
+    bk = shoe_buckles(ctx.name, arm, sh)
+    pieces.append(bk)
+    keys[bk.name] = "brass"
+    st["shoes"] = {"tris": _tris(sh), "buckle_tris": _tris(bk)}
     for o in ch.layers["clothes"]:
         if o not in pieces:
             pieces.append(o)

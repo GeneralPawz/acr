@@ -1752,10 +1752,14 @@ model first draws at that level (`acr-render/src/tex_cache.rs`, m2-tex-stream).
   texture binds (a 4 k map with mips written at once stalled one frame by 190 ms on the
   RX 9060 XT).
 - **Stand-in:** until a material's pictures are in, `GpuModel::group` binds the material in
-  the same place of the next coarser level the model carries (`stand_ins`; its pictures share
-  the master's UV layout, `hdbody.build_lods`), down the chain to the coarsest, which is always
-  loaded. Nothing draws untextured; a material without any stand-in samples white for the
-  missing picture.
+  the same place of the next coarser level the model carries (`stand_ins`), down the chain to
+  the coarsest, which is always loaded. Nothing draws untextured; a material without any
+  stand-in samples white for the missing picture. **Known defect:** `hdbody.build_lods` gives
+  each level its own atlas, so a stand-in is sampled with the wrong UVs: the HD skin shows
+  black and smeared patches (scalp, eyes, hands) until the master's pictures are in. In the
+  driver they stayed for about 6,000 frames (`hdengm18`, round 2 of m2-hd-outfit:
+  `ACR-analysis/genai/hd-outfit/round2/black/`); a `wait` of that length before the
+  screenshot shows the right skin.
 - **Eviction:** `TexCache::evict` each frame drops pictures unused for `IDLE` (1,800) frames,
   and, while the streamed pictures exceed `BUDGET` (512 MB native, 192 MB wasm), the least
   recently used ones unused for `GRACE` (120) frames. The material falls back to its

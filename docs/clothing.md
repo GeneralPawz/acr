@@ -1072,7 +1072,12 @@ layers in one cloth simulation (that poked 30 %, threw 3 m spikes and took 13 mi
    are deleted (the skin too: about 20k of 78k triangles go); what stays is pushed 3 mm under
    the layer on it (nearest point and a ray along the normal down to 12 mm, the layer check's
    `POKE`). Loose parts (coat skirts, turnbacks) hide nothing and are lifted 3 mm over the
-   layers under them instead. Shoes are a 4 mm shell of the foot faces.
+   layers under them instead. Shoes (`outfit_hd.shoes`) are closed meshes: per foot the convex
+   hull of the foot and toe skin 6 mm out (one rounded toe, a flat sole under the arch), voxel
+   remeshed at 4 mm, smoothed and decimated to 1,600 triangles, weighted from the nearest foot
+   skin; the skin's foot and toe faces are deleted (`cull_feet`, master and levels). A brass buckle sits on each
+   instep (`shoe_buckles`, on `foot_*`). The eyes carry `hdbody.eye_albedo` (sclera, brown
+   iris, pupil) on projected UVs (`eye_uvs`).
 3. **Cloth:** tiled twill / plain-weave albedo (1k per key), normal (2k per fabric) and
    roughness on box-projected UVs (5 cm repeat); brass and pewter buttons (`drape.buttons`).
    Weights from the skin, at most 4, normalised.
