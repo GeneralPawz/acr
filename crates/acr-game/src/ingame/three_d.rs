@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 
 use acr_render::damage::{Damage, Keep, Limb};
 use acr_render::model::{self, ModelData};
-use acr_render::model_renderer::{BloodPool, DepthTarget, ModelInstance, ModelRenderer, Wounds};
+use acr_render::model_renderer::{BloodPool, DepthTarget, Drape, ModelInstance, ModelRenderer, Wounds};
 use acr_render::objects_view::ObjectsView;
 use acr_render::scene::{Placement, definition_name};
 use acr_render::terrain::{Camera, TerrainData, TerrainRenderer};
@@ -306,6 +306,11 @@ pub struct ThreeD {
     /// Time spent stacking corpses (µs) and stackings since the last log line.
     pile_us: u128,
     pile_runs: u32,
+    /// The rests of the corpses on piles, stacked again only when they change (#230).
+    piles: piles::Piles,
+    /// The terrain under each corpse's footprint samples, by unit id, with the ground point
+    /// it was sampled at (sampling every corpse every frame costs more than the stacking).
+    pile_ground: HashMap<u32, ([f32; 2], [f32; 8])>,
     /// `ACR_3D_COMPARE` (development): compare models with their sprites.
     compare: Compare,
     started: web_time::Instant,
@@ -418,6 +423,8 @@ impl Default for ThreeD {
             since: None,
             pile_us: 0,
             pile_runs: 0,
+            piles: piles::Piles::default(),
+            pile_ground: HashMap::new(),
             compare: Compare::from_env(),
             started: web_time::Instant::now(),
             ragdolls: None,
@@ -1026,7 +1033,20 @@ impl ThreeD {
             }
             if u.death > 0 && !u.building && !model.machine {
                 corpses.push((self.instances.len(), at, view3d::facing_yaw(u.dir)));
-                footprints.push(footprint(u, at, &inst, model.radius));
+                let ground = |x: f32, y: f32| {
+                    let (x, y) = (x as i32, y as i32);
+                    view3d::ground_point(x, y, terrain.height_at(x, y))[2]
+                };
+                let mut f = footprint(u, record.tick, at, &inst, model.radius);
+                f.ground = match self.pile_ground.get(&u.id.0) {
+                    Some(&(p, g)) if p == [at[0], at[1]] => g,
+                    _ => {
+                        let g = pile_ground(&f, [at[0], at[1]], &ground);
+                        self.pile_ground.insert(u.id.0, ([at[0], at[1]], g));
+                        g
+                    }
+                };
+                footprints.push(f);
             }
             targets.push(super::splatter::Target {
                 unit: u.id.0,
@@ -1085,12 +1105,32 @@ impl ThreeD {
         // Corpses that overlap lie on each other (#221).
         let piles_scope = acr_sim::prof::Scope::new("3d.piles");
         let start = web_time::Instant::now();
-        let rests = piles::stack(&footprints);
+        if self.pile_ground.len() > 2 * footprints.len() + 64 {
+            let ids: HashSet<u32> = footprints.iter().map(|f| f.order.1).collect();
+            self.pile_ground.retain(|id, _| ids.contains(id));
+        }
+        let rests = self.piles.rests(&footprints);
         self.pile_us += start.elapsed().as_micros();
         self.pile_runs += 1;
+        for ((&(i, at, yaw), rest), f) in corpses.iter().zip(rests).zip(&footprints) {
+            if *rest != piles::Rest::default() {
+                let ground = [at[0], at[1], at[2] + rest.lift];
+                self.instances[i].transform = view3d::model_matrix_tilted(ground, yaw, 1.0, rest.pitch, rest.roll);
+            }
+            if rest.drape != [0.0; 4] {
+                // The stations along the model's z (metres from its ground point).
+                let ahead = (f.centre[0] - at[0]) * f.along[0] + (f.centre[1] - at[1]) * f.along[1];
+                self.instances[i].drape = Some(Drape {
+                    heights: rest.drape.map(|d| d / PIXELS_PER_METRE),
+                    first: (ahead + piles::STATIONS[0] * f.half_length) / PIXELS_PER_METRE,
+                    spacing: (piles::STATIONS[1] - piles::STATIONS[0]) * f.half_length / PIXELS_PER_METRE,
+                });
+            }
+        }
         if self.pile_runs == 500 {
+            let (full, alone) = self.piles.take_counts();
             log::info!(
-                "3d: {} corpses piled in {} µs; debris {}; wounded {}",
+                "3d: {} corpses piled in {} µs ({full} stacked, {alone} placed alone); debris {}; wounded {}",
                 footprints.len(),
                 self.pile_us / 500,
                 self.debris.len(),
@@ -1098,12 +1138,6 @@ impl ThreeD {
             );
             self.pile_us = 0;
             self.pile_runs = 0;
-        }
-        for ((i, at, yaw), rest) in corpses.into_iter().zip(rests) {
-            if rest != piles::Rest::default() {
-                let ground = [at[0], at[1], at[2] + rest.lift];
-                self.instances[i].transform = view3d::model_matrix_tilted(ground, yaw, 1.0, rest.pitch, rest.roll);
-            }
         }
         drop(piles_scope);
         // Animals stand over the men they maul (#276), before the ragdolls take the pose.
@@ -1133,6 +1167,14 @@ impl ThreeD {
             self.maulers.place(world, self.frame_seconds, &rigged, &mut self.instances, &rig, &lying, &ground);
         }
         self.update_ragdolls(world, terrain, &rigged, &riders);
+        // Physics-posed bodies lie as the physics put them: no drape (#229).
+        if let Some(r) = self.ragdolls.as_ref() {
+            for &i in r.poses.keys() {
+                if let Some(inst) = self.instances.get_mut(i) {
+                    inst.drape = None;
+                }
+            }
+        }
         acr_sim::prof_scope!("3d.debris_decals");
         // Appended last: the indices above refer to one instance per unit.
         for (i, damage) in pieces {
@@ -1449,6 +1491,7 @@ impl ThreeD {
                 damage: Default::default(),
                 look: None,
                 uniform: None,
+                drape: None,
             });
         }
     }
@@ -1515,6 +1558,7 @@ impl ThreeD {
                 damage: Default::default(),
                 look: None,
                 uniform: None,
+                drape: None,
             });
         }
     }
@@ -1902,6 +1946,7 @@ fn instance(
         // Each soldier his own face, build, hair and height (#283).
         look: (!u.building).then_some(u.id.0),
         uniform: None,
+        drape: None,
     };
     (instance, ground)
 }
@@ -1915,8 +1960,20 @@ const BODY: [f32; 4] = [1.7, 0.5, 0.25, 0.1];
 /// less than its lying body (2.6 m for `engd18.glb`, a horse lies ~2.4 m long).
 const HUMAN_RADIUS: f32 = 2.2 * PIXELS_PER_METRE;
 
-/// The footprint of a corpse for stacking (#221): thinner as it deflates and sinks.
-fn footprint(u: &Unit, ground: [f32; 3], inst: &ModelInstance, radius: f32) -> piles::Footprint {
+/// The terrain under the samples of `f` over the terrain under its ground point `at` (#229;
+/// `terrain`: the ground's height at a point).
+fn pile_ground(f: &piles::Footprint, at: [f32; 2], terrain: &dyn Fn(f32, f32) -> f32) -> [f32; 8] {
+    let base = terrain(at[0], at[1]);
+    let [s, c] = f.along;
+    piles::SAMPLES.map(|(sa, sb)| {
+        let (a, b) = (sa * f.half_length, sb * f.half_width);
+        terrain(f.centre[0] + a * s - b * c, f.centre[1] + a * c + b * s) - base
+    })
+}
+
+/// The footprint of a corpse for stacking (#221): thinner as it deflates and sinks. `died`
+/// is the tick of death (`DeathRecord::tick`); the terrain under it is [`pile_ground`].
+fn footprint(u: &Unit, died: u64, ground: [f32; 3], inst: &ModelInstance, radius: f32) -> piles::Footprint {
     let size = (1.0 + 2.5 * (radius / HUMAN_RADIUS - 1.0)).clamp(1.0, 1.8) * PIXELS_PER_METRE;
     let (s, c) = view3d::facing_yaw(u.dir).sin_cos();
     let [length, width, thick, ahead] = BODY.map(|v| v * size);
@@ -1928,8 +1985,9 @@ fn footprint(u: &Unit, ground: [f32; 3], inst: &ModelInstance, radius: f32) -> p
         half_length: length / 2.0,
         half_width: width / 2.0,
         thickness,
-        // Died earlier (larger death counter) lies lower.
-        order: (u32::from(u16::MAX - u.death), u.id.0),
+        // Died earlier lies lower; the tick, unlike the death counter, stays put (#230).
+        order: (u32::try_from(died).unwrap_or(u32::MAX), u.id.0),
+        ground: [0.0; 8],
     }
 }
 

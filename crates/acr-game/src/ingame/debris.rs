@@ -454,6 +454,7 @@ impl Debris {
                 damage,
                 look: None,
                 uniform: None,
+                drape: None,
             });
             // A large remain (half a body) stains the ground as it rots (`decay_stain`,
             // `seep.rs`), smaller than a whole body and round; it goes with the remain.
@@ -537,6 +538,7 @@ pub fn guts(id: u32, at: Vec3, yaw: f32, decay: f32, player: u8, gibs: &GibModel
             damage: Damage::default(),
             look: None,
             uniform: None,
+            drape: None,
         });
     }
 }

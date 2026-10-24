@@ -146,7 +146,7 @@ acr-render
 acr-game
   ingame/three_d.rs  settings, model lookup and loading, instances from the simulation,
                      the frame's 3D pass, free-camera keys and scrolling
-  ingame/piles.rs    corpse piles: lift and tilt of overlapping corpses
+  ingame/piles.rs    corpse piles: lift, tilt and drape of overlapping corpses, cached
   ui/settings.rs     models / camera / gore
   native.rs          ACR_MODELS_DIR
 ```
@@ -1023,18 +1023,46 @@ twice the lifetime in ticks). `gore=off` keeps the original removal and fade.
   0.5 m wide, its centre 0.1 m ahead of the ground point (the head lies ahead, the chest
   0.55 m), with a rounded top 0.25 m thick. Larger models get a larger footprint
   (`1 + 2.5 · (radius / 2.2 m − 1)`, at most 1.8: `engd18.glb`, radius 2.6 m, gives 1.45).
-- Bodies are stacked by time of death: the larger death counter lies lower, ties by unit id.
-  Each body samples the tops of the bodies placed before it at 8 points (±0.25, ±0.75 of
-  the half length, ±0.5 of the half width); its lift is the mean of the highest back and
-  front supports (or of left and right, whichever is more), at most 1.1 m; it tilts by the
-  difference along the body (pitch) and half the difference across it (roll), at most
-  0.5 (27°), turned rather than sheared (`view3d::model_matrix_tilted`).
+- Bodies are stacked by time of death (`DeathRecord::tick`, ties by unit id). Each body
+  samples the tops of the bodies placed before it and the terrain at 8 points (±0.25, ±0.75
+  of the half length, ±0.5 of the half width), each over its own ground point. It tilts by
+  the difference of the highest supports of its back and front halves (pitch) and half the
+  difference across it (roll), at most 0.5 (27°), turned rather than sheared
+  (`view3d::model_matrix_tilted`); the tilted plane is lifted onto the highest support
+  (never below the ground point, at most 1.1 m). A lone body on a slope lies along it.
+- **Drape (#229):** at four stations along the body (±0.25, ±0.75 of the half length) the
+  higher side's support off that plane bends the body, at most ±0.4 m
+  (`piles::MAX_DRAPE`): a man lying across another lies over him with his head and feet
+  down on the ground, and one in a hollow sags into it. `ModelInstance::drape`
+  (`acr_render::model_renderer::Drape`: four heights in metres and where the stations lie
+  along the model's z) goes into two texels after the look; bit 1 of the instance data's
+  fourth texel `z` marks it (bit 0: damaged). `vs_main` raises the model's up by the height
+  interpolated along z after the palette and the decay collapse, and tilts the normal by
+  the bend; the shadow pass uses the same `vs_main`. Bodies the ragdolls posed get no drape
+  (the physics already laid them on the pile), nor do far meshes (`vs_far`).
 - Piles settle: a body's thickness shrinks by 65 % of its `deflate` weight and its sink
   lowers its top, so the bodies above come down as the ones below decay.
-- Blood pools stay on the ground; living units are not lifted.
-- The bodies go into a flat grid (64 px cells, coarser when they are spread wide) every
-  frame. Monongahela (`battle3.m3d`) with 530–570 English corpses on the map: 0.25–0.5 ms
-  per frame (release, logged every 500 frames); 800 bodies packed into 40 × 20 m: 0.85 ms.
+- Blood pools and the dropped death gear (#206) stay on the ground; living units are not
+  lifted.
+- **Stacking only on change (#230):** `piles::Piles` keeps the footprints as last stacked
+  and their rests. The same corpses in the same order reuse them; up to 16 bodies that
+  died after all the others are placed alone against the bodies within their reach; a
+  corpse gone, more new ones, or a thickness or ground point drifted by over 0.5 px
+  (decay, sink) stacks the whole pile again through a flat grid (64 px cells, coarser when
+  spread wide). The terrain under a corpse's samples is kept per unit
+  (`ThreeD::pile_ground`). The log line every 500 frames gives the µs per frame and how
+  often it stacked and placed alone.
+- Cost, render VM (RX 9060 XT, release), blank grass field, 800 EngM18 killed into
+  40 × 20 m (`ACR-analysis/genai/piles/steps/packed.json`, `profile` over 100 ticks):
+
+  | Scope (ms per frame) | main (3 runs) | branch (4 runs) |
+  |---|---|---|
+  | `3d.piles` | 0.556 / 0.556 / 0.587 | 0.019 / 0.025 / 0.025 / 0.021 |
+  | `3d.instances` (VM noise ±0.2) | 1.42 / 1.40 / 1.79 | 1.42 / 1.77 / 1.85 / 1.54 |
+
+  GPU (`gputime`, zoom 2 on that pile, about 600 animated corpses draped): models
+  5.42 → 5.68 ms, all passes 6.54 → 6.80 ms. Before: Monongahela (`battle3.m3d`) with
+  530–570 corpses 0.25–0.5 ms per frame on the Snapdragon X.
 
 #### Trampled soil (#223)
 

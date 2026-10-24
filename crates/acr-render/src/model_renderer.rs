@@ -66,6 +66,19 @@ pub struct ModelInstance {
     /// A gun crew's uniform (#287): the colours (linear, as the model's palette) of the coat
     /// and of the waistcoat and facings; `None` keeps the model's own.
     pub uniform: Option<[[f32; 3]; 2]>,
+    /// A corpse bent over the bodies or ground under it (#229); `None` keeps it straight.
+    pub drape: Option<Drape>,
+}
+
+/// A lying body's bend (#229, `model.wgsl`): the model's up (glTF +y, metres) is raised by
+/// `heights` at four stations along it (glTF z, `first` and then every `spacing` metres),
+/// linear between them and held beyond the ends. Applied after the palette, so not to
+/// physics-posed bodies (their palette cancels the instance transform).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Drape {
+    pub heights: [f32; 4],
+    pub first: f32,
+    pub spacing: f32,
 }
 
 /// Blood sprayed onto a model from a hit nearby: speckles around a point of its rest pose
@@ -282,7 +295,13 @@ fn instance_texels(inst: &ModelInstance, rig: Option<&damage::Rig>, look: &[[f32
         w0,
         w1,
         [s.point[0], s.point[1], s.point[2], s.radius],
-        [s.amount.clamp(0.0, 1.0), s.age.clamp(0.0, 1.0), f32::from(u8::from(damaged)), marks.len() as f32],
+        // Bit 0: damaged; bit 1: draped (the drape follows the look).
+        [
+            s.amount.clamp(0.0, 1.0),
+            s.age.clamp(0.0, 1.0),
+            f32::from(u8::from(damaged) | (u8::from(inst.drape.is_some()) << 1)),
+            marks.len() as f32,
+        ],
     ]);
     if damaged {
         out.extend(damage::pack(&inst.damage, rig));
@@ -293,6 +312,10 @@ fn instance_texels(inst: &ModelInstance, rig: Option<&damage::Rig>, look: &[[f32
     }
     // The look follows the marks (`model.wgsl`, `look_texel`).
     out.extend_from_slice(look);
+    // The drape follows the look (`model.wgsl`, `vs_main`).
+    if let Some(d) = inst.drape {
+        out.extend([d.heights, [d.first, d.spacing, 0.0, 0.0]]);
+    }
 }
 
 /// The look texels of an instance (`model.wgsl`, `look_texel`): skin tint (linear) and

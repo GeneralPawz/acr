@@ -191,7 +191,8 @@ fn vs_main(v: VertexIn, inst: InstanceIn) -> VsOut {
     var keep = 1.0;
     var side = 1.0;
     var belly = 0.0;
-    if (look.z > 0.5) {
+    let flags = u32(round(look.z));
+    if ((flags & 1u) != 0u) {
         let cuts = texel(d + 4u);
         let fracs = texel(d + 5u);
         let tr = texel(d + 14u);
@@ -251,13 +252,27 @@ fn vs_main(v: VertexIn, inst: InstanceIn) -> VsOut {
         belly = select(0.0, belly * clamp(1.0 - length(b), 0.0, 1.0), part == 0);
     }
     var local = apply(r0, r1, r2, vec4<f32>(p, 1.0));
-    let local_n = apply(r0, r1, r2, vec4<f32>(n, 0.0));
+    var local_n = apply(r0, r1, r2, vec4<f32>(n, 0.0));
     // Procedural decay: the carcass collapses towards the ground and sinks into it (model
     // space, metres, +y up from the ground point; after the palette, so physics poses too).
     let decay = inst.params.x;
     if (material.look.w > 0.5 && decay > 0.0) {
         let collapse = ramp(decay, 0.15, 0.6) * (0.3 + 0.12 * noise3(v.position * 3.0));
         local.y = local.y * (1.0 - collapse) - DECAY_SINK * ramp(decay, 0.7, 1.0);
+    }
+    // A corpse on a pile bends over the bodies and ground under it (#229): its up raised by
+    // the heights at four stations along it, linear between them (`Drape`).
+    if ((flags & 2u) != 0u) {
+        let dd = look_texel(d, u32(round(look.w)), 3u);
+        let at = look_texel(d, u32(round(look.w)), 4u);
+        let s = clamp((local.z - at.x) / at.y, 0.0, 3.0);
+        let k = min(u32(s), 2u);
+        let lo = dd[k];
+        let hi = dd[k + 1u];
+        local.y = local.y + mix(lo, hi, s - f32(k));
+        // The bend tilts the surface: d(height)/dz, zero beyond the ends.
+        let inside = select(0.0, 1.0, local.z > at.x && local.z < at.x + 3.0 * at.y);
+        local_n = normalize(local_n - vec3<f32>(0.0, 0.0, inside * (hi - lo) / at.y * local_n.y));
     }
     // Outer clothing layers a millimetre or so nearer the camera than the ones beneath, so a
     // residual crossing under skinning never flickers through (the instance's scale: its
@@ -459,7 +474,7 @@ fn wounded(rgb_in: vec3<f32>, rest: vec4<f32>, w0: vec4<f32>, w1: vec4<f32>, dec
 // soaked around it and blood running down from it.
 fn marked(rgb_in: vec3<f32>, p: vec3<f32>, d: u32, n: u32) -> vec3<f32> {
     var rgb = rgb_in;
-    let damaged = texel(d + 3u).z > 0.5;
+    let damaged = (u32(round(texel(d + 3u).z)) & 1u) != 0u;
     let start = d + 4u + select(0u, 28u, damaged);
     let grain = noise3(p * 22.0);
     var stain = 0.0;
@@ -521,7 +536,7 @@ fn strands(p: vec3<f32>, seed: f32) -> f32 {
 // punctures (4) cleanest.
 fn holes(p: vec3<f32>, d: u32, gore: f32) -> vec4<f32> {
     var best = vec4<f32>(1e3, 0.0, 0.0, 0.0);
-    if (texel(d + 3u).z < 0.5) {
+    if ((u32(round(texel(d + 3u).z)) & 1u) == 0u) {
         return best;
     }
     let n = u32(texel(d + 15u).w + 0.5);
@@ -600,7 +615,7 @@ fn sprayed(rgb: vec3<f32>, rest: vec3<f32>, spray: vec4<f32>, look: vec2<f32>) -
 
 // Look texel `k` of an instance (after its marks): see the header.
 fn look_texel(d: u32, marks: u32, k: u32) -> vec4<f32> {
-    let damaged = texel(d + 3u).z > 0.5;
+    let damaged = (u32(round(texel(d + 3u).z)) & 1u) != 0u;
     return texel(d + 4u + select(0u, 28u, damaged) + 2u * marks + k);
 }
 
