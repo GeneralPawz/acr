@@ -464,6 +464,18 @@ struct Draw {
 }
 
 /// An instance prepared, before the draws are grouped.
+/// An instance culled and staged on its own (`prepare`), before its palette and data find
+/// their places.
+struct Staged {
+    /// Its index in the frame's list (`usize::MAX` for caps and inserts).
+    i: usize,
+    /// As drawn (scaled to its look's height).
+    inst: ModelInstance,
+    /// Its instance texels (`instance_texels`).
+    data: Vec<[f32; 4]>,
+    entry: Entry,
+}
+
 struct Entry {
     gpu: GpuInstance,
     model: usize,
@@ -1705,16 +1717,13 @@ impl ModelRenderer {
         self.pump_textures(device, queue);
         let mut order: Vec<usize> = (0..instances.len()).filter(|&i| instances[i].model < self.models.len()).collect();
         // Each soldier's look (#283) and the baked variant nearest to it.
-        let chosen: Vec<Option<(looks::Look, Option<usize>)>> = instances
-            .iter()
-            .map(|inst| {
-                let m = self.models.get(inst.model)?;
-                let l = m.data.looks.as_ref()?;
-                let look = looks::choose(inst.look?, l.style);
-                let variant = (!m.variants.is_empty()).then(|| looks::nearest_variant(&l.variants, &look.morphs));
-                Some((look, variant))
-            })
-            .collect();
+        let chosen: Vec<Option<(looks::Look, Option<usize>)>> = crate::par::map(instances, |inst| {
+            let m = self.models.get(inst.model)?;
+            let l = m.data.looks.as_ref()?;
+            let look = looks::choose(inst.look?, l.style);
+            let variant = (!m.variants.is_empty()).then(|| looks::nearest_variant(&l.variants, &look.morphs));
+            Some((look, variant))
+        });
         let variant_of = |i: usize| chosen.get(i).copied().flatten().and_then(|c| c.1);
         // By model, the decaying ones last (they also draw the inner layers), by look variant.
         order.sort_by_key(|&i| (instances[i].model, instances[i].decay > 0.0, variant_of(i)));
@@ -1722,7 +1731,6 @@ impl ModelRenderer {
         let mut poses: HashMap<(usize, Option<usize>, u32), u32> = HashMap::new();
         let mut entries: Vec<Entry> = Vec::with_capacity(order.len());
         let mut data: Vec<[f32; 4]> = Vec::new();
-        let mut caps: Vec<ModelInstance> = Vec::new();
         let [w, h] = view.size;
         let cap_model = self.cap;
         let insert_models = self.inserts;
@@ -1735,7 +1743,10 @@ impl ModelRenderer {
             self.debug = debug_flags();
         }
         let dbg = self.debug;
-        let mut push = |i: usize, inst: &ModelInstance, caps: &mut Vec<ModelInstance>| {
+        // Each instance on its own (in parallel on native, `par.rs`): culling, the look, its
+        // instance texels and entry; the palette's place (`extra.x`), the data's (`extra.y`)
+        // and the caps, which need the palette, follow in order in `finish`.
+        let stage = |i: usize, inst: &ModelInstance| -> Option<Staged> {
             let tweaked;
             let inst = if dbg == 0 {
                 inst
@@ -1749,7 +1760,7 @@ impl ModelRenderer {
                     || (dbg & debug::DEAD_PLAIN != 0 && dead && !vol)
                     || (dbg & debug::CAPS != 0 && i == usize::MAX)
                 {
-                    return;
+                    return None;
                 }
                 let mut t = *inst;
                 if dbg & debug::GORE != 0 {
@@ -1770,15 +1781,13 @@ impl ModelRenderer {
             let look = chosen.get(i).copied().flatten().filter(|_| dbg & debug::LOOKS == 0);
             let variant = look.and_then(|c| c.1);
             // Height: a uniform scale about the ground point.
-            let scaled;
             let inst = match look {
                 Some((l, _)) => {
                     let k = l.height_m / looks::BUILT_HEIGHT_M;
                     let scale = math::from_trs([0.0; 3], [0.0, 0.0, 0.0, 1.0], [k; 3]);
-                    scaled = ModelInstance { transform: math::mul(&inst.transform, &scale), ..*inst };
-                    &scaled
+                    ModelInstance { transform: math::mul(&inst.transform, &scale), ..*inst }
                 }
-                None => inst,
+                None => *inst,
             };
             // Culling by the rest pose's radius (lying corpses reach about as far).
             let origin = [inst.transform[3][0], inst.transform[3][1], inst.transform[3][2]];
@@ -1793,68 +1802,11 @@ impl ModelRenderer {
             let r = (model.radius * stretch * reach + 8.0) * view.camera.scale;
             let p = view.project(origin);
             if p[0] < -r || p[0] > w + r || p[1] < -r || p[1] > h + r || !(0.0..=1.0).contains(&p[2]) {
-                return;
+                return None;
             }
             // Drawn in the 3D pass only when on the screen; the rest only cast.
             let rs = (model.radius * stretch * 1.5 + 8.0) * view.camera.scale;
             let on_screen = p[0] >= -rs && p[0] <= w + rs && p[1] >= -rs && p[1] <= h + rs;
-            casters.push((origin, model.radius * stretch));
-            let key = (inst.model, inst.clip, inst.time.to_bits());
-            let base = if let Some(palette) = custom.get(&i) {
-                let base = texels.len() as u32;
-                for rows in palette {
-                    texels.extend_from_slice(rows);
-                }
-                base
-            } else {
-                *poses.entry(key).or_insert_with(|| {
-                    let base = texels.len() as u32;
-                    for rows in model.pose(inst.clip, inst.time) {
-                        texels.extend_from_slice(&rows);
-                    }
-                    base
-                })
-            };
-            // Caps at the cuts, carried by the bone at the cut in this pose.
-            if let Some(rig) = model.rig.as_ref().filter(|_| !inst.damage.is_none()) {
-                for cap in damage::caps(&inst.damage, rig) {
-                    let at = (base + cap.slot * 3) as usize;
-                    let Some(rows) = texels.get(at..at + 3) else { continue };
-                    let bone: Mat4 =
-                        std::array::from_fn(|c| [rows[0][c], rows[1][c], rows[2][c], if c == 3 { 1.0 } else { 0.0 }]);
-                    caps.push(ModelInstance {
-                        model: cap_model,
-                        clip: None,
-                        time: 0.0,
-                        transform: math::mul(&inst.transform, &math::mul(&bone, &cap.rest_matrix())),
-                        morphs: [0.0; 3],
-                        wounds: Default::default(),
-                        sprayed: Default::default(),
-                        damage: Damage::default(),
-                        look: None,
-                        ..*inst
-                    });
-                }
-                // The inside of the wounds: cavity walls, ribs and bone ends (#280).
-                for ins in damage::inserts(&inst.damage, rig) {
-                    let at = (base + ins.slot * 3) as usize;
-                    let Some(rows) = texels.get(at..at + 3) else { continue };
-                    let bone: Mat4 =
-                        std::array::from_fn(|c| [rows[0][c], rows[1][c], rows[2][c], if c == 3 { 1.0 } else { 0.0 }]);
-                    caps.push(ModelInstance {
-                        model: insert_models[ins.kind as usize],
-                        clip: None,
-                        time: 0.0,
-                        transform: math::mul(&inst.transform, &math::mul(&bone, &ins.rest)),
-                        morphs: [0.0; 3],
-                        wounds: Default::default(),
-                        sprayed: Default::default(),
-                        damage: Damage::default(),
-                        look: None,
-                        ..*inst
-                    });
-                }
-            }
             // The inner layers (bones, an animal's meat) of a body (a rig) only once the skin
             // opens, or where a wound may show them; before, they lie wholly inside the outer
             // layers. Gibs and other pieces without a rig show theirs (a bone chunk's bone).
@@ -1868,7 +1820,6 @@ impl ModelRenderer {
                 && inst.rise.is_none()
                 && !dissolving(gpu_model.dissolves_at)
                 && dbg & debug::NO_CLEAN == 0;
-            let first = data.len() as u32;
             let mut look_data =
                 look_texels(look.as_ref().map(|c| &c.0), gpu_model.eye, inst.look.unwrap_or(0), gpu_model.face_tiles);
             // A crew's uniform rides on the look texels the crew does not use otherwise.
@@ -1879,36 +1830,131 @@ impl ModelRenderer {
                     look_data[k] = [u[k][0], u[k][1], u[k][2], 0.2126 * b[0] + 0.7152 * b[1] + 0.0722 * b[2]];
                 }
             }
-            instance_texels(inst, model.rig.as_ref(), &look_data, scars.get(&i), &mut data);
-            entries.push(Entry {
-                gpu: GpuInstance {
-                    rows: math::affine_rows(&inst.transform),
-                    params: [
-                        inst.decay,
-                        inst.morphs[0],
-                        inst.morphs[if model.emaciated { 2 } else { 1 }],
-                        if inst.transparent { 1.0 } else { 0.0 },
-                    ],
-                    // The hair and beard variants shown (none without a look).
-                    extra: [base, first, u32::from(inst.player), look.map_or(0, |c| c.0.node_mask())],
+            let mut data = Vec::new();
+            instance_texels(&inst, model.rig.as_ref(), &look_data, scars.get(&i), &mut data);
+            Some(Staged {
+                i,
+                data,
+                entry: Entry {
+                    gpu: GpuInstance {
+                        rows: math::affine_rows(&inst.transform),
+                        params: [
+                            inst.decay,
+                            inst.morphs[0],
+                            inst.morphs[if model.emaciated { 2 } else { 1 }],
+                            if inst.transparent { 1.0 } else { 0.0 },
+                        ],
+                        // The palette and the data (set in `finish`), the player, the hair
+                        // and beard variants shown (none without a look).
+                        extra: [0, 0, u32::from(inst.player), look.map_or(0, |c| c.0.node_mask())],
+                    },
+                    model: inst.model,
+                    decaying,
+                    clean,
+                    depth: p[2],
+                    variant,
+                    on_screen,
+                    split: inst.damage.splits_parts(),
+                    origin,
+                    radius: model.radius * stretch,
                 },
-                model: inst.model,
-                decaying,
-                clean,
-                depth: p[2],
-                variant,
-                on_screen,
-                split: inst.damage.splits_parts(),
-                origin,
-                radius: model.radius * stretch,
-            });
+                inst,
+            })
         };
-        for &i in &order {
-            push(i, &instances[i], &mut caps);
+        let staged: Vec<Option<Staged>> = crate::par::map(&order, |&i| stage(i, &instances[i]));
+        // The shared poses in the order they are first wanted (the palettes' layout below),
+        // sampled in parallel.
+        let mut wanted: Vec<(usize, Option<usize>, u32)> = Vec::new();
+        for s in staged.iter().flatten().filter(|s| !custom.contains_key(&s.i)) {
+            let key = (s.inst.model, s.inst.clip, s.inst.time.to_bits());
+            if poses.insert(key, 0).is_none() {
+                wanted.push(key);
+            }
         }
-        let mut none = Vec::new();
-        for inst in &caps {
-            push(usize::MAX, inst, &mut none);
+        poses.clear();
+        let sampled = crate::par::map(&wanted, |&(m, clip, time)| models[m].data.pose(clip, f32::from_bits(time)));
+        let sampled_at: HashMap<(usize, Option<usize>, u32), usize> =
+            wanted.iter().enumerate().map(|(k, &key)| (key, k)).collect();
+        // Caps at the cuts, carried by the bone at the cut in this pose, and the inside of the
+        // wounds: cavity walls, ribs and bone ends (#280); per instance in parallel.
+        let caps_of = |s: &Staged| -> Vec<ModelInstance> {
+            let inst = &s.inst;
+            let model = &models[inst.model].data;
+            let Some(rig) = model.rig.as_ref().filter(|_| !inst.damage.is_none()) else { return Vec::new() };
+            let key = (inst.model, inst.clip, inst.time.to_bits());
+            let Some(palette) = custom.get(&s.i).or_else(|| sampled_at.get(&key).map(|&k| &sampled[k])) else {
+                return Vec::new();
+            };
+            let bone = |slot: u32| -> Option<Mat4> {
+                let rows = palette.get(slot as usize)?;
+                Some(std::array::from_fn(|c| [rows[0][c], rows[1][c], rows[2][c], if c == 3 { 1.0 } else { 0.0 }]))
+            };
+            let piece = |model: usize, bone: Mat4, rest: &Mat4| ModelInstance {
+                model,
+                clip: None,
+                time: 0.0,
+                transform: math::mul(&inst.transform, &math::mul(&bone, rest)),
+                morphs: [0.0; 3],
+                wounds: Default::default(),
+                sprayed: Default::default(),
+                damage: Damage::default(),
+                look: None,
+                ..*inst
+            };
+            let mut out = Vec::new();
+            for cap in damage::caps(&inst.damage, rig) {
+                if let Some(b) = bone(cap.slot) {
+                    out.push(piece(cap_model, b, &cap.rest_matrix()));
+                }
+            }
+            for ins in damage::inserts(&inst.damage, rig) {
+                if let Some(b) = bone(ins.slot) {
+                    out.push(piece(insert_models[ins.kind as usize], b, &ins.rest));
+                }
+            }
+            out
+        };
+        let caps: Vec<ModelInstance> =
+            crate::par::map(&staged, |s| s.as_ref().map_or_else(Vec::new, caps_of)).into_iter().flatten().collect();
+        let staged_caps = crate::par::map(&caps, |inst| stage(usize::MAX, inst));
+        // The palettes in order, each shared pose once (sampled above in this order; the caps'
+        // poses, after them, here), then the instance data.
+        let mut next = 0;
+        data.reserve(staged.iter().flatten().map(|s| s.data.len()).sum());
+        for s in staged.into_iter().chain(staged_caps).flatten() {
+            let (i, inst) = (s.i, &s.inst);
+            casters.push((s.entry.origin, s.entry.radius));
+            let key = (inst.model, inst.clip, inst.time.to_bits());
+            let base = if let Some(palette) = custom.get(&i) {
+                let base = texels.len() as u32;
+                for rows in palette {
+                    texels.extend_from_slice(rows);
+                }
+                base
+            } else {
+                *poses.entry(key).or_insert_with(|| {
+                    let base = texels.len() as u32;
+                    match sampled.get(next) {
+                        Some(palette) => {
+                            next += 1;
+                            for rows in palette {
+                                texels.extend_from_slice(rows);
+                            }
+                        }
+                        None => {
+                            for rows in models[inst.model].data.pose(inst.clip, inst.time) {
+                                texels.extend_from_slice(&rows);
+                            }
+                        }
+                    }
+                    base
+                })
+            };
+            let mut entry = s.entry;
+            entry.gpu.extra[0] = base;
+            entry.gpu.extra[1] = data.len() as u32;
+            data.extend_from_slice(&s.data);
+            entries.push(entry);
         }
         // The instance data follows the palettes; `extra.y` becomes absolute.
         let data_base = texels.len() as u32;

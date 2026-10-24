@@ -19,6 +19,10 @@ serde_json = "1.0.154"
 # Level-of-detail simplification (pure Rust port of meshoptimizer, MIT; builds for wasm).
 meshopt-rs = { version = "0.1.2", features = ["experimental"] }
 
+# Per-instance loops of the 3D frame run in parallel on native (`par.rs`); wasm is single-threaded.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rayon = "1.12"
+
 # The browser decodes streamed pictures off the main thread (`createImageBitmap`, tex_cache.rs).
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 js-sys = "0.3.106"

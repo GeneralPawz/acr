@@ -426,6 +426,8 @@ pub struct ThreeD {
     /// instance index of each unit drawn as a model.
     pub held: HashMap<u32, (usize, f32)>,
     drawn: HashMap<u32, usize>,
+    /// This frame's view: `update` leaves out the plain living well off it ([`off_view`]).
+    cull_view: Option<View3d>,
 }
 
 /// `ACR_3D_COMPARE=overlay`: the sprites of units with a model are drawn half transparent
@@ -545,6 +547,7 @@ impl Default for ThreeD {
             ground_ready: None,
             held: HashMap::new(),
             drawn: HashMap::new(),
+            cull_view: None,
         }
     }
 }
@@ -1004,6 +1007,46 @@ impl ThreeD {
             self.gore != Gore::Off
                 && world.units.get(v as usize).is_some_and(|u| u.id.0 == v && (u.alive || lingering(u)))
         });
+        // The plain living (standing, walking, fighting; not crawling, not dropping his gear, no
+        // gun or ship) well off this frame's view are left out: in a big map most men
+        // (m2-par-loops). What their instances feed while off it is kept below.
+        let cull = (self.held.is_empty() && cull_enabled()).then_some(self.cull_view).flatten();
+        let off = |u: &Unit, model: &ModelData| {
+            cull.is_some_and(|v| {
+                u.alive
+                    && u.death == 0
+                    && !u.building
+                    && !u.body.crawling()
+                    && !u.body.dropped
+                    && !model.machine
+                    && model.crew.is_none()
+                    && off_view(&v, terrain, u)
+            })
+        };
+        // What is left of each man's and animal's body, his torn tissue (the costliest part of
+        // an instance in a big fight), each on its own and in parallel on native
+        // (`acr_render::par`); the loop below takes it by unit (and works it out itself for
+        // anything this missed).
+        let mut damaged: HashMap<u32, (usize, Option<(Damage, bool)>)> = {
+            let mut jobs: Vec<(&Unit, usize, &ModelData)> = Vec::new();
+            let renderer = self.renderer.as_ref();
+            for u in world.units.iter().filter(|u| (u.alive || lingering(u)) && u.inside_of.is_none() && !u.building) {
+                let name = names.entry(u.kind).or_insert_with(|| definition_name(&world.catalog.get(u.kind).id));
+                if let Some(Some(index)) = self.loaded.get(name.as_str())
+                    && let Some(model) = renderer.and_then(|r| r.model(*index))
+                    && !off(u, model)
+                {
+                    jobs.push((u, *index, model));
+                }
+            }
+            let (gore, wounds) = (self.gore, &self.wounds);
+            acr_render::par::map(&jobs, |&(u, index, model)| {
+                let record = world.deaths.get(&u.id.0).copied().unwrap_or_default();
+                (u.id.0, (index, body_damage(gore, wounds, model, u, &record)))
+            })
+            .into_iter()
+            .collect()
+        };
         for u in world.units.iter().filter(|u| (u.alive || lingering(u)) && u.inside_of.is_none()) {
             // Buildings: under construction (#302), finished, burning down, falling in and as
             // ruins (#303).
@@ -1037,6 +1080,22 @@ impl ThreeD {
                 }
             };
             let Some(model) = self.renderer.as_ref().and_then(|r| r.model(index)) else { continue };
+            if off(u, model) {
+                // Off the view: still a model (no sprite at the edge), not crawling, and his
+                // blood trail goes on.
+                self.shown.insert(u.id);
+                self.wounds.set_lying(u.id.0, None);
+                self.turns.forget(u.id.0);
+                if (u.body.bleeding() > 0 || self.wounds.bleeding(u.id.0, now))
+                    && self.gore != Gore::Off
+                    && now.is_multiple_of(super::trail::EVERY)
+                    && now != self.trail_tick
+                {
+                    let (x, y) = (u.pos.x >> 4, u.pos.y >> 4);
+                    self.trail.sample(u.id.0, view3d::unit_ground_point(x, y, terrain.height_at(x, y)), false, now);
+                }
+                continue;
+            }
             let removed_at = match defs.definition(&world.catalog.get(u.kind).id) {
                 Some(d) if d.animation("#DEATHLIE2").is_some() => 2000,
                 _ => 1200,
@@ -1253,36 +1312,16 @@ impl ThreeD {
                     .unwrap_or_else(|| view3d::model_matrix(ground, yaw, 1.0));
             }
             let living = u.alive && u.death == 0;
-            // What is left of the body (#262): cuts, fractures, a torn trunk, an open belly.
-            let damage = match (self.gore, model.rig.is_some(), living) {
-                (Gore::Off, ..) | (_, false, _) => Some(Damage::default()),
-                (_, true, true) => super::damage_view::damage(&u.body, None),
-                (_, true, false) => super::damage_view::damage(&record.body, record.torn),
+            let damage = match damaged.remove(&u.id.0) {
+                Some((i, damage)) if i == index => damage,
+                _ => body_damage(self.gore, &self.wounds, model, u, &record),
             };
-            let Some(damage) = damage else {
+            let Some((damage, belly_open)) = damage else {
                 // Pulverized: nothing whole to draw, only gibs and mist (and no sprite).
                 self.shown.insert(u.id);
                 continue;
             };
             inst.damage = damage;
-            // Tissue torn out by his hits (#280); a limb whose whole cross-section is gone
-            // comes off inside the hole.
-            if self.gore == Gore::Full
-                && !u.building
-                && let Some(rig) = model.rig.as_ref()
-            {
-                for v in self.wounds.volumes(u.id.0, rig) {
-                    inst.damage.push_volume(v);
-                }
-                inst.damage.sever(rig);
-            } else if self.gore == Gore::Full
-                && let Some(rig) = model.beast_rig.as_ref()
-            {
-                // An animal: torn but never cut.
-                for v in self.wounds.volumes(u.id.0, rig) {
-                    inst.damage.push_volume(v);
-                }
-            }
             if model.rig.is_some() {
                 unit_models.insert(u.id.0, (UnitModel { model: index, player: u.owner }, index));
             }
@@ -1351,7 +1390,7 @@ impl ThreeD {
                     inst.model = unarmed;
                 }
             }
-            if damage.belly_open && self.gore == Gore::Full {
+            if belly_open && self.gore == Gore::Full {
                 let yaw = view3d::facing_yaw(u.dir);
                 super::debris::guts(u.id.0, at, yaw, inst.decay, u.owner, &self.gibs, &mut extra);
             }
@@ -2424,6 +2463,59 @@ fn finished(world: &World, u: &Unit) -> bool {
     u.stage >= world.max_stage(u) && !matches!(u.anim, AnimKind::BuildLo(_) | AnimKind::Death | AnimKind::DeathLie(_))
 }
 
+/// Whether `u` stands well off `view`: half a window beyond its edges (models reach, their
+/// shadows fall and a scrolling view moves a frame on before they show).
+fn off_view(view: &View3d, terrain: &TerrainData, u: &Unit) -> bool {
+    let (x, y) = (u.pos.x >> 4, u.pos.y >> 4);
+    let p = view.project(view3d::unit_ground_point(x, y, terrain.height_at(x, y)));
+    let [w, h] = view.size;
+    let m = 0.5 * w.max(h) + 200.0 * view.camera.scale;
+    p[0] < -m || p[0] > w + m || p[1] < -m || p[1] > h + m || !(0.0..=1.0).contains(&p[2])
+}
+
+/// Off-view culling of the living (`ACR_CULL=off` keeps every instance; native only).
+fn cull_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| cfg!(target_arch = "wasm32") || !matches!(std::env::var("ACR_CULL").as_deref(), Ok("off" | "0")))
+}
+
+/// What is left of `u`'s body (#262: cuts, fractures, a torn trunk, an open belly) with the
+/// tissue torn out by his hits (#280; a limb whose whole cross-section is gone comes off
+/// inside the hole), and whether his belly lies open; `None` when pulverized (nothing whole
+/// to draw, only gibs and mist).
+fn body_damage(
+    gore: Gore,
+    wounds: &super::living_wounds::LivingWounds,
+    model: &ModelData,
+    u: &Unit,
+    record: &acr_sim::combat::DeathRecord,
+) -> Option<(Damage, bool)> {
+    let living = u.alive && u.death == 0;
+    let mut damage = match (gore, model.rig.is_some(), living) {
+        (Gore::Off, ..) | (_, false, _) => Damage::default(),
+        (_, true, true) => super::damage_view::damage(&u.body, None)?,
+        (_, true, false) => super::damage_view::damage(&record.body, record.torn)?,
+    };
+    let belly_open = damage.belly_open;
+    if gore == Gore::Full
+        && !u.building
+        && let Some(rig) = model.rig.as_ref()
+    {
+        for v in wounds.volumes(u.id.0, rig) {
+            damage.push_volume(v);
+        }
+        damage.sever(rig);
+    } else if gore == Gore::Full
+        && let Some(rig) = model.beast_rig.as_ref()
+    {
+        // An animal: torn but never cut.
+        for v in wounds.volumes(u.id.0, rig) {
+            damage.push_volume(v);
+        }
+    }
+    Some((damage, belly_open))
+}
+
 /// The model instance of a unit: the clip of its sprite animation at its sprite frame, its
 /// facing, and as a corpse its decay (or the original's fade with `gore=off`); and its
 /// ground point (sunk with the decay).
@@ -2546,6 +2638,7 @@ impl super::InGame {
         // ground up to `MAP_VIEW_TOP` high: tall crowns and long shadows reach in.
         let view = View3d { camera: c, size: window, orbit: self.three_d.orbit() };
         self.three_d.cover_view = (!self.interface.hud.zoom).then_some(view);
+        self.three_d.cull_view = Some(view);
         self.three_d.backdrop = self.backdrop().is_some();
         let [x0, y0, x1, y1] = view.ground_bounds(-100.0, MAP_VIEW_TOP);
         self.three_d.map_view =

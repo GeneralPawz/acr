@@ -21,6 +21,7 @@ pub mod missiles;
 pub mod model;
 pub mod model_renderer;
 pub mod objects_view;
+pub mod par;
 pub mod particles;
 pub mod scene;
 pub mod shadow;

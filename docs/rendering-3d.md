@@ -2069,6 +2069,48 @@ shorter. The piles look alike (`ACR-analysis/rag-perf/close_inline_vs_thread.png
 same moment 30 s into the clash at zoom 4, inline left, threaded right; the falls differ by
 the hits taken, as between two inline runs).
 
+### Parallel loops and view culling (m2-par-loops)
+
+**View cull.** `ThreeD::update` leaves out the plain living well off this frame's view
+(`off_view`: the ground point projected half a window plus 200 screen px × zoom beyond the
+edges, or behind the camera): alive, not crawling, not dropping his gear, no gun or ship,
+no studio pose held. Such a man still counts as shown (no sprite at the edge), his crawl
+state is cleared and his blood trail goes on; corpses, buildings, crews and the wounded
+crawlers are always built, so piles, ragdolls, dropped gear, pools, stains and kept marks
+are unchanged. The view is the current frame's (built before `update`), so a jump across
+the map shows its men in the first frame. `ACR_CULL=off` (native) builds every instance.
+
+**Parallel loops** (`acr_render::par::map`: rayon on native from 64 items, in order on one
+thread in wasm; the results keep the items' order). `models_prepare`: the looks, each
+instance's culling, instance texels and entry (`Staged`), the shared poses (collected in
+first-wanted order, then sampled), the caps and wound inserts with their entries; only the
+palette and data layout stays sequential, so the bone texture, instance buffer and draws
+are the same as before. `3d.instances`: each body's damage and torn tissue
+(`body_damage`, the largest per-unit cost) before the loop, taken by unit inside it.
+
+Render VM (12 cores, RX 9060 XT), release, ms per frame (`3d.instances` per tick,
+`models_prepare` per rendered frame), main e19129b against m2-par-loops, 2 runs each
+(`ACR-analysis/par-loops/`, `cmp.py`):
+
+| scene, phase | `3d.instances` | `models_prepare` | `3d.update` |
+|---|---:|---:|---:|
+| clash (`clash.json`), before contact | 2.05 → 1.37 | 1.38 → 1.05 | 2.6 → 2.0 |
+| clash, contact | 2.32 → 1.46 | 1.84 → 1.53 | 5.7 → 4.7 |
+| clash, +30 s | 3.37 → 1.88 | 2.84 → 2.45 | 8.9 → 7.6 |
+| mission #SINGLE8 (`mission.json`), before | 12.2 → 3.9 (no cull 6.3) | 6.8 → 2.0 (2.2) | 14.4 → 5.0 |
+| mission, fight | 10.7 → 2.5 (6.2) | 4.8 → 1.3 (2.5) | 19.5 → 9.6 |
+| mission, fight +30 s | 11.6 → 2.9 (6.3) | 3.9 → 1.5 (2.5) | 21.6 → 11.1 |
+
+(Mission main from `perf5/mis_main1`, one run; "no cull" is m2-par-loops with
+`ACR_CULL=off`.) The GPU is unchanged. Frames: the clash before contact and the mission
+before the fight and after a camera jump are pixel-identical to main or no-cull; in the
+fight they differ only where the awake ragdolls differ between two runs of the same build
+(clash +30 s: 11977 pixels differing by more than 8, main against main 11939;
+`sheet_clash.png`, `sheet_mission.png`). The user's Snapdragon X has 12 cores (X Elite) or
+8–10 (X Plus): the parallel share should scale alike; the cull does not depend on cores.
+What stays sequential in `models_prepare`: `group_draws` (sorts) and the uploads, about
+1 ms of the 2.5 at +30 s.
+
 ### Input latency
 
 - **Hardware cursor** (native, `acr-game/src/hw_cursor.rs`): the cursor the interface
@@ -2138,12 +2180,10 @@ is the row above: the authored levels spare ≈ 17 of 20 ms GPU over the marchin
 Ranked by the measured share they could spare. VM numbers for the mission; Snapdragon X
 numbers (the user's laptop) for the GPU from the clash above.
 
-1. **View cull before `3d.instances`' per-unit work** (CPU, ≈ 9–11 of 12 ms in the
-   mission): 95 % of the instances built are not drawn and cast no shadow in view. Units
-   outside the view and the shadow reach can skip the clip, wound, gear and look work; what
-   must stay map-wide (kept marks, ragdoll bookkeeping, pools that persist) stays. The same
-   cull before `models_prepare` (≈ 3–6 ms) once the entries are fewer. Rayon over the loop
-   (m2-par-loops) divides what remains.
+1. **The sequential rest of the CPU frame** after m2-par-loops (view cull and parallel
+   loops, above: mission `3d.instances` 12 → 3–4 ms, `models_prepare` 7 → 2 ms):
+   `group_draws` (its sorts) and the uploads in `models_prepare`, and the corpses, which
+   `3d.instances` always builds (piles, ragdolls and marks need them).
 2. **Ragdoll physics in piles** (≈ 4 ms of 6 in the fight at 4 steps, measured on main
    e19129b before m2-rag-perf moved the steps to a worker; see "Ragdoll steps off the
    render thread" above): a step still costs about 2 × the calibration for the contacts

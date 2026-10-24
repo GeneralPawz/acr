@@ -112,6 +112,7 @@ dependencies = [
  "meshopt-rs",
  "naga",
  "png",
+ "rayon",
  "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-futures",
