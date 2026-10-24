@@ -1231,11 +1231,16 @@ With `hit_locations` on, such a ball ploughs instead (`projectile::Plough`, hash
 projectile, nothing while empty): each unit is hit at most once per ball (dying units and
 the shooter do not count), the n-th body takes `damage · (100 − 20·n) / 100`, so 100, 80,
 60, 40 and 20 % (`PLOUGH_LOSS`), and after five bodies (`PLOUGH_BODIES`) the ball is spent
-and flies on harmlessly. A bounce (`explode` → `REFLECT` child) carries on what is left of
-its ball (`World::plough_carry`, not hashed). A 500 ball thus kills three men of 300 life
-and wounds two, as a 6-pounder ball down a file. The first strike of an aimed ball
-(`NUCL2P`, 340 within 35 px, no `DAMAGEHEIGHT`) is unchanged. No random number is drawn
-beyond the rule's body regions. `tests/plough.rs` shows both and pins the original hash.
+and flies on harmlessly. Every ground contact costs it another 10 % (`BOUNCE_LOSS`,
+`Plough::bounces`). A bounce (`explode` → `REFLECT` child) carries on what is left of its
+ball (`World::plough_carry`, not hashed). A 500 ball thus kills three men of 300 life and
+wounds two, as a 6-pounder ball down a file. The first strike of an aimed ball (`NUCL2P`,
+340 within 35 px, no `DAMAGEHEIGHT`; any round of a `DeathCause::Cannonball` weapon kind)
+ploughs too: its victims count against the five bodies and its bounce goes on with what is
+left (`projectile::ploughs`). The energy is in `HitRecord::injury.energy` (100, 80, 50, …),
+so the outcomes go from torn apart to a severed limb to a wound down the file. No random
+number is drawn beyond the rule's body regions. `tests/plough.rs` shows both and pins the
+original hash.
 
 #### Shell fires (#256)
 
@@ -1260,6 +1265,28 @@ tenth of its life (so it never burns to death), and a unit that dies burning is 
   0). They are not saved: savegames replay their commands and the fires come back.
 - 2D draws three flames of the burning-building loop (`[FIRES]` `#DFIRE2`) per fire, fewer
   as it burns down (`effects::ground_fire_sprites`, sprite path; not checked in the 3D view).
+- A soldier already burning from an `X`/`F` weapon when a shell fire catches him keeps
+  `Unit::burning` after his 5 s are up (`Body::burn_kept`): the original's flag never goes
+  out. The renderer shows a burning man by `Unit::burning` (and `Body::burn`, the seconds
+  left from a shell fire).
+
+#### Direct hits: torn apart or a blood mist (#256)
+
+The hit record already says how far a man was torn (`HitRecord::injury.outcome`,
+`DeathRecord::torn`): `Outcome::Off` takes a limb off at `injury.level`, `Torn::InTwo` splits
+the trunk at a level, `Torn::Headless` takes the head, and `Torn::Pulverized` leaves nothing
+whole. The renderer reads these (`debris`, `tears`, `damage_view`, `particle_view`): parts
+thrown with stump caps (#207) for `Off`, `InTwo` and `Headless`, the blood mist and gibs
+for `Pulverized`, scaled by `injury.energy`; the gore setting decides how much is drawn.
+
+Round shot reaches them through the ploughing energy (`body::BALL_SEVERS`, `BALL_TEARS`,
+`BALL_PULVERIZES`). A shell's blast used the fragment table, which never tears a body;
+with the rule on, a man (not an animal) whose centre is within `SHELL_DIRECT` 18 px of the
+burst is torn in two at a drawn trunk level (one `rando()`), within `SHELL_MIST` 8 px
+pulverized (no draw) (`body::shell_direct`, from the burst distance
+`World::hit_close`, not hashed). Off, the blast is the original's (`ExplodeAnmObject`
+0x5578f0 round damage, no injuries). `tests/ground_fire.rs`
+`a_shell_at_a_mans_feet_leaves_a_mist_closer_ones_are_torn_in_two`.
 
 ### Mortar (optional rule, #301)
 

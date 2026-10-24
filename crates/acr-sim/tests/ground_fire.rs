@@ -1,5 +1,6 @@
-//! Shell fires (#256, rule `hit_locations`): a shell bursting on the ground leaves a fire,
-//! soldiers in it catch fire and can burn to death; without the rule nothing changes.
+//! Shell fires and direct hits (#256, rule `hit_locations`): a shell bursting on the ground
+//! leaves a fire, soldiers in it catch fire and can burn to death, and a man at the burst is
+//! torn apart; without the rule nothing changes.
 
 use std::sync::Arc;
 
@@ -10,6 +11,7 @@ use acr_sim::combat::DeathCause;
 use acr_sim::formation::Formations;
 use acr_sim::ground_fire::{BURN_TICKS, GroundFire, RADIUS};
 use acr_sim::map::MapGrid;
+use acr_sim::projectile::create;
 use acr_sim::weapon::Weapons;
 use acr_sim::{Command, Pos, Rules, TypeId, World};
 
@@ -40,7 +42,8 @@ const NDS: &[u8] = b"[MEMBERS]\r\n\
     DIM32_2 #DIM32 1 20 WHITE NO_GRAVITY SLIGHTUP 0 1\r\n\
     NUCL2P #NUCL1 340 35 NONE HI_GRAVITY ANGLE 10 -1\r\n\
     SKOKAT #NUCL1 500 16 NONE HI_GRAVITY REFLECT 32 -1\r\n\
-    [CHILDWEAPON]\r\nNUCL2P 1 1 0 4 SKOKAT SKOKAT SKOKAT SKOKAT\r\n\
+    BURST #NUCL1 800 60 NONE NO_GRAVITY STAND 0 -1\r\n\
+    [CHILDWEAPON]\r\nNUCL2P 1 1 0 4 SKOKAT SKOKAT SKOKAT SKOKAT\r\nBURST 0 0 -1 0\r\n\
     [FULLPARENT]\r\nSTRELA\r\n\
     [CUSTOMEXPLOSION]\r\nSTRELA FLASH 1 1 0 1 POINT\r\n\
     [SYNCWEAPON]\r\nPPOINTT 2 DIM32_2 NUCL2P\r\n\
@@ -156,4 +159,70 @@ fn a_man_who_walks_out_goes_out() {
     let u = &w.units[i];
     assert!(u.living() && !u.burning && u.body.burn == 0);
     assert!(u.life < 60 && u.life > 0, "life {}", u.life);
+}
+
+#[test]
+fn a_fire_weapon_flame_outlasts_the_shell_fire() {
+    let (mut w, _, _, sol) = setup(ON);
+    let s = w.spawn(sol, 1, Pos::from_pixels(2000, 2000), 0);
+    let i = s.0 as usize;
+    // Set on fire by an `X`/`F` weapon before (the original's flag, which never goes out).
+    w.units[i].burning = true;
+    w.ground_fires.list.push(GroundFire { x: 2000, y: 2000, radius: RADIUS, start: 0 });
+    while w.units[i].body.burn == 0 {
+        w.step(&[]);
+    }
+    w.ground_fires.list.clear();
+    for _ in 0..100 {
+        w.step(&[]);
+    }
+    let u = &w.units[i];
+    assert!(u.living() && u.body.burn == 0 && !u.body.burn_kept, "life {}", u.life);
+    assert!(u.burning, "the weapon's fire stays on");
+}
+
+/// A shell bursting at (2000, 2000) among three men 3, 12 and 40 px away; returns the world
+/// and the men.
+fn burst_among(rules: Rules) -> (World, [usize; 3]) {
+    let (mut w, mor, _, sol) = setup(rules);
+    let m = w.spawn(mor, 0, Pos::from_pixels(1000, 2000), 0);
+    let men = [(2003, 2000), (2000, 2012), (2040, 2000)].map(|(x, y)| w.spawn(sol, 1, Pos::from_pixels(x, y), 0));
+    w.step(&[]);
+    let burst = w.catalog.weapons.list.iter().position(|wp| wp.name == "BURST").unwrap() as u16;
+    assert!(create(&mut w, burst, (2000, 2000, 0), (2000, 2000, 0), Some(m.0 as usize), 1, None, (0, 0, 0), 0));
+    (w, men.map(|e| e.0 as usize))
+}
+
+#[test]
+fn a_shell_at_a_mans_feet_leaves_a_mist_closer_ones_are_torn_in_two() {
+    use acr_sim::body::{Outcome, SHELL_DIRECT, SHELL_MIST, Torn};
+    let (w, men) = burst_among(ON);
+    for (k, &i) in men.iter().enumerate() {
+        let (x, y) = w.units[i].pos.pixels();
+        let d = acr_sim::trig::norma(x - 2000, y - 2000);
+        assert!(!w.units[i].living(), "man {k} at {d} px died");
+        let hit = w.hits.iter().find(|h| h.victim == i as u32 && h.cause == DeathCause::Explosion).unwrap();
+        let outcome = hit.injury.unwrap().outcome;
+        let torn = w.deaths.get(&(i as u32)).and_then(|d| d.torn);
+        match k {
+            0 => {
+                assert!(d < SHELL_MIST, "{d}");
+                assert_eq!(outcome, Outcome::Torn(Torn::Pulverized));
+                assert_eq!(torn, Some(Torn::Pulverized));
+            }
+            1 => {
+                assert!((SHELL_MIST..SHELL_DIRECT).contains(&d), "{d}");
+                assert!(matches!(outcome, Outcome::Torn(Torn::InTwo { .. })), "{outcome:?}");
+                assert!(matches!(torn, Some(Torn::InTwo { .. })), "{torn:?}");
+            }
+            _ => assert!(!matches!(outcome, Outcome::Torn(_)), "{outcome:?}"),
+        }
+    }
+    let (w2, _) = burst_among(ON);
+    assert_eq!(w.state_hash(), w2.state_hash());
+    // Without the rule: the original blast, no bodies torn.
+    let (off, men) = burst_among(Rules::default());
+    assert!(men.iter().all(|&i| !off.units[i].living()));
+    assert!(off.hits.iter().all(|h| h.injury.is_none()));
+    assert!(off.deaths.values().all(|d| d.torn.is_none()));
 }

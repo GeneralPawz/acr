@@ -90,6 +90,10 @@ pub fn tick(w: &mut World) {
         let (x, y) = u.pos.pixels();
         if w.ground_fires.list.iter().any(|f| crate::trig::norma(f.x - x, f.y - y) < f.radius) {
             let u = &mut w.units[i];
+            if u.body.burn == 0 {
+                // Already burning from a fire weapon: that fire is the original's and stays.
+                u.body.burn_kept = u.burning;
+            }
             u.burning = true;
             u.body.burn = BURN_SECONDS;
         }
@@ -101,7 +105,8 @@ pub fn tick(w: &mut World) {
         if u.living() {
             u.body.burn -= 1;
             if u.body.burn == 0 {
-                u.burning = false;
+                u.burning = u.body.burn_kept;
+                u.body.burn_kept = false;
             }
         }
     }

@@ -69,6 +69,9 @@ pub const PLOUGH_BODIES: u8 = 5;
 /// Share of the ball's damage, in percent, that each body takes out of it: the bodies get
 /// 100, 80, 60, 40 and 20 % of the damage, then the ball is spent.
 pub const PLOUGH_LOSS: i32 = 20;
+/// Share of the ball's damage, in percent, that each ground contact takes out of a
+/// ploughing ball (the aimed ball's first strike and every bounce).
+pub const BOUNCE_LOSS: i32 = 10;
 
 /// The men a ball low enough to hurt (`DAMAGEHEIGHT`) has already hit, with
 /// [`crate::Rules::hit_locations`] on: each is hit once, each costs the ball
@@ -79,6 +82,8 @@ pub struct Plough {
     /// Unit indices hit so far (the first `n`).
     pub victims: [u32; PLOUGH_BODIES as usize],
     pub n: u8,
+    /// Ground contacts so far (each costs [`BOUNCE_LOSS`]).
+    pub bounces: u8,
 }
 
 impl std::hash::Hash for Plough {
@@ -86,18 +91,27 @@ impl std::hash::Hash for Plough {
         if self.n != 0 {
             (self.victims, self.n).hash(state);
         }
+        if self.bounces != 0 {
+            self.bounces.hash(state);
+        }
     }
 }
 
 impl Plough {
     /// The ball has no energy left to hurt anyone.
     pub fn spent(&self) -> bool {
-        self.n >= PLOUGH_BODIES
+        self.n >= PLOUGH_BODIES || self.energy() == 0
     }
 
-    /// The energy left for the next body, in percent of the ball's (100, 80, … 20).
+    /// The energy left for the next body, in percent of the ball's (100, 80, … 20, less
+    /// [`BOUNCE_LOSS`] per ground contact).
     pub fn energy(&self) -> u8 {
-        (100 - PLOUGH_LOSS * i32::from(self.n)).max(0) as u8
+        (100 - PLOUGH_LOSS * i32::from(self.n) - BOUNCE_LOSS * i32::from(self.bounces)).max(0) as u8
+    }
+
+    /// A ground contact: the ball loses [`BOUNCE_LOSS`] of its energy.
+    fn bounce(&mut self) {
+        self.bounces = self.bounces.saturating_add(1);
     }
 
     fn hit(&self, k: usize) -> bool {
@@ -110,7 +124,7 @@ impl Plough {
         if self.spent() || self.hit(k) {
             return None;
         }
-        let dmg = damage * (100 - PLOUGH_LOSS * i32::from(self.n)) / 100;
+        let dmg = damage * i32::from(self.energy()) / 100;
         self.victims[usize::from(self.n)] = k as u32;
         self.n += 1;
         Some(dmg)
@@ -467,7 +481,9 @@ fn round_damage_with(
                     }
                 };
                 let before = w.hits.len();
+                w.hit_close = Some(d >> 4);
                 crate::combat::make_damage(w, k, dmg, sender, att);
+                w.hit_close = None;
                 w.hit_energy = None;
                 crate::shrapnel::ball_hit(w, k, before, sender, att);
             }
@@ -486,7 +502,7 @@ fn ball_damage(
     target_blast: Option<(i32, i32, i32)>,
 ) {
     let mut plough = p.plough;
-    let ploughing = w.rules.hit_locations && w.catalog.weapons.get(p.weapon).damage_height != 0;
+    let ploughing = ploughs(w, p);
     if ploughing && plough.spent() {
         w.projectiles.media = -1;
         return;
@@ -519,6 +535,17 @@ fn ball_damage(
     if ploughing && let Some(Some(q)) = w.projectiles.slots.get_mut(slot) {
         q.plough = plough;
     }
+}
+
+/// With [`crate::Rules::hit_locations`] on, a round ploughs ([`Plough`]): a ball low enough
+/// to hurt (`DAMAGEHEIGHT`, the bounce `SKOKAT`), and the aimed cannonball's first strike
+/// (`NUCL2P`, a round of a `DeathCause::Cannonball` weapon kind), whose bounce carries on what
+/// that strike left of it (#256).
+fn ploughs(w: &World, p: &Projectile) -> bool {
+    w.rules.hit_locations
+        && (w.catalog.weapons.get(p.weapon).damage_height != 0
+            || sender_of(w, p)
+                .is_some_and(|s| crate::combat::cause_of_attack(w, s, p.att) == crate::combat::DeathCause::Cannonball))
 }
 
 /// The building a direct-fire ball `p` has flown into (hit-locations rule, `GunMode::Direct`).
@@ -590,8 +617,14 @@ pub fn explode(w: &mut World, slot: usize, ground: bool) {
     let outer_carry = w.plough_carry;
     let outer_shot = w.shot_carry;
     w.shot_carry = p.shot;
-    w.plough_carry = (w.rules.hit_locations && wp.damage_height != 0)
-        .then(|| w.projectiles.slots[slot].map_or(p.plough, |q| q.plough));
+    // Each ground contact costs the ball `BOUNCE_LOSS` of its energy.
+    w.plough_carry = ploughs(w, &p).then(|| {
+        let mut pl = w.projectiles.slots[slot].map_or(p.plough, |q| q.plough);
+        if ground {
+            pl.bounce();
+        }
+        pl
+    });
     let m = w.projectiles.media;
     let block = wp.custom.iter().rev().find(|(cm, _)| *cm == m).map(|(_, c)| c);
     let default = block.is_none();

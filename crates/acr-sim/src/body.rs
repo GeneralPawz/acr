@@ -100,6 +100,9 @@ pub struct Body {
     pub chest_wounds: u8,
     /// Seconds of burning left after standing in a shell fire (`crate::ground_fire`).
     pub burn: u8,
+    /// `Unit::burning` was already on (an `X`/`F` weapon, `NRES`) when a shell fire caught
+    /// him, so the end of [`Body::burn`] leaves it on.
+    pub burn_kept: bool,
     /// The long weapon (musket, pike) was dropped; set once, the renderer leaves it lying.
     pub dropped: bool,
     /// A rider (set at his first injury): the horse carries him, so his legs never make him
@@ -142,6 +145,9 @@ impl Hash for Body {
             }
             if self.seep_s != 0 {
                 (self.seep, self.seep_s).hash(state);
+            }
+            if self.burn_kept {
+                self.burn_kept.hash(state);
             }
         }
     }
@@ -879,6 +885,40 @@ pub fn injure(w: &mut World, victim: usize, cause: Cause, energy: u8, region: Hi
     apply(&mut w.units[victim].body, &injury);
     knock(&mut w.units[victim].body, &injury, roll);
     injury
+}
+
+/// Within this distance (px, about 0.6 m) of a shell's burst a man is torn apart
+/// ([`shell_direct`]).
+pub const SHELL_DIRECT: i32 = 18;
+/// … and within this one (px, a shell at his feet) nothing whole is left: a mist of blood.
+pub const SHELL_MIST: i32 = 8;
+
+/// A shell's direct hit (hit-locations rule, #256): a man (not an animal) standing within
+/// [`SHELL_DIRECT`] px of the burst (`d`, `World::hit_close`) is torn in two at a drawn
+/// trunk level (one `rando()`), within [`SHELL_MIST`] px pulverized (no draw). `None`
+/// farther away: the shell table of [`injure`] stands.
+pub fn shell_direct(w: &mut World, victim: usize, d: i32) -> Option<Injury> {
+    if d >= SHELL_DIRECT {
+        return None;
+    }
+    mark_animal(w, victim);
+    if w.units[victim].body.animal != 0 {
+        return None;
+    }
+    let (part, level, torn) = if d < SHELL_MIST {
+        (Part::Chest, 0, Torn::Pulverized)
+    } else {
+        let level = ((w.random.rando() << 8) >> 15) as u8;
+        let part = match level {
+            0..96 => Part::Chest,
+            96..192 => Part::Belly,
+            _ => Part::Pelvis,
+        };
+        (part, level, Torn::InTwo { level })
+    };
+    let injury = Injury { part, level, outcome: Outcome::Torn(torn), energy: 100, cause: Cause::Shell };
+    apply(&mut w.units[victim].body, &injury);
+    Some(injury)
 }
 
 /// An injury aimed at `part` (the close-up bench): at `level`, or a level drawn as in

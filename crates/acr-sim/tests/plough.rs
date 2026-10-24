@@ -25,7 +25,10 @@ const SOLDIER: &str = "NAME Sol\r\nUSERLC 0 G SHADOW 0 0\r\n#STAND 9 1 0 0\r\n@D
 /// (`DAMAGEHEIGHT` 95), with the damage of a bouncing ball (`SKOKAT`, 500 within 16 px).
 const NDS: &[u8] = b"[MEMBERS]\r\n\
     ROLL #NUCL1 500 16 NONE NO_GRAVITY FLY 16 -1\r\n\
-    [DAMAGEHEIGHT]\r\nROLL 95\r\n[END]\r\n";
+    AIMED #NUCL1 340 35 NONE HI_GRAVITY ANGLE 10 -1\r\n\
+    SKOKAT #NUCL1 500 16 NONE HI_GRAVITY REFLECT 32 -1\r\n\
+    [CHILDWEAPON]\r\nAIMED 1 1 0 1 SKOKAT\r\nSKOKAT 1 1 0 1 SKOKAT\r\n\
+    [DAMAGEHEIGHT]\r\nROLL 95\r\nSKOKAT 95\r\n[END]\r\n";
 const ADS: &[u8] = b"@NUCL1 1 0 0 0\r\n";
 const NRES: &[u8] = b"[WEAPONS]\r\n#GENSHIELD 13\r\nMECH 21 19 O\r\nIADRO 2 15 HX\r\n[UNITKINDS]\r\n";
 
@@ -108,4 +111,53 @@ fn the_rule_off_keeps_the_original_hash() {
     // Pinned on the original rules (before #256): update it when the original rules change,
     // never for the optional rule.
     assert_eq!(w.state_hash(), 0x6bbc_90f6_d730_18e6, "hash {:#x}", w.state_hash());
+}
+
+/// An aimed ball (`NUCL2P`: 340 within 35 px, no `DAMAGEHEIGHT`) fired down a file of men 20
+/// px apart, landing at the second; it bounces on as `SKOKAT`. Returns the world and the
+/// ball's hits (victim, energy) in order.
+fn aimed_shot(rules: Rules) -> (World, Vec<(u32, u8)>) {
+    let mut c = Catalog::new();
+    let gun = c.add(ObjectType::from_def("Gun(EN)", &UnitDef::parse(GUNNER.as_bytes())));
+    let sol = c.add(ObjectType::from_def("Sol(EN)", &UnitDef::parse(SOLDIER.as_bytes())));
+    c.set_weapon_kinds(&weapon_kinds(NRES));
+    c.set_weapons(Weapons::parse(NDS, Some(ADS), None));
+    let mut w = World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(Formations::default()));
+    w.rules = rules;
+    let g = w.spawn(gun, 0, Pos::from_pixels(1500, 2000), 0);
+    for k in 0..12 {
+        w.spawn(sol, 1, Pos::from_pixels(2000 + 20 * k, 2000), 128);
+    }
+    w.step(&[]);
+    let aimed = w.catalog.weapons.list.iter().position(|wp| wp.name == "AIMED").unwrap() as u16;
+    assert!(create(&mut w, aimed, (1520, 2000, 10), (2020, 2000, 0), Some(g.0 as usize), 1, None, (0, 0, 0), 0));
+    for _ in 0..200 {
+        w.step(&[]);
+    }
+    let hits = w
+        .hits
+        .iter()
+        .filter(|h| h.cause == DeathCause::Cannonball)
+        .map(|h| (h.victim, h.injury.map_or(100, |i| i.energy)))
+        .collect();
+    (w, hits)
+}
+
+#[test]
+fn with_hit_locations_the_aimed_strike_and_each_bounce_cost_the_ball_energy() {
+    let on = Rules { hit_locations: true, body_spacing: false, mortars: false };
+    let (w, hits) = aimed_shot(on);
+    // The first strike counts against the ball's bodies: one ball, at most five men, each once.
+    assert!(!hits.is_empty() && hits.len() <= usize::from(PLOUGH_BODIES), "{hits:?}");
+    let mut victims: Vec<u32> = hits.iter().map(|h| h.0).collect();
+    victims.sort_unstable();
+    victims.dedup();
+    assert_eq!(victims.len(), hits.len(), "{hits:?}");
+    // Its energy falls with every man and every ground contact.
+    assert_eq!(hits[0].1, 100, "{hits:?}");
+    assert!(hits.windows(2).all(|p| p[1].1 < p[0].1), "{hits:?}");
+    assert!(hits.iter().any(|h| h.1 % 20 != 0), "a bounce costs BOUNCE_LOSS: {hits:?}");
+    let (w2, hits2) = aimed_shot(on);
+    assert_eq!(hits, hits2);
+    assert_eq!(w.state_hash(), w2.state_hash());
 }

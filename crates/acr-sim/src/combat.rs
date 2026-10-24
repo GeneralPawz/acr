@@ -1499,7 +1499,15 @@ fn injure(
         // A lance's thrust wounds as a pike's.
         body_cause = crate::body::Cause::Bayonet;
     }
-    let mut injury = crate::body::injure(w, victim, body_cause, energy, region);
+    // A shell bursting at a man's feet tears him apart (hit-locations rule, #256).
+    let direct = match w.hit_close {
+        Some(d) if cause == DeathCause::Explosion => crate::body::shell_direct(w, victim, d),
+        _ => None,
+    };
+    let mut injury = match direct {
+        Some(injury) => injury,
+        None => crate::body::injure(w, victim, body_cause, energy, region),
+    };
     let strike =
         Strike { kind, height: crate::melee::strike_height(region_of(injury.part), down), mounted, finishing: false };
     let bonus = crate::melee::attacker_bonus(w, sender);

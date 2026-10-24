@@ -537,6 +537,10 @@ pub struct World {
     /// (`crate::body::injure`). Set by the projectiles around their damage; not hashed.
     pub hit_energy: Option<u8>,
     pub hit_height: Option<i32>,
+    /// How far (pixels) the victim of the round damage now dealt stood from the burst, for
+    /// a shell's direct hit (`crate::body::shell_direct`, hit-locations rule). Set by the
+    /// projectiles around their damage; not hashed.
+    pub hit_close: Option<i32>,
     /// The cause the hit now dealt counts as, whatever the sender's weapon: a fragment
     /// ([`crate::shrapnel`]) wounds as a shell's. Only with the hit-locations rule; not
     /// hashed.
@@ -708,6 +712,7 @@ impl World {
             hit_dir: None,
             hit_at: None,
             hit_energy: None,
+            hit_close: None,
             hit_height: None,
             hit_cause: None,
             plough_carry: None,
