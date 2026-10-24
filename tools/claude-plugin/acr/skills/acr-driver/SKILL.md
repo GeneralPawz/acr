@@ -41,7 +41,7 @@ The blank field's `centre` is `[7680, 7680]` (normal size). `dir` runs 0..255: 0
 | `camera`: `x`, `y`, `zoom` (5 means a man about 270 px tall), `yaw_deg` (0 = looks north), `pitch_deg` (10 = near side view), `lift` (px above ground, 27 = waist) | close-up; `"free": true` for free orbit |
 | `hit`: `unit`, `cause` (musket, arrow, cannonball, grapeshot, shell, sabre, bayonet, axe, claw), `region` or `part` + `level`, `dir`, `energy`, `damage` (1000 kills) | a scripted hit through the real injury path |
 | `impact`: `at`, `cause` (shell, cannonball), `by` (a unit id) | a shell burst or ball graze |
-| `command`: `type` move, attack, attack_ground, stop, form, …; `units`, `x`, `y`, `target` | sim orders |
+| `command`: `type` move, attack, attack_ground, stop, form, stand_ground, hold_fire, melee_only (`on`, default true), face (`dir`), move_facing (`x`, `y`, `dir`), …; `units`, `x`, `y`, `target`, `player` | sim orders, sent as the owner of the named units (either side), or `player` |
 | `wait`: `ticks`, `until` | advance time (10 ticks/s at normal speed) |
 | `screenshot`: `path`, `crop` | one frame |
 | `record`: `dir`, `count`, `every`, `crop` | a frame sequence `frame000.png`… |
@@ -99,18 +99,18 @@ or copy it, change unit types and camera, and feed the requests to studio `send`
 
 | File | Shows | Checked by (answers.jsonl) |
 | --- | --- | --- |
-| `archer_volley.json` | 5 `HurLut` archers volley at 5 stationary targets 460 px away; frames in `volley/` | archers stay at x 7450; target life 2000 to 1884 |
-| `musket_volley.json` | 5 `EngM18` fire a volley at targets 500 px away; `volley/` | shooters stay put, reload (`delay`) runs; target life drops |
+| `archer_volley.json` | 5 `HurLut` archers volley at 5 standing targets 460 px away (`stand_ground` + `hold_fire`); frames in `volley/` | archers stay at x 7450, targets at x 7910 with flags `stand_ground`, `no_search`; some target life 2000 to 1801 |
+| `musket_volley.json` | 5 `EngM18` fire a volley at standing targets 500 px away (`stand_ground` + `hold_fire`); `volley/` | shooters stay put, reload (`delay`) runs; targets stay at x 7930, some life 2000 to 1796 |
 | `cannon_ground.json` | `ArtPus` fires at a ground point 1000 px east; `fire/`, `after.png` | `AttackPoint` order, reload counter running, iron and coal paid |
 | `mortar_ground.json` | `ArtMrt` (rule `mortars`) shells a ground point 1400 px east; `fire/` | as the cannon; craters at the point |
 | `building_artillery.json` | `ArtPus` shoots a `SpnDo1` house (life 20000 so it lasts); `fire/` | house life 20000 to 8116 over 780 ticks |
-| `melee_clash.json` | 12 `EngM18` against 12 `SpnMus`, both `hold_fire` (bayonets only), meet in the middle; `clash/` | 24 men down to 9 by tick 286, all between x 7590 and 7800 |
+| `melee_clash.json` | 12 `EngM18` against 12 `SpnMus`, both spawned `hold_fire` (bayonets only); the `SpnMus` `stand_ground`, the `EngM18` attack-move into them; `clash/` | 24 men down to 14 by tick 286, `SpnMus` still at x 7880..7920 |
 | `walk_line.json` | one `EngM18` walks 1400 px east in a straight line, side camera, 12 frames in `gait/` | x 7080 to 8472, `Motion*` animation |
 
 Why the presets look like this (the traps that cost earlier runs their time box):
-- **Stationary targets** are `pose: "crawl"` men of owner 1 with `life: 2000`: they take no orders and do not fight back. Shooters do not pick crawlers on their own, so each shooter gets an explicit `attack` command. A standing enemy, even with `hold_fire`, charges into melee; a hit crawler may crawl a little.
+- **Stationary targets** are standing men of owner 1 with `life: 2000` given `stand_ground` and `hold_fire` commands (`"units": {"owner": 1}`): they stay and do not fire back. Each shooter gets an explicit `attack` command (an `attack` ends the shooter's own stand ground, so do not combine them). Crawlers (`pose: "crawl"`) take no orders at all.
 - **Archers charge** when the target is beyond their range (they walk up to about 480 px): keep archers within about 460 px, muskets within about 500 px.
 - **Guns** need `resources` on the spawn (a shot costs iron and coal), else they never fire. A gun reloads slowly (`delay` 1600 ticks for `ArtPus`, 2400 for `ArtMrt`): expect one shot per 300 ticks.
 - `attack_ground` and `attack` work on guns; a mortar needs `"mortars": true` in `start.blank`.
 
-Missing in the driver (`command`, `drive/state.rs`): no `stand_ground`, `hold_fire` (the sim's `HoldFire`), `melee_only`, `face` or `move_facing` orders, although the sim has `Command::StandGround`, `HoldFire`, `MeleeOnly`, `Face` and `MoveFacing`. Commands are always sent as player 0, so owner 1's units cannot be ordered (an order for them is queued but does nothing). Spawn has only `hold_fire` (melee only).
+The unit states and facings are driver orders since `m2-drive-orders`: `stand_ground`, `hold_fire`, `melee_only`, `face`, `move_facing` (`docs/testing.md`). Spawn's `hold_fire` is still the melee-only switch (`Unit::melee_only`), not the `hold_fire` order.

@@ -152,6 +152,21 @@ filter `{"owner": 0, "type": "Mus"}` for every living match):
 `produce` (`building`, `kind`, `count`), `rally` (`building`, `x`, `y`), `form` (`officer`, `kind` such as `#LINE15`),
 `disband` (`officer`), `friendly_fire` (`on`: shoot through own units), `mortar_zones` (`zones`: `[[x, y, r], ...]`, mortars rule) and `mortar_fire` (`on`). Type names are catalog ids such as `SpnKri(SP)`.
 
+The HUD's unit states, the same sim commands its buttons send (`on` defaults to true, `false`
+switches back): `stand_ground` (`StandGround`: attack only what is in range, never chase; a
+move or an `attack` order ends it), `hold_fire` (`HoldFire`: pick no targets; a player's
+`attack` order ends it), `melee_only` (`MeleeOnly`, types with `ARMATTACK` only: bayonet or
+sabre, no shots). `move_facing` (`x`, `y`, `dir` 0..255) is the right drag: a move that ends
+facing `dir`. `face` (`dir`) turns in place: one `Face` per formation among the units (or
+`officer`), and for a free unit a `MoveFacing` onto its own place, which like any move ends
+its stand ground, so face first, then stand ground.
+
+Commands go to the owner of the units they name (`units`, else `officer` or `building`, else
+the selection) when they all have one owner, else to the local player; `"player": n` sets it.
+So a test orders either side, e.g. targets that stay put and do not fire back:
+`{"type": "stand_ground", "units": {"owner": 1}}` and `{"type": "hold_fire", "units": {"owner": 1}}`.
+The sim ignores units out of the fight (crawling, lying), as for the HUD.
+
 ### The close-up bench (#277)
 
 For judging bodies, wounds and gore up close: a few soldiers placed on open ground, hit by

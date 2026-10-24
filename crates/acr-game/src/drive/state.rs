@@ -296,17 +296,71 @@ fn int(v: &Value, key: &str) -> Result<i32, String> {
     v.get(key).and_then(Value::as_i64).map(|n| n as i32).ok_or(format!("missing {key:?}"))
 }
 
-/// Builds the simulation command `v` describes for the local player.
+/// Builds the simulation command `v` describes (see [`build`]).
 pub fn command(game: &Game, v: &Value) -> Result<Vec<Command>, String> {
     let Mode::InGame(g) = &game.mode else { return Err("no game".into()) };
     let world = g.world().ok_or("no world yet")?;
-    let player = g.player();
-    let sel = g.selection();
+    build(world, g.player(), g.selection(), v)
+}
+
+/// The player a command is given for: `"player": n`, else the one owner of the objects it
+/// names (`units`, else `officer` / `building`, else the selection), else the local player.
+/// The sim drops units its player does not own (`World::owned`), so this lets a test order
+/// either side with the same commands the HUD sends.
+fn command_player(world: &World, local: u8, sel: &[EntityId], v: &Value) -> Result<u8, String> {
+    if let Some(p) = v.get("player") {
+        return p.as_u64().and_then(|p| u8::try_from(p).ok()).ok_or("player: 0..255".into());
+    }
+    let named = if v.get("units").is_some() {
+        ids(world, v, "units", sel)?
+    } else {
+        let one: Vec<EntityId> = ["officer", "building"].iter().filter_map(|k| id(v, k).ok()).collect();
+        if one.is_empty() { sel.to_vec() } else { one }
+    };
+    let mut owners = named.iter().filter_map(|&i| world.unit(i)).map(|u| u.owner);
+    Ok(match owners.next() {
+        Some(o) if owners.all(|p| p == o) => o,
+        _ => local,
+    })
+}
+
+fn dir(v: &Value) -> Result<u8, String> {
+    v.get("dir").and_then(Value::as_u64).and_then(|d| u8::try_from(d).ok()).ok_or("missing \"dir\" (0..255)".into())
+}
+
+/// The commands for `face`: one `Face` per formation among `units` (any member stands for
+/// its officer, `formation::face` turns the member's brigade), and for a free unit a
+/// `MoveFacing` onto its own place (it stays and turns, 0x4ac249). Like any move, that ends
+/// the unit's stand ground: face first, then stand ground.
+fn face(world: &World, player: u8, units: &[EntityId], dir: u8) -> Vec<Command> {
+    let mut brigades = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    for u in units.iter().filter_map(|&i| world.unit(i)).filter(|u| u.living()) {
+        match u.brigade {
+            Some(b) => {
+                if brigades.insert(b) {
+                    out.push(Command::Face { player, officer: u.id, dir });
+                }
+            }
+            None => {
+                let (x, y) = (u.pos.x >> 4, u.pos.y >> 4);
+                out.push(Command::MoveFacing { player, units: vec![u.id], x, y, dir });
+            }
+        }
+    }
+    out
+}
+
+/// Builds the simulation commands `v` describes; `player` is the local player, `sel` its
+/// selection.
+pub fn build(world: &World, player: u8, sel: &[EntityId], v: &Value) -> Result<Vec<Command>, String> {
+    let player = command_player(world, player, sel, v)?;
     let kind = v.get("type").and_then(Value::as_str).ok_or("command: missing \"type\"")?;
     let units = || ids(world, v, "units", sel);
     let object_type = || find_type(world, v.get("kind").and_then(Value::as_str).ok_or("missing \"kind\"")?);
     let count = v.get("count").and_then(Value::as_u64).unwrap_or(1).max(1) as usize;
     let one = |c: Command| Ok(vec![c]);
+    let on = || v.get("on").and_then(Value::as_bool).unwrap_or(true);
     match kind {
         "move" => one(Command::Move { player, units: units()?, x: int(v, "x")?, y: int(v, "y")? }),
         "attack_move" => one(Command::AttackMove { player, units: units()?, x: int(v, "x")?, y: int(v, "y")? }),
@@ -337,6 +391,19 @@ pub fn command(game: &Game, v: &Value) -> Result<Vec<Command>, String> {
             units: units()?,
             on: v.get("on").and_then(Value::as_bool).unwrap_or(true),
         }),
+        // The HUD's `STANDGR` / `NOSTAND`, `DATTACK` / `EATTACK` and `ARMATTACK` / `ANYATTACK`
+        // buttons (`interface.rs`); `on` defaults to true.
+        "stand_ground" => one(Command::StandGround { player, units: units()?, on: on() }),
+        "hold_fire" => one(Command::HoldFire { player, units: units()?, hold: on() }),
+        "melee_only" => one(Command::MeleeOnly { player, units: units()?, on: on() }),
+        // The right drag (`interface.rs` `right_release`): a move that ends facing `dir`.
+        "move_facing" => {
+            one(Command::MoveFacing { player, units: units()?, x: int(v, "x")?, y: int(v, "y")?, dir: dir(v)? })
+        }
+        "face" => match v.get("officer") {
+            Some(_) => one(Command::Face { player, officer: id(v, "officer")?, dir: dir(v)? }),
+            None => Ok(face(world, player, &units()?, dir(v)?)),
+        },
         "friendly_fire" => one(Command::FriendlyFire {
             player,
             units: units()?,
@@ -362,5 +429,142 @@ pub fn command(game: &Game, v: &Value) -> Result<Vec<Command>, String> {
         }),
         "disband" => one(Command::Disband { player, officer: id(v, "officer")? }),
         other => Err(format!("unknown command type {other:?}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use acr_formats::defs::{OrderGroups, OrderList, UnitDef};
+    use acr_sim::catalog::{Catalog, ObjectType};
+    use acr_sim::formation::Formations;
+    use acr_sim::map::MapGrid;
+    use acr_sim::{Pos, TypeId};
+
+    use super::*;
+
+    // The pikeman of `acr-sim/tests/states.rs`; `ARMATTACK` lets it take the melee-only switch.
+    const PIKEMAN: &str = "NAME Pik\r\nUSERLC 0 G SHADOW 0 0\r\n#STAND 9 1 0 0\r\n@MOTION_L 9 0 0 9\r\n\
+        @MOTION_R 9 0 10 19\r\n@PATTACK 9 0 0 35\r\n@UATTACK 9 0 35 0\r\n@ATTACK 9 0 0 20\r\n\
+        @DEATH 9 0 0 39\r\n#DEATHLIE1 9 1 0 39\r\nLIFE 100\r\nGEOMETRY 1 10 40\r\nDAMAGE 0 10\r\n\
+        ATTACK_RADIUS 0 40 100\r\nATTACK_PAUSE 0 1\r\nSEARCH_ENEMY_RADIUS 700\r\nSEARCH_ENEMY_RADIUS_SHIFT 70\r\n\
+        DET_RADIUS 0 0 7000\r\nMATHERIAL 1 BODY\r\nCANKILL 1 BODY\r\nARMATTACK\r\n[END]\r\n";
+    const OFFICER: &str = "NAME Off\r\nUSERLC 0 G SHADOW 0 0\r\n#STAND 9 1 0 0\r\n@MOTION_L 9 0 0 9\r\n\
+        @MOTION_R 9 0 10 19\r\nLIFE 100\r\nGEOMETRY 1 10 40\r\nOFFICER\r\nMATHERIAL 1 BODY\r\n[END]\r\n";
+    const ORDERS: &[u8] =
+        b"#LINE15 SYM2 19 2 9 3 1 2\r\n   C   C   C\r\n      \r\n***************\r\n#END\r\n#EXIT\r\n";
+    const GROUPS: &[u8] = b"1\r\nLINE 0 1 #LINE15\r\n";
+
+    fn setup() -> (World, TypeId, TypeId) {
+        let mut c = Catalog::new();
+        let pik = c.add(ObjectType::from_def("Pik(EN)", &UnitDef::parse(PIKEMAN.as_bytes())));
+        let off = c.add(ObjectType::from_def("Off(EN)", &UnitDef::parse(OFFICER.as_bytes())));
+        let f = Formations::new(&OrderList::parse(ORDERS), &OrderGroups::parse(GROUPS));
+        (World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(f)), pik, off)
+    }
+
+    /// The driver's command `json` as the local player 0 with nothing selected, applied.
+    fn order(w: &mut World, json: Value) -> Vec<Command> {
+        let c = build(w, 0, &[], &json).unwrap();
+        w.step(&c);
+        c
+    }
+
+    fn raw(ids: &[EntityId]) -> Vec<u32> {
+        ids.iter().map(|i| i.0).collect()
+    }
+
+    fn run(w: &mut World, ticks: u32) {
+        for _ in 0..ticks {
+            w.step(&[]);
+        }
+    }
+
+    #[test]
+    fn the_orders_parse_into_the_huds_commands_for_either_side() {
+        let (mut w, pik, _) = setup();
+        let a = w.spawn(pik, 0, Pos::from_pixels(2000, 2000), 0);
+        let b = w.spawn(pik, 1, Pos::from_pixels(2300, 2000), 128);
+        let cmd = |j: Value| build(&w, 0, &[a], &j).unwrap();
+        assert_eq!(
+            cmd(json!({"type": "stand_ground", "units": [b.0]})),
+            [Command::StandGround { player: 1, units: vec![b], on: true }]
+        );
+        assert_eq!(
+            cmd(json!({"type": "hold_fire", "units": {"owner": 1}, "on": false})),
+            [Command::HoldFire { player: 1, units: vec![b], hold: false }]
+        );
+        assert_eq!(cmd(json!({"type": "melee_only"})), [Command::MeleeOnly { player: 0, units: vec![a], on: true }]);
+        assert_eq!(
+            cmd(json!({"type": "move_facing", "units": [a.0], "x": 10, "y": 20, "dir": 64})),
+            [Command::MoveFacing { player: 0, units: vec![a], x: 10, y: 20, dir: 64 }]
+        );
+        assert_eq!(
+            cmd(json!({"type": "face", "units": [b.0], "dir": 0})),
+            [Command::MoveFacing { player: 1, units: vec![b], x: 2300, y: 2000, dir: 0 }]
+        );
+        // `player` wins; mixed owners fall back to the local player.
+        assert_eq!(
+            cmd(json!({"type": "stop", "units": [b.0], "player": 0})),
+            [Command::Stop { player: 0, units: vec![b] }]
+        );
+        assert_eq!(cmd(json!({"type": "stop", "units": [a.0, b.0]})), [Command::Stop { player: 0, units: vec![a, b] }]);
+        assert!(build(&w, 0, &[], &json!({"type": "face", "units": [a.0]})).is_err(), "face needs a dir");
+        assert!(build(&w, 0, &[], &json!({"type": "face", "units": [a.0], "dir": 256})).is_err());
+    }
+
+    #[test]
+    fn a_standing_enemy_does_not_walk_into_melee() {
+        let (mut w, pik, _) = setup();
+        let a = w.spawn(pik, 0, Pos::from_pixels(2000, 2000), 0);
+        let b = w.spawn(pik, 1, Pos::from_pixels(2300, 2000), 128);
+        order(&mut w, json!({"type": "hold_fire", "units": [a.0]}));
+        order(&mut w, json!({"type": "stand_ground", "units": [b.0]}));
+        let start = w.unit(b).unwrap().pos;
+        run(&mut w, 400);
+        let u = w.unit(b).unwrap();
+        assert!(u.stand_ground);
+        assert_eq!(u.pos, start, "owner 1's standing pikeman stayed");
+        assert_eq!((w.unit(a).unwrap().life, u.life), (100, 100));
+    }
+
+    #[test]
+    fn units_holding_fire_do_not_attack() {
+        let (mut w, pik, _) = setup();
+        let a = w.spawn(pik, 0, Pos::from_pixels(2000, 2000), 0);
+        let b = w.spawn(pik, 1, Pos::from_pixels(2150, 2000), 128);
+        order(&mut w, json!({"type": "hold_fire", "units": {"owner": 0}}));
+        order(&mut w, json!({"type": "hold_fire", "units": {"owner": 1}}));
+        run(&mut w, 300);
+        assert_eq!((w.unit(a).unwrap().life, w.unit(b).unwrap().life), (100, 100), "nobody fought");
+        assert!(w.unit(b).unwrap().no_search_victim);
+        // Without the order they fight.
+        order(&mut w, json!({"type": "hold_fire", "units": [b.0], "on": false}));
+        run(&mut w, 400);
+        assert!(w.unit(a).unwrap().life < 100, "b attacked once free to");
+    }
+
+    #[test]
+    fn melee_only_and_face_take_effect() {
+        let (mut w, pik, off) = setup();
+        let free = w.spawn(pik, 1, Pos::from_pixels(3000, 3000), 0);
+        order(&mut w, json!({"type": "melee_only", "units": [free.0]}));
+        assert!(w.unit(free).unwrap().melee_only);
+        order(&mut w, json!({"type": "face", "units": [free.0], "dir": 128}));
+        run(&mut w, 60);
+        let u = w.unit(free).unwrap();
+        assert_eq!((u.dir, u.pos), (128, Pos::from_pixels(3000, 3000)), "turned in place");
+
+        let officer = w.spawn(off, 1, Pos::from_pixels(1500, 1000), 0);
+        let men: Vec<EntityId> =
+            (0..15).map(|i| w.spawn(pik, 1, Pos::from_pixels(1400 + 20 * (i % 5), 1100 + 20 * (i / 5)), 0)).collect();
+        let c = order(&mut w, json!({"type": "form", "officer": officer.0, "units": raw(&men), "kind": "LINE"}));
+        assert_eq!(c[0], Command::Form { player: 1, officer, units: men.clone(), kind: "LINE".into() });
+        let b = usize::from(w.unit(men[0]).unwrap().brigade.expect("formed"));
+        // Any member stands for the formation: one `Face`.
+        let c = order(&mut w, json!({"type": "face", "units": raw(&men), "dir": 64}));
+        assert_eq!(c, [Command::Face { player: 1, officer: men[0], dir: 64 }]);
+        assert_eq!(w.brigades[b].dir, 64);
     }
 }

@@ -25,6 +25,7 @@
  {"cmd": "spawn", "type": "SpnMus", "owner": 1, "x": 7920, "y": 7720, "dir": 128, "hold_fire": true},
  {"cmd": "spawn", "type": "SpnMus", "owner": 1, "x": 7920, "y": 7760, "dir": 128, "hold_fire": true},
  {"cmd": "wait", "ticks": 2},
+ {"cmd": "command", "command": {"type": "stand_ground", "units": {"owner": 1}}},
  {"cmd": "command", "command": {"type": "attack_move", "units": {"owner": 0}, "x": 7900, "y": 7680}},
  {"cmd": "wait", "ticks": 60},
  {"cmd": "camera", "x": 7680, "y": 7680, "zoom": 1.5, "yaw_deg": 0, "pitch_deg": 30},
