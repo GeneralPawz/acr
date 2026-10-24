@@ -131,6 +131,11 @@ A unit or building type whose `.MD` `NAME` has a file `<name>.glb` (lower case, 
   executable when that is not the game folder; these take precedence (for development and
   side-by-side runs).
 
+Images are embedded PNG or JPEG (`image/png`, `image/jpeg`; `model.rs` `decode_png`,
+`decode_jpeg`), both expanded to RGBA8 on load. JPEG goes through `zune-jpeg` (pure Rust,
+native and wasm; about 0.2 MB of the native release binary). The asset pipeline stores
+opaque base colours as JPEG and everything else as PNG (assets.md "Packing").
+
 Files are requested when a type with a model first appears and only when `models` is not
 `off`; a file that fails to load is logged once and the type stays a sprite.
 
@@ -1564,8 +1569,8 @@ the frame rate, the models drawn and the poses sampled.
 
 ## Limits and open points
 
-- No meshopt/Draco decoding, no KTX2 or JPEG textures: export models uncompressed with PNG
-  textures (the pipeline's default).
+- No meshopt/Draco decoding, no KTX2 or WebP textures: export models uncompressed with PNG
+  or JPEG textures (the pipeline's default).
 - No nation colour mask yet (#162).
 - Free camera: fog of war and the minimap frame follow the original view only (water: the
   surface of docs/water.md, a flat one under `water=original`); sprites (trees, units without models) show their stored direction.

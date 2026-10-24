@@ -95,7 +95,7 @@ driver's blank start takes them as its own keys (default false).
 - Use `web_time::Instant` in acr-game runtime code; `std::time::Instant` panics in the browser.
 - Settings come from `localStorage` `acr-settings` (base64 of the same lines).
 - `acr-check` runs clippy for `wasm32-unknown-unknown` on acr-game, acr-render, acr-physics.
-- glTF: no meshopt/Draco, no KTX2 or JPEG; uncompressed meshes, PNG textures.
+- glTF: no meshopt/Draco, no KTX2 or WebP; uncompressed meshes, PNG or JPEG textures.
 
 ## Performance
 

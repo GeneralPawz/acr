@@ -438,6 +438,20 @@ fn decode_png(bytes: &[u8]) -> Result<Image, String> {
     Ok(Image { width: info.width, height: info.height, rgba })
 }
 
+/// Baseline or progressive JPEG (`gltf_pack.py` writes opaque base colours so, #199) as RGBA
+/// with alpha 255. `zune-jpeg` is pure Rust and builds for wasm.
+fn decode_jpeg(bytes: &[u8]) -> Result<Image, String> {
+    use zune_jpeg::zune_core::{bytestream::ZCursor, colorspace::ColorSpace, options::DecoderOptions};
+    let options = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGBA);
+    let mut decoder = zune_jpeg::JpegDecoder::new_with_options(ZCursor::new(bytes), options);
+    let rgba = decoder.decode().map_err(|e| format!("JPEG: {e:?}"))?;
+    let (w, h) = decoder.dimensions().ok_or("JPEG: no size")?;
+    if rgba.len() != w * h * 4 {
+        return Err("JPEG: unexpected output size".into());
+    }
+    Ok(Image { width: w as u32, height: h as u32, rgba })
+}
+
 impl ModelData {
     /// Reads a `.glb` file (or a `.gltf` whose buffers are all embedded in the binary chunk).
     pub fn from_glb(bytes: &[u8]) -> Result<Self, String> {
@@ -499,10 +513,11 @@ impl ModelData {
                     let data = get(view.buffer()).ok_or("glTF: image buffer missing")?;
                     let bytes =
                         data.get(view.offset()..view.offset() + view.length()).ok_or("glTF: image out of range")?;
-                    if mime_type != "image/png" {
-                        return Err(format!("glTF: {mime_type} textures are not supported (use PNG)"));
+                    match mime_type {
+                        "image/png" => decode_png(bytes),
+                        "image/jpeg" => decode_jpeg(bytes),
+                        _ => Err(format!("glTF: {mime_type} textures are not supported (use PNG or JPEG)")),
                     }
-                    decode_png(bytes)
                 }
                 gltf::image::Source::Uri { .. } => Err("glTF: external images are not supported".to_owned()),
             })
@@ -1332,6 +1347,53 @@ pub(crate) mod tests {
             bin.len()
         );
         glb(&json, &bin)
+    }
+
+    /// A scene of one empty node and one embedded image.
+    fn image_model(mime: &str, bytes: &[u8]) -> Vec<u8> {
+        let json = format!(
+            r#"{{"asset":{{"version":"2.0"}},"scene":0,"scenes":[{{"nodes":[0]}}],"nodes":[{{"name":"n"}}],
+            "images":[{{"bufferView":0,"mimeType":"{mime}"}}],
+            "bufferViews":[{{"buffer":0,"byteOffset":0,"byteLength":{}}}],"buffers":[{{"byteLength":{}}}]}}"#,
+            bytes.len(),
+            bytes.len().next_multiple_of(4)
+        );
+        glb(&json, bytes)
+    }
+
+    /// A 16×8 RGB test card: a red ramp across, a green ramp down, blue constant.
+    fn card() -> Vec<u8> {
+        (0..8u32).flat_map(|y| (0..16u32).flat_map(move |x| [(x * 16) as u8, (y * 32) as u8, 160])).collect()
+    }
+
+    #[test]
+    fn png_texture_round_trips() {
+        let mut bytes = Vec::new();
+        let mut enc = png::Encoder::new(&mut bytes, 16, 8);
+        enc.set_color(png::ColorType::Rgb);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.write_header().unwrap().write_image_data(&card()).unwrap();
+        let data = ModelData::from_glb(&image_model("image/png", &bytes)).unwrap();
+        let img = &data.images[0];
+        assert_eq!((img.width, img.height), (16, 8));
+        let want: Vec<u8> = card().as_chunks::<3>().0.iter().flat_map(|p| [p[0], p[1], p[2], 255]).collect();
+        assert_eq!(img.rgba, want);
+    }
+
+    #[test]
+    fn jpeg_texture_round_trips() {
+        let mut bytes = Vec::new();
+        jpeg_encoder::Encoder::new(&mut bytes, 95).encode(&card(), 16, 8, jpeg_encoder::ColorType::Rgb).unwrap();
+        let data = ModelData::from_glb(&image_model("image/jpeg", &bytes)).unwrap();
+        let img = &data.images[0];
+        assert_eq!((img.width, img.height), (16, 8));
+        for (got, want) in img.rgba.as_chunks::<4>().0.iter().zip(card().as_chunks::<3>().0) {
+            assert_eq!(got[3], 255);
+            for c in 0..3 {
+                assert!(got[c].abs_diff(want[c]) <= 12, "{got:?} vs {want:?}");
+            }
+        }
+        assert!(ModelData::from_glb(&image_model("image/webp", &bytes)).is_err());
     }
 
     fn near(a: [f32; 3], b: [f32; 3]) -> bool {

@@ -140,5 +140,50 @@ class Png(unittest.TestCase):
         self.assertLessEqual(len(palette) // 3, 256)
 
 
+@unittest.skipUnless(__import__("importlib").util.find_spec("numpy"), "numpy missing")
+class Jpeg(unittest.TestCase):
+    def test_only_opaque_base_colours_become_jpeg(self):
+        """Images: 0 opaque base colour, 1 normal map, 2 base colour of a masked material,
+        3 base colour with alpha < 255, 4 base colour also used as an occlusion map."""
+        import numpy as np
+
+        rng = np.random.default_rng(2)
+        rgb = rng.integers(0, 256, (32, 32, 3), dtype=np.uint8)
+        holey = np.concatenate([rgb, np.full((32, 32, 1), 255, np.uint8)], axis=2)
+        holey[0, 0, 3] = 0
+        pngs = [g.png_encode(rgb), g.png_encode(rgb[::-1]), g.png_encode(rgb[:, ::-1]), g.png_encode(holey),
+                g.png_encode(rgb.transpose(1, 0, 2))]
+        views, blob = [], b""
+        for data in pngs:
+            views.append({"buffer": 0, "byteOffset": len(blob), "byteLength": len(data)})
+            blob += data + b"\0" * (-len(data) % 4)
+        doc = {
+            "asset": {"version": "2.0"},
+            "images": [{"bufferView": i, "mimeType": "image/png"} for i in range(5)],
+            "textures": [{"source": i} for i in range(5)],
+            "materials": [
+                {"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}, "normalTexture": {"index": 1}},
+                {"pbrMetallicRoughness": {"baseColorTexture": {"index": 2}}, "alphaMode": "MASK"},
+                {"pbrMetallicRoughness": {"baseColorTexture": {"index": 3}}},
+                {"pbrMetallicRoughness": {"baseColorTexture": {"index": 4}}, "occlusionTexture": {"index": 4}},
+            ],
+            "accessors": [], "bufferViews": views, "buffers": [{"byteLength": len(blob)}],
+        }
+        calls = []
+
+        def jpeg(px, quality):
+            calls.append((px.shape, quality))
+            return b"\xff\xd8\xff\xd9"
+
+        out, stats = g.pack_bytes(g.write_glb(doc, blob), jpeg)
+        mimes = [i["mimeType"] for i in g.read_glb(out)[0]["images"]]
+        self.assertEqual(mimes, ["image/jpeg"] + ["image/png"] * 4)
+        self.assertEqual(calls, [((32, 32, 3), g.JPEG_QUALITY)])
+        self.assertEqual(stats["jpeg"][:1], [1])
+        self.assertLess(stats["jpeg"][2], stats["jpeg"][1])
+        _, plain = g.pack_bytes(g.write_glb(doc, blob))
+        self.assertNotIn("jpeg", plain)
+
+
 if __name__ == "__main__":
     unittest.main()

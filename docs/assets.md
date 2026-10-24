@@ -282,7 +282,8 @@ sprite's feet reach below the ground point).
 ## Export and compression
 
 `acr_assets.export.export_glb`: glTF 2.0 binary, +Y up, modifiers applied, custom properties
-as extras, no cameras or lights, images as PNG. Blender 5.2's exporter also offers:
+as extras, no cameras or lights, images as PNG (packing turns opaque base colours into
+JPEG, below). Blender 5.2's exporter also offers:
 
 - **meshopt** (`EXT_meshopt_compression` or `KHR_meshopt_compression`, built in):
   `--compress meshopt`;
@@ -303,15 +304,37 @@ all in core glTF 2.0 types the renderer reads, no extension required:
   interpolation does not reproduce within 2e-4 rad / 2e-4 m; constant channels keep their
   ends, and drop out when they equal the node's own transform (the exported STAND pose the
   renderer falls back to) while another channel keeps the clip's length;
-- PNGs re-encoded losslessly (ancillary chunks dropped, constant opaque alpha removed, an
-  indexed PNG when the image has at most 256 colours, adaptive filters, zlib 9); identical
-  images, views and accessors stored once.
+- opaque base colours as JPEG, quality 88 (`JPEG_QUALITY`, Blender's libjpeg writer,
+  4:2:0 chroma; `export.encode_jpeg`): an image goes JPEG only when every material that
+  uses it takes it as `baseColorTexture` with `alphaMode` `OPAQUE`, its alpha is all 255
+  and the JPEG is smaller than the packed PNG (1×1 swatches stay PNG). Normal,
+  metal-roughness, occlusion and emissive maps, leaf cards and hair (`MASK`/`BLEND`) stay
+  PNG. `ACR_GLTF_JPEG=0` keeps every image PNG; `stats.json` `pack.jpeg` is
+  `[images, PNG bytes, JPEG bytes]`;
+- the other PNGs re-encoded losslessly (ancillary chunks dropped, constant opaque alpha
+  removed, an indexed PNG when the image has at most 256 colours, adaptive filters, zlib 9);
+  identical images, views and accessors stored once.
 
-The renderer reads custom attributes of any component type (`model.rs` `custom_f32`).
-Textures now dominate (EngM18: 1.5 of 2.4 MB). An 8-bit palette for the 1024 px atlases
-would halve them again but is lossy (mean error 0.2–0.3, max 40 levels; 2–3 on normal
-maps), and half resolution quarters them; neither is applied. The renderer decodes PNG only
-(`decode_png`); JPEG or WebP would need a decoder crate (`image`/`zune-jpeg`) in acr-render.
+The renderer reads custom attributes of any component type (`model.rs` `custom_f32`) and
+decodes PNG and JPEG images (`decode_png`, `decode_jpeg` with `zune-jpeg`).
+
+| File (packed, 2026-10-24) | PNG only | with JPEG | JPEG images |
+|---|---|---|---|
+| `engm18.glb` | 3.27 MB | 2.16 MB | 8 (1.74 → 0.40 MB) |
+| `engd18.glb` | 6.99 MB | 3.62 MB | 18 (5.08 → 0.67 MB) |
+| `delkri.glb` | 2.39 MB | 1.50 MB | 12 (1.53 → 0.36 MB) |
+| `engcen.glb` | 2.10 MB | 0.96 MB | 1 (1.50 → 0.21 MB) |
+| `conifer.glb` | 2.24 MB | 1.80 MB | 1 (bark; leaves and normals stay PNG) |
+| `map_t452.glb` | 1.09 MB | 0.87 MB | 1 (normal map stays PNG) |
+
+(Built on the render VM, `ACR_GLTF_JPEG=0` against the default; the swatch rule, added
+after, takes off about 1 KB more.) In-game close-ups (face, uniform, building, ruin, tree;
+`ACR-analysis/small-gltf/jpeg/png_vs_jpeg.png`) differ by 43–63 dB PSNR with no visible
+artefact; the largest differences sit on the eye whites and the coat's red, where 4:2:0
+chroma halves the colour resolution. GPU memory does not change: both decode to RGBA8.
+What is left of EngM18 is meshes and clips (about 1.7 of 2.16 MB). An 8-bit palette for
+the remaining PNG atlases would halve them but is lossy (mean error 0.2–0.3, max 40 levels;
+2–3 on normal maps), and half resolution quarters them; neither is applied.
 
 For small models like `IncDo1` the texture dominates and meshopt makes the file larger
 (141 vs 131 KB; its UV quantisation also moves the colour difference from 3.2 to 5.0). The

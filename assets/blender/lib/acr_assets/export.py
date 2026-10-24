@@ -20,10 +20,11 @@ def export_glb(path, compression="none", image_format="AUTO"):
     """Exports the scene. Skins, morph targets (shape keys), one animation per action
     (`STAND`, `DEATH`, ...), the active colour attribute as COLOR_0 and custom attributes
     whose names start with `_` (`_gore` -> `_GORE`, `_part` -> `_PART`, `_wind` -> `_WIND`)
-    go out when the scene has them. Images go out as PNG (the renderer decodes PNG only).
-    Without compression `gltf_pack` then quantises attributes, drops redundant clip keys and
-    re-encodes images losslessly (#199); what it did lands in `LAST_PACK`.
-    `ACR_GLTF_PACK=0` skips it (to compare)."""
+    go out when the scene has them. Images go out as PNG (the renderer decodes PNG and JPEG).
+    Without compression `gltf_pack` then quantises attributes, drops redundant clip keys,
+    stores opaque base colours as JPEG and re-encodes the other images losslessly (#199);
+    what it did lands in `LAST_PACK`. `ACR_GLTF_PACK=0` skips it, `ACR_GLTF_JPEG=0` keeps
+    every image PNG (to compare)."""
     if compression not in COMPRESSION:
         raise ValueError(f"compression must be one of {COMPRESSION}")
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
@@ -62,8 +63,36 @@ def export_glb(path, compression="none", image_format="AUTO"):
     )
     LAST_PACK.clear()
     if compression == "none" and os.environ.get("ACR_GLTF_PACK", "1") != "0":
-        LAST_PACK.update(gltf_pack.pack_file(path))
+        jpeg = encode_jpeg if os.environ.get("ACR_GLTF_JPEG", "1") != "0" else None
+        LAST_PACK.update(gltf_pack.pack_file(path, jpeg))
     return os.path.getsize(path)
+
+
+def encode_jpeg(pixels, quality):
+    """(h, w, 3) uint8 pixels, top row first -> JPEG bytes through Blender's image writer
+    (libjpeg, 4:2:0 chroma). Pixels of a byte image are stored without a colour transform."""
+    import tempfile
+
+    import numpy as np
+
+    h, w = pixels.shape[:2]
+    img = bpy.data.images.new("acr_jpeg", w, h, alpha=False)
+    try:
+        rgba = np.ones((h, w, 4), np.float32)
+        rgba[..., :3] = pixels[::-1] / 255.0
+        img.pixels.foreach_set(rgba.ravel())
+        fd, path = tempfile.mkstemp(suffix=".jpg")
+        os.close(fd)
+        try:
+            img.filepath_raw = path
+            img.file_format = "JPEG"
+            img.save(filepath=path, quality=quality)
+            with open(path, "rb") as f:
+                return f.read()
+        finally:
+            os.remove(path)
+    finally:
+        bpy.data.images.remove(img)
 
 
 LAST_PACK = {}

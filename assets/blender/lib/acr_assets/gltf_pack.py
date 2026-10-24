@@ -13,6 +13,10 @@ frame. This pass rewrites the binary chunk with core glTF 2.0 types the renderer
   constant channel as its first and last key, and a constant channel equal to the node's
   own transform (the exported STAND pose, which the renderer falls back to) dropped while
   another channel keeps the clip's length;
+- with a `jpeg` encoder given, opaque base-colour PNGs as JPEG (`JPEG_QUALITY`): images used
+  only as `baseColorTexture` of `OPAQUE` materials whose alpha is all 255. Normal,
+  metal-roughness, occlusion and emissive maps and the textures of alpha-masked or blended
+  materials (leaf cards, hair) stay lossless PNG;
 - identical images, buffer views and accessors stored once.
 
 `_PART` and `_LIMB` stay float: a vertex attribute element takes 4 bytes anyway (glTF
@@ -29,6 +33,7 @@ import zlib
 ROT_TOL = 2e-4      # rad: a dropped rotation key is reproduced within this angle
 MOVE_TOL = 2e-4     # m (and scale units) for translation and scale keys
 DROP_REST = True    # drop constant channels equal to the node transform
+JPEG_QUALITY = 88   # opaque base colours as JPEG (when an encoder is passed)
 
 FLOAT, BYTE, UBYTE, SHORT, USHORT, UINT = 5126, 5120, 5121, 5122, 5123, 5125
 SIZE = {BYTE: 1, UBYTE: 1, SHORT: 2, USHORT: 2, UINT: 4, FLOAT: 4}
@@ -372,11 +377,43 @@ class _Packer:
         return out
 
     # --- images
-    def images(self, stats):
+    def colour_images(self):
+        """Indices of the images used only as the base colour of opaque materials."""
+        doc = self.doc
+        tex = doc.get("textures", [])
+
+        def source(ref):
+            t = tex[ref["index"]] if ref and ref.get("index", -1) < len(tex) else None
+            return None if t is None or "extensions" in t else t.get("source")   # leave extensions alone
+
+        colour, other = set(), set()
+        for m in doc.get("materials", []):
+            pbr = m.get("pbrMetallicRoughness", {})
+            base = source(pbr.get("baseColorTexture"))
+            if base is not None:
+                (colour if m.get("alphaMode", "OPAQUE") == "OPAQUE" else other).add(base)
+            refs = [pbr.get("metallicRoughnessTexture")] + [m.get(k) for k in
+                                                             ("normalTexture", "occlusionTexture", "emissiveTexture")]
+            other |= {source(r) for r in refs if r}
+        return colour - other - {None}
+
+    def images(self, stats, jpeg=None):
         seen, remap = {}, {}
+        colour = self.colour_images() if jpeg else set()
         for i, img in enumerate(self.doc.get("images", [])):
             if "bufferView" not in img:
                 continue
+            if i in colour and img.get("mimeType") == "image/png":
+                data = self.views[img["bufferView"]]
+                px = png_decode(data)
+                if px is not None and px.shape[2] in (3, 4) and (px.shape[2] == 3 or (px[..., 3] == 255).all()):
+                    out = jpeg(px[..., :3], JPEG_QUALITY)
+                    # Tiny swatches (1x1 colours) stay smaller as PNG.
+                    if out and len(out) < len(png_shrink(data) or data):
+                        n, a, b = stats.get("jpeg", [0, 0, 0])
+                        stats["jpeg"] = [n + 1, a + len(data), b + len(out)]
+                        self.views[img["bufferView"]] = out
+                        img["mimeType"] = "image/jpeg"
             if img.get("mimeType") == "image/png":
                 small = png_shrink(self.views[img["bufferView"]])
                 if small is not None:
@@ -477,8 +514,9 @@ class _Packer:
 COMPONENTS_TYPE = {1: "SCALAR", 2: "VEC2", 3: "VEC3", 4: "VEC4"}
 
 
-def pack_bytes(data):
-    """The packed glb and what changed."""
+def pack_bytes(data, jpeg=None):
+    """The packed glb and what changed. `jpeg(pixels, quality)` encodes (h, w, 3) uint8 pixels
+    as JPEG bytes; without it every image stays PNG."""
     doc, blob = read_glb(data)
     if not doc.get("bufferViews"):
         return data, {}
@@ -487,15 +525,15 @@ def pack_bytes(data):
     p.attributes(stats)
     p.morphs(stats)
     p.clips(stats)
-    p.images(stats)
+    p.images(stats, jpeg)
     blob = p.finish()
     return write_glb(doc, blob), stats
 
 
-def pack_file(path):
+def pack_file(path, jpeg=None):
     with open(path, "rb") as f:
         data = f.read()
-    out, stats = pack_bytes(data)
+    out, stats = pack_bytes(data, jpeg)
     with open(path, "wb") as f:
         f.write(out)
     stats["bytes"] = [len(data), len(out)]
