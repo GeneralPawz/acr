@@ -173,6 +173,7 @@ def building(ctx, type_, budget=12000, tex=1024, pitch=0.0, nrm=512):
     ctx.stats["iou"] = _final_iou(obj, m, ref.anchor, view.dir)
     ctx.stats["size_m"] = _size(obj)
     obj.parent = ctx.root
+    __import__("acr_assets.ruin", fromlist=["add"]).add(ctx, obj)  # the `.ruin` state (#303, acr_assets/ruin.py)
     return obj
 
 

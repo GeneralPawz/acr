@@ -30,6 +30,13 @@ pub const RUIN_SMOKE: f32 = 90.0;
 pub const RUIN_TICKS: u64 = 600;
 /// Points used for a model without fire anchors.
 const GENERIC_POINTS: usize = 10;
+/// Smoke columns at most (of its smoke anchors, spread evenly): a few large plumes read as
+/// well as one per anchor and cost far less in the particles pass.
+pub const SMOKE_COLUMNS: usize = 6;
+/// The char left on a ruin state (it carries its own soot), reached this many seconds after
+/// the collapse from black.
+const RUIN_BURN: f32 = 0.3;
+const RUIN_COOL: f32 = 4.0;
 
 /// Where a building model burns, in model space (glTF metres, y up).
 #[derive(Clone, Debug, Default)]
@@ -170,7 +177,9 @@ pub fn look(id: u32, ground: Vec3, anchors: &Anchors, lost: f32, dead: Option<f3
             let flames = if c < 1.0 { 1.0 } else { (1.0 - after / RUIN_FLAMES).max(0.0) * 0.6 };
             let smoking = (1.0 - after / RUIN_SMOKE).max(0.0);
             let dust = (1.0 - t / (COLLAPSE_SECONDS + 1.0)).max(0.0);
-            (0.55 + 0.45 * c, m, flames, smoking, dust, down)
+            let burn =
+                if down { RUIN_BURN + (1.0 - RUIN_BURN) * (1.0 - after / RUIN_COOL).max(0.0) } else { 0.55 + 0.45 * c };
+            (burn, m, flames, smoking, dust, down)
         }
     };
     // Anchors burn in an order picked by the id; more of them as it grows.
@@ -179,8 +188,9 @@ pub fn look(id: u32, ground: Vec3, anchors: &Anchors, lost: f32, dead: Option<f3
     let start = (unit_hash(id, 1) * n as f32) as usize;
     let fire = (0..lit).map(|k| place(&transform, anchors.fire[(start + k * 7) % n])).collect();
     let ns = anchors.smoke.len();
-    let smokes = ((smoking * ns as f32).ceil() as usize).min(ns);
-    let smoke = (0..smokes).map(|k| place(&transform, anchors.smoke[(start + k * 5) % ns])).collect();
+    let columns = ns.min(SMOKE_COLUMNS);
+    let smokes = ((smoking * columns as f32).ceil() as usize).min(columns);
+    let smoke = (0..smokes).map(|k| place(&transform, anchors.smoke[(start + k * ns / columns.max(1)) % ns])).collect();
     let k = PIXELS_PER_METRE;
     let fire = Burning {
         unit: id,
@@ -223,6 +233,19 @@ mod tests {
         assert!(n(0.5) > 0 && n(0.5) < n(0.9));
         let ruin = look(1, [0.0; 3], &a, 1.0, Some(COLLAPSE_SECONDS + RUIN_SMOKE + 1.0), true);
         assert!(ruin.fire.fire.is_empty() && ruin.fire.smoke.is_empty() && ruin.show_ruin);
-        assert!(ruin.burn >= 0.99);
+        // A ruin state carries its own soot: black when it appears, lighter as it cools.
+        assert!((ruin.burn - RUIN_BURN).abs() < 1e-3);
+        let fresh = look(1, [0.0; 3], &a, 1.0, Some(COLLAPSE_SECONDS + 0.1), true);
+        assert!(fresh.show_ruin && fresh.burn > 0.9);
+        let shell = look(1, [0.0; 3], &a, 1.0, Some(COLLAPSE_SECONDS + RUIN_SMOKE + 1.0), false);
+        assert!(shell.burn >= 0.99);
+    }
+
+    #[test]
+    fn smoke_rises_in_a_few_columns() {
+        let a = Anchors { fire: vec![[0.0, 5.0, 0.0]; 28], smoke: vec![[0.0, 5.0, 0.0]; 28], half: [5.0; 2], top: 6.0 };
+        let burning = look(1, [0.0; 3], &a, 0.9, None, false);
+        assert_eq!(burning.fire.smoke.len(), SMOKE_COLUMNS);
+        assert_eq!(burning.fire.fire.len(), 28);
     }
 }

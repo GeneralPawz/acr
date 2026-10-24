@@ -334,13 +334,15 @@ impl FireView {
                     speed: [15.0, 40.0],
                     count: 1,
                     kind: ParticleKind::Smoke,
-                    life: [4.0, 7.0],
-                    size: [metres(0.6), metres(1.0)],
+                    life: [3.5, 6.0],
+                    size: [metres(0.7), metres(1.1)],
                     color: smoke_color,
-                    scatter: metres(0.5),
+                    scatter: metres(0.6),
                     seed: 0,
                 };
-                self.emit(sink, key | ((j as u64) << 4) | 2, dt, 2.5 * b.smoking * smoke_k, smoke);
+                // At most `ruin_view::SMOKE_COLUMNS` columns of slightly larger puffs: the particles
+                // pass is fill-bound, so fewer puffs, not bigger ones, make it cheaper.
+                self.emit(sink, key | ((j as u64) << 4) | 2, dt, 2.0 * b.smoking * smoke_k, smoke);
             }
             if b.dust > 0.0 {
                 // Dust (a pale smoke) rolls out over the footprint, splinters fly from the falling
@@ -350,16 +352,18 @@ impl FireView {
                     at: [b.ground[0], b.ground[1], b.ground[2] + metres(0.5)],
                     dir: [0.0, 0.0, 1.0],
                     spread: 0.9,
-                    speed: [20.0, 60.0],
+                    speed: [10.0, 35.0],
                     count: 1,
                     kind: ParticleKind::Smoke,
-                    life: [2.0, 4.0],
+                    life: [1.5, 3.0],
                     size: [metres(0.8), metres(1.6)],
                     color: DUST,
                     scatter: r,
                     seed: 0,
                 };
-                self.emit(sink, key | 3, dt, 30.0 * b.dust, dust);
+                // Low and short-lived, so the falling walls show through and the ruin is clear
+                // once it settles.
+                self.emit(sink, key | 3, dt, 18.0 * b.dust, dust);
                 let debris = Burst {
                     at: [b.ground[0], b.ground[1], b.ground[2] + b.top * 0.4],
                     spread: 0.7,

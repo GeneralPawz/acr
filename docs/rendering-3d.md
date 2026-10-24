@@ -1171,7 +1171,13 @@ height; real point lights; burning men panicking (sim, follow-up).
 - **Ruin:** a model with state groups (`<name>.finished`, `.build<k>`, `.section<s>_<k>`,
   `.ruin`; docs/assets.md "States") draws `finished` plus `section*_0` while standing and
   its `.ruin` group alone once fallen (`ModelData::without_groups`); others stay as the
-  squashed, charred mesh. Flames go on for 20 s, smoke for 90 s. It stays while the
+  squashed, charred mesh. Every generated building (`genbuild`) carries a generic ruin
+  (`acr_assets/ruin.py`, docs/assets.md "States"). A ruin state appears black and cools to
+  burn 0.3 over 4 s (it carries its own soot). Flames go on for 20 s, smoke for 90 s.
+- **Particles:** smoke rises from at most `SMOKE_COLUMNS` (6) of the smoke anchors, spread
+  evenly, at 2 puffs a second each (0.7–1.1 m, 3.5–6 s); the collapse dust is low and short
+  (1.5–3 s, 18 a second). The particles pass is fill-bound: larger puffs cost more than
+  they save (1.0–1.6 m puffs measured 2.20 ms). It stays while the
   simulation keeps the unit (`#DEATHLIE*`); a type without `#DEATH` (EngKre, EngSkl) is
   removed by the simulation at once, and its ruin stays `RUIN_TICKS` (600 ticks, as long as
   a `#DEATHLIE1` lasts).
@@ -1183,10 +1189,12 @@ intact EngKre, a burning EngKre and EngSkl at 900/3000 life; steps
 `ACR-analysis/genai/destruction/steps4.json`): `3d.instances` 0.011 ms a frame,
 `3d.particles` 0.044–0.088 ms; GPU particles pass 1.41 ms burning and 1.64 ms while they
 fall (sum of all passes 2.25 and 2.52 ms). Frames: `ACR-analysis/genai/destruction/`.
+With the smoke columns: GPU particles pass 1.41 → 0.76 ms in the same run (burning).
+Ruins of EngSkl, EngCen, DelCen and an EngSkl burn → collapse → ruin sheet:
+`ACR-analysis/genai/destruction/ruins/`.
 
 Open: the collapse is hidden under the `DESTRUCT` explosions' smoke; pre-fractured
-pieces and a ruin variant for generated buildings (Blender pipeline); scorch under the
-ruin; fewer, larger smoke puffs to cut the particles pass.
+pieces falling in.
 
 ## Camera math
 

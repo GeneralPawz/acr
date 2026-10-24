@@ -358,6 +358,15 @@ model-ref --sections S` draws every section in state S after the animation's par
 finished building does; `render_views.py` plays the clip named after the reference's
 animation and shows only the matching states.
 
+**Generic ruins (#303).** `genbuild.building` ends with `ruin.add`: the intact mesh goes into
+`<name>.finished` (`STANDLO`) and a `<name>.ruin` group (`DEATHLIE1`/`DEATHLIE2`) is built
+from it: walls cut by a ragged height field at 20–50 % of the height (roof gone, the cut
+fractured on a 0.5 m grid), the materials copied per height band and multiplied darker
+upwards (soot, same images), a scorched ground patch, a heap of jittered blocks and fallen
+beams. It stays within 40 % of the intact triangles (stats `ruin`: `triangles`, `share`,
+`walls`, `rubble`, `height_m`, `chunks`, `beams`; EngSkl 3200 of 8000, EngCen and DelCen
+4800 of 12000; about +0.24 MB a glb).
+
 ## Ships and guns from downloaded bases (#287)
 
 Ships and artillery start from professional base models (`assets/LICENSES.md`), kept
