@@ -1056,7 +1056,7 @@ impl ThreeD {
             let mut jobs: Vec<(&Unit, usize, &ModelData)> = Vec::new();
             let renderer = self.renderer.as_ref();
             for u in world.units.iter().filter(|u| (u.alive || lingering(u)) && u.inside_of.is_none() && !u.building) {
-                let name = names.entry(u.kind).or_insert_with(|| definition_name(&world.catalog.get(u.kind).id));
+                let name = names.entry(u.kind).or_insert_with(|| model_name(&self.files, world.catalog.get(u.kind)));
                 if let Some(Some(index)) = self.loaded.get(name.as_str())
                     && let Some(model) = renderer.and_then(|r| r.model(*index))
                     && !off(u, model)
@@ -1080,7 +1080,7 @@ impl ThreeD {
             if u.building && (self.models != Models::All || !(finished(world, u) || fallen || constructing)) {
                 continue;
             }
-            let mut name = names.entry(u.kind).or_insert_with(|| definition_name(&world.catalog.get(u.kind).id));
+            let mut name = names.entry(u.kind).or_insert_with(|| model_name(&self.files, world.catalog.get(u.kind)));
             // Upgraded (#302): every section done draws the `<NAME>UP` model where there is one.
             if u.building
                 && !constructing
@@ -2571,6 +2571,14 @@ struct StruckParts {
 struct BuildingStates {
     build: [Option<usize>; 4],
     sections: Vec<(u8, u16, usize)>,
+}
+
+/// The model name of an object type: its `.MD` `NAME` where a model of that name exists
+/// (the Spanish mines `SpnCoa`, `SpnIro`, `SpnStn` are `SpnRudCo`, `SpnRudIr`, `SpnRudSt`),
+/// else its id's name.
+fn model_name(files: &HashMap<String, String>, t: &acr_sim::ObjectType) -> String {
+    let md = t.md_name.to_ascii_uppercase();
+    if !md.is_empty() && files.contains_key(md.as_str()) { md } else { definition_name(&t.id) }
 }
 
 /// A building that stands finished (not under construction, not falling down).

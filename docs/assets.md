@@ -552,8 +552,13 @@ inside the transport (`desant.rs`), so none are drawn on deck.
   IoU 0.61-0.86 (stats `iou`, `fit`, `blocks`). Faces the sprite sees take its pixels
   through the original camera (`project.project_uvs`: carving and weathering as texture,
   stats `seen_share` 0.27-0.41); the others take their kind's tile scaled to the sprite's
-  dominant colour, in the same single UV set (the renderer reads one). The mine types
-  (`SpnCoa`/`SpnIro`/`SpnStn` in the catalog) are not yet drawn as models in the game. `IncDo3` draws its finished state from sections (`#STANDLO` has 0
+  dominant colour, in the same single UV set (the renderer reads one). The mine types are
+  `SpnCoa`/`SpnIro`/`SpnStn` in the catalog: the renderer looks a model up by the type's
+  `.MD` `NAME` (`ObjectType::md_name`) before the id's name (`three_d.rs` `model_name`).
+  A finished `AtcKre` shows its three `ADDSECTION` parts in their first state (keep, west
+  tower and wings, courtyard wall) around `#STANDLO`; its model is the whole compound fitted
+  to `acr model-ref --sections 0` (IoU 0.66; fitted to `#STANDLO` alone it drew as the
+  front row only, right of and smaller than the sprite). `IncDo3` draws its finished state from sections (`#STANDLO` has 0
   frames, frames 4-11 of `INCDO3.GP`) and is still left out.
 - Types with a scripted model keep it; `GENERATED = True` in `incdo1.py`, `shppinta.py`,
   `shpsanta.py`, `shpfregat.py` builds the generated one instead.
