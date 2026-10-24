@@ -790,14 +790,14 @@ def solidify(obj, thickness):
 HEM = {"coat_skirts": 0.006, "turnbacks": 0.006, "facings": 0.005, "lapels": 0.005}
 
 
-def hem(obj, depth):
+def hem(obj, depth, even=True):
     """A rim `depth` deep along the boundary of `obj`, inwards (no second shell)."""
     mod = obj.modifiers.new("acr_hem", "SOLIDIFY")
     mod.thickness = depth
     mod.offset = -1.0
     mod.use_rim = True
     mod.use_rim_only = True
-    mod.use_even_offset = True
+    mod.use_even_offset = even
     dg = bpy.context.evaluated_depsgraph_get()
     me = bpy.data.meshes.new_from_object(obj.evaluated_get(dg))
     obj.modifiers.remove(mod)
@@ -1143,7 +1143,7 @@ def finish(obj, ch, skirt, weights=None, under=(), cloth=None):
     return am.bind(obj, ch.arm)
 
 
-def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=()):
+def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=(), post_weld=None, weld_limit=None, hem_even=True):
     """Drapes the garments `garments` (in order: each rests on those before) on character
     `ch` (rest pose) and adds them to its `clothes` layer. A garment is drafted by
     `patterns[name]` when given (a family's one-off), else by `garments.GARMENTS` (the
@@ -1217,10 +1217,12 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=()):
                 mid = (ev.vertices[a].co + ev.vertices[b].co) / 2
                 worst_at = (gap, [round(100 * c, 1) for c in mid])
         gaps = sorted((ev.vertices[a].co - ev.vertices[b].co).length for a, b in sew)
-        base = WELD if not g.startswith("shirt") else 0.3
+        base = weld_limit if weld_limit is not None else WELD if not g.startswith("shirt") else 0.3
         limits = [getattr(seams[k], "close", None) or base for k in pieces["_sew_id"]]
         welded = sum(1 for (a, b), lim in zip(sew, limits) if (ev.vertices[a].co - ev.vertices[b].co).length < lim)
         weld(obj, sew, limit=base, limits=limits)
+        if post_weld is not None:
+            post_weld(obj, g)
         unposed = 0.0
         if posed:
             # Weights from the posed skin and layers beneath, then back to the rest pose by
@@ -1264,7 +1266,7 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=()):
                 (key, skirt), f"{key}_skirts" if skirt and key in both else key)
             part.name = part.data.name = f"{ch.name}.{label}"
             if label in HEM:
-                hem(part, HEM[label])
+                hem(part, HEM[label], even=hem_even)
             if posed:
                 bones = set(ch.arm.data.bones.keys())
                 cw = [{b: x for b, x in w.items() if b in bones} for w in _vertex_weights(part)]

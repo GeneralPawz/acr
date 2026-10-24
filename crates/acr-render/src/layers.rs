@@ -223,8 +223,17 @@ fn meshes(model: &ModelData) -> Vec<Mesh> {
     out
 }
 
-/// Checks every pair of layers through every clip at `steps` frames each (plus the rest
-/// pose).
+fn frame_times(duration: f32, fps: f32, steps: usize) -> impl Iterator<Item = f32> {
+    let count = if steps == 0 { (duration * fps).round() as usize + 1 } else { steps };
+    (0..count).map(
+        move |f| {
+            if steps == 0 { (f as f32 / fps).min(duration) } else { duration * f as f32 / steps as f32 }
+        },
+    )
+}
+
+/// Checks every pair of layers through every clip at `steps` samples each (plus the rest
+/// pose). With `steps == 0`, checks every authored frame, including the last frame.
 pub fn check(model: &ModelData, steps: usize) -> Vec<PairReport> {
     let meshes = meshes(model);
     let rest = model.pose(None, 0.0);
@@ -232,8 +241,7 @@ pub fn check(model: &ModelData, steps: usize) -> Vec<PairReport> {
     // Frames: (clip name, frame, palette).
     let mut frames = Vec::new();
     for (ci, clip) in model.clips.iter().enumerate() {
-        for f in 0..steps {
-            let t = clip.duration * f as f32 / steps.max(1) as f32;
+        for (f, t) in frame_times(clip.duration, model.fps, steps).enumerate() {
             frames.push((clip.name.clone(), f, model.pose(Some(ci), t)));
         }
     }
@@ -376,6 +384,16 @@ pub fn table(reports: &[PairReport]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_frame_includes_the_endpoint_and_single_frame_clips() {
+        let frames: Vec<_> = frame_times(9.0 / 24.0, 24.0, 0).collect();
+        assert_eq!(frames.len(), 10);
+        assert_eq!(frames[0], 0.0);
+        assert_eq!(frames[9], 9.0 / 24.0);
+        assert_eq!(frame_times(0.0, 24.0, 0).collect::<Vec<_>>(), vec![0.0]);
+        assert_eq!(frame_times(9.0 / 24.0, 24.0, 8).count(), 8);
+    }
 
     #[test]
     fn ranks_follow_the_dressing_order() {

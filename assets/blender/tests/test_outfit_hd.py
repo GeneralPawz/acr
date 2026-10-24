@@ -54,5 +54,18 @@ class SkirtSwing(unittest.TestCase):
         self.assertEqual(outfit_hd.skirt_swing(keys)[0][1]["skirt_fl_01"], (-80, 0, 0))
 
 
+class FittedSkirts(unittest.TestCase):
+    def test_every_key_uses_the_underlying_leg_including_death(self):
+        keys = [(0, {"thigh_l": (30, 4, -2), "shin_l": (12, 0, 0),
+                     "skirt_fl_01": (-80, 0, 0)}),
+                (9, {"thigh_r": (-20, -3, 1), "shin_r": (25, 0, 0)})]
+        out = outfit_hd.skirt_keys(keys)
+        for (_, source), (frame, fitted) in zip(keys, out):
+            for col in ("fl", "fr", "bl", "br"):
+                self.assertEqual(fitted[f"skirt_{col}_01"], source.get(f"thigh_{col[-1]}", (0, 0, 0)))
+                self.assertEqual(fitted[f"skirt_{col}_02"], source.get(f"shin_{col[-1]}", (0, 0, 0)))
+        self.assertEqual(keys[0][1]["skirt_fl_01"], (-80, 0, 0))
+
+
 if __name__ == "__main__":
     unittest.main()

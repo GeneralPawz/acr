@@ -1060,34 +1060,43 @@ up from the side, frames `walk*`, `fall*`; `ACR_NO_CLOTH=1` for the skinned skir
 
 ## High-detail outfits (m2-hd-outfit)
 
-The HD body (`acr_assets.hdbody`) is dressed the way open-world games do it, not by stacking
-layers in one cloth simulation (that poked 30 %, threw 3 m spikes and took 13 min):
-`acr_assets.outfit_hd`, first unit `assets/units/hdengm18.py` (opt-in, `TYPE` EngM18).
+The opt-in `assets/units/hdengm18.py` uses the HD skin and procedural 1768 drafts through
+`acr_assets.outfit_hd`. It keeps one outfit mesh containing only visible garment layers.
 
-1. **Each garment alone** (`drape_alone`): `drape.dress` with one garment of the 1768 set on
-   the HD skin (measured by `drape.Body` through a patched `mbody.repose`), panels at 1.5 cm,
-   the usual short damped sim and welds. About 76 s for all five on the VM.
-2. **One outfit mesh of the visible layers** (`compose`): from the outermost rank down, faces
-   of an inner layer whose corners all have an outer layer within 5 cm along the skin normal
-   are deleted (the skin too: about 20k of 78k triangles go); what stays is pushed 3 mm under
-   the layer on it (nearest point and a ray along the normal down to 12 mm, the layer check's
-   `POKE`). Loose parts (coat skirts, turnbacks) hide nothing and are lifted 3 mm over the
-   layers under them instead. Shoes are a 4 mm shell of the foot faces.
-3. **Cloth:** tiled twill / plain-weave albedo (1k per key), normal (2k per fabric) and
-   roughness on box-projected UVs (5 cm repeat); brass and pewter buttons (`drape.buttons`).
-   Weights from the skin, at most 4, normalised.
-4. **Gore and decay:** `_PART` from the strongest bone, `_GORE` and the decay mask per layer,
-   `acr_decay` extras on every material (the skin material is renamed `<unit>.skin.*` so
-   its key is `skin`). The renderer's placed caps close a cut sleeve, so no inner body is kept.
-5. **Levels:** the composed pieces decimated to 10k / 3k / 800 before the cut and composed
-   again against the body's level of the same rank, written with `acr_lod` / `acr_lod_of`.
-6. **Skirt swing:** `skirt_swing` keys the skirt bones a key behind the thighs in the
-   `MOTION_*` clips.
+1. **One simulation per garment:** `drape_alone` simulates each garment independently on
+   the HD body at 1.5 cm panel spacing. The HD path welds authored sewing pairs within
+   12 cm (including the sleeve-cap seams), then fairs the coat's shoulders against a
+   12 mm skin-clearance constraint. It does not simulate a stack of garments. The fitted
+   collar and stock retain separate bands rather than being smoothed into the shoulders.
+2. **Composition:** covered inner faces are deleted and retained fitted boundaries offset
+   under the outer layer. Loose skirts are laid at least 25 mm over the breeches, with
+   barycentric weights from the breeches. They are not pushed against nearby cuffs. The
+   stock is fitted around the neck; exposed skin boundaries are never pushed inward.
+   Facings are inlays in the same coat surface, so they do not trim the coat itself.
+   HD hem offsets omit corner miters, bounding the rim displacement to its thickness.
+   Covered trunk, leg and arm skin is removed at every body level; wrists, hands, neck
+   and head remain. Closed leather shoe lasts have rigid foot weights and buckle frames;
+   there are no bare foot or toe faces inside them.
+3. **Skirt bones:** the existing four two-bone chains use the corresponding thigh/shin bind
+   pivots and orientations. `skirt_keys` copies the leg keys into them in every clip,
+   including runs, firing, reload, melee and deaths. Matching deformation makes covered
+   breeches under these panels removable. The chains remain separate garment bones.
+4. **Materials and gore:** tiled wool/linen/leather maps and metal buttons remain. Every
+   outfit primitive retains its material's decay windows, `COLOR_0` decay mask, `_GORE`
+   and integer `_PART`. The game's cut caps close a severed sleeve without inner skin.
+5. **Levels:** simplify the finished visible outfit to 10k / 3k / 800 triangles, preserving
+   its material and custom attributes, then normalise four bone influences and restore
+   integer part IDs. Levels use `acr_lod` / `acr_lod_of`; visibility is not cut again on
+   coarse triangles. Body levels retain their independently baked atlases (see
+   `docs/rendering-3d.md`, "Texture streaming").
 
-`stats.json` → `outfit`: `drape` per garment, `compose.culled_faces` / `moved_verts` /
-`pokes` (rest pose, > 1 mm), `tris` per level, `skin_tris_after`, `drape_s`, `total_s`.
-Run `model_layers` on a copy without the level nodes: the check merges every primitive
-of a material key, so the levels count as poking against the master.
+Build stats under `outfit` include per-garment drape/weld results, composition counts,
+`quality.longest_edge_m`, shoulder dihedral RMS in the fixed 1.30-1.48 m / |x| 0.08-0.29 m
+window, triangle counts, skin removals and seconds. `hd.skin_cloth_influences` must be zero.
+For the game's layer check, exclude authored LOD nodes so it does not compare levels
+against one another. `model_layers --every-frame` checks every authored frame, including
+each clip's endpoint; `--steps 8` remains useful for the historical comparison. Proof
+renders use `posecheck` / `render_pose.py` and the build's pose dump.
 
 ## Known problems
 

@@ -888,7 +888,16 @@ def build_master(ctx, arm, portrait=None, master_tris=MASTER_TRIS):
     body.select_set(True)
     arm.select_set(True)
     bpy.context.view_layer.objects.active = arm
-    bpy.ops.object.parent_set(type="ARMATURE_AUTO")  # parented to the armature (glTF skin)
+    # Garment bones must never attract the body's automatic heat weights. Otherwise
+    # breeches inherit skirt motion from the skin they use as their weight source.
+    cloth_bones = [b for b in arm.data.bones if b.name.startswith("skirt_") and b.use_deform]
+    for b in cloth_bones:
+        b.use_deform = False
+    try:
+        bpy.ops.object.parent_set(type="ARMATURE_AUTO")
+    finally:
+        for b in cloth_bones:
+            b.use_deform = True
     st["finger_verts"] = _sharpen_fingers(body, arm)
     bpy.context.view_layer.objects.active = body
     bpy.ops.object.mode_set(mode="WEIGHT_PAINT")
@@ -896,6 +905,9 @@ def build_master(ctx, arm, portrait=None, master_tris=MASTER_TRIS):
     bpy.ops.object.vertex_group_normalize_all(group_select_mode="ALL", lock_active=False)
     bpy.ops.object.mode_set(mode="OBJECT")
     st["unweighted_verts"] = sum(1 for v in body.data.vertices if not v.groups)
+    cloth_groups = {g.index for g in body.vertex_groups if g.name.startswith("skirt_")}
+    st["skin_cloth_influences"] = sum(1 for v in body.data.vertices
+                                      if any(e.group in cloth_groups and e.weight > 1e-6 for e in v.groups))
 
     cage = body.copy()
     cage.data = body.data.copy()
@@ -959,11 +971,7 @@ def build_master(ctx, arm, portrait=None, master_tris=MASTER_TRIS):
     skin = skin_material(f"{ctx.name}.hd.skin", final, nrm_img, rough_img, 1.0)
     body.data.materials.append(skin)
     cage.data.materials.append(skin)
-    em = bpy.data.materials.new(f"{ctx.name}.hd.eye")
-    em.use_nodes = True
-    em.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0.85, 0.83, 0.8, 1)
-    em.node_tree.nodes["Principled BSDF"].inputs["Roughness"].default_value = 0.08
-    eyes.data.materials.append(em)
+    _eyes(eyes, ctx.name)
     del sc
     tri_uv, tri_v = _tri_arrays(cage.data)
     lab, k = island_labels(tri_uv, tri_v)
@@ -974,6 +982,38 @@ def build_master(ctx, arm, portrait=None, master_tris=MASTER_TRIS):
     st["uv_flipped"] = {"master": uv_flipped(mt_uv)}
     ctx._hd_raster = raster
     return body, eyes, cage
+
+
+def _eyes(eyes, name):
+    """Forward-looking irises and pupils on the actual eyeballs, exported as albedo."""
+    import bpy
+
+    n = 256
+    y, x = np.mgrid[0:n, 0:n] / (n - 1) - 0.5
+    r = np.hypot(x, y)
+    a = np.arctan2(y, x)
+    rgb = np.empty((n, n, 3))
+    rgb[:] = (0.88, 0.86, 0.81)
+    iris = r < 0.18  # 5.4 mm radius on a 30 mm map
+    grain = 0.75 + 0.2 * np.sin(43 * a + 75 * r) * np.sin(71 * a - 60 * r)
+    rgb[iris] = (grain[..., None] * np.array((0.23, 0.29, 0.25)))[iris]
+    rgb[(r > 0.164) & iris] *= 0.45
+    rgb[r < 0.075] = (0.008, 0.006, 0.004)
+    image = _image(f"{name}.iris", rgb)
+    m = skin_material(f"{name}.hd.eye", image)
+    bs = m.node_tree.nodes["Principled BSDF"]
+    bs.inputs["Roughness"].default_value = 0.25
+    bs.inputs["Subsurface Weight"].default_value = 0.0
+    eyes.data.materials.append(m)
+    centers = {}
+    for side in (-1, 1):
+        pts = np.array([v.co[:] for v in eyes.data.vertices if v.co.x * side > 0])
+        centers[side] = (pts.min(axis=0) + pts.max(axis=0)) / 2
+    uv = eyes.data.uv_layers.get("UVMap") or eyes.data.uv_layers.new(name="UVMap")
+    for loop in eyes.data.loops:
+        p = eyes.data.vertices[loop.vertex_index].co
+        c = centers[1 if p.x > 0 else -1]
+        uv.data[loop.index].uv = (0.5 + (p.x - c[0]) / 0.03, 0.5 + (p.z - c[2]) / 0.03)
 
 
 def _portrait_bake(body, eyes, alb_img, portrait, QJ, st):
@@ -1000,6 +1040,14 @@ def _portrait_bake(body, eyes, alb_img, portrait, QJ, st):
     k = np.clip((1.0 - r) / (1.0 - FADE), 0, 1)
     k = k * k * (3 - 2 * k)
     w = (k * np.clip((-no[:, 1] - 0.15) / 0.35, 0, 1) * (co[:, 1] < eye_y + 0.04)).astype(np.float32)
+    # A photograph's painted eyeballs must not appear on the eyelids above the real
+    # eyeballs. Keep the source skin in these sockets; the separate eyes carry irises.
+    for side in (-1, 1):
+        pts = np.array([v.co[:] for v in eyes.data.vertices if v.co.x * side > 0])
+        center = (pts.min(axis=0) + pts.max(axis=0)) / 2
+        er = np.hypot((co[:, 0] - center[0]) / 0.021, (co[:, 2] - center[2] - 0.004) / 0.020)
+        fade = np.clip((er - 0.65) / 0.35, 0, 1)
+        w *= fade * fade * (3 - 2 * fade)
     a = me.color_attributes.new("pmask", "FLOAT_COLOR", "POINT")
     a.data.foreach_set("color", np.stack([w, w, w, np.ones_like(w)], 1).ravel())
     por = bpy.data.images.load(portrait)

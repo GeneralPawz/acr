@@ -1,5 +1,5 @@
 //! `cargo run --release -p acr-render --example model_layers -- <model.glb>... [--steps N]
-//! [--max-crossing N] [--max-poking N]`: skins each model through every clip and reports the
+//! [--every-frame] [--max-crossing N] [--max-poking N]`: skins each model through every clip and reports the
 //! inner clothing layers that come out through outer ones (`acr_render::layers`,
 //! docs/clothing.md), already in the rest pose (poking) or in some frame (crossing). Ends
 //! with one summary line per model; fails when a model exceeds a limit.
@@ -12,6 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
+            "--every-frame" => steps = 0,
             "--steps" => steps = args.next().ok_or("--steps needs a value")?.parse()?,
             "--max-crossing" => max = Some(args.next().ok_or("--max-crossing needs a value")?.parse::<usize>()?),
             "--max-poking" => max_poke = Some(args.next().ok_or("--max-poking needs a value")?.parse::<usize>()?),
