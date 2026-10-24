@@ -236,7 +236,7 @@ def _palette(palette):
 TRACED_STRAP_OFFSETS = (0.020, 0.024)
 # A traced garment's full sleeves take their weights from the arm skin pushed out `offset` m,
 # smoothed `smooth` passes over the sleeve (`drape.sleeve_weights`).
-TRACED_SLEEVE_WEIGHTS = {"offset": 0.0, "smooth": 3}
+TRACED_SLEEVE_WEIGHTS = {"offset": 0.0, "smooth": 3, "blend": 0.06}
 
 
 def _drape(kw, plan):

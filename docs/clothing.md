@@ -792,7 +792,7 @@ the repo holds only the code and synthetic test patterns.
   each (`pike.traced_garment`, cloth of the JSON's `cloth`) and drapes it in place of
   `doublet` / `breeches`. `engmus.COAT_PATTERN` and `engmus.BREECHES_PATTERN` stay `None`
   (the drafted garments) until the traced ones match their layer numbers;
-  `engpik.COAT_PATTERN` is `"waugh/buffcoat_1640"` (round 6). The rule for a default:
+  `engpik.COAT_PATTERN` is `"waugh/buffcoat_1640"` (round 6, again from round 7). The rule for a default:
   crossing not above the drafted, poking at most 10% above, `gear_volume` not worse, the
   studio sheet passed.
 - `stats.json` `drape.<garment>.worst_gap_at_cm`: the widest sewn pair's midpoint (cm, rest
@@ -865,6 +865,28 @@ EngMus stays drafted: the traced pair measures 317 / 215 against 261 / 188; the 
 crossing is the doublet through the belts (26 vs 12) and the falling band through the belts
 (36 vs 22). The band seam's widest pair is at the side of the hip, not at the CF, and
 lifting the legs did not close it.
+
+Round 7 (24 Oct 2026, main ce02139): the verifier's "torn walk-frame sleeves" (round 6) do
+not come back with the current pike clips: in `MOTION_L` the traced cloth sleeves stretch
+less than the drafted (edge length posed / rest, max 1.57 vs 1.75, none over 2x). The real
+tear was at the armhole in the pike charge (`ATTACK`): sleeve vertices next to the armhole
+took the upper arm's weights (`drape.sleeve_weights`) while the armhole edge kept the
+body's, and the cloth between stretched 3.4x. `sleeve_weights(..., blend=)` fades the
+sleeve's weights into the plain transfer's within `blend` m of its open edges
+(`pike.TRACED_SLEEVE_WEIGHTS` 6 cm): edges over 2x 3 -> 2 (the last two lie in the plain
+transfer itself, under the corselet). Weights from a ray out of the arm's bone axis instead
+of the nearest skin measured the same and were not kept. The traced buff coat is EngPik's
+default again:
+
+| EngPik | welded | `gap_mm_max` | poking / crossing | `gear_volume` | IoU STAND |
+|---|---|---|---|---|---|
+| drafted buff coat | 175/187 | 89 | 245 / 311 | 0 | 0.606 |
+| traced IX, round 6 weights | 136/136 | 32 | 252 / 315 | 0 | |
+| traced IX, armhole blend 6 cm | 136/136 | 32 | 249 / 312 | 0 | 0.599 |
+
+EngMus stays drafted (drafted 276 / 236, IoU 0.592): traced doublet 235 / 256 (IoU 0.607),
+traced doublet + breeches 317 / 231 (0.604). The other 17th-century units (drummers and
+standards through `pike.support_spec`, FrnS17, SpnMus, FrnPik) take no pattern switch yet.
 
 The waist band must be pinned (`place.pin` "top": tied to the doublet with points): unpinned,
 the full breeches slid down into a puff at the knee, with bare thighs. That failed drape still

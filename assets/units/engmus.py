@@ -37,6 +37,8 @@ MD = {
 
 # None: the drafted doublet (`garments.doublet`); "waugh/doublet_1635": the doublet traced
 # from Waugh's Diagram VIII (ACR_SOURCES/patterns, docs/clothing.md "Traced patterns").
+# Both stay drafted: traced, the layers measure worse (round 7: doublet crossing 256 vs 236,
+# doublet + breeches poking 317 vs 276).
 COAT_PATTERN = None
 # None: the drafted breeches; "waugh/breeches_1640": Waugh's Diagram X, traced.
 BREECHES_PATTERN = None

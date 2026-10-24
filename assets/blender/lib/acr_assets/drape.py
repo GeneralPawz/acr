@@ -24,6 +24,7 @@ import bpy
 import numpy as np
 from mathutils import Vector
 from mathutils.bvhtree import BVHTree
+from mathutils.kdtree import KDTree
 from mathutils.geometry import delaunay_2d_cdt
 
 from . import armature as am
@@ -839,14 +840,16 @@ def smooth_weights(obj, ws, passes, keep=4, fixed=()):
     return res
 
 
-def sleeve_weights(obj, ch, offset=0.02, passes=3, keep=4):
+def sleeve_weights(obj, ch, offset=0.02, passes=3, keep=4, blend=0.0):
     """Weights of a full sleeve (docs/clothing.md "Traced patterns"): from a proxy of the
     arm's skin pushed out `offset` m along its normals (about the sleeve's own stand-off),
     so a vertex finds the arm surface straight under it rather than the nearest skin round
     the elbow or the armpit; then smoothed over the sleeve (`smooth_weights`), so the cloth
     bends in an arc over the joint instead of folding into the skin. Arm faces only (no
     hands), each side its own arm. The open edges (armhole, wrist) keep the plain transfer's
-    weights, so the sleeve stays on the body's armhole seam."""
+    weights, so the sleeve stays on the body's armhole seam; within `blend` m of them the
+    sleeve's weights fade into the plain transfer's, so the cloth next to the armhole does
+    not tear off the seam when the arm is raised (EngPik's pike charge stretched it 3.4x)."""
     fm = ch.flesh.data
     names = {g.index: g.name for g in ch.flesh.vertex_groups}
     vw = [{names[e.group]: e.weight for e in v.groups if e.group in names} for v in fm.vertices]
@@ -881,6 +884,19 @@ def sleeve_weights(obj, ch, offset=0.02, passes=3, keep=4):
     edge = [v.index for v in bm.verts if v.is_boundary]
     bm.free()
     ws = [f if (not w or i in edge) else w for i, (w, f) in enumerate(zip(ws, plain))]
+    if blend > 0.0 and edge:
+        kd = KDTree(len(edge))
+        for k, i in enumerate(edge):
+            kd.insert(obj.data.vertices[i].co, k)
+        kd.balance()
+        on_edge = set(edge)
+        for i, v in enumerate(obj.data.vertices):
+            if i in on_edge or not ws[i]:
+                continue
+            t = min(kd.find(v.co)[2] / blend, 1.0)
+            if t < 1.0:
+                f = plain[i]
+                ws[i] = {b: t * ws[i].get(b, 0.0) + (1.0 - t) * f.get(b, 0.0) for b in set(ws[i]) | set(f)}
     return smooth_weights(obj, ws, passes, keep=keep, fixed=edge)
 
 
@@ -1213,7 +1229,8 @@ def dress(ch, garments=gm.ORDER, report=None, patterns=None, over=()):
             elif gm.CLOTH.get(g, {}).get("sleeve_weights") and all(
                     panels[names[i]].place["region"] == "arm" for i in idx):
                 sw = gm.CLOTH[g]["sleeve_weights"]
-                finish(part, ch, skirt, weights=sleeve_weights(part, ch, sw["offset"], sw["smooth"]))
+                finish(part, ch, skirt, weights=sleeve_weights(part, ch, sw["offset"], sw["smooth"],
+                                                                    blend=sw.get("blend", 0.0)))
             else:
                 finish(part, ch, skirt, under=under)
             ch.add("clothes", part, key, symmetric=True)
