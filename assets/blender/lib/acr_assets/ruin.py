@@ -183,6 +183,10 @@ def _walls(ctx, obj, group, seed, top, target):
     # materials.clear() drops material_index (pitfall 1): put it back.
     _restore_index(me, index)
     walls_tris = vs.decimate(walls, target)
+    # Bisecting overlapping blocks leaves zero-area and doubled faces, which the exporter
+    # reports as "mesh not valid": clean them here (stats `ruin_cleaned`).
+    ctx.stats["ruin_cleaned"] = bool(walls.data.validate(clean_customdata=False))
+    walls_tris = vs.triangles([walls])
     return walls, walls_tris
 
 

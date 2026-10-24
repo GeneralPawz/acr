@@ -17,6 +17,8 @@ def build(ctx):
     k.box("stone", (0, 0), (6.8, 6.8), z, z + 0.4)
     k.merlons("stone", (0, 0), (6.6, 6.6), z + 0.4, 1.2, w=0.6, gap=0.5)
     k.box("stone", (0, 0), (3.0, 3.0), z, z + 2.0)
+    k.door("stone", 0.0, -3.8, w=1.4, h=2.6, z0=1.0)
+    k.cornice("stone", (0, 0), (6.2, 6.2), z - 0.3, 0.3, 0.3)
     k.stairs("stone", (6.8, -3.0), 1.8, 3.0, 0.0, 3.0, 9, 90)
     k.box("stone", (4.6, -3.0), (1.6, 2.2), 0.0, 3.0)  # landing
     k.heap("rubble", (0, 0), 6.0, 40, 0.5, 0.3, ring=0.85)

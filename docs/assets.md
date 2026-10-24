@@ -549,8 +549,11 @@ inside the transport (`desant.rs`), so none are drawn on deck.
   blocks, stairs, merlons, timbers, rubble heaps and an open or floored pit funnel; one mesh,
   one `surfaces` kind per material slot, turn, scale and shift fitted to the `#STANDLO`
   sprite, then the generic ruin): `NetBlg1/3/4/7/8`, `SpnRudCo/Ir/St`, `AtcKre`, sprite
-  IoU 0.61-0.86 (stats `iou`, `fit`, `blocks`). They are blockouts in shape, without the
-  sprites' carving. `IncDo3` draws its finished state from sections (`#STANDLO` has 0
+  IoU 0.61-0.86 (stats `iou`, `fit`, `blocks`). Faces the sprite sees take its pixels
+  through the original camera (`project.project_uvs`: carving and weathering as texture,
+  stats `seen_share` 0.27-0.41); the others take their kind's tile scaled to the sprite's
+  dominant colour, in the same single UV set (the renderer reads one). The mine types
+  (`SpnCoa`/`SpnIro`/`SpnStn` in the catalog) are not yet drawn as models in the game. `IncDo3` draws its finished state from sections (`#STANDLO` has 0
   frames, frames 4-11 of `INCDO3.GP`) and is still left out.
 - Types with a scripted model keep it; `GENERATED = True` in `incdo1.py`, `shppinta.py`,
   `shpsanta.py`, `shpfregat.py` builds the generated one instead.

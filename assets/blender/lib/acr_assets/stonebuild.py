@@ -25,6 +25,8 @@ from mathutils import Matrix, Vector
 
 from . import materials, surfaces
 
+CELL = 0.6  # metres: grid size of the block faces
+
 # Flat colours (sRGB) for kinds that need no texture.
 FLAT = {
     "pit": (0.09, 0.08, 0.07),
@@ -45,13 +47,25 @@ class Kit:
             self.kinds.append(kind)
         return self.kinds.index(kind)
 
+    def _quad(self, corners, slot):
+        """One quad as a grid of about `CELL` m cells (finer faces see the sprite better: a
+        face takes the projection's colours only when it is visible as a whole)."""
+        a, b, c, d = (Vector(p) for p in corners)
+        nu = max(1, min(24, round(max((b - a).length, (c - d).length) / CELL)))
+        nv = max(1, min(24, round(max((d - a).length, (c - b).length) / CELL)))
+        grid = [[self.bm.verts.new(a.lerp(b, i / nu).lerp(d.lerp(c, i / nu), j / nv)) for i in range(nu + 1)]
+                for j in range(nv + 1)]
+        for j in range(nv):
+            for i in range(nu):
+                f = self.bm.faces.new((grid[j][i], grid[j][i + 1], grid[j + 1][i + 1], grid[j + 1][i]))
+                f.material_index = slot
+
     def _hull(self, kind, pts):
-        """Box from 8 corners: bottom 0-3, top 4-7, counter-clockwise seen from above."""
-        vs = [self.bm.verts.new(p) for p in pts]
+        """Box from 8 corners: bottom 0-3, top 4-7, counter-clockwise seen from above. The
+        bottom face is left out (it stands on the ground or on another block)."""
         slot = self._slot(kind)
-        for q in ((0, 3, 2, 1), (4, 5, 6, 7), (0, 1, 5, 4), (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7)):
-            f = self.bm.faces.new([vs[i] for i in q])
-            f.material_index = slot
+        for q in ((4, 5, 6, 7), (0, 1, 5, 4), (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7)):
+            self._quad([pts[i] for i in q], slot)
         self.blocks += 1
 
     def box(self, kind, c, size, z0, z1, yaw=0.0, taper=0.0):
@@ -86,6 +100,19 @@ class Kit:
             # each step a block from the ground to its tread, stepping back up the flight
             cx, cy = foot[0] - d[0] * s, foot[1] - d[1] * s
             self.box(kind, (cx, cy), (width, step * 1.02), z0, z0 + (z1 - z0) * (i + 1) / n, yaw=facing)
+
+    def cornice(self, kind, c, size, z, h=0.3, out=0.25):
+        """A moulding band `h` high standing `out` proud of a block of `size` at height `z`."""
+        self.box(kind, c, (size[0] + 2 * out, size[1] + 2 * out), z, z + h)
+
+    def door(self, kind, c, face_y, w=1.4, h=2.4, out=0.3, jamb=0.4, z0=0.0):
+        """A doorway on the south face (y = `face_y`) of a block, centred at x = `c`: two
+        jambs and a lintel standing `out` proud of the wall, the opening between them in the
+        wall's own plane (the sprite's dark doorway projects onto it)."""
+        y = face_y - out / 2
+        for sx in (-1, 1):
+            self.box(kind, (c + sx * (w / 2 + jamb / 2), y), (jamb, out), z0, z0 + h)
+        self.box(kind, (c, y), (w + 2 * jamb + 0.2, out + 0.05), z0 + h, z0 + h + 0.45)
 
     def merlons(self, kind, c, size, z, h, w=0.5, gap=0.5, depth=0.45):
         """Merlons of width `w` and gap `gap` standing on the rim of the rectangle `size`."""
@@ -138,12 +165,11 @@ class Kit:
         for i in range(sides):
             a = 2 * math.pi * i / sides
             j = 1.0 + 0.08 * math.sin(3 * a + 1.3) + self.rnd.uniform(-0.04, 0.04)
-            top.append(self.bm.verts.new((c[0] + math.cos(a) * r_top * j, c[1] + math.sin(a) * r_top * j * squash, z_top)))
+            top.append(Vector((c[0] + math.cos(a) * r_top * j, c[1] + math.sin(a) * r_top * j * squash, z_top)))
             bot.append(self.bm.verts.new((c[0] + math.cos(a) * r_floor * j, c[1] + math.sin(a) * r_floor * j * squash, z_floor)))
         for i in range(sides):
             k = (i + 1) % sides
-            f = self.bm.faces.new((top[i], top[k], bot[k], bot[i]))
-            f.material_index = ws
+            self._quad([top[i], top[k], bot[k].co.copy(), bot[i].co.copy()], ws)
         if floor is None:
             self.blocks += 1
             return
@@ -155,17 +181,34 @@ class Kit:
         self.blocks += 1
 
 
-def _material(kind):
+def _material(kind, tint=None, uv="surface"):
+    """The material of a surface kind; with `tint` (sRGB) its tile is scaled to that mean
+    colour (the sprite's colour for the faces no sprite view sees)."""
     if kind in FLAT:
-        return materials.flat(f"stone.{kind}", FLAT[kind])
-    return surfaces.material(kind)
+        return materials.flat(f"stone.{kind}" + (".unseen" if tint else ""), tint or FLAT[kind])
+    if tint is None:
+        return surfaces.material(kind)
+    gen, _tile, rough = surfaces.KINDS[kind]
+    rgb = gen()
+    lin = np.array([materials.srgb_to_linear(c) for c in tint], np.float32)
+    rgb = rgb * (lin / np.maximum(rgb.reshape(-1, 3).mean(axis=0), 1e-4))
+    n = surfaces.SIZE
+    px = np.ones((n, n, 4), np.float32)
+    px[..., :3] = np.clip(rgb, 0, 1)
+    img = bpy.data.images.new(f"stone_{kind}_unseen", n, n, alpha=False, float_buffer=False)
+    img.colorspace_settings.name = "sRGB"
+    img.pixels.foreach_set(np.power(px, [1 / 2.2, 1 / 2.2, 1 / 2.2, 1.0]).astype(np.float32).ravel())
+    img.file_format = "PNG"
+    img.pack()
+    return materials.textured(f"stone_{kind}_unseen", img, uv, roughness=rough, closest=False)
 
 
 def _uvs(me, kinds):
-    """Surface UVs aligned to each face (`surfaces.aligned_uv`), per material's tile size."""
+    """Surface UVs aligned to each face (`surfaces.aligned_uv`), per kind's tile size
+    (`kinds`: the kind of each polygon)."""
     uv = me.uv_layers.get("surface") or me.uv_layers.new(name="surface")
     for poly in me.polygons:
-        kind = kinds[poly.material_index]
+        kind = kinds[poly.index]
         k = 1.0 / (surfaces.KINDS[kind][1] if kind in surfaces.KINDS else 1.0)
         n = poly.normal
         if abs(n.z) > 0.97:
@@ -184,21 +227,29 @@ def _uvs(me, kinds):
 
 
 def finish(ctx, kit, yaws=range(0, 360, 10)):
-    """The kit as one mesh under `ctx.root`, fitted to the sprite, textured, with its ruin."""
-    from . import genbuild, ruin, spritefit
+    """The kit as one mesh under `ctx.root`, fitted to the sprite, coloured, with its ruin.
+
+    Colour: the faces a sprite view sees take the sprite's pixels through the original
+    camera (`project.project_uvs`, as the scripted `incdo1`; at game zoom the model reads
+    like the sprite, carving and weathering included); the faces it does not see (backs,
+    hidden ledges) take their kind's procedural tile scaled to the dominant sprite colour
+    instead of a flat one. Without a reference every face keeps its procedural tile."""
+    from . import genbuild, project, ruin, spritefit
     from . import vessels as vs
 
     me = bpy.data.meshes.new(ctx.root.name)
     kit.bm.to_mesh(me)
     kit.bm.free()
-    for kind in kit.kinds:
-        me.materials.append(_material(kind))
     me.validate()
+    kind_of = np.zeros(len(me.polygons), np.int32)
+    me.polygons.foreach_get("material_index", kind_of)
     obj = bpy.data.objects.new(ctx.root.name, me)
     bpy.context.scene.collection.objects.link(obj)
     v, _ = genbuild._arrays(obj)
     c = (v.min(axis=0) + v.max(axis=0)) / 2
     vs.transform([obj], Matrix.Translation((-c[0], -c[1], -float(v[:, 2].min()))))
+    _uvs(me, [kit.kinds[k] for k in kind_of])
+    index = kind_of.copy()
     if ctx.ref is not None:
         view = ctx.ref.views[0]
         m = genbuild.mask(view)
@@ -207,7 +258,28 @@ def finish(ctx, kit, yaws=range(0, 360, 10)):
         ctx.stats["fit"] = {k: (round(x, 4) if isinstance(x, float) else x) for k, x in f.items() if k not in ("screen", "rough")}
         ctx.stats["fit"]["shift"] = [round(x, 3) for x in f["shift"]]
         ctx.stats["iou"] = genbuild._final_iou(obj, m, ctx.ref.anchor, view.dir)
-    _uvs(me, kit.kinds)
+        _uvs(me, [kit.kinds[k] for k in kind_of])  # tiles at the fitted size
+        image, info = project.project_uvs([obj], ctx.ref)
+        hidden, rgb, _samples = info[obj.name]
+        me.materials.append(materials.textured("sprite", image, "sprite"))
+        for kind in kit.kinds:
+            me.materials.append(_material(kind, tuple(rgb) if rgb else None, uv="sprite"))
+        hid = np.zeros(len(me.polygons), bool)
+        hid[list(hidden)] = True
+        # The renderer reads one UV set: the unseen faces carry their tile UVs in the
+        # `sprite` map too (they do not use the atlas), and the `surface` map goes.
+        sp, su = me.uv_layers["sprite"], me.uv_layers["surface"]
+        for i in np.nonzero(hid)[0]:
+            for li in me.polygons[int(i)].loop_indices:
+                sp.data[li].uv = su.data[li].uv
+        me.uv_layers.remove(su)
+        me.uv_layers.active = me.uv_layers["sprite"]
+        index = np.where(hid, kind_of + 1, 0).astype(np.int32)
+        ctx.stats["seen_share"] = round(1.0 - float(hid.mean()), 3)
+    else:
+        for kind in kit.kinds:
+            me.materials.append(_material(kind))
+    me.polygons.foreach_set("material_index", index)
     for p in me.polygons:
         p.use_smooth = False
     ctx.stats["blocks"] = kit.blocks

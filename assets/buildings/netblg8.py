@@ -11,6 +11,9 @@ def build(ctx):
     k = stonebuild.Kit(seed=38)
     k.box("stone", (0, 0), (9.0, 9.0), 0.0, 5.2)
     k.box("stone", (0, 0), (9.4, 9.4), 5.0, 5.4)
+    k.cornice("stone", (0, 0), (9.0, 9.0), 2.6, 0.3, 0.15)
+    k.cornice("stone", (0, 0), (9.0, 9.0), 0.0, 0.6, 0.3)  # plinth
+    k.door("stone", 0.0, -4.5, w=1.6, h=2.6)
     k.merlons("stone", (0, 0), (9.0, 9.0), 5.4, 1.4, w=0.7, gap=0.35, depth=0.5)
     k.box("stone", (0, 0), (9.0, 9.0), 6.6, 6.9)
     k.heap("rubble", (0, 0), 3.0, 30, 0.6, 0.0)  # fallen stones on the roof
