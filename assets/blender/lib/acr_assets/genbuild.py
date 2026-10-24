@@ -18,7 +18,9 @@ against the reference `acr model-ref` drew (`ctx.ref`, the ground point at its a
 view nearest direction 104), snaps its long axis to Y with the bow south, scales it to
 `length` metres overall, sinks the keel `draft` below the waterline (the ground point) and
 rigs it like `ships.build` (hull > intact / wreck; `STAND`, `MOTION_*`, `ATTACK`, `DEATH`,
-`DEATHLIE1`), without sail bones (the generated mesh is one piece).
+`DEATHLIE1`), without sail bones (the generated mesh is one piece). `rel` borrows another
+type's generated model (path below `generated/`, e.g. the war canoe ShpKanoe3 on ShpKanoe1's),
+still fitted to the own sprite.
 
 Stats: `source`, `source_triangles`, `triangles`, `fit` (yaw, scale, iou of the point
 raster), `size_m`, and for ships `length_m`, `height_m`, `draft_m`, `sprite_length_m`
@@ -249,12 +251,12 @@ def from_sprite(ctx, type_, budget=12000, tex=1024, nrm=512, rel=None):
     return obj
 
 
-def ship(ctx, type_, length, draft, budget=16000, tex=1024, view_dir=104.0, wreck_share=0.2):
+def ship(ctx, type_, length, draft, budget=16000, tex=1024, view_dir=104.0, wreck_share=0.2, rel=None):
     ref = _need_ref(ctx)
     root = ctx.root
     root["acr_clock"] = "world"
     root["acr_machine"] = True
-    obj = _load(ctx, type_, tex)
+    obj = _load(ctx, type_, tex, rel)
     view = min(ref.views, key=lambda w: abs(w.dir - view_dir))
     m = mask(view)
     f = spritefit.fit(sample(obj), m, ref.anchor, view.dir)
