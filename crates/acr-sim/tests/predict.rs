@@ -126,3 +126,19 @@ fn a_ridge_stops_the_musket() {
     assert!(saw_short_reload, "the blocked strike set the 20-frame reload");
     assert_eq!(unit(&w, enemy).life, 100);
 }
+
+/// Reloaded and standing ready in `#PSTAND1` without orders, the musketeer finds an enemy
+/// 490 px away by itself (`SearchVictim` 0x52622b) and fires within the first strike (#194).
+#[test]
+fn a_ready_shooter_without_orders_finds_and_fires() {
+    let (mut w, k) = setup(MapGrid::open(1));
+    let shooter = w.spawn(k.mus, 0, Pos::from_pixels(2000, 2000), 0);
+    w.spawn(k.bystander, 1, Pos::from_pixels(2490, 2000), 128);
+    {
+        let u = &mut w.units[shooter.0 as usize];
+        (u.stance, u.local_stance) = (2, 2);
+        (u.anim, u.anim_frames, u.frame) = (AnimKind::PStand(1), 1, 0);
+    }
+    let t = run_until_shot(&mut w, shooter, 100).expect("the musketeer fired");
+    assert!(t <= 40, "fired at tick {t}");
+}
