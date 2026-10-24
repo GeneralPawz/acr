@@ -85,6 +85,14 @@ class Regions(unittest.TestCase):
         for v in list(faces.PATCHES) + list(faces.OTHER_VARIANTS):
             self.assertTrue(any(v in p for t in (faces.HAIR_VARIANTS, faces.BEARD_VARIANTS) for p in t.values()))
 
+    def test_sideburns_before_the_ear(self):
+        # A ray that reaches the ear lifts the patch onto it: a card standing off the cheek.
+        for row in faces.patch_grid("beard_sideburns"):
+            for th, ph, _tp in row:
+                d = faces.ray_dir(th, ph)
+                at = [c + 0.07 * k for c, k in zip(faces.CENTRE, d)]
+                self.assertEqual(faces.ear(*at), 0.0, (th, ph))
+
     def test_patches(self):
         for name in faces.PATCHES:
             rows = faces.patch_grid(name)

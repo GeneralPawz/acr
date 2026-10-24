@@ -101,8 +101,11 @@ PATCHES = {
     # (on the MakeHuman head the upper lip lies 21..30 degrees below the centre's level)
     "beard_moustache": {"theta": (-40, 40), "lo": [(0, -29), (22, -31), (40, -39)], "hi": [(0, -21), (22, -22), (40, -28)],
                         "thick": 0.014, "open": ("lo", "hi", "ends"), "grid": (12, 2), "ridges": 0.3, "ragged": 5.0},
-    "beard_sideburns": {"theta": (72, 100), "mirror": True, "lo": [(72, -22), (100, -18)], "hi": [(72, 11), (100, 12)],
-                        "thick": 0.005, "open": ("lo", "hi", "ends"), "grid": (3, 4), "ridges": 0.2},
+    # sideburns: in front of the ear only (rays past about 80 degrees hit the ear and stood
+    # the patch off the cheek as a flat card); fine enough to follow the cheek, ragged below
+    "beard_sideburns": {"theta": (56, 80), "mirror": True, "lo": [(56, -12), (68, -20), (80, -24)],
+                        "hi": [(56, 8), (80, 12)], "thick": 0.0035, "open": ("lo", "hi", "ends"), "grid": (5, 5),
+                        "ridges": 0.2, "ragged": 3.0},
 }
 CENTRE = (0.0, 0.09, -0.01)  # ray origin, head-local
 # The head's own texture (`heads.face_map`): the procedural map's size, and the largest a

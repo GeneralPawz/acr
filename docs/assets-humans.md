@@ -100,8 +100,12 @@ stages from the glTF alone, with the decay shader rebuilt from the extras).
 ### Faces and bodies (#283, `acr_assets/faces.py` pure, `heads.py`)
 
 Every foot soldier and rider (engm18, engkri, engd18) carries the material for an
-individual look; the renderer picks one per soldier (a later slice). Until it does, it skips
-the variant meshes, so the game looks as before.
+individual look; the renderer picks one per soldier from the unit id (render only, the sim
+never sees it; `crates/acr-render/src/looks.rs`, `docs/rendering-3d.md`): one of 16 face and
+body variants baked on the CPU from the look targets (the 3 GPU morph slots and the vertex
+locations are taken), the hair and beard nodes, skin and hair tints and the height scale.
+`ACR_MODEL_DEBUG=looks` turns it off. Cost on engm18: about 190 KB of look targets and 55 KB
+of variant meshes in a 3.27 MB glb.
 
 - **Head (pass 4, `acr_assets/mhead.py`):** the head and upper neck of the MakeHuman 1.x
   base mesh (CC0, `assets/blender/data/makehuman/head.json`; source, commit and licence in
@@ -214,8 +218,9 @@ the variant meshes, so the game looks as before.
     root edge) on a neutral 256² streak texture, darker at the roots.
   - "full" shows `beard_full` and `beard_moustache`.
   - Drawn per soldier: at most about 460 tris (tied hair + queue + full beard). engkri lost
-    its fixed `hair` shell; until the renderer picks variants, peasants show the painted
-    cropped scalp.
+    its fixed `hair` shell.
+  - Sideburns stay in front of the ear (θ 56..80°): rays further back hit the ear and stood
+    the patch off the cheek as a flat card (`test_faces.test_sideburns_before_the_ear`).
   - They carry the decay layer `hair`, `_PART` 1, `_LIMB` −1, `deflate` and the face targets.
   - Root extras `acr_hair_variants` / `acr_beard_variants` map a choice to its nodes:
     `{"tied": ["hair_tied", "hair_queue"], "none": [], ...}`. `acr_look_odds` gives their
