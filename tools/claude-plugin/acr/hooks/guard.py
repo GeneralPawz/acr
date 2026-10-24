@@ -77,7 +77,7 @@ def main():
             sub = rest[0] if rest else ""
             if sub == "xtask" and len(rest) > 2 and rest[1] == "assets" and any(t in ("--help", "-h") for t in rest[2:]):
                 block("Blocked: `cargo xtask assets --help` builds every asset. Read xtask/src/assets.rs instead.")
-            local = "vm_cargo" not in cmd and "vm_drive" not in cmd and "ACR_LOCAL_BUILD=1" not in cmd
+            local = not any(k in cmd for k in ("vm_cargo", "vm-cargo", "vm_drive", "vm-drive")) and "ACR_LOCAL_BUILD=1" not in cmd
             if in_acr and local and sub in CARGO_HEAVY:
                 block("Blocked: no local cargo builds/tests in ACR (16 GB ARM laptop, ~10 min builds). Run it on "
                       "the render VM from your worktree root: acr-vm-cargo -- '" + seg.strip() +

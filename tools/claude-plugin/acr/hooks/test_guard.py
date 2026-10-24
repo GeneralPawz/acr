@@ -21,6 +21,7 @@ CASES = [
     ("Bash", "C:/x", "cargo xtask assets --help", {}, 2),
     ("Bash", WT, "acr-vm-cargo -- 'cargo xtask assets --help 2>&1 | head'", {}, 2),
     ("Bash", WT, "acr-vm-cargo -- cargo xtask assets artpus", {}, 0),
+    ("Bash", WT, "acr-vm-cargo -- 'cd crates && cargo test -q -p acr-sim'", {}, 0),
     ("Bash", WT, "git push origin HEAD:main", {"agent_id": "a1", "agent_type": "acr:sim-engineer"}, 2),
     ("Bash", WT, "git push origin m2-x", {"agent_id": "a1", "agent_type": "acr:sim-engineer"}, 0),
     ("Bash", WT, "git push origin HEAD:main", {}, 0),
