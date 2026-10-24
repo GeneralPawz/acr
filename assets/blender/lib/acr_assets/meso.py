@@ -755,18 +755,14 @@ def work_clips(s, md):
         "UATTACK4": [(0.0, stand), (0.5, pick), (1.0, carry)],
         "ATTACK4": [(0.0, carry)],
     }
-    walk = poses.walk_cycle(stand)
-    walk4 = poses.walk_cycle(carry)
+    # Run or walk by the line's frames (#295); stance 4 carries the load.
+    walk, walk4 = poses.step_keys(md, stand), poses.step_keys(md, carry)
     out = {}
     for k, line in md.items():
-        w = walk4 if k.endswith("4") else walk
-        cl_, pl, cr, pr = w
         if k in keys:
             ks = keys[k]
         elif k.startswith("MOTION_"):
-            d = k[len("MOTION_"):].rstrip("012345")
-            ks = {"L": [(0.0, cl_), (0.5, pl), (1.0, cr)], "R": [(0.0, cr), (0.5, pr), (1.0, cl_)],
-                  "LB": [(0.0, cl_), (0.5, pr), (1.0, cr)], "RB": [(0.0, cr), (0.5, pl), (1.0, cl_)]}[d]
+            ks = (walk4 if k.endswith("4") else walk)[k]
         elif k[:1] in "PU" and "ATTACK" in k or k.startswith("PSTAND") or k.startswith("ATTACK") and k[-1].isdigit():
             ks = [(0.0, carry if k.endswith("4") else stand)]
         else:
@@ -784,17 +780,12 @@ def unit_clips(s):
     stand = stance(s)
     still = cl.bare(stand)
     lie = poses.lie_prone()
-    cl_, pl, cr, pr = poses.walk_cycle(stand)
     keys = {
         "STAND": [(0.0, stand)],
-        "MOTION_L": [(0.0, cl_), (0.5, pl), (1.0, cr)],
-        "MOTION_R": [(0.0, cr), (0.5, pr), (1.0, cl_)],
-        "MOTION_LB": [(0.0, cl_), (0.5, pr), (1.0, cr)],
-        "MOTION_RB": [(0.0, cr), (0.5, pl), (1.0, cl_)],
+        # Every MOTION_* line: a run on the 8-frame running sprites, a walk on 10 (#295).
+        **poses.step_keys(md, stand),
         "DEATH": poses.death_keys(dict(still), lie),
     }
-    for k in ("L", "R", "LB", "RB"):
-        keys[f"MOTION_{k}0"] = keys[f"MOTION_{k}"]
     for k in ("DEATHLIE1", "DEATHLIE2", "DEATHLIE3"):
         keys[k] = [(0.0, lie)]
     for k in ("PSTAND", "PATTACK", "UATTACK", "PSTAND1", "PATTACK1", "UATTACK1", "PATTACK0", "UATTACK0"):

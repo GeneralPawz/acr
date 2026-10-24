@@ -389,17 +389,12 @@ def unit_clips(s):
     stand = stance(s)
     still = cl.bare(stand)
     lie = poses.lie_prone()
-    c_l, p_l, c_r, p_r = poses.walk_cycle(stand)
     keys = {
         "STAND": [(0.0, stand)],
-        "MOTION_L": [(0.0, c_l), (0.5, p_l), (1.0, c_r)],
-        "MOTION_R": [(0.0, c_r), (0.5, p_r), (1.0, c_l)],
-        "MOTION_LB": [(0.0, c_l), (0.5, p_r), (1.0, c_r)],
-        "MOTION_RB": [(0.0, c_r), (0.5, p_l), (1.0, c_l)],
+        # Every MOTION_* line: a run on the 8-frame running sprites, a walk on 10 (#295).
+        **poses.step_keys(md, stand),
         "DEATH": poses.death_keys(dict(still), lie),
     }
-    for k in ("L", "R", "LB", "RB"):
-        keys[f"MOTION_{k}0"] = keys[f"MOTION_{k}"]
     for k in ("DEATHLIE1", "DEATHLIE2", "DEATHLIE3"):
         keys[k] = [(0.0, lie)]
     for k in ("PSTAND", "PATTACK", "UATTACK", "PSTAND1", "PATTACK1", "UATTACK1", "PATTACK0", "UATTACK0", "PSTAND2"):

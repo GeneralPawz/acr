@@ -42,7 +42,7 @@ blank-field check. Clips by weapon follow docs/melee.md (strike clips
 | 5 | Dragoons and mounted officers | EngD17 ✔, EngD18 ✔, FrnD17 ✔, FrnD18 ✔, SpnD17 ✔, SpnD18 ✔, UsaD18 ✔, EngKOf17 ✔, EngKOf18 ✔, FrnKOf17 ✔, FrnKOf18 ✔, SpnKOf17 ✔, SpnKOf18 ✔, UsaKOf18 ✔ | 14 | `cavalry.py` specs | done |
 | 6 | Pike and shot, 17th c. (with its drummers and flags) | EngPik ✔, FrnPik ✔, EngMus ✔, SpnMus ✔, FrnS17 ✔, EngB17 ✔, FrnB17 ✔, SpnB17 ✔, EngF17 ✔, FrnF17 ✔, SpnF17 ✔ | 11 | `pikeshot.py` (new) | done |
 | 7 | Mesoamerica (Aztec, Maya) | AtcLut ✔, AtcMet ✔, AtcSha ✔, AtcVog ✔, MayKri ✔, MayLut ✔, MayPik ✔, MaySha ✔, MayVog ✔, MayVoi ✔ | 10 | `meso.py` (new) | done |
-| 8 | Inca (Texcoco also fields IncLut, IncPik) | IncLut ✔, IncPik ✔, IncPra ✔, IncSha ✔, IncTrb ✔, IncVog ✔ | 6 | `andes.py` (new) | done |
+| 8 | Inca (Texcoco also fields IncLut, IncPik) | IncLut ✔, IncPik ✔, IncPra ✔, IncSha ✔, IncTrb ✔, IncVog ✔ | 6 | `inca.py` (new) | done |
 | 9 | Plains (Sioux) | SiuKri ✔, SiuLut ✔, SiuKLut ✔, SiuKPik ✔, SiuKStr ✔, SiuKVog ✔ | 6 | `native.py` + `cavalry.py` | done |
 | 10 | Pueblo (PueVsd also rides for the Woodlands nations) | PueKri ✔, PueLut ✔, PueS15 ✔, PueSha ✔, PueVog ✔, PueVsda ✔, PueVsd ✔ | 7 | `native.py` (Southwest garments) | done |
 | 11 | Frontiersmen and irregulars | EngTap ✔, EngTapDragon ✔, FrnBuk ✔, UsaMil ✔ | 4 | `frontier.py` (new) | done |

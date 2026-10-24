@@ -350,7 +350,8 @@ nearest the window centre that no ragdoll holds; `ACR_NO_GAIT` turns it off).
 - **Cycle from the clip:** each `MOTION_*` and `CRAWL*` clip is sampled once (48 samples) in
   the body's frame. The lowest effector (feet when walking, hands when crawling) within 5 cm
   of the lowest point carries; how far it slides back under the body is the loop's travel
-  (`MOTION_L`/`_R` of `engm18`: 1.15 m per 0.38 s loop; `CRAWL2` 0.64 m per 1.0 s;
+  (`MOTION_L`/`_R` of `engm18`: 1.15 m per 0.38 s loop; the native foot's run, `poses.run_cycle`
+  on its 8-frame running sprites (#295): 1.37 m per 0.29 s loop; `CRAWL2` 0.64 m per 1.0 s;
   `CRAWLARM` 0.32 m per 1.17 s; `WRITHE` travels nothing and keeps its clip).
 - **Phase lock:** the sim position is smoothed over its ticks, and the distance covered
   plays the clip. The visible body sits where the clip's pushes and pulls have brought it: it

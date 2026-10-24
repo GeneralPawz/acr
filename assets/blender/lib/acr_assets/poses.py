@@ -133,6 +133,64 @@ def walk_cycle(stand):
     return contact_l, pass_l, contact_r, pass_r
 
 
+def run_cycle(stand):
+    """Four keys of a running step cycle (same order and frames as `walk_cycle`): the trunk
+    leant forward, a longer reach at the strike, the knee flexed in mid-stance with the swing
+    heel tucked up high, the left arm swinging wide. The carrying foot stays on the ground
+    (both keys put it within 1 cm of it), so the gait layer's phase lock
+    (`acr_physics::gait::Cycle`) measures the whole stride as travel (#295)."""
+    lean = {"spine": (8, 0, 0), "spine1": (4, 0, 0), "head": (-10, 0, 0)}
+
+    def lean_in(p):
+        out = dict(p)
+        for b, (x, y, z) in lean.items():
+            bx, by, bz = out.get(b, (0, 0, 0))
+            out[b] = (bx + x, by + y, bz + z)
+        return out
+
+    contact_l = _with(stand, thigh_l=(-28, -3, 0), shin_l=(6, 0, 0), foot_l=(-8, 0, 0),
+                      thigh_r=(24, 3, 0), shin_r=(34, 0, 0), foot_r=(20, 0, 0),
+                      upperarm_l=(24, 28, 0), root_loc=(0, 0, -0.08))
+    pass_l = _with(stand, thigh_l=(-4, -3, 0), shin_l=(30, 0, 0), foot_l=(-24, 0, 0),
+                   thigh_r=(-34, 3, 0), shin_r=(100, 0, 0), foot_r=(-6, 0, 0), root_loc=(0, 0, -0.05))
+    contact_r = _with(stand, thigh_r=(-28, 3, 0), shin_r=(6, 0, 0), foot_r=(-8, 0, 0),
+                      thigh_l=(24, -3, 0), shin_l=(34, 0, 0), foot_l=(20, 0, 0),
+                      upperarm_l=(-24, 28, 0), root_loc=(0, 0, -0.08))
+    pass_r = _with(stand, thigh_r=(-4, 3, 0), shin_r=(30, 0, 0), foot_r=(-24, 0, 0),
+                   thigh_l=(-34, -3, 0), shin_l=(100, 0, 0), foot_l=(-6, 0, 0), root_loc=(0, 0, -0.05))
+    return tuple(lean_in(p) for p in (contact_l, pass_l, contact_r, pass_r))
+
+
+# Frames per `MOTION_*` step from which a clip is a walk: the European line walks 10 frames a
+# step at 1.67 m/s (GEOMETRY step 40, Rate 16, measured 0.167 m per tick); the native foot
+# runs 8 frames a step on its running sprites at 2.7-3.3 m/s (step 64-80), and a native
+# stance with `RATE <s> 8` (SiuKri, PueKri `MOTION_L4`) walks 10 frames a step at 1.67 m/s.
+WALK_FRAMES = 10
+
+
+def motion_gait(line):
+    """"run" or "walk" for a `MOTION_*` `.MD` line, from its frames a step (#295)."""
+    return "walk" if rig.md_clip_frames(line)[0] >= WALK_FRAMES else "run"
+
+
+def step_keys(md, stand):
+    """{MOTION_* clip: [(fraction, pose)]} for every `MOTION_L/R/LB/RB[digit]` line in `md`:
+    the run cycle or the walk cycle from `stand` by the line's frames (`motion_gait`). LB/RB
+    play the step backwards."""
+    cycles = {"walk": walk_cycle(stand), "run": run_cycle(stand)}
+    out = {}
+    for k, line in md.items():
+        base = k.rstrip("0123456789")
+        if base not in ("MOTION_L", "MOTION_R", "MOTION_LB", "MOTION_RB"):
+            continue
+        c_l, p_l, c_r, p_r = cycles[motion_gait(line)]
+        out[k] = {"MOTION_L": [(0.0, c_l), (0.5, p_l), (1.0, c_r)],
+                  "MOTION_R": [(0.0, c_r), (0.5, p_r), (1.0, c_l)],
+                  "MOTION_LB": [(0.0, c_l), (0.5, p_r), (1.0, c_r)],
+                  "MOTION_RB": [(0.0, c_r), (0.5, p_l), (1.0, c_l)]}[base]
+    return out
+
+
 def lie_prone(arms_out=True):
     """#DEATHLIE1 of the European foot: prone, head towards the facing direction, arms flung
     out above the head, feet near the ground point (fitted to EngM18's sprite with

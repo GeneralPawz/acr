@@ -567,23 +567,17 @@ def unit_clips(s):
     md = s["md"]
     stand = stand_of(s)
     walk = STAND if s["weapon"] == "bow" else stand
-    c_l, p_l, c_r, p_r = poses.walk_cycle(walk)
     lie = poses.lie_prone()
     keys = {
         "STAND": [(0.0, stand)],
-        "MOTION_L": [(0.0, c_l), (0.5, p_l), (1.0, c_r)],
-        "MOTION_R": [(0.0, c_r), (0.5, p_r), (1.0, c_l)],
-        "MOTION_LB": [(0.0, c_l), (0.5, p_r), (1.0, c_r)],
-        "MOTION_RB": [(0.0, c_r), (0.5, p_l), (1.0, c_l)],
+        # Every MOTION_* line: a run on the 8-frame running sprites, a walk on 10 (#295).
+        **poses.step_keys(md, walk),
         "DEATH": poses.death_keys(cl.bare(stand), lie),
         "DEATHLIE1": [(0.0, lie)],
     }
     for k in ("PSTAND", "PSTAND0", "PSTAND1", "PSTAND2", "PATTACK", "UATTACK", "PATTACK0", "UATTACK0", "PATTACK1",
               "UATTACK1", "PATTACK2", "UATTACK2"):
         keys[k] = [(0.0, stand)]
-    for k in ("MOTION_L", "MOTION_R", "MOTION_LB", "MOTION_RB"):
-        for sfx in "0123456789":
-            keys[k + sfx] = keys[k]
     if s["work"]:
         # The peasant's work (DelKri, as EngKri): REST, a look round; WORK, a two-handed
         # swing (hoe, axe) from over the head down to the ground in front.
@@ -647,10 +641,9 @@ def build(ctx, s):
         reload = aiming.drill(ch.arm, poses.RELOAD_STEPS)
         charge = aiming.hold(ch.arm, poses.CHARGE_MUSKET, pocket=(0.02, -0.12, -0.32), left_along=0.30)
         clips = poses.musketeer_clips(md, aim=aim, charge=charge, reload=reload, hip=hip)
-        for k in ("MOTION_L", "MOTION_R", "MOTION_LB", "MOTION_RB"):
-            for sfx in ("0", "1"):
-                if k + sfx in md:
-                    clips[k + sfx] = clips[k]
+        # The native riflemen run on their 8-frame sprites like the rest of the foot (#295).
+        for k, ks in poses.step_keys(md, poses.STAND_MUSKET).items():
+            clips[k] = rig.clip_keys(rig.md_clip_frames(md[k])[0], ks)
         clips = {k: v for k, v in clips.items() if k in md or k.startswith(("ATTACK_", "FIRE_"))}
         for clip, keys in clips.items():
             am.add_clip(ch.arm, clip, keys)
