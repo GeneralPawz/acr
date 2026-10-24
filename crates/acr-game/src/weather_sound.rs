@@ -570,10 +570,14 @@ mod tests {
         // The low band (below about 150 Hz, left channel) where the rumble lies.
         let mut low = 0.0f32;
         let k = 1.0 - (-std::f32::consts::TAU * 150.0 / 44100.0).exp();
-        let band: Vec<f32> = out.iter().step_by(2).map(|&v| {
-            low += k * (v - low);
-            low
-        }).collect();
+        let band: Vec<f32> = out
+            .iter()
+            .step_by(2)
+            .map(|&v| {
+                low += k * (v - low);
+                low
+            })
+            .collect();
         let rms = |from: f32, to: f32| {
             let x = &band[(from * 44100.0) as usize..(to * 44100.0) as usize];
             (x.iter().map(|v| v * v).sum::<f32>() / x.len() as f32).sqrt()
@@ -630,7 +634,8 @@ mod tests {
                 }
             };
             let volley = |t: f32| {
-                (weather == Weather::Rain && (21.0..26.0).contains(&t) && ((t * 60.0) as u32).is_multiple_of(25)).then_some(0.9)
+                (weather == Weather::Rain && (21.0..26.0).contains(&t) && ((t * 60.0) as u32).is_multiple_of(25))
+                    .then_some(0.9)
             };
             let (out, ducks) = capture(30.0, heard, volley);
             write_wav(&format!("{dir}/{}.wav", weather.name()), &out);
@@ -648,8 +653,7 @@ mod tests {
     }
 
     fn write_wav(path: &str, stereo: &[f32]) {
-        let data: Vec<u8> =
-            stereo.iter().flat_map(|s| ((s.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes()).collect();
+        let data: Vec<u8> = stereo.iter().flat_map(|s| ((s.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes()).collect();
         let mut wav = Vec::new();
         wav.extend_from_slice(b"RIFF");
         wav.extend_from_slice(&(36 + data.len() as u32).to_le_bytes());
