@@ -354,6 +354,7 @@ fn instance(model: usize, transform: Mat4, transparent: bool) -> ModelInstance {
         look: None,
         uniform: None,
         drape: None,
+        rise: None,
     }
 }
 
