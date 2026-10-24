@@ -6,7 +6,7 @@ Source: evolveduk, "Old Tree", Sketchfab, CC-BY 4.0 (assets/LICENSES.md); built 
 from acr_assets import nature
 
 TYPE = "TREELIST:42"
-SPEC = {"source": "sketchfab2/old-tree/scene.gltf", "nodes": ["Tree_0_", "Tree_2_"], "kind": "tree", "height": 9.0, "budget": 8000, "leaves": ["tree_2mat"]}
+SPEC = {"source": "sketchfab2/old-tree/scene.gltf", "nodes": ["Tree_0_", "Tree_2_"], "kind": "tree", "height": 9.0, "budget": 8000, "leaves": ["tree_2mat"], "wind": {"trunk": 1.2, "branch": 1.6, "flutter": 2.0, "tempo": 0.95}}
 
 
 def build(ctx):

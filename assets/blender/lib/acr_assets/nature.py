@@ -11,6 +11,9 @@
     recolour  turn red texels leaf green (atlases with an autumn crown only)
     max_width narrow a too wide crown to this many metres (x and y)
     turn      degrees about +Z (models face -Y)
+    wind      the species' sway (below): {"trunk", "branch", "flutter", "tempo"} scales (default
+              WIND[kind]), "bend" the trunk's exponent (2), "crown" flutter on the bark above
+              this share of the height for crowns without leaf cards (birch, pine)
 
 What it does: imports and joins the kept nodes, puts the trunk base on the ground point,
 scales to `height`, cuts to `budget` (bark: collapse decimation; leaf cards: whole cards are
@@ -21,7 +24,9 @@ the renderer multiplies `COLOR_0` into the colour, and the sources' baked vertex
 (black or AO) made crowns dark. Wind (`_WIND`, the same channels as `broadleaf.py`): x trunk
 bend (height / top)² times min(1, top / 6 m) (a bush bends less than a tree), y branch weight
 (distance from the trunk axis / crown radius), z phase per clump (leaf cards grouped in cells of
-half the crown radius), w 1 on leaf cards; rocks carry zeros.
+half the crown radius), w 1 on leaf cards; rocks carry zeros. The root's `extras.acr_wind`
+[trunk, branch, flutter, tempo] scales the shader's sway per species (docs/rendering-3d.md
+"Wind").
 
 Stats: `source_triangles`, `triangles`, `size_m` [x, y, z], `leaf_rgb` (mean sRGB colour of
 the opaque leaf texels after levelling: the crown colour the renderer starts from), `leaf_gain`
@@ -40,6 +45,8 @@ from . import vessels as vs
 
 LEAF_WORDS = ("leaf", "leav", "twig", "frond", "needle", "branches", "bush", "shrub", "fern", "phong3")
 MAX_TEX = 512
+# Default wind scales by kind ([trunk, branch, flutter, tempo]); a SPEC's "wind" overrides keys.
+WIND = {"tree": (1.0, 1.0, 1.0, 1.0), "bush": (1.0, 1.0, 1.5, 1.8), "rock": (0.0, 0.0, 0.0, 1.0)}
 # Mean sRGB level of a leaf card's opaque texels after `_level` (the original's crowns: about
 # 0.30-0.40 on TREES.GP).
 LEAF_LEVEL = 0.33
@@ -285,7 +292,7 @@ def _split_decimate(obj, leaf_slots, target):
     return vs.join([obj, bark], obj.name)
 
 
-def _wind(obj, kind, leaf_slots, seed):
+def _wind(obj, kind, leaf_slots, seed, bend_pow=2.0, crown=None):
     me = obj.data
     a = me.attributes.new("_wind", "FLOAT_COLOR", "POINT")
     if kind == "rock":
@@ -316,9 +323,13 @@ def _wind(obj, kind, leaf_slots, seed):
         co = v.co
         key = (int(math.floor(co.x / cell)), int(math.floor(co.y / cell)), int(math.floor(co.z / cell)))
         horiz = Vector((co.x, co.y)).length
-        x = bend * min(max(co.z, 0.0) / top, 1.0) ** 2
+        h = min(max(co.z, 0.0) / top, 1.0)
+        x = bend * h ** bend_pow
         y = min(horiz / crown_r, 1.0) * min(1.0, crown_r / 2.5)
         w = 1.0 if i in leafy else 0.0
+        if crown is not None and not leafy:
+            # No leaf cards (one bark material): the fine twigs of the upper crown flutter.
+            w = min(1.0, max(0.0, (h - crown) / (1.0 - crown)) * 1.5) * min(1.0, horiz / crown_r * 2.0)
         a.data[i].color = (x, y, phases[key] if w else 0.0, w)
     return crown_r
 
@@ -380,14 +391,18 @@ def build(ctx, spec):
     obj.parent = ctx.root
     for p in me.polygons:
         p.use_smooth = kind == "rock" or p.material_index not in leaf_slots
-    crown_r = _wind(obj, kind, leaf_slots, spec.get("seed", 7))
+    wind = dict(zip(("trunk", "branch", "flutter", "tempo"), WIND[kind]))
+    wind.update({k: v for k, v in spec.get("wind", {}).items() if k in wind})
+    crown_r = _wind(obj, kind, leaf_slots, spec.get("seed", 7), spec.get("wind", {}).get("bend", 2.0),
+                    spec.get("wind", {}).get("crown"))
     white(obj)
     me.calc_loop_triangles()
     xs = [v.co.x for v in me.vertices]
     ys = [v.co.y for v in me.vertices]
     zs = [v.co.z for v in me.vertices]
     ctx.root["acr_nature"] = kind
-    ctx.root["acr_wind"] = "_WIND: x trunk bend, y branch, z phase, w leaf flutter"
+    wind_k = [round(float(wind[k]), 3) for k in ("trunk", "branch", "flutter", "tempo")]
+    ctx.root["acr_wind"] = wind_k
     ctx.stats = {
         "kind": kind,
         "source": spec["source"],
@@ -395,6 +410,7 @@ def build(ctx, spec):
         "triangles": len(me.loop_triangles),
         "size_m": [round(max(xs) - min(xs), 2), round(max(ys) - min(ys), 2), round(max(zs), 2)],
         "crown_r_m": round(crown_r, 2),
+        "wind": wind_k,
         "leaf_rgb": _leaf_rgb(obj, leaf_slots),
         "cards": cards,
         "leaf_gain": {k: round(v, 2) for k, v in sorted(gains.items())},

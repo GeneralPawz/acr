@@ -6,7 +6,7 @@ Source: dariiiii, "Coniferous Forest Assets Pack" (tree A), Sketchfab, CC-BY 4.0
 from acr_assets import nature
 
 TYPE = "TREELIST:87"
-SPEC = {"source": "sketchfab2/coniferous-forest-assets-pack/scene.gltf", "nodes": ["Object_4", "Object_5"], "kind": "tree", "height": 11.0, "budget": 6000, "leaves": ["branchmat"]}
+SPEC = {"source": "sketchfab2/coniferous-forest-assets-pack/scene.gltf", "nodes": ["Object_4", "Object_5"], "kind": "tree", "height": 11.0, "budget": 6000, "leaves": ["branchmat"], "wind": {"trunk": 0.8, "branch": 0.4, "flutter": 0.6, "tempo": 0.8, "bend": 2.8}}
 
 
 def build(ctx):

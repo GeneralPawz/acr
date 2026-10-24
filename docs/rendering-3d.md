@@ -251,13 +251,48 @@ or vertex colour. The loader reads `_WIND` as `Unorm8x4` into vertex location 15
 free one; 0 for every model without it, which the shader skips).
 
 `model.wgsl` `sway` adds, in world metres after the instance transform (so the shadow map,
-drawn with the same `vs_main`, sways too):
+drawn with the same `vs_main`, sways too), with the model's scales `k = (trunk, branch,
+flutter, tempo)` (`material.wind`, from the root's `extras.acr_wind`, `[1, 1, 1, 1]` without)
+and the species clock `τ = k.w · t`:
 
-- trunk: `x · s · (0.06 · gust + 0.07 · sin(1.1 t − k·p + seed) · (0.4 + 0.6 · gust))` along
-  the wind, with `gust = 0.5 + 0.5 sin(0.37 t − 0.3 k·p + seed)`: a lean that breathes and a
-  rock, gusts travelling across the field (`k·p` = world position along the wind × 0.004);
-- branches: `y · s · 0.05 · sin(2.3 t + 2π z + seed)` along the wind and half that across it;
-- leaves: `w · s · 0.02 · sin(7 t + 6π z + p · (0.11, 0.07))` along the normal.
+- gust `g` (0..1): a field over the map on the game clock, two fronts running downwind, about
+  40 m long at 5 m/s and 70 m at 3.7 m/s (`along · 0.0052 − 0.78 t` and `along · 0.003 −
+  0.33 t`, world pixels), the first bent by `1.6 sin(across · 0.0021 + 0.05 t)` and the second
+  tilted across the wind, summed and smoothstepped: gusts visibly roll through a wood, never
+  as one even wave;
+- trunk: `x · s · k.x · (0.06 · g + 0.07 · sin(1.1 τ + j) · (0.3 + 0.7 g))` along the wind:
+  the lean comes with the gust, the rock at the tree's own phase `j` (a hash of `seed`);
+- branches: `y · s · k.y · 0.05 · sin(2.3 τ + 2π z + j) · (0.4 + 0.6 g)` along the wind and
+  half that across it;
+- leaves: `w · s · k.z · 0.02 · (0.5 + 0.5 g) · sin(7 τ + 6π z + p · (0.11, 0.07))` along the
+  normal.
+
+Per species (`assets/nature/*.py` `SPEC["wind"]`, built by `acr_assets.nature`; `bend` is the
+trunk's exponent in `x = (h / top)^bend`, `crown` gives crowns without leaf cards flutter on
+the bark above that share of the height). Peak sway at the crown top (vertices above 90 % of
+the height, gust 1, `s` 1, model scale 1; `ACR-analysis/genai/wind2/tools/amp.py` over the
+built glbs), before (all scales 1, exponent 2) and after:
+
+| Model | k (trunk, branch, flutter, tempo), bend | Height | Crown top before | After | At zoom 1 |
+|---|---|---|---|---|---|
+| conifer, spruce | 0.8, 0.4, 0.6, 0.8; 2.8 | 11–12 m | 0.15 m | 0.10–0.11 m (0.9 %) | 3 px |
+| conifer_snow | 0.7, 0.3, 0.4, 0.8; 2.8 | 11 m | 0.15 m | 0.09 m | 3 px |
+| pine (no cards) | 0.9, 0.5, 0.5, 0.85; 2.6, crown 0.55 | 6 m | 0.12 m | 0.11 m | 3 px |
+| oak, old_tree, tree_large | 1.2–1.3, 1.6–1.8, 2, 0.9–0.95 | 9–10 m | 0.15–0.16 m | 0.19–0.22 m (2.2–2.5 %) | 6–7 px |
+| broadleaf_ez | 1.4, 1.8, 2, 1 | 7 m | 0.16 m | 0.24 m | 7 px |
+| birch (no cards) | 1.8, 2, 2.5, 1.2; crown 0.35 | 8 m | 0.14 m | 0.28 m (3.5 %) | 8.5 px |
+| palm, palm_small | 2, 2–2.5, 2.5, 0.9–1; 4 | 5–9 m | 0.14–0.16 m | 0.27–0.30 m (3.4–5.5 %) | 8–9 px |
+| dead_tree | 0.3, 0.3, 0, 0.7 | 8 m | 0.14 m | 0.04 m | 1 px |
+| cactus, cactus_tall | 0, 0, 0 | 2–4 m | 0.06–0.09 m | 0 | 0 |
+| bush, bush_small, bush_tall, shrub, fern | 2, 3, 2.5, 1.7–2 | 0.6–1.8 m | 0.04–0.06 m | 0.09–0.14 m | 3–4 px |
+| reeds | 4, 2, 2.5, 1.6 | 1.4 m | 0.05 m | 0.17 m (12 %) | 5 px |
+
+So conifers sway little and slowly with a stiff trunk, broadleaf and oak twice as much with
+leaf flutter, palms bend from the top (exponent 4) with fluttering fronds, dead trees barely
+move, cacti stand still, and bushes, reeds and ferns flutter at about twice the tempo (leaves
+up to 13 rad/s, 2 Hz, 5 cm: no jitter up close). Map trees also scale with their fitted
+`scale` (0.25–4). Rocks carry zero weights. `broadleaf.py` (the driver's `props` tree) keeps
+its string `acr_wind` and so the scales 1.
 
 `seed` is the instance's ground point, so neighbours are out of step. `globals.wind` holds the
 direction (`WIND_DIR`, from the west-north-west), strength `s` (`WIND_STRENGTH` 1; 0 with
@@ -269,7 +304,13 @@ Map trees with a model in `map_objects.json` are drawn as models (next section);
 trees ≈ 730 k triangles at zoom 1, `gputime` 120 frames, two runs each, steps in
 `ACR-analysis/genai/wind/steps/field_{on,off}.json`): all passes 0.69–1.54 ms with wind,
 0.86–0.89 ms without: no cost above the run-to-run noise. The vertex grows by 4 bytes
-(120 instead of 116).
+(120 instead of 116). The per-species tuning (gust field, `material.wind`) costs nothing
+measurable either: random map seed 5, fog off, fixed camera at zoom 1 on the densest wood
+`[11776, 14848]` with the 28 nature models, `gputime` 120 frames twice per run, two runs each
+(`ACR-analysis/genai/wind2/steps/perf.json`): all passes 1.31–1.67 ms before, 1.31–1.68 ms
+after (models 0.60–0.76 → 0.60–0.77, shadow map 0.28–0.37 → 0.28–0.36). Frame strips per
+species (gameplay zoom and close-up, 6 frames 0.8 s apart, with a motion map) and of the
+wood: `ACR-analysis/genai/wind2/strip_*.png`, `forest_*.png`.
 
 ### Map trees and stones
 

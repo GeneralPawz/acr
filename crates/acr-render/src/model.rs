@@ -235,6 +235,10 @@ pub struct ModelData {
     /// sprite frame (ships: a sprite of one frame per direction still rocks; looping while
     /// alive, from the death on while sinking).
     pub world_clock: bool,
+    /// `extras.acr_wind` of the scene root (trees and foliage, docs/rendering-3d.md "Wind"):
+    /// the species' scale of the trunk sway, the branch swing and the leaf flutter, and its
+    /// tempo; `[1, 1, 1, 1]` without.
+    pub wind: [f32; 4],
     /// `extras.acr_machine` of the scene root: a ship or a gun, not a body (no blood pools,
     /// no corpse piles).
     pub machine: bool,
@@ -377,6 +381,14 @@ impl ModelData {
         let machine =
             root_extras.iter().any(|e| e.get("acr_machine").and_then(serde_json::Value::as_bool) == Some(true));
         let world_clock = root_extras.iter().any(|e| e.get("acr_clock").and_then(|v| v.as_str()) == Some("world"));
+        let wind = root_extras
+            .iter()
+            .find_map(|e| {
+                let k: Vec<f32> =
+                    e.get("acr_wind")?.as_array()?.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect();
+                <[f32; 4]>::try_from(k).ok()
+            })
+            .unwrap_or([1.0; 4]);
 
         let images = doc
             .images()
@@ -704,6 +716,7 @@ impl ModelData {
             fps,
             type_name,
             world_clock,
+            wind,
             machine,
             radius: 0.0,
             rig,
@@ -773,6 +786,7 @@ impl ModelData {
             fps: CLIP_FPS,
             type_name: None,
             world_clock: false,
+            wind: [1.0; 4],
             machine: false,
             radius: 0.0,
             rig: None,
@@ -1142,7 +1156,7 @@ pub(crate) mod tests {
             r#"{{"asset":{{"version":"2.0"}},"scene":0,
             "scenes":[{{"nodes":[0]}}],
             "nodes":[
-              {{"name":"tiny","children":[1,3],"extras":{{"acr_type":"Tiny","acr_fps":10,"acr_clock":"world"}}}},
+              {{"name":"tiny","children":[1,3],"extras":{{"acr_type":"Tiny","acr_fps":10,"acr_clock":"world","acr_wind":[0.5,1,2,1.5]}}}},
               {{"name":"hips","children":[2]}},
               {{"name":"arm","translation":[0,1,0],"children":[4]}},
               {{"name":"tiny.body","mesh":0,"skin":0}},
@@ -1180,6 +1194,7 @@ pub(crate) mod tests {
         assert_eq!(m.type_name.as_deref(), Some("Tiny"));
         assert_eq!(m.fps, 10.0);
         assert!(m.world_clock);
+        assert_eq!(m.wind, [0.5, 1.0, 2.0, 1.5]);
         assert_eq!(m.primitives.len(), 2);
         assert_eq!(m.triangle_count(), 2);
         // Skinned triangle: two joint slots; the hat a node slot of its own.

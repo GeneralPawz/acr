@@ -58,6 +58,8 @@ struct Material {
     // x: sheen at grazing angles (cloth), y: gloss (blacked leather, brass), z: depth bias
     // towards the camera (model metres) by the clothing layer (docs/clothing.md, "Layers").
     cloth: vec4<f32>,
+    // The model's wind (root `extras.acr_wind`): trunk, branch and flutter scales, tempo.
+    wind: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> globals: Globals;
@@ -279,26 +281,42 @@ fn vs_main(v: VertexIn, inst: InstanceIn) -> VsOut {
     return out;
 }
 
-// Wind (docs/rendering-3d.md "Wind"), world metres: the trunk leans downwind and rocks with
-// its height² (`w.x`), gusts running across the field (`at`, world pixels); the branches swing
-// faster at their clump's phase (`w.y`, `w.z`); the leaves flutter along their normal (`w.w`).
-// `seed` (the instance's ground point) keeps neighbouring trees out of step.
+// Wind (docs/rendering-3d.md "Wind"), world metres: the trunk leans downwind with its
+// height² (`w.x`) as the gusts pass and rocks at its own tempo; the branches swing at their
+// clump's phase (`w.y`, `w.z`); the leaves flutter along their normal (`w.w`). The gusts are a
+// field over the map (`at`, world pixels) on the game clock: two fronts of different length
+// and speed running downwind, bent across the wind, so they travel visibly but never as one
+// even wave. `seed` (the instance's ground point) keeps neighbouring trees out of step;
+// `material.wind` scales trunk, branch and flutter per species and sets its tempo.
 const WIND_LEAN: f32 = 0.06;
 const WIND_ROCK: f32 = 0.07;
 const WIND_BRANCH: f32 = 0.05;
 const WIND_FLUTTER: f32 = 0.02;
 
+fn gust(at: vec2<f32>, dir: vec2<f32>, t: f32) -> f32 {
+    let along = dot(at, dir);
+    let across = dot(at, vec2<f32>(-dir.y, dir.x));
+    // About 40 m long at 5 m/s, and 70 m at 3.7 m/s (30 px/m).
+    let a = sin(along * 0.0052 - t * 0.78 + 1.6 * sin(across * 0.0021 + t * 0.05));
+    let b = sin(along * 0.003 - t * 0.33 + across * 0.0013 + 1.7);
+    let g = clamp(0.45 + 0.35 * a + 0.3 * b, 0.0, 1.0);
+    return g * g * (3.0 - 2.0 * g);
+}
+
 fn sway(w: vec4<f32>, at: vec2<f32>, n: vec3<f32>, seed: f32) -> vec3<f32> {
+    let k = material.wind;
     let s = globals.wind.z;
-    let t = globals.wind.w;
     let dir = globals.wind.xy;
-    let wave = dot(at, dir) * 0.004;
-    let gust = 0.5 + 0.5 * sin(t * 0.37 - wave * 0.3 + seed * 0.011);
+    let g = gust(at, dir, globals.wind.w);
+    let t = globals.wind.w * k.w;
+    let jitter = fract(sin(seed * 0.0173) * 4375.85) * 6.2832;
     let ph = w.z * 6.2832;
-    let trunk = w.x * s * (WIND_LEAN * gust + WIND_ROCK * sin(t * 1.1 - wave + seed * 0.007) * (0.4 + 0.6 * gust));
-    let branch = w.y * s * WIND_BRANCH * sin(t * 2.3 + ph + seed * 0.013) * (0.5 + 0.5 * gust);
-    let side = vec2<f32>(-dir.y, dir.x) * (w.y * s * WIND_BRANCH * 0.5 * sin(t * 1.7 + ph * 1.3));
-    let flutter = w.w * s * WIND_FLUTTER * sin(t * 7.0 + ph * 3.0 + dot(at, vec2<f32>(0.11, 0.07)));
+    let trunk = w.x * s * k.x * (WIND_LEAN * g + WIND_ROCK * sin(t * 1.1 + jitter) * (0.3 + 0.7 * g));
+    let swing = sin(t * 2.3 + ph + jitter) * (0.4 + 0.6 * g);
+    let branch = w.y * s * k.y * WIND_BRANCH * swing;
+    let side = vec2<f32>(-dir.y, dir.x) * (w.y * s * k.y * WIND_BRANCH * 0.5 * sin(t * 1.7 + ph * 1.3 + jitter));
+    let flutter = w.w * s * k.z * WIND_FLUTTER * (0.5 + 0.5 * g)
+        * sin(t * 7.0 + ph * 3.0 + dot(at, vec2<f32>(0.11, 0.07)));
     let nl = n / max(length(n), 1e-5);
     return vec3<f32>(dir * (trunk + branch) + side, 0.0) + nl * flutter;
 }

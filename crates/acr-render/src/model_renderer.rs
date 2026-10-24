@@ -252,6 +252,8 @@ struct MaterialUniform {
     look: [f32; 4],
     /// x: sheen at grazing angles, y: gloss ([`crate::model::Finish`]).
     cloth: [f32; 4],
+    /// The model's wind scales: trunk, branch, flutter, tempo ([`crate::model::ModelData::wind`]).
+    wind: [f32; 4],
 }
 
 #[repr(C)]
@@ -1124,6 +1126,7 @@ impl ModelRenderer {
                         if procedural { 1.0 } else { 0.0 },
                     ],
                     cloth: [m.finish.sheen, m.finish.gloss, m.finish.layer, 0.0],
+                    wind: data.wind,
                 };
                 let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("model material"),

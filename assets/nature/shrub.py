@@ -6,7 +6,7 @@ Source: Poly Haven, "Shrub 02" (d), CC0 (assets/LICENSES.md); built by `acr_asse
 from acr_assets import nature
 
 TYPE = "TREELIST:3"
-SPEC = {"source": "polyhaven2/shrub_02/shrub_02_2k.gltf", "nodes": ["shrub_02_d"], "kind": "bush", "height": 1.3, "budget": 3000}
+SPEC = {"source": "polyhaven2/shrub_02/shrub_02_2k.gltf", "nodes": ["shrub_02_d"], "kind": "bush", "height": 1.3, "budget": 3000, "wind": {"trunk": 2.0, "branch": 3.0, "flutter": 2.5, "tempo": 1.9}}
 
 
 def build(ctx):

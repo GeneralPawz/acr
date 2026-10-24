@@ -6,7 +6,7 @@ Source: greg-l, "Oak Tree", Sketchfab, CC-BY 4.0 (assets/LICENSES.md); built by 
 from acr_assets import nature
 
 TYPE = "TREELIST:355"
-SPEC = {"source": "sketchfab2/oak-tree/scene.gltf", "kind": "tree", "height": 9.0, "budget": 7000}
+SPEC = {"source": "sketchfab2/oak-tree/scene.gltf", "kind": "tree", "height": 9.0, "budget": 7000, "wind": {"trunk": 1.2, "branch": 1.6, "flutter": 2.0, "tempo": 0.9}}
 
 
 def build(ctx):
