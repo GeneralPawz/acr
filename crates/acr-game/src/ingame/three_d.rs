@@ -890,7 +890,14 @@ impl ThreeD {
             } else {
                 self.turns.forget(u.id.0);
             }
-            if model.world_clock && !u.building {
+            if model.world_clock {
+                // A finished building plays its `WORK` clip (mill sails, a water wheel: the
+                // sprite's `#WORK` layer, 0x50927a) on the world clock.
+                if u.building
+                    && let Some(work) = model.clip("WORK")
+                {
+                    inst.clip = Some(work);
+                }
                 inst.time = world_time(model, inst.clip, u, now, record.tick);
             }
             if model.machine && !u.building {

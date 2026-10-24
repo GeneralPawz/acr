@@ -32,6 +32,11 @@ assets/
   buildings/incdo1.py     an asset (one script per model, grouped by category)
   buildings/engkre.py     the wooden fort: stages, section states, ruin, fire anchors
   buildings/atccen.py ... generated models, one four-line script per type (genbuild)
+  buildings/spnmel.py     scripted tower windmill; sails on node `sails`, clip `WORK`, root
+                          `acr_clock = "world"` (the game spins them while it stands finished)
+  props/longhouse.py      scripted Iroquois longhouse, 24 x 6 x 6 m, bark courses, ribs, poles,
+                          smoke holes, hide doors (acr_assets/scripted.py: procedural colour,
+                          normal map and roughness, poles, panels); no TYPE (fits HurDo1)
   units/engm18.py engkri.py engd18.py   musketeer, peasant, dragoon
   nature/broadleaf.py     a tree (TREES.GP frame 104) with wind and felled/stump states
   nature/<model>.py       28 trees, bushes and rocks from Poly Haven / Sketchfab (acr_assets/nature.py:
