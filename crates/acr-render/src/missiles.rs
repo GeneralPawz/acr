@@ -180,6 +180,7 @@ impl Mesh {
                 material: 0,
                 morphs: [false; 2],
                 look_morphs: Vec::new(),
+                lod: None,
             },
             material,
         )

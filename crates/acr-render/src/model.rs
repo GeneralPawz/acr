@@ -219,6 +219,12 @@ pub struct Primitive {
     /// The face and body targets (#283) it has: index into [`crate::looks::LOOK_MORPHS`]
     /// and the position offsets, baked into variants on the CPU.
     pub look_morphs: Vec<(usize, Vec<[f32; 3]>)>,
+    /// Its authored level of detail (docs/rendering-3d.md, "Authored levels"): `Some(k ≥ 1)`
+    /// a level the asset carries (node `extras.acr_lod` = k, or a node name ending `.lod<k>`),
+    /// `Some(0)` the master those levels replace (named by their `extras.acr_lod_of`, or the
+    /// node `<name>` of a `<name>.lod<k>`), `None` drawn at every level (the renderer's own
+    /// index levels, [`crate::lod::levels`]).
+    pub lod: Option<u8>,
 }
 
 /// Individual looks of a model with the face and body extras (#283, `crate::looks`).
@@ -353,6 +359,39 @@ impl Crew {
 
 /// The affine rows (3 × vec4) of each palette slot.
 pub type Palette = Vec<[[f32; 4]; 3]>;
+
+/// The authored levels of detail of a glb's nodes ([`Primitive::lod`]).
+struct AuthoredLods {
+    masters: std::collections::HashSet<String>,
+}
+
+impl AuthoredLods {
+    /// A level node's own level: `extras.acr_lod`, else a name ending `.lod<digit>`.
+    fn level(node: &gltf::Node<'_>) -> Option<u8> {
+        let extra = extras_json(node.extras()).and_then(|e| e.get("acr_lod").and_then(serde_json::Value::as_u64));
+        let named = || {
+            let (_, k) = node.name()?.rsplit_once(".lod")?;
+            (k.len() == 1).then(|| k.parse::<u8>().ok()).flatten()
+        };
+        extra.map(|k| k.min(u64::from(u8::MAX)) as u8).or_else(named).filter(|&k| k >= 1)
+    }
+
+    fn new(nodes: &[gltf::Node<'_>]) -> Self {
+        let mut masters = std::collections::HashSet::new();
+        for n in nodes.iter().filter(|n| Self::level(n).is_some()) {
+            let of =
+                extras_json(n.extras()).and_then(|e| e.get("acr_lod_of").and_then(|v| v.as_str()).map(str::to_owned));
+            if let Some(of) = of.or_else(|| n.name().and_then(|s| s.rsplit_once(".lod")).map(|(of, _)| of.to_owned())) {
+                masters.insert(of);
+            }
+        }
+        Self { masters }
+    }
+
+    fn of(&self, node: &gltf::Node<'_>) -> Option<u8> {
+        Self::level(node).or_else(|| node.name().filter(|n| self.masters.contains(*n)).map(|_| 0))
+    }
+}
 
 fn extras_json(raw: &gltf::json::Extras) -> Option<serde_json::Value> {
     raw.as_ref().and_then(|r| serde_json::from_str(r.get()).ok())
@@ -619,6 +658,7 @@ impl ModelData {
             scene_nodes.push(n);
         }
         scene_nodes.sort_by_key(gltf::Node::index);
+        let lods = AuthoredLods::new(&scene_nodes);
         for node in &scene_nodes {
             let Some(mesh) = node.mesh() else { continue };
             // Slots this node's vertices refer to: its joints, or the node itself.
@@ -754,7 +794,7 @@ impl ModelData {
                 if lean && morphs[1] {
                     lean_prims.push(primitives.len());
                 }
-                primitives.push(Primitive { vertices, indices, material, morphs, look_morphs });
+                primitives.push(Primitive { vertices, indices, material, morphs, look_morphs, lod: lods.of(node) });
             }
         }
 

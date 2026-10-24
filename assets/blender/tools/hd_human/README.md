@@ -20,4 +20,4 @@ makehuman_system_assets_cc0.zip (files2.makehumancommunity.org); see assets/LICE
 
 Round 2: the pipeline version is `assets/blender/lib/acr_assets/hdbody.py` with the opt-in unit
 `assets/units/hdman.py` (`cargo xtask assets hdman`; stats under `hd` in hdman.stats.json,
-LODs in hdman.lods.glb). These prototype scripts stay for the renders.
+LODs as `acr_lod` nodes in hdman.glb). These prototype scripts stay for the renders.

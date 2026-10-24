@@ -527,6 +527,8 @@ struct GpuModel {
     eye: f32,
     /// Head tiles of the face texture (#306, [`crate::model::Material::face_tiles`]); 1: none to pick.
     face_tiles: u8,
+    /// The glb carries its own levels ([`lod::authored`]): chosen by [`lod::AUTHORED_SIZES`].
+    authored: bool,
 }
 
 impl GpuModel {
@@ -536,7 +538,7 @@ impl GpuModel {
         let near = self
             .primitives
             .iter()
-            .filter(move |p| !merged && (decaying || !p.inner))
+            .filter(move |p| !merged && (decaying || !p.inner) && !p.lods[lod].is_empty())
             .map(move |p| (p.lods[lod].clone(), p.material, p.touched));
         let far =
             self.far[lod].iter().filter(move |f| decaying || !f.inner).map(|f| (f.range.clone(), f.material, false));
@@ -1184,12 +1186,23 @@ impl ModelRenderer {
         let baked = data.bake_looks().unwrap_or_default();
         let touched = |p: &crate::model::Primitive| !baked.is_empty() && !p.look_morphs.is_empty();
         let mut slots: Vec<Option<GpuPrimitive>> = (0..data.primitives.len()).map(|_| None).collect();
+        // Authored levels (the HD body): the levels the glb carries, the master (0) first.
+        let mut have: Vec<u8> = data.primitives.iter().filter_map(|p| p.lod).collect();
+        have.sort_unstable();
+        have.dedup();
+        let authored = have.iter().any(|&l| l > 0);
+        if authored && have.first() != Some(&0) {
+            have.insert(0, 0);
+        }
         for pass in [true, false] {
             for (k, p) in data.primitives.iter().enumerate().filter(|(_, p)| touched(p) == pass) {
                 // Indices are offset here: WebGL2 has no base vertex.
                 let base = vertices.len() as u32;
                 vertices.extend_from_slice(&p.vertices);
-                let levels = lod::levels(&p.vertices, &p.indices);
+                let levels = match p.lod.filter(|_| authored) {
+                    Some(own) => lod::authored(&p.vertices, &p.indices, own.min(lod::LEVELS as u8 - 1), &have),
+                    None => lod::levels(&p.vertices, &p.indices),
+                };
                 let lods = std::array::from_fn(|l| {
                     let start = indices.len() as u32;
                     indices.extend(levels[l].iter().map(|i| i + base));
@@ -1200,7 +1213,9 @@ impl ModelRenderer {
             }
         }
         let primitives: Vec<GpuPrimitive> = slots.into_iter().flatten().collect();
-        let far = Self::far_meshes(&mut vertices, &mut indices, &primitives);
+        // The authored levels are the far meshes themselves.
+        let far =
+            if authored { Default::default() } else { Self::far_meshes(&mut vertices, &mut indices, &primitives) };
         let variants: Vec<wgpu::Buffer> = baked
             .iter()
             .map(|v| {
@@ -1260,6 +1275,22 @@ impl ModelRenderer {
                     .create_view(&Default::default())
             })
             .collect();
+        let texture_bytes: usize = data.images.iter().map(|i| i.width as usize * i.height as usize * 4).sum();
+        log::log!(
+            if authored { log::Level::Info } else { log::Level::Debug },
+            "model: {} vertices, {} indices, {} textures {:.1} MB, {:.1} MB buffers{}",
+            vertices.len(),
+            indices.len(),
+            data.images.len(),
+            texture_bytes as f64 / 1e6,
+            (vertices.len() * size_of::<Vertex>() + indices.len() * 4) as f64 / 1e6,
+            if authored { format!(", authored levels {have:?}") } else { String::new() }
+        );
+        // `ACR_LOD_TINT` (native, a test aid): each authored level's materials tinted
+        // (master white, then green, yellow, red).
+        let tint_by_level = cfg!(not(target_arch = "wasm32")) && authored && std::env::var("ACR_LOD_TINT").is_ok();
+        let level_of_material =
+            |m: usize| data.primitives.iter().find(|p| p.material == m).and_then(|p| p.lod).map_or(0, usize::from);
         let procedural = data.decays_procedurally();
         let discards = data
             .materials
@@ -1278,10 +1309,14 @@ impl ModelRenderer {
         let materials = data
             .materials
             .iter()
-            .map(|m| {
+            .enumerate()
+            .map(|(k, m)| {
                 let d = m.decay;
+                const TINTS: [[f32; 4]; lod::LEVELS] =
+                    [[1.0; 4], [0.35, 1.0, 0.35, 1.0], [1.0, 0.9, 0.2, 1.0], [1.0, 0.25, 0.2, 1.0]];
+                let tint = if tint_by_level { TINTS[level_of_material(k).min(lod::LEVELS - 1)] } else { [1.0; 4] };
                 let uniform = MaterialUniform {
-                    base: m.base_color,
+                    base: std::array::from_fn(|c| m.base_color[c] * tint[c]),
                     tint: d.map_or([0.0; 4], |d| [d.tint[0], d.tint[1], d.tint[2], d.tint_strength]),
                     windows: d.map_or([0.0, 1.0, 2.0, 2.0], |d| {
                         let [s0, s1] = d.dissolve.unwrap_or([2.0, 2.0]);
@@ -1353,6 +1388,7 @@ impl ModelRenderer {
             variants,
             eye,
             face_tiles,
+            authored,
         });
         self.models.len() - 1
     }
@@ -1738,6 +1774,7 @@ impl ModelRenderer {
             .map(|m| match self.lod_force {
                 _ if whole(m) || size[m] == 0.0 => 0,
                 Some(l) => l,
+                None if self.models[m].authored => lod::choose_in(&lod::AUTHORED_SIZES, size[m], self.lod_last[m]),
                 None => lod::choose(size[m], self.lod_last[m]),
             })
             .collect();
