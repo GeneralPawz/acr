@@ -161,19 +161,29 @@ const GRAPHICS: &[Row] = &[
         get: |s| on_off(!s.lod),
         set: |s, i| s.lod = i == 0,
     }),
-    Row::Heading(b"Wasser und Boden"),
-    Row::Note(b"Nur in der 3D-Ansicht"),
+    // The note "Nur in der 3D-Ansicht" went into the heading, and water and ground share
+    // one box, so the trees and the wind have their rows.
+    Row::Heading(b"Landschaft (nur 3D)"),
     Row::Choice(Choice {
-        label: b"Wasser",
-        lines: &[b"Detailliert", b"Original"],
-        get: |s| on_off(!s.water_detailed),
-        set: |s, i| s.water_detailed = i == 0,
+        label: b"3D-B\xe4ume, Steine",
+        lines: &[b"An", b"Aus"],
+        get: |s| on_off(!s.map_models),
+        set: |s, i| s.map_models = i == 0,
     }),
     Row::Choice(Choice {
-        label: b"Boden",
-        lines: &[b"Detailliert", b"Original"],
-        get: |s| on_off(!s.ground_detailed),
-        set: |s, i| s.ground_detailed = i == 0,
+        label: b"Wind",
+        lines: &[b"An", b"Aus"],
+        get: |s| on_off(!s.wind),
+        set: |s, i| s.wind = i == 0,
+    }),
+    Row::Choice(Choice {
+        label: b"Wasser, Boden",
+        lines: &[b"Detailliert", b"Wasser original", b"Boden original", b"Original"],
+        get: |s| 2 * on_off(!s.ground_detailed) + on_off(!s.water_detailed),
+        set: |s, i| {
+            s.water_detailed = i % 2 == 0;
+            s.ground_detailed = i < 2;
+        },
     }),
 ];
 

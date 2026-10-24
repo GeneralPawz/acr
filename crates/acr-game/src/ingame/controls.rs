@@ -28,21 +28,32 @@ const PAN_KEYS: [u8; 4] = *b"ADWS";
 /// After Ctrl + Space, a letter within this time stands for one of the original's special
 /// keys.
 const LEADER_TIME: f64 = 2.0;
-/// The leader chords: letter, the key it stands for, its name in the hint.
-pub(super) const LEADER: [(u8, NamedKey, &str); 7] = [
-    (b'P', NamedKey::Pause, "Pause"),
-    (b'M', NamedKey::F12, "Menü"),
-    (b'O', NamedKey::F1, "Ziele"),
-    (b'D', NamedKey::F8, "Diplomatie"),
-    (b'L', NamedKey::Tab, "Lebensbalken"),
-    (b'F', NamedKey::F11, "Vollbild"),
-    (b'N', NamedKey::Space, "nächste Einheit"),
+/// What a leader chord does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Chord {
+    /// A press of one of the original's special keys.
+    Key(NamedKey),
+    /// Jump to the next selected unit (the original's Space).
+    NextUnit,
+    /// ACR: the free camera on or off (`camera=free` for this battle only).
+    Camera,
+}
+/// The leader chords: letter, what it does, its name in the hint.
+pub(super) const LEADER: [(u8, Chord, &str); 8] = [
+    (b'P', Chord::Key(NamedKey::Pause), "Pause"),
+    (b'M', Chord::Key(NamedKey::F12), "Menü"),
+    (b'O', Chord::Key(NamedKey::F1), "Ziele"),
+    (b'D', Chord::Key(NamedKey::F8), "Diplomatie"),
+    (b'L', Chord::Key(NamedKey::Tab), "Lebensbalken"),
+    (b'F', Chord::Key(NamedKey::F11), "Vollbild"),
+    (b'N', Chord::NextUnit, "nächste Einheit"),
+    (b'C', Chord::Camera, "freie Kamera"),
 ];
 /// How long the hint of the leader chords stays (frames of the message list).
 const LEADER_HINT: u32 = 100;
 
-/// The key a leader chord's letter stands for.
-pub(super) fn leader_key(ch: u8) -> Option<NamedKey> {
+/// What a leader chord's letter does.
+pub(super) fn leader_chord(ch: u8) -> Option<Chord> {
     LEADER.iter().find(|&&(c, ..)| c == ch.to_ascii_uppercase()).map(|&(_, k, _)| k)
 }
 
@@ -329,9 +340,7 @@ impl InGame {
         if *key == Key::Named(NamedKey::Space) && mods.control_key() && !mods.alt_key() {
             self.interface.modern.leader = Some(web_time::Instant::now());
             let list: Vec<String> = LEADER.iter().map(|&(c, _, name)| format!("{} {name}", c as char)).collect();
-            let text = format!("Strg+Leertaste: {}", list.join(", "));
-            let bytes = acr_formats::CodePage::Cp1252.encode(&text).unwrap_or_else(|| text.into_bytes());
-            self.mission.hint(bytes, LEADER_HINT);
+            self.leader_hint(&format!("Strg+Leertaste: {}", list.join(", ")));
             return Some(GameKey::None);
         }
         let since = self.interface.modern.leader?;
@@ -346,15 +355,30 @@ impl InGame {
             Key::Character(c) => c.chars().next().filter(char::is_ascii_alphabetic).map(|c| c as u8),
             _ => None,
         };
-        match ch.and_then(leader_key) {
+        match ch.and_then(leader_chord) {
             // Space here would start the chord again while Ctrl is still held.
-            Some(NamedKey::Space) => {
+            Some(Chord::NextUnit) => {
                 self.centre_next();
                 Some(GameKey::None)
             }
-            Some(named) => Some(GameKey::Leader(named)),
+            Some(Chord::Camera) => {
+                let free = self.three_d.toggle_free();
+                self.leader_hint(if free {
+                    "Freie Kamera: , und . drehen, Bild auf/ab neigen, Ende Grundstellung"
+                } else {
+                    "Kamera fest"
+                });
+                Some(GameKey::None)
+            }
+            Some(Chord::Key(named)) => Some(GameKey::Leader(named)),
             None => Some(GameKey::None),
         }
+    }
+
+    /// A line of the leader chords on the message list.
+    fn leader_hint(&mut self, text: &str) {
+        let bytes = acr_formats::CodePage::Cp1252.encode(text).unwrap_or_else(|| text.as_bytes().to_vec());
+        self.mission.hint(bytes, LEADER_HINT);
     }
 
     /// A group recalled with its digit: pressed twice in a row, the camera centres on it.
@@ -494,11 +518,13 @@ mod tests {
 
     #[test]
     fn leader_letters_stand_for_the_special_keys() {
-        assert_eq!(leader_key(b'p'), Some(NamedKey::Pause));
-        assert_eq!(leader_key(b'P'), Some(NamedKey::Pause));
-        assert_eq!(leader_key(b'M'), Some(NamedKey::F12));
-        assert_eq!(leader_key(b'O'), Some(NamedKey::F1));
-        assert_eq!(leader_key(b'X'), None);
+        assert_eq!(leader_chord(b'p'), Some(Chord::Key(NamedKey::Pause)));
+        assert_eq!(leader_chord(b'P'), Some(Chord::Key(NamedKey::Pause)));
+        assert_eq!(leader_chord(b'M'), Some(Chord::Key(NamedKey::F12)));
+        assert_eq!(leader_chord(b'O'), Some(Chord::Key(NamedKey::F1)));
+        assert_eq!(leader_chord(b'n'), Some(Chord::NextUnit));
+        assert_eq!(leader_chord(b'c'), Some(Chord::Camera));
+        assert_eq!(leader_chord(b'X'), None);
         // Every letter once.
         let mut letters: Vec<u8> = LEADER.iter().map(|&(c, ..)| c).collect();
         letters.sort_unstable();

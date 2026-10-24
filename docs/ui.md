@@ -917,12 +917,16 @@ tracks (311, 338, 419, 446) drawn in. The settings each line writes are in
 | 3 | 3D-Grafik | 3D-Modelle | Aus (Original) / Einheiten / Einheiten und Gebäude | `models` |
 | 3 | Darstellung | Kamera | Fest (Original) / Frei | `camera` |
 | 3 | | Schatten, Detailstufen | An / Aus | `shadows`, `lod` |
-| 3 | Wasser und Boden | (note: "Nur in der 3D-Ansicht") | | |
-| 3 | | Wasser, Boden | Detailliert / Original | `water`, `ground` |
+| 3 | Landschaft (nur 3D) | 3D-Bäume, Steine | An / Aus | `map_models` |
+| 3 | | Wind | An / Aus | `wind` |
+| 3 | | Wasser, Boden | Detailliert / Wasser original / Boden original / Original | `water`, `ground` (one box: the page's rows are the frame's) |
 
 All but the two rules take effect at once on OK. The rules are part of the simulation (the
 setup a replay or savegame hashes): a battle keeps the rules it began with, the new choice
-applies from the next battle, as the note under the heading says. Driver check with
+applies from the next battle, as the note under the heading says. The modern controls'
+Ctrl + Space, C switches the free camera for the running battle only
+([controls.md](controls.md#leader-chords-modern)); OK on these pages sets it back to the
+`Kamera` line. Driver check with
 screenshots: `ACR-analysis/settings/after.jsonl`.
 
 ### Mission windows and messages

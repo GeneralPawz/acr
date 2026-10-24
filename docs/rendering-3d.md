@@ -18,7 +18,7 @@ parameters: [assets-humans.md](assets-humans.md).
 | key | values | default | |
 |---|---|---|---|
 | `models` | `off`, `units`, `all` | `off` | `units`: units with a model are drawn in 3D; `all`: finished buildings too (under construction, burning down and ruined they stay sprites) |
-| `camera` | `fixed`, `free` | `fixed` | `free`: the camera turns and tilts (below) |
+| `camera` | `fixed`, `free` | `fixed` | `free`: the camera turns and tilts (below); the modern controls' Ctrl + Space, C switches it for the running battle |
 | `shadows` | `on`, `off` | `on` | sun shadows of the 3D models on the ground and on each other (below); tests switch them with `ACR_SHADOWS=on\|off` or the driver's `{"cmd": "shadows", "on": false}` |
 | `wind` | `on`, `off` | `on` | wind sways trees and foliage that carry `_WIND` weights (below, "Wind"); the driver's `props` request takes `"wind": false` |
 | `map_models` | `on`, `off` | `on` | the map's trees and stones are drawn as models where `assets/nature/map_objects.json` names one (below, "Map trees and stones"); the driver's `{"cmd": "map_models", "on": false}` switches it |

@@ -349,7 +349,14 @@ impl ThreeD {
         self.marks_keep = settings.marks_keep;
         self.set_decay_stain(settings.decay_stain());
         model::set_decay_cap(if settings.corpse_decay_half { model::HALF_DECAY } else { 1.0 });
-        log::info!("3d: models {:?}, camera {:?}, gore {:?}", settings.models, settings.camera, settings.gore);
+        log::info!(
+            "3d: models {:?}, camera {:?}, gore {:?}, wind {}, map models {}",
+            settings.models,
+            settings.camera,
+            settings.gore,
+            settings.wind,
+            settings.map_models
+        );
     }
 
     /// Switches to the free camera with this turn and tilt (the driver's `camera`). The
@@ -361,6 +368,15 @@ impl ThreeD {
             yaw: orbit.yaw.rem_euclid(std::f32::consts::TAU),
             pitch: orbit.pitch.clamp(0.05, Orbit::MAX_PITCH),
         };
+    }
+
+    /// The free camera on or off for this battle (the modern controls' Ctrl + Space, C); true
+    /// if it is on now. The turn and tilt stay from the last time; the view keeps its centre
+    /// either way, since the free camera turns about the ground point there.
+    pub fn toggle_free(&mut self) -> bool {
+        self.free = !self.free;
+        self.release_keys();
+        self.free
     }
 
     /// The model and this frame's instance of a unit drawn as a model (the studio, #299).

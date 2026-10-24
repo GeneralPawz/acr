@@ -127,6 +127,14 @@ on the way keep it. The original keys work as before.
 | Ctrl + Space, L | life bars | Tab |
 | Ctrl + Space, F | fullscreen | F11 |
 | Ctrl + Space, N | jump to the next selected unit | Space |
+| Ctrl + Space, C | free camera on or off (ACR) | none |
+
+**Ctrl + Space, C** switches the free camera (`camera=free`, [rendering-3d.md](rendering-3d.md#settings))
+for the running battle and says so on the message list with its keys; settings.txt keeps
+its value, and OK in the game options sets the camera back to it. The view keeps its
+centre both ways (the free camera turns about the ground point in the window's middle), and
+the turn and tilt stay from the last time. It works with models on or off. C was chosen
+because O (the letter a user may expect for "orbit") is the mission objectives.
 
 ### Keys the modern scheme takes
 
