@@ -488,6 +488,14 @@ on the shot frame of `ATTACK` (29). Moves of more than half a metre between stat
 walked (`guncrew.stepped`: contact and passing poses of `poses.walk_cycle`, about one step
 per 0.55 m, the root sliding along with the cycle's bob).
 
+- **Mortar** (#301, `assets/artillery/artmrt.py`, `acr_assets/mortarcrew.py`): the model is
+  found by the type id (`ArtMrt(XX)` → `artmrt.glb`, `scene::definition_name`) while the sim
+  plays the field gun's `.MD` keys, so it carries the cannon's clip names. Three men
+  (`c0.`..`c2.`: two loaders whose right hands go to the muzzle's rim, IK kind `muzzle`; the
+  firer with the linstock on the vent at frame 29), a bed without wheels, the barrel fixed at
+  60° and a `flash` bone at the muzzle shown for 5 frames from the shot. Open: `crew_view`
+  still counts four men (`CREW`, `FALL_ORDER` starts with `c3.`, absent here, so the first
+  quarter of the life costs no visible man) and bleeds pools at the cannon's `HOME`.
 - **Losses** (`acr-game/src/ingame/crew_view.rs`): the sim keeps the gun a single unit with
   one life; with `k = ceil(4 · life / max_life)` men standing, a man falls each time `k`
   drops (c3 the firer, c1 the loader, c0 the rammer, c2 the layer, who stays longest).

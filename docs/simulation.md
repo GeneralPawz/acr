@@ -1271,7 +1271,8 @@ before the world is made, an `ArtMrt(XX)` type after the original types for ever
 stay as they were):
 
 - A copy of the field gun (`md_name` stays `ArtPus`, so it draws with the gun's sprite and
-  model for now) without canister: `WEAPONINSECTOR` and the `KARTECH` attack go.
+  clip keys; in 3D the type id finds its own model, `artmrt.glb`, see rendering-3d.md "Gun
+  crew") without canister: `WEAPONINSECTOR` and the `KARTECH` attack go.
 - The ball attack fires the original's unused mortar shell `NUCL3M` (`WEAPON.NDS` line 38:
   `#NUCL2 800 60 NONE HI_GRAVITY3 ANGLE 75 -1`; at the burst its `[SYNCWEAPON]` throws the
   `NUCLM` fragments and the `PU2` blast) as weapon kind `IADROMOR`

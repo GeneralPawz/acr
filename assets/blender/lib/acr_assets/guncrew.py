@@ -589,11 +589,12 @@ def join(target, arm):
     bpy.context.view_layer.update()
 
 
-def build(root, gun_arm, name="artpus"):
-    """The four men joined into `gun_arm`. Returns the Characters."""
+def build(root, gun_arm, name="artpus", kits=None):
+    """The men of `kits` ({prefix: kit}, default the cannon's four `KITS`) joined into
+    `gun_arm`. Returns the Characters."""
     crew = []
-    for i, p in enumerate(PREFIXES):
-        ch = man(root, f"{name}.crew{i}", p, KITS[p])
+    for i, (p, kit) in enumerate(sorted((kits or KITS).items())):
+        ch = man(root, f"{name}.crew{i}", p, kit)
         crew.append(ch)
     for ch in crew:
         join(gun_arm, ch.arm)
@@ -612,17 +613,18 @@ def build(root, gun_arm, name="artpus"):
     return crew
 
 
-def key_clips(arm, actions):
+def key_clips(arm, actions, plan=None, marks=None):
     """Keys the crew's specs into the gun's actions {clip: action}, then puts the hands on
     their grips frame by frame (`ik_spans`: the body stepped by `place_body`, the arms by
-    `solve`) and measures every frame's misses (`measure`) as played."""
+    `solve`) and measures every frame's misses (`measure`) as played. `plan` defaults to the
+    cannon's `clips()`, `marks` ({name: (bone, local point)}) to its `gun_marks`."""
     import bpy
 
     from . import armature as am
 
     still = ("index_", "middle_", "ring_", "pinky_", "thumb_", "socket.")
-    plan = clips()
-    marks = gun_marks(arm)
+    plan = plan if plan is not None else clips()
+    marks = marks if marks is not None else gun_marks(arm)
     misses = {}
     for clip, act in actions.items():
         arm.animation_data_create()
@@ -844,8 +846,9 @@ def goals(arm, P, kind, marks):
     (armature space): "wheel" both on the felloe of his wheel (behind or in front of it),
     "chest" the hand on the chest's side on the top of its rope loop, "spike" the right fist
     on the handspike with its head under the trail's ring (`SPIKE_IN` past the seat),
-    "staff" the left on the level staff. The left hand on the handspike follows the right
-    (`solve`)."""
+    "staff" the left on the level staff, "muzzle" the right on the rim of a mortar's muzzle
+    (marks `muzzle_l`/`muzzle_r`, the side nearer the man). The left hand on the handspike
+    follows the right (`solve`)."""
     from mathutils import Vector
 
     B = arm.pose.bones
@@ -872,6 +875,10 @@ def goals(arm, P, kind, marks):
     if kind == "staff":
         sock = B[P + "socket.hand_r"]
         return {"l": _off_grip(arm, P, sock, STAFF_GRIP)}
+    if kind == "muzzle" and "muzzle_l" in marks:
+        hips = B[P + "hips"].head
+        rims = [_mark(arm, marks, m) for m in ("muzzle_l", "muzzle_r")]
+        return {"r": min(rims, key=lambda g: (g - hips).length)}
     return {}
 
 
@@ -924,7 +931,7 @@ def solve(arm, P, kind, marks, frame):
     if kind == "linstock" and "barrel" in marks:
         vent = _mark(arm, marks, "barrel")
         tip = LINSTOCK[1] + 0.07
-        for _ in range(3):
+        for _ in range(6):
             want = vent - (vent - sock.head).normalized() * tip
             _reach(arm, P, "r", want, frame)
             _point_tool(sock, vent, frame)
