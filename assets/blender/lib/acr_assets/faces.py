@@ -147,17 +147,42 @@ PORTRAIT_FADE = 0.72
 # grid of whole head tiles (`heads.face_map`, material `extras.acr_face_tiles`); the
 # renderer picks one per soldier from his look seed (`acr-render` `looks::face_tile`).
 PORTRAIT_TILES = 4
-# The default set for European units, read from `$ACR_SOURCES` (local-only generated faces;
-# a build without them paints the face). `ACR_PORTRAITS=0` switches the default off.
+# The default sets per group of peoples, read from `$ACR_SOURCES` (local-only generated
+# faces; a build without them paints the face), chosen by the unit's name prefix. Only the
+# groups in PORTRAIT_ON are used by default (`ACR_PORTRAIT_GROUPS=eu,wd,...` overrides it);
+# `ACR_PORTRAITS=0` switches every default off.
 PORTRAIT_DIR = os.path.join("generated", "faces", "aligned")
-PORTRAIT_SET = ("eu1_s1", "eu2_s1", "eu3_s1", "eu4_s1")
-EUROPEAN = ("eng", "frn", "spn", "usa")
+PORTRAIT_GROUPS = {
+    "eu": ("eng", "frn", "spn", "usa"),  # European
+    "wd": ("del", "hur", "iro"),  # Eastern Woodlands
+    "pl": ("siu",),  # Plains
+    "sw": ("pue",),  # Southwest (Pueblo)
+    "ms": ("atc", "may"),  # Mesoamerican
+    "an": ("inc",),  # Andean
+}
+PORTRAIT_ON = ("eu", "wd", "pl", "sw", "ms", "an")
+EUROPEAN = PORTRAIT_GROUPS["eu"]
+
+
+def portrait_set(group, tiles=PORTRAIT_TILES):
+    """File stems of group `group`'s default portraits: `<group>1_s1` .. `<group><tiles>_s1`."""
+    return tuple(f"{group}{k}_s1" for k in range(1, tiles + 1))
+
+
+PORTRAIT_SET = portrait_set("eu")
+
+
+def portrait_group(name):
+    """The group of peoples of unit `name` (by name prefix), or None."""
+    n = name.lower()
+    return next((g for g, pre in PORTRAIT_GROUPS.items() if n.startswith(pre)), None)
 
 
 def portrait_sources(name, environ=None, exists=os.path.isfile, tiles=PORTRAIT_TILES):
     """Paths of unit `name`'s frontal portraits, at most `tiles`, or []: first
-    `$ACR_FACES/<unit>.portrait<k>.png` (k = 1..) or `<unit>.portrait.png`, else for
-    European units (name prefix in EUROPEAN) the default set under `$ACR_SOURCES`."""
+    `$ACR_FACES/<unit>.portrait<k>.png` (k = 1..) or `<unit>.portrait.png`, else, when the
+    unit's group (`portrait_group`) is switched on, that group's default set under
+    `$ACR_SOURCES`."""
     env = os.environ if environ is None else environ
     n = name.lower()
     folder = env.get("ACR_FACES")
@@ -166,10 +191,33 @@ def portrait_sources(name, environ=None, exists=os.path.isfile, tiles=PORTRAIT_T
         one = os.path.join(folder, f"{n}.portrait.png")
         if found or exists(one):
             return found or [one]
-    if env.get("ACR_PORTRAITS", "1") == "0" or not n.startswith(EUROPEAN) or not env.get("ACR_SOURCES"):
+    on = env.get("ACR_PORTRAIT_GROUPS")
+    on = PORTRAIT_ON if on is None else tuple(g.strip() for g in on.split(",") if g.strip())
+    group = portrait_group(n)
+    if env.get("ACR_PORTRAITS", "1") == "0" or group not in on or not env.get("ACR_SOURCES"):
         return []
-    return [p for p in (os.path.join(env["ACR_SOURCES"], PORTRAIT_DIR, f"{k}.png") for k in PORTRAIT_SET[:tiles])
+    return [p for p in (os.path.join(env["ACR_SOURCES"], PORTRAIT_DIR, f"{k}.png") for k in portrait_set(group, tiles))
             if exists(p)]
+
+
+# Matching a portrait's colour to the painted skin (`heads._blend_portrait`): one brightness
+# gain within SKIN_GAIN, and per channel at most SKIN_TINT off it, so a photo whose rim is
+# dark stubble or shadow is not blown up into a red face (eu2 reached 1.15, 1.71, 1.64).
+SKIN_GAIN = (0.7, 1.4)
+SKIN_TINT = 0.12
+
+
+def _luma(c):
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+
+
+def skin_match(painted, photo):
+    """Per-channel factors (r, g, b) that bring the mean colour `photo` towards `painted`
+    (linear rgb triples): the brightness ratio clamped to SKIN_GAIN, each channel's own
+    ratio at most SKIN_TINT off it."""
+    g0 = _luma(painted) / max(_luma(photo), 1e-4)
+    g = min(max(g0, SKIN_GAIN[0]), SKIN_GAIN[1])
+    return tuple(g * min(max(p / max(q, 1e-4) / g0, 1.0 - SKIN_TINT), 1.0 + SKIN_TINT) for p, q in zip(painted, photo))
 
 
 def tile_grid(n):

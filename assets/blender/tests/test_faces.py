@@ -38,7 +38,7 @@ class FaceSource(unittest.TestCase):
         have = set(lib).__contains__
         self.assertEqual(faces.portrait_sources("EngM18", {"ACR_SOURCES": "/s"}, have), lib)
         self.assertEqual(faces.portrait_sources("EngM18", {"ACR_SOURCES": "/s"}, have, tiles=1), lib[:1])
-        self.assertEqual(faces.portrait_sources("DelLut", {"ACR_SOURCES": "/s"}, have), [])
+        self.assertEqual(faces.portrait_sources("DelLut", {"ACR_SOURCES": "/s", "ACR_PORTRAIT_GROUPS": "eu"}, have), [])
         self.assertEqual(faces.portrait_sources("EngM18", {"ACR_SOURCES": "/s", "ACR_PORTRAITS": "0"}, have), [])
         self.assertEqual(faces.portrait_sources("EngM18", {}, have), [])
         # Numbered portraits in $ACR_FACES come first.
@@ -46,6 +46,32 @@ class FaceSource(unittest.TestCase):
         self.assertEqual(faces.portrait_sources("EngM18", {"ACR_FACES": "/f", "ACR_SOURCES": "/s"}, mine.__contains__),
                          [os.path.join("/f", "engm18.portrait1.png"), os.path.join("/f", "engm18.portrait2.png")])
         self.assertEqual([faces.tile_grid(n) for n in (1, 2, 4, 5)], [1, 2, 2, 3])
+
+    def test_portrait_groups(self):
+        self.assertEqual([faces.portrait_group(n) for n in ("EngM18", "DelLut", "IroVog", "SiuKVog", "PueLut", "AtcVog",
+                                                            "MayKri", "IncTrb", "Artpus")],
+                         ["eu", "wd", "wd", "pl", "sw", "ms", "ms", "an", None])
+        lib = {os.path.join("/s", faces.PORTRAIT_DIR, f"{g}{k}_s1.png") for g in faces.PORTRAIT_GROUPS for k in range(1, 5)}
+        env = {"ACR_SOURCES": "/s", "ACR_PORTRAIT_GROUPS": "eu,pl"}
+        self.assertEqual(faces.portrait_sources("SiuKVog", env, lib.__contains__, tiles=2),
+                         [os.path.join("/s", faces.PORTRAIT_DIR, f"pl{k}_s1.png") for k in (1, 2)])
+        self.assertEqual(faces.portrait_sources("IncTrb", env, lib.__contains__), [])
+        self.assertEqual(faces.portrait_sources("IncTrb", dict(env, ACR_PORTRAIT_GROUPS=""), lib.__contains__), [])
+        self.assertTrue(set(faces.PORTRAIT_ON) <= set(faces.PORTRAIT_GROUPS))
+
+    def test_skin_match(self):
+        # A matching photo stays as it is.
+        for a, b in zip(faces.skin_match((0.3, 0.2, 0.15), (0.3, 0.2, 0.15)), (1.0, 1.0, 1.0)):
+            self.assertAlmostEqual(a, b)
+        # eu2: a dark, red rim asked for (1.15, 1.71, 1.64); now one gain within SKIN_GAIN and
+        # each channel at most SKIN_TINT off it.
+        painted = (0.30, 0.22, 0.17)
+        photo = (painted[0] / 1.147, painted[1] / 1.708, painted[2] / 1.64)
+        r = faces.skin_match(painted, photo)
+        self.assertLessEqual(max(r), faces.SKIN_GAIN[1] * (1 + faces.SKIN_TINT) + 1e-6)
+        self.assertGreaterEqual(min(r), faces.SKIN_GAIN[0] * (1 - faces.SKIN_TINT) - 1e-6)
+        self.assertLess(max(r) / min(r), (1 + faces.SKIN_TINT) / (1 - faces.SKIN_TINT) + 1e-6)
+        self.assertLess(r[0], r[1])  # still pulls the red back a little
         x0, x1, z0, z1 = faces.PORTRAIT_BOX
         self.assertEqual(faces.portrait_px(x0, z1, 768, 768), (0.0, 0.0))
         c, r = faces.portrait_px(0.0, 0.0, 768, 768)

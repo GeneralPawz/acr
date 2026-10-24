@@ -139,14 +139,26 @@ of variant meshes in a 3.27 MB glb.
     PHOTO OUT` aligns the photo's brows, eyes, nostrils and mouth back onto the guide (scale,
     aspect, shift by FFT cross-correlation; the model drifts 0–16 % in scale and 5–8 % down).
     `faces.portrait_sources` picks up to `PORTRAIT_TILES` (4): `$ACR_FACES/<unit>.portrait1..4.png`
-    or `<unit>.portrait.png`, else for European units (name prefix `eng`, `frn`, `spn`, `usa`)
-    the default set `PORTRAIT_SET` (`eu1_s1` … `eu4_s1`) under
-    `$ACR_SOURCES/generated/faces/aligned/`. Without the files (CI, other machines) or with
+    or `<unit>.portrait.png`, else the default set of the unit's group of peoples
+    (`faces.PORTRAIT_GROUPS` by name prefix: `eu` eng/frn/spn/usa, `wd` del/hur/iro, `pl` siu,
+    `sw` pue, `ms` atc/may, `an` inc; files `<group>1_s1` … `<group>4_s1` under
+    `$ACR_SOURCES/generated/faces/aligned/`), if the group is in `faces.PORTRAIT_ON`
+    (`ACR_PORTRAIT_GROUPS=eu,wd,…` overrides). Without the files (CI, other machines) or with
     `ACR_PORTRAITS=0` the face stays painted. Gun crews take one portrait (no look texel).
+    Every group's set is made from its own unit's guide (dellut, siukvog, puelut, atcvog,
+    inctrb), bare skin only: hair is geometry, face paint goes on top.
     `heads._blend_portrait` projects each along -Y onto the face front inside the ellipse
     `PORTRAIT_AXES`, fades it into the painted skin from `PORTRAIT_FADE`, matches its colour to
-    the painted skin on the rim (`stats.json` `face_uv.<unit>.portraits[k].rim_ratio`), then
-    the face paint and the occlusion go on top.
+    the painted skin on the brighter half of the rim (skin, not stubble or shadow) with
+    `faces.skin_match`: one brightness gain within `SKIN_GAIN` (0.7–1.4) and each channel at
+    most `SKIN_TINT` (12 %) off it (`stats.json` `face_uv.<unit>.portraits[k].rim_ratio`; eu2
+    was 1.15, 1.71, 1.64 unclamped, a red face), then the face paint and the occlusion go on top.
+  - **Face normal map:** `heads.face_normals` turns each portrait's log brightness into a
+    height (band-pass `FACE_RELIEF_FINE`–`FACE_RELIEF_COARSE` texels, dark is deep, times the
+    blend weight, `FACE_RELIEF_STRENGTH`), tiled like the colours and written at
+    `FACE_NORMAL_SCALE` of the colour size as the face material's `normalTexture`
+    (`stats.json` `normal_px`, `portraits[k].relief_p99_deg`; `ACR_FACE_NORMALS=0` leaves it
+    out). Drawn with `material_detail` (rendering-3d.md "Material detail").
   - **Several portraits per unit:** each portrait is a whole head tile (1024²); with more than
     one, `heads._tile_faces` lays them out as a grid (`faces.tile_grid`: 2 × 2 → 2048², tile k
     at column k % g, row k // g from the top, empty cells repeat the first), moves the head's
@@ -154,8 +166,11 @@ of variant meshes in a 3.27 MB glb.
     (`stats.json` `face_uv.<unit>.face_tiles`, `texture_px`). The renderer picks a tile per
     soldier (rendering-3d.md "Individual looks"). Sources: `D:\ACR-models\generated\faces\`
     (VM `~/sources/generated/faces`): `raw/`, `aligned/`, `set_a/`; never in the repo. Cost
-    (engm18, JPEG packing): painted 2 173 116 B, 4 portraits 2 587 968 B (+19 %). Open: no
-    normal map from the portraits yet; the native set (`na*`) is not a default.
+    (engm18, JPEG packing): painted 2 173 116 B, 4 portraits 2 587 968 B (+19 %), with the
+    1024² face normal map 2 828 436 B (+9 %). Native units (painted → 4 portraits + normal
+    map): dellut 1 238 112 → 1 746 528 B, siukvog 3 591 816 → 4 298 340, puelut 1 343 272 →
+    1 908 460, atcvog 1 594 564 → 2 248 868, inctrb 1 219 340 → 1 795 324. The first native
+    trial set (`na*`, from the engm18 guide) is unused.
 - **Body (#287, `acr_assets/mbody.py`):** below the head the skin hull is the MakeHuman 1.x
   base body (CC0, `assets/blender/data/makehuman/body.json`, from
   `assets/blender/tools/makehuman_body.py`), not the Skin-modifier hull: feet with heel,

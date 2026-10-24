@@ -23,6 +23,12 @@ from . import coat, decay, faces, held, mhead
 HAIR_BASE = (0.80, 0.78, 0.75)  # neutral: the renderer multiplies the chosen hair colour in
 FACE_SIZE = faces.FACE_SIZE  # the head's own texture (procedural)
 STRAND_SIZE = 256
+# The face normal map from the portraits (#306, `face_normals`): band-pass radii in texels
+# of a 1024² tile, the strength, and the map's size relative to the colour texture.
+FACE_RELIEF_FINE = 1
+FACE_RELIEF_COARSE = 6
+FACE_RELIEF_STRENGTH = 1.0
+FACE_NORMAL_SCALE = 0.5
 # `unwrap_head`: texel weight of the face front over scalp and neck, solver iterations.
 FACE_WEIGHT = 1.0
 UV_ITERATIONS = 20
@@ -517,22 +523,31 @@ def face_map(ch, skin_rgb, beard=True, scalp=True, tiles=faces.PORTRAIT_TILES):
         if guide:
             g = base[cov] * (0.72 + 0.28 * occ[cov] ** 0.9)[:, None]
             _write_guide(ch.name, loc[cov], flat_n[cov], g)
-        cols = []
+        cols, nrms = [], []
         for por in faces.portrait_sources(ch.name, tiles=tiles) or [None]:
             col = base.copy()
             if por:
-                col[cov], pst = _blend_portrait(por, loc[cov], flat_n[cov], col[cov], occ[cov])
-                st.setdefault("portraits", []).append(dict(pst, file=os.path.basename(por)))
+                col[cov], pst, relief = _blend_portrait(por, loc[cov], flat_n[cov], col[cov], occ[cov])
+                nrm, tilt = face_normals(relief, cov, size_px)
+                nrms.append(nrm)
+                st.setdefault("portraits", []).append(dict(pst, file=os.path.basename(por), relief_p99_deg=round(tilt, 1)))
             col[cov] = face_masks(ch, flat_p[cov], flat_n[cov], col[cov])
             col[cov] *= (0.72 + 0.28 * occ[cov] ** 0.9)[:, None]
             cols.append(dilate(col.reshape(size_px, size_px, 3), cov.reshape(size_px, size_px)).reshape(-1, 3))
         col = cols[0]
+        tile_px = size_px
         if len(cols) > 1:
             col = _tile_faces(cols, size_px, uv, head, me)
             size_px *= faces.tile_grid(len(cols))
             st.update(face_tiles=len(cols), texture_px=size_px)
+        if nrms and os.environ.get("ACR_FACE_NORMALS", "1") != "0":
+            nmap = _grid(nrms, tile_px)
+            nimg = _normal_image(f"{ch.name}.face_nrm", nmap, size_px, max(1, round(size_px * FACE_NORMAL_SCALE)))
+            st.update(normal_px=nimg.size[0])
     img = _image(f"{ch.name}.face", col, size_px)
     m = decay.material(f"{ch.name}.face", "flesh", skin_rgb, image=img, uv_map=uvname, interpolation="Linear")
+    if "normal_px" in st:
+        m["acr_normal_image"] = nimg.name
     m["acr_colour_from"] = "outfit"
     m["acr_tint"] = "skin"
     if st.get("face_tiles", 1) > 1:
@@ -544,21 +559,45 @@ def face_map(ch, skin_rgb, beard=True, scalp=True, tiles=faces.PORTRAIT_TILES):
     return img
 
 
-def _tile_faces(cols, size, uv, head, me):
+def _grid(cols, size):
     """The head tiles `cols` (each `size`² texels, rows from the bottom) as one grid texture,
     tile k at column k % g and row k // g from the top (glTF's image order; unused cells
-    repeat the first); the head polygons' UVs move into the first tile."""
+    repeat the first)."""
     g = faces.tile_grid(len(cols))
+    if g == 1:
+        return cols[0]
     out = np.zeros((g * size, g * size, 3), np.float32)
     for k in range(g * g):
         c, r = k % g, k // g
         y0 = (g - 1 - r) * size
         out[y0:y0 + size, c * size:(c + 1) * size] = cols[k if k < len(cols) else 0].reshape(size, size, 3)
+    return out.reshape(-1, 3)
+
+
+def _normal_image(name, nrm, size, out_px):
+    """A packed linear PNG of the normal map `nrm` (size² rgb, rows from the bottom),
+    scaled to `out_px`: exported as the face material's normalTexture."""
+    px = np.ones((size * size, 4), np.float32)
+    px[:, :3] = np.clip(nrm, 0.0, 1.0)
+    img = bpy.data.images.new(name, size, size, alpha=False)
+    img.colorspace_settings.name = "Non-Color"
+    img.pixels.foreach_set(px.ravel())
+    if out_px != size:
+        img.scale(out_px, out_px)
+    img.file_format = "PNG"
+    img.pack()
+    return img
+
+
+def _tile_faces(cols, size, uv, head, me):
+    """`_grid` of the head tiles `cols`; the head polygons' UVs move into the first tile."""
+    g = faces.tile_grid(len(cols))
+    out = _grid(cols, size)
     for pi in head:
         for li in me.polygons[pi].loop_indices:
             u, v = uv.data[li].uv
             uv.data[li].uv = (u / g, 1.0 - (1.0 - v) / g)
-    return out.reshape(-1, 3)
+    return out
 
 
 def _frontal(loc, n):
@@ -592,6 +631,44 @@ def _write_guide(name, loc, n, col):
     bpy.data.images.remove(out)
 
 
+LUMA = np.array([0.2126, 0.7152, 0.0722], np.float32)
+
+
+def _blur(img, r):
+    """Box blur of the 2D array `img` with radius `r` texels, twice (close to a Gaussian)."""
+    for _ in range(2):
+        for ax in (0, 1):
+            pad = np.pad(img, [(r + 1, r) if a == ax else (0, 0) for a in (0, 1)], mode="edge")
+            c = np.cumsum(pad, axis=ax, dtype=np.float64)
+            hi = c.take(np.arange(2 * r + 1, c.shape[ax]), axis=ax)
+            lo = c.take(np.arange(0, c.shape[ax] - 2 * r - 1), axis=ax)
+            img = ((hi - lo) / (2 * r + 1)).astype(np.float32)
+    return img
+
+
+def face_normals(relief, cov, size):
+    """A tangent-space normal map (rgb in 0..1, rows from the bottom) of the face tile from
+    a portrait's relief (`_blend_portrait`): its log brightness, band-passed in texture
+    space (fine blur FACE_RELIEF_FINE minus coarse FACE_RELIEF_COARSE texels, so the
+    photo's broad shading does not become shape), times the blend weight, read as a height
+    (dark is deep: brows, creases, pores, stubble) at FACE_RELIEF_STRENGTH per unit of log
+    brightness. Returns the map and the tilt of its steepest 1 % (degrees) for `stats.json`."""
+    lum, wgt = relief
+    h = np.zeros(size * size, np.float32)
+    w = np.zeros(size * size, np.float32)
+    h[cov], w[cov] = lum, wgt
+    h = dilate(np.repeat(h.reshape(size, size, 1), 3, 2), cov.reshape(size, size))[..., 0]
+    k = size / 1024.0
+    band = _blur(h, max(1, round(FACE_RELIEF_FINE * k))) - _blur(h, max(2, round(FACE_RELIEF_COARSE * k)))
+    band = np.clip(band, -0.6, 0.6) * w.reshape(size, size) * FACE_RELIEF_STRENGTH
+    dv, du = np.gradient(band * (1024.0 / size))
+    n = np.stack([-du, -dv, np.ones_like(du)], -1)
+    n /= np.linalg.norm(n, axis=-1, keepdims=True)
+    face = w.reshape(size, size) > 0.5
+    tilt = float(np.degrees(np.arccos(np.percentile(n[..., 2][face], 1)))) if face.any() else 0.0
+    return (n * 0.5 + 0.5).reshape(-1, 3), tilt
+
+
 def _blend_portrait(path, loc, n, col, occ):
     """Projects the frontal portrait at `path` (framed by `faces.PORTRAIT_BOX`) along -Y onto
     the face texels and fades it into the painted skin over the rim of the face area; its
@@ -614,12 +691,18 @@ def _blend_portrait(path, loc, n, col, occ):
     ring = (rad > 0.6) & (rad < 0.95) & (wgt > 0.05)
     ratio = np.ones(3, np.float32)
     if ring.sum() > 50:
-        ratio = np.clip(col[ring].mean(0) / np.maximum(smp[ring].mean(0), 1e-4), 0.5, 2.0)
+        # Skin only: the brighter half of the rim (stubble, brows and shadow are darker).
+        lum = smp[ring] @ LUMA
+        skin = lum >= np.median(lum)
+        ratio = np.array(faces.skin_match(col[ring][skin].mean(0), smp[ring][skin].mean(0)), np.float32)
+    # Relief for the face normal map (`face_normals`): the photo's brightness, before the
+    # skin match, with the blend weight.
+    relief = (np.log(np.maximum(smp @ LUMA, 1e-3)), wgt)
     # The baked occlusion goes over both afterwards; the photo has its own, so half of it
     # is divided back out under the portrait.
     smp = smp * ratio / (0.86 + 0.14 * np.clip(occ, 0, 1) ** 0.9)[:, None]
     out = coat.mix(col, smp, wgt)
-    return out, {"texels": int((wgt > 0.5).sum()), "rim_ratio": [round(float(v), 3) for v in ratio]}
+    return out, {"texels": int((wgt > 0.5).sum()), "rim_ratio": [round(float(v), 3) for v in ratio]}, relief
 
 
 def face_masks(ch, p, n, col):
