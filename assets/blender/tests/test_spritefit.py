@@ -1,5 +1,6 @@
 """spritefit: the sprite fit of generated models recovers a known turn, scale and shift."""
 
+import math
 import os
 import sys
 import unittest
@@ -45,6 +46,34 @@ class Fit(unittest.TestCase):
         self.assertGreater(f["iou"], 0.9)
         self.assertAlmostEqual((f["yaw"] - 110.0) % 360.0, 0.0, delta=10.0)
         self.assertAlmostEqual(f["scale"], 5.0, delta=0.5)
+
+
+@unittest.skipIf(np is None, "numpy missing")
+class Upright(unittest.TestCase):
+    def test_camera_upright_stands_the_view_vertical(self):
+        # in the camera frame of the 30-degree view the world's up is (0, -sin e, cos e)
+        up = np.array([0.0, -0.5, math.sqrt(3) / 2])
+        np.testing.assert_allclose(spritefit.camera_upright() @ up, [0.0, 0.0, 1.0], atol=1e-9)
+
+    def test_level_flattens_a_tilted_base(self):
+        rng = np.random.default_rng(3)
+        slab = rng.random((20000, 3)) * [4.0, 2.0, 0.4] - [2.0, 1.0, 0.0]
+        stump = rng.random((8000, 3)) * [1.0, 1.0, 2.0] + [0.5, -0.5, 0.4]
+        pts = np.concatenate([slab, stump]) @ spritefit.rot(0.0, 6.0, -4.0).T
+        r, how, tilt = spritefit.level(pts)
+        self.assertEqual(how, "base")
+        self.assertAlmostEqual(tilt, math.hypot(6.0, 4.0), delta=1.5)
+        out = (pts - pts.mean(0)) @ r.T
+        self.assertGreater(spritefit.base_support(out), 0.08 * len(slab))  # the slab's bottom band
+
+    def test_level_stands_a_pillar_on_its_axis(self):
+        rng = np.random.default_rng(4)
+        pts = rng.random((20000, 3)) * [0.6, 0.6, 4.0] @ spritefit.rot(30.0, 9.0).T
+        r, how, tilt = spritefit.level(pts)
+        self.assertEqual(how, "axis")
+        self.assertAlmostEqual(tilt, 9.0, delta=1.0)
+        out = pts @ r.T
+        self.assertGreater(np.ptp(out[:, 2]), 3.95)
 
 
 if __name__ == "__main__":

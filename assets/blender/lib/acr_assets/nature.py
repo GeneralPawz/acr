@@ -418,6 +418,56 @@ def build(ctx, spec):
     }
 
 
+# Map objects generated from their own sprite (`map`): triangle budget and texture per kind.
+MAP_KINDS = {"ruin": {"tris": 4000, "tex": 1024}, "rubble": {"tris": 1000, "tex": 512}}
+LEVEL_KEEP = 0.01  # `_map_fit` keeps the levelling unless it costs more sprite IoU than this
+
+
+def _map_fit(low, m, anchor, real_dir):
+    """Stands a model made from the game's view of a map sprite upright and fits it to that
+    sprite (`spritefit`): the camera turn (`camera_upright`, minus the 30-degree elevation
+    about X; azimuth 0: the sprite is the north view, `RealDir` 64), then the residual tilt
+    (`level`: long axis of a pillar, else the flattest base), then the sprite fit with the
+    turn held at 0 (scale and ground shift; the model came from this very frame). Returns
+    stats: `iou_raw` (the same fit without the upright turns), `iou_fit`, `iou`
+    (after the transform, denser sample), `iou_camera` (camera turn only; the levelling is
+    undone when it scores `LEVEL_KEEP` worse), `upright` {camera_deg, how, tilt_deg}, `fit`."""
+    from . import genbuild, spritefit
+
+    def centre():
+        v, _ = genbuild._arrays(low)
+        c = (v.min(axis=0) + v.max(axis=0)) / 2
+        vs.transform([low], Matrix.Translation((-c[0], -c[1], -c[2])))
+
+    def m4(r):
+        return Matrix([list(row) for row in r]).to_4x4()
+
+    centre()
+    raw = spritefit.fit(genbuild.sample(low, 60000, seed=1), m, anchor, real_dir, yaws=(0,))
+    cam = spritefit.camera_upright()
+    vs.transform([low], m4(cam))
+    centre()
+    cam_only = spritefit.fit(genbuild.sample(low, 60000, seed=1), m, anchor, real_dir, yaws=(0,))
+    lv, how, tilt = spritefit.level(genbuild.sample(low, 30000, seed=2))
+    vs.transform([low], m4(lv))
+    centre()
+    f = spritefit.fit(genbuild.sample(low, 60000, seed=1), m, anchor, real_dir, yaws=(0,))
+    if f["iou"] < cam_only["iou"] - LEVEL_KEEP:
+        # the levelling made the match worse (a heap without a flat base): undo it
+        vs.transform([low], m4(lv.T))
+        centre()
+        f, how, tilt = cam_only, f"{how} undone", 0.0
+    vs.transform([low], genbuild._matrix(f))
+    return {
+        "iou_raw": round(raw["iou"], 3),
+        "iou_camera": round(cam_only["iou"], 3),
+        "iou_fit": round(f["iou"], 3),
+        "iou": genbuild._final_iou(low, m, anchor, real_dir),
+        "upright": {"camera_deg": round(math.degrees(math.asin(cam[2, 1])), 1), "how": how, "tilt_deg": tilt},
+        "fit": {"scale": round(f["scale"], 4), "shift": [round(x, 3) for x in f["shift"]]},
+    }
+
+
 def build_generated(ctx, spec):
     """A map prop from a generated model (Pixal3D or Rodin, `$ACR_SOURCES/generated/<source>`,
     local only) through `genfit.fit` (prop category: backdrop dropped, decimated to the
@@ -429,6 +479,9 @@ def build_generated(ctx, spec):
                 `genfit.prop_wind`; the root's `acr_wind` scales: `WIND["rock"]` for hard
                 props, `WIND["bush"]` otherwise
         sink    metres below the ground point (default 0.03; on slopes nothing floats)
+        map     "ruin" or "rubble": a map object generated from its own TREELIST sprite in
+                the game's view (`MAP_KINDS` budget, built at the sprite's size, stood
+                upright and fitted to that sprite: `_map_fit`; needs the game folder)
         turn    degrees about +Z
 
     The baked normal map is dropped (the renderer reads base colour only). Stats: the
@@ -436,7 +489,19 @@ def build_generated(ctx, spec):
     `backdrop_faces_removed`, `size_m`) plus `wind`, `flutter_frac`."""
     from . import genfit
 
-    low, st = genfit.fit(spec["source"], name=f"{ctx.name}.mesh")
+    mp = spec.get("map")
+    row = ref = sil = None
+    if mp:
+        from . import conventions as cv
+        from . import genbuild
+
+        ref = genbuild._need_ref(ctx)
+        sil = genbuild.mask(ref.views[0])
+        rows, cols = np.nonzero(sil.any(axis=1))[0], np.nonzero(sil.any(axis=0))[0]
+        # the sprite's size: width, or height through the 30-degree camera
+        size = max((cols[-1] - cols[0] + 1), (rows[-1] - rows[0] + 1) / cv.COS_E) / cv.PIXELS_PER_METRE
+        row = dict(MAP_KINDS[mp], category="prop", size=round(float(size), 3), layer="stone")
+    low, st = genfit.fit(spec["source"], name=f"{ctx.name}.mesh", row=row)
     me = low.data
     # base colour only: drop the normal-map chain and its image
     for m in me.materials:
@@ -456,6 +521,9 @@ def build_generated(ctx, spec):
     st["tex_black_frac"] = round(float((px[:, :3].max(1) < 0.05).mean()), 3)
     st["tex_mean_rgb"] = [round(float(c), 3) for c in px[:, :3].mean(0)]
     me.validate()
+    if mp:
+        st["map_kind"] = mp
+        st.update(_map_fit(low, sil, ref.anchor, ref.views[0].dir))
     sink = spec.get("sink", 0.03)
     vs.transform([low], Matrix.Rotation(math.radians(spec.get("turn", 0.0)), 4, "Z") @ Matrix.Translation((0, 0, -sink)))
     low.parent = ctx.root

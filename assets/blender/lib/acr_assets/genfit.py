@@ -800,16 +800,32 @@ def _apply_decimate(ob, tris):
         m = ob.modifiers.new("tri", "TRIANGULATE")
         bpy.ops.object.modifier_apply(modifier=m.name)
     last = None
-    for _ in range(16):
+    stalls = 0
+    steps = []
+    for _ in range(24):
         n = _tris(ob.data)
+        steps.append(n)
         if n <= tris * 1.05:
             break
         m = ob.modifiers.new("dec", "DECIMATE")
         if last is not None and n > 0.97 * last:
-            # the collapse stalled (open borders, fins): dissolve near-planar regions, then go on
+            # the collapse stalled (open borders, fins): dissolve near-planar regions, then go
+            # on; each further stall dissolves a wider angle (3, 6, 10, 15 degrees: stone
+            # rubble stalls at twice its budget at 3)
             m.decimate_type = "DISSOLVE"
-            m.angle_limit = math.radians(3)
+            m.angle_limit = math.radians((3, 6, 10, 15)[min(stalls, 3)])
+            stalls += 1
             bpy.ops.object.modifier_apply(modifier=m.name)
+            if stalls > 1:
+                # still stuck: open seams of the soup block the collapse; weld them shut
+                # (0.5, 1, 1.5 % of the size)
+                import bmesh
+
+                bm = bmesh.new()
+                bm.from_mesh(ob.data)
+                bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.005 * (stalls - 1) * max(_ext(ob)))
+                bm.to_mesh(ob.data)
+                bm.free()
             m = ob.modifiers.new("tri", "TRIANGULATE")
             bpy.ops.object.modifier_apply(modifier=m.name)
             last = None
@@ -818,6 +834,7 @@ def _apply_decimate(ob, tris):
         m.use_collapse_triangulate = True
         bpy.ops.object.modifier_apply(modifier=m.name)
         last = n
+    return steps
 
 
 def _bake(src, low, img, kind, reach, margin=4):
@@ -999,16 +1016,17 @@ def _deviation(src, low, cutter=None, n=6000):
     return summary(d)
 
 
-def fit(rel, head=None, socket=None, scalp=None, name=None, keep_source=False):
+def fit(rel, head=None, socket=None, scalp=None, name=None, keep_source=False, row=None):
     """Makes generated item `rel` (path below the generated sources) game-ready; returns
     (object, stats). Headgear with `scalp` (a world-space mesh object of the head or body),
     `head` (`head_of`) and `socket` (world position of `socket.hat`) is fitted to that head,
-    its origin at the socket; without them its origin is the middle of the opening."""
+    its origin at the socket; without them its origin is the middle of the opening. `row`
+    stands in for the `ITEMS` row (map objects made from their sprite: `nature`)."""
     import bmesh
     import bpy
     from mathutils import Matrix
 
-    it = item(rel)
+    it = dict(row, name=os.path.splitext(os.path.basename(rel))[0]) if row else item(rel)
     cat = it["category"]
     budget = dict(CATEGORIES[cat], **{k: it[k] for k in ("tris", "tex") if k in it})
     name = name or it["name"]
@@ -1059,7 +1077,7 @@ def fit(rel, head=None, socket=None, scalp=None, name=None, keep_source=False):
         bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context="VERTS")
     bm.to_mesh(low.data)
     bm.free()
-    _apply_decimate(low, budget["tris"])
+    st["decimate_steps"] = _apply_decimate(low, budget["tris"])
     if cat == "prop":
         st["normals"] = _outward(low)
     st["triangles"] = _tris(low.data)

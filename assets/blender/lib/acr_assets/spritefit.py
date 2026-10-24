@@ -146,3 +146,70 @@ def fit(points, mask, anchor, real_dir=64.0, yaws=range(0, 360, 10), pitch=0.0, 
     best["shift"] = ground_shift(*best["screen"], real_dir)
     best["rough"] = [(round(r[0], 3), r[1]) for r in rough[:keep]]
     return best
+
+
+# -- upright: models reconstructed from the game view ---------------------------------------
+#
+# An image-to-3D model of a map sprite (Pixal3D on a TREELIST frame) comes out in the camera
+# frame of that picture: its vertical is the screen's up, but the original camera looks 30
+# degrees down (`conventions.ELEVATION`), so the true vertical is tilted towards the camera.
+# After `genfit.load` (camera at -Y, looking +Y, the game's north view; azimuth 0, `RealDir`
+# 64) the world's up is (0, -sin e, cos e): pillars lean south by e. `camera_upright` turns
+# that back; `level` takes out what the reconstruction adds on top.
+
+LEVEL_MAX = 12.0     # degrees: the residual tilt `level` may take out
+LEVEL_BAND = 0.02    # base support: points within this share of the height above the lowest
+PILLAR = 2.5         # elongation (long / middle principal spread) that makes a pillar
+PILLAR_CONE = 12.0   # degrees: a pillar's long axis this near the vertical is stood up
+
+
+def camera_upright(elevation_deg=None):
+    """3x3 rotation that turns a model reconstructed in the original camera's frame (up =
+    screen up, view along +Y) so its up is the world's +Z: about X by minus the elevation."""
+    e = math.degrees(cv.ELEVATION) if elevation_deg is None else elevation_deg
+    return rot(0.0, -e)
+
+
+def base_support(points, band=LEVEL_BAND):
+    """Points within `band` of the height above the lowest: a flat base stood level has
+    many, a tilted one only its low edge."""
+    z = points[:, 2]
+    h = max(float(z.max() - z.min()), 1e-9)
+    return int(np.count_nonzero(z - z.min() < band * h))
+
+
+def _to_z(a):
+    """Rotation (Rodrigues) that turns unit vector `a` onto +Z."""
+    a = a / np.linalg.norm(a)
+    v = np.cross(a, [0.0, 0.0, 1.0])
+    s, c = np.linalg.norm(v), float(a[2])
+    if s < 1e-12:
+        return np.eye(3) if c > 0 else np.diag([1.0, -1.0, -1.0])
+    k = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]]) / s
+    return np.eye(3) + s * k + (1 - c) * (k @ k)
+
+
+def level(points, max_deg=LEVEL_MAX, step=1.0, band=LEVEL_BAND):
+    """The residual tilt of a roughly upright model: returns (3x3 rotation, how, tilt
+    degrees). A pillar (principal spread long / middle >= `PILLAR`, long axis within
+    `PILLAR_CONE` of +Z) is stood on its long axis ("axis"); anything else gets the pitch
+    and roll within +-`max_deg` that maximise `base_support` (the flat base on the ground,
+    "base"; ties keep the smaller turn)."""
+    p = points - points.mean(0)
+    w, e = np.linalg.eigh(np.cov(p.T))
+    a = e[:, 2] * (1.0 if e[2, 2] >= 0 else -1.0)
+    elong = math.sqrt(max(w[2], 0.0) / max(w[1], 1e-12))
+    cone = math.degrees(math.acos(min(1.0, abs(float(a[2])))))
+    if elong >= PILLAR and cone <= PILLAR_CONE:
+        return _to_z(a), "axis", round(cone, 2)
+    angles = np.arange(-max_deg, max_deg + 1e-9, step)
+    cands = sorted(((float(pp), float(rr)) for pp in angles for rr in angles), key=lambda t: (abs(t[0]) + abs(t[1]), t))
+    best = None
+    for pp, rr in cands:
+        r = rot(0.0, pp, rr)
+        s = base_support(p @ r.T, band)
+        if best is None or s > best[0]:
+            best = (s, r, pp, rr)
+    _, r, pp, rr = best
+    tilt = math.degrees(math.acos(min(1.0, float(r[2, 2]))))
+    return r, "base", round(tilt, 2)

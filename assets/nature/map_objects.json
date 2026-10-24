@@ -1,5 +1,5 @@
 {
-  "_doc": "Map objects drawn as 3D models: TREELIST/STONLIST sprite index or range -> model name (target/assets/nature/<name>.glb), or {\"model\": name, \"scale\": s}. docs/rendering-3d.md \"Map trees and stones\". Models: assets/nature/*.py (acr_assets/nature.py), matched by look to the TREES.GP / STONES.GP frames. Unmapped: dry twig bushes 143-172, flags 331/471, Rushmore 225, flowers 327-330, stone rubble 427-430/434/447-451, standing dead brush 442-443, ruins 453-457/459-464/468-470 (pillars, lintels, rubble); generated props (prop_*/nat_*, acr_assets.nature.build_generated): fallen trees 431-446, ruin walls 452/458/465-466, ruin tower 467; STONLIST skulls 75-79 and the head 132.",
+  "_doc": "Map objects drawn as 3D models: TREELIST/STONLIST sprite index or range -> model name (target/assets/nature/<name>.glb), or {\"model\": name, \"scale\": s}. docs/rendering-3d.md \"Map trees and stones\". Models: assets/nature/*.py (acr_assets/nature.py), matched by look to the TREES.GP / STONES.GP frames. Unmapped: dry twig bushes 143-172, flags 331/471, Rushmore 225, flowers 327-330, stone rubble 429 (its model scores IoU 0.55 against the sprite), standing dead brush 442-443, fallen trees 431-446; ruins and rubble 427-428/430/434/447-470 are map_t<N>, generated from their own sprite and built at its size (scale 1; assets/nature/map_t*.py, docs/assets.md); STONLIST skulls 75-79 and the head 132.",
   "TREELIST": {
     "0": "broadleaf_ez",
     "1": "dead_tree",
@@ -87,7 +87,119 @@
     "381-395": "oak",
     "396-398": "dead_tree",
     "399-410": "stone_a",
-    "411-426": "shrub"
+    "411-426": "shrub",
+    "427": {
+      "model": "map_t427",
+      "scale": 1.0
+    },
+    "428": {
+      "model": "map_t428",
+      "scale": 1.0
+    },
+    "430": {
+      "model": "map_t430",
+      "scale": 1.0
+    },
+    "434": {
+      "model": "map_t434",
+      "scale": 1.0
+    },
+    "447": {
+      "model": "map_t447",
+      "scale": 1.0
+    },
+    "448": {
+      "model": "map_t448",
+      "scale": 1.0
+    },
+    "449": {
+      "model": "map_t449",
+      "scale": 1.0
+    },
+    "450": {
+      "model": "map_t450",
+      "scale": 1.0
+    },
+    "451": {
+      "model": "map_t451",
+      "scale": 1.0
+    },
+    "452": {
+      "model": "map_t452",
+      "scale": 1.0
+    },
+    "453": {
+      "model": "map_t453",
+      "scale": 1.0
+    },
+    "454": {
+      "model": "map_t454",
+      "scale": 1.0
+    },
+    "455": {
+      "model": "map_t455",
+      "scale": 1.0
+    },
+    "456": {
+      "model": "map_t456",
+      "scale": 1.0
+    },
+    "457": {
+      "model": "map_t457",
+      "scale": 1.0
+    },
+    "458": {
+      "model": "map_t458",
+      "scale": 1.0
+    },
+    "459": {
+      "model": "map_t459",
+      "scale": 1.0
+    },
+    "460": {
+      "model": "map_t460",
+      "scale": 1.0
+    },
+    "461": {
+      "model": "map_t461",
+      "scale": 1.0
+    },
+    "462": {
+      "model": "map_t462",
+      "scale": 1.0
+    },
+    "463": {
+      "model": "map_t463",
+      "scale": 1.0
+    },
+    "464": {
+      "model": "map_t464",
+      "scale": 1.0
+    },
+    "465": {
+      "model": "map_t465",
+      "scale": 1.0
+    },
+    "466": {
+      "model": "map_t466",
+      "scale": 1.0
+    },
+    "467": {
+      "model": "map_t467",
+      "scale": 1.0
+    },
+    "468": {
+      "model": "map_t468",
+      "scale": 1.0
+    },
+    "469": {
+      "model": "map_t469",
+      "scale": 1.0
+    },
+    "470": {
+      "model": "map_t470",
+      "scale": 1.0
+    }
   },
   "STONLIST": {
     "0-3": "stone_a",
