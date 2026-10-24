@@ -638,21 +638,27 @@ def build(ctx, s):
         ch.keys[rod.name] = "metal"
         aim, hip, present = aiming.fire_poses(ch)  # from the shoulder and the hip (#296)
         ctx.aim_errors = aiming.errors(ch.arm, aim)
-        reload = aiming.drill(ch.arm, poses.RELOAD_STEPS)
+        infos = {}
+        reload = aiming.drill(ch.arm, poses.RELOAD_STEPS, infos)
         charge = aiming.hold(ch.arm, poses.CHARGE_MUSKET, pocket=(0.02, -0.12, -0.32), left_along=0.30)
         clips = poses.musketeer_clips(md, aim=aim, charge=charge, reload=reload, hip=hip)
         # The native riflemen run on their 8-frame sprites like the rest of the foot (#295).
         for k, ks in poses.step_keys(md, poses.STAND_MUSKET).items():
             clips[k] = rig.clip_keys(rig.md_clip_frames(md[k])[0], ks)
         clips = {k: v for k, v in clips.items() if k in md or k.startswith(("ATTACK_", "FIRE_"))}
+        # The hands on the musket and the rammer on every frame between two loading steps (#255).
+        rods = poses.rod_phases(md)
+        held, plan = aiming.solve_holds(ch.arm, {k: clips[k] for k in rods if k in clips}, reload, infos)
+        clips.update(held)
         for clip, keys in clips.items():
             am.add_clip(ch.arm, clip, keys)
-            if clip in ("ATTACK1", *aiming.FIRE_CLIPS):
-                aiming.bake_musket(ch.arm, clip, keys, rod_phases=poses.ROD_PHASES)
+            if clip in rods:
+                aiming.bake_musket(ch.arm, clip, keys, rod_phases=rods[clip])
             else:
                 aiming.stow_rammer(ch.arm, clip)
             names.append(clip)
         ctx.fire = aiming.fire_stats(ch, present)
+        ctx.reload = aiming.reload_report(ch.arm, plan)
         stand = poses.STAND_MUSKET
     else:
         for clip, keys in unit_clips(s).items():
@@ -683,7 +689,8 @@ def build(ctx, s):
                    acr_limb_radius=ch.limb_radius, acr_light=report.get("light_dir_camera", []),
                    acr_layers=list(ch.layers), acr_family="native")
     ctx.stats = {"triangles": tris, "light": report, "colours": colours,
-                 "aim_errors_m": getattr(ctx, "aim_errors", None), "fire": getattr(ctx, "fire", None)}
+                 "aim_errors_m": getattr(ctx, "aim_errors", None), "fire": getattr(ctx, "fire", None),
+                 "reload": getattr(ctx, "reload", None)}
 
 
 def pose_for(ch, s, clip):

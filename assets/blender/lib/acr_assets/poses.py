@@ -108,6 +108,69 @@ RELOAD_FRAMES = [
     (67, "ram_up"), (70, "ram_down"), (73, "rod_out"), (76, "return_rod"), (80, "poise"),
 ]
 
+# The reload stance (#255). A `SLOWRECHARGE` musketeer (EngM18, FrnM18, UsaM18, IroStr ...:
+# an `#ATTACK3` line) reloads by playing `#ATTACK3` over and over, each play taking its
+# frames off the reload counter (`ATTACK_PAUSE` x personal delay / 100: EngM18 450 = five
+# plays of 88 frames), straight after `#ATTACK1` (no transition: `combat.rs`, stance 4), then
+# `#TRANS3X` (stance 4 to the firing stance, `USETRANSX`) and the next `#ATTACK1`. So:
+# ATTACK1 after the shot primes, casts about, loads, draws the rammer and enters the bore;
+# ATTACK3 rams (a loop: it starts and ends on `RAM_HOLD`); TRANS3X returns the rammer and
+# presents, ending on the aim ATTACK1 starts from. TRANSX3, PATTACK3, UATTACK3 (into and
+# out of the stance from the aim or from STAND) and PSTAND3 (held) for interrupted reloads.
+# Keys: (frame, step) in ATTACK1, (fraction, step) in the others; "@aim" and "@stand" are
+# the present and STAND. Rod: (frame or fraction, `aim._rod` mode).
+RAM_HOLD = "ram_up"
+SLOW_ATTACK1 = [
+    (24, "prime"), (27, "half_cock"), (31, "cartridge"), (35, "bite"), (39, "pan"), (42, "shut"),
+    (48, "cast"), (52, "pour"), (57, "pour"), (61, "grasp_rod"), (65, "rod_out"), (70, RAM_HOLD),
+    (77, "ram_down"),
+]
+SLOW_ROD_ATTACK1 = [(61, "stowed"), (65, "slide"), (67, "swing"), (70, "bore")]
+STANCE4_CLIPS = {
+    "ATTACK3": ([(0.0, RAM_HOLD), (1 / 6, "ram_down"), (2 / 6, RAM_HOLD), (3 / 6, "ram_down"), (4 / 6, RAM_HOLD),
+                 (5 / 6, "ram_down"), (1.0, RAM_HOLD)], [(0.0, "bore")]),
+    "PSTAND3": ([(0.0, RAM_HOLD)], [(0.0, "bore")]),
+    "TRANS3X": ([(0.0, RAM_HOLD), (0.2, "rod_out"), (0.45, "return_rod"), (0.7, "poise"), (1.0, "@aim")],
+                [(0.0, "bore"), (0.12, "swing"), (0.25, "slide"), (0.45, "stowed")]),
+    "TRANSX3": ([(0.0, "@aim"), (0.3, "cast"), (0.5, "grasp_rod"), (0.7, "rod_out"), (1.0, RAM_HOLD)],
+                [(0.5, "stowed"), (0.7, "slide"), (0.8, "swing"), (1.0, "bore")]),
+    "PATTACK3": ([(0.0, "@stand"), (0.25, "prime"), (0.45, "cast"), (0.6, "grasp_rod"), (0.78, "rod_out"),
+                  (1.0, RAM_HOLD)], [(0.6, "stowed"), (0.78, "slide"), (0.86, "swing"), (1.0, "bore")]),
+    "UATTACK3": ([(0.0, RAM_HOLD), (0.15, "rod_out"), (0.35, "return_rod"), (0.6, "poise"), (1.0, "@stand")],
+                 [(0.0, "bore"), (0.08, "swing"), (0.15, "slide"), (0.35, "stowed")]),
+}
+
+
+def slow_recharge(md_lines):
+    """Whether the musketeer reloads in the stance of `#ATTACK3` (`STANCE4_CLIPS`)."""
+    return "ATTACK3" in md_lines
+
+
+def reload_plan(md_lines):
+    """{clip: (keys [(frame, step)], rod [(frame, mode)])} of the reload drill on the clip
+    frames of `md_lines`: ATTACK1's drill after the shot (`SLOW_ATTACK1`, ending on
+    `RAM_HOLD` on its last frame; else the whole drill `RELOAD_FRAMES`, ending in the aim)
+    and the stance-4 clips of a slow-recharge musketeer."""
+    n = rig.md_clip_frames(md_lines["ATTACK1"])[0] if "ATTACK1" in md_lines else 87
+    if not slow_recharge(md_lines):
+        return {"ATTACK1": (list(RELOAD_FRAMES), list(ROD_PHASES))}
+    out = {"ATTACK1": ([k for k in SLOW_ATTACK1 if k[0] < n - 1] + [(n - 1, RAM_HOLD)], list(SLOW_ROD_ATTACK1))}
+    for clip, (keys, rod) in STANCE4_CLIPS.items():
+        if clip in md_lines:
+            last = max(rig.md_clip_frames(md_lines[clip])[0] - 1, 0)
+            out[clip] = ([(int(round(t * last)), s) for t, s in keys], [(int(round(t * last)), m) for t, m in rod])
+    return out
+
+
+def rod_phases(md_lines):
+    """{clip: rod phases} of the clips that draw the rammer (`reload_plan`; FIRE_AIMED and
+    FIRE_HIP play ATTACK1's)."""
+    plan = reload_plan(md_lines)
+    out = {clip: rod for clip, (_k, rod) in plan.items()}
+    for clip in ("FIRE_AIMED", "FIRE_HIP"):
+        out[clip] = plan["ATTACK1"][1]
+    return out
+
 THRUST = {
     "spine": (-14, 0, 8), "spine1": (-6, 0, 0),
     "upperarm_r": (-40, -40, -10), "forearm_r": (-30, 0, 20),
@@ -245,18 +308,34 @@ HIP_MUSKET = {
 }
 
 
-def attack1_keys(aim, fire, reload=None, n=87):
+def _steps(reload):
+    return reload or {k: _with(v["base"], world_loc={"socket.hand_r": v["grip"]}) for k, v in RELOAD_STEPS.items()}
+
+
+def attack1_keys(aim, fire, reload=None, n=87, drill=None):
     """(fraction, pose) keys of ATTACK1 (and FIRE_AIMED, FIRE_HIP: #296): present, keyed on
     every frame up to the shot (the IK-solved hold, acr-blender-pipeline pitfall 5), recoil,
-    the reload drill (`RELOAD_FRAMES`; `reload` = the IK-solved steps, else the unsolved
-    ones), present."""
-    steps = reload or {k: _with(v["base"], world_loc={"socket.hand_r": v["grip"]}) for k, v in RELOAD_STEPS.items()}
+    the reload drill (`drill` = [(frame, step)] ending in the reload stance; default
+    `RELOAD_FRAMES` and the present again; `reload` = the IK-solved steps, else the unsolved
+    ones)."""
+    steps = _steps(reload)
     last = n - 1
     keys = [(f / last, aim) for f in range(SHOT_FRAME)]
     keys += [(SHOT_FRAME / last, fire), ((SHOT_FRAME + 3) / last, aim)]
-    keys += [(f / last, steps[name]) for f, name in RELOAD_FRAMES]
-    keys.append((1.0, aim))
+    keys += [(f / last, steps[name]) for f, name in (drill or RELOAD_FRAMES)]
+    if drill is None:
+        keys.append((1.0, aim))
     return keys
+
+
+def stance4_clips(md_lines, aim, stand, reload=None):
+    """{clip: [(frame, pose)]} of a slow-recharge musketeer's reload stance (`STANCE4_CLIPS`
+    on the frames of `md_lines`); empty for the others."""
+    if not slow_recharge(md_lines):
+        return {}
+    steps = dict(_steps(reload), **{"@aim": aim, "@stand": stand})
+    return {clip: [(f, steps[s]) for f, s in keys] for clip, (keys, _rod) in reload_plan(md_lines).items()
+            if clip != "ATTACK1"}
 
 
 # Strike clips (docs/melee.md, Strike clips): the game plays `ATTACK_<KIND>_<HEIGHT>` (kind
@@ -337,6 +416,9 @@ def musketeer_clips(md_lines, stand=STAND_MUSKET, aim=None, charge=None, reload=
     # The kick: shoulder and body pushed back, the muzzle jumping up a little.
     rl = AIM_MUSKET.get("root_loc", (0, 0, 0))
     fire = _with(AIM_MUSKET, spine=(-4, 0, -2), root_loc=(rl[0], rl[1] + 0.04, rl[2]))
+    n1 = rig.md_clip_frames(md_lines["ATTACK1"])[0] if "ATTACK1" in md_lines else 87
+    # A slow-recharge musketeer's ATTACK1 ends in the reload stance (#255, `reload_plan`).
+    drill = reload_plan(md_lines)["ATTACK1"][0] if slow_recharge(md_lines) else None
     clips = {
         "STAND": [(0.0, stand)],
         "MOTION_L": [(0.0, cl), (0.5, pl), (1.0, cr)],
@@ -353,7 +435,7 @@ def musketeer_clips(md_lines, stand=STAND_MUSKET, aim=None, charge=None, reload=
         "PATTACK1": [(0.0, stand), (0.5, _with(AIM_MUSKET, world={"socket.hand_r": (40, 0, 0)})), (1.0, AIM_MUSKET)],
         "UATTACK1": [(0.0, AIM_MUSKET), (0.5, _with(AIM_MUSKET, world={"socket.hand_r": (40, 0, 0)})), (1.0, stand)],
         "PSTAND1": [(0.0, AIM_MUSKET)],
-        "ATTACK1": attack1_keys(AIM_MUSKET, fire, reload, rig.md_clip_frames(md_lines["ATTACK1"])[0] if "ATTACK1" in md_lines else 87),
+        "ATTACK1": attack1_keys(AIM_MUSKET, fire, reload, n1, drill),
         "DEATH": death_keys(stand, lie),
         "DEATHLIE1": [(0.0, lie)],
     }
@@ -361,7 +443,7 @@ def musketeer_clips(md_lines, stand=STAND_MUSKET, aim=None, charge=None, reload=
         hl = hip.get("root_loc", (0, 0, 0))
         hip_fire = _with(hip, spine=(-2, 0, -14), root_loc=(hl[0], hl[1] + 0.03, hl[2]))
         clips["FIRE_AIMED"] = clips["ATTACK1"]
-        clips["FIRE_HIP"] = attack1_keys(hip, hip_fire, reload, rig.md_clip_frames(md_lines["ATTACK1"])[0])
+        clips["FIRE_HIP"] = attack1_keys(hip, hip_fire, reload, n1, drill)
     out = {}
     for key, keys in clips.items():
         line = md_lines.get("ATTACK1" if key.startswith("FIRE_") else key)
@@ -371,4 +453,5 @@ def musketeer_clips(md_lines, stand=STAND_MUSKET, aim=None, charge=None, reload=
         n = rig.md_clip_frames(md_lines["ATTACK"])[0]
         for key, keys in musketeer_strikes(ready, lunge, n).items():
             out[key] = rig.clip_keys(n, keys)
+    out.update(stance4_clips(md_lines, AIM_MUSKET, stand, reload))
     return out

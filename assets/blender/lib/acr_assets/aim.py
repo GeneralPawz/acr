@@ -370,14 +370,15 @@ def fire_stats(ch, report=None):
 
 
 def place(arm_obj, base, grip, right="grip", left=0.40, elbow_r=(-0.30, 0.15, -0.30), elbow_l=(0.25, 0.0, -0.35),
-          butt=False):
+          butt=False, info=None):
     """A loading pose: the musket (orientation from `base`'s "world" socket rotation) with
     its grip at `grip` (armature space), whichever hand holds it. `right`/`left` say where
     each hand goes: "grip", a distance in metres along the musket from the grip (the left
     palm under the stock, the right hand on the rammer or the muzzle), a point in armature
     space (`(x, y, z)`), or None to leave the arm as `base` has it. The elbows bend towards
     the shoulder + `elbow_r` / `elbow_l` (x, y, z). With `butt`, `grip` is where the butt
-    stands instead (the musket grounded). Returns the new spec."""
+    stands instead (the musket grounded). Returns the new spec; `info` (a dict) receives
+    what `between` needs: the musket's matrix, the hands' goals in its frame, the elbows."""
     spec = dict(base)
     am.pose(arm_obj, spec)
     arm = arm_obj.pose.bones
@@ -404,12 +405,124 @@ def place(arm_obj, base, grip, right="grip", left=0.40, elbow_r=(-0.30, 0.15, -0
     spec_err = {s: round((at[s] - p).length, 3) for s, (p, _) in goals.items()}
     am.pose(arm_obj, spec)
     print("ACR place errors (m):", spec_err)
+    if info is not None:
+        m = arm["socket.hand_r"].matrix.copy()
+        inv = m.inverted()
+        info.update(spec=spec, musket=m, goals={s: inv @ p for s, (p, _) in goals.items()},
+                    elbows={s: Vector(el) for s, t, el in (("r", right, elbow_r), ("l", left, elbow_l)) if t is not None})
     return spec
 
 
-def drill(arm_obj, steps):
-    """{name: spec} for the loading steps {name: {"base", "grip", ...}} (`place` arguments)."""
-    return {name: place(arm_obj, **kw) for name, kw in steps.items()}
+def drill(arm_obj, steps, infos=None):
+    """{name: spec} for the loading steps {name: {"base", "grip", ...}} (`place` arguments);
+    `infos` (a dict) receives each step's `place` info by name (for `solve_holds`)."""
+    out = {}
+    for name, kw in steps.items():
+        info = {}
+        out[name] = place(arm_obj, **kw, info=info)
+        if infos is not None:
+            infos[name] = info
+    return out
+
+
+def between(arm_obj, a, b, t):
+    """The pose a fraction `t` of the way from loading step `a` to `b` (`place` infos): the
+    body's angles blended, the musket's "world" rotation slerped and its grip lerped and both arms IK-solved onto the hands' goals blended in the musket's
+    frame. Returns (spec, {side: goal in the musket's frame})."""
+    sa, sb = a["spec"], b["spec"]
+    spec = {}
+    for k in sorted(set(sa) | set(sb)):
+        if k in ("world", "world_loc"):
+            continue
+        va, vb = sa.get(k, (0.0, 0.0, 0.0)), sb.get(k, (0.0, 0.0, 0.0))
+        spec[k] = tuple(x + (y - x) * t for x, y in zip(va, vb))
+    # The socket's "world" rotation slerped (in grip mode the hand turns to it, so the
+    # musket's matrix is read back from the posed result), its grip lerped.
+    qa, qb = (am.euler(x["spec"]["world"]["socket.hand_r"]).to_quaternion() for x in (a, b))
+    r = qa.slerp(qb, t).to_euler("XYZ")
+    spec["world"] = {"socket.hand_r": tuple(math.degrees(x) for x in r)}
+    spec["world_loc"] = {"socket.hand_r": tuple(a["musket"].translation.lerp(b["musket"].translation, t))}
+    arm = arm_obj.pose.bones
+    am.pose(arm_obj, spec)
+    m = arm["socket.hand_r"].matrix.copy()
+    local = {s: a["goals"][s].lerp(b["goals"][s], t) for s in a["goals"] if s in b["goals"]}
+    goals = {s: (m @ g, arm[f"upperarm_{s}"].head + a["elbows"][s].lerp(b["elbows"][s], t)) for s, g in local.items()}
+    _solve(arm_obj, spec, goals)
+    return spec, local
+
+
+def solve_holds(arm_obj, clips, steps, infos):
+    """Keys every frame between two loading steps of each clip's keys (acr-blender-pipeline
+    pitfall 5: IK on the keys alone lets the hands drift off between them): {clip: keys}
+    with the in-betweens IK-solved (`between`), and {clip: {frame: hand goals in the
+    musket's frame}} over those holds for `reload_report`. `steps` = {name: spec} as
+    `drill` returned them, `infos` its place infos."""
+    name_of = {id(v): k for k, v in steps.items()}
+    cache, out, plan = {}, {}, {}
+    for clip, keys in clips.items():
+        new, goals = [], {}
+        for (f0, s0), (f1, s1) in zip(keys, keys[1:] + [(None, None)]):
+            new.append((f0, s0))
+            a, b = name_of.get(id(s0)), name_of.get(id(s1))
+            if a is None:
+                continue
+            goals[f0] = infos[a]["goals"]
+            if b is None:
+                continue
+            for f in range(f0 + 1, f1):
+                k = (a, b, f - f0, f1 - f0)
+                if k not in cache:
+                    cache[k] = between(arm_obj, infos[a], infos[b], (f - f0) / (f1 - f0))
+                spec, local = cache[k]
+                new.append((f, spec))
+                goals[f] = local
+        out[clip] = new
+        if goals:
+            plan[clip] = goals
+    return out, plan
+
+
+def _carried(arm_obj, side):
+    """(hand bone, point in its rest frame) of the point `_solve` puts on a hand's goal, or
+    (None, None) for the bare left palm."""
+    if side == "r" or arm_obj.get("acr_grip"):
+        hand = arm_obj.data.bones[f"hand_{side}"]
+        return f"hand_{side}", hand.matrix_local.inverted() @ arm_obj.data.bones[f"socket.hand_{side}"].head_local
+    return None, None
+
+
+def reload_report(arm_obj, plan):
+    """`stats.json` "reload" (#255): per clip, over every frame of its loading holds as
+    played, how far the right hand's grip point is from its goal and the left palm from its
+    goal on the musket (m; both hands, so two per frame), and the worst [clip, frame]."""
+    arm = arm_obj.pose.bones
+    out, every = {}, []
+    for clip, goals in sorted(plan.items()):
+        am.set_clip(arm_obj, clip)
+        miss = []
+        for f in sorted(goals):
+            bpy.context.scene.frame_set(f)
+            bpy.context.view_layer.update()
+            m = arm["socket.hand_r"].matrix
+            for side, g in goals[f].items():
+                bone, p = _carried(arm_obj, side)
+                if bone:
+                    at = arm[bone].matrix @ p
+                else:
+                    at = (arm["hand_l"].tail + arm["forearm_l"].tail) * 0.5
+                miss.append(((at - m @ g).length, f))
+        arm_obj.animation_data.action = None
+        if miss:
+            worst = max(miss)
+            out[clip] = {"frames": len(goals), "mean_m": round(sum(d for d, _ in miss) / len(miss), 4),
+                         "max_m": round(worst[0], 4), "worst_frame": worst[1]}
+            every += [(d, clip, f) for d, f in miss]
+    if every:
+        worst = max(every)
+        out["all"] = {"frames": len(every) // 2, "mean_m": round(sum(d for d, *_ in every) / len(every), 4),
+                      "max_m": round(worst[0], 4), "worst": [worst[1], worst[2]]}
+    print("ACR reload (#255):", out.get("all"))
+    return out
 
 
 def errors(arm_obj, spec, left_along=0.34, left_drop=0.035):
@@ -458,9 +571,14 @@ def _rod(mode, arm, musket):
 
 
 def _rod_at(phases, f, arm, musket):
-    """The rod on frame `f` between the (frame, mode) `phases` (stowed outside them)."""
-    if not phases or f <= phases[0][0] or f >= phases[-1][0]:
+    """The rod on frame `f` between the (frame, mode) `phases` (before and after them: the
+    first's and the last's mode; stowed without phases)."""
+    if not phases:
         return _rod("stowed", arm, musket)
+    if f <= phases[0][0]:
+        return _rod(phases[0][1], arm, musket)
+    if f >= phases[-1][0]:
+        return _rod(phases[-1][1], arm, musket)
     i = max(j for j, (k, _) in enumerate(phases) if k <= f)
     (f0, a), (f1, b) = phases[i], phases[i + 1]
     m0, m1 = _rod(a, arm, musket), _rod(b, arm, musket)

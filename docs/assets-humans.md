@@ -697,6 +697,27 @@ Both are keyed on every frame of the hold before the shot and baked per frame
 (fists from the grip axis; two per frame). `gear.musket` has its top (barrel, comb) towards
 +Y since #296: with -Y up the grip frame held it barrel-down at the present.
 
+**Reload drill (#255).** A `SLOWRECHARGE` musketeer (EngM18, FrnM18, UsaM18, IroStr...:
+the `.MD` has `#ATTACK3`) does not reload in `ATTACK1`: the sim plays `#ATTACK3` again and
+again straight after `#ATTACK1`, each play taking its 88 frames off the reload counter
+(`ATTACK_PAUSE` × personal delay / 100; EngM18 450 = five plays), then `#TRANS3X` (20
+frames, `USETRANSX`) to the firing stance and the next `#ATTACK1` (`combat.rs`, the
+slow-recharge branch; `motion::try_to_stand`). Without an `ATTACK3` clip the renderer fell
+back to the bayonet's `ATTACK`. `poses.reload_plan` keys the drill over that chain:
+`ATTACK1` after the shot recovers to the right hip, half-cocks, takes, bites and pours the
+cartridge into the pan, shuts it, casts about (butt by the left foot), pours charge and
+ball, draws the rammer (up its pipes, swung out and turned over: `aim._rod` modes) and
+enters the bore, ending on `poses.RAM_HOLD`; `ATTACK3` rams three times and loops on
+`RAM_HOLD`; `TRANS3X` draws the rammer, returns it, poises and presents, ending on the aim
+`ATTACK1` starts from. `TRANSX3`, `PATTACK3`, `UATTACK3` (into and out of the stance from
+the aim or STAND) and `PSTAND3` cover interrupted reloads. A unit script lists these
+`.MD` lines to get them; a musketeer without `ATTACK3` keeps the whole drill in `ATTACK1`
+(`RELOAD_FRAMES`, back to the aim). Every frame between two loading steps is IK-solved
+(`aim.solve_holds`, `aim.between`: the body blended, the musket on its baked path, the
+hands' goals blended in the musket's frame). `stats.json` `reload` per clip and `all`:
+`frames`, `mean_m`, `max_m` of the right grip point and left palm from their goals as
+played (two per frame), and the worst frame.
+
 ## 4. Decay
 
 One parameter `decay` ∈ [0, 1] per corpse; each material has its layer's windows

@@ -614,17 +614,23 @@ def _musket_clips(ctx, ch, md):
     aim, hip, present = aiming.fire_poses(ch)
     ctx.aim_errors = aiming.errors(ch.arm, aim)
     print("ACR aim errors (m):", ctx.aim_errors)
-    # The reload drill after the shot (ATTACK1), each step IK-solved.
-    reload = aiming.drill(ch.arm, poses.RELOAD_STEPS)
+    # The reload drill after the shot (ATTACK1, and the reload stance ATTACK3 of a
+    # slow-recharge musketeer: #255), each step IK-solved.
+    infos = {}
+    reload = aiming.drill(ch.arm, poses.RELOAD_STEPS, infos)
     # Charge bayonets: the same grip with the butt at the right hip.
     charge = aiming.hold(ch.arm, poses.CHARGE_MUSKET, pocket=(0.02, -0.12, -0.32), left_along=0.30)
     clips = poses.musketeer_clips(md, aim=aim, charge=charge, reload=reload, hip=hip)
     clips.update(finish.musket_clips(ch.arm, md, charge))  # the bayonet's finishing blow
+    # The hands on the musket and the rammer on every frame between two loading steps.
+    rods = poses.rod_phases(md)
+    held, plan = aiming.solve_holds(ch.arm, {k: clips[k] for k in rods if k in clips}, reload, infos)
+    clips.update(held)
     # The port, the lunge and the blows turn the musket of a solved pose: the left hand
     # follows it onto the shaft (`aim.left_on_shaft`; grip mode only).
     solved = {}
     for clip, keys in clips.items():
-        if clip in ("ATTACK1", *aiming.FIRE_CLIPS) or clip.startswith(("STAND", "MOTION", "DEATH", "WRITHE")):
+        if clip in rods or clip.startswith(("STAND", "MOTION", "DEATH", "WRITHE")):
             continue
         for f, p in keys:
             if id(p) not in solved:
@@ -637,13 +643,14 @@ def _musket_clips(ctx, ch, md):
         clips = {k: v for k, v in clips.items() if k != "ATTACK" and not k.startswith("ATTACK_")}
     for clip, keys in clips.items():
         act = am.add_clip(ch.arm, clip, keys)
-        if clip in ("ATTACK1", *aiming.FIRE_CLIPS):
-            aiming.bake_musket(ch.arm, clip, keys, rod_phases=poses.ROD_PHASES)
+        if clip in rods:
+            aiming.bake_musket(ch.arm, clip, keys, rod_phases=rods[clip])
         else:
             aiming.stow_rammer(ch.arm, clip)
         if kind:
             key_show(ch.arm, act, SHOW_REST, ch.prefix)
     ctx.fire = aiming.fire_stats(ch, present)
+    ctx.reload = aiming.reload_report(ch.arm, {k: v for k, v in plan.items() if k in clips})
     for clip, keys in drawn.items():
         wclips.apply(ch.arm, clip, keys)
     # Crawl clips of the wounded (#262): keyframed, looping.
@@ -698,7 +705,8 @@ def build(ctx, s):
                    acr_light=report.get("light_dir_camera", []), acr_layers=list(ch.layers),
                    **faces.extras("regular"))
     ctx.stats = {"triangles": tris, "light": report, "colours": colours, "aim_errors_m": ctx.aim_errors,
-                 "drape": getattr(ch, "drape_report", None), "fire": getattr(ctx, "fire", None)}
+                 "drape": getattr(ch, "drape_report", None), "fire": getattr(ctx, "fire", None),
+                 "reload": getattr(ctx, "reload", None)}
     if getattr(ch, "genfit", None):
         ctx.stats["hat_source"] = ch.genfit
 
