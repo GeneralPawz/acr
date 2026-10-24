@@ -26,6 +26,7 @@ used locally only (its files and the models built from it are never committed).
 | Gravel Ground 01 (`gravel_ground_01`) | detailed ground, class gravel (docs/ground.md) | Rob Tuytel (Poly Haven) | CC0 | https://polyhaven.com/a/gravel_ground_01 |
 | Dry Ground Rocks (`dry_ground_rocks`) | detailed ground, class desert (docs/ground.md) | Rob Tuytel (Poly Haven) | CC0 | https://polyhaven.com/a/dry_ground_rocks |
 | Grass Ground (`grass_ground`) | detailed ground, class steppe (docs/ground.md) | Charlotte Baglioni (Poly Haven) | CC0 | https://polyhaven.com/a/grass_ground |
+| Norah Waugh, *The Cut of Men's Clothes 1600-1900* (cutting diagrams) | traced sewing patterns (`garments.traced`, docs/clothing.md "Traced patterns"); first: Diagram VIII doublet c. 1635-40 for EngMus behind `coat_pattern` | Norah Waugh (Faber and Faber 1964; Routledge) | copyrighted; used locally only: the PDF, page renders and traced JSON stay under `ACR_SOURCES/patterns`, never in the repo | bought book scan, kept outside the repo |
 | Snow 03 (`snow_03`) | detailed ground, class snowy (docs/ground.md) | Rob Tuytel (Poly Haven) | CC0 | https://polyhaven.com/a/snow_03 |
 | Park Dirt (`park_dirt`) | detailed ground, second set of class dirt (docs/ground.md) | Christopher Melani (Poly Haven) | CC0 | https://polyhaven.com/a/park_dirt |
 | Sandy Gravel 02 (`sandy_gravel_02`) | detailed ground, second set of class desert (docs/ground.md) | Dario Barresi (Poly Haven) | CC0 | https://polyhaven.com/a/sandy_gravel_02 |

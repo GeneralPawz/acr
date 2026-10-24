@@ -35,8 +35,14 @@ MD = {
 }
 
 
-def spec():
-    return pike.musketeer_spec(MD, palette={"coat": (0.62, 0.10, 0.07), "breeches": (0.45, 0.44, 0.42), "gaiters": (0.50, 0.48, 0.45)}, sidearm="sword")
+# None: the drafted doublet (`garments.doublet`); "waugh/doublet_1635": the doublet traced
+# from Waugh's Diagram VIII (ACR_SOURCES/patterns, docs/clothing.md "Traced patterns").
+COAT_PATTERN = None
+
+
+def spec(coat_pattern=COAT_PATTERN):
+    return pike.musketeer_spec(MD, palette={"coat": (0.62, 0.10, 0.07), "breeches": (0.45, 0.44, 0.42), "gaiters": (0.50, 0.48, 0.45)}, sidearm="sword",
+                               coat_pattern=coat_pattern)
 
 
 def make(root, name, build=None):

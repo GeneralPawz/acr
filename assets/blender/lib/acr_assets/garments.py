@@ -781,3 +781,141 @@ LAYER_RANK = {
     "cartridge": 8, "knapsack": 8, "pouch": 8, "sack": 8, "scabbard": 8, "horn": 8, "match": 8,
 }
 
+
+
+# -- traced patterns -------------------------------------------------------------------------
+# (docs/clothing.md "Traced patterns"): historical cutting diagrams digitised into
+# `acr-pattern/1` JSON under `ACR_SOURCES/patterns/<source>/<garment>.json` (copyrighted:
+# never in the repo), graded to the body and handed to the drape as `Panel`s and `Seam`s.
+
+PATTERN_SCHEMA = "acr-pattern/1"
+# Length measure a panel's v scales by when its JSON gives no `grade`.
+DEFAULT_V = {"torso": "nape_to_waist", "neck": "neck", "arm": "arm", "cape": "nape_to_waist"}
+
+
+def _bands(spec, fallback):
+    """`grade.u` / `grade.v` -> [(v_from, measure)] sorted; a plain string is one band."""
+    if spec is None:
+        spec = fallback
+    if isinstance(spec, str):
+        return [(-1e9, spec)]
+    return sorted((float(a), str(k)) for a, k in spec)
+
+
+def load_pattern(path):
+    """Reads and checks an `acr-pattern/1` JSON file: counter-clockwise outlines, edge and
+    seam references in range, the measures it grades by present in `base`. Returns the dict."""
+    import json
+
+    with open(path, encoding="utf-8") as f:
+        doc = json.load(f)
+    return check_pattern(doc, path)
+
+
+def check_pattern(doc, where="pattern"):
+    if doc.get("schema") != PATTERN_SCHEMA:
+        raise ValueError(f"{where}: schema {doc.get('schema')!r}, want {PATTERN_SCHEMA!r}")
+    names = {}
+    for p in doc["panels"]:
+        pl = Panel(p["name"], doc["garment"], p.get("key", doc["garment"]), p["outline"], p["edges"], p["place"])
+        if pl.area() <= 0.0:
+            raise ValueError(f"{where}: panel {p['name']!r} is not counter-clockwise")
+        n = len(pl.outline)
+        for e, (i, j) in pl.edges.items():
+            if not (0 <= i < n and 0 <= j < n):
+                raise ValueError(f"{where}: edge {p['name']}.{e} {i, j} outside 0..{n - 1}")
+        g = p.get("grade") or {}
+        region = p["place"]["region"]
+        for _v, k in _bands(g.get("u"), "chest") + _bands(g.get("v"), DEFAULT_V.get(region, "waist_to_knee")):
+            if k not in doc["base"]:
+                raise ValueError(f"{where}: panel {p['name']!r} grades by {k!r}, missing in base")
+        names[p["name"]] = pl
+    for s in doc["seams"]:
+        for link in s["a"] + s["b"]:
+            if link[0] not in names or link[1] not in names[link[0]].edges:
+                raise ValueError(f"{where}: seam link {link} names no panel edge")
+    return doc
+
+
+def _ratio(m, base, k, ease):
+    """Girth ratio with the ease kept constant; lengths (no ease) scale plainly."""
+    return (m[k] + ease) / (base[k] + ease)
+
+
+def _grade_v(v, bands, m, base):
+    """v' = integral from 0 to v of the band ratio m/base (piecewise constant in v): the
+    waist line (v = 0) stays put, above and below scale by their own lengths."""
+    def r(t):
+        k = bands[0][1]
+        for a, kk in bands:
+            if t >= a:
+                k = kk
+        return m[k] / base[k]
+
+    cuts = sorted({0.0, v} | {a for a, _ in bands if min(0.0, v) < a < max(0.0, v)})
+    out = 0.0
+    for a, b in zip(cuts, cuts[1:]):
+        out += (b - a) * r((a + b) / 2.0)
+    return out if v >= 0.0 else -out
+
+
+GRADE_BLEND = 8.0  # cm: a girth band blends in linearly over this height below its `v_from`
+
+
+def _grade_u(u, v, bands, m, base, ease):
+    """u x the girth ratio of the band at v; a band's ratio blends in over `GRADE_BLEND` cm
+    below its `v_from` (no jump in width where one band hands over to the next)."""
+    r = _ratio(m, base, bands[0][1], ease.get(bands[0][1], 0.0))
+    for a, k in bands[1:]:
+        rk = _ratio(m, base, k, ease.get(k, 0.0))
+        f = min(max((v - (a - GRADE_BLEND)) / GRADE_BLEND, 0.0), 1.0)
+        r = r + (rk - r) * f
+    return u * r
+
+
+def grade_pattern(doc, m=MEASURE):
+    """(panels, seams) of the checked pattern `doc` graded from `doc["base"]` to `m`."""
+    base = doc["base"]
+    e = doc.get("ease", 0.0)
+    ease = dict(e) if isinstance(e, dict) else {"chest": float(e), "waist": float(e), "seat": float(e)}
+    gname = doc["garment"]
+    panels = {}
+    for p in doc["panels"]:
+        region = p["place"]["region"]
+        g = p.get("grade") or {}
+        ub = _bands(g.get("u"), "chest")
+        vb = _bands(g.get("v"), DEFAULT_V.get(region, "waist_to_knee"))
+        out = [(_grade_u(u, v, ub, m, base, ease), _grade_v(v, vb, m, base)) for u, v in p["outline"]]
+        place = dict(p["place"])
+        if "lift" in place:
+            place["lift"] = _grade_v(float(place["lift"]), vb, m, base)
+        if "u0" in place:
+            place["u0"] = _grade_u(float(place["u0"]), 0.0, ub, m, base, ease)
+        panels[p["name"]] = Panel(p["name"], gname, p.get("key", gname), out, {k: tuple(v) for k, v in p["edges"].items()},
+                                  place, mirror=p.get("mirror", True), skirt=p.get("skirt", False),
+                                  grain=tuple(p.get("grain", (0.0, 1.0))), tack=p.get("tack"))
+    seams = [Seam([tuple(x) for x in s["a"]], [tuple(x) for x in s["b"]], gname, ease=s.get("ease", 0.15),
+                  close=s.get("close")) for s in doc["seams"]]
+    return panels, seams
+
+
+def traced(path):
+    """A draft `draft(m) -> (panels, seams)` reading the traced pattern at `path` (checked
+    once, graded per call)."""
+    doc = load_pattern(path)
+
+    def draft(m=MEASURE):
+        return grade_pattern(doc, m)
+
+    draft.pattern = doc
+    return draft
+
+
+def pattern_path(rel):
+    """`ACR_SOURCES/patterns/<rel>.json` (`rel` e.g. "waugh/doublet_1635")."""
+    import os
+
+    root = os.environ.get("ACR_SOURCES")
+    if not root:
+        raise RuntimeError(f"traced pattern {rel!r}: ACR_SOURCES is not set (the patterns are local sources)")
+    return os.path.join(root, "patterns", rel + ".json")

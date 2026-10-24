@@ -30,6 +30,7 @@ from mathutils import Matrix, Vector
 from . import armature as am
 from . import clips as cl
 from . import crawl, drape, faces, frontier, gear, heads, held, line, officers, outfit, poses, registry, rig  # noqa: F401
+from . import garments as gm
 from .humans import LAYER_OF, prepare_export
 
 # The pike: 16 ft of ash (4.9 m) with a leaf head and langets.
@@ -234,6 +235,19 @@ def _drape(kw, plan):
     return kw
 
 
+def traced_doublet(rel):
+    """Registers the traced pattern `ACR_SOURCES/patterns/<rel>.json` (docs/clothing.md
+    "Traced patterns") in the doublet's cloth once; returns its garment name."""
+    path = gm.pattern_path(rel)
+    draft = gm.traced(path)
+    name = draft.pattern["garment"]
+    if name not in gm.GARMENTS:
+        cloth = draft.pattern.get("cloth", "doublet")
+        registry.garment(name, draft, gm.CLOTH[cloth] if isinstance(cloth, str) else cloth,
+                         ease=draft.pattern.get("ease"), spacing=draft.pattern.get("spacing", 3.5))
+    return name
+
+
 def musketeer_spec(md, palette=None, hat="pike_broad", **kw):
     """The musketeer: broad hat, bandolier with the apostles over the left shoulder, sword on
     a baldric over the right, the matchlock (the line's musket path: present, fire and the
@@ -241,7 +255,10 @@ def musketeer_spec(md, palette=None, hat="pike_broad", **kw):
     musket path keys (the stance-3 rest clips are not built)."""
     md = {k: v for k, v in md.items() if k in MUSKET_KEYS}
     pal = _palette(palette)
-    _drape(kw, MUSKETEER_DRAPE)
+    # `coat_pattern` "waugh/doublet_1635": a traced doublet instead of the drafted one.
+    rel = kw.pop("coat_pattern", None)
+    plan = MUSKETEER_DRAPE if not rel else tuple(traced_doublet(rel) if g == "doublet" else g for g in MUSKETEER_DRAPE)
+    _drape(kw, plan)
     return line.spec(md, palette=pal, hat=hat,
                      gear=("belt_l", "belt_r", "falling_band", "pike_apostles", "pike_match", "off_scabbard"),
                      fixed=FIXED + tuple(kw.pop("fixed", ())), **kw)

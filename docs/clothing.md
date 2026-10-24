@@ -759,6 +759,47 @@ Seam(a, b, garment, ease=0.15)
   (centre front and back seams), sewn once. `ease` is the allowed length mismatch (eased
   sleeve heads and shoulders); the tests check it. Seams of inlays are skipped by the drape.
 
+## Traced patterns
+
+Historical cutting diagrams (Waugh, *The Cut of Men's Clothes*; later Reconstructing History,
+J.P. Ryan) are digitised into `acr-pattern/1` JSON (schema: the `acr-garments` skill,
+`references/pattern-json.md`) under `ACR_SOURCES/patterns/<source>/<garment>.json`: locally
+`D:\ACR-models\patterns\`, on the VM `/home/claude/sources/patterns/`. They are copyrighted:
+the JSON, the trace sidecar (`<garment>.trace.json`, scan pixels) and the overlay stay there;
+the repo holds only the code and synthetic test patterns.
+
+- `garments.load_pattern(path)` / `check_pattern(doc)`: reads and checks the JSON
+  (counter-clockwise outlines, edges in range, seam links naming real edges, every grading
+  measure in `base`).
+- `garments.grade_pattern(doc, m)`: grades from the original wearer's `base` to the body's
+  `m` and returns `Panel`s and `Seam`s for the drape. Girths (`grade.u` bands, e.g.
+  `[[-200, "waist"], [8, "chest"]]`) scale u by `(m + ease) / (base + ease)` with the ease
+  kept constant; a band blends in over `GRADE_BLEND` (8 cm) below its `v_from`, so widths
+  have no step. Lengths (`grade.v`, one measure or bands) scale v from the waist line:
+  `v' = integral of m/base`, so the waist stays put and skirts (v < 0) and the body (v > 0)
+  scale by their own lengths; `place.lift` is graded the same way.
+- `garments.traced(path)`: a draft `draft(m) -> (panels, seams)` (with `draft.pattern`);
+  `garments.pattern_path("waugh/doublet_1635")` resolves under `ACR_SOURCES` and fails
+  clearly without it.
+- A unit switches to a traced garment through its SPEC: `pike.musketeer_spec(...,
+  coat_pattern="waugh/doublet_1635")` registers it (`pike.traced_doublet`, cloth of the
+  JSON's `cloth`) and drapes it in place of `doublet`. `engmus.COAT_PATTERN` is `None` (the
+  drafted doublet) until the traced one is accepted.
+
+**First pattern: Waugh Diagram VIII** (book p. 26, PDF p. 15), the linen doublet c. 1635-40
+(V&A), for EngMus. Scale from the margin ruler, 63.9 px/in at 300 dpi. Seven panels: front
+and back (cut in one with their skirts in the original, split at the waist line and welded
+`close`), front and back skirts, the side basque (trimmed by the 1 in the skirts overlap it),
+a stand collar, the one-piece sleeve (drawn folded; straightened along its fold, v = arc
+length from the wrist); fourteen seams, the whole sleeve head sewn to front + back armhole
+as one chain. Wearer read off the pattern: chest 81, waist 70, back length 40 cm (ease 10);
+the 1630s waist sits 9 cm high (`lift`). Graded to the default body: chest x1.19, waist
+x1.17, back x1.13. Drape on EngMus (VM, 24 Oct 2026): welded 234 of 234 (drafted doublet 193
+of 201), `gap_mm_max` 35 (110), worst seam 35 mm (the sleeve head); `model_layers` poking 298,
+crossing 256 (drafted: 258, 202; with the sleeve head split at the crown into two seams
+265, 207, but those halves differ by 1.5x in length); `gear_volume` doublet and sleeve
+vertices inside carried gear 135 (92); sprite IoU STAND 0.607 (0.596). Not modelled: the lacing band, the open sleeve slit to X, padding.
+
 ## The British infantry uniform (1768 Royal Warrant)
 
 After the reconstructed patterns (Hunter, Rogers):

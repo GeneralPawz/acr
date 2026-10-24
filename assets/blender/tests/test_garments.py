@@ -207,3 +207,123 @@ class LayerRanks(unittest.TestCase):
         cloth = {k for k, layer in registry.LAYER_OF.items() if layer in ("wool", "linen", "leather", "hide", "flesh")}
         missing = sorted(k for k in cloth if k not in ranks and k not in not_layers)
         self.assertEqual(missing, [], "give these keys a rank in layers.rs and garments.LAYER_RANK")
+
+
+def synthetic_pattern():
+    """A made-up pattern (never traced data): a rectangular torso front and back with a
+    skirt below the waist, one tube sleeve."""
+    torso = {"u": [[-200, "waist"], [10, "chest"]], "v": [[-200, "waist_to_knee"], [0, "nape_to_waist"]]}
+    return {
+        "schema": "acr-pattern/1", "garment": "test_body",
+        "base": {"chest": 90.0, "waist": 80.0, "nape_to_waist": 40.0, "waist_to_knee": 50.0, "arm": 60.0,
+                 "upper_arm": 30.0},
+        "ease": 10.0,
+        "panels": [
+            {"name": "front", "key": "coat", "outline": [[0, -20], [25, -20], [25, 40], [0, 40]],
+             "edges": {"hem": [0, 1], "side": [1, 2], "top": [2, 3], "cf": [3, 0]},
+             "place": {"region": "torso", "theta": 0.0, "dir": 1, "u0": 0.0, "at": "waist", "lift": 4.0},
+             "grade": torso},
+            {"name": "back", "key": "coat", "outline": [[0, -20], [25, -20], [25, 40], [0, 40]],
+             "edges": {"hem": [0, 1], "side": [1, 2], "top": [2, 3], "cb": [3, 0]},
+             "place": {"region": "torso", "theta": 180.0, "dir": -1, "u0": 0.0, "at": "waist"},
+             "grade": torso},
+            {"name": "sleeve", "key": "coat", "outline": [[-20, 0], [20, 0], [20, 60], [-20, 60]],
+             "edges": {"wrist": [0, 1], "seam_f": [1, 2], "cap": [2, 3], "seam_b": [3, 0]},
+             "place": {"region": "arm", "theta": 0.0, "dir": 1, "u0": 0.0, "at": "wrist"},
+             "grade": {"u": [[-200, "upper_arm"]], "v": "arm"}},
+        ],
+        "seams": [{"a": [["front", "side"]], "b": [["back", "side"]]},
+                  {"a": [["back", "cb"]], "b": [["back", "cb", False, "R"]]},
+                  {"a": [["sleeve", "seam_f"]], "b": [["sleeve", "seam_b", True]], "close": 0.05}],
+    }
+
+
+class Traced(unittest.TestCase):
+    """`garments.traced`: acr-pattern/1 JSON graded to the body (docs/clothing.md "Traced
+    patterns"), on a synthetic pattern."""
+
+    def setUp(self):
+        import json
+        import tempfile
+
+        self.doc = synthetic_pattern()
+        fd, self.path = tempfile.mkstemp(suffix=".json")
+        with os.fdopen(fd, "w") as f:
+            json.dump(self.doc, f)
+
+    def tearDown(self):
+        os.remove(self.path)
+
+    def test_base_measures_give_the_pattern_back(self):
+        draft = gm.traced(self.path)
+        panels, seams = draft(dict(gm.MEASURE, **self.doc["base"]))
+        self.assertEqual(panels["front"].outline, [(0, -20), (25, -20), (25, 40), (0, 40)])
+        self.assertEqual(len(seams), 3)
+        self.assertEqual(seams[2].close, 0.05)
+        self.assertEqual(seams[1].b[0], ("back", "cb", False, "R"))
+        self.assertTrue(all(p.garment == "test_body" for p in panels.values()))
+
+    def test_girths_keep_their_ease(self):
+        m = dict(gm.MEASURE, chest=110.0, waist=90.0, nape_to_waist=40.0, waist_to_knee=50.0)
+        panels, _ = gm.traced(self.path)(m)
+        top = panels["front"].outline[2]  # v = 40: the chest band
+        hem = panels["front"].outline[1]  # v = -20: the waist band
+        self.assertAlmostEqual(top[0], 25 * (110 + 10) / (90 + 10))
+        self.assertAlmostEqual(hem[0], 25 * (90 + 10) / (80 + 10))
+
+    def test_lengths_scale_from_the_waist_line_per_band(self):
+        m = dict(gm.MEASURE, chest=90.0, waist=80.0, nape_to_waist=44.0, waist_to_knee=40.0)
+        panels, _ = gm.traced(self.path)(m)
+        f = panels["front"]
+        self.assertAlmostEqual(f.outline[2][1], 40 * 44 / 40)
+        self.assertAlmostEqual(f.outline[1][1], -20 * 40 / 50)
+        self.assertAlmostEqual(f.place["lift"], 4 * 44 / 40)
+        self.assertAlmostEqual(panels["sleeve"].outline[2][1], 60 * gm.MEASURE["arm"] / 60)
+
+    def test_widths_blend_between_bands(self):
+        m = dict(gm.MEASURE, chest=110.0, waist=80.0, nape_to_waist=40.0, waist_to_knee=50.0)
+        doc = dict(self.doc)
+        doc["panels"] = [dict(doc["panels"][0], outline=[[0, 0], [25, 0], [25, 6], [25, 10], [0, 10]],
+                              edges={"hem": [0, 1], "side": [1, 3], "top": [3, 4], "cf": [4, 0]})] + doc["panels"][1:]
+        panels, _ = gm.grade_pattern(gm.check_pattern(doc), m)
+        # chest band from v = 10, blended in from v = 2: half way at v = 6
+        self.assertAlmostEqual(panels["front"].outline[2][0], 25 * (1.0 + (120 / 100 - 1.0) * 0.5))
+        self.assertAlmostEqual(panels["front"].outline[1][0], 25.0)
+
+    def test_bad_patterns_are_refused(self):
+        clockwise = synthetic_pattern()
+        clockwise["panels"][0]["outline"].reverse()
+        with self.assertRaisesRegex(ValueError, "counter-clockwise"):
+            gm.check_pattern(clockwise)
+        no_edge = synthetic_pattern()
+        no_edge["seams"].append({"a": [["front", "armhole"]], "b": [["back", "side"]]})
+        with self.assertRaisesRegex(ValueError, "names no panel edge"):
+            gm.check_pattern(no_edge)
+        no_base = synthetic_pattern()
+        del no_base["base"]["arm"]
+        with self.assertRaisesRegex(ValueError, "missing in base"):
+            gm.check_pattern(no_base)
+
+    def test_the_drape_pairs_every_seam(self):
+        panels, seams = gm.traced(self.path)()
+        for sm in seams:
+            a, b = gm.seam_lengths(panels, sm)
+            self.assertGreater(min(a, b), 0.0)
+
+    def test_local_traced_patterns_load(self):
+        root = os.environ.get("ACR_SOURCES")
+        pats = os.path.join(root or "", "patterns")
+        if not root or not os.path.isdir(pats):
+            self.skipTest("ACR_SOURCES/patterns not available")
+        found = 0
+        for dirpath, _dirs, files in os.walk(pats):
+            for fn in sorted(files):
+                if fn.endswith(".json") and not fn.endswith(".trace.json"):
+                    doc = gm.load_pattern(os.path.join(dirpath, fn))
+                    panels, seams = gm.grade_pattern(doc)
+                    for sm in seams:  # the graded seam pairs lie within their ease (+ 10 %)
+                        a, b = gm.seam_lengths(panels, sm)
+                        self.assertLessEqual(max(a, b) / min(a, b), 1.0 + sm.ease + 0.10, (fn, sm.a, sm.b, a, b))
+                    found += 1
+        if not found:
+            self.skipTest("no traced patterns")
