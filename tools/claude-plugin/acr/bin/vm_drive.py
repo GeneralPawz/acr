@@ -36,12 +36,25 @@ SHOWCASE = r"C:\Users\verwalter\WIP\ACR-analysis\showcase"
 
 
 def sync_dir(local, remote):
-    """Sends the files of `local` whose size or hash differ from `remote` (VM path)."""
+    """Sends the files of `local` whose MD5 differs from `remote` (VM path). A size check alone
+    kept stale copies of rebuilt glbs that came out with the same byte size."""
     listing = subprocess.run(vm_cargo.SSH + [f"mkdir -p {remote} && cd {remote} && find . -maxdepth 1 -type f "
-                                             f"-printf '%f %s\\n'"], capture_output=True, text=True).stdout
-    have = dict(line.rsplit(" ", 1) for line in listing.splitlines() if " " in line)
+                                             f"-exec md5sum {{}} +"], capture_output=True, text=True).stdout
+    have = {}
+    for line in listing.splitlines():
+        parts = line.split(None, 1)
+        if len(parts) == 2:
+            have[parts[1].strip().removeprefix("./")] = parts[0]
+
+    def md5(path):
+        h = hashlib.md5()
+        with open(path, "rb") as fh:
+            for block in iter(lambda: fh.read(1 << 20), b""):
+                h.update(block)
+        return h.hexdigest()
+
     send = [f for f in os.listdir(local) if os.path.isfile(os.path.join(local, f))
-            and have.get(f) != str(os.path.getsize(os.path.join(local, f)))]
+            and have.get(f) != md5(os.path.join(local, f))]
     if not send:
         return 0
     buf = io.BytesIO()
