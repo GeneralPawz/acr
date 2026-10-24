@@ -55,6 +55,7 @@ def _audit_limits(ctx):
         out["frames"] += a["frames"]
         out["violations"] += a["violations"]
         out["by_bone"].update(a["by_bone"])
+        out["by_clip"].update(a["by_clip"])
         if a["worst"] and (out["worst"] is None or a["worst"][3] > out["worst"][3]):
             out["worst"] = a["worst"]
     if out is not None:

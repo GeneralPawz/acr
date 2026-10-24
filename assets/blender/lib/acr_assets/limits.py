@@ -104,6 +104,34 @@ def swing_twist(q):
     return math.degrees(sw), math.degrees(tw)
 
 
+def hinge_angles(q):
+    """(flexion about local X, twist about local Y, sideways about local Z), degrees, of a
+    hinge with its own twist (the elbow and the radius rolling on the ulna): q = swing *
+    twist, the twist about the bone's own axis applied first, the swing (an axis in the
+    local XZ plane) split into its X and Z parts. Euler XYZ would read a bent and pronated
+    forearm (Rx then the twist) as a large Z turn."""
+    w, x, y, z = q
+    n = math.sqrt(w * w + x * x + y * y + z * z) or 1.0
+    w, x, y, z = w / n, x / n, y / n, z / n
+    if w < 0:
+        w, x, y, z = -w, -x, -y, -z
+    t = math.sqrt(w * w + y * y)
+    if t < 1e-9:  # a half turn of swing: the twist is undefined
+        tw, sw = 0.0, (0.0, x, 0.0, z)
+    else:
+        tq = (w / t, 0.0, y / t, 0.0)
+        tw = 2 * math.atan2(tq[2], tq[0])
+        # swing = q * conj(twist)
+        cw, cy = tq[0], -tq[2]
+        sw = (w * cw - y * cy, x * cw - z * cy, y * cw + w * cy, z * cw + x * cy)
+    sw_w = max(-1.0, min(1.0, sw[0]))
+    ang = 2 * math.acos(abs(sw_w))
+    s = math.sqrt(sw[1] ** 2 + sw[3] ** 2)
+    sign = 1.0 if sw_w >= 0 else -1.0
+    ax, az = (sign * sw[1] / s, sign * sw[3] / s) if s > 1e-9 else (0.0, 0.0)
+    return math.degrees(ang * ax), math.degrees(tw), math.degrees(ang * az)
+
+
 def excess(bone, q):
     """How far (degrees, 0 = inside) the local rotation `q` of `bone` lies outside its
     limits: the worst axis. None for bones without limits."""
@@ -114,6 +142,13 @@ def excess(bone, q):
         sw, tw = swing_twist(q)
         lo, hi = lim["twist"]
         return max(0.0, sw - lim["swing"], lo - tw, tw - hi)
+    if lim["kind"] == "hinge":
+        a, b, c = hinge_angles(q)
+        out = 0.0
+        for v, ax in ((a, "x"), (b, "y"), (c, "z")):
+            lo, hi = lim[ax]
+            out = max(out, lo - v, v - hi)
+        return out
     a, b, c = euler_xyz(q)
 
     def wrap(v):

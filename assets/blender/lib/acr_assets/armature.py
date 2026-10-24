@@ -97,7 +97,7 @@ def apply_limits(arm_obj, hands_only=True):
 def audit_limits(arm_obj):
     """Every frame of every clip of `arm_obj` against the joint limits (`limits.excess`,
     beyond the table's tolerance), read from the actions' F-curves: {"frames", "violations",
-    "worst": [clip, bone, frame, degrees], "by_bone": {bone: [count, max degrees]}}."""
+    "worst": [clip, bone, frame, degrees], "by_bone"/"by_clip": {name: [count, max degrees]}}."""
     from . import limits
 
     tol = limits.table()["tolerance_deg"]
@@ -108,6 +108,7 @@ def audit_limits(arm_obj):
     frames = viol = 0
     worst = None
     by_bone = {}
+    by_clip = {}
     for clip in arm_obj.get("acr_clips", []):
         act = bpy.data.actions.get(clip)
         if act is None:
@@ -130,10 +131,12 @@ def audit_limits(arm_obj):
                 viol += 1
                 cnt, mx = by_bone.get(b, (0, 0.0))
                 by_bone[b] = [cnt + 1, round(max(mx, e), 1)]
+                cnt, mx = by_clip.get(clip, (0, 0.0))
+                by_clip[clip] = [cnt + 1, round(max(mx, e), 1)]
                 if worst is None or e > worst[3]:
                     worst = [clip, b, f, round(e, 1)]
     return {"frames": frames, "violations": viol, "worst": worst,
-            "by_bone": dict(sorted(by_bone.items()))}
+            "by_bone": dict(sorted(by_bone.items())), "by_clip": dict(sorted(by_clip.items()))}
 
 
 def segments(arm_obj):
@@ -210,6 +213,93 @@ def pose(arm_obj, spec, frame=None, prefix="", keyed=None):
         if frame is not None:
             pb.keyframe_insert("rotation_quaternion", frame=frame, group=pb.name)
             pb.keyframe_insert("location", frame=frame, group=pb.name)
+    for side in ("l", "r"):
+        settle_arm(arm_obj, side, prefix, frame)
+
+
+def _local(pb, m3):
+    """Local rotation (quaternion) of pose bone `pb` for armature-space orientation `m3`,
+    its parent as posed now."""
+    rest = pb.bone.matrix_local.to_3x3()
+    if pb.parent is None:
+        return (rest.inverted() @ m3).to_quaternion()
+    rel = pb.parent.bone.matrix_local.to_3x3().inverted() @ rest
+    return ((pb.parent.matrix.to_3x3() @ rel).inverted() @ m3).to_quaternion()
+
+
+def _twist_y(q):
+    """Twist (radians) of local quaternion `q` about the bone's own Y axis."""
+    w, y = q.w, q.y
+    if w < 0:
+        w, y = -w, -y
+    return 2 * math.atan2(y, w)
+
+
+def settle_arm(arm_obj, side, prefix="", frame=None):
+    """Puts arm `side` (current pose) inside its joint limits without moving the elbow, the
+    wrist or the hand's orientation (docs/assets-humans.md "Joint limits"):
+    - the upper arm turns about its own axis until the elbow's hinge axis (the forearm's
+      local X) is normal to the plane of shoulder, elbow and wrist, so the forearm bends
+      as a pure hinge (flexion +X), never sideways;
+    - the forearm rolls about its own axis (pronation, within the table's twist range) to
+      take the hand's twist, so the wrist only flexes and deviates;
+    - the hand keeps its armature-space orientation (a grip stays on its item).
+    Keys the three bones at `frame`. Returns the hand's remaining excess (degrees)."""
+    from . import limits
+
+    B = arm_obj.pose.bones
+    names = [prefix + f"{b}_{side}" for b in ("upperarm", "forearm", "hand")]
+    if any(n not in B for n in names):
+        return None
+    up, fa, ha = (B[n] for n in names)
+    hand_m = ha.matrix.to_3x3().copy()
+    y_u = (fa.head - up.head)
+    y_f = (ha.head - fa.head)
+    if y_u.length < 1e-6 or y_f.length < 1e-6:
+        return None
+    y_u, y_f = y_u.normalized(), y_f.normalized()
+    u0 = up.matrix.to_3x3().copy()
+    u0 = (u0 @ Vector((0, 1, 0))).rotation_difference(y_u).to_matrix() @ u0
+    rel_f = up.bone.matrix_local.to_3x3().inverted() @ fa.bone.matrix_local.to_3x3()
+    rel_h = fa.bone.matrix_local.to_3x3().inverted() @ ha.bone.matrix_local.to_3x3()
+    g = u0.inverted() @ y_f  # the forearm's direction in the upper arm's frame
+    h = rel_f @ Vector((1, 0, 0))  # the elbow's hinge axis in the upper arm's frame
+    # (Ry(psi) h) . g = 0: A cos(psi) + B sin(psi) + C = 0.
+    A = h.x * g.x + h.z * g.z
+    Bc = h.z * g.x - h.x * g.z
+    C = h.y * g.y
+    R = math.hypot(A, Bc)
+    cands = [0.0]
+    if R > 1e-6:
+        base = math.atan2(Bc, A)
+        off = math.acos(max(-1.0, min(1.0, -C / R)))
+        cands = [base + off, base - off]
+    best = None
+    for psi in cands:
+        um = u0 @ Matrix.Rotation(psi, 3, "Y")
+        d = (um @ rel_f).inverted() @ y_f
+        flex = math.atan2(d.z, d.y)
+        q_u = _local(up, um)
+        cost = abs(d.x) + (0.0 if flex >= -0.02 else 10.0) + 0.001 * abs(_twist_y(q_u))
+        if best is None or cost < best[0]:
+            best = (cost, um, d)
+    _c, um, d = best
+    q_f = Vector((0, 1, 0)).rotation_difference(d)
+    lo, hi = (math.radians(v) for v in limits.limit(fa.name)["y"])
+    t = 0.0
+    for _ in range(3):
+        fm = um @ rel_f @ q_f.to_matrix() @ Matrix.Rotation(t, 3, "Y")
+        q_h = ((fm @ rel_h).inverted() @ hand_m).to_quaternion()
+        t = max(lo, min(hi, t + _twist_y(q_h)))
+    fm = um @ rel_f @ q_f.to_matrix() @ Matrix.Rotation(t, 3, "Y")
+    q_h = ((fm @ rel_h).inverted() @ hand_m).to_quaternion()
+    for pb, q in ((up, _local(up, um)), (fa, q_f @ Quaternion((0, 1, 0), t)), (ha, q_h)):
+        pb.rotation_mode = "QUATERNION"
+        pb.rotation_quaternion = q
+        if frame is not None:
+            pb.keyframe_insert("rotation_quaternion", frame=frame, group=pb.name)
+    bpy.context.view_layer.update()
+    return limits.excess(ha.name, tuple(q_h))
 
 
 def _grip_hands(arm_obj, spec, world, frame, prefix):

@@ -711,12 +711,20 @@ lie the body down). Tolerance 5°.
   on any finger or thumb violation in the built `hdman`, `engm18`, `delkri`, `engd18`.
 - **Ragdoll:** `ragdoll::skeleton_h` takes the elbow and knee hinges from the same table;
   its test `hinges_match_the_asset_limits` reads the JSON.
-- **Open (m2-joint-limits, first slice):** the arm clips break the limits widely. engm18:
-  4439 violations in 1439 frames, worst forearm_r 171° (ATTACK1), hand_r 158°, hand_l 158°
-  (grip mode turns the hand freely to the musket: forearm twist lands in the wrist); delkri
-  2954, engd18 1920 (rider forearms 170°), spine up to 26° past its per-segment range in
-  the reload. The arm IK (`aim._solve`, `grips.turn_hand`) must solve within the table
-  before the constraints can be active on arms.
+- **Arms (m2-arm-limits):** `armature.settle_arm` runs at the end of every `armature.pose`
+  and in the gun crews' `guncrew._reach`: without moving elbow, wrist or the hand's
+  orientation it turns the upper arm about its own axis so the elbow's hinge axis (the
+  forearm's local X) is normal to the shoulder-elbow-wrist plane (the forearm bends as a pure
+  +X hinge, never sideways), and rolls the forearm (pronation, ±90°) to take the hand's
+  twist. The audit reads hinges (elbow, knee, finger joints) as flexion and sideways swing
+  after the bone's own twist (`limits.hinge_angles`); Euler XYZ read a bent, pronated forearm
+  as a large Z turn. Crews' clips are audited too (`guncrew.key_clips` sets `acr_clips`).
+  engm18 forearm_r 1221 violations (worst 159°) → 45 (22°); arm violations 4070 → 2142.
+- **Open:** the wrists. With the grip's hand orientation kept, the hands still leave their
+  swing range (engm18 hand_r 1177 frames up to 73°, hand_l 846; already ~46° in STAND, so
+  the grip frames or the hand table's axes need checking first), upper-arm twist where
+  the IK pole puts the elbow up or in (engpik upperarm_r 83°, delkri 66°), spine in the
+  reload (26°) and the crew's spine (36°). The arm constraints stay off until then.
 
 ### Contact grip (`hdbody.contact_grip`, `hdbody.grip_gaps`; m2-joint-limits)
 

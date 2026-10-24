@@ -66,6 +66,25 @@ class Table(unittest.TestCase):
         self.assertAlmostEqual(limits.excess("upperarm_l", qy(100)), 10.0, places=3)
         self.assertIsNone(limits.excess("hips", qz(90)))
 
+    def test_hinge_reads_flexion_and_twist_apart(self):
+        # A bent and pronated forearm (hinge, then the roll about its own axis): Euler XYZ
+        # reads it as a 80 degree Z turn, the hinge decomposition as 100 flexion, 80 twist.
+        def mul(a, b):
+            w1, x1, y1, z1 = a
+            w2, x2, y2, z2 = b
+            return (w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2, w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+                    w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2, w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2)
+
+        q = mul(qx(100), qy(80))
+        a, b, c = limits.hinge_angles(q)
+        self.assertAlmostEqual(a, 100.0, places=3)
+        self.assertAlmostEqual(b, 80.0, places=3)
+        self.assertAlmostEqual(c, 0.0, places=3)
+        self.assertGreater(abs(limits.euler_xyz(q)[2]), 70.0)
+        self.assertEqual(limits.excess("forearm_r", q), 0.0)
+        self.assertAlmostEqual(limits.excess("forearm_l", qz(25)), 15.0, places=3)
+        self.assertAlmostEqual(limits.excess("forearm_l", qx(-20)), 20.0, places=3)
+
     def test_euler_matches_order(self):
         e = limits.euler_xyz(qz(30))
         self.assertAlmostEqual(e[2], 30.0, places=4)

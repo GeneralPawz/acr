@@ -696,6 +696,8 @@ def key_clips(arm, actions, plan=None, marks=None):
                     for what, d in measure(arm, p, kind, marks).items():
                         misses.setdefault(what, []).append((d, clip, p, f))
         arm.animation_data.action = None
+    # The crew's clips for the joint-limit audit (`build._audit_limits`).
+    arm["acr_clips"] = sorted(set(arm.get("acr_clips", [])) | set(actions))
     bpy.context.view_layer.update()
     # The exported scene pose is STAND.
     for p, ks in plan["STAND"].items():
@@ -844,6 +846,9 @@ def _reach(arm, P, sd, goal, frame):
         _aim(up, e - s)
         _aim(fo, t - fo.head)
         _orient(ha, keep)
+    from . import armature
+
+    armature.settle_arm(arm, sd, P)  # the elbow a hinge, the wrist's twist in the forearm
     for pb in (up, fo, ha):
         pb.keyframe_insert("rotation_quaternion", frame=frame, group=pb.name)
     return (_fist(arm, P, sd) - goal).length
