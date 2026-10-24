@@ -1,9 +1,10 @@
 """High-detail base human (opt-in test unit, m2-hd-human): the `acr_assets.hdbody` master
 (about 78k triangles, 4k skin) on skeleton H with the musketeer clips of `EngM18` and the
-musket grip on the fingers; its LOD chain (10k / 3k / 800, seam-locked, baked normal and
-albedo each) goes to `hdman.lods.glb` beside the glb, because the renderer builds its own
-LODs at load and reads no authored ones yet (docs/rendering-3d.md, m2-lod). Needs the local
-MakeHuman sources under ACR_SOURCES/makehuman (see hdbody)."""
+musket grip on the fingers; its LOD chain (10k / 3k / 800, each with its own seam-cut
+atlas and baked normal and albedo) rides in the same glb as nodes with `extras.acr_lod` =
+1..3 and `acr_lod_of` = the master's node, on the master's skin (docs/rendering-3d.md,
+"Authored levels"). Needs the local MakeHuman sources under ACR_SOURCES/makehuman (see
+hdbody)."""
 
 import os
 import sys
@@ -19,11 +20,6 @@ from engm18 import MD  # noqa: E402
 
 TYPE = "EngM18"
 PORTRAIT = "generated/faces/aligned/eu1_s1.png"
-
-
-def _out_path():
-    a = sys.argv
-    return a[a.index("--out") + 1] if "--out" in a else None
 
 
 def build(ctx):
@@ -48,14 +44,5 @@ def build(ctx):
     am.set_clip(arm, "STAND")
     arm.animation_data.action = None
     am.pose(arm, {**poses.STAND_MUSKET, **grip})
-    out = _out_path()
-    if out:
-        bpy.ops.object.select_all(action="DESELECT")
-        for ob in lods + [arm]:
-            ob.select_set(True)
-        path = os.path.splitext(os.path.abspath(out))[0] + ".lods.glb"
-        bpy.ops.export_scene.gltf(filepath=path, export_format="GLB", use_selection=True, export_yup=True,
-                                  export_animations=False, export_extras=True)
-        ctx.stats["hd"]["lods_glb_bytes"] = os.path.getsize(path)
-    for ob in lods:  # in the LOD file only (the renderer would draw them all)
-        bpy.data.objects.remove(ob)
+    for level, ob in enumerate(lods, 1):  # authored levels in the glb (docs/rendering-3d.md)
+        ob["acr_lod"] = level
