@@ -1046,7 +1046,7 @@ impl ThreeD {
                 (u.death, removed_at)
             };
             let (x, y) = (u.pos.x >> 4, u.pos.y >> 4);
-            let ground = view3d::ground_point(x, y, terrain.height_at(x, y));
+            let ground = view3d::unit_ground_point(x, y, terrain.height_at(x, y));
             let body = super::gore::Body { death, ..u.into() };
             let (mut wounds, mut pool) = super::gore::corpse(body, record, self.gore, removed_at, ground);
             // A building bleeds no pool and takes no wounds (its burn comes from `ruin_view`).
@@ -1512,7 +1512,7 @@ impl ThreeD {
                 }
                 // No ragdoll: he lies along his facing from where he stood.
                 let u = world.units.get(v as usize).filter(|u| u.id.0 == v)?;
-                let p = ground((u.pos.x >> 4) as f32, (u.pos.y >> 4) as f32);
+                let p = ground((u.pos.x >> 4) as f32, (u.pos.y >> 4) as f32 + view3d::UNIT_SOUTH);
                 let (s, c) = view3d::facing_yaw(u.dir).sin_cos();
                 let at = |m: f32| ground(p[0] + s * m * PIXELS_PER_METRE, p[1] + c * m * PIXELS_PER_METRE);
                 Some(super::maul_view::Lying { chest: at(0.45), hips: p, limb: at(-0.6) })
@@ -2429,7 +2429,9 @@ fn instance(
         Gore::Full | Gore::Reduced => (model::corpse_decay(death, removed_at), false),
     };
     let (morphs, sink) = model::decay_pose(decay, lying);
-    let mut ground = view3d::ground_point(x, y, terrain.height_at(x, y));
+    // Units stand where their sprites draw their feet (#196), buildings on their anchor.
+    let place = if u.building { view3d::ground_point } else { view3d::unit_ground_point };
+    let mut ground = place(x, y, terrain.height_at(x, y));
     // A model without decay masks sinks in the shader (after the palette, so a physics
     // pose sinks too); the footprint still sinks here.
     let placed = ground;

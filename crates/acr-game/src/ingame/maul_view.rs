@@ -115,7 +115,7 @@ impl Maulers {
             let Some(rig) = rig(instances[ii].model) else { continue };
             let own = [instances[ii].transform[3][0], instances[ii].transform[3][1], instances[ii].transform[3][2]];
             let near = |v: &Unit| {
-                let p = ground((v.pos.x >> 4) as f32, (v.pos.y >> 4) as f32);
+                let p = ground((v.pos.x >> 4) as f32, (v.pos.y >> 4) as f32 + view3d::UNIT_SOUTH);
                 flat(own, p).1 < REACH
             };
             let unit = |id: u32| world.units.get(id as usize).filter(|v| v.id.0 == id && !v.building);

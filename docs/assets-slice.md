@@ -16,18 +16,18 @@ blender -b --factory-startup --python assets/blender/tools/preview.py -- \
 ## Numbers
 
 IoU = silhouette intersection over union per stored direction, mean over the directions, at
-the ground point (`acr model-check`); "shifted" = at the best shift within ±24 px (the
+the game's placement (`acr model-check`; units 3 px below the ground point since #196); "shifted" = at the best shift within ±24 px (the
 check's anchor search). Colour difference = mean absolute RGB difference (0–255) where both
 are solid, render unlit.
 
 | asset | check | IoU | IoU shifted | colour diff | triangles (all layers/states) | `.glb` |
 |---|---|---:|---:|---:|---:|---:|
-| `engm18` | `#STAND` | **0.751** | 0.770 | 48.7 | 4 852 | 1.21 MB |
-| | `#DEATHLIE1` | 0.442 | 0.587 | 60.9 | | |
-| `engkri` | `#STAND` | 0.635 | 0.710 | 37.8 | 4 740 | 0.99 MB |
-| | `#DEATHLIE1` | 0.441 | 0.572 | 57.5 | | |
-| `engd18` | `#STAND` | **0.757** | 0.782 | 41.4 | 7 343 | 2.67 MB |
-| | `#DEATHLIE1` | 0.502 | 0.514 | 37.1 | | |
+| `engm18` | `#STAND` | 0.738 | 0.751 | 54.2 | 4 852 | 1.21 MB |
+| | `#DEATHLIE1` | 0.586 | 0.598 | 67.2 | | |
+| `engkri` | `#STAND` | 0.688 | 0.709 | 38.8 | 4 740 | 0.99 MB |
+| | `#DEATHLIE1` | 0.510 | 0.562 | 60.9 | | |
+| `engd18` | `#STAND` | 0.665 | 0.728 | 38.5 | 7 343 | 2.67 MB |
+| | `#DEATHLIE1` | 0.392 | 0.491 | 45.6 | | |
 | `engkre` | `#STANDLO` + section 0 state 0 (wood) | **0.910** | 0.910 | 3.8 | 30 108 | 5.98 MB |
 | | state 1 (stone house in scaffolding) | 0.899 | 0.900 | 2.3 | | |
 | | state 2 (stone house) | 0.901 | 0.901 | 2.2 | | |
@@ -40,14 +40,38 @@ are solid, render unlit.
 | `broadleaf` | `TREELIST:104` | 0.684 | 0.684 | 23.8 | 1 740 | 0.19 MB |
 | `incdo1` (#162 proof) | `#STANDLO` | 0.903 | 0.903 | 2.4 | – | 0.13 MB |
 
-Target for `EngM18 #STAND` was IoU ≥ 0.75 with ≤ 6k triangles: **0.751 with 4 852
+The three humans' IoU, IoU shifted and colour difference are of the current models
+(2026-10-24, VM, #196); triangles, sizes and the fort and tree rows are from the slice. Target
+for `EngM18 #STAND` was IoU ≥ 0.75 with ≤ 6k triangles: **0.751 with 4 852
 triangles** (bones 836, flesh 1 828, clothes ~1 900, stump caps 288, gear ~200).
 
-The unit sprites stand **2–4 px lower** than a model whose feet are on the ground point (the
-check's best shift is (0, 2..4) in every direction for both humans, as in the first run):
-the original renders put the ground under the anchor. The models keep their feet on the
-ground; matching the sprites exactly would need the renderer to place units ~6 world px
-(0.2 m) further south, or a 0.1 m lower model. The lying poses lose most to it (0.44 → 0.59).
+The unit sprites stand **3–4 px lower** than a model whose feet are on the ground point:
+the original renders put the ground under the anchor. Since #196 the game places every unit
+model `view3d::UNIT_SOUTH` = 6 world px (0.2 m, 3 screen px at zoom 1) south of its sim
+position (`view3d::unit_ground_point`; buildings and map objects stay on their anchor), so
+the model, its shadow, corpse, pool and decals and the sprite-anchored selection marks,
+health bars and effects agree. `acr model-check` compares unit renders 3 px lower
+(`UNIT_ROWS`), where the game draws them; the best shift left for `#STAND` is (0, −2..0)
+for `engm18`, (0..2, −1..1) for `engkri`, about (−2, 0) for `engd18`.
+
+In the game (blank white field, zoom 1, fixed camera, shadows off, `models=off` against
+`models=all`, 8 directions; `ACR-analysis/genai/sprite-shift/measure.py`), the sprite's
+lowest row below the model's, mean over the directions, screen px:
+
+| unit | before | #196 |
+|---|---:|---:|
+| EngM18 | 3.4 | 0.4 |
+| HdEngM18 (as `engm18.glb`) | 3.9 | 0.9 |
+| EngKri | 3.4 | 0.4 |
+| EngD18 | 4.3 | 1.3 |
+| EngPik | 2.6 | −0.4 |
+| SpnM18 | 3.5 | 0.5 |
+| DelKri | −1.0 | −4.0 |
+
+DelKri is the exception: its model's feet already stood level with its sprite's
+(`model-check` best shift (0, −3) at the anchor, mean IoU 0.515; 0.480 at the game's
+placement), so it now stands 3–4 px low. That is an asset fix (the model is smaller than
+the sprite: 387 against 577 px in direction 0), not a placement one.
 
 ## Screenshots
 

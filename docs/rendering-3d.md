@@ -146,7 +146,8 @@ Files are requested when a type with a model first appears and only when `models
 acr-render
   math.rs            column-major 4×4 matrices, quaternions
   view3d.rs          View3d: the original projection as a matrix, the free camera (Orbit),
-                     ground picking, model placement (ground_point, facing_yaw, model_matrix)
+                     ground picking, model placement (ground_point, unit_ground_point:
+                     units 6 world px south of their anchor, #196; facing_yaw, model_matrix)
   model.rs           ModelData::from_glb: meshes, materials, skins, clips; pose sampling;
                      clip choice from .MD animation names; corpse decay mapping
   model_renderer.rs  ModelRenderer (GPU skinning, instancing), DepthTarget (the 3D pass)

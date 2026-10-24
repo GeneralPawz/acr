@@ -215,6 +215,20 @@ pub fn ground_point(x: i32, y: i32, h: i32) -> Vec3 {
     [x as f32, ((y >> 1) * 2) as f32, h as f32 / COS_E]
 }
 
+/// How far south of its sim position (world pixels, 0.2 m) a unit model stands (#196): the
+/// original's unit sprites draw their feet 3–4 screen pixels below the anchor (measured in all
+/// 8 directions for EngM18, EngKri, EngD18, EngPik and SpnM18, docs/assets-slice.md), so a
+/// model with its feet on the anchor stood that much higher than its sprite. Buildings and
+/// map objects stand on their anchor.
+pub const UNIT_SOUTH: f32 = 6.0;
+
+/// [`ground_point`] of a unit model: [`UNIT_SOUTH`] further south, at the ground height of the
+/// unit's own point.
+pub fn unit_ground_point(x: i32, y: i32, h: i32) -> Vec3 {
+    let g = ground_point(x, y, h);
+    [g[0], g[1] + UNIT_SOUTH, g[2]]
+}
+
 /// The yaw of a model facing `RealDir` `dir` (0 east, 64 south): models face south at yaw 0
 /// and turn counter-clockwise seen from above (`docs/assets.md`).
 pub fn facing_yaw(dir: u8) -> f32 {
@@ -316,6 +330,21 @@ mod tests {
                 }
                 assert!(close(via_matrix[2], got[2], 1e-6));
             }
+        }
+    }
+
+    #[test]
+    fn unit_models_stand_three_pixels_below_the_anchor() {
+        // #196: at zoom 1 a unit's feet land 3 screen pixels below its sprite anchor, on any
+        // ground height; the left-right position stays.
+        let camera = Camera { x: 1234.0, y: 567.0, scale: 1.0 };
+        let view = View3d::fixed(camera, [1024.0, 768.0]);
+        for (x, y, h) in [(1300, 1200, 0), (1301, 1201, 37), (2000, 3000, -12)] {
+            let anchor = camera.project(x, y, h);
+            let feet = view.project(unit_ground_point(x, y, h));
+            assert!(close(feet[0], anchor[0], 1e-3), "{feet:?} {anchor:?}");
+            assert!(close(feet[1] - anchor[1], UNIT_SOUTH / 2.0, 1e-3), "{feet:?} {anchor:?}");
+            assert_eq!(unit_ground_point(x, y, h)[2], ground_point(x, y, h)[2]);
         }
     }
 

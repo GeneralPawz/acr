@@ -357,9 +357,12 @@ fn model_check(dir: &Path, ty: &str, glb: &Path, out: &Path, rest: &[&str]) -> R
     if !status.success() {
         return Err(format!("Blender failed ({status})").into());
     }
+    // The game stands unit models `UNIT_SOUTH` south of their anchor (#196): compare them there.
+    let unit = !ty.contains(':') && !crate::defs::find_unit(&mut Vfs::open_game_dir(dir)?, ty)?.1.is_building();
+    let down = if unit { UNIT_ROWS } else { 0 };
     let mut scores = Vec::new();
     for v in &reference.views {
-        let render = read_png(&out.join(format!("render_{}.png", v.k)))?;
+        let render = lowered(read_png(&out.join(format!("render_{}.png", v.k)))?, down);
         if (render.width, render.height) != (v.image.width, v.image.height) {
             return Err(format!(
                 "render_{}.png is {}x{}, expected {}x{}",
@@ -413,6 +416,20 @@ pub struct Score {
     pub shifted_iou: f64,
     /// Silhouette areas in pixels: sprite, render.
     pub area: (usize, usize),
+}
+
+/// How many pixels below its anchor the game draws a unit model at zoom 1: half of
+/// `acr_render::view3d::UNIT_SOUTH` (world pixels; the projection halves `y`).
+const UNIT_ROWS: u32 = 3;
+
+/// `image` moved `rows` pixels down (the top rows clear): a render drawn where the game draws.
+fn lowered(mut image: Image, rows: u32) -> Image {
+    let stride = image.width as usize * 4;
+    let shift = (rows as usize * stride).min(image.rgba.len());
+    let len = image.rgba.len();
+    image.rgba.copy_within(..len - shift, shift);
+    image.rgba[..shift].fill(0);
+    image
 }
 
 fn solid(image: &Image) -> Vec<bool> {
@@ -582,6 +599,15 @@ mod tests {
             }
         }
         img
+    }
+
+    #[test]
+    fn a_lowered_render_moves_down() {
+        // #196: unit renders are compared 3 px lower, where the game draws the model.
+        let s = compare(&square(64, 20, 23, 10), &lowered(square(64, 20, 20, 10), 3));
+        assert_eq!((s.iou, s.shift), (1.0, (0, 0)));
+        assert_eq!(lowered(square(64, 20, 20, 10), 0).rgba, square(64, 20, 20, 10).rgba);
+        assert_eq!(UNIT_ROWS as f32 * 2.0, acr_render::view3d::UNIT_SOUTH);
     }
 
     #[test]
