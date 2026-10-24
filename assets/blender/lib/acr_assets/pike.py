@@ -235,16 +235,21 @@ def _drape(kw, plan):
     return kw
 
 
-def traced_doublet(rel):
+def _girth_ease(e):
+    """The pattern's chest (else waist) ease in cm (`ease` is a number or {measure: cm})."""
+    return e.get("chest", e.get("waist")) if isinstance(e, dict) else e
+
+
+def traced_garment(rel, cloth="doublet"):
     """Registers the traced pattern `ACR_SOURCES/patterns/<rel>.json` (docs/clothing.md
-    "Traced patterns") in the doublet's cloth once; returns its garment name."""
+    "Traced patterns") once, in the JSON's `cloth` (default `cloth`); returns its garment name."""
     path = gm.pattern_path(rel)
     draft = gm.traced(path)
     name = draft.pattern["garment"]
     if name not in gm.GARMENTS:
-        cloth = draft.pattern.get("cloth", "doublet")
+        cloth = draft.pattern.get("cloth", cloth)
         registry.garment(name, draft, gm.CLOTH[cloth] if isinstance(cloth, str) else cloth,
-                         ease=draft.pattern.get("ease"), spacing=draft.pattern.get("spacing", 3.5))
+                         ease=_girth_ease(draft.pattern.get("ease")), spacing=draft.pattern.get("spacing", 3.5))
     return name
 
 
@@ -255,10 +260,14 @@ def musketeer_spec(md, palette=None, hat="pike_broad", **kw):
     musket path keys (the stance-3 rest clips are not built)."""
     md = {k: v for k, v in md.items() if k in MUSKET_KEYS}
     pal = _palette(palette)
-    # `coat_pattern` "waugh/doublet_1635": a traced doublet instead of the drafted one.
-    rel = kw.pop("coat_pattern", None)
-    plan = MUSKETEER_DRAPE if not rel else tuple(traced_doublet(rel) if g == "doublet" else g for g in MUSKETEER_DRAPE)
-    _drape(kw, plan)
+    # `coat_pattern` "waugh/doublet_1635", `breeches_pattern` "waugh/breeches_1640": traced
+    # garments instead of the drafted doublet or breeches.
+    swap = {}
+    for key, slot in (("coat_pattern", "doublet"), ("breeches_pattern", "breeches")):
+        rel = kw.pop(key, None)
+        if rel:
+            swap[slot] = traced_garment(rel, slot)
+    _drape(kw, tuple(swap.get(g, g) for g in MUSKETEER_DRAPE))
     return line.spec(md, palette=pal, hat=hat,
                      gear=("belt_l", "belt_r", "falling_band", "pike_apostles", "pike_match", "off_scabbard"),
                      fixed=FIXED + tuple(kw.pop("fixed", ())), **kw)

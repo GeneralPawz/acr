@@ -781,24 +781,47 @@ the repo holds only the code and synthetic test patterns.
 - `garments.traced(path)`: a draft `draft(m) -> (panels, seams)` (with `draft.pattern`);
   `garments.pattern_path("waugh/doublet_1635")` resolves under `ACR_SOURCES` and fails
   clearly without it.
+- A grading band (u or v) named `fixed` keeps the traced size (no measure for it, or cloth
+  so full that the body does not matter).
 - A unit switches to a traced garment through its SPEC: `pike.musketeer_spec(...,
-  coat_pattern="waugh/doublet_1635")` registers it (`pike.traced_doublet`, cloth of the
-  JSON's `cloth`) and drapes it in place of `doublet`. `engmus.COAT_PATTERN` is `None` (the
-  drafted doublet) until the traced one is accepted.
+  coat_pattern="waugh/doublet_1635", breeches_pattern="waugh/breeches_1640")` registers
+  each (`pike.traced_garment`, cloth of the JSON's `cloth`) and drapes it in place of
+  `doublet` / `breeches`. `engmus.COAT_PATTERN` and `engmus.BREECHES_PATTERN` stay `None`
+  (the drafted garments) until the traced ones match their layer numbers.
 
-**First pattern: Waugh Diagram VIII** (book p. 26, PDF p. 15), the linen doublet c. 1635-40
-(V&A), for EngMus. Scale from the margin ruler, 63.9 px/in at 300 dpi. Seven panels: front
-and back (cut in one with their skirts in the original, split at the waist line and welded
-`close`), front and back skirts, the side basque (trimmed by the 1 in the skirts overlap it),
-a stand collar, the one-piece sleeve (drawn folded; straightened along its fold, v = arc
-length from the wrist); fourteen seams, the whole sleeve head sewn to front + back armhole
-as one chain. Wearer read off the pattern: chest 81, waist 70, back length 40 cm (ease 10);
-the 1630s waist sits 9 cm high (`lift`). Graded to the default body: chest x1.19, waist
-x1.17, back x1.13. Drape on EngMus (VM, 24 Oct 2026): welded 234 of 234 (drafted doublet 193
-of 201), `gap_mm_max` 35 (110), worst seam 35 mm (the sleeve head); `model_layers` poking 298,
-crossing 256 (drafted: 258, 202; with the sleeve head split at the crown into two seams
-265, 207, but those halves differ by 1.5x in length); `gear_volume` doublet and sleeve
-vertices inside carried gear 135 (92); sprite IoU STAND 0.607 (0.596). Not modelled: the lacing band, the open sleeve slit to X, padding.
+**Waugh Diagram VIII** (book p. 26, PDF p. 15), the linen doublet c. 1635-40 (V&A), for
+EngMus. Scale from the margin ruler, 63.9 px/in at 300 dpi. Seven panels: front and back (cut
+in one with their skirts in the original, split at the waist line and welded `close`), front
+and back skirts, the side basque (trimmed by the 1 in the skirts overlap it), a stand collar,
+the one-piece sleeve (drawn folded; straightened along its fold, v = arc length from the
+wrist); fourteen seams. The sleeve head is split where its length fraction matches front and
+back armhole (27.4 : 17.7 cm), so each half sews to its own armhole. Wearer read off the
+pattern: chest 81, waist 70, back length 40 cm (ease 10); the 1630s waist sits 9 cm high
+(`lift`). Graded to the default body: chest x1.19, waist x1.17, back x1.13.
+
+**Waugh Diagram X** (book p. 27, PDF p. 16), Genoa velvet breeches c. 1640 (V&A). Page
+deskewed by -0.95 deg; 64.0 px/in. Front, back and the waist band; eight seams. The fullness
+(1.6x) is gathered into the band (seam ease 0.75). The leg runs 57 cm from the crotch to the
+hem, worn bloused and gathered at the knee: v below the crotch is graded so the hem lands
+1 cm below the knee; widths and the rise are `fixed` (about 28 cm over the thigh; no rise
+measure yet). The waist band is pinned. Padding and pockets are not cut.
+
+Numbers on EngMus (VM, 24 Oct 2026; drafted garments in brackets):
+
+| | welded | `gap_mm_max` | poking / crossing | sprite IoU STAND |
+|---|---|---|---|---|
+| drafted doublet + breeches | 193/201, 118/128 | 110, 94 | 258 / 202 | 0.596 |
+| traced doublet (head as one chain, sleeve widened) | 234/234 | 35 | 298 / 256 | 0.607 |
+| traced doublet (head split by length, sleeve widened) | | | 288 / 276 | |
+| traced doublet (head split by length, sleeve as traced) | 231/234 | 57 (collar) | 250 / 259 | |
+| traced doublet + breeches | 234/234, 123/131 | 30, 83 (inseam) | 353 / 331 | |
+
+The waist band must be pinned (`place.pin` "top": tied to the doublet with points): unpinned,
+the full breeches slid down into a puff at the knee, with bare thighs. That failed drape still
+welded 131/131 and measured 265 / 219, so check the sheet before you trust the layer numbers.
+The traced doublet's extra crossings are skin and shirt through the sleeves and body in strike and fire
+poses, and its fuller sleeves now touch the bandolier and cartridges. Not modelled: the
+lacing band, the open sleeve slit to X, padding.
 
 ## The British infantry uniform (1768 Royal Warrant)
 

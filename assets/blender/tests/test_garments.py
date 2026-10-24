@@ -304,6 +304,13 @@ class Traced(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "missing in base"):
             gm.check_pattern(no_base)
 
+    def test_fixed_bands_keep_the_traced_size(self):
+        doc = synthetic_pattern()
+        doc["panels"][2]["grade"] = {"u": [[-200, "fixed"]], "v": "fixed"}
+        m = dict(gm.MEASURE, arm=80.0, upper_arm=40.0)
+        panels, _ = gm.grade_pattern(gm.check_pattern(doc), m)
+        self.assertEqual(panels["sleeve"].outline[2], (20.0, 60.0))
+
     def test_the_drape_pairs_every_seam(self):
         panels, seams = gm.traced(self.path)()
         for sm in seams:

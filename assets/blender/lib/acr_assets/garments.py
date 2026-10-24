@@ -789,6 +789,7 @@ LAYER_RANK = {
 # never in the repo), graded to the body and handed to the drape as `Panel`s and `Seam`s.
 
 PATTERN_SCHEMA = "acr-pattern/1"
+FIXED = "fixed"  # a grading band that keeps the traced size (no measure for it, or full cloth)
 # Length measure a panel's v scales by when its JSON gives no `grade`.
 DEFAULT_V = {"torso": "nape_to_waist", "neck": "neck", "arm": "arm", "cape": "nape_to_waist"}
 
@@ -827,7 +828,7 @@ def check_pattern(doc, where="pattern"):
         g = p.get("grade") or {}
         region = p["place"]["region"]
         for _v, k in _bands(g.get("u"), "chest") + _bands(g.get("v"), DEFAULT_V.get(region, "waist_to_knee")):
-            if k not in doc["base"]:
+            if k != FIXED and k not in doc["base"]:
                 raise ValueError(f"{where}: panel {p['name']!r} grades by {k!r}, missing in base")
         names[p["name"]] = pl
     for s in doc["seams"]:
@@ -839,6 +840,8 @@ def check_pattern(doc, where="pattern"):
 
 def _ratio(m, base, k, ease):
     """Girth ratio with the ease kept constant; lengths (no ease) scale plainly."""
+    if k == FIXED:
+        return 1.0
     return (m[k] + ease) / (base[k] + ease)
 
 
@@ -850,7 +853,7 @@ def _grade_v(v, bands, m, base):
         for a, kk in bands:
             if t >= a:
                 k = kk
-        return m[k] / base[k]
+        return 1.0 if k == FIXED else m[k] / base[k]
 
     cuts = sorted({0.0, v} | {a for a, _ in bands if min(0.0, v) < a < max(0.0, v)})
     out = 0.0
