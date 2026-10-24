@@ -263,19 +263,24 @@ def remesh_shoulders(bm, seg, prefix="", iterations=4):
     lens = sorted(e.calc_length() for f in region() for e in f.edges)
     target = lens[len(lens) // 2]
     splits = flips = 0
+    # BMesh elements hash by address: a set of them iterates in a new order every run, and
+    # the splits, flips and vertex order that follow differ (docs/assets.md "Repeatable
+    # builds"). Sets serve membership only; every loop walks `region()` in mesh order.
     for _ in range(iterations):
-        fs = set(region())
+        fl = region()
+        fs = set(fl)
         # Split the long edges (both faces in the region, so the border stays put).
-        long = [e for e in {e for f in fs for e in f.edges}
+        long = [e for e in dict.fromkeys(e for f in fl for e in f.edges)
                 if e.calc_length() > 1.6 * target and len(e.link_faces) == 2 and all(g in fs for g in e.link_faces)]
         if long:
             splits += len(long)
             bmesh.ops.subdivide_edges(bm, edges=long, cuts=1, use_grid_fill=False)
             bmesh.ops.triangulate(bm, faces=[f for f in bm.faces if len(f.verts) > 3])
         for _f in range(6):
-            fs = set(region())
+            fl = region()
+            fs = set(fl)
             changed = 0
-            for e in [e for f in fs for e in f.edges]:
+            for e in [e for f in fl for e in f.edges]:
                 if not e.is_valid or len(e.link_faces) != 2 or not all(g in fs and len(g.verts) == 3 for g in e.link_faces):
                     continue
                 for g in e.link_faces:
@@ -291,8 +296,10 @@ def remesh_shoulders(bm, seg, prefix="", iterations=4):
             if not changed:
                 break
         # Tangential relaxation, back onto the original surface.
-        fs = set(region())
-        free = {v for f in fs for v in f.verts if not v.is_boundary and all(g in fs for g in v.link_faces)}
+        fl = region()
+        fs = set(fl)
+        free = list(dict.fromkeys(v for f in fl for v in f.verts
+                                  if not v.is_boundary and all(g in fs for g in v.link_faces)))
         for _r in range(2):
             new = {}
             for v in free:
@@ -307,10 +314,11 @@ def remesh_shoulders(bm, seg, prefix="", iterations=4):
                 v.co = loc if loc is not None else c
     # The points the decimation left standing up over the acromion and trapezius: a light
     # full smoothing of the free vertices (a few mm off the convex shoulder).
-    fs = set(region())
-    free = [v for f in fs for v in f.verts if not v.is_boundary and all(g in fs for g in v.link_faces)]
+    fl = region()
+    fs = set(fl)
+    free = list(dict.fromkeys(v for f in fl for v in f.verts if not v.is_boundary and all(g in fs for g in v.link_faces)))
     for _ in range(2):
-        bmesh.ops.smooth_vert(bm, verts=list(set(free)), factor=0.5, use_axis_x=True, use_axis_y=True, use_axis_z=True)
+        bmesh.ops.smooth_vert(bm, verts=free, factor=0.5, use_axis_x=True, use_axis_y=True, use_axis_z=True)
     bm.normal_update()
     fs = region()
     after = sum(_aspect(t) > SLIVER for t in fs)
@@ -694,7 +702,7 @@ def smooth_border(bm, src, seam, offset, iterations=10, hem=0.7):
             v.co = c
     lift(edge)
     eset = set(edge)
-    ring = list({w for v in edge for f in v.link_faces for w in f.verts if w not in eset and not w.is_boundary})
+    ring = list(dict.fromkeys(w for v in edge for f in v.link_faces for w in f.verts if w not in eset and not w.is_boundary))
     for _ in range(2):
         bmesh.ops.smooth_vert(bm, verts=ring, factor=0.5, use_axis_x=True, use_axis_y=True, use_axis_z=True)
     lift(ring)
@@ -904,7 +912,7 @@ class BoneMesh:
         for v in vs:
             v.co.x *= rx
             v.co.y = y + (v.co.y - y) * ry
-        ext = bmesh.ops.extrude_edge_only(self.bm, edges=list({e for v in vs for e in v.link_edges}))
+        ext = bmesh.ops.extrude_edge_only(self.bm, edges=list(dict.fromkeys(e for v in vs for e in v.link_edges)))
         nv = [g for g in ext["geom"] if isinstance(g, bmesh.types.BMVert)]
         for v in nv:
             v.co.z += height

@@ -989,6 +989,11 @@ crawl, death and lying clips (sheets), the looks bench and scripted hits in the 
 (musket, cannonball, sabre to the arm, shell, a leg shot off: the ragdolls fall cleanly
 with the coat).
 
+Repeatable: the same commit drapes the same garments (DelLut and engm18 built twice:
+every mesh's positions and weights identical; docs/assets.md "Repeatable builds").
+Before m2-drape-determinism the shoulder re-mesh iterated BMesh sets in address order, so
+the body under the cloth, and with it every drape number, changed between builds.
+
 Fast iteration: `ACR-analysis/clothing/harness/run.sh <worktree> <tag> [nosim]` runs
 `engm18.make` with the garments on the VM and renders front/side/back/three-quarter views
 coloured by material key in about 15 s.

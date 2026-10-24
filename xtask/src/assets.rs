@@ -31,6 +31,19 @@ fn blender() -> PathBuf {
     if default.is_file() { default.to_path_buf() } else { PathBuf::from("blender") }
 }
 
+/// `blender -b --factory-startup ... build.py -- <script>` with a fixed string-hash seed.
+/// Blender's Python randomises string hashes per run, so sets and dicts of bone or object
+/// names would iterate in a new order every build (docs/assets.md "Repeatable builds").
+/// Blender ignores PYTHON* variables without `--python-use-system-env`; PYTHONHOME and
+/// PYTHONPATH are dropped so no system Python leaks in.
+fn blender_command(blender: &Path, build_py: &Path, script: &Path) -> Command {
+    let mut cmd = Command::new(blender);
+    cmd.env("PYTHONHASHSEED", "0").env_remove("PYTHONHOME").env_remove("PYTHONPATH");
+    cmd.args(["-b", "--factory-startup", "--python-use-system-env", "--python"]);
+    cmd.arg(build_py).arg("--").arg(script);
+    cmd
+}
+
 /// Asset scripts below `dir`, skipping `assets/blender`.
 fn scripts(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     let mut entries: Vec<PathBuf> =
@@ -153,8 +166,7 @@ pub fn assets(root: &Path, o: &Options) -> Result<()> {
             }
             _ => None,
         };
-        let mut cmd = Command::new(&blender);
-        cmd.args(["-b", "--factory-startup", "--python"]).arg(&build_py).arg("--").arg(script);
+        let mut cmd = blender_command(&blender, &build_py, script);
         cmd.arg("--out").arg(&glb).args(["--compress", &o.compress]);
         if let Some(r) = &reference {
             cmd.arg("--ref").arg(r);
@@ -190,6 +202,15 @@ pub fn assets(root: &Path, o: &Options) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn blender_hash_seed_fixed() {
+        let cmd = blender_command(Path::new("blender"), Path::new("build.py"), Path::new("a.py"));
+        let envs: Vec<_> = cmd.get_envs().collect();
+        assert!(envs.contains(&("PYTHONHASHSEED".as_ref(), Some("0".as_ref()))));
+        assert!(envs.contains(&("PYTHONPATH".as_ref(), None)));
+        assert!(cmd.get_args().any(|a| a == "--python-use-system-env"));
+    }
 
     #[test]
     fn reads_constants() {

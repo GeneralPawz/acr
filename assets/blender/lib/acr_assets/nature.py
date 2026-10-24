@@ -334,7 +334,7 @@ def _thin_cards(obj, leaf_slots, target, seed, grow=True):
     drop = []
     for k, p in enumerate(parts):
         if k in keep:
-            vs_ = {v for f in p for v in f.verts}
+            vs_ = list(dict.fromkeys(v for f in p for v in f.verts))
             c = sum((v.co for v in vs_), Vector()) / len(vs_)
             for v in vs_:
                 v.co = c + (v.co - c) * grow

@@ -292,7 +292,7 @@ def bones(arm_obj, name, sections=None):
         for v in vs:
             v.co.x *= 0.22
             v.co.z = 1.18 + (v.co.z - 1.18) * 0.27
-        ext = bmesh.ops.extrude_edge_only(B.bm, edges=list({e for v in vs for e in v.link_edges}))
+        ext = bmesh.ops.extrude_edge_only(B.bm, edges=list(dict.fromkeys(e for v in vs for e in v.link_edges)))
         nv = [g for g in ext["geom"] if isinstance(g, bmesh.types.BMVert)]
         for v in nv:
             v.co.y += 0.03

@@ -100,7 +100,8 @@ cargo xtask assets incdo1 --game-dir "C:\path\to\American Conquest" --check
 
 # the pieces, by hand
 acr model-ref   <game-dir> IncDo1 out/ref                 # ref.json + ref_<k>.png
-blender -b --factory-startup --python assets/blender/build.py -- assets/buildings/incdo1.py \
+PYTHONHASHSEED=0 blender -b --factory-startup --python-use-system-env \
+        --python assets/blender/build.py -- assets/buildings/incdo1.py \
         --out out/incdo1.glb --ref out/ref/ref.json
 acr model-check <game-dir> IncDo1 out/incdo1.glb out/check [--min-iou 0.85]
 acr gp-frame    <game-dir> INCDO1.GP 5 frame.png [--no-shadow]   # one frame, prints its origin
@@ -108,6 +109,31 @@ acr gp-frame    <game-dir> INCDO1.GP 5 frame.png [--no-shadow]   # one frame, pr
 
 `ACR_GAME_DIR` works instead of `--game-dir`. Without a game folder the assets build with
 their flat colours. `--blend` also saves the scene next to the `.glb` for inspection.
+
+### Repeatable builds
+
+The same commit must give the same glb, or no before/after number means anything. Two
+sources of run-to-run change, both fixed (m2-drape-determinism):
+
+- **BMesh elements hash by address.** A `set` of `BMVert`/`BMEdge`/`BMFace` iterates in a new
+  order every run. `body.remesh_shoulders` walked such sets for its edge splits, Delaunay
+  flips and relaxation, so the MakeHuman hull came out with other vertices; every weight and
+  shell after it moved, and the cloth sim, fed a different collider, turned that into
+  different folds (DelLut: 13 poking at 14 mm in one build, 29 at 39.5 mm in the next). Use
+  sets of mesh elements for membership only; iterate a list in mesh order
+  (`dict.fromkeys(...)` drops repeats), and never hand a set's order to a bmesh op.
+- **String hashes are randomised** in Blender's Python, so sets of bone or object names
+  iterate in a new order (float sums and ties in the weights). `cargo xtask assets` runs
+  Blender with `PYTHONHASHSEED=0 --python-use-system-env` (without PYTHONHOME and
+  PYTHONPATH); `build.py` warns when run by hand without it.
+
+Blender's multi-threaded cloth solver is repeatable given identical inputs (DelLut, default
+threads), so the bake keeps all cores. Check: build a unit twice and compare
+`python3 assets/blender/tools/glb_hash.py a.glb b.glb` (POSITION, JOINTS_0, WEIGHTS_0 per
+mesh; `*` marks a difference) and the two `stats.json` files without `sim_s`. On the VM a
+DelLut pair takes about 75 s and an engm18 pair 2 min, too slow for the landing checks.
+Open: DelLut's JPEG texture bytes still differ by a few bytes between builds (geometry and
+weights identical; engm18 identical throughout).
 
 ## Units and axes
 

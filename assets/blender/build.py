@@ -1,6 +1,6 @@
 """Builds one asset: runs an asset script in an empty scene and exports its glTF.
 
-    blender -b --factory-startup --python assets/blender/build.py -- \
+    PYTHONHASHSEED=0 blender -b --factory-startup --python-use-system-env --python assets/blender/build.py -- \
         <asset.py> --out <file.glb> [--ref <ref.json>] [--compress none|meshopt|draco] [--blend <file.blend>]
 
 `cargo xtask assets` calls this for every asset script. An asset script defines
@@ -62,6 +62,10 @@ def main(argv):
             p = os.path.join(a.refs, label, "ref.json")
             if os.path.isfile(p):
                 ctx.refs[label] = Reference(p)
+    if sys.flags.hash_randomization:
+        # Sets of names iterate in a new order every run: the build is not repeatable.
+        print("ACR warning: string hashes are randomised; run through `cargo xtask assets` "
+              "(PYTHONHASHSEED=0 --python-use-system-env) for a repeatable build")
     module.build(ctx)
     for k, v in BUILD_STATS.items():
         ctx.stats.setdefault(k, v)
