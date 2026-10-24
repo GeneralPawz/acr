@@ -74,7 +74,8 @@ def cocked_hat(name, n=14, lace=None):
 
 
 def musket(name, length=1.55, bayonet=0.0):
-    """Brown Bess-like musket along +Z, origin at the grip (0.25 m above the butt);
+    """Brown Bess-like musket along +Z, origin at the grip (0.25 m above the butt), its top
+    towards +Y;
     material 0 wood, 1 metal; empty `socket.muzzle` child at the muzzle."""
     bm = bmesh.new()
     metal = set()
@@ -97,14 +98,20 @@ def musket(name, length=1.55, bayonet=0.0):
         metal |= set(r["verts"])
     for f in bm.faces:
         f.material_index = 1 if f.verts[0] in metal else 0
+    # Top (the barrel, the comb) towards +Y, the butt's drop and the ramrod towards -Y: the
+    # grip frame (`grips.frame`: +Y towards the wrist) then holds it barrel up at the present
+    # with the right hand over the wrist of the stock (#296; built with -Y up before, which
+    # turned the barrel under the stock when aimed). Mirrored, so the faces turn round.
     for v in bm.verts:
         v.co.z -= 0.25
+        v.co.y = -v.co.y
+    bmesh.ops.reverse_faces(bm, faces=bm.faces[:])
     obj = from_bm(bm, name)
     m = bpy.data.objects.new("socket.muzzle", None)
     m.empty_display_size = 0.05
     link(m)
     m.parent = obj
-    m.location = (0, -0.01, length - 0.25)
+    m.location = (0, 0.01, length - 0.25)
     return obj
 
 

@@ -326,7 +326,7 @@ def make(root, name, s):
         gun["acr_material_keys"] = ["wood", "metal"]
         from . import grips
 
-        am.attach(gun, ch.arm, "socket.hand_r", grips.hold_matrix(ch.arm, "socket.hand_r", (0.0, -0.01, 0.0)))
+        am.attach(gun, ch.arm, "socket.hand_r", grips.hold_matrix(ch.arm, "socket.hand_r", (0.0, 0.01, 0.0)))
         ch.held["musket"] = gun
         ch.keys[gun.name] = "wood"
     return ch
@@ -355,11 +355,12 @@ def build(ctx, s, make_fn=None):
     ch.arm.pose.bones[aiming.ROD_SOCKET].matrix = ch.arm.pose.bones["socket.hand_r"].matrix @ aiming.ROD_STOWED
     tris = ch.triangles()
     names = [k for k in poses.musketeer_clips(md) if k in md or k == "STAND" or k not in CLIPS] + list(crawl.CLIPS)
+    names += [c for c in aiming.FIRE_CLIPS if c in (getattr(ctx, "fire", None) or {})]
     prepare_export(ch.all_meshes(), ctx.root, acr_triangles=sum(tris.values()), acr_clips=names,
                    acr_limb_radius=ch.limb_radius, acr_light=report.get("light_dir_camera", []),
                    acr_layers=list(ch.layers), **faces.extras("regular"))
     ctx.stats = {"triangles": tris, "light": report, "colours": colours, "aim_errors_m": ctx.aim_errors,
-                 "drape": getattr(ch, "drape_report", None)}
+                 "drape": getattr(ch, "drape_report", None), "fire": getattr(ctx, "fire", None)}
 
 
 def pose_for(ch, s, clip):

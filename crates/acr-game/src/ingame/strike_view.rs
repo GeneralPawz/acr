@@ -212,6 +212,12 @@ pub fn strike_clip(data: &ModelData, world: &World, u: &Unit) -> Option<usize> {
     {
         return Some(c);
     }
+    // A musket shot (#296): from the shoulder at range, from the hip up close.
+    if height != StrikeHeight::Down
+        && let Some(c) = fire_clip(data, &u.anim.name(), u, v)
+    {
+        return Some(c);
+    }
     let clip = clip_names(&u.anim.name(), kind, height).iter().find_map(|n| data.clip(n))?;
     // A rider cutting down: the side of the horse with the shorter turn.
     let name = &data.clips[clip].name;
@@ -225,6 +231,27 @@ pub fn strike_clip(data: &ModelData, world: &World, u: &Unit) -> Option<usize> {
         }
     }
     Some(clip)
+}
+
+/// Beyond this distance (world pixels, 30 per metre: about 3 m) a musketeer aims from the
+/// shoulder (`FIRE_AIMED`); nearer he fires from the hip (`FIRE_HIP`, #296).
+pub const FIRE_AIMED_MIN_PX: f32 = 90.0;
+
+/// The presentation clip of a shot at `distance_px`.
+pub fn fire_name(distance_px: f32) -> &'static str {
+    if distance_px > FIRE_AIMED_MIN_PX { "FIRE_AIMED" } else { "FIRE_HIP" }
+}
+
+/// The shot's presentation clip (#296) for `u` playing the firearm attack `anim`
+/// (`ATTACK1`, whose frames both clips share) at `v`, when the model has it; `None` keeps
+/// `ATTACK1`.
+fn fire_clip(data: &ModelData, anim: &str, u: &Unit, v: &Unit) -> Option<usize> {
+    if anim.trim_start_matches(['#', '@']) != "ATTACK1" {
+        return None;
+    }
+    let (dx, dy) = ((v.pos.x - u.pos.x) as f32, (v.pos.y - u.pos.y) as f32);
+    let d = dx.hypot(dy) / acr_sim::fixed::SUBPIXEL as f32;
+    data.clip(fire_name(d))
 }
 
 /// The kind of `u`'s current swing at his target: once its blow is struck, the recorded one
@@ -999,6 +1026,9 @@ mod tests {
         assert_eq!(clip_kind("ATTACK_CUT_FINISH"), Some(StrikeKind::Cut));
         assert_eq!(clip_kind("ATTACK_SHOT_DOWN"), Some(StrikeKind::Shot));
         assert_eq!(clip_kind("ATTACK_FINISH"), None);
+        assert_eq!(fire_name(30.0), "FIRE_HIP");
+        assert_eq!(fire_name(90.0), "FIRE_HIP");
+        assert_eq!(fire_name(91.0), "FIRE_AIMED");
         let heart = along(Vec3::ZERO, 0, Some(StrikeKind::Thrust));
         let neck = along(Vec3::ZERO, 0, Some(StrikeKind::Cut));
         assert!(heart.x > 0.5 && neck.x > heart.x + 0.2 && heart.y.abs() < 0.01, "{heart:?} {neck:?}");

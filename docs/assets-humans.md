@@ -685,6 +685,18 @@ plain pose angles. `PATTACK`, `PSTAND` and `ATTACK` use it. `EngM18` reports the
 errors in its stats (`aim_errors_m`: butt to shoulder joint ~8 cm, the pocket offset; left
 hand ~2 mm).
 
+**Aimed and hip fire (#296).** `aim.present` (via `aim.fire_poses`) builds the present of
+`ATTACK1` = `FIRE_AIMED`: it bows neck and head (a grid over pitch and tilt onto the stock)
+until the musket, placed with its sight line (rear sight over the breech, front sight behind
+the muzzle, `SIGHT_UP` above the axis) through the right eye, has its butt plate nearest the
+shoulder pocket, then solves both arms (right elbow raised, left hand under the fore-end).
+`aim.hip` with `poses.HIP_MUSKET` gives `FIRE_HIP` (butt at the right hip, the musket level).
+Both are keyed on every frame of the hold before the shot and baked per frame
+(`aim.bake_musket`). The build writes `stats.json` `fire`: `present` {`sight_m`, `butt_m`,
+`bow`} and per clip `sight` (eye from the sight line per hold frame, as played) and `grip`
+(fists from the grip axis; two per frame). `gear.musket` has its top (barrel, comb) towards
++Y since #296: with -Y up the grip frame held it barrel-down at the present.
+
 ## 4. Decay
 
 One parameter `decay` ∈ [0, 1] per corpse; each material has its layer's windows

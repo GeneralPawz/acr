@@ -179,12 +179,23 @@ CHARGE_MUSKET = {
 }
 
 
+# Hip fire (#296, close range): the musket level at the right hip, the trunk upright over
+# it, the eyes on the man in front (`aim.hip`).
+HIP_MUSKET = {
+    **STANCE, "spine": (-6, 0, -16), "spine2": (-2, 0, -10), "neck": (2, 0, 8), "head": (4, 0, 18),
+    "world": {"socket.hand_r": (90, 0, 0)},
+}
+
+
 def attack1_keys(aim, fire, reload=None, n=87):
-    """(fraction, pose) keys of ATTACK1: present until the shot, recoil, the reload drill
-    (`RELOAD_FRAMES`; `reload` = the IK-solved steps, else the unsolved ones), present."""
+    """(fraction, pose) keys of ATTACK1 (and FIRE_AIMED, FIRE_HIP: #296): present, keyed on
+    every frame up to the shot (the IK-solved hold, acr-blender-pipeline pitfall 5), recoil,
+    the reload drill (`RELOAD_FRAMES`; `reload` = the IK-solved steps, else the unsolved
+    ones), present."""
     steps = reload or {k: _with(v["base"], world_loc={"socket.hand_r": v["grip"]}) for k, v in RELOAD_STEPS.items()}
     last = n - 1
-    keys = [(0.0, aim), ((SHOT_FRAME - 1) / last, aim), (SHOT_FRAME / last, fire), ((SHOT_FRAME + 3) / last, aim)]
+    keys = [(f / last, aim) for f in range(SHOT_FRAME)]
+    keys += [(SHOT_FRAME / last, fire), ((SHOT_FRAME + 3) / last, aim)]
     keys += [(f / last, steps[name]) for f, name in RELOAD_FRAMES]
     keys.append((1.0, aim))
     return keys
@@ -248,12 +259,15 @@ def musketeer_strikes(ready, lunge, n):
     }
 
 
-def musketeer_clips(md_lines, stand=STAND_MUSKET, aim=None, charge=None, reload=None):
+def musketeer_clips(md_lines, stand=STAND_MUSKET, aim=None, charge=None, reload=None, hip=None):
     """{clip: [(frame, pose)]} for a European musketeer from its `.MD` lines
     ({key: "@DEATH 9 4 0 70"}): STAND, MOTION_L, MOTION_R, the bayonet (attack index 0,
     `PIKA`: PATTACK, UATTACK, PSTAND, ATTACK), the musket shot (index 1, `VISTREL`:
     PATTACK1, UATTACK1, PSTAND1, ATTACK1 = fire and reload, with `SETACTIVEPOINT #ATTACK1`),
-    DEATH, DEATHLIE1. `aim` and `charge` are the IK-solved two-handed poses (`aim.hold`)."""
+    DEATH, DEATHLIE1. `aim` and `charge` are the IK-solved two-handed poses (`aim.hold`,
+    `aim.present`). With `hip` (`aim.hip`) also the two presentations of the shot (#296) on
+    ATTACK1's frames: FIRE_AIMED (= ATTACK1, from the shoulder) and FIRE_HIP (from the hip,
+    close range); the game picks one by the target's distance."""
     lie = lie_prone()
     cl, pl, cr, pr = walk_cycle(stand)
     # `aim`: the present pose with both hands on the musket (`aim.hold`); the data pose
@@ -285,9 +299,14 @@ def musketeer_clips(md_lines, stand=STAND_MUSKET, aim=None, charge=None, reload=
         "DEATH": death_keys(stand, lie),
         "DEATHLIE1": [(0.0, lie)],
     }
+    if hip is not None and "ATTACK1" in md_lines:
+        hl = hip.get("root_loc", (0, 0, 0))
+        hip_fire = _with(hip, spine=(-2, 0, -14), root_loc=(hl[0], hl[1] + 0.03, hl[2]))
+        clips["FIRE_AIMED"] = clips["ATTACK1"]
+        clips["FIRE_HIP"] = attack1_keys(hip, hip_fire, reload, rig.md_clip_frames(md_lines["ATTACK1"])[0])
     out = {}
     for key, keys in clips.items():
-        line = md_lines.get(key)
+        line = md_lines.get("ATTACK1" if key.startswith("FIRE_") else key)
         n = rig.md_clip_frames(line)[0] if line else 1
         out[key] = rig.clip_keys(n, keys)
     if "ATTACK" in md_lines:

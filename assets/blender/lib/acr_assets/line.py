@@ -215,7 +215,7 @@ def make(root, name, s):
         gun = gear.musket(f"{name}.musket", length=fit["musket_len"], bayonet=0.0)
         gun["acr_material_keys"] = ["wood", "metal"]
         # The socket's orientation is "upright" in its rest frame; the clips turn it.
-        am.attach(gun, ch.arm, "socket.hand_r", grips.hold_matrix(ch.arm, "socket.hand_r", (0.0, -0.01, 0.0)))
+        am.attach(gun, ch.arm, "socket.hand_r", grips.hold_matrix(ch.arm, "socket.hand_r", (0.0, 0.01, 0.0)))
         ch.held["musket"] = gun
         ch.keys[gun.name] = "wood"
     else:
@@ -608,22 +608,23 @@ def _musket_clips(ctx, ch, md):
     heads.variants(ch)  # hair and beard variants (#283), before the morphs
     ch.morphs(extra_deflate=ch.layers["gear"])
     ch.masks()
-    # Present with both hands: butt in the shoulder, left hand under the barrel (IK).
-    # Right elbow raised out to the side near shoulder height, left elbow under the barrel.
-    aim = aiming.hold(ch.arm, poses.AIM_MUSKET, pocket=(0.06, 0.0, -0.02), elbow_r=(0.35, 0.10, -0.06))
+    # Present with both hands (#296): butt in the shoulder, cheek on the comb, the eye on
+    # the sight line, right elbow raised, left hand under the fore-end (IK); and the shot
+    # from the hip for close range.
+    aim, hip, present = aiming.fire_poses(ch)
     ctx.aim_errors = aiming.errors(ch.arm, aim)
     print("ACR aim errors (m):", ctx.aim_errors)
     # The reload drill after the shot (ATTACK1), each step IK-solved.
     reload = aiming.drill(ch.arm, poses.RELOAD_STEPS)
     # Charge bayonets: the same grip with the butt at the right hip.
     charge = aiming.hold(ch.arm, poses.CHARGE_MUSKET, pocket=(0.02, -0.12, -0.32), left_along=0.30)
-    clips = poses.musketeer_clips(md, aim=aim, charge=charge, reload=reload)
+    clips = poses.musketeer_clips(md, aim=aim, charge=charge, reload=reload, hip=hip)
     clips.update(finish.musket_clips(ch.arm, md, charge))  # the bayonet's finishing blow
     # The port, the lunge and the blows turn the musket of a solved pose: the left hand
     # follows it onto the shaft (`aim.left_on_shaft`; grip mode only).
     solved = {}
     for clip, keys in clips.items():
-        if clip == "ATTACK1" or clip.startswith(("STAND", "MOTION", "DEATH", "WRITHE")):
+        if clip in ("ATTACK1", *aiming.FIRE_CLIPS) or clip.startswith(("STAND", "MOTION", "DEATH", "WRITHE")):
             continue
         for f, p in keys:
             if id(p) not in solved:
@@ -636,12 +637,13 @@ def _musket_clips(ctx, ch, md):
         clips = {k: v for k, v in clips.items() if k != "ATTACK" and not k.startswith("ATTACK_")}
     for clip, keys in clips.items():
         act = am.add_clip(ch.arm, clip, keys)
-        if clip == "ATTACK1":
+        if clip in ("ATTACK1", *aiming.FIRE_CLIPS):
             aiming.bake_musket(ch.arm, clip, keys, rod_phases=poses.ROD_PHASES)
         else:
             aiming.stow_rammer(ch.arm, clip)
         if kind:
             key_show(ch.arm, act, SHOW_REST, ch.prefix)
+    ctx.fire = aiming.fire_stats(ch, present)
     for clip, keys in drawn.items():
         wclips.apply(ch.arm, clip, keys)
     # Crawl clips of the wounded (#262): keyframed, looping.
@@ -690,12 +692,13 @@ def build(ctx, s):
     else:
         am.pose(ch.arm, wclips.bare(wclips.solve(ch.arm, support_clips(md)["STAND"][0][1])))
     tris = ch.triangles()
-    prepare_export(ch.all_meshes(), ctx.root, acr_triangles=sum(tris.values()), acr_clips=list(md) + extra + list(crawl.CLIPS),
+    prepare_export(ch.all_meshes(), ctx.root, acr_triangles=sum(tris.values()), acr_clips=list(md) + extra + list(crawl.CLIPS)
+                   + [c for c in aiming.FIRE_CLIPS if c in (getattr(ctx, "fire", None) or {})],
                    acr_limb_radius=ch.limb_radius,
                    acr_light=report.get("light_dir_camera", []), acr_layers=list(ch.layers),
                    **faces.extras("regular"))
     ctx.stats = {"triangles": tris, "light": report, "colours": colours, "aim_errors_m": ctx.aim_errors,
-                 "drape": getattr(ch, "drape_report", None)}
+                 "drape": getattr(ch, "drape_report", None), "fire": getattr(ctx, "fire", None)}
     if getattr(ch, "genfit", None):
         ctx.stats["hat_source"] = ch.genfit
 

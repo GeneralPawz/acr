@@ -227,6 +227,14 @@ Built so far (`poses.musketeer_strikes`, all musketeers built by `musketeer_clip
 knees bent, the muzzle 48° down), `ATTACK_SMASH_MID` (butt stroke; not chosen by the sim yet),
 `ATTACK_SHOT_DOWN` (point-blank from the hip).
 
+**The musket shot (#296).** A man playing `ATTACK1` at a standing unit plays `FIRE_AIMED`
+(from the shoulder) when the target is more than 90 px (about 3 m) away, else `FIRE_HIP`
+(from the hip), when his model has the clip (`strike_view::fire_clip`, `FIRE_AIMED_MIN_PX`),
+before the names above; without them `ATTACK1` plays. Both clips have `ATTACK1`'s frames, so
+the shot frame (18) still lines up with the muzzle flash and smoke. Built for every musketeer
+of `poses.musketeer_clips` (line, frontier and native gunmen; `docs/assets-humans.md`,
+"Two-handed aiming"). The accuracy of aimed against hip fire (a realism rule) is open.
+
 ### The aiming layer
 
 - **Weapon axis:** from the clip's node transforms (`ragdoll_view::node_frame`): the

@@ -539,7 +539,7 @@ def make(root, name, s):
         am.pose(ch.arm, poses.STAND_MUSKET)
         gun = gear.musket(f"{name}.musket", length=s["gun_len"], bayonet=0.0)
         gun["acr_material_keys"] = ["wood", "metal"]
-        am.attach(gun, ch.arm, "socket.hand_r", grips.hold_matrix(ch.arm, "socket.hand_r", (0.0, -0.01, 0.0)))
+        am.attach(gun, ch.arm, "socket.hand_r", grips.hold_matrix(ch.arm, "socket.hand_r", (0.0, 0.01, 0.0)))
         ch.held["musket"] = gun
         ch.keys[gun.name] = "wood"
         am.pose(ch.arm, {})
@@ -642,23 +642,24 @@ def build(ctx, s):
         am.attach(rod, ch.arm, aiming.ROD_SOCKET, am.world(ch.arm, aiming.ROD_SOCKET))
         ch.held["rammer"] = rod
         ch.keys[rod.name] = "metal"
-        aim = aiming.hold(ch.arm, poses.AIM_MUSKET, pocket=(0.06, 0.0, -0.02), elbow_r=(0.35, 0.10, -0.06))
+        aim, hip, present = aiming.fire_poses(ch)  # from the shoulder and the hip (#296)
         ctx.aim_errors = aiming.errors(ch.arm, aim)
         reload = aiming.drill(ch.arm, poses.RELOAD_STEPS)
         charge = aiming.hold(ch.arm, poses.CHARGE_MUSKET, pocket=(0.02, -0.12, -0.32), left_along=0.30)
-        clips = poses.musketeer_clips(md, aim=aim, charge=charge, reload=reload)
+        clips = poses.musketeer_clips(md, aim=aim, charge=charge, reload=reload, hip=hip)
         for k in ("MOTION_L", "MOTION_R", "MOTION_LB", "MOTION_RB"):
             for sfx in ("0", "1"):
                 if k + sfx in md:
                     clips[k + sfx] = clips[k]
-        clips = {k: v for k, v in clips.items() if k in md or k.startswith("ATTACK_")}
+        clips = {k: v for k, v in clips.items() if k in md or k.startswith(("ATTACK_", "FIRE_"))}
         for clip, keys in clips.items():
             am.add_clip(ch.arm, clip, keys)
-            if clip == "ATTACK1":
+            if clip in ("ATTACK1", *aiming.FIRE_CLIPS):
                 aiming.bake_musket(ch.arm, clip, keys, rod_phases=poses.ROD_PHASES)
             else:
                 aiming.stow_rammer(ch.arm, clip)
             names.append(clip)
+        ctx.fire = aiming.fire_stats(ch, present)
         stand = poses.STAND_MUSKET
     else:
         for clip, keys in unit_clips(s).items():
@@ -689,7 +690,7 @@ def build(ctx, s):
                    acr_limb_radius=ch.limb_radius, acr_light=report.get("light_dir_camera", []),
                    acr_layers=list(ch.layers), acr_family="native")
     ctx.stats = {"triangles": tris, "light": report, "colours": colours,
-                 "aim_errors_m": getattr(ctx, "aim_errors", None)}
+                 "aim_errors_m": getattr(ctx, "aim_errors", None), "fire": getattr(ctx, "fire", None)}
 
 
 def pose_for(ch, s, clip):
