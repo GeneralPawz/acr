@@ -261,6 +261,12 @@ pub enum Request {
     Impact(Value),
     /// `{"cmd":"gputime","frames":n}`: GPU milliseconds per pass, from timestamp queries.
     GpuTime(u32),
+    /// `{"cmd":"frametimes","frames":n}`: wall milliseconds of `n` frames drawn back to back
+    /// (each waited for on the GPU): mean and max, and the model textures' memory after.
+    FrameTimes(u32),
+    /// `{"cmd":"textures"}`: GPU memory of the model textures (loaded, streamed) and the
+    /// streaming counts (docs/rendering-3d.md "Texture streaming").
+    Textures,
     /// `{"cmd":"profile"}`: CPU milliseconds per profiler scope (`acr_sim::prof`) since
     /// the last call, which also switches the profiler on.
     Profile,
@@ -620,6 +626,8 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
         "impact" => Request::Impact(v.clone()),
         "profile" => Request::Profile,
         "gputime" => Request::GpuTime(uint(&v, "frames").unwrap_or(30).clamp(1, 1000) as u32),
+        "frametimes" => Request::FrameTimes(uint(&v, "frames").unwrap_or(60).clamp(1, 10000) as u32),
+        "textures" => Request::Textures,
         "record" => Request::Record {
             dir: string(&v, "dir").ok_or("record: missing \"dir\"")?,
             prefix: string(&v, "prefix").unwrap_or_else(|| "frame".into()),

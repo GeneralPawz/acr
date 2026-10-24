@@ -24,6 +24,7 @@ use crate::looks;
 use crate::math::{self, Mat4};
 use crate::model::{ModelData, Vertex};
 use crate::shadow::{self, ShadowMap};
+use crate::tex_cache;
 use crate::view3d::View3d;
 
 /// Depth and stencil of the 3D pass (supported everywhere, WebGL2 included).
@@ -512,7 +513,20 @@ struct GpuModel {
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
     primitives: Vec<GpuPrimitive>,
-    materials: Vec<wgpu::BindGroup>,
+    /// Per material; `None` while a streamed picture of it is missing: [`Self::group`] binds
+    /// its stand-in's instead (docs/rendering-3d.md "Texture streaming").
+    materials: Vec<Option<wgpu::BindGroup>>,
+    uniforms: Vec<wgpu::Buffer>,
+    /// Per material of a finer authored level: the material of the next coarser level drawn
+    /// in its place until its pictures are in.
+    stand_in: Vec<Option<usize>>,
+    /// Per material: its authored level when finer than the coarsest ([`model::material_levels`]).
+    levels: Vec<Option<u8>>,
+    /// Per image: the texture, `None` while a streamed one is not loaded.
+    views: Vec<Option<wgpu::TextureView>>,
+    /// Per image: sRGB colours (not a normal or roughness map); built with mips.
+    srgb: Vec<bool>,
+    mips: Vec<bool>,
     /// Per material: it can drop fragments whatever the instance (an alpha cut-out, a stump
     /// cap's outline, a wound cavity's near wall).
     discards: Vec<bool>,
@@ -532,6 +546,25 @@ struct GpuModel {
 }
 
 impl GpuModel {
+    /// The bind group drawn for `material`: its own, else the stand-in chain's first.
+    fn group(&self, material: usize) -> &wgpu::BindGroup {
+        let mut k = material;
+        loop {
+            match (&self.materials[k], self.stand_in[k]) {
+                (Some(g), _) => return g,
+                (None, Some(next)) => k = next,
+                // Not reached: a material without stand-in always has its group.
+                (None, None) => unreachable!("material {k} has neither group nor stand-in"),
+            }
+        }
+    }
+
+    /// The images `material` samples.
+    fn images_of(&self, material: usize) -> impl Iterator<Item = usize> + '_ {
+        let m = &self.data.materials[material];
+        [m.texture, m.surface.normal, m.surface.metal_rough].into_iter().flatten().filter(|&i| i < self.views.len())
+    }
+
     /// What a draw at `lod` draws: (index range, material, from the look variant's vertices).
     fn parts(&self, lod: usize, decaying: bool) -> impl Iterator<Item = (Range<u32>, usize, bool)> + '_ {
         let merged = !self.far[lod].is_empty();
@@ -593,6 +626,109 @@ pub struct LookStats {
     pub bytes: usize,
 }
 
+/// GPU memory of the model textures ([`ModelRenderer::texture_stats`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct TextureStats {
+    /// Loaded with their models (with mips).
+    pub loaded_bytes: u64,
+    /// Streamed pictures of finer authored levels now resident.
+    pub streamed_bytes: u64,
+    pub pending: usize,
+    pub loads: u64,
+    pub evictions: u64,
+}
+
+/// A streamed picture going up ([`ModelRenderer::uploads`]): the next mip level and row.
+struct Upload {
+    key: tex_cache::Key,
+    chain: Vec<crate::model::Image>,
+    texture: wgpu::Texture,
+    level: usize,
+    row: u32,
+}
+
+impl Upload {
+    /// Writes rows up to `budget` bytes (at least one); true once all levels are up.
+    fn write(&mut self, queue: &wgpu::Queue, budget: &mut u64) -> bool {
+        while let Some(img) = self.chain.get(self.level) {
+            let row_bytes = u64::from(img.width) * 4;
+            let rows = ((*budget / row_bytes) as u32).clamp(1, img.height - self.row);
+            let from = (u64::from(self.row) * row_bytes) as usize;
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.texture,
+                    mip_level: self.level as u32,
+                    origin: wgpu::Origin3d { x: 0, y: self.row, z: 0 },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &img.rgba[from..from + (u64::from(rows) * row_bytes) as usize],
+                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(img.width * 4), rows_per_image: None },
+                wgpu::Extent3d { width: img.width, height: rows, depth_or_array_layers: 1 },
+            );
+            *budget = budget.saturating_sub(u64::from(rows) * row_bytes);
+            self.row += rows;
+            if self.row == img.height {
+                (self.level, self.row) = (self.level + 1, 0);
+            }
+            if *budget == 0 {
+                break;
+            }
+        }
+        self.level >= self.chain.len()
+    }
+}
+
+/// A texture from a mip chain (the full size first).
+fn upload_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    chain: &[crate::model::Image],
+    srgb: bool,
+) -> wgpu::TextureView {
+    let top = &chain[0];
+    let data: Vec<u8> = chain.iter().flat_map(|c| c.rgba.iter().copied()).collect();
+    device
+        .create_texture_with_data(
+            queue,
+            &wgpu::TextureDescriptor {
+                label: Some("model texture"),
+                size: wgpu::Extent3d { width: top.width, height: top.height, depth_or_array_layers: 1 },
+                mip_level_count: chain.len() as u32,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: if srgb { wgpu::TextureFormat::Rgba8UnormSrgb } else { wgpu::TextureFormat::Rgba8Unorm },
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::LayerMajor,
+            &data,
+        )
+        .create_view(&Default::default())
+}
+
+/// Per material of a finer authored level (`levels`, [`crate::model::material_levels`]): the
+/// material in the same place among those of the next coarser level the model carries.
+fn stand_ins(data: &ModelData, levels: &[Option<u8>]) -> Vec<Option<usize>> {
+    // Each material's level from the primitives that use it (the coarsest's too).
+    let mut level_of: Vec<Option<u8>> = vec![None; data.materials.len()];
+    for p in &data.primitives {
+        if let (Some(l), Some(slot)) = (p.lod, level_of.get_mut(p.material)) {
+            *slot = Some(slot.map_or(l, |s| s.max(l)));
+        }
+    }
+    let at = |l: u8| -> Vec<usize> { (0..data.materials.len()).filter(|&k| level_of[k] == Some(l)).collect() };
+    levels
+        .iter()
+        .enumerate()
+        .map(|(k, level)| {
+            let level = (*level)?;
+            let place = at(level).iter().position(|&m| m == k)?;
+            let next = (level + 1..=u8::MAX).map(at).find(|list| !list.is_empty())?;
+            Some(next[place.min(next.len() - 1)])
+        })
+        .collect()
+}
+
 pub struct ModelRenderer {
     pipeline: wgpu::RenderPipeline,
     /// The cheaper fragments of the far levels (from [`lod::FAR_FROM`]).
@@ -613,6 +749,13 @@ pub struct ModelRenderer {
     linear: wgpu::Sampler,
     nearest: wgpu::Sampler,
     white: wgpu::TextureView,
+    /// The streamed pictures of authored levels ([`tex_cache`]).
+    textures: tex_cache::TexCache,
+    decoder: tex_cache::Decoder,
+    /// Decoded pictures going up in strips of [`tex_cache::UPLOAD_PER_FRAME`] bytes a frame.
+    uploads: std::collections::VecDeque<Upload>,
+    /// GPU bytes of the model textures loaded with their models (not streamed).
+    eager_bytes: u64,
     models: Vec<GpuModel>,
     /// The model placed at every cut ([`damage::procedural_cap`] until [`Self::set_cap`]).
     cap: usize,
@@ -1012,6 +1155,12 @@ impl ModelRenderer {
                 address_mode_v: wgpu::AddressMode::Repeat,
                 mag_filter: filter,
                 min_filter: filter,
+                // Model textures carry mips (`tex_cache::mip_chain`).
+                mipmap_filter: if filter == wgpu::FilterMode::Linear {
+                    wgpu::MipmapFilterMode::Linear
+                } else {
+                    wgpu::MipmapFilterMode::Nearest
+                },
                 ..Default::default()
             })
         };
@@ -1050,6 +1199,10 @@ impl ModelRenderer {
             linear: sampler(wgpu::FilterMode::Linear),
             nearest: sampler(wgpu::FilterMode::Nearest),
             white,
+            textures: Default::default(),
+            decoder: Default::default(),
+            uploads: Default::default(),
+            eager_bytes: 0,
             models: Vec::new(),
             cap: 0,
             inserts: [0; 3],
@@ -1244,45 +1397,42 @@ impl ModelRenderer {
             usage: wgpu::BufferUsages::INDEX,
         });
         // Normal and metallic-roughness maps hold data, not colours: no sRGB decode.
-        let linear: Vec<bool> = (0..data.images.len())
-            .map(|i| data.materials.iter().any(|m| m.surface.normal == Some(i) || m.surface.metal_rough == Some(i)))
+        let srgb: Vec<bool> = (0..data.images.len())
+            .map(|i| !data.materials.iter().any(|m| m.surface.normal == Some(i) || m.surface.metal_rough == Some(i)))
             .collect();
-        let images: Vec<wgpu::TextureView> = data
+        // Mips for all but the projected sprite colours (nearest filtering keeps their texels).
+        let mips: Vec<bool> =
+            (0..data.images.len()).map(|i| !data.materials.iter().any(|m| m.nearest && m.texture == Some(i))).collect();
+        // The pictures of finer authored levels stay encoded until drawn (`tex_cache`).
+        let views: Vec<Option<wgpu::TextureView>> = data
             .images
             .iter()
-            .zip(&linear)
-            .map(|(img, &linear)| {
-                device
-                    .create_texture_with_data(
-                        queue,
-                        &wgpu::TextureDescriptor {
-                            label: Some("model texture"),
-                            size: wgpu::Extent3d { width: img.width, height: img.height, depth_or_array_layers: 1 },
-                            mip_level_count: 1,
-                            sample_count: 1,
-                            dimension: wgpu::TextureDimension::D2,
-                            format: if linear {
-                                wgpu::TextureFormat::Rgba8Unorm
-                            } else {
-                                wgpu::TextureFormat::Rgba8UnormSrgb
-                            },
-                            usage: wgpu::TextureUsages::TEXTURE_BINDING,
-                            view_formats: &[],
-                        },
-                        wgpu::util::TextureDataOrder::LayerMajor,
-                        &img.rgba,
-                    )
-                    .create_view(&Default::default())
+            .enumerate()
+            .map(|(i, img)| {
+                if img.rgba.is_empty() && data.encoded.get(i).is_some_and(Option::is_some) {
+                    return None;
+                }
+                let chain = if mips[i] { tex_cache::mip_chain(img, srgb[i]) } else { vec![img.clone()] };
+                self.eager_bytes += chain.iter().map(|c| c.rgba.len() as u64).sum::<u64>();
+                Some(upload_texture(device, queue, &chain, srgb[i]))
             })
             .collect();
-        let texture_bytes: usize = data.images.iter().map(|i| i.width as usize * i.height as usize * 4).sum();
+        let levels = crate::model::material_levels(&data.primitives, data.materials.len());
+        let stand_in = stand_ins(&data, &levels);
+        let texture_bytes = |streamed: bool| -> u64 {
+            (0..data.images.len())
+                .filter(|&i| views[i].is_none() == streamed)
+                .map(|i| tex_cache::texture_bytes(data.images[i].width, data.images[i].height, mips[i]))
+                .sum()
+        };
         log::log!(
             if authored { log::Level::Info } else { log::Level::Debug },
-            "model: {} vertices, {} indices, {} textures {:.1} MB, {:.1} MB buffers{}",
+            "model: {} vertices, {} indices, {} textures {:.1} MB loaded, {:.1} MB streamed (with mips), {:.1} MB buffers{}",
             vertices.len(),
             indices.len(),
             data.images.len(),
-            texture_bytes as f64 / 1e6,
+            texture_bytes(false) as f64 / 1e6,
+            texture_bytes(true) as f64 / 1e6,
             (vertices.len() * size_of::<Vertex>() + indices.len() * 4) as f64 / 1e6,
             if authored { format!(", authored levels {have:?}") } else { String::new() }
         );
@@ -1306,7 +1456,7 @@ impl ModelRenderer {
                 .fold(if procedural { 0.62 } else { 2.0 }, f32::min)
         };
         let (opens_at, dissolves_at) = (dissolve_from(Some(false)), dissolve_from(None));
-        let materials = data
+        let uniforms = data
             .materials
             .iter()
             .enumerate()
@@ -1347,33 +1497,18 @@ impl ModelRenderer {
                     pbr: [
                         m.surface.metallic,
                         m.surface.roughness,
-                        if m.surface.normal.is_some_and(|t| t < images.len()) { m.surface.normal_scale } else { 0.0 },
-                        if m.surface.metal_rough.is_some_and(|t| t < images.len()) { 1.0 } else { 0.0 },
+                        if m.surface.normal.is_some_and(|t| t < views.len()) { m.surface.normal_scale } else { 0.0 },
+                        if m.surface.metal_rough.is_some_and(|t| t < views.len()) { 1.0 } else { 0.0 },
                     ],
                     thin: [m.finish.thin, 0.0, 0.0, 0.0],
                 };
-                let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("model material"),
                     contents: bytemuck::bytes_of(&uniform),
                     usage: wgpu::BufferUsages::UNIFORM,
-                });
-                let view = m.texture.and_then(|t| images.get(t)).unwrap_or(&self.white);
-                let sampler = if m.nearest { &self.nearest } else { &self.linear };
-                let normal = m.surface.normal.and_then(|t| images.get(t)).unwrap_or(&self.white);
-                let metal_rough = m.surface.metal_rough.and_then(|t| images.get(t)).unwrap_or(&self.white);
-                device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("model material"),
-                    layout: &self.material_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry { binding: 0, resource: buffer.as_entire_binding() },
-                        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(view) },
-                        wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(sampler) },
-                        wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(normal) },
-                        wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(metal_rough) },
-                    ],
                 })
             })
-            .collect();
+            .collect::<Vec<_>>();
         let face_tiles = data.materials.iter().map(|m| m.face_tiles).max().unwrap_or(1);
         self.models.push(GpuModel {
             data,
@@ -1381,7 +1516,13 @@ impl ModelRenderer {
             indices: index_buffer,
             primitives,
             far,
-            materials,
+            materials: Vec::new(),
+            uniforms,
+            stand_in,
+            levels,
+            views,
+            srgb,
+            mips,
             discards,
             opens_at,
             dissolves_at,
@@ -1390,7 +1531,132 @@ impl ModelRenderer {
             face_tiles,
             authored,
         });
-        self.models.len() - 1
+        let index = self.models.len() - 1;
+        let groups =
+            (0..self.models[index].data.materials.len()).map(|k| self.material_group(device, index, k)).collect();
+        self.models[index].materials = groups;
+        index
+    }
+
+    /// The bind group of a model's material, `None` while a streamed picture of it is missing
+    /// and a stand-in draws in its place (without one, white takes the missing picture's place).
+    fn material_group(&self, device: &wgpu::Device, model: usize, k: usize) -> Option<wgpu::BindGroup> {
+        let g = &self.models[model];
+        let m = &g.data.materials[k];
+        if g.stand_in[k].is_some() && g.images_of(k).any(|i| g.views[i].is_none()) {
+            return None;
+        }
+        let view = |t: Option<usize>| t.and_then(|t| g.views.get(t)).and_then(Option::as_ref).unwrap_or(&self.white);
+        let sampler = if m.nearest { &self.nearest } else { &self.linear };
+        Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("model material"),
+            layout: &self.material_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: g.uniforms[k].as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(view(m.texture)) },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(sampler) },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(view(m.surface.normal)),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(view(m.surface.metal_rough)),
+                },
+            ],
+        }))
+    }
+
+    /// Asks for the streamed pictures of `model`'s materials at authored `level` (drawn this
+    /// frame), marking the loaded ones used.
+    fn want_textures(&mut self, model: usize, level: usize) {
+        let g = &self.models[model];
+        for k in (0..g.levels.len()).filter(|&k| g.levels[k].map(usize::from) == Some(level)) {
+            for i in g.images_of(k) {
+                let Some(bytes) = g.data.encoded.get(i).cloned().flatten() else { continue };
+                if self.textures.want((model, i)) {
+                    self.decoder.push(tex_cache::Job { key: (model, i), bytes, srgb: g.srgb[i], mips: g.mips[i] });
+                }
+            }
+        }
+    }
+
+    /// Uploads the pictures decoded since the last frame and drops the unused ones.
+    fn pump_textures(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        self.textures.tick();
+        for done in self.decoder.poll() {
+            let (model, image) = done.key;
+            match done.chain {
+                Ok(chain) if model < self.models.len() => {
+                    let top = &chain[0];
+                    let texture = device.create_texture(&wgpu::TextureDescriptor {
+                        label: Some("model texture (streamed)"),
+                        size: wgpu::Extent3d { width: top.width, height: top.height, depth_or_array_layers: 1 },
+                        mip_level_count: chain.len() as u32,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: if done.srgb {
+                            wgpu::TextureFormat::Rgba8UnormSrgb
+                        } else {
+                            wgpu::TextureFormat::Rgba8Unorm
+                        },
+                        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                        view_formats: &[],
+                    });
+                    self.uploads.push_back(Upload { key: done.key, chain, texture, level: 0, row: 0 });
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    log::warn!("textures: model {model} image {image}: {e}");
+                    self.textures.failed(done.key);
+                }
+            }
+        }
+        // A few MB a frame: a 4 k picture with its mips in one go stalled a frame by 190 ms.
+        let mut budget = tex_cache::UPLOAD_PER_FRAME;
+        while budget > 0 {
+            let Some(up) = self.uploads.front_mut() else { break };
+            if !up.write(queue, &mut budget) {
+                continue;
+            }
+            let Some(up) = self.uploads.pop_front() else { break };
+            let (model, image) = up.key;
+            let bytes: u64 = up.chain.iter().map(|c| c.rgba.len() as u64).sum();
+            if model >= self.models.len() || !self.textures.loaded(up.key, bytes) {
+                continue;
+            }
+            self.models[model].views[image] = Some(up.texture.create_view(&Default::default()));
+            self.refresh_groups(device, model, image);
+            log::info!("textures: model {model} image {image} in, {:.1} MB", bytes as f64 / 1e6);
+        }
+        for (model, image) in self.textures.evict() {
+            if model < self.models.len() {
+                self.models[model].views[image] = None;
+                self.refresh_groups(device, model, image);
+                log::info!("textures: model {model} image {image} dropped");
+            }
+        }
+    }
+
+    /// Rebuilds the groups of the materials that sample `image`.
+    fn refresh_groups(&mut self, device: &wgpu::Device, model: usize, image: usize) {
+        for k in 0..self.models[model].data.materials.len() {
+            if self.models[model].images_of(k).any(|i| i == image) {
+                let group = self.material_group(device, model, k);
+                self.models[model].materials[k] = group;
+            }
+        }
+    }
+
+    /// GPU memory of the model textures and the streaming counts.
+    pub fn texture_stats(&self) -> TextureStats {
+        TextureStats {
+            loaded_bytes: self.eager_bytes,
+            streamed_bytes: self.textures.resident_bytes(),
+            pending: self.textures.pending(),
+            loads: self.textures.loads,
+            evictions: self.textures.evictions,
+        }
     }
 
     pub fn model(&self, index: usize) -> Option<&ModelData> {
@@ -1420,6 +1686,7 @@ impl ModelRenderer {
         instances: &[ModelInstance],
         dissolve: bool,
     ) {
+        self.pump_textures(device, queue);
         let mut order: Vec<usize> = (0..instances.len()).filter(|&i| instances[i].model < self.models.len()).collect();
         // Each soldier's look (#283) and the baked variant nearest to it.
         let chosen: Vec<Option<(looks::Look, Option<usize>)>> = instances
@@ -1862,6 +2129,14 @@ impl ModelRenderer {
         }
         self.shadow_draws = group(casters);
         self.draws = draws;
+        // The streamed pictures of the authored levels drawn (`tex_cache`).
+        let mut drawn: Vec<(usize, usize)> =
+            self.draws.iter().filter(|d| self.models[d.model].authored).map(|d| (d.model, d.lod)).collect();
+        drawn.sort_unstable();
+        drawn.dedup();
+        for (model, level) in drawn {
+            self.want_textures(model, level);
+        }
         self.triangles = [self.count_triangles(&self.draws), self.count_triangles(&self.shadow_draws)];
         let calls = |d: &[Draw]| -> usize { d.iter().map(|d| self.models[d.model].draw_parts(d).count()).sum() };
         self.calls = [calls(&self.draws), calls(&self.shadow_draws)];
@@ -1914,7 +2189,7 @@ impl ModelRenderer {
                     pass.set_vertex_buffer(0, look.filter(|_| from_look).unwrap_or(&m.vertices).slice(..));
                     bound = Some(from_look);
                 }
-                pass.set_bind_group(1, &m.materials[material], &[]);
+                pass.set_bind_group(1, m.group(material), &[]);
                 pass.draw_indexed(indices, 0, 0..range.end - range.start);
             }
         }

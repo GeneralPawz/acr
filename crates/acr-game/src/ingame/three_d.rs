@@ -722,10 +722,12 @@ impl ThreeD {
             return true;
         }
         let Some(name) = self.requested.remove(&acr_formats::normalize_path(path)) else { return false };
+        let started = web_time::Instant::now();
         match result.as_ref().map_err(String::clone).and_then(|b| ModelData::from_glb(b)) {
             Ok(model) => {
                 log::info!(
-                    "3d: {path}: {} triangles, radius {:.1} m, {} clips {:?}",
+                    "3d: {path}: parsed in {:?}, {} triangles, radius {:.1} m, {} clips {:?}",
+                    started.elapsed(),
                     model.triangle_count(),
                     model.radius / PIXELS_PER_METRE,
                     model.clips.len(),
@@ -1965,6 +1967,12 @@ impl ThreeD {
                 rise: None,
             });
         }
+    }
+
+    /// The model textures' GPU memory (`drive` `textures`).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn texture_stats(&self) -> Option<acr_render::model_renderer::TextureStats> {
+        self.renderer.as_ref().map(ModelRenderer::texture_stats)
     }
 
     /// `map_models` on or off (the setting, or the driver).

@@ -270,7 +270,12 @@ pub struct ModelData {
     pub slots: Vec<Slot>,
     pub primitives: Vec<Primitive>,
     pub materials: Vec<Material>,
+    /// Decoded pictures; a deferred one ([`Self::encoded`]) has its size but no pixels.
     pub images: Vec<Image>,
+    /// Per image: the encoded file of a picture left undecoded at load because only finer
+    /// authored levels than the coarsest use it ([`Self::material_levels`]); the renderer
+    /// decodes it once a model first draws at such a level (`tex_cache.rs`).
+    pub encoded: Vec<Option<std::sync::Arc<[u8]>>>,
     pub clips: Vec<Clip>,
     /// Clip time per sprite frame: [`CLIP_FPS`] or the root's `extras.acr_fps`.
     pub fps: f32,
@@ -466,6 +471,59 @@ where
     })
 }
 
+/// The level of each material in a model with authored levels: `Some(k)` when only
+/// primitives of level `k`, finer than the coarsest the model carries, use it; `None` for the
+/// rest (the coarsest level's, those of primitives without a level, unused ones), and for all
+/// of a model without authored levels.
+pub fn material_levels(primitives: &[Primitive], materials: usize) -> Vec<Option<u8>> {
+    let coarsest = primitives.iter().filter_map(|p| p.lod).max().unwrap_or(0);
+    let mut out: Vec<Option<Option<u8>>> = vec![None; materials];
+    for p in primitives {
+        let Some(slot) = out.get_mut(p.material) else { continue };
+        let own = p.lod.filter(|&l| l < coarsest);
+        *slot = Some(match *slot {
+            None => own,
+            Some(prev) if prev == own => own,
+            Some(_) => None,
+        });
+    }
+    out.into_iter().map(Option::flatten).collect()
+}
+
+/// A PNG's size from its header, without decoding it.
+fn png_size(bytes: &[u8]) -> Option<(u32, u32)> {
+    const SIGNATURE: &[u8] = &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+    if bytes.get(..8)? != SIGNATURE || bytes.get(12..16)? != b"IHDR" {
+        return None;
+    }
+    let be = |at: usize| Some(u32::from_be_bytes(bytes.get(at..at + 4)?.try_into().ok()?));
+    Some((be(16)?, be(20)?))
+}
+
+/// A JPEG's size from its frame header, without decoding it.
+fn jpeg_size(bytes: &[u8]) -> Option<(u32, u32)> {
+    if bytes.get(..2)? != [0xFF, 0xD8] {
+        return None;
+    }
+    let mut at = 2;
+    loop {
+        let (&[0xFF, marker], rest) = bytes.get(at..)?.split_first_chunk::<2>()? else { return None };
+        let len = usize::from(u16::from_be_bytes(*rest.first_chunk::<2>()?));
+        // SOF0..SOF15 without DHT (C4), JPG (C8) and DAC (CC): precision, height, width.
+        if (0xC0..=0xCF).contains(&marker) && ![0xC4, 0xC8, 0xCC].contains(&marker) {
+            let h = u16::from_be_bytes(*rest.get(3..)?.first_chunk::<2>()?);
+            let w = u16::from_be_bytes(*rest.get(5..)?.first_chunk::<2>()?);
+            return Some((u32::from(w), u32::from(h)));
+        }
+        at += 2 + len;
+    }
+}
+
+/// A PNG or JPEG file (told apart by its signature) as RGBA8.
+pub fn decode_image(bytes: &[u8]) -> Result<Image, String> {
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G']) { decode_png(bytes) } else { decode_jpeg(bytes) }
+}
+
 fn decode_png(bytes: &[u8]) -> Result<Image, String> {
     let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
     decoder.set_transformations(png::Transformations::normalize_to_color8());
@@ -553,7 +611,8 @@ impl ModelData {
             })
             .unwrap_or([1.0; 4]);
 
-        let images = doc
+        // Encoded first: the pictures only finer authored levels use stay so (below).
+        let raw = doc
             .images()
             .map(|img| match img.source() {
                 gltf::image::Source::View { view, mime_type } => {
@@ -561,8 +620,7 @@ impl ModelData {
                     let bytes =
                         data.get(view.offset()..view.offset() + view.length()).ok_or("glTF: image out of range")?;
                     match mime_type {
-                        "image/png" => decode_png(bytes),
-                        "image/jpeg" => decode_jpeg(bytes),
+                        "image/png" | "image/jpeg" => Ok(bytes),
                         _ => Err(format!("glTF: {mime_type} textures are not supported (use PNG or JPEG)")),
                     }
                 }
@@ -904,6 +962,33 @@ impl ModelData {
                 p.vertices.iter_mut().for_each(|v| v.morph[1] = [0.0; 3]);
             }
         }
+        // Pictures only finer authored levels than the coarsest use: size only, the file kept.
+        let levels = material_levels(&primitives, materials.len());
+        let mut deferred = vec![!raw.is_empty(); raw.len()];
+        let mut used = vec![false; raw.len()];
+        for (m, level) in materials.iter().zip(&levels) {
+            for i in [m.texture, m.surface.normal, m.surface.metal_rough].into_iter().flatten() {
+                if let Some(d) = deferred.get_mut(i) {
+                    *d &= level.is_some();
+                    used[i] = true;
+                }
+            }
+        }
+        let mut images = Vec::with_capacity(raw.len());
+        let mut encoded = Vec::with_capacity(raw.len());
+        for (k, bytes) in raw.iter().enumerate() {
+            let size = (deferred[k] && used[k]).then(|| png_size(bytes).or_else(|| jpeg_size(bytes))).flatten();
+            match size {
+                Some((width, height)) => {
+                    images.push(Image { width, height, rgba: Vec::new() });
+                    encoded.push(Some(std::sync::Arc::<[u8]>::from(*bytes)));
+                }
+                None => {
+                    images.push(decode_image(bytes)?);
+                    encoded.push(None);
+                }
+            }
+        }
         let mut model = Self {
             nodes,
             order,
@@ -911,6 +996,7 @@ impl ModelData {
             primitives,
             materials,
             images,
+            encoded,
             clips,
             fps,
             type_name,
@@ -982,6 +1068,7 @@ impl ModelData {
             primitives: vec![primitive],
             materials: vec![material],
             images: Vec::new(),
+            encoded: Vec::new(),
             clips: Vec::new(),
             fps: CLIP_FPS,
             type_name: None,
@@ -1465,6 +1552,30 @@ pub(crate) mod tests {
         assert_eq!((img.width, img.height), (16, 8));
         let want: Vec<u8> = card().as_chunks::<3>().0.iter().flat_map(|p| [p[0], p[1], p[2], 255]).collect();
         assert_eq!(img.rgba, want);
+    }
+
+    #[test]
+    fn header_sizes_match_decoded() {
+        let jpeg = jpeg_encoder_bytes(5, 3);
+        assert_eq!(super::jpeg_size(&jpeg), Some((5, 3)));
+        let img = super::decode_image(&jpeg).unwrap();
+        assert_eq!((img.width, img.height), (5, 3));
+        let mut png = Vec::new();
+        {
+            let mut e = png::Encoder::new(&mut png, 7, 2);
+            e.set_color(png::ColorType::Rgba);
+            e.write_header().unwrap().write_image_data(&[9; 7 * 2 * 4]).unwrap();
+        }
+        assert_eq!(super::png_size(&png), Some((7, 2)));
+        assert_eq!(super::decode_image(&png).unwrap().width, 7);
+        assert_eq!(super::jpeg_size(&png), None);
+    }
+
+    fn jpeg_encoder_bytes(w: u16, h: u16) -> Vec<u8> {
+        let mut out = Vec::new();
+        let e = jpeg_encoder::Encoder::new(&mut out, 90);
+        e.encode(&vec![128; usize::from(w) * usize::from(h) * 3], w, h, jpeg_encoder::ColorType::Rgb).unwrap();
+        out
     }
 
     #[test]

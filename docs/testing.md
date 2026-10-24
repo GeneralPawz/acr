@@ -134,6 +134,8 @@ its label to appear.
 | `{"cmd": "props", "model": "broadleaf", "at": [[7600, 7700]], "wind": true}` | trees or foliage of a model at ground points (render only; `wind` forces the sway on or off); answers `props` (the count) |
 | `{"cmd": "profile"}` | the simulation's per-system times since the last call: `profile` maps a name to `{"ms", "calls"}` (turns the profiler on at the first call) |
 | `{"cmd": "gputime", "frames": 30}` | draws `frames` (default 30) frames offscreen with the GPU timer on; answers `gputime` with the mean ms per segment, or why the device cannot time (docs/ground.md) |
+| `{"cmd": "frametimes", "frames": 60}` | draws `frames` (default 60) frames offscreen back to back, each waited for on the GPU; answers `frametimes` with `mean_ms`, `median_ms`, `max_ms`, `max_at`, `over_33ms` and the `textures` below (texture streaming hitches, docs/rendering-3d.md "Texture streaming") |
+| `{"cmd": "textures"}` | GPU memory of the model textures: `loaded_mb` (with their models), `streamed_mb` (resident streamed pictures), `total_mb`, `pending`, `loads`, `evictions` |
 | `{"cmd": "hit", "unit": 541, "cause": "musket", "region": "torso", "dir": [-1, 0], "energy": 80}` | a scripted hit (bench) |
 | `{"cmd": "record", "dir": "frames", "count": 20, "every": 3, "crop": [x, y, w, h]}` | `count` screenshots, one every `every` frames (= ticks in a game), as `<dir>/frame000.png`...; `prefix` changes `frame`; answers `paths` (only with `--drive-gpu`) |
 | `{"cmd": "quit"}` | ends the game |

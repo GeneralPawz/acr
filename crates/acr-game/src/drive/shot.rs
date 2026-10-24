@@ -1,7 +1,7 @@
 //! `screenshot`: the current frame drawn into an offscreen texture and written as PNG.
 //! Only with a GPU (`--drive-gpu`); the window stays hidden.
 
-use crate::Game;
+use crate::{Game, Mode};
 
 /// Draws the frame once offscreen and throws it away, so that its missing files are asked
 /// for.
@@ -97,6 +97,54 @@ pub fn write_png(path: &str, [cw, ch]: [u32; 2], rgba: &[u8]) -> Result<(), Stri
     let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
     writer.write_image_data(rgba).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// The model textures' GPU memory in MB and the streaming counts (`textures`).
+pub fn textures(game: &Game) -> serde_json::Value {
+    let Mode::InGame(g) = &game.mode else { return serde_json::Value::Null };
+    let Some(t) = g.texture_stats() else { return serde_json::Value::Null };
+    let mb = |b: u64| (b as f64 / 1e5).round() / 10.0;
+    serde_json::json!({
+        "loaded_mb": mb(t.loaded_bytes),
+        "streamed_mb": mb(t.streamed_bytes),
+        "total_mb": mb(t.loaded_bytes + t.streamed_bytes),
+        "pending": t.pending,
+        "loads": t.loads,
+        "evictions": t.evictions,
+    })
+}
+
+/// `frametimes`: draws `frames` frames offscreen back to back, each waited for on the GPU,
+/// and returns the mean and max wall milliseconds (hitches: texture uploads, `tex_cache`).
+pub fn frametimes(game: &mut Game, frames: u32) -> Result<serde_json::Value, String> {
+    let g = game.graphics.as_ref().ok_or("no GPU: start the driver with --drive-gpu")?;
+    let device = g.gpu.device.clone();
+    let texture = target(&device, g.gpu.config.format, g.gpu.config.width, g.gpu.config.height);
+    let view = texture.create_view(&Default::default());
+    let mut ms: Vec<f64> = Vec::with_capacity(frames as usize);
+    for _ in 0..frames.max(1) {
+        let start = std::time::Instant::now();
+        game.draw_frame(&view);
+        device
+            .poll(wgpu::PollType::Wait { submission_index: None, timeout: Some(std::time::Duration::from_secs(10)) })
+            .map_err(|e| e.to_string())?;
+        ms.push(start.elapsed().as_secs_f64() * 1000.0);
+    }
+    let round = |v: f64| (v * 100.0).round() / 100.0;
+    let mean = ms.iter().sum::<f64>() / ms.len() as f64;
+    let max = ms.iter().copied().fold(0.0, f64::max);
+    let worst = ms.iter().position(|&v| v == max).unwrap_or(0);
+    let mut sorted = ms.clone();
+    sorted.sort_by(f64::total_cmp);
+    Ok(serde_json::json!({
+        "frames": ms.len(),
+        "mean_ms": round(mean),
+        "median_ms": round(sorted[sorted.len() / 2]),
+        "max_ms": round(max),
+        "max_at": worst,
+        "over_33ms": ms.iter().filter(|&&v| v > 33.3).count(),
+        "textures": textures(game),
+    }))
 }
 
 /// `gputime`: draws `frames` frames offscreen with the GPU timer on and returns the mean

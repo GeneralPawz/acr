@@ -940,6 +940,15 @@ impl Driver {
                 job.reply.insert("gputime".into(), timing);
                 Ok(false)
             }
+            Request::FrameTimes(frames) => {
+                let timing = shot::frametimes(game, frames)?;
+                job.reply.insert("frametimes".into(), timing);
+                Ok(false)
+            }
+            Request::Textures => {
+                job.reply.insert("textures".into(), shot::textures(game));
+                Ok(false)
+            }
             Request::Record { dir, prefix, count, every, crop } => {
                 if game.graphics.is_none() {
                     return Err("no GPU: start the driver with --drive-gpu to record".into());

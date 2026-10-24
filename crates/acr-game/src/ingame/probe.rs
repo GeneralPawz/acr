@@ -124,6 +124,12 @@ impl InGame {
         self.mission.set_open_fog(open);
     }
 
+    /// The model textures' GPU memory (`drive` `textures`).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn texture_stats(&self) -> Option<acr_render::model_renderer::TextureStats> {
+        self.three_d.texture_stats()
+    }
+
     /// The map's trees and stones as models on or off (`drive` `map_models`).
     #[cfg(not(target_arch = "wasm32"))]
     pub fn set_map_models(&mut self, on: bool) {

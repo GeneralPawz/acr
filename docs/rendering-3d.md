@@ -1703,12 +1703,9 @@ the renderer draws those instead of index lists of its own.
   only for the original's zoom-out views of big battles.
 - **Test aid:** `ACR_LOD_TINT=1` (native) tints each authored level's materials (master
   white, 10 k green, 3 k yellow, crowd red); `ACR_LOD=<k>` forces a level as before.
-- **Texture memory:** images are uploaded whole as RGBA8 without mips (no streaming, no
-  compressed formats on WebGL2 here). `hdman.glb` (35 MB file): 245 MB of textures, 201 MB
-  of them the master's three 4 k maps, then 2 k (34 MB), 1 k (8.4 MB), 512 (2.1 MB) for the
-  levels, plus 7.8 MB of vertex and index buffers; the old `engm18.glb` 0.3 MB of textures.
-  The far levels never touch the 4 k maps, so a later step could load the master's maps
-  only when a model first draws at level 0.
+- **Texture memory:** see "Texture streaming" below: the finer levels' pictures load when
+  first drawn. `hdman.glb` (35 MB file) carries 245 MB of pixels (201 MB the master's
+  three 4 k maps, then 2 k, 1 k and 512 for the levels); 2.8 MB of them load with the model.
 
 Measured on the render VM (RX 9060 XT, 1600 × 900, shadows on), blank field, grass, HUD
 off, 1,024 EngM18 in a 32 × 32 block, one owner, after 20 ticks; CPU `profile` over 50
@@ -1727,6 +1724,68 @@ The CPU side does not change (one palette per instance either way). The models p
 and the HD body's "800" level is 2,470 (the decimation stops short; `hdbody.LODS`); the 3 k
 level is 3,000. Proof sheets: `sheet-proof-hd-tint.png` (zoom 0.5, 1, 2, 4 and a free
 close-up: red, yellow, yellow, green, white), `sheet-proof-hd.png`, `sheet-proof-old.png`.
+
+### Texture streaming
+
+Model textures carry mips, and the pictures of the finer authored levels load only when a
+model first draws at that level (`acr-render/src/tex_cache.rs`, m2-tex-stream).
+
+- **Which pictures wait:** `model::material_levels` gives each material its authored level
+  when only primitives of that level, finer than the coarsest the glb carries, use it. A
+  picture all of whose materials have such a level stays encoded at load
+  (`ModelData::encoded`; its `Image` has the size from the PNG or JPEG header and no
+  pixels). Everything else (the coarsest level, primitives without a level, models without
+  authored levels) is decoded at load as before.
+- **Request:** `group_draws` calls `want_textures(model, level)` for each authored model and
+  level drawn this frame; `TexCache::want` marks a resident picture used or queues a
+  `Decoder` job. Shadows need no pictures.
+- **Decode:** native: one `acr-texture` thread per picture (decode plus the mip chain);
+  wasm32: one picture per frame on the main thread (no threads; a 4 k JPEG and its mips
+  stall that frame for a few hundred ms there). Off-thread in the browser would take
+  `createImageBitmap` from JS, which acr-render does not bind.
+- **Upload:** in strips of `UPLOAD_PER_FRAME` bytes (8 MB native, 2 MB wasm) into a texture
+  with all its mips; it binds only once complete (a 4 k map with mips at once stalled one
+  frame by 190 ms on the RX 9060 XT).
+- **Stand-in:** until a material's pictures are in, `GpuModel::group` binds the material in
+  the same place of the next coarser level the model carries (`stand_ins`; its pictures share
+  the master's UV layout, `hdbody.build_lods`), down the chain to the coarsest, which is always
+  loaded. Nothing draws untextured; a material without any stand-in samples white for the
+  missing picture.
+- **Eviction:** `TexCache::evict` each frame drops pictures unused for `IDLE` (1,800) frames,
+  and, while the streamed pictures exceed `BUDGET` (512 MB native, 192 MB wasm), the least
+  recently used ones unused for `GRACE` (120) frames. The material falls back to its
+  stand-in; a later draw asks again. Tests: `tex_cache::tests`.
+- **Mips:** `tex_cache::mip_chain`, 2 × 2 boxes down to 1 × 1, sRGB pictures averaged in
+  linear light, for every model texture except nearest-filtered ones (projected sprite
+  colours); the linear sampler filters between mips. +33 % memory per picture.
+- **Compressed formats (not built):** BC7 (desktop) or ASTC (mobile) via KTX2 would cut a
+  4 k map from 85 MB (with mips) to 21 MB. WebGL2 exposes them only as extensions
+  (`EXT_texture_compression_bptc`, `WEBGL_compressed_texture_astc`), so the glb would need
+  both plus an RGBA fallback, or Basis Universal (`KHR_texture_basisu`, UASTC transcoded at
+  load to whatever the device has: wgpu `Features::TEXTURE_COMPRESSION_BC/ASTC`). It needs
+  a transcoder crate that builds for wasm, a `KHR_texture_basisu` reader in `model.rs` and a
+  `toktx`/`basisu` step in `gltf_pack.py`; mips would come from the file.
+
+Measured on the render VM (RX 9060 XT, 1600 × 900, shadows on), blank field, grass, HUD
+off, 1,000 HD men (`hdman.glb` as `EngM18`) in a 32 × 32 block; the camera at zoom 1, then a
+free close-up at zoom 9 (master level), then back to zoom 1; `frametimes` (each frame waited
+for on the GPU) and `textures`. Steps `ACR-analysis/genai/tex-stream/steps/zoom.json`; main
+with the driver requests only (`m2-tex-stream-base`) in `main-1`, the branch in
+`branch2-1`, `branch2-2`; sheets `sheet-close.png`, `sheet-z1.png`.
+
+| | main (2095bac) | streaming |
+|---|---:|---:|
+| HD body's textures at start (zoom 1) | 245.4 MB (no mips) | 2.8 MB loaded + 11.2 MB level 2 = 14.0 MB |
+| after the close-up (240 frames) | 245.4 MB | 2.8 + 279.6 MB (master 3 × 89.5 MB with mips) |
+| back at zoom 1, 1,900 frames later | 245.4 MB | 2.8 + 11.2 MB (master dropped) |
+| `engm18.glb` parse at load | 398 ms | 10 ms |
+| zoom-in, 240 frames: mean / max ms | 20.3 / 34.0 | 19.5–19.7 / 32.7 |
+| back at zoom 1, 60 frames: mean / max ms | 6.0 / 21.9 | 3.3 / 6.3 |
+| zoom 1, 1,900 frames: mean / max ms | 6.0 / 20.6 | 4.6 / 5.3 |
+
+The three master maps arrive within 1–2 s of the zoom (decode on threads, 8 MB a frame);
+before that the master mesh draws with the 10 k level's pictures. The first frame of each
+run (about 100 ms, both builds) is pipeline warm-up.
 
 ## Where a battle's frame goes (m2-perf)
 
