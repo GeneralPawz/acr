@@ -47,6 +47,7 @@ mod piles;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod probe;
 mod ragdoll_view;
+mod ruin_view;
 mod save;
 mod seep;
 mod shouts;
@@ -959,7 +960,7 @@ impl InGame {
             }
         }
         effects::projectile_sprites(world, &self.objects, &mut out);
-        self.effects.fire_sprites(world, &self.objects, &mut out);
+        self.effects.fire_sprites(world, &self.objects, &|id| self.three_d.shows(id), &mut out);
         effects::ground_fire_sprites(world, &self.objects, &mut out);
         out
     }

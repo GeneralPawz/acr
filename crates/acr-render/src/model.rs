@@ -1165,6 +1165,23 @@ impl ModelData {
             .collect();
         Self { primitives, ..self.clone() }
     }
+
+    /// The model without the meshes on nodes that `drop` accepts or that hang below one it
+    /// accepts (the state groups of a building: `<name>.ruin`, `<name>.build0`, ...).
+    pub fn without_groups(&self, drop: impl Fn(&str) -> bool) -> ModelData {
+        let dropped = |mut n: usize| loop {
+            if drop(&self.nodes[n].name) {
+                return true;
+            }
+            match self.nodes[n].parent {
+                Some(p) => n = p,
+                None => return false,
+            }
+        };
+        let primitives =
+            self.primitives.iter().filter(|p| !self.primitive_node(p).is_some_and(dropped)).cloned().collect();
+        Self { primitives, ..self.clone() }
+    }
 }
 
 /// The decay of a corpse (0 fresh .. 1 gone) from its death counter (`Unit::death`, +1 per

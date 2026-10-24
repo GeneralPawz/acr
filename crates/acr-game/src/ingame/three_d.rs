@@ -309,6 +309,12 @@ pub struct ThreeD {
     pools: Vec<BloodPool>,
     /// Units drawn as models this frame (their sprites are left out).
     shown: HashSet<EntityId>,
+    /// Building models with a ruin state group (#303): the ruin's model by the standing one.
+    ruins: HashMap<usize, usize>,
+    /// Fire anchors of building models (#303, `ruin_view`), by model.
+    anchors: HashMap<usize, super::ruin_view::Anchors>,
+    /// Burning and fallen buildings this frame, for their fire, smoke and dust.
+    burning: Vec<super::ruin_view::Burning>,
     /// Frames and time since the last performance line in the log.
     frames: u32,
     since: Option<web_time::Instant>,
@@ -433,6 +439,9 @@ impl Default for ThreeD {
             marks_keep: false,
             kept: Default::default(),
             shown: HashSet::new(),
+            ruins: HashMap::new(),
+            anchors: HashMap::new(),
+            burning: Vec::new(),
             frames: 0,
             since: None,
             pile_us: 0,
@@ -700,7 +709,23 @@ impl ThreeD {
             } else {
                 model
             };
+            // A building with state groups (#303, docs/assets.md "States"): the finished
+            // building draws without its stages and ruin, the ruin as a model of its own.
+            let ruin = model
+                .nodes
+                .iter()
+                .any(|n| state_group(&n.name) == Some("ruin"))
+                .then(|| model.without_groups(|n| state_group(n).is_some_and(|s| s != "ruin")));
+            let model = if model.nodes.iter().any(|n| state_group(&n.name).is_some()) {
+                model.without_groups(|n| state_group(n).is_some_and(|s| s != "finished" && !s.ends_with("_0")))
+            } else {
+                model
+            };
             let index = renderer.add_model(device, queue, model);
+            if let Some(ruin) = ruin {
+                let r = renderer.add_model(device, queue, ruin);
+                self.ruins.insert(index, r);
+            }
             self.gear.insert(index, gear);
             self.loaded.insert(name, Some(index));
         }
@@ -791,6 +816,7 @@ impl ThreeD {
             self.seeps.clear();
         }
         self.debris_tick = now;
+        self.burning.clear();
         self.request_gore(request);
         // The water's clock (as `render` passes to the surface) for ship motion and rings.
         let water_seconds = self.started.elapsed().as_secs_f32();
@@ -803,11 +829,18 @@ impl ThreeD {
         // carcass (meat) sprite when its death animation ends; its body stays in 3D, holding
         // the death's last pose, for as long as other corpses.
         let lingering = |u: &Unit| {
-            self.gore != Gore::Off
+            (self.gore != Gore::Off
                 && !u.alive
                 && !u.building
                 && (u.death >= 1000 || (u.death > 0 && world.catalog.get(u.kind).economy.meat.is_some()))
-                && world.deaths.get(&u.id.0).is_some_and(|r| r.tick > 0 && now - r.tick < self.corpse_ticks)
+                && world.deaths.get(&u.id.0).is_some_and(|r| r.tick > 0 && now - r.tick < self.corpse_ticks))
+                // A building the simulation removed at once (a type without `#DEATH`) stays
+                // as a 3D ruin as long as a `#DEATHLIE1` would (#303).
+                || (u.building
+                    && !u.alive
+                    && u.death > 0
+                    && self.models == Models::All
+                    && world.deaths.get(&u.id.0).is_some_and(|r| r.tick > 0 && now - r.tick < super::ruin_view::RUIN_TICKS))
         };
         // Wounds where this tick's hits struck (#277), kept for the drawn and their corpses.
         let facing = |v: u32| world.units.get(v as usize).filter(|u| u.id.0 == v && !u.building).map(|u| u.dir);
@@ -816,7 +849,10 @@ impl ThreeD {
         self.wounds.retain(&|v| world.units.get(v as usize).is_some_and(|u| u.id.0 == v && (u.alive || lingering(u))));
         self.burns.retain(|v| world.units.get(v as usize).is_some_and(|u| u.id.0 == v && (u.alive || lingering(u))));
         for u in world.units.iter().filter(|u| (u.alive || lingering(u)) && u.inside_of.is_none()) {
-            if u.building && (self.models != Models::All || !finished(world, u)) {
+            // Buildings: finished, burning down, falling in and as ruins (#303); under
+            // construction they stay sprites.
+            let fallen = u.building && u.death > 0 && u.stage >= world.max_stage(u);
+            if u.building && (self.models != Models::All || !(finished(world, u) || fallen)) {
                 continue;
             }
             let name = names.entry(u.kind).or_insert_with(|| definition_name(&world.catalog.get(u.kind).id));
@@ -851,6 +887,10 @@ impl ThreeD {
             let ground = view3d::ground_point(x, y, terrain.height_at(x, y));
             let body = super::gore::Body { death, ..u.into() };
             let (mut wounds, mut pool) = super::gore::corpse(body, record, self.gore, removed_at, ground);
+            // A building bleeds no pool and takes no wounds (its burn comes from `ruin_view`).
+            if u.building {
+                (wounds, pool) = (Default::default(), None);
+            }
             // A big animal bleeds a bigger pool (by its girth against a man's).
             if let (Some(p), Some(rig)) = (pool.as_mut(), model.beast_rig.as_ref()) {
                 p.radius *= (rig.trunk.radius_at(0.5) / 0.16).clamp(0.6, 2.5);
@@ -890,6 +930,27 @@ impl ThreeD {
                 }
             }
             let (mut inst, at) = instance(u, death, index, model, terrain, self.gore, removed_at, wounds);
+            // Burning down, falling in, a ruin (#303): charred, its fires and smoke at its
+            // anchors, sunk and squashed (or its ruin state) once it died.
+            if u.building {
+                let anchors = self.anchors.entry(index).or_insert_with(|| super::ruin_view::anchors(model));
+                let lost = 1.0 - u.life.max(0) as f32 / u.max_life.max(1) as f32;
+                let dead = (u.death > 0)
+                    .then(|| now.saturating_sub(record.tick) as f32 / acr_sim::ORIGINAL_TICKS_PER_SECOND as f32);
+                let ruin = self.ruins.get(&index).copied();
+                let look = super::ruin_view::look(u.id.0, ground, anchors, lost, dead, ruin.is_some());
+                inst.transform = look.transform;
+                inst.wounds.burn = look.burn;
+                (inst.decay, inst.morphs, inst.transparent) = (0.0, [0.0; 3], false);
+                if look.show_ruin
+                    && let Some(r) = ruin
+                {
+                    inst.model = r;
+                }
+                if look.fire.flames + look.fire.smoking + look.fire.dust > 0.0 {
+                    self.burning.push(look.fire);
+                }
+            }
             // Starved: the `emaciated` morph (#207), on models that carry it.
             if u.death > 0 && self.gore != Gore::Off && record.cause == acr_sim::combat::DeathCause::Hunger {
                 inst.morphs[2] = 1.0;
@@ -1416,6 +1477,7 @@ impl ThreeD {
                 self.frame_seconds,
                 rain,
             );
+            self.fire.buildings(&self.burning, &mut self.particles.particles, self.frame_seconds, rain);
         }
         self.shots.clear();
         self.update_cover(terrain, marks.as_deref().map(|m| &m.state));
@@ -1973,6 +2035,18 @@ fn world_time(data: &ModelData, clip: Option<usize>, u: &Unit, now: u64, died: u
     }
     let phase = (u.id.0 % 97) as f32 * 0.61;
     (now as f32 / tps + phase) % duration
+}
+
+/// The state group a node of a building model stands for (docs/assets.md "States"): the
+/// name's last part when it is `finished`, `ruin`, `build<k>` or `section<s>_<k>`.
+fn state_group(name: &str) -> Option<&str> {
+    let last = name.rsplit('.').next()?;
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    let section =
+        last.strip_prefix("section").and_then(|s| s.split_once('_')).is_some_and(|(a, b)| digits(a) && digits(b));
+    (name.contains('.')
+        && (last == "finished" || last == "ruin" || last.strip_prefix("build").is_some_and(digits) || section))
+        .then_some(last)
 }
 
 /// A building that stands finished (not under construction, not falling down).

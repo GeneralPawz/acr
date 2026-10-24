@@ -166,6 +166,10 @@ pub fn spawn(game: &mut Game, v: &Value) -> Result<Value, String> {
         u.life = n.clamp(1, i64::from(i32::MAX)) as i32;
         u.max_life = u.life;
     }
+    // `max_life`: the full life alone, after `life` (a building spawned damaged, #303).
+    if let Some(n) = v.get("max_life").and_then(Value::as_i64) {
+        u.max_life = n.clamp(1, i64::from(i32::MAX)) as i32;
+    }
     if v.get("hold_fire").and_then(Value::as_bool) == Some(true) {
         u.melee_only = true;
     }

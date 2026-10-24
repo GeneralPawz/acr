@@ -173,7 +173,7 @@ frame. Start a random map with the hit-locations rule and the settings `models=a
   `leg_r`; `foot_l`/`foot_r` at the ankle) and `wounds` (one flesh wound per entry) shape
   his body; `resources` sets every resource of the owner to that amount (a cannon
   pays iron and coal per shot); `patrol: true` makes any pose move (a crawler is sent directly, as he takes no
-  orders). `life` sets his life and max life (a victim that lasts several strike cycles);
+  orders). `life` sets his life and max life (a victim that lasts several strike cycles), `max_life` the max life alone (a damaged building, #303);
   `hold_fire: true` sets him to melee only (`Unit::melee_only`, the interface's melee-only
   state): musketeers fight with the bayonet and dragoons with the sabre instead of shooting,
   also no point-blank shot at a man on the ground. Answers `unit.id` (and `life`).

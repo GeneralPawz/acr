@@ -17,7 +17,7 @@ parameters: [assets-humans.md](assets-humans.md).
 
 | key | values | default | |
 |---|---|---|---|
-| `models` | `off`, `units`, `all` | `off` | `units`: units with a model are drawn in 3D; `all`: finished buildings too (under construction, burning down and ruined they stay sprites) |
+| `models` | `off`, `units`, `all` | `off` | `units`: units with a model are drawn in 3D; `all`: buildings too, finished, burning down, falling in and as ruins (#303); under construction they stay sprites |
 | `camera` | `fixed`, `free` | `fixed` | `free`: the camera turns and tilts (below); the modern controls' Ctrl + Space, C switches it for the running battle |
 | `shadows` | `on`, `off` | `on` | sun shadows of the 3D models on the ground and on each other (below); tests switch them with `ACR_SHADOWS=on\|off` or the driver's `{"cmd": "shadows", "on": false}` |
 | `material_detail` | `on`, `off` | `on` | the models' glTF normal maps and a faint highlight from their roughness and metallic (below, "Material detail (#234)"); `off` is the plain Lambert look; tests switch it with `ACR_MATERIAL_DETAIL=on\|off` or the driver's `{"cmd": "material_detail", "on": false}` |
@@ -1152,6 +1152,41 @@ walking through (`ACR-analysis/genai/fire/scripts/perf.json`), zoom 1, 1600x900:
 
 Open: flames on the bones (spine, limbs) of the posed model instead of bands over his
 height; real point lights; burning men panicking (sim, follow-up).
+
+#### Burning, collapsing and ruined buildings (#303)
+
+`ruin_view.rs`, render only, with `models=all`; variety from the unit id.
+
+- **Burning down** (`SLOWDEATH`, `combat::slow_death`): the model stays drawn. Flames and
+  embers rise from its `socket.fire.<i>` anchors and smoke from `socket.smoke.<i>` (EngKre);
+  a model without them (the generated `genbuild` meshes) burns at up to 10 of its vertices
+  above 60 % of its height. The number of anchors lit grows with the life lost (from 20 %
+  on, all at 85 %), smoke from 10 %, and the model chars (`Wounds::burn` up to 0.55). The
+  2D fire sprites (`Effects::fire_sprites`) are left out for a building drawn in 3D.
+- **Falling in:** from the death on, over `COLLAPSE_SECONDS` (2.5 s), the model sinks
+  0.4 m, tilts up to 8° about an axis picked by its id (3° stay) and is squashed to 30 % of
+  its height, charring to black (burn 0.55 → 1). Pale dust (smoke particles) and splinters
+  fly over its footprint (`FireView::buildings`). The original's `DESTRUCT` explosions
+  (`combat::destroyed_building_explodes`) burst over it as before.
+- **Ruin:** a model with state groups (`<name>.finished`, `.build<k>`, `.section<s>_<k>`,
+  `.ruin`; docs/assets.md "States") draws `finished` plus `section*_0` while standing and
+  its `.ruin` group alone once fallen (`ModelData::without_groups`); others stay as the
+  squashed, charred mesh. Flames go on for 20 s, smoke for 90 s. It stays while the
+  simulation keeps the unit (`#DEATHLIE*`); a type without `#DEATH` (EngKre, EngSkl) is
+  removed by the simulation at once, and its ruin stays `RUIN_TICKS` (600 ticks, as long as
+  a `#DEATHLIE1` lasts).
+- **Driver:** `spawn` takes `max_life` after `life`, so a building spawned at 900 of 3000
+  burns down at once (`SLOWDEATH` drains 5 life a tick from the next 128-tick check).
+
+Measured (render VM, RX 9060 XT, 1600×900, blank grass field, free camera at zoom 1.4: an
+intact EngKre, a burning EngKre and EngSkl at 900/3000 life; steps
+`ACR-analysis/genai/destruction/steps4.json`): `3d.instances` 0.011 ms a frame,
+`3d.particles` 0.044–0.088 ms; GPU particles pass 1.41 ms burning and 1.64 ms while they
+fall (sum of all passes 2.25 and 2.52 ms). Frames: `ACR-analysis/genai/destruction/`.
+
+Open: the collapse is hidden under the `DESTRUCT` explosions' smoke; pre-fractured
+pieces and a ruin variant for generated buildings (Blender pipeline); scorch under the
+ruin; fewer, larger smoke puffs to cut the particles pass.
 
 ## Camera math
 

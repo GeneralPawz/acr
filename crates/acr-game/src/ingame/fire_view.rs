@@ -40,6 +40,11 @@ const FLARE: f32 = 2.0;
 const TICKS_PER_SECOND: f32 = 10.0;
 /// Source keys of units (the fires' keys never set this bit).
 const UNIT_KEY: u64 = 1 << 63;
+/// Source keys of buildings (#303): this bit, the unit, the anchor and the emitter.
+const BUILDING_KEY: u64 = 1 << 62;
+/// Dust of a collapse, and the colour of its debris.
+const DUST: [u8; 3] = [112, 102, 88];
+const DEBRIS: [u8; 3] = [60, 46, 34];
 
 #[derive(Default)]
 pub struct FireView {
@@ -281,7 +286,94 @@ impl FireView {
         let units = world.units.len();
         self.burn.retain(|&i, _| (i as usize) < units);
         let frame = self.frame;
-        self.carry.retain(|_, (_, used)| *used == frame);
+        // Buildings emit after this (`buildings`), with the last frame's number.
+        self.carry.retain(|k, (_, used)| *used == frame || (k & BUILDING_KEY != 0 && frame.wrapping_sub(*used) <= 1));
+    }
+}
+
+impl FireView {
+    /// Flames, embers and smoke of burning buildings, and the dust and debris of those
+    /// falling in (#303, `ruin_view`), for one frame of `dt` seconds.
+    pub fn buildings(&mut self, list: &[super::ruin_view::Burning], sink: &mut dyn ParticleSink, dt: f32, rain: bool) {
+        let dt = dt.clamp(0.0, 0.1);
+        let (flame_k, smoke_k, smoke_color) = if rain { (0.6, 2.0, STEAM) } else { (1.0, 1.0, SMOKE) };
+        for b in list {
+            let key = BUILDING_KEY | (u64::from(b.unit) << 12);
+            for (j, &at) in b.fire.iter().enumerate().take(255) {
+                let k = key | ((j as u64) << 4);
+                let flames = Burst {
+                    at,
+                    dir: [0.0, 0.0, 1.0],
+                    spread: 0.25,
+                    speed: [25.0, 70.0],
+                    count: 1,
+                    kind: ParticleKind::Flame,
+                    life: [0.4, 0.8],
+                    size: [metres(0.35) * flame_k, metres(0.7) * flame_k],
+                    color: FLAME,
+                    scatter: metres(0.6),
+                    seed: 0,
+                };
+                self.emit(sink, k, dt, 22.0 * b.flames * flame_k, flames);
+                let embers = Burst {
+                    spread: 0.5,
+                    speed: [30.0, 100.0],
+                    kind: ParticleKind::Ember,
+                    life: [0.8, 2.0],
+                    size: [0.5, 1.1],
+                    color: EMBER,
+                    ..flames
+                };
+                self.emit(sink, k | 1, dt, 5.0 * b.flames * flame_k, embers);
+            }
+            for (j, &at) in b.smoke.iter().enumerate().take(255) {
+                let smoke = Burst {
+                    at: [at[0], at[1], at[2] + metres(0.5)],
+                    dir: [0.0, 0.0, 1.0],
+                    spread: 0.3,
+                    speed: [15.0, 40.0],
+                    count: 1,
+                    kind: ParticleKind::Smoke,
+                    life: [4.0, 7.0],
+                    size: [metres(0.6), metres(1.0)],
+                    color: smoke_color,
+                    scatter: metres(0.5),
+                    seed: 0,
+                };
+                self.emit(sink, key | ((j as u64) << 4) | 2, dt, 2.5 * b.smoking * smoke_k, smoke);
+            }
+            if b.dust > 0.0 {
+                // Dust (a pale smoke) rolls out over the footprint, splinters fly from the falling
+                // walls.
+                let r = b.half[0].max(b.half[1]);
+                let dust = Burst {
+                    at: [b.ground[0], b.ground[1], b.ground[2] + metres(0.5)],
+                    dir: [0.0, 0.0, 1.0],
+                    spread: 0.9,
+                    speed: [20.0, 60.0],
+                    count: 1,
+                    kind: ParticleKind::Smoke,
+                    life: [2.0, 4.0],
+                    size: [metres(0.8), metres(1.6)],
+                    color: DUST,
+                    scatter: r,
+                    seed: 0,
+                };
+                self.emit(sink, key | 3, dt, 30.0 * b.dust, dust);
+                let debris = Burst {
+                    at: [b.ground[0], b.ground[1], b.ground[2] + b.top * 0.4],
+                    spread: 0.7,
+                    speed: [40.0, 140.0],
+                    kind: ParticleKind::Splinter,
+                    life: [1.5, 3.0],
+                    size: [metres(0.15), metres(0.45)],
+                    color: DEBRIS,
+                    scatter: r * 0.8,
+                    ..dust
+                };
+                self.emit(sink, key | 4, dt, 50.0 * b.dust, debris);
+            }
+        }
     }
 }
 

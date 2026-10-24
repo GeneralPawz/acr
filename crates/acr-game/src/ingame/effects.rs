@@ -267,9 +267,18 @@ impl Effects {
         self.work.get(&building).copied().unwrap_or(0)
     }
 
-    /// The sprites of the fires of the buildings, as last advanced.
-    pub fn fire_sprites(&self, world: &World, objects: &ObjectsView, out: &mut Vec<SceneSprite>) {
-        out.extend(self.burning(world, objects).into_iter().map(|look| look.sprite));
+    /// The sprites of the fires of the buildings, as last advanced; none for a building
+    /// `modelled` (drawn in 3D with its own fire, #303).
+    pub fn fire_sprites(
+        &self,
+        world: &World,
+        objects: &ObjectsView,
+        modelled: &dyn Fn(EntityId) -> bool,
+        out: &mut Vec<SceneSprite>,
+    ) {
+        out.extend(
+            self.burning(world, objects).into_iter().filter(|look| !modelled(look.unit)).map(|look| look.sprite),
+        );
     }
 
     /// The burning points (0x505e5f): drawn while the building is damaged enough.
@@ -317,7 +326,7 @@ impl Effects {
                         mirrored: false,
                         white: false,
                     };
-                    out.push(FireLook { sprite, sound });
+                    out.push(FireLook { sprite, sound, unit: id });
                 }
             }
         }
@@ -327,6 +336,7 @@ impl Effects {
 
 struct FireLook {
     sprite: SceneSprite,
+    unit: EntityId,
     sound: Option<(String, i32, i32)>,
 }
 
