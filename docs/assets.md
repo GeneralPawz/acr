@@ -21,7 +21,7 @@ assets/
       export.py           glTF export settings
       kit.py              building kit: palisades, log walls, roofs, scaffolds, rubble
       detail.py           procedural detail tiles (cloth, leather, wood) and box UVs
-      genbuild.py spritefit.py  generated (Tripo, Meshy) buildings and ships fitted to the sprite
+      genbuild.py spritefit.py  generated (Tripo, Meshy, Pixal3D) buildings and ships fitted to the sprite
       rig.py armature.py body.py humans.py outfit.py horse.py gear.py poses.py decay.py ...
                           characters: see docs/assets-humans.md
       (61 modules in all besides `__init__.py`: `ls assets/blender/lib/acr_assets`)
@@ -446,6 +446,17 @@ the sprite reference.
   to Y (bow south), are scaled to a real `length` (the sprites are drawn smaller: the
   sprite fit's length is in stats as `sprite_length_m`) and sunk to `draft`; rig and clips
   as `ships.build`, without sail bones (the mesh is one piece).
+- **Pixal3D buildings** (`genbuild.from_sprite`, the types that had no model): made from
+  the type's own `#STANDLO` sprite (`$ACR_SOURCES/generated/pixal3d/buildings/<Type>_sprite.glb`).
+  They come out in that picture's camera frame, tilted towards the camera, so they take the
+  map-ruin route (`nature._map_fit`: `spritefit.camera_upright`, the residual `level`, scale
+  and ground shift fitted with the turn held at 0, as buildings always face south), are
+  decimated to 12k triangles with a baked 512 px normal map, and have their base colour
+  brought up to the sprite's brightness as the game shades it (`nature._map_tone`). Stats
+  add `iou_raw`, `iou_camera`, `iou_fit`, `upright`, `tone`. Forts and other sectioned
+  types were generated twice (`<Type>Base`: every section in its first state, `<Type>Up`:
+  all sections built); the renderer draws one model per finished building and never swaps by
+  section state, so the scripts use `Base` and `Up` stays unused.
 - Types with a scripted model keep it; `GENERATED = True` in `incdo1.py`, `shppinta.py`,
   `shpsanta.py`, `shpfregat.py` builds the generated one instead.
 - Stats: `source`, `source_triangles`, `triangles`, `fit` (yaw, scale, shift, raster IoU,
