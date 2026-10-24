@@ -70,10 +70,12 @@ DEFAULTS = {"body": "hunting", "sleeves": "hunting", "skirts": True, "legs": "le
 # (`garments.tunic`, `band`, `cloak`; #287 drape pilot): the blouse replaces the draped shirt.
 DRAPED = {"blouse": "frn_blouse", "sash": "frn_sash", "cloak": "frn_cape"}
 
-# Clips the family makes from the `.MD` (the musketeer's; extra stances of the sprites,
-# MOTION_*0..4, ATTACK2/3, are not modelled: the game falls back to the plain ones).
+# Clips the family makes from the `.MD`: the musketeer's, with the reload stance of a
+# SLOWRECHARGE gunman (#255, `poses.STANCE4_CLIPS`). Extra stances of the sprites,
+# MOTION_*0..4 and ATTACK2, are not modelled: the game falls back to the plain ones.
 CLIPS = ("STAND", "MOTION_L", "MOTION_R", "MOTION_LB", "MOTION_RB", "PATTACK", "UATTACK", "PSTAND", "ATTACK",
-         "PATTACK1", "UATTACK1", "PSTAND1", "ATTACK1", "DEATH", "DEATHLIE1")
+         "PATTACK1", "UATTACK1", "PSTAND1", "ATTACK1", "PSTAND3", "PATTACK3", "UATTACK3", "ATTACK3", "TRANSX3",
+         "TRANS3X", "DEATH", "DEATHLIE1")
 
 
 def spec(md, palette=None, build=None, fixed=(), **kw):
@@ -360,7 +362,8 @@ def build(ctx, s, make_fn=None):
                    acr_limb_radius=ch.limb_radius, acr_light=report.get("light_dir_camera", []),
                    acr_layers=list(ch.layers), **faces.extras("regular"))
     ctx.stats = {"triangles": tris, "light": report, "colours": colours, "aim_errors_m": ctx.aim_errors,
-                 "drape": getattr(ch, "drape_report", None), "fire": getattr(ctx, "fire", None)}
+                 "drape": getattr(ch, "drape_report", None), "fire": getattr(ctx, "fire", None),
+                 "reload": getattr(ctx, "reload", None)}
 
 
 def pose_for(ch, s, clip):

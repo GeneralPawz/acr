@@ -146,6 +146,20 @@ def slow_recharge(md_lines):
     return "ATTACK3" in md_lines
 
 
+def _fit(keys, n):
+    """`keys` [(frame, x)] of SLOW_ATTACK1 (87 frames) on an ATTACK1 of `n` frames: the drill
+    after the recoil (from its first key) stretched or squeezed to end before the last frame
+    (DelS15 49, SpnS15 109), so a short clip keeps every step and the rammer drawn; keys that
+    fall on one frame keep the later."""
+    start, end = SLOW_ATTACK1[0][0], 86
+    span = max(n - 1 - start, 1) / (end - start)
+    out = {}
+    for f, x in keys:
+        g = f if f <= start else start + int(round((f - start) * span))
+        out[min(g, n - 2)] = x
+    return sorted(out.items())
+
+
 def reload_plan(md_lines):
     """{clip: (keys [(frame, step)], rod [(frame, mode)])} of the reload drill on the clip
     frames of `md_lines`: ATTACK1's drill after the shot (`SLOW_ATTACK1`, ending on
@@ -154,7 +168,7 @@ def reload_plan(md_lines):
     n = rig.md_clip_frames(md_lines["ATTACK1"])[0] if "ATTACK1" in md_lines else 87
     if not slow_recharge(md_lines):
         return {"ATTACK1": (list(RELOAD_FRAMES), list(ROD_PHASES))}
-    out = {"ATTACK1": ([k for k in SLOW_ATTACK1 if k[0] < n - 1] + [(n - 1, RAM_HOLD)], list(SLOW_ROD_ATTACK1))}
+    out = {"ATTACK1": (_fit(SLOW_ATTACK1, n) + [(n - 1, RAM_HOLD)], _fit(SLOW_ROD_ATTACK1, n))}
     for clip, (keys, rod) in STANCE4_CLIPS.items():
         if clip in md_lines:
             last = max(rig.md_clip_frames(md_lines[clip])[0] - 1, 0)

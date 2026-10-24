@@ -69,6 +69,20 @@ class ReloadDrill(unittest.TestCase):
         t = [s for _f, s in poses.reload_plan(MD)["TRANS3X"][0]]
         self.assertLess(t.index("return_rod"), t.index("poise"))
 
+    def test_short_and_long_attack1_keep_the_whole_drill(self):
+        """DelS15's ATTACK1 has 49 frames, SpnS15's 109: every step and the drawn rammer
+        fit before the last frame, on distinct frames (`poses._fit`)."""
+        full = poses.reload_plan(MD)["ATTACK1"]
+        for n in (49, 81, 87, 109):
+            keys, rod = poses.reload_plan(dict(MD, ATTACK1=f"@ATTACK1 9 3 0 {n - 1}"))["ATTACK1"]
+            frames = [f for f, _ in keys]
+            self.assertEqual(frames, sorted(set(frames)), n)
+            self.assertEqual(frames[-1], n - 1, n)
+            self.assertEqual(len(keys), len(full[0]), n)
+            self.assertEqual([m for _f, m in rod], [m for _f, m in full[1]], n)
+            self.assertLess(rod[-1][0], n - 1, n)
+        self.assertEqual(full[0][:-1], list(poses.SLOW_ATTACK1))
+
     def test_rod_drawn_only_between_its_pipes(self):
         rods = poses.rod_phases(MD)
         self.assertEqual(set(rods), {"ATTACK1", "FIRE_AIMED", "FIRE_HIP", "ATTACK3", "PSTAND3", "PATTACK3",

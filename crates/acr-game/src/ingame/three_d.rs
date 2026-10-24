@@ -862,6 +862,12 @@ impl ThreeD {
             if let Some(c) = clip {
                 inst.clip = Some(c);
             }
+            // A SLOWRECHARGE musketeer replays #ATTACK3 until his reload counter is down to one
+            // play (`combat.rs`, the slow-recharge branch): he rams on that last play only and
+            // holds the clip's first frame, the rammer in the bore, through the others (#255).
+            if u.anim == AnimKind::Attack(3) && u.delay > u.anim_frames && world.catalog.get(u.kind).slow_recharge {
+                inst.time = 0.0;
+            }
             // A rider striking down turns his horse so the man lies at his side, eased in and
             // back.
             if u.alive && u.death == 0 && !u.building {

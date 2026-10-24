@@ -712,8 +712,16 @@ enters the bore, ending on `poses.RAM_HOLD`; `ATTACK3` rams three times and loop
 `ATTACK1` starts from. `TRANSX3`, `PATTACK3`, `UATTACK3` (into and out of the stance from
 the aim or STAND) and `PSTAND3` cover interrupted reloads. A unit script lists these
 `.MD` lines to get them; a musketeer without `ATTACK3` keeps the whole drill in `ATTACK1`
-(`RELOAD_FRAMES`, back to the aim). Every frame between two loading steps is IK-solved
-(`aim.solve_holds`, `aim.between`: the body blended, the musket on its baked path, the
+(`RELOAD_FRAMES`, back to the aim). Every foot gunman whose `.MD` has `SLOWRECHARGE` and
+`#ATTACK3` lists them: line EngM18, FrnM18, SpnM18, UsaM18; native IroStr, IroVog, HurS15,
+HurVog, DelS15, DelVog; frontier EngTap, EngTapDragon, FrnBuk, FrnS15, SpnS15, UsaMil
+(`frontier.CLIPS`); the pike-family musketeers (EngMus, FrnS17, SpnMus) and PueS15 have
+their own ATTACK3 (EngStr has no script yet). The dragoons (EngD18, FrnD17/18, SpnD17/18,
+UsaD18) are `SLOWRECHARGE` without `#ATTACK3`: no reload stance. ATTACK1's drill is fitted to its frame
+count (`poses._fit`: DelS15 49 frames, SpnS15 109). The renderer plays the ram once per
+reload: while the counter still holds more than one play (`delay > anim_frames`) it holds
+`ATTACK3`'s first frame (`RAM_HOLD`), and rams on the last play (`ingame/three_d.rs`).
+Every frame between two loading steps is IK-solved (`aim.solve_holds`, `aim.between`: the body blended, the musket on its baked path, the
 hands' goals blended in the musket's frame). `stats.json` `reload` per clip and `all`:
 `frames`, `mean_m`, `max_m` of the right grip point and left palm from their goals as
 played (two per frame), and the worst frame.
