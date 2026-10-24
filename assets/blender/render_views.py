@@ -13,14 +13,37 @@ import argparse
 import math
 import os
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "lib"))
 
 import bpy  # noqa: E402
 
-from acr_assets import Reference, camera, scene  # noqa: E402
+from acr_assets import Reference, camera, gltf_pack, scene  # noqa: E402
 from acr_assets import conventions as cv  # noqa: E402
+
+
+def _play(obj, act):
+    obj.animation_data.action = act
+    if act is not None and hasattr(obj.animation_data, "action_slot"):
+        slots = [sl for sl in act.slots if sl.target_id_type == "OBJECT"]
+        match = [sl for sl in slots if obj.name in sl.name_display] or slots
+        if match:
+            obj.animation_data.action_slot = match[0]
+
+
+def import_glb(path):
+    """Imports an ACR glb with the extra clip `gltf_pack.REST_CLIP`: packed clips leave out
+    channels that equal the node's transform, which Blender would otherwise fill from the
+    last clip it evaluated."""
+    with open(path, "rb") as f:
+        data = gltf_pack.with_rest_clip(f.read())
+    with tempfile.TemporaryDirectory() as tmp:
+        p = os.path.join(tmp, os.path.basename(path))
+        with open(p, "wb") as f:
+            f.write(data)
+        bpy.ops.import_scene.gltf(filepath=p)
 
 
 def show_state(s, ref):
@@ -34,13 +57,13 @@ def show_state(s, ref):
     for obj in s.objects:
         if obj.type == "ARMATURE":
             obj.animation_data_create()
+            # Bones the clip does not key keep the node transforms (`import_glb`).
+            rest = bpy.data.actions.get(gltf_pack.REST_CLIP)
+            if rest is not None:
+                _play(obj, rest)
+                s.frame_set(0)
             act = bpy.data.actions.get(anim)
-            obj.animation_data.action = act
-            if act is not None and hasattr(obj.animation_data, "action_slot"):
-                slots = [sl for sl in act.slots if sl.target_id_type == "OBJECT"]
-                match = [sl for sl in slots if obj.name in sl.name_display] or slots
-                if match:
-                    obj.animation_data.action_slot = match[0]
+            _play(obj, act)
             if act is None:
                 for pb in obj.pose.bones:
                     pb.matrix_basis.identity()
@@ -74,7 +97,7 @@ def main(argv):
     ref = Reference(a.ref)
 
     s = scene.reset()
-    bpy.ops.import_scene.gltf(filepath=os.path.abspath(a.model))
+    import_glb(os.path.abspath(a.model))
     pivot = bpy.data.objects.new("pivot", None)
     s.collection.objects.link(pivot)
     for obj in list(s.objects):

@@ -288,6 +288,29 @@ as extras, no cameras or lights, images as PNG. Blender 5.2's exporter also offe
 - images as JPEG or WebP (`EXT_texture_webp`), but **no KTX2/Basis**: that needs an external
   tool (`gltfpack -tc`, `toktx`), which is not installed and not downloaded by the build.
 
+**Packing (#199).** Without `--compress`, `acr_assets.gltf_pack` rewrites the exported
+file (pure Python, `ACR_GLTF_PACK=0` skips it; what it did lands in `stats.json` `pack`),
+all in core glTF 2.0 types the renderer reads, no extension required:
+
+- `WEIGHTS_0` as normalised bytes summing to 255; `COLOR_0`, `_GORE`, `_FACE`, `_WIND` as
+  normalised bytes; `TEXCOORD_n` in 0..1 as normalised shorts. `_PART` and `_LIMB` stay
+  float (a vertex attribute element is 4-byte aligned anyway); positions, normals and
+  morph targets stay float (that needs `KHR_mesh_quantization`); dense morph targets become
+  sparse where smaller;
+- clip rotations as normalised shorts; sampled linear channels keep only the keys that
+  interpolation does not reproduce within 2e-4 rad / 2e-4 m; constant channels keep their
+  ends, and drop out when they equal the node's own transform (the exported STAND pose the
+  renderer falls back to) while another channel keeps the clip's length;
+- PNGs re-encoded losslessly (ancillary chunks dropped, constant opaque alpha removed, an
+  indexed PNG when the image has at most 256 colours, adaptive filters, zlib 9); identical
+  images, views and accessors stored once.
+
+The renderer reads custom attributes of any component type (`model.rs` `custom_f32`).
+Textures now dominate (EngM18: 1.5 of 2.4 MB). An 8-bit palette for the 1024 px atlases
+would halve them again but is lossy (mean error 0.2–0.3, max 40 levels; 2–3 on normal
+maps), and half resolution quarters them; neither is applied. The renderer decodes PNG only
+(`decode_png`); JPEG or WebP would need a decoder crate (`image`/`zune-jpeg`) in acr-render.
+
 For small models like `IncDo1` the texture dominates and meshopt makes the file larger
 (141 vs 131 KB; its UV quantisation also moves the colour difference from 3.2 to 5.0). The
 default stays uncompressed until the in-game renderer (#163) decodes meshopt; KTX2

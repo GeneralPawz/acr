@@ -376,6 +376,49 @@ fn decay_layer(extras: &serde_json::Value) -> Option<DecayLayer> {
     })
 }
 
+/// A custom (`_`-prefixed) vertex attribute with `N` components as floats, whatever its
+/// component type: float, or integers (normalised to 0..1 / -1..1 when the accessor says
+/// so, as `assets/blender/lib/acr_assets/gltf_pack.py` writes `_GORE`, `_FACE`, `_WIND`).
+fn custom_f32<'a, 's, const N: usize, F>(a: &gltf::Accessor<'a>, get: F) -> Option<Vec<[f32; N]>>
+where
+    F: Clone + Fn(gltf::Buffer<'a>) -> Option<&'s [u8]>,
+{
+    use gltf::accessor::{DataType, Dimensions, Iter};
+    let n = match a.dimensions() {
+        Dimensions::Scalar => 1,
+        Dimensions::Vec4 => 4,
+        _ => return None,
+    };
+    if n != N {
+        return None;
+    }
+    let (scale, min) = match (a.normalized(), a.data_type()) {
+        (true, DataType::U8) => (255.0, 0.0),
+        (true, DataType::U16) => (65535.0, 0.0),
+        (true, DataType::I8) => (127.0, -1.0),
+        (true, DataType::I16) => (32767.0, -1.0),
+        _ => (1.0, f32::MIN),
+    };
+    let f = move |x: f32| (x / scale).max(min);
+    macro_rules! read {
+        ($t:ty) => {
+            if N == 1 {
+                Iter::<$t>::new(a.clone(), get)?.map(|x| std::array::from_fn(|_| f(x as f32))).collect()
+            } else {
+                Iter::<[$t; 4]>::new(a.clone(), get)?.map(|e| std::array::from_fn(|k| f(e[k] as f32))).collect()
+            }
+        };
+    }
+    Some(match a.data_type() {
+        DataType::F32 => read!(f32),
+        DataType::U8 => read!(u8),
+        DataType::U16 => read!(u16),
+        DataType::I8 => read!(i8),
+        DataType::I16 => read!(i16),
+        DataType::U32 => read!(u32),
+    })
+}
+
 fn decode_png(bytes: &[u8]) -> Result<Image, String> {
     let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
     decoder.set_transformations(png::Transformations::normalize_to_color8());
@@ -617,23 +660,23 @@ impl ModelData {
                     vertices.iter_mut().zip(it.into_rgba_f32()).for_each(|(v, c)| v.color = c);
                 }
                 let custom = |name: &str| prim.get(&gltf::Semantic::Extras(name.into()));
-                if let Some(it) = custom("PART").and_then(|a| gltf::accessor::Iter::<f32>::new(a, get)) {
-                    vertices.iter_mut().zip(it).for_each(|(v, x)| v.body[0] = x);
+                if let Some(it) = custom("PART").and_then(|a| custom_f32::<1, _>(&a, get)) {
+                    vertices.iter_mut().zip(it).for_each(|(v, x)| v.body[0] = x[0]);
                 }
-                if let Some(it) = custom("LIMB").and_then(|a| gltf::accessor::Iter::<f32>::new(a, get)) {
-                    vertices.iter_mut().zip(it).for_each(|(v, x)| v.body[1] = x);
+                if let Some(it) = custom("LIMB").and_then(|a| custom_f32::<1, _>(&a, get)) {
+                    vertices.iter_mut().zip(it).for_each(|(v, x)| v.body[1] = x[0]);
                     has_limb = true;
                 }
-                if let Some(it) = custom("GORE").and_then(|a| gltf::accessor::Iter::<[f32; 4]>::new(a, get)) {
+                if let Some(it) = custom("GORE").and_then(|a| custom_f32::<4, _>(&a, get)) {
                     vertices.iter_mut().zip(it).for_each(|(v, x)| v.body[2] = x[0]);
                 }
-                if let Some(it) = custom("FACE").and_then(|a| gltf::accessor::Iter::<[f32; 4]>::new(a, get)) {
+                if let Some(it) = custom("FACE").and_then(|a| custom_f32::<4, _>(&a, get)) {
                     vertices
                         .iter_mut()
                         .zip(it)
                         .for_each(|(v, x)| v.face = x.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8));
                 }
-                if let Some(it) = custom("WIND").and_then(|a| gltf::accessor::Iter::<[f32; 4]>::new(a, get)) {
+                if let Some(it) = custom("WIND").and_then(|a| custom_f32::<4, _>(&a, get)) {
                     vertices
                         .iter_mut()
                         .zip(it)
@@ -1238,6 +1281,10 @@ pub(crate) mod tests {
         push(f32s(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, h, h]));
         push(f32s(&[0.0, 0.5]));
         push(f32s(&[0.0, 0.0, 0.0, 0.0, 0.0, 3.0]));
+        // 14 `_GORE` as normalised bytes, 15 `_PART` as plain bytes 4 apart (`gltf_pack.py`).
+        push(vec![255, 0, 0, 0, 51, 0, 0, 0, 0, 0, 0, 0]);
+        push(vec![3, 0, 0, 0, 5, 0, 0, 0, 7, 0, 0, 0]);
+        views[15] = views[15].replace('}', ",\"byteStride\":4}");
         let acc = |view: usize, ctype: u32, count: usize, ty: &str, extra: &str| {
             format!("{{\"bufferView\":{view},\"componentType\":{ctype},\"count\":{count},\"type\":\"{ty}\"{extra}}}")
         };
@@ -1256,6 +1303,8 @@ pub(crate) mod tests {
             acc(11, 5126, 2, "VEC4", ""),
             acc(12, 5126, 2, "SCALAR", ",\"min\":[0],\"max\":[0.5]"),
             acc(13, 5126, 2, "VEC3", ""),
+            acc(14, 5121, 3, "VEC4", ",\"normalized\":true"),
+            acc(15, 5121, 3, "SCALAR", ""),
         ];
         let json = format!(
             r#"{{"asset":{{"version":"2.0"}},"scene":0,
@@ -1268,7 +1317,7 @@ pub(crate) mod tests {
               {{"name":"tiny.hat","mesh":1,"translation":[0,0.5,0]}}],
             "skins":[{{"joints":[1,2],"inverseBindMatrices":8}}],
             "meshes":[
-              {{"name":"body","extras":{{"targetNames":["lie_flat","deflate"]}},"primitives":[{{"attributes":{{"POSITION":0,"NORMAL":1,"COLOR_0":2,"JOINTS_0":3,"WEIGHTS_0":4}},"indices":5,"material":0,
+              {{"name":"body","extras":{{"targetNames":["lie_flat","deflate"]}},"primitives":[{{"attributes":{{"POSITION":0,"NORMAL":1,"COLOR_0":2,"JOINTS_0":3,"WEIGHTS_0":4,"_GORE":14,"_PART":15}},"indices":5,"material":0,
                 "targets":[{{"POSITION":6}},{{"POSITION":7}}]}}]}},
               {{"name":"hat","primitives":[{{"attributes":{{"POSITION":9}}}}]}}],
             "materials":[{{"name":"skin","pbrMetallicRoughness":{{"baseColorFactor":[0.5,0.25,0.125,1]}},
@@ -1325,6 +1374,14 @@ pub(crate) mod tests {
         assert_eq!(m.clips[0].duration, 1.0);
         // The rest pose reaches 2 m (the top vertex).
         assert!((m.radius - 60.0).abs() < 1e-3, "{}", m.radius);
+    }
+
+    #[test]
+    fn reads_quantised_custom_attributes() {
+        let m = ModelData::from_glb(&tiny_model()).unwrap();
+        let body: Vec<[f32; 4]> = m.primitives[0].vertices.iter().map(|v| v.body).collect();
+        assert_eq!(body.iter().map(|b| b[0]).collect::<Vec<_>>(), [3.0, 5.0, 7.0]);
+        assert!((body[0][2] - 1.0).abs() < 1e-6 && (body[1][2] - 0.2).abs() < 1e-6 && body[2][2] == 0.0);
     }
 
     #[test]

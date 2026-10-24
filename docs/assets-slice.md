@@ -115,7 +115,8 @@ All under `target/assets/` (git-ignored; rebuilt by the commands above):
    previews must ignore it (`preview.py` does).
 6. **File size:** units 1–1.8 MB, mostly float attributes (`WEIGHTS_0`, `_GORE`, positions)
    and sampled clips; the fort 6 MB of PNG atlases (10 states). JPEG cut the fort to 3.4 MB,
-   but the renderer decodes PNG only for now.
+   but the renderer decodes PNG only for now. `gltf_pack` now quantises the attributes and
+   strips redundant clip keys after export (`docs/assets.md` "Packing").
 7. **Shared cargo target directories** between worktrees made `cargo xtask` run another
    branch's binary twice (cargo saw its own fingerprint as fresh while `debug/xtask.exe` had
    been replaced); the slice used a private target directory.

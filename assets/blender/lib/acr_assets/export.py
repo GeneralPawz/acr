@@ -11,6 +11,8 @@ import os
 
 import bpy
 
+from . import gltf_pack
+
 COMPRESSION = ("none", "meshopt", "draco")
 
 
@@ -18,7 +20,10 @@ def export_glb(path, compression="none", image_format="AUTO"):
     """Exports the scene. Skins, morph targets (shape keys), one animation per action
     (`STAND`, `DEATH`, ...), the active colour attribute as COLOR_0 and custom attributes
     whose names start with `_` (`_gore` -> `_GORE`, `_part` -> `_PART`, `_wind` -> `_WIND`)
-    go out when the scene has them. Images go out as PNG (the renderer decodes PNG only)."""
+    go out when the scene has them. Images go out as PNG (the renderer decodes PNG only).
+    Without compression `gltf_pack` then quantises attributes, drops redundant clip keys and
+    re-encodes images losslessly (#199); what it did lands in `LAST_PACK`.
+    `ACR_GLTF_PACK=0` skips it (to compare)."""
     if compression not in COMPRESSION:
         raise ValueError(f"compression must be one of {COMPRESSION}")
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
@@ -55,4 +60,10 @@ def export_glb(path, compression="none", image_format="AUTO"):
         export_meshopt_compression_enable=compression == "meshopt",
         export_draco_mesh_compression_enable=compression == "draco",
     )
+    LAST_PACK.clear()
+    if compression == "none" and os.environ.get("ACR_GLTF_PACK", "1") != "0":
+        LAST_PACK.update(gltf_pack.pack_file(path))
     return os.path.getsize(path)
+
+
+LAST_PACK = {}

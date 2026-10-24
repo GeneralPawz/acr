@@ -137,7 +137,7 @@ def main(argv):
     a = p.parse_args(argv)
     os.makedirs(a.out, exist_ok=True)
     s = scene.reset()
-    bpy.ops.import_scene.gltf(filepath=os.path.abspath(a.model))
+    render_views.import_glb(os.path.abspath(a.model))
     pivot = bpy.data.objects.new("pivot", None)
     s.collection.objects.link(pivot)
     for obj in list(s.objects):

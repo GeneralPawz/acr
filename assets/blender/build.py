@@ -71,6 +71,8 @@ def main(argv):
         bpy.ops.wm.save_as_mainfile(filepath=os.path.abspath(a.blend))
     size = export.export_glb(os.path.abspath(a.out), a.compress, getattr(module, "IMAGE_FORMAT", "AUTO"))
     ctx.stats["glb_bytes"] = size
+    if export.LAST_PACK:
+        ctx.stats["pack"] = export.LAST_PACK
     with open(os.path.splitext(os.path.abspath(a.out))[0] + ".stats.json", "w", encoding="utf-8") as f:
         json.dump(ctx.stats, f, indent=1)
     print(f"ACR asset {name}: {a.out} ({size} bytes, colours {'from sprites' if ref else 'flat'})")
