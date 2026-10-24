@@ -17,3 +17,7 @@ Run on the VM (paths are examples):
 
 Sources: makehuman/data from github.com/makehumancommunity/makehuman; skins from
 makehuman_system_assets_cc0.zip (files2.makehumancommunity.org); see assets/LICENSES.md.
+
+Round 2: the pipeline version is `assets/blender/lib/acr_assets/hdbody.py` with the opt-in unit
+`assets/units/hdman.py` (`cargo xtask assets hdman`; stats under `hd` in hdman.stats.json,
+LODs in hdman.lods.glb). These prototype scripts stay for the renders.
