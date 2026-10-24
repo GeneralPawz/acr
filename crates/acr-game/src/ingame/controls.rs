@@ -1,7 +1,8 @@
 //! ACR's optional modern controls (#129, see docs/controls.md): the mouse wheel zooms about
 //! the point under the cursor, Ctrl + left drag and middle drag pan the map, W/A/S/D pan
 //! like the arrow keys, Home centres the selection and a control group digit pressed twice
-//! centres the group, Ctrl + click takes units out of the selection. The original controls stay the default and are not changed by any of
+//! centres the group, Ctrl + click takes units out of the selection, Shift + right drag
+//! orbits the free camera. The original controls stay the default and are not changed by any of
 //! this: every entry point here returns at once unless the modern scheme is chosen.
 
 use acr_render::terrain::Camera;
@@ -28,6 +29,12 @@ const PAN_KEYS: [u8; 4] = *b"ADWS";
 /// After Ctrl + Space, a letter within this time stands for one of the original's special
 /// keys.
 const LEADER_TIME: f64 = 2.0;
+/// Shift + right drag under the free camera: turn and tilt per window pixel (radians), a
+/// drag across a 1600 px window turning the view about one and a quarter times.
+const ORBIT_PER_PIXEL: f32 = 0.005;
+/// The message line of Ctrl + Space, C when the free camera goes on: its mouse and keys.
+const FREE_CAMERA_HINT: &str =
+    "Freie Kamera: Umschalt + rechts ziehen dreht und neigt; , und . drehen, Bild auf/ab neigen, Ende Grundstellung";
 /// What a leader chord does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Chord {
@@ -68,6 +75,21 @@ pub(super) fn zoom_about(camera: Camera, at: [f32; 2], scale: f32) -> Camera {
 /// the map point grabbed stays under the cursor at `at`.
 pub(super) fn dragged(start: Camera, from: [f32; 2], at: [f32; 2]) -> Camera {
     Camera { x: start.x - (at[0] - from[0]) / start.scale, y: start.y - (at[1] - from[1]) / start.scale, ..start }
+}
+
+/// The free camera's turn and tilt of a Shift + right drag that started at the window point
+/// `from` with `start`: a drag to the right turns like `.`, a drag up tilts like Page Up,
+/// within the keys' tilt limits.
+pub(super) fn orbit_dragged(
+    start: acr_render::view3d::Orbit,
+    from: [f32; 2],
+    at: [f32; 2],
+) -> acr_render::view3d::Orbit {
+    acr_render::view3d::Orbit {
+        yaw: start.yaw + (at[0] - from[0]) * ORBIT_PER_PIXEL,
+        pitch: start.pitch - (at[1] - from[1]) * ORBIT_PER_PIXEL,
+    }
+    .clamped()
 }
 
 /// The next zoom level after `lines` wheel notches (positive: in), clamped, and exactly 1
@@ -137,6 +159,8 @@ pub(super) struct Modern {
     last_group: Option<(usize, web_time::Instant)>,
     /// When Ctrl + Space was pressed: the next letter is a leader chord.
     leader: Option<web_time::Instant>,
+    /// Shift + right drag under the free camera: the press point and the turn and tilt then.
+    pub orbit: Option<([f32; 2], acr_render::view3d::Orbit)>,
 }
 
 impl Default for Modern {
@@ -150,6 +174,7 @@ impl Default for Modern {
             keys: [false; 4],
             last_group: None,
             leader: None,
+            orbit: None,
         }
     }
 }
@@ -199,6 +224,7 @@ impl InGame {
         if m.scheme == Controls::Original {
             m.zoom = 1.0;
             m.pan = None;
+            m.orbit = None;
             m.keys = [false; 4];
             if !self.interface.hud.zoom && self.camera.scale != 1.0 {
                 let window = self.window_size();
@@ -281,6 +307,38 @@ impl InGame {
         let pan = self.interface.modern.pan.filter(|p| p.button == PanButton::CtrlLeft)?;
         self.interface.modern.pan = None;
         Some(!pan.moved)
+    }
+
+    /// The right button with Shift under the free camera (modern controls): pressed on the
+    /// map it starts orbiting, released it ends that; true if the button was used for it
+    /// (it gives no order then).
+    pub(super) fn orbit_button(&mut self, ctx: &Ctx, pressed: bool) -> bool {
+        if !pressed {
+            return self.interface.modern.orbit.take().is_some();
+        }
+        let Some(orbit) = self.three_d.orbit() else { return false };
+        if !self.modern()
+            || !self.interface.mods.shift_key()
+            || self.drag_from.is_some()
+            || self.interface.modern.pan.is_some()
+        {
+            return false;
+        }
+        let Some(at) = self.cursor.filter(|&c| !self.over_hud(ctx, c)) else { return false };
+        self.interface.modern.orbit = Some((at, orbit));
+        true
+    }
+
+    /// Turns and tilts the free camera while Shift + right drags: right turns like `.`, up
+    /// tilts like Page Up. True if an orbit is in progress (the move does nothing else then).
+    pub(super) fn orbit_moved(&mut self, at: [f32; 2]) -> bool {
+        let Some((from, start)) = self.interface.modern.orbit else { return false };
+        if self.three_d.orbit().is_none() {
+            self.interface.modern.orbit = None;
+            return false;
+        }
+        self.three_d.orbit = orbit_dragged(start, from, at);
+        true
     }
 
     /// Keys of the modern controls; `Some` if the key was used.
@@ -379,7 +437,7 @@ impl InGame {
             Some(Chord::Camera) => {
                 let free = self.three_d.toggle_free();
                 self.leader_hint(if free {
-                    "Freie Kamera: , und . drehen, Bild auf/ab neigen, Ende Grundstellung"
+                    FREE_CAMERA_HINT
                 } else {
                     "Kamera fest"
                 });
@@ -471,6 +529,23 @@ mod tests {
     /// The map point under a window point (original screen pixels).
     fn under(c: Camera, at: [f32; 2]) -> [f32; 2] {
         [c.x + at[0] / c.scale, c.y + at[1] / c.scale]
+    }
+
+    #[test]
+    fn shift_right_drag_orbits() {
+        use acr_render::view3d::Orbit;
+        let start = Orbit { yaw: 1.0, pitch: 0.8 };
+        // No move, no change; right turns (yaw up), up tilts (pitch up).
+        assert_eq!(orbit_dragged(start, [500.0, 400.0], [500.0, 400.0]), start.clamped());
+        let o = orbit_dragged(start, [500.0, 400.0], [600.0, 350.0]);
+        assert!(near(o.yaw, 1.5) && near(o.pitch, 1.05), "{o:?}");
+        // The tilt stays within the keys' limits; the turn wraps.
+        let steep = orbit_dragged(start, [500.0, 400.0], [500.0, -5000.0]);
+        assert!(near(steep.pitch, Orbit::MAX_PITCH));
+        let flat = orbit_dragged(start, [500.0, 400.0], [500.0, 5000.0]);
+        assert!(near(flat.pitch, Orbit::MIN_PITCH));
+        let round = orbit_dragged(start, [0.0, 0.0], [2000.0, 0.0]);
+        assert!((0.0..std::f32::consts::TAU).contains(&round.yaw));
     }
 
     #[test]

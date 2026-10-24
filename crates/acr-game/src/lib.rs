@@ -473,6 +473,10 @@ impl Game {
         if self.ui.settings().group_move() {
             setup.rules.group_move = true;
         }
+        // And `cannon_fire=on` (round shot sets men on fire under hit locations).
+        if self.ui.settings().cannon_fire {
+            setup.rules.cannon_fire = true;
+        }
         let mut game = ingame::InGame::new(setup);
         game.apply_settings(self.ui.settings());
         game.start(&self.assets.paths());

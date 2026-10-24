@@ -205,7 +205,7 @@ const DETAILS: &[Row] = &[
 ];
 
 /// Page 5: the optional realism rules (`acr_sim::Rules`), each off as the original plays by
-/// default; one row per [`ROW_Y`], the third group empty.
+/// default; one row per [`ROW_Y`].
 const REALISM: &[Row] = &[
     // The note "Gelten ab der naechsten Schlacht" is in the heading (#301).
     Row::Heading(b"Realismus (ab n\xe4chster Schlacht)"),
@@ -234,6 +234,15 @@ const REALISM: &[Row] = &[
         lines: &[b"Aus (Original)", b"An: M\xf6rser mit Zielzonen"],
         get: |s| on_off(s.mortars),
         set: |s, i| s.mortars = i == 1,
+    }),
+    Row::Heading(b"Feuer (mit Trefferzonen)"),
+    Row::Choice(Choice {
+        // `cannon_fire`: a round-shot hit sets a man on fire (he burns, panics, may burn to
+        // death); off, only shells and fire weapons light men.
+        label: b"Kugelbrand",
+        lines: &[b"Aus (Original)", b"An: Kugeln setzen in Brand"],
+        get: |s| on_off(s.cannon_fire),
+        set: |s, i| s.cannon_fire = i == 1,
     }),
 ];
 
@@ -481,7 +490,10 @@ mod tests {
         let labels = |page: &[Row]| -> Vec<&[u8]> {
             page.iter().filter_map(|r| if let Row::Choice(c) = r { Some(c.label) } else { None }).collect()
         };
-        assert_eq!(labels(REALISM), [&b"Trefferzonen"[..], b"K\xf6rperabstand", b"Leichenhaufen", b"M\xf6rser"]);
+        assert_eq!(
+            labels(REALISM),
+            [&b"Trefferzonen"[..], b"K\xf6rperabstand", b"Leichenhaufen", b"M\xf6rser", b"Kugelbrand"]
+        );
         assert_eq!(labels(BATTLE), [&b"Blutdarstellung"[..], b"Verwesung", b"Liegezeit", b"Schlachtfeldspuren"]);
         let mut s = Settings::default();
         for row in REALISM {
@@ -490,6 +502,6 @@ mod tests {
             assert_eq!((c.get)(&s), 0);
             (c.set)(&mut s, 1);
         }
-        assert!(s.hit_locations && s.body_spacing && s.corpse_piles && s.mortars);
+        assert!(s.hit_locations && s.body_spacing && s.corpse_piles && s.mortars && s.cannon_fire);
     }
 }

@@ -20,7 +20,7 @@ const CENTER: &str = "NAME Cen\r\nBUILDING\r\nLIFE 1000\r\nLOCATION 0 0 64 64\r\
     [END]\r\n";
 
 const ON: Rules =
-    Rules { hit_locations: false, body_spacing: true, mortars: false, corpse_piles: false, group_move: false };
+    Rules { hit_locations: false, body_spacing: true, mortars: false, corpse_piles: false, group_move: false, cannon_fire: false };
 /// Two men's radii, 1/16 px (2 × 0.3 m at 30 px per metre).
 const TWO_MEN: i32 = 2 * 144;
 
@@ -131,6 +131,7 @@ fn with_the_rule_off_nothing_changes() {
         mortars: false,
         corpse_piles: false,
         group_move: false,
+        cannon_fire: false,
     });
     assert_eq!(off, crowd(Rules::default()));
     assert_ne!(off.3, crowd(ON).3);

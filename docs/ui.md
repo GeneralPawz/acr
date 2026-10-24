@@ -802,6 +802,14 @@ described in [simulation.md](simulation.md#fog-of-war).
   Selected units get none of their own (the brackets 0x4bae50 draw no bar); with Tab off
   only an object flashing in colour 0xd0 in the marker list 0x28c55f8 (set by the right
   click handlers at 0x4c41e8 / 0x4c5218) gets one, which ACR does not draw yet.
+  Buildings get the same bar: neither 0x4bb390 nor the box 0x4bad90 tests a building flag,
+  and houses, towers and forts have `RECTANGLE` (`ATCKRE.MD`: `RECTANGLE 0 100
+  675 345`) and, if they shoot, `SHOWDELAY` (`ENGDO1.MD`, `ENGBLG.MD`, …), so a garrisoned
+  house or a fort shows its reload bar under it. ACR measures a building against its
+  `MaxLife` (OB `max_life`, raised by the stages) and drew no building bars until 2026-10
+  (2D and 3D share the overlay; `ACR-analysis/house-bars/sheet_bars.png`). Not confirmed:
+  that the original's sprite queue hands 0x49d795 the building object for every building
+  sprite.
   - `SHOWDELAY` types (NM+0x172a bit 0, 0x4bb51a) get the reload bar right under it: two
     lines of the raw palette index 0xd0 (the first player colour, red) at y0 − 10 and
     y0 − 9, `(w − 12)·(D − delay)/D` + 2 long with `D = MaxDelay` (+0x8f, 1 if 0) or
@@ -944,6 +952,7 @@ writes are in
 | 5 | Truppen und Gelände | Körperabstand | Aus (Original) / An: Körper brauchen Platz | `body_spacing` |
 | 5 | | Leichenhaufen | Aus (Original) / An: als Hindernis | `corpse_piles` ([simulation.md](simulation.md#corpse-piles-optional-rule-222)) |
 | 5 | | Mörser | Aus (Original) / An: Mörser mit Zielzonen | `mortars` ([simulation.md](simulation.md#mortar-optional-rule-301)) |
+| 5 | Feuer (mit Trefferzonen) | Kugelbrand | Aus (Original) / An: Kugeln setzen in Brand | `cannon_fire` ([simulation.md](simulation.md#shell-fires-256)) |
 
 All but the four rules (page 4, every optional `acr_sim::Rules` flag) take effect at once on OK. The rules are part of the simulation (the
 setup a replay or savegame hashes): a battle keeps the rules it began with, the new choice

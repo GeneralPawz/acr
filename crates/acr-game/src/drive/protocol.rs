@@ -134,6 +134,8 @@ pub enum Start {
         corpse_piles: bool,
         /// The optional group-move rule (`docs/simulation.md` "Group moves").
         group_move: bool,
+        /// The optional cannon-fire rule (round shot sets men on fire under hit locations).
+        cannon_fire: bool,
     },
     /// The blank test field ("The blank field" in `docs/testing.md`): `players` (1 or 2)
     /// without start units and without AI, `nation` for the local player.
@@ -147,6 +149,8 @@ pub enum Start {
         mortars: bool,
         corpse_piles: bool,
         group_move: bool,
+        /// The optional cannon-fire rule (round shot sets men on fire under hit locations).
+        cannon_fire: bool,
         hud: bool,
         /// `"corpse_decay": "half"|"full"` overrides the setting (`corpse_decay`).
         corpse_decay_half: Option<bool>,
@@ -376,6 +380,7 @@ pub(super) fn blank(b: &Value) -> Result<Start, String> {
         mortars: b.get("mortars").and_then(Value::as_bool).unwrap_or(false),
         corpse_piles: b.get("corpse_piles").and_then(Value::as_bool).unwrap_or(false),
         group_move: b.get("group_move").and_then(Value::as_bool).unwrap_or(false),
+        cannon_fire: b.get("cannon_fire").and_then(Value::as_bool).unwrap_or(false),
         hud: b.get("hud").and_then(Value::as_bool).unwrap_or(true),
         corpse_decay_half: b.get("corpse_decay").and_then(Value::as_str).map(|v| v == "half"),
         decay_stain: b.get("decay_stain").and_then(Value::as_str).map(|v| v == "on"),
@@ -578,6 +583,7 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
                     mortars: r.get("mortars").and_then(Value::as_bool).unwrap_or(false),
                     corpse_piles: r.get("corpse_piles").and_then(Value::as_bool).unwrap_or(false),
                     group_move: r.get("group_move").and_then(Value::as_bool).unwrap_or(false),
+                    cannon_fire: r.get("cannon_fire").and_then(Value::as_bool).unwrap_or(false),
                 })
             }
         }
@@ -769,6 +775,7 @@ mod tests {
                 mortars: false,
                 corpse_piles: false,
                 group_move: false,
+                cannon_fire: false,
             })
         );
         let (_, r) = parse(r#"{"cmd": "load_map", "map": "Missions\\a.m3d"}"#).unwrap();
@@ -783,6 +790,7 @@ mod tests {
             mortars: false,
             corpse_piles: false,
             group_move: false,
+            cannon_fire: false,
             hud: true,
             corpse_decay_half: None,
             decay_stain: None,

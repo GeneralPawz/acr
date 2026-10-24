@@ -1381,6 +1381,15 @@ tenth of its life (so it never burns to death), and a unit that dies burning is 
   fire catches fire: `Unit::burning` goes on and `Body::burn` is set to 5 s. While it
   runs he loses 8 life a second through `MakeDamage` without a sender, so he can burn to
   death (`DeathCause::Burned`); out of the fire he goes out after the 5 s.
+- **Round shot (`Rules::cannon_fire`, setting `cannon_fire`, savegame rules bit 5, page 5
+  "Kugelbrand"):** `IADRO` has the `X` flag, so in the original every man a ball hits
+  without killing gets the never-ending burning flag. Under hit locations that made him
+  panic, burn to death and show flames. With `cannon_fire` off (the default) a round-shot
+  hit sets no man with a body on fire while hit locations are on (`MakeDamage` drops `X`/`F`
+  for `DeathCause::Cannonball`); buildings still catch fire. Without hit locations the
+  original's flag is set either way, so the pinned hashes hold. Shells (`IADROMOR`,
+  `VAFLIA`) and their ground fires are not affected by this switch. Saves made before it
+  replay with it off. `tests/body.rs` `round_shot_lights_men_only_with_cannon_fire`.
 - The fires are part of the state hash only while some burn (`Body::burn` only while not
   0). They are not saved: savegames replay their commands and the fires come back.
 - 2D draws three flames of the burning-building loop (`[FIRES]` `#DFIRE2`) per fire, fewer

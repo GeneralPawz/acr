@@ -42,6 +42,7 @@ How the original's keys work inside is described in [ui.md](ui.md#keys-0x4a30e8-
 | Bombard the ground with cannons (not in missions) | the attack-ground icon, then a left or right click on the map | the same |
 | Zoom in and out | – (key L: 4× zoomed-out view) | **mouse wheel**, about the point under the cursor, 0.5× to 2× |
 | Pan by grabbing the map | – | **Ctrl + left drag** or **middle drag** |
+| Turn and tilt the free camera (`camera=free`, ACR) | – (keys `,` `.` Page Up/Down) | **Shift + right drag**: right turns like `.`, up tilts like Page Up (0.29° per window pixel); the keys work as well |
 | Scroll at the window edge | cursor within 6 px of the edge | the same, or off ("Rand aus") |
 | Centre the view | left click or drag on the minimap | the same |
 | Order to a point on the minimap | right click on the minimap | the same |
@@ -139,7 +140,11 @@ on the way keep it. The original keys work as before.
 | Ctrl + Space, C | free camera on or off (ACR) | none |
 
 **Ctrl + Space, C** switches the free camera (`camera=free`, [rendering-3d.md](rendering-3d.md#settings))
-for the running battle and says so on the message list with its keys; settings.txt keeps
+for the running battle and says so on the message list with its mouse and keys ("Freie
+Kamera: Umschalt + rechts ziehen dreht und neigt; , und . drehen, Bild auf/ab neigen, Ende
+Grundstellung"). Under the free camera **Shift + right drag** on the map orbits it (the
+drag gives no order; a right drag without Shift still moves and faces the selection, and
+with the original controls Shift + right drag is a plain right drag); settings.txt keeps
 its value, and OK in the game options sets the camera back to it. The view keeps its
 centre both ways (the free camera turns about the ground point in the window's middle), and
 the turn and tilt stay from the last time. It works with models on or off. C was chosen

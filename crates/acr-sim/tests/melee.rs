@@ -37,7 +37,7 @@ const NRES: &[u8] =
     VISTREL 12 18 HRB\r\n[UNITKINDS]\r\n";
 
 const ON: Rules =
-    Rules { hit_locations: true, body_spacing: false, mortars: false, corpse_piles: false, group_move: false };
+    Rules { hit_locations: true, body_spacing: false, mortars: false, corpse_piles: false, group_move: false, cannon_fire: false };
 
 /// Pikemen and a lancer (a rider with `MECH`, named as a lancer).
 fn setup(rules: Rules) -> (World, TypeId, TypeId) {

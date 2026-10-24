@@ -31,6 +31,12 @@ pub struct Rules {
     /// one behind the other, columns side by side, loose units behind them
     /// ([`crate::motion::group_send_ex`], `docs/simulation.md`, "Group moves").
     pub group_move: bool,
+    /// Round shot sets men on fire (#226 follow-up): with [`Rules::hit_locations`] on, a man
+    /// (not a building, cannon or ship) hit by an `IADRO` round (the `X` flag of `NRES.DAT`)
+    /// catches fire, then burns, panics and may burn to death ([`crate::ground_fire`]). Off
+    /// (the default) round shot lights no man under hit locations; without hit locations
+    /// the original's flag is set as before either way.
+    pub cannon_fire: bool,
 }
 
 impl std::hash::Hash for Rules {
@@ -45,6 +51,9 @@ impl std::hash::Hash for Rules {
         }
         if self.group_move {
             (4u8, self.group_move).hash(state);
+        }
+        if self.cannon_fire {
+            (5u8, self.cannon_fire).hash(state);
         }
     }
 }

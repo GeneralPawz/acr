@@ -111,7 +111,7 @@ its label to appear.
 | `{"cmd": "state"}` | see below; `"units": true` lists every object, `"owner": n` and `"type": "Mus"` filter, `"visible_only": true` respects the fog, `"detail": true` adds each object's orders, animation and frame, stances, reload counter (`delay`), direction and switches, and the listed objects' `activity` |
 | `{"cmd": "command", "command": {"type": "move", "units": [1, 2], "x": 3000, "y": 9000}}` | a simulation command for setup (below) |
 | `{"cmd": "select", "units": [10, 11]}` | replaces the selection (setup; prefer `drag`/`click` to test the interface) |
-| `{"cmd": "start", "random": {"nation": 1, "seed": 5}}` | a random map without the menus; also `opponents`, `resources`, `size`, `difficulty`, `hit_locations` (the optional rule, #225), `body_spacing` (the optional rule, `docs/body-spacing.md`), `mortars` (the optional rule, `simulation.md` "Mortar"), `corpse_piles` (the optional rule, `simulation.md` "Corpse piles"), `group_move` (the optional rule, `simulation.md` "Group moves"); the rules default to off, the `settings.txt` rules are not read |
+| `{"cmd": "start", "random": {"nation": 1, "seed": 5}}` | a random map without the menus; also `opponents`, `resources`, `size`, `difficulty`, `hit_locations` (the optional rule, #225), `body_spacing` (the optional rule, `docs/body-spacing.md`), `mortars` (the optional rule, `simulation.md` "Mortar"), `corpse_piles` (the optional rule, `simulation.md` "Corpse piles"), `group_move` (the optional rule, `simulation.md` "Group moves"), `cannon_fire` (the optional rule, `simulation.md` "Shell fires"); the rules default to off, the `settings.txt` rules are not read |
 | `{"cmd": "start", "map": "Missions\\Singles\\Single7\\Single7.m3d"}` | a map file (alias `load_map`) |
 | `{"cmd": "start", "blank": {"ground": "grass"}}` | the blank test field, see "The blank field" below |
 | `{"cmd": "hud", "on": false}` | hides the interface (panel, minimap, cursor): frames show the world only; `true` brings it back |
@@ -255,6 +255,7 @@ every texture 0, no sprites, no units, an empty `SEA2`; `acr-game/src/blank_map.
 | `mortars` | the optional mortars rule: `ArtMrt(XX)` types to `spawn` (simulation.md "Mortar") |
 | `corpse_piles` | the optional corpse-piles rule: dense piles slow, big ones block (simulation.md "Corpse piles") |
 | `group_move` | the optional group-move rule: every selected formation moves, several stand in lines and rows (simulation.md "Group moves"); also on through `controls=modern` in settings.txt |
+| `cannon_fire` | the optional cannon-fire rule: under `hit_locations` a round-shot hit sets a man on fire (simulation.md "Shell fires"); default `false` |
 | `editor` | `true`: the test editor's field (placing panel shown, fighting off at the start; docs/ui.md) |
 | `hud` | `false` hides the interface from the start, like `{"cmd": "hud", "on": false}` |
 | `corpse_decay` | `full` or `half`: overrides the setting ([rendering-3d.md](rendering-3d.md)) |

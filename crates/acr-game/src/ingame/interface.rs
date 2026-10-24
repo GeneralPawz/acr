@@ -1967,9 +1967,12 @@ impl InGame {
                     fill(&mut out, bracket, cx, cy.min(cy + 2 * sy), cx, cy.max(cy + 2 * sy));
                 }
             }
-            if self.interface.hud.life_bars && !u.building {
-                // Life bar (0x4bb390): two green lines above the box, white end caps.
-                let max = kind.life.max(1);
+            if self.interface.hud.life_bars {
+                // Life bar (0x4bb390): two green lines above the box, white end caps. Buildings
+                // get one too (0x4bb390 and the box 0x4bad90 test no building flag; houses
+                // and forts have `RECTANGLE` and, if they shoot, `SHOWDELAY`), measured
+                // against their `MaxLife`, which the building stages raise.
+                let max = if u.building { u.max_life } else { kind.life }.max(1);
                 let l = (w - 12) * u.life.clamp(0, max) / max;
                 fill(&mut out, green, x0 + 5, y0 - 12, x0 + l + 7, y0 - 11);
                 // `SHOWDELAY` types (NM+0x172a bit 0, 0x4bb51a): the reload bar, two lines of
@@ -2463,7 +2466,7 @@ impl InGame {
     /// Mouse moved (window position).
     pub fn mouse_moved(&mut self, at: [f32; 2]) {
         self.cursor = Some(at);
-        if self.pan_moved(at) {
+        if self.pan_moved(at) || self.orbit_moved(at) {
             return;
         }
         let p = self.canvas_point(at);
@@ -2490,7 +2493,7 @@ impl InGame {
     /// move marker. On the map the order is given on release: a drag of more than 30 map
     /// pixels moves to the press point facing the drag's direction (0x4c4cea..0x4c5891).
     pub fn right_button(&mut self, ctx: &Ctx, pressed: bool) {
-        if self.editor_right(pressed) {
+        if self.editor_right(pressed) || self.orbit_button(ctx, pressed) {
             return;
         }
         if !pressed {

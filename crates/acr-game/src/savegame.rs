@@ -198,7 +198,8 @@ impl SaveGame {
             | u64::from(self.setup.rules.body_spacing) << 1
             | u64::from(self.setup.rules.mortars) << 2
             | u64::from(self.setup.rules.corpse_piles) << 3
-            | u64::from(self.setup.rules.group_move) << 4);
+            | u64::from(self.setup.rules.group_move) << 4
+            | u64::from(self.setup.rules.cannon_fire) << 5);
         w.0
     }
 
@@ -242,6 +243,7 @@ impl SaveGame {
                 mortars: bits & 4 != 0,
                 corpse_piles: bits & 8 != 0,
                 group_move: bits & 16 != 0,
+                cannon_fire: bits & 32 != 0,
             };
         }
         if r.pos != data.len() {
@@ -868,8 +870,10 @@ mod tests {
         };
         save.setup.rules.hit_locations = true;
         save.setup.rules.corpse_piles = true;
+        save.setup.rules.cannon_fire = true;
         assert_eq!(SaveGame::decode(&save.encode()).unwrap(), save);
         save.setup.rules.corpse_piles = false;
+        save.setup.rules.cannon_fire = false;
         let mut bytes = save.encode();
         assert_eq!(SaveGame::decode(&bytes).unwrap(), save);
         // A version 2 save has no rules: the original ones.

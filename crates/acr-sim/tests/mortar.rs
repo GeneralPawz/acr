@@ -47,7 +47,7 @@ IADROMOR 0 7 -
 ";
 
 const ON: Rules =
-    Rules { hit_locations: false, body_spacing: false, mortars: true, corpse_piles: false, group_move: false };
+    Rules { hit_locations: false, body_spacing: false, mortars: true, corpse_piles: false, group_move: false, cannon_fire: false };
 
 /// The catalog: gun, soldier and a fort that builds the gun.
 fn catalog() -> (Catalog, TypeId, TypeId, TypeId) {

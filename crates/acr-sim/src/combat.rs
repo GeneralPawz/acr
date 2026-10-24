@@ -1360,6 +1360,11 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
             return;
         }
         dmg -= va.protection.iter().find(|p| p.0 == kind).map_or(0, |p| p.1);
+        // Rule `cannon_fire` off (the default): under hit locations round shot lights no man.
+        let unlit = !w.rules.cannon_fire
+            && DeathCause::of_weapon(kind) == DeathCause::Cannonball
+            && crate::wounds::has_regions(w, victim);
+        let wf = if unlit { wf & !(FIRE | FIRE_SLOW) } else { wf };
         if wf & FIRE != 0 {
             // X: set on fire at once (+0x3f = FIRELIMIT + 1).
             let v = &mut w.units[victim];

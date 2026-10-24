@@ -48,7 +48,7 @@ fn setup() -> (World, TypeId, TypeId, TypeId) {
 }
 
 const ON: Rules =
-    Rules { hit_locations: true, body_spacing: false, mortars: false, corpse_piles: false, group_move: false };
+    Rules { hit_locations: true, body_spacing: false, mortars: false, corpse_piles: false, group_move: false, cannon_fire: false };
 
 fn world() -> (World, usize) {
     let (mut w, pik, _, _) = setup();
@@ -302,6 +302,27 @@ fn torn_in_two_keeps_the_body_at_death() {
         }
     }
     assert!(torn.is_some(), "a torso hit at energy 70 tears in two");
+}
+
+/// Rule `cannon_fire`: under hit locations a round-shot hit (`IADRO`, flag `X`) sets the man
+/// it does not kill on fire only with the rule; without hit locations the original's flag
+/// goes on either way.
+#[test]
+fn round_shot_lights_men_only_with_cannon_fire() {
+    let lit = |rules: Rules| {
+        let (mut w, pik, _, gun) = setup();
+        w.rules = rules;
+        let s = w.spawn(gun, 1, Pos::from_pixels(1000, 1000), 0).0 as usize;
+        let v = w.spawn(pik, 0, Pos::from_pixels(2000, 2000), 0).0 as usize;
+        w.hit_energy = Some(5);
+        make_damage(&mut w, v, 1, Some(s), 0);
+        assert!(w.units[v].living());
+        w.units[v].burning
+    };
+    assert!(!lit(ON), "off by default under hit locations");
+    assert!(lit(Rules { cannon_fire: true, ..ON }));
+    assert!(lit(Rules::default()), "the original sets its flag");
+    assert!(lit(Rules { cannon_fire: true, ..Rules::default() }));
 }
 
 #[test]

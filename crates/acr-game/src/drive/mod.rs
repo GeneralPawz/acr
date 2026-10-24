@@ -753,6 +753,7 @@ impl Driver {
                         mortars,
                         corpse_piles,
                         group_move,
+                        cannon_fire,
                         hud,
                         corpse_decay_half,
                         decay_stain,
@@ -776,7 +777,7 @@ impl Driver {
                             kind: ui::GameKind::Blank(setup),
                             players,
                             local_player: 0,
-                            rules: acr_sim::Rules { hit_locations, body_spacing, mortars, corpse_piles, group_move },
+                            rules: acr_sim::Rules { hit_locations, body_spacing, mortars, corpse_piles, group_move, cannon_fire },
                         }));
                         if let Mode::InGame(g) = &mut game.mode {
                             g.hud_hidden = !hud;
@@ -802,6 +803,7 @@ impl Driver {
                         mortars,
                         corpse_piles,
                         group_move,
+                        cannon_fire,
                     } => {
                         let mut players = vec![PlayerSetup {
                             name: b"Driver".to_vec(),
@@ -835,7 +837,7 @@ impl Driver {
                             kind: ui::GameKind::RandomMap(map),
                             players,
                             local_player: 0,
-                            rules: acr_sim::Rules { hit_locations, body_spacing, mortars, corpse_piles, group_move },
+                            rules: acr_sim::Rules { hit_locations, body_spacing, mortars, corpse_piles, group_move, cannon_fire },
                         }));
                     }
                 }
@@ -989,6 +991,7 @@ impl Driver {
                         "mortars",
                         "corpse_piles",
                         "group_move",
+                        "cannon_fire",
                         "nation",
                         "ground_cover",
                     ] {

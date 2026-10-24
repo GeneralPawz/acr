@@ -77,6 +77,10 @@ pub fn state(
     let resources: Map<String, Value> =
         RESOURCES.iter().enumerate().map(|(i, n)| ((*n).to_owned(), player.resources[i].into())).collect();
     m.insert("tick".into(), world.tick.0.into());
+    if let Some(o) = g.free_orbit() {
+        // The free camera's turn and tilt in degrees (Shift + right drag, `,`/`.`, Page Up/Down).
+        m.insert("orbit".into(), json!({"yaw_deg": o.yaw.to_degrees(), "pitch_deg": o.pitch.to_degrees()}));
+    }
     m.insert("player".into(), me.into());
     m.insert("resources".into(), resources.into());
     m.insert("population".into(), player.population.into());

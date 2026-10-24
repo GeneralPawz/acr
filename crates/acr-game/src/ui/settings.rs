@@ -53,6 +53,10 @@ pub struct Settings {
     /// men who cross them, big ones are walked around; docs/simulation.md "Corpse piles");
     /// `corpse_piles=on|off`, off by default.
     pub corpse_piles: bool,
+    /// ACR: new games use the optional cannon-fire rule (a round-shot hit sets a man on fire
+    /// under hit locations, docs/simulation.md "Shell fires"); `cannon_fire=on|off`, off by
+    /// default.
+    pub cannon_fire: bool,
     /// ACR: sun shadows of the 3D models (`shadows=on|off`, on by default;
     /// docs/rendering-3d.md "Shadows").
     pub shadows: bool,
@@ -173,6 +177,7 @@ impl Default for Settings {
             body_spacing: false,
             mortars: false,
             corpse_piles: false,
+            cannon_fire: false,
             shadows: true,
             lod: true,
             material_detail: true,
@@ -270,6 +275,7 @@ impl Settings {
             if self.body_spacing { "on" } else { "off" },
             if self.mortars { "on" } else { "off" },
             if self.corpse_piles { "on" } else { "off" },
+            if self.cannon_fire { "on" } else { "off" },
             if self.shadows { "on" } else { "off" },
             if self.lod { "on" } else { "off" },
             if self.material_detail { "on" } else { "off" },
@@ -351,6 +357,7 @@ impl Settings {
                 "body_spacing" => s.body_spacing = value == "on",
                 "mortars" => s.mortars = value == "on",
                 "corpse_piles" => s.corpse_piles = value == "on",
+                "cannon_fire" => s.cannon_fire = value == "on",
                 "shadows" => s.shadows = value != "off",
                 "lod" => s.lod = value != "off",
                 "material_detail" => s.material_detail = value != "off",
@@ -427,6 +434,7 @@ mod tests {
             body_spacing: true,
             mortars: true,
             corpse_piles: true,
+            cannon_fire: true,
             marks_keep: true,
             weather: Weather::Snow,
         };

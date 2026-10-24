@@ -81,6 +81,11 @@ impl InGame {
         self.centred = true;
     }
 
+    /// The free camera's turn and tilt, if it is on (the driver's `state` `orbit`).
+    pub fn free_orbit(&self) -> Option<acr_render::view3d::Orbit> {
+        self.three_d.orbit()
+    }
+
     /// The studio's camera (#299): the ground point `target` (world pixels, z = 0) in the
     /// middle of the window at `scale`, under the free camera turned and tilted by `orbit`.
     pub fn place_camera(&mut self, target: [f32; 2], scale: f32, orbit: acr_render::view3d::Orbit) {
