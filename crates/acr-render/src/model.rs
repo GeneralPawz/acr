@@ -17,7 +17,8 @@
 //!   `*.hair_*`/`*.beard_*` (marked in `body.w`, see `crate::looks`);
 //! - materials: base colour factor and texture (PNG), `extras.acr_decay` (the decay layer of
 //!   `docs/assets-humans.md`). With `acr_decay`, `COLOR_0` is the decay mask, otherwise the
-//!   vertex colour;
+//!   vertex colour; the normal map and the metallic-roughness factors and texture
+//!   ([`Surface`], #234; tangents are derived in the shader, `TANGENT` is not read);
 //! - animations: translation, rotation and scale channels (step, linear; cubic splines use
 //!   their key values linearly), sampled on the CPU into the palette ([`ModelData::pose`]).
 //!
@@ -120,6 +121,30 @@ pub struct Material {
     pub tint: Tint,
     /// How the surface takes the light (`extras.acr_sheen`, `acr_gloss`; docs/clothing.md).
     pub finish: Finish,
+    /// The glTF normal and metallic-roughness maps and factors (#234).
+    pub surface: Surface,
+}
+
+/// A material's glTF surface detail (#234, `model.wgsl` `bumped`, `specular`): the
+/// tangent-space `normalTexture` and its scale, the metallic and roughness factors and their
+/// texture (G roughness, B metal). Drawn with the `material_detail` setting
+/// (docs/rendering-3d.md "Material detail").
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Surface {
+    /// Index into [`ModelData::images`] (linear, not sRGB).
+    pub normal: Option<usize>,
+    pub normal_scale: f32,
+    /// Index into [`ModelData::images`] (linear, not sRGB).
+    pub metal_rough: Option<usize>,
+    pub metallic: f32,
+    pub roughness: f32,
+}
+
+impl Default for Surface {
+    /// No maps, a rough dielectric: the faintest highlight.
+    fn default() -> Self {
+        Self { normal: None, normal_scale: 1.0, metal_rough: None, metallic: 0.0, roughness: 1.0 }
+    }
 }
 
 /// A material's response beyond Lambert (`model.wgsl`, `cloth`): cloth fibres catch the light
@@ -470,6 +495,13 @@ impl ModelData {
                                 |x| x as f32,
                             ),
                     }),
+                    surface: Surface {
+                        normal: m.normal_texture().map(|t| t.texture().source().index()),
+                        normal_scale: m.normal_texture().map_or(1.0, |t| t.scale()),
+                        metal_rough: pbr.metallic_roughness_texture().map(|t| t.texture().source().index()),
+                        metallic: pbr.metallic_factor(),
+                        roughness: pbr.roughness_factor(),
+                    },
                 }
             })
             .collect();
@@ -486,6 +518,7 @@ impl ModelData {
             tissue: Tissue::None,
             tint: Tint::None,
             finish: Finish::default(),
+            surface: Surface::default(),
         });
 
         let mut slots: Vec<Slot> = Vec::new();

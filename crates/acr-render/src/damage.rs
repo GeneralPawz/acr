@@ -1106,6 +1106,7 @@ fn single(name: &str, vertices: Vec<Vertex>, indices: Vec<u32>, tissue: Tissue) 
         tissue,
         tint: Default::default(),
         finish: Default::default(),
+        surface: Default::default(),
     };
     ModelData::single(
         Primitive { vertices, indices, material: 0, morphs: [false; 2], look_morphs: Vec::new() },
@@ -1170,6 +1171,7 @@ pub fn procedural_cap() -> ModelData {
         tissue: Tissue::None,
         tint: Default::default(),
         finish: Default::default(),
+        surface: Default::default(),
     };
     ModelData::single(
         Primitive { vertices, indices, material: 0, morphs: [false; 2], look_morphs: Vec::new() },

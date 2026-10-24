@@ -224,6 +224,9 @@ pub enum Request {
     },
     /// Sun shadows forced on or off over the setting (`None`: the setting again).
     Shadows(Option<bool>),
+    /// Normal maps and the glTF highlight (#234) forced on or off over the `material_detail`
+    /// setting (`None`: the setting again).
+    MaterialDetail(Option<bool>),
     /// `{"cmd": "weather", "mode": "rain"}`: off, rain, snow or fog over the `weather`
     /// setting; without `mode` back to the setting.
     Weather(Option<acr_render::weather::Weather>),
@@ -570,6 +573,7 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
             Request::Camera { x: x as i32, y: y as i32, zoom: num("zoom").map(|z| z as f32), lift, orbit }
         }
         "shadows" => Request::Shadows(v.get("on").and_then(Value::as_bool)),
+        "material_detail" => Request::MaterialDetail(v.get("on").and_then(Value::as_bool)),
         "weather" => Request::Weather(match string(&v, "mode") {
             Some(m) => Some(acr_render::weather::Weather::parse(&m).ok_or(format!("weather: unknown mode {m:?}"))?),
             None => None,

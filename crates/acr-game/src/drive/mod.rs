@@ -864,6 +864,12 @@ impl Driver {
                 job.steps.push_back(Step::Frame);
                 Ok(true)
             }
+            Request::MaterialDetail(on) => {
+                crate::ingame::three_d::set_material_detail_override(on);
+                job.reply.insert("material_detail".into(), on.map_or(Value::Null, Value::Bool));
+                job.steps.push_back(Step::Frame);
+                Ok(true)
+            }
             Request::Weather(weather) => {
                 let Mode::InGame(g) = &mut game.mode else { return Err("no game".into()) };
                 let now = g.set_weather(weather);

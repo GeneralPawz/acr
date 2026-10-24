@@ -20,6 +20,7 @@ parameters: [assets-humans.md](assets-humans.md).
 | `models` | `off`, `units`, `all` | `off` | `units`: units with a model are drawn in 3D; `all`: finished buildings too (under construction, burning down and ruined they stay sprites) |
 | `camera` | `fixed`, `free` | `fixed` | `free`: the camera turns and tilts (below); the modern controls' Ctrl + Space, C switches it for the running battle |
 | `shadows` | `on`, `off` | `on` | sun shadows of the 3D models on the ground and on each other (below); tests switch them with `ACR_SHADOWS=on\|off` or the driver's `{"cmd": "shadows", "on": false}` |
+| `material_detail` | `on`, `off` | `on` | the models' glTF normal maps and a faint highlight from their roughness and metallic (below, "Material detail (#234)"); `off` is the plain Lambert look; tests switch it with `ACR_MATERIAL_DETAIL=on\|off` or the driver's `{"cmd": "material_detail", "on": false}` |
 | `wind` | `on`, `off` | `on` | wind sways trees and foliage that carry `_WIND` weights (below, "Wind"); the driver's `props` request takes `"wind": false` |
 | `map_models` | `on`, `off` | `on` | the map's trees and stones are drawn as models where `assets/nature/map_objects.json` names one (below, "Map trees and stones"); the driver's `{"cmd": "map_models", "on": false}` switches it |
 | `ground` | `detailed`, `original` | `detailed` | the ground in 3D mode (`models` not `off` or `camera=free`): material textures over the original tiles, [ground.md](ground.md); sprite mode always draws the original |
@@ -241,6 +242,44 @@ ground) lie at the far plane, under every model.
   normal is flipped towards the viewer for lighting.
 - Light: Lambert from the game's light vector `(-15, 14, 30)` (upper left, towards the
   viewer) with half ambient; colours are linear, sRGB is encoded by the target or the shader.
+  With `material_detail` the glTF normal map bends the normal and a faint highlight is added
+  (next section).
+
+### Material detail (#234)
+
+`model.rs` reads per material the glTF `normalTexture` (and its `scale`), the
+`metallicFactor`, `roughnessFactor` and `metallicRoughnessTexture` (G roughness, B metal)
+into `Surface`; images used as either map are uploaded linear (`Rgba8Unorm`), the others
+sRGB. The material bind group has them at bindings 3 and 4 (the white texel where a map is
+missing), the material uniform their factors in `pbr`. `globals.params.w` is the setting.
+
+- **Tangents:** none from the file and no attribute: all 16 vertex locations are in use on
+  WebGL2 (15 is `_WIND`). `model.wgsl` `bumped` builds the cotangent frame from the
+  screen-space derivatives of the world position and the uv (Schüler, "Normal Mapping
+  Without Precomputed Tangents"), so mirrored uv islands come out right; the map's +y points
+  to −v (glTF). The derivatives are taken at the top of `shade` (uniform control flow), the
+  maps sampled with `textureSampleLevel` (they have one level). The relief fades out from
+  one texel per pixel to three, before the unmipped map would shimmer; the shadow lookup
+  keeps the geometric normal.
+- **Highlight:** `specular`, GGX (Smith-Schlick, Schlick Fresnel) from the sun, times its
+  visibility, at physical strength but with the roughness held at 0.45 or more: on the
+  usual rough dielectrics (Blender's 0.5, genfit's 0.85) it stays a faint sheen of at most
+  about 7/255 per channel on the coats and the horse in the close-ups below, invisible at
+  gameplay zoom. Generated and nature sources bake their shading into the albedo and some
+  say metallic 1: metal only tints the highlight towards the albedo (at most half way) and
+  never darkens the diffuse, so nothing turns black. The cloth sheen, the gloss of
+  leather and brass and the wet highlights stay as they were and take the bent normal.
+- **Off:** no normal map and no highlight, the frame as before the change (the far levels
+  never draw either).
+- **Assets:** on 2026-10-24 no installed model carries a normal map: `nature.py`
+  `build_generated` and `genfit.py` drop the baked one, the procedural trees have none.
+  Checked with `prop_ruin_chapel` built with the map kept.
+- **Cost** (render VM, RX 9060 XT, Vulkan, 1600 × 900, Monongahela `battle3` at tick 305,
+  zoom 1, about 1700 men and horses and the forest as models; `gputime` 60 frames, two runs
+  each, alternating in one process): models pass 2.965 and 2.942 ms on, 2.955 and 2.925 ms
+  off; shadow map 2.79 / 2.75 on, 2.76 / 2.75 off: within the noise (no normal-mapped model
+  in that scene). Steps: `ACR-analysis/genai/materials/perf.json`; close-ups:
+  `closeups.json` and `sheet_*.png` in the same folder.
 
 ### Wind (trees and foliage)
 

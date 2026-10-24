@@ -35,7 +35,8 @@ struct Globals {
     light: vec4<f32>,
     // View direction (world, into the screen).
     forward: vec4<f32>,
-    // x: encode sRGB here (the target is not sRGB), y: dissolve allowed, z: bone texture width.
+    // x: encode sRGB here (the target is not sRGB), y: dissolve allowed, z: bone texture width,
+    // w: material detail (normal maps and the highlight, #234).
     params: vec4<f32>,
     // Wind: world direction x, y (unit), strength (0: still), time (s).
     wind: vec4<f32>,
@@ -64,6 +65,9 @@ struct Material {
     cloth: vec4<f32>,
     // The model's wind (root `extras.acr_wind`): trunk, branch and flutter scales, tempo.
     wind: vec4<f32>,
+    // Surface detail (#234): glTF metallic and roughness factors, the normal map's scale (0:
+    // none), 1 with a metallic-roughness texture (G roughness, B metal).
+    pbr: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> globals: Globals;
@@ -71,6 +75,9 @@ struct Material {
 @group(1) @binding(0) var<uniform> material: Material;
 @group(1) @binding(1) var base_texture: texture_2d<f32>;
 @group(1) @binding(2) var base_sampler: sampler;
+// Linear data, one level each (sampled with `textureSampleLevel`, `bumped`, `specular`).
+@group(1) @binding(3) var normal_texture: texture_2d<f32>;
+@group(1) @binding(4) var metal_rough_texture: texture_2d<f32>;
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
@@ -660,6 +667,10 @@ fn fs_far_clean(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) v
 fn shade(in: VsOut, front: bool, far: bool, clean: bool) -> vec4<f32> {
     // Sampled first: derivatives need uniform control flow.
     let texel = textureSample(base_texture, base_sampler, in.uv);
+    // The normal map's frame from the screen-space derivatives (`bumped`), also only in
+    // uniform control flow.
+    let dp = mat2x3<f32>(dpdx(in.world), dpdy(in.world));
+    let duv = mat2x2<f32>(dpdx(in.uv), dpdy(in.uv));
     var c = material.base * texel;
     if (material.flags.y > 0.5) {
         c = c * in.color;
@@ -759,9 +770,16 @@ fn shade(in: VsOut, front: bool, far: bool, clean: bool) -> vec4<f32> {
             if (!clean) { discard; }
         }
     }
-    // Lambert from the upper left (the sprites' light), both faces lit.
-    var n = normalize(in.normal);
-    if (dot(n, globals.forward.xyz) > 0.0) {
+    // Lambert from the upper left (the sprites' light), both faces lit. `ng` without the
+    // normal map, for the shadow lookup's offset.
+    var ng = normalize(in.normal);
+    let detail = !far && globals.params.w > 0.5;
+    var n = ng;
+    if (detail && material.pbr.z > 0.0) {
+        n = bumped(ng, dp, duv, in.uv);
+    }
+    if (dot(ng, globals.forward.xyz) > 0.0) {
+        ng = -ng;
         n = -n;
     }
     // An open belly: a dark wet gash.
@@ -836,9 +854,9 @@ fn shade(in: VsOut, front: bool, far: bool, clean: bool) -> vec4<f32> {
     // The sun's direct light is blocked where a model's shadow falls (shadow.wgsl).
     var vis = 1.0;
     if (far) {
-        vis = sun_visibility_one(in.world, n);
+        vis = sun_visibility_one(in.world, ng);
     } else {
-        vis = sun_visibility(in.world, n);
+        vis = sun_visibility(in.world, ng);
     }
     let sun = max(dot(n, globals.light.xyz), 0.0) * vis;
     let lit = globals.light.w + (1.0 - globals.light.w) * sun;
@@ -858,6 +876,10 @@ fn shade(in: VsOut, front: bool, far: bool, clean: bool) -> vec4<f32> {
         let h = normalize(globals.light.xyz - globals.forward.xyz);
         let spec = pow(max(dot(n, h), 0.0), 24.0);
         rgb = rgb + material.cloth.y * spec * vis * mix(vec3<f32>(1.0), albedo * 2.5, 0.5);
+    }
+    // The glTF material's own highlight (#234), faint and broad.
+    if (detail) {
+        rgb = rgb + specular(n, albedo, in.uv) * ((1.0 - globals.light.w) * vis);
     }
     // Wet flesh: a tight highlight.
     if (wet > 0.0) {
@@ -880,6 +902,62 @@ fn shade(in: VsOut, front: bool, far: bool, clean: bool) -> vec4<f32> {
     }
     return vec4<f32>(rgb, 1.0);
 }
+
+// The tangent-space normal map (#234) in the cotangent frame of the screen-space derivatives
+// of the world position and uv (Schüler, "Normal Mapping Without Precomputed Tangents"):
+// no tangent attribute, all 16 vertex locations are in use on WebGL2. Mirrored uv islands
+// come out right. The map has no mip levels: its relief fades out from one texel per pixel
+// to three, before it would shimmer (and it is never drawn at the far levels).
+fn bumped(n: vec3<f32>, dp: mat2x3<f32>, duv: mat2x2<f32>, uv: vec2<f32>) -> vec3<f32> {
+    let size = vec2<f32>(textureDimensions(normal_texture));
+    let foot = max(length(duv[0] * size), length(duv[1] * size));
+    let k = material.pbr.z * (1.0 - smoothstep(1.0, 3.0, foot));
+    let p1 = cross(n, dp[0]);
+    let p2 = cross(dp[1], n);
+    let t = p2 * duv[0].x + p1 * duv[1].x;
+    let b = p2 * duv[0].y + p1 * duv[1].y;
+    let m = max(dot(t, t), dot(b, b));
+    if (k <= 0.0 || m <= 1e-30) {
+        return n;
+    }
+    let raw = textureSampleLevel(normal_texture, base_sampler, uv, 0.0).xyz * 2.0 - 1.0;
+    // glTF: the map's +y points to the image's top, −v.
+    let s = inverseSqrt(m);
+    return normalize((t * raw.x - b * raw.y) * (s * k) + n * max(raw.z, 0.0));
+}
+
+// A faint GGX highlight from the glTF roughness and metallic (#234), under the sun. Kept
+// broad (roughness at least 0.45) and dim so the painterly look reads at gameplay zoom.
+// Generated and nature sources bake their shading into the albedo and some say metallic 1:
+// metal only tints the highlight towards the albedo (at most half way) and never darkens
+// the diffuse, so no baked asset turns black.
+fn specular(n: vec3<f32>, albedo: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
+    var metal = material.pbr.x;
+    var rough = material.pbr.y;
+    if (material.pbr.w > 0.5) {
+        let mr = textureSampleLevel(metal_rough_texture, base_sampler, uv, 0.0);
+        rough = rough * mr.g;
+        metal = metal * mr.b;
+    }
+    let l = globals.light.xyz;
+    let v = -globals.forward.xyz;
+    let h = normalize(l + v);
+    let nl = max(dot(n, l), 0.0);
+    let nv = max(dot(n, v), 1e-3);
+    let nh = max(dot(n, h), 0.0);
+    let a = max(rough, 0.45);
+    let a2 = a * a * a * a;
+    let q = nh * nh * (a2 - 1.0) + 1.0;
+    let d = a2 / (3.14159265 * q * q);
+    let kg = a * a * 0.5;
+    let g = nl / (nl * (1.0 - kg) + kg) / (nv * (1.0 - kg) + kg);
+    let f0 = mix(vec3<f32>(0.04), albedo, clamp(metal, 0.0, 1.0) * 0.5);
+    let f = f0 + (vec3<f32>(1.0) - f0) * pow(1.0 - max(dot(v, h), 0.0), 5.0);
+    return SPECULAR * f * (d * g * 0.25);
+}
+
+// The highlight's strength (`specular`): a physical one, faint on rough dielectrics.
+const SPECULAR: f32 = 1.0;
 
 // `sun_visibility` (shadow.wgsl) with one bilinear tap, for the far levels.
 fn sun_visibility_one(world: vec3<f32>, normal: vec3<f32>) -> f32 {

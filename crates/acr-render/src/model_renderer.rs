@@ -257,6 +257,9 @@ struct MaterialUniform {
     cloth: [f32; 4],
     /// The model's wind scales: trunk, branch, flutter, tempo ([`crate::model::ModelData::wind`]).
     wind: [f32; 4],
+    /// Surface detail (#234, [`crate::model::Surface`]): metallic, roughness, normal map
+    /// scale (0: no normal map), 1 with a metallic-roughness texture.
+    pbr: [f32; 4],
 }
 
 #[repr(C)]
@@ -506,6 +509,9 @@ pub struct ModelRenderer {
     custom: HashMap<usize, crate::model::Palette>,
     /// Sun shadows (`shadow.rs`): on unless switched off (the `shadows` setting).
     pub shadows: bool,
+    /// Normal maps and the highlight from the glTF roughness and metallic (#234): on unless
+    /// switched off (the `material_detail` setting).
+    pub material_detail: bool,
     /// Wind for the `_WIND` weights of trees and foliage (docs/rendering-3d.md "Wind"): world
     /// direction x, y (unit), strength (0: still, the `wind=off` setting), time in seconds.
     pub wind: [f32; 4],
@@ -684,6 +690,9 @@ impl ModelRenderer {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                // The normal map and the metallic-roughness map (#234).
+                texture(3, wgpu::ShaderStages::FRAGMENT, true),
+                texture(4, wgpu::ShaderStages::FRAGMENT, true),
             ],
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -918,6 +927,7 @@ impl ModelRenderer {
             drawn: 0,
             custom: HashMap::new(),
             shadows: true,
+            material_detail: true,
             wind: [1.0, 0.0, 0.0, 0.0],
             weather: [[0.0; 4]; 2],
             shadow,
@@ -1067,10 +1077,15 @@ impl ModelRenderer {
             contents: bytemuck::cast_slice(&indices),
             usage: wgpu::BufferUsages::INDEX,
         });
+        // Normal and metallic-roughness maps hold data, not colours: no sRGB decode.
+        let linear: Vec<bool> = (0..data.images.len())
+            .map(|i| data.materials.iter().any(|m| m.surface.normal == Some(i) || m.surface.metal_rough == Some(i)))
+            .collect();
         let images: Vec<wgpu::TextureView> = data
             .images
             .iter()
-            .map(|img| {
+            .zip(&linear)
+            .map(|(img, &linear)| {
                 device
                     .create_texture_with_data(
                         queue,
@@ -1080,7 +1095,11 @@ impl ModelRenderer {
                             mip_level_count: 1,
                             sample_count: 1,
                             dimension: wgpu::TextureDimension::D2,
-                            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                            format: if linear {
+                                wgpu::TextureFormat::Rgba8Unorm
+                            } else {
+                                wgpu::TextureFormat::Rgba8UnormSrgb
+                            },
                             usage: wgpu::TextureUsages::TEXTURE_BINDING,
                             view_formats: &[],
                         },
@@ -1133,6 +1152,12 @@ impl ModelRenderer {
                     ],
                     cloth: [m.finish.sheen, m.finish.gloss, m.finish.layer, 0.0],
                     wind: data.wind,
+                    pbr: [
+                        m.surface.metallic,
+                        m.surface.roughness,
+                        if m.surface.normal.is_some_and(|t| t < images.len()) { m.surface.normal_scale } else { 0.0 },
+                        if m.surface.metal_rough.is_some_and(|t| t < images.len()) { 1.0 } else { 0.0 },
+                    ],
                 };
                 let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("model material"),
@@ -1141,6 +1166,8 @@ impl ModelRenderer {
                 });
                 let view = m.texture.and_then(|t| images.get(t)).unwrap_or(&self.white);
                 let sampler = if m.nearest { &self.nearest } else { &self.linear };
+                let normal = m.surface.normal.and_then(|t| images.get(t)).unwrap_or(&self.white);
+                let metal_rough = m.surface.metal_rough.and_then(|t| images.get(t)).unwrap_or(&self.white);
                 device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("model material"),
                     layout: &self.material_layout,
@@ -1148,6 +1175,8 @@ impl ModelRenderer {
                         wgpu::BindGroupEntry { binding: 0, resource: buffer.as_entire_binding() },
                         wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(view) },
                         wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(sampler) },
+                        wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(normal) },
+                        wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(metal_rough) },
                     ],
                 })
             })
@@ -1430,7 +1459,7 @@ impl ModelRenderer {
                 if self.encode_srgb { 1.0 } else { 0.0 },
                 if dissolve { 1.0 } else { 0.0 },
                 BONE_WIDTH as f32,
-                0.0,
+                if self.material_detail { 1.0 } else { 0.0 },
             ],
             wind: self.wind,
             weather: self.weather[0],

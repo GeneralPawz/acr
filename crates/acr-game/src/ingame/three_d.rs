@@ -240,6 +240,9 @@ pub struct ThreeD {
     shadows: bool,
     /// `lod=on|off` (docs/rendering-3d.md, "Levels of detail").
     lod: bool,
+    /// `material_detail=on|off` (docs/rendering-3d.md, "Material detail"; `ACR_MATERIAL_DETAIL`
+    /// wins, native only).
+    material_detail: bool,
     /// `wind=on|off` (docs/rendering-3d.md, "Wind"); the driver's `props` request wins.
     wind: bool,
     wind_override: Option<bool>,
@@ -367,6 +370,7 @@ impl Default for ThreeD {
             gore: Gore::Full,
             shadows: true,
             lod: true,
+            material_detail: true,
             wind: true,
             wind_override: None,
             wind_clock: 0.0,
@@ -447,6 +451,7 @@ impl ThreeD {
         self.gore = settings.gore;
         self.shadows = settings.shadows;
         self.lod = settings.lod;
+        self.material_detail = settings.material_detail;
         self.wind = settings.wind;
         self.weather = settings.weather;
         self.map_models.on = settings.map_models;
@@ -1550,6 +1555,7 @@ impl ThreeD {
         }
         renderer.shadows = shadows_override().unwrap_or(self.shadows);
         renderer.lods = self.lod;
+        renderer.material_detail = material_detail_override().unwrap_or(self.material_detail);
         let weather = self.weather_override.unwrap_or(self.weather);
         let look = weather.look();
         let strength = if self.wind_override.unwrap_or(self.wind) { WIND_STRENGTH * weather.wind_scale() } else { 0.0 };
@@ -1715,6 +1721,39 @@ fn shadows_override() -> Option<bool> {
         });
     }
     match SHADOWS_OVERRIDE.load(Ordering::Relaxed) {
+        1 => Some(false),
+        2 => Some(true),
+        _ => None,
+    }
+}
+
+/// Material detail forced on (2) or off (1) for tests, over the setting:
+/// `ACR_MATERIAL_DETAIL=on|off` or the driver's `{"cmd": "material_detail", "on": false}`; 0
+/// follows the setting.
+static MATERIAL_DETAIL_OVERRIDE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(u8::MAX);
+
+/// Forces the material detail on or off (`None`: the setting decides).
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+pub fn set_material_detail_override(on: Option<bool>) {
+    let v = match on {
+        None => 0,
+        Some(false) => 1,
+        Some(true) => 2,
+    };
+    MATERIAL_DETAIL_OVERRIDE.store(v, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn material_detail_override() -> Option<bool> {
+    use std::sync::atomic::Ordering;
+    if MATERIAL_DETAIL_OVERRIDE.load(Ordering::Relaxed) == u8::MAX {
+        let env = if cfg!(target_arch = "wasm32") { None } else { std::env::var("ACR_MATERIAL_DETAIL").ok() };
+        set_material_detail_override(match env.as_deref() {
+            Some("off" | "0") => Some(false),
+            Some("on" | "1") => Some(true),
+            _ => None,
+        });
+    }
+    match MATERIAL_DETAIL_OVERRIDE.load(Ordering::Relaxed) {
         1 => Some(false),
         2 => Some(true),
         _ => None,

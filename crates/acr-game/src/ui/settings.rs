@@ -55,6 +55,9 @@ pub struct Settings {
     /// ACR: levels of detail of the 3D models (`lod=on|off`, on by default;
     /// docs/rendering-3d.md "Levels of detail"): distant figures drawn with fewer triangles.
     pub lod: bool,
+    /// ACR: normal maps and a faint highlight from the glTF roughness and metallic of the 3D
+    /// models (`material_detail=on|off`, on by default; docs/rendering-3d.md "Material detail").
+    pub material_detail: bool,
     /// ACR: wind sways the trees and foliage of the 3D path (`wind=on|off`, on by default;
     /// docs/rendering-3d.md "Wind"): a vertex-shader bend from the models' `_WIND` weights.
     pub wind: bool,
@@ -158,6 +161,7 @@ impl Default for Settings {
             mortars: false,
             shadows: true,
             lod: true,
+            material_detail: true,
             wind: true,
             map_models: true,
             water_detailed: true,
@@ -228,7 +232,7 @@ impl Settings {
         format!(
             "sound_volume={}\nmusic_volume={}\nmusic_mode={}\ngame_mode={}\nscroll_speed={}\nframe_time={}\n\
              resolution={}\nrecord={}\nrecord_file={hex}\ncontrols={controls}\nedge_scroll={}\n\
-             models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\ncorpse_decay={}\nhit_locations={}\nbody_spacing={}\nmortars={}\nshadows={}\nlod={}\nwind={}\nmap_models={}\nwater={}\n\
+             models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\ncorpse_decay={}\nhit_locations={}\nbody_spacing={}\nmortars={}\nshadows={}\nlod={}\nmaterial_detail={}\nwind={}\nmap_models={}\nwater={}\n\
              ground={}\nbattlefield_marks={}\nweather={}\n{}",
             self.sound_volume,
             self.music_volume,
@@ -246,6 +250,7 @@ impl Settings {
             if self.mortars { "on" } else { "off" },
             if self.shadows { "on" } else { "off" },
             if self.lod { "on" } else { "off" },
+            if self.material_detail { "on" } else { "off" },
             if self.wind { "on" } else { "off" },
             if self.map_models { "on" } else { "off" },
             if self.water_detailed { "detailed" } else { "original" },
@@ -304,6 +309,7 @@ impl Settings {
                 "mortars" => s.mortars = value == "on",
                 "shadows" => s.shadows = value != "off",
                 "lod" => s.lod = value != "off",
+                "material_detail" => s.material_detail = value != "off",
                 "wind" => s.wind = value != "off",
                 "map_models" => s.map_models = value != "off",
                 "water" => s.water_detailed = value != "original",
@@ -355,6 +361,7 @@ mod tests {
             gore: Gore::Reduced,
             shadows: false,
             lod: false,
+            material_detail: false,
             wind: false,
             map_models: false,
             water_detailed: false,
