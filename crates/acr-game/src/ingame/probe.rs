@@ -83,7 +83,6 @@ impl InGame {
 
     /// The studio's camera (#299): the ground point `target` (world pixels, z = 0) in the
     /// middle of the window at `scale`, under the free camera turned and tilted by `orbit`.
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn place_camera(&mut self, target: [f32; 2], scale: f32, orbit: acr_render::view3d::Orbit) {
         self.three_d.set_free(orbit);
         self.camera.scale = scale;
@@ -95,7 +94,6 @@ impl InGame {
     }
 
     /// The model and this frame's instance of a unit drawn as a model (#299).
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn posed(
         &self,
         unit: u32,
@@ -104,7 +102,6 @@ impl InGame {
     }
 
     /// Holds a unit's model at `clip` and `time` seconds (`None`: the game's clip again).
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn hold_pose(&mut self, unit: u32, pose: Option<(usize, f32)>) {
         match pose {
             Some(p) => self.three_d.held.insert(unit, p),
@@ -113,38 +110,32 @@ impl InGame {
     }
 
     /// Chars a unit's model as if he had burned (`drive` `burn`, render only, #207).
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn set_burn(&mut self, unit: u32, amount: f32) {
         self.three_d.burns.set(unit, amount);
     }
 
     /// The whole map revealed or the fog of war again (`drive` `fog`).
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn set_open_fog(&mut self, open: bool) {
         self.mission.set_open_fog(open);
     }
 
     /// The model textures' GPU memory (`drive` `textures`).
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn texture_stats(&self) -> Option<acr_render::model_renderer::TextureStats> {
         self.three_d.texture_stats()
     }
 
     /// The map's trees and stones as models on or off (`drive` `map_models`).
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn set_map_models(&mut self, on: bool) {
         self.three_d.set_map_models(on);
     }
 
     /// Rain, snow or fog over the setting (`drive` `weather`; `None`: the setting).
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn set_weather(&mut self, weather: Option<acr_render::weather::Weather>) -> acr_render::weather::Weather {
         self.three_d.set_weather_override(weather);
         self.three_d.weather()
     }
 
     /// The pose held for a unit, if any.
-    #[cfg(not(target_arch = "wasm32"))]
     /// Trees or foliage of model `name` at these ground points (render only; `drive` `props`).
     pub fn place_props(&mut self, name: &str, at: Vec<[i32; 2]>, wind: Option<bool>) {
         self.three_d.set_props(name, at, wind);

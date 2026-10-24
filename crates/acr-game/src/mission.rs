@@ -516,7 +516,6 @@ impl MissionLink {
 
     /// Reveals the whole map from the next tick on, as on the blank field (the driver's
     /// `fog` request).
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn set_open_fog(&mut self, open: bool) {
         self.open_fog = open;
     }

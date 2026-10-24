@@ -48,7 +48,7 @@ a mission 0.3 s, 100 ticks 0.1–0.3 s, a click 5–15 ms; all eight scenarios t
 
 `AmericanConquest.exe --drive [GAME_DIR]` (or `ACR_DRIVE=1`) runs the game under the
 driver: one JSON request per line on stdin, one JSON answer per line on stdout. It is
-native only; the browser build has no driver.
+native only; the browser build has a scene subset of it ("Browser" below).
 
 | Flag | |
 | --- | --- |
@@ -415,6 +415,41 @@ Mission pages ("Nachricht"), questions and choices stop the game until answered.
 as soon as one is built and reports it under `dismissed` with its text. With `dialogs
 report` it stays open, every answer carries it as `blocking`, and the test answers it
 itself (`click` its button). Use `report` when the dialog is what is tested.
+
+## Browser
+
+The browser build (wasm, WebGL2) runs in Playwright's headless Chromium on the render VM:
+`tools/browser/run.sh` stages a game folder (the original's files symlinked, `ACR/Sounds`, and
+`ACR/Models` with the showcase models and an `--overlay` folder's glbs on top), serves the
+release web build with `cargo xtask serve --release --game-dir`, and runs
+`tools/browser/browser_test.py`:
+
+```
+acr-vm-cargo -- 'bash tools/browser/run.sh --out runs/browser/x --overlay ~/browser/hd'     --get 'runs/browser/x=C:/abs/out/x'
+```
+
+The test stores the settings (models=all, camera=free, shadows, LOD, detailed ground) in
+`localStorage` `acr-settings`, opens `/?game=/game/`, starts the blank grass field without
+HUD, spawns `--unit` (default `EngM18`; `~/browser/hd/engm18.glb` is `hdman.glb`) and zooms
+the free camera through `--zooms` (default 1..9, `--step-s` 2 s each, `--hold-s` 8 s at the
+end). Into `--out` go `console.jsonl` (every console message and page error),
+`answers.jsonl`, `z<zoom>.png` page screenshots, `frames.json` and `summary.json`: per step
+the page's frame intervals (`requestAnimationFrame`, so stalls of the main thread count) and
+the game's own work per frame, plus the `textures` answer. `--gpu vulkan` (default: ANGLE on
+the RX 9060 XT), `swiftshader` or `gl`.
+
+**The page hook** (`crates/acr-game/src/web.rs`): `acr_drive(line)` queues a driver request,
+`acr_answers()` returns the answers so far (JSON lines), `acr_frame_ms()` the milliseconds of
+each frame's advance and render since the last call. The page's own frame loop runs one queued
+request per frame once the game has settled (`drive::web_ready`; the movies are skipped).
+Only requests that set a scene up work there: `start` with `blank`, `spawn`, `hit`, `camera`,
+`hud`, `state`, `command`, `ui`, `textures`; waits, screenshots, `frametimes`, `gputime` and
+the studio need the native driver's fixed-step frames, the page takes its screenshots itself.
+
+**Installed on the VM** (user space, `~/browser/venv`): Python Playwright 1.64.1 with its
+Chromium build 1248 (`~/.cache/ms-playwright`; `playwright install --with-deps chromium`
+added the system libraries with sudo). No Node and no wasm-bindgen CLI: `cargo xtask web`
+binds with the `wasm-bindgen-cli-support` crate at Cargo.lock's version (0.2.129).
 
 ## Scenario files
 

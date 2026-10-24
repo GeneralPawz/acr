@@ -583,7 +583,6 @@ impl ThreeD {
 
     /// Switches to the free camera with this turn and tilt (the driver's `camera`). The
     /// tilt may go below the keys' limit, down to a near side view.
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn set_free(&mut self, orbit: Orbit) {
         self.free = true;
         self.orbit = Orbit {
@@ -602,7 +601,6 @@ impl ThreeD {
     }
 
     /// The model and this frame's instance of a unit drawn as a model (the studio, #299).
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn posed(&self, unit: u32) -> Option<(&acr_render::model::ModelData, &ModelInstance)> {
         let inst = self.instances.get(*self.drawn.get(&unit)?)?;
         Some((self.renderer.as_ref()?.model(inst.model)?, inst))
@@ -1855,7 +1853,6 @@ impl ThreeD {
 
     /// The driver's trees and foliage (`props`): replaces the placed ones; `wind` overrides
     /// the setting (`None`: the setting again).
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn set_props(&mut self, name: &str, at: Vec<[i32; 2]>, wind: Option<bool>) {
         let name = name.to_uppercase();
         self.props = at.into_iter().map(|p| (name.clone(), p)).collect();
@@ -1970,13 +1967,11 @@ impl ThreeD {
     }
 
     /// The model textures' GPU memory (`drive` `textures`).
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn texture_stats(&self) -> Option<acr_render::model_renderer::TextureStats> {
         self.renderer.as_ref().map(ModelRenderer::texture_stats)
     }
 
     /// `map_models` on or off (the setting, or the driver).
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn set_map_models(&mut self, on: bool) {
         self.map_models.on = on;
     }

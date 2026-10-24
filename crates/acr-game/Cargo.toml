@@ -39,7 +39,7 @@ console_error_panic_hook = "0.1.7"
 js-sys = "0.3.106"
 wasm-bindgen = "=0.2.129"
 wasm-bindgen-futures = "0.4.79"
-web-sys = { version = "0.3.106", features = ["Window", "Document", "HtmlLinkElement", "Element", "Url", "Blob", "BlobPropertyBag", "HtmlCanvasElement", "EventTarget", "Event", "MouseEvent", "AddEventListenerOptions"] }
+web-sys = { version = "0.3.106", features = ["Window", "Document", "HtmlLinkElement", "Element", "Url", "Blob", "BlobPropertyBag", "HtmlCanvasElement", "EventTarget", "Event", "MouseEvent", "AddEventListenerOptions", "console"] }
 
 [build-dependencies]
 winresource = "0.1.34"

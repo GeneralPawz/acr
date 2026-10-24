@@ -10,7 +10,6 @@ mod animal_sounds;
 mod blank_map;
 mod canvas;
 mod diplomacy;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod drive;
 mod hit_sounds;
 mod hud;
@@ -169,6 +168,8 @@ impl Game {
         let now = web_time::Instant::now();
         let dt = self.last_frame.map_or(0.0, |t| (now - t).as_secs_f64());
         self.last_frame = Some(now);
+        #[cfg(target_arch = "wasm32")]
+        web::serve_requests(self, event_loop);
         {
             acr_sim::prof_scope!("frame.advance");
             self.advance(dt, event_loop);
@@ -179,6 +180,8 @@ impl Game {
             self.hw_cursor.update(&mut self.ui, window, event_loop, Canvas::fit(size).scale);
         }
         self.render();
+        #[cfg(target_arch = "wasm32")]
+        web::frame_done(now.elapsed().as_secs_f32() * 1000.0);
         self.profile_log(now);
     }
 

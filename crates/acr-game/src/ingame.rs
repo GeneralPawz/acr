@@ -49,7 +49,6 @@ mod mortar_ui;
 mod panels;
 mod particle_view;
 mod piles;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod probe;
 mod ragdoll_view;
 mod ruin_view;
@@ -246,13 +245,11 @@ impl InGame {
 
     /// The driver's `ground_cover`: forces the ground cover on or off for this game (`None`:
     /// the setting, none under a backdrop).
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn set_ground_cover(&mut self, on: Option<bool>) {
         self.three_d.cover_forced = on;
     }
 
     /// Turns the decay stains on or off for this game (the driver's `decay_stain`).
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn set_decay_stain(&mut self, on: bool) {
         self.three_d.set_decay_stain(on);
     }

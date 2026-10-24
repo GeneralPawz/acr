@@ -14,21 +14,29 @@
 //! built and idle and a started game is shown. Modal mission messages are pressed away
 //! (`dialogs auto`, the default; each is reported) or left open and reported as `blocking`.
 
+// The browser runs only the scene requests (`web_request`): the rest is native.
+#![cfg_attr(target_arch = "wasm32", allow(dead_code))]
+
 mod bench;
+#[cfg(not(target_arch = "wasm32"))]
 mod logger;
 mod protocol;
+#[cfg_attr(target_arch = "wasm32", path = "shot_web.rs")]
 mod shot;
 mod state;
 mod studio;
 mod tree;
 
+#[cfg(not(target_arch = "wasm32"))]
 pub use logger::install as install_logger;
 pub use protocol::DialogPolicy;
 
 use std::collections::VecDeque;
 use std::io::{BufRead, Write};
 use std::sync::mpsc::{Receiver, TryRecvError};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use web_time::Instant;
 
 use serde_json::{Map, Value, json};
 use winit::dpi::PhysicalPosition;
@@ -318,6 +326,7 @@ fn drag_steps(a: [f32; 2], b: [f32; 2], button: Button, mods: Mods) -> VecDeque<
 
 impl Game {
     /// Runs the game under the test driver (see the module docs).
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn set_driver(&mut self, options: Options) {
         if !options.gpu {
             self.headless = Some(options.size.map(|v| v as f32));
@@ -328,6 +337,7 @@ impl Game {
     }
 
     /// One pass of the event loop under the driver.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn drive(&mut self, event_loop: &ActiveEventLoop) {
         let Some(mut driver) = self.driver.take() else { return };
         driver.run(self, event_loop);
@@ -596,7 +606,10 @@ impl Driver {
         {
             reply.insert("blocking".into(), m.to_json());
         }
+        #[cfg(not(target_arch = "wasm32"))]
         let log = logger::take();
+        #[cfg(target_arch = "wasm32")]
+        let log: Vec<String> = Vec::new();
         if !log.is_empty() {
             reply.insert("log".into(), log.into());
         }
@@ -993,6 +1006,64 @@ impl Driver {
             }
         }
     }
+}
+
+/// The browser's part of the driver (docs/testing.md "Browser"): `acr_drive` in the page
+/// queues request lines, and the page's own frame loop carries out the requests that only set
+/// a scene up, one per frame once the game has settled. Waits, screenshots and studio work
+/// need the native driver's fixed-step frames; the page takes its screenshots itself.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn web_request(game: &mut Game, event_loop: &ActiveEventLoop, line: &str) -> Value {
+    let (_tx, lines) = std::sync::mpsc::channel();
+    let mut driver = Driver {
+        options: Options { gpu: true, size: [0, 0], dialogs: DialogPolicy::Auto },
+        lines,
+        job: None,
+        frames: 0,
+        policy: DialogPolicy::Auto,
+        dismissed: Vec::new(),
+        quit: false,
+    };
+    let (seq, request) = match protocol::parse(line) {
+        Ok(r) => r,
+        Err(e) => return json!({"ok": false, "error": e}),
+    };
+    let mut job = Job::new(seq);
+    let result = match request {
+        r @ (Request::Start(Start::Blank { .. })
+        | Request::Spawn(_)
+        | Request::Hit(_)
+        | Request::Camera { .. }
+        | Request::Hud(_)
+        | Request::State { .. }
+        | Request::Command(_)
+        | Request::Ui { .. }
+        | Request::Textures) => driver.prepare(game, event_loop, r, &mut job),
+        _ => Err("not in the browser: start (blank), spawn, hit, camera, hud, state, command, ui, textures".into()),
+    };
+    let mut reply = job.reply;
+    if let Some(seq) = job.seq {
+        reply.insert("seq".into(), seq);
+    }
+    reply.insert("ok".into(), result.is_ok().into());
+    if let Err(e) = result {
+        reply.insert("error".into(), e.into());
+    }
+    reply.insert("tick".into(), state::tick(game).into());
+    Value::Object(reply)
+}
+
+/// Whether the browser's queued requests may run: no files on their way, the top screen
+/// built and a started game ready (as the native driver settles).
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn web_ready(game: &Game) -> bool {
+    let screen_ready = tree::top(game).is_none_or(|(s, built)| built && !s.busy());
+    let game_ready = match &game.mode {
+        Mode::Intro => true,
+        Mode::Menus => true,
+        Mode::InGame(g) => g.ready(),
+    };
+    game.in_flight.get() == 0 && screen_ready && game_ready && tree::modal(game).is_none()
 }
 
 #[cfg(test)]
