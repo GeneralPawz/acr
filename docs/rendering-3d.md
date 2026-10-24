@@ -1261,9 +1261,14 @@ with `ThreeD::draws_rounds`). Smoke, flashes, explosions and debris keep their s
   shell, `TAMAGAVK` tomahawk, `KOPIE` spear, `KAMEN` stone.
 - **Placement:** at `pos >> 14`, the height `z / COS_E` like the ground, moved on along
   `vel` (and `az`) by the share of the tick the frame is into, so rounds fly smoothly between
-  ticks. +z of the model along the velocity.
-- **Looks:** arrows 0.8 m with an iron head and three feathers, shafts drawn ~1.5× thick;
-  cannonballs dark spheres of 0.07 m (life 0.047 m) with three pale puffs per tick; grapeshot
+  ticks. +z of the model along the velocity. A gun's `ANGLE` arc starts a few pixels above
+  the ground in the simulation (the sprite's offset shows the muzzle): it is raised by
+  `0.1 ×` the distance left to `dest`, at most 0.9 m. The missile models are added with
+  `ModelRenderer::add_small_model` and always drawn at full detail: the far levels dropped
+  the thin shafts entirely.
+- **Looks:** arrows 0.8 m with an iron head and three feathers, shafts 32 mm thick (about
+  three times life, to show at the game's zoom); cannonballs dark spheres of 0.09 m (life
+  0.047 m) with five pale puffs per tick; grapeshot
   0.03 m; shells 0.11 m tumbling, with embers and a wisp of smoke off the fuse tip every
   tick; tomahawks turn end over end (1.7 rad per tick), stones tumble, spears roll. The
   phase is a hash of the slot, weapon and shooter.
@@ -1272,14 +1277,18 @@ with `ThreeD::draws_rounds`). Smoke, flashes, explosions and debris keep their s
   0.022 m radius, dithered half transparent) runs from 1.4 m above the shooter (`pos − dir`)
   to the victim's chest or the ground, at 4500 px/s through the tick.
 - **Stuck arrows:** an arrow impact (a miss: `note_impact` records arrows only when they hit
-  no one) sticks an arrow 0.18 m into the ground along the direction of the nearest arrow
-  seen in the last two ticks (else 40° down along the impact), with a small hashed wobble.
+  no one) sticks an arrow 0.12 m into the ground on the bearing of the nearest arrow seen
+  in the last two ticks (else of the impact), 35–55° down: the simulation's arrows fly
+  nearly flat and would lie hidden in the grass at their true angle.
   They stay `corpse_minutes` (at most 2048). Arrows in bodies and buildings are not drawn
   yet.
 
-Open: proof frames of each round in flight (the first slice's scenes had the targets
-charge into melee), the cost of a 200-musket and 100-archer volley, arrows stuck in bodies
-(gore) and buildings (#304), muzzle-to-target streaks for building hits.
+Cost (RX 9060 XT, blank grass field, 100 archers and 200 musketeers firing at 60 peasants,
+zoom 1, two runs of 80 ticks): `3d.missiles` 0.021 and 0.024 ms per frame. Proof frames:
+`ACR-analysis/genai/projectiles/proof/` (steps in `../steps/proof_*.json`).
+
+Open: arrows stuck in bodies (gore) and buildings (#304); streaks for building hits; the
+cannonball trail reads as a dotted line at high zoom (one burst per tick).
 
 ## Camera math
 

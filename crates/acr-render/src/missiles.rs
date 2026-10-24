@@ -188,13 +188,13 @@ fn normalize(v: Vec3) -> Vec3 {
 pub fn arrow() -> ModelData {
     let mut m = Mesh::default();
     let l = ARROW_LENGTH;
-    m.loft(&[(-l, 0.0), (-l + 0.01, 0.011), (-0.07, 0.011), (-0.07, 0.0)], 5, PALE_WOOD, [0.0; 2]);
-    m.loft(&[(-0.08, 0.0), (-0.075, 0.022), (0.0, 0.0)], 4, IRON, [0.0; 2]);
+    m.loft(&[(-l, 0.0), (-l + 0.01, 0.016), (-0.07, 0.016), (-0.07, 0.0)], 5, PALE_WOOD, [0.0; 2]);
+    m.loft(&[(-0.08, 0.0), (-0.075, 0.028), (0.0, 0.0)], 4, IRON, [0.0; 2]);
     for k in 0..3 {
         let a = k as f32 / 3.0 * std::f32::consts::TAU + 0.5;
         let (c, s) = (a.cos(), a.sin());
         let r = |w: f32, z: f32| [c * w, s * w, z];
-        m.card([r(0.008, -l + 0.03), r(0.04, -l + 0.06), r(0.03, -l + 0.2), r(0.008, -l + 0.22)], FEATHER);
+        m.card([r(0.012, -l + 0.03), r(0.05, -l + 0.06), r(0.04, -l + 0.2), r(0.012, -l + 0.22)], FEATHER);
     }
     m.model("missile_arrow")
 }

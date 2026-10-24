@@ -75,8 +75,8 @@ struct Stuck {
 }
 
 /// Radius of a drawn cannonball and of a grapeshot ball (metres; a 6-pounder's is 0.047 m,
-/// drawn half again as large to show at the game's zoom).
-const BALL_RADIUS: f32 = 0.07;
+/// drawn about twice as large to show at the game's zoom).
+const BALL_RADIUS: f32 = 0.09;
 const GRAPE_RADIUS: f32 = 0.03;
 /// A musket ball's streak: length and radius (metres), and how fast it is drawn to travel
 /// (world px per second: slowed from the ball's ~400 m/s so it is seen at all).
@@ -86,8 +86,10 @@ const STREAK_SPEED: f32 = 4500.0;
 /// Muzzle and chest heights (true world px) the streak runs between.
 const MUZZLE: f32 = 1.4 * PIXELS_PER_METRE;
 const CHEST: f32 = 1.2 * PIXELS_PER_METRE;
+/// A gun's muzzle (true world px) its arcs start from ([`Missiles::draw`]).
+const GUN_MUZZLE: f32 = 0.9 * PIXELS_PER_METRE;
 /// How deep a stuck arrow's head goes into the ground (metres), and at most this many lie.
-const STUCK_DEPTH: f32 = 0.18;
+const STUCK_DEPTH: f32 = 0.12;
 const STUCK_CAP: usize = 2048;
 
 #[derive(Default)]
@@ -111,7 +113,7 @@ impl Missiles {
         if self.models.is_some() {
             return;
         }
-        let mut add = |m| renderer.add_model(device, queue, m);
+        let mut add = |m| renderer.add_small_model(device, queue, m);
         self.models = Some(Models {
             arrow: add(missiles::arrow()),
             streak: add(missiles::streak()),
@@ -166,18 +168,27 @@ impl Missiles {
         self.tick = now;
         // How far into the tick this frame is: rounds move on along their velocity.
         let frac = if self.tick_seconds > 0.0 { (self.since / self.tick_seconds).min(1.0) } else { 0.0 };
+        let mut drawn = 0;
         for (slot, p) in world.projectiles.slots.iter().enumerate() {
             let Some(p) = p else { continue };
             let Some(kind) = round(world, p) else { continue };
+            drawn += 1;
             let seed = hash(slot as u32 ^ hash(p.weapon as u32 ^ p.sender.map_or(0, |s| s.0)));
             let k = 1.0 / 16384.0;
             let vel = [p.vel.0 as f32 * k, p.vel.1 as f32 * k, p.vel.2 as f32 * k / COS_E];
             let az = p.az as f32 * k / COS_E;
-            let at = [
+            let mut at = [
                 p.pos.0 as f32 * k + vel[0] * frac,
                 p.pos.1 as f32 * k + vel[1] * frac,
                 p.pos.2 as f32 * k / COS_E + vel[2] * frac + 0.5 * az * frac * frac,
             ];
+            // A gun's arc starts a few pixels above the ground (its sprite's offset shows the
+            // muzzle height): raised by up to the muzzle's height, down to nothing over the
+            // last stretch before it lands.
+            if world.catalog.weapons.get(p.weapon).propagation == Propagation::Angle {
+                let left = ((p.dest.0 as f32 * k - at[0]).powi(2) + (p.dest.1 as f32 * k - at[1]).powi(2)).sqrt();
+                at[2] += (left * 0.1).min(GUN_MUZZLE);
+            }
             let dir = normalize([vel[0], vel[1], vel[2] + az * frac]);
             // Turning over: per tick of its life, from a phase of its own.
             let turn = (p.frame as f32 + frac) + 6.0 * unit(seed, 1);
@@ -209,6 +220,9 @@ impl Missiles {
             };
             out.push(instance(model, transform, false));
         }
+        if new_tick && now.is_multiple_of(20) && (drawn > 0 || !self.stuck.is_empty()) {
+            log::info!("3d: {drawn} rounds in flight, {} arrows stuck", self.stuck.len());
+        }
         // Arrows that missed (an impact of an arrow) stick where they struck.
         let fresh = world.impacts.iter().filter(|i| i.tick > self.last_impact && i.cause == DeathCause::Arrow);
         for (n, i) in fresh.enumerate() {
@@ -222,7 +236,7 @@ impl Missiles {
                 .map(|&(a, d)| ((a[0] - p[0]).abs() + (a[1] - p[1]).abs(), d))
                 .filter(|&(dist, _)| dist < 60.0)
                 .min_by(|a, b| a.0.total_cmp(&b.0));
-            let mut d = match near {
+            let d = match near {
                 Some((_, d)) => d,
                 None => {
                     let (dx, dy) = (i.dir.0 as f32, i.dir.1 as f32);
@@ -230,12 +244,12 @@ impl Missiles {
                     [dx / l * 0.77, dy / l * 0.77, -0.64]
                 }
             };
-            // At least a little into the ground, wobbling by a hash of the impact.
+            // Into the ground at 35..55° (a flat shot's arrow skids and turns up its point
+            // into the turf), the bearing wobbling by a hash of the impact.
             let seed = hash(i.pos.0 as u32 ^ hash(i.pos.1 as u32 ^ hash(i.tick as u32 + n as u32)));
-            d[2] = d[2].min(-0.3) - 0.15 * unit(seed, 2);
-            d[0] += 0.12 * (unit(seed, 3) - 0.5);
-            d[1] += 0.12 * (unit(seed, 4) - 0.5);
-            let d = normalize(d);
+            let fall = (-d[2]).atan2((d[0] * d[0] + d[1] * d[1]).sqrt()).max(0.6) + 0.35 * unit(seed, 2);
+            let bearing = d[1].atan2(d[0]) + 0.25 * (unit(seed, 3) - 0.5);
+            let d = [bearing.cos() * fall.cos(), bearing.sin() * fall.cos(), -fall.sin()];
             let tip = math::add(g, math::scale(d, STUCK_DEPTH * PIXELS_PER_METRE));
             if self.stuck.len() >= STUCK_CAP {
                 self.stuck.pop_front();
@@ -345,8 +359,8 @@ fn instance(model: usize, transform: Mat4, transparent: bool) -> ModelInstance {
 
 /// A cannonball's faint trail: a few pale puffs along the last tick's way.
 fn trail(sink: &mut dyn ParticleSink, at: Vec3, vel: Vec3, seed: u32) {
-    for k in 0..3u32 {
-        let back = math::sub(at, math::scale(vel, k as f32 / 3.0));
+    for k in 0..5u32 {
+        let back = math::sub(at, math::scale(vel, k as f32 / 5.0));
         sink.emit(&Burst {
             at: back,
             dir: [0.0, 0.0, 1.0],
@@ -354,9 +368,9 @@ fn trail(sink: &mut dyn ParticleSink, at: Vec3, vel: Vec3, seed: u32) {
             speed: [2.0, 6.0],
             count: 1,
             kind: ParticleKind::Dust,
-            life: [0.5, 0.9],
-            size: [1.5, 2.5],
-            color: [176, 174, 168],
+            life: [0.8, 1.4],
+            size: [2.0, 3.5],
+            color: [196, 194, 188],
             scatter: 0.5,
             seed: seed ^ hash(k),
         });

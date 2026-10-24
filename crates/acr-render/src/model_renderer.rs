@@ -595,6 +595,9 @@ pub struct ModelRenderer {
     inserts: [usize; 3],
     /// Buildings' hit damage (#304) for the next `prepare`, by instance index.
     scars: HashMap<usize, Scars>,
+    /// Small models always drawn whole ([`Self::add_small_model`]): their far levels would
+    /// simplify thin parts away.
+    small: Vec<usize>,
     /// Prepared for the next `render`: the instances on the screen.
     draws: Vec<Draw>,
     /// Prepared for the next `render_shadows`: the casters within the shadow map, coarser.
@@ -1026,6 +1029,7 @@ impl ModelRenderer {
             cap: 0,
             inserts: [0; 3],
             scars: HashMap::new(),
+            small: Vec::new(),
             draws: Vec::new(),
             shadow_draws: Vec::new(),
             lod_last: Vec::new(),
@@ -1138,6 +1142,14 @@ impl ModelRenderer {
             }
         }
         far
+    }
+
+    /// [`Self::add_model`] for a small model (missiles, #308) that is always drawn at its
+    /// full level of detail.
+    pub fn add_small_model(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, data: ModelData) -> usize {
+        let m = self.add_model(device, queue, data);
+        self.small.push(m);
+        m
     }
 
     /// Uploads a model; returns its index for [`ModelInstance::model`].
@@ -1693,7 +1705,7 @@ impl ModelRenderer {
         }
         // Caps and wound inserts sit on a body at its own level: always whole (they are small).
         let lods = self.lod_override.unwrap_or(self.lods);
-        let whole = |m: usize| !lods || m == self.cap || self.inserts.contains(&m);
+        let whole = |m: usize| !lods || m == self.cap || self.inserts.contains(&m) || self.small.contains(&m);
         let level: Vec<usize> = (0..n)
             .map(|m| match self.lod_force {
                 _ if whole(m) || size[m] == 0.0 => 0,
