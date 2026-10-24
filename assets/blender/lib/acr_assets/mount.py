@@ -27,6 +27,11 @@ from . import animals as an
 BLEND = "wildmesh/Horse/SK_Horse.blend"
 WITHERS = 1.5  # metres, ground to the top of the withers in the idle pose
 TRIS = 16000
+# Triangles per material of the pack (#233 follow-up), within `TRIS`: an even ratio left the
+# hide 3.6 k while the alpha hair cards kept 8 k, so the barrel, neck and head showed facets
+# in the free camera. Alpha cards still read as strands with far fewer triangles; the eyes
+# (3.9 k in the pack) are two small balls.
+PARTS = {"body": 9000, "hair": 3600, "saddle2": 2000, "saddle1": 1200, "eye": 200}
 SRC_FPS = 30
 # Leg bones whose fallen pose is relaxed (bent a little) instead of the standing pose's.
 # Fallen legs (#287): (bone, degrees, towards): each joint bends its bone towards the tail
@@ -50,7 +55,7 @@ class Horse:
         return self.arm.data.bones[bone].tail_local.copy()
 
 
-def load(name, parent, clips, withers=WITHERS, tris=TRIS, coat=None):
+def load(name, parent, clips, withers=WITHERS, tris=TRIS, coat=None, parts=PARTS):
     """The horse under `parent` with `clips` = {key: (source action, mode, frames[, a, b])}
     (modes of `acr_assets.animals`), its coat tinted by `coat` (`COAT`). Returns a `Horse`."""
     path = os.path.join(an.sources(), *BLEND.split("/"))
@@ -89,9 +94,8 @@ def load(name, parent, clips, withers=WITHERS, tris=TRIS, coat=None):
     _prune(arm, meshes)
     stats["bones"] = len(arm.data.bones)
     stats["source_triangles"] = sum(sum(len(p.vertices) - 2 for p in m.data.polygons) for m in meshes)
-    stats["triangles"] = an._decimate(meshes, tris)
-    for m in meshes:
-        _apply_decimate(m)
+    stats["part_triangles"] = _decimate_parts(meshes, {k: int(v * tris / TRIS) for k, v in parts.items()})
+    stats["triangles"] = sum(sum(len(p.vertices) - 2 for p in m.data.polygons) for m in meshes)
 
     an._show(arm, stand_src, stand_src.frame_range[0])
     h = an._head_dir(arm)
@@ -202,27 +206,42 @@ def _tint(im, rgb):
     im.pack()
 
 
-def _apply_decimate(m):
-    """Bakes the decimation into the mesh (keeping its vertex groups): otherwise every
-    sampled frame of the export decimates the full mesh again."""
-    dec = [md for md in m.modifiers if md.type == "DECIMATE"]
-    if not dec or (m.data.shape_keys and len(m.data.shape_keys.key_blocks)):
-        return
-    others = [md for md in m.modifiers if md.type != "DECIMATE"]
-    for md in others:
-        md.show_viewport = False
-    bpy.context.view_layer.update()
-    ev = m.evaluated_get(bpy.context.evaluated_depsgraph_get())
-    me = bpy.data.meshes.new_from_object(ev, preserve_all_data_layers=True, depsgraph=bpy.context.evaluated_depsgraph_get())
-    old = m.data
-    m.data = me
-    for md in dec:
-        m.modifiers.remove(md)
-    for md in others:
-        md.show_viewport = True
-    if old.users == 0:
-        bpy.data.meshes.remove(old)
-    bpy.context.view_layer.update()
+def _tris_by_material(m):
+    out = {}
+    for p in m.data.polygons:
+        out[p.material_index] = out.get(p.material_index, 0) + len(p.vertices) - 2
+    return out
+
+
+def _decimate_parts(meshes, budget):
+    """Collapses each material's faces to its own triangle count `budget` = {name part:
+    triangles} (edit-mode decimate of the material's faces only, so the weights stay and
+    the other parts are untouched). Returns {part: [source, kept]}."""
+    out = {}
+    for m in meshes:
+        before = _tris_by_material(m)
+        mats = m.data.materials
+        for o in bpy.context.view_layer.objects:
+            o.select_set(False)
+        m.select_set(True)
+        bpy.context.view_layer.objects.active = m
+        for i, n in sorted(before.items()):
+            mat = mats[i] if i < len(mats) else None
+            key = next((k for k in budget if mat and k in mat.name.lower()), None)
+            if key is None or n <= budget[key]:
+                continue
+            bpy.ops.object.mode_set(mode="EDIT")
+            bpy.ops.mesh.select_all(action="DESELECT")
+            m.active_material_index = i
+            bpy.ops.object.material_slot_select()
+            bpy.ops.mesh.decimate(ratio=budget[key] / n)
+            bpy.ops.object.mode_set(mode="OBJECT")
+        after = _tris_by_material(m)
+        for i, n in sorted(before.items()):
+            mat = mats[i] if i < len(mats) else None
+            name = next((k for k in budget if mat and k in mat.name.lower()), mat.name if mat else str(i))
+            out[name] = [n, after.get(i, 0)]
+    return out
 
 
 KEEP = ("saddle", "stirrup_02_l", "stirrup_02_r", "reins_01_l", "reins_01_r")
@@ -425,39 +444,107 @@ def key_clip(arm, name, horse_frames, rider_keys, pose, prefix="rider."):
     return act
 
 
-def saddlecloth(horse, name, rgb, half_len=0.36, drop=0.42, offset=0.018):
-    """A cloth under the saddle in the regiment's colour: the horse's body faces around the
-    saddle (within `half_len` along the back, down to `drop` below the seat) copied and
-    pushed out by `offset`, skinned like the hide under it."""
+def saddlecloth(horse, name, rgb, half_len=0.36, drop=0.42, offset=0.018, rows=12, cols=9):
+    """A cloth under the saddle in the regiment's colour: an even grid laid on the hide
+    around the saddle (within `half_len` along the back, its corners rounded inwards, down to
+    `drop` below the top of the back), `offset` off the hide and skinned like the hide under
+    each grid point (barycentric weights of the face hit).
+
+    It used to be the hide's own faces copied and pushed out: after the decimation a few
+    large triangles chosen by their centres, so its edge was jagged, holes showed the coat
+    between the faces and the pack's girth cut through it (#233 follow-up). Writes
+    `saddlecloth` = {triangles, min_gap_mm, max_gap_mm} to the horse's stats."""
     import bmesh
+    from mathutils import interpolate
+    from mathutils.bvhtree import BVHTree
 
     body = horse.meshes[0]
     sad = horse.head("saddle")
-    bm = bmesh.new()
-    bm.from_mesh(body.data)
+    src = bmesh.new()
+    src.from_mesh(body.data)
     mats = body.data.materials
-    keep = [f for f in bm.faces if mats[f.material_index] and "body" in mats[f.material_index].name.lower()
-            and abs(f.calc_center_median().y - sad.y) < half_len * (1.0 - 0.35 * max(0.0, (sad.z - f.calc_center_median().z) / drop))
-            and f.calc_center_median().z > sad.z - drop]
-    gone = [f for f in bm.faces if f not in set(keep)]
-    bmesh.ops.delete(bm, geom=gone, context="FACES")
-    for v in bm.verts:
-        v.co += v.normal * offset
+    hide = {i for i, m in enumerate(mats) if m and "body" in m.name.lower()}
+    bmesh.ops.delete(src, geom=[f for f in src.faces if f.material_index not in hide], context="FACES")
+    bmesh.ops.triangulate(src, faces=src.faces[:])
+    src.faces.ensure_lookup_table()
+    src.normal_update()
+    dl = src.verts.layers.deform.active
+    tree = BVHTree.FromBMesh(src)
+    top = tree.ray_cast(Vector((sad.x, sad.y, sad.z + 3.0)), Vector((0, 0, -1)))[0].z
+    cz = top - 0.40
+
+    def hit(y, side, theta):
+        o = Vector((sad.x + side * math.sin(theta) * 3.0, y, cz + math.cos(theta) * 3.0))
+        return tree.ray_cast(o, (Vector((sad.x, y, cz)) - o).normalized())
+
+    def reach(y, side):
+        # The angle round the barrel at which the hide falls to `drop` below the top.
+        lo, hi = 0.0, math.radians(150)
+        for _ in range(24):
+            mid = (lo + hi) / 2
+            loc = hit(y, side, mid)[0]
+            if loc is not None and loc.z > top - drop:
+                lo = mid
+            else:
+                hi = mid
+        return lo
+
     me = bpy.data.meshes.new(name)
+    bm = bmesh.new()
+    groups = {}
+    grid = {}
+    for r in range(rows + 1):
+        u = 2.0 * r / rows - 1.0
+        for c in range(-cols, cols + 1):
+            t = abs(c) / cols
+            side = 1.0 if c >= 0 else -1.0
+            # Corners rounded: the lower edge shorter along the back than the top.
+            y = sad.y + u * half_len * (1.0 - 0.30 * t * t)
+            theta = reach(y, side) * t
+            loc, nrm, idx, _ = hit(y, side, theta)
+            if loc is None:
+                loc, nrm, idx, _ = tree.find_nearest(Vector((sad.x, y, top)))
+            f = src.faces[idx]
+            w = interpolate.poly_3d_calc([v.co for v in f.verts], loc)
+            n = sum((v.normal * wi for v, wi in zip(f.verts, w)), Vector()).normalized()
+            vert = bm.verts.new(loc + n * offset)
+            acc = {}
+            for v, wi in zip(f.verts, w):
+                for g, gw in v[dl].items():
+                    acc[g] = acc.get(g, 0.0) + wi * gw
+            best = sorted(acc.items(), key=lambda kv: (-kv[1], kv[0]))[:4]
+            tot = sum(gw for _, gw in best) or 1.0
+            groups[vert] = [(g, gw / tot) for g, gw in best if gw > 1e-4]
+            grid[r, c] = vert
+    for r in range(rows):
+        for c in range(-cols, cols):
+            quad = [grid[r, c], grid[r, c + 1], grid[r + 1, c + 1], grid[r + 1, c]]
+            face = bm.faces.new(quad)
+            face.normal_update()
+            mid = sum((v.co for v in quad), Vector()) / 4
+            if face.normal.dot(mid - Vector((sad.x, mid.y, cz))) < 0:
+                face.normal_flip()
+    src.free()
+    bm.verts.index_update()
+    order = list(bm.verts)
     bm.to_mesh(me)
     bm.free()
     obj = bpy.data.objects.new(name, me)
     bpy.context.scene.collection.objects.link(obj)
-    for g in body.vertex_groups:
-        obj.vertex_groups.new(name=g.name)
+    vgs = [obj.vertex_groups.new(name=g.name) for g in body.vertex_groups]
+    for i, v in enumerate(order):
+        for g, gw in groups[v]:
+            vgs[g].add([i], gw, "REPLACE")
     obj.parent = body.parent
     md = obj.modifiers.new("armature", "ARMATURE")
     md.object = horse.arm
-    me.materials.clear()
     mat = bpy.data.materials.new(name)
     mat.use_nodes = True
     bsdf = next(n for n in mat.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
     bsdf.inputs["Base Color"].default_value = (*rgb, 1.0)
     bsdf.inputs["Roughness"].default_value = 0.95
     me.materials.append(mat)
+    gaps = [tree.find_nearest(v.co)[3] for v in me.vertices]
+    horse.stats["saddlecloth"] = {"triangles": 2 * len(me.polygons), "min_gap_mm": round(min(gaps) * 1000, 1),
+                                  "max_gap_mm": round(max(gaps) * 1000, 1)}
     return obj
