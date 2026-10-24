@@ -38,7 +38,7 @@ def build(ctx):
         outfit_hd.gore(ob, "flesh")
     # The kit worn over the outfit (m2-hd-kit-worn): tricorn on socket.hat, crossbelts and
     # pack straps laid on the coat, the strapped items seated on the trunk (`kit_hd`).
-    kit, belts = kit_hd.wear(ctx, arm, body, outfit)
+    kit, belts, items = kit_hd.wear(ctx, arm, body, outfit)
     # The musket with the fixed bayonet on the hand, gripped by contact, as on hdman.
     grip = hdbody.contact_grip(ctx, arm, body)
     gun, gun_lods = gear_hd.build_item(ctx, "musket")
@@ -69,5 +69,7 @@ def build(ctx):
     ctx.stats["musket_penetration"] = penetration.measure(arm, sorted(clips), gun=gun)
     ctx.stats["fire_contacts"] = aiming.contacts(arm)
     ctx.stats["kit_hd"]["belt_clearance"] = kit_hd.clearance(arm, belts, outfit, sorted(clips))
+    ctx.stats["kit_hd"]["collisions"] = kit_hd.collisions(arm, items, outfit, sorted(clips))
+    ctx.stats["kit_hd"]["decay_missing"] = sorted({m.name for o in kit for m in o.data.materials if "acr_decay" not in m.keys()})
     ctx.stats["triangles"]["kit"] = sum(len(o.data.polygons) for o in kit if "acr_lod" not in o)
     am.pose(arm, {**poses.STAND_MUSKET, **grip})

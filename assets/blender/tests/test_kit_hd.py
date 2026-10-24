@@ -1,4 +1,5 @@
-"""kit_hd / gear_hd: belt weights without the arms, the tricorn's cocked brim (no bpy)."""
+"""kit_hd / gear_hd: belt weights without the arms, the solid straps, the tricorn's cocked
+brim (no bpy)."""
 
 import math
 import os
@@ -22,6 +23,35 @@ class TrunkWeights(unittest.TestCase):
     def test_at_most_four(self):
         w = kit_hd.trunk_weights({b: 0.2 for b in ("hips", "spine", "spine1", "spine2", "neck")})
         self.assertEqual(len(w), 4)
+
+
+class Straps(unittest.TestCase):
+    def test_resample_even_steps_keeps_ends(self):
+        pts, src = kit_hd.resample([(0, 0, 0), (0.1, 0, 0), (0.1, 0.3, 0)], 0.01)
+        self.assertEqual(len(pts), 41)
+        self.assertEqual(pts[0], (0, 0, 0))
+        self.assertAlmostEqual(pts[-1][1], 0.3)
+        gaps = [math.dist(pts[i], pts[i + 1]) for i in range(len(pts) - 1)]
+        self.assertTrue(all(abs(g - 0.01) < 0.002 for g in gaps))
+        self.assertEqual((src[0], src[-1]), (0, 1))
+
+    def test_solid_strap_is_closed(self):
+        for rows, across in ((2, 2), (7, 5)):
+            faces = kit_hd.strap_faces(rows, across)
+            edges = {}
+            for f in faces:
+                for i in range(len(f)):
+                    e = (f[i], f[(i + 1) % len(f)])
+                    edges[e] = edges.get(e, 0) + 1
+            for (a, b), c in edges.items():  # every edge once each way: closed, wound alike
+                self.assertEqual(c, 1)
+                self.assertIn((b, a), edges)
+            self.assertEqual(max(max(f) for f in faces), rows * 2 * across - 1)
+
+    def test_pits_bridged_bumps_kept(self):
+        nb = [[1], [0, 2], [1]]
+        self.assertEqual(kit_hd.fill_pits([0.0, -0.05, 0.0], nb, drop=0.004, passes=1)[1], -0.004)
+        self.assertEqual(kit_hd.fill_pits([0.0, 0.02, 0.0], nb, drop=0.004, passes=1)[1], 0.02)
 
 
 class Tricorn(unittest.TestCase):

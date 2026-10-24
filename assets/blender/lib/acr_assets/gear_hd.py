@@ -923,14 +923,16 @@ def _new_img(name, px, colour):
     return img
 
 
-def finish(ob, px, stats, ratios=LOD_RATIOS, lod_tex=LOD_TEX):
+def finish(ob, px, stats, ratios=LOD_RATIOS, lod_tex=LOD_TEX, layer=None):
     """Bakes the master's procedural materials into its own atlas (albedo with ambient
     occlusion, metallic-roughness, normal), swaps in the baked material, then builds and
-    bakes its levels. Returns the level objects (rest at the master's place)."""
+    bakes its levels. `layer`: the decay layer whose `acr_decay` extras every baked
+    material (master and levels) carries from its creation. Returns the level objects (rest
+    at the master's place)."""
     import bpy
     import numpy as np
 
-    from . import hdbody
+    from . import decay, hdbody
 
     sc = hdbody._cycles()
     sc.render.bake.margin = max(4, px // 256)
@@ -958,6 +960,8 @@ def finish(ob, px, stats, ratios=LOD_RATIOS, lod_tex=LOD_TEX):
         bpy.data.images.remove(i)
     src = list(ob.data.materials)
     mat = baked_material(f"{nm}.hd", alb, orm, nrm)
+    if layer:
+        mat["acr_decay"] = decay.extras(layer)
     from . import held
 
     held.set_materials(ob.data, [mat])
@@ -985,6 +989,8 @@ def finish(ob, px, stats, ratios=LOD_RATIOS, lod_tex=LOD_TEX):
         la.pack()
         lr.pack()
         lm = baked_material(f"{nm}.lod{level}", la, lr, ln)
+        if layer:
+            lm["acr_decay"] = decay.extras(layer)
         held.set_materials(lo.data, [lm])
         sc.render.bake.margin = max(2, lpx // 128)
         _bake_type(lo, ln, "NORMAL", selected=ob)
@@ -1017,14 +1023,23 @@ ITEMS = {
 }
 
 
-def build_item(ctx, key, prefix=None, **shape):
+# The decay layer of each item (`decay.LAYERS`; the knapsack is painted canvas), for items
+# that carry a decay mask (`COLOR_0`): without `acr_decay` the game would read the mask as
+# colour (the noise showed as rainbow on the worn kit).
+LAYERS = {"musket": "wood", "bayonet": "metal", "bayonet_scabbard": "leather", "cartridge_box": "leather",
+          "crossbelts": "leather", "hanger": "metal", "hanger_scabbard": "leather", "canteen": "wood",
+          "knapsack": "linen", "hanger_hilt": "metal", "belt_plate": "metal", "buckle": "metal", "tricorn": "wool"}
+
+
+def build_item(ctx, key, prefix=None, layer=None, **shape):
     """Builds, bakes and LODs item `key` (`shape`: keyword arguments of its mesh function,
-    e.g. the tricorn's crown fitted to the head); returns (master, [levels])."""
+    e.g. the tricorn's crown fitted to the head; `layer`: its decay layer when it will carry a
+    decay mask, e.g. `LAYERS[key]`); returns (master, [levels])."""
     fn, px = ITEMS[key]
     name = f"{prefix or ctx.name}.{key}"
     ob = fn(name, **shape)
     st = ctx.stats.setdefault("gear_hd", {})
-    lods = finish(ob, px, st)
+    lods = finish(ob, px, st, layer=layer)
     if key == "musket":
         st["grip"] = grip_geometry()
     return ob, lods
