@@ -1,7 +1,7 @@
 """Cycles proof renders of a built model in exact clip poses (`acr_assets.posecheck`).
 
     blender -b --factory-startup --python assets/blender/tools/render_pose.py -- \
-        <model.glb | model.blend> <out dir> <job>... [--poses <x.poses.json>] [--legacy]
+        <model.glb | model.blend> <out dir> <job>... [--poses <x.poses.json>] [--legacy] [--ground]
 
 A job is `NAME=CLIP:FRAME[:VIEW[:FOCUS[:SIZE]]]`: clip frame 0 = the clip's first frame;
 VIEW `front`, `side`, `3q`, `back` or `AZ,EL` degrees; FOCUS a bone name (default the whole
@@ -86,6 +86,8 @@ def legacy_play(sc, name, frame):
 
 
 def main(argv):
+    ground = "--ground" in argv
+    argv = [a for a in argv if a != "--ground"]
     legacy = "--legacy" in argv
     argv = [a for a in argv if a != "--legacy"]
     poses = None
@@ -111,6 +113,14 @@ def main(argv):
             o.hide_render = True
     poser = None if legacy else posecheck.Poser(sc)
     cam = studio(sc)
+    if ground:
+        # A real z=0 contact reference for footwear proofs (not an estimated shadow).
+        bpy.ops.mesh.primitive_plane_add(size=200, location=(0, 0, 0))
+        floor = bpy.context.object
+        floor.name = "proof.ground_z0"
+        mat = bpy.data.materials.new("proof.ground")
+        mat.diffuse_color = (0.35, 0.35, 0.35, 1)
+        floor.data.materials.append(mat)
     arm = next(o for o in sc.objects if o.type == "ARMATURE")
     for job in jobs:
         name, spec = job.split("=", 1)

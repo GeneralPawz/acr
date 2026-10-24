@@ -1098,6 +1098,13 @@ against one another. `model_layers --every-frame` checks every authored frame, i
 each clip's endpoint; `--steps 8` remains useful for the historical comparison. Proof
 renders use `posecheck` / `render_pose.py` and the build's pose dump.
 
+HD gaiters retain the independently draped calf, sewn at the ankle into an instep
+extension fitted 3 mm above the closed shoe last. An outer overlap carries the buttoned
+seam; a separate closed leather stirrup passes under each sole. The extension blends
+the calf weights into rigid foot weights. Shoe geometry is seated in the unchanged
+STAND pose at 3 mm ground clearance; `render_pose.py --ground` supplies a z=0 floor
+for the contact proof. `outfit.footwear` records the measured instep clearance.
+
 The HD collar and round cuffs use `outfit_hd.tailored_trim`: the coat simulation stays
 unchanged, then the authored `collar` and `cuff` panel faces are removed by pattern ID.
 Closed parametric bands replace them, with outward 4 mm solidify thickness and closed

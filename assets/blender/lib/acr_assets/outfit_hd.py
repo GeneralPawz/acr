@@ -477,7 +477,19 @@ def shoes(name, arm, body, skins=()):
     import bmesh
     from mathutils import Vector
 
-    from . import armature as am, body as bd
+    from . import armature as am, body as bd, poses
+
+    # Seat the rigid lasts in the unchanged STAND pose. Correct geometry in bind
+    # space, rather than translating the root or modifying a drill/aim stance.
+    saved = [(pb, pb.matrix_basis.copy()) for pb in arm.pose.bones]
+    arm.data.pose_position = "POSE"
+    am.pose(arm, poses.STAND_MUSKET)
+    bpy.context.view_layer.update()
+    stand = {s: arm.pose.bones[f"foot_{s}"].matrix @ arm.data.bones[f"foot_{s}"].matrix_local.inverted()
+             for s in ("l", "r")}
+    for pb, matrix in saved:
+        pb.matrix_basis = matrix
+    arm.data.pose_position = "REST"
 
     verts, faces, sides = [], [], []
     # Back to toe: rounded heel, high instep/tongue, broad ball, closed rounded toe.
@@ -505,6 +517,10 @@ def shoes(name, arm, body, skins=()):
                 faces.append((a, b, b + seg, a + seg))
         faces.append(tuple(start + i for i in reversed(range(seg))))
         faces.append(tuple(start + (len(rings)-1)*seg + i for i in range(seg)))
+        gap = min((stand[side] @ Vector(p)).z for p in verts[start:]) - 0.003
+        shift = stand[side].inverted().to_3x3() @ Vector((0, 0, gap))
+        for i in range(start, len(verts)):
+            verts[i] = Vector(verts[i]) - shift
     me = bpy.data.meshes.new(f"{name}.shoes")
     me.from_pydata(verts, [], faces)
     ob = bd.link(bpy.data.objects.new(me.name, me))
@@ -521,7 +537,7 @@ def shoes(name, arm, body, skins=()):
         for dx, dy, sx, sy in ((-0.020, 0, 0.005, 0.030), (0.020, 0, 0.005, 0.030),
                               (0, -0.013, 0.045, 0.004), (0, 0.013, 0.045, 0.004)):
             for v in bmesh.ops.create_cube(bm, size=1.0)["verts"]:
-                v.co = Vector((cx + dx + v.co.x*sx, -0.030 + dy + v.co.y*sy, 0.116 + v.co.z*0.005))
+                v.co = Vector((cx + dx + v.co.x*sx, -0.145 + dy + v.co.y*sy, 0.067 + v.co.z*0.005))
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
     me = bpy.data.meshes.new(f"{name}.shoe_buckles")
     bm.to_mesh(me); bm.free()
@@ -533,6 +549,117 @@ def shoes(name, arm, body, skins=()):
     for sk in (body, *skins):
         _delete_faces(sk, [v.co.z >= 0.145 for v in sk.data.vertices])
     return [(ob, "shoes"), (buckle, "brass")]
+
+
+def fit_gaiters(name, arm, body, pieces, keys):
+    """Sew the draped ankle into a vamp over the shoe, with an outer placket and stirrup.
+
+    This is a fitted extension of the independently settled gaiter, with shared
+    vertices at the ankle. Its weights blend continuously into the rigid foot.
+    """
+    import bpy
+    import bmesh
+    from mathutils import Vector
+    from . import armature, drape, hdbody
+
+    gaiters = [o for o in pieces if keys[o.name] == "gaiters"]
+    shoe_tree = _tree([o for o in pieces if keys[o.name] == "shoes"])
+    report = {"instep_clearance_mm": [], "stirrup_sides": 2, "outer_seams": 2}
+    for ob in gaiters:
+        bm = bmesh.new()
+        bm.from_mesh(ob.data)
+        # Part borders are coincident duplicates for cutting; merge the ankle's
+        # duplicates before extending it so the new vamp has shared smooth normals.
+        ankle = [v for v in bm.verts if v.co.z < 0.28]
+        bmesh.ops.remove_doubles(bm, verts=ankle, dist=1e-6)
+        deform = bm.verts.layers.deform.verify()
+        # A horizontal sewing line inside the ankle, with no doubled rim.
+        bmesh.ops.bisect_plane(bm, geom=list(bm.verts)+list(bm.edges)+list(bm.faces),
+                               plane_co=(0, 0, 0.22), plane_no=(0, 0, 1),
+                               dist=1e-6, clear_inner=True)
+        edges = [e for e in bm.edges if e.is_boundary and all(abs(v.co.z-0.22)<1e-5 for v in e.verts)]
+        boundary = {v for e in edges for v in e.verts}
+        rows = {v: [v] for v in boundary}
+        for v in boundary:
+            side = "l" if v.co.x > 0 else "r"
+            cx = arm.data.bones[f"foot_{side}"].head_local.x
+            a = math.atan2(v.co.x-cx, -v.co.y)
+            y = -0.020 - (0.110 if math.cos(a)>0 else 0.090)*math.cos(a)
+            # Read the actual shoe last, including its STAND seating correction.
+            width = 0.044 if y > -0.055 else 0.050
+            x = cx + width*0.92*math.sin(a)
+            hit = shoe_tree.ray_cast(Vector((x, y, 0.30)), Vector((0, 0, -1)), 0.40)[0]
+            if hit is None:
+                hit = shoe_tree.find_nearest(Vector((x, y, 0.08)))[0]
+            q = hit + Vector((0, 0, 0.003))
+            report["instep_clearance_mm"].append(round((q-hit).length*1000, 3))
+            weights = dict(v[deform])
+            foot = ob.vertex_groups.get(f"foot_{side}") or ob.vertex_groups.new(name=f"foot_{side}")
+            for t in (0.2, 0.4, 0.6, 0.8, 1.0):
+                co = v.co.lerp(q, t*t)
+                co.z = v.co.z*(1-t)+q.z*t
+                p = bm.verts.new(co)
+                share = t*t*(3-2*t)
+                for group, w in weights.items():
+                    p[deform][group] = w*(1-share)
+                p[deform][foot.index] = p[deform].get(foot.index, 0)+share
+                rows[v].append(p)
+        for e in edges:
+            loop = e.link_loops[0]
+            a, b = loop.vert, loop.link_loop_next.vert
+            for j in range(5):
+                bm.faces.new((rows[b][j], rows[a][j], rows[a][j+1], rows[b][j+1]))
+        bmesh.ops.recalc_face_normals(bm, faces=list(bm.faces))
+        bm.to_mesh(ob.data)
+        bm.free()
+        hdbody.limit_weights(ob)
+
+    def detail(label, verts, faces, thickness=0, rigid_side=None):
+        me = bpy.data.meshes.new(f"{name}.{label}")
+        me.from_pydata(verts, [], faces)
+        ob = bpy.data.objects.new(me.name, me)
+        bpy.context.collection.objects.link(ob)
+        if rigid_side:
+            ob.vertex_groups.new(name=f"foot_{rigid_side}").add(list(range(len(verts))), 1, "REPLACE")
+        else:
+            for i, w in enumerate(drape.transfer_weights(ob, body, arm, under=gaiters)):
+                for b, x in w.items():
+                    (ob.vertex_groups.get(b) or ob.vertex_groups.new(name=b)).add([i], x, "REPLACE")
+        if thickness:
+            solid = ob.modifiers.new("closed leather overlap", "SOLIDIFY")
+            solid.thickness, solid.offset = thickness, 1
+            with bpy.context.temp_override(object=ob, active_object=ob):
+                bpy.ops.object.modifier_apply(modifier=solid.name)
+        armature.bind(ob, arm)
+        hdbody.limit_weights(ob)
+        ob["hd_trim"] = True
+        pieces.append(ob)
+        keys[ob.name] = "gaiters"
+
+    tree = _tree(gaiters)
+    for side, sx in (("l", 1), ("r", -1)):
+        cx = arm.data.bones[f"foot_{side}"].head_local.x
+        verts = []
+        # Overlap seam on the outside; the existing pewter button row seats on it.
+        for z in np.linspace(0.12, 0.49, 38):
+            for y in (-0.007, 0.007):
+                p = tree.ray_cast(Vector((cx+sx*0.25, y, z)), Vector((-sx, 0, 0)), 0.30)[0]
+                if p is None:
+                    p = tree.find_nearest(Vector((cx+sx*0.05, y, z)))[0]
+                verts.append(p+Vector((sx*0.0015, 0, 0)))
+        detail(f"gaiter_outer_seam_{side}", verts,
+               [(2*j, 2*j+1, 2*j+3, 2*j+2) for j in range(37)], 0.0015)
+        # A closed 18 mm leather stirrup: round both edges and under the sole.
+        sole = shoe_tree.ray_cast(Vector((cx, -0.051, -0.10)), Vector((0, 0, 1)), 0.30)[0].z
+        path = [(cx-0.045, 0.080), (cx-0.052, 0.045), (cx-0.052, sole+0.005),
+                (cx-0.045, sole-0.001), (cx, sole-0.001), (cx+0.045, sole-0.001),
+                (cx+0.052, sole+0.005), (cx+0.052, 0.045), (cx+0.045, 0.080)]
+        verts = [(x, y, z) for x, z in path for y in (-0.060, -0.042)]
+        detail(f"gaiter_stirrup_{side}", verts,
+               [(2*j, 2*j+1, 2*j+3, 2*j+2) for j in range(len(path)-1)], 0.0015, side)
+    ds = report["instep_clearance_mm"]
+    report["instep_clearance_mm"] = [min(ds), max(ds)]
+    return report
 
 def relax_tailoring(ob, garment, body_tree):
     """Remove solver-scale buckling before splitting panels, keeping the simulated cut.
@@ -1033,6 +1160,7 @@ def build(ctx, arm, body, body_lods=(), palette=None):
     for sh, key in shoes(ctx.name, arm, body, body_lods):
         pieces.append(sh)
         keys[sh.name] = key
+    st["footwear"] = fit_gaiters(ctx.name, arm, body, pieces, keys)
     st["drape_s"] = round(time.time() - t0, 1)
 
     # Compose/cull against the actual new trim, not the discarded simulated bands.
