@@ -26,8 +26,14 @@ const ORDERS: &[u8] = b"#LINE15 SYM2 19 2 9 3 1 2\r\n   C   C   C\r\n      \r\n*
 #COL15 SYM2 9 2 9 3 1 2\r\n C C\r\n\r\n***\r\n***\r\n***\r\n***\r\n***\r\n#END\r\n#EXIT\r\n";
 const GROUPS: &[u8] = b"2\r\nLINE 1 0 1 1 #LINE15\r\nCOL 1 0 1 1 #COL15\r\n";
 
-const ON: Rules =
-    Rules { hit_locations: false, body_spacing: false, mortars: false, corpse_piles: false, group_move: true, cannon_fire: false };
+const ON: Rules = Rules {
+    hit_locations: false,
+    body_spacing: false,
+    mortars: false,
+    corpse_piles: false,
+    group_move: true,
+    cannon_fire: false,
+};
 
 struct Setup {
     w: World,

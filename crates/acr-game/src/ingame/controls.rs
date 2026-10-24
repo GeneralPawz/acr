@@ -436,11 +436,7 @@ impl InGame {
             }
             Some(Chord::Camera) => {
                 let free = self.three_d.toggle_free();
-                self.leader_hint(if free {
-                    FREE_CAMERA_HINT
-                } else {
-                    "Kamera fest"
-                });
+                self.leader_hint(if free { FREE_CAMERA_HINT } else { "Kamera fest" });
                 Some(GameKey::None)
             }
             Some(Chord::Key(named)) => Some(GameKey::Leader(named)),

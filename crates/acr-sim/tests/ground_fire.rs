@@ -70,8 +70,14 @@ fn setup(rules: Rules) -> (World, TypeId, TypeId, TypeId) {
     (w, mor, tgt, sol)
 }
 
-const ON: Rules =
-    Rules { hit_locations: true, body_spacing: false, mortars: false, corpse_piles: false, group_move: false, cannon_fire: false };
+const ON: Rules = Rules {
+    hit_locations: true,
+    body_spacing: false,
+    mortars: false,
+    corpse_piles: false,
+    group_move: false,
+    cannon_fire: false,
+};
 
 /// A mortar shells a target; returns the world after `ticks` and the first fire seen.
 fn shell(rules: Rules, ticks: u32) -> (World, Option<GroundFire>) {

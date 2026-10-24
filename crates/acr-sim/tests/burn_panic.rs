@@ -28,8 +28,14 @@ fn def(name: &str, extra: &str) -> UnitDef {
 const ORDERS: &[u8] = b"#LINE15 SYM2 19 2 9 3 1 2\r\n   C   C   C\r\n      \r\n***************\r\n#END\r\n#EXIT\r\n";
 const GROUPS: &[u8] = b"1\r\nLINE 1 0 1 1 #LINE15\r\n";
 
-const ON: Rules =
-    Rules { hit_locations: true, body_spacing: false, mortars: false, corpse_piles: false, group_move: false, cannon_fire: false };
+const ON: Rules = Rules {
+    hit_locations: true,
+    body_spacing: false,
+    mortars: false,
+    corpse_piles: false,
+    group_move: false,
+    cannon_fire: false,
+};
 
 /// An officer and 15 pikemen formed in a line; returns the world and the soldiers.
 fn formed(rules: Rules) -> (World, Vec<EntityId>) {

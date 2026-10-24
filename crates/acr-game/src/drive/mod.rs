@@ -777,7 +777,14 @@ impl Driver {
                             kind: ui::GameKind::Blank(setup),
                             players,
                             local_player: 0,
-                            rules: acr_sim::Rules { hit_locations, body_spacing, mortars, corpse_piles, group_move, cannon_fire },
+                            rules: acr_sim::Rules {
+                                hit_locations,
+                                body_spacing,
+                                mortars,
+                                corpse_piles,
+                                group_move,
+                                cannon_fire,
+                            },
                         }));
                         if let Mode::InGame(g) = &mut game.mode {
                             g.hud_hidden = !hud;
@@ -837,7 +844,14 @@ impl Driver {
                             kind: ui::GameKind::RandomMap(map),
                             players,
                             local_player: 0,
-                            rules: acr_sim::Rules { hit_locations, body_spacing, mortars, corpse_piles, group_move, cannon_fire },
+                            rules: acr_sim::Rules {
+                                hit_locations,
+                                body_spacing,
+                                mortars,
+                                corpse_piles,
+                                group_move,
+                                cannon_fire,
+                            },
                         }));
                     }
                 }
