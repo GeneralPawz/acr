@@ -37,6 +37,48 @@ SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-o", "Identities
        "-o", "ServerAliveInterval=30", "-i", KEY, HOST]
 SLOTS = 2
 HERE = os.path.dirname(os.path.abspath(__file__))
+# Where Git Bash's MSYS root lies on Windows: a POSIX path it rewrote starts with this.
+MSYS_ROOTS = [r.replace("\\", "/").rstrip("/") for r in
+              (os.environ.get("ACR_MSYS_ROOT", ""), r"C:/Program Files/Git", r"C:/Program Files (x86)/Git") if r]
+
+
+def unmsys(value):
+    """Undoes Git Bash's path conversion of a VM path: `C:/Program Files/Git/home/x` (also after
+    `K=`) becomes `/home/x` again. The wrappers switch the conversion off; this covers calling
+    the .py directly. Values without that prefix are returned unchanged."""
+    key, eq, val = value.partition("=") if "=" in value and not value[:3].endswith(":/") else ("", "", value)
+    norm = val.replace("\\", "/")
+    for root in MSYS_ROOTS:
+        if norm.lower().startswith(root.lower() + "/"):
+            val = norm[len(root):]
+            break
+    return f"{key}{eq}{val}"
+
+
+def local_path(p):
+    """A local path as Windows sees it: `/c/Users/x` (Git Bash form) becomes `C:/Users/x`."""
+    if p and len(p) >= 3 and p[0] == "/" and p[1].isalpha() and p[2] == "/":
+        return f"{p[1].upper()}:/{p[3:]}"
+    return p
+
+
+def bounded(cmd, timeout=None, input=None):
+    """subprocess.run(capture_output=True) that cannot hang past `timeout` (+5 s) on Windows:
+    run() waits without a limit for the pipes after killing a timed-out child, which never
+    ends while a grandchild keeps them open. Returns CompletedProcess (bytes); raises
+    subprocess.TimeoutExpired."""
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL,
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        out, err = p.communicate(input, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        p.kill()
+        try:
+            p.communicate(timeout=5)
+        except (subprocess.TimeoutExpired, OSError, ValueError):
+            pass
+        raise
+    return subprocess.CompletedProcess(cmd, p.returncode, out, err)
 
 
 def files(wt):
@@ -55,9 +97,13 @@ def sync(wt, name, timeout=None):
            f"tar xzf - -C ~/stage/{name}; install -m 755 ~/stage/{name}/.acr-check.sh ~/bin/acr-check; "
            f"rm ~/stage/{name}/.acr-check.sh; rsync -rl --checksum --delete "
            f"--exclude=/target --exclude=/target-win ~/stage/{name}/ ~/wt/{name}/")
-    r = subprocess.run(SSH + [cmd], input=buf.getvalue(), timeout=timeout)
+    if timeout is None:
+        r = subprocess.run(SSH + [cmd], input=buf.getvalue())
+    else:  # the studio server: must never hang
+        r = bounded(SSH + [cmd], timeout, buf.getvalue())
     if r.returncode != 0:
-        sys.exit(f"vm_cargo: sync failed ({r.returncode})")
+        err = (r.stderr or b"").decode(errors="replace").strip()[-500:] if isinstance(r.stderr, bytes) else ""
+        sys.exit(f"vm_cargo: sync failed ({r.returncode}) {err}")
 
 
 def run(name, command):
@@ -75,12 +121,13 @@ def run(name, command):
 def get(name, pairs):
     failed = False
     for p in pairs:
-        remote, local = p.split("=", 1)
-        # MSYS may have rewritten a leading-slash REMOTE into a Windows path; undo that.
         if "=" not in p:
             print(f"vm_cargo: --get needs REMOTE=LOCAL, got {p!r}", file=sys.stderr)
             failed = True
             continue
+        remote, local = p.split("=", 1)
+        # MSYS may have rewritten a leading-slash REMOTE into a Windows path; undo that.
+        remote, local = unmsys(remote), local_path(local)
         if not remote.startswith(("/", "~")):
             remote = f"~/wt/{name}/{remote}"
         parent, base = os.path.split(remote.rstrip("/"))
@@ -129,7 +176,7 @@ def main():
             rest.append(cmd[i])
             i += 1
     cmd = rest
-    wt = subprocess.run(["git", "-C", a.wt, "rev-parse", "--show-toplevel"],
+    wt = subprocess.run(["git", "-C", local_path(a.wt), "rev-parse", "--show-toplevel"],
                         capture_output=True, text=True, check=True).stdout.strip()
     name = a.name or os.path.basename(wt)
     if not a.no_sync:

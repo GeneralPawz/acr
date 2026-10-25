@@ -1,3 +1,9 @@
 #!/bin/bash
 # Wrapper on the PATH (plugin bin/): see vm_drive.py.
-exec python "$(dirname "$(readlink -f "$0")")/vm_drive.py" "$@"
+# Git Bash rewrites arguments that look like POSIX paths (/home/x, K=/home/x) into Windows
+# paths (C:/Program Files/Git/home/x) when it starts a native program. Every path here is
+# either a VM path or an explicit C:/ path, so switch that off; the script converts /c/... itself.
+export MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1
+here=$(dirname "$(readlink -f "$0")")
+command -v cygpath >/dev/null 2>&1 && here=$(cygpath -m "$here")   # our own path is converted by hand
+exec python "$here/vm_drive.py" "$@"

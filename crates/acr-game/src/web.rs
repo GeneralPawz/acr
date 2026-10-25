@@ -117,7 +117,7 @@ fn run(assets: WebAssets) -> Result<(), JsValue> {
     game.set_saves(Box::new(acr_app::saves::BrowserSaves::default()));
     game.set_profiles(Box::new(acr_app::saves::BrowserSaves::with_prefix("acr-player:")));
     // The options in `localStorage` entry `acr-settings`.
-    game.set_settings_store(Box::new(acr_app::saves::BrowserSaves::with_prefix("acr-")));
+    game.set_settings_store(Box::new(acr_app::saves::BrowserSaves::with_prefix("acr-")), "localStorage acr-settings");
     event_loop.spawn_app(game);
     Ok(())
 }

@@ -375,7 +375,11 @@ impl Settings {
                     s.models = match value {
                         "units" => Models::Units,
                         "all" => Models::All,
-                        _ => Models::Off,
+                        "off" => Models::Off,
+                        other => {
+                            log::warn!("settings: unknown models value {other:?} (off, units or all), using off");
+                            Models::Off
+                        }
                     }
                 }
                 "camera" => s.camera = if value == "free" { CameraMode::Free } else { CameraMode::Fixed },

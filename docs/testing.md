@@ -337,8 +337,8 @@ path) and `models=all` in the settings (the VM's showcase settings have it).
   (`Orbit::ORIGINAL`, the same picture as the fixed camera), but the scale stays fitted.
   To compare a model with its sprite, use the plain bench `camera` (`x`, `y`, `"zoom": 1`,
   `"lift": 0`, no `yaw`/`pitch`) once with `models=off` and once with `models=all` in the
-  settings (`ACR_SETTINGS_DIR`; from Git Bash write `//home/...` so the path is not
-  rewritten). Measured that way (2026-10-24, shadows off, VM): EngDo1, EngCen, SiuMel,
+  settings (`acr-vm-drive --settings models=off`, then `models=all`; the game logs
+  `settings: loaded <file>: models=...`). Measured that way (2026-10-24, shadows off, VM): EngDo1, EngCen, SiuMel,
   EngM18 and DelLut draw within 0.93–1.12 of the sprite's height and 0.82–1.02 of its
   width; at zoom 1 one model metre is 30 px, as the sprites.
 - **`sheet`**: renders a grid inside the game and writes one PNG to `path`: a row per

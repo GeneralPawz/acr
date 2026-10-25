@@ -34,12 +34,15 @@ acr-vm-cargo -- cargo xtask assets artpus \
 
 ```
 acr-vm-drive --steps C:/abs/steps.json --out C:/abs/out [--models C:/abs/glbs | --models wt:target/assets/units] [--size 1600x900] [--no-build]
+             [--settings models=all,shadows=off] [--env K=V ...]
 ```
 
 1. Builds your branch's release game on the VM.
 2. Runs it with `--drive --drive-gpu` on the GPU.
 3. Feeds the steps (a JSON list of driver requests: load the `acr-driver` skill).
 4. Fetches `answers.jsonl`, `game.log` and the screenshots into `--out`. Give each screenshot step a relative `path`.
+
+**Settings:** the run reads the showcase `settings.txt` (`models=units`). `--settings k=v,...` copies it into the run folder with those keys set (e.g. `models=all` for buildings too, `models=off` for sprites). `--env K=V` exports more variables; VM paths work as written from Git Bash (`--env ACR_SETTINGS_DIR=/home/claude/x`): the wrappers switch MSYS path conversion off, so no `//home` trick. After the run it prints the game's `settings: loaded <file>: models=...` line; `no settings file at ...` means the path was wrong and the defaults (models off) were used.
 
 **Models:** the showcase models are synced up automatically; `--models` lays your own glbs over them for that run only. A screenshot takes about 30 ms, and a small run without a rebuild about 3 s. One run is one game process, so it is one field.
 

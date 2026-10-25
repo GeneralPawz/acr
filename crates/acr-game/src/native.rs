@@ -66,8 +66,12 @@ fn run(drive: Option<crate::drive::Options>) -> Result<(), String> {
     // (for runs side by side). The driver uses the defaults unless `ACR_SETTINGS_DIR` is set.
     let settings_dir = std::env::var_os("ACR_SETTINGS_DIR").map(PathBuf::from);
     let settings_dir = if drive.is_some() { settings_dir } else { settings_dir.or_else(data_dir) };
-    if let Some(settings) = settings_dir {
-        game.set_settings_store(Box::new(acr_app::saves::FolderSaves::files(&settings, "", "txt")));
+    match settings_dir {
+        Some(settings) => {
+            let place = settings.join("settings.txt").display().to_string();
+            game.set_settings_store(Box::new(acr_app::saves::FolderSaves::files(&settings, "", "txt")), &place);
+        }
+        None => log::info!("settings: driver without ACR_SETTINGS_DIR, using the defaults (models=Off)"),
     }
     if let Some(options) = drive {
         game.set_driver(options);

@@ -503,9 +503,17 @@ impl Game {
     }
 
     /// Where the options are kept between runs (`settings.txt` in `%LOCALAPPDATA%\ACR`, the
-    /// browser's storage); takes the stored options.
-    pub fn set_settings_store(&mut self, store: Box<dyn acr_app::saves::SaveStore>) {
+    /// browser's storage); takes the stored options. `place` names it in the log, which says
+    /// whether a stored file was read and the models mode it gave (a wrong path silently
+    /// meant the defaults, models off).
+    pub fn set_settings_store(&mut self, store: Box<dyn acr_app::saves::SaveStore>, place: &str) {
         self.stored_settings = self.ui.set_settings_store(store);
+        let s = self.ui.settings();
+        if self.stored_settings {
+            log::info!("settings: loaded {place}: models={:?} controls={:?}", s.models, s.controls);
+        } else {
+            log::warn!("settings: no settings file at {place}, using the defaults: models={:?}", s.models);
+        }
         let (effects, music) = self.ui.settings().volumes();
         self.audio.set_volumes(effects, music);
     }
