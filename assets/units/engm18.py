@@ -6,7 +6,7 @@ Colours are projected from the `#STAND` sprites (lighting reduced, mirrored dire
 the symmetric layers); without a game folder the palette below is used.
 """
 
-from acr_assets import line
+from acr_assets import line, line_kit
 
 TYPE = "EngM18"
 # Sprite checks run by `cargo xtask assets --check` (arguments of `acr model-check`).
@@ -51,8 +51,12 @@ FIT = dict(line.FIT)
 HAT_SOURCE = "pixal3d/eq_tricorn_hat.glb"
 
 
+# Worn kit (`line_kit`): solid crossbelts and modelled items over the coat.
+KIT = line_kit.KITS["eng"]
+
+
 def spec(hat_source=HAT_SOURCE):
-    return line.spec(MD, palette=PALETTE, build=BUILD, fit=FIT, hat_source=hat_source)
+    return line.spec(MD, kit=KIT, palette=PALETTE, build=BUILD, fit=FIT, hat_source=hat_source)
 
 
 def make(root, name, build=None):

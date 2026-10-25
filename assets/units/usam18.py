@@ -5,7 +5,7 @@ turnbacks and buttons, white waistcoat and breeches, black gaiters, white belts,
 bound with white tape (Mollo & McGregor). Waistcoat and lining keep the palette's white.
 """
 
-from acr_assets import line
+from acr_assets import line, line_kit
 
 TYPE = "UsaM18"
 CHECKS = ["--anim STAND", "--anim DEATHLIE1"]
@@ -42,8 +42,12 @@ PALETTE = {
 }
 
 
+# Worn kit (`line_kit`): solid crossbelts and modelled items over the coat.
+KIT = line_kit.KITS["usa"]
+
+
 def spec():
-    return line.spec(MD, palette=PALETTE, fixed=("waistcoat", "lining"), lace={"hat": 0.012})
+    return line.spec(MD, kit=KIT, palette=PALETTE, fixed=("waistcoat", "lining"), lace={"hat": 0.012})
 
 
 def make(root, name, build=None):

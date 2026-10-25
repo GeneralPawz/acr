@@ -5,7 +5,7 @@ breeches, black gaiters, buff belts, a tricorn bound with white tape. Coat, wais
 lining keep their palette colours (`fixed`): the sprite mix would grey the white coat.
 """
 
-from acr_assets import line
+from acr_assets import line, line_kit
 
 TYPE = "SpnM18"
 CHECKS = ["--anim STAND", "--anim DEATHLIE1"]
@@ -47,8 +47,12 @@ PALETTE = {
 HAT_SOURCE = "pixal3d/eq_tricorn_hat.glb"
 
 
+# Worn kit (`line_kit`): solid crossbelts and modelled items over the coat.
+KIT = line_kit.KITS["spn"]
+
+
 def spec(hat_source=HAT_SOURCE):
-    return line.spec(MD, palette=PALETTE, fixed=("coat", "lining", "waistcoat"), lace={"hat": 0.012}, hat_source=hat_source)
+    return line.spec(MD, kit=KIT, palette=PALETTE, fixed=("coat", "lining", "waistcoat"), lace={"hat": 0.012}, hat_source=hat_source)
 
 
 def make(root, name, build=None):

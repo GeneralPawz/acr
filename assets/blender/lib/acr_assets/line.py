@@ -29,6 +29,9 @@ parameters (`spec`), then `build(ctx)` calls `line.build(ctx, SPEC)`.
   own right-hand socket (`socket.blade_r`, like the dragoon's sabre); in the strike clips
   (`ATTACK`, `ATTACK_*`) it is shown and the musket hidden in the hand and slung on the back
   (`socket.sling`), every other clip the other way round (`add_sidearm`, `sidearm_strikes`);
+- `kit`: None or the worn kit's pieces (`line_kit.KITS` per nation; draped garments only):
+  solid crossbelts laid over the coat and modelled items (cartridge box, belt plate,
+  scabbards, knapsack) replacing the `gear` ribbons and boxes they cover (`line_kit.COVERS`);
 - `lace`: None (no lace) or {"hat": braid width in m on the tricorn's brim, "buttonholes":
   True for bars of lace on the lapels and cuffs}, in `palette["lace"]` (`masks.py`).
 
@@ -44,7 +47,7 @@ from . import aim as aiming
 from . import armature as am
 from . import body as bd
 from . import clips as wclips
-from . import crawl, faces, finish, gear, grips, heads, held, masks, outfit, poses, registry, rig, straps
+from . import crawl, faces, finish, gear, grips, heads, held, line_kit, masks, outfit, poses, registry, rig, straps
 from .humans import LAYER_OF, Character, prepare_export
 
 # The English musketeer's colours (`EngM18`): the defaults a nation overrides.
@@ -67,7 +70,7 @@ FIT = {
 }
 DEFAULTS = {"build": BUILD, "fit": FIT, "hat": "tricorn", "gear": ("crossbelts", "cartridge", "knapsack"),
             "weapon": "musket", "mix": 0.5, "fixed": (), "lapels": "facings", "lace": None, "flag": None, "sidearm": None,
-            "hat_source": None}
+            "hat_source": None, "kit": None}
 
 
 def _cartridge(ch, name, s):
@@ -180,12 +183,20 @@ def make(root, name, s):
     # and take the weights of the garments under them (they move with the coat).
     ch.strap_surface, ch.strap_offsets = surf, offsets
     ch.strap_under = fixed if build.get("garments") else None
-    registry.build_gear([g for g in s["gear"] if g in STRAPS], ch, name, s)
+    # Worn kit (`line_kit`, garments only): solid straps and modelled items replace the
+    # ribbons and boxes they cover.
+    kit = line_kit.check(s["kit"]) if build.get("garments") else ()
+    worn = line_kit.covered(s["gear"], kit)
+    registry.build_gear([g for g in worn if g in STRAPS], ch, name, s)
+    if kit:
+        line_kit.straps(ch, name, kit)
     ch.bone_layer()
     ch.caps()
 
     # Strapped gear (rest pose, rigid on deforming bones: follows `deflate`).
-    registry.build_gear([g for g in s["gear"] if g not in STRAPS], ch, name, s)
+    registry.build_gear([g for g in worn if g not in STRAPS], ch, name, s)
+    if kit:
+        ch.kit_items = line_kit.items(ch, name, kit)
 
     # Held gear on sockets, placed in the standing pose (drops at death).
     am.pose(ch.arm, poses.STAND_MUSKET)
@@ -672,6 +683,8 @@ def _musket_clips(ctx, ch, md):
 
 def build(ctx, s):
     """Builds, animates, paints and prepares for export the soldier of SPEC `s`."""
+    import bpy
+
     md = s["md"]
     ch = make(ctx.root, ctx.name, s)
     musket = s["weapon"] == "musket"
@@ -691,6 +704,9 @@ def build(ctx, s):
                 extra.append(clip)
         for clip, keys in crawl.clips().items():
             am.add_clip(ch.arm, clip, keys)
+    if getattr(ch, "kit_items", None):
+        # The worn kit's items in each other and the coat in them, per clip (`kit_hd.collisions`).
+        ch.kit_stats["collisions"] = line_kit.collisions(ch, [c for c in md if c in bpy.data.actions])
     am.set_clip(ch.arm, "STAND")
     report = {}
     colours = ch.colours(ctx.ref, s["palette"], report=report, mix=s["mix"], fixed=s["fixed"])
@@ -718,6 +734,8 @@ def build(ctx, s):
                  "fire_contacts": getattr(ctx, "fire_contacts", None)}
     if getattr(ch, "genfit", None):
         ctx.stats["hat_source"] = ch.genfit
+    if getattr(ch, "kit_stats", None):
+        ctx.stats["kit"] = ch.kit_stats
 
 
 def pose_for(ch, s, clip):

@@ -45,6 +45,28 @@ session folds these notes into docs/humans-roster.md.
 | SpnF18 | SpnM18's uniform | `belt_l`, colour `burgundy` | |
 | UsaF18 | UsaM18's uniform | `belt_l`, colour `stripes` | |
 
+## Worn kit (m2-line-kit)
+
+SPEC `kit` (`line_kit.py`, the `gear_hd` kit at regular-unit scale, draped garments only):
+solid crossbelts laid over the coat at a fixed offset (`kit_hd.lay_strap`, 3 samples across (pack straps 2),
+a row every 3 cm, trunk weights only) and the `gear_hd` items collapsed to `line_kit.TRIS`,
+coloured by the unit's palette (`line_kit.MAT_KEY`: leather `cartridge`, buff `belts`,
+`brass`, `metal`, canvas `knapsack`), each rigid on one trunk bone. They replace the
+ribbons and boxes of `gear` (`line_kit.COVERS`). No authored LOD nodes: one `acr_lod` node
+would switch the whole soldier to authored levels and drop its far meshes
+(`model_renderer::prepare_model`). Per nation (`line_kit.KITS`):
+
+| nation | pieces | why |
+|---|---|---|
+| Eng | crossbelts, oval belt plate, cartridge box, bayonet scabbard, knapsack | the battalion man after the 1768 warrant: no hanger, the plate on the bayonet belt |
+| Frn | crossbelts, cartridge box, bayonet scabbard, hanger (sabre-briquet), knapsack | the fusilier's sabre on the waist belt, buckles, no plate |
+| Spn | as Frn | sword and bayonet on the waist belt |
+| Usa | crossbelts, cartridge box, bayonet scabbard, knapsack | Continental line, no sword |
+
+Canteens are not worn yet: on the back hip the coat skirts swing through them (the HD kit's
+walking defect). Numbers: `stats.json` `kit` (triangles per piece, seat shifts, collisions
+per clip).
+
 ## Open points
 
 - The drummer's jab is made with the right stick (the hanger is not modelled: a held item

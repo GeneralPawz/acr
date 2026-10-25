@@ -8,7 +8,7 @@ cuts them from the red facings), and they and the waistcoat keep the palette's w
 (`fixed`) instead of taking the red the projection finds beside them.
 """
 
-from acr_assets import line
+from acr_assets import line, line_kit
 
 TYPE = "FrnM18"
 CHECKS = ["--anim STAND", "--anim DEATHLIE1"]
@@ -49,8 +49,12 @@ PALETTE = {
 HAT_SOURCE = "pixal3d/eq_tricorn_hat.glb"
 
 
+# Worn kit (`line_kit`): solid crossbelts and modelled items over the coat.
+KIT = line_kit.KITS["frn"]
+
+
 def spec(hat_source=HAT_SOURCE):
-    return line.spec(MD, palette=PALETTE, lapels="lapels", fixed=("waistcoat", "lapels"), hat_source=hat_source)
+    return line.spec(MD, kit=KIT, palette=PALETTE, lapels="lapels", fixed=("waistcoat", "lapels"), hat_source=hat_source)
 
 
 def make(root, name, build=None):
