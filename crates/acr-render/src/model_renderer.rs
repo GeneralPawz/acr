@@ -1763,6 +1763,18 @@ impl ModelRenderer {
         }
     }
 
+    /// The instances the last `prepare` drew, by level of detail (0 the full mesh, up to
+    /// [`lod::LEVELS`] − 1); for the performance recorder.
+    pub fn lod_counts(&self) -> [u32; lod::LEVELS] {
+        let mut counts = [0; lod::LEVELS];
+        // A draw of only the parts the look variants leave repeats the instances of the
+        // variants' own draws.
+        for d in self.draws.iter().filter(|d| d.touched != Some(false)) {
+            counts[d.lod.min(lod::LEVELS - 1)] += d.range.len() as u32;
+        }
+        counts
+    }
+
     /// GPU memory of the model textures and the streaming counts.
     pub fn texture_stats(&self) -> TextureStats {
         TextureStats {

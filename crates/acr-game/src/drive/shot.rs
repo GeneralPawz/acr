@@ -180,3 +180,68 @@ pub fn gputime(game: &mut Game, frames: u32) -> Result<serde_json::Value, String
         serde_json::json!({ "supported": true, "frames": frames, "ms": ms, "total_ms": (total * 1000.0).round() / 1000.0 }),
     )
 }
+
+/// `perf`: plays `frames` frames as the window would (advance at the game's tick, an
+/// offscreen draw, the GPU waited for as the swapchain would make it) through the
+/// performance recorder, on or off, and returns the mean and max wall milliseconds.
+pub fn perf_frames(
+    game: &mut Game,
+    event_loop: &winit::event_loop::ActiveEventLoop,
+    frames: u32,
+    recorder: bool,
+) -> Result<serde_json::Value, String> {
+    if game.perf.on() != recorder {
+        game.perf = crate::perf::Recorder::new(recorder);
+    }
+    let mut ms: Vec<f64> = Vec::with_capacity(frames as usize);
+    if frames > 0 {
+        let g = game.graphics.as_ref().ok_or("no GPU: start the driver with --drive-gpu")?;
+        let device = g.gpu.device.clone();
+        let texture = target(&device, g.gpu.config.format, g.gpu.config.width, g.gpu.config.height);
+        let view = texture.create_view(&Default::default());
+        for _ in 0..frames {
+            let start = std::time::Instant::now();
+            let dt = match &game.mode {
+                Mode::InGame(g) if g.ready() => g.tick_seconds(),
+                _ => 0.1,
+            };
+            {
+                acr_sim::prof_scope!("frame.advance");
+                game.advance(dt, event_loop);
+            }
+            if let Some(g) = &game.graphics {
+                game.perf.gpu_begin(&g.gpu.device, &g.gpu.queue);
+            }
+            {
+                acr_sim::prof_scope!("frame.render_cpu");
+                game.draw_frame(&view);
+            }
+            game.perf.gpu_end();
+            {
+                // Where the window waits for the swapchain.
+                acr_sim::prof_scope!("frame.acquire");
+                device
+                    .poll(wgpu::PollType::Wait {
+                        submission_index: None,
+                        timeout: Some(std::time::Duration::from_secs(10)),
+                    })
+                    .map_err(|e| e.to_string())?;
+            }
+            game.perf_frame();
+            ms.push(start.elapsed().as_secs_f64() * 1000.0);
+        }
+    }
+    let round = |v: f64| (v * 1000.0).round() / 1000.0;
+    let mean = ms.iter().sum::<f64>() / ms.len().max(1) as f64;
+    let mut sorted = ms.clone();
+    sorted.sort_by(f64::total_cmp);
+    Ok(serde_json::json!({
+        "recorder": game.perf.on(),
+        "frames": ms.len(),
+        "mean_ms": round(mean),
+        "median_ms": round(sorted.get(sorted.len() / 2).copied().unwrap_or(0.0)),
+        "max_ms": round(sorted.last().copied().unwrap_or(0.0)),
+        "recorder_us": round(game.perf.mean_own_us()),
+        "scope_calls": round(game.perf.mean_calls()),
+    }))
+}

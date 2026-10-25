@@ -798,7 +798,7 @@ impl Ragdolls {
     }
 
     /// Awake ragdolls.
-    fn awake(&self) -> usize {
+    pub(super) fn awake(&self) -> usize {
         self.actors.values().filter(|a| a.frozen.is_none()).count()
     }
 
@@ -903,7 +903,7 @@ impl Ragdolls {
             if self.mapping(d.model, d.data).is_none() {
                 continue;
             }
-            log::info!("3d: ragdoll for unit {} (hit {:?})", hit.victim, hit.cause);
+            log::debug!("3d: ragdoll for unit {} (hit {:?})", hit.victim, hit.cause);
             self.take_hit(hit, d, now, killed(hit.victim), terrain);
         }
         // Deaths of the hit after their hit (bled out, a second blow elsewhere): let go from

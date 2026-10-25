@@ -146,6 +146,8 @@ pub struct InGame {
     pub hud_hidden: bool,
     /// The driver's studio holds the simulation (#299): no ticks run, models keep drawing.
     pub studio_hold: bool,
+    /// Ctrl + Space, R asked for a performance snapshot (`crate::perf`), not taken yet.
+    pub perf_request: bool,
     /// The test editor's panel and state (editor games only).
     editor: Option<editor::Editor>,
     /// The editor's peace has been applied to the new world.
@@ -209,6 +211,7 @@ impl InGame {
             shouts: Default::default(),
             three_d: Default::default(),
             hud_hidden: false,
+            perf_request: false,
             studio_hold: false,
             editor: None,
             editor_started: false,
@@ -1059,6 +1062,27 @@ impl InGame {
 
     /// Draws the fog of war prepared by [`InGame::render`] into `pass`, after the world
     /// overlays and before the interface.
+    /// This frame's counts for the performance recorder (`crate::perf`): the 3D ones, the
+    /// living units and corpses, the camera and the game speed.
+    pub fn perf_counts(&self, c: &mut crate::perf::Counts) {
+        self.three_d.perf_counts(c);
+        if let Some(world) = &self.world {
+            let alive = world.units.iter().filter(|u| u.alive).count() as u32;
+            c.units = alive;
+            c.corpses = world.units.len() as u32 - alive;
+        }
+        c.zoom = self.camera.scale;
+        c.ticks_per_second = interface::tick_rate(self.frame_time) as u16;
+        c.in_game = self.ready();
+    }
+
+    /// A line on the message list for `frames` frames (the performance recorder's toast).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub fn perf_hint(&mut self, text: &str) {
+        let bytes = acr_formats::CodePage::Cp1252.encode(text).unwrap_or_else(|| text.as_bytes().to_vec());
+        self.mission.hint(bytes, 150);
+    }
+
     pub fn render_fog(&self, pass: &mut wgpu::RenderPass<'_>) {
         if let Some(fog) = &self.fog_renderer {
             fog.render(pass);

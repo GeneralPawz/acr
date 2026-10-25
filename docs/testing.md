@@ -135,6 +135,7 @@ its label to appear.
 | `{"cmd": "props", "model": "broadleaf", "at": [[7600, 7700]], "wind": true}` | trees or foliage of a model at ground points (render only; `wind` forces the sway on or off); answers `props` (the count) |
 | `{"cmd": "profile"}` | the simulation's per-system times since the last call: `profile` maps a name to `{"ms", "calls"}` (turns the profiler on at the first call) |
 | `{"cmd": "gputime", "frames": 30}` | draws `frames` (default 30) frames offscreen with the GPU timer on; answers `gputime` with the mean ms per segment, or why the device cannot time (docs/ground.md) |
+| `{"cmd": "perf", "frames": 300, "recorder": true, "snapshot": true}` | plays `frames` whole frames (advance, an offscreen draw, the GPU waited for) through the performance recorder; answers `perf` with `mean_ms`, `median_ms`, `max_ms`, `recorder_us` and, with `snapshot`, the snapshot's path. `recorder: false` switches the recorder (and its scope timing) off for an A/B of its overhead ("Performance recorder") |
 | `{"cmd": "frametimes", "frames": 60}` | draws `frames` (default 60) frames offscreen back to back, each waited for on the GPU; answers `frametimes` with `mean_ms`, `median_ms`, `max_ms`, `max_at`, `over_33ms` and the `textures` below (texture streaming hitches, docs/rendering-3d.md "Texture streaming") |
 | `{"cmd": "textures"}` | GPU memory of the model textures: `loaded_mb` (with their models), `streamed_mb` (resident streamed pictures), `total_mb`, `pending`, `loads`, `evictions` |
 | `{"cmd": "hit", "unit": 541, "cause": "musket", "region": "torso", "dir": [-1, 0], "energy": 80}` | a scripted hit (bench); `"fire": true` marks it a fire weapon's round (`HitRecord::fire`, e.g. a fire arrow) |
@@ -423,6 +424,69 @@ Mission pages ("Nachricht"), questions and choices stop the game until answered.
 as soon as one is built and reports it under `dismissed` with its text. With `dialogs
 report` it stays open, every answer carries it as `blocking`, and the test answers it
 itself (`click` its button). Use `report` when the dialog is what is tested.
+
+## Performance recorder
+
+The game (native) always records its last frames in memory (`crates/acr-game/src/perf.rs`):
+fixed ring buffers of 4096 frames (68 s at 60 fps) and 300 one-second summaries, nothing
+allocated per frame. `ACR_PERF=off` switches it off. Per frame it keeps:
+
+- the wall time, the sim ticks run, and every `acr_sim::prof` scope (`frame.advance`,
+  `frame.acquire`, `frame.render_cpu`, `frame.present` and the nested `3d.*`, `rag.*`,
+  `render.*` scopes; up to 64 names);
+- the GPU time of one frame every 0.25 s from timestamp queries between passes (ground,
+  shadow map, the 3D pass, interface), read back a few frames later without waiting and
+  without splitting the 3D pass (`gpu_timer::Sampler`); adapters without timestamps (WebGL2,
+  some drivers) have the acquire wait instead;
+- the counts: model instances, models drawn, palettes, triangles and draws of the models and
+  of the shadow casters, instances per level of detail, living units, corpses, awake
+  ragdolls, particles, decals, zoom, free camera, game speed, window size;
+- the model textures' memory once a second (the GPU allocator's totals at a snapshot).
+
+While a battle runs it logs one `perf:` line a second (fps, frame mean and max, GPU, the CPU
+split, ticks per frame, the counts, the recorder's own µs). The 5 s `profile:` block and the
+5 s `3d:` line stay behind `ACR_PROFILE`.
+
+**Snapshots.** Ctrl + Space, R (modern controls; the original scheme has no new key) writes
+one JSON file and shows "Leistungsdaten gespeichert" on the message list. The recorder also
+writes one by itself when the frames stay over 250 ms for 3 s (at most one a minute), and the
+driver's `perf` request with `"snapshot": true` writes one. They go to
+`%LOCALAPPDATA%\ACR\perf\snap-<UTC time>-<key|auto|driver>.json` (`ACR_PERF_DIR` overrides;
+with `ACR_LOG` set, `perf/` next to the log, so driver runs bring them back in their output
+folder). A snapshot (format `acr-perf/1`, about 1 MB at 4096 frames) holds:
+
+| Key | What |
+|---|---|
+| `adapter`, `features`, `gpu_timing` | the adapter's name, backend, type, driver; the device features; whether GPU times are measured |
+| `settings` | the `settings.txt` lines in force |
+| `summary` | the last 10 s: fps, frame ms mean/p50/p95/p99/max, CPU split, GPU split (`ground`, `shadow_map`, `3d_pass`, `interface`), the last counts and their maxima, `recorder_us` |
+| `diagnosis` | `bound` (`gpu`, `cpu`, `vsync`, `mixed`), lines (shares, top scopes, counts against the budgets) and `levers` to try |
+| `budgets` | the working budgets of a battle frame on an integrated GPU: 3 M triangles, 1.5 M shadow-cast triangles, 1500 draws |
+| `top_scopes` | mean and max ms per frame over the last 10 s (nested scopes count in their parents too) |
+| `worst_frames` | the 10 slowest frames: time, ms, GPU, counts, their 6 biggest scopes |
+| `memory_mb` | GPU allocator allocated and reserved, model textures |
+| `seconds` | the 1 Hz columns: fps, mean and max ms, GPU, triangles, draws, units, memory |
+| `frames` | the ring as columns (`t`, `ms`, `ticks`, `gpu_ms`, counts, `scopes_ms` per name) |
+
+The bound: GPU when the sampled GPU time is over 75 % of the frame, or the acquire wait is
+over 40 % and the GPU over half the frame and over the CPU (without timestamps: the acquire
+wait over 40 % outside 15.5–17.5 ms); CPU when advance plus render are over 60 %; else vsync
+(15.5–17.5 ms) or mixed. `rag.worker` is the physics workers' summed time (parallel), so it can
+exceed the frame.
+
+**Reading them.** `python -I tools/perf/perf_report.py` prints the newest snapshot as a ranked
+report (adapter, settings, diagnosis, CPU and GPU split, counts against the budgets, top
+scopes, worst frames, a timeline in ten slices); give files to read others, `--all` lists
+every snapshot in one line each. Agents start from `diagnosis` and `top_scopes`, then follow
+the `frames` columns around `worst_frames`.
+
+**Overhead.** The recorder's own work is 6–8 µs a frame (`recorder_us`), plus two clock reads
+for each of the 45–60 profiler scope calls a battle frame makes (`scope_calls`). Measured with
+`perf` on the render VM (400 men standing, models=all, 1600 × 900, 16 interleaved pairs of
+60 frames on and off): frame median 13.82 ms on, 13.75 ms off, pair differences median
++0.08 ms, mean −0.03 ms, inside the run's noise (±0.5 ms). Steady state writes only the
+1 Hz line; a snapshot takes a few ms (written on the main thread). Switching the recorder
+with `perf` `recorder` starts a fresh ring.
 
 ## Browser
 

@@ -2555,7 +2555,9 @@ impl ThreeD {
         let now = web_time::Instant::now();
         let since = *self.since.get_or_insert(now);
         let elapsed = (now - since).as_secs_f32();
-        if elapsed >= 5.0 {
+        // The 5 s line goes with the `ACR_PROFILE` block; the recorder's 1 Hz `perf:` line
+        // carries the same counts (docs/testing.md "Performance recorder").
+        if elapsed >= 5.0 && acr_sim::prof::enabled() {
             log::info!(
                 "3d: {:.1} fps, {} models drawn ({} poses) of {}, {}k triangles ({} draws), {}k cast ({} draws), camera {:?}",
                 self.frames as f32 / elapsed,
@@ -2568,8 +2570,31 @@ impl ThreeD {
                 renderer.calls[1],
                 view3d.orbit
             );
+        }
+        if elapsed >= 5.0 {
             self.frames = 0;
             self.since = Some(now);
+        }
+    }
+
+    /// The last frame's 3D counts for the performance recorder (`crate::perf`): cheap
+    /// (counters kept anyway, and one pass over the draws and ragdolls).
+    pub fn perf_counts(&self, c: &mut crate::perf::Counts) {
+        c.instances = self.instances.len() as u32;
+        c.particles = self.particles.particles.live() as u32;
+        c.decals = self.pools.len() as u32;
+        c.ragdolls_awake = self.ragdolls.as_ref().map_or(0, |r| r.awake() as u32);
+        c.free_camera = self.free;
+        c.models_phase = self.models_phase();
+        if let Some(r) = &self.renderer {
+            c.drawn = r.drawn as u32;
+            c.poses = r.pose_count as u32;
+            c.triangles = r.triangles[0].min(u64::from(u32::MAX)) as u32;
+            c.draws = r.calls[0] as u32;
+            c.shadow_triangles = r.triangles[1].min(u64::from(u32::MAX)) as u32;
+            c.shadow_draws = r.calls[1] as u32;
+            c.lod = r.lod_counts();
+            c.shadows = r.shadows;
         }
     }
 }

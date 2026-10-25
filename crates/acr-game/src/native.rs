@@ -184,7 +184,7 @@ fn is_game_dir(dir: &Path) -> bool {
     dir.join(MARKER).is_file()
 }
 
-fn data_dir() -> Option<PathBuf> {
+pub(crate) fn data_dir() -> Option<PathBuf> {
     std::env::var_os("LOCALAPPDATA").or_else(|| std::env::var_os("HOME")).map(|d| PathBuf::from(d).join("ACR"))
 }
 

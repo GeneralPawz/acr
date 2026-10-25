@@ -150,6 +150,7 @@ on the way keep it. The original keys work as before.
 | Ctrl + Space, F | fullscreen | F11 |
 | Ctrl + Space, N | jump to the next selected unit | Space |
 | Ctrl + Space, C | free camera on or off (ACR) | none |
+| Ctrl + Space, R | performance snapshot: "Leistungsdaten gespeichert" (ACR, [testing.md](testing.md#performance-recorder)) | none |
 
 **Ctrl + Space, C** switches the free camera (`camera=free`, [rendering-3d.md](rendering-3d.md#settings))
 for the running battle and says so on the message list with its mouse and keys ("Freie

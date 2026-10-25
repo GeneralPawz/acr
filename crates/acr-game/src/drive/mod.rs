@@ -394,6 +394,7 @@ impl Driver {
             _ => 1.0 / ui::TICK_RATE,
         };
         game.advance(dt, event_loop);
+        game.perf_frame();
         self.frames += 1;
         if let Some(job) = &mut self.job {
             job.frames += 1;
@@ -976,6 +977,15 @@ impl Driver {
                     })
                     .collect();
                 job.reply.insert("profile".into(), totals.into());
+                Ok(false)
+            }
+            Request::Perf { frames, recorder, snapshot } => {
+                let mut reply = shot::perf_frames(game, event_loop, frames, recorder)?;
+                if snapshot {
+                    reply["snapshot"] = game.perf_snapshot(crate::perf::Reason::Driver)?.into();
+                }
+                reply["snapshots"] = game.perf.snapshots.into();
+                job.reply.insert("perf".into(), reply);
                 Ok(false)
             }
             Request::Fps(fps) => {

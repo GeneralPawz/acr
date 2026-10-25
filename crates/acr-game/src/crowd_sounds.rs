@@ -189,7 +189,7 @@ impl Crowds {
                 let (was, now) = (before.get(&g).copied().unwrap_or(0), self.counted.get(&g).copied().unwrap_or(0));
                 if (was > group.min) != (now > group.min) {
                     let state = if now > group.min { "above" } else { "below" };
-                    log::info!(
+                    log::debug!(
                         "crowd group {g} at frame {}: {now} sounds in {WINDOW} frames, {state} {} ({:?})",
                         self.elapsed,
                         group.min,

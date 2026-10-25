@@ -45,9 +45,11 @@ pub(super) enum Chord {
     NextUnit,
     /// ACR: the free camera on or off (`camera=free` for this battle only).
     Camera,
+    /// ACR: a performance snapshot (`crate::perf`, docs/testing.md "Performance recorder").
+    Perf,
 }
 /// The leader chords: letter, what it does, its name in the hint.
-pub(super) const LEADER: [(u8, Chord, &str); 8] = [
+pub(super) const LEADER: [(u8, Chord, &str); 9] = [
     (b'P', Chord::Key(NamedKey::Pause), "Pause"),
     (b'M', Chord::Key(NamedKey::F12), "Menü"),
     (b'O', Chord::Key(NamedKey::F1), "Ziele"),
@@ -56,6 +58,7 @@ pub(super) const LEADER: [(u8, Chord, &str); 8] = [
     (b'F', Chord::Key(NamedKey::F11), "Vollbild"),
     (b'N', Chord::NextUnit, "nächste Einheit"),
     (b'C', Chord::Camera, "freie Kamera"),
+    (b'R', Chord::Perf, "Leistung"),
 ];
 /// How long the hint of the leader chords stays (frames of the message list).
 const LEADER_HINT: u32 = 100;
@@ -558,6 +561,10 @@ impl InGame {
                 self.leader_hint(if free { FREE_CAMERA_HINT } else { "Kamera fest" });
                 Some(GameKey::None)
             }
+            Some(Chord::Perf) => {
+                self.perf_request = true;
+                Some(GameKey::None)
+            }
             Some(Chord::Key(named)) => Some(GameKey::Leader(named)),
             None => Some(GameKey::None),
         }
@@ -786,6 +793,7 @@ mod tests {
         assert_eq!(leader_chord(b'O'), Some(Chord::Key(NamedKey::F1)));
         assert_eq!(leader_chord(b'n'), Some(Chord::NextUnit));
         assert_eq!(leader_chord(b'c'), Some(Chord::Camera));
+        assert_eq!(leader_chord(b'r'), Some(Chord::Perf));
         assert_eq!(leader_chord(b'X'), None);
         // Every letter once.
         let mut letters: Vec<u8> = LEADER.iter().map(|&(c, ..)| c).collect();

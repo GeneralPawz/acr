@@ -23,6 +23,7 @@ mod mission_ui;
 mod music;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod native;
+mod perf;
 mod random_map;
 mod savegame;
 pub mod ui;
@@ -81,6 +82,8 @@ pub struct Game {
     last_frame: Option<web_time::Instant>,
     /// `ACR_PROFILE`: frames since the last profile line and when it was written.
     profile: Option<(web_time::Instant, u32)>,
+    /// The always-on performance recorder (`perf.rs`, docs/testing.md).
+    perf: perf::Recorder,
     modifiers: ModifiersState,
     /// The options came from the settings file: the window takes their resolution.
     stored_settings: bool,
@@ -115,6 +118,7 @@ impl Game {
             cursor: Default::default(),
             last_frame: None,
             profile: None,
+            perf: perf::Recorder::from_env(),
             modifiers: ModifiersState::empty(),
             stored_settings: false,
             layers: Vec::new(),
@@ -184,6 +188,67 @@ impl Game {
         #[cfg(target_arch = "wasm32")]
         web::frame_done(now.elapsed().as_secs_f32() * 1000.0);
         self.profile_log(now);
+        self.perf_frame();
+    }
+
+    /// Records the frame just made (`perf.rs`), and writes a snapshot when Ctrl + Space, R
+    /// asked for one or the frames stayed slow.
+    fn perf_frame(&mut self) {
+        if !self.perf.on() {
+            return;
+        }
+        let mut counts = perf::Counts::default();
+        if let Some([w, h]) = self.frame_size() {
+            counts.window = [w as u16, h as u16];
+        }
+        let mut asked = false;
+        if let Mode::InGame(game) = &mut self.mode {
+            game.perf_counts(&mut counts);
+            asked = std::mem::take(&mut game.perf_request);
+            if self.perf.wants_memory() {
+                let textures = game.texture_stats().map(|t| t.loaded_bytes + t.streamed_bytes);
+                self.perf.memory(None, textures);
+            }
+        }
+        let device = self.graphics.as_ref().map(|g| &g.gpu.device);
+        let due = self.perf.frame(&counts, device);
+        if asked {
+            let _ = self.perf_snapshot(perf::Reason::Key);
+        } else if let Some(reason) = due {
+            let _ = self.perf_snapshot(reason);
+        }
+    }
+
+    /// Writes a performance snapshot and shows the toast: its path, or why not.
+    fn perf_snapshot(&mut self, reason: perf::Reason) -> Result<String, String> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let settings = self.ui.settings().encode();
+            let gpu = self.graphics.as_ref().map(|g| &g.gpu);
+            let ctx = perf::Context {
+                settings: &settings,
+                adapter: gpu.map(|g| &g.info),
+                features: gpu.map(|g| g.device.features()),
+                gpu_memory: gpu
+                    .and_then(|g| g.device.generate_allocator_report())
+                    .map(|r| (r.total_allocated_bytes, r.total_reserved_bytes)),
+            };
+            let result = self.perf.snapshot(reason, &ctx);
+            match &result {
+                Ok(_) => {
+                    if let Mode::InGame(game) = &mut self.mode {
+                        game.perf_hint(perf::SAVED);
+                    }
+                }
+                Err(e) => log::warn!("perf: no snapshot: {e}"),
+            }
+            result.map(|p| p.display().to_string())
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = reason;
+            Err("no snapshots in the browser".into())
+        }
     }
 
     /// With `ACR_PROFILE` set (native), logs every 5 s where the frames' time went
@@ -311,10 +376,12 @@ impl Game {
         let Some(frame) = g.gpu.next_frame() else { return };
         drop(acquire);
         let view = frame.texture.create_view(&Default::default());
+        self.perf.gpu_begin(&g.gpu.device, &g.gpu.queue);
         {
             acr_sim::prof_scope!("frame.render_cpu");
             self.draw_frame(&view);
         }
+        self.perf.gpu_end();
         if let Some(g) = &self.graphics {
             acr_sim::prof_scope!("frame.present");
             g.gpu.queue.present(frame);

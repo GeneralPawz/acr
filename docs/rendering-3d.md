@@ -2035,7 +2035,8 @@ the simulation's state): `ACR_PROFILE=1` logs every 5 s the frame rate and ms pe
 scope (`frame.advance`, `frame.acquire`, `frame.render_cpu`, `frame.present`, `sim.*`,
 `3d.*`, `rag.*`, `render.models_prepare`; `ticks`, `rag.steps(count)` and
 `rag.awake(count)` are counts shown as "ms"); the driver's `{"cmd":"profile"}` returns the
-totals since its last call. **Scene:** `ACR-analysis/perf/clash.py`: 700 against 700
+totals since its last call. The game also times the scopes always, for the performance
+recorder (1 Hz `perf:` log line, Ctrl + Space, R snapshots; [testing.md](testing.md#performance-recorder)). **Scene:** `ACR-analysis/perf/clash.py`: 700 against 700
 musketeers (melee only) meet on the blank field, hit locations, body spacing, gore full,
 models all, 1600 × 900, zoom 1; measured before contact, at contact (50 ticks) and 30 s
 later (50 ticks). CPU per driver frame (one tick, 0.1 s of game time, so the ragdolls run

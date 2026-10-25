@@ -287,6 +287,15 @@ pub enum Request {
     /// `{"cmd":"profile"}`: CPU milliseconds per profiler scope (`acr_sim::prof`) since
     /// the last call, which also switches the profiler on.
     Profile,
+    /// `{"cmd":"perf","frames":300,"recorder":true,"snapshot":true}`: plays `frames` whole
+    /// frames (advance, an offscreen draw, the GPU waited for) through the performance
+    /// recorder (`recorder: false` switches it off, for its overhead), returns their wall
+    /// times and, with `snapshot`, writes one (docs/testing.md "Performance recorder").
+    Perf {
+        frames: u32,
+        recorder: bool,
+        snapshot: bool,
+    },
     /// `count` screenshots, one every `every` frames, into `dir` as `<prefix>NNN.png`.
     Record {
         dir: String,
@@ -650,6 +659,11 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
         "impact" => Request::Impact(v.clone()),
         "map_object" => Request::MapObject(v.clone()),
         "profile" => Request::Profile,
+        "perf" => Request::Perf {
+            frames: uint(&v, "frames").unwrap_or(0).min(100_000) as u32,
+            recorder: v.get("recorder").and_then(Value::as_bool).unwrap_or(true),
+            snapshot: v.get("snapshot").and_then(Value::as_bool).unwrap_or(false),
+        },
         "fps" => Request::Fps(v.get("fps").and_then(Value::as_f64).unwrap_or(0.0).clamp(0.0, 1000.0)),
         "gputime" => Request::GpuTime(uint(&v, "frames").unwrap_or(30).clamp(1, 1000) as u32),
         "frametimes" => Request::FrameTimes(uint(&v, "frames").unwrap_or(60).clamp(1, 10000) as u32),

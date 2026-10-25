@@ -29,6 +29,15 @@ pub fn gputime(_game: &mut Game, _frames: u32) -> Result<serde_json::Value, Stri
     Err(NO.into())
 }
 
+pub fn perf_frames(
+    _game: &mut Game,
+    _event_loop: &winit::event_loop::ActiveEventLoop,
+    _frames: u32,
+    _recorder: bool,
+) -> Result<serde_json::Value, String> {
+    Err(NO.into())
+}
+
 /// The model textures' GPU memory in MB and the streaming counts (`textures`).
 pub fn textures(game: &Game) -> serde_json::Value {
     let Mode::InGame(g) = &game.mode else { return serde_json::Value::Null };

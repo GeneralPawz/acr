@@ -145,7 +145,7 @@ impl Maulers {
                     .map(|h| now.saturating_sub(h.tick) as f32 / acr_sim::ORIGINAL_TICKS_PER_SECOND as f32);
                 let pin = stand_over(beast, rig, own, body, bitten, ground, v);
                 if !self.pins.contains_key(&u.id.0) {
-                    log::info!(
+                    log::debug!(
                         "3d: {beast:?} {} pins unit {v}: chest {:?}, hips {:?}, from {own:?} to {:?}, yaw {:.2}",
                         u.id.0,
                         body.chest,

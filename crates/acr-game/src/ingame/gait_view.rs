@@ -455,7 +455,7 @@ impl Gaits {
                 let (n, sum, max) = self.misses.get();
                 let (n, sum, max) = (n + 1, sum + miss, max.max(miss));
                 if n == 100 {
-                    log::info!(
+                    log::debug!(
                         "3d: gait contacts planted: miss {:.1} mm mean, {:.0} mm max",
                         sum / n as f32 * 1000.0,
                         max * 1000.0
