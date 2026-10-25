@@ -16,14 +16,15 @@
 //!   (hunger, #207) in the second slot instead ([`ModelData::emaciated`]); the face and body targets `face_*`/`body_*` (#283), kept on the
 //!   CPU for [`ModelData::bake_looks`]; `_FACE`, and the hair and beard variant meshes
 //!   `*.hair_*`/`*.beard_*` (marked in `body.w`, see `crate::looks`);
-//! - materials: base colour factor and texture (PNG), `extras.acr_decay` (the decay layer of
+//! - materials: base colour factor and texture (PNG, JPEG, or KTX2 by `KHR_texture_basisu`,
+//!   transcoded by the renderer, [`crate::ktx2`]), `extras.acr_decay` (the decay layer of
 //!   `docs/assets-humans.md`). With `acr_decay`, `COLOR_0` is the decay mask, otherwise the
 //!   vertex colour; the normal map and the metallic-roughness factors and texture
 //!   ([`Surface`], #234; tangents are derived in the shader, `TANGENT` is not read);
 //! - animations: translation, rotation and scale channels (step, linear; cubic splines use
 //!   their key values linearly), sampled on the CPU into the palette ([`ModelData::pose`]).
 //!
-//! Not read: compressed meshes (`EXT_meshopt_compression`, Draco), KTX2/JPEG textures,
+//! Not read: compressed meshes (`EXT_meshopt_compression`, Draco), external images,
 //! cameras, lights, morph target normals.
 
 use std::collections::HashMap;
@@ -276,6 +277,10 @@ pub struct ModelData {
     /// authored levels than the coarsest use it ([`Self::material_levels`]); the renderer
     /// decodes it once a model first draws at such a level (`tex_cache.rs`).
     pub encoded: Vec<Option<std::sync::Arc<[u8]>>>,
+    /// Per image: the KTX2 file of a picture loaded with the model, which the renderer
+    /// transcodes for its device at upload ([`crate::ktx2`]); its [`Self::images`] entry has
+    /// the size but no pixels. Streamed KTX2 pictures stay in [`Self::encoded`].
+    pub compressed: Vec<Option<std::sync::Arc<[u8]>>>,
     pub clips: Vec<Clip>,
     /// Clip time per sprite frame: [`CLIP_FPS`] or the root's `extras.acr_fps`.
     pub fps: f32,
@@ -545,6 +550,15 @@ pub fn material_levels(primitives: &[Primitive], materials: usize) -> Vec<Option
     out.into_iter().map(Option::flatten).collect()
 }
 
+/// The image a texture samples: its `KHR_texture_basisu` KTX2 source when it has one, else
+/// its core `source` (PNG or JPEG).
+fn texture_image(t: &gltf::Texture) -> Option<usize> {
+    t.extension_value("KHR_texture_basisu")
+        .and_then(|e| e.get("source")?.as_u64())
+        .map(|i| i as usize)
+        .or_else(|| t.source().map(|s| s.index()))
+}
+
 /// A PNG's size from its header, without decoding it.
 fn png_size(bytes: &[u8]) -> Option<(u32, u32)> {
     const SIGNATURE: &[u8] = &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
@@ -681,8 +695,8 @@ impl ModelData {
                     let bytes =
                         data.get(view.offset()..view.offset() + view.length()).ok_or("glTF: image out of range")?;
                     match mime_type {
-                        "image/png" | "image/jpeg" => Ok(bytes),
-                        _ => Err(format!("glTF: {mime_type} textures are not supported (use PNG or JPEG)")),
+                        "image/png" | "image/jpeg" | "image/ktx2" => Ok(bytes),
+                        _ => Err(format!("glTF: {mime_type} textures are not supported (use PNG, JPEG or KTX2)")),
                     }
                 }
                 gltf::image::Source::Uri { .. } => Err("glTF: external images are not supported".to_owned()),
@@ -700,7 +714,7 @@ impl ModelData {
                 Material {
                     name: m.name().unwrap_or("").to_owned(),
                     base_color: pbr.base_color_factor(),
-                    texture: texture.map(|t| t.source().index()),
+                    texture: texture.as_ref().and_then(texture_image),
                     nearest,
                     alpha_cutoff: (m.alpha_mode() == gltf::material::AlphaMode::Mask)
                         .then(|| m.alpha_cutoff().unwrap_or(0.5)),
@@ -735,9 +749,9 @@ impl ModelData {
                         thin: 0.0,
                     }),
                     surface: Surface {
-                        normal: m.normal_texture().map(|t| t.texture().source().index()),
+                        normal: m.normal_texture().and_then(|t| texture_image(&t.texture())),
                         normal_scale: m.normal_texture().map_or(1.0, |t| t.scale()),
-                        metal_rough: pbr.metallic_roughness_texture().map(|t| t.texture().source().index()),
+                        metal_rough: pbr.metallic_roughness_texture().and_then(|t| texture_image(&t.texture())),
                         metallic: pbr.metallic_factor(),
                         roughness: pbr.roughness_factor(),
                     },
@@ -1061,7 +1075,19 @@ impl ModelData {
         }
         let mut images = Vec::with_capacity(raw.len());
         let mut encoded = Vec::with_capacity(raw.len());
+        let mut compressed = vec![None; raw.len()];
         for (k, bytes) in raw.iter().enumerate() {
+            if let Some((width, height)) = crate::ktx2::size(bytes) {
+                images.push(Image { width, height, rgba: Vec::new() });
+                let file = Some(std::sync::Arc::<[u8]>::from(*bytes));
+                if deferred[k] && used[k] {
+                    encoded.push(file);
+                } else {
+                    encoded.push(None);
+                    compressed[k] = file;
+                }
+                continue;
+            }
             let size = (deferred[k] && used[k]).then(|| png_size(bytes).or_else(|| jpeg_size(bytes))).flatten();
             match size {
                 Some((width, height)) => {
@@ -1082,6 +1108,7 @@ impl ModelData {
             materials,
             images,
             encoded,
+            compressed,
             clips,
             fps,
             type_name,
@@ -1154,6 +1181,7 @@ impl ModelData {
             materials: vec![material],
             images: Vec::new(),
             encoded: Vec::new(),
+            compressed: Vec::new(),
             clips: Vec::new(),
             fps: CLIP_FPS,
             type_name: None,

@@ -74,11 +74,16 @@ impl Gpu {
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("acr"),
-                // Timestamp queries for the driver's `gputime`, where the adapter has them.
+                // Timestamp queries for the driver's `gputime`, and the block-compressed texture
+                // formats KTX2 model textures transcode to (`acr_render::ktx2`), where the
+                // adapter has them.
                 required_features: adapter.features()
                     & (wgpu::Features::TIMESTAMP_QUERY
                         | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS
-                        | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES),
+                        | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES
+                        | wgpu::Features::TEXTURE_COMPRESSION_BC
+                        | wgpu::Features::TEXTURE_COMPRESSION_ETC2
+                        | wgpu::Features::TEXTURE_COMPRESSION_ASTC),
                 required_limits: wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits()),
                 ..Default::default()
             })

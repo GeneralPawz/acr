@@ -11,11 +11,15 @@ log = "0.4.34"
 bytemuck = { version = "1.25.2", features = ["derive"] }
 wgpu = { version = "30.0.1", features = ["webgl"] }
 # glTF models (#163): parsing only, no file or image loading (works in wasm).
-gltf = { version = "1.4.1", default-features = false, features = ["utils", "names", "extras"] }
+# `extensions` and `allow_empty_texture`: KTX2 textures name their image in
+# `KHR_texture_basisu` and have no core `source` (#297).
+gltf = { version = "1.4.1", default-features = false, features = ["utils", "names", "extras", "extensions", "allow_empty_texture"] }
 png = "0.18.1"
 # JPEG base colours in glTF files (#199): pure Rust, builds for wasm.
 zune-jpeg = "0.5"
 serde_json = "1.0.154"
+# KTX2 / Basis Universal textures (#297): pure-Rust transcoder (Apache-2.0), builds for wasm.
+basisu = "0.1"
 # Level-of-detail simplification (pure Rust port of meshoptimizer, MIT; builds for wasm).
 meshopt-rs = { version = "0.1.2", features = ["experimental"] }
 

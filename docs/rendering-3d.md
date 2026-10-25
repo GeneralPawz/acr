@@ -138,6 +138,32 @@ Images are embedded PNG or JPEG (`image/png`, `image/jpeg`; `model.rs` `decode_p
 native and wasm; about 0.2 MB of the native release binary). The asset pipeline stores
 opaque base colours as JPEG and everything else as PNG (assets.md "Packing").
 
+KTX2 textures (#297): an image of `image/ktx2` named by a texture's `KHR_texture_basisu`
+`source` (`model.rs` `texture_image`) is Basis Universal (ETC1S or UASTC, zstd), written by
+`assets/blender/lib/acr_assets/ktx2_pack.py`. `ktx2.rs` transcodes it with the pure-Rust
+`basisu` crate (Apache-2.0, byte-exact port of Binomial's transcoder, builds for wasm) when
+the renderer uploads it, to the best format the device asked for (`acr-app` requests
+`TEXTURE_COMPRESSION_BC`, `_ETC2`, `_ASTC` where the adapter has them; `Target::of`): BC7,
+else ASTC 4 × 4, else ETC2 RGBA, else RGBA8. The file's mips are uploaded as they are (no
+`mipgen` pass); sRGB or linear as for PNGs. Streamed KTX2 pictures (texture streaming below)
+transcode on the `acr-texture` thread natively and on the main thread in the browser (no
+`createImageBitmap` for KTX2). One base size not a multiple of 4 goes to RGBA8.
+
+Measured (render VM, RX 9060 XT, BC7; blank white field, an `EngM18` close-up and a killed
+one, `EngCen`, `oak` and `broadleaf` props; steps `ACR-analysis/ktx2/steps.json`, the
+driver's `textures` and PSNR over the content box against the PNG/JPEG glbs):
+
+| | PNG/JPEG | KTX2 |
+|---|---|---|
+| showcase glbs (310 files) | 670.3 MB | 481.6 MB |
+| texture GPU memory, regular scene | 154.8 MB | 38.7 MB |
+| same with `hdengm18` as `EngM18` (loaded + streamed) | 161.7 + 55.9 MB | 54.5 + 14.0 MB |
+| `engm18.glb` parse | 22.5 ms | 3.9 ms (the transcode moves to the upload) |
+| first 20 frames (loads and uploads) | 38 ms | 45 ms |
+
+PSNR KTX2 against PNG: unit 50.1 dB, face 43.7 dB (max delta 31 of 255), building 58.5 dB,
+trees 49.5 dB (max 4), gore 77.5 dB; HD musketeer face 45.3 dB (max 23).
+
 Files are requested when a type with a model first appears and only when `models` is not
 `off`; a file that fails to load is logged once and the type stays a sprite.
 
@@ -1860,7 +1886,7 @@ model first draws at that level (`acr-render/src/tex_cache.rs`, m2-tex-stream).
   sampling, encode on writing). Model textures carry `RENDER_ATTACHMENT` for it. The linear
   sampler filters between mips. +33 % memory per picture. The pictures match the former CPU
   chain within 2 of 255 per channel (screenshots below).
-- **Compressed formats (not built; design note):** BC7 (desktop) or ASTC (mobile) via KTX2 would cut a
+- **Compressed formats (built, #297; the design note as written before):** BC7 (desktop) or ASTC (mobile) via KTX2 would cut a
   4 k map from 85 MB (with mips) to 21 MB. WebGL2 exposes them only as extensions
   (`EXT_texture_compression_bptc`, `WEBGL_compressed_texture_astc`), so the glb would need
   both plus an RGBA fallback, or Basis Universal (`KHR_texture_basisu`, UASTC transcoded at
@@ -2317,8 +2343,8 @@ the frame rate, the models drawn and the poses sampled.
 
 ## Limits and open points
 
-- No meshopt/Draco decoding, no KTX2 or WebP textures: export models uncompressed with PNG
-  or JPEG textures (the pipeline's default). `KHR_mesh_quantization` is read (integer
+- No meshopt/Draco decoding, no WebP textures: export models uncompressed with PNG, JPEG or
+  KTX2 (`KHR_texture_basisu`) textures. `KHR_mesh_quantization` is read (integer
   positions, normals and morph targets; assets.md "Export and compression").
 - No nation colour mask yet (#162).
 - Free camera: water is the surface of docs/water.md (a flat one under `water=original`);

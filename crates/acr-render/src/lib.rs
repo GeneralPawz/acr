@@ -12,6 +12,7 @@ pub mod ground;
 pub mod ground_cover;
 pub mod ground_state;
 pub mod image;
+pub mod ktx2;
 pub mod layers;
 pub mod lod;
 pub mod looks;

@@ -327,8 +327,20 @@ JPEG, below). Blender 5.2's exporter also offers:
 - **meshopt** (`EXT_meshopt_compression` or `KHR_meshopt_compression`, built in):
   `--compress meshopt`;
 - **Draco** (`KHR_draco_mesh_compression`, built in): `--compress draco`;
-- images as JPEG or WebP (`EXT_texture_webp`), but **no KTX2/Basis**: that needs an external
-  tool (`gltfpack -tc`, `toktx`), which is not installed and not downloaded by the build.
+- images as JPEG or WebP (`EXT_texture_webp`), but **no KTX2/Basis**: that is the separate
+  install-time step below.
+
+**KTX2 textures (#297).** `acr_assets/ktx2_pack.py` (pure Python, no `bpy`) turns the PNG
+and JPEG textures of finished glbs into KTX2 Basis Universal (`KHR_texture_basisu`,
+required) with their mips, in place: `python3 ktx2_pack.py a.glb ...`. Encoder: upstream
+`basisu` 2.50 (`ACR_BASISU`, else the PATH, else `~/tools/basis_universal/basisu` on the
+render VM, built from the Binomial repo with g++). Modes: opaque base colours ETC1S
+(`-q 255`); alpha-masked or blended base colours (leaf and hair cards, decay layers) UASTC
+with RDO 0.5; normal maps UASTC `-normal_map` with renormalised mips; metallic-roughness,
+occlusion and emissive UASTC RDO 1.0, linear. Images under 16 texels or with sides not a
+multiple of 4 stay as they are. It is not part of `export_glb`: Blender's importer cannot
+read KTX2, and `posecheck` and the asset tests import the glbs. The renderer side is in
+rendering-3d.md "Model files".
 
 **Packing (#199).** Without `--compress`, `acr_assets.gltf_pack` rewrites the exported
 file (pure Python, `ACR_GLTF_PACK=0` skips it; what it did lands in `stats.json` `pack`),

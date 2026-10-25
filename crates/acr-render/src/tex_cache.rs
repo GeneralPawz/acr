@@ -166,11 +166,15 @@ pub struct Job {
     pub bytes: Arc<[u8]>,
     pub srgb: bool,
     pub mips: bool,
+    /// What a KTX2 file transcodes to ([`crate::ktx2::target`]).
+    pub target: crate::ktx2::Target,
 }
 
 /// The full-size pixels of a decoded picture (the mips are made on the GPU, [`crate::mipgen`]).
 pub enum Pixels {
     Rgba(Image),
+    /// A KTX2 file transcoded with its own mips ([`crate::ktx2`]).
+    Blocks(crate::ktx2::Blocks),
     /// wasm32: decoded by the browser off the main thread (`createImageBitmap`), cut into
     /// strips of [`strip_rows`] rows: (first row, strip).
     #[cfg(target_arch = "wasm32")]
@@ -185,6 +189,7 @@ impl Pixels {
     pub fn size(&self) -> (u32, u32) {
         match self {
             Pixels::Rgba(img) => (img.width, img.height),
+            Pixels::Blocks(b) => (b.width, b.height),
             #[cfg(target_arch = "wasm32")]
             Pixels::Bitmaps { width, height, .. } => (*width, *height),
         }
@@ -200,7 +205,11 @@ pub struct Done {
 }
 
 fn run(job: Job) -> Done {
-    let pixels = crate::model::decode_image(&job.bytes).map(Pixels::Rgba);
+    let pixels = if crate::ktx2::is_ktx2(&job.bytes) {
+        crate::ktx2::transcode(&job.bytes, job.target, job.mips).map(Pixels::Blocks)
+    } else {
+        crate::model::decode_image(&job.bytes).map(Pixels::Rgba)
+    };
     Done { key: job.key, srgb: job.srgb, mips: job.mips, pixels }
 }
 
@@ -284,7 +293,8 @@ impl Decoder {
         }
         #[cfg(target_arch = "wasm32")]
         {
-            if web_sys::window().is_none() {
+            // No browser decoder for KTX2: transcoded on this thread at the next poll.
+            if web_sys::window().is_none() || crate::ktx2::is_ktx2(&job.bytes) {
                 self.queue.push_back(job);
                 return;
             }

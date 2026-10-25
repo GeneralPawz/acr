@@ -658,15 +658,25 @@ pub struct TextureStats {
 struct Upload {
     key: tex_cache::Key,
     pixels: tex_cache::Pixels,
-    texture: wgpu::Texture,
+    /// None for transcoded KTX2 pictures (all levels go up at once, `ktx2::Blocks::upload`).
+    texture: Option<wgpu::Texture>,
+    srgb: bool,
     /// The next row (RGBA) or strip (browser bitmaps).
     next: u32,
 }
 
 impl Upload {
     /// Writes rows up to `budget` bytes (at least one); true once the full size is up.
-    fn write(&mut self, queue: &wgpu::Queue, budget: &mut u64) -> bool {
+    fn write(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, budget: &mut u64, srgb: bool) -> bool {
+        let Some(texture) = &self.texture else {
+            if let tex_cache::Pixels::Blocks(blocks) = &self.pixels {
+                *budget = budget.saturating_sub(blocks.bytes());
+                self.texture = Some(blocks.upload(device, queue, "model texture (streamed KTX2)", srgb));
+            }
+            return true;
+        };
         match &self.pixels {
+            tex_cache::Pixels::Blocks(_) => true,
             tex_cache::Pixels::Rgba(img) => {
                 let row_bytes = u64::from(img.width) * 4;
                 while self.next < img.height && *budget > 0 {
@@ -674,7 +684,7 @@ impl Upload {
                     let from = (u64::from(self.next) * row_bytes) as usize;
                     queue.write_texture(
                         wgpu::TexelCopyTextureInfo {
-                            texture: &self.texture,
+                            texture,
                             mip_level: 0,
                             origin: wgpu::Origin3d { x: 0, y: self.next, z: 0 },
                             aspect: wgpu::TextureAspect::All,
@@ -706,7 +716,7 @@ impl Upload {
                             flip_y: false,
                         },
                         wgpu::CopyExternalImageDestInfo {
-                            texture: &self.texture,
+                            texture,
                             mip_level: 0,
                             origin: wgpu::Origin3d { x: 0, y: *y, z: 0 },
                             aspect: wgpu::TextureAspect::All,
@@ -987,6 +997,7 @@ fn instance_buffer(device: &wgpu::Device, count: u64) -> wgpu::Buffer {
 
 impl ModelRenderer {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, target: wgpu::TextureFormat) -> Self {
+        crate::ktx2::set_target(crate::ktx2::Target::of(device.features()));
         let shader = model_shader(device);
         let globals_buffer = |label| {
             device.create_buffer(&wgpu::BufferDescriptor {
@@ -1478,23 +1489,43 @@ impl ModelRenderer {
         let mips: Vec<bool> =
             (0..data.images.len()).map(|i| !data.materials.iter().any(|m| m.nearest && m.texture == Some(i))).collect();
         // The pictures of finer authored levels stay encoded until drawn (`tex_cache`).
+        // KTX2 pictures are transcoded for this device (`ktx2`), with the file's own mips.
+        let mut gpu_bytes = vec![0; data.images.len()];
         let views: Vec<Option<wgpu::TextureView>> = data
             .images
             .iter()
             .enumerate()
             .map(|(i, img)| {
+                if let Some(file) = data.compressed.get(i).and_then(Option::as_ref) {
+                    return match crate::ktx2::transcode(file, crate::ktx2::target(), mips[i]) {
+                        Ok(blocks) => {
+                            gpu_bytes[i] = blocks.bytes();
+                            self.eager_bytes += gpu_bytes[i];
+                            let texture = blocks.upload(device, queue, "model texture (KTX2)", srgb[i]);
+                            Some(texture.create_view(&Default::default()))
+                        }
+                        Err(e) => {
+                            log::warn!("model: image {i}: {e}");
+                            None
+                        }
+                    };
+                }
                 if img.rgba.is_empty() && data.encoded.get(i).is_some_and(Option::is_some) {
+                    let ktx2 = data.encoded[i].as_deref().is_some_and(crate::ktx2::is_ktx2);
+                    gpu_bytes[i] = tex_cache::texture_bytes(img.width, img.height, mips[i])
+                        / if ktx2 && crate::ktx2::target() != crate::ktx2::Target::Rgba { 4 } else { 1 };
                     return None;
                 }
-                self.eager_bytes += tex_cache::texture_bytes(img.width, img.height, mips[i]);
+                gpu_bytes[i] = tex_cache::texture_bytes(img.width, img.height, mips[i]);
+                self.eager_bytes += gpu_bytes[i];
                 Some(upload_texture(device, queue, &mut self.mipgen, img, srgb[i], mips[i]))
             })
             .collect();
         let levels = crate::model::material_levels(&data.primitives, data.materials.len());
         let texture_bytes = |streamed: bool| -> u64 {
             (0..data.images.len())
-                .filter(|&i| views[i].is_none() == streamed)
-                .map(|i| tex_cache::texture_bytes(data.images[i].width, data.images[i].height, mips[i]))
+                .filter(|&i| data.encoded.get(i).is_some_and(Option::is_some) == streamed)
+                .map(|i| gpu_bytes[i])
                 .sum()
         };
         log::log!(
@@ -1643,7 +1674,8 @@ impl ModelRenderer {
             for i in g.images_of(k) {
                 let Some(bytes) = g.data.encoded.get(i).cloned().flatten() else { continue };
                 if self.textures.want((model, i)) {
-                    self.decoder.push(tex_cache::Job { key: (model, i), bytes, srgb: g.srgb[i], mips: g.mips[i] });
+                    let (srgb, mips, target) = (g.srgb[i], g.mips[i], crate::ktx2::target());
+                    self.decoder.push(tex_cache::Job { key: (model, i), bytes, srgb, mips, target });
                 }
             }
         }
@@ -1657,9 +1689,10 @@ impl ModelRenderer {
             match done.pixels {
                 Ok(pixels) if model < self.models.len() => {
                     let (width, height) = pixels.size();
-                    let texture =
-                        model_texture(device, "model texture (streamed)", width, height, done.srgb, done.mips);
-                    self.uploads.push_back(Upload { key: done.key, pixels, texture, next: 0 });
+                    let texture = (!matches!(pixels, tex_cache::Pixels::Blocks(_))).then(|| {
+                        model_texture(device, "model texture (streamed)", width, height, done.srgb, done.mips)
+                    });
+                    self.uploads.push_back(Upload { key: done.key, pixels, texture, srgb: done.srgb, next: 0 });
                 }
                 Ok(_) => {}
                 Err(e) => {
@@ -1672,18 +1705,25 @@ impl ModelRenderer {
         let mut budget = tex_cache::UPLOAD_PER_FRAME;
         while budget > 0 {
             let Some(up) = self.uploads.front_mut() else { break };
-            if !up.write(queue, &mut budget) {
+            let srgb = up.srgb;
+            if !up.write(device, queue, &mut budget, srgb) {
                 continue;
             }
             let Some(up) = self.uploads.pop_front() else { break };
             let (model, image) = up.key;
             let (width, height) = up.pixels.size();
-            let bytes = tex_cache::texture_bytes(width, height, up.texture.mip_level_count() > 1);
+            let Some(texture) = up.texture else { continue };
+            let bytes = match &up.pixels {
+                tex_cache::Pixels::Blocks(blocks) => blocks.bytes(),
+                _ => tex_cache::texture_bytes(width, height, texture.mip_level_count() > 1),
+            };
             if model >= self.models.len() || !self.textures.loaded(up.key, bytes) {
                 continue;
             }
-            self.mipgen.generate(device, queue, &up.texture);
-            self.models[model].views[image] = Some(up.texture.create_view(&Default::default()));
+            if !matches!(up.pixels, tex_cache::Pixels::Blocks(_)) {
+                self.mipgen.generate(device, queue, &texture);
+            }
+            self.models[model].views[image] = Some(texture.create_view(&Default::default()));
             self.refresh_groups(device, model, image);
             log::info!("textures: model {model} image {image} in, {:.1} MB", bytes as f64 / 1e6);
         }
