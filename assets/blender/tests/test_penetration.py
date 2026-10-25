@@ -26,6 +26,11 @@ def _stats(name):
 
 
 class Summary(unittest.TestCase):
+    def test_contact_uses_the_nearest_surface(self):
+        self.assertEqual(pen.nearest_surface_gap((0.003, -0.19, 0.04)), 0.003)
+        self.assertEqual(pen.nearest_surface_gap((0.02, -0.004, None)), -0.004)
+        self.assertIsNone(pen.nearest_surface_gap((None,)))
+
     def test_summary_takes_the_deepest_either_way(self):
         frames = [(0, (0, 0.0), (0, 0.0)), (1, (12, 0.03), (2, 0.004)), (2, (3, 0.01), (5, 0.02))]
         s = pen.summarise(frames)

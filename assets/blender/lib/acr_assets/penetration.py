@@ -22,12 +22,19 @@ RAYS = ((0.577, 0.577, 0.577), (-0.577, 0.577, -0.577), (0.577, -0.577, -0.577),
         (-0.577, -0.577, 0.577), (0.80, 0.0, 0.60), (0.0, -0.60, -0.80))
 RAYS_INSIDE = 5  # of `RAYS` with an odd count of crossings: inside (a hole or a flap may spoil one)
 HAND_BONES = ("hand_", "thumb_", "index_", "middle_", "ring_", "pinky_", "socket.")
+_gun_cache = {}
+_push_hand_cache = {}
 
 
 def parity_inside(counts, need=RAYS_INSIDE):
     """True when at least `need` of the rays' crossing `counts` are odd (the point is inside
     the mesh); an open shell's edge or a single flap spoils fewer rays than that."""
     return sum(1 for c in counts if c % 2) >= need
+
+
+def nearest_surface_gap(gaps):
+    """Signed gap to the nearest surface, rather than the most negative remote face."""
+    return min((g for g in gaps if g is not None), key=abs, default=None)
 
 
 def summarise(frames):
@@ -205,7 +212,10 @@ def prepare(arm_obj, bodies=None):
     out = []
     for ob in (bodies if bodies is not None else _skinned(arm_obj)):
         tri = _tris(ob.data, np)
-        hand = _hand_mask(ob, np)
+        hk = (ob.data.as_pointer(), len(ob.data.vertices))
+        if hk not in _push_hand_cache:
+            _push_hand_cache[hk] = _hand_mask(ob, np)
+        hand = _push_hand_cache[hk]
         out.append((ob, tri[~hand[tri].any(1)], tri.tolist(), outward(ob, np), hand[tri].any(1)))
     return out
 
@@ -216,6 +226,8 @@ def push_out(arm_obj, gun, info):
     outward normal, plus `COUNT_M`), or (0, None) when it is clear."""
     import bpy
     import numpy as np
+    from mathutils import Vector
+    from mathutils.bvhtree import BVHTree
 
     dg = bpy.context.evaluated_depsgraph_get()
     inv = np.array(arm_obj.matrix_world.inverted())
@@ -223,6 +235,13 @@ def push_out(arm_obj, gun, info):
     gco = np.empty(len(gun.data.vertices) * 3)
     gun.data.vertices.foreach_get("co", gco)
     gw = gco.reshape(-1, 3) @ mg[:3, :3].T + mg[:3, 3]
+    key = gun.data.as_pointer()
+    if key not in _gun_cache:
+        local = gco.reshape(-1, 3)
+        _gun_cache[key] = (BVHTree.FromPolygons(local.tolist(), _tris(gun.data, np).tolist()),
+                           local.min(0), local.max(0), outward(gun, np))
+    gbvh, lo, hi, gwind = _gun_cache[key]
+    gun_inv = np.linalg.inv(mg)
     best = (0.0, None)
     for ob, tri, all_tri, wind, hand_tri in info:
         me = ob.evaluated_get(dg).data
@@ -234,6 +253,22 @@ def push_out(arm_obj, gun, info):
         for _i, d, _q, n in gun_hits(gw, co, tri, all_tri, flip, hand_tri):
             if d > best[0]:
                 best = (d, n.normalized() * (d + COUNT_M))
+        # A thin strap can pass right through a stock without containing any of
+        # its vertices. Test the reverse direction as well, with the same parity
+        # confirmation used by measure().
+        loc = co @ gun_inv[:3, :3].T + gun_inv[:3, 3]
+        hk = (ob.data.as_pointer(), len(co))
+        if hk not in _push_hand_cache:
+            _push_hand_cache[hk] = _hand_mask(ob, np)
+        hand = _push_hand_cache[hk]
+        candidates = np.nonzero(~hand & (loc >= lo).all(1) & (loc <= hi).all(1))[0]
+        for i in candidates:
+            p = Vector(loc[i])
+            hit = gbvh.find_nearest(p)
+            if (hit[0] is not None and hit[3] > best[0]
+                    and gwind * (p - hit[0]).dot(hit[1]) < 0 and _inside(gbvh, p)):
+                n = Vector(mg[:3, :3] @ np.array(hit[1])) * -gwind
+                best = (hit[3], n.normalized() * (hit[3] + COUNT_M))
     return best
 
 
@@ -304,7 +339,8 @@ def measure(arm_obj, clips, gun=None, extra=None):
                     for i in cand:
                         p = Vector(loc[i])
                         hit = gbvh.find_nearest(p)
-                        if hit[0] is not None and gwind * (p - hit[0]).dot(hit[1]) < 0:
+                        if (hit[0] is not None and gwind * (p - hit[0]).dot(hit[1]) < 0
+                                and _inside(gbvh, p)):
                             if hit[3] > COUNT_M:
                                 bin_[0] += 1
                             bin_[1] = max(bin_[1], hit[3])
