@@ -158,6 +158,27 @@ from 0 at the hide to 1 at 0.6 m off it, a phase per 6 cm clump), so the game's 
 them on top of the pack's tail bones. The hair stays `alphaMode: MASK`; hide, eyes and tack
 are opaque.
 
+## Worn and saddle kit (m2-cav-kit)
+
+SPEC `kit` (`cavalry_kit.KITS`: `d18` the 18th-century dragoons, `d17` EngD17/FrnD17/SpnD17,
+`rei` SpnRei) puts the foot units' kit rules (`line_kit`, `kit_hd`) on the rider and his horse:
+
+| piece | what | skinned |
+|---|---|---|
+| `carbine_belt` | solid buff belt, left shoulder to right hip (70 mm), laid over the coat at `kit_hd.BELT_OFFSET`, its inner face dropped; a steel swivel at its end | the garment under it, arms left out (`line_kit._weigh`, 4 bones); swivel rigid on `hips` |
+| `waist_belt` | round the waist (`kit_hd.ring_path`, 45 mm), a buckle over its open ends | as above; buckle on `hips` |
+| `pouch` | `gear_hd` cartridge box (0.85 scale) over the right hip, seated on the coat on its lowest gap (`line_kit.seat_back`, quantile 0) | rigid `hips` |
+| `scabbard` | `gear_hd.scabbard_mesh` (sabre 0.88 m, sword 0.82 m) from the left of the waist belt, 40° back and 12° out, seated `SADDLE_GAP` outside hide, saddle, saddlecloth and the rider's leg in the seated pose; the hilt (`gear_hd` hanger hilt) in its mouth on `socket.hip_l`, hidden with the sheathed blade while the drawn one shows | rigid `hips` (goes with the thrown rider) |
+| `portmanteau`, `roll` | the valise (0.50 x 0.095 m) and the rolled blanket (0.58 x 0.06 m) behind the cantle, laid down onto the croup slice by slice in `STAND` (`cavalry_kit.sag`, `reseat`) | rigid on the horse bone of `HORSE_BONES` with the fewest hide vertices inside over the gaits (`spine_02`) |
+
+The kit replaces the ribbon `belt` (`bd.strap`) and the box sabre (`gear.sabre`). The saddle's
+pistol holsters stay (`military_saddle`). No `acr_lod` nodes; every material through the
+palette keys (`cavalry_kit.MAT_KEY`). `stats.json` `kit`: triangles and gaps per piece, the
+horse bone tried, and `collisions` per clip (`cavalry_kit.collide`: rider items against coat,
+hide, saddle, saddlecloth; saddle kit against hide and rider). `ACR_NO_KIT=1` builds a unit
+without it and measures the old sabre box the same way (before/after). `kit_hd.is_arm` and
+`trunk_weights` now read the `rider.` prefix (the strap weights kept the arm bones before).
+
 ## Not yet
 
 - Facings, lace and sash are shells and thin geometry; at game zoom the lapels read as
@@ -168,3 +189,5 @@ are opaque.
 - The saddlecloth has no lace border (the sprites show yellow borders on French and
   English cloths).
 - The officers' pistol rides upright on the thigh like the carbine.
+- The officers (`*KOf*`) and standard bearers carry no kit yet; the valise works into the
+  croup in the gallop (`kit.collisions`, `portmanteau|horse` in `GALLOP`).

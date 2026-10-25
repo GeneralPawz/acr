@@ -28,7 +28,7 @@ MD = {
 
 PALETTE = dict(cavalry.PALETTE, **{"coat": (0.12, 0.18, 0.38), "facings": (0.86, 0.85, 0.80), "waistcoat": (0.86, 0.85, 0.80), "breeches": (0.86, 0.85, 0.80), "cap": (0.08, 0.07, 0.06), "crest": (0.86, 0.85, 0.80), "saddlecloth": (0.62, 0.52, 0.38)})
 
-SPEC = {"md": MD, "palette": PALETTE, "dress": "coat", "tack": "military", "held": None, "hat": 'helmet', "gun": 'carbine', "drawn": True, "facings": True,
+SPEC = {"kit": cavalry.KITS["d18"], "md": MD, "palette": PALETTE, "dress": "coat", "tack": "military", "held": None, "hat": 'helmet', "gun": 'carbine', "drawn": True, "facings": True,
         "coat": cavalry.HORSE_COATS["bay"]}
 
 

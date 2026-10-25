@@ -20,6 +20,14 @@ class TrunkWeights(unittest.TestCase):
     def test_all_arm_falls_back_to_trunk(self):
         self.assertEqual(kit_hd.trunk_weights({"forearm_r": 1.0, "index_01_r": 0.2}), {"spine1": 1.0})
 
+    def test_prefixed_arm_bones_removed(self):
+        # The rider's bones on the shared horse armature carry `rider.` (m2-cav-kit).
+        w = kit_hd.trunk_weights({"rider.upperarm_l": 0.5, "rider.spine2": 0.5})
+        self.assertEqual(w, {"rider.spine2": 1.0})
+        self.assertEqual(kit_hd.trunk_weights({"rider.forearm_r": 1.0}), {"rider.spine1": 1.0})
+        self.assertFalse(kit_hd.is_arm("rider.hips"))
+        self.assertFalse(kit_hd.is_arm("socket.hand_r"))
+
     def test_at_most_four(self):
         w = kit_hd.trunk_weights({b: 0.2 for b in ("hips", "spine", "spine1", "spine2", "neck")})
         self.assertEqual(len(w), 4)

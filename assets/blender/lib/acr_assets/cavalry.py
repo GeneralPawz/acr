@@ -41,6 +41,8 @@ A unit script gives a spec and calls `build(ctx, spec)`:
               "pistol" (`held.pistol`) in the right fist: upright on the thigh while he rides,
               level for the shot (ATTACK1, PATTACK1...)
     sabre     False: no sabre at the hip
+    kit       worn and saddle kit (`cavalry_kit.KITS`): carbine belt and swivel, waist
+              belt, pouch, the scabbard along the flank, valise and roll behind the saddle
     drawn     True: a drawn sabre for the melee clips besides the gun (EngD18): it sits on a
               second right-hand socket (`socket.blade_r`); the clips key the sockets' scale,
               so the melee clips show the blade and hide the gun and the sheathed sabre
@@ -59,6 +61,7 @@ a metre beyond its back, lying along it.
 """
 
 import math
+import os
 
 import bmesh
 import bpy
@@ -69,6 +72,7 @@ from . import body as bd
 from . import aim as aiming
 from . import crawl, faces, gear, heads, horse, mount, poses, registry, rig
 from .humans import Character, prepare_export
+from .cavalry_kit import KITS  # noqa: F401  (the units' `kit`)
 
 P = "rider."
 # The family's own material keys (`registry`): a horsehair crest or feather plume.
@@ -1204,9 +1208,10 @@ def dress17(ch, spec, name, origin):
     skirt = bd.tube(ch.arm, f"{name}.buff_skirt", rig.SKIRT_TOP + oz, 0.60 + oz, (0.20, 0.155), (0.25, 0.21), gap_deg=40,
                     flare_back=0.03, columns=rig.SKIRT_COLUMNS, centre=(origin.x, origin.y), prefix=P)
     ch.add("clothes", skirt, "buff", symmetric=True)
-    belt = bd.strap(ch.arm, f"{name}.belt", ch.flesh, Vector((0.12, cy, 1.47 + oz)), Vector((-0.17, cy, 0.95 + oz)),
-                    0.06, 0.045, bones=[P + b for b in rig.BODY_BONES])
-    ch.add("clothes", belt, "belts", symmetric=True)
+    if not spec.get("kit"):  # the kit's solid belts replace the ribbon (`cavalry_kit`)
+        belt = bd.strap(ch.arm, f"{name}.belt", ch.flesh, Vector((0.12, cy, 1.47 + oz)), Vector((-0.17, cy, 0.95 + oz)),
+                        0.06, 0.045, bones=[P + b for b in rig.BODY_BONES])
+        ch.add("clothes", belt, "belts", symmetric=True)
     uniform(ch, spec, oz, cy)
     drape.bucket_boots(ch, name)
     drape.falling_band(ch, name)
@@ -1214,6 +1219,8 @@ def dress17(ch, spec, name, origin):
 
 def make(ctx, spec):
     name, root = ctx.name, ctx.root
+    if os.environ.get("ACR_NO_KIT"):  # the unit as before its kit, for before/after numbers
+        spec = dict(spec, kit=None)
     md = spec["md"]
     hz = mount.load(name, root, horse_clips(md, spec.get("motions", MOTIONS), reloads(spec)), coat=spec.get("coat"))
     centre_fall(hz)
@@ -1244,9 +1251,10 @@ def make(ctx, spec):
         skirt = bd.tube(ch.arm, f"{name}.coat_skirt", rig.SKIRT_TOP + oz, 0.72 + oz, (0.20, 0.15), (0.24, 0.20), gap_deg=80,
                         flare_back=0.03, columns=rig.SKIRT_COLUMNS, centre=(origin.x, origin.y), prefix=P)
         ch.add("clothes", skirt, "coat", symmetric=True)
-        belt = bd.strap(ch.arm, f"{name}.belt", ch.flesh, Vector((0.12, cy, 1.47 + oz)), Vector((-0.17, cy, 0.95 + oz)),
-                        0.06, 0.04, bones=[P + b for b in rig.BODY_BONES])
-        ch.add("clothes", belt, "belts", symmetric=True)
+        if not spec.get("kit"):  # the kit's solid belts replace the ribbon (`cavalry_kit`)
+            belt = bd.strap(ch.arm, f"{name}.belt", ch.flesh, Vector((0.12, cy, 1.47 + oz)), Vector((-0.17, cy, 0.95 + oz)),
+                            0.06, 0.04, bones=[P + b for b in rig.BODY_BONES])
+            ch.add("clothes", belt, "belts", symmetric=True)
         uniform(ch, spec, oz, cy)
     elif spec.get("dress") == "buff17":
         dress17(ch, spec, name, origin)
@@ -1419,7 +1427,12 @@ def make(ctx, spec):
     if reloads(spec):
         # The rammer shows only while it is out of its pipes (`reload_clip`).
         ch.show = dict(getattr(ch, "show", None) or {}, **{ROD_SOCKET: 0.0})
-    if spec.get("sabre", True):
+    if spec.get("kit"):
+        # Worn and saddle kit (`cavalry_kit`): its scabbard and hilt replace the box sabre.
+        from . import cavalry_kit
+
+        cavalry_kit.wear(ch, name, spec, origin)
+    elif spec.get("sabre", True):
         sab = gear.sabre(f"{name}.sabre")
         am.attach(sab, ch.arm, P + "socket.hip_l", Matrix.Translation(am.world(ch.arm, P + "socket.hip_l").translation)
                   @ Matrix.Rotation(math.radians(40), 4, "X"))
@@ -1594,6 +1607,9 @@ def build(ctx, spec):
     # The reins' ends in the rider's fists through every clip; the mane and tail in the wind.
     hz.stats["reins"] = mount.follow_reins(ch.arm, list(ch.arm.get("acr_clips", [])), prefix=P, hide=hz.meshes[0])
     mount.hair_wind(hz)
+    from . import cavalry_kit
+
+    kit_report = cavalry_kit.report(ch, list(made))  # the kit's bone, collisions per clip
     am.set_clip(ch.arm, "STAND")
     report = {}
     colours = ch.colours(ctx.ref, spec["palette"], report=report, fixed=spec.get("fixed", ()))
@@ -1635,3 +1651,4 @@ def build(ctx, spec):
                  "fist_vertices": getattr(ch, "fist_vertices", 0)}
     if getattr(ch, "reload_stats", None):
         ctx.stats["reload"] = ch.reload_stats
+    ctx.stats["kit"] = kit_report

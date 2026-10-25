@@ -43,7 +43,7 @@ MD = {
 PALETTE = dict(cavalry.PALETTE, **cavalry.PALETTE17, **{"coat": (0.72, 0.62, 0.45), "waistcoat": (0.72, 0.62, 0.45), "metal": (0.62, 0.63, 0.66),
                                    "saddlecloth": (0.70, 0.10, 0.06), "breeches": (0.72, 0.60, 0.42), "crest": (0.92, 0.90, 0.86), "sash": (0.75, 0.08, 0.06)})
 
-SPEC = {"md": MD, "palette": PALETTE, "paint": True, "fixed": cavalry.FIXED17, "dress": "buff17", "sleeves": "buff", "armour": True, "arms": True, "tack": "military", "hat": "zischagge", "plume": True, "held": None,
+SPEC = {"kit": cavalry.KITS["rei"], "md": MD, "palette": PALETTE, "paint": True, "fixed": cavalry.FIXED17, "dress": "buff17", "sleeves": "buff", "armour": True, "arms": True, "tack": "military", "hat": "zischagge", "plume": True, "held": None,
         "gun": "pistol", "holster": True, "drawn": True, "blade": "sword", "motions": {"": ("G1_Trot", 2)}}
 
 

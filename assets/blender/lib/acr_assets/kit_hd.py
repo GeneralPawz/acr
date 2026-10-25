@@ -42,16 +42,23 @@ STRAP_LEVELS = ((5, 0.01), (5, 0.01), (3, 0.02), (2, 0.04))
 UNDER_M = 0.001  # m: a belt vertex closer than this to the coat (or under it) counts
 
 
+def _prefix(bone):
+    """A shared armature's bone prefix (`rider.`, `c0.`), or ""."""
+    return bone[:bone.index(".") + 1] if "." in bone and not bone.startswith("socket.") else ""
+
+
 def is_arm(bone):
-    return bone.startswith(ARM_PREFIXES)
+    """An arm or hand bone, with or without a shared armature's prefix (`rider.upperarm_l`)."""
+    return bone[len(_prefix(bone)):].startswith(ARM_PREFIXES)
 
 
 def trunk_weights(groups):
-    """{bone: w} without the arm bones, normalised (`{"spine1": 1}` when nothing is left)."""
+    """{bone: w} without the arm bones, normalised (`{"spine1": 1}`, with the groups' bone
+    prefix, when nothing is left)."""
     w = {b: x for b, x in groups.items() if not is_arm(b) and x > 0.0}
     s = sum(w.values())
     if s <= 0.0:
-        return {"spine1": 1.0}
+        return {next((_prefix(b) for b in groups), "") + "spine1": 1.0}
     top = sorted(w.items(), key=lambda e: -e[1])[:4]
     s = sum(x for _b, x in top)
     return {b: x / s for b, x in top}
@@ -165,16 +172,35 @@ def strap_path(tree, a, b, over_top=True, n=80):
     return [*reversed(front), *arc, *back] if over_top else front
 
 
-def lay_strap(name, tree, a, b, width, offset, thick, across=5, step=0.01, over_top=True):
+def ring_path(tree, centre, z, n=96, start_deg=-80.0, span_deg=340.0):
+    """Centre line of a belt round the body at height `z` about the vertical through
+    `centre` (x, y): rays in from outside every `span_deg / n` degrees from `start_deg`
+    (0: -Y, the front; positive towards +X), [(point on the surface, outward guide)]. The
+    ends are left open (`span_deg` < 360) where a buckle covers them."""
+    from mathutils import Vector
+
+    out = []
+    for k in range(n + 1):
+        th = math.radians(start_deg + span_deg * k / n)
+        d = Vector((math.sin(th), -math.cos(th), 0.0))
+        o = Vector((centre[0], centre[1], z))
+        hit = tree.ray_cast(o + d * 0.6, -d, 0.6)[0]
+        if hit is not None:
+            out.append((hit.copy(), d))
+    return out
+
+
+def lay_strap(name, tree, a, b, width, offset, thick, across=5, step=0.01, over_top=True, path=None):
     """A solid strap (`thick`, box section, closed) laid over the surface of `tree`: its
     inner face `offset` off the surface along the strap's own normal, `across` samples over
-    the width, a row every `step` m; pits narrower than the strap are bridged."""
+    the width, a row every `step` m; pits narrower than the strap are bridged. `path`
+    ([(point, outward guide)], e.g. `ring_path`) replaces the shoulder-to-hip line `a`, `b`."""
     import bpy
     from mathutils import Vector
 
     from . import body as bd
 
-    path = strap_path(tree, a, b, over_top)
+    path = path or strap_path(tree, a, b, over_top)
     pts, src = resample([tuple(p) for p, _g in path], step)
     guides = [path[i][1] for i in src]
     P = [Vector(p) for p in pts]
