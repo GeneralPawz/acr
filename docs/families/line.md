@@ -58,19 +58,27 @@ would switch the whole soldier to authored levels and drop its far meshes
 
 | nation | pieces | why |
 |---|---|---|
-| Eng | crossbelts, oval belt plate, cartridge box, bayonet scabbard, knapsack | the battalion man after the 1768 warrant: no hanger, the plate on the bayonet belt |
-| Frn | crossbelts, cartridge box, bayonet scabbard, hanger (sabre-briquet), knapsack | the fusilier's sabre on the waist belt, buckles, no plate |
-| Spn | as Frn | sword and bayonet on the waist belt |
-| Usa | crossbelts, cartridge box, bayonet scabbard, knapsack | Continental line, no sword |
+| Eng | crossbelts, oval belt plate, cartridge box, bayonet scabbard, knapsack, tin canteen | the battalion man after the 1768 warrant: no hanger, the plate on the bayonet belt; the issued kidney-shaped tin canteen |
+| Frn | crossbelts, cartridge box, bayonet scabbard, hanger (sabre-briquet), knapsack, tin canteen | the fusilier's sabre on the waist belt, buckles, no plate; the tin `bidon` |
+| Spn | as Frn, wooden canteen | sword and bayonet on the waist belt; a small wooden cask |
+| Usa | crossbelts, cartridge box, bayonet scabbard, knapsack, wooden canteen | Continental line, no sword; the cooper-made "cheese-box" canteen |
 
 The hip items rest on the first surface under their back, the coat skirt included
-(`line_kit.seat_back`, turned onto it at most 35°, 4 mm off on the 30 % quantile of the rays:
+(`line_kit.seat_back`, turned onto it at most 35Â°, 4 mm off on the 30 % quantile of the rays:
 on the outermost ray the pleats at the side vent held the box 0.136 m out; now 0.070 m,
 median gap 0.029 m). The knapsack stays rigid on `spine2`: with `kit_hd.follow_back` the
 items met in 234 vertices against 9. `collisions.coat_in_pack` lists the deepest coat
 vertices: the 0.089 m one (rest y 0.094, 8 cm in front of the pack) is a false hit of the
-nearest-face test on the pack's open strap sweeps. Canteens are not worn yet: on the back hip the coat skirts swing through them (the HD kit's
-walking defect). Numbers: `stats.json` `kit` (triangles per piece, seat shifts, collisions
+nearest-face test on the pack's open strap sweeps.
+
+**Canteens** (`canteen`: the `gear_hd` cheese box; `canteen_tin`: `line_kit.tin_canteen_mesh`,
+a flat oval tin) hang behind the left hip under the pack on their own narrow strap
+(`CANTEEN_STRAP`, 22 mm, over the right shoulder nearer the neck than the waist belt, laid
+last over everything), seated on the skirt with `seat_back`. On the back of the hip the
+skirt swings with the thigh (the HD kit: 98 coat vertices in the canteen in walk): the build
+tries the canteen rigid on each of `CANTEEN_BONES` (`hips`, `thigh_l`), counts the clothes'
+vertices inside it over `MOTION_L`/`MOTION_R` and keeps the fewer
+(`kit.collisions.canteen` in stats.json). Numbers: `stats.json` `kit` (triangles per piece, seat shifts, collisions
 per clip).
 
 ## Open points

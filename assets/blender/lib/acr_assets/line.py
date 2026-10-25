@@ -189,6 +189,10 @@ def make(root, name, s):
     worn = line_kit.covered(s["gear"], kit)
     registry.build_gear([g for g in worn if g in STRAPS], ch, name, s)
     if kit:
+        # Gear the kit's straps lie over (`line_kit.UNDER_KIT`: the falling band), first.
+        under = [g for g in worn if g in line_kit.UNDER_KIT]
+        registry.build_gear(under, ch, name, s)
+        worn = tuple(g for g in worn if g not in under)
         line_kit.straps(ch, name, kit)
     ch.bone_layer()
     ch.caps()

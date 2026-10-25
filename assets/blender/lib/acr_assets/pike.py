@@ -29,7 +29,7 @@ from mathutils import Matrix, Vector
 
 from . import armature as am
 from . import clips as cl
-from . import crawl, drape, faces, frontier, gear, heads, held, line, officers, outfit, poses, registry, rig  # noqa: F401
+from . import crawl, drape, faces, frontier, gear, heads, held, line, line_kit, officers, outfit, poses, registry, rig  # noqa: F401
 from . import garments as gm
 from .humans import LAYER_OF, prepare_export
 
@@ -282,6 +282,10 @@ def musketeer_spec(md, palette=None, hat="pike_broad", **kw):
     if "doublet" in swap:
         kw["build"] = dict({"strap_offsets": TRACED_STRAP_OFFSETS}, **(kw.get("build") or {}))
     _drape(kw, tuple(swap.get(g, g) for g in MUSKETEER_DRAPE))
+    # The worn kit (`line_kit.KIT17`): solid baldric and bandolier with the sword, the twelve
+    # apostles, bullet bag and priming flask, in place of the ribbons, the charges' row and
+    # the officer's scabbard (`line_kit.COVERS`).
+    kw.setdefault("kit", line_kit.KIT17)
     return line.spec(md, palette=pal, hat=hat,
                      gear=("belt_l", "belt_r", "falling_band", "pike_apostles", "pike_match", "off_scabbard"),
                      fixed=FIXED + tuple(kw.pop("fixed", ())), **kw)

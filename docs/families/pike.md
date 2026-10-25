@@ -55,6 +55,25 @@ with the `#STAND` sprites (`line`'s `mix`); belts, armour, match and scabbard fi
   - Every pose-bone scale is reset to 1 before export (the hidden-socket bug); the crawl
     clips hide both pikes.
 
+## Worn kit (m2-kit-more)
+
+Musketeers (EngMus, SpnMus, FrnS17: the units on the musketeer rig; the Units table's
+sprite reading gives all three the bandolier over the left shoulder and the sword on a
+baldric) wear `line_kit.KIT17` through
+SPEC `kit` (`musketeer_spec`), the line's worn-kit rules (docs/families/line.md "Worn kit"):
+solid straps at a fixed offset, trunk weights only, at most 4; each item rigid on one bone and
+seated on the surface under it (`line_kit.seat_back`); `acr_decay` on every material; no
+`acr_lod` node.
+- **Baldric**, buff, 65 mm, right shoulder to left hip, with the sword's leather scabbard
+  (0.70 m) at the hip, as the line's hanger hangs. No hilt in it: the sword is drawn for melee
+  (`sidearm="sword"`, shown by its socket), and a rigid hilt could not be hidden then.
+- **Bandolier**, 45 mm, left shoulder to right hip over the baldric, with the **twelve
+  apostles** (`line_kit.apostle_mesh`: turned wooden bottles with leather caps; five down the
+  front, seven down the back, `APOSTLES`, all rigid on `spine`: on the strap's own bone each,
+  neighbours on `spine1` and `spine2` swung into each other), the **bullet bag** at its end (front of the right
+  hip) and the **priming flask** beside it (horn, brass nozzle).
+- The **falling band** is built before the straps so they lie over it (`line_kit.UNDER_KIT`).
+
 ## Clips
 
 | clip | content |
