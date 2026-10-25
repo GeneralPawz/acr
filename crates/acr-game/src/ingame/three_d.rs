@@ -139,10 +139,36 @@ fn storm_at(weather: Weather, clock: f32) -> (f32, f32) {
 }
 
 /// Held gear a crawler, a disarmed or a killed man no longer carries: long weapons, a
-/// rider's carbine and sabre, and the hat.
+/// rider's carbine and sabre, the hat and a peasant's work tools (each only while his clip
+/// shows it, `ModelData::states`).
 fn held_gear(node: &str) -> bool {
     let n = node.rsplit('.').next().unwrap_or(node);
-    ["musket", "rammer", "pike", "gun", "sabre", "blade", "tricorn", "hat", "cap"].contains(&n)
+    ["musket", "rammer", "pike", "gun", "sabre", "blade", "tricorn", "hat", "cap", "axe", "pick", "sickle", "hammer"]
+        .contains(&n)
+}
+
+/// The pick clip of a peasant model (docs/families/civil.md).
+const STONE_CLIP: &str = "ATTACK1_STONE";
+
+/// The clip for a man breaking stone: the original plays one work animation for wood and
+/// stone (`TAKERESSTAGES ... 2`, `#ATTACK1`; `gather.rs` `Attack(work - 1)`), the model
+/// swings the pick in [`STONE_CLIP`] while his load (`carry_type`, set as the work starts) is
+/// stone or gold. `None` keeps `#ATTACK1` (wood, or a model without the clip).
+fn stone_clip(model: &ModelData, world: &World, u: &Unit) -> Option<usize> {
+    if u.anim != AnimKind::Attack(1) {
+        return None;
+    }
+    let take = world.catalog.get(u.kind).economy.take_res.get(usize::from(u.carry_type?)).copied().flatten()?;
+    let stone = matches!(take.credited, acr_sim::economy::STONE | acr_sim::economy::GOLD);
+    if take.work == 2 && stone { model.clip(STONE_CLIP) } else { None }
+}
+
+/// Whether gear node `n` of `model` is in his hands in `clip`: gear without clip states
+/// always, a tool only in the clips its `acr_state` names.
+fn holds(model: &ModelData, n: usize, clip: Option<usize>) -> bool {
+    model
+        .node_states(n)
+        .is_none_or(|names| clip.and_then(|c| model.clips.get(c)).is_some_and(|c| names.contains(&c.name)))
 }
 
 /// Clearance of dropped gear from the body's axis (hips to head) of its dead owner (m).
@@ -160,6 +186,7 @@ fn laid_gear(
     bone: &dyn Fn(&str) -> Option<[f32; 3]>,
     id: u32,
     tick: u64,
+    held: Option<usize>,
 ) -> Vec<(usize, [f32; 2], f32)> {
     use acr_render::math;
     let globals = model.globals(inst.clip, inst.time);
@@ -185,9 +212,11 @@ fn laid_gear(
     let mut out = Vec::new();
     for (k, (&model_index, &(n, lying))) in gear.dropped.iter().zip(&gear.nodes).enumerate() {
         let m = world(n);
-        // A hidden item (scaled to nothing by its clip) does not fall.
+        // A hidden item (scaled to nothing by its clip) does not fall; a tool falls if he held
+        // it in his last clip alive (`held`), from where the death clip has his hand.
         let x = [m[0][0], m[0][1], m[0][2]];
-        if math::dot(x, x) < 1e-6 {
+        let tool = model.node_states(n).is_some();
+        if if tool { !holds(model, n, held) } else { math::dot(x, x) < 1e-6 } {
             continue;
         }
         let mut rng = super::splatter::Rng::new(tick, id ^ (k as u32).wrapping_mul(0x9e37) ^ 0x6ea2);
@@ -197,7 +226,7 @@ fn laid_gear(
         let mut d = [tip[0] - o[0], tip[1] - o[1]];
         let full = math::dot(math::sub(tip, o), math::sub(tip, o)).sqrt();
         let dl = (d[0] * d[0] + d[1] * d[1]).sqrt();
-        if ragdoll || dl < 0.3 * full {
+        if ragdoll || dl < 0.3 * full || full < 1e-6 {
             let a = rng.next() * std::f32::consts::TAU;
             d = [a.cos(), a.sin()];
         } else {
@@ -437,6 +466,9 @@ pub struct ThreeD {
     carried: super::gear_view::Gear,
     /// Riders' horses turned for a blow, eased (`strike_view::Turns`).
     turns: super::strike_view::Turns,
+    /// Per living man whose model shows tools by clip (`ModelData::states`): his clip this
+    /// frame, so a killed or crawling man drops the tool he held (unit id).
+    tool_clips: HashMap<u32, Option<usize>>,
     /// Seconds of the last frame and the world point at the window centre.
     frame_seconds: f32,
     pub focus: [f32; 2],
@@ -572,6 +604,7 @@ impl Default for ThreeD {
             skirts: Default::default(),
             carried: Default::default(),
             turns: Default::default(),
+            tool_clips: HashMap::new(),
             frame_seconds: 0.0,
             focus: [0.0; 2],
             ground_detailed: true,
@@ -1414,6 +1447,11 @@ impl ThreeD {
                 inst.clip = Some(c);
                 // A long `ATTACK` repeats the blow instead of standing between blows.
                 inst.time = super::strike_view::strike_time(u.frame, u.anim_frames, &model.clips[c], model.fps);
+            } else if let Some(c) = stone_clip(model, world, u) {
+                inst.clip = Some(c);
+            }
+            if u.alive && u.death == 0 && !model.states.is_empty() && !u.body.crawling() {
+                self.tool_clips.insert(u.id.0, inst.clip);
             }
             // A SLOWRECHARGE musketeer replays #ATTACK3 until his reload counter is down to one
             // play (`combat.rs`, the slow-recharge branch): he rams on that last play only and
@@ -1525,7 +1563,12 @@ impl ThreeD {
                 && let Some(unarmed) = gear.unarmed
             {
                 inst.model = unarmed;
-                self.debris.drop_gear(u.id.0, &gear.dropped, u.owner, at, now);
+                let held = self.tool_clips.remove(&u.id.0).flatten();
+                let dropped: Vec<usize> = (gear.dropped.iter().zip(&gear.nodes))
+                    .filter(|&(_, &(n, _))| holds(model, n, held))
+                    .map(|(&m, _)| m)
+                    .collect();
+                self.debris.drop_gear(u.id.0, &dropped, u.owner, at, now);
             }
             // Killed (#206): his held gear stays in his hands and on his head while he falls
             // and lies beside him from the landing on (the death clip's end, or `#DEATHLIE`).
@@ -1542,7 +1585,8 @@ impl ThreeD {
                     let ragdolls = self.ragdolls.as_ref();
                     let bone = |name: &str| ragdolls.and_then(|r| r.bone_world(u.id.0, name));
                     let tick = if record.tick > 0 { record.tick } else { now };
-                    let laid = laid_gear(model, gear, &inst, &bone, u.id.0, tick);
+                    let held = self.tool_clips.remove(&u.id.0).flatten();
+                    let laid = laid_gear(model, gear, &inst, &bone, u.id.0, tick, held);
                     self.debris.lay_gear(u.id.0, &laid, u.owner, tick, now);
                     inst.model = unarmed;
                 }

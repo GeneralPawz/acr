@@ -79,11 +79,17 @@ The priest: `STAND` (hands before the chest, book in the left), `REST` (reading)
 - Work states of the original (ENGKRI.MD `TAKERESSTAGES`): wood and stone work stance 2
   (`#ATTACK1`, `U_Rub`), food stance 4 (`#ATTACK3`, `U_Ubrk`, harvest with the sickle),
   building `#WORK` (`U_Str`). The game plays `ATTACK1` for stone (`gather.rs`
-  `Attack(work - 1)`), so the pick clip `ATTACK1_STONE` shows only once the renderer
-  picks it by the unit's load (`carry_type` stone). No hoe: no sprite or state uses one.
-  Tools still show by socket scale; `acr_state` is read by `render_views.py` only.
-- Tools are not dropped at death: `three_d::held_gear` knows musket, sabre, hat and the
-  like by node name, not `axe`, `pick`, `sickle`, `hammer`; and the death clips hide them.
+  `Attack(work - 1)`); the renderer plays `ATTACK1_STONE` instead while the man's load
+  (`carry_type`) credits stone or gold and the model has the clip (`three_d::stone_clip`,
+  render only). No hoe: no sprite or state uses one. The stance clips `PSTAND1`/`PATTACK1`
+  between blows still show the axe for a stone worker (no stone variants).
+- Tools by state: the renderer reads each tool node's `acr_state` (`ModelData::states`, men
+  of skeleton H only) and collapses a tool in every clip that does not name it
+  (`ModelData::pose`, test `tools_show_in_their_clips`), on top of the socket scale.
+- Tools at death: `three_d::held_gear` knows `axe`, `pick`, `sickle`, `hammer`; a killed or
+  crawling man drops the tool his last clip alive showed (`tool_clips`, `holds`), laid
+  beside him from the landing on (#206). The death clips hide the tools, so the tool is not
+  in his hand while he falls (asset: key the held tool in `DEATH`).
 - The tools have no LOD levels and no baked textures (flat palette colours with the
   outfit's decay materials).
 - Spine X: positive bends the trunk forward (docs/assets-humans.md). The stoops of the

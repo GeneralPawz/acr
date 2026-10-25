@@ -285,16 +285,18 @@ pub fn hit(game: &mut Game, v: &Value) -> Result<Value, String> {
 /// fire (`ground_fire::shell_burst`, rule `hit_locations`); one by a mortar (`ArtMrt`, rule
 /// `mortars`) leaves none and bursts smaller.
 /// `{"cmd": "map_object", "group": "tree"|"stone", "index": n, "at": [[x, y], ...],
-/// "rock": bool, "struck": "felled", "dir": 0}`: trees (wood sources) or stones put on the map as `World::objects`, so
+/// "rock": bool, "struck": "felled", "dir": 0, "source": 2}`: trees (wood sources) or stones put on the map as `World::objects`, so
 /// balls meet them under the `ball_terrain` rule; a `rock` locks its ground cells. Drawn as
 /// models with `map_models` where the table names `index`. Returns the struck-state keys.
 pub fn map_object(game: &mut Game, v: &Value) -> Result<Value, String> {
     let Mode::InGame(g) = &mut game.mode else { return Err("no game".into()) };
-    let tree = match v.get("group").and_then(Value::as_str).unwrap_or("tree") {
+    let group = v.get("group").and_then(Value::as_str).unwrap_or("tree");
+    let tree = match group {
         "tree" => true,
-        "stone" => false,
-        o => return Err(format!("map_object: group {o:?} is not \"tree\" or \"stone\"")),
+        "stone" | "source" => false,
+        o => return Err(format!("map_object: group {o:?} is not \"tree\", \"stone\" or \"source\"")),
     };
+    let bare = group == "source";
     let index = v.get("index").and_then(Value::as_u64).unwrap_or(0) as u16;
     let rock = v.get("rock").and_then(Value::as_bool).unwrap_or(false);
     let at: Vec<(i32, i32)> = v
@@ -304,8 +306,20 @@ pub fn map_object(game: &mut Game, v: &Value) -> Result<Value, String> {
         .unwrap_or_default();
     let world = g.world_mut().ok_or("no world yet")?;
     let group = if tree { SpriteGroup::Trees } else { SpriteGroup::Stones };
-    let ids: Vec<usize> =
-        at.iter().map(|&(x, y)| acr_sim::ball_terrain::add_object(world, group, index, x, y, tree, rock)).collect();
+    let ids: Vec<usize> = if bare {
+        Vec::new()
+    } else {
+        at.iter().map(|&(x, y)| acr_sim::ball_terrain::add_object(world, group, index, x, y, tree, rock)).collect()
+    };
+    // `"source": k`: each also a gathering source of `ResType` k (2 stone, 3 field food; a
+    // tree is one of wood already), so peasants can work it on the blank field; group
+    // `"source"` places the source alone (an unseen field).
+    if let Some(kind) = v.get("source").and_then(Value::as_u64) {
+        use acr_sim::gather::{Source, Sources};
+        let mut list = world.sources.list.clone();
+        list.extend(at.iter().map(|&(x, y)| Source { x, y, kind: kind as u8, per_work: 4, radius: 30 }));
+        world.sources = std::sync::Arc::new(Sources::new(list, world.map.land.width * 16));
+    }
     // Already struck (render tests and the frame-time bench): `"struck": "felled" |
     // "splintered" | "chipped"` from flight direction `"dir"` (0 east, 64 south), now.
     if let Some(kind) = v.get("struck").and_then(Value::as_str) {

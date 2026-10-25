@@ -314,6 +314,12 @@ pub struct ModelData {
     /// `lie_flat` and one has `emaciated`. The instance's weight for it is
     /// `ModelInstance::morphs[2]`.
     pub emaciated: bool,
+    /// The held tools of a man (skeleton H) that show in some clips only: per node with
+    /// `extras.acr_state` (a clip name or a list), those clips (docs/families/civil.md).
+    pub states: Vec<(usize, Vec<String>)>,
+    /// Per clip: the palette slots of the [`Self::states`] nodes it does not name, collapsed
+    /// by [`Self::pose`].
+    state_hidden: Vec<Vec<usize>>,
 }
 
 /// The men of a gun model (#287): the bones `c0.`..`c3.` and what hangs on them, so a fallen
@@ -401,6 +407,30 @@ impl AuthoredLods {
     fn of(&self, node: &gltf::Node<'_>) -> Option<u8> {
         Self::level(node).or_else(|| node.name().filter(|n| self.masters.contains(*n)).map(|_| 0))
     }
+}
+
+/// Per clip: the slots of nodes in `states` (or below one) that the clip does not name.
+fn state_hidden(nodes: &[Node], slots: &[Slot], states: &[(usize, Vec<String>)], clips: &[Clip]) -> Vec<Vec<usize>> {
+    if states.is_empty() {
+        return Vec::new();
+    }
+    let names = |mut n: usize| loop {
+        if let Some((_, names)) = states.iter().find(|(k, _)| *k == n) {
+            return Some(names);
+        }
+        n = nodes[n].parent?;
+    };
+    let tagged: Vec<(usize, &Vec<String>)> = slots
+        .iter()
+        .enumerate()
+        .filter_map(|(k, s)| {
+            let n = match *s {
+                Slot::Node(n) | Slot::Joint { node: n, .. } => n,
+            };
+            names(n).map(|v| (k, v))
+        })
+        .collect();
+    clips.iter().map(|c| tagged.iter().filter(|(_, v)| !v.contains(&c.name)).map(|&(k, _)| k).collect()).collect()
 }
 
 fn extras_json(raw: &gltf::json::Extras) -> Option<serde_json::Value> {
@@ -955,7 +985,7 @@ impl ModelData {
             }
         }
 
-        let clips = doc
+        let clips: Vec<Clip> = doc
             .animations()
             .map(|a| {
                 let mut duration: f32 = 0.0;
@@ -1021,6 +1051,23 @@ impl ModelData {
                 rig.read_radii(r);
             }
         }
+        // Tools shown by clip (`acr_state` on a man's gear nodes); buildings and trees keep their
+        // state groups as models of their own.
+        let states: Vec<(usize, Vec<String>)> = if rig.is_some() {
+            doc.nodes()
+                .filter_map(|n| {
+                    let names = match extras_json(n.extras())?.get("acr_state")? {
+                        serde_json::Value::String(s) => vec![s.clone()],
+                        serde_json::Value::Array(a) => a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect(),
+                        _ => return None,
+                    };
+                    Some((n.index(), names))
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let state_hidden = state_hidden(&nodes, &slots, &states, &clips);
         let animal = root_extras.iter().any(|e| e.get("acr_animal").and_then(serde_json::Value::as_bool) == Some(true));
         let beast_rig = (rig.is_none() && animal)
             .then(|| {
@@ -1121,6 +1168,8 @@ impl ModelData {
             looks,
             crew: None,
             emaciated,
+            states,
+            state_hidden,
         };
         model.radius = model.rest_radius();
         if machine {
@@ -1194,6 +1243,8 @@ impl ModelData {
             looks: None,
             crew: None,
             emaciated: false,
+            states: Vec::new(),
+            state_hidden: Vec::new(),
         };
         model.radius = model.rest_radius();
         model
@@ -1294,15 +1345,32 @@ impl ModelData {
     }
 
     /// The palette for `clip` at `time` seconds (bind pose for `None`), as affine rows.
+    /// Gear with clip states ([`Self::states`]) the clip does not name is collapsed.
     pub fn pose(&self, clip: Option<usize>, time: f32) -> Palette {
         let globals = self.globals(clip, time);
-        self.slots
+        let mut palette: Palette = self
+            .slots
             .iter()
             .map(|s| match *s {
                 Slot::Node(n) => math::affine_rows(&globals[n]),
                 Slot::Joint { node, inverse_bind } => math::affine_rows(&math::mul(&globals[node], &inverse_bind)),
             })
-            .collect()
+            .collect();
+        for &s in clip.and_then(|c| self.state_hidden.get(c)).map_or(&[][..], Vec::as_slice) {
+            palette[s] = [[0.0; 4]; 3];
+        }
+        palette
+    }
+
+    /// The clip names node `n` (or the nearest ancestor with states) shows in, `None` for
+    /// gear without states (shown in every clip).
+    pub fn node_states(&self, mut n: usize) -> Option<&[String]> {
+        loop {
+            if let Some((_, names)) = self.states.iter().find(|(k, _)| *k == n) {
+                return Some(names);
+            }
+            n = self.nodes[n].parent?;
+        }
     }
 
     /// The clip for the `.MD` animation `anim` (`#STAND`, `#MOTION_L1`, `#DEATHLIE2`, ...):
@@ -1822,6 +1890,27 @@ pub(crate) mod tests {
         m.machine = false;
         m.slots.retain(|s| matches!(s, Slot::Node(_)));
         assert!(!m.decays_procedurally());
+    }
+
+    #[test]
+    fn tools_show_in_their_clips() {
+        let node = |name: &str, parent| Node {
+            name: name.into(),
+            parent,
+            translation: [0.0; 3],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            scale: [1.0; 3],
+        };
+        let nodes =
+            vec![node("hips", None), node("socket.pick", Some(0)), node("x.pick", Some(1)), node("x.blade", Some(2))];
+        let slots =
+            vec![Slot::Node(0), Slot::Joint { node: 1, inverse_bind: math::IDENTITY }, Slot::Node(2), Slot::Node(3)];
+        let states = vec![(2, vec!["ATTACK1_STONE".to_owned()])];
+        let clip = |n: &str| Clip { name: n.into(), duration: 1.0, channels: Vec::new() };
+        // The pick and what hangs below it hide outside its clip; the socket and body stay.
+        let hidden = state_hidden(&nodes, &slots, &states, &[clip("ATTACK1"), clip("ATTACK1_STONE")]);
+        assert_eq!(hidden, vec![vec![2, 3], vec![]]);
+        assert!(state_hidden(&nodes, &slots, &[], &[clip("ATTACK1")]).is_empty());
     }
 
     #[test]
