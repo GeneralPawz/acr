@@ -9,8 +9,8 @@
 //!   and the feet tilt with the ground.
 //! - A limp ([`acr_sim::body::Body::leg`]): a short, quick step on the bad leg, held stiff in
 //!   the swing with the hip hiked, the trunk leaning over the good leg; the hand on the side of
-//!   a leg wound (or the right hand for a chest or belly wound) holds the wound. A lost foot
-//!   hobbles on the stump.
+//!   a leg wound (or the right hand for a chest or belly wound) holds the wound. In a heavy
+//!   limp the bad foot drags along the ground, toe down. A lost foot hobbles on the stump.
 
 use std::collections::HashMap;
 
@@ -228,6 +228,12 @@ impl Gaits {
                 rig.two_bone_ik(skins, t, s, f, a + (c - a).normalize_or_zero() * want, Vec3::X);
             }
         }
+        // How much the bad foot drags (a limp worse than 40 %, fully from 80 %; two leg wounds
+        // make 70 %, 0.75); a stump hobbles instead.
+        let drag = match (limp, clipm.kind) {
+            (Some(l), Kind::Walk) if !stump(body, l.bad as usize) => ((l.severity - 0.4) / 0.4).clamp(0.0, 1.0),
+            _ => 0.0,
+        };
         // Contacts: planted where they carry.
         let mut targets = [Vec3::ZERO; 2];
         let mut need: f32 = 0.0;
@@ -238,9 +244,16 @@ impl Gaits {
                 lift = 0.03;
             }
             let carries = support == Some(e as u8);
-            let t = man.contacts[e].update(carries, anim, lift, ground, dt);
+            let mut t = man.contacts[e].update(carries, anim, lift, ground, dt);
+            // A heavy limp drags the bad foot: in its swing it stays down on the ground,
+            // scraping forwards instead of lifting (the hip hike gives it room).
+            let dragged = drag > 0.0 && !carries && limp.is_some_and(|l| l.bad as usize == e);
+            if dragged {
+                let floor = ground(t) + lift;
+                t.z = floor + (t.z - floor).max(0.0) * (1.0 - drag);
+            }
             targets[e] = t;
-            if clipm.kind == Kind::Walk {
+            if clipm.kind == Kind::Walk && !dragged {
                 let a = rig.joint(skins, chain[0]);
                 let reach = (rig.joint(skins, chain[1]) - a).length() + (anim - rig.joint(skins, chain[1])).length();
                 need = need.max((t - a).length() - reach * 0.995);
@@ -278,6 +291,12 @@ impl Gaits {
                 let n = Vec3::new(h(-0.1, 0.0) - h(0.1, 0.0), h(0.0, -0.1) - h(0.0, 0.1), 0.2).normalize_or_zero();
                 let pivot = rig.joint(skins, chain[2]);
                 rig.rotate_about(skins, chain[2], pivot, gait::rotation_between(up, n));
+            }
+            // The dragged foot hangs toe down, its toe scraping behind.
+            if drag > 0.0 && limp.is_some_and(|l| l.bad as usize == e) && man.contacts[e].planted.is_none() {
+                let pivot = rig.joint(skins, chain[2]);
+                let down = (fwd - up * (0.7 * drag)).normalize_or_zero();
+                rig.rotate_about(skins, chain[2], pivot, gait::rotation_between(fwd, down));
             }
         }
         // The hand holds the wound.

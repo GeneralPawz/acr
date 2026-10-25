@@ -378,6 +378,13 @@ nearest the window centre that no ragdoll holds; `ACR_NO_GAIT` turns it off).
   straighter and the hip hikes; the trunk leans over the good leg. The hand on the side of a
   wounded leg holds the thigh (arm IK); the right hand holds a chest or open-belly wound. A
   leg ending in a stump (`lost` at the ankle) plants the stump's end on the ground.
+- **Dragged foot:** in a heavy limp (severity over 0.4, fully at 0.8; two flesh wounds in a
+  leg give `Body::leg` 30, severity 0.7, drag 0.75) the bad foot does not lift in its swing:
+  its IK target is pulled down to the ground by the drag, it hangs toe down (pitched by
+  `0.7 · drag` towards the ground) and scrapes forwards; the hip hike gives the stiff leg
+  room, and the dragged leg does not sink the hips. A stump never drags. Sheet (EngM18, two
+  wounds in the left leg, blank white field, `ACR-analysis/locomotion/limp2.json`):
+  `ACR-analysis/locomotion/limp_legs_sheet.png`, main above, branch below.
 - **Balance for survivors** (`ragdoll_view`): the hip sway is stronger (6× the momentum over
   the mass, about 1 Hz). The centre of mass is checked against the support between the feet;
   12 cm outside it, the foot farther from the landing point takes a 0.3 s recovery step by
