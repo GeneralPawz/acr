@@ -42,8 +42,13 @@ PALETTE = {
 }
 
 
-def spec():
-    return line.spec(MD, palette=PALETTE, fixed=("coat", "lining", "waistcoat"), lace={"hat": 0.012})
+# None: the scripted tricorn (`gear.tricorn`); a generated hat (`genfit`, local source under
+# ACR_SOURCES/generated, docs/assets-humans.md "Generated gear"): fitted to this head, baked.
+HAT_SOURCE = "pixal3d/eq_tricorn_hat.glb"
+
+
+def spec(hat_source=HAT_SOURCE):
+    return line.spec(MD, palette=PALETTE, fixed=("coat", "lining", "waistcoat"), lace={"hat": 0.012}, hat_source=hat_source)
 
 
 def make(root, name, build=None):

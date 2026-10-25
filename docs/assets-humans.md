@@ -629,6 +629,16 @@ decay material on the baked image and `acr_baked` (skipped by `Character.colours
 first run (10 hats on EngMus, 12 other items) is in `ACR-analysis/genai/kit3/`
 (`_sheet_genfit.png`, `genfit_stats.json`).
 
+EngM18, FrnM18 and SpnM18 wear `pixal3d/eq_tricorn_hat.glb` (their `HAT_SOURCE`; `None`
+builds the scripted `gear.tricorn`). Against the scripted hat (25 Oct 2026, main 2238c93,
+the three alike within 2): `model_layers` poking / crossing 185 / 630 -> 187 / 631, IoU STAND
+0.738 -> 0.727, DEATHLIE1 0.586 -> 0.589, `gear_volume` unchanged, triangles per LOD
+(`lod::tests::real_models`) 11604 / 8292 / 2690 / 1268 -> 15543 / 11570 / 3245 / 1497 (the
+hat 60 -> 3999), build about 2 min either way. Scaling the hat's width by `FIT["hat_scale"]`
+lowered IoU STAND further (0.724) and was not kept. SpnM18's hat lace (`lace["hat"]`) does not
+apply to a generated hat (the Pixal3D tricorn has its own white edge). The worn items
+(cartridge box, crossbelts, knapsack) are still scripted: no SPEC key places worn genfit gear.
+
 ## 1. What the sprites tell
 
 `ENGM18.MD` packs: `USERLC 1 EngM18G` (walk, `MOTION_*`), `2 EngM18B` (not referenced by any
