@@ -9,7 +9,7 @@ boots, a wheellock carbine and a drawn sword.
 from acr_assets import cavalry
 
 TYPE = "SpnD17"
-CHECKS = ["--anim STAND", "--anim DEATHLIE1"]
+CHECKS = ["--anim STAND", "--anim ATTACK", "--anim DEATHLIE1"]
 
 MD = {
     "REST": "@REST 9 0 0 57",

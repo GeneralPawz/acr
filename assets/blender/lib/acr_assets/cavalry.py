@@ -135,8 +135,16 @@ FLAG_R = {"upperarm_r": (-20, -10, 0), "forearm_r": (-75, 0, 10)}
 # then turned left (Z) with a little side lean (Y): the right shoulder comes forward and
 # down over the horse's left shoulder (about 0.36 left, 0.51 ahead, 1.59 m up) and the
 # blade goes almost straight down past the neck: a cross-body cut (Blender's solve: 0.03 m).
-SABRE_DOWN_L = {"root_loc": (0.25, -0.15, -0.10), "spine": (60, 20, 25), "spine1": (25, 10, 15), "spine2": (12, 5, 10)}
-SABRE_DOWN_R = {"root_loc": (-0.22, 0.0, -0.02), "spine": (-20, -38, 0), "spine1": (-8, -22, 0), "spine2": (-4, -14, 0)}
+# m2-cav-cut: both cuts stand in the stirrups (`stirrup_legs`), the seat raised 12 cm
+# clear of the saddle, the feet kept in the stirrups; the bend starts at the pelvis (`hips`,
+# a free joint: the hip joints flex), so no spine joint goes past `limits.py` (m2-melee6's
+# spine X 60 and side lean 38 were 23 degrees over, and its root, lowered 2-10 cm and moved
+# 22-25 cm sideways, sat the hips into the saddle). The pelvis leans out over the stirrup
+# on the cut's side (hips Y 30-48 degrees), which brings the shoulder as low as before.
+SABRE_DOWN_L = {"root_loc": (0.24, 0.0, 0.12), "hips": (35, 30, 15), "spine": (32, 14, 16), "spine1": (28, 12, 14),
+                "spine2": (15, 10, 10)}
+SABRE_DOWN_R = {"root_loc": (-0.24, -0.04, 0.12), "hips": (10, -48, -10), "spine": (0, -15, -5), "spine1": (0, -15, 0),
+                "spine2": (0, -14, 0)}
 # The war club down right (SiuKVog, SiuKLut): the club reaches 0.42 m along its handle
 # (its head 0.165 m before it, `weapon_tip`), so the rider hangs far out over the right
 # side, the seat over the right stirrup.
@@ -214,6 +222,52 @@ def reins_world(arm, targets, sides=("l", "r"), shoulders=None):
         out["forearm_" + sd] = _turn((fo.tail_local - fo.head_local).normalized(), df)
         dh = (df + Vector((0.0, 0.0, -0.8))).normalized()
         out["hand_" + sd] = _turn((ha.tail_local - ha.head_local).normalized(), dh)
+    return out
+
+
+def stirrup_legs(arm, root_loc, hips=None, base=LEGS_SEAT, iters=14):
+    """Standing in the stirrups (m2-cav-cut): the rider's root moved by `root_loc` (armature
+    space: +x his left, -y forward, +z up) and the pelvis turned by `hips` while each foot stays in its stirrup where `base`
+    (the seat) puts it and as level as there. Per leg the hip (thigh X, Y) and the knee (shin
+    X, a hinge) are solved by damped least squares so the ankle meets its seated place; the
+    foot's armature-space orientation is kept ("world"). Returns the pose keys for the legs
+    plus `root_loc`. The old fixed angles (thigh -42, knee 56) with the root lowered 2-18 cm
+    lifted the feet out of the stirrups and sat the hips down into the saddle."""
+    pb = arm.pose.bones
+    am.pose(arm, base, prefix=P)
+    goal, world = {}, {}
+    for sd in "lr":
+        f = pb[P + "foot_" + sd]
+        goal[sd] = f.head.copy()
+        rot = f.matrix.to_3x3() @ f.bone.matrix_local.to_3x3().inverted()
+        world["foot_" + sd] = tuple(math.degrees(a) for a in rot.to_euler("XYZ"))
+    out = {"root_loc": tuple(root_loc)}
+    for sd in "lr":
+        x = [base["thigh_" + sd][0], base["thigh_" + sd][1], base["shin_" + sd][0]]
+
+        def ankle(v):
+            am.pose(arm, {"root_loc": root_loc, "hips": hips or (0.0, 0.0, 0.0), "thigh_" + sd: (v[0], v[1], 0.0),
+                          "shin_" + sd: (v[2], 0.0, 0.0)}, prefix=P)
+            return pb[P + "foot_" + sd].head.copy()
+
+        for _ in range(iters):
+            at = ankle(x)
+            e = goal[sd] - at
+            if e.length < 2e-4:
+                break
+            cols = []
+            for i in range(3):
+                d = list(x)
+                d[i] += 0.5
+                cols.append((ankle(d) - at) / 0.5)
+            J = Matrix([cols[0], cols[1], cols[2]]).transposed()
+            JT = J.transposed()
+            dx = JT @ ((J @ JT) + Matrix.Identity(3) * 1e-6).inverted() @ e
+            x = [x[0] + dx[0], x[1] + dx[1], max(0.0, x[2] + dx[2])]
+        out["thigh_" + sd] = (x[0], x[1], 0.0)
+        out["shin_" + sd] = (x[2], 0.0, 0.0)
+        out.setdefault("_miss", {})[sd] = round((goal[sd] - ankle(x)).length, 4)
+    out["world"] = world
     return out
 
 
@@ -1302,13 +1356,28 @@ def make(ctx, spec):
         """A point by the right hip (seated), moved by (dx, dy, dz)."""
         return Vector((-0.24 + dx, cy + dy, sad.z + dz))
 
-    def strike(trunk, point, axis, length, left_target, tip=None):
-        return solve_strike(ch, left, trunk, point, axis, length, left_target, tip)
+    ch.strike_offs = {}
 
-    # Standing in the stirrups: the seat raised, the knees opened (m2-melee6).
+    def strike(trunk, point, axis, length, left_target, tip=None, name=None):
+        spec = solve_strike(ch, left, trunk, point, axis, length, left_target, tip)
+        if name:
+            ch.strike_offs[name] = round(ch.strike_off, 3)
+        return spec
+
+    # Standing in the stirrups (m2-cav-cut): the root raised and moved by the pose's
+    # `root_loc`, the feet kept in the stirrups (`stirrup_legs`).
+    ch.stirrup_miss = {}
+
+    def rise(trunk, name):
+        legs = stirrup_legs(ch.arm, trunk["root_loc"], trunk.get("hips"))
+        ch.stirrup_miss[name] = legs.pop("_miss")
+        return dict(LEGS_SEAT, **legs, **{k: v for k, v in trunk.items() if k != "root_loc"})
+
+    # The war club's lean keeps m2-melee6's fixed legs (the seat lowered over the stirrup).
     stirrups = dict(LEGS_SEAT, thigh_l=(-42, -16, 0), shin_l=(56, 0, 0), foot_l=(-14, 0, 0),
                     thigh_r=(-42, 16, 0), shin_r=(56, 0, 0), foot_r=(-14, 0, 0))
-    pommel = Vector((0.0, sad.y - 0.22, sad.z + 0.12))
+    # The left fist on the pommel's top (m2-cav-cut: at +0.12 it sank 64 vertices into it).
+    pommel = Vector((0.0, sad.y - 0.22, sad.z + 0.19))
     lance_len = LANCE[0] - LANCE[1] + 0.30
     sabre_len = (CLUB_TIP if spec.get("blade") == "club" else BLADE[0]) + 0.04
     club = spec.get("blade") == "club"
@@ -1335,7 +1404,7 @@ def make(ctx, spec):
              # held out to the right of the shoulder and the lance only 3° out, so the shaft
              # behind the grip passes outside the rider's body instead of through it.
              "lance_down": strike(dict(LEGS_SEAT, spine=(-6, -8, 0), spine1=(-2, -4, 0)),
-                                  Vector((-0.81, -1.73, 0.20)), axis_of(44, 3), lance_len, None),
+                                  Vector((-0.81, -1.73, 0.20)), axis_of(44, 3), lance_len, None, name="lance_down"),
              "lance_mid": _with_world(dict(LEGS_SEAT, spine=(-14, 0, 8)), right(side(0.02, -0.66, 0.36), (2, 0, 0))),
              # Drawn sabre (`drawn`): raised over the right shoulder, the blade up and back;
              # the cuts down at a man on the ground right and left of the horse, and the cut
@@ -1350,13 +1419,13 @@ def make(ctx, spec):
              # of a man lying 0.95 m out at 75° (`strike_view::TURN_SABRE`, `NEAR_BODY`);
              # solved at the point. 1.2 m out is beyond a seated man's arm and blade. The arm IK used the
              # shoulder at rest before, so the lean carried the hand off its target.
-             "sabre_down_r": strike(dict(stirrups, **(CLUB_DOWN_R if club else SABRE_DOWN_R)),
+             "sabre_down_r": strike(dict(stirrups, **CLUB_DOWN_R) if club else rise(SABRE_DOWN_R, "sabre_down_r"),
                                     Vector((-0.92, -0.25, 0.20)), axis_of(*(CLUB_DOWN_R_AXIS if club else (62, 40))),
-                                    sabre_len, pommel, blade_tip),
+                                    sabre_len, pommel, blade_tip, name="sabre_down_r"),
              # Down left (`strike_view::TURN_SABRE_L`, the man 40° left of the facing, 0.95 m
              # out): across the neck, leaning out over the left shoulder.
-             "sabre_down_l": strike(dict(stirrups, **SABRE_DOWN_L), SABRE_DOWN_L_AT, axis_of(*SABRE_DOWN_L_AXIS),
-                                    sabre_len, pommel, blade_tip),
+             "sabre_down_l": strike(rise(SABRE_DOWN_L, "sabre_down_l"), SABRE_DOWN_L_AT, axis_of(*SABRE_DOWN_L_AXIS),
+                                    sabre_len, pommel, blade_tip, name="sabre_down_l"),
              "sabre_mid": _with_world(dict(LEGS_SEAT, spine=(-8, -8, 6)), right(side(-0.16, -0.46, 0.36), (25, 25, 0))),
              # A gun upright, its butt on the right thigh (the socket turned from the aim's).
              "gun": _with_world(dict(LEGS_SEAT), right(side(0.04, -0.22, 0.12), None, (-2, 0, 0)))}
@@ -1610,6 +1679,7 @@ def build(ctx, spec):
     from . import cavalry_kit
 
     kit_report = cavalry_kit.report(ch, list(made))  # the kit's bone, collisions per clip
+    seat_report = cavalry_kit.rider_clear(ch, list(made))  # the rider against hide and saddle
     am.set_clip(ch.arm, "STAND")
     report = {}
     colours = ch.colours(ctx.ref, spec["palette"], report=report, fixed=spec.get("fixed", ()))
@@ -1652,3 +1722,5 @@ def build(ctx, spec):
     if getattr(ch, "reload_stats", None):
         ctx.stats["reload"] = ch.reload_stats
     ctx.stats["kit"] = kit_report
+    ctx.stats["strike_off_m"] = ch.strike_offs
+    ctx.stats["seat"] = dict(seat_report, stirrup_miss_m=getattr(ch, "stirrup_miss", {}))

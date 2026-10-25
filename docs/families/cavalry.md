@@ -67,6 +67,39 @@ Probe (`strike_view::probe_clips`, frame 2, metres right/forward/up of the attac
 | `ATTACK_CUT_DOWN_L`, officers (sword) | -0.61/0.73/0.20 | -0.60/0.73/0.24, **0.05** | 0.02 |
 | `ATTACK_CUT_DOWN`, officers | 0.92/0.25/0.20 | 0.88/0.23/0.31, 0.12 | 0.07 |
 
+## Standing in the stirrups (m2-cav-cut)
+
+Both sabre cuts down (`SABRE_DOWN_R`, `SABRE_DOWN_L`; ATTACK plays the right one) stand in
+the stirrups: `cavalry.stirrup_legs` moves the root by the pose's `root_loc` (12 cm up,
+24 cm towards the cut's side) and solves each leg (thigh X/Y and the knee hinge, damped
+least squares) so the ankle stays where the seat puts it, the foot kept level in its
+stirrup (miss under 1 mm, `stats.json` `seat.stirrup_miss_m`). The bend starts at the
+pelvis (`hips`, a free joint: the hips flex and the pelvis leans out over the stirrup on the
+cut's side, 30-48°), so spine, spine1 and spine2 stay inside `limits.py`. m2-melee6's fixed
+legs (thigh -42, knee 56) with the root lowered 2-10 cm lifted the feet out of the stirrups
+and sat the hips into the saddle; its spine (X 60, side lean 38) was 15-23° over. The left
+fist rests on the pommel's top (`pommel` +0.19 m; at +0.12 it sank 64 vertices in). The war
+club (`CLUB_DOWN_R`) keeps the old legs.
+
+`stats.json` `seat` (`cavalry_kit.rider_clear`): on every frame of STAND and the cut clips,
+the rider's vertices more than 3 mm inside hide, saddle or saddlecloth, split by the bone
+that moves them: `trunk` (hips, spine, skirts: the seat), `arms` (fists on reins and pommel)
+and `legs` (thighs and boots straddle the barrel in every seated pose, STAND included: 197
+EngD18, 269 SpnRei); the worst frame per clip, `trunk_frames` per frame, `rise_m` the hips
+against STAND. `strike_off_m`: each strike pose's point off its target.
+
+| EngD18 (SpnRei) | before | after |
+|---|---|---|
+| hips at the blow, against STAND | -0.10 to +0.01 m | +0.12 to +0.13 m |
+| trunk inside at the blow: CUT_DOWN f2, CUT_DOWN_L f2, ATTACK f27 | worst frame 81, 154, 88 (fists counted in; STAND 73) | 4, 1, 4 (9, 6, 9) |
+| spine joints past their limit, all clips | 81 frames, max 23° | 16, 15° (the reload) |
+| point off its target, down R / down L | 0.08 / 0.02 m | 0.05 / 0.07 m (0.055 / 0.079) |
+| scabbard push, cut R | 15 cm, 30°, 4 vertices inside | 7 cm (14), 30°, 0-1 inside |
+| kit collisions, all clips | 121 (45) | 70 (25) |
+| ATTACK sprite IoU | 0.648 (0.626) | 0.648 (0.626) |
+
+Proof (`render_pose.py`, exact poses): `ACR-analysis/cav-cut/proof/sheet_cuts.png`.
+
 ## Renders
 
 `ACR-analysis/fam-cavalry/` (blank white field, HUD off): `sheet_dragoons.png` and
@@ -212,6 +245,11 @@ without it and measures the old sabre box the same way (before/after). `kit_hd.i
   English cloths).
 - The officers' pistol rides upright on the thigh like the carbine.
 - The officers (`*KOf*`) and standard bearers carry no kit yet.
-- In the sabre cuts (`ATTACK`, `ATTACK_CUT_DOWN*`) the rider's left hip goes into the saddle.
-  The scabbard then needs the full 15 cm and 30° to clear, and 4 vertices stay inside
-  (`kit.scabbard_hang.pushed`). The real fix is in the cut poses.
+- In the cut down right (`ATTACK`, `ATTACK_CUT_DOWN`) the rider stands clear of the seat, but
+  his pelvis moves 24 cm over the right stirrup, so the left hip's scabbard hook comes over
+  the saddle: it still swings the full 30° out and the straps let it out 7 cm (EngD18) to
+  14 cm (17th c., SpnRei) (`kit.scabbard_hang.pushed`). A rider standing that far out would
+  lay it over his left thigh.
+- The sword wrist in the cuts is bent past `limits.py` (hand_r 50-74°, the blade's line
+  against the forearm from `solve_strike`), as before; the forearm already rolls
+  (`armature.settle_arm`).

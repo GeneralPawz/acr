@@ -5,7 +5,7 @@ palette guides them)."""
 from acr_assets import cavalry
 
 TYPE = "SpnD18"
-CHECKS = ["--anim STAND", "--anim DEATHLIE1"]
+CHECKS = ["--anim STAND", "--anim ATTACK", "--anim DEATHLIE1"]
 
 MD = {
     "REST": "@REST 9 0 0 65",

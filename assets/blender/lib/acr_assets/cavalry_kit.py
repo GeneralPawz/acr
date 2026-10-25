@@ -781,7 +781,7 @@ def hang(ch, clips):
 
 
 def collide(arm, groups, clips, steps=6):
-    """Per clip, sampled `steps` times: for each (name, item, others) the vertices of
+    """Per clip, sampled `steps` times (None: every frame): for each (name, item, others) the vertices of
     `others` deeper than `INSIDE_M` inside the item and the item's vertices inside each of
     `others` (nearest face's normal), the worst frame per pair. {clips: {clip: {pair: n}},
     total, deepest_m, worst}."""
@@ -798,7 +798,8 @@ def collide(arm, groups, clips, steps=6):
             continue
         f0, f1 = (int(round(x)) for x in bpy.data.actions[clip].frame_range)
         pairs = {}
-        for f in sorted({int(round(f0 + (f1 - f0) * k / max(1, steps - 1))) for k in range(steps)}):
+        picks = range(f0, f1 + 1) if steps is None else {int(round(f0 + (f1 - f0) * k / max(1, steps - 1))) for k in range(steps)}
+        for f in sorted(picks):
             am.set_clip(arm, clip, f)
             dg = bpy.context.evaluated_depsgraph_get()
             cache = {}
@@ -850,6 +851,85 @@ def collide(arm, groups, clips, steps=6):
         total += sum(pairs.values())
     arm.animation_data.action = None
     return {"clips": {c: p for c, p in out.items() if p}, "total": total, "deepest_m": round(worst[0], 4), "worst": worst[1]}
+
+
+# The clips where the rider leaves the seat (`rider_clear`): the cuts (`cavalry.add_clips`; ATTACK_DOWN and
+# ATTACK_CUT_DOWN_R play ATTACK_CUT_DOWN's keys, ATTACK_CUT_HIGH ATTACK_CUT_MID's), and STAND.
+SEAT_CLIPS = ("STAND", "ATTACK", "ATTACK_CUT_DOWN", "ATTACK_CUT_DOWN_L", "ATTACK_CUT_MID")
+
+
+LEG_BONES = ("thigh", "shin", "foot", "toe")
+ARM_BONES = ("upperarm", "forearm", "hand", "index", "middle", "ring", "pinky", "thumb")
+
+
+def rider_clear(ch, clips):
+    """`ctx.stats["seat"]`: on every frame of `SEAT_CLIPS`, the rider's vertices (body and
+    clothes, not the belts) deeper than `INSIDE_M` inside hide, saddle or saddlecloth, split
+    by the bone that moves them most: "trunk" (hips, spine, skirts, head: the seat), "arms"
+    (the fists hold reins and pommel) and "legs" (thighs down, which straddle the barrel in
+    every seated pose); the worst frame
+    per clip ([count, frame]), "trunk_frames" the trunk's count per frame, and "rise_m" the
+    hips' lowest and highest place against STAND frame 0."""
+    import bpy
+    import numpy as np
+    from mathutils import Vector
+    from mathutils.bvhtree import BVHTree
+
+    from . import armature as am
+
+    arm, P = ch.arm, ch.prefix
+    hz = ch.horse["mount"]
+    saddle = [x for x in ch.layers["gear"] if ch.keys.get(x.name) == "saddle"]
+    others = [hz.meshes[0], *saddle, *ch.horse.get("extra", [])]
+    rider = [x for x in [ch.flesh, *ch.layers["clothes"]] if x.type == "MESH" and ch.keys.get(x.name) != "belts"]
+    legs = []
+    for ob in rider:
+        names = {g.index: g.name for g in ob.vertex_groups}
+        leg = []
+        for v in ob.data.vertices:
+            g = max(v.groups, key=lambda e: e.weight, default=None)
+            b = names.get(g.group, "")[len(P):] if g is not None else ""
+            leg.append("legs" if b.startswith(LEG_BONES) else "arms" if b.startswith(ARM_BONES) else "trunk")
+        legs.append(leg)
+    out, hips0 = {}, None
+    for clip in [c for c in SEAT_CLIPS if c in clips]:
+        act = bpy.data.actions.get(clip)
+        if act is None:
+            continue
+        f0, f1 = (int(round(x)) for x in act.frame_range)
+        worst = {"trunk": [0, None], "arms": [0, None], "legs": [0, None]}
+        rise, per = [], []
+        for f in range(f0, f1 + 1):
+            am.set_clip(arm, clip, f)
+            dg = bpy.context.evaluated_depsgraph_get()
+            z = arm.pose.bones[P + "hips"].head.z
+            if hips0 is None:
+                hips0 = z
+            rise.append(z - hips0)
+            pts, polys, base = [], [], 0
+            for o in others:
+                co = _co(o, dg)
+                pts.append(co)
+                polys += [[base + i for i in p.vertices] for p in o.data.polygons]
+                base += len(co)
+            allp = np.concatenate(pts)
+            tree = BVHTree.FromPolygons(allp.tolist(), polys)
+            lo, hi = allp.min(0) - 0.01, allp.max(0) + 0.01
+            n = {"trunk": 0, "arms": 0, "legs": 0}
+            for ob, leg in zip(rider, legs):
+                co = _co(ob, dg)
+                for k in np.nonzero(np.all((co >= lo) & (co <= hi), axis=1))[0]:
+                    loc, nrm, _i, _d = tree.find_nearest(Vector(co[k]), 0.05)
+                    if loc is not None and (Vector(co[k]) - loc).dot(nrm) < -INSIDE_M:
+                        n[leg[k]] += 1
+            per.append(n["trunk"])
+            for cls in n:
+                if n[cls] > worst[cls][0]:
+                    worst[cls] = [n[cls], f - f0]
+        out[clip] = {"trunk": worst["trunk"], "arms": worst["arms"], "legs": worst["legs"],
+                     "rise_m": [round(min(rise), 3), round(max(rise), 3)], "trunk_frames": per}
+    arm.animation_data.action = None
+    return {"clips": out, "inside_m": INSIDE_M}
 
 
 def report(ch, clips):

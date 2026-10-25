@@ -28,7 +28,7 @@ TYPE = "EngD18"
 # The horse (#287): "wildmesh" (the bought pack's horse, `acr_assets.mount`, needs
 # `ACR_SOURCES`) or "procedural" (rig R, `acr_assets.horse`); `ACR_HORSE` overrides.
 HORSE = os.environ.get("ACR_HORSE", "wildmesh")
-CHECKS = ["--anim STAND", "--anim DEATHLIE1"]
+CHECKS = ["--anim STAND", "--anim ATTACK", "--anim DEATHLIE1"]
 
 MD = {
     "STAND": "#STAND 9 1 0 0",
