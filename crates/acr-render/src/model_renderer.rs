@@ -821,6 +821,11 @@ pub struct ModelRenderer {
     mipgen: mipgen::MipGen,
     /// GPU bytes of the model textures loaded with their models (not streamed).
     eager_bytes: u64,
+    /// KTX2 pictures already transcoded and uploaded, by file (its `Arc`, kept so the address
+    /// stays unique), sRGB and mips: the parts a model is split into (unarmed body, dropped
+    /// gear, building states) share the file and take the texture instead of transcoding
+    /// it again.
+    ktx2_views: Vec<(std::sync::Arc<[u8]>, bool, bool, wgpu::TextureView)>,
     models: Vec<GpuModel>,
     /// The model placed at every cut ([`damage::procedural_cap`] until [`Self::set_cap`]).
     cap: usize,
@@ -1274,6 +1279,7 @@ impl ModelRenderer {
             uploads: Default::default(),
             mipgen: mipgen::MipGen::new(device),
             eager_bytes: 0,
+            ktx2_views: Vec::new(),
             models: Vec::new(),
             cap: 0,
             inserts: [0; 3],
@@ -1497,12 +1503,20 @@ impl ModelRenderer {
             .enumerate()
             .map(|(i, img)| {
                 if let Some(file) = data.compressed.get(i).and_then(Option::as_ref) {
+                    let key = |(f, s, m, _): &&(std::sync::Arc<[u8]>, bool, bool, wgpu::TextureView)| {
+                        std::sync::Arc::ptr_eq(f, file) && *s == srgb[i] && *m == mips[i]
+                    };
+                    if let Some((.., view)) = self.ktx2_views.iter().find(key) {
+                        return Some(view.clone());
+                    }
                     return match crate::ktx2::transcode(file, crate::ktx2::target(), mips[i]) {
                         Ok(blocks) => {
                             gpu_bytes[i] = blocks.bytes();
                             self.eager_bytes += gpu_bytes[i];
                             let texture = blocks.upload(device, queue, "model texture (KTX2)", srgb[i]);
-                            Some(texture.create_view(&Default::default()))
+                            let view = texture.create_view(&Default::default());
+                            self.ktx2_views.push((file.clone(), srgb[i], mips[i], view.clone()));
+                            Some(view)
                         }
                         Err(e) => {
                             log::warn!("model: image {i}: {e}");

@@ -164,6 +164,31 @@ driver's `textures` and PSNR over the content box against the PNG/JPEG glbs):
 PSNR KTX2 against PNG: unit 50.1 dB, face 43.7 dB (max delta 31 of 255), building 58.5 dB,
 trees 49.5 dB (max 4), gore 77.5 dB; HD musketeer face 45.3 dB (max 23).
 
+Close-ups (same machine, blank white field, zoom 4–5 and 14; steps
+`ACR-analysis/ktx2/roll/closeup.json` and `tree_*.json`, `cmp.py` there): gore 46–60 dB
+(severed arm, wound volumes, decay at +0, +1200, +2700 ticks), `EngM18` face 41.9 dB, birch
+leaf cards 33–38 dB and horse mane and tail 32–36 dB, where the only large deltas are single
+pixels at the alpha-mask edge flipping (0.1–0.25 % of the silhouette; the same with UASTC
+without RDO, so not the RDO); the low-poly `broadleaf` and `pine` have no cards (47–51 dB).
+The HD face matches once its streamed levels are in; while they stream the two show
+different authored levels (KTX2 streams a little later).
+
+Browser (Playwright Chromium, WebGL2 over ANGLE Vulkan on the RX 9060 XT, `tools/browser/run.sh
+--unit EngD18`, two runs each, no console errors, 52.4 dB at zoom 5 against PNG):
+
+| `EngD18` (horse and rider) | PNG | KTX2 |
+|---|---|---|
+| download (`engd18.glb`, `gore.glb`) | 6.08 + 1.71 MB | 5.79 + 1.70 MB |
+| `engd18` parse + upload (transcode) | 111 + 205 ms | 19 + 206 ms |
+| texture GPU memory | 312.7 MB | 12.8 MB |
+
+Each part split off a model (`three_d.rs`: unarmed body, dropped gear, building states) is a
+model of its own with all the images. KTX2 pictures are transcoded once per file and the
+parts share the texture (`ModelRenderer::ktx2_views`); before that `engd18` took 1006 ms to
+upload in the browser and 78 MB. PNG pictures are still uploaded once per part.
+Native, all 310 models loaded in one run (`loadall.json`): parse 4.1 s → 0.6 s, upload
+14.5 s → 18.1 s (sums over the models).
+
 Files are requested when a type with a model first appears and only when `models` is not
 `off`; a file that fails to load is logged once and the type stays a sprite.
 

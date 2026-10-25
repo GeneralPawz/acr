@@ -890,6 +890,8 @@ impl ThreeD {
             }
         }
         for (name, model) in self.parsed.drain(..) {
+            // Upload time per model: textures go up here (KTX2 ones transcoded first, #297).
+            let started = web_time::Instant::now();
             if name == GORE {
                 // The pack is split into its nodes; the torn cap replaces the procedural one
                 // (one cap for all cuts: `stump_cap_clean` is not used yet).
@@ -905,6 +907,7 @@ impl ThreeD {
                         self.gibs.insert(node.to_owned(), renderer.add_model(device, queue, part));
                     }
                 }
+                log::info!("3d: {name}: uploaded in {:?}", started.elapsed());
                 self.loaded.insert(name, Some(usize::MAX));
                 continue;
             }
@@ -1003,6 +1006,7 @@ impl ThreeD {
                 self.states.insert(index, states);
             }
             self.gear.insert(index, gear);
+            log::info!("3d: {name}: uploaded in {:?}", started.elapsed());
             self.loaded.insert(name, Some(index));
         }
     }

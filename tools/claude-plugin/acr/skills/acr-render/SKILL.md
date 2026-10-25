@@ -95,7 +95,11 @@ driver's blank start takes them as its own keys (default false).
 - Use `web_time::Instant` in acr-game runtime code; `std::time::Instant` panics in the browser.
 - Settings come from `localStorage` `acr-settings` (base64 of the same lines).
 - `acr-check` runs clippy for `wasm32-unknown-unknown` on acr-game, acr-render, acr-physics.
-- glTF: no meshopt/Draco, no KTX2 or WebP; uncompressed meshes, PNG or JPEG textures.
+- glTF: no meshopt/Draco, no WebP; uncompressed meshes. Textures PNG, JPEG or KTX2
+  (`KHR_texture_basisu`, `ktx2.rs`): the showcase models are KTX2 (ETC1S colours, UASTC masks,
+  normals and data), transcoded at upload to BC7, ASTC, ETC2 or RGBA8 on native and WebGL2.
+  Parts split off one model (unarmed body, dropped gear, states) share its transcoded
+  textures (`ModelRenderer::ktx2_views`); a new glb needs `ktx2_pack.py` at install.
 
 ## Performance
 

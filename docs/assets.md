@@ -340,7 +340,11 @@ with RDO 0.5; normal maps UASTC `-normal_map` with renormalised mips; metallic-r
 occlusion and emissive UASTC RDO 1.0, linear. Images under 16 texels or with sides not a
 multiple of 4 stay as they are. It is not part of `export_glb`: Blender's importer cannot
 read KTX2, and `posecheck` and the asset tests import the glbs. The renderer side is in
-rendering-3d.md "Model files".
+rendering-3d.md "Model files". The showcase models are KTX2 since 2026-10-25 (all 310,
+644 → 464 MB, 5 min 40 s on the render VM with 4 files at once; PNG backup in
+`showcase/backup-before-ktx2`): a rebuilt glb goes through `ktx2_pack.py` before it is
+installed there. Masked cards stay UASTC: without RDO the alpha edge flipped as many pixels
+(0.1–0.25 % of the silhouette, single pixels, not visible), so RDO 0.5 stays.
 
 **Packing (#199).** Without `--compress`, `acr_assets.gltf_pack` rewrites the exported
 file (pure Python, `ACR_GLTF_PACK=0` skips it; what it did lands in `stats.json` `pack`),
