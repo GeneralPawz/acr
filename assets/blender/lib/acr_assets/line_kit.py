@@ -15,8 +15,9 @@ regular-unit scale over the draped coat of `line.make`.
   `MAT_KEY` (`acr_material_keys`, one slot per source material), so the unit's own paint,
   decay mask and `acr_decay` (`decay.material`) apply as to any line gear. Placed as
   `kit_hd.ITEMS` places them and seated `kit_hd.CLEAR` outside the trunk of the clothes and
-  the body (`kit_hd.seat`), each rigid on one bone (`BONES`; the knapsack on `spine2`, so it
-  cannot crumple in a deep bend). They replace the boxes of `line._cartridge` and
+  the body, each rigid on one bone (`BONES`; the knapsack on `spine2`, so it cannot crumple
+  in a deep bend). The hip items rest on the first surface
+  under their back, the coat skirt included (`seat_back`: turned onto it, `SEAT_GAP` off it). They replace the boxes of `line._cartridge` and
   `line._knapsack`.
 - **LODs:** no authored levels: the line soldier carries none, and one `acr_lod` node would
   make the whole model "authored" in `model_renderer::prepare_model` (no far meshes, the
@@ -49,10 +50,11 @@ BONES = {"cartridge_box": "hips", "bayonet_scabbard": "hips", "hanger_scabbard":
 # (EngM18: 7 vertices 0.05 m deep in ATTACK with the HD place). The pack stays at the HD
 # height: 5 cm higher, the coat's shoulders rose 0.08 m into its top corners when aiming.
 PLACE = {
-    "cartridge_box": ("hips", (0.0, 0.0, 40.0), (-0.16, 0.07, 0.89), (-0.8, 1.0, 0.0)),
+    "cartridge_box": ("hips", (0.0, 0.0, 30.0), (-0.13, 0.10, 0.90), (-0.55, 1.0, 0.0)),
 }
 # Samples over a strap's width (crossbelts, pack straps) and rows along it (m): with 2 across
 # the coat's folds came up between the edges (EngM18 coat through belts 235 vertices at rest).
+PACK_CLEAR = 0.004  # m: the knapsack off the coat's back (`kit_hd.seat`)
 ACROSS, PACK_ACROSS, STEP = 3, 2, 0.03
 PACK_STRAPS = True  # the knapsack's straps over the crossbelts
 
@@ -168,6 +170,79 @@ def _decimate(ob, target):
     return gear_hd._tris(ob)
 
 
+BACK_BAND = 0.015  # m: the item's vertices this near its back (along the seat axis) rest on the surface
+SEAT_GAP = 0.004  # m between the item's back and the surface under it
+SEAT_TURN = 35.0  # degrees at most the item turns onto the surface under it
+# The gap is set on this quantile of the back's rays: on the outermost ray the pleats at the
+# skirt's side vent held the cartridge box 0.11 m off the rest of the skirt (median gap).
+SEAT_QUANTILE = 0.3
+
+
+def _back_gaps(pts, srcs, a):
+    """[(gap, surface name, normal)] under the back of `pts` (within `BACK_BAND` of the
+    rearmost along `a`): the outermost surface each ray from outside meets."""
+    back = min(p.dot(a) for p in pts)
+    out = []
+    for p in pts:
+        if p.dot(a) > back + BACK_BAND:
+            continue
+        best = None
+        for nm, tree in srcs:
+            hit, nrm, _i, _d = tree.ray_cast(p + a * 0.25, -a, 0.5)
+            if hit is not None:
+                g = (p - hit).dot(a)
+                if best is None or g < best[0]:
+                    best = (g, nm, nrm if nrm.dot(a) >= 0 else -nrm)
+        if best is not None:
+            out.append(best)
+    out.sort(key=lambda e: e[0])
+    return out
+
+
+def seat_back(ob, ch, matrix, axis, gap=SEAT_GAP):
+    """Places `ob` (rest at the origin) by `matrix`, turns it (at most `SEAT_TURN`) so its
+    back lies along the surface under it, then moves it along the surface's normal so its
+    back (the vertices within `BACK_BAND` of its rearmost) rests `gap` off the first surface
+    its rays meet: the clothes other than belts (the coat skirt included, which stays under
+    it) and the skin, arm faces left out. Returns (shift, the final matrix, report: the surface,
+    the gaps under the back after the seat)."""
+    import math
+
+    from mathutils import Matrix, Quaternion, Vector
+
+    from . import kit_hd
+
+    a = Vector(axis).normalized()
+    srcs = [(o.name.rsplit(".", 1)[-1], kit_hd.trunk_tree([o]))
+            for o in [*ch.layers["clothes"], ch.flesh] if ch.keys.get(o.name) != "belts"]
+    full = matrix
+    pts = [full @ v.co for v in ob.data.vertices]
+    gaps = _back_gaps(pts, srcs, a)
+    near = [n for g, _nm, n in gaps if g < gaps[0][0] + 0.03] if gaps else []
+    if near:
+        n = sum(near, Vector()).normalized()
+        q = a.rotation_difference(n)
+        if q.angle > math.radians(SEAT_TURN):
+            q = Quaternion(q.axis, math.radians(SEAT_TURN))
+        c = sum(pts, Vector()) / len(pts)
+        full = Matrix.Translation(c) @ q.to_matrix().to_4x4() @ Matrix.Translation(-c) @ full
+        a = q @ a
+        pts = [full @ v.co for v in ob.data.vertices]
+        gaps = _back_gaps(pts, srcs, a)
+    report = {"rays": len(gaps)}
+    shift = 0.0
+    if gaps:
+        g = gaps[min(len(gaps) - 1, int(len(gaps) * SEAT_QUANTILE))][0]
+        shift = gap - g
+        mid = gaps[len(gaps) // 2][0]
+        report.update({"on": gaps[0][1], "gap_min_m": round(gaps[0][0] + shift, 4),
+                       "gap_median_m": round(mid + shift, 4), "gap_max_m": round(gaps[-1][0] + shift, 4)})
+    full = Matrix.Translation(a * shift) @ full
+    ob.data.transform(full)
+    ob.matrix_world = Matrix.Identity(4)
+    return round(shift, 4), full, report
+
+
 def items(ch, name, kit):
     """Builds and seats the kit's rigid items (rest pose); returns {piece: object}."""
     import math
@@ -201,25 +276,70 @@ def items(ch, name, kit):
         ob = fn(f"{name}.{key}")
         keys = material_keys([m.name for m in ob.data.materials])
         tris = _decimate(ob, TRIS[key])
+        rep = {}
         if key in kit_hd.FOLLOW:
             other, offset = kit_hd.FOLLOW[key]
             shift, _f = kit_hd.seat([ob], None, finals[other] @ Matrix.Translation(offset), (0.0, 0.0, 1.0))
         else:
             _bone, rot, centre, axis = placed[key]
             m = Matrix.Translation(centre) @ Euler([math.radians(r) for r in rot], "ZXY").to_matrix().to_4x4()
-            shift, finals[key] = kit_hd.seat([ob], belt_tree if key in ("belt_plate", "buckle") else tree, m, axis)
+            if key in ("belt_plate", "buckle", "knapsack"):
+                shift, finals[key] = kit_hd.seat([ob], belt_tree if key != "knapsack" else tree, m, axis,
+                                                 clear=PACK_CLEAR if key == "knapsack" else kit_hd.CLEAR)
+            else:
+                shift, finals[key], rep = seat_back(ob, ch, m, axis)
+        # The knapsack too: with the coat's spine weights (`kit_hd.follow_back`) the items met
+        # in 234 vertices (EngM18) against 0 rigid on spine2.
         kit_hd.rigid(ob, ch.arm, BONES[key])
         ob["acr_material_keys"] = keys
         ch.add("gear", ob, keys[0])
-        st[key] = {"bone": BONES[key], "shift_m": shift, "tris": tris}
+        st[key] = {"bone": BONES[key], "shift_m": shift, "tris": tris, **rep}
         out[key] = ob
     return out
 
 
+def _coat(ch):
+    coat = next((o for o in ch.layers["clothes"] if ch.keys.get(o.name) == "coat" and o.name.endswith(".coat")), None)
+    return coat or next(o for o in ch.layers["clothes"] if ch.keys.get(o.name) == "coat")
+
+
 def collisions(ch, clips):
     """Items in items and the coat in items per clip (`kit_hd.collisions`)."""
-    coat = next((o for o in ch.layers["clothes"] if ch.keys.get(o.name) == "coat" and o.name.endswith(".coat")), None)
-    coat = coat or next(o for o in ch.layers["clothes"] if ch.keys.get(o.name) == "coat")
     from . import kit_hd
 
-    return kit_hd.collisions(ch.arm, ch.kit_items, coat, clips)
+    coat = _coat(ch)
+
+    out = kit_hd.collisions(ch.arm, ch.kit_items, coat, clips)
+    if out["worst"] and "knapsack" in ch.kit_items:
+        out["coat_in_pack"] = _inside(ch, coat, ch.kit_items["knapsack"], *out["worst"])
+    return out
+
+
+def _inside(ch, coat, item, clip, frame):
+    """The coat's vertices deepest inside `item` at `clip` `frame`: [rest x, y, z, depth, bone]."""
+    import bpy
+    from mathutils.bvhtree import BVHTree
+
+    from . import armature as am
+    from . import kit_hd
+
+    am.set_clip(ch.arm, clip, frame)
+    dg = bpy.context.evaluated_depsgraph_get()
+    ie = item.evaluated_get(dg).data
+    tree = BVHTree.FromPolygons([item.matrix_world @ v.co for v in ie.vertices], [p.vertices for p in ie.polygons])
+    ce = coat.evaluated_get(dg).data
+    dom = kit_hd._dominant(coat)
+    lo = [min((item.matrix_world @ v.co)[k] for v in ie.vertices) - 0.01 for k in range(3)]
+    hi = [max((item.matrix_world @ v.co)[k] for v in ie.vertices) + 0.01 for k in range(3)]
+    hits = []
+    for v, r in zip(ce.vertices, coat.data.vertices):
+        p = coat.matrix_world @ v.co
+        if any(p[k] < lo[k] or p[k] > hi[k] for k in range(3)):
+            continue
+        loc, nrm, _i, _d = tree.find_nearest(p)
+        if loc is not None:
+            d = (p - loc).dot(nrm)
+            if d < -kit_hd.INSIDE_M:
+                hits.append([*(round(x, 3) for x in r.co), round(d, 4), dom[r.index]])
+    ch.arm.animation_data.action = None
+    return sorted(hits, key=lambda h: h[3])[:8]

@@ -63,7 +63,13 @@ would switch the whole soldier to authored levels and drop its far meshes
 | Spn | as Frn | sword and bayonet on the waist belt |
 | Usa | crossbelts, cartridge box, bayonet scabbard, knapsack | Continental line, no sword |
 
-Canteens are not worn yet: on the back hip the coat skirts swing through them (the HD kit's
+The hip items rest on the first surface under their back, the coat skirt included
+(`line_kit.seat_back`, turned onto it at most 35°, 4 mm off on the 30 % quantile of the rays:
+on the outermost ray the pleats at the side vent held the box 0.136 m out; now 0.070 m,
+median gap 0.029 m). The knapsack stays rigid on `spine2`: with `kit_hd.follow_back` the
+items met in 234 vertices against 9. `collisions.coat_in_pack` lists the deepest coat
+vertices: the 0.089 m one (rest y 0.094, 8 cm in front of the pack) is a false hit of the
+nearest-face test on the pack's open strap sweeps. Canteens are not worn yet: on the back hip the coat skirts swing through them (the HD kit's
 walking defect). Numbers: `stats.json` `kit` (triangles per piece, seat shifts, collisions
 per clip).
 
