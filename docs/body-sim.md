@@ -408,6 +408,28 @@ nearest the window centre that no ragdoll holds; `ACR_NO_GAIT` turns it off).
 
 ### Second slice (#279): dragged legs, the push, the hop
 
+- **One loop over the swaps:** `MOTION_L<x>` and `MOTION_R<x>` (`LB`/`RB`) are the left and
+  right step of one cycle (`poses.step_keys`: c_l → p_l → c_r, then c_r → p_r → c_l), and the
+  sim swaps them at every step. `gait_view::step_halves` measures the pair as one 48-sample
+  loop (24 samples each) keyed by the left clip and draws the half the phase is in, so
+  the stride, plants, limp timing and dragged foot run on over the swaps. Measured alone,
+  each half had counted the wrap from c_r back to c_l as travel (1.15 m a step for EngM18,
+  1.37 m for IroLut); the pair measures 1.01 m (0.75 s) and 1.04 m (0.58 s) a stride. A man
+  starting, or back in view (the view cull) or among the 48 nearest, starts at the sim's own
+  step (`Measured::phase_of` from the drawn clip and time), not at the loop's start. Stance
+  foot's move over a swap tick (m, mean / max; RX 9060 XT VM, blank field, 40 ticks,
+  `ACR-analysis/gaitphase/{flat,slope}.json`, `an.py`):
+
+  | Man | flat main | flat branch | slope 8° main | slope 8° branch |
+  |---|---|---|---|---|
+  | walk EngM18 | 0.160 / 0.160 | 0.014 / 0.066 | 0.159 / 0.160 | 0.026 / 0.099 |
+  | limp (two wounds, left) | 0.465 / 0.480 | 0.014 / 0.106 | 0.494 / 0.736 | 0.033 / 0.121 |
+  | run IroLut | 0.468 / 0.468 | 0.162 / 0.319 | 0.468 / 0.468 | 0.163 / 0.319 |
+
+  The run takes 3.2 strides a second at 3.3 m/s and is not resolved by per-tick samples
+  (its non-swap ticks move as much). Strip: `ACR-analysis/gaitphase/strip_{main,br}.png`.
+  Clash 700 vs 700: `rag.gaits` 0.33 → 0.37 ms a tick, the rest in noise.
+
 - **Dragged legs** (`gait_view::crawl_legs`): a crawling man's leg with `Body::leg` 0 (or its
   stump) is a chain hip → knee → foot after the IK of the hands. Each frame the knee and
   foot fall at 1.5 m/s, keep their bones' lengths from the hip outwards (follow the leader:
@@ -424,9 +446,8 @@ nearest the window centre that no ragdoll holds; `ACR_NO_GAIT` turns it off).
   ankle): `Body::leg` 20. Such a man hops on the good leg, two hops per clip loop, the last
   30 % of each in the air with the hips lifted up to 7 cm; the good foot lands under its hip
   18 cm ahead and stays planted; the hurt foot is held behind and up (0.62 leg down, 0.3
-  back, knee forward). No limp warp and no drag. A hopping or crawling man keeps his plants,
-  phase and legs when the sim swaps `MOTION_L` and `MOTION_R` (every step); the walk and
-  limp still restart there as before. The bench `spawn` takes `broken: ["leg_l"]` (a closed
+  back, knee forward). No limp warp and no drag. A crawling man keeps his legs and phase over
+  a change of his crawl clip. The bench `spawn` takes `broken: ["leg_l"]` (a closed
   ankle break).
 - **Measured** (`measure` with `ticks` now reads the drawn, gait-posed joints; RX 9060 XT
   VM, blank white field, EngM18 ×5, `ACR-analysis/locomotion2/steps.json`, 40 ticks each;

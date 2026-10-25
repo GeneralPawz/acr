@@ -41,9 +41,47 @@ enum Kind {
 struct Measured {
     kind: Kind,
     cycle: Cycle,
-    duration: f32,
+    /// The clips of the loop and their durations: one looping clip, or the sim's two halves
+    /// of a step cycle (`MOTION_L` then `MOTION_R`, the left and the right step), each taking
+    /// half of the loop's samples.
+    halves: [(usize, f32); 2],
     /// Height of each effector's joint over the ground when it carries (m).
     lift: [f32; 2],
+}
+
+impl Measured {
+    /// The clip and its time at loop phase `phase` (0..1).
+    fn at(&self, phase: f32) -> (usize, f32) {
+        if self.halves[0].0 == self.halves[1].0 {
+            return (self.halves[0].0, phase * self.halves[0].1);
+        }
+        let h = (phase.rem_euclid(1.0) * 2.0).min(1.999_999);
+        let (clip, duration) = self.halves[h as usize];
+        (clip, h.fract() * duration)
+    }
+
+    /// The loop phase where the sim's clip `clip` is at `time` (a fresh start, or a man back
+    /// in view or among the nearest: his feet pick up where the sim's step is).
+    fn phase_of(&self, clip: usize, time: f32) -> f32 {
+        let (half, (_, duration)) = if self.halves[1].0 == clip { (1, self.halves[1]) } else { (0, self.halves[0]) };
+        let f = (time / duration.max(1e-3)).clamp(0.0, 0.999);
+        if self.halves[0].0 == self.halves[1].0 { f } else { (half as f32 + f) * 0.5 }
+    }
+}
+
+/// The two halves of the sim's step cycle a walking clip belongs to: `MOTION_L<x>` and
+/// `MOTION_R<x>` (`LB`/`RB` backwards) with the same suffix, the left step first; both
+/// clips must exist. The original swaps them at every step, so they are one loop.
+fn step_halves(data: &ModelData, clip: usize) -> Option<[usize; 2]> {
+    let name = &data.clips.get(clip)?.name;
+    let rest = name.strip_prefix("MOTION_")?;
+    let (left, right) = match rest.as_bytes().first()? {
+        b'L' => (name.clone(), format!("MOTION_R{}", &rest[1..])),
+        b'R' => (format!("MOTION_L{}", &rest[1..]), name.clone()),
+        _ => return None,
+    };
+    let find = |n: &str| data.clips.iter().position(|c| c.name == n);
+    Some([find(&left)?, find(&right)?])
 }
 
 #[derive(Default)]
@@ -106,27 +144,29 @@ impl Gaits {
         }
     }
 
-    /// Measures a clip once: its loop of support and travel in the body's frame.
-    fn measure(&self, map: &Mapping, data: &ModelData, clip: usize) -> Option<Measured> {
-        let c = data.clips.get(clip)?;
-        let kind = kind_of(&c.name)?;
+    /// Measures a loop once (one clip, or both halves of a step cycle): its support and
+    /// travel in the body's frame.
+    fn measure(&self, map: &Mapping, data: &ModelData, key: [usize; 2]) -> Option<Measured> {
+        let (a, b) = (data.clips.get(key[0])?, data.clips.get(key[1])?);
+        let kind = kind_of(&a.name)?;
         let eff = self.effectors(kind);
+        let halves = [(key[0], a.duration), (key[1], b.duration)];
+        let probe = Measured { kind, cycle: Cycle::measure(&[], 0.0), halves, lift: [0.0; 2] };
         let at_origin = view3d::model_matrix([0.0, 0.0, 0.0], 0.0, 1.0);
         let points: Vec<Vec<Vec3>> = (0..gait::SAMPLES)
             .map(|i| {
-                let skins = animated_skins(
-                    map,
-                    &data.pose(Some(clip), c.duration * i as f32 / gait::SAMPLES as f32),
-                    &at_origin,
-                );
+                let (clip, t) = probe.at(i as f32 / gait::SAMPLES as f32);
+                let skins = animated_skins(map, &data.pose(Some(clip), t), &at_origin);
                 eff.iter().map(|e| self.rig.joint(&skins, e[2])).collect()
             })
             .collect();
         let low = points.iter().flatten().map(|p| p.z).fold(f32::MAX, f32::min);
         let cycle = Cycle::measure(&points, low + 0.05);
         let lift = std::array::from_fn(|e| points.iter().map(|p| p[e].z).fold(f32::MAX, f32::min));
-        log::info!("3d: gait clip {} ({kind:?}): {:.2} m per loop of {:.2} s", c.name, cycle.length, c.duration);
-        (cycle.length > 0.05 && c.duration > 0.0).then_some(Measured { kind, cycle, duration: c.duration, lift })
+        let duration = if key[0] == key[1] { a.duration } else { a.duration + b.duration };
+        let name = if key[0] == key[1] { a.name.clone() } else { format!("{}+{}", a.name, b.name) };
+        log::info!("3d: gait clip {name} ({kind:?}): {:.2} m per loop of {duration:.2} s", cycle.length);
+        (cycle.length > 0.05 && a.duration > 0.0 && b.duration > 0.0).then_some(Measured { cycle, lift, ..probe })
     }
 
     /// Poses the walking and crawling men nearest `focus` into `poses` (instance → palette),
@@ -159,20 +199,23 @@ impl Gaits {
             let Some(Some(map)) = maps.get(&d.model).filter(|m| m.as_ref().is_some_and(Mapping::human)) else {
                 continue;
             };
-            if !self.clips.contains_key(&(d.model, clip)) {
-                let m = self.measure(map, d.data, clip);
-                self.clips.insert((d.model, clip), m);
+            // MOTION_L and MOTION_R are one loop: the sim's swap at every step is no change.
+            let key = step_halves(d.data, clip).unwrap_or([clip, clip]);
+            let loop_clip = key[0];
+            if !self.clips.contains_key(&(d.model, loop_clip)) {
+                let m = self.measure(map, d.data, key);
+                self.clips.insert((d.model, loop_clip), m);
             }
-            let Some(Some(clipm)) = self.clips.get(&(d.model, clip)) else {
+            let Some(Some(clipm)) = self.clips.get(&(d.model, loop_clip)) else {
                 self.men.remove(&d.unit.id.0);
                 continue;
             };
             let mut taken = self.men.remove(&d.unit.id.0).unwrap_or_default();
             let man = &mut taken;
             man.seen = true;
-            if man.clip != Some(clip) {
-                // The sim swaps MOTION_L and MOTION_R at every step: a hop keeps its plants
-                // and a crawl its dragged legs (and its phase) over the swap.
+            if man.clip != Some(loop_clip) {
+                // A crawl keeps its dragged legs (and its phase) over a change of its clip,
+                // a hop its plants.
                 let same = man
                     .clip
                     .and_then(|c| self.clips.get(&(d.model, c)))
@@ -180,9 +223,12 @@ impl Gaits {
                 let keep =
                     same && (clipm.kind == Kind::Crawl || Limp::of(&d.unit.body, clipm.kind).is_some_and(|l| l.hop));
                 if keep {
-                    man.clip = Some(clip);
+                    man.clip = Some(loop_clip);
                 } else {
-                    *man = Man { clip: Some(clip), seen: true, ..Man::default() };
+                    *man = Man { clip: Some(loop_clip), seen: true, ..Man::default() };
+                    // The feet pick up where the sim's step is (a man starting, or back in
+                    // view or among the nearest), not at the loop's start.
+                    man.follow.dist = clipm.phase_of(clip, d.time) * clipm.cycle.length;
                 }
             }
             // The sim position, smoothed over its ticks; the distance covered along the way.
@@ -203,7 +249,8 @@ impl Gaits {
             if let Some(l) = limp.filter(|l| !l.hop) {
                 phase = gait::limp_warp(&clipm.cycle, l.bad, l.severity, phase);
             }
-            let pose = d.data.pose(Some(clip), phase * clipm.duration);
+            let (shown, t) = clipm.at(phase);
+            let pose = d.data.pose(Some(shown), t);
             let before = animated_skins(map, &pose, &d.transform);
             let mut skins = before.clone();
             // The visible body: where the pushes and pulls brought it.
