@@ -498,9 +498,9 @@ pub fn soil_at(terrain: &TerrainData, state: Option<&GroundState>, x: f32, y: f3
     Soil::of_class(class, wet)
 }
 
-/// True height of the ground (or the water level) at world pixel `(x, y)`.
+/// True height of the drawn ground (or the water level) at world pixel `(x, y)`.
 pub(super) fn ground_z(terrain: &TerrainData, x: f32, y: f32) -> f32 {
-    terrain.height_at(x as i32, y as i32).max(0) as f32 / COS_E
+    terrain.surface(x, y).max(0.0) / COS_E
 }
 
 fn on_water(terrain: &TerrainData, x: f32, y: f32) -> bool {

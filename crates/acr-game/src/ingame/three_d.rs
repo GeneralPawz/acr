@@ -1302,7 +1302,7 @@ impl ThreeD {
                     && now != self.trail_tick
                 {
                     let (x, y) = (u.pos.x >> 4, u.pos.y >> 4);
-                    self.trail.sample(u.id.0, view3d::unit_ground_point(x, y, terrain.height_at(x, y)), false, now);
+                    self.trail.sample(u.id.0, unit_ground(terrain, x, y), false, now);
                 }
                 continue;
             }
@@ -1320,7 +1320,7 @@ impl ThreeD {
                 (u.death, removed_at)
             };
             let (x, y) = (u.pos.x >> 4, u.pos.y >> 4);
-            let ground = view3d::unit_ground_point(x, y, terrain.height_at(x, y));
+            let ground = unit_ground(terrain, x, y);
             let body = super::gore::Body { death, ..u.into() };
             let (mut wounds, mut pool) = super::gore::corpse(body, record, self.gore, removed_at, ground);
             // A building bleeds no pool and takes no wounds (its burn comes from `ruin_view`).
@@ -1639,10 +1639,7 @@ impl ThreeD {
             }
             if u.death > 0 && !u.building && !model.machine {
                 corpses.push((self.instances.len(), at, view3d::facing_yaw(u.dir)));
-                let ground = |x: f32, y: f32| {
-                    let (x, y) = (x as i32, y as i32);
-                    view3d::ground_point(x, y, terrain.height_at(x, y))[2]
-                };
+                let ground = |x: f32, y: f32| terrain.surface(x, y) / view3d::COS_E;
                 let mut f = footprint(u, record.tick, at, &inst, model.radius);
                 f.ground = match self.pile_ground.get(&u.id.0) {
                     Some(&(p, g)) if p == [at[0], at[1]] => g,
@@ -1798,10 +1795,7 @@ impl ThreeD {
         {
             let renderer = self.renderer.as_ref();
             let ragdolls = self.ragdolls.as_ref();
-            let ground = |x: f32, y: f32| {
-                let (x, y) = (x as i32, y as i32);
-                view3d::ground_point(x, y, terrain.height_at(x, y))
-            };
+            let ground = |x: f32, y: f32| surface_point(terrain, x, y);
             let rig = |m: usize| renderer.and_then(|r| r.model(m)).and_then(|d| d.beast_rig.as_ref());
             let lying = |v: u32, limb: &'static str| {
                 let bone = |name: &str| ragdolls.and_then(|r| r.bone_world(v, name));
@@ -1852,10 +1846,7 @@ impl ThreeD {
                 &mut self.pools,
             );
         }
-        let ground = |x: f32, y: f32| {
-            let (x, y) = (x as i32, y as i32);
-            view3d::ground_point(x, y, terrain.height_at(x, y))
-        };
+        let ground = |x: f32, y: f32| surface_point(terrain, x, y);
         // Severed limbs and halves thrown by the blow, gibs (#262 S5).
         let renderer = self.renderer.as_ref();
         let unit = |v: u32| {
@@ -2833,6 +2824,22 @@ fn finished(world: &World, u: &Unit) -> bool {
     u.stage >= world.max_stage(u) && !matches!(u.anim, AnimKind::BuildLo(_) | AnimKind::Death | AnimKind::DeathLie(_))
 }
 
+/// [`view3d::unit_ground_point`] on the drawn ground: the model stands at the height of the
+/// terrain surface under its feet ([`TerrainData::surface`]), not the sim's rounded height of
+/// its anchor, so its feet, the gait's planted feet and a corpse meet the ground drawn.
+fn unit_ground(terrain: &TerrainData, x: i32, y: i32) -> [f32; 3] {
+    let mut g = view3d::unit_ground_point(x, y, 0);
+    g[2] = terrain.surface(g[0], g[1]) / view3d::COS_E;
+    g
+}
+
+/// [`view3d::ground_point`] at the height of the drawn ground (world pixels, fractional).
+fn surface_point(terrain: &TerrainData, x: f32, y: f32) -> [f32; 3] {
+    let mut g = view3d::ground_point(x as i32, y as i32, 0);
+    g[2] = terrain.surface(x, y) / view3d::COS_E;
+    g
+}
+
 /// Whether `u` stands well off `view`: half a window beyond its edges (models reach, their
 /// shadows fall and a scrolling view moves a frame on before they show).
 fn off_view(view: &View3d, terrain: &TerrainData, u: &Unit) -> bool {
@@ -2920,8 +2927,8 @@ fn instance(
     };
     let (morphs, sink) = model::decay_pose(decay, lying);
     // Units stand where their sprites draw their feet (#196), buildings on their anchor.
-    let place = if u.building { view3d::ground_point } else { view3d::unit_ground_point };
-    let mut ground = place(x, y, terrain.height_at(x, y));
+    let mut ground =
+        if u.building { view3d::ground_point(x, y, terrain.height_at(x, y)) } else { unit_ground(terrain, x, y) };
     // A model without decay masks sinks in the shader (after the palette, so a physics
     // pose sinks too); the footprint still sinks here.
     let placed = ground;

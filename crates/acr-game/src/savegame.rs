@@ -595,6 +595,7 @@ impl<'a> Reader<'a> {
                     hill: hill.map(<(i32, i32, i32, i32)>::from),
                     water: water.map(<(i32, i32, i32, i32)>::from),
                     patches: Vec::new(),
+                    rough: 0,
                     editor: false,
                 })
             }
@@ -904,6 +905,7 @@ mod tests {
             hill: None,
             water: Some((-1, 2, 3, 4)),
             patches: Vec::new(),
+            rough: 0,
             editor: false,
         });
         assert_eq!(SaveGame::decode(&save.encode()).unwrap(), save);

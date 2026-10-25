@@ -80,6 +80,9 @@ pub struct BlankSetup {
     pub hill: Option<(i32, i32, i32, i32)>,
     /// Water: `(x, y, width, height)`.
     pub water: Option<(i32, i32, i32, i32)>,
+    /// Rough ground: every vertex raised by 0 to twice this many height units at
+    /// random (a fixed hash of the vertex), for testing feet and bodies on bumps. Not saved.
+    pub rough: i32,
     /// Round patches of other ground textures `(x, y, radius, texture)`, painted in order
     /// (for the detailed ground's transitions, docs/ground.md). Not saved.
     pub patches: Vec<(i32, i32, i32, u8)>,

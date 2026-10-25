@@ -387,6 +387,12 @@ impl Gaits {
             }
             let mut carries = support == Some(e as u8);
             let mut anim = anim;
+            // The clip swings the foot over a level floor at the body's height: on a slope or a
+            // bump it follows the ground under it instead (uphill it hit the rising ground at
+            // full swing before its contact and scraped in; flat ground is unchanged).
+            if clipm.kind == Kind::Walk {
+                anim.z += ground(anim) - ground(pelvis);
+            }
             if let Some((bad, _, flying)) = hop {
                 // The good foot carries all but the flight and lands under its hip, a little
                 // ahead; the hurt foot is placed after the IK.

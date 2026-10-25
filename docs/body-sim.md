@@ -203,7 +203,8 @@ are piled. The renderer takes a palette from it per instance
   lying start from their current pose and stay down. Frozen corpses stay in the physics
   (others fall onto them) until the pool of 96 is full; the oldest then keeps its pose
   without physics.
-- **Ground:** the terrain height (`view3d::ground_point`) as the physics height field.
+- **Ground:** the drawn terrain surface (`HeightField::surface`: the mesh triangles' planes,
+  continuous, not `GetHeight`'s integer rounding) as the physics height field.
 - **Clock:** the game's ticks (10 per second) smoothed by the frame time, fixed 1/60 s
   steps, at most 4 per frame; paused with the game; a jump back (a loaded game) clears.
 - **Budget:** `ragdoll_view::calibrate` at the first frame with models: 8 limp ragdolls,
@@ -466,8 +467,34 @@ nearest the window centre that no ragdoll holds; `ACR_NO_GAIT` turns it off).
   | limp, good foot (m in 2.5 s) | 0.268 | 0.026 | 0.287 | 0.036 |
   | run IroLut | 558 | 3 | 496 | 100 |
 
-  On the slope single frames still dip a foot 2–4 cm under its stance height and the
-  terrain height under a foot jumps by several cm between frames (also on main): open.
+  On the slope single frames still dipped a foot 2–4 cm under its stance height: the ground
+  under it was `GetHeight` (`height_at`), whose integer rounding steps by a whole height unit
+  (3.8 cm) every few cm of travel, while the mesh draws the vertex heights' planes.
+
+  **One ground for everything (#279):** feet, gait IK, ragdolls, cloth, corpses, pools,
+  debris, particles, the model's standing height (`three_d::unit_ground`, the surface under
+  its drawn feet) and the driver's `measure` take `TerrainData::surface` /
+  `HeightField::surface` (`terrain.rs`): the drawn mesh's triangles interpolated in floats,
+  continuous, within `height_at`'s rounding. The sim keeps `height_at`. A swinging foot
+  follows the ground under it (the clip's foot height plus the ground under the foot minus
+  the ground under the hips), so uphill it no longer meets the rising ground at full swing.
+  Per frame, mm per metre walked, both feet (limp: the dragged foot included); held = foot
+  height over the surface while an ankle stands still, max − min over all plants (RX 9060 XT
+  VM, dirt, 150 frames at 60 fps, `ACR-analysis/footterrain/{flat,slope,rough}.json`,
+  `an.py`; rough = blank `"rough": 3`, bumps 0–23 cm; main measured with the same surface):
+
+  | Man | flat main → branch | slope 8° main → branch | rough main → branch |
+  |---|---|---|---|
+  | walk slide | 17 → 17 | 334 → 104 | 567 → 24 |
+  | run slide | 3 → 3 | 140 → 3 | 457 → 3 |
+  | limp slide | 1452 → 1452 | 1461 → 1596 | 1570 → 1460 |
+  | walk held height spread (mm) | 10 → 10 | 73 → 11 | 67 → 13 |
+  | run held height spread (mm) | 3 → 3 | 49 → 3 | 95 → 2 |
+
+  Open: on the slope the walk's and the limp's good foot still land with one 40–60 mm frame
+  (the touchdown at stance height, uphill); the limp's dragged foot scrapes by design.
+  Clash 700 vs 700, two runs: `3d.update` 2.15 / 3.27 → 2.01 / 1.89 ms walking, `rag.gaits`
+  0.32 / 0.40 → 0.33 / 0.29; not slower.
   Strips: `ACR-analysis/gaitrun/sheet_{run,walk,limp}.png` (main over branch, every frame).
   Clash 700 vs 700 (two runs each): `rag.gaits` 0.30 / 0.37 → 0.32 / 0.40 ms a tick
   walking, 0.06–0.07 in contact; in noise.

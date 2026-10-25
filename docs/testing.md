@@ -294,7 +294,8 @@ then on white and on greenscreen with the interface hidden, and records the fram
 
 Units of two owners fight on their own (an animal goes for an enemy within reach): give the
 pair one owner when they should only stand. A slope or hill for gait tests:
-`{"cmd": "start", "blank": {"ground": "dirt", "slope": 8, "hill": true}}`; ships:
+`{"cmd": "start", "blank": {"ground": "dirt", "slope": 8, "hill": true}}`; bumps: `"rough": 6`
+raises every vertex by 0 to 12 height units (a fixed hash, up to 46 cm); ships:
 `{"cmd": "start", "blank": {"water": true}}` and `spawn` e.g. `ShpPinta` at `[9600, 7680]`.
 
 ### The studio (#299)

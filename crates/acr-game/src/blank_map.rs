@@ -114,9 +114,13 @@ fn textures(b: &BlankSetup, vw: usize, len: usize) -> Vec<u8> {
     out
 }
 
-/// Ground height (world pixels) at `(x, y)`: the ramp plus the hill.
+/// Ground height (world pixels) at `(x, y)`: the ramp plus the hill plus the bumps.
 fn height(b: &BlankSetup, x: i32, y: i32) -> f64 {
     let mut h = 0.0;
+    if b.rough > 0 {
+        let k = (x.wrapping_mul(73_856_093) ^ y.wrapping_mul(19_349_663)).wrapping_mul(0x2C1B_3C6D) as u32 >> 16;
+        h += f64::from(b.rough) * f64::from(k) / 32767.5;
+    }
     if let Some((tenths, x0, x1)) = b.slope {
         let run = f64::from(x.clamp(x0.min(x1), x1.max(x0)) - x0.min(x1));
         h += run * (f64::from(tenths) / 10.0).to_radians().tan();
@@ -157,6 +161,7 @@ mod tests {
             hill: Some((5000, 5000, 400, 100)),
             water: Some((8000, 8000, 640, 640)),
             patches: vec![(5000, 5000, 100, 71)],
+            rough: 0,
             editor: false,
         };
         let map = build(&b);

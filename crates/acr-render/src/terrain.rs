@@ -303,6 +303,11 @@ impl TerrainData {
     pub fn height_at(&self, x: i32, y: i32) -> i32 {
         self.field.height_at(x, y)
     }
+
+    /// The drawn ground's height at `(x, y)` ([`HeightField::surface`]).
+    pub fn surface(&self, x: f32, y: f32) -> f32 {
+        self.field.surface(x, y)
+    }
 }
 
 impl HeightField {
@@ -352,6 +357,39 @@ impl HeightField {
                 let dx = (x - ((col as i32 + 1) << 5)) * (((c0 + b0) >> 1) - d);
                 (((y - base - 16) * (c0 - b0)) >> 5) - (dx >> 5) + d
             }
+        }
+    }
+
+    /// The drawn ground's height at `(x, y)` (both world pixels, fractional): the plane of the
+    /// mesh triangle below, interpolated without [`height_at`](Self::height_at)'s integer
+    /// rounding, which steps by a whole height unit (3.8 cm) and jumped under feet on slopes.
+    /// The triangles are the terrain mesh's (`terrain.wgsl` `vs_ground` / `vs_depth`): in each
+    /// strip between two vertex columns, the even column's vertices (every 32 px) and the odd
+    /// column's (16 px higher) zigzag; continuous everywhere, equal to the vertex heights at
+    /// the vertices and within `height_at`'s rounding (a unit or two).
+    pub fn surface(&self, x: f32, y: f32) -> f32 {
+        let w = self.width;
+        let x = x.clamp(0.0, self.playable as f32);
+        let y = y.clamp(32.0, self.playable as f32);
+        let col = ((x / 32.0) as usize).min(w.saturating_sub(2));
+        let fx = (x / 32.0 - col as f32).clamp(0.0, 1.0);
+        // The even and the odd column of the strip, and how far across from the even one.
+        let (even, odd, u) = if col & 1 == 0 { (col, col + 1, fx) } else { (col + 1, col, 1.0 - fx) };
+        let at = |row: usize, c: usize| self.h(row * w + c) as f32;
+        let r = (y / 32.0) as usize;
+        let f = y / 32.0 - r as f32;
+        // Even vertex k at y = 32 k, odd vertex k at 32 k - 16.
+        let around = |k: usize, d: f32| {
+            let (e, lo, hi) = (at(k, even), at(k, odd), at(k + 1, odd));
+            e + u * ((lo + hi) * 0.5 - e) + d * (hi - lo)
+        };
+        if f <= u * 0.5 {
+            around(r, f)
+        } else if f >= 1.0 - u * 0.5 {
+            around(r + 1, f - 1.0)
+        } else {
+            let (a, b, o) = (at(r, even), at(r + 1, even), at(r + 1, odd));
+            a + f * (b - a) + u * (o - (a + b) * 0.5)
         }
     }
 }
@@ -1527,6 +1565,31 @@ mod tests {
         let ramp = terrain(|x, y| (y * 8) as i16 - if x % 2 == 1 { 4 } else { 0 });
         for (x, y) in [(64, 320), (64 + 16, 320), (96, 336), (100, 1000)] {
             assert!((ramp.height_at(x, y) - y / 4).abs() <= 1, "({x}, {y}): {}", ramp.height_at(x, y));
+        }
+    }
+
+    #[test]
+    fn surface_is_continuous_and_matches_height_at() {
+        let bumpy = terrain(|x, y| ((x * 37 + y * 91) % 23) as i16 * 3 - 30);
+        // `GetHeight` floors a halved sum and two products and puts the diagonals a pixel off
+        // the mesh's: a few units off right at an edge on this steep field, under one on
+        // average (another triangulation would be tens).
+        let (mut sum, mut n) = (0.0, 0.0);
+        for x in (40..1200).step_by(7) {
+            for y in (40..1200).step_by(5) {
+                let (a, b) = (bumpy.height_at(x, y) as f32, bumpy.surface(x as f32, y as f32));
+                assert!((a - b).abs() <= 6.0, "({x}, {y}): {a} vs {b}");
+                (sum, n) = (sum + (a - b).abs(), n + 1.0);
+            }
+        }
+        assert!(sum / n < 1.0, "mean {}", sum / n);
+        // At the vertices exactly; no step between neighbouring points (slope here ≤ 2 per px).
+        assert_eq!(bumpy.surface(32.0 * 6.0, 32.0 * 9.0), bumpy.field.h(9 * W + 6) as f32);
+        assert_eq!(bumpy.surface(32.0 * 7.0, 32.0 * 9.0 - 16.0), bumpy.field.h(9 * W + 7) as f32);
+        for i in 0..4000 {
+            let (x, y) = (100.0 + i as f32 * 0.137, 300.0 + i as f32 * 0.071);
+            let step = (bumpy.surface(x + 0.01, y + 0.01) - bumpy.surface(x, y)).abs();
+            assert!(step < 0.1, "({x}, {y}): {step}");
         }
     }
 

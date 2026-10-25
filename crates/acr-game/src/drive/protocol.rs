@@ -381,6 +381,7 @@ pub(super) fn blank(b: &Value) -> Result<Start, String> {
             hill,
             water,
             patches,
+            rough: num(b, "rough", 0).clamp(0, 100),
             editor: b.get("editor").and_then(Value::as_bool).unwrap_or(false),
         },
         players: uint(b, "players").unwrap_or(2).clamp(1, 2) as usize,

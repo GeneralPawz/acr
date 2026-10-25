@@ -779,7 +779,7 @@ impl Ragdolls {
             let mut physics = std::mem::replace(&mut self.physics, Physics::new(Config::default()));
             let field = terrain.height_field();
             let spawned = std::thread::Builder::new().name("acr-ragdolls".into()).spawn(move || {
-                let ground = |x: f32, y: f32| ground_height_at(&|x, y| field.height_at(x, y), x, y);
+                let ground = |x: f32, y: f32| ground_height_at(&|x, y| field.surface(x, y), x, y);
                 let started = web_time::Instant::now();
                 for _ in 0..n {
                     physics.step(&ground);
@@ -1543,18 +1543,18 @@ pub(super) fn node_frame(globals: &[Mat4], node: usize, axis: Vec3, transform: &
     (col(3), col(0) * axis.x + col(1) * axis.y + col(2) * axis.z)
 }
 
-/// Height of the terrain (physics metres) under the physics point `(x, y)`.
+/// Height of the drawn terrain (physics metres) under the physics point `(x, y)`
+/// ([`TerrainData::surface`]: continuous, so a foot or a body resting on it does not jump).
 pub(super) fn ground_height(terrain: &TerrainData, x: f32, y: f32) -> f32 {
-    ground_height_at(&|x, y| terrain.height_at(x, y), x, y)
+    ground_height_at(&|x, y| terrain.surface(x, y), x, y)
 }
 
-/// [`ground_height`] over any height lookup (world pixels), e.g. a [`HeightField`] off the
+/// [`ground_height`] over any surface lookup (world pixels), e.g. a [`HeightField`] off the
 /// render thread.
 ///
 /// [`HeightField`]: acr_render::terrain::HeightField
-fn ground_height_at(height_at: &dyn Fn(i32, i32) -> i32, x: f32, y: f32) -> f32 {
-    let (wx, wy) = ((x * PIXELS_PER_METRE) as i32, (-y * PIXELS_PER_METRE) as i32);
-    view3d::ground_point(wx, wy, height_at(wx, wy))[2] / PIXELS_PER_METRE
+fn ground_height_at(surface: &dyn Fn(f32, f32) -> f32, x: f32, y: f32) -> f32 {
+    surface(x * PIXELS_PER_METRE, -y * PIXELS_PER_METRE) / view3d::COS_E / PIXELS_PER_METRE
 }
 
 /// The rotation `rot` about the point `p`.
