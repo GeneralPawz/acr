@@ -55,7 +55,7 @@ const CHUNK_BOXES: [[[f32; 2]; 3]; 6] = [
 const CHUNK_MIN_TRIANGLES: usize = 4;
 /// Seconds after the death the first piece breaks off, and the spread of the others: the
 /// `DESTRUCT` flash has thinned by then (`ThreeD::veils`).
-const BREAK: f32 = 0.35;
+pub const BREAK: f32 = 0.35;
 const BREAK_SPREAD: f32 = 0.9;
 /// What a bounce keeps of the speed.
 const BOUNCE: f32 = 0.3;
@@ -85,7 +85,10 @@ pub struct Chunk {
 /// inwards to a board's or a wall's depth: its back the surface turned over, its broken
 /// edge in an inner material ([`Break`]). They stay in the standing model too: they show only once the
 /// building, falling in, has left their place.
-pub fn chunks(model: &ModelData) -> Vec<Chunk> {
+///
+/// `broken` false gives the plain pieces instead (the triangles whose centre lies in the box,
+/// no back or edge): a few milliseconds, for when the broken ones are not ready.
+pub fn chunks(model: &ModelData, broken: bool) -> Vec<Chunk> {
     let palette = model.pose(None, 0.0);
     let world = |v: &Vertex| -> Vec3 { affine(&palette[v.joints[0] as usize], v.position) };
     let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
@@ -139,7 +142,12 @@ pub fn chunks(model: &ModelData) -> Vec<Chunk> {
                 let corners = t.map(|i| &p.vertices[i as usize]);
                 let w = corners.map(world);
                 let mut sub = Vec::new();
-                split(&w, [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], &outline, 0, &mut sub);
+                let whole = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+                if broken {
+                    split(&w, whole, &outline, 0, &mut sub);
+                } else if boxed(blend3(&w, &[1.0 / 3.0; 3])) <= 0.0 {
+                    sub.push(whole);
+                }
                 for tri in sub {
                     let mut at = [[0.0f32; 3]; 3];
                     for (c, bary) in tri.iter().enumerate() {
@@ -196,6 +204,11 @@ pub fn chunks(model: &ModelData) -> Vec<Chunk> {
         let mean: Vec3 = std::array::from_fn(|c| colour[c] / weight.max(1e-6));
         let wood = (mean[0] - mean[2]) / mean.iter().fold(0.02f32, |m, &c| m.max(c)) > WOOD_WARMTH;
         let mut piece = model.clone();
+        if !broken {
+            (piece.primitives, piece.images) = (primitives, images.clone());
+            out.push(Chunk { model: piece, centre, radius });
+            continue;
+        }
         let inner = piece.materials.len();
         let mut m = model.materials[primitives[0].material].clone();
         m.name = if wood { "fracture.wood" } else { "fracture.stone" }.to_owned();
@@ -227,6 +240,8 @@ const FRACTURE_EDGE: f32 = 0.15;
 const FRACTURE_DEPTH: u32 = 7;
 /// How far inside the outline (metres of the field) an open edge still counts as the break.
 const OUTLINE_BAND: f32 = 0.3;
+/// The life lost from which a building's broken pieces are cut ahead (on a worker).
+pub const HEAVY_DAMAGE: f32 = 0.5;
 /// How deep a piece's broken edge is: a board on timber, a wall on stone (metres; at most
 /// 35 % of the piece's radius).
 const THICK_WOOD: f32 = 0.09;
@@ -468,25 +483,40 @@ impl Break {
     /// Turns the kept part of a primitive over (`world`: its vertices in model space) as the
     /// piece's back: the same material, pushed in, the winding and normals reversed, darker.
     fn add_back(&self, prim: &mut acr_render::model::Primitive, world: &[Vec3], palette: &acr_render::model::Palette) {
-        let base = prim.vertices.len() as u32;
-        for (k, &at) in world.iter().enumerate() {
-            let mut v = prim.vertices[k];
-            let r = &palette[v.joints[0] as usize];
-            if let Some(inv) = invert(r) {
-                v.position = to_node(r, &inv, self.back(at));
+        // The back is seen through the break only: a coarser mesh than the front does, with
+        // just the vertices it uses. The generated meshes' open seams keep the simplified
+        // levels near the full count, so the shadow level (sloppy, 3 %, it ignores them) is
+        // taken where it is far smaller.
+        let levels = acr_render::lod::levels(&prim.vertices, &prim.indices);
+        let back = [acr_render::lod::SHADOW, 2, 1]
+            .iter()
+            .map(|&l| &levels[l])
+            .find(|l| !l.is_empty() && l.len() * 4 <= prim.indices.len())
+            .unwrap_or(&levels[1])
+            .clone();
+        let back = if back.is_empty() { prim.indices.clone() } else { back };
+        let mut map: FastMap<u32, u32> = FastMap::default();
+        let mut tri = [0u32; 3];
+        for t in back.as_chunks::<3>().0 {
+            for (c, &i) in t.iter().enumerate() {
+                tri[c] = *map.entry(i).or_insert_with(|| {
+                    let mut v = prim.vertices[i as usize];
+                    let r = &palette[v.joints[0] as usize];
+                    if let Some(inv) = invert(r) {
+                        v.position = to_node(r, &inv, self.back(world[i as usize]));
+                    }
+                    v.normal = v.normal.map(|x| -x);
+                    v.color = [v.color[0] * 0.55, v.color[1] * 0.55, v.color[2] * 0.55, v.color[3]];
+                    v.morph = [[0.0; 3]; 2];
+                    prim.vertices.push(v);
+                    for offsets in prim.look_morphs.iter_mut().map(|(_, o)| o) {
+                        let o = offsets.get(i as usize).copied().unwrap_or_default();
+                        offsets.push(o);
+                    }
+                    prim.vertices.len() as u32 - 1
+                });
             }
-            v.normal = v.normal.map(|x| -x);
-            v.color = [v.color[0] * 0.55, v.color[1] * 0.55, v.color[2] * 0.55, v.color[3]];
-            v.morph = [[0.0; 3]; 2];
-            prim.vertices.push(v);
-        }
-        for offsets in prim.look_morphs.iter_mut().map(|(_, o)| o) {
-            offsets.extend_from_within(..);
-        }
-        let n = prim.indices.len();
-        for t in 0..n / 3 {
-            let [a, b, c] = [prim.indices[3 * t], prim.indices[3 * t + 1], prim.indices[3 * t + 2]];
-            prim.indices.extend_from_slice(&[base + a, base + c, base + b]);
+            prim.indices.extend_from_slice(&[tri[0], tri[2], tri[1]]);
         }
     }
 

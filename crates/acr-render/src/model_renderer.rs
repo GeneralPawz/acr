@@ -770,6 +770,18 @@ fn shown_level(wanted: usize, last: usize, ready: impl Fn(usize) -> bool) -> usi
     (wanted..=last.max(wanted)).find(|&l| ready(l)).unwrap_or(wanted)
 }
 
+/// A model with its CPU work done ([`ModelRenderer::prepare_model`]), ready to upload.
+pub struct PreparedModel {
+    data: ModelData,
+    vertices: Vec<Vertex>,
+    indices: Vec<u32>,
+    primitives: Vec<GpuPrimitive>,
+    far: [Vec<FarPart>; lod::LEVELS + 1],
+    baked: Vec<Vec<Vertex>>,
+    have: Vec<u8>,
+    authored: bool,
+}
+
 pub struct ModelRenderer {
     pipeline: wgpu::RenderPipeline,
     /// The cheaper fragments of the far levels (from [`lod::FAR_FROM`]).
@@ -1381,6 +1393,13 @@ impl ModelRenderer {
 
     /// Uploads a model; returns its index for [`ModelInstance::model`].
     pub fn add_model(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, data: ModelData) -> usize {
+        self.add_prepared(device, queue, Self::prepare_model(data))
+    }
+
+    /// The CPU work of [`Self::add_model`] (the looks baked, the levels of detail and far
+    /// meshes built): without the device, so it can run on a worker thread (#303 building
+    /// pieces); [`Self::add_prepared`] uploads the result.
+    pub fn prepare_model(data: ModelData) -> PreparedModel {
         let mut vertices: Vec<Vertex> = Vec::new();
         let mut indices: Vec<u32> = Vec::new();
         // The look variants: the primitives they touch first, so a variant's buffer holds
@@ -1418,6 +1437,12 @@ impl ModelRenderer {
         // The authored levels are the far meshes themselves.
         let far =
             if authored { Default::default() } else { Self::far_meshes(&mut vertices, &mut indices, &primitives) };
+        PreparedModel { data, vertices, indices, primitives, far, baked, have, authored }
+    }
+
+    /// Uploads a model [`Self::prepare_model`] built; answers its index.
+    pub fn add_prepared(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, prepared: PreparedModel) -> usize {
+        let PreparedModel { data, vertices, indices, primitives, far, baked, have, authored } = prepared;
         let variants: Vec<wgpu::Buffer> = baked
             .iter()
             .map(|v| {

@@ -256,6 +256,17 @@ struct HeldKeys {
     down: bool,
 }
 
+/// Building pieces prepared on a worker: the model, its centre and radius (#303).
+#[cfg(not(target_arch = "wasm32"))]
+type ChunkList = Vec<(acr_render::model_renderer::PreparedModel, acr_render::math::Vec3, f32)>;
+
+/// Milliseconds a frame for uploading prepared building pieces (#303).
+#[cfg(not(target_arch = "wasm32"))]
+const UPLOAD_MS: f32 = 3.0;
+
+/// A building's pieces on the GPU: the model index, its centre and radius (#303).
+type Pieces = Vec<(usize, acr_render::math::Vec3, f32)>;
+
 pub struct ThreeD {
     /// Severed pieces, gibs and dropped gear (#262 S5).
     debris: super::debris::Debris,
@@ -374,9 +385,18 @@ pub struct ThreeD {
     burning: Vec<super::ruin_view::Burning>,
     /// The pieces that break off falling building models (#303, `ruin_view::chunks`): model,
     /// centre and radius of each, by the building's model; made on its first collapse.
-    chunks: HashMap<usize, Vec<(usize, acr_render::math::Vec3, f32)>>,
+    chunks: HashMap<usize, Pieces>,
     /// Building models whose pieces `sync_gpu` makes next.
-    chunks_wanted: HashSet<usize>,
+    /// Building models whose pieces are wanted, with the seconds since the death of a fallen
+    /// one (`None`: heavily damaged, wanted ahead).
+    chunks_wanted: HashMap<usize, Option<f32>>,
+    /// The broken pieces being cut and prepared on a worker (native).
+    #[cfg(not(target_arch = "wasm32"))]
+    chunk_jobs: HashMap<usize, std::sync::mpsc::Receiver<ChunkList>>,
+    /// A finished job's pieces going onto the GPU, one a frame: the building model, those
+    /// still to upload and those done.
+    #[cfg(not(target_arch = "wasm32"))]
+    chunk_uploads: Option<(usize, ChunkList, Pieces)>,
     /// Buildings falling in as models this frame (#303): map x, y, the reach of their
     /// `DESTRUCT` explosions (pixels) and their type, for [`Self::veils`].
     veils: Vec<(i32, i32, i32, acr_sim::TypeId)>,
@@ -521,7 +541,11 @@ impl Default for ThreeD {
             anchors: HashMap::new(),
             burning: Vec::new(),
             chunks: HashMap::new(),
-            chunks_wanted: HashSet::new(),
+            chunks_wanted: HashMap::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            chunk_jobs: HashMap::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            chunk_uploads: None,
             veils: Vec::new(),
             building_hits: Default::default(),
             scars: HashMap::new(),
@@ -769,23 +793,99 @@ impl ThreeD {
         self.weather_renderer.get_or_insert_with(|| acr_render::weather::WeatherRenderer::new(device, format));
         self.cover_renderer.get_or_insert_with(|| acr_render::ground_cover::GroundCoverRenderer::new(device, format));
         self.missiles.upload(renderer, device, queue);
-        // The pieces of buildings that began to fall in (#303).
-        for index in std::mem::take(&mut self.chunks_wanted) {
+        // The pieces of buildings that began to fall in (#303): broken ones cut on a worker as
+        // soon as a building is heavily damaged (native), the plain ones at once where those
+        // are not ready when it falls (and in the browser).
+        for (index, dead) in std::mem::take(&mut self.chunks_wanted) {
+            if self.chunks.contains_key(&index) {
+                continue;
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let started = self.chunk_jobs.contains_key(&index)
+                    || self.chunk_uploads.as_ref().is_some_and(|(i, _, _)| *i == index);
+                if !started && let Some(model) = renderer.model(index) {
+                    let model = model.clone();
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    std::thread::spawn(move || {
+                        let started = web_time::Instant::now();
+                        let pieces = super::ruin_view::chunks(&model, true);
+                        let triangles: usize =
+                            pieces.iter().flat_map(|c| &c.model.primitives).map(|p| p.indices.len() / 3).sum();
+                        let list: ChunkList = pieces
+                            .into_iter()
+                            .map(|c| (ModelRenderer::prepare_model(c.model), c.centre, c.radius))
+                            .collect();
+                        log::info!(
+                            "3d: {} broken building pieces, {triangles} triangles, on a worker in {:?}",
+                            list.len(),
+                            started.elapsed()
+                        );
+                        let _ = tx.send(list);
+                    });
+                    self.chunk_jobs.insert(index, rx);
+                }
+                // Wait for the worker until the first piece would break off.
+                if dead.is_none_or(|t| t < super::ruin_view::BREAK) {
+                    if dead.is_some() {
+                        self.chunks_wanted.insert(index, dead);
+                    }
+                    continue;
+                }
+                self.chunk_jobs.remove(&index);
+                if self.chunk_uploads.as_ref().is_some_and(|(i, _, _)| *i == index) {
+                    self.chunk_uploads = None;
+                }
+            }
+            if dead.is_none() {
+                continue;
+            }
             let Some(model) = renderer.model(index) else { continue };
             let started = web_time::Instant::now();
-            let pieces = super::ruin_view::chunks(model);
-            let (cut, triangles) = (
-                started.elapsed(),
-                pieces.iter().flat_map(|c| &c.model.primitives).map(|p| p.indices.len() / 3).sum::<usize>(),
-            );
+            let pieces = super::ruin_view::chunks(model, false);
             let list: Vec<_> =
                 pieces.into_iter().map(|c| (renderer.add_model(device, queue, c.model), c.centre, c.radius)).collect();
-            log::info!(
-                "3d: {} building pieces, {triangles} triangles, in {:?} (cut {cut:?})",
-                list.len(),
-                started.elapsed()
-            );
+            log::info!("3d: {} plain building pieces in {:?}", list.len(), started.elapsed());
             self.chunks.insert(index, list);
+        }
+        // A finished worker's pieces onto the GPU, as many a frame as fit in `UPLOAD_MS` (at
+        // least one; a whole building's at once took up to 40 ms).
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if self.chunk_uploads.is_none() {
+                let mut done = None;
+                for (&index, rx) in &self.chunk_jobs {
+                    match rx.try_recv() {
+                        Ok(list) => done = Some((index, Some(list))),
+                        Err(std::sync::mpsc::TryRecvError::Disconnected) => done = Some((index, None)),
+                        Err(std::sync::mpsc::TryRecvError::Empty) => continue,
+                    }
+                    break;
+                }
+                if let Some((index, list)) = done {
+                    self.chunk_jobs.remove(&index);
+                    if let Some(mut list) = list {
+                        list.reverse();
+                        self.chunk_uploads = Some((index, list, Vec::new()));
+                    }
+                }
+            }
+            if let Some((index, mut list, mut done)) = self.chunk_uploads.take() {
+                let started = web_time::Instant::now();
+                while started.elapsed().as_secs_f32() * 1000.0 < UPLOAD_MS
+                    && let Some((m, centre, radius)) = list.pop()
+                {
+                    done.push((renderer.add_prepared(device, queue, m), centre, radius));
+                }
+                if list.is_empty() {
+                    self.chunks.entry(index).or_insert_with(|| {
+                        log::info!("3d: {} broken building pieces uploaded", done.len());
+                        done
+                    });
+                } else {
+                    self.chunk_uploads = Some((index, list, done));
+                }
+            }
         }
         for (name, model) in self.parsed.drain(..) {
             if name == GORE {
@@ -1197,6 +1297,9 @@ impl ThreeD {
                 let lost = if constructing { 0.0 } else { 1.0 - u.life.max(0) as f32 / u.max_life.max(1) as f32 };
                 let dead = (u.death > 0)
                     .then(|| now.saturating_sub(record.tick) as f32 / acr_sim::ORIGINAL_TICKS_PER_SECOND as f32);
+                if dead.is_none() && lost >= super::ruin_view::HEAVY_DAMAGE && !self.chunks.contains_key(&index) {
+                    self.chunks_wanted.entry(index).or_insert(None);
+                }
                 let ruin = self.ruins.get(&index).copied();
                 let look = super::ruin_view::look(u.id.0, ground, anchors, lost, dead, ruin.is_some());
                 inst.transform = look.transform;
@@ -1217,7 +1320,7 @@ impl ThreeD {
                     }
                     match self.chunks.get(&index) {
                         None => {
-                            self.chunks_wanted.insert(index);
+                            self.chunks_wanted.insert(index, Some(t));
                         }
                         Some(list) => {
                             for (k, &(m, centre, radius)) in list.iter().enumerate() {

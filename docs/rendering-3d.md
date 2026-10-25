@@ -1299,10 +1299,11 @@ height; real point lights; burning men panicking (sim, follow-up).
     their midpoints down to `FRACTURE_EDGE` 0.15 m (at most 7 times) and kept by their
     centre; far from the box's faces no noise is sampled. Vertices are interpolated
     (position, normal, UV, colour), the source corners stay shared.
-  - **Thickness and back:** the kept surface, turned over and pushed in along its
-    smoothed normals by a board on timber (`THICK_WOOD` 0.09 m) or a wall on stone
-    (`THICK_STONE` 0.32 m; at most 35 % of the piece's radius), in its own material,
-    darker (`Break::add_back`).
+  - **Thickness and back:** the kept surface's second simplified level (`lod::levels`,
+    about an eighth of its triangles, with only the vertices it uses), turned over and
+    pushed in along the smoothed normals by a board on timber (`THICK_WOOD` 0.09 m) or a
+    wall on stone (`THICK_STONE` 0.32 m; at most 35 % of the piece's radius), in its own
+    material, darker (`Break::add_back`).
   - **Broken edge** (`Break::rim`): a strip from the outline down to the back in an inner
     material, `fracture.wood` (raw wood, 0.62/0.47/0.27 linear, pale at the surface,
     darker deep in) or `fracture.stone` (broken stone 0.46/0.44/0.41, mottled, one point
@@ -1312,6 +1313,13 @@ height; real point lights; burning men panicking (sim, follow-up).
     outline edges, seen from both sides. Only open edges within `OUTLINE_BAND` (0.3 m) of
     the cut count: the generated meshes have open seams all over that do not break.
   Everything is hashed from the box and the points (millimetres), never the simulation.
+  - **Off the frame:** a building that has lost `HEAVY_DAMAGE` (50 %) of its life asks
+    for its type's pieces ahead; on native a worker thread cuts them and builds their
+    levels of detail (`ModelRenderer::prepare_model`), and `sync_gpu` uploads one piece a
+    frame (`add_prepared`). Where they are not ready by the time the first piece breaks off
+    (`BREAK`, 0.35 s after the death: a building killed at once, or the browser, which
+    has no threads) the plain pieces are cut at once as before (`chunks(model, false)`:
+    the triangles whose centre lies in the box, 5–20 ms a type).
   Each breaks
   off 0.35–1.25 s after the death where the falling model has it then, flies outwards at
   1–2.6 m/s and up at 0.4–1.6 m/s, tumbling, under gravity; it bounces once (30 % of the
@@ -1352,20 +1360,21 @@ the collapse (noise). Sheets main against branch: `ACR-analysis/genai/collapse/c
 
 Fractured pieces (same VM and size, blank grass field, free camera at zoom 0.75 over five
 buildings dying in the same tick: EngDo1, SpnKre, EngSkl, EngKre, EngBlg spawned at
-20/3000 life; then EngDo1 and SpnKre alone, close-ups after they settle; steps
-`ACR-analysis/genai/collapse-frac/steps.json`, settings `models=all`, the unquantized
-showcase models): GPU sum of all passes 1.25 → 1.92 ms while the pieces fly and
-1.67 → 2.44 ms as they land (models 0.26 → 0.64 ms, shadow map 0.06 → 0.31 ms);
-`3d.update` 0.22 → 0.13 ms a frame (noise). The cut and upload, once per building type at
-its first collapse, cost 93–362 ms (cut 21–59 ms, the rest the level-of-detail build of the
-pieces' 44k–177k triangles; main 6–20 ms): a hitch while the VM also ran Blender builds.
-Sheets main against branch: `ACR-analysis/genai/collapse-frac/sheet_close.png`,
-`sheet_seq_do1.png`, `sheet_seq_kre.png`.
+20/3000 life, 5 ticks, a 300-frame `frametimes` pause (the workers' wall time the driver's
+fast ticks lack), then one-tick `wait`s whose `ms` is the frame; settings `models=all`,
+the quantized showcase models; steps `ACR-analysis/genai/collapse-frac/steps4.json`, two
+runs each): the worst frame of the collapse 72 / 72 ms on main (the five types' pieces cut
+and uploaded in the death frame) against 36 / 33 ms (the collapse frame itself; the
+workers took 91–346 ms for 34k–135k triangles, the uploads at most `UPLOAD_MS` 3 ms a
+frame). GPU sum of all passes with the pieces lying 1.70 / 1.73 → 2.27 / 2.28 ms (models
+0.19 → 0.58 ms, shadow map 0.05 → 0.28 ms). Close-ups at zoom 4.5 (EngDo1) and 4 (SpnKre),
+main against branch: `ACR-analysis/genai/collapse-frac/sheet_closeup_z45.png`; collapse
+sequences (unquantized models, before the worker): `sheet_seq_do1.png`, `sheet_seq_kre.png`.
 
 Open: the standing model keeps the pieces' triangles, so they are hidden in it until it
-moved away; the cut and its level-of-detail build run on the main thread at the first
-collapse of a type (a hitch of up to 0.36 s for the dense generated meshes: cut at model
-load or off the main thread, or fewer back triangles).
+moved away; the browser (no threads) and a building killed outright get the plain pieces;
+the pieces of the dense generated meshes keep the source's density (34k–135k triangles a
+type), the back is cut to its shadow level only.
 
 #### Construction and upgrades (#302)
 
