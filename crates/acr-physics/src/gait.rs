@@ -201,7 +201,10 @@ impl Cycle {
     /// Measures a clip: `points[i][e]` is effector `e`'s position at sample `i` in the
     /// body's frame (forward is `-y`, as skeleton H). The lowest effector within `reach` of
     /// the ground (`z` under `ground_z`) carries; the body travels as far as it is pushed back.
-    pub fn measure(points: &[Vec<Vec3>], ground_z: f32) -> Cycle {
+    /// With `flight`, a sample no effector carries (a run's both feet up) carries the body on
+    /// at the speed of the stance before it and the stance after it (each its median step:
+    /// the foot flat, not its landing or toe-off).
+    pub fn measure(points: &[Vec<Vec3>], ground_z: f32, flight: bool) -> Cycle {
         let n = points.len().min(SAMPLES);
         let mut support = [None; SAMPLES];
         for (i, s) in support.iter_mut().enumerate().take(n) {
@@ -215,6 +218,26 @@ impl Cycle {
                 // Moving backwards (+y) under the body pushes it forwards.
                 step[i] = (q.y - p.y).max(0.0);
             }
+        }
+        if flight && support[..n].iter().any(Option::is_some) {
+            // The median step of the stance reached from sample `i` going `dir` (±1), looping.
+            let stance = |i: usize, dir: usize| {
+                let mut j = i;
+                while support[j].is_none() {
+                    j = (j + dir) % n;
+                }
+                let mut got = Vec::new();
+                while support[j].is_some() && got.len() < n {
+                    got.push(step[j]);
+                    j = (j + dir) % n;
+                }
+                got.sort_by(f32::total_cmp);
+                got[got.len() / 2]
+            };
+            let flight: Vec<f32> = (0..n)
+                .map(|i| if support[i].is_some() { step[i] } else { 0.5 * (stance(i, n - 1) + stance(i, 1)) })
+                .collect();
+            step[..n].copy_from_slice(&flight);
         }
         let length: f32 = step.iter().sum();
         let mut progress = [0.0f32; SAMPLES + 1];
@@ -334,7 +357,7 @@ mod tests {
                 vec![foot(0.0), foot(0.5)]
             })
             .collect();
-        Cycle::measure(&pts, 0.05)
+        Cycle::measure(&pts, 0.05, true)
     }
 
     #[test]
@@ -344,6 +367,31 @@ mod tests {
         assert_eq!(c.support_at(0.1), Some(0));
         assert_eq!(c.support_at(0.6), Some(1));
         assert!((c.progress_at(0.5) - 0.5).abs() < 0.05);
+    }
+
+    #[test]
+    fn a_flight_travels_at_the_stance_speed() {
+        // Each foot carries 0.3 of the loop, sliding back 0.6 m a loop; both are up for the
+        // 0.2 between (a run's flights): the body goes on at the stance speed.
+        let pts: Vec<Vec<Vec3>> = (0..SAMPLES)
+            .map(|i| {
+                let ph = i as f32 / SAMPLES as f32;
+                let foot = |off: f32| {
+                    let p = (ph + off).rem_euclid(1.0);
+                    if p < 0.3 {
+                        Vec3::new(0.0, -0.3 + 2.0 * p, 0.0)
+                    } else {
+                        Vec3::new(0.0, 0.3 - 0.6 * (p - 0.3) / 0.7, 0.2)
+                    }
+                };
+                vec![foot(0.0), foot(0.5)]
+            })
+            .collect();
+        let c = Cycle::measure(&pts, 0.05, true);
+        assert!((c.length - 2.0).abs() < 0.08, "{}", c.length);
+        assert_eq!(c.support_at(0.4), None);
+        assert!((c.progress_at(0.5) - 0.5).abs() < 0.03, "{}", c.progress_at(0.5));
+        assert!(c.progress_at(0.4) > c.progress_at(0.31) + 0.05);
     }
 
     #[test]

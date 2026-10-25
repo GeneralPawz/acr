@@ -103,6 +103,9 @@ struct Man {
     dir: Vec3,
     follow: Follow,
     contacts: [Contact; 2],
+    /// A walking foot's ball (toe joint, world) held while its heel rises in the stance: the
+    /// foot rolls over it instead of the ankle staying down and the toes digging in.
+    balls: [Option<Vec3>; 2],
     sink: f32,
     seen: bool,
     /// Crawling: each dragged leg's knee and foot (world), once placed.
@@ -130,6 +133,9 @@ const CADENCE: [f32; 2] = [0.5, 1.8];
 const CLEAR: f32 = 0.05;
 /// How far a swinging foot's toes clear the ground over their stance height (m).
 const TOE_CLEAR: f32 = 0.04;
+/// How far the clip's ankle rises over its stance height before a carrying foot rolls over
+/// its ball (m).
+const HEEL_OFF: f32 = 0.005;
 
 /// The gait layer of the 3D view.
 pub struct Gaits {
@@ -175,7 +181,8 @@ impl Gaits {
         let eff = self.effectors(kind);
         let halves = [(key[0], a.duration), (key[1], b.duration)];
         let duration = if key[0] == key[1] { a.duration } else { a.duration + b.duration };
-        let probe = Measured { kind, cycle: Cycle::measure(&[], 0.0), halves, lift: [0.0; 2], toe: [0.0; 2], duration };
+        let probe =
+            Measured { kind, cycle: Cycle::measure(&[], 0.0, false), halves, lift: [0.0; 2], toe: [0.0; 2], duration };
         let toes = [self.rig.bone("toe_l"), self.rig.bone("toe_r")];
         let mut toe_z: Vec<[f32; 2]> = Vec::new();
         let at_origin = view3d::model_matrix([0.0, 0.0, 0.0], 0.0, 1.0);
@@ -188,7 +195,8 @@ impl Gaits {
             })
             .collect();
         let low = points.iter().flatten().map(|p| p.z).fold(f32::MAX, f32::min);
-        let cycle = Cycle::measure(&points, low + 0.05);
+        // A run's flights travel on (`MOTION*`); a crawl's gaps between its hands do not.
+        let cycle = Cycle::measure(&points, low + 0.05, kind == Kind::Walk);
         let lift = std::array::from_fn(|e| points.iter().map(|p| p[e].z).fold(f32::MAX, f32::min));
         // The toe's lowest height while its foot stands.
         let toe = std::array::from_fn(|e| {
@@ -377,6 +385,7 @@ impl Gaits {
         let mut targets = [Vec3::ZERO; 2];
         let mut need: f32 = 0.0;
         let pelvis = rig.joint(skins, hips);
+        let toes = [rig.bone("toe_l"), rig.bone("toe_r")];
         for (e, chain) in eff.iter().enumerate() {
             let joint = rig.joint(skins, chain[2]);
             // The stride stretched along the way about the hips.
@@ -402,6 +411,22 @@ impl Gaits {
                 anim.z = ground(anim) + lift + 0.06;
             }
             let mut t = man.contacts[e].update(carries, anim, lift, ground, dt);
+            // Heel-off in a run (a clip with flights): once the clip lifts the carrying ankle,
+            // the ball stays where it was and the ankle follows the clip's foot about it.
+            if clipm.kind == Kind::Walk
+                && carries
+                && hop.is_none()
+                && clipm.cycle.support.contains(&None)
+                && anim.z - ground(anim) - lift > HEEL_OFF
+            {
+                let stretch = |p: Vec3| p + fwd * ((p - pelvis).dot(fwd) * (stride - 1.0));
+                let o = stretch(rig.joint(skins, toes[e])) - stretch(joint);
+                let ball = *man.balls[e].get_or_insert(t + o);
+                t = ball - o;
+                man.contacts[e].last = t;
+            } else {
+                man.balls[e] = None;
+            }
             // A walking foot that has just lifted clears the ground first (toe-off) instead of
             // scraping forwards on its toes.
             let release = man.contacts[e].release;
@@ -433,7 +458,6 @@ impl Gaits {
             });
             rig.translate(skins, hips, Vec3::new(0.0, 0.0, bob - man.sink));
         }
-        let toes = [rig.bone("toe_l"), rig.bone("toe_r")];
         for (e, chain) in eff.iter().enumerate() {
             let side = if e == 0 { Vec3::X } else { Vec3::X * -1.0 };
             let hint = if clipm.kind == Kind::Walk { fwd.cross(up) * -1.0 } else { side };
@@ -475,7 +499,7 @@ impl Gaits {
             }
             // The toes stay out of the ground (a foot pitched down at toe-off, or on a slope) and
             // clear it in the swing: up to `TOE_CLEAR` as the foot rises from its stance height.
-            if clipm.kind == Kind::Walk {
+            if clipm.kind == Kind::Walk && man.balls[e].is_none() {
                 let (ankle, tip) = (rig.joint(skins, chain[2]), rig.joint(skins, toes[e]));
                 let risen = ((ankle.z - ground(ankle) - clipm.lift[e]) / 0.04).clamp(0.0, 1.0);
                 let floor = ground(tip) + clipm.toe[e] - 0.005 + TOE_CLEAR * risen;

@@ -278,7 +278,7 @@ WALK = {
 RUN = {
     "stride": 2.40, "duty": 0.32, "strike": 6.0, "flat": 0.05, "heel_off": 0.15, "toe_off": 24.0,
     "dorsi": 4.0, "lift": 0.12, "kick": 0.26, "retract": 1.0, "heel0": 0.22, "drive": 2.8, "hover": 0.03,
-    "hip": 0.86, "bob": 0.025, "bob_at": 0.43, "arm": 28.0,
+    "hip": 0.86, "bob": 0.025, "bob_at": 0.43, "arm": 28.0, "roll": True, "ankle_up": 20.0,
     "lean": {"spine": (9, 0, 0), "spine1": (4, 0, 0), "head": (-11, 0, 0)},
 }
 GAITS = {"walk": WALK, "run": RUN}
@@ -380,8 +380,22 @@ def gait_frame(g, ph):
     out = []
     for f, z, p, on in feet:
         t, s = _leg_ik(f, z - hip)
-        foot = min(max(-math.degrees(p) - (t + s), FOOT_X[0]), FOOT_X[1])
-        out.append((f, z, -math.radians(t + s + foot), on, (t, s, foot)))
+        lo = -g.get("ankle_up", -FOOT_X[0])
+        foot = min(max(-math.degrees(p) - (t + s), lo), FOOT_X[1])
+        pitch = -math.radians(t + s + foot)
+        if on and g.get("roll"):
+            # Where the ankle's range cannot keep the standing foot level (the run's bent knee
+            # and forward shin), the heel rises and the foot stands on its ball instead of the
+            # ball sinking into the ground.
+            sole = min(z + _rot(pt, pitch)[1] for pt in (HEEL, BALL))
+            if sole < 0.0:
+                z -= sole
+                t, s = _leg_ik(f, z - hip)
+                foot = min(max(-math.degrees(p) - (t + s), lo), FOOT_X[1])
+                pitch = -math.radians(t + s + foot)
+                z -= min(min(z + _rot(pt, pitch)[1] for pt in (HEEL, BALL)), 0.0)
+                t, s = _leg_ik(f, z - hip)
+        out.append((f, z, pitch, on, (t, s, foot)))
     return {"hip": hip, "feet": out}
 
 
@@ -413,16 +427,31 @@ def _sole(f):
 
 def gait_measure(g, samples=48):
     """What the gait layer measures of a cycle (`Cycle::measure`): {"stride_m" (travel of the
-    lowest ankle within 5 cm of its lowest height), "flight" (share with both soles > 1 cm
+    lowest ankle within 5 cm of its lowest height; a sample none carries goes on at the mean
+    of the stances before and after it), "flight" (share with both soles > 1 cm
     up), "clear_m" (lowest sole point of the left foot in mid-swing), "swing_pitch_deg"
     (its pitch, toes up positive, at mid-swing)}."""
     rows = [gait_frame(g, i / samples) for i in range(samples)]
     low = min(f[1] for r in rows for f in r["feet"])
-    travel = 0.0
+    steps, support = [], []
     for i, r in enumerate(rows):
         e = min((0, 1), key=lambda k: r["feet"][k][1])
-        if r["feet"][e][1] < low + 0.05:
-            travel += max(r["feet"][e][0] - rows[(i + 1) % samples]["feet"][e][0], 0.0)
+        support.append(r["feet"][e][1] < low + 0.05)
+        steps.append(max(r["feet"][e][0] - rows[(i + 1) % samples]["feet"][e][0], 0.0) if support[-1] else 0.0)
+
+    def stance(i, d):
+        j = i
+        while not support[j]:
+            j = (j + d) % samples
+        got = []
+        while support[j] and len(got) < samples:
+            got.append(steps[j])
+            j = (j + d) % samples
+        return sum(got) / len(got)
+
+    if any(support):
+        steps = [s if support[i] else 0.5 * (stance(i, -1) + stance(i, 1)) for i, s in enumerate(steps)]
+    travel = sum(steps)
     flight = sum(1 for r in rows if all(_sole(f) > 0.01 for f in r["feet"])) / samples
     clear, pitch, mid = 1.0, 0.0, 1.0
     for i, r in enumerate(rows):

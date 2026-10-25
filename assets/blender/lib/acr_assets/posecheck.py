@@ -304,7 +304,8 @@ def gait(poser, fps=24.0):
     """{MOTION_L<x>: {"stride_m", "s", "speed_mps", "flight", "clear_m"}} of every step cycle
     (MOTION_L<x> then MOTION_R<x>, every frame but each half's last) as the gait layer
     measures it (`acr_physics::gait::Cycle::measure`: the lowest ankle within 5 cm of its
-    lowest height carries; travel = its move back). `flight`: share of frames with both
+    lowest height carries; travel = its move back, and a frame no ankle carries travels at the
+    mean of the stance before and the stance after). `flight`: share of frames with both
     feet's toe joints and ankles over their standing heights + 1 cm; `clear_m`: lowest toe
     tip of a foot that does not carry, over its standing height."""
     arms = [a for a in _clip_armatures(poser.scene) if "foot_l" in a.pose.bones]
@@ -335,17 +336,32 @@ def gait(poser, fps=24.0):
         low = min(r[e][0].z for r in rows for e in (0, 1))
         ball = min(r[e][1].z for r in rows for e in (0, 1))
         tip = min(r[e][2].z for r in rows for e in (0, 1))
-        travel, flight, clear = 0.0, 0, 1.0
+        flight, clear = 0, 1.0
+        steps, support = [], []
         for i, r in enumerate(rows):
             e = 0 if r[0][0].z <= r[1][0].z else 1
             carries = r[e][0].z < low + 0.05
-            if carries:
-                travel += max(rows[(i + 1) % n][e][0].y - r[e][0].y, 0.0)
+            support.append(carries)
+            steps.append(max(rows[(i + 1) % n][e][0].y - r[e][0].y, 0.0) if carries else 0.0)
             if all(r[k][0].z > low + 0.01 and r[k][1].z > ball + 0.01 for k in (0, 1)):
                 flight += 1
             for k in (0, 1):
                 if not (carries and k == e) and r[k][0].z > low + 0.03:
                     clear = min(clear, r[k][2].z - tip)
+        if any(support):
+
+            def stance(i, d):
+                j = i
+                while not support[j]:
+                    j = (j + d) % n
+                got = []
+                while support[j] and len(got) < n:
+                    got.append(steps[j])
+                    j = (j + d) % n
+                return sum(got) / len(got)
+
+            steps = [s if support[i] else 0.5 * (stance(i, -1) + stance(i, 1)) for i, s in enumerate(steps)]
+        travel = sum(steps)
         secs = n / fps
         out[left] = {"stride_m": round(travel, 3), "s": round(secs, 3), "speed_mps": round(travel / secs, 2),
                      "flight": round(flight / n, 3), "clear_m": round(clear, 3)}

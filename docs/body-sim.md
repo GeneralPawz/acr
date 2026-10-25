@@ -455,8 +455,23 @@ nearest the window centre that no ragdoll holds; `ACR_NO_GAIT` turns it off).
     frame in `step_keys` and `musketeer_clips`, planted soles, two-bone IK, the swing foot
     dorsiflexed, the run leant 13° with two flights) and `stats.json` `gait` holds what this
     layer measures: walk 1.31 m in 0.75 s, run 1.51 m in 0.58 s of a 2.4 m authored stride.
-    The run stays short because `Cycle::measure` credits no travel while both ankles are
-    over 5 cm (the flight); a flight-aware measure would let the clip play its 2.4 m.
+    The run stayed short because `Cycle::measure` credited no travel while both ankles are
+    over 5 cm (the flight). Now (`MOTION*` clips only; a crawl's gaps stay uncounted) a
+    sample nothing carries travels at the median step of the stances before and after it:
+    the run measures 2.08 m (0.58 s), walk 1.31 m and crawl 0.39 m unchanged. Still short of
+    the authored 2.4 m: the ankle of a foot rolling onto its ball moves back slower than the
+    body. The run clip's stance foot had hit the ankle's -8° limit (`FOOT_X`) and pushed its
+    ball 2.6–4.7 cm into the ground; `RUN` now allows 20° (`ankle_up`, AAOS) and lifts the
+    heel where that is not enough (`roll`), and in game a run's carrying foot rolls over its
+    held ball once the clip lifts its ankle 5 mm (`HEEL_OFF`, `Man::balls`). Foot slide per
+    frame, mm per metre (RX 9060 XT VM, `ACR-analysis/stride/flight/{flat,slope,rough}.json`,
+    `footterrain/an.py`; before = 803c775):
+
+    | Man | flat | slope 8° | rough |
+    |---|---|---|---|
+    | walk EngM18 | 6 → 6 | 13 → 13 | 7 → 7 |
+    | run IroLut | 40 → 13 | 53 → 8 | 44 → 9 |
+    | run toes, lowest (mm) | -31 → 10 | -32 → -1 | -31 → -17 |
   - **Limp:** the 0.61 m "good foot" slide of the per-tick measure was the measure: the
     lower foot of two ticks and a 3 cm height window caught the dragged bad foot (it
     scrapes by design) and the good foot's toe-off. Per frame the good foot slid 0.27 m in
