@@ -11,7 +11,7 @@
 //! puff of dust ([`chunk_fall`]). Variety comes from the unit id, never the simulation's RNG.
 
 use acr_render::math::{Mat4, Vec3};
-use acr_render::model::ModelData;
+use acr_render::model::{ModelData, Vertex};
 use acr_render::view3d::{self, PIXELS_PER_METRE};
 
 /// Seconds a destroyed building takes to fall in.
@@ -79,15 +79,15 @@ pub struct Chunk {
     pub radius: f32,
 }
 
-/// The pieces of `model` that break off (#303): the triangles whose centre lies in each of
-/// the [`CHUNK_BOXES`], with the vertices they use. They stay in the standing model too: they
-/// show only once the building, falling in, has left their place.
+/// The pieces of `model` that break off (#303), each a broken slab: the model's surface
+/// inside one of the [`CHUNK_BOXES`], cut along a jagged outline (the box's distance field
+/// plus a noise, [`JAG`]; triangles along it are split down to [`FRACTURE_EDGE`]), thickened
+/// inwards to a board's or a wall's depth: its back the surface turned over, its broken
+/// edge in an inner material ([`Break`]). They stay in the standing model too: they show only once the
+/// building, falling in, has left their place.
 pub fn chunks(model: &ModelData) -> Vec<Chunk> {
     let palette = model.pose(None, 0.0);
-    let world = |v: &acr_render::model::Vertex| -> Vec3 {
-        let r = &palette[v.joints[0] as usize];
-        std::array::from_fn(|i| r[i][0] * v.position[0] + r[i][1] * v.position[1] + r[i][2] * v.position[2] + r[i][3])
-    };
+    let world = |v: &Vertex| -> Vec3 { affine(&palette[v.joints[0] as usize], v.position) };
     let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
     for v in model.primitives.iter().flat_map(|p| &p.vertices) {
         let p = world(v);
@@ -101,18 +101,27 @@ pub fn chunks(model: &ModelData) -> Vec<Chunk> {
     // Small pieces need no full textures: each piece is a model of its own and uploads them.
     let images: Vec<acr_render::model::Image> = model.images.iter().map(|i| shrink(i, CHUNK_TEXTURE)).collect();
     let mut out = Vec::new();
-    for b in &CHUNK_BOXES {
-        let inside = |p: Vec3| {
-            (0..3).all(|i| {
-                let f = (p[i] - lo[i]) / (hi[i] - lo[i]).max(1e-4);
-                f >= b[i][0] && f <= b[i][1]
-            })
+    for (k, b) in CHUNK_BOXES.iter().enumerate() {
+        let mid: Vec3 = std::array::from_fn(|i| lo[i] + 0.5 * (b[i][0] + b[i][1]) * (hi[i] - lo[i]));
+        let half: Vec3 = std::array::from_fn(|i| 0.5 * (b[i][1] - b[i][0]) * (hi[i] - lo[i]));
+        let jag = JAG.min(JAG_SHARE * half.iter().fold(f32::MAX, |m, &h| m.min(h)));
+        let seed = k as u32 * 7 + 3;
+        // Below 0 inside the piece: the box, its faces broken by two octaves of noise.
+        let boxed = |p: Vec3| (0..3).fold(f32::MIN, |m, i| m.max((p[i] - mid[i]).abs() - half[i]));
+        let field = |p: Vec3| {
+            let n = 0.65 * noise3(p, 1.0 / 0.7, seed) + 0.35 * noise3(p, 1.0 / 0.22, seed + 1);
+            boxed(p) + jag * (2.0 * n - 1.0)
         };
+        let outline = Outline { boxed: &boxed, field: &field, jag };
         let mut primitives = Vec::new();
-        let mut triangles = 0usize;
+        let mut worlds: Vec<Vec<Vec3>> = Vec::new();
         let mut points: Vec<Vec3> = Vec::new();
+        let mut kept: Vec<[Vec3; 3]> = Vec::new();
+        let (mut colour, mut weight) = ([0.0f32; 3], 0.0f32);
+        let mut host: Option<Vertex> = None;
         for p in &model.primitives {
-            let mut map: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+            let material = &model.materials[p.material];
+            let texture = material.texture.and_then(|t| images.get(t));
             let mut prim = acr_render::model::Primitive {
                 vertices: Vec::new(),
                 indices: Vec::new(),
@@ -121,34 +130,60 @@ pub fn chunks(model: &ModelData) -> Vec<Chunk> {
                 look_morphs: p.look_morphs.iter().map(|(k, _)| (*k, Vec::new())).collect(),
                 lod: None,
             };
-            for t in p.indices.as_chunks::<3>().0 {
-                let c = t.iter().fold([0.0f32; 3], |c, &i| {
-                    let q = world(&p.vertices[i as usize]);
-                    [c[0] + q[0] / 3.0, c[1] + q[1] / 3.0, c[2] + q[2] / 3.0]
-                });
-                if !inside(c) {
-                    continue;
-                }
-                triangles += 1;
-                for &i in t {
-                    let next = prim.vertices.len() as u32;
-                    let j = *map.entry(i).or_insert_with(|| {
-                        let v = &p.vertices[i as usize];
-                        points.push(world(v));
-                        prim.vertices.push(*v);
-                        for ((_, offsets), (_, all)) in prim.look_morphs.iter_mut().zip(&p.look_morphs) {
-                            offsets.push(all.get(i as usize).copied().unwrap_or_default());
-                        }
-                        next
-                    });
-                    prim.indices.push(j);
+            let mut at_world = Vec::new();
+            // A vertex once each: a corner of the source by its index (shared with the
+            // neighbours), a point inside a split triangle by the triangle and its
+            // barycentrics (dyadic, so exact).
+            let mut map: FastMap<(u32, u32, u32), u32> = FastMap::default();
+            for (number, t) in p.indices.as_chunks::<3>().0.iter().enumerate() {
+                let corners = t.map(|i| &p.vertices[i as usize]);
+                let w = corners.map(world);
+                let mut sub = Vec::new();
+                split(&w, [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], &outline, 0, &mut sub);
+                for tri in sub {
+                    let mut at = [[0.0f32; 3]; 3];
+                    for (c, bary) in tri.iter().enumerate() {
+                        let key = match bary.iter().position(|&f| f == 1.0) {
+                            Some(c) => (u32::MAX, t[c], 0),
+                            None => {
+                                (number as u32, (bary[0] * 4096.0).round() as u32, (bary[1] * 4096.0).round() as u32)
+                            }
+                        };
+                        let pos = blend3(&w, bary);
+                        at[c] = pos;
+                        let next = prim.vertices.len() as u32;
+                        let j = *map.entry(key).or_insert_with(|| {
+                            let v = lerp_vertex(&corners, bary);
+                            points.push(pos);
+                            at_world.push(pos);
+                            let s = texture.map_or([1.0; 3], |img| sample(img, v.uv));
+                            for c in 0..3 {
+                                colour[c] += s[c] * material.base_color[c];
+                            }
+                            weight += 1.0;
+                            host.get_or_insert(v);
+                            prim.vertices.push(v);
+                            for ((_, offsets), (_, all)) in prim.look_morphs.iter_mut().zip(&p.look_morphs) {
+                                let o = bary.iter().zip(t).fold([0.0f32; 3], |o, (&f, &i)| {
+                                    let a = all.get(i as usize).copied().unwrap_or_default();
+                                    [o[0] + f * a[0], o[1] + f * a[1], o[2] + f * a[2]]
+                                });
+                                offsets.push(o);
+                            }
+                            next
+                        });
+                        prim.indices.push(j);
+                    }
+                    kept.push(at);
                 }
             }
             if !prim.indices.is_empty() {
                 primitives.push(prim);
+                worlds.push(at_world);
             }
         }
-        if triangles < CHUNK_MIN_TRIANGLES {
+        let Some(host) = host else { continue };
+        if kept.len() < CHUNK_MIN_TRIANGLES {
             continue;
         }
         let n = points.len() as f32;
@@ -157,11 +192,393 @@ pub fn chunks(model: &ModelData) -> Vec<Chunk> {
         let radius = points.iter().fold(0.0f32, |r, p| {
             r.max(((p[0] - centre[0]).powi(2) + (p[1] - centre[1]).powi(2) + (p[2] - centre[2]).powi(2)).sqrt())
         });
+        // Timber or masonry by the piece's mean colour (warm is wood, as `model.wgsl` `scarred`).
+        let mean: Vec3 = std::array::from_fn(|c| colour[c] / weight.max(1e-6));
+        let wood = (mean[0] - mean[2]) / mean.iter().fold(0.02f32, |m, &c| m.max(c)) > WOOD_WARMTH;
         let mut piece = model.clone();
+        let inner = piece.materials.len();
+        let mut m = model.materials[primitives[0].material].clone();
+        m.name = if wood { "fracture.wood" } else { "fracture.stone" }.to_owned();
+        m.base_color = if wood { WOOD_INNER } else { STONE_INNER };
+        (m.texture, m.alpha_cutoff, m.decay, m.stump) = (None, None, None, false);
+        (m.surface.normal, m.surface.metal_rough) = (None, None);
+        (m.surface.roughness, m.surface.metallic) = (0.95, 0.0);
+        piece.materials.push(m);
+        let depth = (if wood { THICK_WOOD } else { THICK_STONE }).min(0.35 * radius);
+        let broken = Break::new(&kept, &field, wood, depth, k as u32);
+        for (prim, world) in primitives.iter_mut().zip(&worlds) {
+            broken.add_back(prim, world, &palette);
+        }
+        if let Some(prim) = broken.rim(host, &palette[host.joints[0] as usize], inner) {
+            primitives.push(prim);
+        }
         (piece.primitives, piece.images) = (primitives, images.clone());
         out.push(Chunk { model: piece, centre, radius });
     }
     out
+}
+
+/// The jagged outline of the pieces (#303): the noise amplitude (metres; at most
+/// [`JAG_SHARE`] of the box's smallest half extent), the longest triangle edge along it
+/// and how often a triangle is split at most.
+const JAG: f32 = 0.35;
+const JAG_SHARE: f32 = 0.3;
+const FRACTURE_EDGE: f32 = 0.15;
+const FRACTURE_DEPTH: u32 = 7;
+/// How far inside the outline (metres of the field) an open edge still counts as the break.
+const OUTLINE_BAND: f32 = 0.3;
+/// How deep a piece's broken edge is: a board on timber, a wall on stone (metres; at most
+/// 35 % of the piece's radius).
+const THICK_WOOD: f32 = 0.09;
+const THICK_STONE: f32 = 0.32;
+/// A piece is timber when its mean colour is this warm ((r − b) / max), as `scarred`.
+const WOOD_WARMTH: f32 = 0.19;
+/// The inner materials (linear): raw wood, broken stone and mortar (the fresh colours of
+/// `model.wgsl` `scarred`).
+const WOOD_INNER: [f32; 4] = [0.62, 0.47, 0.27, 1.0];
+const STONE_INNER: [f32; 4] = [0.46, 0.44, 0.41, 1.0];
+
+/// A small, fast hasher for the integer keys of the pieces' maps (the standard one is slow
+/// for a few hundred thousand points).
+#[derive(Default)]
+struct Fx(u64);
+
+impl std::hash::Hasher for Fx {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u64(u64::from(b));
+        }
+    }
+    fn write_u32(&mut self, i: u32) {
+        self.write_u64(u64::from(i));
+    }
+    fn write_i32(&mut self, i: i32) {
+        self.write_u64(u64::from(i as u32));
+    }
+    fn write_usize(&mut self, i: usize) {
+        self.write_u64(i as u64);
+    }
+    fn write_u64(&mut self, i: u64) {
+        self.0 = (self.0.rotate_left(5) ^ i).wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
+}
+
+type FastMap<K, V> = std::collections::HashMap<K, V, std::hash::BuildHasherDefault<Fx>>;
+
+/// A model-space point through a palette entry (rows).
+fn affine(r: &[[f32; 4]; 3], p: Vec3) -> Vec3 {
+    std::array::from_fn(|i| r[i][0] * p[0] + r[i][1] * p[1] + r[i][2] * p[2] + r[i][3])
+}
+
+/// The point at barycentrics `b` of the triangle `w`.
+fn blend3(w: &[Vec3; 3], b: &Vec3) -> Vec3 {
+    std::array::from_fn(|i| b[0] * w[0][i] + b[1] * w[1][i] + b[2] * w[2][i])
+}
+
+/// Splits the triangle `w` (model space; the part given by barycentrics `t`) where the
+/// outline `field` crosses it until its edges are shorter than [`FRACTURE_EDGE`], and keeps
+/// the parts inside.
+fn split(w: &[Vec3; 3], t: [Vec3; 3], o: &Outline, depth: u32, out: &mut Vec<[Vec3; 3]>) {
+    let p = t.map(|b| blend3(w, &b));
+    let c: Vec3 = std::array::from_fn(|i| (p[0][i] + p[1][i] + p[2][i]) / 3.0);
+    let d = |a: Vec3, b: Vec3| ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt();
+    let reach = p.iter().fold(0.0f32, |r, &q| r.max(d(q, c)));
+    // Far from the box's faces the noise cannot move the outline over the triangle: no
+    // noise to sample (most of the model).
+    let b = (o.boxed)(c);
+    if b - reach > o.jag {
+        return;
+    }
+    if b + reach < -o.jag {
+        out.push(t);
+        return;
+    }
+    let f = (o.field)(c);
+    let edge = d(p[0], p[1]).max(d(p[1], p[2])).max(d(p[2], p[0]));
+    // Smaller triangles split only where the outline crosses them (the corners disagree).
+    let crossed = || p.iter().any(|&q| ((o.field)(q) < 0.0) != (f < 0.0));
+    if edge <= FRACTURE_EDGE || depth >= FRACTURE_DEPTH || (edge <= 4.0 * FRACTURE_EDGE && !crossed()) {
+        if f < 0.0 {
+            out.push(t);
+        }
+        return;
+    }
+    let half = |a: Vec3, b: Vec3| -> Vec3 { std::array::from_fn(|i| 0.5 * (a[i] + b[i])) };
+    let (m01, m12, m20) = (half(t[0], t[1]), half(t[1], t[2]), half(t[2], t[0]));
+    for s in [[t[0], m01, m20], [m01, t[1], m12], [m20, m12, t[2]], [m01, m12, m20]] {
+        split(w, s, o, depth + 1, out);
+    }
+}
+
+/// A piece's outline: the box's distance field (metres, below 0 inside), the same broken by
+/// noise, and the noise's amplitude.
+struct Outline<'a> {
+    boxed: &'a dyn Fn(Vec3) -> f32,
+    field: &'a dyn Fn(Vec3) -> f32,
+    jag: f32,
+}
+
+/// The vertex at barycentrics `b` of a triangle.
+fn lerp_vertex(c: &[&Vertex; 3], b: &Vec3) -> Vertex {
+    let mut v = *c[0];
+    let mix = |f: &dyn Fn(&Vertex) -> f32| b[0] * f(c[0]) + b[1] * f(c[1]) + b[2] * f(c[2]);
+    for i in 0..3 {
+        v.position[i] = mix(&|x| x.position[i]);
+        v.normal[i] = mix(&|x| x.normal[i]);
+        v.morph[0][i] = mix(&|x| x.morph[0][i]);
+        v.morph[1][i] = mix(&|x| x.morph[1][i]);
+    }
+    for i in 0..2 {
+        v.uv[i] = mix(&|x| x.uv[i]);
+    }
+    for i in 0..4 {
+        v.color[i] = mix(&|x| x.color[i]);
+        v.body[i] = mix(&|x| x.body[i]);
+    }
+    v.normal = unit(v.normal);
+    v
+}
+
+/// The texel (linear RGB) of `img` at `uv`, wrapped.
+fn sample(img: &acr_render::model::Image, uv: [f32; 2]) -> Vec3 {
+    if img.width == 0 || img.height == 0 {
+        return [1.0; 3];
+    }
+    let x = ((uv[0].rem_euclid(1.0) * img.width as f32) as u32).min(img.width - 1);
+    let y = ((uv[1].rem_euclid(1.0) * img.height as f32) as u32).min(img.height - 1);
+    let at = ((y * img.width + x) * 4) as usize;
+    std::array::from_fn(|c| (f32::from(img.rgba[at + c]) / 255.0).powf(2.2))
+}
+
+/// Value noise 0..1 at `p` (metres) with `freq` cells a metre, from `seed`.
+fn noise3(p: Vec3, freq: f32, seed: u32) -> f32 {
+    let q = p.map(|x| x * freq);
+    let cell = q.map(f32::floor);
+    let f: Vec3 = std::array::from_fn(|i| {
+        let t = q[i] - cell[i];
+        t * t * (3.0 - 2.0 * t)
+    });
+    let at = |dx: i32, dy: i32, dz: i32| {
+        let h = ((cell[0] as i32 + dx) as u32)
+            ^ ((cell[1] as i32 + dy) as u32).wrapping_mul(0x8da6_b343)
+            ^ ((cell[2] as i32 + dz) as u32).wrapping_mul(0xd816_3841);
+        acr_render::particles::unit(h, seed)
+    };
+    let lerp = |a: f32, b: f32, t: f32| a + (b - a) * t;
+    let plane = |dz: i32| lerp(lerp(at(0, 0, dz), at(1, 0, dz), f[0]), lerp(at(0, 1, dz), at(1, 1, dz), f[0]), f[1]);
+    lerp(plane(0), plane(1), f[2])
+}
+
+fn unit(a: Vec3) -> Vec3 {
+    let l = a.iter().map(|x| x * x).sum::<f32>().sqrt().max(1e-9);
+    a.map(|x| x / l)
+}
+
+fn sub(a: Vec3, b: Vec3) -> Vec3 {
+    std::array::from_fn(|i| a[i] - b[i])
+}
+
+fn cross(a: Vec3, b: Vec3) -> Vec3 {
+    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+}
+
+/// A point of the piece (model space) as a key: millimetres.
+fn point_key(p: Vec3) -> [i32; 3] {
+    p.map(|x| (x * 1000.0).round() as i32)
+}
+
+/// The break of a piece (#303), from its kept surface (model space): the smoothed normals,
+/// the outline (the edges only one kept triangle uses, in its winding, with its normal) and
+/// the outward direction at each outline point. [`Break::back`] gives the point about
+/// `depth` under the surface where the piece's back lies; on the outline a hash shifts it in
+/// and out, so the broken edge between them ([`Break::rim`]) is jagged.
+struct Break {
+    normals: FastMap<[i32; 3], Vec3>,
+    outline: Vec<(Vec3, Vec3, Vec3)>,
+    outward: FastMap<[i32; 3], Vec3>,
+    wood: bool,
+    depth: f32,
+    seed: u32,
+}
+
+impl Break {
+    fn new(tris: &[[Vec3; 3]], field: &dyn Fn(Vec3) -> f32, wood: bool, depth: f32, seed: u32) -> Break {
+        let mut normals: FastMap<[i32; 3], Vec3> = FastMap::default();
+        // Per edge: how many triangles use it, its ends in the first one's winding, that normal.
+        type Use = (usize, Vec3, Vec3, Vec3);
+        let mut edges: FastMap<([i32; 3], [i32; 3]), Use> = FastMap::default();
+        for t in tris {
+            let n = cross(sub(t[1], t[0]), sub(t[2], t[0]));
+            if n.iter().all(|x| x.abs() < 1e-12) {
+                continue;
+            }
+            for (c, &p) in t.iter().enumerate() {
+                let e = normals.entry(point_key(p)).or_insert([0.0; 3]);
+                *e = std::array::from_fn(|i| e[i] + n[i]);
+                let q = t[(c + 1) % 3];
+                let (a, b) = (point_key(p), point_key(q));
+                let id = if a < b { (a, b) } else { (b, a) };
+                edges.entry(id).and_modify(|e| e.0 += 1).or_insert((1, p, q, unit(n)));
+            }
+        }
+        // Only along the cut: generated meshes have open seams all over, which do not break.
+        let mut outline: Vec<(Vec3, Vec3, Vec3)> = edges
+            .values()
+            .filter(|e| e.0 == 1 && field(std::array::from_fn(|i| 0.5 * (e.1[i] + e.2[i]))) > -OUTLINE_BAND)
+            .map(|&(_, a, b, n)| (a, b, n))
+            .collect();
+        // The same order on every run (the map's is random).
+        outline.sort_by_key(|&(a, b, _)| (point_key(a), point_key(b)));
+        let mut outward: FastMap<[i32; 3], Vec3> = FastMap::default();
+        for &(a, b, n) in &outline {
+            let o = unit(cross(sub(b, a), n));
+            for p in [a, b] {
+                let e = outward.entry(point_key(p)).or_insert([0.0; 3]);
+                *e = std::array::from_fn(|i| e[i] + o[i]);
+            }
+        }
+        Break { normals, outline, outward, wood, depth, seed }
+    }
+
+    fn hash(&self, k: [i32; 3], j: u32) -> f32 {
+        let h = (k[0] as u32).wrapping_mul(0x9e37_79b9)
+            ^ (k[1] as u32).wrapping_mul(0x85eb_ca6b)
+            ^ (k[2] as u32).wrapping_mul(0xc2b2_ae35);
+        acr_render::particles::unit(h ^ self.seed.wrapping_mul(0x27d4_eb2f), j)
+    }
+
+    fn normal(&self, p: Vec3) -> Vec3 {
+        unit(self.normals.get(&point_key(p)).copied().unwrap_or([0.0, 1.0, 0.0]))
+    }
+
+    /// The back point under the surface point `p`.
+    fn back(&self, p: Vec3) -> Vec3 {
+        let (n, k) = (self.normal(p), point_key(p));
+        let shift = self.outward.get(&k).map_or([0.0; 3], |o| {
+            let s = (self.hash(k, 0) - 0.45) * self.depth * if self.wood { 1.2 } else { 1.6 };
+            unit(*o).map(|x| x * s)
+        });
+        let deeper = self.depth * (0.8 + 0.4 * self.hash(k, 1));
+        std::array::from_fn(|i| p[i] - n[i] * deeper + shift[i])
+    }
+
+    /// Turns the kept part of a primitive over (`world`: its vertices in model space) as the
+    /// piece's back: the same material, pushed in, the winding and normals reversed, darker.
+    fn add_back(&self, prim: &mut acr_render::model::Primitive, world: &[Vec3], palette: &acr_render::model::Palette) {
+        let base = prim.vertices.len() as u32;
+        for (k, &at) in world.iter().enumerate() {
+            let mut v = prim.vertices[k];
+            let r = &palette[v.joints[0] as usize];
+            if let Some(inv) = invert(r) {
+                v.position = to_node(r, &inv, self.back(at));
+            }
+            v.normal = v.normal.map(|x| -x);
+            v.color = [v.color[0] * 0.55, v.color[1] * 0.55, v.color[2] * 0.55, v.color[3]];
+            v.morph = [[0.0; 3]; 2];
+            prim.vertices.push(v);
+        }
+        for offsets in prim.look_morphs.iter_mut().map(|(_, o)| o) {
+            offsets.extend_from_within(..);
+        }
+        let n = prim.indices.len();
+        for t in 0..n / 3 {
+            let [a, b, c] = [prim.indices[3 * t], prim.indices[3 * t + 1], prim.indices[3 * t + 2]];
+            prim.indices.extend_from_slice(&[base + a, base + c, base + b]);
+        }
+    }
+
+    /// The broken edge: a strip from each outline edge down to the back in the inner
+    /// `material`, shaded by the vertex colour (pale at the surface, darker deep in, stone
+    /// mottled with mortar); timber also throws long thin splinters off it, seen from both
+    /// sides. The vertices sit in the node of `host` (`matrix`).
+    fn rim(&self, host: Vertex, matrix: &[[f32; 4]; 3], material: usize) -> Option<acr_render::model::Primitive> {
+        let inverse = invert(matrix)?;
+        let (wood, depth) = (self.wood, self.depth);
+        let mut prim = acr_render::model::Primitive {
+            vertices: Vec::new(),
+            indices: Vec::new(),
+            material,
+            morphs: [false; 2],
+            look_morphs: Vec::new(),
+            lod: None,
+        };
+        let mut push = |p: Vec3, n: Vec3, shade: f32| -> u32 {
+            let mut v = host;
+            v.position = to_node(matrix, &inverse, p);
+            // The shader turns normals by the palette's 3 × 3 part.
+            v.normal =
+                unit(std::array::from_fn(|i| inverse[i][0] * n[0] + inverse[i][1] * n[1] + inverse[i][2] * n[2]));
+            v.uv = [0.5, 0.5];
+            v.color = [shade, shade, shade, 1.0];
+            v.morph = [[0.0; 3]; 2];
+            prim.vertices.push(v);
+            prim.vertices.len() as u32 - 1
+        };
+        let stone = |p: Vec3| {
+            let h = self.hash(point_key(p), 2);
+            // Pale mortar among the broken stones.
+            if h > 0.8 { 1.3 } else { 0.7 + 0.35 * h }
+        };
+        let mut indices = Vec::new();
+        for &(a, b, n) in &self.outline {
+            let (a2, b2) = (self.back(a), self.back(b));
+            let side = unit(cross(sub(b, a), n));
+            let (sa, sb, sa2, sb2) =
+                if wood { (1.1, 1.1, 0.75, 0.75) } else { (stone(a), stone(b), stone(a2), stone(b2)) };
+            let ia = push(a, side, sa);
+            let ib = push(b, side, sb);
+            let ib2 = push(b2, side, sb2);
+            let ia2 = push(a2, side, sa2);
+            indices.extend_from_slice(&[ia, ia2, ib2, ia, ib2, ib]);
+            let ke = point_key(std::array::from_fn(|i| 0.5 * (a[i] + b[i])));
+            if wood && self.hash(ke, 7) < 0.45 {
+                let len = 0.08 + 0.22 * self.hash(ke, 8);
+                let f = 0.3 + 0.4 * self.hash(ke, 9);
+                let bend = (self.hash(ke, 10) - 0.5) * 0.8;
+                let s0: Vec3 = std::array::from_fn(|i| a[i] + (b[i] - a[i]) * (f - 0.2) - n[i] * depth * 0.3);
+                let s1: Vec3 = std::array::from_fn(|i| a[i] + (b[i] - a[i]) * (f + 0.2) - n[i] * depth * 0.6);
+                let tip: Vec3 = std::array::from_fn(|i| {
+                    a[i] + (b[i] - a[i]) * f + side[i] * len + n[i] * (bend * len - depth * 0.45)
+                });
+                let i0 = push(s0, n, 1.0);
+                let i1 = push(s1, n, 1.0);
+                let i2 = push(tip, n, 1.25);
+                indices.extend_from_slice(&[i0, i1, i2, i0, i2, i1]);
+            }
+        }
+        if indices.is_empty() {
+            return None;
+        }
+        prim.indices = indices;
+        Some(prim)
+    }
+}
+
+/// A model-space point into the frame of the palette entry `r` (`inv`: its 3 × 3 inverse).
+fn to_node(r: &[[f32; 4]; 3], inv: &[[f32; 3]; 3], p: Vec3) -> Vec3 {
+    let q = [p[0] - r[0][3], p[1] - r[1][3], p[2] - r[2][3]];
+    std::array::from_fn(|i| inv[i][0] * q[0] + inv[i][1] * q[1] + inv[i][2] * q[2])
+}
+
+/// The inverse of a palette entry's 3 × 3 part (rows), if it has one.
+fn invert(r: &[[f32; 4]; 3]) -> Option<[[f32; 3]; 3]> {
+    let m = |i: usize, j: usize| r[i][j];
+    let det = m(0, 0) * (m(1, 1) * m(2, 2) - m(1, 2) * m(2, 1)) - m(0, 1) * (m(1, 0) * m(2, 2) - m(1, 2) * m(2, 0))
+        + m(0, 2) * (m(1, 0) * m(2, 1) - m(1, 1) * m(2, 0));
+    if det.abs() < 1e-12 {
+        return None;
+    }
+    // The adjugate over the determinant: entry (i, j) is the cofactor of (j, i).
+    Some(std::array::from_fn(|i| {
+        std::array::from_fn(|j| {
+            let (a, b) = ((j + 1) % 3, (j + 2) % 3);
+            let (x, y) = ((i + 1) % 3, (i + 2) % 3);
+            (m(a, x) * m(b, y) - m(a, y) * m(b, x)) / det
+        })
+    }))
 }
 
 /// `image` halved (2 × 2 means) until its longer side is at most `max`.

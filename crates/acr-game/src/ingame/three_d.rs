@@ -774,9 +774,17 @@ impl ThreeD {
             let Some(model) = renderer.model(index) else { continue };
             let started = web_time::Instant::now();
             let pieces = super::ruin_view::chunks(model);
+            let (cut, triangles) = (
+                started.elapsed(),
+                pieces.iter().flat_map(|c| &c.model.primitives).map(|p| p.indices.len() / 3).sum::<usize>(),
+            );
             let list: Vec<_> =
                 pieces.into_iter().map(|c| (renderer.add_model(device, queue, c.model), c.centre, c.radius)).collect();
-            log::info!("3d: {} building pieces in {:?}", list.len(), started.elapsed());
+            log::info!(
+                "3d: {} building pieces, {triangles} triangles, in {:?} (cut {cut:?})",
+                list.len(),
+                started.elapsed()
+            );
             self.chunks.insert(index, list);
         }
         for (name, model) in self.parsed.drain(..) {

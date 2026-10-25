@@ -1289,10 +1289,30 @@ height; real point lights; burning men panicking (sim, follow-up).
   (`effects::projectile_sprites`, `VEIL_SHARE`). Sprite buildings and `models=off` keep the
   whole explosion.
 - **Falling pieces:** on its first collapse `sync_gpu` splits six pieces off the finished
-  model (`ruin_view::chunks`): the triangles whose centre lies in one of `CHUNK_BOXES`
-  (four roof corners, a piece of the front and of the back wall, as fractions of the
-  model's bounds), each a model of its own with its textures shrunk to 256 px (11–13 ms
-  once per building type for EngSkl and EngBlg, logged as `building pieces`). Each breaks
+  model (`ruin_view::chunks`), one per `CHUNK_BOXES` box (four roof corners, a piece of
+  the front and of the back wall, as fractions of the model's bounds), each a model of its
+  own with its textures shrunk to 256 px (logged as `building pieces` with its triangles
+  and the time of the cut). Each is a broken slab, not a clean block:
+  - **Jagged outline:** the surface inside the box's distance field broken by two octaves
+    of value noise (0.7 m and 0.22 m cells, `JAG` 0.35 m, at most 30 % of the box's
+    smallest half extent; seeded by the box). Triangles the outline crosses are split at
+    their midpoints down to `FRACTURE_EDGE` 0.15 m (at most 7 times) and kept by their
+    centre; far from the box's faces no noise is sampled. Vertices are interpolated
+    (position, normal, UV, colour), the source corners stay shared.
+  - **Thickness and back:** the kept surface, turned over and pushed in along its
+    smoothed normals by a board on timber (`THICK_WOOD` 0.09 m) or a wall on stone
+    (`THICK_STONE` 0.32 m; at most 35 % of the piece's radius), in its own material,
+    darker (`Break::add_back`).
+  - **Broken edge** (`Break::rim`): a strip from the outline down to the back in an inner
+    material, `fracture.wood` (raw wood, 0.62/0.47/0.27 linear, pale at the surface,
+    darker deep in) or `fracture.stone` (broken stone 0.46/0.44/0.41, mottled, one point
+    in five pale mortar), told by the piece's mean texture colour (warm is wood, as
+    `scarred`). The back's rim points are shifted in and out along the outline by a hash,
+    so the edge is ragged; timber throws thin splinters (0.08–0.3 m) off 45 % of the
+    outline edges, seen from both sides. Only open edges within `OUTLINE_BAND` (0.3 m) of
+    the cut count: the generated meshes have open seams all over that do not break.
+  Everything is hashed from the box and the points (millimetres), never the simulation.
+  Each breaks
   off 0.35–1.25 s after the death where the falling model has it then, flies outwards at
   1–2.6 m/s and up at 0.4–1.6 m/s, tumbling, under gravity; it bounces once (30 % of the
   speed kept) and lies still in the rubble, charred up to burn 0.4 only so it reads
@@ -1330,8 +1350,22 @@ window): `3d.update` 0.066 → 0.079 ms a frame, `3d.instances` 0.019 → 0.029 
 `3d.particles` 0.080 → 0.086–0.092 ms; GPU sum of all passes 1.46 → 1.38–1.42 ms after
 the collapse (noise). Sheets main against branch: `ACR-analysis/genai/collapse/compare-seq*.png`.
 
-Open: the pieces show the outer surface only (no broken edges or inner faces), and the
-standing model keeps their triangles, so they are hidden in it until it moved away.
+Fractured pieces (same VM and size, blank grass field, free camera at zoom 0.75 over five
+buildings dying in the same tick: EngDo1, SpnKre, EngSkl, EngKre, EngBlg spawned at
+20/3000 life; then EngDo1 and SpnKre alone, close-ups after they settle; steps
+`ACR-analysis/genai/collapse-frac/steps.json`, settings `models=all`, the unquantized
+showcase models): GPU sum of all passes 1.25 → 1.92 ms while the pieces fly and
+1.67 → 2.44 ms as they land (models 0.26 → 0.64 ms, shadow map 0.06 → 0.31 ms);
+`3d.update` 0.22 → 0.13 ms a frame (noise). The cut and upload, once per building type at
+its first collapse, cost 93–362 ms (cut 21–59 ms, the rest the level-of-detail build of the
+pieces' 44k–177k triangles; main 6–20 ms): a hitch while the VM also ran Blender builds.
+Sheets main against branch: `ACR-analysis/genai/collapse-frac/sheet_close.png`,
+`sheet_seq_do1.png`, `sheet_seq_kre.png`.
+
+Open: the standing model keeps the pieces' triangles, so they are hidden in it until it
+moved away; the cut and its level-of-detail build run on the main thread at the first
+collapse of a type (a hitch of up to 0.36 s for the dense generated meshes: cut at model
+load or off the main thread, or fewer back triangles).
 
 #### Construction and upgrades (#302)
 
