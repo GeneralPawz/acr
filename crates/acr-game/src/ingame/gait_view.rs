@@ -11,6 +11,11 @@
 //!   the swing with the hip hiked, the trunk leaning over the good leg; the hand on the side of
 //!   a leg wound (or the right hand for a chest or belly wound) holds the wound. In a heavy
 //!   limp the bad foot drags along the ground, toe down. A lost foot hobbles on the stump.
+//! - A broken ankle or a joint put out ([`acr_sim::body::FractureKind`] on a leg that still
+//!   carries): he hops on the good leg with the hurt foot held up behind him.
+//! - Crawling: legs that no longer carry (or their stumps) are passive chains dragged behind
+//!   the hips, knees and feet resting on the terrain and following each pull; a man with
+//!   one working leg pushes with it in rhythm with the hands' pulls.
 
 use std::collections::HashMap;
 
@@ -19,7 +24,7 @@ use acr_physics::{Vec3, skeleton_h};
 use acr_render::model::ModelData;
 use acr_render::terrain::TerrainData;
 use acr_render::view3d;
-use acr_sim::body::{Body, LimbId};
+use acr_sim::body::{ANKLE, Body, FractureKind, LimbId};
 
 use super::ragdoll_view::{Drawn, Mapping, animated_skins, ground_height, physics_of, repose};
 
@@ -50,7 +55,20 @@ struct Man {
     contacts: [Contact; 2],
     sink: f32,
     seen: bool,
+    /// Crawling: each dragged leg's knee and foot (world), once placed.
+    legs: [Option<[Vec3; 2]>; 2],
+    /// Crawling: the pushing foot's plant.
+    feet: [Contact; 2],
 }
+
+/// Height of a dragged knee's and foot's joint over the ground (m): the kneecap and the
+/// instep lie on it.
+const KNEE_REST: f32 = 0.06;
+const FOOT_REST: f32 = 0.07;
+/// How fast a dragged limb that has lost the ground falls back onto it (m/s).
+const LEG_FALL: f32 = 1.5;
+/// Share of the hop loop in the air.
+const HOP_FLIGHT: f32 = 0.3;
 
 /// The gait layer of the 3D view.
 pub struct Gaits {
@@ -153,7 +171,19 @@ impl Gaits {
             let man = &mut taken;
             man.seen = true;
             if man.clip != Some(clip) {
-                *man = Man { clip: Some(clip), seen: true, ..Man::default() };
+                // The sim swaps MOTION_L and MOTION_R at every step: a hop keeps its plants
+                // and a crawl its dragged legs (and its phase) over the swap.
+                let same = man
+                    .clip
+                    .and_then(|c| self.clips.get(&(d.model, c)))
+                    .is_some_and(|m| m.as_ref().is_some_and(|m| m.kind == clipm.kind));
+                let keep =
+                    same && (clipm.kind == Kind::Crawl || Limp::of(&d.unit.body, clipm.kind).is_some_and(|l| l.hop));
+                if keep {
+                    man.clip = Some(clip);
+                } else {
+                    *man = Man { clip: Some(clip), seen: true, ..Man::default() };
+                }
             }
             // The sim position, smoothed over its ticks; the distance covered along the way.
             let sim = physics_of([d.transform[3][0], d.transform[3][1], d.transform[3][2]]);
@@ -170,7 +200,7 @@ impl Gaits {
             let body = &d.unit.body;
             let limp = Limp::of(body, clipm.kind);
             let (mut phase, lead) = man.follow.place(&clipm.cycle, clipm.cycle.length);
-            if let Some(l) = limp {
+            if let Some(l) = limp.filter(|l| !l.hop) {
                 phase = gait::limp_warp(&clipm.cycle, l.bad, l.severity, phase);
             }
             let pose = d.data.pose(Some(clip), phase * clipm.duration);
@@ -231,9 +261,16 @@ impl Gaits {
         // How much the bad foot drags (a limp worse than 40 %, fully from 80 %; two leg wounds
         // make 70 %, 0.75); a stump hobbles instead.
         let drag = match (limp, clipm.kind) {
-            (Some(l), Kind::Walk) if !stump(body, l.bad as usize) => ((l.severity - 0.4) / 0.4).clamp(0.0, 1.0),
+            (Some(l), Kind::Walk) if !stump(body, l.bad as usize) && !l.hop => {
+                ((l.severity - 0.4) / 0.4).clamp(0.0, 1.0)
+            }
             _ => 0.0,
         };
+        // A hop on the good leg: two hops per loop, the end of each in the air.
+        let hop = limp.filter(|l| l.hop && clipm.kind == Kind::Walk).map(|l| {
+            let h = (phase * 2.0).fract();
+            (l.bad as usize, h, h >= 1.0 - HOP_FLIGHT)
+        });
         // Contacts: planted where they carry.
         let mut targets = [Vec3::ZERO; 2];
         let mut need: f32 = 0.0;
@@ -243,7 +280,16 @@ impl Gaits {
             if clipm.kind == Kind::Walk && stump(body, e) {
                 lift = 0.03;
             }
-            let carries = support == Some(e as u8);
+            let mut carries = support == Some(e as u8);
+            let mut anim = anim;
+            if let Some((bad, _, flying)) = hop {
+                // The good foot carries all but the flight and lands under its hip, a little
+                // ahead; the hurt foot is placed after the IK.
+                carries = e != bad && !flying;
+                let a = rig.joint(skins, chain[0]);
+                anim = Vec3::new(a.x, a.y, 0.0) + fwd * 0.18;
+                anim.z = ground(anim) + lift + 0.06;
+            }
             let mut t = man.contacts[e].update(carries, anim, lift, ground, dt);
             // A heavy limp drags the bad foot: in its swing it stays down on the ground,
             // scraping forwards instead of lifting (the hip hike gives it room).
@@ -253,7 +299,7 @@ impl Gaits {
                 t.z = floor + (t.z - floor).max(0.0) * (1.0 - drag);
             }
             targets[e] = t;
-            if clipm.kind == Kind::Walk && !dragged {
+            if clipm.kind == Kind::Walk && !dragged && hop.is_none_or(|(bad, _, _)| bad != e) {
                 let a = rig.joint(skins, chain[0]);
                 let reach = (rig.joint(skins, chain[1]) - a).length() + (anim - rig.joint(skins, chain[1])).length();
                 need = need.max((t - a).length() - reach * 0.995);
@@ -263,7 +309,11 @@ impl Gaits {
         if clipm.kind == Kind::Walk {
             let want = need.clamp(0.0, 0.25);
             man.sink += (want - man.sink) * (1.0 - (-dt * 12.0).exp()).max(if want > man.sink { 0.5 } else { 0.0 });
-            rig.translate(skins, hips, Vec3::new(0.0, 0.0, -man.sink));
+            // The hop lifts the hips in its flight.
+            let bob = hop.map_or(0.0, |(_, h, flying)| {
+                if flying { 0.07 * (std::f32::consts::PI * (h - 1.0 + HOP_FLIGHT) / HOP_FLIGHT).sin() } else { 0.0 }
+            });
+            rig.translate(skins, hips, Vec3::new(0.0, 0.0, bob - man.sink));
         }
         for (e, chain) in eff.iter().enumerate() {
             let side = if e == 0 { Vec3::X } else { Vec3::X * -1.0 };
@@ -292,12 +342,23 @@ impl Gaits {
                 let pivot = rig.joint(skins, chain[2]);
                 rig.rotate_about(skins, chain[2], pivot, gait::rotation_between(up, n));
             }
+            // The hurt foot held up behind, the knee forward.
+            if hop.is_some_and(|(bad, _, _)| bad == e) {
+                let a = rig.joint(skins, chain[0]);
+                let (l1, l2) = chain_lengths(rig, skins, chain);
+                let foot = a - up * (0.62 * (l1 + l2)) - fwd * (0.3 * (l1 + l2));
+                let knee = knee_towards(a, foot, l1, l2, fwd);
+                place_leg(rig, skins, chain, knee, foot);
+            }
             // The dragged foot hangs toe down, its toe scraping behind.
             if drag > 0.0 && limp.is_some_and(|l| l.bad as usize == e) && man.contacts[e].planted.is_none() {
                 let pivot = rig.joint(skins, chain[2]);
                 let down = (fwd - up * (0.7 * drag)).normalize_or_zero();
                 rig.rotate_about(skins, chain[2], pivot, gait::rotation_between(fwd, down));
             }
+        }
+        if clipm.kind == Kind::Crawl {
+            self.crawl_legs(skins, clipm, phase, man, body, ground, dt, fwd);
         }
         // The hand holds the wound.
         if let Some((side, bone, along)) = held_wound(body) {
@@ -312,11 +373,108 @@ impl Gaits {
     }
 }
 
-/// A limp: the bad effector and how bad it is (0..1).
+impl Gaits {
+    /// A crawling man's legs: each leg that no longer carries is a chain of hip, knee and
+    /// foot dragged behind the hips (follow the leader: each point keeps its bone's length
+    /// to the one before and otherwise stays where it lay), resting on the terrain; a leg that
+    /// still works pushes while the hands pull and draws up, knee out, while they reach.
+    #[allow(clippy::too_many_arguments)]
+    fn crawl_legs(
+        &self,
+        skins: &mut [Skin],
+        clipm: &Measured,
+        phase: f32,
+        man: &mut Man,
+        body: &Body,
+        ground: &dyn Fn(Vec3) -> f32,
+        dt: f32,
+        fwd: Vec3,
+    ) {
+        let rig = &self.rig;
+        let up = Vec3::Z;
+        let legs = self.effectors(Kind::Walk);
+        let pelvis = rig.joint(skins, rig.bone("hips"));
+        // The pull: the body travels faster than its mean over the loop.
+        let rate = (clipm.cycle.progress_at(phase + 0.03) - clipm.cycle.progress_at(phase)).rem_euclid(1.0) / 0.03;
+        let pulling = rate > 1.0;
+        for (e, chain) in legs.iter().enumerate() {
+            let hip = rig.joint(skins, chain[0]);
+            let (knee_a, foot_a) = (rig.joint(skins, chain[1]), rig.joint(skins, chain[2]));
+            let (l1, l2) = chain_lengths(rig, skins, chain);
+            let limb = if e == 0 { LimbId::LegL } else { LimbId::LegR };
+            if body.leg(limb) > 0 {
+                // The push: planted while the hands pull, drawn up while they reach.
+                let push = pulling;
+                let side = {
+                    let s = hip - pelvis;
+                    Vec3::new(s.x, s.y, 0.0).normalize_or_zero()
+                };
+                let mut drawn = hip - fwd * (0.5 * (l1 + l2)) + side * (0.3 * (l1 + l2));
+                drawn.z = ground(drawn) + FOOT_REST + 0.04;
+                let foot = man.feet[e].update(push, drawn, FOOT_REST, ground, dt);
+                let knee = knee_towards(hip, foot, l1, l2, side + up * 0.3);
+                place_leg(rig, skins, chain, knee, foot);
+                man.legs[e] = None;
+                continue;
+            }
+            let [mut knee, mut foot] = man.legs[e].unwrap_or([knee_a, foot_a]);
+            // Fall onto the ground, then keep the bones' lengths from the hip outwards.
+            knee.z -= LEG_FALL * dt;
+            knee = hip + norm_or(knee - hip, knee_a - hip) * l1;
+            knee.z = knee.z.max(ground(knee) + KNEE_REST);
+            foot.z -= LEG_FALL * dt;
+            // A little stiffness: the knee straightens as it is pulled.
+            let thigh = (knee - hip).normalize_or_zero();
+            let dir = norm_or(norm_or(foot - knee, thigh) * 0.85 + thigh * 0.15, thigh);
+            foot = knee + dir * l2;
+            foot.z = foot.z.max(ground(foot) + FOOT_REST);
+            man.legs[e] = Some([knee, foot]);
+            place_leg(rig, skins, chain, knee, foot);
+        }
+    }
+}
+
+/// `v` normalised, else `or` normalised.
+fn norm_or(v: Vec3, or: Vec3) -> Vec3 {
+    if v.length_sq() > 1e-10 { v.normalize_or_zero() } else { or.normalize_or_zero() }
+}
+
+/// The lengths of a chain's two bones in the pose.
+fn chain_lengths(rig: &Rig, skins: &[Skin], chain: &[usize; 3]) -> (f32, f32) {
+    let [a, b, c] = chain.map(|j| rig.joint(skins, j));
+    ((b - a).length(), (c - b).length())
+}
+
+/// Where the knee (or elbow) of a chain from `a` with bones `l1`, `l2` lies when its end
+/// reaches towards `c`, bent towards `pole`.
+fn knee_towards(a: Vec3, c: Vec3, l1: f32, l2: f32, pole: Vec3) -> Vec3 {
+    let to = c - a;
+    let d = to.length().clamp((l1 - l2).abs() + 1e-3, l1 + l2 - 1e-3);
+    let axis = norm_or(to, Vec3::Z * -1.0);
+    let x = (d * d + l1 * l1 - l2 * l2) / (2.0 * d);
+    let h = (l1 * l1 - x * x).max(0.0).sqrt();
+    let perp = (pole - axis * pole.dot(axis)).normalize_or_zero();
+    a + axis * x + perp * h
+}
+
+/// Turns a chain's upper bone so its middle joint lies towards `knee`, then its lower bone so
+/// its end points at `foot`.
+fn place_leg(rig: &Rig, skins: &mut [Skin], chain: &[usize; 3], knee: Vec3, foot: Vec3) {
+    let a = rig.joint(skins, chain[0]);
+    let b = rig.joint(skins, chain[1]);
+    rig.rotate_about(skins, chain[0], a, gait::rotation_between(b - a, knee - a));
+    let b = rig.joint(skins, chain[1]);
+    let c = rig.joint(skins, chain[2]);
+    rig.rotate_about(skins, chain[1], b, gait::rotation_between(c - b, foot - b));
+}
+
+/// A limp: the bad effector and how bad it is (0..1); `hop` when that leg is broken at the
+/// ankle or has a joint out and he hops on the other.
 #[derive(Clone, Copy, Debug)]
 struct Limp {
     bad: u8,
     severity: f32,
+    hop: bool,
 }
 
 impl Limp {
@@ -326,7 +484,10 @@ impl Limp {
         }
         let (l, r) = (body.leg(LimbId::LegL), body.leg(LimbId::LegR));
         let (bad, f) = if l <= r { (0u8, l) } else { (1, r) };
-        (f < 100 && f > 0).then(|| Limp { bad, severity: (100 - f) as f32 / 100.0 })
+        let limb = body.limb(if bad == 0 { LimbId::LegL } else { LimbId::LegR });
+        let hop =
+            !limb.severed() && limb.fracture.is_some_and(|b| b.level >= ANKLE || b.kind == FractureKind::Dislocated);
+        (f < 100 && f > 0).then(|| Limp { bad, severity: (100 - f) as f32 / 100.0, hop })
     }
 }
 

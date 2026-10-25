@@ -372,7 +372,7 @@ pub struct Rig {
 
 /// Inverse of the affine part of `m` applied to the origin: where a joint with inverse
 /// bind matrix `m` sits in the bind pose.
-fn joint_position(m: &Mat4) -> Vec3 {
+pub fn joint_position(m: &Mat4) -> Vec3 {
     // m · p + t = 0  →  p = −A⁻¹ t (Cramer).
     let a = |r: usize, c: usize| m[c][r];
     let t = [-m[3][0], -m[3][1], -m[3][2]];

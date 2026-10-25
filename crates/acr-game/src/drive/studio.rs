@@ -185,7 +185,7 @@ pub enum Task {
         id: u32,
         left: u32,
         samples: Vec<Value>,
-        feet: Vec<[Vec3; 2]>,
+        feet: Vec<[Vec3; 4]>,
         hold: bool,
     },
 }
@@ -298,7 +298,9 @@ pub fn step(game: &mut Game, task: Task, reply: &mut serde_json::Map<String, Val
             }
             ingame(game)?.studio_hold = hold;
             let m = reply.entry("measure").or_insert(json!({}));
-            m["walk"] = json!({"samples": samples, "sliding": sliding(&feet)});
+            let pair = |k: usize| feet.iter().map(|f| [f[k], f[k + 1]]).collect::<Vec<_>>();
+            m["walk"] = json!({"samples": samples, "sliding": sliding(&pair(0), ["foot_l", "foot_r"]),
+                               "hands_sliding": sliding(&pair(2), ["hand_l", "hand_r"])});
             Ok(Next::Done)
         }
         Task::Sheet(sheet) => sheet_step(game, sheet, reply),
@@ -425,32 +427,48 @@ fn hands(game: &mut Game, id: u32) -> Result<Value, String> {
     }))
 }
 
-/// One walk sample: tick, clip, time, ground point and both feet (world metres; z above
-/// the unit's ground point).
-fn foot_sample(game: &mut Game, id: u32) -> Result<(Value, [Vec3; 2]), String> {
+/// One walk sample: tick, clip, time, ground point, both feet and both hands (world metres;
+/// z above the unit's ground point) as drawn, after the gait's IK.
+fn foot_sample(game: &mut Game, id: u32) -> Result<(Value, [Vec3; 4]), String> {
     let g = ingame(game)?;
     let tick = g.world().map_or(0, |w| w.tick.0);
     let (model, inst) = g.posed(id).ok_or("measure: not drawn")?;
     let globals = model.globals(inst.clip, inst.time);
     let ground = inst.transform[3];
+    // The pose drawn: the gait's (IK on the clip) where it posed him, else the clip's. A
+    // joint slot's palette entry carries the joint's bind position to its posed place.
+    let shown = g.shown_pose(id);
     let foot = |name: &str| -> Vec3 {
         let Some(n) = model.nodes.iter().position(|n| n.name == name) else { return [0.0; 3] };
-        let p = math::transform_point(&inst.transform, [globals[n][3][0], globals[n][3][1], globals[n][3][2]]);
+        let posed = shown.and_then(|pal| {
+            model.slots.iter().zip(pal).find_map(|(slot, m)| {
+                let bind = match slot {
+                    Slot::Joint { node, inverse_bind } if *node == n => {
+                        acr_render::damage::joint_position(inverse_bind)
+                    }
+                    Slot::Node(node) if *node == n => [0.0; 3],
+                    _ => return None,
+                };
+                Some(std::array::from_fn(|r| m[r][0] * bind[0] + m[r][1] * bind[1] + m[r][2] * bind[2] + m[r][3]))
+            })
+        });
+        let local = posed.unwrap_or([globals[n][3][0], globals[n][3][1], globals[n][3][2]]);
+        let p = math::transform_point(&inst.transform, local);
         [p[0] / PIXELS_PER_METRE, p[1] / PIXELS_PER_METRE, (p[2] - ground[2]) / PIXELS_PER_METRE]
     };
-    let feet = [foot("foot_l"), foot("foot_r")];
+    let feet = [foot("foot_l"), foot("foot_r"), foot("hand_l"), foot("hand_r")];
     let clip = inst.clip.and_then(|c| model.clips.get(c)).map(|c| c.name.clone());
     let r = |v: Vec3| v.map(|x| (x * 1000.0).round() / 1000.0);
     Ok((
-        json!({"tick": tick, "clip": clip, "t": inst.time, "ground_m": r([ground[0] / PIXELS_PER_METRE, ground[1] / PIXELS_PER_METRE, 0.0]),
-               "foot_l": r(feet[0]), "foot_r": r(feet[1])}),
+        json!({"tick": tick, "clip": clip, "t": inst.time, "posed": shown.is_some(), "ground_m": r([ground[0] / PIXELS_PER_METRE, ground[1] / PIXELS_PER_METRE, 0.0]),
+               "foot_l": r(feet[0]), "foot_r": r(feet[1]), "hand_l": r(feet[2]), "hand_r": r(feet[3])}),
         feet,
     ))
 }
 
-/// Foot sliding over a walk: per foot, the horizontal distance it moves between samples
-/// while planted (within 3 cm of its lowest height).
-pub fn sliding(feet: &[[Vec3; 2]]) -> Value {
+/// Foot (or hand) sliding over a walk: per effector, the horizontal distance it moves
+/// between samples while planted (within 3 cm of its lowest height).
+pub fn sliding(feet: &[[Vec3; 2]], names: [&str; 2]) -> Value {
     let mut out = Vec::new();
     for k in 0..2 {
         let low = feet.iter().map(|f| f[k][2]).fold(f32::MAX, f32::min);
@@ -462,7 +480,7 @@ pub fn sliding(feet: &[[Vec3; 2]]) -> Value {
                 n += 1;
             }
         }
-        out.push(json!({"foot": if k == 0 { "foot_l" } else { "foot_r" }, "slide_m": (slide * 1000.0).round() / 1000.0, "planted_steps": n}));
+        out.push(json!({"foot": names[k], "slide_m": (slide * 1000.0).round() / 1000.0, "planted_steps": n}));
     }
     out.into()
 }
@@ -759,7 +777,7 @@ mod tests {
             [[0.01, 0.0, 0.0], [0.3, 0.0, 0.2]],
             [[0.03, 0.0, 0.01], [0.6, 0.0, 0.0]],
         ];
-        let s = sliding(&feet);
+        let s = sliding(&feet, ["foot_l", "foot_r"]);
         assert!((s[0]["slide_m"].as_f64().unwrap() - 0.03).abs() < 1e-6, "{s}");
         assert_eq!(s[1]["planted_steps"], 0);
     }

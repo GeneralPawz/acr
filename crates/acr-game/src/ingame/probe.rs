@@ -106,6 +106,11 @@ impl InGame {
         self.three_d.posed(unit)
     }
 
+    /// The palette a unit's model was last drawn with when posed outside its clip (gait).
+    pub fn shown_pose(&self, unit: u32) -> Option<&acr_render::model::Palette> {
+        self.three_d.shown_pose(unit)
+    }
+
     /// Holds a unit's model at `clip` and `time` seconds (`None`: the game's clip again).
     pub fn hold_pose(&mut self, unit: u32, pose: Option<(usize, f32)>) {
         match pose {

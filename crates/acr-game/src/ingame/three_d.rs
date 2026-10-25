@@ -702,6 +702,14 @@ impl ThreeD {
         Some((self.renderer.as_ref()?.model(inst.model)?, inst))
     }
 
+    /// The palette the gait or a ragdoll gave a unit's model this frame (still waiting for the
+    /// draw, as in the headless driver), else the one it was last drawn with (the studio's
+    /// foot measurements, #279).
+    pub fn shown_pose(&self, unit: u32) -> Option<&acr_render::model::Palette> {
+        let i = *self.drawn.get(&unit)?;
+        self.ragdolls.as_ref().and_then(|r| r.poses.get(&i)).or_else(|| self.renderer.as_ref()?.shown_pose(i))
+    }
+
     /// Finds the model files among the game's paths.
     pub fn start(&mut self, paths: &[String]) {
         for path in paths {

@@ -187,8 +187,8 @@ frame. Start a random map with the hit-locations rule and the settings `models=a
   exact first, else the shortest match) for `owner` (0) at `x`, `y`, facing `dir` (0..255,
   0 = east, 64 = south). `pose`: `stand` (default), `walk` (patrols `walk` px, default 200,
   east and back) or `crawl` (left leg off below the knee). `lost` (`arm_l`, `arm_r`, `leg_l`,
-  `leg_r`; `foot_l`/`foot_r` at the ankle) and `wounds` (one flesh wound per entry) shape
-  his body; `resources` sets every resource of the owner to that amount (a cannon
+  `leg_r`; `foot_l`/`foot_r` at the ankle), `wounds` (one flesh wound per entry) and
+  `broken` (`leg_l`, `leg_r`: a closed break at the ankle, he still stands) shape his body; `resources` sets every resource of the owner to that amount (a cannon
   pays iron and coal per shot); `patrol: true` makes any pose move (a crawler is sent directly, as he takes no
   orders). `life` sets his life and max life (a victim that lasts several strike cycles), `max_life` the max life alone (a damaged building, #303); `progress` (0..1) puts a building under construction at that share of its `BUILDSTAGES` and `sections` sets its section states, one per `ADDSECTION` (#302);
   `hold_fire: true` sets him to melee only (`Unit::melee_only`, the interface's melee-only
@@ -355,9 +355,11 @@ path) and `models=all` in the settings (the VM's showcase settings have it).
   `gap_mm` to that axis (an off hand on a two-handed item should have a small gap). With
   `ticks`: n the simulation runs n ticks (the unit's hold is released; give it a walk with
   `spawn`'s `pose: walk`) and `walk.samples` lists per tick the `tick`, `clip`, `t`,
-  `ground_m` and both feet (`foot_l`, `foot_r`: world metres, z above the ground point);
-  `walk.sliding` sums per foot the horizontal motion between ticks while the foot is
-  planted (within 3 cm of its lowest height) as `slide_m`. The simulation is held again
+  `ground_m`, both feet and both hands (`foot_l`, `foot_r`, `hand_l`, `hand_r`: world
+  metres, z above the ground point) as drawn, after the gait's IK (`posed` true when the
+  gait posed him; else the clip's); `walk.sliding` sums per foot the horizontal motion
+  between ticks while the foot is planted (within 3 cm of its lowest height) as `slide_m`,
+  `walk.hands_sliding` the same per hand (crawlers). The simulation is held again
   afterwards if it was.
 
 ```text

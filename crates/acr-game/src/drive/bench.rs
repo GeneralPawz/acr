@@ -149,6 +149,12 @@ pub fn spawn(game: &mut Game, v: &Value) -> Result<Value, String> {
         let l = limb(&n).ok_or_else(|| format!("unknown limb {n:?}"))?;
         body.limbs[l as usize].wounds = body.limbs[l as usize].wounds.saturating_add(1);
     }
+    // `broken`: a closed break at the ankle (`leg_l`, `leg_r`): he still stands on it (#279 hop).
+    for n in names("broken") {
+        let l = limb(&n).ok_or_else(|| format!("unknown limb {n:?}"))?;
+        body.limbs[l as usize].fracture =
+            Some(body::Fracture { level: body::ANKLE, kind: body::FractureKind::Closed, bend: 0 });
+    }
     if pose != Pose::Walk && v.get("patrol").and_then(Value::as_bool) == Some(true) {
         if g.world().is_some_and(|w| w.units[i].body.out_of_fight()) {
             // Crawlers take no orders: sent straight on their way.

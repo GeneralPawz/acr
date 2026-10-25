@@ -403,8 +403,47 @@ nearest the window centre that no ragdoll holds; `ACR_NO_GAIT` turns it off).
   distance); no slope on the bench (the random map's ground only); the sim has no
   knocked-down state, so a knocked-down survivor always gets up; the recovery step does not
   move the hips' spring origin and the hips are still held kinematically (no ankle torque
-  or real support forces); a broken lower leg does not hop; a one-legged pushing leg when
-  crawling; legs are not dragged by contacts (the clip's legs). Writhing keeps its clip.
+  or real support forces); the hop has no landing squash and no arm swing for balance; the
+  dragged legs do not collide with each other or the body. Writhing keeps its clip.
+
+### Second slice (#279): dragged legs, the push, the hop
+
+- **Dragged legs** (`gait_view::crawl_legs`): a crawling man's leg with `Body::leg` 0 (or its
+  stump) is a chain hip → knee → foot after the IK of the hands. Each frame the knee and
+  foot fall at 1.5 m/s, keep their bones' lengths from the hip outwards (follow the leader:
+  they stay where they lay until the hips pull them) and rest on the terrain (joints 6 cm
+  and 7 cm over it); the shin straightens by 15 % of the thigh's direction per frame. The
+  bones are turned onto the points; nothing of the clip's legs is left. Per man two points
+  per leg, kept over the clip's swaps.
+- **One-leg push:** a working leg of a crawler (`CRAWL1`, or `CRAWLARM` with legs) is planted
+  while the hands pull (the body travels faster than its loop mean, from `Cycle::progress`)
+  and between pulls drawn up beside the hips (half a leg back, 0.3 leg out), knee bent out
+  to the side; the plant holds while the body moves over it.
+- **Hop** (`Limp::hop`): `acr_sim::body` has breaks that still carry, a closed break at the
+  ankle or below (`Fracture::level >= ANKLE`) and a joint put out (`Dislocated`, knee or
+  ankle): `Body::leg` 20. Such a man hops on the good leg, two hops per clip loop, the last
+  30 % of each in the air with the hips lifted up to 7 cm; the good foot lands under its hip
+  18 cm ahead and stays planted; the hurt foot is held behind and up (0.62 leg down, 0.3
+  back, knee forward). No limp warp and no drag. A hopping or crawling man keeps his plants,
+  phase and legs when the sim swaps `MOTION_L` and `MOTION_R` (every step); the walk and
+  limp still restart there as before. The bench `spawn` takes `broken: ["leg_l"]` (a closed
+  ankle break).
+- **Measured** (`measure` with `ticks` now reads the drawn, gait-posed joints; RX 9060 XT
+  VM, blank white field, EngM18 ×5, `ACR-analysis/locomotion2/steps.json`, 40 ticks each;
+  slide of planted feet in m / planted ticks):
+
+  | Man | main | branch |
+  |---|---|---|
+  | walk | 0.009 / 16, 0.007 / 15 | same |
+  | limp (two wounds, left) | 0.009 / 16, 0.004 / 15 | same |
+  | broken ankle (left) | drag limp 0.009 / 16, 0.003 / 15 | hop: good foot 0.001 / 26 |
+  | crawl, no legs | clip legs 1.01, 1.01 | dragged 0.81, 0.81 (body moved 0.80) |
+  | crawl, left leg lost | clip legs 0.37, 0.77 | stump dragged 0.79; push foot 0.038 / 15 |
+
+  The clip's feet (before the fix to `measure`) slid 1.7–1.8 m in the same walks.
+  Cost: `rag.gaits` in the 700 vs 700 clash (`ACR-analysis/locomotion/clash_br/steps.jsonl`,
+  one run each) 0.04–0.52 ms per frame on main and 0.03–0.52 ms on the branch. Sheets:
+  `ACR-analysis/locomotion2/ba_c2_*.png`, `ba_c1_*.png`, `ba_hop_side.png` (before above).
 
 - **Action layers:** keyframed actions (the reload drill, aiming, melee) drive the upper
   body as targets while the gait drives the legs. Physics blends both.

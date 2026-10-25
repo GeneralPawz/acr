@@ -867,6 +867,8 @@ pub struct ModelRenderer {
     /// Palettes given from outside (a physics ragdoll) for instances by their index in the
     /// next `prepare`'s slice, in place of their clip (`set_custom_poses`).
     custom: HashMap<usize, crate::model::Palette>,
+    /// The custom palettes the last `prepare` drew (the studio's measurements, #279).
+    shown_custom: HashMap<usize, crate::model::Palette>,
     /// Sun shadows (`shadow.rs`): on unless switched off (the `shadows` setting).
     pub shadows: bool,
     /// Normal maps and the highlight from the glTF roughness and metallic (#234): on unless
@@ -1302,6 +1304,7 @@ impl ModelRenderer {
             pose_count: 0,
             drawn: 0,
             custom: HashMap::new(),
+            shown_custom: HashMap::new(),
             shadows: true,
             material_detail: true,
             wind: [1.0, 0.0, 0.0, 0.0],
@@ -1782,6 +1785,11 @@ impl ModelRenderer {
         self.custom = poses;
     }
 
+    /// The custom palette instance `index` was drawn with by the last `prepare`, if any.
+    pub fn shown_pose(&self, index: usize) -> Option<&crate::model::Palette> {
+        self.shown_custom.get(&index)
+    }
+
     /// Hit damage (#304) for the next [`ModelRenderer::prepare`]: instance index → its
     /// building's scars. Used once.
     pub fn set_scars(&mut self, scars: HashMap<usize, Scars>) {
@@ -2103,6 +2111,7 @@ impl ModelRenderer {
             let light = Globals { view_proj: fit.matrix, forward: [-s[0], -s[1], -s[2], 0.0], ..globals };
             queue.write_buffer(&self.shadow_globals, 0, bytemuck::bytes_of(&light));
         }
+        self.shown_custom = custom;
     }
 
     /// The shadow map and the bind group receivers sample it through (terrain).
