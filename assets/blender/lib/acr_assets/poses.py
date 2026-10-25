@@ -240,47 +240,221 @@ THRUST = {
 }
 
 
+# -- locomotion: walk and run cycles (#gait) -------------------------------------------
+#
+# One stride (left strike to left strike) is generated, not keyed by hand: each foot's sole
+# is planted and moves back under the hips at the stride's speed while it stands (rolling
+# heel -> flat -> ball), then swings forward dorsiflexed (toes up) on an arc that clears the
+# ground and lands with the heel leading; the legs reach their ankle targets by two-bone IK
+# in the sagittal plane of skeleton H (hip 0.93 m, thigh 0.43, shin 0.415, ankle 0.085), the
+# hips drop where both legs could not reach. Phase 0 = left heel strike; MOTION_L is phase
+# 0 -> 0.5 (c_l -> c_r), MOTION_R 0.5 -> 1; LB/RB play them backwards.
+#
+# Numbers (docs/body-sim.md "Cadence and stride"): the sim walks the line at 1.67 m/s and
+# runs the native foot at 3.33 m/s; the sprites take 10 frames a step walking (20 a stride,
+# 0.75 s at 24 fps between the first and last frame of each half) and 8 running (0.58 s).
+# Walk: 1.3 m a stride, double support 12 % of the stride. Run: a real run at 3.3 m/s
+# takes 2.2-2.5 m at about 1.4 strides/s with a flight phase; stance 36 % per foot leaves
+# two flights of 14 %. The gait layer (`acr_physics::gait::Cycle::measure`) counts travel
+# only while the lowest ankle is within 5 cm of its lowest height, so the run's landing
+# foot comes down early in the flight and is pulled back under the body (ground-speed
+# matching) to keep the flight's travel in the measured stride.
+
+LEG_HIP = 0.93
+LEG_THIGH = 0.43
+LEG_SHIN = math.hypot(0.02, 0.415)
+LEG_SHIN_BACK = math.atan2(0.02, 0.415)  # the shin's rest tilt back from the thigh
+ANKLE_UP = 0.085
+# Sole points relative to the ankle (forward, up) with the foot flat: heel, ball, toe tip.
+HEEL = (-0.05, -0.085)
+BALL = (0.13, -0.085)
+TIP = (0.20, -0.08)
+
+WALK = {
+    "stride": 1.40, "duty": 0.62, "strike": 14.0, "flat": 0.08, "heel_off": 0.36, "toe_off": 42.0,
+    "dorsi": 6.0, "lift": 0.07, "kick": 0.0, "retract": 0.5, "heel0": 0.30, "drive": 2.8, "hover": 0.012,
+    "hip": 0.91, "bob": 0.012, "bob_at": 0.31, "arm": 16.0, "lean": {},
+}
+RUN = {
+    "stride": 2.40, "duty": 0.32, "strike": 6.0, "flat": 0.05, "heel_off": 0.15, "toe_off": 24.0,
+    "dorsi": 4.0, "lift": 0.12, "kick": 0.26, "retract": 1.0, "heel0": 0.22, "drive": 2.8, "hover": 0.03,
+    "hip": 0.86, "bob": 0.025, "bob_at": 0.43, "arm": 28.0,
+    "lean": {"spine": (9, 0, 0), "spine1": (4, 0, 0), "head": (-11, 0, 0)},
+}
+GAITS = {"walk": WALK, "run": RUN}
+
+
+def _rot(v, p):
+    """(forward, up) turned by `p` radians, toes up positive."""
+    c, s = math.cos(p), math.sin(p)
+    return (v[0] * c - v[1] * s, v[0] * s + v[1] * c)
+
+
+def _smooth(t):
+    t = min(max(t, 0.0), 1.0)
+    return t * t * (3.0 - 2.0 * t)
+
+
+def _hermite(a, b, ma, mb, s):
+    s2, s3 = s * s, s * s * s
+    return (2 * s3 - 3 * s2 + 1) * a + (s3 - 2 * s2 + s) * ma + (-2 * s3 + 3 * s2) * b + (s3 - s2) * mb
+
+
+def _stance(g, ph):
+    """(ankle forward, ankle up, pitch rad) of a standing foot at its phase `ph` (0 = strike)."""
+    v, d = g["stride"], g["duty"]
+    heel = g["heel0"] - v * ph  # where the flat foot's heel is (moves back under the hips)
+    if ph < g["flat"]:
+        p = math.radians(g["strike"]) * (1.0 - _smooth(ph / g["flat"]))
+    elif ph < g["heel_off"]:
+        p = 0.0
+    else:
+        p = -math.radians(g["toe_off"]) * ((ph - g["heel_off"]) / (d - g["heel_off"])) ** 2
+    if p >= 0.0:
+        r = _rot(HEEL, p)
+        return heel - r[0], -r[1], p
+    r = _rot(BALL, p)
+    return heel + BALL[0] - HEEL[0] - r[0], -r[1], p
+
+
+def _foot(g, ph):
+    """(ankle forward, ankle up, pitch rad, standing) of a foot at its phase `ph`."""
+    ph %= 1.0
+    d = g["duty"]
+    if ph < d:
+        return (*_stance(g, ph), True)
+    s = (ph - d) / (1.0 - d)
+    f0, z0, p0 = _stance(g, d)
+    f1, z1, p1 = _stance(g, 0.0)
+    span = 1.0 - d
+    # Forward fast after the toe-off (the shin upright and the foot level by mid-swing), then
+    # pulled back under the body before the strike (`retract`, a share of the stride speed).
+    f = _hermite(f0, f1, (f1 - f0) * g["drive"], -g["stride"] * span * g["retract"], s)
+    # The arc: lifted most early in the swing (the heel kicked up behind when running), down
+    # to the strike height for the last part (the run's landing foot hovers low).
+    z = z0 + (z1 - z0) * _smooth(s) + g["lift"] * math.sin(math.pi * min(s / 0.75, 1.0)) \
+        + g["kick"] * math.sin(math.pi * min(s / 0.6, 1.0)) ** 2 * (1.0 if s < 0.6 else 0.0) \
+        + g["hover"] * _smooth((1.0 - s) / 0.25)
+    dorsi = math.radians(g["dorsi"])
+    if s < 0.3:
+        p = p0 + (dorsi - p0) * _smooth(s / 0.3)
+    else:
+        p = dorsi + (p1 - dorsi) * _smooth((s - 0.3) / 0.7)
+    return f, z, p, False
+
+
+def _leg_ik(f, dz):
+    """(thigh X, shin X) degrees putting the ankle at `f` forward, `dz` below the hip."""
+    d = math.hypot(f, dz)
+    bend_min = LEG_SHIN_BACK + math.radians(1.0)
+    d_max = math.sqrt(LEG_THIGH ** 2 + LEG_SHIN ** 2 + 2 * LEG_THIGH * LEG_SHIN * math.cos(bend_min))
+    d = min(d, d_max)
+    line = math.atan2(f, -dz)  # forward of straight down
+    inner = math.acos(max(-1.0, min(1.0, (LEG_THIGH ** 2 + LEG_SHIN ** 2 - d * d) / (2 * LEG_THIGH * LEG_SHIN))))
+    bend = math.pi - inner
+    a_t = line + math.asin(max(-1.0, min(1.0, LEG_SHIN * math.sin(bend) / d)))
+    return -math.degrees(a_t), math.degrees(bend - LEG_SHIN_BACK)
+
+
+def _reach(f):
+    """Highest the hip may be over a standing ankle `f` forward of it (m above the ankle)."""
+    bend_min = LEG_SHIN_BACK + math.radians(3.0)
+    d_max = math.sqrt(LEG_THIGH ** 2 + LEG_SHIN ** 2 + 2 * LEG_THIGH * LEG_SHIN * math.cos(bend_min))
+    return math.sqrt(max(d_max * d_max - f * f, 0.0))
+
+
+# The ankle's range in the clips (armature X, + = toes down): the swing foot behind a kicked-up
+# heel cannot stay level, it follows the shin (`limits.py` foot).
+FOOT_X = (-8.0, 45.0)
+
+
+def gait_frame(g, ph):
+    """The body at stride phase `ph`: {"hip": m, "feet": [(f, z, pitch, standing, (thigh,
+    shin, foot X))] left, right} (ankles forward of the hip joint, heights over the ground,
+    the pitch after the ankle's range)."""
+    feet = [_foot(g, ph), _foot(g, ph - 0.5)]
+    hip = g["hip"] + g["bob"] * math.cos(4.0 * math.pi * (ph - g["bob_at"]))
+    for f, z, _p, on in feet:
+        if on:
+            hip = min(hip, z + _reach(f))
+    out = []
+    for f, z, p, on in feet:
+        t, s = _leg_ik(f, z - hip)
+        foot = min(max(-math.degrees(p) - (t + s), FOOT_X[0]), FOOT_X[1])
+        out.append((f, z, -math.radians(t + s + foot), on, (t, s, foot)))
+    return {"hip": hip, "feet": out}
+
+
+def gait_pose(stand, g, ph):
+    """The pose at stride phase `ph` over `stand` (legs, hips height, lean, left arm)."""
+    fr = gait_frame(g, ph)
+    out = dict(stand)
+    for (_f, _z, p, on, (t, s, foot)), sfx, y in zip(fr["feet"], ("_l", "_r"), (-3, 3)):
+        out["thigh" + sfx] = (round(t, 2), y, 0)
+        out["shin" + sfx] = (round(s, 2), 0, 0)
+        out["foot" + sfx] = (round(foot, 2), 0, 0)
+        # On the ball the toes stay flat on the ground.
+        out["toe" + sfx] = (round(math.degrees(min(p, 0.0)), 2), 0, 0) if on else (0, 0, 0)
+    out["root_loc"] = (0, 0, round(fr["hip"] - LEG_HIP, 4))
+    ax, ay, az = stand.get("upperarm_l", (0, 0, 0))
+    out["upperarm_l"] = (round(ax + g["arm"] * math.cos(2.0 * math.pi * ph), 2), ay, az)
+    for b, (x, y, z) in g["lean"].items():
+        bx, by, bz = out.get(b, (0, 0, 0))
+        out[b] = (bx + x, by + y, bz + z)
+    out["world"] = dict(stand.get("world", {}))
+    return out
+
+
+def _sole(f):
+    """Height of the lowest sole point of a foot of `gait_frame` (heel, ball; the toe tip
+    while it swings: a standing foot's toes stay flat)."""
+    return min(f[1] + _rot(pt, f[2])[1] for pt in ((HEEL, BALL) if f[3] else (HEEL, BALL, TIP)))
+
+
+def gait_measure(g, samples=48):
+    """What the gait layer measures of a cycle (`Cycle::measure`): {"stride_m" (travel of the
+    lowest ankle within 5 cm of its lowest height), "flight" (share with both soles > 1 cm
+    up), "clear_m" (lowest sole point of the left foot in mid-swing), "swing_pitch_deg"
+    (its pitch, toes up positive, at mid-swing)}."""
+    rows = [gait_frame(g, i / samples) for i in range(samples)]
+    low = min(f[1] for r in rows for f in r["feet"])
+    travel = 0.0
+    for i, r in enumerate(rows):
+        e = min((0, 1), key=lambda k: r["feet"][k][1])
+        if r["feet"][e][1] < low + 0.05:
+            travel += max(r["feet"][e][0] - rows[(i + 1) % samples]["feet"][e][0], 0.0)
+    flight = sum(1 for r in rows if all(_sole(f) > 0.01 for f in r["feet"])) / samples
+    clear, pitch, mid = 1.0, 0.0, 1.0
+    for i, r in enumerate(rows):
+        s = (i / samples - g["duty"]) / (1.0 - g["duty"])
+        if 0.2 <= s <= 0.8:
+            clear = min(clear, _sole(r["feet"][0]))
+        if 0.0 <= s <= 1.0 and abs(s - 0.5) < mid:
+            mid, pitch = abs(s - 0.5), math.degrees(r["feet"][0][2])
+    return {"stride_m": round(travel, 3), "flight": round(flight, 3), "clear_m": round(clear, 3),
+            "swing_pitch_deg": round(pitch, 1)}
+
+
+def cycle_half(stand, gait, base, n):
+    """[(fraction, pose)] of `MOTION_L/R/LB/RB` (`base`) on `n` frames, a key a frame."""
+    g = GAITS[gait]
+    start, step = {"MOTION_L": (0.0, 0.5), "MOTION_R": (0.5, 0.5),
+                   "MOTION_LB": (1.0, -0.5), "MOTION_RB": (0.5, -0.5)}[base]
+    last = max(n - 1, 1)
+    return [(i / last, gait_pose(stand, g, start + step * i / last)) for i in range(last + 1)]
+
+
 def walk_cycle(stand):
-    """Four keys of a 20-frame step cycle (MOTION_L = frames 0..9, MOTION_R = 10..19)."""
-    contact_l = _with(stand, thigh_l=(-24, -3, 0), shin_l=(6, 0, 0), foot_l=(-6, 0, 0),
-                      thigh_r=(16, 3, 0), shin_r=(22, 0, 0), foot_r=(14, 0, 0),
-                      upperarm_l=(14, 28, 0), root_loc=(0, 0, -0.025))
-    pass_l = _with(stand, thigh_l=(-4, -3, 0), shin_l=(4, 0, 0),
-                   thigh_r=(-18, 3, 0), shin_r=(48, 0, 0), foot_r=(-10, 0, 0), root_loc=(0, 0, 0.0))
-    contact_r = _with(stand, thigh_r=(-24, 3, 0), shin_r=(6, 0, 0), foot_r=(-6, 0, 0),
-                      thigh_l=(16, -3, 0), shin_l=(22, 0, 0), foot_l=(14, 0, 0),
-                      upperarm_l=(-14, 28, 0), root_loc=(0, 0, -0.025))
-    pass_r = _with(stand, thigh_r=(-4, 3, 0), shin_r=(4, 0, 0),
-                   thigh_l=(-18, -3, 0), shin_l=(48, 0, 0), foot_l=(-10, 0, 0), root_loc=(0, 0, 0.0))
-    return contact_l, pass_l, contact_r, pass_r
+    """Four keys of the walk (`WALK`): contact_l, pass_l, contact_r, pass_r at phases 0,
+    0.25, 0.5, 0.75 (MOTION_L = frames 0..9, MOTION_R = 10..19). Clips that can, key every
+    frame (`cycle_half`)."""
+    return tuple(gait_pose(stand, WALK, ph) for ph in (0.0, 0.25, 0.5, 0.75))
 
 
 def run_cycle(stand):
-    """Four keys of a running step cycle (same order and frames as `walk_cycle`): the trunk
-    leant forward, a longer reach at the strike, the knee flexed in mid-stance with the swing
-    heel tucked up high, the left arm swinging wide. The carrying foot stays on the ground
-    (both keys put it within 1 cm of it), so the gait layer's phase lock
-    (`acr_physics::gait::Cycle`) measures the whole stride as travel (#295)."""
-    lean = {"spine": (8, 0, 0), "spine1": (4, 0, 0), "head": (-10, 0, 0)}
-
-    def lean_in(p):
-        out = dict(p)
-        for b, (x, y, z) in lean.items():
-            bx, by, bz = out.get(b, (0, 0, 0))
-            out[b] = (bx + x, by + y, bz + z)
-        return out
-
-    contact_l = _with(stand, thigh_l=(-28, -3, 0), shin_l=(6, 0, 0), foot_l=(-8, 0, 0),
-                      thigh_r=(24, 3, 0), shin_r=(34, 0, 0), foot_r=(20, 0, 0),
-                      upperarm_l=(24, 28, 0), root_loc=(0, 0, -0.08))
-    pass_l = _with(stand, thigh_l=(-4, -3, 0), shin_l=(30, 0, 0), foot_l=(-24, 0, 0),
-                   thigh_r=(-34, 3, 0), shin_r=(100, 0, 0), foot_r=(-6, 0, 0), root_loc=(0, 0, -0.05))
-    contact_r = _with(stand, thigh_r=(-28, 3, 0), shin_r=(6, 0, 0), foot_r=(-8, 0, 0),
-                      thigh_l=(24, -3, 0), shin_l=(34, 0, 0), foot_l=(20, 0, 0),
-                      upperarm_l=(-24, 28, 0), root_loc=(0, 0, -0.08))
-    pass_r = _with(stand, thigh_r=(-4, 3, 0), shin_r=(30, 0, 0), foot_r=(-24, 0, 0),
-                   thigh_l=(-34, -3, 0), shin_l=(100, 0, 0), foot_l=(-6, 0, 0), root_loc=(0, 0, -0.05))
-    return tuple(lean_in(p) for p in (contact_l, pass_l, contact_r, pass_r))
+    """Four keys of the run (`RUN`), as `walk_cycle`: the trunk leant forward, the swing
+    heel kicked up, a flight before each strike."""
+    return tuple(gait_pose(stand, RUN, ph) for ph in (0.0, 0.25, 0.5, 0.75))
 
 
 # Frames per `MOTION_*` step from which a clip is a walk: the European line walks 10 frames a
@@ -297,19 +471,14 @@ def motion_gait(line):
 
 def step_keys(md, stand):
     """{MOTION_* clip: [(fraction, pose)]} for every `MOTION_L/R/LB/RB[digit]` line in `md`:
-    the run cycle or the walk cycle from `stand` by the line's frames (`motion_gait`). LB/RB
-    play the step backwards."""
-    cycles = {"walk": walk_cycle(stand), "run": run_cycle(stand)}
+    the run or the walk (`motion_gait`) from `stand`, a key on every frame of the line
+    (`cycle_half`). LB/RB play the step backwards."""
     out = {}
     for k, line in md.items():
         base = k.rstrip("0123456789")
         if base not in ("MOTION_L", "MOTION_R", "MOTION_LB", "MOTION_RB"):
             continue
-        c_l, p_l, c_r, p_r = cycles[motion_gait(line)]
-        out[k] = {"MOTION_L": [(0.0, c_l), (0.5, p_l), (1.0, c_r)],
-                  "MOTION_R": [(0.0, c_r), (0.5, p_r), (1.0, c_l)],
-                  "MOTION_LB": [(0.0, c_l), (0.5, p_r), (1.0, c_r)],
-                  "MOTION_RB": [(0.0, c_r), (0.5, p_l), (1.0, c_l)]}[base]
+        out[k] = cycle_half(stand, motion_gait(line), base, rig.md_clip_frames(line)[0])
     return out
 
 
@@ -465,7 +634,6 @@ def musketeer_clips(md_lines, stand=STAND_MUSKET, aim=None, charge=None, reload=
     ATTACK1's frames: FIRE_AIMED (= ATTACK1, from the shoulder) and FIRE_HIP (from the hip,
     close range); the game picks one by the target's distance."""
     lie = lie_prone()
-    cl, pl, cr, pr = walk_cycle(stand)
     # `aim`: the present pose with both hands on the musket (`aim.hold`); the data pose
     # without it.
     AIM_MUSKET = aim or globals()["AIM_MUSKET"]
@@ -480,11 +648,10 @@ def musketeer_clips(md_lines, stand=STAND_MUSKET, aim=None, charge=None, reload=
     drill = reload_plan(md_lines)["ATTACK1"][0] if slow_recharge(md_lines) else None
     clips = {
         "STAND": [(0.0, stand)],
-        "MOTION_L": [(0.0, cl), (0.5, pl), (1.0, cr)],
-        "MOTION_R": [(0.0, cr), (0.5, pr), (1.0, cl)],
-        # Backwards: the forward halves reversed (the .MD plays R's and L's frames backwards).
-        "MOTION_LB": [(0.0, cl), (0.5, pr), (1.0, cr)],
-        "MOTION_RB": [(0.0, cr), (0.5, pl), (1.0, cl)],
+        # The step cycle a key a frame (`step_keys`; LB/RB backwards).
+        **{k: cycle_half(stand, motion_gait(md_lines[k]) if k in md_lines else "walk", k,
+                         rig.md_clip_frames(md_lines[k])[0] if k in md_lines else 10)
+           for k in ("MOTION_L", "MOTION_R", "MOTION_LB", "MOTION_RB")},
         # Bayonet (index 0).
         "PATTACK": [(0.0, stand), (0.5, _with(ready, world={"socket.hand_r": (40, 0, 0)})), (1.0, ready)],
         "UATTACK": [(0.0, ready), (0.5, _with(ready, world={"socket.hand_r": (40, 0, 0)})), (1.0, stand)],

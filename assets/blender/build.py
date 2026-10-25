@@ -120,6 +120,10 @@ def main(argv):
     if poser is not None:
         # What proof renders of the glb check their pose against (`posecheck.verify`).
         posecheck.dump(os.path.abspath(a.out), poser)
+        # The step cycles as the game's gait layer measures them (docs/body-sim.md).
+        g = posecheck.gait(poser)
+        if g:
+            ctx.stats["gait"] = g
     if export.LAST_PACK:
         ctx.stats["pack"] = export.LAST_PACK
     with open(os.path.splitext(os.path.abspath(a.out))[0] + ".stats.json", "w", encoding="utf-8") as f:

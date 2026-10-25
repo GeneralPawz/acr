@@ -451,6 +451,12 @@ nearest the window centre that no ragdoll holds; `ACR_NO_GAIT` turns it off).
     The run clip is the root cause: a real run at 3.3 m/s takes 2.2–2.5 m strides at about
     1.4/s with a flight phase; the Blender run clip should be authored to that (and the
     walk to about 1.3 m at the sim's 1.67 m/s), not stretched here.
+    Since m2-stride the clips are generated (`poses.WALK`, `poses.RUN`, `gait_pose`; a key a
+    frame in `step_keys` and `musketeer_clips`, planted soles, two-bone IK, the swing foot
+    dorsiflexed, the run leant 13° with two flights) and `stats.json` `gait` holds what this
+    layer measures: walk 1.31 m in 0.75 s, run 1.51 m in 0.58 s of a 2.4 m authored stride.
+    The run stays short because `Cycle::measure` credits no travel while both ankles are
+    over 5 cm (the flight); a flight-aware measure would let the clip play its 2.4 m.
   - **Limp:** the 0.61 m "good foot" slide of the per-tick measure was the measure: the
     lower foot of two ticks and a 3 cm height window caught the dragged bad foot (it
     scrapes by design) and the good foot's toe-off. Per frame the good foot slid 0.27 m in

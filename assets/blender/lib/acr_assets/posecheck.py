@@ -298,3 +298,56 @@ def game_colours():
 def poses_path(glb_or_blend):
     p = os.path.splitext(glb_or_blend)[0] + ".poses.json"
     return p if os.path.isfile(p) else None
+
+
+def gait(poser, fps=24.0):
+    """{MOTION_L<x>: {"stride_m", "s", "speed_mps", "flight", "clear_m"}} of every step cycle
+    (MOTION_L<x> then MOTION_R<x>, every frame but each half's last) as the gait layer
+    measures it (`acr_physics::gait::Cycle::measure`: the lowest ankle within 5 cm of its
+    lowest height carries; travel = its move back). `flight`: share of frames with both
+    feet's toe joints and ankles over their standing heights + 1 cm; `clear_m`: lowest toe
+    tip of a foot that does not carry, over its standing height."""
+    arms = [a for a in _clip_armatures(poser.scene) if "foot_l" in a.pose.bones]
+    out = {}
+    if not arms:
+        return out
+    arm = arms[0]
+    for act in sorted(bpy.data.actions, key=lambda a: a.name):
+        left = act.name
+        if not left.startswith("MOTION_L") or left.startswith("MOTION_LB"):
+            continue
+        right = "MOTION_R" + left[len("MOTION_L"):]
+        if right not in bpy.data.actions:
+            continue
+        rows = []
+        for clip in (left, right):
+            f0, f1 = poser.clip_range(clip)
+            for k in range(f1 - f0):
+                poser.play(clip, k)
+                w = arm.matrix_world
+                row = []
+                for sfx in ("_l", "_r"):
+                    ank = w @ arm.pose.bones["foot" + sfx].head
+                    toe = arm.pose.bones["toe" + sfx]
+                    row.append((ank, w @ toe.head, w @ toe.tail))
+                rows.append(row)
+        n = len(rows)
+        low = min(r[e][0].z for r in rows for e in (0, 1))
+        ball = min(r[e][1].z for r in rows for e in (0, 1))
+        tip = min(r[e][2].z for r in rows for e in (0, 1))
+        travel, flight, clear = 0.0, 0, 1.0
+        for i, r in enumerate(rows):
+            e = 0 if r[0][0].z <= r[1][0].z else 1
+            carries = r[e][0].z < low + 0.05
+            if carries:
+                travel += max(rows[(i + 1) % n][e][0].y - r[e][0].y, 0.0)
+            if all(r[k][0].z > low + 0.01 and r[k][1].z > ball + 0.01 for k in (0, 1)):
+                flight += 1
+            for k in (0, 1):
+                if not (carries and k == e) and r[k][0].z > low + 0.03:
+                    clear = min(clear, r[k][2].z - tip)
+        secs = n / fps
+        out[left] = {"stride_m": round(travel, 3), "s": round(secs, 3), "speed_mps": round(travel / secs, 2),
+                     "flight": round(flight / n, 3), "clear_m": round(clear, 3)}
+    poser.reset()
+    return out
