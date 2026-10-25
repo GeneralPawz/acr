@@ -228,8 +228,8 @@ def tailor_trim(ob, garment, body_tree):
     relax_tailoring(ob, garment, body_tree)
     if garment != "coat":
         return
-    patch_chest(ob, body_tree)
     hang_skirts(ob)
+    patch_chest(ob, body_tree)
     names = list(garments.coat()[0])
     ids = {names.index(n) for n in ("collar", "cuff")}
     bm = bmesh.new()

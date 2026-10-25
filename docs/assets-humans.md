@@ -581,6 +581,11 @@ penetrating material, with the worst clip and frame.
 
 ### High-detail gear masters (`acr_assets/gear_hd.py`; m2-hd-musket)
 
+HD gear AO bakes isolate the active item from the soldier and other kit. Items are
+baked at the origin before seating; foreign meshes must not cast permanent dark
+patches into their albedo. The knapsack retains its existing back weights; a rigid
+thoracic trial reduced deformation but increased collisions and was rejected.
+
 Masters first, levels derived, for the HD units. The British line soldier's kit, modelled
 from reference dimensions (no third-party source): the Short Land Pattern musket (42"
 barrel, 1.47 m, 0.75 bore, walnut stock lofted from `STOCK`, brass butt plate, guard, side

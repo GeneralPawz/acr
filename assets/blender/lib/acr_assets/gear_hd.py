@@ -869,7 +869,17 @@ def _bake_type(ob, img, kind, samples=1, selected=None):
     else:
         _select_only(ob)
         sc.render.bake.use_selected_to_active = False
-    bpy.ops.object.bake(type=kind)
+    # AO belongs to the item itself. Worn gear is baked at the origin before
+    # seating; the soldier's feet and previously built kit otherwise cast the
+    # large dark patches that were burned into the knapsack flap.
+    hidden = [(o, o.hide_render) for o in sc.objects if kind == "AO" and o.type == "MESH" and o != ob]
+    for o, _state in hidden:
+        o.hide_render = True
+    try:
+        bpy.ops.object.bake(type=kind)
+    finally:
+        for o, state in hidden:
+            o.hide_render = state
     sc.cycles.samples = 1
     sc.render.bake.use_selected_to_active = False
     for nt, t in tg:
