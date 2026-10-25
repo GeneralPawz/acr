@@ -173,11 +173,15 @@ pub fn gputime(game: &mut Game, frames: u32) -> Result<serde_json::Value, String
         }
     }
     let n = f64::from(frames);
+    let models = match &game.mode {
+        Mode::InGame(g) => g.frame_stats().unwrap_or_default(),
+        _ => serde_json::Value::Null,
+    };
     let total: f64 = sums.iter().map(|(_, ms)| ms).sum::<f64>() / n;
     let ms: serde_json::Map<String, serde_json::Value> =
         sums.iter().map(|(l, s)| ((*l).to_owned(), serde_json::json!((s / n * 1000.0).round() / 1000.0))).collect();
     Ok(
-        serde_json::json!({ "supported": true, "frames": frames, "ms": ms, "total_ms": (total * 1000.0).round() / 1000.0 }),
+        serde_json::json!({ "supported": true, "frames": frames, "ms": ms, "total_ms": (total * 1000.0).round() / 1000.0, "models": models }),
     )
 }
 

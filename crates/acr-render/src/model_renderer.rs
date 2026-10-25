@@ -2401,6 +2401,23 @@ impl ModelRenderer {
         gpu
     }
 
+    /// The models drawing the most triangles in the last `prepare`'s 3D pass (the driver's
+    /// `gputime`): (model, instances, triangles, finest level drawn), heaviest first.
+    pub fn heaviest(&self, count: usize) -> Vec<(usize, u64, u64, usize)> {
+        let mut by: HashMap<usize, (u64, u64, usize)> = HashMap::new();
+        for d in &self.draws {
+            let n = u64::from(d.range.end - d.range.start);
+            let e = by.entry(d.model).or_insert((0, 0, d.lod));
+            e.0 += n;
+            e.1 += self.count_triangles(std::slice::from_ref(d));
+            e.2 = e.2.min(d.lod);
+        }
+        let mut out: Vec<_> = by.into_iter().map(|(m, (n, t, l))| (m, n, t, l)).collect();
+        out.sort_by_key(|&(.., t, _)| std::cmp::Reverse(t));
+        out.truncate(count);
+        out
+    }
+
     fn count_triangles(&self, draws: &[Draw]) -> u64 {
         draws
             .iter()

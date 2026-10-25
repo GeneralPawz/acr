@@ -100,14 +100,18 @@ pub fn bias_step(cost: impl Fn(usize) -> (u64, usize), budget: &Budget, last: us
     if budget.triangles == 0 && budget.draws == 0 {
         return 0;
     }
-    (0..BIAS_STEPS)
-        .find(|&k| {
-            let room = if k < last { BIAS_ROOM } else { 1.0 };
-            let (t, d) = cost(k);
-            (budget.triangles == 0 || t as f32 <= budget.triangles as f32 * room)
-                && (budget.draws == 0 || d as f32 <= budget.draws as f32 * room)
-        })
-        .unwrap_or(BIAS_STEPS - 1)
+    let costs: Vec<(u64, usize)> = (0..BIAS_STEPS).map(&cost).collect();
+    let fits = costs.iter().enumerate().position(|(k, &(t, d))| {
+        let room = if k < last { BIAS_ROOM } else { 1.0 };
+        (budget.triangles == 0 || t as f32 <= budget.triangles as f32 * room)
+            && (budget.draws == 0 || d as f32 <= budget.draws as f32 * room)
+    });
+    // Nothing fits: the first step that reaches the floor (all at their coarsest), no
+    // coarser for nothing.
+    fits.unwrap_or_else(|| {
+        let floor = costs[BIAS_STEPS - 1];
+        costs.iter().position(|&(t, d)| t <= floor.0 && d <= floor.1).unwrap_or(BIAS_STEPS - 1)
+    })
 }
 
 /// The level for a projected size, staying at `last` within the hysteresis band.
@@ -402,7 +406,8 @@ mod tests {
         // From a coarser step, step 2 fits only without room to spare: step 3.
         assert_eq!(bias_step(cost, &budget, 4), 3);
         assert_eq!(bias_step(cost, &Budget::NONE, 5), 0);
-        assert_eq!(bias_step(|_| (u64::MAX, 0), &budget, 0), BIAS_STEPS - 1);
+        // Nothing fits: the first step at the floor.
+        assert_eq!(bias_step(|k| ((4000u64 >> k).max(1500), 0), &budget, 0), 2);
     }
 
     use super::*;

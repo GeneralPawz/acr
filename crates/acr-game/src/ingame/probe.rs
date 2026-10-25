@@ -135,6 +135,12 @@ impl InGame {
         self.mission.set_open_fog(open);
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    /// The last frame's model counts (`ThreeD::frame_stats`).
+    pub fn frame_stats(&self) -> Option<serde_json::Value> {
+        self.three_d.frame_stats()
+    }
+
     /// The model textures' GPU memory (`drive` `textures`).
     pub fn texture_stats(&self) -> Option<acr_render::model_renderer::TextureStats> {
         self.three_d.texture_stats()

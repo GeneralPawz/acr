@@ -2372,6 +2372,27 @@ impl ThreeD {
         self.renderer.as_ref().map(ModelRenderer::texture_stats)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    /// The last frame's model counts (the driver's `gputime`): instances drawn and given,
+    /// triangles and draw calls of the 3D pass and the shadow map, casters cut, LOD size factor.
+    pub fn frame_stats(&self) -> Option<serde_json::Value> {
+        let r = self.renderer.as_ref()?;
+        Some(serde_json::json!({
+            "drawn": r.drawn,
+            "instances": self.instances.len(),
+            "triangles": r.triangles[0],
+            "draws": r.calls[0],
+            "cast_triangles": r.triangles[1],
+            "cast_draws": r.calls[1],
+            "casters_cut": r.casters_cut,
+            "lod_sizes": acr_render::lod::bias(r.bias_step) * r.budget.lod_scale,
+            "heaviest": r.heaviest(12).into_iter().map(|(m, n, t, l)| {
+                let name = self.loaded.iter().find(|(_, v)| **v == Some(m)).map_or_else(|| format!("#{m}"), |(k, _)| k.clone());
+                serde_json::json!([name, n, t, l])
+            }).collect::<Vec<_>>(),
+        }))
+    }
+
     /// `map_models` on or off (the setting, or the driver).
     pub fn set_map_models(&mut self, on: bool) {
         self.map_models.on = on;

@@ -23,6 +23,7 @@ parameters: [assets-humans.md](assets-humans.md).
 | `material_detail` | `on`, `off` | `on` | the models' glTF normal maps and a faint highlight from their roughness and metallic (below, "Material detail (#234)"); `off` is the plain Lambert look; tests switch it with `ACR_MATERIAL_DETAIL=on\|off` or the driver's `{"cmd": "material_detail", "on": false}` |
 | `wind` | `on`, `off` | `on` | wind sways trees and foliage that carry `_WIND` weights (below, "Wind"); the driver's `props` request takes `"wind": false` |
 | `map_models` | `on`, `off` | `on` | the map's trees and stones are drawn as models where `assets/nature/map_objects.json` names one (below, "Map trees and stones"); the driver's `{"cmd": "map_models", "on": false}` switches it |
+| `graphics` | `auto`, `low`, `medium`, `high`, `ultra` | `auto` | the graphics preset ("Graphics presets" below): the frame's triangle, draw and shadow-caster limits, and the single switches once when chosen; `auto` takes the adapter's (`ACR_GPU_CLASS` stands in for it, native) |
 | `lod` | `on`, `off` | `on` | the models' distance levels, built at load by `lod.rs` or carried by the glb ("Authored levels"); `ACR_LOD` overrides it |
 | `water` | `detailed`, `original` | `detailed` | the water surface in 3D mode, [water.md](water.md); native override `ACR_WATER` |
 | `ground` | `detailed`, `original` | `detailed` | the ground in 3D mode (`models` not `off` or `camera=free`): material textures over the original tiles, [ground.md](ground.md); sprite mode always draws the original |
@@ -1693,6 +1694,49 @@ the height found so far, six times), and unit boxes (`RECTANGLE`) stand at the p
 ground point in screen space, so click and rectangle selection work as before.
 
 ## Performance
+
+### Graphics presets (m2-igpu)
+
+`graphics=auto|low|medium|high|ultra` (`ui/graphics.rs`; Spieleinstellungen page 4
+"Voreinstellung": Automatisch, Niedrig, Mittel, Hoch, Ultra). A preset gives the frame a
+`lod::Budget` and, once when chosen, sets `shadows`, `material_detail`, `wind`, `ground_cover`
+and `water`; switches changed afterwards stay the user's.
+
+| Preset | Triangles | Draws | Shadow casters | LOD sizes | Switches off |
+|---|---|---|---|---|---|
+| Niedrig | 1.5 M | 700 | none | ×0.75 | shadows, material detail, wind, ground cover, detailed water |
+| Mittel | 3 M | 1200 | 400 nearest, 0.6 of the reach, 600 k triangles | ×1 | ground cover |
+| Hoch | no limit | no limit | all | ×1 | none (today's look) |
+| Ultra | no limit | no limit | all | ×1.5 (finer levels hold further out) | none |
+
+- **Budget** (`ModelRenderer::group_draws`, `lod::bias_step`): the triangles and draw calls
+  of every model's levels times its instances on screen; when the levels by size would
+  exceed it, all projected sizes are scaled by 0.75 per step until it fits (going back finer
+  needs 15 % room). When nothing fits, the first step at the floor (all coarsest) is taken.
+  The view is orthographic, so a step drops the whole army, not just far men.
+- **Shadow casters:** within `shadow_reach` of the shadow map's reach, nearest to the view
+  centre first, at most `casters` and `shadow_triangles`; the rest cast none.
+- **auto:** `graphics::detect` from `wgpu::AdapterInfo::device_type`: integrated, virtual
+  and unknown (the browser) Mittel, CPU Niedrig, discrete Hoch. On the first start (no
+  `graphics` line yet) the detected preset's switches are applied and stored (never by the
+  driver).
+- The driver's `gputime` answers `models`: drawn, instances, triangles, draws, cast
+  triangles and draws, `casters_cut`, `lod_sizes` and the twelve heaviest models.
+
+Measured on the render VM (RX 9060 XT, 1600 × 900), mission Single3 (#PAGE0303) loaded by
+the driver (`ACR-analysis/igpu/scene.json`: 2574 units, 700 British killed, 1 in 6 by
+cannonball), free camera yaw 0, pitch 30°, on the British (3599, 13479); `ACR_GPU_CLASS`
+picks the preset:
+
+| Preset | zoom 1: tris / draws / cast tris | GPU ms | zoom 0.5: tris / cast tris | GPU ms |
+|---|---|---|---|---|
+| Ultra | 9.9 M / 1175 / 5.2 M | 15.1 | 7.5 M / 4.1 M | 13.1 |
+| Hoch | 9.3 M / 1175 / 4.6 M | 14.2 | 6.0 M / 3.4 M | 9.8 |
+| Mittel | 3.7 M / 844 / 0.38 M | 5.3 | 4.5 M / 0.41 M | 5.9 |
+| Niedrig | 3.7 M / 844 / 0 | 5.0 | 4.5 M / 0 | 5.2 |
+
+The floor of 3.7 M is mostly split corpses (cannonball), which stay at authored level 1
+(about 10 k triangles, `DAMAGED_UP_TO`), plus 824 stump caps and wound inserts drawn whole.
 
 Windows 11 ARM64, Snapdragon X (Adreno, DX12), release build, 1024 × 768, `engm18.glb`
 (5760 triangles, 3868 without the bone layer):

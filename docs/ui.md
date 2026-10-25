@@ -959,8 +959,9 @@ writes are in
 | 3 | Landschaft (nur 3D) | Wetter | Aus (Original) / Regen / Schnee / Nebel | `weather` (a look and its sound, no gameplay effect) |
 | 3 | | Wind | An / Aus | `wind` |
 | 3 | | Wasser, Boden | Detailliert / Wasser original / Boden original / Original | `water`, `ground` (one box: the page's rows are the frame's) |
+| 4 | Grafikstufe (nur 3D) | Voreinstellung | Automatisch / Niedrig / Mittel / Hoch / Ultra | `graphics` ([rendering-3d.md](rendering-3d.md) "Graphics presets"); a new choice also sets the single switches |
 | 4 | 3D-Details | Materialdetails | An / Aus | `material_detail` (page 3 is full) |
-| 4 | Boden (nur 3D) | Bodenbewuchs | An / Aus | `ground_cover` ([ground.md](ground.md)) |
+| 4 | | Bodenbewuchs | An / Aus | `ground_cover` ([ground.md](ground.md)) |
 | 5 | Realismus (ab nächster Schlacht) | Trefferzonen | Aus (Original) / An: Wunden, Glieder, Verbluten | `hit_locations` |
 | 5 | Truppen und Gelände | Körperabstand | Aus (Original) / An: Körper brauchen Platz | `body_spacing` |
 | 5 | | Leichenhaufen | Aus (Original) / An: als Hindernis | `corpse_piles` ([simulation.md](simulation.md#corpse-piles-optional-rule-222)) |
