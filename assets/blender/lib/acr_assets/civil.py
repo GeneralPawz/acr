@@ -13,7 +13,8 @@ waistcoat over shirt sleeves in one layer (FrnKri). Knee breeches, stockings (th
 pattern without the garter), shoes, a sash band, a slouch hat.
 
 Tools (`TOOLS`, held items as `held.Item`s registered here, not in `held.py`): felling axe
-(`#ATTACK1`, wood and stone, and the club blows of `#ATTACK`), sickle (`#ATTACK3`, the
+(`#ATTACK1`, wood and stone, and the club blows of `#ATTACK`), pick (`ATTACK1_STONE`, a
+stone variant the renderer may pick by load), sickle (`#ATTACK3`, the
 field), hammer (`#WORK`, building, kneeling), a grain sack (stance 2) and a bundle of
 firewood (stance 4) on the shoulder. Each sits on its own socket bone (`socket.<tool>`,
 a child of `socket.hand_r` or of `spine2`) whose scale every clip keys 0 or 1 (`show`).
@@ -66,6 +67,8 @@ AXE_LEN = 0.82  # haft end to the head
 AXE_TIP = 0.65  # grip to the edge (along the haft)
 SICKLE_TIP = 0.30
 HAMMER_TIP = 0.30
+PICK_LEN = 0.86  # haft end to the eye's top
+PICK_TIP = (0.0, -0.27, 0.70)  # the point in the item frame (grip at the origin, haft +Z)
 
 
 def _loft(it, sections, part, n, frame, caps=(True, True)):
@@ -112,6 +115,31 @@ def axe(length=AXE_LEN):
             (-0.105, 0.0035, 0.052, -0.006), (-0.122, 0.0015, 0.060, -0.008), (-0.130, 0.0006, 0.062, -0.008)]
     _loft(it, [((0.0, y, z1 + dz), (hz, hx)) for y, hx, hz, dz in prof], "head", 16, _ACROSS_Y)
     it.sockets["socket.tip"] = (0.0, -0.13, z1)
+    return it
+
+
+def pick(length=PICK_LEN):
+    """A quarryman's pick: an ash haft (the grip 8 cm above its swelled end) through the eye
+    of a forged iron head lying across it, a long point forward (-Y) curving down towards
+    the hands, a short chisel behind (+Y) (`socket.tip` at the point, `PICK_TIP`)."""
+    it = held.Item("pick")
+    it.keys = {"haft": "wood", "head": "metal"}
+    z = length - 0.14
+    _haft(it, -0.08, z + 0.05, 0.018, 0.016, "haft", n=12, rings=14, knob=0.006)
+    # The eye: a short block round the haft's top.
+    _loft(it, [((0.0, y, z), (0.026, hx)) for y, hx in ((0.028, 0.017), (0.018, 0.021), (-0.018, 0.021),
+                                                         (-0.028, 0.017))], "head", 12, _ACROSS_Y)
+    for sgn, reach, drop, r0 in ((-1, -PICK_TIP[1], z - PICK_TIP[2], 0.016), (1, 0.15, 0.025, 0.015)):
+        pts = []
+        m = 9
+        for k in range(m + 1):
+            t = k / m
+            rad = r0 * (1.0 - 0.92 * t) if k < m else 0.0
+            # Straight out of the eye, dipping more towards the end (a parabola).
+            pts.append(((0.0, sgn * (0.022 + (reach - 0.022) * t), z - drop * t * t), rad))
+        # The point square-ish, the chisel flat across (wide in X).
+        it.tube(pts, "head", n=8, scale=(1.0, 0.75) if sgn < 0 else (1.6, 0.45))
+    it.sockets["socket.tip"] = PICK_TIP
     return it
 
 
@@ -213,13 +241,13 @@ def cross():
     return it
 
 
-ITEMS = {"axe": axe, "sickle": sickle, "hammer": hammer, "dagger": dagger, "sack": sack, "bundle": bundle, "book": book, "cross": cross}
-BUDGET = {"axe": 1500, "sickle": 1500, "hammer": 1500, "dagger": 600, "sack": 140, "bundle": 160, "book": 24, "cross": 24}
-TIP = {"axe": AXE_TIP, "sickle": SICKLE_TIP, "hammer": HAMMER_TIP}
+ITEMS = {"axe": axe, "pick": pick, "sickle": sickle, "hammer": hammer, "dagger": dagger, "sack": sack, "bundle": bundle, "book": book, "cross": cross}
+BUDGET = {"axe": 1500, "pick": 1500, "sickle": 1500, "hammer": 1500, "dagger": 600, "sack": 140, "bundle": 160, "book": 24, "cross": 24}
+TIP = {"axe": AXE_TIP, "pick": math.hypot(*PICK_TIP), "sickle": SICKLE_TIP, "hammer": HAMMER_TIP}
 
 # Socket bones of the tools: (parent, offset of the head from the parent socket's head or
 # the bone point). Hand tools share `socket.hand_r`'s frame, so the clips' "world" turns them.
-HAND_TOOLS = ("axe", "sickle", "hammer")
+HAND_TOOLS = ("axe", "pick", "sickle", "hammer")
 SHOULDER = {"sack": ("spine2", (0.15, 0.03, 1.55)), "bundle": ("spine2", (-0.15, 0.03, 1.56))}
 TOOL_SOCKETS = tuple(f"socket.{t}" for t in HAND_TOOLS + tuple(SHOULDER))
 
@@ -253,21 +281,27 @@ CHOP_STANCE = {"thigh_l": (-12, -8, 0), "shin_l": (10, 0, 0), "thigh_r": (6, 8, 
 # Stooped over the stalks, the left hand gathering them.
 REAP_STANCE = {"root_loc": (0, 0.06, -0.20), "thigh_l": (-40, -6, 0), "shin_l": (52, 0, 0), "foot_l": (-12, 0, 0),
                "thigh_r": (-20, 8, 0), "shin_r": (40, 0, 0), "foot_r": (-16, 0, 0),
-               "spine": (-42, 0, 0), "spine1": (-14, 0, 0), "spine2": (-6, 0, 0), "head": (-16, 0, 0)}
+               "spine": (42, 0, 0), "spine1": (14, 0, 0), "spine2": (6, 0, 0), "head": (-16, 0, 0)}
+# How far forward of the ground point the hammering man kneels: the sprite (`EngKriU_Str`)
+# kneels about 0.4 m ahead of its anchor (`--check --anim WORK` anchor shift 10-12 px in
+# every view before this).
+WORK_FWD = -0.38
 # On the right knee, the left foot forward, bent over the beam.
-KNEEL = {"root_loc": (0, 0.10, -0.43), "thigh_l": (-82, -6, 0), "shin_l": (84, 0, 0), "foot_l": (-4, 0, 0),
+KNEEL = {"root_loc": (0, 0.10 + WORK_FWD, -0.43), "thigh_l": (-82, -6, 0), "shin_l": (84, 0, 0), "foot_l": (-4, 0, 0),
          "thigh_r": (-4, 6, 0), "shin_r": (96, 0, 0), "foot_r": (34, 0, 0),
-         "spine": (-22, 0, 0), "spine1": (-8, 0, 0), "head": (-8, 0, 0)}
+         "spine": (22, 0, 0), "spine1": (8, 0, 0), "head": (-8, 0, 0)}
 
 # The sprite frames the blows land on (`SOUND <frame> #<clip>` in ENGKRI.MD; the field has
 # no sound: three strokes spread over the 57 frames as the sprite's).
-IMPACT = {"ATTACK1": (15,), "WORK": (5,), "ATTACK3": (14, 33, 52)}
+IMPACT = {"ATTACK1": (15,), "ATTACK1_STONE": (15,), "WORK": (5,), "ATTACK3": (14, 33, 52)}
 
 # Tree (the bark the axe bites, ahead and a little left) and the beam the hammer drives a
 # peg into, in armature space.
 TREE = (0.18, -0.80, 1.00)
-PEG = (-0.06, -0.45, 0.38)  # the top of a beam before the knee
+PEG = (-0.06, -0.45 + WORK_FWD, 0.38)  # the top of a beam before the knee
 STALKS = (0.05, -0.50, 0.40)
+ROCK = (0.02, -0.98, 0.14)  # the top of a stone before the feet, where the pick bites
+PICK_BELOW = 0.07  # the left fist at the haft's end, below the right
 
 
 def _tool(base, r_point, rot, l_point=None, pole=(-0.30, 0.10, -0.30), lpole=(0.30, 0.10, -0.30)):
@@ -331,6 +365,30 @@ def chop_keys():
     return _dense_two([(0, ready), (8, up), (12, mid), (15, hit), (18, after), (22, ready), (26, ready)])
 
 
+def mine_keys():
+    """`ATTACK1_STONE` (27 frames, the stone variant of #ATTACK1): the pick raised over the
+    right shoulder, the weight going back onto the right foot, then swung down with the
+    trunk and the knees into the stone before the feet (`ROCK`), the point biting on frame
+    15 (`SOUND 15 #WORKSTONE STONE1`), a lever back to free it, the ready again."""
+    base = _with(STAND, **CHOP_STANCE)
+    ready_r = (80, 0, 10)
+    ready = _two(_with(base, spine=(12, 0, 0)), (-0.06, -0.36, 0.88), ready_r, PICK_BELOW)
+    up_r = (-25, 0, 25)  # the head up behind the right shoulder
+    up = _two(_with(base, root_loc=(0.02, 0.04, -0.01), spine=(-4, 0, 14), spine1=(-2, 0, 8), head=(12, 0, -8)),
+              (-0.16, -0.06, 1.52), up_r, PICK_BELOW)
+    mid_r = (55, 0, 10)
+    mid = _two(_with(base, root_loc=(0, -0.02, -0.04), spine=(18, 0, 4), spine1=(6, 0, 2)),
+               (-0.08, -0.42, 1.22), mid_r, PICK_BELOW)
+    hit_r = (112, 0, 4)  # haft forward and down, the point driven into the stone
+    low = _with(base, root_loc=(0, -0.05, -0.12), thigh_l=(-30, -8, 0), shin_l=(30, 0, 0), thigh_r=(-12, 8, 0),
+                shin_r=(28, 0, 0), spine=(36, 0, -2), spine1=(10, 0, 0), head=(-6, 0, 0))
+    hit = _two(low, cl.grip_for(ROCK, hit_r, PICK_TIP), hit_r, PICK_BELOW)
+    lever_r = (100, 0, 4)  # the haft pulled up a little: the point levers the chip loose
+    lever = _two(_with(low, root_loc=(0, -0.03, -0.10), spine=(32, 0, -2)),
+                 cl.grip_for(cl.add(ROCK, (0.0, 0.01, 0.02)), lever_r, PICK_TIP), lever_r, PICK_BELOW)
+    return _dense_two([(0, ready), (8, up), (12, mid), (15, hit), (18, lever), (22, ready), (27, ready)], PICK_BELOW)
+
+
 def reap_keys(n=57, impacts=IMPACT["ATTACK3"]):
     """#ATTACK3 (57 frames): stooped in the field, the left hand gathering the stalks, the
     sickle drawn through them right to left, three strokes."""
@@ -339,7 +397,7 @@ def reap_keys(n=57, impacts=IMPACT["ATTACK3"]):
     back_r = (70, -60, 70)
     back = _tool(base, (-0.28, -0.38, 0.52), back_r, gather)
     cut_r = (80, -80, 20)
-    cut = _tool(_with(base, spine=(-44, 0, -10)), cl.add(STALKS, (-0.06, 0.04, 0.0)), cut_r, gather)
+    cut = _tool(_with(base, spine=(44, 0, -10)), cl.add(STALKS, (-0.06, 0.04, 0.0)), cut_r, gather)
     keys = [(0, back)]
     for f in impacts:
         keys += [(f - 5, back), (f, cut), (f + 3, _tool(base, cl.add(STALKS, (0.08, 0.02, 0.02)), cut_r,
@@ -353,10 +411,10 @@ def hammer_keys(n=21, impact=IMPACT["WORK"][0]):
     landing on `PEG` on frame 5, the hammer lifted again."""
     hold_l = cl.add(PEG, (0.08, 0.02, 0.10))
     raised_r = (-50, 0, 10)
-    raised = _tool(KNEEL_STAND, (-0.18, -0.30, 0.82), raised_r, hold_l)
+    raised = _tool(KNEEL_STAND, (-0.18, -0.30 + WORK_FWD, 0.82), raised_r, hold_l)
     hit_r = (100, 0, 4)
-    hit = _tool(_with(KNEEL_STAND, spine=(-28, 0, 0)), cl.grip_for(PEG, hit_r, HAMMER_TIP), hit_r, hold_l)
-    lift = _tool(KNEEL_STAND, (-0.16, -0.40, 0.55), (40, 0, 6), hold_l)
+    hit = _tool(_with(KNEEL_STAND, spine=(28, 0, 0)), cl.grip_for(PEG, hit_r, HAMMER_TIP), hit_r, hold_l)
+    lift = _tool(KNEEL_STAND, (-0.16, -0.40 + WORK_FWD, 0.55), (40, 0, 6), hold_l)
     return [(0, raised), (impact, hit), (impact + 3, lift), (n - 6, raised), (n - 1, raised)]
 
 
@@ -366,7 +424,7 @@ KNEEL_STAND = _with(STAND, **KNEEL)
 CARRY_SACK = {"reach": {"l": _l((0.20, -0.10, 1.62), (0.35, 0.0, -0.30)), "r": _r((0.06, -0.20, 1.52))}}
 CARRY_BUNDLE = {"reach": {"r": _r((-0.20, -0.10, 1.62), (-0.35, 0.0, -0.30)), "l": _l((-0.06, -0.20, 1.50))}}
 STOOP_LIFT = _with(STAND, root_loc=(0, 0.04, -0.30), thigh_l=(-60, -6, 0), shin_l=(78, 0, 0), foot_l=(-18, 0, 0),
-                   thigh_r=(-56, 6, 0), shin_r=(74, 0, 0), foot_r=(-18, 0, 0), spine=(-38, 0, 0),
+                   thigh_r=(-56, 6, 0), shin_r=(74, 0, 0), foot_r=(-18, 0, 0), spine=(38, 0, 0),
                    upperarm_l=(-50, 20, 0), upperarm_r=(-50, -20, 0))
 
 
@@ -392,6 +450,21 @@ def _clip(n, keys, tools=(), event=None):
     if c:
         c[0] = (c[0][0], _show(c[0][1], tools))
     return c
+
+
+STONE_CLIP = "ATTACK1_STONE"
+
+
+def tool_states(clips):
+    """{tool: [clip names that show it]} from the clips' first-key socket scales (`show`),
+    for each tool's node extras `acr_state` (docs/assets.md "States")."""
+    out = {}
+    for name in sorted(clips):
+        keys = clips[name]
+        for sock, v in keys[0][1].get("show", {}).items() if keys else ():
+            if v:
+                out.setdefault(sock.split(".", 1)[1], []).append(name)
+    return out
 
 
 def _norm(n, keys):
@@ -455,6 +528,10 @@ def peasant_clips(md):
     out["ATTACK1"] = _clip(n["ATTACK1"], chop, ("axe",), event=IMPACT["ATTACK1"][0])
     for k in ("PSTAND1", "PATTACK1", "UATTACK1"):
         out[k] = _clip(1, [(0, chop[0][1])], ("axe",))
+    # Stone with the pick: the original plays the chop for wood and stone alike (its own
+    # `#WORKSTONE` is commented out in the .MD); a renderer that tells the load apart plays
+    # this variant for stone.
+    out[STONE_CLIP] = _clip(n["ATTACK1"], mine_keys(), ("pick",), event=IMPACT[STONE_CLIP][0])
     reap = reap_keys(n["ATTACK3"])
     out["ATTACK3"] = _clip(n["ATTACK3"], reap, ("sickle",), event=IMPACT["ATTACK3"][0])
     for k in ("PSTAND3", "PATTACK3", "UATTACK3"):
@@ -478,7 +555,7 @@ def peasant_clips(md):
     lie = poses.lie_prone()
     out["DEATH"] = _clip(n["DEATH"], _norm(n["DEATH"], poses.death_keys(STAND, lie)))
     out["DEATHLIE1"] = _clip(1, [(0, lie)])
-    return {k: v for k, v in out.items() if k in md or k.startswith("ATTACK_")}
+    return {k: v for k, v in out.items() if k in md or k.startswith("ATTACK_") or k == STONE_CLIP}
 
 
 # The priest: hands before the chest, the book in the left.
@@ -691,7 +768,7 @@ def clips_of(s):
 
 
 # Two-handed work clips: the left fist on the tool's haft (`_two`), measured as played.
-TWO_HANDED = {"ATTACK1": "axe"}
+TWO_HANDED = {"ATTACK1": "axe", STONE_CLIP: "pick"}
 
 
 def _grip_stats(ch, clips):
@@ -739,6 +816,10 @@ def build(ctx, s):
         keys[0] = (keys[0][0], _show(keys[0][1], ()))
         cl.apply(ch.arm, clip, keys)
     grips = _grip_stats(ch, clips) if s["kind"] != "priest" else {}
+    states = tool_states(clips)
+    for t, names in states.items():
+        if t in ch.held:
+            ch.held[t]["acr_state"] = names
     am.set_clip(ch.arm, "STAND")
     report = {}
     colours = ch.colours(ctx.ref, s["palette"], report=report, mix=s["mix"], fixed=s["fixed"])
@@ -757,7 +838,7 @@ def build(ctx, s):
                    acr_layers=list(ch.layers), **faces.extras("civilian"))
     ctx.stats = {"triangles": tris, "colours": colours, "drape": getattr(ch, "drape_report", None),
                  "events": {k: c.event for k, c in clips.items() if getattr(c, "event", None) is not None},
-                 "hands": {"grips": grips}, "seat": getattr(ch, "seat_report", None)}
+                 "hands": {"grips": grips}, "tool_states": {t: len(v) for t, v in states.items()}, "seat": getattr(ch, "seat_report", None)}
 
 
 def pose_for(ch, s, clip):

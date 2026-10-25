@@ -38,25 +38,29 @@ Registered here: material keys `sack`, `habit`, `cappa`, `book`; hat `civil_slou
 Tools are `held.Item`s defined in `civil.py` (`ITEMS`, `BUDGET`), not in `held.py`. The
 hand tools are seen close up and keep to the gear budget of 0.5-1.5k triangles (#205,
 `test_hand_tools_in_gear_budget`): `axe` (640 tris: turned haft with a butt knob, a head
-lofted from the poll through the eye to a flared bit, `_loft`), `sickle` (518: turned
+lofted from the poll through the eye to a flared bit, `_loft`), `pick` (732: haft, eye block, a
+long point forward curving down, a flat chisel behind; `PICK_TIP`), `sickle` (518: turned
 handle, ferrule, a thin half-moon blade), `hammer` (568: round face, neck, split claw); then
 `sack` (100), `bundle` of firewood (112), `book` (24), `cross` (24). They have no textures
 or normal maps (flat palette colours like the other procedural gear). The European peasants
 also wear a `dagger` (236) in a leather sheath at the left hip (`_belt_dagger`, seated on the
 smock or breeches with `gear.seat`; `stats.seat`), not dropped at death. Each tool hangs on its own non-deforming socket bone added to skeleton H
-(`civil.skeleton()`): `socket.axe`, `socket.sickle`, `socket.hammer` (children of
+(`civil.skeleton()`): `socket.axe`, `socket.pick`, `socket.sickle`, `socket.hammer` (children of
 `socket.hand_r`, so a clip's `world` rotation turns them), `socket.sack` (left shoulder),
 `socket.bundle` (right shoulder), both under `spine2`. Every clip keys the scale of all
-five sockets on its first frame (`show`: 1 for its tools, 0 for the rest), the crawl clips
-too.
+sockets on its first frame (`show`: 1 for its tools, 0 for the rest), the crawl clips
+too. Each tool node carries extras `acr_state`: the clips that show it (`tool_states`, from
+the `show` keys; `stats.tool_states` counts them), so `render_views.py` and a renderer that
+reads states on units hide it elsewhere.
 
 ## Clips (ENGKRI.MD; FrnKri, SpnKri the same layout)
 
 | clip | sprite pack | content | event |
 |---|---|---|---|
 | `ATTACK1` (27) | `U_Rub` | axe: wind-up over the right shoulder, flat diagonal cut into the trunk, follow-through; wood and stone (`TAKERESSTAGES ... 2`); keyed on every frame with the left fist put back on the haft (`_dense_two`; `stats.hands.grips.ATTACK1`) | 15 (`SOUND 15 #ATTACK1 TREE1`) |
+| `ATTACK1_STONE` (28) | none (the `.MD`'s `#WORKSTONE` is commented out) | pick: raised behind the right shoulder, weight back, swung down with trunk and knees, the point into the stone before the feet (`ROCK`), a lever back; left fist kept on the haft per frame (`stats.hands.grips`) | 15 (`SOUND 15 #WORKSTONE STONE1`) |
 | `ATTACK3` (57) | `U_Ubrk` | stooped, left hand gathering, three sickle strokes | 14, 33, 52 |
-| `WORK` (21) | `U_Str` | kneeling, left hand on the peg, one hammer blow | 5 (`SOUND 5 #WORK STROIT`) |
+| `WORK` (21) | `U_Str` | kneeling 0.38 m ahead of the ground point as the sprite (`WORK_FWD`), left hand on the peg, one hammer blow | 5 (`SOUND 5 #WORK STROIT`) |
 | `MOTION_*2`, `PSTAND2`, `ATTACK2` | `G_Urg` | walking with the grain sack on the left shoulder | - |
 | `PATTACK2` / `UATTACK2` (86) | `P_Urg` | stoop and shoulder the sack / put it down | - |
 | `MOTION_*4`, `PSTAND4`, `ATTACK4`, `PATTACK4` / `UATTACK4` | `G_Drv`, `P_Drv` | the same with the firewood on the right shoulder | - |
@@ -72,11 +76,20 @@ The priest: `STAND` (hands before the chest, book in the left), `REST` (reading)
 
 - Per-instance clothing colours: the renderer tints only skin, hair and the gun crew's
   coat per instance (`Tint`); the peasants vary by face, hair and build only.
-- The sim credits stone with the axe clip (`ATTACK1`, as the original); there is no pick or
-  hoe: the `.MD` has one clip for wood and stone and the field sprite shows a sickle, so a
-  pick would need the renderer to pick the tool by resource, not by clip. Tools show by
-  their socket scale per clip, not by node extras `acr_state` (which the renderer reads
-  for trees only).
+- Work states of the original (ENGKRI.MD `TAKERESSTAGES`): wood and stone work stance 2
+  (`#ATTACK1`, `U_Rub`), food stance 4 (`#ATTACK3`, `U_Ubrk`, harvest with the sickle),
+  building `#WORK` (`U_Str`). The game plays `ATTACK1` for stone (`gather.rs`
+  `Attack(work - 1)`), so the pick clip `ATTACK1_STONE` shows only once the renderer
+  picks it by the unit's load (`carry_type` stone). No hoe: no sprite or state uses one.
+  Tools still show by socket scale; `acr_state` is read by `render_views.py` only.
+- Tools are not dropped at death: `three_d::held_gear` knows musket, sabre, hat and the
+  like by node name, not `axe`, `pick`, `sickle`, `hammer`; and the death clips hide them.
+- The tools have no LOD levels and no baked textures (flat palette colours with the
+  outfit's decay materials).
+- Spine X: positive bends the trunk forward (docs/assets-humans.md). The stoops of the
+  reap, kneel and lift poses had it negative (leaning back); fixed with the pick clip
+  (`--check` IoU ATTACK3 0.35 -> 0.59, WORK 0.23 -> 0.60). The chop keeps its values (its
+  sprite check drops with a forward lean).
 - Carry stances follow the sprites: the sim's carry stance (5 for wood and stone, 3 for
   food) walks on the plain walk sprites, so loads show only in stances 2 and 4.
 - No tonsure on the priest (the head variants have no bald crown yet).
@@ -89,6 +102,6 @@ The priest: `STAND` (hands before the chest, book in the left), `REST` (reading)
 - Look (first pass, ACR-analysis/fam-civil): the clothes and the priest read well; the
   stockings showed small skin holes on the shins (the gaiter pattern's seam paired by
   sample count; arc length since the shared look slice, `garments.seam_fractions`), the sickle is
-  hard to see in `ATTACK3` (small, close to the body), the reaping stoop leans sideways,
+  hard to see in `ATTACK3` (small, close to the body),
   the sack sits too far back on the shoulder, the shell edges of the priest's cappa are
   ragged. Poses were set by hand, not fitted to the sprites (`tools/silhouette.py`).

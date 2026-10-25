@@ -8,7 +8,7 @@ sprite packs.
 from acr_assets import civil
 
 TYPE = "EngKri"
-CHECKS = ["--anim STAND", "--anim DEATHLIE1"]
+CHECKS = ["--anim STAND", "--anim ATTACK1", "--anim ATTACK3", "--anim WORK", "--anim DEATHLIE1"]
 
 MD = civil.peasant_md(rest=52, death=45)
 PALETTE = {"smock": (0.36, 0.11, 0.09), "band": (0.62, 0.07, 0.06), "breeches": (0.78, 0.74, 0.60),

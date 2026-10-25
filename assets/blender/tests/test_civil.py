@@ -72,11 +72,33 @@ class PeasantClips(unittest.TestCase):
         for a, b in zip(tip, civil.TREE):
             self.assertAlmostEqual(a, b, delta=0.01)
 
+    def test_pick_point_in_the_stone(self):
+        c = self.clips[civil.STONE_CLIP]
+        self.assertEqual(c.event, 15)
+        self.assertEqual(c[-1][0], cl.md_frames(self.md["ATTACK1"]) - 1)
+        f, pose = next(k for k in c if k[0] == 15)
+        tip = cl.add(pose["reach"]["r"][0], cl.rot(pose["world"]["socket.hand_r"], civil.PICK_TIP))
+        for a, b in zip(tip, civil.ROCK):
+            self.assertAlmostEqual(a, b, delta=0.01)
+        # The point comes down from above the head: the raise is over 1.4 m, the strike low.
+        heights = [cl.add(p["reach"]["r"][0], cl.rot(p["world"]["socket.hand_r"], civil.PICK_TIP))[2] for _f, p in c]
+        self.assertGreater(max(heights[:12]), 1.4)
+        self.assertEqual(min(range(len(heights)), key=heights.__getitem__), 15)
+
+    def test_tool_states(self):
+        st = civil.tool_states(self.clips)
+        self.assertIn("ATTACK1", st["axe"])
+        self.assertEqual(st["pick"], [civil.STONE_CLIP])
+        self.assertIn("ATTACK3", st["sickle"])
+        self.assertEqual(st["hammer"], ["WORK"])
+        self.assertNotIn("STAND", sum(st.values(), []))
+
     def test_tools_shown_per_clip(self):
         def shown(c):
             return {s.split(".", 1)[1] for s, v in c[0][1]["show"].items() if v}
 
         self.assertEqual(shown(self.clips["ATTACK1"]), {"axe"})
+        self.assertEqual(shown(self.clips[civil.STONE_CLIP]), {"pick"})
         self.assertEqual(shown(self.clips["ATTACK3"]), {"sickle"})
         self.assertEqual(shown(self.clips["WORK"]), {"hammer"})
         self.assertEqual(shown(self.clips["MOTION_L2"]), {"sack"})
