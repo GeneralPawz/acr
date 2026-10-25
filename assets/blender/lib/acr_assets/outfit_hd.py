@@ -368,7 +368,7 @@ def tailored_trim(name, arm, body, pieces, keys, skin):
     from mathutils import Vector
     from . import armature, drape, hdbody
 
-    made, report = [], {"profile": "neck_band", "cuffs": {}, "pieces": {}}
+    made, report = [], {"profile": "standing_throat", "cuffs": {}, "pieces": {}}
 
     def piece(label, key, verts, faces, thickness, under=()):
         me = bpy.data.meshes.new(f"{name}.{label}")
@@ -460,7 +460,7 @@ def tailored_trim(name, arm, body, pieces, keys, skin):
         cy = (min(p.y for p in pts)+max(p.y for p in pts))/2
         rx = max(abs(p.x) for p in pts)
         ry = (max(p.y for p in pts)-min(p.y for p in pts))/2
-        scale = max((abs(p.x/rx)**3+abs((p.y-cy)/ry)**3)**(1/3) for p in pts)
+        scale = max(math.hypot(p.x/rx, (p.y-cy)/ry) for p in pts)
         neck_sections.append((z, cy, rx*scale, ry*scale))
     report["neck_sections_m"] = neck_sections
 
@@ -471,7 +471,7 @@ def tailored_trim(name, arm, body, pieces, keys, skin):
         p, q = neck_sections[i], neck_sections[i+1]
         cy, rx, ry = [p[k]*(1-u)+q[k]*u for k in (1, 2, 3)]
         sa, ca = math.sin(a), math.cos(a)
-        den = (abs(sa)**3+abs(ca)**3)**(1/3)
+        den = math.hypot(sa, ca)
         return Vector(((rx+gap)*sa/den, cy-(ry+gap)*ca/den, z))
 
     # Both bands close at centre back. A low front clears the chin; the stock rises
@@ -482,8 +482,14 @@ def tailored_trim(name, arm, body, pieces, keys, skin):
         cr, sr = [], []
         for a in angles:
             back = (1-math.cos(a))/2
-            cr.append(smooth_neck(a, 1.493 + 0.022*back + 0.042*t,
-                                 0.012 + 0.012*(1-t) + 0.0007*math.sin(math.pi*t)))
+            notch = 0.004*max(0, math.cos(a))**12*t
+            p = smooth_neck(a, 1.489 + 0.022*back + (0.051-0.012*back)*t-notch,
+                            0.006 + 0.006*(1-t)**5 + 0.0005*math.sin(math.pi*t))
+            if t <= 0.08:
+                radial = Vector((math.sin(a), -math.cos(a), 0))
+                fit = neck_point(a, p.z, 0.006)
+                p += radial*max(0, (fit-p).dot(radial))
+            cr.append(p)
             sr.append(smooth_neck(a, 1.509 + 0.014*back + 0.044*t,
                                  0.003 + 0.0005*math.sin(4*math.pi*t)))
         collar.append(cr)
@@ -491,21 +497,34 @@ def tailored_trim(name, arm, body, pieces, keys, skin):
     sleeves = [o for o in pieces if keys[o.name] == "coat"]
     band("collar", "facings", collar, 0.004, under=sleeves)
     band("stock", "stock", stock, 0.001)
+    report["collar_front_flare_mm"] = round(math.hypot(
+        collar[-1][0].x-collar[0][0].x, collar[-1][0].y-collar[0][0].y)*1000, 3)
+    # The hooked upper fronts close above the waistcoat's V. A connected fitted
+    # facing replaces the old alternating open diamonds at the throat.
+    verts = []
+    for z, width in ((1.415, 0.006), (1.43, 0.015), (1.45, 0.023),
+                     (1.47, 0.026), (1.49, 0.028), (1.505, 0.025)):
+        for u in (-1, -0.5, 0, 0.5, 1):
+            x = width*u
+            hit = skin.ray_cast(Vector((x, -0.4, z)), Vector((0, 1, 0)), 0.5)[0]
+            verts.append(hit+Vector((0, -0.022, 0)))
+    faces = [(j*5+i, j*5+i+1, (j+1)*5+i+1, (j+1)*5+i) for j in range(5) for i in range(4)]
+    piece("throat_closure", "facings", verts, faces, 0.002, under=sleeves)
     # Rounded knot and two short folded linen ends, following the throat/chest.
-    knot_z = 1.532
-    knot_y = smooth_neck(0, knot_z, 0.026).y
+    knot_z = 1.550
+    knot_y = smooth_neck(0, knot_z, 0.008).y
     rings = []
-    for z, width, depth in ((1.521, 0.006, 0.003), (1.525, 0.011, 0.007),
-                            (1.535, 0.010, 0.008), (1.541, 0.004, 0.002)):
+    for z, width, depth in ((1.539, 0.006, 0.003), (1.544, 0.010, 0.006),
+                            (1.554, 0.009, 0.007), (1.559, 0.004, 0.002)):
         rings.append([(width*math.sin(a), knot_y-depth*math.cos(a), z) for a in angles])
     band("stock_knot", "fallband", rings, 0.001)
     for side in (-1, 1):
         verts = []
         for t, width in ((0, 0.006), (0.25, 0.012), (0.85, 0.014), (1, 0.010)):
-            z = 1.526 - 0.048*t
+            z = 1.545 - 0.070*t
             for u in (-1, 0, 1):
                 x = side*(0.006+0.012*t) + u*width
-                p = neck_point(math.atan2(x, 0.065), z, 0.027)
+                p = neck_point(math.atan2(x, 0.065), z, 0.014+0.020*t)
                 verts.append((x, p.y-0.002*(1-u*u), z))
         faces = [(j*3+i, j*3+i+1, (j+1)*3+i+1, (j+1)*3+i)
                  for j in range(3) for i in range(2)]
@@ -1161,7 +1180,15 @@ def compose(body_tree, objs, keys, rank, skins=(), arm=None):
         bm = bmesh.new()
         bm.from_mesh(o.data)
         bm.verts.ensure_lookup_table()
-        gone = [f for f in bm.faces if (all if keys[o.name] == "waistcoat" else any)(cov[v.index] for v in f.verts)]
+        if keys[o.name] == "waistcoat":
+            hidden = {f for f in bm.faces if all(cov[v.index] for v in f.verts)}
+            # Two face rings of hidden overlap prevent an oblique view seeing
+            # past a cut edge into the gap between fitted layers.
+            for _ in range(2):
+                hidden = {f for f in hidden if all(g in hidden for e in f.edges for g in e.link_faces)}
+            gone = list(hidden)
+        else:
+            gone = [f for f in bm.faces if any(cov[v.index] for v in f.verts)]
         st["culled_faces"][o.name] = len(gone)
         bmesh.ops.delete(bm, geom=gone, context="FACES")
         bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context="VERTS")

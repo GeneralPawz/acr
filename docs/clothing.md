@@ -1136,6 +1136,10 @@ use the existing `fallband` layer (above the stock, alongside the facing). Cylin
 UVs keep the bands' weave continuous. Weights transfer from skin/sleeve surfaces and
 are limited to four. `outfit.collar_cuffs` records profiles, button counts, measured
 thickness ranges, boundary/nonmanifold edge counts, and weight errors per piece.
+The standing collar now fits a round neck profile at 6 mm ease, with a short fitted
+base rather than a flared band. Its stock knot sits above the blue edge; folded linen
+ends lie over a closed upper facing, covering the old open throat diamonds. Two hidden
+face rings retain the waistcoat's oblique-view underlap; all-frame crossings remain zero.
 
 ## Known problems
 
