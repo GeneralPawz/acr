@@ -348,6 +348,8 @@ pub struct ThreeD {
     /// `material_detail=on|off` (docs/rendering-3d.md, "Material detail"; `ACR_MATERIAL_DETAIL`
     /// wins, native only).
     material_detail: bool,
+    /// The frame's limits from the graphics preset (`graphics`, `ui/graphics.rs`).
+    budget: acr_render::lod::Budget,
     /// `wind=on|off` (docs/rendering-3d.md, "Wind"); the driver's `props` request wins.
     wind: bool,
     wind_override: Option<bool>,
@@ -540,6 +542,7 @@ impl Default for ThreeD {
             shadows: true,
             lod: true,
             material_detail: true,
+            budget: acr_render::lod::Budget::NONE,
             wind: true,
             wind_override: None,
             wind_clock: 0.0,
@@ -652,6 +655,7 @@ impl ThreeD {
         self.shadows = settings.shadows;
         self.lod = settings.lod;
         self.material_detail = settings.material_detail;
+        self.budget = settings.graphics.budget();
         self.wind = settings.wind;
         self.weather = settings.weather;
         self.map_models.on = settings.map_models;
@@ -2437,6 +2441,7 @@ impl ThreeD {
         }
         renderer.shadows = shadows_override().unwrap_or(self.shadows);
         renderer.lods = self.lod;
+        renderer.budget = self.budget;
         renderer.material_detail = material_detail_override().unwrap_or(self.material_detail);
         let weather = self.weather_override.unwrap_or(self.weather);
         let storm = storm_at(weather, self.wind_clock);
@@ -2559,7 +2564,7 @@ impl ThreeD {
         // carries the same counts (docs/testing.md "Performance recorder").
         if elapsed >= 5.0 && acr_sim::prof::enabled() {
             log::info!(
-                "3d: {:.1} fps, {} models drawn ({} poses) of {}, {}k triangles ({} draws), {}k cast ({} draws), camera {:?}",
+                "3d: {:.1} fps, {} models drawn ({} poses) of {}, {}k triangles ({} draws), {}k cast ({} draws, {} cut), lod sizes x{:.2}, camera {:?}",
                 self.frames as f32 / elapsed,
                 renderer.drawn,
                 renderer.pose_count,
@@ -2568,6 +2573,8 @@ impl ThreeD {
                 renderer.calls[0],
                 renderer.triangles[1] / 1000,
                 renderer.calls[1],
+                renderer.casters_cut,
+                acr_render::lod::bias(renderer.bias_step) * renderer.budget.lod_scale,
                 view3d.orbit
             );
         }

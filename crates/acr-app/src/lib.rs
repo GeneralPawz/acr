@@ -54,7 +54,8 @@ pub struct Gpu {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub config: wgpu::SurfaceConfiguration,
-    /// The adapter's name, driver and backend (the performance recorder's snapshots).
+    /// The adapter's name, driver and backend (the performance recorder's snapshots; the
+    /// graphics preset `auto` picks by its type).
     pub info: wgpu::AdapterInfo,
 }
 
@@ -120,6 +121,7 @@ impl Gpu {
         );
         surface.configure(&device, &config);
         let info = adapter.get_info();
+        log::info!("adapter: {} ({:?}, {:?})", info.name, info.device_type, info.backend);
         Ok(Self { surface, device, queue, config, info })
     }
 

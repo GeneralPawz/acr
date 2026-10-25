@@ -108,8 +108,13 @@ pub struct Settings {
     /// ACR (#224): `weather=off|rain|snow|fog` (off by default): rain, snow or fog over the
     /// 3D path, a look only (docs/rendering-3d.md "Weather (#224)"); no gameplay effect.
     pub weather: Weather,
+    /// ACR: the graphics preset (`graphics=auto|low|medium|high|ultra`, auto by default;
+    /// `ui/graphics.rs`, docs/rendering-3d.md "Graphics presets"): the frame's limits, and
+    /// the single switches once when chosen.
+    pub graphics: Graphics,
 }
 
+pub use super::graphics::Graphics;
 pub use acr_render::weather::Weather;
 
 /// `models=off|units|all`: sprites everywhere (the original), 3D units, 3D units and
@@ -199,6 +204,7 @@ impl Default for Settings {
             marks_keep: false,
             aim_guides: true,
             weather: Weather::Off,
+            graphics: Graphics::Auto,
         }
     }
 }
@@ -276,7 +282,7 @@ impl Settings {
             "sound_volume={}\nmusic_volume={}\nmusic_mode={}\ngame_mode={}\nscroll_speed={}\nframe_time={}\n\
              resolution={}\nrecord={}\nrecord_file={hex}\ncontrols={controls}\nedge_scroll={}\n\
              models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\ncorpse_decay={}\nhit_locations={}\nbody_spacing={}\nmortars={}\ncorpse_piles={}\ncannon_fire={}\nshadows={}\nlod={}\nmaterial_detail={}\nwind={}\nmap_models={}\nwater={}\n\
-             ground={}\nground_cover={}\nbattlefield_marks={}\nweather={}\naim_guides={}\n{}{}{}",
+             ground={}\nground_cover={}\nbattlefield_marks={}\nweather={}\naim_guides={}\ngraphics={}\n{}{}{}",
             self.sound_volume,
             self.music_volume,
             self.music_mode,
@@ -304,6 +310,7 @@ impl Settings {
             if self.marks_keep { "keep" } else { "fade" },
             self.weather.name(),
             if self.aim_guides { "on" } else { "off" },
+            self.graphics.name(),
             match self.decay_stain {
                 Some(true) =>
                     "decay_stain=on
@@ -400,6 +407,7 @@ impl Settings {
                 "battlefield_marks" => s.marks_keep = value == "keep",
                 "aim_guides" => s.aim_guides = value != "off",
                 "weather" => s.weather = Weather::parse(value).unwrap_or_default(),
+                "graphics" => s.graphics = Graphics::parse(value).unwrap_or_default(),
                 "group_move" => {
                     s.group_move = match value {
                         "on" => Some(true),
@@ -478,6 +486,7 @@ mod tests {
             marks_keep: true,
             aim_guides: false,
             weather: Weather::Snow,
+            graphics: Graphics::Medium,
         };
         assert_eq!(Settings::decode(&s.encode()), s);
         // The removed "Spotify mitmischen" (music_mode=2) reads as no music.

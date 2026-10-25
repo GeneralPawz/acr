@@ -848,6 +848,12 @@ pub struct ModelRenderer {
     pub lods: bool,
     pub lod_override: Option<bool>,
     pub lod_force: Option<usize>,
+    /// The frame's limits (the graphics preset, [`lod::Budget`]).
+    pub budget: lod::Budget,
+    /// The [`lod::bias_step`] of the last `prepare` (0: the levels by size alone).
+    pub bias_step: usize,
+    /// Shadow casters the budget left out in the last `prepare`.
+    pub casters_cut: usize,
     /// Triangles drawn by the last `prepare`: models, shadow casters.
     pub triangles: [u64; 2],
     /// Draw calls of the last `prepare`: models, shadow casters.
@@ -1296,6 +1302,9 @@ impl ModelRenderer {
                 .ok()
                 .and_then(|v| v.parse::<usize>().ok())
                 .map(|l| l.min(lod::LEVELS - 1)),
+            budget: lod::Budget::NONE,
+            bias_step: 0,
+            casters_cut: 0,
             triangles: [0; 2],
             calls: [0; 2],
             prepare_ns: [0; 4],
@@ -2209,14 +2218,48 @@ impl ModelRenderer {
         // Caps and wound inserts sit on a body at its own level: always whole (they are small).
         let lods = self.lod_override.unwrap_or(self.lods);
         let whole = |m: usize| !lods || m == self.cap || self.inserts.contains(&m) || self.small.contains(&m);
-        let level: Vec<usize> = (0..n)
-            .map(|m| match self.lod_force {
-                _ if whole(m) || size[m] == 0.0 => 0,
-                Some(l) => l,
-                None if self.models[m].authored => lod::choose_in(&lod::AUTHORED_SIZES, size[m], self.lod_last[m]),
-                None => lod::choose(size[m], self.lod_last[m]),
+        let budget = self.budget;
+        let pick = |m: usize, bias: f32| match self.lod_force {
+            _ if whole(m) || size[m] == 0.0 => 0,
+            Some(l) => l,
+            None if self.models[m].authored => lod::choose_in(&lod::AUTHORED_SIZES, size[m] * bias, self.lod_last[m]),
+            None => lod::choose(size[m] * bias, self.lod_last[m]),
+        };
+        // The budget (#igpu): the triangles and draw calls each level would cost, by model;
+        // all models' sizes scaled down together by the step that fits.
+        let mut on_screen = vec![[0u64; 2]; n];
+        for e in entries.iter().filter(|e| e.on_screen) {
+            on_screen[e.model][usize::from(e.split)] += 1;
+        }
+        let cost_of: Vec<[(u64, usize); lod::LEVELS + 1]> = (0..n)
+            .map(|m| {
+                std::array::from_fn(|l| {
+                    let parts = self.models[m].parts(l, false);
+                    parts.fold((0, 0), |(t, c), (r, ..)| (t + u64::from(r.end - r.start) / 3, c + 1))
+                })
             })
             .collect();
+        let frame_cost = |k: usize| -> (u64, usize) {
+            let b = lod::bias(k) * budget.lod_scale;
+            (0..n).filter(|&m| on_screen[m] != [0, 0]).fold((0, 0), |(t, c), m| {
+                let l = pick(m, b);
+                let [whole_n, split_n] = on_screen[m];
+                let (wt, wc) = cost_of[m][l];
+                let (st, sc) = cost_of[m][l.min(lod::DAMAGED_UP_TO)];
+                (
+                    t + whole_n * wt + split_n * st,
+                    c + if whole_n > 0 { wc } else { 0 } + if split_n > 0 { sc } else { 0 },
+                )
+            })
+        };
+        let step =
+            if lods && self.lod_force.is_none() { lod::bias_step(frame_cost, &budget, self.bias_step) } else { 0 };
+        if step != self.bias_step {
+            log::debug!("lod: budget step {step} (sizes x{:.2})", lod::bias(step));
+        }
+        self.bias_step = step;
+        let bias = lod::bias(step) * budget.lod_scale;
+        let level: Vec<usize> = (0..n).map(|m| pick(m, bias)).collect();
         for m in (0..n).filter(|&m| size[m] > 0.0) {
             if self.lod_last[m] != Some(level[m]) {
                 log::debug!("lod: model {m} at {:.0} px: level {}", size[m], level[m]);
@@ -2296,14 +2339,39 @@ impl ModelRenderer {
         self.drawn = main.len();
         let draws = group(main);
         let mut casters = Vec::new();
+        self.casters_cut = 0;
         if let Some((texel, focus, reach)) = shadow {
-            casters = entries
+            let far = |e: &Entry| {
+                let d = math::sub(e.origin, focus);
+                (d[0] * d[0] + d[1] * d[1]).sqrt() - e.radius
+            };
+            let mut near: Vec<&Entry> = entries
                 .iter()
-                .filter(|e| {
-                    let d = math::sub(e.origin, focus);
-                    // Outside the map, or under two texels across: nothing to see.
-                    (d[0] * d[0] + d[1] * d[1]).sqrt() - e.radius <= reach && e.radius >= texel
-                })
+                // Outside the map (or the preset's share of it), or under two texels across.
+                .filter(|e| far(e) <= reach * budget.shadow_reach && e.radius >= texel)
+                .collect();
+            // The budget's casters: the nearest to the view centre first, the far men cast none.
+            let capped = budget.casters < near.len() || budget.shadow_triangles > 0;
+            if capped {
+                near.sort_by(|a, b| far(a).total_cmp(&far(b)));
+                let all = near.len();
+                near.truncate(budget.casters);
+                if budget.shadow_triangles > 0 {
+                    let mut sum = 0u64;
+                    let keep = near
+                        .iter()
+                        .take_while(|e| {
+                            let l = (level[e.model] + lod::SHADOW_STEP).min(lod::SHADOW);
+                            sum += cost_of[e.model][l].0;
+                            sum <= budget.shadow_triangles
+                        })
+                        .count();
+                    near.truncate(keep);
+                }
+                self.casters_cut = all - near.len();
+            }
+            casters = near
+                .into_iter()
                 // Coarser than seen; the shadow needs no face variant.
                 .map(|e| {
                     let l = match level[e.model] + lod::SHADOW_STEP {

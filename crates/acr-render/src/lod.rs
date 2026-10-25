@@ -49,6 +49,67 @@ pub const SHADOW_RATIO: f32 = 0.03;
 /// 54 px).
 pub const AUTHORED_SIZES: [f32; LEVELS - 1] = [600.0, 240.0, 80.0];
 
+/// Per-frame limits of the 3D pass and of the shadow map, set by the graphics presets
+/// (docs/rendering-3d.md "Graphics presets"). When the levels chosen by size would draw more,
+/// every model's projected size is scaled down by [`BIAS_STEP`] steps until the frame fits
+/// ([`bias_step`]): a big army drops to its coarser levels as a whole, the same for every man.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Budget {
+    /// Triangles of the 3D pass (0: no limit).
+    pub triangles: u64,
+    /// Draw calls of the 3D pass (0: no limit).
+    pub draws: usize,
+    /// Shadow casters at most, the nearest to the view centre first.
+    pub casters: usize,
+    /// Triangles of the shadow map (0: no limit); past it the farther casters cast none.
+    pub shadow_triangles: u64,
+    /// Share of the shadow map's reach the casters come from (1: all of it).
+    pub shadow_reach: f32,
+    /// Scales the projected sizes the levels are chosen by: above 1 the finer levels hold
+    /// further out (Ultra), below 1 they give way sooner.
+    pub lod_scale: f32,
+}
+
+impl Budget {
+    /// No limits: today's look (the Hoch preset).
+    pub const NONE: Self =
+        Self { triangles: 0, draws: 0, casters: usize::MAX, shadow_triangles: 0, shadow_reach: 1.0, lod_scale: 1.0 };
+}
+
+impl Default for Budget {
+    fn default() -> Self {
+        Self::NONE
+    }
+}
+
+/// The factor a [`Budget`] step scales the projected sizes by.
+pub const BIAS_STEP: f32 = 0.75;
+/// Steps tried, the last about a twentieth of the size.
+pub const BIAS_STEPS: usize = 11;
+/// Going back to a finer step needs this share of the budget free (no flicker at the edge).
+pub const BIAS_ROOM: f32 = 0.85;
+
+/// The size factor of step `k`.
+pub fn bias(k: usize) -> f32 {
+    BIAS_STEP.powi(k as i32)
+}
+
+/// The finest step whose cost (triangles, draw calls) fits `budget`; a step finer than the
+/// last frame's (`last`) must fit with [`BIAS_ROOM`] to spare. The coarsest step when none fits.
+pub fn bias_step(cost: impl Fn(usize) -> (u64, usize), budget: &Budget, last: usize) -> usize {
+    if budget.triangles == 0 && budget.draws == 0 {
+        return 0;
+    }
+    (0..BIAS_STEPS)
+        .find(|&k| {
+            let room = if k < last { BIAS_ROOM } else { 1.0 };
+            let (t, d) = cost(k);
+            (budget.triangles == 0 || t as f32 <= budget.triangles as f32 * room)
+                && (budget.draws == 0 || d as f32 <= budget.draws as f32 * room)
+        })
+        .unwrap_or(BIAS_STEPS - 1)
+}
+
 /// The level for a projected size, staying at `last` within the hysteresis band.
 pub fn choose(size_px: f32, last: Option<usize>) -> usize {
     choose_in(&SIZES, size_px, last)
@@ -332,6 +393,18 @@ pub const MAX_ERROR: [f32; LEVELS] = [0.0, 0.01, 0.015, 0.02];
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn budget_steps_down_to_fit_and_back_with_room() {
+        let budget = Budget { triangles: 1000, ..Budget::NONE };
+        // Halving per step: 4000, 2000, 1000, ...
+        let cost = |k: usize| (4000u64 >> k, 0);
+        assert_eq!(bias_step(cost, &budget, 0), 2);
+        // From a coarser step, step 2 fits only without room to spare: step 3.
+        assert_eq!(bias_step(cost, &budget, 4), 3);
+        assert_eq!(bias_step(cost, &Budget::NONE, 5), 0);
+        assert_eq!(bias_step(|_| (u64::MAX, 0), &budget, 0), BIAS_STEPS - 1);
+    }
+
     use super::*;
 
     fn grid(n: usize) -> (Vec<Vertex>, Vec<u32>) {

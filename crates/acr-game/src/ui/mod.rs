@@ -11,6 +11,7 @@
 pub mod dialog;
 pub mod draw;
 pub mod fonts;
+pub mod graphics;
 pub mod library;
 pub mod missions;
 pub mod screens;
@@ -183,6 +184,8 @@ pub struct Ui {
     /// Where the options are kept between runs (ACR's `settings.txt`, see
     /// [`Settings::encode`]); none in tests.
     settings_store: Option<Box<dyn acr_app::saves::SaveStore>>,
+    /// No `graphics` line in the stored options ([`Self::graphics_unset`]).
+    graphics_unset: bool,
     /// Shown on the loading screen while a saved game is replayed (0..=1).
     loading_progress: Option<f32>,
 }
@@ -211,6 +214,7 @@ impl Ui {
             saves: Box::new(acr_app::saves::MemorySaves::default()),
             profiles: Box::new(acr_app::saves::MemorySaves::default()),
             settings_store: None,
+            graphics_unset: true,
             loading_progress: None,
         };
         ui.stack.push(Entry { screen: Box::new(screens::main_menu::MainMenu::default()), built: false });
@@ -594,8 +598,11 @@ impl Ui {
     /// file was found.
     pub fn set_settings_store(&mut self, store: Box<dyn acr_app::saves::SaveStore>) -> bool {
         let stored = store.read(SETTINGS_FILE);
+        self.graphics_unset = true;
         if let Some(bytes) = &stored {
-            self.settings = Settings::decode(&String::from_utf8_lossy(bytes));
+            let text = String::from_utf8_lossy(bytes);
+            self.graphics_unset = !text.lines().any(|l| l.trim_start().starts_with("graphics="));
+            self.settings = Settings::decode(&text);
         }
         self.settings_store = Some(store);
         stored.is_some()
@@ -614,10 +621,25 @@ impl Ui {
         &self.settings
     }
 
+    /// No `graphics` line was stored yet: the first start of the presets, whose detected
+    /// preset sets the switches once (`graphics::detect`).
+    pub fn graphics_unset(&self) -> bool {
+        self.graphics_unset
+    }
+
     /// Changes an option from inside a game (the "Zielhilfe" icon) and keeps it in the
     /// settings store, like the options dialog's OK.
     pub fn change_settings(&mut self, change: impl FnOnce(&mut Settings)) {
+        self.change_settings_stored(change, true);
+    }
+
+    /// [`Self::change_settings`], kept in the store only if `store`.
+    pub fn change_settings_stored(&mut self, change: impl FnOnce(&mut Settings), store: bool) {
         change(&mut self.settings);
+        self.graphics_unset = false;
+        if !store {
+            return;
+        }
         if let Some(store) = &mut self.settings_store
             && let Err(e) = store.write(SETTINGS_FILE, self.settings.encode().as_bytes())
         {

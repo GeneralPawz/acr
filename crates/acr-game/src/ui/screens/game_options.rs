@@ -11,6 +11,7 @@
 
 use super::super::dialog::{Align, CANCEL, Kind, OK, WidgetId};
 use super::super::draw::{Draw, Rect};
+use super::super::graphics::{Graphics, PRESETS};
 use super::super::settings::{CONTROL_CHOICES, CameraMode, Gore, Models, RESOLUTIONS, Settings, Weather};
 use super::super::{Ctx, Input, Nav, Screen};
 use super::{Menu, font};
@@ -185,6 +186,21 @@ const GRAPHICS: &[Row] = &[
 /// Page 4: the 3D switches that no longer fit on [`GRAPHICS`] (its rows are the frame's),
 /// one row per [`ROW_Y`], the third group empty.
 const DETAILS: &[Row] = &[
+    Row::Heading(b"Grafikstufe (nur 3D)"),
+    Row::Choice(Choice {
+        // `graphics` (`ui/graphics.rs`): the frame's limits; a new choice also sets the
+        // single switches on these pages ([`GameOptions::collect`]).
+        label: b"Voreinstellung",
+        lines: &[b"Automatisch", b"Niedrig", b"Mittel", b"Hoch", b"Ultra"],
+        get: |s| match s.graphics {
+            Graphics::Auto => 0,
+            Graphics::Low => 1,
+            Graphics::Medium => 2,
+            Graphics::High => 3,
+            Graphics::Ultra => 4,
+        },
+        set: |s, i| s.graphics = if i == 0 { Graphics::Auto } else { PRESETS[(i - 1).min(3)] },
+    }),
     Row::Heading(b"3D-Details"),
     Row::Choice(Choice {
         // `material_detail`: normal and roughness maps on the models.
@@ -193,7 +209,7 @@ const DETAILS: &[Row] = &[
         get: |s| on_off(!s.material_detail),
         set: |s, i| s.material_detail = i == 0,
     }),
-    Row::Heading(b"Boden (nur 3D)"),
+    // The ground cover joined the details when the presets took the first group.
     Row::Choice(Choice {
         // `ground_cover` (docs/ground.md "Phase 5: ground cover"): grass, flowers, ferns,
         // litter and pebbles on the detailed ground.
@@ -293,6 +309,10 @@ impl GameOptions {
                 if let Row::Choice(c) = &rows(self.page)[row] {
                     (c.set)(&mut settings, d.combo(w).cur);
                 }
+            }
+            // A preset newly chosen sets the single switches it stands for.
+            if settings.graphics != self.settings.graphics {
+                settings.graphics.apply_switches(&mut settings);
             }
             return settings;
         }

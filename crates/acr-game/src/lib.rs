@@ -715,6 +715,19 @@ impl ApplicationHandler<Event> for Game {
         match event {
             Event::GpuReady(gpu) => {
                 let gpu = *gpu;
+                // The graphics preset `auto` stands for (docs/rendering-3d.md "Graphics
+                // presets"); on the first start its switches are set once.
+                let detected = ui::graphics::detect(&gpu.info);
+                ui::graphics::set_detected(detected);
+                log::info!("graphics: {} adapter gives preset {}", gpu.info.name, detected.name());
+                if self.ui.graphics_unset() && self.ui.settings().graphics == ui::graphics::Graphics::Auto {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let driven = self.driver.is_some();
+                    #[cfg(target_arch = "wasm32")]
+                    let driven = false;
+                    // The driver never writes the user's options.
+                    self.ui.change_settings_stored(|s| detected.apply_switches(s), !driven);
+                }
                 let images = ImageRenderer::new(&gpu.device, gpu.config.format);
                 let sprites = SpriteRenderer::new(&gpu.device, gpu.config.format);
                 self.graphics = Some(Graphics { gpu, images, sprites });
