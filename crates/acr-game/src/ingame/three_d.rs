@@ -153,14 +153,31 @@ const STONE_CLIP: &str = "ATTACK1_STONE";
 /// The clip for a man breaking stone: the original plays one work animation for wood and
 /// stone (`TAKERESSTAGES ... 2`, `#ATTACK1`; `gather.rs` `Attack(work - 1)`), the model
 /// swings the pick in [`STONE_CLIP`] while his load (`carry_type`, set as the work starts) is
-/// stone or gold. `None` keeps `#ATTACK1` (wood, or a model without the clip).
+/// stone or gold, and holds it between blows in `PSTAND1_STONE`, `PATTACK1_STONE` and
+/// `UATTACK1_STONE`. `None` keeps the `.MD` clip (wood, or a model without the variant).
 fn stone_clip(model: &ModelData, world: &World, u: &Unit) -> Option<usize> {
-    if u.anim != AnimKind::Attack(1) {
-        return None;
-    }
+    let name = match u.anim {
+        AnimKind::Attack(1) => STONE_CLIP,
+        AnimKind::PStand(1) => "PSTAND1_STONE",
+        AnimKind::PAttack(1) => "PATTACK1_STONE",
+        AnimKind::UAttack(1) => "UATTACK1_STONE",
+        _ => return None,
+    };
     let take = world.catalog.get(u.kind).economy.take_res.get(usize::from(u.carry_type?)).copied().flatten()?;
     let stone = matches!(take.credited, acr_sim::economy::STONE | acr_sim::economy::GOLD);
-    if take.work == 2 && stone { model.clip(STONE_CLIP) } else { None }
+    if take.work == 2 && stone { model.clip(name) } else { None }
+}
+
+/// The death clip `clip` of `model` played with the tool `held` (his last clip alive) showed
+/// still in the hand: `<clip>_<TOOL>` (`DEATH_AXE`, `DEATHLIE1_PICK`), where the model has it
+/// (docs/families/civil.md).
+fn held_death_clip(model: &ModelData, clip: usize, held: Option<usize>) -> Option<usize> {
+    let held = model.clips.get(held?)?;
+    let name = &model.clips.get(clip)?.name;
+    model.states.iter().filter(|(_, names)| names.contains(&held.name)).find_map(|&(n, _)| {
+        let tool = model.nodes[n].name.rsplit('.').next()?;
+        model.clip(&format!("{name}_{}", tool.to_uppercase()))
+    })
 }
 
 /// Whether gear node `n` of `model` is in his hands in `clip`: gear without clip states
@@ -1577,6 +1594,13 @@ impl ThreeD {
                 && let Some(gear) = self.gear.get(&index)
                 && let Some(unarmed) = gear.unarmed
             {
+                // The tool he held stays in his hand until it is laid down (`DEATH_AXE`).
+                if !self.debris.has_dropped(u.id.0)
+                    && let Some(c) = inst.clip
+                    && let Some(v) = held_death_clip(model, c, self.tool_clips.get(&u.id.0).copied().flatten())
+                {
+                    inst.clip = Some(v);
+                }
                 let landed = matches!(u.anim, AnimKind::DeathLie(_))
                     || inst.clip.and_then(|c| model.clips.get(c)).is_none_or(|c| inst.time >= c.duration);
                 if self.debris.has_dropped(u.id.0) {

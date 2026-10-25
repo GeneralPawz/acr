@@ -67,6 +67,8 @@ reads states on units hide it elsewhere.
 | `ATTACK`, `ATTACK5`, `ATTACK_CUT_MID`, `ATTACK_CUT_DOWN`, `ATTACK_DOWN` (53) | `U` | `clips.club_strikes` with the axe's edge (`AXE_TIP`) | 2 |
 | `STAND`, `REST`, `MOTION_*`, `MOTION_*1/3/5` | `Stp`, `G` | stand, look round, walk (stances 1, 3, 5 walk empty-handed as the sprites) | - |
 | `DEATH`, `DEATHLIE1` | `H` | `poses.death_keys`, `lie_prone` | - |
+| `DEATH_<TOOL>`, `DEATHLIE1_<TOOL>` (`AXE`, `PICK`, `SICKLE`, `HAMMER`) | - | the death clips with that tool shown (`held_variant`) | - |
+| `PSTAND1_STONE`, `PATTACK1_STONE`, `UATTACK1_STONE` | - | the stance between blows with the pick (first key of `ATTACK1_STONE`) | - |
 
 The priest: `STAND` (hands before the chest, book in the left), `REST` (reading), walk,
 `ATTACK` (200 frames) = `clips.heal` (heal on frame 2, `SETACTIVEPOINT #ATTACK 1`),
@@ -81,15 +83,16 @@ The priest: `STAND` (hands before the chest, book in the left), `REST` (reading)
   building `#WORK` (`U_Str`). The game plays `ATTACK1` for stone (`gather.rs`
   `Attack(work - 1)`); the renderer plays `ATTACK1_STONE` instead while the man's load
   (`carry_type`) credits stone or gold and the model has the clip (`three_d::stone_clip`,
-  render only). No hoe: no sprite or state uses one. The stance clips `PSTAND1`/`PATTACK1`
-  between blows still show the axe for a stone worker (no stone variants).
+  render only), and `PSTAND1_STONE`, `PATTACK1_STONE`, `UATTACK1_STONE` between blows.
+  No hoe: no sprite or state uses one.
 - Tools by state: the renderer reads each tool node's `acr_state` (`ModelData::states`, men
   of skeleton H only) and collapses a tool in every clip that does not name it
   (`ModelData::pose`, test `tools_show_in_their_clips`), on top of the socket scale.
 - Tools at death: `three_d::held_gear` knows `axe`, `pick`, `sickle`, `hammer`; a killed or
   crawling man drops the tool his last clip alive showed (`tool_clips`, `holds`), laid
-  beside him from the landing on (#206). The death clips hide the tools, so the tool is not
-  in his hand while he falls (asset: key the held tool in `DEATH`).
+  beside him from the landing on (#206). Until then he falls with it in his hand: the
+  renderer plays `<clip>_<TOOL>` of the death clip for the tool his last clip showed
+  (`three_d::held_death_clip`; with gore off he lies holding it, as a musketeer his musket).
 - The tools have no LOD levels and no baked textures (flat palette colours with the
   outfit's decay materials).
 - Spine X: positive bends the trunk forward (docs/assets-humans.md). The stoops of the

@@ -88,9 +88,9 @@ class PeasantClips(unittest.TestCase):
     def test_tool_states(self):
         st = civil.tool_states(self.clips)
         self.assertIn("ATTACK1", st["axe"])
-        self.assertEqual(st["pick"], [civil.STONE_CLIP])
+        self.assertEqual(st["pick"], sorted([civil.STONE_CLIP, "DEATHLIE1_PICK", "DEATH_PICK", "PATTACK1_STONE", "PSTAND1_STONE", "UATTACK1_STONE"]))
         self.assertIn("ATTACK3", st["sickle"])
-        self.assertEqual(st["hammer"], ["WORK"])
+        self.assertEqual(st["hammer"], ["DEATHLIE1_HAMMER", "DEATH_HAMMER", "WORK"])
         self.assertNotIn("STAND", sum(st.values(), []))
 
     def test_tools_shown_per_clip(self):
@@ -104,6 +104,16 @@ class PeasantClips(unittest.TestCase):
         self.assertEqual(shown(self.clips["MOTION_L2"]), {"sack"})
         self.assertEqual(shown(self.clips["MOTION_L4"]), {"bundle"})
         self.assertEqual(shown(self.clips["MOTION_L"]), set())
+        # Between blows of the stone work and while falling the tool stays in the hand.
+        for k in civil.STONE_STANCES:
+            self.assertEqual(shown(self.clips[civil.held_variant(k, "pick")]), {"pick"})
+            self.assertEqual(self.clips[civil.held_variant(k, "pick")][0][1]["reach"], self.clips[civil.STONE_CLIP][0][1]["reach"])
+        for k in civil.DEATH_CLIPS:
+            self.assertEqual(shown(self.clips[k]), set())
+            for t in civil.HAND_TOOLS:
+                v = self.clips[civil.held_variant(k, t)]
+                self.assertEqual(shown(v), {t})
+                self.assertEqual([f for f, _ in v], [f for f, _ in self.clips[k]])
         for k, c in self.clips.items():
             self.assertEqual(set(c[0][1]["show"]), set(civil.TOOL_SOCKETS), k)
 

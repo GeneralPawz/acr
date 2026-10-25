@@ -453,6 +453,16 @@ def _clip(n, keys, tools=(), event=None):
 
 
 STONE_CLIP = "ATTACK1_STONE"
+# The stance clips between blows of the stone work, with the pick (`<clip>_STONE`).
+STONE_STANCES = ("PSTAND1", "PATTACK1", "UATTACK1")
+# The death clips with a hand tool still held (`<clip>_<TOOL>`): the renderer plays the one of
+# the tool his last clip alive showed until it drops the tool (docs/families/civil.md).
+DEATH_CLIPS = ("DEATH", "DEATHLIE1")
+
+
+def held_variant(clip, tool):
+    """The name of `clip` played with `tool` in the hand (`DEATH_AXE`, `PSTAND1_STONE`)."""
+    return f"{clip}_{'STONE' if tool == 'pick' and clip in STONE_STANCES else tool.upper()}"
 
 
 def tool_states(clips):
@@ -531,7 +541,10 @@ def peasant_clips(md):
     # Stone with the pick: the original plays the chop for wood and stone alike (its own
     # `#WORKSTONE` is commented out in the .MD); a renderer that tells the load apart plays
     # this variant for stone.
-    out[STONE_CLIP] = _clip(n["ATTACK1"], mine_keys(), ("pick",), event=IMPACT[STONE_CLIP][0])
+    mine = mine_keys()
+    out[STONE_CLIP] = _clip(n["ATTACK1"], mine, ("pick",), event=IMPACT[STONE_CLIP][0])
+    for k in STONE_STANCES:
+        out[held_variant(k, "pick")] = _clip(1, [(0, mine[0][1])], ("pick",))
     reap = reap_keys(n["ATTACK3"])
     out["ATTACK3"] = _clip(n["ATTACK3"], reap, ("sickle",), event=IMPACT["ATTACK3"][0])
     for k in ("PSTAND3", "PATTACK3", "UATTACK3"):
@@ -555,7 +568,19 @@ def peasant_clips(md):
     lie = poses.lie_prone()
     out["DEATH"] = _clip(n["DEATH"], _norm(n["DEATH"], poses.death_keys(STAND, lie)))
     out["DEATHLIE1"] = _clip(1, [(0, lie)])
-    return {k: v for k, v in out.items() if k in md or k.startswith("ATTACK_") or k == STONE_CLIP}
+    for k in DEATH_CLIPS:
+        for t in HAND_TOOLS:
+            out[held_variant(k, t)] = _with_tools(out[k], (t,))
+    held = {held_variant(k, "pick") for k in STONE_STANCES} | {held_variant(k, t) for k in DEATH_CLIPS for t in HAND_TOOLS}
+    return {k: v for k, v in out.items() if k in md or k.startswith("ATTACK_") or k == STONE_CLIP or k in held}
+
+
+def _with_tools(clip, tools):
+    """`clip` (a copy) with `tools` shown instead of its own."""
+    c = cl.Clip(clip, clip.event)
+    if c:
+        c[0] = (c[0][0], _show(c[0][1], tools))
+    return c
 
 
 # The priest: hands before the chest, the book in the left.
