@@ -1592,7 +1592,7 @@ def build(ctx, spec):
     ch.masks()
     made = add_clips(ch, spec["md"], spec.get("motions", MOTIONS))
     # The reins' ends in the rider's fists through every clip; the mane and tail in the wind.
-    hz.stats["reins"] = mount.follow_reins(ch.arm, list(ch.arm.get("acr_clips", [])), prefix=P)
+    hz.stats["reins"] = mount.follow_reins(ch.arm, list(ch.arm.get("acr_clips", [])), prefix=P, hide=hz.meshes[0])
     mount.hair_wind(hz)
     am.set_clip(ch.arm, "STAND")
     report = {}

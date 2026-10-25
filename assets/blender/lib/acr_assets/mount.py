@@ -563,7 +563,8 @@ def saddlecloth(horse, name, rgb, half_len=0.36, drop=0.42, offset=0.018, rows=1
 # the head (the bit ring).
 REIN_BONES = {sd: (f"reins_01_{sd}", f"reins_01_posFix_{sd}") for sd in ("l", "r")}
 REIN_TAKE = (0.10, 0.22)  # right fist off its rein end (m): the left fist takes both reins
-REIN_DROP = (0.35, 0.60)  # rider's root off his seat on the saddle (m): let go (thrown, dead)
+REIN_DROP = (0.35, 0.60)  # rider's root off his seat on the saddle (m): dropped (thrown, dead)
+REIN_REACH = (0.25, 0.40)  # rein fist off its place in the seat (m): the rein dropped slack
 REIN_SPLIT = 0.03  # both reins in the left fist: the right one this far to the right
 
 
@@ -572,30 +573,61 @@ def _smooth(x, a, b):
     return t * t * (3.0 - 2.0 * t)
 
 
-def follow_reins(arm, clips, prefix="rider."):
-    """Keys the reins' ends into the rider's fists on every frame of `clips` (#233): the left
-    rein in the left fist, the right one in the right fist while it is on the reins, else in the
-    left fist beside the left rein (aiming, cutting, the mounted reload); let go when the rider
-    leaves the saddle (thrown, the corpses). The pack's reins stayed on the saddle
-    bones, so they missed the fists in every clip that moves the hands. Returns the miss of
-    the rein end against its fist (m) before and after over the held frames (side x frame) and
-    the frames let go per clip."""
+def _slack_points(arm, hide, ahead=0.10):
+    """Where each dropped rein end lies: on the neck's crest `ahead` m in front of its rest
+    end, 2 cm off the hide; as saddle-local points (rest), so they ride the back."""
+    from mathutils.bvhtree import BVHTree
+
+    me = hide.data
+    mats = me.materials
+    faces = [tuple(p.vertices) for p in me.polygons if mats[p.material_index] and "body" in mats[p.material_index].name.lower()]
+    tree = BVHTree.FromPolygons([v.co for v in me.vertices], faces)
+    sad = arm.data.bones["saddle"].matrix_local.inverted()
+    out = {}
+    for sd in ("l", "r"):
+        e = arm.data.bones["reins_01_inner_" + sd].head_local
+        o = Vector((e.x * 0.5, e.y - ahead, e.z + 1.0))
+        hit = tree.ray_cast(o, Vector((0.0, 0.0, -1.0)))[0]
+        p = (hit if hit is not None else Vector((e.x * 0.5, e.y - ahead, e.z - 0.05))) + Vector((0.0, 0.0, 0.02))
+        out[sd] = sad @ p
+    return out
+
+
+def follow_reins(arm, clips, prefix="rider.", hide=None):
+    """Keys the reins' ends on every frame of `clips` (#233): the left rein in the left fist,
+    the right one in the right fist while it is on the reins, else in the left fist beside the
+    left rein. A fist out of the reins' reach (`REIN_REACH` from its place in the seat: aiming,
+    the mounted reload, a two-handed swing) or a rider out of the saddle (`REIN_DROP`: thrown,
+    the corpses) drops the rein slack on the neck's crest (`_slack_points` on `hide`), never
+    stretched to the hand. The pack's reins stayed on the saddle bones, missing the fists.
+    Returns the fist miss over the held side-frames before and after, the frames dropped per
+    clip and the longest span from the rein's middle (on the neck) to its end, before/after."""
     pb = arm.pose.bones
     if "reins_01_inner_l" not in pb or prefix + "socket.hand_l" not in pb:
         return {}
     gap = {"before": [], "after": []}
-    let_go = {}
+    span = {"before": 0.0, "after": 0.0}
+    dropped = {}
+    slack = _slack_points(arm, hide) if hide is not None else None
 
     def rest():
-        # A channel a clip does not key plays at rest in the game, but keeps in Blender what
-        # the last clip shown left there (STAND's rider 1.4 m off his seat after an ATTACK).
+        # A channel a clip does not key plays at rest in the game (the exporter resets the
+        # bones before it samples a clip), but keeps in Blender what the last clip shown left
+        # there (STAND's rider 1.4 m off his seat after an ATTACK).
         for p in pb:
             p.location, p.scale = Vector(), Vector((1.0, 1.0, 1.0))
             p.rotation_quaternion, p.rotation_euler = (1.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0)
 
+    def middle(sd):
+        b = pb.get("reins_02_" + sd)
+        return b.head if b is not None else pb["head"].head
+
     rest()
     am.set_clip(arm, "STAND", 0)
-    seat = pb["saddle"].matrix.inverted() @ pb[prefix + "root"].head
+    inv = pb["saddle"].matrix.inverted()
+    seat = inv @ pb[prefix + "root"].head
+    # The fists on the reins in the seat (saddle-local): the reach is measured from there.
+    home = {sd: inv @ pb[prefix + "socket.hand_" + sd].head for sd in ("l", "r")}
     for name in clips:
         act = bpy.data.actions.get(name)
         if act is None:
@@ -604,39 +636,51 @@ def follow_reins(arm, clips, prefix="rider."):
         rest()
         for f in range(s, e + 1):
             am.set_clip(arm, name, f)
+            sad = pb["saddle"].matrix.copy()
             fist = {sd: pb[prefix + "socket.hand_" + sd].head.copy() for sd in ("l", "r")}
             end = {sd: pb["reins_01_inner_" + sd].head.copy() for sd in ("l", "r")}
+            for sd in ("l", "r"):
+                span["before"] = max(span["before"], (end[sd] - middle(sd)).length)
             take = _smooth((fist["r"] - end["r"]).length, *REIN_TAKE)
-            want = {"l": fist["l"], "r": fist["r"].lerp(fist["l"] + Vector((-REIN_SPLIT, 0.0, 0.0)), take)}
-            off = (pb["saddle"].matrix.inverted() @ pb[prefix + "root"].head - seat).length
-            hold = 1.0 - _smooth(off, *REIN_DROP)
+            hand = {"l": fist["l"], "r": fist["r"].lerp(fist["l"] + Vector((-REIN_SPLIT, 0.0, 0.0)), take)}
+            inv = sad.inverted()
+            seated = 1.0 - _smooth((inv @ pb[prefix + "root"].head - seat).length, *REIN_DROP)
+            near = {"l": home["l"], "r": home["r"].lerp(home["l"] + Vector((-REIN_SPLIT, 0.0, 0.0)), take)}
+            want = {}
             held = []
             for sd in ("l", "r"):
-                d = want[sd] - end[sd]
+                hold = seated * (1.0 - _smooth((inv @ hand[sd] - near[sd]).length, *REIN_REACH))
+                drop = sad @ slack[sd] if slack else end[sd]
+                want[sd] = drop.lerp(hand[sd], hold)
                 if hold > 0.999:
-                    gap["before"].append(d.length)
+                    gap["before"].append((hand[sd] - end[sd]).length)
                     held.append(sd)
                 else:
-                    let_go[name] = let_go.get(name, 0) + 1
+                    dropped[name] = dropped.get(name, 0) + 1
+                d = want[sd] - end[sd]
                 for bone in REIN_BONES[sd]:
                     if bone not in pb:
                         continue
                     m = pb[bone].matrix.copy()
-                    m.translation += d * hold
+                    m.translation += d
                     pb[bone].matrix = m
                     pb[bone].keyframe_insert("location", frame=f, group=bone)
             bpy.context.view_layer.update()
+            for sd in ("l", "r"):
+                span["after"] = max(span["after"], (pb["reins_01_inner_" + sd].head - middle(sd)).length)
             for sd in held:
-                gap["after"].append((want[sd] - pb["reins_01_inner_" + sd].head).length)
+                gap["after"].append((hand[sd] - pb["reins_01_inner_" + sd].head).length)
         for fc in am._fcurves(act):
             for kp in fc.keyframe_points:
                 kp.interpolation = "LINEAR"
     arm.animation_data.action = None
+    rest()
 
     def summ(v):
         return {"mean_m": round(sum(v) / len(v), 4), "max_m": round(max(v), 4)} if v else {}
 
-    return {"held": len(gap["before"]), "let_go": let_go, "before": summ(gap["before"]), "after": summ(gap["after"])}
+    return {"held": len(gap["before"]), "dropped": dropped, "before": summ(gap["before"]), "after": summ(gap["after"]),
+            "span_max_m": {k: round(v, 3) for k, v in span.items()}}
 
 
 def hair_wind(horse, reach=0.6, seed=233, cell=0.06):

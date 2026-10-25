@@ -11,7 +11,8 @@ plays a clip over the node transforms (the exported STAND pose). This module doe
   clips, the pose of every bone at the first, middle and last frame of every clip, played over
   the export pose, into `<name>.poses.json`;
 - `import_glb(path)`: imports a glb through `gltf_pack.REST_CLIP`;
-- `Poser(scene)` with `play(clip, frame)`: puts every bone and node back to its export pose,
+- `Poser(scene)` with `play(clip, frame)`: puts every node back to its export pose and every
+  bone of an opened `--blend` to rest (as the exporter samples clips),
   then applies only `clip` at clip frame `frame` (0 = the clip's first frame, at the build's
   fps), for an imported glb or an opened `--blend` alike;
 - `verify(poses, clip, frame)`: compares the shown pose with the dump and raises
@@ -27,7 +28,7 @@ import math
 import os
 
 import bpy
-from mathutils import Matrix
+from mathutils import Euler, Matrix, Quaternion, Vector
 
 from . import armature as am
 from . import gltf_pack
@@ -119,8 +120,15 @@ class Poser:
             pose = {}
             if o.type == "ARMATURE":
                 for pb in o.pose.bones:
-                    pose[pb.name] = (pb.rotation_mode, pb.location.copy(), pb.rotation_quaternion.copy(),
-                                     pb.rotation_euler.copy(), pb.scale.copy())
+                    if self.imported:
+                        pose[pb.name] = (pb.rotation_mode, pb.location.copy(), pb.rotation_quaternion.copy(),
+                                         pb.rotation_euler.copy(), pb.scale.copy())
+                    else:
+                        # The exporter resets the bones to rest before it samples a clip
+                        # (`export_reset_pose_bones`), so a channel a clip does not key plays
+                        # at rest in the game, not as the scene left it (#233: mounted riders
+                        # rendered 1.4 m over the saddle).
+                        pose[pb.name] = (pb.rotation_mode, Vector(), Quaternion(), Euler(), Vector((1.0, 1.0, 1.0)))
             self.base[o.name] = (o.matrix_basis.copy(), pose)
 
     def _assign(self, o, act):

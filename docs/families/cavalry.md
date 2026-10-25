@@ -141,12 +141,17 @@ facets over barrel, neck and croup), hair cards 14 k, bridle, bit rings and rein
 (`mount.LOD_PARTS`: 14.8 k, 5.3 k, 1.9 k; `extras.acr_lod` / `acr_lod_of`, materials shared,
 docs/rendering-3d.md "Authored levels"); `stats.json` `horse.lod_triangles`.
 
-`mount.follow_reins` keys the pack's rein ends (`reins_01_<side>`, `posFix`) into the
-rider's fists (`socket.hand_<side>`) on every frame of every clip: the left rein in the left
-fist, the right one in the right fist while that is on the reins and otherwise in the left
-fist 3 cm to the right (aim, cut, the mounted reload); both let go as the rider's root leaves
-his seat (thrown, corpses). `stats.json` `horse.reins`: the end's miss against its fist over
-the held side-frames, before and after, and the frames let go per clip.
+`mount.follow_reins` keys the pack's rein ends (`reins_01_<side>`, `posFix`) on every frame
+of every clip: the left rein in the left fist (`socket.hand_l`), the right one in the right
+fist while that is on the reins, else in the left fist 3 cm to the right. A fist more than
+0.25-0.40 m from its place in the seat (aiming, the mounted reload, a two-handed swing) or a
+rider out of the saddle (thrown, corpses) drops the rein slack on the neck's crest, 10 cm
+ahead of its rest end, so a rein never stretches to a raised hand. `stats.json`
+`horse.reins`: the end's miss against its fist over the held side-frames before and after,
+the frames dropped per clip, and the longest span from the rein's middle on the neck to its
+end (engd18: 0.65 m at rest, 0.75 m keyed). Blender keeps channels a clip does not key from
+the last clip shown, while the exporter samples each clip from rest: `follow_reins` and
+`posecheck.Poser` (opened `--blend`) reset the bones to rest first.
 
 `mount.hair_wind` gives the mane, forelock and tail cards `_WIND` (branch swing and flutter
 from 0 at the hide to 1 at 0.6 m off it, a phase per 6 cm clump), so the game's wind sways
