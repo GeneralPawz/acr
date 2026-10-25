@@ -1110,18 +1110,6 @@ the calf weights into rigid foot weights. Shoe geometry is seated in the unchang
 STAND pose at 3 mm ground clearance; `render_pose.py --ground` supplies a z=0 floor
 for the contact proof. `outfit.footwear` records the measured instep clearance.
 
-The HD coat's buckled armhole fronts are retopologised after the single solve, using
-their shared settled boundary and a subdivided front patch. Its points fit to front
-skin rays at 18 mm clearance, avoiding nearest-point jumps into the armpit. The lapel
-inlays have no internal cut rim; their coincident torso vertices join the red wool.
-`outfit.quality.chest_patch_faces` and `chest_patch_reversed_faces` record that patch.
-
-The visible waistcoat retains a complete triangular underlap, culled only when all
-corners are covered. It is fitted 15 mm under the outer cloth. Fitted coat fronts and
-waistcoat share a continuous hips/spine/spine1/spine2 weight field; sleeve weights blend
-back in outside the bodice. The layer checker excludes authored replacement LODs,
-which must not be compared against one another or the master.
-
 The HD collar and round cuffs use `outfit_hd.tailored_trim`: the coat simulation stays
 unchanged, then the authored `collar` and `cuff` panel faces are removed by pattern ID.
 Closed parametric bands replace them, with outward 4 mm solidify thickness and closed
@@ -1136,10 +1124,6 @@ use the existing `fallband` layer (above the stock, alongside the facing). Cylin
 UVs keep the bands' weave continuous. Weights transfer from skin/sleeve surfaces and
 are limited to four. `outfit.collar_cuffs` records profiles, button counts, measured
 thickness ranges, boundary/nonmanifold edge counts, and weight errors per piece.
-The standing collar now fits a round neck profile at 6 mm ease, with a short fitted
-base rather than a flared band. Its stock knot sits above the blue edge; folded linen
-ends lie over a closed upper facing, covering the old open throat diamonds. Two hidden
-face rings retain the waistcoat's oblique-view underlap; all-frame crossings remain zero.
 
 ## Known problems
 
