@@ -15,12 +15,14 @@ rules (`line_kit`, `kit_hd`) on the rider of `cavalry.make` and on his horse.
   saddle, saddlecloth and the rider's own leg in the seated pose. The hilt (`gear_hd`
   hanger hilt) sits in the scabbard's mouth on `socket.hip_l`, so the melee clips hide it
   with the sheathed blade while the drawn one shows (`cavalry.SHOW_MELEE`); it replaces the
-  box sabre of `gear.sabre`. They go with the rider when he is thrown.
+  box sabre of `gear.sabre`. The scabbard hangs on its own bone (`hang`: it goes with the
+  hips at the belt's hook but keeps its angle against the horse, swung clear per clip).
+  They go with the rider when he is thrown.
 - **Saddle kit** (`portmanteau`, `roll`): the valise across the croup behind the cantle and
   the rolled blanket on it, each laid down onto the surface under it slice by slice
-  (`sag`: `GAP` off the hide, the roll off the valise), rigid on one horse bone each:
-  the one of `HORSE_BONES` with the fewest hide vertices inside it over the gaits
-  (`_horse_bone`). They stay with the horse.
+  (`sag`: `SADDLE_GAP` off the hide, the roll off the valise) in `STAND`, rigid on their
+  own horse bone keyed on every frame from the croup under them (`follow_croup`). They
+  stay with the horse.
 - **LODs:** no `acr_lod` nodes (as the line kit); every material through the unit's keys
   (`MAT_KEY`), so `acr_decay` and the decay masks apply as to the other gear.
 
@@ -56,12 +58,16 @@ SCABBARD_TILT = (40.0, -12.0)  # degrees: the tip back (X), and out from the fla
 # Valise and roll (m): length across the horse, radius.
 PORTMANTEAU = (0.50, 0.095)
 ROLL = (0.58, 0.060)
-HORSE_BONES = ("saddle", "spine_02", "spine_01")
+VALISE_BONE = "kit_valise"  # the saddle kit's horse bone, keyed from the croup (`follow_croup`)
+PATCH_MARGIN = 0.06  # m: the croup patch reaches this far round the kit's footprint
+PATCH_DEPTH = 0.10  # m: ... and this far below its lowest point
+LIFT_CLEAR = 0.004  # m: the least gap kept under the valise in every frame
+HANGER_BONE = "kit_scabbard"  # the scabbard's hanger (rider bone, `hang`)
+HOOK = (-0.015, 0.0, 0.07)  # m: its hook on the waist belt from the seated mouth (rest)
+STRAP = 0.15  # m: the furthest the carriage straps let the scabbard out from the flank
+HANG_OUT = (0.0, 10.0, 20.0, 30.0)  # degrees it may swing out about the hook ...
+HANG_COST = 0.003  # m of push one degree of swing is worth (the least of both wins)
 BEND = 0.015  # m: a stuffed valise bends at most this much over the croup (`sag`)
-SWING = (0.0, 4.0, 8.0)  # degrees the scabbard may swing out about its mouth (at 30 it stood off like a wing and still met the saddle: its mouth meets it in the leans)
-LEAN = ("ATTACK", "ATTACK_CUT_DOWN", "ATTACK_DOWN", "ATTACK_CUT_DOWN_R", "ATTACK_CUT_DOWN_L", "ATTACK_CUT_MID",
-        "ATTACK_CUT_HIGH", "ATTACK1", "GALLOP")
-GAITS = ("MOTION_L", "MOTION_R", "MOTION_L1", "MOTION_R1", "WALK", "STAND")
 INSIDE_M = 0.003  # m: a vertex this deep inside a surface counts (`kit_hd.INSIDE_M`)
 
 
@@ -94,6 +100,25 @@ def sag_shifts(columns, clear, bend=None):
         top = max(out)
         out = [max(v, top - bend) for v in out]
     return out
+
+
+def rigid_fit(P, Q):
+    """The rotation R and translation t that best move points `P` onto `Q` (n x 3, least
+    squares, Kabsch; numpy, tested)."""
+    import numpy as np
+
+    P, Q = np.asarray(P, float), np.asarray(Q, float)
+    cp, cq = P.mean(0), Q.mean(0)
+    U, _s, Vt = np.linalg.svd((P - cp).T @ (Q - cq))
+    d = np.sign(np.linalg.det(Vt.T @ U.T))
+    R = Vt.T @ np.diag([1.0, 1.0, d]) @ U.T
+    return R, cq - R @ cp
+
+
+def spread_max(xs, reach=1):
+    """Each value the largest within `reach` places of it (a lift kept a frame before and
+    after it is needed: no jump from frame to frame)."""
+    return [max(xs[max(0, i - reach):i + reach + 1]) for i in range(len(xs))]
 
 
 def strap_end(points, side_x):
@@ -331,7 +356,7 @@ def rider_items(ch, name, kit, origin, spec):
         gap = _out_gap(ob, tree, (1.0, 0.0, 0.0))
         _to_rest(ob, ch.arm, hips)
         pb, A = ch.arm.pose.bones[hips], ch.arm.matrix_world
-        # The seated mouth at rest: the scabbard swings out about it (`swing`).
+        # The seated mouth at rest: the hanger's hook is above it (`hang`).
         ch.cav_kit["mouth"] = (A @ pb.bone.matrix_local @ pb.matrix.inverted() @ A.inverted()) @ final.translation
         st["scabbard"] = {"shift_m": shift, "gap_m": gap, "length_m": length}
         _finish(ch, ob, "scabbard", TRIS["scabbard"], st, hips)
@@ -348,7 +373,7 @@ def rider_items(ch, name, kit, origin, spec):
 
 def saddle_items(ch, name, kit):
     """The valise and the roll behind the cantle (current pose), on the saddle bone for now
-    (`_horse_bone` picks the bone once the clips exist)."""
+    (`follow_croup` gives them their own bone once the clips exist)."""
     from mathutils import Vector
 
     from . import kit_hd
@@ -424,30 +449,193 @@ def wear(ch, name, spec, origin):
 
 # ----------------------------------------------------------------------------- checks
 
-def _horse_bone(ch, clips):
-    """Rigs the saddle kit on the bone of `HORSE_BONES` with the fewest hide vertices
-    inside it over the gaits; returns {bone: vertices}."""
-    from . import kit_hd
+def _add_bone(arm, name, parent, head, tail, children=()):
+    """Adds the deforming bone `name` (armature space) under `parent`; `children` move under
+    it, keeping their rest."""
+    import bpy
+
+    for o in bpy.context.view_layer.objects:
+        o.select_set(False)
+    arm.select_set(True)
+    bpy.context.view_layer.objects.active = arm
+    bpy.ops.object.mode_set(mode="EDIT")
+    eb = arm.data.edit_bones
+    b = eb.new(name)
+    b.head, b.tail = head, tail
+    b.parent = eb[parent]
+    b.use_connect = False
+    b.use_deform = True
+    for c in children:
+        if c in eb:
+            eb[c].parent = b
+    bpy.ops.object.mode_set(mode="OBJECT")
+    arm.pose.bones[name].rotation_mode = "QUATERNION"
+
+
+def _rest_pose(arm):
+    for p in arm.pose.bones:
+        p.location, p.scale = (0.0, 0.0, 0.0), (1.0, 1.0, 1.0)
+        p.rotation_quaternion, p.rotation_euler = (1.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0)
+
+
+def _co(ob, dg):
+    """Vertices of `ob` as evaluated (world, numpy)."""
+    import numpy as np
+
+    ev = ob.evaluated_get(dg)
+    me = ev.to_mesh()
+    co = np.empty(len(me.vertices) * 3)
+    me.vertices.foreach_get("co", co)
+    mw = np.array(ev.matrix_world)
+    ev.to_mesh_clear()
+    return co.reshape(-1, 3) @ mw[:3, :3].T + mw[:3, 3]
+
+
+def _sweep(arm, clips, meshes, bones):
+    """Per clip, every frame: the vertices `idx` (all with None) of each of `meshes` [(object,
+    idx)] (world) and the pose matrices of `bones` (armature space), as played.
+    {clip: [(frame, [co per mesh], {bone: matrix})]}."""
+    import bpy
+
+    from . import armature as am
+
+    out = {}
+    for clip in clips:
+        act = bpy.data.actions.get(clip)
+        if act is None:
+            continue
+        f0, f1 = (int(round(x)) for x in act.frame_range)
+        rows = []
+        for f in range(f0, f1 + 1):
+            am.set_clip(arm, clip, f)
+            dg = bpy.context.evaluated_depsgraph_get()
+            co = [_co(ob, dg) if idx is None else _co(ob, dg)[idx] for ob, idx in meshes]
+            rows.append((f, co, {b: arm.pose.bones[b].matrix.copy() for b in bones}))
+        out[clip] = rows
+    arm.animation_data.action = None
+    return out
+
+
+def _key_basis(arm, clip, bone, frames_basis):
+    """Keys `bone`'s local transform [(frame, basis matrix)] into `clip` (linear)."""
+    import bpy
+
+    from . import armature as am
+
+    act = bpy.data.actions[clip]
+    ad = arm.animation_data
+    ad.action = act
+    if hasattr(ad, "action_slot") and act.slots:
+        ad.action_slot = act.slots[0]
+    pb = arm.pose.bones[bone]
+    for f, B in frames_basis:
+        loc, q, _s = B.decompose()
+        pb.location, pb.rotation_quaternion, pb.scale = loc, q, (1.0, 1.0, 1.0)
+        for path in ("location", "rotation_quaternion", "scale"):
+            pb.keyframe_insert(path, frame=f, group=bone)
+    for fc in am._fcurves(act):
+        if f'"{bone}"' in fc.data_path:
+            for kp in fc.keyframe_points:
+                kp.interpolation = "LINEAR"
+    ad.action = None
+
+
+def _min_gap(tree, pts, reach=PATCH_MARGIN):
+    """Least signed distance of `pts` to `tree` (within `reach`; None if none is near) and
+    the number deeper than `INSIDE_M`."""
+    from mathutils import Vector
+
+    best, n = None, 0
+    for p in pts:
+        loc, nrm, _i, _d = tree.find_nearest(Vector(p), reach)
+        if loc is None:
+            continue
+        s = (Vector(p) - loc).dot(nrm)
+        best = s if best is None else min(best, s)
+        n += s < -INSIDE_M
+    return best, n
+
+
+def follow_croup(ch, clips):
+    """Gives the valise and roll their own horse bone (`VALISE_BONE`, under the saddle),
+    keyed on every frame of `clips` from the croup under them: the rigid fit (`rigid_fit`)
+    of the hide's vertices under their footprint at that frame to the same vertices in
+    `STAND` frame 0, where `reseat` lays them down. A frame where the croup would come
+    within `LIFT_CLEAR` of them (it bends under the fit) lifts them along the fit's up by
+    the shortfall, spread to the frames beside (`spread_max`). No back bone follows the
+    croup's 6-11 cm against the saddle in the gallop, and the hide's own weights swung the
+    valise into the rider (m2-cav-kit). Returns the stats per clip."""
+    import bpy
+    import numpy as np
+    from mathutils import Matrix, Vector
+    from mathutils.bvhtree import BVHTree
+
+    from . import armature as am
 
     items = ch.cav_kit["saddle"]
     if not items:
         return None
+    arm = ch.arm
     hide = ch.horse["mount"].meshes[0]
-    gaits = [c for c in clips if c in GAITS]
-    # Rigid on one back bone, seated 0-10 mm in STAND. Tried and dropped (m2-cav-kit): lifted
-    # clear of every frame (6-11 cm off the croup at STAND), and skinned like the hide
-    # under it ( the back bones swing it into the rider at the walk, EngD18 WALK
-    # 392 hide and 256 rider vertices).
-    live = live_clips(clips)
-    tried = {}
-    for bone in HORSE_BONES:
-        reseat(ch, bone)
-        tried[bone] = collide(ch.arm, [(k, ob, [hide]) for k, ob in items.items()], [c for c in live if c in GAITS], steps=4)["total"]
-    best = min(HORSE_BONES, key=lambda b: (tried[b], HORSE_BONES.index(b)))
-    gaps = reseat(ch, best)
+    arm.animation_data.action = None
+    _rest_pose(arm)
+    bpy.context.view_layer.update()
+    pts = [ob.matrix_world @ v.co for ob in items.values() for v in ob.data.vertices]
+    c = arm.matrix_world.inverted() @ (sum(pts, Vector()) / len(pts))
+    _add_bone(arm, VALISE_BONE, "saddle", c, c + Vector((0.0, 0.0, 0.1)))
+    _rest_pose(arm)
+    gaps = reseat(ch, VALISE_BONE)
     for k in items:
-        ch.cav_kit_stats["items"][k].update(bone=best, gap_m=gaps[k])
-    return {"gait_hide_verts": tried, "bone": best}
+        ch.cav_kit_stats["items"][k].update(bone=VALISE_BONE, gap_m=gaps[k])
+    # The reference: STAND frame 0, the bone not keyed yet (it follows the saddle).
+    _rest_pose(arm)
+    am.set_clip(arm, "STAND", 0)
+    dg = bpy.context.evaluated_depsgraph_get()
+    V0 = np.concatenate([_co(ob, dg) for ob in items.values()])
+    B0 = arm.pose.bones[VALISE_BONE].matrix.copy()
+    H0 = _co(hide, dg)
+    lo, hi = V0.min(0), V0.max(0)
+    m = PATCH_MARGIN
+    top = H0[:, 2] > lo[2] - PATCH_DEPTH
+    near = np.all((H0[:, :2] >= lo[:2] - m) & (H0[:, :2] <= hi[:2] + m), axis=1) & top
+    under = np.all((H0[:, :2] >= lo[:2]) & (H0[:, :2] <= hi[:2]), axis=1) & top
+    idx = np.nonzero(near)[0]
+    pos = {int(i): k for k, i in enumerate(idx)}
+    fit = np.array([pos[int(i)] for i in np.nonzero(under)[0]])
+    polys = [[pos[i] for i in p.vertices] for p in hide.data.polygons if all(i in pos for i in p.vertices)]
+    P0 = H0[idx][fit]
+    arm.animation_data.action = None
+    sweep = _sweep(arm, clips, [(hide, idx)], ["saddle"])
+    rel = arm.pose.bones["saddle"].bone.matrix_local.inverted() @ arm.pose.bones[VALISE_BONE].bone.matrix_local
+    per = {}
+    for clip, rows in sweep.items():
+        fits, lifts = [], []
+        for _f, (co,), _m in rows:
+            R, t = rigid_fit(P0, co[fit])
+            tree = BVHTree.FromPolygons(co.tolist(), polys)
+            up = R[:, 2]
+            moved = V0 @ R.T + t
+            lift = 0.0
+            for _ in range(3):
+                g = _min_gap(tree, moved + up * lift)[0]
+                if g is None or g >= LIFT_CLEAR - 1e-4:
+                    break
+                lift += LIFT_CLEAR - g
+            fits.append((R, t, up, tree))
+            lifts.append(lift)
+        lifts = spread_max(lifts)
+        keys, after = [], []
+        for (f, _hc, mats), (R, t, up, tree), lift in zip(rows, fits, lifts):
+            T = Matrix([[*R[i], t[i] + up[i] * lift] for i in range(3)] + [[0.0, 0.0, 0.0, 1.0]])
+            keys.append((f, (mats["saddle"] @ rel).inverted() @ (T @ B0)))
+            after.append(_min_gap(tree, V0 @ R.T + t + up * lift))
+        _key_basis(arm, clip, VALISE_BONE, keys)
+        gs = [a[0] for a in after if a[0] is not None]
+        per[clip] = {"lift_max_m": round(max(lifts), 4), "gap_min_m": round(min(gs), 4) if gs else None,
+                     "inside": max(a[1] for a in after)}
+    _rest_pose(arm)
+    return {"bone": VALISE_BONE, "patch_verts": int(len(idx)), "fit_verts": int(len(fit)),
+            "inside_total": sum(p["inside"] for p in per.values()), "clips": per}
 
 
 def reseat(ch, bone):
@@ -482,46 +670,114 @@ def live_clips(clips):
     return [c for c in clips if not c.startswith(("DEATH", "CRAWL", "WRITHE"))]
 
 
-def swing(ch, clips):
-    """Swings the scabbard out about its mouth (`SWING`, the hilt with it) to the least
-    angle that keeps it out of hide, saddle and saddlecloth over the leaning clips."""
-    from mathutils import Matrix
+def hang(ch, clips):
+    """Hangs the scabbard from the waist belt on a hanger bone (`HANGER_BONE`, under the
+    hips, its head at the belt's hook `HOOK` above the mouth; the hilt's `socket.hip_l`
+    under it), keyed on every frame of the live clips: it goes with the hips at its hook but
+    keeps the angle it hangs at in `STAND` against the horse, and where it would meet hide,
+    saddle or saddlecloth its carriage straps let it out sideways (the horse's +X, its left)
+    by the depth plus `GAP`, at most `STRAP`, or swing out about the hook (`HANG_OUT`),
+    whichever moves it least (`HANG_COST`), both spread to the frames beside (`spread_max`).
+    Rigid on the hips it pressed its mouth into the saddle when the rider stood in the
+    stirrups (104-132 vertices in the leans), and swinging it out about the mouth did not
+    help (the mouth stayed in). Returns the push per clip."""
+    import numpy as np
+    from mathutils import Matrix, Vector
+    from mathutils.bvhtree import BVHTree
 
-    items = ch.cav_kit["items"]
-    ob = items.get("scabbard")
+    from . import armature as am
+    from . import kit_hd
+
+    ob = ch.cav_kit["items"].get("scabbard")
     if ob is None:
         return None
+    arm, P = ch.arm, ch.prefix
+    hips, bone = P + "hips", P + HANGER_BONE
+    hook = arm.matrix_world.inverted() @ (ch.cav_kit["mouth"] + Vector(HOOK))
+    arm.animation_data.action = None
+    _rest_pose(arm)
+    _add_bone(arm, bone, hips, hook, hook + Vector((0.0, 0.0, 0.1)), children=(P + "socket.hip_l",))
+    kit_hd.rigid(ob, arm, bone)
+    _rest_pose(arm)
+    import bpy
+
+    bpy.context.view_layer.update()
+    # The scabbard in the hanger's frame (its rest), and what it may meet near it.
+    W = arm.matrix_world
+    Bl = arm.pose.bones[bone].bone.matrix_local
+    loc = np.array([list(Bl.inverted() @ (W.inverted() @ (ob.matrix_world @ v.co))) for v in ob.data.vertices])
+    am.set_clip(arm, "STAND", 0)
+    dg = bpy.context.evaluated_depsgraph_get()
+    S0 = arm.pose.bones[bone].matrix.to_3x3()
+    A0 = arm.pose.bones["saddle"].matrix.to_3x3()
     hz = ch.horse["mount"]
     others = [hz.meshes[0], *[x for x in ch.layers["gear"] if ch.keys.get(x.name) == "saddle"], *ch.horse.get("extra", [])]
-    mouth = ch.cav_kit["mouth"]
-    lean = [c for c in clips if c in LEAN]
-    base = [v.co.copy() for v in ob.data.vertices]
-    tried, done = {}, 0.0
-    for a in SWING:
-        R = Matrix.Translation(mouth) @ Matrix.Rotation(math.radians(-a), 4, "Y") @ Matrix.Translation(-mouth)
-        for v, c in zip(ob.data.vertices, base):
-            v.co = R @ c
-        tried[a] = collide(ch.arm, [("scabbard", ob, others)], lean, steps=6)["total"]
-        done = a
-        if tried[a] == 0:
-            break
-    best = min(tried, key=lambda k: (tried[k], k))
-    R = Matrix.Translation(mouth) @ Matrix.Rotation(math.radians(-best), 4, "Y") @ Matrix.Translation(-mouth)
-    for v, c in zip(ob.data.vertices, base):
-        v.co = R @ c
-    hilt = ch.held.get("sabre")
-    if hilt is not None:
-        import bpy
+    sc = _co(ob, dg)
+    lo, hi = sc.min(0) - 0.35, sc.max(0) + 0.35
+    meshes, polys, base = [], [], 0
+    for o in others:
+        co = _co(o, dg)
+        keep = np.nonzero(np.all((co >= lo) & (co <= hi), axis=1))[0]
+        pos = {int(i): k for k, i in enumerate(keep)}
+        polys += [[base + pos[i] for i in p.vertices] for p in o.data.polygons if all(i in pos for i in p.vertices)]
+        meshes.append((o, keep))
+        base += len(keep)
+    arm.animation_data.action = None
+    live = live_clips(clips)
+    sweep = _sweep(arm, clips, meshes, ["saddle", hips])
+    rel = arm.pose.bones[hips].bone.matrix_local.inverted() @ Bl
+    per = {}
+    for clip, rows in sweep.items():
+        if clip not in live:
+            _key_basis(arm, clip, bone, [(f, Matrix.Identity(4)) for f, _c, _m in rows])
+            continue
+        def place(mats, cos, a):
+            M_id = mats[hips] @ rel
+            turn = mats["saddle"].to_3x3() @ A0.inverted()
+            O = turn @ Matrix.Rotation(math.radians(-a), 3, "Y") @ S0
+            out = np.array(list(turn @ Vector((1.0, 0.0, 0.0))))
+            pts = loc @ np.array([list(r) for r in O]).T + np.array(list(M_id.translation))
+            return M_id, O, out, pts
 
-        ch.arm.animation_data.action = None
-        from . import armature as am
+        def solve(tree, pts, out):
+            push = 0.0
+            for _ in range(5):
+                g, n = _min_gap(tree, pts + out * push, reach=0.1)
+                if g is None or g >= GAP - 1e-4 or push >= STRAP:
+                    return push, n if push >= STRAP else 0
+                push = min(STRAP, push + GAP - g)
+            return push, _min_gap(tree, pts + out * push, reach=0.1)[1]
 
-        am.pose(ch.arm, ch.poses[ch.ride], prefix=ch.prefix)
-        bpy.context.view_layer.update()
-        W = _from_rest(ch.arm, ch.prefix + "hips")
-        hilt.matrix_world = W @ R @ W.inverted() @ hilt.matrix_world
-    _ = done
-    return {"tried": tried, "deg": best}
+        trees, angles = [], []
+        for _f, cos, mats in rows:
+            tree = BVHTree.FromPolygons(np.concatenate(cos).tolist(), polys)
+            trees.append(tree)
+            cost = {}
+            for a in HANG_OUT:
+                M_id, O, out, pts = place(mats, cos, a)
+                push, n = solve(tree, pts, out)
+                cost[a] = (n, push + a * HANG_COST)
+                if push == 0.0:
+                    break
+            angles.append(min(cost, key=lambda a: cost[a]))
+        angles = spread_max(angles)
+        frames, pushes = [], []
+        for (_f, cos, mats), tree, a in zip(rows, trees, angles):
+            M_id, O, out, pts = place(mats, cos, a)
+            frames.append((M_id, O, out, tree, pts))
+            pushes.append(solve(tree, pts, out)[0])
+        pushes = spread_max(pushes)
+        keys, inside = [], 0
+        for (f, _c, _m), (M_id, O, out, tree, pts), push in zip(rows, frames, pushes):
+            M = Matrix.Translation(M_id.translation + Vector(list(out * push))) @ O.to_4x4()
+            keys.append((f, M_id.inverted() @ M))
+            inside = max(inside, _min_gap(tree, pts + out * push, reach=0.1)[1])
+        _key_basis(arm, clip, bone, keys)
+        if max(pushes) > 0 or inside:
+            per[clip] = {"push_max_m": round(max(pushes), 4), "out_max_deg": max(angles), "inside": inside,
+                         "push_cm": [round(x * 100) for x in pushes]}
+    _rest_pose(arm)
+    return {"bone": HANGER_BONE, "hook_m": list(HOOK), "pushed": per}
 
 
 def collide(arm, groups, clips, steps=6):
@@ -607,8 +863,9 @@ def report(ch, clips):
     rider = [x for x in [ch.flesh, *ch.layers["clothes"]] if ch.keys.get(x.name) != "belts"]
     kit = getattr(ch, "cav_kit", None)
     if kit:
-        st["horse_bone"] = _horse_bone(ch, clips)
-        st["scabbard_swing"] = swing(ch, clips)
+        every = list(ch.arm.get("acr_clips", clips))
+        st["valise"] = follow_croup(ch, every)
+        st["scabbard_hang"] = hang(ch, every)
         items = dict(kit["items"])
         sad = kit["saddle"]
     else:

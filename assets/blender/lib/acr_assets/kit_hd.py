@@ -296,9 +296,13 @@ def seat(objs, tree, matrix, axis, clear=CLEAR):
 
 
 def rigid(ob, arm, bone):
-    """Skins `ob` wholly to `bone`."""
+    """Skins `ob` wholly to `bone`. Rigged again (`cavalry_kit.reseat`), it keeps one armature
+    modifier: a second one deformed it twice in Blender (posed frames measured wrong) while
+    the export skins it once."""
     from . import armature as am
 
+    for md in [m for m in ob.modifiers if m.type == "ARMATURE"]:
+        ob.modifiers.remove(md)
     ob.vertex_groups.clear()
     g = ob.vertex_groups.new(name=bone)
     g.add(list(range(len(ob.data.vertices))), 1.0, "REPLACE")

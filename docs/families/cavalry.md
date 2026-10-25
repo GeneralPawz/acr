@@ -168,20 +168,35 @@ SPEC `kit` (`cavalry_kit.KITS`: `d18` the 18th-century dragoons, `d17` EngD17/Fr
 | `carbine_belt` | solid buff belt, left shoulder to right hip (70 mm), laid over the coat at `kit_hd.BELT_OFFSET`, its inner face dropped; a steel swivel at its end | the garment under it, arms left out (`line_kit._weigh`, 4 bones); swivel rigid on `hips` |
 | `waist_belt` | round the waist (`kit_hd.ring_path`, 45 mm), a buckle over its open ends | as above; buckle on `hips` |
 | `pouch` | `gear_hd` cartridge box (0.85 scale) over the right hip, seated on the coat on its lowest gap (`line_kit.seat_back`, quantile 0) | rigid `hips` |
-| `scabbard` | `gear_hd.scabbard_mesh` (sabre 0.88 m, sword 0.82 m) from the left of the waist belt, 40° back and 12° out, seated `SADDLE_GAP` outside hide, saddle, saddlecloth and the rider's leg in the seated pose; the hilt (`gear_hd` hanger hilt) in its mouth on `socket.hip_l`, hidden with the sheathed blade while the drawn one shows | rigid `hips` (goes with the thrown rider) |
-| `portmanteau`, `roll` | the valise (0.50 x 0.095 m) and the rolled blanket on it (0.58 x 0.06 m), lying across the croup behind the cantle, laid down in `STAND` (`cavalry_kit.sag`, `reseat`: stiff, bending at most `BEND` 15 mm; not decimated, which crumpled them) | rigid on the horse bone of `HORSE_BONES` with the fewest hide vertices inside over the gaits (`saddle` or `spine_02`) |
+| `scabbard` | `gear_hd.scabbard_mesh` (sabre 0.88 m, sword 0.82 m) from the left of the waist belt, 40° back and 12° out, seated `SADDLE_GAP` outside hide, saddle, saddlecloth and the rider's leg in the seated pose; the hilt (`gear_hd` hanger hilt) in its mouth on `socket.hip_l`, hidden with the sheathed blade while the drawn one shows | rigid on its hanger bone `rider.kit_scabbard` (`hang`; under `hips`, goes with the thrown rider) |
+| `portmanteau`, `roll` | the valise (0.50 x 0.095 m) and the rolled blanket on it (0.58 x 0.06 m), lying across the croup behind the cantle, laid down in `STAND` (`cavalry_kit.sag`, `reseat`: stiff, bending at most `BEND` 15 mm; not decimated, which crumpled them) | rigid on their own horse bone `kit_valise` (under `saddle`), keyed from the croup on every frame (`follow_croup`) |
 
-The scabbard swings out about its mouth (`swing`, at most 8°) to the angle with the fewest
-hits over the leaning clips. Tried and dropped for the valise: lifting it clear of every frame
-(6–11 cm off the croup at STAND) and skinning it like the hide under it
-(the back bones swung it into the rider at the walk). The croup flexes 6–11 cm
-against any one back bone in the gallop and the reiter's trot, so the valise still meets it
-there (`stats.json` `kit.collisions`).
+**Valise bone (`cavalry_kit.follow_croup`).** The croup flexes 6–11 cm against any one back
+bone in the gallop and the reiter's trot. The valise and roll sit on their own bone, keyed on
+every frame of every clip. The key is the rigid fit (`rigid_fit`, Kabsch) of the hide vertices
+under their footprint (163 vertices; the patch reaches `PATCH_MARGIN` 6 cm round it) to the
+same vertices in `STAND` frame 0, where `reseat` lays them down. In a frame where the croup
+bends under the fit to within `LIFT_CLEAR` (4 mm), the bone lifts along the fit's up; the lift
+spreads to the frames beside it (`spread_max`). `stats.json` `kit.valise`: lift, least gap and
+vertices inside per clip. Tried and dropped: lifting the valise clear of every frame (6–11 cm
+off the croup at STAND), and skinning it like the hide under it (it swung into the rider).
+`kit_hd.rigid` stacked one armature modifier per call, so the five re-rigs of the old bone
+choice deformed the valise five times over in Blender. The export skinned it once, so the old
+`kit.collisions` for it were wrong.
+
+**Scabbard hanger (`cavalry_kit.hang`).** The scabbard and the hilt's `socket.hip_l` hang on
+`rider.kit_scabbard`, whose head is the belt hook (`HOOK`, 7 cm above the seated mouth). It is
+keyed on every frame of the live clips. It goes with the hips at the hook but keeps its `STAND`
+angle against the horse. Where it would meet the hide, saddle or saddlecloth, the straps let it
+out sideways (up to `STRAP` 15 cm) or swing it out about the hook (`HANG_OUT`, up to 30°),
+whichever moves it less. Both spread over neighbouring frames. `stats.json`
+`kit.scabbard_hang.pushed`: the push per frame (cm) and the vertices still inside. Swinging it
+about its mouth (the old `swing`) did not help: the mouth itself met the saddle.
 
 The kit replaces the ribbon `belt` (`bd.strap`) and the box sabre (`gear.sabre`). The saddle's
 pistol holsters stay (`military_saddle`). No `acr_lod` nodes; every material through the
-palette keys (`cavalry_kit.MAT_KEY`). `stats.json` `kit`: triangles and gaps per piece, the
-horse bone tried, and `collisions` per clip (`cavalry_kit.collide`: rider items against coat,
+palette keys (`cavalry_kit.MAT_KEY`). `stats.json` `kit`: triangles and gaps per piece,
+`valise`, `scabbard_hang`, and `collisions` per clip (`cavalry_kit.collide`: rider items against coat,
 hide, saddle, saddlecloth; saddle kit against hide and rider). `ACR_NO_KIT=1` builds a unit
 without it and measures the old sabre box the same way (before/after). `kit_hd.is_arm` and
 `trunk_weights` now read the `rider.` prefix (the strap weights kept the arm bones before).
@@ -196,5 +211,7 @@ without it and measures the old sabre box the same way (before/after). `kit_hd.i
 - The saddlecloth has no lace border (the sprites show yellow borders on French and
   English cloths).
 - The officers' pistol rides upright on the thigh like the carbine.
-- The officers (`*KOf*`) and standard bearers carry no kit yet; the valise works into the
-  croup in the gallop (`kit.collisions`, `portmanteau|horse` in `GALLOP`).
+- The officers (`*KOf*`) and standard bearers carry no kit yet.
+- In the sabre cuts (`ATTACK`, `ATTACK_CUT_DOWN*`) the rider's left hip goes into the saddle.
+  The scabbard then needs the full 15 cm and 30° to clear, and 4 vertices stay inside
+  (`kit.scabbard_hang.pushed`). The real fix is in the cut poses.

@@ -24,6 +24,24 @@ class Sag(unittest.TestCase):
         self.assertEqual([round(x, 3) for x in cavalry_kit.sag_shifts(cols, 0.0, 0.02)], [-0.42, -0.4, -0.42])
 
 
+class Croup(unittest.TestCase):
+    def test_rigid_fit_recovers_a_turn_and_shift(self):
+        import math
+
+        import numpy as np
+
+        a = math.radians(12)
+        R = np.array([[1, 0, 0], [0, math.cos(a), -math.sin(a)], [0, math.sin(a), math.cos(a)]])
+        P = np.array([[0, 0, 0], [0.3, 0, 0.02], [0, 0.2, -0.03], [0.1, 0.1, 0.05], [-0.2, 0.05, 0.0]])
+        Q = P @ R.T + np.array([0.01, -0.07, 0.11])
+        R2, t2 = cavalry_kit.rigid_fit(P, Q)
+        self.assertTrue(np.allclose(R2, R, atol=1e-9))
+        self.assertTrue(np.allclose(t2, [0.01, -0.07, 0.11], atol=1e-9))
+
+    def test_spread_max_keeps_a_lift_beside_it(self):
+        self.assertEqual(cavalry_kit.spread_max([0, 0, 0.02, 0, 0]), [0, 0.02, 0.02, 0.02, 0])
+
+
 class Kit(unittest.TestCase):
     def test_strap_end_is_lowest_on_its_side(self):
         pts = [(0.1, 0, 1.4), (-0.17, 0, 0.95), (-0.15, 0.1, 0.97), (0.2, 0, 0.9)]
