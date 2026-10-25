@@ -202,6 +202,10 @@ fn skin(palette: &crate::model::Palette, v: &(V3, [u32; 4], [f32; 4])) -> V3 {
 fn meshes(model: &ModelData) -> Vec<Mesh> {
     let mut out: Vec<Mesh> = Vec::new();
     for p in &model.primitives {
+        // Authored levels replace the master; they are never worn together.
+        if p.lod.is_some_and(|level| level > 0) {
+            continue;
+        }
         let mat = &model.materials[p.material];
         let key = material_key(&mat.name).to_owned();
         let Some(base) = layer_rank(&key) else { continue };

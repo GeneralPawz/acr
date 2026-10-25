@@ -1093,6 +1093,38 @@ def _skin_openings(sk, covered, arm):
             for c, v in zip(covered, sk.data.vertices)]
 
 
+def torso_weights(z):
+    """One continuous trunk field shared by fitted coat fronts and their underlap."""
+    knots = ((1.04, "hips"), (1.20, "spine"), (1.34, "spine1"), (1.48, "spine2"))
+    if z <= knots[0][0]:
+        return {knots[0][1]: 1.0}
+    for (lo, a), (hi, b) in zip(knots, knots[1:]):
+        if z < hi:
+            t = (z-lo)/(hi-lo)
+            return {a: 1-t, b: t}
+    return {knots[-1][1]: 1.0}
+
+
+def front_weights(ob, underlap=False):
+    """Keep the bodice off arm influences; blend into sleeve weights at the armhole."""
+    names = {g.index: g.name for g in ob.vertex_groups}
+    weights = []
+    for v in ob.data.vertices:
+        w = {names[e.group]: e.weight for e in v.groups}
+        t = 1.0 if underlap else max(0.0, min(1.0, (0.28-abs(v.co.x))/0.08, (0.04-v.co.y)/0.04))
+        if not underlap and not 0.98 < v.co.z < 1.51:
+            t = 0.0
+        result = {b: x*(1-t) for b, x in w.items()}
+        for b, x in torso_weights(v.co.z).items():
+            result[b] = result.get(b, 0)+x*t
+        weights.append(result)
+    for g in list(ob.vertex_groups):
+        ob.vertex_groups.remove(g)
+    for i, w in enumerate(weights):
+        for b, x in w.items():
+            if x > 1e-6:
+                (ob.vertex_groups.get(b) or ob.vertex_groups.new(name=b)).add([i], x, "REPLACE")
+
 def compose(body_tree, objs, keys, rank, skins=(), arm=None):
     """The visible-layers-only outfit: deletes covered inner faces (and the skin under the
     clothes, `skins`), pushes what stays under the layer on it. `body_tree`: BVH of the
@@ -1107,7 +1139,7 @@ def compose(body_tree, objs, keys, rank, skins=(), arm=None):
         if o.get("hd_trim") or keys[o.name] in ("shoes", "brass", "coat", "facings", "lapels") or o.name.endswith(LOOSE):
             continue
         outer = [x for x in hiding if rank(keys[x.name]) > r and x is not o]
-        if keys[o.name] == "breeches":
+        if keys[o.name] in ("breeches", "waistcoat"):
             # These panels now have the same deformation as the breeches. Covered
             # breeches stay covered during the clips and can be removed safely.
             outer += [x for x in objs if x.name.endswith(LOOSE)]
@@ -1117,7 +1149,7 @@ def compose(body_tree, objs, keys, rank, skins=(), arm=None):
         if keys[o.name] == "waistcoat":
             # Only the open coat front exposes the waistcoat. Its back and
             # shoulders are covered in every drill, even when a ray misses a hem.
-            _delete_faces(o, [v.co.y < -0.035 and abs(v.co.x) < 0.12 and 1.05 <= v.co.z < 1.44
+            _delete_faces(o, [v.co.y < -0.015 and abs(v.co.x) < 0.14 and 0.98 <= v.co.z < 1.50
                               for v in o.data.vertices])
         cov = _covered(o, tree, body_tree)
         if keys[o.name] == "breeches":
@@ -1129,14 +1161,17 @@ def compose(body_tree, objs, keys, rank, skins=(), arm=None):
         bm = bmesh.new()
         bm.from_mesh(o.data)
         bm.verts.ensure_lookup_table()
-        gone = [f for f in bm.faces if any(cov[v.index] for v in f.verts)]
+        gone = [f for f in bm.faces if (all if keys[o.name] == "waistcoat" else any)(cov[v.index] for v in f.verts)]
         st["culled_faces"][o.name] = len(gone)
         bmesh.ops.delete(bm, geom=gone, context="FACES")
         bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context="VERTS")
         bm.to_mesh(o.data)
         bm.free()
         tree = _tree(outer)
-        moved, pokes = (0, 0) if keys[o.name] == "stock" else _clamp(o, tree, body_tree)
+        moved, pokes = (0, 0) if keys[o.name] == "stock" else _clamp(
+            o, tree, body_tree, offset=0.015 if keys[o.name] == "waistcoat" else OFFSET)
+        if keys[o.name] == "waistcoat":
+            front_weights(o, underlap=True)
         st["moved_verts"][o.name], st["pokes"][o.name] = moved, pokes
     # Loose panels were already laid over the breeches with their fixed clearance.
     # Repeated nearest-point pushes here buckle the waist onto unrelated body faces.
@@ -1393,6 +1428,9 @@ def build(ctx, arm, body, body_lods=(), palette=None):
     strip_inlay_rims(pieces, keys)
     fit_stock(pieces, keys, body_tree)
     lay_skirts(pieces, keys)
+    for piece in pieces:
+        if keys[piece.name] in ("coat", "facings"):
+            front_weights(piece)
     for sh, key in shoes(ctx.name, arm, body, body_lods):
         pieces.append(sh)
         keys[sh.name] = key
