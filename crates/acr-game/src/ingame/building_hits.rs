@@ -28,6 +28,8 @@ pub const MAX_ARROWS: usize = 24;
 const ARROW_DEPTH: f32 = 0.07;
 /// From this share of its life lost on, a building cracks and blackens all over (full at 0).
 const BATTERED_FROM: f32 = 0.5;
+/// Soot marks over the fires of a burning building (#303), within [`MAX_SCARS`].
+const MAX_FIRE_SOOT: usize = 10;
 
 /// A hit not yet placed: the building's model may not be loaded.
 #[derive(Debug, Clone, Copy)]
@@ -121,19 +123,21 @@ impl BuildingHits {
     }
 
     /// The damage of building `u` drawn as `inst` (model `index`, `model`): its scars for
-    /// the renderer, and the transforms of its stuck arrows pushed to `arrows`. `None`
-    /// when it shows none.
+    /// the renderer, and the transforms of its stuck arrows pushed to `arrows`. `fire`: the
+    /// points where it burns (model frame, metres) and how hard (0..1,
+    /// `ruin_view::Look::sooted`): soot climbs the wall over each. `None` when it shows none.
     pub fn place(
         &mut self,
         u: &Unit,
         index: usize,
         model: &ModelData,
         inst: &ModelInstance,
+        fire: &[(Vec3, f32)],
         arrows: &mut Vec<Mat4>,
     ) -> Option<Scars> {
         let lost = 1.0 - u.life.max(0) as f32 / u.max_life.max(1) as f32;
         let batter = ((lost - BATTERED_FROM) / (1.0 - BATTERED_FROM)).clamp(0.0, 1.0);
-        if u.death > 0 || (batter <= 0.0 && !self.buildings.contains_key(&u.id.0)) {
+        if u.death > 0 || (batter <= 0.0 && fire.is_empty() && !self.buildings.contains_key(&u.id.0)) {
             return None;
         }
         let b = self.buildings.entry(u.id.0).or_default();
@@ -157,10 +161,23 @@ impl BuildingHits {
         for a in &b.arrows {
             arrows.push(math::mul(&inst.transform, &arrow_matrix(a)));
         }
-        if b.scars.is_empty() && batter <= 0.0 {
+        if b.scars.is_empty() && batter <= 0.0 && fire.is_empty() {
             return None;
         }
-        Some(Scars { list: b.scars.clone(), batter, soot: batter * 0.9 })
+        // Fire soot first (at most `MAX_FIRE_SOOT`), then the newest hits in what is left.
+        let fire = &fire[..fire.len().min(MAX_FIRE_SOOT)];
+        let keep = MAX_SCARS - fire.len();
+        let mut list: Vec<Scar> = b.scars[b.scars.len().saturating_sub(keep)..].to_vec();
+        let mut heat = 0.0f32;
+        for (k, &(p, strength)) in fire.iter().enumerate() {
+            let out = [p[0], 0.0, p[2]];
+            let len = math::dot(out, out).sqrt();
+            let normal = if len > 1e-4 { math::scale(out, 1.0 / len) } else { [0.0, 1.0, 0.0] };
+            let seed = (hash(u.id.0 ^ hash(k as u32 ^ 0x500d)) & 0xffff) as f32 / 65535.0;
+            list.push(Scar { point: p, normal, radius: 0.5 + 0.9 * strength, kind: ScarKind::Scorch, seed });
+            heat = heat.max(strength);
+        }
+        Some(Scars { list, batter, soot: (batter * 0.9).max(heat * 0.45) })
     }
 }
 

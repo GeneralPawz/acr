@@ -1301,9 +1301,24 @@ height; real point lights; burning men panicking (sim, follow-up).
 - **Burning down** (`SLOWDEATH`, `combat::slow_death`): the model stays drawn. Flames and
   embers rise from its `socket.fire.<i>` anchors and smoke from `socket.smoke.<i>` (EngKre);
   a model without them (the generated `genbuild` meshes) burns at up to 10 of its vertices
-  above 60 % of its height. The number of anchors lit grows with the life lost (from 20 %
-  on, all at 85 %), smoke from 10 %, and the model chars (`Wounds::burn` up to 0.55). The
-  2D fire sprites (`Effects::fire_sprites`) are left out for a building drawn in 3D.
+  above 60 % of its height. The anchors lit follow the original's count (`n·(T − L)/T`,
+  `T` = 3/4 of its life, `effects::burning_points`, 0x505e5f), smoke from 10 %, and the
+  model chars (`Wounds::burn` = 0.55 · share alight^0.8). The 2D fire sprites
+  (`Effects::fire_sprites`) are left out for a building drawn in 3D.
+- **Stages** (`ruin_view::Stage`, by the life lost): *small* from 25 % (the original's
+  first fire points: half-strength flames 0.55 × size at the anchors, few sparks, thin pale
+  smoke), *roof* from 50 % (full-size flames, 2 × 2 flame points over the roof at 92 % of
+  its height, darker smoke), *blaze* from 75 % and while it falls in (1.45 × flames that
+  rise and spread 1.4 × as far, 3 × 3 roof points, twice the sparks, thick dark smoke
+  1.3 × as large). The rubble burns as a roof fire while more than 30 % of its flames are
+  left, then small. A warm `Glow` disc lies round its walls (its light; at most 4 m,
+  growing with the stage). Soot climbs the walls over each anchor alight
+  (`building_hits::place`, `ScarKind::Scorch` 0.5–1.4 m, the first lit darkest, at most
+  `MAX_FIRE_SOOT` 10 of the 32 scars) and soot all over up to 0.45.
+- **Wind:** smoke drifts with the wind that sways the trees (`Particles::wind`,
+  `SMOKE_DRIFT` 1.8 m/s × the weather's wind scale along `WIND_DIR`, none with `wind=off`):
+  a particle takes it over its first 2 s, so a column rises straight and then bends;
+  embers take 0.6 of it, flames 0.25. Shell fires and burning men drift alike.
 - **Falling in:** from the death on, over `COLLAPSE_SECONDS` (2.5 s), the model sinks
   0.4 m, tilts up to 8° about an axis picked by its id (3° stay) and is squashed to 30 % of
   its height, charring to black (burn 0.55 → 1). Pale dust (smoke particles) and splinters
@@ -1358,6 +1373,9 @@ height; real point lights; burning men panicking (sim, follow-up).
   squashed, charred mesh. Every generated building (`genbuild`) carries a generic ruin
   (`acr_assets/ruin.py`, docs/assets.md "States"). A ruin state appears black and cools to
   burn 0.3 over 4 s (it carries its own soot). Flames go on for 20 s, smoke for 90 s.
+  The ground round it chars over its first 10 s from the death (ten scorch ellipses round
+  the footprint into the ground state's scorch channel, once a second, as shell fires),
+  and stays black (detailed ground only).
 - **Particles:** smoke rises from at most `SMOKE_COLUMNS` (6) of the smoke anchors, spread
   evenly, at 2 puffs a second each (0.7–1.1 m, 3.5–6 s); the collapse dust is low and short
   (1.5–3 s, 18 a second). The particles pass is fill-bound: larger puffs cost more than
@@ -1376,6 +1394,14 @@ fall (sum of all passes 2.25 and 2.52 ms). Frames: `ACR-analysis/genai/destructi
 With the smoke columns: GPU particles pass 1.41 → 0.76 ms in the same run (burning).
 Ruins of EngSkl, EngCen, DelCen and an EngSkl burn → collapse → ruin sheet:
 `ACR-analysis/genai/destruction/ruins/`.
+
+Stages, wind and scorch (same VM and size, blank grass field, free camera at zoom 1, ten
+buildings at 85 % lost (EngDo1 and SpnKre, all in a blaze), two runs of 30 frames each;
+steps `ACR-analysis/bld-fire/scripts/perf.json` from `mk_steps.py`, settings models=all):
+`3d.particles` 0.10–0.12 → 0.13–0.18 ms a frame, `3d.instances` 0.02–0.03 → 0.01–0.04 ms;
+GPU particles pass 0.96–1.00 → 0.95–0.97 ms, models pass 0.96–0.99 → 1.42–1.47 ms (the
+soot scars), sum of all passes 2.59–2.62 → 3.02–3.07 ms. Stage, hit-side and ruin sheets
+main against branch: `ACR-analysis/bld-fire/` (`look.json`).
 
 Thinned explosions and falling pieces (same VM and size, blank grass field, EngSkl and
 EngBlg spawned at 20/3000 life, free camera and the fixed camera at zoom 1, 50 frames from
@@ -1492,8 +1518,10 @@ lost) next to an EngDo1 after 35; steps `ACR-analysis/genai/building-hits/steps.
 covers about half the window); an unhurt fort draws as on main (0.17 ms both).
 `3d.instances` 0.057 → 0.12–0.15 ms a frame. Frames: `ACR-analysis/genai/building-hits/`.
 
-Open: fire arrows are not told from arrows in the hit record (no scorch from them yet);
-the record has no height (hashed); knocked-out chunks as geometry or debris pieces.
+Fire soot over a burning building's fires: "Burning, collapsing and ruined buildings
+(#303)", Stages. Open: fire arrows are not told from arrows in the hit record (no scorch
+from them yet); the record has no height (hashed); knocked-out chunks as geometry or debris
+pieces.
 
 ### Projectiles (#308)
 

@@ -788,9 +788,13 @@ pub fn place(m: &Mat4, p: Vec3) -> Vec3 {
 #[derive(Clone, Debug, Default)]
 pub struct Burning {
     pub unit: u32,
-    /// Flames at these world points (pixels), with this strength (0..1).
+    /// Its [`Stage`] of burning.
+    pub stage: Stage,
+    /// Flames at these world points (pixels), with this strength (0..1) and size (1 a
+    /// roof fire's flames).
     pub fire: Vec<Vec3>,
     pub flames: f32,
+    pub size: f32,
     /// Smoke at these points and strength.
     pub smoke: Vec<Vec3>,
     pub smoking: f32,
@@ -802,6 +806,49 @@ pub struct Burning {
     pub top: f32,
     /// Where pieces struck the ground in the last [`LANDING_DUST`] seconds (pixels).
     pub landings: Vec<Vec3>,
+    /// Seconds since it fell in, if it did: the ground round it chars (scorch).
+    pub fallen: Option<f32>,
+}
+
+/// How far a building burns (#303), by the life it lost, at the original's thresholds:
+/// its fire points show below three quarters of its life (`effects::burning_points`,
+/// 0x505e5f) and more catch fire as it loses more.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Stage {
+    #[default]
+    None,
+    /// Small fires at a few of its windows and its roof (from 25 % of its life lost).
+    Small,
+    /// The roof burns (from 50 %): flames over its top.
+    Roof,
+    /// A full blaze (from 75 %, and while it falls in).
+    Blaze,
+}
+
+/// Life lost (share) where each [`Stage`] begins.
+const STAGE_FROM: [f32; 3] = [0.25, 0.5, 0.75];
+/// Flame strength and size per [`Stage`] (none, small, roof, blaze).
+const STAGE_FLAMES: [f32; 4] = [0.0, 0.5, 0.8, 1.0];
+const STAGE_SIZE: [f32; 4] = [0.0, 0.55, 1.0, 1.45];
+/// Charring of a building that burns down, at its death (the collapse takes it to black).
+const BURN_STANDING: f32 = 0.55;
+
+/// The [`Stage`] of a building that lost `lost` (share) of its life.
+pub fn stage(lost: f32) -> Stage {
+    match STAGE_FROM.iter().filter(|&&f| lost >= f).count() {
+        0 => Stage::None,
+        1 => Stage::Small,
+        2 => Stage::Roof,
+        _ => Stage::Blaze,
+    }
+}
+
+/// Points on a building's roof (model space): `n` x `n` over the inner footprint at height
+/// `y`, for a roof fire and a blaze.
+fn roof_points(anchors: &Anchors, n: usize, y: f32) -> Vec<Vec3> {
+    let (hx, hz) = (anchors.half[0] * 0.6, anchors.half[1] * 0.6);
+    let step = |i: usize| if n > 1 { 2.0 * i as f32 / (n - 1) as f32 - 1.0 } else { 0.0 };
+    (0..n * n).map(|k| [hx * step(k % n), y, hz * step(k / n)]).collect()
 }
 
 /// What a building shows: its burn tint (0..1) and its fires, and the matrix it is drawn
@@ -812,18 +859,23 @@ pub struct Look {
     pub transform: Mat4,
     pub fire: Burning,
     pub show_ruin: bool,
+    /// The fire anchors that burn while it stands (model space, metres) and how hard
+    /// (0..1): soot climbs the walls over them (`building_hits`).
+    pub sooted: Vec<(Vec3, f32)>,
 }
 
 /// The [`Look`] of building `id` at `ground` with `anchors`.
 pub fn look(id: u32, ground: Vec3, anchors: &Anchors, lost: f32, dead: Option<f32>, ruin: bool) -> Look {
     let ramp = |x: f32, a: f32, b: f32| ((x - a) / (b - a)).clamp(0.0, 1.0);
-    let (burn, transform, flames, smoking, dust, show_ruin) = match dead {
+    // The share of its fire points alight: the original's n·(T − L)/T with T = 3/4 of its
+    // life.
+    let alight = ramp(lost, STAGE_FROM[0], 1.0);
+    let (burn, transform, stage, lit, smoking, dust, show_ruin, fallen) = match dead {
         None => {
-            // Burning down: flames from a quarter of its life lost on (the original's
-            // sprite fires show from about there), all of them near the end.
-            let flames = ramp(lost, 0.2, 0.85);
             let m = view3d::model_matrix(ground, 0.0, 1.0);
-            (0.55 * ramp(lost, 0.3, 1.0), m, flames, ramp(lost, 0.1, 0.6), 0.0, false)
+            // Chars as it burns: a little from the first small fires, most in the blaze.
+            let burn = BURN_STANDING * alight.powf(0.8);
+            (burn, m, stage(lost), alight, ramp(lost, 0.1, 0.6), 0.0, false, None)
         }
         Some(t) => {
             let c = collapse(t);
@@ -831,19 +883,50 @@ pub fn look(id: u32, ground: Vec3, anchors: &Anchors, lost: f32, dead: Option<f3
             let low = if down { 1.0 } else { RUIN_HEIGHT };
             let m = collapse_matrix(ground, id, c, low);
             let after = (t - COLLAPSE_SECONDS).max(0.0);
-            let flames = if c < 1.0 { 1.0 } else { (1.0 - after / RUIN_FLAMES).max(0.0) * 0.6 };
+            let lit = if c < 1.0 { 1.0 } else { (1.0 - after / RUIN_FLAMES).max(0.0) * 0.6 };
+            // A blaze while it falls in, the roof's last flames in the rubble, then embers.
+            let stage = if c < 1.0 {
+                Stage::Blaze
+            } else if lit > 0.3 {
+                Stage::Roof
+            } else if lit > 0.0 {
+                Stage::Small
+            } else {
+                Stage::None
+            };
             let smoking = (1.0 - after / RUIN_SMOKE).max(0.0);
             let dust = (1.0 - t / (COLLAPSE_SECONDS + 1.0)).max(0.0);
-            let burn =
-                if down { RUIN_BURN + (1.0 - RUIN_BURN) * (1.0 - after / RUIN_COOL).max(0.0) } else { 0.55 + 0.45 * c };
-            (burn, m, flames, smoking, dust, down)
+            let burn = if down {
+                RUIN_BURN + (1.0 - RUIN_BURN) * (1.0 - after / RUIN_COOL).max(0.0)
+            } else {
+                BURN_STANDING + (1.0 - BURN_STANDING) * c
+            };
+            (burn, m, stage, lit, smoking, dust, down, Some(t))
         }
     };
+    let s = stage as usize;
+    let flames = if stage == Stage::None { 0.0 } else { STAGE_FLAMES[s] };
     // Anchors burn in an order picked by the id; more of them as it grows.
     let n = anchors.fire.len();
-    let lit = ((flames * n as f32).ceil() as usize).min(n);
+    let lit_n = if stage == Stage::None || n == 0 { 0 } else { ((lit * n as f32).ceil() as usize).clamp(1, n) };
     let start = (unit_hash(id, 1) * n as f32) as usize;
-    let fire = (0..lit).map(|k| place(&transform, anchors.fire[(start + k * 7) % n])).collect();
+    let chosen: Vec<Vec3> = (0..lit_n).map(|k| anchors.fire[(start + k * 7) % n]).collect();
+    // The first to catch burn longest: their soot is darkest.
+    let sooted = if dead.is_none() {
+        let n = n.max(1) as f32;
+        chosen.iter().enumerate().map(|(k, &p)| (p, (alight * 1.5 - k as f32 / n).clamp(0.2, 1.0))).collect()
+    } else {
+        Vec::new()
+    };
+    let mut fire: Vec<Vec3> = chosen.iter().map(|&p| place(&transform, p)).collect();
+    // The roof catches: flames over its top, all of it in a blaze; in the rubble low.
+    let roof = match stage {
+        Stage::Roof => 2,
+        Stage::Blaze => 3,
+        _ => 0,
+    };
+    let y = if show_ruin { anchors.top * 0.25 } else { anchors.top * 0.92 };
+    fire.extend(roof_points(anchors, roof, y).into_iter().map(|p| place(&transform, p)));
     let ns = anchors.smoke.len();
     let columns = ns.min(SMOKE_COLUMNS);
     let smokes = ((smoking * columns as f32).ceil() as usize).min(columns);
@@ -851,8 +934,10 @@ pub fn look(id: u32, ground: Vec3, anchors: &Anchors, lost: f32, dead: Option<f3
     let k = PIXELS_PER_METRE;
     let fire = Burning {
         unit: id,
+        stage,
         fire,
         flames,
+        size: STAGE_SIZE[s],
         smoke,
         smoking,
         dust,
@@ -860,8 +945,9 @@ pub fn look(id: u32, ground: Vec3, anchors: &Anchors, lost: f32, dead: Option<f3
         half: [anchors.half[0] * k, anchors.half[1] * k],
         top: anchors.top * k,
         landings: Vec::new(),
+        fallen,
     };
-    Look { burn, transform, fire, show_ruin }
+    Look { burn, transform, fire, show_ruin, sooted }
 }
 
 #[cfg(test)]
@@ -922,6 +1008,29 @@ mod tests {
         let a = Anchors { fire: vec![[0.0, 5.0, 0.0]; 28], smoke: vec![[0.0, 5.0, 0.0]; 28], half: [5.0; 2], top: 6.0 };
         let burning = look(1, [0.0; 3], &a, 0.9, None, false);
         assert_eq!(burning.fire.smoke.len(), SMOKE_COLUMNS);
-        assert_eq!(burning.fire.fire.len(), 28);
+        // In a blaze at 90 % lost the original's 28 * (T - L) / T anchors (25, T = 3/4 of
+        // its life) burn, and the roof's 3 x 3.
+        assert_eq!(burning.fire.fire.len(), 25 + 9);
+    }
+
+    #[test]
+    fn burning_goes_through_stages() {
+        assert_eq!(stage(0.2), Stage::None);
+        assert_eq!(stage(0.3), Stage::Small);
+        assert_eq!(stage(0.6), Stage::Roof);
+        assert_eq!(stage(0.8), Stage::Blaze);
+        let a = Anchors { fire: vec![[0.0, 5.0, 0.0]; 10], smoke: vec![[0.0, 5.0, 0.0]; 10], half: [5.0; 2], top: 6.0 };
+        let at = |lost| look(1, [0.0; 3], &a, lost, None, false);
+        let (small, roof, blaze) = (at(0.3), at(0.6), at(0.9));
+        assert!(small.fire.size < roof.fire.size && roof.fire.size < blaze.fire.size);
+        assert!(small.fire.fire.len() < roof.fire.fire.len() && roof.fire.fire.len() < blaze.fire.fire.len());
+        // Charring grows with it, soot climbs over the fires that burn.
+        assert!(small.burn < roof.burn && roof.burn < blaze.burn && blaze.burn <= BURN_STANDING);
+        assert!(!small.sooted.is_empty() && small.sooted.len() < blaze.sooted.len());
+        assert!(at(0.1).fire.fire.is_empty() && at(0.1).burn == 0.0);
+        // Falling in is a blaze, and the ground round it chars.
+        let falling = look(1, [0.0; 3], &a, 1.0, Some(0.5), false);
+        assert_eq!(falling.fire.stage, Stage::Blaze);
+        assert!(falling.sooted.is_empty() && falling.fire.fallen.is_some());
     }
 }

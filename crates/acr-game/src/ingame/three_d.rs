@@ -126,6 +126,8 @@ const MAP_VIEW_MARGIN: f32 = 600.0;
 /// shader's clock wraps at (seconds; f32 keeps its sines smooth well below it).
 const WIND_DIR: [f32; 2] = [0.94, 0.34];
 const WIND_STRENGTH: f32 = 1.0;
+/// How fast smoke drifts in a wind of [`WIND_STRENGTH`] (world px a second: 1.8 m/s).
+const SMOKE_DRIFT: f32 = 1.8 * PIXELS_PER_METRE;
 const WIND_PERIOD: f32 = 3600.0;
 
 /// The rain's strength and the lightning flash of `weather` at wind clock `clock`.
@@ -1379,7 +1381,7 @@ impl ThreeD {
                     }
                 }
                 // Holes, pocks, scorch and stuck arrows where rounds struck it (#304).
-                if let Some(scars) = self.building_hits.place(u, index, model, &inst, &mut arrows) {
+                if let Some(scars) = self.building_hits.place(u, index, model, &inst, &look.sooted, &mut arrows) {
                     self.scars.insert(self.instances.len(), scars);
                 }
             }
@@ -1947,6 +1949,14 @@ impl ThreeD {
         let mut marks = marks;
         let mut footfalls = marks.as_mut().map(|m| std::mem::take(&mut m.footfalls)).unwrap_or_default();
         if self.models != Models::Off {
+            // Smoke drifts with the wind that sways the trees (#303).
+            let weather = self.weather_override.unwrap_or(self.weather);
+            let drift = if self.wind_override.unwrap_or(self.wind) {
+                SMOKE_DRIFT * WIND_STRENGTH * weather.wind_scale()
+            } else {
+                0.0
+            };
+            self.particles.particles.wind = [WIND_DIR[0] * drift, WIND_DIR[1] * drift];
             let water_seconds = self.started.elapsed().as_secs_f32();
             let water_view = &mut self.water_view;
             let mut ring = |at: [f32; 2]| water_view.ring(at, water_seconds);
@@ -1971,7 +1981,13 @@ impl ThreeD {
                 self.frame_seconds,
                 rain,
             );
-            self.fire.buildings(&self.burning, &mut self.particles.particles, self.frame_seconds, rain);
+            self.fire.buildings(
+                &self.burning,
+                &mut self.particles.particles,
+                marks.as_deref_mut().map(|m| &mut m.state),
+                self.frame_seconds,
+                rain,
+            );
         }
         self.shots.clear();
         self.update_cover(terrain, marks.as_deref().map(|m| &m.state));

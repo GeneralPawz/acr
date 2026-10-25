@@ -193,7 +193,8 @@ impl FireView {
             }
         }
         let fires = &world.ground_fires.list;
-        self.scorched.retain(|k, _| fires.iter().any(|f| fire_key(f) == *k));
+        // A fallen building's scorch (`buildings`) keeps its own entry.
+        self.scorched.retain(|k, _| k & BUILDING_KEY != 0 || fires.iter().any(|f| fire_key(f) == *k));
         // Burning men, and the corpses of the burned.
         for (i, u) in world.units.iter().enumerate() {
             let index = i as u32;
@@ -294,38 +295,104 @@ impl FireView {
 impl FireView {
     /// Flames, embers and smoke of burning buildings, and the dust and debris of those
     /// falling in (#303, `ruin_view`), for one frame of `dt` seconds.
-    pub fn buildings(&mut self, list: &[super::ruin_view::Burning], sink: &mut dyn ParticleSink, dt: f32, rain: bool) {
+    pub fn buildings(
+        &mut self,
+        list: &[super::ruin_view::Burning],
+        sink: &mut dyn ParticleSink,
+        mut state: Option<&mut GroundState>,
+        dt: f32,
+        rain: bool,
+    ) {
+        use super::ruin_view::Stage;
         let dt = dt.clamp(0.0, 0.1);
         let (flame_k, smoke_k, smoke_color) = if rain { (0.6, 2.0, STEAM) } else { (1.0, 1.0, SMOKE) };
         for b in list {
             let key = BUILDING_KEY | (u64::from(b.unit) << 12);
+            // Small fires lick out of windows, a roof fire stands over the top, a blaze
+            // roars with sparks (`ruin_view::Stage`).
+            let size = b.size * flame_k;
+            let (sparks, reach) = match b.stage {
+                Stage::Blaze => (2.0, 1.4),
+                Stage::Roof => (1.2, 1.15),
+                _ => (0.6, 0.8),
+            };
             for (j, &at) in b.fire.iter().enumerate().take(255) {
                 let k = key | ((j as u64) << 4);
                 let flames = Burst {
                     at,
                     dir: [0.0, 0.0, 1.0],
                     spread: 0.25,
-                    speed: [25.0, 70.0],
+                    speed: [25.0 * reach, 70.0 * reach],
                     count: 1,
                     kind: ParticleKind::Flame,
                     life: [0.4, 0.8],
-                    size: [metres(0.35) * flame_k, metres(0.7) * flame_k],
+                    size: [metres(0.35) * size, metres(0.7) * size],
                     color: FLAME,
-                    scatter: metres(0.6),
+                    scatter: metres(0.6) * reach,
                     seed: 0,
                 };
                 self.emit(sink, k, dt, 22.0 * b.flames * flame_k, flames);
                 let embers = Burst {
                     spread: 0.5,
-                    speed: [30.0, 100.0],
+                    speed: [30.0 * reach, 100.0 * reach],
                     kind: ParticleKind::Ember,
                     life: [0.8, 2.0],
                     size: [0.5, 1.1],
                     color: EMBER,
                     ..flames
                 };
-                self.emit(sink, k | 1, dt, 5.0 * b.flames * flame_k, embers);
+                self.emit(sink, k | 1, dt, 5.0 * sparks * b.flames * flame_k, embers);
             }
+            // The fire's light on the ground round it: a warm disc, wider and brighter as it
+            // grows (cheaper than a point light, as for shell fires).
+            if b.stage != Stage::None && !b.fire.is_empty() {
+                // Only round its walls: a disc as wide as the house would tint the view.
+                let r = b.half[0].min(b.half[1]).min(metres(4.0)) * (0.5 + 0.3 * b.size);
+                let glow = Burst {
+                    at: [b.ground[0], b.ground[1], b.ground[2] + 1.0],
+                    dir: [0.0, 0.0, 1.0],
+                    spread: 0.0,
+                    speed: [0.0, 0.0],
+                    count: 1,
+                    kind: ParticleKind::Glow,
+                    life: [0.45, 0.6],
+                    size: [r * 1.0, r * 1.3],
+                    color: GLOW,
+                    scatter: r * 0.3,
+                    seed: 0,
+                };
+                self.emit(sink, key | 6, dt, 2.5 * b.flames * flame_k, glow);
+            }
+            // The ground round a building that fell in chars over its first ten seconds and
+            // stays black round the ruin (the ground state keeps scorch).
+            if let (Some(t), Some(state)) = (b.fallen, state.as_deref_mut()) {
+                let second = t as u32;
+                let done = self.scorched.entry(key).or_insert(u32::MAX);
+                if *done != second && second <= 10 {
+                    *done = second;
+                    let k = (0.3 + 0.07 * second as f32).min(1.0);
+                    let s = hash(b.unit ^ 0x5c0c_b11d);
+                    let (hx, hy) = (b.half[0].max(metres(1.0)), b.half[1].max(metres(1.0)));
+                    for e in 0..10u32 {
+                        let (sa, ca) = (std::f32::consts::TAU * (e as f32 + unit(s, e * 4)) / 10.0).sin_cos();
+                        let out = 0.85 + 0.45 * unit(s, e * 4 + 1);
+                        let at = [b.ground[0] + ca * hx * out, b.ground[1] + sa * hy * out];
+                        let half = hx.min(hy) * (0.45 + 0.3 * unit(s, e * 4 + 2));
+                        state.stamp(&Stamp {
+                            scorch: k * (0.6 + 0.4 * unit(s, e * 4 + 3)),
+                            ..Stamp::print(at, [ca, sa], [half, half * 0.7], 0.0, 0.1)
+                        });
+                    }
+                }
+            }
+            // Thin pale smoke from the first small fires, a thick dark column in a blaze.
+            let (thick, smoke_tint) = match b.stage {
+                Stage::Blaze => (1.3, 0.8),
+                Stage::Roof => (1.1, 0.9),
+                Stage::Small => (0.8, 1.35),
+                Stage::None => (1.0, 1.0),
+            };
+            let tint = smoke_color.map(|c| (f32::from(c) * smoke_tint).min(255.0) as u8);
             for (j, &at) in b.smoke.iter().enumerate().take(255) {
                 let smoke = Burst {
                     at: [at[0], at[1], at[2] + metres(0.5)],
@@ -335,8 +402,8 @@ impl FireView {
                     count: 1,
                     kind: ParticleKind::Smoke,
                     life: [3.5, 6.0],
-                    size: [metres(0.7), metres(1.1)],
-                    color: smoke_color,
+                    size: [metres(0.7) * thick, metres(1.1) * thick],
+                    color: tint,
                     scatter: metres(0.6),
                     seed: 0,
                 };

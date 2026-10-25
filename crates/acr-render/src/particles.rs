@@ -104,6 +104,16 @@ impl ParticleKind {
         }
     }
 
+    /// How much of the wind a particle of this kind takes (0 none, 1 drifts with it).
+    fn carried(self) -> f32 {
+        match self {
+            Self::Smoke => 1.0,
+            Self::Ember => 0.6,
+            Self::Flame => 0.25,
+            _ => 0.0,
+        }
+    }
+
     /// Kinds that come to rest on the ground (the others vanish there or float).
     fn lies(self) -> bool {
         matches!(self, Self::Clod | Self::Mud | Self::Grass | Self::Splinter | Self::Sod | Self::Gore)
@@ -214,6 +224,10 @@ pub fn unit(seed: u32, k: u32) -> f32 {
     (hash(seed ^ hash(k.wrapping_mul(0x9e37_79b9))) >> 8) as f32 / (1u32 << 24) as f32
 }
 
+/// Seconds over which a new particle comes up to the wind's speed (a plume rises
+/// straight off the fire, then bends).
+const WIND_TAKE: f32 = 2.0;
+
 /// The pool: fixed capacity, swap-removed, and this frame's instances (hard first).
 pub struct Particles {
     pool: Vec<Particle>,
@@ -223,6 +237,9 @@ pub struct Particles {
     soft_from: usize,
     /// Bursts cut short because the pool was full (since the start).
     pub dropped: u64,
+    /// The wind over the field (world px a second, x y): smoke drifts with it, more as it
+    /// rises and ages (#303); embers and flames lean a little. Zero leaves them as before.
+    pub wind: [f32; 2],
 }
 
 impl Default for Particles {
@@ -233,6 +250,7 @@ impl Default for Particles {
             instances: Vec::with_capacity(MAX_PARTICLES),
             soft_from: 0,
             dropped: 0,
+            wind: [0.0; 2],
         }
     }
 }
@@ -315,6 +333,11 @@ impl Particles {
             let keep = (1.0 - kind.drag() * dt).max(0.0);
             p.vel = math::scale(p.vel, keep);
             p.pos = math::add(p.pos, math::scale(p.vel, dt));
+            let carried = kind.carried() * (p.age / WIND_TAKE).min(1.0) * dt;
+            if carried > 0.0 {
+                p.pos[0] += self.wind[0] * carried;
+                p.pos[1] += self.wind[1] * carried;
+            }
             if kind.floats() {
                 // Dust, smoke and fire float: they never sink into the ground (the glow lies
                 // on it).
@@ -602,6 +625,24 @@ mod tests {
             p.step(1.0 / 60.0, &|_, _| 0.0);
         }
         assert_eq!(p.live(), 0);
+    }
+
+    #[test]
+    fn smoke_drifts_with_the_wind() {
+        let mean_x = |wind: [f32; 2], kind| {
+            let mut p = Particles { wind, ..Particles::default() };
+            p.emit(&Burst { dir: [0.0, 0.0, 1.0], ..fountain(5, 20, kind) });
+            for _ in 0..120 {
+                p.step(1.0 / 60.0, &|_, _| 0.0);
+            }
+            p.pool.iter().map(|q| q.pos[0]).sum::<f32>() / p.pool.len().max(1) as f32
+        };
+        let still = mean_x([0.0; 2], ParticleKind::Smoke);
+        let blown = mean_x([50.0, 0.0], ParticleKind::Smoke);
+        // Two seconds at a speed that comes up over the first two: about half of 100 px.
+        assert!(blown - still > 35.0 && blown - still < 60.0, "{still} {blown}");
+        // Dust stays where it was.
+        assert_eq!(mean_x([50.0, 0.0], ParticleKind::Dust), mean_x([0.0; 2], ParticleKind::Dust));
     }
 
     #[test]
