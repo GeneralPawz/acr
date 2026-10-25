@@ -133,9 +133,6 @@ const CADENCE: [f32; 2] = [0.5, 1.8];
 const CLEAR: f32 = 0.05;
 /// How far a swinging foot's toes clear the ground over their stance height (m).
 const TOE_CLEAR: f32 = 0.04;
-/// How far the clip's ankle rises over its stance height before a carrying foot rolls over
-/// its ball (m).
-const HEEL_OFF: f32 = 0.005;
 
 /// The gait layer of the 3D view.
 pub struct Gaits {
@@ -195,7 +192,8 @@ impl Gaits {
             })
             .collect();
         let low = points.iter().flatten().map(|p| p.z).fold(f32::MAX, f32::min);
-        // A run's flights travel on (`MOTION*`); a crawl's gaps between its hands do not.
+        // A run's body travels evenly over its flights (`MOTION*`); a crawl's gaps between its
+        // hands do not travel.
         let cycle = Cycle::measure(&points, low + 0.05, kind == Kind::Walk);
         let lift = std::array::from_fn(|e| points.iter().map(|p| p[e].z).fold(f32::MAX, f32::min));
         // The toe's lowest height while its foot stands.
@@ -417,7 +415,7 @@ impl Gaits {
                 && carries
                 && hop.is_none()
                 && clipm.cycle.support.contains(&None)
-                && anim.z - ground(anim) - lift > HEEL_OFF
+                && anim.z - ground(anim) - lift > gait::HEEL_OFF
             {
                 let stretch = |p: Vec3| p + fwd * ((p - pelvis).dot(fwd) * (stride - 1.0));
                 let o = stretch(rig.joint(skins, toes[e])) - stretch(joint);
@@ -501,7 +499,12 @@ impl Gaits {
             // clear it in the swing: up to `TOE_CLEAR` as the foot rises from its stance height.
             if clipm.kind == Kind::Walk && man.balls[e].is_none() {
                 let (ankle, tip) = (rig.joint(skins, chain[2]), rig.joint(skins, toes[e]));
-                let risen = ((ankle.z - ground(ankle) - clipm.lift[e]) / 0.04).clamp(0.0, 1.0);
+                let mut risen = ((ankle.z - ground(ankle) - clipm.lift[e]) / 0.04).clamp(0.0, 1.0);
+                if clipm.cycle.support.contains(&None) {
+                    // A run's foot leaves its ball risen: its toes clear over the release, not at
+                    // once.
+                    risen *= 1.0 - man.contacts[e].release;
+                }
                 let floor = ground(tip) + clipm.toe[e] - 0.005 + TOE_CLEAR * risen;
                 let d = tip - ankle;
                 if tip.z < floor && d.length() > 1e-3 {

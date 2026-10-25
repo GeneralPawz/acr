@@ -183,6 +183,9 @@ impl Contact {
     }
 }
 
+/// How far a carrying ankle rises over its lowest before a run's foot rolls over its ball (m).
+pub const HEEL_OFF: f32 = 0.005;
+
 /// Samples of a looping clip.
 pub const SAMPLES: usize = 48;
 
@@ -201,9 +204,11 @@ impl Cycle {
     /// Measures a clip: `points[i][e]` is effector `e`'s position at sample `i` in the
     /// body's frame (forward is `-y`, as skeleton H). The lowest effector within `reach` of
     /// the ground (`z` under `ground_z`) carries; the body travels as far as it is pushed back.
-    /// With `flight`, a sample no effector carries (a run's both feet up) carries the body on
-    /// at the speed of the stance before it and the stance after it (each its median step:
-    /// the foot flat, not its landing or toe-off).
+    /// With `flight` a clip with flights (samples no effector carries: a run's both feet
+    /// up) travels evenly, as its body does: each sample by the median step of the samples
+    /// that carry (the foot flat; not its landing, its roll onto the ball or the toe-off,
+    /// which move the ankle slower than the body). A clip without flights measures as
+    /// without `flight`.
     pub fn measure(points: &[Vec<Vec3>], ground_z: f32, flight: bool) -> Cycle {
         let n = points.len().min(SAMPLES);
         let mut support = [None; SAMPLES];
@@ -219,25 +224,11 @@ impl Cycle {
                 step[i] = (q.y - p.y).max(0.0);
             }
         }
-        if flight && support[..n].iter().any(Option::is_some) {
-            // The median step of the stance reached from sample `i` going `dir` (±1), looping.
-            let stance = |i: usize, dir: usize| {
-                let mut j = i;
-                while support[j].is_none() {
-                    j = (j + dir) % n;
-                }
-                let mut got = Vec::new();
-                while support[j].is_some() && got.len() < n {
-                    got.push(step[j]);
-                    j = (j + dir) % n;
-                }
-                got.sort_by(f32::total_cmp);
-                got[got.len() / 2]
-            };
-            let flight: Vec<f32> = (0..n)
-                .map(|i| if support[i].is_some() { step[i] } else { 0.5 * (stance(i, n - 1) + stance(i, 1)) })
-                .collect();
-            step[..n].copy_from_slice(&flight);
+        if flight && support[..n].iter().any(Option::is_some) && support[..n].contains(&None) {
+            let mut carried: Vec<f32> = (0..n).filter(|&i| support[i].is_some()).map(|i| step[i]).collect();
+            carried.sort_by(f32::total_cmp);
+            let even = carried[carried.len() / 2];
+            step[..n].fill(even);
         }
         let length: f32 = step.iter().sum();
         let mut progress = [0.0f32; SAMPLES + 1];
@@ -357,7 +348,7 @@ mod tests {
                 vec![foot(0.0), foot(0.5)]
             })
             .collect();
-        Cycle::measure(&pts, 0.05, true)
+        Cycle::measure(&pts, 0.05, false)
     }
 
     #[test]

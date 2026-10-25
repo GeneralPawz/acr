@@ -427,8 +427,8 @@ def _sole(f):
 
 def gait_measure(g, samples=48):
     """What the gait layer measures of a cycle (`Cycle::measure`): {"stride_m" (travel of the
-    lowest ankle within 5 cm of its lowest height; a sample none carries goes on at the mean
-    of the stances before and after it), "flight" (share with both soles > 1 cm
+    lowest ankle within 5 cm of its lowest height; a cycle with samples none carries travels
+    evenly at the median step of the carrying ones), "flight" (share with both soles > 1 cm
     up), "clear_m" (lowest sole point of the left foot in mid-swing), "swing_pitch_deg"
     (its pitch, toes up positive, at mid-swing)}."""
     rows = [gait_frame(g, i / samples) for i in range(samples)]
@@ -439,18 +439,10 @@ def gait_measure(g, samples=48):
         support.append(r["feet"][e][1] < low + 0.05)
         steps.append(max(r["feet"][e][0] - rows[(i + 1) % samples]["feet"][e][0], 0.0) if support[-1] else 0.0)
 
-    def stance(i, d):
-        j = i
-        while not support[j]:
-            j = (j + d) % samples
-        got = []
-        while support[j] and len(got) < samples:
-            got.append(steps[j])
-            j = (j + d) % samples
-        return sum(got) / len(got)
-
-    if any(support):
-        steps = [s if support[i] else 0.5 * (stance(i, -1) + stance(i, 1)) for i, s in enumerate(steps)]
+    if any(support) and not all(support):
+        # A run travels evenly: every sample by the median step of the carrying ones.
+        carried = sorted(s for s, on in zip(steps, support) if on)
+        steps = [carried[len(carried) // 2]] * samples
     travel = sum(steps)
     flight = sum(1 for r in rows if all(_sole(f) > 0.01 for f in r["feet"])) / samples
     clear, pitch, mid = 1.0, 0.0, 1.0

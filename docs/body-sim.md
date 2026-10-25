@@ -456,22 +456,31 @@ nearest the window centre that no ragdoll holds; `ACR_NO_GAIT` turns it off).
     dorsiflexed, the run leant 13° with two flights) and `stats.json` `gait` holds what this
     layer measures: walk 1.31 m in 0.75 s, run 1.51 m in 0.58 s of a 2.4 m authored stride.
     The run stayed short because `Cycle::measure` credited no travel while both ankles are
-    over 5 cm (the flight). Now (`MOTION*` clips only; a crawl's gaps stay uncounted) a
-    sample nothing carries travels at the median step of the stances before and after it:
-    the run measures 2.08 m (0.58 s), walk 1.31 m and crawl 0.39 m unchanged. Still short of
-    the authored 2.4 m: the ankle of a foot rolling onto its ball moves back slower than the
-    body. The run clip's stance foot had hit the ankle's -8° limit (`FOOT_X`) and pushed its
-    ball 2.6–4.7 cm into the ground; `RUN` now allows 20° (`ankle_up`, AAOS) and lifts the
-    heel where that is not enough (`roll`), and in game a run's carrying foot rolls over its
-    held ball once the clip lifts its ankle 5 mm (`HEEL_OFF`, `Man::balls`). Foot slide per
-    frame, mm per metre (RX 9060 XT VM, `ACR-analysis/stride/flight/{flat,slope,rough}.json`,
-    `footterrain/an.py`; before = 803c775):
+    over 5 cm (the flight). Now a `MOTION*` clip with flights travels evenly, as its body
+    does: every sample by the median step of the carrying samples (the foot flat; landing,
+    roll and toe-off move the ankle slower than the body). The run measures 2.29 m (0.58 s,
+    the exported clip's flat-foot step is 4.6 % under the authored 2.4 m); walk 1.31 m and
+    crawl 0.39 m keep their measure (no flights; a crawl's gaps are never credited). The run
+    clip's stance foot had hit the ankle's -8° limit (`FOOT_X`) and pushed its ball 2.6–4.7 cm
+    into the ground; `RUN` now allows 20° (`ankle_up`, AAOS) and lifts the heel where that is
+    not enough (`roll`). In game a run's carrying foot rolls over its held ball once the clip
+    lifts its ankle `gait::HEEL_OFF` (5 mm; `Man::balls`), and its toes clear over the
+    release instead of at once. Foot slide per frame, mm per metre (RX 9060 XT VM,
+    `ACR-analysis/stride/flight/{flat,slope,rough}.json`; `footterrain/an.py`, and `an2.py`,
+    which takes the toe as the contact while it is down and the ankle over 5 mm up: an ankle
+    turning about a held ball is no slide; before = 803c775):
 
     | Man | flat | slope 8° | rough |
     |---|---|---|---|
-    | walk EngM18 | 6 → 6 | 13 → 13 | 7 → 7 |
-    | run IroLut | 40 → 13 | 53 → 8 | 44 → 9 |
-    | run toes, lowest (mm) | -31 → 10 | -32 → -1 | -31 → -17 |
+    | walk EngM18 (an.py) | 6 → 6 | 13 → 13 | 7 → 7 |
+    | run IroLut (an.py) | 40 → 8 | 53 → 6 | 44 → 14 |
+    | run IroLut (an2.py) | 41 → 5 | 53 → 6 | 44 → 10 |
+    | run toes, lowest (mm) | -31 → 11 | -32 → 11 | -31 → -17 |
+
+    What is left of the run's slide is the ankle turning 5–7 mm a frame about the held ball
+    while that ball sits 16–21 mm up (over `an2.py`'s 15 mm toe window; the ball itself moves
+    0–1 mm a frame), and 3 mm moves at the heel strike. Main's 1.04 m run measured 3 mm/m
+    with its toes 31 mm in the ground.
   - **Limp:** the 0.61 m "good foot" slide of the per-tick measure was the measure: the
     lower foot of two ticks and a 3 cm height window caught the dragged bad foot (it
     scrapes by design) and the good foot's toe-off. Per frame the good foot slid 0.27 m in
