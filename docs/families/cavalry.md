@@ -169,7 +169,14 @@ SPEC `kit` (`cavalry_kit.KITS`: `d18` the 18th-century dragoons, `d17` EngD17/Fr
 | `waist_belt` | round the waist (`kit_hd.ring_path`, 45 mm), a buckle over its open ends | as above; buckle on `hips` |
 | `pouch` | `gear_hd` cartridge box (0.85 scale) over the right hip, seated on the coat on its lowest gap (`line_kit.seat_back`, quantile 0) | rigid `hips` |
 | `scabbard` | `gear_hd.scabbard_mesh` (sabre 0.88 m, sword 0.82 m) from the left of the waist belt, 40° back and 12° out, seated `SADDLE_GAP` outside hide, saddle, saddlecloth and the rider's leg in the seated pose; the hilt (`gear_hd` hanger hilt) in its mouth on `socket.hip_l`, hidden with the sheathed blade while the drawn one shows | rigid `hips` (goes with the thrown rider) |
-| `portmanteau`, `roll` | the valise (0.50 x 0.095 m) and the rolled blanket (0.58 x 0.06 m) behind the cantle, laid down onto the croup slice by slice in `STAND` (`cavalry_kit.sag`, `reseat`) | rigid on the horse bone of `HORSE_BONES` with the fewest hide vertices inside over the gaits (`spine_02`) |
+| `portmanteau`, `roll` | the valise (0.50 x 0.095 m) and the rolled blanket on it (0.58 x 0.06 m), lying across the croup behind the cantle, laid down in `STAND` (`cavalry_kit.sag`, `reseat`: stiff, bending at most `BEND` 15 mm; not decimated, which crumpled them) | rigid on the horse bone of `HORSE_BONES` with the fewest hide vertices inside over the gaits (`saddle` or `spine_02`) |
+
+The scabbard swings out about its mouth (`swing`, at most 8°) to the angle with the fewest
+hits over the leaning clips. Tried and dropped for the valise: lifting it clear of every frame
+(6–11 cm off the croup at STAND) and skinning it like the hide under it
+(the back bones swung it into the rider at the walk). The croup flexes 6–11 cm
+against any one back bone in the gallop and the reiter's trot, so the valise still meets it
+there (`stats.json` `kit.collisions`).
 
 The kit replaces the ribbon `belt` (`bd.strap`) and the box sabre (`gear.sabre`). The saddle's
 pistol holsters stay (`military_saddle`). No `acr_lod` nodes; every material through the

@@ -19,6 +19,11 @@ class Sag(unittest.TestCase):
         self.assertAlmostEqual(cavalry_kit.sag_shifts(cols, 0.0)[1], -0.4)
 
 
+    def test_bend_capped_below_the_highest_support(self):
+        cols = [[(1.0, 0.5)], [(1.0, 0.6)], [(1.0, 0.5)]]
+        self.assertEqual([round(x, 3) for x in cavalry_kit.sag_shifts(cols, 0.0, 0.02)], [-0.42, -0.4, -0.42])
+
+
 class Kit(unittest.TestCase):
     def test_strap_end_is_lowest_on_its_side(self):
         pts = [(0.1, 0, 1.4), (-0.17, 0, 0.95), (-0.15, 0.1, 0.97), (0.2, 0, 0.9)]

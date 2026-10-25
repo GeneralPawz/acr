@@ -46,7 +46,7 @@ SADDLE_PIECES = ("portmanteau", "roll")
 # Source material of the meshes -> cavalry palette key.
 MAT_KEY = {"leather": "tack", "buff": "belts", "brass": "brass", "steel": "metal", "iron": "metal",
            "wood": "wood", "canvas": "saddlecloth", "cord": "belts", "walnut": "wood"}
-TRIS = {"pouch": 200, "scabbard": 160, "hilt": 140, "swivel": 80, "buckle": 60, "portmanteau": 700, "roll": 450}
+TRIS = {"pouch": 200, "scabbard": 160, "hilt": 140, "swivel": 80, "buckle": 60, "portmanteau": 1200, "roll": 900}  # the valise and roll whole: decimated they crumpled
 CARBINE_W, WAIST_W = 0.070, 0.045  # m: a dragoon's broad carbine belt; the sword belt
 WAIST_Z = 1.00  # m above the rider's origin: the waist belt's centre line
 GAP = 0.005  # m: an item off the surface it rests on
@@ -57,6 +57,10 @@ SCABBARD_TILT = (40.0, -12.0)  # degrees: the tip back (X), and out from the fla
 PORTMANTEAU = (0.50, 0.095)
 ROLL = (0.58, 0.060)
 HORSE_BONES = ("saddle", "spine_02", "spine_01")
+BEND = 0.015  # m: a stuffed valise bends at most this much over the croup (`sag`)
+SWING = (0.0, 4.0, 8.0)  # degrees the scabbard may swing out about its mouth (at 30 it stood off like a wing and still met the saddle: its mouth meets it in the leans)
+LEAN = ("ATTACK", "ATTACK_CUT_DOWN", "ATTACK_DOWN", "ATTACK_CUT_DOWN_R", "ATTACK_CUT_DOWN_L", "ATTACK_CUT_MID",
+        "ATTACK_CUT_HIGH", "ATTACK1", "GALLOP")
 GAITS = ("MOTION_L", "MOTION_R", "MOTION_L1", "MOTION_R1", "WALK", "STAND")
 INSIDE_M = 0.003  # m: a vertex this deep inside a surface counts (`kit_hd.INSIDE_M`)
 
@@ -72,10 +76,12 @@ def material_keys(slot_names):
     return [MAT_KEY[n.rsplit(".", 1)[-1]] for n in slot_names]
 
 
-def sag_shifts(columns, clear):
+def sag_shifts(columns, clear, bend=None):
     """Per slice: the move along -Z that rests the slice `clear` above the surface under
     it. `columns` [(item z, surface z or None)] per slice, vertices of the slice; a slice
-    with no surface under it takes its neighbours' mean (pure Python, tested)."""
+    with no surface under it takes its neighbours' mean. `bend`: no slice moves more than
+    this below the slice that moves least (a stiff item rests on its highest support;
+    pure Python, tested)."""
     out = []
     for col in columns:
         need = [s + clear - z for z, s in col if s is not None]
@@ -84,6 +90,9 @@ def sag_shifts(columns, clear):
         if v is None:
             near = [x for x in out[max(0, i - 2):i + 3] if x is not None]
             out[i] = sum(near) / len(near) if near else 0.0
+    if bend is not None and out:
+        top = max(out)
+        out = [max(v, top - bend) for v in out]
     return out
 
 
@@ -184,7 +193,7 @@ def sag(ob, tree, clear=GAP, slices=14):
         i = min(slices - 1, int((v.co.x - x0) / w))
         hit = tree.ray_cast(Vector((v.co.x, v.co.y, v.co.z + 1.0)), Vector((0, 0, -1)), 3.0)[0]
         cols[i].append((v.co.z, hit.z if hit is not None and hit.z < v.co.z + 0.5 else None))
-    sh = sag_shifts(cols, clear)
+    sh = sag_shifts(cols, clear, BEND)
     for v in vs:
         t = (v.co.x - x0) / w - 0.5
         i = max(0, min(slices - 1, int(math.floor(t))))
@@ -283,7 +292,8 @@ def rider_items(ch, name, kit, origin, spec):
         st["swivel"] = {"shift_m": kit_hd.seat([ob], belt_tree, m, (-1.0, 0.0, 0.0), clear=0.002)[0]}
         _finish(ch, ob, "swivel", TRIS["swivel"], st, hips)
         ch.cav_kit["items"]["swivel"] = ob
-    if "waist_belt" in belts:
+    # No buckle under a cuirass: pushed out by it onto the pommel (SpnRei 27 vertices at STAND).
+    if "waist_belt" in belts and not spec.get("armour"):
         ob = gear_hd.buckle_mesh(f"{name}.buckle")
         c = Vector((o.x, o.y - 0.2, o.z + WAIST_Z))
         hit = belt_tree.ray_cast(c, Vector((0, 1, 0)), 0.5)[0]
@@ -320,6 +330,9 @@ def rider_items(ch, name, kit, origin, spec):
         shift, final = kit_hd.seat([ob], tree, world_m, (1.0, 0.0, 0.0), clear=SADDLE_GAP)
         gap = _out_gap(ob, tree, (1.0, 0.0, 0.0))
         _to_rest(ob, ch.arm, hips)
+        pb, A = ch.arm.pose.bones[hips], ch.arm.matrix_world
+        # The seated mouth at rest: the scabbard swings out about it (`swing`).
+        ch.cav_kit["mouth"] = (A @ pb.bone.matrix_local @ pb.matrix.inverted() @ A.inverted()) @ final.translation
         st["scabbard"] = {"shift_m": shift, "gap_m": gap, "length_m": length}
         _finish(ch, ob, "scabbard", TRIS["scabbard"], st, hips)
         ch.cav_kit["items"]["scabbard"] = ob
@@ -421,10 +434,15 @@ def _horse_bone(ch, clips):
         return None
     hide = ch.horse["mount"].meshes[0]
     gaits = [c for c in clips if c in GAITS]
+    # Rigid on one back bone, seated 0-10 mm in STAND. Tried and dropped (m2-cav-kit): lifted
+    # clear of every frame (6-11 cm off the croup at STAND), and skinned like the hide
+    # under it ( the back bones swing it into the rider at the walk, EngD18 WALK
+    # 392 hide and 256 rider vertices).
+    live = live_clips(clips)
     tried = {}
     for bone in HORSE_BONES:
         reseat(ch, bone)
-        tried[bone] = collide(ch.arm, [(k, ob, [hide]) for k, ob in items.items()], gaits, steps=4)["total"]
+        tried[bone] = collide(ch.arm, [(k, ob, [hide]) for k, ob in items.items()], [c for c in live if c in GAITS], steps=4)["total"]
     best = min(HORSE_BONES, key=lambda b: (tried[b], HORSE_BONES.index(b)))
     gaps = reseat(ch, best)
     for k in items:
@@ -457,6 +475,53 @@ def reseat(ch, bone):
         kit_hd.rigid(ob, ch.arm, bone)
     ch.arm.animation_data.action = None
     return gaps
+
+
+def live_clips(clips):
+    """The clips with the horse on its feet (not the falls, corpses and crawls)."""
+    return [c for c in clips if not c.startswith(("DEATH", "CRAWL", "WRITHE"))]
+
+
+def swing(ch, clips):
+    """Swings the scabbard out about its mouth (`SWING`, the hilt with it) to the least
+    angle that keeps it out of hide, saddle and saddlecloth over the leaning clips."""
+    from mathutils import Matrix
+
+    items = ch.cav_kit["items"]
+    ob = items.get("scabbard")
+    if ob is None:
+        return None
+    hz = ch.horse["mount"]
+    others = [hz.meshes[0], *[x for x in ch.layers["gear"] if ch.keys.get(x.name) == "saddle"], *ch.horse.get("extra", [])]
+    mouth = ch.cav_kit["mouth"]
+    lean = [c for c in clips if c in LEAN]
+    base = [v.co.copy() for v in ob.data.vertices]
+    tried, done = {}, 0.0
+    for a in SWING:
+        R = Matrix.Translation(mouth) @ Matrix.Rotation(math.radians(-a), 4, "Y") @ Matrix.Translation(-mouth)
+        for v, c in zip(ob.data.vertices, base):
+            v.co = R @ c
+        tried[a] = collide(ch.arm, [("scabbard", ob, others)], lean, steps=6)["total"]
+        done = a
+        if tried[a] == 0:
+            break
+    best = min(tried, key=lambda k: (tried[k], k))
+    R = Matrix.Translation(mouth) @ Matrix.Rotation(math.radians(-best), 4, "Y") @ Matrix.Translation(-mouth)
+    for v, c in zip(ob.data.vertices, base):
+        v.co = R @ c
+    hilt = ch.held.get("sabre")
+    if hilt is not None:
+        import bpy
+
+        ch.arm.animation_data.action = None
+        from . import armature as am
+
+        am.pose(ch.arm, ch.poses[ch.ride], prefix=ch.prefix)
+        bpy.context.view_layer.update()
+        W = _from_rest(ch.arm, ch.prefix + "hips")
+        hilt.matrix_world = W @ R @ W.inverted() @ hilt.matrix_world
+    _ = done
+    return {"tried": tried, "deg": best}
 
 
 def collide(arm, groups, clips, steps=6):
@@ -543,6 +608,7 @@ def report(ch, clips):
     kit = getattr(ch, "cav_kit", None)
     if kit:
         st["horse_bone"] = _horse_bone(ch, clips)
+        st["scabbard_swing"] = swing(ch, clips)
         items = dict(kit["items"])
         sad = kit["saddle"]
     else:
