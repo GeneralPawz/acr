@@ -14,6 +14,7 @@
 use std::collections::HashMap;
 
 use acr_render::ground_state::{GroundState, Stamp, metres};
+use acr_render::math::Vec3;
 use acr_render::particles::{Burst, ParticleKind, ParticleSink, hash, unit};
 use acr_render::terrain::TerrainData;
 use acr_sim::World;
@@ -42,6 +43,8 @@ const TICKS_PER_SECOND: f32 = 10.0;
 const UNIT_KEY: u64 = 1 << 63;
 /// Source keys of buildings (#303): this bit, the unit, the anchor and the emitter.
 const BUILDING_KEY: u64 = 1 << 62;
+/// Source keys of fire arrows stuck in buildings (#304): this bit and the place.
+const ARROW_KEY: u64 = 1 << 61;
 /// Dust of a collapse, and the colour of its debris.
 const DUST: [u8; 3] = [112, 102, 88];
 const DEBRIS: [u8; 3] = [60, 46, 34];
@@ -65,7 +68,8 @@ pub struct FireView {
 
 fn fire_key(f: &GroundFire) -> u64 {
     // Bits 0-3 tell a fire's emitters apart.
-    ((f.start << 4) ^ (u64::from(f.x as u32) << 24) ^ (u64::from(f.y as u32) << 44)) & !(UNIT_KEY | 0xF)
+    ((f.start << 4) ^ (u64::from(f.x as u32) << 24) ^ (u64::from(f.y as u32) << 44))
+        & !(UNIT_KEY | BUILDING_KEY | ARROW_KEY | 0xF)
 }
 
 impl FireView {
@@ -288,11 +292,62 @@ impl FireView {
         self.burn.retain(|&i, _| (i as usize) < units);
         let frame = self.frame;
         // Buildings emit after this (`buildings`), with the last frame's number.
-        self.carry.retain(|k, (_, used)| *used == frame || (k & BUILDING_KEY != 0 && frame.wrapping_sub(*used) <= 1));
+        self.carry.retain(|k, (_, used)| {
+            *used == frame || (k & (BUILDING_KEY | ARROW_KEY) != 0 && frame.wrapping_sub(*used) <= 1)
+        });
     }
 }
 
 impl FireView {
+    /// The small fires of fire arrows stuck in buildings (#304, `building_hits`): at each
+    /// point (world pixels) a tongue of flame or two by its strength (0..1), sparks and a
+    /// thin smoke, for one frame of `dt` seconds.
+    pub fn arrow_fires(&mut self, list: &[(Vec3, f32)], sink: &mut dyn ParticleSink, dt: f32, rain: bool) {
+        let dt = dt.clamp(0.0, 0.1);
+        let (flame_k, smoke_k, smoke_color) = if rain { (0.6, 2.0, STEAM) } else { (1.0, 1.0, SMOKE) };
+        for &(at, strength) in list {
+            // By its place (a building does not move).
+            let place = hash(at[0].to_bits() ^ hash(at[1].to_bits() ^ hash(at[2].to_bits())));
+            let key = ARROW_KEY | (u64::from(place) << 4);
+            let flames = Burst {
+                at,
+                dir: [0.0, 0.0, 1.0],
+                spread: 0.2,
+                speed: [12.0, 30.0],
+                count: 1,
+                kind: ParticleKind::Flame,
+                life: [0.3, 0.55],
+                size: [metres(0.1) * flame_k, metres(0.2) * flame_k],
+                color: FLAME,
+                scatter: metres(0.06),
+                seed: 0,
+            };
+            self.emit(sink, key, dt, 14.0 * strength * flame_k, flames);
+            let embers = Burst {
+                spread: 0.5,
+                speed: [20.0, 60.0],
+                kind: ParticleKind::Ember,
+                life: [0.5, 1.2],
+                size: [0.4, 0.8],
+                color: EMBER,
+                ..flames
+            };
+            self.emit(sink, key | 1, dt, 2.0 * strength * flame_k, embers);
+            let smoke = Burst {
+                at: [at[0], at[1], at[2] + metres(0.3)],
+                spread: 0.3,
+                speed: [10.0, 22.0],
+                kind: ParticleKind::Smoke,
+                life: [2.0, 3.5],
+                size: [metres(0.15), metres(0.28)],
+                color: smoke_color,
+                scatter: metres(0.05),
+                ..flames
+            };
+            self.emit(sink, key | 2, dt, 2.5 * strength * smoke_k, smoke);
+        }
+    }
+
     /// Flames, embers and smoke of burning buildings, and the dust and debris of those
     /// falling in (#303, `ruin_view`), for one frame of `dt` seconds.
     pub fn buildings(

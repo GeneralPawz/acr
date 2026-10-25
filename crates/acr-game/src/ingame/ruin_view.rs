@@ -202,7 +202,7 @@ pub fn chunks(model: &ModelData, broken: bool) -> Vec<Chunk> {
         });
         // Timber or masonry by the piece's mean colour (warm is wood, as `model.wgsl` `scarred`).
         let mean: Vec3 = std::array::from_fn(|c| colour[c] / weight.max(1e-6));
-        let wood = (mean[0] - mean[2]) / mean.iter().fold(0.02f32, |m, &c| m.max(c)) > WOOD_WARMTH;
+        let wood = is_wood(mean);
         let mut piece = model.clone();
         if !broken {
             (piece.primitives, piece.images) = (primitives, images.clone());
@@ -357,9 +357,16 @@ fn lerp_vertex(c: &[&Vertex; 3], b: &Vec3) -> Vertex {
     v
 }
 
+/// Timber rather than masonry by a surface's mean colour (linear): warm is wood, as
+/// `model.wgsl` `scarred` tells them.
+pub fn is_wood(mean: Vec3) -> bool {
+    (mean[0] - mean[2]) / mean.iter().fold(0.02f32, |m, &c| m.max(c)) > WOOD_WARMTH
+}
+
 /// The texel (linear RGB) of `img` at `uv`, wrapped.
-fn sample(img: &acr_render::model::Image, uv: [f32; 2]) -> Vec3 {
-    if img.width == 0 || img.height == 0 {
+pub fn sample(img: &acr_render::model::Image, uv: [f32; 2]) -> Vec3 {
+    // No pixels for a texture kept encoded until upload (KTX2, deferred PNG).
+    if img.width == 0 || img.height == 0 || img.rgba.len() < (img.width * img.height * 4) as usize {
         return [1.0; 3];
     }
     let x = ((uv[0].rem_euclid(1.0) * img.width as f32) as u32).min(img.width - 1);
@@ -614,7 +621,12 @@ fn invert(r: &[[f32; 4]; 3]) -> Option<[[f32; 3]; 3]> {
 /// `image` halved (2 × 2 means) until its longer side is at most `max`.
 fn shrink(image: &acr_render::model::Image, max: u32) -> acr_render::model::Image {
     let mut img = image.clone();
-    while img.width.max(img.height) > max && img.width >= 2 && img.height >= 2 {
+    // A texture kept encoded until upload (KTX2, deferred PNG) has no pixels here.
+    while img.width.max(img.height) > max
+        && img.width >= 2
+        && img.height >= 2
+        && img.rgba.len() >= (img.width * img.height * 4) as usize
+    {
         let (w, h) = (img.width / 2, img.height / 2);
         let mut rgba = vec![0u8; (w * h * 4) as usize];
         for y in 0..h {

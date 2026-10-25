@@ -364,6 +364,7 @@ mod tests {
             injury: None,
             strike: None,
             critical: None,
+            fire: false,
         }
     }
 

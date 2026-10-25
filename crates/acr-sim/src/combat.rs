@@ -1306,6 +1306,8 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
     let mut dmg = dmg;
     let mut record =
         DeathRecord::of(if w.units[victim].burning { DeathCause::Burned } else { DeathCause::Unknown }, None);
+    // A fire weapon's round (`HitRecord::fire`, render only).
+    let mut fire = false;
     if let Some(s) = sender {
         let st = catalog.get(w.units[s].kind);
         if st.skill_bonus != 0 && att < 32 && st.skill_mask & (1 << att) != 0 {
@@ -1353,7 +1355,7 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
             let blow = region.map(|r| injure(w, victim, s, att, record.cause, r));
             let injury = blow.map(|b| b.injury);
             record.torn = injury.and_then(|i| i.outcome.torn());
-            record_hit(w, victim, s, record.cause, true, region, blow);
+            record_hit(w, victim, s, record.cause, true, region, blow, false);
             record_death(w, victim, record);
             die(w, victim);
             w.units[s].kills = w.units[s].kills.saturating_add(1);
@@ -1365,6 +1367,7 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
             && DeathCause::of_weapon(kind) == DeathCause::Cannonball
             && crate::wounds::has_regions(w, victim);
         let wf = if unlit { wf & !(FIRE | FIRE_SLOW) } else { wf };
+        fire = wf & (FIRE | FIRE_SLOW) != 0;
         if wf & FIRE != 0 {
             // X: set on fire at once (+0x3f = FIRELIMIT + 1).
             let v = &mut w.units[victim];
@@ -1394,7 +1397,7 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
     let region = injury.map(|i| region_of(i.part)).or(region);
     let fatal = injury.is_some_and(|i| i.outcome.kills());
     if let Some(s) = sender {
-        record_hit(w, victim, s, record.cause, w.units[victim].life <= dmg || fatal, region, blow);
+        record_hit(w, victim, s, record.cause, w.units[victim].life <= dmg || fatal, region, blow, fire);
     }
     if w.units[victim].life > dmg && !fatal {
         w.units[victim].life -= dmg;
@@ -1758,6 +1761,10 @@ pub struct HitRecord {
     pub strike: Option<Strike>,
     /// The vital zone the blow found (a critical hit), if any.
     pub critical: Option<Vital>,
+    /// A fire weapon's round (`F`/`X` of `NRES.DAT [WEAPONS]`, e.g. `OSTRELA` fire arrows)
+    /// that may light what it strikes: the renderer scorches where it sticks. Render only,
+    /// as the whole record.
+    pub fire: bool,
 }
 
 /// The strike of a scripted hit ([`scripted_hit`]): by its cause, a rider's blow a cut.
@@ -1847,6 +1854,7 @@ pub fn scripted_hit(w: &mut World, victim: usize, hit: ScriptedHit) -> Option<us
         injury,
         strike: injury.map(|i| scripted_strike(cause, mounted, maul, i, was_down)),
         critical: None,
+        fire: false,
     });
     let index = w.hits.len() - 1;
     if killed {
@@ -1865,6 +1873,7 @@ pub fn scripted_hit(w: &mut World, victim: usize, hit: ScriptedHit) -> Option<us
 }
 
 /// Notes a hit of `sender` on `victim` (render only, not hashed).
+#[allow(clippy::too_many_arguments)]
 fn record_hit(
     w: &mut World,
     victim: usize,
@@ -1873,6 +1882,7 @@ fn record_hit(
     killed: bool,
     region: Option<crate::wounds::HitRegion>,
     blow: Option<Blow>,
+    fire: bool,
 ) {
     let injury = blow.map(|b| b.injury);
     let (strike, critical) = blow.map_or((None, None), |b| (b.strike, b.critical));
@@ -1899,6 +1909,7 @@ fn record_hit(
         injury,
         strike,
         critical,
+        fire,
     });
 }
 

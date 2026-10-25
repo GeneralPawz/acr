@@ -407,6 +407,10 @@ pub struct ThreeD {
     building_hits: super::building_hits::BuildingHits,
     scars: HashMap<usize, acr_render::model_renderer::Scars>,
     arrow_model: Option<usize>,
+    /// The rubble knocked out of holes: stone blocks and boards (`procedural_rubble`).
+    rubble_models: Option<[usize; 2]>,
+    /// Fire arrows burning on buildings this frame (world pixels, strength).
+    arrow_fires: Vec<([f32; 3], f32)>,
     /// Frames and time since the last performance line in the log.
     frames: u32,
     since: Option<web_time::Instant>,
@@ -552,6 +556,8 @@ impl Default for ThreeD {
             building_hits: Default::default(),
             scars: HashMap::new(),
             arrow_model: None,
+            rubble_models: None,
+            arrow_fires: Vec::new(),
             frames: 0,
             since: None,
             pile_us: 0,
@@ -788,6 +794,12 @@ impl ThreeD {
         let renderer = self.renderer.get_or_insert_with(|| ModelRenderer::new(device, queue, format));
         if self.arrow_model.is_none() {
             self.arrow_model = Some(renderer.add_model(device, queue, acr_render::damage::procedural_arrow()));
+        }
+        if self.rubble_models.is_none() {
+            self.rubble_models = Some(
+                [false, true]
+                    .map(|wood| renderer.add_model(device, queue, acr_render::damage::procedural_rubble(wood))),
+            );
         }
         self.depth.get_or_insert_with(|| DepthTarget::new(device, format));
         self.water.get_or_insert_with(|| acr_render::water::WaterRenderer::new(device, format));
@@ -1136,6 +1148,7 @@ impl ThreeD {
         self.wounds.take_hits(world.hits.iter(), now, self.gore, &facing);
         self.building_hits.take(world);
         self.scars.clear();
+        self.arrow_fires.clear();
         let mut arrows: Vec<acr_render::math::Mat4> = Vec::new();
         // The section overlays of the building being drawn (#302).
         let mut sections: Vec<usize> = Vec::new();
@@ -1385,7 +1398,9 @@ impl ThreeD {
                     }
                 }
                 // Holes, pocks, scorch and stuck arrows where rounds struck it (#304).
-                if let Some(scars) = self.building_hits.place(u, index, model, &inst, &look.sooted, &mut arrows) {
+                if let Some(scars) =
+                    self.building_hits.place(u, index, model, &inst, &look.sooted, &mut arrows, &mut self.arrow_fires)
+                {
                     self.scars.insert(self.instances.len(), scars);
                 }
             }
@@ -1594,6 +1609,30 @@ impl ThreeD {
             }
             self.instances.push(inst);
             self.shown.insert(u.id);
+        }
+        // Rubble knocked out of the holes (#304), lying for the battle.
+        let mut rubble = Vec::new();
+        self.building_hits.pieces(self.frame_seconds, &mut rubble);
+        if let Some(models) = self.rubble_models {
+            for (transform, wood) in rubble {
+                self.instances.push(ModelInstance {
+                    model: models[usize::from(wood)],
+                    clip: None,
+                    time: 0.0,
+                    transform,
+                    decay: 0.0,
+                    morphs: [0.0; 3],
+                    transparent: false,
+                    player: 0,
+                    wounds: Default::default(),
+                    sprayed: Default::default(),
+                    damage: Default::default(),
+                    look: None,
+                    uniform: None,
+                    drape: None,
+                    rise: None,
+                });
+            }
         }
         if let Some(arrow) = self.arrow_model {
             for transform in arrows {
@@ -1992,6 +2031,7 @@ impl ThreeD {
                 self.frame_seconds,
                 rain,
             );
+            self.fire.arrow_fires(&self.arrow_fires, &mut self.particles.particles, self.frame_seconds, rain);
         }
         self.shots.clear();
         self.update_cover(terrain, marks.as_deref().map(|m| &m.state));

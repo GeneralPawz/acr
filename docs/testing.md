@@ -136,7 +136,7 @@ its label to appear.
 | `{"cmd": "gputime", "frames": 30}` | draws `frames` (default 30) frames offscreen with the GPU timer on; answers `gputime` with the mean ms per segment, or why the device cannot time (docs/ground.md) |
 | `{"cmd": "frametimes", "frames": 60}` | draws `frames` (default 60) frames offscreen back to back, each waited for on the GPU; answers `frametimes` with `mean_ms`, `median_ms`, `max_ms`, `max_at`, `over_33ms` and the `textures` below (texture streaming hitches, docs/rendering-3d.md "Texture streaming") |
 | `{"cmd": "textures"}` | GPU memory of the model textures: `loaded_mb` (with their models), `streamed_mb` (resident streamed pictures), `total_mb`, `pending`, `loads`, `evictions` |
-| `{"cmd": "hit", "unit": 541, "cause": "musket", "region": "torso", "dir": [-1, 0], "energy": 80}` | a scripted hit (bench) |
+| `{"cmd": "hit", "unit": 541, "cause": "musket", "region": "torso", "dir": [-1, 0], "energy": 80}` | a scripted hit (bench); `"fire": true` marks it a fire weapon's round (`HitRecord::fire`, e.g. a fire arrow) |
 | `{"cmd": "record", "dir": "frames", "count": 20, "every": 3, "crop": [x, y, w, h]}` | `count` screenshots, one every `every` frames (= ticks in a game), as `<dir>/frame000.png`...; `prefix` changes `frame`; answers `paths` (only with `--drive-gpu`) |
 | `{"cmd": "quit"}` | ends the game |
 

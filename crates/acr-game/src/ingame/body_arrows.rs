@@ -364,6 +364,7 @@ mod tests {
             }),
             strike: None,
             critical: None,
+            fire: false,
         }
     }
 

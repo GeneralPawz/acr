@@ -1298,7 +1298,10 @@ particles, only with models on) draws fire from the simulation's state, render o
 - **Rain** (`weather`): flames 0.6 times as large and as many, twice the smoke, pale grey
   (steam) instead of dark.
 - **Particles** (`acr_render::particles`): new kinds `Flame` (rises at 90 px/s², a
-  teardrop of noise from white-yellow root to dull red tip), `Ember` (a twinkling spark),
+  teardrop of noise from white-yellow root to dull red tip; with volume (m2-bld-chunks):
+  three tongues in one quad, a wide dim sheath, the body and a bright core, each torn by
+  its own noise rolling up at its own speed and as bright as the way through a round
+  tongue is long, five value noises a fragment), `Ember` (a twinkling spark),
   `Glow` (a still, faint warm disc on the ground: the fire's light, cheaper than a point
   light) and `Smoke` (like dust, but rises, grows to four times its size and uses an
   arithmetic hash, as `sin` hashes of large arguments show blocks on dark smoke). The three
@@ -1543,10 +1546,32 @@ lost) next to an EngDo1 after 35; steps `ACR-analysis/genai/building-hits/steps.
 covers about half the window); an unhurt fort draws as on main (0.17 ms both).
 `3d.instances` 0.057 → 0.12–0.15 ms a frame. Frames: `ACR-analysis/genai/building-hits/`.
 
+- **Rubble (m2-bld-chunks):** a cannonball's hole and a shell's (a shell now bursts a hole
+  under its scorch) knock out 3–5 (shell 6–8) pieces, `damage::procedural_rubble`: a broken
+  block with pale broken ends, a stone block (0.06–0.14 m half size) or a board
+  (0.2–0.45 × 0.05–0.09 m) by the struck triangle's colour (`ruin_view::is_wood` of
+  material × texture × vertex colour at its middle; textures kept encoded until upload are
+  decoded once for this). They drop out of the hole outwards (a shell's fly further), fall
+  with gravity, bounce once and land on a face after whole quarter turns, and lie for the
+  battle: 600 in all (`MAX_PIECES`), the oldest go; a new game clears them. Instances
+  appended after the units, cast shadows.
+- **Fire arrows:** `HitRecord::fire` (render only, not hashed; set in `make_damage` from
+  the weapon's `F`/`X` flags, `OSTRELA`; the driver's `hit` takes `"fire": true`). The
+  arrow sticks as any arrow and leaves a small scorch (0.16–0.26 m) and a small fire there
+  (`FireView::arrow_fires`: a tongue or two, sparks, thin smoke) for 8 s
+  (`ARROW_FIRE_SECONDS`), on for as long as the building burns once it caught (the
+  original lights it after `FIRELIMIT` of them, `combat.rs` `FIRE_SLOW`, 0x4e8990); 8 per
+  building (`MAX_ARROW_FIRES`).
+
+Measured (m2-bld-chunks, render VM, RX 9060 XT, 1600×900, ten blazing buildings, steps
+`ACR-analysis/bld-fire/scripts/perf.json`, `models=all`): particles pass 0.96 ms on main,
+1.04–1.06 ms with the flames' volume below; sum of all passes 3.03–3.08 → 3.10–3.14 ms.
+Frames and sheets: `ACR-analysis/bld-chunks/` (`cmp_*.png`, steps `scripts/look.json`).
+
 Fire soot over a burning building's fires: "Burning, collapsing and ruined buildings
-(#303)", Stages. Open: fire arrows are not told from arrows in the hit record (no scorch
-from them yet); the record has no height (hashed); knocked-out chunks as geometry or debris
-pieces.
+(#303)", Stages. Open: the record has no height (hashed); grey weathered timber reads as
+stone to the colour test (EngDo1's rubble is stone blocks); rubble keeps one colour per
+material, not the wall's.
 
 ### Projectiles (#308)
 

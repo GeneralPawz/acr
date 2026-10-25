@@ -1041,6 +1041,7 @@ impl Ragdolls {
                 injury: None,
                 strike: None,
                 critical: None,
+                fire: false,
             };
             self.take_hit(&hit, d, now, true, terrain);
             let Some(a) = self.actors.get_mut(&v).filter(|a| a.slot != usize::MAX) else { continue };
@@ -1707,6 +1708,7 @@ mod tests {
             injury: Some(Injury { part, level, outcome: Outcome::Wound, energy: 80, cause: Cause::Musket }),
             strike: None,
             critical: None,
+            fire: false,
         };
         let name = |h: HitRecord| g.desc[struck_generic(&h, &g).0].name;
         assert_eq!(name(hit(Part::Head, 0)), "RigHead");

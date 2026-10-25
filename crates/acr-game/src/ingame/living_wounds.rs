@@ -343,6 +343,7 @@ mod tests {
             injury: Some(Injury { part, level: 160, outcome, energy: 100, cause: acr_sim::body::Cause::Musket }),
             strike: None,
             critical: None,
+            fire: false,
         }
     }
 

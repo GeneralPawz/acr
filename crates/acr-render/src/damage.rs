@@ -1123,6 +1123,54 @@ pub fn procedural_arrow() -> ModelData {
     single("stuck_arrow", vertices, indices, Tissue::None)
 }
 
+/// A piece of rubble knocked out of a building by a ball or shell (#304,
+/// `building_hits`): a block about 2 × 2 × 2 (half extents 1, scaled per piece by its
+/// instance matrix), its corners pushed in a little so it reads as broken; `wood` a weathered
+/// board (scaled flat and long), else a grey stone block with a paler broken face.
+pub fn procedural_rubble(wood: bool) -> ModelData {
+    // Corners (x, y, z in -1..1) pulled in by a fixed per-corner amount: no two edges alike.
+    const PULL: [f32; 8] = [0.12, 0.0, 0.2, 0.08, 0.05, 0.22, 0.0, 0.15];
+    let corner = |i: usize| -> Vec3 {
+        let p = [
+            if i & 1 != 0 { 1.0 } else { -1.0 },
+            if i & 2 != 0 { 1.0 } else { -1.0 },
+            if i & 4 != 0 { 1.0 } else { -1.0 },
+        ];
+        let k = 1.0 - PULL[i];
+        [p[0] * k, p[1] * k, p[2] * k]
+    };
+    let (outer, broken) = if wood {
+        ([0.26, 0.19, 0.12, 1.0], [0.5, 0.37, 0.21, 1.0])
+    } else {
+        ([0.25, 0.24, 0.22, 1.0], [0.36, 0.34, 0.31, 1.0])
+    };
+    // Faces as corner quads (outward winding) with their colour: the ends are the broken ones.
+    let faces: [([usize; 4], bool); 6] = [
+        ([1, 3, 7, 5], true),
+        ([0, 4, 6, 2], true),
+        ([2, 6, 7, 3], false),
+        ([0, 1, 5, 4], false),
+        ([4, 5, 7, 6], false),
+        ([0, 2, 3, 1], false),
+    ];
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    for (quad, end) in faces {
+        let p = quad.map(corner);
+        let e1 = [p[1][0] - p[0][0], p[1][1] - p[0][1], p[1][2] - p[0][2]];
+        let e2 = [p[2][0] - p[0][0], p[2][1] - p[0][1], p[2][2] - p[0][2]];
+        let n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+        let l = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt().max(1e-6);
+        let n = [n[0] / l, n[1] / l, n[2] / l];
+        let first = vertices.len() as u32;
+        for c in p {
+            vertices.push(vertex(c, n, if end { broken } else { outer }));
+        }
+        indices.extend([first, first + 1, first + 2, first, first + 2, first + 3]);
+    }
+    single(if wood { "rubble.wood" } else { "rubble.stone" }, vertices, indices, Tissue::None)
+}
+
 fn vertex(position: Vec3, normal: Vec3, color: [f32; 4]) -> Vertex {
     Vertex {
         position,

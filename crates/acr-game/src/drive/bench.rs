@@ -256,6 +256,8 @@ pub fn hit(game: &mut Game, v: &Value) -> Result<Value, String> {
     }
     let index = scripted_hit(world, unit, ScriptedHit { cause, mounted, region, dir, energy, dmg: damage, aim, maul })
         .ok_or_else(|| format!("unit {unit} is not alive"))?;
+    // A fire arrow (`OSTRELA`) or another fire weapon's round: only the record says so.
+    world.hits[index].fire = v.get("fire").and_then(Value::as_bool).unwrap_or(false);
     let h = world.hits[index];
     Ok(json!({
         "unit": unit,

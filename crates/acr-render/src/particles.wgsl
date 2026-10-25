@@ -180,23 +180,32 @@ fn fs_particle(in: VsOut) -> @location(0) vec4<f32> {
     let r = length(uv);
     let sun = globals.sun.xyz;
     if kind == KIND_FLAME {
-        // Emissive: white-yellow at the root, orange, then dull red at the licking tip,
-        // its edge torn by noise rolling upward. Mostly added to what is behind (low alpha).
+        // Emissive, with volume: three tongues one inside the other, a wide dim sheath, the
+        // body and a bright core, each torn by its own noise rolling upward at its own speed
+        // (they slide past each other as layers of a flame do) and each as bright as the way
+        // through a round tongue is long (full in its middle, nothing at its rim). White-
+        // yellow in the core, orange, dull red at the licking tips. Mostly added to what is
+        // behind (low alpha).
         let t = f32(in.params.y) / 256.0;
-        let o = vec2<f32>(seed * 0.071, seed * 0.113 - t * 6.0);
-        let n = fbmf(vec2<f32>(uv.x * 2.2, uv.y * 1.6) + o);
-        // 0 at the root (uv.y -1), 1 at the tip.
+        // 0 at the root (uv.y -1), 1 at the tip; a teardrop: round at the root.
         let up = clamp((uv.y + 1.0) * 0.5, 0.0, 1.0);
-        // A teardrop: round at the root, a wavering tip.
-        let width = sqrt(max(1.0 - up, 0.0)) * smoothstep(0.0, 0.25, up) * (0.45 + 0.6 * n) * 0.9;
-        let x = abs(uv.x + (n - 0.5) * 0.5 * up);
-        let body = 1.0 - smoothstep(width * 0.4, width, x);
-        let heat = body * (1.0 - up * (0.6 + 0.5 * n)) * opacity;
+        let shape = sqrt(max(1.0 - up, 0.0)) * smoothstep(0.0, 0.25, up);
+        let n0 = vnoisef(vec2<f32>(uv.x * 1.8, uv.y * 1.2) + vec2<f32>(seed * 0.053, seed * 0.097 - t * 4.0));
+        let x0 = abs(uv.x + (n0 - 0.5) * 0.7 * up) / max(shape * (0.55 + 0.6 * n0), 1e-3);
+        let d0 = sqrt(max(1.0 - x0 * x0, 0.0)) * max(1.0 - up * (0.55 + 0.5 * n0), 0.0);
+        let n1 = fbmf(vec2<f32>(uv.x * 2.2, uv.y * 1.6) + vec2<f32>(seed * 0.071, seed * 0.113 - t * 6.0));
+        let x1 = abs(uv.x + (n1 - 0.5) * 0.5 * up) / max(shape * (0.45 + 0.6 * n1) * 0.8, 1e-3);
+        let d1 = sqrt(max(1.0 - x1 * x1, 0.0)) * max(1.0 - up * (0.6 + 0.5 * n1), 0.0);
+        let n2 = vnoisef(vec2<f32>(uv.x * 3.1, uv.y * 2.3) + vec2<f32>(seed * 0.031 + 4.1, seed * 0.07 - t * 8.5));
+        let x2 = abs(uv.x + (n2 - 0.5) * 0.3 * up) / max(shape * (0.4 + 0.5 * n2) * 0.5, 1e-3);
+        let d2 = sqrt(max(1.0 - x2 * x2, 0.0)) * max(1.0 - up * (0.9 + 0.4 * n2), 0.0);
+        let heat = (0.3 * d0 + 0.45 * d1 + 0.35 * d2) * opacity;
         if heat < 0.01 {
             discard;
         }
-        let core = smoothstep(0.55, 1.0, heat);
-        let rgb = mix(in.color.rgb, vec3<f32>(1.0, 0.82, 0.45) * 1.5, core) * heat * 1.3;
+        let hot = clamp(d2 * 1.2 + d1 * 0.35, 0.0, 1.0) * opacity;
+        let outer = mix(in.color.rgb, in.color.rgb * vec3<f32>(0.85, 0.42, 0.25), up);
+        let rgb = mix(outer, vec3<f32>(1.0, 0.82, 0.45) * 1.5, smoothstep(0.35, 1.0, hot)) * heat * 1.3;
         return emit(rgb, heat * 0.15);
     }
     if kind == KIND_EMBER {
