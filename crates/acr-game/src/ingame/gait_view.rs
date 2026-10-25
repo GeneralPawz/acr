@@ -47,6 +47,10 @@ struct Measured {
     halves: [(usize, f32); 2],
     /// Height of each effector's joint over the ground when it carries (m).
     lift: [f32; 2],
+    /// Walking: lowest height of each toe joint over the ground while its foot carries (m).
+    toe: [f32; 2],
+    /// The loop's length in time (s).
+    duration: f32,
 }
 
 impl Measured {
@@ -88,6 +92,14 @@ fn step_halves(data: &ModelData, clip: usize) -> Option<[usize; 2]> {
 struct Man {
     clip: Option<usize>,
     vis: Option<Vec3>,
+    /// The visible position's way over the sim's last tick: from, to, the time since that
+    /// tick and the tick's length (s), so it moves evenly between the sim's steps.
+    from: Vec3,
+    to: Vec3,
+    since: f32,
+    span: f32,
+    /// Ground speed (m/s, smoothed).
+    speed: f32,
     dir: Vec3,
     follow: Follow,
     contacts: [Contact; 2],
@@ -107,6 +119,17 @@ const FOOT_REST: f32 = 0.07;
 const LEG_FALL: f32 = 1.5;
 /// Share of the hop loop in the air.
 const HOP_FLIGHT: f32 = 0.3;
+/// Stride against ground speed: the clip's stride scaled by (speed / clip speed)^`STRIDE_EXP`
+/// within `STRIDE_SOFT`, so mostly the cadence follows the speed; the stride stretches further
+/// (within `STRIDE`) only where the cadence would leave `CADENCE` times the clip's.
+const STRIDE_EXP: f32 = 0.25;
+const STRIDE_SOFT: [f32; 2] = [0.9, 1.15];
+const STRIDE: [f32; 2] = [0.75, 1.3];
+const CADENCE: [f32; 2] = [0.5, 1.8];
+/// How high a lifting foot clears the ground at most in its first 0.12 s (m).
+const CLEAR: f32 = 0.05;
+/// How far a swinging foot's toes clear the ground over their stance height (m).
+const TOE_CLEAR: f32 = 0.04;
 
 /// The gait layer of the 3D view.
 pub struct Gaits {
@@ -151,22 +174,33 @@ impl Gaits {
         let kind = kind_of(&a.name)?;
         let eff = self.effectors(kind);
         let halves = [(key[0], a.duration), (key[1], b.duration)];
-        let probe = Measured { kind, cycle: Cycle::measure(&[], 0.0), halves, lift: [0.0; 2] };
+        let duration = if key[0] == key[1] { a.duration } else { a.duration + b.duration };
+        let probe = Measured { kind, cycle: Cycle::measure(&[], 0.0), halves, lift: [0.0; 2], toe: [0.0; 2], duration };
+        let toes = [self.rig.bone("toe_l"), self.rig.bone("toe_r")];
+        let mut toe_z: Vec<[f32; 2]> = Vec::new();
         let at_origin = view3d::model_matrix([0.0, 0.0, 0.0], 0.0, 1.0);
         let points: Vec<Vec<Vec3>> = (0..gait::SAMPLES)
             .map(|i| {
                 let (clip, t) = probe.at(i as f32 / gait::SAMPLES as f32);
                 let skins = animated_skins(map, &data.pose(Some(clip), t), &at_origin);
+                toe_z.push(toes.map(|b| self.rig.joint(&skins, b).z));
                 eff.iter().map(|e| self.rig.joint(&skins, e[2])).collect()
             })
             .collect();
         let low = points.iter().flatten().map(|p| p.z).fold(f32::MAX, f32::min);
         let cycle = Cycle::measure(&points, low + 0.05);
         let lift = std::array::from_fn(|e| points.iter().map(|p| p[e].z).fold(f32::MAX, f32::min));
-        let duration = if key[0] == key[1] { a.duration } else { a.duration + b.duration };
+        // The toe's lowest height while its foot stands.
+        let toe = std::array::from_fn(|e| {
+            let on = (0..toe_z.len()).filter(|&i| cycle.support[i] == Some(e as u8)).map(|i| toe_z[i][e]);
+            on.fold(f32::MAX, f32::min).min(1.0)
+        });
         let name = if key[0] == key[1] { a.name.clone() } else { format!("{}+{}", a.name, b.name) };
-        log::info!("3d: gait clip {name} ({kind:?}): {:.2} m per loop of {duration:.2} s", cycle.length);
-        (cycle.length > 0.05 && a.duration > 0.0 && b.duration > 0.0).then_some(Measured { cycle, lift, ..probe })
+        log::info!(
+            "3d: gait clip {name} ({kind:?}): {:.2} m per loop of {duration:.2} s, lift {lift:.3?}, toe {toe:.3?}",
+            cycle.length
+        );
+        (cycle.length > 0.05 && a.duration > 0.0 && b.duration > 0.0).then_some(Measured { cycle, lift, toe, ..probe })
     }
 
     /// Poses the walking and crawling men nearest `focus` into `poses` (instance → palette),
@@ -232,16 +266,36 @@ impl Gaits {
                 }
             }
             // The sim position, smoothed over its ticks; the distance covered along the way.
+            // The sim moves in ticks: the visible body goes evenly from where it was to the new
+            // sim position over one tick's time (one tick behind), at any frame rate.
             let sim = physics_of([d.transform[3][0], d.transform[3][1], d.transform[3][2]]);
-            let vis = match man.vis {
-                Some(v) if (sim - v).length() < 2.0 => v + (sim - v) * (1.0 - (-dt * 10.0).exp()),
-                _ => sim,
-            };
+            match man.vis {
+                Some(v) if (sim - v).length() < 2.0 => {
+                    if (sim - man.to).length() > 1e-6 {
+                        man.span = man.since.clamp(dt.max(1e-3), 0.25);
+                        (man.from, man.to, man.since) = (v, sim, 0.0);
+                    }
+                }
+                _ => (man.from, man.to, man.span, man.since) = (sim, sim, 0.1, 0.1),
+            }
+            man.since += dt;
+            let vis = man.from + (man.to - man.from) * (man.since / man.span.max(1e-3)).min(1.0);
             let step = Vec3::new(vis.x - man.vis.unwrap_or(vis).x, vis.y - man.vis.unwrap_or(vis).y, 0.0);
             if step.length() > 1e-5 {
                 man.dir = (man.dir * 0.8 + step.normalize_or_zero() * 0.2).normalize_or_zero();
             }
-            man.follow.dist += step.length();
+            if dt > 0.0 {
+                let k = 1.0 - (-dt / 0.3).exp();
+                man.speed += (step.length() / dt - man.speed) * k;
+            }
+            // The cadence follows the ground speed; the stride stretches a little (walking).
+            let hops = Limp::of(&d.unit.body, clipm.kind).is_some_and(|l| l.hop);
+            let stride = if clipm.kind == Kind::Walk && !hops {
+                stride_scale(man.speed, clipm.cycle.length / clipm.duration.max(1e-3))
+            } else {
+                1.0
+            };
+            man.follow.dist += step.length() / stride;
             man.vis = Some(vis);
             let body = &d.unit.body;
             let limp = Limp::of(body, clipm.kind);
@@ -254,9 +308,9 @@ impl Gaits {
             let before = animated_skins(map, &pose, &d.transform);
             let mut skins = before.clone();
             // The visible body: where the pushes and pulls brought it.
-            let shift = (vis - sim) + man.dir * lead;
+            let shift = (vis - sim) + man.dir * (lead * stride);
             self.rig.translate(&mut skins, 0, Vec3::new(shift.x, shift.y, 0.0));
-            self.pose(&mut skins, clipm, man, phase, limp, body, &ground, dt);
+            self.pose(&mut skins, clipm, man, phase, stride, limp, body, &ground, dt);
             // Each slot moves with its bone but keeps its own animation: a socket the clip
             // keys to scale 0 (a tool shown only while working) stays hidden, fingers keep
             // their grip.
@@ -273,6 +327,7 @@ impl Gaits {
         clipm: &Measured,
         man: &mut Man,
         phase: f32,
+        stride: f32,
         limp: Option<Limp>,
         body: &Body,
         ground: &dyn Fn(Vec3) -> f32,
@@ -321,8 +376,11 @@ impl Gaits {
         // Contacts: planted where they carry.
         let mut targets = [Vec3::ZERO; 2];
         let mut need: f32 = 0.0;
+        let pelvis = rig.joint(skins, hips);
         for (e, chain) in eff.iter().enumerate() {
-            let anim = rig.joint(skins, chain[2]);
+            let joint = rig.joint(skins, chain[2]);
+            // The stride stretched along the way about the hips.
+            let anim = joint + fwd * ((joint - pelvis).dot(fwd) * (stride - 1.0));
             let mut lift = clipm.lift[e].max(0.02);
             if clipm.kind == Kind::Walk && stump(body, e) {
                 lift = 0.03;
@@ -338,6 +396,13 @@ impl Gaits {
                 anim.z = ground(anim) + lift + 0.06;
             }
             let mut t = man.contacts[e].update(carries, anim, lift, ground, dt);
+            // A walking foot that has just lifted clears the ground first (toe-off) instead of
+            // scraping forwards on its toes.
+            let release = man.contacts[e].release;
+            if clipm.kind == Kind::Walk && !carries && release > 0.0 && hop.is_none() {
+                let floor = ground(t) + lift;
+                t.z = t.z.max(floor + CLEAR * (std::f32::consts::PI * (1.0 - release)).sin());
+            }
             // A heavy limp drags the bad foot: in its swing it stays down on the ground,
             // scraping forwards instead of lifting (the hip hike gives it room).
             let dragged = drag > 0.0 && !carries && limp.is_some_and(|l| l.bad as usize == e);
@@ -348,7 +413,7 @@ impl Gaits {
             targets[e] = t;
             if clipm.kind == Kind::Walk && !dragged && hop.is_none_or(|(bad, _, _)| bad != e) {
                 let a = rig.joint(skins, chain[0]);
-                let reach = (rig.joint(skins, chain[1]) - a).length() + (anim - rig.joint(skins, chain[1])).length();
+                let reach = (rig.joint(skins, chain[1]) - a).length() + (joint - rig.joint(skins, chain[1])).length();
                 need = need.max((t - a).length() - reach * 0.995);
             }
         }
@@ -362,10 +427,23 @@ impl Gaits {
             });
             rig.translate(skins, hips, Vec3::new(0.0, 0.0, bob - man.sink));
         }
+        let toes = [rig.bone("toe_l"), rig.bone("toe_r")];
         for (e, chain) in eff.iter().enumerate() {
             let side = if e == 0 { Vec3::X } else { Vec3::X * -1.0 };
             let hint = if clipm.kind == Kind::Walk { fwd.cross(up) * -1.0 } else { side };
+            // The foot keeps the clip's pitch in the world, not the shin's after the IK (the toes
+            // sank into the ground late in each stance).
+            let aim = rig.joint(skins, toes[e]) - rig.joint(skins, chain[2]);
             rig.two_bone_ik(skins, chain[0], chain[1], chain[2], targets[e], hint);
+            if clipm.kind == Kind::Walk {
+                let ankle = rig.joint(skins, chain[2]);
+                rig.rotate_about(
+                    skins,
+                    chain[2],
+                    ankle,
+                    gait::rotation_between(rig.joint(skins, toes[e]) - ankle, aim),
+                );
+            }
             if man.contacts[e].planted.is_some() {
                 let miss = (rig.joint(skins, chain[2]) - targets[e]).length();
                 let (n, sum, max) = self.misses.get();
@@ -388,6 +466,21 @@ impl Gaits {
                 let n = Vec3::new(h(-0.1, 0.0) - h(0.1, 0.0), h(0.0, -0.1) - h(0.0, 0.1), 0.2).normalize_or_zero();
                 let pivot = rig.joint(skins, chain[2]);
                 rig.rotate_about(skins, chain[2], pivot, gait::rotation_between(up, n));
+            }
+            // The toes stay out of the ground (a foot pitched down at toe-off, or on a slope) and
+            // clear it in the swing: up to `TOE_CLEAR` as the foot rises from its stance height.
+            if clipm.kind == Kind::Walk {
+                let (ankle, tip) = (rig.joint(skins, chain[2]), rig.joint(skins, toes[e]));
+                let risen = ((ankle.z - ground(ankle) - clipm.lift[e]) / 0.04).clamp(0.0, 1.0);
+                let floor = ground(tip) + clipm.toe[e] - 0.005 + TOE_CLEAR * risen;
+                let d = tip - ankle;
+                if tip.z < floor && d.length() > 1e-3 {
+                    let flat = Vec3::new(d.x, d.y, 0.0).length().max(1e-3);
+                    let z = (floor - ankle.z).clamp(-d.length() * 0.95, d.length() * 0.95);
+                    let h = (d.length() * d.length() - z * z).sqrt();
+                    let want = Vec3::new(d.x / flat * h, d.y / flat * h, z);
+                    rig.rotate_about(skins, chain[2], ankle, gait::rotation_between(d, want));
+                }
             }
             // The hurt foot held up behind, the knee forward.
             if hop.is_some_and(|(bad, _, _)| bad == e) {
@@ -479,6 +572,16 @@ impl Gaits {
             place_leg(rig, skins, chain, knee, foot);
         }
     }
+}
+
+/// The stride's scale for ground speed `speed` on a clip made for `natural` (both m/s).
+fn stride_scale(speed: f32, natural: f32) -> f32 {
+    if speed < 0.05 || natural < 0.05 {
+        return 1.0;
+    }
+    let r = speed / natural;
+    let soft = r.powf(STRIDE_EXP).clamp(STRIDE_SOFT[0], STRIDE_SOFT[1]);
+    soft.max(r / CADENCE[1]).min(r / CADENCE[0]).clamp(STRIDE[0], STRIDE[1])
 }
 
 /// `v` normalised, else `or` normalised.

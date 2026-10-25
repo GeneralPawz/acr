@@ -399,8 +399,7 @@ nearest the window centre that no ragdoll holds; `ACR_NO_GAIT` turns it off).
   (`arm_l`, `arm_r`, `leg_l`, `leg_r`; `foot_l`, `foot_r` lose the leg at the ankle),
   `wounds` (one flesh wound per entry) and `patrol` (any pose moves; crawlers, who take no
   orders, are sent directly).
-- **Not yet:** step length does not change with speed (the cadence does, with the
-  distance); no slope on the bench (the random map's ground only); the sim has no
+- **Not yet:** no slope on the bench (the random map's ground only); the sim has no
   knocked-down state, so a knocked-down survivor always gets up; the recovery step does not
   move the hips' spring origin and the hips are still held kinematically (no ankle torque
   or real support forces); the hop has no landing squash and no arm swing for balance; the
@@ -429,6 +428,49 @@ nearest the window centre that no ragdoll holds; `ACR_NO_GAIT` turns it off).
   The run takes 3.2 strides a second at 3.3 m/s and is not resolved by per-tick samples
   (its non-swap ticks move as much). Strip: `ACR-analysis/gaitphase/strip_{main,br}.png`.
   Clash 700 vs 700: `rag.gaits` 0.33 → 0.37 ms a tick, the rest in noise.
+
+- **Per frame (#279 run):** measured per rendered frame (driver `fps` 60, 6 frames a tick),
+  stance feet were already still; the skating was elsewhere:
+  - The visible body eased towards each new sim position (`1 - e^{-10 dt}`), so body, phase
+    and swing feet ran in bursts at the tick rate (2.3 : 1 speed within a tick). It now goes
+    evenly from where it was to the new sim position over the last tick's length (one tick
+    behind, `Man::{from, to, since, span}`).
+  - After the IK the foot kept the shin's turn, not the clip's pitch: the toes sank 2–6 cm
+    into the ground late in each stance and ploughed forwards at toe-off (run: toes 6 cm
+    under, 7–15 cm a frame). The foot now keeps the clip's direction (ankle → toe) in the
+    world, its toes stay over their lowest stance height (`Measured::toe`; slopes) and, as
+    the ankle rises 4 cm off its stance height, clear it by up to `TOE_CLEAR` 4 cm. A foot
+    that has just lifted rises by up to `CLEAR` 5 cm over its first 0.12 s.
+  - **Cadence and stride:** the clips walk 1.01 m a stride in 0.75 s (1.35 m/s) and run
+    1.04 m in 0.58 s (1.79 m/s); the sim walks EngM18 at 1.67 m/s and IroLut at 3.33 m/s.
+    `stride_scale`: the stride stretches by (speed / clip speed)^0.25 within 0.9–1.15 (along
+    the way, about the hips; the body's travel with it), and further within 0.75–1.3 only
+    where the cadence would leave 0.5–1.8 times the clip's; the cadence takes the rest. Walk
+    ×1.05 (cadence 1.57 strides/s), run ×1.15 (2.78/s), the slow limp (0.41 m/s) ×0.75.
+    The run clip is the root cause: a real run at 3.3 m/s takes 2.2–2.5 m strides at about
+    1.4/s with a flight phase; the Blender run clip should be authored to that (and the
+    walk to about 1.3 m at the sim's 1.67 m/s), not stretched here.
+  - **Limp:** the 0.61 m "good foot" slide of the per-tick measure was the measure: the
+    lower foot of two ticks and a 3 cm height window caught the dragged bad foot (it
+    scrapes by design) and the good foot's toe-off. Per frame the good foot slid 0.27 m in
+    2.5 s (its toe-off and toes in the ground); now 0.03 m.
+
+  Foot slide per frame, both feet, mm per metre walked (RX 9060 XT VM, blank field, 150
+  frames at 60 fps, `ACR-analysis/gaitrun/{flat,slope}.json`, `an.py`: a foot is on the
+  ground while its ankle is within 15 mm of its stance height or its toe joint within 15 mm
+  of the terrain; slide = its horizontal move over such frames). Limp: the good foot alone.
+
+  | Man | flat main | flat branch | slope 8° main | slope 8° branch |
+  |---|---|---|---|---|
+  | walk EngM18 | 153 | 17 | 291 | 179 |
+  | limp, good foot (m in 2.5 s) | 0.268 | 0.026 | 0.287 | 0.036 |
+  | run IroLut | 558 | 3 | 496 | 100 |
+
+  On the slope single frames still dip a foot 2–4 cm under its stance height and the
+  terrain height under a foot jumps by several cm between frames (also on main): open.
+  Strips: `ACR-analysis/gaitrun/sheet_{run,walk,limp}.png` (main over branch, every frame).
+  Clash 700 vs 700 (two runs each): `rag.gaits` 0.30 / 0.37 → 0.32 / 0.40 ms a tick
+  walking, 0.06–0.07 in contact; in noise.
 
 - **Dragged legs** (`gait_view::crawl_legs`): a crawling man's leg with `Body::leg` 0 (or its
   stump) is a chain hip → knee → foot after the IK of the hands. Each frame the knee and

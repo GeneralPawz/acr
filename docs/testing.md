@@ -124,6 +124,7 @@ its label to appear.
 | `{"cmd": "pose", "id": 0, "clip": "ATTACK1", "frame": 12}` | holds a unit's model at a clip time (studio) |
 | `{"cmd": "sheet", "path": "s.png", "ids": [0], "views": ["front", "side"], "clips": [{"clip": "ATTACK1", "frames": [0, 10]}], "cell": [360, 480]}` | a labelled grid of posed views in one PNG (studio) |
 | `{"cmd": "measure", "id": 0, "ticks": 40}` | hand/grip and foot numbers of a unit (studio) |
+| `{"cmd": "fps", "fps": 60}` | from now on each driver frame advances 1/`fps` s of game time (several frames a tick, as in play; `measure` and `record` then sample every rendered frame); 0 goes back to one tick a frame |
 | `{"cmd": "spawn", "type": "EngM18", "x": 3000, "y": 9000, "dir": 0, "pose": "stand"}` | places a unit (bench) |
 | `{"cmd": "shadows", "on": false}` | sun shadows of the models forced off (`true`: on; no `on`: the `shadows` setting again); `ACR_SHADOWS=on\|off` does the same at start |
 | `{"cmd": "burn", "unit": 3, "amount": 1.0}` | the unit's model charred as if he had burned (render only, #207; 0 forgets it; default amount 1); a corpse shows the larger of it and its cause's |
@@ -356,7 +357,8 @@ path) and `models=all` in the settings (the VM's showcase settings have it).
   `ticks`: n the simulation runs n ticks (the unit's hold is released; give it a walk with
   `spawn`'s `pose: walk`) and `walk.samples` lists per tick the `tick`, `clip`, `t`,
   `ground_m`, both feet and both hands (`foot_l`, `foot_r`, `hand_l`, `hand_r`: world
-  metres, z above the ground point) as drawn, after the gait's IK (`posed` true when the
+  metres, z above the ground point), each foot's height over the terrain under it
+  (`over_m`) and both toe joints (`toe_m`: x, y, height over the terrain) as drawn, after the gait's IK (`posed` true when the
   gait posed him; else the clip's); `walk.sliding` sums per foot the horizontal motion
   between ticks while the foot is planted (within 3 cm of its lowest height) as `slide_m`,
   `walk.hands_sliding` the same per hand (crawlers). The simulation is held again

@@ -98,6 +98,13 @@ impl InGame {
         self.centred = true;
     }
 
+    /// Height of the drawn ground (3D world pixels) under the 3D world point `(x, y)`.
+    pub fn ground_z(&self, x: f32, y: f32) -> Option<f32> {
+        let t = self.terrain.as_ref()?;
+        let (wx, wy) = (x as i32, y as i32);
+        Some(acr_render::view3d::ground_point(wx, wy, t.height_at(wx, wy))[2])
+    }
+
     /// The model and this frame's instance of a unit drawn as a model (#299).
     pub fn posed(
         &self,

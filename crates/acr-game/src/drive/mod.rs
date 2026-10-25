@@ -188,6 +188,8 @@ pub struct Driver {
     /// Messages pressed away since the last answer.
     dismissed: Vec<Value>,
     quit: bool,
+    /// Game seconds per frame set by `fps` (`None`: one tick per frame).
+    frame_seconds: Option<f64>,
 }
 
 impl Driver {
@@ -212,6 +214,7 @@ impl Driver {
             frames: 0,
             dismissed: Vec::new(),
             quit: false,
+            frame_seconds: None,
         }
     }
 
@@ -387,7 +390,7 @@ impl Driver {
     /// One frame of the game at the fixed step.
     fn frame(&mut self, game: &mut Game, event_loop: &ActiveEventLoop) {
         let dt = match &game.mode {
-            Mode::InGame(g) if g.ready() && !game.ui.dialog_open() => g.tick_seconds(),
+            Mode::InGame(g) if g.ready() && !game.ui.dialog_open() => self.frame_seconds.unwrap_or(g.tick_seconds()),
             _ => 1.0 / ui::TICK_RATE,
         };
         game.advance(dt, event_loop);
@@ -975,6 +978,11 @@ impl Driver {
                 job.reply.insert("profile".into(), totals.into());
                 Ok(false)
             }
+            Request::Fps(fps) => {
+                self.frame_seconds = (fps > 0.0).then(|| 1.0 / fps);
+                job.reply.insert("fps".into(), fps.into());
+                Ok(false)
+            }
             Request::GpuTime(frames) => {
                 let timing = shot::gputime(game, frames)?;
                 job.reply.insert("gputime".into(), timing);
@@ -1059,6 +1067,7 @@ pub(crate) fn web_request(game: &mut Game, event_loop: &ActiveEventLoop, line: &
         policy: DialogPolicy::Auto,
         dismissed: Vec::new(),
         quit: false,
+        frame_seconds: None,
     };
     let (seq, request) = match protocol::parse(line) {
         Ok(r) => r,

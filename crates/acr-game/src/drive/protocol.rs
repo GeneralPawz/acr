@@ -280,6 +280,10 @@ pub enum Request {
     /// `{"cmd":"textures"}`: GPU memory of the model textures (loaded, streamed) and the
     /// streaming counts (docs/rendering-3d.md "Texture streaming").
     Textures,
+    /// `{"cmd":"fps","fps":n}`: each driver frame advances 1/n s of game time (several frames
+    /// per tick: the 3D view's per-frame motion, as in play at that frame rate); 0 goes back
+    /// to one tick per frame.
+    Fps(f64),
     /// `{"cmd":"profile"}`: CPU milliseconds per profiler scope (`acr_sim::prof`) since
     /// the last call, which also switches the profiler on.
     Profile,
@@ -645,6 +649,7 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
         "impact" => Request::Impact(v.clone()),
         "map_object" => Request::MapObject(v.clone()),
         "profile" => Request::Profile,
+        "fps" => Request::Fps(v.get("fps").and_then(Value::as_f64).unwrap_or(0.0).clamp(0.0, 1000.0)),
         "gputime" => Request::GpuTime(uint(&v, "frames").unwrap_or(30).clamp(1, 1000) as u32),
         "frametimes" => Request::FrameTimes(uint(&v, "frames").unwrap_or(60).clamp(1, 10000) as u32),
         "textures" => Request::Textures,

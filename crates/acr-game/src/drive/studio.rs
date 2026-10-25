@@ -453,15 +453,26 @@ fn foot_sample(game: &mut Game, id: u32) -> Result<(Value, [Vec3; 4]), String> {
             })
         });
         let local = posed.unwrap_or([globals[n][3][0], globals[n][3][1], globals[n][3][2]]);
-        let p = math::transform_point(&inst.transform, local);
-        [p[0] / PIXELS_PER_METRE, p[1] / PIXELS_PER_METRE, (p[2] - ground[2]) / PIXELS_PER_METRE]
+        math::transform_point(&inst.transform, local)
     };
-    let feet = [foot("foot_l"), foot("foot_r"), foot("hand_l"), foot("hand_r")];
+    let world = [foot("foot_l"), foot("foot_r"), foot("hand_l"), foot("hand_r")];
+    let toes = [foot("toe_l"), foot("toe_r")];
+    let feet = world.map(|p| [p[0] / PIXELS_PER_METRE, p[1] / PIXELS_PER_METRE, (p[2] - ground[2]) / PIXELS_PER_METRE]);
+    // Each foot's height over the ground under it (slopes).
+    let over = world.map(|p| g.ground_z(p[0], p[1]).map_or(0.0, |z| (p[2] - z) / PIXELS_PER_METRE));
+    let mm = |x: f32| (x * 1000.0).round() / 1000.0;
+    let over_m = [over[0], over[1]].map(mm);
+    // The toes: where they are and their height over the ground (heel lifts, toe-off).
+    let toe_m = toes.map(|p| {
+        let h = g.ground_z(p[0], p[1]).map_or(0.0, |z| (p[2] - z) / PIXELS_PER_METRE);
+        [mm(p[0] / PIXELS_PER_METRE), mm(p[1] / PIXELS_PER_METRE), mm(h)]
+    });
     let clip = inst.clip.and_then(|c| model.clips.get(c)).map(|c| c.name.clone());
     let r = |v: Vec3| v.map(|x| (x * 1000.0).round() / 1000.0);
     Ok((
         json!({"tick": tick, "clip": clip, "t": inst.time, "posed": shown.is_some(), "ground_m": r([ground[0] / PIXELS_PER_METRE, ground[1] / PIXELS_PER_METRE, 0.0]),
-               "foot_l": r(feet[0]), "foot_r": r(feet[1]), "hand_l": r(feet[2]), "hand_r": r(feet[3])}),
+               "foot_l": r(feet[0]), "foot_r": r(feet[1]), "hand_l": r(feet[2]), "hand_r": r(feet[3]),
+               "over_m": over_m, "toe_m": toe_m}),
         feet,
     ))
 }
