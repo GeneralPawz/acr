@@ -8,6 +8,8 @@ The musket hangs on `socket.hand_r` with its origin at the grip, 0.25 m in front
 """
 
 import math
+from contextlib import contextmanager
+from functools import wraps
 
 import bpy
 from mathutils import Matrix, Vector
@@ -15,6 +17,29 @@ from mathutils import Matrix, Vector
 from . import armature as am
 
 GRIP_TO_BUTT = 0.25
+
+
+@contextmanager
+def _rig_only(arm_obj):
+    """IK and eye searches need bones, not repeated HD mesh deformation."""
+    shown = [o for o in arm_obj.children_recursive if o.type == "MESH" and not o.hide_viewport]
+    for ob in shown:
+        ob.hide_viewport = True
+    try:
+        yield
+    finally:
+        for ob in shown:
+            ob.hide_viewport = False
+        if shown:
+            bpy.context.view_layer.update()
+
+
+def _bones_only(fn):
+    @wraps(fn)
+    def wrapped(arm_obj, *args, **kwargs):
+        with _rig_only(arm_obj):
+            return fn(arm_obj, *args, **kwargs)
+    return wrapped
 
 
 def _to_spec(pb, m3, parent_m3):
@@ -34,6 +59,7 @@ def _aim_bone(m3, direction):
     return q.to_matrix() @ m3
 
 
+@_bones_only
 def _solve(arm_obj, spec, goals, iterations=6, show=None):
     """Solves the arms of `goals` = {"r"|"l": (point, pole)} analytically (two-bone IK in
     the plane of shoulder, goal and pole) on the posed `spec` so the right hand's grip point
@@ -92,7 +118,9 @@ def _off_hand(arm_obj, spec, loose, goals, point, show=None):
         return k in held and ((show or {}).get(k, arm_obj.pose.bones[k].scale.x) > 0.5)
 
     held = arm_obj.get("acr_grip_held", ())
-    if shown("socket.hand_l"):
+    if "l" in spec.get("free_hands", ()):
+        return point
+    if shown("socket.hand_l") and not arm_obj.get("acr_musket_rest"):
         return point
     key = next((k for k in ("socket.hand_r", "socket.club_r", "socket.blade_r") if shown(k)), None)
     if key is None:
@@ -167,7 +195,7 @@ def _butt_points(arm_obj):
     return [m @ c for c in _butt_cache[gun.name]]
 
 
-def butt_gap(arm_obj):
+def _butt_contact(arm_obj):
     """Signed distance (m) of the butt plate's deepest point from the man's surface (body,
     clothes, straps; hands and levels left out): negative inside. None without a musket or
     with no surface within 0.2 m."""
@@ -183,7 +211,8 @@ def butt_gap(arm_obj):
     inv = arm_obj.matrix_world.inverted()
     p = np.array([tuple(x) for x in pts])
     lo, hi = p.min(0) - 0.2, p.max(0) + 0.2
-    best = None
+    nearest = [None] * len(pts)
+    normals = [None] * len(pts)
     for ob in penetration._skinned(arm_obj):
         key = ("tri", ob.name)
         if key not in _butt_cache:
@@ -202,13 +231,34 @@ def butt_gap(arm_obj):
         if not len(sel):
             continue
         bvh = BVHTree.FromPolygons([tuple(c) for c in co], [tuple(int(i) for i in t) for t in sel])
-        for q in pts:
+        for i, q in enumerate(pts):
             hit = bvh.find_nearest(q, 0.2)
             if hit[0] is None:
                 continue
             d = hit[3] if flip * (q - hit[0]).dot(hit[1]) >= 0 else -hit[3]
-            best = d if best is None else min(best, d)
-    return best
+            closest = penetration.nearest_surface_gap((nearest[i], d))
+            if nearest[i] is None or closest != nearest[i]:
+                nearest[i], normals[i] = d, hit[1] * flip
+    valid = [i for i, d in enumerate(nearest) if d is not None]
+    if not valid:
+        return None
+    i = min(valid, key=lambda j: nearest[j])
+    return nearest[i], normals[i]
+
+
+def butt_gap(arm_obj):
+    """Signed gap of the deepest butt-plate point to its nearest surface."""
+    contact = _butt_contact(arm_obj)
+    return None if contact is None else contact[0]
+
+
+def seat_move(arm_obj):
+    """Normal correction to 2 mm butt contact, including open coat surfaces."""
+    contact = _butt_contact(arm_obj)
+    if contact is None:
+        return None, None
+    gap, normal = contact
+    return gap, normal.normalized() * max(-0.02, 0.002 - gap)
 
 
 def wrist_deg(arm_obj, side="r"):
@@ -240,6 +290,36 @@ def contacts(arm_obj, clips=("FIRE_AIMED", "FIRE_HIP")):
         restore()
         arm_obj.animation_data.action = None
     print("ACR fire contacts (m2-aim-hd):", out)
+    return out
+
+
+def carry_contacts(arm_obj, clips):
+    """Every carry frame's signed stock-to-shoulder gap along the chest normal."""
+    from . import penetration
+
+    gun = penetration.find_musket(arm_obj)
+    out = {}
+    restore = penetration.show(penetration._skinned(arm_obj))
+    try:
+        for clip in clips:
+            if clip != "STAND" and not clip.startswith("MOTION"):
+                continue
+            action = bpy.data.actions.get(clip)
+            if action is None:
+                continue
+            gaps = []
+            for f in range(int(action.frame_range[0]), int(action.frame_range[1]) + 1):
+                am.set_clip(arm_obj, clip, f)
+                m = arm_obj.matrix_world.inverted() @ gun.matrix_world
+                point = m @ Vector((0, 0.025, 0.05))
+                hit = _surface_hit(arm_obj, point + Vector((0, -0.25, 0)), Vector((0, 1, 0)))
+                if hit is not None:
+                    gaps.append(hit.y - point.y)
+            out[clip] = {"frames": len(gaps), "min_gap_m": round(min(gaps), 4) if gaps else None,
+                         "max_gap_m": round(max(gaps), 4) if gaps else None}
+    finally:
+        restore()
+        arm_obj.animation_data.action = None
     return out
 
 
@@ -276,7 +356,7 @@ def hold(arm_obj, base, pocket=(0.03, -0.05, -0.04), left_along=0.34, left_drop=
 # Aimed fire (#296): the sight line. The musket's top (local +Y, `gear.musket`: the barrel sits on the
 # stock, the butt drops below it) carries a rear sight over the breech and a front sight
 # behind the muzzle; aiming puts the eye on the line through both ("Kimme und Korn").
-SIGHT_UP = 0.026  # m above the musket's axis (top of the barrel + the blade)
+SIGHT_UP = 0.05  # m above the musket's axis (top of the barrel + the blade)
 REAR_SIGHT = 0.06  # m from the grip towards the muzzle (over the breech)
 FRONT_SIGHT_BACK = 0.03  # m behind the muzzle
 EYE_HALF = 0.032  # m from the face's centre line to the eye
@@ -288,11 +368,19 @@ BUTT_HEEL, BUTT_TOE = 0.03, 0.05  # m of the butt plate above and below the axis
 def eye_rest(ch):
     """The right (aiming) eye at rest (armature space): from the refined head's frame, else
     estimated from the head bone."""
-    bones = ch.arm.data.bones
+    bones = getattr(ch, "arm", ch).data.bones
     side = 1.0 if bones["upperarm_r"].head_local.x > 0 else -1.0
     fr = getattr(ch, "face_frame", None)
     if fr is not None:
         return Vector((fr.cx + side * EYE_HALF, fr.y_front + 0.008, fr.eye_z))
+    arm = getattr(ch, "arm", ch)
+    eyes = next((o for o in arm.children if o.type == "MESH" and o.name.endswith(".eyes")), None)
+    if eyes is not None:
+        m = arm.matrix_world.inverted() @ eyes.matrix_world
+        pts = [p for p in (m @ v.co for v in eyes.data.vertices) if p.x * side > 0]
+        if pts:
+            centre = sum(pts, Vector()) / len(pts)
+            return Vector((centre.x, min(p.y for p in pts), centre.z))
     h = bones["head"]
     return Vector((h.head_local.x + side * EYE_HALF, h.head_local.y - 0.085, h.head_local.z + 0.09))
 
@@ -313,8 +401,9 @@ def sight_line(arm_obj, eye):
     if obj is None:
         return None
     m = arm_obj.matrix_world.inverted() @ obj.matrix_world
-    rear = m @ Vector((0.0, SIGHT_UP, REAR_SIGHT))
-    front = m @ Vector((0.0, SIGHT_UP, muzzle.z - FRONT_SIGHT_BACK))
+    height = SIGHT_UP + obj.get("acr_bore_y", 0.0)
+    rear = m @ Vector((0.0, height, REAR_SIGHT))
+    front = m @ Vector((0.0, height, muzzle.z - FRONT_SIGHT_BACK))
     hb = arm_obj.pose.bones["head"]
     e = hb.matrix @ hb.bone.matrix_local.inverted() @ Vector(eye)
     return rear, front, e, m
@@ -360,44 +449,140 @@ def _sighted(arm_obj, spec, eye, pocket):
     return origin - o, (heel.lerp(toe, t) - p).length, axis
 
 
-def present(arm_obj, base, eye, pocket=(0.06, 0.0, -0.02), left_along=0.34, left_drop=0.035,
-            elbow_r=(0.40, 0.10, 0.08), elbow_l=0.45, head=None):
-    """Aimed fire (#296): `base` (with the musket's "world" orientation) with the head bowed
-    onto the comb (cheek weld) so the eye (`eye` at rest) lies on the sight line while the
-    butt plate sits nearest the shoulder pocket: the bow (pitch) and the tilt onto the stock,
-    shared by neck and head, are searched over `head` = (pitches, tilts) (degrees added). The
-    musket is placed through the eye, then both arms are solved as in `hold` (right hand on
-    the wrist of the stock, the elbow raised out; left hand under the fore-end). Returns
-    (spec, report {sight_m, butt_m, bow})."""
-    pitches, tilts = head or (range(-6, 40, 3), range(-30, 7, 3))
+def _surface_hit(arm_obj, origin, direction, skip_arms=False):
+    """First hit on the posed body, outfit or kit, in armature space."""
+    import numpy as np
+    from mathutils.bvhtree import BVHTree
+    from . import penetration
 
-    def bowed(dp, dt):
-        # The bow shared by the neck (a third) and the head.
-        spec = dict(base)
-        for bone, part in (("neck", 1 / 3), ("head", 2 / 3)):
-            r = base.get(bone, (0, 0, 0))
-            spec[bone] = (round(r[0] + dp * part, 2), round(r[1] + dt * part, 2), r[2])
-        return spec
-
+    dg = bpy.context.evaluated_depsgraph_get()
+    inv = arm_obj.matrix_world.inverted()
     best = None
-    for dp in pitches:
-        for dt in tilts:
-            butt = _sighted(arm_obj, bowed(dp, dt), eye, pocket)[1]
-            if best is None or butt < best[0] - 1e-6:
-                best = (butt, (dp, dt))
-    spec = bowed(*best[1])
-    grip, butt, axis = _sighted(arm_obj, spec, eye, pocket)
-    _, sh, inward, flat = _pocket(arm_obj, pocket, axis)
-    left = grip + axis * left_along + Vector((0, 0, -left_drop))
-    goals = {
-        "r": (grip, sh - inward * elbow_r[0] - flat * elbow_r[1] + Vector((0, 0, elbow_r[2]))),
-        "l": (left, left + Vector((0, 0, -elbow_l)) + flat * 0.10),
-    }
-    _solve(arm_obj, spec, goals)
-    rear, front, e, _ = sight_line(arm_obj, eye)
-    report = {"sight_m": round(_off_line(rear, front, e), 4), "butt_m": round(butt, 4),
-              "bow": list(best[1])}
-    print("ACR present (#296):", report)
+    for ob in penetration._skinned(arm_obj):
+        tri = penetration._tris(ob.data, np)
+        if skip_arms:
+            skip = penetration._hand_mask(ob, np, penetration.HAND_BONES + ("upperarm_", "forearm_"))
+            tri = tri[~skip[tri].any(1)]
+        co = np.empty(len(ob.data.vertices) * 3)
+        ob.evaluated_get(dg).data.vertices.foreach_get("co", co)
+        m = np.array(inv @ ob.matrix_world)
+        co = co.reshape(-1, 3) @ m[:3, :3].T + m[:3, 3]
+        hit = BVHTree.FromPolygons(co.tolist(), tri.tolist()).ray_cast(origin, direction, 0.7)
+        if hit[0] is not None and (best is None or hit[3] < best[1]):
+            best = (hit[0].copy(), hit[3])
+    return None if best is None else best[0]
+
+
+@_bones_only
+def _raised_clavicle(arm_obj, base):
+    """Raise and protract the right shoulder within its authored joint ranges."""
+    am.pose(arm_obj, base)
+    start = arm_obj.pose.bones["upperarm_r"].head.copy()
+    best = None
+    for y in (-18, -9, 0, 9, 18):
+        for z in (-18, -9, 0, 9, 18):
+            sp = dict(base, clavicle_r=(0, y, z))
+            am.pose(arm_obj, sp)
+            delta = arm_obj.pose.bones["upperarm_r"].head - start
+            cost = (delta.z - 0.025) ** 2 + (delta.y + 0.025) ** 2
+            if best is None or cost < best[0]:
+                best = (cost, sp)
+    return best[1]
+
+
+@_bones_only
+def _aim_arms(arm_obj, base, grip, along=0.30):
+    """Keep the elbow out near shoulder height; choose the least wrist bend."""
+    am.pose(arm_obj, base)
+    arm = arm_obj.pose.bones
+    sh = arm["upperarm_r"].head.copy()
+    axis = am.euler(base["world"]["socket.hand_r"]) @ Vector((0, 0, 1))
+    flat = Vector((axis.x, axis.y, 0)).normalized()
+    inward = (arm["upperarm_l"].head - sh).normalized()
+    left = Vector(grip) + axis * along
+    best = None
+    for deg in range(-30, 61, 10):
+        t = math.radians(deg)
+        pole = sh - inward * (0.4 * math.cos(t)) + Vector((0, 0, 0.4 * math.sin(t)))
+        placed = dict(base, world_loc={"socket.hand_r": tuple(grip)})
+        sp = _solve(arm_obj, placed, {
+            "r": (grip, pole), "l": (left, left + Vector((0, 0, -0.45)) + flat * 0.10)})
+        elbow = arm["forearm_r"].head
+        wrist = wrist_deg(arm_obj)
+        cost = wrist + 400 * max(0, abs(elbow.z - sh.z) - 0.08)
+        if best is None or cost < best[0]:
+            best = (cost, sp)
+    am.pose(arm_obj, best[1])
+    return best[1]
+
+
+def present(arm_obj, base, eye, **_options):
+    """Seat the butt first, keeping the target direction fixed, then fit the cheek weld.
+
+    The gun is never aimed away from the target to accommodate the eye. Both the
+    normal-contact clearance and the hand goals are solved on the dressed body.
+    """
+    from . import penetration
+
+    restore = penetration.show(penetration._skinned(arm_obj))
+    try:
+        base = _raised_clavicle(arm_obj, base)
+        am.pose(arm_obj, base)
+        gun = penetration.find_musket(arm_obj)
+        m = arm_obj.matrix_world.inverted() @ gun.matrix_world
+        r = m.to_3x3().normalized()
+        axis, up = r.col[2], r.col[1]
+        socket_offset = m.translation - arm_obj.pose.bones["socket.hand_r"].head
+        _butt_points(arm_obj)
+        plate = sum(_butt_cache[gun.name], Vector()) / len(_butt_cache[gun.name])
+        sh = arm_obj.pose.bones["upperarm_r"].head.copy()
+        inward = (arm_obj.pose.bones["upperarm_l"].head - sh).normalized()
+        candidates = []
+        # Anterior shoulder pocket, below the clavicle and inside the deltoid.
+        for inside in (0.025, 0.05, 0.075):
+            for drop in (-0.025, 0.0, 0.025):
+                p = sh + inward * inside - Vector((0, 0, drop))
+                hit = _surface_hit(arm_obj, p + axis * 0.35, -axis, skip_arms=True)
+                if hit is not None:
+                    grip = hit + axis * 0.003 - r @ plate - socket_offset
+                    candidates.append((grip, inside, drop))
+        best = None
+        info = penetration.prepare(arm_obj)
+        for grip, inside, drop in candidates:
+            sp = _aim_arms(arm_obj, base, grip)
+            for _ in range(8):
+                depth, push = penetration.push_out(arm_obj, gun, info)
+                if push is None or depth < 0.001:
+                    break
+                grip += push
+                sp = _aim_arms(arm_obj, base, grip)
+            # Fit only anatomically legal head keys to the seated, target-aligned gun.
+            with _rig_only(arm_obj):
+                for bow in range(-6, 25, 3):
+                    for tilt in range(-24, 25, 3):
+                        hsp = dict(sp)
+                        for bone, part in (("neck", 1 / 3), ("head", 2 / 3)):
+                            x, y, z = base.get(bone, (0, 0, 0))
+                            hsp[bone] = (min(35 if bone == "neck" else 30, x + bow * part),
+                                         max(-40, min(40, y + tilt * part)), max(-25, min(25, z)))
+                        am.pose(arm_obj, hsp)
+                        rear, front, e, _m = sight_line(arm_obj, eye)
+                        sight = _off_line(rear, front, e)
+                        cost = sight + 0.0001 * (abs(bow) + abs(tilt))
+                        if best is None or cost < best[0]:
+                            best = (cost, hsp, sight, (bow, tilt), inside, drop)
+        if best is None:
+            raise RuntimeError("aim.present: no anterior shoulder surface")
+        _cost, spec, sight, bow, inside, drop = best
+        am.pose(arm_obj, spec)
+        gap = butt_gap(arm_obj)
+        report = {"sight_m": round(sight, 4), "aim_dev_deg": 0.0,
+                  "bow": list(bow), "clavicle": list(spec["clavicle_r"]),
+                  "butt_gap_m": None if gap is None else round(gap, 4),
+                  "wrist_deg": wrist_deg(arm_obj)}
+    finally:
+        restore()
+    print("ACR present (surface contact):", report)
     return spec, report
 
 
@@ -413,9 +598,33 @@ def fire_poses(ch):
     shot from the hip (#296), both IK-solved on `ch`."""
     from . import poses
 
+    arm = getattr(ch, "arm", ch)
     eye = eye_rest(ch)
-    aimed, report = present(ch.arm, poses.AIM_MUSKET, eye)
-    return aimed, hip(ch.arm, poses.HIP_MUSKET), report
+    arm["acr_aim_eye"] = list(eye)
+    aimed, report = present(arm, poses.AIM_MUSKET, eye)
+    return aimed, hip(arm, poses.HIP_MUSKET), report
+
+
+@_bones_only
+def fit_eye(arm_obj, spec):
+    """Refit the cheek weld after contact correction, keeping the barrel fixed."""
+    from . import poses
+
+    eye = Vector(arm_obj.get("acr_aim_eye", eye_rest(arm_obj)))
+    best = None
+    for bow in range(-6, 31, 3):
+        for tilt in range(-30, 31, 3):
+            sp = dict(spec)
+            for bone, part in (("neck", 1 / 3), ("head", 2 / 3)):
+                x, y, z = poses.AIM_MUSKET[bone]
+                sp[bone] = (min(35 if bone == "neck" else 30, x + bow * part),
+                            max(-40, min(40, y + tilt * part)), max(-25, min(25, z)))
+            am.pose(arm_obj, sp)
+            rear, front, e, _m = sight_line(arm_obj, eye)
+            error = _off_line(rear, front, e)
+            if best is None or error < best[0]:
+                best = (error, sp)
+    return {b: best[1][b] for b in ("neck", "head")}, round(best[0], 4)
 
 
 def fire_report(arm_obj, eye, clip, frames):
@@ -476,6 +685,8 @@ def place(arm_obj, base, grip, right="grip", left=0.40, elbow_r=(-0.30, 0.15, -0
     stands instead (the musket grounded). Returns the new spec; `info` (a dict) receives
     what `between` needs: the musket's matrix, the hands' goals in its frame, the elbows."""
     spec = dict(base)
+    if right != "grip":
+        spec["free_hands"] = ("r",)
     am.pose(arm_obj, spec)
     arm = arm_obj.pose.bones
     axis = (arm["socket.hand_r"].matrix.to_3x3() @ Vector((0, 0, 1))).normalized()
@@ -514,6 +725,11 @@ def drill(arm_obj, steps, infos=None):
     `infos` (a dict) receives each step's `place` info by name (for `solve_holds`)."""
     out = {}
     for name, kw in steps.items():
+        if name in ("grasp_rod", "rod_out", "ram_up", "ram_down", "return_rod"):
+            # Foot drill: the right hand supports the upright musket while the
+            # left fist draws and works the rammer.
+            kw = dict(kw, right=kw["left"], left=kw["right"],
+                      elbow_r=(-0.25, 0.0, -0.30), elbow_l=(0.30, 0.05, 0.10))
         info = {}
         out[name] = place(arm_obj, **kw, info=info)
         if infos is not None:
@@ -528,7 +744,7 @@ def between(arm_obj, a, b, t):
     sa, sb = a["spec"], b["spec"]
     spec = {}
     for k in sorted(set(sa) | set(sb)):
-        if k in ("world", "world_loc"):
+        if k in ("world", "world_loc", "free_hands"):
             continue
         va, vb = sa.get(k, (0.0, 0.0, 0.0)), sb.get(k, (0.0, 0.0, 0.0))
         spec[k] = tuple(x + (y - x) * t for x, y in zip(va, vb))
@@ -537,6 +753,8 @@ def between(arm_obj, a, b, t):
     qa, qb = (am.euler(x["spec"]["world"]["socket.hand_r"]).to_quaternion() for x in (a, b))
     r = qa.slerp(qb, t).to_euler("XYZ")
     spec["world"] = {"socket.hand_r": tuple(math.degrees(x) for x in r)}
+    if sa.get("free_hands") or sb.get("free_hands"):
+        spec["free_hands"] = ("r",)
     spec["world_loc"] = {"socket.hand_r": tuple(a["musket"].translation.lerp(b["musket"].translation, t))}
     arm = arm_obj.pose.bones
     am.pose(arm_obj, spec)
@@ -643,15 +861,17 @@ ROD_SOCKET = "socket.hand_l"
 ROD_LENGTH = 0.9
 
 
-def _rod(mode, arm, musket, prefix="", length=ROD_LENGTH, stowed=ROD_STOWED):
+def _rod(mode, arm, musket, prefix="", length=ROD_LENGTH, stowed=ROD_STOWED, hand_side="r"):
     """The ramrod's matrix (tail at the origin, +Z to the head) in `mode`: "stowed" in its
     pipes; "slide" drawn up along the barrel, the right hand near its head; "swing" turned
     out to the man's right, held in the middle; "bore" head down the barrel, the hand at
     its tail. `prefix`, `length`, `stowed`: a rider's carbine (`cavalry.reload_clip`)."""
     if mode == "stowed":
         return musket @ stowed
-    hand = arm[prefix + "hand_r"]
-    palm = (hand.head + hand.tail) / 2
+    hand = arm[prefix + "hand_" + hand_side]
+    socket = arm.get(prefix + "socket.hand_" + hand_side)
+    palm = (hand.matrix @ hand.bone.matrix_local.inverted() @ socket.bone.head_local
+            if socket is not None else (hand.head + hand.tail) / 2)
     m3 = musket.to_3x3()
     axis = m3 @ Vector((0, 0, 1))
     on_bore = musket.translation + axis * (palm - musket.translation).dot(axis)
@@ -714,7 +934,7 @@ def bake_musket(arm_obj, clip, keys, rod_phases=None):
         m.translation = m0.translation.lerp(m1.translation, t)
         bpy.context.scene.frame_set(f)
         _key(sock, m, f)
-        _key(rod, _rod_at(rod_phases, f, arm, m), f)
+        _key(rod, _rod_at(rod_phases, f, arm, m, hand_side="l"), f)
     _linear(arm_obj)
     arm_obj.animation_data.action = None
 

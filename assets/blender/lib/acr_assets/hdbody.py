@@ -737,6 +737,8 @@ def contact_grip(ctx, arm, body, diameters=STOCK):
     import bpy
 
     st = ctx.stats.setdefault("hd", {}).setdefault("grip", {})
+    arm["acr_grip_pitch_r"] = 95.0
+    arm["acr_grip_yaw_r"] = -30.0
     _prime(arm, body)
     spec, axes, sst = _wrap_hands(arm, diameters, STOCK_BACK)
     st.update(sst)

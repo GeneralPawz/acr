@@ -137,6 +137,9 @@ def make(root, name, s):
     build, fit = s["build"], s["fit"]
     ch = Character(root, name, build)
     w = s["weapon"]
+    if w == "musket":
+        ch.arm["acr_grip_pitch_r"] = 95.0
+        ch.arm["acr_grip_yaw_r"] = -30.0
     grip = held.fists("drumstick", "drumstick") if w == "drum" else held.fists(w)
     ch.body(shoulders=not build.get("garments"), grip=grip)  # no re-mesh under drafted garments
 
@@ -636,6 +639,9 @@ def _musket_clips(ctx, ch, md):
     # Charge bayonets: the same grip with the butt at the right hip.
     charge = aiming.hold(ch.arm, poses.CHARGE_MUSKET, pocket=(0.02, -0.12, -0.32), left_along=0.30)
     clips = poses.musketeer_clips(md, aim=aim, charge=charge, reload=reload, hip=hip)
+    from . import musket_contact
+
+    clips = musket_contact.carry_keys(ch.arm, clips)
     clips.update(finish.musket_clips(ch.arm, md, charge))  # the bayonet's finishing blow
     # The hands on the musket and the rammer on every frame between two loading steps.
     rods = poses.rod_phases(md)
@@ -664,6 +670,7 @@ def _musket_clips(ctx, ch, md):
             aiming.stow_rammer(ch.arm, clip)
         if kind:
             key_show(ch.arm, act, SHOW_REST, ch.prefix)
+    ctx.contact_bake = musket_contact.bake(ch.arm, clips, rods)
     ctx.fire = aiming.fire_stats(ch, present)
     ctx.reload = aiming.reload_report(ch.arm, {k: v for k, v in plan.items() if k in clips})
     for clip, keys in drawn.items():
@@ -683,6 +690,7 @@ def _musket_clips(ctx, ch, md):
 
     ctx.penetration = penetration.measure(ch.arm, sorted(a.name for a in bpy.data.actions if a.name.isupper()))
     ctx.fire_contacts = aiming.contacts(ch.arm)
+    ctx.carry_contacts = aiming.carry_contacts(ch.arm, clips)
 
 
 def build(ctx, s):
@@ -721,8 +729,8 @@ def build(ctx, s):
     ch.arm.animation_data.action = None
     unscale(ch.arm)
     if musket:
-        am.pose(ch.arm, poses.STAND_MUSKET)
-        ch.arm.pose.bones[aiming.ROD_SOCKET].matrix = ch.arm.pose.bones["socket.hand_r"].matrix @ aiming.ROD_STOWED
+        am.set_clip(ch.arm, "STAND")
+        ch.arm.animation_data.action = None
     else:
         am.pose(ch.arm, wclips.bare(wclips.solve(ch.arm, support_clips(md)["STAND"][0][1])))
     tris = ch.triangles()
@@ -736,6 +744,8 @@ def build(ctx, s):
                  "reload": getattr(ctx, "reload", None),
                  "musket_penetration": getattr(ctx, "penetration", None),
                  "fire_contacts": getattr(ctx, "fire_contacts", None)}
+    ctx.stats["musket_contact_bake"] = getattr(ctx, "contact_bake", None)
+    ctx.stats["carry_contacts"] = getattr(ctx, "carry_contacts", None)
     if getattr(ch, "genfit", None):
         ctx.stats["hat_source"] = ch.genfit
     if getattr(ch, "kit_stats", None):

@@ -1074,6 +1074,8 @@ def hold(arm, gun, lods, bayonet=None, bayonet_lods=()):
     from . import armature as am
     from . import grips
 
+    gun["acr_bore_y"] = BARREL_Y
+
     at = grips.hold_matrix(arm, "socket.hand_r", (0.0, 0.0, 0.0))  # origin already on the wrist
     for ob in [gun, *lods]:
         am.attach(ob, arm, "socket.hand_r", at)

@@ -151,7 +151,7 @@ def euler(r):
 
 def spec_bones(spec):
     """Bones a pose spec moves (rotation) and the ones it places (location)."""
-    rot = {k for k in spec if k not in ("root_loc", "world", "world_loc")}
+    rot = {k for k in spec if k not in ("root_loc", "world", "world_loc", "free_hands")}
     rot |= set(spec.get("world", {})) | set(spec.get("world_loc", {}))
     loc = set(spec.get("world_loc", {})) | ({"root"} if "root_loc" in spec else set())
     return rot, loc
@@ -189,10 +189,15 @@ def pose(arm_obj, spec, frame=None, prefix="", keyed=None):
     # applied to its rest orientation, whatever its parents do (a socket that keeps a
     # musket upright or aimed while the hand moves).
     for key, r in world.items():
-        if arm_obj.get("acr_grip") and key in arm_obj.get("acr_grip_held", ()):
+        free = key.endswith(tuple("_" + s for s in spec.get("free_hands", ())))
+        if arm_obj.get("acr_grip") and key in arm_obj.get("acr_grip_held", ()) and not free:
             continue
         pb = arm_obj.pose.bones[prefix + key]
         target = euler(r) @ pb.bone.matrix_local.to_3x3()
+        if free and key.startswith("socket.hand_") and arm_obj.get("acr_grip"):
+            from . import grips
+
+            target = euler(r) @ grips.item_in_socket(arm_obj, prefix + key).inverted()
         par = pb.parent
         rel = par.bone.matrix_local.to_3x3().inverted() @ pb.bone.matrix_local.to_3x3()
         basis = (par.matrix.to_3x3() @ rel).inverted() @ target
@@ -310,7 +315,8 @@ def _grip_hands(arm_obj, spec, world, frame, prefix):
     "world" first, then `socket.hand_*`."""
     from . import grips
 
-    held = [k for k in arm_obj.get("acr_grip_held", ()) if prefix + k in arm_obj.pose.bones]
+    held = [k for k in arm_obj.get("acr_grip_held", ()) if prefix + k in arm_obj.pose.bones
+            and not k.endswith(tuple("_" + s for s in spec.get("free_hands", ())))]
     if not held:
         return
     targets = {}

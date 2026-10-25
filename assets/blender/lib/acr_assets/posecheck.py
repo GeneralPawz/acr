@@ -195,16 +195,25 @@ def dump(path, poser):
     if not arms or not bpy.data.actions:
         return None
     out = {"format": FORMAT, "fps": scene.render.fps, "clips": {}}
-    for act in sorted(bpy.data.actions, key=lambda a: a.name):
-        if not am._fcurves(act) or not any(fc.data_path.startswith("pose.bones") for fc in am._fcurves(act)):
-            continue
-        frames, _f0 = _frames(act)
-        clip = {}
-        for k in frames:
-            poser.play(act.name, k)
-            clip[str(k)] = {a.name: snapshot(a) for a in arms}
-        out["clips"][act.name] = clip
-    poser.reset()
+    # Poses are baked FK. Evaluating the HD skin and every LOD for a bone-only
+    # snapshot is unnecessary and can take minutes without changing the result.
+    shown = [o for o in scene.objects if o.type == "MESH" and not o.hide_viewport]
+    for ob in shown:
+        ob.hide_viewport = True
+    try:
+        for act in sorted(bpy.data.actions, key=lambda a: a.name):
+            if not am._fcurves(act) or not any(fc.data_path.startswith("pose.bones") for fc in am._fcurves(act)):
+                continue
+            frames, _f0 = _frames(act)
+            clip = {}
+            for k in frames:
+                poser.play(act.name, k)
+                clip[str(k)] = {a.name: snapshot(a) for a in arms}
+            out["clips"][act.name] = clip
+    finally:
+        for ob in shown:
+            ob.hide_viewport = False
+        poser.reset()
     p = os.path.splitext(path)[0] + ".poses.json"
     with open(p, "w", encoding="utf-8") as f:
         json.dump(out, f, separators=(",", ":"))

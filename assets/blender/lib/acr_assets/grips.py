@@ -22,6 +22,8 @@ in the fist and the hand turned to the held item.
   so its knuckle line runs along it.
 """
 
+import math
+
 import bpy
 from mathutils import Matrix, Vector
 
@@ -58,7 +60,12 @@ def frame(arm_obj, side, prefix=""):
     t = Vector((0.0, -1.0, 0.0))
     t = (t - d * t.dot(d)).normalized()  # the knuckle line, out of the thumb side
     y = -d
-    return Matrix((y.cross(t), y, t)).transposed()
+    g = Matrix((y.cross(t), y, t)).transposed()
+    # A long gun's wrist is gripped diagonally across the palm. The transverse
+    # tool grip otherwise puts the trigger wrist directly above the stock.
+    pitch = arm_obj.get(prefix + "acr_grip_pitch_" + side, 0.0)
+    yaw = arm_obj.get(prefix + "acr_grip_yaw_" + side, 0.0)
+    return g @ Matrix.Rotation(math.radians(pitch), 3, "X") @ Matrix.Rotation(math.radians(yaw), 3, "Y")
 
 
 def centre(arm_obj, side, prefix="", radius=None):
@@ -85,15 +92,19 @@ def close(ch, diameters=None):
         b = _hand(ch.arm, P, sd)
         d = (b.tail_local - b.head_local).normalized()
         n = _palm(d, sd)
-        ax = d.cross(n)
+        ax = frame(ch.arm, sd, P).col[2].normalized()
+        n = (n - ax * n.dot(ax)).normalized()
+        bend = n.cross(ax).normalized()
+        if bend.dot(d) < 0:
+            ax, bend = -ax, -bend
         k = b.head_local + d * KNUCKLE
         c = k + n * r
         for v in me.vertices:
             if next((e.weight for e in v.groups if e.group == g.index), 0.0) < 0.5:
                 continue
-            s = (v.co - k).dot(d)
+            s = (v.co - k).dot(bend)
             if s > 0.0:
-                v.co = c + Matrix.Rotation(s / r, 3, ax) @ (v.co - d * s - c)
+                v.co = c + Matrix.Rotation(s / r, 3, ax) @ (v.co - bend * s - c)
                 moved += 1
     me.update()
     ch.arm["acr_fist"] = radii
@@ -192,7 +203,21 @@ def align_off_hand(arm_obj, side, axis, prefix=""):
     a = Vector(axis).normalized()
     if t.dot(a) < 0:
         a = -a
-    return t.rotation_difference(a).to_matrix() @ cur
+    aligned = t.rotation_difference(a).to_matrix() @ cur
+    # Roll the supporting palm towards the forearm's neutral direction. Keeping
+    # its old A-pose roll put the wrist above the fore-end and the cuff in it.
+    fore = arm_obj.pose.bones[prefix + "forearm_" + side]
+    rest_d = hand.bone.matrix_local.to_3x3().col[1]
+    neutral = fore.matrix.to_3x3() @ fore.bone.matrix_local.to_3x3().inverted() @ rest_d
+    want = neutral - a * neutral.dot(a)
+    have = aligned @ rest_d
+    have -= a * have.dot(a)
+    if want.length > 1e-5 and have.length > 1e-5:
+        want.normalize()
+        have.normalize()
+        angle = math.atan2(a.dot(have.cross(want)), have.dot(want))
+        aligned = Matrix.Rotation(angle, 3, a) @ aligned
+    return aligned
 
 
 def palm_errors(arm_obj, prefix=""):

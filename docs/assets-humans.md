@@ -847,26 +847,35 @@ Both are keyed on every frame of the hold before the shot and baked per frame
 (fists from the grip axis; two per frame). `gear.musket` has its top (barrel, comb) towards
 +Y since #296: with -Y up the grip frame held it barrel-down at the present.
 
-**Musket contacts, measured (m2-aim-hd).** `acr_assets.penetration` measures the held musket
-against the man over every frame of every clip (`stats.json` `musket_penetration`: per clip
-the musket vertices inside the body or outfit, `gun_in_body`, and the body vertices inside
-the musket, `body_in_gun`, each with the deepest and the most per frame; levels left out). A
-musket vertex counts when it lies behind the nearest surface (up to 0.30 m deep, no longer
-capped at 0.04 m) and ray parity confirms it (`penetration.gun_hits`: at least 5 of 6 rays
-cross the whole mesh an odd number of times), so the open edge of a garment shell does not
-count and a butt deep in the chest does; a vertex whose nearest triangle is a hand's lies in
-the fist by design. `aim.contacts` writes `fire_contacts`: per fire clip the butt plate's
-signed gap to the surface (`aim.butt_gap`, negative inside) and the right wrist's bend
-(`aim.wrist_deg`). `tests/test_penetration.py` gates the fire clips at 1 cm with
-`ACR_PENETRATION_GATE=1`; it stays opt-in while the present penetrates: on a077049 the reload
-frames of FIRE_AIMED reach 0.10 m (hdman) and 0.06 m (engm18). The aimed hold itself (frame
-0, PSTAND1) measures clean on hdman: its butt plate floats 3.7 cm behind the shoulder
-(`butt_gap` +0.037), so the side view reads as "through the shoulder" without a crossing. A
-fix must raise the right clavicle, drop the head onto the comb (eye about 5 cm above the axis)
-and seat the butt by contact; a search that seats it by sliding along the axis alone runs
-into the deltoid of the raised arm (m2-aim-fix: `butt_gap` −0.035 after a 0.25 m slide).
-`penetration.push_out` gives the move that takes the musket's deepest vertex out of the man,
-for such a contact solve.
+**Musket contact solve (`m2-aim-codex`).** The line and HD paths now share a
+surface-based present. The right clavicle is raised and protracted, the butt is placed
+against the dressed shoulder, and clearance is corrected along surface normals while
+keeping the target direction fixed. The right stock grip is diagonal across the palm
+(`acr_grip_pitch_r=95`, `acr_grip_yaw_r=-30`); other tool grips retain their frame.
+The supporting palm rolls toward its forearm's neutral direction. The cheek weld is
+fitted after contact correction, using the HD eye mesh where available and a sight line
+5 cm above the bore. `fire_contacts` records butt gap and wrist bend; `fire` records the
+eye error and grip misses as played.
+
+`musket_contact.carry_keys` shoulders the gun on the left, with the palm up under the
+butt and the free right wrist neutral. Shared STAND endpoints are replaced too. The leg
+and step keys are unchanged. `carry_contacts` measures the stock-to-shoulder gap in every
+carry frame. `free_hands` in a pose spec lets a placed musket move independently of a
+working hand. Foot reloads work the rammer in the left fist; the mounted helper retains
+its right-hand default.
+
+`musket_contact.bake` re-solves contacts on every played frame, including transitions
+and blows, and keys FK channels. It retains the best clearance found and bounds moves
+to 20 cm so a trapped cuff cannot drive the gun indefinitely out of reach. Residual
+penetration and joint-limit violations remain explicit: a completed bake is not a pass.
+
+`penetration` confirms both directions of closed-volume penetration by multi-ray parity.
+Reverse correction catches thin straps crossing a stock without containing its vertices.
+Open garments also need signed butt-surface contact, selected per vertex from its nearest
+surface rather than the most negative distant face. The 1 cm gate remains opt-in
+(`ACR_PENETRATION_GATE=1`) until all required clips pass, including carry, reload and
+blows. Proofs use `posecheck` / `render_pose.py`. Bone dumps skip mesh evaluation;
+comparison with the original function on the same scene preserves all 420 sampled poses.
 
 **Reload drill (#255).** A `SLOWRECHARGE` musketeer (EngM18, FrnM18, UsaM18, IroStr...:
 the `.MD` has `#ATTACK3`) does not reload in `ATTACK1`: the sim plays `#ATTACK3` again and

@@ -516,6 +516,7 @@ def matchlocks(ch, name, rest=True):
         _bpy.data.objects.remove(tmp)
         _bpy.data.meshes.remove(old)
     if rest:
+        ch.arm["acr_musket_rest"] = 1
         am.pose(ch.arm, {})
         gear.hold(ch, held.musket_rest(), f"{name}.musket_rest", ch.prefix + "socket.hand_l", slot="rest")
         am.pose(ch.arm, poses.STAND_MUSKET)
