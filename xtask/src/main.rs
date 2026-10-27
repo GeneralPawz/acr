@@ -39,6 +39,10 @@ const GAME_EXE: &str = "AmericanConquest";
 const WEB_EXE: &str = "AmericanConquest-Web";
 
 fn main() -> ExitCode {
+    if let Err(e) = check_own_build(env!("CARGO_MANIFEST_DIR"), std::env::var_os("CARGO_MANIFEST_DIR")) {
+        eprintln!("xtask: {e}");
+        return ExitCode::from(2);
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     let release = args.iter().any(|a| a == "--release");
     let option = |name: &str| args.windows(2).find(|w| w[0] == name).map(|w| w[1].clone());
@@ -112,6 +116,28 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Refuses a binary built from another checkout (#208). With a `CARGO_TARGET_DIR` shared
+/// between worktrees, cargo may keep its fingerprint fresh while another worktree replaced
+/// `xtask`, so `cargo xtask` would run that branch's code. `cargo run` passes the manifest
+/// directory it ran for; it must be the one this binary was compiled from. Started without
+/// cargo (no variable), the binary is taken as it is.
+fn check_own_build(built_from: &str, run_for: Option<std::ffi::OsString>) -> Result<()> {
+    let Some(run_for) = run_for else { return Ok(()) };
+    let same = |a: &Path, b: &Path| match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    };
+    if same(Path::new(built_from), Path::new(&run_for)) {
+        return Ok(());
+    }
+    Err(format!(
+        "this xtask binary was built from {built_from}, not from {} (a shared CARGO_TARGET_DIR?); \
+         use a target directory per worktree, or `touch xtask/src/main.rs` to rebuild it here",
+        Path::new(&run_for).display()
+    )
+    .into())
 }
 
 /// The workspace `cargo xtask` was started in. Found at runtime because a shared
@@ -234,4 +260,23 @@ fn copy_dir(from: &Path, to: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::check_own_build;
+
+    #[test]
+    fn own_build_runs() {
+        let here = env!("CARGO_MANIFEST_DIR");
+        assert!(check_own_build(here, Some(here.into())).is_ok());
+        assert!(check_own_build(here, None).is_ok());
+    }
+
+    #[test]
+    fn other_checkout_is_refused() {
+        let other = std::env::temp_dir();
+        let e = check_own_build(env!("CARGO_MANIFEST_DIR"), Some(other.into_os_string())).unwrap_err();
+        assert!(e.to_string().contains("shared CARGO_TARGET_DIR"));
+    }
 }
