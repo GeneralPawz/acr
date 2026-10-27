@@ -3,6 +3,9 @@
     blender -b --factory-startup --python assets/blender/render_views.py -- \
         --ref <ref.json> --model <file.glb> --out <dir> [--shading flat|studio]
 
+`--ref` and `--out` may repeat (paired in order): the model is imported once and rendered
+for every reference, e.g. every `CHECKS` entry of an asset.
+
 Writes `render_<k>.png` (RGBA, transparent background, the canvas of `ref.json`) for
 `acr model-check`, which compares them with `ref_<k>.png`. Workbench with flat lighting
 shows the base colour (texture) unlit, which is what the sprite colours are projected into;
@@ -66,14 +69,31 @@ def show_state(s, ref):
     print(f"ACR state: {anim}, sections {sections}, hidden {sum(o.hide_render for o in s.objects)} objects")
 
 
+def render_reference(s, pivot, ref, out):
+    """Renders every view of `ref` into `out` (`render_<k>.png`). Replaces the camera of an
+    earlier reference: canvas size and anchor differ per reference."""
+    if s.camera is not None:
+        bpy.data.objects.remove(s.camera)
+    show_state(s, ref)
+    camera.original_camera(ref.width, ref.height, ref.anchor)
+    os.makedirs(out, exist_ok=True)
+    for v in ref.views:
+        pivot.rotation_euler = (0.0, 0.0, cv.yaw(v.dir))
+        s.render.filepath = os.path.join(os.path.abspath(out), f"render_{v.k}.png")
+        bpy.ops.render.render(write_still=True)
+        print(f"ACR view {v.k}: RealDir {v.dir}, yaw {math.degrees(cv.yaw(v.dir)):.1f} deg")
+
+
 def main(argv):
     p = argparse.ArgumentParser(prog="render_views.py")
-    p.add_argument("--ref", required=True)
+    p.add_argument("--ref", required=True, action="append")
     p.add_argument("--model", required=True)
-    p.add_argument("--out", required=True)
+    p.add_argument("--out", required=True, action="append")
     p.add_argument("--shading", default="flat", choices=("flat", "studio"))
     a = p.parse_args(argv)
-    ref = Reference(a.ref)
+    if len(a.ref) != len(a.out):
+        p.error("--ref and --out must come in pairs")
+    refs = [Reference(r) for r in a.ref]
 
     s = scene.reset()
     import_glb(os.path.abspath(a.model))
@@ -82,8 +102,6 @@ def main(argv):
     for obj in list(s.objects):
         if obj.parent is None and obj is not pivot:
             obj.parent = pivot
-    show_state(s, ref)
-    camera.original_camera(ref.width, ref.height, ref.anchor)
 
     s.render.engine = "BLENDER_WORKBENCH"
     s.display.shading.light = "FLAT" if a.shading == "flat" else "STUDIO"
@@ -97,12 +115,8 @@ def main(argv):
     s.render.image_settings.color_depth = "8"
     s.render.dither_intensity = 0.0
 
-    os.makedirs(a.out, exist_ok=True)
-    for v in ref.views:
-        pivot.rotation_euler = (0.0, 0.0, cv.yaw(v.dir))
-        s.render.filepath = os.path.join(os.path.abspath(a.out), f"render_{v.k}.png")
-        bpy.ops.render.render(write_still=True)
-        print(f"ACR view {v.k}: RealDir {v.dir}, yaw {math.degrees(cv.yaw(v.dir)):.1f} deg")
+    for ref, out in zip(refs, a.out):
+        render_reference(s, pivot, ref, out)
 
 
 if __name__ == "__main__":

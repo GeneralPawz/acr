@@ -299,6 +299,13 @@ use as a regression test. The tool is Rust (it decodes the GP frames and reads t
 `acr-formats`, as the viewer does) and only the rendering runs in Blender; nothing in it needs
 Blender at compile time, so CI stays independent of Blender.
 
+`cargo xtask assets --check` does not call `acr model-check` into Blender once per check: per
+asset it writes every `CHECKS` reference, starts Blender once (`render_views.py` takes
+`--ref`/`--out` repeatedly: one glb import, one render per state and direction) and scores
+with `acr model-check ... --rendered`. It skips `acr model-ref` when the output directory
+holds a `.model-ref` stamp for the same game folder, type and arguments that is not older than
+the `acr` binary (delete the directory to force it).
+
 ### Proof: `IncDo1` (Inca hut)
 
 `assets/buildings/incdo1.py`: plinth, wattle walls, stone corner pillars, posts, thatched hip
