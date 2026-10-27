@@ -147,7 +147,8 @@ All under `target/assets/` (git-ignored; rebuilt by the commands above):
    strips redundant clip keys after export (`docs/assets.md` "Packing").
 7. **Shared cargo target directories** between worktrees made `cargo xtask` run another
    branch's binary twice (cargo saw its own fingerprint as fresh while `debug/xtask.exe` had
-   been replaced); the slice used a private target directory.
+   been replaced); the slice used a private target directory. xtask now refuses a binary built
+   from another checkout (#208).
 
 ## Before scaling to all groups
 
