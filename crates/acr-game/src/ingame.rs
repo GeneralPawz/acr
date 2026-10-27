@@ -106,6 +106,8 @@ pub struct InGame {
     last_frames: HashMap<EntityId, (AnimKind, i32)>,
     /// The tick of the last hit whose sound was chosen ([`crate::hit_sounds`]).
     hit_cursor: u64,
+    /// The tick of the last ground impact whose sound was chosen.
+    impact_cursor: u64,
     /// Agony of the dying, fearful shouts and the din of battle ([`crate::agony`]).
     agony: crate::agony::Agony,
     /// Units that started a flight leg in panic since the last frame.
@@ -190,6 +192,7 @@ impl InGame {
             sound_events: Vec::new(),
             last_frames: HashMap::new(),
             hit_cursor: 0,
+            impact_cursor: 0,
             agony: crate::agony::Agony::new(crate::agony::Mix::from_env()),
             fleeing: Vec::new(),
             camera: Camera { x: 0.0, y: 0.0, scale: 1.0 },
@@ -852,6 +855,9 @@ impl InGame {
         if self.hit_cursor > world.tick.0 {
             self.hit_cursor = 0;
         }
+        if self.impact_cursor > world.tick.0 {
+            self.impact_cursor = 0;
+        }
         let scale = self.camera.scale;
         let view = [self.camera.x, self.camera.y, window[0] / scale, window[1] / scale];
         let objects = self.objects.objects();
@@ -863,6 +869,9 @@ impl InGame {
         };
         let events = crate::hit_sounds::hit_sounds(&world.hits, who, self.hit_cursor, view, self.mission.fog());
         self.hit_cursor = world.hits.back().map_or(self.hit_cursor, |h| h.tick.max(self.hit_cursor));
+        let ground = crate::hit_sounds::ground_sounds(&world.impacts, self.impact_cursor, view, self.mission.fog());
+        self.impact_cursor = world.impacts.back().map_or(self.impact_cursor, |i| i.tick.max(self.impact_cursor));
+        let events: Vec<_> = events.into_iter().chain(ground).collect();
         for e in &events {
             log::debug!("hit sound {} (pan {:.2}, volume {:.2})", e.name, e.pan, e.volume);
         }

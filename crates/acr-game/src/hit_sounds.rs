@@ -8,12 +8,17 @@
 //! [`MAX_IMPACTS`] impacts and [`MAX_PAINS`] screams nearest the view centre play, and
 //! [`crate::unit_sounds::UnitSounds::play`] skips a group's variants that still play.
 //!
+//! Rounds that strike the ground (`World::impacts`: balls that missed, cannonballs landing,
+//! shells bursting) thud too (#226): [`GROUND_HEAVY`] for cannonballs and shells,
+//! [`GROUND_SOFT`] for the rest; per tick only the [`MAX_GROUND`] nearest the view centre
+//! play ([`ground_sounds`]).
+//!
 //! The samples are CC0 files of ACR (`assets/sounds`, see its `CREDITS.txt`), looked up as
 //! the game files `ACR\Sounds\<file>` (docs/simulation.md, "Hit and pain sounds").
 
 use std::collections::BTreeMap;
 
-use acr_sim::combat::{DeathCause, HitRecord};
+use acr_sim::combat::{DeathCause, HitRecord, ImpactRecord};
 use acr_sim::fog::Fog;
 
 use crate::animal_sounds::Cry;
@@ -25,6 +30,10 @@ pub const BODY: &str = "ACR_HIT_BODY";
 pub const HEAVY: &str = "ACR_HIT_HEAVY";
 /// Any projectile hitting a building.
 pub const WOOD: &str = "ACR_HIT_WOOD";
+/// Musket balls, arrows and grapeshot striking the ground.
+pub const GROUND_SOFT: &str = "ACR_GROUND_SOFT";
+/// Cannonballs and shells striking the ground.
+pub const GROUND_HEAVY: &str = "ACR_GROUND_HEAVY";
 /// A soldier wounded but alive.
 pub const PAIN: &str = "ACR_PAIN";
 
@@ -33,6 +42,8 @@ pub const GROUPS: &[(&str, &[&str])] = &[
     (BODY, &["hit_body1.ogg", "hit_body2.ogg", "hit_body3.ogg"]),
     (HEAVY, &["hit_heavy1.ogg", "hit_heavy2.ogg", "hit_heavy3.ogg"]),
     (WOOD, &["hit_wood1.ogg", "hit_wood2.ogg", "hit_wood3.ogg"]),
+    (GROUND_SOFT, &["ground_soft1.ogg", "ground_soft2.ogg", "ground_soft3.ogg"]),
+    (GROUND_HEAVY, &["ground_heavy1.ogg", "ground_heavy2.ogg", "ground_heavy3.ogg"]),
     (
         PAIN,
         &[
@@ -54,6 +65,8 @@ pub const DIR: &str = r"ACR\Sounds";
 
 /// Impact sounds started per tick at most.
 pub const MAX_IMPACTS: usize = 3;
+/// Ground impacts started per tick at most.
+pub const MAX_GROUND: usize = 2;
 /// Pain screams started per tick at most.
 pub const MAX_PAINS: usize = 1;
 
@@ -144,6 +157,38 @@ pub fn hit_sounds<'a>(
                 at: None,
             }));
         }
+    }
+    out
+}
+
+/// The sounds of the ground impacts after tick `after`, heard in `view` under `fog` (as for
+/// [`hit_sounds`]): per tick the [`MAX_GROUND`] nearest the view centre, in tick order.
+pub fn ground_sounds<'a>(
+    impacts: impl IntoIterator<Item = &'a ImpactRecord>,
+    after: u64,
+    view: [f32; 4],
+    fog: Option<&Fog>,
+) -> Vec<SoundEvent> {
+    let centre = (view[0] + view[2] / 2.0, view[1] + view[3] / 2.0);
+    let mut ticks: BTreeMap<u64, Vec<(f32, &'static str, f32, f32)>> = BTreeMap::new();
+    for i in impacts.into_iter().filter(|i| i.tick > after) {
+        // Unlike a hit's, an impact's position is in plain world pixels.
+        let (x, y) = (i.pos.0 as f32, i.pos.1 as f32);
+        let Some((volume, pan)) = unit_sounds::placed(x, y, view, fog) else { continue };
+        let heavy = i.mortar || matches!(i.cause, DeathCause::Cannonball | DeathCause::Explosion);
+        let group = if heavy { GROUND_HEAVY } else { GROUND_SOFT };
+        let d = (x - centre.0).powi(2) + (y - centre.1).powi(2);
+        ticks.entry(i.tick).or_default().push((d, group, volume, pan));
+    }
+    let mut out = Vec::new();
+    for (_, mut list) in ticks {
+        list.sort_by(|a, b| a.0.total_cmp(&b.0));
+        out.extend(list.iter().take(MAX_GROUND).map(|&(_, name, volume, pan)| SoundEvent {
+            name: name.to_owned(),
+            pan,
+            volume,
+            at: None,
+        }));
     }
     out
 }
@@ -250,5 +295,36 @@ mod tests {
             }
         }
         assert_eq!(files("NOPE"), None);
+    }
+
+    fn impact_at(tick: u64, x: i32, cause: DeathCause, mortar: bool) -> ImpactRecord {
+        // y = 884: the view centre's row (plain world pixels).
+        ImpactRecord { tick, pos: (x, 884), dir: (1, 0), cause, mortar }
+    }
+
+    #[test]
+    fn ground_impacts_by_round() {
+        use DeathCause::*;
+        let hits = [
+            impact_at(1, 1512, Gunshot, false),
+            impact_at(2, 1512, Cannonball, false),
+            impact_at(3, 1512, Grapeshot, false),
+            impact_at(4, 1512, Explosion, true),
+            impact_at(5, 1512, Arrow, true),
+        ];
+        let events = ground_sounds(&hits, 0, VIEW, None);
+        assert_eq!(names(&events), [GROUND_SOFT, GROUND_HEAVY, GROUND_SOFT, GROUND_HEAVY, GROUND_HEAVY]);
+        assert_eq!((events[0].volume, events[0].pan), (1.0, 0.0));
+        // Only after the cursor; far ones are not heard.
+        assert_eq!(ground_sounds(&hits, 4, VIEW, None).len(), 1);
+        assert!(ground_sounds(&[impact_at(1, 1000 + 1024 + 1025, Gunshot, false)], 0, VIEW, None).is_empty());
+    }
+
+    #[test]
+    fn a_volley_of_misses_plays_the_nearest_few_per_tick() {
+        let volley: Vec<_> = (0..50).map(|i| impact_at(3, 1512 + 5 * (49 - i), DeathCause::Gunshot, false)).collect();
+        let events = ground_sounds(&volley, 0, VIEW, None);
+        assert_eq!(events.len(), MAX_GROUND);
+        assert!(events.iter().all(|e| e.pan < 0.05));
     }
 }
