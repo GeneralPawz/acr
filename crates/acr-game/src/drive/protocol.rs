@@ -233,6 +233,8 @@ pub enum Request {
     Camera {
         x: i32,
         y: i32,
+        /// Centred on this unit (alive or a corpse) instead of `x`/`y` (#237).
+        unit: Option<u32>,
         zoom: Option<f32>,
         /// True pixels above the ground point that come to the middle (default 0.9 m).
         lift: f32,
@@ -619,9 +621,14 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
         "studio" | "pose" | "sheet" | "measure" => Request::Studio { cmd: cmd.to_owned(), v: v.clone() },
         "camera" => {
             let num = |k: &str| v.get(k).and_then(Value::as_f64);
+            let unit = uint(&v, "unit").map(|u| u as u32);
             let (x, y) = match v.get("world").and_then(point) {
                 Some([x, y]) => (x, y),
-                None => (num("x").ok_or("camera: missing \"x\"")?, num("y").ok_or("camera: missing \"y\"")?),
+                None if unit.is_some() => (0.0, 0.0),
+                None => (
+                    num("x").ok_or("camera: missing \"x\" (or \"world\", \"unit\")")?,
+                    num("y").ok_or("camera: missing \"y\"")?,
+                ),
             };
             let deg = |k: &str| num(k).or_else(|| num(&format!("{k}_deg")).map(f64::to_radians));
             let orbit = match (deg("yaw"), deg("pitch")) {
@@ -629,7 +636,7 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
                 (yaw, pitch) => Some([yaw.unwrap_or(0.0) as f32, pitch.unwrap_or(0.52) as f32]),
             };
             let lift = num("lift").unwrap_or(27.0) as f32;
-            Request::Camera { x: x as i32, y: y as i32, zoom: num("zoom").map(|z| z as f32), lift, orbit }
+            Request::Camera { x: x as i32, y: y as i32, unit, zoom: num("zoom").map(|z| z as f32), lift, orbit }
         }
         "shadows" => Request::Shadows(v.get("on").and_then(Value::as_bool)),
         "burn" => Request::Burn {
@@ -749,12 +756,16 @@ mod tests {
     fn parses_bench_commands() {
         let (_, r) =
             parse(r#"{"cmd": "camera", "x": 3000, "y": 4000, "zoom": 5, "yaw_deg": 90, "pitch": 0.2}"#).unwrap();
-        let Request::Camera { x: 3000, y: 4000, zoom: Some(5.0), lift: 27.0, orbit: Some([yaw, pitch]) } = r else {
+        let Request::Camera { x: 3000, y: 4000, unit: None, zoom: Some(5.0), lift: 27.0, orbit: Some([yaw, pitch]) } =
+            r
+        else {
             panic!("{r:?}")
         };
         assert!((yaw - std::f32::consts::FRAC_PI_2).abs() < 1e-5 && (pitch - 0.2).abs() < 1e-6);
         let (_, r) = parse(r#"{"cmd": "camera", "world": [10, 20]}"#).unwrap();
-        assert_eq!(r, Request::Camera { x: 10, y: 20, zoom: None, lift: 27.0, orbit: None });
+        assert_eq!(r, Request::Camera { x: 10, y: 20, unit: None, zoom: None, lift: 27.0, orbit: None });
+        let (_, r) = parse(r#"{"cmd": "camera", "unit": 541, "zoom": 5}"#).unwrap();
+        assert_eq!(r, Request::Camera { x: 0, y: 0, unit: Some(541), zoom: Some(5.0), lift: 27.0, orbit: None });
         let (_, r) = parse(r#"{"cmd": "record", "dir": "out", "count": 3, "every": 4}"#).unwrap();
         assert_eq!(r, Request::Record { dir: "out".into(), prefix: "frame".into(), count: 3, every: 4, crop: None });
         assert!(matches!(parse(r#"{"cmd": "hit", "unit": 5}"#).unwrap().1, Request::Hit(_)));

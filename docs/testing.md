@@ -119,6 +119,7 @@ its label to appear.
 | `{"cmd": "screenshot", "path": "out.png", "crop": [x, y, w, h]}` | only with `--drive-gpu` |
 | `{"cmd": "dialogs", "policy": "report"}` | `auto` or `report` |
 | `{"cmd": "camera", "x": 3000, "y": 9000, "zoom": 5, "yaw_deg": 0, "pitch_deg": 10}` | the close-up bench's camera, see below |
+| `{"cmd": "camera", "unit": 541, "zoom": 5}` | centred on a unit, a corpse too (#237); takes the same `zoom`, `yaw_deg`, `pitch_deg` and `lift` |
 | `{"cmd": "camera", "frame": [0], "view": "side", "part": "hands", "margin": 0.15}` | frames units or a body part (studio, see "The studio") |
 | `{"cmd": "studio", "ground": "white", "units": [{"type": "EngM18", "x": 7680, "y": 7680, "dir": 64}]}` | a held blank field with exactly these units (studio) |
 | `{"cmd": "pose", "id": 0, "clip": "ATTACK1", "frame": 12}` | holds a unit's model at a clip time (studio) |

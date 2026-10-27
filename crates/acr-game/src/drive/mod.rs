@@ -891,11 +891,20 @@ impl Driver {
                 // Pressing away what is open now needs a frame.
                 Ok(policy == DialogPolicy::Auto && tree::modal(game).is_some())
             }
-            Request::Camera { x, y, zoom, lift, orbit } => {
+            Request::Camera { x, y, unit, zoom, lift, orbit } => {
                 let Mode::InGame(g) = &mut game.mode else { return Err("no game".into()) };
+                // A unit's spot, corpses included: the death and gear checks look at those.
+                let (x, y) = match unit {
+                    Some(id) => {
+                        let world = g.world().ok_or("no world yet")?;
+                        let u = world.units.get(id as usize).ok_or(format!("camera: no unit {id}"))?;
+                        (u.pos.x >> 4, u.pos.y >> 4)
+                    }
+                    None => (x, y),
+                };
                 let orbit = orbit.map(|[yaw, pitch]| acr_render::view3d::Orbit { yaw, pitch });
                 g.set_camera(x, y, lift, zoom, orbit);
-                job.reply.insert("camera".into(), json!({"world": [x, y], "zoom": g.camera_scale()}));
+                job.reply.insert("camera".into(), json!({"world": [x, y], "unit": unit, "zoom": g.camera_scale()}));
                 // One frame to draw the view (and settle the files it asks for).
                 job.steps.push_back(Step::Frame);
                 job.settle = true;
