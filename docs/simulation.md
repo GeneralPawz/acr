@@ -1079,7 +1079,10 @@ order) and draws random numbers.
   other world sounds): musket balls, arrows, thrown weapons and grapeshot `ACR_HIT_BODY`,
   cannonballs and shells `ACR_HIT_HEAVY`, any projectile on a building `ACR_HIT_WOOD`; a
   soldier who survives a hit (also in melee) cries out (`ACR_PAIN`). Kills keep their
-  `#DEATH` sounds. Per tick only the 3 impacts and 1 scream nearest the view centre play,
+  `#DEATH` sounds. Rounds that strike the ground (`World::impacts`, #226: balls that missed,
+  landing cannonballs, bursting shells) thud where they land: cannonballs, shells and
+  mortars `ACR_GROUND_HEAVY`, the rest `ACR_GROUND_SOFT` (at most 2 per tick, own cursor).
+  Per tick only the 3 impacts and 1 scream nearest the view centre play,
   and a group's variants that still play are skipped. The samples are CC0 files in the
   repository's `assets/sounds` (sources in its `CREDITS.txt`), read as the game files
   `ACR\Sounds\<file>`: in the game folder (natively and in the browser; `cargo xtask dist

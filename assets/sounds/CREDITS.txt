@@ -6,6 +6,8 @@ hit_body1-3.ogg   Kenney, "Impact Sounds" 1.0 (www.kenney.nl), CC0:
                   impactPunch_medium_000-002.ogg, unchanged
 hit_heavy1-3.ogg  Kenney, "Impact Sounds": impactPunch_heavy_000-002.ogg, unchanged
 hit_wood1-3.ogg   Kenney, "Impact Sounds": impactWood_heavy_000-002.ogg, unchanged
+ground_soft1-3.ogg Kenney, "Impact Sounds": impactSoft_medium_000-002.ogg, unchanged
+ground_heavy1-3.ogg Kenney, "Impact Sounds": impactMining_000-002.ogg, unchanged
 
 pain1-9.wav       HaelDB, "Male Grunt/Yelling sounds"
                   (https://opengameart.org/content/male-gruntyelling-sounds), used under its
