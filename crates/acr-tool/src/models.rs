@@ -33,7 +33,7 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "model-check",
-        usage: "<game-dir> <TYPE|LIST:INDEX> <model.glb> <out-dir> [--anim NAME] [--step N] [--sections STATE] [--min-iou X] [--blender PATH] [--scripts DIR]",
+        usage: "<game-dir> <TYPE|LIST:INDEX> <model.glb> <out-dir> [--anim NAME] [--step N] [--sections STATE] [--min-iou X] [--blender PATH] [--scripts DIR] [--rendered]   (--rendered: score the render_<k>.png already in out-dir, rendered by render_views.py)",
         run: |a| match a {
             [dir, ty, glb, out, rest @ ..] => model_check(Path::new(dir), ty, Path::new(glb), Path::new(out), rest),
             _ => Err(crate::WRONG_ARGS.into()),
@@ -325,8 +325,13 @@ pub fn find_blender(explicit: Option<&str>) -> PathBuf {
 fn model_check(dir: &Path, ty: &str, glb: &Path, out: &Path, rest: &[&str]) -> Result<()> {
     let mut ref_args = Vec::new();
     let (mut min_iou, mut blender, mut scripts) = (None, None, None);
+    let mut rendered = false;
     let mut it = rest.iter();
     while let Some(&flag) = it.next() {
+        if flag == "--rendered" {
+            rendered = true;
+            continue;
+        }
         let value = *it.next().ok_or_else(|| format!("{flag} needs a value"))?;
         match flag {
             "--min-iou" => min_iou = Some(value.parse::<f64>()?),
@@ -336,26 +341,28 @@ fn model_check(dir: &Path, ty: &str, glb: &Path, out: &Path, rest: &[&str]) -> R
         }
     }
     let reference = model_ref(dir, ty, out, &RefOptions::parse(&ref_args)?)?;
-    let scripts = scripts.unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/blender"));
-    let script = scripts.join("render_views.py");
-    if !script.is_file() {
-        return Err(format!("{} not found (use --scripts)", script.display()).into());
-    }
-    let blender = find_blender(blender);
-    let status = std::process::Command::new(&blender)
-        .args(["-b", "--factory-startup", "--python"])
-        .arg(&script)
-        .arg("--")
-        .arg("--ref")
-        .arg(out.join("ref.json"))
-        .arg("--model")
-        .arg(glb)
-        .arg("--out")
-        .arg(out)
-        .status()
-        .map_err(|e| format!("cannot run Blender ({}): {e}; set BLENDER or --blender", blender.display()))?;
-    if !status.success() {
-        return Err(format!("Blender failed ({status})").into());
+    if !rendered {
+        let scripts = scripts.unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/blender"));
+        let script = scripts.join("render_views.py");
+        if !script.is_file() {
+            return Err(format!("{} not found (use --scripts)", script.display()).into());
+        }
+        let blender = find_blender(blender);
+        let status = std::process::Command::new(&blender)
+            .args(["-b", "--factory-startup", "--python"])
+            .arg(&script)
+            .arg("--")
+            .arg("--ref")
+            .arg(out.join("ref.json"))
+            .arg("--model")
+            .arg(glb)
+            .arg("--out")
+            .arg(out)
+            .status()
+            .map_err(|e| format!("cannot run Blender ({}): {e}; set BLENDER or --blender", blender.display()))?;
+        if !status.success() {
+            return Err(format!("Blender failed ({status})").into());
+        }
     }
     // The game stands unit models `UNIT_SOUTH` south of their anchor (#196): compare them there.
     let unit = !ty.contains(':') && !crate::defs::find_unit(&mut Vfs::open_game_dir(dir)?, ty)?.1.is_building();
