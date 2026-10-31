@@ -937,9 +937,14 @@ fn debug_flags() -> u32 {
         .unwrap_or(0)
 }
 
-/// `model.wgsl` with the shadow receiver (`shadow.wgsl`) and casters (`model_shadow.wgsl`).
-pub const MODEL_SHADER: &str =
-    concat!(include_str!("model.wgsl"), include_str!("shadow.wgsl"), include_str!("model_shadow.wgsl"));
+/// `model.wgsl` with the wind field (`wind.wgsl`), the shadow receiver (`shadow.wgsl`) and
+/// casters (`model_shadow.wgsl`).
+pub const MODEL_SHADER: &str = concat!(
+    include_str!("model.wgsl"),
+    include_str!("wind.wgsl"),
+    include_str!("shadow.wgsl"),
+    include_str!("model_shadow.wgsl")
+);
 
 fn model_shader(device: &wgpu::Device) -> wgpu::ShaderModule {
     device.create_shader_module(wgpu::ShaderModuleDescriptor {

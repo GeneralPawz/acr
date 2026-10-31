@@ -251,16 +251,7 @@ pub fn flash(clock: f32) -> f32 {
     f * (0.35 + 0.65 * s.near)
 }
 
-/// The gust strength (0..1) at world point `at` and wind clock `clock` for wind direction
-/// `dir`: `gust` of `model.wgsl`, which sways the trees by it.
-pub fn gust(at: [f32; 2], dir: [f32; 2], clock: f32) -> f32 {
-    let along = at[0] * dir[0] + at[1] * dir[1];
-    let across = -at[0] * dir[1] + at[1] * dir[0];
-    let a = (along * 0.0052 - clock * 0.78 + 1.6 * (across * 0.0021 + clock * 0.05).sin()).sin();
-    let b = (along * 0.003 - clock * 0.33 + across * 0.0013 + 1.7).sin();
-    let g = (0.45 + 0.35 * a + 0.3 * b).clamp(0.0, 1.0);
-    g * g * (3.0 - 2.0 * g)
-}
+pub use crate::wind::gust;
 
 /// At most this many drops or flakes in a frame.
 pub const MAX_DROPS: u32 = 24_000;
