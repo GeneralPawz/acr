@@ -154,6 +154,14 @@ as `key=value` lines in `settings.txt` in `%LOCALAPPDATA%\ACR` (the folder of
 in the browser, and reads them at start-up (volumes and window size included). The
 original keeps its options elsewhere; ACR does not read or write those.
 
+On a screen wider than 1024 the original anchors the resource bar and the "M" plaque to the
+right edge (`RealLx`, 0x4ecc50), and ACR follows. `center_top_bar=on` in `settings.txt`
+(off by default, no options-page row: the page is full, #374; #360) moves the plaque, the
+values, their hint rects and the click region left by (`RealLx` − 781) / 2, so the plaque
+and the bar (781 wide together) are centred on the screen and the filler tiles run the
+whole width. Nothing else moves. It is a UI setting, not a rule: it is not in the Rules hash
+or the savegames.
+
 ### Single missions (0x5d66b0) and campaign missions (0x5c4e30)
 
 Missions come from `Missions\Missions.txt` (0x569c27: id, name, script DLL, map,

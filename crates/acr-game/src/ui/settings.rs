@@ -90,6 +90,10 @@ pub struct Settings {
     /// guides on the ground (`ingame/gun_marks.rs`), switched by their command icon
     /// "Zielhilfe" in a game, which writes it back here (docs/ui.md "Gun marks").
     pub aim_guides: bool,
+    /// ACR: `center_top_bar=on|off` (off by default): on a screen wider than 1024 the
+    /// resource bar and the "M" plaque sit centred instead of at the right edge, where the
+    /// original anchors them (docs/ui.md). A UI setting: not in the rules or the savegames.
+    pub center_top_bar: bool,
     /// ACR: `decay_stain=on|off`: a decaying corpse's fluids soak into the ground under it
     /// (a cadaver decomposition island: a dark, greasy stain drying to brown, the grass
     /// dying around it; docs/rendering-3d.md). `None` (not in the file): on with
@@ -203,6 +207,7 @@ impl Default for Settings {
             ground_detailed: true,
             marks_keep: false,
             aim_guides: true,
+            center_top_bar: false,
             weather: Weather::Off,
             graphics: Graphics::Auto,
         }
@@ -282,7 +287,7 @@ impl Settings {
             "sound_volume={}\nmusic_volume={}\nmusic_mode={}\ngame_mode={}\nscroll_speed={}\nframe_time={}\n\
              resolution={}\nrecord={}\nrecord_file={hex}\ncontrols={controls}\nedge_scroll={}\n\
              models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\ncorpse_decay={}\nhit_locations={}\nbody_spacing={}\nmortars={}\ncorpse_piles={}\ncannon_fire={}\nshadows={}\nlod={}\nmaterial_detail={}\nwind={}\nmap_models={}\nwater={}\n\
-             ground={}\nground_cover={}\nbattlefield_marks={}\nweather={}\naim_guides={}\ngraphics={}\n{}{}{}",
+             ground={}\nground_cover={}\nbattlefield_marks={}\nweather={}\naim_guides={}\ncenter_top_bar={}\ngraphics={}\n{}{}{}",
             self.sound_volume,
             self.music_volume,
             self.music_mode,
@@ -310,6 +315,7 @@ impl Settings {
             if self.marks_keep { "keep" } else { "fade" },
             self.weather.name(),
             if self.aim_guides { "on" } else { "off" },
+            if self.center_top_bar { "on" } else { "off" },
             self.graphics.name(),
             match self.decay_stain {
                 Some(true) =>
@@ -406,6 +412,7 @@ impl Settings {
                 "ground_cover" => s.ground_cover = value != "off",
                 "battlefield_marks" => s.marks_keep = value == "keep",
                 "aim_guides" => s.aim_guides = value != "off",
+                "center_top_bar" => s.center_top_bar = value == "on",
                 "weather" => s.weather = Weather::parse(value).unwrap_or_default(),
                 "graphics" => s.graphics = Graphics::parse(value).unwrap_or_default(),
                 "group_move" => {
@@ -485,6 +492,7 @@ mod tests {
             cannon_fire: true,
             marks_keep: true,
             aim_guides: false,
+            center_top_bar: true,
             weather: Weather::Snow,
             graphics: Graphics::Medium,
         };
