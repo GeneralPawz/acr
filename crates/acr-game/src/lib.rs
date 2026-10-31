@@ -27,6 +27,7 @@ mod mission_ui;
 mod music;
 #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
 pub mod native;
+mod pacing;
 mod perf;
 mod random_map;
 mod savegame;
@@ -47,7 +48,7 @@ use canvas::Canvas;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Fullscreen, Window, WindowId};
 
@@ -113,6 +114,8 @@ pub struct Game {
     profile: Option<(web_time::Instant, u32)>,
     /// The always-on performance recorder (`perf.rs`, docs/testing.md).
     perf: perf::Recorder,
+    /// When the next frame is due (`pacing.rs`, #440).
+    pacing: pacing::Pacing,
     modifiers: ModifiersState,
     /// The options came from the settings file: the window takes their resolution.
     stored_settings: bool,
@@ -151,6 +154,7 @@ impl Game {
             touch_clock: web_time::Instant::now(),
             touch_time: None,
             last_frame: None,
+            pacing: Default::default(),
             profile: None,
             perf: perf::Recorder::from_env(),
             modifiers: ModifiersState::empty(),
@@ -243,6 +247,9 @@ impl Game {
         web::frame_done(now.elapsed().as_secs_f32() * 1000.0);
         self.profile_log(now);
         self.perf_frame();
+        let settings = self.ui.settings();
+        let fps = pacing::cap_fps(settings.frame_cap, settings.power_save, pacing::battery_mode());
+        self.pacing.frame_done(web_time::Instant::now(), fps);
     }
 
     /// Records the frame just made (`perf.rs`), and writes a snapshot when Ctrl + Space, R
@@ -925,9 +932,14 @@ impl ApplicationHandler<Event> for Game {
         if self.driver.is_some() {
             return self.drive(event_loop);
         }
-        let _ = event_loop;
-        if let Some(window) = &self.window {
-            window.request_redraw();
+        let Some(window) = &self.window else { return };
+        // Capped: sleep until the next frame is due instead of asking for it at once (#440).
+        match self.pacing.wait(web_time::Instant::now()) {
+            Some(wait) => event_loop.set_control_flow(ControlFlow::WaitUntil(web_time::Instant::now() + wait)),
+            None => {
+                event_loop.set_control_flow(ControlFlow::Wait);
+                window.request_redraw();
+            }
         }
     }
 }

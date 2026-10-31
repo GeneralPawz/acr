@@ -115,6 +115,11 @@ impl ApplicationHandler<Event> for Launcher {
             }
         }
         if let Some(game) = &mut self.game {
+            // The user may change the Game Mode in the system's game settings between runs.
+            match game_mode_battery(&self.app) {
+                Ok(on) => crate::pacing::set_battery_mode(on),
+                Err(e) => log::warn!("cannot read the Game Mode: {e}"),
+            }
             game.resumed(event_loop);
             if !self.pointer_hidden {
                 self.pointer_hidden = true;
@@ -249,5 +254,40 @@ fn hide_system_pointer(app: &AndroidApp) -> Result<(), jni::errors::Error> {
             }
         }
         Ok(())
+    })
+}
+
+/// Whether Android's Game Mode is `GAME_MODE_BATTERY` (`GameManager.getGameMode()`, API 31+;
+/// earlier versions have neither, which reads as not battery).
+fn game_mode_battery(app: &AndroidApp) -> Result<bool, jni::errors::Error> {
+    use jni::objects::{JObject, JValue};
+    use jni::{jni_sig, jni_str};
+    /// `Build.VERSION_CODES.S`.
+    const API_S: i32 = 31;
+    /// `GameManager.GAME_MODE_BATTERY`.
+    const GAME_MODE_BATTERY: i32 = 3;
+    // SAFETY: both pointers come from the running activity and stay valid while it runs.
+    let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    vm.attach_current_thread(|env| {
+        let sdk =
+            env.get_static_field(jni_str!("android/os/Build$VERSION"), jni_str!("SDK_INT"), jni_sig!(int))?.i()?;
+        if sdk < API_S {
+            return Ok(false);
+        }
+        let activity = unsafe { JObject::from_raw(env, app.activity_as_ptr().cast()) };
+        let name = env.new_string("game")?;
+        let manager = env
+            .call_method(
+                &activity,
+                jni_str!("getSystemService"),
+                jni_sig!((java.lang.String) -> java.lang.Object),
+                &[JValue::Object(&name)],
+            )?
+            .l()?;
+        if manager.is_null() {
+            return Ok(false);
+        }
+        let mode = env.call_method(&manager, jni_str!("getGameMode"), jni_sig!(() -> int), &[])?.i()?;
+        Ok(mode == GAME_MODE_BATTERY)
     })
 }

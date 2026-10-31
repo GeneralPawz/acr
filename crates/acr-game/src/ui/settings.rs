@@ -167,6 +167,13 @@ pub struct Settings {
     /// `ui/graphics.rs`, docs/rendering-3d.md "Graphics presets"): the frame's limits, and
     /// the single switches once when chosen.
     pub graphics: Graphics,
+    /// ACR (#440): `frame_cap=off|30|60` (off by default): at most 30 or 60 frames per second;
+    /// off draws at the display's rate (vsync). `pacing.rs`.
+    pub frame_cap: FrameCap,
+    /// ACR (#440): `power_save=on|off`: caps the rate at 30 fps. `None` (not in the file):
+    /// follows Android's Game Mode (`BATTERY` saves power), off elsewhere
+    /// ([`crate::pacing::cap_fps`]).
+    pub power_save: Option<bool>,
 }
 
 /// Which top bar a game shows (`top_bar` in `settings.txt`).
@@ -196,6 +203,7 @@ impl TopBar {
 }
 
 pub use super::graphics::Graphics;
+pub use crate::pacing::FrameCap;
 pub use acr_render::water::SeaState;
 pub use acr_render::weather::Weather;
 
@@ -295,6 +303,8 @@ impl Default for Settings {
             weather: Weather::Off,
             sea_state: SeaState::Calm,
             graphics: Graphics::Auto,
+            frame_cap: FrameCap::Off,
+            power_save: None,
         }
     }
 }
@@ -373,7 +383,7 @@ impl Settings {
             "sound_volume={}\nmusic_volume={}\nmusic_mode={}\ngame_mode={}\nscroll_speed={}\nframe_time={}\n\
              resolution={}\nrecord={}\nrecord_file={hex}\ncontrols={controls}\nedge_scroll={}\n\
              models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\ncorpse_decay={}\nhit_locations={}\nbody_spacing={}\nmortars={}\ncorpse_piles={}\ncannon_fire={}\nformation_attack={}\nanimal_give_up={}\ndart_fire={}\naimed_fire={}\nshadows={}\nlod={}\nmaterial_detail={}\nwind={}\nmap_models={}\nwater={}\n\
-             ground={}\nground_cover={}\nbattlefield_marks={}\nweather={}\nsea_state={}\naim_guides={}\ncenter_top_bar={}\n{top_bar}graphics={}\n{}{}{}{}",
+             ground={}\nground_cover={}\nbattlefield_marks={}\nweather={}\nsea_state={}\naim_guides={}\ncenter_top_bar={}\n{top_bar}graphics={}\nframe_cap={}\n{}{}{}{}{}",
             self.sound_volume,
             self.music_volume,
             self.music_mode,
@@ -408,6 +418,12 @@ impl Settings {
             if self.aim_guides { "on" } else { "off" },
             if self.center_top_bar { "on" } else { "off" },
             self.graphics.name(),
+            self.frame_cap.name(),
+            match self.power_save {
+                Some(true) => "power_save=on\n",
+                Some(false) => "power_save=off\n",
+                None => "",
+            },
             match self.decay_stain {
                 Some(true) =>
                     "decay_stain=on
@@ -516,6 +532,19 @@ impl Settings {
                 "weather" => s.weather = Weather::parse(value).unwrap_or_default(),
                 "sea_state" => s.sea_state = SeaState::parse(value).unwrap_or_default(),
                 "graphics" => s.graphics = Graphics::parse(value).unwrap_or_default(),
+                "frame_cap" => {
+                    s.frame_cap = FrameCap::parse(value).unwrap_or_else(|| {
+                        log::warn!("settings: unknown frame_cap value {value:?} (off, 30 or 60), using off");
+                        FrameCap::Off
+                    })
+                }
+                "power_save" => {
+                    s.power_save = match value {
+                        "on" => Some(true),
+                        "off" => Some(false),
+                        _ => None,
+                    }
+                }
                 "group_move" => {
                     s.group_move = match value {
                         "on" => Some(true),
@@ -604,6 +633,8 @@ mod tests {
             weather: Weather::Snow,
             sea_state: SeaState::Storm,
             graphics: Graphics::Medium,
+            frame_cap: FrameCap::Fps60,
+            power_save: Some(true),
         };
         assert_eq!(Settings::decode(&s.encode()), s);
         // The removed "Spotify mitmischen" (music_mode=2) reads as no music.
@@ -633,6 +664,13 @@ group_move=off"
         );
         assert!(Settings::decode("group_move=on").group_move());
         assert_eq!(Settings::decode(""), Settings::default());
+        // `frame_cap` is off and `power_save` unset (follows the Game Mode) by default.
+        assert_eq!((Settings::default().frame_cap, Settings::default().power_save), (FrameCap::Off, None));
+        assert_eq!(Settings::decode("frame_cap=30").frame_cap, FrameCap::Fps30);
+        assert_eq!(Settings::decode("frame_cap=45").frame_cap, FrameCap::Off);
+        assert_eq!(Settings::decode("power_save=off").power_save, Some(false));
+        assert_eq!(Settings::decode("power_save=maybe").power_save, None);
+        assert!(!Settings::default().encode().contains("power_save"));
         // `top_bar`: absent or unknown follows the input mode, and stays out of the file.
         assert_eq!(Settings::decode("").top_bar, None);
         assert_eq!(Settings::decode("top_bar=touch").top_bar, Some(TopBar::Touch));
