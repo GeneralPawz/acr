@@ -1,8 +1,8 @@
 //! The test editor (main menu "Editor", docs/controls.md, "Editor"): a blank field where
 //! units are placed directly, any number at once, loose or already standing in a formation,
 //! with fighting switched off while the battle is set up. Not in the original, whose editor
-//! places single units only; everything here acts on the local world directly, like the
-//! test driver's `spawn`, so an editor game is not a network or replay game.
+//! places single units only. A click that changes the world becomes an [`Input`]: the game
+//! applies it between two ticks and logs it with its tick, so a savegame replays it ([`input`]).
 //!
 //! The window is the original's "Einheit wählen" (`ED_HDR01`, built by 0x5bb6c0, docs/ui.md,
 //! "Editor"): the side panel's column with a title, the eight player colours, a nation combo
@@ -10,6 +10,7 @@
 //! formation, upgrade level, facing, fighting, cannon switches, the player to control) sit in
 //! a second box directly under it.
 
+pub(crate) mod input;
 mod levels;
 pub mod sides;
 mod world;
@@ -31,6 +32,8 @@ use crate::ui::screens::font as menu_font;
 
 mod battle;
 mod presets;
+
+use input::Input;
 
 const WHITE: FontId = FontId("SmallWhiteFont");
 const YELLOW: FontId = FontId("SmallYellowFont");
@@ -418,12 +421,6 @@ impl Editor {
         self.facing[usize::from(self.owner)]
     }
 
-    /// The formation chosen for the picked type, if any.
-    pub fn formation(&self, world: &World) -> Option<FormChoice> {
-        let kind = self.pick?;
-        (self.form > 0).then(|| formations(world, kind).get(self.form - 1).cloned()).flatten()
-    }
-
     /// The window's items in drawing order (hit tests go from the back).
     pub fn layout(&self, world: &World, view: &View, local: u8) -> Vec<Item> {
         let mut out = Vec::new();
@@ -752,8 +749,10 @@ impl Editor {
         sides::apply(world, self.sides, &self.team);
     }
 
-    /// A click on window item `act`. Returns a new local player for [`Act::Control`].
-    pub fn apply(&mut self, world: &mut World, act: Act, local: u8) -> Option<u8> {
+    /// A click on window item `act`: what the window itself does, and the input for the
+    /// world if the click changes it.
+    pub fn apply(&mut self, world: &World, act: Act, local: u8) -> Out {
+        let mut out = Out::default();
         if act != Act::Combo && !matches!(act, Act::Entry(_)) {
             self.combo_open = false;
         }
@@ -774,7 +773,7 @@ impl Editor {
                 }
             }
             Act::Army(a) => self.army_act(a),
-            Act::Battle(a) => self.battle_act(world, a),
+            Act::Battle(a) => out.input = self.battle_act(a),
             Act::Pick(k) => {
                 self.pick = if self.pick == Some(k) { None } else { Some(k) };
                 self.level = 0;
@@ -798,36 +797,19 @@ impl Editor {
                 let f = &mut self.facing[usize::from(self.owner)];
                 *f = f.wrapping_add((d * 32) as u8);
             }
-            Act::Peace => {
-                self.sides = self.sides.next();
-                sides::apply(world, self.sides, &self.team);
-                self.status = match self.sides {
-                    sides::Mode::Off => b"Kampf aus".to_vec(),
-                    sides::Mode::Free => b"Kampf an: alle gegen alle".to_vec(),
-                    sides::Mode::Teams => b"Kampf an: Teams".to_vec(),
-                };
-            }
-            Act::Reload => {
-                let n = reload_guns(world);
-                self.status = format!("{n} Kanonen geladen").into_bytes();
-            }
-            Act::AutoReload => {
-                self.auto_reload = !self.auto_reload;
-                self.status = if self.auto_reload {
-                    b"Kanonen laden sofort nach".to_vec()
-                } else {
-                    b"Kanonen laden normal".to_vec()
-                };
-            }
-            Act::Control => return Some(sides::next_controlled(world, local)),
+            Act::Peace => out.input = Some(Input::Sides { mode: self.sides.next(), teams: self.team }),
+            Act::Reload => out.input = Some(Input::ReloadGuns),
+            Act::AutoReload => out.input = Some(Input::AutoReload(!self.auto_reload)),
+            Act::Control => out.local = Some(sides::next_controlled(world, local)),
             Act::Team(p) => {
-                let t = &mut self.team[usize::from(p) & 7];
+                let mut teams = self.team;
+                let t = &mut teams[usize::from(p) & 7];
                 *t = sides::next_team(*t);
-                sides::apply(world, self.sides, &self.team);
+                out.input = Some(Input::Sides { mode: self.sides, teams });
             }
             Act::Hide => self.open = !self.open,
         }
-        None
+        out
     }
 
     /// Scrolls the icons by `d` pixels, within the content.
@@ -841,55 +823,34 @@ impl Editor {
         self.scroll_by(world, -(lines.round() as i32) * PITCH);
     }
 
-    /// Places the picked type at world pixel `at`: [`Editor::count`] units, loose or in
-    /// formations of the chosen kind side by side across the facing.
-    pub fn place(&mut self, world: &mut World, at: (i32, i32)) {
-        let Some(kind) = self.pick else { return };
-        if let Some(why) = world::refuse(world, kind, at.0, at.1) {
-            self.status = why.as_bytes().to_vec();
-            return;
+    /// The input a left click on the map at world pixel `at` makes: the armed army, or the
+    /// picked type ([`Editor::count`] units, loose or in formations of the chosen kind side
+    /// by side across the facing). `None` when nothing is armed or picked.
+    pub fn click_on_map(&self, world: &World, at: (i32, i32)) -> Option<Input> {
+        if let Some(size) = self.army.armed {
+            let era = self.army.era_for(self.entry);
+            return Some(Input::Preset { nation: self.entry, size, era, owner: self.owner(), at, dir: self.facing() });
         }
-        if world.catalog.get(kind).building {
-            let owner = self.owner();
-            self.status = match world::place_building(world, kind, owner, at) {
-                Ok(name) => format!("{name}, fertig").into_bytes(),
-                Err(e) => e.into_bytes(),
-            };
-            return;
-        }
-        let (n, owner, dir) = (self.count() as usize, self.owner(), self.facing());
-        // The level holds for the owner's every object of the placed types, as researched
-        // upgrades do: set before spawning, so the new men start at full upgraded life.
-        let form = self.formation(world);
-        let mut kinds = vec![kind];
-        if let Some(c) = &form {
-            let o = world.formations.officers.get(&c.officer).cloned().unwrap_or_default();
-            kinds.extend([Some(c.officer), o.drummer, o.flag].into_iter().flatten());
-        }
-        let ups = levels::steps(world, kind);
-        let level = levels::apply(world, owner, kind, self.level);
-        // The officer, drummer and flag bearer stand at the same level, as far as they have it.
-        for &k in kinds.iter().skip(1) {
-            levels::apply(world, owner, k, level);
-        }
-        let placed = match form {
-            Some(choice) => place_formations(world, kind, &choice, n, owner, at, dir),
-            None => {
-                let t = world.catalog.get(kind);
-                let gap = (t.radius2 * 4).max(32);
-                for p in grid(n, at, dir, gap) {
-                    world.spawn(kind, owner, Pos::from_pixels(p.0, p.1), dir);
-                }
-                Ok(n)
-            }
-        };
-        sides::apply(world, self.sides, &self.team);
-        let name = world.catalog.get(kind).id.clone();
-        self.status = match placed {
-            Ok(k) => format!("{k} x {name}, Ausbau {level}/{ups}").into_bytes(),
-            Err(e) => e.into_bytes(),
-        };
+        let kind = self.pick?;
+        Some(Input::Place {
+            kind: world.catalog.get(kind).id.clone(),
+            owner: self.owner(),
+            at,
+            count: self.count(),
+            form: self.form as u32,
+            dir: self.facing(),
+            level: self.level as u32,
+        })
     }
+}
+
+/// What a click on the window did.
+#[derive(Debug, Default)]
+pub struct Out {
+    /// A new local player ([`Act::Control`]).
+    pub local: Option<u8>,
+    /// The change to the world the click asks for.
+    pub input: Option<Input>,
 }
 
 /// Spawns formations of `choice` holding `n` soldiers of `kind` (full formations of the
@@ -1043,6 +1004,24 @@ impl super::InGame {
             .collect()
     }
 
+    /// A click on the window: its own effect, and the input for the world, if any, applied
+    /// and logged. Returns a new local player.
+    fn editor_act(&mut self, act: Act, local: u8) -> Option<u8> {
+        let (Some(e), Some(world)) = (&mut self.editor, &self.world) else { return None };
+        let out = e.apply(world, act, local);
+        if let Some(input) = out.input {
+            self.editor_input(input);
+        }
+        out.local
+    }
+
+    /// Applies an editor input between two ticks and logs it with the tick, for savegames.
+    pub(super) fn editor_input(&mut self, input: Input) {
+        let (Some(e), Some(world), Some(map)) = (&mut self.editor, &mut self.world, &mut self.map) else { return };
+        self.save.log.editor(world.tick.0, input.clone());
+        e.status = input::apply(world, map, e, &input).status;
+    }
+
     /// The left button in the editor: the window, or placing the picked type on the map.
     /// True when the press (or its release) is used up.
     pub(super) fn editor_left(&mut self, ctx: &Ctx, pressed: bool) -> bool {
@@ -1066,8 +1045,8 @@ impl super::InGame {
         if Editor::bounds(&items).contains(p) || items.iter().any(|i| i.look == Look::DropRow && i.rect.contains(p)) {
             let act = items.iter().rev().find(|i| i.act.is_some() && i.hit_rect().contains(p)).and_then(|i| i.act);
             let local = self.local_player();
-            if let (Some(act), Some(e), Some(world)) = (act, &mut self.editor, &mut self.world)
-                && let Some(next) = e.apply(world, act, local)
+            if let Some(act) = act
+                && let Some(next) = self.editor_act(act, local)
             {
                 self.setup.local_player = usize::from(next);
                 self.selected.clear();
@@ -1085,11 +1064,15 @@ impl super::InGame {
         let armed = self.editor.as_ref().is_some_and(|e| e.pick.is_some() || e.army.armed.is_some());
         if armed && !self.over_hud(ctx, at) {
             let target = self.world_at(at);
-            if let (Some(e), Some(world)) = (&mut self.editor, &mut self.world) {
-                if !e.place_armed(world, target) {
-                    e.place(world, target);
-                }
+            let input = match (&self.editor, &self.world) {
+                (Some(e), Some(world)) => e.click_on_map(world, target),
+                _ => None,
+            };
+            if let Some(e) = &mut self.editor {
                 e.swallow_release = true;
+            }
+            if let Some(input) = input {
+                self.editor_input(input);
             }
             return true;
         }
@@ -1104,11 +1087,8 @@ impl super::InGame {
         }
         let over_combo = self.cursor.is_some_and(|c| COMBO_BOX.contains(self.canvas_point(c)));
         let local = self.local_player();
-        if over_combo
-            && let (Some(e), Some(world)) = (&mut self.editor, &mut self.world)
-            && e.open
-        {
-            e.apply(world, Act::Army(presets::Act::Toggle), local);
+        if over_combo && self.editor.as_ref().is_some_and(|e| e.open) {
+            self.editor_act(Act::Army(presets::Act::Toggle), local);
             return true;
         }
         let hit = self.cursor.map(|at| self.canvas_point(at)).and_then(|p| {
@@ -1118,10 +1098,9 @@ impl super::InGame {
         // A colour's swatch cycles its team while teams fight.
         if let Some(Item { look: Look::Swatch { owner }, .. }) = hit
             && owner != NEUTRAL
-            && let (Some(e), Some(world)) = (&mut self.editor, &mut self.world)
-            && e.sides == sides::Mode::Teams
+            && self.editor.as_ref().is_some_and(|e| e.sides == sides::Mode::Teams)
         {
-            e.apply(world, Act::Team(owner), 0);
+            self.editor_act(Act::Team(owner), 0);
             return true;
         }
         let icon = match hit {

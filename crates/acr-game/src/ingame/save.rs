@@ -9,7 +9,8 @@
 use acr_sim::World;
 use web_time::{Duration, Instant};
 
-use super::InGame;
+use super::editor::{self, Editor};
+use super::{EditorInput, InGame};
 use crate::mission::MissionLink;
 use crate::savegame::{DipInput, FastForward, Log, Progress, SaveGame, SaveTime, Script};
 
@@ -56,6 +57,48 @@ impl Script for MissionLink {
             }
             DipInput::Building(index) => self.dip_check_building(world, *index),
         }
+    }
+}
+
+/// Replays an editor game: the mission link, and the editor's own per-tick effects (its
+/// alliances, cannons that load at once) and inputs.
+struct EditorReplay<'a> {
+    mission: &'a mut MissionLink,
+    editor: &'a mut Editor,
+    map: &'a mut acr_formats::M3dMap,
+}
+
+impl Script for EditorReplay<'_> {
+    fn before_step(&mut self, world: &mut World) -> Option<Vec<acr_sim::Command>> {
+        self.mission.set_alliances(self.editor.masks());
+        let orders = MissionLink::before_step(self.mission, world)?;
+        if self.editor.auto_reload {
+            editor::reload_guns(world);
+        }
+        Some(orders)
+    }
+
+    fn dialog_open(&self) -> bool {
+        self.mission.window_open()
+    }
+
+    fn close_dialog(&mut self, answer: u32) {
+        self.mission.answer_window(answer);
+    }
+
+    fn ended(&self) -> bool {
+        self.mission.ended.is_some()
+    }
+
+    fn diplomacy(&mut self, world: &mut World, input: &DipInput) {
+        Script::diplomacy(self.mission, world, input);
+    }
+
+    fn editor(&mut self, world: &mut World, input: &EditorInput) {
+        editor::input::apply(world, self.map, self.editor, input);
+        // The marches a battle left are commands in the log already; the camera is the saved one.
+        self.editor.orders.clear();
+        self.editor.camera_to = None;
     }
 }
 
@@ -110,7 +153,14 @@ impl InGame {
         let Some(world) = &mut self.world else { return true };
         let started = *r.started.get_or_insert_with(Instant::now);
         let deadline = Instant::now() + BUDGET;
-        let progress = r.ff.run(&r.save.log, world, &mut self.mission, || Instant::now() < deadline);
+        let more = || Instant::now() < deadline;
+        let progress = match (&mut self.editor, &mut self.map) {
+            (Some(editor), Some(map)) => {
+                let mut script = EditorReplay { mission: &mut self.mission, editor, map };
+                r.ff.run(&r.save.log, world, &mut script, more)
+            }
+            _ => r.ff.run(&r.save.log, world, &mut self.mission, more),
+        };
         self.requests.borrow_mut().extend(self.mission.take_requests());
         if progress != Progress::Done {
             return true;
