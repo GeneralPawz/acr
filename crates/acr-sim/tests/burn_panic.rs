@@ -37,6 +37,7 @@ const ON: Rules = Rules {
     cannon_fire: false,
     ball_terrain: false,
     formation_attack: false,
+    animal_give_up: false,
 };
 
 /// An officer and 15 pikemen formed in a line; returns the world and the soldiers.

@@ -2346,8 +2346,11 @@ pub fn search_victims(w: &mut World) {
             }
         }
         let best = if best.0 >= DOWN_OFFSET && best.1.is_some() { (best.0 - DOWN_OFFSET, best.1) } else { best };
+        // An animal that gave up on a target ignores it until it has left the search radius
+        // and come back (rule `animal_give_up`, `crate::leash`).
         if let (d, Some(k)) = best
             && d < sr
+            && !w.leashes.shy_of(i, w.units[k].id)
             && visible_between(w, w.units[k].pos, c, i)
         {
             let was = w.units[i].target();

@@ -1575,6 +1575,33 @@ coarse area routing (`TOP1`) does not know them, and `RemoveFools` may still swa
 a blocked cell. In Spieleinstellungen it is the line `Leichenhaufen` (`Aus (Original)` /
 `An: als Hindernis`) on page 5, ACR-Regeln ([ui.md](ui.md)); the setting is `corpse_piles=on`.
 
+### Animals give up (optional rule, #355)
+
+The original has no give-up distance for animals. `ANMMED.MD` and the other beasts carry
+`SEARCH_ENEMY_RADIUS`, `DET_RADIUS` and `ANIMAL` (`NM+0x172f` bit 3, parser 0x4f4a47; its
+only reader that matters here is `MakeDamage` 0x4e89dc). `AttackObjLink`
+(0x51bcaf..0x5209b7) pops an attack order only for stand ground (0x5204aa) and for dead,
+friendly or invalid targets, and `SearchVictim` (0x52622b) never removes a target, so a bear
+follows a man until one of them is dead.
+
+With `Rules::animal_give_up` on (setting `animal_give_up=on`, savegame rules bit 9; no options-page row, the options page has no free line left), `leash::tick` (`crates/acr-sim/src/leash.rs`,
+after `search_victims`) does this for every type with the `ANIMAL` flag (`Role::animal`):
+
+- The first tick an animal has an attack order, its position is recorded as the chase start.
+- When the target is more than `LEASH_FACTOR` (3) times `SEARCH_ENEMY_RADIUS` from that
+  point (`Norma`, 1/16 px; the radius after the `_SHIFT` share, 118 px for the bear), the
+  animal pops the attack and walks back (a priority-0 `SendTo`, so an enemy met on the way
+  is fought; its chase start stays).
+  The radius is the distance at which the animal notices anyone, so it follows two radii
+  beyond where it could first have seen the target. `DET_RADIUS` is the weapon's reach, no
+  measure of interest.
+- `SearchVictim` ignores that target (`Leashes::shy_of`) until it has been at least one
+  search radius from the animal and comes within it again.
+- The record is dropped once the animal is idle and not shy. Off (the default) nothing is
+  recorded; `World::leashes` and the rule are hashed only when non-empty or on.
+
+Tests: `crates/acr-sim/tests/leash.rs`.
+
 ### Worked timing (musketeer, 10 ticks/s)
 
 - First shot: `#PATTACK1` (63 frames, 32 ticks), then 7 ticks to the active frame 14. The

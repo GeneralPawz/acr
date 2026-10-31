@@ -55,6 +55,7 @@ const ON: Rules = Rules {
     cannon_fire: false,
     ball_terrain: false,
     formation_attack: false,
+    animal_give_up: false,
 };
 
 /// The catalog: gun, soldier and a fort that builds the gun.
