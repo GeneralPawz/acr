@@ -14,9 +14,6 @@ pub enum RenderScale {
     P50,
 }
 
-/// A phone's screen: the window's longer side in pixels above which the default is 75 %.
-pub const PHONE_LONG_SIDE: u32 = 2000;
-
 impl RenderScale {
     pub fn name(self) -> &'static str {
         match self {
@@ -41,12 +38,6 @@ impl RenderScale {
             RenderScale::P75 => 0.75,
             RenderScale::P50 => 0.5,
         }
-    }
-
-    /// The scale used when none is set: 75 % on an Android phone (the window's longer side
-    /// above [`PHONE_LONG_SIDE`] px), else 100 %.
-    pub fn default_for(android: bool, window: [u32; 2]) -> Self {
-        if android && window[0].max(window[1]) > PHONE_LONG_SIDE { RenderScale::P75 } else { RenderScale::P100 }
     }
 
     /// The upscale filter: nearest at 50 %, linear otherwise.
@@ -199,12 +190,9 @@ mod tests {
     }
 
     #[test]
-    fn default_is_75_on_phones_only() {
-        assert_eq!(RenderScale::default_for(true, [3168, 1440]), RenderScale::P75);
-        assert_eq!(RenderScale::default_for(true, [1440, 3168]), RenderScale::P75);
-        // A tablet-sized or small window, and any desktop, keep 100.
-        assert_eq!(RenderScale::default_for(true, [2000, 1200]), RenderScale::P100);
-        assert_eq!(RenderScale::default_for(false, [3840, 2160]), RenderScale::P100);
+    fn default_is_100() {
+        // Below 100 % sprites keep their pixel size, so the view shows less of the world: an
+        // opt-in until the camera compensates (#440).
         assert_eq!(RenderScale::default(), RenderScale::P100);
     }
 
