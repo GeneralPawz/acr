@@ -34,6 +34,7 @@ const ON: Rules = Rules {
     group_move: true,
     cannon_fire: false,
     ball_terrain: false,
+    animal_give_up: false,
 };
 
 struct Setup {

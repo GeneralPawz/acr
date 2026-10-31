@@ -57,6 +57,10 @@ pub struct Settings {
     /// under hit locations, docs/simulation.md "Shell fires"); `cannon_fire=on|off`, off by
     /// default.
     pub cannon_fire: bool,
+    /// ACR: new games use the optional animal-leash rule (animals give up a chase when the
+    /// target gets too far from its start; docs/simulation.md "Animals give up");
+    /// `animal_give_up=on|off`, off by default.
+    pub animal_give_up: bool,
     /// ACR: sun shadows of the 3D models (`shadows=on|off`, on by default;
     /// docs/rendering-3d.md "Shadows").
     pub shadows: bool,
@@ -193,6 +197,7 @@ impl Default for Settings {
             mortars: false,
             corpse_piles: false,
             cannon_fire: false,
+            animal_give_up: false,
             shadows: true,
             lod: true,
             material_detail: true,
@@ -281,7 +286,7 @@ impl Settings {
         format!(
             "sound_volume={}\nmusic_volume={}\nmusic_mode={}\ngame_mode={}\nscroll_speed={}\nframe_time={}\n\
              resolution={}\nrecord={}\nrecord_file={hex}\ncontrols={controls}\nedge_scroll={}\n\
-             models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\ncorpse_decay={}\nhit_locations={}\nbody_spacing={}\nmortars={}\ncorpse_piles={}\ncannon_fire={}\nshadows={}\nlod={}\nmaterial_detail={}\nwind={}\nmap_models={}\nwater={}\n\
+             models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\ncorpse_decay={}\nhit_locations={}\nbody_spacing={}\nmortars={}\ncorpse_piles={}\ncannon_fire={}\nanimal_give_up={}\nshadows={}\nlod={}\nmaterial_detail={}\nwind={}\nmap_models={}\nwater={}\n\
              ground={}\nground_cover={}\nbattlefield_marks={}\nweather={}\naim_guides={}\ngraphics={}\n{}{}{}",
             self.sound_volume,
             self.music_volume,
@@ -299,6 +304,7 @@ impl Settings {
             if self.mortars { "on" } else { "off" },
             if self.corpse_piles { "on" } else { "off" },
             if self.cannon_fire { "on" } else { "off" },
+            if self.animal_give_up { "on" } else { "off" },
             if self.shadows { "on" } else { "off" },
             if self.lod { "on" } else { "off" },
             if self.material_detail { "on" } else { "off" },
@@ -396,6 +402,7 @@ impl Settings {
                 "mortars" => s.mortars = value == "on",
                 "corpse_piles" => s.corpse_piles = value == "on",
                 "cannon_fire" => s.cannon_fire = value == "on",
+                "animal_give_up" => s.animal_give_up = value == "on",
                 "shadows" => s.shadows = value != "off",
                 "lod" => s.lod = value != "off",
                 "material_detail" => s.material_detail = value != "off",
@@ -483,6 +490,7 @@ mod tests {
             mortars: true,
             corpse_piles: true,
             cannon_fire: true,
+            animal_give_up: true,
             marks_keep: true,
             aim_guides: false,
             weather: Weather::Snow,

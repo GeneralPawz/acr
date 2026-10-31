@@ -790,6 +790,7 @@ impl Driver {
                                 group_move,
                                 cannon_fire,
                                 ball_terrain,
+                                animal_give_up: false,
                             },
                         }));
                         if let Mode::InGame(g) = &mut game.mode {
@@ -859,6 +860,7 @@ impl Driver {
                                 group_move,
                                 cannon_fire,
                                 ball_terrain,
+                                animal_give_up: false,
                             },
                         }));
                     }
