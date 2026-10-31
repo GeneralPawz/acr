@@ -1,0 +1,18 @@
+{
+  "name": "mill_harvest",
+  "description": "A mill finished by peasants plants fields; peasants sent to a field with a right click harvest it and the food stock rises",
+  "steps": [
+    {"cmd": "start", "random": {"nation": 1, "seed": 5}, "note": "Spain; the start units of Data\\Start2.dat"},
+    {"cmd": "wait", "ticks": 200, "note": "the first census enables the buildings"},
+    {"cmd": "spawn", "type": "SpnMel", "owner": 0, "x": 2900, "y": 12900, "progress": 0.9, "note": "a direct build creates no site", "capture": {"mill": "unit.id"}},
+    {"cmd": "command", "command": {"type": "repair", "units": {"owner": 0, "type": "Kri"}, "building": "${mill}"}},
+    {"cmd": "wait", "until": {"units": {"owner": 0, "type": "SpnMel", "building": true, "finished": true, "min": 1}}, "timeout": 3000},
+    {"cmd": "wait", "ticks": 1400, "note": "the planted fields ripen"},
+    {"cmd": "state", "capture": {"food": "state.resources.food"}},
+    {"cmd": "drag", "around": {"owner": 0, "type": "Kri", "max": 5}},
+    {"cmd": "state", "expect": {"path": "state.selection", "len_ge": 5}},
+    {"cmd": "rclick", "world": [2900, 13100]},
+    {"cmd": "wait", "ticks": 1500},
+    {"cmd": "state", "expect": {"path": "state.resources.food", "gt": "${food}"}}
+  ]
+}
