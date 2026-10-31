@@ -92,6 +92,9 @@ fn step_halves(data: &ModelData, clip: usize) -> Option<[usize; 2]> {
 struct Man {
     clip: Option<usize>,
     vis: Option<Vec3>,
+    /// Where the body is drawn against the sim position (world pixels): the smoothing and the
+    /// pushes and pulls of the feet, see [`drawn_offset`].
+    offset: [f32; 2],
     /// The visible position's way over the sim's last tick: from, to, the time since that
     /// tick and the tick's length (s), so it moves evenly between the sim's steps.
     from: Vec3,
@@ -159,7 +162,19 @@ fn kind_of(name: &str) -> Option<Kind> {
     }
 }
 
+/// A body shifted by `shift` (physics metres) from its sim position stands that many world
+/// pixels off it (physics y runs north, the world's south).
+fn drawn_offset(shift: Vec3) -> [f32; 2] {
+    [shift.x * view3d::PIXELS_PER_METRE, -shift.y * view3d::PIXELS_PER_METRE]
+}
+
 impl Gaits {
+    /// How far the walking or crawling man `unit` is drawn from his sim position (world
+    /// pixels), as of the last pose; `None` while he is not posed here.
+    pub fn offset(&self, unit: u32) -> Option<[f32; 2]> {
+        self.men.get(&unit).map(|m| m.offset)
+    }
+
     fn effectors(&self, kind: Kind) -> [[usize; 3]; 2] {
         let b = |n: &str| self.rig.bone(n);
         match kind {
@@ -315,6 +330,7 @@ impl Gaits {
             let mut skins = before.clone();
             // The visible body: where the pushes and pulls brought it.
             let shift = (vis - sim) + man.dir * (lead * stride);
+            man.offset = drawn_offset(shift);
             self.rig.translate(&mut skins, 0, Vec3::new(shift.x, shift.y, 0.0));
             self.pose(&mut skins, clipm, man, phase, stride, limp, body, &ground, dt);
             // Each slot moves with its bone but keeps its own animation: a socket the clip
@@ -692,4 +708,17 @@ fn held_wound(body: &Body) -> Option<(usize, &'static str, f32)> {
         return Some((1, if body.belly_open { "spine" } else { "spine2" }, 0.5));
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drawn_offset_is_the_shift_in_world_pixels() {
+        // North in physics is up the screen: a body 1 m north and 2 m east of its sim point.
+        let o = drawn_offset(Vec3::new(2.0, 1.0, 0.5));
+        assert_eq!(o, [2.0 * view3d::PIXELS_PER_METRE, -view3d::PIXELS_PER_METRE]);
+        assert_eq!(drawn_offset(Vec3::ZERO), [0.0, 0.0]);
+    }
 }
