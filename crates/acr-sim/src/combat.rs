@@ -522,6 +522,12 @@ pub fn attack_link_aim(w: &mut World, i: usize, aim: Aim, prio: u8) {
                     if can_set_delay {
                         // delay = MaxDelay = AttPause·PersonalDelay/100·DPAUS/100 (0x51d7e9).
                         u.delay = pause * u.personal_delay / 100 * add_pause / 100;
+                        // Rule `aimed_fire`: the longer aim of a shot from the shoulder.
+                        if weapon && aimed_shot(w, i, ns - 1, e_pos.pixels()) {
+                            let u = &mut w.units[i];
+                            u.delay = u.delay * (100 + crate::wounds::AIMED_PAUSE) / 100;
+                        }
+                        let u = &mut w.units[i];
                         u.max_delay = u.delay;
                     }
                     if weapon {
@@ -956,6 +962,24 @@ fn aim_point(w: &mut World, aim: Aim) -> (i32, i32, i32) {
     }
 }
 
+/// Rule `aimed_fire` (#296): whether `i`'s attack `att` is a firearm shot (`VISTREL`) at `c`
+/// beyond [`crate::wounds::AIMED_MIN`] pixels, one the renderer plays as `FIRE_AIMED`.
+fn aimed_shot(w: &World, i: usize, att: usize, c: (i32, i32)) -> bool {
+    if !w.rules.aimed_fire || cause_of_attack(w, i, att as u8) != DeathCause::Gunshot {
+        return false;
+    }
+    let (xs, ys) = w.units[i].pos.pixels();
+    let (dx, dy) = (i64::from(c.0 - xs), i64::from(c.1 - ys));
+    (dx * dx + dy * dy) as u64 > (crate::wounds::AIMED_MIN as u64).pow(2)
+}
+
+/// The aimed shot's smaller dispersion: `c` is pulled towards `aimed` to `AIMED_SCATTER` %.
+fn aimed_scatter(aimed: (i32, i32, i32), c: &mut (i32, i32, i32)) {
+    let s = crate::wounds::AIMED_SCATTER;
+    c.0 = aimed.0 + (c.0 - aimed.0) * s / 100;
+    c.1 = aimed.1 + (c.1 - aimed.1) * s / 100;
+}
+
 /// `CreateRazbros` (0x51b917): disperses the aim point by `RAZBROS`.
 pub(crate) fn razbros(w: &mut World, i: usize, c: &mut (i32, i32, i32)) {
     let u = &w.units[i];
@@ -990,7 +1014,11 @@ fn shoot(w: &mut World, i: usize, aim: Aim, att: usize, my_z: i32, en_z: i32, ca
             blocked_shot(w, i, (xs, ys, my_z), c, None, ShotStop::Fire { can_set_delay });
             return;
         }
+        let aimed = c;
         razbros(w, i, &mut c);
+        if aimed_shot(w, i, att, (aimed.0, aimed.1)) {
+            aimed_scatter(aimed, &mut c);
+        }
         for _ in 0..4 {
             w.random.rando();
         }
@@ -1008,6 +1036,9 @@ fn shoot(w: &mut World, i: usize, aim: Aim, att: usize, my_z: i32, en_z: i32, ca
         }
         let aimed = c;
         razbros(w, i, &mut c);
+        if aimed_shot(w, i, att, (aimed.0, aimed.1)) {
+            aimed_scatter(aimed, &mut c);
+        }
         if w.shot_carry.mode == crate::artillery::GunMode::Direct as u8 {
             // Direct fire (hit-locations rule): laid with care, half the dispersion.
             let s = crate::artillery::DIRECT_SCATTER;
@@ -2477,6 +2508,13 @@ fn object_one(w: &mut World, catalog: &crate::catalog::Catalog, i: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn aimed_scatter_pulls_the_miss_towards_the_aim() {
+        let mut c = (1000, -500, 7);
+        aimed_scatter((0, 0, 7), &mut c);
+        assert_eq!(c, (600, -300, 7));
+    }
 
     #[test]
     fn half_life_halves_per_distance() {
