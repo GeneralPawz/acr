@@ -208,8 +208,8 @@ impl InGame {
         let hud = &mut self.interface.hud;
         hud.hud_scale = scale;
         serde_json::json!({
-            "scale": hud.zoom(crate::hud::zoom::Group::Commands).scale,
-            "icon0": self.interface.canvas.to_window(hud.icon_on_canvas(0)),
+            "scale": hud.zoom(crate::hud::zoom::Group::Commands, &self.interface.view).scale,
+            "icon0": self.interface.canvas.to_window(hud.icon_on_canvas(0, &self.interface.view)),
         })
     }
 
@@ -267,7 +267,7 @@ impl InGame {
             .filter(|i| Hud::shown(i.slot))
             .map(|i| HudIcon {
                 id: format!("hud/{}", i.slot),
-                rect: canvas.to_window(hud.icon_on_canvas(i.slot)),
+                rect: canvas.to_window(hud.icon_on_canvas(i.slot, &self.interface.view)),
                 hint: i.hint.clone(),
                 disabled: i.disabled,
                 selected: i.selected,
