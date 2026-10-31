@@ -269,8 +269,8 @@ are piled. The renderer takes a palette from it per instance
     ground for a second after it had fallen (the cavalry models need a re-export). Bones: bear 24, elk 29, jaguar 35, alligator 37.
 - **Mauling** (`m2-animalsim`, see `docs/damage-model.md`): an animal's blow (`Injury::cause`
   `Claw`, `Bite`, `Gore`) pushes a man with 28, 22 or 60 N·s (half at no energy) away from the
-  animal, a goring also upwards; at 19 N·s or more, or whenever the simulation knocks him down
-  (`Body::down`), he falls. While `Body::down` lasts he stays on the ground (the fall phase is
+  animal, a goring also upwards; whenever the simulation knocks him down
+  (`Body::down`), he falls. While `Body::down` lasts (until `Body::rising`) he stays on the ground (the fall phase is
   held, at 12 % tone instead of 30 %, so he lies limp) and the animal's further blows strike the
   lying body.
 - **Pinning** (`maul_view.rs`, render only): a living animal whose attack target is down
@@ -390,18 +390,23 @@ nearest the window centre that no ragdoll holds; `ACR_NO_GAIT` turns it off).
   the mass, about 1 Hz). The centre of mass is checked against the support between the feet;
   12 cm outside it, the foot farther from the landing point takes a 0.3 s recovery step by
   IK under the centre of mass and stays there. An impulse of 19 N·s or more (close grapeshot,
-  cannonball, shell) knocks him down: the root is freed, the legs go to 25 % tone with the
-  knees and hips folding, and he falls to his knees and over. He lies until 2.2 s, then the
-  hips blend from where he lay back to the clip over 1.5 s while the tone returns, and the
-  clip takes him back.
+  cannonball, shell) knocks him down in the sim (`Body::down`, `knock_down`: any cannonball,
+  a shell of energy 30 and up, grapeshot of 93 and up; the renderer follows the sim, #340):
+  the root is freed, the legs go to 25 % tone with the knees and hips folding, and he falls
+  to his knees and over. He lies while the sim keeps him lying (2.2 s for a blast), then
+  gets up through a kneel over 1.5 s (`GETUP_TICKS`, the last ticks of `Body::down`, in
+  which he still cannot act): the hips come up from where he lay to the clip's hips lowered
+  by 0.45 m with the knees folded, then on to the clip as the legs unfold and the tone
+  returns, and the clip takes him back. No clip of a get-up exists (the original has none:
+  its men never rise from a blow, `#DEATHLIE1` is for the dead), so the kneel is a pose of
+  joint targets; a proper rise clip is still wanted.
 - **Bench:** `ACR-analysis/gait/bench_gait.py` (with `ACR_EXE`) records a walker, a limper
   (two wounds in the left leg), a man with the right foot lost, a crawler without legs, a
   one-armed crawler and a grapeshot hit on a standing man. The bench `spawn` takes `lost`
   (`arm_l`, `arm_r`, `leg_l`, `leg_r`; `foot_l`, `foot_r` lose the leg at the ankle),
   `wounds` (one flesh wound per entry) and `patrol` (any pose moves; crawlers, who take no
   orders, are sent directly).
-- **Not yet:** no slope on the bench (the random map's ground only); the sim has no
-  knocked-down state, so a knocked-down survivor always gets up; the recovery step does not
+- **Not yet:** no slope on the bench (the random map's ground only); the recovery step does not
   move the hips' spring origin and the hips are still held kinematically (no ankle torque
   or real support forces); the hop has no landing squash and no arm swing for balance; the
   dragged legs do not collide with each other or the body. Writhing keeps its clip.
@@ -610,8 +615,10 @@ tuning on the bench.
   | `Unhorsed` | thrown off the horse; the horse runs on or stands |
 
 `KnockedDown` exists in a first, minimal form: `Body::down` (ticks), set by animals' blows
-(`docs/damage-model.md`, mauling) with the hit-locations rule; while it lasts he cannot move,
-attack or hit back, and the renderer keeps him on the ground.
+(`docs/damage-model.md`, mauling) and by blasts that spare him (#340: cannonballs, shells,
+close grapeshot) with the hit-locations rule; while it lasts he cannot move, attack or hit
+back, and the renderer keeps him on the ground, then lets him rise (`Body::rising`, the
+last `GETUP_TICKS`, 1.5 s: derived from the renderer's blend, the original has no get-up).
 
 - **Riders:** a rider with a broken or lost leg, or a heavy hit, may fall from the saddle.
   From then on he is a foot soldier on the ground.

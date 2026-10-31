@@ -486,6 +486,33 @@ fn knocked_down_by_a_mauling_and_up_again() {
     assert!(!w.units[p].body.downed());
 }
 
+/// A blast that spares the man knocks him down: he lies, then gets up (kneeling, standing) and
+/// cannot move or strike until he is on his feet (#340).
+#[test]
+fn knocked_down_by_a_blast_lies_then_gets_up() {
+    use acr_sim::body::{DOWN_BLAST, GETUP_TICKS, knock_down};
+    assert_eq!(knock_down(Cause::Cannonball, 20, 0), DOWN_BLAST);
+    assert_eq!(knock_down(Cause::Shell, 40, 0), DOWN_BLAST);
+    assert_eq!(knock_down(Cause::Shell, 10, 0), 0, "a small fragment only wounds");
+    assert_eq!(knock_down(Cause::Grapeshot, 100, 0), DOWN_BLAST);
+    assert_eq!(knock_down(Cause::Grapeshot, 60, 0), 0);
+    const { assert!(DOWN_BLAST > GETUP_TICKS, "he lies before he rises") };
+    let (mut w, p) = world();
+    injure(&mut w, p, Cause::Shell, 40, HitRegion::Legs);
+    let mut phases = Vec::new();
+    while w.units[p].body.downed() {
+        let b = &w.units[p].body;
+        assert_eq!(b.walk_rate(16), 0, "unable to move at down = {}", b.down);
+        phases.push(if b.rising() { "up" } else { "lie" });
+        w.step(&[]);
+    }
+    let lying = usize::from(DOWN_BLAST - GETUP_TICKS);
+    assert_eq!(phases.len(), usize::from(DOWN_BLAST));
+    assert!(phases[..lying].iter().all(|p| *p == "lie"));
+    assert!(phases[lying..].iter().all(|p| *p == "up"));
+    assert!(!w.units[p].body.rising());
+}
+
 const BEAR: &str = "NAME AnmMed\r\nUSERLC 0 G SHADOW 0 0\r\n#STAND 9 1 0 0\r\n@MOTION_L 9 0 0 9\r\n\
     @MOTION_R 9 0 10 19\r\n@PATTACK 9 0 0 35\r\n@UATTACK 9 0 35 0\r\n@ATTACK 9 0 0 20\r\n\
     @DEATH 9 0 0 39\r\n#DEATHLIE1 9 1 0 39\r\nLIFE 400\r\nGEOMETRY 1 10 40\r\nDAMAGE 0 12\r\n\
