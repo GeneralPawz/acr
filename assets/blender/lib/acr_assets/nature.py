@@ -14,6 +14,8 @@
               under which green faces stay), "rgb" (sRGB crown colour)}
     max_width narrow a too wide crown to this many metres (x and y)
     turn      degrees about +Z (models face -Y)
+    smooth    rocks only: smooth shading (default off: flat, so the cut-down mesh reads as facets
+              instead of a blob)
     dry       0..1: leaf cards towards a darker straw brown (dead, dry bushes; wilting crowns)
     keep      share of the leaf cards kept, without growing the kept ones (a sparse crown)
     lie       a fallen tree: {"deg": tip about +Y, crown towards +X, "squash": height factor
@@ -638,7 +640,7 @@ def build(ctx, spec):
                  @ Matrix.Translation((-cx, -cy, -lo - sink / k)))
     obj.parent = ctx.root
     for p in me.polygons:
-        p.use_smooth = kind == "rock" or p.material_index not in leaf_slots
+        p.use_smooth = spec.get("smooth", False) if kind == "rock" else p.material_index not in leaf_slots
     wind = dict(zip(("trunk", "branch", "flutter", "tempo"), WIND[kind]))
     wind.update({k: v for k, v in spec.get("wind", {}).items() if k in wind})
     crown_r = _wind(obj, kind, leaf_slots, spec.get("seed", 7), spec.get("wind", {}).get("bend", 2.0),

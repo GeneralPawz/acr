@@ -600,9 +600,12 @@ objects (`World::objects`, static for the whole battle) are drawn as models wher
   cloth whose flutter runs out from the hoist ("turn": "sprite", the cloth towards the east as
   in the sprite), the fallen trees 431–446 (but 434, a ruin) the broadleaf_ez tree laid down
   (`lie`) with a table `scale` each from the sprite's width, as the fit by height reads a lying
-  tree wrong; the standing dead brush 442–443 is `dead_tree`, 84 `bush_small`. Still sprites:
-  Mount Rushmore 225, the rubble 429, the tower 467 and the column 468, STONLIST skulls 75–79
-  and the head 132. 84, 331 and 471 are on none of the game's maps.
+  tree wrong; the standing dead brush 442–443 is `dead_tree`, 84 `bush_small`. The rock outcrops
+  STONLIST 128–130 (5–7 m wide, flat) are `boulder_c` with a table `scale` from the sprite's width
+  (the fit by height took a field stone to the 4× clamp, a smooth blob; #345); rocks are
+  flat shaded. Still sprites:
+  Mount Rushmore 225, the rubble 429, the tower 467 and the column 468, STONLIST skulls 75–79,
+  the head 132 and the ore scatter 131. 84, 331 and 471 are on none of the game's maps.
 - **Sprites:** the replaced frames go to `ObjectsView::set_hidden` (kept over scene
   rebuilds); `Scene::visible` leaves them out, also in the zoomed-out view. `models=off` or
   `map_models=off` brings every sprite back at once.

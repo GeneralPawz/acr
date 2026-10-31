@@ -1,5 +1,5 @@
 {
-  "_doc": "Map objects drawn as 3D models: TREELIST/STONLIST sprite index or range -> model name (target/assets/nature/<name>.glb), or {\"model\": name, \"scale\": s}. docs/rendering-3d.md \"Map trees and stones\". Models: assets/nature/*.py (acr_assets/nature.py), matched by look to the TREES.GP / STONES.GP frames. Dry twig bushes 143-172 are bush_dry, the flower (lily) patches 327-330 flowers, the flags 331/471 flag (sprite facing), the standing dead brush 442-443 dead_tree, the fallen trees 431-446 fallen_tree with a scale each (the sprite's opaque width / 30 px/m over the model's 7.3 m: the height fit does not hold for a lying tree). Unmapped: Rushmore 225, stone rubble 429 (its model scores IoU 0.55 against the sprite); ruins and rubble 427-428/430/434/447-466/469-470 are map_t<N>, generated from their own sprite and built at its size, entries {\"model\": \"map_tN\", \"turn\": \"sprite\"}: the sprite's facing instead of the random turn, scale 1 (assets/nature/map_t*.py, docs/assets.md); the tower 467 (its model is a blob, 9 % of the texture unbaked) and the fallen column 468 (black speckles in the game; its mesh has 2 islands, likely a second shell) stay sprites; STONLIST skulls 75-79 and the head 132.",
+  "_doc": "Map objects drawn as 3D models: TREELIST/STONLIST sprite index or range -> model name (target/assets/nature/<name>.glb), or {\"model\": name, \"scale\": s}. docs/rendering-3d.md \"Map trees and stones\". Models: assets/nature/*.py (acr_assets/nature.py), matched by look to the TREES.GP / STONES.GP frames. Dry twig bushes 143-172 are bush_dry, the flower (lily) patches 327-330 flowers, the flags 331/471 flag (sprite facing), the standing dead brush 442-443 dead_tree, the fallen trees 431-446 fallen_tree with a scale each (the sprite's opaque width / 30 px/m over the model's 7.3 m: the height fit does not hold for a lying tree). Unmapped: Rushmore 225, stone rubble 429 (its model scores IoU 0.55 against the sprite); ruins and rubble 427-428/430/434/447-466/469-470 are map_t<N>, generated from their own sprite and built at its size, entries {\"model\": \"map_tN\", \"turn\": \"sprite\"}: the sprite's facing instead of the random turn, scale 1 (assets/nature/map_t*.py, docs/assets.md); the tower 467 (its model is a blob, 9 % of the texture unbaked) and the fallen column 468 (black speckles in the game; its mesh has 2 islands, likely a second shell) stay sprites; STONLIST skulls 75-79, the head 132 and the scattered ore 131 (no rock model fits it). The rock outcrops 128-130 (200-230 px wide, 5-7 m) are boulder_c at a table scale from the sprite width: fitting a small stone by height blew it up to the 4x clamp as a smooth blob.",
   "TREELIST": {
     "0": "broadleaf_ez",
     "1": "dead_tree",
@@ -163,6 +163,8 @@
     "83-93": "stone_b",
     "94": "rock_moss_b",
     "95-127": "stone_b",
-    "128-131": "stone_a"
+    "128": {"model": "boulder_c", "scale": 0.8},
+    "129": {"model": "boulder_c", "scale": 0.9},
+    "130": {"model": "boulder_c", "scale": 1.15}
   }
 }
