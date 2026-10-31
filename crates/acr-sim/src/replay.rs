@@ -20,6 +20,8 @@ use crate::world::EntityId;
 
 const MAGIC: &[u8; 4] = b"ACRR";
 const VERSION: u64 = 1;
+/// Bit of the unit type word of a `Produce` that marks an endless order (command 0x4e).
+const ENDLESS_BIT: u16 = 0x2000;
 
 /// A recorded match.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -185,10 +187,12 @@ impl Writer {
                 self.0.extend_from_slice(&[5, *player]);
                 self.u(u64::from(officer.0));
             }
-            Command::Produce { player, building, kind } => {
+            Command::Produce { player, building, kind, endless } => {
                 self.0.extend_from_slice(&[6, *player]);
                 self.u(u64::from(building.0));
-                self.u(u64::from(kind.0));
+                // As in command 0x4e: bit 0x2000 of the type word marks an endless order.
+                assert!(kind.0 & ENDLESS_BIT == 0, "type id {} collides with the endless bit", kind.0);
+                self.u(u64::from(kind.0 | if *endless { ENDLESS_BIT } else { 0 }));
             }
             Command::Unproduce { player, building, kind } => {
                 self.0.extend_from_slice(&[7, *player]);
@@ -451,7 +455,16 @@ impl<'a> Reader<'a> {
             3 => Command::Form { player, officer: self.id()?, units: self.ids()?, kind: self.str()? },
             4 => Command::Face { player, officer: self.id()?, dir: self.byte()? },
             5 => Command::Disband { player, officer: self.id()? },
-            6 => Command::Produce { player, building: self.id()?, kind: self.kind()? },
+            6 => {
+                let building = self.id()?;
+                let word = self.kind()?.0;
+                Command::Produce {
+                    player,
+                    building,
+                    kind: TypeId(word & !ENDLESS_BIT),
+                    endless: word & ENDLESS_BIT != 0,
+                }
+            }
             7 => Command::Unproduce { player, building: self.id()?, kind: self.kind()? },
             8 => Command::Enter { player, units: self.ids()?, building: self.id()? },
             9 => Command::Leave { player, building: self.id()? },
@@ -532,7 +545,8 @@ mod tests {
                 Command::Form { player: 3, officer: EntityId(9), units: vec![EntityId(10)], kind: "LINE".into() },
                 Command::Face { player: 3, officer: EntityId(9), dir: 200 },
                 Command::Disband { player: 3, officer: EntityId(9) },
-                Command::Produce { player: 1, building: EntityId(4), kind: TypeId(300) },
+                Command::Produce { player: 1, building: EntityId(4), kind: TypeId(300), endless: false },
+                Command::Produce { player: 1, building: EntityId(4), kind: TypeId(300), endless: true },
                 Command::Unproduce { player: 1, building: EntityId(4), kind: TypeId(2) },
                 Command::Enter { player: 1, units: vec![EntityId(5)], building: EntityId(4) },
                 Command::Leave { player: 1, building: EntityId(4) },
@@ -594,8 +608,27 @@ mod tests {
         let back = Replay::decode(&bytes).unwrap();
         assert_eq!(back, r);
         assert_eq!(back.entries.len(), 2, "empty ticks are not stored");
-        assert_eq!(back.commands_at(9).len(), 42);
+        assert_eq!(back.commands_at(9).len(), 43);
         assert!(back.commands_at(5).is_empty());
+    }
+
+    #[test]
+    fn endless_is_bit_0x2000_of_the_type_word() {
+        let build = |endless| {
+            let mut r = Replay::new("m", 0);
+            r.record(1, &[Command::Produce { player: 1, building: EntityId(4), kind: TypeId(300), endless }]);
+            r
+        };
+        // A replay from before the flag has the bare type word and still decodes, not endless.
+        let (plain, endless) = (build(false).encode(), build(true).encode());
+        let has = |bytes: &[u8], word: [u8; 2]| bytes.windows(2).any(|w| w == word);
+        assert!(has(&plain, [0xac, 0x02]), "300 as a varint");
+        assert!(has(&endless, [0xac, 0x42]), "300 | 0x2000");
+        let Command::Produce { kind, endless: e, .. } = Replay::decode(&plain).unwrap().commands_at(1)[0] else {
+            panic!("not a produce")
+        };
+        assert_eq!((kind, e), (TypeId(300), false));
+        assert_eq!(Replay::decode(&endless).unwrap(), build(true));
     }
 
     #[test]

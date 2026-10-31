@@ -1,0 +1,30 @@
+{
+  "name": "endless_production",
+  "description": "Build a Fort, Ctrl+click the halberdier button (an endless order: count 1200, the infinity sign), send peasants in and wait for several soldiers, then right-click the button to remove the order",
+  "steps": [
+    {"cmd": "start", "random": {"nation": 1, "seed": 5}},
+    {"cmd": "wait", "ticks": 200},
+    {"cmd": "drag", "around": {"owner": 0, "type": "Kri"}},
+    {"cmd": "click", "label": "Fort"},
+    {"cmd": "click", "near": {"owner": 0, "type": "Kri"}, "offset": [0, 700]},
+    {"cmd": "wait", "until": {"units": {"owner": 0, "type": "Kre", "finished": true}}, "timeout": 20000},
+    {"cmd": "click", "unit": {"owner": 0, "type": "Kre"}, "expect": {"path": "target.type", "contains": "Kre"}},
+    {"cmd": "state", "capture": {"food": "state.resources.food"}},
+    {"cmd": "click", "label": "Hellebardier", "mods": ["ctrl"]},
+    {"cmd": "state", "expect": {"path": "state.resources.food", "lt": "${food}"}, "note": "paid when queued"},
+    {"cmd": "move", "label": "Hellebardier", "expect": {"path": "target.count", "eq": 1200}, "note": "an endless order counts 1200: the button draws the infinity sign"},
+    {"cmd": "click", "label": "Hellebardier", "mods": ["ctrl"]},
+    {"cmd": "move", "label": "Hellebardier", "expect": {"path": "target.count", "eq": 1200}, "note": "a second endless order of the type is refused"},
+    {"cmd": "drag", "around": {"owner": 0, "type": "Kri", "max": 5}},
+    {"cmd": "rclick", "unit": {"owner": 0, "type": "Kre"}, "note": "the selected peasants walk into the Fort"},
+    {"cmd": "wait", "until": {"units": {"owner": 0, "type": "SpnAlb", "min": 103}}, "timeout": 6000},
+    {"cmd": "click", "unit": {"owner": 0, "type": "Kre"}},
+    {"cmd": "move", "label": "Hellebardier", "expect": {"path": "target.count", "eq": 1200}, "note": "the soldiers came and the order is still there"},
+    {"cmd": "state", "capture": {"food2": "state.resources.food"}},
+    {"cmd": "rclick", "label": "Hellebardier", "expect": {"path": "target.right_click", "eq": true}},
+    {"cmd": "wait", "ticks": 3},
+    {"cmd": "state", "expect": {"path": "state.resources.food", "gt": "${food2}"}},
+    {"cmd": "wait", "ticks": 5},
+    {"cmd": "move", "label": "Hellebardier", "expect": {"path": "target.count", "exists": false}, "note": "the right click removed the endless order"}
+  ]
+}

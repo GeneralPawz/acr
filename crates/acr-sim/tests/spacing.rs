@@ -171,7 +171,7 @@ fn units_out_of_a_building_are_not_stuck() {
     acr_sim::economy::census_all(&mut w);
     w.players[0].resources = [100_000; 8];
     for _ in 0..6 {
-        w.step(&[Command::Produce { player: 0, building: center, kind: kri }]);
+        w.step(&[Command::Produce { player: 0, building: center, kind: kri, endless: false }]);
     }
     run(&mut w, 600);
     let men: Vec<EntityId> = w.units.iter().filter(|u| u.kind == kri).map(|u| u.id).collect();
@@ -365,7 +365,8 @@ fn trained_to_rally(rules: Rules, limit: usize) -> (Option<usize>, usize) {
     w.players[0].resources = [1_000_000; 8];
     w.players[0].housing = 1000;
     w.step(&[Command::Rally { player: 0, building: center, x: 2048 + 300, y: 2048 + 200 }]);
-    let produce: Vec<Command> = (0..20).map(|_| Command::Produce { player: 0, building: center, kind: kri }).collect();
+    let produce: Vec<Command> =
+        (0..20).map(|_| Command::Produce { player: 0, building: center, kind: kri, endless: false }).collect();
     w.step(&produce);
     let mut close: std::collections::HashMap<(usize, usize), usize> = Default::default();
     let mut longest = 0;

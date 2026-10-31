@@ -32,14 +32,14 @@ fn production_over_the_depot_limit_is_cancelled() {
     economy::census_all(&mut w);
     w.players[0].resources[WOOD] = 1000;
     // One depot allows one gun: the first is made, the second is refunded.
-    w.step(&[Command::Produce { player: 0, building: b, kind: gun }]);
+    w.step(&[Command::Produce { player: 0, building: b, kind: gun, endless: false }]);
     for _ in 0..20 {
         w.step(&[]);
     }
     let guns = |w: &World| w.units.iter().filter(|u| u.living() && u.kind == gun).count();
     assert_eq!(guns(&w), 1);
     let wood = w.players[0].resources[WOOD];
-    w.step(&[Command::Produce { player: 0, building: b, kind: gun }]);
+    w.step(&[Command::Produce { player: 0, building: b, kind: gun, endless: false }]);
     for _ in 0..20 {
         w.step(&[]);
     }
