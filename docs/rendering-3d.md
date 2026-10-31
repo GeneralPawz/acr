@@ -34,7 +34,7 @@ parameters: [assets-humans.md](assets-humans.md).
 | `battlefield_marks` | `fade`, `keep` | `fade` | `keep`: craters, scuffs, blood splatter and pools and the debris of the fallen stay for the whole battle (below, "Kept battlefield marks") |
 | `decay_stain` | `on`, `off` | `on` with `gore=full`, else `off` | the fluids of decaying corpses stain the ground under them (below, "Decay stains"); written only once set |
 | `weather` | `off`, `rain`, `snow`, `fog` | `off` | rain, snow or fog over the 3D frame, a look only with no gameplay effect (below, "Weather (#224)"); the driver's `{"cmd": "weather", "mode": "rain"}` overrides it (without `mode`: back to the setting) |
-| `hit_locations`, `body_spacing`, `mortars`, `corpse_piles`, `cannon_fire` | `on`, `off` | `off` | the optional `acr_sim::Rules`, page 4 of the options; they apply from the next battle ([simulation.md](simulation.md)) |
+| `hit_locations`, `body_spacing`, `mortars`, `corpse_piles`, `cannon_fire`, `dart_fire` | `on`, `off` | `off` | the optional `acr_sim::Rules`, page 4 of the options; they apply from the next battle ([simulation.md](simulation.md)) |
 
 Sprites stay the default; with `models=off` and `camera=fixed` the frame is drawn exactly as
 before (no depth buffer, no extra pass). The game menu's options dialog (Spieleinstellungen)

@@ -63,6 +63,7 @@ const ON: Rules = Rules {
     group_move: false,
     cannon_fire: false,
     ball_terrain: false,
+    dart_fire: false,
 };
 
 #[test]

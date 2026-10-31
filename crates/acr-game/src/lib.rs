@@ -581,6 +581,10 @@ impl Game {
         if self.ui.settings().cannon_fire {
             setup.rules.cannon_fire = true;
         }
+        // And `dart_fire=on` (blowpipe darts set men on fire under hit locations).
+        if self.ui.settings().dart_fire {
+            setup.rules.dart_fire = true;
+        }
         // And `ball_terrain` (with hit locations, on by default with the modern controls).
         if self.ui.settings().ball_terrain() {
             setup.rules.ball_terrain = true;
