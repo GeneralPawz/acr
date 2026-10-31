@@ -1,0 +1,32 @@
+{
+  "name": "editor_nature",
+  "description": "The editor's Natur list (#429): a tree and a stone are put on the map, one click on the deep water of the field is refused, and a saved and loaded game keeps both.",
+  "steps": [
+    {"cmd": "start", "blank": {"editor": true, "water": {"x": 7680, "y": 7000, "w": 2000, "h": 1500}}},
+    {"cmd": "wait", "ticks": 5},
+    {"cmd": "state", "expect": {"path": "state.map_objects.trees", "exists": false}},
+    {"cmd": "click", "label": "Nation", "exact": true},
+    {"cmd": "click", "label": "Nation Natur", "exact": true},
+    {"cmd": "click", "label": "[AG 0]", "note": "the first tree"},
+    {"cmd": "click", "world": [7000, 7700], "note": "on land"},
+    {"cmd": "click", "world": [8700, 7700], "note": "in the middle of the water"},
+    {"cmd": "wait", "until": {"label": "Nicht im tiefen Wasser"}},
+    {"cmd": "state", "expect": [
+      {"path": "state.map_objects.trees", "eq": 1},
+      {"path": "state.map_objects.stones", "exists": false}]},
+    {"cmd": "move", "pos": [870, 300], "note": "the wheel acts over the window"},
+    {"cmd": "wheel", "lines": -120, "note": "scroll to the stones"},
+    {"cmd": "click", "label": "[ST 100]"},
+    {"cmd": "click", "world": [7200, 7900]},
+    {"cmd": "state", "expect": [
+      {"path": "state.map_objects.trees", "eq": 1},
+      {"path": "state.map_objects.stones", "eq": 1}]},
+    {"cmd": "save", "name": "e2e_nature"},
+    {"cmd": "wait", "ticks": 20},
+    {"cmd": "load", "name": "e2e_nature"},
+    {"cmd": "wait", "until": {"in_game": true}, "timeout": 20000},
+    {"cmd": "state", "expect": [
+      {"path": "state.map_objects.trees", "eq": 1},
+      {"path": "state.map_objects.stones", "eq": 1}]}
+  ]
+}

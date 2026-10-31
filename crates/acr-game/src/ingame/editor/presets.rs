@@ -696,7 +696,7 @@ impl Editor {
         let mut line = |text: String, name: String, hot: bool, act: Option<EditorAct>| {
             let look = if act.is_some() { Look::DropRow } else { Look::Text };
             let rect = Rect::new(OX + 10, y, 224, ROW);
-            out.push(Item { rect, text: text.into_bytes(), name, hot, act, look });
+            out.push(Item { rect, text: text.into_bytes(), name, hot, act, look, gp: None });
             y += ROW;
         };
         line(format!("Armee: {}", ENTRIES[self.entry].0), String::new(), false, None);

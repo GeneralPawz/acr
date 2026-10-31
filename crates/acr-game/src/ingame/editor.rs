@@ -18,7 +18,9 @@ mod world;
 use std::cell::RefCell;
 use std::collections::HashMap;
 
+use acr_formats::m3d::SpriteGroup;
 use acr_sim::catalog::{Medium, MotionStyle};
+use acr_sim::economy::WOOD;
 use acr_sim::fixed::Pos;
 use acr_sim::tech::UpgradeId;
 use acr_sim::{TypeId, World};
@@ -84,8 +86,9 @@ const COMBO_BOX: Rect = Rect { x0: OX + 10, y0: OY + 36, x1: OX + 10 + 224, y1: 
 /// The counts offered; a count above one formation's size places several side by side.
 pub const COUNTS: [u32; 12] = [1, 5, 10, 15, 36, 72, 120, 196, 392, 588, 784, 980];
 /// The combo box's lines: the playable nations in the order of `TEXT\NATIONS.TXT` (name, and
-/// the prefix of their type ids), then ACR's two extra lists, the animals and the cannons.
-pub const ENTRIES: [(&str, &str); 14] = [
+/// the prefix of their type ids), then ACR's own lists: the animals, the cannons and the
+/// map's nature (trees, bushes, stones and deposits).
+pub const ENTRIES: [(&str, &str); 15] = [
     ("Maya", "May"),
     ("Spanien", "Spn"),
     ("England", "Eng"),
@@ -100,9 +103,12 @@ pub const ENTRIES: [(&str, &str); 14] = [
     ("Sioux", "Siu"),
     ("Tiere", "Anm"),
     ("Kanonen", "Art"),
+    ("Natur", ""),
 ];
 /// The first of [`ENTRIES`] that is ACR's own (not a nation of the original).
 const FIRST_EXTRA: usize = 12;
+/// The line of [`ENTRIES`] that lists the map's trees and stones, not types.
+const NATUR: usize = 14;
 /// The nation list opens on England, as the first game does for most players.
 const DEFAULT_ENTRY: usize = 2;
 /// The owner of wild animals: the eighth colour of the window is this neutral player.
@@ -125,7 +131,7 @@ pub enum Act {
     Army(presets::Act),
     /// A click of the battle view ("Schlacht").
     Battle(battle::Act),
-    Pick(TypeId),
+    Pick(Pick),
     /// Picks the owner (one of the eight colours).
     Owner(u8),
     /// Cycles the team number of a colour (a right click on its swatch).
@@ -157,6 +163,9 @@ pub enum Look {
     Frame { divider: Option<i32> },
     /// A unit icon (`ICONS.GP` frame) in its cell.
     Icon { frame: Option<usize> },
+    /// A map object's frame of the pack in [`Item::gp`], its ground point `(ox, oy)` at the
+    /// bottom centre of the cell, clipped to it; the name stands in the cell without a pack.
+    Sprite { frame: usize, ox: i32, oy: i32 },
     /// A player colour; `hot` adds the larger outline.
     Swatch { owner: u8 },
     /// The closed combo box.
@@ -177,6 +186,8 @@ pub struct Item {
     pub hot: bool,
     pub act: Option<Act>,
     pub look: Look,
+    /// The sprite pack of a [`Look::Sprite`] cell.
+    pub gp: Option<String>,
 }
 
 /// A formation a type can stand in: the `ORD_GROUPS.LST` group, its officer type and the
@@ -196,6 +207,9 @@ pub struct View<'a> {
     pub icon: &'a dyn Fn(TypeId) -> Option<usize>,
     /// An upgrade's text, as the game's upgrade hint shows it.
     pub upgrade_name: &'a dyn Fn(UpgradeId) -> Vec<u8>,
+    /// The pack, and the ground point inside the frame, of a map object of a sprite list
+    /// (frame = the object's index), once the list is loaded.
+    pub sprite: &'a dyn Fn(SpriteGroup, u16) -> Option<(String, i32, i32)>,
     /// `ED_HDR01`.
     pub title: Vec<u8>,
 }
@@ -209,8 +223,8 @@ pub struct Editor {
     combo_open: bool,
     /// The icons' scroll position in pixels.
     scroll: i32,
-    /// The type placed by a click on the map.
-    pub pick: Option<TypeId>,
+    /// What a click on the map places.
+    pub pick: Option<Pick>,
     count: usize,
     /// 0 = loose, else 1 + the index in [`formations`].
     form: usize,
@@ -287,11 +301,36 @@ pub fn reload_guns(world: &mut World) -> usize {
     n
 }
 
-/// A category of an entry's list: its header and types.
+/// What a cell of the list picks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pick {
+    /// An object type: units, animals, cannons, buildings.
+    Unit(TypeId),
+    /// A tree, bush, stone or deposit: its sprite group and index in the group's list.
+    Nature(SpriteGroup, u16),
+    /// A tool of the terrain brush.
+    #[allow(dead_code)] // the terrain tools list them (#430)
+    Ground(GroundTool),
+}
+
+/// The tools of the terrain brush (ACR's own, the original's are not traced).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // the terrain tools use them (#430)
+pub enum GroundTool {
+    Raise,
+    Lower,
+    Flatten,
+    Water,
+    Land,
+    /// Paints a ground texture (`TILE` value).
+    Texture(u8),
+}
+
+/// A category of an entry's list: its header and what its cells pick.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Group {
     pub header: &'static str,
-    pub kinds: Vec<TypeId>,
+    pub kinds: Vec<Pick>,
 }
 
 /// The category of a type in a nation's list: buildings, ships, riders, guns
@@ -315,6 +354,9 @@ fn category(t: &acr_sim::catalog::ObjectType) -> usize {
 // The original builds these lists at load (0x111ca9c/0x111caa0/0x111caa4, read at 0x5bb8aa);
 // where it fills them is unknown, so this groups the catalog by kind (docs/ui.md, "Editor").
 pub fn groups(world: &World, entry: usize) -> Vec<Group> {
+    if entry == NATUR {
+        return nature_groups(world);
+    }
     let prefix = ENTRIES[entry].1.to_ascii_lowercase();
     let mut seen = std::collections::HashSet::new();
     let mut by: Vec<Vec<TypeId>> = vec![Vec::new(); CATEGORIES.len()];
@@ -326,14 +368,50 @@ pub fn groups(world: &World, entry: usize) -> Vec<Group> {
     }
     if entry >= FIRST_EXTRA {
         // Animals and cannons are one list under their own name.
-        let kinds = by.into_iter().take(3).flatten().collect();
+        let kinds = by.into_iter().take(3).flatten().map(Pick::Unit).collect();
         return vec![Group { header: ENTRIES[entry].0, kinds }];
     }
     by.into_iter()
         .zip(CATEGORIES)
         .filter(|(kinds, _)| !kinds.is_empty())
-        .map(|(kinds, header)| Group { header, kinds })
+        .map(|(kinds, header)| Group { header, kinds: kinds.into_iter().map(Pick::Unit).collect() })
         .collect()
+}
+
+/// The Natur list, from the map's sprite lists: trees that are a wood source, other trees
+/// (bushes), stones without a source and stones with one (deposits that feed mines).
+fn nature_groups(world: &World) -> Vec<Group> {
+    let shapes = &world.shapes;
+    let (mut trees, mut bushes, mut stones, mut deposits) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for (group, kinds) in &shapes.kinds {
+        for index in 0..kinds.chars.len() as u16 {
+            let pick = Pick::Nature(*group, index);
+            match group {
+                SpriteGroup::Trees => {
+                    let wood = shapes.work_source(*group, index).is_some_and(|(kind, ..)| usize::from(kind) == WOOD);
+                    if wood { &mut trees } else { &mut bushes }.push(pick);
+                }
+                SpriteGroup::Stones => {
+                    if shapes.source(*group, index).is_some() { &mut deposits } else { &mut stones }.push(pick);
+                }
+                _ => {}
+            }
+        }
+    }
+    [("Baeume", trees), ("Buesche", bushes), ("Steine", stones), ("Vorkommen", deposits)]
+        .into_iter()
+        .filter(|(_, kinds)| !kinds.is_empty())
+        .map(|(header, kinds)| Group { header, kinds })
+        .collect()
+}
+
+/// The name of a map object type and its `[AG i]`/`[ST i]` tag, as the driver finds it by.
+fn nature_label(world: &World, group: SpriteGroup, index: u16) -> (String, String) {
+    let name =
+        world.shapes.kinds.get(&group).and_then(|k| k.names.get(usize::from(index))).cloned().unwrap_or_default();
+    let code = String::from_utf8_lossy(&group.code()).into_owned();
+    let label = format!("{name} [{code} {index}]");
+    (name, label)
 }
 
 /// What the flow of [`flow`] puts at a place.
@@ -431,6 +509,7 @@ impl Editor {
             hot,
             act,
             look,
+            gp: None,
         };
         if !self.open {
             let rect = Rect::new(OX, BOX_Y0, 249, ROW);
@@ -481,15 +560,32 @@ impl Editor {
                     out.push(item(rect, text, "", false, None, Look::Header));
                 }
                 Placed::Cell(g, i, col, y) => {
-                    let kind = groups[g].kinds[i];
+                    let pick = groups[g].kinds[i];
                     let rect = Rect::new(OX + 5 + PITCH * col as i32, OY + y - 1 - scroll, CELL, CELL);
                     if rect.intersect(&CONTENT).is_empty() {
                         continue;
                     }
-                    let (frame, name) = ((view.icon)(kind), (view.names)(kind));
-                    let label = String::from_utf8_lossy(&name).into_owned();
-                    let hot = self.pick == Some(kind);
-                    out.push(item(rect, name, &label, hot, Some(Act::Pick(kind)), Look::Icon { frame }));
+                    let hot = self.pick == Some(pick);
+                    match pick {
+                        Pick::Unit(kind) => {
+                            let (frame, name) = ((view.icon)(kind), (view.names)(kind));
+                            let label = String::from_utf8_lossy(&name).into_owned();
+                            out.push(item(rect, name, &label, hot, Some(Act::Pick(pick)), Look::Icon { frame }));
+                        }
+                        Pick::Nature(group, index) => {
+                            let (name, label) = nature_label(world, group, index);
+                            let sprite = (view.sprite)(group, index);
+                            let look = match &sprite {
+                                Some((_, ox, oy)) => Look::Sprite { frame: usize::from(index), ox: *ox, oy: *oy },
+                                None => Look::Icon { frame: None },
+                            };
+                            let mut cell = item(rect, name.into_bytes(), &label, hot, Some(Act::Pick(pick)), look);
+                            cell.gp = sprite.map(|(gp, ..)| gp);
+                            out.push(cell);
+                        }
+                        // The terrain tools have no list yet.
+                        Pick::Ground(_) => {}
+                    }
                 }
             }
         }
@@ -543,7 +639,7 @@ impl Editor {
             *y += ROW;
         };
         pair(&mut out, &mut y, format!("Anzahl: {}", self.count()), "Anzahl", Act::Count(-1), Act::Count(1));
-        let form = match self.pick {
+        let form = match self.unit() {
             Some(kind) if self.form > 0 => {
                 formations(world, kind).get(self.form - 1).map_or("lose".into(), |c| group_name(world, c.group))
             }
@@ -567,9 +663,13 @@ impl Editor {
         line(&mut out, &mut y, auto.as_bytes().to_vec(), "Kanonen nachladen", self.auto_reload, Some(Act::AutoReload));
         let me = if local == NEUTRAL { "Neutral".to_owned() } else { format!("Spieler {}", local + 1) };
         line(&mut out, &mut y, format!("Ich steuere: {me}").into_bytes(), "Ich steuere", false, Some(Act::Control));
-        if let Some(kind) = self.pick {
+        if let Some(pick) = self.pick {
             let mut text = b"Typ: ".to_vec();
-            text.extend((view.names)(kind));
+            match pick {
+                Pick::Unit(kind) => text.extend((view.names)(kind)),
+                Pick::Nature(group, index) => text.extend(nature_label(world, group, index).1.into_bytes()),
+                Pick::Ground(_) => {}
+            }
             text.truncate(44);
             line(&mut out, &mut y, text, "", false, None);
         }
@@ -600,7 +700,7 @@ impl Editor {
             let rows = menu.rows(names.len(), names.iter().map(Vec::len).max().unwrap_or(0));
             for (n, (rect, text)) in rows.into_iter().zip(names).enumerate() {
                 let name = format!("Ausbau {}", String::from_utf8_lossy(&text));
-                let hot = self.pick == Some(menu.kind) && self.level == n;
+                let hot = self.pick == Some(Pick::Unit(menu.kind)) && self.level == n;
                 out.push(item(rect, text, &name, hot, Some(Act::SetLevel(n)), Look::DropRow));
             }
         }
@@ -609,7 +709,7 @@ impl Editor {
 
     /// The Ausbau line: the picked type's level, its name and the upgrades applied.
     fn level_line(&self, world: &World, view: &View) -> Vec<u8> {
-        let names = self.pick.map_or_else(
+        let names = self.unit().map_or_else(
             || vec![levels::BASIS.as_bytes().to_vec()],
             |kind| levels::names(world, kind, view.upgrade_name),
         );
@@ -679,6 +779,20 @@ impl Editor {
                     match frame {
                         Some(f) => cell.push(Draw::game_frame(hud::gp::ICONS, f, r.x0 + 1, r.y0 + 1, 0)),
                         // No icon: the name stands in its cell.
+                        None => cell.push(Draw::game_text(WHITE, &i.text[..i.text.len().min(8)], r.x0 + 3, r.y0 + 14)),
+                    }
+                    hud::outline(&mut cell, r, colour(index));
+                    out.extend(cell.into_iter().map(|d| d.clipped(CONTENT)));
+                }
+                Look::Sprite { frame, ox, oy } => {
+                    let index = if i.hot { OUTLINE_PICKED } else { OUTLINE };
+                    let mut cell = Vec::new();
+                    match &i.gp {
+                        // The ground point at the bottom centre of the cell.
+                        Some(gp) => cell.push(
+                            Draw::game_frame(gp, frame, r.x0 + CELL / 2 - ox, r.y1 - 4 - oy, 0)
+                                .clipped(r.intersect(&CONTENT)),
+                        ),
                         None => cell.push(Draw::game_text(WHITE, &i.text[..i.text.len().min(8)], r.x0 + 3, r.y0 + 14)),
                     }
                     hud::outline(&mut cell, r, colour(index));
@@ -774,15 +888,18 @@ impl Editor {
             }
             Act::Army(a) => self.army_act(a),
             Act::Battle(a) => out.input = self.battle_act(a),
-            Act::Pick(k) => {
-                self.pick = if self.pick == Some(k) { None } else { Some(k) };
+            Act::Pick(p) => {
+                self.pick = if self.pick == Some(p) { None } else { Some(p) };
                 self.level = 0;
-                self.form = self.form.min(formations(world, k).len());
+                self.form = match p {
+                    Pick::Unit(k) => self.form.min(formations(world, k).len()),
+                    _ => 0,
+                };
             }
             Act::Owner(p) => self.owner = p,
             Act::SetLevel(l) => {
                 if let Some(m) = menu {
-                    self.pick = Some(m.kind);
+                    self.pick = Some(Pick::Unit(m.kind));
                     self.level = l.min(levels::steps(world, m.kind));
                     self.form = self.form.min(formations(world, m.kind).len());
                 }
@@ -790,7 +907,7 @@ impl Editor {
             Act::ScrollBy(d) => self.scroll_by(world, d),
             Act::Count(d) => self.count = (self.count as i32 + d).clamp(0, COUNTS.len() as i32 - 1) as usize,
             Act::Form(d) => {
-                let n = self.pick.map_or(0, |k| formations(world, k).len()) as i32 + 1;
+                let n = self.unit().map_or(0, |k| formations(world, k).len()) as i32 + 1;
                 self.form = (self.form as i32 + d).rem_euclid(n) as usize;
             }
             Act::Facing(d) => {
@@ -831,16 +948,27 @@ impl Editor {
             let era = self.army.era_for(self.entry);
             return Some(Input::Preset { nation: self.entry, size, era, owner: self.owner(), at, dir: self.facing() });
         }
-        let kind = self.pick?;
-        Some(Input::Place {
-            kind: world.catalog.get(kind).id.clone(),
-            owner: self.owner(),
-            at,
-            count: self.count(),
-            form: self.form as u32,
-            dir: self.facing(),
-            level: self.level as u32,
-        })
+        match self.pick? {
+            Pick::Unit(kind) => Some(Input::Place {
+                kind: world.catalog.get(kind).id.clone(),
+                owner: self.owner(),
+                at,
+                count: self.count(),
+                form: self.form as u32,
+                dir: self.facing(),
+                level: self.level as u32,
+            }),
+            Pick::Nature(group, index) => Some(Input::Nature { group, index, at }),
+            Pick::Ground(_) => None,
+        }
+    }
+
+    /// The picked type, if a unit, animal, cannon or building is picked.
+    pub fn unit(&self) -> Option<TypeId> {
+        match self.pick {
+            Some(Pick::Unit(kind)) => Some(kind),
+            _ => None,
+        }
     }
 }
 
@@ -908,17 +1036,11 @@ fn place_formations(
     Ok(placed)
 }
 
-impl Look {
-    fn is_icon(self) -> bool {
-        matches!(self, Look::Icon { .. })
-    }
-}
-
 impl Item {
     /// Where a click hits: icons and headers only inside the clipped content.
     pub fn hit_rect(&self) -> Rect {
         match self.look {
-            Look::Icon { .. } | Look::Header => self.rect.intersect(&CONTENT),
+            Look::Icon { .. } | Look::Sprite { .. } | Look::Header => self.rect.intersect(&CONTENT),
             _ => self.rect,
         }
     }
@@ -970,8 +1092,17 @@ impl super::InGame {
             let text = ctx.texts.get(id);
             if text == id.as_bytes() { Vec::new() } else { text.to_vec() }
         };
-        let view =
-            View { names: &names, icon: &icon, upgrade_name: &upgrade_name, title: ctx.texts.get("ED_HDR01").to_vec() };
+        let sprite = |group: SpriteGroup, index: u16| {
+            let entry = self.objects.objects().list(group)?.entries.get(usize::from(index))?;
+            Some((self.objects.objects().list(group)?.gp_path(), entry.dx, entry.dy))
+        };
+        let view = View {
+            names: &names,
+            icon: &icon,
+            upgrade_name: &upgrade_name,
+            sprite: &sprite,
+            title: ctx.texts.get("ED_HDR01").to_vec(),
+        };
         e.layout(world, &view, self.local_player())
     }
 
@@ -998,7 +1129,7 @@ impl super::InGame {
                     count: None,
                     number: None,
                     clickable: !r.is_empty(),
-                    right_clickable: i.look.is_icon() || i.look == Look::Combo,
+                    right_clickable: matches!(i.act, Some(Act::Pick(Pick::Unit(_)))) || i.look == Look::Combo,
                 }
             })
             .collect()
@@ -1019,7 +1150,26 @@ impl super::InGame {
     pub(super) fn editor_input(&mut self, input: Input) {
         let (Some(e), Some(world), Some(map)) = (&mut self.editor, &mut self.world, &mut self.map) else { return };
         self.save.log.editor(world.tick.0, input.clone());
-        e.status = input::apply(world, map, e, &input).status;
+        let applied = input::apply(world, map, e, &input);
+        e.status = applied.status;
+        if applied.objects {
+            // A tree is no dot of the minimap.
+            let tree = matches!(input, Input::Nature { group: SpriteGroup::Trees, .. });
+            self.refresh_objects(!tree);
+        }
+    }
+
+    /// The map got objects: the scene is built again and the minimap, if they show there.
+    /// The 3D map models place themselves again when the objects change.
+    pub(super) fn refresh_objects(&mut self, minimap: bool) {
+        let (Some(map), Some(terrain)) = (&self.map, &self.terrain) else { return };
+        self.objects.rebuild_static(map, terrain);
+        if minimap
+            && let Some(assets) = &self.assets
+            && let Some(m) = crate::hud::minimap::Minimap::new(map, assets)
+        {
+            self.interface.hud.set_minimap(m);
+        }
     }
 
     /// The left button in the editor: the window, or placing the picked type on the map.
@@ -1104,7 +1254,7 @@ impl super::InGame {
             return true;
         }
         let icon = match hit {
-            Some(Item { look: Look::Icon { .. }, act: Some(Act::Pick(k)), rect, .. }) => Some((k, rect)),
+            Some(Item { act: Some(Act::Pick(Pick::Unit(k))), rect, .. }) => Some((k, rect)),
             _ => None,
         };
         let e = self.editor.as_mut().expect("editor");
@@ -1159,7 +1309,101 @@ impl super::InGame {
 
 #[cfg(test)]
 mod tests {
+    use acr_sim::map::SpriteShapes;
+    use acr_sim::sprite::{ObjChar, SpriteKinds};
+
     use super::*;
+
+    fn kinds(names: &[&str]) -> SpriteKinds {
+        let chars = names
+            .iter()
+            .map(|_| ObjChar {
+                res_type: None,
+                per_work: 0,
+                radius: 32,
+                work_amount: 0,
+                work_next: None,
+                time_amount: 0,
+                time_next: None,
+                deposit: false,
+                list_radius: 0,
+            })
+            .collect();
+        SpriteKinds { chars, names: names.iter().map(|n| (*n).to_owned()).collect() }
+    }
+
+    /// A world with two trees (a wood source and a bush) and three stones (a rock, a rock and
+    /// a deposit), and no game files.
+    pub(in crate::ingame::editor) fn nature_world() -> World {
+        use acr_sim::formation::Formations;
+        let mut shapes = SpriteShapes::default();
+        shapes.kinds.insert(SpriteGroup::Trees, kinds(&["AG1", "AG2"]));
+        shapes.kinds.insert(SpriteGroup::Stones, kinds(&["ST1", "ST2", "ST3"]));
+        shapes.work.insert(SpriteGroup::Trees, vec![Some((WOOD as u8, 4, 30)), None]);
+        shapes.sources.insert(SpriteGroup::Stones, vec![None, None, Some(1)]);
+        let mut world = World::new(
+            std::sync::Arc::new(acr_sim::MapGrid::open(1)),
+            std::sync::Arc::new(acr_sim::catalog::Catalog::new()),
+            std::sync::Arc::new(Formations::default()),
+        );
+        world.shapes = std::sync::Arc::new(shapes);
+        world
+    }
+
+    #[test]
+    fn natur_lists_trees_bushes_stones_deposits() {
+        let world = nature_world();
+        let groups = groups(&world, NATUR);
+        let pick = |g, i| Pick::Nature(g, i);
+        assert_eq!(
+            groups,
+            vec![
+                Group { header: "Baeume", kinds: vec![pick(SpriteGroup::Trees, 0)] },
+                Group { header: "Buesche", kinds: vec![pick(SpriteGroup::Trees, 1)] },
+                Group { header: "Steine", kinds: vec![pick(SpriteGroup::Stones, 0), pick(SpriteGroup::Stones, 1)] },
+                Group { header: "Vorkommen", kinds: vec![pick(SpriteGroup::Stones, 2)] },
+            ]
+        );
+        // A world without sprite lists has an empty list.
+        let mut bare = nature_world();
+        bare.shapes = Default::default();
+        assert!(super::groups(&bare, NATUR).is_empty());
+
+        // The cells carry the sprite of the pack, or the name where there is none.
+        let sprite = |g: SpriteGroup, i: u16| (i < 2).then(|| (format!("{g:?}.GP"), 5 + i32::from(i), 9));
+        let cells = |e: &Editor, sprite: &dyn Fn(SpriteGroup, u16) -> Option<(String, i32, i32)>| -> Vec<Item> {
+            let view = View {
+                names: &|_| Vec::new(),
+                icon: &|_| None,
+                upgrade_name: &|_| Vec::new(),
+                sprite,
+                title: Vec::new(),
+            };
+            e.layout(&world, &view, 0).into_iter().filter(|i| matches!(i.act, Some(Act::Pick(_)))).collect()
+        };
+        let mut e = Editor { entry: NATUR, ..Editor::default() };
+        let items = cells(&e, &sprite);
+        assert_eq!(items.len(), 5);
+        assert_eq!(items[0].name, "AG1 [AG 0]");
+        assert_eq!(items[4].name, "ST3 [ST 2]");
+        assert_eq!(items[1].look, Look::Sprite { frame: 1, ox: 6, oy: 9 });
+        assert_eq!(items[1].gp.as_deref(), Some("Trees.GP"));
+        assert_eq!(items[4].look, Look::Icon { frame: None }, "no sprite: the name");
+        assert_eq!(items[4].gp, None);
+        // Picking a cell, then the map: the input names the type and the place.
+        e.apply(&world, Act::Pick(Pick::Nature(SpriteGroup::Stones, 2)), 0);
+        assert_eq!(
+            e.click_on_map(&world, (700, 800)),
+            Some(Input::Nature { group: SpriteGroup::Stones, index: 2, at: (700, 800) })
+        );
+        assert_eq!(e.unit(), None);
+    }
+
+    #[test]
+    fn entries_end_with_natur() {
+        assert_eq!(ENTRIES[ENTRIES.len() - 1], ("Natur", ""));
+        assert_eq!(NATUR, ENTRIES.len() - 1);
+    }
 
     #[test]
     fn a_grid_is_centred_and_spaced() {
@@ -1182,7 +1426,7 @@ mod tests {
 
     #[test]
     fn the_grid_flows_in_rows_of_five_under_headers() {
-        let g = |n: u16| Group { header: "x", kinds: (0..n).map(TypeId).collect() };
+        let g = |n: u16| Group { header: "x", kinds: (0..n).map(|i| Pick::Unit(TypeId(i))).collect() };
         let (placed, end) = flow(&[g(6), g(1)]);
         // Header at 80, icons from 100 (two rows), the next header 2 rows on, its icon 20 later.
         assert_eq!(placed[0], Placed::Header(0, 80));
@@ -1208,6 +1452,6 @@ mod tests {
         assert_eq!((OX, OY), (755, 79));
         assert_eq!((BOX_X1, BOX_Y0, BOX_Y1, DIVIDER), (1004, 48, 465, 153));
         assert_eq!(ENTRIES[FIRST_EXTRA].0, "Tiere");
-        assert!(ENTRIES.len() == FIRST_EXTRA + 2 && DEFAULT_ENTRY < FIRST_EXTRA);
+        assert!(ENTRIES.len() == FIRST_EXTRA + 3 && DEFAULT_ENTRY < FIRST_EXTRA);
     }
 }

@@ -7,8 +7,10 @@
 //! [`formations`]), never by the window's state: replaying it needs no window.
 
 use acr_formats::M3dMap;
+use acr_formats::m3d::{Sprite, SpriteGroup};
 use acr_sim::World;
 use acr_sim::fixed::Pos;
+use acr_sim::world::ObjectRefusal;
 
 pub(crate) use super::presets::{Era, Size};
 pub(crate) use super::sides::Mode;
@@ -31,6 +33,8 @@ pub enum Input {
     /// The battle view's "Aufstellen": the nations and centuries of both sides, the army size
     /// and "Kampf sofort". Its marches are commands and sit in the command log.
     Battle { nation: [usize; 2], era: [Option<Era>; 2], size: Size, fight: bool },
+    /// A tree or stone of the Natur list: type `index` of the group's sprite list at `at`.
+    Nature { group: SpriteGroup, index: u16, at: (i32, i32) },
 }
 
 /// What applying an input gave.
@@ -38,12 +42,15 @@ pub enum Input {
 pub struct Applied {
     /// The line under the window.
     pub status: Vec<u8>,
+    /// The map got an object: the scene is built again (and the minimap, unless a tree).
+    pub objects: bool,
 }
 
 /// Applies `input` to the world (and the editor's own state: the Kampf rule, the battle
 /// view's placed units). `map` is the map the world was made from, for the inputs that
-/// change it (none yet).
-pub fn apply(world: &mut World, _map: &mut M3dMap, editor: &mut Editor, input: &Input) -> Applied {
+/// change it.
+pub fn apply(world: &mut World, map: &mut M3dMap, editor: &mut Editor, input: &Input) -> Applied {
+    let mut objects = false;
     let status = match input {
         Input::Place { kind, owner, at, count, form, dir, level } => {
             place(world, editor, kind, *owner, *at, (*count as usize, *form as usize, *dir, *level as usize))
@@ -67,8 +74,32 @@ pub fn apply(world: &mut World, _map: &mut M3dMap, editor: &mut Editor, input: &
             editor.place_army(world, (*nation, *size, *era), *owner, *at, *dir)
         }
         Input::Battle { nation, era, size, fight } => editor.go_to_battle(world, *nation, *era, *size, *fight),
+        Input::Nature { group, index, at } => {
+            let (status, added) = nature(world, map, *group, *index, *at);
+            objects = added;
+            status
+        }
     };
-    Applied { status }
+    Applied { status, objects }
+}
+
+/// Puts a tree or stone on the map and into the world; the text for the status line says
+/// why not. A deposit next to a mine feeds it from the next `HandleMines` (every 256 ticks,
+/// `economy::bind_mines`).
+fn nature(world: &mut World, map: &mut M3dMap, group: SpriteGroup, index: u16, (x, y): (i32, i32)) -> (Vec<u8>, bool) {
+    let why = match world.object_refusal(group, index, x, y) {
+        None => {
+            let sprite = Sprite { group, x, y, index, extra: None };
+            map.sprites.push(sprite.clone());
+            world.add_map_object(map, &sprite);
+            let name = world.shapes.kinds.get(&group).and_then(|k| k.names.get(usize::from(index)));
+            return (format!("{} gesetzt", name.map_or("Objekt", String::as_str)).into_bytes(), true);
+        }
+        Some(ObjectRefusal::UnknownType) => "Unbekanntes Objekt",
+        Some(ObjectRefusal::OffMap) => "Ausserhalb der Karte",
+        Some(ObjectRefusal::Water) => "Nicht im tiefen Wasser",
+    };
+    (why.as_bytes().to_vec(), false)
 }
 
 /// Puts units or a building on the map; the text for the status line says why not.
@@ -161,6 +192,44 @@ mod tests {
         assert_eq!(apply(&mut w, &mut map, &mut editor, &place("Nope", 0)).status, b"Unbekannter Typ");
         assert_eq!(apply(&mut w, &mut map, &mut editor, &place(KIND, 99)).status, b"keine Formation");
         assert_eq!(count(&w, 2), 5);
+    }
+
+    #[test]
+    fn a_nature_input_puts_a_tree_and_a_stone_and_refuses_deep_water() {
+        use acr_formats::m3d::Grid;
+        let mut w = crate::ingame::editor::tests::nature_world();
+        // The sea west of x = 1600 (32 px cells).
+        let side = 512 << 1;
+        let mut cells = vec![0u8; side * side];
+        for row in cells.chunks_mut(side) {
+            row[..50].fill(200);
+        }
+        std::sync::Arc::make_mut(&mut w.map).water_depth = Some(Grid { width: side, height: side, cells });
+        let mut editor = Editor::default();
+        let mut map = M3dMap::default();
+        let nature = |group, index, at| Input::Nature { group, index, at };
+
+        let tree = apply(&mut w, &mut map, &mut editor, &nature(SpriteGroup::Trees, 0, (3000, 3000)));
+        assert!(tree.objects);
+        assert_eq!(tree.status, b"AG1 gesetzt");
+        let stone = apply(&mut w, &mut map, &mut editor, &nature(SpriteGroup::Stones, 2, (3200, 3000)));
+        assert!(stone.objects);
+        assert_eq!((map.sprites.len(), w.objects.len()), (2, 2));
+        assert_eq!(map.sprites[1].group, SpriteGroup::Stones);
+        assert_eq!(w.deposits.len(), 1, "a deposit of the Vorkommen list");
+        assert!(w.sources.nearest(3000, 3000).is_some(), "a tree is a wood source");
+
+        for (input, text) in [
+            (nature(SpriteGroup::Trees, 0, (800, 3000)), &b"Nicht im tiefen Wasser"[..]),
+            (nature(SpriteGroup::Trees, 0, (-5, 3000)), b"Ausserhalb der Karte"),
+            (nature(SpriteGroup::Trees, 9, (3000, 3000)), b"Unbekanntes Objekt"),
+            (nature(SpriteGroup::Complex, 0, (3000, 3000)), b"Unbekanntes Objekt"),
+        ] {
+            let refused = apply(&mut w, &mut map, &mut editor, &input);
+            assert!(!refused.objects);
+            assert_eq!(refused.status, text);
+        }
+        assert_eq!((map.sprites.len(), w.objects.len()), (2, 2), "a refusal changes nothing");
     }
 
     #[test]

@@ -129,6 +129,18 @@ pub fn state(
         .map(|(o, [u, b, s, f])| (o.to_string(), json!({"units": u, "buildings": b, "sites": s, "burning": f})))
         .collect();
     m.insert("counts".into(), counts.into());
+    // The map's trees, stones and other static objects by group (the editor's Natur list adds to them).
+    let mut objects: BTreeMap<&str, u32> = BTreeMap::new();
+    for o in &world.objects {
+        let group = match o.group {
+            acr_formats::m3d::SpriteGroup::Trees => "trees",
+            acr_formats::m3d::SpriteGroup::Stones => "stones",
+            acr_formats::m3d::SpriteGroup::Holes => "holes",
+            _ => "other",
+        };
+        *objects.entry(group).or_default() += 1;
+    }
+    m.insert("map_objects".into(), json!(objects));
     let ended = g.mission_result().map(|w| if w { "won" } else { "lost" });
     m.insert("mission".into(), json!({"ended": ended, "objectives": g.has_objectives()}));
     if units {
