@@ -1039,8 +1039,9 @@ writes are in
 | 6 | Tiere | Tiere geben auf | Aus (Original) / An: Jagd endet bei Abstand | `animal_give_up` ([simulation.md](simulation.md#animals-give-up-optional-rule-355)) |
 
 Power settings without an options row (`settings.txt` only, #440; docs/android.md "Battery"):
-`frame_cap=off|30|60` (off: the display's rate under vsync) and `power_save=on|off` (caps at
-30 fps; unset: follows Android's Game Mode `BATTERY`).
+`frame_cap=off|30|60` (off: the display's rate under vsync), `power_save=on|off` (caps at
+30 fps; unset: follows Android's Game Mode `BATTERY`) and `render_scale=100|85|75|50` (unset: 75 on
+a phone, else 100).
 
 All but the rules (pages 5 and 6, every optional `acr_sim::Rules` flag) take effect at once on OK. The rules are part of the simulation (the
 setup a replay or savegame hashes): a battle keeps the rules it began with, the new choice

@@ -83,6 +83,7 @@ settings below, all in `settings.txt` (no options page), spend less:
 | Key | Values | Default | |
 |---|---|---|---|
 | `frame_cap` | `off`, `30`, `60` | `off` | at most that many frames per second; `off` is the display's rate |
+| `render_scale` | `100`, `85`, `75`, `50` | unset: `75` on a phone (window's longer side above 2000 px), else `100` | the share of the window's size the frame is drawn at, then stretched over the window (see below) |
 | `power_save` | `on`, `off` | unset | `on` caps at 30 fps; unset follows Android's Game Mode: `BATTERY` caps, anything else does not (`GameManager.getGameMode()` through JNI, API 31+, read on every resume; `game_mode_battery` in `android.rs`) |
 
 The cap is the stricter of `frame_cap` and the saver's 30 fps. It skips the redraw requests
@@ -104,3 +105,22 @@ the free camera, particles, awake ragdolls, weather or a storm at sea, and a run
 drawn with 3D models (wind and water move all the time; paused, they hold still). When a
 signature cannot be told, the frame counts as changed. A game that stands still lets the
 simulation catch up with up to 0.2 s of ticks on its next frame.
+
+### Render scale
+
+`render_scale=100|85|75|50` draws the frame at that share of the window's size into an offscreen
+target (`acr_render::upscale`, `Upscaler`) and stretches it over the swapchain with one
+triangle: linear filtering, nearest at 50 %. `Gpu::size()` (`acr-app`) is the render size, so
+the layout, the scene and the depth buffers follow it, and the input positions (mouse, touch,
+and the dp of the touch gestures) are converted from window to render pixels
+(`Game::to_render`). The **whole frame is scaled, the interface included**: the menus and the
+HUD are laid out on the canvas of the render size and are as soft as the world; drawing them
+at full size on top would need the world and the interface in two passes with two layouts,
+which the pipeline does not have. The shader indexes no vector component at run time
+(Adreno). With 100 % nothing changes: no offscreen target, no extra pass. Without the key,
+Android phones use 75 %, the desktop and the browser 100 %.
+
+The game lays out for the render size like for a smaller window, and the sprite view shows as
+much of the world as the render size has pixels (as the original does at a lower resolution):
+at 75 % a sprite view shows 75 % of the width and height of the world it showed at 100 %, with the
+sprites at the same pixel size, then stretched.
