@@ -273,6 +273,7 @@ impl InGame {
         self.apply_controls(settings);
         self.three_d.apply(settings);
         self.interface.aim_guides = settings.aim_guides;
+        self.interface.hud.center_top_bar = settings.center_top_bar;
     }
 
     /// Whether the aim guides are shown: the app writes a switch by the "Zielhilfe" icon back
