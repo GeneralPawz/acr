@@ -1997,6 +1997,10 @@ impl InGame {
             if !selected && !self.interface.hud.life_bars {
                 continue;
             }
+            // Tab shows what the player sees: no bar over a stranger in the fog of war.
+            if hidden_in_fog(self.mission.fog(), world, u, own) {
+                continue;
+            }
             let kind = world.catalog.get(u.kind);
             // `RECTANGLE dx dy w h` (defaults 0, 3, 40, 64; 0x4bad90).
             let r = objects.definition(&kind.id).and_then(|d| d.get("RECTANGLE"));
@@ -3035,9 +3039,39 @@ fn grouping(world: &acr_sim::World, own: u8, selected: &[EntityId]) -> Option<bo
     all_formed.then_some(true)
 }
 
+/// A unit of another player stands in the fog of war, so its marks stay off.
+fn hidden_in_fog(fog: Option<&acr_sim::fog::Fog>, world: &acr_sim::World, u: &Unit, own: u8) -> bool {
+    u.owner != own && fog.is_some_and(|f| !f.visible(world, u.pos.x >> 4, u.pos.y >> 4))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strangers_in_the_fog_get_no_marks() {
+        use acr_sim::Pos;
+        use acr_sim::catalog::{Catalog, ObjectType};
+        use acr_sim::fog::Fog;
+        use acr_sim::formation::Formations;
+        use acr_sim::map::MapGrid;
+        use std::sync::Arc;
+        let mut c = Catalog::new();
+        let t = c.add(ObjectType::from_def(
+            "Mus(EN)",
+            &acr_formats::defs::UnitDef::parse(b"NAME X\r\nLIFE 100\r\nGEOMETRY 1 10 40\r\n[END]\r\n"),
+        ));
+        let mut w = acr_sim::World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(Formations::default()));
+        let mine = w.spawn(t, 0, Pos::from_pixels(900, 900), 0);
+        let foe = w.spawn(t, 1, Pos::from_pixels(900, 900), 0);
+        let (mine, foe) = (w.unit(mine).unwrap().clone(), w.unit(foe).unwrap().clone());
+        let mut fog = Fog::new(w.map.shift);
+        assert!(hidden_in_fog(Some(&fog), &w, &foe, 0), "dark cell");
+        assert!(!hidden_in_fog(Some(&fog), &w, &mine, 0), "own units are always marked");
+        fog.open();
+        assert!(!hidden_in_fog(Some(&fog), &w, &foe, 0), "seen");
+        assert!(!hidden_in_fog(None, &w, &foe, 0), "no fog");
+    }
 
     #[test]
     fn grouped_formations_are_selected_together() {
