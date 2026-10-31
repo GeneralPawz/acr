@@ -811,6 +811,19 @@ impl World {
         (world, report)
     }
 
+    /// Whether a unit of `kind` may be put at `pos` as far as the sea goes: a land unit not on
+    /// deep water (`SEA2` depth above 128, where `WaterLock` 0x53c632 locks land cells), a
+    /// ship only on water that floats it (above 130). Maps without a `SEA2` have no sea.
+    pub fn sea_allows(&self, kind: TypeId, pos: Pos) -> bool {
+        let Some(depth) = self.map.water_depth.as_ref() else { return self.catalog.get(kind).medium == Medium::Land };
+        let (cx, cy) = pos.cell(32);
+        let d = if cx < 0 || cy < 0 { 0 } else { depth.get(cx as usize, cy as usize).map_or(0, i32::from) };
+        match self.catalog.get(kind).medium {
+            Medium::Land => d <= 128,
+            Medium::Water => d > 130,
+        }
+    }
+
     /// Places a new unit or (finished) building.
     pub fn spawn(&mut self, kind: TypeId, owner: PlayerId, pos: Pos, dir: u8) -> EntityId {
         let adv = self.adv(owner, kind);

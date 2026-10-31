@@ -579,7 +579,9 @@ impl<'a> Reader<'a> {
                     1 => Ground::Dirt,
                     2 => Ground::Snow,
                     3 => Ground::White,
-                    _ => Ground::Greenscreen,
+                    4 => Ground::Greenscreen,
+                    5 => Ground::Sea,
+                    _ => return Err(err("ground")),
                 };
                 let mut parts = [None; 3];
                 for part in &mut parts {

@@ -124,6 +124,8 @@ pub enum Start {
         seed: u32,
         resources: usize,
         size: usize,
+        /// The landscape style; 6 is the sea battle map (#408).
+        landscape: usize,
         difficulty: usize,
         hit_locations: bool,
         /// The optional body-spacing rule (`docs/body-spacing.md`).
@@ -343,8 +345,9 @@ pub(super) fn blank(b: &Value) -> Result<Start, String> {
         "snow" => Ground::Snow,
         "white" => Ground::White,
         "greenscreen" | "green" => Ground::Greenscreen,
+        "sea" => Ground::Sea,
         other => {
-            return Err(format!("blank: unknown ground {other:?}: grass, dirt, snow, white or greenscreen"));
+            return Err(format!("blank: unknown ground {other:?}: grass, dirt, snow, white, greenscreen or sea"));
         }
     };
     let c = crate::blank_map::playable(size) / 2;
@@ -603,6 +606,7 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
                     seed: uint(&r, "seed").unwrap_or(1) as u32,
                     resources: uint(&r, "resources").unwrap_or(0) as usize,
                     size: uint(&r, "size").unwrap_or(0) as usize,
+                    landscape: uint(&r, "landscape").unwrap_or(0) as usize,
                     difficulty: uint(&r, "difficulty").unwrap_or(1) as usize,
                     hit_locations: r.get("hit_locations").and_then(Value::as_bool).unwrap_or(false),
                     body_spacing: r.get("body_spacing").and_then(Value::as_bool).unwrap_or(false),
@@ -816,6 +820,7 @@ mod tests {
                 seed: 9,
                 resources: 0,
                 size: 0,
+                landscape: 0,
                 difficulty: 1,
                 hit_locations: false,
                 body_spacing: false,
@@ -862,6 +867,9 @@ mod tests {
         let (_, r) = parse(r#"{"cmd": "start", "blank": {"ground": "greenscreen", "hud": false}}"#).unwrap();
         let Request::Start(Start::Blank { setup, hud: false, .. }) = r else { panic!() };
         assert_eq!(setup.ground, crate::ui::setup::Ground::Greenscreen);
+        let (_, r) = parse(r#"{"cmd": "start", "blank": {"ground": "sea"}}"#).unwrap();
+        let Request::Start(Start::Blank { setup, .. }) = r else { panic!() };
+        assert_eq!(setup.ground, crate::ui::setup::Ground::Sea);
         assert_eq!(parse(r#"{"cmd": "hud", "on": true}"#).unwrap().1, Request::Hud(true));
         let (_, r) = parse(r#"{"cmd": "dialogs", "policy": "report"}"#).unwrap();
         assert_eq!(r, Request::Dialogs(DialogPolicy::Report));

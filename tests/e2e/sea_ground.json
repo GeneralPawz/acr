@@ -1,0 +1,12 @@
+{
+  "name": "sea_ground",
+  "description": "The blank field's sea ground (#408): open water to the edge; a ship can be put anywhere on it and sails, a land unit cannot be put on it",
+  "steps": [
+    {"cmd": "start", "blank": {"ground": "sea"}},
+    {"cmd": "spawn", "type": "EngM18", "x": 7680, "y": 7680, "dir": 0, "expect": {"ok": false}},
+    {"cmd": "spawn", "type": "ShpPinta", "x": 3000, "y": 3000, "dir": 0, "expect": {"path": "unit.id", "eq": 0}},
+    {"cmd": "command", "command": {"type": "move", "units": [0], "x": 12000, "y": 12000}},
+    {"cmd": "wait", "ticks": 300},
+    {"cmd": "state", "units": true, "expect": [{"path": "state.units.0.x", "gt": 3300}, {"path": "state.units.0.y", "gt": 3300}]}
+  ]
+}

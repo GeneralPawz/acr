@@ -246,7 +246,12 @@ impl Screen for RandomMap {
         let names = |ids: &[String]| ids.iter().map(|id| texts.get(id).to_vec()).collect::<Vec<_>>();
         let gmtp_counts = [5, 2, 3, 10, 3, 2, 7];
         let mut rows: Vec<(Vec<u8>, Vec<Vec<u8>>, usize)> = vec![
-            (texts.get("INTF_CROOM_O0").to_vec(), names(&res.landscape.0), res.landscape.1),
+            // The original's styles, then ACR's sea battle map (#408, `acr_mapgen::SEA_LANDSCAPE`).
+            (
+                texts.get("INTF_CROOM_O0").to_vec(),
+                names(&res.landscape.0).into_iter().chain([b"Meer".to_vec()]).collect(),
+                res.landscape.1,
+            ),
             (texts.get("INTF_CROOM_O1").to_vec(), names(&res.relief.0), res.relief.1),
             (texts.get("INTF_CROOM_O2").to_vec(), names(&res.resources.0), res.resources.1),
             (texts.get("INTF_CROOM_O3").to_vec(), names(&res.minerals.0), res.minerals.1),

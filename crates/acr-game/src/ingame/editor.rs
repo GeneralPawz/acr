@@ -736,6 +736,10 @@ impl Editor {
     /// formations of the chosen kind side by side across the facing.
     pub fn place(&mut self, world: &mut World, at: (i32, i32)) {
         let Some(kind) = self.pick else { return };
+        if !world.sea_allows(kind, Pos::from_pixels(at.0, at.1)) {
+            self.status = b"Nicht auf Wasser".to_vec();
+            return;
+        }
         let (n, owner, dir) = (self.count() as usize, self.owner(), self.facing());
         // The level holds for the owner's every object of the placed types, as researched
         // upgrades do: set before spawning, so the new men start at full upgraded life.

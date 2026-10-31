@@ -100,6 +100,11 @@ pub fn spawn(game: &mut Game, v: &Value) -> Result<Value, String> {
     let walk = v.get("walk").and_then(Value::as_i64).unwrap_or(200) as i32;
     let world = g.world_mut().ok_or("no world yet")?;
     let kind = find_type(world, name)?;
+    if !world.sea_allows(kind, Pos::from_pixels(x, y)) {
+        return Err(format!(
+            "spawn: {name} cannot stand at ({x}, {y}): land units not on deep water, ships only on it"
+        ));
+    }
     let id = world.spawn(kind, owner, Pos::from_pixels(x, y), dir);
     // `resources`: the owner's stock of every resource set to this (a cannon pays per shot).
     if let Some(n) = v.get("resources").and_then(Value::as_i64)

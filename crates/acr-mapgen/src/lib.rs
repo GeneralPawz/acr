@@ -17,9 +17,11 @@
 mod files;
 mod generator;
 mod rng;
+mod sea;
 
 pub use files::{CostTable, LandShape, ResDat, StartUnits, TerrLine};
 pub use rng::Rng;
+pub use sea::{LANDSCAPE as SEA_LANDSCAPE, open_water};
 
 use acr_formats::M3dMap;
 
@@ -157,6 +159,9 @@ impl std::error::Error for Error {}
 
 /// Generates the map for `settings`.
 pub fn generate(settings: &Settings, source: &mut dyn Source) -> Result<Generated, Error> {
+    if settings.landscape == SEA_LANDSCAPE {
+        return sea::generate(settings, source);
+    }
     generator::run(settings, source)
 }
 
