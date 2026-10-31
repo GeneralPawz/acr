@@ -43,6 +43,7 @@ pub mod webui;
 use std::sync::Arc;
 
 use acr_app::{Assets, Gpu};
+use acr_render::upscale::{RenderScale, Upscaler};
 use acr_render::{ImageDraw, ImageRenderer, SpriteRenderer};
 use canvas::Canvas;
 use winit::application::ApplicationHandler;
@@ -75,6 +76,8 @@ struct Graphics {
     images: ImageRenderer,
     #[allow(dead_code)] // used by the in-game screens that follow
     sprites: SpriteRenderer,
+    /// The offscreen scene and its stretch to the window, below 100 % render scale.
+    upscaler: Upscaler,
 }
 
 /// What the app shows.
@@ -412,6 +415,8 @@ impl Game {
         self.layers.clear();
         let Some(size) = self.frame_size() else { return };
         let mut layers = Vec::new();
+        // Pixels per density-independent pixel, in render pixels.
+        let density = self.window.as_ref().map_or(1.0, |w| w.scale_factor() as f32) * self.input_factor() as f32;
         if let Mode::InGame(game) = &mut self.mode {
             match &self.graphics {
                 Some(g) => game.sync_gpu(&g.gpu.device, &g.gpu.queue, g.gpu.config.format),
@@ -440,7 +445,7 @@ impl Game {
                 {
                     self.ui.open_dialog(window);
                 }
-                game.set_scale_factor(self.window.as_ref().map_or(1.0, |w| w.scale_factor() as f32));
+                game.set_scale_factor(density);
                 let (l, images, cursor) = game.interface(&self.ui.ctx(), size, game_dt);
                 layers = l;
                 // The "Zielhilfe" icon's switch is kept in `settings.txt` (`aim_guides`).
@@ -484,9 +489,52 @@ impl Game {
         }
     }
 
+    /// The render scale in effect: the setting, else the device's default.
+    fn render_scale(&self) -> RenderScale {
+        let surface = self.graphics.as_ref().map_or([0, 0], |g| g.gpu.surface_size());
+        self.ui
+            .settings()
+            .render_scale
+            .unwrap_or_else(|| RenderScale::default_for(cfg!(target_os = "android"), surface))
+    }
+
+    /// Makes the GPU's render size follow the render scale (the layout, the scene and the
+    /// input follow the GPU's size).
+    fn sync_render_scale(&mut self) {
+        let scale = self.render_scale().factor();
+        if let Some(g) = &mut self.graphics
+            && g.gpu.render_scale() != scale
+        {
+            log::info!("render scale {scale} of {:?}", g.gpu.surface_size());
+            g.gpu.set_render_scale(scale);
+        }
+    }
+
+    /// Window pixels to render pixels: the factor the scene is drawn smaller by (1 at 100 %).
+    fn input_factor(&self) -> f64 {
+        self.graphics.as_ref().map_or(1.0, |g| f64::from(g.gpu.size()[0]) / f64::from(g.gpu.surface_size()[0]))
+    }
+
     /// Draws the frame [`Game::advance`] prepared into `view`, a texture of the surface's
-    /// size and format.
+    /// size and format: the scene at the render scale, stretched over `view` below 100 %.
     fn draw_frame(&mut self, view: &wgpu::TextureView) {
+        self.sync_render_scale();
+        let scale = self.render_scale();
+        let Some(g) = &mut self.graphics else { return };
+        if g.gpu.render_scale() >= 1.0 {
+            return self.draw_scene(view);
+        }
+        let size = g.gpu.size().map(|v| v as u32);
+        let scene = g.upscaler.target(&g.gpu.device, size);
+        self.draw_scene(&scene);
+        let Some(g) = &mut self.graphics else { return };
+        let mut encoder = g.gpu.device.create_command_encoder(&Default::default());
+        g.upscaler.blit(&mut encoder, view, scale.filter());
+        g.gpu.queue.submit([encoder.finish()]);
+    }
+
+    /// Draws the frame into `view`, a texture of the render size ([`Gpu::size`]).
+    fn draw_scene(&mut self, view: &wgpu::TextureView) {
         let Some(g) = &mut self.graphics else { return };
         let canvas = Canvas::fit(g.gpu.size());
         let (draws, world_draws): (Vec<ImageDraw>, usize) = match &self.mode {
@@ -856,7 +904,9 @@ impl ApplicationHandler<Event> for Game {
                 }
                 let images = ImageRenderer::new(&gpu.device, gpu.config.format);
                 let sprites = SpriteRenderer::new(&gpu.device, gpu.config.format);
-                self.graphics = Some(Graphics { gpu, images, sprites });
+                let upscaler = Upscaler::new(&gpu.device, gpu.config.format);
+                self.graphics = Some(Graphics { gpu, images, sprites, upscaler });
+                self.sync_render_scale();
                 if let Some(window) = &self.window {
                     let size = window.inner_size();
                     if let Some(g) = &mut self.graphics {
@@ -918,6 +968,7 @@ impl ApplicationHandler<Event> for Game {
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
+                let position = self.to_render(position);
                 self.switch_input(input_mode::InputMode::Mouse);
                 self.cursor_moved(position, event_loop)
             }
@@ -925,7 +976,8 @@ impl ApplicationHandler<Event> for Game {
                 self.switch_input(input_mode::InputMode::Mouse);
                 self.mouse_input(state, button, event_loop)
             }
-            WindowEvent::Touch(touch) => {
+            WindowEvent::Touch(mut touch) => {
+                touch.location = self.to_render(touch.location);
                 self.switch_input(input_mode::InputMode::Touch);
                 self.touch(touch, event_loop)
             }
@@ -997,6 +1049,12 @@ fn draws_signature(draws: &[ImageDraw]) -> u64 {
 
 /// Input from the window (or the test driver), in window pixels.
 impl Game {
+    /// A window position in render pixels (the layout's), below 100 % render scale.
+    fn to_render(&self, p: PhysicalPosition<f64>) -> PhysicalPosition<f64> {
+        let f = self.input_factor();
+        PhysicalPosition::new(p.x * f, p.y * f)
+    }
+
     /// A finger on the screen, through the touch gestures (`touch.rs`): tap, drag and long
     /// press (with a swipe: the order's arrow) work as the mouse, two fingers pan and zoom, a ▶ unpauses.
     fn touch(&mut self, touch: winit::event::Touch, event_loop: &ActiveEventLoop) {
@@ -1007,7 +1065,7 @@ impl Game {
             TouchPhase::Ended | TouchPhase::Cancelled => touch::Phase::Ended,
         };
         if let Some(window) = &self.window {
-            self.touches.set_scale(window.scale_factor());
+            self.touches.set_scale(window.scale_factor() * self.input_factor());
         }
         let paused = matches!(&self.mode, Mode::InGame(g) if g.paused());
         let now = self.touch_now();

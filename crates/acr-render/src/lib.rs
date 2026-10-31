@@ -28,6 +28,7 @@ pub mod scene;
 pub mod shadow;
 pub mod terrain;
 pub mod tex_cache;
+pub mod upscale;
 pub mod view3d;
 pub mod water;
 pub mod weather;

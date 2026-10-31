@@ -174,6 +174,10 @@ pub struct Settings {
     /// follows Android's Game Mode (`BATTERY` saves power), off elsewhere
     /// ([`crate::pacing::cap_fps`]).
     pub power_save: Option<bool>,
+    /// ACR (#440): `render_scale=100|85|75|50`: the share of the window's size the scene is
+    /// drawn at, then stretched over the window. `None` (not in the file): 75 on an Android
+    /// phone, else 100 ([`RenderScale::default_for`]). `acr_render::upscale`.
+    pub render_scale: Option<RenderScale>,
 }
 
 /// Which top bar a game shows (`top_bar` in `settings.txt`).
@@ -204,6 +208,7 @@ impl TopBar {
 
 pub use super::graphics::Graphics;
 pub use crate::pacing::FrameCap;
+pub use acr_render::upscale::RenderScale;
 pub use acr_render::water::SeaState;
 pub use acr_render::weather::Weather;
 
@@ -305,6 +310,7 @@ impl Default for Settings {
             graphics: Graphics::Auto,
             frame_cap: FrameCap::Off,
             power_save: None,
+            render_scale: None,
         }
     }
 }
@@ -383,7 +389,7 @@ impl Settings {
             "sound_volume={}\nmusic_volume={}\nmusic_mode={}\ngame_mode={}\nscroll_speed={}\nframe_time={}\n\
              resolution={}\nrecord={}\nrecord_file={hex}\ncontrols={controls}\nedge_scroll={}\n\
              models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\ncorpse_decay={}\nhit_locations={}\nbody_spacing={}\nmortars={}\ncorpse_piles={}\ncannon_fire={}\nformation_attack={}\nanimal_give_up={}\ndart_fire={}\naimed_fire={}\nshadows={}\nlod={}\nmaterial_detail={}\nwind={}\nmap_models={}\nwater={}\n\
-             ground={}\nground_cover={}\nbattlefield_marks={}\nweather={}\nsea_state={}\naim_guides={}\ncenter_top_bar={}\n{top_bar}graphics={}\nframe_cap={}\n{}{}{}{}{}",
+             ground={}\nground_cover={}\nbattlefield_marks={}\nweather={}\nsea_state={}\naim_guides={}\ncenter_top_bar={}\n{top_bar}graphics={}\nframe_cap={}\n{}{}{}{}{}{}",
             self.sound_volume,
             self.music_volume,
             self.music_mode,
@@ -424,6 +430,7 @@ impl Settings {
                 Some(false) => "power_save=off\n",
                 None => "",
             },
+            self.render_scale.map_or(String::new(), |s| format!("render_scale={}\n", s.name())),
             match self.decay_stain {
                 Some(true) =>
                     "decay_stain=on
@@ -538,6 +545,14 @@ impl Settings {
                         FrameCap::Off
                     })
                 }
+                "render_scale" => {
+                    s.render_scale = RenderScale::parse(value);
+                    if s.render_scale.is_none() {
+                        log::warn!(
+                            "settings: unknown render_scale value {value:?} (100, 85, 75 or 50), using the default"
+                        );
+                    }
+                }
                 "power_save" => {
                     s.power_save = match value {
                         "on" => Some(true),
@@ -635,6 +650,7 @@ mod tests {
             graphics: Graphics::Medium,
             frame_cap: FrameCap::Fps60,
             power_save: Some(true),
+            render_scale: Some(RenderScale::P85),
         };
         assert_eq!(Settings::decode(&s.encode()), s);
         // The removed "Spotify mitmischen" (music_mode=2) reads as no music.
@@ -671,6 +687,11 @@ group_move=off"
         assert_eq!(Settings::decode("power_save=off").power_save, Some(false));
         assert_eq!(Settings::decode("power_save=maybe").power_save, None);
         assert!(!Settings::default().encode().contains("power_save"));
+        // `render_scale` unset follows the device (`RenderScale::default_for`) and stays out of the file.
+        assert_eq!(Settings::default().render_scale, None);
+        assert_eq!(Settings::decode("render_scale=50").render_scale, Some(RenderScale::P50));
+        assert_eq!(Settings::decode("render_scale=60").render_scale, None);
+        assert!(!Settings::default().encode().contains("render_scale"));
         // `top_bar`: absent or unknown follows the input mode, and stays out of the file.
         assert_eq!(Settings::decode("").top_bar, None);
         assert_eq!(Settings::decode("top_bar=touch").top_bar, Some(TopBar::Touch));

@@ -61,6 +61,14 @@ pub struct Gpu {
     instance: wgpu::Instance,
     /// The window's surface is gone (Android, while the app is in the background).
     suspended: bool,
+    /// The share of the surface's size the scene is drawn at (render scale, #440); 1 draws
+    /// straight into the swapchain.
+    scale: f32,
+}
+
+/// The size the scene is drawn at: the surface's size times `scale`, rounded, at least 1 px.
+pub fn scaled_size(surface: [u32; 2], scale: f32) -> [u32; 2] {
+    surface.map(|v| ((v as f32 * scale).round() as u32).max(1))
 }
 
 impl Gpu {
@@ -133,7 +141,7 @@ impl Gpu {
         surface.configure(&device, &config);
         let info = adapter.get_info();
         log::info!("adapter: {} ({:?}, {:?})", info.name, info.device_type, info.backend);
-        Ok(Self { surface, device, queue, config, info, instance, suspended: false })
+        Ok(Self { surface, device, queue, config, info, instance, suspended: false, scale: 1.0 })
     }
 
     /// An instance, the window's surface and an adapter for it; `primary` limits the search
@@ -181,8 +189,25 @@ impl Gpu {
         Ok(())
     }
 
+    /// The size the game lays out for and draws the scene at: the surface's, times the render
+    /// scale ([`Gpu::set_render_scale`]).
     pub fn size(&self) -> [f32; 2] {
-        [self.config.width as f32, self.config.height as f32]
+        scaled_size(self.surface_size(), self.scale).map(|v| v as f32)
+    }
+
+    /// The surface's (the window's) size in pixels.
+    pub fn surface_size(&self) -> [u32; 2] {
+        [self.config.width, self.config.height]
+    }
+
+    /// Draws the scene at `scale` (0..=1) of the surface's size; the caller upscales it.
+    pub fn set_render_scale(&mut self, scale: f32) {
+        self.scale = scale.clamp(0.1, 1.0);
+    }
+
+    /// The render scale in effect.
+    pub fn render_scale(&self) -> f32 {
+        self.scale
     }
 
     /// The next frame to draw into, or `None` if this frame should be skipped.
@@ -198,5 +223,22 @@ impl Gpu {
             }
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scaled_size;
+
+    #[test]
+    fn render_scale_target_sizes() {
+        assert_eq!(scaled_size([3168, 1440], 0.75), [2376, 1080]);
+        assert_eq!(scaled_size([3168, 1440], 0.5), [1584, 720]);
+        assert_eq!(scaled_size([3168, 1440], 0.85), [2693, 1224]);
+        assert_eq!(scaled_size([1024, 768], 1.0), [1024, 768]);
+        // Rounded, and never empty.
+        assert_eq!(scaled_size([1001, 1], 0.5), [501, 1]);
+        assert_eq!(scaled_size([1, 1], 0.5), [1, 1]);
+        assert_eq!(scaled_size([0, 0], 0.5), [1, 1]);
     }
 }
