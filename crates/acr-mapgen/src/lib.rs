@@ -14,6 +14,7 @@
 //! 4. inland textures from fractal noise, land elevation from the mask;
 //! 5. start units from `Data\Start%d.dat`.
 
+pub mod edit;
 mod files;
 mod generator;
 mod rng;
