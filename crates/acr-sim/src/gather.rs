@@ -45,6 +45,13 @@ impl Sources {
         Self { list, side, cells }
     }
 
+    /// Adds a source (the editor's tree), keeping the cell index.
+    pub fn push(&mut self, s: Source) {
+        let (cx, cy) = ((s.x >> 7).clamp(0, self.side - 1), (s.y >> 7).clamp(0, self.side - 1));
+        self.cells[(cy * self.side + cx) as usize].push(self.list.len() as u32);
+        self.list.push(s);
+    }
+
     fn cell(&self, cx: i32, cy: i32) -> &[u32] {
         if cx < 0 || cy < 0 || cx >= self.side || cy >= self.side {
             return &[];

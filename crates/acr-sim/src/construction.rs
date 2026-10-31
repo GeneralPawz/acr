@@ -185,10 +185,29 @@ fn found_site(w: &mut World, player: u8, kind: TypeId, t: &ObjectType, pos: Pos)
     id
 }
 
+/// The land lock cells building `i` holds now: a construction site its `BUILDLOCKPOINTS`
+/// (the `LOCKPOINTS` when it has none), a finished building its `LOCKPOINTS` and the
+/// `STAGELOCKPOINTS` of its done sections (as `upgrade::upstage` sets them).
+pub(crate) fn current_locks(w: &World, i: usize) -> Vec<(i32, i32)> {
+    let u = &w.units[i];
+    let t = w.catalog.get(u.kind);
+    if u.stage < w.max_stage(u) {
+        let points = if t.economy.build_lock_points.is_empty() { &t.lock_points } else { &t.economy.build_lock_points };
+        return lock_cells(t, u.pos, points);
+    }
+    let mut cells = lock_cells(t, u.pos, &t.lock_points);
+    for &(k, _) in &t.economy.sections {
+        if crate::upgrade::section_state(u.stages, k) == crate::upgrade::section::DONE {
+            cells.extend(lock_cells(t, u.pos, &t.economy.stage_lock_points[usize::from(k)]));
+        }
+    }
+    cells
+}
+
 /// 0x51374e: every unit within `r` of `(x, y)` (1/16 px) whose 3 × 3 lock cells around its
 /// cell are not free jumps to the centre of the first cell on the rings 0..59 around it with
 /// a free 3 × 3 box; its destination and path are dropped, its orders stay.
-fn push_out(w: &mut World, x: i32, y: i32, r: i32) {
+pub(crate) fn push_out(w: &mut World, x: i32, y: i32, r: i32) {
     let land = w.map.land.clone();
     for i in 0..w.units.len() {
         let u = &w.units[i];
