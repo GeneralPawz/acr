@@ -124,3 +124,15 @@ The game lays out for the render size like for a smaller window, and the sprite 
 much of the world as the render size has pixels (as the original does at a lower resolution):
 at 75 % a sprite view shows 75 % of the width and height of the world it showed at 100 %, with the
 sprites at the same pixel size, then stretched.
+
+### Performance hints (ADPF)
+
+On API 31+ the game creates a `PerformanceHintManager` session for the main thread through JNI
+(`HintSession` in `android.rs`, once, at the first resume; NDK `APerformanceHint_*` would need
+API 33). Every frame reports the thread's work (the redraw's time without the wait for the
+swapchain) and, when it changes, the budget: the interval of the rate in effect (the cap, the
+idle 5 fps) or the display's refresh interval (`pacing::frame_budget`), so the scheduler can use
+efficient cores and lower clocks while the work is small. Without a manager or a session
+(older Android, a refusal) it logs `performance hints: not available` at info level and
+nothing changes; a failing call stops the hints. logcat tag `acr` shows
+`performance hints: session created`.

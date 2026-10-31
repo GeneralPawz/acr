@@ -84,6 +84,40 @@ pub fn on_demand(power_save: Option<bool>, android: bool) -> bool {
     power_save.unwrap_or(android)
 }
 
+/// The frame budget the performance hints aim at: the interval of the rate in effect (the cap,
+/// the idle rate), else the display's refresh rate (`refresh_mhz`, millihertz), else 60 Hz.
+pub fn frame_budget(fps: Option<u32>, refresh_mhz: Option<u32>) -> Duration {
+    match (fps, refresh_mhz) {
+        (Some(f), _) if f > 0 => Duration::from_secs_f64(1.0 / f64::from(f)),
+        (_, Some(m)) if m > 0 => Duration::from_secs_f64(1000.0 / f64::from(m)),
+        _ => Duration::from_secs_f64(1.0 / 60.0),
+    }
+}
+
+/// Where the main thread's work per frame goes (Android's performance hints, #440).
+pub trait WorkSink {
+    /// The work per frame the system should plan for changed.
+    fn target(&mut self, budget: Duration);
+    /// The thread's work for the frame just drawn, without the wait for the display.
+    fn report(&mut self, work: Duration);
+}
+
+/// Feeds a [`WorkSink`]: the target when the budget changed, the work every frame.
+#[derive(Default)]
+pub struct Work {
+    budget: Option<Duration>,
+}
+
+impl Work {
+    pub fn frame(&mut self, sink: &mut dyn WorkSink, budget: Duration, work: Duration) {
+        if self.budget != Some(budget) {
+            self.budget = Some(budget);
+            sink.target(budget);
+        }
+        sink.report(work);
+    }
+}
+
 /// A frame is due a little before the interval has passed: under vsync the present then
 /// waits for the display's refresh, and a frame that came a hair late would miss it and
 /// fall to the next one.
@@ -107,12 +141,16 @@ impl Pacing {
     /// A frame was drawn at `now`; with a cap, or while nothing changes and `on_demand` is on,
     /// the next one is due after its interval.
     pub fn frame_done(&mut self, now: Instant, fps: Option<u32>, on_demand: bool) {
-        let fps = match (fps, on_demand && self.idle()) {
+        self.next = self.rate(fps, on_demand).map(|f| now + Duration::from_secs_f64(EARLY / f64::from(f.max(1))));
+    }
+
+    /// The frame rate in effect: the cap `fps`, lowered to [`IDLE_FPS`] while idle.
+    pub fn rate(&self, fps: Option<u32>, on_demand: bool) -> Option<u32> {
+        match (fps, on_demand && self.idle()) {
             (Some(f), true) => Some(f.min(IDLE_FPS)),
             (None, true) => Some(IDLE_FPS),
             (f, false) => f,
-        };
-        self.next = fps.map(|f| now + Duration::from_secs_f64(EARLY / f64::from(f.max(1))));
+        }
     }
 
     /// What the frame just drawn shows, as a hash; `None`: not known, so not quiet.
@@ -229,6 +267,36 @@ mod tests {
         p.frame_done(t0, Some(30), true);
         p.input();
         assert!(p.wait(t0).is_some(), "not idle: the cap still holds");
+    }
+
+    #[test]
+    fn the_budget_is_the_rate_in_effect_else_the_display() {
+        let ms = |d: Duration| (d.as_secs_f64() * 1000.0 * 100.0).round() / 100.0;
+        assert_eq!(ms(frame_budget(Some(30), Some(120_000))), 33.33);
+        assert_eq!(ms(frame_budget(None, Some(120_000))), 8.33);
+        assert_eq!(ms(frame_budget(None, None)), 16.67);
+        assert_eq!(ms(frame_budget(Some(IDLE_FPS), None)), 200.0);
+        assert_eq!(ms(frame_budget(None, Some(0))), 16.67);
+    }
+
+    #[test]
+    fn work_reports_every_frame_and_the_target_when_it_changes() {
+        #[derive(Default)]
+        struct Log(Vec<String>);
+        impl WorkSink for Log {
+            fn target(&mut self, b: Duration) {
+                self.0.push(format!("target {}", b.as_millis()));
+            }
+            fn report(&mut self, w: Duration) {
+                self.0.push(format!("work {}", w.as_millis()));
+            }
+        }
+        let (mut sink, mut work) = (Log::default(), Work::default());
+        let ms = Duration::from_millis;
+        work.frame(&mut sink, ms(16), ms(3));
+        work.frame(&mut sink, ms(16), ms(4));
+        work.frame(&mut sink, ms(200), ms(2));
+        assert_eq!(sink.0, ["target 16", "work 3", "work 4", "target 200", "work 2"]);
     }
 
     #[test]

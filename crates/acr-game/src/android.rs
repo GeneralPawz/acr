@@ -55,7 +55,7 @@ fn run(app: AndroidApp) -> Result<(), String> {
     let event_loop =
         EventLoop::<Event>::with_user_event().with_android_app(app.clone()).build().map_err(|e| e.to_string())?;
     let proxy = event_loop.create_proxy();
-    let mut launcher = Launcher { app, proxy, game: None, asked: false, pointer_hidden: false };
+    let mut launcher = Launcher { app, proxy, game: None, asked: false, pointer_hidden: false, hints_tried: false };
     event_loop.run_app(&mut launcher).map_err(|e| e.to_string())
 }
 
@@ -68,6 +68,8 @@ struct Launcher {
     asked: bool,
     /// The system pointer is hidden (the game draws its own for a mouse).
     pointer_hidden: bool,
+    /// The performance hint session was tried (once, at the first resume with a game).
+    hints_tried: bool,
 }
 
 impl Launcher {
@@ -121,6 +123,18 @@ impl ApplicationHandler<Event> for Launcher {
                 Err(e) => log::warn!("cannot read the Game Mode: {e}"),
             }
             game.resumed(event_loop);
+            if !self.hints_tried {
+                self.hints_tried = true;
+                // 60 Hz until the first frame reports the real budget.
+                match HintSession::create(&self.app, std::time::Duration::from_micros(16_667)) {
+                    Ok(Some(session)) => {
+                        log::info!("performance hints: session created");
+                        game.set_work_sink(Box::new(session));
+                    }
+                    Ok(None) => log::info!("performance hints: not available on this device"),
+                    Err(e) => log::info!("performance hints: not available ({e})"),
+                }
+            }
             if !self.pointer_hidden {
                 self.pointer_hidden = true;
                 if let Err(e) = hide_system_pointer(&self.app) {
@@ -290,4 +304,95 @@ fn game_mode_battery(app: &AndroidApp) -> Result<bool, jni::errors::Error> {
         let mode = env.call_method(&manager, jni_str!("getGameMode"), jni_sig!(() -> int), &[])?.i()?;
         Ok(mode == GAME_MODE_BATTERY)
     })
+}
+
+/// Android's performance hint session (ADPF, `PerformanceHintManager`, API 31+) of the main
+/// thread, through JNI: the work the thread did per frame and the budget, so the scheduler can
+/// pick efficient cores and clocks. Created once; when the device has no manager or refuses a
+/// session, there is none and the game runs as before.
+struct HintSession {
+    vm: jni::JavaVM,
+    session: jni::refs::Global<jni::objects::JObject<'static>>,
+    /// A call failed: stop calling.
+    failed: bool,
+}
+
+impl HintSession {
+    /// The session for the calling thread aiming at `budget` per frame; `None` when the device
+    /// has no such manager (before API 31) or gives no session.
+    fn create(app: &AndroidApp, budget: std::time::Duration) -> Result<Option<Self>, jni::errors::Error> {
+        use jni::objects::{JObject, JValue};
+        use jni::{jni_sig, jni_str};
+        /// `Build.VERSION_CODES.S`.
+        const API_S: i32 = 31;
+        // SAFETY: the pointer comes from the running activity and stays valid while it runs.
+        let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) };
+        let session = vm.attach_current_thread(|env| {
+            let sdk =
+                env.get_static_field(jni_str!("android/os/Build$VERSION"), jni_str!("SDK_INT"), jni_sig!("I"))?.i()?;
+            if sdk < API_S {
+                return Ok(None);
+            }
+            let activity = unsafe { JObject::from_raw(env, app.activity_as_ptr().cast()) };
+            let name = env.new_string("performance_hint")?;
+            let manager = env
+                .call_method(
+                    &activity,
+                    jni_str!("getSystemService"),
+                    jni_sig!("(Ljava/lang/String;)Ljava/lang/Object;"),
+                    &[JValue::Object(&name)],
+                )?
+                .l()?;
+            if manager.is_null() {
+                return Ok(None);
+            }
+            let tid =
+                env.call_static_method(jni_str!("android/os/Process"), jni_str!("myTid"), jni_sig!("()I"), &[])?.i()?;
+            let tids = env.new_int_array(1)?;
+            tids.set_region(env, 0, &[tid])?;
+            let session = env
+                .call_method(
+                    &manager,
+                    jni_str!("createHintSession"),
+                    jni_sig!("([IJ)Landroid/os/PerformanceHintManager$Session;"),
+                    &[JValue::Object(&tids), JValue::Long(nanos(budget))],
+                )?
+                .l()?;
+            if session.is_null() {
+                return Ok(None);
+            }
+            Ok::<_, jni::errors::Error>(Some(env.new_global_ref(session)?))
+        })?;
+        Ok(session.map(|session| Self { vm, session, failed: false }))
+    }
+
+    /// `Session.<method>(nanos)`.
+    fn call(&mut self, method: &'static jni::strings::JNIStr, nanos: i64) {
+        use jni::jni_sig;
+        use jni::objects::JValue;
+        if self.failed {
+            return;
+        }
+        let result = self.vm.attach_current_thread(|env| {
+            env.call_method(&self.session, method, jni_sig!("(J)V"), &[JValue::Long(nanos)]).map(|_| ())
+        });
+        if let Err(e) = result {
+            log::warn!("performance hints stop: {e}");
+            self.failed = true;
+        }
+    }
+}
+
+fn nanos(d: std::time::Duration) -> i64 {
+    i64::try_from(d.as_nanos()).unwrap_or(i64::MAX)
+}
+
+impl crate::pacing::WorkSink for HintSession {
+    fn target(&mut self, budget: std::time::Duration) {
+        self.call(jni::jni_str!("updateTargetWorkDuration"), nanos(budget));
+    }
+
+    fn report(&mut self, work: std::time::Duration) {
+        self.call(jni::jni_str!("reportActualWorkDuration"), nanos(work));
+    }
 }
