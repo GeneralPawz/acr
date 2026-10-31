@@ -207,23 +207,33 @@ fn objects_of(w: &World, player: u8, kind: TypeId) -> Vec<usize> {
     (0..w.units.len()).filter(|&i| w.units[i].alive && w.units[i].owner == player && w.units[i].kind == kind).collect()
 }
 
-/// The upgrades that change a player's characteristics of `kind` (unit categories and
-/// costs), in tech order: the test editor's upgrade levels (`ingame/editor.rs`) apply a
-/// share of them. Left out: `[PRIVATE]` and stage upgrades, the categories acting on the
-/// researching building (`SINGLE_*`, `PERSONALLIFE`) and the one-off `HEALING`.
+/// The categories that change how a unit fights: speed, shield, protection, reload pause,
+/// range, damage, life and cannon spread.
+const FIGHTING: [u8; 9] = [
+    ctg::SPEED,
+    ctg::SHIELD,
+    ctg::PROTECTION,
+    ctg::ATTPAUSE,
+    ctg::ATTRANGE,
+    ctg::DAMAGE,
+    ctg::LIFE,
+    ctg::MORELIFE,
+    ctg::RAZBROS,
+];
+
+/// The upgrades that change how `kind` fights (see `FIGHTING`), in tech order: the test
+/// editor's training levels (`ingame/editor/levels.rs`) apply a prefix of them. Left out:
+/// `[PRIVATE]` and stage upgrades, upgrades that only change a price or the build time,
+/// and the categories acting on the researching building.
 pub fn of_type(catalog: &crate::catalog::Catalog, kind: TypeId) -> Vec<UpgradeId> {
-    let personal = [ctg::SINGLE_INSIDE, ctg::SINGLE_ATTPAUSE, ctg::MOREFARMS_SINGLE, ctg::PERSONALLIFE, ctg::HEALING];
     (0..catalog.tech.upgrades.len())
         .map(|i| UpgradeId(i as u16))
         .filter(|&up| {
             let def = catalog.tech.upgrade(up);
             !def.individual
                 && !def.stage_up
-                && match &def.effect {
-                    Effect::Units { category, units, .. } => units.contains(&kind) && !personal.contains(category),
-                    Effect::Cost { units, .. } => units.contains(&kind),
-                    _ => false,
-                }
+                && matches!(&def.effect, Effect::Units { category, units, .. }
+                    if units.contains(&kind) && FIGHTING.contains(category))
         })
         .collect()
 }

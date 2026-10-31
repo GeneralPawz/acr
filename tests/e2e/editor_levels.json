@@ -27,7 +27,7 @@
     {"cmd": "click", "label": "Ausbau Basis", "exact": true, "expect": {"ok": false}},
     {"cmd": "click", "label": "Spieler 2", "exact": true},
     {"cmd": "rclick", "label": "(FrnM18(FR))"},
-    {"cmd": "click", "label": "Ausbau Spezialmusketen"},
+    {"cmd": "click", "label": "Ausbau Spezialmusketen kaufen"},
     {"cmd": "click", "pos": [500, 400]},
     {"cmd": "wait", "ticks": 2},
     {"cmd": "state", "units": true, "detail": true, "owner": 1, "expect": [
