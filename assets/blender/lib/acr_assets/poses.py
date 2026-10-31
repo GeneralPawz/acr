@@ -456,9 +456,10 @@ def gait_measure(g, samples=48):
             "swing_pitch_deg": round(pitch, 1)}
 
 
-def cycle_half(stand, gait, base, n):
-    """[(fraction, pose)] of `MOTION_L/R/LB/RB` (`base`) on `n` frames, a key a frame."""
-    g = GAITS[gait]
+def cycle_half(stand, gait, base, n, swing=True):
+    """[(fraction, pose)] of `MOTION_L/R/LB/RB` (`base`) on `n` frames, a key a frame. Without
+    `swing` the left arm keeps `stand`'s angles (it holds the gun)."""
+    g = GAITS[gait] if swing else {**GAITS[gait], "arm": 0.0}
     start, step = {"MOTION_L": (0.0, 0.5), "MOTION_R": (0.5, 0.5),
                    "MOTION_LB": (1.0, -0.5), "MOTION_RB": (0.5, -0.5)}[base]
     last = max(n - 1, 1)
@@ -490,16 +491,16 @@ def motion_gait(line):
     return "walk" if rig.md_clip_frames(line)[0] >= WALK_FRAMES else "run"
 
 
-def step_keys(md, stand):
+def step_keys(md, stand, swing=True):
     """{MOTION_* clip: [(fraction, pose)]} for every `MOTION_L/R/LB/RB[digit]` line in `md`:
     the run or the walk (`motion_gait`) from `stand`, a key on every frame of the line
-    (`cycle_half`). LB/RB play the step backwards."""
+    (`cycle_half`, `swing`). LB/RB play the step backwards."""
     out = {}
     for k, line in md.items():
         base = k.rstrip("0123456789")
         if base not in ("MOTION_L", "MOTION_R", "MOTION_LB", "MOTION_RB"):
             continue
-        out[k] = cycle_half(stand, motion_gait(line), base, rig.md_clip_frames(line)[0])
+        out[k] = cycle_half(stand, motion_gait(line), base, rig.md_clip_frames(line)[0], swing)
     return out
 
 
@@ -554,6 +555,14 @@ CHARGE_MUSKET = {
 HIP_MUSKET = {
     **STANCE, "spine": (-6, 0, -16), "spine2": (-2, 0, -10), "neck": (2, 0, 8), "head": (4, 0, 18),
     "world": {"socket.hand_r": (90, 0, 0)},
+}
+
+# A short gun carried at the waist (the trappers' running sprites, #347): both hands on it
+# (`aim.hold` with a pocket at the belt), the muzzle forward and down, the legs and head as
+# the musketeer's stand.
+CARRY_WAIST = {
+    **{k: STAND_MUSKET[k] for k in ("thigh_l", "thigh_r", "spine", "head")},
+    "world": {"socket.hand_r": (100, 0, 0)},
 }
 
 
@@ -645,7 +654,7 @@ def musketeer_strikes(ready, lunge, n):
     }
 
 
-def musketeer_clips(md_lines, stand=STAND_MUSKET, aim=None, charge=None, reload=None, hip=None):
+def musketeer_clips(md_lines, stand=STAND_MUSKET, aim=None, charge=None, reload=None, hip=None, swing=True):
     """{clip: [(frame, pose)]} for a European musketeer from its `.MD` lines
     ({key: "@DEATH 9 4 0 70"}): STAND, MOTION_L, MOTION_R, the bayonet (attack index 0,
     `PIKA`: PATTACK, UATTACK, PSTAND, ATTACK), the musket shot (index 1, `VISTREL`:
@@ -653,7 +662,8 @@ def musketeer_clips(md_lines, stand=STAND_MUSKET, aim=None, charge=None, reload=
     DEATH, DEATHLIE1. `aim` and `charge` are the IK-solved two-handed poses (`aim.hold`,
     `aim.present`). With `hip` (`aim.hip`) also the two presentations of the shot (#296) on
     ATTACK1's frames: FIRE_AIMED (= ATTACK1, from the shoulder) and FIRE_HIP (from the hip,
-    close range); the game picks one by the target's distance."""
+    close range); the game picks one by the target's distance. Without `swing` the left arm
+    holds the gun through the steps (`stand` carries it in both hands)."""
     lie = lie_prone()
     # `aim`: the present pose with both hands on the musket (`aim.hold`); the data pose
     # without it.
@@ -671,7 +681,7 @@ def musketeer_clips(md_lines, stand=STAND_MUSKET, aim=None, charge=None, reload=
         "STAND": [(0.0, stand)],
         # The step cycle a key a frame (`step_keys`; LB/RB backwards).
         **{k: cycle_half(stand, motion_gait(md_lines[k]) if k in md_lines else "walk", k,
-                         rig.md_clip_frames(md_lines[k])[0] if k in md_lines else 10)
+                         rig.md_clip_frames(md_lines[k])[0] if k in md_lines else 10, swing)
            for k in ("MOTION_L", "MOTION_R", "MOTION_LB", "MOTION_RB")},
         # Bayonet (index 0).
         "PATTACK": [(0.0, stand), (0.5, _with(ready, world={"socket.hand_r": (40, 0, 0)})), (1.0, ready)],

@@ -38,6 +38,26 @@ class Specs(unittest.TestCase):
             frontier.spec({}, coat="red")
 
 
+class Trapper(unittest.TestCase):
+    """EngTap (#347): the short gun at the waist, the 10-frame food walk as a walk."""
+
+    def test_spec(self):
+        s = frontier.spec({}, carry="waist", gun=0.95)
+        self.assertIn(s["carry"], frontier.CARRIES)
+        self.assertLess(s["gun"], frontier.DEFAULTS["gun"])
+        with self.assertRaises(KeyError):
+            frontier.CARRIES["shoulder"]
+
+    def test_stance_walk_is_a_walk(self):
+        md = {"MOTION_L": "@MOTION_L 9 1 0 7", "MOTION_L4": "@MOTION_L4 9 2 0 9"}
+        self.assertEqual(poses.motion_gait(md["MOTION_L"]), "run")
+        self.assertEqual(poses.motion_gait(md["MOTION_L4"]), "walk")
+        steps = poses.step_keys(md, poses.STAND_MUSKET, swing=False)
+        left = [p["upperarm_l"] for _f, p in steps["MOTION_L4"]]
+        self.assertEqual(len(left), 10)
+        self.assertEqual(len(set(left)), 1)  # the left arm stays on the gun
+
+
 class Halberd(unittest.TestCase):
     def test_clips(self):
         c = conquista.halberd_clips(ALB_MD)

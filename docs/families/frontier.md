@@ -38,6 +38,21 @@ The musketeer clips of `line.py` (`line._musket_clips`: present, fire and reload
 `poses.musketeer_strikes` on ATTACK's frames; walk, death, crawl). Only the clips the family
 makes are listed in the glb (`frontier.CLIPS` plus the strikes and crawl).
 
+## Trapper carry and gait (#347)
+
+`EngTap` runs on its 8-frame `MOTION_L` (step 80, as the native foot: the generated run,
+`poses.motion_gait`) with a short gun (0.95 m) held in both hands at the belt, muzzle forward
+and down (`SPEC["carry"] = "waist"`: `poses.CARRY_WAIST` solved by `aim.hold`; the stand,
+the steps and the presents start from it, the left arm stays on the gun). The `.MD`'s
+`TAKERESSTAGES FOOD 8 5 3` and `RATE 4 8` make a hunter with food walk stance 5 at half
+speed on `#MOTION_L4` (10 frames a step); the family now makes `MOTION_{L,R,LB,RB}4` as a
+walk (`frontier.WALKS`), where the plain run clip played at half speed before (the gallop).
+Sprite check (`--anim`, first frame, mean IoU of 9 directions): MOTION_L 0.508 -> 0.523,
+MOTION_L4 0.484, ATTACK1 0.466 -> 0.474, ATTACK3 0.397 -> 0.398, STAND 0.549 -> 0.508.
+Not modelled: the load on the shoulder of `MOTION_L4`, the reload of the sprites (ATTACK3
+plays the musketeer's drill), the Büffeljagd felt outfit and beaver hat (no such garment or
+hat in the kit). `EngTapDragon` (same sprites) is unchanged.
+
 ## Known gaps
 
 - The sprites' extra stances (`MOTION_*0..4`, `ATTACK2` (PIKA), `ATTACK3` / `PSTAND3`) are

@@ -65,7 +65,7 @@ KIT = ("belt_l", "horn", "pouch", "tomahawk_belt", "knife")
 FIXED = ("horn", "pouch", "metal", "wood", "belts", "scabbard", "brass", "plume")
 DEFAULTS = {"body": "hunting", "sleeves": "hunting", "skirts": True, "legs": "leggings", "layers": ("cape", "sash"),
             "kit": KIT, "hat": "fur_cap", "hat_at": (0.0, 0.005, -0.07, -8), "gun": 1.62, "mix": 0.4, "fixed": (),
-            "build": BUILD, "melee": "musket", "drape": False}
+            "build": BUILD, "melee": "musket", "drape": False, "carry": None}
 # With `drape` the shell layers `blouse`, `sash` and `cloak` are drafted and draped instead
 # (`garments.tunic`, `band`, `cloak`; #287 drape pilot): the blouse replaces the draped shirt.
 DRAPED = {"blouse": "frn_blouse", "sash": "frn_sash", "cloak": "frn_cape"}
@@ -76,6 +76,18 @@ DRAPED = {"blouse": "frn_blouse", "sash": "frn_sash", "cloak": "frn_cape"}
 CLIPS = ("STAND", "MOTION_L", "MOTION_R", "MOTION_LB", "MOTION_RB", "PATTACK", "UATTACK", "PSTAND", "ATTACK",
          "PATTACK1", "UATTACK1", "PSTAND1", "ATTACK1", "PSTAND3", "PATTACK3", "UATTACK3", "ATTACK3", "TRANSX3",
          "TRANS3X", "DEATH", "DEATHLIE1")
+# The stance walk of a food carrier (`TAKERESSTAGES FOOD .. 5`, `RATE 4 8`: the sim walks it
+# at half speed on `MOTION_L4`, 10 frames a step), made as a walk (`poses.motion_gait`).
+WALKS = ("MOTION_L4", "MOTION_R4", "MOTION_LB4", "MOTION_RB4")
+CARRIES = {"waist": lambda arm: _carry_waist(arm)}
+
+
+def _carry_waist(arm):
+    """The stand with the short gun held in both hands at the belt (`poses.CARRY_WAIST`)."""
+    from . import aim as aiming
+    from . import poses
+
+    return aiming.hold(arm, poses.CARRY_WAIST, pocket=(0.04, -0.12, -0.36), left_along=0.32)
 
 
 def spec(md, palette=None, build=None, fixed=(), **kw):
@@ -342,9 +354,10 @@ def build(ctx, s, make_fn=None):
     from . import crawl, faces, heads, line, outfit, poses
     from .humans import LAYER_OF, prepare_export
 
-    md = {k: v for k, v in s["md"].items() if k in CLIPS}
+    md = {k: v for k, v in s["md"].items() if k in CLIPS + WALKS}
     ch = (make_fn or make)(ctx.root, ctx.name, s)
-    line._musket_clips(ctx, ch, md)
+    line._musket_clips(ctx, ch, md, carry=CARRIES[s["carry"]] if s["carry"] else None,
+                       walks=[k for k in WALKS if k in md])
     am.set_clip(ch.arm, "STAND")
     report = {}
     colours = ch.colours(ctx.ref, s["palette"], report=report, mix=s["mix"], fixed=s["fixed"])
@@ -357,6 +370,7 @@ def build(ctx, s, make_fn=None):
     ch.arm.pose.bones[aiming.ROD_SOCKET].matrix = ch.arm.pose.bones["socket.hand_r"].matrix @ aiming.ROD_STOWED
     tris = ch.triangles()
     names = [k for k in poses.musketeer_clips(md) if k in md or k == "STAND" or k not in CLIPS] + list(crawl.CLIPS)
+    names += [k for k in WALKS if k in md]
     names += [c for c in aiming.FIRE_CLIPS if c in (getattr(ctx, "fire", None) or {})]
     prepare_export(ch.all_meshes(), ctx.root, acr_triangles=sum(tris.values()), acr_clips=names,
                    acr_limb_radius=ch.limb_radius, acr_light=report.get("light_dir_camera", []),
@@ -371,6 +385,10 @@ def pose_for(ch, s, clip):
     from . import armature as am
     from . import poses
 
-    keys = poses.musketeer_clips({k: v for k, v in s["md"].items() if k in CLIPS})[clip]
+    md = {k: v for k, v in s["md"].items() if k in CLIPS + WALKS}
+    stand = getattr(ch, "stand_pose", poses.STAND_MUSKET)
+    all_keys = poses.musketeer_clips({k: v for k, v in md.items() if k in CLIPS}, stand, swing=not s["carry"])
+    all_keys.update(poses.step_keys({k: v for k, v in md.items() if k in WALKS}, stand, not s["carry"]))
+    keys = all_keys[clip]
     ch._pose_spec = keys[-1][1] if clip == "DEATH" else keys[0][1]
     am.pose(ch.arm, ch._pose_spec)
