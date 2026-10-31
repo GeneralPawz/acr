@@ -609,17 +609,17 @@ impl Hud {
 
     /// A canvas point in the side panels' coordinates.
     fn panel_point(&self, p: [f32; 2]) -> [f32; 2] {
-        let p = self.local(Group::Panel, p);
+        let p = self.corner_zoom(Group::Panel).to_layout(p);
         [p[0] - self.panel_dx() as f32, p[1]]
     }
 
     /// The scale about the corner a group of panels hangs from (`hud_scale`), kept so that
     /// the group stays on the screen (the minimap at most half of its height).
-    pub fn zoom(&self, group: Group) -> Zoom {
+    fn corner_zoom(&self, group: Group) -> Zoom {
         let scale = zoom::resolve(self.hud_scale, self.density, cfg!(target_os = "android"), ICON);
         let [w, h] = self.screen.map(|v| v as f32);
         match group {
-            Group::Commands => Zoom { anchor: [0.0, h], scale: zoom::fit(scale, w, COMMANDS_W as f32) },
+            Group::Commands => self.commands_zoom(PROPERTY[0] - 2),
             Group::Army => {
                 let anchor = [ARMY_ORIGIN.0 as f32, ARMY_ORIGIN.1 as f32];
                 Zoom { anchor, scale: zoom::fit(scale, h - anchor[1], ARMY_H as f32) }
@@ -629,24 +629,52 @@ impl Hud {
         }
     }
 
+    /// The left edge of what the command panel draws: the single type's box (`Zone1X + 6`)
+    /// when there is one, else the commands' frame (`PropertyX − 2`).
+    fn commands_left(view: &View) -> i32 {
+        if view.icons.iter().any(|i| i.slot == ZONE1_SLOT) { ZONE1[0] + 6 } else { PROPERTY[0] - 2 }
+    }
+
+    /// [`Hud::corner_zoom`] of `group`; the command panel is also pulled left so that its
+    /// leftmost drawn part sits at the screen's edge.
+    pub fn zoom(&self, group: Group, view: &View) -> Zoom {
+        match group {
+            Group::Commands => self.commands_zoom(Self::commands_left(view)),
+            _ => self.corner_zoom(group),
+        }
+    }
+
+    /// The command panel's scale about the bottom edge with layout x `left` pulled to the
+    /// screen's left edge: the anchor `left·s / (s − 1)` maps `left` to 0. Capped so that the
+    /// grid's right edge stays on the screen.
+    fn commands_zoom(&self, left: i32) -> Zoom {
+        let scale = zoom::resolve(self.hud_scale, self.density, cfg!(target_os = "android"), ICON);
+        let [w, h] = self.screen.map(|v| v as f32);
+        let scale = zoom::fit(scale, w, (COMMANDS_W - left) as f32);
+        if scale <= 1.0 {
+            return Zoom { anchor: [0.0, h], scale: 1.0 };
+        }
+        Zoom { anchor: [left as f32 * scale / (scale - 1.0), h], scale }
+    }
+
     /// A canvas point in the layout of `group`.
-    fn local(&self, group: Group, p: [f32; 2]) -> [f32; 2] {
-        self.zoom(group).to_layout(p)
+    fn local(&self, group: Group, view: &View, p: [f32; 2]) -> [f32; 2] {
+        self.zoom(group, view).to_layout(p)
     }
 
     /// The mouse in the layout of `group`.
-    fn mouse_in(&self, group: Group) -> Option<[f32; 2]> {
-        self.mouse.map(|m| self.local(group, m))
+    fn mouse_in(&self, group: Group, view: &View) -> Option<[f32; 2]> {
+        self.mouse.map(|m| self.local(group, view, m))
     }
 
     /// Command icon `slot` on the canvas, `[x, y, w, h]`.
-    pub fn icon_on_canvas(&self, slot: usize) -> [f32; 4] {
-        self.zoom(Group::Commands).rect(Self::icon_rect(self.screen, slot))
+    pub fn icon_on_canvas(&self, slot: usize, view: &View) -> [f32; 4] {
+        self.zoom(Group::Commands, view).rect(Self::icon_rect(self.screen, slot))
     }
 
     /// Army icon `slot` on the canvas, `[x, y, w, h]`.
     pub fn army_on_canvas(&self, slot: usize) -> [f32; 4] {
-        self.zoom(Group::Army).rect(Self::army_rect(slot))
+        self.corner_zoom(Group::Army).rect(Self::army_rect(slot))
     }
 
     fn placement(&self, view: &View) -> Placement {
@@ -813,15 +841,15 @@ impl Hud {
                 return true;
             }
         }
-        let commands = self.local(Group::Commands, p);
+        let commands = self.local(Group::Commands, view, p);
         if Self::icon_boxes(self.screen, &view.icons).iter().any(|(r, _)| r.contains(commands)) {
             return true;
         }
-        let army = self.local(Group::Army, p);
+        let army = self.local(Group::Army, view, p);
         if Self::army_icons(view).any(|i| Self::army_rect(i.slot).contains(army)) {
             return true;
         }
-        self.minimap.is_some() && self.placement(view).rect.contains(self.local(Group::Minimap, p))
+        self.minimap.is_some() && self.placement(view).rect.contains(self.local(Group::Minimap, view, p))
     }
 
     pub fn release(&mut self) {
@@ -901,8 +929,11 @@ impl Hud {
                 return HudEvent::Used;
             }
         }
-        let (army, commands, mini) =
-            (self.local(Group::Army, p), self.local(Group::Commands, p), self.local(Group::Minimap, p));
+        let (army, commands, mini) = (
+            self.local(Group::Army, view, p),
+            self.local(Group::Commands, view, p),
+            self.local(Group::Minimap, view, p),
+        );
         if let Some(icon) = Self::army_icons(view).find(|i| Self::army_rect(i.slot).contains(army)) {
             self.pressed = true;
             return match (&icon.action, icon.disabled) {
@@ -940,7 +971,7 @@ impl Hud {
         }
         if self.pressed
             && self.minimap.is_some()
-            && let Some(px) = self.placement(view).pixel_at(self.local(Group::Minimap, p))
+            && let Some(px) = self.placement(view).pixel_at(self.local(Group::Minimap, view, p))
         {
             return HudEvent::Camera(px);
         }
@@ -953,11 +984,11 @@ impl Hud {
         if self.panel != Panel::None && panels::covers(self.panel_point(p)) {
             return HudEvent::Used;
         }
-        let army = self.local(Group::Army, p);
+        let army = self.local(Group::Army, view, p);
         if Self::army_icons(view).any(|i| Self::army_rect(i.slot).contains(army)) {
             return HudEvent::Used;
         }
-        let commands = self.local(Group::Commands, p);
+        let commands = self.local(Group::Commands, view, p);
         if let Some(icon) =
             view.icons.iter().find(|i| Self::shown(i.slot) && Self::icon_rect(self.screen, i.slot).contains(commands))
         {
@@ -967,7 +998,7 @@ impl Hud {
             };
         }
         if self.minimap.is_some()
-            && let Some(px) = self.placement(view).pixel_at(self.local(Group::Minimap, p))
+            && let Some(px) = self.placement(view).pixel_at(self.local(Group::Minimap, view, p))
         {
             return HudEvent::Order(px);
         }
@@ -992,14 +1023,14 @@ impl Hud {
         if self.minimap.is_some() {
             let mut out = Vec::new();
             self.draw_minimap(ctx, view, &palette, &mut out);
-            layers.push((self.zoom(Group::Minimap), out));
+            layers.push((self.zoom(Group::Minimap, view), out));
         }
         let screen = self.screen;
         let mut out = Vec::new();
         for (r, corners) in Self::icon_boxes(screen, &view.icons) {
             border(ctx, &mut out, r.x0, r.y0, r.x1, r.y1, corners);
         }
-        let mouse = self.mouse_in(Group::Commands);
+        let mouse = self.mouse_in(Group::Commands, view);
         for icon in view.icons.iter().filter(|i| Self::shown(i.slot)) {
             let r = Self::icon_rect(screen, icon.slot);
             let pressed = self.pressed && mouse.is_some_and(|m| r.contains(m));
@@ -1011,16 +1042,16 @@ impl Hud {
         if let Some(market) = view.market {
             draw_market(ctx, market, screen, &mut out);
         }
-        layers.push((self.zoom(Group::Commands), out));
+        layers.push((self.zoom(Group::Commands, view), out));
         // The army icons, the last set 0x5a9fa0 draws (0x5aa394).
         let mut out = Vec::new();
-        let mouse = self.mouse_in(Group::Army);
+        let mouse = self.mouse_in(Group::Army, view);
         for icon in Self::army_icons(view) {
             let r = Self::army_rect(icon.slot);
             let pressed = self.pressed && mouse.is_some_and(|m| r.contains(m));
             draw_icon(ctx, icon, r.x0, r.y0, pressed, &palette, &mut out);
         }
-        layers.push((self.zoom(Group::Army), out));
+        layers.push((self.zoom(Group::Army, view), out));
         let mut panel = Vec::new();
         match (self.panel, &view.unit_info) {
             (Panel::Unit, Some(info)) => self.unit_panel.draw(ctx, info, view.morale.as_ref(), &palette, &mut panel),
@@ -1032,7 +1063,7 @@ impl Hud {
             _ => {}
         }
         let dx = self.panel_dx();
-        layers.push((self.zoom(Group::Panel), panel.into_iter().map(|d| d.translated(dx, 0)).collect()));
+        layers.push((self.zoom(Group::Panel, view), panel.into_iter().map(|d| d.translated(dx, 0)).collect()));
         let mut out = Vec::new();
         if self.touch() {
             self.draw_touch_bar(ctx, view, &mut out);
@@ -1060,7 +1091,7 @@ impl Hud {
         // draws): an octagon in `GetPaletteColor(255, 255, 0)` around its members' mean
         // position.
         let mark = self
-            .mouse_in(Group::Army)
+            .mouse_in(Group::Army, view)
             .and_then(|m| Self::army_icons(view).find(|i| Self::army_rect(i.slot).contains(m)).and_then(|i| i.mark));
         if let Some([px, py]) = mark {
             let placement = self.placement(view);
@@ -1192,14 +1223,14 @@ impl Hud {
                 scaled = false;
             }
         }
-        let commands = self.local(Group::Commands, m);
+        let commands = self.local(Group::Commands, view, m);
         for icon in view.icons.iter().filter(|i| Self::shown(i.slot)) {
             if Self::icon_rect(self.screen, icon.slot).contains(commands) && !icon.hint.is_empty() {
                 hint = Some(&icon.hint);
                 scaled = true;
             }
         }
-        let army = self.local(Group::Army, m);
+        let army = self.local(Group::Army, view, m);
         for icon in Self::army_icons(view) {
             if Self::army_rect(icon.slot).contains(army) && !icon.hint.is_empty() {
                 hint = Some(&icon.hint);
@@ -1726,5 +1757,106 @@ mod tests {
         // Never smaller than 1024 × 768.
         hud.set_screen([800, 600]);
         assert_eq!(hud.screen(), SCREEN);
+    }
+
+    fn centre(r: [f32; 4]) -> [f32; 2] {
+        [r[0] + r[2] / 2.0, r[1] + r[3] / 2.0]
+    }
+
+    fn icon(slot: usize) -> Icon {
+        Icon { slot, action: Some(HudCommand::SelectType(slot)), ..Icon::default() }
+    }
+
+    fn phone() -> Hud {
+        let mut hud = Hud::default();
+        hud.set_screen([1690, 768]);
+        hud.set_density(3.5 / 1.875);
+        hud
+    }
+
+    /// `hud_scale`: at scale 1 nothing moves; scaled, the commands' frame is pulled to the
+    /// screen's left edge (anchor `L·s / (s − 1)`) and grows up from the bottom, and a press
+    /// is mapped back through the same transform.
+    #[test]
+    fn presses_follow_the_scaled_panel() {
+        let ui = crate::ui::Ui::new(&[]);
+        let ctx = ui.ctx();
+        // A mixed selection: the types in the grid, no single type's box.
+        let mut view = View { icons: vec![icon(0), icon(13)], ..View::default() };
+        let mut hud = phone();
+        assert_eq!(hud.icon_on_canvas(0, &view), [182.0, 630.0, 40.0, 40.0]);
+        assert_eq!(hud.press(&ctx, &view, [202.0, 650.0]), HudEvent::Command(HudCommand::SelectType(0)));
+
+        hud.hud_scale = Some(2.0);
+        let z = hud.zoom(Group::Commands, &view);
+        assert_eq!((z.scale, z.anchor), (2.0, [360.0, 768.0]));
+        // The frame (layout x 180) is at the screen's edge, the first icon 4 pixels in.
+        assert_eq!(hud.icon_on_canvas(0, &view), [4.0, 492.0, 80.0, 80.0]);
+        assert_eq!(hud.icon_on_canvas(13, &view), [88.0, 576.0, 80.0, 80.0]);
+        for slot in [0, 13] {
+            let hit = hud.press(&ctx, &view, centre(hud.icon_on_canvas(slot, &view)));
+            assert_eq!(hit, HudEvent::Command(HudCommand::SelectType(slot)));
+        }
+        // The old place is map now.
+        assert_eq!(hud.press(&ctx, &view, [202.0, 650.0]), HudEvent::None);
+        assert!(hud.covers(&ctx, &view, centre(hud.icon_on_canvas(0, &view))));
+        assert!(!hud.covers(&ctx, &view, [202.0, 650.0]));
+        // The frame's left edge itself is covered.
+        assert!(hud.covers(&ctx, &view, [1.0, 700.0]));
+        view.icons[0].right = Some(HudCommand::SelectType(99));
+        let right = hud.right_press(&ctx, &view, centre(hud.icon_on_canvas(0, &view)));
+        assert_eq!(right, HudEvent::Command(HudCommand::SelectType(99)));
+
+        // A single unit: its portrait box (layout x 12) goes to the edge instead.
+        let single = View { icons: vec![icon(ZONE1_SLOT), icon(0)], ..View::default() };
+        let z = hud.zoom(Group::Commands, &single);
+        assert_eq!(z.anchor, [24.0, 768.0]);
+        assert_eq!(hud.icon_on_canvas(ZONE1_SLOT, &single), [0.0, 492.0, 80.0, 80.0]);
+        let hit = hud.press(&ctx, &single, centre(hud.icon_on_canvas(ZONE1_SLOT, &single)));
+        assert_eq!(hit, HudEvent::Command(HudCommand::SelectType(ZONE1_SLOT)));
+        let hit = hud.press(&ctx, &single, centre(hud.icon_on_canvas(0, &single)));
+        assert_eq!(hit, HudEvent::Command(HudCommand::SelectType(0)));
+
+        // The minimap grows up and left from the bottom-right corner, capped at half the height.
+        hud.set_minimap(Minimap { pixels: vec![0; (minimap::SIDE * minimap::SIDE) as usize] });
+        let z = hud.zoom(Group::Minimap, &view);
+        assert_eq!(z.anchor, [1690.0, 768.0]);
+        assert!((z.scale - 384.0 / 257.0).abs() < 1e-4, "{}", z.scale);
+        let [x, y, w, h] = z.rect(hud.placement(&view).rect);
+        match hud.press(&ctx, &view, [x + w / 2.0, y + h / 2.0]) {
+            HudEvent::Camera([px, py]) => assert!((px - 120.0).abs() < 1.0 && (py - 120.0).abs() < 1.0, "{px} {py}"),
+            e => panic!("{e:?}"),
+        }
+    }
+
+    /// The phone default (a 3168 x 1440 window at scale factor 3.5, canvas scale 1.875): the
+    /// command icons are 7 mm, the panel sits in the lower-left corner for a mixed selection
+    /// and for a single unit, and the grid fits the width; the desktop default is 1.
+    #[test]
+    fn the_phone_default_sits_in_the_corner() {
+        let mut hud = phone();
+        let density = 3.5 / 1.875;
+        hud.hud_scale = Some(zoom::resolve(None, density, true, ICON));
+        let mixed = View { icons: vec![icon(0), icon(1)], ..View::default() };
+        let single = View { icons: vec![icon(ZONE1_SLOT)], ..View::default() };
+        for view in [&mixed, &single] {
+            let z = hud.zoom(Group::Commands, view);
+            assert!((z.scale - 2.058).abs() < 0.01, "{}", z.scale);
+            let [x, y, w, _] = hud.icon_on_canvas(0, view);
+            let mm = w / density / (160.0 / 25.4);
+            assert!((mm - 7.0).abs() < 0.1, "{mm} mm");
+            assert!(x > 0.0 && x < 400.0 && y > 400.0, "{x} {y}");
+            let [x, _, w, _] = hud.icon_on_canvas(GRID_COLUMNS - 1, view);
+            assert!(x + w <= 1690.0, "{}", x + w);
+        }
+        // The leftmost drawn part is at the edge: the frame, or the single type's box.
+        let [x, ..] = hud.zoom(Group::Commands, &mixed).rect(Rect::new(180, 700, 1, 1));
+        assert!(x.abs() < 1e-3, "{x}");
+        let [x, ..] = hud.zoom(Group::Commands, &single).rect(Rect::new(12, 700, 1, 1));
+        assert!(x.abs() < 1e-3, "{x}");
+        // The unset desktop default leaves the layout alone.
+        hud.hud_scale = None;
+        assert_eq!(hud.zoom(Group::Commands, &mixed), Zoom { anchor: [0.0, 768.0], scale: 1.0 });
+        assert_eq!(hud.icon_on_canvas(0, &mixed), [182.0, 630.0, 40.0, 40.0]);
     }
 }

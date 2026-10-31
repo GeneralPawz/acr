@@ -142,7 +142,7 @@ pub struct Settings {
     /// minimap, the side panels and army list) are drawn this many times larger about their
     /// screen corner, with their hit-testing scaled the same way; the map and the top bar keep
     /// their size ([`crate::hud::zoom`]). `None` (not in the file): 1 on a desktop or in a
-    /// browser, on Android a size that makes a command icon about 9 mm wide. A UI setting:
+    /// browser, on Android a size that makes a command icon about 7 mm wide. A UI setting:
     /// not in the rules or the savegames.
     pub hud_scale: Option<f32>,
     /// ACR: `decay_stain=on|off`: a decaying corpse's fluids soak into the ground under it

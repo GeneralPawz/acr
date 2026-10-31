@@ -1,6 +1,6 @@
 {
   "name": "touch_hud_scale",
-  "description": "hud_scale (#448) at a phone-like window (1584x720, canvas scale 0.9375, screen 1690x768): with the panels 1.8 times larger the command panel grows up and right from the bottom-left corner, so the Fort icon (slot 0) moves from (182, 630) to (327.6, 519.6) canvas pixels and is 72 wide; a finger on its old place picks nothing, a finger on the scaled icon picks the Fort",
+  "description": "hud_scale (#448) at a phone-like window (1584x720, canvas scale 0.9375, screen 1690x768): with the panels 1.8 times larger the command panel grows up and right from the bottom-left corner, so the Fort icon (slot 0) moves from (182, 630) to (306, 519.6) canvas pixels (the single type's box is pulled to the left edge) and is 72 wide; a finger on its old place picks nothing, a finger on the scaled icon picks the Fort",
   "args": ["--size", "1584x720"],
   "steps": [
     {"cmd": "start", "random": {"nation": 1, "seed": 5}},
@@ -13,15 +13,15 @@
     ]},
     {"cmd": "hud_scale", "scale": 1.8, "expect": [
       {"path": "hud_scale.scale", "gt": 1.799}, {"path": "hud_scale.scale", "lt": 1.801},
-      {"path": "hud_scale.icon0.0", "gt": 307}, {"path": "hud_scale.icon0.0", "lt": 308},
+      {"path": "hud_scale.icon0.0", "gt": 286}, {"path": "hud_scale.icon0.0", "lt": 288},
       {"path": "hud_scale.icon0.1", "gt": 487}, {"path": "hud_scale.icon0.1", "lt": 488},
       {"path": "hud_scale.icon0.2", "gt": 67}, {"path": "hud_scale.icon0.2", "lt": 68}
     ]},
     {"cmd": "touch", "phase": "start", "id": 1, "pos": [189, 609], "t": 0},
     {"cmd": "touch", "phase": "end", "id": 1, "pos": [189, 609], "t": 60},
     {"cmd": "ui", "expect": {"path": "ui.cursor.mode", "eq": "normal"}, "note": "the icon's old place is the panel's box now, not the Fort"},
-    {"cmd": "touch", "phase": "start", "id": 1, "pos": [341, 521], "t": 1000},
-    {"cmd": "touch", "phase": "end", "id": 1, "pos": [341, 521], "t": 1060},
+    {"cmd": "touch", "phase": "start", "id": 1, "pos": [321, 521], "t": 1000},
+    {"cmd": "touch", "phase": "end", "id": 1, "pos": [321, 521], "t": 1060},
     {"cmd": "ui", "expect": {"path": "ui.cursor.mode", "contains": "placing"}, "note": "a finger on the scaled icon picks the Fort"},
     {"cmd": "key", "key": "Escape"},
     {"cmd": "hud_scale", "scale": 1, "expect": {"path": "hud_scale.scale", "eq": 1}},
