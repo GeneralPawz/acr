@@ -24,6 +24,10 @@ const MUSKET: &str = "NAME Mus\r\nUSERLC 0 G SHADOW 0 0\r\n#STAND 9 1 0 0\r\n@MO
 const HORSE: &str = "NAME Hor\r\nUSERLC 0 G SHADOW 0 0\r\n#STAND 9 1 0 0\r\n@MOTION_L 9 0 0 9\r\n\
     @MOTION_R 9 0 10 19\r\n@DEATH 9 0 0 9\r\n#DEATHLIE1 9 1 0 9\r\nLIFE 100\r\nGEOMETRY 1 10 40\r\n\
     USAGE HARDHORCE\r\nMATHERIAL 1 BODY\r\nCANKILL 1 BODY\r\n[END]\r\n";
+/// Mounted shooters with the armed-attack switch (the dragoons).
+const DRAGOON: &str = "NAME Dra\r\nUSERLC 0 G SHADOW 0 0\r\n#STAND 9 1 0 0\r\n@MOTION_L 9 0 0 9\r\n\
+    @MOTION_R 9 0 10 19\r\n@DEATH 9 0 0 9\r\n#DEATHLIE1 9 1 0 9\r\nLIFE 100\r\nGEOMETRY 1 10 40\r\n\
+    USAGE STRELOK\r\nARMATTACK\r\nMATHERIAL 1 BODY\r\nCANKILL 1 BODY\r\n[END]\r\n";
 const CANNON: &str = "NAME Can\r\nUSERLC 0 G SHADOW 0 0\r\n#STAND 16 1 0 0\r\n@MOTION_L 16 0 0 9\r\n\
     @MOTION_R 16 0 10 19\r\n@MOTION_L0 16 0 0 9\r\n@MOTION_R0 16 0 10 19\r\n@MOTION_L1 16 0 0 19\r\n\
     @MOTION_R1 16 0 0 19\r\n@PATTACK4 16 0 0 19\r\n@UATTACK4 16 0 19 0\r\n@ATTACK4 16 0 0 39\r\n\
@@ -55,6 +59,7 @@ pub(super) struct Rig {
     pub mus: TypeId,
     pub horse: TypeId,
     pub pike: TypeId,
+    pub dragoon: TypeId,
     pub gun: TypeId,
 }
 
@@ -68,10 +73,11 @@ pub(super) fn rig_with(groups: &[u8]) -> Rig {
     let (off, mus) = (add("Off(EN)", OFFICER), add("Mus(EN)", MUSKET));
     let (horse, gun) = (add("Hor(EN)", HORSE), add("Can(EN)", CANNON));
     let pike = add("Pik(EN)", PIKE);
+    let dragoon = add("Dra(EN)", DRAGOON);
     c.set_weapon_kinds(&weapon_kinds(NRES));
     c.set_weapons(Weapons::parse(NDS, Some(ADS), None));
     let f = Formations::new(&OrderList::parse(ORDERS), &OrderGroups::parse(groups));
-    Rig { w: World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(f)), off, mus, horse, pike, gun }
+    Rig { w: World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(f)), off, mus, horse, pike, dragoon, gun }
 }
 
 /// `n` units of `kind` in rows of `row`, `gap` px apart, from `(x, y)` facing `dir`.
@@ -530,4 +536,161 @@ fn no_karree_without_the_button_faces_instead() {
     assert!(all.iter().any(|c| matches!(c, Command::Face { officer, .. } if *officer == line[0])), "{all:?}");
     assert_eq!(cm.report(0).karrees, 0);
     assert_eq!(shape_of(&r.w, line[1]), "#LINE12");
+}
+
+/// A foe line of 12 musketeers (6 wide, 100 px apart) with its corner at `at`, facing the west.
+fn foe_line(r: &mut Rig, at: (i32, i32)) -> Vec<EntityId> {
+    crowd(&mut r.w, r.mus, 1, at, 12, (6, 100), 128)
+}
+
+fn moves_to(cmds: &[Command], units: &[EntityId]) -> Vec<(i32, i32)> {
+    cmds.iter()
+        .filter_map(|c| match c {
+            Command::MoveFacing { units: u, x, y, .. } if u[0] == units[0] => Some((*x, *y)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn the_flank_route_stays_outside_the_enemy_box() {
+    let mut r = rig();
+    let foe = foe_line(&mut r, (3000, 6900));
+    let (north, south) = (
+        crowd(&mut r.w, r.horse, 0, (1000, 6400), 8, (4, 20), 0),
+        crowd(&mut r.w, r.horse, 0, (1000, 7600), 8, (4, 20), 0),
+    );
+    let mut me = army(0, 0, vec![body(Duty::Cavalry, &north), body(Duty::Cavalry, &south)]);
+    me.origin = (1000, 7000);
+    let armies = [me, army(1, 128, vec![body(Duty::Line, &foe)])];
+    let mut cm = Commander::new(&r.w, armies, [Control::Ai, Control::Player]);
+    let all = run(&mut r.w, &mut cm, 900);
+    // The box: x 3000..3500, y 6900..7000.
+    let n = moves_to(&all, &north);
+    assert_eq!(n[0].1.signum(), 1);
+    assert!(n[0].1 < 6900 - 300 && n[0].0 > 2500 && n[0].0 < 2800, "north WP1 {:?}", n[0]);
+    assert!(n[0].1 > 6300, "{:?}", n[0]);
+    let s = moves_to(&all, &south);
+    assert!(s[0].1 > 7000 + 300 && s[0].0 > 2500 && s[0].0 < 2800, "south WP1 {:?}", s[0]);
+    assert_eq!(cm.report(0).charges, 0, "the wings are still riding round");
+}
+
+/// A wing at the top edge of the map, a line of the foe and a lone gun, none of them guarded.
+fn edge_scene(r: &mut Rig, kind: TypeId) -> (Vec<EntityId>, Vec<EntityId>, [Army; 2]) {
+    let wing = formed(kind, r, 0, (1200, 350), 0, "LINE12");
+    let line = foe_line(r, (3000, 420));
+    let guns = vec![r.w.spawn(r.gun, 1, Pos::from_pixels(3600, 440), 128)];
+    let mut me = army(0, 0, vec![body(Duty::Cavalry, &wing)]);
+    me.origin = (1000, 500);
+    let armies = [me, army(1, 128, vec![body(Duty::Line, &line), body(Duty::Guns, &guns)])];
+    (wing, guns, armies)
+}
+
+#[test]
+fn the_flank_route_is_blocked_at_the_map_edge() {
+    let mut r = rig();
+    let (wing, guns, armies) = {
+        let k = r.horse;
+        edge_scene(&mut r, k)
+    };
+    let mut cm = Commander::new(&r.w, armies, [Control::Ai, Control::Player]);
+    let all = run(&mut r.w, &mut cm, 900);
+    // No ride round: the wing goes straight for the lone guns, not the line.
+    assert!(moves_to(&all, &wing).is_empty(), "{:?}", moves_to(&all, &wing));
+    let (x, y) = all
+        .iter()
+        .find_map(|c| match c {
+            Command::AttackMove { x, y, .. } => Some((*x, *y)),
+            _ => None,
+        })
+        .expect("a charge");
+    let gun = r.w.units[guns[0].0 as usize].pos.pixels();
+    assert!(dist((x, y), gun) < 60, "aimed at {:?}, guns at {gun:?}", (x, y));
+    assert_eq!(cm.report(0).charges, 1);
+    // Horses have no armed-attack switch.
+    assert!(!all.iter().any(|c| matches!(c, Command::MeleeOnly { .. })));
+}
+
+fn view_of<'a>(armies: &'a [Army; 2], mine: &'a [picture::Picture], theirs: &'a [picture::Picture]) -> super::View<'a> {
+    super::View { tick: 0, me: &armies[0], foe: &armies[1], mine, theirs }
+}
+
+#[test]
+fn the_wing_charges_guns_before_a_karree() {
+    let mut r = rig();
+    let wing = crowd(&mut r.w, r.horse, 0, (1000, 4000), 12, (6, 20), 0);
+    let square = formed(r.mus, &mut r, 1, (3000, 3800), 128, "KARE12");
+    let line = foe_line(&mut r, (3000, 4400));
+    let guns = vec![r.w.spawn(r.gun, 1, Pos::from_pixels(3200, 4000), 128)];
+    let armies = [
+        army(0, 0, vec![body(Duty::Cavalry, &wing)]),
+        army(1, 128, vec![body(Duty::Line, &square), body(Duty::Line, &line), body(Duty::Guns, &guns)]),
+    ];
+    let (mine, theirs) = (picture::of(&r.w, &armies[0]), picture::of(&r.w, &armies[1]));
+    let v = view_of(&armies, &mine, &theirs);
+    // The square stands 200 px from the guns: it protects them, but is never the choice.
+    let at = mine[0].centroid;
+    let pick = super::cavalry::best(&r.w, &v, at, false, None).unwrap();
+    assert_ne!(pick, 0, "a square is charged");
+    // Moved away from the square, the guns come first.
+    r.w.units[guns[0].0 as usize].pos = Pos::from_pixels(3200, 5200);
+    let theirs = picture::of(&r.w, &armies[1]);
+    let v = view_of(&armies, &mine, &theirs);
+    assert_eq!(super::cavalry::best(&r.w, &v, at, false, None), Some(2));
+}
+
+#[test]
+fn a_wing_rallies_and_reforms_after_losses() {
+    let mut r = rig();
+    let (wing, _guns, armies) = {
+        let k = r.dragoon;
+        edge_scene(&mut r, k)
+    };
+    let mut cm = Commander::new(&r.w, armies, [Control::Ai, Control::Player]);
+    let mut all = Vec::new();
+    for _ in 0..1000 {
+        all.extend(run(&mut r.w, &mut cm, 1));
+        if cm.report(0).charges == 1 {
+            break;
+        }
+    }
+    assert_eq!(cm.report(0).charges, 1);
+    // The dragoons charge with the sabre.
+    assert!(all.iter().any(|c| matches!(c, Command::MeleeOnly { on: true, units, .. } if units.contains(&wing[1]))));
+    // Eight of twelve fall.
+    for id in &wing[1..9] {
+        r.w.units[id.0 as usize].alive = false;
+    }
+    let later = run(&mut r.w, &mut cm, 800);
+    assert_eq!(cm.report(0).rallies, 1);
+    assert!(later.iter().any(|c| matches!(c, Command::MeleeOnly { on: false, .. })));
+    assert!(moves_to(&later, &wing).iter().any(|&p| dist(p, (1200, 350)) < 100), "{:?}", moves_to(&later, &wing));
+    assert!(later.iter().any(|c| matches!(c, Command::Reform { group: 0, .. })), "{later:?}");
+}
+
+#[test]
+fn a_resting_wing_intercepts_cavalry() {
+    let mut r = rig();
+    let line = formed(r.mus, &mut r, 0, (1800, 4000), 0, "LINE12");
+    let wing = crowd(&mut r.w, r.horse, 0, (1600, 4600), 8, (4, 20), 0);
+    let riders = crowd(&mut r.w, r.horse, 1, (3000, 4000), 12, (6, 20), 128);
+    let armies = [
+        army(0, 0, vec![body(Duty::Line, &line), body(Duty::Cavalry, &wing)]),
+        army(1, 128, vec![body(Duty::Cavalry, &riders)]),
+    ];
+    let mut cm = Commander::new(&r.w, armies, [Control::Ai, Control::Player]);
+    let first = run(&mut r.w, &mut cm, 1);
+    assert!(!first.iter().any(|c| matches!(c, Command::AttackMove { units, .. } if units.contains(&wing[0]))));
+    for id in &riders {
+        r.w.units[id.0 as usize].pos.x -= 600 << 4;
+    }
+    let mut all = run(&mut r.w, &mut cm, 20);
+    all.extend(run(&mut r.w, &mut cm, 1));
+    let hit = all.iter().find_map(|c| match c {
+        Command::AttackMove { units, x, y, .. } if units.contains(&wing[0]) => Some((*x, *y)),
+        _ => None,
+    });
+    let at = hit.expect("the wing rides at the riders");
+    assert!(dist(at, centroid(&r.w, &riders)) < 100, "{at:?}");
+    assert_eq!(cm.report(0).charges, 1);
 }

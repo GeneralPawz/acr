@@ -11,9 +11,11 @@
 //! A side under [`Control::Player`] is commanded by the player; only its guns are automatic
 //! and a gun the player orders himself is left alone for good. [`Control::Ai`] runs the whole
 //! controller. Today that is the batteries ([`guns`]) and the lines and melee foot ([`line`]) with
-//! their squares against cavalry ([`karree`]); the other duties hold their position until
-//! their behaviours are added in `Commander::decide`: cavalry wings, skirmishers and reserves, and the native styles.
+//! their squares against cavalry ([`karree`]) and the cavalry wings ([`cavalry`]); the other
+//! duties hold their position until their behaviours are added in `Commander::decide`:
+//! skirmishers and reserves, and the native styles.
 
+mod cavalry;
 pub mod frame;
 mod guns;
 mod karree;
@@ -131,6 +133,7 @@ pub struct Commander {
     batteries: [guns::Battery; 2],
     squares: [karree::Squares; 2],
     lines: [line::Line; 2],
+    wings: [cavalry::Wings; 2],
     reports: [Report; 2],
     /// The orders of the last tick asked for, so that asking again repeats them.
     cache: Option<(u64, Vec<Command>)>,
@@ -146,6 +149,7 @@ impl Commander {
             batteries,
             squares: [karree::Squares::new(world), karree::Squares::new(world)],
             lines: Default::default(),
+            wings: Default::default(),
             reports: Default::default(),
             cache: None,
         }
@@ -193,9 +197,12 @@ impl Commander {
             let mine = picture::of(world, me);
             let view = View { tick: world.tick.0, me, foe, mine: &mine, theirs: &foe_pics };
             let held = self.squares[side].decide(world, &view, (&mut *out, &mut *report));
-            self.lines[side].decide(world, &view, &held, (out, report));
+            self.lines[side].decide(world, &view, &held, (&mut *out, &mut *report));
+            if let Some(end) = self.lines[side].cannonade_end() {
+                self.wings[side].decide(world, &view, end + cavalry::HOLD_AFTER, (out, report));
+            }
         }
         // The other duties of an Ai side hold their position until their behaviours are added
-        // here (cavalry wings, skirmishers and reserves, the native styles): no orders.
+        // here (skirmishers and reserves, the native styles): no orders.
     }
 }
