@@ -399,7 +399,19 @@ fn menu_button(screen: [i32; 2]) -> (i32, i32) {
     (screen[0] - RES_PANEL - 65, 0)
 }
 
+/// Width of the "M" plaque and the resource panel together (`RealLx − 781`..`RealLx`).
+const TOP_GROUP: i32 = RES_PANEL + 65;
+
+/// How far the top bar (the "M" plaque, resource values and hints) moves from its right
+/// anchor (0x4ecc50): with `center` (the `center_top_bar` setting) the group is centred on
+/// the screen, otherwise it stays at the original's place.
+fn top_bar_dx(screen: [i32; 2], center: bool) -> i32 {
+    if center { -(screen[0] - TOP_GROUP) / 2 } else { 0 }
+}
+
 pub struct Hud {
+    /// The top bar is centred on a wide screen (`center_top_bar` in `settings.txt`).
+    pub center_top_bar: bool,
     /// The layout size (`RealLx`, `RealLy`), at least [`SCREEN`].
     screen: [i32; 2],
     data: Option<Rc<HudData>>,
@@ -432,6 +444,7 @@ pub struct Hud {
 impl Default for Hud {
     fn default() -> Self {
         Self {
+            center_top_bar: false,
             screen: SCREEN,
             data: None,
             minimap: None,
@@ -492,6 +505,16 @@ impl Hud {
 
     pub fn screen(&self) -> [i32; 2] {
         self.screen
+    }
+
+    fn top_dx(&self) -> i32 {
+        top_bar_dx(self.screen, self.center_top_bar)
+    }
+
+    /// [`menu_button`] with the top bar's shift.
+    fn menu_button(&self) -> (i32, i32) {
+        let (x, y) = menu_button(self.screen);
+        (x + self.top_dx(), y)
     }
 
     /// How far the side panels move right: they are laid out for `RealLx` = 1024 (see
@@ -604,7 +627,7 @@ impl Hud {
         let entries = menu_entries(view);
         let width = entries.iter().map(|e| ctx.fonts.width(ctx.lib, font::WHITE, ctx.texts.get(e.text(self)))).max();
         let width = width.unwrap_or(0) + 24;
-        let (bx, _) = menu_button(self.screen);
+        let (bx, _) = self.menu_button();
         let x = bx + 33 - width / 2;
         let rows =
             entries.into_iter().enumerate().map(|(i, e)| (e, Rect::new(x, 60 + 24 * i as i32, width, 24))).collect();
@@ -643,8 +666,12 @@ impl Hud {
         if self.panel != Panel::None && panels::covers(self.panel_point(p)) {
             return true;
         }
-        let (bx, by) = menu_button(self.screen);
-        if Rect::new(bx, by, 67, 42).contains(p) || (p[1] < 42.0 && p[0] >= (self.screen[0] - RES_PANEL) as f32) {
+        let (bx, by) = self.menu_button();
+        let dx = self.top_dx();
+        let x0 = (self.screen[0] - RES_PANEL + dx) as f32;
+        // Centred, the bar ends before the screen's edge; anchored, it runs to it.
+        let x1 = if dx == 0 { f32::INFINITY } else { x0 + RES_PANEL as f32 };
+        if Rect::new(bx, by, 67, 42).contains(p) || (p[1] < 42.0 && p[0] >= x0 && p[0] < x1) {
             return true;
         }
         if Self::icon_boxes(self.screen, &view.icons).iter().any(|(r, _)| r.contains(p)) {
@@ -720,7 +747,7 @@ impl Hud {
             }
             return HudEvent::Used;
         }
-        let (bx, _) = menu_button(self.screen);
+        let (bx, _) = self.menu_button();
         let [x, y] = p;
         if x > (bx + 23) as f32 && x < (bx + 44) as f32 && y > 8.0 && y < 26.0 {
             self.dropdown = true;
@@ -844,7 +871,7 @@ impl Hud {
         if let Some(market) = view.market {
             draw_market(ctx, market, screen, out);
         }
-        draw_resources(ctx, view, screen, out);
+        draw_resources(ctx, view, screen, self.top_dx(), out);
         if self.dropdown {
             self.draw_dropdown(ctx, view, out);
         }
@@ -913,7 +940,9 @@ impl Hud {
         let Some(m) = self.mouse else { return };
         let mut hint: Option<&[u8]> = None;
         for (i, id) in RES_HINTS.iter().enumerate() {
-            if res_hint_rect(self.screen, i).contains(m) {
+            let mut r = res_hint_rect(self.screen, i);
+            (r.x0, r.x1) = (r.x0 + self.top_dx(), r.x1 + self.top_dx());
+            if r.contains(m) {
                 hint = Some(ctx.texts.get(id));
             }
         }
@@ -1003,14 +1032,19 @@ pub fn border(ctx: &Ctx, out: &mut Vec<Draw>, x0: i32, y0: i32, x1: i32, y1: i32
 /// The resource panel (0x4ecc50): frame 1 tiled every 256 pixels from the left, frame 0 at
 /// `RealLx − 716`, the "M" button frame 2 left of it; values right aligned in `YellowFont`,
 /// 110 pixels apart, with food and gold swapped into the icons' order.
-fn draw_resources(ctx: &Ctx, view: &View, screen: [i32; 2], out: &mut Vec<Draw>) {
+///
+/// `dx` moves the "M" plaque, frame 0 and the values ([`top_bar_dx`]); the filler then runs
+/// the whole width, as frame 0 no longer reaches the edge.
+fn draw_resources(ctx: &Ctx, view: &View, screen: [i32; 2], dx: i32, out: &mut Vec<Draw>) {
     let x0 = screen[0] - RES_PANEL;
-    for i in 0..=(x0 / 256) {
+    let tiles = if dx == 0 { x0 / 256 } else { screen[0] / 256 };
+    let x0 = x0 + dx;
+    for i in 0..=tiles {
         out.push(Draw::game_frame(gp::RESPANEL, 1, i * 256, 0, 0));
     }
     out.push(Draw::game_frame(gp::RESPANEL, 0, x0, 0, 0));
     let (bx, by) = menu_button(screen);
-    out.push(Draw::game_frame(gp::RESPANEL, 2, bx, by, 0));
+    out.push(Draw::game_frame(gp::RESPANEL, 2, bx + dx, by, 0));
     for (i, &value) in view.resources.iter().enumerate() {
         // `FOOD` and `GOLD` change places (0x4ece10).
         let slot = match i {
@@ -1356,6 +1390,25 @@ mod tests {
         let bar_x = ZONE1_SIZE[0] + ZONE1[0] - 5;
         assert_eq!(bar_x, 173);
         assert!(bar_x + 3 < left.x1);
+    }
+
+    /// `center_top_bar`: the plaque, values, hint rects and click region move so that the
+    /// group (781 wide) is centred; off, they stay at the original's right anchor.
+    #[test]
+    fn top_bar_centering_offsets() {
+        for (w, dx, left) in [(1024, -121, 122), (1920, -569, 570), (2560, -889, 890)] {
+            let screen = [w, 1080];
+            assert_eq!(top_bar_dx(screen, false), 0);
+            assert_eq!(top_bar_dx(screen, true), dx);
+            let mut hud = Hud::default();
+            hud.set_screen(screen);
+            assert_eq!(hud.menu_button(), menu_button(screen));
+            hud.center_top_bar = true;
+            assert_eq!(hud.menu_button(), (left, 0));
+            // The group spans left..left + 781: the margins differ by at most a pixel.
+            assert!((left - (w - left - TOP_GROUP)).abs() <= 1);
+            assert_eq!(hud.top_dx(), dx);
+        }
     }
 
     /// The bar along the top edge, the panels at the right edge, the icons and the minimap
