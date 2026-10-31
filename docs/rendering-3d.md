@@ -423,7 +423,8 @@ built glbs), before (all scales 1, exponent 2) and after:
 
 | Model | k (trunk, branch, flutter, tempo), bend | Height | Crown top before | After | At zoom 1 |
 |---|---|---|---|---|---|
-| conifer, spruce | 0.8, 0.4, 0.6, 0.8; 2.8 | 11–12 m | 0.15 m | 0.10–0.11 m (0.9 %) | 3 px |
+| conifer (procedural fir, #346: broadleaf's `_WIND` weights, no per-model k; not remeasured) | scale 1 | 5.6 m | n/a | n/a | n/a |
+| spruce | 0.8, 0.4, 0.6, 0.8; 2.8 | 12 m | 0.15 m | 0.10–0.11 m (0.9 %) | 3 px |
 | conifer_snow | 0.7, 0.3, 0.4, 0.8; 2.8 | 11 m | 0.15 m | 0.09 m | 3 px |
 | pine (no cards) | 0.9, 0.5, 0.5, 0.85; 2.6, crown 0.55 | 6 m | 0.12 m | 0.11 m | 3 px |
 | oak, old_tree, tree_large | 1.2–1.3, 1.6–1.8, 2, 0.9–0.95 | 9–10 m | 0.15–0.16 m | 0.19–0.22 m (2.2–2.5 %) | 6–7 px |

@@ -412,7 +412,7 @@ decodes PNG and JPEG images (`decode_png`, `decode_jpeg` with `zune-jpeg`).
 | `engd18.glb` | 6.99 MB | 3.62 MB | 18 (5.08 → 0.67 MB) |
 | `delkri.glb` | 2.39 MB | 1.50 MB | 12 (1.53 → 0.36 MB) |
 | `engcen.glb` | 2.10 MB | 0.96 MB | 1 (1.50 → 0.21 MB) |
-| `conifer.glb` | 2.24 MB | 1.80 MB | 1 (bark; leaves and normals stay PNG) |
+| `conifer.glb` | 0.32 MB | n/a | procedural fir since #346 (no Sketchfab textures; size of the plain build, not remeasured with the JPEG switch) |
 | `map_t452.glb` | 1.09 MB | 0.87 MB | 1 (normal map stays PNG) |
 
 (Built on the render VM, `ACR_GLTF_JPEG=0` against the default; the swatch rule, added
