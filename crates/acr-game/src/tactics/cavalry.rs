@@ -29,7 +29,7 @@ use super::{Duty, Report, View};
 /// Ticks the wings hold after the cannonade ended.
 pub(super) const HOLD_AFTER: u64 = 200;
 /// How far from the map's edge a unit stays, pixels (the editor's `MAP_MARGIN`).
-const MAP_MARGIN: i32 = 320;
+pub(super) const MAP_MARGIN: i32 = 320;
 /// WP1 lies this far short of the enemy's nearest man, pixels...
 const AHEAD: i32 = 300;
 /// ...and WP1 and WP2 this far outside the side of its box.
