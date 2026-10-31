@@ -86,11 +86,13 @@ impl Shouts {
 
 /// Queues the shouts of the last step's flight legs: only with the life bars on (Tab,
 /// 0x90d411) and not for `NIKAKIXMAM` types (NM+0x172e bit 5, animals); the colour follows
-/// the unit's alliance mask for the local player (OB+0x9a).
+/// the unit's alliance mask for the local player (OB+0x9a). Units of other players in the
+/// fog of war stay silent.
 pub fn collect(
     world: &acr_sim::World,
     terrain: &acr_render::terrain::TerrainData,
     objects: &acr_render::objects_view::ObjectsView,
+    fog: Option<&acr_sim::fog::Fog>,
     player: u8,
     life_bars: bool,
     shouts: &mut Shouts,
@@ -98,16 +100,25 @@ pub fn collect(
     if !life_bars {
         return;
     }
-    for &id in &world.shouts {
-        let Some(u) = world.unit(id) else { continue };
-        let kind = &world.catalog.get(u.kind).id;
-        if objects.objects().definition(kind).is_some_and(|d| d.has("NIKAKIXMAM")) {
-            continue;
-        }
+    for u in shouters(world, objects, fog, player) {
         let (x, y) = (u.pos.x >> 4, u.pos.y >> 4);
         let friend = u.nmask >> (player & 7) & 1 != 0;
         shouts.push(Pending { x, y: (y >> 1) - terrain.height_at(x, y) - 90, friend });
     }
+}
+
+/// The units that shout this step and may be shown to `player`.
+fn shouters<'a>(
+    world: &'a acr_sim::World,
+    objects: &'a acr_render::objects_view::ObjectsView,
+    fog: Option<&'a acr_sim::fog::Fog>,
+    player: u8,
+) -> impl Iterator<Item = &'a acr_sim::Unit> {
+    world.shouts.iter().filter_map(|&id| world.unit(id)).filter(move |u| {
+        let kind = &world.catalog.get(u.kind).id;
+        !objects.objects().definition(kind).is_some_and(|d| d.has("NIKAKIXMAM"))
+            && !super::interface::hidden_in_fog(fog, world, u, player)
+    })
 }
 
 /// 0x5fffc0: the boxes' centres are closer than half their summed sizes on both axes.
@@ -158,6 +169,33 @@ mod tests {
         s.push(Pending { x: 510, y: 305, friend: false });
         s.push(Pending { x: 900, y: 300, friend: false });
         assert_eq!(s.update(&lines(), measure).len(), 2);
+    }
+
+    #[test]
+    fn shouts_of_strangers_in_the_fog_are_dropped() {
+        use acr_sim::Pos;
+        use acr_sim::catalog::{Catalog, ObjectType};
+        use acr_sim::fog::Fog;
+        use acr_sim::formation::Formations;
+        use acr_sim::map::MapGrid;
+        use std::sync::Arc;
+        let mut c = Catalog::new();
+        let t = c.add(ObjectType::from_def(
+            "Mus(EN)",
+            &acr_formats::defs::UnitDef::parse(b"NAME X\r\nLIFE 100\r\nGEOMETRY 1 10 40\r\n[END]\r\n"),
+        ));
+        let mut w = acr_sim::World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(Formations::default()));
+        let mine = w.spawn(t, 0, Pos::from_pixels(900, 900), 0);
+        let foe = w.spawn(t, 1, Pos::from_pixels(900, 900), 0);
+        w.shouts = vec![mine, foe];
+        let objects = acr_render::objects_view::ObjectsView::new();
+        let dark = Fog::new(w.map.shift);
+        let mut open = Fog::new(w.map.shift);
+        open.open();
+        let owners = |fog| shouters(&w, &objects, fog, 0).map(|u| u.owner).collect::<Vec<_>>();
+        assert_eq!(owners(Some(&dark)), [0], "the stranger is in the dark");
+        assert_eq!(owners(Some(&open)), [0, 1]);
+        assert_eq!(owners(None), [0, 1]);
     }
 
     #[test]
