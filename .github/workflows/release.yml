@@ -14,16 +14,41 @@ permissions:
   contents: write
 
 jobs:
-  web:
+  ui:
+    name: svelte ui
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: ui/.bun-version
+      - run: bun install --frozen-lockfile
+        working-directory: ui
+      - run: bun run check && bun run test && bun run build
+        working-directory: ui
+      - uses: actions/upload-artifact@v4
+        with:
+          name: acr-ui
+          path: ui/dist
+          if-no-files-found: error
+
+  web:
+    needs: ui
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: acr-ui
+          path: ui-dist
       - run: rustup toolchain install && rustup target add wasm32-unknown-unknown
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: ui/.bun-version
       - uses: Swatinem/rust-cache@v2
       - run: cargo xtask web --release --app game
+        env:
+          ACR_UI_DIST: ${{ github.workspace }}/ui-dist
       - uses: actions/upload-artifact@v4
         with:
           name: web-bundle
@@ -36,7 +61,7 @@ jobs:
 
   windows:
     name: windows ${{ matrix.arch }}
-    needs: web
+    needs: [web, ui]
     runs-on: windows-latest
     strategy:
       matrix:
@@ -47,11 +72,17 @@ jobs:
             target: aarch64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: acr-ui
+          path: ui-dist
       - run: rustup toolchain install && rustup target add ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
           key: release-${{ matrix.target }}
       - run: cargo build --release --locked --target ${{ matrix.target }} --bin AmericanConquest --bin AmericanConquest-Web
+        env:
+          ACR_UI_DIST: ${{ github.workspace }}/ui-dist
       - uses: actions/download-artifact@v4
         with:
           name: web-bundle

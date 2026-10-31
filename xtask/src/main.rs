@@ -2,7 +2,8 @@
 //!
 //! - `cargo xtask web [--release] [--app game|viewer]`    build a browser app into `target/web/<app>`
 //! - `cargo xtask ui [--watch]`   build the Svelte UI (`ui/`, Bun) into `ui/dist`; `web`, `serve` and
-//!   `dist` do it too for the game unless `--no-ui` (or `ACR_UI_DIST` names a built bundle)
+//!   `dist` do it too for the game unless `--no-ui` (or `ACR_UI_DIST` names a built bundle);
+//!   `dist` also embeds it in `AmericanConquest.exe`
 //! - `cargo xtask ui-diff A.png B.png [--out D.png] [--min PERCENT]`   pixels of two screenshots within +-8
 //! - `cargo xtask serve [--release] [--port N] [--game-dir DIR]`   build, then serve it on
 //!   localhost; with `--game-dir`, the archives are served under `/game/` with range
@@ -206,14 +207,19 @@ fn build_web(app: &str, release: bool) -> Result<PathBuf> {
     Ok(out)
 }
 
-/// Builds the release into `dist/`: the game executable, the browser build (`web/`) and its
+/// Builds the release into `dist/`: the game executable (with the Svelte UI embedded), the browser build (`web/`) and its
 /// launcher. With a game folder, the original icon is embedded in both; `install` also copies them
 /// into that folder, so both can be started from there with a double-click.
 fn dist(game_dir: Option<&Path>, install: bool) -> Result<()> {
     let root = workspace_root();
+    // The executable embeds the Svelte UI (build.rs reads `ACR_UI_DIST`); without Bun it is left out.
+    let ui_dist = ui::bundle(&root, std::env::args().any(|a| a == "--no-ui"))?;
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let mut build = Command::new(cargo);
     build.current_dir(&root).args(["build", "--release", "--package", "acr-game", "--bin", GAME_EXE]);
+    if let Some(dist) = &ui_dist {
+        build.env("ACR_UI_DIST", dist);
+    }
     if let Some(dir) = game_dir {
         if !dir.join("ALL.GSC").is_file() {
             return Err(format!("{} is not an American Conquest folder (no ALL.GSC)", dir.display()).into());

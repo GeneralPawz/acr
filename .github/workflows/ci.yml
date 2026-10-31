@@ -66,12 +66,27 @@ jobs:
         working-directory: ui
       - run: bun run check && bun run test && bun run build
         working-directory: ui
+      - uses: actions/upload-artifact@v4
+        with:
+          name: acr-ui
+          path: ui/dist
+          if-no-files-found: error
+      # The built bundle must end up in the executable's library (webui::bundle).
+      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev  # cpal (acr-audio)
+      - run: cargo test --locked -p acr-game --lib bundle
+        env:
+          ACR_UI_DIST: ${{ github.workspace }}/ui/dist
 
   wasm:
     name: wasm clippy + web bundle
+    needs: ui
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: acr-ui
+          path: ui-dist
       - run: rustup toolchain install && rustup target add wasm32-unknown-unknown
       - uses: oven-sh/setup-bun@v2
         with:
@@ -82,6 +97,8 @@ jobs:
           -p acr-formats -p acr-mapgen -p acr-sim -p acr-script -p acr-mission -p acr-render -p acr-audio -p acr-video -p acr-app -p acr-viewer -p acr-game
           -- -D warnings
       - run: cargo xtask web --release --app game && cargo xtask web --release --app viewer
+        env:
+          ACR_UI_DIST: ${{ github.workspace }}/ui-dist
       - uses: actions/upload-artifact@v4
         with:
           name: acr-web
@@ -92,6 +109,7 @@ jobs:
     name: windows ${{ matrix.arch }}
     # Paused while development runs on Linux (decided 2026-10-31); release.yml still builds Windows.
     if: false
+    needs: ui
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -103,11 +121,17 @@ jobs:
             target: aarch64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: acr-ui
+          path: ui-dist
       - run: rustup toolchain install && rustup target add ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
       - run: cargo build --release --locked --target ${{ matrix.target }} --bin acr --bin acr-viewer --bin AmericanConquest
+        env:
+          ACR_UI_DIST: ${{ github.workspace }}/ui-dist
       - uses: actions/upload-artifact@v4
         with:
           name: acr-windows-${{ matrix.arch }}

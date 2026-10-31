@@ -66,7 +66,8 @@ docs/formats/   reverse-engineered format specifications with evidence
 Everything is done through the workspace: decoders are validated against the full game
 data by `acr` subcommands rather than ad-hoc scripts, and the web build needs no tools
 beyond `cargo`; only the optional Svelte UI (`ui/`, `?ui=svelte`) needs Bun (a justified extra tool: it installs
-the packages and runs Vite and the tests; `cargo xtask web` skips the UI with a warning without `bun`).
+the packages and runs Vite and the tests; `cargo xtask web` skips the UI with a warning without `bun`). `cargo build` embeds `ui/dist` (or
+`ACR_UI_DIST`) in the executable when it exists and warns when it does not; CI builds it in the `ui` job.
 
 ## Design rules
 
