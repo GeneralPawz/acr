@@ -24,6 +24,8 @@ use crate::ui::draw::{Draw, GAME_PALETTE, Rect};
 use crate::ui::fonts::FontId;
 use crate::ui::screens::font as menu_font;
 
+mod presets;
+
 const WHITE: FontId = FontId("SmallWhiteFont");
 const YELLOW: FontId = FontId("SmallYellowFont");
 /// `Interf2\Combo2` (the global at 0x1100c38, loaded at 0x4eff3b) and `Interf2\VScroll2`.
@@ -68,6 +70,8 @@ const X0: i32 = OX + 8;
 const W: i32 = 249 - 16;
 const ROW: i32 = 16;
 const EXTRA_Y: i32 = BOX_Y1 + 6;
+/// The nation combo box (10, 36), 224 wide; a right click on it opens the army menu.
+const COMBO_BOX: Rect = Rect { x0: OX + 10, y0: OY + 36, x1: OX + 10 + 224, y1: OY + 36 + 22 };
 /// The counts offered; a count above one formation's size places several side by side.
 pub const COUNTS: [u32; 12] = [1, 5, 10, 15, 36, 72, 120, 196, 392, 588, 784, 980];
 /// The combo box's lines: the playable nations in the order of `TEXT\NATIONS.TXT` (name, and
@@ -114,6 +118,8 @@ pub enum Act {
     Combo,
     /// Picks a line of the combo box.
     Entry(usize),
+    /// A line of the army menu (a right click on the combo box opens it).
+    Army(presets::Act),
     Pick(TypeId),
     /// Picks the owner (one of the eight colours).
     Owner(u8),
@@ -210,6 +216,8 @@ pub struct Editor {
     pub peace: bool,
     /// Every cannon is reloaded each tick (a test switch, off on start).
     pub auto_reload: bool,
+    /// The army menu and the army the next click on the map places.
+    pub army: presets::Menu,
     /// The last placement or problem, shown under the window.
     status: Vec<u8>,
     /// A press placed or hit the window: its release does nothing else.
@@ -232,6 +240,7 @@ impl Default for Editor {
             // Player 1 faces north (up the screen), player 2 south, the others east.
             facing: [192, 64, 0, 0, 0, 0, 0, 0],
             level: 0,
+            army: presets::Menu::default(),
             peace: true,
             auto_reload: false,
             status: b"Typ waehlen, dann auf die Karte klicken".to_vec(),
@@ -459,10 +468,9 @@ impl Editor {
                 }
             }
         }
-        // The combo box (10, 36), 224 wide.
-        let combo = Rect::new(OX + 10, OY + 36, 224, 22);
+        // The combo box.
         out.push(item(
-            combo,
+            COMBO_BOX,
             ENTRIES[self.entry].0.as_bytes().to_vec(),
             "Nation",
             false,
@@ -487,7 +495,7 @@ impl Editor {
         // ACR's controls in a box under the window.
         let mut y = EXTRA_Y;
         let extras = |rows: i32| Rect::inclusive(OX, BOX_Y1 + 1, BOX_X1, BOX_Y1 + 1 + 12 + rows * ROW);
-        let rows = 13 + i32::from(self.pick.is_some());
+        let rows = 14 + i32::from(self.pick.is_some());
         out.push(item(extras(rows), Vec::new(), "", false, None, Look::Frame { divider: None }));
         let line = |out: &mut Vec<Item>, y: &mut i32, text: Vec<u8>, name: &str, hot: bool, act: Option<Act>| {
             out.push(item(Rect::new(X0, *y, W, ROW), text, name, hot, act, Look::Text));
@@ -548,6 +556,8 @@ impl Editor {
         status.truncate(44);
         line(&mut out, &mut y, status, "", false, None);
         line(&mut out, &mut y, b"Rechtsklick: Platzieren beenden".to_vec(), "", false, None);
+        line(&mut out, &mut y, b"Rechtsklick auf Nation: Armee".to_vec(), "", false, None);
+        out.extend(self.army_items());
         // The open combo box's lines, over everything.
         if self.combo_open {
             for (i, (label, _)) in ENTRIES.iter().enumerate() {
@@ -672,6 +682,12 @@ impl Editor {
         if act != Act::Combo && !matches!(act, Act::Entry(_)) {
             self.combo_open = false;
         }
+        if !matches!(act, Act::Army(_)) {
+            self.army.open = false;
+        }
+        if matches!(act, Act::Pick(_)) {
+            self.army.armed = None;
+        }
         match act {
             Act::Combo => self.combo_open = !self.combo_open,
             Act::Entry(e) => {
@@ -681,6 +697,7 @@ impl Editor {
                     self.scroll = 0;
                 }
             }
+            Act::Army(a) => self.army_act(a),
             Act::Pick(k) => {
                 self.pick = if self.pick == Some(k) { None } else { Some(k) };
                 self.form = self.form.min(formations(world, k).len());
@@ -916,7 +933,7 @@ impl super::InGame {
                     count: None,
                     number: None,
                     clickable: !r.is_empty(),
-                    right_clickable: false,
+                    right_clickable: i.look == Look::Combo,
                 }
             })
             .collect()
@@ -947,10 +964,13 @@ impl super::InGame {
             self.editor.as_mut().expect("editor").swallow_release = true;
             return true;
         }
-        if self.editor.as_ref().is_some_and(|e| e.pick.is_some()) && !self.over_hud(ctx, at) {
+        let armed = self.editor.as_ref().is_some_and(|e| e.pick.is_some() || e.army.armed.is_some());
+        if armed && !self.over_hud(ctx, at) {
             let target = self.world_at(at);
             if let (Some(e), Some(world)) = (&mut self.editor, &mut self.world) {
-                e.place(world, target);
+                if !e.place_armed(world, target) {
+                    e.place(world, target);
+                }
                 e.swallow_release = true;
             }
             return true;
@@ -958,11 +978,19 @@ impl super::InGame {
         false
     }
 
-    /// The right button in the editor: stops placing.
+    /// The right button in the editor: on the nation combo box it opens the army menu,
+    /// elsewhere it stops placing.
     pub(super) fn editor_right(&mut self, pressed: bool) -> bool {
-        match &mut self.editor {
-            Some(e) if pressed && e.pick.is_some() => {
+        let over_combo = self.cursor.is_some_and(|c| COMBO_BOX.contains(self.canvas_point(c)));
+        let local = self.local_player();
+        match (&mut self.editor, &mut self.world) {
+            (Some(e), Some(world)) if pressed && e.open && over_combo => {
+                e.apply(world, Act::Army(presets::Act::Toggle), local);
+                true
+            }
+            (Some(e), _) if pressed && (e.pick.is_some() || e.army.armed.is_some()) => {
                 e.pick = None;
+                e.army.armed = None;
                 true
             }
             _ => false,

@@ -225,7 +225,7 @@ title folds the window; the wheel over it scrolls the icons.
 | In the window | What it does |
 |---|---|
 | The eight colours | the owner of the placed units: players 1 to 7 and, the eighth, the neutral player (wild animals) |
-| Nation combo box | lists the 12 playable nations, then Tiere and Kanonen (ACR's own lists); a click opens it, a line picks it |
+| Nation combo box | lists the 12 playable nations, then Tiere and Kanonen (ACR's own lists); a click opens it, a line picks it; a right click opens the army menu ("Army presets" below) |
 | Icon grid | the nation's land units under Infanterie, Kavallerie and Artillerie, as `ICONS.GP` icons; a click picks the type (again: unpicks); while picked, a left click on the map places it. Marine and buildings are not placed yet (#406) |
 | Scroll bar | the arrows scroll a row, the track a page; no dragging |
 
@@ -259,3 +259,95 @@ A formation is placed standing on its slots with its officer, drummer and flag b
 smallest size that holds the count; above the largest size (196) several are placed side by
 side across the facing. Right click stops placing; F2 or the title folds the panel; the
 wheel over the panel scrolls the list. Fighting starts switched off.
+
+### Army presets
+
+A right click on the nation combo box opens a small menu under it (a button beside the box
+would not fit in the 249 px window): Klein, Mittel, Gross, and above them the century for
+the nations that have several (England, Spanien, Frankreich: 17., 18., early 19.; USA: 18.,
+early 19.; the natives have one army). A size arms the preset; the next left click on the
+map places the army for the chosen owner, centred on the click and facing the Richtung. The
+status line shows the soldiers placed or why nothing was (an army that would leave the map,
+320 px from its edge, or stand in water is not placed at all). A right click on the map, or
+picking an icon, disarms it; the armed preset stays armed for more clicks like a picked
+type. Not in the original. Upgrade levels are not touched; Tiere and Kanonen have no armies.
+The test driver: `rclick` on `Nation`, then `click` on `Armee Mittel`, `Armee 17. Jahrhundert`
+(`tests/e2e/editor_army.json`).
+
+The code is `crates/acr-game/src/ingame/editor/presets.rs`: `place_preset(world, nation,
+size, era, owner, at, facing)` places one (the nation is an index in the combo box's list,
+`era` is `None` for the natives), `blocks(...)` lays it out as a list of bodies: unit type,
+soldiers, formation shape, offset (forward, side) from the clicked point, facing relative to
+the army. A preset is a doctrine (rows of bodies, front to back, per size) and a roster (the
+nation's unit type for each role); the offsets are computed from the formation shapes' real
+slot extents with a 64 px gap between bodies, so bodies never overlap whatever the types.
+The unit tests (`cargo test -p acr-game presets -- --ignored`, with `ACR_GAME_DIR`) place every
+nation, century and size at eight facings and check that every type exists, every formation
+has the size asked for, nothing leaves the map and no two units overlap (0.9 of the sum of
+their radii: the engine's diagonal facings draw formations about 6 % tighter).
+
+**Sizes** (formation bodies, not counting skirmish screens, guns and militia): Klein 2
+(about 80 to 115 men, 0 to 2 guns), Mittel 4 to 6 (about 315 to 510 men, 4 guns
+for the Europeans), Gross 11 to 14 (about 980 to 1660 men, 6 to 8 guns for the Europeans). Formations come in the original's sizes (15, 36, 72,
+120, 196 foot; 40, 90, 160 horse), and the presets use 36 to 120 foot and 40 or 90 horse.
+
+| Family | Nations | Layout, front to back (Gross; Klein and Mittel take part of it) |
+|---|---|---|
+| European, 17th | England, Spanien, Frankreich | skirmishers and 3 batteries of 2 guns in front; first line: horse wing, shot (Linie 72), pike block (Kolonne 72), shot, shot, pike block, shot, horse wing; second line of 120: shot, pikes, shot; one horse body in reserve. Pikes: EngPik, SpnAlb (halberdiers), FrnPik |
+| European, 18th | England, Spanien, Frankreich, USA | skirmishers (EngTap, FrnBuk, SpnS15) and 3 batteries of 2 guns in front; first line: horse wing, 2 lines of 120 Fuesiliere, a battery between, 2 lines, horse wing; second line of 3 lines (the USA with Miliz loose on both flanks); 2 horse bodies in reserve |
+| European, early 19th | England, USA | skirmishers and 3 batteries in front; first line as the 18th (horse wing, 3 lines, a battery, 3 lines, horse wing); second line: Miliz (USA), Karree (72), line (120), Karree, Miliz; one horse body in reserve. Mittel has one Karree in the line, Klein one beside its line |
+| European, early 19th | Spanien, Frankreich | grand battery (4 batteries of 2 guns) between two skirmish screens; one rank of 6 battalion columns (Kolonne 120) with a horse wing at each end; behind it 2 columns of 72 and 2 horse bodies |
+| Woodland | Delawaren, Huronen, Irokesen | loose; a screen of 3 loose groups of shooters (72) in front, then 6 loose groups of 120 warriors (Lanzenkaempfer DelPik, Tomahawkwerfer IroTam), behind them 6 groups of 120 archers |
+| Southwest | Pueblos | as Woodland, with their own arquebusiers as the front line and a captured-horse body (PueVsdA, loose) on each flank |
+| Plains | Sioux | hunters (SiuLut, loose, 3 groups of 72) in front; a row of cavalry wedges (Keil 90): 2 on each wing (mounted shooters), 4 in the centre (lancers); 4 bodies of mounted archers (thin line) behind |
+| Mesoamerica | Maya, Inka, Azteken | in front 4 loose groups of 36 (Inka: slingers; none for the Maya and Aztecs); the line: 4 bodies of 72 warriors, an elite body (Kolonne 120), 4 bodies of 72; behind it 4 bodies of 72 archers |
+
+Totals per nation are printed by `cargo test -p acr-game print_the_presets -- --ignored
+--nocapture`: for example England 18th Klein 114 (2 guns), Mittel 459 (4), Gross 1280 (8);
+Azteken 108, 456, 984; Delawaren 108, 360, 1656; Sioux 80, 422, 1296.
+
+**Unit types.** The game's unit lists carry three European generations: the 17th century
+(Pikenier, Musketier, Dragoner 17. Jhd.), the 18th (Fuesilier, Dragoner 18. Jhd.) and nothing
+of its own for the early 19th, which therefore reuses the 18th's types in another order of
+battle (columns, squares, grand battery). The Europeans' only cavalry are the Dragoner
+types, in the formation `PRUS` (a line) for the wings. The Spanish skirmishers are the
+Hakenbuechsenschuetzen (SpnS15), the USA's are the Trapper (EngTap(US)); England's trappers
+and France's Freibeuter are the other skirmishers. Natives without a melee type use what
+they have: the Aztecs' Speerwerfer (AtcMet) form the front line, the Pueblos' arquebusiers
+(PueS15) too; the Sioux have no foot soldiers but hunters, so their line is horse.
+
+**Sources of the orders of battle** (from the literature, simplified to what the unit lists
+can show; not checked against the books during this work, so treat the details as the
+author's reading):
+
+- 17th century, pike and shot: Rocroi 1643 (the Spanish tercios, pike blocks with shot at the
+  corners, against Conde's French in two lines with cavalry on both wings) and Naseby 1645
+  (the New Model Army: foot in the centre, shot on both sides of the pikes, horse
+  on both wings, dragoons on the flank). Guns in front or between the foot. C. Duffy, *The
+  Military Experience in the Age of Reason*; G. Parker, *The Army of Flanders and the Spanish
+  Road*; R. Brzezinski, *The Army of Gustavus Adolphus*.
+- 18th century, linear: Blenheim 1704 (Marlborough: infantry in two lines, cavalry on the
+  wings and in the second line, guns in front of the centre, the villages held by foot), Fontenoy
+  1745 (the French in a line along the ridge with guns and redoubts, skirmishers in the woods,
+  horse in reserve behind) and Saratoga 1777 (Continentals and militia, Morgan's riflemen and
+  light infantry on the flank, guns on the line). D. Chandler, *The Art of Warfare in the Age of
+  Marlborough*; C. Duffy, *The Army of Maria Theresa*; R. Ketchum, *Saratoga*.
+- Early 19th century: Waterloo 1815 (Wellington's foot in line behind a ridge with skirmishers
+  in front, squares against horse, guns between the brigades; the French in battalion columns
+  and a grand battery of about 80 guns), New Orleans 1815 (regulars and militia in a line, guns
+  between, riflemen on the flanks), Bailen 1808 (Spanish in lines and columns). D. Chandler,
+  *The Campaigns of Napoleon*; J. Haythornthwaite, *Waterloo Men*.
+- Mesoamerica: Aztec armies fought in units of 400 and 8,000 men, opening with missile troops
+  (archers, slingers, spear throwers) and closing with the warriors in the line; in the
+  presets the missile troops stand behind the warriors, as the editor's brief asks. The Inka
+  army was divided into units on a decimal pattern, with slingers and archers before the
+  spearmen; the Maya fought in loose groups under chiefs with an elite guard. R. Hassig,
+  *Aztec Warfare*; J. Rowe, "Inca culture at the time of the Spanish conquest"; D. Webster,
+  "The Not So Peaceful Civilization" (Journal of World Prehistory 14, 2000).
+- Woodland: the Iroquois and Huron fought in loose lines or crescents with the archers and, from
+  the 17th century, musket men behind and between the warriors, in ambush and without
+  formations; D. Richter, *The Ordeal of the Longhouse*; W. Starkey, *European and Native
+  American Warfare 1675-1815*. Plains: Sioux war parties on horseback, in groups, charging
+  in a front with the archers and shooters on the flanks, the foot hunters scouting; R. Hyde,
+  *Red Cloud's Folk*. Pueblos: the revolt of 1680 with bows, captured Spanish arms and horses.
+
