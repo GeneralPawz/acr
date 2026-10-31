@@ -201,7 +201,8 @@ impl SaveGame {
             | u64::from(self.setup.rules.group_move) << 4
             | u64::from(self.setup.rules.cannon_fire) << 5
             | u64::from(self.setup.rules.ball_terrain) << 6
-            | u64::from(self.setup.rules.formation_attack) << 7);
+            | u64::from(self.setup.rules.formation_attack) << 7
+            | u64::from(self.setup.rules.animal_give_up) << 9);
         w.0
     }
 
@@ -248,6 +249,7 @@ impl SaveGame {
                 cannon_fire: bits & 32 != 0,
                 ball_terrain: bits & 64 != 0,
                 formation_attack: bits & 128 != 0,
+                animal_give_up: bits & 512 != 0,
             };
         }
         if r.pos != data.len() {

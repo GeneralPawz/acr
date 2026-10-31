@@ -44,6 +44,10 @@ pub struct Rules {
     /// as it reaches free units; the original ignores it for them ([`crate::combat::attack_obj_times`],
     /// `docs/simulation.md`, "Formation attack").
     pub formation_attack: bool,
+    /// Animals give up a chase when the target gets too far from where it began and walk
+    /// back ([`crate::leash`], `docs/simulation.md`, "Animals give up"). The original chases
+    /// until the target is dead (AttackObjLink 0x51bcaf).
+    pub animal_give_up: bool,
 }
 
 impl std::hash::Hash for Rules {
@@ -67,6 +71,9 @@ impl std::hash::Hash for Rules {
         }
         if self.formation_attack {
             (7u8, self.formation_attack).hash(state);
+        }
+        if self.animal_give_up {
+            (9u8, self.animal_give_up).hash(state);
         }
     }
 }
