@@ -10,11 +10,14 @@
 //! formation, upgrade level, facing, fighting, cannon switches, the player to control) sit in
 //! a second box directly under it.
 
+mod levels;
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 
 use acr_sim::catalog::{Medium, MotionStyle};
 use acr_sim::fixed::Pos;
+use acr_sim::tech::UpgradeId;
 use acr_sim::{TypeId, World};
 
 use crate::hud::{self, SCREEN, panels};
@@ -98,11 +101,6 @@ pub const NEUTRAL: u8 = 7;
 const FACINGS: [&str; 8] = ["Ost", "Suedost", "Sued", "Suedwest", "West", "Nordwest", "Nord", "Nordost"];
 /// Space between formations placed side by side, world pixels.
 const FORMATION_GAP: i32 = 64;
-/// Upgrade levels: the button in the settings and the name.
-// TODO(#402): a right click on an icon opens a level drop-down; these buttons then go.
-const LEVELS: [(&str, &str); 3] = [("B", "Basis"), ("H", "Halb"), ("V", "Voll")];
-/// Width of one level button.
-const LEVEL_W: i32 = 24;
 /// The categories of a nation's list (the `ED_` headers of `TEXT\EDITOR.TXT`); the original
 /// also has marine and buildings, which this editor cannot place yet.
 const CATEGORIES: [&str; 3] = ["Infanterie", "Kavallerie", "Artillerie"];
@@ -117,9 +115,8 @@ pub enum Act {
     Pick(TypeId),
     /// Picks the owner (one of the eight colours).
     Owner(u8),
-    /// Sets the upgrade level directly (a button of the settings).
+    /// Picks the open level drop-down's type at that level ([`levels`]).
     SetLevel(usize),
-    Level(i32),
     /// Scrolls the icons by pixels / by pages (the scroll bar's arrows and track).
     ScrollBy(i32),
     Count(i32),
@@ -182,6 +179,8 @@ pub struct View<'a> {
     pub names: &'a dyn Fn(TypeId) -> Vec<u8>,
     /// A type's `ICONS.GP` frame (`ICON` of its `.MD`), if it has one.
     pub icon: &'a dyn Fn(TypeId) -> Option<usize>,
+    /// An upgrade's text, as the game's upgrade hint shows it.
+    pub upgrade_name: &'a dyn Fn(UpgradeId) -> Vec<u8>,
     /// `ED_HDR01`.
     pub title: Vec<u8>,
 }
@@ -203,9 +202,11 @@ pub struct Editor {
     /// The player placed units belong to, 0..=7 ([`NEUTRAL`] is wild animals).
     owner: u8,
     facing: [u8; 8],
-    /// Upgrade level of placed types, an index in [`LEVELS`]: none, the first half of the
-    /// type's upgrades or all of them ([`acr_sim::upgrade::of_type`]).
+    /// Training level of the picked type: how many of its upgrades apply, in the nation
+    /// file's order ([`levels`]).
     level: usize,
+    /// The level drop-down, open after a right click on an icon.
+    menu: Option<levels::Menu>,
     /// Fighting is off: every player is everybody's ally (set on start).
     pub peace: bool,
     /// Every cannon is reloaded each tick (a test switch, off on start).
@@ -232,6 +233,7 @@ impl Default for Editor {
             // Player 1 faces north (up the screen), player 2 south, the others east.
             facing: [192, 64, 0, 0, 0, 0, 0, 0],
             level: 0,
+            menu: None,
             peace: true,
             auto_reload: false,
             status: b"Typ waehlen, dann auf die Karte klicken".to_vec(),
@@ -487,7 +489,7 @@ impl Editor {
         // ACR's controls in a box under the window.
         let mut y = EXTRA_Y;
         let extras = |rows: i32| Rect::inclusive(OX, BOX_Y1 + 1, BOX_X1, BOX_Y1 + 1 + 12 + rows * ROW);
-        let rows = 13 + i32::from(self.pick.is_some());
+        let rows = 12 + i32::from(self.pick.is_some());
         out.push(item(extras(rows), Vec::new(), "", false, None, Look::Frame { divider: None }));
         let line = |out: &mut Vec<Item>, y: &mut i32, text: Vec<u8>, name: &str, hot: bool, act: Option<Act>| {
             out.push(item(Rect::new(X0, *y, W, ROW), text, name, hot, act, Look::Text));
@@ -517,16 +519,8 @@ impl Editor {
             _ => "lose".into(),
         };
         pair(&mut out, &mut y, format!("Formation: {form}"), "Formation", Act::Form(-1), Act::Form(1));
-        let ups = self.pick.map_or(0, |k| acr_sim::upgrade::of_type(&world.catalog, k).len());
-        let level = format!("Ausbau: {} ({}/{ups})", LEVELS[self.level].1, level_count(self.level, ups));
-        pair(&mut out, &mut y, level, "Ausbau", Act::Level(-1), Act::Level(1));
-        // The level buttons; TODO(#402) replaces them with the icons' right-click drop-down.
-        for (l, (label, name)) in LEVELS.iter().enumerate() {
-            let rect = Rect::new(X0 + l as i32 * LEVEL_W, y, LEVEL_W, ROW);
-            let text = label.as_bytes().to_vec();
-            out.push(item(rect, text, &format!("Ausbau {name}"), self.level == l, Some(Act::SetLevel(l)), Look::Text));
-        }
-        y += ROW;
+        let level = self.level_line(world, view);
+        line(&mut out, &mut y, level, "Ausbau", false, None);
         let facing = format!("Richtung: {}", FACINGS[usize::from(self.facing() / 32) & 7]);
         pair(&mut out, &mut y, facing, "Richtung", Act::Facing(-1), Act::Facing(1));
         let owner = if self.owner == NEUTRAL { "Neutral".to_owned() } else { format!("Spieler {}", self.owner + 1) };
@@ -563,7 +557,45 @@ impl Editor {
                 ));
             }
         }
+        // The level drop-down, over everything.
+        if let Some(menu) = self.menu {
+            let names = levels::names(world, menu.kind, view.upgrade_name);
+            let rows = menu.rows(names.len(), names.iter().map(Vec::len).max().unwrap_or(0));
+            for (n, (rect, text)) in rows.into_iter().zip(names).enumerate() {
+                let name = format!("Ausbau {}", String::from_utf8_lossy(&text));
+                let hot = self.pick == Some(menu.kind) && self.level == n;
+                out.push(item(rect, text, &name, hot, Some(Act::SetLevel(n)), Look::DropRow));
+            }
+        }
         out
+    }
+
+    /// The Ausbau line: the picked type's level, its name and the upgrades applied.
+    fn level_line(&self, world: &World, view: &View) -> Vec<u8> {
+        let names = self.pick.map_or_else(
+            || vec![levels::BASIS.as_bytes().to_vec()],
+            |kind| levels::names(world, kind, view.upgrade_name),
+        );
+        // The upgrade texts are long: the count comes first, the line is cut to the window.
+        let mut text = format!("Ausbau {}/{}: ", self.level, names.len() - 1).into_bytes();
+        text.extend(names.get(self.level).map_or(&[][..], Vec::as_slice));
+        text.truncate(44);
+        text
+    }
+
+    /// A right click on the icon of `kind` at `cell`: opens its level drop-down.
+    pub fn open_levels(&mut self, kind: TypeId, cell: Rect) {
+        self.combo_open = false;
+        self.menu = Some(levels::Menu { kind, anchor: cell });
+    }
+
+    pub fn menu_open(&self) -> bool {
+        self.menu.is_some()
+    }
+
+    /// Closes the level drop-down; true if it was open.
+    pub fn close_levels(&mut self) -> bool {
+        self.menu.take().is_some()
     }
 
     /// The window's whole area (clicks there never reach the map).
@@ -672,6 +704,7 @@ impl Editor {
         if act != Act::Combo && !matches!(act, Act::Entry(_)) {
             self.combo_open = false;
         }
+        let menu = self.menu.take();
         match act {
             Act::Combo => self.combo_open = !self.combo_open,
             Act::Entry(e) => {
@@ -683,11 +716,17 @@ impl Editor {
             }
             Act::Pick(k) => {
                 self.pick = if self.pick == Some(k) { None } else { Some(k) };
+                self.level = 0;
                 self.form = self.form.min(formations(world, k).len());
             }
             Act::Owner(p) => self.owner = p,
-            Act::SetLevel(l) => self.level = l.min(LEVELS.len() - 1),
-            Act::Level(d) => self.level = (self.level as i32 + d).rem_euclid(LEVELS.len() as i32) as usize,
+            Act::SetLevel(l) => {
+                if let Some(m) = menu {
+                    self.pick = Some(m.kind);
+                    self.level = l.min(levels::steps(world, m.kind));
+                    self.form = self.form.min(formations(world, m.kind).len());
+                }
+            }
             Act::ScrollBy(d) => self.scroll_by(world, d),
             Act::Count(d) => self.count = (self.count as i32 + d).clamp(0, COUNTS.len() as i32 - 1) as usize,
             Act::Form(d) => {
@@ -749,10 +788,11 @@ impl Editor {
             let o = world.formations.officers.get(&c.officer).cloned().unwrap_or_default();
             kinds.extend([Some(c.officer), o.drummer, o.flag].into_iter().flatten());
         }
-        let ups = acr_sim::upgrade::of_type(&world.catalog, kind).len();
-        for &k in &kinds {
-            let n = level_count(self.level, acr_sim::upgrade::of_type(&world.catalog, k).len());
-            acr_sim::upgrade::set_type_level(world, owner, k, n);
+        let ups = levels::steps(world, kind);
+        let level = levels::apply(world, owner, kind, self.level);
+        // The officer, drummer and flag bearer stand at the same level, as far as they have it.
+        for &k in kinds.iter().skip(1) {
+            levels::apply(world, owner, k, level);
         }
         let placed = match form {
             Some(choice) => place_formations(world, kind, &choice, n, owner, at, dir),
@@ -768,19 +808,9 @@ impl Editor {
         set_peace(world, self.peace);
         let name = world.catalog.get(kind).id.clone();
         self.status = match placed {
-            Ok(k) => format!("{k} x {name}, Ausbau {}/{ups}", level_count(self.level, ups)).into_bytes(),
+            Ok(k) => format!("{k} x {name}, Ausbau {level}/{ups}").into_bytes(),
             Err(e) => e.into_bytes(),
         };
-    }
-}
-
-/// How many of a type's `ups` upgrades level `level` applies: none, the first half
-/// (rounded up) or all.
-fn level_count(level: usize, ups: usize) -> usize {
-    match level {
-        0 => 0,
-        1 => ups.div_ceil(2),
-        _ => ups,
     }
 }
 
@@ -839,6 +869,12 @@ fn place_formations(
     Ok(placed)
 }
 
+impl Look {
+    fn is_icon(self) -> bool {
+        matches!(self, Look::Icon { .. })
+    }
+}
+
 impl Item {
     /// Where a click hits: icons and headers only inside the clipped content.
     pub fn hit_rect(&self) -> Rect {
@@ -889,7 +925,9 @@ impl super::InGame {
             n
         };
         let icon = |k: TypeId| e.icons.borrow().as_ref().and_then(|m| m.get(&k).copied().flatten());
-        let view = View { names: &names, icon: &icon, title: ctx.texts.get("ED_HDR01").to_vec() };
+        let upgrade_name = |u: acr_sim::tech::UpgradeId| ctx.texts.get(&world.catalog.tech.upgrade(u).message).to_vec();
+        let view =
+            View { names: &names, icon: &icon, upgrade_name: &upgrade_name, title: ctx.texts.get("ED_HDR01").to_vec() };
         e.layout(world, &view, self.local_player())
     }
 
@@ -916,7 +954,7 @@ impl super::InGame {
                     count: None,
                     number: None,
                     clickable: !r.is_empty(),
-                    right_clickable: false,
+                    right_clickable: i.look.is_icon(),
                 }
             })
             .collect()
@@ -935,6 +973,13 @@ impl super::InGame {
         let Some(at) = self.cursor else { return false };
         let p = self.canvas_point(at);
         let items = self.editor_items(ctx);
+        // A press outside the level drop-down closes it; one on the map does no more.
+        let on_menu = items.iter().any(|i| i.look == Look::DropRow && i.rect.contains(p));
+        let closed = self.editor.as_mut().is_some_and(|e| !on_menu && e.close_levels());
+        if closed && !Editor::bounds(&items).contains(p) {
+            self.editor.as_mut().expect("editor").swallow_release = true;
+            return true;
+        }
         if Editor::bounds(&items).contains(p) || items.iter().any(|i| i.look == Look::DropRow && i.rect.contains(p)) {
             let act = items.iter().rev().find(|i| i.act.is_some() && i.hit_rect().contains(p)).and_then(|i| i.act);
             let local = self.local_player();
@@ -958,15 +1003,33 @@ impl super::InGame {
         false
     }
 
-    /// The right button in the editor: stops placing.
-    pub(super) fn editor_right(&mut self, pressed: bool) -> bool {
-        match &mut self.editor {
-            Some(e) if pressed && e.pick.is_some() => {
-                e.pick = None;
-                true
-            }
-            _ => false,
+    /// The right button in the editor: on an icon, opens its level drop-down; elsewhere
+    /// closes the drop-down or stops placing.
+    pub(super) fn editor_right(&mut self, ctx: &Ctx, pressed: bool) -> bool {
+        if !pressed || self.editor.is_none() {
+            return false;
         }
+        let icon = self.cursor.map(|at| self.canvas_point(at)).and_then(|p| {
+            let items = self.editor_items(ctx);
+            let hit = items.iter().rev().find(|i| i.act.is_some() && i.hit_rect().contains(p))?;
+            match (hit.look, hit.act) {
+                (Look::Icon { .. }, Some(Act::Pick(k))) => Some((k, hit.rect)),
+                _ => None,
+            }
+        });
+        let e = self.editor.as_mut().expect("editor");
+        if let Some((kind, cell)) = icon {
+            e.open_levels(kind, cell);
+            return true;
+        }
+        if e.close_levels() {
+            return true;
+        }
+        if e.pick.is_some() {
+            e.pick = None;
+            return true;
+        }
+        false
     }
 
     /// The wheel over the window scrolls its icons.
@@ -977,14 +1040,21 @@ impl super::InGame {
             return false;
         }
         if let (Some(e), Some(world)) = (&mut self.editor, &self.world) {
+            e.close_levels();
             e.wheel(world, lines);
         }
         true
     }
 
-    /// F2 folds the window.
+    /// F2 folds the window; Escape closes the level drop-down.
     pub(super) fn editor_key(&mut self, key: &winit::keyboard::Key, pressed: bool) -> bool {
         match (&mut self.editor, key) {
+            (Some(e), winit::keyboard::Key::Named(winit::keyboard::NamedKey::Escape)) if e.menu_open() => {
+                if pressed {
+                    e.close_levels();
+                }
+                true
+            }
             (Some(e), winit::keyboard::Key::Named(winit::keyboard::NamedKey::F2)) => {
                 if pressed {
                     e.open = !e.open;
@@ -1017,15 +1087,6 @@ mod tests {
         e.count = (e.count as i32 - 1).clamp(0, COUNTS.len() as i32 - 1) as usize;
         assert_eq!(e.count(), 1);
         assert!(COUNTS.contains(&196));
-    }
-
-    #[test]
-    fn levels_apply_none_half_or_all_upgrades() {
-        assert_eq!([0, 1, 2].map(|l| level_count(l, 7)), [0, 4, 7]);
-        assert_eq!([0, 1, 2].map(|l| level_count(l, 0)), [0, 0, 0]);
-        let mut e = Editor::default();
-        e.level = (e.level as i32 - 1).rem_euclid(LEVELS.len() as i32) as usize;
-        assert_eq!(LEVELS[e.level].1, "Voll", "stepping back from Basis wraps to Voll");
     }
 
     #[test]

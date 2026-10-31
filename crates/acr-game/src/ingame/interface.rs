@@ -2602,7 +2602,7 @@ impl InGame {
     /// move marker. On the map the order is given on release: a drag of more than 30 map
     /// pixels moves to the press point facing the drag's direction (0x4c4cea..0x4c5891).
     pub fn right_button(&mut self, ctx: &Ctx, pressed: bool) {
-        if self.editor_right(pressed) || self.orbit_button(ctx, pressed) {
+        if self.editor_right(ctx, pressed) || self.orbit_button(ctx, pressed) {
             return;
         }
         if !pressed {

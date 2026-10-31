@@ -1,0 +1,39 @@
+{
+  "name": "editor_levels",
+  "description": "The test editor's training levels (#402): a right click on a unit icon opens a drop-down (Basis, then one line per upgrade of the type, named by the upgrade's text); a choice picks the unit at that level. Player 1 places a Füsilier at Basis, player 2 at the level of 'Spezialmusketen' (every upgrade of the nation file up to it), Escape and a click outside close the drop-down, and a right click on the map still stops placing.",
+  "steps": [
+    {"cmd": "start", "blank": {"editor": true}},
+    {"cmd": "wait", "ticks": 5},
+    {"cmd": "click", "label": "Nation", "exact": true},
+    {"cmd": "click", "label": "Nation Frankreich", "exact": true},
+    {"cmd": "click", "label": "Anzahl -", "exact": true, "note": "36 -> 15"},
+    {"cmd": "click", "label": "Anzahl -", "exact": true, "note": "10"},
+    {"cmd": "click", "label": "Anzahl -", "exact": true, "note": "5"},
+    {"cmd": "click", "label": "Anzahl -", "exact": true, "note": "1"},
+    {"cmd": "rclick", "label": "(FrnM18(FR))", "note": "opens the level drop-down"},
+    {"cmd": "click", "label": "Ausbau Basis", "exact": true},
+    {"cmd": "click", "pos": [400, 400]},
+    {"cmd": "wait", "ticks": 2},
+    {"cmd": "state", "units": true, "detail": true, "owner": 0, "expect": [
+      {"path": "state.units", "len_eq": 1},
+      {"path": "state.units.0.adv.damage.1", "eq": 600},
+      {"path": "state.units.0.adv.pause.1", "eq": 520}]},
+    {"cmd": "rclick", "pos": [700, 300], "note": "on the map: stops placing"},
+    {"cmd": "rclick", "label": "(FrnM18(FR))"},
+    {"cmd": "key", "key": "Escape", "note": "closes the drop-down"},
+    {"cmd": "click", "label": "Ausbau Basis", "exact": true, "expect": {"ok": false}, "note": "it is closed"},
+    {"cmd": "rclick", "label": "(FrnM18(FR))"},
+    {"cmd": "click", "pos": [300, 600], "note": "outside click closes it and places nothing"},
+    {"cmd": "click", "label": "Ausbau Basis", "exact": true, "expect": {"ok": false}},
+    {"cmd": "click", "label": "Spieler 2", "exact": true},
+    {"cmd": "rclick", "label": "(FrnM18(FR))"},
+    {"cmd": "click", "label": "Ausbau Spezialmusketen"},
+    {"cmd": "click", "pos": [500, 400]},
+    {"cmd": "wait", "ticks": 2},
+    {"cmd": "state", "units": true, "detail": true, "owner": 1, "expect": [
+      {"path": "state.units", "len_eq": 1},
+      {"path": "state.units.0.adv.damage.1", "eq": 726},
+      {"path": "state.units.0.adv.pause.1", "eq": 159}]},
+    {"cmd": "state", "units": true, "detail": true, "owner": 0, "expect": {"path": "state.units.0.adv.pause.1", "eq": 520}}
+  ]
+}

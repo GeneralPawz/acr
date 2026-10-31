@@ -226,7 +226,7 @@ title folds the window; the wheel over it scrolls the icons.
 |---|---|
 | The eight colours | the owner of the placed units: players 1 to 7 and, the eighth, the neutral player (wild animals) |
 | Nation combo box | lists the 12 playable nations, then Tiere and Kanonen (ACR's own lists); a click opens it, a line picks it |
-| Icon grid | the nation's land units under Infanterie, Kavallerie and Artillerie, as `ICONS.GP` icons; a click picks the type (again: unpicks); while picked, a left click on the map places it. Marine and buildings are not placed yet (#406) |
+| Icon grid | the nation's land units under Infanterie, Kavallerie and Artillerie, as `ICONS.GP` icons; a click picks the type at Basis (again: unpicks); while picked, a left click on the map places it. A right click opens the icon's training levels, see below. Marine and buildings are not placed yet (#406) |
 | Scroll bar | the arrows scroll a row, the track a page; no dragging |
 
 Under the window ACR's own controls:
@@ -235,8 +235,7 @@ Under the window ACR's own controls:
 |---|---|
 | Anzahl | 1, 5, 10, 15, 36, 72, 120, 196, 392, 588, 784 or 980 |
 | Formation | lose (a square block) or the formations the type's officers lead: Linie, Kolonne, Karree for infantry, the cavalry wedges as named in `ORD_GROUPS.LST` |
-| Ausbau | the upgrade level; shows how many of the picked type's upgrades it applies |
-| B H V | sets the upgrade level directly: Basis (none), Halb (the first half of the upgrades, rounded up) or Voll (all); a right-click drop-down on the icons replaces them (#402) |
+| Ausbau | the picked type's training level: `Ausbau n/m: name`, n of its m upgrades applied (set by the icons' right-click drop-down) |
 | Richtung | the facing, in eight steps; kept per owner |
 | Besitzer | the owner picked among the colours |
 | Kampf | AUS: every player is everybody's ally, nobody attacks; AN: the sides fight |
@@ -245,15 +244,25 @@ Under the window ACR's own controls:
 | Ich steuere | which player's units the mouse selects and commands (player 1 or 2) |
 
 The test driver lists the window's controls in `ui` as `editor/<n>` (names like `Anzahl +`,
-`Ausbau Halb`, `Nation Frankreich`, `Spieler 2`, `Neutral`, an icon by its name and type id),
-so `tests/e2e/editor_window.json` clicks them by label.
+`Ausbau Basis`, `Nation Frankreich`, `Spieler 2`, `Neutral`, an icon by its name and type id),
+so `tests/e2e/editor_window.json` and `editor_levels.json` click them by label.
 
-The upgrade level applies the upgrades that change the type's characteristics (damage,
+**Training levels.** A right click on a unit icon opens a drop-down (the combo box's list look)
+under it: "Basis" (no upgrade), then one line per upgrade of the type in the nation file's
+order, named by the upgrade's text as the game's upgrade hint shows it (`Spezialmusketen
+kaufen (FEUERRATE FÜSILIER +35%)`; an upgrade without a text by its id). A choice picks the
+type at that level: exactly the upgrades up to and including that line. Escape, a click
+outside or a choice closes it; a right click on the map still stops placing (and, with the
+drop-down open, closes it). The level is the picked type's: picking another icon with the left
+click starts at Basis again. The test driver's `state` with `detail` lists each object's
+`adv` (life, damage and pause per attack index of its owner's characteristics).
+
+The levels apply the upgrades that change the type's characteristics (damage,
 protection, life, range, cannon spread `RAZBROS`, reload pause, speed, cost; `upgrade::of_type`,
 in the nation file's order) as if researched, without marking them researched. Like researched
 upgrades it holds per owner and type: placing a type at another level changes that owner's
 units of the type already standing too, so compare levels between Spieler 1 and Spieler 2. A
-formation's officer, drummer and flag bearer get the same level of their own upgrades.
+formation's officer, drummer and flag bearer get the same level, as far as their own upgrades go.
 
 A formation is placed standing on its slots with its officer, drummer and flag bearer, in the
 smallest size that holds the count; above the largest size (196) several are placed side by

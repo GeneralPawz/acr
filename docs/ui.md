@@ -1368,7 +1368,9 @@ frames `Interf2\Combo2` at 0x4eff3b.
 - ACR's additions: the combo box ends with "Tiere" and "Kanonen"; the eighth colour is the
   neutral player 7 (wild animals); the controls of docs/controls.md sit in a second paper box
   under the window; the combo box's list, the arrows and track of the scroll bar are clicks
-  only (no dragging); the fonts (`fon16y1`/`fon16y3`) and the colour of the title are guesses
+  only (no dragging); a right click on an icon opens a drop-down of the unit's training levels
+  (Basis, then the type's upgrades by their text, docs/controls.md "Editor") in the combo
+  box's list look, closed by Escape, an outside click or a choice; the fonts (`fon16y1`/`fon16y3`) and the colour of the title are guesses
   (the original's are the globals 0x676be0, 0x9091cc, 0x90d69c).
 
 ## Load and save dialogs
