@@ -96,7 +96,9 @@ impl Placement {
 /// `NoSearchVictim` an attack below 0x80 is accepted without effect, and one of 0x80 or more
 /// clears the flag; an attack below the unit's current priority is refused; below 5 the unit
 /// only switches to a strictly closer enemy. The order keeps `prio & 0x7f`; a unit on a
-/// patrol-like move (`InPatrol`) gets the attack in front.
+/// patrol-like move (`InPatrol`) gets the attack in front. With [`crate::Rules::formation_attack`]
+/// a 0xFE attack skips the formation step (0x51ad61..0x51ad6c) and the member attacks like a
+/// free unit.
 pub fn attack_obj_ex(w: &mut World, i: usize, j: usize, prio: u8, placement: Placement) -> bool {
     attack_obj_times(w, i, j, prio, placement, 0)
 }
@@ -157,6 +159,7 @@ pub fn attack_obj_times(w: &mut World, i: usize, j: usize, prio: u8, placement: 
         && prio != 0x8F
         && !ut.role.artillery
         && !e.building
+        && !(raw == 0xFE && w.rules.formation_attack)
         && let Some(br) = w.brigades.get(b)
     {
         if !br.shooters {

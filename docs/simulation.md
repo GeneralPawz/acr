@@ -1472,6 +1472,27 @@ nearest first, while the ball is below `TRUNK_TOP` 100 px (stones `STONE_TOP` 40
   (`ball_terrain::add_object`); `state` lists `struck` and the last `impacts`.
 - Tests: `tests/ball_terrain.rs`.
 
+### Formation attack (optional rule, #352)
+
+In the original, the members of a close-combat formation ignore a right-click attack on a
+unit that is not a building. `AttackObj` (0x51a930) turns the interface's priority 0xFE into
+0x90 and then, for a brigade member that is not a shooters' formation (not artillery, target
+no building, priority not 0x8F), returns at 0x51ad61..0x51ad6c without an order (an idle
+formation starts `Bitva` instead only for other priorities). The line keeps standing; the
+player has to give the formation its own move or attack order.
+
+**The rule** (`Rules::formation_attack`, `combat::attack_obj_times`): with it on, a 0xFE
+attack skips that formation step, so the member goes on through the gate like a free unit.
+Other priorities (scripts, the AI, 0x8F) keep the original's formation handling. Off (the
+default) is the original.
+
+- Switched on by `formation_attack=on|off` in `settings.txt` (default off), page 5 of the
+  options ("Formationsangriff"), savegame rules bit 7, the driver's `start` and `studio` key
+  `formation_attack`. Hashed only when on, so replays and multiplayer games compare the rule
+  through the state hash like the other rules.
+- Tests: `tests/formation_attack.rs` (a LINE of pikemen with an officer ordered at an enemy
+  unit: stands with the rule off, engages with it on).
+
 ### Mortar (optional rule, #301)
 
 Not in the original game. Period field guns fired solid shot almost flat, so indirect fire
