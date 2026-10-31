@@ -6,7 +6,7 @@ use naga::valid::{Capabilities, ValidationFlags, Validator};
 
 const SHADERS: [(&str, &str); 14] = [
     ("mipgen.wgsl", acr_render::mipgen::SHADER),
-    ("ground_cover.wgsl", include_str!("../src/ground_cover.wgsl")),
+    ("ground_cover.wgsl", acr_render::ground_cover::GROUND_COVER_SHADER),
     ("weather.wgsl", include_str!("../src/weather.wgsl")),
     ("particles.wgsl", include_str!("../src/particles.wgsl")),
     ("water.wgsl", include_str!("../src/water.wgsl")),
