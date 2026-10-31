@@ -298,6 +298,11 @@ impl InGame {
         "normal".into()
     }
 
+    /// The touch placement outline's window position while one is shown (#439).
+    pub fn touch_outline(&self) -> Option<[f32; 2]> {
+        (self.interface.touch && self.interface.placing.is_some()).then(|| self.touch_outline_at())
+    }
+
     /// The window size the interface was last laid out for.
     pub fn window_size_px(&self) -> [f32; 2] {
         self.interface.window

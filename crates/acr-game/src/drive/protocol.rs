@@ -271,6 +271,16 @@ pub enum Request {
     /// `{"cmd": "top_bar", "mode": "touch"}`: the top bar shown, over the `top_bar` setting;
     /// answers the buttons' and the panel's window rects and whether the panel is open.
     TopBar(crate::ui::settings::TopBar),
+    /// `{"cmd": "touch", "phase": "start|move|end|tick", "id": 1, "pos": [x, y], "t": 0}`: a
+    /// finger through the touch gestures, which also puts the game in touch mode. The
+    /// position is any pointer target (`pos`, `label`, ...); `t` (ms) sets the touch clock the
+    /// long press and the double tap use (kept until the next `t`); `tick` only advances it.
+    Touch {
+        phase: Option<crate::touch::Phase>,
+        id: u64,
+        target: Option<Target>,
+        time: Option<u64>,
+    },
     /// The fog of war on or off (off: the whole map revealed, as on the blank field).
     Fog(bool),
     /// The map's trees and stones as models switched on or off over `map_models`.
@@ -552,6 +562,17 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
             timeout: uint(&v, "timeout").unwrap_or(CLICK_TIMEOUT),
         },
         "move" => Request::Move { target: target(&v)? },
+        "touch" => {
+            let phase = match string(&v, "phase").as_deref() {
+                Some("start") => Some(crate::touch::Phase::Started),
+                Some("move") => Some(crate::touch::Phase::Moved),
+                Some("end") => Some(crate::touch::Phase::Ended),
+                Some("tick") => None,
+                _ => return Err("touch: \"phase\" is start, move, end or tick".into()),
+            };
+            let target = if phase.is_some() { Some(target(&v)?) } else { None };
+            Request::Touch { phase, id: uint(&v, "id").unwrap_or(1), target, time: uint(&v, "t") }
+        }
         "key" => Request::Key { key: string(&v, "key").ok_or("key: missing \"key\"")?, mods: mods(&v) },
         "drag" if v.get("around").is_some() => {
             let a = &v["around"];
@@ -749,6 +770,25 @@ pub fn pick_label<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_the_touch_request() {
+        use crate::touch::Phase;
+        let (_, r) = parse(r#"{"cmd": "touch", "phase": "start", "id": 2, "pos": [10, 20], "t": 5}"#).unwrap();
+        assert_eq!(
+            r,
+            Request::Touch {
+                phase: Some(Phase::Started),
+                id: 2,
+                target: Some(Target::Pos([10.0, 20.0])),
+                time: Some(5)
+            }
+        );
+        let (_, r) = parse(r#"{"cmd": "touch", "phase": "tick", "t": 600}"#).unwrap();
+        assert_eq!(r, Request::Touch { phase: None, id: 1, target: None, time: Some(600) });
+        assert!(parse(r#"{"cmd": "touch", "phase": "end"}"#).is_err(), "a finger needs a position");
+        assert!(parse(r#"{"cmd": "touch"}"#).is_err());
+    }
 
     #[test]
     fn parses_the_top_bar_request() {

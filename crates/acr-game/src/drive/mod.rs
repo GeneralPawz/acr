@@ -112,6 +112,8 @@ enum Step {
     Key(Key, Option<String>, ElementState),
     Mods(ModifiersState),
     Wheel(f32),
+    /// A finger (`id`, event, window position) and the touch clock in ms; no event: the clock only.
+    Touch(u64, Option<crate::touch::Phase>, [f32; 2], Option<u64>),
     /// Run one frame before the next step.
     Frame,
 }
@@ -438,6 +440,7 @@ impl Driver {
             Step::Key(k, text, s) => game.keyboard_input(k, text.as_deref(), s, event_loop),
             Step::Mods(m) => game.modifiers_changed(m),
             Step::Wheel(l) => game.mouse_wheel(l, event_loop),
+            Step::Touch(id, phase, pos, t) => game.drive_touch(id, phase, pos, t, event_loop),
             Step::Frame => {}
         }
     }
@@ -692,6 +695,19 @@ impl Driver {
                     Step::Mods(ModifiersState::empty()),
                     Step::Frame,
                 ]);
+                job.settle = true;
+                Ok(true)
+            }
+            Request::Touch { phase, id, target, time } => {
+                let pos = match &target {
+                    Some(target) => {
+                        let (pos, hit) = tree::resolve(game, target)?;
+                        job.reply.insert("touch".into(), hit);
+                        pos
+                    }
+                    None => [0.0; 2],
+                };
+                job.steps.extend([Step::Touch(id, phase, pos, time), Step::Frame]);
                 job.settle = true;
                 Ok(true)
             }

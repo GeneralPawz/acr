@@ -5,7 +5,7 @@
 //! |---|---|
 //! | tap | left click |
 //! | drag | left button held (a selection rectangle, a dragged slider) |
-//! | long press | right click where the finger is |
+//! | long press | right click where the finger is (on a production icon in the game: the Ctrl+click, endless production, #438) |
 //! | long press, then swipe | right button dragged: the order's direction arrow (formations face it) |
 //! | two fingers | the middle button at their middle: moving them together pans the map |
 //! | pinch (while the two fingers pan) | zoom about the fingers' middle (the wheel's zoom) |

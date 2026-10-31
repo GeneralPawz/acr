@@ -1,0 +1,18 @@
+{
+  "name": "touch_endless",
+  "description": "Touch mode (#438): a long press on a production icon is the Ctrl+click, an endless order (count 1200, the infinity sign)",
+  "steps": [
+    {"cmd": "start", "random": {"nation": 1, "seed": 5}},
+    {"cmd": "wait", "ticks": 200},
+    {"cmd": "drag", "around": {"owner": 0, "type": "Kri"}},
+    {"cmd": "click", "label": "Fort"},
+    {"cmd": "click", "near": {"owner": 0, "type": "Kri"}, "offset": [0, 700]},
+    {"cmd": "wait", "until": {"units": {"owner": 0, "type": "Kre", "finished": true}}, "timeout": 20000},
+    {"cmd": "click", "unit": {"owner": 0, "type": "Kre"}, "expect": {"path": "target.type", "contains": "Kre"}},
+    {"cmd": "move", "label": "Hellebardier", "expect": {"path": "target.count", "exists": false}},
+    {"cmd": "touch", "phase": "start", "id": 1, "label": "Hellebardier", "t": 1000},
+    {"cmd": "touch", "phase": "tick", "t": 1600},
+    {"cmd": "touch", "phase": "end", "id": 1, "label": "Hellebardier", "t": 1650},
+    {"cmd": "move", "label": "Hellebardier", "expect": {"path": "target.count", "eq": 1200}, "note": "a long press is an endless order: the infinity sign"}
+  ]
+}

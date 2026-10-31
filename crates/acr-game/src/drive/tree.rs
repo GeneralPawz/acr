@@ -309,7 +309,11 @@ pub fn describe(game: &Game, all: bool) -> Value {
         m.insert("messages".into(), messages(game).into());
         m.insert(
             "cursor".into(),
-            json!({"pos": [game.cursor.x.round(), game.cursor.y.round()], "mode": g.cursor_mode()}),
+            json!({
+                "pos": [game.cursor.x.round(), game.cursor.y.round()],
+                "mode": g.cursor_mode(),
+                "outline": g.touch_outline(),
+            }),
         );
     }
     if let Some(size) = game.frame_size() {

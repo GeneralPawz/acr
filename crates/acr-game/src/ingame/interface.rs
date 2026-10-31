@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::time::Duration;
 
 use acr_formats::raster::Image;
 use acr_sim::world::EntityId;
@@ -33,6 +34,12 @@ const KEY_SCROLL: i32 = 4;
 /// click (WM_LBUTTONUP, 0x4a2d2a: 600 ms).
 const DOUBLE_CLICK: f64 = 0.6;
 const DOUBLE_CLICK_PIXELS: f32 = 16.0;
+/// Touch placement: a second tap within this time and [`DOUBLE_TAP_DP`] of the first places the
+/// building.
+const DOUBLE_TAP: Duration = Duration::from_millis(350);
+const DOUBLE_TAP_DP: f32 = 40.0;
+/// The blinking outline's pulses per second.
+const OUTLINE_HZ: f64 = 2.0;
 /// A right drag longer than this (map pixels) gives the move a direction (0x4c4dad).
 const DRAG_MIN: i32 = 30;
 /// Colour tables of the building preview (`ShowGPDarkN` / `ShowGPRedN`, loaded at 0x483feb
@@ -164,6 +171,15 @@ pub struct State {
     pages: HashMap<TypeId, u8>,
     /// Start of the game screen, for the pulsing preview.
     started: web_time::Instant,
+    /// Touch mode (#331): a finger is the pointer, so placing a building uses a blinking
+    /// outline moved by taps (#439) and a long press on a production icon is endless (#438).
+    pub(super) touch: bool,
+    /// The outline's window position while placing in touch mode; `None`: the window's middle.
+    pub(super) touch_outline: Option<[f32; 2]>,
+    /// The last tap while placing (touch clock, window position), for the double tap.
+    touch_tap: Option<(Duration, [f32; 2])>,
+    /// The touch clock at the latest gestures (the app's, or the driver's).
+    pub(super) touch_time: Duration,
     keyboard: Option<Vec<(u8, u8, String)>>,
     pub mods: ModifiersState,
     pub(super) view: View,
@@ -243,6 +259,10 @@ impl Default for State {
             rally_mode: false,
             pages: HashMap::new(),
             started: web_time::Instant::now(),
+            touch: false,
+            touch_outline: None,
+            touch_tap: None,
+            touch_time: Duration::ZERO,
             keyboard: None,
             mods: ModifiersState::empty(),
             view: View::default(),
@@ -280,6 +300,19 @@ pub fn tick_rate(frame_time: i32) -> u32 {
 /// Map cell size in screen pixels: 32 wide, 16 high (world y is halved on screen).
 const CELL: [f32; 2] = [32.0, 16.0];
 
+/// Whether a tap at `at` (touch clock `now`) is the second of a double tap after `prev`, within
+/// `reach` window pixels.
+fn is_double_tap(prev: Option<(Duration, [f32; 2])>, now: Duration, at: [f32; 2], reach: f32) -> bool {
+    prev.is_some_and(|(t, p)| now.saturating_sub(t) <= DOUBLE_TAP && (p[0] - at[0]).hypot(p[1] - at[1]) <= reach)
+}
+
+/// The touch placement outline's opacity `seconds` into the game: a pulse of [`OUTLINE_HZ`]
+/// between 0.25 and 1.
+fn outline_alpha(seconds: f64) -> f32 {
+    let wave = 0.5 + 0.5 * (std::f64::consts::TAU * OUTLINE_HZ * seconds).sin();
+    (0.25 + 0.75 * wave) as f32
+}
+
 impl InGame {
     /// Applies the options: game speed (tick rate), scroll speed and the control scheme; the
     /// top bar is the setting's, or the input mode's where the setting is unset.
@@ -297,6 +330,7 @@ impl InGame {
     /// Shows the top bar the input mode asks for (an explicit `top_bar` setting wins).
     pub fn set_input_mode(&mut self, settings: &Settings, mode: crate::input_mode::InputMode) {
         self.interface.hud.top_bar = mode.top_bar(settings.top_bar);
+        self.interface.touch = mode == crate::input_mode::InputMode::Touch;
     }
 
     /// Whether the aim guides are shown: the app writes a switch by the "Zielhilfe" icon back
@@ -307,6 +341,11 @@ impl InGame {
 
     pub fn set_modifiers(&mut self, mods: ModifiersState) {
         self.interface.mods = mods;
+    }
+
+    /// The touch clock at the gestures about to be applied (the double tap's time).
+    pub fn set_touch_time(&mut self, now: Duration) {
+        self.interface.touch_time = now;
     }
 
     /// Tells the game the window's scale factor, which sizes the touch top bar.
@@ -1627,6 +1666,8 @@ impl InGame {
                     self.objects.objects().definition(&world.catalog.get(kind).id).is_some_and(|d| d.has("WALLOBJECT"));
                 if wall || self.can_afford(kind) {
                     self.interface.placing = Some(kind);
+                    self.interface.touch_outline = None;
+                    self.interface.touch_tap = None;
                     self.interface.rally_mode = false;
                 }
             }
@@ -2136,8 +2177,13 @@ impl InGame {
         // The building being placed (0x4bdd1e): pulsing dark where it fits
         // (`ShowGPDarkN`), red where it does not (`ShowGPRedN`), with
         // N = 5 + (sin(t / 100 ms) + 2)·8 (0x4bde42).
+        let outline = if self.interface.touch {
+            Some(self.touch_outline_at())
+        } else {
+            self.cursor.filter(|&c| !self.over_hud(ctx, c))
+        };
         if let Some(kind) = self.interface.placing
-            && let Some(at) = self.cursor.filter(|&c| !self.over_hud(ctx, c))
+            && let Some(at) = outline
         {
             let (x, y) = self.world_at(at);
             let ((sx, sy), table) = match self.placement_site(kind, x, y) {
@@ -2159,10 +2205,13 @@ impl InGame {
             });
             if let Some(look) = look {
                 let h = terrain.height_at(sx, sy);
+                // Touch: the outline blinks (#439).
+                let alpha = if self.interface.touch { outline_alpha(t / 10.0) } else { 1.0 };
                 for ((gp, frame), (ox, oy), _, _) in look.parts {
-                    out.push(
-                        Draw::game_frame_remap(&gp, frame, sx + ox, (sy >> 1) + oy - h, 0, table, row).unclipped(),
-                    );
+                    let mut d = Draw::game_frame_remap(&gp, frame, sx + ox, (sy >> 1) + oy - h, 0, table, row);
+                    d = d.unclipped();
+                    d.alpha = alpha;
+                    out.push(d);
                 }
             }
         }
@@ -2514,6 +2563,43 @@ impl InGame {
             return true;
         }
         let Some(kind) = self.interface.placing else { return false };
+        if self.interface.touch {
+            self.touch_place_tap(kind, at);
+            return true;
+        }
+        self.place_building(kind, at);
+        true
+    }
+
+    /// A tap on the map while placing in touch mode (#439): it moves the outline there and never
+    /// places; a second tap within [`DOUBLE_TAP`] and [`DOUBLE_TAP_DP`] of the first places the
+    /// building at the outline.
+    fn touch_place_tap(&mut self, kind: TypeId, at: [f32; 2]) {
+        let i = &mut self.interface;
+        let reach = DOUBLE_TAP_DP * i.scale_factor;
+        let double = is_double_tap(i.touch_tap, i.touch_time, at, reach);
+        if double {
+            i.touch_tap = None;
+            let at = self.touch_outline_at();
+            self.place_building(kind, at);
+        } else {
+            i.touch_tap = Some((i.touch_time, at));
+            i.touch_outline = Some(at);
+        }
+    }
+
+    /// The touch placement outline's window position: the last tap, at first the window's middle.
+    pub(super) fn touch_outline_at(&self) -> [f32; 2] {
+        self.interface.touch_outline.unwrap_or_else(|| {
+            let [w, h] = self.window_size();
+            [w / 2.0, h / 2.0]
+        })
+    }
+
+    /// Orders the building of `kind` at the window position `at` if it fits (Shift keeps the
+    /// build mode).
+    fn place_building(&mut self, kind: TypeId, at: [f32; 2]) {
+        let player = self.own();
         let (x, y) = self.world_at(at);
         if let Some((x, y)) = self.placement_site(kind, x, y) {
             let units: Vec<EntityId> =
@@ -2526,7 +2612,6 @@ impl InGame {
                 self.interface.placing = None;
             }
         }
-        true
     }
 
     /// Shift adds to the selection (0x4da424: never removes); Ctrl does nothing. A double
@@ -2634,6 +2719,13 @@ impl InGame {
                 let (x, y) = self.minimap_world(px);
                 self.commands.push(Command::Move { player, units: self.selected.clone(), x, y });
                 self.unit_sound(self.selected[0], "ORDER_SOUND");
+            }
+            // Touch: a long press on a production icon is the Ctrl+click, an endless order (#438).
+            HudEvent::Command(HudCommand::Unproduce(kind)) if self.interface.touch => {
+                let mods = self.interface.mods;
+                self.interface.mods |= ModifiersState::CONTROL;
+                self.hud_command(HudCommand::Produce(kind));
+                self.interface.mods = mods;
             }
             // An icon's right-click command (`UnProduce` 0x4d6e08, cancelling an upgrade).
             HudEvent::Command(c) => self.hud_command(c),
@@ -3510,5 +3602,31 @@ PEASANTABSORBER 2
         // Rising and vertical lines.
         assert_eq!(pixels((0, 8), (16, 0)).len(), 17);
         assert_eq!(pixels((3, 0), (3, 5)), (0..=5).map(|y| (3, y)).collect::<Vec<_>>());
+    }
+}
+
+#[cfg(test)]
+mod touch_tests {
+    use super::*;
+
+    fn ms(n: u64) -> Duration {
+        Duration::from_millis(n)
+    }
+
+    #[test]
+    fn a_double_tap_is_two_taps_close_in_time_and_place() {
+        let first = Some((ms(1000), [300.0, 200.0]));
+        assert!(!is_double_tap(None, ms(1100), [300.0, 200.0], 40.0), "a single tap never places");
+        assert!(is_double_tap(first, ms(1350), [310.0, 215.0], 40.0));
+        assert!(!is_double_tap(first, ms(1351), [300.0, 200.0], 40.0), "too slow");
+        assert!(!is_double_tap(first, ms(1100), [300.0, 241.0], 40.0), "too far");
+        assert!(is_double_tap(first, ms(1100), [300.0, 241.0], 80.0), "the reach follows the density");
+    }
+
+    #[test]
+    fn the_outline_blinks_twice_a_second() {
+        assert!((outline_alpha(0.125) - 1.0).abs() < 1e-5, "peak");
+        assert!((outline_alpha(0.375) - 0.25).abs() < 1e-5, "trough");
+        assert!((outline_alpha(0.5 + 0.125) - outline_alpha(0.125)).abs() < 1e-5, "period 0.5 s");
     }
 }
