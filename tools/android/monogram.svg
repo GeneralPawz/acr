@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The "AC" monogram of the game's icon, redrawn as calligraphic strokes (our own drawing, traced
+     by eye from the 32x32 Ac.ico: same curls in the same places). Grid = the icon's inner 28x28
+     pixels. Each polyline is a centre line smoothed by make-icon.py and stamped with a broad nib
+     (strokes across the nib are thick, along it hairlines); `w` scales the nib per point. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28" fill="none" stroke="#d4a02e" stroke-width="0.8" stroke-linecap="round">
+  <!-- A: the main down stroke, thick, hairline start and a tapering foot -->
+  <polyline points="11.5,3.6 13.2,4.4 14.2,6.5 15.2,9 16.4,11.4 17.8,13.4 19.2,14.6" w="0.2 0.7 1 1.1 1.1 0.8 0.15"/>
+  <!-- A: left leg, a hairline curving down to the crossbar -->
+  <polyline points="12.6,3.9 10.6,4.6 8.8,6.2 8.2,8.4 8.6,10.4" w="0.25 0.3 0.4 0.3 0.2"/>
+  <!-- A: top serif curl -->
+  <polyline points="6.6,6.2 7.2,4.8 8.8,4.2 10.6,4.3" w="0.2 0.5 0.6 0.3"/>
+  <!-- A: crossbar swash ending in a hook -->
+  <polyline points="7.4,10.6 9.6,10.2 12.6,10.4 15.4,11.2 18.4,12.0 21.0,12.2 22.6,12.9 23.2,14.2" w="0.15 0.5 0.7 0.9 0.9 0.8 0.5 0.15"/>
+  <!-- C: left curl, over the top, down the thick stem, round the bottom, up to the serif -->
+  <polyline points="3.6,19.0 3.4,16.6 4.8,14.6 7.4,13.8 9.6,14.6 10.4,17.2 10.6,20.0 11.4,22.0 13.4,23.0 16.4,23.2 19.4,22.6 21.6,21.4 22.6,20.2" w="0.2 0.5 0.7 0.8 0.9 1.1 1.15 1.0 0.8 0.6 0.5 0.4 0.15"/>
+  <!-- C: small inner curl -->
+  <polyline points="3.6,19.0 5.4,19.6 7.4,19.0 8.6,18.0" w="0.2 0.5 0.4 0.15"/>
+</svg>

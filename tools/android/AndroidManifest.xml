@@ -15,6 +15,7 @@
         android:appCategory="game"
         android:isGame="true"
         android:icon="@mipmap/icon"
+        android:roundIcon="@mipmap/icon"
         android:hasCode="false"
         android:extractNativeLibs="false"
         android:requestLegacyExternalStorage="true"
