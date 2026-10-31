@@ -1,4 +1,11 @@
-//! Plays a [`Mixer`] on the default audio device (WASAPI natively, Web Audio in the browser).
+//! Plays a [`Mixer`] on the default audio device (WASAPI natively, AAudio on Android, Web
+//! Audio in the browser).
+//!
+//! On Android (#440) the callback asks for [`ANDROID_BUFFER_MS`] ms of audio at a time: the
+//! default burst is a few milliseconds, which wakes the mixer and the CPU hundreds of times a
+//! second; a larger one wakes it about 25 times. cpal's AAudio backend offers no power-saving
+//! performance mode (it opens with the default mode, or low latency with its `realtime`
+//! feature, which is off), so the buffer is the lever the backend allows.
 //!
 //! In the browser, audio may only start after a user gesture; create the output in
 //! response to the first click or key press.
@@ -9,6 +16,16 @@ use std::sync::{Arc, Mutex};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 use crate::Mixer;
+
+/// The callback size on Android, in milliseconds of audio: sound effects and music in a strategy game
+/// bear 40 ms of delay.
+pub const ANDROID_BUFFER_MS: u32 = 40;
+
+/// The callback size in frames for `sample_rate`: [`ANDROID_BUFFER_MS`], rounded up to a
+/// multiple of 64 frames.
+pub fn android_buffer_frames(sample_rate: u32) -> u32 {
+    (sample_rate * ANDROID_BUFFER_MS).div_ceil(1000).div_ceil(64) * 64
+}
 
 /// What the device thread reports back: the stream died, buffers ran dry.
 #[derive(Default)]
@@ -151,18 +168,46 @@ fn open(mixer: &Arc<Mutex<Mixer>>, health: &Arc<Health>) -> Result<cpal::Stream,
     if let Ok(mut m) = mixer.lock() {
         m.set_rate(config.sample_rate);
     }
-    let stream = match supported.sample_format() {
-        cpal::SampleFormat::F32 => build::<f32>(&device, &config, mixer.clone(), health.clone(), |s| s),
-        cpal::SampleFormat::I16 => {
-            build::<i16>(&device, &config, mixer.clone(), health.clone(), |s| (s * 32767.0) as i16)
-        }
-        cpal::SampleFormat::U16 => {
-            build::<u16>(&device, &config, mixer.clone(), health.clone(), |s| ((s + 1.0) * 32767.5) as u16)
-        }
-        other => return Err(format!("unsupported sample format {other:?}")),
+    let format = supported.sample_format();
+    let stream = match large_callback(&config) {
+        Some(big) => build_for(&device, format, &big, mixer, health)
+            .inspect(|_| log::info!("audio: callback of {:?} frames", big.buffer_size))
+            .or_else(|e| {
+                // The device's own choice if it refuses.
+                log::warn!("audio: no large callback ({e}), using the device's default");
+                build_for(&device, format, &config, mixer, health)
+            }),
+        None => build_for(&device, format, &config, mixer, health),
     }?;
     stream.play().map_err(|e| e.to_string())?;
     Ok(stream)
+}
+
+/// `config` with the larger callback of Android (see the module docs); `None` elsewhere.
+fn large_callback(config: &cpal::StreamConfig) -> Option<cpal::StreamConfig> {
+    cfg!(target_os = "android").then(|| cpal::StreamConfig {
+        buffer_size: cpal::BufferSize::Fixed(android_buffer_frames(config.sample_rate)),
+        ..*config
+    })
+}
+
+fn build_for(
+    device: &cpal::Device,
+    format: cpal::SampleFormat,
+    config: &cpal::StreamConfig,
+    mixer: &Arc<Mutex<Mixer>>,
+    health: &Arc<Health>,
+) -> Result<cpal::Stream, String> {
+    match format {
+        cpal::SampleFormat::F32 => build::<f32>(device, config, mixer.clone(), health.clone(), |s| s),
+        cpal::SampleFormat::I16 => {
+            build::<i16>(device, config, mixer.clone(), health.clone(), |s| (s * 32767.0) as i16)
+        }
+        cpal::SampleFormat::U16 => {
+            build::<u16>(device, config, mixer.clone(), health.clone(), |s| ((s + 1.0) * 32767.5) as u16)
+        }
+        other => Err(format!("unsupported sample format {other:?}")),
+    }
 }
 
 fn build<T: cpal::SizedSample + Send + 'static>(
@@ -210,5 +255,23 @@ fn on_error(health: &Health, e: &cpal::Error) {
             health.broken.store(true, Ordering::Relaxed);
         }
         _ => log::warn!("audio stream: {e}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn android_callback_is_about_40_ms_in_whole_64_frame_steps() {
+        assert_eq!(android_buffer_frames(48_000), 1920);
+        assert_eq!(android_buffer_frames(44_100), 1792);
+        assert_eq!(android_buffer_frames(8_000), 320);
+        for rate in [8_000, 22_050, 44_100, 48_000, 96_000] {
+            let frames = android_buffer_frames(rate);
+            assert_eq!(frames % 64, 0);
+            let ms = frames as f32 / rate as f32 * 1000.0;
+            assert!((40.0..44.0).contains(&ms), "{rate} Hz: {ms} ms");
+        }
     }
 }
