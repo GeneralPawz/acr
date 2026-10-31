@@ -14,7 +14,7 @@ use acr_render::objects_view::ObjectsView;
 use acr_render::scene::{Placement, definition_name};
 use acr_render::terrain::{Camera, TerrainData, TerrainRenderer};
 use acr_render::view3d::{self, Orbit, PIXELS_PER_METRE, View3d};
-use acr_render::water::Disturbances;
+use acr_render::water::{Disturbances, SeaState};
 use acr_render::weather::Weather;
 use acr_sim::World;
 use acr_sim::world::{AnimKind, EntityId, Unit};
@@ -393,6 +393,10 @@ pub struct ThreeD {
     /// Rain, snow or fog (#224, `weather` setting; the driver's `weather` overrides it).
     weather: Weather,
     weather_override: Option<Weather>,
+    /// The sea's state (`sea_state` setting; the driver's `sea_state` overrides it): a storm
+    /// scales the waves up, darkens the sky and brings rain and wind (docs/water.md).
+    sea: SeaState,
+    sea_override: Option<SeaState>,
     weather_renderer: Option<acr_render::weather::WeatherRenderer>,
     /// Where balls fell into the water this frame (a splash each).
     shots: Vec<[f32; 2]>,
@@ -565,6 +569,8 @@ impl Default for ThreeD {
             cover_forced: None,
             weather: Weather::Off,
             weather_override: None,
+            sea: SeaState::Calm,
+            sea_override: None,
             weather_renderer: None,
             shots: Vec::new(),
             last_blast: 0,
@@ -658,6 +664,7 @@ impl ThreeD {
         self.budget = settings.graphics.budget();
         self.wind = settings.wind;
         self.weather = settings.weather;
+        self.sea = settings.sea_state;
         self.map_models.on = settings.map_models;
         self.water_detailed = settings.water_detailed;
         self.corpse_ticks = u64::from(settings.corpse_minutes) * 60 * acr_sim::ORIGINAL_TICKS_PER_SECOND as u64;
@@ -1532,7 +1539,7 @@ impl ThreeD {
                 };
                 inst.transform = self
                     .water_view
-                    .ship(u, now, terrain, ground, yaw, model.radius, water_seconds)
+                    .ship(u, now, terrain, ground, yaw, model.radius, water_seconds, self.sea_state())
                     .unwrap_or_else(|| view3d::model_matrix(ground, yaw, 1.0));
             }
             let living = u.alive && u.death == 0;
@@ -2064,7 +2071,7 @@ impl ThreeD {
         let mut footfalls = marks.as_mut().map(|m| std::mem::take(&mut m.footfalls)).unwrap_or_default();
         if self.models != Models::Off {
             // Smoke drifts with the wind that sways the trees (#303).
-            let weather = self.weather_override.unwrap_or(self.weather);
+            let weather = self.weather();
             let drift = if self.wind_override.unwrap_or(self.wind) {
                 SMOKE_DRIFT * WIND_STRENGTH * weather.wind_scale()
             } else {
@@ -2464,9 +2471,16 @@ impl ThreeD {
         renderer.lods = self.lod;
         renderer.budget = self.budget;
         renderer.material_detail = material_detail_override().unwrap_or(self.material_detail);
-        let weather = self.weather_override.unwrap_or(self.weather);
+        let sea = self.sea_override.unwrap_or(self.sea);
+        let weather = weather_at_sea(self.weather_override.unwrap_or(self.weather), sea);
         let storm = storm_at(weather, self.wind_clock);
-        let look = weather.look();
+        let mut look = weather.look();
+        if sea == SeaState::Storm {
+            // The storm's sky: the light darker and the distance greyer than a plain rain.
+            look.grade = look.grade.map(|g| g * 0.82);
+            look.fog_strength = (look.fog_strength * 1.5).min(1.0);
+            look.density *= 1.6;
+        }
         let strength = if self.wind_override.unwrap_or(self.wind) { WIND_STRENGTH * weather.wind_scale() } else { 0.0 };
         renderer.wind = [WIND_DIR[0], WIND_DIR[1], strength, self.wind_clock];
         renderer.weather = [look.model(), look.model_fog()];
@@ -2498,7 +2512,8 @@ impl ThreeD {
                 let detailed = water_detailed(self.water_detailed);
                 let none = Disturbances::default();
                 let disturbances = if detailed { &self.water_view.disturbances } else { &none };
-                w.prepare(device, queue, terrain, &view3d, seconds, detailed, disturbances).then_some(&*w)
+                let sea = self.sea_override.unwrap_or(self.sea);
+                w.prepare(device, queue, terrain, &view3d, seconds, detailed, sea, disturbances).then_some(&*w)
             }
             _ => None,
         };
@@ -2657,9 +2672,21 @@ impl ThreeD {
         strength * acr_render::weather::gust(at, WIND_DIR, self.wind_clock)
     }
 
-    /// The weather drawn: the driver's override, else the setting.
+    /// The weather drawn: the driver's override, else the setting; a storm at sea brings rain
+    /// when the weather is off.
     pub fn weather(&self) -> Weather {
-        self.weather_override.unwrap_or(self.weather)
+        weather_at_sea(self.weather_override.unwrap_or(self.weather), self.sea_state())
+    }
+
+    /// The sea drawn: the driver's override, else the `sea_state` setting.
+    pub fn sea_state(&self) -> SeaState {
+        self.sea_override.unwrap_or(self.sea)
+    }
+
+    /// The driver's `sea_state` request (`None`: back to the setting).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub fn set_sea_override(&mut self, sea: Option<SeaState>) {
+        self.sea_override = sea;
     }
 
     /// The driver's `weather` request (`None`: back to the setting).
@@ -2672,6 +2699,14 @@ impl ThreeD {
     /// depth tint (`water=detailed`, models on and their renderer up, not zoomed out).
     pub fn draws_water(&self, zoomed: bool) -> bool {
         self.active() && self.renderer.is_some() && !zoomed && water_detailed(self.water_detailed)
+    }
+}
+
+/// The weather under `sea`: a storm brings rain when the weather is off.
+fn weather_at_sea(weather: Weather, sea: SeaState) -> Weather {
+    match weather {
+        Weather::Off if sea == SeaState::Storm => Weather::Rain,
+        w => w,
     }
 }
 

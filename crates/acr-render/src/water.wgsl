@@ -54,7 +54,12 @@ fn depth_units(p: vec2<f32>) -> f32 {
 
 // How much the waves move here: calm in shallows, full on open water (water.rs `wave_scale`).
 fn wave_scale(units: f32) -> f32 {
-    return mix(0.15, 1.0, smoothstep(0.0, 40.0, units)) * globals.sun.w;
+    return mix(0.15, 1.0, smoothstep(0.0, 40.0, units)) * globals.sun.w * globals.grid.w;
+}
+
+// 0 for the calm sea, 1 for the storm (`grid.w` is the waves' gain, water.rs `SeaState`).
+fn storm_level() -> f32 {
+    return clamp((globals.grid.w - 1.0) / 3.0, 0.0, 1.0);
 }
 
 struct Surface {
@@ -69,6 +74,9 @@ fn gerstner(p: vec2<f32>, scale: f32) -> Surface {
     s.offset = vec3<f32>(0.0);
     s.slope = vec2<f32>(0.0);
     let t = globals.eye.w;
+    // The storm's waves are choppier, but not 4 times: the gain is divided out of the
+    // steepness (the crests would loop), and the steepness rises by half.
+    let steep = STEEPNESS * mix(1.0, 1.5, storm_level()) / max(globals.grid.w, 1.0);
     for (var i = 0; i < WAVES; i++) {
         let w = globals.waves[i];
         let k = w.z;
@@ -76,7 +84,7 @@ fn gerstner(p: vec2<f32>, scale: f32) -> Surface {
         let phase = k * dot(w.xy, p) - sqrt(GRAVITY * k) * t + globals.phases[i / 4][i % 4];
         let c = cos(phase);
         let sn = sin(phase);
-        let q = STEEPNESS / (k * max(w.w, 1e-3) * f32(WAVES));
+        let q = steep / (k * max(w.w, 1e-3) * f32(WAVES));
         s.offset += vec3<f32>(w.xy * (q * a * c), a * sn);
         s.slope += w.xy * (k * a * c);
     }
@@ -134,7 +142,7 @@ fn detail(p: vec2<f32>, pixel: f32, scale: f32) -> vec2<f32> {
         freq *= 2.03;
         amp *= 0.62;
     }
-    return slope * mix(0.45, 1.0, scale);
+    return slope * mix(0.45, 1.0, min(scale, 1.0)) * mix(1.0, 1.8, storm_level());
 }
 
 // Ships and rings: extra height (px) and foam at world point `p`.
@@ -283,17 +291,22 @@ fn fs_water(in: VsOut) -> @location(0) vec4<f32> {
     let t = clamp(units / DEPTH_FULL, 0.0, 1.0);
     let shallow = vec3<f32>(0.115, 0.17, 0.15);
     let deep = vec3<f32>(0.024, 0.050, 0.062);
-    let body = mix(shallow, deep, sqrt(t)) * (0.85 + 0.2 * max(dot(normal, l), 0.0));
+    let storm = storm_level();
+    // Under a storm sky the water is darker and greyer, the sun's light dim.
+    // The storm's steep faces show: lit on the side of the sun, almost black in the lee.
+    let lit = mix(0.85 + 0.2 * max(dot(normal, l), 0.0), 0.3 + 1.6 * max(dot(normal, l) - 0.2, 0.0), storm);
+    let body = mix(shallow, deep, sqrt(t)) * lit * mix(1.0, 0.8, storm);
     let absorbed = mix(0.35, 0.95, sqrt(t));
 
     // Sky by Fresnel (Schlick, water F0 = 0.02); no sky box yet: a hazy gradient by height.
     let cos_v = max(dot(normal, v), 0.0);
     let fresnel = (0.02 + 0.98 * pow(1.0 - cos_v, 5.0)) * mix(0.6, 1.0, detailed);
     let r = reflect(-v, normal);
-    let sky = mix(vec3<f32>(0.60, 0.65, 0.68), vec3<f32>(0.32, 0.40, 0.48), sqrt(clamp(r.z, 0.0, 1.0)));
+    var sky = mix(vec3<f32>(0.60, 0.65, 0.68), vec3<f32>(0.32, 0.40, 0.48), sqrt(clamp(r.z, 0.0, 1.0)));
+    sky = mix(sky, vec3<f32>(0.20, 0.22, 0.25), 0.7 * storm);
     // The glint: a soft sheen plus sparse sparkles on the facets that face the sun just so.
     let rl = max(dot(r, l), 0.0);
-    let glint = (pow(rl, 60.0) * 0.05 + pow(rl, 900.0) * 0.5) * detailed;
+    let glint = (pow(rl, 60.0) * 0.05 + pow(rl, 900.0) * 0.5) * detailed * (1.0 - 0.8 * storm);
 
     // Foam: a broken band along the shore, and the churn of wakes and splashes.
     let time = globals.eye.w;
@@ -302,10 +315,19 @@ fn fs_water(in: VsOut) -> @location(0) vec4<f32> {
         + noise(p * 0.19 - vec2<f32>(time * 0.25, -time * 0.3)) * 0.4;
     let shore_foam = smoothstep(0.55, 0.9, f + shore * 0.45 - 0.2) * shore * 0.55;
     let churned = smoothstep(0.25, 0.9, churn * (0.55 + 0.9 * f)) * 0.85;
-    let foam = clamp(shore_foam + churned, 0.0, 1.0) * detailed;
+    // Whitecaps (storm only): foam on the high crests and the steep faces, torn into streaks
+    // along the wind (the long waves' direction) by noise stretched that way.
+    let wind_dir = globals.waves[0].xy;
+    let along = vec2<f32>(dot(p, wind_dir), dot(p, vec2<f32>(-wind_dir.y, wind_dir.x)));
+    let streak = noise(vec2<f32>(along.x * 0.03 - time * 2.5, along.y * 0.2))
+        * (0.55 + 0.45 * noise(p * 0.35 + vec2<f32>(time * 0.6, 0.0)));
+    let crest = s.offset.z / max(scale, 1e-3) / 4.5 + length(s.slope) * 1.2;
+    let caps = smoothstep(1.0, 1.7, crest * (0.45 + streak * 1.1)) * storm * edge;
+    let foam = clamp(shore_foam + churned + caps * 0.9, 0.0, 1.0) * detailed;
 
     let reflected = fresnel * sky + (1.0 - fresnel) * absorbed * body;
-    let rgb = foam * vec3<f32>(0.80, 0.83, 0.82) + (1.0 - foam) * reflected + vec3<f32>(glint);
+    let rgb = foam * mix(vec3<f32>(0.80, 0.83, 0.82), vec3<f32>(0.66, 0.69, 0.70), storm) + (1.0 - foam) * reflected
+        + vec3<f32>(glint);
     let alpha = 1.0 - (1.0 - foam) * (1.0 - fresnel) * (1.0 - absorbed);
     // Premultiplied: the lakebed keeps (1 - alpha) of its colour.
     return vec4<f32>(rgb * edge, alpha * edge);

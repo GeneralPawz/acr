@@ -936,6 +936,13 @@ impl Driver {
                 job.steps.push_back(Step::Frame);
                 Ok(true)
             }
+            Request::SeaState(sea) => {
+                let Mode::InGame(g) = &mut game.mode else { return Err("no game".into()) };
+                let now = g.set_sea_state(sea);
+                job.reply.insert("sea_state".into(), now.name().into());
+                job.steps.push_back(Step::Frame);
+                Ok(true)
+            }
             Request::Fog(on) => {
                 let Mode::InGame(g) = &mut game.mode else { return Err("no game".into()) };
                 g.set_open_fog(!on);

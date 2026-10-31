@@ -157,6 +157,12 @@ impl InGame {
         self.three_d.weather()
     }
 
+    /// Calm or storm over the `sea_state` setting (`drive` `sea_state`; `None`: the setting).
+    pub fn set_sea_state(&mut self, sea: Option<acr_render::water::SeaState>) -> acr_render::water::SeaState {
+        self.three_d.set_sea_override(sea);
+        self.three_d.sea_state()
+    }
+
     /// The pose held for a unit, if any.
     /// Trees or foliage of model `name` at these ground points (render only; `drive` `props`).
     pub fn place_props(&mut self, name: &str, at: Vec<[i32; 2]>, wind: Option<bool>) {

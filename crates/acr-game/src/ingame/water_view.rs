@@ -8,13 +8,15 @@ use std::collections::HashMap;
 use acr_render::math::{Mat4, Vec3};
 use acr_render::terrain::TerrainData;
 use acr_render::view3d;
-use acr_render::water::{self, Disturbances, Ring, Wake, Waves};
+use acr_render::water::{self, Disturbances, Ring, SeaState, Wake, Waves};
 use acr_sim::World;
 use acr_sim::world::Unit;
 
 const TPS: f32 = acr_sim::ORIGINAL_TICKS_PER_SECOND as f32;
 /// Depth units from which a ship counts as afloat (ships float above 130, i.e. 3 units).
 const AFLOAT: f32 = 2.0;
+/// The most a hull pitches or rolls (rad, about 26°).
+const MAX_TILT: f32 = 0.45;
 /// Shot lower than this (true px above the ground) over water has landed in it.
 const SPLASH_HEIGHT: i32 = 8;
 
@@ -68,6 +70,7 @@ impl WaterView {
         yaw: f32,
         radius: f32,
         seconds: f32,
+        sea_state: SeaState,
     ) -> Option<Mat4> {
         let sea = terrain.water()?;
         if water::depth_units(sea, ground[0], ground[1]) < AFLOAT {
@@ -84,7 +87,7 @@ impl WaterView {
         let right = [-c, s];
         let at = |a: f32, r: f32| {
             let p = [ground[0] + fwd[0] * a + right[0] * r, ground[1] + fwd[1] * a + right[1] * r];
-            let scale = water::wave_scale(water::depth_units(sea, p[0], p[1]));
+            let scale = water::wave_scale(water::depth_units(sea, p[0], p[1])) * sea_state.gain();
             waves.sample(p, seconds % 3600.0, scale).height
         };
         // Bow, stern, both sides at the bow and the stern quarters: the hull spans many short
@@ -94,8 +97,9 @@ impl WaterView {
             (at(half * 0.3, -beam) + at(-half * 0.3, -beam), at(half * 0.3, beam) + at(-half * 0.3, beam));
         let heave = (bow + stern + port + starboard) / 8.0 + at(0.0, 0.0) * 0.5;
         // Slopes, damped: a hull of this mass lags and answers with less than the water's slope.
-        let pitch = (bow - stern) / 2.0 / (half * 1.05) * 0.8;
-        let roll = (starboard - port) / 2.0 / (2.0 * beam) * 0.6;
+        // A storm's swell throws them about; the limit keeps the hull from rolling over.
+        let pitch = ((bow - stern) / 2.0 / (half * 1.05) * 0.8).clamp(-MAX_TILT, MAX_TILT);
+        let roll = ((starboard - port) / 2.0 / (2.0 * beam) * 0.6).clamp(-MAX_TILT, MAX_TILT);
         let placed = [ground[0], ground[1], ground[2] + heave * 0.7];
 
         // Speed and heading from the position over the ticks (the simulation moves ships by
