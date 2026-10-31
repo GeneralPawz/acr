@@ -629,14 +629,16 @@ def support_clips(md, active=None):
     return out
 
 
-def _musket_clips(ctx, ch, md, carry=None, walks=()):
+def _musket_clips(ctx, ch, md, carry=None, walks=(), gun=None, style=None):
     """The musket's rammer and the musketeer clips (aim, reload, charge, crawl). `carry`: a
     function of the armature giving the stand pose with the gun held in both hands (the
     steps then keep the left arm on it); `walks`: the stance walks of `md` (`MOTION_L4`) to
-    make besides the plain steps."""
+    make besides the plain steps; `gun`: a short gun's length (m), whose reload and rammer follow
+    it; `style`: the reload of `poses.STYLES`."""
     # Ramrod (in its pipes; drawn in the reload of ATTACK1): on the free left-hand socket,
     # placed on every frame by `aim.bake_musket` / `aim.stow_rammer`.
-    rod = gear.rammer(f"{ctx.name}.rammer")
+    rod_kw = aiming.rod_for(gun) if gun else {}
+    rod = gear.rammer(f"{ctx.name}.rammer", rod_kw.get("length", aiming.ROD_LENGTH))
     am.attach(rod, ch.arm, aiming.ROD_SOCKET, am.world(ch.arm, aiming.ROD_SOCKET))
     ch.held["rammer"] = rod
     ch.keys[rod.name] = "metal"
@@ -652,17 +654,18 @@ def _musket_clips(ctx, ch, md, carry=None, walks=()):
     # The reload drill after the shot (ATTACK1, and the reload stance ATTACK3 of a
     # slow-recharge musketeer: #255), each step IK-solved.
     infos = {}
-    reload = aiming.drill(ch.arm, poses.RELOAD_STEPS, infos)
+    reload = aiming.drill(ch.arm, poses.reload_steps(gun) if gun else poses.RELOAD_STEPS, infos)
     # Charge bayonets: the same grip with the butt at the right hip.
     charge = aiming.hold(ch.arm, poses.CHARGE_MUSKET, pocket=(0.02, -0.12, -0.32), left_along=0.30)
     stand = carry(ch.arm) if carry else poses.STAND_MUSKET
     ch.stand_pose = stand
-    clips = poses.musketeer_clips(md, stand, aim=aim, charge=charge, reload=reload, hip=hip, swing=not carry)
+    clips = poses.musketeer_clips(md, stand, aim=aim, charge=charge, reload=reload, hip=hip, swing=not carry,
+                                 style=style)
     for k, ks in poses.step_keys({k: md[k] for k in walks}, stand, not carry).items():
         clips[k] = rig.clip_keys(rig.md_clip_frames(md[k])[0], ks)
     clips.update(finish.musket_clips(ch.arm, md, charge))  # the bayonet's finishing blow
     # The hands on the musket and the rammer on every frame between two loading steps.
-    rods = poses.rod_phases(md)
+    rods = poses.rod_phases(md, style)
     held, plan = aiming.solve_holds(ch.arm, {k: clips[k] for k in rods if k in clips}, reload, infos)
     clips.update(held)
     # The port, the lunge and the blows turn the musket of a solved pose: the left hand
@@ -683,9 +686,9 @@ def _musket_clips(ctx, ch, md, carry=None, walks=()):
     for clip, keys in clips.items():
         act = am.add_clip(ch.arm, clip, keys)
         if clip in rods:
-            aiming.bake_musket(ch.arm, clip, keys, rod_phases=rods[clip])
+            aiming.bake_musket(ch.arm, clip, keys, rod_phases=rods[clip], rod_kw=rod_kw)
         else:
-            aiming.stow_rammer(ch.arm, clip)
+            aiming.stow_rammer(ch.arm, clip, rod_kw)
         if kind:
             key_show(ch.arm, act, SHOW_REST, ch.prefix)
     ctx.fire = aiming.fire_stats(ch, present)
@@ -695,7 +698,7 @@ def _musket_clips(ctx, ch, md, carry=None, walks=()):
     # Crawl clips of the wounded (#262): keyframed, looping.
     for clip, keys in crawl.clips().items():
         act = am.add_clip(ch.arm, clip, keys)
-        aiming.stow_rammer(ch.arm, clip)
+        aiming.stow_rammer(ch.arm, clip, rod_kw)
         if kind:
             key_show(ch.arm, act, SHOW_REST, ch.prefix)
     if kind:

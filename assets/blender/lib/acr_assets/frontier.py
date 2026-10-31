@@ -24,7 +24,11 @@ A unit script is data: its `.MD` lines and `spec(md, ...)`, then `build(ctx)` ca
   horn and pouch over the left shoulder), `c_scabbard` and `plume` (conquista.py);
 - `hat`: a registered hat (`fur_cap`, `round_hat`, `buccaneer_hat`, `tricorn`, ... and
   conquista.py's `morion`, `cabasset`, `flat_cap`), `hat_at` its (dx, dy, dz, tilt°);
-- `gun`: the long gun's length (m) or None (conquista.py's halberdier).
+- `gun`: the long gun's length (m) or None (conquista.py's halberdier);
+- `carry`: `"waist"` to hold the gun at the belt in both hands (`CARRIES`); `reload`: the
+  reload of `poses.STYLES` (`"trapper"`: the short gun's own, with the rammer scaled to it);
+- `load`: a load of pelts on the right shoulder, shown in the stance walks only (`WALKS`,
+  `add_load`).
 """
 
 import math
@@ -46,7 +50,8 @@ for _key, _layer, _like, _fin, _rgb in (
         ("doublet", "wool", "wool", (1.0, 0.40, 0.0), (0.72, 0.30, 0.14)),
         ("dsleeve", "wool", "wool", (1.0, 0.40, 0.0), (0.70, 0.12, 0.08)),
         ("slops", "wool", "wool", (1.0, 0.40, 0.0), (0.80, 0.62, 0.18)),
-        ("plume", "wool", "felt", (1.0, 0.60, 0.0), (0.75, 0.08, 0.06))):
+        ("plume", "wool", "felt", (1.0, 0.60, 0.0), (0.75, 0.08, 0.06)),
+        ("pelt", "hide", "felt", (1.0, 0.70, 0.0), (0.78, 0.74, 0.66))):
     registry.painter(_key, like=_like, finish=_fin)
     registry.material(_key, _layer, painter=_key, fallback=_rgb)
 
@@ -56,16 +61,17 @@ PALETTE = {
     "fur": (0.35, 0.24, 0.14), "horn": (0.82, 0.74, 0.56), "pouch": (0.28, 0.18, 0.10), "fcloak": (0.70, 0.10, 0.06),
     "fshirt": (0.88, 0.86, 0.80), "fvest": (0.55, 0.14, 0.08), "fhose": (0.78, 0.76, 0.70),
     "doublet": (0.72, 0.30, 0.14), "dsleeve": (0.70, 0.12, 0.08), "slops": (0.80, 0.62, 0.18),
-    "plume": (0.75, 0.08, 0.06), "breeches": (0.42, 0.32, 0.20), "shoes": (0.18, 0.12, 0.07),
+    "plume": (0.75, 0.08, 0.06), "pelt": (0.78, 0.74, 0.66), "breeches": (0.42, 0.32, 0.20), "shoes": (0.18, 0.12, 0.07),
     "hat": (0.30, 0.22, 0.14), "wood": (0.42, 0.24, 0.12), "metal": (0.58, 0.58, 0.60),
     "belts": (0.30, 0.20, 0.11), "scabbard": (0.07, 0.06, 0.05), "brass": (0.80, 0.66, 0.34),
 }
 BUILD = {"width": 0.98, "shoulders": 1.06, "limbs": 1.15}
 KIT = ("belt_l", "horn", "pouch", "tomahawk_belt", "knife")
-FIXED = ("horn", "pouch", "metal", "wood", "belts", "scabbard", "brass", "plume")
+FIXED = ("horn", "pouch", "metal", "wood", "belts", "scabbard", "brass", "plume", "pelt")
 DEFAULTS = {"body": "hunting", "sleeves": "hunting", "skirts": True, "legs": "leggings", "layers": ("cape", "sash"),
             "kit": KIT, "hat": "fur_cap", "hat_at": (0.0, 0.005, -0.07, -8), "gun": 1.62, "mix": 0.4, "fixed": (),
-            "build": BUILD, "melee": "musket", "drape": False, "carry": None}
+            "build": BUILD, "melee": "musket", "drape": False, "carry": None, "reload": None,
+            "load": False}
 # With `drape` the shell layers `blouse`, `sash` and `cloak` are drafted and draped instead
 # (`garments.tunic`, `band`, `cloak`; #287 drape pilot): the blouse replaces the draped shirt.
 DRAPED = {"blouse": "frn_blouse", "sash": "frn_sash", "cloak": "frn_cape"}
@@ -88,6 +94,49 @@ def _carry_waist(arm):
     from . import poses
 
     return aiming.hold(arm, poses.CARRY_WAIST, pocket=(0.04, -0.12, -0.36), left_along=0.32)
+
+
+# The load of the food carrier's walk: a socket on the right clavicle over the shoulder
+# (armature space, metres above the shoulder joint), shown in `WALKS` and hidden in every
+# other clip (`key_load`).
+LOAD = "socket.load"
+LOAD_AT = (0.0, 0.0, 0.085)
+LOAD_TILT = 12  # degrees: the roll's front end drooping towards the chest
+
+
+def add_load(ch, name):
+    """The load of pelts (`gear.pelt_load`) skinned rigidly to `socket.load`, a bone on the
+    right clavicle over the shoulder that `key_load` scales to show or hide the load."""
+    import bpy
+    from mathutils import Matrix, Vector
+
+    from . import gear
+
+    bpy.context.view_layer.objects.active = ch.arm
+    bpy.ops.object.mode_set(mode="EDIT")
+    ebs = ch.arm.data.edit_bones
+    at = ebs[ch.prefix + "upperarm_r"].head + Vector(LOAD_AT)
+    eb = ebs.new(ch.prefix + LOAD)
+    eb.head, eb.tail = at, at + Vector((0.0, 0.0, 0.1))
+    eb.parent, eb.use_deform = ebs[ch.prefix + "clavicle_r"], True
+    bpy.ops.object.mode_set(mode="OBJECT")
+    load = gear.pelt_load(f"{name}.load")
+    gear.rigid(load, ch.arm, ch.prefix + LOAD, Matrix.Translation(at + Vector((0.0, 0.07, 0.05)))
+               @ Matrix.Rotation(math.radians(LOAD_TILT), 4, "X"))
+    return ch.add("gear", load, "pelt")
+
+
+def key_load(ch, clips):
+    """Keys `socket.load` over every clip of `clips` (`bpy.data.actions` names): shown in the
+    stance walks, hidden elsewhere (a scale of 0, `line.key_show`)."""
+    import bpy
+
+    from . import line
+
+    for clip in clips:
+        act = bpy.data.actions.get(clip)
+        if act is not None:
+            line.key_show(ch.arm, act, {LOAD: 1 if clip in WALKS else 0}, ch.prefix)
 
 
 def spec(md, palette=None, build=None, fixed=(), **kw):
@@ -343,12 +392,16 @@ def make(root, name, s):
         am.attach(gun, ch.arm, "socket.hand_r", grips.hold_matrix(ch.arm, "socket.hand_r", (0.0, 0.01, 0.0)))
         ch.held["musket"] = gun
         ch.keys[gun.name] = "wood"
+    if s["load"]:
+        add_load(ch, name)
     return ch
 
 
 def build(ctx, s, make_fn=None):
     """Builds, animates, paints and prepares for export the gunman of SPEC `s` (the
     musketeer clips of `line.py`)."""
+    import bpy
+
     from . import aim as aiming
     from . import armature as am
     from . import crawl, faces, heads, line, outfit, poses
@@ -357,7 +410,10 @@ def build(ctx, s, make_fn=None):
     md = {k: v for k, v in s["md"].items() if k in CLIPS + WALKS}
     ch = (make_fn or make)(ctx.root, ctx.name, s)
     line._musket_clips(ctx, ch, md, carry=CARRIES[s["carry"]] if s["carry"] else None,
-                       walks=[k for k in WALKS if k in md])
+                       walks=[k for k in WALKS if k in md], style=s["reload"],
+                       gun=s["gun"] if s["reload"] else None)
+    if s["load"]:
+        key_load(ch, [a.name for a in bpy.data.actions if a.name.isupper()])
     am.set_clip(ch.arm, "STAND")
     report = {}
     colours = ch.colours(ctx.ref, s["palette"], report=report, mix=s["mix"], fixed=s["fixed"])
@@ -367,7 +423,8 @@ def build(ctx, s, make_fn=None):
     for pb in ch.arm.pose.bones:
         pb.scale = (1.0, 1.0, 1.0)
     am.pose(ch.arm, poses.STAND_MUSKET)
-    ch.arm.pose.bones[aiming.ROD_SOCKET].matrix = ch.arm.pose.bones["socket.hand_r"].matrix @ aiming.ROD_STOWED
+    stowed = aiming.rod_for(s["gun"])["stowed"] if s["reload"] else aiming.ROD_STOWED
+    ch.arm.pose.bones[aiming.ROD_SOCKET].matrix = ch.arm.pose.bones["socket.hand_r"].matrix @ stowed
     tris = ch.triangles()
     names = [k for k in poses.musketeer_clips(md) if k in md or k == "STAND" or k not in CLIPS] + list(crawl.CLIPS)
     names += [k for k in WALKS if k in md]
@@ -387,7 +444,8 @@ def pose_for(ch, s, clip):
 
     md = {k: v for k, v in s["md"].items() if k in CLIPS + WALKS}
     stand = getattr(ch, "stand_pose", poses.STAND_MUSKET)
-    all_keys = poses.musketeer_clips({k: v for k, v in md.items() if k in CLIPS}, stand, swing=not s["carry"])
+    all_keys = poses.musketeer_clips({k: v for k, v in md.items() if k in CLIPS}, stand, swing=not s["carry"],
+                                     style=s["reload"])
     all_keys.update(poses.step_keys({k: v for k, v in md.items() if k in WALKS}, stand, not s["carry"]))
     keys = all_keys[clip]
     ch._pose_spec = keys[-1][1] if clip == "DEATH" else keys[0][1]

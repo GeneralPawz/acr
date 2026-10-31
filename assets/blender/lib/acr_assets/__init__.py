@@ -42,4 +42,6 @@ class Reference:
         self.anchor = tuple(data["anchor"])
         # ADDSECTION state drawn into the reference (`--sections`), -1 none.
         self.sections = data.get("sections", -1)
+        # The frame of the clip a unit reference shows (`--step`).
+        self.step = data.get("step", 0)
         self.views = [View(self, v) for v in data["views"]]

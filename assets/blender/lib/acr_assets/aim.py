@@ -643,6 +643,15 @@ ROD_SOCKET = "socket.hand_l"
 ROD_LENGTH = 0.9
 
 
+def rod_for(gun, musket=1.62):
+    """`_rod`'s options for a gun of `gun` metres: a short gun's rod is no longer than its
+    barrel (88 %) and lies in the pipes with its head at the muzzle (the trapper's rifle,
+    #347)."""
+    muzzle = gun - GRIP_TO_BUTT
+    length = min(ROD_LENGTH, 0.88 * muzzle)
+    return {"length": length, "stowed": Matrix.Translation((0, -0.02, muzzle - length + 0.03))}
+
+
 def _rod(mode, arm, musket, prefix="", length=ROD_LENGTH, stowed=ROD_STOWED):
     """The ramrod's matrix (tail at the origin, +Z to the head) in `mode`: "stowed" in its
     pipes; "slide" drawn up along the barrel, the right hand near its head; "swing" turned
@@ -693,11 +702,11 @@ def _key(pb, m, frame):
     pb.keyframe_insert("location", frame=frame, group=pb.name)
 
 
-def bake_musket(arm_obj, clip, keys, rod_phases=None):
+def bake_musket(arm_obj, clip, keys, rod_phases=None, rod_kw=None):
     """Keys the musket (`socket.hand_r`) on every frame of `clip` along the path between its
     keys' placements (armature space: location lerped, rotation slerped), so it does not
     swing with a hand whose grip changes between keys, and the ramrod: in its pipes, or in
-    the right hand through the (frame, mode) `rod_phases` (`_rod`)."""
+    the right hand through the (frame, mode) `rod_phases` (`_rod`, options `rod_kw`)."""
     arm = arm_obj.pose.bones
     placed = []
     for f, spec in keys:
@@ -714,12 +723,12 @@ def bake_musket(arm_obj, clip, keys, rod_phases=None):
         m.translation = m0.translation.lerp(m1.translation, t)
         bpy.context.scene.frame_set(f)
         _key(sock, m, f)
-        _key(rod, _rod_at(rod_phases, f, arm, m), f)
+        _key(rod, _rod_at(rod_phases, f, arm, m, **(rod_kw or {})), f)
     _linear(arm_obj)
     arm_obj.animation_data.action = None
 
 
-def stow_rammer(arm_obj, clip):
+def stow_rammer(arm_obj, clip, rod_kw=None):
     """Keys the ramrod in its pipes on every frame of `clip` (the musket as the clip has it)."""
     act = bpy.data.actions[clip]
     first, last = (int(x) for x in act.frame_range)
@@ -727,7 +736,7 @@ def stow_rammer(arm_obj, clip):
     arm = arm_obj.pose.bones
     for f in range(first, last + 1):
         bpy.context.scene.frame_set(f)
-        _key(arm[ROD_SOCKET], _rod("stowed", arm, arm["socket.hand_r"].matrix.copy()), f)
+        _key(arm[ROD_SOCKET], _rod("stowed", arm, arm["socket.hand_r"].matrix.copy(), **(rod_kw or {})), f)
     _linear(arm_obj)
     arm_obj.animation_data.action = None
 

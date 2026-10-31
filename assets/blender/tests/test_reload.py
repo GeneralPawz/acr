@@ -107,6 +107,43 @@ class ReloadDrill(unittest.TestCase):
         self.assertEqual(plays, 5)
 
 
+class TrapperReload(unittest.TestCase):
+    """The trapper's reload (#347): the short rifle's own stance clips and steps."""
+
+    TRAPPER = {"ATTACK1": "@ATTACK1 9 3 0 86", "PSTAND3": "#PSTAND3 9 1 3 87", "ATTACK3": "#ATTACK3 9 84 3 87",
+               "TRANS3X": "#TRANS3X 9 21 3 129", "TRANSX3": "#TRANSX3 9 21 3 149"}
+
+    def test_attack3_rams_twice_on_the_low_stroke(self):
+        plan = poses.reload_plan(self.TRAPPER, "trapper")
+        steps = [s for _f, s in plan["ATTACK3"][0]]
+        self.assertEqual(steps, ["ram_down", "ram_up", "ram_down", "ram_up", "ram_down"])
+        # ATTACK1 and the stance clips rest on the low stroke; the musketeer's plan is untouched.
+        self.assertEqual(plan["ATTACK1"][0][-1][1], "ram_down")
+        self.assertEqual(plan["PSTAND3"][0][0][1], "ram_down")
+        self.assertEqual(plan["TRANS3X"][0][0][1], "ram_down")
+        musketeer = poses.reload_plan(self.TRAPPER)
+        self.assertEqual(musketeer["ATTACK1"][0][-1][1], poses.RAM_HOLD)
+        self.assertEqual([s for _f, s in musketeer["ATTACK3"][0]].count("ram_up"), 4)
+
+    def test_clips_use_the_style(self):
+        reload = {k: {"step": k} for k in poses.RELOAD_STEPS}
+        c = poses.musketeer_clips(self.TRAPPER, aim=AIM, stand=STAND, reload=reload, style="trapper")
+        self.assertIs(c["ATTACK3"][0][1], reload["ram_down"])
+        self.assertIs(c["ATTACK1"][-1][1], reload["ram_down"])
+
+    def test_steps_follow_the_short_gun(self):
+        self.assertEqual(poses.reload_steps(poses.MUSKET_LEN), poses.RELOAD_STEPS)
+        short, full = poses.reload_steps(0.95), poses.RELOAD_STEPS
+        for name, st in short.items():
+            if isinstance(full[name]["left"], float) and full[name]["left"] >= 0.9:
+                self.assertLessEqual(st["left"], 0.95 - 0.25, name)  # the left hand stays on the barrel
+            if isinstance(full[name]["right"], float) and full[name]["right"] >= 0.9:
+                self.assertAlmostEqual(st["right"], full[name]["right"] - 0.67, 3, name)
+            if full[name].get("butt"):
+                self.assertGreater(st["grip"][1], full[name]["grip"][1], name)  # the butt nearer the man
+            self.assertEqual(st["base"]["root"], (0, 0, 0), name)
+
+
 class MountedReload(unittest.TestCase):
     """The dragoons reload in ATTACK1 itself (ENGD18.MD: "/SLOWRECHARGE", 156 frames)."""
 
