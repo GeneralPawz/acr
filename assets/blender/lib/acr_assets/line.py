@@ -583,6 +583,23 @@ def _colour(ch, name, s):
     gear.hold(ch, staff, f"{name}.colour", "socket.hand_r", slot="colour")
     flag = gear.hold(ch, cloth, f"{name}.colour_cloth", "socket.hand_r", slot="colour_cloth")
     ch.flag = flag.name
+    cloth_wind(flag)
+
+
+def cloth_wind(obj):
+    """`_WIND` on the colour's cloth (docs/rendering-3d.md "Wind", "Flags"): `y` the distance
+    from the staff, 0 on the hoist to 1 at the fly, `z` a phase down the cloth (0 at the top
+    edge); the game ripples the vertices of a `flag` material by them and keeps the hoist
+    fixed. The mesh is in the item frame (`FLAG_SIZE`)."""
+    me = obj.data
+    a = me.attributes.new("_wind", "FLOAT_COLOR", "POINT")
+    active = me.color_attributes.active_color_name
+    # Not COLOR_0: that is the decay mask (the cloth has none).
+    me.color_attributes.active_color_name = active or "none"
+    for i, v in enumerate(me.vertices):
+        u = min(max((v.co.x - 0.02) / FLAG_SIZE[0], 0.0), 1.0)
+        row = min(max((FLAG_TOP - v.co.z) / FLAG_SIZE[1], 0.0), 1.0)
+        a.data[i].color = (0.0, u, row, 0.0)
 
 
 def support_clips(md, active=None):

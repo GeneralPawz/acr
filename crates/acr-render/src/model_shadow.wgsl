@@ -15,7 +15,7 @@ fn fs_shadow(in: VsOut) {
     if (material.flags.z > 0.0 && c.a < material.flags.z) {
         discard;
     }
-    if (in.params.w > 0.5) {
+    if (fract(in.params.w * 0.5) > 0.4) {
         let p = vec2<i32>(floor(in.pos.xy));
         if (((p.x + p.y) & 1) == 1) {
             discard;

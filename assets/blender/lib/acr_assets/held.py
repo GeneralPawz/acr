@@ -266,7 +266,7 @@ def drumstick(length=0.42):
     return it
 
 
-def colour(staff=2.9, cloth=(1.8, 1.65), grip=0.9, cols=8, rows=6):
+def colour(staff=2.9, cloth=(1.8, 1.65), grip=0.9, cols=12, rows=6):
     """A regimental colour on its pike: an ash staff (`grip` m above the butt in the hand),
     a gilt spear-point finial (`socket.tip`) and the silk cloth nailed to the staff below
     it, flying to +X. The cloth is a `cols` x `rows` grid with groups `cloth` (all its
