@@ -34,7 +34,7 @@ pub enum Command {
     /// Walk into a building (peasants into mines, units into garrisons).
     Enter { player: PlayerId, units: Vec<EntityId>, building: EntityId },
     /// Let everybody out of a building.
-    Leave { player: PlayerId, building: EntityId },
+    Leave { player: PlayerId, building: EntityId, kind: Option<TypeId> },
     /// Set a building's rally point (world pixels).
     Rally { player: PlayerId, building: EntityId, x: i32, y: i32 },
     /// Place a building at world pixel `(x, y)` (paid at once) and send `units` to build it.

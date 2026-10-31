@@ -2145,9 +2145,15 @@ No game option writes it. How the map view draws the fog is in
     not kept. The player's leave command is the dispatcher case at 0x4e34d9 (player byte and a
     unit-type word, handler 0x4de7c8): `LeaveMine` (0x5f518b, call 0x4de874) on every selected
     building of the player, for that type, so one unit of the type per command, after
-    `EXITPAUSE`. `Command::Leave` has no type yet and lets everybody out at once (#365), but
-    through the same walk-out (`economy::release` calls `walk_out`: born points, spawn
-    priority, rally point), so the units are not left in unlimited motion at the door.
+    `EXITPAUSE`. `Command::Leave { kind: Some(_) }` does the same (`economy::leave_mine`); the
+    sender is the building panel's occupant button (0x5f5a66, command 0x2e through 0x4d713a,
+    five commands with Shift): 0x5f71d3 counts the occupants of the selected buildings per
+    unit type and makes one icon per type present, in type order, whose click sends that
+    type. Our panel shows up to three (`LEAVE_SLOTS`), and has no Shift repeat. Replays: the
+    high bit of the player byte of opcode 9 says a type word follows; older ones decode to
+    `kind: None`, which lets everybody out at once (#365), through the same walk-out
+    (`economy::release` calls `walk_out`: born points, spawn priority, rally point), so the
+    units are not left in unlimited motion at the door.
     `LeaveBuilding` (0x56c6ca) gives the same `LeaveMine` to any object with someone inside
     (OB+0xf0), without the `LeaveMine` order test of `OBJ_LeaveMine`; a dead object's slot
     is empty here, where the engine would still find the dying object.

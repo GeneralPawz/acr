@@ -224,7 +224,7 @@ fn peasants_in_a_mine_produce_gold() {
     let earned = w.players[0].resources[GOLD] - gold;
     assert!((399..=401).contains(&earned), "earned {earned}");
     // Leaving puts them back on the map.
-    w.step(&[Command::Leave { player: 0, building: mine }]);
+    w.step(&[Command::Leave { player: 0, building: mine, kind: None }]);
     assert!(w.units[mine.0 as usize].inside.is_empty());
     assert!(workers.iter().all(|&id| w.units[id.0 as usize].inside_of.is_none()));
 }

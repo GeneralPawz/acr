@@ -1180,9 +1180,12 @@ impl World {
                     }
                 }
             }
-            Command::Leave { player, building } => {
+            Command::Leave { player, building, kind } => {
                 if let Some(&b) = self.owned(*player, &[*building]).first() {
-                    crate::economy::leave(self, b);
+                    match kind {
+                        Some(kind) => crate::economy::leave_mine(self, b, *kind),
+                        None => crate::economy::leave(self, b),
+                    }
                 }
             }
             Command::Rally { player, building, x, y } => {

@@ -426,7 +426,11 @@ pub fn build(world: &World, player: u8, sel: &[EntityId], v: &Value) -> Result<V
         "gather" => one(Command::Gather { player, units: units()?, x: int(v, "x")?, y: int(v, "y")? }),
         "repair" => one(Command::Repair { player, units: units()?, building: id(v, "building")? }),
         "enter" => one(Command::Enter { player, units: units()?, building: id(v, "building")? }),
-        "leave" => one(Command::Leave { player, building: id(v, "building")? }),
+        "leave" => {
+            // One unit of `kind` leaves; without a kind everybody does.
+            let kind = if v.get("kind").is_some() { Some(object_type()?) } else { None };
+            one(Command::Leave { player, building: id(v, "building")?, kind })
+        }
         "build" => {
             one(Command::Build { player, units: units()?, kind: object_type()?, x: int(v, "x")?, y: int(v, "y")? })
         }

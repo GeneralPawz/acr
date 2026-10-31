@@ -65,8 +65,8 @@ const MARKET_BUTTONS: &[(usize, &str, &str, HudCommand)] = &[
     (30, "r_Plus10k", "ECONOMA", HudCommand::MarketAmount(10000)),
 ];
 
-/// Slot of the icon that lets the units out of a building.
-const LEAVE_SLOT: usize = 11 + 12;
+/// Slots of the occupant icons, one per unit type inside (the first at column 11 of row 1).
+const LEAVE_SLOTS: [usize; 3] = [11 + 12, 11 + 24, 11];
 
 /// What a key does for the app.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1302,18 +1302,25 @@ impl InGame {
                 ..Icon::default()
             });
         }
-        let inside: Vec<EntityId> = working.iter().flat_map(|b| b.inside.iter().copied()).collect();
-        if let Some(first) = inside.first().and_then(|&id| world.unit(id)) {
-            let it = catalog.get(first.kind);
+        // One icon per unit type inside, in type order, with its count over the selected
+        // buildings (0x5f71d3); a click lets one unit of that type out (`0x5f5a66`).
+        let mut inside: std::collections::BTreeMap<TypeId, i32> = std::collections::BTreeMap::new();
+        for id in working.iter().flat_map(|b| b.inside.iter()) {
+            if let Some(u) = world.unit(*id) {
+                *inside.entry(u.kind).or_default() += 1;
+            }
+        }
+        icons.retain(|i| !LEAVE_SLOTS.contains(&i.slot) || inside.is_empty());
+        for ((kind, count), slot) in inside.into_iter().zip(LEAVE_SLOTS) {
+            let it = catalog.get(kind);
             let frame = objects.definition(&it.id).and_then(|d| d.icon()).and_then(|i| data.icon(i)).unwrap_or(0);
-            icons.retain(|i| i.slot != LEAVE_SLOT);
             icons.push(Icon {
                 frame,
-                slot: LEAVE_SLOT,
+                slot,
                 outline: Some(outline),
-                count: Some(inside.len() as i32),
+                count: Some(count),
                 hint: unit_name(ctx, &it.md_name),
-                action: Some(HudCommand::Leave),
+                action: Some(HudCommand::Leave(usize::from(kind.0))),
                 ..Icon::default()
             });
         }
@@ -1606,11 +1613,17 @@ impl InGame {
                     self.interface.pages.insert(kind, page);
                 }
             }
-            HudCommand::Leave => {
-                let buildings: Vec<EntityId> =
-                    self.selected_units().filter(|u| u.building && !u.inside.is_empty()).map(|u| u.id).collect();
+            HudCommand::Leave(kind) => {
+                // Every selected building holding the type lets one unit of it out
+                // (0x4de7c8 walks the selected buildings).
+                let kind = TypeId(kind as u16);
+                let buildings: Vec<EntityId> = self
+                    .selected_units()
+                    .filter(|u| u.building && u.inside.iter().any(|&i| world.unit(i).is_some_and(|o| o.kind == kind)))
+                    .map(|u| u.id)
+                    .collect();
                 for building in buildings {
-                    self.commands.push(Command::Leave { player, building });
+                    self.commands.push(Command::Leave { player, building, kind: Some(kind) });
                 }
             }
             HudCommand::Rally => {
