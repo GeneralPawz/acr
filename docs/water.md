@@ -99,6 +99,26 @@ The reasons:
   - Without the 3D path (models off), and in the zoomed-out map view, the tint stays as
     it was.
 
+### Storm (#409, built)
+
+`sea_state=calm|storm` (default `calm`, which is today's look exactly; driver
+`{"cmd": "sea_state", "mode": "storm"}`) is a look only, nothing reaches `acr-sim`:
+
+- **Waves**: `SeaState::gain()` (`STORM_GAIN` = 4) multiplies every wave's amplitude, in the
+  shader (`globals.grid.w`, `wave_scale`) and in the CPU sum (`Waves::sample`'s `scale`, so
+  ships and surface agree). Crests reach ~4 × 12 px (1.6 m); the grid's margin and
+  `ground_bounds` grow by the gain. The gain is divided out of the Gerstner steepness (else
+  the crests loop) and the steepness rises by half (0.5 → 0.75): choppier, not just higher.
+  The detail normal is 1.8 × stronger.
+- **Whitecaps and spray**: foam on the high crests and steep faces, torn into streaks along the
+  wind by stretched noise (`caps` in `fs_water`); no separate spray particles yet.
+- **Light**: the water is darker and greyer (`body`, `sky`, no glint), the steep faces lit on
+  the sun's side and dark in the lee (`lit`). The scene gets the `weather=rain` look when
+  `weather=off` (`weather_at_sea` in `three_d.rs`: rain, the trees' wind ×2.2, the weather
+  sound), with its grade 18 % darker, the fog 1.5 × and 1.6 × the drops.
+- **Ships**: heave, pitch and roll follow the 4 × sum, so they pitch and roll hard; the tilt is
+  limited to 0.45 rad (`MAX_TILT`) so a hull does not roll over.
+
 Rivers: the depth gradient is already in the texture. A flow direction along the river
 (perpendicular to the gradient, signed by the downhill direction of the terrain) will
 scroll the ripples and foam in phase 3.
@@ -252,6 +272,13 @@ of the wake and ring terms where any are in the uniform. The grid has at most
 (no timestamp queries or windowed fps run yet); with 10 waves per vertex and the noise per
 pixel it may exceed the 0.3 ms native budget at 1600 × 900 and needs that measurement
 before release, especially on WebGL2.
+
+Storm (#409), `cargo xtask drive --gpu` under `xvfb-run` (Mesa llvmpipe, a software
+rasteriser, 1024 × 768, three ships, free camera at 35°, `ACR_WATER=detailed`, `gputime` 60
+frames): water pass 31.9 ms calm, 26.8 ms storm (the shader work is the same; the difference
+is noise). That says nothing about a GPU, so the 0.3 ms budget is still unmeasured; the storm
+adds per pixel only 2 noise lookups, a few multiplies and the rain's own draw (weather
+2.5 ms on llvmpipe).
 
 ## Phases
 

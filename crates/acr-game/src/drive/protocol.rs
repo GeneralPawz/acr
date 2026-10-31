@@ -255,6 +255,9 @@ pub enum Request {
     /// `{"cmd": "weather", "mode": "rain"}`: off, rain, snow or fog over the `weather`
     /// setting; without `mode` back to the setting.
     Weather(Option<acr_render::weather::Weather>),
+    /// `{"cmd": "sea_state", "mode": "storm"}`: calm or storm over the `sea_state` setting
+    /// (waves, sky, rain and wind); without `mode` back to the setting.
+    SeaState(Option<acr_render::water::SeaState>),
     /// The fog of war on or off (off: the whole map revealed, as on the blank field).
     Fog(bool),
     /// The map's trees and stones as models switched on or off over `map_models`.
@@ -646,6 +649,10 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
         "material_detail" => Request::MaterialDetail(v.get("on").and_then(Value::as_bool)),
         "weather" => Request::Weather(match string(&v, "mode") {
             Some(m) => Some(acr_render::weather::Weather::parse(&m).ok_or(format!("weather: unknown mode {m:?}"))?),
+            None => None,
+        }),
+        "sea_state" => Request::SeaState(match string(&v, "mode") {
+            Some(m) => Some(acr_render::water::SeaState::parse(&m).ok_or(format!("sea_state: unknown mode {m:?}"))?),
             None => None,
         }),
         "fog" => Request::Fog(v.get("on").and_then(Value::as_bool).unwrap_or(true)),

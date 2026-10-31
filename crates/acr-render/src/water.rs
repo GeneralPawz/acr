@@ -26,6 +26,46 @@ pub const RING_SECONDS: f32 = 6.0;
 /// Gravity in world px per s² (30 px to the metre), as `GRAVITY` in `water.wgsl`.
 const GRAVITY: f32 = 294.0;
 
+/// `sea_state=calm|storm`: how wild the sea is. A storm scales the spectrum up (higher,
+/// steeper waves with whitecaps) and darkens the water; the weather's rain and wind come with
+/// it in the game (docs/water.md "Storm"). Render only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SeaState {
+    #[default]
+    Calm,
+    Storm,
+}
+
+impl SeaState {
+    pub fn name(self) -> &'static str {
+        match self {
+            SeaState::Calm => "calm",
+            SeaState::Storm => "storm",
+        }
+    }
+
+    /// The setting's value; anything else is `None`.
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "calm" => SeaState::Calm,
+            "storm" => SeaState::Storm,
+            _ => return None,
+        })
+    }
+
+    /// The factor on every wave's amplitude (`globals.grid.w` in `water.wgsl`); also on the
+    /// CPU sum ([`Waves::sample`]'s `scale`), so ships and surface agree.
+    pub fn gain(self) -> f32 {
+        match self {
+            SeaState::Calm => 1.0,
+            SeaState::Storm => STORM_GAIN,
+        }
+    }
+}
+
+/// The storm's wave amplitude factor: 4 × the calm spectrum.
+pub const STORM_GAIN: f32 = 4.0;
+
 /// One Gerstner wave: unit direction, wave number (rad/px), amplitude (px), phase offset.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Wave {
@@ -342,6 +382,7 @@ impl WaterRenderer {
         view: &View3d,
         seconds: f32,
         detailed: bool,
+        sea: SeaState,
         disturbances: &Disturbances,
     ) -> bool {
         self.vertices = 0;
@@ -349,7 +390,7 @@ impl WaterRenderer {
             return false;
         }
         let map = self.map.as_ref().expect("set above");
-        let [mut x0, mut y0, mut x1, mut y1] = view.ground_bounds(-WAVE_REACH, WAVE_REACH);
+        let [mut x0, mut y0, mut x1, mut y1] = view.ground_bounds(-WAVE_REACH * sea.gain(), WAVE_REACH * sea.gain());
         if view.is_free() {
             let t = view.target();
             x0 = x0.max(t[0] - FREE_REACH);
@@ -357,7 +398,7 @@ impl WaterRenderer {
             x1 = x1.min(t[0] + FREE_REACH);
             y1 = y1.min(t[1] + FREE_REACH);
         }
-        let margin = 2.0 * WAVE_REACH;
+        let margin = 2.0 * WAVE_REACH * sea.gain();
         let rect = [
             (x0 - margin).max(0.0),
             (y0 - margin).max(0.0),
@@ -404,7 +445,7 @@ impl WaterRenderer {
             rect,
             eye: [eye[0], eye[1], eye[2], time],
             sun: [sun[0], sun[1], sun[2], if detailed { 1.0 } else { 0.0 }],
-            grid: [map.extent[0] / 32.0, map.extent[1] / 32.0, cells as f32, 0.0],
+            grid: [map.extent[0] / 32.0, map.extent[1] / 32.0, cells as f32, sea.gain()],
             waves,
             phases,
             wakes,
@@ -453,6 +494,17 @@ mod tests {
         let dx = (h(p[0] + e, p[1]) - h(p[0] - e, p[1])) / (2.0 * e);
         let dy = (h(p[0], p[1] + e) - h(p[0], p[1] - e)) / (2.0 * e);
         assert!((dx - s.slope[0]).abs() < 2e-2 && (dy - s.slope[1]).abs() < 2e-2, "{dx} {dy} vs {:?}", s.slope);
+    }
+
+    #[test]
+    fn storm_scales_the_sum() {
+        let w = Waves::new(5);
+        let (p, t) = ([800.0, 300.0], 3.0);
+        let (calm, storm) = (w.sample(p, t, SeaState::Calm.gain()), w.sample(p, t, SeaState::Storm.gain()));
+        assert!((storm.height - calm.height * STORM_GAIN).abs() < 1e-3);
+        assert!((storm.slope[0] - calm.slope[0] * STORM_GAIN).abs() < 1e-3);
+        assert_eq!(SeaState::parse("storm"), Some(SeaState::Storm));
+        assert_eq!(SeaState::parse("gale"), None);
     }
 
     #[test]

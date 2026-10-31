@@ -132,6 +132,7 @@ its label to appear.
 | `{"cmd": "material_detail", "on": false}` | normal maps and the glTF highlight of the models (#234) forced off (`true`: on; no `on`: the `material_detail` setting again); `ACR_MATERIAL_DETAIL=on\|off` does the same at start |
 | `{"cmd": "weather", "mode": "rain"}` | rain, snow, fog or off over the `weather` setting (no `mode`: the setting again); answers `weather` (docs/rendering-3d.md "Weather (#224)") |
 | `{"cmd": "map_models", "on": false}` | the map's trees and stones as sprites (`true`: as models where `map_objects.json` has one), over the `map_models` setting |
+| `{"cmd": "sea_state", "mode": "storm"}` | calm or storm over the `sea_state` setting (no `mode`: the setting again): high waves, dark sky, rain and wind on water; answers `sea_state` (docs/water.md "Storm"). Needs `water=detailed` (a `--gpu` run on a software adapter resolves `graphics=auto` to low: set `ACR_WATER=detailed`) |
 | `{"cmd": "fog", "on": false}` | the whole map revealed from the next tick, as on the blank field (`true`: the fog of war again); for shots of a real map |
 | `{"cmd": "props", "model": "broadleaf", "at": [[7600, 7700]], "wind": true}` | trees or foliage of a model at ground points (render only; `wind` forces the sway on or off); answers `props` (the count) |
 | `{"cmd": "profile"}` | the simulation's per-system times since the last call: `profile` maps a name to `{"ms", "calls"}` (turns the profiler on at the first call) |

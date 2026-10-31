@@ -108,6 +108,9 @@ pub struct Settings {
     /// ACR (#224): `weather=off|rain|snow|fog` (off by default): rain, snow or fog over the
     /// 3D path, a look only (docs/rendering-3d.md "Weather (#224)"); no gameplay effect.
     pub weather: Weather,
+    /// ACR: `sea_state=calm|storm` (calm by default): a storm raises the waves, darkens the
+    /// sky and brings rain and wind to water maps (docs/water.md), a look only.
+    pub sea_state: SeaState,
     /// ACR: the graphics preset (`graphics=auto|low|medium|high|ultra`, auto by default;
     /// `ui/graphics.rs`, docs/rendering-3d.md "Graphics presets"): the frame's limits, and
     /// the single switches once when chosen.
@@ -115,6 +118,7 @@ pub struct Settings {
 }
 
 pub use super::graphics::Graphics;
+pub use acr_render::water::SeaState;
 pub use acr_render::weather::Weather;
 
 /// `models=off|units|all`: sprites everywhere (the original), 3D units, 3D units and
@@ -204,6 +208,7 @@ impl Default for Settings {
             marks_keep: false,
             aim_guides: true,
             weather: Weather::Off,
+            sea_state: SeaState::Calm,
             graphics: Graphics::Auto,
         }
     }
@@ -282,7 +287,7 @@ impl Settings {
             "sound_volume={}\nmusic_volume={}\nmusic_mode={}\ngame_mode={}\nscroll_speed={}\nframe_time={}\n\
              resolution={}\nrecord={}\nrecord_file={hex}\ncontrols={controls}\nedge_scroll={}\n\
              models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\ncorpse_decay={}\nhit_locations={}\nbody_spacing={}\nmortars={}\ncorpse_piles={}\ncannon_fire={}\nshadows={}\nlod={}\nmaterial_detail={}\nwind={}\nmap_models={}\nwater={}\n\
-             ground={}\nground_cover={}\nbattlefield_marks={}\nweather={}\naim_guides={}\ngraphics={}\n{}{}{}",
+             ground={}\nground_cover={}\nbattlefield_marks={}\nweather={}\nsea_state={}\naim_guides={}\ngraphics={}\n{}{}{}",
             self.sound_volume,
             self.music_volume,
             self.music_mode,
@@ -309,6 +314,7 @@ impl Settings {
             if self.ground_cover { "on" } else { "off" },
             if self.marks_keep { "keep" } else { "fade" },
             self.weather.name(),
+            self.sea_state.name(),
             if self.aim_guides { "on" } else { "off" },
             self.graphics.name(),
             match self.decay_stain {
@@ -407,6 +413,7 @@ impl Settings {
                 "battlefield_marks" => s.marks_keep = value == "keep",
                 "aim_guides" => s.aim_guides = value != "off",
                 "weather" => s.weather = Weather::parse(value).unwrap_or_default(),
+                "sea_state" => s.sea_state = SeaState::parse(value).unwrap_or_default(),
                 "graphics" => s.graphics = Graphics::parse(value).unwrap_or_default(),
                 "group_move" => {
                     s.group_move = match value {
@@ -486,6 +493,7 @@ mod tests {
             marks_keep: true,
             aim_guides: false,
             weather: Weather::Snow,
+            sea_state: SeaState::Storm,
             graphics: Graphics::Medium,
         };
         assert_eq!(Settings::decode(&s.encode()), s);
@@ -518,6 +526,9 @@ group_move=off"
         assert_eq!(Settings::decode(""), Settings::default());
         assert_eq!(Settings::decode("weather=fog").weather, Weather::Fog);
         assert_eq!(Settings::decode("weather=hail").weather, Weather::Off);
+        assert_eq!(Settings::decode("sea_state=storm").sea_state, SeaState::Storm);
+        assert_eq!(Settings::decode("sea_state=gale").sea_state, SeaState::Calm);
+        assert_eq!(Settings::default().sea_state, SeaState::Calm);
         let odd = Settings::decode("scroll_speed=99\nfoo=1\nresolution=x\ncontrols=modern\nmodels=3d\ngore=off");
         assert_eq!((odd.scroll_speed, odd.resolution, odd.controls), (10, 1, Controls::Modern));
         assert_eq!((odd.models, odd.camera, odd.gore), (Models::Off, CameraMode::Fixed, Gore::Off));
