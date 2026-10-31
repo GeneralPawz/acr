@@ -14,6 +14,7 @@ pub mod minimap;
 pub mod panels;
 pub mod produce;
 pub mod touch;
+pub mod zoom;
 
 use std::rc::Rc;
 
@@ -25,6 +26,7 @@ use crate::ui::fonts::FontId;
 use crate::ui::settings::TopBar;
 use data::HudData;
 use minimap::{Minimap, Placement};
+use zoom::{Group, Zoom};
 
 /// Sprite packs of the interface.
 pub mod gp {
@@ -72,6 +74,13 @@ pub const ZONE1_SLOT: usize = 99;
 const ARMY_ORIGIN: (i32, i32) = (6, 31);
 pub const ARMY_COLUMNS: usize = 5;
 pub const ARMY_ROWS: usize = 7;
+
+/// How far the scaled panels reach from their corner (layout pixels), which caps `hud_scale`
+/// so they stay on the screen: the command grid's right edge, the army list's height, the
+/// minimap's side with its margin.
+const COMMANDS_W: i32 = PROPERTY[0] + (ICON + ADD_ICON) * GRID_COLUMNS as i32;
+const ARMY_H: i32 = (ICON + ADD_ICON) * ARMY_ROWS as i32;
+const MINIMAP_EXTENT: i32 = minimap::SIDE + 17;
 
 /// Width of the resource panel (`Interf2\ResPanel` frame 0, 0x4ecc50).
 const RES_PANEL: i32 = 716;
@@ -427,6 +436,8 @@ pub struct Hud {
     pub top_bar: TopBar,
     /// Canvas pixels one density-independent pixel covers; sizes the touch buttons.
     density: f32,
+    /// The panels' scale (`hud_scale` in `settings.txt`); `None`: the platform's ([`zoom`]).
+    pub hud_scale: Option<f32>,
     /// The touch top bar's resource panel is open.
     resources_open: bool,
     /// The top bar is centred on a wide screen (`center_top_bar` in `settings.txt`).
@@ -465,6 +476,7 @@ impl Default for Hud {
         Self {
             top_bar: TopBar::Classic,
             density: 1.0,
+            hud_scale: None,
             resources_open: false,
             center_top_bar: false,
             screen: SCREEN,
@@ -597,7 +609,44 @@ impl Hud {
 
     /// A canvas point in the side panels' coordinates.
     fn panel_point(&self, p: [f32; 2]) -> [f32; 2] {
+        let p = self.local(Group::Panel, p);
         [p[0] - self.panel_dx() as f32, p[1]]
+    }
+
+    /// The scale about the corner a group of panels hangs from (`hud_scale`), kept so that
+    /// the group stays on the screen (the minimap at most half of its height).
+    pub fn zoom(&self, group: Group) -> Zoom {
+        let scale = zoom::resolve(self.hud_scale, self.density, cfg!(target_os = "android"), ICON);
+        let [w, h] = self.screen.map(|v| v as f32);
+        match group {
+            Group::Commands => Zoom { anchor: [0.0, h], scale: zoom::fit(scale, w, COMMANDS_W as f32) },
+            Group::Army => {
+                let anchor = [ARMY_ORIGIN.0 as f32, ARMY_ORIGIN.1 as f32];
+                Zoom { anchor, scale: zoom::fit(scale, h - anchor[1], ARMY_H as f32) }
+            }
+            Group::Minimap => Zoom { anchor: [w, h], scale: zoom::fit(scale, h / 2.0, MINIMAP_EXTENT as f32) },
+            Group::Panel => Zoom { anchor: [w, 0.0], scale: zoom::fit(scale, h, (panels::INF_Y2 + 8) as f32) },
+        }
+    }
+
+    /// A canvas point in the layout of `group`.
+    fn local(&self, group: Group, p: [f32; 2]) -> [f32; 2] {
+        self.zoom(group).to_layout(p)
+    }
+
+    /// The mouse in the layout of `group`.
+    fn mouse_in(&self, group: Group) -> Option<[f32; 2]> {
+        self.mouse.map(|m| self.local(group, m))
+    }
+
+    /// Command icon `slot` on the canvas, `[x, y, w, h]`.
+    pub fn icon_on_canvas(&self, slot: usize) -> [f32; 4] {
+        self.zoom(Group::Commands).rect(Self::icon_rect(self.screen, slot))
+    }
+
+    /// Army icon `slot` on the canvas, `[x, y, w, h]`.
+    pub fn army_on_canvas(&self, slot: usize) -> [f32; 4] {
+        self.zoom(Group::Army).rect(Self::army_rect(slot))
     }
 
     fn placement(&self, view: &View) -> Placement {
@@ -764,13 +813,15 @@ impl Hud {
                 return true;
             }
         }
-        if Self::icon_boxes(self.screen, &view.icons).iter().any(|(r, _)| r.contains(p)) {
+        let commands = self.local(Group::Commands, p);
+        if Self::icon_boxes(self.screen, &view.icons).iter().any(|(r, _)| r.contains(commands)) {
             return true;
         }
-        if Self::army_icons(view).any(|i| Self::army_rect(i.slot).contains(p)) {
+        let army = self.local(Group::Army, p);
+        if Self::army_icons(view).any(|i| Self::army_rect(i.slot).contains(army)) {
             return true;
         }
-        self.minimap.is_some() && self.placement(view).rect.contains(p)
+        self.minimap.is_some() && self.placement(view).rect.contains(self.local(Group::Minimap, p))
     }
 
     pub fn release(&mut self) {
@@ -850,7 +901,9 @@ impl Hud {
                 return HudEvent::Used;
             }
         }
-        if let Some(icon) = Self::army_icons(view).find(|i| Self::army_rect(i.slot).contains(p)) {
+        let (army, commands, mini) =
+            (self.local(Group::Army, p), self.local(Group::Commands, p), self.local(Group::Minimap, p));
+        if let Some(icon) = Self::army_icons(view).find(|i| Self::army_rect(i.slot).contains(army)) {
             self.pressed = true;
             return match (&icon.action, icon.disabled) {
                 (Some(a), false) => HudEvent::Command(a.clone()),
@@ -858,7 +911,7 @@ impl Hud {
             };
         }
         for icon in &view.icons {
-            if Self::icon_rect(self.screen, icon.slot).contains(p) && Self::shown(icon.slot) {
+            if Self::icon_rect(self.screen, icon.slot).contains(commands) && Self::shown(icon.slot) {
                 self.pressed = true;
                 return match (&icon.action, icon.disabled) {
                     (Some(a), false) => HudEvent::Command(a.clone()),
@@ -867,7 +920,7 @@ impl Hud {
             }
         }
         if self.minimap.is_some()
-            && let Some(px) = self.placement(view).pixel_at(p)
+            && let Some(px) = self.placement(view).pixel_at(mini)
         {
             self.pressed = true;
             return HudEvent::Camera(px);
@@ -887,7 +940,7 @@ impl Hud {
         }
         if self.pressed
             && self.minimap.is_some()
-            && let Some(px) = self.placement(view).pixel_at(p)
+            && let Some(px) = self.placement(view).pixel_at(self.local(Group::Minimap, p))
         {
             return HudEvent::Camera(px);
         }
@@ -900,11 +953,13 @@ impl Hud {
         if self.panel != Panel::None && panels::covers(self.panel_point(p)) {
             return HudEvent::Used;
         }
-        if Self::army_icons(view).any(|i| Self::army_rect(i.slot).contains(p)) {
+        let army = self.local(Group::Army, p);
+        if Self::army_icons(view).any(|i| Self::army_rect(i.slot).contains(army)) {
             return HudEvent::Used;
         }
+        let commands = self.local(Group::Commands, p);
         if let Some(icon) =
-            view.icons.iter().find(|i| Self::shown(i.slot) && Self::icon_rect(self.screen, i.slot).contains(p))
+            view.icons.iter().find(|i| Self::shown(i.slot) && Self::icon_rect(self.screen, i.slot).contains(commands))
         {
             return match (&icon.right, icon.disabled) {
                 (Some(a), false) => HudEvent::Command(a.clone()),
@@ -912,7 +967,7 @@ impl Hud {
             };
         }
         if self.minimap.is_some()
-            && let Some(px) = self.placement(view).pixel_at(p)
+            && let Some(px) = self.placement(view).pixel_at(self.local(Group::Minimap, p))
         {
             return HudEvent::Order(px);
         }
@@ -924,35 +979,48 @@ impl Hud {
         self.minimap_dirty = true;
     }
 
-    /// The interface in canvas coordinates, in drawing order.
-    pub fn draw(&mut self, ctx: &Ctx, view: &View, out: &mut Vec<Draw>) {
-        let Some(palette) = ctx.lib.palette(GAME_PALETTE) else { return };
+    /// The interface in layers in drawing order, each with the [`Zoom`] of its canvas
+    /// (`hud_scale`): the minimap, the command panel, the army list, the side panels, then
+    /// the top bar and the drop-down at the canvas' scale and the hint at the mouse.
+    pub fn draw(&mut self, ctx: &Ctx, view: &View) -> Vec<(Zoom, Vec<Draw>)> {
+        let Some(palette) = ctx.lib.palette(GAME_PALETTE) else { return Vec::new() };
         let data = self.data(ctx);
+        let mut layers = Vec::new();
         // The minimap (0x4c0a40) comes first, then the icons (0x5aa206): the boxes, the
         // icons and the unit stats over them (0x607f50, called at 0x5aa278), so the reload
         // bar at x = 173..176 lies on the boxes' joint; then the resource panel (0x4ecc50).
         if self.minimap.is_some() {
-            self.draw_minimap(ctx, view, &palette, out);
+            let mut out = Vec::new();
+            self.draw_minimap(ctx, view, &palette, &mut out);
+            layers.push((self.zoom(Group::Minimap), out));
         }
         let screen = self.screen;
+        let mut out = Vec::new();
         for (r, corners) in Self::icon_boxes(screen, &view.icons) {
-            border(ctx, out, r.x0, r.y0, r.x1, r.y1, corners);
+            border(ctx, &mut out, r.x0, r.y0, r.x1, r.y1, corners);
         }
-        let mouse = self.mouse;
+        let mouse = self.mouse_in(Group::Commands);
         for icon in view.icons.iter().filter(|i| Self::shown(i.slot)) {
             let r = Self::icon_rect(screen, icon.slot);
             let pressed = self.pressed && mouse.is_some_and(|m| r.contains(m));
-            draw_icon(ctx, icon, r.x0, r.y0, pressed, &palette, out);
+            draw_icon(ctx, icon, r.x0, r.y0, pressed, &palette, &mut out);
         }
         if let (Some(stats), Some(_)) = (&view.stats, &data) {
-            draw_stats(ctx, stats, &palette, screen, out);
+            draw_stats(ctx, stats, &palette, screen, &mut out);
         }
+        if let Some(market) = view.market {
+            draw_market(ctx, market, screen, &mut out);
+        }
+        layers.push((self.zoom(Group::Commands), out));
         // The army icons, the last set 0x5a9fa0 draws (0x5aa394).
+        let mut out = Vec::new();
+        let mouse = self.mouse_in(Group::Army);
         for icon in Self::army_icons(view) {
             let r = Self::army_rect(icon.slot);
             let pressed = self.pressed && mouse.is_some_and(|m| r.contains(m));
-            draw_icon(ctx, icon, r.x0, r.y0, pressed, &palette, out);
+            draw_icon(ctx, icon, r.x0, r.y0, pressed, &palette, &mut out);
         }
+        layers.push((self.zoom(Group::Army), out));
         let mut panel = Vec::new();
         match (self.panel, &view.unit_info) {
             (Panel::Unit, Some(info)) => self.unit_panel.draw(ctx, info, view.morale.as_ref(), &palette, &mut panel),
@@ -964,19 +1032,19 @@ impl Hud {
             _ => {}
         }
         let dx = self.panel_dx();
-        out.extend(panel.into_iter().map(|d| d.translated(dx, 0)));
-        if let Some(market) = view.market {
-            draw_market(ctx, market, screen, out);
-        }
+        layers.push((self.zoom(Group::Panel), panel.into_iter().map(|d| d.translated(dx, 0)).collect()));
+        let mut out = Vec::new();
         if self.touch() {
-            self.draw_touch_bar(ctx, view, out);
+            self.draw_touch_bar(ctx, view, &mut out);
         } else {
-            draw_resources(ctx, view, screen, self.top_dx(), out);
+            draw_resources(ctx, view, screen, self.top_dx(), &mut out);
         }
         if self.dropdown {
-            self.draw_dropdown(ctx, view, out);
+            self.draw_dropdown(ctx, view, &mut out);
         }
-        self.draw_hint(ctx, view, &palette, out);
+        layers.push((Zoom::NONE, out));
+        layers.extend(self.draw_hint(ctx, view, &palette));
+        layers
     }
 
     fn draw_minimap(&self, ctx: &Ctx, view: &View, palette: &Palette, out: &mut Vec<Draw>) {
@@ -992,7 +1060,7 @@ impl Hud {
         // draws): an octagon in `GetPaletteColor(255, 255, 0)` around its members' mean
         // position.
         let mark = self
-            .mouse
+            .mouse_in(Group::Army)
             .and_then(|m| Self::army_icons(view).find(|i| Self::army_rect(i.slot).contains(m)).and_then(|i| i.mark));
         if let Some([px, py]) = mark {
             let placement = self.placement(view);
@@ -1110,39 +1178,54 @@ impl Hud {
         }
     }
 
-    /// Hints of the resource values and icons: a box at the mouse (`DS+6 == −1`, 0x47d6b2).
-    fn draw_hint(&self, ctx: &Ctx, view: &View, palette: &Palette, out: &mut Vec<Draw>) {
-        let Some(m) = self.mouse else { return };
+    /// Hints of the resource values and icons: a box at the mouse (`DS+6 == −1`, 0x47d6b2),
+    /// scaled about the mouse like the panel it hints at.
+    fn draw_hint(&self, ctx: &Ctx, view: &View, palette: &Palette) -> Option<(Zoom, Vec<Draw>)> {
+        let m = self.mouse?;
         let mut hint: Option<&[u8]> = None;
+        let mut scaled = true;
         for (i, id) in RES_HINTS.iter().enumerate().filter(|_| !self.touch()) {
             let mut r = res_hint_rect(self.screen, i);
             (r.x0, r.x1) = (r.x0 + self.top_dx(), r.x1 + self.top_dx());
             if r.contains(m) {
                 hint = Some(ctx.texts.get(id));
+                scaled = false;
             }
         }
+        let commands = self.local(Group::Commands, m);
         for icon in view.icons.iter().filter(|i| Self::shown(i.slot)) {
-            if Self::icon_rect(self.screen, icon.slot).contains(m) && !icon.hint.is_empty() {
+            if Self::icon_rect(self.screen, icon.slot).contains(commands) && !icon.hint.is_empty() {
                 hint = Some(&icon.hint);
+                scaled = true;
             }
         }
+        let army = self.local(Group::Army, m);
         for icon in Self::army_icons(view) {
-            if Self::army_rect(icon.slot).contains(m) && !icon.hint.is_empty() {
+            if Self::army_rect(icon.slot).contains(army) && !icon.hint.is_empty() {
                 hint = Some(&icon.hint);
+                scaled = true;
             }
         }
         if self.panel == Panel::Game
             && let Some(id) = panels::GamePanel::hint(self.panel_point(m))
         {
             hint = Some(ctx.texts.get(id));
+            scaled = true;
         }
         if self.panel == Panel::Unit
             && let Some(h) = self.unit_panel.hint()
         {
             hint = Some(h);
+            scaled = true;
         }
-        let Some(text) = hint else { return };
-        tooltip(ctx, palette, text, m, self.screen, out);
+        let text = hint?;
+        let scale = zoom::resolve(self.hud_scale, self.density, cfg!(target_os = "android"), ICON);
+        let zoom = Zoom { anchor: m, scale: if scaled { scale } else { 1.0 } };
+        // The box keeps within the screen as laid out about the mouse.
+        let [sw, sh] = zoom.to_layout([self.screen[0] as f32, self.screen[1] as f32]);
+        let mut out = Vec::new();
+        tooltip(ctx, palette, text, m, [sw.floor() as i32, sh.floor() as i32], &mut out);
+        Some((zoom, out))
     }
 }
 

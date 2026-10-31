@@ -202,6 +202,17 @@ impl InGame {
         })
     }
 
+    /// Sets the HUD panels' scale over the setting (`None`: the platform's default); answers
+    /// the command panel's scale in force and the window rect of its first icon.
+    pub fn set_hud_scale(&mut self, scale: Option<f32>) -> serde_json::Value {
+        let hud = &mut self.interface.hud;
+        hud.hud_scale = scale;
+        serde_json::json!({
+            "scale": hud.zoom(crate::hud::zoom::Group::Commands).scale,
+            "icon0": self.interface.canvas.to_window(hud.icon_on_canvas(0)),
+        })
+    }
+
     /// The pose held for a unit, if any.
     /// Trees or foliage of model `name` at these ground points (render only; `drive` `props`).
     pub fn place_props(&mut self, name: &str, at: Vec<[i32; 2]>, wind: Option<bool>) {
@@ -247,30 +258,26 @@ impl InGame {
 
     /// The icon grid of the last drawn interface.
     pub fn hud_icons(&self) -> Vec<HudIcon> {
-        let screen = self.interface.hud.screen();
+        let hud = &self.interface.hud;
         let canvas = self.interface.canvas;
         self.interface
             .view
             .icons
             .iter()
             .filter(|i| Hud::shown(i.slot))
-            .map(|i| {
-                let r = Hud::icon_rect(screen, i.slot);
-                HudIcon {
-                    id: format!("hud/{}", i.slot),
-                    rect: canvas.to_window([r.x0 as f32, r.y0 as f32, r.width() as f32, r.height() as f32]),
-                    hint: i.hint.clone(),
-                    disabled: i.disabled,
-                    selected: i.selected,
-                    gray: i.gray,
-                    count: i.count,
-                    number: i.number,
-                    clickable: i.action.is_some() && !i.disabled,
-                    right_clickable: i.right.is_some() && !i.disabled,
-                }
+            .map(|i| HudIcon {
+                id: format!("hud/{}", i.slot),
+                rect: canvas.to_window(hud.icon_on_canvas(i.slot)),
+                hint: i.hint.clone(),
+                disabled: i.disabled,
+                selected: i.selected,
+                gray: i.gray,
+                count: i.count,
+                number: i.number,
+                clickable: i.action.is_some() && !i.disabled,
+                right_clickable: i.right.is_some() && !i.disabled,
             })
             .chain(Hud::army_icons(&self.interface.view).map(|i| {
-                let r = Hud::army_rect(i.slot);
                 // The army icons have no hints; the driver names them `army` (the list
                 // button) and `army <number>`.
                 let label = match i.number {
@@ -279,7 +286,7 @@ impl InGame {
                 };
                 HudIcon {
                     id: format!("army/{}", i.slot),
-                    rect: canvas.to_window([r.x0 as f32, r.y0 as f32, r.width() as f32, r.height() as f32]),
+                    rect: canvas.to_window(hud.army_on_canvas(i.slot)),
                     hint: label.into_bytes(),
                     disabled: i.disabled,
                     selected: i.selected,

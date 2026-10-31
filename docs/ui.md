@@ -195,6 +195,21 @@ clicks, and the hint rects of the resource values are off. It is a UI setting, n
 Rules hash or the savegames. The e2e driver switches it with
 `{"cmd": "top_bar", "mode": "touch"}` (docs/testing.md).
 
+#### HUD scale
+
+`hud_scale=1.0..2.5` in `settings.txt` (ACR's own, #448; absent: 1 on a desktop or in a
+browser, on Android the scale that makes a command icon about 9 mm wide: 56.7 dp over the icon's
+40 canvas pixels times the density, so 2.5 at most) draws the HUD panels larger about the
+screen corner they hang from: the command panel and unit icons (with the market plaques) about
+the bottom-left corner (grows up and right), the minimap about the bottom-right, the unit and
+game panels about the top-right, the army list about its first icon. The layout is the original's and
+unchanged; the panels' draws go on a canvas `hud_scale` times larger (`hud/zoom.rs`, the sprites
+are stretched as on any canvas, linear), a press is mapped back by the same transform before it
+is tested against the layout, and a hint scales about the mouse. Each group is capped so it stays
+on the screen: the command panel at the screen's width over 686, the minimap at half the screen's
+height, the side panels at its height. The map, the touch top bar and the "M" drop-down keep
+their size. The e2e driver sets it with `{"cmd": "hud_scale", "scale": 1.8}` (docs/testing.md).
+
 ### Single missions (0x5d66b0) and campaign missions (0x5c4e30)
 
 Missions come from `Missions\Missions.txt` (0x569c27: id, name, script DLL, map,
