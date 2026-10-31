@@ -13,6 +13,7 @@ use acr_formats::m3d::MapSize;
 use acr_sim::World;
 use acr_sim::formation;
 
+use super::input::Input;
 use super::presets::{self, Block, Era, Error, Role, Size};
 use super::{Act as EditorAct, ENTRIES, Editor};
 use super::{FIRST_EXTRA, Item, Look, OY, ROW, W, X0, sides};
@@ -186,8 +187,8 @@ fn undo(world: &mut World, ids: Vec<acr_sim::EntityId>) {
 }
 
 impl Editor {
-    /// A click on the battle view.
-    pub(super) fn battle_act(&mut self, world: &mut World, act: Act) {
+    /// A click on the battle view; "Aufstellen" returns the input that places the armies.
+    pub(super) fn battle_act(&mut self, act: Act) -> Option<Input> {
         let b = &mut self.battle;
         let step = |v: usize, d: i32| (v as i32 + d).rem_euclid(FIRST_EXTRA as i32) as usize;
         match act {
@@ -208,22 +209,44 @@ impl Editor {
             }
             Act::Fight => b.fight = !b.fight,
             Act::Go => {
-                b.march.clear();
-                let result = deploy(world, b);
-                if b.fight && self.sides == sides::Mode::Off {
-                    self.sides = sides::Mode::Free;
-                }
-                self.apply_sides(world);
-                self.orders.append(&mut self.battle.march);
-                self.status = match result {
-                    Ok([a, c]) => {
-                        let side = MapSize { shift: world.map.shift }.playable_size();
-                        self.camera_to = Some((side / 2, side / 2));
-                        format!("Schlacht: {a} gegen {c} Mann").into_bytes()
-                    }
-                    Err(e) => e.to_string().into_bytes(),
-                };
+                return Some(Input::Battle {
+                    nation: b.nation,
+                    era: [b.era_of(0), b.era_of(1)],
+                    size: b.size,
+                    fight: b.fight,
+                });
             }
+        }
+        None
+    }
+
+    /// Places both armies for [`Input::Battle`]: the sides as given, then the Kampf rule
+    /// (switched on by "Kampf sofort"), the marches left in [`Editor::orders`] and the camera
+    /// on the middle. Returns the text for the status line.
+    pub(super) fn go_to_battle(
+        &mut self,
+        world: &mut World,
+        nation: [usize; 2],
+        era: [Option<Era>; 2],
+        size: Size,
+        fight: bool,
+    ) -> Vec<u8> {
+        let b = &mut self.battle;
+        (b.nation, b.era, b.size, b.fight) = (nation, era, size, fight);
+        b.march.clear();
+        let result = deploy(world, b);
+        if b.fight && self.sides == sides::Mode::Off {
+            self.sides = sides::Mode::Free;
+        }
+        self.apply_sides(world);
+        self.orders.append(&mut self.battle.march);
+        match result {
+            Ok([a, c]) => {
+                let side = MapSize { shift: world.map.shift }.playable_size();
+                self.camera_to = Some((side / 2, side / 2));
+                format!("Schlacht: {a} gegen {c} Mann").into_bytes()
+            }
+            Err(e) => e.to_string().into_bytes(),
         }
     }
 

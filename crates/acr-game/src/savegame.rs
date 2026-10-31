@@ -24,7 +24,17 @@
 //! camera x | camera y (world pixels) | selection: count + ids | groups: count, per group: ids
 //! rules (version 3): bits of the optional rules of the setup (bit 0 hit locations, #225; bit 1
 //! body spacing; bit 2 mortars, #301; bit 3 corpse piles, #222)
+//! editor (version 4, #427): the blank field's editor flag | rough | patches: count, per patch
+//!              x y radius texture (all zero for other games)
+//!              inputs: count, per input: tick delta | tag, then
+//!              0 place: kind bytes, owner, x, y, count, form, dir, level
+//!              1 sides: mode, 8 teams    2 reload guns    3 auto reload: on
+//!              4 preset: nation, size, century (0 none, 1 + number), owner, x, y, dir
+//!              5 battle: 2 nations, 2 centuries (as above), size, fight
 //! ```
+//!
+//! The editor's inputs ([`EditorInput`]) change the world between two ticks like a
+//! diplomacy input does, so they are logged with their tick and replayed the same way.
 //!
 //! The name, time and setup come first so that the load dialog can list savegames
 //! without decoding the rest ([`SaveInfo::peek`]).
@@ -33,11 +43,13 @@ use acr_sim::replay::Replay;
 use acr_sim::world::EntityId;
 use acr_sim::{Command, World};
 
+use crate::ingame::EditorInput;
+use crate::ingame::editor_input::{Era, Mode, Size};
 use crate::ui::setup::{BlankSetup, Control, Difficulty, Ground, MapSize, MissionSetup, PlayerSetup, RandomMapSetup};
 use crate::ui::{GameKind, GameSetup};
 
 const MAGIC: &[u8; 4] = b"ACRS";
-const VERSION: u64 = 3;
+const VERSION: u64 = 4;
 
 /// An input of the diplomacy panel, given to DipServer between two ticks.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,6 +70,8 @@ pub struct Log {
     /// `(tick, input)` of every diplomacy request, in order: it changes the scripts' state
     /// (alliances, purchases) without being a command.
     pub diplomacy: Vec<(u64, DipInput)>,
+    /// `(tick, input)` of every change the editor made to the world, in order.
+    pub editor: Vec<(u64, EditorInput)>,
 }
 
 impl Log {
@@ -78,6 +92,11 @@ impl Log {
     /// Records a diplomacy input given while the world stood at `tick`.
     pub fn diplomacy(&mut self, tick: u64, input: DipInput) {
         self.diplomacy.push((tick, input));
+    }
+
+    /// Records an editor input applied while the world stood at `tick`.
+    pub fn editor(&mut self, tick: u64, input: EditorInput) {
+        self.editor.push((tick, input));
     }
 }
 
@@ -205,6 +224,26 @@ impl SaveGame {
             | u64::from(self.setup.rules.animal_give_up) << 9
             | u64::from(self.setup.rules.dart_fire) << 8
             | u64::from(self.setup.rules.aimed_fire) << 11);
+        let (editor, rough, patches) = match &self.setup.kind {
+            GameKind::Blank(b) => (b.editor, b.rough, b.patches.as_slice()),
+            _ => (false, 0, [].as_slice()),
+        };
+        w.u(u64::from(editor));
+        w.i(rough);
+        w.u(patches.len() as u64);
+        for &(x, y, radius, texture) in patches {
+            w.i(x);
+            w.i(y);
+            w.i(radius);
+            w.u(u64::from(texture));
+        }
+        w.u(self.log.editor.len() as u64);
+        let mut last = 0;
+        for (tick, input) in &self.log.editor {
+            w.u(tick - last);
+            last = *tick;
+            w.input(input);
+        }
         w.0
     }
 
@@ -256,10 +295,30 @@ impl SaveGame {
                 aimed_fire: bits & 2048 != 0,
             };
         }
+        let mut editor = Vec::new();
+        if version >= 4 {
+            let is_editor = r.u()? != 0;
+            let rough = r.i()?;
+            let n = r.len()?;
+            let mut patches = Vec::with_capacity(n);
+            for _ in 0..n {
+                let (x, y, radius) = (r.i()?, r.i()?, r.i()?);
+                patches.push((x, y, radius, r.u8()?));
+            }
+            if let GameKind::Blank(b) = &mut setup.kind {
+                (b.editor, b.rough, b.patches) = (is_editor, rough, patches);
+            }
+            let n = r.len()?;
+            let mut t = 0u64;
+            for _ in 0..n {
+                t = t.checked_add(r.u()?).ok_or(err("tick overflow"))?;
+                editor.push((t, r.input()?));
+            }
+        }
         if r.pos != data.len() {
             return Err(err("trailing bytes"));
         }
-        let log = Log { commands: replay.entries, dialogs, diplomacy };
+        let log = Log { commands: replay.entries, dialogs, diplomacy, editor };
         Ok(Self { name, time, setup, tick, hash, log, camera, selected, groups })
     }
 }
@@ -275,6 +334,8 @@ pub trait Script {
     fn ended(&self) -> bool;
     /// Gives a recorded diplomacy input to DipServer.
     fn diplomacy(&mut self, world: &mut World, input: &DipInput);
+    /// Applies a recorded editor input (only editor games have any).
+    fn editor(&mut self, _world: &mut World, _input: &EditorInput) {}
 }
 
 /// How far a [`FastForward`] got.
@@ -296,13 +357,14 @@ pub struct FastForward {
     next_command: usize,
     next_dialog: usize,
     next_dip: usize,
+    next_edit: usize,
     /// A recorded close did not match an open dialog (or the other way round).
     pub mismatch: bool,
 }
 
 impl FastForward {
     pub fn new(target: u64) -> Self {
-        Self { target, next_command: 0, next_dialog: 0, next_dip: 0, mismatch: false }
+        Self { target, next_command: 0, next_dialog: 0, next_dip: 0, next_edit: 0, mismatch: false }
     }
 
     /// Steps the world while `more()` allows (checked before every tick).
@@ -320,6 +382,12 @@ impl FastForward {
                 self.mismatch |= *t != tick;
                 self.next_dip += 1;
                 script.diplomacy(world, input);
+            }
+            // So did the editor's.
+            while let Some((t, input)) = log.editor.get(self.next_edit).filter(|(t, _)| *t <= tick) {
+                self.mismatch |= *t != tick;
+                self.next_edit += 1;
+                script.editor(world, input);
             }
             // Closes recorded at the saved tick itself still apply: a question answered
             // just before saving (its tick is re-run with the answer next).
@@ -406,6 +474,63 @@ impl Writer {
         self.u(ids.len() as u64);
         for id in ids {
             self.u(u64::from(id.0));
+        }
+    }
+
+    fn pair(&mut self, (x, y): (i32, i32)) {
+        self.i(x);
+        self.i(y);
+    }
+
+    fn era(&mut self, era: Option<Era>) {
+        self.u(era.map_or(0, |e| 1 + u64::from(e.code())));
+    }
+
+    fn input(&mut self, input: &EditorInput) {
+        match input {
+            EditorInput::Place { kind, owner, at, count, form, dir, level } => {
+                self.u(0);
+                self.bytes(kind.as_bytes());
+                self.u(u64::from(*owner));
+                self.pair(*at);
+                for v in [count, form] {
+                    self.u(u64::from(*v));
+                }
+                self.u(u64::from(*dir));
+                self.u(u64::from(*level));
+            }
+            EditorInput::Sides { mode, teams } => {
+                self.u(1);
+                self.u(u64::from(mode.code()));
+                for &t in teams {
+                    self.u(u64::from(t));
+                }
+            }
+            EditorInput::ReloadGuns => self.u(2),
+            EditorInput::AutoReload(on) => {
+                self.u(3);
+                self.u(u64::from(*on));
+            }
+            EditorInput::Preset { nation, size, era, owner, at, dir } => {
+                self.u(4);
+                self.u(*nation as u64);
+                self.u(u64::from(size.code()));
+                self.era(*era);
+                self.u(u64::from(*owner));
+                self.pair(*at);
+                self.u(u64::from(*dir));
+            }
+            EditorInput::Battle { nation, era, size, fight } => {
+                self.u(5);
+                for n in nation {
+                    self.u(*n as u64);
+                }
+                for e in era {
+                    self.era(*e);
+                }
+                self.u(u64::from(size.code()));
+                self.u(u64::from(*fight));
+            }
         }
     }
 
@@ -551,6 +676,68 @@ impl<'a> Reader<'a> {
             *v = u16::try_from(self.u()?).map_err(|_| err("date"))?;
         }
         Ok((name, SaveTime { unix, local }, version))
+    }
+
+    fn u8(&mut self) -> Result<u8, SaveError> {
+        u8::try_from(self.u()?).map_err(|_| err("number"))
+    }
+
+    fn u32(&mut self) -> Result<u32, SaveError> {
+        u32::try_from(self.u()?).map_err(|_| err("number"))
+    }
+
+    fn pair(&mut self) -> Result<(i32, i32), SaveError> {
+        Ok((self.i()?, self.i()?))
+    }
+
+    fn era(&mut self) -> Result<Option<Era>, SaveError> {
+        match self.u()? {
+            0 => Ok(None),
+            n => u8::try_from(n - 1).ok().and_then(Era::from_code).map(Some).ok_or(err("century")),
+        }
+    }
+
+    fn size(&mut self) -> Result<Size, SaveError> {
+        Size::from_code(self.u8()?).ok_or(err("army size"))
+    }
+
+    fn input(&mut self) -> Result<EditorInput, SaveError> {
+        Ok(match self.u()? {
+            0 => EditorInput::Place {
+                kind: self.str()?,
+                owner: self.u8()?,
+                at: self.pair()?,
+                count: self.u32()?,
+                form: self.u32()?,
+                dir: self.u8()?,
+                level: self.u32()?,
+            },
+            1 => {
+                let mode = Mode::from_code(self.u8()?).ok_or(err("kampf mode"))?;
+                let mut teams = [0; 8];
+                for t in &mut teams {
+                    *t = self.u8()?;
+                }
+                EditorInput::Sides { mode, teams }
+            }
+            2 => EditorInput::ReloadGuns,
+            3 => EditorInput::AutoReload(self.u()? != 0),
+            4 => EditorInput::Preset {
+                nation: self.small()?,
+                size: self.size()?,
+                era: self.era()?,
+                owner: self.u8()?,
+                at: self.pair()?,
+                dir: self.u8()?,
+            },
+            5 => EditorInput::Battle {
+                nation: [self.small()?, self.small()?],
+                era: [self.era()?, self.era()?],
+                size: self.size()?,
+                fight: self.u()? != 0,
+            },
+            _ => return Err(err("editor input")),
+        })
     }
 
     fn setup(&mut self) -> Result<GameSetup, SaveError> {
@@ -867,6 +1054,108 @@ mod tests {
         assert_eq!(SaveGame::decode(&save.encode()).unwrap(), save);
     }
 
+    /// Every kind of editor input.
+    fn editor_inputs() -> Vec<(u64, EditorInput)> {
+        vec![
+            (
+                0,
+                EditorInput::Place {
+                    kind: "EngM18(EN)".into(),
+                    owner: 3,
+                    at: (-5, 1400),
+                    count: 36,
+                    form: 2,
+                    dir: 192,
+                    level: 4,
+                },
+            ),
+            (0, EditorInput::Sides { mode: Mode::Teams, teams: [1, 2, 3, 4, 1, 2, 3, 4] }),
+            (12, EditorInput::ReloadGuns),
+            (12, EditorInput::AutoReload(true)),
+            (
+                40,
+                EditorInput::Preset {
+                    nation: 2,
+                    size: Size::Large,
+                    era: Some(Era::C18),
+                    owner: 1,
+                    at: (700, 900),
+                    dir: 64,
+                },
+            ),
+            (40, EditorInput::Preset { nation: 7, size: Size::Small, era: None, owner: 0, at: (1, 2), dir: 0 }),
+            (900, EditorInput::Battle { nation: [2, 3], era: [Some(Era::C17), None], size: Size::Medium, fight: true }),
+        ]
+    }
+
+    #[test]
+    fn keeps_an_editor_game() {
+        let mut setup = setup();
+        setup.kind = GameKind::Blank(crate::ui::setup::BlankSetup {
+            rough: 40,
+            patches: vec![(100, -200, 300, 71), (5, 6, 7, 0)],
+            editor: true,
+            ..Default::default()
+        });
+        let save = SaveGame {
+            name: b"e".to_vec(),
+            time: SaveTime::default(),
+            setup,
+            tick: 900,
+            hash: 7,
+            log: Log { editor: editor_inputs(), ..Log::default() },
+            camera: [0, 0],
+            selected: Vec::new(),
+            groups: Vec::new(),
+        };
+        let bytes = save.encode();
+        assert_eq!(SaveGame::decode(&bytes).unwrap(), save);
+        // A damaged input tag is refused.
+        let one =
+            SaveGame { log: Log { editor: vec![(0, EditorInput::ReloadGuns)], ..Log::default() }, ..save.clone() };
+        let mut bad = one.encode();
+        *bad.last_mut().unwrap() = 99;
+        assert!(SaveGame::decode(&bad).is_err());
+        // A version 3 save has no trailer (flag, rough, no patches, no inputs): a plain field.
+        let mut plain = save.clone();
+        plain.setup.kind = GameKind::Blank(Default::default());
+        plain.log = Log::default();
+        let mut old = plain.encode();
+        old[4] = 3;
+        old.truncate(old.len() - 4);
+        assert_eq!(SaveGame::decode(&old).unwrap(), plain);
+    }
+
+    #[test]
+    fn fast_forward_applies_editor_inputs_at_their_tick() {
+        /// Records the tick of every input it is given.
+        struct Seen(Vec<(u64, EditorInput)>);
+        impl Script for Seen {
+            fn before_step(&mut self, _: &mut World) -> Option<Vec<Command>> {
+                Some(Vec::new())
+            }
+            fn dialog_open(&self) -> bool {
+                false
+            }
+            fn close_dialog(&mut self, _: u32) {}
+            fn ended(&self) -> bool {
+                false
+            }
+            fn diplomacy(&mut self, _: &mut World, _: &DipInput) {}
+            fn editor(&mut self, world: &mut World, input: &EditorInput) {
+                self.0.push((world.tick.0, input.clone()));
+            }
+        }
+        let (mut w, _) = world();
+        let log = Log { editor: editor_inputs().into_iter().filter(|(t, _)| *t <= 40).collect(), ..Log::default() };
+        let mut seen = Seen(Vec::new());
+        let mut ff = FastForward::new(40);
+        assert_eq!(ff.run(&log, &mut w, &mut seen, || true), Progress::Done);
+        assert!(!ff.mismatch);
+        // Each input came before the tick it was logged at ran, the one at the saved tick too.
+        assert_eq!(seen.0, log.editor);
+    }
+
     #[test]
     fn reads_version_1_saves_without_diplomacy() {
         let (w, _, mut log, _) = play(40);
@@ -885,8 +1174,9 @@ mod tests {
         let mut bytes = save.encode();
         // Version 1 had no diplomacy section and no rules: drop the version, the empty count
         // and the rules.
-        assert_eq!(bytes[4], 3);
+        assert_eq!(bytes[4], 4);
         bytes[4] = 1;
+        assert_eq!(bytes.split_off(bytes.len() - 4), [0, 0, 0, 0]);
         assert_eq!(bytes.pop(), Some(0));
         let cut = bytes.len() - 4;
         assert_eq!(bytes[cut..], [0, 0, 0, 0]);
@@ -921,8 +1211,10 @@ mod tests {
         save.setup.rules.aimed_fire = false;
         let mut bytes = save.encode();
         assert_eq!(SaveGame::decode(&bytes).unwrap(), save);
-        // A version 2 save has no rules: the original ones.
+        // A version 2 save has no rules (and no editor trailer: flag, rough, patches, inputs):
+        // the original ones.
         bytes[4] = 2;
+        assert_eq!(bytes.split_off(bytes.len() - 4), [0, 0, 0, 0]);
         assert_eq!(bytes.pop(), Some(1));
         assert_eq!(SaveGame::decode(&bytes).unwrap().setup.rules, acr_sim::Rules::default());
     }

@@ -36,6 +36,15 @@ pub enum Size {
 impl Size {
     pub const ALL: [Size; 3] = [Size::Small, Size::Medium, Size::Large];
 
+    /// The size's number in a savegame (its place in [`Size::ALL`]).
+    pub fn code(self) -> u8 {
+        Self::ALL.iter().position(|&s| s == self).expect("listed") as u8
+    }
+
+    pub fn from_code(code: u8) -> Option<Self> {
+        Self::ALL.get(usize::from(code)).copied()
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Size::Small => "Klein",
@@ -54,6 +63,17 @@ pub enum Era {
 }
 
 impl Era {
+    pub const ALL: [Era; 3] = [Era::C17, Era::C18, Era::C19];
+
+    /// The century's number in a savegame (its place in [`Era::ALL`]).
+    pub fn code(self) -> u8 {
+        Self::ALL.iter().position(|&e| e == self).expect("listed") as u8
+    }
+
+    pub fn from_code(code: u8) -> Option<Self> {
+        Self::ALL.get(usize::from(code)).copied()
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Era::C17 => "17. Jahrhundert",
@@ -695,18 +715,21 @@ impl Editor {
         out
     }
 
-    /// A left click on the map at world pixel `at` with an armed army: places it for the
-    /// editor's owner facing the editor's Richtung. False when nothing is armed.
-    pub fn place_armed(&mut self, world: &mut World, at: (i32, i32)) -> bool {
-        let Some(size) = self.army.armed else { return false };
-        let era = self.army.era_for(self.entry);
-        let result = place_preset(world, self.entry, size, era, self.owner(), at, self.facing());
+    /// Places army `size` of `nation` for [`super::Input::Preset`]; the text for the status line.
+    pub(super) fn place_army(
+        &self,
+        world: &mut World,
+        (nation, size, era): (usize, Size, Option<Era>),
+        owner: u8,
+        at: (i32, i32),
+        dir: u8,
+    ) -> Vec<u8> {
+        let result = place_preset(world, nation, size, era, owner, at, dir);
         self.apply_sides(world);
-        self.status = match result {
+        match result {
             Ok(n) => format!("Armee {}: {n} Mann", size.label()).into_bytes(),
             Err(e) => e.to_string().into_bytes(),
-        };
-        true
+        }
     }
 }
 

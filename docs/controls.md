@@ -217,8 +217,9 @@ toggle their panels and views and never reach these icons.
 The main menu's "Editor" opens a blank grass field for two human players with the original
 editor's placing window ("Einheit wählen", docs/ui.md "Editor: the placing window") at the
 right, in the column of the side panels (`crates/acr-game/src/ingame/editor.rs`). Unlike the
-original's editor it places many units at once and whole formations ready-formed; it acts on
-the local world directly (like the test driver's `spawn`), so an editor game is not a network
+original's editor it places many units at once and whole formations ready-formed; what it does to
+the world is an editor input (`ingame/editor/input.rs`), applied between two ticks and saved with
+its tick (savegame version 4), so a saved editor game loads with its units; it is not a network
 game. The rules of the settings apply (`hit_locations`, `body_spacing`). F2 or a click on the
 title folds the window; the wheel over it scrolls the icons.
 

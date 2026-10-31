@@ -156,6 +156,19 @@ impl SpriteGroup {
             _ => Self::Unknown(code),
         }
     }
+
+    /// The two-letter code `from_code` reads this group from.
+    pub fn code(self) -> [u8; 2] {
+        match self {
+            Self::Trees => *b"AG",
+            Self::Stones => *b"ST",
+            Self::Holes => *b"HO",
+            Self::Complex => *b"CO",
+            Self::Meat => *b"PS",
+            Self::Animations => *b"SA",
+            Self::Unknown(code) => code,
+        }
+    }
 }
 
 /// A static map object (tree, stone, ...): `TRE1` (14 bytes) or the older `TREE` (12 bytes).
@@ -668,6 +681,13 @@ mod tests {
         out.extend_from_slice(&(payload.len() as u32 + 4).to_le_bytes());
         out.extend_from_slice(payload);
         out
+    }
+
+    #[test]
+    fn a_sprite_group_code_reads_back() {
+        for code in [*b"AG", *b"ST", *b"HO", *b"CO", *b"PS", *b"SA", *b"ZZ"] {
+            assert_eq!(SpriteGroup::from_code(code).code(), code);
+        }
     }
 
     fn header() -> Vec<u8> {

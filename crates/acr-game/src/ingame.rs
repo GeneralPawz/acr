@@ -32,6 +32,7 @@ mod damage_view;
 mod debris;
 mod dip;
 mod editor;
+pub(crate) use editor::input::{self as editor_input, Input as EditorInput};
 mod effects;
 mod fire_view;
 mod gait_view;

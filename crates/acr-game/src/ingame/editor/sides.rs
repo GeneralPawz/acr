@@ -24,6 +24,24 @@ pub enum Mode {
 }
 
 impl Mode {
+    /// The mode's number in a savegame.
+    pub fn code(self) -> u8 {
+        match self {
+            Self::Off => 0,
+            Self::Free => 1,
+            Self::Teams => 2,
+        }
+    }
+
+    pub fn from_code(code: u8) -> Option<Self> {
+        Some(match code {
+            0 => Self::Off,
+            1 => Self::Free,
+            2 => Self::Teams,
+            _ => return None,
+        })
+    }
+
     /// The next mode of the "Kampf" line: AUS, AN, Teams, AUS ...
     pub fn next(self) -> Self {
         match self {
