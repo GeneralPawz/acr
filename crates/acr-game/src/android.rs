@@ -38,6 +38,12 @@ fn android_main(app: AndroidApp) {
     if let Err(e) = run(app) {
         log::error!("{e}");
     }
+    // The event loop ends when the activity is destroyed (back, task removed). Android keeps
+    // the process cached and on the next launch creates a new activity in it, but
+    // `android_main` runs once per process, so the app would open to nothing. Ending the
+    // process makes every launch a cold start.
+    log::info!("event loop ended; exiting the process");
+    std::process::exit(0);
 }
 
 /// The app's own folder: settings and performance snapshots.
