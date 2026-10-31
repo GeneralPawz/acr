@@ -53,6 +53,9 @@ pub struct Mixer {
     /// The other effects' level the ambience ducks under, and the ambience's gain now.
     duck_level: f32,
     duck_gain: f32,
+    /// The output is paused (the app is in the background): new sounds are dropped, so they
+    /// do not pile up and all play at once on return, and [`Mixer::render`] gives silence.
+    paused: bool,
 }
 
 /// What the mixer rendered since the meter was last read.
@@ -81,7 +84,18 @@ impl Mixer {
             meter: Meter::default(),
             duck_level: 0.0,
             duck_gain: 1.0,
+            paused: false,
         }
+    }
+
+    /// Pauses or resumes the mix. While paused no sound starts (the id returned is of a
+    /// sound that is not there), playing sounds and the music keep their place.
+    pub fn set_paused(&mut self, paused: bool) {
+        self.paused = paused;
+    }
+
+    pub fn paused(&self) -> bool {
+        self.paused
     }
 
     pub fn rate(&self) -> u32 {
@@ -97,6 +111,9 @@ impl Mixer {
     pub fn play(&mut self, sound: Sound, volume: f32, pan: f32) -> VoiceId {
         let id = VoiceId(self.next_id);
         self.next_id += 1;
+        if self.paused {
+            return id;
+        }
         self.meter.started += 1;
         let gain = gains(volume, pan);
         self.voices.push(Voice {
@@ -117,7 +134,7 @@ impl Mixer {
     /// under the other effects.
     pub fn play_ambient(&mut self, sound: Sound, volume: f32, pan: f32) -> VoiceId {
         let id = self.play(sound, volume, pan);
-        if let Some(v) = self.voices.last_mut() {
+        if let Some(v) = self.voices.iter_mut().find(|v| v.id == id) {
             v.ambient = true;
         }
         id
@@ -134,7 +151,7 @@ impl Mixer {
     pub fn play_looped(&mut self, sound: Sound, volume: f32, fade: f32) -> VoiceId {
         let id = self.play_ambient(sound, volume, 0.0);
         let ramp = self.ramp(fade);
-        if let Some(v) = self.voices.last_mut() {
+        if let Some(v) = self.voices.iter_mut().find(|v| v.id == id) {
             v.looping = true;
             v.level = if ramp < 1.0 { 0.0 } else { 1.0 };
             v.ramp = ramp;
@@ -146,7 +163,7 @@ impl Mixer {
     /// unlike [`Mixer::play_looped`] it is no ambience and does not duck.
     pub fn play_repeating(&mut self, sound: Sound, volume: f32, pan: f32) -> VoiceId {
         let id = self.play(sound, volume, pan);
-        if let Some(v) = self.voices.last_mut() {
+        if let Some(v) = self.voices.iter_mut().find(|v| v.id == id) {
             v.looping = true;
         }
         id
@@ -217,6 +234,10 @@ impl Mixer {
 
     /// Fills `out` (interleaved, `channels` per frame) with the mix, overwriting it.
     pub fn render(&mut self, out: &mut [f32], channels: u16) {
+        if self.paused {
+            out.fill(0.0);
+            return;
+        }
         self.mix(out, channels);
         out.iter_mut().for_each(|s| *s = s.clamp(-1.0, 1.0));
         self.meter.blocks += 1;
@@ -339,6 +360,27 @@ mod tests {
         assert!((out[0] - 0.25).abs() < 1e-6 && (out[1] - 0.5).abs() < 1e-6);
         m.stop(id);
         assert!(!m.is_playing(id));
+    }
+
+    #[test]
+    fn a_paused_mixer_starts_nothing_and_keeps_what_plays() {
+        let mut m = Mixer::new(100);
+        let kept = m.play_repeating(sound(100, &[16384, 16384, 16384]), 1.0, 0.0);
+        m.set_paused(true);
+        let (a, b, c) = (
+            m.play(sound(100, &[16384; 3]), 1.0, 0.0),
+            m.play_ambient(sound(100, &[16384; 3]), 1.0, 0.0),
+            m.play_looped(sound(100, &[16384; 3]), 1.0, 0.1),
+        );
+        assert!(m.paused() && !m.is_playing(a) && !m.is_playing(b) && !m.is_playing(c));
+        // Nothing of the new sounds touched the one that plays.
+        assert_eq!(m.voice_count(), 1);
+        let mut out = [1.0; 8];
+        m.render(&mut out, 2);
+        assert!(out.iter().all(|s| *s == 0.0));
+        m.set_paused(false);
+        m.render(&mut out, 2);
+        assert!(m.is_playing(kept) && out.iter().all(|s| (s - 0.5).abs() < 1e-6));
     }
 
     #[test]

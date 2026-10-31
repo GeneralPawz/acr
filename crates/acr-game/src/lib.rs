@@ -31,6 +31,7 @@ mod pacing;
 mod perf;
 mod random_map;
 mod savegame;
+mod suspend;
 pub mod tactics;
 mod touch;
 pub mod ui;
@@ -100,6 +101,7 @@ pub struct Game {
     webui: Option<webui::WebUi>,
     mode: Mode,
     audio: music::Audio,
+    suspension: suspend::Suspension,
     unit_sounds: unit_sounds::UnitSounds,
     weather_sound: weather_sound::WeatherSound,
     intro: intro::Intro,
@@ -152,6 +154,7 @@ impl Game {
             webui: None,
             mode: Mode::Intro,
             audio: music::Audio::new(&paths),
+            suspension: Default::default(),
             unit_sounds: unit_sounds::UnitSounds::new(),
             weather_sound: Default::default(),
             intro: intro::Intro::new(&paths),
@@ -796,6 +799,64 @@ impl Game {
         }
     }
 
+    /// The app goes to the background (winit's `suspended`; Android's app switch destroys
+    /// the window): the running game is paused, the audio stops, and the game is saved to
+    /// the autosave slot, as the system may kill the process while it is away. Returns what
+    /// was done, for the log and the driver.
+    fn suspend_app(&mut self) -> serde_json::Value {
+        let mut reply = serde_json::Map::new();
+        if let Mode::InGame(game) = &mut self.mode
+            && self.suspension.suspend(game.paused())
+        {
+            game.set_paused(true);
+        }
+        self.audio.set_paused(true);
+        if let Mode::InGame(game) = &self.mode {
+            reply.insert("paused".into(), game.paused().into());
+        }
+        let started = web_time::Instant::now();
+        match self.autosave() {
+            Ok(Some((tick, bytes, encode))) => {
+                let total = started.elapsed();
+                log::info!(
+                    "autosave: tick {tick}, {bytes} bytes, encoded in {:.1} ms, all in {:.1} ms",
+                    encode.as_secs_f64() * 1e3,
+                    total.as_secs_f64() * 1e3
+                );
+                reply.insert("autosave".into(), suspend::autosave_file().into());
+                reply.insert("bytes".into(), bytes.into());
+                reply.insert("encode_ms".into(), (encode.as_secs_f64() * 1e3).into());
+                reply.insert("total_ms".into(), (total.as_secs_f64() * 1e3).into());
+            }
+            Ok(None) => {}
+            Err(e) => log::error!("cannot autosave: {e}"),
+        }
+        reply.into()
+    }
+
+    /// The app is back: the audio plays on, the game stays paused (the player resumes it).
+    fn resume_app(&mut self) {
+        self.audio.set_paused(false);
+        if self.suspension.resume() {
+            log::info!("resumed: the game stays paused");
+        }
+    }
+
+    /// Writes the running game to the autosave slot: `None` when there is nothing to save
+    /// (menus, a game still loading, a finished game); else the tick, size and encode time.
+    fn autosave(&mut self) -> Result<Option<(u64, usize, web_time::Duration)>, String> {
+        let Mode::InGame(game) = &self.mode else { return Ok(None) };
+        let (unix, local) = acr_app::saves::local_time();
+        let Some(save) = game.autosave_snapshot(suspend::AUTOSAVE, savegame::SaveTime { unix, local }) else {
+            return Ok(None);
+        };
+        let started = web_time::Instant::now();
+        let bytes = save.encode();
+        let encode = started.elapsed();
+        self.ui.saves_mut().write(&suspend::autosave_file(), &bytes)?;
+        Ok(Some((save.tick, bytes.len(), encode)))
+    }
+
     /// A load dialog's OK: starts the saved game, which replays up to its tick.
     fn load_game(&mut self, save: Box<savegame::SaveGame>) {
         log::info!("loading a game saved at tick {}: {:?}", save.tick, save.setup);
@@ -854,6 +915,7 @@ impl ApplicationHandler<Event> for Game {
             {
                 log::error!("cannot recreate the surface: {e}");
             }
+            self.resume_app();
             return;
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -907,6 +969,7 @@ impl ApplicationHandler<Event> for Game {
         if let Some(g) = &mut self.graphics {
             g.gpu.suspend();
         }
+        self.suspend_app();
     }
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: Event) {

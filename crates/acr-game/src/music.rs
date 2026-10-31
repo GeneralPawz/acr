@@ -103,6 +103,13 @@ impl Audio {
         self.output = None;
     }
 
+    /// The app went to the background (or came back): pauses the device stream.
+    pub fn set_paused(&mut self, paused: bool) {
+        if let Some(output) = &mut self.output {
+            output.set_paused(paused);
+        }
+    }
+
     /// True once the audio device is open.
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     pub fn started(&self) -> bool {

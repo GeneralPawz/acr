@@ -47,6 +47,29 @@ The app looks for the original's folder (the one with `dmcr.exe`) in this order:
 
 Saves, profiles and settings are kept in the app's own folder (`data_dir()` in `android.rs`).
 
+## Switching to another app
+
+winit's Android backend sends `suspended` when the system destroys the window (`TerminateWindow`,
+after the app is paused and stopped) and `resumed` when a new one comes (`InitWindow`); that is the
+app switch. `LostFocus` also arrives as `Focused(false)` but also for the notification shade and
+split screen, so the game does not pause on it (it only releases keys).
+
+On `suspended` (`Game::suspend_app`, `suspend.rs`):
+
+- the running game is paused, unless the user had paused it already; a finished game is never paused;
+- the audio output is paused (`AudioOutput::set_paused`: `stream.pause()`, and the mixer drops new
+  sounds so none pile up);
+- a game that runs (not in a menu, still loading, or finished) is saved to the slot
+  `Autosave (App)` (`Save\Autosave (App).sav` in the app's folder), through the same savegame path
+  as the menu's save, because the system may kill a backgrounded process. The save is the command
+  log, so encoding takes microseconds and the whole step about a millisecond (release build,
+  3000 ticks); it is written synchronously. The Load menu lists it like any save; nothing loads it
+  by itself.
+
+On `resumed` the audio plays again; the game stays paused until the player resumes it (the pause
+plaque, the play gesture, the Pause key). The test driver has `{"cmd":"suspend"}` and
+`{"cmd":"resume"}` (`tests/e2e/suspend.json`).
+
 ## Shaders
 
 Adreno drivers miscompile a vector indexed by a runtime value, so the shaders select lanes with

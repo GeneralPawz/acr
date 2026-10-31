@@ -35,6 +35,16 @@ struct Health {
     broken: AtomicBool,
     /// Buffer underruns since the last [`AudioOutput::take_underruns`].
     xruns: AtomicU32,
+    /// The stream should be paused (the app is in the background); the device thread
+    /// follows it within 100 ms.
+    paused: AtomicBool,
+}
+
+/// What to do to a stream that is `applied` (paused or not) when `wanted` is the state
+/// it should be in: `Some(true)` pauses it, `Some(false)` plays it, `None` leaves it.
+#[cfg(not(target_arch = "wasm32"))]
+fn pause_change(wanted: bool, applied: bool) -> Option<bool> {
+    (wanted != applied).then_some(wanted)
 }
 
 /// Keeps the device stream alive; audio stops when this is dropped.
@@ -98,6 +108,22 @@ impl AudioOutput {
         false
     }
 
+    /// Pauses or resumes the device stream (the app went to the background or came back).
+    /// The mixer drops new sounds meanwhile, so none pile up.
+    pub fn set_paused(&mut self, paused: bool) {
+        if let Ok(mut mixer) = self.mixer.lock() {
+            mixer.set_paused(paused);
+        }
+        self.health.paused.store(paused, Ordering::Relaxed);
+        #[cfg(target_arch = "wasm32")]
+        {
+            let result = if paused { self.stream.pause() } else { self.stream.play() };
+            if let Err(e) = result {
+                log::warn!("audio: cannot {} the stream: {e}", if paused { "pause" } else { "resume" });
+            }
+        }
+    }
+
     /// Buffer underruns since the last call.
     pub fn take_underruns(&self) -> u32 {
         self.health.xruns.swap(0, Ordering::Relaxed)
@@ -134,8 +160,19 @@ fn device_thread(
         }
     };
     let mut last_try = std::time::Instant::now();
+    let mut paused = false;
     while !stop.load(Ordering::Relaxed) {
         std::thread::sleep(std::time::Duration::from_millis(100));
+        if let (Some(change), Some(s)) = (pause_change(health.paused.load(Ordering::Relaxed), paused), &stream) {
+            let result = if change { s.pause() } else { s.play() };
+            match result {
+                Ok(()) => paused = change,
+                Err(e) => {
+                    log::warn!("audio: cannot {} the stream: {e}", if change { "pause" } else { "resume" });
+                    health.broken.store(true, Ordering::Relaxed);
+                }
+            }
+        }
         if !health.broken.load(Ordering::Relaxed) || last_try.elapsed().as_secs_f32() < 2.0 {
             continue;
         }
@@ -145,6 +182,8 @@ fn device_thread(
             Ok(s) => {
                 log::info!("audio: output reopened");
                 stream = Some(s);
+                // A new stream plays.
+                paused = false;
                 health.broken.store(false, Ordering::Relaxed);
             }
             Err(e) => log::warn!("audio: cannot reopen the output: {e}"),
@@ -273,5 +312,14 @@ mod tests {
             let ms = frames as f32 / rate as f32 * 1000.0;
             assert!((40.0..44.0).contains(&ms), "{rate} Hz: {ms} ms");
         }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn the_stream_follows_the_wanted_pause_state() {
+        assert_eq!(pause_change(true, false), Some(true));
+        assert_eq!(pause_change(false, true), Some(false));
+        assert_eq!(pause_change(true, true), None);
+        assert_eq!(pause_change(false, false), None);
     }
 }

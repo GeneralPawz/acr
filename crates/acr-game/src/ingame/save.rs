@@ -127,6 +127,15 @@ impl InGame {
         })
     }
 
+    /// The game for the autosave on suspend: like [`InGame::snapshot`], but not for a
+    /// finished game.
+    pub fn autosave_snapshot(&self, name: &[u8], time: SaveTime) -> Option<SaveGame> {
+        if self.mission.ended.is_some() {
+            return None;
+        }
+        self.snapshot(name, time)
+    }
+
     /// Fraction of a loaded game replayed so far, while it is replayed.
     pub fn loading_progress(&self) -> Option<f32> {
         let r = self.save.resume.as_ref()?;

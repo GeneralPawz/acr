@@ -238,6 +238,10 @@ pub enum Request {
     Load {
         name: String,
     },
+    /// The app goes to the background / comes back (winit's `suspended` / `resumed` on
+    /// Android): pauses and autosaves; the audio stays off in a driven run.
+    Suspend,
+    Resume,
     Dialogs(DialogPolicy),
     /// The camera centred on a world pixel, zoomed, and with `yaw`/`pitch` the free camera.
     Camera {
@@ -664,6 +668,8 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
         }
         "hud" => Request::Hud(v.get("on").and_then(Value::as_bool).ok_or("hud: missing \"on\" (true or false)")?),
         "save" => Request::Save { name: string(&v, "name").ok_or("save: missing \"name\"")? },
+        "suspend" => Request::Suspend,
+        "resume" => Request::Resume,
         "load" => Request::Load { name: string(&v, "name").ok_or("load: missing \"name\"")? },
         "dialogs" => Request::Dialogs(
             string(&v, "policy").as_deref().and_then(DialogPolicy::parse).ok_or("dialogs: policy auto or report")?,
