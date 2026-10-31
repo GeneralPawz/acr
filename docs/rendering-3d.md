@@ -720,7 +720,9 @@ walked (`guncrew.stepped`: contact and passing poses of `poses.walk_cycle`, abou
 per 0.55 m, the root sliding along with the cycle's bob).
 
 - **Mortar** (#301, `assets/artillery/artmrt.py`, `acr_assets/mortarcrew.py`): the model is
-  found by the type id (`ArtMrt(XX)` → `artmrt.glb`, `scene::definition_name`) while the sim
+  found by the type id (`ArtMrt(XX)` → `artmrt.glb`, `scene::definition_name`; the type is a
+  copy of the field gun's and keeps its `.MD` `NAME` `ArtPus`, so `three_d::model_name` tries
+  the id of a `mortar` type first, #337) while the sim
   plays the field gun's `.MD` keys, so it carries the cannon's clip names. Three men
   (`c0.`..`c2.`: two loaders whose right hands go to the muzzle's rim, IK kind `muzzle`; the
   firer with the linstock on the vent at frame 29), a bed without wheels, the barrel fixed at
