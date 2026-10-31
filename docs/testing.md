@@ -154,7 +154,7 @@ still unmet in `unmet`.
 Simulation commands (`type`, with `units` as a list of ids, `"selection"` (the default) or a
 filter `{"owner": 0, "type": "Mus"}` for every living match):
 `move`, `attack_move`, `patrol`, `attack_ground` (`x`, `y`), `stop`, `attack` (`target`), `gather` (`x`,
-`y`), `repair` / `enter` (`building`), `leave` (`building`), `build` (`kind`, `x`, `y`),
+`y`), `repair` / `enter` (`building`), `leave` (`building`, optional `kind`: one unit of it leaves), `build` (`kind`, `x`, `y`),
 `produce` (`building`, `kind`, `count`), `rally` (`building`, `x`, `y`), `form` (`officer`, `kind` such as `#LINE15`),
 `disband` (`officer`), `friendly_fire` (`on`: shoot through own units), `mortar_zones` (`zones`: `[[x, y, r], ...]`, mortars rule) and `mortar_fire` (`on`). Type names are catalog ids such as `SpnKri(SP)`.
 

@@ -23,6 +23,9 @@ const VERSION: u64 = 1;
 /// Bit of the unit type word of a `Produce` that marks an endless order (command 0x4e).
 const ENDLESS_BIT: u16 = 0x2000;
 
+/// Bit of the player byte of a `Leave` that says a unit type follows.
+const LEAVE_TYPED: u8 = 0x80;
+
 /// A recorded match.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Replay {
@@ -204,9 +207,15 @@ impl Writer {
                 self.ids(units);
                 self.u(u64::from(building.0));
             }
-            Command::Leave { player, building } => {
-                self.0.extend_from_slice(&[9, *player]);
+            Command::Leave { player, building, kind } => {
+                // The original's command 0x2e carries the unit type word (0x4de7c8). The high
+                // bit of the player byte marks a replay with it; older ones lack the word.
+                let typed = if kind.is_some() { LEAVE_TYPED } else { 0 };
+                self.0.extend_from_slice(&[9, *player | typed]);
                 self.u(u64::from(building.0));
+                if let Some(kind) = kind {
+                    self.u(u64::from(kind.0));
+                }
             }
             Command::Rally { player, building, x, y } => {
                 self.0.extend_from_slice(&[10, *player]);
@@ -467,7 +476,11 @@ impl<'a> Reader<'a> {
             }
             7 => Command::Unproduce { player, building: self.id()?, kind: self.kind()? },
             8 => Command::Enter { player, units: self.ids()?, building: self.id()? },
-            9 => Command::Leave { player, building: self.id()? },
+            9 => {
+                let building = self.id()?;
+                let kind = if player & LEAVE_TYPED != 0 { Some(self.kind()?) } else { None };
+                Command::Leave { player: player & !LEAVE_TYPED, building, kind }
+            }
             10 => Command::Rally { player, building: self.id()?, x: self.i()?, y: self.i()? },
             11 => Command::Build { player, units: self.ids()?, kind: self.kind()?, x: self.i()?, y: self.i()? },
             12 => Command::Repair { player, units: self.ids()?, building: self.id()? },
@@ -549,7 +562,8 @@ mod tests {
                 Command::Produce { player: 1, building: EntityId(4), kind: TypeId(300), endless: true },
                 Command::Unproduce { player: 1, building: EntityId(4), kind: TypeId(2) },
                 Command::Enter { player: 1, units: vec![EntityId(5)], building: EntityId(4) },
-                Command::Leave { player: 1, building: EntityId(4) },
+                Command::Leave { player: 1, building: EntityId(4), kind: Some(TypeId(300)) },
+                Command::Leave { player: 1, building: EntityId(4), kind: None },
                 Command::Rally { player: 1, building: EntityId(4), x: -3, y: 9 },
                 Command::Build { player: 1, units: vec![EntityId(5)], kind: TypeId(7), x: 100, y: 200 },
                 Command::Repair { player: 1, units: vec![], building: EntityId(4) },
@@ -608,7 +622,7 @@ mod tests {
         let back = Replay::decode(&bytes).unwrap();
         assert_eq!(back, r);
         assert_eq!(back.entries.len(), 2, "empty ticks are not stored");
-        assert_eq!(back.commands_at(9).len(), 43);
+        assert_eq!(back.commands_at(9).len(), 44);
         assert!(back.commands_at(5).is_empty());
     }
 
@@ -629,6 +643,20 @@ mod tests {
         };
         assert_eq!((kind, e), (TypeId(300), false));
         assert_eq!(Replay::decode(&endless).unwrap(), build(true));
+    }
+
+    #[test]
+    fn leave_without_a_type_word_still_decodes() {
+        let mut r = Replay::new("m", 0);
+        r.record(1, &[Command::Leave { player: 2, building: EntityId(4), kind: None }]);
+        let bytes = r.encode();
+        // The old encoding: opcode 9, plain player byte, the building.
+        assert!(bytes.windows(3).any(|w| w == [9, 2, 4]));
+        assert_eq!(Replay::decode(&bytes).unwrap(), r);
+        let mut typed = Replay::new("m", 0);
+        typed.record(1, &[Command::Leave { player: 2, building: EntityId(4), kind: Some(TypeId(300)) }]);
+        assert!(typed.encode().windows(5).any(|w| w == [9, 0x82, 4, 0xac, 0x02]));
+        assert_eq!(Replay::decode(&typed.encode()).unwrap(), typed);
     }
 
     #[test]

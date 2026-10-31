@@ -202,8 +202,8 @@ pub enum HudCommand {
     Place(usize),
     /// Show page `n` of the building's icons (`PAGE1..3`, 0x608c60).
     Page(u8),
-    /// Let the units out of the selected building.
-    Leave,
+    /// Let one unit of this type out of each selected building (`0x5f5a66`, command 0x2e).
+    Leave(usize),
     /// Research an upgrade in the selected buildings (`PerformUpgrade`).
     Upgrade(u16),
     /// Stop a running research (right click, `StopUpgrade`).
