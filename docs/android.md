@@ -89,3 +89,18 @@ The cap is the stricter of `frame_cap` and the saver's 30 fps. It skips the redr
 until the next frame time (`pacing.rs`): the event loop sleeps (`ControlFlow::WaitUntil`),
 nothing waits in a loop, and the vsync present still aligns the frame to a refresh. A frame
 is due at 90 % of the interval, so the present waits for the refresh instead of missing it.
+
+### Render on demand
+
+On Android (and with `power_save=on` elsewhere; `power_save=off` switches it off) the rate drops
+to 5 fps once a frame has looked like the one before for 30 frames in a row with no input
+(`pacing.rs`: `QUIET_FRAMES`, `IDLE_FPS`). Any window event, a finger on the screen, a message
+or a change of the picture restores the normal rate at once. What "looks the same" means
+(`Game::look_signature` in `lib.rs`): the hash of the frame's interface draws (image, rect, tint:
+a menu, a dialog, the HUD, the cursor), and in a game also the camera, and while the game runs
+(not paused, no dialog) the position and animation frame of every unit and projectile. These
+are never quiet, so they keep the full rate: the intro movies, a loading game, the Svelte UI,
+the free camera, particles, awake ragdolls, weather or a storm at sea, and a running game
+drawn with 3D models (wind and water move all the time; paused, they hold still). When a
+signature cannot be told, the frame counts as changed. A game that stands still lets the
+simulation catch up with up to 0.2 s of ticks on its next frame.

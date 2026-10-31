@@ -3,6 +3,12 @@
 //! redraw requests until the next frame time instead of waiting in a loop, so it works with
 //! the vsync present mode: the loop sleeps in between and the present still waits for the
 //! display's next refresh.
+//!
+//! Render on demand (#440): when a frame looks like the one before for [`QUIET_FRAMES`] frames
+//! (a [`Pacing::observe`]d signature of what the frame shows), with no input in between, the
+//! rate drops to [`IDLE_FPS`]. Any input ([`Pacing::input`]) or a change in the signature
+//! restores the full rate at once. A frame whose signature is unknown (`None`) counts as a
+//! change: when unsure, render.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -66,6 +72,18 @@ pub fn battery_mode() -> bool {
     BATTERY_MODE.load(Ordering::Relaxed)
 }
 
+/// Frames with an unchanged picture and no input before the rate drops.
+pub const QUIET_FRAMES: u32 = 30;
+
+/// The rate while nothing changes.
+pub const IDLE_FPS: u32 = 5;
+
+/// Render on demand is on: `power_save` says so, else on Android only (the desktop and the
+/// browser keep drawing at the display's rate).
+pub fn on_demand(power_save: Option<bool>, android: bool) -> bool {
+    power_save.unwrap_or(android)
+}
+
 /// A frame is due a little before the interval has passed: under vsync the present then
 /// waits for the display's refresh, and a frame that came a hair late would miss it and
 /// fall to the next one.
@@ -75,6 +93,9 @@ const EARLY: f64 = 0.9;
 #[derive(Debug, Default)]
 pub struct Pacing {
     next: Option<Instant>,
+    /// The last frame's signature, and how many frames in a row had it.
+    last: Option<u64>,
+    quiet: u32,
 }
 
 impl Pacing {
@@ -83,9 +104,37 @@ impl Pacing {
         self.next?.checked_duration_since(now).filter(|d| !d.is_zero())
     }
 
-    /// A frame was drawn at `now`; with a cap the next one is due after its interval.
-    pub fn frame_done(&mut self, now: Instant, fps: Option<u32>) {
+    /// A frame was drawn at `now`; with a cap, or while nothing changes and `on_demand` is on,
+    /// the next one is due after its interval.
+    pub fn frame_done(&mut self, now: Instant, fps: Option<u32>, on_demand: bool) {
+        let fps = match (fps, on_demand && self.idle()) {
+            (Some(f), true) => Some(f.min(IDLE_FPS)),
+            (None, true) => Some(IDLE_FPS),
+            (f, false) => f,
+        };
         self.next = fps.map(|f| now + Duration::from_secs_f64(EARLY / f64::from(f.max(1))));
+    }
+
+    /// What the frame just drawn shows, as a hash; `None`: not known, so not quiet.
+    pub fn observe(&mut self, signature: Option<u64>) {
+        self.quiet = match signature {
+            Some(s) if self.last == Some(s) => self.quiet.saturating_add(1),
+            _ => 0,
+        };
+        self.last = signature;
+    }
+
+    /// An input arrived: the full rate again, and the next frame at once if the rate was low.
+    pub fn input(&mut self) {
+        if self.idle() {
+            self.next = None;
+        }
+        self.quiet = 0;
+    }
+
+    /// Nothing has changed for [`QUIET_FRAMES`] frames.
+    pub fn idle(&self) -> bool {
+        self.quiet >= QUIET_FRAMES
     }
 }
 
@@ -119,14 +168,74 @@ mod tests {
         let t0 = Instant::now();
         let mut p = Pacing::default();
         assert_eq!(p.wait(t0), None, "nothing drawn yet: draw now");
-        p.frame_done(t0, None);
+        p.frame_done(t0, None, false);
         assert_eq!(p.wait(t0), None, "no cap: never wait");
-        p.frame_done(t0, Some(30));
+        p.frame_done(t0, Some(30), false);
         let w = p.wait(t0 + Duration::from_millis(5)).expect("must wait");
         // 30 fps: a frame every 33.3 ms, due 10 % early (30 ms), 5 ms have passed.
         assert!((w.as_secs_f64() - 0.025).abs() < 1e-6, "{w:?}");
         assert_eq!(p.wait(t0 + Duration::from_millis(31)), None);
-        p.frame_done(t0, Some(60));
+        p.frame_done(t0, Some(60), false);
         assert!(p.wait(t0 + Duration::from_millis(16)).is_none());
+    }
+
+    /// Feeds `n` frames with signature `s` and returns the wait after the last one.
+    fn frames(p: &mut Pacing, t: Instant, n: u32, s: Option<u64>, fps: Option<u32>) -> Option<Duration> {
+        for _ in 0..n {
+            p.observe(s);
+            p.frame_done(t, fps, true);
+        }
+        p.wait(t)
+    }
+
+    #[test]
+    fn an_unchanged_picture_drops_to_idle_after_the_quiet_frames() {
+        let t0 = Instant::now();
+        let mut p = Pacing::default();
+        assert_eq!(frames(&mut p, t0, QUIET_FRAMES, Some(7), None), None, "the first frame is a change");
+        assert!(!p.idle());
+        let w = frames(&mut p, t0, 1, Some(7), None).expect("idle: waits");
+        assert!(p.idle());
+        // 5 fps: 200 ms, due 10 % early.
+        assert!((w.as_secs_f64() - 0.18).abs() < 1e-6, "{w:?}");
+        // A cap below the idle rate stays: 2 fps is never raised to 5.
+        assert!(frames(&mut p, t0, 1, Some(7), Some(2)).unwrap() > w);
+    }
+
+    #[test]
+    fn a_change_an_unknown_picture_or_an_input_restores_the_rate_at_once() {
+        let t0 = Instant::now();
+        let mut p = Pacing::default();
+        assert!(frames(&mut p, t0, QUIET_FRAMES + 2, Some(7), None).is_some());
+        // The picture changed.
+        assert_eq!(frames(&mut p, t0, 1, Some(8), None), None);
+        assert!(!p.idle());
+        // Not known: render.
+        frames(&mut p, t0, QUIET_FRAMES + 2, Some(8), None);
+        assert!(p.idle());
+        assert_eq!(frames(&mut p, t0, 1, None, None), None);
+        // Input: the waiting frame is requested now, not after the idle interval.
+        frames(&mut p, t0, QUIET_FRAMES + 2, Some(9), None);
+        assert!(p.wait(t0).is_some());
+        p.input();
+        assert_eq!(p.wait(t0), None);
+        assert!(!p.idle());
+    }
+
+    #[test]
+    fn input_keeps_a_cap() {
+        let t0 = Instant::now();
+        let mut p = Pacing::default();
+        p.frame_done(t0, Some(30), true);
+        p.input();
+        assert!(p.wait(t0).is_some(), "not idle: the cap still holds");
+    }
+
+    #[test]
+    fn on_demand_follows_power_save_else_android() {
+        assert!(on_demand(None, true));
+        assert!(!on_demand(None, false));
+        assert!(on_demand(Some(true), false));
+        assert!(!on_demand(Some(false), true));
     }
 }

@@ -1124,6 +1124,28 @@ impl InGame {
         c.in_game = self.ready();
     }
 
+    /// A hash of what the game screen shows apart from the interface's draws (render on demand,
+    /// `pacing.rs`): the camera, and while the game runs (`still` false: not paused, no dialog)
+    /// the units and projectiles. `None`: not known or in motion, so keep drawing.
+    pub fn look_signature(&self, still: bool) -> Option<u64> {
+        use std::hash::{Hash, Hasher};
+        if !self.ready() || self.three_d.animating(still) {
+            return None;
+        }
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        let c = &self.camera;
+        (c.x.to_bits(), c.y.to_bits(), c.scale.to_bits()).hash(&mut h);
+        if !still && let Some(world) = &self.world {
+            for u in &world.units {
+                (u.id.0, u.alive, u.pos, u.anim, u.frame).hash(&mut h);
+            }
+            for p in world.projectiles.slots.iter().flatten() {
+                (p.pos, p.frame).hash(&mut h);
+            }
+        }
+        Some(h.finish())
+    }
+
     /// A line on the message list for `frames` frames (the performance recorder's toast).
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn perf_hint(&mut self, text: &str) {

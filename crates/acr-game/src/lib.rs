@@ -115,6 +115,8 @@ pub struct Game {
     perf: perf::Recorder,
     /// When the next frame is due (`pacing.rs`, #440).
     pacing: pacing::Pacing,
+    /// A hash of the interface's draws of the last frame, for render on demand.
+    draws_signature: u64,
     modifiers: ModifiersState,
     /// The options came from the settings file: the window takes their resolution.
     stored_settings: bool,
@@ -154,6 +156,7 @@ impl Game {
             touch_time: None,
             last_frame: None,
             pacing: Default::default(),
+            draws_signature: 0,
             profile: None,
             perf: perf::Recorder::from_env(),
             modifiers: ModifiersState::empty(),
@@ -248,7 +251,31 @@ impl Game {
         self.perf_frame();
         let settings = self.ui.settings();
         let fps = pacing::cap_fps(settings.frame_cap, settings.power_save, pacing::battery_mode());
-        self.pacing.frame_done(web_time::Instant::now(), fps);
+        let on_demand = pacing::on_demand(settings.power_save, cfg!(target_os = "android"));
+        let signature = if on_demand { self.look_signature() } else { None };
+        self.pacing.observe(signature);
+        self.pacing.frame_done(web_time::Instant::now(), fps, on_demand);
+    }
+
+    /// A hash of what the last frame showed (the interface's draws and the world's look), for
+    /// render on demand (`pacing.rs`); `None` when it cannot be told or is in motion.
+    fn look_signature(&self) -> Option<u64> {
+        // The Svelte UI is drawn elsewhere; the movies move.
+        if self.webui.is_some() || matches!(self.mode, Mode::Intro) || self.driver_active() {
+            return None;
+        }
+        let world = match &self.mode {
+            Mode::InGame(game) => game.look_signature(game.paused() || self.ui.dialog_open())?,
+            _ => 0,
+        };
+        Some(self.draws_signature ^ world.rotate_left(17))
+    }
+
+    fn driver_active(&self) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        return self.driver.is_some();
+        #[cfg(target_arch = "wasm32")]
+        false
     }
 
     /// Records the frame just made (`perf.rs`), and writes a snapshot when Ctrl + Space, R
@@ -477,6 +504,7 @@ impl Game {
         {
             draws.truncate(world_draws);
         }
+        self.draws_signature = draws_signature(&draws);
         g.images.prepare(&g.gpu.device, &g.gpu.queue, g.gpu.size(), &draws);
         let mut encoder = g.gpu.device.create_command_encoder(&Default::default());
         acr_render::gpu_timer::mark_encoder(&mut encoder, "start");
@@ -808,6 +836,7 @@ impl ApplicationHandler<Event> for Game {
     }
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: Event) {
+        self.pacing.input();
         match event {
             Event::GpuReady(gpu) => {
                 let gpu = *gpu;
@@ -876,6 +905,10 @@ impl ApplicationHandler<Event> for Game {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        // Any event (input, resize, focus) restores the full rate at once (render on demand).
+        if !matches!(event, WindowEvent::RedrawRequested) {
+            self.pacing.input();
+        }
         match event {
             WindowEvent::CloseRequested => self.apply(ui::Action::Quit, event_loop),
             WindowEvent::Resized(size) => {
@@ -932,6 +965,10 @@ impl ApplicationHandler<Event> for Game {
             return self.drive(event_loop);
         }
         let Some(window) = &self.window else { return };
+        // A resting finger sends no events but a long press needs the clock to tick.
+        if self.touches.down() {
+            self.pacing.input();
+        }
         // Capped: sleep until the next frame is due instead of asking for it at once (#440).
         match self.pacing.wait(web_time::Instant::now()) {
             Some(wait) => event_loop.set_control_flow(ControlFlow::WaitUntil(web_time::Instant::now() + wait)),
@@ -941,6 +978,20 @@ impl ApplicationHandler<Event> for Game {
             }
         }
     }
+}
+
+/// A hash of the draws of a frame: the images and where they go.
+fn draws_signature(draws: &[ImageDraw]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    draws.len().hash(&mut h);
+    for d in draws {
+        d.texture.id().hash(&mut h);
+        for v in d.dst.iter().chain(&d.src).chain(&d.color) {
+            v.to_bits().hash(&mut h);
+        }
+    }
+    h.finish()
 }
 
 /// Input from the window (or the test driver), in window pixels.
