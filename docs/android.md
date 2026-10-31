@@ -136,3 +136,17 @@ efficient cores and lower clocks while the work is small. Without a manager or a
 (older Android, a refusal) it logs `performance hints: not available` at info level and
 nothing changes; a failing call stops the hints. logcat tag `acr` shows
 `performance hints: session created`.
+
+### Audio
+
+`acr-audio` plays through cpal 0.18, whose Android backend is AAudio (not Oboe). It opens the
+stream with the default performance mode (the low-latency mode is cpal's `realtime` feature,
+which is off) and cpal has no power-saving mode to ask for. The lever it offers is the callback
+size: by default AAudio calls the mixer every burst (a few milliseconds, hundreds of wakeups a
+second), so on Android `output.rs` asks for `BufferSize::Fixed` of 40 ms of audio, rounded up to
+64 frames (1920 at 48 kHz, `android_buffer_frames`): about 25 wakeups a second, for a 40 ms
+delay of sounds that a strategy game does not notice. A fixed size also turns off cpal's dynamic
+buffer tuning after underruns; if the device refuses the fixed size, the stream opens with the
+default (logcat `audio: no large callback`). The log line `audio: callback of Fixed(1920)
+frames` shows the size in use. Not measured: the effect on battery and on underruns is for
+the phone (`audio stream` warnings in logcat).
