@@ -661,8 +661,12 @@ impl InGame {
         if !self.editor_started
             && let (Some(e), Some(world)) = (&self.editor, &mut self.world)
         {
-            editor::set_peace(world, e.peace);
+            e.apply_sides(world);
             self.editor_started = true;
+        }
+        // The scripts copy their alliance masks to the world every tick: give them the editor's.
+        if let Some(e) = &self.editor {
+            self.mission.set_alliances(e.masks());
         }
         if !self.centred && self.uploaded {
             self.centre(window);

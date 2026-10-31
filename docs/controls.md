@@ -238,14 +238,14 @@ Under the window ACR's own controls:
 | Ausbau | the picked type's training level: `Ausbau n/m: name`, n of its m upgrades applied (set by the icons' right-click drop-down) |
 | Richtung | the facing, in eight steps; kept per owner |
 | Besitzer | the owner picked among the colours |
-| Kampf | AUS: every player is everybody's ally, nobody attacks; AN: the sides fight |
+| Kampf | a click cycles AUS (every player is everybody's ally, nobody attacks), AN alle gegen alle (every player fights every other), Teams (owners with the same team number are allied). In Teams a right click on a colour's swatch cycles its team 1 to 4, shown as a small digit on the swatch (start: 1, 2, 3, 4, 1, 2, 3). The neutral player (animals) is hostile to everyone unless the mode is AUS. The rule sets the alliance masks (`NMask`) of the nations and objects, as the mission scripts do; the editor hands them to the script state every frame, since that copies them to the world each tick |
 | Kanonen sofort laden | reloads every cannon on the field at once (its reload counter cleared) |
 | Kanonen: sofort nachladen | AN: every cannon is reloaded before each tick, so it fires as soon as it is aimed (a test switch; starts AUS) |
-| Ich steuere | which player's units the mouse selects and commands (player 1 or 2) |
+| Ich steuere | which player's units the mouse selects and commands; a click goes to the next player (neutral included) that has living units |
 
 The test driver lists the window's controls in `ui` as `editor/<n>` (names like `Anzahl +`,
 `Ausbau Basis`, `Nation Frankreich`, `Spieler 2`, `Neutral`, an icon by its name and type id),
-so `tests/e2e/editor_window.json` and `editor_levels.json` click them by label.
+so `tests/e2e/editor_window.json` and `editor_levels.json` click them by label; `editor_players.json` and `editor_teams.json` cover the Kampf modes.
 
 **Training levels.** A right click on a unit icon opens a drop-down (the combo box's list look)
 under it: "Basis" (no upgrade), then one line per upgrade that changes how the type fights
