@@ -14,6 +14,12 @@ At most two commands build at once (VM slots); others wait. Output streams back;
 code is CMD's. `--get` fetches files or folders afterwards (REMOTE `target/...` is in
 ~/target/NAME, other relative paths in the worktree, or absolute starting with ~ or /; LOCAL an absolute Windows path).
 
+On the VM itself (hostname `claude-render`, or `ACR_VM_LOCAL=1`) the same steps run through
+the local shell instead of ssh: the worktree is still staged into ~/wt/NAME, so builds,
+checks and the studio behave the same from Windows and from a session on the VM. The VM
+keeps everything under ~/projects/acr; ~/wt, ~/target, ~/sources, ~/game and the other
+old paths are links into it.
+
 The landing checks are `acr-check` on the VM (this folder's acr-check.sh, installed into
 ~/bin on every sync).
 
@@ -27,14 +33,19 @@ import argparse
 import io
 import os
 import shlex
+import socket
 import subprocess
 import sys
 import tarfile
 
 HOST = "claude@192.168.178.130"
 KEY = os.path.expanduser("~/.ssh/claude-render")
-SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-o", "IdentitiesOnly=yes",
-       "-o", "ServerAliveInterval=30", "-i", KEY, HOST]
+# On the VM itself every "remote" command runs in the local shell: `SSH + [cmd]` stays the
+# one way to run a VM command, from Windows and from a session on the VM alike.
+LOCAL = os.environ.get("ACR_VM_LOCAL") == "1" or (os.name != "nt" and socket.gethostname() == "claude-render")
+SSH = (["bash", "-c"] if LOCAL else
+       ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-o", "IdentitiesOnly=yes",
+        "-o", "ServerAliveInterval=30", "-i", KEY, HOST])
 SLOTS = 2
 HERE = os.path.dirname(os.path.abspath(__file__))
 # Where Git Bash's MSYS root lies on Windows: a POSIX path it rewrote starts with this.

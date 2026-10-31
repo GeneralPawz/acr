@@ -14,6 +14,10 @@ description: "How to build, check, test, run Blender asset builds and take GPU s
 
 You edit files locally. Every command below syncs your worktree to the VM first (changed files only), runs there, and brings the output back. Run them from your worktree root. They are commands on the Bash PATH (the acr plugin's `bin/`).
 
+Everything lives under `~/projects/acr` on the VM (checkout `ACR`, worktrees `ACR-wt/`, staged copies `wt/`, build dirs `target/`, `sources`, `game`, `ACR-models`, `ACR-analysis`); `~/wt`, `~/target`, `~/sources`, `~/game` and the other old paths are links into it.
+
+**Working on the VM itself** (a Claude session on `claude-render`): the same commands work unchanged. They detect the VM (hostname, or `ACR_VM_LOCAL=1`) and run through the local shell instead of ssh; `acr-showcase` builds the Linux showcase (`~/projects/acr/acr-test/showcase`) and `blender-vm` runs `/opt/blender/blender` directly. Use worktrees under `~/projects/acr/ACR-wt/`.
+
 ## Checks, tests, builds: `acr-vm-cargo`
 
 ```

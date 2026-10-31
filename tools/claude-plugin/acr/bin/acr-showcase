@@ -1,8 +1,26 @@
 #!/bin/bash
-# Builds the Windows release exe from origin/main on this PC and installs it as the
-# showcase's AC-showcase.exe (staged as AC-showcase-next.exe while the game runs).
+# Builds the release game from origin/main and installs it into the showcase: on Windows the
+# exe as AC-showcase.exe, on the VM the Linux build as AC-showcase (staged as *-next while the
+# game runs).
 #   acr-showcase [worktree used for the build, default ACR-wt/m2-editor]
 set -u
+if [ "$(uname -s)" = Linux ]; then
+  # On the VM: build the Linux game from origin/main into the desktop showcase
+  # (~/projects/acr/acr-test/showcase, started by its "ACR Showcase" icon).
+  src="${1:-$HOME/projects/acr/ACR-wt/showcase}"
+  S="$HOME/projects/acr/acr-test/showcase"
+  if [ ! -d "$src/.git" ]; then git -C "$HOME/projects/acr/ACR" worktree add -q --detach "$src" origin/main || exit 2; fi
+  cd "$src" && git fetch -q origin && git checkout -q --detach origin/main || exit 2
+  export PATH="$HOME/.cargo/bin:$PATH" CARGO_TARGET_DIR="$HOME/projects/acr/target/showcase" ACR_LOCAL_BUILD=1
+  cargo build --release -q -p acr-game 2>&1 | tail -5
+  cp "$CARGO_TARGET_DIR/release/AmericanConquest" "$S/AC-showcase-next" || exit 3
+  if pgrep -x AC-showcase >/dev/null; then
+    echo "STAGED AC-showcase-next from $(git rev-parse --short HEAD) (the game is running)"
+  else
+    mv "$S/AC-showcase-next" "$S/AC-showcase" && echo "INSTALLED AC-showcase from $(git rev-parse --short HEAD)"
+  fi
+  exit 0
+fi
 wt="${1:-C:/Users/verwalter/WIP/ACR-wt/m2-editor}"
 S=/c/Users/verwalter/WIP/ACR-analysis/showcase
 cd "$wt" && git fetch -q origin && git checkout -q --detach origin/main || exit 2

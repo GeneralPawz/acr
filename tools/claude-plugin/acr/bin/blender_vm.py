@@ -5,11 +5,13 @@ Set `BLENDER` to `blender-vm.cmd` (next to this file). xtask calls it like Blend
     [--compress X] [--ref <ref.json>] [--refs <dir>] [--blend <file>]
 The repo's `assets/` and the reference folder go to the VM (tar over ssh), Blender runs
 there on the RX 9060 XT, the outputs (glb, stats, blend) come back. Falls back to local
-Blender when the VM is unreachable (env BLENDER_LOCAL, default the 5.2 install).
+Blender when the VM is unreachable (env BLENDER_LOCAL, default the 5.2 install). On the VM
+itself (hostname `claude-render` or `ACR_VM_LOCAL=1`) it simply runs /opt/blender/blender.
 """
 
 import io
 import os
+import socket
 import subprocess
 import sys
 import tarfile
@@ -29,6 +31,11 @@ def norm(p):
 
 
 def main(args):
+    if os.environ.get("ACR_VM_LOCAL") == "1" or (os.name != "nt" and socket.gethostname() == "claude-render"):
+        # Already on the VM: Blender runs here, no staging needed.
+        env = dict(os.environ)
+        env.setdefault("ACR_SOURCES", REMOTE_SOURCES)
+        return subprocess.run([REMOTE_BLENDER] + args, env=env).returncode
     build = args[args.index("--python") + 1]
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(build))))
     job = "acr-" + format(abs(hash(norm(root))) % 10**8, "08d") + "-" + str(os.getpid())

@@ -1,0 +1,3 @@
+#!/bin/bash
+# BLENDER for xtask on Linux (the VM): see blender_vm.py. On Windows use blender-vm.cmd.
+exec python3 -I "$(dirname "$(readlink -f "$0")")/blender_vm.py" "$@"
