@@ -105,6 +105,8 @@ pub struct Game {
     input_mode: input_mode::InputMode,
     /// The clock of the touch gestures (a long press).
     touch_clock: web_time::Instant,
+    /// The test driver's own touch time, which replaces the clock while it feeds fingers.
+    touch_time: Option<std::time::Duration>,
     last_frame: Option<web_time::Instant>,
     /// `ACR_PROFILE`: frames since the last profile line and when it was written.
     profile: Option<(web_time::Instant, u32)>,
@@ -146,6 +148,7 @@ impl Game {
             touches: touch::Touches::default(),
             input_mode: input_mode::InputMode::initial(),
             touch_clock: web_time::Instant::now(),
+            touch_time: None,
             last_frame: None,
             profile: None,
             perf: perf::Recorder::from_env(),
@@ -937,8 +940,38 @@ impl Game {
             self.touches.set_scale(window.scale_factor());
         }
         let paused = matches!(&self.mode, Mode::InGame(g) if g.paused());
-        let now = self.touch_clock.elapsed();
+        let now = self.touch_now();
         let gestures = self.touches.event(touch.id, phase, [touch.location.x, touch.location.y], now, paused);
+        self.gestures(gestures, event_loop);
+    }
+
+    /// A finger of the test driver (`{"cmd": "touch"}`): the game goes into touch mode, `time`
+    /// (ms) sets the driver's touch clock, and `phase` is the finger's event (`None`: only the
+    /// clock runs, a long press).
+    pub(crate) fn drive_touch(
+        &mut self,
+        id: u64,
+        phase: Option<touch::Phase>,
+        pos: [f32; 2],
+        time: Option<u64>,
+        event_loop: &ActiveEventLoop,
+    ) {
+        if self.input_mode != input_mode::InputMode::Touch {
+            self.input_mode = input_mode::InputMode::Touch;
+            if let Mode::InGame(game) = &mut self.mode {
+                game.set_input_mode(self.ui.settings(), self.input_mode);
+            }
+        }
+        if let Some(ms) = time {
+            self.touch_time = Some(std::time::Duration::from_millis(ms));
+        }
+        let now = self.touch_now();
+        let paused = matches!(&self.mode, Mode::InGame(g) if g.paused());
+        let mut gestures = match phase {
+            Some(phase) => self.touches.event(id, phase, [f64::from(pos[0]), f64::from(pos[1])], now, paused),
+            None => Vec::new(),
+        };
+        gestures.extend(self.touches.tick(now));
         self.gestures(gestures, event_loop);
     }
 
@@ -961,12 +994,21 @@ impl Game {
 
     /// The touch gestures' clock: a resting finger becomes a right click.
     fn touch_tick(&mut self, event_loop: &ActiveEventLoop) {
-        let gestures = self.touches.tick(self.touch_clock.elapsed());
+        let gestures = self.touches.tick(self.touch_now());
         self.gestures(gestures, event_loop);
+    }
+
+    /// The touch clock: the driver's time while it feeds fingers, else the real one.
+    fn touch_now(&self) -> std::time::Duration {
+        self.touch_time.unwrap_or_else(|| self.touch_clock.elapsed())
     }
 
     fn gestures(&mut self, gestures: Vec<touch::Gesture>, event_loop: &ActiveEventLoop) {
         use touch::Gesture;
+        let now = self.touch_now();
+        if let Mode::InGame(game) = &mut self.mode {
+            game.set_touch_time(now);
+        }
         for g in gestures {
             match g {
                 Gesture::Move([x, y]) => self.cursor_moved(PhysicalPosition::new(x, y), event_loop),
