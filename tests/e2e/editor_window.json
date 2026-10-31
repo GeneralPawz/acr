@@ -1,0 +1,29 @@
+{
+  "name": "editor_window",
+  "description": "The test editor's placing window (#401, the original's 'Einheit wählen', 0x5bb6c0): the eight colours, the nation combo box, the icon grid under category headers, and ACR's controls in a box under it. Picks Frankreich in the combo box, a unit icon, the count, an upgrade level and the owner, places the units with a click on the map, then places animals as the neutral player and switches the rules (Kampf, Kanonen, Ich steuere).",
+  "steps": [
+    {"cmd": "start", "blank": {"editor": true}},
+    {"cmd": "wait", "ticks": 5},
+    {"cmd": "click", "label": "Spieler 2", "exact": true},
+    {"cmd": "click", "label": "Nation", "exact": true},
+    {"cmd": "click", "label": "Nation Frankreich", "exact": true},
+    {"cmd": "click", "label": "(FrnM18(FR))", "note": "the Füsilier icon"},
+    {"cmd": "click", "label": "Anzahl +", "exact": true, "note": "36 -> 72"},
+    {"cmd": "click", "label": "Ausbau Halb", "exact": true},
+    {"cmd": "click", "pos": [400, 400], "note": "places 72 men for player 2"},
+    {"cmd": "wait", "ticks": 2},
+    {"cmd": "state", "expect": {"path": "state.counts.1.units.FrnM18(FR)", "eq": 72}},
+    {"cmd": "click", "label": "Nation", "exact": true},
+    {"cmd": "click", "label": "Nation Tiere", "exact": true},
+    {"cmd": "click", "label": "Neutral", "exact": true},
+    {"cmd": "click", "label": "(Anm", "index": 0, "note": "the first animal"},
+    {"cmd": "click", "pos": [600, 300]},
+    {"cmd": "wait", "ticks": 2},
+    {"cmd": "state", "expect": {"path": "state.counts.7.units", "len_ge": 1}},
+    {"cmd": "click", "label": "Kampf", "exact": true, "note": "fighting on"},
+    {"cmd": "click", "label": "Kanonen sofort laden", "exact": true},
+    {"cmd": "click", "label": "Kanonen nachladen", "exact": true},
+    {"cmd": "click", "label": "Ich steuere", "exact": true},
+    {"cmd": "ui", "expect": {"path": "ui.in_game", "eq": true}}
+  ]
+}

@@ -3,67 +3,127 @@
 //! with fighting switched off while the battle is set up. Not in the original, whose editor
 //! places single units only; everything here acts on the local world directly, like the
 //! test driver's `spawn`, so an editor game is not a network or replay game.
+//!
+//! The window is the original's "Einheit wählen" (`ED_HDR01`, built by 0x5bb6c0, docs/ui.md,
+//! "Editor"): the side panel's column with a title, the eight player colours, a nation combo
+//! box and a scrolled grid of unit icons under category headers. ACR's own controls (count,
+//! formation, upgrade level, facing, fighting, cannon switches, the player to control) sit in
+//! a second box directly under it.
 
-use acr_sim::catalog::Medium;
+use std::cell::RefCell;
+use std::collections::HashMap;
+
+use acr_sim::catalog::{Medium, MotionStyle};
 use acr_sim::fixed::Pos;
 use acr_sim::{TypeId, World};
 
+use crate::hud::{self, SCREEN, panels};
 use crate::ui::Ctx;
-use crate::ui::draw::{Draw, Rect};
+use crate::ui::dialog::{Dialog, Kind};
+use crate::ui::draw::{Draw, GAME_PALETTE, Rect};
 use crate::ui::fonts::FontId;
+use crate::ui::screens::font as menu_font;
 
 const WHITE: FontId = FontId("SmallWhiteFont");
 const YELLOW: FontId = FontId("SmallYellowFont");
-/// Panel origin and width on the interface canvas, and the row height.
-const X0: i32 = 8;
-const Y0: i32 = 64;
-const W: i32 = 300;
+/// `Interf2\Combo2` (the global at 0x1100c38, loaded at 0x4eff3b) and `Interf2\VScroll2`.
+const COMBO: &str = "INTERF2\\COMBO2.GP";
+const VSCROLL: &str = "INTERF2\\VSCROLL2.GP";
+
+/// The `DialogsSystem` origin of the window (0x5bb6c0): `RealLx − 259 − 10`, `InfY1 + 31`.
+const OX: i32 = SCREEN[0] - 259 - 10;
+const OY: i32 = 48 + 31;
+/// The window's box (`addBorder(0, −31, 249, 386, 74, 3)`, 0x47c05b): its right and bottom
+/// edge and the divider under the colours and the combo box.
+const BOX_X1: i32 = OX + 249;
+const BOX_Y0: i32 = OY - 31;
+const BOX_Y1: i32 = OY + 386;
+const DIVIDER: i32 = OY + 74;
+/// Corner table 0x668640 of the box above the divider (style 3, 0x48039d); below it the unit
+/// panel's paper (0x6686a0), both with fill 0x1c.
+const HEADER_CORNERS: [i32; 8] = [17, 18, -1, -1, 12, 14, 23, -1];
+const PAPER_FILL: usize = 28;
+/// The clipped content (`addClipper(DS.x + 4, DS.y + 75, RealLx, DS.y + 386)`).
+const CONTENT: Rect = Rect { x0: OX + 4, y0: OY + 75, x1: BOX_X1, y1: BOX_Y1 };
+/// Icon cells: 41 × 41 on a 44 pixel pitch, five to a row from x = 6 (0x5bb9d7); a category
+/// header takes 20 pixels, the first one starts at y = 80 (0x5bb8c2).
+const CELL: i32 = 41;
+const PITCH: i32 = 44;
+const COLUMNS: usize = 5;
+const FIRST_ROW: i32 = 80;
+const HEADER_H: i32 = 20;
+/// The scroll bar (`addNewGP_VScrollBar` at (259 − 37, 82), 303 long) and the content height
+/// it scrolls to: the content's end less `0x17e` (0x5bba8a).
+const BAR_X: i32 = OX + 259 - 37;
+const BAR_Y: i32 = OY + 82;
+const BAR_LEN: i32 = 303;
+const BAR_W: i32 = 16;
+const VISIBLE_H: i32 = 0x17e;
+/// The palette index of a player's colour is `0xd0 + 4 · player` (0x5bb140); the cell
+/// outline is 0x65, 0xff when picked (0x5bb630).
+const OUTLINE: u8 = 0x65;
+const OUTLINE_PICKED: u8 = 0xff;
+/// ACR's controls: the second box under the window.
+const X0: i32 = OX + 8;
+const W: i32 = 249 - 16;
 const ROW: i32 = 16;
-/// Unit types shown at once in the list.
-const LIST_ROWS: usize = 14;
+const EXTRA_Y: i32 = BOX_Y1 + 6;
 /// The counts offered; a count above one formation's size places several side by side.
 pub const COUNTS: [u32; 12] = [1, 5, 10, 15, 36, 72, 120, 196, 392, 588, 784, 980];
-/// Nation tabs: label and the type id prefixes they list.
-pub const TABS: [(&str, &str); 14] = [
-    ("ENG", "Eng"),
-    ("FRN", "Frn"),
-    ("SPN", "Spn"),
+/// The combo box's lines: the playable nations in the order of `TEXT\NATIONS.TXT` (name, and
+/// the prefix of their type ids), then ACR's two extra lists, the animals and the cannons.
+pub const ENTRIES: [(&str, &str); 14] = [
+    ("Maya", "May"),
+    ("Spanien", "Spn"),
+    ("England", "Eng"),
+    ("Frankreich", "Frn"),
     ("USA", "Usa"),
-    ("AZT", "Atc"),
-    ("MAY", "May"),
-    ("INC", "Inc"),
-    ("PUE", "Pue"),
-    ("SIU", "Siu"),
-    ("DEL", "Del"),
-    ("HUR", "Hur"),
-    ("IRO", "Iro"),
+    ("Inka", "Inc"),
+    ("Azteken", "Atc"),
+    ("Pueblos", "Pue"),
+    ("Delawaren", "Del"),
+    ("Huronen", "Hur"),
+    ("Irokesen", "Iro"),
+    ("Sioux", "Siu"),
     ("Tiere", "Anm"),
     ("Kanonen", "Art"),
 ];
-/// Owners offered: the two players and the neutral player 7 (wild animals).
-const OWNERS: [(u8, &str); 3] = [(0, "Spieler 1"), (1, "Spieler 2"), (7, "Neutral")];
+/// The first of [`ENTRIES`] that is ACR's own (not a nation of the original).
+const FIRST_EXTRA: usize = 12;
+/// The nation list opens on England, as the first game does for most players.
+const DEFAULT_ENTRY: usize = 2;
+/// The owner of wild animals: the eighth colour of the window is this neutral player.
+pub const NEUTRAL: u8 = 7;
 /// Compass names of the eight facings, `dir` = 32 · i (0 east, 64 south).
 const FACINGS: [&str; 8] = ["Ost", "Suedost", "Sued", "Suedwest", "West", "Nordwest", "Nord", "Nordost"];
 /// Space between formations placed side by side, world pixels.
 const FORMATION_GAP: i32 = 64;
-/// Upgrade levels: the button behind a list row and the name in the settings.
+/// Upgrade levels: the button in the settings and the name.
+// TODO(#402): a right click on an icon opens a level drop-down; these buttons then go.
 const LEVELS: [(&str, &str); 3] = [("B", "Basis"), ("H", "Halb"), ("V", "Voll")];
-/// Width of one level button behind a list row.
-const LEVEL_W: i32 = 20;
+/// Width of one level button.
+const LEVEL_W: i32 = 24;
+/// The categories of a nation's list (the `ED_` headers of `TEXT\EDITOR.TXT`); the original
+/// also has marine and buildings, which this editor cannot place yet.
+const CATEGORIES: [&str; 3] = ["Infanterie", "Kavallerie", "Artillerie"];
 
-/// A click target of the panel.
+/// A click target of the window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Act {
-    Tab(usize),
+    /// Opens or closes the nation combo box.
+    Combo,
+    /// Picks a line of the combo box.
+    Entry(usize),
     Pick(TypeId),
-    /// Picks the type at an upgrade level (a button behind its list row).
-    PickLevel(TypeId, usize),
+    /// Picks the owner (one of the eight colours).
+    Owner(u8),
+    /// Sets the upgrade level directly (a button of the settings).
+    SetLevel(usize),
     Level(i32),
-    ScrollUp,
-    ScrollDown,
+    /// Scrolls the icons by pixels / by pages (the scroll bar's arrows and track).
+    ScrollBy(i32),
     Count(i32),
     Form(i32),
-    Owner,
     Facing(i32),
     Peace,
     Reload,
@@ -72,13 +132,39 @@ pub enum Act {
     Hide,
 }
 
-/// One line of the panel: where it is, what it says, whether it is highlighted.
+/// How an item is drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Look {
+    /// A line of text, highlighted when `hot`.
+    Text,
+    /// The window's title.
+    Title,
+    /// A category header of the grid.
+    Header,
+    /// A box of the window: with a divider below the colours, or plain paper.
+    Frame { divider: Option<i32> },
+    /// A unit icon (`ICONS.GP` frame) in its cell.
+    Icon { frame: Option<usize> },
+    /// A player colour; `hot` adds the larger outline.
+    Swatch { owner: u8 },
+    /// The closed combo box.
+    Combo,
+    /// A line of the open combo box.
+    DropRow,
+    /// The scroll bar, drawn as a whole.
+    Bar { pos: i32, max: i32 },
+}
+
+/// One thing of the window: where it is, what it says, whether it is highlighted.
 #[derive(Debug, Clone)]
 pub struct Item {
     pub rect: Rect,
     pub text: Vec<u8>,
+    /// The name the test driver finds it by.
+    pub name: String,
     pub hot: bool,
     pub act: Option<Act>,
+    pub look: Look,
 }
 
 /// A formation a type can stand in: the `ORD_GROUPS.LST` group, its officer type and the
@@ -90,19 +176,33 @@ pub struct FormChoice {
     pub shapes: Vec<usize>,
 }
 
+/// What the window needs of the game to draw a type.
+pub struct View<'a> {
+    /// A type's display name.
+    pub names: &'a dyn Fn(TypeId) -> Vec<u8>,
+    /// A type's `ICONS.GP` frame (`ICON` of its `.MD`), if it has one.
+    pub icon: &'a dyn Fn(TypeId) -> Option<usize>,
+    /// `ED_HDR01`.
+    pub title: Vec<u8>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Editor {
-    /// The panel is shown (F2 or its title toggles).
+    /// The window is shown (F2 or its title toggles).
     pub open: bool,
-    tab: usize,
-    scroll: usize,
+    /// The combo box line: an index in [`ENTRIES`].
+    entry: usize,
+    combo_open: bool,
+    /// The icons' scroll position in pixels.
+    scroll: i32,
     /// The type placed by a click on the map.
     pub pick: Option<TypeId>,
     count: usize,
     /// 0 = loose, else 1 + the index in [`formations`].
     form: usize,
-    owner: usize,
-    facing: [u8; 3],
+    /// The player placed units belong to, 0..=7 ([`NEUTRAL`] is wild animals).
+    owner: u8,
+    facing: [u8; 8],
     /// Upgrade level of placed types, an index in [`LEVELS`]: none, the first half of the
     /// type's upgrades or all of them ([`acr_sim::upgrade::of_type`]).
     level: usize,
@@ -110,29 +210,33 @@ pub struct Editor {
     pub peace: bool,
     /// Every cannon is reloaded each tick (a test switch, off on start).
     pub auto_reload: bool,
-    /// The last placement or problem, shown under the panel.
+    /// The last placement or problem, shown under the window.
     status: Vec<u8>,
-    /// A press placed or hit the panel: its release does nothing else.
+    /// A press placed or hit the window: its release does nothing else.
     pub swallow_release: bool,
+    /// The `ICONS.GP` frames of the catalog's types, once the game's data is loaded.
+    pub icons: RefCell<Option<HashMap<TypeId, Option<usize>>>>,
 }
 
 impl Default for Editor {
     fn default() -> Self {
         Self {
             open: true,
-            tab: 0,
+            entry: DEFAULT_ENTRY,
+            combo_open: false,
             scroll: 0,
             pick: None,
             count: COUNTS.iter().position(|&c| c == 36).unwrap_or(0),
             form: 0,
             owner: 0,
-            // Player 1 faces north (up the screen), player 2 south, neutral east.
-            facing: [192, 64, 0],
+            // Player 1 faces north (up the screen), player 2 south, the others east.
+            facing: [192, 64, 0, 0, 0, 0, 0, 0],
             level: 0,
             peace: true,
             auto_reload: false,
             status: b"Typ waehlen, dann auf die Karte klicken".to_vec(),
             swallow_release: false,
+            icons: RefCell::new(None),
         }
     }
 }
@@ -151,20 +255,83 @@ pub fn reload_guns(world: &mut World) -> usize {
     n
 }
 
-/// Types a tab lists: units and animals of the prefix that stand on land.
-pub fn types(world: &World, tab: usize) -> Vec<TypeId> {
-    let prefix = TABS[tab].1.to_ascii_lowercase();
-    let mut out: Vec<(String, TypeId)> = world
-        .catalog
-        .iter()
-        .filter(|(_, t)| {
-            !t.building && t.life > 0 && t.medium == Medium::Land && t.id.to_ascii_lowercase().starts_with(&prefix)
-        })
-        .map(|(id, t)| (t.id.clone(), id))
-        .collect();
-    out.sort();
-    out.dedup_by(|a, b| a.1 == b.1);
-    out.into_iter().map(|(_, id)| id).collect()
+/// A category of an entry's list: its header and types.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Group {
+    pub header: &'static str,
+    pub kinds: Vec<TypeId>,
+}
+
+/// The category of a land type in a nation's list: riders, guns (`COMPLEXROTATE`) or foot.
+fn category(t: &acr_sim::catalog::ObjectType) -> usize {
+    if acr_sim::spacing::is_rider(t) {
+        1
+    } else if t.motion_style == MotionStyle::ComplexRotate {
+        2
+    } else {
+        0
+    }
+}
+
+/// Types an entry lists, in the order of the nation files (the catalog's): units and
+/// animals of the prefix that stand on land, in the categories of the original's lists.
+// The original builds these lists at load (0x111ca9c/0x111caa0/0x111caa4, read at 0x5bb8aa);
+// where it fills them is unknown, so this groups the catalog by kind (docs/ui.md, "Editor").
+pub fn groups(world: &World, entry: usize) -> Vec<Group> {
+    let prefix = ENTRIES[entry].1.to_ascii_lowercase();
+    let mut seen = std::collections::HashSet::new();
+    let mut by: Vec<Vec<TypeId>> = vec![Vec::new(); CATEGORIES.len()];
+    for (id, t) in world.catalog.iter() {
+        if t.building
+            || t.life <= 0
+            || t.medium != Medium::Land
+            || !t.id.to_ascii_lowercase().starts_with(&prefix)
+            || !seen.insert(id)
+        {
+            continue;
+        }
+        by[category(t)].push(id);
+    }
+    if entry >= FIRST_EXTRA {
+        // Animals and cannons are one list under their own name.
+        let kinds = by.into_iter().flatten().collect();
+        return vec![Group { header: ENTRIES[entry].0, kinds }];
+    }
+    by.into_iter()
+        .zip(CATEGORIES)
+        .filter(|(kinds, _)| !kinds.is_empty())
+        .map(|(kinds, header)| Group { header, kinds })
+        .collect()
+}
+
+/// What the flow of [`flow`] puts at a place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Placed {
+    /// The header of group `.0` at y.
+    Header(usize, i32),
+    /// Type `.1` of group `.0` in column `.2` at y.
+    Cell(usize, usize, usize, i32),
+}
+
+/// The grid's flow (0x5bb8c2): from y = 80 relative to the window's origin, a header per
+/// group and its icons five to a row; returns the places and the y after the last row.
+pub fn flow(groups: &[Group]) -> (Vec<Placed>, i32) {
+    let mut out = Vec::new();
+    let mut y = FIRST_ROW;
+    for (g, group) in groups.iter().enumerate() {
+        out.push(Placed::Header(g, y));
+        y += HEADER_H;
+        for (i, _) in group.kinds.iter().enumerate() {
+            out.push(Placed::Cell(g, i, i % COLUMNS, y + (i / COLUMNS) as i32 * PITCH));
+        }
+        y += group.kinds.len().div_ceil(COLUMNS) as i32 * PITCH;
+    }
+    (out, y)
+}
+
+/// How far the icons scroll: the content's end less the visible height (0x5bba8a).
+pub fn scroll_max(end: i32) -> i32 {
+    (end - VISIBLE_H).max(0)
 }
 
 /// The formations soldiers of `kind` can stand in, as their officers list them.
@@ -227,11 +394,11 @@ impl Editor {
     }
 
     pub fn owner(&self) -> u8 {
-        OWNERS[self.owner].0
+        self.owner
     }
 
     pub fn facing(&self) -> u8 {
-        self.facing[self.owner]
+        self.facing[usize::from(self.owner)]
     }
 
     /// The formation chosen for the picked type, if any.
@@ -240,104 +407,171 @@ impl Editor {
         (self.form > 0).then(|| formations(world, kind).get(self.form - 1).cloned()).flatten()
     }
 
-    /// The panel's lines; `names` gives a type's display name.
-    pub fn layout(&self, world: &World, names: &dyn Fn(TypeId) -> Vec<u8>, local: u8) -> Vec<Item> {
+    /// The window's items in drawing order (hit tests go from the back).
+    pub fn layout(&self, world: &World, view: &View, local: u8) -> Vec<Item> {
         let mut out = Vec::new();
-        let mut y = Y0;
-        let line = |out: &mut Vec<Item>, y: &mut i32, text: Vec<u8>, hot: bool, act: Option<Act>| {
-            out.push(Item { rect: Rect::new(X0, *y, W, ROW), text, hot, act });
-            *y += ROW;
+        let item = |rect: Rect, text: Vec<u8>, name: &str, hot: bool, act: Option<Act>, look: Look| Item {
+            rect,
+            text,
+            name: name.to_owned(),
+            hot,
+            act,
+            look,
         };
         if !self.open {
-            line(&mut out, &mut y, b"[Editor] (F2)".to_vec(), false, Some(Act::Hide));
+            let rect = Rect::new(OX, BOX_Y0, 249, ROW);
+            out.push(item(rect, b"[Editor] (F2)".to_vec(), "Editor", false, Some(Act::Hide), Look::Text));
             return out;
         }
-        line(&mut out, &mut y, b"EDITOR - einklappen (F2)".to_vec(), true, Some(Act::Hide));
-        // Tabs, four to a row.
-        for (i, (label, _)) in TABS.iter().enumerate() {
-            let (cx, cy) = (X0 + (i % 4) as i32 * (W / 4), y + (i / 4) as i32 * ROW);
-            out.push(Item {
-                rect: Rect::new(cx, cy, W / 4, ROW),
-                text: label.as_bytes().to_vec(),
-                hot: i == self.tab,
-                act: Some(Act::Tab(i)),
-            });
+        let window = Rect::inclusive(OX, BOX_Y0, BOX_X1, BOX_Y1);
+        out.push(item(window, Vec::new(), "", false, None, Look::Frame { divider: Some(DIVIDER) }));
+        let title = Rect::new(OX + 10, OY - 30, 200, ROW);
+        out.push(item(title, view.title.clone(), "Editor einklappen", false, Some(Act::Hide), Look::Title));
+        // The eight player colours (0x5bb140): 28 apart from x = 10, y = 10.
+        for p in 0..8u8 {
+            let rect = Rect::new(OX + 10 + 28 * i32::from(p), OY + 10, 22, 16);
+            let name = if p == NEUTRAL { "Neutral".to_owned() } else { format!("Spieler {}", p + 1) };
+            let hot = self.owner == p;
+            out.push(item(rect, Vec::new(), &name, hot, Some(Act::Owner(p)), Look::Swatch { owner: p }));
         }
-        y += TABS.len().div_ceil(4) as i32 * ROW + 4;
-        let list = types(world, self.tab);
-        line(&mut out, &mut y, b"  ^ hoch".to_vec(), false, (self.scroll > 0).then_some(Act::ScrollUp));
-        let buttons = LEVEL_W * LEVELS.len() as i32;
-        for &kind in list.iter().skip(self.scroll).take(LIST_ROWS) {
-            let mut text = names(kind);
-            text.truncate(33);
-            let picked = self.pick == Some(kind);
-            out.push(Item { rect: Rect::new(X0, y, W - buttons, ROW), text, hot: picked, act: Some(Act::Pick(kind)) });
-            for (l, (label, _)) in LEVELS.iter().enumerate() {
-                out.push(Item {
-                    rect: Rect::new(X0 + W - buttons + l as i32 * LEVEL_W, y, LEVEL_W, ROW),
-                    text: label.as_bytes().to_vec(),
-                    hot: picked && self.level == l,
-                    act: Some(Act::PickLevel(kind, l)),
-                });
+        // The grid, scrolled and clipped to the content.
+        let groups = groups(world, self.entry);
+        let (placed, end) = flow(&groups);
+        let max = scroll_max(end);
+        let scroll = self.scroll.clamp(0, max);
+        for p in &placed {
+            match *p {
+                Placed::Header(g, y) => {
+                    let rect = Rect::new(OX + 10, OY + y - scroll, 200, HEADER_H);
+                    let text = groups[g].header.as_bytes().to_vec();
+                    out.push(item(rect, text, "", false, None, Look::Header));
+                }
+                Placed::Cell(g, i, col, y) => {
+                    let kind = groups[g].kinds[i];
+                    let rect = Rect::new(OX + 5 + PITCH * col as i32, OY + y - 1 - scroll, CELL, CELL);
+                    if rect.intersect(&CONTENT).is_empty() {
+                        continue;
+                    }
+                    let (frame, name) = ((view.icon)(kind), (view.names)(kind));
+                    let label = String::from_utf8_lossy(&name).into_owned();
+                    let hot = self.pick == Some(kind);
+                    out.push(item(rect, name, &label, hot, Some(Act::Pick(kind)), Look::Icon { frame }));
+                }
             }
-            y += ROW;
         }
-        for _ in list.len().saturating_sub(self.scroll).min(LIST_ROWS)..LIST_ROWS {
-            line(&mut out, &mut y, Vec::new(), false, None);
+        // The combo box (10, 36), 224 wide.
+        let combo = Rect::new(OX + 10, OY + 36, 224, 22);
+        out.push(item(
+            combo,
+            ENTRIES[self.entry].0.as_bytes().to_vec(),
+            "Nation",
+            false,
+            Some(Act::Combo),
+            Look::Combo,
+        ));
+        // The scroll bar: arrows and the track's halves are the click targets.
+        if max > 0 {
+            let bar = Rect::new(BAR_X, BAR_Y, BAR_W, BAR_LEN);
+            out.push(item(bar, Vec::new(), "", false, None, Look::Bar { pos: scroll, max }));
+            let (up, down) =
+                (Rect::new(BAR_X, BAR_Y, BAR_W, BAR_W), Rect::new(BAR_X, BAR_Y + BAR_LEN - BAR_W, BAR_W, BAR_W));
+            out.push(item(up, Vec::new(), "Hoch", false, Some(Act::ScrollBy(-PITCH)), Look::Text));
+            out.push(item(down, Vec::new(), "Runter", false, Some(Act::ScrollBy(PITCH)), Look::Text));
+            let (mid_y, track_h) = (BAR_Y + BAR_W, BAR_LEN - 2 * BAR_W);
+            let page = VISIBLE_H - PITCH;
+            let above = Rect::new(BAR_X, mid_y, BAR_W, track_h / 2);
+            let below = Rect::new(BAR_X, mid_y + track_h / 2, BAR_W, track_h - track_h / 2);
+            out.push(item(above, Vec::new(), "Seite hoch", false, Some(Act::ScrollBy(-page)), Look::Text));
+            out.push(item(below, Vec::new(), "Seite runter", false, Some(Act::ScrollBy(page)), Look::Text));
         }
-        let more = self.scroll + LIST_ROWS < list.len();
-        line(&mut out, &mut y, b"  v runter".to_vec(), false, more.then_some(Act::ScrollDown));
-        y += 4;
-        let pair = |out: &mut Vec<Item>, y: &mut i32, text: String, a: Act, b: Act| {
-            out.push(Item { rect: Rect::new(X0, *y, 24, ROW), text: b"<".to_vec(), hot: false, act: Some(a) });
-            out.push(Item {
-                rect: Rect::new(X0 + 24, *y, W - 48, ROW),
-                text: text.into_bytes(),
-                hot: false,
-                act: None,
-            });
-            out.push(Item { rect: Rect::new(X0 + W - 24, *y, 24, ROW), text: b">".to_vec(), hot: false, act: Some(b) });
+        // ACR's controls in a box under the window.
+        let mut y = EXTRA_Y;
+        let extras = |rows: i32| Rect::inclusive(OX, BOX_Y1 + 1, BOX_X1, BOX_Y1 + 1 + 12 + rows * ROW);
+        let rows = 13 + i32::from(self.pick.is_some());
+        out.push(item(extras(rows), Vec::new(), "", false, None, Look::Frame { divider: None }));
+        let line = |out: &mut Vec<Item>, y: &mut i32, text: Vec<u8>, name: &str, hot: bool, act: Option<Act>| {
+            out.push(item(Rect::new(X0, *y, W, ROW), text, name, hot, act, Look::Text));
             *y += ROW;
         };
-        pair(&mut out, &mut y, format!("Anzahl: {}", self.count()), Act::Count(-1), Act::Count(1));
+        let pair = |out: &mut Vec<Item>, y: &mut i32, text: String, name: &str, a: Act, b: Act| {
+            let arrow = |x: i32, t: &str, d: &str, act: Act| {
+                item(
+                    Rect::new(x, *y, 24, ROW),
+                    t.as_bytes().to_vec(),
+                    &format!("{name} {d}"),
+                    false,
+                    Some(act),
+                    Look::Text,
+                )
+            };
+            out.push(arrow(X0, "<", "-", a));
+            out.push(item(Rect::new(X0 + 24, *y, W - 48, ROW), text.into_bytes(), name, false, None, Look::Text));
+            out.push(arrow(X0 + W - 24, ">", "+", b));
+            *y += ROW;
+        };
+        pair(&mut out, &mut y, format!("Anzahl: {}", self.count()), "Anzahl", Act::Count(-1), Act::Count(1));
         let form = match self.pick {
             Some(kind) if self.form > 0 => {
                 formations(world, kind).get(self.form - 1).map_or("lose".into(), |c| group_name(world, c.group))
             }
             _ => "lose".into(),
         };
-        pair(&mut out, &mut y, format!("Formation: {form}"), Act::Form(-1), Act::Form(1));
+        pair(&mut out, &mut y, format!("Formation: {form}"), "Formation", Act::Form(-1), Act::Form(1));
         let ups = self.pick.map_or(0, |k| acr_sim::upgrade::of_type(&world.catalog, k).len());
         let level = format!("Ausbau: {} ({}/{ups})", LEVELS[self.level].1, level_count(self.level, ups));
-        pair(&mut out, &mut y, level, Act::Level(-1), Act::Level(1));
-        pair(
-            &mut out,
-            &mut y,
-            format!("Richtung: {}", FACINGS[usize::from(self.facing() / 32) & 7]),
-            Act::Facing(-1),
-            Act::Facing(1),
-        );
-        line(&mut out, &mut y, format!("Besitzer: {}", OWNERS[self.owner].1).into_bytes(), false, Some(Act::Owner));
+        pair(&mut out, &mut y, level, "Ausbau", Act::Level(-1), Act::Level(1));
+        // The level buttons; TODO(#402) replaces them with the icons' right-click drop-down.
+        for (l, (label, name)) in LEVELS.iter().enumerate() {
+            let rect = Rect::new(X0 + l as i32 * LEVEL_W, y, LEVEL_W, ROW);
+            let text = label.as_bytes().to_vec();
+            out.push(item(rect, text, &format!("Ausbau {name}"), self.level == l, Some(Act::SetLevel(l)), Look::Text));
+        }
+        y += ROW;
+        let facing = format!("Richtung: {}", FACINGS[usize::from(self.facing() / 32) & 7]);
+        pair(&mut out, &mut y, facing, "Richtung", Act::Facing(-1), Act::Facing(1));
+        let owner = if self.owner == NEUTRAL { "Neutral".to_owned() } else { format!("Spieler {}", self.owner + 1) };
+        line(&mut out, &mut y, format!("Besitzer: {owner}").into_bytes(), "Besitzer", false, None);
         let peace = if self.peace { "Kampf: AUS (klicken: an)" } else { "Kampf: AN (klicken: aus)" };
-        line(&mut out, &mut y, peace.as_bytes().to_vec(), !self.peace, Some(Act::Peace));
-        line(&mut out, &mut y, b"Kanonen sofort laden".to_vec(), false, Some(Act::Reload));
+        line(&mut out, &mut y, peace.as_bytes().to_vec(), "Kampf", !self.peace, Some(Act::Peace));
+        line(&mut out, &mut y, b"Kanonen sofort laden".to_vec(), "Kanonen sofort laden", false, Some(Act::Reload));
         let auto = if self.auto_reload { "Kanonen: sofort nachladen AN" } else { "Kanonen: sofort nachladen AUS" };
-        line(&mut out, &mut y, auto.as_bytes().to_vec(), self.auto_reload, Some(Act::AutoReload));
-        let me = OWNERS.iter().find(|o| o.0 == local).map_or("?", |o| o.1);
-        line(&mut out, &mut y, format!("Ich steuere: {me}").into_bytes(), false, Some(Act::Control));
-        y += 4;
+        line(&mut out, &mut y, auto.as_bytes().to_vec(), "Kanonen nachladen", self.auto_reload, Some(Act::AutoReload));
+        let me = if local == NEUTRAL { "Neutral".to_owned() } else { format!("Spieler {}", local + 1) };
+        line(&mut out, &mut y, format!("Ich steuere: {me}").into_bytes(), "Ich steuere", false, Some(Act::Control));
+        if let Some(kind) = self.pick {
+            let mut text = b"Typ: ".to_vec();
+            text.extend((view.names)(kind));
+            text.truncate(44);
+            line(&mut out, &mut y, text, "", false, None);
+        }
         let mut status = self.status.clone();
-        status.truncate(40);
-        line(&mut out, &mut y, status, false, None);
-        if self.pick.is_some() {
-            line(&mut out, &mut y, b"Rechtsklick: Platzieren beenden".to_vec(), false, None);
+        status.truncate(44);
+        line(&mut out, &mut y, status, "", false, None);
+        line(&mut out, &mut y, b"Rechtsklick: Platzieren beenden".to_vec(), "", false, None);
+        // The open combo box's lines, over everything.
+        if self.combo_open {
+            for (i, (label, _)) in ENTRIES.iter().enumerate() {
+                let rect = Rect::new(OX + 10, OY + 36 + 22 + i as i32 * ROW, 224, ROW);
+                let name = format!("Nation {label}");
+                out.push(item(
+                    rect,
+                    label.as_bytes().to_vec(),
+                    &name,
+                    i == self.entry,
+                    Some(Act::Entry(i)),
+                    Look::DropRow,
+                ));
+            }
         }
         out
     }
 
-    /// The panel's whole area (clicks there never reach the map).
+    /// The window's whole area (clicks there never reach the map).
     pub fn bounds(items: &[Item]) -> Rect {
-        items.iter().fold(Rect::new(X0, Y0, 0, 0), |r, i| Rect {
+        let mut frames = items.iter().filter(|i| matches!(i.look, Look::Frame { .. }) || i.act == Some(Act::Hide));
+        let Some(first) = frames.next() else { return Rect::new(0, 0, 0, 0) };
+        let first = first.rect;
+        frames.fold(first, |r, i| Rect {
             x0: r.x0.min(i.rect.x0),
             y0: r.y0.min(i.rect.y0),
             x1: r.x1.max(i.rect.x1),
@@ -345,53 +579,125 @@ impl Editor {
         })
     }
 
-    pub fn draws(items: &[Item], out: &mut Vec<Draw>) {
-        if items.is_empty() {
-            return;
-        }
-        let b = Self::bounds(items);
-        out.push(Draw::fill([0, 0, 0, 170], Rect { x0: b.x0 - 4, y0: b.y0 - 4, x1: b.x1 + 4, y1: b.y1 + 4 }));
-        for i in items.iter().filter(|i| !i.text.is_empty()) {
-            if i.hot {
-                out.push(Draw::fill([90, 70, 20, 200], i.rect));
+    pub fn draws(items: &[Item], ctx: &Ctx, out: &mut Vec<Draw>) {
+        ctx.lib.want(COMBO);
+        ctx.lib.want(VSCROLL);
+        let palette = ctx.lib.palette(GAME_PALETTE);
+        let colour = |index: u8| {
+            palette.as_ref().map_or([128, 128, 128, 255], |p| {
+                let [r, g, b] = p.rgb(index);
+                [r, g, b, 255]
+            })
+        };
+        for i in items {
+            let r = i.rect;
+            match i.look {
+                Look::Frame { divider } => {
+                    let (x0, y0, x1, y1) = (r.x0, r.y0, r.x1 - 1, r.y1 - 1);
+                    match divider {
+                        Some(d) => {
+                            panels::paper(ctx, out, (x0, y0, x1, d), PAPER_FILL, HEADER_CORNERS);
+                            panels::paper(ctx, out, (x0, d, x1, y1), PAPER_FILL, panels::PAPER_CORNERS);
+                        }
+                        None => panels::paper(ctx, out, (x0, y0, x1, y1), PAPER_FILL, panels::PAPER_CORNERS),
+                    }
+                }
+                Look::Title => out.push(Draw::game_text(menu_font::F16Y1, &i.text, r.x0, r.y0)),
+                Look::Header => out.push(Draw::game_text(menu_font::F16Y1, &i.text, r.x0, r.y0).clipped(CONTENT)),
+                Look::Icon { frame } => {
+                    let index = if i.hot { OUTLINE_PICKED } else { OUTLINE };
+                    let mut cell = Vec::new();
+                    match frame {
+                        Some(f) => cell.push(Draw::game_frame(hud::gp::ICONS, f, r.x0 + 1, r.y0 + 1, 0)),
+                        // No icon: the name stands in its cell.
+                        None => cell.push(Draw::game_text(WHITE, &i.text[..i.text.len().min(8)], r.x0 + 3, r.y0 + 14)),
+                    }
+                    hud::outline(&mut cell, r, colour(index));
+                    out.extend(cell.into_iter().map(|d| d.clipped(CONTENT)));
+                }
+                Look::Swatch { owner } => {
+                    let c = colour(hud::color::PLAYER.wrapping_add(4 * owner));
+                    out.push(Draw::fill(c, Rect::new(r.x0 + 2, r.y0 + 2, 18, 12)));
+                    if i.hot {
+                        hud::outline(out, r, c);
+                    }
+                }
+                Look::Combo => {
+                    let mut d = Dialog::default();
+                    let id = d.add_combo_box_dlx(
+                        ctx.lib,
+                        r.x0,
+                        r.y0,
+                        r.width(),
+                        COMBO,
+                        0,
+                        9,
+                        menu_font::F16Y1,
+                        menu_font::F16Y3,
+                    );
+                    if let Kind::ComboBox(c) = &mut d.widgets[id].kind {
+                        c.lines = vec![i.text.clone()];
+                    }
+                    let mut drawn = Vec::new();
+                    d.draw(ctx.lib, ctx.fonts, &mut drawn);
+                    out.extend(drawn.into_iter().map(Draw::in_game));
+                }
+                Look::DropRow => {
+                    out.push(Draw::fill(if i.hot { [90, 70, 20, 255] } else { [0, 0, 0, 255] }, r));
+                    out.push(Draw::game_text(YELLOW, &i.text, r.x0 + 4, r.y0 + 2));
+                }
+                Look::Bar { pos, max } => {
+                    let mut d = Dialog::default();
+                    d.add_scroll_bar(ctx.lib, r.x0, r.y0, r.height(), max, pos, VSCROLL, 0);
+                    let mut drawn = Vec::new();
+                    d.draw(ctx.lib, ctx.fonts, &mut drawn);
+                    out.extend(drawn.into_iter().map(Draw::in_game));
+                }
+                Look::Text => {
+                    if i.text.is_empty() {
+                        continue;
+                    }
+                    if i.hot {
+                        out.push(Draw::fill([90, 70, 20, 200], r));
+                    }
+                    let font = if i.act.is_some() { YELLOW } else { WHITE };
+                    out.push(Draw::game_text(font, &i.text, r.x0 + 3, r.y0 + 2));
+                }
             }
-            let font = if i.act.is_some() { YELLOW } else { WHITE };
-            out.push(Draw::game_text(font, &i.text, i.rect.x0 + 3, i.rect.y0 + 2));
         }
     }
 
-    /// A click on panel item `act`. Returns a new local player for [`Act::Control`].
+    /// A click on window item `act`. Returns a new local player for [`Act::Control`].
     pub fn apply(&mut self, world: &mut World, act: Act, local: u8) -> Option<u8> {
+        if act != Act::Combo && !matches!(act, Act::Entry(_)) {
+            self.combo_open = false;
+        }
         match act {
-            Act::Tab(t) => {
-                self.tab = t;
-                self.scroll = 0;
+            Act::Combo => self.combo_open = !self.combo_open,
+            Act::Entry(e) => {
+                self.combo_open = false;
+                if self.entry != e {
+                    self.entry = e;
+                    self.scroll = 0;
+                }
             }
             Act::Pick(k) => {
                 self.pick = if self.pick == Some(k) { None } else { Some(k) };
                 self.form = self.form.min(formations(world, k).len());
             }
-            Act::PickLevel(k, l) => {
-                self.pick = Some(k);
-                self.level = l;
-                self.form = self.form.min(formations(world, k).len());
-            }
+            Act::Owner(p) => self.owner = p,
+            Act::SetLevel(l) => self.level = l.min(LEVELS.len() - 1),
             Act::Level(d) => self.level = (self.level as i32 + d).rem_euclid(LEVELS.len() as i32) as usize,
-            Act::ScrollUp => self.scroll = self.scroll.saturating_sub(LIST_ROWS / 2),
-            Act::ScrollDown => {
-                let n = types(world, self.tab).len();
-                self.scroll = (self.scroll + LIST_ROWS / 2).min(n.saturating_sub(LIST_ROWS));
-            }
+            Act::ScrollBy(d) => self.scroll_by(world, d),
             Act::Count(d) => self.count = (self.count as i32 + d).clamp(0, COUNTS.len() as i32 - 1) as usize,
             Act::Form(d) => {
                 let n = self.pick.map_or(0, |k| formations(world, k).len()) as i32 + 1;
                 self.form = (self.form as i32 + d).rem_euclid(n) as usize;
             }
             Act::Facing(d) => {
-                let f = &mut self.facing[self.owner];
+                let f = &mut self.facing[usize::from(self.owner)];
                 *f = f.wrapping_add((d * 32) as u8);
             }
-            Act::Owner => self.owner = (self.owner + 1) % OWNERS.len(),
             Act::Peace => {
                 self.peace = !self.peace;
                 set_peace(world, self.peace);
@@ -415,11 +721,15 @@ impl Editor {
         None
     }
 
-    /// Scrolls the list by wheel notches.
+    /// Scrolls the icons by `d` pixels, within the content.
+    fn scroll_by(&mut self, world: &World, d: i32) {
+        let (_, end) = flow(&groups(world, self.entry));
+        self.scroll = (self.scroll + d).clamp(0, scroll_max(end));
+    }
+
+    /// Scrolls the icons by wheel notches (one row each).
     pub fn wheel(&mut self, world: &World, lines: f32) {
-        let n = types(world, self.tab).len();
-        let s = self.scroll as i32 - (lines.round() as i32) * 2;
-        self.scroll = s.clamp(0, n.saturating_sub(LIST_ROWS) as i32) as usize;
+        self.scroll_by(world, -(lines.round() as i32) * PITCH);
     }
 
     /// Places the picked type at world pixel `at`: [`Editor::count`] units, loose or in
@@ -525,11 +835,46 @@ fn place_formations(
     Ok(placed)
 }
 
+impl Item {
+    /// Where a click hits: icons and headers only inside the clipped content.
+    pub fn hit_rect(&self) -> Rect {
+        match self.look {
+            Look::Icon { .. } | Look::Header => self.rect.intersect(&CONTENT),
+            _ => self.rect,
+        }
+    }
+}
+
 /// The editor's hooks into the game screen.
 impl super::InGame {
-    /// The panel's lines for the current state, or none outside the editor.
+    /// The `ICONS.GP` frames of the catalog's types, cached in the editor once the `.MD`
+    /// definitions and the icon list are loaded.
+    fn editor_icons_ready(&self, ctx: &Ctx, e: &Editor, world: &World) {
+        use crate::hud::data::HudData;
+        if e.icons.borrow().is_some() {
+            return;
+        }
+        ctx.lib.want(HudData::ICON_LIST);
+        ctx.lib.want(HudData::NRES);
+        let (Some(list), Some(nres)) = (ctx.lib.bytes(HudData::ICON_LIST), ctx.lib.bytes(HudData::NRES)) else {
+            return;
+        };
+        let data = HudData::parse(&list, &nres);
+        let objects = self.objects.objects();
+        let map: HashMap<TypeId, Option<usize>> = world
+            .catalog
+            .iter()
+            .map(|(id, t)| (id, objects.definition(&t.id).and_then(|d| d.icon()).and_then(|n| data.icon(n))))
+            .collect();
+        if map.values().any(Option::is_some) {
+            *e.icons.borrow_mut() = Some(map);
+        }
+    }
+
+    /// The window's items for the current state, or none outside the editor.
     fn editor_items(&self, ctx: &Ctx) -> Vec<Item> {
         let (Some(e), Some(world)) = (&self.editor, &self.world) else { return Vec::new() };
+        self.editor_icons_ready(ctx, e, world);
         let names = |k: TypeId| {
             let t = world.catalog.get(k);
             let mut n = super::interface::unit_name(ctx, &t.md_name);
@@ -539,14 +884,41 @@ impl super::InGame {
             n.extend_from_slice(format!(" ({})", t.id).as_bytes());
             n
         };
-        e.layout(world, &names, self.local_player())
+        let icon = |k: TypeId| e.icons.borrow().as_ref().and_then(|m| m.get(&k).copied().flatten());
+        let view = View { names: &names, icon: &icon, title: ctx.texts.get("ED_HDR01").to_vec() };
+        e.layout(world, &view, self.local_player())
     }
 
     pub(super) fn editor_overlay(&self, ctx: &Ctx, out: &mut Vec<Draw>) {
-        Editor::draws(&self.editor_items(ctx), out);
+        Editor::draws(&self.editor_items(ctx), ctx, out);
     }
 
-    /// The left button in the editor: the panel, or placing the picked type on the map.
+    /// The window's clickable items for the test driver (`ui`, `click`), in window pixels.
+    pub fn editor_icons(&self, ctx: &Ctx) -> Vec<super::probe::HudIcon> {
+        let canvas = self.interface.canvas;
+        self.editor_items(ctx)
+            .iter()
+            .enumerate()
+            .filter(|(_, i)| i.act.is_some())
+            .map(|(n, i)| {
+                let r = i.hit_rect();
+                super::probe::HudIcon {
+                    id: format!("editor/{n}"),
+                    rect: canvas.to_window([r.x0 as f32, r.y0 as f32, r.width() as f32, r.height() as f32]),
+                    hint: i.name.clone().into_bytes(),
+                    disabled: false,
+                    selected: i.hot,
+                    gray: false,
+                    count: None,
+                    number: None,
+                    clickable: !r.is_empty(),
+                    right_clickable: false,
+                }
+            })
+            .collect()
+    }
+
+    /// The left button in the editor: the window, or placing the picked type on the map.
     /// True when the press (or its release) is used up.
     pub(super) fn editor_left(&mut self, ctx: &Ctx, pressed: bool) -> bool {
         if self.editor.is_none() {
@@ -559,8 +931,8 @@ impl super::InGame {
         let Some(at) = self.cursor else { return false };
         let p = self.canvas_point(at);
         let items = self.editor_items(ctx);
-        if Editor::bounds(&items).contains(p) {
-            let act = items.iter().find(|i| i.rect.contains(p)).and_then(|i| i.act);
+        if Editor::bounds(&items).contains(p) || items.iter().any(|i| i.look == Look::DropRow && i.rect.contains(p)) {
+            let act = items.iter().rev().find(|i| i.act.is_some() && i.hit_rect().contains(p)).and_then(|i| i.act);
             let local = self.local_player();
             if let (Some(act), Some(e), Some(world)) = (act, &mut self.editor, &mut self.world)
                 && let Some(next) = e.apply(world, act, local)
@@ -593,7 +965,7 @@ impl super::InGame {
         }
     }
 
-    /// The wheel over the panel scrolls its list.
+    /// The wheel over the window scrolls its icons.
     pub fn editor_wheel(&mut self, ctx: &Ctx, lines: f32) -> bool {
         let Some(at) = self.cursor else { return false };
         let p = self.canvas_point(at);
@@ -606,7 +978,7 @@ impl super::InGame {
         true
     }
 
-    /// F2 folds the panel.
+    /// F2 folds the window.
     pub(super) fn editor_key(&mut self, key: &winit::keyboard::Key, pressed: bool) -> bool {
         match (&mut self.editor, key) {
             (Some(e), winit::keyboard::Key::Named(winit::keyboard::NamedKey::F2)) => {
@@ -650,5 +1022,36 @@ mod tests {
         let mut e = Editor::default();
         e.level = (e.level as i32 - 1).rem_euclid(LEVELS.len() as i32) as usize;
         assert_eq!(LEVELS[e.level].1, "Voll", "stepping back from Basis wraps to Voll");
+    }
+
+    #[test]
+    fn the_grid_flows_in_rows_of_five_under_headers() {
+        let g = |n: u16| Group { header: "x", kinds: (0..n).map(TypeId).collect() };
+        let (placed, end) = flow(&[g(6), g(1)]);
+        // Header at 80, icons from 100 (two rows), the next header 2 rows on, its icon 20 later.
+        assert_eq!(placed[0], Placed::Header(0, 80));
+        assert_eq!(placed[1], Placed::Cell(0, 0, 0, 100));
+        assert_eq!(placed[5], Placed::Cell(0, 4, 4, 100));
+        assert_eq!(placed[6], Placed::Cell(0, 5, 0, 144));
+        assert_eq!(placed[7], Placed::Header(1, 188));
+        assert_eq!(placed[8], Placed::Cell(1, 0, 0, 208));
+        assert_eq!(end, 252);
+        assert_eq!(flow(&[]).1, FIRST_ROW);
+    }
+
+    #[test]
+    fn the_scroll_range_is_the_content_beyond_the_visible_height() {
+        assert_eq!(scroll_max(0x17e), 0);
+        assert_eq!(scroll_max(0x17e + 44), 44);
+        assert_eq!(scroll_max(100), 0);
+    }
+
+    #[test]
+    fn the_window_sits_in_the_side_panel_column() {
+        // `RealLx − 269`, `InfY1 + 31` (0x5bb735, 0x5bb743) and the box of 0x5bb766.
+        assert_eq!((OX, OY), (755, 79));
+        assert_eq!((BOX_X1, BOX_Y0, BOX_Y1, DIVIDER), (1004, 48, 465, 153));
+        assert_eq!(ENTRIES[FIRST_EXTRA].0, "Tiere");
+        assert!(ENTRIES.len() == FIRST_EXTRA + 2 && DEFAULT_ENTRY < FIRST_EXTRA);
     }
 }

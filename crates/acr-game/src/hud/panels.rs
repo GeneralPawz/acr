@@ -37,7 +37,7 @@ const SPECIAL_YELLOW: FontId = FontId("SpecialYellowFont");
 /// panel frame (0x668660), the paper of the unit panel (0x6686a0) and the footer of the
 /// game panel (0x6686c0).
 const PANEL_CORNERS: [i32; 8] = [17, 87, -1, -1, 12, 36, 23, -1];
-const PAPER_CORNERS: [i32; 8] = [3, 22, 6, 24, 12, 36, 10, 11];
+pub(crate) const PAPER_CORNERS: [i32; 8] = [3, 22, 6, 24, 12, 36, 10, 11];
 const FOOTER_CORNERS: [i32; 8] = [3, 86, 6, 8, 12, 14, 10, 11];
 
 /// The mouse input the panels swallow (0x4c1c36): `x > RealLx − 262`, `y < InfY2 + 8`.
@@ -92,7 +92,7 @@ pub fn frame_box(ctx: &Ctx, out: &mut Vec<Draw>, (x0, y0, x1, y1): (i32, i32, i3
 }
 
 /// Paper (0x47fb51): 64-pixel tiles `fill + (i² + j³) % 3` clipped to the box, then its frame.
-fn paper(ctx: &Ctx, out: &mut Vec<Draw>, r: (i32, i32, i32, i32), fill: usize, corners: [i32; 8]) {
+pub(crate) fn paper(ctx: &Ctx, out: &mut Vec<Draw>, r: (i32, i32, i32, i32), fill: usize, corners: [i32; 8]) {
     let (x0, y0, x1, y1) = r;
     let clip = Rect::inclusive(x0, y0, x1, y1);
     for i in 0..=(x1 - x0) >> 6 {

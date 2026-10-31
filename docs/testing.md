@@ -260,7 +260,7 @@ every texture 0, no sprites, no units, an empty `SEA2`; `acr-game/src/blank_map.
 | `group_move` | the optional group-move rule: every selected formation moves, several stand in lines and rows (simulation.md "Group moves"); also on through `controls=modern` in settings.txt |
 | `cannon_fire` | the optional cannon-fire rule: under `hit_locations` a round-shot hit sets a man on fire (simulation.md "Shell fires"); default `false` |
 | `ball_terrain` | the optional ball-terrain rule: under `hit_locations` balls fell trees and knock stones (simulation.md "Balls against trees and stones"); put them there with `{"cmd": "map_object", "group": "tree"\|"stone", "index": 0, "at": [[x, y]], "rock": false}` (`"struck": "felled"|"splintered"|"chipped", "dir": d` puts them there already struck, for close-ups and the frame-time bench; `"source": k` also makes each a gathering source of `ResType` k (2 stone, 3 field food), and group `"source"` places the source alone, so peasants work stone and fields on the blank field); default `false` |
-| `editor` | `true`: the test editor's field (placing panel shown, fighting off at the start; docs/ui.md) |
+| `editor` | `true`: the test editor's field (the placing window shown, fighting off at the start; docs/controls.md) |
 | `hud` | `false` hides the interface from the start, like `{"cmd": "hud", "on": false}` |
 | `corpse_decay` | `full` or `half`: overrides the setting ([rendering-3d.md](rendering-3d.md)) |
 | `decay_stain` | `on` or `off`: overrides the setting (the ground stains under decaying corpses, [rendering-3d.md](rendering-3d.md#decay-stains)) |

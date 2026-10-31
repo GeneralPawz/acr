@@ -211,7 +211,7 @@ pub fn items(game: &Game, all: bool) -> Vec<Item> {
     if game_has_input(game)
         && let Mode::InGame(g) = &game.mode
     {
-        for icon in g.hud_icons() {
+        for icon in g.hud_icons().into_iter().chain(g.editor_icons(&game.ui.ctx())) {
             out.push(Item {
                 id: icon.id.clone(),
                 kind: "icon",

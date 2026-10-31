@@ -111,7 +111,8 @@ lacks. Decoding to Unicode (`acr_formats::text`) is for tools and logs.
 - Single player: Kampagne → player name (0x5c6170) → campaigns (0x5ca690); Einzelmission →
   player name → single missions (0x5d66b0); Zufallskarte → player name → random map
   (0x5cc630 → 0x5cd790). Multiplayer: 0x5c95d0. Load: 0x5d8090. Options: 0x5c9740.
-  Editor: 0x59c2a0.
+  Editor: not found (0x59c2a0 only draws `Interf2\_Loading` centred, 0x5bb6c0 below is the
+  editor's placing window).
 
 In ACR the editor entry does nothing; multiplayer shows its background and title only. The startup movies (`Video\1..10.bik`) play before the main menu.
 
@@ -1280,6 +1281,43 @@ to the panel (0x4c1c36). U toggles value 2, I value 1; one panel at a time.
 - Whether the original hides a selected type's icon when production icons take its slot.
 - The original builds on the button press; ACR too, but the order in which it checks the
   site and the price on the click (0x4c20ac) is not traced.
+
+### Editor: the placing window (0x5bb6c0)
+
+The original editor builds "Einheit wählen" (`ED_HDR01`, `TEXT\EDITOR.TXT`) in the
+`DialogsSystem` 0x28cb398 at 0x5bb6c0; its sibling 0x5bb560 builds "Farbe wählen"
+(`ED_HDR00`). F2 of ACR's test editor folds it. Origin (`RealLx − 269`, `InfY1 + 31`) =
+(755, 79); `Interf2\ToolBox`, `ToolOpt` and `VScroll2` are loaded at 0x5ba450, the combo
+frames `Interf2\Combo2` at 0x4eff3b.
+
+- Box: `addBorder(0, −31, 249, 386, 74, 3)` (0x47c05b, style 3 = 0x48039d): paper (fill 28)
+  with corner table 0x668640 above the divider at y = 74 and the unit panel's paper
+  (0x6686a0) below it. Title text button at (10, −30).
+- The eight player colours (0x5bb140, at (10, 10)): bars 18 × 12 at x = 12 + 28·i, y = 12 in
+  palette index `0xd0 + 4·i`; the picked one gets a 22 × 16 outline (a flag-1 `ColoredBar`).
+  In the single player editor all eight show.
+- Nation combo box: `addGP_ComboBoxDLX(10, 36, 224)` on `Combo2` with the nations' names
+  (count 0x2395448, names 0x2399450, current 0x28cffd0).
+- Scroll bar `addNewGP_VScrollBar(222, 82, 303)` on `VScroll2`; its range is the content's
+  end less 0x17e (hidden when negative, 0x5bba8a). Clipper from (4, 75) to the screen edge,
+  386 down.
+- Content from y = 80: per nation a list of unit ids (`0x111caa4[nation]`, u16, count
+  `0x111caa0`) in which `0xffff` starts a category: a text button with the header
+  (`0x111ca9c`, a text id of `EDITOR.TXT`: infantry, cavalry, artillery, marine, buildings) at
+  (10, y), then y += 20. Units follow five to a row (x = 6 + 44·col, 44 apart): the picture
+  is frame `NewMonster+0xe → +0x1822` of GP 0 (`ICONS.GP`, the `ICON` of the `.MD`) and a
+  41 × 41 `ColoredBar` at (x − 1, y − 1), colour 0x65 (0xff for the picked one, by 0x5bb630,
+  which stores the type in 0x90da78), user value `type + 0x2710`, hint the name. A row that
+  is not full adds 44 when the next header or the end comes.
+- Where the three nation lists are filled is not known (no store to those globals in the
+  code). ACR builds them from its catalog: the land types whose id has the nation's prefix, in
+  the nation files' order, split into infantry, cavalry (`spacing::is_rider`) and artillery
+  (`COMPLEXROTATE`). Marine and buildings are left out until #406.
+- ACR's additions: the combo box ends with "Tiere" and "Kanonen"; the eighth colour is the
+  neutral player 7 (wild animals); the controls of docs/controls.md sit in a second paper box
+  under the window; the combo box's list, the arrows and track of the scroll bar are clicks
+  only (no dragging); the fonts (`fon16y1`/`fon16y3`) and the colour of the title are guesses
+  (the original's are the globals 0x676be0, 0x9091cc, 0x90d69c).
 
 ## Load and save dialogs
 
