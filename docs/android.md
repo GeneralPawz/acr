@@ -74,3 +74,18 @@ winit 0.30 turns every `MotionEvent` into a `Touch` and drops hover, buttons and
 winit's master skips mouse pointers as well. The workspace therefore patches winit to the fork
 `GeneralPawz/winit`, branch `acr/android-mouse` (v0.30.13 plus the mouse mapping; see `[patch.crates-io]`
 in the root `Cargo.toml`). Drop the patch when winit reports Android mice.
+
+## Battery
+
+Issue #440. The game presents with `PresentMode::AutoVsync` (the display's rate), and the
+settings below, all in `settings.txt` (no options page), spend less:
+
+| Key | Values | Default | |
+|---|---|---|---|
+| `frame_cap` | `off`, `30`, `60` | `off` | at most that many frames per second; `off` is the display's rate |
+| `power_save` | `on`, `off` | unset | `on` caps at 30 fps; unset follows Android's Game Mode: `BATTERY` caps, anything else does not (`GameManager.getGameMode()` through JNI, API 31+, read on every resume; `game_mode_battery` in `android.rs`) |
+
+The cap is the stricter of `frame_cap` and the saver's 30 fps. It skips the redraw requests
+until the next frame time (`pacing.rs`): the event loop sleeps (`ControlFlow::WaitUntil`),
+nothing waits in a loop, and the vsync present still aligns the frame to a refresh. A frame
+is due at 90 % of the interval, so the present waits for the refresh instead of missing it.

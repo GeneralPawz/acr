@@ -1038,6 +1038,10 @@ writes are in
 | 6 | | Gezieltes Feuer | Aus (Original) / An: genauer, längeres Laden | `aimed_fire` ([simulation.md](simulation.md#aimed-fire-optional-rule-aimed_fire-296)) |
 | 6 | Tiere | Tiere geben auf | Aus (Original) / An: Jagd endet bei Abstand | `animal_give_up` ([simulation.md](simulation.md#animals-give-up-optional-rule-355)) |
 
+Power settings without an options row (`settings.txt` only, #440; docs/android.md "Battery"):
+`frame_cap=off|30|60` (off: the display's rate under vsync) and `power_save=on|off` (caps at
+30 fps; unset: follows Android's Game Mode `BATTERY`).
+
 All but the rules (pages 5 and 6, every optional `acr_sim::Rules` flag) take effect at once on OK. The rules are part of the simulation (the
 setup a replay or savegame hashes): a battle keeps the rules it began with, the new choice
 applies from the next battle (the game setup reads them, `lib.rs`), as the heading of page 5 says. They have pages of their own (#374) since the rules outgrew one page; page 2 keeps the
