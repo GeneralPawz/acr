@@ -6,8 +6,10 @@
 //! makes its members face outward (`kare_face_outward` 0x4dfe94), so stand ground is ordered only
 //! at a later decision, once the square stands in order. After [`CALM`] decisions without cavalry
 //! within [`CALM_RANGE`] the body reforms into the group it came from. Nothing changes while
-//! more than [`ENGAGED_PERCENT`] of the body fights at hand. A line without the button, and the
-//! melee foot (pikes need no square), stand ground and face the riders instead.
+//! more than [`ENGAGED_PERCENT`] of the body fights at hand. Riders that closed by `gain` pixels
+//! since the last decision count from `NEAR_CLOSING + gain` (at most [`LOOKAHEAD`] more), so that
+//! dragoons covering 200 px a decision are seen while there is still time to form. A line without
+//! the button, and the melee foot (pikes need no square), stand ground and face the riders instead.
 //!
 //! A body in a square or braced is `held`: the line ([`super::line`]) gives it no orders.
 
@@ -27,6 +29,9 @@ const NEAR: i32 = 350;
 /// ...and this near when it came nearer by [`CLOSING`] since the last decision, pixels.
 const NEAR_CLOSING: i32 = 700;
 const CLOSING: i32 = 30;
+/// At most this much is added to [`NEAR_CLOSING`] for the distance riders closed by since the
+/// last decision, pixels.
+const LOOKAHEAD: i32 = 300;
 /// No cavalry this near counts as calm, pixels.
 const CALM_RANGE: i32 = 1100;
 /// Calm decisions in a row before the square dissolves.
@@ -115,8 +120,10 @@ impl Squares {
             let threat = (0..now.len())
                 .filter_map(|j| {
                     let d = now[j]?;
-                    let closing = before[j].is_some_and(|was| was - d >= CLOSING);
-                    (d <= NEAR || (d <= NEAR_CLOSING && closing)).then_some((d, j))
+                    // Riders that closed by `gain` since the last decision are a threat from
+                    // `gain` farther off: fast ones (dragoons) cover 200 px in a decision.
+                    let gain = before[j].map_or(0, |was| was - d);
+                    (d <= NEAR || (gain >= CLOSING && d <= NEAR_CLOSING + gain.min(LOOKAHEAD))).then_some((d, j))
                 })
                 .min();
             let calm_now = now.iter().flatten().all(|&d| d > CALM_RANGE);
