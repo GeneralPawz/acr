@@ -287,6 +287,18 @@ impl InGame {
         self.uploaded && !self.loading_save()
     }
 
+    /// The game is paused (the Pause key, 0x1100a78); a finished game is never paused.
+    pub fn paused(&self) -> bool {
+        self.interface.paused && self.mission.ended.is_none()
+    }
+
+    /// Pauses or resumes, as the Pause key does (the touch gestures set it, not toggle it).
+    pub fn set_paused(&mut self, paused: bool) {
+        if self.mission.ended.is_none() {
+            self.interface.paused = paused;
+        }
+    }
+
     /// Takes a loaded file if it is one of ours. A file may serve several parts (e.g. the
     /// unit definitions are read by both the objects and the simulation).
     pub fn on_loaded(&mut self, path: &str, result: &Result<Vec<u8>, String>) -> bool {

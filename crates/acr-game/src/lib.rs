@@ -29,6 +29,7 @@ pub mod native;
 mod perf;
 mod random_map;
 mod savegame;
+mod touch;
 pub mod ui;
 mod unit_sounds;
 mod weather_sound;
@@ -97,6 +98,10 @@ pub struct Game {
     weather_sound: weather_sound::WeatherSound,
     intro: intro::Intro,
     cursor: PhysicalPosition<f64>,
+    /// The fingers on the screen and their gesture ([`Game::touch`]).
+    touches: touch::Touches,
+    /// The clock of the touch gestures (a long press).
+    touch_clock: web_time::Instant,
     last_frame: Option<web_time::Instant>,
     /// `ACR_PROFILE`: frames since the last profile line and when it was written.
     profile: Option<(web_time::Instant, u32)>,
@@ -135,6 +140,8 @@ impl Game {
             window: None,
             graphics: None,
             cursor: Default::default(),
+            touches: touch::Touches::default(),
+            touch_clock: web_time::Instant::now(),
             last_frame: None,
             profile: None,
             perf: perf::Recorder::from_env(),
@@ -853,6 +860,7 @@ impl ApplicationHandler<Event> for Game {
             }
             WindowEvent::CursorMoved { position, .. } => self.cursor_moved(position, event_loop),
             WindowEvent::MouseInput { state, button, .. } => self.mouse_input(state, button, event_loop),
+            WindowEvent::Touch(touch) => self.touch(touch, event_loop),
             WindowEvent::KeyboardInput { event: KeyEvent { logical_key, text, state, .. }, .. } => {
                 self.keyboard_input(logical_key, text.as_deref(), state, event_loop)
             }
@@ -883,6 +891,7 @@ impl ApplicationHandler<Event> for Game {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.touch_tick(event_loop);
         #[cfg(not(target_arch = "wasm32"))]
         if self.driver.is_some() {
             return self.drive(event_loop);
@@ -896,6 +905,56 @@ impl ApplicationHandler<Event> for Game {
 
 /// Input from the window (or the test driver), in window pixels.
 impl Game {
+    /// A finger on the screen, through the touch gestures (`touch.rs`): tap, drag and long
+    /// press (with a swipe: the order's arrow) work as the mouse, two fingers pause and zoom, a ▶ unpauses.
+    fn touch(&mut self, touch: winit::event::Touch, event_loop: &ActiveEventLoop) {
+        use winit::event::TouchPhase;
+        let phase = match touch.phase {
+            TouchPhase::Started => touch::Phase::Started,
+            TouchPhase::Moved => touch::Phase::Moved,
+            TouchPhase::Ended | TouchPhase::Cancelled => touch::Phase::Ended,
+        };
+        if let Some(window) = &self.window {
+            self.touches.set_scale(window.scale_factor());
+        }
+        let paused = matches!(&self.mode, Mode::InGame(g) if g.paused());
+        let now = self.touch_clock.elapsed();
+        let gestures = self.touches.event(touch.id, phase, [touch.location.x, touch.location.y], now, paused);
+        self.gestures(gestures, event_loop);
+    }
+
+    /// The touch gestures' clock: a resting finger becomes a right click.
+    fn touch_tick(&mut self, event_loop: &ActiveEventLoop) {
+        let gestures = self.touches.tick(self.touch_clock.elapsed());
+        self.gestures(gestures, event_loop);
+    }
+
+    fn gestures(&mut self, gestures: Vec<touch::Gesture>, event_loop: &ActiveEventLoop) {
+        use touch::Gesture;
+        for g in gestures {
+            match g {
+                Gesture::Move([x, y]) => self.cursor_moved(PhysicalPosition::new(x, y), event_loop),
+                Gesture::LeftDown => self.mouse_input(ElementState::Pressed, MouseButton::Left, event_loop),
+                Gesture::LeftUp => self.mouse_input(ElementState::Released, MouseButton::Left, event_loop),
+                Gesture::RightDown => self.mouse_input(ElementState::Pressed, MouseButton::Right, event_loop),
+                Gesture::RightUp => self.mouse_input(ElementState::Released, MouseButton::Right, event_loop),
+                Gesture::Pause | Gesture::Unpause => {
+                    if let Mode::InGame(game) = &mut self.mode
+                        && game.ready()
+                        && !self.ui.dialog_open()
+                    {
+                        game.set_paused(g == Gesture::Pause);
+                    }
+                }
+                Gesture::Zoom(lines) => {
+                    if matches!(self.mode, Mode::InGame(_)) {
+                        self.mouse_wheel(lines, event_loop);
+                    }
+                }
+            }
+        }
+    }
+
     fn cursor_moved(&mut self, position: PhysicalPosition<f64>, event_loop: &ActiveEventLoop) {
         self.cursor = position;
         if let Mode::InGame(game) = &mut self.mode {
