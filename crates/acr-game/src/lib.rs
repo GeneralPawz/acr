@@ -593,6 +593,10 @@ impl Game {
         if self.ui.settings().dart_fire {
             setup.rules.dart_fire = true;
         }
+        // And `aimed_fire=on` (shots beyond 3 m are aimed: more exact, a longer reload).
+        if self.ui.settings().aimed_fire {
+            setup.rules.aimed_fire = true;
+        }
         // And `ball_terrain` (with hit locations, on by default with the modern controls).
         if self.ui.settings().ball_terrain() {
             setup.rules.ball_terrain = true;

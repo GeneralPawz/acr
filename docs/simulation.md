@@ -1501,6 +1501,19 @@ default) is the original.
 - Tests: `tests/formation_attack.rs` (a LINE of pikemen with an officer ordered at an enemy
   unit: stands with the rule off, engages with it on).
 
+### Aimed fire (optional rule `aimed_fire`, #296)
+
+The renderer plays a firearm shot beyond 3 m (90 px, `strike_view::FIRE_AIMED_MIN_PX`) as
+`FIRE_AIMED` (musket at the shoulder), nearer as `FIRE_HIP`. The rule gives the shot the
+matching weight (`Rules::aimed_fire`, `combat::aimed_shot`; ACR's own, not in the original):
+a `VISTREL` shot at an aim point farther than `wounds::AIMED_MIN` (90 px) scatters to
+`AIMED_SCATTER` (60 %) of its `RAZBROS` (the random draws are the same, only the offset is
+scaled, like `DIRECT_SCATTER`), and its reload (`delay`, set at the shot) is `AIMED_PAUSE`
+(15 %) longer: the longer aim. Nearer shots, other weapons and the rule off are untouched; the
+rules hash counts it only when on (tag 11, since 10 is reserved). Switched on by
+`aimed_fire=on|off` in `settings.txt` (off by default), savegame rules bit 11. No driver key
+or options page yet. Tests: `tests/aimed_fire.rs`, `combat::tests::aimed_scatter_*`.
+
 ### Mortar (optional rule, #301)
 
 Not in the original game. Period field guns fired solid shot almost flat, so indirect fire

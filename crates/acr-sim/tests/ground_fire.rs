@@ -81,6 +81,7 @@ const ON: Rules = Rules {
     formation_attack: false,
     animal_give_up: false,
     dart_fire: false,
+    aimed_fire: false,
 };
 
 /// A mortar shells a target; returns the world after `ticks` and the first fire seen.

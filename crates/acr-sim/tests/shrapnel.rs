@@ -78,6 +78,7 @@ const ON: Rules = Rules {
     formation_attack: false,
     animal_give_up: false,
     dart_fire: false,
+    aimed_fire: false,
 };
 
 /// A mortar shells a target with a ring of soldiers around it; the world after `ticks`.
