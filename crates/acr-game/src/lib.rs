@@ -30,6 +30,7 @@ pub mod native;
 mod perf;
 mod random_map;
 mod savegame;
+pub mod tactics;
 mod touch;
 pub mod ui;
 mod unit_sounds;
