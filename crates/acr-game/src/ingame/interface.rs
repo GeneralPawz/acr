@@ -3051,7 +3051,7 @@ fn minimap_dots(world: &acr_sim::World, player: u8, selected: &[EntityId], shift
 }
 
 /// A unit of another player stands in the fog of war, so its marks stay off.
-fn hidden_in_fog(fog: Option<&acr_sim::fog::Fog>, world: &acr_sim::World, u: &Unit, own: u8) -> bool {
+pub(super) fn hidden_in_fog(fog: Option<&acr_sim::fog::Fog>, world: &acr_sim::World, u: &Unit, own: u8) -> bool {
     u.owner != own && fog.is_some_and(|f| !f.visible(world, u.pos.x >> 4, u.pos.y >> 4))
 }
 
