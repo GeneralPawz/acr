@@ -363,3 +363,29 @@ author's reading):
   in a front with the archers and shooters on the flanks, the foot hunters scouting; R. Hyde,
   *Red Cloud's Folk*. Pueblos: the revolt of 1680 with bows, captured Spanish arms and horses.
 
+
+### Battle view (Schlacht)
+
+The button in the window's title row (right of "Einheit waehlen"; a combo box line would
+shift the nation indices the rest of the editor counts by) switches the window to a second
+view and back ("Einheiten"). Not in the original. It offers, for Seite 1 (player 1) and Seite 2
+(player 2), a nation (arrows, the 12 playable ones; England against Frankreich to start) and
+a century where the nation has several, then the size (Klein, Mittel, Gross), "Kampf sofort:
+AUS/AN" and "Aufstellen".
+
+"Aufstellen" places both armies (the army presets above) facing each other across the middle
+of the map: Seite 1 facing east on the west half, Seite 2 facing west on the east half, each
+centred across the line, the fronts 1.5 times the longest range of their main infantry apart
+(a musket 1100 px, so 1650; at least 400). The map is square, so the line of battle runs west
+to east and the widths (Gross: 4 to 8.7k px) lie across the north-south axis, which always
+fits. An army that would leave the map or stand in water places nothing, for either side. With
+Kampf sofort AN fighting is switched on, otherwise the editor's Kampf is left as it is; the
+camera centres between the armies. A second "Aufstellen" first removes the units the first
+one placed (their ids stay used), so a battle can be re-rolled.
+
+Idle units only shoot what is within about 0.7 musket ranges (`search_radius`, combat.rs) and
+do not advance, so at 1.5 ranges nobody fights until the armies are ordered forward
+(`tests/e2e/editor_battle.json` moves both sides to the middle with `command`).
+The code is `crates/acr-game/src/ingame/editor/battle.rs` (`origins`, `gap_of`, `deploy`).
+The driver lists `Schlacht`, `Seite 1 Nation -`/`+`, `Seite 1 Jahrhundert -`/`+`, `Groesse -`/`+`,
+`Kampf sofort` and `Aufstellen`.
