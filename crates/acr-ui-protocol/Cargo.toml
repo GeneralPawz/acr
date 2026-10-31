@@ -1,0 +1,17 @@
+[package]
+name = "acr-ui-protocol"
+description = "Messages between the game and its Svelte UI (docs/webui.md), with TypeScript export"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+# `cargo test -p acr-ui-protocol --features ts` writes the TypeScript types to ui/src/lib/protocol/.
+ts = ["dep:ts-rs"]
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+ts-rs = { version = "12.0.1", optional = true }
+
+[dev-dependencies]
+serde_json = "1.0.154"

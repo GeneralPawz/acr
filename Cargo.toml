@@ -18,6 +18,7 @@ acr-audio = { path = "crates/acr-audio" }
 acr-app = { path = "crates/acr-app" }
 acr-video = { path = "crates/acr-video" }
 acr-physics = { path = "crates/acr-physics" }
+acr-ui-protocol = { path = "crates/acr-ui-protocol" }
 
 # Line tables keep backtraces readable at a fraction of the size of full debug info.
 [profile.dev]
