@@ -976,6 +976,7 @@ writes are in
 | 5 | | Kugeln, Gelände | Aus (Original) / An: Kugeln brechen Bäume | `ball_terrain` (unset: on with the modern controls; written only when the line is changed) |
 | 6 | Befehle (neue Schlacht) | Gruppenbewegung | Aus (Original) / An: alle Formationen | `group_move` (unset: on with the modern controls) |
 | 6 | Kampf | Formationsangriff | Aus (Original) / An: Glieder greifen an | `formation_attack` ([simulation.md](simulation.md#formation-attack-optional-rule-352)) |
+| 6 | | Tiere geben auf | Aus (Original) / An: Jagd endet bei Abstand | `animal_give_up` ([simulation.md](simulation.md#animals-give-up-optional-rule-355)) |
 
 All but the rules (pages 5 and 6, every optional `acr_sim::Rules` flag) take effect at once on OK. The rules are part of the simulation (the
 setup a replay or savegame hashes): a battle keeps the rules it began with, the new choice
