@@ -2866,8 +2866,15 @@ struct BuildingStates {
 
 /// The model name of an object type: its `.MD` `NAME` where a model of that name exists
 /// (the Spanish mines `SpnCoa`, `SpnIro`, `SpnStn` are `SpnRudCo`, `SpnRudIr`, `SpnRudSt`),
-/// else its id's name.
+/// else its id's name. A mortar (`ArtMrt`, #337) is a copy of the field gun's type and so
+/// carries the gun's `.MD` `NAME`: it looks for the model of its own id first.
 fn model_name(files: &HashMap<String, String>, t: &acr_sim::ObjectType) -> String {
+    if t.mortar {
+        let own = definition_name(&t.id);
+        if files.contains_key(own.as_str()) {
+            return own;
+        }
+    }
     let md = t.md_name.to_ascii_uppercase();
     if !md.is_empty() && files.contains_key(md.as_str()) { md } else { definition_name(&t.id) }
 }
@@ -3115,6 +3122,23 @@ mod tests {
         let class = acr_render::ground::class_of(crate::blank_map::texture(ground));
         t.place_cover(&|_, _| class, &|_, _| 0.0, None);
         t.cover.instances().0.len()
+    }
+
+    #[test]
+    fn the_mortar_has_its_own_model_not_the_field_guns() {
+        use acr_formats::defs::UnitDef;
+        use acr_sim::catalog::ObjectType;
+        let gun = ObjectType::from_def("ArtPus(EN)", &UnitDef::parse(b"NAME ArtPus\r\n"));
+        let mut mortar = ObjectType::from_def("ArtMrt(EN)", &UnitDef::parse(b"NAME ArtPus\r\n"));
+        mortar.mortar = true;
+        let files = |names: &[&str]| -> HashMap<String, String> {
+            names.iter().map(|n| (n.to_string(), format!("{n}.glb"))).collect()
+        };
+        let both = files(&["ARTPUS", "ARTMRT"]);
+        assert_eq!(model_name(&both, &gun), "ARTPUS");
+        assert_eq!(model_name(&both, &mortar), "ARTMRT");
+        // Without the mortar's model it keeps the gun's.
+        assert_eq!(model_name(&files(&["ARTPUS"]), &mortar), "ARTPUS");
     }
 
     #[test]
