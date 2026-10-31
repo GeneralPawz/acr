@@ -975,6 +975,7 @@ impl InGame {
         let yaw = self.three_d.orbit().map_or(0.0, |o| o.yaw);
         let turn = (yaw * 256.0 / std::f32::consts::TAU).round() as i32 as u8;
         let mut out = Vec::with_capacity(world.units.len());
+        effects::field_sprites(world, &self.objects, self.three_d.active(), &mut out);
         // Units inside buildings are not drawn (`Hidden`).
         for u in world.units.iter().filter(|u| u.alive && u.inside_of.is_none() && !self.three_d.shows(u.id)) {
             let kind = world.catalog.get(u.kind);

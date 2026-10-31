@@ -471,6 +471,8 @@ pub fn definition_name(unit_id: &str) -> String {
 #[derive(Default)]
 pub struct MapObjects {
     lists: HashMap<SpriteGroup, SpriteList>,
+    /// `COMPLEX.LST` (fields): its entries name animations of `WEAPON.ADS`.
+    complex: Option<SpriteList>,
     /// `.MD` files still to arrive, once `NMLIST.TXT` is read.
     defs_pending: Option<usize>,
     /// Unit definitions by upper-case `NAME`.
@@ -530,10 +532,12 @@ impl MapObjects {
         (SpriteGroup::Holes, "HOLELIST.LST"),
     ];
     pub const NAME_LIST: &'static str = "NMLIST.TXT";
+    /// The fields' list; kept apart from [`MapObjects::LISTS`]: it has no pack of its own.
+    pub const COMPLEX_LIST: &'static str = "COMPLEX.LST";
 
     /// The files to request first.
     pub fn files() -> Vec<&'static str> {
-        Self::LISTS.iter().map(|(_, p)| *p).chain([Self::NAME_LIST]).collect()
+        Self::LISTS.iter().map(|(_, p)| *p).chain([Self::NAME_LIST, Self::COMPLEX_LIST]).collect()
     }
 
     /// Takes a loaded file (any file; others are ignored) and returns further files to
@@ -541,7 +545,9 @@ impl MapObjects {
     pub fn add_file(&mut self, path: &str, bytes: &[u8]) -> Vec<String> {
         let mut more = Vec::new();
         let upper = acr_formats::normalize_path(path);
-        if let Some((group, _)) = Self::LISTS.iter().find(|(_, p)| *p == path) {
+        if path == Self::COMPLEX_LIST {
+            self.complex = SpriteList::parse(&String::from_utf8_lossy(bytes));
+        } else if let Some((group, _)) = Self::LISTS.iter().find(|(_, p)| *p == path) {
             if let Some(list) = SpriteList::parse(&String::from_utf8_lossy(bytes)) {
                 more.extend(self.want_pack(&list.gp_path()));
                 self.lists.insert(*group, list);
@@ -597,6 +603,7 @@ impl MapObjects {
     pub fn wants(&self, path: &str) -> bool {
         Self::LISTS.iter().any(|(_, p)| *p == path)
             || path == Self::NAME_LIST
+            || path == Self::COMPLEX_LIST
             || (path == Self::EFFECTS && self.effects_pending)
             || self.packs.contains_key(path)
             || self.rlc.contains_key(path)
@@ -675,6 +682,25 @@ impl MapObjects {
     /// `WEAPON.ADS`, once loaded.
     pub fn effects(&self) -> Option<&UnitDef> {
         self.effects.as_ref()
+    }
+
+    /// The animation of a field type (`COMPLEX.LST` entry `index`, `KUK00`..`KUK05` by growth
+    /// stage) and its step at `tick`: the drawing code (0x4d0a22) takes `tick / pause` modulo
+    /// the animation's length.
+    pub fn complex_step(&self, index: usize, tick: u64) -> Option<(&str, usize)> {
+        let entry = self.complex.as_ref()?.entries.get(index)?;
+        let anim = entry.animation.as_deref()?;
+        let len = self.effects.as_ref()?.animation(anim)?.frame_refs().len();
+        Some((anim, (tick / entry.pause.max(1) as u64) as usize % len.max(1)))
+    }
+
+    /// The picture of a field type at `tick`: its animation's frame and the `COMPLEX.LST`
+    /// offset `(−DX, −DY)` of the ground point (0x4d0a74).
+    pub fn complex_look(&self, index: usize, tick: u64) -> Option<(FrameKey, (i32, i32))> {
+        let (anim, step) = self.complex_step(index, tick)?;
+        let entry = &self.complex.as_ref()?.entries[index];
+        let (frame, _) = self.effect_look(anim, step, 0)?;
+        Some((frame, (-entry.dx, -entry.dy)))
     }
 
     /// Frame `step` (clamped to the last, as 0x557d98 does) of the effect animation `anim`
@@ -1358,5 +1384,33 @@ LOCATION -400 -300 900 700
         let names = |o: Vec<(String, i32)>| o.into_iter().map(|(n, s)| format!("{n}{s}")).collect::<Vec<_>>().join(" ");
         assert_eq!(names(order(false)), "STONES.GP5 ENGCEN.GP6 TREES.GP10 ENGCEN.GP12 ENGM18.GP20 TREES.GP30");
         assert_eq!(names(order(true)), "STONES.GP5 TREES.GP10 TREES.GP30 ENGCEN.GP6 ENGCEN.GP12 ENGM18.GP20");
+    }
+}
+
+#[cfg(test)]
+mod complex_tests {
+    use super::*;
+
+    const LST: &str = "COMPLEX 4\nKUK00 159 146 30 #KUK00 1 1 0 0\nKUK01 159 146 30 #KUK01 1 1 0 0\n\
+                       KUK05 159 146 30 #KUK05 1 1 0 0\nKUD05 159 146 30 #KUK05 1 1 0 0\n";
+    const ADS: &str = "USERLC 52 kuk NONE -159 -146\n#KUK00 1 1 52 0\n#KUK01 1 1 52 1\n#KUK05 1 1 52 5\n[END]\n";
+
+    /// The picture of a field follows its growth stage: the type's `#KUKnn` animation names
+    /// the frame, and a regrown field (`KUD05`) shows the ripe frame again.
+    #[test]
+    fn field_frames_follow_the_growth_stage() {
+        let mut objects = MapObjects::default();
+        objects.add_file(MapObjects::COMPLEX_LIST, LST.as_bytes());
+        objects.effects = Some(UnitDef::parse(ADS.as_bytes()));
+        let frame_of = |index: usize, tick: u64| {
+            let (anim, step) = objects.complex_step(index, tick).unwrap();
+            let refs = objects.effects().unwrap().animation(anim).unwrap().frame_refs();
+            (anim.to_owned(), refs[step].sprite, refs[step].frame)
+        };
+        assert_eq!(frame_of(0, 0), ("#KUK00".to_owned(), 52, 0));
+        assert_eq!(frame_of(1, 700), ("#KUK01".to_owned(), 52, 1));
+        assert_eq!(frame_of(2, 5), ("#KUK05".to_owned(), 52, 5));
+        assert_eq!(frame_of(3, 5), frame_of(2, 5));
+        assert!(objects.complex_step(4, 0).is_none(), "past the list");
     }
 }

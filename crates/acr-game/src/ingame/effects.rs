@@ -453,6 +453,32 @@ pub fn ground_fire_sprites(world: &World, objects: &ObjectsView, out: &mut Vec<S
     }
 }
 
+/// The fields of the simulation (`World::sprites`, `COMPLEX` group) as sprites: each one's
+/// picture is the animation its type names in `COMPLEX.LST` (`KUK00`..`KUK05` by growth
+/// stage), at the ground point offset by the list's `(−DX, −DY)` (0x4d0930, 0x4d0a22). The
+/// original sorts them at their row with the units; `flat` (the 3D pass) lays them on the
+/// ground, behind every model. Carcasses (`MEAT`) are not drawn yet.
+pub fn field_sprites(world: &World, objects: &ObjectsView, flat: bool, out: &mut Vec<SceneSprite>) {
+    let assets = objects.objects();
+    for s in world.sprites.iter().filter(|s| !s.removed && s.group == acr_formats::m3d::SpriteGroup::Complex) {
+        let Some((frame, (dx, dy))) = assets.complex_look(usize::from(s.index), world.tick.0) else { continue };
+        let h = objects_height(world, s.x, s.y);
+        out.push(SceneSprite {
+            frame,
+            layer: if flat { Layer::Ground } else { Layer::Sorted },
+            x: s.x,
+            y: s.y,
+            dx,
+            dy: dy - h,
+            sort: s.y >> 1,
+            player: 0,
+            transparent: false,
+            mirrored: false,
+            white: false,
+        });
+    }
+}
+
 /// The weapon sounds of the last ticks as sound events, placed like the original's world
 /// sounds (0x586a48: `x`, `y/2 − z`).
 pub fn weapon_sounds(
