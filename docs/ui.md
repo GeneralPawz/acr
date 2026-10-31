@@ -167,7 +167,7 @@ or the savegames.
 
 `top_bar=classic|touch` in `settings.txt` (no options page; classic where the key is absent,
 touch on Android, `Settings::top_bar_default`) replaces the resource bar and the "M" plaque
-by two plaques at the top right (`hud/touch.rs`), made of the classic bar's own pieces from
+by plaques at the top right (`hud/touch.rs`), made of the classic bar's own pieces from
 `Interf2\ResPanel`: **M**, the classic "M" plaque (frame 2, x 11..58), and right of it the
 Resources plaque, a short bit of the resource bar (frame 0: its left end cap x 11..27, the
 gold slot's icon, its right end cap x 691..707, empty bar between). Both are drawn at the
@@ -184,7 +184,13 @@ the middle of a taller row), so nothing is unreachable in touch mode; a second t
 it. The gold plaque toggles a panel under it: the classic bar's six slots stacked (cap, icon,
 cap; the same values and `YellowFont`, right aligned as in the bar, in the icons' order);
 a second tap closes it, and the open panel takes the taps on it before the plaque's target.
-The area the classic bar covered is map: only the two targets and the open panel take
+Left of M are two bare bits of the bar (end caps and filler, no icon) with a glyph of the game's
+font (`YellowFont`): pause ("II", ">" while paused) toggles the pause as the Pause key does, and
+a small escape plaque ("O") sends Escape (closes the panels and command modes, leaves the
+victory or defeat message, opens the game menu when nothing else is open). Android's back key is
+Escape too. Their targets tile the space left of M, each at least 40 dp wide, with the plaque at
+the right end of its target. Dialogs are modal, so only the back key (or Escape) closes one.
+The area the classic bar covered is map: only the targets and the open panel take
 clicks, and the hint rects of the resource values are off. It is a UI setting, not a rule: not in the
 Rules hash or the savegames. The e2e driver switches it with
 `{"cmd": "top_bar", "mode": "touch"}` (docs/testing.md).

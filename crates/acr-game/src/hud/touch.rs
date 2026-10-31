@@ -1,7 +1,8 @@
 //! The touch top bar (`top_bar=touch`, docs/ui.md "Touch top bar"): the classic bar's own
-//! pieces as two plaques at the top right, the "M" plaque and a short bit of the resource bar
-//! with the gold icon, under which a stack of resource slots opens. Only the layout lives
-//! here; [`super::Hud`] draws and hit-tests it.
+//! pieces as plaques at the top right, from the right: a short bit of the resource bar with
+//! the gold icon (under which a stack of resource slots opens), the "M" plaque, a pause plaque
+//! and a small escape plaque (a bare bit of the bar, with a glyph of the game's font). Only
+//! the layout lives here; [`super::Hud`] draws and hit-tests it.
 //!
 //! The plaques are cut from `Interf2\ResPanel` and drawn at the sprite's own size (the canvas
 //! scales them: a whole-number multiple of the original, never blurred). The touch target is
@@ -34,6 +35,11 @@ pub const FILL_W: i32 = 76;
 pub const ICON_PAD: i32 = 8;
 pub const ICON_W: i32 = 32;
 const RES_W: i32 = CAP_W * 2 + ICON_PAD * 2 + ICON_W;
+/// The bare plaques: cap, filler of this width, cap.
+pub const PAUSE_MID: i32 = 24;
+pub const ESCAPE_MID: i32 = 12;
+const PAUSE_W: i32 = CAP_W * 2 + PAUSE_MID;
+const ESCAPE_W: i32 = CAP_W * 2 + ESCAPE_MID;
 /// A row of the panel: cap, one classic slot (padding, icon, room for the value), cap.
 pub const ROW_MID: i32 = 104;
 pub const ROW_W: i32 = CAP_W * 2 + ROW_MID;
@@ -49,6 +55,12 @@ pub struct Layout {
     /// The Resources plaque's body, and the touch target around it.
     pub resources_draw: Rect,
     pub resources: Rect,
+    /// The pause plaque (left of "M"): pauses, or resumes while paused.
+    pub pause_draw: Rect,
+    pub pause: Rect,
+    /// The escape plaque (left of pause): sends Escape.
+    pub escape_draw: Rect,
+    pub escape: Rect,
     /// The stack of slots under the Resources plaque (hit-tested only while open).
     pub panel: Rect,
     /// Gap between the screen edge and a plaque.
@@ -73,8 +85,14 @@ impl Layout {
         let y1 = resources_draw.y1.max(min);
         let resources = Rect { x0: (resources_draw.x0 - GAP / 2).min(screen[0] - min), y0: 0, x1: screen[0], y1 };
         let menu = Rect { x0: menu_draw.x0.min(resources.x0 - min), y0: 0, x1: resources.x0, y1 };
+        // Pause and escape: their targets (at least `min` wide) tile the space left of "M" and
+        // each plaque sits at the right end of its target, so a finger never lands on two.
+        let pause = Rect { x0: menu.x0 - min.max(PAUSE_W + GAP), y0: 0, x1: menu.x0, y1 };
+        let escape = Rect { x0: pause.x0 - min.max(ESCAPE_W + GAP), y0: 0, x1: pause.x0, y1 };
+        let pause_draw = Rect::new(pause.x1 - GAP - PAUSE_W, margin, PAUSE_W, BODY_H);
+        let escape_draw = Rect::new(escape.x1 - GAP - ESCAPE_W, margin, ESCAPE_W, BODY_H);
         let panel = Rect::new(resources_draw.x1 - ROW_W, resources_draw.y1 + margin, ROW_W, BODY_H * ROWS as i32);
-        Self { menu_draw, menu, resources_draw, resources, panel, margin }
+        Self { menu_draw, menu, resources_draw, resources, pause_draw, pause, escape_draw, escape, panel, margin }
     }
 
     /// Row `i` of the panel (the icons' order of the classic bar).
@@ -84,7 +102,11 @@ impl Layout {
 
     /// Whether `p` is on a plaque's target, or on the panel while it is `open`.
     pub fn covers(&self, p: [f32; 2], open: bool) -> bool {
-        self.menu.contains(p) || self.resources.contains(p) || (open && self.panel.contains(p))
+        self.menu.contains(p)
+            || self.pause.contains(p)
+            || self.escape.contains(p)
+            || self.resources.contains(p)
+            || (open && self.panel.contains(p))
     }
 }
 
@@ -97,11 +119,18 @@ mod tests {
         for density in [0.3, 0.5, 1.0, 1.0 / 0.9375, 1.9, 3.5 / 1.875] {
             let l = Layout::new([1690, 768], density);
             let min = (MIN_DP * density).ceil() as i32;
-            for (hit, draw) in [(l.menu, l.menu_draw), (l.resources, l.resources_draw)] {
+            for (hit, draw) in [
+                (l.menu, l.menu_draw),
+                (l.resources, l.resources_draw),
+                (l.pause, l.pause_draw),
+                (l.escape, l.escape_draw),
+            ] {
                 assert!(hit.height() >= min && hit.width() >= min, "{density}: {hit:?}");
                 assert!(hit.x0 <= draw.x0 && hit.x1 >= draw.x1 && hit.y0 <= draw.y0 && hit.y1 >= draw.y1);
             }
             assert!(l.menu.x1 <= l.resources.x0, "{density}: the targets overlap");
+            assert!(l.pause.x1 <= l.menu.x0 && l.escape.x1 <= l.pause.x0, "{density}: the targets overlap");
+            assert!(l.escape.x0 >= 0 && l.escape_draw.x0 >= 0);
         }
     }
 
@@ -114,6 +143,10 @@ mod tests {
         assert_eq!(phone.menu_draw, Rect::new(1551, 8, 47, 35));
         assert_eq!(phone.resources, Rect::new(1600, 0, 90, 75));
         assert_eq!(phone.menu, Rect::new(1525, 0, 75, 75));
+        assert_eq!(phone.pause_draw, Rect::new(1465, 8, 56, 35));
+        assert_eq!(phone.pause, Rect::new(1450, 0, 75, 75));
+        assert_eq!(phone.escape_draw, Rect::new(1402, 8, 44, 35));
+        assert_eq!(phone.escape, Rect::new(1375, 0, 75, 75));
         // The plaque is 35 canvas pixels (66 physical, 19 dp), the target 75 (140, 40 dp).
         assert!(phone.resources.height() as f32 * 1.875 / 3.5 >= MIN_DP);
         // The same screen at scale 1 (a laptop window of 1584 x 720, scale 0.9375).
@@ -125,6 +158,8 @@ mod tests {
         assert_eq!(classic.resources_draw, Rect::new(940, 4, 80, 35));
         assert_eq!(classic.resources, Rect::new(938, 0, 86, 40));
         assert_eq!(classic.menu, Rect::new(889, 0, 49, 40));
+        assert_eq!(classic.pause, Rect::new(829, 0, 60, 40));
+        assert_eq!(classic.escape, Rect::new(781, 0, 48, 40));
         // A bad density falls back to 1.
         assert_eq!(Layout::new([1024, 768], f32::NAN), classic);
         assert_eq!(Layout::new([1024, 768], 0.0), classic);
@@ -146,11 +181,13 @@ mod tests {
         let inside = |r: Rect| [(r.x0 + 1) as f32, (r.y0 + 1) as f32];
         assert!(l.covers(inside(l.menu), false));
         assert!(l.covers(inside(l.resources), false));
+        assert!(l.covers(inside(l.pause), false));
+        assert!(l.covers(inside(l.escape), false));
         assert!(!l.covers(inside(l.panel), false));
         assert!(l.covers(inside(l.panel), true));
         // The area the classic bar covered is map now: left of the plaques, and under them.
         assert!(!l.covers([512.0, 10.0], true));
-        assert!(!l.covers([(l.menu.x0 - 1) as f32, 10.0], true));
+        assert!(!l.covers([(l.escape.x0 - 1) as f32, 10.0], true));
         assert!(!l.covers([l.menu.x0 as f32 + 5.0, l.menu.y1 as f32], true));
         // The targets reach the top and the right edge of the screen.
         assert!(l.covers([1023.0, 0.0], false));

@@ -1,6 +1,6 @@
 {
   "name": "touch_top_bar",
-  "description": "top_bar=touch at a phone-like window (1584x720, canvas scale 0.9375): a tap on Resources opens the compact panel, a second tap closes it, a tap on Menu opens the M drop-down (the rows are finger-sized, the first is the game menu), a tap on its first row opens the game menu, and the area the classic bar covered is map (a click there does not open the old M drop-down)",
+  "description": "top_bar=touch at a phone-like window (1584x720, canvas scale 0.9375): a tap on Resources opens the compact panel, a second tap closes it, a tap on Menu opens the M drop-down (the rows are finger-sized, the first is the game menu), a tap on its first row opens the game menu, Escape closes it again, the pause plaque pauses and resumes, the escape plaque (left of pause) acts as the Escape key (it opens the game menu when nothing else is open), and the area the classic bar covered is map (a click there does not open the old M drop-down)",
   "args": ["--size", "1584x720"],
   "steps": [
     {"cmd": "start", "blank": {"ground": "grass"}},
@@ -12,11 +12,18 @@
     {"cmd": "top_bar", "mode": "touch", "expect": {"path": "top_bar.open", "eq": true}},
     {"cmd": "click", "pos": [1547, 19]},
     {"cmd": "top_bar", "mode": "touch", "expect": {"path": "top_bar.open", "eq": false}},
-    {"cmd": "click", "pos": [1400, 20]},
+    {"cmd": "click", "pos": [1200, 20]},
     {"cmd": "ui", "expect": {"screen": "game"}},
     {"cmd": "click", "pos": [1479, 19]},
     {"cmd": "top_bar", "mode": "touch", "expect": {"path": "top_bar.dropdown", "eq": true}},
     {"cmd": "click", "pos": [1463, 67]},
+    {"cmd": "ui", "expect": {"screen": "GameMenu"}},
+    {"cmd": "key", "key": "Escape", "expect": {"screen": "game"}},
+    {"cmd": "click", "pos": [1429, 19]},
+    {"cmd": "top_bar", "mode": "touch", "expect": {"path": "top_bar.paused", "eq": true}},
+    {"cmd": "click", "pos": [1429, 19]},
+    {"cmd": "top_bar", "mode": "touch", "expect": {"path": "top_bar.paused", "eq": false}},
+    {"cmd": "click", "pos": [1378, 19]},
     {"cmd": "ui", "expect": {"screen": "GameMenu"}}
   ]
 }

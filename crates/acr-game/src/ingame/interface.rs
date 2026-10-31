@@ -87,6 +87,8 @@ pub enum GameMouse {
     Restart,
     /// Open the mission history (`UM_HIST`).
     History,
+    /// A press of the Escape key (the touch top bar's escape plaque).
+    Escape,
 }
 
 /// The gather order of a right click at world pixel `(x, y)` (`DetermineResource`, 0x4d3ef0,
@@ -525,6 +527,7 @@ impl InGame {
         let res = &world.players[usize::from(player).min(world.players.len() - 1)].resources;
         view.resources = std::array::from_fn(|i| res[i].max(0) as u32);
         view.history = self.mission.has_history();
+        view.paused = self.interface.paused && self.mission.ended.is_none();
         view.fog = self.fog_mask();
         let shift = self.shift() + 9;
         view.dots = minimap_dots(world, player, &self.selected, shift);
@@ -2419,6 +2422,11 @@ impl InGame {
                     self.mission.surrender();
                     return GameMouse::None;
                 }
+                HudEvent::TogglePause => {
+                    self.set_paused(!self.paused());
+                    return GameMouse::None;
+                }
+                HudEvent::Escape => return GameMouse::Escape,
                 HudEvent::Zoom => {
                     self.toggle_zoom(at);
                     return GameMouse::None;
