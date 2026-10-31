@@ -120,11 +120,12 @@ def _walk(pose, n=36, strides=3):
 PACE_EVERY = 2  # frames between the keys of a paced walk (the legs' angles are not linear in the foot)
 
 
-def _pace(pose, n, slip):
+def _pace(pose, n, slip, **gait):
     """Keys [(frame, pose)] of one stride (two steps) over `n` frames with `pose` on top, the
     gait's stride set to `slip` metres: the planted foot moves back `slip` a cycle, as fast as
-    the ground runs past (`turn_slip`), so it stays put on it."""
-    g = dict(poses.WALK, stride=slip)
+    the ground runs past (`turn_slip`), so it stays put on it. `gait` overrides the walk's
+    parameters (a long `slip` wants a longer stance, `duty`)."""
+    g = dict(poses.WALK, stride=slip, **gait)
     out = []
     for f in range(0, n + 1, PACE_EVERY):
         w = poses.gait_pose(STAND, g, (f / n) % 1.0)
@@ -179,6 +180,12 @@ LIFT = dict(SPIKE, spine=(-16, 0, 0), spine1=(-6, 0, 0), head=(14, 0, 0),
 # Turning (the original's `ArtPus_pvrt`): c2 lifts the trail end with the handspike and walks
 # it round, c1 heaves the left wheel from behind, c0 the right one from in front (they turn
 # opposite ways about the axle), c3 stands by the chest set down beside the trail.
+# He walks the trail round sideways on (the ground runs past him along the circle,
+# `turn_heading`) with his shoulders twisted back to the lever.
+TWIST = -40
+LIFT_WALK = dict(LIFT, spine=(-16, 0, TWIST), spine1=(-6, 0, TWIST))
+TRAIL_X, TRAIL_Y = -0.23, 3.93  # his station over the turn (m, gun frame): where the lever puts his hips
+TRAIL_GAIT = {"duty": 0.7}  # the long steps of that circle: planted longer (the ankle slides less than with the 0.62 walk)
 TURN = {"c0.": (PUSH_X, -PUSH_Y, 180), "c1.": (-PUSH_X, PUSH_Y, 0), "c2.": (0.0, 3.15, 0), "c3.": (1.3, 2.95, -90)}
 
 
@@ -243,8 +250,10 @@ def lift_keys(n=70):
     tx, ty, tyaw = TURN["c2."]
     at("c2.", 30, tool(SPIKE, DOWN), tx, ty, tyaw)
     at("c2.", 44, tool(SPIKE, DOWN), tx, ty, tyaw)
-    at("c2.", 66, tool(LIFT, DOWN), tx, ty, tyaw)
-    k["c2."].append((n, place(_walk(tool(LIFT, DOWN), 40, 2)[0][1], (tx, ty), tyaw)))
+    at("c2.", 58, tool(LIFT, DOWN), tx, ty, tyaw)
+    tx, ty = TRAIL_X, TRAIL_Y
+    ready = _pace(tool(LIFT_WALK, DOWN), 40, turn_slip(tx, ty), **TRAIL_GAIT)[0][1]  # TRAIL_WALK's first frame
+    k["c2."].append((n, place(ready, (tx, ty), turn_heading(tx, ty))))
     tx, ty, _tyaw = TURN["c3."]
     ready = _pace(tool(STAND, UP), 40, turn_slip(tx, ty))[0][1]  # TRAIL_WALK's first frame: turned to step along
     at("c3.", 36, tool(STAND, UP), tx, ty, turn_heading(tx, ty))
@@ -257,7 +266,9 @@ def turn_keys(n=40):
     """TRAIL_WALK (`#MOTION_L1`, 40 frames, `ArtPus_pvrt`; `#MOTION_R1` plays it backwards, and
     `#PSTAND1` between the steps holds its first frame): c2 walks the lifted trail round, c0/c1
     heave the wheels (WHEEL_HEAVE), c3 stands by the chest. First and last frames are alike."""
-    out = {"c2.": [(f, place(s, TURN["c2."][:2], TURN["c2."][2])) for f, s in _walk(tool(LIFT, DOWN), n, 2)]}
+    # c2 walks the trail round at the ground's pace as c3 does below, the lever in both hands.
+    out = {"c2.": [(f, place(s, (TRAIL_X, TRAIL_Y), turn_heading(TRAIL_X, TRAIL_Y)))
+                   for f, s in _pace(tool(LIFT_WALK, DOWN), n, turn_slip(TRAIL_X, TRAIL_Y), **TRAIL_GAIT)]}
     for p in ("c0.", "c1."):
         x, y, yaw = TURN[p]
         a, b = (tool(PUSH, UP), tool(HEAVE, UP)) if p == "c0." else (PUSH, HEAVE)
