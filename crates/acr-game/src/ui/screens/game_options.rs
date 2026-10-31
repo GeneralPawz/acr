@@ -282,6 +282,14 @@ const RULES_MORE: &[Row] = &[
         get: |s| on_off(s.group_move()),
         set: |s, i| s.group_move = Some(i == 1),
     }),
+    Row::Heading(b"Kampf"),
+    Row::Choice(Choice {
+        // `formation_attack`: a right-click attack reaches close-combat formation members.
+        label: b"Formationsangriff",
+        lines: &[b"Aus (Original)", b"An: Glieder greifen an"],
+        get: |s| on_off(s.formation_attack),
+        set: |s, i| s.formation_attack = i == 1,
+    }),
 ];
 
 /// The rows of ACR page `page` (1 to 5).
@@ -549,7 +557,7 @@ mod tests {
                 b"Kugeln, Gel\xe4nde"
             ]
         );
-        assert_eq!(labels(RULES_MORE), [&b"Gruppenbewegung"[..]]);
+        assert_eq!(labels(RULES_MORE), [&b"Gruppenbewegung"[..], b"Formationsangriff"]);
         assert_eq!(labels(BATTLE), [&b"Blutdarstellung"[..], b"Verwesung", b"Liegezeit", b"Schlachtfeldspuren"]);
         let mut s = Settings::default();
         for row in RULES.iter().chain(RULES_MORE) {
@@ -561,6 +569,7 @@ mod tests {
             assert_eq!((c.get)(&s), 1);
         }
         assert!(s.hit_locations && s.body_spacing && s.corpse_piles && s.mortars && s.cannon_fire);
+        assert!(s.formation_attack);
         assert!(s.ball_terrain == Some(true) && s.group_move());
     }
 }
