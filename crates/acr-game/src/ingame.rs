@@ -718,6 +718,7 @@ impl InGame {
                         world,
                         terrain,
                         &self.objects,
+                        self.mission.fog(),
                         self.setup.local_player as u8,
                         self.interface.hud.life_bars,
                         &mut self.shouts.borrow_mut(),
