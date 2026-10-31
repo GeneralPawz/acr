@@ -352,7 +352,7 @@ pub fn impact(
                 count: 24,
                 life: [2.5, 4.5],
                 size: [12.0, 22.0],
-                color: soil.dust().map(|c| (u16::from(c) * 3 / 4) as u8),
+                color: soil.dust().map(|c| (u16::from(c) * 11 / 20) as u8),
                 scatter: 12.0,
                 ..burst([at[0], at[1], at[2] + 5.0], ParticleKind::Dust, seed ^ 0x2468)
             });
@@ -363,7 +363,7 @@ pub fn impact(
                 count: 8,
                 life: [6.0, 9.0],
                 size: [20.0, 32.0],
-                color: haze(soil),
+                color: haze(soil).map(|c| (u16::from(c) * 3 / 5) as u8), // smoke, not pale dust (#338)
                 scatter: 26.0,
                 ..burst([at[0], at[1], at[2] + 14.0], ParticleKind::Dust, seed ^ 0x4321)
             });
@@ -669,6 +669,13 @@ pub fn spurt(sink: &mut dyn ParticleSink, cause: DeathCause, at: [f32; 3], dir: 
 /// Seconds a shell fragment's streak flies: it reaches its end and is gone.
 const FRAGMENT_FLIGHT: f32 = 0.18;
 
+/// A casing fragment's speck `i`: dark iron and soot (#338), not the glowing orange it was,
+/// which read as bright marks at a shell's burst; the later specks of the streak are blacker.
+fn casing_color(i: u32) -> [u8; 3] {
+    let k = i.min(3) as u8;
+    [58 - 8 * k, 52 - 7 * k, 48 - 6 * k]
+}
+
 /// A shell fragment's streak: a few glowing specks one behind the other along its flight
 /// from the burst (about knee to chest high) to where it struck or fell, bigger for a
 /// bigger piece. They vanish at the end of the flight instead of landing.
@@ -705,7 +712,7 @@ fn fragment(sink: &mut dyn ParticleSink, f: &acr_sim::shrapnel::Fragment, ground
             life: [FRAGMENT_FLIGHT + back / speed; 2],
             size: [size * (1.0 - 0.15 * i as f32); 2],
             color: match f.kind {
-                Kind::Casing => [255, 196 - 30 * i.min(3) as u8, 90],
+                Kind::Casing => casing_color(i),
                 Kind::Earth => [92, 70, 48],
                 Kind::Bone => [226, 214, 190],
             },
@@ -951,6 +958,22 @@ mod tests {
         let mut shell = Record::default();
         impact(&mut shell, DeathCause::Explosion, [0.0; 3], [0.0, 0.0], 1.0, Some(grass), 1);
         assert!(count(&shell, ParticleKind::Clod) >= 150);
+    }
+
+    #[test]
+    fn a_shell_burst_is_earth_and_soot_not_fire() {
+        // #338: no yellow or orange: every colour is a dark or dusty brown-grey (red at
+        // least blue, little spread between red and green, nothing glowing).
+        let in_range = |c: [u8; 3]| c[0] >= c[2] && c[0] - c[2] <= 60 && c[0].abs_diff(c[1]) <= 30 && c[0] <= 190;
+        let grass = Some(Soil::of_class(0, false));
+        let mut shell = Record::default();
+        impact(&mut shell, DeathCause::Explosion, [0.0; 3], [0.0; 2], 1.0, grass, 1);
+        assert!(
+            !shell.0.is_empty() && shell.0.iter().all(|b| in_range(b.color)),
+            "{:?}",
+            shell.0.iter().map(|b| b.color).collect::<Vec<_>>()
+        );
+        assert!((0..8).all(|i| in_range(casing_color(i)) && casing_color(i)[0] < 70));
     }
 
     #[test]
