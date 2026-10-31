@@ -1385,8 +1385,13 @@ frames `Interf2\Combo2` at 0x4eff3b.
   their kind. A ship is put only on deep water, a land unit or building not (`World::sea_allows`);
   a building is put finished and free of charge under the footprint checks of building
   (`construction::place_free`: no other building or enemy on it, no locked ground). Vegetation,
-  stones and terrain tools (#406) are not done.
-- ACR's additions: the combo box ends with "Tiere" and "Kanonen"; the eighth colour is the
+  stones and terrain tools follow in the lists below.
+- ACR's additions: the combo box ends with "Tiere", "Kanonen", "Natur" and "Gelaende"; Natur
+  lists the map's trees, bushes, stones and deposits as their sprite frames (ground point at
+  the cell's bottom centre, clipped to the cell), Gelaende the five terrain tools as text cells
+  and fifteen ground textures as cells filled with their minimap colour
+  (`GroundAssets::minimap_color(t, 3)`); the terrain tools are ACR's own: the original editor's
+  ToolBox/ToolOpt at 0x5ba450 are untraced (docs/controls.md "Editor"); the eighth colour is the
   neutral player 7 (wild animals); the controls of docs/controls.md sit in a second paper box
   under the window; the combo box's list, the arrows and track of the scroll bar are clicks
   only (no dragging); a right click on an icon opens a drop-down of the unit's training levels

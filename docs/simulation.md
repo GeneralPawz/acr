@@ -164,6 +164,25 @@ Map load (`CreateLockMap` 0x44e340, `LockByTerrain` 0x44d800, then 0x44e250 and
 Units do not touch these maps. They use the separate occupancy grid (`UnitsField`,
 0x1100d78), described under motion.
 
+**Editing the map (ACR, #428–#430).** The original derives the maps once, at load. ACR's
+editor changes the ground and the objects of a running game, so the derivation exists as
+a function of a region: `MapGrid::from_m3d` is an empty grid followed by `MapGrid::rederive`
+over the whole map. `rederive(map, shapes, area)` works on the 64 px blocks of `area` grown by 4
+and takes back those grown by 2 (each chamfer pass reads the four neighbours of a block), with
+the water locks and the map borders of that window; the blocks it returns equal the full
+derivation of the edited map bit for bit (test `region_rederive_equals_full_derivation`). A
+region loses the locks of buildings and sites, which are not part of the map's data;
+`World::sync_terrain(map, area)` copies the edited heights, textures and depths
+(`MapGrid::copy_terrain`), re-derives the region and sets the locks of every living building
+again (`construction::current_locks`: `BUILDLOCKPOINTS` of a site, `LOCKPOINTS` of a finished
+building and the stage points of its finished sections). `World::add_map_object(map, sprite)`
+appends a tree or stone to `objects`, a deposit (`[INTERNAL_SOURCE]`) to `deposits`, a
+gathering source (`[SOURCES]`) to the sources index and its spacing; an object with a `[LOCK]`
+polygon is a `rederive` over the polygon's box, the buildings' locks back, and units standing
+on the new locks are pushed out as for a construction site. `World::object_refusal` refuses
+unknown types, points off the playable area and deep water (`SEA2` depth above 128). Both are
+used by the editor's inputs (docs/controls.md "Editor").
+
 ## Pathfinding
 
 ### Coarse level: areas

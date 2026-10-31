@@ -39,6 +39,10 @@ folder's `Save\` and `Players\` folders (in the browser: the browser's local sto
   (gathering, construction, production, upgrades, market, fields), fog of war.
 - Computer players (the original AI DLLs) and DipServer, run in an x86 interpreter.
 - Save and load; unit, weapon, ambient and interface sounds; music.
+- A map editor of ACR's own (main menu "Editor"): units, whole formations at a training level,
+  buildings and ships, trees and stones, and a terrain brush (raise, lower, level, water and
+  land, fifteen ground textures); a saved editor game keeps all of it. The terrain tools
+  are ACR's: the original editor's are not traced.
 - Muzzle smoke, cannon balls, explosions and debris, burning and smoking buildings.
 - Controls: the original ones, or an optional modern scheme (wheel zoom, drag panning,
   W/A/S/D) — see [controls.md](controls.md).

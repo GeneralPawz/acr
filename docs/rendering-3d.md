@@ -624,6 +624,11 @@ objects (`World::objects`, static for the whole battle) are drawn as models wher
 - **Cost:** the transforms are built once per map and model set (`MapModels::place`); per
   frame only the objects inside the view's ground rectangle (`View3d::ground_bounds` up to
   2000 px high, plus 600 px for crowns and shadows) become instances (`3d.map_objects`).
+- **After edits:** the editor's Natur list adds objects and its Gelaende tools change the
+  ground. `MapModels::place` places again when the object count changes;
+  `MapModels::invalidate()` (through `ThreeD::terrain_edited()`) does it after a terrain edit,
+  so the models stand on the new ground. The view calls it with the scene's rebuild
+  (`ObjectsView::rebuild_static`), at most every 0.25 s during a stroke and once at its end.
 - `game.log` names the densest 1024 px cell of trees and the most used tree types of the map
   (`3d: map trees: ...`), for tests and for filling the table.
 
