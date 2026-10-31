@@ -49,6 +49,26 @@ jobs:
       - run: cargo test --workspace --locked
       - run: python3 -m unittest discover -s assets/blender/tests  # asset camera math, no Blender
 
+  ui:
+    name: svelte ui
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ui/.node-version
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      # The protocol's TypeScript types are committed: no diff allowed.
+      - run: cargo test --locked -p acr-ui-protocol --features ts
+      - run: git diff --exit-code -- ui/src/lib/protocol
+      - run: npm ci
+        working-directory: ui
+      - run: npm run check && npm test && npm run build
+        working-directory: ui
+
   wasm:
     name: wasm clippy + web bundle
     runs-on: ubuntu-latest
