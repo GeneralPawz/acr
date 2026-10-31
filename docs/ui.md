@@ -969,6 +969,7 @@ writes are in
 | 5 | | Leichenhaufen | Aus (Original) / An: als Hindernis | `corpse_piles` ([simulation.md](simulation.md#corpse-piles-optional-rule-222)) |
 | 5 | | Mörser | Aus (Original) / An: Mörser mit Zielzonen | `mortars` ([simulation.md](simulation.md#mortar-optional-rule-301)) |
 | 5 | Feuer (mit Trefferzonen) | Kugelbrand | Aus (Original) / An: Kugeln setzen in Brand | `cannon_fire` ([simulation.md](simulation.md#shell-fires-256)) |
+| 5 |  | Formationsangriff | Aus (Original) / An: Linie greift an | `formation_attack` ([simulation.md](simulation.md#formation-attack-optional-rule-352)) |
 
 All but the four rules (page 4, every optional `acr_sim::Rules` flag) take effect at once on OK. The rules are part of the simulation (the
 setup a replay or savegame hashes): a battle keeps the rules it began with, the new choice

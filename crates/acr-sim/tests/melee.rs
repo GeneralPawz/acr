@@ -44,6 +44,7 @@ const ON: Rules = Rules {
     group_move: false,
     cannon_fire: false,
     ball_terrain: false,
+    formation_attack: false,
 };
 
 /// Pikemen and a lancer (a rider with `MECH`, named as a lancer).

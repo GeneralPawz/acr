@@ -138,6 +138,8 @@ pub enum Start {
         cannon_fire: bool,
         /// The optional ball-terrain rule (balls break trees and knock stones under hit locations).
         ball_terrain: bool,
+        /// The optional formation-attack rule (`docs/simulation.md` "Formation attack").
+        formation_attack: bool,
     },
     /// The blank test field ("The blank field" in `docs/testing.md`): `players` (1 or 2)
     /// without start units and without AI, `nation` for the local player.
@@ -155,6 +157,8 @@ pub enum Start {
         cannon_fire: bool,
         /// The optional ball-terrain rule (balls break trees and knock stones under hit locations).
         ball_terrain: bool,
+        /// The optional formation-attack rule (`docs/simulation.md` "Formation attack").
+        formation_attack: bool,
         hud: bool,
         /// `"corpse_decay": "half"|"full"` overrides the setting (`corpse_decay`).
         corpse_decay_half: Option<bool>,
@@ -404,6 +408,7 @@ pub(super) fn blank(b: &Value) -> Result<Start, String> {
         group_move: b.get("group_move").and_then(Value::as_bool).unwrap_or(false),
         cannon_fire: b.get("cannon_fire").and_then(Value::as_bool).unwrap_or(false),
         ball_terrain: b.get("ball_terrain").and_then(Value::as_bool).unwrap_or(false),
+        formation_attack: b.get("formation_attack").and_then(Value::as_bool).unwrap_or(false),
         hud: b.get("hud").and_then(Value::as_bool).unwrap_or(true),
         corpse_decay_half: b.get("corpse_decay").and_then(Value::as_str).map(|v| v == "half"),
         decay_stain: b.get("decay_stain").and_then(Value::as_str).map(|v| v == "on"),
@@ -608,6 +613,7 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
                     group_move: r.get("group_move").and_then(Value::as_bool).unwrap_or(false),
                     cannon_fire: r.get("cannon_fire").and_then(Value::as_bool).unwrap_or(false),
                     ball_terrain: r.get("ball_terrain").and_then(Value::as_bool).unwrap_or(false),
+                    formation_attack: r.get("formation_attack").and_then(Value::as_bool).unwrap_or(false),
                 })
             }
         }
@@ -817,6 +823,7 @@ mod tests {
                 group_move: false,
                 cannon_fire: false,
                 ball_terrain: false,
+                formation_attack: false,
             })
         );
         let (_, r) = parse(r#"{"cmd": "load_map", "map": "Missions\\a.m3d"}"#).unwrap();
@@ -833,6 +840,7 @@ mod tests {
             group_move: false,
             cannon_fire: false,
             ball_terrain: false,
+            formation_attack: false,
             hud: true,
             corpse_decay_half: None,
             decay_stain: None,
