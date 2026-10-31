@@ -521,7 +521,10 @@ cursor is drawn anywhere in the window, also beside the menu canvas.
       `StopFishing`) and `ZASEV` for a finished mill (0x65, `StopSowing`: no automatic
       fields; switching it back on plants at once). Each two-state icon shows the frame and
       hint of the current state (`STOPBUILD_OFF`/`_ON`, `FISHING_ON_TXT`/`_OFF_TXT`,
-      `MAKEZASEV`/`DONTMAKEZASEV`) and switches to the other.
+      `MAKEZASEV`/`DONTMAKEZASEV`) and switches to the other. The `STOPBUILD` line's frames
+      are swapped: the parser (0x4ec33e) stores the first word in 0x66ae60 and the second in
+      0x66ae5c, and the icon code (0x607af1) draws 0x66ae5c while stopped, so a running
+      building shows `Production_OFF` and a stopped one `Production_ON` (red).
 - Mortar buttons (ACR, #301, not in the original; `ingame/mortar_ui.rs`): with the
   mortars rule on and own mortars (`ArtMrt`) among the selection, four icons in the
   command icons' style (owner outline, yellow frame while on) at slots the guns leave free:
