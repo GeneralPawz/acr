@@ -24,6 +24,13 @@ and the hashes stay as they are.
   second (`set_trample`), up to 10 levels darker.
 - The **free camera** draws the same mesh through the view matrix, depth-tested, into the
   same palette target.
+- **Edits** (the editor's Gelaende tools, ACR's own): `TerrainData::update` takes over the changed
+  rect of the map (vertices with a margin of one for the light, zoomed-view cells with a margin of
+  one, the water depth), `take_dirty` hands the vertex rect to `TerrainRenderer::update_map`, which
+  writes just that rect to the height, vertex and zoom textures and the whole water depth when it
+  changed; the textures and bind groups stay. Trampled soil in the rect is drawn unmarked until the
+  next `set_trample`. A loaded editor game makes the terrain data again after its replay and
+  uploads it whole.
 
 ## Phase 1: material ground (built)
 
@@ -432,7 +439,9 @@ after about 20 minutes. Its cost is negligible: a few hundred instances at most.
   scorch over 40/255 (shell craters, `fire_view` fires) and dug ground (displacement beyond
   ±14/255 ≈ 2.8 cm: craters, furrows, ruts) clear it. Chunks of 16 × 16 cells are cached
   and re-placed every second (4 stale chunks per frame, new chunks up to 96 per frame), so
-  marks reach the cover within a second or two.
+  marks reach the cover within a second or two. After a terrain edit of the editor
+  (`ThreeD::terrain_edited()`) the cache is cleared and the cover grows again on the new
+  ground: re-placed within the rate above, not in one frame.
 - **Cost** (RX 9060 XT on the render VM, 1600 × 900, blank field with a meadow patch of
   radius 2600 px, 240 men marching, zoom 1; `ACR-analysis/genai/groundcover/steps/
   bench.json`, two runs): GPU `ground cover` 0.136–0.147 ms (off 0.007); CPU

@@ -38,6 +38,10 @@
 //!
 //! The editor's inputs ([`EditorInput`]) change the world between two ticks like a
 //! diplomacy input does, so they are logged with their tick and replayed the same way.
+//! That includes the map's own edits (version 4): a tree or stone of the Natur list and every dab
+//! of the terrain brush are inputs, so a saved editor game replays on the blank field to the
+//! same ground and objects (and the loaded game's view is built from the map once after the
+//! replay). No `.m3d` is written.
 //!
 //! The name, time and setup come first so that the load dialog can list savegames
 //! without decoding the rest ([`SaveInfo::peek`]).

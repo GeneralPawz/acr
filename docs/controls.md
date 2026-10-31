@@ -218,22 +218,26 @@ The main menu's "Editor" opens a blank grass field for two human players with th
 editor's placing window ("Einheit wählen", docs/ui.md "Editor: the placing window") at the
 right, in the column of the side panels (`crates/acr-game/src/ingame/editor.rs`). Unlike the
 original's editor it places many units at once and whole formations ready-formed; what it does to
-the world is an editor input (`ingame/editor/input.rs`), applied between two ticks and saved with
-its tick (savegame version 4), so a saved editor game loads with its units; it is not a network
-game. The rules of the settings apply (`hit_locations`, `body_spacing`). F2 or a click on the
+the world is an editor input (`ingame/editor/input.rs`: units, buildings, Kampf, trees and stones,
+terrain dabs), applied between two ticks and logged with its tick in the savegame (version 4), so a
+saved editor game loads with everything the editor did, the painted ground included; it is not a
+network game. The rules of the settings apply (`hit_locations`, `body_spacing`). F2 or a click on the
 title folds the window; the wheel over it scrolls the icons.
 
 | In the window | What it does |
 |---|---|
 | The eight colours | the owner of the placed units: players 1 to 7 and, the eighth, the neutral player (wild animals) |
-| Nation combo box | lists the 12 playable nations, then Tiere and Kanonen (ACR's own lists); a click opens it, a line picks it; a right click opens the army menu ("Army presets" below) |
+| Nation combo box | lists the 12 playable nations, then Tiere, Kanonen, Natur and Gelaende (ACR's own lists); a click opens it, a line picks it; a right click opens the army menu ("Army presets" below) |
 | Icon grid | the nation's units under Infanterie, Kavallerie and Artillerie, as `ICONS.GP` icons; a click picks the type at Basis (again: unpicks); while picked, a left click on the map places it. A right click opens the icon's training levels, see below. Marine (ships, only on deep water, as `sea_ground`) and Gebaeude follow, buildings put finished and free where their footprint is free; vegetation and terrain are not placed yet (#406) |
+| Natur list | the map's sprite lists as frames of their pack (the name where the pack is missing), under Baeume (trees that are a wood source), Buesche (other trees), Steine (stones) and Vorkommen (stones that feed a mine, `[INTERNAL_SOURCE]`); a click picks the type, a left click on the map puts one object there. Not on deep water (`SEA2` depth above 128), not off the map. A rock locks its ground cells like a loaded one (`World::add_map_object`, docs/simulation.md "Passability") |
+| Gelaende list | ACR's own terrain tools; the original editor's ToolBox/ToolOpt (loaded at 0x5ba450) are untraced. Under Werkzeug: Anheben, Absenken, Ebnen (pulls the ground to the height it had where the stroke began), Wasser (a pool, shallow at its rim and deep inside, where ships float and land units stop) and Land (dries it); under Boden fifteen ground textures (Gras 0, Wiese 1, Erde 71, Schlamm 29, Sand 72, Fels 8, Waldboden 28, Schnee 103, Feld 27, Rissig 42, Roterde 66, Kies 14, Wueste 120, Steppe 93, Pflaster 24, docs/ground.md) in the colour the minimap gives them. With a tool picked the left button paints: the press makes a dab and, held, the cursor strokes: a dab whenever it moved half a radius or 0.1 s passed (at most one per frame). A map with area tables (`TOP1`/`TOPW`) is refused: the editor's fields have none |
 | Scroll bar | the arrows scroll a row, the track a page; no dragging |
 
 Under the window ACR's own controls:
 
 | Line | What it does |
 |---|---|
+| Pinsel | (Gelaende only) the brush radius in world pixels: 32, 64, 128 (the start), 256 or 512; the arrows step it |
 | Anzahl | 1, 5, 10, 15, 36, 72, 120, 196, 392, 588, 784 or 980 |
 | Formation | lose (a square block) or the formations the type's officers lead: Linie, Kolonne, Karree for infantry, the cavalry wedges as named in `ORD_GROUPS.LST` |
 | Ausbau | the picked type's training level: `Ausbau n/m: name`, n of its m upgrades applied (set by the icons' right-click drop-down) |
@@ -246,7 +250,7 @@ Under the window ACR's own controls:
 
 The test driver lists the window's controls in `ui` as `editor/<n>` (names like `Anzahl +`,
 `Ausbau Basis`, `Nation Frankreich`, `Spieler 2`, `Neutral`, an icon by its name and type id),
-so `tests/e2e/editor_window.json` and `editor_levels.json` click them by label; `editor_players.json` and `editor_teams.json` cover the Kampf modes, `editor_world.json` and `editor_ships.json` the buildings and ships.
+so `tests/e2e/editor_window.json` and `editor_levels.json` click them by label; `editor_players.json` and `editor_teams.json` cover the Kampf modes, `editor_world.json` and `editor_ships.json` the buildings and ships, `editor_nature.json` the Natur list and `editor_terrain.json` the Gelaende tools (read back with the driver's `ground`, docs/testing.md); `editor_save_load.json` and `editor_map_save.json` save an editor game and load it again: units at a training level, a formation, a building, a tree, painted water with a ship on it, a hill and a texture all return.
 
 **Training levels.** A right click on a unit icon opens a drop-down (the combo box's list look)
 under it: "Basis" (no upgrade), then one line per upgrade that changes how the type fights
