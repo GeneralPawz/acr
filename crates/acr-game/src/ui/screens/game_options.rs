@@ -290,6 +290,13 @@ const RULES_MORE: &[Row] = &[
         get: |s| on_off(s.formation_attack),
         set: |s, i| s.formation_attack = i == 1,
     }),
+    Row::Choice(Choice {
+        // `animal_give_up` (#355): a chasing animal gives up when the target gets too far.
+        label: b"Tiere geben auf",
+        lines: &[b"Aus (Original)", b"An: Jagd endet bei Abstand"],
+        get: |s| on_off(s.animal_give_up),
+        set: |s, i| s.animal_give_up = i == 1,
+    }),
 ];
 
 /// The rows of ACR page `page` (1 to 5).
@@ -557,7 +564,7 @@ mod tests {
                 b"Kugeln, Gel\xe4nde"
             ]
         );
-        assert_eq!(labels(RULES_MORE), [&b"Gruppenbewegung"[..], b"Formationsangriff"]);
+        assert_eq!(labels(RULES_MORE), [&b"Gruppenbewegung"[..], b"Formationsangriff", b"Tiere geben auf"]);
         assert_eq!(labels(BATTLE), [&b"Blutdarstellung"[..], b"Verwesung", b"Liegezeit", b"Schlachtfeldspuren"]);
         let mut s = Settings::default();
         for row in RULES.iter().chain(RULES_MORE) {
@@ -569,7 +576,7 @@ mod tests {
             assert_eq!((c.get)(&s), 1);
         }
         assert!(s.hit_locations && s.body_spacing && s.corpse_piles && s.mortars && s.cannon_fire);
-        assert!(s.formation_attack);
+        assert!(s.formation_attack && s.animal_give_up);
         assert!(s.ball_terrain == Some(true) && s.group_move());
     }
 }
