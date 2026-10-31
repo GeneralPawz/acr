@@ -1285,8 +1285,8 @@ while they are the default; `tests/wounds.rs` pins the hash of a fight). On:
 - Savegames keep the rule (version 3, at the end of the file); older saves load with the
   original rules. Starting a game with it: set `rules.hit_locations` in the `GameSetup`, or
   through the driver `{"cmd": "start", "random": {"seed": 5, "hit_locations": true}}`, or
-  Spieleinstellungen page 4 (`Trefferzonen`, applies from the next battle). There
-  Spieleinstellungen page 4 (`Trefferzonen`, applies from the next battle).
+  Spieleinstellungen page 5, ACR-Regeln (`Trefferzonen`, applies from the next battle). There
+  Spieleinstellungen page 5, ACR-Regeln (`Trefferzonen`, applies from the next battle).
 #### The body: injuries, crawling, bleeding out (#254, #262)
 
 The full model is in `docs/damage-model.md` (section 1); `acr_sim::body` implements it.
@@ -1552,7 +1552,7 @@ option `corpse_piles`, savegame rules bit 3) dense piles of bodies hinder the li
 Not covered: cannons and the push of formations (`spacing`) ignore the piles, the
 coarse area routing (`TOP1`) does not know them, and `RemoveFools` may still swap a man into
 a blocked cell. In Spieleinstellungen it is the line `Leichenhaufen` (`Aus (Original)` /
-`An: als Hindernis`) on page 4, Realismus ([ui.md](ui.md)); the setting is `corpse_piles=on`.
+`An: als Hindernis`) on page 5, ACR-Regeln ([ui.md](ui.md)); the setting is `corpse_piles=on`.
 
 ### Worked timing (musketeer, 10 ticks/s)
 

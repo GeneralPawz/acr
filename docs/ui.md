@@ -935,10 +935,10 @@ described in [simulation.md](simulation.md#fog-of-war).
   - OK and Abbruch on `G_Load_Game` frame 1. Enter and Escape work.
   - OK changes the simulation's tick rate and the scroll speed.
 
-ACR adds four more pages in the same frame (`ui/screens/game_options.rs`). A text button
-right on the first heading's line ("Weitere Optionen »", then "Seite 2/5: Grafik »",
-"Seite 3/5: Details »", "Seite 4/5: Realismus »", "Seite 5/5: Zurück »") turns the pages;
-OK takes the choices of all five, Abbruch none.
+ACR adds five more pages in the same frame (`ui/screens/game_options.rs`). A text button
+right on the first heading's line ("Weitere Optionen »", then "Seite 2/6: Grafik »",
+"Seite 3/6: Details »", "Seite 4/6: ACR-Regeln »", "Seite 5/6: Weitere »", "Seite 6/6: Zurück »") turns the pages;
+OK takes the choices of all six, Abbruch none.
 Rows are 27 px apart from the first heading, labels and boxes where the original page has
 them (+76 / +239): headings on its heading rows (203, 257, 365), a combo box on every other
 row, since the frame has the empty boxes (230, 284, 392) and the sliders'
@@ -964,17 +964,19 @@ writes are in
 | 4 | Grafikstufe (nur 3D) | Voreinstellung | Automatisch / Niedrig / Mittel / Hoch / Ultra | `graphics` ([rendering-3d.md](rendering-3d.md) "Graphics presets"); a new choice also sets the single switches |
 | 4 | 3D-Details | Materialdetails | An / Aus | `material_detail` (page 3 is full) |
 | 4 | | Bodenbewuchs | An / Aus | `ground_cover` ([ground.md](ground.md)) |
-| 5 | Realismus (ab nächster Schlacht) | Trefferzonen | Aus (Original) / An: Wunden, Glieder, Verbluten | `hit_locations` |
+| 5 | ACR-Regeln (neue Schlacht) | Trefferzonen | Aus (Original) / An: Wunden, Glieder, Verbluten | `hit_locations` |
 | 5 | Truppen und Gelände | Körperabstand | Aus (Original) / An: Körper brauchen Platz | `body_spacing` |
 | 5 | | Leichenhaufen | Aus (Original) / An: als Hindernis | `corpse_piles` ([simulation.md](simulation.md#corpse-piles-optional-rule-222)) |
 | 5 | | Mörser | Aus (Original) / An: Mörser mit Zielzonen | `mortars` ([simulation.md](simulation.md#mortar-optional-rule-301)) |
 | 5 | Feuer (mit Trefferzonen) | Kugelbrand | Aus (Original) / An: Kugeln setzen in Brand | `cannon_fire` ([simulation.md](simulation.md#shell-fires-256)) |
+| 5 | | Kugeln, Gelände | Aus (Original) / An: Kugeln brechen Bäume | `ball_terrain` (unset: on with the modern controls; written only when the line is changed) |
+| 6 | Befehle (neue Schlacht) | Gruppenbewegung | Aus (Original) / An: alle Formationen | `group_move` (unset: on with the modern controls) |
 
-All but the four rules (page 4, every optional `acr_sim::Rules` flag) take effect at once on OK. The rules are part of the simulation (the
+All but the rules (pages 5 and 6, every optional `acr_sim::Rules` flag) take effect at once on OK. The rules are part of the simulation (the
 setup a replay or savegame hashes): a battle keeps the rules it began with, the new choice
-applies from the next battle (the game setup reads them, `lib.rs`), as page 4's heading
-says. They moved off page 2 when the corpse-piles rule (#222) needed a line and page 2 was
-full; page 2 keeps the battle's looks. The modern controls'
+applies from the next battle (the game setup reads them, `lib.rs`), as the heading of page 5 says. They have pages of their own (#374) since the rules outgrew one page; page 2 keeps the
+battle's looks. A new rule is one `Row::Choice` line in `RULES` or `RULES_MORE` (the UI
+settings that are not rules, such as `center_top_bar`, go on `RULES_MORE` too). The modern controls'
 Ctrl + Space, C switches the free camera for the running battle only
 ([controls.md](controls.md#leader-chords-modern)); OK on these pages sets it back to the
 `Kamera` line. Driver check with

@@ -1,0 +1,23 @@
+{
+  "name": "options_rules_page",
+  "description": "Spieleinstellungen -> the pages of 'Weitere Optionen' up to ACR's rules pages; a click on a label fails when the page lacks it",
+  "steps": [
+    {"cmd": "start", "blank": {"ground": "grass"}},
+    {"cmd": "key", "key": "Escape", "expect": {"screen": "GameMenu"}},
+    {"cmd": "click", "label": "Spieleinstellungen", "expect": {"screen": "GameOptions"}},
+    {"cmd": "click", "label": "Weitere Optionen »"},
+    {"cmd": "click", "label": "Seite 2/6: Grafik »"},
+    {"cmd": "click", "label": "Seite 3/6: Details »"},
+    {"cmd": "click", "label": "Seite 4/6: ACR-Regeln »"},
+    {"cmd": "ui", "expect": [
+      {"path": "ui.widgets.2.label", "eq": "ACR-Regeln (neue Schlacht)"},
+      {"path": "ui.widgets.3.label", "eq": "Trefferzonen"},
+      {"path": "ui.widgets.9.label", "eq": "Kugelbrand"},
+      {"path": "ui.widgets.10.label", "eq": "Kugeln, Gelände"}
+    ]},
+    {"cmd": "click", "label": "Seite 5/6: Weitere »"},
+    {"cmd": "ui", "expect": {"path": "ui.widgets.3.label", "eq": "Gruppenbewegung"}},
+    {"cmd": "click", "label": "Seite 6/6: Zurück »"},
+    {"cmd": "click", "label": "Abbruch", "expect": {"screen": "game"}}
+  ]
+}

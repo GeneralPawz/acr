@@ -5,14 +5,14 @@
 //! `ScrollSpeed = slider + 2`, game mode, resolution and volumes.
 //!
 //! ACR adds four pages in the same frame ("Weitere Optionen", docs/ui.md): the battle's
-//! looks ([`BATTLE`]), the 3D graphics ([`GRAPHICS`], [`DETAILS`]) and the optional realism rules
-//! ([`REALISM`]). The rules go into a new battle's setup only (they are part of the
-//! simulation), which their page's heading says.
+//! looks ([`BATTLE`]), the 3D graphics ([`GRAPHICS`], [`DETAILS`]) and ACR's own rules
+//! ([`RULES`], [`RULES_MORE`]). The rules go into a new battle's setup only (they are part of
+//! the simulation), which their page's heading says.
 
 use super::super::dialog::{Align, CANCEL, Kind, OK, WidgetId};
 use super::super::draw::{Draw, Rect};
 use super::super::graphics::{Graphics, PRESETS};
-use super::super::settings::{CONTROL_CHOICES, CameraMode, Gore, Models, RESOLUTIONS, Settings, Weather};
+use super::super::settings::{CONTROL_CHOICES, CameraMode, Controls, Gore, Models, RESOLUTIONS, Settings, Weather};
 use super::super::{Ctx, Input, Nav, Screen};
 use super::{Menu, font};
 use crate::ui::fonts::FontId;
@@ -29,8 +29,8 @@ const YELLOW: FontId = FontId("YellowFont");
 const ABORT: i32 = 0xff;
 /// `UserParam` of the page switch (ACR).
 const NEXT_PAGE: i32 = 0xfe;
-/// Pages: the original's, [`BATTLE`], [`GRAPHICS`], [`DETAILS`], [`REALISM`].
-const PAGES: usize = 5;
+/// Pages: the original's, [`BATTLE`], [`GRAPHICS`], [`DETAILS`], [`RULES`], [`RULES_MORE`].
+const PAGES: usize = 6;
 
 /// One line of an ACR page: a label and a combo box over a setting.
 struct Choice {
@@ -61,7 +61,7 @@ const ROW_Y: [i32; 10] = [203, 230, 257, 284, 311, 338, 365, 392, 419, 446];
 const BOX_ROWS: [i32; 7] = [230, 284, 311, 338, 392, 419, 446];
 
 /// Page 2: the battle's looks (German like the game's texts, Latin-1), one row per
-/// [`ROW_Y`]; the third group stays empty since the rules moved to [`REALISM`].
+/// [`ROW_Y`]; the third group stays empty since the rules moved to [`RULES`].
 const BATTLE: &[Row] = &[
     Row::Heading(b"Gefecht"),
     Row::Choice(Choice {
@@ -220,11 +220,13 @@ const DETAILS: &[Row] = &[
     }),
 ];
 
-/// Page 5: the optional realism rules (`acr_sim::Rules`), each off as the original plays by
-/// default; one row per [`ROW_Y`].
-const REALISM: &[Row] = &[
+/// Page 5: ACR's own rules (`acr_sim::Rules`), each off as the original plays by default;
+/// one row per [`ROW_Y`]. A new rule is one more `Row::Choice` line in its group here, or on
+/// [`RULES_MORE`] (headings at the frame's heading rows 0, 2 and 6, three boxes after the
+/// second and third).
+const RULES: &[Row] = &[
     // The note "Gelten ab der naechsten Schlacht" is in the heading (#301).
-    Row::Heading(b"Realismus (ab n\xe4chster Schlacht)"),
+    Row::Heading(b"ACR-Regeln (neue Schlacht)"),
     Row::Choice(Choice {
         label: b"Trefferzonen",
         lines: &[b"Aus (Original)", b"An: Wunden, Glieder, Verbluten"],
@@ -260,15 +262,36 @@ const REALISM: &[Row] = &[
         get: |s| on_off(s.cannon_fire),
         set: |s, i| s.cannon_fire = i == 1,
     }),
+    Row::Choice(Choice {
+        // `ball_terrain` (with hit locations): balls break trees and knock stones aside. Unset,
+        // it follows the control scheme; the page writes it only when the line is changed.
+        label: b"Kugeln, Gel\xe4nde",
+        lines: &[b"Aus (Original)", b"An: Kugeln brechen B\xe4ume"],
+        get: |s| on_off(s.ball_terrain.unwrap_or(s.controls == Controls::Modern)),
+        set: |s, i| s.ball_terrain = Some(i == 1),
+    }),
 ];
 
-/// The rows of ACR page `page` (1 to 4).
+/// Page 6: more of ACR's rules, and the settings that are not rules; same layout as [`RULES`].
+const RULES_MORE: &[Row] = &[
+    Row::Heading(b"Befehle (neue Schlacht)"),
+    Row::Choice(Choice {
+        // `group_move`: every selected formation moves, side by side and behind each other.
+        label: b"Gruppenbewegung",
+        lines: &[b"Aus (Original)", b"An: alle Formationen"],
+        get: |s| on_off(s.group_move()),
+        set: |s, i| s.group_move = Some(i == 1),
+    }),
+];
+
+/// The rows of ACR page `page` (1 to 5).
 fn rows(page: usize) -> &'static [Row] {
     match page {
         1 => BATTLE,
         2 => GRAPHICS,
         3 => DETAILS,
-        _ => REALISM,
+        4 => RULES,
+        _ => RULES_MORE,
     }
 }
 
@@ -306,7 +329,11 @@ impl GameOptions {
         if self.page > 0 {
             let mut settings = self.settings.clone();
             for &(row, w) in &self.choices {
-                if let Row::Choice(c) = &rows(self.page)[row] {
+                // Only a changed line is written: a setting that follows the control scheme
+                // (`group_move`, `ball_terrain`) stays unset otherwise.
+                if let Row::Choice(c) = &rows(self.page)[row]
+                    && d.combo(w).cur != (c.get)(&self.settings)
+                {
                     (c.set)(&mut settings, d.combo(w).cur);
                 }
             }
@@ -350,10 +377,11 @@ impl GameOptions {
         // ACR: the page switch, right-aligned on the first heading's line.
         let label: &[u8] = match self.page {
             0 => b"Weitere Optionen \xbb",
-            1 => b"Seite 2/5: Grafik \xbb",
-            2 => b"Seite 3/5: Details \xbb",
-            3 => b"Seite 4/5: Realismus \xbb",
-            _ => b"Seite 5/5: Zur\xfcck \xbb",
+            1 => b"Seite 2/6: Grafik \xbb",
+            2 => b"Seite 3/6: Details \xbb",
+            3 => b"Seite 4/6: ACR-Regeln \xbb",
+            4 => b"Seite 5/6: Weitere \xbb",
+            _ => b"Seite 6/6: Zur\xfcck \xbb",
         };
         let width = ctx.fonts.width(ctx.lib, font::F18Y3, label);
         m.entry(ctx, ox + 534 - width, oy + 203, label, [font::F18W, font::F18Y3, font::F18Y3], Align::Left, NEXT_PAGE);
@@ -500,28 +528,39 @@ mod tests {
         // Every row has its place; the frame's boxes and tracks are covered (by a choice, or
         // a plain strip after a short page's last row), headings free.
         assert!(!BOX_ROWS.contains(&PLAIN_ROW));
-        for page in [BATTLE, GRAPHICS, DETAILS, REALISM] {
+        for page in [BATTLE, GRAPHICS, DETAILS, RULES, RULES_MORE] {
             assert!(page.len() <= ROW_Y.len());
             for (row, y) in page.iter().zip(ROW_Y) {
                 assert_eq!(BOX_ROWS.contains(&y), !matches!(row, Row::Heading(_)), "row {y}");
             }
         }
-        // The optional rules (`acr_sim::Rules`) are all on the realism page, off = original.
+        // ACR's rules (`acr_sim::Rules`) are all on the rules pages, off = original.
         let labels = |page: &[Row]| -> Vec<&[u8]> {
             page.iter().filter_map(|r| if let Row::Choice(c) = r { Some(c.label) } else { None }).collect()
         };
         assert_eq!(
-            labels(REALISM),
-            [&b"Trefferzonen"[..], b"K\xf6rperabstand", b"Leichenhaufen", b"M\xf6rser", b"Kugelbrand"]
+            labels(RULES),
+            [
+                &b"Trefferzonen"[..],
+                b"K\xf6rperabstand",
+                b"Leichenhaufen",
+                b"M\xf6rser",
+                b"Kugelbrand",
+                b"Kugeln, Gel\xe4nde"
+            ]
         );
+        assert_eq!(labels(RULES_MORE), [&b"Gruppenbewegung"[..]]);
         assert_eq!(labels(BATTLE), [&b"Blutdarstellung"[..], b"Verwesung", b"Liegezeit", b"Schlachtfeldspuren"]);
         let mut s = Settings::default();
-        for row in REALISM {
+        for row in RULES.iter().chain(RULES_MORE) {
             let Row::Choice(c) = row else { continue };
             assert_eq!(c.lines[0], b"Aus (Original)");
+            (c.set)(&mut s, 0);
             assert_eq!((c.get)(&s), 0);
             (c.set)(&mut s, 1);
+            assert_eq!((c.get)(&s), 1);
         }
         assert!(s.hit_locations && s.body_spacing && s.corpse_piles && s.mortars && s.cannon_fire);
+        assert!(s.ball_terrain == Some(true) && s.group_move());
     }
 }
