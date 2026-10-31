@@ -113,6 +113,14 @@ const BATTLE: &[Row] = &[
         get: |s| on_off(s.marks_keep),
         set: |s, i| s.marks_keep = i == 1,
     }),
+    Row::Heading(b"Anzeige"),
+    Row::Choice(Choice {
+        // `center_top_bar` (#360): a UI setting, not a rule.
+        label: b"Leiste mittig",
+        lines: &[b"Aus (Original)", b"An: Leiste mittig"],
+        get: |s| on_off(s.center_top_bar),
+        set: |s, i| s.center_top_bar = i == 1,
+    }),
 ];
 
 /// Page 3: the 3D graphics, one row per [`ROW_Y`].
@@ -583,7 +591,10 @@ mod tests {
             labels(RULES_MORE),
             [&b"Gruppenbewegung"[..], b"Formationsangriff", b"Blasrohrbrand", b"Gezieltes Feuer", b"Tiere geben auf"]
         );
-        assert_eq!(labels(BATTLE), [&b"Blutdarstellung"[..], b"Verwesung", b"Liegezeit", b"Schlachtfeldspuren"]);
+        assert_eq!(
+            labels(BATTLE),
+            [&b"Blutdarstellung"[..], b"Verwesung", b"Liegezeit", b"Schlachtfeldspuren", b"Leiste mittig"]
+        );
         let mut s = Settings::default();
         for row in RULES.iter().chain(RULES_MORE) {
             let Row::Choice(c) = row else { continue };
