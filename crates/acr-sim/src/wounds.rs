@@ -40,6 +40,10 @@ pub struct Rules {
     /// Cannonballs break trees and knock stones aside (with [`Rules::hit_locations`] on):
     /// [`crate::ball_terrain`], `docs/simulation.md`, "Balls against trees and stones".
     pub ball_terrain: bool,
+    /// Animals give up a chase when the target gets too far from where it began and walk
+    /// back ([`crate::leash`], `docs/simulation.md`, "Animals give up"). The original chases
+    /// until the target is dead (AttackObjLink 0x51bcaf).
+    pub animal_give_up: bool,
 }
 
 impl std::hash::Hash for Rules {
@@ -60,6 +64,9 @@ impl std::hash::Hash for Rules {
         }
         if self.ball_terrain {
             (6u8, self.ball_terrain).hash(state);
+        }
+        if self.animal_give_up {
+            (9u8, self.animal_give_up).hash(state);
         }
     }
 }

@@ -55,6 +55,7 @@ const ON: Rules = Rules {
     group_move: false,
     cannon_fire: false,
     ball_terrain: false,
+    animal_give_up: false,
 };
 
 fn world() -> (World, usize) {

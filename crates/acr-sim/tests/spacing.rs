@@ -27,6 +27,7 @@ const ON: Rules = Rules {
     group_move: false,
     cannon_fire: false,
     ball_terrain: false,
+    animal_give_up: false,
 };
 /// Two men's radii, 1/16 px (2 × 0.3 m at 30 px per metre).
 const TWO_MEN: i32 = 2 * 144;
@@ -140,6 +141,7 @@ fn with_the_rule_off_nothing_changes() {
         group_move: false,
         cannon_fire: false,
         ball_terrain: false,
+        animal_give_up: false,
     });
     assert_eq!(off, crowd(Rules::default()));
     assert_ne!(off.3, crowd(ON).3);

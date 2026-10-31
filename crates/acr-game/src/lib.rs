@@ -581,6 +581,10 @@ impl Game {
         if self.ui.settings().cannon_fire {
             setup.rules.cannon_fire = true;
         }
+        // And `animal_give_up=on` (#355, docs/simulation.md "Animals give up").
+        if self.ui.settings().animal_give_up {
+            setup.rules.animal_give_up = true;
+        }
         // And `ball_terrain` (with hit locations, on by default with the modern controls).
         if self.ui.settings().ball_terrain() {
             setup.rules.ball_terrain = true;
