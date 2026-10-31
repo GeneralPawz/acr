@@ -217,7 +217,7 @@ struct Globals {
 
 struct WaterMap {
     /// Which depth grid was uploaded (its size and address).
-    key: (usize, usize, usize),
+    key: (usize, usize, usize, u64),
     /// The map's wave spectrum ([`seed`]).
     waves: Waves,
     /// World size of the grid (px).
@@ -331,7 +331,7 @@ impl WaterRenderer {
             self.map = None;
             return false;
         };
-        let key = (w, h, cells.as_ptr() as usize);
+        let key = (w, h, cells.as_ptr() as usize, data.water_revision());
         if self.map.as_ref().is_some_and(|m| m.key == key) {
             return true;
         }

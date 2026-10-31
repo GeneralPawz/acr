@@ -139,6 +139,12 @@ impl MapModels {
         self.table.values().map(|c| c.model.as_str()).collect()
     }
 
+    /// Places the models again at the next [`MapModels::place`] (the ground under them changed).
+    #[allow(dead_code)] // used by the editor's terrain tools (#430)
+    pub fn invalidate(&mut self) {
+        self.key = None;
+    }
+
     /// Nothing placed, every sprite drawn.
     pub fn clear(&mut self) {
         self.placed.clear();
