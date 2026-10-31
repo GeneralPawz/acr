@@ -682,6 +682,30 @@ impl Agony {
 mod tests {
     use super::*;
 
+    /// The deep, slowed-down moans sounded like a zombie (#344): no growl or roar sample among
+    /// the agony voices, and none lowered by more than 10 % (under two semitones), as
+    /// `assets/sounds/CREDITS.txt` records each one's speed.
+    #[test]
+    fn agony_voices_are_human_pitched() {
+        for (_, names) in GROUPS {
+            for name in *names {
+                assert!(!name.contains("growl") && !name.contains("roar"), "{name} is not a human voice");
+            }
+        }
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/sounds/CREDITS.txt");
+        let credits = std::fs::read_to_string(path).unwrap();
+        let mut factors = 0;
+        for (i, m) in credits.match_indices("slowed to ") {
+            let rest = &credits[i + m.len()..];
+            let end = rest.find(|c: char| !c.is_ascii_digit() && c != '.').unwrap_or(rest.len());
+            let f: f32 = rest[..end].parse().unwrap();
+            assert!(f >= 0.9, "a sample slowed to {f} sounds like a growl");
+            factors += 1;
+        }
+        assert!(factors > 0, "the speed notes in CREDITS.txt are not found");
+        assert!(credits.contains("moan1-5.wav") && !credits.contains("0.65-0.8 (lower)"));
+    }
+
     const VIEW: [f32; 4] = [1000.0, 500.0, 1024.0, 768.0];
 
     fn kill(tick: u64, victim: u32, x: i32, cause: DeathCause) -> HitRecord {

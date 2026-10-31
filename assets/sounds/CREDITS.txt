@@ -19,7 +19,9 @@ scream1-6.wav     HaelDB, "Male Grunt/Yelling sounds" (as above, CC0 option), ag
                   yell1.wav, 3yell13.wav, 3yell16.wav, 1yell3.wav, 2yell6.wav, 3yell6.wav,
                   mono 22050 Hz 8-bit, trimmed of silence, cut to 3 s, faded out.
 moan1-5.wav       the same pack: 3grunt1.wav, 3grunt2.wav, 3grunt6.wav, 3grunt3.wav,
-                  1yell13.wav, slowed to 0.65-0.8 (lower), mono 22050 Hz 8-bit, faded out.
+                  1yell13.wav, at natural pitch (until #344 they were pitched down by 0.65-0.8,
+                  which made them a zombie-like growl), mono 22050 Hz 8-bit, cut to 2.5 s,
+                  faded out.
 gasp1-3.wav       the same pack: 3grunt4.wav, 3grunt5.wav, 3grunt3.wav, slowed to 0.9,
                   mono 22050 Hz 8-bit.
 fear1-7.wav       the same pack: 1yell11.wav, 2yell4.wav, 2yell5.wav, 3yell14.wav,
