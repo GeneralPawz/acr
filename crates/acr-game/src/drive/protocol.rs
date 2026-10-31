@@ -268,6 +268,9 @@ pub enum Request {
     /// `{"cmd": "sea_state", "mode": "storm"}`: calm or storm over the `sea_state` setting
     /// (waves, sky, rain and wind); without `mode` back to the setting.
     SeaState(Option<acr_render::water::SeaState>),
+    /// `{"cmd": "top_bar", "mode": "touch"}`: the top bar shown, over the `top_bar` setting;
+    /// answers the buttons' and the panel's window rects and whether the panel is open.
+    TopBar(crate::ui::settings::TopBar),
     /// The fog of war on or off (off: the whole map revealed, as on the blank field).
     Fog(bool),
     /// The map's trees and stones as models switched on or off over `map_models`.
@@ -671,6 +674,10 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
             Some(m) => Some(acr_render::water::SeaState::parse(&m).ok_or(format!("sea_state: unknown mode {m:?}"))?),
             None => None,
         }),
+        "top_bar" => Request::TopBar(match string(&v, "mode") {
+            Some(m) => crate::ui::settings::TopBar::parse(&m).ok_or(format!("top_bar: unknown mode {m:?}"))?,
+            None => return Err("top_bar: missing \"mode\"".into()),
+        }),
         "fog" => Request::Fog(v.get("on").and_then(Value::as_bool).unwrap_or(true)),
         "map_models" => Request::MapModels(v.get("on").and_then(Value::as_bool).unwrap_or(true)),
         "props" => Request::Props {
@@ -742,6 +749,15 @@ pub fn pick_label<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_the_top_bar_request() {
+        use crate::ui::settings::TopBar;
+        assert_eq!(parse(r#"{"cmd": "top_bar", "mode": "touch"}"#).unwrap().1, Request::TopBar(TopBar::Touch));
+        assert_eq!(parse(r#"{"cmd": "top_bar", "mode": "classic"}"#).unwrap().1, Request::TopBar(TopBar::Classic));
+        assert!(parse(r#"{"cmd": "top_bar", "mode": "tiny"}"#).is_err());
+        assert!(parse(r#"{"cmd": "top_bar"}"#).is_err());
+    }
 
     #[test]
     fn parses_clicks_by_label_id_and_position() {

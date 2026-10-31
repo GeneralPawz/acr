@@ -163,6 +163,26 @@ and the bar (781 wide together) are centred on the screen and the filler tiles r
 whole width. Nothing else moves. It is a UI setting, not a rule: it is not in the Rules hash
 or the savegames.
 
+#### Touch top bar
+
+`top_bar=classic|touch` in `settings.txt` (no options page; classic where the key is absent,
+touch on Android, `Settings::top_bar_default`) replaces the resource bar and the "M" plaque
+by two buttons (`hud/touch.rs`): **M** at the top left opens the same drop-down as the
+classic "M" plaque (game menu, unit and game info, minimap, zoom, surrender, restart, ...),
+anchored under the button, left aligned, with rows as high as the button (shrunk to fit the
+screen, never below 24; the 24-pixel frame sits in the middle of a taller row), so nothing
+is unreachable in touch mode; a second tap on M closes it. The gold icon at the top right toggles a compact panel under
+it with the six amounts, each beside its icon (the classic bar's own `ResPanel` frame 0
+sliced, same values and `YellowFont`, food and gold in the icons' order); a second tap on
+the button closes it. The buttons are drawn as the drop-down's `Border` box. They are at
+least 48 density-independent pixels high (1.5 times as wide): the layout takes the window's
+scale factor (winit `scale_factor`) over the canvas scale, so a phone (1440 x 3168, scale
+3.5, canvas scale 1.875) gets 90 canvas pixels, about 9 mm, and a 1584 x 720 window 52. The
+area the classic bar covered is map: only the two buttons and the open panel take clicks, and
+the hint rects of the resource values are off. It is a UI setting, not a rule: not in the
+Rules hash or the savegames. The e2e driver switches it with
+`{"cmd": "top_bar", "mode": "touch"}` (docs/testing.md).
+
 ### Single missions (0x5d66b0) and campaign missions (0x5c4e30)
 
 Missions come from `Missions\Missions.txt` (0x569c27: id, name, script DLL, map,

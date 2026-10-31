@@ -109,6 +109,11 @@ pub struct Settings {
     /// resource bar and the "M" plaque sit centred instead of at the right edge, where the
     /// original anchors them (docs/ui.md). A UI setting: not in the rules or the savegames.
     pub center_top_bar: bool,
+    /// ACR: `top_bar=classic|touch` (classic where the key is absent, touch on Android, see
+    /// [`Settings::top_bar_default`]): `touch` replaces the resource bar and the "M" plaque by
+    /// two finger-sized buttons, Menu and Resources (docs/ui.md "Touch top bar"). A UI
+    /// setting: not in the rules or the savegames.
+    pub top_bar: TopBar,
     /// ACR: `decay_stain=on|off`: a decaying corpse's fluids soak into the ground under it
     /// (a cadaver decomposition island: a dark, greasy stain drying to brown, the grass
     /// dying around it; docs/rendering-3d.md). `None` (not in the file): on with
@@ -134,6 +139,32 @@ pub struct Settings {
     /// `ui/graphics.rs`, docs/rendering-3d.md "Graphics presets"): the frame's limits, and
     /// the single switches once when chosen.
     pub graphics: Graphics,
+}
+
+/// Which top bar a game shows (`top_bar` in `settings.txt`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TopBar {
+    /// The original's resource bar and "M" plaque.
+    Classic,
+    /// Two finger-sized buttons: Menu, and Resources with a compact panel.
+    Touch,
+}
+
+impl TopBar {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "classic" => Some(Self::Classic),
+            "touch" => Some(Self::Touch),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Classic => "classic",
+            Self::Touch => "touch",
+        }
+    }
 }
 
 pub use super::graphics::Graphics;
@@ -231,6 +262,7 @@ impl Default for Settings {
             marks_keep: false,
             aim_guides: true,
             center_top_bar: false,
+            top_bar: Settings::top_bar_default(),
             weather: Weather::Off,
             sea_state: SeaState::Calm,
             graphics: Graphics::Auto,
@@ -239,6 +271,11 @@ impl Default for Settings {
 }
 
 impl Settings {
+    /// The top bar where `top_bar` is absent from the file: touch on Android, classic elsewhere.
+    pub fn top_bar_default() -> TopBar {
+        if cfg!(target_os = "android") { TopBar::Touch } else { TopBar::Classic }
+    }
+
     /// Whether decaying corpses stain the ground (`decay_stain`, by default with `gore=full`).
     pub fn decay_stain(&self) -> bool {
         self.decay_stain.unwrap_or(self.gore == Gore::Full)
@@ -311,7 +348,7 @@ impl Settings {
             "sound_volume={}\nmusic_volume={}\nmusic_mode={}\ngame_mode={}\nscroll_speed={}\nframe_time={}\n\
              resolution={}\nrecord={}\nrecord_file={hex}\ncontrols={controls}\nedge_scroll={}\n\
              models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\ncorpse_decay={}\nhit_locations={}\nbody_spacing={}\nmortars={}\ncorpse_piles={}\ncannon_fire={}\nformation_attack={}\nanimal_give_up={}\ndart_fire={}\naimed_fire={}\nshadows={}\nlod={}\nmaterial_detail={}\nwind={}\nmap_models={}\nwater={}\n\
-             ground={}\nground_cover={}\nbattlefield_marks={}\nweather={}\nsea_state={}\naim_guides={}\ncenter_top_bar={}\ngraphics={}\n{}{}{}",
+             ground={}\nground_cover={}\nbattlefield_marks={}\nweather={}\nsea_state={}\naim_guides={}\ncenter_top_bar={}\ntop_bar={}\ngraphics={}\n{}{}{}",
             self.sound_volume,
             self.music_volume,
             self.music_mode,
@@ -345,6 +382,7 @@ impl Settings {
             self.sea_state.name(),
             if self.aim_guides { "on" } else { "off" },
             if self.center_top_bar { "on" } else { "off" },
+            self.top_bar.name(),
             self.graphics.name(),
             match self.decay_stain {
                 Some(true) =>
@@ -446,6 +484,7 @@ impl Settings {
                 "battlefield_marks" => s.marks_keep = value == "keep",
                 "aim_guides" => s.aim_guides = value != "off",
                 "center_top_bar" => s.center_top_bar = value == "on",
+                "top_bar" => s.top_bar = TopBar::parse(value).unwrap_or_else(Settings::top_bar_default),
                 "weather" => s.weather = Weather::parse(value).unwrap_or_default(),
                 "sea_state" => s.sea_state = SeaState::parse(value).unwrap_or_default(),
                 "graphics" => s.graphics = Graphics::parse(value).unwrap_or_default(),
@@ -531,6 +570,7 @@ mod tests {
             marks_keep: true,
             aim_guides: false,
             center_top_bar: true,
+            top_bar: TopBar::Touch,
             weather: Weather::Snow,
             sea_state: SeaState::Storm,
             graphics: Graphics::Medium,
@@ -563,6 +603,12 @@ group_move=off"
         );
         assert!(Settings::decode("group_move=on").group_move());
         assert_eq!(Settings::decode(""), Settings::default());
+        // `top_bar`: absent or unknown reads as the platform default.
+        assert_eq!(Settings::decode("").top_bar, Settings::top_bar_default());
+        assert_eq!(Settings::decode("top_bar=touch").top_bar, TopBar::Touch);
+        assert_eq!(Settings::decode("top_bar=classic").top_bar, TopBar::Classic);
+        assert_eq!(Settings::decode("top_bar=huge").top_bar, Settings::top_bar_default());
+        assert!(Settings { top_bar: TopBar::Touch, ..Settings::default() }.encode().contains("top_bar=touch\n"));
         assert_eq!(Settings::decode("weather=fog").weather, Weather::Fog);
         assert_eq!(Settings::decode("weather=hail").weather, Weather::Off);
         assert_eq!(Settings::decode("sea_state=storm").sea_state, SeaState::Storm);

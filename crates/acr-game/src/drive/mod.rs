@@ -957,6 +957,12 @@ impl Driver {
                 job.steps.push_back(Step::Frame);
                 Ok(true)
             }
+            Request::TopBar(mode) => {
+                let Mode::InGame(g) = &mut game.mode else { return Err("no game".into()) };
+                job.reply.insert("top_bar".into(), g.set_top_bar(mode));
+                job.steps.push_back(Step::Frame);
+                Ok(true)
+            }
             Request::Fog(on) => {
                 let Mode::InGame(g) = &mut game.mode else { return Err("no game".into()) };
                 g.set_open_fog(!on);

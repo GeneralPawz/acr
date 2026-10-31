@@ -13,6 +13,7 @@ pub mod data;
 pub mod minimap;
 pub mod panels;
 pub mod produce;
+pub mod touch;
 
 use std::rc::Rc;
 
@@ -21,6 +22,7 @@ use acr_formats::Palette;
 use crate::ui::Ctx;
 use crate::ui::draw::{Draw, GAME_PALETTE, Rect};
 use crate::ui::fonts::FontId;
+use crate::ui::settings::TopBar;
 use data::HudData;
 use minimap::{Minimap, Placement};
 
@@ -76,6 +78,16 @@ const RES_PANEL: i32 = 716;
 /// Distance of the resource values (right aligned) and their spacing.
 const RES_TEXT_X: i32 = 0x77;
 const RES_STEP: i32 = 110;
+/// The first resource icon in `ResPanel` frame 0 (`x`, `y`, width, height; the next ones lie
+/// `RES_STEP` apart): the touch top bar cuts its icons from the same sprite.
+const TOUCH_ICON_X: i32 = 28;
+const TOUCH_ICON_Y: i32 = 4;
+const TOUCH_ICON_W: i32 = 32;
+const TOUCH_ICON_H: i32 = 34;
+/// The slot of the icon on the Resources button: gold.
+const TOUCH_FACE_SLOT: i32 = 3;
+/// Height of a line of `YellowFont`/`WhiteFont` text, for centring it.
+const TEXT_HEIGHT: i32 = 20;
 
 /// Palette indices (palette set 0).
 pub mod color {
@@ -410,6 +422,12 @@ fn top_bar_dx(screen: [i32; 2], center: bool) -> i32 {
 }
 
 pub struct Hud {
+    /// The top bar shown: the original's or the touch buttons (`top_bar` in `settings.txt`).
+    pub top_bar: TopBar,
+    /// Canvas pixels one density-independent pixel covers; sizes the touch buttons.
+    density: f32,
+    /// The touch top bar's resource panel is open.
+    resources_open: bool,
     /// The top bar is centred on a wide screen (`center_top_bar` in `settings.txt`).
     pub center_top_bar: bool,
     /// The layout size (`RealLx`, `RealLy`), at least [`SCREEN`].
@@ -444,6 +462,9 @@ pub struct Hud {
 impl Default for Hud {
     fn default() -> Self {
         Self {
+            top_bar: TopBar::Classic,
+            density: 1.0,
+            resources_open: false,
             center_top_bar: false,
             screen: SCREEN,
             data: None,
@@ -505,6 +526,47 @@ impl Hud {
 
     pub fn screen(&self) -> [i32; 2] {
         self.screen
+    }
+
+    /// Sets how many canvas pixels one density-independent pixel covers (the window's scale
+    /// factor over the canvas scale), which sizes the touch top bar.
+    pub fn set_density(&mut self, density: f32) {
+        self.density = density;
+    }
+
+    fn touch(&self) -> bool {
+        self.top_bar == TopBar::Touch
+    }
+
+    /// The touch top bar's buttons and panel.
+    pub fn touch_layout(&self) -> touch::Layout {
+        touch::Layout::new(self.screen, self.density)
+    }
+
+    /// A press at `p` on the touch top bar: Menu opens the "M" drop-down (closes it when it
+    /// was `was_open`, which the press has just shut), Resources toggles the panel, the open
+    /// panel swallows the click; `None` elsewhere.
+    fn touch_press(&mut self, p: [f32; 2], was_open: bool) -> Option<HudEvent> {
+        let layout = self.touch_layout();
+        if layout.menu.contains(p) {
+            self.dropdown = !was_open;
+            return Some(HudEvent::Used);
+        }
+        if layout.resources.contains(p) {
+            self.resources_open = !self.resources_open;
+            return Some(HudEvent::Used);
+        }
+        (self.resources_open && layout.panel.contains(p)).then_some(HudEvent::Used)
+    }
+
+    /// The "M" drop-down is open.
+    pub fn dropdown_open(&self) -> bool {
+        self.dropdown
+    }
+
+    /// The touch top bar's resource panel is open.
+    pub fn resources_open(&self) -> bool {
+        self.resources_open
     }
 
     fn top_dx(&self) -> i32 {
@@ -627,10 +689,19 @@ impl Hud {
         let entries = menu_entries(view);
         let width = entries.iter().map(|e| ctx.fonts.width(ctx.lib, font::WHITE, ctx.texts.get(e.text(self)))).max();
         let width = width.unwrap_or(0) + 24;
-        let (bx, _) = self.menu_button();
-        let x = bx + 33 - width / 2;
+        // Classic: centred under the "M" plaque, rows 24 high from y = 60. Touch: under the
+        // Menu button, left aligned, rows as high as the button, fitted into the screen.
+        let (x, y0, row) = if self.touch() {
+            let l = self.touch_layout();
+            let gap = l.menu.y0;
+            let fit = (self.screen[1] - l.menu.y1 - 2 * gap) / entries.len().max(1) as i32;
+            (l.menu.x0, l.menu.y1 + gap, l.menu.height().min(fit).max(24))
+        } else {
+            let (bx, _) = self.menu_button();
+            (bx + 33 - width / 2, 60, 24)
+        };
         let rows =
-            entries.into_iter().enumerate().map(|(i, e)| (e, Rect::new(x, 60 + 24 * i as i32, width, 24))).collect();
+            entries.into_iter().enumerate().map(|(i, e)| (e, Rect::new(x, y0 + row * i as i32, width, row))).collect();
         (width, rows)
     }
 
@@ -666,13 +737,19 @@ impl Hud {
         if self.panel != Panel::None && panels::covers(self.panel_point(p)) {
             return true;
         }
-        let (bx, by) = self.menu_button();
-        let dx = self.top_dx();
-        let x0 = (self.screen[0] - RES_PANEL + dx) as f32;
-        // Centred, the bar ends before the screen's edge; anchored, it runs to it.
-        let x1 = if dx == 0 { f32::INFINITY } else { x0 + RES_PANEL as f32 };
-        if Rect::new(bx, by, 67, 42).contains(p) || (p[1] < 42.0 && p[0] >= x0 && p[0] < x1) {
-            return true;
+        if self.touch() {
+            if self.touch_layout().covers(p, self.resources_open) {
+                return true;
+            }
+        } else {
+            let (bx, by) = self.menu_button();
+            let dx = self.top_dx();
+            let x0 = (self.screen[0] - RES_PANEL + dx) as f32;
+            // Centred, the bar ends before the screen's edge; anchored, it runs to it.
+            let x1 = if dx == 0 { f32::INFINITY } else { x0 + RES_PANEL as f32 };
+            if Rect::new(bx, by, 67, 42).contains(p) || (p[1] < 42.0 && p[0] >= x0 && p[0] < x1) {
+                return true;
+            }
         }
         if Self::icon_boxes(self.screen, &view.icons).iter().any(|(r, _)| r.contains(p)) {
             return true;
@@ -697,6 +774,7 @@ impl Hud {
     /// Left button pressed at canvas point `p`.
     pub fn press(&mut self, ctx: &Ctx, view: &View, p: [f32; 2]) -> HudEvent {
         self.mouse = Some(p);
+        let was_open = self.dropdown;
         if self.dropdown {
             self.dropdown = false;
             // The click callback 0x4c6550.
@@ -747,11 +825,17 @@ impl Hud {
             }
             return HudEvent::Used;
         }
-        let (bx, _) = self.menu_button();
-        let [x, y] = p;
-        if x > (bx + 23) as f32 && x < (bx + 44) as f32 && y > 8.0 && y < 26.0 {
-            self.dropdown = true;
-            return HudEvent::Used;
+        if self.touch() {
+            if let Some(event) = self.touch_press(p, was_open) {
+                return event;
+            }
+        } else {
+            let (bx, _) = self.menu_button();
+            let [x, y] = p;
+            if x > (bx + 23) as f32 && x < (bx + 44) as f32 && y > 8.0 && y < 26.0 {
+                self.dropdown = true;
+                return HudEvent::Used;
+            }
         }
         if let Some(icon) = Self::army_icons(view).find(|i| Self::army_rect(i.slot).contains(p)) {
             self.pressed = true;
@@ -871,7 +955,11 @@ impl Hud {
         if let Some(market) = view.market {
             draw_market(ctx, market, screen, out);
         }
-        draw_resources(ctx, view, screen, self.top_dx(), out);
+        if self.touch() {
+            self.draw_touch_bar(ctx, view, out);
+        } else {
+            draw_resources(ctx, view, screen, self.top_dx(), out);
+        }
         if self.dropdown {
             self.draw_dropdown(ctx, view, out);
         }
@@ -923,15 +1011,79 @@ impl Hud {
             let hover = self.mouse.is_some_and(|m| r.contains(m));
             // `addGP_TextButtonLimited(.., Border, 74 + i % 3, 77 + i % 3, width, WhiteFont, YellowFont)`.
             let frame = if hover { 77 + i % 3 } else { 74 + i % 3 };
-            // The frame repeats along the row (`GP_TextButton` draw 0x46ef12).
+            // The frame repeats along the row (`GP_TextButton` draw 0x46ef12); a taller touch
+            // row keeps its 24-pixel frame in the middle.
             let step = ctx.lib.frame_size(gp::BORDER, frame)[0].max(1);
+            let fy = r.y0 + (r.height() - 24) / 2;
+            if r.height() > 24 {
+                out.push(Draw::fill([0, 0, 0, 160], *r));
+            }
             for k in 0..(r.width() + step - 1) / step {
-                out.push(Draw::game_frame(gp::BORDER, frame, r.x0 + k * step, r.y0, 0).clipped(*r));
+                out.push(Draw::game_frame(gp::BORDER, frame, r.x0 + k * step, fy, 0).clipped(Rect {
+                    y0: fy,
+                    y1: fy + 24,
+                    ..*r
+                }));
             }
             let text = ctx.texts.get(entry.text(self));
             let f = if hover { font::WHITE } else { font::YELLOW };
             let w = ctx.fonts.width(ctx.lib, f, text);
-            out.push(Draw::game_text(f, text, r.x0 + (r.width() - w) / 2, r.y0 + 2));
+            out.push(Draw::game_text(f, text, r.x0 + (r.width() - w) / 2, fy + 2));
+        }
+    }
+
+    /// The touch top bar: the Menu and Resources buttons in the dropdown's box frame and
+    /// fonts, and under Resources the panel of the six amounts while it is open.
+    fn draw_touch_bar(&self, ctx: &Ctx, view: &View, out: &mut Vec<Draw>) {
+        let layout = self.touch_layout();
+        let hover = |r: Rect| self.mouse.is_some_and(|m| r.contains(m));
+        let button = |out: &mut Vec<Draw>, r: Rect, text: &[u8], lit: bool| {
+            out.push(Draw::fill([0, 0, 0, 160], r));
+            border(ctx, out, r.x0, r.y0, r.x1 - 1, r.y1 - 1, BOX_CORNERS);
+            let f = if lit { font::WHITE } else { font::YELLOW };
+            let w = ctx.fonts.width(ctx.lib, f, text);
+            out.push(Draw::game_text(f, text, r.x0 + (r.width() - w) / 2, r.y0 + (r.height() - TEXT_HEIGHT) / 2));
+        };
+        // The plaque's own "M": the game menu's name does not fit a button.
+        button(out, layout.menu, b"M", hover(layout.menu));
+        button(out, layout.resources, b"", hover(layout.resources) || self.resources_open);
+        let r = layout.resources;
+        let face = Rect::new(
+            r.x0 + (r.width() - TOUCH_ICON_W) / 2,
+            r.y0 + (r.height() - TOUCH_ICON_H) / 2,
+            TOUCH_ICON_W,
+            TOUCH_ICON_H,
+        );
+        let from = TOUCH_FACE_SLOT * RES_STEP + TOUCH_ICON_X;
+        out.push(Draw::game_frame(gp::RESPANEL, 0, face.x0 - from, face.y0 - TOUCH_ICON_Y, 0).clipped(face));
+        if !self.resources_open {
+            return;
+        }
+        let panel = layout.panel;
+        out.push(Draw::fill([0, 0, 0, 200], panel));
+        border(ctx, out, panel.x0, panel.y0, panel.x1 - 1, panel.y1 - 1, BOX_CORNERS);
+        for slot in 0..touch::ROWS {
+            let r = layout.row_rect(slot);
+            // The classic bar's values are in `FOOD`, `GOLD` swapped order (0x4ece10).
+            let value = view.resources[match slot {
+                1 => 3,
+                3 => 1,
+                s => s,
+            }];
+            let lot;
+            let text: &[u8] = if value >= 10_000_000 {
+                ctx.texts.get("RES_LOT_MONEY")
+            } else {
+                lot = value.to_string();
+                lot.as_bytes()
+            };
+            // The icon is the classic bar's own: its slice of `ResPanel` frame 0.
+            let iy = r.y0 + (r.height() - TOUCH_ICON_H) / 2;
+            let from = slot as i32 * RES_STEP + TOUCH_ICON_X;
+            let dest = Rect::new(r.x0, iy, TOUCH_ICON_W, TOUCH_ICON_H);
+            out.push(Draw::game_frame(gp::RESPANEL, 0, r.x0 - from, iy - TOUCH_ICON_Y, 0).clipped(dest));
+            let w = ctx.fonts.width(ctx.lib, font::YELLOW, text);
+            out.push(Draw::game_text(font::YELLOW, text, r.x1 - w, r.y0 + (r.height() - TEXT_HEIGHT) / 2));
         }
     }
 
@@ -939,7 +1091,7 @@ impl Hud {
     fn draw_hint(&self, ctx: &Ctx, view: &View, palette: &Palette, out: &mut Vec<Draw>) {
         let Some(m) = self.mouse else { return };
         let mut hint: Option<&[u8]> = None;
-        for (i, id) in RES_HINTS.iter().enumerate() {
+        for (i, id) in RES_HINTS.iter().enumerate().filter(|_| !self.touch()) {
             let mut r = res_hint_rect(self.screen, i);
             (r.x0, r.x1) = (r.x0 + self.top_dx(), r.x1 + self.top_dx());
             if r.contains(m) {
@@ -1409,6 +1561,36 @@ mod tests {
             assert!((left - (w - left - TOP_GROUP)).abs() <= 1);
             assert_eq!(hud.top_dx(), dx);
         }
+    }
+
+    /// `top_bar=touch`: Menu opens the game menu, Resources toggles the panel (a second tap
+    /// closes it), the open panel takes its clicks, and the old bar's area is map.
+    #[test]
+    fn touch_bar_presses() {
+        let mut hud = Hud { top_bar: TopBar::Touch, ..Hud::default() };
+        hud.set_screen([1690, 768]);
+        hud.set_density(3.5 / 1.875);
+        let l = hud.touch_layout();
+        let centre = |r: Rect| [((r.x0 + r.x1) / 2) as f32, ((r.y0 + r.y1) / 2) as f32];
+        assert!(!hud.resources_open());
+        assert!(matches!(hud.touch_press(centre(l.menu), false), Some(HudEvent::Used)));
+        assert!(hud.dropdown, "Menu opens the M drop-down");
+        // The press that follows shuts it first; a second tap on Menu leaves it shut.
+        hud.dropdown = false;
+        assert!(matches!(hud.touch_press(centre(l.menu), true), Some(HudEvent::Used)));
+        assert!(!hud.dropdown);
+        assert!(hud.touch_press(centre(l.panel), false).is_none(), "the closed panel is map");
+        assert!(matches!(hud.touch_press(centre(l.resources), false), Some(HudEvent::Used)));
+        assert!(hud.resources_open());
+        assert!(matches!(hud.touch_press(centre(l.panel), false), Some(HudEvent::Used)));
+        assert!(hud.resources_open(), "a tap on the panel keeps it open");
+        assert!(matches!(hud.touch_press(centre(l.resources), false), Some(HudEvent::Used)));
+        assert!(!hud.resources_open());
+        // Where the classic bar and its "M" plaque were: map.
+        for p in [[1000.0, 20.0], [600.0, 30.0], [hud.screen()[0] as f32 - 700.0, 10.0]] {
+            assert!(hud.touch_press(p, false).is_none(), "{p:?}");
+        }
+        assert!(hud.touch_layout().covers(centre(l.menu), false) && !hud.touch_layout().covers([1000.0, 20.0], true));
     }
 
     /// The bar along the top edge, the panels at the right edge, the icons and the minimap

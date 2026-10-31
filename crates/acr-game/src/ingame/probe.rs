@@ -163,6 +163,26 @@ impl InGame {
         self.three_d.sea_state()
     }
 
+    /// Shows the classic or the touch top bar (`drive` `top_bar`); answers its mode and, in
+    /// window pixels `[x, y, w, h]`, the Menu and Resources buttons and the panel, with
+    /// whether the panel is open.
+    pub fn set_top_bar(&mut self, mode: crate::ui::settings::TopBar) -> serde_json::Value {
+        let hud = &mut self.interface.hud;
+        hud.top_bar = mode;
+        let l = hud.touch_layout();
+        let rect = |r: crate::ui::draw::Rect| {
+            self.interface.canvas.to_window([r.x0 as f32, r.y0 as f32, r.width() as f32, r.height() as f32])
+        };
+        serde_json::json!({
+            "mode": mode.name(),
+            "menu": rect(l.menu),
+            "resources": rect(l.resources),
+            "panel": rect(l.panel),
+            "open": self.interface.hud.resources_open(),
+            "dropdown": self.interface.hud.dropdown_open(),
+        })
+    }
+
     /// The pose held for a unit, if any.
     /// Trees or foliage of model `name` at these ground points (render only; `drive` `props`).
     pub fn place_props(&mut self, name: &str, at: Vec<[i32; 2]>, wind: Option<bool>) {
