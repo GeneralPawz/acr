@@ -34,7 +34,7 @@ The app looks for the original's folder (the one with `dmcr.exe`) in this order:
 2. `American Conquest/` at the top of the shared storage. This needs "All files access"; when no
    folder is found, the app opens that system settings page and looks again on return.
 
-Saves, profiles and settings are kept next to the game folder.
+Saves, profiles and settings are kept in the app's own folder (`data_dir()` in `android.rs`).
 
 ## Shaders
 
@@ -43,4 +43,6 @@ Adreno drivers miscompile a vector indexed by a runtime value, so the shaders se
 
 ## Controls
 
-See the touch gestures in `crates/acr-game/src/touch.rs`.
+Touch gestures are in `crates/acr-game/src/touch.rs` (its header lists them): tap, drag, long
+press and swipe, pinch, and the pause gestures. The touch top bar (`top_bar=touch`) is the
+default on Android.
