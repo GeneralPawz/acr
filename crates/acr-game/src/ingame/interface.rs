@@ -281,8 +281,9 @@ pub fn tick_rate(frame_time: i32) -> u32 {
 const CELL: [f32; 2] = [32.0, 16.0];
 
 impl InGame {
-    /// Applies the options: game speed (tick rate), scroll speed and the control scheme.
-    pub fn apply_settings(&mut self, settings: &Settings) {
+    /// Applies the options: game speed (tick rate), scroll speed and the control scheme; the
+    /// top bar is the setting's, or the input mode's where the setting is unset.
+    pub fn apply_settings(&mut self, settings: &Settings, mode: crate::input_mode::InputMode) {
         self.frame_time = settings.frame_time;
         self.clock.set_rate(tick_rate(settings.frame_time));
         self.interface.scroll_speed = settings.scroll_speed.clamp(2, 10);
@@ -290,7 +291,12 @@ impl InGame {
         self.three_d.apply(settings);
         self.interface.aim_guides = settings.aim_guides;
         self.interface.hud.center_top_bar = settings.center_top_bar;
-        self.interface.hud.top_bar = settings.top_bar;
+        self.set_input_mode(settings, mode);
+    }
+
+    /// Shows the top bar the input mode asks for (an explicit `top_bar` setting wins).
+    pub fn set_input_mode(&mut self, settings: &Settings, mode: crate::input_mode::InputMode) {
+        self.interface.hud.top_bar = mode.top_bar(settings.top_bar);
     }
 
     /// Whether the aim guides are shown: the app writes a switch by the "Zielhilfe" icon back

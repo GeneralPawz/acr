@@ -26,3 +26,10 @@ debug = "line-tables-only"
 
 [profile.dev.package."*"]
 debug = false
+
+# Android mouse (#331): winit 0.30 turns every Android MotionEvent into a Touch and drops hover,
+# buttons and the wheel. This fork reports a mouse pointer as CursorMoved/MouseInput/MouseWheel;
+# upstream has no such support (master skips mouse pointers, rust-windowing/winit
+# src android event_loop.rs). Branch acr/android-mouse on v0.30.13.
+[patch.crates-io]
+winit = { git = "https://github.com/GeneralPawz/winit", rev = "9d6694d45a3d23699d6e10efab58bbf10abf424a" }

@@ -46,3 +46,18 @@ Adreno drivers miscompile a vector indexed by a runtime value, so the shaders se
 Touch gestures are in `crates/acr-game/src/touch.rs` (its header lists them): tap, drag, long
 press and swipe, pinch, and the pause gestures. The touch top bar (`top_bar=touch`) is the
 default on Android.
+
+### Mouse and keyboard
+
+With a mouse and keyboard attached the game plays as on the desktop and follows the last input
+used (`crates/acr-game/src/input_mode.rs`): a finger puts it in touch mode (the touch top bar,
+the gestures, no cursor); a mouse move, button or wheel puts it in mouse mode (the classic top
+bar, the game's own cursor, the wheel zooms). An explicit `top_bar=` in `settings.txt` stays in
+both modes. Android's own pointer is hidden (`PointerIcon.TYPE_NULL` on the decor and content
+views, `hide_system_pointer` in `android.rs`). Hardware keys reach the game as key events;
+Escape is also the back key.
+
+winit 0.30 turns every `MotionEvent` into a `Touch` and drops hover, buttons and the wheel, and
+winit's master skips mouse pointers as well. The workspace therefore patches winit to the fork
+`GeneralPawz/winit`, branch `acr/android-mouse` (v0.30.13 plus the mouse mapping; see `[patch.crates-io]`
+in the root `Cargo.toml`). Drop the patch when winit reports Android mice.
