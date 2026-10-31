@@ -155,7 +155,7 @@ def stand_keys():
 # its rope handles at the ends, metres from its bottom centre (x, z).
 CHEST_REST = (1.15, 3.5)
 CHEST_HANDLE = (0.34, 0.28)
-CHEST_SPAN = 0.64  # a carrier's hips from the chest's middle: clear of its end and rope loop
+CHEST_SPAN = 0.70  # a carrier's hips from the chest's middle: clear of its end and rope loop
 CARRY_Y = 3.8  # the carriers walk behind the trail end (2.75)
 CARRY_Z = 0.6  # the chest's bottom when carried (the handles at the hanging hands)
 # Lifting the trail for a turn: the carriage turns up about the axle (degrees about X).
@@ -700,6 +700,14 @@ def key_clips(arm, actions, plan=None, marks=None):
                 for f in frames:
                     bpy.context.scene.frame_set(f)
                     solve(arm, p, kind, marks, f)
+                # A tool moved to the left fist comes back to the right one a frame outside
+                # the span (the key before the first would otherwise hold it there).
+                tool = arm.pose.bones[p + "socket.hand_r"]
+                if kind == "chest" and tool.location.length > 1e-6:
+                    tool.location = (0, 0, 0)
+                    for f in (f0 - 1, f1 + 1):
+                        if 0 <= f <= ks[-1][0]:
+                            tool.keyframe_insert("location", frame=f, group=tool.name)
         for fc in am._fcurves(act):
             if fc.data_path.startswith('pose.bones["c'):
                 for kp in fc.keyframe_points:
@@ -830,8 +838,11 @@ def _orient(pb, rot3):
 
 
 def _fist(arm, P, sd):
-    """The centre of the fist `sd` (its grip socket, `grips.setup`)."""
-    return arm.pose.bones[P + "socket.hand_" + sd].head.copy()
+    """The centre of the fist `sd`: where its grip socket sits on the hand (`grips.setup`),
+    whether or not the socket has been moved off it (`_tool_to_left`)."""
+    B = arm.pose.bones
+    ha, sock = B[P + "hand_" + sd], B[P + "socket.hand_" + sd]
+    return ha.matrix @ (ha.bone.matrix_local.inverted() @ sock.bone.head_local)
 
 
 def _arm_reach(arm, P, sd):
@@ -901,6 +912,20 @@ def _off_grip(arm, P, sock, d):
     s = arm.pose.bones[P + "upperarm_l"].head
     a = _tool_axis(sock) * abs(d)
     return min((sock.head + a, sock.head - a), key=lambda g: (g - s).length)
+
+
+def _tool_to_left(arm, P, frame):
+    """The tool socket (`socket.hand_r`, upright) moved into the left fist and keyed at `frame`:
+    the right hand holds a chest's rope loop, so the tool goes in the free hand."""
+    import bpy
+
+    sock = arm.pose.bones[P + "socket.hand_r"]
+    bpy.context.view_layer.update()
+    m = sock.matrix.copy()
+    m.translation = _fist(arm, P, "l")
+    sock.matrix = m
+    bpy.context.view_layer.update()
+    sock.keyframe_insert("location", frame=frame, group=sock.name)
 
 
 def goals(arm, P, kind, marks):
@@ -1013,7 +1038,8 @@ def solve(arm, P, kind, marks, frame):
             _reach(arm, P, "r", want, frame)
             _point_tool(sock, vent, frame)
         return
-    for sd, g in goals(arm, P, kind, marks).items():
+    grips = goals(arm, P, kind, marks)
+    for sd, g in grips.items():
         _reach(arm, P, sd, g, frame)
     if kind == "spike" and "intact" in marks:
         _point_tool(sock, _mark(arm, marks, "intact"), frame)
@@ -1021,6 +1047,8 @@ def solve(arm, P, kind, marks, frame):
         return
     if kind in ("wheel", "chest"):
         _orient(sock, held)  # a staff or linstock in the other hand stays upright
+        if kind == "chest" and "r" in grips:
+            _tool_to_left(arm, P, frame)
         sock.keyframe_insert("rotation_quaternion", frame=frame, group=sock.name)
 
 

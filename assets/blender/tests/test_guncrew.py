@@ -194,12 +194,111 @@ class Grips(unittest.TestCase):
             self.assertIn(what, grips)
             self.assertLess(grips[what]["mean_m"], GRIP_MEAN, (what, grips[what]))
             self.assertLess(grips[what]["max_m"], GRIP_MAX, (what, grips[what]))
+        # The carriers' fists are on the rope loops within a few cm (#342).
+        for what in ("chest_l", "chest_r"):
+            self.assertLess(grips[what]["max_m"], 0.03, (what, grips[what]))
         # The handspike (the turn's and the laying's lever) is held exactly.
         for what in ("spike_l", "spike_seat"):
             self.assertLess(grips[what]["max_m"], 0.01, (what, grips[what]))
         # Its seat is on the trail's top (0.25 m over the ground, the trail bone's local y the
         # height over the axle at 0.72), not the carriage's top 0.7 m over it (m2-cannon-crew).
         self.assertLess(st["hands"]["marks_rest"]["intact"][1], -0.3, st["hands"]["marks_rest"])
+
+
+def _poses():
+    """The last build's `artpus.poses.json` (bone heads and turns per clip frame), or None."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    path = os.environ.get("ACR_ARTPUS_POSES") or os.path.join(here, "..", "..", "..", "target", "assets", "artillery",
+                                                               "artpus.poses.json")
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)["clips"]
+
+
+# A man as capsules round his bones (m): the coat's breadth is the torso's.
+BODY = (((("hips", "spine"), ("spine", "spine1"), ("spine1", "spine2"), ("spine2", "neck")), 0.17),
+        ((("neck", "head"),), 0.11),
+        ((("upperarm_l", "forearm_l"), ("upperarm_r", "forearm_r")), 0.06),
+        ((("thigh_l", "shin_l"), ("thigh_r", "shin_r"), ("shin_l", "foot_l"), ("shin_r", "foot_r")), 0.08))
+CHEST_BOX = ((-0.30, -0.20, 0.0), (0.30, 0.20, 0.40))  # the chest about its bottom's centre (the lid included)
+GAP_MEN = 0.10  # m: between the two carriers' bodies
+GAP_CHEST = 0.04  # m: between a carrier's body and the chest
+GAP_TOOL = 0.15  # m: the tool's axis from the chest
+HANDLE_NEAR = 0.15  # m: the wrist from the rope loop it holds (the fist is round it)
+
+
+def _capsules(rig, man):
+    pt = lambda b: rig[man + b][:3]
+    return [(pt(a), pt(b), r) for pairs, r in BODY for a, b in pairs]
+
+
+def _along(a, b, n=9):
+    return [tuple(x + (y - x) * i / (n - 1) for x, y in zip(a, b)) for i in range(n)]
+
+
+def _to_box(p, chest):
+    out = [max(lo - (v - c), (v - c) - hi, 0.0) for v, c, lo, hi in zip(p, chest, CHEST_BOX[0], CHEST_BOX[1])]
+    return math.sqrt(sum(o * o for o in out))
+
+
+def _to_chest(rig, man):
+    """The nearest a man's body (not his hands) comes to the chest's box, minus his breadth."""
+    chest = rig["chest"][:3]
+    return min(_to_box(p, chest) - r for a, b, r in _capsules(rig, man) for p in _along(a, b))
+
+
+def _between(rig):
+    return min(math.dist(p, q) - r1 - r2
+               for a, b, r1 in _capsules(rig, "c2.") for c, e, r2 in _capsules(rig, "c3.")
+               for p in _along(a, b) for q in _along(c, e))
+
+
+class Carriers(unittest.TestCase):
+    """The two men who carry the ammunition chest (#342), as built: `artpus.poses.json`."""
+
+    def setUp(self):
+        self.clips = _poses()
+        if self.clips is None:
+            self.skipTest("no artpus build (cargo xtask assets artpus)")
+
+    def frames(self, carried=False):
+        """(clip, frame, rig): the push and the carrying in (`carried`: only once the chest is
+        up in the men's hands, from frame 28)."""
+        for clip in ("GUN_PUSH", "CHEST_CARRY"):
+            for f, pose in self.clips[clip].items():
+                if not carried or clip == "GUN_PUSH" or int(f) >= 28:
+                    yield clip, f, pose["artpus.rig"]
+
+    def test_the_men_and_the_chest_do_not_overlap(self):
+        for clip, f, rig in self.frames():
+            self.assertGreater(_between(rig), GAP_MEN, (clip, f))
+            for man in ("c2.", "c3."):
+                # (Stooping to the chest on the ground they stand at its handles, close.)
+                gap = GAP_CHEST if clip == "GUN_PUSH" or int(f) >= 28 else 0.0
+                self.assertGreater(_to_chest(rig, man), gap, (clip, f, man))
+
+    def test_the_hands_hold_the_rope_loops(self):
+        """Each carrier's hand at his end of the chest is on the loop (CHEST_GRIP over the
+        bottom, x from its middle), the left man's left, the right man's right."""
+        hx, hz = guncrew.CHEST_GRIP
+        for f, pose in self.clips["GUN_PUSH"].items():
+            rig = pose["artpus.rig"]
+            cx, cy, cz = rig["chest"][:3]
+            for man, hand, sd in (("c2.", "hand_l", -1), ("c3.", "hand_r", 1)):
+                loop = (cx + sd * hx, cy, cz + hz)
+                self.assertLess(math.dist(rig[man + hand][:3], loop), HANDLE_NEAR, (f, man))
+
+    def test_the_linstock_is_not_in_the_chests_hand(self):
+        """The firer's linstock stands in his free (outer) hand, clear of the chest."""
+        for clip, f, rig in self.frames(carried=True):
+            tool = rig["c3.socket.hand_r"][:3]
+            hand = rig["c3.socket.hand_l"][:3]
+            self.assertLess(math.dist(tool, rig["c3.hand_l"][:3]), 0.2, (clip, f))
+            self.assertGreater(abs(tool[0] - rig["chest"][0]), 0.5, (clip, f))
+            axis = [(tool[0], tool[1], tool[2] + z) for z in (guncrew.LINSTOCK[0], guncrew.LINSTOCK[1])]
+            self.assertGreater(min(_to_box(p, rig["chest"][:3]) for p in _along(*axis)), GAP_TOOL, (clip, f))
+            self.assertLess(math.dist(tool[:2], hand[:2]), 0.2, (clip, f))
 
 
 if __name__ == "__main__":
