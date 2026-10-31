@@ -308,6 +308,10 @@ pub enum Request {
     /// `{"cmd":"textures"}`: GPU memory of the model textures (loaded, streamed) and the
     /// streaming counts (docs/rendering-3d.md "Texture streaming").
     Textures,
+    /// `{"cmd":"ground","pos"|"world":[x,y]}`: height, drawn height, texture, sea depth and
+    /// locks of the ground at a window position or world pixel (the editor's terrain tools,
+    /// #430). The target is a `Target::Pos` or `Target::World`.
+    Ground(Target),
     /// `{"cmd":"fps","fps":n}`: each driver frame advances 1/n s of game time (several frames
     /// per tick: the 3D view's per-frame motion, as in play at that frame rate); 0 goes back
     /// to one tick per frame.
@@ -726,6 +730,10 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
         "gputime" => Request::GpuTime(uint(&v, "frames").unwrap_or(30).clamp(1, 1000) as u32),
         "frametimes" => Request::FrameTimes(uint(&v, "frames").unwrap_or(60).clamp(1, 10000) as u32),
         "textures" => Request::Textures,
+        "ground" => match target(&v)? {
+            t @ (Target::Pos(_) | Target::World(_)) => Request::Ground(t),
+            _ => return Err("ground: needs \"pos\" or \"world\"".into()),
+        },
         "record" => Request::Record {
             dir: string(&v, "dir").ok_or("record: missing \"dir\"")?,
             prefix: string(&v, "prefix").unwrap_or_else(|| "frame".into()),
@@ -816,6 +824,11 @@ mod tests {
         let (_, r) = parse(r#"{"cmd": "rclick", "pos": [10, 20.5], "mods": ["Shift"]}"#).unwrap();
         let Request::Click { target, button, mods, .. } = r else { panic!() };
         assert_eq!((target, button, mods.shift), (Target::Pos([10.0, 20.5]), Button::Right, true));
+        let (_, r) = parse(r#"{"cmd": "ground", "world": [700, 800]}"#).unwrap();
+        assert_eq!(r, Request::Ground(Target::World([700, 800])));
+        let (_, r) = parse(r#"{"cmd": "ground", "pos": [10, 20]}"#).unwrap();
+        assert_eq!(r, Request::Ground(Target::Pos([10.0, 20.0])));
+        assert!(parse(r#"{"cmd": "ground", "unit": 3}"#).is_err());
         let (_, r) = parse(r#"{"cmd": "click", "id": "hud/3"}"#).unwrap();
         assert!(matches!(r, Request::Click { target: Target::Id(id), .. } if id == "hud/3"));
         let (_, r) = parse(r#"{"cmd": "drag", "from": [1, 2], "to": {"world": [300, 400]}}"#).unwrap();

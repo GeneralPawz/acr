@@ -436,6 +436,13 @@ impl InGame {
             renderer.set_map(device, queue, terrain);
             self.uploaded = true;
         }
+        // An edit of the terrain: the changed vertices go to the GPU.
+        if self.uploaded
+            && let (Some(renderer), Some(terrain)) = (&mut self.renderer, &mut self.terrain)
+            && let Some(rect) = terrain.take_dirty()
+        {
+            renderer.update_map(queue, terrain, rect);
+        }
         let marks_on = self.ground_marks_on();
         self.three_d.ground_marks = marks_on;
         if let (Some(renderer), Some(marks), true) = (&self.renderer, &mut self.ground_marks, marks_on) {
@@ -678,6 +685,7 @@ impl InGame {
             self.objects.update(map, terrain, &|p| self.requests.borrow_mut().push(p.to_owned()));
         }
         self.build_world();
+        self.editor_stroke(seconds);
         if !self.editor_started
             && let (Some(e), Some(world)) = (&self.editor, &mut self.world)
         {

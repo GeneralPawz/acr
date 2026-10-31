@@ -32,6 +32,8 @@
 //!              4 preset: nation, size, century (0 none, 1 + number), owner, x, y, dir
 //!              5 battle: 2 nations, 2 centuries (as above), size, fight
 //!              6 nature (#429): group code (2 bytes), index, x, y
+//!              7 ground (#430): x, y, radius, tool (0 raise, 1 lower, 2 flatten: height; 3 texture:
+//!                number; 4 water, 5 land)
 //! ```
 //!
 //! The editor's inputs ([`EditorInput`]) change the world between two ticks like a
@@ -41,6 +43,7 @@
 //! without decoding the rest ([`SaveInfo::peek`]).
 
 use acr_formats::m3d::SpriteGroup;
+use acr_mapgen::edit::{Dab, Tool};
 use acr_sim::replay::Replay;
 use acr_sim::world::EntityId;
 use acr_sim::{Command, World};
@@ -530,6 +533,21 @@ impl Writer {
                 self.u(u64::from(*index));
                 self.pair(*at);
             }
+            EditorInput::Ground(dab) => {
+                self.u(7);
+                self.pair((dab.x, dab.y));
+                self.i(dab.radius);
+                let (tag, value) = match dab.tool {
+                    Tool::Raise(n) => (0, i32::from(n)),
+                    Tool::Lower(n) => (1, i32::from(n)),
+                    Tool::Flatten(h) => (2, i32::from(h)),
+                    Tool::Texture(t) => (3, i32::from(t)),
+                    Tool::Water => (4, 0),
+                    Tool::Land => (5, 0),
+                };
+                self.u(tag);
+                self.i(value);
+            }
             EditorInput::Battle { nation, era, size, fight } => {
                 self.u(5);
                 for n in nation {
@@ -751,6 +769,22 @@ impl<'a> Reader<'a> {
                 index: u16::try_from(self.u()?).map_err(|_| err("sprite index"))?,
                 at: self.pair()?,
             },
+            7 => {
+                let (x, y) = self.pair()?;
+                let radius = self.i()?;
+                let (tag, value) = (self.u()?, self.i()?);
+                let small = |v: i32| i16::try_from(v).map_err(|_| err("brush value"));
+                let tool = match tag {
+                    0 => Tool::Raise(small(value)?),
+                    1 => Tool::Lower(small(value)?),
+                    2 => Tool::Flatten(small(value)?),
+                    3 => Tool::Texture(u8::try_from(value).map_err(|_| err("brush value"))?),
+                    4 => Tool::Water,
+                    5 => Tool::Land,
+                    _ => return Err(err("brush tool")),
+                };
+                EditorInput::Ground(Dab { x, y, radius, tool })
+            }
             _ => return Err(err("editor input")),
         })
     }
@@ -1100,6 +1134,9 @@ mod tests {
             ),
             (40, EditorInput::Preset { nation: 7, size: Size::Small, era: None, owner: 0, at: (1, 2), dir: 0 }),
             (50, EditorInput::Nature { group: SpriteGroup::Stones, index: 7, at: (1200, 3400) }),
+            (60, EditorInput::Ground(Dab { x: 1500, y: -40, radius: 128, tool: Tool::Flatten(300) })),
+            (61, EditorInput::Ground(Dab { x: 1500, y: 90, radius: 512, tool: Tool::Texture(71) })),
+            (62, EditorInput::Ground(Dab { x: 0, y: 0, radius: 16, tool: Tool::Water })),
             (900, EditorInput::Battle { nation: [2, 3], era: [Some(Era::C17), None], size: Size::Medium, fight: true }),
         ]
     }

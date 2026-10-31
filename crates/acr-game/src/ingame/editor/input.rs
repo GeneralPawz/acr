@@ -8,6 +8,7 @@
 
 use acr_formats::M3dMap;
 use acr_formats::m3d::{Sprite, SpriteGroup};
+use acr_mapgen::edit::{self, Dab, EditError, Tool};
 use acr_sim::World;
 use acr_sim::fixed::Pos;
 use acr_sim::world::ObjectRefusal;
@@ -35,6 +36,8 @@ pub enum Input {
     Battle { nation: [usize; 2], era: [Option<Era>; 2], size: Size, fight: bool },
     /// A tree or stone of the Natur list: type `index` of the group's sprite list at `at`.
     Nature { group: SpriteGroup, index: u16, at: (i32, i32) },
+    /// One stamp of the terrain brush ([`acr_mapgen::edit`]); a stroke is a run of them.
+    Ground(Dab),
 }
 
 /// What applying an input gave.
@@ -44,6 +47,9 @@ pub struct Applied {
     pub status: Vec<u8>,
     /// The map got an object: the scene is built again (and the minimap, unless a tree).
     pub objects: bool,
+    /// The terrain changed in this box of world pixels `[x0, y0, x1, y1)`: the game's render
+    /// data, the GPU copy, the minimap and the scene follow.
+    pub ground: Option<[i32; 4]>,
 }
 
 /// Applies `input` to the world (and the editor's own state: the Kampf rule, the battle
@@ -51,6 +57,7 @@ pub struct Applied {
 /// change it.
 pub fn apply(world: &mut World, map: &mut M3dMap, editor: &mut Editor, input: &Input) -> Applied {
     let mut objects = false;
+    let mut ground = None;
     let status = match input {
         Input::Place { kind, owner, at, count, form, dir, level } => {
             place(world, editor, kind, *owner, *at, (*count as usize, *form as usize, *dir, *level as usize))
@@ -79,8 +86,38 @@ pub fn apply(world: &mut World, map: &mut M3dMap, editor: &mut Editor, input: &I
             objects = added;
             status
         }
+        Input::Ground(dab) => match edit::apply(map, dab) {
+            Ok(area) => {
+                if let Some(area) = area {
+                    world.sync_terrain(map, area);
+                }
+                ground = area;
+                tool_name(dab.tool).as_bytes().to_vec()
+            }
+            Err(e) => match e {
+                EditError::NoTerrain => "Karte ohne Gelaende",
+                EditError::NoSea => "Karte ohne Wasser",
+                EditError::Areas => "Karte mit Wegegebieten: nicht editierbar",
+                EditError::Radius => "Pinsel ungueltig",
+                EditError::Texture => "Unbekannte Textur",
+            }
+            .as_bytes()
+            .to_vec(),
+        },
     };
-    Applied { status, objects }
+    Applied { status, objects, ground }
+}
+
+/// The status line's word for a brush tool.
+fn tool_name(tool: Tool) -> &'static str {
+    match tool {
+        Tool::Raise(_) => "Angehoben",
+        Tool::Lower(_) => "Abgesenkt",
+        Tool::Flatten(_) => "Geebnet",
+        Tool::Texture(_) => "Boden gemalt",
+        Tool::Water => "Wasser gemalt",
+        Tool::Land => "Land gemalt",
+    }
 }
 
 /// Puts a tree or stone on the map and into the world; the text for the status line says
@@ -192,6 +229,60 @@ mod tests {
         assert_eq!(apply(&mut w, &mut map, &mut editor, &place("Nope", 0)).status, b"Unbekannter Typ");
         assert_eq!(apply(&mut w, &mut map, &mut editor, &place(KIND, 99)).status, b"keine Formation");
         assert_eq!(count(&w, 2), 5);
+    }
+
+    /// A flat map of size shift 1 with sea cells, and the world made from it.
+    fn flat_world() -> (World, M3dMap) {
+        use acr_formats::m3d::{Grid, MapSize, Water};
+        let size = MapSize { shift: 1 };
+        let (vw, vh) = (size.vertex_width(), size.vertex_height());
+        let n = (240usize << 1) + 2;
+        let map = M3dMap {
+            size: Some(size),
+            header: [vw as u32, vh as u32],
+            heights: Some(Grid { width: vw, height: vh, cells: vec![0; vw * vh] }),
+            textures: Some(Grid { width: vw, height: vh, cells: vec![0; vw * vh] }),
+            water: Some(Water {
+                depth: Grid { width: n, height: n, cells: vec![0; n * n] },
+                brightness: Grid { width: n, height: n, cells: vec![0; n * n] },
+            }),
+            ..M3dMap::default()
+        };
+        let mut w = crate::ingame::editor::tests::nature_world();
+        w.map = std::sync::Arc::new(acr_sim::MapGrid::from_m3d(&map, &w.shapes));
+        (w, map)
+    }
+
+    #[test]
+    fn a_ground_input_edits_the_map_and_the_worlds_copy() {
+        let (mut w, mut map) = flat_world();
+        let mut editor = Editor::default();
+        let dab = |x, y, tool| Input::Ground(Dab { x, y, radius: 128, tool });
+
+        let raised = apply(&mut w, &mut map, &mut editor, &dab(3200, 3200, Tool::Raise(edit::RAISE)));
+        let area = raised.ground.expect("the dab changed the ground");
+        assert!(area[0] <= 3200 - 128 && area[2] >= 3200 + 128);
+        assert!(w.map.heights.at(3200, 3200) > 0, "the world sees the hill");
+        assert_eq!(raised.status, b"Angehoben");
+
+        let flooded = apply(&mut w, &mut map, &mut editor, &dab(6400, 6400, Tool::Water));
+        assert!(flooded.ground.is_some());
+        assert!(w.map.land.check_pt(6400 >> 4, 6400 >> 4), "land is locked on the water");
+        assert!(!w.map.water.check_pt(6400 >> 4, 6400 >> 4), "ships float there");
+        let dried = apply(&mut w, &mut map, &mut editor, &dab(6400, 6400, Tool::Land));
+        assert!(dried.ground.is_some());
+        assert!(!w.map.land.check_pt(6400 >> 4, 6400 >> 4));
+
+        // A bad brush is refused with a text and changes nothing.
+        let before = map.heights.clone();
+        let bad = apply(
+            &mut w,
+            &mut map,
+            &mut editor,
+            &Input::Ground(Dab { x: 3200, y: 3200, radius: 7, tool: Tool::Raise(8) }),
+        );
+        assert_eq!((bad.ground, bad.status), (None, b"Pinsel ungueltig".to_vec()));
+        assert_eq!(map.heights, before);
     }
 
     #[test]

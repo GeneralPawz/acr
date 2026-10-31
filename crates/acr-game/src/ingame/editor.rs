@@ -19,6 +19,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use acr_formats::m3d::SpriteGroup;
+use acr_mapgen::edit::{self, Dab, Tool};
+use acr_render::terrain::TerrainData;
 use acr_sim::catalog::{Medium, MotionStyle};
 use acr_sim::economy::WOOD;
 use acr_sim::fixed::Pos;
@@ -87,8 +89,8 @@ const COMBO_BOX: Rect = Rect { x0: OX + 10, y0: OY + 36, x1: OX + 10 + 224, y1: 
 pub const COUNTS: [u32; 12] = [1, 5, 10, 15, 36, 72, 120, 196, 392, 588, 784, 980];
 /// The combo box's lines: the playable nations in the order of `TEXT\NATIONS.TXT` (name, and
 /// the prefix of their type ids), then ACR's own lists: the animals, the cannons and the
-/// map's nature (trees, bushes, stones and deposits).
-pub const ENTRIES: [(&str, &str); 15] = [
+/// map's nature (trees, bushes, stones and deposits) and the terrain tools.
+pub const ENTRIES: [(&str, &str); 16] = [
     ("Maya", "May"),
     ("Spanien", "Spn"),
     ("England", "Eng"),
@@ -104,11 +106,51 @@ pub const ENTRIES: [(&str, &str); 15] = [
     ("Tiere", "Anm"),
     ("Kanonen", "Art"),
     ("Natur", ""),
+    ("Gelaende", ""),
 ];
 /// The first of [`ENTRIES`] that is ACR's own (not a nation of the original).
 const FIRST_EXTRA: usize = 12;
 /// The line of [`ENTRIES`] that lists the map's trees and stones, not types.
 const NATUR: usize = 14;
+/// The line of [`ENTRIES`] that lists the terrain tools and ground textures.
+const GELAENDE: usize = 15;
+/// The terrain tools of the Gelaende list (ACR's own: the original editor's ToolBox/ToolOpt at
+/// 0x5ba450 are untraced).
+const TOOLS: [(&str, GroundTool); 5] = [
+    ("Anheben", GroundTool::Raise),
+    ("Absenken", GroundTool::Lower),
+    ("Ebnen", GroundTool::Flatten),
+    ("Wasser", GroundTool::Water),
+    ("Land", GroundTool::Land),
+];
+/// The ground textures of the Gelaende list: name and `TILE` value (docs/ground.md).
+const GROUNDS: [(&str, u8); 15] = [
+    ("Gras", 0),
+    ("Wiese", 1),
+    ("Erde", 71),
+    ("Schlamm", 29),
+    ("Sand", 72),
+    ("Fels", 8),
+    ("Waldboden", 28),
+    ("Schnee", 103),
+    ("Feld", 27),
+    ("Rissig", 42),
+    ("Roterde", 66),
+    ("Kies", 14),
+    ("Wueste", 120),
+    ("Steppe", 93),
+    ("Pflaster", 24),
+];
+/// The brush radii the Pinsel line steps through, world pixels.
+pub const BRUSHES: [i32; 5] = [32, 64, 128, 256, 512];
+/// The radius a new editor paints with: `BRUSHES[2]`.
+const DEFAULT_BRUSH: usize = 2;
+/// A dab when the cursor moved `radius / STROKE_STEP` since the last one ...
+const STROKE_STEP: i32 = 2;
+/// ... or this many seconds passed, at most one per frame.
+const STROKE_EVERY: f32 = 0.1;
+/// During a stroke the scene, minimap and models are built again at most this often (seconds).
+const REFRESH_EVERY: f32 = 0.25;
 /// The nation list opens on England, as the first game does for most players.
 const DEFAULT_ENTRY: usize = 2;
 /// The owner of wild animals: the eighth colour of the window is this neutral player.
@@ -143,6 +185,8 @@ pub enum Act {
     Count(i32),
     Form(i32),
     Facing(i32),
+    /// Steps the brush radius ([`BRUSHES`]).
+    Brush(i32),
     Peace,
     Reload,
     AutoReload,
@@ -163,6 +207,8 @@ pub enum Look {
     Frame { divider: Option<i32> },
     /// A unit icon (`ICONS.GP` frame) in its cell.
     Icon { frame: Option<usize> },
+    /// A ground texture: its colour (RGB) fills the cell.
+    Texture { colour: [u8; 3] },
     /// A map object's frame of the pack in [`Item::gp`], its ground point `(ox, oy)` at the
     /// bottom centre of the cell, clipped to it; the name stands in the cell without a pack.
     Sprite { frame: usize, ox: i32, oy: i32 },
@@ -210,6 +256,8 @@ pub struct View<'a> {
     /// The pack, and the ground point inside the frame, of a map object of a sprite list
     /// (frame = the object's index), once the list is loaded.
     pub sprite: &'a dyn Fn(SpriteGroup, u16) -> Option<(String, i32, i32)>,
+    /// The colour of a ground texture as the minimap shows it, once the ground is loaded.
+    pub texture_colour: &'a dyn Fn(u8) -> Option<[u8; 3]>,
     /// `ED_HDR01`.
     pub title: Vec<u8>,
 }
@@ -225,6 +273,15 @@ pub struct Editor {
     scroll: i32,
     /// What a click on the map places.
     pub pick: Option<Pick>,
+    /// The terrain brush radius: an index in [`BRUSHES`].
+    brush: usize,
+    /// The terrain stroke the held left button makes.
+    stroke: Option<Stroke>,
+    /// The terrain, objects or minimap changed and the view is built again at the next
+    /// [`REFRESH_EVERY`] (or at the end of the stroke).
+    pub stale: Option<Stale>,
+    /// Seconds since the view was last built again.
+    since_refresh: f32,
     count: usize,
     /// 0 = loose, else 1 + the index in [`formations`].
     form: usize,
@@ -266,6 +323,10 @@ impl Default for Editor {
             combo_open: false,
             scroll: 0,
             pick: None,
+            brush: DEFAULT_BRUSH,
+            stroke: None,
+            stale: None,
+            since_refresh: 0.0,
             count: COUNTS.iter().position(|&c| c == 36).unwrap_or(0),
             form: 0,
             owner: 0,
@@ -309,13 +370,11 @@ pub enum Pick {
     /// A tree, bush, stone or deposit: its sprite group and index in the group's list.
     Nature(SpriteGroup, u16),
     /// A tool of the terrain brush.
-    #[allow(dead_code)] // the terrain tools list them (#430)
     Ground(GroundTool),
 }
 
 /// The tools of the terrain brush (ACR's own, the original's are not traced).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // the terrain tools use them (#430)
 pub enum GroundTool {
     Raise,
     Lower,
@@ -324,6 +383,25 @@ pub enum GroundTool {
     Land,
     /// Paints a ground texture (`TILE` value).
     Texture(u8),
+}
+
+/// A stroke of the terrain brush: the last dab and what passed since.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Stroke {
+    /// The last dab; the next ones have its radius and tool (Flatten keeps the level the
+    /// press took).
+    dab: Dab,
+    /// Seconds since the last dab.
+    since: f32,
+}
+
+/// What the edits left behind for the view to rebuild.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Stale {
+    /// The minimap shows the change (not trees).
+    pub minimap: bool,
+    /// The ground changed (the 3D models and ground cover follow).
+    pub ground: bool,
 }
 
 /// A category of an entry's list: its header and what its cells pick.
@@ -357,6 +435,9 @@ pub fn groups(world: &World, entry: usize) -> Vec<Group> {
     if entry == NATUR {
         return nature_groups(world);
     }
+    if entry == GELAENDE {
+        return ground_groups();
+    }
     let prefix = ENTRIES[entry].1.to_ascii_lowercase();
     let mut seen = std::collections::HashSet::new();
     let mut by: Vec<Vec<TypeId>> = vec![Vec::new(); CATEGORIES.len()];
@@ -376,6 +457,22 @@ pub fn groups(world: &World, entry: usize) -> Vec<Group> {
         .filter(|(kinds, _)| !kinds.is_empty())
         .map(|(kinds, header)| Group { header, kinds: kinds.into_iter().map(Pick::Unit).collect() })
         .collect()
+}
+
+/// The Gelaende list: the brush tools and the ground textures.
+fn ground_groups() -> Vec<Group> {
+    vec![
+        Group { header: "Werkzeug", kinds: TOOLS.iter().map(|&(_, t)| Pick::Ground(t)).collect() },
+        Group { header: "Boden", kinds: GROUNDS.iter().map(|&(_, t)| Pick::Ground(GroundTool::Texture(t))).collect() },
+    ]
+}
+
+/// The name of a terrain tool or ground texture.
+fn ground_name(tool: GroundTool) -> &'static str {
+    match tool {
+        GroundTool::Texture(t) => GROUNDS.iter().find(|&&(_, v)| v == t).map_or("Boden", |&(n, _)| n),
+        other => TOOLS.iter().find(|&&(_, v)| v == other).map_or("Werkzeug", |&(n, _)| n),
+    }
 }
 
 /// The Natur list, from the map's sprite lists: trees that are a wood source, other trees
@@ -491,6 +588,11 @@ impl Editor {
         COUNTS[self.count]
     }
 
+    /// The terrain brush radius, world pixels.
+    pub fn radius(&self) -> i32 {
+        BRUSHES[self.brush]
+    }
+
     pub fn owner(&self) -> u8 {
         self.owner
     }
@@ -583,8 +685,17 @@ impl Editor {
                             cell.gp = sprite.map(|(gp, ..)| gp);
                             out.push(cell);
                         }
-                        // The terrain tools have no list yet.
-                        Pick::Ground(_) => {}
+                        Pick::Ground(tool) => {
+                            let name = ground_name(tool);
+                            let look = match tool {
+                                GroundTool::Texture(t) => match (view.texture_colour)(t) {
+                                    Some(colour) => Look::Texture { colour },
+                                    None => Look::Icon { frame: None },
+                                },
+                                _ => Look::Icon { frame: None },
+                            };
+                            out.push(item(rect, name.as_bytes().to_vec(), name, hot, Some(Act::Pick(pick)), look));
+                        }
                     }
                 }
             }
@@ -616,7 +727,8 @@ impl Editor {
         // ACR's controls in a box under the window.
         let mut y = EXTRA_Y;
         let extras = |rows: i32| Rect::inclusive(OX, BOX_Y1 + 1, BOX_X1, BOX_Y1 + 1 + 12 + rows * ROW);
-        let rows = 13 + i32::from(self.pick.is_some());
+        let brush_row = self.entry == GELAENDE;
+        let rows = 13 + i32::from(self.pick.is_some()) + i32::from(brush_row);
         out.push(item(extras(rows), Vec::new(), "", false, None, Look::Frame { divider: None }));
         let line = |out: &mut Vec<Item>, y: &mut i32, text: Vec<u8>, name: &str, hot: bool, act: Option<Act>| {
             out.push(item(Rect::new(X0, *y, W, ROW), text, name, hot, act, Look::Text));
@@ -646,6 +758,10 @@ impl Editor {
             _ => "lose".into(),
         };
         pair(&mut out, &mut y, format!("Formation: {form}"), "Formation", Act::Form(-1), Act::Form(1));
+        if brush_row {
+            let text = format!("Pinsel: {}", self.radius());
+            pair(&mut out, &mut y, text, "Pinsel", Act::Brush(-1), Act::Brush(1));
+        }
         let level = self.level_line(world, view);
         line(&mut out, &mut y, level, "Ausbau", false, None);
         let facing = format!("Richtung: {}", FACINGS[usize::from(self.facing() / 32) & 7]);
@@ -668,7 +784,7 @@ impl Editor {
             match pick {
                 Pick::Unit(kind) => text.extend((view.names)(kind)),
                 Pick::Nature(group, index) => text.extend(nature_label(world, group, index).1.into_bytes()),
-                Pick::Ground(_) => {}
+                Pick::Ground(tool) => text.extend(ground_name(tool).as_bytes()),
             }
             text.truncate(44);
             line(&mut out, &mut y, text, "", false, None);
@@ -778,9 +894,18 @@ impl Editor {
                     let mut cell = Vec::new();
                     match frame {
                         Some(f) => cell.push(Draw::game_frame(hud::gp::ICONS, f, r.x0 + 1, r.y0 + 1, 0)),
-                        // No icon: the name stands in its cell.
-                        None => cell.push(Draw::game_text(WHITE, &i.text[..i.text.len().min(8)], r.x0 + 3, r.y0 + 14)),
+                        // No icon: the name stands in its cell, cut at the cell's edge.
+                        None => cell.push(
+                            Draw::game_text(WHITE, &i.text[..i.text.len().min(8)], r.x0 + 3, r.y0 + 14).clipped(r),
+                        ),
                     }
+                    hud::outline(&mut cell, r, colour(index));
+                    out.extend(cell.into_iter().map(|d| d.clipped(CONTENT)));
+                }
+                Look::Texture { colour: [red, green, blue] } => {
+                    let index = if i.hot { OUTLINE_PICKED } else { OUTLINE };
+                    let mut cell =
+                        vec![Draw::fill([red, green, blue, 255], Rect::new(r.x0 + 1, r.y0 + 1, CELL - 2, CELL - 2))];
                     hud::outline(&mut cell, r, colour(index));
                     out.extend(cell.into_iter().map(|d| d.clipped(CONTENT)));
                 }
@@ -905,6 +1030,7 @@ impl Editor {
                 }
             }
             Act::ScrollBy(d) => self.scroll_by(world, d),
+            Act::Brush(d) => self.brush = (self.brush as i32 + d).clamp(0, BRUSHES.len() as i32 - 1) as usize,
             Act::Count(d) => self.count = (self.count as i32 + d).clamp(0, COUNTS.len() as i32 - 1) as usize,
             Act::Form(d) => {
                 let n = self.unit().map_or(0, |k| formations(world, k).len()) as i32 + 1;
@@ -959,8 +1085,69 @@ impl Editor {
                 level: self.level as u32,
             }),
             Pick::Nature(group, index) => Some(Input::Nature { group, index, at }),
-            Pick::Ground(_) => None,
+            Pick::Ground(tool) => Some(Input::Ground(self.dab(world, tool, at))),
         }
+    }
+
+    /// The dab of `tool` at `at` with the brush radius. Flatten takes the level of the
+    /// ground there (the press of a stroke fixes it for the whole stroke).
+    fn dab(&self, world: &World, tool: GroundTool, (x, y): (i32, i32)) -> Dab {
+        let tool = match tool {
+            GroundTool::Raise => Tool::Raise(edit::RAISE),
+            GroundTool::Lower => Tool::Lower(edit::RAISE),
+            GroundTool::Flatten => Tool::Flatten(world.map.heights.at(x, y).clamp(0, i32::from(i16::MAX)) as i16),
+            GroundTool::Water => Tool::Water,
+            GroundTool::Land => Tool::Land,
+            GroundTool::Texture(t) => Tool::Texture(t),
+        };
+        Dab { x, y, radius: self.radius(), tool }
+    }
+
+    /// A press on the map starts a stroke when `input` is a dab.
+    pub fn begin_stroke(&mut self, input: &Input) {
+        if let Input::Ground(dab) = input {
+            self.stroke = Some(Stroke { dab: *dab, since: 0.0 });
+        }
+    }
+
+    /// Ends the stroke (the button went up); true if there was one.
+    pub fn end_stroke(&mut self) -> bool {
+        self.stroke.take().is_some()
+    }
+
+    /// Advances the stroke by `seconds` with the cursor at world pixel `at`: the next dab, if
+    /// the cursor moved half a radius from the last one or [`STROKE_EVERY`] seconds passed.
+    /// At most one dab per call (per frame).
+    pub fn stroke_step(&mut self, seconds: f32, at: (i32, i32)) -> Option<Input> {
+        let stroke = self.stroke.as_mut()?;
+        stroke.since += seconds;
+        let moved = i64::from(at.0 - stroke.dab.x).pow(2) + i64::from(at.1 - stroke.dab.y).pow(2);
+        let step = i64::from(stroke.dab.radius / STROKE_STEP);
+        if moved < step * step && stroke.since < STROKE_EVERY {
+            return None;
+        }
+        stroke.since = 0.0;
+        stroke.dab.x = at.0;
+        stroke.dab.y = at.1;
+        Some(Input::Ground(stroke.dab))
+    }
+
+    /// Notes that an edit changed what the view shows.
+    pub fn mark_stale(&mut self, minimap: bool, ground: bool) {
+        let s = self.stale.get_or_insert_with(Stale::default);
+        s.minimap |= minimap;
+        s.ground |= ground;
+    }
+
+    /// Takes what is to be rebuilt: all of it when `now` or the stroke is over or
+    /// [`REFRESH_EVERY`] passed since the last time, else nothing.
+    pub fn take_stale(&mut self, seconds: f32, now: bool) -> Option<Stale> {
+        self.since_refresh += seconds;
+        if self.stale.is_some() && (now || self.stroke.is_none() || self.since_refresh >= REFRESH_EVERY) {
+            self.since_refresh = 0.0;
+            return self.stale.take();
+        }
+        None
     }
 
     /// The picked type, if a unit, animal, cannon or building is picked.
@@ -1040,7 +1227,9 @@ impl Item {
     /// Where a click hits: icons and headers only inside the clipped content.
     pub fn hit_rect(&self) -> Rect {
         match self.look {
-            Look::Icon { .. } | Look::Sprite { .. } | Look::Header => self.rect.intersect(&CONTENT),
+            Look::Icon { .. } | Look::Texture { .. } | Look::Sprite { .. } | Look::Header => {
+                self.rect.intersect(&CONTENT)
+            }
             _ => self.rect,
         }
     }
@@ -1096,11 +1285,16 @@ impl super::InGame {
             let entry = self.objects.objects().list(group)?.entries.get(usize::from(index))?;
             Some((self.objects.objects().list(group)?.gp_path(), entry.dx, entry.dy))
         };
+        let texture_colour = |t: u8| {
+            let assets = self.assets.as_ref()?;
+            Some(assets.palette.0[usize::from(assets.minimap_color(t, 3))])
+        };
         let view = View {
             names: &names,
             icon: &icon,
             upgrade_name: &upgrade_name,
             sprite: &sprite,
+            texture_colour: &texture_colour,
             title: ctx.texts.get("ED_HDR01").to_vec(),
         };
         e.layout(world, &view, self.local_player())
@@ -1152,24 +1346,80 @@ impl super::InGame {
         self.save.log.editor(world.tick.0, input.clone());
         let applied = input::apply(world, map, e, &input);
         e.status = applied.status;
+        if let Some(area) = applied.ground {
+            // The render data follows each dab; the GPU copy goes at the next `sync_gpu`.
+            if let (Some(terrain), Some(assets)) = (&mut self.terrain, &self.assets)
+                && let Err(why) = terrain.update(map, assets, area)
+            {
+                self.failed = Some(format!("terrain: {why}"));
+            }
+            e.mark_stale(true, true);
+        }
         if applied.objects {
             // A tree is no dot of the minimap.
             let tree = matches!(input, Input::Nature { group: SpriteGroup::Trees, .. });
-            self.refresh_objects(!tree);
+            e.mark_stale(!tree, false);
+        }
+        self.refresh_edited_view(0.0);
+    }
+
+    /// Builds the view of the edited map again, as far as it is stale: the scene (objects stand
+    /// on the new ground), the minimap and the 3D map models and ground cover. During a stroke
+    /// at most every [`REFRESH_EVERY`] seconds, otherwise at once. The water draws from the
+    /// terrain data's revision and the GPU copy goes with `sync_gpu`.
+    pub(super) fn refresh_edited_view(&mut self, seconds: f32) {
+        let Some(e) = &mut self.editor else { return };
+        let Some(stale) = e.take_stale(seconds, false) else { return };
+        let (Some(map), Some(terrain)) = (&self.map, &self.terrain) else { return };
+        self.objects.rebuild_static(map, terrain);
+        if stale.minimap {
+            self.rebuild_minimap();
+        }
+        if stale.ground {
+            self.three_d.terrain_edited();
         }
     }
 
-    /// The map got objects: the scene is built again and the minimap, if they show there.
-    /// The 3D map models place themselves again when the objects change.
-    pub(super) fn refresh_objects(&mut self, minimap: bool) {
-        let (Some(map), Some(terrain)) = (&self.map, &self.terrain) else { return };
-        self.objects.rebuild_static(map, terrain);
-        if minimap
+    fn rebuild_minimap(&mut self) {
+        if let Some(map) = &self.map
             && let Some(assets) = &self.assets
             && let Some(m) = crate::hud::minimap::Minimap::new(map, assets)
         {
             self.interface.hud.set_minimap(m);
         }
+    }
+
+    /// The map was edited behind the view's back (a loaded game's replay): the terrain, the
+    /// GPU copy, the scene, the minimap and the models are made from the map again.
+    pub(super) fn rebuild_after_edits(&mut self) {
+        if let (Some(assets), Some(map)) = (&self.assets, &self.map) {
+            match TerrainData::new(map, assets) {
+                Ok(t) => {
+                    self.terrain = Some(t);
+                    self.uploaded = false;
+                }
+                Err(e) => self.failed = Some(format!("terrain: {e}")),
+            }
+        }
+        if let (Some(map), Some(terrain)) = (&self.map, &self.terrain) {
+            self.objects.rebuild_static(map, terrain);
+        }
+        self.rebuild_minimap();
+        self.three_d.terrain_edited();
+    }
+
+    /// Advances a terrain stroke by a frame: the next dab where the cursor is, if due, and the
+    /// throttled rebuild of the view.
+    pub(super) fn editor_stroke(&mut self, seconds: f32) {
+        let at = self.cursor.map(|c| self.world_at(c));
+        let input = match (&mut self.editor, at) {
+            (Some(e), Some(at)) => e.stroke_step(seconds, at),
+            _ => None,
+        };
+        if let Some(input) = input {
+            self.editor_input(input);
+        }
+        self.refresh_edited_view(seconds);
     }
 
     /// The left button in the editor: the window, or placing the picked type on the map.
@@ -1180,7 +1430,13 @@ impl super::InGame {
         }
         if !pressed {
             let e = self.editor.as_mut().expect("editor");
-            return std::mem::take(&mut e.swallow_release);
+            let stroked = e.end_stroke();
+            let swallow = std::mem::take(&mut e.swallow_release);
+            if stroked {
+                // The stroke's last changes show at once.
+                self.refresh_edited_view(0.0);
+            }
+            return swallow;
         }
         let Some(at) = self.cursor else { return false };
         let p = self.canvas_point(at);
@@ -1222,7 +1478,10 @@ impl super::InGame {
                 e.swallow_release = true;
             }
             if let Some(input) = input {
-                self.editor_input(input);
+                self.editor_input(input.clone());
+                if let Some(e) = &mut self.editor {
+                    e.begin_stroke(&input);
+                }
             }
             return true;
         }
@@ -1377,6 +1636,7 @@ mod tests {
                 icon: &|_| None,
                 upgrade_name: &|_| Vec::new(),
                 sprite,
+                texture_colour: &|_| None,
                 title: Vec::new(),
             };
             e.layout(&world, &view, 0).into_iter().filter(|i| matches!(i.act, Some(Act::Pick(_)))).collect()
@@ -1400,9 +1660,121 @@ mod tests {
     }
 
     #[test]
-    fn entries_end_with_natur() {
-        assert_eq!(ENTRIES[ENTRIES.len() - 1], ("Natur", ""));
-        assert_eq!(NATUR, ENTRIES.len() - 1);
+    fn entries_end_with_natur_and_gelaende() {
+        assert_eq!(ENTRIES[ENTRIES.len() - 2], ("Natur", ""));
+        assert_eq!(ENTRIES[ENTRIES.len() - 1], ("Gelaende", ""));
+        assert_eq!((NATUR, GELAENDE), (ENTRIES.len() - 2, ENTRIES.len() - 1));
+    }
+
+    #[test]
+    fn gelaende_lists_the_tools_and_the_textures() {
+        let world = nature_world();
+        let groups = groups(&world, GELAENDE);
+        assert_eq!(
+            groups.iter().map(|g| (g.header, g.kinds.len())).collect::<Vec<_>>(),
+            [("Werkzeug", 5), ("Boden", 15)]
+        );
+        assert_eq!(groups[0].kinds[0], Pick::Ground(GroundTool::Raise));
+        assert_eq!(groups[1].kinds[2], Pick::Ground(GroundTool::Texture(71)));
+        assert_eq!(ground_name(GroundTool::Texture(71)), "Erde");
+        assert_eq!(ground_name(GroundTool::Flatten), "Ebnen");
+
+        let cells = |e: &Editor, colour: bool| {
+            let view = View {
+                names: &|_| Vec::new(),
+                icon: &|_| None,
+                upgrade_name: &|_| Vec::new(),
+                sprite: &|_, _| None,
+                texture_colour: &|t| colour.then_some([t, 0, 0]),
+                title: Vec::new(),
+            };
+            e.layout(&world, &view, 0)
+        };
+        let mut e = Editor { entry: GELAENDE, ..Editor::default() };
+        let items = cells(&e, true);
+        let find = |name: &str| items.iter().find(|i| i.name == name).expect(name).clone();
+        assert_eq!(find("Anheben").look, Look::Icon { frame: None });
+        assert_eq!(find("Erde").look, Look::Texture { colour: [71, 0, 0] });
+        assert_eq!(find("Erde").act, Some(Act::Pick(Pick::Ground(GroundTool::Texture(71)))));
+        assert_eq!(find("Pinsel").text, b"Pinsel: 128");
+        assert_eq!(
+            cells(&e, false).iter().find(|i| i.name == "Erde").map(|i| i.look),
+            Some(Look::Icon { frame: None })
+        );
+
+        // The brush steps through its radii and stops at the ends; other lists have no Pinsel line.
+        for (d, radius) in [(1, 256), (1, 512), (1, 512), (-1, 256)] {
+            e.apply(&world, Act::Brush(d), 0);
+            assert_eq!(e.radius(), radius);
+        }
+        e.entry = NATUR;
+        assert!(cells(&e, true).iter().all(|i| i.name != "Pinsel"));
+    }
+
+    #[test]
+    fn a_ground_click_makes_a_dab_of_the_brush_and_flatten_takes_the_level_there() {
+        let mut world = nature_world();
+        std::sync::Arc::make_mut(&mut world.map).heights.cells.fill(40);
+        let mut e = Editor::default();
+        e.apply(&world, Act::Brush(-1), 0);
+        e.apply(&world, Act::Pick(Pick::Ground(GroundTool::Raise)), 0);
+        assert_eq!(
+            e.click_on_map(&world, (900, 1000)),
+            Some(Input::Ground(Dab { x: 900, y: 1000, radius: 64, tool: Tool::Raise(edit::RAISE) }))
+        );
+        e.apply(&world, Act::Pick(Pick::Ground(GroundTool::Flatten)), 0);
+        let Some(Input::Ground(Dab { tool: Tool::Flatten(level), .. })) = e.click_on_map(&world, (900, 1000)) else {
+            panic!("a Flatten dab")
+        };
+        assert_eq!(level, 40);
+        e.apply(&world, Act::Pick(Pick::Ground(GroundTool::Texture(71))), 0);
+        assert!(matches!(e.click_on_map(&world, (1, 2)), Some(Input::Ground(Dab { tool: Tool::Texture(71), .. }))));
+        assert_eq!(e.unit(), None);
+    }
+
+    #[test]
+    fn a_stroke_dabs_when_the_cursor_moved_half_a_radius_or_a_tenth_of_a_second_passed() {
+        let mut world = nature_world();
+        std::sync::Arc::make_mut(&mut world.map).heights.cells.fill(40);
+        let mut e = Editor::default();
+        e.apply(&world, Act::Pick(Pick::Ground(GroundTool::Flatten)), 0);
+        let press = e.click_on_map(&world, (1000, 1000)).expect("a dab");
+        e.begin_stroke(&press);
+        let dab = |x, y| Some(Input::Ground(Dab { x, y, radius: 128, tool: Tool::Flatten(40) }));
+        assert_eq!(e.stroke_step(0.016, (1000, 1000)), None, "still, too soon");
+        assert_eq!(e.stroke_step(0.016, (1050, 1000)), None, "50 px of the 64 needed");
+        assert_eq!(e.stroke_step(0.016, (1064, 1000)), dab(1064, 1000), "half a radius");
+        assert_eq!(e.stroke_step(0.016, (1064, 1000)), None, "the clock starts again");
+        // The level is the press's, whatever the ground is now.
+        std::sync::Arc::make_mut(&mut world.map).heights.cells.fill(90);
+        for _ in 0..5 {
+            assert_eq!(e.stroke_step(0.016, (1064, 1000)), None);
+        }
+        assert_eq!(e.stroke_step(0.03, (1064, 1000)), dab(1064, 1000), "a tenth of a second, standing still");
+        assert!(e.end_stroke());
+        assert_eq!(e.stroke_step(1.0, (0, 0)), None, "no stroke after the release");
+        assert!(!e.end_stroke());
+        // Only a dab starts a stroke.
+        e.begin_stroke(&Input::ReloadGuns);
+        assert_eq!(e.stroke_step(1.0, (0, 0)), None);
+    }
+
+    #[test]
+    fn the_view_is_rebuilt_at_once_outside_a_stroke_and_every_quarter_second_in_one() {
+        let mut e = Editor::default();
+        assert_eq!(e.take_stale(1.0, false), None, "nothing stale");
+        e.mark_stale(false, true);
+        assert_eq!(e.take_stale(0.0, false), Some(Stale { minimap: false, ground: true }), "no stroke: at once");
+        e.begin_stroke(&Input::Ground(Dab { x: 0, y: 0, radius: 64, tool: Tool::Land }));
+        e.mark_stale(true, false);
+        assert_eq!(e.take_stale(0.1, false), None, "a stroke waits");
+        e.mark_stale(false, true);
+        assert_eq!(e.take_stale(0.1, false), None);
+        assert_eq!(e.take_stale(0.1, false), Some(Stale { minimap: true, ground: true }), "a quarter second on");
+        e.mark_stale(true, true);
+        assert_eq!(e.take_stale(0.0, false), None, "just rebuilt");
+        e.end_stroke();
+        assert!(e.take_stale(0.0, false).is_some(), "the end of the stroke shows the rest");
     }
 
     #[test]
@@ -1452,6 +1824,6 @@ mod tests {
         assert_eq!((OX, OY), (755, 79));
         assert_eq!((BOX_X1, BOX_Y0, BOX_Y1, DIVIDER), (1004, 48, 465, 153));
         assert_eq!(ENTRIES[FIRST_EXTRA].0, "Tiere");
-        assert!(ENTRIES.len() == FIRST_EXTRA + 3 && DEFAULT_ENTRY < FIRST_EXTRA);
+        assert!(ENTRIES.len() == FIRST_EXTRA + 4 && DEFAULT_ENTRY < FIRST_EXTRA);
     }
 }

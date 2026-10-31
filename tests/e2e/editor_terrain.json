@@ -1,0 +1,46 @@
+{
+  "name": "editor_terrain",
+  "description": "The editor's Gelaende list (#430): Anheben lifts the ground, Wasser floods it and locks it for land units, a ship is put on the painted water, Erde paints a texture and Land dries the water again.",
+  "steps": [
+    {"cmd": "start", "blank": {"editor": true}},
+    {"cmd": "wait", "ticks": 5},
+    {"cmd": "ground", "world": [7000, 7700], "expect": [
+      {"path": "ground.height", "eq": 0},
+      {"path": "ground.depth", "eq": 0},
+      {"path": "ground.land_locked", "eq": false}]},
+    {"cmd": "click", "label": "Nation", "exact": true},
+    {"cmd": "click", "label": "Nation Gelaende", "exact": true},
+    {"cmd": "click", "label": "Anheben", "exact": true},
+    {"cmd": "click", "world": [7000, 7700], "note": "one dab at the middle of the brush"},
+    {"cmd": "ground", "world": [7000, 7700], "expect": [
+      {"path": "ground.height", "gt": 0},
+      {"path": "ground.drawn", "gt": 0}]},
+    {"cmd": "click", "label": "Wasser", "exact": true},
+    {"cmd": "click", "world": [9000, 7700]},
+    {"cmd": "ground", "world": [9000, 7700], "expect": [
+      {"path": "ground.depth", "gt": 130},
+      {"path": "ground.land_locked", "eq": true},
+      {"path": "ground.water_locked", "eq": false}]},
+    {"cmd": "click", "label": "Nation", "exact": true},
+    {"cmd": "click", "label": "Nation England", "exact": true},
+    {"cmd": "click", "label": "Seite runter", "exact": true, "note": "scroll to the ships"},
+    {"cmd": "click", "label": "Anzahl -", "exact": true, "note": "36 -> 15"},
+    {"cmd": "click", "label": "Anzahl -", "exact": true, "note": "10"},
+    {"cmd": "click", "label": "Anzahl -", "exact": true, "note": "5"},
+    {"cmd": "click", "label": "Anzahl -", "exact": true, "note": "1"},
+    {"cmd": "click", "label": "(ShpFregat(EN))", "note": "the frigate icon"},
+    {"cmd": "click", "world": [9000, 7700], "note": "on the painted water"},
+    {"cmd": "wait", "ticks": 5},
+    {"cmd": "state", "expect": {"path": "state.counts.0.units.ShpFregat(EN)", "eq": 1}},
+    {"cmd": "click", "label": "Nation", "exact": true},
+    {"cmd": "click", "label": "Nation Gelaende", "exact": true},
+    {"cmd": "click", "label": "Erde", "exact": true},
+    {"cmd": "click", "world": [6000, 7000]},
+    {"cmd": "ground", "world": [6000, 7000], "expect": {"path": "ground.tile", "eq": 71}},
+    {"cmd": "click", "label": "Land", "exact": true},
+    {"cmd": "click", "world": [9000, 7700]},
+    {"cmd": "ground", "world": [9000, 7700], "expect": [
+      {"path": "ground.depth", "eq": 0},
+      {"path": "ground.land_locked", "eq": false}]}
+  ]
+}
