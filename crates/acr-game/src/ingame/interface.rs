@@ -2035,6 +2035,20 @@ impl InGame {
                 };
                 fill(&mut out, white, x0 + 4, y0 - 12, x0 + 4, bottom);
                 fill(&mut out, white, x0 + w - 5, y0 - 12, x0 + w - 5, bottom);
+                if u.building {
+                    // The garrison label (0x4bb6f8, buildings only: OB+0x27 bit 4): an 8 × 8
+                    // square in the owner's colour `0xd0 + 4·owner` at (x0 + 5, y0 − 22) and
+                    // the count 12 px right of it, its bottom 4 px above the reload bar's
+                    // row (y0 − 10), in `SmallWhiteFont` (0x92dc4c).
+                    let owner = rgba(color::PLAYER.wrapping_add(4 * u.owner));
+                    fill(&mut out, owner, x0 + 5, y0 - 22, x0 + 12, y0 - 15);
+                    let seen = world.nation_mask[usize::from(own) & 7] & u.nmask != 0;
+                    let capacity = (world.adv(u.owner, u.kind).max_inside & 0xFFFF) + u.add_inside;
+                    let text = inside_label(seen, u.inside.len(), capacity);
+                    let font = hud::font::SMALL_WHITE;
+                    let top = y0 - 14 - ctx.fonts.glyph_height(ctx.lib, font, b'C');
+                    out.push(Draw::game_text(font, &text, x0 + 17, top).unclipped());
+                }
             }
         }
         if !self.interface.hud.zoom {
@@ -3035,9 +3049,22 @@ fn grouping(world: &acr_sim::World, own: u8, selected: &[EntityId]) -> Option<bo
     all_formed.then_some(true)
 }
 
+/// The label over a building's bar (0x4bb7ae..0x4bb82a): `inside/capacity` for the player's
+/// own side (alliance mask shared, 0x4bb790), `?/capacity` for the others.
+fn inside_label(seen: bool, inside: usize, capacity: i32) -> Vec<u8> {
+    if seen { format!("{inside}/{capacity}") } else { format!("?/{capacity}") }.into_bytes()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn garrison_label_hides_the_count_of_foreign_buildings() {
+        assert_eq!(inside_label(true, 10, 15), b"10/15");
+        assert_eq!(inside_label(true, 0, 0), b"0/0");
+        assert_eq!(inside_label(false, 10, 15), b"?/15");
+    }
 
     #[test]
     fn grouped_formations_are_selected_together() {
