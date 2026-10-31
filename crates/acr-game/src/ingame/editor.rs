@@ -632,6 +632,10 @@ impl Editor {
         let mut out = self.build(world, view, local);
         for i in &mut out {
             i.rect = i.rect.offset(dx, dy);
+            // The divider is a y of its own: it moves with the box.
+            if let Look::Frame { divider: Some(d) } = &mut i.look {
+                *d += dy;
+            }
         }
         // The level drop-down, over everything.
         if let Some(menu) = self.menu {
@@ -2065,5 +2069,32 @@ mod tests {
         e.drag_to([at[0] + 44.0, at[1]]);
         assert_eq!((e.frame.w, e.frame.columns()), (293, 6));
         assert!(e.release_grab(true));
+    }
+
+    #[test]
+    fn every_part_of_the_window_moves_by_the_same_offset() {
+        let mut e = Editor { entry: NATUR, ..Editor::default() };
+        let before = natur_items(&e);
+        // An odd offset and a bigger size: the divider, frames, combo, swatches, grid, bar and
+        // extras box all stand where the default layout of that size puts them, plus the offset.
+        e.frame = Frame { x: 777, y: 79, w: 249 + 44, h: 417 + 31, folded: false };
+        let moved = natur_items(&e);
+        let mut sized = Editor { entry: NATUR, ..Editor::default() };
+        sized.frame = Frame { x: frame::DEFAULT.x, y: frame::DEFAULT.y, ..e.frame };
+        let base = natur_items(&sized);
+        let (dx, dy) = (777 - frame::DEFAULT.x, 79 - frame::DEFAULT.y);
+        assert_eq!(base.len(), moved.len());
+        for (b, m) in base.iter().zip(&moved) {
+            assert_eq!(b.rect.offset(dx, dy), m.rect, "{}", b.name);
+            match (b.look, m.look) {
+                (Look::Frame { divider: Some(x) }, Look::Frame { divider: Some(y) }) => assert_eq!(x + dy, y),
+                (a, c) => assert_eq!(a, c),
+            }
+        }
+        assert!(before.iter().any(|i| matches!(i.look, Look::Frame { divider: Some(_) })));
+        // The divider lies between the combo box and the grid, as at the original's place.
+        let combo = named(&moved, "Nation").rect;
+        let Look::Frame { divider: Some(d) } = moved[0].look else { panic!("no divider") };
+        assert!(d > combo.y1 && d < e.frame.content().y0);
     }
 }
