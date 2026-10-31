@@ -357,12 +357,17 @@ pub mod usage {
     pub const SKLAD: u8 = 4;
     pub const TOWER: u8 = 5;
     pub const MINE: u8 = 7;
+    pub const FASTHORSE: u8 = 8;
     pub const FISHER: u8 = 16;
     pub const MORTIRA: u8 = 9;
     pub const PUSHKA: u8 = 10;
     pub const SUPERMORTIRA: u8 = 18;
     pub const PORT: u8 = 19;
+    pub const LIGHTINFANTRY: u8 = 20;
+    pub const STRELOK: u8 = 21;
+    pub const HARDHORCE: u8 = 22;
     pub const PEASANT: u8 = 23;
+    pub const HORSE_STRELOK: u8 = 24;
     pub const MCANNON: u8 = 33;
 }
 

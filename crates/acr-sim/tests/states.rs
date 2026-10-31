@@ -3,10 +3,12 @@
 
 use std::sync::Arc;
 
+use acr_formats::defs::nres::weapon_kinds;
 use acr_formats::defs::{OrderGroups, OrderList, UnitDef};
 use acr_sim::catalog::{Catalog, ObjectType};
 use acr_sim::formation::{BOrder, Formations};
 use acr_sim::map::MapGrid;
+use acr_sim::weapon::Weapons;
 use acr_sim::world::EntityId;
 use acr_sim::{Command, Pos, TypeId, World};
 
@@ -139,4 +141,55 @@ fn formation_melee_sends_members_after_enemies() {
     assert!(members_attacking >= 2, "several members fought: {members_attacking}");
     assert!(enemies.iter().all(|e| u(&w, *e).death != 0), "the enemies died");
     assert!(!matches!(w.brigades[0].orders.last(), Some(BOrder::Bitva(_))), "the melee ended");
+}
+
+const CANNON: &str = "NAME Can\r\nUSERLC 0 G SHADOW 0 0\r\n#STAND 16 1 0 0\r\n@MOTION_L 16 0 0 9\r\n\
+    @MOTION_R 16 0 10 19\r\n@MOTION_L0 16 0 0 9\r\n@MOTION_R0 16 0 10 19\r\n@MOTION_L1 16 0 0 19\r\n\
+    @MOTION_R1 16 0 0 19\r\n@PATTACK4 16 0 0 19\r\n@UATTACK4 16 0 19 0\r\n@ATTACK4 16 0 0 39\r\n\
+    SETACTIVEPOINT #ATTACK4 10 10 0 10 0 10 0 10 0 10 0 10 0 10 0 10 0 10 0 10 0 10 0 10 0 10 0 10 0 10 0 10 0\r\n\
+    LIFE 1500\r\nGEOMETRY 1 10 40\r\nMOTIONSTYLE COMPLEXROTATE\r\nUSAGE PUSHKA\r\nARTPODGOTOVKA\r\n\
+    ATTACK_RADIUS 4 300 3000\r\nATTACK_PAUSE 4 100\r\nWEAPON 4 PPOINTT\r\nWEAPONKIND 4 IADRO\r\n\
+    CANKILL 1 BODY\r\nMATHERIAL 1 BODY\r\n[END]\r\n";
+const NDS: &[u8] = b"[MEMBERS]\r\n\
+    POINT #POINT 0 1 NONE HI_GRAVITY1 RANDOM 3 -1\r\n\
+    PPOINTT #POINT 0 0 NONE NO_GRAVITY SLIGHTUP 0 1\r\n\
+    NUCL2P #NUCL1 340 35 NONE HI_GRAVITY ANGLE 10 -1\r\n\
+    [SYNCWEAPON]\r\nPPOINTT 1 NUCL2P\r\n[END]\r\n";
+const ADS: &[u8] = b"@POINT 1 0 0 0\r\n@NUCL1 1 0 0 0\r\n";
+const NRES: &[u8] = b"[WEAPONS]\r\n#GENSHIELD 13\r\nIADRO 2 15 HX\r\n[UNITKINDS]\r\n";
+
+/// A gun told to attack and then to stand ground (the tactics controller's order pair)
+/// shoots a target in range, drops it when it walks out of range (0x5204aa) and does not
+/// move: without the drop `AttackObjLink` would drive the gun after the target.
+#[test]
+fn a_gun_standing_ground_drops_a_target_out_of_range() {
+    let mut c = Catalog::new();
+    let can = c.add(ObjectType::from_def("Can(EN)", &UnitDef::parse(CANNON.as_bytes())));
+    let pik = c.add(ObjectType::from_def("Pik(EN)", &UnitDef::parse(PIKEMAN.as_bytes())));
+    c.set_weapon_kinds(&weapon_kinds(NRES));
+    c.set_weapons(Weapons::parse(NDS, Some(ADS), None));
+    let f = Formations::new(&OrderList::parse(ORDERS), &OrderGroups::parse(GROUPS));
+    let mut w = World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(f));
+    assert_eq!(w.catalog.get(can).role.usage, acr_sim::catalog::usage::PUSHKA);
+    let g = w.spawn(can, 0, Pos::from_pixels(1000, 2000), 64);
+    let t = w.spawn(pik, 1, Pos::from_pixels(2200, 2000), 128);
+    w.units[t.0 as usize].no_search_victim = true;
+    let start = u(&w, g).pos;
+    w.step(&[
+        Command::Attack { player: 0, units: vec![g], target: t },
+        Command::StandGround { player: 0, units: vec![g], on: true },
+    ]);
+    assert!(u(&w, g).stand_ground && u(&w, g).target() == Some(t));
+    // The target walks away past the gun's reach (`ATTACK_RADIUS 4 300 3000`).
+    w.step(&[Command::Move { player: 1, units: vec![t], x: 6000, y: 2000 }]);
+    let mut fired = false;
+    for _ in 0..700 {
+        w.step(&[]);
+        fired |= w.projectiles.iter().count() > 0;
+    }
+    assert!(fired, "the gun fired while the target was in range");
+    assert!(u(&w, t).pos.pixels().0 - 1000 > 3000, "the target left the reach");
+    assert_eq!(u(&w, g).target(), None, "the target out of range was dropped");
+    assert_eq!(u(&w, g).pos, start, "and the gun did not follow it");
+    assert!(u(&w, g).stand_ground);
 }
