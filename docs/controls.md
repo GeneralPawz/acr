@@ -21,8 +21,8 @@ in the browser's `localStorage` entry `acr-settings` on the web. The scroll spee
 (*Scrolltempo*) also sets how fast the keys pan in the modern scheme.
 
 For phones, `top_bar=touch` in `settings.txt` (the default on Android, `classic` elsewhere;
-not on an options page) replaces the top bar by two buttons of at least 48 dp: **M** (top
-left) opens the M drop-down with finger-sized rows (game menu, surrender, ...), the gold icon (top right) shows or hides the six resource amounts
+not on an options page) replaces the top bar by two plaques of the classic bar at the top right (touch
+targets of at least 40 dp): **M** opens the M drop-down with finger-sized rows (game menu, surrender, ...), the gold plaque shows or hides the six resource amounts
 (tap again to close). Taps elsewhere along the top edge reach the map ([ui.md](ui.md)).
 
 The game menu's *Spieleinstellungen* has five more pages ("Weitere Optionen »"): blood and
