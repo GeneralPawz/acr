@@ -1373,7 +1373,13 @@ frames `Interf2\Combo2` at 0x4eff3b.
 - Where the three nation lists are filled is not known (no store to those globals in the
   code). ACR builds them from its catalog: the land types whose id has the nation's prefix, in
   the nation files' order, split into infantry, cavalry (`spacing::is_rider`) and artillery
-  (`COMPLEXROTATE`). Marine and buildings are left out until #406.
+  (`COMPLEXROTATE`). Marine (the `Medium::Water` types) and buildings (the building types)
+  follow, listed by the nation tag in brackets at the end of their id (`ShpFregat(SP)`,
+  `MayBlg2(AC)`; the buildings of the Aztecs carry Maya prefixes), since ships are named for
+  their kind. A ship is put only on deep water, a land unit or building not (`World::sea_allows`);
+  a building is put finished and free of charge under the footprint checks of building
+  (`construction::place_free`: no other building or enemy on it, no locked ground). Vegetation,
+  stones and terrain tools (#406) are not done.
 - ACR's additions: the combo box ends with "Tiere" and "Kanonen"; the eighth colour is the
   neutral player 7 (wild animals); the controls of docs/controls.md sit in a second paper box
   under the window; the combo box's list, the arrows and track of the scroll bar are clicks

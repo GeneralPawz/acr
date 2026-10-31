@@ -1,0 +1,16 @@
+{
+  "name": "editor_world",
+  "description": "The test editor's Marine and Gebaeude lists (#406): a finished town hall is put on grass (a second one on the same spot is refused), a land unit is refused on the sea and a ship put there.",
+  "steps": [
+    {"cmd": "start", "blank": {"editor": true}},
+    {"cmd": "wait", "ticks": 5},
+    {"cmd": "click", "label": "Nation", "exact": true},
+    {"cmd": "click", "label": "Nation England", "exact": true},
+    {"cmd": "wheel", "lines": -6, "note": "scroll to the buildings"},
+    {"cmd": "click", "label": "(EngCen(EN))", "note": "the town hall icon"},
+    {"cmd": "click", "pos": [400, 400]},
+    {"cmd": "click", "pos": [400, 400], "note": "the same spot: refused"},
+    {"cmd": "wait", "ticks": 5},
+    {"cmd": "state", "expect": [{"path": "state.counts.0.buildings.EngCen(EN)", "eq": 1}, {"path": "state.counts.0.sites.EngCen(EN)", "exists": false}]}
+  ]
+}
