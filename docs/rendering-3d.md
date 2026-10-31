@@ -902,9 +902,10 @@ rots by a fallback in `model.wgsl` (material `look.w`), driven by the same per-c
 An animal that leaves a carcass (`TRANSFORMTOMEAT`) is removed by the simulation at the end of
 its death clip (not alive, death counter 1); in 3D its body lingers like a soldier's for
 `corpse_minutes`. The simulation's `MEAT` sprite (`sprite::leave_carcass`, a `ResSprite`
-for hunting) is not drawn by the game at all yet (dynamic sprite objects have no draw path;
-the static scene holds the map's sprites only), so nothing shows beside the 3D carcass; when
-that path comes it must leave out a `MEAT` sprite whose animal still lies in 3D. **Asset side, later:**
+for hunting) is not drawn by the game yet: `MEAT.LST` names `TREES.GP` frames 0..2 (tree
+pictures) for `M00`..`M02`, so a literal draw would put trees there (open question, #358).
+Fields (`COMPLEX`, `World::sprites`) are drawn: see "Fields". When carcasses come, leave out a
+`MEAT` sprite whose animal still lies in 3D. **Asset side, later:**
 `deflate` / `lie_flat` morph targets for the animals (the masked corpses do not collapse yet;
 they sink with the instance transform).
 
@@ -2491,3 +2492,16 @@ the frame rate, the models drawn and the poses sampled.
   neighbouring corpse; strapped gear floats over a deflated body (assets-humans.md,
   insight 6).
 - No blending between clips; morph target normals are ignored.
+
+#### Fields
+
+`World::sprites` of the `COMPLEX` group (planted by mills, #358) join the per-frame dynamic
+sprite list of the units (`effects::field_sprites`). The picture of a type is the animation
+that `COMPLEX.LST` names after the radius (`KUK00 159 146 30 #KUK00 1 1 0 0`, the stage
+`KUK00`..`KUK05` is the animation's frame in `KUK.GP`; `KUD`/`KUB` reuse `#KUK`, the nation
+`PUK` types `FIELD2.GP`), looked up in `WEAPON.ADS`; step `tick / pause` modulo the
+animation's length. Placement as other list sprites: `(x − DX, y/2 − z − DY)` (0x4d0930,
+animation choice 0x4d0a22 → 0x49c3e1, the sorted draw). The 2D view sorts them at row `y/2`
+with the units, as the original does. With 3D models or the free camera they are drawn as
+`Layer::Ground` sprites, flat behind every model (like stones and holes), so they show in both
+camera modes; no model and no real ground decal yet.

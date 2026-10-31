@@ -254,8 +254,10 @@ the drawing code does ([`docs/simulation.md`](../simulation.md#directions-and-sp
 
 ## Open questions
 
-- Objects: `COMPLEX.LST` (fields, `KUK`/`PUK`) and `ANIMATIONS.LST` (`SA`, river animations of
-  `POTOK.GP`) have their own formats and are not drawn yet; `MEAT.LST` (`PS`) neither. Line
+- Objects: `ANIMATIONS.LST` (`SA`, river animations of
+  `POTOK.GP`) has its own format and is not drawn yet; `MEAT.LST` (`PS`) neither. `COMPLEX.LST`
+  (fields, `KUK`/`PUK`, animations of `WEAPON.ADS`) is drawn for the simulation's fields only
+  (docs/rendering-3d.md "Fields"), not for the map's own `CO` objects. Line
   sorting of buildings is approximated.
 
 - Waves and surf: `WAVE*.DAT`, `WAVE.GRD`, `PRIBOY.GP` and `Water\voda.bmp` (not shipped) are
