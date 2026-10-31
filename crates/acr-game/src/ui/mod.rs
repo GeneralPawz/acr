@@ -338,7 +338,14 @@ impl Ui {
     /// the missions it names and stores the player's progress (0x4bcbb1).
     pub fn finish_game(&mut self, setup: &GameSetup, won: Option<bool>) {
         self.leave_game();
-        let GameKind::Mission(mission) = &setup.kind else { return };
+        let mission = match &setup.kind {
+            GameKind::Mission(mission) => mission,
+            GameKind::Acr(m) => {
+                self.push(Box::new(screens::single_mission::SingleMission::default().at_acr(*m)));
+                return;
+            }
+            _ => return,
+        };
         match mission.campaign {
             Some((campaign, index)) => {
                 if won == Some(true) {

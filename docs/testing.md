@@ -590,7 +590,7 @@ Armada* musketeers behind their pikemen step aside or hold fire, and keep reload
 friendly fire is switched on), `attack_ground` (a random map built
 up to the Festung, a cannon trained and ordered through `Boden angreifen` onto the ground
 pays its shots; the Festung's cannon ball sets a neutral building burning, which burns down
-and disappears), `sea_battle` (random map landscape 6: two fleets on open water sail together and trade broadsides), `sea_ground` (the blank field's `sea` ground: ships go anywhere on it, a land unit cannot be put there), `save_load` (save and load through the game menu), `army_list` (two formations: the army icon
+and disappears), `sea_battle` (random map landscape 6: two fleets on open water sail together and trade broadsides), `sea_mission` (ACR's own single mission, the Battle of Lake Erie, started from the Einzelmission list: the computer's fleet comes to the player's by itself, docs/acr-missions.md), `sea_ground` (the blank field's `sea` ground: ships go anywhere on it, a land unit cannot be put there), `save_load` (save and load through the game menu), `army_list` (two formations: the army icon
 at the top left opens the list of formations with their numbers; a click selects one, whose
 command panel icon shows the same number).
 

@@ -209,6 +209,9 @@ description, count, count lines), the order from `Missions\SingleMiss.txt`.
   `START`, cancel hint `WAR_CANCEL`. The list shows the campaign's missions up to the last
   one the player has opened (0x5c5432), see below.
 
+ACR appends its own missions (`docs/acr-missions.md`) to the list after the original's rows;
+they have no preview picture and take their briefing from code.
+
 The menu screens start the game from their own loop and continue after it, so a game
 ends back in the list it was started from: the campaign's or the single missions' list
 with the mission still selected; ACR returns random maps to the main menu.

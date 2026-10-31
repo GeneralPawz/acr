@@ -16,6 +16,7 @@ use acr_formats::string_table::Texts;
 use acr_mission::{MissionEvent, ScriptSetup, Scripts};
 use acr_sim::{Command, World};
 
+use crate::acr_missions::AcrMission;
 use crate::mission_ui::Messages;
 use crate::ui::draw::Draw;
 use crate::ui::screens::mission::{Answer, ChoiceWindow, HistoryEntry, HistoryWindow, MessageWindow, Window};
@@ -39,6 +40,8 @@ struct Pending {
 }
 
 pub struct MissionLink {
+    /// One of ACR's own missions: its rules and the computer's orders are Rust, no script.
+    acr: Option<AcrMission>,
     script: Option<String>,
     texts: Option<String>,
     /// Look the script/texts up in `Missions.txt` by map path (games started from a map).
@@ -93,7 +96,7 @@ impl MissionLink {
                 (Some(m.script.clone()), Some(m.texts.clone()).filter(|t| !t.is_empty()), None, m.difficulty.index())
             }
             GameKind::Mission(m) => (None, None, Some(m.map.clone()), m.difficulty.index()),
-            GameKind::RandomMap(_) | GameKind::Blank(_) => (None, None, None, 1),
+            GameKind::RandomMap(_) | GameKind::Blank(_) | GameKind::Acr(_) => (None, None, None, 1),
         };
         // Random maps put player k's units in nation `color` (random_map.rs).
         let random = matches!(setup.kind, GameKind::RandomMap(_) | GameKind::Blank(_));
@@ -102,11 +105,13 @@ impl MissionLink {
             .players
             .iter()
             .enumerate()
-            .filter(|(_, p)| matches!(p.control, Control::Computer(_)))
+            // ACR's missions play their computer players themselves ([`AcrMission::orders`]).
+            .filter(|(_, p)| matches!(p.control, Control::Computer(_)) && !matches!(setup.kind, GameKind::Acr(_)))
             .map(|(i, _)| nation_of(i))
             .collect();
         let local_player = nation_of(setup.local_player);
         Self {
+            acr: if let GameKind::Acr(m) = setup.kind { Some(m) } else { None },
             script,
             texts,
             lookup_map,
@@ -221,6 +226,9 @@ impl MissionLink {
         if self.scripts.is_some() || self.off {
             return Vec::new();
         }
+        if self.acr.is_some() {
+            return Vec::new();
+        }
         if self.script.is_none()
             && let Some(dll) = map.mission_dll.clone().filter(|d| !d.is_empty())
         {
@@ -288,6 +296,15 @@ impl MissionLink {
         }
         self.update_fog(world);
         self.messages.tick();
+        if let Some(mission) = self.acr {
+            if self.ended.is_none()
+                && let Some(won) = mission.verdict(world)
+            {
+                self.ended = Some(won);
+                self.ended_at = self.clock;
+            }
+            return Some(if self.ended.is_some() { Vec::new() } else { mission.orders(world) });
+        }
         // Deterministic start: the world does not move before the scripts run (they would
         // otherwise start at a tick that depends on file loading).
         let Some(scripts) = &mut self.scripts else { return if self.off { Some(Vec::new()) } else { None } };

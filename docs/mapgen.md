@@ -124,6 +124,9 @@ that branch before the generator proper (`sea.rs`):
   at the west and east end (2/5 of the map side from the middle, facing each other), more
   on a circle around the middle; start resources from `Res.dat` as usual.
 
+ACR's historic sea battle (docs/acr-missions.md) builds its own map with shores and islands
+in code; the sea map above is the open-water case.
+
 The driver's blank field has the same water as ground `sea` (docs/testing.md).
 
 ## Deviations

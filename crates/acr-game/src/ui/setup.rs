@@ -131,6 +131,8 @@ pub enum GameKind {
     RandomMap(RandomMapSetup),
     /// The driver's blank test field: no objects, no start units, no AI, no fog.
     Blank(BlankSetup),
+    /// One of ACR's own missions (`crate::acr_missions`), listed after the original's.
+    Acr(crate::acr_missions::AcrMission),
 }
 
 /// A game to start: produced by "start" in the menus, consumed by the in-game screen.

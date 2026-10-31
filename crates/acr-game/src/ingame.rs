@@ -163,7 +163,7 @@ impl InGame {
             GameKind::RandomMap(r) => {
                 (None, Some(crate::random_map::RandomMapGen::new(crate::random_map::settings(r, &setup))))
             }
-            GameKind::Blank(_) => (None, None),
+            GameKind::Blank(_) | GameKind::Acr(_) => (None, None),
         };
         let failed = None;
         let mission = crate::mission::MissionLink::new(&setup);
@@ -231,10 +231,17 @@ impl InGame {
         drop(queue);
         self.three_d.start(paths);
         self.generate_map();
-        if let GameKind::Blank(b) = &self.setup.kind {
-            self.map = Some(crate::blank_map::build(b));
-            self.objects.reset();
-            self.editor = b.editor.then(editor::Editor::default);
+        match &self.setup.kind {
+            GameKind::Blank(b) => {
+                self.map = Some(crate::blank_map::build(b));
+                self.objects.reset();
+                self.editor = b.editor.then(editor::Editor::default);
+            }
+            GameKind::Acr(m) => {
+                self.map = Some(m.map());
+                self.objects.reset();
+            }
+            _ => {}
         }
         self.objects.start(&|p| self.requests.borrow_mut().push(p.to_owned()));
         self.objects.start_effects(&|p| self.requests.borrow_mut().push(p.to_owned()));
