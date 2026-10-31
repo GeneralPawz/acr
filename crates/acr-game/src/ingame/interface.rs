@@ -340,6 +340,7 @@ impl InGame {
         self.interface.aim_guides = settings.aim_guides;
         self.editor_window = settings.editor_window;
         self.interface.hud.center_top_bar = settings.center_top_bar;
+        self.interface.hud.hud_scale = settings.hud_scale;
         self.set_input_mode(settings, mode);
     }
 
@@ -2037,8 +2038,8 @@ impl InGame {
         let _ = self.keyboard(ctx);
         self.post_hints(ctx);
         let view = self.build_view(ctx, window);
+        let hud_layers = self.interface.hud.draw(ctx, &view);
         let mut hud_draws = Vec::new();
-        self.interface.hud.draw(ctx, &view, &mut hud_draws);
         self.dip_draw(ctx, &mut hud_draws);
         if self.interface.paused && self.mission.ended.is_none() {
             pause_text(ctx, self.interface.hud.screen(), &mut hud_draws);
@@ -2068,7 +2069,10 @@ impl InGame {
         if let Some(rect) = self.selection_rectangle(ctx) {
             layers.push((Canvas::new(1.0, [0.0, 0.0]), rect));
         }
-        layers.push((self.interface.canvas, hud_draws));
+        // The panels at their `hud_scale`, then the dialogs and the pause text at the canvas'.
+        let canvas = self.interface.canvas;
+        layers.extend(hud_layers.into_iter().map(|(zoom, draws)| (zoom.canvas(canvas), draws)));
+        layers.push((canvas, hud_draws));
         (layers, images, cursor)
     }
 

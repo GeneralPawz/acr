@@ -271,6 +271,10 @@ pub enum Request {
     /// `{"cmd": "top_bar", "mode": "touch"}`: the top bar shown, over the `top_bar` setting;
     /// answers the buttons' and the panel's window rects and whether the panel is open.
     TopBar(crate::ui::settings::TopBar),
+    /// `{"cmd": "hud_scale", "scale": 1.8}`: the HUD panels' scale, over the `hud_scale` setting
+    /// (without `scale`: the platform's default); answers the command panel's scale in force
+    /// and its first icon's window rect.
+    HudScale(Option<f32>),
     /// `{"cmd": "touch", "phase": "start|move|end|tick", "id": 1, "pos": [x, y], "t": 0}`: a
     /// finger through the touch gestures, which also puts the game in touch mode. The
     /// position is any pointer target (`pos`, `label`, ...); `t` (ms) sets the touch clock the
@@ -703,6 +707,14 @@ pub fn parse(line: &str) -> Result<(Option<Value>, Request), String> {
             Some(m) => crate::ui::settings::TopBar::parse(&m).ok_or(format!("top_bar: unknown mode {m:?}"))?,
             None => return Err("top_bar: missing \"mode\"".into()),
         }),
+        "hud_scale" => Request::HudScale(match v.get("scale") {
+            None | Some(Value::Null) => None,
+            Some(s) => Some(
+                s.as_f64()
+                    .and_then(|s| crate::hud::zoom::parse(&s.to_string()))
+                    .ok_or("hud_scale: \"scale\" must be a positive number")?,
+            ),
+        }),
         "fog" => Request::Fog(v.get("on").and_then(Value::as_bool).unwrap_or(true)),
         "map_models" => Request::MapModels(v.get("on").and_then(Value::as_bool).unwrap_or(true)),
         "props" => Request::Props {
@@ -805,6 +817,15 @@ mod tests {
         assert_eq!(parse(r#"{"cmd": "top_bar", "mode": "classic"}"#).unwrap().1, Request::TopBar(TopBar::Classic));
         assert!(parse(r#"{"cmd": "top_bar", "mode": "tiny"}"#).is_err());
         assert!(parse(r#"{"cmd": "top_bar"}"#).is_err());
+    }
+
+    #[test]
+    fn parses_the_hud_scale_request() {
+        assert_eq!(parse(r#"{"cmd": "hud_scale", "scale": 1.8}"#).unwrap().1, Request::HudScale(Some(1.8)));
+        assert_eq!(parse(r#"{"cmd": "hud_scale", "scale": 9}"#).unwrap().1, Request::HudScale(Some(2.5)));
+        assert_eq!(parse(r#"{"cmd": "hud_scale"}"#).unwrap().1, Request::HudScale(None));
+        assert!(parse(r#"{"cmd": "hud_scale", "scale": "big"}"#).is_err());
+        assert!(parse(r#"{"cmd": "hud_scale", "scale": -1}"#).is_err());
     }
 
     #[test]

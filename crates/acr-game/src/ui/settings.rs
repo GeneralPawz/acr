@@ -24,7 +24,7 @@ impl EditorWindow {
 }
 
 /// The original's option globals, with their ranges.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Settings {
     /// `WarSound`: sound effect volume 0..=100.
     pub sound_volume: i32,
@@ -138,6 +138,13 @@ pub struct Settings {
     /// mouse or elsewhere ([`crate::input_mode::InputMode::top_bar`]). A UI setting: not in the
     /// rules or the savegames.
     pub top_bar: Option<TopBar>,
+    /// ACR: `hud_scale=1.0..2.5`: the HUD panels (the command panel and unit list, the
+    /// minimap, the side panels and army list) are drawn this many times larger about their
+    /// screen corner, with their hit-testing scaled the same way; the map and the top bar keep
+    /// their size ([`crate::hud::zoom`]). `None` (not in the file): 1 on a desktop or in a
+    /// browser, on Android a size that makes a command icon about 9 mm wide. A UI setting:
+    /// not in the rules or the savegames.
+    pub hud_scale: Option<f32>,
     /// ACR: `decay_stain=on|off`: a decaying corpse's fluids soak into the ground under it
     /// (a cadaver decomposition island: a dark, greasy stain drying to brown, the grass
     /// dying around it; docs/rendering-3d.md). `None` (not in the file): on with
@@ -305,6 +312,7 @@ impl Default for Settings {
             aim_guides: true,
             center_top_bar: false,
             top_bar: None,
+            hud_scale: None,
             weather: Weather::Off,
             sea_state: SeaState::Calm,
             graphics: Graphics::Auto,
@@ -385,11 +393,12 @@ impl Settings {
             Gore::Off => "off",
         };
         let top_bar = self.top_bar.map_or(String::new(), |b| format!("top_bar={}\n", b.name()));
+        let hud_scale = self.hud_scale.map_or(String::new(), |s| format!("hud_scale={s}\n"));
         format!(
             "sound_volume={}\nmusic_volume={}\nmusic_mode={}\ngame_mode={}\nscroll_speed={}\nframe_time={}\n\
              resolution={}\nrecord={}\nrecord_file={hex}\ncontrols={controls}\nedge_scroll={}\n\
              models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\ncorpse_decay={}\nhit_locations={}\nbody_spacing={}\nmortars={}\ncorpse_piles={}\ncannon_fire={}\nformation_attack={}\nanimal_give_up={}\ndart_fire={}\naimed_fire={}\nshadows={}\nlod={}\nmaterial_detail={}\nwind={}\nmap_models={}\nwater={}\n\
-             ground={}\nground_cover={}\nbattlefield_marks={}\nweather={}\nsea_state={}\naim_guides={}\ncenter_top_bar={}\n{top_bar}graphics={}\nframe_cap={}\n{}{}{}{}{}{}",
+             ground={}\nground_cover={}\nbattlefield_marks={}\nweather={}\nsea_state={}\naim_guides={}\ncenter_top_bar={}\n{top_bar}{hud_scale}graphics={}\nframe_cap={}\n{}{}{}{}{}{}",
             self.sound_volume,
             self.music_volume,
             self.music_mode,
@@ -536,6 +545,7 @@ impl Settings {
                 "aim_guides" => s.aim_guides = value != "off",
                 "center_top_bar" => s.center_top_bar = value == "on",
                 "top_bar" => s.top_bar = TopBar::parse(value),
+                "hud_scale" => s.hud_scale = crate::hud::zoom::parse(value),
                 "weather" => s.weather = Weather::parse(value).unwrap_or_default(),
                 "sea_state" => s.sea_state = SeaState::parse(value).unwrap_or_default(),
                 "graphics" => s.graphics = Graphics::parse(value).unwrap_or_default(),
@@ -645,6 +655,7 @@ mod tests {
             aim_guides: false,
             center_top_bar: true,
             top_bar: Some(TopBar::Touch),
+            hud_scale: Some(1.8),
             weather: Weather::Snow,
             sea_state: SeaState::Storm,
             graphics: Graphics::Medium,
@@ -699,6 +710,13 @@ group_move=off"
         assert_eq!(Settings::decode("top_bar=huge").top_bar, None);
         assert!(Settings { top_bar: Some(TopBar::Touch), ..Settings::default() }.encode().contains("top_bar=touch\n"));
         assert!(!Settings::default().encode().contains("\ntop_bar="));
+        // `hud_scale`: absent or no number is unset (the platform's), a number is kept in range.
+        assert_eq!(Settings::decode("").hud_scale, None);
+        assert_eq!(Settings::decode("hud_scale=1.8").hud_scale, Some(1.8));
+        assert_eq!(Settings::decode("hud_scale=7").hud_scale, Some(2.5));
+        assert_eq!(Settings::decode("hud_scale=small").hud_scale, None);
+        assert!(Settings { hud_scale: Some(2.0), ..Settings::default() }.encode().contains("hud_scale=2\n"));
+        assert!(!Settings::default().encode().contains("hud_scale"));
         assert_eq!(Settings::decode("weather=fog").weather, Weather::Fog);
         assert_eq!(Settings::decode("weather=hail").weather, Weather::Off);
         assert_eq!(Settings::decode("sea_state=storm").sea_state, SeaState::Storm);
