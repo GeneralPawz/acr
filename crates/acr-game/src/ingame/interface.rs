@@ -1622,9 +1622,9 @@ impl InGame {
                     .filter(|u| u.building && u.inside.iter().any(|&i| world.unit(i).is_some_and(|o| o.kind == kind)))
                     .map(|u| u.id)
                     .collect();
-                for building in buildings {
-                    self.commands.push(Command::Leave { player, building, kind: Some(kind) });
-                }
+                // 0x5f5a66 sends the command five times while Shift is held.
+                let n = if self.interface.mods.shift_key() { SHIFT_REPEAT } else { 1 };
+                self.commands.extend(leave_commands(player, &buildings, kind, n));
             }
             HudCommand::Rally => {
                 self.interface.rally_mode = true;
@@ -3122,6 +3122,14 @@ fn inside_label(seen: bool, inside: usize, capacity: i32) -> Vec<u8> {
     if seen { format!("{inside}/{capacity}") } else { format!("?/{capacity}") }.into_bytes()
 }
 
+/// The typed leave commands of one click on an occupant icon: `n` per building.
+fn leave_commands(player: u8, buildings: &[EntityId], kind: TypeId, n: usize) -> Vec<Command> {
+    buildings
+        .iter()
+        .flat_map(|&building| std::iter::repeat_n(Command::Leave { player, building, kind: Some(kind) }, n))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3185,6 +3193,15 @@ mod tests {
         assert_eq!(inside_label(true, 10, 15), b"10/15");
         assert_eq!(inside_label(true, 0, 0), b"0/0");
         assert_eq!(inside_label(false, 10, 15), b"?/15");
+    }
+
+    #[test]
+    fn shift_click_on_an_occupant_sends_five_leaves_per_building() {
+        let (b, kind) = ([EntityId(3), EntityId(4)], TypeId(7));
+        assert_eq!(leave_commands(0, &b, kind, 1).len(), 2);
+        let five = leave_commands(0, &b, kind, SHIFT_REPEAT);
+        assert_eq!(five.len(), 10);
+        assert!(five[..5].iter().all(|c| *c == Command::Leave { player: 0, building: EntityId(3), kind: Some(kind) }));
     }
 
     #[test]
