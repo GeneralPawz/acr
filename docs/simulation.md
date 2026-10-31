@@ -1511,8 +1511,8 @@ a `VISTREL` shot at an aim point farther than `wounds::AIMED_MIN` (90 px) scatte
 scaled, like `DIRECT_SCATTER`), and its reload (`delay`, set at the shot) is `AIMED_PAUSE`
 (15 %) longer: the longer aim. Nearer shots, other weapons and the rule off are untouched; the
 rules hash counts it only when on (tag 11, since 10 is reserved). Switched on by
-`aimed_fire=on|off` in `settings.txt` (off by default), savegame rules bit 11. No driver key
-or options page yet. Tests: `tests/aimed_fire.rs`, `combat::tests::aimed_scatter_*`.
+`aimed_fire=on|off` in `settings.txt` (off by default), savegame rules bit 11, page 6 of the options
+("Gezieltes Feuer"). No driver key yet. Tests: `tests/aimed_fire.rs`, `combat::tests::aimed_scatter_*`.
 
 ### Mortar (optional rule, #301)
 
