@@ -10,16 +10,17 @@
 //!
 //! A side under [`Control::Player`] is commanded by the player; only its guns are automatic
 //! and a gun the player orders himself is left alone for good. [`Control::Ai`] runs the whole
-//! controller. Today that is the batteries ([`guns`]) and the lines and melee foot ([`line`]) with
+//! controller. That is the batteries ([`guns`]) and the lines and melee foot ([`line`]) with
 //! their squares against cavalry ([`karree`]), the cavalry wings ([`cavalry`]), the skirmishers
-//! ([`screen`]) and the reserve ([`reserve`]); the native styles add their behaviours in
-//! `Commander::decide`.
+//! ([`screen`]), the reserve ([`reserve`]) and the native doctrines' rules and archers
+//! ([`native`]).
 
 mod cavalry;
 pub mod frame;
 mod guns;
 mod karree;
 mod line;
+mod native;
 pub mod picture;
 mod reserve;
 mod screen;
@@ -138,6 +139,7 @@ pub struct Commander {
     wings: [cavalry::Wings; 2],
     screens: [screen::Screens; 2],
     reserves: [reserve::Reserves; 2],
+    natives: [native::Natives; 2],
     reports: [Report; 2],
     /// The orders of the last tick asked for, so that asking again repeats them.
     cache: Option<(u64, Vec<Command>)>,
@@ -156,6 +158,7 @@ impl Commander {
             wings: Default::default(),
             screens: Default::default(),
             reserves: Default::default(),
+            natives: Default::default(),
             reports: Default::default(),
             cache: None,
         }
@@ -216,12 +219,18 @@ impl Commander {
         self.reserves[side].decide(world, &mut self.armies[side], &mine, (&mut *out, &mut *report));
         let (me, foe) = (&self.armies[side], &self.armies[1 - side]);
         let view = View { tick: world.tick.0, me, foe, mine: &mine, theirs: &foe_pics };
-        let held = self.squares[side].decide(world, &view, (&mut *out, &mut *report));
-        self.lines[side].decide(world, &view, &held, (&mut *out, &mut *report));
-        if let Some(end) = self.lines[side].cannonade_end() {
-            self.wings[side].decide(world, &view, end + cavalry::HOLD_AFTER, (&mut *out, &mut *report));
+        let mut held = self.squares[side].decide(world, &view, (&mut *out, &mut *report));
+        // Foot that flanks like a wing is the wings' while they have it.
+        let flank = self.natives[side].flank(&view).to_vec();
+        for &i in flank.iter().filter(|&&i| self.wings[side].keeps(i)) {
+            held[i] = true;
         }
+        let rules = self.natives[side].rules(view.me.style, view.tick);
+        self.lines[side].decide(world, &view, (&held, rules), (&mut *out, &mut *report));
+        if let Some(end) = self.lines[side].cannonade_end() {
+            self.wings[side].decide(world, &view, (end + cavalry::HOLD_AFTER, &flank), (&mut *out, &mut *report));
+        }
+        self.natives[side].decide(world, &view, self.lines[side].marching(), (&mut *out, &mut *report));
         self.screens[side].decide(world, &view, (out, report));
-        // The native styles add their behaviours here.
     }
 }

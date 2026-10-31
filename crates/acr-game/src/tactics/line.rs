@@ -43,10 +43,23 @@ const WEAK_PERCENT: u32 = 60;
 const ODDS: (u32, u32) = (3, 2);
 /// The melee foot keeps this far behind the line's front, pixels.
 const MELEE_BEHIND: i32 = 120;
-/// Melee foot charges an enemy this near, pixels.
-const RUSH: i32 = 300;
+/// Melee foot charges an enemy this near, pixels (a doctrine may rush from farther: [`Rules`]).
+pub(super) const RUSH: i32 = 300;
 /// A charge is ordered again when the enemy moved this far from the last aim, pixels.
 const RETARGET: i32 = 150;
+
+/// What a doctrine changes in the line's rules ([`super::native`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Rules {
+    /// The melee foot charges an enemy this near, pixels.
+    pub rush: i32,
+    /// The melee foot stays where it stands until the enemy is within `rush`.
+    pub hold_melee: bool,
+}
+
+impl Rules {
+    pub(super) const EUROPEAN: Self = Self { rush: RUSH, hold_melee: false };
+}
 
 /// Ticks a line fires from its first halt before the second bound, by doctrine.
 const fn fire_ticks(style: Style) -> u64 {
@@ -109,7 +122,7 @@ pub(super) struct Line {
 
 /// The foot body of the enemy nearest to `from` (any living body if no foot is left) and its
 /// distance.
-fn nearest_foe(v: &View, from: (i32, i32)) -> Option<(usize, i32)> {
+pub(super) fn nearest_foe(v: &View, from: (i32, i32)) -> Option<(usize, i32)> {
     let pick = |foot: bool| {
         (0..v.theirs.len())
             .filter(|&j| {
@@ -136,6 +149,11 @@ fn toward(from: (i32, i32), to: (i32, i32), step: i32) -> (i32, i32) {
 impl Line {
     /// The tick the cannonade ended, or the tick it ends at the latest ([`CANNONADE_TICKS`] after
     /// the first decision; a side without foot never marches); `None` before the first decision.
+    /// The cannonade is over: the line has been ordered to march.
+    pub(super) fn marching(&self) -> bool {
+        self.marching
+    }
+
     pub(super) fn cannonade_end(&self) -> Option<u64> {
         self.marched_at.or(self.began.map(|b| b + CANNONADE_TICKS))
     }
@@ -146,7 +164,7 @@ impl Line {
         &mut self,
         world: &World,
         v: &View,
-        held: &[bool],
+        (held, rules): (&[bool], Rules),
         (out, report): (&mut Vec<Command>, &mut Report),
     ) {
         let n = v.me.bodies.len();
@@ -184,9 +202,10 @@ impl Line {
         for &i in front.iter().filter(|&&i| !held[i]) {
             let (p, m) = (&v.mine[i], &mut self.modes[i]);
             let Some((_, d)) = nearest_foe(v, p.centroid) else { continue };
-            let halts_at = if p.melee { RUSH } else { p.reach * halt.0 / halt.1 };
+            let halts_at = if p.melee { rules.rush } else { p.reach * halt.0 / halt.1 };
             match m.stage {
-                Stage::Ready if p.melee => movers.push((i, d - RUSH)),
+                Stage::Ready if p.melee && rules.hold_melee => {}
+                Stage::Ready if p.melee => movers.push((i, d - rules.rush)),
                 Stage::Ready if d - halts_at <= HALT_SLACK => {
                     *m = Mode { stage: Stage::Halted, since: v.tick, ..Mode::default() };
                     report.halts += 1;
@@ -234,7 +253,7 @@ impl Line {
             let Some((j, d)) = nearest_foe(v, p.centroid) else { return false };
             match m.stage {
                 Stage::Charging => true,
-                _ if p.melee => d <= RUSH,
+                _ if p.melee => d <= rules.rush + HALT_SLACK,
                 Stage::Ready | Stage::Second => false,
                 Stage::Halted | Stage::Closed => {
                     let foe = &v.theirs[j];
@@ -245,7 +264,7 @@ impl Line {
             }
         });
         for &i in front.iter().chain(&behind).filter(|&&i| !held[i]) {
-            let near = nearest_foe(v, v.mine[i].centroid).is_some_and(|f| f.1 <= RUSH);
+            let near = nearest_foe(v, v.mine[i].centroid).is_some_and(|f| f.1 <= rules.rush + HALT_SLACK);
             let m = &mut self.modes[i];
             if m.stage != Stage::Charging && (triggered || (near && behind.contains(&i))) {
                 *m = Mode { stage: Stage::Charging, since: v.tick, ..Mode::default() };
