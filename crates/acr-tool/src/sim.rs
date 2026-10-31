@@ -137,7 +137,7 @@ pub fn sim_check(dir: &Path, map: &str, rest: &[&str]) -> Result<()> {
         } else if let Some(&kind) = acr_sim::economy::producible(&base, b).first() {
             let (x, y) = u.pos.pixels();
             cmds.push(Command::Rally { player: u.owner, building: u.id, x, y: y + 200 });
-            cmds.push(Command::Produce { player: u.owner, building: u.id, kind });
+            cmds.push(Command::Produce { player: u.owner, building: u.id, kind, endless: false });
             produced += 1;
         } else if let Some(&upgrade) = acr_sim::upgrade::available(&base, b).first() {
             cmds.push(Command::Upgrade { player: u.owner, buildings: vec![u.id], upgrade });

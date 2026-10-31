@@ -181,7 +181,7 @@ pub fn execute(st: &mut ScriptState, world: &mut World, nation: u8) {
         } else if let Some(b) = p.producer {
             // `ProduceByAI`: queued in the producer, paying the price; with a units collector
             // the unit joins it when it is born.
-            if acr_sim::economy::produce(world, b.0 as usize, p.kind)
+            if acr_sim::economy::produce(world, b.0 as usize, p.kind, false)
                 && let Some(g) = city.units_collector
             {
                 st.production.push(crate::state::Production { building: b, kind: p.kind, group: g, ready: 0 });

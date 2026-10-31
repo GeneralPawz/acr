@@ -432,7 +432,7 @@ pub fn build(world: &World, player: u8, sel: &[EntityId], v: &Value) -> Result<V
         }
         "produce" => {
             let (building, kind) = (id(v, "building")?, object_type()?);
-            Ok((0..count).map(|_| Command::Produce { player, building, kind }).collect())
+            Ok((0..count).map(|_| Command::Produce { player, building, kind, endless: false }).collect())
         }
         "rally" => one(Command::Rally { player, building: id(v, "building")?, x: int(v, "x")?, y: int(v, "y")? }),
         "form" => one(Command::Form {

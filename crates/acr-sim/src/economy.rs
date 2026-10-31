@@ -32,9 +32,19 @@ pub struct Production {
     /// Progress, +2 per tick, done at `stages` (the unit's `BUILDSTAGES`).
     pub progress: i32,
     pub stages: i32,
-    /// Number of objects of the type when it was ordered: the refund price.
+    /// Number of objects of the type when it was ordered: the refund price; `UNPAID` for an
+    /// endless order that could not be paid yet (order +0x14 in `Produce` 0x49e649).
     pub power: u16,
+    /// An endless order (dest 0xfffe in the order, +0x11): it renews itself when its unit is made.
+    pub endless: bool,
 }
+
+/// `Production::power` of an endless order waiting for its price (`0xffff`, 0x49eb82).
+pub const UNPAID: u16 = 0xffff;
+/// Food below which an endless order is not paid when queued (`cmp 0x1f4` at 0x49ea70).
+const ENDLESS_FOOD_RESERVE: i32 = 500;
+/// How many orders an endless order counts as in `GetProduceCount` (0x49e060: 0x4b0).
+pub const ENDLESS_COUNT: i32 = 1200;
 
 /// A mine bound to a deposit (`TakeResourceFromSprite`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -253,40 +263,74 @@ pub fn producible(w: &World, b: usize) -> Vec<TypeId> {
     }
 }
 
+/// Gives back the price of `order` (`0x514a68` with the order's `power`); an unpaid endless
+/// order has nothing to refund (0x49e8ca, 0x4dbe6f).
+fn refund(w: &mut World, b: usize, order: &Production) {
+    if order.power == UNPAID {
+        return;
+    }
+    let owner = w.units[b].owner;
+    let refund = cost_after(w.catalog.get(order.kind), w.adv(owner, order.kind).cost, u32::from(order.power));
+    let stock = &mut w.players[usize::from(owner)].resources;
+    for (s, c) in stock.iter_mut().zip(refund) {
+        *s = s.saturating_add(c);
+    }
+}
+
 /// `Produce` (0x49e649): queues a unit in a finished building, paying the full price now.
-pub fn produce(w: &mut World, b: usize, kind: TypeId) -> bool {
+///
+/// An `endless` order (dest 0xfffe, from Ctrl+click) is refused when one of `kind` is queued
+/// already (0x49e6f2); the building's queued normal orders of `kind` are removed with a
+/// refund (0x49e831); and it is queued even if it cannot be paid (or while the food is
+/// below 500), when it stays unpaid until `production_link` retries it (0x49eaac).
+pub fn produce(w: &mut World, b: usize, kind: TypeId, endless: bool) -> bool {
     let u = &w.units[b];
     if !u.living() || !u.building || u.stage < w.max_stage(u) || u.research.is_some() {
+        return false;
+    }
+    if endless && u.queue.iter().any(|q| q.kind == kind && q.endless) {
         return false;
     }
     if !stages_done(u.stages, w.catalog.tech.of(kind).map_or(0, |t| t.stage_mask)) {
         return false;
     }
     let player = u.owner;
+    if endless {
+        let queue = std::mem::take(&mut w.units[b].queue);
+        let (normal, rest): (Vec<_>, Vec<_>) = queue.into_iter().partition(|q| q.kind == kind);
+        w.units[b].queue = rest;
+        for order in &normal {
+            refund(w, b, order);
+        }
+    }
     let power = w.players[usize::from(player)].type_count.get(usize::from(kind.0)).copied().unwrap_or(0);
     let cost = unit_cost(w, player, kind, None);
-    if !pay(w, player, &cost) {
+    let low_food = w.players[usize::from(player)].resources[FOOD] < ENDLESS_FOOD_RESERVE;
+    let paid = !(endless && low_food) && pay(w, player, &cost);
+    if !paid && !endless {
         return false;
     }
     let stages = w.adv(player, kind).build_stages;
-    w.units[b].queue.push(Production { kind, progress: 0, stages, power });
+    let power = if paid { power } else { UNPAID };
+    w.units[b].queue.push(Production { kind, progress: 0, stages, power, endless });
     true
 }
 
 /// `UnProduce` (0x4dbd47): cancels one queued order of `kind` (a waiting one first, else
-/// the running one) with a full refund; progress is lost.
+/// the running one), endless or not, with a full refund unless it is unpaid; progress is lost.
 pub fn unproduce(w: &mut World, b: usize, kind: TypeId) {
     let q = &w.units[b].queue;
     let Some(k) = (1..q.len()).find(|&k| q[k].kind == kind).or_else(|| (q.first()?.kind == kind).then_some(0)) else {
         return;
     };
     let order = w.units[b].queue.remove(k);
-    let owner = w.units[b].owner;
-    let refund = cost_after(w.catalog.get(kind), w.adv(owner, kind).cost, u32::from(order.power));
-    let stock = &mut w.players[usize::from(w.units[b].owner)].resources;
-    for (s, c) in stock.iter_mut().zip(refund) {
-        *s = s.saturating_add(c);
-    }
+    refund(w, b, &order);
+}
+
+/// The count of orders of building `b` as `GetProduceCount` (0x49e060) sums them for the
+/// command panel: an endless order is 1200, a normal one 1.
+pub fn queue_count(w: &World, b: usize) -> i32 {
+    w.units[b].queue.iter().map(|q| if q.endless { ENDLESS_COUNT } else { 1 }).sum()
 }
 
 /// The engine part of `City::ProcessCreation` (0x432582) for nation `k = tmtmt & 7`
@@ -468,6 +512,13 @@ fn production_link(w: &mut World, b: usize) {
     if converts && !w.units[b].inside.iter().any(|&id| catalog.get(w.units[id.0 as usize].kind).peasant) {
         return; // NOT_ENOUGH_PEASANTS
     }
+    // An endless order still unpaid at the head (0x49f1e6): it is taken out and ordered again,
+    // which pays it if the price is there now, else puts it back at the end of the queue.
+    if head.power == UNPAID {
+        w.units[b].queue.remove(0);
+        produce(w, b, head.kind, true);
+        return;
+    }
     // The depot limit (0x49f21b): over it, the order is cancelled with a refund.
     if let Some((g, n)) = pt.economy.depot_group {
         let [depots, count] = [None, Some(g)].map(|group| {
@@ -524,6 +575,7 @@ fn production_link(w: &mut World, b: usize) {
             crate::motion::smart_send_to(&mut w.units[id.0 as usize], areas.as_ref(), tx, ty, 0, 0, 0x80);
         }
         census(w, owner);
+        renew(w, b, &head);
         return;
     }
     spawn_from(w, b, head.kind);
@@ -535,6 +587,15 @@ fn production_link(w: &mut World, b: usize) {
         w.remove(pid);
     }
     census(w, owner);
+    renew(w, b, &head);
+}
+
+/// A finished endless order orders itself again, paying the price anew (0x49f7ee, 0x49ff5d,
+/// 0x4a01eb: `Produce(type, 0xfffe)` after the head is gone).
+fn renew(w: &mut World, b: usize, done: &Production) {
+    if done.endless {
+        produce(w, b, done.kind, true);
+    }
 }
 
 /// The spawn of `ProduceObjLink` (0x49eeb7, from 0x49f4b3): the unit appears at the
