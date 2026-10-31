@@ -202,7 +202,8 @@ impl SaveGame {
             | u64::from(self.setup.rules.cannon_fire) << 5
             | u64::from(self.setup.rules.ball_terrain) << 6
             | u64::from(self.setup.rules.formation_attack) << 7
-            | u64::from(self.setup.rules.animal_give_up) << 9);
+            | u64::from(self.setup.rules.animal_give_up) << 9
+            | u64::from(self.setup.rules.dart_fire) << 8);
         w.0
     }
 
@@ -250,6 +251,7 @@ impl SaveGame {
                 ball_terrain: bits & 64 != 0,
                 formation_attack: bits & 128 != 0,
                 animal_give_up: bits & 512 != 0,
+                dart_fire: bits & 256 != 0,
             };
         }
         if r.pos != data.len() {
@@ -881,10 +883,12 @@ mod tests {
         save.setup.rules.corpse_piles = true;
         save.setup.rules.cannon_fire = true;
         save.setup.rules.formation_attack = true;
+        save.setup.rules.dart_fire = true;
         assert_eq!(SaveGame::decode(&save.encode()).unwrap(), save);
         save.setup.rules.corpse_piles = false;
         save.setup.rules.cannon_fire = false;
         save.setup.rules.formation_attack = false;
+        save.setup.rules.dart_fire = false;
         let mut bytes = save.encode();
         assert_eq!(SaveGame::decode(&bytes).unwrap(), save);
         // A version 2 save has no rules: the original ones.

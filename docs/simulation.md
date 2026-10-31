@@ -1393,6 +1393,14 @@ tenth of its life (so it never burns to death), and a unit that dies burning is 
   original's flag is set either way, so the pinned hashes hold. Shells (`IADROMOR`,
   `VAFLIA`) and their ground fires are not affected by this switch. Saves made before it
   replay with it off. `tests/body.rs` `round_shot_lights_men_only_with_cannon_fire`.
+- **Blowpipe darts (`Rules::dart_fire`, setting `dart_fire`, savegame rules bit 8, `settings.txt` only, no options row, #350):** `VAFLIA` reads `4 4 HFB` in `NRES.DAT [WEAPONS]`: the `F` flag (slow
+  fire, flag table 0x23bbb84), so in the original `MakeDamage` counts the hits and after
+  `FIRELIMIT` of them the man gets the never-ending burning flag. Under hit locations that
+  made bowmen burn to death fighting `IncTrb`. With `dart_fire` off (the default) a dart hit
+  sets no man with a body on fire while hit locations are on (`MakeDamage` drops `F` for a
+  `VAFLIA` attack) and a dart bursting on the ground leaves no fire (`ground_fire::shell_burst`);
+  the other shells (`IADROMOR`) keep both. Without hit locations the flag is set as before.
+  `tests/body.rs` `darts_light_men_only_with_dart_fire`; e2e `dart_no_fire` (bowmen against `IncTrb`).
 - The fires are part of the state hash only while some burn (`Body::burn` only while not
   0). They are not saved: savegames replay their commands and the fires come back.
 - 2D draws three flames of the burning-building loop (`[FIRES]` `#DFIRE2`) per fire, fewer

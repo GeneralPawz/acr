@@ -68,6 +68,10 @@ pub fn shell_burst(w: &mut World, sender: Option<usize>, att: u8, (x, y): (i32, 
     if crate::combat::cause_of_attack(w, s, att) != crate::combat::DeathCause::Explosion {
         return;
     }
+    // A blowpipe dart bursts without fire unless the rule `dart_fire` is on (#350).
+    if !w.rules.dart_fire && crate::combat::is_dart(w, s, att) {
+        return;
+    }
     // A mortar's shell bursts without fire (user decision): nobody catches fire from it.
     if crate::mortar::fired_by(w.units.get(s).map(|u| u.kind), &w.catalog) {
         return;

@@ -38,6 +38,7 @@ const ON: Rules = Rules {
     ball_terrain: true,
     formation_attack: false,
     animal_give_up: false,
+    dart_fire: false,
 };
 
 /// What stands on the ball's way (y = 2000), from x 1950 eastwards.
