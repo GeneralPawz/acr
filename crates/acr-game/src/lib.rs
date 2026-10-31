@@ -31,6 +31,7 @@ mod unit_sounds;
 mod weather_sound;
 #[cfg(target_arch = "wasm32")]
 mod web;
+pub mod webui;
 
 use std::sync::Arc;
 
@@ -46,7 +47,19 @@ use winit::window::{Fullscreen, Window, WindowId};
 
 pub enum Event {
     GpuReady(Box<Gpu>),
-    Loaded { path: String, result: Result<Vec<u8>, String> },
+    Loaded {
+        path: String,
+        result: Result<Vec<u8>, String>,
+    },
+    /// A message from the Svelte UI (JSON, `acr-ui-protocol`).
+    Ui(String),
+    /// The Svelte UI asks for an asset (`webui::assets`).
+    UiAsset {
+        path: String,
+        reply: webui::AssetReply,
+    },
+    /// The page's user gesture: the audio may start now.
+    AudioUnlock,
 }
 
 /// GPU resources that exist once the window has a surface.
@@ -73,6 +86,8 @@ pub struct Game {
     window: Option<Arc<Window>>,
     graphics: Option<Graphics>,
     ui: ui::Ui,
+    /// The Svelte UI, once it said `Ready` (docs/webui.md).
+    webui: Option<webui::WebUi>,
     mode: Mode,
     audio: music::Audio,
     unit_sounds: unit_sounds::UnitSounds,
@@ -107,6 +122,7 @@ impl Game {
         Self {
             proxy,
             ui: ui::Ui::new(&paths),
+            webui: None,
             mode: Mode::Intro,
             audio: music::Audio::new(&paths),
             unit_sounds: unit_sounds::UnitSounds::new(),
@@ -141,6 +157,21 @@ impl Game {
                 let _ = proxy.send_event(Event::Loaded { path: owned, result });
             }),
         );
+    }
+
+    /// Answers the Svelte UI's waiting asset requests and publishes what changed.
+    fn publish_webui(&mut self) {
+        let Some(mut web) = self.webui.take() else { return };
+        web.pump_assets(&self.ui);
+        let (mode, loading) = match &self.mode {
+            Mode::Intro => (acr_ui_protocol::Mode::Intro, None),
+            Mode::Menus => (acr_ui_protocol::Mode::Menus, None),
+            Mode::InGame(g) if g.ready() => (acr_ui_protocol::Mode::Game, None),
+            Mode::InGame(g) => (acr_ui_protocol::Mode::Loading, g.loading_progress()),
+        };
+        let size = self.frame_size();
+        web.publish(&mut self.ui, mode, loading, size);
+        self.webui = Some(web);
     }
 
     fn canvas(&self) -> Option<Canvas> {
@@ -301,6 +332,7 @@ impl Game {
             let action = self.ui.update(dt);
             self.apply(action, event_loop);
         }
+        self.publish_webui();
         self.load_requested();
         self.play_sounds();
         self.audio.report();
@@ -711,7 +743,7 @@ impl ApplicationHandler<Event> for Game {
         }
     }
 
-    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: Event) {
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: Event) {
         match event {
             Event::GpuReady(gpu) => {
                 let gpu = *gpu;
@@ -737,6 +769,15 @@ impl ApplicationHandler<Event> for Game {
                         g.gpu.resize(size.width, size.height);
                     }
                 }
+            }
+            Event::Ui(json) => webui::input::on_message(self, event_loop, &json),
+            Event::UiAsset { path, reply } => match self.webui.as_mut() {
+                Some(web) => web.request_asset(path, reply),
+                None => reply(Err(webui::AssetError::NotFound("the UI is not connected".into()))),
+            },
+            Event::AudioUnlock => {
+                #[cfg(target_arch = "wasm32")]
+                self.audio.start();
             }
             Event::Loaded { path, result } => {
                 self.in_flight.set(self.in_flight.get().saturating_sub(1));
