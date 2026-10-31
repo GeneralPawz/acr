@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { applyWidgets, isSnapshot } from './patch';
 import type { WidgetView } from './protocol/WidgetView';
+import type { ScreenPatch } from './protocol/ScreenPatch';
 
 const widget = (id: string, hover = false): WidgetView => ({
   id,
@@ -38,7 +39,7 @@ describe('applyWidgets', () => {
 
 describe('isSnapshot', () => {
   it('needs every topic', () => {
-    const screen = {
+    const screen: ScreenPatch = {
       name: 'MainMenu',
       stack: ['MainMenu'],
       in_game: false,
@@ -46,7 +47,7 @@ describe('isSnapshot', () => {
       engine_drawn: false,
       hint: null,
       widgets: { t: 'full', widgets: [] },
-    } as const;
+    };
     expect(isSnapshot({ rev: 5, mode: 'menus', screen, cursor: null, loading: null })).toBe(true);
     expect(isSnapshot({ rev: 5, mode: 'menus', screen })).toBe(false);
     expect(isSnapshot({ rev: 5, screen: { ...screen, widgets: { t: 'changed', upsert: [], order: null } } })).toBe(false);
