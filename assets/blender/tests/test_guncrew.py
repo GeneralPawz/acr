@@ -126,6 +126,17 @@ class Drill(unittest.TestCase):
         for side in ("_l", "_r"):
             self.assertLess(foot_slide(keys, side), SLIDE_MAX, side)
 
+    def test_the_trail_man_walks_the_trail_round_without_sliding(self):
+        """c2 paces TRAIL_WALK at the ground's speed (#343, as c3 in #341) and starts it
+        where TRAIL_LIFT ends, his hands on the lever throughout."""
+        clips = guncrew.clips()
+        keys = clips["TRAIL_WALK"]["c2."]
+        for side in ("_l", "_r"):
+            self.assertLess(foot_slide(keys, side), SLIDE_MAX, side)
+        self.assertEqual({s.get("ik") for _, s in keys}, {"spike"})
+        self.assertEqual(clips["TRAIL_LIFT"]["c2."][-1][1], keys[0][1])
+        self.assertEqual({s.get("ik") for _, s in clips["TRAIL_LIFT"]["c2."][-4:]}, {"spike"})
+
     def test_carriers_stand_clear_of_the_chest(self):
         """The carriers' hips stand clear of the chest's ends and rope loops (0.37 m out)."""
         self.assertGreater(guncrew.CHEST_SPAN - 0.37, 0.2)
