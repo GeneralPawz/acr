@@ -31,6 +31,7 @@ pub mod tex_cache;
 pub mod view3d;
 pub mod water;
 pub mod weather;
+pub mod wind;
 
 use std::ops::Range;
 

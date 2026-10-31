@@ -24,6 +24,8 @@ const KIND_FERN: u32 = 3u;
 const KIND_LITTER: u32 = 4u;
 const KIND_PEBBLE: u32 = 5u;
 const TAU: f32 = 6.2831853;
+// Scales the models' trunk bend (metres) to a card's lean as a fraction of its size.
+const GROUND_BEND: f32 = 3.0;
 
 struct VsOut {
     @builtin(position) clip: vec4<f32>,
@@ -82,11 +84,13 @@ fn vs_cover(
         // Trodden: laid over away from a hashed direction.
         let lean = seed / 255.0 * TAU;
         p = p + vec3<f32>(cos(lean), sin(lean), 0.0) * flat_k * s * 0.7 * c.y;
-        // Wind: a slow sway rolling over the field and a quick flutter, by height squared.
+        // Wind: the models' field and lean (wind.wgsl), one tempo for every plant; a plant
+        // differs by its phase and stiffness only. By height squared.
         let w = globals.wind;
-        let phase = w.w * 1.9 - dot(pos.xy, w.xy) * 0.006 + seed * 0.03;
-        let gust = 0.55 + 0.45 * sin(phase) + 0.15 * sin(w.w * 6.7 + seed * 0.7);
-        p = p + vec3<f32>(w.x, w.y, 0.0) * w.z * gust * s * 0.25 * c.y * c.y;
+        let phase = hash11(seed) * TAU;
+        let stiff = 0.8 + 0.4 * hash11(seed + 17.0);
+        let bend = trunk_bend(gust(pos.xy, w.xy, w.w), w.w, 1.0, phase);
+        p = p + vec3<f32>(w.xy, 0.0) * w.z * stiff * bend * s * GROUND_BEND * c.y * c.y;
     }
     var clip = globals.view * vec4<f32>(p, 1.0);
     // Orthographic (w = 1): pulled 3 px towards the camera, so the slope behind the

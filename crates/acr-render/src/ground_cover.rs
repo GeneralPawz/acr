@@ -297,6 +297,9 @@ impl GroundCover {
     }
 }
 
+/// `ground_cover.wgsl` with the wind field (`wind.wgsl`) the models sway by.
+pub const GROUND_COVER_SHADER: &str = concat!(include_str!("ground_cover.wgsl"), include_str!("wind.wgsl"));
+
 /// How much of the cover the zoom shows: none below 0.55, all from 1.3.
 pub fn zoom_fade(scale: f32) -> f32 {
     let t = ((scale - 0.55) / (1.3 - 0.55)).clamp(0.0, 1.0);
@@ -329,7 +332,10 @@ pub struct GroundCoverRenderer {
 
 impl GroundCoverRenderer {
     pub fn new(device: &wgpu::Device, target: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::include_wgsl!("ground_cover.wgsl"));
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("ground_cover.wgsl"),
+            source: wgpu::ShaderSource::Wgsl(GROUND_COVER_SHADER.into()),
+        });
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("ground cover"),
             entries: &[wgpu::BindGroupLayoutEntry {
