@@ -83,7 +83,7 @@ settings below, all in `settings.txt` (no options page), spend less:
 | Key | Values | Default | |
 |---|---|---|---|
 | `frame_cap` | `off`, `30`, `60` | `off` | at most that many frames per second; `off` is the display's rate |
-| `render_scale` | `100`, `85`, `75`, `50` | unset: `75` on a phone (window's longer side above 2000 px), else `100` | the share of the window's size the frame is drawn at, then stretched over the window (see below) |
+| `render_scale` | `100`, `85`, `75`, `50` | unset: `100` (below it the view shows less of the world in sprite mode, so it is an opt-in until the camera compensates) | the share of the window's size the frame is drawn at, then stretched over the window (see below) |
 | `power_save` | `on`, `off` | unset | `on` caps at 30 fps; unset follows Android's Game Mode: `BATTERY` caps, anything else does not (`GameManager.getGameMode()` through JNI, API 31+, read on every resume; `game_mode_battery` in `android.rs`) |
 
 The cap is the stricter of `frame_cap` and the saver's 30 fps. It skips the redraw requests
@@ -117,8 +117,9 @@ and the dp of the touch gestures) are converted from window to render pixels
 HUD are laid out on the canvas of the render size and are as soft as the world; drawing them
 at full size on top would need the world and the interface in two passes with two layouts,
 which the pipeline does not have. The shader indexes no vector component at run time
-(Adreno). With 100 % nothing changes: no offscreen target, no extra pass. Without the key,
-Android phones use 75 %, the desktop and the browser 100 %.
+(Adreno). With 100 % nothing changes: no offscreen target, no extra pass. Without the key it is
+100 % everywhere: below it sprites keep their pixel size, so the view shows less of the world,
+and it stays an opt-in until the camera compensates for it.
 
 The game lays out for the render size like for a smaller window, and the sprite view shows as
 much of the world as the render size has pixels (as the original does at a lower resolution):

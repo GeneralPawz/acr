@@ -517,13 +517,10 @@ impl Game {
         }
     }
 
-    /// The render scale in effect: the setting, else the device's default.
+    /// The render scale in effect: the setting, else 100 % (below it the view shows less of the
+    /// world in sprite mode, so it stays an opt-in).
     fn render_scale(&self) -> RenderScale {
-        let surface = self.graphics.as_ref().map_or([0, 0], |g| g.gpu.surface_size());
-        self.ui
-            .settings()
-            .render_scale
-            .unwrap_or_else(|| RenderScale::default_for(cfg!(target_os = "android"), surface))
+        self.ui.settings().render_scale.unwrap_or_default()
     }
 
     /// Makes the GPU's render size follow the render scale (the layout, the scene and the

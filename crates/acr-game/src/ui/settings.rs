@@ -175,8 +175,8 @@ pub struct Settings {
     /// ([`crate::pacing::cap_fps`]).
     pub power_save: Option<bool>,
     /// ACR (#440): `render_scale=100|85|75|50`: the share of the window's size the scene is
-    /// drawn at, then stretched over the window. `None` (not in the file): 75 on an Android
-    /// phone, else 100 ([`RenderScale::default_for`]). `acr_render::upscale`.
+    /// drawn at, then stretched over the window. `None` (not in the file): 100; below it the
+    /// view shows less of the world in sprite mode, so it is an opt-in. `acr_render::upscale`.
     pub render_scale: Option<RenderScale>,
 }
 
@@ -687,7 +687,7 @@ group_move=off"
         assert_eq!(Settings::decode("power_save=off").power_save, Some(false));
         assert_eq!(Settings::decode("power_save=maybe").power_save, None);
         assert!(!Settings::default().encode().contains("power_save"));
-        // `render_scale` unset follows the device (`RenderScale::default_for`) and stays out of the file.
+        // `render_scale` unset is 100 % and stays out of the file.
         assert_eq!(Settings::default().render_scale, None);
         assert_eq!(Settings::decode("render_scale=50").render_scale, Some(RenderScale::P50));
         assert_eq!(Settings::decode("render_scale=60").render_scale, None);
