@@ -36,8 +36,15 @@ const NDS: &[u8] = b"[MEMBERS]\r\nPOINT #POINT 0 1 NONE HI_GRAVITY1 RANDOM 3 -1\
     [SYNCWEAPON]\r\nPPOINTT 1 NUCL2P\r\n[END]\r\n";
 const ADS: &[u8] = b"@POINT 1 0 0 0\r\n@NUCL1 1 0 0 0\r\n";
 const NRES: &[u8] = b"[WEAPONS]\r\n#GENSHIELD 13\r\nMECH 21 19 O\r\nIADRO 2 15 HX\r\n[UNITKINDS]\r\n";
-const ORDERS: &[u8] = b"#LINE15 SYM2 19 2 9 3 1 2\r\n   C   C   C\r\n      \r\n***************\r\n#END\r\n#EXIT\r\n";
-const GROUPS: &[u8] = b"1\r\nLINE 0 1 #LINE15\r\n";
+const ORDERS: &[u8] = b"#LINE15 SYM2 19 2 9 3 1 2\r\n   C   C   C\r\n      \r\n***************\r\n#END\r\n\
+#LINE12 SYM2 19 2 9 3 1 2\r\n   C   C   C\r\n      \r\n************\r\n#END\r\n\
+#KARE12 SYM4 9 2 9 3\r\n****\r\n*CC*\r\n*C *\r\n****\r\n#END\r\n#EXIT\r\n";
+/// Lines of 12 or 15 that can form a square (the button lists the group `KARE`).
+const GROUPS: &[u8] = b"2\r\nLINE 2 0 1 2 #LINE12 #LINE15\r\nKARE 2 0 1 1 #KARE12\r\n";
+/// A pikeman: no ranged attack.
+const PIKE: &str = "NAME Pik\r\nUSERLC 0 G SHADOW 0 0\r\n#STAND 9 1 0 0\r\n@MOTION_L 9 0 0 9\r\n\
+    @MOTION_R 9 0 10 19\r\n@DEATH 9 0 0 9\r\n#DEATHLIE1 9 1 0 9\r\nLIFE 100\r\nGEOMETRY 1 10 40\r\n\
+    ATTACK_RADIUS 0 0 100\r\nMATHERIAL 1 BODY\r\nCANKILL 1 BODY\r\n[END]\r\n";
 
 /// The unit types of the synthetic battles and the world they stand in.
 pub(super) struct Rig {
@@ -45,18 +52,24 @@ pub(super) struct Rig {
     pub off: TypeId,
     pub mus: TypeId,
     pub horse: TypeId,
+    pub pike: TypeId,
     pub gun: TypeId,
 }
 
 pub(super) fn rig() -> Rig {
+    rig_with(GROUPS)
+}
+
+pub(super) fn rig_with(groups: &[u8]) -> Rig {
     let mut c = Catalog::new();
     let mut add = |name: &str, def: &str| c.add(ObjectType::from_def(name, &UnitDef::parse(def.as_bytes())));
     let (off, mus) = (add("Off(EN)", OFFICER), add("Mus(EN)", MUSKET));
     let (horse, gun) = (add("Hor(EN)", HORSE), add("Can(EN)", CANNON));
+    let pike = add("Pik(EN)", PIKE);
     c.set_weapon_kinds(&weapon_kinds(NRES));
     c.set_weapons(Weapons::parse(NDS, Some(ADS), None));
-    let f = Formations::new(&OrderList::parse(ORDERS), &OrderGroups::parse(GROUPS));
-    Rig { w: World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(f)), off, mus, horse, gun }
+    let f = Formations::new(&OrderList::parse(ORDERS), &OrderGroups::parse(groups));
+    Rig { w: World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(f)), off, mus, horse, pike, gun }
 }
 
 /// `n` units of `kind` in rows of `row`, `gap` px apart, from `(x, y)` facing `dir`.
@@ -74,6 +87,16 @@ pub(super) fn crowd(
         .collect()
 }
 
+/// An officer and 12 soldiers of `kind` formed as `shape` at `(x, y)` facing `dir`.
+pub(super) fn formed(kind: TypeId, r: &mut Rig, owner: u8, at: (i32, i32), dir: u8, shape: &str) -> Vec<EntityId> {
+    let shape = r.w.formations.shape_index(shape).unwrap();
+    let officer = r.w.spawn(r.off, owner, Pos::from_pixels(at.0, at.1), dir);
+    let soldiers = crowd(&mut r.w, kind, owner, at, 12, (12, 0), dir);
+    let ids: Vec<usize> = soldiers.iter().map(|id| id.0 as usize).collect();
+    create_placed(&mut r.w, (officer.0 as usize, None, None), &ids, shape, at, dir);
+    std::iter::once(officer).chain(soldiers).collect()
+}
+
 pub(super) fn body(duty: Duty, units: &[EntityId]) -> Body {
     Body { duty, units: units.to_vec(), lateral: 0 }
 }
@@ -83,7 +106,7 @@ pub(super) fn army(owner: u8, facing: u8, bodies: Vec<Body>) -> Army {
 }
 
 /// Runs the controller and the world for `ticks`, returning every order given.
-fn run(w: &mut World, cm: &mut Commander, ticks: usize) -> Vec<Command> {
+pub(super) fn run(w: &mut World, cm: &mut Commander, ticks: usize) -> Vec<Command> {
     let mut all = Vec::new();
     for _ in 0..ticks {
         let cmds = cm.orders(w);
@@ -295,4 +318,141 @@ fn a_formation_is_in_order_until_it_scatters() {
         r.w.units[s.0 as usize].pos.x += 400 << 4;
     }
     assert!(!picture::of(&r.w, &a)[0].in_order, "half the soldiers far from their slots");
+}
+
+/// The centroid of the units of `ids`, pixels.
+fn centroid(w: &World, ids: &[EntityId]) -> (i32, i32) {
+    let n = ids.len() as i32;
+    let (x, y) = ids.iter().fold((0, 0), |a, id| {
+        let p = w.units[id.0 as usize].pos.pixels();
+        (a.0 + p.0, a.1 + p.1)
+    });
+    (x / n, y / n)
+}
+
+fn moves(cmds: &[Command]) -> usize {
+    cmds.iter().filter(|c| matches!(c, Command::MoveFacing { .. })).count()
+}
+
+/// Two lines of 12 musketeers at x = 1600, one behind the other, facing a crowd at x = 2900.
+fn two_lines() -> (Rig, [Vec<EntityId>; 2], Vec<EntityId>) {
+    let mut r = rig();
+    let a = formed(r.mus, &mut r, 0, (1600, 3900), 0, "LINE12");
+    let b = formed(r.mus, &mut r, 0, (1600, 4300), 0, "LINE12");
+    let foe = crowd(&mut r.w, r.mus, 1, (2900, 4000), 12, (6, 20), 128);
+    (r, [a, b], foe)
+}
+
+fn two_line_armies(lines: &[Vec<EntityId>; 2], foe: &[EntityId], style: Style) -> [Army; 2] {
+    let mut me = army(0, 0, vec![body(Duty::Line, &lines[0]), body(Duty::Line, &lines[1])]);
+    me.style = style;
+    [me, army(1, 128, vec![body(Duty::Line, foe)])]
+}
+
+#[test]
+fn the_line_waits_for_a_body_out_of_order() {
+    let (mut r, lines, foe) = two_lines();
+    let mut cm = Commander::new(&r.w, two_line_armies(&lines, &foe, Style::Linear), [Control::Ai, Control::Player]);
+    // Both bodies in order: the first bound goes to both.
+    let first = run(&mut r.w, &mut cm, 1);
+    assert_eq!(moves(&first), 2, "{first:?}");
+    // Hold the second body scattered (a formation walks its soldiers back by itself): nobody
+    // moves while it is out of order...
+    let (mut r, lines, foe) = two_lines();
+    let mut cm = Commander::new(&r.w, two_line_armies(&lines, &foe, Style::Linear), [Control::Ai, Control::Player]);
+    let scattered = |r: &mut Rig, cm: &mut Commander, ticks: usize| {
+        let mut all = Vec::new();
+        for _ in 0..ticks {
+            for &s in lines[1].iter().skip(1).take(8) {
+                r.w.units[s.0 as usize].pos.x = 2600 << 4;
+            }
+            let cmds = cm.orders(&r.w);
+            r.w.step(&cmds);
+            all.extend(cmds);
+        }
+        all
+    };
+    let early = scattered(&mut r, &mut cm, 200);
+    assert_eq!(moves(&early), 0, "{early:?}");
+    // ...until the patience is out; then the line goes on without the straggler.
+    let late = scattered(&mut r, &mut cm, 300);
+    assert!(moves(&late) > 0);
+}
+
+/// The first tick at which `pred` holds of the orders given, running up to `ticks`.
+fn first_order(r: &mut Rig, cm: &mut Commander, ticks: u64, pred: impl Fn(&Command) -> bool) -> Option<u64> {
+    for _ in 0..ticks {
+        let cmds = cm.orders(&r.w);
+        let hit = cmds.iter().any(&pred);
+        r.w.step(&cmds);
+        if hit {
+            return Some(r.w.tick.0 - 1);
+        }
+    }
+    None
+}
+
+#[test]
+fn the_line_halts_at_nine_tenths_of_musket_range() {
+    let mut r = rig();
+    let line = formed(r.mus, &mut r, 0, (1500, 4000), 0, "LINE12");
+    let foe = crowd(&mut r.w, r.mus, 1, (3000, 4000), 12, (6, 20), 128);
+    let armies = [army(0, 0, vec![body(Duty::Line, &line)]), army(1, 128, vec![body(Duty::Line, &foe)])];
+    let mut cm = Commander::new(&r.w, armies, [Control::Ai, Control::Player]);
+    let at = first_order(&mut r, &mut cm, 3000, |c| matches!(c, Command::StandGround { on: true, .. }));
+    assert!(at.is_some(), "the line never stood ground");
+    assert_eq!(cm.report(0).halts, 1);
+    let d = dist(centroid(&r.w, &line), centroid(&r.w, &foe));
+    assert!((680..=808).contains(&d), "halted {d} px from the foe (reach 850)");
+    r.w.step(&[]);
+    assert!(line.iter().skip(1).all(|id| r.w.units[id.0 as usize].stand_ground));
+    // It stays there.
+    run(&mut r.w, &mut cm, 100);
+    assert!((dist(centroid(&r.w, &line), centroid(&r.w, &foe)) - d).abs() <= 40);
+}
+
+#[test]
+fn columns_charge_after_a_short_fire() {
+    let charge_at = |style| {
+        let mut r = rig();
+        let line = formed(r.mus, &mut r, 0, (1900, 4000), 0, "LINE12");
+        let foe = crowd(&mut r.w, r.mus, 1, (3000, 4000), 12, (6, 20), 128);
+        let mut me = army(0, 0, vec![body(Duty::Line, &line)]);
+        me.style = style;
+        let mut cm =
+            Commander::new(&r.w, [me, army(1, 128, vec![body(Duty::Line, &foe)])], [Control::Ai, Control::Player]);
+        let at = first_order(&mut r, &mut cm, 4000, |c| matches!(c, Command::AttackMove { .. }));
+        assert_eq!(cm.report(0).charges, u32::from(at.is_some()));
+        at
+    };
+    let (column, linear) = (charge_at(Style::Column), charge_at(Style::Linear));
+    let (column, linear) = (column.expect("a column charges"), linear.expect("a line charges"));
+    assert!(column + 100 <= linear, "column {column}, line {linear}");
+}
+
+#[test]
+fn pikes_stay_behind_until_the_charge() {
+    let mut r = rig();
+    let line = formed(r.mus, &mut r, 0, (1900, 4000), 0, "LINE12");
+    let pikes = formed(r.pike, &mut r, 0, (1500, 4000), 0, "LINE12");
+    let foe = crowd(&mut r.w, r.mus, 1, (3000, 4000), 12, (6, 20), 128);
+    let me = army(0, 0, vec![body(Duty::Line, &line), body(Duty::Melee, &pikes)]);
+    let mut cm = Commander::new(&r.w, [me, army(1, 128, vec![body(Duty::Line, &foe)])], [Control::Ai, Control::Player]);
+    let mut charged = None;
+    for _ in 0..4000 {
+        let cmds = cm.orders(&r.w);
+        if charged.is_none()
+            && cmds.iter().any(|c| matches!(c, Command::AttackMove { units, .. } if units.contains(&pikes[1])))
+        {
+            charged = Some(r.w.tick.0);
+            assert!(cmds.iter().any(|c| matches!(c, Command::AttackMove { units, .. } if units.contains(&line[1]))));
+        }
+        r.w.step(&cmds);
+        if charged.is_none() && r.w.tick.0.is_multiple_of(10) {
+            let gap = centroid(&r.w, &line).0 - centroid(&r.w, &pikes).0;
+            assert!(gap >= 60, "tick {}: the pikes are {gap} px behind the line", r.w.tick.0);
+        }
+    }
+    assert!(charged.is_some(), "the pikes charged with the line");
+    assert!(centroid(&r.w, &pikes).0 > 1500, "and they moved up behind it");
 }
