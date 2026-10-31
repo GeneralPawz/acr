@@ -117,7 +117,22 @@ def _walk(pose, n=36, strides=3):
     return out
 
 
-PUSH_X = 1.02  # the wheel pushers stand just outside their wheel (x = 0.82)
+PACE_EVERY = 2  # frames between the keys of a paced walk (the legs' angles are not linear in the foot)
+
+
+def _pace(pose, n, slip):
+    """Keys [(frame, pose)] of one stride (two steps) over `n` frames with `pose` on top, the
+    gait's stride set to `slip` metres: the planted foot moves back `slip` a cycle, as fast as
+    the ground runs past (`turn_slip`), so it stays put on it."""
+    g = dict(poses.WALK, stride=slip)
+    out = []
+    for f in range(0, n + 1, PACE_EVERY):
+        w = poses.gait_pose(STAND, g, (f / n) % 1.0)
+        out.append((f, dict(pose, **{k: v for k, v in w.items() if k.startswith(("thigh", "shin", "foot")) or k == "root_loc"})))
+    return out
+
+
+PUSH_X = 1.02 # the wheel pushers stand just outside their wheel (x = 0.82)
 # and this far behind (or in front of) the axle: leant well in, their shoulders clear of the
 # rim their hands are on (the original's `ArtPus_Tlk`: backs near level, heads at the hubs).
 PUSH_Y = 1.45
@@ -231,7 +246,7 @@ def lift_keys(n=70):
     at("c2.", 66, tool(LIFT, DOWN), tx, ty, tyaw)
     k["c2."].append((n, place(_walk(tool(LIFT, DOWN), 40, 2)[0][1], (tx, ty), tyaw)))
     tx, ty, _tyaw = TURN["c3."]
-    ready = _walk(tool(STAND, UP), 40, 1)[0][1]  # TRAIL_WALK's first frame: turned to step along
+    ready = _pace(tool(STAND, UP), 40, turn_slip(tx, ty))[0][1]  # TRAIL_WALK's first frame: turned to step along
     at("c3.", 36, tool(STAND, UP), tx, ty, turn_heading(tx, ty))
     at("c3.", 52, ready, tx, ty, turn_heading(tx, ty))
     k["c3."].append((n, place(ready, (tx, ty), turn_heading(tx, ty))))
@@ -249,9 +264,10 @@ def turn_keys(n=40):
         out[p] = [(f, place(a if (f // 10) % 2 == 0 else b, (x, y), yaw)) for f in range(0, n + 1, 10)]
     # c3 steps along with the turn: the ground turns under the gun (a 16th per cycle the
     # other way), so at his station it runs past him at `turn_slip` per cycle; he walks
-    # against it on the spot, one stride (two steps) per cycle, his feet keeping pace with it.
+    # against it on the spot, one stride (two steps) per cycle, each planted foot moving back
+    # at the ground's pace (a gait of that stride, keyed every PACE_EVERY frames).
     x, y, _yaw = TURN["c3."]
-    out["c3."] = [(f, place(s, (x, y), turn_heading(x, y))) for f, s in _walk(tool(STAND, UP), n, 1)]
+    out["c3."] = [(f, place(s, (x, y), turn_heading(x, y))) for f, s in _pace(tool(STAND, UP), n, turn_slip(x, y))]
     return out
 
 

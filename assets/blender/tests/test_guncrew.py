@@ -8,7 +8,44 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
 
-from acr_assets import guncrew  # noqa: E402
+from acr_assets import guncrew, poses  # noqa: E402
+
+
+SLIDE_MAX = 0.08  # m: a foot planted through the turn moves less than this over the ground (four keys a cycle: 0.15; built, bezier: 0.24)
+
+
+def _at(keys, f):
+    """The leg angles, root and yaw of keys [(frame, spec)] at frame `f`, linear between keys."""
+    (f0, a), (f1, b) = next(((p, q) for p, q in zip(keys, keys[1:]) if p[0] <= f <= q[0]))
+    t = (f - f0) / (f1 - f0)
+    mix = lambda u, v: tuple(x + (y - x) * t for x, y in zip(u, v))
+    out = {k: mix(a[k], b[k]) for k in ("thigh_l", "thigh_r", "shin_l", "shin_r", "root_loc", "root")}
+    return out
+
+
+def foot_slide(keys, side):
+    """Metres a foot (`"_l"`/`"_r"`) of a man keyed through the gun's turn moves over the ground
+    while planted (within 3 cm of its lowest height in two keys running), summed over the keys:
+    the ankle from the leg angles, set in the gun's frame at his station, which turns
+    clockwise by `guncrew.TURN_STEP` over the clip."""
+    n = keys[-1][0]
+    pts = []
+    for f in range(n + 1):
+        spec = _at(keys, f)
+        a = math.radians(-spec["thigh" + side][0])
+        b = math.radians(spec["shin" + side][0]) + poses.LEG_SHIN_BACK
+        fwd = poses.LEG_THIGH * math.sin(a) + poses.LEG_SHIN * math.sin(a - b)
+        up = (poses.LEG_HIP + spec["root_loc"][2] - poses.LEG_THIGH * math.cos(a)
+              - poses.LEG_SHIN * math.cos(a - b))
+        yaw = math.radians(spec["root"][2])
+        x0, y0 = spec["root_loc"][:2]
+        # The man looks along (sin yaw, -cos yaw).
+        gx, gy = x0 + fwd * math.sin(yaw), y0 - fwd * math.cos(yaw)
+        th = -math.radians(guncrew.TURN_STEP) * f / n
+        pts.append((gx * math.cos(th) - gy * math.sin(th), gx * math.sin(th) + gy * math.cos(th), up))
+    low = min(p[2] for p in pts)
+    return sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(pts, pts[1:])
+               if a[2] < low + 0.03 and b[2] < low + 0.03)
 
 
 class Drill(unittest.TestCase):
@@ -80,6 +117,14 @@ class Drill(unittest.TestCase):
         self.assertAlmostEqual(math.sin(yaw), 0.0)
         self.assertAlmostEqual(-math.cos(yaw), -1.0)
         self.assertAlmostEqual(guncrew.turn_slip(x, y), math.hypot(x, y) * math.radians(22.5))
+
+    def test_the_firer_does_not_slide_through_the_turn(self):
+        """Foot slide of c3 in TRAIL_WALK (#341), as `measure` of the studio sums it: the gun
+        turns clockwise by TURN_STEP over the clip, and a foot within 3 cm of its lowest
+        height in two keys running moves over the ground (fixed in the world) by its slide."""
+        keys = guncrew.clips()["TRAIL_WALK"]["c3."]
+        for side in ("_l", "_r"):
+            self.assertLess(foot_slide(keys, side), SLIDE_MAX, side)
 
     def test_carriers_stand_clear_of_the_chest(self):
         """The carriers' hips stand clear of the chest's ends and rope loops (0.37 m out)."""

@@ -750,7 +750,7 @@ per 0.55 m, the root sliding along with the cycle's bob).
   ammunition chest set down beside the trail), `#MOTION_L1` plays `TRAIL_WALK` (`ArtPus_pvrt`:
   the trail walked round a 16th, the wheels heaved opposite ways by a spoke's pitch, so the
   loop is seamless; c3 walks on the spot one stride per cycle, facing along the ground that
-  runs past his station while the model turns, `guncrew.turn_heading`/`turn_slip`), `#MOTION_R1` plays it backwards and `#UATTACK1` `TRAIL_LIFT` backwards.
+  runs past his station while the model turns, `guncrew.turn_heading`/`turn_slip`; his gait's stride is that slip and it is keyed every 2 frames (`guncrew._pace`; four keys a cycle slid his planted feet 0.15-0.25 m a step, #341), so a planted foot moves under 8 cm on the ground, `test_guncrew.foot_slide`), `#MOTION_R1` plays it backwards and `#UATTACK1` `TRAIL_LIFT` backwards.
   `#PSTAND1`, which the sim shows for one tick between two turn steps (and after a move, when
   the gun keeps its trail up), holds `TRAIL_WALK`'s first frame. It used to fall back to
   `STAND` (`clip_for_animation` finds no `PSTAND`), so every step popped the crew back to
