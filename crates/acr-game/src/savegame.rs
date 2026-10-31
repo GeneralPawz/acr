@@ -437,6 +437,10 @@ impl Writer {
                 self.u(r.size as u64);
                 self.u(r.climate as u64);
             }
+            GameKind::Acr(m) => {
+                self.u(3);
+                self.bytes(m.id().as_bytes());
+            }
             GameKind::Blank(b) => {
                 self.u(2);
                 self.u(b.size as u64);
@@ -608,6 +612,10 @@ impl<'a> Reader<'a> {
                     rough: 0,
                     editor: false,
                 })
+            }
+            3 => {
+                let id = self.str()?;
+                GameKind::Acr(crate::acr_missions::AcrMission::from_id(&id).ok_or_else(|| err("ACR mission"))?)
             }
             _ => return Err(err("game kind")),
         };
@@ -839,6 +847,24 @@ mod tests {
             Quiz { unit: ids[1], answer: None, asked: false, page_shown: false, dialog: None, allied: false };
         assert_eq!(FastForward::new(120).run(&log, &mut again, &mut quiz, || true), Progress::Done);
         assert_ne!(again.state_hash(), w.state_hash());
+    }
+
+    #[test]
+    fn an_acr_mission_save_keeps_its_mission() {
+        let mission = crate::acr_missions::AcrMission::LakeErie1813;
+        let (w, _, log, _) = play(10);
+        let save = SaveGame {
+            name: b"erie".to_vec(),
+            time: SaveTime::default(),
+            setup: GameSetup { kind: GameKind::Acr(mission), players: mission.players(), ..setup() },
+            tick: w.tick.0,
+            hash: w.state_hash(),
+            log,
+            camera: [0, 0],
+            selected: Vec::new(),
+            groups: Vec::new(),
+        };
+        assert_eq!(SaveGame::decode(&save.encode()).unwrap(), save);
     }
 
     #[test]

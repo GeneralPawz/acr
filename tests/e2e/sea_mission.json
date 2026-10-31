@@ -1,0 +1,125 @@
+{
+  "name": "sea_mission",
+  "description": "ACR's own single mission 'Seeschlacht auf dem Eriesee' (#417), the last row of the Einzelmission list: six American and five British ships, the computer's fleet sails to the player's by itself (attack move) and the fleets trade fire",
+  "step_timeout_s": 180,
+  "steps": [
+    {
+      "cmd": "click",
+      "label": "Einzelspieler"
+    },
+    {
+      "cmd": "click",
+      "label": "Einzelmission"
+    },
+    {
+      "cmd": "click",
+      "label": "OK"
+    },
+    {
+      "cmd": "click",
+      "label": "Seeschlacht auf dem Eriesee"
+    },
+    {
+      "cmd": "click",
+      "label": "Mission spielen!"
+    },
+    {
+      "cmd": "wait",
+      "ticks": 20
+    },
+    {
+      "cmd": "state",
+      "units": true,
+      "expect": [
+        {
+          "path": "state.units",
+          "len_eq": 11
+        },
+        {
+          "path": "state.counts.0.units.ShpFregat(US)",
+          "eq": 2
+        },
+        {
+          "path": "state.counts.0.units.ShpPinta(US)",
+          "eq": 4
+        },
+        {
+          "path": "state.counts.1.units.ShpFregat(EN)",
+          "eq": 2
+        },
+        {
+          "path": "state.counts.1.units.ShpPinta(EN)",
+          "eq": 3
+        }
+      ]
+    },
+    {
+      "cmd": "command",
+      "command": {
+        "type": "attack_move",
+        "units": {
+          "owner": 0
+        },
+        "x": 5200,
+        "y": 6800
+      }
+    },
+    {
+      "cmd": "wait",
+      "ticks": 2200
+    },
+    {
+      "cmd": "state",
+      "units": true,
+      "expect": [
+        {
+          "path": "state.mission.ended",
+          "eq": null
+        },
+        {
+          "path": "state.units.0.life",
+          "lt": 56500
+        },
+        {
+          "path": "state.units.6.life",
+          "lt": 56500
+        }
+      ]
+    },
+    {
+      "cmd": "wait",
+      "until": {
+        "screen": "SingleMission"
+      },
+      "timeout": 20000,
+      "note": "one side is sunk: the game ends and returns to the missions list with the mission still selected"
+    },
+    {
+      "cmd": "ui",
+      "expect": {
+        "path": "ui.widgets",
+        "len_ge": 10
+      }
+    },
+    {
+      "cmd": "click",
+      "label": "Mission spielen!",
+      "note": "again, and this time the player gives no order"
+    },
+    {
+      "cmd": "wait",
+      "ticks": 2400
+    },
+    {
+      "cmd": "state",
+      "units": true,
+      "expect": [
+        {
+          "path": "state.units.2.life",
+          "lt": 65150
+        }
+      ],
+      "note": "the computer's fleet came to us by itself and fired"
+    }
+  ]
+}

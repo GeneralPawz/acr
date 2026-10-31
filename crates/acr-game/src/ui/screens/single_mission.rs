@@ -18,6 +18,7 @@ use super::super::missions::{self, Mission};
 use super::super::setup::{Difficulty, GameKind, GameSetup, MissionSetup};
 use super::super::{Ctx, Input, Nav, Screen};
 use super::{Menu, font};
+use crate::acr_missions::AcrMission;
 
 const BACKGROUND: &str = "INTERF2\\SINGLE_MISSION_BACKGROUND.BMP";
 const VSCROLL: &str = "INTERF2\\VSCROLL.GP";
@@ -65,6 +66,10 @@ pub struct SingleMission {
     start: usize,
     menu: Menu,
     missions: Vec<Mission>,
+    /// ACR's own missions, listed after the original's (single missions only).
+    acr: Vec<AcrMission>,
+    /// The ACR mission selected when the list opens.
+    start_acr: Option<AcrMission>,
     list: WidgetId,
     difficulty: WidgetId,
     preview: WidgetId,
@@ -82,6 +87,12 @@ impl SingleMission {
     /// Opens the list with mission `index` selected (returning from a game).
     pub fn at(mut self, index: usize) -> Self {
         self.start = index;
+        self
+    }
+
+    /// Opens the list with ACR's mission `mission` selected (returning from a game).
+    pub fn at_acr(mut self, mission: AcrMission) -> Self {
+        self.start_acr = Some(mission);
         self
     }
 
@@ -115,6 +126,8 @@ impl SingleMission {
     /// briefing's `.bmp` for campaign missions (0x5c5893).
     fn preview(&self, index: usize) -> String {
         match self.campaign {
+            // ACR's missions have no picture of the original's.
+            None if index >= self.missions.len() => String::new(),
             None => format!("MAPS2\\SINGLE{}.BMP", index + 1),
             Some(_) => self.missions.get(index).map_or(String::new(), |m| {
                 let b = m.briefing();
@@ -144,7 +157,16 @@ impl SingleMission {
     }
 
     fn setup(&self) -> Option<GameSetup> {
-        let m = self.missions.get(self.menu.d.list(self.list).cur)?;
+        let cur = self.menu.d.list(self.list).cur;
+        if let Some(&mission) = cur.checked_sub(self.missions.len()).and_then(|i| self.acr.get(i)) {
+            return Some(GameSetup {
+                kind: GameKind::Acr(mission),
+                players: mission.players(),
+                local_player: 0,
+                rules: Default::default(),
+            });
+        }
+        let m = self.missions.get(cur)?;
         let difficulty = Difficulty::from_index(self.menu.d.combo(self.difficulty).cur);
         Some(GameSetup {
             kind: GameKind::Mission(MissionSetup {
@@ -184,6 +206,12 @@ impl Screen for SingleMission {
 
     fn build(&mut self, ctx: &Ctx) {
         self.missions = self.load(ctx);
+        self.acr = if self.campaign.is_none() { AcrMission::ALL.to_vec() } else { Vec::new() };
+        if let Some(m) = self.start_acr.take()
+            && let Some(i) = self.acr.iter().position(|&a| a == m)
+        {
+            self.start = self.missions.len() + i;
+        }
         let background = self.background(ctx);
         let preview = self.preview(0);
         let m = &mut self.menu;
@@ -199,7 +227,7 @@ impl Screen for SingleMission {
         list.focus = true;
         list.dy = -3;
         list.dx -= 16;
-        list.items = self.missions.iter().map(|m| m.name.clone()).collect();
+        list.items = self.missions.iter().map(|m| m.name.clone()).chain(self.acr.iter().map(|m| m.name())).collect();
         list.cur = self.start.min(list.items.len().saturating_sub(1));
         self.difficulty = m.d.add_combo_box(ctx.lib, 213, 638, COMBO, 0, 9, font::F18W, font::F18Y3);
         let combo = m.d.combo_mut(self.difficulty);
@@ -212,8 +240,13 @@ impl Screen for SingleMission {
             .map(|id| ctx.texts.get(id).to_vec())
             .collect();
         m.d.set_hint(self.difficulty, ctx.texts.get("DIFFICULT5"));
-        for mission in &self.missions {
-            let text = ctx.lib.bytes(mission.briefing()).map(|b| b.to_vec()).unwrap_or_default();
+        let briefings = self
+            .missions
+            .iter()
+            .map(|m| ctx.lib.bytes(m.briefing()).map(|b| b.to_vec()).unwrap_or_default())
+            .chain(self.acr.iter().map(|m| m.briefing()))
+            .collect::<Vec<_>>();
+        for text in briefings {
             let (x, y, size) = TEXT;
             let viewer = m.d.add_text_viewer(ctx.lib, ctx.fonts, x, y, size, &text, font::F18Y3);
             m.d.viewer_mut(viewer).set_line_height(TEXT_LINE_H, size[1] - 1);
