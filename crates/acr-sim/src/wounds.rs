@@ -40,6 +40,10 @@ pub struct Rules {
     /// Cannonballs break trees and knock stones aside (with [`Rules::hit_locations`] on):
     /// [`crate::ball_terrain`], `docs/simulation.md`, "Balls against trees and stones".
     pub ball_terrain: bool,
+    /// A right-click attack (priority 0xFE) reaches the members of a close-combat formation
+    /// as it reaches free units; the original ignores it for them ([`crate::combat::attack_obj_times`],
+    /// `docs/simulation.md`, "Formation attack").
+    pub formation_attack: bool,
 }
 
 impl std::hash::Hash for Rules {
@@ -60,6 +64,9 @@ impl std::hash::Hash for Rules {
         }
         if self.ball_terrain {
             (6u8, self.ball_terrain).hash(state);
+        }
+        if self.formation_attack {
+            (7u8, self.formation_attack).hash(state);
         }
     }
 }

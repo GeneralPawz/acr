@@ -260,6 +260,13 @@ const REALISM: &[Row] = &[
         get: |s| on_off(s.cannon_fire),
         set: |s, i| s.cannon_fire = i == 1,
     }),
+    Row::Choice(Choice {
+        // `formation_attack`: a right-click attack reaches close-combat formation members.
+        label: b"Formationsangriff",
+        lines: &[b"Aus (Original)", b"An: Linie greift an"],
+        get: |s| on_off(s.formation_attack),
+        set: |s, i| s.formation_attack = i == 1,
+    }),
 ];
 
 /// The rows of ACR page `page` (1 to 4).
@@ -512,7 +519,14 @@ mod tests {
         };
         assert_eq!(
             labels(REALISM),
-            [&b"Trefferzonen"[..], b"K\xf6rperabstand", b"Leichenhaufen", b"M\xf6rser", b"Kugelbrand"]
+            [
+                &b"Trefferzonen"[..],
+                b"K\xf6rperabstand",
+                b"Leichenhaufen",
+                b"M\xf6rser",
+                b"Kugelbrand",
+                b"Formationsangriff"
+            ]
         );
         assert_eq!(labels(BATTLE), [&b"Blutdarstellung"[..], b"Verwesung", b"Liegezeit", b"Schlachtfeldspuren"]);
         let mut s = Settings::default();
@@ -522,6 +536,8 @@ mod tests {
             assert_eq!((c.get)(&s), 0);
             (c.set)(&mut s, 1);
         }
-        assert!(s.hit_locations && s.body_spacing && s.corpse_piles && s.mortars && s.cannon_fire);
+        assert!(
+            s.hit_locations && s.body_spacing && s.corpse_piles && s.mortars && s.formation_attack && s.cannon_fire
+        );
     }
 }
