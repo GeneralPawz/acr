@@ -795,6 +795,7 @@ impl Driver {
                                 formation_attack,
                                 animal_give_up: false,
                                 dart_fire,
+                                aimed_fire: false,
                             },
                         }));
                         if let Mode::InGame(g) = &mut game.mode {
@@ -871,6 +872,7 @@ impl Driver {
                                 formation_attack,
                                 animal_give_up: false,
                                 dart_fire,
+                                aimed_fire: false,
                             },
                         }));
                     }
