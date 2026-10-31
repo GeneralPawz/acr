@@ -583,6 +583,9 @@ pub struct World {
     /// Trees and stones struck by balls ([`crate::Rules::ball_terrain`],
     /// [`crate::ball_terrain`]); hashed only while some object is struck.
     pub struck: crate::ball_terrain::StruckMap,
+    /// Animals on a chase ([`crate::Rules::animal_give_up`], [`crate::leash`]); hashed only
+    /// while there are some.
+    pub leashes: crate::leash::Leashes,
 }
 
 /// Unit indices per 128 px cell (8 × 8 lock cells).
@@ -733,6 +736,7 @@ impl World {
             mortar_zones: Default::default(),
             piles: Default::default(),
             struck: Default::default(),
+            leashes: Default::default(),
         }
     }
 
@@ -1023,6 +1027,7 @@ impl World {
             crate::prof_scope!("sim.search_victims");
             crate::combat::search_victims(self);
         }
+        crate::leash::tick(self);
         crate::ship::process_fishing(self);
         if self.tick.0 & 255 == 0 {
             crate::economy::bind_mines(self);
@@ -1421,6 +1426,7 @@ impl World {
         let hash = if self.mortar_zones.is_empty() { hash } else { state_hash(&(hash, &self.mortar_zones)) };
         let hash = if self.piles.is_empty() { hash } else { state_hash(&(hash, &self.piles)) };
         let hash = if self.struck.is_empty() { hash } else { state_hash(&(hash, &self.struck)) };
+        let hash = if self.leashes.is_empty() { hash } else { state_hash(&(hash, &self.leashes)) };
         // The peace time, only in games that have one.
         if self.peace == crate::peace::Peace::default() { hash } else { state_hash(&(hash, &self.peace)) }
     }

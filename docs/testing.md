@@ -261,6 +261,7 @@ every texture 0, no sprites, no units, an empty `SEA2`; `acr-game/src/blank_map.
 | `group_move` | the optional group-move rule: every selected formation moves, several stand in lines and rows (simulation.md "Group moves"); also on through `controls=modern` in settings.txt |
 | `formation_attack` | the optional formation-attack rule (simulation.md "Formation attack"); default `false` |
 | `cannon_fire` | the optional cannon-fire rule: under `hit_locations` a round-shot hit sets a man on fire (simulation.md "Shell fires"); default `false` |
+| `animal_give_up` | the optional animal-leash rule (simulation.md "Animals give up"); not in the driver's `start`, set it in `settings.txt` |
 | `ball_terrain` | the optional ball-terrain rule: under `hit_locations` balls fell trees and knock stones (simulation.md "Balls against trees and stones"); put them there with `{"cmd": "map_object", "group": "tree"\|"stone", "index": 0, "at": [[x, y]], "rock": false}` (`"struck": "felled"|"splintered"|"chipped", "dir": d` puts them there already struck, for close-ups and the frame-time bench; `"source": k` also makes each a gathering source of `ResType` k (2 stone, 3 field food), and group `"source"` places the source alone, so peasants work stone and fields on the blank field); default `false` |
 | `editor` | `true`: the test editor's field (the placing window shown, fighting off at the start; docs/controls.md) |
 | `hud` | `false` hides the interface from the start, like `{"cmd": "hud", "on": false}` |

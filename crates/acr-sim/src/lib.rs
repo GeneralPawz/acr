@@ -37,6 +37,7 @@ pub mod gather;
 pub mod ground_fire;
 pub mod grouping;
 pub mod hash;
+pub mod leash;
 pub mod map;
 pub mod market;
 pub mod melee;

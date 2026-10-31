@@ -61,6 +61,10 @@ pub struct Settings {
     /// units (`acr_sim::Rules::formation_attack`, docs/simulation.md "Formation attack");
     /// `formation_attack=on|off`, off by default (the original: they stay in line).
     pub formation_attack: bool,
+    /// ACR: new games use the optional animal-leash rule (animals give up a chase when the
+    /// target gets too far from its start; docs/simulation.md "Animals give up");
+    /// `animal_give_up=on|off`, off by default.
+    pub animal_give_up: bool,
     /// ACR: sun shadows of the 3D models (`shadows=on|off`, on by default;
     /// docs/rendering-3d.md "Shadows").
     pub shadows: bool,
@@ -202,6 +206,7 @@ impl Default for Settings {
             corpse_piles: false,
             cannon_fire: false,
             formation_attack: false,
+            animal_give_up: false,
             shadows: true,
             lod: true,
             material_detail: true,
@@ -291,7 +296,7 @@ impl Settings {
         format!(
             "sound_volume={}\nmusic_volume={}\nmusic_mode={}\ngame_mode={}\nscroll_speed={}\nframe_time={}\n\
              resolution={}\nrecord={}\nrecord_file={hex}\ncontrols={controls}\nedge_scroll={}\n\
-             models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\ncorpse_decay={}\nhit_locations={}\nbody_spacing={}\nmortars={}\ncorpse_piles={}\ncannon_fire={}\nformation_attack={}\nshadows={}\nlod={}\nmaterial_detail={}\nwind={}\nmap_models={}\nwater={}\n\
+             models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\ncorpse_decay={}\nhit_locations={}\nbody_spacing={}\nmortars={}\ncorpse_piles={}\ncannon_fire={}\nformation_attack={}\nanimal_give_up={}\nshadows={}\nlod={}\nmaterial_detail={}\nwind={}\nmap_models={}\nwater={}\n\
              ground={}\nground_cover={}\nbattlefield_marks={}\nweather={}\nsea_state={}\naim_guides={}\ngraphics={}\n{}{}{}",
             self.sound_volume,
             self.music_volume,
@@ -310,6 +315,7 @@ impl Settings {
             if self.corpse_piles { "on" } else { "off" },
             if self.cannon_fire { "on" } else { "off" },
             if self.formation_attack { "on" } else { "off" },
+            if self.animal_give_up { "on" } else { "off" },
             if self.shadows { "on" } else { "off" },
             if self.lod { "on" } else { "off" },
             if self.material_detail { "on" } else { "off" },
@@ -409,6 +415,7 @@ impl Settings {
                 "corpse_piles" => s.corpse_piles = value == "on",
                 "cannon_fire" => s.cannon_fire = value == "on",
                 "formation_attack" => s.formation_attack = value == "on",
+                "animal_give_up" => s.animal_give_up = value == "on",
                 "shadows" => s.shadows = value != "off",
                 "lod" => s.lod = value != "off",
                 "material_detail" => s.material_detail = value != "off",
@@ -498,6 +505,7 @@ mod tests {
             corpse_piles: true,
             cannon_fire: true,
             formation_attack: true,
+            animal_give_up: true,
             marks_keep: true,
             aim_guides: false,
             weather: Weather::Snow,

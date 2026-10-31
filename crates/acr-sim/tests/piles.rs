@@ -24,6 +24,7 @@ const ON: Rules = Rules {
     cannon_fire: false,
     ball_terrain: false,
     formation_attack: false,
+    animal_give_up: false,
 };
 
 /// The walker's row (px) and his start and goal columns.

@@ -386,6 +386,9 @@ pub struct Role {
     pub capture: bool,
     /// `CANTCAPTURE` (NM+0x172a bit2): never captures (animals).
     pub cant_capture: bool,
+    /// `ANIMAL` (NM+0x172f bit3, parser 0x4f4a47): a beast (bear, jaguar, ...). The original
+    /// reads it only in `MakeDamage` (0x4e89dc); ACR's optional leash ([`crate::leash`]) uses it.
+    pub animal: bool,
     /// `CANSTORM` (NM+0x172c bit5): may go into buildings (`GoToMine`) besides peasants, and
     /// so storm enemy ones.
     pub can_storm: bool,
@@ -423,6 +426,7 @@ fn role(def: &UnitDef) -> Role {
         category: 0,
         capture: false,
         cant_capture: false,
+        animal: false,
         can_storm: false,
         can_be_killed_inside: false,
         high_unit: false,
@@ -458,6 +462,7 @@ fn role(def: &UnitDef) -> Role {
             "CATEGORY" => r.category = u8::from(c.word(0).is_some_and(|w| w.eq_ignore_ascii_case("STRELOK"))),
             "CAPTURE" => r.capture = true,
             "CANTCAPTURE" => r.cant_capture = true,
+            "ANIMAL" => r.animal = true,
             "CANSTORM" => r.can_storm = true,
             "CANBEKILLEDINSIDE" => r.can_be_killed_inside = true,
             "HIGHUNIT" => r.high_unit = true,
