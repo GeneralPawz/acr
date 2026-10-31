@@ -989,25 +989,13 @@ pub fn leave(w: &mut World, b: usize) {
     release(w, b, inside);
 }
 
-/// Puts units of building `b` (already off its list) back outside at its born points.
+/// Puts units of building `b` (already off its list) back outside: each walks out like a
+/// unit that `LeaveMine` (0x5f522e) lets off (born points, rally point; [`walk_out`]), so it
+/// has the spawn priority and a cleared occupancy cell and its `ClearUnlimited` can end.
 fn release(w: &mut World, b: usize, inside: Vec<crate::world::EntityId>) {
-    let catalog = w.catalog.clone();
-    let bt = catalog.get(w.units[b].kind);
-    let (bx, by) = base_cell(bt, w.units[b].pos);
-    let pts = bt.economy.born_points.clone();
-    let pos = w.units[b].pos;
     for id in inside {
-        let u = &mut w.units[id.0 as usize];
-        u.inside_of = None;
-        let first = pts.first().map_or(pos, |&(x, y)| Pos::new((bx + x) << 8, (by + y) << 8));
-        let out = pts.last().map_or(first, |&(x, y)| Pos::new((bx + x) << 8, (by + y) << 8));
-        u.pos = first;
-        u.cell = Unit::cell_of(first, u.lx);
-        u.unlimited = true;
-        u.orders.clear();
-        u.orders.push(Order::ClearUnlimited);
-        u.orders.push(Order::SendTo { cell: Unit::cell_of(out, u.lx), prio: SPAWN_PRIO });
-        u.dest = Some(out);
+        w.units[id.0 as usize].inside_of = None;
+        walk_out(w, b, id.0 as usize, true);
     }
 }
 
