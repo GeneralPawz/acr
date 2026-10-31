@@ -156,12 +156,18 @@ fn sample_layer(layer: u32, uv: vec2<f32>, gx: vec2<f32>, gy: vec2<f32>) -> Samp
     return s;
 }
 
+// Component `i` of `v` by mask, not by a runtime index: Adreno's Vulkan driver fails to link
+// the latter (as in fog.wgsl).
+fn component(v: vec4<f32>, i: u32) -> f32 {
+    return dot(v, select(vec4<f32>(0.0), vec4<f32>(1.0), vec4<u32>(0u, 1u, 2u, 3u) == vec4<u32>(i)));
+}
+
 // One class at a world point: its set at its repeat and its second set (or the same set) at
 // a turned, larger repeat, mixed by low-frequency noise against tiling. The gradients of `xy`
 // come from uniform control flow (the classes differ per triangle).
 fn sample_class(kind: u32, xy: vec2<f32>, gx: vec2<f32>, gy: vec2<f32>, mixer: f32) -> Sample {
     let k = 1.0 / detail.layers[kind].w;
-    let other = u32(detail.second[kind / 4u][kind % 4u]);
+    let other = u32(component(detail.second[kind / 4u], kind % 4u));
     // The second sample is turned and about 1.9 x larger than its layer's repeat.
     let k2 = 1.0 / detail.layers[other].w;
     let s1 = sample_layer(kind, xy * k, gx * k, gy * k);
@@ -182,8 +188,8 @@ fn shade_at(level: f32) -> f32 {
     let l = clamp(level, 0.0, 31.0);
     let i = u32(floor(l));
     let j = min(i + 1u, 31u);
-    let a = detail.shade[i / 4u][i % 4u];
-    let b = detail.shade[j / 4u][j % 4u];
+    let a = component(detail.shade[i / 4u], i % 4u);
+    let b = component(detail.shade[j / 4u], j % 4u);
     return mix(a, b, l - floor(l));
 }
 

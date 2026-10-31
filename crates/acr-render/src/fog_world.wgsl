@@ -68,7 +68,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let top = mix(cell_at(c), cell_at(c + vec2<i32>(1, 0)), f.x);
     let bottom = mix(cell_at(c + vec2<i32>(0, 1)), cell_at(c + vec2<i32>(1, 1)), f.x);
     let row = u32(clamp(floor(shade(mix(top, bottom, f.y))), 0.0, 159.0));
-    var a = globals.dark[row >> 2u][row & 3u];
+    // Component by mask, not by a runtime index: Adreno's Vulkan driver fails to link the
+    // latter.
+    let four = globals.dark[row >> 2u];
+    var a = dot(four, select(vec4<f32>(0.0), vec4<f32>(1.0), vec4<u32>(0u, 1u, 2u, 3u) == vec4<u32>(row & 3u)));
     if (a <= 0.0) {
         discard;
     }

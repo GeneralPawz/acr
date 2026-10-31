@@ -68,6 +68,12 @@ struct Surface {
     slope: vec2<f32>,
 };
 
+// Component `i` of `v` by mask, not by a runtime index: Adreno's Vulkan driver fails to link
+// the latter (as in fog.wgsl).
+fn component(v: vec4<f32>, i: u32) -> f32 {
+    return dot(v, select(vec4<f32>(0.0), vec4<f32>(1.0), vec4<u32>(0u, 1u, 2u, 3u) == vec4<u32>(i)));
+}
+
 // The Gerstner sum (water.rs `Waves::sample` without the horizontal shift).
 fn gerstner(p: vec2<f32>, scale: f32) -> Surface {
     var s: Surface;
@@ -81,7 +87,7 @@ fn gerstner(p: vec2<f32>, scale: f32) -> Surface {
         let w = globals.waves[i];
         let k = w.z;
         let a = w.w * scale;
-        let phase = k * dot(w.xy, p) - sqrt(GRAVITY * k) * t + globals.phases[i / 4][i % 4];
+        let phase = k * dot(w.xy, p) - sqrt(GRAVITY * k) * t + component(globals.phases[i / 4], u32(i % 4));
         let c = cos(phase);
         let sn = sin(phase);
         let q = steep / (k * max(w.w, 1e-3) * f32(WAVES));
