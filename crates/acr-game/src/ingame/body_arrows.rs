@@ -328,6 +328,7 @@ fn arrow(model: usize, transform: Mat4) -> ModelInstance {
         uniform: None,
         drape: None,
         rise: None,
+        pace: 0.0,
     }
 }
 

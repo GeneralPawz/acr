@@ -69,7 +69,8 @@ struct Material {
     // Surface detail (#234): glTF metallic and roughness factors, the normal map's scale (0:
     // none), 1 with a metallic-roughness texture (G roughness, B metal).
     pbr: vec4<f32>,
-    // x: the least screen width (px) of thin parts (0: none; arrows).
+    // x: the least screen width (px) of thin parts (0: none; arrows), y: 1 on a flag's cloth
+    // (its `_WIND` is the hoist distance and a phase, not a sway: `flag_wave`).
     thin: vec4<f32>,
 };
 
@@ -103,7 +104,8 @@ struct InstanceIn {
     @location(9) row0: vec4<f32>,
     @location(10) row1: vec4<f32>,
     @location(11) row2: vec4<f32>,
-    // decay, deflate weight, lie_flat weight, half transparent (1)
+    // decay, deflate weight, lie_flat weight, half transparent (1) plus twice the pace in
+    // 0.1 m/s (model_renderer.rs `pack_pace`)
     @location(12) params: vec4<f32>,
     // first texel of the pose, first texel of the instance data, player, hair and beard
     // variants shown (bit mask)
@@ -295,7 +297,14 @@ fn vs_main(v: VertexIn, inst: InstanceIn) -> VsOut {
     var world = apply(inst.row0, inst.row1, inst.row2, vec4<f32>(local, 1.0))
         - globals.forward.xyz * (material.cloth.z * unit);
     let world_n = apply(inst.row0, inst.row1, inst.row2, vec4<f32>(local_n, 0.0));
-    if (globals.wind.z > 0.0 && any(v.wind != vec4<f32>(0.0))) {
+    let pace = floor(inst.params.w * 0.5) * 0.1;
+    if (material.thin.y > 0.5) {
+        // A flag's cloth ripples in the wind and streams behind the bearer; the pole edge
+        // (`v.wind.y` 0) stays where the skin puts it.
+        if (globals.wind.z + pace > 0.0) {
+            world = world + ripple(v.wind, world.xy, world_n, vec2<f32>(inst.row2.x, inst.row2.y), pace) * unit;
+        }
+    } else if (globals.wind.z > 0.0 && any(v.wind != vec4<f32>(0.0))) {
         world = world + sway(v.wind, world.xy, world_n, inst.row0.w + inst.row1.w) * unit;
     }
     var out: VsOut;
@@ -369,6 +378,21 @@ fn sway(w: vec4<f32>, at: vec2<f32>, n: vec3<f32>, seed: f32) -> vec3<f32> {
         * sin(t * 7.0 + ph * 3.0 + dot(at, vec2<f32>(0.11, 0.07)));
     let nl = n / max(length(n), 1e-5);
     return vec3<f32>(dir * (trunk + branch) + side, 0.0) + nl * flutter;
+}
+
+// A flag's cloth, world metres (wind.wgsl `flag_wave`, `flag_drift`): `w.y` is the distance
+// from the pole (0..1), `w.z` a phase along the hoist. The wave runs along the cloth's normal
+// `n` and travels from the pole to the fly; the free edge also trails downwind and opposite
+// to the bearer's motion (`pace` m/s along `heading`, the instance's facing in world).
+fn ripple(w: vec4<f32>, at: vec2<f32>, n: vec3<f32>, heading: vec2<f32>, pace: f32) -> vec3<f32> {
+    let s = globals.wind.z;
+    let dir = globals.wind.xy;
+    let g = gust(at, dir, globals.wind.w);
+    let strength = flag_strength(s, g, pace);
+    let nl = n / max(length(n), 1e-5);
+    let wave = flag_wave(w.y, w.z, globals.wind.w, strength);
+    let drift = flag_drift(dir, s, heading / max(length(heading), 1e-5), pace) * (w.y * w.y);
+    return nl * wave + vec3<f32>(drift, 0.0);
 }
 
 // How far a carcass without masks sinks into the ground at the end (metres).
@@ -867,7 +891,7 @@ fn shade(in: VsOut, front: bool, far: bool, clean: bool) -> vec4<f32> {
         if (!clean) { discard; }
     }
     // Half transparent like the original's fading corpses: every other pixel (no sorting).
-    if (in.params.w > 0.5) {
+    if (fract(in.params.w * 0.5) > 0.4) {
         let p = vec2<i32>(floor(in.pos.xy));
         if (((p.x + p.y) & 1) == 1) {
             if (!clean) { discard; }
@@ -971,6 +995,12 @@ fn shade(in: VsOut, front: bool, far: bool, clean: bool) -> vec4<f32> {
     // Lambert from the upper left (the sprites' light), both faces lit. `ng` without the
     // normal map, for the shadow lookup's offset.
     var ng = normalize(in.normal);
+    if (material.thin.y > 0.5) {
+        // A flag's ripple (`ripple`) bends the cloth, not its vertex normals: the folds are
+        // shaded by the surface's own slope, on the side the cloth faced.
+        let slope = normalize(cross(dp[0], dp[1]));
+        ng = select(-slope, slope, dot(slope, ng) >= 0.0);
+    }
     let detail = !far && globals.params.w > 0.5;
     var n = ng;
     if (detail && material.pbr.z > 0.0) {

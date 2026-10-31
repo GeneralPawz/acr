@@ -172,6 +172,10 @@ pub struct Finish {
     /// `model.wgsl` `vs_main`): vertices nearer the model's z axis than half of it are pushed
     /// out to it, so a thin shaft never falls below a pixel and flickers away when zoomed out.
     pub thin: f32,
+    /// 1 on a flag's cloth (the material key `flag`): its vertices ripple by `_WIND.y` (the
+    /// distance from the pole, 0..1) and `_WIND.z` (a phase), not sway (`model.wgsl`,
+    /// `flag_wave` of `wind.wgsl`).
+    pub ripple: f32,
 }
 
 /// Which per-soldier colour a material takes (`extras.acr_tint`).
@@ -777,6 +781,7 @@ impl ModelData {
                                 |x| x as f32,
                             ),
                         thin: 0.0,
+                        ripple: 0.0,
                     }),
                     surface: Surface {
                         normal: m.normal_texture().and_then(|t| texture_image(&t.texture())),
@@ -788,6 +793,9 @@ impl ModelData {
                 }
             })
             .collect();
+        for m in &mut materials {
+            m.finish.ripple = if crate::layers::material_key(&m.name) == "flag" { 1.0 } else { 0.0 };
+        }
         // Primitives without a material take a grey default.
         let default_material = materials.len();
         materials.push(Material {
