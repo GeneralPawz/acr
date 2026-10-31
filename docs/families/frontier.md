@@ -49,9 +49,33 @@ speed on `#MOTION_L4` (10 frames a step); the family now makes `MOTION_{L,R,LB,R
 walk (`frontier.WALKS`), where the plain run clip played at half speed before (the gallop).
 Sprite check (`--anim`, first frame, mean IoU of 9 directions): MOTION_L 0.508 -> 0.523,
 MOTION_L4 0.484, ATTACK1 0.466 -> 0.474, ATTACK3 0.397 -> 0.398, STAND 0.549 -> 0.508.
-Not modelled: the load on the shoulder of `MOTION_L4`, the reload of the sprites (ATTACK3
-plays the musketeer's drill), the Büffeljagd felt outfit and beaver hat (no such garment or
-hat in the kit). `EngTapDragon` (same sprites) is unchanged.
+`EngTapDragon` (same sprites) is unchanged.
+
+## Trapper reload and load (#347)
+
+The `#ATTACK3` sprites show the short rifle grounded and upright, the right hand rising to
+head height on the rod and sinking again, twice over the 84 frames. `SPEC["reload"] =
+"trapper"` (`poses.STYLES`) plays that: `poses.reload_steps(0.95)` is the musketeer's drill
+with the hand distances along the short barrel (the left hand near the muzzle, the butt
+nearer the man, square on instead of bladed), ATTACK3 rams twice (`TRAPPER_RAM`) and
+ATTACK1, PSTAND3 and the transitions rest on the low stroke so the clips chain. The rammer
+is as long as the barrel allows (`aim.rod_for`). The rammer, IK grips and `solve_holds` are
+the musketeer's.
+
+`SPEC["load"]` puts a load of pelts (`gear.pelt_load`, two rolls) on the right shoulder: the
+bone `socket.load` on `clavicle_r` carries it skinned rigidly, and `frontier.key_load` scales
+it to 1 in `MOTION_{L,R,LB,RB}4` and to 0 in every other clip (like the sidearm sockets). The
+`MOTION_L4` sprites show a pale bundle over the right shoulder. It is skinned gear, not
+held, so it does not drop at death; the death clips hide it.
+
+Sprite check (`--anim ATTACK3 --step N`, mean IoU of 9 directions, `acr model-check --step`
+now also renders the model at that frame): step 0 0.398 -> 0.434, step 21 (the hand high)
+0.433 -> 0.468, step 63 0.432 -> 0.469; MOTION_L4 0.490 -> 0.489 with the load.
+
+Not modelled: the Büffeljagd felt outfit and beaver hat. The kit has no felt garment or
+beaver hat; it would take a new hat in `registry.HATS` and a felt coat pattern for
+`civil.peasant_coat`, plus a mission-specific outfit switch (the sim would have to tell the
+renderer which skin a unit wears), which is a subsystem of its own.
 
 ## Known gaps
 

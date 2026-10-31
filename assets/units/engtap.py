@@ -9,7 +9,7 @@ Family 11 (`acr_assets.frontier`, docs/families/frontier.md).
 from acr_assets import frontier, line
 
 TYPE = "EngTap"
-CHECKS = ["--anim STAND", "--anim MOTION_L", "--anim MOTION_L4", "--anim ATTACK1", "--anim ATTACK3", "--anim DEATHLIE1"]
+CHECKS = ["--anim STAND", "--anim MOTION_L", "--anim MOTION_L4", "--anim ATTACK1", "--anim ATTACK3", "--anim ATTACK3 --step 21", "--anim ATTACK3 --step 63", "--anim DEATHLIE1"]
 
 MD = {
     "REST": "@REST 9 5 0 65",
@@ -48,7 +48,7 @@ MD = {
 
 
 def spec():
-    return frontier.spec(MD, drape=True, carry="waist", gun=0.95)
+    return frontier.spec(MD, drape=True, carry="waist", gun=0.95, reload="trapper", load=True)
 
 
 def build(ctx):

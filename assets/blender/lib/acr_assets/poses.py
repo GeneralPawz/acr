@@ -141,6 +141,46 @@ STANCE4_CLIPS = {
 }
 
 
+# The trapper's reload (#347): the sprites of `#ATTACK3` show the short rifle grounded and
+# upright, the right hand rising to head height on the rod and sinking again, twice over the
+# 84 frames (the clip goes out and back), where the musketeer's drill rams three times. The
+# stance hangs on the low stroke, so ATTACK1 ends where ATTACK3 starts (frame 87 of the
+# sprites, the hand low). Same steps as `RELOAD_STEPS` with the distances along a short gun
+# (`reload_steps`).
+TRAPPER_HOLD = "ram_down"
+TRAPPER_RAM = [(0.0, "ram_down"), (0.25, "ram_up"), (0.5, "ram_down"), (0.75, "ram_up"), (1.0, "ram_down")]
+MUSKET_LEN = 1.62
+# Reload styles: (the step the stance rests on, the stance-4 clips).
+STYLES = {
+    None: (RAM_HOLD, STANCE4_CLIPS),
+    "trapper": (TRAPPER_HOLD, dict({
+        clip: ([(t, TRAPPER_HOLD if s == RAM_HOLD else s) for t, s in keys], rod)
+        for clip, (keys, rod) in STANCE4_CLIPS.items()}, ATTACK3=(TRAPPER_RAM, [(0.0, "bore")]))),
+}
+
+
+def reload_steps(gun=MUSKET_LEN):
+    """`RELOAD_STEPS` for a short gun of `gun` metres: the right hand's distances along the gun
+    that reach the muzzle and the rod above it (0.9 m and more) follow the shorter barrel,
+    the left hand holds the barrel near the muzzle and the grounded butt stands nearer the
+    man (a short gun held upright has to be within reach of the left arm)."""
+    if gun >= MUSKET_LEN:
+        return dict(RELOAD_STEPS)
+    muzzle = gun - 0.25
+    out = {}
+    for name, st in RELOAD_STEPS.items():
+        # Square on to the front, not bladed: the sprite check scores it higher (#347).
+        st = dict(st, base=_with(st["base"], root=(0, 0, 0)))
+        if isinstance(st["right"], (int, float)) and st["right"] >= 0.9:
+            st["right"] = round(st["right"] + gun - MUSKET_LEN, 3)
+        if isinstance(st["left"], (int, float)) and st["left"] >= 0.9:
+            st["left"] = round(min(st["left"], muzzle - 0.10), 3)
+        if st.get("butt"):
+            st["grip"] = (-0.12, -0.30, 0.03)
+        out[name] = st
+    return out
+
+
 def slow_recharge(md_lines):
     """Whether the musketeer reloads in the stance of `#ATTACK3` (`STANCE4_CLIPS`)."""
     return "ATTACK3" in md_lines
@@ -160,26 +200,27 @@ def _fit(keys, n):
     return sorted(out.items())
 
 
-def reload_plan(md_lines):
+def reload_plan(md_lines, style=None):
     """{clip: (keys [(frame, step)], rod [(frame, mode)])} of the reload drill on the clip
     frames of `md_lines`: ATTACK1's drill after the shot (`SLOW_ATTACK1`, ending on
     `RAM_HOLD` on its last frame; else the whole drill `RELOAD_FRAMES`, ending in the aim)
-    and the stance-4 clips of a slow-recharge musketeer."""
+    and the stance-4 clips of a slow-recharge musketeer (`STYLES[style]`)."""
+    hold, stance = STYLES[style]
     n = rig.md_clip_frames(md_lines["ATTACK1"])[0] if "ATTACK1" in md_lines else 87
     if not slow_recharge(md_lines):
         return {"ATTACK1": (list(RELOAD_FRAMES), list(ROD_PHASES))}
-    out = {"ATTACK1": (_fit(SLOW_ATTACK1, n) + [(n - 1, RAM_HOLD)], _fit(SLOW_ROD_ATTACK1, n))}
-    for clip, (keys, rod) in STANCE4_CLIPS.items():
+    out = {"ATTACK1": (_fit(SLOW_ATTACK1, n) + [(n - 1, hold)], _fit(SLOW_ROD_ATTACK1, n))}
+    for clip, (keys, rod) in stance.items():
         if clip in md_lines:
             last = max(rig.md_clip_frames(md_lines[clip])[0] - 1, 0)
             out[clip] = ([(int(round(t * last)), s) for t, s in keys], [(int(round(t * last)), m) for t, m in rod])
     return out
 
 
-def rod_phases(md_lines):
+def rod_phases(md_lines, style=None):
     """{clip: rod phases} of the clips that draw the rammer (`reload_plan`; FIRE_AIMED and
     FIRE_HIP play ATTACK1's)."""
-    plan = reload_plan(md_lines)
+    plan = reload_plan(md_lines, style)
     out = {clip: rod for clip, (_k, rod) in plan.items()}
     for clip in ("FIRE_AIMED", "FIRE_HIP"):
         out[clip] = plan["ATTACK1"][1]
@@ -586,13 +627,13 @@ def attack1_keys(aim, fire, reload=None, n=87, drill=None):
     return keys
 
 
-def stance4_clips(md_lines, aim, stand, reload=None):
+def stance4_clips(md_lines, aim, stand, reload=None, style=None):
     """{clip: [(frame, pose)]} of a slow-recharge musketeer's reload stance (`STANCE4_CLIPS`
     on the frames of `md_lines`); empty for the others."""
     if not slow_recharge(md_lines):
         return {}
     steps = dict(_steps(reload), **{"@aim": aim, "@stand": stand})
-    return {clip: [(f, steps[s]) for f, s in keys] for clip, (keys, _rod) in reload_plan(md_lines).items()
+    return {clip: [(f, steps[s]) for f, s in keys] for clip, (keys, _rod) in reload_plan(md_lines, style).items()
             if clip != "ATTACK1"}
 
 
@@ -654,7 +695,8 @@ def musketeer_strikes(ready, lunge, n):
     }
 
 
-def musketeer_clips(md_lines, stand=STAND_MUSKET, aim=None, charge=None, reload=None, hip=None, swing=True):
+def musketeer_clips(md_lines, stand=STAND_MUSKET, aim=None, charge=None, reload=None, hip=None, swing=True,
+                     style=None):
     """{clip: [(frame, pose)]} for a European musketeer from its `.MD` lines
     ({key: "@DEATH 9 4 0 70"}): STAND, MOTION_L, MOTION_R, the bayonet (attack index 0,
     `PIKA`: PATTACK, UATTACK, PSTAND, ATTACK), the musket shot (index 1, `VISTREL`:
@@ -676,7 +718,7 @@ def musketeer_clips(md_lines, stand=STAND_MUSKET, aim=None, charge=None, reload=
     fire = _with(AIM_MUSKET, spine=(-4, 0, -2), root_loc=(rl[0], rl[1] + 0.04, rl[2]))
     n1 = rig.md_clip_frames(md_lines["ATTACK1"])[0] if "ATTACK1" in md_lines else 87
     # A slow-recharge musketeer's ATTACK1 ends in the reload stance (#255, `reload_plan`).
-    drill = reload_plan(md_lines)["ATTACK1"][0] if slow_recharge(md_lines) else None
+    drill = reload_plan(md_lines, style)["ATTACK1"][0] if slow_recharge(md_lines) else None
     clips = {
         "STAND": [(0.0, stand)],
         # The step cycle a key a frame (`step_keys`; LB/RB backwards).
@@ -710,5 +752,5 @@ def musketeer_clips(md_lines, stand=STAND_MUSKET, aim=None, charge=None, reload=
         n = rig.md_clip_frames(md_lines["ATTACK"])[0]
         for key, keys in musketeer_strikes(ready, lunge, n).items():
             out[key] = rig.clip_keys(n, keys)
-    out.update(stance4_clips(md_lines, AIM_MUSKET, stand, reload))
+    out.update(stance4_clips(md_lines, AIM_MUSKET, stand, reload, style))
     return out

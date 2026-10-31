@@ -143,6 +143,8 @@ struct Reference {
     anchor: (i32, i32),
     /// The section state drawn (`--sections`), if any.
     sections: Option<u8>,
+    /// The frame of the animation a unit shows (`--step`, wrapped); 0 for buildings.
+    step: usize,
     views: Vec<View>,
 }
 
@@ -167,8 +169,8 @@ fn model_ref(dir: &Path, ty: &str, out: &Path, o: &RefOptions) -> Result<Referen
         .filter(|_| def.is_building())
         .map_or((0, 0), |c| (c.int(0).unwrap_or(0), c.int(1).unwrap_or(0)));
     let refs = anim.frame_refs();
-    let refs: Vec<_> =
-        if def.is_building() { refs } else { refs.get(o.step % refs.len().max(1)).copied().into_iter().collect() };
+    let step = if def.is_building() { 0 } else { o.step % refs.len().max(1) };
+    let refs: Vec<_> = if def.is_building() { refs } else { refs.get(step).copied().into_iter().collect() };
 
     // Per view: the decoded parts with their offset from the ground point.
     let mut packs: Vec<(String, GpFile, acr_formats::Palette)> = Vec::new();
@@ -211,7 +213,8 @@ fn model_ref(dir: &Path, ty: &str, out: &Path, o: &RefOptions) -> Result<Referen
         parts_per_view.push(parts);
     }
     let name = def.name().unwrap_or(ty).to_owned();
-    let reference = compose(name, anim.name.clone(), dirs, full_rotation, o, &packs, &parts_per_view)?;
+    let mut reference = compose(name, anim.name.clone(), dirs, full_rotation, o, &packs, &parts_per_view)?;
+    reference.step = step;
     write_reference(&reference, out)?;
     Ok(reference)
 }
@@ -252,7 +255,7 @@ fn compose(
             View { k, dir: stored_direction(k, dirs, full_rotation), image }
         })
         .collect();
-    Ok(Reference { name, anim, dirs, full_rotation, width, height, anchor, sections: o.sections, views })
+    Ok(Reference { name, anim, dirs, full_rotation, width, height, anchor, sections: o.sections, step: 0, views })
 }
 
 /// The reference of a map object: frame `index` of a sprite list (`TREELIST:104` reads
@@ -291,12 +294,13 @@ fn write_reference(r: &Reference, out: &Path) -> Result<()> {
     }
     let json = format!(
         "{{\n  \"type\": \"{}\",\n  \"anim\": \"{}\",\n  \"dirs\": {},\n  \"full_rotation\": {},\n  \
-         \"sections\": {},\n  \"width\": {},\n  \"height\": {},\n  \"anchor\": [{}, {}],\n  \"views\": [\n{}\n  ]\n}}\n",
+         \"sections\": {},\n  \"step\": {},\n  \"width\": {},\n  \"height\": {},\n  \"anchor\": [{}, {}],\n  \"views\": [\n{}\n  ]\n}}\n",
         r.name,
         r.anim,
         r.dirs,
         r.full_rotation,
         r.sections.map_or(-1, i32::from),
+        r.step,
         r.width,
         r.height,
         r.anchor.0,

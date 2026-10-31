@@ -42,7 +42,7 @@ def show_state(s, ref):
     # Every bone and node at its node transform, then only this clip (`posecheck.Poser`).
     poser = posecheck.Poser(s)
     if bpy.data.actions.get(anim) is not None:
-        poser.play(anim, 0)
+        poser.play(anim, getattr(ref, "step", 0))
     else:
         poser.reset()
         for obj in s.objects:

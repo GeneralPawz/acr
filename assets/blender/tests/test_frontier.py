@@ -57,6 +57,18 @@ class Trapper(unittest.TestCase):
         self.assertEqual(len(left), 10)
         self.assertEqual(len(set(left)), 1)  # the left arm stays on the gun
 
+    def test_reload_and_load(self):
+        s = frontier.spec({}, carry="waist", gun=0.95, reload="trapper", load=True)
+        self.assertIn(s["reload"], poses.STYLES)
+        # The unit asks for them (its script imports Blender's modules, so read as text).
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "units", "engtap.py"),
+                  encoding="utf-8") as f:
+            self.assertIn('reload="trapper", load=True', f.read())
+        # The load shows in the stance walks only (`frontier.key_load`).
+        self.assertEqual(set(frontier.WALKS), {"MOTION_L4", "MOTION_R4", "MOTION_LB4", "MOTION_RB4"})
+        self.assertIsNone(frontier.spec({})["reload"])
+        self.assertFalse(frontier.spec({})["load"])
+
 
 class Halberd(unittest.TestCase):
     def test_clips(self):

@@ -125,6 +125,21 @@ def rammer(name, length=0.9):
     return from_bm(bm, name)
 
 
+def pelt_load(name):
+    """A load of pelts rolled up and tied, for the shoulder: two rolls side by side along +Y
+    (0.34 m and 0.28 m long, the longer one 0.11 m across), origin at their middle."""
+    bm = bmesh.new()
+    for x, z, length, radius in ((0.0, 0.0, 0.34, 0.055), (0.05, -0.04, 0.28, 0.042)):
+        roll = Matrix.Translation((x, 0.0, z)) @ Matrix.Rotation(math.pi / 2, 4, "X")
+        bmesh.ops.create_cone(bm, cap_ends=True, segments=10, radius1=radius, radius2=radius, depth=length,
+                              matrix=roll)
+        for sign in (-1, 1):
+            bmesh.ops.create_uvsphere(bm, u_segments=10, v_segments=6, radius=radius,
+                                      matrix=Matrix.Translation((x, sign * length / 2, z)))
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    return from_bm(bm, name)
+
+
 def sabre(name, length=0.95):
     """Sabre in its scabbard, along -Z from the hilt (origin)."""
     bm = bmesh.new()

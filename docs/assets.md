@@ -281,6 +281,10 @@ back. The sprite check stays a sanity check for size and placement only.
 
 ## Sprite check (`acr model-check`)
 
+`--step N` names the frame of a unit's animation (`ref.json` `step`; `render_views.py` plays
+the model's clip at that frame, so a `CHECKS` entry `--anim ATTACK3 --step 21` scores the
+middle of a clip, not only its first frame).
+
 `acr model-check <game-dir> <TYPE> <model.glb> <out>` writes the reference, runs
 `render_views.py` (Workbench, flat lighting, texture colour, no anti-aliasing, transparent
 film, view transform *Standard*; the model is rotated for each stored direction) and compares
