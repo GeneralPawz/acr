@@ -226,7 +226,7 @@ title folds the window; the wheel over it scrolls the icons.
 |---|---|
 | The eight colours | the owner of the placed units: players 1 to 7 and, the eighth, the neutral player (wild animals) |
 | Nation combo box | lists the 12 playable nations, then Tiere and Kanonen (ACR's own lists); a click opens it, a line picks it |
-| Icon grid | the nation's land units under Infanterie, Kavallerie and Artillerie, as `ICONS.GP` icons; a click picks the type at Basis (again: unpicks); while picked, a left click on the map places it. A right click opens the icon's training levels, see below. Marine and buildings are not placed yet (#406) |
+| Icon grid | the nation's units under Infanterie, Kavallerie and Artillerie, as `ICONS.GP` icons; a click picks the type at Basis (again: unpicks); while picked, a left click on the map places it. A right click opens the icon's training levels, see below. Marine (ships, only on deep water, as `sea_ground`) and Gebaeude follow, buildings put finished and free where their footprint is free; vegetation and terrain are not placed yet (#406) |
 | Scroll bar | the arrows scroll a row, the track a page; no dragging |
 
 Under the window ACR's own controls:
@@ -245,7 +245,7 @@ Under the window ACR's own controls:
 
 The test driver lists the window's controls in `ui` as `editor/<n>` (names like `Anzahl +`,
 `Ausbau Basis`, `Nation Frankreich`, `Spieler 2`, `Neutral`, an icon by its name and type id),
-so `tests/e2e/editor_window.json` and `editor_levels.json` click them by label; `editor_players.json` and `editor_teams.json` cover the Kampf modes.
+so `tests/e2e/editor_window.json` and `editor_levels.json` click them by label; `editor_players.json` and `editor_teams.json` cover the Kampf modes, `editor_world.json` and `editor_ships.json` the buildings and ships.
 
 **Training levels.** A right click on a unit icon opens a drop-down (the combo box's list look)
 under it: "Basis" (no upgrade), then one line per upgrade that changes how the type fights
