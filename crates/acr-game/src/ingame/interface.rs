@@ -178,6 +178,9 @@ pub struct State {
     pub(super) touch_outline: Option<[f32; 2]>,
     /// The last tap while placing (touch clock, window position), for the double tap.
     touch_tap: Option<(Duration, [f32; 2])>,
+    /// A finger down on the map while placing in touch mode: where it touched, where the
+    /// outline was then, and whether it has moved; moving drags the outline by as much.
+    touch_grab: Option<TouchGrab>,
     /// The touch clock at the latest gestures (the app's, or the driver's).
     pub(super) touch_time: Duration,
     keyboard: Option<Vec<(u8, u8, String)>>,
@@ -262,6 +265,7 @@ impl Default for State {
             touch: false,
             touch_outline: None,
             touch_tap: None,
+            touch_grab: None,
             touch_time: Duration::ZERO,
             keyboard: None,
             mods: ModifiersState::empty(),
@@ -299,6 +303,14 @@ pub fn tick_rate(frame_time: i32) -> u32 {
 
 /// Map cell size in screen pixels: 32 wide, 16 high (world y is halved on screen).
 const CELL: [f32; 2] = [32.0, 16.0];
+
+/// The outline held by a finger while placing in touch mode (#439).
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct TouchGrab {
+    press: [f32; 2],
+    outline: [f32; 2],
+    dragged: bool,
+}
 
 /// Whether a tap at `at` (touch clock `now`) is the second of a double tap after `prev`, within
 /// `reach` window pixels.
@@ -1675,6 +1687,7 @@ impl InGame {
                     self.interface.placing = Some(kind);
                     self.interface.touch_outline = None;
                     self.interface.touch_tap = None;
+                    self.interface.touch_grab = None;
                     self.interface.rally_mode = false;
                 }
             }
@@ -2514,6 +2527,7 @@ impl InGame {
             self.dip_check_building(at);
         }
         if !pressed && self.drag_from.is_none() {
+            self.touch_place_release();
             self.mortar_release(at);
             self.dip_release();
             self.interface.hud.release();
@@ -2578,20 +2592,45 @@ impl InGame {
         true
     }
 
-    /// A tap on the map while placing in touch mode (#439): it moves the outline there and never
-    /// places; a second tap within [`DOUBLE_TAP`] and [`DOUBLE_TAP_DP`] of the first places the
-    /// building at the outline.
+    /// A finger down on the map while placing in touch mode (#439): the second tap of a double
+    /// tap (within [`DOUBLE_TAP`] and [`DOUBLE_TAP_DP`] of the first) places the building at the
+    /// outline; otherwise the finger grabs the outline: dragging moves it smoothly by as much as
+    /// the finger moves, and a release without moving is a tap that puts it there
+    /// ([`Self::touch_place_release`]). Nothing else places.
     fn touch_place_tap(&mut self, kind: TypeId, at: [f32; 2]) {
-        let i = &mut self.interface;
-        let reach = DOUBLE_TAP_DP * i.scale_factor;
-        let double = is_double_tap(i.touch_tap, i.touch_time, at, reach);
-        if double {
-            i.touch_tap = None;
+        let reach = DOUBLE_TAP_DP * self.interface.scale_factor;
+        if is_double_tap(self.interface.touch_tap, self.interface.touch_time, at, reach) {
+            self.interface.touch_tap = None;
+            self.interface.touch_grab = None;
             let at = self.touch_outline_at();
             self.place_building(kind, at);
         } else {
-            i.touch_tap = Some((i.touch_time, at));
-            i.touch_outline = Some(at);
+            let outline = self.touch_outline_at();
+            self.interface.touch_grab = Some(TouchGrab { press: at, outline, dragged: false });
+        }
+    }
+
+    /// The finger moved while it holds the outline: past the click slop it drags the outline.
+    fn touch_place_drag(&mut self, at: [f32; 2]) -> bool {
+        let Some(g) = &mut self.interface.touch_grab else { return false };
+        let d = [at[0] - g.press[0], at[1] - g.press[1]];
+        if !g.dragged && d[0].abs() < CLICK_SLOP && d[1].abs() < CLICK_SLOP {
+            return true;
+        }
+        g.dragged = true;
+        self.interface.touch_outline = Some([g.outline[0] + d[0], g.outline[1] + d[1]]);
+        true
+    }
+
+    /// The finger lifted: a tap (it never moved) puts the outline there and counts towards a
+    /// double tap; a drag leaves the outline where it was dragged.
+    fn touch_place_release(&mut self) {
+        let Some(g) = self.interface.touch_grab.take() else { return };
+        if g.dragged {
+            self.interface.touch_tap = None;
+        } else {
+            self.interface.touch_tap = Some((self.interface.touch_time, g.press));
+            self.interface.touch_outline = Some(g.press);
         }
     }
 
@@ -2681,6 +2720,9 @@ impl InGame {
     /// Mouse moved (window position).
     pub fn mouse_moved(&mut self, at: [f32; 2]) {
         self.cursor = Some(at);
+        if self.touch_place_drag(at) {
+            return;
+        }
         let p = self.canvas_point(at);
         if self.editor.as_mut().is_some_and(|e| e.drag_to(p)) {
             return;
