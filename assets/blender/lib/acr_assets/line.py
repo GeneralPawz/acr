@@ -612,8 +612,11 @@ def support_clips(md, active=None):
     return out
 
 
-def _musket_clips(ctx, ch, md):
-    """The musket's rammer and the musketeer clips (aim, reload, charge, crawl)."""
+def _musket_clips(ctx, ch, md, carry=None, walks=()):
+    """The musket's rammer and the musketeer clips (aim, reload, charge, crawl). `carry`: a
+    function of the armature giving the stand pose with the gun held in both hands (the
+    steps then keep the left arm on it); `walks`: the stance walks of `md` (`MOTION_L4`) to
+    make besides the plain steps."""
     # Ramrod (in its pipes; drawn in the reload of ATTACK1): on the free left-hand socket,
     # placed on every frame by `aim.bake_musket` / `aim.stow_rammer`.
     rod = gear.rammer(f"{ctx.name}.rammer")
@@ -635,7 +638,11 @@ def _musket_clips(ctx, ch, md):
     reload = aiming.drill(ch.arm, poses.RELOAD_STEPS, infos)
     # Charge bayonets: the same grip with the butt at the right hip.
     charge = aiming.hold(ch.arm, poses.CHARGE_MUSKET, pocket=(0.02, -0.12, -0.32), left_along=0.30)
-    clips = poses.musketeer_clips(md, aim=aim, charge=charge, reload=reload, hip=hip)
+    stand = carry(ch.arm) if carry else poses.STAND_MUSKET
+    ch.stand_pose = stand
+    clips = poses.musketeer_clips(md, stand, aim=aim, charge=charge, reload=reload, hip=hip, swing=not carry)
+    for k, ks in poses.step_keys({k: md[k] for k in walks}, stand, not carry).items():
+        clips[k] = rig.clip_keys(rig.md_clip_frames(md[k])[0], ks)
     clips.update(finish.musket_clips(ch.arm, md, charge))  # the bayonet's finishing blow
     # The hands on the musket and the rammer on every frame between two loading steps.
     rods = poses.rod_phases(md)
@@ -645,7 +652,7 @@ def _musket_clips(ctx, ch, md):
     # follows it onto the shaft (`aim.left_on_shaft`; grip mode only).
     solved = {}
     for clip, keys in clips.items():
-        if clip in rods or clip.startswith(("STAND", "MOTION", "DEATH", "WRITHE")):
+        if clip in rods or clip.startswith(("STAND", "DEATH", "WRITHE")) or (clip.startswith("MOTION") and not carry):
             continue
         for f, p in keys:
             if id(p) not in solved:

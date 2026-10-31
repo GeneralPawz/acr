@@ -9,7 +9,7 @@ Family 11 (`acr_assets.frontier`, docs/families/frontier.md).
 from acr_assets import frontier, line
 
 TYPE = "EngTap"
-CHECKS = ["--anim STAND", "--anim DEATHLIE1"]
+CHECKS = ["--anim STAND", "--anim MOTION_L", "--anim MOTION_L4", "--anim ATTACK1", "--anim ATTACK3", "--anim DEATHLIE1"]
 
 MD = {
     "REST": "@REST 9 5 0 65",
@@ -39,11 +39,16 @@ MD = {
     "PSTAND": "#PSTAND 9 1 5 0",
     "PSTAND1": "#PSTAND1 9 1 5 0",
     "DEATHLIE1": "#DEATHLIE1 9 1 4 33",
+    # The carrying walk of a hunter with food (`RATE 4 8`: half speed, 10 frames a step).
+    "MOTION_L4": "@MOTION_L4 9 2 0 9",
+    "MOTION_R4": "@MOTION_R4 9 2 10 19",
+    "MOTION_LB4": "@MOTION_LB4 9 2 19 10",
+    "MOTION_RB4": "@MOTION_RB4 9 2 9 0",
 }
 
 
 def spec():
-    return frontier.spec(MD, drape=True)
+    return frontier.spec(MD, drape=True, carry="waist", gun=0.95)
 
 
 def build(ctx):
