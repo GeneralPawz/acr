@@ -1830,7 +1830,7 @@ mod tests {
     }
 
     /// The phone default (a 3168 x 1440 window at scale factor 3.5, canvas scale 1.875): the
-    /// command icons are 7 mm, the panel sits in the lower-left corner for a mixed selection
+    /// command icons are 6 mm, the panel sits in the lower-left corner for a mixed selection
     /// and for a single unit, and the grid fits the width; the desktop default is 1.
     #[test]
     fn the_phone_default_sits_in_the_corner() {
@@ -1841,10 +1841,10 @@ mod tests {
         let single = View { icons: vec![icon(ZONE1_SLOT)], ..View::default() };
         for view in [&mixed, &single] {
             let z = hud.zoom(Group::Commands, view);
-            assert!((z.scale - 2.058).abs() < 0.01, "{}", z.scale);
+            assert!((z.scale - 1.764).abs() < 0.01, "{}", z.scale);
             let [x, y, w, _] = hud.icon_on_canvas(0, view);
             let mm = w / density / (160.0 / 25.4);
-            assert!((mm - 7.0).abs() < 0.1, "{mm} mm");
+            assert!((mm - 6.0).abs() < 0.1, "{mm} mm");
             assert!(x > 0.0 && x < 400.0 && y > 400.0, "{x} {y}");
             let [x, _, w, _] = hud.icon_on_canvas(GRID_COLUMNS - 1, view);
             assert!(x + w <= 1690.0, "{}", x + w);

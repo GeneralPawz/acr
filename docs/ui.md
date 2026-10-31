@@ -198,8 +198,8 @@ Rules hash or the savegames. The e2e driver switches it with
 #### HUD scale
 
 `hud_scale=1.0..2.5` in `settings.txt` (ACR's own, #448; absent: 1 on a desktop or in a
-browser, on Android the scale that makes a command icon about 7 mm wide: 44.1 dp over the icon's
-40 canvas pixels times the density (about 2.06 on a phone of scale factor 3.5), 2.5 at most) draws the HUD panels larger about the
+browser, on Android the scale that makes a command icon about 6 mm wide: 37.8 dp over the icon's
+40 canvas pixels times the density (about 1.76 on a phone of scale factor 3.5), 2.5 at most) draws the HUD panels larger about the
 screen corner they hang from: the command panel and unit icons (with the market plaques) about
 the bottom-left corner (grows up and right), the minimap about the bottom-right, the unit and
 game panels about the top-right, the army list about its first icon. The layout is the original's and
