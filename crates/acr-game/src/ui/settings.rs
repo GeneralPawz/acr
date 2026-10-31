@@ -65,6 +65,10 @@ pub struct Settings {
     /// target gets too far from its start; docs/simulation.md "Animals give up");
     /// `animal_give_up=on|off`, off by default.
     pub animal_give_up: bool,
+    /// ACR: new games use the optional dart-fire rule (a blowpipe dart sets a man on fire
+    /// under hit locations, docs/simulation.md "Shell fires"); `dart_fire=on|off`, off by
+    /// default.
+    pub dart_fire: bool,
     /// ACR: sun shadows of the 3D models (`shadows=on|off`, on by default;
     /// docs/rendering-3d.md "Shadows").
     pub shadows: bool,
@@ -207,6 +211,7 @@ impl Default for Settings {
             cannon_fire: false,
             formation_attack: false,
             animal_give_up: false,
+            dart_fire: false,
             shadows: true,
             lod: true,
             material_detail: true,
@@ -296,7 +301,7 @@ impl Settings {
         format!(
             "sound_volume={}\nmusic_volume={}\nmusic_mode={}\ngame_mode={}\nscroll_speed={}\nframe_time={}\n\
              resolution={}\nrecord={}\nrecord_file={hex}\ncontrols={controls}\nedge_scroll={}\n\
-             models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\ncorpse_decay={}\nhit_locations={}\nbody_spacing={}\nmortars={}\ncorpse_piles={}\ncannon_fire={}\nformation_attack={}\nanimal_give_up={}\nshadows={}\nlod={}\nmaterial_detail={}\nwind={}\nmap_models={}\nwater={}\n\
+             models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\ncorpse_decay={}\nhit_locations={}\nbody_spacing={}\nmortars={}\ncorpse_piles={}\ncannon_fire={}\nformation_attack={}\nanimal_give_up={}\ndart_fire={}\nshadows={}\nlod={}\nmaterial_detail={}\nwind={}\nmap_models={}\nwater={}\n\
              ground={}\nground_cover={}\nbattlefield_marks={}\nweather={}\nsea_state={}\naim_guides={}\ngraphics={}\n{}{}{}",
             self.sound_volume,
             self.music_volume,
@@ -316,6 +321,7 @@ impl Settings {
             if self.cannon_fire { "on" } else { "off" },
             if self.formation_attack { "on" } else { "off" },
             if self.animal_give_up { "on" } else { "off" },
+            if self.dart_fire { "on" } else { "off" },
             if self.shadows { "on" } else { "off" },
             if self.lod { "on" } else { "off" },
             if self.material_detail { "on" } else { "off" },
@@ -416,6 +422,7 @@ impl Settings {
                 "cannon_fire" => s.cannon_fire = value == "on",
                 "formation_attack" => s.formation_attack = value == "on",
                 "animal_give_up" => s.animal_give_up = value == "on",
+                "dart_fire" => s.dart_fire = value == "on",
                 "shadows" => s.shadows = value != "off",
                 "lod" => s.lod = value != "off",
                 "material_detail" => s.material_detail = value != "off",
@@ -506,6 +513,7 @@ mod tests {
             cannon_fire: true,
             formation_attack: true,
             animal_give_up: true,
+            dart_fire: true,
             marks_keep: true,
             aim_guides: false,
             weather: Weather::Snow,
