@@ -2104,7 +2104,12 @@ No game option writes it. How the map view draws the fog is in
     set for artillery (NM+0x178e, `NM+0x172a` bit 5). The rally point follows the spawn's
     rules except on the building itself: the leaving unit goes back in only when the
     building is full (0x5f56f7). The flag OB+0x29 bit 1 the link clears and sets again is
-    not kept. The player's leave command (`Command::Leave`) still lets everybody out at once.
+    not kept. The player's leave command is the dispatcher case at 0x4e34d9 (player byte and a
+    unit-type word, handler 0x4de7c8): `LeaveMine` (0x5f518b, call 0x4de874) on every selected
+    building of the player, for that type, so one unit of the type per command, after
+    `EXITPAUSE`. `Command::Leave` has no type yet and lets everybody out at once (#365), but
+    through the same walk-out (`economy::release` calls `walk_out`: born points, spawn
+    priority, rally point), so the units are not left in unlimited motion at the door.
     `LeaveBuilding` (0x56c6ca) gives the same `LeaveMine` to any object with someone inside
     (OB+0xf0), without the `LeaveMine` order test of `OBJ_LeaveMine`; a dead object's slot
     is empty here, where the engine would still find the dying object.
