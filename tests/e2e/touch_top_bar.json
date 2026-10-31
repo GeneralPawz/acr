@@ -8,15 +8,15 @@
       {"path": "top_bar.mode", "eq": "touch"},
       {"path": "top_bar.open", "eq": false}
     ]},
-    {"cmd": "click", "pos": [1543, 29]},
+    {"cmd": "click", "pos": [1547, 19]},
     {"cmd": "top_bar", "mode": "touch", "expect": {"path": "top_bar.open", "eq": true}},
-    {"cmd": "click", "pos": [1543, 29]},
+    {"cmd": "click", "pos": [1547, 19]},
     {"cmd": "top_bar", "mode": "touch", "expect": {"path": "top_bar.open", "eq": false}},
     {"cmd": "click", "pos": [1400, 20]},
     {"cmd": "ui", "expect": {"screen": "game"}},
-    {"cmd": "click", "pos": [41, 29]},
+    {"cmd": "click", "pos": [1479, 19]},
     {"cmd": "top_bar", "mode": "touch", "expect": {"path": "top_bar.dropdown", "eq": true}},
-    {"cmd": "click", "pos": [28, 83]},
+    {"cmd": "click", "pos": [1463, 67]},
     {"cmd": "ui", "expect": {"screen": "GameMenu"}}
   ]
 }

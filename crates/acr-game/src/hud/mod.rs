@@ -78,16 +78,11 @@ const RES_PANEL: i32 = 716;
 /// Distance of the resource values (right aligned) and their spacing.
 const RES_TEXT_X: i32 = 0x77;
 const RES_STEP: i32 = 110;
-/// The first resource icon in `ResPanel` frame 0 (`x`, `y`, width, height; the next ones lie
-/// `RES_STEP` apart): the touch top bar cuts its icons from the same sprite.
+/// The first resource icon in `ResPanel` frame 0 (x; the next ones lie `RES_STEP` apart, each
+/// `touch::ICON_W` wide): the touch top bar cuts its slots from the same sprite.
 const TOUCH_ICON_X: i32 = 28;
-const TOUCH_ICON_Y: i32 = 4;
-const TOUCH_ICON_W: i32 = 32;
-const TOUCH_ICON_H: i32 = 34;
-/// The slot of the icon on the Resources button: gold.
-const TOUCH_FACE_SLOT: i32 = 3;
-/// Height of a line of `YellowFont`/`WhiteFont` text, for centring it.
-const TEXT_HEIGHT: i32 = 20;
+/// The slot of the icon on the Resources plaque: gold.
+const TOUCH_FACE_SLOT: usize = 3;
 
 /// Palette indices (palette set 0).
 pub mod color {
@@ -548,6 +543,9 @@ impl Hud {
     /// panel swallows the click; `None` elsewhere.
     fn touch_press(&mut self, p: [f32; 2], was_open: bool) -> Option<HudEvent> {
         let layout = self.touch_layout();
+        if self.resources_open && layout.panel.contains(p) {
+            return Some(HudEvent::Used);
+        }
         if layout.menu.contains(p) {
             self.dropdown = !was_open;
             return Some(HudEvent::Used);
@@ -556,7 +554,7 @@ impl Hud {
             self.resources_open = !self.resources_open;
             return Some(HudEvent::Used);
         }
-        (self.resources_open && layout.panel.contains(p)).then_some(HudEvent::Used)
+        None
     }
 
     /// The "M" drop-down is open.
@@ -690,12 +688,15 @@ impl Hud {
         let width = entries.iter().map(|e| ctx.fonts.width(ctx.lib, font::WHITE, ctx.texts.get(e.text(self)))).max();
         let width = width.unwrap_or(0) + 24;
         // Classic: centred under the "M" plaque, rows 24 high from y = 60. Touch: under the
-        // Menu button, left aligned, rows as high as the button, fitted into the screen.
+        // "M" plaque, rows as high as its target, fitted into the screen.
         let (x, y0, row) = if self.touch() {
             let l = self.touch_layout();
-            let gap = l.menu.y0;
-            let fit = (self.screen[1] - l.menu.y1 - 2 * gap) / entries.len().max(1) as i32;
-            (l.menu.x0, l.menu.y1 + gap, l.menu.height().min(fit).max(24))
+            let gap = l.margin;
+            let y0 = l.menu_draw.y1 + touch::SHADOW_H + gap;
+            let fit = (self.screen[1] - y0 - gap) / entries.len().max(1) as i32;
+            // Left aligned under the plaque, pushed left where it would leave the screen.
+            let x = l.menu_draw.x0.min(self.screen[0] - width - gap).max(0);
+            (x, y0, l.menu.height().min(fit).max(24))
         } else {
             let (bx, _) = self.menu_button();
             (bx + 33 - width / 2, 60, 24)
@@ -1032,38 +1033,40 @@ impl Hud {
         }
     }
 
-    /// The touch top bar: the Menu and Resources buttons in the dropdown's box frame and
-    /// fonts, and under Resources the panel of the six amounts while it is open.
+    /// The touch top bar: the classic bar's "M" plaque and a short bit of the bar with the gold
+    /// icon, and under the latter the six slots of the bar stacked while the panel is open.
     fn draw_touch_bar(&self, ctx: &Ctx, view: &View, out: &mut Vec<Draw>) {
         let layout = self.touch_layout();
-        let hover = |r: Rect| self.mouse.is_some_and(|m| r.contains(m));
-        let button = |out: &mut Vec<Draw>, r: Rect, text: &[u8], lit: bool| {
-            out.push(Draw::fill([0, 0, 0, 160], r));
-            border(ctx, out, r.x0, r.y0, r.x1 - 1, r.y1 - 1, BOX_CORNERS);
-            let f = if lit { font::WHITE } else { font::YELLOW };
-            let w = ctx.fonts.width(ctx.lib, f, text);
-            out.push(Draw::game_text(f, text, r.x0 + (r.width() - w) / 2, r.y0 + (r.height() - TEXT_HEIGHT) / 2));
+        // A piece of `ResPanel` `frame` from source column `sx`, `w` wide, drawn at `x` with
+        // its body from `y` to `bottom` (the sprite's own top row is empty).
+        let piece = |out: &mut Vec<Draw>, frame: usize, sx: i32, x: i32, w: i32, y: i32, bottom: i32| {
+            let clip = Rect::new(x, y, w, bottom - y);
+            out.push(Draw::game_frame(gp::RESPANEL, frame, x - sx, y - 1, 0).clipped(clip));
         };
-        // The plaque's own "M": the game menu's name does not fit a button.
-        button(out, layout.menu, b"M", hover(layout.menu));
-        button(out, layout.resources, b"", hover(layout.resources) || self.resources_open);
-        let r = layout.resources;
-        let face = Rect::new(
-            r.x0 + (r.width() - TOUCH_ICON_W) / 2,
-            r.y0 + (r.height() - TOUCH_ICON_H) / 2,
-            TOUCH_ICON_W,
-            TOUCH_ICON_H,
-        );
-        let from = TOUCH_FACE_SLOT * RES_STEP + TOUCH_ICON_X;
-        out.push(Draw::game_frame(gp::RESPANEL, 0, face.x0 - from, face.y0 - TOUCH_ICON_Y, 0).clipped(face));
+        let shadow = touch::SHADOW_H;
+        let m = layout.menu_draw;
+        piece(out, 2, touch::CAP_X, m.x0, touch::M_W, m.y0, m.y1 + shadow);
+        // A slot of the bar: end cap, filler, the icon of `slot`, end cap; `mid` wide between the caps.
+        let slot_piece = |out: &mut Vec<Draw>, r: Rect, mid: i32, slot: usize, bottom: i32| {
+            let x = r.x0 + touch::CAP_W;
+            piece(out, 0, touch::CAP_X, r.x0, touch::CAP_W, r.y0, bottom);
+            piece(out, 0, touch::FILL_X, x, mid.min(touch::FILL_W), r.y0, bottom);
+            if mid > touch::FILL_W {
+                piece(out, 0, touch::FILL_X, x + touch::FILL_W, mid - touch::FILL_W, r.y0, bottom);
+            }
+            let icon = TOUCH_ICON_X + slot as i32 * RES_STEP;
+            piece(out, 0, icon, x + touch::ICON_PAD, touch::ICON_W, r.y0, bottom);
+            piece(out, 0, touch::RIGHT_CAP_X, x + mid, touch::CAP_W, r.y0, bottom);
+        };
+        let r = layout.resources_draw;
+        slot_piece(out, r, touch::ICON_PAD * 2 + touch::ICON_W, TOUCH_FACE_SLOT, r.y1 + shadow);
         if !self.resources_open {
             return;
         }
-        let panel = layout.panel;
-        out.push(Draw::fill([0, 0, 0, 200], panel));
-        border(ctx, out, panel.x0, panel.y0, panel.x1 - 1, panel.y1 - 1, BOX_CORNERS);
         for slot in 0..touch::ROWS {
             let r = layout.row_rect(slot);
+            let last = slot + 1 == touch::ROWS;
+            slot_piece(out, r, touch::ROW_MID, slot, r.y1 + if last { shadow } else { 0 });
             // The classic bar's values are in `FOOD`, `GOLD` swapped order (0x4ece10).
             let value = view.resources[match slot {
                 1 => 3,
@@ -1077,13 +1080,10 @@ impl Hud {
                 lot = value.to_string();
                 lot.as_bytes()
             };
-            // The icon is the classic bar's own: its slice of `ResPanel` frame 0.
-            let iy = r.y0 + (r.height() - TOUCH_ICON_H) / 2;
-            let from = slot as i32 * RES_STEP + TOUCH_ICON_X;
-            let dest = Rect::new(r.x0, iy, TOUCH_ICON_W, TOUCH_ICON_H);
-            out.push(Draw::game_frame(gp::RESPANEL, 0, r.x0 - from, iy - TOUCH_ICON_Y, 0).clipped(dest));
+            // Right aligned where the bar puts it (`x0 + 119 + 110·slot` of the frame, y = 7).
             let w = ctx.fonts.width(ctx.lib, font::YELLOW, text);
-            out.push(Draw::game_text(font::YELLOW, text, r.x1 - w, r.y0 + (r.height() - TEXT_HEIGHT) / 2));
+            let right = r.x0 + touch::CAP_W + touch::ROW_MID - 5;
+            out.push(Draw::game_text(font::YELLOW, text, right - w, r.y0 + 6));
         }
     }
 
