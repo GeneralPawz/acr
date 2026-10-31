@@ -119,6 +119,11 @@ pub struct Game {
     perf: perf::Recorder,
     /// When the next frame is due (`pacing.rs`, #440).
     pacing: pacing::Pacing,
+    /// Where the work per frame is reported (Android's performance hints, #440).
+    work_sink: Option<Box<dyn pacing::WorkSink>>,
+    work: pacing::Work,
+    /// The time the last frame waited for the swapchain, which is not work.
+    acquire_wait: std::time::Duration,
     /// A hash of the interface's draws of the last frame, for render on demand.
     draws_signature: u64,
     modifiers: ModifiersState,
@@ -160,6 +165,9 @@ impl Game {
             touch_time: None,
             last_frame: None,
             pacing: Default::default(),
+            work_sink: None,
+            work: Default::default(),
+            acquire_wait: Default::default(),
             draws_signature: 0,
             profile: None,
             perf: perf::Recorder::from_env(),
@@ -259,6 +267,23 @@ impl Game {
         let signature = if on_demand { self.look_signature() } else { None };
         self.pacing.observe(signature);
         self.pacing.frame_done(web_time::Instant::now(), fps, on_demand);
+        self.report_work(now, fps, on_demand);
+    }
+
+    /// Tells the performance hints (`set_work_sink`) how long this frame's work took and what
+    /// the frame budget is (the rate in effect, idle included).
+    fn report_work(&mut self, started: web_time::Instant, fps: Option<u32>, on_demand: bool) {
+        let Some(sink) = &mut self.work_sink else { return };
+        let fps = self.pacing.rate(fps, on_demand);
+        let refresh = self.window.as_ref().and_then(|w| w.current_monitor()).and_then(|m| m.refresh_rate_millihertz());
+        let work = started.elapsed().saturating_sub(std::mem::take(&mut self.acquire_wait));
+        self.work.frame(sink.as_mut(), pacing::frame_budget(fps, refresh), work);
+    }
+
+    /// Reports the main thread's work per frame to `sink` from now on.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    pub fn set_work_sink(&mut self, sink: Box<dyn pacing::WorkSink>) {
+        self.work_sink = Some(sink);
     }
 
     /// A hash of what the last frame showed (the interface's draws and the world's look), for
@@ -474,7 +499,10 @@ impl Game {
     fn render(&mut self) {
         let Some(g) = &mut self.graphics else { return };
         let acquire = acr_sim::prof::Scope::new("frame.acquire");
-        let Some(frame) = g.gpu.next_frame() else { return };
+        let waited = web_time::Instant::now();
+        let frame = g.gpu.next_frame();
+        self.acquire_wait = waited.elapsed();
+        let Some(frame) = frame else { return };
         drop(acquire);
         let view = frame.texture.create_view(&Default::default());
         self.perf.gpu_begin(&g.gpu.device, &g.gpu.queue);
