@@ -1,0 +1,22 @@
+{
+  "name": "touch_top_bar",
+  "description": "top_bar=touch at a phone-like window (1584x720, canvas scale 0.9375): a tap on Resources opens the compact panel, a second tap closes it, a tap on Menu opens the M drop-down (the rows are finger-sized, the first is the game menu), a tap on its first row opens the game menu, and the area the classic bar covered is map (a click there does not open the old M drop-down)",
+  "args": ["--size", "1584x720"],
+  "steps": [
+    {"cmd": "start", "blank": {"ground": "grass"}},
+    {"cmd": "top_bar", "mode": "touch", "expect": [
+      {"path": "top_bar.mode", "eq": "touch"},
+      {"path": "top_bar.open", "eq": false}
+    ]},
+    {"cmd": "click", "pos": [1543, 29]},
+    {"cmd": "top_bar", "mode": "touch", "expect": {"path": "top_bar.open", "eq": true}},
+    {"cmd": "click", "pos": [1543, 29]},
+    {"cmd": "top_bar", "mode": "touch", "expect": {"path": "top_bar.open", "eq": false}},
+    {"cmd": "click", "pos": [1400, 20]},
+    {"cmd": "ui", "expect": {"screen": "game"}},
+    {"cmd": "click", "pos": [41, 29]},
+    {"cmd": "top_bar", "mode": "touch", "expect": {"path": "top_bar.dropdown", "eq": true}},
+    {"cmd": "click", "pos": [28, 83]},
+    {"cmd": "ui", "expect": {"screen": "GameMenu"}}
+  ]
+}

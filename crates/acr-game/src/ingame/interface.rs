@@ -166,6 +166,8 @@ pub struct State {
     pub mods: ModifiersState,
     pub(super) view: View,
     pub(super) canvas: Canvas,
+    /// The window's scale factor (physical pixels per density-independent pixel).
+    pub(super) scale_factor: f32,
     pub(super) window: [f32; 2],
     /// The last left button release on the map (time, canvas point), for double clicks.
     last_click: Option<(web_time::Instant, [f32; 2])>,
@@ -243,6 +245,7 @@ impl Default for State {
             mods: ModifiersState::empty(),
             view: View::default(),
             canvas: Canvas::screen([1024.0, 768.0]),
+            scale_factor: 1.0,
             window: [1024.0, 768.0],
             last_click: None,
             select_before: Vec::new(),
@@ -285,6 +288,7 @@ impl InGame {
         self.three_d.apply(settings);
         self.interface.aim_guides = settings.aim_guides;
         self.interface.hud.center_top_bar = settings.center_top_bar;
+        self.interface.hud.top_bar = settings.top_bar;
     }
 
     /// Whether the aim guides are shown: the app writes a switch by the "Zielhilfe" icon back
@@ -295,6 +299,11 @@ impl InGame {
 
     pub fn set_modifiers(&mut self, mods: ModifiersState) {
         self.interface.mods = mods;
+    }
+
+    /// Tells the game the window's scale factor, which sizes the touch top bar.
+    pub fn set_scale_factor(&mut self, scale_factor: f32) {
+        self.interface.scale_factor = scale_factor;
     }
 
     /// The interface's canvas: the whole window at the menus' scale.
@@ -1938,6 +1947,7 @@ impl InGame {
         self.interface.canvas = Canvas::screen(window);
         self.interface.window = window;
         self.interface.hud.set_screen(self.interface.canvas.size());
+        self.interface.hud.set_density(self.interface.scale_factor / self.interface.canvas.scale);
         self.diplomacy.set_screen(self.interface.hud.screen());
         if !self.interface.hud.has_minimap()
             && let (Some(map), Some(assets)) = (&self.map, &self.assets)

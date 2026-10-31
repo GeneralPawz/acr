@@ -383,6 +383,7 @@ impl Game {
                 {
                     self.ui.open_dialog(window);
                 }
+                game.set_scale_factor(self.window.as_ref().map_or(1.0, |w| w.scale_factor() as f32));
                 let (l, images, cursor) = game.interface(&self.ui.ctx(), size, game_dt);
                 layers = l;
                 // The "Zielhilfe" icon's switch is kept in `settings.txt` (`aim_guides`).
