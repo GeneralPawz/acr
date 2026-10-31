@@ -25,7 +25,7 @@ use acr_sim::catalog::{Medium, MotionStyle};
 use acr_sim::economy::WOOD;
 use acr_sim::fixed::Pos;
 use acr_sim::tech::UpgradeId;
-use acr_sim::{TypeId, World};
+use acr_sim::{EntityId, TypeId, World};
 
 use crate::hud::{self, SCREEN, panels};
 use crate::ui::Ctx;
@@ -1282,7 +1282,8 @@ pub struct Out {
 
 /// Spawns formations of `choice` holding `n` soldiers of `kind` (full formations of the
 /// largest size, the rest in the smallest size that holds it), side by side across `dir`
-/// around `at`, each with its officer, drummer and flag bearer. Returns the soldiers placed.
+/// around `at`, each with its officer, drummer and flag bearer. Returns the soldiers placed and
+/// every unit spawned (officers, drummers and flag bearers too).
 fn place_formations(
     world: &mut World,
     kind: TypeId,
@@ -1291,7 +1292,7 @@ fn place_formations(
     owner: u8,
     at: (i32, i32),
     dir: u8,
-) -> Result<usize, String> {
+) -> Result<(usize, Vec<EntityId>), String> {
     let slots_of: Vec<(usize, usize)> =
         choice.shapes.iter().map(|&s| (s, world.formations.shapes[s].slots())).collect();
     let slots = |s: usize| slots_of.iter().find(|x| x.0 == s).map_or(0, |x| x.1);
@@ -1320,19 +1321,24 @@ fn place_formations(
     let officer_data = world.formations.officers.get(&choice.officer).cloned().unwrap_or_default();
     let mut offset = -f64::from(total) / 2.0;
     let mut placed = 0;
+    let mut ids = Vec::new();
     for (&shape, &w) in sizes.iter().zip(&widths) {
         let mid = offset + f64::from(w) / 2.0;
         offset += f64::from(w + FORMATION_GAP);
         let c = (at.0 + (mid * ax).round() as i32, at.1 + (mid * ay).round() as i32);
         let p = Pos::from_pixels(c.0, c.1);
-        let officer = world.spawn(choice.officer, owner, p, dir).0 as usize;
-        let drummer = officer_data.drummer.map(|d| world.spawn(d, owner, p, dir).0 as usize);
-        let flag = officer_data.flag.map(|f| world.spawn(f, owner, p, dir).0 as usize);
-        let soldiers: Vec<usize> = (0..slots(shape)).map(|_| world.spawn(kind, owner, p, dir).0 as usize).collect();
+        let officer = world.spawn(choice.officer, owner, p, dir);
+        let drummer = officer_data.drummer.map(|d| world.spawn(d, owner, p, dir));
+        let flag = officer_data.flag.map(|f| world.spawn(f, owner, p, dir));
+        let soldiers: Vec<EntityId> = (0..slots(shape)).map(|_| world.spawn(kind, owner, p, dir)).collect();
         placed += soldiers.len();
-        acr_sim::formation::create_placed(world, (officer, drummer, flag), &soldiers, shape, c, dir);
+        ids.extend([Some(officer), drummer, flag].into_iter().flatten());
+        ids.extend(&soldiers);
+        let soldiers: Vec<usize> = soldiers.iter().map(|s| s.0 as usize).collect();
+        let marks = (officer.0 as usize, drummer.map(|d| d.0 as usize), flag.map(|f| f.0 as usize));
+        acr_sim::formation::create_placed(world, marks, &soldiers, shape, c, dir);
     }
-    Ok(placed)
+    Ok((placed, ids))
 }
 
 impl Item {
