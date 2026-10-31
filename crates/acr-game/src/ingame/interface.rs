@@ -1046,8 +1046,10 @@ impl InGame {
 
     /// The first selected object's switches (collector 0x606889, icons 0x607add..0x607d3b), at
     /// their `[CONST]` slots:
-    /// - `STOPBUILD` for a `CANSTOPBUILD` type with fewer than 12 rows: stopped, the first
-    ///   frame with `STOPBUILD_OFF` resumes; running, the second with `STOPBUILD_ON` stops;
+    /// - `STOPBUILD` for a `CANSTOPBUILD` type with fewer than 12 rows: stopped, the
+    ///   `Production_ON` frame (the line's second word) with `STOPBUILD_OFF` resumes; running,
+    ///   the `Production_OFF` frame (the first) with `STOPBUILD_ON` stops, see
+    ///   [`stopbuild_frame`];
     /// - with one selected type: `KARTECH` (`KARTECH_TXT`) and `PREKARTECH`
     ///   (`PREKARTECH_TXT`) when a selected unit has canister; `FISHING` for a fishing boat
     ///   (fishing: the second frame, `FISHING_OFF_TXT`, stops; else the first,
@@ -1085,10 +1087,11 @@ impl InGame {
             }
         };
         if t.can_stop_build && rows < 12 {
+            let frame = stopbuild_frame(first.switched_off);
             if first.switched_off {
-                push("STOPBUILD", 0, "STOPBUILD_OFF", false, HudCommand::StopProduction(false));
+                push("STOPBUILD", frame, "STOPBUILD_OFF", false, HudCommand::StopProduction(false));
             } else {
-                push("STOPBUILD", 1, "STOPBUILD_ON", false, HudCommand::StopProduction(true));
+                push("STOPBUILD", frame, "STOPBUILD_ON", false, HudCommand::StopProduction(true));
             }
         }
         if !single {
@@ -2795,6 +2798,15 @@ impl InGame {
     }
 }
 
+/// Which `STOPBUILD` frame of `NRES.DAT [CONST]` (`off on`: index 0, 1) the button shows. The
+/// parser (0x4ec33e, `%s%s%d%d`) stores the first word in 0x66ae60 and the second in 0x66ae5c;
+/// the icon code (0x607af1) draws 0x66ae5c while OB+0xf2 bit0 (stopped) is set and 0x66ae60
+/// while running. So a running building shows the first word (`Production_OFF`) and a stopped
+/// one the second (`Production_ON`), the reverse of the names' order.
+fn stopbuild_frame(stopped: bool) -> usize {
+    usize::from(stopped)
+}
+
 /// `PAUSETEXT` while the game is paused (0x4c0130): `BigWhiteFont` centred at half the
 /// screen height on a paper box (0x480130) 64 pixels wider on each side.
 fn pause_text(ctx: &Ctx, screen: [i32; 2], out: &mut Vec<Draw>) {
@@ -3071,6 +3083,12 @@ mod tests {
         assert_eq!(minimap_dots(&w, 0, &[], 9).len(), 2, "a corpse is no dot");
         w.remove(ids[1]);
         assert_eq!(minimap_dots(&w, 0, &[], 9).len(), 1);
+    }
+
+    #[test]
+    fn stopbuild_button_shows_the_original_frame_for_each_state() {
+        assert_eq!(stopbuild_frame(false), 0, "running: the first word of the line");
+        assert_eq!(stopbuild_frame(true), 1, "stopped: the second word of the line");
     }
 
     #[test]
