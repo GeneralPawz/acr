@@ -34,9 +34,11 @@ const NDS: &[u8] = b"[MEMBERS]\r\n\
     NUCLM #POINT 100 50 NONE HI_GRAVITY3 SLIGHTUP 0 2\r\n\
     NUCLMOSKOL #NUCL1 100 50 NONE HI_GRAVITY3 RANDOM 9 -1\r\n\
     PU2 #PU2 900 10 WHITE NO_GRAVITY SLIGHTUP 0 1\r\n\
+    DIMMORT #DIMMORT 0 0 ALPHAGB NO_GRAVITY SLIGHTUP 0 1\r\n\
     [CHILDWEAPON]\r\nNUCLM 4 9 0 1 NUCLMOSKOL\r\n\
-    [SYNCWEAPON]\r\nPPOINTT 2 DIM32_2 NUCL2P\r\nNUCL3M 2 NUCLM PU2\r\n[END]\r\n";
-const ADS: &[u8] = b"@POINT 1 0 0 0\r\n@NUCL1 1 0 0 0\r\n@NUCL2 1 0 0 0\r\n@DIM32 1 0 0 43\r\n@PU2 1 0 0 9\r\n";
+    [SYNCWEAPON]\r\nPPOINTT 2 DIM32_2 NUCL2P\r\nNUCL3M 2 NUCLM PU2\r\n[SOUND]\r\nDIMMORT MORVIS1\r\n[END]\r\n";
+const ADS: &[u8] =
+    b"@POINT 1 0 0 0\r\n@NUCL1 1 0 0 0\r\n@NUCL2 1 0 0 0\r\n@DIM32 1 0 0 43\r\n@PU2 1 0 0 9\r\n@DIMMORT 17 0 0 9\r\n";
 const NRES: &[u8] = b"[WEAPONS]
 #GENSHIELD 13
 MECH 21 19 O
@@ -268,4 +270,43 @@ fn a_howitzer_shell_still_starts_a_fire() {
     }
     assert!(w.units[near_h].burning, "the man in the howitzer's fire burns");
     assert!(!w.units[near_m].burning, "the man where the mortar's shell fell does not");
+}
+
+#[test]
+fn a_mortar_shot_blasts_at_the_muzzle_along_the_barrel() {
+    let (mut w, mrt, sol) = setup(ON);
+    let m = w.spawn(mrt, 0, Pos::from_pixels(800, 2000), 0);
+    w.spawn(sol, 1, Pos::from_pixels(1800, 2000), 128);
+    w.step(&[
+        Command::MortarZones { player: 0, units: vec![m], zones: vec![Zone { x: 1800, y: 2000, r: 200 }] },
+        Command::MortarFire { player: 0, units: vec![m], on: true },
+    ]);
+    let blast = w.catalog.weapons.find(mortar::BLAST).expect("DIMMORT");
+    let (mut heard, mut seen) = (0, None);
+    for _ in 0..200 {
+        w.step(&[]);
+        heard += w.sounds.iter().filter(|s| s.weapon == blast).count();
+        if seen.is_none() {
+            seen = w.projectiles.iter().find(|p| p.weapon == blast).cloned();
+        }
+    }
+    assert!(heard >= 1, "MORVIS1 starts with the shot");
+    let p = seen.expect("the blast object");
+    // At the muzzle, near the gun, facing the target and up: east and up the screen.
+    assert!(((p.pos.0 >> 14) - 800).abs() < 200 && ((p.pos.1 >> 14) - 2000).abs() < 200, "{:?}", p.pos);
+    let (dx, dy) = ((p.dest.0 - p.pos.0) >> 14, (p.dest.1 - p.pos.1) >> 14);
+    assert!(dx > 0 && dy < 0 && -dy > dx, "up and toward the target: {dx} {dy}");
+}
+
+#[test]
+fn a_field_gun_gets_no_mortar_blast() {
+    let (mut w, gun, sol) = setup(Rules { mortars: false, ..ON });
+    let g = w.spawn(gun, 0, Pos::from_pixels(800, 2000), 0);
+    let t = w.spawn(sol, 1, Pos::from_pixels(1800, 2000), 128);
+    w.step(&[Command::Attack { player: 0, units: vec![g], target: t }]);
+    let blast = w.catalog.weapons.find(mortar::BLAST).unwrap();
+    for _ in 0..200 {
+        w.step(&[]);
+        assert!(w.sounds.iter().all(|s| s.weapon != blast));
+    }
 }

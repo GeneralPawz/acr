@@ -1499,6 +1499,14 @@ stay as they were):
   impacts and fragments carry `mortar: true` (render only, not hashed): the 3D view draws
   a smaller burst (rendering-3d.md, "particles of a hit"); damage and radius are the
   shell's own.
+- **Muzzle blast (#339).** A field gun's launch weapon `PPOINTT` puts its smoke `DIM32_2`
+  (sound `PUSVIS1`) at the muzzle (`[SYNCWEAPON] PPOINTT 2 DIM32_2 NUCL2P`); the mortar's
+  shell leaves directly, so nothing was created there. `WEAPON.NDS` has the mortar's own
+  (line 64 `DIMMORT #DIMMORT 0 0 ALPHAGB`, `[SOUND] DIMMORT MORVIS1`), linked only through
+  `DIMMORT1`, a 60° arc no `.MD` fires. `combat::shoot` therefore creates `DIMMORT` at the
+  muzzle with each shell (`mortar::muzzle_blast`); its destination lies along the barrel (60°
+  up towards the target), which turns the standing sprite (0x557e58) up that way. The 3D
+  model's `flash` bone plays on its own.
 - It gets the gun's `TypeTech` and access rules and follows it in every build list that
   holds the gun. Upgrades of the gun do not reach it yet.
 
