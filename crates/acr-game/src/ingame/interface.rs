@@ -89,6 +89,17 @@ pub enum GameMouse {
     History,
 }
 
+/// The gather order of a right click at world pixel `(x, y)` (`DetermineResource`, 0x4d3ef0,
+/// called at 0x4c4bf5): the nearest source within 64 px, fields and carcasses included, if
+/// one of the units can gather its type.
+fn gather_context(world: &acr_sim::World, units: &[&Unit], x: i32, y: i32) -> Option<Context> {
+    let kind = acr_sim::gather::determine(world, x, y)?;
+    units
+        .iter()
+        .any(|u| world.catalog.get(u.kind).economy.take_res.get(usize::from(kind)).is_some_and(Option::is_some))
+        .then_some(Context::Gather(x, y, kind))
+}
+
 /// What a right click on the map orders (and the cursor shown for it).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Context {
@@ -1425,14 +1436,7 @@ impl InGame {
             }
         }
         let (x, y) = self.world_at(at);
-        if let Some(kind) = world.sources.determine(x, y)
-            && units
-                .iter()
-                .any(|u| world.catalog.get(u.kind).economy.take_res.get(usize::from(kind)).is_some_and(Option::is_some))
-        {
-            return Some(Context::Gather(x, y, kind));
-        }
-        Some(Context::Move(x, y))
+        Some(gather_context(world, &units, x, y).unwrap_or(Context::Move(x, y)))
     }
 
     /// Right click on the map: the context order (attack, repair, enter, gather, rally point,
@@ -3136,6 +3140,43 @@ mod tests {
         fog.open();
         assert!(!hidden_in_fog(Some(&fog), &w, &foe, 0), "seen");
         assert!(!hidden_in_fog(None, &w, &foe, 0), "no fog");
+    }
+
+    #[test]
+    fn a_right_click_on_a_field_gathers_it() {
+        use acr_formats::defs::{NationDef, SpriteResources, UnitDef};
+        use acr_formats::m3d::SpriteGroup;
+        use acr_formats::sprite_list::SpriteList;
+        use acr_sim::Pos;
+        use acr_sim::catalog::{Catalog, ObjectType};
+        use acr_sim::formation::Formations;
+        use acr_sim::map::MapGrid;
+        use acr_sim::sprite::SpriteKinds;
+        use std::sync::Arc;
+        let peasant = "NAME Kri\r\nUSERLC 0 G SHADOW 0 0\r\n#STAND 9 1 0 0\r\nLIFE 50\r\nGEOMETRY 1 10 40\r\nPEASANT\r\n\
+            TAKERESSTAGES FOOD 3 3 4\r\n[END]\r\n";
+        let swordsman =
+            "NAME Mus\r\nUSERLC 0 G SHADOW 0 0\r\n#STAND 9 1 0 0\r\nLIFE 50\r\nGEOMETRY 1 10 40\r\n[END]\r\n";
+        let mut c = Catalog::new();
+        let kri = c.add(ObjectType::from_def("Kri(EN)", &UnitDef::parse(peasant.as_bytes())));
+        let mus = c.add(ObjectType::from_def("Mus(EN)", &UnitDef::parse(swordsman.as_bytes())));
+        c.tech.add_nation(&c.clone(), &NationDef::parse(b"[ENABLED]\r\nKri(EN)\r\n[END]\r\n"));
+        let mut w = acr_sim::World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(Formations::default()));
+        let lst = SpriteList::parse("COMPLEX 2\r\nKUK00 159 146 30\r\nKUK01 159 146 30\r\n").unwrap();
+        let rsr = SpriteResources::parse(b"[SOURCES]\r\nKUK01 FOOD 3 64\r\n[END]\r\n");
+        w.sprite_kinds = Arc::new((SpriteKinds::new(&lst, &rsr), SpriteKinds::default()));
+        let field = w.add_sprite(SpriteGroup::Complex, 1, 2600, 2048);
+        w.sprites[field].index = 1;
+        let peasant = w.spawn(kri, 0, Pos::from_pixels(2000, 2000), 0);
+        let soldier = w.spawn(mus, 0, Pos::from_pixels(2000, 2100), 0);
+        let (p, s) = (w.unit(peasant).unwrap(), w.unit(soldier).unwrap());
+        // A ripe field within 64 px of the click, the sickle cursor.
+        let ctx = gather_context(&w, &[p], 2620, 2060);
+        assert_eq!(ctx, Some(Context::Gather(2620, 2060, 3)));
+        assert_eq!(ctx.unwrap().cursor(), usize::from(cursor::frame::GATHER[3]));
+        // Too far from it, or nobody who can gather it.
+        assert_eq!(gather_context(&w, &[p], 2800, 2048), None);
+        assert_eq!(gather_context(&w, &[s], 2620, 2060), None);
     }
 
     #[test]
