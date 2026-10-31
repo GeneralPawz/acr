@@ -46,8 +46,8 @@ fn respond(mut stream: TcpStream, dir: &Path, game_dir: Option<&Path>) -> Result
     }
     let path = request_line.split_whitespace().nth(1).unwrap_or("/");
     let path = path.split(['?', '#']).next().unwrap_or("/").trim_start_matches('/');
-    // Only plain names are served: no traversal, no subdirectories.
-    let plain = |name: &str| !name.is_empty() && !name.contains(['/', '\\']) && !name.contains("..");
+    // Only plain names are served: no traversal. Folders of the app (`ui/`) are fine.
+    let plain = |name: &str| name.split('/').all(|seg| !seg.is_empty() && !seg.contains('\\') && !seg.starts_with('.'));
 
     if let (Some(rest), Some(game)) = (path.strip_prefix("game/"), game_dir) {
         if rest.is_empty() {
@@ -84,6 +84,10 @@ fn respond(mut stream: TcpStream, dir: &Path, game_dir: Option<&Path>) -> Result
         Some("html") => "text/html; charset=utf-8",
         Some("js") => "text/javascript",
         Some("wasm") => "application/wasm",
+        Some("css") => "text/css; charset=utf-8",
+        Some("png") => "image/png",
+        Some("json") => "application/json",
+        Some("svg") => "image/svg+xml",
         _ => "application/octet-stream",
     };
     send(&mut stream, "200 OK", mime, &[], &std::fs::read(&file)?)

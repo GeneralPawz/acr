@@ -1,6 +1,9 @@
 //! Build automation, kept in Rust so the project needs no extra tools.
 //!
 //! - `cargo xtask web [--release] [--app game|viewer]`    build a browser app into `target/web/<app>`
+//! - `cargo xtask ui [--watch]`   build the Svelte UI (`ui/`, Node 24) into `ui/dist`; `web`, `serve` and
+//!   `dist` do it too for the game unless `--no-ui` (or `ACR_UI_DIST` names a built bundle)
+//! - `cargo xtask ui-diff A.png B.png [--out D.png] [--min PERCENT]`   pixels of two screenshots within +-8
 //! - `cargo xtask serve [--release] [--port N] [--game-dir DIR]`   build, then serve it on
 //!   localhost; with `--game-dir`, the archives are served under `/game/` with range
 //!   support and `http://127.0.0.1:N/?game=/game/` opens the app without a file picker
@@ -23,6 +26,7 @@ mod assets;
 mod drive;
 mod e2e;
 mod jev;
+mod ui;
 
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -57,6 +61,8 @@ fn main() -> ExitCode {
         Some("web") => build_web(&app, release).map(|_| ()),
         Some("serve") => build_web(&app, release).and_then(|dir| serve(&dir, game_dir.as_deref(), port)),
         Some("dist") => dist(game_dir.as_deref(), args.iter().any(|a| a == "--install")),
+        Some("ui") => ui::ui(&workspace_root(), &args[1..]),
+        Some("ui-diff") => ui::ui_diff(&args[1..]),
         Some("e2e") => drive::run_e2e(&args[1..], game_dir.clone()),
         Some("drive") => drive::drive(&args[1..], game_dir.clone()),
         Some("jev") => drive::run_jev(&args[1..], game_dir.clone()),
@@ -101,6 +107,8 @@ fn main() -> ExitCode {
                 "usage: cargo xtask web [--release] [--app game|viewer]\n       \
                  cargo xtask serve [--release] [--app game|viewer] [--port N] [--game-dir DIR]\n       \
                  cargo xtask dist [--game-dir DIR] [--install]
+                        cargo xtask ui [--watch]
+                        cargo xtask ui-diff A.png B.png [--out D.png] [--min PERCENT]
                         cargo xtask assets [NAME..] [--game-dir DIR] [--compress none|meshopt|draco] [--check] [--blend]
                         cargo xtask e2e [FILE..] [--filter S] [--game-dir DIR] [--exe PATH] [--no-build] [--gpu] [--list] [-v]
                         cargo xtask drive [--game-dir DIR] [--exe PATH] [--no-build] [--gpu]
@@ -183,6 +191,17 @@ fn build_web(app: &str, release: bool) -> Result<PathBuf> {
         .debug(!release)
         .generate(&out)?;
     std::fs::copy(root.join("crates").join(&krate).join("web/index.html"), out.join("index.html"))?;
+    // The Svelte UI is the game's only (the viewer has none).
+    let ui_out = out.join("ui");
+    if ui_out.exists() {
+        std::fs::remove_dir_all(&ui_out)?;
+    }
+    if app == "game" {
+        let no_ui = std::env::args().any(|a| a == "--no-ui");
+        if let Some(dist) = ui::bundle(&root, no_ui)? {
+            copy_dir(&dist, &ui_out)?;
+        }
+    }
     eprintln!("web build ready in {}", out.display());
     Ok(out)
 }

@@ -9,6 +9,7 @@ publish = false
 [dependencies]
 acr-serve = { path = "../crates/acr-serve" }
 base64 = "0.22.1"
+png = "0.18.1"
 serde_json = "1.0.154"
 # Must match the wasm-bindgen version the viewer links against exactly.
 wasm-bindgen-cli-support = "=0.2.129"

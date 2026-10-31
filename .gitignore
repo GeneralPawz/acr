@@ -4,4 +4,6 @@
 *.GSC
 *.GS1
 /dist
+/ui/node_modules
+/ui/dist
 __pycache__/
