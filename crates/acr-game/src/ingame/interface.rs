@@ -38,6 +38,9 @@ const DOUBLE_CLICK_PIXELS: f32 = 16.0;
 /// building.
 const DOUBLE_TAP: Duration = Duration::from_millis(350);
 const DOUBLE_TAP_DP: f32 = 40.0;
+/// Touch placement: a tap this close to the outline (dp) only starts a double tap and leaves the
+/// outline where it is, so placing never shifts the building by the finger's aim.
+const ON_OUTLINE_DP: f32 = 64.0;
 /// The blinking outline's pulses per second.
 const OUTLINE_HZ: f64 = 2.0;
 /// A right drag longer than this (map pixels) gives the move a direction (0x4c4dad).
@@ -2622,15 +2625,19 @@ impl InGame {
         true
     }
 
-    /// The finger lifted: a tap (it never moved) puts the outline there and counts towards a
-    /// double tap; a drag leaves the outline where it was dragged.
+    /// The finger lifted: a tap (it never moved) counts towards a double tap and, unless it was
+    /// on the outline ([`ON_OUTLINE_DP`]), puts the outline there; a drag leaves the outline where
+    /// it was dragged.
     fn touch_place_release(&mut self) {
         let Some(g) = self.interface.touch_grab.take() else { return };
         if g.dragged {
             self.interface.touch_tap = None;
         } else {
             self.interface.touch_tap = Some((self.interface.touch_time, g.press));
-            self.interface.touch_outline = Some(g.press);
+            let reach = ON_OUTLINE_DP * self.interface.scale_factor;
+            if (g.press[0] - g.outline[0]).hypot(g.press[1] - g.outline[1]) > reach {
+                self.interface.touch_outline = Some(g.press);
+            }
         }
     }
 
