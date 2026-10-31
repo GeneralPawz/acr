@@ -506,11 +506,7 @@ impl InGame {
         view.history = self.mission.has_history();
         view.fog = self.fog_mask();
         let shift = self.shift() + 9;
-        for u in world.units.iter().filter(|u| u.alive && u.inside_of.is_none()) {
-            let selected = u.owner == player && self.selected.contains(&u.id);
-            let color = if selected { minimap::WHITE } else { minimap::PLAYER_COLORS[usize::from(u.owner % 8)] };
-            view.dots.push(Dot { x: u.pos.x >> shift, y: u.pos.y >> shift, color });
-        }
+        view.dots = minimap_dots(world, player, &self.selected, shift);
         let Some(data) = self.interface.hud.data(ctx) else { return view };
         // One icon per selected type of the free units, in selection order; its bar sums life
         // and MaxLife (OB+0x78/0x7a, 0x606e12), which building sections raise. Then one per
@@ -3035,9 +3031,47 @@ fn grouping(world: &acr_sim::World, own: u8, selected: &[EntityId]) -> Option<bo
     all_formed.then_some(true)
 }
 
+/// The minimap's unit dots: living objects outside buildings only. Dying men and corpses
+/// (`alive` while `death > 0`) are no longer shown (#351).
+fn minimap_dots(world: &acr_sim::World, player: u8, selected: &[EntityId], shift: u32) -> Vec<Dot> {
+    world
+        .units
+        .iter()
+        .filter(|u| u.living() && u.inside_of.is_none())
+        .map(|u| {
+            let own_selected = u.owner == player && selected.contains(&u.id);
+            let color = if own_selected { minimap::WHITE } else { minimap::PLAYER_COLORS[usize::from(u.owner % 8)] };
+            Dot { x: u.pos.x >> shift, y: u.pos.y >> shift, color }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn minimap_shows_living_units_only() {
+        use acr_formats::defs::UnitDef;
+        use acr_sim::Pos;
+        use acr_sim::catalog::{Catalog, ObjectType};
+        use acr_sim::formation::Formations;
+        use acr_sim::map::MapGrid;
+        use std::sync::Arc;
+        let mut c = Catalog::new();
+        let def = "NAME X\r\nUSERLC 0 G SHADOW 0 0\r\n#STAND 9 1 0 0\r\n@MOTION_L 9 0 0 9\r\n@MOTION_R 9 0 10 19\r\n@DEATH 9 0 0 39\r\n#DEATHLIE1 9 1 0 39\r\n\
+                   LIFE 100\r\nGEOMETRY 1 10 40\r\n[END]\r\n";
+        let k = c.add(ObjectType::from_def("Mus(EN)", &UnitDef::parse(def.as_bytes())));
+        let mut w = acr_sim::World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(Formations::default()));
+        let ids: Vec<EntityId> = (0..3).map(|i| w.spawn(k, 0, Pos::from_pixels(1000 + 50 * i, 1000), 0)).collect();
+        assert_eq!(minimap_dots(&w, 0, &[], 9).len(), 3);
+        w.kill(ids[0]);
+        w.step(&[]);
+        assert!(w.unit(ids[0]).is_some_and(|u| u.alive && u.death > 0), "the corpse still exists");
+        assert_eq!(minimap_dots(&w, 0, &[], 9).len(), 2, "a corpse is no dot");
+        w.remove(ids[1]);
+        assert_eq!(minimap_dots(&w, 0, &[], 9).len(), 1);
+    }
 
     #[test]
     fn grouped_formations_are_selected_together() {
