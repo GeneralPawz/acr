@@ -694,3 +694,67 @@ fn a_resting_wing_intercepts_cavalry() {
     assert!(dist(at, centroid(&r.w, &riders)) < 100, "{at:?}");
     assert_eq!(cm.report(0).charges, 1);
 }
+
+#[test]
+fn skirmishers_fall_back_behind_the_flank_when_infantry_closes() {
+    let mut r = rig();
+    let line = formed(r.mus, &mut r, 0, (1800, 4000), 0, "LINE12");
+    let screen = crowd(&mut r.w, r.mus, 0, (2400, 3900), 8, (4, 20), 0);
+    // Formed enemy infantry 800 px off: the skirmishers fire on.
+    let foe = foe_line(&mut r, (3200, 3900));
+    let armies = [
+        army(0, 0, vec![body(Duty::Line, &line), body(Duty::Screen, &screen)]),
+        army(1, 128, vec![body(Duty::Line, &foe)]),
+    ];
+    let mut cm = Commander::new(&r.w, armies, [Control::Ai, Control::Player]);
+    let first = run(&mut r.w, &mut cm, 1);
+    assert!(moves_to(&first, &screen).is_empty());
+    // It closes to 450 px.
+    for id in &foe {
+        r.w.units[id.0 as usize].pos.x -= 600 << 4;
+    }
+    let mut all = run(&mut r.w, &mut cm, 20);
+    all.extend(run(&mut r.w, &mut cm, 1));
+    let to = moves_to(&all, &screen);
+    assert_eq!(to.len(), 1, "{all:?}");
+    let ys: Vec<i32> = line.iter().map(|id| r.w.units[id.0 as usize].pos.pixels().1).collect();
+    let (lo, hi) = (*ys.iter().min().unwrap(), *ys.iter().max().unwrap());
+    let front = line.iter().map(|id| r.w.units[id.0 as usize].pos.pixels().0).max().unwrap();
+    // 250 behind the front, 150 outside the nearer (northern) flank.
+    assert!((to[0].0 - (front - 250)).abs() < 30, "{to:?} front {front}");
+    assert!((to[0].1 - (lo - 150)).abs() < 30 || (to[0].1 - (hi + 150)).abs() < 30, "{to:?} y {lo}..{hi}");
+    // They stand ground at the spot.
+    let later = run(&mut r.w, &mut cm, 600);
+    assert!(later.iter().any(|c| matches!(c, Command::StandGround { units, on: true, .. } if units == &screen)));
+}
+
+#[test]
+fn the_reserve_takes_a_broken_bodys_place() {
+    let mut r = rig();
+    let first_line = formed(r.mus, &mut r, 0, (1800, 4000), 0, "LINE12");
+    let reserve = formed(r.mus, &mut r, 0, (1300, 4000), 0, "LINE12");
+    let foe = foe_line(&mut r, (4000, 3900));
+    let armies = [
+        army(0, 0, vec![body(Duty::Line, &first_line), body(Duty::Reserve { cavalry: false }, &reserve)]),
+        army(1, 128, vec![body(Duty::Line, &foe)]),
+    ];
+    let mut cm = Commander::new(&r.w, armies, [Control::Ai, Control::Player]);
+    // The reserve closes up to 350 px behind the line's front.
+    let first = run(&mut r.w, &mut cm, 1);
+    let to = moves_to(&first, &reserve);
+    assert_eq!(to.len(), 1, "{first:?}");
+    let front = first_line.iter().map(|id| r.w.units[id.0 as usize].pos.pixels().0).max().unwrap();
+    let here = r.w.units[reserve[1].0 as usize].pos.pixels().0;
+    assert!(to[0].0 > here && to[0].0 <= front - 350 + 30, "{to:?} front {front}");
+    assert_eq!(cm.armies[0].bodies[1].duty, Duty::Reserve { cavalry: false });
+    // The first line is shot to pieces: nine of thirteen fall.
+    for id in &first_line[1..10] {
+        r.w.units[id.0 as usize].alive = false;
+    }
+    let later = run(&mut r.w, &mut cm, 40);
+    assert_eq!(cm.report(0).reserves, 1);
+    assert_eq!(cm.armies[0].bodies[1].duty, Duty::Line);
+    assert_eq!(cm.armies[0].bodies[0].duty, Duty::Reserve { cavalry: false });
+    assert!(moves_to(&later, &first_line).len() == 1, "the broken body falls back: {later:?}");
+    assert!(later.iter().any(|c| matches!(c, Command::Reform { .. })));
+}
