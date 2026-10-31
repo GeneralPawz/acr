@@ -140,7 +140,6 @@ impl MapModels {
     }
 
     /// Places the models again at the next [`MapModels::place`] (the ground under them changed).
-    #[allow(dead_code)] // used by the editor's terrain tools (#430)
     pub fn invalidate(&mut self) {
         self.key = None;
     }

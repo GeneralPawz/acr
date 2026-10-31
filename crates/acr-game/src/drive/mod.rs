@@ -1055,6 +1055,21 @@ impl Driver {
                 job.reply.insert("frametimes".into(), timing);
                 Ok(false)
             }
+            Request::Ground(target) => {
+                let Mode::InGame(g) = &game.mode else { return Err("no game".into()) };
+                let (x, y) = match target {
+                    protocol::Target::World([x, y]) => (x, y),
+                    protocol::Target::Pos(p) => g.ground_under(p),
+                    _ => return Err("ground: needs \"pos\" or \"world\"".into()),
+                };
+                let p = g.ground_probe(x, y).ok_or("no terrain yet")?;
+                job.reply.insert(
+                    "ground".into(),
+                    json!({"height": p.height, "drawn": p.drawn, "tile": p.tile, "depth": p.depth,
+                           "land_locked": p.land_locked, "water_locked": p.water_locked}),
+                );
+                Ok(false)
+            }
             Request::Textures => {
                 job.reply.insert("textures".into(), shot::textures(game));
                 Ok(false)

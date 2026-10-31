@@ -647,15 +647,14 @@ impl Default for ThreeD {
 }
 
 impl ThreeD {
-    /// `decay_stain=on|off` (`apply` sets it from the settings).
     /// The terrain was edited: the ground cover grows again and the map models stand on the
     /// new ground.
-    #[allow(dead_code)] // used by the editor's terrain tools (#430)
     pub fn terrain_edited(&mut self) {
         self.cover.clear();
         self.map_models.invalidate();
     }
 
+    /// `decay_stain=on|off` (`apply` sets it from the settings).
     pub fn set_decay_stain(&mut self, on: bool) {
         self.stain = on;
         if !on {

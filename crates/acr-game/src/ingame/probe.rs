@@ -8,6 +8,22 @@ use super::InGame;
 use super::interface::tick_rate;
 use crate::hud::Hud;
 
+/// The ground at one world pixel as the driver's `ground` command reports it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroundProbe {
+    /// The simulation's ground height there.
+    pub height: i32,
+    /// The height the terrain data draws.
+    pub drawn: i32,
+    /// The `TILE` texture of the nearest vertex of the map.
+    pub tile: u8,
+    /// The `SEA2` depth of the 32 px cell (0 without sea).
+    pub depth: u8,
+    /// The simulation's land and water locks of the 16 px cell.
+    pub land_locked: bool,
+    pub water_locked: bool,
+}
+
 /// An icon of the HUD's grid as the driver reports it.
 pub struct HudIcon {
     /// `hud/<slot>` for the grid, `army/<slot>` for the army icons at the top left.
@@ -313,6 +329,31 @@ impl InGame {
         let (x, y, w, h) = self.unit_box(u);
         let s = self.camera.scale;
         [(x as f32 - self.camera.x) * s, (y as f32 - self.camera.y) * s, w as f32 * s, h as f32 * s]
+    }
+
+    /// The ground under a window position, in world pixels.
+    pub fn ground_under(&self, at: [f32; 2]) -> (i32, i32) {
+        self.world_at(at)
+    }
+
+    /// The ground at world pixel `(x, y)`: heights, texture, sea depth and locks. `None`
+    /// before the world and the terrain are built.
+    pub fn ground_probe(&self, x: i32, y: i32) -> Option<GroundProbe> {
+        let (world, map, terrain) = (self.world.as_ref()?, self.map.as_ref()?, self.terrain.as_ref()?);
+        let textures = map.textures.as_ref()?;
+        // Vertex (col, row) lies at (32 col, 32 row - 16 (col & 1)).
+        let col = ((x + 16) >> 5).clamp(0, textures.width as i32 - 1);
+        let row = ((y + 16 * (col & 1) + 16) >> 5).clamp(0, textures.height as i32 - 1);
+        let depth = map.water.as_ref().and_then(|w| w.depth.get((x >> 5).max(0) as usize, (y >> 5).max(0) as usize));
+        let (cx, cy) = (x >> 4, y >> 4);
+        Some(GroundProbe {
+            height: world.map.heights.at(x, y),
+            drawn: terrain.height_at(x, y),
+            tile: textures.get(col as usize, row as usize)?,
+            depth: depth.unwrap_or(0),
+            land_locked: world.map.land.check_pt(cx, cy),
+            water_locked: world.map.water.check_pt(cx, cy),
+        })
     }
 
     /// The window position of a world pixel on the ground.
