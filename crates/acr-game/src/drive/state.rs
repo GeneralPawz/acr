@@ -174,6 +174,16 @@ pub fn state(
                     o.insert("stance".into(), json!([u.stance, u.local_stance, u.ground_state]));
                     o.insert("delay".into(), json!([u.delay, u.max_delay]));
                     o.insert("moving".into(), u.in_motion.into());
+                    // The owner's characteristics of the type (upgrades included).
+                    let adv = world.adv(u.owner, u.kind);
+                    o.insert(
+                        "adv".into(),
+                        json!({
+                            "life": adv.life,
+                            "damage": adv.attacks.iter().map(|a| a.damage).collect::<Vec<_>>(),
+                            "pause": adv.attacks.iter().map(|a| a.pause).collect::<Vec<_>>(),
+                        }),
+                    );
                     let flags: Vec<&str> = [
                         (u.stand_ground, "stand_ground"),
                         (u.melee_only, "melee_only"),
