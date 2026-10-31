@@ -110,8 +110,9 @@ pub struct Body {
     /// A rider (set at his first injury): the horse carries him, so his legs never make him
     /// crawl or slow him (falling from the saddle comes with the body simulation, #276).
     pub mounted: bool,
-    /// Knocked down by an animal (mauling, #276 phase 4): ticks left on the ground. While
-    /// down he cannot move, attack or hit back.
+    /// Knocked down (a mauling, #276 phase 4, or a blast, #340): ticks left until he can act
+    /// again, lying first and then getting up (the last [`GETUP_TICKS`], [`Body::rising`]).
+    /// While down he cannot move, attack or hit back.
     pub down: u8,
     /// An animal's body (set at its first injury): its size ([`Beast::size`], 1..=4), 0 for
     /// a man. Four legs, the front ones in the arm slots: wounds slow it, a leg that gives
@@ -258,6 +259,12 @@ impl Body {
     /// Knocked down ([`Body::down`]): he cannot move, attack or hit back until he is up.
     pub fn downed(&self) -> bool {
         self.down > 0
+    }
+
+    /// Down and past lying: getting up (kneeling, then standing), the last [`GETUP_TICKS`] of
+    /// [`Body::down`]. He still cannot act.
+    pub fn rising(&self) -> bool {
+        (1..=GETUP_TICKS).contains(&self.down)
     }
 
     /// An animal's speed in percent: its worst leg slows it (60 % at none left whole), one
@@ -645,23 +652,38 @@ pub const GORE_BELLY: [i32; 2] = [45, 25];
 pub const GORE_CHEST_KILL: i32 = 15;
 pub const GORE_HEAD_KILL: i32 = 40;
 
-/// Ticks a mauling hit keeps the victim down ([`Body::down`]): a claw from [`CLAW_KNOCKS`]
-/// energy, a bite by [`BITE_KNOCKS`] percent (from [`BITE_SEVERS`] and below), a gore
-/// always. A new hit while down renews it.
-pub const DOWN_CLAW: u8 = 40;
-pub const DOWN_BITE: u8 = 30;
-pub const DOWN_GORE: u8 = 50;
+/// Ticks of getting up (lying, through kneeling, to standing) at the end of [`Body::down`]:
+/// 1.5 s at the original's 10 ticks per second. The original has no get-up (its men never
+/// rise from a blow: `#DEATHLIE1` is for the dead, and no `.MD` of a man carries a rise
+/// clip), so the time is derived from the renderer's get-up blend (`GETUP_S`).
+pub const GETUP_TICKS: u8 = 15;
+/// Ticks a mauling hit keeps the victim down ([`Body::down`]): lying (a claw from
+/// [`CLAW_KNOCKS`] energy, a bite by [`BITE_KNOCKS`] percent (from [`BITE_SEVERS`] and
+/// below), a gore always) and then [`GETUP_TICKS`] of getting up. A new hit while down
+/// renews it.
+pub const DOWN_CLAW: u8 = 40 + GETUP_TICKS;
+pub const DOWN_BITE: u8 = 30 + GETUP_TICKS;
+pub const DOWN_GORE: u8 = 50 + GETUP_TICKS;
 pub const CLAW_KNOCKS: u8 = 70;
 pub const BITE_KNOCKS: [i32; 2] = [60, 30];
+/// A blast throws the survivor down for 2.2 s (22 ticks) and he gets up ([`GETUP_TICKS`]).
+pub const DOWN_BLAST: u8 = 22 + GETUP_TICKS;
+/// The energy from which a blast knocks a man down, where its impulse reaches 19 N·s (the
+/// renderer's `KNOCK_DOWN`): a shell's blast, a close grapeshot, any cannonball.
+pub const SHELL_KNOCKS: u8 = 30;
+pub const GRAPE_KNOCKS: u8 = 93;
 
-/// The ticks a mauling hit by `cause` with `energy` and percentage `roll` (the outcome's)
-/// knocks the victim down for; 0 for none.
+/// The ticks a hit by `cause` with `energy` and percentage `roll` (the outcome's) knocks the
+/// victim down for, lying and getting up; 0 for none.
 pub fn knock_down(cause: Cause, energy: u8, roll: i32) -> u8 {
     match cause {
         Cause::Claw if energy >= CLAW_KNOCKS => DOWN_CLAW,
         // Decorrelated from the outcome, from the same roll.
         Cause::Bite if (roll * 37 + 11) % 100 < BITE_KNOCKS[usize::from(energy < BITE_SEVERS)] => DOWN_BITE,
         Cause::Gore => DOWN_GORE,
+        Cause::Cannonball => DOWN_BLAST,
+        Cause::Shell if energy >= SHELL_KNOCKS => DOWN_BLAST,
+        Cause::Grapeshot if energy >= GRAPE_KNOCKS => DOWN_BLAST,
         _ => 0,
     }
 }
@@ -1000,7 +1022,7 @@ pub fn beast_outcome(injury: &Injury, size: u8, roll: i32) -> Outcome {
     }
 }
 
-/// A mauling hit knocks the victim down ([`knock_down`]), or keeps him down longer; never
+/// A mauling or a blast knocks the victim down ([`knock_down`]), or keeps him down longer; never
 /// an animal.
 fn knock(body: &mut Body, injury: &Injury, roll: i32) {
     if body.animal != 0 {

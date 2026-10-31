@@ -56,11 +56,14 @@ const BLAST_UP: f32 = 5.0;
 const STEP: f32 = 1.0 / 60.0;
 /// Hip sway per m/s of the blow's momentum over the body's mass.
 const SWAY_GAIN: f32 = 6.0;
-/// Impulse (N·s) that knocks a survivor down (a close grapeshot, a glancing cannonball).
-const KNOCK_DOWN: f32 = 19.0;
-/// Knocked down: falling and lying (s), then getting up (s).
+/// Knocked down: falling and lying (s), then getting up (s) through kneeling. The simulation
+/// keeps him down for as long (`acr_sim::body::GETUP_TICKS` is `GETUP_S` in ticks).
 const FALL_S: f32 = 2.2;
 const GETUP_S: f32 = 1.5;
+/// How far the hips are below the standing clip's while he kneels (m).
+const KNEEL_DROP: f32 = 0.45;
+/// Thigh and shin flexion (rad) of the kneel: left thigh, right thigh, left shin, right shin.
+const KNEEL_FLEX: [(&str, f32); 4] = [("thigh_l", 1.3), ("thigh_r", 1.1), ("shin_l", 2.0), ("shin_r", 2.2)];
 /// Centre of mass beyond the support between the feet (m) that makes him step.
 const STEP_AT: f32 = 0.12;
 
@@ -1219,10 +1222,9 @@ impl Ragdolls {
         r.apply_blow(&mut self.physics, bone, point, (dir + lift) * j, max_dv);
         // The survivor's hips sway with the blow (the total momentum over his mass).
         a.sway_v += dir * (j / a.mass) * SWAY_GAIN;
-        // A hard blow knocks a survivor down: he gets up when the clip takes him back (and the
-        // simulation lets him: `Body::down`).
-        let thrown = j >= KNOCK_DOWN || d.unit.body.down > 0;
-        if !a.dying && a.human && thrown && a.down.is_none() {
+        // The simulation knocks a survivor down (`Body::down`: a blast, a mauling): he lies
+        // while it keeps him down, then gets up through a kneel as it lets him rise.
+        if !a.dying && a.human && d.unit.body.downed() && a.down.is_none() {
             a.down = Some(self.time);
             a.fallen = None;
             a.recover = a.recover.max(FALL_S + GETUP_S + 0.3);
@@ -1287,12 +1289,14 @@ impl Ragdolls {
                 r.place(&mut self.physics, hips, &s, Vec3::ZERO);
                 continue;
             }
-            // Held down (mauled): he lies as long as the simulation keeps him down.
+            // Held down: he lies as long as the simulation keeps him lying; the get-up starts
+            // when it begins to let him rise (`Body::rising`).
+            let lying = d.unit.body.downed() && !d.unit.body.rising();
             if let Some(down) = a.down
-                && d.unit.body.down > 0
-                && self.time - down > FALL_S - 0.2
+                && lying
+                && self.time - down > FALL_S - 0.02
             {
-                a.down = Some(self.time - (FALL_S - 0.2));
+                a.down = Some(self.time - (FALL_S - 0.02));
                 a.recover = a.recover.max(t + FALL_S + GETUP_S + 0.3);
             }
             // Knocked down: the legs give, he lies a moment, then gets up through a blend of
@@ -1310,7 +1314,7 @@ impl Ragdolls {
                     for leg in [Region::LegL, Region::LegR] {
                         r.set_tone_region(&mut self.physics, leg, Tone::FULL.scaled(0.25));
                     }
-                    for (n, flex) in [("thigh_l", 1.3), ("thigh_r", 1.1), ("shin_l", 2.0), ("shin_r", 2.2)] {
+                    for (n, flex) in KNEEL_FLEX {
                         let b = self.rig.bone(n);
                         let axis = r.joint_axis(&self.physics, b);
                         r.set_target(&mut self.physics, b, Quat::from_axis_angle(axis, flex));
@@ -1318,12 +1322,32 @@ impl Ragdolls {
                     continue;
                 }
                 let fallen = *a.fallen.get_or_insert_with(|| r.skin_matrix(&self.physics, hips));
+                // Through a kneel: the hips come up from where he lay to the kneel (the clip's
+                // hips, lowered) with the knees still folded, then on to the clip as the legs
+                // unfold.
                 let k = ((td - FALL_S) / GETUP_S).clamp(0.0, 1.0);
-                let k = k * k * (3.0 - 2.0 * k);
+                let ease = |x: f32| x * x * (3.0 - 2.0 * x);
+                let mut kneel = skins[hips];
+                kneel[3][2] -= KNEEL_DROP;
+                let (from, to, u, fold) = if k < 0.5 {
+                    (fallen, kneel, ease(k * 2.0), 1.0)
+                } else {
+                    let u = ease(k * 2.0 - 1.0);
+                    (kneel, skins[hips], u, 1.0 - u)
+                };
                 r.set_tone_all(&mut self.physics, Tone::FULL.scaled(0.2 + 0.8 * k));
-                let s: [[f32; 4]; 4] = std::array::from_fn(|c| {
-                    std::array::from_fn(|i| fallen[c][i] + (skins[hips][c][i] - fallen[c][i]) * k)
-                });
+                for leg in [Region::LegL, Region::LegR] {
+                    r.set_tone_region(&mut self.physics, leg, Tone::FULL.scaled((0.25 + 0.75 * k).max(0.5)));
+                }
+                if fold > 0.0 {
+                    for (n, flex) in KNEEL_FLEX {
+                        let b = self.rig.bone(n);
+                        let axis = r.joint_axis(&self.physics, b);
+                        r.set_target(&mut self.physics, b, Quat::from_axis_angle(axis, flex * fold));
+                    }
+                }
+                let s: [[f32; 4]; 4] =
+                    std::array::from_fn(|c| std::array::from_fn(|i| from[c][i] + (to[c][i] - from[c][i]) * u));
                 r.set_pinned_root(&mut self.physics, true);
                 r.place(&mut self.physics, hips, &s, Vec3::ZERO);
                 continue;
