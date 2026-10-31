@@ -49,7 +49,7 @@ fn run(app: AndroidApp) -> Result<(), String> {
     let event_loop =
         EventLoop::<Event>::with_user_event().with_android_app(app.clone()).build().map_err(|e| e.to_string())?;
     let proxy = event_loop.create_proxy();
-    let mut launcher = Launcher { app, proxy, game: None, asked: false };
+    let mut launcher = Launcher { app, proxy, game: None, asked: false, pointer_hidden: false };
     event_loop.run_app(&mut launcher).map_err(|e| e.to_string())
 }
 
@@ -60,6 +60,8 @@ struct Launcher {
     proxy: EventLoopProxy<Event>,
     game: Option<Game>,
     asked: bool,
+    /// The system pointer is hidden (the game draws its own for a mouse).
+    pointer_hidden: bool,
 }
 
 impl Launcher {
@@ -108,6 +110,12 @@ impl ApplicationHandler<Event> for Launcher {
         }
         if let Some(game) = &mut self.game {
             game.resumed(event_loop);
+            if !self.pointer_hidden {
+                self.pointer_hidden = true;
+                if let Err(e) = hide_system_pointer(&self.app) {
+                    log::error!("cannot hide the system pointer: {e}");
+                }
+            }
         }
     }
 
@@ -187,6 +195,53 @@ fn ask_all_files_access(app: &AndroidApp) -> Result<(), jni::errors::Error> {
             jni_sig!((android.content.Intent) -> void),
             &[JValue::Object(&intent)],
         )?;
+        Ok(())
+    })
+}
+
+/// Hides Android's own mouse pointer over the activity's windows (`PointerIcon.TYPE_NULL`),
+/// since the game draws its cursor. `setPointerIcon` only stores the icon in the view, which
+/// the next hover looks up, so it needs no UI-thread hop.
+fn hide_system_pointer(app: &AndroidApp) -> Result<(), jni::errors::Error> {
+    use jni::objects::{JObject, JValue};
+    use jni::{jni_sig, jni_str};
+    /// `android.R.id.content`, the frame that holds the activity's content view.
+    const CONTENT_ID: i32 = 0x0102_0002;
+    /// `PointerIcon.TYPE_NULL`.
+    const TYPE_NULL: i32 = 0;
+    // SAFETY: both pointers come from the running activity and stay valid while it runs.
+    let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    vm.attach_current_thread(|env| {
+        let activity = unsafe { JObject::from_raw(env, app.activity_as_ptr().cast()) };
+        let icon = env
+            .call_static_method(
+                jni_str!("android/view/PointerIcon"),
+                jni_str!("getSystemIcon"),
+                jni_sig!((android.content.Context, int) -> android.view.PointerIcon),
+                &[JValue::Object(&activity), JValue::Int(TYPE_NULL)],
+            )?
+            .l()?;
+        let window =
+            env.call_method(&activity, jni_str!("getWindow"), jni_sig!(() -> android.view.Window), &[])?.l()?;
+        let decor = env.call_method(&window, jni_str!("getDecorView"), jni_sig!(() -> android.view.View), &[])?.l()?;
+        let content = env
+            .call_method(
+                &activity,
+                jni_str!("findViewById"),
+                jni_sig!((int) -> android.view.View),
+                &[JValue::Int(CONTENT_ID)],
+            )?
+            .l()?;
+        for view in [decor, content] {
+            if !view.is_null() {
+                env.call_method(
+                    &view,
+                    jni_str!("setPointerIcon"),
+                    jni_sig!((android.view.PointerIcon) -> void),
+                    &[JValue::Object(&icon)],
+                )?;
+            }
+        }
         Ok(())
     })
 }

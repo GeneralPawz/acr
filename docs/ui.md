@@ -165,8 +165,8 @@ or the savegames.
 
 #### Touch top bar
 
-`top_bar=classic|touch` in `settings.txt` (no options page; classic where the key is absent,
-touch on Android, `Settings::top_bar_default`) replaces the resource bar and the "M" plaque
+`top_bar=classic|touch` in `settings.txt` (no options page; where the key is absent the
+input mode decides: touch with fingers on Android, classic with a mouse, see docs/android.md) replaces the resource bar and the "M" plaque
 by plaques at the top right (`hud/touch.rs`), made of the classic bar's own pieces from
 `Interf2\ResPanel`: **M**, the classic "M" plaque (frame 2, x 11..58), and right of it the
 Resources plaque, a short bit of the resource bar (frame 0: its left end cap x 11..27, the

@@ -20,6 +20,7 @@ mod hud;
 #[cfg(not(target_arch = "wasm32"))]
 mod hw_cursor;
 mod ingame;
+mod input_mode;
 mod intro;
 mod mission;
 mod mission_ui;
@@ -100,6 +101,8 @@ pub struct Game {
     cursor: PhysicalPosition<f64>,
     /// The fingers on the screen and their gesture ([`Game::touch`]).
     touches: touch::Touches,
+    /// Touch or mouse, by the last input used ([`input_mode::InputMode`]).
+    input_mode: input_mode::InputMode,
     /// The clock of the touch gestures (a long press).
     touch_clock: web_time::Instant,
     last_frame: Option<web_time::Instant>,
@@ -141,6 +144,7 @@ impl Game {
             graphics: None,
             cursor: Default::default(),
             touches: touch::Touches::default(),
+            input_mode: input_mode::InputMode::initial(),
             touch_clock: web_time::Instant::now(),
             last_frame: None,
             profile: None,
@@ -223,7 +227,12 @@ impl Game {
         // Before drawing, so the frame leaves out a cursor the system now shows.
         #[cfg(not(target_arch = "wasm32"))]
         if let (Some(window), Some(size)) = (&self.window, self.frame_size()) {
-            self.hw_cursor.update(&mut self.ui, window, event_loop, Canvas::fit(size).scale);
+            if cfg!(target_os = "android") && self.input_mode.draws_cursor() {
+                // Android has no window cursors: the interface draws it for a mouse.
+                self.ui.set_hardware_cursor(false);
+            } else {
+                self.hw_cursor.update(&mut self.ui, window, event_loop, Canvas::fit(size).scale);
+            }
         }
         self.render();
         #[cfg(target_arch = "wasm32")]
@@ -505,7 +514,7 @@ impl Game {
             ui::Action::LeaveGame => self.leave_game(),
             ui::Action::Settings(settings) => {
                 if let Mode::InGame(game) = &mut self.mode {
-                    game.apply_settings(&settings);
+                    game.apply_settings(&settings, self.input_mode);
                 }
                 let (effects, music) = settings.volumes();
                 self.audio.set_volumes(effects, music);
@@ -613,7 +622,7 @@ impl Game {
             setup.rules.ball_terrain = true;
         }
         let mut game = ingame::InGame::new(setup);
-        game.apply_settings(self.ui.settings());
+        game.apply_settings(self.ui.settings(), self.input_mode);
         game.start(&self.assets.paths());
         self.mode = Mode::InGame(Box::new(game));
         self.load_requested();
@@ -675,7 +684,7 @@ impl Game {
         self.ui.leave_game();
         self.ui.show_loading();
         let mut game = ingame::InGame::from_save(save);
-        game.apply_settings(self.ui.settings());
+        game.apply_settings(self.ui.settings(), self.input_mode);
         game.start(&self.assets.paths());
         self.mode = Mode::InGame(Box::new(game));
         self.load_requested();
@@ -858,13 +867,23 @@ impl ApplicationHandler<Event> for Game {
                     g.gpu.resize(size.width, size.height);
                 }
             }
-            WindowEvent::CursorMoved { position, .. } => self.cursor_moved(position, event_loop),
-            WindowEvent::MouseInput { state, button, .. } => self.mouse_input(state, button, event_loop),
-            WindowEvent::Touch(touch) => self.touch(touch, event_loop),
+            WindowEvent::CursorMoved { position, .. } => {
+                self.switch_input(input_mode::InputMode::Mouse);
+                self.cursor_moved(position, event_loop)
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                self.switch_input(input_mode::InputMode::Mouse);
+                self.mouse_input(state, button, event_loop)
+            }
+            WindowEvent::Touch(touch) => {
+                self.switch_input(input_mode::InputMode::Touch);
+                self.touch(touch, event_loop)
+            }
             WindowEvent::KeyboardInput { event: KeyEvent { logical_key, text, state, .. }, .. } => {
                 self.keyboard_input(logical_key, text.as_deref(), state, event_loop)
             }
             WindowEvent::MouseWheel { delta, .. } => {
+                self.switch_input(input_mode::InputMode::Mouse);
                 let lines = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
                     MouseScrollDelta::PixelDelta(p) => p.y as f32 / 40.0,
@@ -921,6 +940,23 @@ impl Game {
         let now = self.touch_clock.elapsed();
         let gestures = self.touches.event(touch.id, phase, [touch.location.x, touch.location.y], now, paused);
         self.gestures(gestures, event_loop);
+    }
+
+    /// An input of `kind` arrived: on a change of the mode the top bar and the cursor follow,
+    /// and what the other input still held is let go (a finger's button, a pressed key).
+    fn switch_input(&mut self, kind: input_mode::InputMode) {
+        let mode = self.input_mode.after(kind);
+        if mode == self.input_mode {
+            return;
+        }
+        self.input_mode = mode;
+        self.touches = touch::Touches::default();
+        if let Mode::InGame(game) = &mut self.mode {
+            game.release_all();
+            game.set_input_mode(self.ui.settings(), mode);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        self.hw_cursor.hidden();
     }
 
     /// The touch gestures' clock: a resting finger becomes a right click.
