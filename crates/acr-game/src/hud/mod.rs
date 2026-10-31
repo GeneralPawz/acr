@@ -294,6 +294,8 @@ pub struct View {
     /// The market's numbers when a market is selected: the amount offered (once a resource
     /// to sell is chosen) and what it buys (once both are chosen).
     pub market: Option<(Option<i32>, Option<i32>)>,
+    /// The game is paused: the touch top bar's pause plaque shows a play glyph.
+    pub paused: bool,
 }
 
 /// What the game should do after input on the interface.
@@ -320,6 +322,10 @@ pub enum HudEvent {
     Zoom,
     /// The unit panel's Next (1) or Prev (−1) button.
     UnitPanelStep(i32),
+    /// The touch top bar's pause plaque: the Pause key.
+    TogglePause,
+    /// The touch top bar's escape plaque: the Escape key.
+    Escape,
 }
 
 /// The side panel (`0x1100a74`): none, the game info (key I, 1) or the unit
@@ -538,7 +544,7 @@ impl Hud {
         touch::Layout::new(self.screen, self.density)
     }
 
-    /// A press at `p` on the touch top bar: Menu opens the "M" drop-down (closes it when it
+    /// A press at `p` on the touch top bar: Pause and Escape are events for the game, Menu opens the "M" drop-down (closes it when it
     /// was `was_open`, which the press has just shut), Resources toggles the panel, the open
     /// panel swallows the click; `None` elsewhere.
     fn touch_press(&mut self, p: [f32; 2], was_open: bool) -> Option<HudEvent> {
@@ -549,6 +555,12 @@ impl Hud {
         if layout.menu.contains(p) {
             self.dropdown = !was_open;
             return Some(HudEvent::Used);
+        }
+        if layout.pause.contains(p) {
+            return Some(HudEvent::TogglePause);
+        }
+        if layout.escape.contains(p) {
+            return Some(HudEvent::Escape);
         }
         if layout.resources.contains(p) {
             self.resources_open = !self.resources_open;
@@ -1047,26 +1059,37 @@ impl Hud {
         let m = layout.menu_draw;
         piece(out, 2, touch::CAP_X, m.x0, touch::M_W, m.y0, m.y1 + shadow);
         // A slot of the bar: end cap, filler, the icon of `slot`, end cap; `mid` wide between the caps.
-        let slot_piece = |out: &mut Vec<Draw>, r: Rect, mid: i32, slot: usize, bottom: i32| {
+        let slot_piece = |out: &mut Vec<Draw>, r: Rect, mid: i32, slot: Option<usize>, bottom: i32| {
             let x = r.x0 + touch::CAP_W;
             piece(out, 0, touch::CAP_X, r.x0, touch::CAP_W, r.y0, bottom);
             piece(out, 0, touch::FILL_X, x, mid.min(touch::FILL_W), r.y0, bottom);
             if mid > touch::FILL_W {
                 piece(out, 0, touch::FILL_X, x + touch::FILL_W, mid - touch::FILL_W, r.y0, bottom);
             }
-            let icon = TOUCH_ICON_X + slot as i32 * RES_STEP;
-            piece(out, 0, icon, x + touch::ICON_PAD, touch::ICON_W, r.y0, bottom);
+            if let Some(slot) = slot {
+                let icon = TOUCH_ICON_X + slot as i32 * RES_STEP;
+                piece(out, 0, icon, x + touch::ICON_PAD, touch::ICON_W, r.y0, bottom);
+            }
             piece(out, 0, touch::RIGHT_CAP_X, x + mid, touch::CAP_W, r.y0, bottom);
         };
+        // The pause and escape plaques: a bare bit of the bar with a glyph of the game's font.
+        let pause: &[u8] = if view.paused { b">" } else { b"II" };
+        for (r, mid, glyph) in
+            [(layout.pause_draw, touch::PAUSE_MID, pause), (layout.escape_draw, touch::ESCAPE_MID, b"O".as_slice())]
+        {
+            slot_piece(out, r, mid, None, r.y1 + shadow);
+            let w = ctx.fonts.width(ctx.lib, font::YELLOW, glyph);
+            out.push(Draw::game_text(font::YELLOW, glyph, r.x0 + (r.width() - w) / 2, r.y0 + 6));
+        }
         let r = layout.resources_draw;
-        slot_piece(out, r, touch::ICON_PAD * 2 + touch::ICON_W, TOUCH_FACE_SLOT, r.y1 + shadow);
+        slot_piece(out, r, touch::ICON_PAD * 2 + touch::ICON_W, Some(TOUCH_FACE_SLOT), r.y1 + shadow);
         if !self.resources_open {
             return;
         }
         for slot in 0..touch::ROWS {
             let r = layout.row_rect(slot);
             let last = slot + 1 == touch::ROWS;
-            slot_piece(out, r, touch::ROW_MID, slot, r.y1 + if last { shadow } else { 0 });
+            slot_piece(out, r, touch::ROW_MID, Some(slot), r.y1 + if last { shadow } else { 0 });
             // The classic bar's values are in `FOOD`, `GOLD` swapped order (0x4ece10).
             let value = view.resources[match slot {
                 1 => 3,
@@ -1586,6 +1609,8 @@ mod tests {
         assert!(hud.resources_open(), "a tap on the panel keeps it open");
         assert!(matches!(hud.touch_press(centre(l.resources), false), Some(HudEvent::Used)));
         assert!(!hud.resources_open());
+        assert!(matches!(hud.touch_press(centre(l.pause), false), Some(HudEvent::TogglePause)));
+        assert!(matches!(hud.touch_press(centre(l.escape), false), Some(HudEvent::Escape)));
         // Where the classic bar and its "M" plaque were: map.
         for p in [[1000.0, 20.0], [600.0, 30.0], [hud.screen()[0] as f32 - 700.0, 10.0]] {
             assert!(hud.touch_press(p, false).is_none(), "{p:?}");

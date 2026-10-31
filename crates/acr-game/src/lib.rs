@@ -999,6 +999,7 @@ impl Game {
                         self.load_requested();
                     }
                 }
+                ingame::GameMouse::Escape => self.press_escape(event_loop),
                 ingame::GameMouse::None => {}
             }
             return;
@@ -1013,6 +1014,13 @@ impl Game {
                 };
                 self.ui_input(input, event_loop);
             }
+        }
+    }
+
+    /// The Escape key, pressed and released (the touch top bar's plaque, Android's back key).
+    fn press_escape(&mut self, event_loop: &ActiveEventLoop) {
+        for state in [ElementState::Pressed, ElementState::Released] {
+            self.keyboard_input(Key::Named(NamedKey::Escape), None, state, event_loop);
         }
     }
 
@@ -1044,6 +1052,12 @@ impl Game {
         state: ElementState,
         event_loop: &ActiveEventLoop,
     ) {
+        // Android's back key (KEYCODE_BACK, winit's `BrowserBack`) is Escape.
+        #[cfg(target_os = "android")]
+        let logical_key = match logical_key {
+            Key::Named(NamedKey::BrowserBack | NamedKey::GoBack) => Key::Named(NamedKey::Escape),
+            key => key,
+        };
         let pressed = state == ElementState::Pressed;
         if matches!(&self.mode, Mode::InGame(g) if g.ready())
             && (!self.ui.dialog_open() || !pressed)
