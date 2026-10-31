@@ -117,6 +117,13 @@ impl Gpu {
         // swapchain image, so that work still overlaps the GPU's previous frame.
         // `ACR_FRAME_LATENCY` (native) overrides it.
         config.desired_maximum_frame_latency = frame_latency();
+        // The default is the adapter's first mode, which on Android (Vulkan) can be an unlocked
+        // one: the game then drew 300-400 frames a second on a phone. Vsync keeps it at the
+        // display's rate (and the battery and heat down).
+        #[cfg(target_os = "android")]
+        {
+            config.present_mode = wgpu::PresentMode::AutoVsync;
+        }
         log::info!(
             "surface: {:?}, {} frame(s) queued, {:?}",
             config.present_mode,
