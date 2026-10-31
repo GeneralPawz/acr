@@ -56,7 +56,7 @@ crates/
   acr-tool      `acr` CLI for inspecting game data and validating decoders
   acr-serve     local web server: `cargo xtask serve` and the `AmericanConquest-Web` launcher
   acr-ui-protocol  messages between the game and its Svelte UI (serde, TypeScript export)
-ui/             the Svelte UI (Node 24, `cargo xtask ui`), see docs/webui.md
+ui/             the Svelte UI (Bun, `cargo xtask ui`), see docs/webui.md
 xtask/          build automation in Rust (`cargo xtask web|serve|dist|ui|ui-diff|assets|e2e|drive|jev`)
 tests/e2e/      end-to-end scenarios run through the game's driver mode, see docs/testing.md
 assets/         Blender scripts that build the 3D models (M2), see docs/assets.md
@@ -65,8 +65,8 @@ docs/formats/   reverse-engineered format specifications with evidence
 
 Everything is done through the workspace: decoders are validated against the full game
 data by `acr` subcommands rather than ad-hoc scripts, and the web build needs no tools
-beyond `cargo`; only the optional Svelte UI (`ui/`, `?ui=svelte`) needs Node 24 and npm
-(`cargo xtask web` skips it with a warning without `npm`).
+beyond `cargo`; only the optional Svelte UI (`ui/`, `?ui=svelte`) needs Bun (a justified extra tool: it installs
+the packages and runs Vite and the tests; `cargo xtask web` skips the UI with a warning without `bun`).
 
 ## Design rules
 

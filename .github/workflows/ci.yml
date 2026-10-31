@@ -54,19 +54,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version-file: ui/.node-version
-          cache: npm
-          cache-dependency-path: ui/package-lock.json
+          bun-version-file: ui/.bun-version
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       # The protocol's TypeScript types are committed: no diff allowed.
       - run: cargo test --locked -p acr-ui-protocol --features ts
       - run: git diff --exit-code -- ui/src/lib/protocol
-      - run: npm ci
+      - run: bun install --frozen-lockfile
         working-directory: ui
-      - run: npm run check && npm test && npm run build
+      - run: bun run check && bun run test && bun run build
         working-directory: ui
 
   wasm:
@@ -75,6 +73,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: rustup toolchain install && rustup target add wasm32-unknown-unknown
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: ui/.bun-version
       - uses: Swatinem/rust-cache@v2
       - run: >-
           cargo clippy --locked --target wasm32-unknown-unknown
