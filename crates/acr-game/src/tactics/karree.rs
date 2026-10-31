@@ -102,7 +102,8 @@ impl Squares {
             let now: Vec<Option<i32>> = (0..v.theirs.len())
                 .map(|j| {
                     let t = &v.theirs[j];
-                    (p.alive > 0 && t.cavalry && t.alive >= RIDERS).then(|| dist(p.centroid, t.centroid))
+                    (p.alive > 0 && (t.cavalry || v.foe.bodies[j].duty == Duty::Cavalry) && t.alive >= RIDERS)
+                        .then(|| dist(p.centroid, t.centroid))
                 })
                 .collect();
             let before = std::mem::replace(&mut b.seen, now.clone());

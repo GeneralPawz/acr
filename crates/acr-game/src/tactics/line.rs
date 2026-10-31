@@ -99,6 +99,8 @@ pub(super) struct Line {
     began: Option<u64>,
     /// The cannonade is over.
     marching: bool,
+    /// The tick the cannonade ended.
+    marched_at: Option<u64>,
     /// Ticks the line has waited to close up.
     waited: u64,
     /// Per body of the army.
@@ -132,6 +134,12 @@ fn toward(from: (i32, i32), to: (i32, i32), step: i32) -> (i32, i32) {
 }
 
 impl Line {
+    /// The tick the cannonade ended, or the tick it ends at the latest ([`CANNONADE_TICKS`] after
+    /// the first decision; a side without foot never marches); `None` before the first decision.
+    pub(super) fn cannonade_end(&self) -> Option<u64> {
+        self.marched_at.or(self.began.map(|b| b + CANNONADE_TICKS))
+    }
+
     /// One decision of the line and melee foot of `v.me`. The bodies `held` are in a square or
     /// braced against cavalry ([`super::karree`]) and get no order.
     pub(super) fn decide(
@@ -160,6 +168,7 @@ impl Line {
             let gap = front.iter().filter_map(|&i| nearest_foe(v, v.mine[i].centroid)).map(|f| f.1).min();
             if gap.is_none_or(|g| g <= reach + CANNONADE_MARGIN) || v.tick - began >= CANNONADE_TICKS {
                 self.marching = true;
+                self.marched_at = Some(v.tick);
             }
         }
         if !self.marching {
