@@ -191,6 +191,10 @@ impl InGame {
         let _ = self.mission.take_camera();
         // Pages DipServer opened on the way are history: the panel starts closed.
         let _ = self.mission.take_diplomacy();
+        // The replay put objects on the map behind the scene's back.
+        if self.editor.is_some() && save.log.editor.iter().any(|(_, i)| matches!(i, EditorInput::Nature { .. })) {
+            self.refresh_objects(true);
+        }
         self.save.log = save.log;
         true
     }

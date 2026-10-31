@@ -31,6 +31,7 @@
 //!              1 sides: mode, 8 teams    2 reload guns    3 auto reload: on
 //!              4 preset: nation, size, century (0 none, 1 + number), owner, x, y, dir
 //!              5 battle: 2 nations, 2 centuries (as above), size, fight
+//!              6 nature (#429): group code (2 bytes), index, x, y
 //! ```
 //!
 //! The editor's inputs ([`EditorInput`]) change the world between two ticks like a
@@ -39,6 +40,7 @@
 //! The name, time and setup come first so that the load dialog can list savegames
 //! without decoding the rest ([`SaveInfo::peek`]).
 
+use acr_formats::m3d::SpriteGroup;
 use acr_sim::replay::Replay;
 use acr_sim::world::EntityId;
 use acr_sim::{Command, World};
@@ -520,6 +522,14 @@ impl Writer {
                 self.pair(*at);
                 self.u(u64::from(*dir));
             }
+            EditorInput::Nature { group, index, at } => {
+                self.u(6);
+                for b in group.code() {
+                    self.u(u64::from(b));
+                }
+                self.u(u64::from(*index));
+                self.pair(*at);
+            }
             EditorInput::Battle { nation, era, size, fight } => {
                 self.u(5);
                 for n in nation {
@@ -735,6 +745,11 @@ impl<'a> Reader<'a> {
                 era: [self.era()?, self.era()?],
                 size: self.size()?,
                 fight: self.u()? != 0,
+            },
+            6 => EditorInput::Nature {
+                group: SpriteGroup::from_code([self.u8()?, self.u8()?]),
+                index: u16::try_from(self.u()?).map_err(|_| err("sprite index"))?,
+                at: self.pair()?,
             },
             _ => return Err(err("editor input")),
         })
@@ -1084,6 +1099,7 @@ mod tests {
                 },
             ),
             (40, EditorInput::Preset { nation: 7, size: Size::Small, era: None, owner: 0, at: (1, 2), dir: 0 }),
+            (50, EditorInput::Nature { group: SpriteGroup::Stones, index: 7, at: (1200, 3400) }),
             (900, EditorInput::Battle { nation: [2, 3], era: [Some(Era::C17), None], size: Size::Medium, fight: true }),
         ]
     }

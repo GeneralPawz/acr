@@ -262,6 +262,7 @@ impl Editor {
             hot,
             act: act.map(EditorAct::Battle),
             look: Look::Text,
+            gp: None,
         };
         // A value with an arrow to each side, like the settings under the unit list.
         let pair = |out: &mut Vec<Item>, y: i32, value: String, name: &str, less: Act, more: Act| {
@@ -272,6 +273,7 @@ impl Editor {
                 hot: false,
                 act: Some(EditorAct::Battle(act)),
                 look: Look::Text,
+                gp: None,
             };
             out.push(arrow(X0, "<", "-", less));
             out.push(Item { rect: Rect::new(X0 + 24, y, W - 48, ROW), ..text(y, value, name, false, None) });
