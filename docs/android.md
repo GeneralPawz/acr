@@ -25,6 +25,17 @@ adb logcat -s acr                                              # the game's log
 `ACR_ANDROID_ABIS="arm64-v8a x86_64"` adds the emulator's ABI. The APK is signed with a local
 debug key (`~/.android/acr-debug.keystore`, created on first use).
 
+## Launcher icon
+
+`tools/android/make-icon.py` draws an adaptive icon (API 26+, with a monochrome layer for themed
+icons) plus round legacy PNGs at build time into the work dir; nothing generated is committed. The
+original only has its emblem at 32x32 (`Ac.ico`; the exe resources and the menu art hold nothing
+larger) and upscaling it gives a blob, so the gold "AC" monogram is redrawn: `tools/android/monogram.svg`
+holds its calligraphic strokes (our own drawing, traced from the 32x32 icon), which the script
+stamps with a broad nib and shades in brass with a dark outline. The backdrop (dark bronze
+gradient, thin gold ring) is drawn at 432x432 (108 dp). Needs Python with Pillow and numpy;
+`ACR_ICON_PREVIEW=path.png` writes a preview of the masked result next to the old icon.
+
 ## Game data
 
 The app looks for the original's folder (the one with `dmcr.exe`) in this order:

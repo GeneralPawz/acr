@@ -12,7 +12,7 @@ tc=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin
 abis=${ACR_ANDROID_ABIS:-arm64-v8a}
 target=${CARGO_TARGET_DIR:-$root/target}
 work=$root/target/android/work
-rm -rf "$work" && mkdir -p "$work/res/mipmap"
+rm -rf "$work" && mkdir -p "$work/res"
 for abi in $abis; do
   case $abi in
     arm64-v8a) triple=aarch64-linux-android ;;
@@ -26,8 +26,9 @@ for abi in $abis; do
   cp "$target/$triple/release/libacr_game.so" "$work/lib/$abi/"
   "$tc/llvm-strip" --strip-debug "$work/lib/$abi/libacr_game.so"
 done
-# The icon embedded in the Windows build, as the launcher icon.
-python3 -c "from PIL import Image; Image.open('$root/crates/acr-game/Ac.ico').convert('RGBA').resize((96, 96), Image.LANCZOS).save('$work/res/mipmap/icon.png')"
+# The launcher icon: an adaptive icon drawn from monogram.svg (docs/android.md).
+python3 "$root/tools/android/make-icon.py" "$root/tools/android/monogram.svg" "$work/res" \
+  "${ACR_ICON_PREVIEW:-$work/icon-preview.png}" "$root/crates/acr-game/Ac.ico"
 "$bt/aapt2" compile --dir "$work/res" -o "$work/res.zip"
 "$bt/aapt2" link -o "$work/base.apk" -I "$platform/android.jar" --manifest "$root/tools/android/AndroidManifest.xml" "$work/res.zip"
 (cd "$work" && zip -q -0 -r base.apk lib)
