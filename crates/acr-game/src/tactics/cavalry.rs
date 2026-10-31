@@ -39,7 +39,7 @@ const OUTSIDE: i32 = 400;
 pub(super) const FOOT_OUTSIDE: i32 = 600;
 /// A route with less room than this left outside the box (after clamping) is blocked, pixels.
 const ROOM: i32 = 150;
-/// A wing has reached a waypoint within this, pixels.
+/// A wing has reached a waypoint when its nearest man is within this, pixels ([`lead`]).
 const ARRIVED: i32 = 200;
 /// Ticks after which a wing on its flank route charges wherever it is.
 const FLANK_TICKS: u64 = 1500;
@@ -160,7 +160,7 @@ fn score(world: &World, v: &View, j: usize, from: (i32, i32), frontal: bool) -> 
         _ => {
             let approach = get_dir(from.0 - t.centroid.0, from.1 - t.centroid.1);
             let off = (approach.wrapping_sub(t.facing) as i8).unsigned_abs();
-            if off >= FLANK_ANGLE && !t.cavalry { 3 } else { 1 }
+            if off >= FLANK_ANGLE && !riders(v, j) { 3 } else { 1 }
         }
     };
     Some(weight * 100_000 / i64::from(dist(from, t.centroid) + 100))
@@ -315,7 +315,7 @@ impl Wing {
             State::Flank { route, leg, since } => {
                 if c.v.tick - since >= FLANK_TICKS {
                     self.enter_charge(c, i, Aim::Best { frontal: false });
-                } else if dist(p.centroid, route[usize::from(leg)]) <= ARRIVED {
+                } else if lead(c, i, route[usize::from(leg)]) <= ARRIVED {
                     if leg == 0 {
                         let to = route[1];
                         let foe = c.v.theirs.iter().find(|t| t.alive > 0).map_or(to, |t| t.centroid);
@@ -329,7 +329,7 @@ impl Wing {
             State::Charge { .. } => self.charge(c, i),
             State::Rally { since } => {
                 let home = self.home.unwrap_or(p.centroid);
-                if dist(p.centroid, home) <= HOME || c.v.tick - since >= HOME_TICKS {
+                if lead(c, i, home) <= HOME || c.v.tick - since >= HOME_TICKS {
                     if let (Some(brigade), Some(group)) = (p.brigade, p.group)
                         && let Ok(group) = u8::try_from(group)
                     {
@@ -431,6 +431,18 @@ impl Wing {
             c.out.push(Command::MeleeOnly { player: c.v.me.owner, units: arm, on });
         }
     }
+}
+
+/// How far the nearest living man of body `i` is from `to`, pixels: a wing's formation is
+/// hundreds of pixels deep, so its centroid trails the point it was sent to by half of that.
+fn lead(c: &Ctx, i: usize, to: (i32, i32)) -> i32 {
+    c.v.me.bodies[i]
+        .units
+        .iter()
+        .filter_map(|&id| living(c.world, id))
+        .map(|u| dist(u.pos.pixels(), to))
+        .min()
+        .unwrap_or(i32::MAX)
 }
 
 fn units(c: &Ctx, i: usize) -> Vec<EntityId> {

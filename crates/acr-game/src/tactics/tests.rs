@@ -847,3 +847,71 @@ fn clans_send_their_outer_groups_round_the_flank() {
     // The middle group stays with the line: no flank waypoint, it is not a wing.
     assert!(moves_to(&all, &groups[1]).iter().all(|p| (p.1 - 7000).abs() < 100), "{:?}", moves_to(&all, &groups[1]));
 }
+
+#[test]
+fn riders_closing_fast_form_the_square_earlier() {
+    let mut r = rig();
+    let (line, riders, armies) = line_and_riders(&mut r);
+    let mut cm = Commander::new(&r.w, armies, [Control::Ai, Control::Player]);
+    let start: Vec<(i32, i32)> = riders.iter().map(|id| r.w.units[id.0 as usize].pos.pixels()).collect();
+    let mid = centroid(&r.w, &riders);
+    let mut at = None;
+    for t in 0..300 {
+        // The riders gallop at 10 px a tick from 1500 px away.
+        let d = 1500 - 10 * t;
+        let to = centroid(&r.w, &line).0 + d;
+        for (id, p) in riders.iter().zip(&start) {
+            let u = &mut r.w.units[id.0 as usize];
+            u.pos = Pos::from_pixels(p.0 - mid.0 + to, p.1);
+        }
+        let cmds = cm.orders(&r.w);
+        if at.is_none() && cmds.iter().any(|c| matches!(c, Command::Reform { group: 1, .. })) {
+            at = Some(dist(centroid(&r.w, &line), centroid(&r.w, &riders)));
+        }
+        r.w.step(&cmds);
+    }
+    let d = at.expect("a reform to KARE");
+    assert!((800..=920).contains(&d), "the square was ordered with the riders {d} px off");
+}
+
+#[test]
+fn a_deep_wing_goes_on_when_its_lead_reaches_the_waypoint() {
+    let mut r = rig();
+    let foe = foe_line(&mut r, (3000, 6900));
+    let wing = crowd(&mut r.w, r.horse, 0, (1000, 6400), 8, (4, 20), 0);
+    let mut me = army(0, 0, vec![body(Duty::Cavalry, &wing)]);
+    me.origin = (1000, 7000);
+    let mut cm = Commander::new(&r.w, [me, army(1, 128, vec![body(Duty::Line, &foe)])], [Control::Ai, Control::Player]);
+    let all = run(&mut r.w, &mut cm, 900);
+    let wp1 = moves_to(&all, &wing)[0];
+    assert_eq!(moves_to(&all, &wing).len(), 1, "still on the first leg");
+    // A column 700 px deep: the lead stands on the waypoint, the centroid 350 px behind it.
+    for (k, id) in wing.iter().enumerate() {
+        r.w.units[id.0 as usize].pos = Pos::from_pixels(wp1.0 - 100 * k as i32, wp1.1);
+    }
+    assert!(dist(centroid(&r.w, &wing), wp1) > 300);
+    let more = run(&mut r.w, &mut cm, 40);
+    let legs = moves_to(&more, &wing);
+    assert_eq!(legs.len(), 1, "{more:?}");
+    assert!(legs[0].0 > wp1.0 + 400, "the second waypoint {:?} lies past the first {wp1:?}", legs[0]);
+}
+
+#[test]
+fn a_wing_does_not_pick_the_dragoons_flank_as_a_line() {
+    // Dragoons are riders: charged from the side they are worth no more than any riders.
+    let mut r = rig();
+    let wing = crowd(&mut r.w, r.horse, 0, (1000, 4000), 8, (4, 20), 0);
+    let dragoons = crowd(&mut r.w, r.dragoon, 1, (2000, 4300), 12, (6, 20), 0);
+    let guns = vec![r.w.spawn(r.gun, 1, Pos::from_pixels(2600, 3000), 128)];
+    let armies = [
+        army(0, 0, vec![body(Duty::Cavalry, &wing)]),
+        army(1, 128, vec![body(Duty::Cavalry, &dragoons), body(Duty::Guns, &guns)]),
+    ];
+    let cm = Commander::new(&r.w, armies, [Control::Ai, Control::Ai]);
+    let (mine, theirs) = (picture::of(&r.w, &cm.armies[0]), picture::of(&r.w, &cm.armies[1]));
+    let v = view_of(&cm.armies, &mine, &theirs);
+    // The dragoons face west; the wing comes from the south-west: a flank for a line, nothing for riders.
+    let from = mine[0].centroid;
+    let best = super::cavalry::best(&r.w, &v, from, false, None);
+    assert_eq!(best, Some(1), "the unguarded guns, not the dragoons");
+}
