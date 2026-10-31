@@ -1,0 +1,26 @@
+{
+  "name": "editor_army",
+  "description": "The test editor's army presets (#403): a right click on the nation combo box opens the army menu, a size (and a century, where the nation has several) is picked, and the next left click on the map places the whole army. England in the 18th century, Mittel: 3 lines of 120 Fuesiliere, 2 wings of 40 dragoons, 15 trappers and 4 guns for player 1; the 17th century, Klein, for player 2: a line of 72 musketeers, a block of 36 pikemen and 2 guns.",
+  "steps": [
+    {"cmd": "start", "blank": {"editor": true}},
+    {"cmd": "wait", "ticks": 5},
+    {"cmd": "rclick", "label": "Nation", "exact": true, "note": "opens the army menu"},
+    {"cmd": "click", "label": "Armee Mittel", "exact": true},
+    {"cmd": "click", "pos": [400, 400], "note": "places the army"},
+    {"cmd": "wait", "ticks": 2},
+    {"cmd": "state", "expect": {"path": "state.counts.0.units.EngM18(EN)", "eq": 360}},
+    {"cmd": "state", "expect": {"path": "state.counts.0.units.EngD18(EN)", "eq": 80}},
+    {"cmd": "state", "expect": {"path": "state.counts.0.units.EngTap(EN)", "eq": 15}},
+    {"cmd": "state", "expect": {"path": "state.counts.0.units.ArtPus(EN)", "eq": 4}},
+    {"cmd": "click", "label": "Spieler 2", "exact": true},
+    {"cmd": "rclick", "label": "Nation", "exact": true},
+    {"cmd": "click", "label": "Armee 17. Jahrhundert", "exact": true},
+    {"cmd": "click", "label": "Armee Klein", "exact": true},
+    {"cmd": "click", "pos": [400, 400]},
+    {"cmd": "wait", "ticks": 2},
+    {"cmd": "state", "expect": {"path": "state.counts.1.units.EngMus(EN)", "eq": 72}},
+    {"cmd": "state", "expect": {"path": "state.counts.1.units.EngPik(EN)", "eq": 36}},
+    {"cmd": "state", "expect": {"path": "state.counts.1.units.ArtPus(EN)", "eq": 2}},
+    {"cmd": "ui", "expect": {"path": "ui.in_game", "eq": true}}
+  ]
+}
