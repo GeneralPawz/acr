@@ -157,7 +157,7 @@ original keeps its options elsewhere; ACR does not read or write those.
 
 On a screen wider than 1024 the original anchors the resource bar and the "M" plaque to the
 right edge (`RealLx`, 0x4ecc50), and ACR follows. `center_top_bar=on` in `settings.txt`
-(off by default, no options-page row: the page is full, #374; #360) moves the plaque, the
+(off by default; page 2 of the options, "Leiste mittig"; #360) moves the plaque, the
 values, their hint rects and the click region left by (`RealLx` − 781) / 2, so the plaque
 and the bar (781 wide together) are centred on the screen and the filler tiles run the
 whole width. Nothing else moves. It is a UI setting, not a rule: it is not in the Rules hash
@@ -980,6 +980,7 @@ writes are in
 | 2 | Tote und Spuren | Verwesung | Knochen / Nur halb, each mit / ohne Bodenfleck | `corpse_decay`, `decay_stain` (one box: the page's rows are the frame's) |
 | 2 | | Liegezeit | 1 … 60 Minuten | `corpse_minutes` |
 | 2 | | Schlachtfeldspuren | Verblassen / Bleiben (ganze Schlacht) | `battlefield_marks` |
+| 2 | Anzeige | Leiste mittig | Aus (Original) / An: Leiste mittig | `center_top_bar` (not a rule: centres the top bar on wide screens, see [Options](#options-0x5c9740)) |
 | 3 | 3D-Grafik | 3D-Modelle | Aus (Original) / Einheiten / Einheiten und Gebäude | `models` |
 | 3 | Darstellung | Kamera | Fest (Original) / Frei | `camera` |
 | 3 | | Schatten, Details | An / Schatten aus / Detailstufen aus / Beide aus | `shadows`, `lod` (one box, so the landscape group has room for the weather) |
@@ -1006,7 +1007,7 @@ All but the rules (pages 5 and 6, every optional `acr_sim::Rules` flag) take eff
 setup a replay or savegame hashes): a battle keeps the rules it began with, the new choice
 applies from the next battle (the game setup reads them, `lib.rs`), as the heading of page 5 says. They have pages of their own (#374) since the rules outgrew one page; page 2 keeps the
 battle's looks. A new rule is one `Row::Choice` line in `RULES` or `RULES_MORE` (the UI
-settings that are not rules, such as `center_top_bar`, go on `RULES_MORE` too). The modern controls'
+settings that are not rules go on the page they belong to, such as `center_top_bar` on `BATTLE`). The modern controls'
 Ctrl + Space, C switches the free camera for the running battle only
 ([controls.md](controls.md#leader-chords-modern)); OK on these pages sets it back to the
 `Kamera` line. Driver check with
