@@ -137,19 +137,44 @@ pub fn place(w: &mut World, player: u8, kind: TypeId, x: i32, y: i32) -> Option<
         *s -= c;
     }
     let kind = res_subst(w, &t, kind, pos);
+    Some(found_site(w, player, kind, &t, pos))
+}
+
+/// The editor's placing (no price, no builders): `kind` at world pixel `(x, y)` under the
+/// checks of [`place`], finished with its `LOCKPOINTS` (`stage` = `None`) or as a site
+/// advanced to that construction stage. `None` if the position is refused.
+pub fn place_free(w: &mut World, player: u8, kind: TypeId, x: i32, y: i32, stage: Option<i32>) -> Option<EntityId> {
+    let t = w.catalog.get(kind).clone();
+    if !t.building || !on_map(w, x, y) {
+        return None;
+    }
+    let pos = snap(&t, x, y);
+    if !footprint_free(w, player, &t, pos) {
+        return None;
+    }
+    let id = found_site(w, player, kind, &t, pos);
+    let max = w.max_stage(&w.units[id.0 as usize]).max(1);
+    for _ in 0..stage.map_or(max, |s| s.clamp(0, max)) {
+        next_stage(w, id.0 as usize);
+    }
+    Some(id)
+}
+
+/// Creates the construction site of `kind` at `pos`: stage 0, 2 life, its `BUILDLOCKPOINTS`.
+fn found_site(w: &mut World, player: u8, kind: TypeId, t: &ObjectType, pos: Pos) -> EntityId {
     let id = w.spawn(kind, player, pos, 0);
     let u = &mut w.units[id.0 as usize];
     u.stage = 0;
     u.life = 2;
-    set_anim(u, &t, stage_anim(0, 1));
+    set_anim(u, t, stage_anim(0, 1));
     let points = if t.economy.build_lock_points.is_empty() { &t.lock_points } else { &t.economy.build_lock_points };
     let map = Arc::make_mut(&mut w.map);
-    for (cx, cy) in lock_cells(&t, pos, points) {
+    for (cx, cy) in lock_cells(t, pos, points) {
         map.land.set_pt(cx, cy);
     }
     if !t.economy.build_lock_points.is_empty() {
         // 0x51692c: units standing on the new locks are moved out.
-        let (bx, by) = base_cell(&t, pos);
+        let (bx, by) = base_cell(t, pos);
         let (cmx, cmy, br) = t.check_center;
         push_out(w, ((bx + cmx) << 8) | 0x80, ((by + cmy) << 8) | 0x80, (br + 2) << 8);
     }
@@ -157,7 +182,7 @@ pub fn place(w: &mut World, player: u8, kind: TypeId, x: i32, y: i32) -> Option<
     let (px, py) = pos.pixels();
     crate::aiplace::renew(w, px, py);
     census(w, player);
-    Some(id)
+    id
 }
 
 /// 0x51374e: every unit within `r` of `(x, y)` (1/16 px) whose 3 × 3 lock cells around its

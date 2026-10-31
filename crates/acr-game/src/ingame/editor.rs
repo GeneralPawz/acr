@@ -12,6 +12,7 @@
 
 mod levels;
 pub mod sides;
+mod world;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -102,9 +103,8 @@ pub const NEUTRAL: u8 = 7;
 const FACINGS: [&str; 8] = ["Ost", "Suedost", "Sued", "Suedwest", "West", "Nordwest", "Nord", "Nordost"];
 /// Space between formations placed side by side, world pixels.
 const FORMATION_GAP: i32 = 64;
-/// The categories of a nation's list (the `ED_` headers of `TEXT\EDITOR.TXT`); the original
-/// also has marine and buildings, which this editor cannot place yet.
-const CATEGORIES: [&str; 3] = ["Infanterie", "Kavallerie", "Artillerie"];
+/// The categories of a nation's list (the `ED_` headers of `TEXT\EDITOR.TXT`).
+const CATEGORIES: [&str; 5] = ["Infanterie", "Kavallerie", "Artillerie", "Marine", "Gebaeude"];
 
 /// A click target of the window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -270,9 +270,14 @@ pub struct Group {
     pub kinds: Vec<TypeId>,
 }
 
-/// The category of a land type in a nation's list: riders, guns (`COMPLEXROTATE`) or foot.
+/// The category of a type in a nation's list: buildings, ships, riders, guns
+/// (`COMPLEXROTATE`) or foot.
 fn category(t: &acr_sim::catalog::ObjectType) -> usize {
-    if acr_sim::spacing::is_rider(t) {
+    if t.building {
+        4
+    } else if t.medium == Medium::Water {
+        3
+    } else if acr_sim::spacing::is_rider(t) {
         1
     } else if t.motion_style == MotionStyle::ComplexRotate {
         2
@@ -290,19 +295,14 @@ pub fn groups(world: &World, entry: usize) -> Vec<Group> {
     let mut seen = std::collections::HashSet::new();
     let mut by: Vec<Vec<TypeId>> = vec![Vec::new(); CATEGORIES.len()];
     for (id, t) in world.catalog.iter() {
-        if t.building
-            || t.life <= 0
-            || t.medium != Medium::Land
-            || !t.id.to_ascii_lowercase().starts_with(&prefix)
-            || !seen.insert(id)
-        {
+        if t.life <= 0 || !world::of_nation(t, entry, &prefix) || !seen.insert(id) {
             continue;
         }
         by[category(t)].push(id);
     }
     if entry >= FIRST_EXTRA {
         // Animals and cannons are one list under their own name.
-        let kinds = by.into_iter().flatten().collect();
+        let kinds = by.into_iter().take(3).flatten().collect();
         return vec![Group { header: ENTRIES[entry].0, kinds }];
     }
     by.into_iter()
@@ -801,8 +801,16 @@ impl Editor {
     /// formations of the chosen kind side by side across the facing.
     pub fn place(&mut self, world: &mut World, at: (i32, i32)) {
         let Some(kind) = self.pick else { return };
-        if !world.sea_allows(kind, Pos::from_pixels(at.0, at.1)) {
-            self.status = b"Nicht auf Wasser".to_vec();
+        if let Some(why) = world::refuse(world, kind, at.0, at.1) {
+            self.status = why.as_bytes().to_vec();
+            return;
+        }
+        if world.catalog.get(kind).building {
+            let owner = self.owner();
+            self.status = match world::place_building(world, kind, owner, at) {
+                Ok(name) => format!("{name}, fertig").into_bytes(),
+                Err(e) => e.into_bytes(),
+            };
             return;
         }
         let (n, owner, dir) = (self.count() as usize, self.owner(), self.facing());

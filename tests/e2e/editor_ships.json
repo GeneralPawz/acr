@@ -1,0 +1,114 @@
+{
+  "name": "editor_ships",
+  "description": "The test editor's Marine list (#406): on the sea ground a ship is put on the water and sails, a land unit and a building are refused.",
+  "steps": [
+    {
+      "cmd": "start",
+      "blank": {
+        "editor": true,
+        "ground": "sea"
+      }
+    },
+    {
+      "cmd": "wait",
+      "ticks": 5
+    },
+    {
+      "cmd": "click",
+      "label": "Nation",
+      "exact": true
+    },
+    {
+      "cmd": "click",
+      "label": "Nation England",
+      "exact": true
+    },
+    {
+      "cmd": "click",
+      "label": "(EngM18(EN))",
+      "note": "the Fuesilier icon"
+    },
+    {
+      "cmd": "click",
+      "pos": [
+        450,
+        400
+      ]
+    },
+    {
+      "cmd": "click",
+      "label": "Seite runter",
+      "exact": true,
+      "note": "scroll to the buildings"
+    },
+    {
+      "cmd": "click",
+      "label": "(EngCen(EN))",
+      "note": "the town hall icon"
+    },
+    {
+      "cmd": "click",
+      "pos": [
+        400,
+        400
+      ]
+    },
+    {
+      "cmd": "click",
+      "label": "Anzahl -",
+      "exact": true,
+      "note": "36 -> 15"
+    },
+    {
+      "cmd": "click",
+      "label": "Anzahl -",
+      "exact": true,
+      "note": "10"
+    },
+    {
+      "cmd": "click",
+      "label": "Anzahl -",
+      "exact": true,
+      "note": "5"
+    },
+    {
+      "cmd": "click",
+      "label": "Anzahl -",
+      "exact": true,
+      "note": "1"
+    },
+    {
+      "cmd": "click",
+      "label": "(ShpFregat(EN))",
+      "note": "the frigate icon"
+    },
+    {
+      "cmd": "click",
+      "pos": [
+        500,
+        400
+      ]
+    },
+    {
+      "cmd": "wait",
+      "ticks": 5
+    },
+    {
+      "cmd": "state",
+      "expect": [
+        {
+          "path": "state.counts.0.buildings.EngCen(EN)",
+          "exists": false
+        },
+        {
+          "path": "state.counts.0.units.EngM18(EN)",
+          "exists": false
+        },
+        {
+          "path": "state.counts.0.units.ShpFregat(EN)",
+          "eq": 1
+        }
+      ]
+    }
+  ]
+}
