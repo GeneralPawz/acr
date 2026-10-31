@@ -822,6 +822,14 @@ described in [simulation.md](simulation.md#fog-of-war).
     y0 − 9, `(w − 12)·(D − delay)/D` + 2 long with `D = MaxDelay` (+0x8f, 1 if 0) or
     `delay` (+0x8c) if larger: empty right after a shot, full when loaded. The end caps
     then reach down to y0 − 9.
+  - Buildings (OB+0x27 bit 4, 0x4bb6f8) get a garrison label over the bar: an 8 × 8 square in
+    `0xd0 + 4·owner` (OB+0x95) at (x0 + 5, y0 − 22) and, 12 px to its right with its bottom 4 px
+    above y0 − 10, `SmallWhiteFont` (0x92dc4c, FontM13 colour 1) text `%d/%d` (0x644798): the
+    units inside (OB+0xf0) and `MaxInside` (NM+0xd8) + `AddInside` (OB+0xa5). For objects
+    whose alliance mask shares no bit with the local player's nation (0x1114079 + 0x1a902·n)
+    it reads `?/%d` (0x644790) instead; ACR leaves out the extra test of OB+0xf2 bit 1
+    (storm flag, never set). Drawn for every building, also with capacity 0. ACR:
+    `inside_label`.
 - Gun marks (`ingame/gun_marks.rs`, not in the original, which draws no gun ranges; the
   red X of the canister mark before is gone): a selected own cannon (a type with
   `WEAPONINSECTOR`) shows on the ground what its fire mode covers, in the selection
