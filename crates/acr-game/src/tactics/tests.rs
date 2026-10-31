@@ -758,3 +758,92 @@ fn the_reserve_takes_a_broken_bodys_place() {
     assert!(moves_to(&later, &first_line).len() == 1, "the broken body falls back: {later:?}");
     assert!(later.iter().any(|c| matches!(c, Command::Reform { .. })));
 }
+
+/// The tick and the distance to the foe at which `pred` first holds of the orders given.
+fn first_order_at(
+    r: &mut Rig,
+    cm: &mut Commander,
+    (mine, foe): (&[EntityId], &[EntityId]),
+    ticks: u64,
+    pred: impl Fn(&Command) -> bool,
+) -> Option<i32> {
+    for _ in 0..ticks {
+        let cmds = cm.orders(&r.w);
+        let hit = cmds.iter().any(&pred);
+        let d = dist(centroid(&r.w, mine), centroid(&r.w, foe));
+        r.w.step(&cmds);
+        if hit {
+            return Some(d);
+        }
+    }
+    None
+}
+
+#[test]
+fn warriors_rush_only_within_reach() {
+    let rush_at = |style| {
+        let mut r = rig();
+        let warriors = formed(r.pike, &mut r, 0, (1500, 4000), 0, "LINE12");
+        let foe = crowd(&mut r.w, r.mus, 1, (3000, 4000), 12, (6, 20), 128);
+        let mut me = army(0, 0, vec![body(Duty::Melee, &warriors)]);
+        me.style = style;
+        let mut cm =
+            Commander::new(&r.w, [me, army(1, 128, vec![body(Duty::Line, &foe)])], [Control::Ai, Control::Player]);
+        first_order_at(&mut r, &mut cm, (&warriors, &foe), 4000, |c| matches!(c, Command::AttackMove { .. }))
+            .expect("the warriors rush")
+    };
+    let (band, linear) = (rush_at(Style::Warband), rush_at(Style::Linear));
+    assert!((400..=724).contains(&band), "the warband rushed from {band} px");
+    assert!(linear <= 324 && linear + 150 < band, "linear foot from {linear} px, warband from {band}");
+}
+
+#[test]
+fn archers_keep_behind_the_warriors() {
+    let mut r = rig();
+    let warriors = formed(r.pike, &mut r, 0, (1700, 4000), 0, "LINE12");
+    let archers = formed(r.mus, &mut r, 0, (1300, 4000), 0, "LINE12");
+    let foe = crowd(&mut r.w, r.mus, 1, (3400, 4000), 12, (6, 20), 128);
+    let mut me = army(0, 0, vec![body(Duty::Melee, &warriors), body(Duty::Missile, &archers)]);
+    me.style = Style::Warband;
+    let mut cm = Commander::new(&r.w, [me, army(1, 128, vec![body(Duty::Line, &foe)])], [Control::Ai, Control::Player]);
+    let mut rushed = false;
+    for _ in 0..3000 {
+        let cmds = cm.orders(&r.w);
+        rushed |= cmds.iter().any(|c| matches!(c, Command::AttackMove { .. }));
+        r.w.step(&cmds);
+        if !rushed && r.w.tick.0.is_multiple_of(10) {
+            let gap = centroid(&r.w, &warriors).0 - centroid(&r.w, &archers).0;
+            assert!(gap >= 100, "tick {}: the archers are {gap} px behind the warriors", r.w.tick.0);
+        }
+    }
+    assert!(rushed, "the warriors rushed");
+    assert_eq!(cm.report(0).halts, 1, "the archers halted");
+    let d = dist(centroid(&r.w, &archers), centroid(&r.w, &foe));
+    assert!((660..=808).contains(&d), "the archers halted {d} px from the foe (bow range 850)");
+    assert!(archers.iter().skip(1).all(|id| r.w.units[id.0 as usize].stand_ground));
+}
+
+#[test]
+fn clans_send_their_outer_groups_round_the_flank() {
+    let mut r = rig();
+    let foe = foe_line(&mut r, (3000, 6900));
+    let groups: Vec<Vec<EntityId>> =
+        [6000, 7000, 8000].iter().map(|&y| formed(r.pike, &mut r, 0, (1000, y), 0, "LINE12")).collect();
+    let bodies = groups
+        .iter()
+        .zip([-1000, 0, 1000])
+        .map(|(g, lateral)| Body { duty: Duty::Melee, units: g.clone(), lateral })
+        .collect();
+    let mut me = army(0, 0, bodies);
+    me.origin = (1000, 7000);
+    me.style = Style::Clans;
+    let mut cm = Commander::new(&r.w, [me, army(1, 128, vec![body(Duty::Line, &foe)])], [Control::Ai, Control::Player]);
+    let all = run(&mut r.w, &mut cm, 1200);
+    // The box: x 3000..3500, y 6900..7000; the route runs 600 px outside it.
+    let north = moves_to(&all, &groups[0]);
+    let south = moves_to(&all, &groups[2]);
+    assert!(north[0].1 <= 6900 - 600 + 20 && north[0].1 > 6000, "north WP1 {:?}", north[0]);
+    assert!(south[0].1 >= 7000 + 600 - 20, "south WP1 {:?}", south[0]);
+    // The middle group stays with the line: no flank waypoint, it is not a wing.
+    assert!(moves_to(&all, &groups[1]).iter().all(|p| (p.1 - 7000).abs() < 100), "{:?}", moves_to(&all, &groups[1]));
+}

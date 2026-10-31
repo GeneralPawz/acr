@@ -107,7 +107,7 @@ impl Squares {
                 })
                 .collect();
             let before = std::mem::replace(&mut b.seen, now.clone());
-            if p.alive == 0 || !matches!(duty, Duty::Line | Duty::Melee) {
+            if p.alive == 0 || p.cavalry || !matches!(duty, Duty::Line | Duty::Melee) {
                 b.state = State::Open;
                 continue;
             }

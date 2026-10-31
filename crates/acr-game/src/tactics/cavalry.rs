@@ -34,6 +34,9 @@ pub(super) const MAP_MARGIN: i32 = 320;
 const AHEAD: i32 = 300;
 /// ...and WP1 and WP2 this far outside the side of its box.
 const OUTSIDE: i32 = 400;
+/// Foot that flanks like a wing (the outer warrior groups of the clans) rides this far outside
+/// the box instead, pixels.
+pub(super) const FOOT_OUTSIDE: i32 = 600;
 /// A route with less room than this left outside the box (after clamping) is blocked, pixels.
 const ROOM: i32 = 150;
 /// A wing has reached a waypoint within this, pixels.
@@ -94,7 +97,7 @@ enum State {
     Spent,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 struct Wing {
     state: State,
     /// Where the wing stood at the first decision.
@@ -102,6 +105,16 @@ struct Wing {
     /// The enemy body it charges and where the last `AttackMove` was aimed.
     target: Option<usize>,
     aim: Option<(i32, i32)>,
+    /// How far outside the enemy's box the route runs ([`OUTSIDE`], or [`FOOT_OUTSIDE`] for foot).
+    outside: i32,
+    /// Foot that found no way to flank and no frontal target after its release: the line has it.
+    gave_up: bool,
+}
+
+impl Default for Wing {
+    fn default() -> Self {
+        Self { state: State::Hold, home: None, target: None, aim: None, outside: OUTSIDE, gave_up: false }
+    }
 }
 
 /// The cavalry wings of one side.
@@ -166,7 +179,7 @@ pub(super) fn best(world: &World, v: &View, from: (i32, i32), frontal: bool, kep
 
 /// The flank route of a wing at army-frame side `s` round the enemy's box, in world pixels,
 /// and whether the map leaves too little room for it. `None` without a living enemy.
-fn route(world: &World, v: &View, s: i32) -> Option<([(i32, i32); 2], bool)> {
+fn route(world: &World, v: &View, s: i32, outside: i32) -> Option<([(i32, i32); 2], bool)> {
     let (mut f_min, mut f_max, mut s_min, mut s_max) = (i32::MAX, i32::MIN, i32::MAX, i32::MIN);
     for id in v.foe.bodies.iter().flat_map(|b| &b.units) {
         let Some(u) = living(world, *id) else { continue };
@@ -178,7 +191,7 @@ fn route(world: &World, v: &View, s: i32) -> Option<([(i32, i32); 2], bool)> {
         return None;
     }
     let side = if s < (s_min + s_max) / 2 { -1 } else { 1 };
-    let (edge, box_edge) = if side < 0 { (s_min - OUTSIDE, s_min) } else { (s_max + OUTSIDE, s_max) };
+    let (edge, box_edge) = if side < 0 { (s_min - outside, s_min) } else { (s_max + outside, s_max) };
     let limit = MapSize { shift: world.map.shift }.playable_size() - MAP_MARGIN;
     let mut blocked = false;
     let mut point = |f: i32| {
@@ -194,22 +207,33 @@ fn route(world: &World, v: &View, s: i32) -> Option<([(i32, i32); 2], bool)> {
 }
 
 impl Wings {
-    /// One decision of the wings of `v.me`; they hold until the tick `release`.
+    /// Whether the wings still command body `i`: a flanking foot body they gave up on is the
+    /// line's again.
+    pub(super) fn keeps(&self, i: usize) -> bool {
+        !self.wings.get(i).is_some_and(|w| w.gave_up)
+    }
+
+    /// One decision of the wings of `v.me` and of the foot bodies `flank` that flank like wings;
+    /// they hold until the tick `release`.
     pub(super) fn decide(
         &mut self,
         world: &World,
         v: &View,
-        release: u64,
+        (release, flank): (u64, &[usize]),
         (out, report): (&mut Vec<Command>, &mut Report),
     ) {
         let n = v.me.bodies.len();
         self.wings.resize_with(n, Wing::default);
-        let is_wing = |i: usize| v.me.bodies[i].duty == Duty::Cavalry;
+        let is_wing = |i: usize| v.me.bodies[i].duty == Duty::Cavalry || flank.contains(&i);
         if !(0..n).any(is_wing) {
             return;
         }
         for i in (0..n).filter(|&i| is_wing(i)) {
-            self.wings[i].home.get_or_insert(v.mine[i].centroid);
+            let w = &mut self.wings[i];
+            w.home.get_or_insert(v.mine[i].centroid);
+            if v.me.bodies[i].duty != Duty::Cavalry {
+                w.outside = FOOT_OUTSIDE;
+            }
         }
         let sent = self.intercept(v);
         let mut ctx = Ctx { world, v, release, out, report };
@@ -218,7 +242,9 @@ impl Wings {
             ctx.report.charges += 1;
         }
         for i in (0..n).filter(|&i| is_wing(i) && v.mine[i].alive > 0) {
-            self.wings[i].step(&mut ctx, i);
+            if !self.wings[i].gave_up {
+                self.wings[i].step(&mut ctx, i);
+            }
         }
     }
 
@@ -359,7 +385,7 @@ impl Wing {
         if c.v.tick < c.release {
             return;
         }
-        match route(c.world, c.v, c.v.mine[i].s) {
+        match route(c.world, c.v, c.v.mine[i].s, self.outside) {
             Some((route, false)) => {
                 let wp1 = route[0];
                 self.go(c, i, wp1, c.v.me.facing);
@@ -368,7 +394,7 @@ impl Wing {
             Some((_, true)) if best(c.world, c.v, c.v.mine[i].centroid, true, None).is_some() => {
                 self.enter_charge(c, i, Aim::Best { frontal: true });
             }
-            _ => {}
+            _ => self.gave_up = c.v.me.bodies[i].duty != Duty::Cavalry,
         }
     }
 
