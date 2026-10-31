@@ -114,15 +114,18 @@ fn dirt(in: VsOut, crater: bool) -> vec4<f32> {
     var alpha: f32;
     if (crater) {
         let pit = 1.0 - smoothstep(0.15, 0.45, d);
-        let earth = mix(vec3<f32>(0.16, 0.11, 0.07), vec3<f32>(0.22, 0.16, 0.10), speck);
-        rgb = mix(earth, vec3<f32>(0.05, 0.035, 0.025), pit);
+        // Dark soil and soot (#338): these are linear values, the brighter ones read as pale
+        // tan once sRGB-encoded.
+        let earth = mix(vec3<f32>(0.045, 0.032, 0.021), vec3<f32>(0.065, 0.047, 0.031), speck);
+        rgb = mix(earth, vec3<f32>(0.012, 0.009, 0.006), pit);
         alpha = smoothstep(1.0, 0.7, d) * 0.92;
     } else {
         rgb = mix(vec3<f32>(0.20, 0.15, 0.10), vec3<f32>(0.30, 0.25, 0.18), speck);
         alpha = smoothstep(1.0, 0.4, d) * 0.7;
     }
     // Dust settles: the fresh earth greys towards the ground's colour.
-    rgb = mix(rgb, vec3<f32>(0.24, 0.21, 0.16), 0.5 * in.look.x);
+    let settled = select(vec3<f32>(0.24, 0.21, 0.16), vec3<f32>(0.075, 0.062, 0.046), crater);
+    rgb = mix(rgb, settled, 0.5 * in.look.x);
     alpha = alpha * mix(1.0, 0.6, in.look.x) * in.look.y;
     if (globals.params.x > 0.5) {
         rgb = to_srgb(rgb);

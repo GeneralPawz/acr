@@ -131,7 +131,12 @@ pub fn crater(cause: DeathCause, at: [f32; 2], dir: [f32; 2]) -> Vec<Stamp> {
             }
             out
         }
-        DeathCause::Explosion => vec![base(1.0, -0.25, 0.08, 0.9)],
+        // A dark crater of churned soil (the mud channel darkens the bare earth) inside a
+        // wider soot patch (#338): no pale dug soil, no bright rim.
+        DeathCause::Explosion => vec![
+            Stamp { mud: 0.8, ..base(1.0, -0.25, 0.08, 0.9) },
+            Stamp { scorch: 0.55, ..Stamp::print(at, [1.0, 0.0], [metres(1.7), metres(1.7)], 0.0, 0.0) },
+        ],
         DeathCause::Grapeshot => vec![base(0.12, -0.05, 0.015, 0.0)],
         _ => Vec::new(),
     }
@@ -240,7 +245,8 @@ mod tests {
         let c = crater(DeathCause::Cannonball, [1000.0, 1000.0], [1.0, 0.0]);
         assert_eq!(c.len(), 2);
         let shell = crater(DeathCause::Explosion, [1000.0, 1000.0], [0.0, 0.0]);
-        assert!(shell[0].scorch > 0.5);
+        assert!(shell[0].scorch > 0.5 && shell[0].mud >= 0.7, "a dark, soot-black crater");
+        assert!(shell[1].scorch > 0.4 && shell[1].half[0] > shell[0].half[0], "a soot patch around it");
         assert!(crater(DeathCause::Melee, [0.0, 0.0], [1.0, 0.0]).is_empty());
     }
 }
