@@ -1194,8 +1194,9 @@ impl InGame {
             } else if it.building && !t.building {
                 icon.action = Some(HudCommand::Place(usize::from(k.0)));
             } else {
-                let queued: usize = working.iter().map(|b| b.queue.iter().filter(|q| q.kind == k).count()).sum();
-                icon.count = (queued > 0).then_some(queued as i32);
+                // `GetProduceCount` (0x49e060): an endless order counts 1200, any other 1.
+                let queued: i32 = working.iter().flat_map(|b| &b.queue).filter(|q| q.kind == k).map(order_count).sum();
+                icon.count = (queued > 0).then_some(queued);
                 icon.life = working
                     .iter()
                     .find_map(|b| b.queue.first().filter(|q| q.kind == k).map(|q| (q.progress, q.stages.max(1))));
@@ -1320,30 +1321,40 @@ impl InGame {
     }
 
     /// Production orders for the selected buildings (`Produce` 0x4d6226, `UnProduce`
-    /// 0x4d6e08), five with Shift. A new unit goes to the building with the shortest queue,
-    /// a cancel to the one with the most units of the type queued.
+    /// 0x4d6e08), five with Shift, one endless order with Ctrl (bit 0x2000 of the type,
+    /// 0x4d6226). A new unit goes to the building with the shortest queue, a cancel to the
+    /// one with the most of the type queued (an endless order counting 1200, so first).
     fn queue_orders(&mut self, kind: TypeId, produce: bool) {
         let player = self.own();
-        let mut queues: Vec<(EntityId, usize, usize)> = self
+        let endless = produce && self.interface.mods.control_key();
+        // Per building: the queue length and the counts of its orders of the type in the order
+        // `UnProduce` (0x4dbd47) takes them, the waiting ones first, then the head.
+        let mut queues: Vec<(EntityId, usize, Vec<i32>)> = self
             .selected_units()
             .filter(|u| u.building && u.owner == player)
-            .map(|u| (u.id, u.queue.len(), u.queue.iter().filter(|q| q.kind == kind).count()))
+            .map(|u| {
+                let of_kind =
+                    |i: usize, q: &acr_sim::economy::Production| (q.kind == kind).then(|| (i, order_count(q)));
+                let mut taken: Vec<_> = u.queue.iter().enumerate().skip(1).filter_map(|(i, q)| of_kind(i, q)).collect();
+                taken.extend(u.queue.first().and_then(|q| of_kind(0, q)));
+                (u.id, u.queue.len(), taken.into_iter().map(|(_, n)| n).rev().collect())
+            })
             .collect();
-        let n = if self.interface.mods.shift_key() { SHIFT_REPEAT } else { 1 };
+        let n = if self.interface.mods.shift_key() && !endless { SHIFT_REPEAT } else { 1 };
         for _ in 0..n {
             let pick = if produce {
                 queues.iter_mut().min_by_key(|q| q.1)
             } else {
-                queues.iter_mut().filter(|q| q.2 > 0).max_by_key(|q| q.2)
+                queues.iter_mut().filter(|q| !q.2.is_empty()).max_by_key(|q| q.2.iter().sum::<i32>())
             };
             let Some(q) = pick else { break };
             let building = q.0;
             if produce {
                 q.1 += 1;
-                self.commands.push(Command::Produce { player, building, kind });
+                self.commands.push(Command::Produce { player, building, kind, endless });
             } else {
                 q.1 -= 1;
-                q.2 -= 1;
+                q.2.pop();
                 self.commands.push(Command::Unproduce { player, building, kind });
             }
         }
@@ -1572,7 +1583,9 @@ impl InGame {
                     self.interface.hints.push(Hint::UnitLimit);
                     return;
                 }
-                if self.can_afford(TypeId(kind as u16)) {
+                // Ctrl (0x4d6226) orders an endless unit, which is queued even when it cannot be
+                // paid yet; the plain order needs `CanAfford` first.
+                if self.interface.mods.control_key() || self.can_afford(TypeId(kind as u16)) {
                     self.queue_orders(TypeId(kind as u16), true);
                 }
             }
@@ -2561,6 +2574,8 @@ impl InGame {
                 self.commands.push(Command::Move { player, units: self.selected.clone(), x, y });
                 self.unit_sound(self.selected[0], "ORDER_SOUND");
             }
+            // An icon's right-click command (`UnProduce` 0x4d6e08, cancelling an upgrade).
+            HudEvent::Command(c) => self.hud_command(c),
             HudEvent::None if self.interface.attack_ground_mode => self.attack_ground_at(at),
             HudEvent::None if self.cancel_mode() => {}
             HudEvent::None => {
@@ -2797,6 +2812,11 @@ impl InGame {
             }
         }
     }
+}
+
+/// What an order counts as in `GetProduceCount` (0x49e060): 1200 if endless, else 1.
+fn order_count(q: &acr_sim::economy::Production) -> i32 {
+    if q.endless { acr_sim::economy::ENDLESS_COUNT } else { 1 }
 }
 
 /// `PAUSETEXT` while the game is paused (0x4c0130): `BigWhiteFont` centred at half the

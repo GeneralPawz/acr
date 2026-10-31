@@ -68,7 +68,7 @@ fn buildings_produce_units_and_prices_grow() {
     // Two centres exist: the next one costs 100 * 2 * 2.
     assert_eq!(economy::unit_cost(&w, 0, cen, None)[WOOD], 400);
     let food = w.players[0].resources[FOOD];
-    w.step(&[Command::Produce { player: 0, building: center, kind: kri }]);
+    w.step(&[Command::Produce { player: 0, building: center, kind: kri, endless: false }]);
     assert_eq!(w.players[0].resources[FOOD], food - 50, "paid when queued");
     assert_eq!(w.units[center.0 as usize].queue.len(), 1);
     // BUILDSTAGES 20 at +2 per tick, counting the tick of the order: done on the 10th.
@@ -91,7 +91,7 @@ fn buildings_produce_units_and_prices_grow() {
         w.spawn(kri, 0, Pos::from_pixels(1000 + 40 * i, 3000), 0);
     }
     economy::census_all(&mut w);
-    w.step(&[Command::Produce { player: 0, building: second, kind: kri }]);
+    w.step(&[Command::Produce { player: 0, building: second, kind: kri, endless: false }]);
     run(&mut w, 50);
     assert_eq!(w.units[second.0 as usize].queue.len(), 1, "waits for housing");
     // Cancelling refunds the price.
@@ -99,6 +99,111 @@ fn buildings_produce_units_and_prices_grow() {
     w.step(&[Command::Unproduce { player: 0, building: second, kind: kri }]);
     assert!(w.units[second.0 as usize].queue.is_empty());
     assert!(w.players[0].resources[FOOD] >= food + 49, "refunded");
+}
+
+/// A centre with room for `homes * 3` units and the food to pay for them.
+fn endless_setup(homes: i32) -> (World, TypeId, EntityId) {
+    let (mut w, kri, _, cen) = setup();
+    let center = w.spawn(cen, 0, Pos::from_pixels(2048, 2048), 0);
+    for i in 1..homes {
+        w.spawn(cen, 0, Pos::from_pixels(2048 + 400 * i, 4096), 0);
+    }
+    economy::census_all(&mut w);
+    w.players[0].resources[FOOD] = 10_000;
+    (w, kri, center)
+}
+
+fn endless(w: &mut World, building: EntityId, kind: TypeId) -> bool {
+    w.step(&[Command::Produce { player: 0, building, kind, endless: true }]);
+    w.units[building.0 as usize].queue.iter().any(|q| q.kind == kind && q.endless)
+}
+
+#[test]
+fn an_endless_order_renews_itself_and_pays_each_unit() {
+    let (mut w, kri, center) = endless_setup(4);
+    assert!(endless(&mut w, center, kri));
+    assert_eq!(w.players[0].resources[FOOD], 10_000 - 50, "paid when queued");
+    let before = w.units.iter().filter(|u| u.kind == kri).count();
+    run(&mut w, 60);
+    let made = w.units.iter().filter(|u| u.kind == kri).count() - before;
+    assert!(made >= 5, "{made} units came");
+    let q = &w.units[center.0 as usize].queue;
+    assert_eq!(q.len(), 1, "one order is always waiting");
+    assert!(q[0].endless && q[0].power != economy::UNPAID);
+    // Every unit made and the order now waiting were paid (and the peasants eat a little).
+    let paid = 10_000 - w.players[0].resources[FOOD];
+    assert!(paid >= 50 * (made as i32 + 1), "{paid}");
+}
+
+#[test]
+fn a_second_endless_order_of_the_type_is_refused() {
+    let (mut w, kri, center) = endless_setup(2);
+    assert!(endless(&mut w, center, kri));
+    let food = w.players[0].resources[FOOD];
+    w.step(&[Command::Produce { player: 0, building: center, kind: kri, endless: true }]);
+    assert_eq!(w.units[center.0 as usize].queue.len(), 1);
+    assert_eq!(w.players[0].resources[FOOD], food, "nothing paid");
+}
+
+#[test]
+fn an_endless_order_replaces_the_normal_orders_of_its_type_with_refund() {
+    let (mut w, kri, center) = endless_setup(2);
+    let normal = Command::Produce { player: 0, building: center, kind: kri, endless: false };
+    w.step(&[normal.clone(), normal]);
+    assert_eq!(w.units[center.0 as usize].queue.len(), 2);
+    assert_eq!(w.players[0].resources[FOOD], 10_000 - 100);
+    assert!(endless(&mut w, center, kri));
+    let q = &w.units[center.0 as usize].queue;
+    assert_eq!(q.len(), 1, "both normal orders are gone");
+    assert_eq!(w.players[0].resources[FOOD], 10_000 - 50, "refunded, the endless one paid");
+    assert_eq!(economy::queue_count(&w, center.0 as usize), economy::ENDLESS_COUNT);
+}
+
+#[test]
+fn an_unaffordable_endless_order_is_queued_and_paid_later() {
+    let (mut w, kri, center) = endless_setup(2);
+    w.players[0].resources[FOOD] = 40;
+    assert!(endless(&mut w, center, kri), "queued although it cannot be paid");
+    assert_eq!(w.units[center.0 as usize].queue[0].power, economy::UNPAID);
+    run(&mut w, 20);
+    assert_eq!(w.units[center.0 as usize].queue[0].power, economy::UNPAID, "still waiting");
+    assert_eq!(w.units[center.0 as usize].queue[0].progress, 0);
+    // With the food there it is paid on the next retry and starts.
+    w.players[0].resources[FOOD] = 10_000;
+    run(&mut w, 3);
+    let q = &w.units[center.0 as usize].queue;
+    assert_ne!(q[0].power, economy::UNPAID);
+    assert!(w.players[0].resources[FOOD] <= 10_000 - 50);
+    // A normal order that cannot be paid is still refused.
+    w.players[0].resources[FOOD] = 40;
+    w.step(&[Command::Produce { player: 0, building: center, kind: kri, endless: false }]);
+    assert_eq!(w.units[center.0 as usize].queue.len(), 1);
+}
+
+#[test]
+fn an_endless_order_is_not_paid_below_500_food() {
+    let (mut w, kri, center) = endless_setup(2);
+    w.players[0].resources[FOOD] = 499;
+    assert!(endless(&mut w, center, kri));
+    assert_eq!(w.units[center.0 as usize].queue[0].power, economy::UNPAID, "0x49ea70");
+    assert_eq!(w.players[0].resources[FOOD], 499);
+}
+
+#[test]
+fn unproduce_removes_an_endless_order_and_refunds_what_was_paid() {
+    let (mut w, kri, center) = endless_setup(2);
+    assert!(endless(&mut w, center, kri));
+    w.step(&[Command::Unproduce { player: 0, building: center, kind: kri }]);
+    assert!(w.units[center.0 as usize].queue.is_empty());
+    run(&mut w, 30);
+    assert!(w.units[center.0 as usize].queue.is_empty(), "nothing renews it");
+    assert!(w.players[0].resources[FOOD] >= 10_000 - 1, "refunded");
+    // An unpaid one has nothing to give back.
+    w.players[0].resources[FOOD] = 40;
+    assert!(endless(&mut w, center, kri));
+    w.step(&[Command::Unproduce { player: 0, building: center, kind: kri }]);
+    assert!(w.units[center.0 as usize].queue.is_empty());
+    assert_eq!(w.players[0].resources[FOOD], 40);
 }
 
 #[test]
@@ -231,8 +336,8 @@ fn production_follows_the_build_lists_and_access_control() {
     let center = w.spawn(cen, 0, Pos::from_pixels(2048, 2048), 0);
     economy::census_all(&mut w);
     assert_eq!(economy::producible(&w, center.0 as usize), [kri], "pikemen need barracks");
-    w.step(&[Command::Produce { player: 0, building: center, kind: pik }]);
-    w.step(&[Command::Produce { player: 0, building: center, kind: cen }]);
+    w.step(&[Command::Produce { player: 0, building: center, kind: pik, endless: false }]);
+    w.step(&[Command::Produce { player: 0, building: center, kind: cen, endless: false }]);
     assert!(w.units[center.0 as usize].queue.is_empty(), "refused");
     // A finished barracks enables the pikemen at the next census.
     let site = w.spawn(bar, 0, Pos::from_pixels(3000, 2048), 0);
@@ -242,7 +347,7 @@ fn production_follows_the_build_lists_and_access_control() {
     w.units[site.0 as usize].stage = 10;
     economy::census_all(&mut w);
     assert_eq!(economy::producible(&w, center.0 as usize), [kri, pik]);
-    w.step(&[Command::Produce { player: 0, building: center, kind: pik }]);
+    w.step(&[Command::Produce { player: 0, building: center, kind: pik, endless: false }]);
     assert_eq!(w.units[center.0 as usize].queue.len(), 1);
     // Barracks have no rally point (`[CANSETDEST]`).
     w.step(&[Command::Rally { player: 0, building: site, x: 100, y: 100 }]);
@@ -256,7 +361,7 @@ fn produced_units_walk_to_the_rally_point() {
     economy::census_all(&mut w);
     w.step(&[
         Command::Rally { player: 0, building: center, x: 2600, y: 2400 },
-        Command::Produce { player: 0, building: center, kind: kri },
+        Command::Produce { player: 0, building: center, kind: kri, endless: false },
     ]);
     // BUILDSTAGES 64 (the builder's default): 32 ticks, then the walk.
     for _ in 0..600 {
@@ -280,7 +385,7 @@ fn a_rally_point_on_trees_sends_peasants_to_chop() {
     economy::census_all(&mut w);
     w.step(&[
         Command::Rally { player: 0, building: center, x: 2620, y: 2400 },
-        Command::Produce { player: 0, building: center, kind: kri },
+        Command::Produce { player: 0, building: center, kind: kri, endless: false },
     ]);
     for _ in 0..33 {
         w.step(&[]);

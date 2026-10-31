@@ -566,8 +566,14 @@ builds the icons.
 - For a unit producer:
   - the icon shows the number queued in the selected buildings (flag 8) and the head order's
     progress as its life bar;
-  - left click: `Produce` (0x6088c0, 0x4d6226), five times with Shift;
-  - right click: `Unproduce` (0x608810, 0x4d6e08), five times with Shift;
+  - left click: `Produce` (0x6088c0, 0x4d6226), five times with Shift; with Ctrl one endless
+    order (bit 0x2000 of the type word, command 0x4e), queued without the `CanAfford` check;
+  - an endless order counts 1200 (`GetProduceCount` 0x49e060): from 1200 the icon draws the
+    infinity sign as twelve line segments (0x494ad5 through 0x443ea2: colour 0 shifted by
+    (2, 2) under colour 0xae, at (3, 3) of the icon) and, if `count / 1200 > 1`, that number
+    at the top right (0x495294). The font of that number (0x90d69c) is taken as the yellow one;
+  - right click: `Unproduce` (0x608810, 0x4d6e08), five times with Shift; it removes an
+    endless order like any other;
   - the key from the list presses the icon.
 - Several selected buildings: ACR sends a new unit to the building with the shortest queue
   and a cancel to the one with most units of that type queued. The original's choice in
