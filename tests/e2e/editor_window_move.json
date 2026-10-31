@@ -1,0 +1,31 @@
+{
+  "name": "editor_window_move",
+  "description": "The test editor's window is movable, minimisable and resizable (ACR's own): the handle in the title row moves both boxes, the \"_\" button folds it to the title row, the corner grip widens it to more icon columns, and a loaded editor game opens it where it was left (the place is the editor_window setting).",
+  "steps": [
+    {"cmd": "start", "blank": {"editor": true}},
+    {"cmd": "wait", "ticks": 5},
+    {"cmd": "click", "label": "Nation", "exact": true},
+    {"cmd": "click", "label": "Nation Frankreich", "exact": true},
+    {"cmd": "click", "label": "Anzahl +", "exact": true, "capture": {"ax": "target.rect.0", "ay": "target.rect.1"}, "note": "the extras box, where the original's place has it"},
+    {"cmd": "drag", "from": {"label": "Editor verschieben", "exact": true}, "to": [580, 130], "note": "left button: 300 px left, 70 down"},
+    {"cmd": "wait", "frames": 3},
+    {"cmd": "click", "label": "Anzahl +", "exact": true, "expect": [{"path": "target.rect.0", "lt": "${ax}"}, {"path": "target.rect.1", "gt": "${ay}"}], "note": "both boxes moved"},
+    {"cmd": "click", "label": "(Frn", "index": 0, "capture": {"row1": "target.rect.1"}},
+    {"cmd": "click", "label": "(Frn", "index": 5, "expect": {"path": "target.rect.1", "gt": "${row1}"}, "note": "five columns: the sixth icon starts the second row"},
+    {"cmd": "drag", "from": {"label": "Editor Groesse", "exact": true}, "to": [900, 700], "note": "wider, taller"},
+    {"cmd": "wait", "frames": 3},
+    {"cmd": "click", "label": "(Frn", "index": 5, "expect": [{"path": "target.rect.1", "eq": "${row1}"}], "note": "now six icons fit in the first row"},
+    {"cmd": "click", "label": "Editor minimieren", "exact": true},
+    {"cmd": "wait", "frames": 2},
+    {"cmd": "click", "label": "Anzahl +", "exact": true, "expect": {"ok": false}, "note": "folded to the title row"},
+    {"cmd": "click", "label": "Editor minimieren", "exact": true, "capture": {"mx": "target.rect.0", "my": "target.rect.1"}},
+    {"cmd": "wait", "frames": 2},
+    {"cmd": "click", "label": "Anzahl +", "exact": true, "capture": {"bx": "target.rect.0", "by": "target.rect.1"}, "note": "unfolded again"},
+    {"cmd": "save", "name": "e2e_editor_move"},
+    {"cmd": "load", "name": "e2e_editor_move"},
+    {"cmd": "wait", "until": {"in_game": true}, "timeout": 20000},
+    {"cmd": "wait", "ticks": 5},
+    {"cmd": "click", "label": "Anzahl +", "exact": true, "expect": [{"path": "target.rect.0", "eq": "${bx}"}, {"path": "target.rect.1", "eq": "${by}"}], "note": "a loaded editor game opens its window where it was left (the setting, not the savegame)"},
+    {"cmd": "click", "label": "Editor minimieren", "exact": true, "expect": [{"path": "target.rect.0", "eq": "${mx}"}]}
+  ]
+}

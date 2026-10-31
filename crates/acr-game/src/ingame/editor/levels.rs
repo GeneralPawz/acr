@@ -8,7 +8,7 @@
 use acr_sim::tech::{Effect, UpgradeId, Value, ctg};
 use acr_sim::{TypeId, World};
 
-use super::{BOX_X1, ROW};
+use super::ROW;
 use crate::hud::SCREEN;
 use crate::ui::draw::Rect;
 
@@ -104,10 +104,10 @@ pub fn apply(world: &mut World, owner: u8, kind: TypeId, level: usize) -> usize 
 impl Menu {
     /// The lines' rectangles for `n` levels whose longest name has `chars` characters:
     /// under the icon, moved up or left to stay on the screen and clear of the window's edge.
-    pub fn rows(&self, n: usize, chars: usize) -> Vec<Rect> {
+    pub fn rows(&self, n: usize, chars: usize, box_x1: i32) -> Vec<Rect> {
         let h = n as i32 * ROW;
         let width = (chars as i32 * CHAR_W + 8).clamp(MIN_WIDTH, MAX_WIDTH);
-        let x = self.anchor.x0.min(BOX_X1 - width - 2).max(0);
+        let x = self.anchor.x0.min(box_x1 - width - 2).max(0);
         let below = self.anchor.y1;
         let y = if below + h > SCREEN[1] { (self.anchor.y0 - h).max(0) } else { below };
         (0..n as i32).map(|i| Rect::new(x, y + i * ROW, width, ROW)).collect()
@@ -178,11 +178,11 @@ mod tests {
     #[test]
     fn the_drop_down_stays_on_screen() {
         let menu = Menu { kind: TypeId(0), anchor: Rect::new(900, 700, 41, 41) };
-        let rows = menu.rows(4, 10);
-        assert!(rows.iter().all(|r| r.x1 <= BOX_X1 && r.y1 <= SCREEN[1]));
-        assert!(menu.rows(2, 70)[0].width() > rows[0].width(), "long texts widen it");
+        let rows = menu.rows(4, 10, 1004);
+        assert!(rows.iter().all(|r| r.x1 <= 1004 && r.y1 <= SCREEN[1]));
+        assert!(menu.rows(2, 70, 1004)[0].width() > rows[0].width(), "long texts widen it");
         assert_eq!(rows[1].y0 - rows[0].y0, ROW);
         let high = Menu { kind: TypeId(0), anchor: Rect::new(760, 100, 41, 41) };
-        assert_eq!(high.rows(2, 10)[0].y0, 141);
+        assert_eq!(high.rows(2, 10, 1004)[0].y0, 141);
     }
 }

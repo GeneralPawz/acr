@@ -35,8 +35,10 @@ use crate::ui::fonts::FontId;
 use crate::ui::screens::font as menu_font;
 
 mod battle;
+pub mod frame;
 mod presets;
 
+use frame::{Drag, Frame, Grab};
 use input::Input;
 
 const WHITE: FontId = FontId("SmallWhiteFont");
@@ -50,7 +52,6 @@ const OX: i32 = SCREEN[0] - 259 - 10;
 const OY: i32 = 48 + 31;
 /// The window's box (`addBorder(0, −31, 249, 386, 74, 3)`, 0x47c05b): its right and bottom
 /// edge and the divider under the colours and the combo box.
-const BOX_X1: i32 = OX + 249;
 const BOX_Y0: i32 = OY - 31;
 const BOX_Y1: i32 = OY + 386;
 const DIVIDER: i32 = OY + 74;
@@ -58,8 +59,6 @@ const DIVIDER: i32 = OY + 74;
 /// panel's paper (0x6686a0), both with fill 0x1c.
 const HEADER_CORNERS: [i32; 8] = [17, 18, -1, -1, 12, 14, 23, -1];
 const PAPER_FILL: usize = 28;
-/// The clipped content (`addClipper(DS.x + 4, DS.y + 75, RealLx, DS.y + 386)`).
-const CONTENT: Rect = Rect { x0: OX + 4, y0: OY + 75, x1: BOX_X1, y1: BOX_Y1 };
 /// Icon cells: 41 × 41 on a 44 pixel pitch, five to a row from x = 6 (0x5bb9d7); a category
 /// header takes 20 pixels, the first one starts at y = 80 (0x5bb8c2).
 const CELL: i32 = 41;
@@ -192,6 +191,8 @@ pub enum Act {
     AutoReload,
     Control,
     Hide,
+    /// Takes hold of the title row's handle or the corner grip ([`frame`]).
+    Grab(Grab),
 }
 
 /// How an item is drawn.
@@ -204,22 +205,41 @@ pub enum Look {
     /// A category header of the grid.
     Header,
     /// A box of the window: with a divider below the colours, or plain paper.
-    Frame { divider: Option<i32> },
+    Frame {
+        divider: Option<i32>,
+    },
     /// A unit icon (`ICONS.GP` frame) in its cell.
-    Icon { frame: Option<usize> },
+    Icon {
+        frame: Option<usize>,
+    },
     /// A ground texture: its colour (RGB) fills the cell.
-    Texture { colour: [u8; 3] },
+    Texture {
+        colour: [u8; 3],
+    },
     /// A map object's frame of the pack in [`Item::gp`], its ground point `(ox, oy)` at the
     /// bottom centre of the cell, clipped to it; the name stands in the cell without a pack.
-    Sprite { frame: usize, ox: i32, oy: i32 },
+    Sprite {
+        frame: usize,
+        ox: i32,
+        oy: i32,
+    },
     /// A player colour; `hot` adds the larger outline.
-    Swatch { owner: u8 },
+    Swatch {
+        owner: u8,
+    },
     /// The closed combo box.
     Combo,
     /// A line of the open combo box.
     DropRow,
     /// The scroll bar, drawn as a whole.
-    Bar { pos: i32, max: i32 },
+    Bar {
+        pos: i32,
+        max: i32,
+    },
+    /// The title row's handle (dots), the "_" button and the corner grip (ACR's, [`frame`]).
+    Handle,
+    Minimise,
+    Corner,
 }
 
 /// One thing of the window: where it is, what it says, whether it is highlighted.
@@ -264,8 +284,10 @@ pub struct View<'a> {
 
 #[derive(Debug, Clone)]
 pub struct Editor {
-    /// The window is shown (F2 or its title toggles).
-    pub open: bool,
+    /// Where the window stands and how big it is; folded: only the title row (F2, "_", the title).
+    pub frame: Frame,
+    /// The handle or corner grip being dragged.
+    drag: Option<Drag>,
     /// The combo box line: an index in [`ENTRIES`].
     entry: usize,
     combo_open: bool,
@@ -318,7 +340,8 @@ pub struct Editor {
 impl Default for Editor {
     fn default() -> Self {
         Self {
-            open: true,
+            frame: frame::DEFAULT,
+            drag: None,
             entry: DEFAULT_ENTRY,
             combo_open: false,
             scroll: 0,
@@ -521,24 +544,25 @@ pub enum Placed {
 }
 
 /// The grid's flow (0x5bb8c2): from y = 80 relative to the window's origin, a header per
-/// group and its icons five to a row; returns the places and the y after the last row.
-pub fn flow(groups: &[Group]) -> (Vec<Placed>, i32) {
+/// group and its icons `columns` (five in the original) to a row; returns the places and the y
+/// after the last row.
+pub fn flow(groups: &[Group], columns: usize) -> (Vec<Placed>, i32) {
     let mut out = Vec::new();
     let mut y = FIRST_ROW;
     for (g, group) in groups.iter().enumerate() {
         out.push(Placed::Header(g, y));
         y += HEADER_H;
         for (i, _) in group.kinds.iter().enumerate() {
-            out.push(Placed::Cell(g, i, i % COLUMNS, y + (i / COLUMNS) as i32 * PITCH));
+            out.push(Placed::Cell(g, i, i % columns, y + (i / columns) as i32 * PITCH));
         }
-        y += group.kinds.len().div_ceil(COLUMNS) as i32 * PITCH;
+        y += group.kinds.len().div_ceil(columns) as i32 * PITCH;
     }
     (out, y)
 }
 
 /// How far the icons scroll: the content's end less the visible height (0x5bba8a).
-pub fn scroll_max(end: i32) -> i32 {
-    (end - VISIBLE_H).max(0)
+pub fn scroll_max(end: i32, visible: i32) -> i32 {
+    (end - visible).max(0)
 }
 
 /// The formations soldiers of `kind` can stand in, as their officers list them.
@@ -603,6 +627,28 @@ impl Editor {
 
     /// The window's items in drawing order (hit tests go from the back).
     pub fn layout(&self, world: &World, view: &View, local: u8) -> Vec<Item> {
+        // Built at the original's place in the window's size, then moved.
+        let (dx, dy) = self.frame.shift();
+        let mut out = self.build(world, view, local);
+        for i in &mut out {
+            i.rect = i.rect.offset(dx, dy);
+        }
+        // The level drop-down, over everything.
+        if let Some(menu) = self.menu {
+            let names = levels::names(world, menu.kind, view.upgrade_name);
+            let rows = menu.rows(names.len(), names.iter().map(Vec::len).max().unwrap_or(0), self.frame.x1());
+            for (n, (rect, text)) in rows.into_iter().zip(names).enumerate() {
+                let name = format!("Ausbau {}", String::from_utf8_lossy(&text));
+                let hot = self.pick == Some(Pick::Unit(menu.kind)) && self.level == n;
+                out.push(Item { rect, text, name, hot, act: Some(Act::SetLevel(n)), look: Look::DropRow, gp: None });
+            }
+        }
+        out
+    }
+
+    /// The items at the original's place, without the level drop-down.
+    fn build(&self, world: &World, view: &View, local: u8) -> Vec<Item> {
+        let f = self.frame.at_default();
         let mut out = Vec::new();
         let item = |rect: Rect, text: Vec<u8>, name: &str, hot: bool, act: Option<Act>, look: Look| Item {
             rect,
@@ -613,17 +659,26 @@ impl Editor {
             look,
             gp: None,
         };
-        if !self.open {
-            let rect = Rect::new(OX, BOX_Y0, 249, ROW);
+        // The handle and "_" button stand in the folded title row too.
+        let buttons = |out: &mut Vec<Item>| {
+            let grab = Some(Act::Grab(Grab::Move));
+            out.push(item(f.handle(), Vec::new(), "Editor verschieben", false, grab, Look::Handle));
+            out.push(item(f.minimise(), b"_".to_vec(), "Editor minimieren", false, Some(Act::Hide), Look::Minimise));
+        };
+        if self.frame.folded {
+            let rect = Rect::new(OX, BOX_Y0, f.w, ROW);
             out.push(item(rect, b"[Editor] (F2)".to_vec(), "Editor", false, Some(Act::Hide), Look::Text));
+            buttons(&mut out);
             return out;
         }
-        let window = Rect::inclusive(OX, BOX_Y0, BOX_X1, BOX_Y1);
+        let corner = item(f.grip(), Vec::new(), "Editor Groesse", false, Some(Act::Grab(Grab::Resize)), Look::Corner);
+        let window = Rect::inclusive(OX, BOX_Y0, f.x1(), f.y1());
         out.push(item(window, Vec::new(), "", false, None, Look::Frame { divider: Some(DIVIDER) }));
-        let title = Rect::new(OX + 10, OY - 30, 200, ROW);
+        let title = Rect::new(OX + 10, OY - 30, 110, ROW);
         out.push(item(title, view.title.clone(), "Editor einklappen", false, Some(Act::Hide), Look::Title));
         let (label, name) = if self.battle.on { ("Einheiten", "Einheiten") } else { ("Schlacht", "Schlacht") };
-        let switch = Rect::new(BOX_X1 - 70, OY - 30, 66, ROW);
+        buttons(&mut out);
+        let switch = Rect::new(f.x1() - 70, OY - 30, 66, ROW);
         out.push(item(
             switch,
             label.as_bytes().to_vec(),
@@ -634,6 +689,7 @@ impl Editor {
         ));
         if self.battle.on {
             out.extend(self.battle_items());
+            out.push(corner);
             return out;
         }
         // The eight player colours (0x5bb140): 28 apart from x = 10, y = 10.
@@ -651,8 +707,8 @@ impl Editor {
         }
         // The grid, scrolled and clipped to the content.
         let groups = groups(world, self.entry);
-        let (placed, end) = flow(&groups);
-        let max = scroll_max(end);
+        let (placed, end) = flow(&groups, f.columns());
+        let max = scroll_max(end, f.visible_h());
         let scroll = self.scroll.clamp(0, max);
         for p in &placed {
             match *p {
@@ -664,7 +720,7 @@ impl Editor {
                 Placed::Cell(g, i, col, y) => {
                     let pick = groups[g].kinds[i];
                     let rect = Rect::new(OX + 5 + PITCH * col as i32, OY + y - 1 - scroll, CELL, CELL);
-                    if rect.intersect(&CONTENT).is_empty() {
+                    if rect.intersect(&f.content()).is_empty() {
                         continue;
                     }
                     let hot = self.pick == Some(pick);
@@ -711,27 +767,31 @@ impl Editor {
         ));
         // The scroll bar: arrows and the track's halves are the click targets.
         if max > 0 {
-            let bar = Rect::new(BAR_X, BAR_Y, BAR_W, BAR_LEN);
+            let (bar_x, bar_len) = (BAR_X + f.extra_w(), BAR_LEN + f.extra_h());
+            let bar = Rect::new(bar_x, BAR_Y, BAR_W, bar_len);
             out.push(item(bar, Vec::new(), "", false, None, Look::Bar { pos: scroll, max }));
             let (up, down) =
-                (Rect::new(BAR_X, BAR_Y, BAR_W, BAR_W), Rect::new(BAR_X, BAR_Y + BAR_LEN - BAR_W, BAR_W, BAR_W));
+                (Rect::new(bar_x, BAR_Y, BAR_W, BAR_W), Rect::new(bar_x, BAR_Y + bar_len - BAR_W, BAR_W, BAR_W));
             out.push(item(up, Vec::new(), "Hoch", false, Some(Act::ScrollBy(-PITCH)), Look::Text));
             out.push(item(down, Vec::new(), "Runter", false, Some(Act::ScrollBy(PITCH)), Look::Text));
-            let (mid_y, track_h) = (BAR_Y + BAR_W, BAR_LEN - 2 * BAR_W);
-            let page = VISIBLE_H - PITCH;
-            let above = Rect::new(BAR_X, mid_y, BAR_W, track_h / 2);
-            let below = Rect::new(BAR_X, mid_y + track_h / 2, BAR_W, track_h - track_h / 2);
+            let (mid_y, track_h) = (BAR_Y + BAR_W, bar_len - 2 * BAR_W);
+            let page = f.visible_h() - PITCH;
+            let above = Rect::new(bar_x, mid_y, BAR_W, track_h / 2);
+            let below = Rect::new(bar_x, mid_y + track_h / 2, BAR_W, track_h - track_h / 2);
             out.push(item(above, Vec::new(), "Seite hoch", false, Some(Act::ScrollBy(-page)), Look::Text));
             out.push(item(below, Vec::new(), "Seite runter", false, Some(Act::ScrollBy(page)), Look::Text));
         }
-        // ACR's controls in a box under the window.
-        let mut y = EXTRA_Y;
-        let extras = |rows: i32| Rect::inclusive(OX, BOX_Y1 + 1, BOX_X1, BOX_Y1 + 1 + 12 + rows * ROW);
+        out.push(corner);
+        // ACR's controls in a box under the window, as wide as it.
+        let mut y = EXTRA_Y + f.extra_h();
+        let chars = f.chars();
+        let ew = W + f.extra_w();
+        let extras = |rows: i32| Rect::inclusive(OX, f.y1() + 1, f.x1(), f.y1() + 1 + 12 + rows * ROW);
         let brush_row = self.entry == GELAENDE;
         let rows = 13 + i32::from(self.pick.is_some()) + i32::from(brush_row);
         out.push(item(extras(rows), Vec::new(), "", false, None, Look::Frame { divider: None }));
         let line = |out: &mut Vec<Item>, y: &mut i32, text: Vec<u8>, name: &str, hot: bool, act: Option<Act>| {
-            out.push(item(Rect::new(X0, *y, W, ROW), text, name, hot, act, Look::Text));
+            out.push(item(Rect::new(X0, *y, ew, ROW), text, name, hot, act, Look::Text));
             *y += ROW;
         };
         let pair = |out: &mut Vec<Item>, y: &mut i32, text: String, name: &str, a: Act, b: Act| {
@@ -746,8 +806,8 @@ impl Editor {
                 )
             };
             out.push(arrow(X0, "<", "-", a));
-            out.push(item(Rect::new(X0 + 24, *y, W - 48, ROW), text.into_bytes(), name, false, None, Look::Text));
-            out.push(arrow(X0 + W - 24, ">", "+", b));
+            out.push(item(Rect::new(X0 + 24, *y, ew - 48, ROW), text.into_bytes(), name, false, None, Look::Text));
+            out.push(arrow(X0 + ew - 24, ">", "+", b));
             *y += ROW;
         };
         pair(&mut out, &mut y, format!("Anzahl: {}", self.count()), "Anzahl", Act::Count(-1), Act::Count(1));
@@ -786,11 +846,11 @@ impl Editor {
                 Pick::Nature(group, index) => text.extend(nature_label(world, group, index).1.into_bytes()),
                 Pick::Ground(tool) => text.extend(ground_name(tool).as_bytes()),
             }
-            text.truncate(44);
+            text.truncate(chars);
             line(&mut out, &mut y, text, "", false, None);
         }
         let mut status = self.status.clone();
-        status.truncate(44);
+        status.truncate(chars);
         line(&mut out, &mut y, status, "", false, None);
         line(&mut out, &mut y, b"Rechtsklick: Platzieren beenden".to_vec(), "", false, None);
         line(&mut out, &mut y, b"Rechtsklick auf Nation: Armee".to_vec(), "", false, None);
@@ -810,16 +870,6 @@ impl Editor {
                 ));
             }
         }
-        // The level drop-down, over everything.
-        if let Some(menu) = self.menu {
-            let names = levels::names(world, menu.kind, view.upgrade_name);
-            let rows = menu.rows(names.len(), names.iter().map(Vec::len).max().unwrap_or(0));
-            for (n, (rect, text)) in rows.into_iter().zip(names).enumerate() {
-                let name = format!("Ausbau {}", String::from_utf8_lossy(&text));
-                let hot = self.pick == Some(Pick::Unit(menu.kind)) && self.level == n;
-                out.push(item(rect, text, &name, hot, Some(Act::SetLevel(n)), Look::DropRow));
-            }
-        }
         out
     }
 
@@ -832,7 +882,7 @@ impl Editor {
         // The upgrade texts are long: the count comes first, the line is cut to the window.
         let mut text = format!("Ausbau {}/{}: ", self.level, names.len() - 1).into_bytes();
         text.extend(names.get(self.level).map_or(&[][..], Vec::as_slice));
-        text.truncate(44);
+        text.truncate(self.frame.chars());
         text
     }
 
@@ -853,7 +903,9 @@ impl Editor {
 
     /// The window's whole area (clicks there never reach the map).
     pub fn bounds(items: &[Item]) -> Rect {
-        let mut frames = items.iter().filter(|i| matches!(i.look, Look::Frame { .. }) || i.act == Some(Act::Hide));
+        let mut frames = items
+            .iter()
+            .filter(|i| matches!(i.look, Look::Frame { .. }) || matches!(i.act, Some(Act::Hide | Act::Grab(_))));
         let Some(first) = frames.next() else { return Rect::new(0, 0, 0, 0) };
         let first = first.rect;
         frames.fold(first, |r, i| Rect {
@@ -864,7 +916,7 @@ impl Editor {
         })
     }
 
-    pub fn draws(items: &[Item], ctx: &Ctx, out: &mut Vec<Draw>) {
+    pub fn draws(items: &[Item], ctx: &Ctx, content: Rect, out: &mut Vec<Draw>) {
         ctx.lib.want(COMBO);
         ctx.lib.want(VSCROLL);
         let palette = ctx.lib.palette(GAME_PALETTE);
@@ -888,7 +940,7 @@ impl Editor {
                     }
                 }
                 Look::Title => out.push(Draw::game_text(menu_font::F16Y1, &i.text, r.x0, r.y0)),
-                Look::Header => out.push(Draw::game_text(menu_font::F16Y1, &i.text, r.x0, r.y0).clipped(CONTENT)),
+                Look::Header => out.push(Draw::game_text(menu_font::F16Y1, &i.text, r.x0, r.y0).clipped(content)),
                 Look::Icon { frame } => {
                     let index = if i.hot { OUTLINE_PICKED } else { OUTLINE };
                     let mut cell = Vec::new();
@@ -900,14 +952,14 @@ impl Editor {
                         ),
                     }
                     hud::outline(&mut cell, r, colour(index));
-                    out.extend(cell.into_iter().map(|d| d.clipped(CONTENT)));
+                    out.extend(cell.into_iter().map(|d| d.clipped(content)));
                 }
                 Look::Texture { colour: [red, green, blue] } => {
                     let index = if i.hot { OUTLINE_PICKED } else { OUTLINE };
                     let mut cell =
                         vec![Draw::fill([red, green, blue, 255], Rect::new(r.x0 + 1, r.y0 + 1, CELL - 2, CELL - 2))];
                     hud::outline(&mut cell, r, colour(index));
-                    out.extend(cell.into_iter().map(|d| d.clipped(CONTENT)));
+                    out.extend(cell.into_iter().map(|d| d.clipped(content)));
                 }
                 Look::Sprite { frame, ox, oy } => {
                     let index = if i.hot { OUTLINE_PICKED } else { OUTLINE };
@@ -916,12 +968,12 @@ impl Editor {
                         // The ground point at the bottom centre of the cell.
                         Some(gp) => cell.push(
                             Draw::game_frame(gp, frame, r.x0 + CELL / 2 - ox, r.y1 - 4 - oy, 0)
-                                .clipped(r.intersect(&CONTENT)),
+                                .clipped(r.intersect(&content)),
                         ),
                         None => cell.push(Draw::game_text(WHITE, &i.text[..i.text.len().min(8)], r.x0 + 3, r.y0 + 14)),
                     }
                     hud::outline(&mut cell, r, colour(index));
-                    out.extend(cell.into_iter().map(|d| d.clipped(CONTENT)));
+                    out.extend(cell.into_iter().map(|d| d.clipped(content)));
                 }
                 Look::Swatch { owner } => {
                     let c = colour(hud::color::PLAYER.wrapping_add(4 * owner));
@@ -963,6 +1015,29 @@ impl Editor {
                     let mut drawn = Vec::new();
                     d.draw(ctx.lib, ctx.fonts, &mut drawn);
                     out.extend(drawn.into_iter().map(Draw::in_game));
+                }
+                Look::Handle => {
+                    hud::outline(out, r, colour(OUTLINE));
+                    // Two columns of three dots to hold.
+                    for (a, b) in (0..2).flat_map(|a| (0..3).map(move |b| (a, b))) {
+                        out.push(Draw::fill(
+                            colour(OUTLINE_PICKED),
+                            Rect::new(r.x0 + 6 + 5 * a, r.y0 + 3 + 4 * b, 2, 2),
+                        ));
+                    }
+                }
+                Look::Minimise => {
+                    hud::outline(out, r, colour(OUTLINE));
+                    out.push(Draw::game_text(YELLOW, &i.text, r.x0 + 7, r.y0 + 2));
+                }
+                Look::Corner => {
+                    // A triangle of dots in the corner.
+                    for (a, b) in (0..3).flat_map(|a| (0..3 - a).map(move |b| (a, b))) {
+                        out.push(Draw::fill(
+                            colour(OUTLINE_PICKED),
+                            Rect::new(r.x1 - 4 - 4 * a, r.y1 - 4 - 4 * b, 2, 2),
+                        ));
+                    }
                 }
                 Look::Text => {
                     if i.text.is_empty() {
@@ -1050,15 +1125,48 @@ impl Editor {
                 *t = sides::next_team(*t);
                 out.input = Some(Input::Sides { mode: self.sides, teams });
             }
-            Act::Hide => self.open = !self.open,
+            Act::Hide => self.frame = self.frame.toggled(),
+            Act::Grab(_) => {}
         }
         out
     }
 
+    /// A fresh editor with its window at `frame` (the saved place).
+    pub fn with_frame(frame: Frame) -> Self {
+        Self { frame, ..Self::default() }
+    }
+
+    /// A press at canvas point `p` took hold of a grip with the right or left button.
+    pub fn grab(&mut self, grab: Grab, right: bool, p: [f32; 2]) {
+        self.drag = Some(Drag::new(grab, right, (p[0] as i32, p[1] as i32), self.frame));
+    }
+
+    /// The cursor is at canvas point `p`: a held grip moves or resizes the window. True while
+    /// one is held (the move is used up).
+    pub fn drag_to(&mut self, p: [f32; 2]) -> bool {
+        let Some(drag) = self.drag else { return false };
+        self.frame = drag.at((p[0] as i32, p[1] as i32));
+        true
+    }
+
+    /// The button went up: lets go of a grip it held. True if it held one.
+    pub fn release_grab(&mut self, right: bool) -> bool {
+        if self.drag.is_some_and(|d| d.right == right) {
+            self.drag = None;
+            return true;
+        }
+        false
+    }
+
+    /// A grip is held (the setting is stored once it is let go).
+    pub fn dragging(&self) -> bool {
+        self.drag.is_some()
+    }
+
     /// Scrolls the icons by `d` pixels, within the content.
     fn scroll_by(&mut self, world: &World, d: i32) {
-        let (_, end) = flow(&groups(world, self.entry));
-        self.scroll = (self.scroll + d).clamp(0, scroll_max(end));
+        let (_, end) = flow(&groups(world, self.entry), self.frame.columns());
+        self.scroll = (self.scroll + d).clamp(0, scroll_max(end, self.frame.visible_h()));
     }
 
     /// Scrolls the icons by wheel notches (one row each).
@@ -1225,10 +1333,10 @@ fn place_formations(
 
 impl Item {
     /// Where a click hits: icons and headers only inside the clipped content.
-    pub fn hit_rect(&self) -> Rect {
+    pub fn hit_rect(&self, content: Rect) -> Rect {
         match self.look {
             Look::Icon { .. } | Look::Texture { .. } | Look::Sprite { .. } | Look::Header => {
-                self.rect.intersect(&CONTENT)
+                self.rect.intersect(&content)
             }
             _ => self.rect,
         }
@@ -1301,18 +1409,21 @@ impl super::InGame {
     }
 
     pub(super) fn editor_overlay(&self, ctx: &Ctx, out: &mut Vec<Draw>) {
-        Editor::draws(&self.editor_items(ctx), ctx, out);
+        if let Some(e) = &self.editor {
+            Editor::draws(&self.editor_items(ctx), ctx, e.frame.content(), out);
+        }
     }
 
     /// The window's clickable items for the test driver (`ui`, `click`), in window pixels.
     pub fn editor_icons(&self, ctx: &Ctx) -> Vec<super::probe::HudIcon> {
         let canvas = self.interface.canvas;
+        let content = self.editor.as_ref().map_or(Rect::SCREEN, |e| e.frame.content());
         self.editor_items(ctx)
             .iter()
             .enumerate()
             .filter(|(_, i)| i.act.is_some())
             .map(|(n, i)| {
-                let r = i.hit_rect();
+                let r = i.hit_rect(content);
                 super::probe::HudIcon {
                     id: format!("editor/{n}"),
                     rect: canvas.to_window([r.x0 as f32, r.y0 as f32, r.width() as f32, r.height() as f32]),
@@ -1431,6 +1542,7 @@ impl super::InGame {
         if !pressed {
             let e = self.editor.as_mut().expect("editor");
             let stroked = e.end_stroke();
+            e.release_grab(false);
             let swallow = std::mem::take(&mut e.swallow_release);
             if stroked {
                 // The stroke's last changes show at once.
@@ -1441,6 +1553,7 @@ impl super::InGame {
         let Some(at) = self.cursor else { return false };
         let p = self.canvas_point(at);
         let items = self.editor_items(ctx);
+        let content = self.editor.as_ref().map_or(Rect::SCREEN, |e| e.frame.content());
         // A press outside the level drop-down closes it; one on the map does no more.
         let on_menu = items.iter().any(|i| i.look == Look::DropRow && i.rect.contains(p));
         let closed = self.editor.as_mut().is_some_and(|e| !on_menu && e.close_levels());
@@ -1449,7 +1562,11 @@ impl super::InGame {
             return true;
         }
         if Editor::bounds(&items).contains(p) || items.iter().any(|i| i.look == Look::DropRow && i.rect.contains(p)) {
-            let act = items.iter().rev().find(|i| i.act.is_some() && i.hit_rect().contains(p)).and_then(|i| i.act);
+            let act =
+                items.iter().rev().find(|i| i.act.is_some() && i.hit_rect(content).contains(p)).and_then(|i| i.act);
+            if let Some(Act::Grab(grab)) = act {
+                self.editor.as_mut().expect("editor").grab(grab, false, p);
+            }
             let local = self.local_player();
             if let Some(act) = act
                 && let Some(next) = self.editor_act(act, local)
@@ -1491,19 +1608,34 @@ impl super::InGame {
     /// The right button in the editor: on an icon, opens its level drop-down; on the nation
     /// combo box it opens the army menu; elsewhere closes the drop-down or menu, or stops placing.
     pub(super) fn editor_right(&mut self, ctx: &Ctx, pressed: bool) -> bool {
-        if !pressed || self.editor.is_none() {
-            return false;
+        let Some(e) = &mut self.editor else { return false };
+        if !pressed {
+            return e.release_grab(true);
         }
-        let over_combo = self.cursor.is_some_and(|c| COMBO_BOX.contains(self.canvas_point(c)));
+        let (dx, dy) = e.frame.shift();
+        let content = e.frame.content();
+        let combo = COMBO_BOX.offset(dx, dy);
+        let over_combo = self.cursor.is_some_and(|c| combo.contains(self.canvas_point(c)));
         let local = self.local_player();
-        if over_combo && self.editor.as_ref().is_some_and(|e| e.open) {
+        if over_combo && self.editor.as_ref().is_some_and(|e| !e.frame.folded) {
             self.editor_act(Act::Army(presets::Act::Toggle), local);
             return true;
         }
         let hit = self.cursor.map(|at| self.canvas_point(at)).and_then(|p| {
             let items = self.editor_items(ctx);
-            items.into_iter().rev().find(|i| i.act.is_some() && i.hit_rect().contains(p))
+            items.into_iter().rev().find(|i| i.act.is_some() && i.hit_rect(content).contains(p))
         });
+        // The handle or corner grip held with the right button (a touch long press) drags too.
+        if let Some(Item { act: Some(Act::Grab(grab)), .. }) = hit
+            && let Some(at) = self.cursor
+        {
+            let p = self.canvas_point(at);
+            if let Some(e) = &mut self.editor {
+                e.grab(grab, true, p);
+                e.swallow_release = true;
+            }
+            return true;
+        }
         // A colour's swatch cycles its team while teams fight.
         if let Some(Item { look: Look::Swatch { owner }, .. }) = hit
             && owner != NEUTRAL
@@ -1557,7 +1689,7 @@ impl super::InGame {
             }
             (Some(e), winit::keyboard::Key::Named(winit::keyboard::NamedKey::F2)) => {
                 if pressed {
-                    e.open = !e.open;
+                    e.frame = e.frame.toggled();
                 }
                 true
             }
@@ -1799,7 +1931,7 @@ mod tests {
     #[test]
     fn the_grid_flows_in_rows_of_five_under_headers() {
         let g = |n: u16| Group { header: "x", kinds: (0..n).map(|i| Pick::Unit(TypeId(i))).collect() };
-        let (placed, end) = flow(&[g(6), g(1)]);
+        let (placed, end) = flow(&[g(6), g(1)], COLUMNS);
         // Header at 80, icons from 100 (two rows), the next header 2 rows on, its icon 20 later.
         assert_eq!(placed[0], Placed::Header(0, 80));
         assert_eq!(placed[1], Placed::Cell(0, 0, 0, 100));
@@ -1808,22 +1940,130 @@ mod tests {
         assert_eq!(placed[7], Placed::Header(1, 188));
         assert_eq!(placed[8], Placed::Cell(1, 0, 0, 208));
         assert_eq!(end, 252);
-        assert_eq!(flow(&[]).1, FIRST_ROW);
+        assert_eq!(flow(&[], COLUMNS).1, FIRST_ROW);
     }
 
     #[test]
     fn the_scroll_range_is_the_content_beyond_the_visible_height() {
-        assert_eq!(scroll_max(0x17e), 0);
-        assert_eq!(scroll_max(0x17e + 44), 44);
-        assert_eq!(scroll_max(100), 0);
+        assert_eq!(scroll_max(0x17e, VISIBLE_H), 0);
+        assert_eq!(scroll_max(0x17e + 44, VISIBLE_H), 44);
+        assert_eq!(scroll_max(100, VISIBLE_H), 0);
     }
 
     #[test]
     fn the_window_sits_in_the_side_panel_column() {
         // `RealLx − 269`, `InfY1 + 31` (0x5bb735, 0x5bb743) and the box of 0x5bb766.
         assert_eq!((OX, OY), (755, 79));
-        assert_eq!((BOX_X1, BOX_Y0, BOX_Y1, DIVIDER), (1004, 48, 465, 153));
+        assert_eq!((frame::DEFAULT.x1(), BOX_Y0, BOX_Y1, DIVIDER), (1004, 48, 465, 153));
         assert_eq!(ENTRIES[FIRST_EXTRA].0, "Tiere");
         assert!(ENTRIES.len() == FIRST_EXTRA + 4 && DEFAULT_ENTRY < FIRST_EXTRA);
+    }
+
+    /// The window's items on the nature list (six cells, in a world without icons).
+    fn natur_items(e: &Editor) -> Vec<Item> {
+        let view = View {
+            names: &|_| Vec::new(),
+            icon: &|_| None,
+            upgrade_name: &|_| Vec::new(),
+            sprite: &|_, _| None,
+            texture_colour: &|_| None,
+            title: b"Einheit".to_vec(),
+        };
+        e.layout(&nature_world(), &view, 0)
+    }
+
+    fn named<'a>(items: &'a [Item], name: &str) -> &'a Item {
+        items.iter().find(|i| i.name == name).unwrap_or_else(|| panic!("no item {name}"))
+    }
+
+    #[test]
+    fn a_moved_window_moves_every_item_and_its_hit_areas() {
+        let mut e = Editor { entry: NATUR, ..Editor::default() };
+        let before = natur_items(&e);
+        e.frame = Frame { x: 100, y: 200, ..frame::DEFAULT };
+        let after = natur_items(&e);
+        assert_eq!(before.len(), after.len());
+        let (dx, dy) = (100 - 755, 200 - 48);
+        for (b, a) in before.iter().zip(&after) {
+            assert_eq!(b.rect.offset(dx, dy), a.rect, "{}", b.name);
+        }
+        // A click maps to the moved rectangles only.
+        let content = e.frame.content();
+        let cell = after.iter().find(|i| matches!(i.act, Some(Act::Pick(_)))).unwrap();
+        let at = [cell.rect.x0 as f32 + 5.0, cell.rect.y0 as f32 + 5.0];
+        assert!(cell.hit_rect(content).contains(at));
+        assert!(!before.iter().filter(|i| i.act.is_some()).any(|i| i.hit_rect(frame::DEFAULT.content()).contains(at)));
+        assert_eq!(Editor::bounds(&after), before_bounds(&before).offset(dx, dy));
+    }
+
+    fn before_bounds(items: &[Item]) -> Rect {
+        Editor::bounds(items)
+    }
+
+    #[test]
+    fn a_wider_window_has_more_columns_and_a_taller_one_a_longer_bar() {
+        let g = |n: u16| Group { header: "x", kinds: (0..n).map(|i| Pick::Unit(TypeId(i))).collect() };
+        let wide = Frame { x: 300, w: 249 + 44, ..frame::DEFAULT };
+        assert_eq!(wide.columns(), 6);
+        let (placed, end) = flow(&[g(7)], wide.columns());
+        // Six to a row, the seventh below; five columns need two rows too, but sixteen do not.
+        assert_eq!((placed[6], placed[7]), (Placed::Cell(0, 5, 5, 100), Placed::Cell(0, 6, 0, 144)));
+        assert_eq!(end, 188);
+        assert_eq!(flow(&[g(12)], wide.columns()).1, 80 + 20 + 2 * 44);
+        assert_eq!(flow(&[g(12)], 5).1, 80 + 20 + 3 * 44);
+        // The extras box follows the size (the scroll bar: tests/e2e/editor_window_move.json).
+        let mut e = Editor {
+            entry: 0,
+            frame: Frame { x: 300, w: 249 + 88, h: 417 + 60, ..frame::DEFAULT },
+            ..Editor::default()
+        };
+        let items = natur_items(&e);
+        let extras = items.iter().find(|i| matches!(i.look, Look::Frame { divider: None })).unwrap();
+        assert_eq!((extras.rect.x0, extras.rect.x1), (300, 300 + 337 + 1));
+        assert_eq!(extras.rect.y0, 48 + 417 + 60 + 1);
+        assert_eq!(named(&items, "Anzahl +").rect.x1, 300 + 8 + (337 - 16));
+        e.frame.h = 417;
+        assert!(natur_items(&e).iter().all(|i| i.rect.y1 <= 768));
+    }
+
+    #[test]
+    fn the_minimise_button_folds_to_the_title_row_and_back() {
+        let mut e = Editor::default();
+        let world = nature_world();
+        let open = natur_items(&e);
+        assert!(open.iter().any(|i| i.look == Look::Corner));
+        let out = e.apply(&world, named(&open, "Editor minimieren").act.unwrap(), 0);
+        assert!(out.input.is_none() && e.frame.folded);
+        let folded = natur_items(&e);
+        let names: Vec<_> = folded.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(names, ["Editor", "Editor verschieben", "Editor minimieren"]);
+        assert!(Editor::bounds(&folded).height() <= ROW + 1);
+        // The same button, at the same place, opens it again.
+        assert_eq!(named(&folded, "Editor minimieren").rect, named(&open, "Editor minimieren").rect);
+        e.apply(&world, Act::Hide, 0);
+        assert!(!e.frame.folded);
+    }
+
+    #[test]
+    fn dragging_the_handle_or_the_grip_moves_or_resizes_with_either_button() {
+        let mut e = Editor::default();
+        let items = natur_items(&e);
+        let handle = named(&items, "Editor verschieben");
+        assert_eq!(handle.act, Some(Act::Grab(Grab::Move)));
+        let start = [handle.rect.x0 as f32 + 3.0, handle.rect.y0 as f32 + 3.0];
+        e.grab(Grab::Move, false, start);
+        assert!(e.drag_to([start[0] - 300.0, start[1] + 40.0]));
+        assert_eq!((e.frame.x, e.frame.y), (455, 88));
+        // A right button's release does not let go of a left drag.
+        assert!(!e.release_grab(true) && e.dragging());
+        assert!(e.release_grab(false) && !e.dragging());
+        assert!(!e.drag_to([0.0, 0.0]));
+        // The grip, taken with the right button (a touch long press), widens it by a column.
+        let grip = named(&natur_items(&e), "Editor Groesse").rect;
+        let at = [grip.x0 as f32 + 2.0, grip.y0 as f32 + 2.0];
+        e.grab(Grab::Resize, true, at);
+        e.drag_to([at[0] + 44.0, at[1]]);
+        assert_eq!((e.frame.w, e.frame.columns()), (293, 6));
+        assert!(e.release_grab(true));
     }
 }

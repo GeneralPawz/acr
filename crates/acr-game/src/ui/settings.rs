@@ -1,5 +1,28 @@
 //! Player options edited in the options screen (0x5c9740).
 
+/// Where the test editor's window stands (`editor_window`): the top-left corner of its box, the
+/// box's size as `ingame::editor::frame::Frame` counts it, and whether it is folded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EditorWindow {
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+    pub folded: bool,
+}
+
+impl EditorWindow {
+    /// `x,y,w,h,folded` (folded as 0 or 1); anything else is no setting.
+    fn parse(value: &str) -> Option<Self> {
+        let mut it = value.split(',').map(|v| v.trim().parse::<i32>().ok());
+        let [x, y, w, h, folded] = [(); 5].map(|()| it.next().flatten());
+        if it.next().is_some() {
+            return None;
+        }
+        Some(Self { x: x?, y: y?, w: w?, h: h?, folded: folded? != 0 })
+    }
+}
+
 /// The original's option globals, with their ranges.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
@@ -130,6 +153,10 @@ pub struct Settings {
     /// only with `hit_locations`). `None` (not in the file): on with `controls=modern`, off
     /// otherwise ([`Settings::ball_terrain`]).
     pub ball_terrain: Option<bool>,
+    /// ACR: `editor_window=x,y,w,h,folded`: where the test editor's window stands, how big it
+    /// is and whether it is folded (`ingame/editor/frame.rs`); unset: the original's place.
+    /// A UI setting: not a rule, not in the savegames.
+    pub editor_window: Option<EditorWindow>,
     /// ACR (#224): `weather=off|rain|snow|fog` (off by default): rain, snow or fog over the
     /// 3D path, a look only (docs/rendering-3d.md "Weather (#224)"); no gameplay effect.
     pub weather: Weather,
@@ -243,6 +270,7 @@ impl Default for Settings {
             decay_stain: None,
             group_move: None,
             ball_terrain: None,
+            editor_window: None,
             hit_locations: false,
             body_spacing: false,
             mortars: false,
@@ -345,7 +373,7 @@ impl Settings {
             "sound_volume={}\nmusic_volume={}\nmusic_mode={}\ngame_mode={}\nscroll_speed={}\nframe_time={}\n\
              resolution={}\nrecord={}\nrecord_file={hex}\ncontrols={controls}\nedge_scroll={}\n\
              models={models}\ncamera={camera}\ngore={gore}\ncorpse_minutes={}\ncorpse_decay={}\nhit_locations={}\nbody_spacing={}\nmortars={}\ncorpse_piles={}\ncannon_fire={}\nformation_attack={}\nanimal_give_up={}\ndart_fire={}\naimed_fire={}\nshadows={}\nlod={}\nmaterial_detail={}\nwind={}\nmap_models={}\nwater={}\n\
-             ground={}\nground_cover={}\nbattlefield_marks={}\nweather={}\nsea_state={}\naim_guides={}\ncenter_top_bar={}\n{top_bar}graphics={}\n{}{}{}",
+             ground={}\nground_cover={}\nbattlefield_marks={}\nweather={}\nsea_state={}\naim_guides={}\ncenter_top_bar={}\n{top_bar}graphics={}\n{}{}{}{}",
             self.sound_volume,
             self.music_volume,
             self.music_mode,
@@ -406,6 +434,10 @@ impl Settings {
                     "ball_terrain=off
 ",
                 None => "",
+            },
+            match self.editor_window {
+                Some(w) => format!("editor_window={},{},{},{},{}\n", w.x, w.y, w.w, w.h, u8::from(w.folded)),
+                None => String::new(),
             },
         )
     }
@@ -505,6 +537,7 @@ impl Settings {
                         _ => None,
                     }
                 }
+                "editor_window" => s.editor_window = EditorWindow::parse(value),
                 "corpse_minutes" => s.corpse_minutes = int.map_or(s.corpse_minutes, |v| v.clamp(1, 60) as u32),
                 "gore" => {
                     s.gore = match value {
@@ -554,6 +587,7 @@ mod tests {
             decay_stain: Some(false),
             group_move: Some(false),
             ball_terrain: Some(true),
+            editor_window: Some(EditorWindow { x: 40, y: 12, w: 337, h: 500, folded: true }),
             hit_locations: true,
             body_spacing: true,
             mortars: true,

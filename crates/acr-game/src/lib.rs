@@ -413,6 +413,12 @@ impl Game {
                 if guides != self.ui.settings().aim_guides {
                     self.ui.change_settings(|s| s.aim_guides = guides);
                 }
+                // The editor window's place is kept in `settings.txt` (`editor_window`).
+                if let Some(place) = game.editor_window()
+                    && place != self.ui.settings().editor_window
+                {
+                    self.ui.change_settings(|s| s.editor_window = place);
+                }
                 // Mission pages, hints and the end of the game over the interface.
                 layers.push((game.screen_canvas(), game.overlay(&self.ui.ctx())));
                 for (name, image) in images {

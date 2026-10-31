@@ -248,6 +248,20 @@ Under the window ACR's own controls:
 | Kanonen: sofort nachladen | AN: every cannon is reloaded before each tick, so it fires as soon as it is aimed (a test switch; starts AUS) |
 | Ich steuere | which player's units the mouse selects and commands; a click goes to the next player (neutral included) that has living units |
 
+Moving and sizing (ACR's own; the original's window is fixed; `ingame/editor/frame.rs`): the title row
+holds a handle (two columns of dots, "Editor verschieben") and a "_" button ("Editor minimieren"); the
+bottom-right corner holds a grip ("Editor Groesse"). Dragging the handle moves the window and the box of
+controls under it; dragging the grip resizes it: one more icon column per 44 pixels of width over the
+original's 249 (five at the original's size), more visible rows with the height, the scroll bar and the
+clipper following, the controls box as wide as the window (longer lines). The size is never below the
+original's and the window, with its controls box, never leaves the screen (so the height has room only
+as far as the controls box under it fits). A drag works with the left button and with the right one: on
+touch a plain drag from the handle or grip, or a long press on it and then a drag (touch.rs turns the
+long press into the right button). "_", the title or F2 folds the window to its title row (the handle and
+"_" stay on it) and unfolds it. Place, size and folded state are kept per session in `settings.txt` as
+`editor_window=x,y,w,h,folded` (a UI setting: not a rule, not in the savegames; unset: the original's
+place). `tests/e2e/editor_window_move.json` covers it.
+
 The test driver lists the window's controls in `ui` as `editor/<n>` (names like `Anzahl +`,
 `Ausbau Basis`, `Nation Frankreich`, `Spieler 2`, `Neutral`, an icon by its name and type id),
 so `tests/e2e/editor_window.json` and `editor_levels.json` click them by label; `editor_players.json` and `editor_teams.json` cover the Kampf modes, `editor_world.json` and `editor_ships.json` the buildings and ships, `editor_nature.json` the Natur list and `editor_terrain.json` the Gelaende tools (read back with the driver's `ground`, docs/testing.md); `editor_save_load.json` and `editor_map_save.json` save an editor game and load it again: units at a training level, a formation, a building, a tree, painted water with a ship on it, a hill and a texture all return.
