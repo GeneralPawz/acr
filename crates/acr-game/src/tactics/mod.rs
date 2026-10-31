@@ -10,12 +10,13 @@
 //!
 //! A side under [`Control::Player`] is commanded by the player; only its guns are automatic
 //! and a gun the player orders himself is left alone for good. [`Control::Ai`] runs the whole
-//! controller. Today that is the batteries ([`guns`]) and the lines and melee foot ([`line`]); the
-//! other duties hold their position until their behaviours are added in `Commander::decide`:
-//! squares, cavalry wings, skirmishers and reserves, and the native styles.
+//! controller. Today that is the batteries ([`guns`]) and the lines and melee foot ([`line`]) with
+//! their squares against cavalry ([`karree`]); the other duties hold their position until
+//! their behaviours are added in `Commander::decide`: cavalry wings, skirmishers and reserves, and the native styles.
 
 pub mod frame;
 mod guns;
+mod karree;
 mod line;
 pub mod picture;
 #[cfg(test)]
@@ -128,6 +129,7 @@ pub struct Commander {
     armies: [Army; 2],
     control: [Control; 2],
     batteries: [guns::Battery; 2],
+    squares: [karree::Squares; 2],
     lines: [line::Line; 2],
     reports: [Report; 2],
     /// The orders of the last tick asked for, so that asking again repeats them.
@@ -138,7 +140,15 @@ impl Commander {
     /// A controller for `armies` as they stand in `world`.
     pub fn new(world: &World, armies: [Army; 2], control: [Control; 2]) -> Self {
         let batteries = [guns::Battery::new(world, &armies[0]), guns::Battery::new(world, &armies[1])];
-        Self { armies, control, batteries, lines: Default::default(), reports: Default::default(), cache: None }
+        Self {
+            armies,
+            control,
+            batteries,
+            squares: [karree::Squares::new(world), karree::Squares::new(world)],
+            lines: Default::default(),
+            reports: Default::default(),
+            cache: None,
+        }
     }
 
     /// Changes who commands each side; what the controller has seen of it stays.
@@ -182,10 +192,10 @@ impl Commander {
         if !hand_over {
             let mine = picture::of(world, me);
             let view = View { tick: world.tick.0, me, foe, mine: &mine, theirs: &foe_pics };
-            let held = vec![false; me.bodies.len()];
+            let held = self.squares[side].decide(world, &view, (&mut *out, &mut *report));
             self.lines[side].decide(world, &view, &held, (out, report));
         }
         // The other duties of an Ai side hold their position until their behaviours are added
-        // here (squares, cavalry wings, skirmishers and reserves, the native styles): no orders.
+        // here (cavalry wings, skirmishers and reserves, the native styles): no orders.
     }
 }

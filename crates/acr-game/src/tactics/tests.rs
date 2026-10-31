@@ -41,6 +41,8 @@ const ORDERS: &[u8] = b"#LINE15 SYM2 19 2 9 3 1 2\r\n   C   C   C\r\n      \r\n*
 #KARE12 SYM4 9 2 9 3\r\n****\r\n*CC*\r\n*C *\r\n****\r\n#END\r\n#EXIT\r\n";
 /// Lines of 12 or 15 that can form a square (the button lists the group `KARE`).
 const GROUPS: &[u8] = b"2\r\nLINE 2 0 1 2 #LINE12 #LINE15\r\nKARE 2 0 1 1 #KARE12\r\n";
+/// Lines without that button.
+const GROUPS_NO_KARE: &[u8] = b"2\r\nLINE 0 2 #LINE12 #LINE15\r\nKARE 0 1 #KARE12\r\n";
 /// A pikeman: no ranged attack.
 const PIKE: &str = "NAME Pik\r\nUSERLC 0 G SHADOW 0 0\r\n#STAND 9 1 0 0\r\n@MOTION_L 9 0 0 9\r\n\
     @MOTION_R 9 0 10 19\r\n@DEATH 9 0 0 9\r\n#DEATHLIE1 9 1 0 9\r\nLIFE 100\r\nGEOMETRY 1 10 40\r\n\
@@ -455,4 +457,77 @@ fn pikes_stay_behind_until_the_charge() {
     }
     assert!(charged.is_some(), "the pikes charged with the line");
     assert!(centroid(&r.w, &pikes).0 > 1500, "and they moved up behind it");
+}
+
+/// A line of 12 musketeers at x = 1800 and 12 riders 300 px in front of it.
+fn line_and_riders(r: &mut Rig) -> (Vec<EntityId>, Vec<EntityId>, [Army; 2]) {
+    let line = formed(r.mus, r, 0, (1800, 4000), 0, "LINE12");
+    let riders = crowd(&mut r.w, r.horse, 1, (2050, 3950), 12, (6, 20), 128);
+    let armies = [army(0, 0, vec![body(Duty::Line, &line)]), army(1, 128, vec![body(Duty::Cavalry, &riders)])];
+    (line, riders, armies)
+}
+
+fn shape_of(w: &World, unit: EntityId) -> String {
+    let b = w.units[unit.0 as usize].brigade.unwrap();
+    w.formations.shapes[w.brigades[usize::from(b)].shape].name.clone()
+}
+
+#[test]
+fn a_line_forms_karree_when_cavalry_closes() {
+    let mut r = rig();
+    let (line, _riders, armies) = line_and_riders(&mut r);
+    let mut cm = Commander::new(&r.w, armies, [Control::Ai, Control::Player]);
+    let (mut reformed, mut stood) = (None, None);
+    for _ in 0..400 {
+        let cmds = cm.orders(&r.w);
+        let reform = cmds.iter().any(|c| matches!(c, Command::Reform { group: 1, .. }));
+        let stand = cmds.iter().any(|c| matches!(c, Command::StandGround { on: true, .. }));
+        assert!(!(reform && stand), "stand ground in the batch of the reform: {cmds:?}");
+        if reform {
+            reformed.get_or_insert(r.w.tick.0);
+        }
+        if stand && stood.is_none() {
+            stood = Some(r.w.tick.0);
+            assert!(shape_of(&r.w, line[1]).starts_with("#KARE"), "the square stands before it stands ground");
+            assert!(picture::of(&r.w, &cm.armies[0])[0].in_order);
+        }
+        r.w.step(&cmds);
+    }
+    let (reformed, stood) = (reformed.expect("a reform to KARE"), stood.expect("stand ground"));
+    assert!(reformed < stood, "reform {reformed}, stand ground {stood}");
+    assert_eq!(cm.report(0).karrees, 1);
+    assert!(line.iter().skip(1).all(|id| r.w.units[id.0 as usize].stand_ground));
+}
+
+#[test]
+fn and_returns_to_line_when_it_is_gone() {
+    let mut r = rig();
+    let (line, riders, armies) = line_and_riders(&mut r);
+    let mut cm = Commander::new(&r.w, armies, [Control::Ai, Control::Player]);
+    run(&mut r.w, &mut cm, 200);
+    assert!(shape_of(&r.w, line[1]).starts_with("#KARE"));
+    // The riders leave: three calm decisions later the square is a line again.
+    for &id in &riders {
+        r.w.units[id.0 as usize].pos.x += 3000 << 4;
+    }
+    let later = run(&mut r.w, &mut cm, 40);
+    assert!(!later.iter().any(|c| matches!(c, Command::Reform { .. })), "not yet: {later:?}");
+    let later = run(&mut r.w, &mut cm, 100);
+    assert_eq!(later.iter().filter(|c| matches!(c, Command::Reform { group: 0, .. })).count(), 1, "{later:?}");
+    assert_eq!(shape_of(&r.w, line[1]), "#LINE12");
+    assert_eq!(cm.report(0).karrees, 1);
+}
+
+#[test]
+fn no_karree_without_the_button_faces_instead() {
+    let mut r = rig_with(GROUPS_NO_KARE);
+    let (line, _riders, armies) = line_and_riders(&mut r);
+    let mut cm = Commander::new(&r.w, armies, [Control::Ai, Control::Player]);
+    let all = run(&mut r.w, &mut cm, 100);
+    assert!(!all.iter().any(|c| matches!(c, Command::Reform { .. })), "{all:?}");
+    assert!(all.iter().any(|c| matches!(c, Command::StandGround { on: true, .. })));
+    // The riders stand east of the line, which already faces east: the face order points east too.
+    assert!(all.iter().any(|c| matches!(c, Command::Face { officer, .. } if *officer == line[0])), "{all:?}");
+    assert_eq!(cm.report(0).karrees, 0);
+    assert_eq!(shape_of(&r.w, line[1]), "#LINE12");
 }
