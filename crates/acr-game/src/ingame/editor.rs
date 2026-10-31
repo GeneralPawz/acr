@@ -11,6 +11,7 @@
 //! a second box directly under it.
 
 mod levels;
+pub mod sides;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -115,6 +116,8 @@ pub enum Act {
     Pick(TypeId),
     /// Picks the owner (one of the eight colours).
     Owner(u8),
+    /// Cycles the team number of a colour (a right click on its swatch).
+    Team(u8),
     /// Picks the open level drop-down's type at that level ([`levels`]).
     SetLevel(usize),
     /// Scrolls the icons by pixels / by pages (the scroll bar's arrows and track).
@@ -207,8 +210,10 @@ pub struct Editor {
     level: usize,
     /// The level drop-down, open after a right click on an icon.
     menu: Option<levels::Menu>,
-    /// Fighting is off: every player is everybody's ally (set on start).
-    pub peace: bool,
+    /// Who fights whom ([`sides`]); everybody is allied on start.
+    pub sides: sides::Mode,
+    /// The team number of each owner, used by [`sides::Mode::Teams`].
+    team: [u8; 8],
     /// Every cannon is reloaded each tick (a test switch, off on start).
     pub auto_reload: bool,
     /// The last placement or problem, shown under the window.
@@ -234,7 +239,8 @@ impl Default for Editor {
             facing: [192, 64, 0, 0, 0, 0, 0, 0],
             level: 0,
             menu: None,
-            peace: true,
+            sides: sides::Mode::Off,
+            team: sides::default_teams(),
             auto_reload: false,
             status: b"Typ waehlen, dann auf die Karte klicken".to_vec(),
             swallow_release: false,
@@ -361,18 +367,6 @@ fn group_name(world: &World, group: usize) -> String {
     }
 }
 
-/// Every player allied with every other (`peace`), or each only with itself, as the
-/// mission scripts set alliances (`sync_alliances`): the nations' masks and every object's.
-pub fn set_peace(world: &mut World, peace: bool) {
-    for (n, m) in world.nation_mask.iter_mut().enumerate() {
-        *m = if peace { 0xFF } else { 1 << n };
-    }
-    let masks = world.nation_mask;
-    for u in &mut world.units {
-        u.nmask = masks[usize::from(u.owner) & 7];
-    }
-}
-
 /// `n` positions of a loose block centred on `(x, y)`, rows across `dir`, `gap` apart.
 pub fn grid(n: usize, (x, y): (i32, i32), dir: u8, gap: i32) -> Vec<(i32, i32)> {
     let cols = (n as f64).sqrt().ceil().max(1.0) as usize;
@@ -434,7 +428,13 @@ impl Editor {
             let rect = Rect::new(OX + 10 + 28 * i32::from(p), OY + 10, 22, 16);
             let name = if p == NEUTRAL { "Neutral".to_owned() } else { format!("Spieler {}", p + 1) };
             let hot = self.owner == p;
-            out.push(item(rect, Vec::new(), &name, hot, Some(Act::Owner(p)), Look::Swatch { owner: p }));
+            // In teams mode the team number shows on the swatch.
+            let team = if self.sides == sides::Mode::Teams && p != NEUTRAL {
+                self.team[usize::from(p)].to_string()
+            } else {
+                String::new()
+            };
+            out.push(item(rect, team.into_bytes(), &name, hot, Some(Act::Owner(p)), Look::Swatch { owner: p }));
         }
         // The grid, scrolled and clipped to the content.
         let groups = groups(world, self.entry);
@@ -525,8 +525,12 @@ impl Editor {
         pair(&mut out, &mut y, facing, "Richtung", Act::Facing(-1), Act::Facing(1));
         let owner = if self.owner == NEUTRAL { "Neutral".to_owned() } else { format!("Spieler {}", self.owner + 1) };
         line(&mut out, &mut y, format!("Besitzer: {owner}").into_bytes(), "Besitzer", false, None);
-        let peace = if self.peace { "Kampf: AUS (klicken: an)" } else { "Kampf: AN (klicken: aus)" };
-        line(&mut out, &mut y, peace.as_bytes().to_vec(), "Kampf", !self.peace, Some(Act::Peace));
+        let fight = match self.sides {
+            sides::Mode::Off => "Kampf: AUS (klicken: an)",
+            sides::Mode::Free => "Kampf: AN, alle gegen alle (klicken: Teams)",
+            sides::Mode::Teams => "Kampf: Teams, Rechtsklick auf Farbe (klicken: aus)",
+        };
+        line(&mut out, &mut y, fight.as_bytes().to_vec(), "Kampf", self.sides != sides::Mode::Off, Some(Act::Peace));
         line(&mut out, &mut y, b"Kanonen sofort laden".to_vec(), "Kanonen sofort laden", false, Some(Act::Reload));
         let auto = if self.auto_reload { "Kanonen: sofort nachladen AN" } else { "Kanonen: sofort nachladen AUS" };
         line(&mut out, &mut y, auto.as_bytes().to_vec(), "Kanonen nachladen", self.auto_reload, Some(Act::AutoReload));
@@ -653,6 +657,9 @@ impl Editor {
                     if i.hot {
                         hud::outline(out, r, c);
                     }
+                    if !i.text.is_empty() {
+                        out.push(Draw::game_text(WHITE, &i.text, r.x0 + 8, r.y0 + 12));
+                    }
                 }
                 Look::Combo => {
                     let mut d = Dialog::default();
@@ -699,6 +706,16 @@ impl Editor {
         }
     }
 
+    /// The nations' alliance masks of the Kampf rule.
+    pub fn masks(&self) -> [u8; 8] {
+        sides::masks(self.sides, &self.team)
+    }
+
+    /// Applies the Kampf rule to the world (on start and after each placement).
+    pub fn apply_sides(&self, world: &mut World) {
+        sides::apply(world, self.sides, &self.team);
+    }
+
     /// A click on window item `act`. Returns a new local player for [`Act::Control`].
     pub fn apply(&mut self, world: &mut World, act: Act, local: u8) -> Option<u8> {
         if act != Act::Combo && !matches!(act, Act::Entry(_)) {
@@ -738,9 +755,13 @@ impl Editor {
                 *f = f.wrapping_add((d * 32) as u8);
             }
             Act::Peace => {
-                self.peace = !self.peace;
-                set_peace(world, self.peace);
-                self.status = if self.peace { b"Kampf aus".to_vec() } else { b"Kampf an!".to_vec() };
+                self.sides = self.sides.next();
+                sides::apply(world, self.sides, &self.team);
+                self.status = match self.sides {
+                    sides::Mode::Off => b"Kampf aus".to_vec(),
+                    sides::Mode::Free => b"Kampf an: alle gegen alle".to_vec(),
+                    sides::Mode::Teams => b"Kampf an: Teams".to_vec(),
+                };
             }
             Act::Reload => {
                 let n = reload_guns(world);
@@ -754,7 +775,12 @@ impl Editor {
                     b"Kanonen laden normal".to_vec()
                 };
             }
-            Act::Control => return Some(if local == 0 { 1 } else { 0 }),
+            Act::Control => return Some(sides::next_controlled(world, local)),
+            Act::Team(p) => {
+                let t = &mut self.team[usize::from(p) & 7];
+                *t = sides::next_team(*t);
+                sides::apply(world, self.sides, &self.team);
+            }
             Act::Hide => self.open = !self.open,
         }
         None
@@ -805,7 +831,7 @@ impl Editor {
                 Ok(n)
             }
         };
-        set_peace(world, self.peace);
+        sides::apply(world, self.sides, &self.team);
         let name = world.catalog.get(kind).id.clone();
         self.status = match placed {
             Ok(k) => format!("{k} x {name}, Ausbau {level}/{ups}").into_bytes(),
@@ -1014,14 +1040,23 @@ impl super::InGame {
         if !pressed || self.editor.is_none() {
             return false;
         }
-        let icon = self.cursor.map(|at| self.canvas_point(at)).and_then(|p| {
+        let hit = self.cursor.map(|at| self.canvas_point(at)).and_then(|p| {
             let items = self.editor_items(ctx);
-            let hit = items.iter().rev().find(|i| i.act.is_some() && i.hit_rect().contains(p))?;
-            match (hit.look, hit.act) {
-                (Look::Icon { .. }, Some(Act::Pick(k))) => Some((k, hit.rect)),
-                _ => None,
-            }
+            items.into_iter().rev().find(|i| i.act.is_some() && i.hit_rect().contains(p))
         });
+        // A colour's swatch cycles its team while teams fight.
+        if let Some(Item { look: Look::Swatch { owner }, .. }) = hit
+            && owner != NEUTRAL
+            && let (Some(e), Some(world)) = (&mut self.editor, &mut self.world)
+            && e.sides == sides::Mode::Teams
+        {
+            e.apply(world, Act::Team(owner), 0);
+            return true;
+        }
+        let icon = match hit {
+            Some(Item { look: Look::Icon { .. }, act: Some(Act::Pick(k)), rect, .. }) => Some((k, rect)),
+            _ => None,
+        };
         let e = self.editor.as_mut().expect("editor");
         if let Some((kind, cell)) = icon {
             e.open_levels(kind, cell);

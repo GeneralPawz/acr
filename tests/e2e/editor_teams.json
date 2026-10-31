@@ -1,0 +1,32 @@
+{
+  "name": "editor_teams",
+  "description": "The test editor's Kampf teams (#405): a right click on a colour's swatch cycles its team number (shown on the swatch). Players 1 and 2 are put in team 1 and player 3 stays in team 3; 1 and 2 stand next to each other and do not fight for hundreds of ticks, then player 3 (team 3) is placed next to them and fights the pair: both sides lose men.",
+  "steps": [
+    {"cmd": "start", "blank": {"editor": true}},
+    {"cmd": "wait", "ticks": 5},
+    {"cmd": "click", "label": "Nation", "exact": true},
+    {"cmd": "click", "label": "Nation Frankreich", "exact": true},
+    {"cmd": "click", "label": "(FrnM18(FR))", "note": "the Füsilier icon"},
+    {"cmd": "click", "label": "Anzahl -", "exact": true, "note": "36 -> 15"},
+    {"cmd": "click", "label": "Anzahl -", "exact": true, "note": "10"},
+    {"cmd": "click", "label": "Kampf", "exact": true, "note": "AN"},
+    {"cmd": "click", "label": "Kampf", "exact": true, "note": "Teams"},
+    {"cmd": "rclick", "label": "Spieler 2", "note": "team 2 -> 3"},
+    {"cmd": "rclick", "label": "Spieler 2", "note": "4"},
+    {"cmd": "rclick", "label": "Spieler 2", "note": "1: with player 1"},
+    {"cmd": "click", "label": "Spieler 1", "exact": true},
+    {"cmd": "click", "pos": [400, 400]},
+    {"cmd": "click", "label": "Spieler 2", "exact": true},
+    {"cmd": "click", "pos": [450, 400]},
+    {"cmd": "wait", "ticks": 300},
+    {"cmd": "state", "expect": [
+      {"path": "state.counts.0.units.FrnM18(FR)", "eq": 10},
+      {"path": "state.counts.1.units.FrnM18(FR)", "eq": 10}]},
+    {"cmd": "click", "label": "Spieler 3", "exact": true},
+    {"cmd": "click", "pos": [425, 450]},
+    {"cmd": "wait", "ticks": 300},
+    {"cmd": "state", "expect": [
+      {"path": "state.counts.0.units.FrnM18(FR)", "lt": 10},
+      {"path": "state.counts.2.units.FrnM18(FR)", "lt": 10}]}
+  ]
+}

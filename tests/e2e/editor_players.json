@@ -1,0 +1,30 @@
+{
+  "name": "editor_players",
+  "description": "The test editor's Kampf rule with more than two players (#405): three players place Füsiliers near each other, Kampf cycles AUS, AN (alle gegen alle); a few hundred ticks later every one of them has lost units. Nobody fights while Kampf is AUS.",
+  "steps": [
+    {"cmd": "start", "blank": {"editor": true}},
+    {"cmd": "wait", "ticks": 5},
+    {"cmd": "click", "label": "Nation", "exact": true},
+    {"cmd": "click", "label": "Nation Frankreich", "exact": true},
+    {"cmd": "click", "label": "(FrnM18(FR))", "note": "the Füsilier icon"},
+    {"cmd": "click", "label": "Anzahl -", "exact": true, "note": "36 -> 15"},
+    {"cmd": "click", "label": "Anzahl -", "exact": true, "note": "10"},
+    {"cmd": "click", "label": "Spieler 1", "exact": true},
+    {"cmd": "click", "pos": [400, 400]},
+    {"cmd": "click", "label": "Spieler 2", "exact": true},
+    {"cmd": "click", "pos": [450, 400]},
+    {"cmd": "click", "label": "Spieler 3", "exact": true},
+    {"cmd": "click", "pos": [425, 450]},
+    {"cmd": "wait", "ticks": 300},
+    {"cmd": "state", "expect": [
+      {"path": "state.counts.0.units.FrnM18(FR)", "eq": 10},
+      {"path": "state.counts.1.units.FrnM18(FR)", "eq": 10},
+      {"path": "state.counts.2.units.FrnM18(FR)", "eq": 10}]},
+    {"cmd": "click", "label": "Kampf", "exact": true, "note": "AN: alle gegen alle"},
+    {"cmd": "wait", "ticks": 250},
+    {"cmd": "state", "expect": [
+      {"path": "state.counts.0.units.FrnM18(FR)", "lt": 10},
+      {"path": "state.counts.1.units.FrnM18(FR)", "lt": 10},
+      {"path": "state.counts.2.units.FrnM18(FR)", "lt": 10}]}
+  ]
+}

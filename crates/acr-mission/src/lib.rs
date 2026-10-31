@@ -131,6 +131,12 @@ impl Scripts {
         std::mem::replace(&mut self.state.fog, fog)
     }
 
+    /// Sets the nations' alliance masks (`Nation+0x11ed1`) the scripts keep and hand to the
+    /// simulation each tick; the test editor's "Kampf" rule uses it, as no script sets them.
+    pub fn set_alliances(&mut self, masks: [u8; 8]) {
+        self.state.nmask = masks;
+    }
+
     pub fn state(&self) -> &ScriptState {
         &self.state
     }

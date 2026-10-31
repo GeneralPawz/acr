@@ -290,6 +290,14 @@ impl MissionLink {
 
     /// Runs the scripts for the next tick; `None` while the game must stand still (a page or
     /// question is open). After the end of the game the world goes on without scripts.
+    /// Sets the nations' alliance masks of the scripts' state (the editor's "Kampf" rule), which
+    /// they copy to the world every tick.
+    pub fn set_alliances(&mut self, masks: [u8; 8]) {
+        if let Some(s) = &mut self.scripts {
+            s.set_alliances(masks);
+        }
+    }
+
     pub fn before_step(&mut self, world: &mut World) -> Option<Vec<Command>> {
         if !self.pending.is_empty() {
             return None;
