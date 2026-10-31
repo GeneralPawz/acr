@@ -1611,7 +1611,9 @@ mod tests {
     /// later no bone of the free-falling body moves faster than a stagger.
     #[test]
     fn arrow_hit_does_not_launch() {
-        assert!(impulse_of(DeathCause::Arrow, 100) < KNOCK_DOWN);
+        // The simulation decides who goes down (`acr_sim::body::knock_down`); an arrow counts
+        // as a musket-class hit there and never does.
+        assert_eq!(acr_sim::body::knock_down(acr_sim::body::Cause::Musket, 100, 0), 0);
         assert_eq!(blow_speed_cap(false, DeathCause::Arrow), MELEE_DV);
         assert!(blow_speed_cap(false, DeathCause::Explosion).is_infinite());
         let mut physics = Physics::new(Config::default());
