@@ -16,9 +16,9 @@ use crate::ui::draw::Rect;
 pub const MIN: f32 = 1.0;
 pub const MAX: f32 = 2.5;
 
-/// Size on the glass the Android default aims at for a command icon: about 7 mm, in dp (a dp
+/// Size on the glass the Android default aims at for a command icon: about 6 mm, in dp (a dp
 /// is 1/160 inch).
-const ICON_MM: f32 = 7.0;
+const ICON_MM: f32 = 6.0;
 const DP_PER_MM: f32 = 160.0 / 25.4;
 
 /// The panels that scale, by the corner they hang from.
@@ -88,7 +88,7 @@ impl Zoom {
     }
 }
 
-/// The scale the Android default aims at: a command icon of `icon` canvas pixels about 7 mm
+/// The scale the Android default aims at: a command icon of `icon` canvas pixels about 6 mm
 /// wide when one dp covers `density` canvas pixels, within the setting's range.
 pub fn phone_scale(density: f32, icon: i32) -> f32 {
     (ICON_MM * DP_PER_MM * density / icon as f32).clamp(MIN, MAX)
@@ -152,11 +152,11 @@ mod tests {
 
     #[test]
     fn the_phone_default_and_the_setting() {
-        // 3168 x 1440 at scale factor 3.5: a dp is 1.867 canvas pixels; the icon 7 mm wide.
+        // 3168 x 1440 at scale factor 3.5: a dp is 1.867 canvas pixels; the icon 6 mm wide.
         let phone = phone_scale(3.5 / 1.875, 40);
-        assert!((phone - 2.058).abs() < 0.01, "{phone}");
+        assert!((phone - 1.764).abs() < 0.01, "{phone}");
         let lower = phone_scale(1.5, 40);
-        assert!(lower > 1.5 && lower < phone, "{lower}");
+        assert!(lower > 1.0 && lower < phone, "{lower}");
         assert_eq!(phone_scale(5.0, 40), MAX);
         assert_eq!(phone_scale(0.1, 40), MIN);
         // Unset: the phone default on Android, 1 on the desktop; a set value wins.
