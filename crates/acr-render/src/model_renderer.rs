@@ -73,6 +73,9 @@ pub struct ModelInstance {
     pub drape: Option<Drape>,
     /// A building under construction (#302): drawn up to a height; `None` draws it whole.
     pub rise: Option<Rise>,
+    /// How fast the model travels along its facing (m/s; 0 standing): a flag bearer's cloth
+    /// streams behind him by it (`model.wgsl`, `flag_wave`). Counted to 0.1 m/s, up to 20.
+    pub pace: f32,
 }
 
 /// A building rising under construction (#302, `model.wgsl` `rising`): only what lies below
@@ -325,6 +328,12 @@ struct GpuPool {
     shape: [f32; 4],
     look: [f32; 4],
     tilt: [f32; 4],
+}
+
+/// `GpuInstance::params.w`: the half transparent flag (1) plus twice the pace in tenths of
+/// a metre per second (`model.wgsl` reads both back).
+fn pack_pace(transparent: bool, pace: f32) -> f32 {
+    f32::from(u8::from(transparent)) + 2.0 * (pace.clamp(0.0, 20.0) * 10.0).round()
 }
 
 #[repr(C)]
@@ -1634,7 +1643,7 @@ impl ModelRenderer {
                         if m.surface.normal.is_some_and(|t| t < views.len()) { m.surface.normal_scale } else { 0.0 },
                         if m.surface.metal_rough.is_some_and(|t| t < views.len()) { 1.0 } else { 0.0 },
                     ],
-                    thin: [m.finish.thin, 0.0, 0.0, 0.0],
+                    thin: [m.finish.thin, m.finish.ripple, 0.0, 0.0],
                 };
                 device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("model material"),
@@ -1961,7 +1970,7 @@ impl ModelRenderer {
                             inst.decay,
                             inst.morphs[0],
                             inst.morphs[if model.emaciated { 2 } else { 1 }],
-                            if inst.transparent { 1.0 } else { 0.0 },
+                            pack_pace(inst.transparent, inst.pace),
                         ],
                         // The palette and the data (set in `finish`), the player, the hair
                         // and beard variants shown (none without a look).

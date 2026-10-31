@@ -1419,6 +1419,7 @@ impl ThreeD {
                                     time: 0.0,
                                     transform,
                                     rise: None,
+                                    pace: 0.0,
                                     damage: Default::default(),
                                     // Less charred than the burnt-out shell: the broken
                                     // planks and thatch read against it.
@@ -1708,6 +1709,7 @@ impl ThreeD {
                     uniform: None,
                     drape: None,
                     rise: None,
+                    pace: 0.0,
                 });
             }
         }
@@ -1729,6 +1731,7 @@ impl ThreeD {
                     uniform: None,
                     drape: None,
                     rise: None,
+                    pace: 0.0,
                 });
             }
         }
@@ -2250,6 +2253,7 @@ impl ThreeD {
                 uniform: None,
                 drape: None,
                 rise: None,
+                pace: 0.0,
             });
         }
     }
@@ -2362,6 +2366,7 @@ impl ThreeD {
                     uniform: None,
                     drape: None,
                     rise: None,
+                    pace: 0.0,
                 });
             }
         }
@@ -2955,6 +2960,16 @@ fn body_damage(
     Some((damage, belly_open))
 }
 
+/// How fast a unit travels while it plays `anim` (m/s): a flag bearer's cloth streams behind
+/// him by it (`ModelInstance::pace`). The walking clips move at a man's pace, nothing else
+/// moves him.
+fn pace_of(anim: &AnimKind) -> f32 {
+    match anim {
+        AnimKind::MotionL | AnimKind::MotionR | AnimKind::MotionLs(_) | AnimKind::MotionRs(_) => WALK_PACE,
+        _ => 0.0,
+    }
+}
+
 /// The model instance of a unit: the clip of its sprite animation at its sprite frame, its
 /// facing, and as a corpse its decay (or the original's fade with `gore=off`); and its
 /// ground point (sunk with the decay).
@@ -3006,9 +3021,13 @@ fn instance(
         uniform: None,
         drape: None,
         rise: None,
+        pace: pace_of(&u.anim),
     };
     (instance, ground)
 }
+
+/// A man's walking pace (m/s).
+const WALK_PACE: f32 = 1.3;
 
 /// A human's body lying on the ground (metres): length, width, thickness, and how far its
 /// centre lies ahead of the ground point (towards the head; the chest is 0.55 m ahead,
@@ -3104,6 +3123,15 @@ fn wound_rig(model: &acr_render::model::ModelData) -> Option<&acr_render::damage
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_walking_clips_have_a_pace() {
+        assert_eq!(pace_of(&AnimKind::MotionL), WALK_PACE);
+        assert_eq!(pace_of(&AnimKind::MotionRs(1)), WALK_PACE);
+        for still in [AnimKind::Stand, AnimKind::Attack(0), AnimKind::Death] {
+            assert_eq!(pace_of(&still), 0.0);
+        }
+    }
     use crate::ui::setup::Ground;
 
     /// The blank field's ground under the view at its centre, as `InGame` sets it up.

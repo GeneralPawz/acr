@@ -415,6 +415,17 @@ and the species clock `τ = k.w · t`:
 - leaves: `w · s · k.z · 0.02 · (0.5 + 0.5 g) · sin(7 τ + 6π z + p · (0.11, 0.07))` along the
   normal.
 
+**Flags.** A material of key `flag` (the colour's cloth, `line.py` `cloth_wind`) is not swayed:
+its `_WIND` holds `y` the distance from the staff (0 on the hoist .. 1 at the fly) and `z` a
+phase down the cloth, and `model.wgsl` `ripple` moves it by `wind.wgsl` (`wind.rs` mirrors
+it, the tests are there): `flag_wave` is a wave along the cloth's normal, `0.16 m · strength ·
+u (0.35 + 0.65 u) · sin(9 u − 5 t + 1.3 z)`, zero at the staff and running out to the fly;
+`flag_strength` is the wind `s` (more in a gust) plus `0.45` per m/s of the bearer's pace;
+`flag_drift` streams the free edge (weight `u²`) downwind and opposite to his motion. The pace
+is `ModelInstance::pace` (the unit's walking clips: 1.3 m/s; packed in the instance's
+`params.w` with the half-transparent flag), so a bearer on the march streams his colour in a
+dead calm too. #348.
+
 Per species (`assets/nature/*.py` `SPEC["wind"]`, built by `acr_assets.nature`; `bend` is the
 trunk's exponent in `x = (h / top)^bend`, `crown` gives crowns without leaf cards flutter on
 the bark above that share of the height). Peak sway at the crown top (vertices above 90 % of
