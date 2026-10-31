@@ -1372,6 +1372,8 @@ pub fn make_damage(w: &mut World, victim: usize, dmg: i32, sender: Option<usize>
         let unlit = !w.rules.cannon_fire
             && DeathCause::of_weapon(kind) == DeathCause::Cannonball
             && crate::wounds::has_regions(w, victim);
+        // Rule `dart_fire` off (the default): likewise for the blowpipe dart (`VAFLIA`, flag `F`).
+        let unlit = unlit || (!w.rules.dart_fire && kind == "VAFLIA" && crate::wounds::has_regions(w, victim));
         let wf = if unlit { wf & !(FIRE | FIRE_SLOW) } else { wf };
         fire = wf & (FIRE | FIRE_SLOW) != 0;
         if wf & FIRE != 0 {
@@ -1941,6 +1943,12 @@ pub fn cause_of_attack(w: &World, sender: usize, att: u8) -> DeathCause {
     let Some(u) = w.units.get(sender) else { return DeathCause::Unknown };
     let a = w.adv(u.owner, u.kind);
     a.attacks.get(usize::from(att)).map_or(DeathCause::Unknown, |a| DeathCause::of_weapon(&a.kind))
+}
+
+/// Whether `sender`'s attack `att` is the blowpipe dart (`VAFLIA`).
+pub fn is_dart(w: &World, sender: usize, att: u8) -> bool {
+    let Some(u) = w.units.get(sender) else { return false };
+    w.adv(u.owner, u.kind).attacks.get(usize::from(att)).is_some_and(|a| a.kind == "VAFLIA")
 }
 
 /// Notes a round striking the ground (render only, not hashed).

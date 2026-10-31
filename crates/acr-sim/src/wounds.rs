@@ -48,6 +48,13 @@ pub struct Rules {
     /// back ([`crate::leash`], `docs/simulation.md`, "Animals give up"). The original chases
     /// until the target is dead (AttackObjLink 0x51bcaf).
     pub animal_give_up: bool,
+    /// Blowpipe darts set men on fire (#350): with [`Rules::hit_locations`] on, a man (not a
+    /// building, cannon or ship) hit by a `VAFLIA` dart (the `F` flag of `NRES.DAT`) catches
+    /// fire after `FIRELIMIT` hits, then burns, panics and may burn to death
+    /// ([`crate::ground_fire`]). Off (the default) a dart lights no man under hit locations
+    /// and leaves no ground fire; without hit locations the original's flag is set as before
+    /// either way.
+    pub dart_fire: bool,
 }
 
 impl std::hash::Hash for Rules {
@@ -74,6 +81,9 @@ impl std::hash::Hash for Rules {
         }
         if self.animal_give_up {
             (9u8, self.animal_give_up).hash(state);
+        }
+        if self.dart_fire {
+            (8u8, self.dart_fire).hash(state);
         }
     }
 }

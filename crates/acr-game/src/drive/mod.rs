@@ -760,6 +760,7 @@ impl Driver {
                         cannon_fire,
                         ball_terrain,
                         formation_attack,
+                        dart_fire,
                         hud,
                         corpse_decay_half,
                         decay_stain,
@@ -793,6 +794,7 @@ impl Driver {
                                 ball_terrain,
                                 formation_attack,
                                 animal_give_up: false,
+                                dart_fire,
                             },
                         }));
                         if let Mode::InGame(g) = &mut game.mode {
@@ -823,6 +825,7 @@ impl Driver {
                         cannon_fire,
                         ball_terrain,
                         formation_attack,
+                        dart_fire,
                     } => {
                         let mut players = vec![PlayerSetup {
                             name: b"Driver".to_vec(),
@@ -867,6 +870,7 @@ impl Driver {
                                 ball_terrain,
                                 formation_attack,
                                 animal_give_up: false,
+                                dart_fire,
                             },
                         }));
                     }
@@ -1059,6 +1063,7 @@ impl Driver {
                         "cannon_fire",
                         "ball_terrain",
                         "formation_attack",
+                        "dart_fire",
                         "nation",
                         "ground_cover",
                     ] {

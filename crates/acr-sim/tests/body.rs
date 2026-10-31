@@ -35,7 +35,7 @@ const MUSKETEER: &str = "NAME Mus\r\nUSERLC 0 G SHADOW 0 0\r\n#STAND 9 1 0 0\r\n
 
 const NRES: &[u8] =
     b"[WEAPONS]\r\n#GENSHIELD 13\r\nMECH 21 19 O\r\nSTRELA 1 14 HRB\r\nPIKA 11 17 O\r\nIADRO 2 15 HX\r\n\
-    VISTREL 12 18 HRB\r\n[UNITKINDS]\r\n";
+    VISTREL 12 18 HRB\r\nVAFLIA 4 4 HFB\r\n[UNITKINDS]\r\n";
 /// Pikemen, musketeers and a gunner whose blow is a cannonball (`IADRO`).
 fn setup() -> (World, TypeId, TypeId, TypeId) {
     let mut c = Catalog::new();
@@ -57,6 +57,7 @@ const ON: Rules = Rules {
     ball_terrain: false,
     formation_attack: false,
     animal_give_up: false,
+    dart_fire: false,
 };
 
 fn world() -> (World, usize) {
@@ -332,6 +333,31 @@ fn round_shot_lights_men_only_with_cannon_fire() {
     assert!(lit(Rules { cannon_fire: true, ..ON }));
     assert!(lit(Rules::default()), "the original sets its flag");
     assert!(lit(Rules { cannon_fire: true, ..Rules::default() }));
+}
+
+/// Rule `dart_fire` (#350): under hit locations a blowpipe dart (`VAFLIA`, flag `F`) sets
+/// the man it hits on fire only with the rule; without hit locations the original's flag
+/// goes on either way.
+#[test]
+fn darts_light_men_only_with_dart_fire() {
+    let lit = |rules: Rules| {
+        let mut c = Catalog::new();
+        let pik = c.add(ObjectType::from_def("Pik(EN)", &UnitDef::parse(PIKEMAN.as_bytes())));
+        let blower = PIKEMAN.replace("NAME Pik", "NAME Trb").replace("WEAPONKIND 0 PIKA", "WEAPONKIND 0 VAFLIA");
+        let trb = c.add(ObjectType::from_def("Trb(EN)", &UnitDef::parse(blower.as_bytes())));
+        c.set_weapon_kinds(&weapon_kinds(NRES));
+        let mut w = World::new(Arc::new(MapGrid::open(1)), Arc::new(c), Arc::new(Formations::default()));
+        w.rules = rules;
+        let s = w.spawn(trb, 1, Pos::from_pixels(1000, 1000), 0).0 as usize;
+        let v = w.spawn(pik, 0, Pos::from_pixels(2000, 2000), 0).0 as usize;
+        w.hit_energy = Some(5);
+        make_damage(&mut w, v, 1, Some(s), 0);
+        assert!(w.units[v].living());
+        w.units[v].burning
+    };
+    assert!(!lit(ON), "off by default under hit locations");
+    assert!(lit(Rules { dart_fire: true, ..ON }));
+    assert!(lit(Rules::default()), "the original sets its flag");
 }
 
 #[test]
