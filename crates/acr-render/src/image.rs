@@ -29,6 +29,14 @@ pub struct ImageTexture {
     group: Rc<wgpu::BindGroup>,
 }
 
+impl ImageTexture {
+    /// Identifies the uploaded image while it lives (its bind group's address): equal for
+    /// clones, so a frame can tell whether it draws the same images as the one before.
+    pub fn id(&self) -> usize {
+        Rc::as_ptr(&self.group) as usize
+    }
+}
+
 /// One image (or part of it) drawn into a screen rectangle.
 #[derive(Clone)]
 pub struct ImageDraw {

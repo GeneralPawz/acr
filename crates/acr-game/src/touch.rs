@@ -106,6 +106,11 @@ fn mid(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
 }
 
 impl Touches {
+    /// A finger is on the screen.
+    pub fn down(&self) -> bool {
+        !self.fingers.is_empty()
+    }
+
     /// Sets the window's scale factor (pixels per density-independent pixel).
     pub fn set_scale(&mut self, scale: f64) {
         self.scale = scale.max(0.5);

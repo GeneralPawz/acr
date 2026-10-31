@@ -2695,6 +2695,17 @@ impl ThreeD {
         strength * acr_render::weather::gust(at, WIND_DIR, self.wind_clock)
     }
 
+    /// Whether the 3D view moves by itself (render on demand, `pacing.rs`): particles, ragdolls,
+    /// weather, and while the game runs (`still` false) the wind and water of the models. The
+    /// free camera is moved by held keys, which send no events. When unsure: true.
+    pub fn animating(&self, still: bool) -> bool {
+        self.free
+            || self.particles.particles.live() > 0
+            || self.ragdolls.as_ref().is_some_and(|r| r.awake() > 0)
+            || self.weather() != Weather::Off
+            || (self.models_phase() && !still)
+    }
+
     /// The weather drawn: the driver's override, else the setting; a storm at sea brings rain
     /// when the weather is off.
     pub fn weather(&self) -> Weather {
