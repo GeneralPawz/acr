@@ -23,6 +23,7 @@ const ON: Rules = Rules {
     group_move: false,
     cannon_fire: false,
     ball_terrain: false,
+    dart_fire: false,
 };
 
 /// The walker's row (px) and his start and goal columns.
