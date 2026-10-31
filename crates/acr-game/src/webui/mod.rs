@@ -5,11 +5,13 @@
 //! input back ([`input`]); the UI draws the screens it claimed in its `Ready` message and the
 //! engine stops drawing exactly those, as long as the UI can describe them ([`view`]).
 //!
+//! - [`bundle`]: the built UI, embedded in the executable.
 //! - [`assets`]: pictures and fonts decoded from the player's files for the UI.
 //! - [`font_atlas`]: glyph atlases of the original fonts. [`keys`]: DOM keys as winit keys.
 //! - `web`: the browser's exports (wasm only).
 
 pub mod assets;
+pub mod bundle;
 pub mod font_atlas;
 pub mod input;
 pub mod keys;

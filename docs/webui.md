@@ -19,6 +19,21 @@ Every other screen is still drawn by the engine, under the UI's input overlay.
 | Browser page | `crates/acr-game/web/index.html`: `/?game=/game/&ui=svelte` mounts it after the game started; the default is `ui=engine` |
 | Tooling | `cargo xtask web/serve/dist` build and copy the bundle to `target/web/game/ui/` (`--no-ui` or no `bun` skips it, `ACR_UI_DIST` names a bundle built elsewhere); `cargo xtask ui-diff A.png B.png [--out D.png]` |
 
+## Bundle embedding
+
+`crates/acr-game/build.rs` reads `ACR_UI_DIST` (a folder; it must contain `acr-ui.js`, else the build
+fails) or `ui/dist`, and generates `ui_bundle.rs` into `OUT_DIR`: `FILES: &[(&str, &[u8])]` (path with
+`/` below the folder, sorted, `include_bytes!`) and `PRESENT`. `webui::bundle` includes it. A missing
+`ui/dist` gives `PRESENT = false` and a `cargo:warning`, never an error; the wasm library embeds
+nothing (the page loads `ui/` beside it). `cargo xtask dist` builds the bundle first and passes it as
+`ACR_UI_DIST`, so `AmericanConquest.exe` carries it.
+
+CI: the `ui` job (Bun from `ui/.bun-version`) checks the protocol export, runs `bun run check|test|build`,
+uploads `ui/dist` as artifact `acr-ui`, and runs the `webui::bundle` test with `ACR_UI_DIST` set to it.
+The `wasm` and (paused) `windows` jobs of `ci.yml`, and the `web` and `windows` jobs of `release.yml`,
+need `ui` and download the artifact into `ACR_UI_DIST`. The Windows-only clippy of `acr-game` waits for
+the native host (#319).
+
 Without a bundle everything compiles and the game uses the engine's UI; the driver, `cargo test`
 and clippy never need Bun.
 
