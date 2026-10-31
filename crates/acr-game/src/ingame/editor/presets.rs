@@ -711,7 +711,7 @@ impl Editor {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
 
     /// The three sizes of every doctrine have the bodies the sizes promise: Klein 2, Mittel
@@ -780,7 +780,7 @@ mod tests {
 
     /// The game's catalog and formations on an open map (shift 1, 15360 px a side); needs the
     /// original game files, so the tests that use it are ignored without `ACR_GAME_DIR`.
-    fn world() -> World {
+    pub(in crate::ingame::editor) fn world() -> World {
         use acr_formats::Vfs;
         use acr_sim::assets::SimAssets;
         use std::sync::Arc;

@@ -24,6 +24,7 @@ use crate::ui::draw::{Draw, GAME_PALETTE, Rect};
 use crate::ui::fonts::FontId;
 use crate::ui::screens::font as menu_font;
 
+mod battle;
 mod presets;
 
 const WHITE: FontId = FontId("SmallWhiteFont");
@@ -120,6 +121,8 @@ pub enum Act {
     Entry(usize),
     /// A line of the army menu (a right click on the combo box opens it).
     Army(presets::Act),
+    /// A click of the battle view ("Schlacht").
+    Battle(battle::Act),
     Pick(TypeId),
     /// Picks the owner (one of the eight colours).
     Owner(u8),
@@ -218,6 +221,10 @@ pub struct Editor {
     pub auto_reload: bool,
     /// The army menu and the army the next click on the map places.
     pub army: presets::Menu,
+    /// The battle view (a button in the title row switches to it).
+    pub battle: battle::Battle,
+    /// The camera is to centre on this world point (set by "Aufstellen").
+    pub camera_to: Option<(i32, i32)>,
     /// The last placement or problem, shown under the window.
     status: Vec<u8>,
     /// A press placed or hit the window: its release does nothing else.
@@ -241,6 +248,8 @@ impl Default for Editor {
             facing: [192, 64, 0, 0, 0, 0, 0, 0],
             level: 0,
             army: presets::Menu::default(),
+            battle: battle::Battle::default(),
+            camera_to: None,
             peace: true,
             auto_reload: false,
             status: b"Typ waehlen, dann auf die Karte klicken".to_vec(),
@@ -436,6 +445,20 @@ impl Editor {
         out.push(item(window, Vec::new(), "", false, None, Look::Frame { divider: Some(DIVIDER) }));
         let title = Rect::new(OX + 10, OY - 30, 200, ROW);
         out.push(item(title, view.title.clone(), "Editor einklappen", false, Some(Act::Hide), Look::Title));
+        let (label, name) = if self.battle.on { ("Einheiten", "Einheiten") } else { ("Schlacht", "Schlacht") };
+        let switch = Rect::new(BOX_X1 - 70, OY - 30, 66, ROW);
+        out.push(item(
+            switch,
+            label.as_bytes().to_vec(),
+            name,
+            self.battle.on,
+            Some(Act::Battle(battle::Act::Toggle)),
+            Look::Text,
+        ));
+        if self.battle.on {
+            out.extend(self.battle_items());
+            return out;
+        }
         // The eight player colours (0x5bb140): 28 apart from x = 10, y = 10.
         for p in 0..8u8 {
             let rect = Rect::new(OX + 10 + 28 * i32::from(p), OY + 10, 22, 16);
@@ -698,6 +721,7 @@ impl Editor {
                 }
             }
             Act::Army(a) => self.army_act(a),
+            Act::Battle(a) => self.battle_act(world, a),
             Act::Pick(k) => {
                 self.pick = if self.pick == Some(k) { None } else { Some(k) };
                 self.form = self.form.min(formations(world, k).len());
@@ -961,7 +985,11 @@ impl super::InGame {
                 self.setup.local_player = usize::from(next);
                 self.selected.clear();
             }
-            self.editor.as_mut().expect("editor").swallow_release = true;
+            let e = self.editor.as_mut().expect("editor");
+            e.swallow_release = true;
+            if let Some((x, y)) = e.camera_to.take() {
+                self.set_camera(x, y, 0.0, None, None);
+            }
             return true;
         }
         let armed = self.editor.as_ref().is_some_and(|e| e.pick.is_some() || e.army.armed.is_some());
