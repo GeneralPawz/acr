@@ -7,9 +7,9 @@
 //! | drag | left button held (a selection rectangle, a dragged slider) |
 //! | long press | right click where the finger is |
 //! | long press, then swipe | right button dragged: the order's direction arrow (formations face it) |
-//! | two fingers sliding down together (‖) | pause |
+//! | two fingers | the middle button at their middle: moving them together pans the map |
+//! | pinch (while the two fingers pan) | zoom about the fingers' middle (the wheel's zoom) |
 //! | a triangle drawn like ▶ while paused | unpause |
-//! | pinch | zoom about the fingers' middle (the wheel's zoom) |
 
 use std::time::Duration;
 
@@ -21,7 +21,9 @@ pub enum Gesture {
     LeftUp,
     RightDown,
     RightUp,
-    Pause,
+    /// The middle button, which pans the map (modern controls).
+    MiddleDown,
+    MiddleUp,
     Unpause,
     /// Wheel notches, positive in.
     Zoom(f32),
@@ -39,23 +41,13 @@ pub enum Phase {
 const LONG_PRESS: Duration = Duration::from_millis(500);
 /// Density-independent pixels a finger may wander and still tap or long-press.
 const SLOP_DP: f64 = 10.0;
-/// How far two fingers slide down together to pause.
-const PAUSE_DP: f64 = 70.0;
-/// Two fingers that slide this far together, before their distance changes, slide.
-const SWIPE_DP: f64 = 25.0;
-/// A change of the fingers' distance (as a log ratio) that makes two fingers a pinch.
+/// A change of the fingers' distance (as a log ratio) from which two fingers also zoom, so
+/// the jitter of a pan does not.
 const PINCH_LOG: f64 = 0.12;
 /// The smallest triangle drawn, both sides.
 const TRIANGLE_DP: f64 = 50.0;
 /// Pinch: the wheel's zoom step (`controls::ZOOM_STEP`, 2^(1/4)) per notch.
 const NOTCH_LOG: f64 = std::f64::consts::LN_2 / 4.0;
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum TwoMode {
-    Undecided,
-    Pinch,
-    Slide,
-}
 
 #[derive(Clone, Debug, PartialEq)]
 enum State {
@@ -71,13 +63,12 @@ enum State {
     /// One finger holding the right button after a long press; moving it drags the order's
     /// direction arrow, lifting it gives the order.
     RightHeld,
-    /// Two fingers.
+    /// Two fingers, holding the middle button at their middle (a pan), and zooming once their
+    /// distance has changed enough.
     Two {
         start_dist: f64,
-        start_mid: [f64; 2],
         last_dist: f64,
-        mode: TwoMode,
-        paused: bool,
+        pinching: bool,
     },
     /// The gesture is over; wait until every finger is up.
     Done,
@@ -141,13 +132,8 @@ impl Touches {
                         }
                         let (a, b) = (self.fingers[0].pos, self.fingers[1].pos);
                         let d = dist(a, b).max(1.0);
-                        self.state = State::Two {
-                            start_dist: d,
-                            start_mid: mid(a, b),
-                            last_dist: d,
-                            mode: TwoMode::Undecided,
-                            paused,
-                        };
+                        out.extend([Gesture::Move(mid(a, b)), Gesture::MiddleDown]);
+                        self.state = State::Two { start_dist: d, last_dist: d, pinching: false };
                     }
                     _ => {}
                 }
@@ -169,31 +155,14 @@ impl Touches {
                     }
                     State::Dragging | State::RightHeld if i == 0 => out.push(Gesture::Move(pos)),
                     State::Tracing if i == 0 => self.path.push(pos),
-                    State::Two { start_dist, start_mid, last_dist, mode, paused } if i < 2 => {
+                    State::Two { start_dist, last_dist, pinching } if i < 2 => {
                         let (a, b) = (self.fingers[0].pos, self.fingers[1].pos);
                         let (d, m) = (dist(a, b).max(1.0), mid(a, b));
-                        let spread = (d / *start_dist).ln();
-                        let (dx, dy) = (m[0] - start_mid[0], m[1] - start_mid[1]);
-                        if *mode == TwoMode::Undecided {
-                            if spread.abs() > PINCH_LOG {
-                                *mode = TwoMode::Pinch;
-                            } else if dx.hypot(dy) > SWIPE_DP * self.scale {
-                                *mode = TwoMode::Slide;
-                            }
-                        }
-                        match *mode {
-                            TwoMode::Pinch => {
-                                out.push(Gesture::Move(m));
-                                out.push(Gesture::Zoom(((d / *last_dist).ln() / NOTCH_LOG) as f32));
-                                *last_dist = d;
-                            }
-                            TwoMode::Slide if dy > PAUSE_DP * self.scale && dx.abs() < dy / 2.0 => {
-                                if !*paused {
-                                    out.push(Gesture::Pause);
-                                }
-                                self.state = State::Done;
-                            }
-                            _ => {}
+                        out.push(Gesture::Move(m));
+                        *pinching |= (d / *start_dist).ln().abs() > PINCH_LOG;
+                        if *pinching {
+                            out.push(Gesture::Zoom(((d / *last_dist).ln() / NOTCH_LOG) as f32));
+                            *last_dist = d;
                         }
                     }
                     _ => {}
@@ -224,6 +193,9 @@ impl Touches {
                         }
                         _ => {}
                     }
+                }
+                if matches!(self.state, State::Two { .. }) {
+                    out.push(Gesture::MiddleUp);
                 }
                 self.fingers.remove(i);
                 self.state = if self.fingers.is_empty() { State::Idle } else { State::Done };
@@ -339,33 +311,59 @@ mod tests {
         );
     }
 
+    fn zoom_of(gestures: &[Gesture]) -> f32 {
+        gestures.iter().map(|g| if let Gesture::Zoom(l) = g { *l } else { 0.0 }).sum()
+    }
+
     #[test]
-    fn two_fingers_sliding_down_pause_and_a_pinch_zooms() {
+    fn two_fingers_moving_together_pan_the_map() {
+        let mut t = Touches::default();
+        t.event(1, Phase::Started, [100.0, 100.0], ms(0), false);
+        let start = t.event(2, Phase::Started, [160.0, 100.0], ms(10), false);
+        assert_eq!(start, [Gesture::Move([130.0, 100.0]), Gesture::MiddleDown]);
+        let mut all = Vec::new();
+        for k in 1..=10 {
+            let (dx, dy) = (7.0 * f64::from(k), 10.0 * f64::from(k));
+            all.extend(t.event(1, Phase::Moved, [100.0 + dx, 100.0 + dy], ms(20 + k as u64), false));
+            all.extend(t.event(2, Phase::Moved, [160.0 + dx, 100.0 + dy], ms(20 + k as u64), false));
+        }
+        assert!(all.iter().all(|g| matches!(g, Gesture::Move(_))), "a pan has no zoom: {all:?}");
+        assert_eq!(all.last(), Some(&Gesture::Move([200.0, 200.0])));
+        assert_eq!(t.event(1, Phase::Ended, [170.0, 200.0], ms(100), false), [Gesture::MiddleUp]);
+        assert!(t.event(2, Phase::Ended, [230.0, 200.0], ms(110), false).is_empty(), "no click after the pan");
+        assert!(t.tick(ms(2000)).is_empty());
+    }
+
+    #[test]
+    fn two_fingers_sliding_down_no_longer_pause() {
         let mut t = Touches::default();
         t.event(1, Phase::Started, [100.0, 100.0], ms(0), false);
         t.event(2, Phase::Started, [160.0, 100.0], ms(10), false);
         let mut all = Vec::new();
-        for k in 1..=10 {
+        for k in 1..=20 {
             let y = 100.0 + 10.0 * f64::from(k);
             all.extend(t.event(1, Phase::Moved, [100.0, y], ms(20 + k as u64), false));
             all.extend(t.event(2, Phase::Moved, [160.0, y], ms(20 + k as u64), false));
         }
-        assert_eq!(all, [Gesture::Pause]);
-        t.event(1, Phase::Ended, [100.0, 200.0], ms(100), false);
-        assert!(t.event(2, Phase::Ended, [160.0, 200.0], ms(110), false).is_empty(), "no click after the slide");
+        assert!(all.iter().all(|g| matches!(g, Gesture::Move(_))), "{all:?}");
+    }
 
-        t.event(1, Phase::Started, [100.0, 100.0], ms(200), false);
-        t.event(2, Phase::Started, [200.0, 100.0], ms(210), false);
-        let mut zoom = 0.0;
+    #[test]
+    fn a_pinch_zooms_while_it_pans() {
+        let mut t = Touches::default();
+        t.event(1, Phase::Started, [100.0, 100.0], ms(0), false);
+        t.event(2, Phase::Started, [200.0, 100.0], ms(10), false);
+        let mut all = Vec::new();
         for k in 1..=10 {
-            for g in t.event(2, Phase::Moved, [200.0 + 10.0 * f64::from(k), 100.0], ms(220), false) {
-                if let Gesture::Zoom(l) = g {
-                    zoom += l;
-                }
-            }
+            all.extend(t.event(2, Phase::Moved, [200.0 + 10.0 * f64::from(k), 100.0], ms(220), false));
         }
-        // The fingers spread from 100 to 200 px: twice as close, four notches in.
-        assert!((zoom - 4.0).abs() < 0.6, "{zoom}");
+        // The fingers spread from 100 to 200 px: twice as far, four notches in.
+        assert!((zoom_of(&all) - 4.0).abs() < 0.6, "{all:?}");
+        // The middle moved with the spreading finger, so the map panned too.
+        assert!(all.contains(&Gesture::Move([200.0, 100.0])));
+        // Moving both fingers on while spread: pan and zoom in the same event stream.
+        let more = t.event(1, Phase::Moved, [120.0, 130.0], ms(300), false);
+        assert!(more.iter().any(|g| matches!(g, Gesture::Move(_))) && zoom_of(&more) < 0.0, "{more:?}");
     }
 
     #[test]

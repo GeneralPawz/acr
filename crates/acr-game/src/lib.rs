@@ -906,7 +906,7 @@ impl ApplicationHandler<Event> for Game {
 /// Input from the window (or the test driver), in window pixels.
 impl Game {
     /// A finger on the screen, through the touch gestures (`touch.rs`): tap, drag and long
-    /// press (with a swipe: the order's arrow) work as the mouse, two fingers pause and zoom, a ▶ unpauses.
+    /// press (with a swipe: the order's arrow) work as the mouse, two fingers pan and zoom, a ▶ unpauses.
     fn touch(&mut self, touch: winit::event::Touch, event_loop: &ActiveEventLoop) {
         use winit::event::TouchPhase;
         let phase = match touch.phase {
@@ -938,12 +938,14 @@ impl Game {
                 Gesture::LeftUp => self.mouse_input(ElementState::Released, MouseButton::Left, event_loop),
                 Gesture::RightDown => self.mouse_input(ElementState::Pressed, MouseButton::Right, event_loop),
                 Gesture::RightUp => self.mouse_input(ElementState::Released, MouseButton::Right, event_loop),
-                Gesture::Pause | Gesture::Unpause => {
+                Gesture::MiddleDown => self.mouse_input(ElementState::Pressed, MouseButton::Middle, event_loop),
+                Gesture::MiddleUp => self.mouse_input(ElementState::Released, MouseButton::Middle, event_loop),
+                Gesture::Unpause => {
                     if let Mode::InGame(game) = &mut self.mode
                         && game.ready()
                         && !self.ui.dialog_open()
                     {
-                        game.set_paused(g == Gesture::Pause);
+                        game.set_paused(false);
                     }
                 }
                 Gesture::Zoom(lines) => {
