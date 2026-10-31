@@ -1160,23 +1160,36 @@ impl Dialog {
     }
 
     pub fn draw(&self, lib: &Library, fonts: &Fonts, out: &mut Vec<Draw>) {
-        for w in self.widgets.iter().filter(|w| w.visible) {
-            let start = out.len();
-            self.draw_widget(lib, fonts, w, out);
-            let dy = self.owner_dy(w);
-            if dy != 0 {
-                for d in &mut out[start..] {
-                    d.y += dy;
-                }
-            }
-            for d in &mut out[start..] {
-                d.clip = d.clip.intersect(&w.clip);
-            }
+        for i in 0..self.widgets.len() {
+            out.extend(self.widget_draws(lib, fonts, i));
         }
-        // Drop-downs on top of everything (`OnDrawActive`).
+        out.extend(self.dropdown_draws());
+    }
+
+    /// What widget `index` draws, placed and clipped (nothing if it is hidden). [`Dialog::draw`]
+    /// is these for all widgets, then [`Dialog::dropdown_draws`].
+    pub fn widget_draws(&self, lib: &Library, fonts: &Fonts, index: usize) -> Vec<Draw> {
+        let w = &self.widgets[index];
+        let mut out = Vec::new();
+        if !w.visible {
+            return out;
+        }
+        self.draw_widget(lib, fonts, w, &mut out);
+        let dy = self.owner_dy(w);
+        for d in &mut out {
+            d.y += dy;
+            d.clip = d.clip.intersect(&w.clip);
+        }
+        out
+    }
+
+    /// The open combo box's drop-down, on top of everything (`OnDrawActive`).
+    pub fn dropdown_draws(&self) -> Vec<Draw> {
+        let mut out = Vec::new();
         if let Some(id) = self.modal {
-            self.draw_drop_down(&self.widgets[id], out);
+            self.draw_drop_down(&self.widgets[id], &mut out);
         }
+        out
     }
 
     fn draw_widget(&self, lib: &Library, fonts: &Fonts, w: &Widget, out: &mut Vec<Draw>) {
@@ -1520,5 +1533,25 @@ mod tests {
         d.choose(a, 1);
         assert_eq!(d.press([12.0, 12.0]).chosen, Some(1));
         assert_eq!(d.press([17.0, 17.0]).chosen, None);
+    }
+
+    #[test]
+    fn draw_is_the_widgets_draws_in_order() {
+        let (lib, fonts) = (Library::new(&[]), Fonts::default());
+        let mut d = Dialog::default();
+        d.set_clip(Some(Rect::new(0, 0, 50, 50)));
+        let a = d.add_outline(5, 5, 10, 10, [1, 2, 3, 255]);
+        let hidden = d.add_outline(0, 0, 4, 4, [9; 4]);
+        d.widgets[hidden].visible = false;
+        d.set_clip(None);
+        d.add_outline(20, 20, 6, 6, [4, 5, 6, 255]);
+        let mut all = Vec::new();
+        d.draw(&lib, &fonts, &mut all);
+        let per: Vec<Vec<Draw>> = (0..d.widgets.len()).map(|i| d.widget_draws(&lib, &fonts, i)).collect();
+        assert_eq!((per[a].len(), per[hidden].len(), per[2].len()), (4, 0, 4));
+        assert_eq!(per[a][0].clip, Rect::new(0, 0, 50, 50));
+        let joined: Vec<Draw> = per.into_iter().flatten().collect();
+        assert_eq!(format!("{all:?}"), format!("{joined:?}"));
+        assert!(d.dropdown_draws().is_empty());
     }
 }

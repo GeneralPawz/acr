@@ -76,6 +76,15 @@ const ALWAYS: [&str; 7] = [
     dialog::sound::HOVER[2],
 ];
 
+/// What an external UI (the Svelte UI of `webui`) draws instead of the engine.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct External {
+    /// Screens it draws (`Screen::name`); [`Ui::draws`] leaves them out.
+    pub screens: Vec<String>,
+    /// It shows the cursor too.
+    pub cursor: bool,
+}
+
 /// Shared services for screens.
 pub struct Ctx<'a> {
     pub lib: &'a Library,
@@ -188,6 +197,8 @@ pub struct Ui {
     graphics_unset: bool,
     /// Shown on the loading screen while a saved game is replayed (0..=1).
     loading_progress: Option<f32>,
+    /// An external UI draws these screens and the cursor ([`Ui::set_external`]).
+    external: Option<External>,
 }
 
 impl Ui {
@@ -216,6 +227,7 @@ impl Ui {
             settings_store: None,
             graphics_unset: true,
             loading_progress: None,
+            external: None,
         };
         ui.stack.push(Entry { screen: Box::new(screens::main_menu::MainMenu::default()), built: false });
         ui
@@ -224,6 +236,22 @@ impl Ui {
     /// The open screens from the bottom, each with whether it is built (test driver).
     pub fn screens(&self) -> impl Iterator<Item = (&dyn Screen, bool)> {
         self.stack.iter().map(|e| (&*e.screen as &dyn Screen, e.built))
+    }
+
+    /// An external UI takes over `external.screens` and the cursor; `None` ends it.
+    pub fn set_external(&mut self, external: Option<External>) {
+        self.external = external;
+    }
+
+    /// The screen [`Ui::draws`] shows: the top one that is built (the previous one while the
+    /// next loads).
+    pub fn shown_screen(&self) -> Option<&dyn Screen> {
+        self.stack.iter().rev().find(|e| e.built).map(|e| &*e.screen as &dyn Screen)
+    }
+
+    /// The loaded files and fonts, to resolve what the screens draw.
+    pub fn assets(&self) -> (&Library, &Fonts) {
+        (&self.lib, &self.fonts)
     }
 
     /// The canvas position of the mouse, as the screens last saw it.
@@ -670,7 +698,10 @@ impl Ui {
         // Keep showing the previous screen while the next one loads.
         if let Some(entry) = self.stack.iter().rev().find(|e| e.built) {
             let ctx = self.ctx();
-            entry.screen.draw(&ctx, &mut draws);
+            let claimed = self.external.as_ref().is_some_and(|x| x.screens.iter().any(|n| n == entry.screen.name()));
+            if !claimed {
+                entry.screen.draw(&ctx, &mut draws);
+            }
             if entry.screen.in_game() {
                 draws = draws.into_iter().map(Draw::in_game).collect();
             }
@@ -684,8 +715,11 @@ impl Ui {
         }
         self.textures.resolve(device, queue, images, &self.lib, &self.fonts, canvas, &draws, &mut out);
         // The cursor goes anywhere in the window, also beside the menu canvas.
+        let own_cursor = self.external.as_ref().is_some_and(|e| e.cursor);
         let mut draws = Vec::new();
-        if let (Some([x, y]), Some(cursor), false) = (self.mouse, self.cursor_draw(), self.hardware_cursor) {
+        if let (Some([x, y]), Some(cursor), false) =
+            (self.mouse, self.cursor_draw(), self.hardware_cursor || own_cursor)
+        {
             draws.push(cursor.translated(x.floor() as i32, y.floor() as i32));
         }
         let window = Canvas { clip: Rect::ALL, ..*canvas };
