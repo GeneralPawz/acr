@@ -1,0 +1,23 @@
+{
+  "name": "sea_battle",
+  "description": "The sea battle map (#408, random map landscape 6): open water, each player's ships at opposite ends; they sail towards each other (attack move) and trade broadsides: both flagships lose life",
+  "step_timeout_s": 180,
+  "steps": [
+    {"cmd": "start", "random": {"nation": 1, "seed": 5, "landscape": 6}},
+    {"cmd": "wait", "ticks": 20},
+    {"cmd": "state", "units": true, "expect": [
+      {"path": "state.population", "eq": 3},
+      {"path": "state.units", "len_eq": 6}
+    ]},
+    {"cmd": "command", "command": {"type": "attack_move", "units": {"owner": 0}, "x": 7680, "y": 7680}},
+    {"cmd": "command", "command": {"type": "attack_move", "units": {"owner": 1}, "x": 7680, "y": 7680}},
+    {"cmd": "wait", "ticks": 5000},
+    {"cmd": "wait", "ticks": 5000},
+    {"cmd": "wait", "ticks": 5000},
+    {"cmd": "state", "units": true, "expect": [
+      {"path": "tick", "ge": 15000},
+      {"path": "state.units.0.life", "lt": 65150},
+      {"path": "state.units.3.life", "lt": 65150}
+    ]}
+  ]
+}

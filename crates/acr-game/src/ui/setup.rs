@@ -102,6 +102,8 @@ pub enum Ground {
     White,
     /// Pure greenscreen green (0, 255, 0), like `White`.
     Greenscreen,
+    /// Open water everywhere, for ship fights (#408); see [`crate::blank_map`].
+    Sea,
 }
 
 /// Who controls a player.

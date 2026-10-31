@@ -111,7 +111,7 @@ its label to appear.
 | `{"cmd": "state"}` | see below; `"units": true` lists every object, `"owner": n` and `"type": "Mus"` filter, `"visible_only": true` respects the fog, `"detail": true` adds each object's orders, animation and frame, stances, reload counter (`delay`), direction and switches, and the listed objects' `activity` |
 | `{"cmd": "command", "command": {"type": "move", "units": [1, 2], "x": 3000, "y": 9000}}` | a simulation command for setup (below) |
 | `{"cmd": "select", "units": [10, 11]}` | replaces the selection (setup; prefer `drag`/`click` to test the interface) |
-| `{"cmd": "start", "random": {"nation": 1, "seed": 5}}` | a random map without the menus; also `opponents`, `resources`, `size`, `difficulty`, `hit_locations` (the optional rule, #225), `body_spacing` (the optional rule, `docs/body-spacing.md`), `mortars` (the optional rule, `simulation.md` "Mortar"), `corpse_piles` (the optional rule, `simulation.md` "Corpse piles"), `group_move` (the optional rule, `simulation.md` "Group moves"), `cannon_fire` (the optional rule, `simulation.md` "Shell fires"); the rules default to off, the `settings.txt` rules are not read |
+| `{"cmd": "start", "random": {"nation": 1, "seed": 5}}` | a random map without the menus; also `opponents`, `resources`, `size`, `landscape` (an index of the menu's list; 6 is the sea battle map: open water, three ships of each player at their own end, no AI worth the name, docs/mapgen.md "Sea battle"), `difficulty`, `hit_locations` (the optional rule, #225), `body_spacing` (the optional rule, `docs/body-spacing.md`), `mortars` (the optional rule, `simulation.md` "Mortar"), `corpse_piles` (the optional rule, `simulation.md` "Corpse piles"), `group_move` (the optional rule, `simulation.md` "Group moves"), `cannon_fire` (the optional rule, `simulation.md` "Shell fires"); the rules default to off, the `settings.txt` rules are not read |
 | `{"cmd": "start", "map": "Missions\\Singles\\Single7\\Single7.m3d"}` | a map file (alias `load_map`) |
 | `{"cmd": "start", "blank": {"ground": "grass"}}` | the blank test field, see "The blank field" below |
 | `{"cmd": "hud", "on": false}` | hides the interface (panel, minimap, cursor): frames show the world only; `true` brings it back |
@@ -248,7 +248,7 @@ every texture 0, no sprites, no units, an empty `SEA2`; `acr-game/src/blank_map.
 | Key | Values |
 | --- | --- |
 | `size` | `normal` (default), `large`, `huge` |
-| `ground` | `grass` (texture 0, the editor's green, default), `dirt` (71), `snow` (103); `white` and `greenscreen` (or `green`): a flat colour, see below |
+| `ground` | `grass` (texture 0, the editor's green, default), `dirt` (71), `snow` (103); `white` and `greenscreen` (or `green`): a flat colour, see below; `sea`: open water to the map's edge (deep everywhere), for ship fights: `spawn` ships of both owners (#408) |
 | `slope` | degrees (a ramp rising eastwards from `centre.x − 750` to `centre.x + 750`, flat beyond) or `{"deg": 5, "x0": 7000, "x1": 8000}` |
 | `hill` | `true` (radius 600, height 100 px at the centre) or `{"x", "y", "radius", "height"}`: a round cosine hill |
 | `water` | `true` (2000 × 1200 px east of the centre) or `{"x", "y", "w", "h"}`: a rectangle of `SEA2` depth, shallow at its edge and deep (200; ships float above 130, land units stop above 128) from 160 px in; the terrain stays at its height (water is drawn flat). With models the 3D path draws the water surface (docs/water.md) under both cameras; `ACR_WATER=original` keeps the original tint |
@@ -585,7 +585,7 @@ Armada* musketeers behind their pikemen step aside or hold fire, and keep reload
 friendly fire is switched on), `attack_ground` (a random map built
 up to the Festung, a cannon trained and ordered through `Boden angreifen` onto the ground
 pays its shots; the Festung's cannon ball sets a neutral building burning, which burns down
-and disappears), `save_load` (save and load through the game menu), `army_list` (two formations: the army icon
+and disappears), `sea_battle` (random map landscape 6: two fleets on open water sail together and trade broadsides), `sea_ground` (the blank field's `sea` ground: ships go anywhere on it, a land unit cannot be put there), `save_load` (save and load through the game menu), `army_list` (two formations: the army icon
 at the top left opens the list of formations with their numbers; a click selects one, whose
 command panel icon shows the same number).
 

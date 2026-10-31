@@ -108,6 +108,24 @@ textures, `SPRT` sprites, `LOCK` passability lists, `OBJS` units (owner 7 = natu
 neutral villages), `NRG1` ground paint with a depth buffer; `PIX1` (decals) and `ZONE`
 (script zones) leave no trace in saved random maps.
 
+## Sea battle (ACR addition, #408)
+
+The original has no map without land: its six landscape styles (`Terrain\Res.dat`, section 4:
+`LT_Land` to `LT_Continent`, each with a `.MSP` shape per player count) all draw coasts, and
+`Res.dat` has no water-only entry. ACR adds landscape 6 (the menu's "Meer" after the six;
+the map name carries the nibble 6, which no original map has). `acr_mapgen::generate` takes
+that branch before the generator proper (`sea.rs`):
+
+- `SEA2` depth 200 and brightness 0x60 on every cell (`open_water`; ships float above 130,
+  land units stop above 128, docs/water.md), heights 0, texture 0, no sprites, no `LOC1`
+  (the simulation's lock maps come from the depth), no territories or peace time: the
+  fleets are at war from tick 0;
+- every player (a slot with a nation) gets `ShpFregat`, `ShpPinta`, `ShpPinta` of its nation (the European ones; the native nations three `ShpKanoe3`; ids carry the `(XX)` of `AI\AI.DAT`'s peasant): two players
+  at the west and east end (2/5 of the map side from the middle, facing each other), more
+  on a circle around the middle; start resources from `Res.dat` as usual.
+
+The driver's blank field has the same water as ground `sea` (docs/testing.md).
+
 ## Deviations
 
 - `UORG` rows 1–2 use two stack variables the original never initialises

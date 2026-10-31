@@ -12,7 +12,7 @@ use crate::ui::setup::{self, BlankSetup, Ground};
 /// `TILES3.BMP` textures of the three grounds: 0 is the editor's green field.
 pub const fn texture(ground: Ground) -> u8 {
     match ground {
-        Ground::Grass | Ground::White | Ground::Greenscreen => 0,
+        Ground::Grass | Ground::White | Ground::Greenscreen | Ground::Sea => 0,
         Ground::Dirt => DIRT,
         Ground::Snow => SNOW,
     }
@@ -23,7 +23,7 @@ pub const fn backdrop(ground: Ground) -> Option<[f64; 3]> {
     match ground {
         Ground::White => Some([1.0, 1.0, 1.0]),
         Ground::Greenscreen => Some([0.0, 1.0, 0.0]),
-        Ground::Grass | Ground::Dirt | Ground::Snow => None,
+        Ground::Grass | Ground::Dirt | Ground::Snow | Ground::Sea => None,
     }
 }
 
@@ -68,7 +68,12 @@ pub fn build(b: &BlankSetup) -> M3dMap {
     let n = ((240usize) << size.shift) + 2;
     let mut depth = vec![0u8; n * n];
     let mut brightness = vec![0u8; n * n];
-    if let Some((wx, wy, ww, wh)) = b.water {
+    // The sea ground is open water to the edge of the map: ships sail everywhere, land units
+    // stop at once (the same layers as the sea battle of the random map setup, #408).
+    if b.ground == Ground::Sea {
+        let w = acr_mapgen::open_water(size.shift);
+        (depth, brightness) = (w.depth.cells, w.brightness.cells);
+    } else if let Some((wx, wy, ww, wh)) = b.water {
         let (x0, y0, x1, y1) = (wx >> 5, wy >> 5, (wx + ww) >> 5, (wy + wh) >> 5);
         for cy in y0.max(0)..=y1.min(n as i32 - 1) {
             for cx in x0.max(0)..=x1.min(n as i32 - 1) {
@@ -183,5 +188,14 @@ mod tests {
         assert_eq!(depth.get(260, 260), Some(DEEP as u8));
         assert_eq!(depth.get(250, 260), Some(120));
         assert_eq!(depth.get(240, 260), Some(0));
+    }
+
+    #[test]
+    fn the_sea_ground_is_open_water_to_the_edge() {
+        let map = build(&BlankSetup { ground: Ground::Sea, ..Default::default() });
+        let depth = &map.water.as_ref().unwrap().depth;
+        assert!(depth.cells.iter().all(|&d| d == DEEP as u8));
+        assert!(map.units.is_empty());
+        assert!(map.heights.as_ref().unwrap().cells.iter().all(|&h| h == 0));
     }
 }

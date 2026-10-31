@@ -810,6 +810,7 @@ impl Driver {
                         seed,
                         resources,
                         size,
+                        landscape,
                         difficulty,
                         hit_locations,
                         body_spacing,
@@ -837,6 +838,7 @@ impl Driver {
                         }
                         let map = RandomMapSetup {
                             seed,
+                            landscape,
                             resources,
                             size: match size {
                                 1 => ui::setup::MapSize::Large,
