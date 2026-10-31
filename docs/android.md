@@ -56,7 +56,7 @@ Adreno drivers miscompile a vector indexed by a runtime value, so the shaders se
 
 Touch gestures are in `crates/acr-game/src/touch.rs` (its header lists them): tap, drag, long
 press and swipe, pinch, and the pause gestures. In touch mode a long press on a production icon is the Ctrl+click (endless production, #438), and
-a building chosen to place shows a blinking outline in the middle of the window: a tap moves it, a
+a building chosen to place shows a blinking outline in the middle of the window: a tap moves it there, a drag (started anywhere) slides it along with the finger, a
 double tap (350 ms, 40 dp) places it, Escape or a long press cancels (#439). The touch top bar (`top_bar=touch`) is the
 default on Android.
 
