@@ -298,6 +298,14 @@ const RULES_MORE: &[Row] = &[
         set: |s, i| s.dart_fire = i == 1,
     }),
     Row::Choice(Choice {
+        // `aimed_fire` (#296): a far shot scatters less and reloads longer.
+        label: b"Gezieltes Feuer",
+        lines: &[b"Aus (Original)", b"An: genauer, l\xe4ngeres Laden"],
+        get: |s| on_off(s.aimed_fire),
+        set: |s, i| s.aimed_fire = i == 1,
+    }),
+    Row::Heading(b"Tiere"),
+    Row::Choice(Choice {
         // `animal_give_up` (#355): a chasing animal gives up when the target gets too far.
         label: b"Tiere geben auf",
         lines: &[b"Aus (Original)", b"An: Jagd endet bei Abstand"],
@@ -573,7 +581,7 @@ mod tests {
         );
         assert_eq!(
             labels(RULES_MORE),
-            [&b"Gruppenbewegung"[..], b"Formationsangriff", b"Blasrohrbrand", b"Tiere geben auf"]
+            [&b"Gruppenbewegung"[..], b"Formationsangriff", b"Blasrohrbrand", b"Gezieltes Feuer", b"Tiere geben auf"]
         );
         assert_eq!(labels(BATTLE), [&b"Blutdarstellung"[..], b"Verwesung", b"Liegezeit", b"Schlachtfeldspuren"]);
         let mut s = Settings::default();
@@ -586,7 +594,7 @@ mod tests {
             assert_eq!((c.get)(&s), 1);
         }
         assert!(s.hit_locations && s.body_spacing && s.corpse_piles && s.mortars && s.cannon_fire);
-        assert!(s.formation_attack && s.dart_fire && s.animal_give_up);
+        assert!(s.formation_attack && s.dart_fire && s.aimed_fire && s.animal_give_up);
         assert!(s.ball_terrain == Some(true) && s.group_move());
     }
 }
