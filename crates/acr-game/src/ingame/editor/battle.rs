@@ -50,6 +50,11 @@ pub struct Battle {
     fight: bool,
     /// The units the last "Aufstellen" placed.
     placed: Vec<acr_sim::EntityId>,
+    /// The bodies of each side's army with the units that stand in them (officers, drummers
+    /// and flag bearers too), in the order of the roster.
+    pub bodies: [Vec<(Block, Vec<acr_sim::EntityId>)>; 2],
+    /// Where each side's army stands: its origin in world pixels.
+    pub at: [(i32, i32); 2],
     /// The orders "Aufstellen" left for the game to issue (attack-moves of Kampf sofort).
     pub march: Vec<acr_sim::command::Command>,
 }
@@ -63,6 +68,8 @@ impl Default for Battle {
             size: Size::Medium,
             fight: false,
             placed: Vec::new(),
+            bodies: [Vec::new(), Vec::new()],
+            at: [(0, 0); 2],
             march: Vec::new(),
         }
     }
@@ -137,6 +144,7 @@ pub fn gap_of(ranges: [i32; 2]) -> i32 {
 fn deploy(world: &mut World, battle: &mut Battle) -> Result<[usize; 2], Error> {
     // The previous battle goes first, its units' ids kept (the slots are only freed).
     undo(world, std::mem::take(&mut battle.placed));
+    battle.bodies = [Vec::new(), Vec::new()];
     let plans = [0, 1].map(|s| presets::blocks(world, battle.nation[s], battle.size, battle.era_of(s)));
     let [Ok(p0), Ok(p1)] = plans else { return Err(plans.into_iter().find_map(Result::err).expect("an error")) };
     let gap = gap_of([range(world, &p0), range(world, &p1)]);
@@ -144,15 +152,20 @@ fn deploy(world: &mut World, battle: &mut Battle) -> Result<[usize; 2], Error> {
     let at = origins([Extent::of(&p0), Extent::of(&p1)], gap, side)?;
     let before: Vec<bool> = world.units.iter().map(|u| u.alive).collect();
     let mut men = [0; 2];
-    for s in 0..2 {
+    for (s, plan) in [p0, p1].into_iter().enumerate() {
         match presets::place_preset(world, battle.nation[s], battle.size, battle.era_of(s), s as u8, at[s], FACING[s]) {
-            Ok(n) => men[s] = n,
+            Ok(ids) => {
+                men[s] = ids.iter().map(Vec::len).sum();
+                battle.bodies[s] = plan.into_iter().zip(ids).collect();
+            }
             Err(e) => {
                 undo(world, fresh(world, &before));
+                battle.bodies = [Vec::new(), Vec::new()];
                 return Err(e);
             }
         }
     }
+    battle.at = at;
     battle.placed = fresh(world, &before);
     // Kampf sofort: each army marches on the other's centre, formations as bodies.
     if battle.fight {
@@ -368,6 +381,22 @@ mod tests {
                 let name = format!("{} {:?} {size:?}", ENTRIES[r.nation].0, r.era);
                 let men = deploy(&mut w, &mut battle).expect(&name);
                 assert!(men[0] > 0 && men[0] == men[1], "{name}: {men:?}");
+                // Every body kept its units: alive, the owner's, soldiers and commanders.
+                for (s, bodies) in battle.bodies.iter().enumerate() {
+                    assert_eq!(bodies.len(), presets::blocks(&w, r.nation, size, r.era).unwrap().len(), "{name}");
+                    assert_eq!(bodies.iter().map(|(_, ids)| ids.len()).sum::<usize>(), men[s], "{name}");
+                    for (b, ids) in bodies {
+                        let alive = |id: &acr_sim::EntityId| {
+                            let u = &w.units[id.0 as usize];
+                            u.alive && usize::from(u.owner) == s
+                        };
+                        assert!(!ids.is_empty() && ids.iter().all(alive), "{name}: {:?}", b.role);
+                        let soldiers = ids.iter().filter(|id| w.units[id.0 as usize].kind == b.kind).count();
+                        assert_eq!(soldiers, b.men, "{name}: {:?}", b.role);
+                        // Formations bring an officer (and drummer, flag bearer); loose men none.
+                        assert_eq!(ids.len() > b.men, b.form.is_some(), "{name}: {:?} commanders", b.role);
+                    }
+                }
                 let first = battle.placed.clone();
                 let x_of = |w: &World, owner: u8| -> Vec<i32> {
                     w.units.iter().filter(|u| u.alive && u.owner == owner).map(|u| u.pos.x >> 4).collect()

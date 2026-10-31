@@ -12,7 +12,7 @@
 
 use acr_formats::m3d::MapSize;
 use acr_sim::fixed::Pos;
-use acr_sim::{TypeId, World};
+use acr_sim::{EntityId, TypeId, World};
 
 use super::{Act as EditorAct, ENTRIES, Editor, FIRST_EXTRA, FORMATION_GAP, FormChoice, Item, Look, OX, OY, ROW};
 use super::{formations, grid, place_formations};
@@ -445,6 +445,8 @@ pub struct Block {
     pub form: Option<(FormChoice, usize)>,
     pub forward: i32,
     pub side: i32,
+    /// The row of the roster the body stands in, 0 the front row.
+    pub row: u8,
     /// The facing relative to the army's, in 1/256 turns.
     pub turn: u8,
     /// What the body covers around its centre: forward, backward, left and right edges
@@ -548,8 +550,17 @@ pub fn blocks(world: &World, nation: usize, size: Size, era: Option<Era>) -> Res
                     (None, reach_of(pts.into_iter(), gap / 2))
                 }
             };
-            let block =
-                Block { role: e.role, kind, men: usize::from(e.men), form, forward: 0, side: 0, turn: 0, reach };
+            let block = Block {
+                role: e.role,
+                kind,
+                men: usize::from(e.men),
+                form,
+                forward: 0,
+                side: 0,
+                row: 0,
+                turn: 0,
+                reach,
+            };
             items.push((block, e.n));
         }
         if !items.is_empty() {
@@ -561,7 +572,7 @@ pub fn blocks(world: &World, nation: usize, size: Size, era: Option<Era>) -> Res
     let total: i32 = rows.iter().map(|(gap, items)| gap + depth(items)).sum();
     let mut front = total / 2;
     let mut out = Vec::new();
-    for (gap, items) in rows {
+    for (row, (gap, items)) in rows.into_iter().enumerate() {
         front -= gap;
         let width: i32 = items.iter().map(|(b, n)| i32::from(*n) * (b.reach.right - b.reach.left)).sum::<i32>()
             + FORMATION_GAP * (items.iter().map(|(_, n)| i32::from(*n)).sum::<i32>() - 1);
@@ -573,6 +584,7 @@ pub fn blocks(world: &World, nation: usize, size: Size, era: Option<Era>) -> Res
                 // The body's front edge on the row's front, its left edge at the cursor.
                 b.forward = front - b.reach.front;
                 b.side = left - b.reach.left;
+                b.row = row as u8;
                 left += b.reach.right - b.reach.left + FORMATION_GAP;
                 out.push(b);
             }
@@ -604,8 +616,8 @@ fn check_bounds(world: &World, b: &Block, at: (i32, i32), facing: u8) -> Result<
 
 /// Places the army of `nation` (an index in [`ENTRIES`]) in century `era` and `size` for
 /// player `owner`, centred on world pixel `at` and facing `facing` (0 east, 64 south, ...).
-/// Returns the soldiers placed (officers, drummers and flag bearers not counted). Nothing is
-/// placed when any body would leave the map or stand in water. Upgrade levels are left as
+/// Returns the units placed per body, in the order of [`blocks`] (soldiers, officers, drummers
+/// and flag bearers). Nothing is placed when any body would leave the map or stand in water. Upgrade levels are left as
 /// they are; the caller sets the alliances (`Editor::apply_sides`) afterwards.
 pub fn place_preset(
     world: &mut World,
@@ -615,24 +627,26 @@ pub fn place_preset(
     owner: u8,
     at: (i32, i32),
     facing: u8,
-) -> Result<usize, Error> {
+) -> Result<Vec<Vec<EntityId>>, Error> {
     let plan = blocks(world, nation, size, era)?;
     for b in &plan {
         check_bounds(world, b, at, facing)?;
     }
-    let mut placed = 0;
+    let mut placed = Vec::new();
     for b in &plan {
         let (c, dir) = (b.spot(at, facing), b.dir(facing));
         match &b.form {
             Some((choice, _)) => {
-                placed += place_formations(world, b.kind, choice, b.men, owner, c, dir).map_err(Error::Place)?;
+                let (_, ids) = place_formations(world, b.kind, choice, b.men, owner, c, dir).map_err(Error::Place)?;
+                placed.push(ids);
             }
             None => {
                 let gap = Block::gap(world, b.kind, b.role);
-                for p in grid(b.men, c, dir, gap) {
-                    world.spawn(b.kind, owner, Pos::from_pixels(p.0, p.1), dir);
-                }
-                placed += b.men;
+                let ids = grid(b.men, c, dir, gap)
+                    .into_iter()
+                    .map(|p| world.spawn(b.kind, owner, Pos::from_pixels(p.0, p.1), dir))
+                    .collect();
+                placed.push(ids);
             }
         }
     }
@@ -727,7 +741,10 @@ impl Editor {
         let result = place_preset(world, nation, size, era, owner, at, dir);
         self.apply_sides(world);
         match result {
-            Ok(n) => format!("Armee {}: {n} Mann", size.label()).into_bytes(),
+            Ok(bodies) => {
+                let n: usize = bodies.iter().map(Vec::len).sum();
+                format!("Armee {}: {n} Mann", size.label()).into_bytes()
+            }
             Err(e) => e.to_string().into_bytes(),
         }
     }
@@ -837,9 +854,12 @@ pub(super) mod tests {
                 for facing in (0..=255u8).step_by(32) {
                     let mut w = world.clone();
                     let name = format!("{} {:?} {size:?} facing {facing}", ENTRIES[r.nation].0, r.era);
-                    let n = place_preset(&mut w, r.nation, size, r.era, 0, centre, facing).expect(&name);
-                    let want: usize = plan.iter().map(|b| b.men).sum();
-                    assert_eq!(n, want, "{name}");
+                    let ids = place_preset(&mut w, r.nation, size, r.era, 0, centre, facing).expect(&name);
+                    assert_eq!(ids.len(), plan.len(), "{name}");
+                    for (b, ids) in plan.iter().zip(&ids) {
+                        let soldiers = ids.iter().filter(|id| w.units[id.0 as usize].kind == b.kind).count();
+                        assert_eq!(soldiers, b.men, "{name}: {:?}", b.role);
+                    }
                     let units: Vec<_> = w.units.iter().filter(|u| u.alive).collect();
                     let inside = |v: i32| (MAP_MARGIN..=side - MAP_MARGIN).contains(&v);
                     for (i, a) in units.iter().enumerate() {

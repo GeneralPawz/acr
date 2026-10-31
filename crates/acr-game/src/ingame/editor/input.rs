@@ -180,7 +180,7 @@ fn place(
         levels::apply(world, owner, k, level);
     }
     let placed = match choice {
-        Some(choice) => place_formations(world, kind, &choice, n, owner, at, dir),
+        Some(choice) => place_formations(world, kind, &choice, n, owner, at, dir).map(|(placed, _)| placed),
         None => {
             let t = world.catalog.get(kind);
             let gap = (t.radius2 * 4).max(32);
