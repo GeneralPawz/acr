@@ -1,6 +1,6 @@
 {
   "name": "editor_battle",
-  "description": "The test editor's battle view (#404): the title row's Schlacht button switches to it, England and Frankreich in the 18th century (the nations and the century are stepped away and back with the arrows), Mittel, Kampf sofort AN, Aufstellen puts 360 line infantry, 80 dragoons, 15 trappers and 4 guns of England for player 1 and the French equivalents for player 2 facing each other across the middle of the map. After a few hundred ticks both sides have casualties. A second Aufstellen replaces the armies (full strength again).",
+  "description": "The test editor's battle view (#404): the title row's Schlacht button switches to it, England and Frankreich in the 18th century (the nations and the century are stepped away and back with the arrows), Mittel, Kampf sofort AN, Aufstellen puts 360 line infantry, 80 dragoons, 15 trappers and 4 guns of England for player 1 and the French equivalents for player 2 facing each other across the middle of the map. Kampf sofort sends both armies at each other (attack-move), so after some hundred ticks both sides have casualties. A second Aufstellen replaces the armies (full strength again).",
   "steps": [
     {"cmd": "start", "blank": {"editor": true}},
     {"cmd": "wait", "ticks": 5},
@@ -18,9 +18,7 @@
     {"cmd": "state", "expect": {"path": "state.counts.0.units.ArtPus(EN)", "eq": 4}},
     {"cmd": "state", "expect": {"path": "state.counts.1.units.FrnM18(FR)", "eq": 360}},
     {"cmd": "state", "expect": {"path": "state.counts.1.units.FrnD18(FR)", "eq": 80}},
-    {"cmd": "command", "command": {"type": "move", "units": {"owner": 0}, "x": 7200, "y": 7680}, "note": "idle troops only shoot what is within about 0.7 musket ranges: the fronts, 1.5 ranges apart, march up"},
-    {"cmd": "command", "command": {"type": "move", "units": {"owner": 1}, "x": 8160, "y": 7680}},
-    {"cmd": "wait", "ticks": 1500},
+    {"cmd": "wait", "ticks": 1000},
     {"cmd": "state", "expect": {"path": "state.counts.0.units.EngM18(EN)", "lt": 360}},
     {"cmd": "state", "expect": {"path": "state.counts.1.units.FrnM18(FR)", "lt": 360}},
     {"cmd": "click", "label": "Aufstellen", "exact": true, "note": "re-roll"},

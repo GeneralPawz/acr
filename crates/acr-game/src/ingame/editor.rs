@@ -231,6 +231,8 @@ pub struct Editor {
     pub battle: battle::Battle,
     /// The camera is to centre on this world point (set by "Aufstellen").
     pub camera_to: Option<(i32, i32)>,
+    /// Orders the game issues on its next tick (the battle view's marches).
+    pub orders: Vec<acr_sim::command::Command>,
     /// The last placement or problem, shown under the window.
     status: Vec<u8>,
     /// A press placed or hit the window: its release does nothing else.
@@ -259,6 +261,7 @@ impl Default for Editor {
             team: sides::default_teams(),
             battle: battle::Battle::default(),
             camera_to: None,
+            orders: Vec::new(),
             auto_reload: false,
             status: b"Typ waehlen, dann auf die Karte klicken".to_vec(),
             swallow_release: false,
@@ -1071,7 +1074,10 @@ impl super::InGame {
             }
             let e = self.editor.as_mut().expect("editor");
             e.swallow_release = true;
-            if let Some((x, y)) = e.camera_to.take() {
+            let orders = std::mem::take(&mut e.orders);
+            let camera = e.camera_to.take();
+            self.commands.extend(orders);
+            if let Some((x, y)) = camera {
                 self.set_camera(x, y, 0.0, None, None);
             }
             return true;
