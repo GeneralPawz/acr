@@ -437,9 +437,83 @@ behaviour is the batteries:
 - On the player's side, a gun that has an order other than the controller's attack, or has
   moved more than 32 px from where it was placed, is the player's from then on.
 
-The other duties hold their position until their behaviours are added. The driver's `state`
-has `battle.sides[0..1]` (phase, alive, guns_drift_max, gun_orders, halts, karrees, charges,
-rallies, reserves) while the controller runs. The code is
+#### Battle tactics
+
+Every constant below is a named `const` with a doc line in `crates/acr-game/src/tactics/`.
+None of the numbers is the original's (its AI cannot drive editor armies); the engine
+mechanics they rely on are, with the addresses followed: `ReformBrigade` 0x4e1cd3, stand
+ground on a `#KARE` formation (`kare_face_outward` 0x4dfe94), `StandGround` 0x4e09c7 and the
+target drop 0x5204aa, `GroupSend` 0x4ac776 (one formation per command), formation walking
+0x41b83a (members walk to their own slots, the shape is not kept on the way), formation melee
+`Bitva` 0x41ee89, the brigade orders on the owner's city tick 0x434486, the gun's choice of
+ball or canister (`auto_canister` 0x526349, `artillery.rs`).
+
+*Pictures.* Each decision reads, per body: the centroid and its place in the army's frame
+(`f` ahead, `s` to the right, from integer tables), the men alive and at the start, its
+formation and group, whether it is `in_order` (at least 80 % of the soldiers within 64 px of
+their slot), mounted (usage 8, 22 or 24), the reach (the largest ranged radius, a body that
+reaches 150 px or less fights in melee) and the men in panic. Distances are taken between
+centroids in world pixels.
+
+*Line and melee foot* (`line.rs`). The foot waits behind its guns (cannonade) until the enemy
+front is within the reach + 600 px of the line or 600 ticks have passed. It advances in bounds
+of 160 px (`MoveFacing`), the next one ordered only when every line body is in order (after 300
+ticks it goes on without a straggler). A line halts at 9/10 of its reach from the nearest
+enemy foot body (a column at 10/10; a halt is within 24 px) and stands ground, which makes it
+fire on its own. After 400 ticks (column 200, pike and shot 300) it makes a second bound to
+6/10 of its reach. It charges (`AttackMove` at the enemy body in front, ordered again when the
+body moved 150 px) when that body has at most 60 % of its start, when it has 3/2 of the
+enemy's men, or after 400 ticks at close range; one body's trigger sends the whole line. The
+melee foot keeps 120 px behind the line's front and charges with it, or alone against an enemy
+within 300 px (+ the 24 px slack).
+
+*Squares* (`karree.rs`). A line that sees an enemy riders body (5 or more, cavalry or a wing)
+within 350 px, or within 700 px having come nearer by 30 px since the last decision (plus the
+distance it gained, at most 300 more, so that dragoons covering 200 px a decision are seen at
+about 900 px), is `Reform`ed to the group `KARE` if its group lists it among the buttons, and
+stands ground at a later decision, once the square is in order (a reform ends stand ground,
+and standing ground on a square turns its men outward). After 3 decisions without riders
+within 1100 px it reforms to the group it came from. Nothing changes while more than 30 % of
+the body fights within 100 px. A line without the button and the melee foot stand ground and
+`Face` the riders; mounted bodies never form squares. A body in a square is not ordered by the
+line.
+
+*Cavalry wings* (`cavalry.rs`). A wing holds until 200 ticks after the cannonade and rides
+round the enemy's box on its own side: waypoint 1 at 300 px short of the nearest enemy man and
+400 px outside the box's edge, waypoint 2 level with the middle of the box, both inside the
+map margin of 320 px; with less than 150 px left outside the box it is blocked and goes for
+the guns and skirmishers in front. A waypoint is reached when the wing's nearest man is within
+200 px (a wing's formation is hundreds of pixels deep, its centroid trails). After 1500 ticks
+it charges wherever it is. The charge goes to the best target: score by the kind of body
+(unprotected guns 4, skirmishers 3, a line hit from 48/256 turns or more off its facing 3,
+other bodies 1; riders always 1; pikes, squares and guns with foot within 250 px 0 or 1)
+divided by the distance, kept unless another scores 3/2 as much. Types with `ARMATTACK` (the
+dragoons `EngD18`, `FrnD18`: `USAGE STRELOK`, sabre 40-80 and carbine) get `MeleeOnly(on)`
+for the charge. A wing with less than 60 % of the riders it charged with rides home
+(`MeleeOnly` off, `Reform`), rests 200 ticks and goes again; below 30 % of its start it is
+spent and the reserve takes its place. A resting or waiting wing with at least 50 % of its
+start intercepts enemy riders that came 30 px nearer the own foot or guns and are within
+1000 px, until they are 1500 px off.
+
+*Skirmishers* (`screen.rs`) fire in front of the line on their own. They fall back once, to
+250 px behind the line's front and 150 px outside its nearer flank, when formed enemy foot is
+within 500 px, riders within 900, or the own line within 200; there they stand ground.
+
+*Reserve* (`reserve.rs`) follows 350 px behind the line's front. A first-line body with less
+than 40 % of its start, no formation, or 30 % in panic is broken: the nearest reserve body
+of the same arm takes its duty, the broken one re-forms and becomes the reserve.
+
+*Native doctrines* (`native.rs`). Warband: the warriors rush (`AttackMove`) an enemy within
+700 px, the archers (`Missile`) follow 150 px behind the warriors' front and halt at 9/10 of
+their bow range, standing ground to shoot. Clans: the warriors rush from 900 px, and the
+outermost warrior group on each side (with at least 3 groups) rides round the flank like a
+wing, 600 px outside the box. Riders: the lancer wedges hold until the mounted archers have
+shot for 200 ticks from their halt, then charge from wherever they stand; the wings flank.
+
+*Guns* (`guns.rs`): see above. *Driver:* `state.battle.sides[0..1]` has `phase`, `alive`,
+`guns_drift_max`, `gun_orders`, `halts`, `karrees`, `charges`, `rallies` and `reserves` while
+the controller runs. `tests/e2e/editor_battle_tactics.json` plays England against Frankreich
+(Mittel, both KI) for 2500 ticks on the real data. The code is
 `crates/acr-game/src/ingame/editor/battle.rs` (`origins`, `gap_of`, `deploy`, `armies`).
 The driver lists `Schlacht`, `Seite 1 Nation -`/`+`, `Seite 1 Jahrhundert -`/`+`, `Groesse -`/`+`,
 `Seite 1 Steuerung`, `Seite 2 Steuerung`, `Aufstellen` and `Kampf`.

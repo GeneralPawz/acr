@@ -1,0 +1,31 @@
+{
+  "name": "editor_battle_tactics",
+  "description": "A whole predefined battle under the battle controller on the real data (#404): England against Frankreich in the 18th century, Mittel, both sides on KI (Seite 1 Steuerung switched from Spieler), Aufstellen, the swords. The guns stay where they were placed (drift at most 24 px at 300 and at 2500 ticks), both lines halt at their muskets' range and fire (halts), the dragoons ride round the flanks and charge, the lines meet them in squares, and after 2500 ticks both armies' line infantry has casualties.",
+  "steps": [
+    {"cmd": "start", "blank": {"editor": true}},
+    {"cmd": "wait", "ticks": 5},
+    {"cmd": "click", "label": "Schlacht", "exact": true},
+    {"cmd": "click", "label": "Seite 1 Steuerung", "exact": true, "note": "Seite 1: KI"},
+    {"cmd": "click", "label": "Aufstellen", "exact": true},
+    {"cmd": "wait", "ticks": 2},
+    {"cmd": "state", "expect": [
+      {"path": "state.counts.0.units.EngM18(EN)", "eq": 360},
+      {"path": "state.counts.1.units.FrnM18(FR)", "eq": 360}]},
+    {"cmd": "click", "label": "Kampf", "exact": true},
+    {"cmd": "wait", "ticks": 300},
+    {"cmd": "state", "expect": [
+      {"path": "state.battle.sides.0.guns_drift_max", "le": 24},
+      {"path": "state.battle.sides.1.guns_drift_max", "le": 24}]},
+    {"cmd": "wait", "ticks": 2200},
+    {"cmd": "state", "expect": [
+      {"path": "state.battle.sides.0.guns_drift_max", "le": 24},
+      {"path": "state.battle.sides.1.guns_drift_max", "le": 24},
+      {"path": "state.battle.sides.0.halts", "ge": 2},
+      {"path": "state.battle.sides.1.halts", "ge": 2},
+      {"path": "state.battle.sides.0.charges", "ge": 1},
+      {"path": "state.battle.sides.1.charges", "ge": 1},
+      {"path": "state.battle.sides.0.karrees", "ge": 1},
+      {"path": "state.counts.0.units.EngM18(EN)", "lt": 360},
+      {"path": "state.counts.1.units.FrnM18(FR)", "lt": 360}]}
+  ]
+}
