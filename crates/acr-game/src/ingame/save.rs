@@ -71,10 +71,8 @@ struct EditorReplay<'a> {
 impl Script for EditorReplay<'_> {
     fn before_step(&mut self, world: &mut World) -> Option<Vec<acr_sim::Command>> {
         self.mission.set_alliances(self.editor.masks());
-        let orders = MissionLink::before_step(self.mission, world)?;
-        if self.editor.auto_reload {
-            editor::reload_guns(world);
-        }
+        let mut orders = MissionLink::before_step(self.mission, world)?;
+        orders.extend(self.editor.before_step(world));
         Some(orders)
     }
 
@@ -96,8 +94,7 @@ impl Script for EditorReplay<'_> {
 
     fn editor(&mut self, world: &mut World, input: &EditorInput) {
         editor::input::apply(world, self.map, self.editor, input);
-        // The marches a battle left are commands in the log already; the camera is the saved one.
-        self.editor.orders.clear();
+        // The camera is the saved one.
         self.editor.camera_to = None;
     }
 }

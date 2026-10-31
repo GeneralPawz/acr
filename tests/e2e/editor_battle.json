@@ -1,6 +1,6 @@
 {
   "name": "editor_battle",
-  "description": "The test editor's battle view (#404): the title row's Schlacht button switches to it, England and Frankreich in the 18th century (the nations and the century are stepped away and back with the arrows), Mittel, Kampf sofort AN, Aufstellen puts 360 line infantry, 80 dragoons, 15 trappers and 4 guns of England for player 1 and the French equivalents for player 2 facing each other across the middle of the map. Kampf sofort sends both armies at each other (attack-move), so after some hundred ticks both sides have casualties. A second Aufstellen replaces the armies (full strength again).",
+  "description": "The test editor's battle view (#404): the title row's Schlacht button switches to it, England and Frankreich in the 18th century (the nations and the century are stepped away and back with the arrows), Mittel, Aufstellen puts 360 line infantry, 80 dragoons, 15 trappers and 4 guns of England for player 1 and the French equivalents for player 2 facing each other across the middle of the map; nothing fights until the swords button (Kampf) is clicked. Then the battle controller commands the armies (Seite 1 the player, so only its guns; Seite 2 the Ki) and, with the guns firing, both sides have casualties after some hundred ticks. A second Aufstellen replaces the armies (full strength again) and ends the controller.",
   "steps": [
     {"cmd": "start", "blank": {"editor": true}},
     {"cmd": "wait", "ticks": 5},
@@ -9,7 +9,6 @@
     {"cmd": "click", "label": "Seite 2 Nation +", "exact": true},
     {"cmd": "click", "label": "Seite 1 Jahrhundert +", "exact": true},
     {"cmd": "click", "label": "Seite 1 Jahrhundert -", "exact": true},
-    {"cmd": "click", "label": "Kampf sofort", "exact": true},
     {"cmd": "click", "label": "Aufstellen", "exact": true},
     {"cmd": "wait", "ticks": 2},
     {"cmd": "state", "expect": {"path": "state.counts.0.units.EngM18(EN)", "eq": 360}},
@@ -18,13 +17,26 @@
     {"cmd": "state", "expect": {"path": "state.counts.0.units.ArtPus(EN)", "eq": 4}},
     {"cmd": "state", "expect": {"path": "state.counts.1.units.FrnM18(FR)", "eq": 360}},
     {"cmd": "state", "expect": {"path": "state.counts.1.units.FrnD18(FR)", "eq": 80}},
+    {"cmd": "wait", "ticks": 200, "note": "no fight before the swords"},
+    {"cmd": "state", "expect": [
+      {"path": "state.counts.0.units.EngM18(EN)", "eq": 360},
+      {"path": "state.counts.1.units.FrnM18(FR)", "eq": 360},
+      {"path": "state.battle", "exists": false}]},
+    {"cmd": "click", "label": "Kampf", "exact": true, "note": "the swords: Kampf on, the controller starts"},
     {"cmd": "wait", "ticks": 1000},
+    {"cmd": "state", "expect": [
+      {"path": "state.battle.sides.0.gun_orders", "ge": 1},
+      {"path": "state.battle.sides.1.gun_orders", "ge": 1},
+      {"path": "state.battle.sides.0.guns_drift_max", "le": 8},
+      {"path": "state.battle.sides.1.guns_drift_max", "le": 8}]},
     {"cmd": "state", "expect": {"path": "state.counts.0.units.EngM18(EN)", "lt": 360}},
     {"cmd": "state", "expect": {"path": "state.counts.1.units.FrnM18(FR)", "lt": 360}},
     {"cmd": "click", "label": "Aufstellen", "exact": true, "note": "re-roll"},
     {"cmd": "wait", "ticks": 2},
     {"cmd": "state", "expect": {"path": "state.counts.0.units.EngM18(EN)", "eq": 360}},
-    {"cmd": "state", "expect": {"path": "state.counts.1.units.FrnM18(FR)", "eq": 360}},
+    {"cmd": "state", "expect": [
+      {"path": "state.counts.1.units.FrnM18(FR)", "eq": 360},
+      {"path": "state.battle", "exists": false}]},
     {"cmd": "ui", "expect": {"path": "ui.in_game", "eq": true}}
   ]
 }

@@ -1,0 +1,25 @@
+{
+  "name": "editor_battle_save",
+  "description": "A fight of the battle controller survives a savegame: England against Frankreich (Mittel), Aufstellen, the swords, 400 ticks, saved and loaded again. The controller's orders are not logged but made again by the replay, so the game loads without the warning that it differs from the saved one, with the same counts and the controller still running.",
+  "steps": [
+    {"cmd": "start", "blank": {"editor": true}},
+    {"cmd": "wait", "ticks": 5},
+    {"cmd": "click", "label": "Schlacht", "exact": true},
+    {"cmd": "click", "label": "Aufstellen", "exact": true},
+    {"cmd": "wait", "ticks": 2},
+    {"cmd": "click", "label": "Kampf", "exact": true, "note": "the swords"},
+    {"cmd": "wait", "ticks": 400},
+    {"cmd": "state", "expect": {"path": "state.battle.sides.0.gun_orders", "ge": 1}},
+    {"cmd": "state", "capture": {"english": "state.counts.0.units.EngM18(EN)", "french": "state.counts.1.units.FrnM18(FR)", "orders0": "state.battle.sides.0.gun_orders"}},
+    {"cmd": "save", "name": "e2e_battle"},
+    {"cmd": "wait", "ticks": 20},
+    {"cmd": "load", "name": "e2e_battle", "expect": {"path": "log", "exists": false}},
+    {"cmd": "wait", "until": {"in_game": true}, "timeout": 60000, "expect": {"path": "log", "exists": false}},
+    {"cmd": "state", "expect": [
+      {"path": "state.counts.0.units.EngM18(EN)", "eq": "${english}"},
+      {"path": "state.counts.1.units.FrnM18(FR)", "eq": "${french}"},
+      {"path": "state.battle.sides.0.gun_orders", "ge": "${orders0}"}]},
+    {"cmd": "wait", "ticks": 200},
+    {"cmd": "state", "expect": {"path": "state.battle.sides.1.gun_orders", "ge": 1}}
+  ]
+}

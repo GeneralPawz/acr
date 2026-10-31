@@ -8,21 +8,28 @@
 //! west-east, the armies' widths across the north-south axis. The fronts stand 1.5 times the
 //! longest range of the armies' main infantry apart (at least [`MIN_GAP`]). A second
 //! "Aufstellen" first removes the units the first one placed, so a battle can be re-rolled.
+//!
+//! "Aufstellen" only places. The swords button then starts the fight: Kampf is switched on and
+//! the battle controller (`crate::tactics`) takes over the armies' orders. Each side is either
+//! the player's (only its guns are automatic) or the Ki's (the whole controller).
 
 use acr_formats::m3d::MapSize;
 use acr_sim::World;
 use acr_sim::formation;
 
 use super::input::Input;
-use super::presets::{self, Block, Era, Error, Role, Size};
+use super::presets::{self, Block, Doctrine, Era, Error, Role, Size};
 use super::{Act as EditorAct, ENTRIES, Editor};
-use super::{FIRST_EXTRA, Item, Look, OY, ROW, W, X0, sides};
+use super::{CELL, FIRST_EXTRA, Item, Look, OY, ROW, W, X0, sides};
+use crate::tactics::{self, Control, Duty, Style};
 use crate::ui::draw::Rect;
 
 /// The fronts never stand closer than this, world pixels.
 const MIN_GAP: i32 = 400;
 /// The facings of the two sides: east and west.
 const FACING: [u8; 2] = [0, 128];
+/// The `ICONS.GP` icon of the fight button: two sabres on grey.
+pub const FIGHT_ICON: &str = "ATAKA2";
 
 /// A click on the battle view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,7 +41,9 @@ pub enum Act {
     /// Another century for the side.
     Era(usize, i32),
     Size(i32),
-    /// Fighting starts at once (otherwise the editor's Kampf switch is left as it is).
+    /// Who commands side `0` or `1`: the player (guns only) or the Ki.
+    Control(usize),
+    /// The swords button: starts the fight.
     Fight,
     /// Places both armies.
     Go,
@@ -47,7 +56,8 @@ pub struct Battle {
     nation: [usize; 2],
     era: [Option<Era>; 2],
     size: Size,
-    fight: bool,
+    /// Whether the Ki commands the side (otherwise the player does, only the guns are automatic).
+    pub ai: [bool; 2],
     /// The units the last "Aufstellen" placed.
     placed: Vec<acr_sim::EntityId>,
     /// The bodies of each side's army with the units that stand in them (officers, drummers
@@ -55,8 +65,8 @@ pub struct Battle {
     pub bodies: [Vec<(Block, Vec<acr_sim::EntityId>)>; 2],
     /// Where each side's army stands: its origin in world pixels.
     pub at: [(i32, i32); 2],
-    /// The orders "Aufstellen" left for the game to issue (attack-moves of Kampf sofort).
-    pub march: Vec<acr_sim::command::Command>,
+    /// The battle controller, from the swords button until the next "Aufstellen".
+    pub tactics: Option<tactics::Commander>,
 }
 
 impl Default for Battle {
@@ -66,11 +76,11 @@ impl Default for Battle {
             nation: [2, 3],
             era: [None, None],
             size: Size::Medium,
-            fight: false,
+            ai: [false, true],
             placed: Vec::new(),
             bodies: [Vec::new(), Vec::new()],
             at: [(0, 0); 2],
-            march: Vec::new(),
+            tactics: None,
         }
     }
 }
@@ -167,15 +177,6 @@ fn deploy(world: &mut World, battle: &mut Battle) -> Result<[usize; 2], Error> {
     }
     battle.at = at;
     battle.placed = fresh(world, &before);
-    // Kampf sofort: each army marches on the other's centre, formations as bodies.
-    if battle.fight {
-        for s in 0..2 {
-            let units: Vec<_> =
-                battle.placed.iter().copied().filter(|id| world.units[id.0 as usize].owner == s as u8).collect();
-            let (x, y) = at[1 - s];
-            battle.march.push(acr_sim::command::Command::AttackMove { player: s as u8, units, x, y });
-        }
-    }
     Ok(men)
 }
 
@@ -196,6 +197,71 @@ fn undo(world: &mut World, ids: Vec<acr_sim::EntityId>) {
             formation::dissolve(world, usize::from(b));
         }
         world.remove(id);
+    }
+}
+
+/// The controller's armies for the bodies "Aufstellen" placed, or `None` without any.
+fn armies(world: &World, battle: &Battle) -> Option<[tactics::Army; 2]> {
+    if battle.bodies.iter().all(Vec::is_empty) {
+        return None;
+    }
+    let make = |s: usize| {
+        let doctrine = presets::roster(battle.nation[s], battle.era_of(s)).ok()?.doctrine;
+        let blocks = &battle.bodies[s];
+        // The rows behind the first one with main infantry are the second line.
+        let front_row = blocks.iter().filter(|(b, _)| b.role == Role::Front).map(|(b, _)| b.row).min();
+        let bodies = blocks
+            .iter()
+            .map(|(b, ids)| tactics::Body {
+                duty: duty_of(world, s as u8, b, front_row),
+                units: ids.clone(),
+                lateral: b.side,
+            })
+            .collect();
+        Some(tactics::Army {
+            owner: s as u8,
+            facing: FACING[s],
+            origin: battle.at[s],
+            style: style_of(doctrine),
+            bodies,
+        })
+    };
+    Some([make(0)?, make(1)?])
+}
+
+/// The doctrine's style in the controller.
+fn style_of(d: Doctrine) -> Style {
+    match d {
+        Doctrine::PikeShot => Style::PikeShot,
+        Doctrine::Linear => Style::Linear,
+        Doctrine::Column => Style::Column,
+        Doctrine::Lines19 => Style::Lines19,
+        Doctrine::Warband => Style::Warband,
+        Doctrine::Clans => Style::Clans,
+        Doctrine::Riders => Style::Riders,
+    }
+}
+
+/// What a roster role does in the battle: guns, skirmishers, shooters behind the line and
+/// cavalry wings keep their duty; the main infantry fights as a line, or in melee when its
+/// weapons reach no further than [`tactics::picture::MELEE_REACH`]; militia and everything
+/// but guns, skirmishers and shooters in a row behind the first one with main infantry
+/// (`front_row`) is the reserve.
+fn duty_of(world: &World, owner: u8, b: &Block, front_row: Option<u8>) -> Duty {
+    let behind = front_row.is_some_and(|f| b.row > f);
+    match b.role {
+        Role::Guns => Duty::Guns,
+        Role::Screen => Duty::Screen,
+        Role::Back => Duty::Missile,
+        Role::Militia => Duty::Reserve { cavalry: false },
+        Role::Wing if behind => Duty::Reserve { cavalry: true },
+        Role::Wing => Duty::Cavalry,
+        Role::Front | Role::Pike | Role::Elite if behind => Duty::Reserve { cavalry: false },
+        Role::Front | Role::Pike | Role::Elite => {
+            let adv = world.adv(owner, b.kind);
+            let reach = adv.attacks.iter().filter(|a| a.weapon.is_some()).map(|a| a.radius.1).max().unwrap_or(0);
+            if reach > tactics::picture::MELEE_REACH { Duty::Line } else { Duty::Melee }
+        }
     }
 }
 
@@ -220,22 +286,29 @@ impl Editor {
                 let i = Size::ALL.iter().position(|&s| s == b.size).unwrap_or(0) as i32;
                 b.size = Size::ALL[(i + d).rem_euclid(Size::ALL.len() as i32) as usize];
             }
-            Act::Fight => b.fight = !b.fight,
+            Act::Control(s) => {
+                b.ai[s] = !b.ai[s];
+                // While the fight runs the change is an input (logged, replayed).
+                if b.tactics.is_some() {
+                    return Some(Input::Fight { ai: b.ai });
+                }
+            }
+            Act::Fight => return Some(Input::Fight { ai: b.ai }),
             Act::Go => {
                 return Some(Input::Battle {
                     nation: b.nation,
                     era: [b.era_of(0), b.era_of(1)],
                     size: b.size,
-                    fight: b.fight,
+                    fight: false,
                 });
             }
         }
         None
     }
 
-    /// Places both armies for [`Input::Battle`]: the sides as given, then the Kampf rule
-    /// (switched on by "Kampf sofort"), the marches left in [`Editor::orders`] and the camera
-    /// on the middle. Returns the text for the status line.
+    /// Places both armies for [`Input::Battle`]: the sides as given, `fight` (an old savegame's
+    /// "Kampf sofort") switching Kampf on, and the camera on the middle. The controller of an
+    /// earlier fight ends. Returns the text for the status line.
     pub(super) fn go_to_battle(
         &mut self,
         world: &mut World,
@@ -245,14 +318,13 @@ impl Editor {
         fight: bool,
     ) -> Vec<u8> {
         let b = &mut self.battle;
-        (b.nation, b.era, b.size, b.fight) = (nation, era, size, fight);
-        b.march.clear();
+        (b.nation, b.era, b.size) = (nation, era, size);
+        b.tactics = None;
         let result = deploy(world, b);
-        if b.fight && self.sides == sides::Mode::Off {
+        if fight && self.sides == sides::Mode::Off {
             self.sides = sides::Mode::Free;
         }
         self.apply_sides(world);
-        self.orders.append(&mut self.battle.march);
         match result {
             Ok([a, c]) => {
                 let side = MapSize { shift: world.map.shift }.playable_size();
@@ -261,6 +333,25 @@ impl Editor {
             }
             Err(e) => e.to_string().into_bytes(),
         }
+    }
+
+    /// The swords button ([`Input::Fight`]): Kampf on, and the battle controller commands the
+    /// armies placed (or, while it runs, `ai` changes who commands each side).
+    pub(super) fn start_fight(&mut self, world: &mut World, ai: [bool; 2]) -> Vec<u8> {
+        let b = &mut self.battle;
+        b.ai = ai;
+        let control = ai.map(|ai| if ai { Control::Ai } else { Control::Player });
+        if let Some(t) = &mut b.tactics {
+            t.set_control(control);
+            return b"Steuerung geaendert".to_vec();
+        }
+        let Some(armies) = armies(world, b) else { return b"Erst aufstellen".to_vec() };
+        b.tactics = Some(tactics::Commander::new(world, armies, control));
+        if self.sides == sides::Mode::Off {
+            self.sides = sides::Mode::Free;
+        }
+        self.apply_sides(world);
+        b"Kampf".to_vec()
     }
 
     /// The battle view's lines inside the window.
@@ -309,11 +400,33 @@ impl Editor {
         y = OY + 80;
         pair(&mut out, y, format!("Groesse: {}", b.size.label()), "Groesse", Act::Size(-1), Act::Size(1));
         y += ROW;
-        let fight = if b.fight { "Kampf sofort: AN" } else { "Kampf sofort: AUS" };
-        out.push(text(y, fight.into(), "Kampf sofort", b.fight, Some(Act::Fight)));
-        y += ROW + 6;
+        for s in 0..2 {
+            let n = s + 1;
+            let who = if b.ai[s] { "KI" } else { "Spieler" };
+            out.push(text(
+                y,
+                format!("Seite {n}: {who}"),
+                &format!("Seite {n} Steuerung"),
+                false,
+                Some(Act::Control(s)),
+            ));
+            y += ROW;
+        }
+        y += 6;
         out.push(text(y, "Aufstellen".into(), "Aufstellen", false, Some(Act::Go)));
         y += ROW + 6;
+        // The swords: starts the fight; lit while it runs.
+        let cell = Rect::new(X0 + 4, y, CELL, CELL);
+        out.push(Item {
+            rect: cell,
+            text: b"Kampf".to_vec(),
+            name: "Kampf".into(),
+            hot: b.tactics.is_some(),
+            act: Some(EditorAct::Battle(Act::Fight)),
+            look: Look::Icon { frame: self.fight_icon.get() },
+            gp: None,
+        });
+        y += CELL + 6;
         let mut status = self.status.clone();
         status.truncate(44);
         out.push(Item { text: status, ..text(y, String::new(), "", false, None) });
@@ -326,6 +439,14 @@ mod tests {
     use super::*;
 
     const SIDE: i32 = 15360;
+
+    /// A world without units or types: enough for the view's own state.
+    fn empty() -> World {
+        use acr_sim::catalog::Catalog;
+        use acr_sim::formation::Formations;
+        use std::sync::Arc;
+        World::new(Arc::new(acr_sim::MapGrid::open(1)), Arc::new(Catalog::new()), Arc::new(Formations::default()))
+    }
 
     fn ext(front: i32, back: i32, half: i32) -> Extent {
         Extent { front, back, left: -half, right: half }
@@ -418,5 +539,98 @@ mod tests {
                 assert_eq!(w.units.iter().filter(|u| u.alive).count(), first.len(), "{name}: re-roll");
             }
         }
+    }
+
+    #[test]
+    fn the_swords_ask_for_a_fight_and_the_switches_send_one_only_while_it_runs() {
+        let mut e = Editor::default();
+        assert_eq!(e.battle.ai, [false, true], "Seite 1 is the player's, Seite 2 the Ki's");
+        assert_eq!(e.battle_act(Act::Fight), Some(Input::Fight { ai: [false, true] }));
+        // Before the fight a switch is only the view's state.
+        assert_eq!(e.battle_act(Act::Control(0)), None);
+        assert_eq!(e.battle.ai, [true, true]);
+        // "Aufstellen" never fights.
+        assert!(matches!(e.battle_act(Act::Go), Some(Input::Battle { fight: false, .. })));
+        // While it runs, a switch is an input that is logged.
+        let w = empty();
+        let army = |owner| tactics::Army { owner, facing: 0, origin: (0, 0), style: Style::Linear, bodies: Vec::new() };
+        e.battle.tactics = Some(tactics::Commander::new(&w, [army(0), army(1)], [Control::Ai; 2]));
+        assert_eq!(e.battle_act(Act::Control(1)), Some(Input::Fight { ai: [true, false] }));
+        let items = e.battle_items();
+        let swords = items.iter().find(|i| i.name == "Kampf").expect("the swords");
+        assert!(
+            swords.hot && matches!(swords.look, Look::Icon { frame: None }),
+            "lit, and a name without the icon list"
+        );
+        assert_eq!((swords.rect.width(), swords.rect.height()), (41, 41));
+        for name in ["Seite 1 Steuerung", "Seite 2 Steuerung", "Aufstellen"] {
+            assert!(items.iter().any(|i| i.name == name), "{name}");
+        }
+        assert!(items.iter().all(|i| i.name != "Kampf sofort"), "replaced by the swords");
+    }
+
+    #[test]
+    fn a_fight_without_armies_says_so() {
+        let mut e = Editor::default();
+        let mut w = empty();
+        assert_eq!(e.start_fight(&mut w, [false, true]), b"Erst aufstellen");
+        assert!(e.battle.tactics.is_none() && e.sides == sides::Mode::Off);
+    }
+
+    /// England against France, Mittel: "Aufstellen" places and the swords start the fight;
+    /// Kampf goes on, the guns of both sides are ordered (the Ki's side with the rest of its
+    /// army still holding), nothing but their attack and stand ground is ordered, and no gun
+    /// moves. An old savegame's "Kampf sofort" only switches Kampf on.
+    #[test]
+    #[ignore = "needs the original game files (ACR_GAME_DIR)"]
+    fn the_swords_start_the_controller_over_the_placed_armies() {
+        use acr_sim::Command;
+        let base = presets::tests::world();
+        let mut e = Editor::default();
+        let mut w = base.clone();
+        e.go_to_battle(&mut w, [2, 3], [None, None], Size::Medium, true);
+        assert_eq!(e.sides, sides::Mode::Free, "fight: true switches Kampf on");
+        assert!(e.battle.tactics.is_none(), "and starts nothing");
+        let mut e = Editor::default();
+        let mut w = base.clone();
+        e.go_to_battle(&mut w, [2, 3], [None, None], Size::Medium, false);
+        assert_eq!(e.sides, sides::Mode::Off);
+        assert_eq!(e.start_fight(&mut w, [false, true]), b"Kampf");
+        assert_eq!(e.sides, sides::Mode::Free);
+        let a = armies(&w, &e.battle).expect("armies");
+        for (s, army) in a.iter().enumerate() {
+            let duties = |d: Duty| army.bodies.iter().filter(|b| b.duty == d).count();
+            assert_eq!(duties(Duty::Guns), e.battle.bodies[s].iter().filter(|(b, _)| b.role == Role::Guns).count());
+            assert!(duties(Duty::Guns) > 0 && duties(Duty::Line) > 0 && duties(Duty::Cavalry) > 0, "side {s}");
+            assert!(army.bodies.iter().all(|b| !b.units.is_empty()));
+        }
+        let guns: Vec<_> =
+            a.iter().flat_map(|x| &x.bodies).filter(|b| b.duty == Duty::Guns).flat_map(|b| &b.units).collect();
+        for _ in 0..600 {
+            let cmds = e.before_step(&mut w);
+            for c in &cmds {
+                match c {
+                    Command::Attack { units, .. } | Command::StandGround { units, .. } => {
+                        assert!(units.iter().all(|u| guns.contains(&u)), "{c:?}");
+                    }
+                    other => panic!("{other:?}"),
+                }
+            }
+            w.step(&cmds);
+        }
+        let t = e.battle.tactics.as_ref().expect("running");
+        for s in 0..2 {
+            let r = t.report(s);
+            assert!(r.gun_orders > 0 && r.guns_drift_max <= 8, "side {s}: {r:?}");
+        }
+        // The same fight on a copy of the world gives the same state.
+        let (mut e2, mut w2) = (Editor::default(), base.clone());
+        e2.go_to_battle(&mut w2, [2, 3], [None, None], Size::Medium, false);
+        e2.start_fight(&mut w2, [false, true]);
+        for _ in 0..600 {
+            let cmds = e2.before_step(&mut w2);
+            w2.step(&cmds);
+        }
+        assert_eq!(w.state_hash(), w2.state_hash());
     }
 }

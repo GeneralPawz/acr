@@ -31,9 +31,14 @@ pub enum Input {
     AutoReload(bool),
     /// The army of `nation` (an index in the combo box) of `size` and `era` centred on `at`.
     Preset { nation: usize, size: Size, era: Option<Era>, owner: u8, at: (i32, i32), dir: u8 },
-    /// The battle view's "Aufstellen": the nations and centuries of both sides, the army size
-    /// and "Kampf sofort". Its marches are commands and sit in the command log.
+    /// The battle view's "Aufstellen": the nations and centuries of both sides and the army
+    /// size. `fight` only switches Kampf on (old savegames; the button sends false): their
+    /// marches were commands and sit in the command log.
     Battle { nation: [usize; 2], era: [Option<Era>; 2], size: Size, fight: bool },
+    /// The battle view's swords button, or a side's switch while the fight runs: Kampf on, and
+    /// the battle controller starts (or changes who commands a side). `ai` is per side
+    /// whether the controller commands all of it, otherwise only its guns.
+    Fight { ai: [bool; 2] },
     /// A tree or stone of the Natur list: type `index` of the group's sprite list at `at`.
     Nature { group: SpriteGroup, index: u16, at: (i32, i32) },
     /// One stamp of the terrain brush ([`acr_mapgen::edit`]); a stroke is a run of them.
@@ -81,6 +86,7 @@ pub fn apply(world: &mut World, map: &mut M3dMap, editor: &mut Editor, input: &I
             editor.place_army(world, (*nation, *size, *era), *owner, *at, *dir)
         }
         Input::Battle { nation, era, size, fight } => editor.go_to_battle(world, *nation, *era, *size, *fight),
+        Input::Fight { ai } => editor.start_fight(world, *ai),
         Input::Nature { group, index, at } => {
             let (status, added) = nature(world, map, *group, *index, *at);
             objects = added;

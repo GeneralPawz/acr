@@ -31,6 +31,7 @@
 //!              1 sides: mode, 8 teams    2 reload guns    3 auto reload: on
 //!              4 preset: nation, size, century (0 none, 1 + number), owner, x, y, dir
 //!              5 battle: 2 nations, 2 centuries (as above), size, fight
+//!              8 fight: bits 0 and 1 set when the battle controller commands side 1 / side 2 entirely
 //!              6 nature (#429): group code (2 bytes), index, x, y
 //!              7 ground (#430): x, y, radius, tool (0 raise, 1 lower, 2 flatten: height; 3 texture:
 //!                number; 4 water, 5 land)
@@ -552,6 +553,10 @@ impl Writer {
                 self.u(tag);
                 self.i(value);
             }
+            EditorInput::Fight { ai } => {
+                self.u(8);
+                self.u(u64::from(ai[0]) | u64::from(ai[1]) << 1);
+            }
             EditorInput::Battle { nation, era, size, fight } => {
                 self.u(5);
                 for n in nation {
@@ -768,6 +773,13 @@ impl<'a> Reader<'a> {
                 size: self.size()?,
                 fight: self.u()? != 0,
             },
+            8 => {
+                let bits = self.u8()?;
+                if bits > 3 {
+                    return Err(err("fight sides"));
+                }
+                EditorInput::Fight { ai: [bits & 1 != 0, bits & 2 != 0] }
+            }
             6 => EditorInput::Nature {
                 group: SpriteGroup::from_code([self.u8()?, self.u8()?]),
                 index: u16::try_from(self.u()?).map_err(|_| err("sprite index"))?,
@@ -1142,6 +1154,10 @@ mod tests {
             (61, EditorInput::Ground(Dab { x: 1500, y: 90, radius: 512, tool: Tool::Texture(71) })),
             (62, EditorInput::Ground(Dab { x: 0, y: 0, radius: 16, tool: Tool::Water })),
             (900, EditorInput::Battle { nation: [2, 3], era: [Some(Era::C17), None], size: Size::Medium, fight: true }),
+            (901, EditorInput::Fight { ai: [false, true] }),
+            (902, EditorInput::Fight { ai: [true, true] }),
+            (903, EditorInput::Fight { ai: [true, false] }),
+            (904, EditorInput::Fight { ai: [false, false] }),
         ]
     }
 
@@ -1167,6 +1183,14 @@ mod tests {
         };
         let bytes = save.encode();
         assert_eq!(SaveGame::decode(&bytes).unwrap(), save);
+        // A fight with a side bit that does not exist is refused.
+        let fight = SaveGame {
+            log: Log { editor: vec![(0, EditorInput::Fight { ai: [true, true] })], ..Log::default() },
+            ..save.clone()
+        };
+        let mut bad = fight.encode();
+        *bad.last_mut().unwrap() = 4;
+        assert!(SaveGame::decode(&bad).is_err());
         // A damaged input tag is refused.
         let one =
             SaveGame { log: Log { editor: vec![(0, EditorInput::ReloadGuns)], ..Log::default() }, ..save.clone() };

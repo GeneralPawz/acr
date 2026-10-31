@@ -732,9 +732,10 @@ impl InGame {
                 let mut commands = std::mem::take(&mut self.commands);
                 self.save.log.command(world.tick.0, &commands);
                 commands.extend(orders);
-                // The editor's test switch: cannons always loaded (acts on the local world).
-                if self.editor.as_ref().is_some_and(|e| e.auto_reload) {
-                    editor::reload_guns(world);
+                // The editor's part: the battle controller's orders (not logged, a replay makes
+                // them again) and the test switch of cannons always loaded.
+                if let Some(e) = &mut self.editor {
+                    commands.extend(e.before_step(world));
                 }
                 world.step(&commands);
                 let _after = acr_sim::prof::Scope::new("game.after_tick");

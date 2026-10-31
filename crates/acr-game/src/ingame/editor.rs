@@ -15,7 +15,7 @@ mod levels;
 pub mod sides;
 mod world;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 use acr_formats::m3d::SpriteGroup;
@@ -327,14 +327,15 @@ pub struct Editor {
     pub battle: battle::Battle,
     /// The camera is to centre on this world point (set by "Aufstellen").
     pub camera_to: Option<(i32, i32)>,
-    /// Orders the game issues on its next tick (the battle view's marches).
-    pub orders: Vec<acr_sim::command::Command>,
     /// The last placement or problem, shown under the window.
     status: Vec<u8>,
     /// A press placed or hit the window: its release does nothing else.
     pub swallow_release: bool,
     /// The `ICONS.GP` frames of the catalog's types, once the game's data is loaded.
     pub icons: RefCell<Option<HashMap<TypeId, Option<usize>>>>,
+    /// The `ICONS.GP` frame of the battle view's fight button (`ATAKA2`, two sabres), once the
+    /// icon list is loaded.
+    pub fight_icon: Cell<Option<usize>>,
 }
 
 impl Default for Editor {
@@ -362,12 +363,27 @@ impl Default for Editor {
             team: sides::default_teams(),
             battle: battle::Battle::default(),
             camera_to: None,
-            orders: Vec::new(),
             auto_reload: false,
             status: b"Typ waehlen, dann auf die Karte klicken".to_vec(),
             swallow_release: false,
             icons: RefCell::new(None),
+            fight_icon: Cell::new(None),
         }
+    }
+}
+
+impl Editor {
+    /// The editor's part of a tick, before the world steps: the battle controller's orders
+    /// (none without a fight), and the cannons loaded at once when that switch is on. Live
+    /// play and the replay of a savegame call it at the same point, after the mission's
+    /// scripts, so the controller's orders (not logged, they follow from the world) come after
+    /// the player's and the mission's.
+    pub fn before_step(&mut self, world: &mut World) -> Vec<acr_sim::Command> {
+        let orders = self.battle.tactics.as_mut().map(|t| t.orders(world)).unwrap_or_default();
+        if self.auto_reload {
+            reload_guns(world);
+        }
+        orders
     }
 }
 
@@ -1368,6 +1384,7 @@ impl super::InGame {
             return;
         };
         let data = HudData::parse(&list, &nres);
+        e.fight_icon.set(data.icon(battle::FIGHT_ICON));
         let objects = self.objects.objects();
         let map: HashMap<TypeId, Option<usize>> = world
             .catalog
@@ -1377,6 +1394,12 @@ impl super::InGame {
         if map.values().any(Option::is_some) {
             *e.icons.borrow_mut() = Some(map);
         }
+    }
+
+    /// What the battle controller did for each side, while a fight runs in the editor.
+    pub fn battle_reports(&self) -> Option<[crate::tactics::Report; 2]> {
+        let t = self.editor.as_ref()?.battle.tactics.as_ref()?;
+        Some([t.report(0).clone(), t.report(1).clone()])
     }
 
     /// The window's items for the current state, or none outside the editor.
@@ -1586,9 +1609,7 @@ impl super::InGame {
             }
             let e = self.editor.as_mut().expect("editor");
             e.swallow_release = true;
-            let orders = std::mem::take(&mut e.orders);
             let camera = e.camera_to.take();
-            self.commands.extend(orders);
             if let Some((x, y)) = camera {
                 self.set_camera(x, y, 0.0, None, None);
             }

@@ -129,6 +129,11 @@ pub fn state(
         .map(|(o, [u, b, s, f])| (o.to_string(), json!({"units": u, "buildings": b, "sites": s, "burning": f})))
         .collect();
     m.insert("counts".into(), counts.into());
+    // The editor's battle controller, once the swords button started the fight.
+    if let Some(reports) = g.battle_reports() {
+        let sides: Vec<Value> = reports.iter().map(battle_side).collect();
+        m.insert("battle".into(), json!({"sides": sides}));
+    }
     // The map's trees, stones and other static objects by group (the editor's Natur list adds to them).
     let mut objects: BTreeMap<&str, u32> = BTreeMap::new();
     for o in &world.objects {
@@ -470,6 +475,21 @@ pub fn build(world: &World, player: u8, sel: &[EntityId], v: &Value) -> Result<V
         "disband" => one(Command::Disband { player, officer: id(v, "officer")? }),
         other => Err(format!("unknown command type {other:?}")),
     }
+}
+
+/// One side of the battle controller's report (`state.battle.sides`).
+fn battle_side(r: &crate::tactics::Report) -> Value {
+    json!({
+        "phase": format!("{:?}", r.phase),
+        "alive": r.alive,
+        "guns_drift_max": r.guns_drift_max,
+        "gun_orders": r.gun_orders,
+        "halts": r.halts,
+        "karrees": r.karrees,
+        "charges": r.charges,
+        "rallies": r.rallies,
+        "reserves": r.reserves,
+    })
 }
 
 #[cfg(test)]
