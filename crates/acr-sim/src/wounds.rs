@@ -55,7 +55,20 @@ pub struct Rules {
     /// and leaves no ground fire; without hit locations the original's flag is set as before
     /// either way.
     pub dart_fire: bool,
+    /// Aimed fire (#296): a firearm shot beyond [`AIMED_MIN`] is laid from the shoulder
+    /// (presentation clip `FIRE_AIMED`): its dispersion is [`AIMED_SCATTER`] % of the hip
+    /// fire's and the shot's reload is [`AIMED_PAUSE`] % longer. Off (the default) every shot
+    /// is as in the original.
+    pub aimed_fire: bool,
 }
+
+/// Aimed fire starts beyond this distance (sim pixels, 30 per metre: 3 m), the distance
+/// at which the renderer switches from `FIRE_HIP` to `FIRE_AIMED`.
+pub const AIMED_MIN: i32 = 90;
+/// Dispersion of an aimed shot in percent of `RAZBROS` (rule `aimed_fire`).
+pub const AIMED_SCATTER: i32 = 60;
+/// Extra reload of an aimed shot in percent (the longer aim; rule `aimed_fire`).
+pub const AIMED_PAUSE: i32 = 15;
 
 impl std::hash::Hash for Rules {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
@@ -84,6 +97,9 @@ impl std::hash::Hash for Rules {
         }
         if self.dart_fire {
             (8u8, self.dart_fire).hash(state);
+        }
+        if self.aimed_fire {
+            (11u8, self.aimed_fire).hash(state);
         }
     }
 }
