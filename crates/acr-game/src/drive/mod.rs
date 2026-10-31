@@ -906,6 +906,17 @@ impl Driver {
                 job.reply.insert("file".into(), file.into());
                 Ok(false)
             }
+            Request::Suspend => {
+                let reply = game.suspend_app();
+                if let Some(map) = reply.as_object() {
+                    job.reply.extend(map.clone());
+                }
+                Ok(false)
+            }
+            Request::Resume => {
+                game.resume_app();
+                Ok(false)
+            }
             Request::Load { name } => {
                 let bytes = acr_formats::CodePage::Cp1252.encode(&name).ok_or("name not in CP1252")?;
                 let file = ui::screens::save_load::file_name(&bytes);

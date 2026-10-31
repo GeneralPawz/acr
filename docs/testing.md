@@ -116,6 +116,7 @@ its label to appear.
 | `{"cmd": "start", "blank": {"ground": "grass"}}` | the blank test field, see "The blank field" below |
 | `{"cmd": "hud", "on": false}` | hides the interface (panel, minimap, cursor): frames show the world only; `true` brings it back |
 | `{"cmd": "save", "name": "x"}` / `{"cmd": "load", "name": "x"}` | savegame shortcuts |
+| `{"cmd": "suspend"}` / `{"cmd": "resume"}` | the app goes to the background / returns (Android app switch): pauses the game and writes the `Autosave (App)` save (reply `paused`, `autosave`, `bytes`, `encode_ms`, `total_ms`); resume leaves it paused (`tests/e2e/suspend.json`) |
 | `{"cmd": "screenshot", "path": "out.png", "crop": [x, y, w, h]}` | only with `--drive-gpu` |
 | `{"cmd": "dialogs", "policy": "report"}` | `auto` or `report` |
 | `{"cmd": "camera", "x": 3000, "y": 9000, "zoom": 5, "yaw_deg": 0, "pitch_deg": 10}` | the close-up bench's camera, see below |

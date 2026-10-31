@@ -77,6 +77,7 @@ pub fn state(
     let resources: Map<String, Value> =
         RESOURCES.iter().enumerate().map(|(i, n)| ((*n).to_owned(), player.resources[i].into())).collect();
     m.insert("tick".into(), world.tick.0.into());
+    m.insert("paused".into(), g.paused().into());
     if let Some(o) = g.free_orbit() {
         // The free camera's turn and tilt in degrees (Shift + right drag, `,`/`.`, Page Up/Down).
         m.insert("orbit".into(), json!({"yaw_deg": o.yaw.to_degrees(), "pitch_deg": o.pitch.to_degrees()}));

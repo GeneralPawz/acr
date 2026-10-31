@@ -1,0 +1,21 @@
+{
+  "name": "suspend",
+  "description": "The app going to the background (Android app switch): the running game is paused and saved to Autosave (App), coming back leaves it paused, and the autosave loads like any save (#331)",
+  "steps": [
+    {"cmd": "start", "random": {"nation": 1, "seed": 5}},
+    {"cmd": "wait", "ticks": 120},
+    {"cmd": "state", "capture": {"saved": "state.tick"}, "expect": {"path": "state.paused", "eq": false}},
+    {"cmd": "suspend", "expect": [
+      {"path": "paused", "eq": true},
+      {"path": "autosave", "eq": "Autosave (App)"}]},
+    {"cmd": "resume"},
+    {"cmd": "state", "expect": [
+      {"path": "state.paused", "eq": true},
+      {"path": "state.tick", "eq": "${saved}"}]},
+    {"cmd": "load", "name": "Autosave (App)"},
+    {"cmd": "wait", "until": {"in_game": true}, "timeout": 20000},
+    {"cmd": "state", "expect": [
+      {"path": "state.mode", "eq": "game"},
+      {"path": "state.tick", "ge": "${saved}"}]}
+  ]
+}
