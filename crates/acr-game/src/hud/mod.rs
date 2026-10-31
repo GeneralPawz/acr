@@ -1155,6 +1155,32 @@ pub fn line(out: &mut Vec<Draw>, rgba: [u8; 4], (x0, y0): (i32, i32), (x1, y1): 
     }
 }
 
+/// The count a button shows for an endless production order (`GetProduceCount` 0x49e060).
+const ENDLESS_COUNT: i32 = 1200;
+
+/// The segments of the infinity sign at `(x, y)` (0x494ad5: twelve calls of 0x443ea2),
+/// 14 pixels wide and 6 high.
+const INFINITY: [[i32; 4]; 12] = [
+    [2, 0, 4, 0],
+    [4, 0, 10, 6],
+    [10, 6, 12, 6],
+    [12, 6, 14, 4],
+    [14, 4, 14, 2],
+    [14, 2, 12, 0],
+    [12, 0, 10, 0],
+    [10, 0, 4, 6],
+    [4, 6, 2, 6],
+    [2, 6, 0, 4],
+    [0, 4, 0, 2],
+    [0, 2, 2, 0],
+];
+
+fn infinity(out: &mut Vec<Draw>, (x, y): (i32, i32), rgba: [u8; 4]) {
+    for [x0, y0, x1, y1] in INFINITY {
+        line(out, rgba, (x + x0, y + y0), (x + x1, y + y1));
+    }
+}
+
 /// One icon (0x494c96): the picture (one pixel down-right while pressed), the outline in
 /// the owner's colour, the yellow frame when highlighted, the life bar, the number at the
 /// bottom right, the count.
@@ -1209,7 +1235,22 @@ fn draw_icon(ctx: &Ctx, icon: &Icon, x: i32, y: i32, pressed: bool, palette: &Pa
         out.push(Draw::game_text(font::BLACK, text.as_bytes(), tx - 1, ty - 1));
         out.push(Draw::game_text(font::WHITE, text.as_bytes(), tx, ty));
     }
-    if let Some(n) = icon.count {
+    if let Some(n) = icon.count.filter(|&n| n >= ENDLESS_COUNT) {
+        // Flag 8 with count >= 1200 (0x495294): the infinity sign as line segments (0x494ad5),
+        // black shifted by (2, 2) under colour 0xae, and the number of endless orders if more
+        // than one, right aligned at the top (BlackFont at (+1, +2) and (-1, 0), then
+        // YellowFont; the original's second font 0x90d69c is not named in the data).
+        infinity(out, (x + 3 + 2, y + 3 + 2), rgba(0));
+        infinity(out, (x + 3 + 1, y + 3 + 1), rgba(0xae));
+        if n / ENDLESS_COUNT > 1 {
+            let text = (n / ENDLESS_COUNT).to_string();
+            let w = ctx.fonts.width(ctx.lib, font::YELLOW, text.as_bytes());
+            let tx = x + ICON - 2 - w;
+            out.push(Draw::game_text(font::BLACK, text.as_bytes(), tx + 1, y + 2));
+            out.push(Draw::game_text(font::BLACK, text.as_bytes(), tx - 1, y));
+            out.push(Draw::game_text(font::YELLOW, text.as_bytes(), tx, y + 1));
+        }
+    } else if let Some(n) = icon.count {
         let text = n.to_string();
         out.push(Draw::game_text(font::BLACK, text.as_bytes(), x + 2, y + 2));
         out.push(Draw::game_text(font::BLACK, text.as_bytes(), x, y));

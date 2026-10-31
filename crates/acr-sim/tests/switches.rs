@@ -27,7 +27,7 @@ fn stop_production_holds_the_queue() {
     let b = w.spawn(bar, 0, Pos::from_pixels(2048, 2048), 0);
     acr_sim::economy::census_all(&mut w);
     w.step(&[
-        Command::Produce { player: 0, building: b, kind: sol },
+        Command::Produce { player: 0, building: b, kind: sol, endless: false },
         Command::StopProduction { player: 0, buildings: vec![b], stop: true },
     ]);
     for _ in 0..600 {

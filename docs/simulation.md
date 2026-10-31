@@ -1605,6 +1605,15 @@ Implemented in `economy.rs`. The sources are `City::Census` (0x42e658), the upke
     100). It waits while `housing < population + 1`.
   - A `PEASANTCONVERTOR` building producing a non-peasant instead uses up a peasant from
     inside.
+  - **Endless orders** (Ctrl+click, `Produce` 0x49e649 with dest 0xfffe, order +0x11): the
+    building's queued normal orders of the type are removed with a refund (0x49e831), and an
+    endless order of the type already queued refuses a second (0x49e6f2). The order is
+    queued even if `CanAfford` fails or the food is below 500 (0x49ea70, 0x49eaac), then
+    unpaid (`power` 0xffff, 0x49eb82). An unpaid order at the head is taken out and ordered
+    again (0x49f1e6), which pays it if it can by then or puts it back at the end. When its
+    unit is made the head is removed and `Produce(type, 0xfffe)` orders the next one and pays
+    anew (0x49f7ee, 0x49ff5d, 0x4a01eb). `UnProduce` (0x4dbd47) takes it like any order and
+    refunds nothing for an unpaid one (0x4dbe6f).
   - Depot limit (0x49f21b): a head order of a `MAXINDEPO g n` type is cancelled with a refund
     (`UnProduce`) while the owner has `n` · finished `ARTDEPO` objects or more of group `g`.
   - The unit appears at the first `BORNPOINT`, a cell corner relative to the lock base cell

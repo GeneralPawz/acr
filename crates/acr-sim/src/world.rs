@@ -1141,12 +1141,12 @@ impl World {
                     crate::formation::disband(self, o);
                 }
             }
-            Command::Produce { player, building, kind } => {
+            Command::Produce { player, building, kind, endless } => {
                 if let Some(&b) = self.owned(*player, &[*building]).first()
                     && usize::from(kind.0) < self.catalog.len()
                     && crate::economy::can_produce(self, b, *kind)
                 {
-                    crate::economy::produce(self, b, *kind);
+                    crate::economy::produce(self, b, *kind, *endless);
                 }
             }
             Command::Unproduce { player, building, kind } => {

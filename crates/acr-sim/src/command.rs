@@ -26,8 +26,9 @@ pub enum Command {
     Face { player: PlayerId, officer: EntityId, dir: u8 },
     /// Release the members of the formation led by `officer`.
     Disband { player: PlayerId, officer: EntityId },
-    /// Queue a unit in a building; the price is paid at once.
-    Produce { player: PlayerId, building: EntityId, kind: TypeId },
+    /// Queue a unit in a building; the price is paid at once. `endless` (Ctrl+click, bit
+    /// 0x2000 of the type in command 0x4e) keeps ordering the unit again as each is made.
+    Produce { player: PlayerId, building: EntityId, kind: TypeId, endless: bool },
     /// Cancel one queued unit of `kind` (full refund).
     Unproduce { player: PlayerId, building: EntityId, kind: TypeId },
     /// Walk into a building (peasants into mines, units into garrisons).

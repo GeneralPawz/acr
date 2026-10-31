@@ -64,7 +64,7 @@ fn research_costs_time_and_changes_the_type() {
     assert_eq!(w.players[0].resources[GOLD], gold - 100, "paid at the start");
     assert!(!upgrade::available(&w, center.0 as usize).contains(&dmg), "not offered while researched");
     // A researching building takes no orders.
-    w.step(&[Command::Produce { player: 0, building: center, kind: kri }]);
+    w.step(&[Command::Produce { player: 0, building: center, kind: kri, endless: false }]);
     assert!(w.units[center.0 as usize].queue.is_empty());
     // #TIME 21 from 1 at +2 per tick: done on the 10th tick, counting the order's tick.
     run(&mut w, 7);
@@ -122,7 +122,7 @@ fn build_life_private_and_stage_upgrades() {
     assert_eq!(w.units[b].max_life, 1500, "the stage adds its life");
     assert_eq!(economy::producible(&w, b), [kri, pik]);
     // The halved BUILDSTAGES: a peasant in 10 ticks.
-    w.step(&[Command::Produce { player: 0, building: center, kind: kri }]);
+    w.step(&[Command::Produce { player: 0, building: center, kind: kri, endless: false }]);
     let n = w.units.len();
     run(&mut w, 9);
     assert_eq!(w.units.len(), n + 1);

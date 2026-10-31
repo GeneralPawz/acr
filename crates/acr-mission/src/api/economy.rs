@@ -191,7 +191,13 @@ fn produce(api: &mut Api, c: &mut Call, fast: Option<i32>) -> Result<u32> {
             continue;
         }
         let power = api.world.players[usize::from(u.owner)].type_count.get(usize::from(t.0)).copied().unwrap_or(0);
-        api.world.units[bi].queue.push(acr_sim::economy::Production { kind: t, progress, stages, power });
+        api.world.units[bi].queue.push(acr_sim::economy::Production {
+            kind: t,
+            progress,
+            stages,
+            power,
+            endless: false,
+        });
         api.st.production.push(Production { building: api.world.units[bi].id, kind: t, group: d, ready: 0 });
     }
     Ok(0)
