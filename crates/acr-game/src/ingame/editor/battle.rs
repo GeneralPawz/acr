@@ -49,11 +49,21 @@ pub struct Battle {
     fight: bool,
     /// The units the last "Aufstellen" placed.
     placed: Vec<acr_sim::EntityId>,
+    /// The orders "Aufstellen" left for the game to issue (attack-moves of Kampf sofort).
+    pub march: Vec<acr_sim::command::Command>,
 }
 
 impl Default for Battle {
     fn default() -> Self {
-        Self { on: false, nation: [2, 3], era: [None, None], size: Size::Medium, fight: false, placed: Vec::new() }
+        Self {
+            on: false,
+            nation: [2, 3],
+            era: [None, None],
+            size: Size::Medium,
+            fight: false,
+            placed: Vec::new(),
+            march: Vec::new(),
+        }
     }
 }
 
@@ -143,6 +153,15 @@ fn deploy(world: &mut World, battle: &mut Battle) -> Result<[usize; 2], Error> {
         }
     }
     battle.placed = fresh(world, &before);
+    // Kampf sofort: each army marches on the other's centre, formations as bodies.
+    if battle.fight {
+        for s in 0..2 {
+            let units: Vec<_> =
+                battle.placed.iter().copied().filter(|id| world.units[id.0 as usize].owner == s as u8).collect();
+            let (x, y) = at[1 - s];
+            battle.march.push(acr_sim::command::Command::AttackMove { player: s as u8, units, x, y });
+        }
+    }
     Ok(men)
 }
 
@@ -189,11 +208,13 @@ impl Editor {
             }
             Act::Fight => b.fight = !b.fight,
             Act::Go => {
+                b.march.clear();
                 let result = deploy(world, b);
                 if b.fight {
                     self.peace = false;
                 }
                 set_peace(world, self.peace);
+                self.orders.append(&mut self.battle.march);
                 self.status = match result {
                     Ok([a, c]) => {
                         let side = MapSize { shift: world.map.shift }.playable_size();
@@ -210,7 +231,7 @@ impl Editor {
     pub(super) fn battle_items(&self) -> Vec<Item> {
         let b = &self.battle;
         let mut out = Vec::new();
-        let mut y = OY + 10;
+        let mut y = OY + 4;
         let text = |y: i32, text: String, name: &str, hot: bool, act: Option<Act>| Item {
             rect: Rect::new(X0, y, W, ROW),
             text: text.into_bytes(),
