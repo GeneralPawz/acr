@@ -160,6 +160,19 @@ impl ObjectsView {
         self.scene = Some(scene);
     }
 
+    /// Builds the scene of `map` again (objects were added or the ground changed) and keeps
+    /// the atlas, whose frames are uploaded as they are drawn. Nothing while the first scene
+    /// is still waiting for its files ([`ObjectsView::update`] builds it).
+    pub fn rebuild_static(&mut self, map: &M3dMap, terrain: &TerrainData) {
+        if self.scene.is_none() {
+            return;
+        }
+        let mut scene =
+            if self.dynamic_units { self.assets.static_scene(map, terrain) } else { self.assets.scene(map, terrain) };
+        scene.set_hidden(self.hidden.clone());
+        self.scene = Some(scene);
+    }
+
     pub fn sync_gpu(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) {
         let renderer = self.renderer.get_or_insert_with(|| SpriteRenderer::new(device, format));
         if let Some(palette) = self.palette.take() {
@@ -250,5 +263,37 @@ impl ObjectsView {
         } else {
             renderer.render(pass, &atlas.atlas);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use acr_formats::m3d::{Grid, MapSize, Sprite, SpriteGroup};
+
+    #[test]
+    fn rebuild_static_places_the_objects_added_since() {
+        let terrain_map = M3dMap {
+            size: Some(MapSize { shift: 1 }),
+            heights: Some(Grid { width: 33, height: 16, cells: vec![0; 33 * 16] }),
+            textures: Some(Grid { width: 33, height: 16, cells: vec![0; 33 * 16] }),
+            ..Default::default()
+        };
+        let terrain = TerrainData::from_parts(
+            &terrain_map,
+            &acr_formats::terrain::TextureFlags([0; 256]),
+            &acr_formats::terrain::RandomTable(vec![0; 0x2000]),
+        )
+        .unwrap();
+        let mut view = ObjectsView::new().with_dynamic_units();
+        // Waiting for its files: nothing is built.
+        view.rebuild_static(&terrain_map, &terrain);
+        assert!(!view.ready());
+        // Without any definitions every sprite counts as missing, which shows what was placed.
+        view.scene = Some(view.assets.static_scene(&terrain_map, &terrain));
+        let mut map = terrain_map.clone();
+        map.sprites.push(Sprite { group: SpriteGroup::Trees, x: 640, y: 640, index: 3, extra: None });
+        view.rebuild_static(&map, &terrain);
+        assert_eq!(view.scene.as_ref().unwrap().missing.get("Trees"), Some(&1));
     }
 }

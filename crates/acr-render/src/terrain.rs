@@ -17,7 +17,7 @@
 
 use acr_formats::Palette;
 use acr_formats::grd::BlendTable;
-use acr_formats::m3d::M3dMap;
+use acr_formats::m3d::{Grid, M3dMap};
 use acr_formats::terrain::{MaskTable, RandomTable, TILE_SIZE, TextureFlags, TileSet};
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
@@ -214,6 +214,9 @@ pub struct TerrainData {
     water: Option<(usize, usize, Vec<u8>)>,
     /// Lowest and highest vertex height.
     pub height_range: (i32, i32),
+    revision: u64,
+    water_revision: u64,
+    dirty: Option<[usize; 4]>,
 }
 
 /// The ground heights of a map alone (`GetHeight`'s data): cheap to clone (shared), `Send`,
@@ -221,63 +224,144 @@ pub struct TerrainData {
 #[derive(Clone)]
 pub struct HeightField {
     width: usize,
-    heights: std::sync::Arc<[i16]>,
+    heights: std::sync::Arc<Vec<i16>>,
     /// Edge of the square that clamps height lookups, in world pixels.
     playable: i32,
 }
 
 impl TerrainData {
     pub fn new(map: &M3dMap, assets: &GroundAssets) -> Result<Self, String> {
+        Self::from_parts(map, &assets.flags, &assets.random)
+    }
+
+    /// [`TerrainData::new`] from the two tables it reads, so it needs no game files.
+    pub fn from_parts(map: &M3dMap, flags: &TextureFlags, random: &RandomTable) -> Result<Self, String> {
         let size = map.size.ok_or("map without size")?;
         let heights = map.heights.as_ref().ok_or("map without SURF")?;
         let textures = map.textures.as_ref().ok_or("map without TILE")?;
         let (width, height) = (heights.width, heights.height);
         let cells_per_row = (width - 1) / 2;
-        let lift = |v: usize, tile: u8| {
-            if assets.flags.has(tile, TextureFlags::PLAIN) { 0 } else { (assets.random.get(v % 0x1FC5) & 7) as u8 }
-        };
-        let vertices = (0..width * height)
-            .map(|v| {
-                let tile = textures.cells[v];
-                let light = if assets.flags.has(tile, TextureFlags::BRIGHT) {
-                    0
-                } else {
-                    vertex_light(&heights.cells, width, v)
-                };
-                [tile, light, lift(v, tile), zoom_weight(&assets.random, v)]
-            })
-            .collect();
+        let vertices = (0..width * height).map(|v| vertex_data(heights, textures, flags, random, v)).collect();
         // Without SECT the engine picks variants from the random table (0x44864B).
         let section = |i: usize| match &map.sections {
             Some(s) => s.get(i).copied().unwrap_or(0),
-            None => (assets.random.get(i) % 3) as u8,
+            None => (random.get(i) % 3) as u8,
         };
         let sections = (0..cells_per_row * height)
             .map(|cell| std::array::from_fn(|k| if k < 7 { section(cell * 6 + k) } else { 0 }))
             .collect();
-        let tile = |v: usize| textures.cells.get(v).copied().unwrap_or(0);
-        let zoom_layers = (0..cells_per_row * height)
-            .flat_map(|cell| {
-                let v = cell / cells_per_row * width + cell % cells_per_row * 2;
-                ZOOM_TRIANGLES.map(|t| {
-                    let [base, a, b] = zoom_layers(t.vertices.map(|(dx, dy)| tile(v + dx + dy * width)));
-                    [base, a, b, 0]
-                })
-            })
-            .collect();
+        let zoom_layers =
+            (0..cells_per_row * height).flat_map(|cell| zoom_cell(textures, width, cells_per_row, cell)).collect();
         let water = map.water.as_ref().map(|w| (w.depth.width, w.depth.height, w.depth.cells.clone()));
         let range =
             heights.cells.iter().fold((i32::MAX, i32::MIN), |(lo, hi), &h| (lo.min(h.into()), hi.max(h.into())));
         Ok(Self {
             width,
             height,
-            field: HeightField { width, heights: heights.cells.clone().into(), playable: size.playable_size() },
+            field: HeightField {
+                width,
+                heights: std::sync::Arc::new(heights.cells.clone()),
+                playable: size.playable_size(),
+            },
             vertices,
             sections,
             zoom_layers,
             water,
             height_range: range,
+            revision: 0,
+            water_revision: 0,
+            dirty: None,
         })
+    }
+
+    /// Takes over the edit of `area` (world pixels `[x0, y0, x1, y1)`, as `acr_mapgen::edit`
+    /// returns it) that `map` already holds: recomputes the vertices (a margin of one vertex
+    /// for the light, which reads the neighbours' heights), the zoomed-view cells (a margin
+    /// of one cell) and the water depth there, and marks the vertex rect dirty
+    /// ([`TerrainData::take_dirty`]). `map` must have the size this was built from.
+    pub fn update(&mut self, map: &M3dMap, assets: &GroundAssets, area: [i32; 4]) -> Result<(), String> {
+        self.update_parts(map, &assets.flags, &assets.random, area)
+    }
+
+    /// [`TerrainData::update`] from the two tables it reads.
+    pub fn update_parts(
+        &mut self,
+        map: &M3dMap,
+        flags: &TextureFlags,
+        random: &RandomTable,
+        area: [i32; 4],
+    ) -> Result<(), String> {
+        let heights = map.heights.as_ref().ok_or("map without SURF")?;
+        let textures = map.textures.as_ref().ok_or("map without TILE")?;
+        if (heights.width, heights.height) != (self.width, self.height) || textures.cells.len() != heights.cells.len() {
+            return Err("map size differs from the terrain".into());
+        }
+        let [c0, r0, c1, r1] = vertex_rect(area, self.width, self.height);
+        if c0 >= c1 || r0 >= r1 {
+            return Ok(());
+        }
+        // The light of a vertex reads its neighbours' heights.
+        let (c0, r0, c1, r1) =
+            (c0.saturating_sub(1), r0.saturating_sub(1), (c1 + 1).min(self.width), (r1 + 1).min(self.height));
+        let w = self.width;
+        let field = std::sync::Arc::make_mut(&mut self.field.heights);
+        for row in r0..r1 {
+            let span = row * w + c0..row * w + c1;
+            field[span.clone()].copy_from_slice(&heights.cells[span.clone()]);
+            for v in span {
+                self.vertices[v] = vertex_data(heights, textures, flags, random, v);
+            }
+        }
+        let (lo, hi) = heights.cells[r0 * w..r1 * w]
+            .iter()
+            .fold(self.height_range, |(lo, hi), &h| (lo.min(h.into()), hi.max(h.into())));
+        self.height_range = (lo, hi);
+        let [k0, s0, k1, s1] = zoom_rect([c0, r0, c1, r1], w, self.height);
+        let cells_per_row = (w - 1) / 2;
+        for row in s0..s1 {
+            for cc in k0..k1 {
+                let cell = row * cells_per_row + cc;
+                self.zoom_layers[cell * 4..cell * 4 + 4].copy_from_slice(&zoom_cell(textures, w, cells_per_row, cell));
+            }
+        }
+        if let (Some((ww, wh, cells)), Some(water)) = (self.water.as_mut(), map.water.as_ref()) {
+            let d = &water.depth;
+            if (d.width, d.height) == (*ww, *wh) {
+                let x1 = (((area[2] - 1) >> 5) + 2).clamp(0, *ww as i32) as usize;
+                let y1 = (((area[3] - 1) >> 5) + 2).clamp(0, *wh as i32) as usize;
+                let x0 = ((area[0] >> 5) - 1).clamp(0, *ww as i32) as usize;
+                let y0 = ((area[1] >> 5) - 1).clamp(0, *wh as i32) as usize;
+                let mut changed = false;
+                for y in y0..y1 {
+                    let span = y * *ww + x0..y * *ww + x1.max(x0);
+                    changed |= cells[span.clone()] != d.cells[span.clone()];
+                    cells[span.clone()].copy_from_slice(&d.cells[span]);
+                }
+                self.water_revision += changed as u64;
+            }
+        }
+        self.revision += 1;
+        self.dirty = Some(match self.dirty {
+            Some([a, b, c, d]) => [a.min(c0), b.min(r0), c.max(c1), d.max(r1)],
+            None => [c0, r0, c1, r1],
+        });
+        Ok(())
+    }
+
+    /// Counts the updates since [`TerrainData::from_parts`].
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    /// Counts the updates that changed the water depth.
+    pub fn water_revision(&self) -> u64 {
+        self.water_revision
+    }
+
+    /// The vertex rect `[col0, row0, col1, row1)` changed since the last call (for the GPU
+    /// copy, [`TerrainRenderer::update_map`]).
+    pub fn take_dirty(&mut self) -> Option<[usize; 4]> {
+        self.dirty.take()
     }
 
     /// The heights alone, shared (see [`HeightField`]).
@@ -392,6 +476,46 @@ impl HeightField {
             a + f * (b - a) + u * (o - (a + b) * 0.5)
         }
     }
+}
+
+/// Per vertex: texture, light level, random lift, zoomed-view blend weight.
+fn vertex_data(
+    heights: &Grid<i16>,
+    textures: &Grid<u8>,
+    flags: &TextureFlags,
+    random: &RandomTable,
+    v: usize,
+) -> [u8; 4] {
+    let tile = textures.cells[v];
+    let light = if flags.has(tile, TextureFlags::BRIGHT) { 0 } else { vertex_light(&heights.cells, heights.width, v) };
+    let lift = if flags.has(tile, TextureFlags::PLAIN) { 0 } else { (random.get(v % 0x1FC5) & 7) as u8 };
+    [tile, light, lift, zoom_weight(random, v)]
+}
+
+/// The four zoomed-view triangles of `cell` ([`zoom_layers`]).
+fn zoom_cell(textures: &Grid<u8>, width: usize, cells_per_row: usize, cell: usize) -> [[u8; 4]; 4] {
+    let v = cell / cells_per_row * width + cell % cells_per_row * 2;
+    let tile = |v: usize| textures.cells.get(v).copied().unwrap_or(0);
+    ZOOM_TRIANGLES.map(|t| {
+        let [base, a, b] = zoom_layers(t.vertices.map(|(dx, dy)| tile(v + dx + dy * width)));
+        [base, a, b, 0]
+    })
+}
+
+/// The vertices `[col0, row0, col1, row1)` that lie in the world-pixel box `area` (vertex
+/// `(col, row)` is at `(32 col, 32 row - 16 (col & 1))`), at least; clamped to the grid.
+fn vertex_rect(area: [i32; 4], width: usize, height: usize) -> [usize; 4] {
+    let col = |x: i32| (x >> 5).clamp(0, width as i32) as usize;
+    let row = |y: i32| (y >> 5).clamp(0, height as i32) as usize;
+    // Odd columns sit half a row lower: the last row reaches 16 px further.
+    [col(area[0]), row(area[1]), (col(area[2] - 1) + 1).min(width), (row(area[3] - 1 + 16) + 1).min(height)]
+}
+
+/// The zoomed-view cells `[col0, row0, col1, row1)` whose triangles read a vertex of the
+/// vertex rect (a cell reads two columns and one row beyond its own).
+fn zoom_rect([c0, r0, c1, r1]: [usize; 4], width: usize, height: usize) -> [usize; 4] {
+    let per_row = (width - 1) / 2;
+    [c0.saturating_sub(2).div_ceil(2), r0.saturating_sub(1), ((c1 - 1) / 2 + 1).min(per_row), r1.min(height)]
 }
 
 /// Integer `div` as the engine's helper (0x6153B4): truncates toward zero.
@@ -515,6 +639,12 @@ struct MapTextures {
     height: usize,
     water: (usize, usize),
     height_range: (i32, i32),
+    /// Kept for [`TerrainRenderer::update_map`]: the heights, zoom layers and water depth.
+    heights: wgpu::Texture,
+    zoom: wgpu::Texture,
+    depth: wgpu::Texture,
+    /// The [`TerrainData::water_revision`] `depth` holds.
+    water_revision: u64,
 }
 
 /// The original view's zoom below which the detailed ground is not drawn.
@@ -1186,6 +1316,22 @@ impl TerrainRenderer {
         let vertex_texture =
             texture_object(device, queue, "terrain vertices", size, wgpu::TextureFormat::Rgba8Uint, &vertices);
         let vertex_view = vertex_texture.create_view(&Default::default());
+        let heights_texture =
+            texture_object(device, queue, "terrain heights", size, wgpu::TextureFormat::R16Sint, &heights);
+        let zoom_texture =
+            texture_object(device, queue, "terrain zoom layers", zoom, wgpu::TextureFormat::Rgba8Uint, &zoom_layers);
+        let depth_texture =
+            texture_object(device, queue, "terrain water", (ww, wh), wgpu::TextureFormat::R8Uint, &depth);
+        let group = self.bind_group(
+            device,
+            &[
+                heights_texture.create_view(&Default::default()),
+                vertex_view,
+                texture(device, queue, "terrain sections", cells, wgpu::TextureFormat::Rgba8Uint, &sections),
+                depth_texture.create_view(&Default::default()),
+                zoom_texture.create_view(&Default::default()),
+            ],
+        );
         self.map = Some(MapTextures {
             vertices: vertex_texture,
             base: data.vertices.clone(),
@@ -1193,17 +1339,78 @@ impl TerrainRenderer {
             height: data.height,
             water: (ww, wh),
             height_range: data.height_range,
-            group: self.bind_group(
-                device,
-                &[
-                    texture(device, queue, "terrain heights", size, wgpu::TextureFormat::R16Sint, &heights),
-                    vertex_view,
-                    texture(device, queue, "terrain sections", cells, wgpu::TextureFormat::Rgba8Uint, &sections),
-                    texture(device, queue, "terrain water", (ww, wh), wgpu::TextureFormat::R8Uint, &depth),
-                    texture(device, queue, "terrain zoom layers", zoom, wgpu::TextureFormat::Rgba8Uint, &zoom_layers),
-                ],
-            ),
+            heights: heights_texture,
+            zoom: zoom_texture,
+            depth: depth_texture,
+            water_revision: data.water_revision(),
+            group,
         });
+    }
+
+    /// Copies the vertex rect `rect` ([`TerrainData::take_dirty`]) of an edited `data` to the
+    /// map textures (heights, vertices, zoom layers) and the whole water depth if it changed;
+    /// the textures and their bind group stay. Nothing without a map or for another size
+    /// (use [`TerrainRenderer::set_map`]). Trampled soil in the rect is drawn unmarked until
+    /// the next [`TerrainRenderer::set_trample`].
+    pub fn update_map(&mut self, queue: &wgpu::Queue, data: &TerrainData, rect: [usize; 4]) {
+        let Some(map) = &mut self.map else { return };
+        if (map.width, map.height) != (data.width, data.height) {
+            return;
+        }
+        let [c0, r0, c1, r1] = [rect[0], rect[1], rect[2].min(data.width), rect[3].min(data.height)];
+        map.height_range = data.height_range;
+        if c0 < c1 && r0 < r1 {
+            let w = data.width;
+            let write = |texture: &wgpu::Texture, x: usize, y: usize, size: (usize, usize), bytes: &[u8]| {
+                let mut origin = texture.as_image_copy();
+                origin.origin = wgpu::Origin3d { x: x as u32, y: y as u32, z: 0 };
+                queue.write_texture(
+                    origin,
+                    bytes,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some((bytes.len() / size.1) as u32),
+                        rows_per_image: None,
+                    },
+                    wgpu::Extent3d { width: size.0 as u32, height: size.1 as u32, depth_or_array_layers: 1 },
+                );
+            };
+            let size = (c1 - c0, r1 - r0);
+            let rows = || (r0..r1).map(|r| r * w + c0..r * w + c1);
+            let heights: Vec<u8> =
+                rows().flat_map(|s| data.field.heights[s].iter().flat_map(|h| h.to_le_bytes())).collect();
+            write(&map.heights, c0, r0, size, &heights);
+            for span in rows() {
+                map.base[span.clone()].copy_from_slice(&data.vertices[span]);
+            }
+            let vertices: Vec<u8> =
+                rows().flat_map(|s| map.base[s].iter().flatten().copied().collect::<Vec<_>>()).collect();
+            write(&map.vertices, c0, r0, size, &vertices);
+            let [k0, s0, k1, s1] = zoom_rect([c0, r0, c1, r1], w, data.height);
+            let per_row = (w - 1) / 2;
+            let zoom: Vec<u8> = (s0..s1)
+                .flat_map(|row| {
+                    let span = (row * per_row + k0) * ZOOM_TRIANGLES.len()..(row * per_row + k1) * ZOOM_TRIANGLES.len();
+                    data.zoom_layers[span].iter().flatten().copied().collect::<Vec<_>>()
+                })
+                .collect();
+            if k0 < k1 && s0 < s1 {
+                write(&map.zoom, k0 * ZOOM_TRIANGLES.len(), s0, ((k1 - k0) * ZOOM_TRIANGLES.len(), s1 - s0), &zoom);
+            }
+        }
+        if map.water_revision != data.water_revision() {
+            map.water_revision = data.water_revision();
+            if let Some((ww, wh, depth)) = data.water().filter(|&(ww, wh, _)| (ww, wh) == map.water) {
+                let mut origin = map.depth.as_image_copy();
+                origin.origin = wgpu::Origin3d::ZERO;
+                queue.write_texture(
+                    origin,
+                    depth,
+                    wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(ww as u32), rows_per_image: None },
+                    wgpu::Extent3d { width: ww as u32, height: wh as u32, depth_or_array_layers: 1 },
+                );
+            }
+        }
     }
 
     /// Binds the map textures (heights, vertices, sections, water, zoom layers) with the
@@ -1530,13 +1737,101 @@ mod tests {
         TerrainData {
             width: W,
             height: rows,
-            field: HeightField { width: W, heights: heights.into(), playable: 15360 },
+            field: HeightField { width: W, heights: std::sync::Arc::new(heights), playable: 15360 },
             vertices: Vec::new(),
             sections: Vec::new(),
             zoom_layers: Vec::new(),
             water: None,
             height_range: (0, 0),
+            revision: 0,
+            water_revision: 0,
+            dirty: None,
         }
+    }
+
+    fn tables() -> (TextureFlags, RandomTable) {
+        let random = (0..0x2000u32).map(|i| (i.wrapping_mul(2_654_435_761) >> 11) as u16).collect();
+        (TextureFlags([0; 256]), RandomTable(random))
+    }
+
+    /// A small map (33 x 16 vertices, 20 x 20 water cells) with varied heights and textures.
+    fn small_map() -> M3dMap {
+        use acr_formats::m3d::{MapSize, Water};
+        let (w, h) = (33, 16);
+        let heights = (0..w * h).map(|v| ((v * 37 % 101) as i16 - 40) * 3).collect();
+        let textures = (0..w * h).map(|v| (v * 7 % 5) as u8).collect();
+        let grid = |cells| Grid { width: 20, height: 20, cells };
+        M3dMap {
+            size: Some(MapSize { shift: 1 }),
+            heights: Some(Grid { width: w, height: h, cells: heights }),
+            textures: Some(Grid { width: w, height: h, cells: textures }),
+            water: Some(Water { depth: grid(vec![0; 400]), brightness: grid(vec![0; 400]) }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn update_matches_a_fresh_build() {
+        let (flags, random) = tables();
+        let mut map = small_map();
+        let mut data = TerrainData::from_parts(&map, &flags, &random).unwrap();
+        // Raise a patch, repaint it and put water in the corner of it.
+        let (cols, rows) = (8..12usize, 6..8usize);
+        for row in rows.clone() {
+            for col in cols.clone() {
+                map.heights.as_mut().unwrap().cells[row * 33 + col] += 500;
+                map.textures.as_mut().unwrap().cells[row * 33 + col] = 9;
+            }
+        }
+        map.water.as_mut().unwrap().depth.cells[6 * 20 + 9] = 200;
+        let area = [8 * 32, 6 * 32 - 16, 12 * 32, 8 * 32];
+        data.update_parts(&map, &flags, &random, area).unwrap();
+        let fresh = TerrainData::from_parts(&map, &flags, &random).unwrap();
+        assert_eq!(*data.field.heights, *fresh.field.heights);
+        assert_eq!(data.vertices, fresh.vertices);
+        assert_eq!(data.zoom_layers, fresh.zoom_layers);
+        assert_eq!(data.sections, fresh.sections);
+        assert_eq!(data.water, fresh.water);
+        assert_eq!(data.height_range, fresh.height_range);
+        assert_eq!((data.revision(), data.water_revision()), (1, 1));
+        // The same water again changes no depth.
+        data.update_parts(&map, &flags, &random, area).unwrap();
+        assert_eq!((data.revision(), data.water_revision()), (2, 1));
+    }
+
+    #[test]
+    fn height_range_only_widens() {
+        let (flags, random) = tables();
+        let mut map = small_map();
+        let mut data = TerrainData::from_parts(&map, &flags, &random).unwrap();
+        let (lo, hi) = data.height_range;
+        map.heights.as_mut().unwrap().cells.fill(0);
+        data.update_parts(&map, &flags, &random, [0, 0, 33 * 32, 16 * 32]).unwrap();
+        assert_eq!(data.height_range, (lo.min(0), hi.max(0)));
+        assert_eq!(data.height_range, (lo, hi));
+    }
+
+    #[test]
+    fn dirty_rect_covers_light_neighbours() {
+        let (flags, random) = tables();
+        let mut map = small_map();
+        let mut data = TerrainData::from_parts(&map, &flags, &random).unwrap();
+        let before = data.vertices.clone();
+        // Vertex (10, 7) alone, at world pixel (320, 224).
+        map.heights.as_mut().unwrap().cells[7 * 33 + 10] += 900;
+        data.update_parts(&map, &flags, &random, [320, 224, 321, 225]).unwrap();
+        let dirty = data.take_dirty().unwrap();
+        assert_eq!(dirty, [9, 6, 12, 9]);
+        assert_eq!(data.take_dirty(), None);
+        let mut lit = 0;
+        for (v, (old, new)) in before.iter().zip(&data.vertices).enumerate() {
+            let (col, row) = (v % 33, v / 33);
+            if old != new {
+                lit += 1;
+                assert!((dirty[0]..dirty[2]).contains(&col) && (dirty[1]..dirty[3]).contains(&row), "{col},{row}");
+            }
+        }
+        assert!(lit > 1, "the neighbours' light changed too");
     }
 
     #[test]
