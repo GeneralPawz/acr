@@ -209,26 +209,39 @@ toggle their panels and views and never reach these icons.
 
 ## Editor (test field)
 
-The main menu's "Editor" opens a blank grass field for two human players with a placing
-panel at the top left (`crates/acr-game/src/ingame/editor.rs`). Unlike the original's editor
-it places many units at once and whole formations ready-formed; it acts on the local world
-directly (like the test driver's `spawn`), so an editor game is not a network game. The
-rules of the settings apply (`hit_locations`, `body_spacing`).
+The main menu's "Editor" opens a blank grass field for two human players with the original
+editor's placing window ("Einheit wählen", docs/ui.md "Editor: the placing window") at the
+right, in the column of the side panels (`crates/acr-game/src/ingame/editor.rs`). Unlike the
+original's editor it places many units at once and whole formations ready-formed; it acts on
+the local world directly (like the test driver's `spawn`), so an editor game is not a network
+game. The rules of the settings apply (`hit_locations`, `body_spacing`). F2 or a click on the
+title folds the window; the wheel over it scrolls the icons.
 
-| Panel line | What it does |
+| In the window | What it does |
 |---|---|
-| ENG … IRO, Tiere, Kanonen | lists the land units of a nation, the animals or the cannons |
-| a unit | picks it (again: unpicks); while picked, a left click on the map places it |
-| B H V behind a unit | picks it at an upgrade level: Basis (none), Halb (the first half of its upgrades, rounded up) or Voll (all) |
+| The eight colours | the owner of the placed units: players 1 to 7 and, the eighth, the neutral player (wild animals) |
+| Nation combo box | lists the 12 playable nations, then Tiere and Kanonen (ACR's own lists); a click opens it, a line picks it |
+| Icon grid | the nation's land units under Infanterie, Kavallerie and Artillerie, as `ICONS.GP` icons; a click picks the type (again: unpicks); while picked, a left click on the map places it. Marine and buildings are not placed yet (#406) |
+| Scroll bar | the arrows scroll a row, the track a page; no dragging |
+
+Under the window ACR's own controls:
+
+| Line | What it does |
+|---|---|
 | Anzahl | 1, 5, 10, 15, 36, 72, 120, 196, 392, 588, 784 or 980 |
 | Formation | lose (a square block) or the formations the type's officers lead: Linie, Kolonne, Karree for infantry, the cavalry wedges as named in `ORD_GROUPS.LST` |
-| Ausbau | the upgrade level, as with the buttons; shows how many of the picked type's upgrades it applies |
+| Ausbau | the upgrade level; shows how many of the picked type's upgrades it applies |
+| B H V | sets the upgrade level directly: Basis (none), Halb (the first half of the upgrades, rounded up) or Voll (all); a right-click drop-down on the icons replaces them (#402) |
 | Richtung | the facing, in eight steps; kept per owner |
-| Besitzer | Spieler 1, Spieler 2 or Neutral (wild animals) |
+| Besitzer | the owner picked among the colours |
 | Kampf | AUS: every player is everybody's ally, nobody attacks; AN: the sides fight |
 | Kanonen sofort laden | reloads every cannon on the field at once (its reload counter cleared) |
 | Kanonen: sofort nachladen | AN: every cannon is reloaded before each tick, so it fires as soon as it is aimed (a test switch; starts AUS) |
-| Ich steuere | which player's units the mouse selects and commands |
+| Ich steuere | which player's units the mouse selects and commands (player 1 or 2) |
+
+The test driver lists the window's controls in `ui` as `editor/<n>` (names like `Anzahl +`,
+`Ausbau Halb`, `Nation Frankreich`, `Spieler 2`, `Neutral`, an icon by its name and type id),
+so `tests/e2e/editor_window.json` clicks them by label.
 
 The upgrade level applies the upgrades that change the type's characteristics (damage,
 protection, life, range, cannon spread `RAZBROS`, reload pause, speed, cost; `upgrade::of_type`,
