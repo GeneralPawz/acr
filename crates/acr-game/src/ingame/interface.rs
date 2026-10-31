@@ -2005,8 +2005,10 @@ impl InGame {
             let r = objects.definition(&kind.id).and_then(|d| d.get("RECTANGLE"));
             let [dx, dy, w, h] = [0, 1, 2, 3].map(|i| r.and_then(|c| c.int(i)).unwrap_or([0, 3, 40, 64][i]));
             let (x, y) = (u.pos.x >> 4, u.pos.y >> 4);
-            let x0 = x - w / 2 + dx;
-            let y0 = (y >> 1) - h + dy - terrain.height_at(x, y);
+            // A model is drawn where its body walks between the sim's ticks: the marks follow it.
+            let [ox, oy] = self.three_d.drawn_offset(u.id);
+            let x0 = x + ox - w / 2 + dx;
+            let y0 = ((y + oy) >> 1) - h + dy - terrain.height_at(x, y);
             let (x1, y1) = (x0 + w - 1, y0 + h - 1);
             // Soldiers of a formed formation get no brackets of their own (0x4bae50).
             let in_formation = u.brigade.is_some() && !kind.officer;

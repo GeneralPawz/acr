@@ -764,6 +764,17 @@ impl ThreeD {
         self.compare != Compare::Overlay && self.models_phase() && self.shown.contains(&unit)
     }
 
+    /// How far the model of `unit` is drawn from its sim position (world pixels): the walking
+    /// body goes evenly between the sim's steps, so what follows it (the selection brackets)
+    /// takes this offset. Zero where it stands on the sim position or is no model.
+    pub fn drawn_offset(&self, unit: EntityId) -> [i32; 2] {
+        if !self.shows(unit) {
+            return [0, 0];
+        }
+        let o = self.ragdolls.as_ref().and_then(|r| r.walker_offset(unit.0)).unwrap_or([0.0, 0.0]);
+        [o[0].round() as i32, o[1].round() as i32]
+    }
+
     /// `ACR_3D_COMPARE=overlay`: the unit's sprite is drawn half transparent over its model.
     /// The rounds in flight are drawn as models (#308): their sprites are left out.
     pub fn draws_rounds(&self) -> bool {

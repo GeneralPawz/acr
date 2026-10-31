@@ -1067,6 +1067,11 @@ impl Ragdolls {
         thrown
     }
 
+    /// How far the walking man `unit` is drawn from his sim position (world pixels).
+    pub fn walker_offset(&self, unit: u32) -> Option<[f32; 2]> {
+        self.gaits.offset(unit)
+    }
+
     /// Where the bone `name` of `unit`'s ragdoll is (world pixels), while it has one (an
     /// animal mauling him stands over it, `maul_view.rs`).
     pub fn bone_world(&self, unit: u32, name: &str) -> Option<[f32; 3]> {
