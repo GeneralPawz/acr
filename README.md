@@ -55,7 +55,9 @@ crates/
   acr-viewer    sprite and map viewer app (winit); native binary and wasm entry point
   acr-tool      `acr` CLI for inspecting game data and validating decoders
   acr-serve     local web server: `cargo xtask serve` and the `AmericanConquest-Web` launcher
-xtask/          build automation in Rust (`cargo xtask web|serve|dist|assets|e2e|drive|jev`)
+  acr-ui-protocol  messages between the game and its Svelte UI (serde, TypeScript export)
+ui/             the Svelte UI (Node 24, `cargo xtask ui`), see docs/webui.md
+xtask/          build automation in Rust (`cargo xtask web|serve|dist|ui|ui-diff|assets|e2e|drive|jev`)
 tests/e2e/      end-to-end scenarios run through the game's driver mode, see docs/testing.md
 assets/         Blender scripts that build the 3D models (M2), see docs/assets.md
 docs/formats/   reverse-engineered format specifications with evidence
@@ -63,7 +65,8 @@ docs/formats/   reverse-engineered format specifications with evidence
 
 Everything is done through the workspace: decoders are validated against the full game
 data by `acr` subcommands rather than ad-hoc scripts, and the web build needs no tools
-beyond `cargo`.
+beyond `cargo`; only the optional Svelte UI (`ui/`, `?ui=svelte`) needs Node 24 and npm
+(`cargo xtask web` skips it with a warning without `npm`).
 
 ## Design rules
 
@@ -139,6 +142,7 @@ cargo run --release -p acr-viewer -- "C:\path\to\American Conquest" --map eng01 
 cargo xtask serve --release
 # ... or let the local server provide the archives: open http://127.0.0.1:8080/?game=/game/
 cargo xtask serve --release --game-dir "C:\path\to\American Conquest"
+# ... with the Svelte UI for the claimed menu screens: http://127.0.0.1:8080/?game=/game/&ui=svelte
 ```
 
 Requires the `wasm32-unknown-unknown` target for the browser build
