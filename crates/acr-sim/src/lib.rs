@@ -70,7 +70,7 @@ pub use command::{Command, PlayerId};
 pub use fixed::Pos;
 pub use map::MapGrid;
 pub use rng::{Rng, SyncRandom};
-pub use world::{EntityId, Unit, World};
+pub use world::{EntityId, ObjectRefusal, Unit, World};
 pub use wounds::Rules;
 
 /// Simulation ticks per second at the original default game speed: the single-player frame

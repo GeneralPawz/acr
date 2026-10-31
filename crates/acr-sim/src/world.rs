@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use acr_formats::m3d::{M3dMap, SpriteGroup};
+use acr_formats::m3d::{M3dMap, Sprite, SpriteGroup};
 
 use crate::catalog::{Catalog, Medium, TypeId};
 use crate::clock::Tick;
@@ -348,6 +348,17 @@ impl Unit {
     }
 }
 
+/// Why [`World::object_refusal`] refuses a map object.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObjectRefusal {
+    /// Not a tree or stone of the map's sprite lists.
+    UnknownType,
+    /// Outside the playable area.
+    OffMap,
+    /// On deep water.
+    Water,
+}
+
 /// Static map object: tree, stone, ... (`TRE1`).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MapObject {
@@ -467,6 +478,9 @@ pub struct World {
     pub sprite_kinds: Arc<(crate::sprite::SpriteKinds, crate::sprite::SpriteKinds)>,
     /// The map's other sprites for the spacing of new ones: `(x, y, radius)` (static).
     pub spacing: Arc<Vec<(i32, i32, i32)>>,
+    /// Blocking polygons and sprite characters of the map's sprite lists (static like the
+    /// catalog, not hashed); empty for a world made by [`World::new`].
+    pub shapes: Arc<SpriteShapes>,
     /// Command centres and the panic-chance cache.
     pub morale: crate::morale::MoraleState,
     /// Projectiles in flight.
@@ -699,6 +713,7 @@ impl World {
             sprites: Vec::new(),
             sprite_kinds: Arc::default(),
             spacing: Arc::default(),
+            shapes: Arc::default(),
             morale: Default::default(),
             projectiles: Default::default(),
             sounds: Vec::new(),
@@ -756,6 +771,7 @@ impl World {
         }
         let map = Arc::new(grid);
         let mut world = World::new(map, catalog, formations);
+        world.shapes = Arc::new(sprites.clone());
         let mut report = LoadReport::default();
         if let Some(res) = &m3d.resources {
             for (p, r) in world.players.iter_mut().zip(res) {
@@ -813,6 +829,104 @@ impl World {
             world.game_options = p.flags;
         }
         (world, report)
+    }
+
+    /// Why the editor may not put a tree or stone of `group`/`index` at world pixel
+    /// `(x, y)`: not a tree or stone of a known list, outside the playable area, or on
+    /// deep water (`SEA2` depth above 128, where `WaterLock` locks land).
+    pub fn object_refusal(&self, group: SpriteGroup, index: u16, x: i32, y: i32) -> Option<ObjectRefusal> {
+        let known = matches!(group, SpriteGroup::Trees | SpriteGroup::Stones)
+            && self.shapes.kinds.get(&group).is_some_and(|k| usize::from(index) < k.chars.len());
+        if !known {
+            return Some(ObjectRefusal::UnknownType);
+        }
+        let playable = (240 << self.map.shift) * 32;
+        if x <= 0 || y <= 0 || x >= playable || y >= playable {
+            return Some(ObjectRefusal::OffMap);
+        }
+        let depth = self.map.water_depth.as_ref()?.get((x >> 5) as usize, (y >> 5) as usize);
+        depth.is_some_and(|d| d > 128).then_some(ObjectRefusal::Water)
+    }
+
+    /// Adds a tree or stone the editor put on the map. `map` already holds `sprite` (the
+    /// map is the source of truth, the world its copy); returns its index in `objects`,
+    /// which is the sprite's index in `map.sprites` when both were appended in step.
+    ///
+    /// Everything a loaded map derives from the sprite is added incrementally: a deposit
+    /// for an `[INTERNAL_SOURCE]` type, a gathering source for a `[SOURCES]` type, the
+    /// spacing radius, and the lock polygon's cells (the region around it is re-derived,
+    /// the buildings' locks put back, and units standing on the new locks moved out as for
+    /// a construction site).
+    ///
+    /// # Panics
+    /// For fields and carcasses (`Complex`, `Meat`), which are [`ResSprite`]s, not map
+    /// objects; [`object_refusal`](Self::object_refusal) refuses them.
+    ///
+    /// [`ResSprite`]: crate::sprite::ResSprite
+    pub fn add_map_object(&mut self, map: &M3dMap, sprite: &Sprite) -> usize {
+        assert!(!matches!(sprite.group, SpriteGroup::Complex | SpriteGroup::Meat), "not a map object");
+        let shapes = self.shapes.clone();
+        let (group, index, x, y) = (sprite.group, sprite.index, sprite.x, sprite.y);
+        self.objects.push(MapObject { group, index, x, y });
+        if let Some(resource) = shapes.source(group, index) {
+            self.deposits.push(crate::economy::Deposit { x, y, resource });
+        }
+        if let Some((kind, per_work, radius)) = shapes.work_source(group, index) {
+            let source = crate::gather::Source { x, y, kind, per_work, radius };
+            if self.sources.list.is_empty() {
+                // A world made by `World::new` has no index yet.
+                self.sources = Arc::new(crate::gather::Sources::new(vec![source], self.map.land.width * 16));
+            } else {
+                Arc::make_mut(&mut self.sources).push(source);
+            }
+        }
+        Arc::make_mut(&mut self.spacing).push((x, y, shapes.spacing(group, index)));
+        let lock = shapes.groups.get(&group).and_then(|g| g.get(usize::from(index))).and_then(Option::as_ref);
+        if let Some(l) = lock.filter(|l| !l.polygon.is_empty()) {
+            // The polygon's box in world px: x as is, y at half scale (see `lock_sprite`).
+            let (x0, y0) = (x - l.dx, (y >> 1) - l.dy);
+            let xs = l.polygon.iter().map(|p| x0 + p.0);
+            let ys = l.polygon.iter().map(|p| 2 * (y0 + p.1));
+            let area = [
+                xs.clone().min().unwrap_or(x),
+                ys.clone().min().unwrap_or(y),
+                xs.max().unwrap_or(x) + 1,
+                ys.max().unwrap_or(y) + 1,
+            ];
+            Arc::make_mut(&mut self.map).rederive(map, &shapes, area);
+            self.relock_buildings();
+            let (cx, cy) = ((area[0] + area[2]) / 2, (area[1] + area[3]) / 2);
+            let reach = (area[2] - area[0]).max(area[3] - area[1]) / 2 + 32;
+            crate::construction::push_out(self, cx << 4, cy << 4, reach << 4);
+        }
+        self.objects.len() - 1
+    }
+
+    /// Takes the terrain of the edited `map` inside `area` (world px, `[x0, y0, x1, y1)`)
+    /// into the world: the heights, textures and water depth are copied, the land and water
+    /// locks of the region re-derived ([`MapGrid::rederive`]), and the locks of the
+    /// buildings put back.
+    pub fn sync_terrain(&mut self, map: &M3dMap, area: [i32; 4]) {
+        let shapes = self.shapes.clone();
+        let grid = Arc::make_mut(&mut self.map);
+        grid.copy_terrain(map, area);
+        grid.rederive(map, &shapes, area);
+        self.relock_buildings();
+    }
+
+    /// Sets the land locks of every living building ([`construction::current_locks`]); the
+    /// cells outside a re-derived region are set already.
+    ///
+    /// [`construction::current_locks`]: crate::construction::current_locks
+    fn relock_buildings(&mut self) {
+        let cells: Vec<(i32, i32)> = (0..self.units.len())
+            .filter(|&i| self.units[i].building && self.units[i].living())
+            .flat_map(|i| crate::construction::current_locks(self, i))
+            .collect();
+        let grid = Arc::make_mut(&mut self.map);
+        for (cx, cy) in cells {
+            grid.land.set_pt(cx, cy);
+        }
     }
 
     /// Whether a unit of `kind` may be put at `pos` as far as the sea goes: a land unit not on
