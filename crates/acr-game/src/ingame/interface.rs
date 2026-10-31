@@ -323,6 +323,7 @@ impl InGame {
         self.apply_controls(settings);
         self.three_d.apply(settings);
         self.interface.aim_guides = settings.aim_guides;
+        self.editor_window = settings.editor_window;
         self.interface.hud.center_top_bar = settings.center_top_bar;
         self.set_input_mode(settings, mode);
     }
@@ -331,6 +332,12 @@ impl InGame {
     pub fn set_input_mode(&mut self, settings: &Settings, mode: crate::input_mode::InputMode) {
         self.interface.hud.top_bar = mode.top_bar(settings.top_bar);
         self.interface.touch = mode == crate::input_mode::InputMode::Touch;
+    }
+
+    /// The editor window's place as `settings.txt` keeps it (`editor_window`), once a held grip
+    /// is let go; `None` outside the editor or while one is held.
+    pub fn editor_window(&self) -> Option<Option<crate::ui::settings::EditorWindow>> {
+        self.editor.as_ref().filter(|e| !e.dragging()).map(|e| e.frame.setting())
     }
 
     /// Whether the aim guides are shown: the app writes a switch by the "Zielhilfe" icon back
@@ -2674,6 +2681,10 @@ impl InGame {
     /// Mouse moved (window position).
     pub fn mouse_moved(&mut self, at: [f32; 2]) {
         self.cursor = Some(at);
+        let p = self.canvas_point(at);
+        if self.editor.as_mut().is_some_and(|e| e.drag_to(p)) {
+            return;
+        }
         if self.pan_moved(at) || self.orbit_moved(at) {
             return;
         }

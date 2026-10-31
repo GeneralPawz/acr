@@ -155,6 +155,8 @@ pub struct InGame {
     editor: Option<editor::Editor>,
     /// The editor's peace has been applied to the new world.
     editor_started: bool,
+    /// Where the editor's window stood last (`editor_window` in the settings), for the next editor game.
+    editor_window: Option<crate::ui::settings::EditorWindow>,
 }
 
 impl InGame {
@@ -219,6 +221,7 @@ impl InGame {
             studio_hold: false,
             editor: None,
             editor_started: false,
+            editor_window: None,
         }
     }
 
@@ -236,7 +239,9 @@ impl InGame {
             GameKind::Blank(b) => {
                 self.map = Some(crate::blank_map::build(b));
                 self.objects.reset();
-                self.editor = b.editor.then(editor::Editor::default);
+                self.editor = b
+                    .editor
+                    .then(|| editor::Editor::with_frame(editor::frame::Frame::from_setting(self.editor_window)));
             }
             GameKind::Acr(m) => {
                 self.map = Some(m.map());
