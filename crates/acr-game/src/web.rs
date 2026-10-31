@@ -113,6 +113,7 @@ fn run(assets: WebAssets) -> Result<(), JsValue> {
         log::set_max_level(log::LevelFilter::Warn);
     }
     let event_loop = crate::event_loop()?;
+    crate::webui::web::set_proxy(event_loop.create_proxy());
     let mut game = Game::new(event_loop.create_proxy(), Box::new(assets));
     game.set_saves(Box::new(acr_app::saves::BrowserSaves::default()));
     game.set_profiles(Box::new(acr_app::saves::BrowserSaves::with_prefix("acr-player:")));
