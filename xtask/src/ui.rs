@@ -1,4 +1,4 @@
-//! The Svelte UI's tooling (docs/webui.md): `cargo xtask ui` builds `ui/` with Node, and
+//! The Svelte UI's tooling (docs/webui.md): `cargo xtask ui` builds `ui/` with Bun, and
 //! `cargo xtask ui-diff` compares two screenshots.
 
 use std::path::{Path, PathBuf};
@@ -11,40 +11,43 @@ const TOLERANCE: u8 = 8;
 /// Share of equal pixels `ui-diff` demands unless `--min` says otherwise.
 const MIN_SHARE: f64 = 99.5;
 
-fn npm() -> Command {
-    // `npm` is a script on Windows.
-    Command::new(if cfg!(windows) { "npm.cmd" } else { "npm" })
+fn bun() -> Command {
+    Command::new("bun")
 }
 
 fn run(root: &Path, args: &[&str]) -> Result<()> {
-    let status = npm().current_dir(root.join("ui")).args(args).status()?;
-    if status.success() { Ok(()) } else { Err(format!("npm {}: {status}", args.join(" ")).into()) }
+    let status = bun().current_dir(root.join("ui")).args(args).status()?;
+    if status.success() { Ok(()) } else { Err(format!("bun {}: {status}", args.join(" ")).into()) }
 }
 
 /// Installs the packages when the lock file is newer than the installed set.
 fn install(root: &Path) -> Result<()> {
     let ui = root.join("ui");
-    let stamp = ui.join("node_modules").join(".package-lock.json");
+    let stamp = ui.join("node_modules").join(".bun-install");
     let newer =
         |a: &Path, b: &Path| match (a.metadata().and_then(|m| m.modified()), b.metadata().and_then(|m| m.modified())) {
             (Ok(a), Ok(b)) => a > b,
             _ => true,
         };
-    if newer(&ui.join("package-lock.json"), &stamp) { run(root, &["ci"]) } else { Ok(()) }
+    if !ui.join("node_modules").is_dir() || newer(&ui.join("bun.lock"), &stamp) {
+        run(root, &["install", "--frozen-lockfile"])?;
+        std::fs::write(&stamp, "")?;
+    }
+    Ok(())
 }
 
 /// `cargo xtask ui [--watch]`: installs and builds the bundle into `ui/dist`.
 pub fn ui(root: &Path, args: &[String]) -> Result<()> {
     install(root)?;
     if args.iter().any(|a| a == "--watch") {
-        run(root, &["run", "build", "--", "--watch"])
+        run(root, &["run", "build", "--watch"])
     } else {
         run(root, &["run", "build"])
     }
 }
 
 /// The folder of the built bundle for `xtask web`, or `None` to leave the UI out (the game
-/// then uses the engine's UI). `ACR_UI_DIST` names a bundle built elsewhere (CI); without Node
+/// then uses the engine's UI). `ACR_UI_DIST` names a bundle built elsewhere (CI); without Bun
 /// the UI is skipped with a warning, never an error.
 pub fn bundle(root: &Path, no_ui: bool) -> Result<Option<PathBuf>> {
     if no_ui {
@@ -58,8 +61,8 @@ pub fn bundle(root: &Path, no_ui: bool) -> Result<Option<PathBuf>> {
             Err(format!("ACR_UI_DIST {} has no acr-ui.js", dist.display()).into())
         };
     }
-    if npm().arg("--version").output().is_err() {
-        eprintln!("xtask: warning: npm not found, the web build has no Svelte UI (engine UI only)");
+    if bun().arg("--version").output().is_err() {
+        eprintln!("xtask: warning: bun not found, the web build has no Svelte UI (engine UI only)");
         return Ok(None);
     }
     ui(root, &[])?;

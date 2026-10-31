@@ -538,7 +538,7 @@ screens it claims are DOM (`[data-acr-id]`, `[data-acr-hover]`), all input is fo
 (needs at least 99.5% of the pixels within +-8). In headless Chromium without a GPU the game needs
 WebGPU on SwiftShader: `--enable-unsafe-webgpu --enable-unsafe-swiftshader
 --use-webgpu-adapter=swiftshader --enable-features=Vulkan,WebGPU`. The UI's own tests are
-`cd ui && npm run check && npm test`.
+`cd ui && bun run check && bun run test` (not `bun test`, which is Bun's own runner).
 
 ## Scenario files
 

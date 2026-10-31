@@ -29,6 +29,6 @@ taking screenshots in a loop.
   icon that is already there.
 - The menus' Svelte UI (`ui/`, docs/webui.md): Rust keeps all UI state; `cargo test -p acr-ui-protocol
   --features ts` must leave no diff in `ui/src/lib/protocol/`, and in `ui/` run
-  `npm run check && npm test && npm run build`.
+  `bun run check && bun run test && bun run build`.
 - Keep the browser build compiling:
   `cargo clippy --target wasm32-unknown-unknown -p acr-game -p acr-render -- -D warnings`.

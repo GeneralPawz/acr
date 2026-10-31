@@ -1,7 +1,7 @@
 //! Build automation, kept in Rust so the project needs no extra tools.
 //!
 //! - `cargo xtask web [--release] [--app game|viewer]`    build a browser app into `target/web/<app>`
-//! - `cargo xtask ui [--watch]`   build the Svelte UI (`ui/`, Node 24) into `ui/dist`; `web`, `serve` and
+//! - `cargo xtask ui [--watch]`   build the Svelte UI (`ui/`, Bun) into `ui/dist`; `web`, `serve` and
 //!   `dist` do it too for the game unless `--no-ui` (or `ACR_UI_DIST` names a built bundle)
 //! - `cargo xtask ui-diff A.png B.png [--out D.png] [--min PERCENT]`   pixels of two screenshots within +-8
 //! - `cargo xtask serve [--release] [--port N] [--game-dir DIR]`   build, then serve it on
