@@ -284,14 +284,21 @@ fn inside(poly: &[(i32, i32)], px: i32, py: i32) -> bool {
 
 /// Rasterises a sprite's polygon into 16 px cells (0x4cfe90): the picture origin is
 /// `(x − dx, y/2 − dy)` with polygon y at half scale; a cell is blocked when its centre
-/// `(16cx + 8, 8cy + 4)` lies inside.
-fn lock_sprite(m: &mut LockMap, s: &Sprite, l: &SpriteLock) {
+/// `(16cx + 8, 8cy + 4)` lies inside. Only cells in `clip` (`[x0, y0, x1, y1)` in cells) are set.
+fn lock_sprite(m: &mut LockMap, s: &Sprite, l: &SpriteLock, clip: [i32; 4]) {
     let (x0, y0) = (s.x - l.dx, (s.y >> 1) - l.dy);
+    let xs = l.polygon.iter().map(|p| x0 + p.0);
+    let ys = l.polygon.iter().map(|p| y0 + p.1);
+    let (minx, maxx) = (xs.clone().min().unwrap_or(0), xs.max().unwrap_or(0));
+    let (miny, maxy) = (ys.clone().min().unwrap_or(0), ys.max().unwrap_or(0));
+    let cxs = ((minx >> 4) - 4).max(clip[0])..((maxx >> 4) + 5).min(clip[2]);
+    let cys = ((miny >> 3) - 4).max(clip[1])..((maxy >> 3) + 5).min(clip[3]);
+    if cxs.is_empty() || cys.is_empty() {
+        return;
+    }
     let poly: Vec<(i32, i32)> = l.polygon.iter().map(|&(x, y)| (x0 + x, y0 + y)).collect();
-    let (minx, maxx) = (poly.iter().map(|p| p.0).min().unwrap_or(0), poly.iter().map(|p| p.0).max().unwrap_or(0));
-    let (miny, maxy) = (poly.iter().map(|p| p.1).min().unwrap_or(0), poly.iter().map(|p| p.1).max().unwrap_or(0));
-    for cx in (minx >> 4) - 4..=(maxx >> 4) + 4 {
-        for cy in (miny >> 3) - 4..=(maxy >> 3) + 4 {
+    for cx in cxs {
+        for cy in cys.clone() {
             if inside(&poly, 16 * cx + 8, 8 * cy + 4) {
                 m.set_pt(cx, cy);
             }
@@ -316,6 +323,8 @@ pub struct MapGrid {
     pub textures: Option<acr_formats::m3d::Grid<u8>>,
     /// `SEA2` depth on the 32 px grid (explosions in water).
     pub water_depth: Option<acr_formats::m3d::Grid<u8>>,
+    /// `LOC1`: the map's lock overrides, kept for re-derivation.
+    pub loc1: Option<acr_formats::m3d::Locks>,
 }
 
 /// `TOP1`/`TOPW` in the form the router uses.
@@ -381,17 +390,10 @@ impl MapGrid {
             water_areas: map.water_areas.as_ref().map(AreaGraph::from_areas),
             textures: map.textures.clone(),
             water_depth: map.water.as_ref().map(|w| w.depth.clone()),
+            loc1: map.locks.clone(),
         };
-        grid.lock_by_terrain(map, sprites);
-        if let Some(w) = &map.water {
-            grid.water_lock(&w.depth);
-        }
-        grid.lock_borders();
-        for s in &map.sprites {
-            if let Some(l) = sprites.get(s).filter(|l| l.source) {
-                lock_sprite(&mut grid.land, s, l);
-            }
-        }
+        let side_px = LOCK_CELL * side;
+        grid.rederive(map, sprites, [0, 0, side_px, side_px]);
         grid
     }
 
@@ -408,9 +410,10 @@ impl MapGrid {
             water_areas: None,
             textures: None,
             water_depth: None,
+            loc1: None,
         };
         grid.water.set_rect(0, 0, side, side);
-        grid.lock_borders();
+        grid.lock_borders([0, 0, side, side]);
         grid
     }
 
@@ -419,94 +422,95 @@ impl MapGrid {
         240 << self.shift
     }
 
-    /// `LockByTerrain` (0x44d800).
-    fn lock_by_terrain(&mut self, map: &M3dMap, sprites: &SpriteShapes) {
-        let n = self.half_cells() / 2; // 64 px cells per side
-        let land = &mut self.land;
-        // (a) Slope: a 64 px cell is blocked when a corner deviates ≥ 23 from the corners' mean.
-        for cx in 0..n {
-            for cy in (0..n).rev() {
-                let h = [
-                    self.heights.at(64 * cx, 64 * cy),
-                    self.heights.at(64 * cx + 64, 64 * cy),
-                    self.heights.at(64 * cx, 64 * cy + 64),
-                    self.heights.at(64 * cx + 64, 64 * cy + 64),
-                ];
-                let avg = h.iter().sum::<i32>() >> 2;
-                if h.iter().any(|&v| (v - avg).abs() >= 23) {
-                    land.set_bar(4 * cx, 4 * cy, 4);
-                } else {
-                    land.clr_bar(4 * cx, 4 * cy, 4);
+    /// Takes the terrain layers inside `area` (world px, `[x0, y0, x1, y1)`) from an edited
+    /// map: heights, textures and water depth, with a margin of one vertex. The lock bitmaps
+    /// follow with [`rederive`](Self::rederive).
+    ///
+    /// # Panics
+    /// If a layer of `map` has another size than the grid's.
+    pub fn copy_terrain(&mut self, map: &M3dMap, area: [i32; 4]) {
+        if let Some(src) = &map.heights {
+            assert_eq!(src.width, self.heights.stride, "terrain heights of another size");
+            let rows = src.cells.len() / src.width;
+            if self.heights.cells.len() != src.cells.len() {
+                self.heights.cells.clone_from(&src.cells);
+            } else {
+                let [c0, r0, c1, r1] = vertex_box(area, src.width, rows);
+                for r in r0..r1 {
+                    let row = r * src.width;
+                    self.heights.cells[row + c0..row + c1].copy_from_slice(&src.cells[row + c0..row + c1]);
                 }
             }
         }
-        // (b) Blocking sprites (rocks); mines follow after the quantisation.
+        if let Some(src) = &map.textures {
+            copy_grid(&mut self.textures, src, vertex_box(area, src.width, src.height));
+        }
+        if let Some(w) = &map.water {
+            let [x0, y0, x1, y1] = area.map(|v| v >> 5);
+            let (w0, h0) = (w.depth.width, w.depth.height);
+            let b = [x0 - 1, y0 - 1, x1 + 2, y1 + 2].map(|v| v.max(0) as usize);
+            copy_grid(&mut self.water_depth, &w.depth, [b[0].min(w0), b[1].min(h0), b[2].min(w0), b[3].min(h0)]);
+        }
+    }
+
+    /// Derives the passability of the 64 px blocks around `area` (world px,
+    /// `[x0, y0, x1, y1)`) exactly as [`from_m3d`](Self::from_m3d) does for the whole map
+    /// (`CreateLockMap`, 0x44e340): the blocks of `area` grown by 2 come out bit-equal to
+    /// the full derivation of `map`, provided the heights and depths here equal the map's
+    /// ([`copy_terrain`](Self::copy_terrain)). Building locks in those blocks are lost; the
+    /// caller puts them back. Everything outside stays as it was.
+    ///
+    /// The two chamfer passes each read the four neighbours of a block, so the blocks are
+    /// derived on a scratch copy over `area` grown by 4 and only those grown by 2 are
+    /// taken from it. Cells beyond the playable area are only part of the region when
+    /// `area` reaches the map edge.
+    pub fn rederive(&mut self, map: &M3dMap, sprites: &SpriteShapes, area: [i32; 4]) {
+        if area[2] <= area[0] || area[3] <= area[1] {
+            return;
+        }
+        let n = self.half_cells() / 2; // 64 px blocks per side
+        let blocks = |grow: i32| {
+            let lo = |v: i32| ((v >> 6) - grow).clamp(0, n);
+            let hi = |v: i32| (((v - 1) >> 6) + 1 + grow).clamp(0, n);
+            [lo(area[0]), lo(area[1]), hi(area[2]), hi(area[3])]
+        };
+        let (win, keep) = (blocks(4), blocks(2));
+        // The lock-cell rectangle of a block range; the last block also owns the cells
+        // beyond the playable area.
+        let cells = |b: [i32; 4]| {
+            let end = |v: i32, side: i32| if v == n { side } else { 4 * v };
+            [4 * b[0], 4 * b[1], end(b[2], self.land.width), end(b[3], self.land.height)]
+        };
+        let (win_cells, keep_cells) = (cells(win), cells(keep));
+        let mut scratch = self.land.clone();
+        lock_by_terrain(&self.heights, &mut scratch, map, sprites, win, win_cells);
+        if keep_cells == [0, 0, self.land.width, self.land.height] {
+            self.land = scratch;
+        } else {
+            let [x0, y0, x1, y1] = keep_cells;
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    if scratch.check_pt(x, y) { self.land.set_pt(x, y) } else { self.land.clr_pt(x, y) }
+                }
+            }
+        }
+        let [x0, y0, x1, y1] = keep_cells;
+        self.water.clr_rect(x0, y0, x1 - x0, y1 - y0);
+        if let Some(w) = &map.water {
+            self.water_lock(&w.depth, keep_cells);
+        }
+        self.lock_borders(keep_cells);
         for s in &map.sprites {
-            if let Some(l) = sprites.get(s).filter(|l| !l.source) {
-                lock_sprite(land, s, l);
-            }
-        }
-        // (c) LOC1 overrides on 64 px cells: first unlock, then lock.
-        if let Some(locks) = &map.locks {
-            for &(x, y) in &locks.unlocked {
-                land.clr_bar(4 * i32::from(x), 4 * i32::from(y), 4);
-            }
-            for &(x, y) in &locks.locked {
-                land.set_bar(4 * i32::from(x), 4 * i32::from(y), 4);
-            }
-        }
-        // (e) Quantise to 64 px: blocked iff ≥ 3 of the four 32 px quadrants have a lock.
-        for ax in 1..n - 1 {
-            for ay in 1..n - 1 {
-                let (x, y) = (4 * ax, 4 * ay);
-                let q = [land.any2(x, y), land.any2(x + 2, y), land.any2(x, y + 2), land.any2(x + 2, y + 2)];
-                if q.iter().filter(|&&b| b).count() >= 3 {
-                    land.set_bar(x, y, 4);
-                } else {
-                    land.clr_bar(x, y, 4);
-                }
-            }
-        }
-        // (f) Chamfer free blocks next to two adjacent blocked sides; (g) the same for blocked blocks.
-        for blocked_pass in [false, true] {
-            let copy = land.clone();
-            for ax in 1..n - 1 {
-                for ay in 1..n - 1 {
-                    let (x, y) = (4 * ax, 4 * ay);
-                    if copy.any2(x + 1, y + 1) != blocked_pass {
-                        continue;
-                    }
-                    let m = u8::from(copy.any2(x + 1, y - 3))
-                        | u8::from(copy.any2(x + 5, y + 1)) << 1
-                        | u8::from(copy.any2(x + 1, y + 5)) << 2
-                        | u8::from(copy.any2(x - 3, y + 1)) << 3;
-                    let pattern = match m {
-                        3 => Some(P_UR),
-                        6 => Some(P_LR),
-                        9 => Some(P_UL),
-                        12 => Some(P_LL),
-                        7 | 11 | 13 | 14 if !blocked_pass => {
-                            land.set_bar(x, y, 4);
-                            None
-                        }
-                        _ => None,
-                    };
-                    if let Some(p) = pattern {
-                        for (row, line) in p.iter().enumerate() {
-                            for (col, &c) in line.iter().enumerate() {
-                                let (px, py) = (x + col as i32, y + row as i32);
-                                if c == b'*' { land.set_pt(px, py) } else { land.clr_pt(px, py) }
-                            }
-                        }
-                    }
-                }
+            if let Some(l) = sprites.get(s).filter(|l| l.source) {
+                lock_sprite(&mut self.land, s, l, keep_cells);
             }
         }
     }
 
-    /// `WaterLock` (0x53c632): the `SEA2` depth (32 px cells) is sampled at the four 16 px
-    /// sub-cells with weights 9/3/3/1; deep water blocks land units and frees ships.
-    fn water_lock(&mut self, depth: &Grid<u8>) {
+    /// `WaterLock` (0x53c632) over the lock cells `clip`: the `SEA2` depth (32 px cells) is
+    /// sampled at the four 16 px sub-cells with weights 9/3/3/1; deep water blocks land
+    /// units and frees ships.
+    fn water_lock(&mut self, depth: &Grid<u8>, clip: [i32; 4]) {
         let d = |x: i32, y: i32| -> i32 {
             if x < 0 || y < 0 {
                 return 0;
@@ -515,8 +519,8 @@ impl MapGrid {
         };
         let f = |p: i32, q: i32, r: i32, s: i32| (3 * (3 * p + q + r) + s) >> 4;
         let n = self.land.width / 2;
-        for y in 0..n - 1 {
-            for x in 0..n - 1 {
+        for y in clip[1] / 2..(clip[3] / 2).min(n - 1) {
+            for x in clip[0] / 2..(clip[2] / 2).min(n - 1) {
                 let (a, b, c, e) = (d(x, y), d(x + 1, y), d(x, y + 1), d(x + 1, y + 1));
                 let sub = [(0, 0, f(a, b, c, e)), (1, 0, f(b, e, a, c)), (0, 1, f(c, e, a, b)), (1, 1, f(e, c, b, a))];
                 for (i, j, v) in sub {
@@ -534,22 +538,148 @@ impl MapGrid {
         }
     }
 
-    /// Map borders and the top edge, where high terrain would be drawn above the screen top.
-    fn lock_borders(&mut self) {
+    /// Map borders and the top edge, where high terrain would be drawn above the screen top,
+    /// inside the lock cells `clip`.
+    fn lock_borders(&mut self, clip: [i32; 4]) {
         let half = self.half_cells();
         let (w2, h2) = (half * 2, half * 2);
         let shift = i32::from(self.shift);
+        let rects = [(0, 0, w2, 4), (0, h2, w2, 32 << shift), (0, 4, 4, h2 - 4), (w2, 0, 32 << shift, 512 << shift)];
         for layer in [&mut self.land, &mut self.water] {
-            layer.set_rect(0, 0, w2, 4);
-            layer.set_rect(0, h2, w2, 32 << shift);
-            layer.set_rect(0, 4, 4, h2 - 4);
-            layer.set_rect(w2, 0, 32 << shift, 512 << shift);
+            for (x, y, w, h) in rects {
+                let (x0, y0) = (x.max(clip[0]), y.max(clip[1]));
+                let (x1, y1) = ((x + w).min(clip[2]), (y + h).min(clip[3]));
+                layer.set_rect(x0, y0, x1 - x0, y1 - y0);
+            }
         }
-        for ax in 0..half / 2 {
+        for ax in (clip[0] / 4)..(clip[2] / 4).min(half / 2) {
             for ay in 1..25 {
-                if ay * 32 - self.heights.at(ax * 64 + 32, ay * 64) < 16 {
+                if (clip[1]..clip[3]).contains(&(4 * ay)) && ay * 32 - self.heights.at(ax * 64 + 32, ay * 64) < 16 {
                     self.land.set_bar(4 * ax, 4 * ay, 4);
                     self.water.set_bar(4 * ax, 4 * ay, 4);
+                }
+            }
+        }
+    }
+}
+
+/// The vertex box `[c0, r0, c1, r1)` of a `cols × rows` vertex grid around the world-px
+/// `area`, with a margin of one vertex (vertex `(c, r)` sits at `(32c, 32r − 16(c & 1))`).
+fn vertex_box(area: [i32; 4], cols: usize, rows: usize) -> [usize; 4] {
+    let v = |v: i32, max: usize| v.max(0).min(max as i32) as usize;
+    [
+        v((area[0] >> 5) - 1, cols),
+        v((area[1] >> 5) - 1, rows),
+        v(((area[2] - 1) >> 5) + 2, cols),
+        v(((area[3] + 14) >> 5) + 2, rows),
+    ]
+}
+
+/// Copies the cells of `src` inside `[c0, r0, c1, r1)` into `dst`; `dst` becomes a copy of
+/// `src` when it is missing or of another size.
+fn copy_grid<T: Copy>(dst: &mut Option<Grid<T>>, src: &Grid<T>, b: [usize; 4]) {
+    match dst {
+        Some(d) if d.width == src.width && d.height == src.height => {
+            for r in b[1]..b[3] {
+                let row = r * src.width;
+                d.cells[row + b[0]..row + b[2]].copy_from_slice(&src.cells[row + b[0]..row + b[2]]);
+            }
+        }
+        _ => *dst = Some(src.clone()),
+    }
+}
+
+/// `LockByTerrain` (0x44d800) on the land layer `land`, over the 64 px blocks `win`
+/// (`[bx0, by0, bx1, by1)`) and the lock cells `win_cells`.
+fn lock_by_terrain(
+    heights: &Heights,
+    land: &mut LockMap,
+    map: &M3dMap,
+    sprites: &SpriteShapes,
+    win: [i32; 4],
+    win_cells: [i32; 4],
+) {
+    let n = 240 << heights.shift >> 1; // 64 px cells per side
+    // (a) Slope: a 64 px cell is blocked when a corner deviates ≥ 23 from the corners' mean.
+    for cx in win[0]..win[2] {
+        for cy in (win[1]..win[3]).rev() {
+            let h = [
+                heights.at(64 * cx, 64 * cy),
+                heights.at(64 * cx + 64, 64 * cy),
+                heights.at(64 * cx, 64 * cy + 64),
+                heights.at(64 * cx + 64, 64 * cy + 64),
+            ];
+            let avg = h.iter().sum::<i32>() >> 2;
+            if h.iter().any(|&v| (v - avg).abs() >= 23) {
+                land.set_bar(4 * cx, 4 * cy, 4);
+            } else {
+                land.clr_bar(4 * cx, 4 * cy, 4);
+            }
+        }
+    }
+    // (b) Blocking sprites (rocks); mines follow after the quantisation.
+    for s in &map.sprites {
+        if let Some(l) = sprites.get(s).filter(|l| !l.source) {
+            lock_sprite(land, s, l, win_cells);
+        }
+    }
+    // (c) LOC1 overrides on 64 px cells: first unlock, then lock.
+    if let Some(locks) = &map.locks {
+        let inside = |x: u16, y: u16| {
+            (win_cells[0]..win_cells[2]).contains(&(4 * i32::from(x)))
+                && (win_cells[1]..win_cells[3]).contains(&(4 * i32::from(y)))
+        };
+        for &(x, y) in locks.unlocked.iter().filter(|&&(x, y)| inside(x, y)) {
+            land.clr_bar(4 * i32::from(x), 4 * i32::from(y), 4);
+        }
+        for &(x, y) in locks.locked.iter().filter(|&&(x, y)| inside(x, y)) {
+            land.set_bar(4 * i32::from(x), 4 * i32::from(y), 4);
+        }
+    }
+    let inner = (win[0].max(1), win[1].max(1), win[2].min(n - 1), win[3].min(n - 1));
+    // (e) Quantise to 64 px: blocked iff ≥ 3 of the four 32 px quadrants have a lock.
+    for ax in inner.0..inner.2 {
+        for ay in inner.1..inner.3 {
+            let (x, y) = (4 * ax, 4 * ay);
+            let q = [land.any2(x, y), land.any2(x + 2, y), land.any2(x, y + 2), land.any2(x + 2, y + 2)];
+            if q.iter().filter(|&&b| b).count() >= 3 {
+                land.set_bar(x, y, 4);
+            } else {
+                land.clr_bar(x, y, 4);
+            }
+        }
+    }
+    // (f) Chamfer free blocks next to two adjacent blocked sides; (g) the same for blocked blocks.
+    for blocked_pass in [false, true] {
+        let copy = land.clone();
+        for ax in inner.0..inner.2 {
+            for ay in inner.1..inner.3 {
+                let (x, y) = (4 * ax, 4 * ay);
+                if copy.any2(x + 1, y + 1) != blocked_pass {
+                    continue;
+                }
+                let m = u8::from(copy.any2(x + 1, y - 3))
+                    | u8::from(copy.any2(x + 5, y + 1)) << 1
+                    | u8::from(copy.any2(x + 1, y + 5)) << 2
+                    | u8::from(copy.any2(x - 3, y + 1)) << 3;
+                let pattern = match m {
+                    3 => Some(P_UR),
+                    6 => Some(P_LR),
+                    9 => Some(P_UL),
+                    12 => Some(P_LL),
+                    7 | 11 | 13 | 14 if !blocked_pass => {
+                        land.set_bar(x, y, 4);
+                        None
+                    }
+                    _ => None,
+                };
+                if let Some(p) = pattern {
+                    for (row, line) in p.iter().enumerate() {
+                        for (col, &c) in line.iter().enumerate() {
+                            let (px, py) = (x + col as i32, y + row as i32);
+                            if c == b'*' { land.set_pt(px, py) } else { land.clr_pt(px, py) }
+                        }
+                    }
                 }
             }
         }
@@ -591,7 +721,7 @@ mod tests {
         // origin (160, 160) -> x 160..224, y 160..192 in half-scale units = 16 px cells 10..13, 20..23.
         let l = SpriteLock { dx: 0, dy: 0, polygon: vec![(0, 0), (64, 0), (64, 32), (0, 32)], source: false };
         let s = Sprite { group: SpriteGroup::Stones, x: 160, y: 320, index: 0, extra: None };
-        lock_sprite(&mut m, &s, &l);
+        lock_sprite(&mut m, &s, &l, [0, 0, 64, 64]);
         assert_eq!(m.count(), 16);
         assert!(m.check_pt(10, 20) && m.check_pt(13, 23) && !m.check_pt(14, 20) && !m.check_pt(10, 24));
     }

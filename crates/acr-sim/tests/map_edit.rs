@@ -73,3 +73,70 @@ const LAND_COUNT: usize = 187426;
 const WATER_COUNT: usize = 1014720;
 const LAND_HASH: u64 = 0xdc9f_f524_0db3_7355;
 const WATER_HASH: u64 = 0xfa36_5874_160d_ffe5;
+
+/// A small deterministic generator (xorshift64*).
+struct Rng(u64);
+
+impl Rng {
+    fn next(&mut self, n: u32) -> i32 {
+        self.0 ^= self.0 >> 12;
+        self.0 ^= self.0 << 25;
+        self.0 ^= self.0 >> 27;
+        (self.0.wrapping_mul(0x2545_f491_4f6c_dd1d) >> 33) as i32 % n as i32
+    }
+}
+
+#[test]
+fn region_rederive_equals_full_derivation() {
+    let shapes = shapes();
+    let mut map = map();
+    let mut grid = MapGrid::from_m3d(&map, &shapes);
+    let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+    let size = map.size.expect("size");
+    let (w, side) = (size.vertex_width() as i32, size.playable_size() + 64);
+    for step in 0..50 {
+        // Centres cover the borders, the top edge, the ridge, the lake and the rest.
+        let (cx, cy) = match step % 5 {
+            0 => (rng.next(side as u32), rng.next(1800)),
+            1 => (3200 + rng.next(400), rng.next(side as u32)),
+            2 => (1900 + rng.next(3000), 6400 + rng.next(3200)),
+            3 => (rng.next(600), rng.next(side as u32)),
+            _ => (rng.next(side as u32), rng.next(side as u32)),
+        };
+        let r = 64 + rng.next(500);
+        let area = [cx - r, cy - r, cx + r, cy + r];
+        let heights = map.heights.as_mut().expect("heights");
+        let plateau = rng.next(3) == 0;
+        let level = rng.next(400) as i16;
+        for row in 0..heights.height as i32 {
+            for col in 0..w {
+                let (x, y) = (32 * col, 32 * row - 16 * (col & 1));
+                if x >= area[0] && x < area[2] && y >= area[1] && y < area[3] {
+                    heights.cells[(row * w + col) as usize] = if plateau { level } else { rng.next(400) as i16 };
+                }
+            }
+        }
+        let depth = &mut map.water.as_mut().expect("water").depth;
+        let dv = [0, 0, 120, 131, 200, 255][rng.next(6) as usize] as u8;
+        for y in (area[1] >> 5).max(0)..=(area[3] >> 5) {
+            for x in (area[0] >> 5).max(0)..=(area[2] >> 5) {
+                if let Some(c) =
+                    depth.cells.get_mut(y as usize * depth.width + x as usize).filter(|_| x < depth.width as i32)
+                {
+                    *c = if rng.next(4) == 0 { dv.saturating_sub(rng.next(60) as u8) } else { dv };
+                }
+            }
+        }
+        if step % 3 == 0 {
+            map.sprites.push(sprite(rng.next(2) as u16, cx.clamp(64, side - 64), cy.clamp(64, side - 64)));
+        }
+        // Sprites reach about 400 px around their position.
+        let area = [area[0].min(cx - 400), area[1].min(cy - 400), area[2].max(cx + 400), area[3].max(cy + 400)];
+        grid.copy_terrain(&map, area);
+        grid.rederive(&map, &shapes, area);
+        let full = MapGrid::from_m3d(&map, &shapes);
+        assert!(grid.land == full.land, "land differs after edit {step} at {area:?}");
+        assert!(grid.water == full.water, "water differs after edit {step} at {area:?}");
+        assert!(grid.heights == full.heights && grid.water_depth == full.water_depth);
+    }
+}
