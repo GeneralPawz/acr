@@ -33,6 +33,14 @@ pub const WEAPON: &str = "NUCL3M";
 /// The weapon kind (`NRES.DAT [WEAPONS]`): a bursting shell
 /// ([`crate::combat::DeathCause::Explosion`]; with hit locations also on, fragments and ground fire).
 pub const KIND: &str = "IADROMOR";
+/// The blast at the muzzle (`WEAPON.NDS` line 64, `DIMMORT #DIMMORT 0 0 ALPHAGB`, sound
+/// `MORVIS1`). The original links it to the shell by `[SYNCWEAPON] DIMMORT1 2 NUCL3M DIMMORT`,
+/// a chain no `.MD` fires (`DIMMORT1` is itself a 60 degree arc); a field gun's `PPOINTT` puts
+/// its smoke `DIM32_2` and `PUSVIS1` at the muzzle the same way (`Shoot` 0x51ddc3).
+pub const BLAST: &str = "DIMMORT";
+/// How far from the muzzle the blast's destination lies (world px): it only gives the
+/// sprite its direction, a standing object faces its destination (0x557e58).
+const BLAST_REACH: i32 = 64;
 /// The nearest a mortar fires (world px): closer the shell would fall on its own crew.
 pub const MIN_RANGE: i32 = 600;
 /// The farthest (world px; the field gun's ball reaches 6000).
@@ -148,6 +156,24 @@ fn patch(attacks: &mut [Attack], ball: usize, can: Option<usize>, weapon: Option
 /// ([`crate::ground_fire::shell_burst`]) and is drawn as a smaller burst (render only).
 pub fn fired_by(kind: Option<TypeId>, c: &Catalog) -> bool {
     kind.is_some_and(|k| c.get(k).mortar)
+}
+
+/// The muzzle blast of a mortar's shot from `muzzle` (world px, `z` up) at `aim`: [`BLAST`]
+/// created at the muzzle, starting its sound, and facing along the barrel, which points at
+/// the target [`ELEVATION`] degrees up (on the screen a world `y` is half a `z`). Without the
+/// weapon in the table, as in a bare test, there is no blast.
+pub fn muzzle_blast(w: &mut World, muzzle: (i32, i32, i32), aim: (i32, i32, i32)) {
+    let Some(blast) = w.catalog.weapons.find(BLAST) else { return };
+    let (dx, dy) = (aim.0 - muzzle.0, aim.1 - muzzle.1);
+    let n = norma(dx, dy).max(1);
+    let (side, up) = (
+        BLAST_REACH as f64 * libm::cos(f64::from(ELEVATION).to_radians()),
+        BLAST_REACH as f64 * libm::sin(f64::from(ELEVATION).to_radians()),
+    );
+    let (hx, hy) = ((f64::from(dx) * side) as i32 / n, (f64::from(dy) * side) as i32 / n);
+    let up = up as i32;
+    let dest = (muzzle.0 + hx, muzzle.1 + hy - 2 * up, muzzle.2 + up);
+    crate::projectile::create(w, blast, muzzle, dest, None, 0, None, (0, 0, 0), 0);
 }
 
 /// Whether unit `i` is a mortar the rule lets take zones.

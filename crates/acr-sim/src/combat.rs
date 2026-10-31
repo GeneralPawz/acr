@@ -1012,6 +1012,9 @@ fn shoot(w: &mut World, i: usize, aim: Aim, att: usize, my_z: i32, en_z: i32, ca
             c.1 = aimed.1 + (c.1 - aimed.1) * s / 100;
         }
         crate::projectile::create(w, wid, (x0, y0, z0), c, Some(i), att as u8, None, (0, 0, 0), 0);
+        if crate::mortar::fired_by(Some(w.units[i].kind), &catalog) {
+            crate::mortar::muzzle_blast(w, (x0, y0, z0), aimed);
+        }
         if catalog.get(w.units[i].kind).sector_weapon.is_some_and(|s| usize::from(s.att) == att) {
             crate::artillery::sector_damage(w, i);
         }
