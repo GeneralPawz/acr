@@ -601,6 +601,16 @@ const MELEE_IMPULSE: f32 = 12.0;
 /// rest of the impulse goes to the trunk, so a hand or the head is not whipped.
 const MELEE_DV: f32 = 2.0;
 
+/// The most a blow speeds up the struck body itself (m/s). A melee, thrown or arrow hit
+/// pushes a light limb, never whips it into a spin that launches the whole body; only blasts,
+/// shot and animals' blows are uncapped.
+fn blow_speed_cap(maul: bool, cause: DeathCause) -> f32 {
+    match (maul, cause) {
+        (false, DeathCause::Melee | DeathCause::Thrown | DeathCause::Arrow) => MELEE_DV,
+        _ => f32::INFINITY,
+    }
+}
+
 /// Impulse (N·s) of a blow by cause and energy (percent): a musket ball's momentum (30 g at
 /// about 300 m/s) when it stops in the body, a share of a cannonball's, the swing of a
 /// weapon.
@@ -1200,10 +1210,7 @@ impl Ragdolls {
         };
         // Thrown down and a little up for a goring.
         let lift = if maul == Some(2) { Vec3::new(0.0, 0.0, 0.35) } else { Vec3::ZERO };
-        let max_dv = match (maul, hit.cause) {
-            (None, DeathCause::Melee | DeathCause::Thrown) => MELEE_DV,
-            _ => f32::INFINITY,
-        };
+        let max_dv = blow_speed_cap(maul.is_some(), hit.cause);
         r.apply_blow(&mut self.physics, bone, point, (dir + lift) * j, max_dv);
         // The survivor's hips sway with the blow (the total momentum over his mass).
         a.sway_v += dir * (j / a.mass) * SWAY_GAIN;
@@ -1569,6 +1576,33 @@ fn rot_about(rot: &[[f32; 4]; 4], p: [f32; 3]) -> Mat4 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An arrow hit on a hand (#349) knocks nobody down and sends no body into the air: the
+    /// struck bone takes at most `MELEE_DV`, the rest goes to the trunk, and a few steps
+    /// later no bone of the free-falling body moves faster than a stagger.
+    #[test]
+    fn arrow_hit_does_not_launch() {
+        assert!(impulse_of(DeathCause::Arrow, 100) < KNOCK_DOWN);
+        assert_eq!(blow_speed_cap(false, DeathCause::Arrow), MELEE_DV);
+        assert!(blow_speed_cap(false, DeathCause::Explosion).is_infinite());
+        let mut physics = Physics::new(Config::default());
+        let r = Ragdoll::spawn(&mut physics, &skeleton_h(), 75.0, Vec3::new(0.0, 0.0, 1.0), Quat::IDENTITY);
+        r.set_tone_all(&mut physics, Tone::LIMP);
+        let hand = r.bone_index("forearm_r").unwrap();
+        let point = physics.body(r.body(hand)).pos;
+        let j = impulse_of(DeathCause::Arrow, 100);
+        r.apply_blow(
+            &mut physics,
+            hand,
+            point,
+            Vec3::new(0.0, 1.0, 0.5).normalize_or_zero() * j,
+            blow_speed_cap(false, DeathCause::Arrow),
+        );
+        for b in 0..r.len() {
+            let v = physics.body(r.body(b)).vel;
+            assert!(v.length() <= 3.0, "bone {b} flies at {} m/s", v.length());
+        }
+    }
 
     /// A man fallen curled on his side, settled and asleep (the relax test's corpse).
     fn curled_corpse() -> (f32, f32, Vec3, Vec3) {
