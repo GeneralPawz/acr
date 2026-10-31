@@ -1,9 +1,11 @@
 //! The editor's training levels (docs/controls.md, "Editor"): a right click on a unit icon
 //! opens a drop-down with its levels. Level 0 is "Basis" (no upgrade); level `n` applies the
-//! first `n` upgrades of [`acr_sim::upgrade::of_type`] (the nation file's order), and is
-//! named by the text of upgrade `n`, as the game's upgrade hint shows it ("Ausbildung I").
+//! first `n` upgrades of [`acr_sim::upgrade::of_type`] (those that change how the type
+//! fights, in the nation file's order). A line is named by the upgrade's text as the game's
+//! upgrade hint shows it, cut before its parenthesised effect, followed by the effect as the
+//! upgrade defines it ("Spezialmusketen kaufen  Nachladen -26%").
 
-use acr_sim::tech::UpgradeId;
+use acr_sim::tech::{Effect, UpgradeId, Value, ctg};
 use acr_sim::{TypeId, World};
 
 use super::{BOX_X1, ROW};
@@ -13,10 +15,12 @@ use crate::ui::draw::Rect;
 /// The first line: the type as it is, no upgrade applied.
 pub const BASIS: &str = "Basis";
 /// The drop-down is as wide as its longest line needs, at about this many pixels per
-/// character of the small font, within these limits (the upgrade texts name their effect).
+/// character of the small font, within these limits; longer lines are cut.
 const CHAR_W: i32 = 6;
 const MIN_WIDTH: i32 = 150;
-const MAX_WIDTH: i32 = 500;
+const MAX_WIDTH: i32 = 320;
+/// Characters of a line that fit the widest drop-down.
+const MAX_CHARS: usize = ((MAX_WIDTH - 8) / CHAR_W) as usize;
 
 /// An open drop-down: the type it picks and the icon cell it hangs from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,15 +34,62 @@ pub fn steps(world: &World, kind: TypeId) -> usize {
     acr_sim::upgrade::of_type(&world.catalog, kind).len()
 }
 
-/// The names of the levels of `kind`: Basis, then one per upgrade. An upgrade without text
-/// is named by its id.
+/// The names of the levels of `kind`: Basis, then one per upgrade: its short text and its
+/// effect, or the effect alone when it has no text.
 pub fn names(world: &World, kind: TypeId, text: &dyn Fn(UpgradeId) -> Vec<u8>) -> Vec<Vec<u8>> {
     let mut out = vec![BASIS.as_bytes().to_vec()];
     for up in acr_sim::upgrade::of_type(&world.catalog, kind) {
-        let name = text(up);
-        out.push(if name.is_empty() { world.catalog.tech.upgrade(up).id.clone().into_bytes() } else { name });
+        let mut name = short(&text(up)).to_vec();
+        let effect = effect(&world.catalog.tech.upgrade(up).effect);
+        if !name.is_empty() && !effect.is_empty() {
+            name.extend(b"  ");
+        }
+        name.extend(effect.bytes());
+        cut(&mut name);
+        out.push(name);
     }
     out
+}
+
+/// An upgrade's text before its parenthesised effect, without the surrounding blanks.
+fn short(text: &[u8]) -> &[u8] {
+    let end = text.windows(2).position(|w| w == b" (").unwrap_or(text.len());
+    text[..end].trim_ascii()
+}
+
+/// Cuts a line to what fits the widest drop-down, ending in "..." (the font has no ellipsis).
+fn cut(name: &mut Vec<u8>) {
+    if name.len() > MAX_CHARS {
+        name.truncate(MAX_CHARS - 3);
+        name.extend(b"...");
+    }
+}
+
+/// What a fighting upgrade does, compactly: "Schaden +1", "Nachladen -20%".
+fn effect(effect: &Effect) -> String {
+    let Effect::Units { category, value, .. } = effect else { return String::new() };
+    let what = match *category {
+        ctg::SPEED => "Tempo",
+        ctg::SHIELD => "Schild",
+        ctg::PROTECTION => "Schutz",
+        ctg::ATTPAUSE => "Nachladen",
+        ctg::ATTRANGE => "Reichweite",
+        ctg::DAMAGE => "Schaden",
+        ctg::LIFE | ctg::MORELIFE => "Leben",
+        ctg::RAZBROS => "Streuung",
+        _ => return String::new(),
+    };
+    format!("{what} {}", amount(value.unwrap_or(Value { op: 3, n: 0 })))
+}
+
+/// A value as the nation files write it: `5`, `+5`, `-5`, `5%`, `+5%`, `-5%`.
+fn amount(v: Value) -> String {
+    let sign = match v.op & 3 {
+        1 => "+",
+        2 => "-",
+        _ => "",
+    };
+    format!("{sign}{}{}", v.n, if v.op & 4 != 0 { "%" } else { "" })
 }
 
 /// Puts level `level` of `kind` in force for `owner`: exactly the first `level` upgrades,
@@ -78,10 +129,12 @@ mod tests {
     const PIKEMAN: &str = "NAME Pik\r\nLIFE 100\r\nGEOMETRY 1 10 40\r\nATTACK_RADIUS 0 0 40\r\nDAMAGE 0 7\r\n\
         WEAPONKIND 0 PIKA\r\n[END]\r\n";
     const NATION: &[u8] = b"[UPGRADE]\r\n\
+        FAST ICO #POSITION 3 0 #LEVEL 1 M #COST 0 #TIME 3\r\nBUILD GRP 1 Pik(EN) -50%\r\n\
+        PRICE ICO #POSITION 4 0 #LEVEL 1 M #COST 0 #TIME 3\r\nCOST GRP 1 Pik(EN) GRP 1 GOLD -10%\r\n\
         DMG ICO #POSITION 0 0 #LEVEL 1 M #COST 0 #TIME 3\r\nDAMAGE WEAPONKIND PIKA Pik(EN) +2\r\n\
         TOUGH ICO #POSITION 1 0 #LEVEL 1 M #COST 0 #TIME 3\r\nLIFE GRP 1 Pik(EN) +50%\r\n\
         DMG2 ICO #POSITION 2 0 #LEVEL 2 M #COST 0 #TIME 3\r\nDAMAGE WEAPONKIND PIKA Pik(EN) +3\r\n\
-        [ENABLED]\r\nPik(EN)\r\n[UPGRADEPLACE]\r\nPik(EN) 7 DMG\r\nTOUGH\r\nDMG2\r\n[END]\r\n";
+        [ENABLED]\r\nPik(EN)\r\n[UPGRADEPLACE]\r\nPik(EN) 7 FAST\r\nPRICE\r\nDMG\r\nTOUGH\r\nDMG2\r\n[END]\r\n";
 
     fn pikeman() -> (World, TypeId) {
         let mut c = Catalog::new();
@@ -95,7 +148,7 @@ mod tests {
     #[test]
     fn each_level_applies_exactly_the_upgrades_up_to_it() {
         let (mut w, pik) = pikeman();
-        assert_eq!(steps(&w, pik), 3);
+        assert_eq!(steps(&w, pik), 3, "a build time and a price upgrade are no training");
         // Damage and life after the first n upgrades (DMG +2, TOUGH +50% life, DMG2 +3).
         let expect = [(7, 100), (9, 100), (9, 150), (12, 150)];
         // Step up and down: a level never keeps traces of a higher one.
@@ -111,9 +164,15 @@ mod tests {
     #[test]
     fn levels_are_named_basis_then_by_upgrade_text() {
         let (w, pik) = pikeman();
-        let text = |u: UpgradeId| if u.0 == 1 { Vec::new() } else { format!("Ausbildung {}", u.0).into_bytes() };
+        let text = |u: UpgradeId| match u.0 {
+            2 => b"Fechtuebung ansetzen (STAHLWAFFENKRAFT +2)".to_vec(),
+            3 => Vec::new(),
+            _ => b"Drill ".repeat(20),
+        };
         let names: Vec<String> = names(&w, pik, &text).into_iter().map(|n| String::from_utf8(n).unwrap()).collect();
-        assert_eq!(names, ["Basis", "Ausbildung 0", "TOUGH", "Ausbildung 2"]);
+        assert_eq!(names[..3], ["Basis", "Fechtuebung ansetzen  Schaden +2", "Leben +50%"]);
+        assert_eq!(names[3].len(), MAX_CHARS, "long lines are cut");
+        assert!(names[3].ends_with("..."));
     }
 
     #[test]

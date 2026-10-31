@@ -925,7 +925,12 @@ impl super::InGame {
             n
         };
         let icon = |k: TypeId| e.icons.borrow().as_ref().and_then(|m| m.get(&k).copied().flatten());
-        let upgrade_name = |u: acr_sim::tech::UpgradeId| ctx.texts.get(&world.catalog.tech.upgrade(u).message).to_vec();
+        // A text the game does not have comes back as its own id: no text then.
+        let upgrade_name = |u: acr_sim::tech::UpgradeId| {
+            let id = &world.catalog.tech.upgrade(u).message;
+            let text = ctx.texts.get(id);
+            if text == id.as_bytes() { Vec::new() } else { text.to_vec() }
+        };
         let view =
             View { names: &names, icon: &icon, upgrade_name: &upgrade_name, title: ctx.texts.get("ED_HDR01").to_vec() };
         e.layout(world, &view, self.local_player())

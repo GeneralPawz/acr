@@ -288,18 +288,17 @@ fn a_destroyed_building_explodes_at_its_check_points() {
 
 #[test]
 fn editor_type_levels_apply_and_undo_the_upgrades_of_one_type() {
-    let (mut w, kri, pik, _) = setup();
+    let (mut w, _, pik, _) = setup();
     let ups = upgrade::of_type(&w.catalog, pik);
     let names: Vec<&str> = ups.iter().map(|&u| w.catalog.tech.upgrade(u).id.as_str()).collect();
-    assert_eq!(names, ["DMG", "DMG2", "FAST", "TOUGH"], "no private, stage or building upgrades");
+    assert_eq!(names, ["DMG", "DMG2", "TOUGH"], "fighting only: no build time, private, stage or building upgrades");
     let man = w.spawn(pik, 0, Pos::from_pixels(2048, 2048), 0).0 as usize;
     upgrade::set_type_level(&mut w, 0, pik, ups.len());
     let a = w.adv(0, pik);
-    assert_eq!((a.attacks[0].damage, a.life, a.build_stages), (9, 150, 20));
+    assert_eq!((a.attacks[0].damage, a.life, a.build_stages), (9, 150, 40));
     assert!(a.protection.contains(&("PIKA".into(), 5)), "{:?}", a.protection);
     assert_eq!((w.units[man].life, w.units[man].max_life), (150, 150), "the man standing there too");
     assert_eq!(w.adv(1, pik).attacks[0].damage, 7, "other players unchanged");
-    assert_eq!(w.adv(0, kri).build_stages, 40, "FAST names Kri too, but only Pik is set");
     assert!(!w.players[0].upgrades[usize::from(ups[0].0)].done, "nothing marked researched");
     upgrade::set_type_level(&mut w, 0, pik, 2);
     let a = w.adv(0, pik);

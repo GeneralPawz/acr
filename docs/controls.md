@@ -248,9 +248,12 @@ The test driver lists the window's controls in `ui` as `editor/<n>` (names like 
 so `tests/e2e/editor_window.json` and `editor_levels.json` click them by label.
 
 **Training levels.** A right click on a unit icon opens a drop-down (the combo box's list look)
-under it: "Basis" (no upgrade), then one line per upgrade of the type in the nation file's
-order, named by the upgrade's text as the game's upgrade hint shows it (`Spezialmusketen
-kaufen (FEUERRATE FÜSILIER +35%)`; an upgrade without a text by its id). A choice picks the
+under it: "Basis" (no upgrade), then one line per upgrade that changes how the type fights
+(damage, protection, shield, life, range, reload pause, speed, cannon spread; not prices or
+build times; `upgrade::of_type`) in the nation file's order. A line is the upgrade's text
+as the game's upgrade hint shows it, cut before its parenthesised effect, and the effect as
+the upgrade defines it: `Spezialmusketen kaufen  Nachladen -35%`; an upgrade without a text
+shows the effect alone (`Schaden +10%`). Lines are cut to about 320 pixels ("..."). A choice picks the
 type at that level: exactly the upgrades up to and including that line. Escape, a click
 outside or a choice closes it; a right click on the map still stops placing (and, with the
 drop-down open, closes it). The level is the picked type's: picking another icon with the left
@@ -258,7 +261,7 @@ click starts at Basis again. The test driver's `state` with `detail` lists each 
 `adv` (life, damage and pause per attack index of its owner's characteristics).
 
 The levels apply the upgrades that change the type's characteristics (damage,
-protection, life, range, cannon spread `RAZBROS`, reload pause, speed, cost; `upgrade::of_type`,
+protection, life, range, cannon spread `RAZBROS`, reload pause, speed; `upgrade::of_type`,
 in the nation file's order) as if researched, without marking them researched. Like researched
 upgrades it holds per owner and type: placing a type at another level changes that owner's
 units of the type already standing too, so compare levels between Spieler 1 and Spieler 2. A
