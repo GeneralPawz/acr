@@ -27,5 +27,8 @@ taking screenshots in a loop.
   directly (copy it under a unique name if you need a windowed run).
 - The original game data is not in the repository; never commit files from it except the
   icon that is already there.
+- The menus' Svelte UI (`ui/`, docs/webui.md): Rust keeps all UI state; `cargo test -p acr-ui-protocol
+  --features ts` must leave no diff in `ui/src/lib/protocol/`, and in `ui/` run
+  `npm run check && npm test && npm run build`.
 - Keep the browser build compiling:
   `cargo clippy --target wasm32-unknown-unknown -p acr-game -p acr-render -- -D warnings`.

@@ -6,6 +6,8 @@ How the original menus of `dmcr.exe` work, recovered from the disassembly, and h
 functions have names. The widget code is the same as in the published Cossacks: Back to War
 sources (`Dialogs.cpp`), constants included.
 
+The Svelte UI draws these screens as DOM from the same Rust state (docs/webui.md).
+
 ## Screen loop
 
 Every menu screen is a function that builds a `DialogsSystem` on the stack, then loops:

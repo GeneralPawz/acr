@@ -531,6 +531,15 @@ Chromium build 1248 (`~/.cache/ms-playwright`; `playwright install --with-deps c
 added the system libraries with sudo). No Node and no wasm-bindgen CLI: `cargo xtask web`
 binds with the `wasm-bindgen-cli-support` crate at Cargo.lock's version (0.2.129).
 
+**The Svelte UI** (`?ui=svelte`, docs/webui.md): the browser test drives the same page, the menu
+screens it claims are DOM (`[data-acr-id]`, `[data-acr-hover]`), all input is forwarded raw so
+`acr_drive` and the pointer work as before. Parity of a screen: screenshots of `?ui=engine` and
+`?ui=svelte` at 1024x768, device pixel ratio 1, then `cargo xtask ui-diff a.png b.png --out d.png`
+(needs at least 99.5% of the pixels within +-8). In headless Chromium without a GPU the game needs
+WebGPU on SwiftShader: `--enable-unsafe-webgpu --enable-unsafe-swiftshader
+--use-webgpu-adapter=swiftshader --enable-features=Vulkan,WebGPU`. The UI's own tests are
+`cd ui && npm run check && npm test`.
+
 ## Scenario files
 
 `tests/e2e/<name>.json`:
